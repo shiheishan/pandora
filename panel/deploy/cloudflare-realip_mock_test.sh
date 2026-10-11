@@ -98,21 +98,17 @@ done
 cmp -s "$cf" "$TEST_DIR/cf.before" || fail "render after Cloudflare enable overwrote the networks"
 
 # ---------------------------------------------------------------------------
-# 5. 安装链：更新脚本进发布包，更新脚本与模板落到 /opt/aegispanel/deploy
+# 5. 安装链：更新脚本进发布包，更新脚本与模板落到 /opt/pandora/deploy
 # ---------------------------------------------------------------------------
 # build-release.sh 的两份脚本清单（拷贝与 tar 成员）都要有它，否则包里缺、或 SHA256SUMS 有而 tar 无
 n="$(grep -c 'render-nginx.sh update-cloudflare-realip.sh; do' "$SCRIPT_DIR/build-release.sh")"
 [[ "$n" == 2 ]] || fail "build-release.sh lists update-cloudflare-realip.sh in $n of 2 script loops"
-grep -Eq '^for script in .*\brender-nginx\.sh\b.*\bupdate-cloudflare-realip\.sh\b.*; do' "$SCRIPT_DIR/install-linux-binaries.sh" \
-  || fail "install-linux-binaries.sh does not stage update-cloudflare-realip.sh"
-# render-nginx.sh 读同目录模板：Docker 版安装不装模板，装完提示的那条渲染命令就会失败
-grep -Eq '^for data_file in .*\bnginx-aegis\.conf\b' "$SCRIPT_DIR/install-linux-binaries.sh" \
-  || fail "install-linux-binaries.sh does not stage nginx-aegis.conf next to render-nginx.sh"
-grep -Fq '"$SCRIPT_DIR/update-cloudflare-realip.sh"' "$SCRIPT_DIR/install-native.sh" \
-  || fail "install-native.sh does not copy update-cloudflare-realip.sh"
-grep -Fq '"$SCRIPT_DIR/nginx-aegis.conf"' "$SCRIPT_DIR/install-native.sh" \
-  || fail "install-native.sh does not copy nginx-aegis.conf"
-# 两个安装脚本收尾都要把 Cloudflare 的启用步骤告诉人
-grep -Fq 'update-cloudflare-realip.sh' "$SCRIPT_DIR/install.sh" || fail "install.sh does not mention the Cloudflare step"
+# render-nginx.sh 读同目录模板：不装模板的话，装完提示的那条渲染命令就会失败
+grep -Fq '"$SCRIPT_DIR/update-cloudflare-realip.sh"' "$SCRIPT_DIR/install.sh" \
+  || fail "install.sh does not copy update-cloudflare-realip.sh"
+grep -Fq '"$SCRIPT_DIR/nginx-aegis.conf"' "$SCRIPT_DIR/install.sh" \
+  || fail "install.sh does not copy nginx-aegis.conf"
+# 首装收尾要把 Cloudflare 的启用步骤告诉人（收尾提示在 install-lib.sh）
+grep -Fq 'update-cloudflare-realip.sh' "$SCRIPT_DIR/install-lib.sh" || fail "the install summary does not mention the Cloudflare step"
 
 printf 'cloudflare-realip mock: PASS\n'

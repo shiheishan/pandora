@@ -34,7 +34,7 @@ set -euo pipefail
 export ADM=${ADM:-http://127.0.0.1:9001}
 export PUB=${PUB:-http://127.0.0.1:9000}
 export NODE=${NODE:-http://127.0.0.1:9003}
-export PSQL=${PSQL:-/opt/aegispanel/deploy/psql.sh}
+export PSQL=${PSQL:-/opt/pandora/deploy/psql.sh}
 export ADMIN_EMAIL=${ADMIN_EMAIL:-}
 export ADMIN_PASS=${ADMIN_PASS:-}
 export RISK_E2E_DISPOSABLE=${RISK_E2E_DISPOSABLE:-}

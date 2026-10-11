@@ -10,20 +10,13 @@
 
 **先只读，后动手。** 每章的「怎么确认」只看状态、日志和库，不改任何东西。「处理」里会改状态的步骤标了 **【写】**：
 
-- 改库之前先备份：`cd /opt/aegispanel/deploy && ./backup-postgres.sh`，记下输出的 `backup complete: <路径>`。
+- 改库之前先备份：`cd /opt/pandora/deploy && ./backup-postgres.sh`，记下输出的 `backup complete: <路径>`。
 - 先想清楚影响面：重启网关会断开正在进行的请求和节点事件流；重启 PostgreSQL 期间整个面板不可用。
 - 不手改订单、支付、账本、审计这几类表。它们有守卫触发器和只追加约束，绕过去会让账对不上。
 
 **口令不进命令行。** `.env` 只给 root 读，不要 `cat` 它；口令只经标准输入或 0600 文件传，不要写成命令参数（会进 `ps` 和 shell 历史）。
 
-**两种安装布局。** 下文命令按 `install.sh` 的布局写，直装机器按下表替换：
-
-| | `install.sh`（Docker 数据基座） | `install-native.sh`（直装） |
-|---|---|---|
-| 安装目录 | `/opt/aegispanel` | `/opt/pandora` |
-| 进库（超级用户，不受行级安全限制） | `cd /opt/aegispanel/deploy && ./psql.sh` | `runuser -u postgres -- psql -p <POSTGRES_PORT> -d <POSTGRES_DB>`（两个值在 `.env` 里） |
-| PostgreSQL / Valkey | 容器 `aegis-postgres` / `aegis-valkey`（`docker ps`、`docker logs`） | systemd 单元 `postgresql@<版本>-main`、`valkey-server`（或 `redis-server`） |
-| `deploy/` 下的备份、校验、恢复脚本与 `psql.sh` | 有 | 没有；升级前备份在 `/var/backups/pandora/` |
+**路径。** 安装目录是 `/opt/pandora`，`deploy/` 下是备份、校验、恢复和巡检脚本。加密备份和升级前备份在 `/var/backups/pandora/`（`.env` 的 `AEGIS_BACKUP_DIR`）。进库（超级用户，不受行级安全限制）：`cd /opt/pandora/deploy && ./psql.sh`，它以 `postgres` 经 `127.0.0.1:POSTGRES_PORT` 连。PostgreSQL 与 Valkey 是系统服务：`postgresql@18-main` 和 `valkey-server`（Debian 12、Ubuntu 22.04 上是 `redis-server`）。
 
 ## 0. 先看全貌（只读）
 
@@ -34,8 +27,9 @@ systemctl status aegis-public aegis-admin aegis-node nginx --no-pager
 for p in 9000 9001 9003; do printf '%s ' "$p"; curl -s -o /dev/null -w '%{http_code}\n' -m 3 "http://127.0.0.1:$p/healthz"; done
 # 就绪探针：门户查库和 Valkey，后台只查库；200 是 ok，503 是依赖不通
 curl -s -m 5 http://127.0.0.1:9000/readyz; echo; curl -s -m 5 http://127.0.0.1:9001/readyz; echo
-docker ps -a --filter name=aegis-
-sudo /opt/aegispanel/deploy/edge-tls.sh status
+# 数据库与缓存：都应是 active (running)（Debian 12、Ubuntu 22.04 上 Valkey 的单元是 redis-server）
+systemctl status postgresql@18-main valkey-server --no-pager
+sudo /opt/pandora/deploy/edge-tls.sh status
 ```
 
 日志在哪：
@@ -44,7 +38,8 @@ sudo /opt/aegispanel/deploy/edge-tls.sh status
 |---|---|
 | 三个网关 | `/var/log/aegis/public.log`、`admin.log`、`node.log`（单元把标准输出追加到这里；`journalctl -u aegis-public` 只有启停记录） |
 | nginx | `/var/log/nginx/aegis-access.log`（不记路径，只记方法、状态码、耗时）、`/var/log/nginx/aegis-error.log`（只记 crit） |
-| PostgreSQL | `docker logs aegis-postgres`：超过 500 ms 的语句和锁等待都会记 |
+| PostgreSQL | `/var/log/postgresql/postgresql-18-main.log`：超过 500 ms 的语句、锁等待、检查点都会记；启停记录看 `journalctl -u postgresql@18-main` |
+| Valkey | `journalctl -u valkey-server`（Debian 12、Ubuntu 22.04 是 `redis-server`）和发行版自己的日志文件（路径见配置文件里的 `logfile`） |
 | 证书续期 | `journalctl -u aegis-tls-renew`、结论文件 `/var/lib/aegispanel/tls/status` |
 | 备份 | `journalctl -u aegis-backup` |
 | 节点端（节点机上） | `journalctl -u pandora-native` |
@@ -68,24 +63,25 @@ grep -h '<request_id>' /var/log/aegis/*.log
 | `数据库连不上` | [8. 数据库连接满或慢](#8-数据库连接满或慢)（库进程本身挂了也在这章） |
 | `/ 已用 N%`、`/tmp 已用 N%` | [9. 磁盘满](#9-磁盘满) |
 | `备份目录 … 里没有任何备份`、`最新备份已经是 N 小时前的`、`最新备份只有 N 字节，疑似空文件` | [10. 备份没跑或异常](#10-备份没跑或异常) |
-| `取不到 https://… 在用的证书`、`读不出 … 证书的有效期`、`… 的证书已过期`、`… 的证书还剩 N 小时到期`、`HTTPS 证书续期出错：…`、`证书续期 timer 超过 36 小时没跑` | [4. 面板 HTTPS 证书续期失败](#4-面板-https-证书续期失败) |
+| `取不到 https://… 在用的证书`、`读不出 https://… 证书的有效期`、`https://… 的证书已过期`、`https://… 的证书还剩 N 小时到期`、`HTTPS 证书续期出错：…`、`证书续期 timer 超过 36 小时没跑` | [4. 面板 HTTPS 证书续期失败](#4-面板-https-证书续期失败) |
 | `有 N 条通知排队超过 30 分钟没发出去`、`最近六小时有 N 条通知发送失败` | [7. 通知积压](#7-通知积压) |
 | `过去 30 分钟没有任何节点上报心跳（7 天内曾有 N 个在报）` | [3. 节点离线或不上报心跳](#3-节点离线或不上报心跳) |
+| `通知积压查询失败或超时（每条查询限 10 秒）`、`通知发送失败查询失败或超时（每条查询限 10 秒）`、`节点心跳（最近 30 分钟）查询失败或超时（每条查询限 10 秒）`、`节点心跳（7 天内）查询失败或超时（每条查询限 10 秒）` | [8. 数据库连接满或慢](#8-数据库连接满或慢)（锁等待、DDL 或 VACUUM FULL 卡住某张表时会出现） |
 
 另外两个告警源也指到第 4 章：续期单元 `aegis-tls-renew.service` 记为 failed，以及 Telegram 上的 `潘多拉面板 HTTPS 证书（…）：…`。
 
-**巡检随安装器装好。** `healthcheck.sh` 与 `aegis-health.service` / `aegis-health.timer` 在发布包里，`install.sh`、`install-native.sh` 首装与升级都会装上并 `enable --now aegis-health.timer`。装在没有它的老版本机器上，升级一次即可；也可以手工补：
+**巡检随安装器装好。** `healthcheck.sh` 与 `aegis-health.service` / `aegis-health.timer` 在发布包里，`install.sh` 首装与升级都会装上并 `enable --now aegis-health.timer`。装在没有它的老版本机器上，升级一次即可；也可以手工补：
 
 ```bash
 systemctl list-timers aegis-health.timer     # 看有没有在跑
-# 手工补装（以 install.sh 布局为例，换成发布包里的 deploy/ 与 deploy/systemd/）：
-install -m 0755 deploy/healthcheck.sh /opt/aegispanel/deploy/
+# 手工补装（在发布包的目录里执行，用包里的 deploy/ 与 deploy/systemd/）：
+install -m 0755 deploy/healthcheck.sh /opt/pandora/deploy/
 install -m 0644 deploy/systemd/aegis-health.service deploy/systemd/aegis-health.timer /etc/systemd/system/
 systemctl daemon-reload && systemctl enable --now aegis-health.timer
 ```
 
-- 每 10 分钟跑一次，启用后 10 分钟首跑。没问题只往 `<安装目录>/logs/health.log` 追一行 `OK`；有问题单元记为 failed，`.env` 设了 `AEGIS_ALERT_TG_TOKEN` 与 `AEGIS_ALERT_TG_CHAT` 时再推一条 Telegram。
-- 脚本取安装目录自己的位置（`/opt/aegispanel` 或 `/opt/pandora`）；查库时有 `deploy/psql.sh`（docker 布局）走它，没有（直装布局）就以 postgres 系统用户连本机 aegis 库。
+- 每 10 分钟跑一次，启用后 10 分钟首跑。没问题只往 `/opt/pandora/logs/health.log` 追一行 `OK`；有问题单元记为 failed，`.env` 设了 `AEGIS_ALERT_TG_TOKEN` 与 `AEGIS_ALERT_TG_CHAT` 时再推一条 Telegram。
+- 脚本取安装目录自己的位置（`/opt/pandora`）；查库走 `deploy/psql.sh`。
 - 首装后到配好备份之前，会有一条「备份目录里没有任何备份」的告警，这是真告警：去第 10 章把备份配好。
 
 ---
@@ -121,8 +117,8 @@ systemctl daemon-reload && systemctl enable --now aegis-health.timer
 
 ### 处理
 
-1. 依赖先行：`docker ps -a --filter name=aegis-`，两个容器应为 `Up (healthy)`。
-   - **【写】** 容器没起来：`cd /opt/aegispanel/deploy && docker compose up -d`。
+1. 依赖先行：`systemctl status postgresql@18-main valkey-server --no-pager`（Debian 12、Ubuntu 22.04 上 Valkey 是 `redis-server`），两个单元应为 `active (running)`。
+   - **【写】** 没起来：`systemctl start postgresql@18-main valkey-server`，起不来看第 8 章的日志位置。
 2. 按日志里的原因改 `.env`。改之前先复制一份：`cp -p .env .env.bak.$(date +%s)`。
 3. **【写】** `systemctl restart aegis-public`（或对应网关），再用第 0 节的探活确认。重启会断开正在进行的请求；节点网关重启时，节点事件流会在几秒内重连。
 4. 卡死的进程，重启前先抓现场：`.env` 里设了 `AEGIS_*_PPROF_ADDR`（只接受回环地址）时，从那个端口取 goroutine 转储。
@@ -141,7 +137,7 @@ systemctl daemon-reload && systemctl enable --now aegis-health.timer
 
 | 现象 | 去看 |
 |---|---|
-| 后台地址打不开、404，或者落到了门户首页 | 前缀不对。`sudo /opt/aegispanel/deploy/admin-url.sh` 重新打印完整地址；地址要以 `/` 结尾，`/<后台前缀>` 会 301 到 `/<后台前缀>/` |
+| 后台地址打不开、404，或者落到了门户首页 | 前缀不对。`sudo /opt/pandora/deploy/admin-url.sh` 重新打印完整地址；地址要以 `/` 结尾，`/<后台前缀>` 会 301 到 `/<后台前缀>/` |
 | 浏览器提示证书不安全 | 面板在用自签证书，转第 4 章 |
 | 提示「邮箱或密码不正确」 | 下面的审计查询 |
 | 429，或「请求太频繁」 | 登录限速：网关按「IP + 路径」每分钟 `AEGIS_RL_AUTH_PER_MIN` 次（缺省 10），nginx 另有每 IP 每分钟 12 次的边缘限速（超了回 503） |
@@ -151,7 +147,7 @@ systemctl daemon-reload && systemctl enable --now aegis-health.timer
 「邮箱或密码不正确」对外是同一句话，背后有四种情况：账号不存在、口令错误、账号停用、账号没有后台角色。审计里记了真实原因（同一来源短时间内重复失败只记一条）：
 
 ```bash
-cd /opt/aegispanel/deploy
+cd /opt/pandora/deploy
 ./psql.sh -X -c "SELECT occurred_at, after_digest->>'reason' AS reason FROM audit_events WHERE action = 'user.login_failed' AND api_domain = 'admin' ORDER BY occurred_at DESC LIMIT 20;"
 ```
 
@@ -160,7 +156,7 @@ cd /opt/aegispanel/deploy
 列出全部管理员及其状态、角色、最近登录（只读）：
 
 ```bash
-cd /opt/aegispanel && ( set -a && . deploy/.env && set +a && ./bin/aegis-adminctl list )
+cd /opt/pandora && ( set -a && . deploy/.env && set +a && ./bin/aegis-adminctl list )
 ```
 
 ### 常见原因
@@ -175,7 +171,7 @@ cd /opt/aegispanel && ( set -a && . deploy/.env && set +a && ./bin/aegis-adminct
 - **【写】** 重置口令。会吊销这个账号的全部会话和刷新令牌，写审计 `adminctl.password_reset`。口令只经标准输入：
 
   ```bash
-  cd /opt/aegispanel && ( set -a && . deploy/.env && set +a \
+  cd /opt/pandora && ( set -a && . deploy/.env && set +a \
     && read -rsp '新密码：' p && echo && printf '%s\n' "$p" | ./bin/aegis-adminctl reset-password --email <管理员邮箱> --password-stdin; unset p )
   ```
 
@@ -265,7 +261,7 @@ cd /opt/aegispanel && ( set -a && . deploy/.env && set +a && ./bin/aegis-adminct
 ### 怎么确认
 
 ```bash
-sudo /opt/aegispanel/deploy/edge-tls.sh status     # 证书来源、到期时间、签发者、上次检查的结论
+sudo /opt/pandora/deploy/edge-tls.sh status     # 证书来源、到期时间、签发者、上次检查的结论
 cat /var/lib/aegispanel/tls/status                  # RESULT=ok|warn|error，MESSAGE 是原因
 systemctl status aegis-tls-renew.service --no-pager
 systemctl list-timers aegis-tls-renew.timer
@@ -290,7 +286,7 @@ echo | openssl s_client -connect <面板地址>:443 -servername <面板域名> 2
 | `lego 续期失败（输出见上）：确认 80 端口从公网可达` | 80 被安全组或防火墙挡了，或者这个 IP 已经不是本机的公网地址 |
 | `仍在用自签证书：…` | 申请正规证书失败，冒号后面是原因。最常见的还是 80 不通；域名证书还要求域名解析到本机 |
 | `certbot 续期失败（报错见 journalctl -u aegis-tls-renew 与 /var/log/letsencrypt/letsencrypt.log）` | 看那两处日志 |
-| 「续期校验」显示 `webroot 还指着别处` 或 `找不到续期配置` | certbot 的续期配置没走面板的校验目录 `/var/www/aegis-acme`，续期会 404。`renew` 每次会自动改正（改前备份到 `/var/backups/aegispanel/letsencrypt-renewal-*`），修不好的原因记进 status |
+| 「续期校验」显示 `webroot 还指着别处` 或 `找不到续期配置` | certbot 的续期配置没走面板的校验目录 `/var/www/aegis-acme`，续期会 404。`renew` 每次会自动改正（改前备份到 `/var/backups/pandora/letsencrypt-renewal-*`），修不好的原因记进 status |
 | `证书已更新但 nginx -t 不通过，没有 reload` | nginx 配置坏了，`nginx -t` 看哪一行 |
 | `在用的证书不覆盖面板地址 …（对外地址改过？）` | `.env` 的 `AEGIS_PUBLIC_BASE_URL` 换了主机 |
 | `证书还剩 N 小时到期，续期没成功`、`证书已过期` | 上面几种原因拖到了临界点 |
@@ -312,12 +308,12 @@ echo | openssl s_client -connect <面板地址>:443 -servername <面板域名> 2
 
    ```bash
    sudo systemctl start aegis-tls-renew.service      # 等价于 edge-tls.sh renew
-   sudo /opt/aegispanel/deploy/edge-tls.sh status
+   sudo /opt/pandora/deploy/edge-tls.sh status
    ```
 
-3. **【写】** 来源是 `selfsigned`：`sudo /opt/aegispanel/deploy/edge-tls.sh issue`。
+3. **【写】** 来源是 `selfsigned`：`sudo /opt/pandora/deploy/edge-tls.sh issue`。
 4. **【写】** timer 没启用：`systemctl enable --now aegis-tls-renew.timer`。
-5. **【写】** 对外地址改过：`sudo /opt/aegispanel/deploy/edge-tls.sh setup`。它会重新渲染 nginx，`nginx -t` 不过就换回原配置。
+5. **【写】** 对外地址改过：`sudo /opt/pandora/deploy/edge-tls.sh setup`。它会重新渲染 nginx，`nginx -t` 不过就换回原配置。
 6. 域名证书想先验证续期能不能成：`sudo certbot renew --dry-run --cert-name <域名>`。它走 Let's Encrypt 测试环境，不换证书。
 7. 不要反复手动 `issue`。Let's Encrypt 有频率限制（同一 IP 或注册域名每 7 天 50 张，完全相同的域名组合每 7 天 5 张），撞上了只能等。
 
@@ -501,8 +497,9 @@ echo | openssl s_client -connect <面板地址>:443 -servername <面板域名> 2
 - 库进程本身：
 
   ```bash
-  docker ps -a --filter name=aegis-postgres          # 应为 Up (healthy)
-  docker logs --since 30m aegis-postgres 2>&1 | tail -n 50   # 慢语句（>500 ms）、锁等待、OOM、磁盘满
+  systemctl status postgresql@18-main --no-pager              # 应为 active (running)
+  tail -n 50 /var/log/postgresql/postgresql-18-main.log       # 慢语句（>500 ms）、锁等待、OOM、磁盘满
+  journalctl -u postgresql@18-main --since '30 min ago' --no-pager   # 启停与被 systemd 杀掉的记录
   ```
 
 - 连接与长事务：
@@ -514,17 +511,33 @@ echo | openssl s_client -connect <面板地址>:443 -servername <面板域名> 2
   ./psql.sh -X -c "SELECT pid, pg_blocking_pids(pid) AS blocked_by, left(query, 80) AS query FROM pg_stat_activity WHERE cardinality(pg_blocking_pids(pid)) > 0;"
   ```
 
-连接预算：compose 里 `max_connections=60` = 3 条超级用户保留 + 11 条维护余量 + 门户 1 条常驻监听 + 三个网关各自的池上限（缺省门户 16、后台 15、节点 15）。算式在 `.env.example` 的连接池注释里。
+连接预算：`/etc/postgresql/18/main/conf.d/pandora.conf` 里 `max_connections=60` = 3 条超级用户保留 + 11 条维护余量 + 三个网关各自的池上限（缺省门户 16 = 15 + 1 条常驻监听、后台 15、节点 14）+ 节点纪元探针池外专用的 1 条连接，合计 3 + 11 + 16 + 15 + 14 + 1 = 60。缺省值与算式以 `internal/platform/config/runtime.go` 为准（`.env.example` 的连接池注释同源）。
 
 ### 常见原因
 
 | 原因 | 怎么认 |
 |---|---|
-| 容器挂了或反复重启 | `docker ps` 状态；`docker logs` 里有 OOM（容器限 512M）或磁盘满（转第 9 章） |
+| PostgreSQL 单元挂了或反复重启 | `systemctl status postgresql@18-main`；日志里有 OOM（drop-in 限了 `MemoryMax=512M`、不许换出，见下一条与第 13 章）或磁盘满（转第 9 章） |
+| 进程被 OOM 杀掉 | 见本表下面「不换出到硬盘的代价」 |
 | 某个会话 `idle in transaction`，或者手工跑的语句占着锁 | 第三、四条查询 |
 | 改大了 `AEGIS_*_DB_MAX_CONNS`，或者多开了网关实例，总数超出预算 | 第一条查询各用户的连接数 |
 | 保留期清理积压，表越来越大、查询越来越慢 | `admin.log` 里有 `…清理失败` |
-| 某条业务查询慢 | `docker logs` 里同一条语句反复超过 500 ms |
+| 某条业务查询慢 | PostgreSQL 日志里同一条语句反复超过 500 ms |
+
+**不换出到硬盘的代价。** PostgreSQL、Valkey 与三个网关的单元都带 `MemorySwapMax=0`（第 13 章）：内存紧的时候它们不会被换出去变慢，代价是内存真用尽（撞上单元的 `MemoryMax`，或整机没内存）时，由「变慢」变成「进程被 OOM 杀掉」。怎么看：
+
+```bash
+systemctl status aegis-public aegis-admin aegis-node postgresql@18-main valkey-server --no-pager | grep -iE 'oom|Result|Active'
+journalctl -k --since -1h | grep -iE 'oom|killed process'            # 内核记的是哪个进程、哪个 cgroup
+journalctl -u aegis-public --since -1h | grep -iE 'oom-kill|Main process exited'
+```
+
+- 网关（`Restart=on-failure`）与 Valkey（发行版单元 `Restart=always`）被杀后由 systemd 自己拉起；Valkey 不落盘，限流计数与实时推送的临时状态清零。
+- PostgreSQL：drop-in 写了 `OOMPolicy=continue`，被杀的多半是某个后端连接，单元不停，postmaster 自己做崩溃恢复（断开所有连接、重放 WAL、重新接客，几秒钟，期间网关的请求会失败一下）；postmaster 本身受 `OOMScoreAdjust=-900` 保护，真被杀了（`kill -9`、OOM 杀到它本身，少见），drop-in 的 `ExecStopPost` 跑 `deploy/pg-revive.sh`：systemd 说 postmaster 是被信号杀掉的（`EXIT_CODE=killed` 或 `dumped`）、且这个单元没有 `systemctl stop`/`restart` 在处理，就排一个 5 秒后的 `systemctl start`（`journalctl -t pandora-pg-revive` 有记录）；60 秒内再死一次就不再拉。**要让一个被杀掉的库保持停着**（例如 `pg_ctlcluster --force stop` 最后 SIGKILL 了 postmaster，或 `systemctl kill -s KILL`，这些在 systemd 看来都是「被杀」），先 `systemctl stop pandora-pg-revive-18-main.timer` 取消排好的拉起（5 秒窗口内；之后再 `systemctl stop postgresql@18-main`）；拉起已经发生的，直接 `systemctl stop postgresql@18-main`，这是有作业的停库，不会再被拉。有意停库（`pg_ctlcluster 18 main stop` 的各种模式、`systemctl stop`）postmaster 是自己退出的，不会被拉回来。不用 systemd 的 `Restart=`：panel2 实测被 `kill -9` 与 postgres 用户有意停库，单元结果都是 `exit-code`，「异常才重启」拉不起前者，「失败就重启」会把后者拉回来。
+- 没拉起来、或反复崩溃时靠巡检（`aegis-health.timer`，每 10 分钟）：库连不上记一条 `ALERT 数据库连不上`，`aegis-health.service` 记为 failed。**只有 `.env` 配了 `AEGIS_ALERT_TG_*` 才会推 Telegram**，没配时只留 failed 单元与 `/opt/pandora/logs/health.log` 的 ALERT 行，要人去看（`systemctl --failed`）。`psql.sh` 连库超过 5 秒就放弃；巡检的每条查询另限 10 秒（`statement_timeout`），库连得上但查询卡住（锁等待、IO 挂住）时也会按时记「数据库连不上（或 10 秒内查不出 SELECT 1）」，而不是被 systemd 的 120 秒超时杀掉、一条告警都没发；第一条失败后其余查库项跳过。SELECT 1 已通过、后面某条计数查询超时或失败时，会记「<检查项>查询失败或超时」并告警，不会当成没数据记 OK。
+- 反复被杀：先看是哪一个占得多（`systemctl status` 的 Memory 行、`ps -o rss`），再按第 8 章看连接数与慢查询；不要把 `MemorySwapMax` 去掉了事，那只是把问题换成卡顿。
+- 内核 cgroup 不是 v2 或没开 swap 记账时这一条不生效，安装输出会说。
+
 
 ### 处理
 
@@ -536,13 +549,13 @@ echo | openssl s_client -connect <面板地址>:443 -servername <面板域名> 2
    ```
 
    只动确认过的那个 pid。不要终止迁移会话（`goose`），处理迁移见第 11 章。
-2. **【写】** 重启库：`cd /opt/aegispanel/deploy && docker compose restart postgres`。期间整个面板不可用，网关会自动重连。
-3. **【写】** 调连接预算：改 `.env` 的 `AEGIS_*_DB_MAX_CONNS`，按 `.env.example` 的算式重排，再重启对应网关；改 `max_connections` 要改 compose 并重启库。
-4. 要看语句的累计耗时，需要 `pg_stat_statements`。开它要改 `shared_preload_libraries` 并重启库，先评估停机窗口。
+2. **【写】** 重启库：`systemctl restart postgresql@18-main`。期间整个面板不可用，网关会自动重连。
+3. **【写】** 调连接预算：改 `.env` 的 `AEGIS_*_DB_MAX_CONNS`，按 `.env.example` 的算式重排，再重启对应网关。改 `max_connections` 等数据库参数要改发布包里的 `deploy/postgresql-pandora.conf` 再重跑安装器：它整份覆盖 `/etc/postgresql/18/main/conf.d/pandora.conf`，文件变了才重启 PostgreSQL；只改机器上那份，下次安装会被覆盖。
+4. 要看语句的累计耗时，需要 `pg_stat_statements`。用压测脚本 `tools/loadtest/scripts/pgstat.sh`（`enable --yes` / `disable --yes`）：它用 `ALTER SYSTEM` 把 `shared_preload_libraries` 写进数据目录的 `postgresql.auto.conf` 并重启库、建扩展，只在原值为空时才写。不改 `postgresql-pandora.conf`，因为 `conf.d/pandora.conf` 每次安装整份覆盖，而 `postgresql.auto.conf` 的优先级更高、重装不会冲掉它，所以开着的状态会一直留到 `disable` 为止。重启库期间网关连库失败几秒，先评估停机窗口。
 
 ### 什么时候升级处理
 
-同一条业务语句反复慢，或者保留期清理一直失败：带上 `docker logs` 里那条语句（先去掉其中的个人信息）和库体积，提给开发。
+同一条业务语句反复慢，或者保留期清理一直失败：带上 PostgreSQL 日志里那条语句（先去掉其中的个人信息）和库体积，提给开发。
 
 ---
 
@@ -552,9 +565,8 @@ echo | openssl s_client -connect <面板地址>:443 -servername <面板域名> 2
 
 ```bash
 df -h / /tmp
-du -xsh /var/log/aegis /var/log/nginx /var/backups/aegispanel /var/lib/docker 2>/dev/null
+du -xsh /var/log/aegis /var/log/nginx /var/log/postgresql /var/backups/pandora /var/lib/postgresql 2>/dev/null
 journalctl --disk-usage
-docker system df
 ./psql.sh -X -c "SELECT pg_size_pretty(pg_database_size(current_database()));"
 ./psql.sh -X -c "SELECT relname, pg_size_pretty(pg_total_relation_size(relid)) AS size FROM pg_catalog.pg_statio_user_tables ORDER BY pg_total_relation_size(relid) DESC LIMIT 15;"
 ```
@@ -565,7 +577,7 @@ docker system df
 
 - **备份堆积。** `backup-postgres.sh` 只按 `AEGIS_BACKUP_RETENTION_DAYS`（缺省 14 天）清理自己生成的 `aegis-postgres-*.dump.age`。`install.sh` 升级前留的 `pre-upgrade-*.dump`、回滚前导出的 `rollback-*` 目录都不会自动清。
 - **`/tmp` 满。** 它常是一块小的 tmpfs，在机器上构建会把它塞满；根分区却还有空间。
-- **日志。** 网关日志每天轮转、单文件超过 64M 也轮转，保留 14 份；nginx 和 journal 按发行版设置。
+- **日志。** 网关日志每天轮转、单文件超过 64M 也轮转，保留 14 份；nginx、journal、PostgreSQL 与 Valkey 的日志按发行版设置。
 - **库变大。** 节点上报的在线记录、探针点、流量汇总靠 aegis-admin 的保留期清理（每 10 分钟一轮）。后台网关停了很久，这些表会一直涨。
 - **迁移预检。** 升级前的预检在同一个 PostgreSQL 里克隆整库，要有和库差不多大的空闲空间。
 
@@ -573,9 +585,8 @@ docker system df
 
 1. **【写】** 删旧的升级前备份：先确认有一份更新的 `aegis-postgres-*.dump.age` 通过了校验（第 10 章），异地也有副本，再删 `pre-upgrade-*.dump`。
 2. **【写】** `journalctl --vacuum-size=200M`。
-3. **【写】** `docker image prune` 只清没有标签的旧镜像。**不要**用 `docker system prune --volumes`，它会删掉数据卷 `aegis_pgdata`。
-4. 不要手动删 PostgreSQL 数据目录里的任何文件，包括 `pg_wal`。
-5. 库本身太大：确认 aegis-admin 在跑，`admin.log` 里没有 `…清理失败`；积压会在之后几轮里分批清掉。
+3. 不要手动删 PostgreSQL 数据目录里的任何文件，包括 `pg_wal`。
+4. 库本身太大：确认 aegis-admin 在跑，`admin.log` 里没有 `…清理失败`；积压会在之后几轮里分批清掉。
 
 ### 什么时候升级处理
 
@@ -591,16 +602,16 @@ docker system df
 systemctl status aegis-backup.service --no-pager
 systemctl list-timers aegis-backup.timer               # 每天 03:17 UTC 附近
 journalctl -u aegis-backup -n 100 --no-pager
-ls -lt /var/backups/aegispanel | head
+ls -lt /var/backups/pandora | head
 ```
 
 后台仪表盘的系统状态卡片也会显示：最新一份的时间、缺校验文件的份数、解密私钥有没有配好。
 
 ### 常见原因
 
-- **timer 从没启用过。** `install.sh` 装了 `aegis-backup.service/.timer`，但不替你启用；新装的机器上「一份备份都没有」多半是这个。直装布局没有加密备份单元。
+- **timer 从没启用过。** `install.sh` 装了 `aegis-backup.service/.timer`，但不替你启用；新装的机器上「一份备份都没有」多半是这个。
 - `.env` 的 `AEGIS_BACKUP_AGE_RECIPIENT` 还是占位符。脚本拒绝生成明文备份，直接失败。
-- Docker 或 `aegis-postgres` 没在跑（备份单元依赖 docker）。
+- `postgresql@18-main` 没在跑，或 `.env` 的 `POSTGRES_SUPER_PASSWORD` 与库里 `postgres` 的口令对不上（报 `password authentication failed`）。
 - 磁盘满（第 9 章）。
 - 远端上传钩子（`AEGIS_BACKUP_REMOTE_HOOK`）失败，日志里能看到。
 
@@ -612,13 +623,16 @@ ls -lt /var/backups/aegispanel | head
 4. 校验最新一份。要在 `deploy/` 目录下以 root 跑，它读同目录的 `.env`（要求属 root、0600 或 0400）：
 
    ```bash
-   cd /opt/aegispanel/deploy && ./verify-backup.sh /var/backups/aegispanel/aegis-postgres-<时间>.dump.age
+   cd /opt/pandora/deploy && ./verify-backup.sh /var/backups/pandora/aegis-postgres-<时间>.dump.age
    ```
 
-   - 它核对 sha256、签名清单、解密和归档目录，通过时输出 `backup verified:`。
-   - 签名清单 `aegis-postgres-<时间>.manifest.json` 只有配了 WebDAV 异地备份才会生成。没有时报 `signed manifest not found`；只想确认这份能解开，可以一次性设 `AEGIS_BACKUP_ALLOW_UNSIGNED_LEGACY=RESTORE_UNSIGNED:<备份文件名>` 再跑。
-   - 设 `AEGIS_VERIFY_RESTORE=1` 会在临时库里完整恢复一遍，需要和库差不多大的空闲磁盘；无签名的备份不能这样做。
-5. 解密私钥（`.env` 的 `AEGIS_BACKUP_AGE_IDENTITY`）缺省和备份在同一台机器上。机器整体丢失时备份就解不开，私钥要另外保存一份。
+   - 它先核这份备份的来路，再核 sha256、解密和归档目录，通过时输出 `backup verified:`。来路两种：
+     - 本机写的备份：`backup-postgres.sh` 每份都写一个封条 `aegis-postgres-<时间>.dump.age.seal`，是用这台安装的 age 解密私钥派生的签名。留存期内哪一份都能核、能恢复；
+     - 从 WebDAV 取回的备份：签名清单 `aegis-postgres-<时间>.manifest.json` 加 WebDAV 之外的可信检查点，只认最新一份（防替换、防回滚）。
+   - 两样都没有报 `refusing an archive of unknown origin`；封条对不上报 `local backup seal verification failed`：这份不是本安装写出的，或者归档、校验文件被改过，不要恢复它。
+   - 封条用的就是解密私钥：换过私钥（或机器重装后没用回原来那把）的备份核不过。所以私钥要另存（见第 5 条），重装后放回原处。
+   - 设 `AEGIS_VERIFY_RESTORE=1` 会在临时库里完整恢复一遍，需要和库差不多大的空闲磁盘。
+5. 解密私钥（`.env` 的 `AEGIS_BACKUP_AGE_IDENTITY`）缺省和备份在同一台机器上（`/opt/pandora/secrets/backup-age.key`）。机器整体丢失时备份就解不开，私钥要另外保存一份。
 6. 从备份恢复见 `MIGRATION-RUNBOOK.md` 第 3 节。
 
 ### 什么时候升级处理
@@ -629,7 +643,7 @@ ls -lt /var/backups/aegispanel | head
 
 ## 11. 迁移失败或卡在预检
 
-`install.sh` / `install-native.sh` 升级和发布控制器的迁移顺序都是：停服前查无效索引 → 停服前在克隆库上预检 → 停服 → 迁移只核对预检凭据。
+`install.sh` 升级和发布控制器的迁移顺序都是：停服前查无效索引 → 停服前在克隆库上预检 → 停服 → 迁移只核对预检凭据。
 
 ### 怎么确认
 
@@ -648,15 +662,13 @@ ls -lt /var/backups/aegispanel | head
 | `migration: INVALID indexes found …` | 上次 `CREATE INDEX CONCURRENTLY` 中途失败留下的无效索引。这时重跑会被 `IF NOT EXISTS` 跳过、却记成已执行，所以直接拒绝。输出里给了每个索引的 `DROP INDEX CONCURRENTLY` 语句；清理步骤见 `MIGRATION-RUNBOOK.md` 第 1 节第 5 步与第 4.3 节 |
 | `migration precheck: active legacy renewals=N; release refused` | 有旧式在途续费单。没付款的走正常的取消流程；处理中或已付的逐单核对，不要用 SQL 改 |
 | `migration precheck: release migration artifact is older than source` | 装的发布包比库里的版本旧，换成新的发布包 |
-| `migration precheck: docker is required` | 直装机器上没有 Docker，跑不了克隆预检，升级停在这里，服务没停 |
-| `migration precheck: PostgreSQL published endpoint mismatch` | `.env` 的 `POSTGRES_PORT` 和容器实际发布的端口不一致 |
 | `migration precheck: attestation …; production is unchanged, rerun the full precheck` | 停服后的凭据核对不过（中间有人迁移过、迁移目录变了、凭据超过六小时等），服务已自动拉回。重新发版即可 |
 
 单独查无效索引（只读；退出码 0 没有、1 有、2 查不了）：
 
 ```bash
-cd /opt/aegispanel/deploy
-PANDORA_LOCAL_MIGRATION_APPROVED=yes GOOSE_BIN=/opt/aegispanel/bin/goose ./migrate.sh check-indexes
+cd /opt/pandora/deploy
+PANDORA_LOCAL_MIGRATION_APPROVED=yes GOOSE_BIN=/opt/pandora/bin/goose ./migrate.sh check-indexes
 ```
 
 **预检很慢：** 克隆和演练的耗时随库大小增长（5k 规模约 15–21 秒）。它在业务时段读整库，要有和库差不多大的空闲磁盘（第 9 章）。大库请挑低峰发版。
@@ -777,3 +789,47 @@ pandora-native enrollment abort --identity /etc/pandora-native/identity.json --r
 
 - 端口确实空闲，节点仍长时间报 `port_in_use` 或 `not_started`：带上节点 id、`ss -lntup` 输出和最近 200 行 `journalctl -u pandora-native`。
 - 接入卡在 `committed` 与本机状态对不上、`enrollment status` 本身报错：带上它的完整输出和面板 `node.log` 里含这个节点 id 的行（日志文件里有私钥和运行令牌，不要贴）。
+
+---
+
+## 13. PostgreSQL 与 Valkey 的加固
+
+PostgreSQL 与 Valkey 是发行版包装的系统服务。`install.sh` 用 systemd drop-in 与 Valkey 配置块把它们收紧（首装、升级都会做；内容没变不重启）。这一步在外来集群检查、迁移、收窄运行角色都做完之后、起网关之前：升级时网关在迁移前就停了，第一次加固重启 PostgreSQL 与 Valkey 只发生在这段停服窗口里，多几秒，不打断在线请求（Valkey 不落盘，限流计数与实时推送的临时状态会清零，与重启网关相同）。
+
+本章不是排障，是说明这两个服务被收紧成什么样、起不来时怎么办。数据库参数（`max_connections` 等）不在这里，在 `/etc/postgresql/18/main/conf.d/pandora.conf`，改法见第 8 章。
+
+每份 drop-in 分两段：资源约束一直在（`MemoryMax`；`MemorySwapMax=0`，不换出到硬盘，代价见第 8 章「不换出到硬盘的代价」），它们只要 cgroup、不要挂载命名空间，所以不随加固开关去掉；隔离段随开关 `PANDORA_SYSTEMD_HARDENING`。三个网关的单元自己带 `MemorySwapMax=0`。
+
+- PostgreSQL：`/etc/systemd/system/postgresql@18-main.service.d/pandora.conf`；
+- Valkey / Redis：`/etc/systemd/system/valkey-server.service.d/pandora.conf`（或 `redis-server.service.d`），外加配置文件（`/etc/valkey/valkey.conf` 或 `/etc/redis/redis.conf`）末尾 `# >>> pandora` 到 `# <<< pandora` 的一块。
+
+| 项 | Debian 包缺省 | 加固后 |
+|---|---|---|
+| PG 监听 | `listen_addresses=localhost`；pg_hba 本地 peer、回环 scram | 不变。另加 `IPAddressDeny=any` 与 `IPAddressAllow=localhost`，有人把 `listen_addresses` 改成 `*` 外面也连不进 |
+| PG 运行用户 | 单元以 root 起，由 pg_ctlcluster 降权，能力集完整 | `User=postgres`、能力集清空、`NoNewPrivileges` |
+| PG 隔离 | 只有 `OOMScoreAdjust` | 补齐。`ProtectSystem=strict`（只放行数据、日志、socket 目录）；`PrivateTmp`、`PrivateDevices`、`ProtectHome`；`ProtectKernel*`、`ProtectProc=invisible`；`RestrictNamespaces`；系统调用拒绝清单；`MemoryMax=512M`。不加 `MemoryDenyWriteExecute`，因为超级用户会话可能用 JIT |
+| PG 文件与口令 | 数据目录 700；超级用户口令只在 `.env`（0600） | 不变 |
+| Valkey 监听 | 只听回环、`protected-mode yes`、有口令 | 不变。配置块把这两行钉住（bind 按版本写：Valkey 与 Redis 6.2 起 `127.0.0.1 -::1`；Ubuntu 22.04 的 Redis 6.0 不认「-」，回环有 IPv6 写 `127.0.0.1 ::1`，没有只写 `127.0.0.1`），drop-in 只放行回环 |
+| Valkey 运行用户 | 单元 `User=valkey`（或 `redis`）。Debian 12 的 redis 单元留着 SETUID、SETGID、SYS_RESOURCE 能力 | 用户不变。能力集一律清空 |
+| Valkey 隔离 | 看发行版：Debian 13 的 valkey 单元已经较严；Debian 12 的 redis 单元末尾把 `ProtectSystem` 改回 `true`，也没有系统调用过滤。**都缺**进程可见性、网络出口、内存上限 | drop-in 整套写全，不依赖发行版单元：`ProtectSystem=strict`、`PrivateTmp/Devices`、`ProtectProc=invisible`、`MemoryDenyWriteExecute`；系统调用允许清单 `@system-service` 去掉 `@privileged @resources`；只放行回环；`MemoryMax=160M` |
+| Valkey 行为 | 危险命令可用，定期写 `dump.rdb`，没有内存上限 | 配置块补齐：禁 `FLUSHALL` 与 `FLUSHDB`；不落盘；`maxmemory 96mb allkeys-lru` |
+| Valkey 口令 | `valkey.conf`（640）的 `requirepass` | 不变，口令只经 stdin 与环境写入 |
+
+被挡的系统调用一律返回 EPERM，不会直接杀掉进程。
+
+**起不来怎么办**：
+
+- PostgreSQL 重启前先做一次 `CHECKPOINT` 并计时，等它在线的时长按这次实测给（30 秒加检查点耗时的三倍），慢盘不会被误判。
+- 带着新 drop-in 起不来：drop-in 还原成这次之前的样子（之前有的写回，没有的删掉），再起、再核实在线。Valkey 分口令、配置块、drop-in 三步，每步改之前存一份配置，哪步起不来只撤回那一步。
+- 撤回后核实服务在跑：首装与升级把服务按新版本起来之后再停下（退出码非 0），提示原因。撤回后仍没起来就照实说、停下。
+- 原因是 `226/NAMESPACE`（LXC、OpenVZ 一类容器化 VPS 不支持 systemd 沙箱要的挂载命名空间）时，提示会直接说。
+
+**开关 `PANDORA_SYSTEMD_HARDENING`**：缺省 1（开）。确认主机不支持沙箱、或者 18/main 要给别的用途（见下），用 `PANDORA_SYSTEMD_HARDENING=0` 重跑安装器：两份 drop-in 只留资源约束、去掉隔离段，记进 `.env`（只改这一行），之后的升级沿用；改回 1 再跑一次就恢复。Valkey 的配置块不受开关影响（那是命令与持久化行为，不是沙箱）。关掉后只剩 Debian 包缺省的隔离，安装器每次都会提醒。
+
+**drop-in 作用于整个 PostgreSQL 18/main，不只是面板的库**：
+
+- `IPAddressDeny=any` 加 `IPAddressAllow=localhost`：集群只接受回环连接。以后给它配远程备库（流复制）、从别的机器跑 `pg_basebackup` 或 `pg_dump`，都会连不上（不是密码错，是包被丢）。
+- `MemoryMax=512M`：集群全部后端共用这个上限，别的库的负载也算在里面。
+- 要这样用，先评估，再用开关关掉，或者自己另写 drop-in 覆盖这两项（文件名排在 `pandora.conf` 之后，如 `zz-local.conf`；安装器只管自己那个文件）。
+
+想临时去掉某项排查：删掉对应的 drop-in，再 `systemctl daemon-reload && systemctl restart <单元>`。下次安装会再加回来（要长期关掉用开关）；真有扩展或功能被挡住，带着 `journalctl -u <单元> -n 50` 报上来。

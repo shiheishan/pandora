@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 面板 HTTPS 边缘：证书 → nginx 配置 → 续期，一处管完。两个安装器都调它，装完后由
+# 面板 HTTPS 边缘：证书 → nginx 配置 → 续期，一处管完。install.sh 调它，装完后由
 # aegis-tls-renew.timer 每天两次调 renew；出了问题，运维也直接用它补救。
 #
 #   edge-tls.sh setup  [.env]   放行防火墙 → 确保有证书（没有就先自签）→ 渲染 nginx 并生效
@@ -43,7 +43,7 @@ LE_RENEWAL_DIR="${LE_LIVE_DIR%/*}/renewal"
 ACME_WEBROOT="${PANDORA_ACME_WEBROOT:-/var/www/aegis-acme}"
 NGINX_DIR="${PANDORA_NGINX_DIR:-/etc/nginx}"
 REALIP_FILE="${PANDORA_REALIP_FILE:-/etc/aegispanel/cloudflare-realip.conf}"
-BACKUP_DIR="${PANDORA_BACKUP_DIR:-/var/backups/aegispanel}"
+BACKUP_DIR="${PANDORA_BACKUP_DIR:-/var/backups/pandora}"
 OS_RELEASE="${PANDORA_OS_RELEASE:-/etc/os-release}"
 APT_SOURCES_DIR="${PANDORA_APT_SOURCES_DIR:-/etc/apt}"
 RENEW_TIMER=aegis-tls-renew.timer
@@ -216,7 +216,7 @@ make_selfsigned() {
 #------------------------------------------------------------------------------
 # certbot 续期配置：接管来的证书，续期也要走本脚本的 nginx 提供的校验目录
 #------------------------------------------------------------------------------
-# 老 install.sh 或运维手工申请的证书，续期配置（renewal/<证书名>.conf）里的 webroot 常是
+# 运维手工（或更早的安装器）用 certbot 申请的证书，续期配置（renewal/<证书名>.conf）里的 webroot 常是
 # /var/www/html；nginx 模板只从 ACME_WEBROOT 提供 /.well-known/acme-challenge/，不改的话
 # certbot.timer 与 renew 的补救续期都拿不到校验文件（404），要到快过期才发现。
 certbot_lineage() { basename -- "$(readlink "$LIVE")"; }
@@ -389,7 +389,7 @@ cmd_ensure() {
     [[ "$(live_mode)" != certbot ]] || align_certbot_renewal || warn "$REASON"
     return 0
   fi
-  # 升级：以前 install.sh 用 certbot 申请过的域名证书，直接接管
+  # 本机已有 certbot 申请过的这个域名的证书（运维手工或更早的安装器申请的），直接接管
   if [[ "$HOST_KIND" = domain ]] && cert_usable "$LE_LIVE_DIR/$HOST"; then
     point_live "$LE_LIVE_DIR/$HOST"
     say "接管已有的 Let's Encrypt 证书 $LE_LIVE_DIR/$HOST"

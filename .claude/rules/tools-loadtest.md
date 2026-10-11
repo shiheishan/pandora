@@ -36,6 +36,6 @@ paths:
 ## scripts/（压测期在面板主机上以 root 跑）
 
 - 放在这里而不放 `deploy/`：deploy 是随产品分发的安装链，这些是压测期诊断工具，不进发布包。
-- 同时兼容 install.sh 的 Docker 数据基座与 install-native.sh 的直装布局（公共段在 `lt-common.sh`）。
+- 只认 `deploy/install.sh` 的直装布局（`/opt/pandora`、系统单元 `postgresql@<版本>-main` 与 `valkey-server` / `redis-server`，公共段在 `lt-common.sh`）；没有 Docker 分支，旧轮次的 Docker 布局结果不由仓库代码读。
 - 只读解析 `.env`、不 source；口令只经 `PGPASSWORD` / `REDISCLI_AUTH` 环境变量传给子进程，不出现在命令行参数里。
 - `nginx-realip.sh` 只顶替 `deploy/render-nginx.sh` 生成的 cloudflare-realip 信任表并能还原，随包的 nginx 站点配置不动。

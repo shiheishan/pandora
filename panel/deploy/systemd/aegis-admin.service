@@ -1,13 +1,15 @@
 [Unit]
 Description=Pandora Panel Admin Gateway
-After=network-online.target docker.service
+# 数据服务先起：PostgreSQL 的各集群（postgresql@）都排在 postgresql.service 之前；Valkey 与 Redis 两个名字都写，
+# 装的是哪个就排在哪个之后（不存在的单元 systemd 不理会）。只排顺序、不拉起，数据服务重启也不连带网关
+After=network-online.target postgresql.service valkey-server.service redis-server.service
 Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/aegispanel
-EnvironmentFile=/opt/aegispanel/deploy/.env
-ExecStart=/opt/aegispanel/bin/aegis-admin
+WorkingDirectory=/opt/pandora
+EnvironmentFile=/opt/pandora/deploy/.env
+ExecStart=/opt/pandora/bin/aegis-admin
 KillSignal=SIGTERM
 # 停机两段各限 AEGIS_SHUTDOWN_TIMEOUT（缺省 20 秒）：先等在途请求跑完，再 join 后台循环。
 # 45 秒留够两段之和，免得在途事务还没提交就被 SIGKILL。

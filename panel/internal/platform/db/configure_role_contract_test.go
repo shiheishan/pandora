@@ -70,7 +70,7 @@ func TestConfigureAppRoleRevokesDeleteOnGuardedTablesLast(t *testing.T) {
 
 // 运行角色的查询护栏：关 JIT、语句超时低于网关与 nginx 的超时；与 search_path 一样
 // 按库设置，不许集群级 ALTER ROLE（一次性预检库与源库共享集群角色）。
-// 数据基座 compose 另对整个实例关 JIT，两处一起钉住。
+// install.sh 装到 conf.d 的 postgresql-pandora.conf 另对整个实例关 JIT，两处一起钉住。
 func TestConfigureAppRolePinsQueryGuards(t *testing.T) {
 	_, sourceFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -95,11 +95,33 @@ func TestConfigureAppRolePinsQueryGuards(t *testing.T) {
 			t.Fatalf("%q must be database-scoped", forbidden)
 		}
 	}
-	compose, err := os.ReadFile(filepath.Join(root, "deploy", "docker-compose.yml"))
+	conf, err := os.ReadFile(filepath.Join(root, "deploy", "postgresql-pandora.conf"))
 	if err != nil {
-		t.Fatalf("read docker-compose.yml: %v", err)
+		t.Fatalf("read postgresql-pandora.conf: %v", err)
 	}
-	if !strings.Contains(string(compose), "- jit=off") {
-		t.Fatal("docker-compose.yml must start PostgreSQL with -c jit=off")
+	if got, ok := lastPostgresSetting(string(conf), "jit"); !ok || got != "off" {
+		t.Fatalf("postgresql-pandora.conf must turn JIT off for the whole instance with an active jit = off line (last jit setting: %q, present: %v)", got, ok)
 	}
+}
+
+// lastPostgresSetting 按 postgresql.conf 的写法取某个参数最后一次生效的值：去掉 # 之后的注释，
+// 「名字 = 值」或「名字 值」，值两侧的单引号去掉；同名参数后写的压过先写的。没写过返回 false。
+func lastPostgresSetting(conf, name string) (string, bool) {
+	value, found := "", false
+	for _, line := range strings.Split(conf, "\n") {
+		if i := strings.IndexByte(line, '#'); i >= 0 {
+			line = line[:i]
+		}
+		line = strings.TrimSpace(line)
+		key, rest, ok := strings.Cut(line, "=")
+		if !ok {
+			key, rest, ok = strings.Cut(line, " ")
+		}
+		if !ok || !strings.EqualFold(strings.TrimSpace(key), name) {
+			continue
+		}
+		value = strings.ToLower(strings.Trim(strings.TrimSpace(rest), "'"))
+		found = true
+	}
+	return value, found
 }

@@ -11,7 +11,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=platform.sh
 . "$SCRIPT_DIR/platform.sh"
 
-APP_DIR="${PANDORA_APP_DIR:-/opt/aegispanel}"
+# 安装目录：install.sh 装在 /opt/pandora；PANDORA_APP_DIR 只给装在别处的机器与桩测试覆盖
+APP_DIR="${PANDORA_APP_DIR:-/opt/pandora}"
 RELEASE_DIR="${1:-}"
 SOURCE_RELEASE_DIR=""
 INGRESS_UNIT="${PANDORA_INGRESS_UNIT:-nginx.service}"

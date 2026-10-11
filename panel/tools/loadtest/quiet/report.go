@@ -4,7 +4,8 @@
 // 口径与 2026-10-07 的 5k-r4 静默轮次（ops-local/vultr-test2/5k-r4/quiet/）一致：
 //   - CPU 取窗口首尾两次快照做差；cgroup 的 usage_usec 含已退出的子进程，是最准的一种，判定用它；
 //     /proc/stat 整机与按进程名汇总作旁证，用来发现 cgroup 之外的开销。
-//   - 面板 + 数据库 = 三个网关 + postgres + valkey；nginx 单列、有自己的线；docker、containerd 只列出。
+//   - 面板 + 数据库 = 三个网关 + postgres + valkey；nginx 单列、有自己的线。
+//   - 只认直装布局（deploy/install.sh）的 systemd 单元名；Docker 布局的旧结果不在这里读。
 //   - 内存用窗口外首尾各一次的 MemTotal − MemAvailable（free 的 used，不含 cache），窗口内换入、换出都要为 0。
 package quiet
 
@@ -58,8 +59,8 @@ type cpuReport struct {
 	procs  []procRow
 }
 
-// computeCPU 对 A、B 两份快照做差。containers 把 docker 容器的 cgroup 单元翻成容器名。
-func computeCPU(a, b *cpuSnapshot, containers map[string]string) (*cpuReport, error) {
+// computeCPU 对 A、B 两份快照做差。
+func computeCPU(a, b *cpuSnapshot) (*cpuReport, error) {
 	dt := b.at - a.at
 	if dt <= 0 {
 		return nil, fmt.Errorf("snapshot B (%.1f) is not after A (%.1f)", b.at, a.at)
@@ -81,13 +82,9 @@ func computeCPU(a, b *cpuSnapshot, containers map[string]string) (*cpuReport, er
 		if _, has := bv["usage_usec"]; !has {
 			continue
 		}
-		label := name
-		if c, ok := containers[name]; ok {
-			label = c
-		}
 		pct := func(key string) float64 { return float64(sub(bv[key], av[key])) / dt / 1e4 }
 		r.units = append(r.units, unitCPU{
-			name: label, total: pct("usage_usec"), user: pct("user_usec"), system: pct("system_usec"),
+			name: name, total: pct("usage_usec"), user: pct("user_usec"), system: pct("system_usec"),
 			throttled: sub(bv["nr_throttled"], av["nr_throttled"]),
 		})
 	}
@@ -147,15 +144,15 @@ func sub(b, a uint64) uint64 {
 	return b - a
 }
 
-// panelRoles 把 cgroup 单元归到判定用的角色。docker 布局里单元是容器名（aegis-postgres / aegis-valkey），
-// 直装布局里是 postgresql@<版本>-main.service、valkey-server.service（或 redis-server.service）。
+// roleOf 把 cgroup 单元归到判定用的角色：三个网关各自一角；postgresql@<版本>-main.service 是 postgres，
+// valkey-server.service（Debian 12 上是 redis-server.service）是 valkey。
 func roleOf(unit string) string {
 	switch {
 	case unit == "aegis-public.service" || unit == "aegis-admin.service" || unit == "aegis-node.service":
 		return unit
-	case unit == "aegis-postgres" || strings.HasPrefix(unit, "postgresql"):
+	case strings.HasPrefix(unit, "postgresql"):
 		return "postgres"
-	case unit == "aegis-valkey" || strings.HasPrefix(unit, "valkey") || strings.HasPrefix(unit, "redis"):
+	case strings.HasPrefix(unit, "valkey") || strings.HasPrefix(unit, "redis"):
 		return "valkey"
 	}
 	return ""
@@ -167,8 +164,6 @@ type verdict struct {
 	members    map[string][]string
 	panelDB    float64
 	nginx      float64
-	docker     float64
-	contd      float64
 	cpuPass    bool
 	limit      float64
 	nginxLimit float64
@@ -183,13 +178,8 @@ func judgeCPU(r *cpuReport, tier string, limit, nginxLimit float64) verdict {
 			v.roles[role] += u.total
 			v.members[role] = append(v.members[role], u.name)
 		}
-		switch u.name {
-		case "nginx.service":
+		if u.name == "nginx.service" {
 			v.nginx = u.total
-		case "docker.service":
-			v.docker = u.total
-		case "containerd.service":
-			v.contd = u.total
 		}
 	}
 	for _, g := range gatewayUnits {
@@ -199,7 +189,7 @@ func judgeCPU(r *cpuReport, tier string, limit, nginxLimit float64) verdict {
 	}
 	for _, role := range []string{"postgres", "valkey"} {
 		if _, ok := v.roles[role]; !ok {
-			v.problems = append(v.problems, fmt.Sprintf("no cgroup entry for %s: containers.txt / unit names did not match", role))
+			v.problems = append(v.problems, fmt.Sprintf("no cgroup entry for %s: no postgresql* / valkey* / redis* unit under system.slice", role))
 		}
 	}
 	for _, g := range gatewayUnits {
@@ -242,7 +232,6 @@ func writeCPU(w io.Writer, r *cpuReport, v verdict) {
 	}
 	fmt.Fprintf(w, "- **合计 %.2f**（%s 档标准 ≤ %g）→ %s\n", v.panelDB, v.tier, v.limit, passWord(v.cpuPass))
 	fmt.Fprintf(w, "- **nginx 单列 %.2f**（%s 档标准 ≤ %g）→ %s\n", v.nginx, v.tier, v.nginxLimit, passWord(v.nginxPass))
-	fmt.Fprintf(w, "- docker.service（含 docker-proxy）：%.2f；containerd：%.2f\n", v.docker, v.contd)
 	fmt.Fprintf(w, "- 含 nginx：%.2f\n", v.panelDB+v.nginx)
 	for _, p := range v.problems {
 		fmt.Fprintf(w, "- **注意**：%s\n", p)
@@ -309,7 +298,7 @@ func run(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	cpu, err := computeCPU(a, b, loadContainers(*dir))
+	cpu, err := computeCPU(a, b)
 	if err != nil {
 		return err
 	}

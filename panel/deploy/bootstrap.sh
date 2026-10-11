@@ -2,13 +2,16 @@
 # Configure the least-privileged runtime login after migrations create it.
 # The password is passed through environment/stdin only and is never rendered
 # into command arguments or script output.
+# 本机 psql 经 127.0.0.1:POSTGRES_PORT 以 postgres 超级用户跑 configure-app-role.sql；
+# 恢复库之后、装完迁移之后都要跑。
 set -euo pipefail
 cd "$(dirname "$0")"
+# shellcheck disable=SC1091
 . ./.env
 
-: "${POSTGRES_USER:?POSTGRES_USER is required}"
-: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
 : "${POSTGRES_DB:?POSTGRES_DB is required}"
+: "${POSTGRES_SUPER_PASSWORD:?POSTGRES_SUPER_PASSWORD is required}"
+: "${POSTGRES_PORT:?POSTGRES_PORT is required}"
 : "${AEGIS_DB_APP_PASSWORD:?AEGIS_DB_APP_PASSWORD is required}"
 
 if [ "${AEGIS_DB_APP_PASSWORD}" = "CHANGE_ME" ]; then
@@ -20,14 +23,10 @@ if [[ ! "${AEGIS_DB_APP_PASSWORD}" =~ ^[A-Za-z0-9_-]{32,}$ ]]; then
   exit 1
 fi
 
-export PGPASSWORD="${POSTGRES_PASSWORD}"
+# configure-app-role.sql 以 \getenv 读运行角色口令，只经环境变量给 psql
 export AEGIS_DB_APP_PASSWORD
-
-docker exec -i \
-  -e PGPASSWORD \
-  -e AEGIS_DB_APP_PASSWORD \
-  aegis-postgres \
-  psql -X -v ON_ERROR_STOP=1 -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" \
+PGPASSWORD="${POSTGRES_SUPER_PASSWORD}" PGSSLMODE=disable \
+  psql -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "${POSTGRES_PORT}" -U postgres -d "${POSTGRES_DB}" \
   < ./configure-app-role.sql
 
 echo "aegis_app runtime login configured (password not printed)"

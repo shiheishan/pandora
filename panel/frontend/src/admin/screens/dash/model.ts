@@ -329,12 +329,14 @@ function ageText(hours: number): string {
 export function backupSummary(b: BackupStatus): BackupSummary {
   // 读不到不等于没备份（后端注释：权限或 systemd 沙箱都可能挡住），状态记为未知
   if (!b.readable) return { state: 'unknown', meta: '读不到备份目录' }
-  if (!b.latest) return { state: 'warn', meta: '还没有备份' }
+  // latest 只算能恢复的那份（有校验、有封条）：有文件却没有这样的一份时说清楚，不说「还没有」
+  if (!b.latest) return { state: 'warn', meta: (b.count ?? 0) > 0 ? `${b.count} 份都恢复不了（缺封条或校验）` : '还没有备份' }
   const problems = [
     b.stale ? '过期' : '',
     b.identity_configured === false ? '未配解密私钥' : '',
     b.offsite_configured === false ? '未配异地' : '',
     (b.missing_checksum ?? 0) > 0 ? `${b.missing_checksum} 份缺校验` : '',
+    (b.missing_seal ?? 0) > 0 ? `${b.missing_seal} 份缺封条` : '',
   ].filter(Boolean)
   const age = b.latest_age_hours !== undefined ? `最近一份 ${ageText(b.latest_age_hours)}` : '最近一份时间未知'
   return problems.length ? { state: 'warn', meta: problems.join(' · ') } : { state: 'ok', meta: age }

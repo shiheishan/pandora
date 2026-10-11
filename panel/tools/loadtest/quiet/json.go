@@ -8,7 +8,7 @@ import (
 )
 
 // -json 的输出：perf-gate skill 的 verdict.py 读它做改前改后对比，判定口径只在这个包里一份。
-// 字段只增不改名；单位：CPU 单核 = 100，内存 MiB。
+// 字段不改名；单位：CPU 单核 = 100，内存 MiB。docker / containerd 两列随 Docker 布局删掉了（verdict.py 不读）。
 type jsonReport struct {
 	Tier    string    `json:"tier"`
 	WindowS float64   `json:"window_s"`
@@ -26,8 +26,6 @@ type jsonCPU struct {
 	NginxLimit float64            `json:"nginx_limit"`
 	NginxPass  bool               `json:"nginx_pass"`
 	Roles      map[string]float64 `json:"roles"`
-	Docker     float64            `json:"docker"`
-	Containerd float64            `json:"containerd"`
 	Busy       float64            `json:"busy"`
 	Steal      float64            `json:"steal"`
 	// Throttled 是窗口内各 cgroup 单元的 Δnr_throttled（只列非 0 的）
@@ -66,8 +64,8 @@ func writeJSON(w io.Writer, r *cpuReport, v verdict, m *memVerdict) error {
 		CPU: jsonCPU{
 			PanelDB: round2(v.panelDB), Limit: v.limit, Pass: v.cpuPass,
 			Nginx: round2(v.nginx), NginxLimit: v.nginxLimit, NginxPass: v.nginxPass,
-			Roles: map[string]float64{}, Docker: round2(v.docker), Containerd: round2(v.contd),
-			Busy: round2(r.busy), Steal: round2(r.stat["steal"]),
+			Roles: map[string]float64{},
+			Busy:  round2(r.busy), Steal: round2(r.stat["steal"]),
 			Throttled: map[string]uint64{}, Problems: append([]string{}, v.problems...),
 		},
 		Procs: []jsonRow{},

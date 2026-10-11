@@ -4,8 +4,8 @@
 #
 # 看什么：
 #   PostgreSQL  temp_files / temp_bytes 涨了说明 work_mem 不够、在落盘排序；blks_read 相对 blks_hit
-#               涨得多说明 shared_buffers 装不下热数据；连接数逼近 max_connections（Docker 版 60）即排队
-#   Valkey      used_memory 逼近 maxmemory（Docker 版 96mb，allkeys-lru）时 evicted_keys 会涨——
+#               涨得多说明 shared_buffers 装不下热数据；连接数逼近 max_connections（deploy/postgresql-pandora.conf 的 60）即排队
+#   Valkey      used_memory 逼近 maxmemory（install.sh 写的 96mb，allkeys-lru）时 evicted_keys 会涨——
 #               被淘汰的可能是限流计数与幂等键，压测结论要把这一项带上
 set -euo pipefail
 

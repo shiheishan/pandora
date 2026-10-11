@@ -29,6 +29,9 @@ type backupFile struct {
 	// HasChecksum 为 false 说明这份备份没有校验文件。verify-backup.sh
 	// 缺了它会拒绝验证，等于这份备份不可信。
 	HasChecksum bool `json:"has_checksum"`
+	// HasSeal 为 false 说明这份本地备份没有封条（<归档>.seal）：verify-backup.sh 与 restore-postgres.sh 都拒绝它，
+	// 等于恢复不了，不算有效备份
+	HasSeal bool `json:"has_seal"`
 }
 
 // systemStatusResponse 是 GET v1/system/status 的响应。
@@ -75,6 +78,7 @@ type backupStatusView struct {
 	LatestAgeHours     *int          `json:"latest_age_hours,omitempty"`
 	Stale              *bool         `json:"stale,omitempty"`
 	MissingChecksum    *int          `json:"missing_checksum,omitempty"`
+	MissingSeal        *int          `json:"missing_seal,omitempty"`
 	Recent             *[]backupFile `json:"recent,omitempty"`
 	IdentityConfigured *bool         `json:"identity_configured,omitempty"`
 	IdentityHint       string        `json:"identity_hint,omitempty"`
@@ -127,12 +131,16 @@ func (h *handlers) backupStatus() backupStatusView {
 
 	files := []backupFile{}
 	checksums := map[string]bool{}
+	seals := map[string]bool{}
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
 		if strings.HasSuffix(e.Name(), ".sha256") {
 			checksums[strings.TrimSuffix(e.Name(), ".sha256")] = true
+		}
+		if strings.HasSuffix(e.Name(), ".seal") {
+			seals[strings.TrimSuffix(e.Name(), ".seal")] = true
 		}
 	}
 	var total int64
@@ -147,7 +155,7 @@ func (h *handlers) backupStatus() backupStatusView {
 		total += info.Size()
 		files = append(files, backupFile{
 			Name: e.Name(), Size: info.Size(), ModTime: info.ModTime(),
-			HasChecksum: checksums[e.Name()],
+			HasChecksum: checksums[e.Name()], HasSeal: seals[e.Name()],
 		})
 	}
 	sort.Slice(files, func(i, j int) bool {
@@ -156,19 +164,34 @@ func (h *handlers) backupStatus() backupStatusView {
 
 	st.Count = statusPtr(len(files))
 	st.TotalBytes = statusPtr(total)
+	// 「最新备份」只算恢复得了的那份：有校验文件、有封条。封不上的（私钥读不了等）留在目录里也不算，
+	// 不然备份天天失败在封条这一步，概览却一直显示「最新备份有效」
+	var latest *backupFile
+	for i := range files {
+		if files[i].HasChecksum && files[i].HasSeal {
+			latest = &files[i]
+			break
+		}
+	}
 	if len(files) > 0 {
-		st.Latest = statusPtr(files[0])
-		age := time.Since(files[0].ModTime)
-		st.LatestAgeHours = statusPtr(int(age.Hours()))
-		// 超过 48 小时没有新备份，多半是定时器出了问题 —— 正常是每天一次。
-		st.Stale = statusPtr(age > 48*time.Hour)
-		missing := 0
+		missing, unsealed := 0, 0
 		for _, f := range files {
 			if !f.HasChecksum {
 				missing++
 			}
+			if !f.HasSeal {
+				unsealed++
+			}
 		}
 		st.MissingChecksum = statusPtr(missing)
+		st.MissingSeal = statusPtr(unsealed)
+	}
+	if latest != nil {
+		st.Latest = statusPtr(*latest)
+		age := time.Since(latest.ModTime)
+		st.LatestAgeHours = statusPtr(int(age.Hours()))
+		// 超过 48 小时没有新备份，多半是定时器出了问题 —— 正常是每天一次。
+		st.Stale = statusPtr(age > 48*time.Hour)
 	} else {
 		st.Stale = statusPtr(true)
 	}

@@ -74,8 +74,9 @@ ALTER ROLE aegis_app SET row_security = on;
 --   jit = off: PG18 defaults to jit=on with jit_above_cost=100000.  Queries
 --   with per-row subplans cross that estimate easily and spend far longer
 --   compiling than executing; at 5k users JIT was ~78% of all execution time.
---   docker-compose.yml also passes -c jit=off for the bundled instance; this
---   setting covers native installs and managed PostgreSQL.
+--   postgresql-pandora.conf also turns JIT off for the whole installed
+--   instance; pinning it here as well covers managed PostgreSQL and keeps the
+--   runtime role off JIT even if the instance setting is changed back.
 --
 --   statement_timeout = 15s: one statement running longer than this means the
 --   request is already lost.  15s stays below nginx's 20s read timeout on the
@@ -127,6 +128,16 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA app
 -- 只删本租户、保留期不少于 31 天的 (int, int) 版本，由 aegis_app 的保留期任务调用，旧签名已不存在。
 REVOKE EXECUTE ON FUNCTION app.guard_finalized_refund_ledger_entry()
   FROM PUBLIC, aegis_app;
+-- app.seed_tenant_defaults(uuid) 是 SECURITY DEFINER，只给迁移与运维建租户用：00090、00128 都 REVOKE 过
+-- aegis_app，可上面整个 app 模式的 GRANT EXECUTE 每次 bootstrap 都会把它授回去，这里收回。
+-- 迁移里收回过 aegis_app 的函数，bootstrap 之后都不能再让它执行：PG18 门禁 app_role_exec 域逐个核对
+-- （internal/platform/db/approle_function_revokes_pg18_test.go）
+DO $$
+BEGIN
+  IF to_regprocedure('app.seed_tenant_defaults(uuid)') IS NOT NULL THEN
+    REVOKE ALL ON FUNCTION app.seed_tenant_defaults(uuid) FROM PUBLIC, aegis_app;
+  END IF;
+END $$;
 
 -- Idempotency rows are durable request evidence. Claims may set only their
 -- initial identity/lease; subsequent writes are limited to one resource bind

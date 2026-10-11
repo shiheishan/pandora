@@ -126,7 +126,8 @@ export type UserTraffic = z.output<typeof userTrafficSchema>
 // GET v1/system/status（backup / database / state / components，security.audit.read）。
 // backup 段是 Go 按条件放键的 map：读不到目录时只有 dir / readable / message，没有备份时没有 latest 等，故保持可选
 // ---------------------------------------------------------------------------
-const backupFileSchema = z.object({ name: z.string(), size: count, created_at: z.string(), has_checksum: z.boolean() })
+// has_seal：本地备份的封条（<归档>.seal）在不在；没有封条的恢复不了，后端不把它算作最新备份
+const backupFileSchema = z.object({ name: z.string(), size: count, created_at: z.string(), has_checksum: z.boolean(), has_seal: z.boolean() })
 const backupSchema = z.object({
   dir: z.string(),
   readable: z.boolean(),
@@ -137,6 +138,7 @@ const backupSchema = z.object({
   latest_age_hours: count.optional(),
   stale: z.boolean().optional(),
   missing_checksum: count.optional(),
+  missing_seal: count.optional(),
   recent: z.array(backupFileSchema).optional(),
   identity_configured: z.boolean().optional(),
   identity_hint: z.string().optional(),

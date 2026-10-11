@@ -1,6 +1,6 @@
 [Unit]
 Description=Pandora panel HTTPS certificate renewal (edge-tls.sh renew)
-Documentation=file:///opt/aegispanel/deploy/edge-tls.sh
+Documentation=file:///opt/pandora/deploy/edge-tls.sh
 Wants=network-online.target
 After=network-online.target nginx.service
 
@@ -8,10 +8,10 @@ After=network-online.target nginx.service
 Type=oneshot
 User=root
 Group=root
-WorkingDirectory=/opt/aegispanel/deploy
+WorkingDirectory=/opt/pandora/deploy
 # 续期、自签兜底时重试申请、证书换了就 reload nginx、到期告警；结论写 /var/lib/aegispanel/tls/status。
 # 失败时本单元记为 failed（systemctl --failed 看得见），配了 AEGIS_ALERT_TG_* 还会推 Telegram
-ExecStart=/opt/aegispanel/deploy/edge-tls.sh renew /opt/aegispanel/deploy/.env
+ExecStart=/opt/pandora/deploy/edge-tls.sh renew /opt/pandora/deploy/.env
 UMask=0022
 TimeoutStartSec=15min
 

@@ -27,7 +27,7 @@ grep -Fq 'cp "$ROOT/deploy/logrotate-aegis" "$target/deploy/logrotate-aegis"' "$
   || fail 'build-release.sh does not ship logrotate-aegis'
 grep -Fq '"$target_base/deploy/logrotate-aegis"' "$DEPLOY/build-release.sh" \
   || fail 'build-release.sh does not archive logrotate-aegis'
-grep -Fq 'stage_file "$RELEASE_DIR/deploy/logrotate-aegis" /etc/logrotate.d/aegis 0644' "$DEPLOY/install-linux-binaries.sh" \
-  || fail 'install-linux-binaries.sh does not install logrotate-aegis'
+grep -Fq 'install -m 0644 "$SCRIPT_DIR/logrotate-aegis" /etc/logrotate.d/aegis' "$DEPLOY/install.sh" \
+  || fail 'install.sh does not install logrotate-aegis'
 
 printf 'logrotate-aegis static: PASS\n'

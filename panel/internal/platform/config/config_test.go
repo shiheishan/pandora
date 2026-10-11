@@ -42,12 +42,12 @@ func TestLoadDeploymentKeepsNamesAndDefaults(t *testing.T) {
 		t.Setenv(k, "")
 	}
 	d := loadDeployment()
-	if d.BackupDir != "/var/backups/aegispanel" || d.PdndDistDir != "/opt/aegispanel/pdnd-dist" ||
+	if d.BackupDir != "/var/backups/pandora" || d.PdndDistDir != "/opt/pandora/pdnd-dist" ||
 		d.BackupAgeIdentity != "" || d.GeoIPDB != "" || d.GeoIPIPv6DB != "" ||
 		d.NativeReleaseVersion != "" || len(d.NativeArtifactSHA256) != 0 {
 		t.Fatalf("defaults = %+v", d)
 	}
-	if d.AdminGeoIPDB() != "/opt/aegispanel/geoip/ip2region_v4.xdb" {
+	if d.AdminGeoIPDB() != "/opt/pandora/geoip/ip2region_v4.xdb" {
 		t.Fatalf("admin GeoIP default = %q", d.AdminGeoIPDB())
 	}
 	if got := LoadBackupWebDAV().ConfigPath; got != "/etc/aegispanel/backup-webdav.json" {

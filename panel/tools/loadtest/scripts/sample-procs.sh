@@ -2,7 +2,7 @@
 # 用法（面板主机，root 以读到 postgres / valkey 等其他用户进程的 smaps_rollup）：
 #   sample-procs.sh OUT.csv [间隔秒，缺省 5] [总时长秒，缺省 0 = 直到 Ctrl-C / kill]
 #
-# 进程组（按进程名精确匹配，Docker 里的 postgres / valkey 在宿主机上同样可见）：
+# 进程组（按进程名精确匹配）：
 #   aegis-public aegis-admin aegis-node postgres valkey（valkey-server 与 redis-server 合并） nginx
 #   以及 _system：整机，cpu_pct 为全部核的忙碌合计，rss_kb 为 MemTotal - MemAvailable
 #

@@ -13,11 +13,13 @@ on:
     paths:
       - "panel/deploy/**"
       - "panel/migrations/**"
+      - "panel/dev/**"
       - ".github/workflows/panel-deploy.yml"
   pull_request:
     paths:
       - "panel/deploy/**"
       - "panel/migrations/**"
+      - "panel/dev/**"
       - ".github/workflows/panel-deploy.yml"
 
 permissions:
@@ -46,13 +48,13 @@ jobs:
             migrate-layout_mock_test.sh
             migrate-rollback_mock_test.sh
             check-migrations_mock_test.sh
+            db-scripts_mock_test.sh
             render-nginx_test.sh
             deploy-params_static_test.sh
             cloudflare-realip_mock_test.sh
             release-artifact-binding_mock_test.sh
             logrotate-aegis_static_test.sh
             public-base-url_mock_test.sh
-            migrate-to-new-host_mock_test.sh
             install-chain_mock_test.sh
             install-migrate-order_mock_test.sh
             install-firstrun_mock_test.sh
@@ -61,6 +63,13 @@ jobs:
             tls-renew_static_test.sh
             healthcheck-install_static_test.sh
             build-release_toolchain_mock_test.sh
+            install-pgcluster_mock_test.sh
+            install-backup_mock_test.sh
+            install-hardening_mock_test.sh
+            pg-revive_mock_test.sh
+            dev-compose_static_test.sh
+            deploy-single-layout_static_test.sh
+            webdav-backup-hardening_mock_test.sh
           )
           failed=()
           for t in "${tests[@]}"; do
@@ -73,6 +82,26 @@ jobs:
             exit 1
           fi
           echo "deploy mock tests: ${#tests[@]} passed"
+
+  # 直装写进 Valkey / Redis 配置的 pandora 块，在 Redis 6.0（Ubuntu 22.04）、7.0（Debian 12）、Valkey 8.1（Debian 13）
+  # 的官方镜像里真起一遍（要 Docker）。只在 GitHub 上跑：检查机没有 Docker，明说跳过
+  deploy-valkey-versions:
+    name: Valkey hardening block on supported versions
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: panel/deploy
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start each supported Redis / Valkey with the pandora block
+        run: |
+          t=valkey-hardening_versions_docker_test.sh
+          if [ "${GITHUB_ACTIONS:-}" != true ]; then
+            echo "不在 GitHub Actions 上，跳过 $t（GitHub 上必跑）"
+            exit 0
+          fi
+          bash "$t"
 
   # 发布控制器的桩测试要 Linux root（systemd、flock、/proc 的桩都按 root 写）。GitHub runner
   # 有免密 sudo，在这里必跑；它证明「完整预检在停服之前、停服后只做只读核对」的顺序。
@@ -107,3 +136,29 @@ jobs:
             echo "GitHub runner 上没有免密 sudo，无法跑 $t" >&2
             exit 1
           fi
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: panel/go.mod
+          cache-dependency-path: panel/go.sum
+      - name: Run the backup provenance checks (local seal, signed manifest) as root
+        # 真跑 backup-postgres.sh → verify-backup.sh → restore-postgres.sh，封条用真的 aegis-backup-webdav；
+        # 三个脚本把 .env 与可执行文件按属主和 /proc/self/fd 绑定，要 Linux root
+        run: |
+          t=backup-provenance_mock_test.sh
+          if [ "${GITHUB_ACTIONS:-}" != true ]; then
+            echo "不在 GitHub Actions 上，跳过 $t（GitHub 上必跑）"
+            exit 0
+          fi
+          tool="$RUNNER_TEMP/aegis-backup-webdav"
+          (cd .. && CGO_ENABLED=0 go build -trimpath -o "$tool" ./cmd/aegis-backup-webdav)
+          if [ "$(id -u)" -eq 0 ]; then
+            out="$(PANDORA_TEST_BACKUP_TOOL="$tool" bash "$t")"
+          elif sudo -n true 2>/dev/null; then
+            out="$(sudo -n env "PATH=$PATH" PANDORA_TEST_BACKUP_TOOL="$tool" bash "$t")"
+          else
+            echo "GitHub runner 上没有免密 sudo，无法跑 $t" >&2
+            exit 1
+          fi
+          printf '%s\n' "$out"
+          # 以 root 跑必须真跑到运行段，不许落回静态检查
+          if grep -q 'runtime=NOT_RUN' <<<"$out"; then echo "$t did not run its runtime part" >&2; exit 1; fi

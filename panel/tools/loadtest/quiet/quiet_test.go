@@ -36,8 +36,8 @@ const pidB = `100 (aegis-node) S 1 0 0 0 -1 0 0 0 0 0 1600 800 0 0 20 0 1 0 1 0 
 300 (new) S 1 0 0 0 -1 0 0 0 0 0 50 50 0 0 20 0 1 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 17 0 0 0 0 0 0
 `
 
-// fixture 写一份窗口 100 秒的合成采集目录。postgres / valkey 用哪种名字由 layout 决定。
-func fixture(t *testing.T, layout string) string {
+// fixture 写一份窗口 100 秒的合成采集目录，单元名照直装布局。
+func fixture(t *testing.T) string {
 	dir := t.TempDir()
 	cg := func(rows map[string][3]uint64) string {
 		var b strings.Builder
@@ -46,17 +46,11 @@ func fixture(t *testing.T, layout string) string {
 		}
 		return b.String()
 	}
-	pg, vk := "aegis-postgres", "aegis-valkey"
-	if layout == "docker" {
-		write(t, filepath.Join(dir, "containers.txt"), "abc aegis-postgres\ndef aegis-valkey\n")
-		pg, vk = "docker-abc.scope", "docker-def.scope"
-	} else {
-		pg, vk = "postgresql@18-main.service", "valkey-server.service"
-	}
+	pg, vk := "postgresql@18-main.service", "valkey-server.service"
 	a := map[string][3]uint64{"aegis-public.service": {1_000_000, 0}, "aegis-admin.service": {1_000_000, 0}, "aegis-node.service": {10_000_000, 5},
-		pg: {20_000_000, 0}, vk: {2_000_000, 0}, "nginx.service": {3_000_000, 0}, "docker.service": {1_000_000, 0}}
+		pg: {20_000_000, 0}, vk: {2_000_000, 0}, "nginx.service": {3_000_000, 0}, "ssh.service": {1_000_000, 0}}
 	b := map[string][3]uint64{"aegis-public.service": {1_100_000, 0}, "aegis-admin.service": {1_100_000, 0}, "aegis-node.service": {17_000_000, 30},
-		pg: {30_000_000, 0}, vk: {3_000_000, 0}, "nginx.service": {5_000_000, 0}, "docker.service": {1_500_000, 0}}
+		pg: {30_000_000, 0}, vk: {3_000_000, 0}, "nginx.service": {5_000_000, 0}, "ssh.service": {1_500_000, 0}}
 	write(t, filepath.Join(dir, "cpu-A/at"), "1000.0\n")
 	write(t, filepath.Join(dir, "cpu-B/at"), "1100.0\n")
 	write(t, filepath.Join(dir, "cpu-A/procstat"), "cpu  1000 0 500 90000 100 0 50 10 0 0\n")
@@ -68,7 +62,7 @@ func fixture(t *testing.T, layout string) string {
 	mem := func(avail int, swapIn int) string {
 		return "2026-10-08T01:00:00Z\n               total        used        free      shared  buff/cache   available\nMem:            3915         900         100         100        2900        " + itoa(uint64(avail/1024)) + "\n" +
 			"MemTotal:        4009980 kB\nMemAvailable:    " + itoa(uint64(avail)) + " kB\nSwapTotal:       8089596 kB\nSwapFree:        8082636 kB\npswpin " + itoa(uint64(swapIn)) + "\npswpout 0\n" +
-			"== PSS(kB) by comm\naegis-node                 n=1   pss_kb=43356    rss_kb=43364\npostgres                   n=24  pss_kb=184299   rss_kb=790832\n== docker stats\nx 1MiB / 2MiB 1%\n"
+			"== PSS(kB) by comm\naegis-node                 n=1   pss_kb=43356    rss_kb=43364\npostgres                   n=24  pss_kb=184299   rss_kb=790832\n== gateway cgroup memory.current\naegis-node 45000000\n"
 	}
 	write(t, filepath.Join(dir, "mem-before.txt"), mem(3_000_000, 0))
 	write(t, filepath.Join(dir, "mem-after.txt"), mem(2_900_000, 0))
@@ -83,58 +77,77 @@ func fixture(t *testing.T, layout string) string {
 
 func itoa(v uint64) string { return strconv.FormatUint(v, 10) }
 
-func TestReportMatchesHandComputedNumbersForBothLayouts(t *testing.T) {
-	for _, layout := range []string{"docker", "native"} {
-		t.Run(layout, func(t *testing.T) {
-			dir := fixture(t, layout)
-			a, err := loadCPUSnapshot(dir, "A")
-			if err != nil {
-				t.Fatal(err)
-			}
-			b, err := loadCPUSnapshot(dir, "B")
-			if err != nil {
-				t.Fatal(err)
-			}
-			r, err := computeCPU(a, b, loadContainers(dir))
-			if err != nil {
-				t.Fatal(err)
-			}
-			near(t, "window", r.window, 100)
-			// /proc/stat：user +1200 tick / 100 s = 12，system 5，softirq 1，steal 0.2
-			near(t, "user", r.stat["user"], 12)
-			near(t, "system", r.stat["system"], 5)
-			near(t, "busy", r.busy, 12+5+1+0.2)
-			v := judgeCPU(r, "B", tiers["B"].cpu, tiers["B"].nginx)
-			// usage_usec 增量 / 100 s / 1e4：public 0.1、admin 0.1、node 7、postgres 10、valkey 1
-			near(t, "node", v.roles["aegis-node.service"], 7)
-			near(t, "postgres", v.roles["postgres"], 10)
-			near(t, "valkey", v.roles["valkey"], 1)
-			near(t, "panel+db", v.panelDB, 0.1+0.1+7+10+1)
-			near(t, "nginx", v.nginx, 2)
-			if !v.cpuPass || !v.nginxPass || len(v.problems) != 0 {
-				t.Fatalf("verdict %+v", v)
-			}
-			if got := judgeCPU(r, "A", tiers["A"].cpu, tiers["A"].nginx); got.cpuPass || !got.nginxPass {
-				t.Fatalf("18.2 must fail tier A's 10 while nginx 2 passes its 3: %+v", got)
-			}
-			if got := judgeCPU(r, "B", 25, 1.5); got.nginxPass {
-				t.Fatal("nginx 2 must fail a ceiling of 1.5")
-			}
-			// 进程：node 的 utime+stime 增量 (1600+800-1500)=900/100=9；"a b) c" 含括号与空格，own 增量 100/100=1，子进程 40/100；新进程整段计入 100/100=1
-			byName := map[string]procRow{}
-			for _, p := range r.procs {
-				byName[p.comm] = p
-			}
-			near(t, "aegis-node ticks", byName["aegis-node"].own, 9)
-			near(t, "paren comm own", byName["a b) c"].own, 1)
-			near(t, "paren comm child", byName["a b) c"].child, 0.4)
-			near(t, "new process", byName["new"].own, 1)
-		})
+func TestReportMatchesHandComputedNumbers(t *testing.T) {
+	dir := fixture(t)
+	a, err := loadCPUSnapshot(dir, "A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := loadCPUSnapshot(dir, "B")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := computeCPU(a, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	near(t, "window", r.window, 100)
+	// /proc/stat：user +1200 tick / 100 s = 12，system 5，softirq 1，steal 0.2
+	near(t, "user", r.stat["user"], 12)
+	near(t, "system", r.stat["system"], 5)
+	near(t, "busy", r.busy, 12+5+1+0.2)
+	v := judgeCPU(r, "B", tiers["B"].cpu, tiers["B"].nginx)
+	// usage_usec 增量 / 100 s / 1e4：public 0.1、admin 0.1、node 7、postgres 10、valkey 1；ssh 不归任何角色
+	near(t, "node", v.roles["aegis-node.service"], 7)
+	near(t, "postgres", v.roles["postgres"], 10)
+	near(t, "valkey", v.roles["valkey"], 1)
+	near(t, "panel+db", v.panelDB, 0.1+0.1+7+10+1)
+	near(t, "nginx", v.nginx, 2)
+	if !v.cpuPass || !v.nginxPass || len(v.problems) != 0 {
+		t.Fatalf("verdict %+v", v)
+	}
+	if got := judgeCPU(r, "A", tiers["A"].cpu, tiers["A"].nginx); got.cpuPass || !got.nginxPass {
+		t.Fatalf("18.2 must fail tier A's 10 while nginx 2 passes its 3: %+v", got)
+	}
+	if got := judgeCPU(r, "B", 25, 1.5); got.nginxPass {
+		t.Fatal("nginx 2 must fail a ceiling of 1.5")
+	}
+	// 进程：node 的 utime+stime 增量 (1600+800-1500)=900/100=9；"a b) c" 含括号与空格，own 增量 100/100=1，子进程 40/100；新进程整段计入 100/100=1
+	byName := map[string]procRow{}
+	for _, p := range r.procs {
+		byName[p.comm] = p
+	}
+	near(t, "aegis-node ticks", byName["aegis-node"].own, 9)
+	near(t, "paren comm own", byName["a b) c"].own, 1)
+	near(t, "paren comm child", byName["a b) c"].child, 0.4)
+	near(t, "new process", byName["new"].own, 1)
+}
+
+// Docker 布局的旧采集（库与缓存在 docker-<容器 ID>.scope 里）不再翻译：判定必须明说缺了 postgres / valkey，
+// 不能把它们当 0 算进「过」
+func TestContainerScopesAreNotCountedAsTheDatabase(t *testing.T) {
+	dir := fixture(t)
+	for _, tag := range []string{"A", "B"} {
+		path := filepath.Join(dir, "cpu-"+tag, "cgroups")
+		raw, _ := os.ReadFile(path)
+		text := strings.NewReplacer("postgresql@18-main.service", "docker-abc.scope", "valkey-server.service", "docker-def.scope").Replace(string(raw))
+		write(t, path, text)
+	}
+	write(t, filepath.Join(dir, "containers.txt"), "abc aegis-postgres\ndef aegis-valkey\n")
+	a, _ := loadCPUSnapshot(dir, "A")
+	b, _ := loadCPUSnapshot(dir, "B")
+	r, err := computeCPU(a, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := judgeCPU(r, "B", tiers["B"].cpu, tiers["B"].nginx)
+	if v.cpuPass || len(v.problems) != 2 || !strings.Contains(v.problems[0], "postgres") || !strings.Contains(v.problems[1], "valkey") {
+		t.Fatalf("container scopes must leave postgres and valkey missing, loudly: %+v", v)
 	}
 }
 
 func TestRunPrintsVerdictsAndStrictFailsOnTheLimits(t *testing.T) {
-	dir := fixture(t, "docker")
+	dir := fixture(t)
 	// 夹具内存：MemTotal 4009980 kB − 可用 2900000 kB ≈ 1084 MiB，高于 1024
 	var out bytes.Buffer
 	if err := run([]string{"-dir", dir}, &out); err != nil {
@@ -165,7 +178,7 @@ func TestRunPrintsVerdictsAndStrictFailsOnTheLimits(t *testing.T) {
 }
 
 func TestMissingGatewayIsFlaggedNotSilentlyZero(t *testing.T) {
-	dir := fixture(t, "native")
+	dir := fixture(t)
 	raw, _ := os.ReadFile(filepath.Join(dir, "cpu-B/cgroups"))
 	var keep []string
 	for _, l := range strings.Split(string(raw), "\n") {
@@ -176,7 +189,7 @@ func TestMissingGatewayIsFlaggedNotSilentlyZero(t *testing.T) {
 	write(t, filepath.Join(dir, "cpu-B/cgroups"), strings.Join(keep, "\n"))
 	a, _ := loadCPUSnapshot(dir, "A")
 	b, _ := loadCPUSnapshot(dir, "B")
-	r, _ := computeCPU(a, b, nil)
+	r, _ := computeCPU(a, b)
 	v := judgeCPU(r, "B", tiers["B"].cpu, tiers["B"].nginx)
 	if v.cpuPass || len(v.problems) == 0 || !strings.Contains(v.problems[0], "aegis-node.service") {
 		t.Fatalf("a missing gateway cgroup must fail the verdict loudly: %+v", v)
@@ -184,7 +197,7 @@ func TestMissingGatewayIsFlaggedNotSilentlyZero(t *testing.T) {
 }
 
 func TestSwapActivityIsCalledOut(t *testing.T) {
-	dir := fixture(t, "docker")
+	dir := fixture(t)
 	raw, _ := os.ReadFile(filepath.Join(dir, "mem-after.txt"))
 	write(t, filepath.Join(dir, "mem-after.txt"), strings.Replace(string(raw), "pswpin 0", "pswpin 77", 1))
 	var out bytes.Buffer
@@ -198,7 +211,7 @@ func TestSwapActivityIsCalledOut(t *testing.T) {
 }
 
 func TestBackwardsSnapshotsAreRefused(t *testing.T) {
-	dir := fixture(t, "docker")
+	dir := fixture(t)
 	write(t, filepath.Join(dir, "cpu-B/at"), "900.0\n")
 	var out bytes.Buffer
 	if err := run([]string{"-dir", dir}, &out); err == nil {
@@ -209,7 +222,7 @@ func TestBackwardsSnapshotsAreRefused(t *testing.T) {
 // 窗口内退出的子进程：父进程的 cutime 增量里有它开窗前的累计，要扣掉，只留窗口内的部分（w10quiet v3 的 postgres
 // 5.42 里 3.81 是开窗前的）；kworker 换了工作队列 comm 会变，按 starttime 认同一个进程，不当成新进程整段计入。
 func TestReapedChildrenCountOnlyTheirInWindowTicks(t *testing.T) {
-	dir := fixture(t, "native")
+	dir := fixture(t)
 	line := func(pid, ppid int, comm string, own, child, start uint64) string {
 		return itoa(uint64(pid)) + " (" + comm + ") S " + itoa(uint64(ppid)) + " 0 0 0 -1 0 0 0 0 0 " + itoa(own) + " 0 " + itoa(child) + " 0 20 0 1 0 " + itoa(start) + " 0 0\n"
 	}
@@ -217,7 +230,7 @@ func TestReapedChildrenCountOnlyTheirInWindowTicks(t *testing.T) {
 	write(t, filepath.Join(dir, "cpu-B/pidstat"), line(10, 1, "postgres", 150, 350, 5)+line(12, 2, "kworker/0:1-mm_percpu_wq", 20, 0, 7))
 	a, _ := loadCPUSnapshot(dir, "A")
 	b, _ := loadCPUSnapshot(dir, "B")
-	r, err := computeCPU(a, b, nil)
+	r, err := computeCPU(a, b)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +248,7 @@ func TestReapedChildrenCountOnlyTheirInWindowTicks(t *testing.T) {
 }
 
 func TestJSONCarriesTheVerdictForPerfGate(t *testing.T) {
-	dir := fixture(t, "docker")
+	dir := fixture(t)
 	var out bytes.Buffer
 	if err := run([]string{"-dir", dir, "-json", "-tier", "A"}, &out); err != nil {
 		t.Fatal(err)

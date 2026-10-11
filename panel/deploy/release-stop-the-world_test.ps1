@@ -88,9 +88,7 @@ Assert-Contains $migrate 'GOOSE_ENV+=(PGPASSWORD="$MIGRATION_PGPASSWORD")' 'fall
 $check = Get-Content -Raw -LiteralPath (Join-Path $deploy 'check-migrations.sh')
 Assert-Contains $check 'set -Eeuo pipefail' 'migration precheck must enable strict pipeline handling'
 Assert-Contains $check 'migration_files=(' 'empty migration sets must be detected'
-Assert-Contains $check 'docker exec -i -e PGPASSWORD' 'database password value must not appear in docker argv'
 Assert-Contains $check 'exec -c /bin/bash --noprofile --norc -p -c' 'host database tooling must receive a clean environment'
-Assert-Contains $check 'exec /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' 'container database tooling must receive a clean environment'
 Assert-Contains $check 'mktemp -d "$TEMP_ROOT/pandora-migration-check.XXXXXX"' 'migration errors must use the validated private temp root'
 Assert-Contains $check "MIGRATION_PGOPTIONS='-c app.idempotency_writers_stopped=yes" 'disposable precheck must support guarded migrations after stop proof'
 Assert-Contains $check 'renewal cutover active_legacy=0' 'release precheck must prove no unlinked active renewal survives cutover'

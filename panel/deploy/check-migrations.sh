@@ -16,6 +16,9 @@
 #       停服之后的轻量核对，只读：重新校验迁移目录、源库水位与续费闸门，并与凭据逐项比对，
 #       不克隆、不演练。任何一项对不上即以 78 拒绝，要求重跑完整预检。
 #
+# 连库：本机的 psql / pg_dump 与克隆上演练的 goose，都经 127.0.0.1:POSTGRES_PORT 以 postgres 超级用户、
+# POSTGRES_SUPER_PASSWORD 连（与迁移 DSN 同一个身份与端点）。
+#
 # 克隆库上的停写闸门：PANDORA_STOPPED_WRITER_UPGRADE_APPROVED=yes（写入者已停，
 # migrate.sh 在停服后内联预检时用）或 PANDORA_PRECHECK_REHEARSE_STOPPED_WRITER=yes
 # （停服前的演练：只作用于没有写入者的克隆库，不是「线上写入者已停」的声明）。
@@ -49,27 +52,29 @@ fi
 
 DEPLOY_DIR="$(cd "$(dirname "$0")" && pwd)"
 ENV_FILE="${AEGIS_ENV_FILE:-$DEPLOY_DIR/.env}"
-# 迁移文件默认取与 deploy/ 并排的 migrations/：install.sh（/opt/aegispanel）、install-native.sh
-# （/opt/pandora）和源码树（make check-migrations）都是这个布局。不写死安装路径——
-# 曾写死 /opt/pandora，install.sh 装的机器上会找不到，或者读到另一套安装留下的旧迁移。
+# 迁移文件默认取与 deploy/ 并排的 migrations/：安装目录（/opt/pandora）和源码树（make check-migrations）
+# 都是这个布局。不写死安装路径：写死了，源码树与解开的发布包里跑会读到本机另一套安装留下的旧迁移。
 MIGRATIONS_DIR="${AEGIS_MIGRATIONS_DIR:-$(dirname -- "$DEPLOY_DIR")/migrations}"
 
 [ -r "$ENV_FILE" ] || { echo "migration precheck: missing environment file" >&2; exit 1; }
 [ -d "$MIGRATIONS_DIR" ] || { echo "migration precheck: missing migrations directory" >&2; exit 1; }
 . "$ENV_FILE"
-: "${POSTGRES_USER:?POSTGRES_USER is required}"
-: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
+
 : "${POSTGRES_DB:?POSTGRES_DB is required}"
 : "${POSTGRES_PORT:?POSTGRES_PORT is required}"
 GOOSE="${GOOSE_BIN:-/root/go/bin/goose}"
 
-[[ "$POSTGRES_USER" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] \
-  || { echo "migration precheck: unsafe PostgreSQL user" >&2; exit 1; }
 [[ "$POSTGRES_DB" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] \
   || { echo "migration precheck: unsafe source database" >&2; exit 1; }
 [[ "$POSTGRES_PORT" =~ ^[0-9]+$ ]] && [ "$POSTGRES_PORT" -ge 1 ] && [ "$POSTGRES_PORT" -le 65535 ] \
   || { echo "migration precheck: unsafe PostgreSQL port" >&2; exit 1; }
-command -v docker >/dev/null 2>&1 || { echo "migration precheck: docker is required" >&2; exit 1; }
+# 预检身份：能建库、能读全部数据的超级用户 postgres，与正式迁移同一个身份
+: "${POSTGRES_SUPER_PASSWORD:?POSTGRES_SUPER_PASSWORD is required}"
+PRECHECK_DB_PASSWORD="$POSTGRES_SUPER_PASSWORD"
+for client in psql pg_dump; do
+  command -v "$client" >/dev/null 2>&1 \
+    || { echo "migration precheck: $client is required" >&2; exit 1; }
+done
 [ -x "$GOOSE" ] || { echo "migration precheck: goose executable is missing" >&2; exit 1; }
 
 shopt -s nullglob
@@ -170,49 +175,34 @@ trap cleanup_temp_only EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-printf '%s\n' "$POSTGRES_PASSWORD" >"$PASSWORD_FILE"
+printf '%s\n' "$PRECHECK_DB_PASSWORD" >"$PASSWORD_FILE"
+unset PRECHECK_DB_PASSWORD
 chmod 0600 "$PASSWORD_FILE"
 
 # Privileged-mode Bash ignores inherited function exports and SHELLOPTS. Each
 # client is then launched through `exec -c`, so it starts from an empty
 # environment and receives only the fixed variables below. The password moves
 # through a mode-0600 file and is never present in a helper process argv.
-run_clean_docker() (
+#   run_clean_client <可执行文件名> <参数…>
+run_clean_client() (
   local cm_path="$PATH" cm_home="${HOME:-/root}" cm_password_file="$PASSWORD_FILE"
-  local cm_docker
-  cm_docker="$(command -v docker)"
+  local cm_client
+  cm_client="$(command -v "$1")" || exit 127
+  shift
   exec -c /bin/bash --noprofile --norc -p -c '
     password_file=$1; client_path=$2; client_home=$3; shift 3
     IFS= read -r client_password <"$password_file" || exit 91
     export PATH="$client_path" HOME="$client_home" PGPASSWORD="$client_password"
     exec "$@"
-  ' pandora-clean-client "$cm_password_file" "$cm_path" "$cm_home" "$cm_docker" "$@"
+  ' pandora-clean-client "$cm_password_file" "$cm_path" "$cm_home" "$cm_client" "$@"
 )
-# docker exec inherits the container's baseline environment. Route database
-# clients through a second, in-container empty environment as well; the only
-# secret crosses that boundary over a dedicated descriptor, never in argv or
-# the database client's stdin.
-CONTAINER_CLEAN_CLIENT='
-  exec 9<<PANDORA_PASSWORD_FD
-$PGPASSWORD
-PANDORA_PASSWORD_FD
-  exec /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-    /bin/sh -c '\''
-      IFS= read -r PGPASSWORD <&9 || exit 93
-      exec 9<&-
-      export PGPASSWORD
-      exec "$@"
-    '\'' pandora-container-client "$@"
-'
+# 本机客户端经回环 TCP 连同一个端点：psql、pg_dump 与下面的 goose 都是 127.0.0.1:POSTGRES_PORT，
+# 不会连到两个集群上
 psql_run() {
-  run_clean_docker exec -i -e PGPASSWORD aegis-postgres \
-    /bin/sh -c "$CONTAINER_CLEAN_CLIENT" pandora-container-wrapper \
-    psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" "$@"
+  run_clean_client psql -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$POSTGRES_PORT" -U postgres "$@"
 }
 pg_dump_run() {
-  run_clean_docker exec -i -e PGPASSWORD aegis-postgres \
-    /bin/sh -c "$CONTAINER_CLEAN_CLIENT" pandora-container-wrapper \
-    pg_dump -U "$POSTGRES_USER" "$@"
+  run_clean_client pg_dump -h 127.0.0.1 -p "$POSTGRES_PORT" -U postgres "$@"
 }
 cleanup() {
   local status=$? cleanup_failed=0
@@ -242,14 +232,6 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-
-# Bind the host-side goose endpoint to the exact PostgreSQL container used by
-# dump/restore. A same-named database on another local cluster is not accepted.
-PUBLISHED_ENDPOINT="$(run_clean_docker port aegis-postgres 5432/tcp)"
-[ "$PUBLISHED_ENDPOINT" = "127.0.0.1:$POSTGRES_PORT" ] || {
-  echo "migration precheck: PostgreSQL published endpoint mismatch" >&2
-  exit 1
-}
 
 # Establish the exact source waterline using SELECT only. An artifact older
 # than the source database is never a complete release input.
@@ -377,7 +359,7 @@ if [ "$REHEARSE_STOPPED_WRITER" = yes ]; then
   # 冻结迁移要的两个 aegis.client_auth_* 开关随它移出主序列，不再下发。
   MIGRATION_PGOPTIONS='-c app.idempotency_writers_stopped=yes -c app.allow_idempotency_schema37_up=yes -c app.allow_idempotency_schema38_up=yes -c app.allow_idempotency_schema39_up=yes'
 fi
-GOOSE_DBSTRING="host=127.0.0.1 port=$POSTGRES_PORT user=$POSTGRES_USER dbname=$DB sslmode=disable"
+GOOSE_DBSTRING="host=127.0.0.1 port=$POSTGRES_PORT user=postgres dbname=$DB sslmode=disable"
 run_clean_goose() (
   local cm_path="$PATH" cm_home="${HOME:-/root}" cm_password_file="$PASSWORD_FILE"
   local cm_goose="$GOOSE" cm_dbstring="$GOOSE_DBSTRING"

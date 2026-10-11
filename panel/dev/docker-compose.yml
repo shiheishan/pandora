@@ -1,0 +1,116 @@
+# Pandora 开发数据基座：PostgreSQL 18 + Valkey 8，只给本机开发用。生产机不用 Docker，
+# deploy/install.sh 直装系统的 PostgreSQL 18 与 Valkey；这里尽量与生产同形：
+#   - PostgreSQL 参数与 deploy/postgresql-pandora.conf 的有效行逐项相同（下面以 -c 给），
+#     deploy/dev-compose_static_test.sh 核对，两边改一边就红；
+#   - 身份与直装一致：postgres 是超级用户（口令 POSTGRES_SUPER_PASSWORD），库 POSTGRES_DB 的属主是
+#     POSTGRES_USER（缺省 aegis，由 initdb/ 里的脚本在首次初始化时建），运行角色 aegis_app 由迁移与
+#     deploy/bootstrap.sh 配好。deploy/ 下的 psql.sh、migrate.sh、check-migrations.sh、bootstrap.sh
+#     按同一份 deploy/.env 经 127.0.0.1:POSTGRES_PORT 连它，与生产同一条路（主机要装 PostgreSQL 18 客户端）；
+#   - Valkey 参数与 install.sh 写进 Valkey 配置的 pandora 块逐项相同：maxmemory 96mb + allkeys-lru、不落盘、
+#     禁 FLUSHALL / FLUSHDB（同一个静态测试核对；块里的 bind / protected-mode 在容器里由下一条代替）；
+#   - 两个端口只绑 127.0.0.1（静态测试同样核对）。
+#
+# 变量取自 deploy/.env（从 deploy/.env.example 复制后填）。在 panel/ 下用 make up / down / logs，
+# 或手工：docker compose -f dev/docker-compose.yml --env-file deploy/.env up -d --wait
+#
+# 只在空数据卷上初始化一次：改了 POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_SUPER_PASSWORD / POSTGRES_DB
+# 之后要 make down 再删卷（docker volume rm pandora-dev_pgdata）重建，或在库里手工改成一致。
+name: pandora-dev
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: pandora-dev-postgres
+    environment:
+      # 镜像的 POSTGRES_USER 是超级用户名，与 .env 里的 POSTGRES_USER（库属主）不是一回事
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_SUPER_PASSWORD:?POSTGRES_SUPER_PASSWORD is required (deploy/.env)}
+      # scram-sha-256 而非 md5：避免弱口令哈希被离线破解
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+      # 给 initdb/10-pandora-owner.sql 建库属主与库（不设镜像的 POSTGRES_DB：镜像建的库属主是 postgres，与直装不同）
+      PANDORA_DB: ${POSTGRES_DB:-aegis}
+      PANDORA_DB_OWNER: ${POSTGRES_USER:-aegis}
+      PANDORA_DB_OWNER_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required (deploy/.env)}
+    # 参数与 deploy/postgresql-pandora.conf 逐项相同，取舍理由写在那份文件里
+    command:
+      - postgres
+      - -c
+      - max_connections=60
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - effective_cache_size=384MB
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=48MB
+      - -c
+      - jit=off
+      - -c
+      - wal_level=replica
+      - -c
+      - max_wal_size=512MB
+      - -c
+      - min_wal_size=96MB
+      - -c
+      - checkpoint_completion_target=0.9
+      - -c
+      - log_min_duration_statement=500
+      - -c
+      - log_lock_waits=on
+      - -c
+      - log_checkpoints=on
+      - -c
+      - timezone=UTC
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      # PG 18 镜像改用 pg_ctlcluster 布局（主版本号子目录），挂载点是 /var/lib/postgresql，
+      # 不是旧版的 /var/lib/postgresql/data，否则启动时报「unused mount/volume」并循环重启
+      - pgdata:/var/lib/postgresql
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # 走 TCP：镜像初始化时先起一个只听 unix socket 的临时实例，经 socket 探会在它身上报就绪
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -q"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 30s
+
+  valkey:
+    # Valkey 8 = Redis 协议兼容的 BSD 许可分支（Redis 7.4+ 已改 RSALv2/SSPL）
+    image: valkey/valkey:8-alpine
+    container_name: pandora-dev-valkey
+    command:
+      - valkey-server
+      - --requirepass
+      - ${VALKEY_PASSWORD:?VALKEY_PASSWORD is required (deploy/.env)}
+      - --maxmemory
+      - 96mb
+      # 限流计数器、幂等键、会话缓存都允许被淘汰；持久化状态一律落 PG
+      - --maxmemory-policy
+      - allkeys-lru
+      - --appendonly
+      - "no"
+      - --save
+      - ""
+      # 危险命令改名禁用，与生产一致；开发时清限流键用 dev/clear-ratelimit.sh
+      - --rename-command
+      - FLUSHALL
+      - ""
+      - --rename-command
+      - FLUSHDB
+      - ""
+    ports:
+      - "127.0.0.1:${VALKEY_PORT:-6380}:6379"
+    environment:
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a \"$$VALKEY_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+
+volumes:
+  pgdata:

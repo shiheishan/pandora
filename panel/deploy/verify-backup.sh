@@ -55,16 +55,30 @@ run_trusted_executable() {
   exec {executable_fd}<&-
   return "${rc:-0}"
 }
+# 以超级用户跑 PostgreSQL 客户端（psql、pg_dump、pg_restore、createdb、dropdb）：本机客户端经
+# 127.0.0.1:POSTGRES_PORT 以 postgres 超级用户连（不用 runuser 切到 postgres：备份单元的系统调用过滤
+# 不许切换用户）。口令只经环境变量 PGPASSWORD 给这一个客户端，不进命令行参数、不导出给整个脚本。
+# 只读归档目录（pg_restore --list）不连库，不要求凭据；要连库的先过 pandora_pg_require_login。
+# 备份、校验、恢复三件套各带一份（只信任自己，不 source 共用文件），db-scripts_mock_test.sh 核对逐字一致。
+pandora_pg() {
+  local tool="$1"; shift
+  PGPASSWORD="${POSTGRES_SUPER_PASSWORD-}" PGHOST=127.0.0.1 PGPORT="${POSTGRES_PORT-}" PGUSER=postgres \
+    PGSSLMODE=disable "$tool" "$@"
+}
+# 核对要用到的本机客户端
+pandora_pg_require() {
+  local tool
+  for tool in "$@"; do require_command "$tool"; done
+}
+# 连库要的凭据：postgres 超级用户的口令与本机端口
+pandora_pg_require_login() {
+  : "${POSTGRES_SUPER_PASSWORD:?POSTGRES_SUPER_PASSWORD is required}"
+  [[ "${POSTGRES_PORT:-}" =~ ^[0-9]+$ ]] || die "POSTGRES_PORT must be a port number"
+}
 require_command readlink
 require_command stat
-invocation_allow_unsigned="${AEGIS_BACKUP_ALLOW_UNSIGNED_LEGACY-}"
 invocation_verify_restore="${AEGIS_VERIFY_RESTORE-}"
 load_trusted_env "$PWD/.env"
-if [ -n "$invocation_allow_unsigned" ]; then
-  AEGIS_BACKUP_ALLOW_UNSIGNED_LEGACY="$invocation_allow_unsigned"
-else
-  unset AEGIS_BACKUP_ALLOW_UNSIGNED_LEGACY
-fi
 AEGIS_VERIFY_RESTORE="${invocation_verify_restore:-0}"
 
 [ "$#" -eq 1 ] || die "usage: $0 /absolute/path/aegis-postgres-*.dump.age"
@@ -74,58 +88,70 @@ archive="$1"
 checksum="${archive}.sha256"
 [ -f "$checksum" ] || die "checksum not found: $checksum"
 manifest="${archive%.dump.age}.manifest.json"
-legacy_approval="RESTORE_UNSIGNED:$(basename "$archive")"
-legacy_mode=0
-if [ "${AEGIS_BACKUP_ALLOW_UNSIGNED_LEGACY:-}" = "$legacy_approval" ] && [ ! -e "$manifest" ]; then
-  legacy_mode=1
-  echo "verify-backup: WARNING unsigned legacy recovery explicitly enabled" >&2
-else
+seal="${archive}.seal"
+: "${AEGIS_BACKUP_AGE_IDENTITY:?AEGIS_BACKUP_AGE_IDENTITY is required}"
+[[ "$AEGIS_BACKUP_AGE_IDENTITY" = /* ]] || die "AEGIS_BACKUP_AGE_IDENTITY must be an absolute path"
+# 缺省取安装根目录（本脚本在 <根>/deploy/ 下，已 cd 到这里）的 bin/，即 /opt/pandora/bin/
+uploader="${AEGIS_BACKUP_WEBDAV_BIN:-$(dirname -- "$PWD")/bin/aegis-backup-webdav}"
+[[ "$uploader" = /* ]] || die "AEGIS_BACKUP_WEBDAV_BIN must be an absolute path"
+# 来源两种，都要核过才往下走：
+#   - 本机写的备份：backup-postgres.sh 写的封条 <归档>.seal（这台安装的 age 私钥派生的 HMAC），本机留存期内哪一份都能核；
+#   - 从 WebDAV 取回的备份：签名清单 + WebDAV 之外的可信检查点（只认最新一份，防替换、防回滚）。
+# 两样都没有就拒绝：来路不明的归档不进库
+if [ -e "$seal" ]; then
+  run_trusted_executable "$uploader" verify-local-seal "$archive" "$checksum" "$seal" "$AEGIS_BACKUP_AGE_IDENTITY" >/dev/null \
+    || die "local backup seal verification failed: this archive was not written by this installation, or it was changed (if you are sure of its origin, restore it by hand: MIGRATION-RUNBOOK.md section 3)"
+elif [ -e "$manifest" ]; then
   : "${AEGIS_BACKUP_MANIFEST_PUBLIC_KEY:?AEGIS_BACKUP_MANIFEST_PUBLIC_KEY is required}"
   : "${AEGIS_BACKUP_TRUSTED_CHECKPOINT:?AEGIS_BACKUP_TRUSTED_CHECKPOINT is required}"
-  uploader="${AEGIS_BACKUP_WEBDAV_BIN:-/opt/aegispanel/bin/aegis-backup-webdav}"
-  [[ "$uploader" = /* ]] || die "AEGIS_BACKUP_WEBDAV_BIN must be an absolute path"
-  [ -f "$manifest" ] || die "signed manifest not found: $manifest"
   run_trusted_executable "$uploader" verify-manifest "$archive" "$checksum" "$manifest" \
     "$AEGIS_BACKUP_MANIFEST_PUBLIC_KEY" "$AEGIS_BACKUP_TRUSTED_CHECKPOINT" \
     || die "signed manifest or trusted checkpoint verification failed"
+else
+  die "neither a local seal ($seal) nor a signed manifest ($manifest): refusing an archive of unknown origin"
 fi
-: "${AEGIS_BACKUP_AGE_IDENTITY:?AEGIS_BACKUP_AGE_IDENTITY is required}"
-[[ "$AEGIS_BACKUP_AGE_IDENTITY" = /* ]] || die "AEGIS_BACKUP_AGE_IDENTITY must be an absolute path"
 [ -r "$AEGIS_BACKUP_AGE_IDENTITY" ] || die "age identity is not readable"
 require_command age
-require_command docker
+pandora_pg_require pg_restore psql createdb dropdb
 
 (cd "$(dirname "$archive")" && sha256sum --check --status "$(basename "$checksum")") \
   || die "SHA256 verification failed"
+# pg_restore --list 读完目录就退出，不读后面的数据块；不把剩下的读掉，age 会因 SIGPIPE 失败（库稍大就必现，
+# panel2 演练发现），pipefail 把它当成解密失败
 age --decrypt --identity "$AEGIS_BACKUP_AGE_IDENTITY" "$archive" \
-  | docker exec -i aegis-postgres pg_restore --list >/dev/null \
+  | { pandora_pg pg_restore --list >/dev/null; list_rc=$?; cat >/dev/null; exit "$list_rc"; } \
   || die "age decryption or pg_restore TOC verification failed"
 
-if [ "${AEGIS_VERIFY_RESTORE:-0}" = "1" ]; then
-  [ "$legacy_mode" -eq 0 ] \
-    || die "unsigned legacy backups cannot run full restore rehearsal"
-  : "${POSTGRES_USER:?POSTGRES_USER is required for restore verification}"
-  : "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required for restore verification}"
+# AEGIS_VERIFY_RESTORE=1：在临时库里完整恢复一遍（不还原属主与权限，单独校验时用，角色不必齐）；
+# =owners：与正式恢复同样的参数照原样还原属主与权限，restore-postgres.sh 先备好角色再这样演练
+case "${AEGIS_VERIFY_RESTORE:-0}" in
+  0|1|owners) ;;
+  *) die "AEGIS_VERIFY_RESTORE must be 0, 1 or owners" ;;
+esac
+if [ "${AEGIS_VERIFY_RESTORE:-0}" != 0 ]; then
   : "${POSTGRES_DB:?POSTGRES_DB is required for restore verification}"
+  pandora_pg_require_login
   verify_db="aegis_verify_$(date -u +%Y%m%d%H%M%S)_$$"
   [[ "$verify_db" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || die "unsafe temporary database name"
-  export PGPASSWORD="$POSTGRES_PASSWORD"
   cleanup_db() {
-    docker exec -i -e PGPASSWORD aegis-postgres \
-      dropdb -U "$POSTGRES_USER" --if-exists --force "$verify_db" >/dev/null 2>&1 || true
+    pandora_pg dropdb --if-exists --force "$verify_db" >/dev/null 2>&1 || true
   }
   trap cleanup_db EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
-  docker exec -i -e PGPASSWORD aegis-postgres \
-    createdb -U "$POSTGRES_USER" --template=template0 "$verify_db"
+  restore_opts=(--exit-on-error)
+  createdb_opts=(--template=template0 --encoding=UTF8)
+  if [ "$AEGIS_VERIFY_RESTORE" = owners ]; then
+    # 与正式恢复同参数：库属主与 restore-postgres.sh 建正式库时一样（.env 的 POSTGRES_USER）
+    : "${POSTGRES_USER:?POSTGRES_USER is required for an owner-preserving rehearsal}"
+    createdb_opts+=(--owner "$POSTGRES_USER")
+  else
+    restore_opts+=(--no-owner --no-privileges)
+  fi
+  pandora_pg createdb "${createdb_opts[@]}" "$verify_db"
   age --decrypt --identity "$AEGIS_BACKUP_AGE_IDENTITY" "$archive" \
-    | docker exec -i -e PGPASSWORD aegis-postgres \
-        pg_restore -U "$POSTGRES_USER" -d "$verify_db" \
-          --no-owner --no-privileges --exit-on-error
-  docker exec -i -e PGPASSWORD aegis-postgres \
-    psql -X -U "$POSTGRES_USER" -d "$verify_db" -v ON_ERROR_STOP=1 \
-      -c 'SELECT 1' >/dev/null
+    | pandora_pg pg_restore -d "$verify_db" "${restore_opts[@]}"
+  pandora_pg psql -X -d "$verify_db" -v ON_ERROR_STOP=1 -c 'SELECT 1' >/dev/null
   cleanup_db
   trap - EXIT INT TERM
 fi

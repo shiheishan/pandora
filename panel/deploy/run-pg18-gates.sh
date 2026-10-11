@@ -152,6 +152,9 @@ DOMAINS=(
   # 缓存纪元（00154–00156，w12cache）：各输入表的写在提交后推进纪元并通知，platform/cache 的 Watch 收到的延迟；
   # 不该推进的写不推进；监听停掉后缓存退回读纪元。先跑 configure-app-role.sql，以 aegis_app 读序列与 LISTEN。
   "cache_epoch|pandora_cache_epoch_gate|./internal/platform/cache|run_id|pandora_cache_epoch_test_marker|pandora-cache-epoch-pg18|app_role|^TestCacheEpochPG18$"
+  # 运行角色的函数执行权（w12native）：应用 configure-app-role.sql 之后，迁移里收回过 aegis_app 的函数
+  # （app.seed_tenant_defaults 等 SECURITY DEFINER）它都执行不了；清单从迁移原文现扫。独占一个库
+  "app_role_exec|pandora_app_role_exec_gate|./internal/platform/db|run_id|pandora_app_role_exec_test_marker|pandora-app-role-exec-pg18|app_role|^TestAppRoleFunctionRevokesPG18$"
 )
 
 selected() {

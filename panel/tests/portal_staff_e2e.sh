@@ -11,7 +11,7 @@ set -uo pipefail
 
 PUB=${PUB:-http://127.0.0.1:9000}
 ADM=${ADM:-http://127.0.0.1:9001}
-PSQL=${PSQL:-/opt/aegispanel/deploy/psql.sh}
+PSQL=${PSQL:-/opt/pandora/deploy/psql.sh}
 ADMIN_EMAIL=${ADMIN_EMAIL:-}
 ADMIN_PASS=${ADMIN_PASS:-}
 

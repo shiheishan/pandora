@@ -127,27 +127,7 @@ func (h *handlers) systemComponents(r *http.Request, database map[string]any, ba
 	out = append(out, sse)
 
 	// --- backup：由备份目录的探测结果派生 ---
-	bk := systemComponent{Key: "backup", State: "unknown", Metrics: map[string]any{}}
-	if backup.Readable {
-		stale := statusDeref(backup.Stale)
-		identity := statusDeref(backup.IdentityConfigured)
-		offsite := statusDeref(backup.OffsiteConfigured)
-		missing := statusDeref(backup.MissingChecksum)
-		// 没有备份文件时 latest_age_hours 为 null（键在、值空）
-		var age any
-		if backup.LatestAgeHours != nil {
-			age = *backup.LatestAgeHours
-		}
-		bk.Metrics = map[string]any{"latest_age_hours": age, "stale": stale,
-			"identity_configured": identity, "offsite_configured": offsite}
-		bk.State = "ok"
-		if stale || !identity || !offsite || missing > 0 {
-			bk.State = "warn"
-		}
-	} else if backup.Message != "" {
-		bk.Message = backup.Message
-	}
-	out = append(out, bk)
+	out = append(out, backupComponent(backup))
 
 	state := "ok"
 	for _, c := range out {
@@ -156,4 +136,30 @@ func (h *handlers) systemComponents(r *http.Request, database map[string]any, ba
 		}
 	}
 	return state, out
+}
+
+// backupComponent 由备份目录的探测结果派生 backup 组件：过期、缺私钥、没异地备份、缺校验、缺封条都转 warn
+func backupComponent(backup backupStatusView) systemComponent {
+	bk := systemComponent{Key: "backup", State: "unknown", Metrics: map[string]any{}}
+	if backup.Readable {
+		stale := statusDeref(backup.Stale)
+		identity := statusDeref(backup.IdentityConfigured)
+		offsite := statusDeref(backup.OffsiteConfigured)
+		missing := statusDeref(backup.MissingChecksum)
+		unsealed := statusDeref(backup.MissingSeal)
+		// 没有备份文件时 latest_age_hours 为 null（键在、值空）
+		var age any
+		if backup.LatestAgeHours != nil {
+			age = *backup.LatestAgeHours
+		}
+		bk.Metrics = map[string]any{"latest_age_hours": age, "stale": stale,
+			"identity_configured": identity, "offsite_configured": offsite}
+		bk.State = "ok"
+		if stale || !identity || !offsite || missing > 0 || unsealed > 0 {
+			bk.State = "warn"
+		}
+	} else if backup.Message != "" {
+		bk.Message = backup.Message
+	}
+	return bk
 }

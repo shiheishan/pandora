@@ -9,13 +9,14 @@
 # 在 5k-r4 实测各占 2–9 个百分点），所以窗口内只有一个 `vmstat 5`：
 #   T 与 T+窗口 各读一次 /proc/stat、全部进程的 /proc/<pid>/stat（含 cutime/cstime）、system.slice 下各单元的 cpu.stat；
 #   T−20 秒 与 T+窗口 各取一次内存快照（窗口外，不算进窗口的 CPU）：free、meminfo、vmstat 换页计数、关键进程 PSS、
-#   Docker 布局另记 docker stats 与各网关 cgroup 的 memory.current；
+#   各网关 cgroup 的 memory.current；
 #   同一时刻另写 kern-<标签>.txt（内核记账：min_free_kbytes、THP、完整 meminfo、sockstat、slab 前 30、zoneinfo）
 #   与 pg-smaps-<标签>.txt（PG 每个进程的 smaps_rollup），用来拆「已用」里内核水位、slab、PG 共享内存各占多少。
 #   开头写一份 host.txt（machine-id、核数、内核、面板版本），perf-gate 据此核对改前改后是不是同一台机器。
 # 产物目录交给 `loadtest quiet-report -dir <目录> -tier <A|B>` 出判定。
 #
-# 同时兼容 install.sh 的 Docker 布局与 install-native.sh 的直装布局；cgroup v2（Debian 13 / Ubuntu 24.04 缺省）。
+# 只认 deploy/install.sh 的直装布局（库与缓存是 system.slice 下的 postgresql@*-main、valkey-server / redis-server）；
+# cgroup v2（Debian 13 / Ubuntu 24.04 缺省）。
 set -uo pipefail
 export LC_ALL=C
 
@@ -42,16 +43,12 @@ mem() { # mem <标签>
     grep -E '^pswp(in|out) ' /proc/vmstat
     echo "== PSS(kB) by comm"
     local p c v r
-    for p in $(pgrep -x 'aegis-public|aegis-admin|aegis-node|postgres|valkey-server|redis-server|nginx|docker-proxy|dockerd|containerd|containerd-shim|containerd-shim-runc-v2'); do
+    for p in $(pgrep -x 'aegis-public|aegis-admin|aegis-node|postgres|valkey-server|redis-server|nginx'); do
       c="$(cat "/proc/$p/comm" 2>/dev/null)" || continue
       v="$(awk '$1=="Pss:"{print $2}' "/proc/$p/smaps_rollup" 2>/dev/null)"
       r="$(awk '$1=="VmRSS:"{print $2}' "/proc/$p/status" 2>/dev/null)"
       echo "$c $p ${v:-0} ${r:-0}"
     done | awk '{pss[$1]+=$3; rss[$1]+=$4; n[$1]++} END{for(k in pss) printf "%-26s n=%-3d pss_kb=%-8d rss_kb=%d\n", k, n[k], pss[k], rss[k]}' | sort
-    if command -v docker >/dev/null 2>&1; then
-      echo "== docker stats"
-      docker stats --no-stream --format '{{.Name}} {{.MemUsage}} {{.CPUPerc}}' 2>&1
-    fi
     echo "== gateway cgroup memory.current"
     local g
     for g in aegis-public aegis-admin aegis-node; do
@@ -94,10 +91,8 @@ kern() { # kern <标签>：内核侧内存记账，quiet-report 不读，拆账�
 }
 
 host() { # 机器指纹：perf-gate 核对改前改后同机同配置；不含 IP、主机名
-  local f rel=""
-  for f in /opt/aegispanel/deploy/release-artifact.env /opt/pandora/deploy/release-artifact.env; do
-    [[ -r "$f" ]] && { rel="$(awk -F= '$1=="PANDORA_NATIVE_RELEASE_VERSION"{print $2}' "$f")"; break; }
-  done
+  local f=/opt/pandora/deploy/release-artifact.env rel=""
+  [[ -r "$f" ]] && rel="$(awk -F= '$1=="PANDORA_NATIVE_RELEASE_VERSION"{print $2}' "$f")"
   {
     echo "machine_id=$(cat /etc/machine-id 2>/dev/null)"
     echo "nproc=$(nproc)"
@@ -119,11 +114,6 @@ cpusnap() { # cpusnap <标签>
     echo "$(basename "$(dirname "$c")") $(awk '$1=="usage_usec"||$1=="user_usec"||$1=="system_usec"||$1=="nr_throttled"||$1=="throttled_usec"{printf "%s=%s ", $1, $2}' "$c")"
   done > "$d/cgroups"
 }
-
-# 容器全 ID → 名字，quiet-report 据此把 docker-<id>.scope 认成 aegis-postgres / aegis-valkey
-if command -v docker >/dev/null 2>&1; then
-  docker ps --no-trunc --format '{{.ID}} {{.Names}}' > "$OUT/containers.txt" 2>/dev/null || true
-fi
 
 log "start T=$(date -u -d @"$T" +%FT%TZ) window=${W}m"
 host

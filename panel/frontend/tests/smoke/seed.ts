@@ -104,9 +104,9 @@ function step(title: string): void {
   console.log(`==> ${title}`)
 }
 
-/** SQL 夹具：以迁移账号直连冒烟库。只用于产品接口造不出来的数据，每处都写明为什么 */
+/** SQL 夹具：以迁移账号（超级用户 postgres，与直装的迁移同一身份）直连冒烟库。只用于产品接口造不出来的数据，每处都写明为什么 */
 function sqlFixture(what: string, sql: string): void {
-  const r = spawnSync('docker', ['exec', '-i', PG_CONTAINER, 'psql', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-U', 'aegis', '-d', PG_DB], { input: sql, encoding: 'utf8' })
+  const r = spawnSync('docker', ['exec', '-i', PG_CONTAINER, 'psql', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres', '-d', PG_DB], { input: sql, encoding: 'utf8' })
   if (r.status !== 0) throw new Error(`SQL 夹具「${what}」失败：${r.stderr}`)
 }
 

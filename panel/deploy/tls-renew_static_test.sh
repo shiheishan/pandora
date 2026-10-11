@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# HTTPS 证书续期 timer 的静态检查：单元、发布包、两个安装器、edge-tls.sh 之间的名字与路径对得上。
+# HTTPS 证书续期 timer 的静态检查：单元、发布包、安装器、edge-tls.sh 之间的名字与路径对得上。
 #   - timer 每天至少两次、错峰、补跑（6 天的 IP 证书过半就续，要给失败留重试次数）；
-#   - service 以 edge-tls.sh renew 读 /opt/aegispanel/deploy/.env，沙箱放开的可写目录正好覆盖它要写的；
-#   - 两个单元进 build-release.sh 的拷贝与归档清单、install-linux-binaries.sh 的安装事务，
-#     install-native.sh 换安装目录后装；edge-tls.sh setup 启用的就是这个 timer。
+#   - service 以 edge-tls.sh renew 读 /opt/pandora/deploy/.env，沙箱放开的可写目录正好覆盖它要写的；
+#   - 两个单元进 build-release.sh 的拷贝与归档清单，install.sh 随 UNITS 原样装上；
+#     edge-tls.sh setup 启用的就是这个 timer。
 set -euo pipefail
 
 DEPLOY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -25,8 +25,8 @@ hours="$(sed -E 's/^\*-\*-\* ([0-9,]+):.*/\1/' <<<"$cal")"
 
 # --- service ---
 grep -qx 'Type=oneshot' "$svc" || fail 'service is not oneshot'
-grep -qx 'ExecStart=/opt/aegispanel/deploy/edge-tls.sh renew /opt/aegispanel/deploy/.env' "$svc" || fail 'ExecStart drifted'
-grep -qx 'WorkingDirectory=/opt/aegispanel/deploy' "$svc" || fail 'WorkingDirectory drifted'
+grep -qx 'ExecStart=/opt/pandora/deploy/edge-tls.sh renew /opt/pandora/deploy/.env' "$svc" || fail 'ExecStart drifted'
+grep -qx 'WorkingDirectory=/opt/pandora/deploy' "$svc" || fail 'WorkingDirectory drifted'
 grep -Eq '^TimeoutStartSec=' "$svc" || fail 'service has no start timeout (a hung ACME request would block every later run)'
 for d in NoNewPrivileges=true PrivateTmp=true ProtectSystem=full ProtectHome=true; do
   grep -qx "$d" "$svc" || fail "service lacks $d"
@@ -49,10 +49,11 @@ for u in aegis-tls-renew.service aegis-tls-renew.timer; do
   grep -Fq "cp \"\$ROOT/deploy/systemd/$u\" \"\$target/deploy/systemd/$u\"" "$build" || fail "build-release.sh does not copy $u"
   grep -Fq "\"\$target_base/deploy/systemd/$u\"" "$build" || fail "build-release.sh does not archive $u"
 done
-inst="$DEPLOY/install-linux-binaries.sh"
-grep -Eq '^for script in .*\bedge-tls\.sh\b.*; do' "$inst" || fail 'install-linux-binaries.sh does not stage edge-tls.sh'
-grep -Eq 'aegis-tls-renew\.service aegis-tls-renew\.timer; do' "$inst" || fail 'install-linux-binaries.sh does not stage the renewal units'
-grep -Fq 'sed "s|/opt/aegispanel|${INSTALL_DIR}|g" "$SCRIPT_DIR/systemd/$u"' "$DEPLOY/install-native.sh" \
-  || fail 'install-native.sh does not rewrite the install directory in the renewal units'
+inst="$DEPLOY/install.sh"
+grep -Fq '"$SCRIPT_DIR/edge-tls.sh"' "$inst" || fail 'install.sh does not install edge-tls.sh'
+for u in aegis-tls-renew.service aegis-tls-renew.timer; do
+  bash -c '. "$1"; printf "%s\n" "${UNITS[@]}"' _ "$DEPLOY/install-lib.sh" | grep -qx "$u" || fail "install.sh does not install $u"
+done
+grep -Fq 'install -m 0644 "$SCRIPT_DIR/systemd/$u" "/etc/systemd/system/$u"' "$inst" || fail 'install.sh does not install the units as shipped'
 
 printf 'tls-renew static: PASS\n'

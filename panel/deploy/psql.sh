@@ -1,7 +1,20 @@
 #!/usr/bin/env bash
-# AegisPanel psql 封装：从 .env 读凭据，避免命令行泄露密码。
+# 以超级用户进面板的库：
+#   ./psql.sh                       交互
+#   ./psql.sh -tAc 'SELECT 1'       单条
+#   ./psql.sh < 多语句.sql          多语句经标准输入
+# 凭据从同目录的 .env 读（不导出给别的进程）：本机 psql 经 127.0.0.1:POSTGRES_PORT 以 postgres 超级用户
+# （POSTGRES_SUPER_PASSWORD）连，口令只经环境变量 PGPASSWORD 给客户端，不进命令行参数。
 set -euo pipefail
 cd "$(dirname "$0")"
-set -a; . ./.env; set +a
-exec docker exec -i -e PGPASSWORD="$POSTGRES_PASSWORD" aegis-postgres \
-  psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" "$@"
+die() { echo "psql.sh: $*" >&2; exit 1; }
+[ -r ./.env ] || die "cannot read $(pwd)/.env"
+# shellcheck disable=SC1091
+. ./.env
+
+: "${POSTGRES_DB:?POSTGRES_DB is required}"
+: "${POSTGRES_SUPER_PASSWORD:?POSTGRES_SUPER_PASSWORD is required}"
+: "${POSTGRES_PORT:?POSTGRES_PORT is required}"
+# 连不上的库别挂住调用方（巡检 healthcheck.sh 经它查库）：缺省 5 秒连不上就失败，调用方可以自己给 PGCONNECT_TIMEOUT
+PGPASSWORD="$POSTGRES_SUPER_PASSWORD" PGSSLMODE=disable PGCONNECT_TIMEOUT="${PGCONNECT_TIMEOUT:-5}" exec psql \
+  -h 127.0.0.1 -p "$POSTGRES_PORT" -U postgres -d "$POSTGRES_DB" "$@"

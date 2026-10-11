@@ -29,23 +29,20 @@ if grep -Eq '^[[:space:]]*AEGIS_ENV=' "$DEPLOY/release-artifact.env.example"; th
   fail 'release-artifact.env.example sets AEGIS_ENV'
 fi
 
-# 2. 安装：与二进制同一事务装到 /opt/aegispanel/deploy/，升级随包覆盖
-need "$DEPLOY/install-linux-binaries.sh" 'configure-app-role.sql release-artifact.env; do'
-need "$DEPLOY/install-linux-binaries.sh" 'stage_file "$RELEASE_DIR/deploy/$data_file" "/opt/aegispanel/deploy/$data_file" 0644'
-need "$DEPLOY/install.sh" '"$RELEASE_ROOT/deploy/release-artifact.env"'
-need "$DEPLOY/install-native.sh" '"$SCRIPT_DIR/release-artifact.env" "$INSTALL_DIR/deploy/"'
+# 2. 安装：install.sh 装到 /opt/pandora/deploy/，升级随包覆盖；发布目录缺它时动手之前就拒绝
+need "$DEPLOY/install.sh" 'cp -f "$SCRIPT_DIR/release-artifact.env" "$INSTALL_DIR/deploy/"'
+need "$DEPLOY/install.sh" '[ -f "$root/deploy/release-artifact.env" ]'
 
 # 3. 加载：接入节点的是 aegis-node，发布物文件排在 .env 之后（发布包的值优先）
 unit="$DEPLOY/systemd/aegis-node.service"
-env_line="$(grep -n '^EnvironmentFile=/opt/aegispanel/deploy/\.env$' "$unit" | cut -d: -f1)"
-artifact_line="$(grep -n '^EnvironmentFile=-/opt/aegispanel/deploy/release-artifact\.env$' "$unit" | cut -d: -f1)"
+env_line="$(grep -n '^EnvironmentFile=/opt/pandora/deploy/\.env$' "$unit" | cut -d: -f1)"
+artifact_line="$(grep -n '^EnvironmentFile=-/opt/pandora/deploy/release-artifact\.env$' "$unit" | cut -d: -f1)"
 [ -n "$env_line" ] && [ -n "$artifact_line" ] || fail 'aegis-node.service does not load both .env and release-artifact.env'
 [ "$artifact_line" -gt "$env_line" ] || fail 'release-artifact.env must be loaded after .env'
 
 # 4. 发布包装出来的就是生产：首装写 AEGIS_ENV=production，并要求对外地址
-need "$DEPLOY/install.sh" '-e "s|^AEGIS_ENV=.*|AEGIS_ENV=production|"'
+need "$DEPLOY/install.sh" 'AEGIS_ENV=production'
 need "$DEPLOY/install.sh" 'PANDORA_PUBLIC_BASE_URL'
-need "$DEPLOY/install-native.sh" 'AEGIS_ENV=production'
 
 # 5. 版本号：不设 PANDORA_VERSION 时由 git describe 推出，必须过脚本自己的格式检查。
 #    仓库里有 archive/client-auth 这种带斜杠的归档标签，裸 describe 会取到它（曾经就这样
