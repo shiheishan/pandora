@@ -473,7 +473,7 @@ func (a *hysteria2Adapter) NewPacketConnectionEx(ctx context.Context, conn N.Pac
 			return
 		}
 		defer sess.close()
-		relayHy2UDP(ctx, conn, upstream, destination, sess.up(), sess.down())
+		relayHy2UDP(ctx, conn, upstream, destination, user.ID, sess.up(), sess.down())
 	}()
 }
 

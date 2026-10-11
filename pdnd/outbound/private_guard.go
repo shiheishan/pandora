@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"sync/atomic"
 
+	"github.com/aegispanel/nodeagent/internal/udprecv"
 	"golang.org/x/net/ipv4"
 )
 
@@ -100,18 +101,19 @@ func packetDestinationIP(addr net.Addr) (netip.Addr, bool) {
 	return netip.Addr{}, false
 }
 
-// UDPBatchConn 是直连 UDP 的批量收发（Linux 上 WriteBatch / ReadBatch 即
-// sendmmsg / recvmmsg），给 hy2、TUIC 这类单连接几万包/秒的 UDP 转发用。
+// UDPBatchConn 是直连 UDP 的批量发与就绪收（Linux 上 WriteBatch 即 sendmmsg，
+// Receiver 收包用 recvmmsg），给 hy2、TUIC 这类单连接几万包/秒的 UDP 转发用。
 //
-// 它不交出裸 socket：拿到它的人只能经这几个方法收发、调缓冲。私网拦截在
+// 它不交出裸 socket：拿到它的人只能经这几个方法发、收、调缓冲。私网拦截在
 // WriteBatch 里逐条按目标把关，与 guardedPacketConn.WriteTo 同一个判定、同一种
 // 语义（被拦的包静默丢弃、照常计为已发出）；收方向与 ReadFrom 一样不过滤。
 type UDPBatchConn interface {
 	// WriteBatch 依次发出 ms，返回已处理的条数（被拦的也算已处理，N 记为负载
 	// 长度）；少于 len(ms) 且 err 为 nil 时，调用方从返回处接着发。
 	WriteBatch(ms []ipv4.Message, flags int) (int, error)
-	// ReadBatch 一次收多包，语义同 ipv4.PacketConn.ReadBatch。
-	ReadBatch(ms []ipv4.Message, flags int) (int, error)
+	// Receiver 是这个 socket 的收包器（等待期间不占缓冲，见 internal/udprecv），
+	// 只能收；平台不支持时为 nil。只给一个 goroutine 用。
+	Receiver() *udprecv.Receiver
 	LocalAddr() net.Addr
 	SetReadBuffer(bytes int) error
 	SetWriteBuffer(bytes int) error
@@ -129,12 +131,17 @@ func (c *guardedPacketConn) UDPBatch() UDPBatchConn {
 	if !ok {
 		return nil
 	}
-	return &guardedUDPBatch{raw: raw, batch: ipv4.NewPacketConn(raw)}
+	rc, err := raw.SyscallConn()
+	if err != nil {
+		return nil
+	}
+	return &guardedUDPBatch{raw: raw, recv: udprecv.NewReceiver(rc), batch: ipv4.NewPacketConn(raw)}
 }
 
 // guardedUDPBatch 的字段都不导出、类型本身也不导出：包外拿不到 raw。
 type guardedUDPBatch struct {
 	raw   *net.UDPConn
+	recv  *udprecv.Receiver
 	batch *ipv4.PacketConn
 }
 
@@ -179,9 +186,7 @@ func (b *guardedUDPBatch) WriteBatch(ms []ipv4.Message, flags int) (int, error) 
 	return done, nil
 }
 
-func (b *guardedUDPBatch) ReadBatch(ms []ipv4.Message, flags int) (int, error) {
-	return b.batch.ReadBatch(ms, flags)
-}
+func (b *guardedUDPBatch) Receiver() *udprecv.Receiver { return b.recv }
 
 func (b *guardedUDPBatch) LocalAddr() net.Addr            { return b.raw.LocalAddr() }
 func (b *guardedUDPBatch) SetReadBuffer(bytes int) error  { return b.raw.SetReadBuffer(bytes) }

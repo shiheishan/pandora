@@ -430,7 +430,7 @@ func (a *tuicAdapter) NewPacketConnectionEx(ctx context.Context, conn N.PacketCo
 		defer sess.close()
 		// 与 Hysteria2 共用转发热路径（hysteria2_udp.go）：凑批上行、批量或逐包下行
 		// 不复制负载、目标解析按会话缓存、流量原子累加到用户计数器。
-		relayHy2UDP(ctx, conn, upstream, destination, sess.up(), sess.down())
+		relayHy2UDP(ctx, conn, upstream, destination, user.ID, sess.up(), sess.down())
 	})
 }
 

@@ -4,6 +4,7 @@ import (
 	"net"
 	"testing"
 
+	"github.com/aegispanel/nodeagent/internal/udprecv"
 	"github.com/aegispanel/nodeagent/outbound"
 	"golang.org/x/net/ipv4"
 )
@@ -15,7 +16,7 @@ type bufferRecordingBatch struct {
 }
 
 func (b *bufferRecordingBatch) WriteBatch(ms []ipv4.Message, _ int) (int, error) { return len(ms), nil }
-func (b *bufferRecordingBatch) ReadBatch([]ipv4.Message, int) (int, error)       { return 0, net.ErrClosed }
+func (b *bufferRecordingBatch) Receiver() *udprecv.Receiver                      { return nil }
 func (b *bufferRecordingBatch) LocalAddr() net.Addr                              { return b.local }
 func (b *bufferRecordingBatch) SetReadBuffer(n int) error                        { b.read = n; return nil }
 func (b *bufferRecordingBatch) SetWriteBuffer(n int) error                       { b.sent = n; return nil }

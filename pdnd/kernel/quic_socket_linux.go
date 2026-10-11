@@ -17,8 +17,8 @@ import (
 // Mbps 时一个调度停顿就能把缓冲灌满、整批丢包（客户端看到的就是限速与重传）。
 // Linux 读回来的值是设置值的两倍，所以按「不到期望的一半」判。
 //
-// UDP 转发的出站 socket（hysteria2_udp.go 的 hy2UDPSocketBuffer）受同一上限，拿不到时
-// 不逐会话告警：这条告警已经说明了原因与办法，每个入站只出一次。
+// 只关 QUIC 监听 socket：UDP 转发的出站 socket 固定申请约 104KB（hysteria2_udp.go 的
+// hy2UDPSocketBuffer，内核实给 212992），在发行版缺省上限之内，不受这条 sysctl 影响。
 //
 // 走包级 slog（main 已把进程日志设成默认 logger），与其他日志同为 level= 结构化格式。
 func warnSmallQUICSocketBuffers(protocol string, port int, conn net.PacketConn) {
@@ -38,6 +38,6 @@ func warnSmallQUICSocketBuffers(protocol string, port int, conn net.PacketConn) 
 	if rcv >= quicSocketBufferWant/2 && snd >= quicSocketBufferWant/2 {
 		return
 	}
-	slog.Warn("QUIC 入站的 UDP 缓冲偏小（UDP 转发的出站 socket 受同一上限），单连接大流量会丢包；请把 sysctl net.core.rmem_max 与 net.core.wmem_max 设到 8388608 以上后重启 pdnd（面板的节点安装脚本会写 /etc/sysctl.d/90-pandora-native.conf，手工安装见 release/README.md）",
+	slog.Warn("QUIC 入站的 UDP 缓冲偏小，单连接大流量会丢包；请把 sysctl net.core.rmem_max 与 net.core.wmem_max 设到 8388608 以上后重启 pdnd（面板的节点安装脚本会写 /etc/sysctl.d/90-pandora-native.conf，手工安装见 release/README.md）",
 		"protocol", protocol, "port", port, "接收缓冲KB", rcv/1024, "发送缓冲KB", snd/1024)
 }
