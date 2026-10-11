@@ -266,14 +266,14 @@ func seedDashboardScriptEdges(t *testing.T, ctx context.Context, admin *pgxpool.
 		('c4b00000-0000-4000-8000-000000000033','c4b00000-0000-4000-8000-000000000001','c4b00000-0000-4000-8000-000000000013',gen_random_uuid(),gen_random_uuid(),'active','CNY',0,now()+interval '30 days',9417003),
 		('c4b00000-0000-4000-8000-000000000034','c4b00000-0000-4000-8000-000000000002','c4b00000-0000-4000-8000-000000000021',gen_random_uuid(),gen_random_uuid(),'active','CNY',0,now()+interval '30 days',9417101)`)
 	exec(`SET LOCAL session_replication_role = origin`)
-	exec(`INSERT INTO node_traffic_hourly(tenant_id,hour_start,node_id,upload_bytes,download_bytes,positive_entry_count,positive_report_count,last_positive_report_at)
-		SELECT t, date_trunc('hour', statement_timestamp() - interval '1 hour', 'UTC'), n, up, 0, 1, 1, statement_timestamp()
+	exec(`INSERT INTO node_traffic_hourly(tenant_id,hour_start,node_id,upload_bytes,download_bytes,billed_bytes,positive_entry_count,positive_report_count,last_positive_report_at)
+		SELECT t, date_trunc('hour', statement_timestamp() - interval '1 hour', 'UTC'), n, up, 0, up, 1, 1, statement_timestamp()
 		  FROM (VALUES
 		    ('c4b00000-0000-4000-8000-000000000001'::uuid,'c4b00000-0000-4000-8000-0000000000a1'::uuid,60::numeric),
 		    ('c4b00000-0000-4000-8000-000000000002'::uuid,'c4b00000-0000-4000-8000-0000000000a2'::uuid,7::numeric)
 		  ) AS v(t,n,up)`)
-	exec(`INSERT INTO node_user_traffic_hourly(tenant_id,hour_start,node_id,node_uid,upload_bytes,download_bytes,entry_count,last_report_at)
-		SELECT t, date_trunc('hour', statement_timestamp() - interval '1 hour', 'UTC'), n, uid, up, 0, 1, statement_timestamp()
+	exec(`INSERT INTO node_user_traffic_hourly(tenant_id,hour_start,node_id,node_uid,upload_bytes,download_bytes,billed_bytes,entry_count,last_report_at)
+		SELECT t, date_trunc('hour', statement_timestamp() - interval '1 hour', 'UTC'), n, uid, up, 0, up, 1, statement_timestamp()
 		  FROM (VALUES
 		    ('c4b00000-0000-4000-8000-000000000001'::uuid,'c4b00000-0000-4000-8000-0000000000a1'::uuid,9417001::bigint,10::numeric),
 		    ('c4b00000-0000-4000-8000-000000000001'::uuid,'c4b00000-0000-4000-8000-0000000000a1'::uuid,9417002::bigint,20::numeric),
