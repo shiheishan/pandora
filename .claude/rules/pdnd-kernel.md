@@ -16,12 +16,24 @@ paths:
 - 握手限时：普通 TLS 用 `inboundHandshakeTimeout`（10 秒，`withHandshakeDeadline` / `serverTLSHandshake`），REALITY 握手 worker 15 秒。Close 打断的握手不算失败、不上报。ShadowTLS 组合入站把 `inboundHandshakeTimeout` 显式传给 `nativewire/shadowtls`，只限认证判定之前，判定后的诱饵中继不限时（原则见 pdnd-forks 规则文件）。
 - 全部 HTTP 承载（WebSocket、HTTP Upgrade、gRPC、XHTTP、Naive）的 `http.Server` 只经 `newInboundHTTPServer` 构造，靠它的 `ReadHeaderTimeout` 给 TLS 握手与请求头限时；不要直接 `&http.Server{}`（`TestInboundHTTPServerBoundsHandshake`）。
 - 它同时设 `ErrorLog`（`inbound_http_errorlog.go`）：net/http 缺省把「TLS handshake error from 完整IP」逐条写标准库 log、不限流。TLS 由 net/http 握手的入站（Naive）把 ErrorLog 换成带自己 connErr 的那份，握手失败走 OnConnError；panic（`http:` 与 `http2:` 两种前缀）按 Error 记；只丢 `httpPeerNoisePrefixes` 逐条列出的对端噪声，其余按 WARN 记（如 `http: Accept error … too many open files`）；记之前行内 ip:port 截网段。
+- TCP 直连类 TLS 入站（Trojan、VLESS、VMess 的 tcp+tls 与 AnyTLS）每条连接握手用的 Web ALPN 派生配置走 `inbound_tls.go` 的 `inboundWebALPNConfig`：按 base `tls.Config` 的弱指针缓存，base 被回收时 `runtime.AddCleanup` 删条目（入站重建换证书即换新 base）。不要在握手路径上直接 `withInboundWebALPN`（每条连接一次 `Clone`）；交给握手之后不得再改 base 的字段。守卫 `TestInboundWebALPNConfigCacheHit`、`TestInboundWebALPNConfigAllocsOnCacheHit`、`TestInboundWebALPNCacheDroppedAfterBaseGC`。
 
 ## 认证失败的回落
 
 - Trojan / AnyTLS / Naive 认证不过、或不是本协议客户端，一律交给 `probe_fallback*.go`：配了 `fallback` 由回落站点应答，没配是中性 404；不回 407、不带 realm。
 - HTTP 承载的回落里，CONNECT 不走 `httputil.ReverseProxy`：Go 1.26.9 起它对 CONNECT 一律走 ErrorHandler（CVE-2026-56866），回成节点合成的 502 就是指纹。改由 `probeFallbackConnect` 发 `CONNECT /`：只转请求头、不带请求体（探测方在 CONNECT 后面带的字节一个也不进回落站点），专用 Transport 关 keep-alive，回落站点回 2xx 也只转这一个响应、不建隧道。守卫 `probe_resistance_connect_test.go`（h2 与 http/1.1 都带走私字节）。兼容内核 `core/sing/naive_masquerade.go` 同一口径各留一份。
 - 本机 Go 1.27.1 早于这批修复（h1 服务端 CONNECT 后不关连接，会接着服务流水线请求）：跑这组测试用 `GOTOOLCHAIN=go1.26.9`，与 CI 同版本。
+- Shadowsocks（旧版 AEAD）与 VMess 认证失败（含 salt / authID 重放、请求头没读全）不立刻关，返回 `drainAfterReport`，上报之后由 `drainUntilPeerClose`（`replay_filter.go`）读到对端关（排空），关闭发 FIN 而不是带着未读字节的 RST。约束：
+  - 读满 `drainMaxBytes`（16MB）即关；读缓冲 2KB（`TestDrainMemoryPerConn`）。
+  - 全进程同时排空的上限 `drainMaxConcurrentDefault`（4096），名额满时踢最老的一条放新的进来，不拒新：拒新会让占满名额的一方把别的认证失败逼回 RST（`replay_filter_drain.go` 的 `drainRegistry`，守卫 `TestDrainFullEvictsOldestWithFIN`、`TestDrainRegistryCountUnderChurn`）。
+  - 同一来源（IPv4 单个地址、IPv6 /64，`drainSource`）同时排空至多 `drainMaxPerSourceDefault`（16）条，同样踢本来源最老的；同源上限先于全局上限生效（`TestDrainPerSourceCap`、`TestDrainSourceKey`）。
+  - 每条排空总时限在 [5, 10) 分钟里随机（`drainMaxDurationDefault` 加 `drainJitterDefault`），与对端行为无关，到点发 FIN 关（`TestDrainMaxDurationClosesWithFIN`）。
+  - 各协议的排空用例：`TestShadowsocks*DrainsUntilPeerClose`、`TestVMess*DrainsUntilPeerClose`。
+
+## 防重放
+
+- VMess 的 authID 用按时间分代的精确表 `replayFilter`（`replay_filter.go`）：整代丢弃，每代满 `replayFilterMaxPerGen` 提前换代。
+- 旧版 Shadowsocks AEAD 的 TCP salt 用全进程共用的 `saltBloom`（`replay_filter_bloom.go`，误报 1e-6）：每 `ssSaltGenPeriod`（15 分钟）换一代、整代过期，一个 salt 至少记一代、至多两代；代内当前块写满就串一块翻倍的新块（不提前换代，爬坡时不丢已记的 salt），总容量超过两块最大块（约 7.2MB）才从最老的块起丢；整整两代没有写入全部丢掉。只记认证通过的 salt。SS2022 另有时间戳与精确表，不用 Bloom（SIP022）。守卫 `TestSaltBloom*`。
 
 ## 转发的空闲回收
 
@@ -87,6 +99,9 @@ QUIC 栈是 sagernet/quic-go（经 sing-quic 与 `internal/nativewire` 的 hy2 /
   - 其余守卫：`hysteria2_udp_mem_test.go`（空闲、活跃、卡在写回的存活堆）、`hysteria2_udp_recv_test.go`（真 socket 逐字节、IPv4 / IPv6 来源、收尾、不留 goroutine）、`TestHy2DownlinkMediumRateTwoRecvsPerPacket`。`hysteria2_udp_share_test.go`、`hysteria2_udp_warm_test.go` 用上游替身（按 udprecv 的语义实现 `Ready` / `Recv`：先窥视、空就等，`calls` 按系统调用计，窥视也算），一次收包能给多包，批量组、名额与热态在 darwin 上也走得到；真 socket 的用例在 darwin 上一次只收一包（recvfrom），recvmmsg 与批量路径只在 Linux CI 上走到。
   - 下行收包器不分协议族（IPv6 上游同样就绪收、在 Linux 上 recvmmsg 批量收）；默认拦私网时收包器由 `outbound.UDPBatchConn.Receiver()` 给出，只能收，裸 socket 不出 outbound 包；上行批量发送仍只在 IPv4 本地地址时。加密、封装类出站只有 `net.PacketConn`，下行退回阻塞 ReadFrom、常驻 64KB。
 - hy2 / TUIC 每用户在途 UDP 会话上限 `quicUDPSessionsPerUser`（1024，`quic_udp_quota.go`），挡 fd 与 udp_mem 被单个用户耗尽；超出拒新不踢旧，走 OnConnError 的 limit 分类。
+  - Juicity 每个 UDP 目标一条路由（一个上游 socket），按同一上限计；路由没有上行也没有下行 `juicityUDPIdleTimeout`（5 分钟）即回收、归还名额（`juicity_udp.go`，守卫 `TestJuicityUDPRouteIdleReclaim`）。
+  - AnyTLS 的 UoT 一个目标算一个会话，该用户在同一入站上的全部 UoT 流共用名额；超额或发往某个目标失败只丢那个包、经 onDrop 记一条，不关流；目标空闲 `uotUpstreamIdleTimeout`（5 分钟）回收（`uot_bridge.go`）。名额与该目标的 socket、读 goroutine、读缓冲同时释放：只有把目标移出表的一方归还名额，读 goroutine 靠 done 退出，客户端不读下行时也不滞留。守卫 `TestUOTTargetsBoundedByUserUDPQuota`、`TestUOTQuotaSharedAcrossStreamsOfOneUser`、`TestUOTReclaimedTargetsReleaseReaderWhenConsumerStalls`、`TestUOTIdleTargetsReclaimed`。
+- Hysteria2 认证前的约束在 `internal/nativewire/hysteria2/service.go`（fork 改动明细见 pdnd-forks 规则文件）：认证前每条请求流读请求头限时 10 秒（`DefaultPreAuthHeaderTimeout`，超时只拒那条流，不关连接）；未认证且没有在途请求的连接空闲 75 秒关（`DefaultPreAuthIdleTimeout`，取 nginx keepalive_timeout，有请求在途不计时）；认证前在途请求至多 32 条（`preAuthMaxInflight`，多出的 H3_REQUEST_REJECTED）；HEADERS 声明长度超过 32KB 拒（`preAuthMaxHeaderBytes`，H3_EXCESSIVE_LOAD）。没有「握手后 10 秒未认证即关」：那样会误杀伪装站点的正常长连接（`TestPreAuthActiveMasqueradeConnSurvives`）。其余守卫 `preauth_test.go`、`preauth_idle_test.go`。
 - `internal/nativewire` 的 hy2 / TUIC 服务端在 QUIC 连接断开时关掉其上全部 UDP 会话（`closeUDPSessions`）：会话 ctx 来自服务而非连接，不关要等 udpTimeout（5 分钟）才收尾，期间占着上游 socket、在线设备与会话名额（`TestOnlineDevicesWiringUDP` 守着）；置 `udpClosed` 与拷列表在同一把 `udpAccess` 里，之后到的包不再建会话（TUIC quic 中继模式会在单向流 goroutine 里建，`TestNoUDPSessionAfterClose`）。
 - 内核里直接用包级 `slog.*` 的日志（缓冲告警、关停、panic）靠 main 的 `installLogger` 把进程 logger 设成 slog 默认才是 `level=` 格式、受 log_level 约束；标准库 log 包转进来的输出按 WARN 记，log_level=warn 时不被吞（`logger_test.go`）。能拿到注入 logger 的地方优先用注入的。
 - 包装 quic-go 的监听 socket 时必须保留批量与 GSO：任何只实现 `net.PacketConn` 的包装都会让 quic-go 退回逐包 ReadFrom / WriteTo（每 Gbps 多约一核）。测量口径与 harness 见 w9quic 报告（回环、私网目标放开）；生产默认拦私网时走 outbound 的带检查批量接口，GSO 消息同样逐条过 guard。
