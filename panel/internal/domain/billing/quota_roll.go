@@ -31,6 +31,46 @@ const (
 	rollQuotaRetryDelay = 500 * time.Millisecond
 )
 
+// rollQuotaDueWhere、rollCycleDueWhere 是两条滚动语句里「哪些行到期」的条件（别名 qb 配额行、
+// s 订阅），滚动语句与滚动后的「还有没有到期的行」探测（rollQuotaDueRemain）共用同一份，口径
+// 不会两样。
+var rollQuotaDueWhere = `
+		 WHERE qb.tenant_id = $1
+		   AND qb.period IN ('day','month')
+		   AND qb.period_end IS NOT NULL
+		   AND s.status IN ('active','trialing','grace')
+		   AND (s.current_period_end IS NULL OR s.current_period_end > now())
+		   AND (qb.period_end <= now()
+		        OR (qb.period_end > qb.period_start + CASE qb.period
+		                WHEN 'day' THEN interval '1 day 1 hour' ELSE interval '1 month 4 days' END
+		            AND qb.period_start + ` + quotaStepSQL("qb.period") + ` <= now()))`
+
+const rollCycleDueWhere = `
+		 WHERE qb.tenant_id = $1
+		   AND qb.period = 'cycle'
+		   AND qb.period_end IS NOT NULL
+		   AND qb.period_end <= now()
+		   AND s.status IN ('active','trialing','grace')
+		   AND s.current_period_end > now()
+		   AND s.current_period_end > qb.period_end
+		   AND NOT EXISTS (
+		         SELECT 1 FROM quota_balances x
+		          WHERE x.tenant_id = qb.tenant_id AND x.subscription_id = qb.subscription_id
+		            AND x.metric = qb.metric AND x.period = 'cycle'
+		            AND x.period_start > qb.period_start)`
+
+// rollQuotaDueRemain 探测滚动一遍之后是否还有到期的行（不加锁）：被 push 记账锁住而跳过的行
+// 滚完仍然到期，所以探测到了就说明需要补一遍。$1 租户。
+var rollQuotaDueRemain = `
+	SELECT EXISTS (
+	        SELECT 1 FROM quota_balances qb
+	          JOIN subscriptions s ON s.tenant_id = qb.tenant_id AND s.id = qb.subscription_id
+	        ` + rollQuotaDueWhere + `)
+	    OR EXISTS (
+	        SELECT 1 FROM quota_balances qb
+	          JOIN subscriptions s ON s.tenant_id = qb.tenant_id AND s.id = qb.subscription_id
+	        ` + rollCycleDueWhere + `)`
+
 // rollQuotaSQL 滚动一批到期的 day / month 配额，$1 租户、$2 批量上限。
 //
 // 加锁与 push 记账同序：push 按 ORDER BY id FOR UPDATE 锁配额行，这里同样按 id、且
@@ -58,15 +98,7 @@ var rollQuotaSQL = `
 		  FROM quota_balances qb
 		  JOIN subscriptions s
 		    ON s.tenant_id = qb.tenant_id AND s.id = qb.subscription_id
-		 WHERE qb.tenant_id = $1
-		   AND qb.period IN ('day','month')
-		   AND qb.period_end IS NOT NULL
-		   AND s.status IN ('active','trialing','grace')
-		   AND (s.current_period_end IS NULL OR s.current_period_end > now())
-		   AND (qb.period_end <= now()
-		        OR (qb.period_end > qb.period_start + CASE qb.period
-		                WHEN 'day' THEN interval '1 day 1 hour' ELSE interval '1 month 4 days' END
-		            AND qb.period_start + ` + quotaStepSQL("qb.period") + ` <= now()))
+` + rollQuotaDueWhere + `
 		 ORDER BY qb.id
 		 LIMIT $2
 		   FOR UPDATE OF qb SKIP LOCKED
@@ -138,18 +170,7 @@ var rollCycleQuotaSQL = `
 		         WHERE d.plan_version_id = s.plan_version_id
 		           AND d.metric = qb.metric AND d.period = 'cycle'
 		         LIMIT 1) qd ON true
-		 WHERE qb.tenant_id = $1
-		   AND qb.period = 'cycle'
-		   AND qb.period_end IS NOT NULL
-		   AND qb.period_end <= now()
-		   AND s.status IN ('active','trialing','grace')
-		   AND s.current_period_end > now()
-		   AND s.current_period_end > qb.period_end
-		   AND NOT EXISTS (
-		         SELECT 1 FROM quota_balances x
-		          WHERE x.tenant_id = qb.tenant_id AND x.subscription_id = qb.subscription_id
-		            AND x.metric = qb.metric AND x.period = 'cycle'
-		            AND x.period_start > qb.period_start)
+` + rollCycleDueWhere + `
 		 ORDER BY qb.id
 		 LIMIT $2
 		   FOR UPDATE OF qb SKIP LOCKED
@@ -186,44 +207,63 @@ func quotaStepSQL(period string) string {
 // period='cycle' 的跟着订阅走，过期恢复的续费当场重置，提前续费到原到期日才由这里
 // 滚进新周期（rollCycleQuotaSQL）；period='total' 只在过期恢复时清零。
 //
-// 分批、每批一个短事务（rollQuotaSQL）；一批满额就接着下一批。跑完后若有行因被 push
-// 锁着而跳过，隔一小会儿再补一遍，仍锁着的留给下一轮。计费不依赖滚动及时：push 侧
-// 扣的是已开始的那一期（见 nodefabric 的记账），滚动晚几分钟只影响重置时刻。
+// 分批、每批一个短事务（rollQuotaSQL）；一批满额就接着下一批。第一遍之后若还有到期的行（因被
+// push 锁着而跳过，或批数用完），隔一小会儿再补一遍，仍锁着的留给下一轮。计费不依赖滚动及时：
+// push 侧扣的是已开始的那一期（见 nodefabric 的记账），滚动只影响重置时刻；但被跳过的用户在
+// 重置前一直是用尽状态，所以跳过了就补，不等下一轮（10 分钟）。
+//
+// 第二遍按需（w12period）：第一遍之后用一条不加锁的探测（rollQuotaDueRemain，与滚动语句共用
+// 到期条件）看还有没有到期的行，没有——没有到期的行，或者全部滚完——就不做第二遍。静默时的
+// 常态是没有到期的行，原先每轮都把同一次整表筛选原样再跑一遍。
 func (s *Service) RollQuotaPeriods(ctx context.Context, tenantID string) (int, error) {
+	total, err := s.rollQuotaPass(ctx, tenantID)
+	if err != nil {
+		return total, err
+	}
+	var remain bool
+	if err := s.pool.QueryRowScoped(ctx, db.Scope{TenantID: tenantID}, rollQuotaDueRemain,
+		[]any{tenantID}, &remain); err != nil {
+		return total, err
+	}
+	if !remain {
+		return total, nil
+	}
+	select {
+	case <-ctx.Done():
+		return total, ctx.Err()
+	case <-time.After(rollQuotaRetryDelay):
+	}
+	again, err := s.rollQuotaPass(ctx, tenantID)
+	return total + again, err
+}
+
+// rollQuotaPass 滚一遍到期的行：分批，每批一个短事务，直到一批不满或批数用完。
+func (s *Service) rollQuotaPass(ctx context.Context, tenantID string) (int, error) {
 	total := 0
-	for pass := 0; pass < 2; pass++ {
-		if pass > 0 {
-			select {
-			case <-ctx.Done():
-				return total, ctx.Err()
-			case <-time.After(rollQuotaRetryDelay):
-			}
-		}
-		for batch := 0; batch < rollQuotaMaxBatches; batch++ {
-			var n, rolled int
-			err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-				tag, err := tx.Exec(ctx, rollQuotaSQL, tenantID, rollQuotaBatch)
-				if err != nil {
-					return err
-				}
-				n = int(tag.RowsAffected())
-				rolled = n
-				// 提前续费留下的 cycle 行（两条语句锁的都是配额行，同为按 id 的 SKIP LOCKED）
-				tag, err = tx.Exec(ctx, rollCycleQuotaSQL, tenantID, rollQuotaBatch)
-				if err != nil {
-					return err
-				}
-				rolled += int(tag.RowsAffected())
-				n = max(n, int(tag.RowsAffected()))
-				return nil
-			})
+	for batch := 0; batch < rollQuotaMaxBatches; batch++ {
+		var n, rolled int
+		err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+			tag, err := tx.Exec(ctx, rollQuotaSQL, tenantID, rollQuotaBatch)
 			if err != nil {
-				return total, err
+				return err
 			}
-			total += rolled
-			if n < rollQuotaBatch {
-				break
+			n = int(tag.RowsAffected())
+			rolled = n
+			// 提前续费留下的 cycle 行（两条语句锁的都是配额行，同为按 id 的 SKIP LOCKED）
+			tag, err = tx.Exec(ctx, rollCycleQuotaSQL, tenantID, rollQuotaBatch)
+			if err != nil {
+				return err
 			}
+			rolled += int(tag.RowsAffected())
+			n = max(n, int(tag.RowsAffected()))
+			return nil
+		})
+		if err != nil {
+			return total, err
+		}
+		total += rolled
+		if n < rollQuotaBatch {
+			break
 		}
 	}
 	return total, nil

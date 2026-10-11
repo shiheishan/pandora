@@ -429,7 +429,7 @@ func (s *Service) nodeUsers(ctx context.Context, tenantID string, n *ServingNode
 		pinned = func(set nodeUserSet) bool { return !set.strict && set.watch.deliveryCovers(ws) }
 		flight = ws.flight("w")
 	}
-	return c.users.get(ctx, usersCacheKey(tenantID, *n.PoolID), flight, valid, pinned,
+	return c.users.Get(ctx, usersCacheKey(tenantID, *n.PoolID), flight, valid, pinned,
 		func(ctx context.Context) (nodeUserSet, error) {
 			// 戳在查询之前取：名单的快照晚于戳里每一条通知对应的提交
 			loaded := s.watchStamp()

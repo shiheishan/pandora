@@ -26,10 +26,12 @@ type Service struct {
 	pool *db.Pool
 	// dash 是看板读模型的 30 秒缓存（dashboard_cache.go）；nil 时不缓存
 	dash *dashboardCache
+	// userGenWake 是批量生成账号任务的进程内唤醒（user_generation_wake.go）；容量 1。
+	userGenWake chan struct{}
 }
 
 func NewService(pool *db.Pool) *Service {
-	return &Service{pool: pool, dash: newDashboardCache(dashboardCacheTTL, time.Now)}
+	return &Service{pool: pool, dash: newDashboardCache(dashboardCacheTTL, time.Now), userGenWake: make(chan struct{}, 1)}
 }
 
 //==============================================================================

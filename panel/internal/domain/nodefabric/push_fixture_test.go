@@ -1,11 +1,14 @@
 package nodefabric
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/aegispanel/aegis/internal/platform/cache"
 )
 
 // servingNodeWithUsers 给测试里的节点挂一份放行名单：ReportTraffic 只给节点当前名单里的
@@ -13,15 +16,22 @@ import (
 // 寿命一小时），记账测试不必为了名单去搭套餐、池与服务器的整套夹具。
 func servingNodeWithUsers(svc *Service, tenantID, nodeID string, rate float64, uids ...int64) *ServingNode {
 	svc.EnableNodeCaches()
-	svc.caches.users.ttl = time.Hour
+	if svc.caches.users.Len() == 0 {
+		// 名单寿命拉到一小时，其余参数与 newNodeCaches 相同（同一个 svc 上挂多个节点时只换一次）
+		svc.caches.users = cache.New[string](cache.Options[nodeUserSet]{TTL: time.Hour, Max: nodeUsersCacheMax,
+			StaleGrace: nodeUsersStaleGrace,
+			Rank:       func(set nodeUserSet) int64 { return set.epoch },
+			Expiry:     func(set nodeUserSet) time.Time { return set.nextExpiry }})
+	}
 	pool := uuid.NewSHA1(uuid.NameSpaceOID, []byte(tenantID+"/"+nodeID)).String()
 	users := make([]ProxyUser, len(uids))
 	for i, uid := range uids {
 		users[i] = ProxyUser{ID: uid, UUID: fmt.Sprintf("00000000-0000-4000-8000-%012d", uid)}
 	}
-	svc.caches.users.mu.Lock()
-	svc.caches.users.storeLocked(usersCacheKey(tenantID, pool),
-		nodeUserSet{users: users, version: UserSetVersion(users), epoch: math.MaxInt64})
-	svc.caches.users.mu.Unlock()
+	set := nodeUserSet{users: users, version: UserSetVersion(users), epoch: math.MaxInt64}
+	// 先丢掉旧条目：同一个节点再挂一份名单时要换成新的那份
+	svc.caches.users.Drop(usersCacheKey(tenantID, pool))
+	_, _ = svc.caches.users.Get(context.Background(), usersCacheKey(tenantID, pool), "", always[nodeUserSet], nil,
+		func(context.Context) (nodeUserSet, error) { return set, nil })
 	return &ServingNode{ID: nodeID, TrafficRate: rate, PoolID: &pool, epochKnown: true}
 }

@@ -3,7 +3,7 @@
 #   sample-cgroup.sh OUT.csv [间隔秒，缺省 60] [总时长秒，缺省 0 = 直到 Ctrl-C / kill]
 #
 # 怎么读：计数都是单元启动以来的累计值，相邻两行做差。
-#   nr_throttled 在稳态里一格一格往上涨 = 该网关在撞 CPUQuota（随包 public/node 60%、admin 80%）
+#   nr_throttled 在稳态里一格一格往上涨 = 该网关在撞 CPUQuota（随包 node 60%、admin 80%；public 是 CPUWeight，不被节流，计数恒为 0）
 #   mem_max_events / oom_kill 增加 = 撞了 MemoryMax；mem_high_events 只在设了 MemoryHigh 时有意义
 # 网关重启后计数归零，做差时以单元重启为界分段。
 set -euo pipefail

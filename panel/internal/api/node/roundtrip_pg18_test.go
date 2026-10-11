@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -25,6 +24,7 @@ import (
 	"github.com/aegispanel/aegis/internal/domain/nodefabric"
 	platformcrypto "github.com/aegispanel/aegis/internal/platform/crypto"
 	"github.com/aegispanel/aegis/internal/platform/db"
+	"github.com/aegispanel/aegis/tools/routebudget"
 )
 
 // 这些检查是 TestSignedNodeHTTPPG18 的一部分（effective 域的 -run 只列顶层函数名）。
@@ -154,8 +154,8 @@ func checkNodeHotPathPG18(t *testing.T, ctx context.Context, admin *pgxpool.Pool
 			}
 			hub := nodefabric.NewStreamHub()
 			svc.AttachStream(hub)
-			server := httptest.NewServer(NewRouter(Deps{Pool: app, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
-				Node: svc, NodeStream: hub}))
+			access := &routebudget.AccessLog{}
+			server := httptest.NewServer(NewRouter(Deps{Pool: app, Log: access.Logger(), Node: svc, NodeStream: hub}))
 
 			uni := func(path string) string {
 				return fmt.Sprintf("%s/api/v1/server/UniProxy/%s?node_id=%s&node_type=shadowsocks", server.URL, path, nodeID)
@@ -211,19 +211,32 @@ func checkNodeHotPathPG18(t *testing.T, ctx context.Context, admin *pgxpool.Pool
 			var weighted float64
 			for _, ep := range endpoints {
 				// 前两次把各连接上的语句准备好（稳态走语句缓存），再量三次取平均
+				warm := access.Mark()
 				for i := 0; i < 2; i++ {
 					if code := ep.do(); code >= 300 && code != http.StatusNotModified {
 						t.Fatalf("%s %s warm-up = %d", mode.name, ep.name, code)
 					}
 				}
+				access.Range(t, warm, 2) // 预热请求的访问日志行到齐，再开始对账
 				const runs = 3
-				before := counter.syncs.Load()
+				before, mark := counter.syncs.Load(), warm+2
 				for i := 0; i < runs; i++ {
 					if code := ep.do(); code >= 300 && code != http.StatusNotModified {
 						t.Fatalf("%s %s = %d", mode.name, ep.name, code)
 					}
 				}
-				per := float64(counter.syncs.Load()-before) / runs
+				// 往返记账器（pgx 追踪器，访问日志的 db_rt）与线上同步点逐端点对账：
+				// 单连接、语句已热、没有后台连接，两边必须一致
+				tracked := 0
+				for _, e := range access.Range(t, mark, runs) {
+					tracked += e.DBRT
+				}
+				wire := counter.syncs.Load() - before
+				if int64(tracked) != wire {
+					t.Errorf("[%s] %s: access log db_rt sums to %d over %d requests, the wire saw %d sync points",
+						mode.name, ep.name, tracked, runs, wire)
+				}
+				per := float64(wire) / runs
 				weighted += per * ep.perMin
 				t.Logf("[%s] %s：每请求 %.1f 次库往返（每节点每分钟 %.0f 次请求）", mode.name, ep.name, per, ep.perMin)
 			}

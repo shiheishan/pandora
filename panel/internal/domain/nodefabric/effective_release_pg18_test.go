@@ -219,6 +219,10 @@ func TestEffectiveReleasePG18(t *testing.T) {
 		testNonceReplayAndPurgePG18(t, ctx, admin, svc, tenantA, nodeA, tenantB, nodeB)
 	})
 
+	t.Run("nonce_valkey_outage_recovery_keeps_replays_out", func(t *testing.T) {
+		testNonceOutageRecoveryPG18(t, ctx, admin, app)
+	})
+
 	t.Run("unchanged_effective_release_skips_lock_and_write", func(t *testing.T) {
 		testEffectiveUnchangedPG18(t, ctx, admin, svc)
 	})

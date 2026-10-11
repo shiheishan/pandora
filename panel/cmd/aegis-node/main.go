@@ -25,6 +25,7 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/logging"
 	"github.com/aegispanel/aegis/internal/platform/profiling"
 	"github.com/aegispanel/aegis/internal/platform/realtime"
+	"github.com/aegispanel/aegis/internal/platform/roundtrip"
 	"github.com/aegispanel/aegis/internal/platform/server"
 )
 
@@ -51,7 +52,9 @@ func run() error {
 	stopOnEarlySignal := context.AfterFunc(sigCtx, stop)
 	closeResourcesOnReturn := true
 
-	pool, err := db.OpenWithOptions(ctx, cfg.DatabaseURL, db.Options{
+	// 连接串经 DatabaseURLFor 取：设了 AEGIS_NODE_DB_PLAN_CACHE_MODE 就带上 plan_cache_mode，
+	// 缺省原样返回 DatabaseURL。nonce 回落、心跳、上报都走这一个池。
+	pool, err := db.OpenWithOptions(ctx, cfg.DatabaseURLFor(config.DomainNode), db.Options{
 		MaxConns: cfg.DBMaxConns[config.DomainNode], MinConns: cfg.DBMinConns[config.DomainNode], StatsLog: log,
 	})
 	if err != nil {
@@ -68,6 +71,8 @@ func run() error {
 		return fmt.Errorf("parse Redis URL: %w", err)
 	}
 	rdb := redis.NewClient(redisOpt)
+	// 往返记账：请求里的每条 Valkey 命令记进访问日志的 kv_rt（platform/roundtrip）
+	rdb.AddHook(roundtrip.ValkeyHook{})
 	defer rdb.Close()
 	// Valkey 不是节点网关的硬依赖：节点的 REST 路径不用它（nonce 认领出错回落 PG），
 	// 事件流的跨进程信号断了也只是退回轮询。启动时连不上只告警、照常起服务，
@@ -103,9 +108,15 @@ func run() error {
 	)
 
 	nodeService := nodefabric.NewService(pool, signer)
-	// 签名请求的 nonce 先在 Valkey 认领（SET NX PX），出错回落 PG。PG 里还有未过期的
-	// nonce（上次运行回落过）时，保留期内两边都认领，重放照样被拦下。
-	nodeService.SetNonceStore(valkeyNonceStore{rdb: rdb}, log)
+	// 签名请求的 nonce 先在 Valkey 认领（SET NX PX），出错回落 PG，Valkey 恢复后立即回到
+	// Valkey。PG 里还有上次运行留下的未过期 nonce 时，签名时间戳不晚于其中最大值的请求
+	// 在 PG 补查，重放照样被拦下（nodefabric/nonce_guard.go 的状态机）。
+	// nonce 认领用单独的客户端：超时 250ms 且按 ctx 期限收手（nonceRedisOptions）。
+	nonceRDB := redis.NewClient(nonceRedisOptions(redisOpt))
+	// nonce 认领同样记进访问日志的 kv_rt，与共用客户端挂同一个钩子（每个客户端只挂一次）
+	nonceRDB.AddHook(roundtrip.ValkeyHook{})
+	defer nonceRDB.Close()
+	nodeService.SetNonceStore(valkeyNonceStore{rdb: nonceRDB}, log)
 	primeCtx, cancelPrime := context.WithTimeout(ctx, 5*time.Second)
 	nodeService.PrimeNonceFallback(primeCtx, middleware.DefaultTenantID)
 	cancelPrime()
@@ -150,7 +161,8 @@ func run() error {
 	var workers sync.WaitGroup
 	workers.Add(3)
 	// 签名请求 nonce 的过期清理。原先每个请求顺手删一批，并发请求争同一批行；
-	// 防重放只靠主键冲突，清理晚几分钟不影响判定，只影响表的大小。
+	// 防重放只靠主键冲突，清理晚几分钟不影响判定，只影响表的大小。表里只有 Valkey
+	// 不可用那几秒的回落行（和补查行），平时是空表上的一次索引查找。
 	go func() {
 		defer workers.Done()
 		runNoncePurge(ctx, nodeService, log)
@@ -202,6 +214,25 @@ func run() error {
 			"error", drainErr.Error())
 	}
 	return errors.Join(serverErr, drainErr)
+}
+
+// nonceRedisOptions 从共用的 Valkey 配置派生 nonce 认领专用客户端的配置。
+//
+// go-redis 缺省 ContextTimeoutEnabled=false：socket 期限按 ReadTimeout（3 秒）算、不看 ctx，
+// 守卫给的 250ms 期限形同虚设，Valkey 连得上却不应答时每个签名请求卡 3 秒（对抗审查
+// w12nonce #2）。这里单独建一个客户端，而不是在共用客户端上打开 ContextTimeoutEnabled：
+// 共用客户端还承载事件流的 PSubscribe 长读与 Publish（platform/realtime，三个网关共用），
+// 改它的超时语义要连带核对那几条路径；nonce 是单条 SET NX，独立一个小连接池最好推断。
+// 读、写、拨号、等连接池都限在 250ms，并按 ctx 期限收手；go-redis 对超时的重试在 ctx
+// 到期后的退避处停下，所以一次认领最多约 250ms。
+func nonceRedisOptions(base *redis.Options) *redis.Options {
+	opt := *base
+	opt.ContextTimeoutEnabled = true
+	opt.DialTimeout = nodefabric.NonceStoreTimeout
+	opt.ReadTimeout = nodefabric.NonceStoreTimeout
+	opt.WriteTimeout = nodefabric.NonceStoreTimeout
+	opt.PoolTimeout = nodefabric.NonceStoreTimeout
+	return &opt
 }
 
 // valkeyNonceStore 把签名请求的 nonce 认领交给 Valkey：SET key 1 NX PX ttl。

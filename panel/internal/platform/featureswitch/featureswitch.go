@@ -1,7 +1,7 @@
 // Package featureswitch 读降级开关（feature_switches）的一行，供中间件的开关门使用。
 //
 // SQL 放在 platform：中间件不写 SQL、也不 import domain（开关的写入方是 adminops）。
-// 进程内缓存与失效仍在 middleware/switch_cache.go。
+// 进程内缓存与失效在 middleware/switches.go（platform/cache 的 Cache）。
 package featureswitch
 
 import (

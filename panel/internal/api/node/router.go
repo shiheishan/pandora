@@ -50,6 +50,9 @@ func NewRouter(d Deps) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)
+	// 访问日志与往返记账器（db_rt/kv_rt）：紧跟 RequestID，签名校验与 nonce 认领的往返都算进来。
+	// 节点的例行请求每秒几百个，成功且不慢的降到 debug（分布看每分钟的 access_summary）
+	r.Use(middleware.AccessLog(d.Log, middleware.QuietSuccess(20*time.Millisecond)))
 	r.Use(middleware.ClientInfo)
 	r.Use(middleware.Recovery(d.Log))
 	r.Use(middleware.SecurityHeaders)

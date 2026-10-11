@@ -98,7 +98,7 @@ LOG_DIR="$(mktemp -d)"
 # 结果判定），所以同包的域必须把过滤写精确。过滤是最后一个字段，
 # 里面的 | 会被 read 原样留给它。
 DOMAINS=(
-  "effective|pandora_effective_pg18|./internal/domain/nodefabric ./internal/api/node|||||^(TestEffectiveReleasePG18|TestSignedNodeHTTPPG18)$"
+  "effective|pandora_effective_pg18|./internal/domain/nodefabric ./internal/api/node|||||^(TestEffectiveReleasePG18|TestSignedNodeHTTPPG18|TestNodeRouteBudgetPG18)$"
   "enrollment|pandora_enrollment_pg18|./internal/domain/nodefabric|||||^(TestNodeEnrollmentPG18|TestIssueServerTokenPG18)$"
   # 服务器级绑定 P1（00144，w9bind）：服务器身份、接入 S1、绑定令牌、吊销与 RLS；域服务与网关各一个用例，同一个库
   "server_binding|pandora_server_binding_gate|./internal/domain/nodefabric ./internal/api/node|run_id|pandora_server_binding_test_marker|pandora-server-binding-pg18||^(TestServerBindingPG18|TestServerEnrollmentHTTPPG18)$"
@@ -149,6 +149,9 @@ DOMAINS=(
   # 节点证书集中签发（00147 / 00148，w9cert）：先跑 configure-app-role.sql，以 aegis_app 证明证书版本没有
   # UPDATE 授权；worker 接进程内 pebble 与模拟 DNS 提供方跑签发、续期、限流与凭据失效。两个包同库，过滤写精确。
   "certs|pandora_certs_gate|./internal/domain/certs ./internal/api/admin|run_id|pandora_certs_test_marker|pandora-certs-pg18|app_role|^(TestCertsPG18|TestCertsReviewPG18|TestCertificatesAdminPG18)$"
+  # 缓存纪元（00154–00156，w12cache）：各输入表的写在提交后推进纪元并通知，platform/cache 的 Watch 收到的延迟；
+  # 不该推进的写不推进；监听停掉后缓存退回读纪元。先跑 configure-app-role.sql，以 aegis_app 读序列与 LISTEN。
+  "cache_epoch|pandora_cache_epoch_gate|./internal/platform/cache|run_id|pandora_cache_epoch_test_marker|pandora-cache-epoch-pg18|app_role|^TestCacheEpochPG18$"
 )
 
 selected() {

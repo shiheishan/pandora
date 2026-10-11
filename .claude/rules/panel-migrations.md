@@ -94,6 +94,8 @@ paths:
 - 要在提交时才推进的信号，用约束触发器 `DEFERRABLE INITIALLY DEFERRED FOR EACH ROW`：信号与数据可见之间只隔提交本身
   - 高频表加 `WHEN`，只在「能不能用」翻转时触发，每次扣量、每次心跳都不推进（00101 的配额、流量包）
   - 新增会影响节点下发结果的表或列，要给 00101 那组触发器补同类的一条，否则 aegis-node 的缓存只能靠几秒的 TTL 兜底
+  - 进程内缓存的其它纪元（00155、00156，`platform/cache` 的 `epoch.go` 列着种类）：节点目录（订阅里能看到的节点与连接参数）、门户目录（套餐、版本、价格、配额定义、流量包）、外观（主题、插槽）、站点设置（租户行、系统设置、降级开关）。都用 `app.bump_cache_epoch('<种类>')` 的延迟约束触发器：提交时推进 `<种类>_epoch` 并 `pg_notify('aegis_cache_epoch', '<种类>')`。例外是配置应用回执（追加写、旧合约回报逐条追加不去重）：`app.bump_node_catalog_on_application()` 只在节点最近一次回执「是否失败」翻转时推进，失败类阶段与 `nodefabric.RuntimeFailingSQL` 同一份（守卫 `TestNodeCatalogApplicationPhasesMatchRuntimeFailing`），读方口径变了两边一起改。这些表加了会影响缓存内容的列或新输入表，要补同类触发器，并加进 `TestCacheEpochPG18` 的触发器清单；节点目录的 nodes 触发器与 00153 同一份列清单（另比已应用的发布物、首次心跳与恢复心跳），PG18 守卫 `checkNodeCatalogColumns` 对照 information_schema
+  - 新种类：建序列 `<种类>_epoch` 并 `GRANT SELECT` 给 aegis_app，Go 侧加进 `cache.CacheKinds()`
 - 只给某一张表改通用变更通知，照 00076 / 00022 的写法：
   - 不动 `app.notify_change()`，也不动别的表，只 DROP、重建这张表上的 `zz_notify_<表>`；
   - 文件头写清这张表为什么例外；

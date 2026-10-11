@@ -7,6 +7,21 @@
 #------------------------------------------------------------------------------
 # 迁移
 #------------------------------------------------------------------------------
+# 在干净的环境里跑一个命令：只带 PATH、HOME 与参数里开头连续给出的 NAME=VALUE，之后是命令。
+# 变量经本进程内的函数参数传，在子 shell 里清掉全部继承的环境后 export 再 exec，不经 env(1)：
+# `env -i NAME=VALUE cmd` 会把 NAME=VALUE 写进 env 自己的命令行参数，迁移 DSN 里的超级用户或
+# 迁移角色口令就能被同机其他账号用 ps 看到；这里口令只存在于子进程的环境（/proc/<pid>/environ，
+# 仅属主与 root 可读），不进任何 argv。
+pandora_scrubbed_run() (
+  local p="$PATH" h="${HOME:-/root}" name kv vars=()
+  while [ "$#" -gt 0 ] && [[ "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; do vars+=("$1"); shift; done
+  while IFS= read -r name; do unset "$name" 2>/dev/null || true; done < <(compgen -e)
+  while read -r _ _ name; do unset -f "$name" 2>/dev/null || true; done < <(declare -Fx)
+  export PATH="$p" HOME="$h"
+  for kv in ${vars[@]+"${vars[@]}"}; do export "${kv%%=*}=${kv#*=}"; done
+  exec "$@"
+)
+
 # 升级时一次性库预检（check-migrations.sh：整库克隆 + 在克隆上演练待执行迁移）耗时随库
 # 大小线性增长（5k-r4 实测 95 MB 的库约 15 秒，占停服的 2/3）。所以升级分三段：
 #   1. 停服之前跑完整预检，按停写口径在克隆上演练（PANDORA_PRECHECK_REHEARSE_STOPPED_WRITER
@@ -29,7 +44,7 @@
 pandora_run_migrations() {
   local mode="$1" fresh="$2" deploy="$3" env_file="$4" migrations="$5" goose="$6"
   local services=(${PANDORA_SERVICES:-aegis-public aegis-admin aegis-node})
-  local base_env=(env -i "PATH=$PATH" "HOME=${HOME:-/root}" "AEGIS_ENV_FILE=$env_file"
+  local base_env=(pandora_scrubbed_run "AEGIS_ENV_FILE=$env_file"
     "AEGIS_MIGRATIONS_DIR=$migrations" "GOOSE_BIN=$goose")
   # 调用方显式给了迁移 DSN 就带上（install-native.sh 用 postgres 超级用户）；.env 里有的话以 .env 为准
   [ -z "${AEGIS_MIGRATION_DATABASE_URL:-}" ] || base_env+=("AEGIS_MIGRATION_DATABASE_URL=$AEGIS_MIGRATION_DATABASE_URL")

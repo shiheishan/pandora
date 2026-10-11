@@ -171,6 +171,8 @@ func TestTrafficChargePG18(t *testing.T) {
 	droppedIndexScenario(t, ctx, admin)
 	billedBytesScenario(t, ctx, admin, app)
 	trafficDailyScenario(t, ctx, admin, app)
+	// w12period：按天汇总改增量，对照原来的全量重扫逐行一致（traffic_daily_incremental_pg18_test.go）
+	trafficDailyIncrementalScenario(t, ctx, admin, app)
 	// w8node：封禁即断、解封恢复，下发变化 1–2 秒内推给节点（user_status_delivery_pg18_test.go）。
 	// 自带时限：要等几轮真实的推送节拍
 	t.Run("node_delivery_status", func(t *testing.T) {

@@ -145,6 +145,9 @@ func Load() (*Config, error) {
 	if c.Runtime, err = loadRuntime(); err != nil {
 		return nil, err
 	}
+	if err = checkPlanCacheModes(c.DatabaseURL, c.DBPlanCacheMode); err != nil {
+		return nil, err
+	}
 	if c.NodePorts, err = loadNodePorts(c.PublicBaseURL); err != nil {
 		return nil, err
 	}

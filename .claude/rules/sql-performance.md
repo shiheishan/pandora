@@ -21,5 +21,7 @@ paths:
 - **只增不删的表**：在线记录、探针点、汇总表要有保留期任务（分批删、每批有上限）；追加写表（`app.make_append_only`）不能为清理削弱保护，走带边界的 SECURITY DEFINER 函数（00100 `app.purge_node_metrics`）
 - **按列查却没索引**：新增按某列查找的路径先对照迁移里的 CREATE INDEX（曾经按 token_prefix 查订阅凭据而索引建在 token_hash 上）
 - **一个请求开多个事务**：每个事务至少 BEGIN、设租户、COMMIT 三次往返（`InTx` 已把 BEGIN 与设租户合成一次）。热路径能一条语句取齐就用 `QueryRowScoped`
+- **只读也开事务**：InTx 的闭包里只有 SELECT（不带 FOR UPDATE/SHARE、没有写）白付 BEGIN 与 COMMIT。读已提交下每条语句本来就各取快照，事务不带来一致性；改用 `QueryRowScoped` / `QueryScoped` / `BatchScoped`（一次往返，互不依赖的几条排进一个批次）。守卫 `panel/tools/archguard/readonly_tx_test.go` 的 `TestNoReadOnlyInTx`，现有违例按「包:声明 → 个数」登记在 `readOnlyTxExemptions`，改好一个就把数减一
+- **往返预算**：门户与节点热路由的稳态往返数钉在 `panel/tools/routebudget/routes.txt`，PG18 走真实路由逐条量（见 `rules/tools-routebudget.md`）。改了热路由的 SQL 或事务结构，预算会变：少了照测试给出的行改小，多了要么优化回来、要么说明理由再改表
 - **长事务里算 Argon2**：19 MiB、几十毫秒一次，持着连接和行锁去算会拖垮连接池。先经全局名额算好再开事务
 - **语句超时**：aegis_app 按库设了 statement_timeout=15s。合理需要更长的后台任务在自己的事务里 `SET LOCAL statement_timeout`，不要放宽全局值

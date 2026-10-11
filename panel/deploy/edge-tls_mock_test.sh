@@ -237,7 +237,7 @@ ln -s "$T/nginx/sites-available/default" "$T/nginx/sites-enabled/default"
 bash "$EDGE" ensure "$T/ip.env" >/dev/null
 edge apply "$T/ip.env" || fail "apply failed: $(cat "$T/out")"
 [ ! -e "$T/nginx/sites-enabled/default" ] && [ -f "$T/nginx/sites-available/default" ] || fail 'stock default site handling'
-grep -Eq '^[[:space:]]*worker_connections 8192;' "$T/nginx/nginx.conf" || fail 'nginx.conf not tuned'
+grep -Eq '^[[:space:]]*worker_connections 16384;' "$T/nginx/nginx.conf" && grep -Eq '^worker_processes 1;' "$T/nginx/nginx.conf" || fail 'nginx.conf not tuned'
 printf 'server { listen 80 default_server; }\n' >"$T/nginx/sites-available/mine"
 ln -s "$T/nginx/sites-available/mine" "$T/nginx/sites-enabled/default"
 echo '# previous good config' >"$T/nginx/conf.d/aegis.conf"

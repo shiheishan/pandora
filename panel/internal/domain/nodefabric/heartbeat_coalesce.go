@@ -24,7 +24,8 @@ import (
 //   - 材料字段没变、上一次收下的心跳不到 hbCoalesceMaxGap、纪元监听健康（回包里的状态与
 //     期望版本从节点配置视图出，见 config_delivery_view.go）时，只记进内存，回包照旧；
 //     后台协程每 hbFlushInterval 把攒下的心跳一批写进库（一条 UPDATE nodes、一条
-//     INSERT node_metrics、一条 UPDATE servers，同一个异步提交的批）。
+//     INSERT node_metrics、一条 UPDATE servers，同一个异步提交的批；服务器那条只带可能有同 id
+//     服务器行的节点，整批都没有就不发，见 hbServerKnowledge）。
 //   - 其余情况（第一次见到、任何材料字段变了、断了一阵又回来、监听不健康）照旧立即写。
 //
 // 口径与最坏延迟：
@@ -69,6 +70,9 @@ const (
 	hbFlushTimeout = 10 * time.Second
 	// hbMaterialRefresh：离上一次立即写超过这么久，即使材料没变也立即写一次（自愈兜底）。
 	hbMaterialRefresh = 10 * time.Minute
+	// hbServerKnowledgeTTL：「这个节点有没有同 id 的服务器行」的判断多久后重新核对一次，与
+	// hbMaterialRefresh 同一个自愈量级。
+	hbServerKnowledgeTTL = hbMaterialRefresh
 )
 
 // hbMaterial 是心跳里除探针值之外的全部上报：任何一项变了都立即写。
@@ -88,6 +92,24 @@ type hbPending struct {
 	metricsAt time.Time
 }
 
+// hbServerKnowledge 记着「库里有没有 id 等于这个节点 id 的服务器行」（两阶段接入与老的引导
+// 路径建的服务器 id 就是控制节点 id；后台手建的服务器 id 与节点不同，查不到）。没有这样一行的
+// 节点，批量写里的服务器那条 UPDATE 永远是 0 行：静默压测里 1000 个模拟节点每 15 秒空跑一次。
+//
+// 只在批量写里学（跟着探针语句在同一次往返里问一次），忘掉的时机见 hbCoalescer.written：
+// 第一次见到、身份换了、材料字段变了（引导和接入建服务器行时都会换身份、改版本与资产，
+// 之后的第一拍一定立即写），以及隔 hbServerKnowledgeTTL 重新核对。
+type hbServerKnowledge struct {
+	known bool
+	has   bool
+	at    time.Time // 学到的时刻
+}
+
+// fresh 报告这条判断此刻还能用。
+func (k hbServerKnowledge) fresh(now time.Time) bool {
+	return k.known && now.Sub(k.at) < hbServerKnowledgeTTL
+}
+
 type hbNodeState struct {
 	material   hbMaterial
 	identity   []byte    // 那次立即写用的身份公钥（无签名写为空）
@@ -95,11 +117,16 @@ type hbNodeState struct {
 	acceptedAt time.Time // 最近一次收下的心跳（立即写或进缓冲）
 	metricsAt  time.Time // 最近一次写进（或排进）探针点的心跳时刻
 	pending    *hbPending
+	server     hbServerKnowledge
+	serverGen  uint64 // server 每被清空（或节点记录重建）一次换一个新值：批量写学到结果时据此丢掉过期的判断
 }
 
 type heartbeatCoalescer struct {
 	mu    sync.Mutex
 	nodes map[string]*hbNodeState // 键：租户 \x00 节点
+	// serverStatements、serverProbes 是批量写里服务器 UPDATE 与探测各发了几条（测试用）
+	serverStatements, serverProbes int
+	gen                            uint64 // serverGen 的发号器
 }
 
 func newHeartbeatCoalescer() *heartbeatCoalescer {
@@ -141,6 +168,15 @@ func (c *heartbeatCoalescer) written(key string, in HeartbeatInput, at time.Time
 	if st == nil {
 		st = &hbNodeState{}
 		c.nodes[key] = st
+		c.gen++
+		st.serverGen = c.gen
+	}
+	// 第一次见到、换了身份或材料字段变了：服务器行可能刚建好（引导、接入会同时换身份、改版本与
+	// 资产），之前的判断作废；例行的自愈写（同样的材料与身份）不动它
+	if st.material != materialOf(in) || !bytes.Equal(st.identity, identity) {
+		st.server = hbServerKnowledge{}
+		c.gen++
+		st.serverGen = c.gen
 	}
 	st.material, st.acceptedAt, st.writtenAt, st.pending = materialOf(in), at, at, nil
 	st.identity = append([]byte(nil), identity...)
@@ -160,6 +196,8 @@ type hbFlushRow struct {
 	tenantID, nodeID string
 	key              string
 	p                hbPending
+	server           hbServerKnowledge // 取走时的判断
+	serverGen        uint64
 }
 
 // take 取走全部待写的心跳，顺手删掉久不来的节点。
@@ -170,7 +208,8 @@ func (c *heartbeatCoalescer) take(now time.Time) []hbFlushRow {
 	for key, st := range c.nodes {
 		if st.pending != nil {
 			tenantID, nodeID := splitHBKey(key)
-			rows = append(rows, hbFlushRow{tenantID: tenantID, nodeID: nodeID, key: key, p: *st.pending})
+			rows = append(rows, hbFlushRow{tenantID: tenantID, nodeID: nodeID, key: key, p: *st.pending,
+				server: st.server, serverGen: st.serverGen})
 			st.pending = nil
 			continue
 		}
@@ -193,6 +232,30 @@ func (c *heartbeatCoalescer) putBack(rows []hbFlushRow, now time.Time) {
 		if st := c.nodes[r.key]; st != nil && st.pending == nil && !st.acceptedAt.After(r.p.at) {
 			p := r.p
 			st.pending = &p
+		}
+	}
+}
+
+// countServerWork 记下一次批量写里发了服务器 UPDATE 与探测（测试用）。
+func (c *heartbeatCoalescer) countServerWork(statement, probe bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if statement {
+		c.serverStatements++
+	}
+	if probe {
+		c.serverProbes++
+	}
+}
+
+// learnServers 记下批量写里核对出的结果：has 里的节点有同 id 的服务器行，其余被核对的没有。
+// 取走之后判断被清空过（serverGen 变了）的节点不记，下一拍重新核对。
+func (c *heartbeatCoalescer) learnServers(probed []hbFlushRow, has map[string]bool, now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, r := range probed {
+		if st := c.nodes[r.key]; st != nil && st.serverGen == r.serverGen {
+			st.server = hbServerKnowledge{known: true, has: has[r.nodeID], at: now}
 		}
 	}
 }
@@ -314,7 +377,7 @@ func (s *Service) flushHeartbeats(ctx context.Context, c *heartbeatCoalescer, lo
 		byTenant[r.tenantID] = append(byTenant[r.tenantID], r)
 	}
 	for tenantID, batch := range byTenant {
-		skipped, err := s.writeHeartbeatBatch(ctx, tenantID, batch)
+		skipped, err := s.writeHeartbeatBatch(ctx, c, tenantID, batch)
 		if err != nil {
 			c.putBack(batch, time.Now())
 			log.Warn("心跳批量写失败，下一轮重试", "tenant_id", tenantID, "rows", len(batch), "error", err.Error())
@@ -330,7 +393,7 @@ func (s *Service) flushHeartbeats(ctx context.Context, c *heartbeatCoalescer, lo
 // 加锁顺序：节点行、服务器行都按 id 排好序，先 FOR NO KEY UPDATE SKIP LOCKED 锁住再改（与普通
 // UPDATE 同一档行锁，不挡外键检查的 KEY SHARE）。别的事务正持有的行直接跳过、不等，所以批量写
 // 永远不会排在后台的租户级多行写（发布分流、发布配置）后面成环；跳过的节点返回给调用方放回缓冲。
-func (s *Service) writeHeartbeatBatch(ctx context.Context, tenantID string, rows []hbFlushRow) (skipped []hbFlushRow, err error) {
+func (s *Service) writeHeartbeatBatch(ctx context.Context, c *heartbeatCoalescer, tenantID string, rows []hbFlushRow) (skipped []hbFlushRow, err error) {
 	sort.Slice(rows, func(i, j int) bool { return rows[i].nodeID < rows[j].nodeID })
 	ids := make([]string, len(rows))
 	ats := make([]time.Time, len(rows))
@@ -394,25 +457,69 @@ func (s *Service) writeHeartbeatBatch(ctx context.Context, tenantID string, rows
 		tenantID, ids, ats, keys, m.ids, m.ats, m.cpu, m.memU, m.memT, m.diskU, m.diskT,
 		m.l1, m.l5, m.l15, m.rx, m.tx, m.tc, m.up).QueryRow(func(row pgx.Row) error { return row.Scan(&locked) })
 	// 服务器行（两阶段接入的服务器 id = 控制节点 id）：与立即写同一个刷新间隔；锁不到的这一轮
-	// 不刷新（下一次心跳再说），同样不等
-	b.Queue(`
-		WITH v AS (
-			SELECT * FROM unnest($2::uuid[], $3::timestamptz[], $4::bytea[]) AS v(id, beat_at, k)
-		), locked AS (
-			SELECT s.id FROM servers s JOIN v ON v.id = s.id
-			 WHERE s.tenant_id = $1 AND s.deleted_at IS NULL
-			   AND (s.last_heartbeat_at IS NULL
-			        OR s.last_heartbeat_at < v.beat_at - interval '`+serverHeartbeatRefresh+`')
-			 ORDER BY s.id
-			   FOR NO KEY UPDATE OF s SKIP LOCKED
-		)
-		UPDATE servers s SET last_heartbeat_at = v.beat_at
-		  FROM locked l JOIN v ON v.id = l.id
-		 WHERE s.tenant_id = $1 AND s.id = l.id`+gate,
-		tenantID, ids, ats, keys)
+	// 不刷新（下一次心跳再说），同样不等。
+	//
+	// 空集短路：没有同 id 服务器行的节点（后台手建的服务器 id 与节点不同；压测的模拟节点根本
+	// 没有服务器）这条 UPDATE 永远是 0 行，却每 15 秒按整批节点探一遍主键。记着每个节点「有没有」
+	// （hbServerKnowledge），核对过没有的不再带进来，整批都没有就不发这条语句；没核对过或
+	// 过了 hbServerKnowledgeTTL 的节点，照旧带进 UPDATE，并在同一次往返里用一条主键探测核对，
+	// 下一拍起就按结果走。服务器行刚建好的那一拍必然是立即写（身份和材料都变了，written 会清掉
+	// 判断），库里的心跳时刻不会因此晚于离线判定。
+	now := time.Now()
+	var srvIDs []string
+	var srvAts []time.Time
+	var srvKeys [][]byte
+	var probe []hbFlushRow
+	for i, r := range rows {
+		fresh := r.server.fresh(now)
+		if fresh && !r.server.has {
+			continue
+		}
+		srvIDs, srvAts, srvKeys = append(srvIDs, ids[i]), append(srvAts, ats[i]), append(srvKeys, keys[i])
+		if !fresh {
+			probe = append(probe, r)
+		}
+	}
+	hasServer := make(map[string]bool, len(probe))
+	if len(probe) > 0 {
+		probeIDs := make([]string, len(probe))
+		for i, r := range probe {
+			probeIDs[i] = r.nodeID
+		}
+		b.Queue(`SELECT id::text FROM servers WHERE tenant_id = $1 AND deleted_at IS NULL AND id = ANY($2::uuid[])`,
+			tenantID, probeIDs).Query(func(rs pgx.Rows) error {
+			for rs.Next() {
+				var id string
+				if err := rs.Scan(&id); err != nil {
+					return err
+				}
+				hasServer[id] = true
+			}
+			return rs.Err()
+		})
+	}
+	if len(srvIDs) > 0 {
+		b.Queue(`
+			WITH v AS (
+				SELECT * FROM unnest($2::uuid[], $3::timestamptz[], $4::bytea[]) AS v(id, beat_at, k)
+			), locked AS (
+				SELECT s.id FROM servers s JOIN v ON v.id = s.id
+				 WHERE s.tenant_id = $1 AND s.deleted_at IS NULL
+				   AND (s.last_heartbeat_at IS NULL
+				        OR s.last_heartbeat_at < v.beat_at - interval '`+serverHeartbeatRefresh+`')
+				 ORDER BY s.id
+				   FOR NO KEY UPDATE OF s SKIP LOCKED
+			)
+			UPDATE servers s SET last_heartbeat_at = v.beat_at
+			  FROM locked l JOIN v ON v.id = l.id
+			 WHERE s.tenant_id = $1 AND s.id = l.id`+gate,
+			tenantID, srvIDs, srvAts, srvKeys)
+	}
 	if err := s.pool.BatchScoped(ctx, db.Scope{TenantID: tenantID}, db.BatchOptions{AsyncCommit: true}, b); err != nil {
 		return nil, err
 	}
+	c.countServerWork(len(srvIDs) > 0, len(probe) > 0)
+	c.learnServers(probe, hasServer, now)
 	got := make(map[string]bool, len(locked))
 	for _, id := range locked {
 		got[id] = true

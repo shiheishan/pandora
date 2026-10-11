@@ -14,9 +14,10 @@ import (
 )
 
 // 服务器签名请求的防重放，沿用节点链路那套 nonceGuard（nonce_guard.go）：进程内近期集
-// 先「查并占」，主存储是 Valkey（SET NX PX），Valkey 出错或 PG 活跃窗口内再在 PG 认领。
-// 键空间按服务器隔离（合约 §2.4 第 5 步）：近期集与 Valkey 的键都带 server: 段，
-// PG 回落落在 server_request_nonces，和节点 nonce 互不相撞。
+// 先「查并占」，主存储是 Valkey（SET NX PX），Valkey 不可用时回落 PG，签名时间戳落在
+// 补查界内时 Valkey 认领成功后再在 PG 补查。键空间按服务器隔离（合约 §2.4 第 5 步）：
+// 近期集的键带服务器种类字节、Valkey 的键带 server 前缀，PG 回落落在 server_request_nonces，
+// 和节点 nonce 互不相撞。
 
 // serverNonceKeyPrefix 是 Valkey 里服务器 nonce 键的前缀，与节点的 aegis:node-nonce: 分开。
 const serverNonceKeyPrefix = "aegis:server-nonce:"
@@ -36,39 +37,11 @@ func (s *Service) ClaimServerRequestNonce(ctx context.Context, tenantID, serverI
 	if g == nil {
 		return s.claimServerNonceInDatabase(ctx, tenantID, serverID, nonce, fingerprint, requestTS)
 	}
-	key := tenantID + ":" + serverID + ":" + base64.RawURLEncoding.EncodeToString(nonce)
-	if !g.claimRecent("server:" + key) {
-		return errServerNonceReplayed
-	}
-	fellBack := true
-	if g.storeUsable() {
-		storeCtx, cancel := context.WithTimeout(ctx, nonceStoreTimeout)
-		claimed, storeErr := g.store.ClaimNonce(storeCtx, serverNonceKeyPrefix+key, signedNonceRetention)
-		cancel()
-		switch {
-		case storeErr == nil && !claimed:
-			g.storeRecovered()
-			return errServerNonceReplayed
-		case storeErr == nil:
-			g.storeRecovered()
-			if !g.pgActive() {
-				return nil
-			}
-			// PG 里可能还有回落期间的旧 nonce：再认领一次，重放照样撞主键（只是补查，不延长窗口）
-			fellBack = false
-		case ctx.Err() != nil:
-			return ctx.Err()
-		default:
-			g.storeFailed(storeErr)
-		}
-	}
-	if err := s.claimServerNonceInDatabase(ctx, tenantID, serverID, nonce, fingerprint, requestTS); err != nil {
-		return err
-	}
-	if fellBack {
-		g.usedDatabase()
-	}
-	return nil
+	storeKey := serverNonceKeyPrefix + tenantID + ":" + serverID + ":" + base64.RawURLEncoding.EncodeToString(nonce)
+	return g.claim(ctx, makeRecentKey(recentKindServer, tenantID, serverID, nonce), storeKey, requestTS,
+		errServerNonceReplayed, func(ctx context.Context) error {
+			return s.claimServerNonceInDatabase(ctx, tenantID, serverID, nonce, fingerprint, requestTS)
+		})
 }
 
 // claimServerNonceInDatabase 在 PG 里认领 nonce。防重放只靠主键冲突：同一（租户, 服务器, nonce）

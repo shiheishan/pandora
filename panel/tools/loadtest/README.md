@@ -13,7 +13,7 @@
 | 事项 | 做法 |
 |---|---|
 | 库 | **每档干净库**：同一档的 r1 / r2 之间不重装，档与档之间重装数据基座（第 7 节） |
-| 资源上限 | **按生产上限测**：CPUQuota、MemoryMax、连接池上限（缺省值）都不改。只有某档撞上限时，才在该档补一轮放开上限的对照（第 9.4 节），结果写成「撞上限」，不写成「机器不够」 |
+| 资源上限 | **按生产上限测**：CPUQuota / CPUWeight、MemoryMax、连接池上限（缺省值）都不改。只有某档撞上限时，才在该档补一轮放开上限的对照（第 9.4 节），结果写成「撞上限」，不写成「机器不够」 |
 | 真实来源 IP | 压测机**直连源站**，不经 Cloudflare；压测期间用 `nginx-realip.sh` 顶替信任表（第 4 节） |
 | 及格线 | 照原四条；另把「15k 档稳态时三个网关的 `nr_throttled` 增量」列为**必报观测项**（不是及格线） |
 | 速率 | 稳态各档订阅按每人每 30 分钟一次（偏激进，测余量）；24 小时那轮可选「贴近真实」：每人每 6 小时一次 |
@@ -85,7 +85,7 @@
    - 管理员账号和口令只记在你自己的密码库里。
    - 每次重装数据基座后要再建一次（管理员在库里）。
 5. 记下随包的资源上限。它们就是生产形态，压测按它测：
-   - systemd：`aegis-public` 是 `CPUQuota=60%`、`MemoryMax=256M`；`aegis-node` 是 `60%`、`384M`（w10quiet：1000 节点在线时重启的峰值 294M）；`aegis-admin` 是 `80%`、`384M`。
+   - systemd：`aegis-public` 是 `CPUWeight=50`（没有 CPU 硬配额）、`MemoryMax=256M`；`aegis-node` 是 `60%`、`384M`（w10quiet：1000 节点在线时重启的峰值 294M）；`aegis-admin` 是 `80%`、`384M`。
    - Docker 数据基座：PG `max_connections=60`、`shared_buffers=128MB`、容器 512M；Valkey `maxmemory 96mb allkeys-lru`。
    - `platform/db` 连接池上限可配置：缺省 public 16、admin 15、node 14（另 1 条纪元监听探针专用），算式和环境变量 `AEGIS_{PUBLIC,ADMIN,NODE}_DB_MAX_CONNS` 见 `panel/deploy/.env.example`，压测按缺省测。
 
@@ -359,7 +359,7 @@ JSON 里每个端点都有 count、QPS、p50/p95/p99/max（毫秒）、错误码
 
 判据：某档 r1 / r2 里出现下面任一情况，就算这一档「撞上限」：
 
-- **撞 CPUQuota**：`cgroup.csv` 里某网关的 `nr_throttled` 在稳态内持续逐格增长，而不是偶发的个位数。
+- **撞 CPUQuota**（只有 aegis-node、aegis-admin 带硬配额；aegis-public 是 CPUWeight，不会被节流，它的 CPU 饱和看整机 CPU 与 `cpu.stat` 的 `usage_usec`）：`cgroup.csv` 里该网关的 `nr_throttled` 在稳态内持续逐格增长，而不是偶发的个位数。
 - **撞 MemoryMax**：`mem_max_events` 或 `oom_kill` 增加。
 - **连接池等待明显**：T+15m 的 goroutine profile 里，大量 goroutine 停在取连接上：
 
@@ -367,14 +367,14 @@ JSON 里每个端点都有 count、QPS、p50/p95/p99/max（毫秒）、错误码
   go tool pprof -top -focus 'pgxpool.*Acquire|puddle' <网关>-goroutine-<时间>.pprof
   ```
 
-撞了 CPU 或内存上限：只对撞了的网关临时放开，在同一档补一轮 `<档>-r1-uncapped`（同一个库、同一份 manifest，流程照第 8 节），跑完立刻还原：
+撞了 CPU 或内存上限：只对撞了的网关临时放开（下面以 aegis-node 为例；aegis-public 没有 CPU 配额，只需放开 `MemoryMax`），在同一档补一轮 `<档>-r1-uncapped`（同一个库、同一份 manifest，流程照第 8 节），跑完立刻还原：
 
 ```bash
-sudo systemctl set-property --runtime aegis-public.service CPUQuota= MemoryMax=infinity   # 只改运行时，重启机器即失效
-systemctl show aegis-public.service -p CPUQuotaPerSecUSec -p MemoryMax                     # 确认已放开
+sudo systemctl set-property --runtime aegis-node.service CPUQuota= MemoryMax=infinity   # 只改运行时，重启机器即失效
+systemctl show aegis-node.service -p CPUQuotaPerSecUSec -p MemoryMax                       # 确认已放开
 # ……对照轮……
-sudo systemctl revert aegis-public.service && sudo systemctl daemon-reload                  # 还原随包上限
-systemctl show aegis-public.service -p CPUQuotaPerSecUSec -p MemoryMax                     # 应回到 600ms 与 256M；没回到就 systemctl restart aegis-public
+sudo systemctl revert aegis-node.service && sudo systemctl daemon-reload                  # 还原随包上限
+systemctl show aegis-node.service -p CPUQuotaPerSecUSec -p MemoryMax                       # 应回到 600ms 与 384M；没回到就 systemctl restart aegis-node
 ```
 
 撞了连接池：池上限由 `.env` 的 `AEGIS_*_DB_MAX_CONNS` 配置，但总量受 PG `max_connections=60` 约束（算式见 `.env.example`），这一轮不做对照。只在结果里写「撞连接池上限」并附 goroutine 证据；要不要为对照调大上限由总协调定。

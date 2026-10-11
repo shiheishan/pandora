@@ -95,7 +95,7 @@ func (s *Service) cachedNodeConfig(ctx context.Context, tenantID, nodeID string,
 	}
 	nodeID = parsed.String()
 	covers := func(v *nodeConfigView) bool { return v.watch.configCovers(want) }
-	v, err := s.caches.config.get(ctx, identityCacheKey(tenantID, nodeID), want.flight("c"), covers, covers,
+	v, err := s.caches.config.Get(ctx, identityCacheKey(tenantID, nodeID), want.flight("c"), covers, covers,
 		func(ctx context.Context) (*nodeConfigView, error) { return s.loadNodeConfigView(ctx, tenantID, nodeID) })
 	if err != nil || !covers(v) {
 		return nil, false
