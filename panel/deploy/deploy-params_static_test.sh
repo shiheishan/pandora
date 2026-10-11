@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 占用类部署参数的静态守卫（w12deploy）：systemd 单元的 CPU 策略、compose 的开关与健康检查间隔。
+# 占用类部署参数的静态守卫（w12deploy）：systemd 单元的 CPU 策略、PostgreSQL 的 shared_buffers 缺省值、
+# .env 样例里的开关。
 # 不需要数据库和 root。
 set -euo pipefail
 
@@ -22,17 +23,10 @@ for unit in aegis-admin aegis-node; do
   active "$DIR/systemd/$unit.service" | grep -Eq '^CPUQuota=[0-9]+%$' || fail "$unit.service lost its CPUQuota"
 done
 
-# compose：shared_buffers 缺省 128MB、可由 .env 的 PG_SHARED_BUFFERS 覆盖（降 64MB 要先同机 A/B）
-compose="$DIR/docker-compose.yml"
-grep -Fq 'shared_buffers=${PG_SHARED_BUFFERS:-128MB}' "$compose" || fail 'compose: shared_buffers is not switchable with a 128MB default'
-grep -Eq '^PG_SHARED_BUFFERS=$' "$DIR/.env.example" || fail '.env.example: PG_SHARED_BUFFERS must exist and default to empty'
-
-# healthcheck 每次是一次 docker exec：间隔不得短于 60 秒
-intervals="$(grep -E '^[[:space:]]+interval:' "$compose" | grep -Eo '[0-9]+' || true)"
-[[ "$(wc -l <<<"$intervals")" -eq 2 ]] || fail 'compose: want exactly two healthcheck intervals'
-while read -r secs; do
-  (( secs >= 60 )) || fail "compose: healthcheck interval ${secs}s is shorter than 60s"
-done <<<"$intervals"
+# PostgreSQL 的 shared_buffers 缺省 128MB（发布包 postgresql-pandora.conf，装进 conf.d）：降到 64MB 能省
+# 64MB 内存，但要先经同机 A/B 确认热集放得下、p99 不变差。开发数据基座与它逐项一致由 dev-compose_static_test.sh 钉住
+grep -Eq '^shared_buffers[[:space:]]*=[[:space:]]*128MB([[:space:]]|$)' "$DIR/postgresql-pandora.conf" \
+  || fail 'postgresql-pandora.conf: shared_buffers default changed from 128MB (needs a same-host A/B first)'
 
 # plan_cache_mode 与口令哈希并发的环境变量在样例里都有，缺省留空
 for key in AEGIS_PUBLIC_DB_PLAN_CACHE_MODE AEGIS_ADMIN_DB_PLAN_CACHE_MODE AEGIS_NODE_DB_PLAN_CACHE_MODE AEGIS_PASSWORD_HASH_CONCURRENCY; do
