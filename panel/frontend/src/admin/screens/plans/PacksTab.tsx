@@ -46,23 +46,23 @@ export function PacksTab() {
     { key: 'status', header: '状态', width: '90px', render: (p) => <Tag tone={PACK_STATUS_VIEW[p.status].tone}>{PACK_STATUS_VIEW[p.status].label}</Tag> },
     { key: 'sold', header: '已售', width: '80px', mono: true, align: 'right', render: (p) => formatCount(p.sold_count) },
     { key: 'sort', header: '排序', width: '70px', mono: true, align: 'right', render: (p) => p.sort_order },
+    {
+      key: 'actions',
+      header: '',
+      width: '140px',
+      align: 'right',
+      render: (p) => (
+        <span className={css.rowActions}>
+          <Button size="xs" variant="link" onClick={() => setEditing(p)}>
+            编辑
+          </Button>
+          <Button size="xs" variant="ghost" onClick={() => setToggling(p)}>
+            {p.status === 'active' ? '下架' : '上架'}
+          </Button>
+        </span>
+      ),
+    },
   ]
-  columns.push({
-    key: 'actions',
-    header: '',
-    width: '140px',
-    align: 'right',
-    render: (p) => (
-      <span className={css.rowActions}>
-        <Button size="xs" variant="link" onClick={() => setEditing(p)}>
-          编辑
-        </Button>
-        <Button size="xs" variant="ghost" onClick={() => setToggling(p)}>
-          {p.status === 'active' ? '下架' : '上架'}
-        </Button>
-      </span>
-    ),
-  })
 
   return (
     <>

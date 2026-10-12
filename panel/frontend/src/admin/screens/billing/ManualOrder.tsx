@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { isApiError } from '../../../core/api'
 import { useApi } from '../../../shell/runtime'
 import { Button, Input, Modal, Select, useToast } from '../../../ui'
-import { useCan, useFailure, useIntentKey } from '../../actions'
+import { useFailure, useIntentKey } from '../../actions'
 import { usePlans } from '../plans/api'
 import { useInvalidateUsers, useUser } from '../users/api'
 import { manualCreatedSchema, useInvalidateBilling, useManualPreview, useUserPick } from './api'
@@ -45,14 +45,11 @@ export function ManualOrder({
 function ManualForm({ userId, entrySubscriptionId, onClose }: { userId: string | null; entrySubscriptionId: string | null; onClose: (createdId?: string) => void }) {
   const api = useApi()
   const toast = useToast()
-  const can = useCan()
   const fail = useFailure()
   const intent = useIntentKey()
   const invalidate = useInvalidateBilling()
   const invalidateUsers = useInvalidateUsers()
-  const canUsers = can('iam.user.read')
-  const canPlans = can('catalog.read')
-  const prefill = useUser(canUsers ? userId : null)
+  const prefill = useUser(userId)
   const plans = usePlans()
   const [form, setForm] = useState<ManualForm>(() => emptyManual())
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -65,7 +62,7 @@ function ManualForm({ userId, entrySubscriptionId, onClose }: { userId: string |
     setForm((f) => ({ ...f, user: { id: prefill.data.id, email: prefill.data.email } }))
   }
 
-  const choices = canPlans ? priceChoices(plans.data ?? []) : []
+  const choices = priceChoices(plans.data ?? [])
   const chosen = choices.find((c) => c.value === form.choice)
   // 管理员自己点的落点；换了用户、套餐或价格，选项就变了，点过的作废
   const [picked, setPicked] = useState('')
@@ -85,7 +82,7 @@ function ManualForm({ userId, entrySubscriptionId, onClose }: { userId: string |
   const selected = selectedKey(preview.data, picked)
   const option = preview.data?.options.find((o) => o.key === selected)
   const target = option ? choiceOf(option) : null
-  // 低于最低付款额：preview 按落点给出应付与判定（只有开单权限也拿得到），页面不再读渠道列表自己算
+  // 低于最低付款额：preview 按落点给出应付与判定，页面不再读渠道列表自己算
   const below = manualBelowMinimum(form.settlement, option, preview.data?.min_payment, chosen?.currency)
   const gate = submitGate({
     hasInputs: params !== null,
@@ -144,20 +141,18 @@ function ManualForm({ userId, entrySubscriptionId, onClose }: { userId: string |
       <div className={css.dialogBody}>
         <UserPicker
           value={form.user}
-          enabled={canUsers}
-          loading={canUsers && userId !== null && prefill.isPending}
+          loading={userId !== null && prefill.isPending}
           onChange={(user) => set('user', user)}
           error={errors.user_id}
         />
         <div className={css.grid2}>
           <Select
             label="套餐与周期"
-            placeholder={!canPlans ? '需要套餐读取权限' : plans.isPending ? '读取中…' : choices.length ? '选择在售价格' : '没有在售的价格'}
+            placeholder={plans.isPending ? '读取中…' : choices.length ? '选择在售价格' : '没有在售的价格'}
             options={choices.map(({ value, label }) => ({ value, label }))}
             value={form.choice}
             onChange={(e) => set('choice', e.target.value)}
             error={errors.price_id || errors.plan_id || failure.fields.price_id}
-            disabled={!canPlans}
           />
           <Select
             label="结算方式"
@@ -220,13 +215,11 @@ function ManualForm({ userId, entrySubscriptionId, onClose }: { userId: string |
 // ---------------------------------------------------------------------------
 function UserPicker({
   value,
-  enabled,
   loading,
   onChange,
   error,
 }: {
   value: ManualForm['user']
-  enabled: boolean
   loading: boolean
   onChange: (user: ManualForm['user']) => void
   error?: string
@@ -237,7 +230,7 @@ function UserPicker({
     const timer = setTimeout(() => setTerm(text), 300)
     return () => clearTimeout(timer)
   }, [text])
-  const pick = useUserPick(term, enabled && value === null)
+  const pick = useUserPick(term, value === null)
   const found = pick.data ?? []
 
   if (value)
@@ -257,10 +250,9 @@ function UserPicker({
       <Input
         label="用户"
         type="search"
-        placeholder={enabled ? (loading ? '读取用户中…' : '输入邮箱或用户 ID 搜索') : '需要用户读取权限才能选择用户'}
+        placeholder={loading ? '读取用户中…' : '输入邮箱或用户 ID 搜索'}
         value={text}
         onChange={(e) => setText(e.target.value)}
-        disabled={!enabled}
         error={error}
         data-autofocus=""
       />

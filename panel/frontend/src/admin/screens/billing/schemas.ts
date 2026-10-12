@@ -102,7 +102,7 @@ export type OrderDetail = z.output<typeof orderDetailSchema>
 export type OrderItem = z.output<typeof orderItemSchema>
 
 // ---------------------------------------------------------------------------
-// GET v1/orders/{id}/payments：支付尝试、入账、退款（billing.payment.read，比读订单高一级）
+// GET v1/orders/{id}/payments：支付尝试、入账、退款
 // ---------------------------------------------------------------------------
 const intentSchema = z.object({
   id: z.string(),
@@ -223,8 +223,7 @@ const placementSchema = z.object({
 export const manualPreviewSchema = z.object({
   options: z.array(placementSchema),
   default_key: z.string().default(''),
-  // 站点最低付款额（分）：启用且收新单的 CNY 渠道里最小的 min_amount，与报价、建单同一口径；不限为 0。
-  // 只有开单权限、读不到渠道列表的管理员也拿得到
+  // 站点最低付款额（分）：启用且收新单的 CNY 渠道里最小的 min_amount，与报价、建单同一口径；不限为 0
   min_payment: int,
 })
 export type Placement = z.output<typeof placementSchema>

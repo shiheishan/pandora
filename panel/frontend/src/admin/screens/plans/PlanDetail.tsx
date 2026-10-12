@@ -97,7 +97,7 @@ function Loaded({ plan, row, onEdit }: { plan: PlanDetail; row: PlanRow | undefi
   )
 }
 
-/** POST v1/plans/{id}/archive：catalog.publish + reauth + 幂等；不可逆（库里触发器只许 active / draft → archived） */
+/** POST v1/plans/{id}/archive：reauth + 幂等；不可逆（库里触发器只许 active / draft → archived） */
 function ArchiveDialog({ plan, open, onClose }: { plan: PlanDetail; open: boolean; onClose: () => void }) {
   const api = useApi()
   const toast = useToast()

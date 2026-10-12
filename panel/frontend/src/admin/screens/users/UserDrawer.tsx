@@ -3,7 +3,6 @@ import { isApiError } from '../../../core/api'
 import { formatDateTime } from '../../../core/format'
 import { navigate } from '../../../core/router'
 import { Button, Drawer, Empty, Skeleton, Tabs, Tag } from '../../../ui'
-import { useCan } from '../../actions'
 import { useInvalidateUsers, useUser, type UserDetail } from './api'
 import { BalanceForm, ResetPasswordDialog, RotateDialog, StatusDialog } from './dialogs'
 import { ExtendDialog } from './ExtendDialog'
@@ -84,74 +83,59 @@ function DrawerTitle({ d }: { d: UserDetail }) {
 type Dialog = 'status' | 'password' | 'rotate' | 'extend' | 'traffic' | null
 
 function Body({ d, tab, onTab, now }: { d: UserDetail; tab: DrawerTab; onTab: (t: DrawerTab) => void; now: Date }) {
-  const can = useCan()
   const invalidate = useInvalidateUsers()
   const [dialog, setDialog] = useState<Dialog>(null)
   const [balanceOpen, setBalanceOpen] = useState(false)
-  const canWrite = can('iam.user.write')
-  const canRisk = can('security.audit.read')
-  const canResets = can('metering.reset.read')
-  const tabs = DRAWER_TABS.filter(([k]) => (k !== 'risk' || canRisk) && (k !== 'resets' || canResets))
-  const current: DrawerTab = tabs.some(([k]) => k === tab) ? tab : 'profile'
+  const current: DrawerTab = DRAWER_TABS.some(([k]) => k === tab) ? tab : 'profile'
   const disabled = d.status === 'suspended' || d.status === 'banned'
   // 待验证、注销中、已匿名的账号不给启停：后端只收 active / suspended / banned 之间的切换语义
   const toggleable = d.status === 'active' || disabled
-  // 只读账号一个操作都没有时，不留空的操作条
-  const canExtend = can('billing.adjustment.write') && extendableSubscriptions(d.subscriptions).length > 0
-  // 加流量包：与加时长同权限码；流量包挂在某一份订阅上，只有还在用的订阅用得上
-  const canGrantTraffic = can('billing.adjustment.write') && trafficPackTargets(d.subscriptions).length > 0
-  const hasActions = canWrite || canExtend || canGrantTraffic || can('billing.provider.write') || can('billing.order.write')
+  const canExtend = extendableSubscriptions(d.subscriptions).length > 0
+  // 加流量包：流量包挂在某一份订阅上，只有还在用的订阅用得上
+  const canGrantTraffic = trafficPackTargets(d.subscriptions).length > 0
 
   return (
     <div className={css.drawerBody}>
-      {hasActions && (
-        <div className={css.actionBar}>
-          {canWrite && toggleable && (
-            <Button size="sm" className={disabled ? undefined : css.dangerText} onClick={() => setDialog('status')}>
-              {disabled ? '启用账号' : '禁用账号'}
-            </Button>
-          )}
-          {canWrite && (
-            <Button size="sm" onClick={() => setDialog('password')}>
-              重置密码
-            </Button>
-          )}
-          {can('billing.provider.write') && (
-            <Button size="sm" aria-expanded={balanceOpen} onClick={() => setBalanceOpen((v) => !v)}>
-              调整余额
-            </Button>
-          )}
-          {canWrite && d.subscriptions.length > 0 && (
-            <Button size="sm" onClick={() => setDialog('rotate')}>
-              更换订阅地址
-            </Button>
-          )}
-          {canExtend && (
-            <Button size="sm" onClick={() => setDialog('extend')}>
-              加时长
-            </Button>
-          )}
-          {canGrantTraffic && (
-            <Button size="sm" onClick={() => setDialog('traffic')}>
-              加流量包
-            </Button>
-          )}
-          {can('billing.order.write') && (
-            <Button size="sm" onClick={() => navigate('/billing/orders', { query: { new: d.id } })}>
-              为其开单
-            </Button>
-          )}
-        </div>
-      )}
+      <div className={css.actionBar}>
+        {toggleable && (
+          <Button size="sm" className={disabled ? undefined : css.dangerText} onClick={() => setDialog('status')}>
+            {disabled ? '启用账号' : '禁用账号'}
+          </Button>
+        )}
+        <Button size="sm" onClick={() => setDialog('password')}>
+          重置密码
+        </Button>
+        <Button size="sm" aria-expanded={balanceOpen} onClick={() => setBalanceOpen((v) => !v)}>
+          调整余额
+        </Button>
+        {d.subscriptions.length > 0 && (
+          <Button size="sm" onClick={() => setDialog('rotate')}>
+            更换订阅地址
+          </Button>
+        )}
+        {canExtend && (
+          <Button size="sm" onClick={() => setDialog('extend')}>
+            加时长
+          </Button>
+        )}
+        {canGrantTraffic && (
+          <Button size="sm" onClick={() => setDialog('traffic')}>
+            加流量包
+          </Button>
+        )}
+        <Button size="sm" onClick={() => navigate('/billing/orders', { query: { new: d.id } })}>
+          为其开单
+        </Button>
+      </div>
       {balanceOpen && <BalanceForm user={d} onClose={() => setBalanceOpen(false)} onDone={() => void invalidate()} />}
-      <Tabs label="用户详情" items={tabs.map(([value, label]) => ({ value, label }))} value={current} onChange={(v) => onTab(v as DrawerTab)} />
+      <Tabs label="用户详情" items={DRAWER_TABS.map(([value, label]) => ({ value, label }))} value={current} onChange={(v) => onTab(v as DrawerTab)} />
       <div className={css.tabPanel} role="tabpanel">
         {current === 'profile' && <ProfileTab d={d} now={now} />}
         {current === 'sub' && <SubscriptionsTab d={d} now={now} />}
         {current === 'devices' && <DevicesTab d={d} />}
-        {current === 'resets' && canResets && <ResetHistory d={d} />}
+        {current === 'resets' && <ResetHistory d={d} />}
         {current === 'orders' && <OrdersTab d={d} now={now} />}
-        {current === 'risk' && canRisk && <RiskTab userId={d.id} now={now} />}
+        {current === 'risk' && <RiskTab userId={d.id} now={now} />}
       </div>
       <StatusDialog user={d} open={dialog === 'status'} onClose={() => setDialog(null)} onDone={() => void invalidate()} />
       <ResetPasswordDialog user={d} open={dialog === 'password'} onClose={() => setDialog(null)} />

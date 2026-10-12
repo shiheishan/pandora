@@ -124,7 +124,7 @@ export const userGroupsSchema = z.object({ groups: z.array(userGroupSchema) })
 export type UserGroup = z.output<typeof userGroupSchema>
 
 // ---------------------------------------------------------------------------
-// GET v1/users/{id}/profile（security.audit.read）：风控画像，明文 IP 只在这里
+// GET v1/users/{id}/profile：风控画像，明文 IP 只在这里
 // ---------------------------------------------------------------------------
 export const profileSchema = z.object({
   events: z.array(z.object({ action: z.string(), outcome: z.string(), ip: z.string(), ua: z.string(), domain: z.string(), at: time })),
@@ -186,12 +186,11 @@ export function useGenerationJob(id: string | null) {
 }
 
 /** 最近的批量生成任务（最多 20 个，最新在前） */
-export function useGenerationJobs(enabled = true) {
+export function useGenerationJobs() {
   const api = useApi()
   return useQuery({
     queryKey: [...UK, 'generation-jobs'],
     queryFn: ({ signal }) => api.get('v1/users/bulk/generate/jobs', generationJobsSchema, { signal }).then((r) => r.jobs),
-    enabled,
   })
 }
 export const bulkMailSchema = z.object({ queued: count, skipped: count })
@@ -224,7 +223,7 @@ export type OnlineDevice = z.output<typeof onlineDeviceSchema>
 export type DeviceMode = z.output<typeof devicesSchema>['mode']
 
 // ---------------------------------------------------------------------------
-// 流量重置（metering.reset.*）：日志的 plan_name / actor_email / note 是 omitempty，空时整键省略
+// 流量重置：日志的 plan_name / actor_email / note 是 omitempty，空时整键省略
 // ---------------------------------------------------------------------------
 export const RESET_REASONS = ['renewal', 'cycle_roll', 'manual', 'gift_card', 'plan_change'] as const
 export type ResetReason = (typeof RESET_REASONS)[number]
@@ -252,7 +251,7 @@ export type ResetStats = z.output<typeof resetStatsSchema>
 export const resetDoneSchema = z.object({ reset: z.literal(true), freed_bytes: count })
 
 // ---------------------------------------------------------------------------
-// GET v1/plans（catalog.read）：批量筛选的「套餐」下拉只要 id / 名称 / 状态
+// GET v1/plans：批量筛选的「套餐」下拉只要 id / 名称 / 状态
 // ---------------------------------------------------------------------------
 export const planOptionsSchema = z.object({ plans: z.array(z.object({ id: z.string(), name: z.string(), status: z.enum(['draft', 'active', 'archived']) })) })
 export type PlanOption = z.output<typeof planOptionsSchema>['plans'][number]
@@ -300,12 +299,11 @@ export function useUserGroups() {
   })
 }
 
-export function useUserProfile(id: string, enabled: boolean) {
+export function useUserProfile(id: string) {
   const api = useApi()
   return useQuery({
     queryKey: [...UK, 'profile', id],
     queryFn: ({ signal }) => api.get(`v1/users/${encodeURIComponent(id)}/profile`, profileSchema, { signal }),
-    enabled,
   })
 }
 
@@ -324,13 +322,12 @@ export function useFindUserByEmail() {
   )
 }
 
-export function usePlanOptions(enabled: boolean) {
+export function usePlanOptions() {
   const api = useApi()
   return useQuery({
     // 挂在套餐的键前缀下：套餐页写后按前缀失效会一并刷新；别的管理员改了套餐靠 plans.changed
     queryKey: planOptionsKey('users'),
     queryFn: ({ signal }) => api.get('v1/plans', planOptionsSchema, { signal }).then((r) => r.plans),
-    enabled,
     staleTime: 5 * 60_000,
     meta: { topics: ['plans.changed'] },
   })

@@ -41,15 +41,12 @@ export function Versions({ plan }: { plan: PlanDetail }) {
       const saved = await api.put(`v1/plans/${encodeURIComponent(plan.id)}/versions/${encodeURIComponent(created.id)}`, rowVersionSchema, {
         body: versionBody(form ?? versionForm(from), from, created.row_version),
       })
-      let pools = ''
       if (from.pool_ids.length) {
         const body = { version_id: created.id, expected_version_row_version: saved.row_version, pool_ids: from.pool_ids }
         await api.post(`v1/plans/${encodeURIComponent(plan.id)}/pools`, poolsBoundSchema, { body, idempotencyKey: poolIntent.keyFor([plan.id, body]) })
         poolIntent.reset()
-      } else if (from.pool_ids.length) {
-        pools = '；节点池绑定要发布权限，草稿暂时没有线路'
       }
-      toast(`已建草稿 v${created.version}，沿用 v${from.version} 的额度与线路${pools}`)
+      toast(`已建草稿 v${created.version}，沿用 v${from.version} 的额度与线路`)
       setOpen(created.id)
     } catch (e) {
       if (!created) return void fail(e, { intent: createIntent })

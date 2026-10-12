@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, Empty, Menu, QueryView, Switch, Tag, useToast, type MenuEntry } from '../../../ui'
-import { useCan, useFailure } from '../../actions'
+import { useFailure } from '../../actions'
 import { toggledSchema, useInvalidateBilling, useProviders, type Provider } from './api'
 import css from './Billing.module.css'
 import { effectiveMethods, isEditableProvider, isOffline, methodLabel, providerMode, providerNote, rateLabel, todayLabel, toggleBody, type ProviderMode } from './model'
@@ -14,8 +14,6 @@ interface Pending {
 
 export function ProvidersTab({ now }: { now: Date }) {
   const providers = useProviders()
-  const can = useCan()
-  const writable = can('billing.provider.write')
   const [pending, setPending] = useState<Pending | null>(null)
   // null = 关；'new' = 新建；Provider = 编辑这一条
   const [form, setForm] = useState<Provider | 'new' | null>(null)
@@ -25,17 +23,15 @@ export function ProvidersTab({ now }: { now: Date }) {
       <div className={css.toolbar}>
         <span className={css.small}>后台的新建、编辑与开关在门户结账页最多 5 分钟后生效。</span>
         <span className={css.spacer} />
-        {writable && (
-          <Button size="sm" variant="primary" onClick={() => setForm('new')}>
-            新建渠道
-          </Button>
-        )}
+        <Button size="sm" variant="primary" onClick={() => setForm('new')}>
+          新建渠道
+        </Button>
       </div>
       <QueryView query={providers} isEmpty={(d) => d.length === 0} empty={<Empty title="还没有支付渠道" description="点「新建渠道」接入易支付，或由运维用 aegis-payctl 配置。" />}>
         {(rows) => (
           <div className={css.cards}>
             {rows.map((p) => (
-              <ProviderCard key={p.id} p={p} now={now} writable={writable} onToggle={(target) => setPending({ p, target })} onEdit={() => setForm(p)} />
+              <ProviderCard key={p.id} p={p} now={now} onToggle={(target) => setPending({ p, target })} onEdit={() => setForm(p)} />
             ))}
           </div>
         )}
@@ -46,14 +42,14 @@ export function ProvidersTab({ now }: { now: Date }) {
   )
 }
 
-function ProviderCard({ p, now, writable, onToggle, onEdit }: { p: Provider; now: Date; writable: boolean; onToggle: (target: ProviderMode) => void; onEdit: () => void }) {
+function ProviderCard({ p, now, onToggle, onEdit }: { p: Provider; now: Date; onToggle: (target: ProviderMode) => void; onEdit: () => void }) {
   const offline = isOffline(p)
   const mode = providerMode(p)
   const note = providerNote(p, now)
-  const toggleable = writable && !offline
+  const toggleable = !offline
   const methods = p.adapter === 'epay' ? effectiveMethods(p) : []
   const entries: MenuEntry[] = []
-  if (writable && isEditableProvider(p)) entries.push({ key: 'edit', label: '编辑配置', onSelect: onEdit })
+  if (isEditableProvider(p)) entries.push({ key: 'edit', label: '编辑配置', onSelect: onEdit })
   if (toggleable && mode !== 'off') entries.push({ key: 'off', label: '完全停用（回调也不处理）', danger: true, onSelect: () => onToggle('off') })
   return (
     <section className={`${css.card} ${mode !== 'on' && !offline ? css.cardOff : ''}`} aria-label={p.display_name}>

@@ -8,14 +8,13 @@ import { CouponForm, type BatchResult } from './CouponForm'
 import local from './Coupons.module.css'
 import { couponBatchLabel, couponState, discountLabel, formatDateTime, planScopeLabel, usage, validUntilLabel } from './logic'
 import css from './marketing.module.css'
-import { useCan, useCoupons, useFailure, useInvalidateMarketing, usePlanCatalog, useRedemptions } from './queries'
+import { useCoupons, useFailure, useInvalidateMarketing, usePlanCatalog, useRedemptions } from './queries'
 import { okResponse, type Coupon, type Plan } from './schemas'
 
 const PAGE = 50
 type Mode = 'all' | 'active' | 'paused'
 
 export function Coupons() {
-  const can = useCan()
   const toast = useToast()
   const [mode, setMode] = useState<Mode>('all')
   const [offset, setOffset] = useState(0)
@@ -25,8 +24,6 @@ export function Coupons() {
   const list = useCoupons({ ...(mode === 'all' ? {} : { status: mode }), limit: PAGE, offset })
   const catalog = usePlanCatalog()
   const plans = catalog.isSuccess ? catalog.data : undefined
-  const writable = can('marketing.coupon.write')
-  const withLog = can('billing.order.read')
 
   const pickMode = (next: Mode) => {
     setMode(next)
@@ -49,14 +46,10 @@ export function Coupons() {
           ]}
         />
         <span className={css.spacer} />
-        {writable && (
-          <>
-            <Button onClick={() => setForm(form === 'batch' ? null : 'batch')}>批量生成</Button>
-            <Button variant="primary" onClick={() => setForm(form === 'one' ? null : 'one')}>
-              新建优惠券
-            </Button>
-          </>
-        )}
+        <Button onClick={() => setForm(form === 'batch' ? null : 'batch')}>批量生成</Button>
+        <Button variant="primary" onClick={() => setForm(form === 'one' ? null : 'one')}>
+          新建优惠券
+        </Button>
       </div>
 
       {form && (
@@ -89,14 +82,14 @@ export function Coupons() {
             <Empty
               bare
               title={mode === 'all' ? '还没有优惠券' : mode === 'active' ? '没有启用中的优惠券' : '没有已停用的优惠券'}
-              description={writable ? '用「新建优惠券」发一张，或「批量生成」给渠道发一批。' : '有营销写权限的同事可以在这里创建。'}
+              description="用「新建优惠券」发一张，或「批量生成」给渠道发一批。"
             />
           }
         >
           {(data) => (
             <>
               {data.coupons.map((c) => (
-                <CouponRow key={c.id} coupon={c} plans={plans} writable={writable} withLog={withLog} open={open === c.id} onToggleOpen={() => setOpen(open === c.id ? null : c.id)} />
+                <CouponRow key={c.id} coupon={c} plans={plans} open={open === c.id} onToggleOpen={() => setOpen(open === c.id ? null : c.id)} />
               ))}
               <Pager total={data.total} limit={PAGE} offset={offset} onChange={setOffset} />
             </>
@@ -112,15 +105,11 @@ export function Coupons() {
 function CouponRow({
   coupon: c,
   plans,
-  writable,
-  withLog,
   open,
   onToggleOpen,
 }: {
   coupon: Coupon
   plans: readonly Plan[] | undefined
-  writable: boolean
-  withLog: boolean
   open: boolean
   onToggleOpen: () => void
 }) {
@@ -145,20 +134,16 @@ function CouponRow({
     <>
       <span className={local.codeText}>{c.code}</span>
       {batch && <span className={css.faint}>{batch}</span>}
-      {withLog && <IconChevronDown className={local.chevron} />}
+      <IconChevronDown className={local.chevron} />
     </>
   )
 
   return (
     <div className={open ? `${local.row} ${local.open}` : local.row}>
       <div className={`${local.grid} ${local.line}`}>
-        {withLog ? (
-          <button type="button" className={local.code} aria-expanded={open} onClick={onToggleOpen}>
-            {codeCell}
-          </button>
-        ) : (
-          <span className={local.code}>{codeCell}</span>
-        )}
+        <button type="button" className={local.code} aria-expanded={open} onClick={onToggleOpen}>
+          {codeCell}
+        </button>
         <span>{discountLabel(c)}</span>
         <span className={css.muted}>{planScopeLabel(c.applicable_plan_ids, plans)}</span>
         <span className={local.usage}>
@@ -173,7 +158,7 @@ function CouponRow({
             <Switch
               aria-label={`${state.on ? '停用' : '启用'} ${c.code}`}
               checked={toggle.isPending ? toggle.variables === 'active' : state.on}
-              disabled={!writable || toggle.isPending}
+              disabled={toggle.isPending}
               onChange={() => toggle.mutate(state.on ? 'paused' : 'active')}
             />
           ) : (

@@ -158,7 +158,7 @@ export const planPoolsSchema = z.object({
 })
 export type PlanPools = z.output<typeof planPoolsSchema>
 
-// GET v1/node-pools（node.read，节点分段）：新建向导没有套餐 id，只能从这里取候选；
+// GET v1/node-pools（节点分段）：新建向导没有套餐 id，只能从这里取候选；
 // 只收向导要的字段，其余字段归节点页的 schema 管，所以查询键与节点页分开
 export const poolOptionsSchema = z.object({ pools: list(z.object({ id: z.string(), name: z.string(), status: z.string(), active_nodes: count })) })
 export type PoolOption = z.output<typeof poolOptionsSchema>['pools'][number]

@@ -12,7 +12,7 @@ export function sharingHint(sources: number): { text: string; tone: 'ok' | 'warn
 }
 
 export function RiskTab({ userId, now }: { userId: string; now: Date }) {
-  const q = useUserProfile(userId, true)
+  const q = useUserProfile(userId)
   return (
     <QueryView query={q} rows={4} isEmpty={() => false} empty={null}>
       {(p) => <Profile p={p} now={now} />}

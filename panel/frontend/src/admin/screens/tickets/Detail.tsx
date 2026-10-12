@@ -25,7 +25,7 @@ export function Detail({ id }: { id: string | null }) {
     )
   }
   if (q.isError) {
-    // 契约：工单不存在回 404（CodeNotFound）；缺读权限的人进不来这一页
+    // 契约：工单不存在回 404（CodeNotFound）
     if (isApiError(q.error, 'not_found')) return <Empty bare className={css.detailEmpty} title="工单不存在" description="它可能已被删除，或链接有误。" />
     return (
       <Empty
@@ -97,7 +97,7 @@ function Controls({ t }: { t: TicketDetail }) {
   const toast = useToast()
   const fail = useFailure()
   const invalidate = useInvalidateTickets()
-  const assignees = useAssignees(true)
+  const assignees = useAssignees()
   const statusKey = useIntentKey()
   const assignKey = useIntentKey()
   const [closing, setClosing] = useState(false)

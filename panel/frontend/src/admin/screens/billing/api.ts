@@ -39,18 +39,18 @@ export function useOrder(id: string | null) {
   })
 }
 
-/** 支付记录要 billing.payment.read：没有就不请求，抽屉里整块不画 */
-export function useOrderPayments(id: string | null, enabled: boolean) {
+/** 订单的支付记录 */
+export function useOrderPayments(id: string | null) {
   const api = useApi()
   return useQuery({
     queryKey: [...BK, 'payments', id],
     queryFn: ({ signal }) => api.get(`v1/orders/${encodeURIComponent(id!)}/payments`, paymentHistorySchema, { signal }),
-    enabled: enabled && id !== null,
+    enabled: id !== null,
     meta: { topics: orderTopics },
   })
 }
 
-/** 人工开单的用户选择器：GET v1/users?q=（iam.user.read），只取前 8 个候选 */
+/** 人工开单的用户选择器：GET v1/users?q=，只取前 8 个候选 */
 export function useUserPick(q: string, enabled: boolean) {
   const api = useApi()
   const term = q.trim()
@@ -96,7 +96,7 @@ export function useLatePayments(status: LateStatus | '', offset: number) {
   })
 }
 
-/** 渠道列表（billing.payment.read）。人工开单的站点最低付款额改由 preview 的 min_payment 给，不再读它 */
+/** 渠道列表。人工开单的站点最低付款额改由 preview 的 min_payment 给，不再读它 */
 export function useProviders() {
   const api = useApi()
   return useQuery({

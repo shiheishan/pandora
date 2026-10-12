@@ -13,7 +13,7 @@ const decimalBytes = z.string().regex(/^\d+$/)
 const currency = z.string().min(1)
 
 // ---------------------------------------------------------------------------
-// GET v1/dashboard/backlog/notifications（DASH-01 冻结，ops.notification.read）
+// GET v1/dashboard/backlog/notifications（DASH-01 冻结）
 // ---------------------------------------------------------------------------
 export const backlogSchema = z.object({
   as_of: z.string(),
@@ -38,7 +38,7 @@ export const backlogSchema = z.object({
 export type Backlog = z.output<typeof backlogSchema>
 
 // ---------------------------------------------------------------------------
-// GET v1/overview（adminops.Overview，billing.ledger.read）
+// GET v1/overview（adminops.Overview）
 // ---------------------------------------------------------------------------
 const revenueRowSchema = z.object({
   currency,
@@ -69,7 +69,7 @@ export type RevenueRow = z.output<typeof revenueRowSchema>
 export type Overview = z.output<typeof overviewSchema>
 
 // ---------------------------------------------------------------------------
-// GET v1/revenue/timeseries（previous_total 为紧邻前一等长区间的 displayed_net 合计，billing.ledger.read）
+// GET v1/revenue/timeseries（previous_total 为紧邻前一等长区间的 displayed_net 合计）
 // ---------------------------------------------------------------------------
 export type RevenueCurrency = 'CNY' | 'USD'
 export type RevenueDays = 7 | 30 | 90
@@ -123,7 +123,7 @@ export type NodeTraffic = z.output<typeof nodeTrafficSchema>
 export type UserTraffic = z.output<typeof userTrafficSchema>
 
 // ---------------------------------------------------------------------------
-// GET v1/system/status（backup / database / state / components，security.audit.read）。
+// GET v1/system/status（backup / database / state / components）。
 // backup 段是 Go 按条件放键的 map：读不到目录时只有 dir / readable / message，没有备份时没有 latest 等，故保持可选
 // ---------------------------------------------------------------------------
 // has_seal：本地备份的封条（<归档>.seal）在不在；没有封条的恢复不了，后端不把它算作最新备份
@@ -183,7 +183,7 @@ export type SystemComponent = z.output<typeof componentSchema>
 export type SystemStatus = z.output<typeof systemStatusSchema>
 
 // ---------------------------------------------------------------------------
-// GET v1/stats/timeseries（security.audit.read）
+// GET v1/stats/timeseries
 // ---------------------------------------------------------------------------
 const activityPointSchema = z.object({
   day: z.string().regex(/^\d{2}-\d{2}$/),
