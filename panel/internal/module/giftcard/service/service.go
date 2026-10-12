@@ -92,6 +92,8 @@ type Sealer interface {
 // PlanChangeValuer 由 order 实现（换套餐折算的唯一出处）：一份订阅此刻没用完的已付价值、币种，
 // 以及换掉时不保留的赠送整天数。套餐卡「换掉那一份」时把这笔价值全额退进余额。
 // 没注册时套餐卡不给「换掉」的选项（只能续同款或另开一份），免得用户的已付价值被吞掉。
+// 这份订阅有没完结的续费或换套餐单时回 order 的 ErrOpenChange（errs.Conflict）：兑换原样往上抛、卡不会被用掉，
+// 预览不给这一份的「换掉」。giftcard 在码转 used 之前、锁住订阅之后调它。
 type PlanChangeValuer interface {
 	RemainingValue(ctx context.Context, subscriptionID uuid.UUID, now time.Time) (amount decimal.Decimal, currency money.Currency, giftDaysLost int, err error)
 }
