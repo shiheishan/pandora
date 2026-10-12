@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/aegispanel/aegis/internal/pkg/money"
-	"github.com/google/uuid"
 )
 
 func TestConcurrentDebitsNoOverdraft(t *testing.T) {
