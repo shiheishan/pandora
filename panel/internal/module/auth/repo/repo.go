@@ -66,6 +66,30 @@ func (r *Repo) HasActiveRole(ctx context.Context, userID uuid.UUID) (bool, error
 	return ok, err
 }
 
+// HasAnyRole 报告用户是否有任何角色绑定（含已过期的）：「后台人员」的定义。
+func (r *Repo) HasAnyRole(ctx context.Context, userID uuid.UUID) (bool, error) {
+	var ok bool
+	err := r.d.Conn(ctx).Raw(
+		"SELECT EXISTS (SELECT 1 FROM user_roles WHERE user_id = ?)",
+		userID,
+	).Scan(&ok).Error
+	return ok, err
+}
+
+// Covers 报告 actor 当前生效的权限是否覆盖 target 当前生效的全部权限（集合包含，实时查库）。
+func (r *Repo) Covers(ctx context.Context, actorID, targetID uuid.UUID) (bool, error) {
+	var ok bool
+	err := r.d.Conn(ctx).Raw(
+		"SELECT NOT EXISTS ("+
+			"SELECT rp.permission_code FROM user_roles ur JOIN role_permissions rp ON rp.role_id = ur.role_id WHERE ur.user_id = ? AND "+unexpiredUR+
+			" EXCEPT "+
+			"SELECT rp.permission_code FROM user_roles ur JOIN role_permissions rp ON rp.role_id = ur.role_id WHERE ur.user_id = ? AND "+unexpiredUR+
+			")",
+		targetID, actorID,
+	).Scan(&ok).Error
+	return ok, err
+}
+
 // UserRoles 返回用户未过期绑定的角色（按 name、code 排序）。
 func (r *Repo) UserRoles(ctx context.Context, userID uuid.UUID) ([]RoleRow, error) {
 	var rows []RoleRow

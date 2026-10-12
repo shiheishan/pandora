@@ -2,10 +2,12 @@ package service
 
 import (
 	"context"
+	"errors"
 	"math"
 	"time"
 
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
+	identitysvc "github.com/aegispanel/aegis/internal/module/identity/service"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
@@ -82,13 +84,17 @@ func (s *Service) Login(ctx context.Context, audience, email, password string) (
 
 	u, err := s.users.Authenticate(ctx, audience, email, password)
 	if err != nil {
-		code := errs.As(err).Code
-		switch code {
-		case errs.Unauthorized, errs.NotFound:
-			s.loginFailed(ctx, audience, eh, knownUID, reasonInvalidCredentials, true)
-			return Tokens{}, errInvalidCredentials
-		case errs.Forbidden:
+		// identity 在账号存在时出错也带回 User，只用来记失败审计
+		if knownUID == nil && u.ID != uuid.Nil {
+			id := u.ID
+			knownUID = &id
+		}
+		switch {
+		case errors.Is(err, identitysvc.ErrAccountInactive):
 			s.loginFailed(ctx, audience, eh, knownUID, reasonAccountInactive, true)
+			return Tokens{}, errInvalidCredentials
+		case errs.As(err).Code == errs.Unauthorized, errs.As(err).Code == errs.NotFound:
+			s.loginFailed(ctx, audience, eh, knownUID, reasonInvalidCredentials, true)
 			return Tokens{}, errInvalidCredentials
 		default:
 			return Tokens{}, err

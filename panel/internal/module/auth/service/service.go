@@ -23,7 +23,7 @@ import (
 
 // Users 是 auth 对 identity service 的全部要求；*identitysvc.Service 实现它（app 装配时传入）。
 type Users interface {
-	// Authenticate 校验邮箱与口令；口令错或用户不存在返回 errs.Unauthorized。
+	// Authenticate 校验邮箱与口令：口令错或用户不存在返回 identity.ErrInvalidCredentials，停用返回 ErrAccountInactive；账号存在时出错也带回 User。
 	Authenticate(ctx context.Context, audience, email, password string) (identitysvc.User, error)
 	// FindByEmail 按邮箱找用户；不存在返回 errs.NotFound。
 	FindByEmail(ctx context.Context, email string) (identitysvc.User, error)
@@ -52,6 +52,10 @@ type store interface {
 	Permissions(ctx context.Context, userID uuid.UUID) ([]string, error)
 	// HasActiveRole 报告用户是否持有任何未过期的角色绑定。
 	HasActiveRole(ctx context.Context, userID uuid.UUID) (bool, error)
+	// HasAnyRole 报告用户是否有任何角色绑定（含已过期的）。
+	HasAnyRole(ctx context.Context, userID uuid.UUID) (bool, error)
+	// Covers 报告 actor 的生效权限是否覆盖 target 的全部生效权限。
+	Covers(ctx context.Context, actorID, targetID uuid.UUID) (bool, error)
 	// UserRoles 返回用户未过期绑定的角色（按 name、code 排序）。
 	UserRoles(ctx context.Context, userID uuid.UUID) ([]repo.RoleRow, error)
 	// RoleByCode 按角色码取角色；不存在 ok 为 false。
