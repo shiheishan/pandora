@@ -3,6 +3,8 @@
 -- 钱的底线放在库里：分录金额 > 0；每笔交易提交时借贷相等、只有一个币种（DEFERRABLE 约束触发器）；
 -- 用户类科目的余额缓存不为负；交易与分录只追加。余额缓存由 Go 在同一事务里更新（先按科目 ID 升序锁行），
 -- 不再用触发器维护。账务记录不设保留期，不建清理函数。
+-- 金额列都是 numeric(20,2)：库里多余小数会被静默舍入，所以不写「= round(x, 2)」这种永远成立的 CHECK；
+-- 多余小数由写入前的 money.Check 拦。
 
 CREATE TABLE ledger_accounts (
   id            uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -13,7 +15,7 @@ CREATE TABLE ledger_accounts (
   currency      text NOT NULL CHECK (currency IN ('CNY', 'USD')),
   owner_user_id uuid REFERENCES users(id) ON DELETE RESTRICT,
   owner_ref     text NOT NULL DEFAULT '' CHECK (char_length(owner_ref) <= 64),
-  balance       numeric(20,2) NOT NULL DEFAULT 0 CHECK (balance = round(balance, 2)),
+  balance       numeric(20,2) NOT NULL DEFAULT 0,
   created_at    timestamptz NOT NULL DEFAULT now(),
   updated_at    timestamptz NOT NULL DEFAULT now(),
   -- 用户类科目挂用户、不带 owner_ref；平台类科目不挂用户、必须有 owner_ref
@@ -44,6 +46,8 @@ CREATE TABLE ledger_transactions (
   actor_kind  text NOT NULL CHECK (actor_kind IN ('system', 'user', 'admin')),
   actor_id    uuid,
   occurred_at timestamptz NOT NULL DEFAULT now(),
+  -- 建这笔交易的顶层事务号：分录只能在同一个事务里追加，提交后的交易不能再挂分录（见 ledger_entries_same_xact）
+  created_xact xid8 NOT NULL DEFAULT pg_current_xact_id(),
   CONSTRAINT ledger_transactions_source_pair CHECK ((source_type IS NULL) = (source_id IS NULL)),
   CONSTRAINT ledger_transactions_actor CHECK ((actor_kind = 'system') = (actor_id IS NULL)),
   -- 人工调账必须写原因
@@ -52,14 +56,14 @@ CREATE TABLE ledger_transactions (
 );
 CREATE INDEX ledger_transactions_source_idx ON ledger_transactions (source_type, source_id) WHERE source_id IS NOT NULL;
 CREATE INDEX ledger_transactions_time_idx ON ledger_transactions (occurred_at DESC, id DESC);
--- 每张订单至多一笔 order_paid / balance_hold / balance_release
-CREATE UNIQUE INDEX ledger_transactions_order_action_key ON ledger_transactions (source_id, kind)
-  WHERE source_type = 'order' AND kind IN ('order_paid', 'balance_hold', 'balance_release');
--- 每笔支付至多一次挂账；每个来源至多一笔换套餐退回
-CREATE UNIQUE INDEX ledger_transactions_late_payment_key ON ledger_transactions (source_id)
-  WHERE source_type = 'payment' AND kind = 'late_payment_suspense';
-CREATE UNIQUE INDEX ledger_transactions_plan_change_key ON ledger_transactions (source_type, source_id)
-  WHERE kind = 'plan_change_refund' AND source_id IS NOT NULL;
+-- 每个来源至多一笔的交易：一张订单的充值、冻结、释放、结算各一笔；一笔支付的挂账一笔；
+-- 一个来源的换套餐退回一笔；一条佣金记录的解冻一笔；一笔提现的打款一笔；一个礼品卡码的入余额一笔。
+-- Go 里写之前先查（返回 ErrDuplicatePosting，不让调用方事务作废），本索引是并发时的兜底。
+-- 种类清单与 Go 的 onePerSourceKinds 一致，改一边要同步另一边。
+CREATE UNIQUE INDEX ledger_transactions_source_once_key ON ledger_transactions (kind, source_type, source_id)
+  WHERE source_id IS NOT NULL AND kind IN (
+    'balance_topup', 'balance_hold', 'balance_release', 'order_paid', 'late_payment_suspense',
+    'plan_change_refund', 'commission_settled', 'commission_paid', 'gift_card_balance');
 
 CREATE TABLE ledger_entries (
   id             uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -67,7 +71,7 @@ CREATE TABLE ledger_entries (
   account_id     uuid NOT NULL,
   currency       text NOT NULL CHECK (currency IN ('CNY', 'USD')),
   direction      text NOT NULL CHECK (direction IN ('debit', 'credit')),
-  amount         numeric(20,2) NOT NULL CHECK (amount > 0 AND amount = round(amount, 2)),
+  amount         numeric(20,2) NOT NULL CHECK (amount > 0),
   created_at     timestamptz NOT NULL DEFAULT now(),
   -- 复合外键钉住币种：分录币种 = 交易币种 = 科目币种
   CONSTRAINT ledger_entries_transaction_fk FOREIGN KEY (transaction_id, currency)
@@ -85,6 +89,26 @@ CREATE TRIGGER ledger_transactions_append_only
 CREATE TRIGGER ledger_entries_append_only
   BEFORE UPDATE OR DELETE OR TRUNCATE ON ledger_entries
   FOR EACH STATEMENT EXECUTE FUNCTION deny_mutation();
+
+-- 已提交的交易不能再追加分录：分录所属交易必须是当前顶层事务建的
+-- （pg_current_xact_id() 返回顶层事务号，保存点里也一样）。交易不存在时交给外键报错。
+-- +goose StatementBegin
+CREATE FUNCTION assert_ledger_entry_same_xact() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  v_xact xid8;
+BEGIN
+  SELECT t.created_xact INTO v_xact FROM ledger_transactions t WHERE t.id = NEW.transaction_id;
+  IF FOUND AND v_xact <> pg_current_xact_id() THEN
+    RAISE EXCEPTION '账务交易 % 已提交，不能再追加分录', NEW.transaction_id USING ERRCODE = 'restrict_violation';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+-- +goose StatementEnd
+
+CREATE TRIGGER ledger_entries_same_xact
+  BEFORE INSERT ON ledger_entries
+  FOR EACH ROW EXECUTE FUNCTION assert_ledger_entry_same_xact();
 
 -- 账本配平：唯一的提交时检查。每笔交易至少两条分录、借贷相等、只有一个币种；
 -- DEFERRABLE INITIALLY DEFERRED，事务中途可以不平，提交那一刻必须平，否则整个事务回滚。
@@ -139,7 +163,7 @@ CREATE TABLE balance_holds (
   order_id       uuid NOT NULL,
   user_id        uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   currency       text NOT NULL CHECK (currency IN ('CNY', 'USD')),
-  amount         numeric(20,2) NOT NULL CHECK (amount > 0 AND amount = round(amount, 2)),
+  amount         numeric(20,2) NOT NULL CHECK (amount > 0),
   status         text NOT NULL DEFAULT 'held' CHECK (status IN ('held', 'captured', 'released')),
   hold_txn_id    uuid NOT NULL,
   capture_txn_id uuid,
@@ -172,4 +196,5 @@ DROP TABLE IF EXISTS balance_holds;
 DROP TABLE IF EXISTS ledger_entries;
 DROP TABLE IF EXISTS ledger_transactions;
 DROP FUNCTION IF EXISTS assert_ledger_balanced();
+DROP FUNCTION IF EXISTS assert_ledger_entry_same_xact();
 DROP TABLE IF EXISTS ledger_accounts;

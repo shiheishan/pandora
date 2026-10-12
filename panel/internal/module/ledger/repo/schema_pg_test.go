@@ -1,7 +1,7 @@
 package repo
 
 // 本文件证明钱的底线确实在库里生效：只追加、提交时配平、单币种、用户类余额不为负、
-// 科目归属形状、每单一笔 hold 的唯一索引。直接写 SQL，绕开 Go 层的检查。
+// 科目归属形状、按来源唯一的交易、每单一笔 hold、提交后不能追加分录。直接写 SQL，绕开 Go 层的检查。
 
 import (
 	"errors"
@@ -313,21 +313,41 @@ func TestAccountOwnerKeyUnique(t *testing.T) {
 	}
 }
 
-func TestOrderActionUnique(t *testing.T) {
+// TestSourceOnceUnique 证明 ledger_transactions_source_once_key：清单里的 kind 同一来源只能有一笔，
+// 不同 kind 或不同来源互不影响，清单外的 kind（如 commission_accrued）同一来源可以多笔。
+func TestSourceOnceUnique(t *testing.T) {
 	d := testkit.DB(t)
-	src := "order"
-	t.Run("同单两笔 hold", func(t *testing.T) {
-		g := txConn(t, d)
-		order := uuid.New()
-		if _, err := insertTxn(g, "balance_hold", "CNY", &src, &order); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := insertTxn(g, "balance_hold", "CNY", &src, &order); pgCode(err) != "23505" {
-			t.Fatalf("want 23505, got %v", err)
-		}
-	})
+	once := []struct{ kind, source string }{
+		{"balance_topup", "order"},
+		{"balance_hold", "order"},
+		{"balance_release", "order"},
+		{"order_paid", "order"},
+		{"late_payment_suspense", "payment"},
+		{"plan_change_refund", "subscription"},
+		{"commission_settled", "commission_entry"},
+		{"commission_paid", "withdrawal"},
+		{"gift_card_balance", "gift_card_code"},
+	}
+	for _, c := range once {
+		t.Run(c.kind, func(t *testing.T) {
+			g := txConn(t, d)
+			src := c.source
+			id := uuid.New()
+			if _, err := insertTxn(g, c.kind, "CNY", &src, &id); err != nil {
+				t.Fatal(err)
+			}
+			other := uuid.New()
+			if _, err := insertTxn(g, c.kind, "CNY", &src, &other); err != nil {
+				t.Fatalf("不同来源应允许: %v", err)
+			}
+			if _, err := insertTxn(g, c.kind, "CNY", &src, &id); pgCode(err) != "23505" {
+				t.Fatalf("同一来源第二笔: want 23505, got %v", err)
+			}
+		})
+	}
 	t.Run("同单 hold 与 release 各一笔", func(t *testing.T) {
 		g := txConn(t, d)
+		src := "order"
 		order := uuid.New()
 		if _, err := insertTxn(g, "balance_hold", "CNY", &src, &order); err != nil {
 			t.Fatal(err)
@@ -336,6 +356,80 @@ func TestOrderActionUnique(t *testing.T) {
 			t.Fatalf("不同 kind 应允许: %v", err)
 		}
 	})
+	t.Run("清单外的 kind 同一来源可多笔", func(t *testing.T) {
+		g := txConn(t, d)
+		src := "order"
+		order := uuid.New()
+		for i := 0; i < 2; i++ {
+			if _, err := insertTxn(g, "commission_accrued", "CNY", &src, &order); err != nil {
+				t.Fatalf("第 %d 笔 commission_accrued: %v", i+1, err)
+			}
+		}
+	})
+}
+
+// TestLedgerEntryAfterCommitRejected 证明 ledger_entries_same_xact：交易提交后，
+// 另一个事务往它追加一对借贷相等的分录也会被拒（23001）。
+func TestLedgerEntryAfterCommitRejected(t *testing.T) {
+	d := testkit.DB(t)
+	testkit.Truncate(t, d, ledgerTables...)
+	var txnID, cash, susp uuid.UUID
+	err := d.Base().Transaction(func(g *gorm.DB) error {
+		cash = mkPlatformAccount(t, g, "channel_cash", "CNY", "test")
+		susp = mkPlatformAccount(t, g, "suspense", "CNY", "manual_adjust")
+		id, err := insertTxn(g, "balance_topup", "CNY", nil, nil)
+		if err != nil {
+			return err
+		}
+		txnID = id
+		if err := insertEntry(g, id, cash, "CNY", "debit", "10.00"); err != nil {
+			return err
+		}
+		return insertEntry(g, id, susp, "CNY", "credit", "10.00")
+	})
+	if err != nil {
+		t.Fatalf("平账交易应能提交: %v", err)
+	}
+	err = d.Base().Transaction(func(g *gorm.DB) error {
+		if err := insertEntry(g, txnID, cash, "CNY", "debit", "1.00"); err != nil {
+			return err
+		}
+		return insertEntry(g, txnID, susp, "CNY", "credit", "1.00")
+	})
+	if pgCode(err) != "23001" {
+		t.Fatalf("往已提交的交易追加分录: want 23001, got %v", err)
+	}
+	var n int64
+	if err := d.Base().Raw("SELECT count(*) FROM ledger_entries WHERE transaction_id = ?", txnID).Row().Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("交易应仍只有 2 条分录，得 %d", n)
+	}
+}
+
+// TestLedgerEntryInSavepointAllowed 证明保存点里追加分录不受影响（pg_current_xact_id 是顶层事务号）。
+func TestLedgerEntryInSavepointAllowed(t *testing.T) {
+	d := testkit.DB(t)
+	g := txConn(t, d)
+	cash := mkPlatformAccount(t, g, "channel_cash", "CNY", "test")
+	susp := mkPlatformAccount(t, g, "suspense", "CNY", "manual_adjust")
+	txnID, err := insertTxn(g, "balance_topup", "CNY", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Exec("SAVEPOINT sp1").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := insertEntry(g, txnID, cash, "CNY", "debit", "1.00"); err != nil {
+		t.Fatalf("保存点里追加分录: %v", err)
+	}
+	if err := insertEntry(g, txnID, susp, "CNY", "credit", "1.00"); err != nil {
+		t.Fatalf("保存点里追加分录: %v", err)
+	}
+	if err := g.Exec("RELEASE SAVEPOINT sp1").Error; err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestAdjustMemoRequired(t *testing.T) {
