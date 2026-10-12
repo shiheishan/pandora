@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
+	orderrepo "github.com/aegispanel/aegis/internal/module/order/repo"
 	paymentsvc "github.com/aegispanel/aegis/internal/module/payment/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/money"
@@ -346,4 +348,45 @@ func TestConcurrentZeroPayVersusWebhookNoDeadlock(t *testing.T) {
 		t.Fatalf("券 reserved=%d redeemed=%d，期望 0 与 %d", cReserved, cRedeemed, 2*rounds)
 	}
 	e.assertNoDrift(t, ctx)
+}
+
+// 超时释放不等锁：到期的单正被别的事务锁着时，这一轮跳过（计入 Skipped），订单不动；锁放开后下一轮照常释放。
+func TestExpireDueSkipsLockedOrder(t *testing.T) {
+	e, ctx := newCommitEnv(t)
+	user := e.mkUser(t, ctx)
+	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month", intp(5), nil)
+	c := e.buyNew(t, ctx, user, planID, priceID, Checkout{})
+	e.mustExec(t, ctx, `UPDATE orders SET expires_at = now() - interval '1 minute' WHERE id = ?`, c.OrderID)
+	e.mustExec(t, ctx, `UPDATE order_reservations SET expires_at = now() - interval '1 minute' WHERE order_id = ?`, c.OrderID)
+
+	var stats ExpireStats
+	err := e.txm.Do(ctx, func(tctx context.Context) error {
+		// 模拟回调或取消正持有订单锁
+		if _, _, err := e.svc.repo.OrderByID(tctx, c.OrderID, orderrepo.ForNoKeyUpdate); err != nil {
+			return err
+		}
+		var err error
+		stats, err = e.svc.ExpireDue(ctx, 10) // 用不带事务的 ctx：自己开事务，与上面的锁并发
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Expired != 0 || stats.Failed != 0 {
+		t.Fatalf("订单被锁时不该释放或失败，统计 %+v", stats)
+	}
+	if st := e.order(t, ctx, c.OrderID).Status; st != StatusPending {
+		t.Fatalf("订单 %s，期望仍待付", st)
+	}
+
+	stats, err = e.svc.ExpireDue(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Expired != 1 {
+		t.Fatalf("锁放开后应释放 1 单，统计 %+v", stats)
+	}
+	if st := e.order(t, ctx, c.OrderID).Status; st != StatusExpired {
+		t.Fatalf("订单 %s，期望 expired", st)
+	}
 }

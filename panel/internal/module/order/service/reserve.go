@@ -11,14 +11,23 @@ import (
 	"github.com/aegispanel/aegis/internal/module/order/model"
 	"github.com/aegispanel/aegis/internal/module/order/repo"
 	paymentsvc "github.com/aegispanel/aegis/internal/module/payment/service"
+	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
 
 // placeOrder 插订单行、预留行（state held，expires_at = o.ExpiresAt，held_at = 现在）与一条 reserve 流水（from nil → held）。
-// o.ID 为 uuid.Nil 时由库生成并回填。插订单撞唯一索引 orders_one_open_subscription_change（repo.IsDuplicate）回 ErrOpenChange。
+// o.ID 为 uuid.Nil 时由库生成并回填。
+//
+// 唯一冲突怎么区分：db 打开了 GORM TranslateError，错误里拿不到约束名，所以按订单种类判断。orders 上只有两个唯一约束：
+// 订单号（随机段碰撞，概率极低）与 orders_one_open_subscription_change（只约束 renewal、upgrade）。
+// 续费、换套餐撞了按「已有未完成的续费或变更单」回 ErrOpenChange（订单号碰撞也会落到这里，概率可以忽略）；
+// 其余种类只可能是订单号碰撞，回内部错误，用户重试即可（事务已作废，不能在同一事务里换号重插）。
 func (s *Service) placeOrder(ctx context.Context, o *model.Order, actor Actor) (model.Reservation, error) {
 	if err := s.repo.CreateOrder(ctx, o); err != nil {
 		if repo.IsDuplicate(err) {
-			return model.Reservation{}, ErrOpenChange
+			if o.Kind == KindRenewal || o.Kind == KindUpgrade {
+				return model.Reservation{}, ErrOpenChange
+			}
+			return model.Reservation{}, errs.Wrap(errs.Internal, fmt.Errorf("order: 订单号碰撞 %s: %w", o.OrderNo, err))
 		}
 		return model.Reservation{}, err
 	}
@@ -243,8 +252,13 @@ func (s *Service) releaseOrder(ctx context.Context, o model.Order, to, reason, e
 	}
 	if o.BalanceApplied.IsPositive() {
 		memo := reason
-		if _, err := s.ledger.ReleaseOrderHold(ctx, o.ID, memo); err != nil {
+		released, err := s.ledger.ReleaseOrderHold(ctx, o.ID, memo)
+		if err != nil {
 			return model.Order{}, err
+		}
+		// 订单记了余额抵扣，冻结却不在 held：账与单对不上，不静默放过（与 promo.Release 回 ErrNotHeld 同样严格）
+		if !released {
+			return model.Order{}, fmt.Errorf("order: 订单 %s 有余额抵扣但没有可释放的冻结", o.ID)
 		}
 	}
 

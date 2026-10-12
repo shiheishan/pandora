@@ -143,10 +143,11 @@ func (s *Service) ExpireDue(ctx context.Context, limit int) (ExpireStats, error)
 }
 
 // expireOne 在单独的事务里锁单、复核并释放一张超时订单；不该释放时返回 false。
+// 订单正被结算或取消锁着时不等锁（SKIP LOCKED），这一轮跳过、计入 Skipped（旧 reservation_expiry 同口径）。
 func (s *Service) expireOne(ctx context.Context, id uuid.UUID) (bool, error) {
 	expired := false
 	err := s.tx.Do(ctx, func(ctx context.Context) error {
-		o, ok, err := s.repo.OrderByID(ctx, id, repo.ForNoKeyUpdate)
+		o, ok, err := s.repo.OrderByID(ctx, id, repo.ForNoKeyUpdateSkipLocked)
 		if err != nil {
 			return err
 		}

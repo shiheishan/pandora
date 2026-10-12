@@ -18,7 +18,8 @@ import (
 const (
 	listLimitDefault = 20
 	listLimitMax     = 100
-	// adminEmailMatchMax 是后台按邮箱搜订单时最多取的用户数。
+	// adminEmailMatchMax 是后台按邮箱搜订单时最多取的用户数；命中超过 1000 个用户时只按前 1000 个筛（静默截断），
+	// 搜索词太宽时请管理员输得更具体或改用 user_id 筛选。
 	adminEmailMatchMax = 1000
 	// topupItemName 是充值单（没有订单行）在列表上的商品名。
 	topupItemName = "余额充值"

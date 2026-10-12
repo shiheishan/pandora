@@ -314,14 +314,17 @@ func (s *Service) CreateRenewalOrder(ctx context.Context, in RenewalOrderInput) 
 			priceID = sub.Price.PriceID
 		}
 		if priceID == nil {
-			return errs.Invalid(map[string]string{"price_id": "请选择续费的价格"})
+			return errs.Newf(errs.Conflict, "这条订阅没有关联价格，无法自动续费")
 		}
 		uid := userID
+		// 续费不锁套餐行（Lock: false）：价格行由冻结触发器钉死不可改，续费也不动库存与限购，
+		// 锁了只会让同套餐的续费与新购在整段建单事务里排队，还多出一条与结算成环的路径，不值得。
+		// 与旧代码的 FOR SHARE 相比，只差在后台恰好同时关掉「允许续费」或下架价格的那一瞬间：这张单按改之前的状态建成，可接受。
 		offer, err := s.catalog.Offer(ctx, *priceID, catalogsvc.OfferRequest{
 			Use:    catalogsvc.UseRenewal,
 			UserID: &uid,
 			PlanID: &sub.PlanID,
-			Lock:   true,
+			Lock:   false,
 			Now:    now,
 		})
 		if err != nil {

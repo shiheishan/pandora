@@ -30,6 +30,8 @@ const (
 	// ForNoKeyUpdate 与 UPDATE 默认强度相同，不挡子表外键检查的 FOR KEY SHARE。
 	ForNoKeyUpdate
 	ForUpdate
+	// ForNoKeyUpdateSkipLocked 拿不到锁就当这行不存在（超时释放的单笔事务用：订单正被结算或取消锁着时跳过）。
+	ForNoKeyUpdateSkipLocked
 )
 
 // suffix 返回追加在 SELECT 末尾的锁子句。
@@ -39,6 +41,8 @@ func (l Lock) suffix() string {
 		return " FOR NO KEY UPDATE"
 	case ForUpdate:
 		return " FOR UPDATE"
+	case ForNoKeyUpdateSkipLocked:
+		return " FOR NO KEY UPDATE SKIP LOCKED"
 	}
 	return ""
 }

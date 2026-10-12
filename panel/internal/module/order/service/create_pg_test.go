@@ -11,6 +11,7 @@ import (
 	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
 	idemsvc "github.com/aegispanel/aegis/internal/module/idempotency/service"
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
+	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/money"
 )
@@ -450,5 +451,25 @@ func TestQuoteRejects(t *testing.T) {
 		if _, err := e.svc.Quote(asUser(ctx, user), QuoteInput{Action: a}); codeOf(err) != errs.ValidationFailed {
 			t.Fatalf("动作 %s 应 422，得到 %v", a, err)
 		}
+	}
+}
+
+// 续费时订阅没有关联价格档、请求也没带 price_id：回 409（旧 renewal_price.go 的文案）。
+func TestCreateRenewalWithoutPrice(t *testing.T) {
+	e, ctx := newEnv(t)
+	user := e.mkUser(t, ctx)
+	planID, versionID, _ := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	sub, err := e.subs.Provision(ctx, subsvc.Provision{
+		UserID: user, PlanID: planID, PlanVersionID: versionID,
+		Price: subsvc.PriceSnapshot{Currency: money.CNY, Amount: dec("10"), Interval: "month", IntervalCount: 1},
+		Actor: subsvc.Actor{Kind: subsvc.ActorSystem},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.svc.CreateRenewalOrder(asUser(ctx, user), RenewalOrderInput{SubscriptionID: sub.ID})
+	ee := errs.As(err)
+	if ee.Code != errs.Conflict || ee.Message != "这条订阅没有关联价格，无法自动续费" {
+		t.Fatalf("期望 409「没有关联价格」，得到 %v", err)
 	}
 }
