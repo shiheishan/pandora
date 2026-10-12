@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -86,6 +87,9 @@ type env struct {
 	svc     *Service
 	users   *fakeUsers
 	roster  *spyRoster
+	// replica 在 session_replication_role = replica 的事务里执行 q：orders、subscription_events 挡删除，
+	// 真提交的用例靠它删自己建的订单及引用它的事件（测试库是超级用户）。
+	replica func(q string, args ...any) error
 }
 
 func newEnv(t *testing.T) *env {
@@ -120,6 +124,20 @@ func newEnv(t *testing.T) *env {
 		svc:     svc,
 		users:   users,
 		roster:  roster,
+		replica: func(q string, args ...any) error {
+			g := d.Base().Begin()
+			if g.Error != nil {
+				return g.Error
+			}
+			defer g.Rollback()
+			if err := g.Exec("SET LOCAL session_replication_role = replica").Error; err != nil {
+				return err
+			}
+			if err := g.Exec(q, args...).Error; err != nil {
+				return err
+			}
+			return g.Commit().Error
+		},
 	}
 }
 
@@ -152,6 +170,35 @@ func newUser(t *testing.T, e *env, ctx context.Context) uuid.UUID {
 	e.users.mu.Lock()
 	e.users.emails[id] = email
 	e.users.mu.Unlock()
+	return id
+}
+
+// newOrder 给 user 插一张待付订单（10.00 CNY）并返回 ID：subscription_events.order_id、subscriptions.source_order_id
+// 有指向 orders 的外键。kind 是 renewal / upgrade 时 subID 必填（库里要求指向同一用户的一份订阅），new 时为 nil。
+// 订单号满足 ^[A-Z0-9-]{1,64}$，随机取，全局唯一。订单真落库时（ctx 里没有事务，或所在事务已提交）登记清理：
+// 先删引用它的事件、清掉订阅上的来源单，再删订单。
+func newOrder(t *testing.T, e *env, ctx context.Context, user uuid.UUID, kind string, subID *uuid.UUID) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	no := "T-" + strings.ToUpper(randHex(16))
+	if err := e.row(ctx, `INSERT INTO orders (order_no, user_id, kind, currency, subtotal_amount, total_amount, payable_amount,
+		subscription_id, expires_at)
+		VALUES (?, ?, ?, 'CNY', 10, 10, 10, ?, now() + interval '30 minutes') RETURNING id`, no, user, kind, subID).Scan(&id); err != nil {
+		t.Fatalf("建订单: %v", err)
+	}
+	tx.AfterCommit(ctx, "", func(context.Context) {
+		t.Cleanup(func() {
+			for _, q := range []string{
+				`DELETE FROM subscription_events WHERE order_id = ?`,
+				`UPDATE subscriptions SET source_order_id = NULL WHERE source_order_id = ?`,
+				`DELETE FROM orders WHERE id = ?`,
+			} {
+				if err := e.replica(q, id); err != nil {
+					t.Errorf("清订单 %q: %v", q, err)
+				}
+			}
+		})
+	})
 	return id
 }
 

@@ -328,12 +328,12 @@ func TestRenewableForPlanRecheckPG(t *testing.T) {
 	planA, versionA := newPlan(t, e, ctx, quotaSpec{MetricTraffic, PeriodCycle, i64(gib)})
 	planB, versionB := newPlan(t, e, ctx, quotaSpec{MetricTraffic, PeriodCycle, i64(2 * gib)})
 	sub := provision(t, e, ctx, user, planA, versionA, "")
+	orderID := newOrder(t, e, ctx, user, "upgrade", &sub.ID)
 
 	locked, release := make(chan struct{}), make(chan struct{})
 	errA := make(chan error, 1)
 	go func() {
 		errA <- e.svc.tx.Do(ctx, func(ctx context.Context) error {
-			orderID := uuid.New()
 			if _, err := e.svc.ChangePlan(ctx, PlanChange{
 				SubscriptionID: sub.ID, UserID: user, PlanID: planB, PlanVersionID: versionB,
 				Price: monthly(), OrderID: &orderID, Actor: Actor{Kind: ActorPayment},
