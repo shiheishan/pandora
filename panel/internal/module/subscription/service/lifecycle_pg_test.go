@@ -97,7 +97,7 @@ func TestRenewEarlyPG(t *testing.T) {
 	sub := provision(t, e, ctx, user, planID, versionID, "")
 	setConsumed(t, e, ctx, sub.ID, MetricTraffic, PeriodCycle, 7)
 
-	orderID := uuid.New()
+	orderID := newOrder(t, e, ctx, user, "renewal", &sub.ID)
 	res, err := e.svc.Renew(ctx, Renewal{
 		SubscriptionID: sub.ID, UserID: user, Price: monthly(), PaidAt: time.Now(),
 		OrderID: &orderID, Actor: Actor{Kind: ActorPayment}, Source: "order",
@@ -258,7 +258,7 @@ func TestChangePlanPG(t *testing.T) {
 	if _, err := e.svc.ChangePlan(ctx, PlanChange{SubscriptionID: sub.ID, UserID: user, PlanID: planB, PlanVersionID: versionB, Price: monthly(), Actor: Actor{Kind: ActorPayment}}); errs.As(err).Code != errs.Internal {
 		t.Fatalf("无来源: %v", err)
 	}
-	orderID := uuid.New()
+	orderID := newOrder(t, e, ctx, user, "upgrade", &sub.ID)
 	yearly := monthly()
 	yearly.Interval = "year"
 	res, err := e.svc.ChangePlan(ctx, PlanChange{

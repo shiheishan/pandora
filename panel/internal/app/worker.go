@@ -11,6 +11,7 @@ import (
 	idemtask "github.com/aegispanel/aegis/internal/module/idempotency/task"
 	identitytask "github.com/aegispanel/aegis/internal/module/identity/task"
 	notifytask "github.com/aegispanel/aegis/internal/module/notify/task"
+	ordertask "github.com/aegispanel/aegis/internal/module/order/task"
 	paymenttask "github.com/aegispanel/aegis/internal/module/payment/task"
 	"github.com/aegispanel/aegis/internal/pkg/jobs"
 	"github.com/hibiken/asynq"
@@ -112,5 +113,6 @@ func modules(svc *services) []jobs.Module {
 		identitytask.New(svc.identity),
 		notifytask.New(svc.notify),
 		paymenttask.New(svc.payment),
+		ordertask.New(svc.order),
 	}
 }

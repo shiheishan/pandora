@@ -13,7 +13,7 @@ func TestHoldAndRelease(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	cur := money.USD
-	order := uuid.New()
+	order := e.newOrder(t, ctx, user, cur)
 	e.fund(t, ctx, user, cur, "10.00")
 
 	hold, err := e.svc.HoldForOrder(ctx, HoldInput{
@@ -78,7 +78,7 @@ func TestHoldTwice(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	cur := money.USD
-	order := uuid.New()
+	order := e.newOrder(t, ctx, user, cur)
 	e.fund(t, ctx, user, cur, "10.00")
 	if _, err := e.svc.HoldForOrder(ctx, HoldInput{
 		OrderID: order, UserID: user, Currency: cur, Amount: dec("1.00"),
@@ -100,7 +100,7 @@ func TestPostOrderPaidMixed(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	cur := money.USD
-	order := uuid.New()
+	order := e.newOrder(t, ctx, user, cur)
 	e.fund(t, ctx, user, cur, "10.00")
 	if _, err := e.svc.HoldForOrder(ctx, HoldInput{
 		OrderID: order, UserID: user, Currency: cur, Amount: dec("3.00"),
@@ -149,7 +149,7 @@ func TestPostOrderPaidChannelOnly(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	cur := money.USD
-	order := uuid.New()
+	order := e.newOrder(t, ctx, user, cur)
 	if _, err := e.svc.PostOrderPaid(ctx, OrderPaid{
 		OrderID: order, UserID: user, Currency: cur,
 		Total: dec("5.00"), Paid: dec("5.00"), Fee: dec("0"), Provider: "epay",
@@ -176,7 +176,7 @@ func TestPostOrderPaidAfterRelease(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	cur := money.USD
-	order := uuid.New()
+	order := e.newOrder(t, ctx, user, cur)
 	e.fund(t, ctx, user, cur, "10.00")
 	if _, err := e.svc.HoldForOrder(ctx, HoldInput{
 		OrderID: order, UserID: user, Currency: cur, Amount: dec("3.00"),
@@ -207,7 +207,7 @@ func TestCaptureFromBalance(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	cur := money.USD
-	order := uuid.New()
+	order := e.newOrder(t, ctx, user, cur)
 	e.fund(t, ctx, user, cur, "10.00")
 
 	h, txnID, err := e.svc.CaptureFromBalance(ctx, HoldInput{
@@ -272,7 +272,7 @@ func TestPostOrderPaidBalanceOnly(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	cur := money.USD
-	order := uuid.New()
+	order := e.newOrder(t, ctx, user, cur)
 	e.fund(t, ctx, user, cur, "5.00")
 	if _, err := e.svc.HoldForOrder(ctx, HoldInput{
 		OrderID: order, UserID: user, Currency: cur, Amount: dec("5.00"),
@@ -302,7 +302,7 @@ func TestPostOrderPaidZeroTotal(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	cur := money.USD
-	order := uuid.New()
+	order := e.newOrder(t, ctx, user, cur)
 	var before int64
 	if err := e.row(ctx, `SELECT count(*) FROM ledger_transactions`).Scan(&before); err != nil {
 		t.Fatal(err)
@@ -326,7 +326,7 @@ func TestPostOrderPaidMismatch(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	cur := money.USD
-	order := uuid.New()
+	order := e.newOrder(t, ctx, user, cur)
 	e.fund(t, ctx, user, cur, "10.00")
 	if _, err := e.svc.HoldForOrder(ctx, HoldInput{
 		OrderID: order, UserID: user, Currency: cur, Amount: dec("3.00"),
@@ -368,7 +368,7 @@ func TestPostOrderPaidHoldNotUsed(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	cur := money.USD
-	order := uuid.New()
+	order := e.newOrder(t, ctx, user, cur)
 	e.fund(t, ctx, user, cur, "10.00")
 	if _, err := e.svc.HoldForOrder(ctx, HoldInput{
 		OrderID: order, UserID: user, Currency: cur, Amount: dec("3.00"),

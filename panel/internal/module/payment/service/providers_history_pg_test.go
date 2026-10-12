@@ -161,9 +161,10 @@ func TestListProvidersStatsInSiteTimezone(t *testing.T) {
 	}
 	insertPay := func(ref string, amount string, at time.Time) {
 		t.Helper()
+		orderID, _ := e.mkOrder(t, ctx, user)
 		if err := e.exec(ctx, `
 INSERT INTO payments (order_id, user_id, provider_id, provider_payment_id, currency, amount, paid_at)
-VALUES (?, ?, ?, ?, 'CNY', ?, ?)`, uuid.Must(uuid.NewV7()), user, p.ID, ref, amount, at); err != nil {
+VALUES (?, ?, ?, ?, 'CNY', ?, ?)`, orderID, user, p.ID, ref, amount, at); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -172,10 +173,11 @@ VALUES (?, ?, ?, ?, 'CNY', ?, ?)`, uuid.Must(uuid.NewV7()), user, p.ID, ref, amo
 
 	insertIntent := func(n int, status string) {
 		t.Helper()
+		orderID, orderNo := e.mkOrder(t, ctx, user)
 		if err := e.exec(ctx, `
 INSERT INTO payment_intents (order_id, order_no, user_id, provider_id, out_trade_no, currency, amount, status, http_method, redirect_url)
 VALUES (?, ?, ?, ?, ?, 'CNY', 1.00, ?, 'GET', 'https://checkout.example.test/x')`,
-			uuid.Must(uuid.NewV7()), "S"+uuid.New().String()[:8], user, p.ID, "S-"+uuid.New().String()[:12], status); err != nil {
+			orderID, orderNo, user, p.ID, "S-"+uuid.New().String()[:12], status); err != nil {
 			t.Fatalf("intent %d: %v", n, err)
 		}
 	}

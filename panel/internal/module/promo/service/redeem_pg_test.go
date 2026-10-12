@@ -24,8 +24,10 @@ func TestReserveConcurrentCapacity(t *testing.T) {
 	createCoupon(t, e, ctx, admin, code, spec)
 
 	users := make([]uuid.UUID, 20)
+	orders := make([]OrderRef, len(users))
 	for i := range users {
 		users[i] = newUser(t, e, ctx)
+		orders[i] = newOrder(t, e, ctx, users[i])
 	}
 
 	start := make(chan struct{})
@@ -35,10 +37,10 @@ func TestReserveConcurrentCapacity(t *testing.T) {
 
 	for i := range users {
 		wg.Add(1)
-		go func(u uuid.UUID) {
+		go func(u uuid.UUID, o OrderRef) {
 			defer wg.Done()
 			<-start
-			_, err := e.svc.Reserve(ctx, code, target(u, "10.00"), order())
+			_, err := e.svc.Reserve(ctx, code, target(u, "10.00"), o)
 			mu.Lock()
 			if err == nil {
 				okN++
@@ -48,7 +50,7 @@ func TestReserveConcurrentCapacity(t *testing.T) {
 				t.Errorf("Reserve: %v", err)
 			}
 			mu.Unlock()
-		}(users[i])
+		}(users[i], orders[i])
 	}
 	close(start)
 	wg.Wait()
@@ -90,18 +92,22 @@ func TestReservePerUserConcurrent(t *testing.T) {
 	code := randCode("PER")
 	createCoupon(t, e, ctx, admin, code, fixedSpec("1.00"))
 	u := newUser(t, e, ctx)
+	orders := make([]OrderRef, 10)
+	for i := range orders {
+		orders[i] = newOrder(t, e, ctx, u)
+	}
 
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var okN, limitN int
 
-	for i := 0; i < 10; i++ {
+	for i := range orders {
 		wg.Add(1)
-		go func() {
+		go func(o OrderRef) {
 			defer wg.Done()
 			<-start
-			_, err := e.svc.Reserve(ctx, code, target(u, "10.00"), order())
+			_, err := e.svc.Reserve(ctx, code, target(u, "10.00"), o)
 			mu.Lock()
 			if err == nil {
 				okN++
@@ -111,7 +117,7 @@ func TestReservePerUserConcurrent(t *testing.T) {
 				t.Errorf("Reserve: %v", err)
 			}
 			mu.Unlock()
-		}()
+		}(orders[i])
 	}
 	close(start)
 	wg.Wait()
@@ -137,8 +143,8 @@ func TestReleaseThenReuse(t *testing.T) {
 
 	ua := newUser(t, e, ctx)
 	ub := newUser(t, e, ctx)
-	o1 := order()
-	o2 := order()
+	o1 := newOrder(t, e, ctx, ua)
+	o2 := newOrder(t, e, ctx, ub)
 
 	if _, err := e.svc.Reserve(ctx, code, target(ua, "10.00"), o1); err != nil {
 		t.Fatal(err)
@@ -223,7 +229,7 @@ func TestReserveRules(t *testing.T) {
 	if !applied.Discount.Equal(wantDisc) {
 		t.Fatalf("折扣 %s，期望 3.32", applied.Discount)
 	}
-	ordPct := order()
+	ordPct := newOrder(t, e, ctx, u)
 	if _, err := e.svc.Reserve(ctx, codePct, target(u, "9.99"), ordPct); err != nil {
 		t.Fatal(err)
 	}
@@ -307,7 +313,7 @@ func TestReserveRules(t *testing.T) {
 	if got, err := e.svc.Evaluate(ctx, "  ", target(u7, "10.00")); err != nil || got != nil {
 		t.Fatalf("空码 Evaluate: got=%v err=%v", got, err)
 	}
-	if got, err := e.svc.Reserve(ctx, "  ", target(u7, "10.00"), order()); err != nil || got != nil {
+	if got, err := e.svc.Reserve(ctx, "  ", target(u7, "10.00"), newOrder(t, e, ctx, u7)); err != nil || got != nil {
 		t.Fatalf("空码 Reserve: got=%v err=%v", got, err)
 	}
 
@@ -315,14 +321,14 @@ func TestReserveRules(t *testing.T) {
 	codeReuse := randCode("RUS")
 	createCoupon(t, e, ctx, admin, codeReuse, fixedSpec("1.00"))
 	u8 := newUser(t, e, ctx)
-	ordA := order()
+	ordA := newOrder(t, e, ctx, u8)
 	if _, err := e.svc.Reserve(ctx, codeReuse, target(u8, "10.00"), ordA); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.svc.Release(ctx, ordA.ID, ""); err != nil {
 		t.Fatal(err)
 	}
-	ordB := order()
+	ordB := newOrder(t, e, ctx, u8)
 	if _, err := e.svc.Reserve(ctx, codeReuse, target(u8, "10.00"), ordB); err != nil {
 		t.Fatalf("释放后再占用: %v", err)
 	}
@@ -333,7 +339,7 @@ func TestReserveRules(t *testing.T) {
 	createCoupon(t, e, ctx, admin, codeA, fixedSpec("1.00"))
 	createCoupon(t, e, ctx, admin, codeB, fixedSpec("1.00"))
 	u9 := newUser(t, e, ctx)
-	ordDup := order()
+	ordDup := newOrder(t, e, ctx, u9)
 	if _, err := e.svc.Reserve(ctx, codeA, target(u9, "10.00"), ordDup); err != nil {
 		t.Fatal(err)
 	}

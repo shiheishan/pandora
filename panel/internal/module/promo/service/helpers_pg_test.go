@@ -105,6 +105,9 @@ type env struct {
 	cat   *fakeCatalog
 	users *fakeUsers
 	site  *fakeSite
+	// replica 在 session_replication_role = replica 的事务里执行 q：orders、coupon_redemptions 有禁删触发器，
+	// 真提交的用例靠它删自己建的订单与占用（测试库是超级用户）。
+	replica func(q string, args ...any) error
 }
 
 func newEnv(t *testing.T) *env {
@@ -144,6 +147,20 @@ func newEnv(t *testing.T) *env {
 			return d.Conn(ctx).Exec(q, args...).Error
 		},
 		txCtx: func() context.Context { return testkit.TxCtx(t, d) },
+		replica: func(q string, args ...any) error {
+			g := d.Base().Begin()
+			if g.Error != nil {
+				return g.Error
+			}
+			defer g.Rollback()
+			if err := g.Exec("SET LOCAL session_replication_role = replica").Error; err != nil {
+				return err
+			}
+			if err := g.Exec(q, args...).Error; err != nil {
+				return err
+			}
+			return g.Commit().Error
+		},
 		svc:   svc,
 		txm:   txm,
 		cat:   cat,
@@ -248,11 +265,27 @@ func target(user uuid.UUID, subtotal string) Target {
 	}
 }
 
-func order() OrderRef {
-	return OrderRef{
-		ID: uuid.New(),
-		No: "T" + randHex(16),
+// newOrder 给 user 插一张待付的新购订单（10.00），返回订单引用：coupon_redemptions.order_id 有指向 orders 的外键，
+// 占用里的订单号快照也用这张单的号（满足 ^[A-Z0-9-]{1,64}$，随机取，全局唯一）。
+// 订单真落库时（ctx 里没有事务，或所在事务已提交）登记清理：先删引用它的占用，再删订单。
+func newOrder(t *testing.T, e *env, ctx context.Context, user uuid.UUID) OrderRef {
+	t.Helper()
+	o := OrderRef{No: "T-" + strings.ToUpper(randHex(16))}
+	if err := e.row(ctx, `INSERT INTO orders (order_no, user_id, kind, currency, subtotal_amount, total_amount, payable_amount, expires_at)
+		VALUES (?, ?, 'new', 'CNY', 10, 10, 10, now() + interval '30 minutes') RETURNING id`, o.No, user).Scan(&o.ID); err != nil {
+		t.Fatalf("建订单: %v", err)
 	}
+	tx.AfterCommit(ctx, "", func(context.Context) {
+		t.Cleanup(func() {
+			if err := e.replica(`DELETE FROM coupon_redemptions WHERE order_id = ?`, o.ID); err != nil {
+				t.Errorf("清占用: %v", err)
+			}
+			if err := e.replica(`DELETE FROM orders WHERE id = ?`, o.ID); err != nil {
+				t.Errorf("清订单: %v", err)
+			}
+		})
+	})
+	return o
 }
 
 func errCode(err error) errs.Code {

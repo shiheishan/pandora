@@ -15,7 +15,7 @@ func TestReserveRollsBackWithCaller(t *testing.T) {
 	code := randCode("RBK")
 	createCoupon(t, e, ctx, admin, code, fixedSpec("1.00"))
 	u := newUser(t, e, ctx)
-	o := order()
+	o := newOrder(t, e, ctx, u)
 
 	sentinel := errors.New("调用方回滚")
 	err := e.txm.Do(ctx, func(ctx context.Context) error {
@@ -48,7 +48,7 @@ func TestReserveRollsBackWithCaller(t *testing.T) {
 		t.Fatalf("占用行数 %d，期望 0", n)
 	}
 
-	if _, err := e.svc.Reserve(ctx, code, target(u, "10.00"), order()); err != nil {
+	if _, err := e.svc.Reserve(ctx, code, target(u, "10.00"), newOrder(t, e, ctx, u)); err != nil {
 		t.Fatalf("回滚后应能再占用: %v", err)
 	}
 }
@@ -88,7 +88,7 @@ func TestEvaluateMatchesReserve(t *testing.T) {
 				t.Fatalf("Evaluate %s @ %s: nil", c.code, sub)
 			}
 
-			oref := order()
+			oref := newOrder(t, e, ctx, u)
 			a2, err := e.svc.Reserve(ctx, c.code, tg, oref)
 			if err != nil {
 				t.Fatalf("Reserve %s @ %s: %v", c.code, sub, err)
@@ -136,8 +136,8 @@ func TestPausedHeldStillFinishes(t *testing.T) {
 	u1 := newUser(t, e, ctx)
 	u2 := newUser(t, e, ctx)
 	u3 := newUser(t, e, ctx)
-	o1 := order()
-	o2 := order()
+	o1 := newOrder(t, e, ctx, u1)
+	o2 := newOrder(t, e, ctx, u2)
 
 	if _, err := e.svc.Reserve(ctx, code, target(u1, "10.00"), o1); err != nil {
 		t.Fatal(err)
@@ -150,7 +150,7 @@ func TestPausedHeldStillFinishes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := e.svc.Reserve(ctx, code, target(u3, "10.00"), order()); !errors.Is(err, ErrCouponNotFound) {
+	if _, err := e.svc.Reserve(ctx, code, target(u3, "10.00"), newOrder(t, e, ctx, u3)); !errors.Is(err, ErrCouponNotFound) {
 		t.Fatalf("暂停后新占用: %v", err)
 	}
 

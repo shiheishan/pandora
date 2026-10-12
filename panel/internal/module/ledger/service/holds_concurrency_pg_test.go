@@ -45,8 +45,10 @@ func TestConcurrentCaptureAndSettleNoDeadlock(t *testing.T) {
 
 	const n = 10
 	pending := make([]uuid.UUID, n)
+	captures := make([]uuid.UUID, n)
 	for i := range pending {
-		pending[i] = uuid.New()
+		pending[i] = e.newOrder(t, ctx, user, cur)
+		captures[i] = e.newOrder(t, ctx, user, cur)
 		if _, err := e.svc.HoldForOrder(ctx, HoldInput{
 			OrderID: pending[i], UserID: user, Currency: cur, Amount: dec("1.00"),
 		}); err != nil {
@@ -58,14 +60,14 @@ func TestConcurrentCaptureAndSettleNoDeadlock(t *testing.T) {
 	var bad errCollector
 	for i := 0; i < n; i++ {
 		wg.Add(2)
-		go func() {
+		go func(order uuid.UUID) {
 			defer wg.Done()
 			if _, _, err := e.svc.CaptureFromBalance(ctx, HoldInput{
-				OrderID: uuid.New(), UserID: user, Currency: cur, Amount: dec("1.00"),
+				OrderID: order, UserID: user, Currency: cur, Amount: dec("1.00"),
 			}); err != nil {
 				bad.add(err)
 			}
-		}()
+		}(captures[i])
 		go func(order uuid.UUID) {
 			defer wg.Done()
 			if _, err := e.svc.PostOrderPaid(ctx, OrderPaid{
@@ -108,7 +110,7 @@ func TestConcurrentReleaseAndSettle(t *testing.T) {
 	const n = 10
 	orders := make([]uuid.UUID, n)
 	for i := range orders {
-		orders[i] = uuid.New()
+		orders[i] = e.newOrder(t, ctx, user, cur)
 		if _, err := e.svc.HoldForOrder(ctx, HoldInput{
 			OrderID: orders[i], UserID: user, Currency: cur, Amount: dec("1.00"),
 		}); err != nil {
@@ -183,16 +185,20 @@ func TestConcurrentHoldAndAdjustNoOverdraft(t *testing.T) {
 	e.fund(t, ctx, user, cur, "10.00")
 
 	const n = 10
+	orders := make([]uuid.UUID, n)
+	for i := range orders {
+		orders[i] = e.newOrder(t, ctx, user, cur)
+	}
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var bad errCollector
 	holdsOK, adjustsOK := 0, 0
 	for i := 0; i < n; i++ {
 		wg.Add(2)
-		go func() {
+		go func(order uuid.UUID) {
 			defer wg.Done()
 			_, err := e.svc.HoldForOrder(ctx, HoldInput{
-				OrderID: uuid.New(), UserID: user, Currency: cur, Amount: dec("1.00"),
+				OrderID: order, UserID: user, Currency: cur, Amount: dec("1.00"),
 			})
 			switch {
 			case err == nil:
@@ -202,7 +208,7 @@ func TestConcurrentHoldAndAdjustNoOverdraft(t *testing.T) {
 			case !errors.Is(err, ErrInsufficientBalance):
 				bad.add(err)
 			}
-		}()
+		}(orders[i])
 		go func() {
 			defer wg.Done()
 			_, err := e.svc.AdjustBalance(asAdmin(ctx, admin), Adjustment{
