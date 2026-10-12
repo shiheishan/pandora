@@ -134,7 +134,7 @@ nodeapi/                         buf 生成的 Go 代码，单独的 Go module�
 | payment | payment_providers、payment_intents、payments、payment_events、late_payment_cases | 渠道适配、回调、查单、挂账。adminops 那套渠道写法删掉 |
 | ledger | ledger_accounts、ledger_transactions、ledger_entries、balance_holds | 记账、余额、冻结、调账 |
 | promo | coupons、coupon_redemptions | 优惠券 |
-| commission | commission_entries、withdrawals | 佣金计提、解冻、提现 |
+| commission | commission_entries、withdrawals、commission_transfers | 佣金计提（订单结算时经 order 的 PaidHook）、解冻、提现审核与打款、转余额。commission_transfers 记每笔佣金转余额，与账本的 commission_to_balance 交易一一对应；可用佣金按本模块的表算（已解冻 − 未驳回的提现 − 已转余额） |
 | giftcard | gift_card_templates、gift_card_prizes、gift_card_template_plans、gift_card_codes、gift_card_redemptions、gift_card_batches | 发放调 subscription、ledger 的 service |
 | subscription | subscriptions、subscription_events、subscription_credentials、quota_balances、traffic_pack_grants、traffic_pack_transfers、traffic_reset_logs、subscription_usage_daily、subscription_fetch_log | 状态口径（生效、可救回、已停用）只在这里定义；节点上报的扣量调它的批量扣量方法 |
 | node | servers、nodes、node_pools、node_pool_user_groups、server_identities、bootstrap_tokens、node_configs、node_config_applications、node_outbounds、node_routes、route_groups、route_group_members、node_traffic_hourly、node_user_traffic_hourly、node_user_traffic_daily、node_metrics、node_alive_ips、node_traffic_reports、node_tasks；面板 CA | 后台编排、gRPC 会话、接入、流量入账（入账后调 subscription 扣量） |
@@ -158,7 +158,8 @@ giftcard ─► order ─► catalog
            │  ├────► payment ─► ledger
            │  ├────► promo
            │  └────► subscription ─► catalog
-commission ─► ledger, identity
+commission ─► order（PaidHook 与 PaidOrder 类型）, ledger, identity, settings, audit
+             （order 只经 PaidHook 接口回调 commission，不 import 它，不成环）
 node ─► subscription, catalog, settings, certs
 notify, support, content, appearance, plugin ─► identity, settings
 identity, auth ─► settings, audit
@@ -199,8 +200,8 @@ identity, auth ─► settings, audit
 | 类 | 内容 |
 |---|---|
 | 行级约束 | NOT NULL、CHECK（状态枚举、金额非负、订单恒等式 `payable = total − balance_applied`、`total = greatest(subtotal − discount − proration_credit, 0)`、`proration_credit` 只许 upgrade、人工单原因 ≥5 字、paid/fulfilled ⇒ paid_amount = total 且 paid_at 非空、cancelled ⇒ cancel_reason 非空、券容量、`stock_sold + stock_reserved ≤ stock_total`、`consumed_bytes ≤ granted_bytes`、佣金 `commission = trunc(base × rate_bp / 10000)`、`rate_bp` 在 (0, 5000]） |
-| 唯一与外键 | 每单一笔 order_paid / balance_hold / balance_release 的部分唯一索引，late_payment、plan_change_refund 的唯一，`UNIQUE(provider, provider_payment_id)`，`UNIQUE(provider, provider_event_id)`，`UNIQUE(order, referrer)`，`nodes` 端口占用唯一索引等 |
-| 追加写触发器 | 一个通用的 `deny_mutation()`，挂在 ledger_transactions、ledger_entries、subscription_events、order_reservation_events、各类预留流水、traffic_reset_logs、traffic_pack_transfers、gift_card_redemptions、referrals、audit_events、node_config_applications、node_traffic_reports、node_metrics、revenue_report_adjustments、certificate_issuances、order_items；另有 `deny_delete()`，挂在 payment_events、commission_entries、withdrawals、late_payment_cases。运行角色同时收回这些表的 UPDATE/DELETE/TRUNCATE |
+| 唯一与外键 | 每单一笔 order_paid / balance_hold / balance_release 的部分唯一索引，late_payment、plan_change_refund 的唯一，`UNIQUE(provider, provider_payment_id)`，`UNIQUE(provider, provider_event_id)`，`UNIQUE(order, referrer)`，每人一笔在途提现的部分唯一索引，`nodes` 端口占用唯一索引等；balance_holds 与佣金三张表引用账本交易用 `(txn_id, currency) → ledger_transactions(id, currency)` 复合外键，钉住币种 |
+| 追加写触发器 | 一个通用的 `deny_mutation()`，挂在 ledger_transactions、ledger_entries、subscription_events、order_reservation_events、各类预留流水、traffic_reset_logs、traffic_pack_transfers、gift_card_redemptions、referrals、commission_transfers、audit_events、node_config_applications、node_traffic_reports、node_metrics、revenue_report_adjustments、certificate_issuances、order_items；另有 `deny_delete()`，挂在 payment_events、commission_entries、withdrawals、late_payment_cases。运行角色同时收回这些表的 UPDATE/DELETE/TRUNCATE |
 | 账本配平 | `assert_ledger_balanced` 保留为唯一的提交时（DEFERRABLE）检查：每笔交易借贷和为 0、只有一个币种。这是钱的底线，跨行检查写不成 CHECK |
 | 余额不透支 | 新增 CHECK：用户类科目的余额缓存不得为负（现在只靠 Go 判断） |
 | 认证材料守卫 | server_identities 的密钥字段不可改，吊销只能 active → revoked 且不可逆 |
@@ -212,6 +213,10 @@ identity, auth ─► settings, audit
 ### 5.4 状态机
 
 每个状态机在 service 里写成一张转换表，加一个纯函数 `CanTransition(from, to)`；repo 的状态更新带上 `WHERE status = 旧状态`，影响 0 行就当并发冲突。库里只保留 `CHECK (status IN (…))`。
+
+佣金的两个状态机比旧代码简化：
+- 佣金条目：pending → available（解冻）。没有 reversed。需要人工复核的条目（同源、同源检查失败或未装配、解冻时待结科目余额不足）标 `review_required`，停在 pending、不参与自动解冻。
+- 提现：requested → approved / rejected，approved → paid。没有 reviewing、processing、failed、returned；只有打款这一步记账（commission_paid）。
 
 ---
 
