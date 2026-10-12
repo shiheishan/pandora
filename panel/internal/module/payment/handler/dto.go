@@ -1,0 +1,218 @@
+package handler
+
+import (
+	"time"
+
+	"github.com/aegispanel/aegis/internal/module/payment/service"
+	"github.com/aegispanel/aegis/internal/pkg/money"
+	"github.com/shopspring/decimal"
+)
+
+// paymentMethodLabels 是常见渠道内方式的中文名。
+var paymentMethodLabels = map[string]string{
+	"alipay": "支付宝",
+	"wxpay":  "微信支付",
+	"qqpay":  "QQ 钱包",
+}
+
+// paymentMethodsResponse 对应 GET /v1/payment-methods。
+type paymentMethodsResponse struct {
+	Methods []paymentMethodResponse `json:"methods"`
+}
+
+// paymentMethodResponse 是门户可选的一种支付方式。
+type paymentMethodResponse struct {
+	Provider   string   `json:"provider"`
+	Method     string   `json:"method"`
+	Label      string   `json:"label"`
+	Currencies []string `json:"currencies"`
+}
+
+func paymentMethodFrom(m service.PaymentMethod) paymentMethodResponse {
+	label := m.DisplayName
+	if l, ok := paymentMethodLabels[m.Method]; ok {
+		label = l
+	}
+	cur := m.Currencies
+	if cur == nil {
+		cur = []string{}
+	}
+	return paymentMethodResponse{
+		Provider: m.Provider, Method: m.Method, Label: label, Currencies: cur,
+	}
+}
+
+// providerSettingsRequest 是渠道可编辑配置（新建内嵌、编辑单独使用）。
+type providerSettingsRequest struct {
+	DisplayName      string   `json:"display_name"`
+	BaseURL          string   `json:"base_url"`
+	SubmitPath       string   `json:"submit_path"`
+	APIPath          string   `json:"api_path"`
+	Methods          []string `json:"methods"`
+	DefaultMethod    string   `json:"default_method"`
+	AllowPrivateHost bool     `json:"allow_private_host"`
+	MinAmount        int64    `json:"min_amount"`
+	MerchantID       string   `json:"merchant_id"`
+	Key              string   `json:"key"`
+}
+
+func (r providerSettingsRequest) settings() service.ProviderSettings {
+	return service.ProviderSettings{
+		DisplayName: r.DisplayName, BaseURL: r.BaseURL,
+		SubmitPath: r.SubmitPath, APIPath: r.APIPath,
+		Methods: r.Methods, DefaultMethod: r.DefaultMethod,
+		AllowPrivateHost: r.AllowPrivateHost,
+		MinAmount:        money.FromCents(r.MinAmount),
+		MerchantID:       r.MerchantID, Key: r.Key,
+	}
+}
+
+// createProviderRequest 是新建渠道请求体。
+type createProviderRequest struct {
+	Code    string `json:"code"`
+	Adapter string `json:"adapter"`
+	providerSettingsRequest
+}
+
+// providerWriteResponse 是建、改渠道成功响应。
+type providerWriteResponse struct {
+	ID                 string `json:"id"`
+	Code               string `json:"code"`
+	CredentialsChanged bool   `json:"credentials_changed"`
+}
+
+func providerWriteFrom(r service.ProviderWriteResult) providerWriteResponse {
+	return providerWriteResponse{
+		ID: r.ID.String(), Code: r.Code, CredentialsChanged: r.CredentialsChanged,
+	}
+}
+
+// listProvidersResponse 对应 GET /v1/payment-providers。
+type listProvidersResponse struct {
+	Providers []providerResponse `json:"providers"`
+}
+
+// providerResponse 是后台渠道卡一行。
+type providerResponse struct {
+	ID               string           `json:"id"`
+	Code             string           `json:"code"`
+	Adapter          string           `json:"adapter"`
+	DisplayName      string           `json:"display_name"`
+	Enabled          bool             `json:"enabled"`
+	AcceptingNew     bool             `json:"accepting_new"`
+	HasCredentials   bool             `json:"has_credentials"`
+	BaseURL          string           `json:"base_url"`
+	Currencies       []string         `json:"currencies"`
+	SubmitPath       string           `json:"submit_path"`
+	APIPath          string           `json:"api_path"`
+	Methods          []string         `json:"methods"`
+	DefaultMethod    string           `json:"default_method"`
+	AllowPrivateHost bool             `json:"allow_private_host"`
+	MinAmount        int64            `json:"min_amount"`
+	Today            map[string]int64 `json:"today"`
+	SuccessRate24h   *float64         `json:"success_rate_24h"`
+	LastCallbackAt   *time.Time       `json:"last_callback_at"`
+}
+
+func providerFrom(v service.ProviderView) (providerResponse, error) {
+	minAmt, err := money.ToCents(v.MinAmount)
+	if err != nil {
+		return providerResponse{}, err
+	}
+	methods := v.Methods
+	if methods == nil {
+		methods = []string{}
+	}
+	currencies := v.Currencies
+	if currencies == nil {
+		currencies = []string{}
+	}
+	today, err := centsByCurrency(v.Today)
+	if err != nil {
+		return providerResponse{}, err
+	}
+	return providerResponse{
+		ID: v.ID.String(), Code: v.Code, Adapter: v.Adapter, DisplayName: v.DisplayName,
+		Enabled: v.Enabled, AcceptingNew: v.AcceptingNew, HasCredentials: v.HasCredentials,
+		BaseURL: v.BaseURL, Currencies: currencies,
+		SubmitPath: v.SubmitPath, APIPath: v.APIPath, Methods: methods,
+		DefaultMethod: v.DefaultMethod, AllowPrivateHost: v.AllowPrivateHost,
+		MinAmount: minAmt, Today: today,
+		SuccessRate24h: v.SuccessRate24h, LastCallbackAt: v.LastCallbackAt,
+	}, nil
+}
+
+// toggleProviderRequest 是渠道开关请求体。
+type toggleProviderRequest struct {
+	Enabled      bool `json:"enabled"`
+	AcceptingNew bool `json:"accepting_new"`
+}
+
+// toggleProviderResponse 对应 POST .../toggle 成功响应。
+type toggleProviderResponse struct {
+	OK bool `json:"ok"`
+}
+
+// listLatePaymentsResponse 对应 GET /v1/late-payments。
+type listLatePaymentsResponse struct {
+	Cases          []lateCaseResponse `json:"cases"`
+	Total          int64              `json:"total"`
+	PendingAmounts map[string]int64   `json:"pending_amounts"`
+}
+
+// lateCaseResponse 是挂账列表一行。
+type lateCaseResponse struct {
+	ID               string     `json:"id"`
+	CaseKind         string     `json:"case_kind"`
+	Status           string     `json:"status"`
+	Amount           int64      `json:"amount"`
+	Currency         string     `json:"currency"`
+	OrderNo          string     `json:"order_no"`
+	OrderStatus      string     `json:"order_status"`
+	UserID           string     `json:"user_id"`
+	UserEmail        string     `json:"user_email"`
+	ReceivedAt       time.Time  `json:"received_at"`
+	ResolvedAt       *time.Time `json:"resolved_at,omitempty"`
+	ResolutionReason *string    `json:"resolution_reason,omitempty"`
+}
+
+func lateCaseFrom(c service.LateCase) (lateCaseResponse, error) {
+	amt, err := money.ToCents(c.Amount)
+	if err != nil {
+		return lateCaseResponse{}, err
+	}
+	return lateCaseResponse{
+		ID: c.ID.String(), CaseKind: string(c.Kind), Status: string(c.Status),
+		Amount: amt, Currency: string(c.Currency),
+		OrderNo: c.OrderNo, OrderStatus: c.OrderStatus,
+		UserID: c.UserID.String(), UserEmail: c.UserEmail,
+		ReceivedAt: c.ReceivedAt,
+		ResolvedAt: c.ResolvedAt, ResolutionReason: c.ResolutionReason,
+	}, nil
+}
+
+// centsByCurrency 把按币种的金额转成分；nil 给空 map。
+func centsByCurrency(m map[money.Currency]decimal.Decimal) (map[string]int64, error) {
+	if m == nil {
+		return map[string]int64{}, nil
+	}
+	out := make(map[string]int64, len(m))
+	for c, d := range m {
+		cents, err := money.ToCents(d)
+		if err != nil {
+			return nil, err
+		}
+		out[string(c)] = cents
+	}
+	return out, nil
+}
+
+// applyLatePaymentRequest 是挂账转入余额请求体。
+type applyLatePaymentRequest struct {
+	Reason string `json:"reason"`
+}
+
+// applyLatePaymentResponse 对应转入余额成功响应。
+type applyLatePaymentResponse struct {
+	LedgerTxnID string `json:"ledger_txn_id"`
+}
