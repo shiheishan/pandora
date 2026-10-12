@@ -356,7 +356,7 @@ cd /opt/pandora/deploy && ./backup-postgres.sh         # 立刻做一份加密�
 | 项 | 状态 |
 |---|---|
 | 方向 | 后端换主流技术栈（见「架构」开头的说明与 [docs/architecture.md](docs/architecture.md)）；还没有任何生产部署，新栈直接替换，不做数据迁移与兼容期 |
-| 换栈 | P0 设计定稿；P1 骨架完成；P2 鉴权与用户完成：settings、audit、idempotency、identity、auth、notify（邮件部分）六个模块已装进 `pandora serve` / `worker`，`pandora admin` 管后台账号与角色；新二进制上的鉴权、找回密码、门户禁登三组 e2e 在 CI 全绿；前端改为 15 分钟 access + refresh cookie，后台 2 小时无操作自动退出。下一步 P3 交易 |
+| 换栈 | P0 设计定稿；P1 骨架完成；P2 鉴权与用户完成：settings、audit、idempotency、identity、auth、notify（邮件部分）六个模块已装进 `pandora serve` / `worker`，`pandora admin` 管后台管理员；后台权限只分有和没有（无角色、权限码与临时提权）；新二进制上的鉴权、找回密码、门户禁登三组 e2e 在 CI 全绿；前端改为 15 分钟 access + refresh cookie，后台 2 小时无操作自动退出。下一步 P3 交易 |
 | 开发分支 | `feat/panel-redesign`（`main` 停在 2026-09-26 的面板重构合入之后） |
 | CI | `feat/panel-redesign` 上四组全绿：新栈（含新二进制 e2e）、PG18 集成门禁、前端冒烟、Go 漏洞扫描 |
 | 旧栈 | 只修阻断性 bug；Xboard 功能验收 PARTIAL，未 RELEASED；未在真实机器上部署或实测 |
