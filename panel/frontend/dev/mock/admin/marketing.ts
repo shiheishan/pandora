@@ -376,7 +376,6 @@ export const marketing: MockModule = {
   routes: {
     // --- 优惠券 -----------------------------------------------------------
     'GET /v1/coupons': (ctx) => {
-      if (!ctx.requirePermission('marketing.coupon.read')) return
       const q = text(ctx.query.get('q')).toLowerCase()
       const status = ctx.query.get('status') ?? ''
       const { limit, offset } = page(ctx.query, 25, 200)
@@ -386,12 +385,11 @@ export const marketing: MockModule = {
       ctx.send(200, { coupons: hit.slice(offset, offset + limit).map((c) => ({ ...c, discounted_total: c.redeemed_count * 1200 })), total: hit.length })
     },
     'GET /v1/coupons/:id/redemptions': (ctx) => {
-      if (!ctx.requirePermission('marketing.coupon.read') || !ctx.requirePermission('billing.order.read')) return
       if (!UUID.test(ctx.params.id!)) return ctx.fail(500, 'internal_error', '服务暂时不可用，请稍后重试')
       ctx.send(200, { redemptions: redemptions.get(ctx.params.id!) ?? [] })
     },
     'POST /v1/coupons': async (ctx) => {
-      if (!ctx.requirePermission('marketing.coupon.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       const extra = unknownField(body, COUPON_FIELDS)
@@ -404,7 +402,7 @@ export const marketing: MockModule = {
       ctx.send(200, { id: c.id, code: c.code })
     },
     'POST /v1/coupons/batch': async (ctx) => {
-      if (!ctx.requirePermission('marketing.coupon.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('coupon_batch_generate', () => {
@@ -428,7 +426,7 @@ export const marketing: MockModule = {
       })
     },
     'POST /v1/coupons/:id/status': async (ctx) => {
-      if (!ctx.requirePermission('marketing.coupon.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       if (body.status !== 'active' && body.status !== 'paused') return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { status: '只能是 active 或 paused' })
@@ -440,11 +438,9 @@ export const marketing: MockModule = {
 
     // --- 礼品卡 -----------------------------------------------------------
     'GET /v1/gift-cards': (ctx) => {
-      if (!ctx.requirePermission('marketing.giftcard.read')) return
       ctx.send(200, { templates: templates.filter((t) => t.status !== 'archived').map(templateView) })
     },
     'GET /v1/gift-cards/stats': (ctx) => {
-      if (!ctx.requirePermission('marketing.giftcard.read')) return
       const used = codes.filter((c) => c.status === 'used')
       const sum = (pick: (t: Template) => number, list: Code[]) => list.reduce((s, c) => s + pick(templates.find((t) => t.id === c.template_id)!), 0)
       const general = (t: Template) => (t.type === 'general' ? (t.rewards.balance ?? 0) : 0)
@@ -459,7 +455,6 @@ export const marketing: MockModule = {
       })
     },
     'GET /v1/gift-cards/codes': (ctx) => {
-      if (!ctx.requirePermission('marketing.giftcard.read')) return
       const status = ctx.query.get('status') ?? ''
       if (!['', 'unused', 'used', 'disabled', 'expired'].includes(status)) return ctx.fail(400, 'bad_request', '不支持的卡密状态')
       const templateId = ctx.query.get('template_id') ?? ''
@@ -469,9 +464,9 @@ export const marketing: MockModule = {
       const hit = codes.filter((c) => (!status || c.status === status) && (!templateId || c.template_id === templateId) && (!batchId || c.batch_id === batchId))
       ctx.send(200, { codes: hit.slice(offset, offset + limit).map(codeView), total: hit.length })
     },
-    // 按筛选导出掩码报表（对账）：与列表同筛选，读 + ops.export + reauth，无幂等；只出掩码
+    // 按筛选导出掩码报表（对账）：与列表同筛选，reauth，无幂等；只出掩码
     'GET /v1/gift-cards/codes/report': (ctx) => {
-      if (!ctx.requirePermission('marketing.giftcard.read') || !ctx.requirePermission('ops.export') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const status = ctx.query.get('status') ?? ''
       if (!['', 'unused', 'used', 'disabled', 'expired'].includes(status)) return ctx.fail(400, 'bad_request', '不支持的卡密状态')
       const templateId = ctx.query.get('template_id') ?? ''
@@ -492,7 +487,6 @@ export const marketing: MockModule = {
       })
     },
     'GET /v1/gift-cards/batches': (ctx) => {
-      if (!ctx.requirePermission('marketing.giftcard.read')) return
       const templateId = ctx.query.get('template_id') ?? ''
       if (templateId && !UUID.test(templateId)) return ctx.fail(400, 'bad_request', '标识符格式不正确')
       const { limit, offset } = page(ctx.query, 50, 200)
@@ -500,7 +494,7 @@ export const marketing: MockModule = {
       ctx.send(200, { items: hit.slice(offset, offset + limit).map(batchView), total: hit.length })
     },
     'POST /v1/gift-cards/batches/:id/export': async (ctx) => {
-      if (!ctx.requirePermission('marketing.giftcard.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const raw = await ctx.body()
       // 后端解码 struct{}：空体与多字段都 400
       if (!raw || ctx.req.headers['content-length'] === '0' || Object.keys(raw).length > 0) return ctx.fail(400, 'bad_request', '请求体必须是 {}')
@@ -523,7 +517,6 @@ export const marketing: MockModule = {
       })
     },
     'GET /v1/gift-cards/usages': (ctx) => {
-      if (!ctx.requirePermission('marketing.giftcard.read')) return
       const templateId = ctx.query.get('template_id') ?? ''
       if (templateId && !UUID.test(templateId)) return ctx.fail(400, 'bad_request', '标识符格式不正确')
       const rows = usages
@@ -541,7 +534,7 @@ export const marketing: MockModule = {
       ctx.send(200, { usages: rows })
     },
     'POST /v1/gift-cards': async (ctx) => {
-      if (!ctx.requirePermission('marketing.giftcard.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       const r = (body.rewards ?? {}) as Rewards & Json
@@ -579,7 +572,7 @@ export const marketing: MockModule = {
       ctx.send(200, { template: templateView(t) })
     },
     'POST /v1/gift-cards/:id/codes': async (ctx) => {
-      if (!ctx.requirePermission('marketing.giftcard.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('giftcard_codes_generate', () => {
@@ -605,7 +598,6 @@ export const marketing: MockModule = {
       })
     },
     'POST /v1/gift-cards/codes/:id/toggle': async (ctx) => {
-      if (!ctx.requirePermission('marketing.giftcard.write')) return
       const body = await ctx.body()
       if (!body || typeof body.disabled !== 'boolean') return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       const c = codes.find((x) => x.id === ctx.params.id)
@@ -620,7 +612,6 @@ export const marketing: MockModule = {
 
     // --- 佣金与提现 ---------------------------------------------------------
     'GET /v1/commission/overview': (ctx) => {
-      if (!ctx.requirePermission('marketing.commission.read')) return
       const waiting = withdrawals.filter((w) => ['requested', 'reviewing', 'approved', 'processing'].includes(w.status)).length
       ctx.send(200, {
         pending: 390400,
@@ -639,13 +630,12 @@ export const marketing: MockModule = {
       })
     },
     'GET /v1/withdrawals': (ctx) => {
-      if (!ctx.requirePermission('marketing.commission.read')) return
       const status = ctx.query.get('status') ?? ''
       const rows = withdrawals.filter((w) => !status || w.status === status).sort((a, b) => b.requested_at.localeCompare(a.requested_at))
       ctx.send(200, { withdrawals: rows.slice(0, 200) })
     },
     'POST /v1/withdrawals/:id/review': async (ctx) => {
-      if (!ctx.requirePermission('marketing.withdrawal.approve') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       const extra = unknownField(body, ['action', 'reason'])
@@ -665,7 +655,7 @@ export const marketing: MockModule = {
       ctx.send(200, { status: w.status })
     },
     'POST /v1/withdrawals/:id/paid': async (ctx) => {
-      if (!ctx.requirePermission('marketing.withdrawal.approve') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('commission_withdrawal_mark_paid', () => {
@@ -681,7 +671,7 @@ export const marketing: MockModule = {
       })
     },
     'POST /v1/commission/config': async (ctx) => {
-      if (!ctx.requirePermission('marketing.commission.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       const extra = unknownField(body, ['rate_percent', 'freeze_days', 'min_withdraw', 'scope'])

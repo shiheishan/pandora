@@ -141,7 +141,6 @@ export const billing: MockModule = {
   routes: {
     // ---- 订单 ---------------------------------------------------------------
     'GET /v1/orders': (ctx) => {
-      if (!ctx.requirePermission('billing.order.read')) return
       const qs = ctx.query
       const statuses = (qs.get('status') ?? '')
         .split(',')
@@ -170,14 +169,12 @@ export const billing: MockModule = {
     },
 
     'GET /v1/orders/:id': (ctx) => {
-      if (!ctx.requirePermission('billing.order.read')) return
       const o = findOrder(ctx.params.id)
       if (!o) return ctx.fail(404, 'not_found', '资源不存在或无权访问')
       ctx.send(200, { order: orderDetail(o) })
     },
 
     'GET /v1/orders/:id/payments': (ctx) => {
-      if (!ctx.requirePermission('billing.payment.read')) return
       const o = findOrder(ctx.params.id)
       if (!o) return ctx.fail(404, 'not_found', '资源不存在或无权访问')
       ctx.send(200, orderHistory(o))
@@ -185,7 +182,6 @@ export const billing: MockModule = {
 
     // 取消：写权限 + 幂等，没挂 reauth（契约）；400 / 409 文案照 billing 域的 Go 原文（中文，R114）
     'POST /v1/orders/:id/cancel': async (ctx) => {
-      if (!ctx.requirePermission('billing.order.write')) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('admin_order_cancel', () => {
@@ -215,7 +211,6 @@ export const billing: MockModule = {
     // 人工开单的落点：purchase.Options 的一支（同款可续 → 不同款过期 30 天内恢复并改成 P → 新开 → 不同款生效中换掉），
     // 只读的 POST：写权限，不挂 reauth，也没有幂等键。形状是 purchase.Placement（选项 + 这份现在的样子 + 落地之后）
     'POST /v1/orders/manual/preview': async (ctx) => {
-      if (!ctx.requirePermission('billing.order.write')) return
       const body = await ctx.body()
       if (!body) return ctx.send(BAD_JSON.status, BAD_JSON.body)
       const bad = unknownField(body, ['user_id', 'plan_id', 'price_id', 'entry_subscription_id'])
@@ -258,7 +253,7 @@ export const billing: MockModule = {
     // 落点由 target 定（preview 给出的选项之一）：续费 / 换套餐落在已有订阅上，链接不变；新开另生成一份。
     // 选项多于一个而没带 target 回 422「请选择这单落到哪一份」，target 不在当前选项里回 422「这个用法现在不能用了…」
     'POST /v1/orders/manual': async (ctx) => {
-      if (!ctx.requirePermission('billing.order.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('order_create', () => {
@@ -388,7 +383,7 @@ export const billing: MockModule = {
 
     // 标记已支付：写权限 → reauth → 幂等；金额从订单读，不收传入（R2 响应 snake_case）
     'POST /v1/orders/:id/mark-paid': async (ctx) => {
-      if (!ctx.requirePermission('billing.order.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('admin_order_mark_paid', () => {
@@ -427,7 +422,6 @@ export const billing: MockModule = {
     // 像回调丢了、渠道答已付（补记：待支付的结清开通，已取消 / 过期的进挂账），其余答未付；
     // 从没发起过支付回 409。文案与 Go 的 billing/payment_query.go 一致
     'POST /v1/orders/:id/query': async (ctx) => {
-      if (!ctx.requirePermission('billing.order.write')) return
       await ctx.idempotent('admin_order_query', () => {
         const o = findOrder(ctx.params.id)
         if (!o) return NOT_FOUND
@@ -465,7 +459,6 @@ export const billing: MockModule = {
 
     // ---- 挂账（保留规则 6）-----------------------------------------------------
     'GET /v1/late-payments': (ctx) => {
-      if (!ctx.requirePermission('billing.ledger.read')) return
       const status = (ctx.query.get('status') ?? '').trim()
       if (!LATE.includes(status)) return ctx.fail(400, 'bad_request', '不支持的挂账状态')
       const limitRaw = Number.parseInt(ctx.query.get('limit') ?? '', 10)
@@ -483,9 +476,9 @@ export const billing: MockModule = {
       })
     },
 
-    // 转入余额：billing.adjustment.write → reauth → 幂等；后端用 json.NewDecoder，不拒绝多余字段
+    // 转入余额：reauth → 幂等；后端用 json.NewDecoder，不拒绝多余字段
     'POST /v1/late-payments/:id/apply-to-balance': async (ctx) => {
-      if (!ctx.requirePermission('billing.adjustment.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体无法解析')
       await ctx.idempotent('late_payment_apply', () => {
@@ -504,13 +497,12 @@ export const billing: MockModule = {
 
     // ---- 支付渠道 -------------------------------------------------------------
     'GET /v1/payment-providers': (ctx) => {
-      if (!ctx.requirePermission('billing.payment.read')) return
       ctx.send(200, { providers: [...providers].sort((a, b) => a.code.localeCompare(b.code)).map(providerView) })
     },
 
-    // 启停：billing.provider.write → reauth，没有幂等；两个布尔漏传按 false
+    // 启停：reauth，没有幂等；两个布尔漏传按 false
     'POST /v1/payment-providers/:code/toggle': async (ctx) => {
-      if (!ctx.requirePermission('billing.provider.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       const bad = unknownField(body, ['enabled', 'accepting_new'])
@@ -522,9 +514,9 @@ export const billing: MockModule = {
       ctx.send(200, { ok: true })
     },
 
-    // 新建：billing.provider.write → reauth → 幂等；建出来是「已启用、暂停收新单」，只回凭据是否变更
+    // 新建：reauth → 幂等；建出来是「已启用、暂停收新单」，只回凭据是否变更
     'POST /v1/payment-providers': async (ctx) => {
-      if (!ctx.requirePermission('billing.provider.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.send(BAD_JSON.status, BAD_JSON.body)
       await ctx.idempotent('payment_provider_create', () => {
@@ -550,7 +542,7 @@ export const billing: MockModule = {
 
     // 编辑：请求体不收 code / adapter（建后不可改）；商户号、密钥留空 = 不改；offline 与非易支付只读
     'PUT /v1/payment-providers/:code': async (ctx) => {
-      if (!ctx.requirePermission('billing.provider.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.send(BAD_JSON.status, BAD_JSON.body)
       await ctx.idempotent('payment_provider_update', () => {
@@ -578,7 +570,6 @@ export const billing: MockModule = {
 
     // ---- 收入调整（报表口径，只追加）---------------------------------------------
     'GET /v1/revenue/adjustments': (ctx) => {
-      if (!ctx.requirePermission('billing.ledger.read')) return
       const currency = (ctx.query.get('currency') ?? '').toUpperCase()
       if (currency && currency !== 'CNY' && currency !== 'USD') return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { currency: '仅支持 CNY 或 USD' })
       const rows = adjustments
@@ -589,7 +580,7 @@ export const billing: MockModule = {
     },
 
     'POST /v1/revenue/adjustments': async (ctx) => {
-      if (!ctx.requirePermission('billing.adjustment.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.send(BAD_JSON.status, BAD_JSON.body)
       await ctx.idempotent('revenue_adjustment_create', () => {
@@ -622,7 +613,7 @@ export const billing: MockModule = {
     },
 
     'POST /v1/revenue/adjustments/:id/reverse': async (ctx) => {
-      if (!ctx.requirePermission('billing.adjustment.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.send(BAD_JSON.status, BAD_JSON.body)
       await ctx.idempotent('revenue_adjustment_reverse', () => {

@@ -156,11 +156,9 @@ export function routeGroupRoutes(nodes: RoutedNode[]): Record<string, MockRoute>
 
   return {
     'GET /v1/route-groups': (ctx) => {
-      if (!ctx.requirePermission('node.read')) return
       ctx.send(200, { groups: ordered(routeGroups).map((g) => out(g, nodes)) })
     },
     'POST /v1/route-groups': async (ctx) => {
-      if (!ctx.requirePermission('node.config.publish')) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('route_group_create', () => {
@@ -177,7 +175,7 @@ export function routeGroupRoutes(nodes: RoutedNode[]): Record<string, MockRoute>
       })
     },
     'PATCH /v1/route-groups/:id': async (ctx) => {
-      if (!ctx.requirePermission('node.config.publish') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('route_group_update', () => {
@@ -200,7 +198,7 @@ export function routeGroupRoutes(nodes: RoutedNode[]): Record<string, MockRoute>
       })
     },
     'DELETE /v1/route-groups/:id': async (ctx) => {
-      if (!ctx.requirePermission('node.config.publish') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       if (emptyBody(ctx)) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
@@ -222,13 +220,12 @@ export function routeGroupRoutes(nodes: RoutedNode[]): Record<string, MockRoute>
       })
     },
     'GET /v1/route-groups/:id/routing': (ctx) => {
-      if (!ctx.requirePermission('node.read')) return
       const g = findGroup(ctx.params.id)
       if (!g) return reply(ctx, notFound())
       ctx.send(200, { row_version: g.row_version, outbounds: g.outbounds, routes: g.routes })
     },
     'PUT /v1/route-groups/:id/routing': async (ctx) => {
-      if (!ctx.requirePermission('node.config.publish') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('route_group_routing_publish', () => {
@@ -257,7 +254,7 @@ export function routeGroupRoutes(nodes: RoutedNode[]): Record<string, MockRoute>
       })
     },
     'PUT /v1/route-groups/:id/members': async (ctx) => {
-      if (!ctx.requirePermission('node.config.publish') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('route_group_members_update', () => {
@@ -286,7 +283,6 @@ export function routeGroupRoutes(nodes: RoutedNode[]): Record<string, MockRoute>
       })
     },
     'PUT /v1/nodes/:id/route-groups': async (ctx) => {
-      if (!ctx.requirePermission('node.config.publish')) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       const n = findNode(ctx.params.id)
@@ -312,7 +308,6 @@ export function routeGroupRoutes(nodes: RoutedNode[]): Record<string, MockRoute>
       ctx.send(200, { ok: true, row_version: n.row_version })
     },
     'GET /v1/nodes/:id/routing/effective': (ctx) => {
-      if (!ctx.requirePermission('node.read')) return
       const n = findNode(ctx.params.id)
       if (!n) return reply(ctx, notFound())
       ctx.send(200, effective(n))

@@ -573,27 +573,25 @@ const reply = (ctx: MockContext, r: MockResult) => ctx.send(r.status, r.body)
 export const content: MockModule = {
   routes: {
     'GET /v1/announcements': (ctx) => {
-      if (!ctx.requirePermission('ops.announcement.write')) return
       promoteDue()
       const ts = (a: Ann) => new Date(a.published_at ?? a.created_at).getTime()
       const list = [...anns].sort((a, b) => Number(b.pinned) - Number(a.pinned) || ts(b) - ts(a))
       ctx.send(200, { announcements: list.map(annJson), plans: PLANS, user_groups: GROUPS })
     },
     'POST /v1/announcements': async (ctx) => {
-      if (!ctx.requirePermission('ops.announcement.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       await ctx.idempotent('announcement_save', () => saveAnn(ctx, null))
     },
     'POST /v1/announcements/:id/withdraw': async (ctx) => {
-      if (!ctx.requirePermission('ops.announcement.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       await ctx.idempotent('announcement_withdraw', () => withdrawAnn(ctx, ctx.params.id!))
     },
     'POST /v1/announcements/:id': async (ctx) => {
-      if (!ctx.requirePermission('ops.announcement.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       await ctx.idempotent('announcement_save', () => saveAnn(ctx, ctx.params.id!))
     },
 
     'GET /v1/content-pages': (ctx) => {
-      if (!ctx.requirePermission('ops.content.write')) return
       const kind = ctx.query.get('kind') ?? ''
       const status = ctx.query.get('status') ?? ''
       const q = (ctx.query.get('q') ?? '').trim().toLowerCase()
@@ -606,31 +604,29 @@ export const content: MockModule = {
       ctx.send(200, { pages: rows.map((r) => pageJson(r, { body: false, author: true })) })
     },
     'GET /v1/content-pages/:id': (ctx) => {
-      if (!ctx.requirePermission('ops.content.write')) return
       const row = UUID.test(ctx.params.id!) ? pages.find((p) => p.id === ctx.params.id!.toLowerCase()) : undefined
       if (!row) return reply(ctx, notFound())
       ctx.send(200, { page: pageJson(row, { body: true, author: false }) })
     },
     'POST /v1/content-pages': async (ctx) => {
-      if (!ctx.requirePermission('ops.content.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       await ctx.idempotent('content_page_version_create', () => publishPage(ctx))
     },
     'POST /v1/content-pages/:id/archive': async (ctx) => {
-      if (!ctx.requirePermission('ops.content.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       await ctx.idempotent('content_page_archive', () => archivePage(ctx, ctx.params.id!))
     },
 
     'GET /v1/themes': (ctx) => {
-      if (!ctx.requirePermission('platform.appearance.read')) return
       ctx.send(200, { themes })
     },
     'POST /v1/themes': async (ctx) => {
-      if (!ctx.requirePermission('platform.appearance.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       await ctx.idempotent('appearance_theme_save', () => saveTheme(ctx))
     },
     // 激活与删除：reauth、无幂等（router_appearance.go）；处理器不读请求体
     'POST /v1/themes/:code/activate': (ctx) => {
-      if (!ctx.requirePermission('platform.appearance.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const target = themes.find((t) => t.code === ctx.params.code)
       if (!target) return reply(ctx, err(404, 'not_found', '主题不存在'))
       for (const t of themes) t.is_active = t === target
@@ -638,18 +634,17 @@ export const content: MockModule = {
       ctx.send(200, { activated: true })
     },
     'DELETE /v1/themes/:code': (ctx) => {
-      if (!ctx.requirePermission('platform.appearance.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const i = themes.findIndex((t) => t.code === ctx.params.code && !t.is_builtin && !t.is_active)
       if (i < 0) return reply(ctx, err(422, 'validation_failed', '删不掉：内置主题和正在生效的主题都不能删'))
       themes.splice(i, 1)
       ctx.send(200, { deleted: true })
     },
     'GET /v1/slots': (ctx) => {
-      if (!ctx.requirePermission('platform.appearance.read')) return
       ctx.send(200, { slots: SLOT_CATALOG.map(([key, label, where]) => ({ key, label, where, content: '', enabled: false, ...savedSlots.get(key) })) })
     },
     'POST /v1/slots/:key': async (ctx) => {
-      if (!ctx.requirePermission('platform.appearance.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       await ctx.idempotent('appearance_slot_save', async () => {
         const decoded = await decode(ctx, { content: 'string', enabled: 'boolean' })
         if (!decoded.ok) return decoded.result
@@ -664,11 +659,10 @@ export const content: MockModule = {
     },
 
     'GET /v1/settings/site': (ctx) => {
-      if (!ctx.requirePermission('security.audit.read')) return
       ctx.send(200, { timezone: siteTimezone })
     },
     'POST /v1/settings/site': async (ctx) => {
-      if (!ctx.requirePermission('platform.settings.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const decoded = await decode(ctx, { timezone: 'string' })
       if (!decoded.ok) return reply(ctx, decoded.result)
       const tz = str(decoded.body.timezone)

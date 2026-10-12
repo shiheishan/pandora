@@ -334,12 +334,11 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
   return {
     // ---- 全局路由（静态段 routing 先于 /nodes/:id 系列）----
     'GET /v1/nodes/routing': (ctx) => {
-      if (!ctx.requirePermission('node.read')) return
       const online = live().filter((n) => n.serving_status === 'active' && n.last_heartbeat_at && Date.now() - new Date(n.last_heartbeat_at).getTime() <= 90_000).length
       ctx.send(200, { revision: revisionOf(), outbounds: globalRouting.outbounds, routes: globalRouting.routes, online_nodes: online })
     },
     'PUT /v1/nodes/routing': async (ctx) => {
-      if (!ctx.requirePermission('node.config.publish') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('node_routing_global_publish', () => {
@@ -368,7 +367,6 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
 
     // ---- 服务器 ----
     'GET /v1/servers': (ctx) => {
-      if (!ctx.requirePermission('node.read')) return
       const status = (ctx.query.get('status') ?? '').trim()
       const q = (ctx.query.get('q') ?? '').trim().toLowerCase()
       if (status && !(status in SERVER_EDGES)) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { status: '不支持的服务器状态' })
@@ -380,7 +378,6 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
       ctx.send(200, { servers: rows, total: rows.length })
     },
     'POST /v1/servers': async (ctx) => {
-      if (!ctx.requirePermission('node.write')) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       const extra = unknownField(body, SERVER_FIELDS)
@@ -397,13 +394,11 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
       ctx.send(201, serverOut(s, nodes))
     },
     'GET /v1/servers/:id': (ctx) => {
-      if (!ctx.requirePermission('node.read')) return
       const s = findServer(ctx.params.id)
       if (!s) return reply(ctx, notFound())
       ctx.send(200, serverOut(s, nodes))
     },
     'GET /v1/servers/:id/nodes': (ctx) => {
-      if (!ctx.requirePermission('node.read')) return
       const s = findServer(ctx.params.id)
       if (!s) return reply(ctx, notFound())
       const rows = nodes
@@ -413,7 +408,6 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
       ctx.send(200, { nodes: rows, total: rows.length })
     },
     'PATCH /v1/servers/:id': async (ctx) => {
-      if (!ctx.requirePermission('node.write')) return
       const s = findServer(ctx.params.id)
       if (!s) return reply(ctx, notFound())
       const body = await ctx.body()
@@ -435,7 +429,6 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
       ctx.send(200, serverOut(s, nodes))
     },
     'POST /v1/servers/:id/status': async (ctx) => {
-      if (!ctx.requirePermission('node.lifecycle')) return
       const s = findServer(ctx.params.id)
       if (!s) return reply(ctx, notFound())
       const body = await ctx.body()
@@ -459,7 +452,7 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
       ctx.send(200, serverOut(s, nodes))
     },
     'DELETE /v1/servers/:id': async (ctx) => {
-      if (!ctx.requirePermission('node.lifecycle') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const s = findServer(ctx.params.id)
       if (!s) return reply(ctx, notFound())
       const body = await ctx.body()
@@ -479,7 +472,7 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
       ctx.send(200, { ok: true, id: s.id })
     },
     'POST /v1/servers/:id/bootstrap-token': async (ctx) => {
-      if (!ctx.requirePermission('node.provision') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('server_bootstrap_token_issue', () => {
@@ -498,7 +491,6 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
 
     // ---- 节点池 ----
     'GET /v1/node-pools': (ctx) => {
-      if (!ctx.requirePermission('node.read')) return
       const rows = [...pools]
         .sort((a, b) => a.name.localeCompare(b.name, 'zh'))
         .map((p) => {
@@ -524,7 +516,6 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
       ctx.send(200, { pools: rows })
     },
     'POST /v1/node-pools': async (ctx) => {
-      if (!ctx.requirePermission('node.provision')) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       const extra = unknownField(body, ['code', 'name', 'region', 'status', 'allowed_user_group_ids'])
@@ -543,7 +534,6 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
       ctx.send(200, { id: p.id })
     },
     'POST /v1/node-pools/:id': async (ctx) => {
-      if (!ctx.requirePermission('node.provision')) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       const extra = unknownField(body, ['code', 'name', 'region', 'status', 'allowed_user_group_ids'])
@@ -564,7 +554,6 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
       ctx.send(200, { ok: true })
     },
     'DELETE /v1/node-pools/:id': (ctx) => {
-      if (!ctx.requirePermission('node.provision')) return
       const p = pools.find((x) => x.id === ctx.params.id)
       if (!p) return reply(ctx, notFound())
       if (nodes.some((n) => n.pool_id === p.id)) return ctx.fail(409, 'conflict', '这个分组下还有节点，先把节点移到别的分组再删')

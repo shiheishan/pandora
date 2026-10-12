@@ -230,9 +230,8 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
   }
 
   return {
-    // ---- 用户组：iam.user.write，无 reauth、无幂等 -----------------------------
+    // ---- 用户组：无 reauth、无幂等 -----------------------------
     'POST /v1/user-groups': async (ctx) => {
-      if (!ctx.requirePermission('iam.user.write')) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       const extra = unknownField(body, ['name', 'code', 'description'])
@@ -248,7 +247,6 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
 
     // 编辑：code 被忽略，不允许改
     'POST /v1/user-groups/:id': async (ctx) => {
-      if (!ctx.requirePermission('iam.user.write')) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       const extra = unknownField(body, ['name', 'code', 'description'])
@@ -264,7 +262,6 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
 
     // 删除：成员、套餐可见性、专属价格、优惠券限定任一不为 0 都回 409，message 写明是哪一种
     'DELETE /v1/user-groups/:id': (ctx) => {
-      if (!ctx.requirePermission('iam.user.write')) return
       const k = groups.findIndex((x) => x.id === ctx.params.id)
       if (k < 0) return ctx.fail(404, 'not_found', '资源不存在或无权访问')
       const g = groups[k]!
@@ -282,7 +279,6 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
     // ---- 批量运营 -----------------------------------------------------------
     // 预览：只要读权限，鼓励多用
     'POST /v1/users/bulk/preview': async (ctx) => {
-      if (!ctx.requirePermission('iam.user.read')) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       const extra = unknownField(body, FILTER_KEYS)
@@ -302,9 +298,9 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
       })
     },
 
-    // 导出：iam.user.write + reauth（R9），无幂等；limit 默认 10000、最大 50000，超出静默截断
+    // 导出：reauth（R9），无幂等；limit 默认 10000、最大 50000，超出静默截断
     'GET /v1/users/bulk/export': (ctx) => {
-      if (!ctx.requirePermission('iam.user.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const f = filterFromQuery(ctx.query)
       const bad = filterProblem(f)
       if (bad) return ctx.send(bad.status, bad.body)
@@ -331,10 +327,10 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
       ctx.sendRaw(200, { contentType: 'text/csv; charset=utf-8', text, headers: { 'Content-Disposition': 'attachment; filename="users.csv"' } })
     },
 
-    // 批量生成：iam.user.write + reauth（R9）+ 幂等 user_bulk_generate。是后台任务（adminops
+    // 批量生成：reauth（R9）+ 幂等 user_bulk_generate。是后台任务（adminops
     // SubmitGenerateUsers）：回 202 与任务；账号在这里一次建好，进度按时间往前走（每 60ms 一个）
     'POST /v1/users/bulk/generate': async (ctx) => {
-      if (!ctx.requirePermission('iam.user.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       await ctx.idempotent('user_bulk_generate', () => {
         if (!body) return err(400, 'bad_request', '请求体不是合法的 JSON')
@@ -395,11 +391,10 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
       })
     },
     'GET /v1/users/bulk/generate/jobs': (ctx) => {
-      if (!ctx.requirePermission('iam.user.write')) return
       ctx.send(200, { jobs: generationJobs.slice(0, 20).map(jobView) })
     },
     'GET /v1/users/bulk/generate/jobs/:id/result': (ctx) => {
-      if (!ctx.requirePermission('iam.user.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const job = generationJobs.find((j) => j.id === ctx.params.id)
       // 别人的任务与不存在的任务同一个 404（只有提交人能下载）
       if (!job || job.actor_id !== ctx.user.userId) return ctx.fail(404, 'not_found', '资源不存在或无权访问')
@@ -410,13 +405,12 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
       ctx.sendRaw(200, { contentType: 'text/csv; charset=utf-8', text, headers: { 'Content-Disposition': 'attachment; filename="generated-users.csv"' } })
     },
     'GET /v1/users/bulk/generate/jobs/:id': (ctx) => {
-      if (!ctx.requirePermission('iam.user.write')) return
       const job = generationJobs.find((j) => j.id === ctx.params.id)
       if (!job) return ctx.fail(404, 'not_found', '资源不存在或无权访问')
       ctx.send(200, jobView(job))
     },
     'POST /v1/users/bulk/mail': async (ctx) => {
-      if (!ctx.requirePermission('ops.notification.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       await ctx.idempotent('user_bulk_mail', () => {
         if (!body) return err(400, 'bad_request', '请求体不是合法的 JSON')
@@ -440,7 +434,6 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
 
     // ---- 设备策略 -----------------------------------------------------------
     'GET /v1/devices': (ctx) => {
-      if (!ctx.requirePermission('iam.user.read')) return
       const rows = users
         .flatMap((u) => u.subs.filter((s) => s.status === 'active' || s.status === 'trialing' || s.status === 'grace').map((s) => ({ u, s })))
         .sort((a, b) => b.s.online_devices - a.s.online_devices || b.s.created_at.localeCompare(a.s.created_at))
@@ -462,9 +455,9 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
       ctx.send(200, { devices: rows, mode: device.mode, grace: device.grace, window_minutes: device.window_minutes })
     },
 
-    // 全局模式：iam.user.write + reauth（R9），无幂等；grace 只在传了时写
+    // 全局模式：reauth（R9），无幂等；grace 只在传了时写
     'POST /v1/settings/device-limit': async (ctx) => {
-      if (!ctx.requirePermission('iam.user.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       const extra = unknownField(body, ['mode', 'grace', 'window_minutes'])
@@ -483,7 +476,6 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
 
     // ---- 流量重置 -----------------------------------------------------------
     'GET /v1/traffic-resets': (ctx) => {
-      if (!ctx.requirePermission('metering.reset.read')) return
       const reason = ctx.query.get('reason') ?? ''
       const userId = ctx.query.get('user_id') ?? ''
       if (reason && !REASONS.includes(reason as Reason)) return ctx.fail(400, 'bad_request', '不支持的重置原因')
@@ -496,7 +488,6 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
     },
 
     'GET /v1/traffic-resets/stats': (ctx) => {
-      if (!ctx.requirePermission('metering.reset.read')) return
       const since = Date.now() - 30 * DAY
       const recent = logs.filter((l) => Date.parse(l.created_at) > since)
       const byReason: Partial<Record<Reason, number>> = {}
@@ -511,16 +502,15 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
 
     // 单用户历史：固定最近 50 条，不接受分页
     'GET /v1/users/:id/traffic-resets': (ctx) => {
-      if (!ctx.requirePermission('metering.reset.read')) return
       if (!UUID.test(ctx.params.id!)) return ctx.fail(400, 'bad_request', '用户标识格式不正确')
       const hits = logs.filter((l) => l.user_id === ctx.params.id)
       ctx.send(200, { logs: hits.slice(0, 50).map(logView), total: hits.length })
     },
 
-    // 手动重置（按份）：metering.reset.write + reauth + 幂等 traffic_manual_reset；
+    // 手动重置（按份）：reauth + 幂等 traffic_manual_reset；
     // path 是订阅 id，只清这一份的本期已用，且这一份必须 status=active（试用不行）
     'POST /v1/subscriptions/:id/traffic-reset': async (ctx) => {
-      if (!ctx.requirePermission('metering.reset.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       await ctx.idempotent('traffic_manual_reset', () => {
         if (!body) return err(400, 'bad_request', '请求体不是合法的 JSON')
@@ -550,10 +540,10 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
       })
     },
 
-    // 加时长：billing.adjustment.write + reauth + 幂等 subscription_admin_extend（billing.ExtendSubscriptionAsAdmin）。
+    // 加时长：reauth + 幂等 subscription_admin_extend（billing.ExtendSubscriptionAsAdmin）。
     // 先解码（多余字段 400），再校验天数与原因（422 带 fields），再找订阅（404）、判状态（409）与到期时间（422 无 fields）
     'POST /v1/subscriptions/:id/extend': async (ctx) => {
-      if (!ctx.requirePermission('billing.adjustment.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       await ctx.idempotent('subscription_admin_extend', () => {
         if (!body) return err(400, 'bad_request', '请求体不是合法的 JSON')
@@ -576,10 +566,10 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
         return { status: 200, body: { subscription_id: sub.id, user_email: owner.email, days, previous_end: previous, period_end: end } }
       })
     },
-    // 加流量包：billing.adjustment.write + reauth + 幂等 subscription_admin_traffic_grant；
+    // 加流量包：reauth + 幂等 subscription_admin_traffic_grant；
     // 流量包挂在这一份订阅上（billing.GrantTrafficPackAsAdmin），回执里的剩余量是这一份的余量
     'POST /v1/subscriptions/:id/traffic-pack': async (ctx) => {
-      if (!ctx.requirePermission('billing.adjustment.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       await ctx.idempotent('subscription_admin_traffic_grant', () => {
         if (!body) return err(400, 'bad_request', '请求体不是合法的 JSON')

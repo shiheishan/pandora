@@ -359,11 +359,9 @@ export const nodes: MockModule = {
     ...infraRoutes(store),
     ...routeGroupRoutes(store),
     'GET /v1/node-protocol-schemas': (ctx) => {
-      if (!ctx.requirePermission('node.read')) return
       ctx.send(200, NODE_PROTOCOL_SCHEMAS)
     },
     'GET /v1/nodes': (ctx) => {
-      if (!ctx.requirePermission('node.read')) return
       // nodefabric.validateAdminNodeQuery：不认得的状态、过长的搜索词、不是 UUID 的 id 回 422
       const state = ctx.query.get('state') ?? ''
       const q = (ctx.query.get('q') ?? '').trim()
@@ -383,7 +381,6 @@ export const nodes: MockModule = {
       ctx.send(200, { nodes: id ? page.map(detailRow) : page.map(listRow), total: rows.length })
     },
     'POST /v1/nodes': async (ctx) => {
-      if (!ctx.requirePermission('node.provision')) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('node_create', () => {
@@ -417,7 +414,6 @@ export const nodes: MockModule = {
       })
     },
     'PATCH /v1/nodes/:id': async (ctx) => {
-      if (!ctx.requirePermission('node.write')) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       const extra = unknownField(body, ['row_version', 'name', 'pool_id', 'node_type', 'server_host', 'server_port', 'kernel', 'traffic_rate', 'display_name', 'protocol_config', 'country_code'])
@@ -449,7 +445,6 @@ export const nodes: MockModule = {
       ctx.send(200, adminNode(n))
     },
     'POST /v1/nodes/:id/copy': async (ctx) => {
-      if (!ctx.requirePermission('node.provision')) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('node_copy', () => {
@@ -474,7 +469,6 @@ export const nodes: MockModule = {
       })
     },
     'POST /v1/nodes/:id/move': async (ctx) => {
-      if (!ctx.requirePermission('node.provision')) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('node_server_move', () => {
@@ -495,7 +489,6 @@ export const nodes: MockModule = {
       })
     },
     'PUT /v1/nodes/order': async (ctx) => {
-      if (!ctx.requirePermission('node.write')) return
       const body = await ctx.body()
       const items = Array.isArray(body?.items) ? (body!.items as Json[]) : []
       if (items.length < 1 || items.length > 200) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { items: '一次 1–200 项' })
@@ -512,7 +505,6 @@ export const nodes: MockModule = {
       ctx.send(200, { ok: true, updated: items.length })
     },
     'POST /v1/nodes/status:batch': async (ctx) => {
-      if (!ctx.requirePermission('node.lifecycle')) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('node_status_batch', () => {
@@ -537,7 +529,7 @@ export const nodes: MockModule = {
       })
     },
     'POST /v1/nodes/bootstrap-token': async (ctx) => {
-      if (!ctx.requirePermission('node.provision') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('node_bootstrap_token_issue', () => {
@@ -554,11 +546,10 @@ export const nodes: MockModule = {
       })
     },
     'POST /v1/nodes/reality-keypair': (ctx) => {
-      if (!ctx.requirePermission('node.read')) return
       ctx.send(200, { private_key: randomBytes(32).toString('base64url'), public_key: randomBytes(32).toString('base64url'), short_id: randomBytes(4).toString('hex'), hint: '私钥只在保存时写入，之后读接口不回显' })
     },
     'DELETE /v1/nodes/:id': async (ctx) => {
-      if (!ctx.requirePermission('node.lifecycle') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body || emptyBody(ctx)) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       const n = findNode(ctx.params.id)
@@ -570,11 +561,10 @@ export const nodes: MockModule = {
       n.name = `${n.name}#destroyed-${Date.now()}`
       ctx.send(200, { deleted: true })
     },
-    // R108 / R113：一步上线，照 nodefabric.ActivateNode：node.lifecycle、幂等 node_activate、无 reauth；
+    // R108 / R113：一步上线，照 nodefabric.ActivateNode：幂等 node_activate、无 reauth；
     // 判断顺序同 Go——版本号非法 400、节点不存在 404、已是 active 回 200 不改动（先于版本号）、版本冲突 409，
     // 再依次是接入尾段、节点身份、协议就绪、服务器；服务器跟着进 ready；warnings 没有提示时不出现
     'POST /v1/nodes/:id/activate': async (ctx) => {
-      if (!ctx.requirePermission('node.lifecycle')) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('node_activate', () => {
@@ -601,7 +591,7 @@ export const nodes: MockModule = {
     },
 
     'POST /v1/nodes/:id/retire': async (ctx) => {
-      if (!ctx.requirePermission('node.lifecycle') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('node_retire', () => {
@@ -617,14 +607,14 @@ export const nodes: MockModule = {
       })
     },
     'POST /v1/nodes/:id/revoke-identity': (ctx) => {
-      if (!ctx.requirePermission('node.identity.revoke') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const n = findNode(ctx.params.id)
       if (!n || !n.identity_serial || n.identityRevoked) return reply(ctx, notFound('该节点没有有效身份'))
       n.identityRevoked = true
       ctx.send(200, { ok: true })
     },
     'POST /v1/nodes/config/publish': async (ctx) => {
-      if (!ctx.requirePermission('node.config.publish') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('node_config_publish', () => {
@@ -635,7 +625,6 @@ export const nodes: MockModule = {
       })
     },
     'GET /v1/nodes/:id/metrics': (ctx) => {
-      if (!ctx.requirePermission('node.read')) return
       const n = findNode(ctx.params.id)
       if (!n || !n.last_heartbeat_at || n.serving_status === 'retired') return ctx.send(200, { points: null, latest: null })
       const now = Date.now()
@@ -648,13 +637,11 @@ export const nodes: MockModule = {
       ctx.send(200, { points, latest: { cpu_percent: points.at(-1)!.cpu_percent, mem_used_mb: 2400, mem_total_mb: 4096, disk_used_gb: 22, disk_total_gb: 80, load1: 0.8, load5: 0.7, load15: 0.6, tcp_conns: points.at(-1)!.tcp_conns, uptime_sec: 86400 * 12, rx_total: 9e12, tx_total: 2e12 } })
     },
     'GET /v1/nodes/:id/routing': (ctx) => {
-      if (!ctx.requirePermission('node.read')) return
       const n = findNode(ctx.params.id)
       if (!n) return reply(ctx, notFound('节点不存在'))
       ctx.send(200, { row_version: n.row_version, groups: groupRefsOfNode(n.id), ...n.routing })
     },
     'PUT /v1/nodes/:id/routing': async (ctx) => {
-      if (!ctx.requirePermission('node.config.publish')) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       const n = findNode(ctx.params.id)
@@ -670,7 +657,7 @@ export const nodes: MockModule = {
       ctx.send(200, { ok: true, row_version: n.row_version })
     },
     'POST /v1/nodes/:id/server-token': async (ctx) => {
-      if (!ctx.requirePermission('node.provision') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       await ctx.idempotent('node_server_token_issue', () => {
         const n = findNode(ctx.params.id)
         if (!n) return notFound('节点不存在')
@@ -683,7 +670,6 @@ export const nodes: MockModule = {
       })
     },
     'GET /v1/nodes/:id/identity': (ctx) => {
-      if (!ctx.requirePermission('node.read')) return
       if (!UUID.test(ctx.params.id!)) return reply(ctx, notFound('节点不存在'))
       const n = findNode(ctx.params.id)
       if (!n) return reply(ctx, notFound('节点不存在'))

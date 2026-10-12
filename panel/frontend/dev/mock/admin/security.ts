@@ -439,7 +439,6 @@ async function setSwitch(ctx: MockContext): Promise<MockResult> {
 export const security: MockModule = {
   routes: {
     'GET /v1/audit': (ctx) => {
-      if (!ctx.requirePermission('security.audit.read')) return
       tick()
       let limit = atoi(ctx.query.get('limit'), 50)
       if (limit <= 0 || limit > 200) limit = 50
@@ -448,7 +447,7 @@ export const security: MockModule = {
       ctx.send(200, { events: rows.slice(offset, offset + limit).map(auditJson), total: rows.length })
     },
     'GET /v1/audit/export': (ctx) => {
-      if (!ctx.requirePermission('security.audit.read') || !ctx.requirePermission('ops.export') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const range = exportRange(ctx.query)
       if ('status' in range) return reply(ctx, range)
       const f = { ...auditFilter(ctx.query), ...range }
@@ -467,13 +466,11 @@ export const security: MockModule = {
     },
 
     'GET /v1/access-log': (ctx) => {
-      if (!ctx.requirePermission('security.audit.read')) return
       tick()
       reply(ctx, accessList(ctx))
     },
 
     'GET /v1/ip-clusters': (ctx) => {
-      if (!ctx.requirePermission('security.audit.read')) return
       const all = ctx.query.get('include_reviewed') === '1'
       const now = Date.now()
       const rows = clusters
@@ -484,7 +481,6 @@ export const security: MockModule = {
       ctx.send(200, { clusters: rows })
     },
     'POST /v1/ip-clusters/:key/review': async (ctx) => {
-      if (!ctx.requirePermission('security.risk.review')) return
       const d = await decode(ctx, { note: 'string' })
       if (!d.ok) return reply(ctx, d.result)
       if (!/^([0-9a-f]{2})+$/i.test(ctx.params.key!)) return reply(ctx, NOT_FOUND)
@@ -498,17 +494,16 @@ export const security: MockModule = {
       ctx.send(200, { key: ctx.params.key, decision: 'normal', expires_at: expires.replace(/\.\d+Z$/, 'Z') })
     },
     'POST /v1/ip-clusters/:key/disable-accounts': async (ctx) => {
-      if (!ctx.requirePermission('security.risk.review') || !ctx.requirePermission('iam.user.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       await ctx.idempotent('ip_cluster_disable', () => disableAccounts(ctx))
     },
 
     'GET /v1/switches': (ctx) => {
-      if (!ctx.requirePermission('security.audit.read')) return
       const rows = [...switches].sort((a, b) => Number(b.essential) - Number(a.essential) || a.code.localeCompare(b.code))
       ctx.send(200, { switches: rows })
     },
     'POST /v1/switches/:code': async (ctx) => {
-      if (!ctx.requirePermission('platform.settings.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       reply(ctx, await setSwitch(ctx))
     },
   },
