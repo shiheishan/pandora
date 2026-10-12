@@ -156,13 +156,17 @@ func (r *Repo) IDsByEmailLike(ctx context.Context, q string, limit int) ([]uuid.
 	if q == "" {
 		return nil, nil
 	}
-	var ids []uuid.UUID
+	var rows []UserRef
 	err := r.d.Conn(ctx).Raw(
 		"SELECT id FROM users WHERE email::text ILIKE ? ESCAPE '\\' ORDER BY id LIMIT ?",
 		likePattern(q), limit,
-	).Scan(&ids).Error
+	).Scan(&rows).Error
 	if err != nil {
 		return nil, err
+	}
+	ids := make([]uuid.UUID, len(rows))
+	for i, row := range rows {
+		ids[i] = row.ID
 	}
 	return ids, nil
 }
