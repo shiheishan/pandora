@@ -197,7 +197,7 @@ func TestPlanChangeAndManualIdempotentReplay(t *testing.T) {
 	run := func(actx context.Context, actor uuid.UUID, scope string, create func(context.Context) (Created, error)) {
 		t.Helper()
 		key := "idem-" + randHex(16)
-		fp := idemsvc.NewFingerprint("POST", "/api/v1/"+scope, []byte(`{}`))
+		fp := idemsvc.NewFingerprint([]byte("test-fp-key"), "POST", "/api/v1/"+scope, []byte(`{}`))
 		claim, replay, err := e.idem.Claim(actx, scope, key, fp)
 		if err != nil || claim == nil || replay != nil {
 			t.Fatalf("%s 认领: claim=%v replay=%v err=%v", scope, claim, replay, err)

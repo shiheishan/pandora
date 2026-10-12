@@ -21,8 +21,11 @@ import (
 
 const testScope = "order_create"
 
+// testFPKey 是测试用的指纹密钥。
+var testFPKey = []byte("test-idempotency-fingerprint-key")
+
 func fp(s string) service.Fingerprint {
-	return service.NewFingerprint("POST", "/v1/x", []byte(s))
+	return service.NewFingerprint(testFPKey, "POST", "/v1/x", []byte(s))
 }
 
 func actorCtx(t *testing.T, d *db.DB, userID uuid.UUID) context.Context {

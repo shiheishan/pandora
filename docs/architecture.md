@@ -509,6 +509,7 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 | IP、标识的 HMAC 哈希 | `pandora/hmac/ip/v1`、`pandora/hmac/identity/v1` |
 | 订阅审计盐、通知收件人盐 | `pandora/hmac/sub-audit/v1`、`pandora/hmac/notify/v1` |
 | 礼品卡卡密的 HMAC（码表只存它与掩码） | `pandora/hmac/giftcard/v1` |
+| 幂等请求指纹（落库的 method、target、请求体摘要） | `pandora/hmac/idempotency/v1` |
 | 插件钩子签名 | 每个钩子自己的密钥（不变） |
 
 被封存的数据：渠道凭据、DNS 凭据、ACME 账户私钥、证书私钥、面板 CA 私钥、批量建用户的结果、提现收款信息。原来的 `Envelope` 没有 DEK，名不副实，改名为 `Sealer`。

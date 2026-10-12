@@ -58,7 +58,7 @@ func TestFlowPGFullCycle(t *testing.T) {
 	d := testkit.DB(t)
 	testkit.Truncate(t, d, "idempotency_keys")
 	svc := service.New(repo.New(d), tx.NewManager(d))
-	h := handler.New(svc)
+	h := handler.New(svc, testFPKey)
 	actor := uuid.New()
 	var bizCalls int
 	e := pgEngine(h, actor, func(c *gin.Context) {
@@ -104,7 +104,7 @@ func TestFlowPGRetryAfterFail(t *testing.T) {
 	d := testkit.DB(t)
 	testkit.Truncate(t, d, "idempotency_keys")
 	svc := service.New(repo.New(d), tx.NewManager(d))
-	h := handler.New(svc)
+	h := handler.New(svc, testFPKey)
 	actor := uuid.New()
 	var bizCalls int
 	e := pgEngine(h, actor, func(c *gin.Context) {
@@ -144,7 +144,7 @@ func TestFlowPGActorIsolation(t *testing.T) {
 	d := testkit.DB(t)
 	testkit.Truncate(t, d, "idempotency_keys")
 	svc := service.New(repo.New(d), tx.NewManager(d))
-	h := handler.New(svc)
+	h := handler.New(svc, testFPKey)
 	key := "shared-key"
 
 	actors := []uuid.UUID{uuid.New(), uuid.New()}
@@ -166,7 +166,7 @@ func TestFlowPGBusinessComplete(t *testing.T) {
 	d := testkit.DB(t)
 	testkit.Truncate(t, d, "idempotency_keys")
 	svc := service.New(repo.New(d), tx.NewManager(d))
-	h := handler.New(svc)
+	h := handler.New(svc, testFPKey)
 	actor := uuid.New()
 	e := pgEngine(h, actor, func(c *gin.Context) {
 		claim, ok := service.ClaimFrom(c.Request.Context())
@@ -209,7 +209,7 @@ func TestFlowPGConcurrent(t *testing.T) {
 	d := testkit.DB(t)
 	testkit.Truncate(t, d, "idempotency_keys")
 	svc := service.New(repo.New(d), tx.NewManager(d))
-	h := handler.New(svc)
+	h := handler.New(svc, testFPKey)
 	actor := uuid.New()
 	var bizCalls int32
 	e := pgEngine(h, actor, func(c *gin.Context) {

@@ -42,6 +42,9 @@ type fakeService struct {
 	releaseCalls              []int
 }
 
+// testFPKey 是测试用的指纹密钥。
+var testFPKey = []byte("test-idempotency-fingerprint-key")
+
 func (f *fakeService) Claim(ctx context.Context, scope, key string, fp service.Fingerprint) (*service.Claim, *service.Response, error) {
 	f.claimCalls = append(f.claimCalls, claimCall{scope: scope, key: key, fp: fp})
 	if f.claimErr != nil {
@@ -115,7 +118,7 @@ func TestMiddlewareMissingOrInvalidKey(t *testing.T) {
 	actor := uuid.New()
 	bizHits := 0
 	fake := &fakeService{claimResult: defaultClaim()}
-	e := newTestEngine(New(fake), actor, func(c *gin.Context) { bizHits++ })
+	e := newTestEngine(New(fake, testFPKey), actor, func(c *gin.Context) { bizHits++ })
 
 	w := post(t, e, "/v1/things", "{}", "")
 	if w.Code != http.StatusBadRequest || errorCode(t, w) != "bad_request" {
@@ -139,7 +142,7 @@ func TestMiddlewareMissingOrInvalidKey(t *testing.T) {
 
 func TestMiddlewareUnauthorized(t *testing.T) {
 	fake := &fakeService{claimResult: defaultClaim()}
-	e := newTestEngine(New(fake), uuid.Nil, func(c *gin.Context) { c.Status(http.StatusCreated) })
+	e := newTestEngine(New(fake, testFPKey), uuid.Nil, func(c *gin.Context) { c.Status(http.StatusCreated) })
 	w := post(t, e, "/v1/things", "{}", "k1")
 	if w.Code != http.StatusUnauthorized || errorCode(t, w) != "unauthorized" {
 		t.Fatalf("未登录: %d %s", w.Code, w.Body.String())
@@ -162,7 +165,7 @@ func TestMiddlewareClaimErrors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		fake := &fakeService{claimErr: tc.err}
-		e := newTestEngine(New(fake), actor, func(c *gin.Context) { bizHits++ })
+		e := newTestEngine(New(fake, testFPKey), actor, func(c *gin.Context) { bizHits++ })
 		w := post(t, e, "/v1/things", "{}", "k1")
 		if w.Code != http.StatusConflict || errorCode(t, w) != tc.code {
 			t.Fatalf("%s: %d %s", tc.name, w.Code, w.Body.String())
@@ -176,7 +179,7 @@ func TestMiddlewareClaimErrors(t *testing.T) {
 func TestMiddlewareBodyTooLarge(t *testing.T) {
 	actor := uuid.New()
 	fake := &fakeService{claimResult: defaultClaim()}
-	e := newTestEngine(New(fake), actor, func(c *gin.Context) {})
+	e := newTestEngine(New(fake, testFPKey), actor, func(c *gin.Context) {})
 	body := strings.Repeat("x", int(service.MaxBodyBytes)+1)
 	w := post(t, e, "/v1/things", body, "k1")
 	if w.Code != http.StatusBadRequest || errorCode(t, w) != "bad_request" {
@@ -191,7 +194,7 @@ func TestMiddlewareFingerprintAndBodyRestore(t *testing.T) {
 	actor := uuid.New()
 	fake := &fakeService{claimResult: defaultClaim()}
 	var readBody []byte
-	e := newTestEngine(New(fake), actor, func(c *gin.Context) {
+	e := newTestEngine(New(fake, testFPKey), actor, func(c *gin.Context) {
 		readBody, _ = io.ReadAll(c.Request.Body)
 		c.JSON(http.StatusCreated, gin.H{"ok": true})
 	})
@@ -203,7 +206,7 @@ func TestMiddlewareFingerprintAndBodyRestore(t *testing.T) {
 	if len(fake.claimCalls) != 1 {
 		t.Fatalf("Claim 次数 %d", len(fake.claimCalls))
 	}
-	wantFP := service.NewFingerprint("POST", "/v1/things?a=1", []byte(body))
+	wantFP := service.NewFingerprint(testFPKey, "POST", "/v1/things?a=1", []byte(body))
 	if fake.claimCalls[0].fp != wantFP {
 		t.Fatal("指纹与 NewFingerprint 不一致")
 	}
@@ -217,7 +220,7 @@ func TestMiddlewareClaimInContext(t *testing.T) {
 	claim := defaultClaim()
 	fake := &fakeService{claimResult: claim}
 	var got *service.Claim
-	e := newTestEngine(New(fake), actor, func(c *gin.Context) {
+	e := newTestEngine(New(fake, testFPKey), actor, func(c *gin.Context) {
 		got, _ = service.ClaimFrom(c.Request.Context())
 		c.Status(http.StatusCreated)
 	})
@@ -239,7 +242,7 @@ func TestMiddlewareReplay(t *testing.T) {
 	}
 	fake := &fakeService{replayResult: replay}
 	bizHits := 0
-	e := newTestEngine(New(fake), actor, func(c *gin.Context) { bizHits++ })
+	e := newTestEngine(New(fake, testFPKey), actor, func(c *gin.Context) { bizHits++ })
 	w := post(t, e, "/v1/things", "{}", "k1")
 	if w.Code != 201 || w.Body.String() != `{"id":"r"}` {
 		t.Fatalf("body %q", w.Body.String())
@@ -261,7 +264,7 @@ func TestMiddlewareReplay(t *testing.T) {
 func TestMiddlewareCompleteSuccess(t *testing.T) {
 	actor := uuid.New()
 	fake := &fakeService{claimResult: defaultClaim()}
-	e := newTestEngine(New(fake), actor, func(c *gin.Context) {
+	e := newTestEngine(New(fake, testFPKey), actor, func(c *gin.Context) {
 		c.Header("ETag", `"v1"`)
 		c.Header("X-Custom", "1")
 		c.JSON(201, gin.H{"id": "a"})
@@ -288,7 +291,7 @@ func TestMiddlewareCompleteSuccess(t *testing.T) {
 func TestMiddlewareComplete204(t *testing.T) {
 	actor := uuid.New()
 	fake := &fakeService{claimResult: defaultClaim()}
-	e := newTestEngine(New(fake), actor, func(c *gin.Context) { c.Status(204) })
+	e := newTestEngine(New(fake, testFPKey), actor, func(c *gin.Context) { c.Status(204) })
 	w := post(t, e, "/v1/things", "{}", "k1")
 	if w.Code != 204 {
 		t.Fatalf("status %d", w.Code)
@@ -305,7 +308,7 @@ func TestMiddlewareComplete204(t *testing.T) {
 func TestMiddlewareFailRelease(t *testing.T) {
 	actor := uuid.New()
 	fake := &fakeService{claimResult: defaultClaim()}
-	e := newTestEngine(New(fake), actor, func(c *gin.Context) {
+	e := newTestEngine(New(fake, testFPKey), actor, func(c *gin.Context) {
 		httpx.Fail(c, errs.New(errs.ValidationFailed))
 	})
 	w := post(t, e, "/v1/things", "{}", "k1")
@@ -326,7 +329,7 @@ func TestMiddlewarePanicReleases(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	e := gin.New()
 	e.Use(httpx.Recovery(), httpx.Errors(), withActor(actor))
-	e.POST("/v1/things", New(fake).Middleware("thing_create"), func(c *gin.Context) { panic("boom") })
+	e.POST("/v1/things", New(fake, testFPKey).Middleware("thing_create"), func(c *gin.Context) { panic("boom") })
 	w := post(t, e, "/v1/things", "{}", "k1")
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("%d %s", w.Code, w.Body.String())
@@ -339,7 +342,7 @@ func TestMiddlewarePanicReleases(t *testing.T) {
 func TestMiddlewareJSON500Release(t *testing.T) {
 	actor := uuid.New()
 	fake := &fakeService{claimResult: defaultClaim()}
-	e := newTestEngine(New(fake), actor, func(c *gin.Context) {
+	e := newTestEngine(New(fake, testFPKey), actor, func(c *gin.Context) {
 		c.JSON(500, gin.H{"err": "x"})
 	})
 	w := post(t, e, "/v1/things", "{}", "k1")
@@ -354,7 +357,7 @@ func TestMiddlewareJSON500Release(t *testing.T) {
 func TestMiddlewareContentEncodingUnreplayable(t *testing.T) {
 	actor := uuid.New()
 	fake := &fakeService{claimResult: defaultClaim()}
-	e := newTestEngine(New(fake), actor, func(c *gin.Context) {
+	e := newTestEngine(New(fake, testFPKey), actor, func(c *gin.Context) {
 		c.Header("Content-Encoding", "gzip")
 		c.Data(200, "application/octet-stream", []byte("x"))
 	})
@@ -371,7 +374,7 @@ func TestMiddlewareOversizedResponseUnreplayable(t *testing.T) {
 	actor := uuid.New()
 	fake := &fakeService{claimResult: defaultClaim()}
 	big := strings.Repeat("b", service.MaxBodyBytes+1)
-	e := newTestEngine(New(fake), actor, func(c *gin.Context) {
+	e := newTestEngine(New(fake, testFPKey), actor, func(c *gin.Context) {
 		c.String(200, big)
 	})
 	w := post(t, e, "/v1/things", "{}", "k1")
@@ -386,7 +389,7 @@ func TestMiddlewareOversizedResponseUnreplayable(t *testing.T) {
 func TestMiddlewareDuplicateLocationUnreplayable(t *testing.T) {
 	actor := uuid.New()
 	fake := &fakeService{claimResult: defaultClaim()}
-	e := newTestEngine(New(fake), actor, func(c *gin.Context) {
+	e := newTestEngine(New(fake, testFPKey), actor, func(c *gin.Context) {
 		c.Writer.Header().Add("Location", "/a")
 		c.Writer.Header().Add("Location", "/b")
 		c.Status(201)
@@ -402,7 +405,7 @@ func TestMiddlewareDetectContentTypeOnComplete(t *testing.T) {
 	fake := &fakeService{claimResult: defaultClaim()}
 	html := "<html></html>"
 	wantCT := http.DetectContentType([]byte(html))
-	e := newTestEngine(New(fake), actor, func(c *gin.Context) {
+	e := newTestEngine(New(fake, testFPKey), actor, func(c *gin.Context) {
 		c.Writer.WriteHeader(200)
 		_, _ = c.Writer.Write([]byte(html))
 	})
@@ -421,7 +424,7 @@ func TestMiddlewareCompleteErrorDoesNotChangeClient(t *testing.T) {
 		claimResult: defaultClaim(),
 		completeErr: errors.New("db down"),
 	}
-	e := newTestEngine(New(fake), actor, func(c *gin.Context) {
+	e := newTestEngine(New(fake, testFPKey), actor, func(c *gin.Context) {
 		c.JSON(201, gin.H{"id": "a"})
 	})
 	w := post(t, e, "/v1/things", "{}", "k1")
@@ -431,7 +434,7 @@ func TestMiddlewareCompleteErrorDoesNotChangeClient(t *testing.T) {
 }
 
 func TestMiddlewareInvalidScopePanics(t *testing.T) {
-	h := New(&fakeService{})
+	h := New(&fakeService{}, testFPKey)
 	panicked := false
 	func() {
 		defer func() {

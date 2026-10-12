@@ -19,6 +19,8 @@ const (
 	InfoHMACSubAudit = "pandora/hmac/sub-audit/v1"
 	InfoHMACNotify   = "pandora/hmac/notify/v1"
 	InfoHMACGiftCard = "pandora/hmac/giftcard/v1"
+	// InfoHMACIdempotency 是幂等请求指纹（落库的请求体摘要）
+	InfoHMACIdempotency = "pandora/hmac/idempotency/v1"
 )
 
 const minMasterLen = 32

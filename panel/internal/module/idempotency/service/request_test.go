@@ -1,6 +1,7 @@
 package service
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"net/url"
 	"strings"
@@ -90,20 +91,27 @@ func TestTarget(t *testing.T) {
 }
 
 func TestNewFingerprint(t *testing.T) {
-	want := sha256.Sum256([]byte("POST\n/v1/orders\n{\"a\":1}"))
-	got := NewFingerprint("POST", "/v1/orders", []byte("{\"a\":1}"))
+	key := []byte("test-idempotency-fingerprint-key")
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte("POST\n/v1/orders\n{\"a\":1}"))
+	var want Fingerprint
+	copy(want[:], mac.Sum(nil))
+	got := NewFingerprint(key, "POST", "/v1/orders", []byte("{\"a\":1}"))
 	if got != want {
-		t.Fatalf("指纹与预期 SHA-256 不一致")
+		t.Fatalf("指纹与预期 HMAC-SHA256 不一致")
+	}
+	if NewFingerprint([]byte("another-key"), "POST", "/v1/orders", []byte("{\"a\":1}")) == got {
+		t.Fatal("密钥不同应得到不同指纹")
 	}
 
-	base := NewFingerprint("POST", "/v1/orders", []byte("{\"a\":1}"))
-	if NewFingerprint("GET", "/v1/orders", []byte("{\"a\":1}")) == base {
+	base := NewFingerprint(key, "POST", "/v1/orders", []byte("{\"a\":1}"))
+	if NewFingerprint(key, "GET", "/v1/orders", []byte("{\"a\":1}")) == base {
 		t.Fatal("方法不同应得到不同指纹")
 	}
-	if NewFingerprint("POST", "/v1/other", []byte("{\"a\":1}")) == base {
+	if NewFingerprint(key, "POST", "/v1/other", []byte("{\"a\":1}")) == base {
 		t.Fatal("target 不同应得到不同指纹")
 	}
-	if NewFingerprint("POST", "/v1/orders", []byte("{\"a\":2}")) == base {
+	if NewFingerprint(key, "POST", "/v1/orders", []byte("{\"a\":2}")) == base {
 		t.Fatal("body 不同应得到不同指纹")
 	}
 

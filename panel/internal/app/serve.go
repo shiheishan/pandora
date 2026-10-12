@@ -150,7 +150,7 @@ func newHTTPServer(sc config.HTTPServer, h http.Handler) *http.Server {
 func newEngines(r *runtime, svc *services) (*gin.Engine, *gin.Engine) {
 	settingsH := settingsh.New(svc.settings)
 	authH := authh.New(svc.auth, svc.limiter, authOptions(r.cfg))
-	idemH := idemh.New(svc.idem)
+	idemH := idemh.New(svc.idem, svc.idemFPKey)
 	kit := route.Kit{
 		RequireAuth:  authH.RequireAuth(),
 		RecentReauth: authH.RecentReauth(),

@@ -57,9 +57,11 @@ type services struct {
 	order      *ordersvc.Service
 	commission *commissionsvc.Service
 	giftcard   *giftcardsvc.Service
-	limiter    *ratelimit.Limiter
-	queue      *asynq.Client
-	tx         *tx.Manager
+	// idemFPKey 是幂等请求指纹的 HMAC 密钥（从主密钥派生）
+	idemFPKey []byte
+	limiter   *ratelimit.Limiter
+	queue     *asynq.Client
+	tx        *tx.Manager
 }
 
 // asynqRedis 给 asynq 的连接参数：与业务客户端同一套解析（redisx.Options），用户名、口令、库号、TLS、超时都同源。
@@ -186,6 +188,7 @@ func buildServices(r *runtime) (*services, error) {
 		order:      orderSvc,
 		commission: commissionSvc,
 		giftcard:   giftcardSvc,
+		idemFPKey:  keys.Derive(crypto.InfoHMACIdempotency, 32),
 		limiter:    limiter,
 		queue:      queue,
 		tx:         txm,

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"fmt"
 	"net/url"
@@ -19,7 +20,7 @@ const (
 	Retention = 30 * 24 * time.Hour
 )
 
-// Fingerprint 是请求的 SHA-256 指纹。
+// Fingerprint 是请求的 HMAC-SHA256 指纹。
 type Fingerprint [sha256.Size]byte
 
 // ValidKey 判断 Idempotency-Key 是否合法。
@@ -61,15 +62,20 @@ func Target(u *url.URL) string {
 	return target
 }
 
-// NewFingerprint 计算 method、target、body 的请求指纹。
-func NewFingerprint(method, target string, body []byte) Fingerprint {
+// NewFingerprint 用 key 对 method、target、body 做 HMAC-SHA256。key 由主密钥按 crypto.InfoHMACIdempotency 派生：
+// 指纹落库，请求体里可能有卡密之类的低熵秘密，不带密钥的哈希拿到库就能穷举还原。
+func NewFingerprint(key []byte, method, target string, body []byte) Fingerprint {
 	hashInput := make([]byte, 0, len(method)+len(target)+len(body)+2)
 	hashInput = append(hashInput, method...)
 	hashInput = append(hashInput, '\n')
 	hashInput = append(hashInput, target...)
 	hashInput = append(hashInput, '\n')
 	hashInput = append(hashInput, body...)
-	return sha256.Sum256(hashInput)
+	mac := hmac.New(sha256.New, key)
+	mac.Write(hashInput)
+	var fp Fingerprint
+	copy(fp[:], mac.Sum(nil))
+	return fp
 }
 
 // validateResourceType 校验业务资源类型格式（与 scope 同规则）。

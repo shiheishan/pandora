@@ -404,7 +404,7 @@ func TestCreateNewOrderCompletesIdempotencyClaim(t *testing.T) {
 	uctx := asUser(ctx, user)
 
 	key := "idem-" + randHex(16)
-	fp := idemsvc.NewFingerprint("POST", "/api/v1/orders", []byte(`{"plan_id":"x"}`))
+	fp := idemsvc.NewFingerprint([]byte("test-fp-key"), "POST", "/api/v1/orders", []byte(`{"plan_id":"x"}`))
 	claim, replay, err := e.idem.Claim(uctx, "order_create", key, fp)
 	if err != nil || claim == nil || replay != nil {
 		t.Fatalf("认领: claim=%v replay=%v err=%v", claim, replay, err)

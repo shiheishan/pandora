@@ -31,12 +31,16 @@ type Service interface {
 
 // Handler 挂载按 scope 区分的幂等中间件。
 type Handler struct {
-	svc Service
+	svc   Service
+	fpKey []byte
 }
 
-// New 构造 Handler。
-func New(svc Service) *Handler {
-	return &Handler{svc: svc}
+// New 构造 Handler；fpKey 是请求指纹的 HMAC 密钥（主密钥按 crypto.InfoHMACIdempotency 派生），不能为空。
+func New(svc Service, fpKey []byte) *Handler {
+	if len(fpKey) == 0 {
+		panic("idempotency: 指纹密钥为空")
+	}
+	return &Handler{svc: svc, fpKey: fpKey}
 }
 
 // Middleware 返回认领、重放与事后完成/释放的 gin 中间件。
@@ -69,7 +73,7 @@ func (h *Handler) Middleware(scope string) gin.HandlerFunc {
 		c.Request.Body = io.NopCloser(bytes.NewReader(body))
 
 		ctx := c.Request.Context()
-		fp := service.NewFingerprint(c.Request.Method, service.Target(c.Request.URL), body)
+		fp := service.NewFingerprint(h.fpKey, c.Request.Method, service.Target(c.Request.URL), body)
 		claim, replay, err := h.svc.Claim(ctx, scope, key, fp)
 		if err != nil {
 			httpx.Fail(c, err)
