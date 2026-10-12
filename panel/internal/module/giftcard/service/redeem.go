@@ -90,6 +90,13 @@ func (s *Service) Redeem(ctx context.Context, in RedeemInput) (RedeemResult, err
 				return ErrNoPlacement
 			}
 		}
+		// 套餐卡的拒绝检查（含换掉时的剩余价值与未完结订单）都在码转 used 之前做完
+		var prep planPrep
+		if t.Type == TypePlan && placed {
+			if prep, err = s.preparePlan(ctx, user, t, opt, now); err != nil {
+				return err
+			}
+		}
 		// 防重：码先转 used（与发放同一事务），并发兑同一张码的后到者在行锁后看到 used
 		moved, err := s.repo.UpdateCodeStatus(ctx, c.ID, CodeUnused, CodeUsed, &user, &now)
 		if err != nil {
@@ -98,11 +105,11 @@ func (s *Service) Redeem(ctx context.Context, in RedeemInput) (RedeemResult, err
 		if !moved {
 			return ErrCodeUnusable
 		}
-		g, err := s.grant(ctx, grantInput{user: user, codeID: c.ID, t: t, opt: opt, placed: placed, targetLive: targetLive, now: now})
+		g, err := s.grant(ctx, grantInput{user: user, codeID: c.ID, t: t, opt: opt, placed: placed, targetLive: targetLive, prep: prep, now: now})
 		if err != nil {
 			return err
 		}
-		if err := s.repo.InsertRedemption(ctx, redemptionModel(c, t, user, g)); err != nil {
+		if err := s.repo.InsertRedemption(ctx, redemptionModel(c, t, user, g, now)); err != nil {
 			return gcErr(err)
 		}
 		codeID := c.ID
@@ -264,8 +271,10 @@ func (g granted) result(t Template) RedeemResult {
 }
 
 // redemptionModel 把发放结果转成兑换流水行。
-func redemptionModel(c model.Code, t Template, user uuid.UUID, g granted) *model.Redemption {
+// redeemedAt 显式写兑换时刻（与 used_at、冷却判断同一个时钟）。
+func redemptionModel(c model.Code, t Template, user uuid.UUID, g granted, redeemedAt time.Time) *model.Redemption {
 	m := &model.Redemption{
+		RedeemedAt:     redeemedAt,
 		CodeID:         c.ID,
 		TemplateID:     t.ID,
 		UserID:         user,

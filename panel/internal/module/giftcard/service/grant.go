@@ -24,7 +24,9 @@ type grantInput struct {
 	placed bool
 	// targetLive 是落点那份订阅在选定时是否生效中
 	targetLive bool
-	now        time.Time
+	// prep 只对套餐卡有意义：码转 used 之前由 preparePlan 备好
+	prep planPrep
+	now  time.Time
 }
 
 // errPlanUnavailable 是套餐卡绑定的套餐已下架或没有发布版本：卡不能用，事务回滚、码不会被用掉。
@@ -137,7 +139,84 @@ func (s *Service) grant(ctx context.Context, in grantInput) (granted, error) {
 	return g, nil
 }
 
-// grantPlan 发放套餐卡：续同款、换掉那一份或另开一份。
+// planPrep 是套餐卡在码转 used 之前就备好的东西：要动的那份订阅已经锁住，换掉时剩余价值已经算好。
+// 任何会拒绝兑换的检查（套餐下架、订阅不对、这份订阅上有没完结的续费或换套餐单）都在这一步，
+// 失败时码还是 unused，事务回滚后什么都没动。
+type planPrep struct {
+	plan  catalogsvc.Plan
+	sub   subsvc.Subscription
+	value decimal.Decimal
+	cur   money.Currency
+}
+
+// preparePlan 按选定的落点备好套餐卡的发放：新开与换掉要求卡上的套餐在售（planFor）；续同款不要求
+// （套餐下架后存量用户照样能用已发出去的同款卡续，与旧代码一致），只核对订阅就是这个套餐。
+// 换掉：锁订阅之后、动任何东西之前先调 RemainingValue —— order 在这份订阅有没完结的续费或换套餐单时
+// 回 409（ErrOpenChange），原样往上抛，卡不会被用掉；没装折算时不给换掉。
+func (s *Service) preparePlan(ctx context.Context, user uuid.UUID, t Template, opt Option, now time.Time) (planPrep, error) {
+	r := t.Rewards
+	if r.PlanID == nil {
+		return planPrep{}, ErrNoPlacement
+	}
+	planID := *r.PlanID
+	owner := user
+	switch opt.Kind {
+	case KindNew:
+		plan, err := s.planFor(ctx, planID)
+		return planPrep{plan: plan}, err
+	case KindRenew:
+		if opt.SubscriptionID == nil {
+			return planPrep{}, ErrChoiceStale
+		}
+		sub, err := s.subs.Lock(ctx, *opt.SubscriptionID, &owner)
+		if err != nil {
+			return planPrep{}, err
+		}
+		if sub.PlanID != planID {
+			return planPrep{}, ErrChoiceStale
+		}
+		plan := catalogsvc.Plan{ID: planID, Name: t.Name}
+		plans, err := s.catalog.PlansByIDs(ctx, []uuid.UUID{planID})
+		if err != nil {
+			return planPrep{}, err
+		}
+		if p, ok := plans[planID]; ok {
+			plan = p
+		}
+		return planPrep{plan: plan, sub: sub}, nil
+	case KindChange:
+		if s.valuer == nil || opt.SubscriptionID == nil {
+			// 没有折算就不给「换掉」的选项；走到这里是落点与装配对不上
+			return planPrep{}, ErrChoiceStale
+		}
+		sub, err := s.subs.Lock(ctx, *opt.SubscriptionID, &owner)
+		if err != nil {
+			return planPrep{}, err
+		}
+		if sub.PlanID == planID {
+			return planPrep{}, ErrChoiceStale
+		}
+		value, cur, _, err := s.valuer.RemainingValue(ctx, sub.ID, now)
+		if err != nil {
+			return planPrep{}, err
+		}
+		if value.IsNegative() {
+			value = decimal.Zero
+		}
+		if err := money.Check(value); err != nil {
+			return planPrep{}, errs.Wrap(errs.Internal, err)
+		}
+		plan, err := s.planFor(ctx, planID)
+		if err != nil {
+			return planPrep{}, err
+		}
+		return planPrep{plan: plan, sub: sub, value: value, cur: cur}, nil
+	default:
+		return planPrep{}, ErrChoiceStale
+	}
+}
+
+// grantPlan 发放套餐卡：续同款、换掉那一份或另开一份（检查都已在 preparePlan 里做完）。
 // 价格快照的金额一律记 0：卡是送的，日后换套餐按已付价值退款时不能把赠送算成用户付过的钱。
 func (s *Service) grantPlan(ctx context.Context, in grantInput) (granted, error) {
 	r := in.t.Rewards
@@ -145,10 +224,7 @@ func (s *Service) grantPlan(ctx context.Context, in grantInput) (granted, error)
 		return granted{}, ErrNoPlacement
 	}
 	planID := *r.PlanID
-	plan, err := s.planFor(ctx, planID)
-	if err != nil {
-		return granted{}, err
-	}
+	plan, sub := in.prep.plan, in.prep.sub
 	actor := subsvc.Actor{Kind: subsvc.ActorUser, ID: &in.user}
 	g := granted{planID: &planID}
 	switch in.opt.Kind {
@@ -157,7 +233,7 @@ func (s *Service) grantPlan(ctx context.Context, in grantInput) (granted, error)
 		if err != nil {
 			return granted{}, err
 		}
-		sub, err := s.subs.Provision(ctx, subsvc.Provision{
+		created, err := s.subs.Provision(ctx, subsvc.Provision{
 			UserID:        in.user,
 			PlanID:        planID,
 			PlanVersionID: *plan.CurrentVersionID,
@@ -167,17 +243,9 @@ func (s *Service) grantPlan(ctx context.Context, in grantInput) (granted, error)
 		if err != nil {
 			return granted{}, err
 		}
-		g.planMode, g.subID = PlanGrantNew, &sub.ID
-		g.summary = append(g.summary, "已开通「"+plan.Name+"」，到期 "+sub.PeriodEnd.UTC().Format("2006-01-02"))
+		g.planMode, g.subID = PlanGrantNew, &created.ID
+		g.summary = append(g.summary, "已开通「"+plan.Name+"」，到期 "+created.PeriodEnd.UTC().Format("2006-01-02"))
 	case KindRenew:
-		owner := in.user
-		sub, err := s.subs.Lock(ctx, *in.opt.SubscriptionID, &owner)
-		if err != nil {
-			return granted{}, err
-		}
-		if sub.PlanID != planID {
-			return granted{}, ErrChoiceStale
-		}
 		price, err := s.giftPrice(ctx, r.PriceID, &sub.Price)
 		if err != nil {
 			return granted{}, err
@@ -197,7 +265,7 @@ func (s *Service) grantPlan(ctx context.Context, in grantInput) (granted, error)
 		g.planMode, g.subID = PlanGrantRenewed, &id
 		g.summary = append(g.summary, "「"+plan.Name+"」已续期，到期 "+res.PeriodEnd.UTC().Format("2006-01-02"))
 	case KindChange:
-		if err := s.grantPlanChange(ctx, in, plan, &g); err != nil {
+		if err := s.grantPlanChange(ctx, in, &g); err != nil {
 			return granted{}, err
 		}
 	default:
@@ -206,32 +274,14 @@ func (s *Service) grantPlan(ctx context.Context, in grantInput) (granted, error)
 	return g, nil
 }
 
-// grantPlanChange 把选中的那一份换成卡上的套餐：先按换之前的状态算没用完的已付价值，换完全额退进余额。
-func (s *Service) grantPlanChange(ctx context.Context, in grantInput, plan catalogsvc.Plan, g *granted) error {
-	if s.valuer == nil {
-		// 没有折算就不给「换掉」的选项；走到这里是落点与装配对不上
-		return ErrChoiceStale
-	}
-	owner := in.user
-	sub, err := s.subs.Lock(ctx, *in.opt.SubscriptionID, &owner)
-	if err != nil {
-		return err
-	}
-	if sub.PlanID == plan.ID {
-		return ErrChoiceStale
-	}
-	value, cur, _, err := s.valuer.RemainingValue(ctx, sub.ID, in.now)
-	if err != nil {
-		return err
-	}
-	if value.IsNegative() {
-		value = decimal.Zero
-	}
+// grantPlanChange 把选中的那一份换成卡上的套餐，再把 preparePlan 算好的剩余价值全额退进余额。
+func (s *Service) grantPlanChange(ctx context.Context, in grantInput, g *granted) error {
+	plan, sub, value, cur := in.prep.plan, in.prep.sub, in.prep.value, in.prep.cur
 	price, err := s.giftPrice(ctx, in.t.Rewards.PriceID, nil)
 	if err != nil {
 		return err
 	}
-	codeID := in.codeID
+	codeID, owner := in.codeID, in.user
 	res, err := s.subs.ChangePlan(ctx, subsvc.PlanChange{
 		SubscriptionID: sub.ID,
 		UserID:         in.user,
@@ -248,9 +298,6 @@ func (s *Service) grantPlanChange(ctx context.Context, in grantInput, plan catal
 	g.planMode, g.subID = PlanGrantChanged, &id
 	g.summary = append(g.summary, "已换成「"+plan.Name+"」，到期 "+res.PeriodEnd.UTC().Format("2006-01-02"))
 	if value.IsPositive() {
-		if err := money.Check(value); err != nil {
-			return err
-		}
 		if _, err := s.ledger.Post(ctx, ledgersvc.Posting{
 			Kind:       ledgersvc.KindPlanChangeRefund,
 			Currency:   cur,

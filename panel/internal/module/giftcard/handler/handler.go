@@ -70,7 +70,8 @@ func (h *Handler) RegisterPublic(v1 *gin.RouterGroup, k route.Kit) {
 	v1.GET("/me/gift-cards", k.RequireAuth, h.myRedemptions)
 }
 
-// RegisterAdmin 注册后台路由。生码、导出、改模板要重认证（卡密是等价现金）；停用单个码不要（止血越快越好）。
+// RegisterAdmin 注册后台路由。生码、导出、改模板、启停卡密都要重认证（卡密是等价现金；恢复一张停用的码
+// 等于让它重新生效）。前端遇到 reauth_required 会统一弹重认证框。
 func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	v1.GET("/gift-cards", k.RequireAuth, h.listTemplates)
 	v1.GET("/gift-cards/stats", k.RequireAuth, h.stats)
@@ -81,12 +82,13 @@ func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	v1.GET("/gift-cards/usages", k.RequireAuth, h.listUsages)
 	v1.POST("/gift-cards", k.RequireAuth, k.RecentReauth, h.saveTemplate)
 	v1.POST("/gift-cards/:id/codes", k.RequireAuth, k.RecentReauth, k.Idempotency(ScopeCodesGenerate), h.generateCodes)
-	v1.POST("/gift-cards/codes/:id/toggle", k.RequireAuth, h.toggleCode)
+	v1.POST("/gift-cards/codes/:id/toggle", k.RequireAuth, k.RecentReauth, h.toggleCode)
 }
 
 // limit 是按登录账号的每分钟限流；排在 RequireAuth 之后。
 func (h *Handler) limit(name string, n int) gin.HandlerFunc {
-	rule := ratelimit.PerMinute(name, n)
+	// Strict：Redis 出故障时拒绝（503）而不是放行 —— 卡密是等价现金，限流是在线爆破的唯一上限
+	rule := ratelimit.PerMinute(name, n).StrictMode()
 	return func(c *gin.Context) {
 		if h.lim == nil {
 			c.Next()

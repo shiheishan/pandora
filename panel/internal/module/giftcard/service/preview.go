@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
+	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
 
 // Preview 是门户兑换前的卡面预览：码不能用（不存在、已用、停用、过期、活动不在进行中）一律回 ErrCodeUnusable。
@@ -74,6 +75,9 @@ func (s *Service) Preview(ctx context.Context, rawCode string) (CardPreview, err
 	views, err := s.placementViews(ctx, t, o, opts, cands, us, now)
 	if err != nil {
 		return CardPreview{}, err
+	}
+	if !hasKey(views, def) {
+		def = ""
 	}
 	out.Placement = &CardPlacement{Question: placementQuestion(o), Options: views, DefaultKey: def}
 	return out, nil
@@ -147,6 +151,10 @@ func (s *Service) placementViews(ctx context.Context, t Template, o offer, opts 
 			p.NewPeriodEnd = &end
 			if op.Kind == KindChange && s.valuer != nil {
 				credit, cur, lost, err := s.valuer.RemainingValue(ctx, c.SubscriptionID, now)
+				if e := errs.As(err); e != nil && e.Code == errs.Conflict {
+					// 这份订阅上有没完结的续费或换套餐单：兑换时会被拒，这里干脆不给「换掉」
+					continue
+				}
 				if err != nil {
 					return nil, err
 				}
@@ -166,4 +174,14 @@ func (s *Service) placementViews(ctx context.Context, t Template, o offer, opts 
 		out = append(out, p)
 	}
 	return out, nil
+}
+
+// hasKey 报告选项里有没有这个 Key（预览剔掉了不可选的「换掉」后，默认项可能已不在）。
+func hasKey(views []Placement, key string) bool {
+	for _, v := range views {
+		if v.Key == key {
+			return true
+		}
+	}
+	return false
 }

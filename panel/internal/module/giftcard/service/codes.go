@@ -99,7 +99,7 @@ func (s *Service) ListCodes(ctx context.Context, f CodeFilter, limit, offset int
 }
 
 // ToggleCode 停用（disabled=true）或恢复一个卡密。已兑换、已过期的不能改；状态不需要该操作回 409。
-// 停用单个码不要求重认证：那是发现异常时的止血动作，越快越好。
+// 路由要求重认证：恢复一张停用的码等于让它重新生效，与生码同级。
 func (s *Service) ToggleCode(ctx context.Context, codeID uuid.UUID, disabled bool) error {
 	if _, err := adminPrincipal(ctx); err != nil {
 		return err
