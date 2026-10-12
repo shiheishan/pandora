@@ -147,7 +147,10 @@ func (st *sessionStore) create(ctx context.Context, rec sessionRecord, now time.
 // 通过时按节流更新 last_seen，返回 {1, reauth_at, amr, abs_exp}。
 var checkScript = redis.NewScript(`
 local h = redis.call('HMGET', KEYS[1], 'uid', 'aud', 'abs_exp', 'last_seen', 'epoch', 'reauth_at', 'amr')
-if not h[1] then return {0} end
+if not h[1] then
+  redis.call('SREM', KEYS[2], ARGV[6])
+  return {0}
+end
 if h[1] ~= ARGV[1] or h[2] ~= ARGV[2] then return {0} end
 local now = tonumber(ARGV[3])
 local idle = tonumber(ARGV[4])
