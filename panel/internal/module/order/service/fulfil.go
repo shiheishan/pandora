@@ -37,6 +37,7 @@ func (s *Service) markPaid(ctx context.Context, o model.Order, at time.Time) (mo
 //	new：开通新订阅（source_order_id 指向本单），同一更新把 subscription_id 写成新订阅
 //	renewal：在原订阅上续一期（版本沿用订阅自己的）
 //	addon：给目标订阅发一笔流量包余额
+//	upgrade：把原订阅原地换成新套餐（周期从现在起算一整期），剩余价值抵完新价还有余的退进余额（plan_change_refund）
 //
 // 订阅上的价格快照取订单行（建单时的价格档单价），与旧 provision.go 取 prices.unit_amount 同口径。
 func (s *Service) fulfil(ctx context.Context, o model.Order, at time.Time, actor subsvc.Actor) (model.Order, error) {
@@ -105,6 +106,10 @@ func (s *Service) fulfil(ctx context.Context, o model.Order, at time.Time, actor
 		}); err != nil {
 			return model.Order{}, err
 		}
+	case KindUpgrade:
+		if err := s.fulfilPlanChange(ctx, o, actor); err != nil {
+			return model.Order{}, err
+		}
 	case KindAddon:
 		it, err := s.onlyItem(ctx, o)
 		if err != nil {
@@ -133,6 +138,54 @@ func (s *Service) fulfil(ctx context.Context, o model.Order, at time.Time, actor
 		return model.Order{}, ErrStateChanged
 	}
 	return s.reload(ctx, o.ID)
+}
+
+// fulfilPlanChange 把换套餐单落到订阅上：subscription.ChangePlan（自己锁订阅行；结算与建单都已先锁过），
+// 再把剩余价值抵完新价（优惠后）还有余的部分退进余额。那部分钱此前已记成平台收入，这里冲回收入、记成欠用户的余额，
+// 不是凭空造钱。退款科目（平台收入、用户余额）排在订阅之后锁，与结算同向。
+func (s *Service) fulfilPlanChange(ctx context.Context, o model.Order, actor subsvc.Actor) error {
+	if o.SubscriptionID == nil {
+		return fmt.Errorf("order: 换套餐订单缺订阅 %s", o.ID)
+	}
+	it, err := s.onlyItem(ctx, o)
+	if err != nil {
+		return err
+	}
+	if it.PlanID == nil || it.PlanVersionID == nil {
+		return fmt.Errorf("order: 换套餐订单行缺套餐或版本 %s", o.ID)
+	}
+	price, err := itemPrice(o, it)
+	if err != nil {
+		return err
+	}
+	orderID := o.ID
+	if _, err := s.subs.ChangePlan(ctx, subsvc.PlanChange{
+		SubscriptionID: *o.SubscriptionID,
+		UserID:         o.UserID,
+		PlanID:         *it.PlanID,
+		PlanVersionID:  *it.PlanVersionID,
+		Price:          price,
+		OrderID:        &orderID,
+		Actor:          actor,
+	}); err != nil {
+		return err
+	}
+	refund := planChangeRefund(o.ProrationCreditAmount, o.SubtotalAmount, o.DiscountAmount)
+	if !refund.IsPositive() {
+		return nil
+	}
+	_, err = s.ledger.Post(ctx, ledgersvc.Posting{
+		Kind:       ledgersvc.KindPlanChangeRefund,
+		Currency:   money.Currency(o.Currency),
+		SourceType: ledgersvc.SourceOrder,
+		SourceID:   o.ID,
+		Memo:       "换套餐剩余价值退回余额",
+		Legs: []ledgersvc.Leg{
+			{Account: ledgersvc.PlatformAccount(ledgersvc.PlatformRevenue, ledgersvc.RefMain), Direction: ledgersvc.Debit, Amount: refund},
+			{Account: ledgersvc.UserAccount(ledgersvc.UserBalance, o.UserID), Direction: ledgersvc.Credit, Amount: refund},
+		},
+	})
+	return err
 }
 
 // settleZeroPay 建单事务里应付为 0 的单当场履约：先确认预留（库存、限购、券），再在有余额抵扣时

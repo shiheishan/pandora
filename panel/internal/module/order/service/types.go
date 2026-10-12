@@ -12,7 +12,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
-// 订单种类（库里 CHECK 同一集合）。KindUpgrade（换套餐）第二期才有入口。
+// 订单种类（库里 CHECK 同一集合）。KindUpgrade 是换套餐（升级与降级都用它，方向由金额决定）。
 const (
 	KindNew     = "new"
 	KindRenewal = "renewal"
@@ -69,14 +69,16 @@ const (
 
 // 审计动作名（沿用旧代码）与资源类型。
 const (
-	ActionOrderCreated     = "order.created"
-	ActionRenewalCreated   = "subscription.renewal_created"
-	ActionTopupCreated     = "balance.topup_created"
-	ActionOrderCancelled   = "order.cancelled"
-	ActionOrderExpired     = "order.expired"
-	ActionOrderMarkedPaid  = "order.marked_paid"
-	ActionPaymentSucceeded = "payment.succeeded"
-	ResourceOrder          = "order"
+	ActionOrderCreated      = "order.created"
+	ActionRenewalCreated    = "subscription.renewal_created"
+	ActionTopupCreated      = "balance.topup_created"
+	ActionOrderCancelled    = "order.cancelled"
+	ActionOrderExpired      = "order.expired"
+	ActionOrderMarkedPaid   = "order.marked_paid"
+	ActionPaymentSucceeded  = "payment.succeeded"
+	ActionPlanChangeCreated = "subscription.plan_change_created"
+	ActionManualCreated     = "order.manual_created"
+	ResourceOrder           = "order"
 )
 
 // 时间与金额口径（与旧代码一致）。
@@ -85,7 +87,7 @@ const (
 	PaymentWindow = 30 * time.Minute
 	// QuoteAsOfWindow 是确认下单时带回的报价时刻最多早于现在多久。
 	QuoteAsOfWindow = 10 * time.Minute
-	// MaxSmallDueCents 是换套餐零头一次最多免掉的钱（分）；只有第二期的换套餐用。
+	// MaxSmallDueCents 是换套餐零头一次最多免掉的钱（分）；只有门户换套餐能免。
 	MaxSmallDueCents = 99
 	// TopupMinCents、TopupMaxCents 是单笔充值的上下限（分）。
 	TopupMinCents = 100
@@ -93,6 +95,10 @@ const (
 	// ExpireBatchDefault、ExpireBatchMax 是超时释放一轮处理的订单数。
 	ExpireBatchDefault = 50
 	ExpireBatchMax     = 500
+	// maxQuoteRows 是换套餐报价最多展开的订阅数与目标套餐数（旧代码同值）。
+	maxQuoteRows = 20
+	// referenceMaxRunes 是线下凭证号的最大字数。
+	referenceMaxRunes = 128
 )
 
 // 对外的固定错误（文案沿用旧代码）。同一个变量只读共享，调用方可以 errors.Is 比较。
@@ -110,7 +116,19 @@ var (
 	ErrPaymentLapsed      = errs.Newf(errs.OrderLapsed, "这张订单已超过付款期限，请取消后重新下单")
 	ErrMarkPaidZero       = errs.Newf(errs.Conflict, "这张订单不需要支付")
 	ErrUnknownStatus      = errs.Newf(errs.BadRequest, "不支持的订单状态")
+	ErrPlanChangeSamePlan = errs.Newf(errs.Conflict, "与当前套餐相同，请使用续费")
+	ErrPlanChangeCurrency = errs.Newf(errs.Conflict, "变更套餐不能更换币种")
+	// errProrationMixedCurrency：不同币种的钱加不到一起，也就没有「剩余价值」可言
+	errProrationMixedCurrency = errs.Newf(errs.Conflict, "这条订阅本周期的付费订单币种不一致，无法折算")
+	// errManualBelowMinimum 是后台待支付单应付低于最低额：用户付不了。带 fields.settlement，后台据它落到「结算方式」上
+	errManualBelowMinimum = &errs.Error{Code: errs.ValidationFailed, Message: manualBelowMinimumMessage,
+		Fields: map[string]string{"settlement": manualBelowMinimumMessage}}
+	errOfflineNothingDue       = errs.Newf(errs.Conflict, "这张订单不需要支付，请改用赠送")
+	errOfflineChangeNothingDue = errs.Newf(errs.Conflict, "原套餐的剩余价值已经抵完新价，这张单不需要支付，请改用赠送")
 )
+
+// manualBelowMinimumMessage 是后台待支付单低于最低额时落在「结算方式」上的话。
+const manualBelowMinimumMessage = "应付金额低于支付渠道的最低付款额，用户无法在线支付，请改用赠送或线下已收款"
 
 // Actor 是一次状态变化的操作者（写预留流水）。Kind 为 ActorUser、ActorAdmin 时 ID 必填。
 type Actor struct {
@@ -135,7 +153,8 @@ type Checkout struct {
 	Expect     *Expect
 }
 
-// Created 是建单的结果（门户 201 响应的内容）。Status 为 pending_payment，或零元单当场履约后的 fulfilled。
+// Created 是建单的结果（门户 201 响应的内容）。Status 为 pending_payment，或零元单、线下已收款当场履约后的 fulfilled。
+// Total 是免掉零头之后的订单总额（与库里 total_amount 一致）。Change 只在换套餐单上非 nil。
 type Created struct {
 	OrderID        uuid.UUID
 	OrderNo        string
@@ -144,7 +163,16 @@ type Created struct {
 	Discount       decimal.Decimal
 	BalanceApplied decimal.Decimal
 	Payable        decimal.Decimal
-	Status         string
+	// Waived 是免掉的零头（只有门户换套餐会有）；对外的 discount_amount 照旧含它
+	Waived decimal.Decimal
+	Status string
+	Change *ChangeAmounts
+}
+
+// ChangeAmounts 是换套餐单另给的两项：原订阅的剩余价值，与履约时退进余额的差额（降级才有）。
+type ChangeAmounts struct {
+	ProrationCredit decimal.Decimal
+	BalanceRefund   decimal.Decimal
 }
 
 // CreatedReply 由 handler 提供：把建单结果做成幂等可重放的响应。service 在建单事务里调用它，
@@ -257,8 +285,9 @@ type Quote struct {
 	// CouponCode 是生效的优惠码；CouponError 是优惠码不能用的中文原因（不让整个报价失败）
 	CouponCode  *string
 	CouponError *string
-	// Credit 是换套餐时原套餐剩余价值（第一期恒为 0，CreditDetail 恒为 nil）
+	// Credit 是换套餐时原套餐剩余价值（其余动作为 0）；CreditDetail 是「怎么算的」，只有换套餐且原订阅有周期时非 nil
 	Credit         decimal.Decimal
+	CreditDetail   *CreditDetail
 	Total          decimal.Decimal
 	Refund         decimal.Decimal
 	WithBalance    BalancePlan

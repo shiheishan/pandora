@@ -25,6 +25,9 @@ type fakeSvc struct {
 	createNew     func(service.NewOrderInput) (service.Created, error)
 	createRenewal func(service.RenewalOrderInput) (service.Created, error)
 	createPack    func(service.PackOrderInput) (service.Created, error)
+	createChange  func(service.PlanChangeOrderInput) (service.Created, error)
+	manualPreview func(service.ManualPreviewInput) (service.ManualPreview, error)
+	createManual  func(service.ManualOrderInput) (service.Created, error)
 	createTopup   func(service.TopupInput) (service.TopupCreated, error)
 	pay           func(service.PayInput) (paymentsvc.IntentResult, error)
 	query         func(uuid.UUID) (service.QueryResult, error)
@@ -52,6 +55,18 @@ func (f *fakeSvc) CreateRenewalOrder(_ context.Context, in service.RenewalOrderI
 
 func (f *fakeSvc) CreatePackOrder(_ context.Context, in service.PackOrderInput) (service.Created, error) {
 	return f.createPack(in)
+}
+
+func (f *fakeSvc) CreatePlanChangeOrder(_ context.Context, in service.PlanChangeOrderInput) (service.Created, error) {
+	return f.createChange(in)
+}
+
+func (f *fakeSvc) ManualPreview(_ context.Context, in service.ManualPreviewInput) (service.ManualPreview, error) {
+	return f.manualPreview(in)
+}
+
+func (f *fakeSvc) CreateManualOrder(_ context.Context, in service.ManualOrderInput) (service.Created, error) {
+	return f.createManual(in)
 }
 
 func (f *fakeSvc) CreateTopup(_ context.Context, in service.TopupInput) (service.TopupCreated, error) {

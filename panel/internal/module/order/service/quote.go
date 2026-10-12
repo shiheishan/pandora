@@ -14,14 +14,14 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
-// applyQuoteBalances 给一条报价算「用余额」与「不用余额」两种付法。
-func applyQuoteBalances(q *Quote, balance, minPay decimal.Decimal) {
-	q.WithBalance = PlanBalance(q.Total, balance, balance, minPay)
-	q.WithoutBalance = PlanBalance(q.Total, balance, decimal.Zero, minPay)
+// applyQuoteBalances 给一条报价算「用余额」与「不用余额」两种付法；waive 为真时付不了的零头可以免（只有换套餐）。
+func applyQuoteBalances(q *Quote, balance, minPay decimal.Decimal, waive bool) {
+	q.WithBalance = WaiveSmallDue(PlanBalance(q.Total, balance, balance, minPay), waive)
+	q.WithoutBalance = WaiveSmallDue(PlanBalance(q.Total, balance, decimal.Zero, minPay), waive)
 }
 
 // finalizeQuoteResult 补上币种、可用余额与最低付款额，并给每条报价算两种付法；与结果币种不同的报价不计余额。
-func finalizeQuoteResult(ctx context.Context, s *Service, userID uuid.UUID, out QuoteResult) (QuoteResult, error) {
+func finalizeQuoteResult(ctx context.Context, s *Service, userID uuid.UUID, out QuoteResult, waive bool) (QuoteResult, error) {
 	if len(out.Quotes) > 0 {
 		out.Currency = out.Quotes[0].Currency
 	}
@@ -44,7 +44,7 @@ func finalizeQuoteResult(ctx context.Context, s *Service, userID uuid.UUID, out 
 		if q.Currency != out.Currency {
 			avail = decimal.Zero
 		}
-		applyQuoteBalances(q, avail, minPay)
+		applyQuoteBalances(q, avail, minPay, waive)
 	}
 	return out, nil
 }
@@ -249,7 +249,7 @@ func (s *Service) Quote(ctx context.Context, in QuoteInput) (QuoteResult, error)
 	case QuotePack:
 		lines, err = quotePackLines(ctx, s, userID, in)
 	case QuoteChange:
-		return QuoteResult{}, errs.Invalid(map[string]string{"action": "换套餐报价暂未开放"})
+		lines, err = quoteChangeLines(ctx, s, userID, in, now)
 	default:
 		return QuoteResult{}, errs.Invalid(map[string]string{"action": "只能是 renew、change、new 或 pack"})
 	}
@@ -257,5 +257,6 @@ func (s *Service) Quote(ctx context.Context, in QuoteInput) (QuoteResult, error)
 		return QuoteResult{}, err
 	}
 	out.Quotes = lines
-	return finalizeQuoteResult(ctx, s, userID, out)
+	// 只有换套餐的零头能免；其余入口付不了的标 below_minimum，前端提示先充值或用余额
+	return finalizeQuoteResult(ctx, s, userID, out, in.Action == QuoteChange)
 }

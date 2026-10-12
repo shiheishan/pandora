@@ -22,7 +22,7 @@ var errAmountMismatch = errs.Newf(errs.Conflict, "收款金额与订单应付不
 // 订单此刻不收这笔钱时返回 paymentsvc.NotPayable，由 payment 转挂账；其他错误整笔回滚。
 //
 // 锁序（与建单「订阅 → 套餐 / 券 → 科目」、取消「订单 → 套餐 → 计数 → 券 → 用户科目」同向，避免 40P01）：
-// 订单 → 订阅（续费、流量包）→ 预留（库存、限购、券）→ 账务科目（含平台收入）→ 订单状态 → PaidHook → 履约。
+// 订单 → 订阅（续费、换套餐、流量包）→ 预留（库存、限购、券）→ 账务科目（含平台收入）→ 订单状态 → PaidHook → 履约。
 // 记账回 ErrHoldReleased 转 NotPayable 时，payment 回滚到保存点，前面已确认的预留一并撤销。
 func (s *Service) SettlePayment(ctx context.Context, in paymentsvc.SettleInput) error {
 	o, ok, err := s.repo.OrderByID(ctx, in.OrderID, repo.ForNoKeyUpdate)
@@ -46,8 +46,8 @@ func (s *Service) SettlePayment(ctx context.Context, in paymentsvc.SettleInput) 
 	}
 	now := s.clock()
 
-	// 续费、流量包先锁目标订阅（履约时 Renew / GrantTrafficPack 会再锁同一行，同一事务内不冲突）
-	if o.Kind == KindRenewal || o.Kind == KindAddon {
+	// 续费、换套餐、流量包先锁目标订阅（履约时 Renew / ChangePlan / GrantTrafficPack 会再锁同一行，同一事务内不冲突）
+	if o.Kind == KindRenewal || o.Kind == KindUpgrade || o.Kind == KindAddon {
 		if o.SubscriptionID == nil {
 			return fmt.Errorf("order: %s 订单缺订阅 %s", o.Kind, o.ID)
 		}
@@ -55,8 +55,14 @@ func (s *Service) SettlePayment(ctx context.Context, in paymentsvc.SettleInput) 
 		if err != nil {
 			return err
 		}
-		// 只有续费查订阅是否停用（流量包不查，旧 subscriptionBoundOrderKind 同口径）
-		if o.Kind == KindRenewal && !sub.StateAt(now).AcceptsChange() {
+		// 续费与换套餐查订阅是否停用：停用了钱进挂账（流量包不查，旧 subscriptionBoundOrderKind 同口径）
+		if o.Kind != KindAddon && !sub.StateAt(now).AcceptsChange() {
+			return paymentsvc.NotPayable(paymentsvc.CaseIneligibleSubscription, o.Status)
+		}
+		// 换套餐单冻结的剩余价值只对建单时的那一段周期成立：之后订阅被套餐卡换过套餐、或过期后被救回或续回（周期起点都会
+		// 挪到那一刻），再按冻结的数换一次、退一次就重复了。周期起点晚于建单时刻即视为已变，钱进挂账。
+		// 两个时刻都由应用时钟写入（订单 created_at 由 GORM 在插入时取，周期起点由 subscription 取 now）。
+		if o.Kind == KindUpgrade && sub.PeriodStart.After(o.CreatedAt) {
 			return paymentsvc.NotPayable(paymentsvc.CaseIneligibleSubscription, o.Status)
 		}
 	}

@@ -38,6 +38,9 @@ type txRunner interface {
 type Catalog interface {
 	Offer(ctx context.Context, priceID uuid.UUID, req catalogsvc.OfferRequest) (catalogsvc.Offer, error)
 	PlanOffers(ctx context.Context, planID uuid.UUID, req catalogsvc.OfferRequest) (catalogsvc.OfferPlan, error)
+	ListOffers(ctx context.Context, req catalogsvc.OfferRequest) ([]catalogsvc.OfferPlan, error)
+	// GetPlan 是后台套餐详情（含全部价格档）：人工开单预览用它确认套餐存在、取价格档
+	GetPlan(ctx context.Context, planID uuid.UUID) (catalogsvc.PlanDetail, error)
 	PackOffer(ctx context.Context, packID uuid.UUID, lock bool) (catalogsvc.TrafficPack, error)
 	ReserveStock(ctx context.Context, planID uuid.UUID, qty int) (bool, error)
 	ReleaseStock(ctx context.Context, planID uuid.UUID, qty int) error
@@ -75,6 +78,10 @@ type Subscriptions interface {
 	Provision(ctx context.Context, in subsvc.Provision) (subsvc.Subscription, error)
 	Renew(ctx context.Context, in subsvc.Renewal) (subsvc.RenewalResult, error)
 	GrantTrafficPack(ctx context.Context, in subsvc.PackGrant) (subsvc.Pack, error)
+	ChangePlan(ctx context.Context, in subsvc.PlanChange) (subsvc.PlanChangeResult, error)
+	Quotas(ctx context.Context, subID uuid.UUID) ([]subsvc.Quota, error)
+	// PeriodOrderIDsBySubscriptions 是每份订阅本周期的付费来源订单（按发生先后）：换套餐折算剩余价值的基数
+	PeriodOrderIDsBySubscriptions(ctx context.Context, subIDs []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error)
 }
 
 // Payments 是 payment service 用到的面。

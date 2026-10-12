@@ -1,4 +1,5 @@
-// Package handler 是 order 模块的 HTTP 层：门户报价、下单、支付、取消、查单与我的订单；后台订单列表、详情、取消、标记已支付与查单。
+// Package handler 是 order 模块的 HTTP 层：门户报价、下单（含换套餐）、支付、取消、查单与我的订单；
+// 后台订单列表、详情、取消、标记已支付、查单与人工开单。
 package handler
 
 import (
@@ -21,6 +22,9 @@ type Service interface {
 	CreateNewOrder(ctx context.Context, in service.NewOrderInput) (service.Created, error)
 	CreateRenewalOrder(ctx context.Context, in service.RenewalOrderInput) (service.Created, error)
 	CreatePackOrder(ctx context.Context, in service.PackOrderInput) (service.Created, error)
+	CreatePlanChangeOrder(ctx context.Context, in service.PlanChangeOrderInput) (service.Created, error)
+	ManualPreview(ctx context.Context, in service.ManualPreviewInput) (service.ManualPreview, error)
+	CreateManualOrder(ctx context.Context, in service.ManualOrderInput) (service.Created, error)
 	CreateTopup(ctx context.Context, in service.TopupInput) (service.TopupCreated, error)
 	Pay(ctx context.Context, in service.PayInput) (paymentsvc.IntentResult, error)
 	Query(ctx context.Context, orderID uuid.UUID) (service.QueryResult, error)
@@ -37,14 +41,15 @@ type Service interface {
 var _ Service = (*service.Service)(nil)
 var _ route.Module = (*Handler)(nil)
 
-// 幂等作用域（沿用旧代码的名字；流量包与新购共用 order_create）。
+// 幂等作用域（沿用旧代码的名字；流量包、新购与后台人工单共用 order_create）。
 const (
-	ScopeOrderCreate   = "order_create"
-	ScopeRenewalCreate = "subscription_renewal_create"
-	ScopeTopupCreate   = "balance_topup_create"
-	ScopeAdminCancel   = "admin_order_cancel"
-	ScopeAdminMarkPaid = "admin_order_mark_paid"
-	ScopeAdminQuery    = "admin_order_query"
+	ScopeOrderCreate      = "order_create"
+	ScopeRenewalCreate    = "subscription_renewal_create"
+	ScopePlanChangeCreate = "subscription_change_plan_create"
+	ScopeTopupCreate      = "balance_topup_create"
+	ScopeAdminCancel      = "admin_order_cancel"
+	ScopeAdminMarkPaid    = "admin_order_mark_paid"
+	ScopeAdminQuery       = "admin_order_query"
 )
 
 // SwitchCheckout 是下单与支付的功能开关；取消、查单、我的订单不受它管。
@@ -74,6 +79,8 @@ func (h *Handler) RegisterPublic(v1 *gin.RouterGroup, k route.Kit) {
 	checkout := k.Switch(SwitchCheckout)
 	v1.POST("/orders", k.RequireAuth, checkout, k.Idempotency(ScopeOrderCreate), h.createOrder)
 	v1.POST("/me/subscriptions/:id/renew", k.RequireAuth, checkout, k.Idempotency(ScopeRenewalCreate), h.createRenewal)
+	// 换套餐有自己的幂等域（旧代码同名）；金额走统一报价的 action=change
+	v1.POST("/me/subscriptions/:id/change-plan", k.RequireAuth, checkout, k.Idempotency(ScopePlanChangeCreate), h.createPlanChange)
 	v1.POST("/me/traffic-pack-orders", k.RequireAuth, checkout, k.Idempotency(ScopeOrderCreate), h.createPackOrder)
 	v1.POST("/me/topups", k.RequireAuth, checkout, k.Idempotency(ScopeTopupCreate), h.createTopup)
 	v1.POST("/me/checkout/quote", k.RequireAuth, checkout, h.quote)
@@ -89,6 +96,10 @@ func (h *Handler) RegisterPublic(v1 *gin.RouterGroup, k route.Kit) {
 // RegisterAdmin 注册后台路由。
 func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	v1.GET("/orders", k.RequireAuth, h.adminOrders)
+	// 人工单动真金白银或真权益（线下已收款直接记收入）：与标记已支付同门槛，重认证加幂等键；
+	// 作用域与新购同为 order_create（人工单本来就是一次建单）。预览只读，不要重认证与幂等键
+	v1.POST("/orders/manual", k.RequireAuth, k.RecentReauth, k.Idempotency(ScopeOrderCreate), h.createManualOrder)
+	v1.POST("/orders/manual/preview", k.RequireAuth, h.previewManualOrder)
 	v1.GET("/orders/:id", k.RequireAuth, h.adminOrder)
 	v1.GET("/orders/:id/payments", k.RequireAuth, h.adminOrderPayments)
 	// 取消与查单不要重认证（旧代码同口径：取消只退资源，查单造不出钱）
