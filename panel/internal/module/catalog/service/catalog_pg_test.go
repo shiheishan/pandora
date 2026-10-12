@@ -522,13 +522,13 @@ func TestWizardUpdatePriceOnly(t *testing.T) {
 	}
 	var cnyActive, usdActive int
 	for _, p := range upd.Plan.Prices {
-		if p.Currency.String() == "CNY" && p.Status == PriceActive {
+		if string(p.Currency) == "CNY" && p.Status == PriceActive {
 			cnyActive++
 			if !p.UnitAmount.Equal(decimal.RequireFromString("10.90")) {
 				t.Fatalf("CNY 金额 %s", p.UnitAmount)
 			}
 		}
-		if p.Currency.String() == "USD" && p.Status == PriceActive {
+		if string(p.Currency) == "USD" && p.Status == PriceActive {
 			usdActive++
 			if !p.UnitAmount.Equal(decimal.RequireFromString("1.99")) {
 				t.Fatalf("USD 不应变 %s", p.UnitAmount)
@@ -540,7 +540,7 @@ func TestWizardUpdatePriceOnly(t *testing.T) {
 	}
 	archivedCNY := 0
 	for _, p := range upd.Plan.Prices {
-		if p.Currency.String() == "CNY" && p.Status == PriceArchived {
+		if string(p.Currency) == "CNY" && p.Status == PriceArchived {
 			archivedCNY++
 		}
 	}
