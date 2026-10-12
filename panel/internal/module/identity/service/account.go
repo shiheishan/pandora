@@ -43,8 +43,8 @@ func requireAudience(audience string) error {
 
 // Authenticate 校验邮箱与口令。邮箱不存在时做一次 dummyVerify 对齐耗时；邮箱不存在或口令不对都返回
 // ErrInvalidCredentials，账号停用或封禁返回 ErrAccountInactive（对外同一文案）。账号存在时，
-// 出错也带回 User（只给 auth 写失败审计和计数用，不代表登录成功）。成功时顺手记 last_login_at，
-// 参数过时的哈希静默重算。
+// 出错也带回 User（只给 auth 写失败审计和计数用，不代表登录成功）。参数过时的哈希静默重算；
+// last_login_at 不在这里记（口令对不等于登录成功），由 auth 在会话建成后调 TouchLastLogin。
 func (s *Service) Authenticate(ctx context.Context, audience, email, password string) (User, error) {
 	if err := requireAudience(audience); err != nil {
 		return User{}, err
@@ -98,17 +98,21 @@ func (s *Service) Authenticate(ctx context.Context, audience, email, password st
 	}
 	release()
 
-	log := plog.From(ctx)
-	if err := s.repo.TouchLastLogin(ctx, cred.ID); err != nil {
-		log.Warn("更新最后登录时间失败", zap.Error(err))
-	}
 	if newPHC != "" {
 		if _, err := s.repo.RehashPassword(ctx, cred.ID, *cred.PHC, newPHC); err != nil {
-			log.Warn("静默升级口令哈希失败", zap.Error(err))
+			plog.From(ctx).Warn("静默升级口令哈希失败", zap.Error(err))
 		}
 	}
 
 	return toUser(cred.User), nil
+}
+
+// TouchLastLogin 记最近登录时间；auth 在登录或快捷登录的会话建成后调用。
+func (s *Service) TouchLastLogin(ctx context.Context, userID uuid.UUID) error {
+	if err := s.repo.TouchLastLogin(ctx, userID); err != nil {
+		return errs.Wrap(errs.Internal, err)
+	}
+	return nil
 }
 
 // VerifyPassword 校验某个已知用户的口令（auth 的重认证用）：不对返回 ErrInvalidCredentials。
