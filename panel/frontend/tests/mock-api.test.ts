@@ -156,3 +156,53 @@ describe('mock api · admin', () => {
     expect((await adjust(access_token, 'ro-1', { amount: 100, currency: 'CNY', reason: '只读模式演练' })).status).toBe(200)
   })
 })
+
+describe('mock api · refresh cookie', () => {
+  let server: Server
+  let base: string
+  beforeAll(async () => ({ server, base } = await serve('portal')))
+  afterAll(() => close(server))
+
+  // Set-Cookie 里的 pandora_rt=<值>
+  const rtFrom = (res: Response) => /pandora_rt=([^;]*)/.exec(res.headers.get('set-cookie') ?? '')?.[1] ?? ''
+  const refresh = (rt?: string) =>
+    fetch(`${base}/v1/auth/refresh`, { method: 'POST', headers: rt ? { Cookie: `pandora_rt=${rt}` } : {} })
+
+  it('login sets an HttpOnly refresh cookie and returns no refresh_token in the body', async () => {
+    const res = await fetch(`${base}/v1/auth/login`, { method: 'POST', body: JSON.stringify(MOCK_ACCOUNTS.portal) })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Record<string, unknown>
+    expect(body).not.toHaveProperty('refresh_token')
+    expect(res.headers.get('set-cookie')).toMatch(/pandora_rt=[^;]+;.*HttpOnly.*SameSite=Strict.*Path=\/v1\/auth/)
+  })
+
+  it('refresh rotates the cookie and the old value stops working', async () => {
+    const login = await fetch(`${base}/v1/auth/login`, { method: 'POST', body: JSON.stringify(MOCK_ACCOUNTS.portal) })
+    const first = rtFrom(login)
+    const ok = await refresh(first)
+    expect(ok.status).toBe(200)
+    expect(await ok.json()).toMatchObject({ token_type: 'Bearer', access_token: expect.any(String) })
+    const second = rtFrom(ok)
+    expect(second).not.toBe('')
+    expect(second).not.toBe(first)
+    expect((await refresh(first)).status).toBe(401)
+    expect((await refresh(second)).status).toBe(200)
+  })
+
+  it('refresh without a cookie is 401', async () => {
+    expect((await refresh()).status).toBe(401)
+  })
+
+  it('logout revokes the refresh cookie', async () => {
+    const login = await fetch(`${base}/v1/auth/login`, { method: 'POST', body: JSON.stringify(MOCK_ACCOUNTS.portal) })
+    const rt = rtFrom(login)
+    const { access_token } = (await login.json()) as { access_token: string }
+    const out = await fetch(`${base}/v1/auth/logout`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${access_token}`, Cookie: `pandora_rt=${rt}` },
+    })
+    expect(out.status).toBe(204)
+    expect(out.headers.get('set-cookie')).toMatch(/pandora_rt=;.*Max-Age=0/)
+    expect((await refresh(rt)).status).toBe(401)
+  })
+})

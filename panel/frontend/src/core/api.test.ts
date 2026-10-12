@@ -13,6 +13,7 @@ interface Call {
   authorization: string | null
   idempotencyKey: string | null
   accept: string | null
+  credentials: RequestCredentials
   body: unknown
 }
 
@@ -38,6 +39,7 @@ function fakeFetch(replies: Reply[]) {
       authorization: headers.get('Authorization'),
       idempotencyKey: headers.get('Idempotency-Key'),
       accept: headers.get('Accept'),
+      credentials: init?.credentials ?? 'same-origin',
       body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
     }
     calls.push(call)
@@ -323,30 +325,57 @@ describe('reauth_required', () => {
 
   it('a wrong password is a 401 for the dialog: no logout, token kept', async () => {
     const onUnauthorized = vi.fn()
-    const env = setup([envelope(401, 'unauthorized', '密码不正确')], { onUnauthorized })
+    // 第一次 401 可能只是令牌过期：先刷新再重放，重放仍 401 才是口令错
+    const env = setup(
+      [envelope(401, 'unauthorized', '密码不正确'), refreshOk(), envelope(401, 'unauthorized', '密码不正确')],
+      { onUnauthorized },
+    )
     const error = await rejection(env.client.reauth('wrong'))
     expect(error).toMatchObject({ status: 401, code: 'unauthorized', message: '密码不正确' })
-    expect(env.tokens.get()).toBe('tok-1')
+    expect(env.tokens.get()).toBe('tok-2')
     expect(onUnauthorized).not.toHaveBeenCalled()
   })
 })
 
+function refreshOk(accessToken = 'tok-2'): Response {
+  return json(200, { access_token: accessToken, token_type: 'Bearer', expires_in: 900 })
+}
+
+function isRefreshCall(call: Call): boolean {
+  return call.method === 'POST' && call.url.includes('v1/auth/refresh')
+}
+
 describe('401 handling', () => {
   it('clears the token and reports once the session is gone', async () => {
     const onUnauthorized = vi.fn()
-    const env = setup([envelope(401, 'unauthorized', '登录已失效')], { onUnauthorized })
+    const env = setup([envelope(401, 'unauthorized', '登录已失效'), envelope(401, 'unauthorized', 'refresh 失效')], { onUnauthorized })
     const error = await rejection(env.client.get('v1/me', ok))
     expect(isApiError(error, 'unauthorized')).toBe(true)
     expect(env.tokens.get()).toBeNull()
     expect(onUnauthorized).toHaveBeenCalledWith(error)
+    expect(env.calls.filter(isRefreshCall)).toHaveLength(1)
   })
 
-  it('password-check endpoints keep the session on 401', async () => {
+  it('password-check endpoints keep the session when the replay after refresh is still 401', async () => {
     const onUnauthorized = vi.fn()
-    const env = setup([envelope(401, 'unauthorized', '当前密码不正确')], { onUnauthorized })
+    const env = setup(
+      [envelope(401, 'unauthorized', '当前密码不正确'), refreshOk(), envelope(401, 'unauthorized', '当前密码不正确')],
+      { onUnauthorized },
+    )
     await rejection(env.client.post('v1/me/password', ok, { passwordCheck: true, body: { old_password: 'a', new_password: 'b' } }))
-    expect(env.tokens.get()).toBe('tok-1')
+    expect(env.tokens.get()).toBe('tok-2')
     expect(onUnauthorized).not.toHaveBeenCalled()
+  })
+
+  it('password-check endpoints still log out when the refresh itself is rejected', async () => {
+    const onUnauthorized = vi.fn()
+    const env = setup(
+      [envelope(401, 'unauthorized', '登录已失效'), envelope(401, 'unauthorized', 'refresh 失效')],
+      { onUnauthorized },
+    )
+    await rejection(env.client.post('v1/me/password', ok, { passwordCheck: true, body: { old_password: 'a', new_password: 'b' } }))
+    expect(env.tokens.get()).toBeNull()
+    expect(onUnauthorized).toHaveBeenCalledTimes(1)
   })
 
   it('a late 401 for an old token does not wipe a newer login', async () => {
@@ -369,6 +398,134 @@ describe('401 handling', () => {
     const env = setup([envelope(404, 'not_found', '资源不存在或无权访问')])
     const error = await rejection(env.client.get('v1/tickets', ok))
     expect(error.code).toBe('not_found')
+    expect(env.tokens.get()).toBe('tok-1')
+  })
+})
+
+describe('access token refresh on 401', () => {
+  it('concurrent 401s trigger a single refresh and all replay with the new token', async () => {
+    const unauthorized = () => envelope(401, 'unauthorized')
+    const env = setup([
+      unauthorized(),
+      unauthorized(),
+      unauthorized(),
+      refreshOk(),
+      json(200, { ok: true }),
+      json(200, { ok: true }),
+      json(200, { ok: true }),
+    ])
+    await expect(Promise.all([env.client.get('v1/a', ok), env.client.get('v1/b', ok), env.client.get('v1/c', ok)])).resolves.toEqual([
+      { ok: true },
+      { ok: true },
+      { ok: true },
+    ])
+    expect(env.calls.filter(isRefreshCall)).toHaveLength(1)
+    const dataCalls = env.calls.filter((c) => !isRefreshCall(c))
+    expect(dataCalls.slice(0, 3).every((c) => c.authorization === 'Bearer tok-1')).toBe(true)
+    expect(dataCalls.slice(3).every((c) => c.authorization === 'Bearer tok-2')).toBe(true)
+    expect(env.tokens.get()).toBe('tok-2')
+  })
+
+  it('after refresh replay still 401: clears token and onUnauthorized once', async () => {
+    const onUnauthorized = vi.fn()
+    const env = setup([envelope(401, 'unauthorized'), refreshOk(), envelope(401, 'unauthorized', '仍失效')], { onUnauthorized })
+    const error = await rejection(env.client.get('v1/me', ok))
+    expect(error.code).toBe('unauthorized')
+    expect(env.calls.filter(isRefreshCall)).toHaveLength(1)
+    expect(env.tokens.get()).toBeNull()
+    expect(onUnauthorized).toHaveBeenCalledTimes(1)
+  })
+
+  it('refresh 401 clears the session and surfaces the original 401', async () => {
+    const onUnauthorized = vi.fn()
+    const env = setup([envelope(401, 'unauthorized', 'access 过期'), envelope(401, 'unauthorized', 'cookie 失效')], { onUnauthorized })
+    const error = await rejection(env.client.get('v1/me', ok))
+    expect(error.message).toBe('access 过期')
+    expect(env.tokens.get()).toBeNull()
+    expect(onUnauthorized).toHaveBeenCalledTimes(1)
+  })
+
+  it('a 4xx other than 401 from refresh (e.g. 404, 403) also ends the session', async () => {
+    const onUnauthorized = vi.fn()
+    const env = setup([envelope(401, 'unauthorized', '登录已失效'), envelope(404, 'not_found', '不存在')], { onUnauthorized })
+    const error = await rejection(env.client.get('v1/me', ok))
+    expect(error.status).toBe(401)
+    expect(env.tokens.get()).toBeNull()
+    expect(onUnauthorized).toHaveBeenCalledTimes(1)
+  })
+
+  it('refresh 503 keeps the token and throws service_unavailable', async () => {
+    const onUnauthorized = vi.fn()
+    const env = setup([envelope(401, 'unauthorized'), envelope(503, 'service_unavailable')], { onUnauthorized })
+    const error = await rejection(env.client.get('v1/me', ok))
+    expect(error.code).toBe('service_unavailable')
+    expect(env.tokens.get()).toBe('tok-1')
+    expect(onUnauthorized).not.toHaveBeenCalled()
+  })
+
+  it('skips refresh when another tab already rotated the token inside the lock', async () => {
+    const tokens = createTokenStore('admin', { storage: null, events: null })
+    tokens.set('tok-1')
+    const fake = fakeFetch([
+      (call) => {
+        expect(call.authorization).toBe('Bearer tok-1')
+        return envelope(401, 'unauthorized')
+      },
+      json(200, { ok: true }),
+    ])
+    const locks = {
+      request: vi.fn(async (_name: string, fn: () => Promise<unknown>) => {
+        tokens.set('tok-other')
+        return fn()
+      }),
+    }
+    vi.stubGlobal('navigator', { locks })
+    const client = createApiClient({
+      tokens,
+      fetch: fake.fetch,
+      baseUrl: () => ADMIN_BASE,
+      retryDelays: [0, 0],
+      refreshLockName: 'test-refresh-lock',
+    })
+    await client.get('v1/me', ok)
+    expect(fake.calls.filter(isRefreshCall)).toHaveLength(0)
+    expect(fake.calls[1]!.authorization).toBe('Bearer tok-other')
+    vi.unstubAllGlobals()
+  })
+
+  it('passwordCheck: refresh then replay 401 does not clear the token', async () => {
+    const onUnauthorized = vi.fn()
+    const env = setup(
+      [envelope(401, 'unauthorized', '口令错'), refreshOk(), envelope(401, 'unauthorized', '口令仍错')],
+      { onUnauthorized },
+    )
+    const error = await rejection(
+      env.client.post('v1/me/password', ok, { passwordCheck: true, body: { old_password: 'a', new_password: 'b' } }),
+    )
+    expect(error.message).toBe('口令仍错')
+    expect(env.tokens.get()).toBe('tok-2')
+    expect(onUnauthorized).not.toHaveBeenCalled()
+  })
+
+  it('refresh uses same-origin credentials without Authorization; normal calls use omit', async () => {
+    const env = setup([envelope(401, 'unauthorized'), refreshOk(), json(200, { ok: true })])
+    await env.client.get('v1/me', ok)
+    expect(env.calls[0]!.credentials).toBe('omit')
+    const refresh = env.calls.find(isRefreshCall)!
+    expect(refresh.credentials).toBe('same-origin')
+    expect(refresh.authorization).toBeNull()
+  })
+
+  it('withCookies requests use same-origin credentials', async () => {
+    const env = setup([json(204, undefined)])
+    await env.client.post('v1/auth/logout', noContent, { withCookies: true })
+    expect(env.calls[0]!.credentials).toBe('same-origin')
+  })
+
+  it('auth: false does not trigger refresh on 401', async () => {
+    const env = setup([envelope(401, 'unauthorized')])
+    await rejection(env.client.post('v1/auth/login', ok, { auth: false, body: { email: 'a@b.c', password: 'x' } }))
+    expect(env.calls).toHaveLength(1)
     expect(env.tokens.get()).toBe('tok-1')
   })
 })

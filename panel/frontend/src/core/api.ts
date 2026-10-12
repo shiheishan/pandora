@@ -201,6 +201,8 @@ export interface RequestOptions {
    * 这里的 401 交给表单内联显示，不触发全局登出。
    */
   passwordCheck?: boolean
+  /** 为 true 时本次 fetch 带 same-origin cookie（refresh / logout）；默认 omit。 */
+  withCookies?: boolean
   signal?: AbortSignal
 }
 
@@ -221,6 +223,8 @@ export interface ApiClientOptions {
   fetch?: typeof fetch
   /** 网络失败的重试间隔（毫秒），条数即最大重试次数；只对 GET 与带幂等键的请求生效。 */
   retryDelays?: readonly number[]
+  /** 跨标签页 refresh 互斥锁名；门户/后台各传一个。 */
+  refreshLockName?: string
 }
 
 export interface ApiClient {
@@ -244,11 +248,13 @@ export interface ApiClient {
 /** 无响应体（204）的接口用它作 schema。 */
 export const noContent = z.undefined()
 
-const reauthResponseSchema = z.object({
+const tokenResponseSchema = z.object({
   access_token: z.string().min(1),
   token_type: z.literal('Bearer'),
   expires_in: z.number(),
 })
+
+const reauthResponseSchema = tokenResponseSchema
 
 function isAbort(error: unknown, signal?: AbortSignal): boolean {
   return signal?.aborted === true || (error instanceof DOMException && error.name === 'AbortError')
@@ -290,6 +296,45 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     return pendingReauth
   }
 
+  const refreshLockName = options.refreshLockName
+  let pendingRefresh: Promise<boolean> | null = null
+
+  async function refreshSessionCore(usedToken: string | null): Promise<boolean> {
+    const current = tokens.get()
+    if (usedToken !== null && current !== null && current !== usedToken) {
+      return true
+    }
+    const res = await doFetch(resolveApiUrl('v1/auth/refresh', baseUrl()), {
+      method: 'POST',
+      headers: new Headers({ Accept: 'application/json' }),
+      credentials: 'same-origin',
+      cache: 'no-store',
+    })
+    if (res.ok) {
+      const data = await parse(res, tokenResponseSchema)
+      tokens.set(data.access_token)
+      return true
+    }
+    // 4xx（cookie 无效或被吊销、来源检查不过、没有这个接口）都是刷新被拒；5xx 是暂时故障，抛给调用方、不清令牌
+    const error = await readError(res)
+    if (error.status >= 400 && error.status < 500) return false
+    throw error
+  }
+
+  async function refreshSession(usedToken: string | null): Promise<boolean> {
+    const run = async (): Promise<boolean> => {
+      const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined
+      if (refreshLockName && locks?.request) {
+        return locks.request(refreshLockName, () => refreshSessionCore(usedToken))
+      }
+      return refreshSessionCore(usedToken)
+    }
+    pendingRefresh ??= run().finally(() => {
+      pendingRefresh = null
+    })
+    return pendingRefresh
+  }
+
   function sessionLost(error: ApiError, usedToken: string | null) {
     // 只清发请求时用的那枚：期间用户已重新登录的话，新令牌不能被旧请求的 401 清掉
     if (usedToken !== null && tokens.get() === usedToken) {
@@ -308,7 +353,8 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       headers.set('Content-Type', 'application/json')
       body = JSON.stringify(opts.body)
     }
-    const res = await doFetch(url, { method, headers, body, signal: opts.signal, credentials: 'omit', cache: 'no-store' })
+    const credentials = opts.withCookies ? 'same-origin' : 'omit'
+    const res = await doFetch(url, { method, headers, body, signal: opts.signal, credentials, cache: 'no-store' })
     return { res, token }
   }
 
@@ -340,6 +386,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     const replayable = method === 'GET' || key !== undefined
     let networkRetries = 0
     let replayedAfterReauth = false
+    let replayedAfterRefresh = false
 
     for (;;) {
       let sent: Awaited<ReturnType<typeof send>>
@@ -360,9 +407,21 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       if (res.ok) return res
 
       const error = await readError(res)
-      if (error.status === 401 && opts.auth !== false && !opts.passwordCheck) {
-        sessionLost(error, token)
+
+      // 401：先刷新一次（refresh 的 503 / 网络错误原样抛出、不清令牌），成功就用新令牌重放一次。
+      // 刷新被拒说明会话已失效，一律掉线；刷新成功、重放仍 401 时，口令校验接口的 401 是口令错，
+      // 交给表单、不登出，其余请求掉线。
+      if (error.status === 401 && opts.auth !== false) {
+        if (!replayedAfterRefresh) {
+          replayedAfterRefresh = true
+          if (await refreshSession(token)) continue
+          sessionLost(error, token)
+          throw error
+        }
+        if (!opts.passwordCheck) sessionLost(error, token)
+        throw error
       }
+
       // reauth_required 在 Idempotency 之前拦下，处理器没执行、幂等键没消耗，
       // 所以不论有没有键都可以重放；有键时用同一个键。只重放一次。
       if (error.code === 'reauth_required' && !replayedAfterReauth) {
