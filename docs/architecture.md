@@ -552,8 +552,8 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 |---|---|---|
 | P1 骨架 | `cmd/pandora` 与 cobra；`pkg` 下的 config、log、db、tx、redisx、errs、httpx（reqid、恢复、错误中间件、安全头、超时）、jwtx、crypto（HKDF、Sealer）、ratelimit、pagination；asynq 的 Server 和 Scheduler 外壳；goose 与 `00001_base.sql`；`.golangci.yml` 与 depguard 生成脚本；CI 新增 job：lint、迁移往返、新树单测 | `pandora serve` 起得来，`/healthz` 回 200，日志带 req_id；`pandora worker` 能跑一个示例周期任务；`pandora migrate up/down/up` 在 CI 通过；depguard 能拦住一个故意违规的样例（样例不入库） |
 | P2 鉴权与用户 | identity、auth、settings、audit、idempotency 五个模块；refresh 接口；前端令牌改造 | e2e 的登录、注册、找回、改密、跨域令牌、IAM-006、重认证、停用即吊销各段全绿；前端 api 测试覆盖刷新单飞 |
-| P3 交易 | catalog、order、payment、ledger、promo、commission、giftcard；decimal | 下单、结算、释放、换套餐、佣金、挂账、查单各条 PG 集成测试改写后通过；e2e 回调重放只记一笔账；易支付「990 分 ↔ 9.90」与篡改用例通过；账本配平检查在库里生效 |
-| P4 订阅 | subscription 模块、订阅链接渲染、到期与配额滚动任务 | expiry_e2e 全绿；订阅格式 UA 分支全覆盖；渲染结果与旧实现逐字节对比一致（用固定种子数据做 golden） |
+| P3 交易 | catalog、order、payment、ledger、promo、commission、giftcard，以及 subscription 的核心（表、开通、续期、换套餐、加流量、状态口径；结算离不开它）；decimal。分四波：catalog、ledger、promo → subscription 核心、payment → order → commission、giftcard。`plan_node_pools` 推到 P5 与 node 一起建 | 下单、结算、释放、换套餐、佣金、挂账、查单各条 PG 集成测试改写后通过；e2e 回调重放只记一笔账；易支付「990 分 ↔ 9.90」与篡改用例通过；账本配平检查在库里生效 |
+| P4 订阅 | 订阅链接渲染与拉取、到期与配额滚动任务（订阅的表与开通等核心已在 P3） | expiry_e2e 全绿；订阅格式 UA 分支全覆盖；渲染结果与旧实现逐字节对比一致（用固定种子数据做 golden） |
 | P5 节点 | node 模块后台编排；proto 与 nodeapi；Enroll 与 Session；pdnd 客户端改造；nodesim 与 acceptancepanel | 冒烟：200 用户、5 节点、60 秒零 5xx；删人后节点秒级断线（node-e2e 真机）；证书续期、吊销断流、supersede 都有集成测试 |
 | P6 其余 | certs、notify、support、content、appearance、plugin、report；看板改为调属主 service | 后台各页面 flow-walk 通过；admin_e2e 全绿 |
 | P7 切换与删旧 | 安装脚本（Redis、单二进制、systemd、nginx）；删除旧代码、旧迁移、旧守卫（行数豁免表、RESERVED-TABLES、routebudget）；更新 README 和 `.claude/rules` | 全新测试机上安装成功；全部 e2e、Playwright、节点验收在新二进制上通过；仓库里不再有 `aegis-*` 命令和 `internal/domain` |
