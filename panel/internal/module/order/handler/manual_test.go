@@ -201,7 +201,7 @@ func TestManualPreviewShape(t *testing.T) {
 				{Key: "change:" + subID.String(), Kind: service.PlacementChange, SubscriptionID: &subID, Expired: true,
 					Label: "家里", PlanID: &curPlan, PlanName: "标准", State: subsvc.StateRevivable, PeriodEnd: &end, NewPeriodEnd: &newEnd,
 					Credit: money.FromCents(2950), Currency: money.CNY, GiftDaysLost: 3, TrafficUsed: 5, TrafficCap: 10, PackRemaining: 2,
-					Due: money.FromCents(50), BelowMinimum: true},
+					Due: money.FromCents(50), BelowMinimum: true, Unavailable: "已有未完结的续费或变更单"},
 			},
 		}, nil
 	}}
@@ -221,7 +221,10 @@ func TestManualPreviewShape(t *testing.T) {
 	opts := m["options"].([]any)
 	o0, o1 := opts[0].(map[string]any), opts[1].(map[string]any)
 	mustAbsent(t, o0, "subscription_id", "expired", "badge", "label", "plan_id", "plan_name", "state", "period_end",
-		"credit", "currency", "gift_days_lost", "traffic_used", "traffic_cap", "pack_remaining")
+		"credit", "currency", "gift_days_lost", "traffic_used", "traffic_cap", "pack_remaining", "unavailable_reason")
+	if o1["unavailable_reason"] != "已有未完结的续费或变更单" {
+		t.Fatalf("不可选原因 %v", o1["unavailable_reason"])
+	}
 	if o0["key"] != "new" || num(t, o0, "due") != 3000 || o0["below_minimum"] != false || o0["new_period_end"] == nil {
 		t.Fatalf("new 选项 %v", o0)
 	}
@@ -248,5 +251,33 @@ func TestManualPreviewShape(t *testing.T) {
 	b = mustErr(t, do(e, http.MethodPost, "/v1/orders/manual/preview", `{}`), http.StatusUnprocessableEntity, string(errs.ValidationFailed))
 	if b.Error.Fields["user_id"] != "必填" {
 		t.Fatalf("fields %v", b.Error.Fields)
+	}
+}
+
+// 免掉的零头对外并进 discount_amount（审查 S5）：前端「小计 − 折扣 − 剩余价值 = 应付」照旧对得上；建单响应与我的订单列表同口径。
+func TestDiscountAmountIncludesWaived(t *testing.T) {
+	c := changeCreated()
+	c.Discount = money.FromCents(300)
+	c.Waived = money.FromCents(50)
+	f := &fakeSvc{
+		createChange: func(service.PlanChangeOrderInput) (service.Created, error) { return c, nil },
+		myOrders: func(service.ListFilter) (service.MyOrderList, error) {
+			return service.MyOrderList{Orders: []service.MyOrderView{{OrderRow: service.OrderRow{
+				ID: uuid.New(), OrderNo: "AO2", Kind: "upgrade", Status: "fulfilled", Currency: money.CNY,
+				Subtotal: money.FromCents(1550), Discount: money.FromCents(0), Waived: money.FromCents(50), ProrationCredit: money.FromCents(1500),
+			}}}, Total: 1}, nil
+		},
+	}
+	e := newEngine(f, false, nil)
+	w := do(e, http.MethodPost, "/v1/me/subscriptions/"+uuid.NewString()+"/change-plan",
+		`{"plan_id":"`+uuid.NewString()+`","price_id":"`+uuid.NewString()+`"}`)
+	mustStatus(t, w, http.StatusCreated)
+	if m := obj(t, w); num(t, m, "discount_amount") != 350 {
+		t.Fatalf("建单 discount_amount %v", m["discount_amount"])
+	}
+	w = do(e, http.MethodGet, "/v1/orders", "")
+	mustStatus(t, w, http.StatusOK)
+	if row := obj(t, w)["orders"].([]any)[0].(map[string]any); num(t, row, "discount_amount") != 50 || num(t, row, "total_amount") != 0 {
+		t.Fatalf("列表行 %v", row)
 	}
 }
