@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/mail"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -40,6 +41,16 @@ func looksLikeEmail(s string) bool {
 		}
 	}
 	return strings.Contains(s[at+1:], ".")
+}
+
+// ValidEmail 判断能否作为收信地址：不含 CR/LF、不超过 254 字节，且 net/mail 能解析成不带显示名、与原串一致的裸地址
+// （规则与 notify 的发信校验一致，挡掉 a..b@x.com、a,b@x.com、a@b@x.com 这类发不出信的地址）。调用方先 TrimSpace。
+func ValidEmail(address string) bool {
+	if address == "" || len(address) > 254 || strings.ContainsAny(address, "\r\n") {
+		return false
+	}
+	a, err := mail.ParseAddress(address)
+	return err == nil && a.Name == "" && a.Address == address
 }
 
 // errEmailInvalid 是邮箱格式不对的 422。

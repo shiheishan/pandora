@@ -203,3 +203,18 @@ func TestTruncateToPtr(t *testing.T) {
 		t.Fatalf("非法 UTF-8: %q", p)
 	}
 }
+
+func TestValidEmail(t *testing.T) {
+	good := []string{"a@b.co", "first.last+tag@example.test"}
+	for _, s := range good {
+		if !ValidEmail(s) {
+			t.Fatalf("%q 应合格", s)
+		}
+	}
+	bad := []string{"", "a..b@x.com", "a,b@x.com", "a@b@x.com", "Name <a@b.co>", "a@b.co\r\n", strings.Repeat("a", 250) + "@b.co"}
+	for _, s := range bad {
+		if ValidEmail(s) {
+			t.Fatalf("%q 应不合格", s)
+		}
+	}
+}

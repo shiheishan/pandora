@@ -203,7 +203,7 @@ func (s *Service) Profile(ctx context.Context, id uuid.UUID) (Profile, error) {
 // CreateUser 建一个有口令的用户（给命令行建管理员用）：口令按后台人员的 12 位规则校验；邮箱已存在回 409。
 func (s *Service) CreateUser(ctx context.Context, email, password string) (User, error) {
 	email = normalizeEmail(email)
-	if !looksLikeEmail(email) {
+	if !ValidEmail(email) {
 		return User{}, errEmailInvalid()
 	}
 	if err := validatePassword(password, true); err != nil {

@@ -22,7 +22,7 @@ import (
 func (s *Service) StartRegistration(ctx context.Context, email, inviteCode string) (RegistrationStart, error) {
 	start := time.Now()
 	email = normalizeEmail(email)
-	if !looksLikeEmail(email) {
+	if !ValidEmail(email) {
 		return RegistrationStart{}, errEmailInvalid()
 	}
 	inviteCode = strings.ToUpper(strings.TrimSpace(inviteCode))
