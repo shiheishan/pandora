@@ -43,10 +43,10 @@ func (h *Handler) listPlans(c *gin.Context) {
 	plans := make([]planRowResponse, 0, len(rows))
 	for _, r := range rows {
 		var nodeCount int64
-		if r.Plan.CurrentVersionID != nil {
-			nodeCount = nodes[*r.Plan.CurrentVersionID]
+		if r.CurrentVersionID != nil {
+			nodeCount = nodes[*r.CurrentVersionID]
 		}
-		plans = append(plans, planRowFromSummary(r, subs[r.Plan.ID], nodeCount))
+		plans = append(plans, planRowFromSummary(r, subs[r.ID], nodeCount))
 	}
 
 	httpx.OK(c, listPlansResponse{Plans: plans})

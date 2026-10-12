@@ -208,8 +208,8 @@ type priceRowResponse struct {
 	Currency    string     `json:"currency"`
 	UnitAmount  int64      `json:"unit_amount"`
 	Interval    string     `json:"billing_interval"`
-	Count       int16      `json:"interval_count"`
-	TrialDays   int16      `json:"trial_days"`
+	Count       int        `json:"interval_count"`
+	TrialDays   int        `json:"trial_days"`
 	Status      string     `json:"status"`
 	UserGroupID *string    `json:"user_group_id"`
 	ValidFrom   *time.Time `json:"valid_from"`
@@ -224,7 +224,7 @@ type versionRowResponse struct {
 	FrozenAt             *time.Time           `json:"frozen_at"`
 	RowVersion           int64                `json:"row_version"`
 	QuotaResetStrategy   string               `json:"quota_reset_strategy"`
-	QuotaResetDay        *int16               `json:"quota_reset_day"`
+	QuotaResetDay        *int                 `json:"quota_reset_day"`
 	GracePeriodHours     int                  `json:"grace_period_hours"`
 	GraceKeepsService    bool                 `json:"grace_keeps_service"`
 	RenewalExtendsPeriod bool                 `json:"renewal_extends_period"`
@@ -554,22 +554,14 @@ func uuidsToStrings(ids []uuid.UUID) []string {
 	return out
 }
 
-func intPtrToInt16(p *int) *int16 {
-	if p == nil {
-		return nil
-	}
-	v := int16(*p)
-	return &v
-}
-
 func priceRowFrom(p service.Price) priceRowResponse {
 	return priceRowResponse{
 		ID:          uuidToString(p.ID),
 		Currency:    string(p.Currency),
 		UnitAmount:  money.MustCents(p.UnitAmount),
 		Interval:    p.BillingInterval,
-		Count:       int16(p.IntervalCount),
-		TrialDays:   int16(p.TrialDays),
+		Count:       p.IntervalCount,
+		TrialDays:   p.TrialDays,
 		Status:      p.Status,
 		UserGroupID: uuidPtrToString(p.UserGroupID),
 		ValidFrom:   p.ValidFrom,
@@ -602,7 +594,7 @@ func versionRowFrom(v service.Version) versionRowResponse {
 		FrozenAt:             v.FrozenAt,
 		RowVersion:           v.RowVersion,
 		QuotaResetStrategy:   v.QuotaResetStrategy,
-		QuotaResetDay:        intPtrToInt16(v.QuotaResetDay),
+		QuotaResetDay:        v.QuotaResetDay,
 		GracePeriodHours:     v.GracePeriodHours,
 		GraceKeepsService:    v.GraceKeepsService,
 		RenewalExtendsPeriod: v.RenewalExtendsPeriod,
@@ -687,8 +679,8 @@ func planRowFromSummary(s service.PlanSummary, activeSubs int64, nodeCount int64
 func collectCurrentVersionIDs(rows []service.PlanSummary) []uuid.UUID {
 	out := make([]uuid.UUID, 0, len(rows))
 	for _, r := range rows {
-		if r.Plan.CurrentVersionID != nil {
-			out = append(out, *r.Plan.CurrentVersionID)
+		if r.CurrentVersionID != nil {
+			out = append(out, *r.CurrentVersionID)
 		}
 	}
 	return out
@@ -697,7 +689,7 @@ func collectCurrentVersionIDs(rows []service.PlanSummary) []uuid.UUID {
 func collectPlanIDs(rows []service.PlanSummary) []uuid.UUID {
 	out := make([]uuid.UUID, len(rows))
 	for i, r := range rows {
-		out[i] = r.Plan.ID
+		out[i] = r.ID
 	}
 	return out
 }

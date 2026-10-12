@@ -57,27 +57,6 @@ func normalizeHighlights(raw []string) ([]string, map[string]string) {
 	return out, fields
 }
 
-func mergeInvalid(base error, fields map[string]string) error {
-	if len(fields) == 0 {
-		return base
-	}
-	if base == nil {
-		return errs.Invalid(fields)
-	}
-	var ve *errs.Error
-	if errors.As(base, &ve) && ve.Code == errs.ValidationFailed {
-		merged := map[string]string{}
-		for k, v := range ve.Fields {
-			merged[k] = v
-		}
-		for k, v := range fields {
-			merged[k] = v
-		}
-		return errs.Invalid(merged)
-	}
-	return base
-}
-
 func validatePlanFields(code, name, visibility string, groupIDs []uuid.UUID, from, until *time.Time, purchaseLimit, stock *int) map[string]string {
 	fields := map[string]string{}
 	if !catalogCodePattern.MatchString(strings.TrimSpace(code)) {

@@ -22,10 +22,9 @@ func expectValidation(t *testing.T, err error) map[string]string {
 	return ve.Fields
 }
 
-func strPtr(s string) *string        { return &s }
-func intPtr(n int) *int              { return &n }
-func int64Ptr(n int64) *int64        { return &n }
-func timePtr(t time.Time) *time.Time { return &t }
+func strPtr(s string) *string { return &s }
+func intPtr(n int) *int       { return &n }
+func int64Ptr(n int64) *int64 { return &n }
 
 func TestNormalizeHighlights(t *testing.T) {
 	t.Run("nil 输入返回非 nil 空切片", func(t *testing.T) {

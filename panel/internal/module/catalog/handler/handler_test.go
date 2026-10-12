@@ -390,7 +390,9 @@ func TestAdminCreatePlan(t *testing.T) {
 			Fields map[string]string `json:"fields"`
 		} `json:"error"`
 	}
-	_ = json.Unmarshal(w.Body.Bytes(), &env)
+	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
 	if env.Error.Fields["visible_group_ids"] == "" {
 		t.Fatalf("fields %v", env.Error.Fields)
 	}
@@ -418,7 +420,7 @@ func TestAdminCreatePlan(t *testing.T) {
 
 // 6. 后台 PUT /v1/plans/:id/versions/:versionID 与 pool_ids
 func TestAdminUpdateVersionPoolIDs(t *testing.T) {
-	planID := samplePlanDetail().Plan.ID
+	planID := samplePlanDetail().ID
 	verID := samplePlanDetail().Versions[0].ID
 	f := &fakeSvc{updateVersionRV: 9}
 	e := newAdminEngine(New(f), nil)
@@ -452,7 +454,9 @@ func TestAdminUpdateVersionPoolIDs(t *testing.T) {
 		OK         bool  `json:"ok"`
 		RowVersion int64 `json:"row_version"`
 	}
-	json.Unmarshal(w.Body.Bytes(), &okBody)
+	if err := json.Unmarshal(w.Body.Bytes(), &okBody); err != nil {
+		t.Fatal(err)
+	}
 	if !okBody.OK || okBody.RowVersion != 9 {
 		t.Fatalf("%+v", okBody)
 	}
@@ -466,7 +470,7 @@ func TestAdminUpdateVersionPoolIDs(t *testing.T) {
 
 // 7. 后台 PUT /v1/plans/:id/complete
 func TestAdminUpdatePlanCompleteOptionalFields(t *testing.T) {
-	planID := samplePlanDetail().Plan.ID
+	planID := samplePlanDetail().ID
 	f := &fakeSvc{createPlanOut: samplePlanDetail()}
 	e := newAdminEngine(New(f), nil)
 	path := "/v1/plans/" + planID.String() + "/complete"
@@ -499,7 +503,7 @@ func TestAdminUpdatePlanCompleteOptionalFields(t *testing.T) {
 
 // 8. 后台 POST /v1/plans/:id/prices
 func TestAdminCreatePrice(t *testing.T) {
-	planID := samplePlanDetail().Plan.ID
+	planID := samplePlanDetail().ID
 	priceID := uuid.New()
 	f := &fakeSvc{
 		createPriceOut: service.Price{
@@ -521,7 +525,9 @@ func TestAdminCreatePrice(t *testing.T) {
 			UnitAmount int64 `json:"unit_amount"`
 		} `json:"price"`
 	}
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
 	if resp.Price.UnitAmount != 1999 {
 		t.Fatalf("响应 unit_amount %d", resp.Price.UnitAmount)
 	}
@@ -549,7 +555,9 @@ func TestAdminCreatePlanComplete(t *testing.T) {
 		VersionID string   `json:"version_id"`
 		PriceIDs  []string `json:"price_ids"`
 	}
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
 	if resp.VersionID != verID.String() || len(resp.PriceIDs) != 1 || resp.PriceIDs[0] != priceID.String() {
 		t.Fatalf("%+v", resp)
 	}
@@ -603,7 +611,9 @@ func TestAdminSetTrafficPackStatus(t *testing.T) {
 			SoldCount int64 `json:"sold_count"`
 		} `json:"pack"`
 	}
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
 	if resp.Pack.SoldCount != 99 {
 		t.Fatalf("sold_count %d", resp.Pack.SoldCount)
 	}
@@ -622,7 +632,9 @@ func TestServiceErrSoldOutMapsTo409(t *testing.T) {
 			Code string `json:"code"`
 		} `json:"error"`
 	}
-	json.Unmarshal(w.Body.Bytes(), &env)
+	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
 	if env.Error.Code != string(errs.Conflict) {
 		t.Fatalf("code %s", env.Error.Code)
 	}

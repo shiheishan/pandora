@@ -15,7 +15,6 @@ import (
 	"github.com/aegispanel/aegis/internal/module/catalog/repo"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
-	"github.com/aegispanel/aegis/internal/pkg/db"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/reqid"
 	"github.com/aegispanel/aegis/internal/pkg/testkit"
@@ -55,7 +54,6 @@ func (f *fakeUsers) UserGroupID(_ context.Context, userID uuid.UUID) (*uuid.UUID
 type env struct {
 	svc   *Service
 	users *fakeUsers
-	d     *db.DB
 	exec  func(ctx context.Context, sql string, args ...any) error
 	row   func(ctx context.Context, sql string, args ...any) *sql.Row
 }
@@ -86,7 +84,6 @@ func newEnv(t *testing.T) (*env, context.Context) {
 	e := &env{
 		svc:   svc,
 		users: users,
-		d:     d,
 		row: func(ctx context.Context, q string, args ...any) *sql.Row {
 			return d.Conn(ctx).Raw(q, args...).Row()
 		},
@@ -123,7 +120,6 @@ func newEnvCommitted(t *testing.T) (*env, context.Context) {
 	e := &env{
 		svc:   svc,
 		users: users,
-		d:     d,
 		row: func(ctx context.Context, q string, args ...any) *sql.Row {
 			return d.Conn(ctx).Raw(q, args...).Row()
 		},

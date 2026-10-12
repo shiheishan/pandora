@@ -14,7 +14,6 @@ import (
 
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/module/catalog/repo"
-	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 	"github.com/google/uuid"
@@ -193,15 +192,6 @@ func catalogErr(err error) error {
 		return errs.Newf(errs.ValidationFailed, "目录语义校验未通过")
 	}
 	return err
-}
-
-// principal 取 ctx 里的登录主体；没有时回 401。
-func principal(ctx context.Context) (authn.Principal, error) {
-	p, ok := authn.From(ctx)
-	if !ok || p.UserID == uuid.Nil {
-		return authn.Principal{}, errs.New(errs.Unauthorized)
-	}
-	return p, nil
 }
 
 // writeAudit 在 ctx 的事务里写一条后台审计（操作者由 audit 从登录主体取）。

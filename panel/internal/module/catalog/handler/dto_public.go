@@ -17,7 +17,7 @@ type portalPlan struct {
 	Highlights         []string      `json:"highlights"`
 	Recommended        bool          `json:"recommended"`
 	QuotaResetStrategy string        `json:"quota_reset_strategy"`
-	QuotaResetDay      *int16        `json:"quota_reset_day"`
+	QuotaResetDay      *int          `json:"quota_reset_day"`
 	AllowRenewal       bool          `json:"allow_renewal"`
 	AllowUpgrade       bool          `json:"allow_upgrade"`
 	Quotas             []portalQuota `json:"quotas"`
@@ -36,8 +36,8 @@ type portalPrice struct {
 	Currency      string `json:"currency"`
 	UnitAmount    int64  `json:"unit_amount"`
 	Interval      string `json:"billing_interval"`
-	IntervalCount int16  `json:"interval_count"`
-	TrialDays     int16  `json:"trial_days"`
+	IntervalCount int    `json:"interval_count"`
+	TrialDays     int    `json:"trial_days"`
 }
 
 // portalPack 与旧 billing.TrafficPack JSON 一致。
@@ -62,11 +62,6 @@ func portalPlanFrom(op service.OfferPlan) portalPlan {
 	pl := op.Plan
 	ver := op.Version
 	v := ver.Version
-	var resetDay *int16
-	if ver.QuotaResetDay != nil {
-		d := int16(*ver.QuotaResetDay)
-		resetDay = &d
-	}
 	hl := pl.Highlights
 	if hl == nil {
 		hl = []string{}
@@ -82,8 +77,8 @@ func portalPlanFrom(op service.OfferPlan) portalPlan {
 			Currency:      string(pr.Currency),
 			UnitAmount:    money.MustCents(pr.UnitAmount),
 			Interval:      pr.BillingInterval,
-			IntervalCount: int16(pr.IntervalCount),
-			TrialDays:     int16(pr.TrialDays),
+			IntervalCount: pr.IntervalCount,
+			TrialDays:     pr.TrialDays,
 		}
 	}
 	return portalPlan{
@@ -97,7 +92,7 @@ func portalPlanFrom(op service.OfferPlan) portalPlan {
 		Highlights:         hl,
 		Recommended:        pl.Recommended,
 		QuotaResetStrategy: ver.QuotaResetStrategy,
-		QuotaResetDay:      resetDay,
+		QuotaResetDay:      ver.QuotaResetDay,
 		AllowRenewal:       pl.AllowRenewal,
 		AllowUpgrade:       pl.AllowUpgrade,
 		Quotas:             quotas,
