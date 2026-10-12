@@ -12,16 +12,19 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
 	"github.com/aegispanel/aegis/internal/pkg/reqid"
+	"github.com/aegispanel/aegis/internal/pkg/reqmeta"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
 
-// RequestID 规范化 X-Request-ID，回写响应头，并把带 req_id 字段的 logger 放进请求 ctx。
+// RequestID 规范化 X-Request-ID，回写响应头，把带 req_id 字段的 logger 与来源信息（IP、UA）放进请求 ctx。
 func RequestID(base *zap.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := reqid.Normalize(c.GetHeader(reqid.Header))
 		c.Header(reqid.Header, id)
-		c.Request = c.Request.WithContext(plog.WithReqID(c.Request.Context(), base, id))
+		ctx := plog.WithReqID(c.Request.Context(), base, id)
+		ctx = reqmeta.With(ctx, reqmeta.Meta{IP: c.ClientIP(), UserAgent: c.Request.UserAgent()})
+		c.Request = c.Request.WithContext(ctx)
 		c.Set("req_id", id)
 		c.Next()
 	}

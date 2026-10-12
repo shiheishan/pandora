@@ -12,6 +12,7 @@ import (
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/reqid"
+	"github.com/aegispanel/aegis/internal/pkg/reqmeta"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
@@ -218,5 +219,17 @@ func TestTimeoutSetsDeadlineUnlessExempt(t *testing.T) {
 	w, _ = do(t, e, http.MethodGet, "/v1/events", "", nil)
 	if !strings.Contains(w.Body.String(), "false") {
 		t.Fatalf("stream should be exempt: %s", w.Body.String())
+	}
+}
+
+func TestRequestIDSetsReqMeta(t *testing.T) {
+	e := newTestEngine()
+	e.GET("/m", func(c *gin.Context) {
+		m := reqmeta.From(c.Request.Context())
+		OK(c, gin.H{"ip": m.IP, "ua": m.UserAgent})
+	})
+	w, _ := do(t, e, http.MethodGet, "/m", "", map[string]string{"User-Agent": "probe-ua"})
+	if !strings.Contains(w.Body.String(), "probe-ua") || !strings.Contains(w.Body.String(), "192.0.2.1") {
+		t.Fatalf("reqmeta missing: %s", w.Body.String())
 	}
 }
