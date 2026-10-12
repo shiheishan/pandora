@@ -119,8 +119,9 @@ CREATE TABLE gift_card_codes (
   created_at  timestamptz NOT NULL DEFAULT now(),
   updated_at  timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT gift_card_codes_hash_key UNIQUE (code_hash),
+  -- 延迟到提交时检查：生码时先插码（撞哈希的重抽），全部插好后才知道整批明文、才建批次行（密文非空）
   CONSTRAINT gift_card_codes_batch_fkey FOREIGN KEY (batch_id, template_id)
-    REFERENCES gift_card_batches (id, template_id) ON DELETE RESTRICT,
+    REFERENCES gift_card_batches (id, template_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
   -- 已兑换必须同时有人和时间，其余状态两者都空
   CONSTRAINT gift_card_codes_used_shape CHECK (
     (status = 'used') = (used_by IS NOT NULL) AND (status = 'used') = (used_at IS NOT NULL)
