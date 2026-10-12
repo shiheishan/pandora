@@ -30,7 +30,7 @@ const (
 	dispatchBatch      = 20               // 每批认领条数
 	dispatchMaxBatches = 50               // 一次 Dispatch 最多批数
 	dispatchLease      = 10 * time.Minute // 认领租约，必须长于任务超时（4 分钟）
-	dispatchTimeout    = 4 * time.Minute  // notify:dispatch 的任务超时
+	DispatchTimeout    = 4 * time.Minute  // notify:dispatch 的任务超时
 	maxAttempts        = 5                // 每条投递最多尝试次数
 	RetentionDays      = 90               // 投递记录保留期（产品定）
 )
