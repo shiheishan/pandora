@@ -6,6 +6,7 @@ import (
 
 	"github.com/aegispanel/aegis/internal/module/ledger/model"
 	"github.com/aegispanel/aegis/internal/pkg/money"
+	"github.com/google/uuid"
 )
 
 // InsertTransaction 插入一笔交易及其分录（交易一条 INSERT … RETURNING，分录一条批量 INSERT），
@@ -26,4 +27,14 @@ func (r *Repo) InsertTransaction(ctx context.Context, t *model.Transaction, entr
 		entries[i].TransactionID = t.ID
 	}
 	return mapErr(r.d.Conn(ctx).Create(&entries).Error)
+}
+
+// TransactionExists 报告某来源是否已有这种 kind 的交易（一条 SELECT EXISTS）。
+func (r *Repo) TransactionExists(ctx context.Context, kind, sourceType string, sourceID uuid.UUID) (bool, error) {
+	var exists bool
+	err := r.d.Conn(ctx).Raw(
+		"SELECT EXISTS (SELECT 1 FROM ledger_transactions WHERE kind = ? AND source_type = ? AND source_id = ?)",
+		kind, sourceType, sourceID,
+	).Row().Scan(&exists)
+	return exists, mapErr(err)
 }

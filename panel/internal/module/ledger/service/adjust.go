@@ -111,7 +111,7 @@ func (s *Service) adjustBalance(ctx context.Context, a Adjustment, cur money.Cur
 			{Account: PlatformAccount(Suspense, RefManualAdjust), Direction: Credit, Amount: abs},
 		}
 	}
-	txnID, err := s.Post(ctx, Posting{
+	txnID, err := s.postChecked(ctx, Posting{
 		Kind:       KindBalanceAdjusted,
 		Currency:   cur,
 		SourceType: SourceUser,

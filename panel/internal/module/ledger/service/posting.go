@@ -48,6 +48,10 @@ func validatePosting(p Posting) error {
 	if utf8.RuneCountInString(p.Memo) > 500 {
 		return fmt.Errorf("%w: 备注超过 500 字", ErrInvalidPosting)
 	}
+	// 与库里 ledger_transactions_adjust_memo 同口径（Go 用 TrimSpace，比库里的 btrim 更严），不让它走到库里。
+	if p.Kind == KindBalanceAdjusted && utf8.RuneCountInString(strings.TrimSpace(p.Memo)) < 5 {
+		return fmt.Errorf("%w: 人工调账的备注去掉首尾空白后至少 5 个字", ErrInvalidPosting)
+	}
 	if len(p.Legs) < 2 {
 		return fmt.Errorf("%w: 至少需要两条分录", ErrInvalidPosting)
 	}
@@ -151,12 +155,11 @@ func signedDelta(t AccountType, d Direction, amount decimal.Decimal) decimal.Dec
 	return amount.Neg()
 }
 
-// accountKeys 把分录里的科目去重并按 (Type, UserID.String(), Ref) 升序排成稳定顺序。
-func accountKeys(legs []Leg) []AccountRef {
-	var keys []AccountRef
+// sortedRefs 把科目引用去重并按 (Type, UserID.String(), Ref) 升序排成稳定顺序。
+func sortedRefs(refs []AccountRef) []AccountRef {
 	seen := make(map[AccountRef]struct{})
-	for _, leg := range legs {
-		ref := leg.Account
+	var keys []AccountRef
+	for _, ref := range refs {
 		if _, ok := seen[ref]; ok {
 			continue
 		}
@@ -175,4 +178,13 @@ func accountKeys(legs []Leg) []AccountRef {
 		return a.Ref < b.Ref
 	})
 	return keys
+}
+
+// accountKeys 把分录里的科目去重并按 (Type, UserID.String(), Ref) 升序排成稳定顺序。
+func accountKeys(legs []Leg) []AccountRef {
+	refs := make([]AccountRef, len(legs))
+	for i, leg := range legs {
+		refs[i] = leg.Account
+	}
+	return sortedRefs(refs)
 }

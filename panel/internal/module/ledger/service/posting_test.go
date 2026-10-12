@@ -26,6 +26,12 @@ func TestValidatePosting_valid(t *testing.T) {
 	if err := validatePosting(validTwoLegPosting()); err != nil {
 		t.Fatalf("expected nil, got %v", err)
 	}
+	p := validTwoLegPosting()
+	p.Kind = KindBalanceAdjusted
+	p.Memo = "补偿五个字"
+	if err := validatePosting(p); err != nil {
+		t.Fatalf("balance_adjusted valid memo: %v", err)
+	}
 }
 
 func TestValidatePosting_errors(t *testing.T) {
@@ -77,6 +83,10 @@ func TestValidatePosting_errors(t *testing.T) {
 		}},
 		{"备注含 NUL", func(p *Posting) { p.Memo = "a\x00b" }},
 		{"备注 501 字", func(p *Posting) { p.Memo = strings.Repeat("字", 501) }},
+		{"人工调账备注过短", func(p *Posting) {
+			p.Kind = KindBalanceAdjusted
+			p.Memo = "  四个字  "
+		}},
 	}
 
 	for _, tc := range cases {
@@ -256,6 +266,65 @@ func TestAccountKeys_dedupAndOrder(t *testing.T) {
 	for i := range keys {
 		if keys[i] != keys2[i] {
 			t.Fatal("order not stable")
+		}
+	}
+}
+
+func TestKindDedicated(t *testing.T) {
+	for _, k := range []Kind{KindBalanceHold, KindBalanceRelease, KindOrderPaid, KindBalanceAdjusted} {
+		if !k.Dedicated() {
+			t.Fatalf("%s should be dedicated", k)
+		}
+	}
+	for _, k := range []Kind{KindBalanceTopup, KindCommissionToBalance} {
+		if k.Dedicated() {
+			t.Fatalf("%s should not be dedicated", k)
+		}
+	}
+}
+
+func TestKindOnePerSource(t *testing.T) {
+	for _, k := range []Kind{
+		KindBalanceTopup, KindBalanceHold, KindBalanceRelease, KindOrderPaid,
+		KindLatePaymentSuspense, KindPlanChangeRefund, KindCommissionSettled,
+		KindCommissionPaid, KindGiftCardBalance,
+	} {
+		if !k.OnePerSource() {
+			t.Fatalf("%s should be one per source", k)
+		}
+	}
+	for _, k := range []Kind{
+		KindCommissionAccrued, KindCommissionToBalance, KindBalanceAdjusted, KindLatePaymentApplied,
+	} {
+		if k.OnePerSource() {
+			t.Fatalf("%s should not be one per source", k)
+		}
+	}
+}
+
+func TestSortedRefs(t *testing.T) {
+	u1 := uuid.MustParse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+	u2 := uuid.MustParse("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+	refs := []AccountRef{
+		PlatformAccount(Suspense, "z"),
+		UserAccount(UserBalance, u2),
+		PlatformAccount(Suspense, "z"),
+		UserAccount(UserBalance, u1),
+		PlatformAccount(ChannelCash, "a"),
+	}
+	got := sortedRefs(refs)
+	want := accountKeys([]Leg{
+		{Account: PlatformAccount(ChannelCash, "a"), Direction: Debit, Amount: decimal.NewFromInt(1)},
+		{Account: PlatformAccount(Suspense, "z"), Direction: Credit, Amount: decimal.NewFromInt(1)},
+		{Account: UserAccount(UserBalance, u1), Direction: Debit, Amount: decimal.NewFromInt(1)},
+		{Account: UserAccount(UserBalance, u2), Direction: Credit, Amount: decimal.NewFromInt(1)},
+	})
+	if len(got) != len(want) {
+		t.Fatalf("len=%d want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("[%d] got %+v want %+v", i, got[i], want[i])
 		}
 	}
 }

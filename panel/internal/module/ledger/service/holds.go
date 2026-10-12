@@ -78,7 +78,15 @@ func validateHoldInput(in HoldInput) error {
 }
 
 func (s *Service) holdForOrder(ctx context.Context, in HoldInput) (Hold, error) {
-	txnID, err := s.Post(ctx, Posting{
+	// 先查再写，撞唯一索引作并发兜底。
+	_, found, err := s.repo.HoldByOrder(ctx, in.OrderID)
+	if err != nil {
+		return Hold{}, err
+	}
+	if found {
+		return Hold{}, ErrHoldExists
+	}
+	txnID, err := s.postChecked(ctx, Posting{
 		Kind:       KindBalanceHold,
 		Currency:   in.Currency,
 		SourceType: SourceOrder,
@@ -152,7 +160,7 @@ func (s *Service) releaseOrderHold(ctx context.Context, orderID uuid.UUID, memo 
 	if err != nil {
 		return false, err
 	}
-	txnID, err := s.Post(ctx, Posting{
+	txnID, err := s.postChecked(ctx, Posting{
 		Kind:       KindBalanceRelease,
 		Currency:   cur,
 		SourceType: SourceOrder,
@@ -176,7 +184,51 @@ func (s *Service) releaseOrderHold(ctx context.Context, orderID uuid.UUID, memo 
 	return true, nil
 }
 
+// CaptureFromBalance 冻结用户余额并当场扣款：余额全额支付的订单（零元待付、余额续费）用它，不要先 HoldForOrder 再 PostOrderPaid。
+// 先把用户余额、冻结、收入三个科目按 ID 升序一次锁完，再记 balance_hold 与 order_paid 两笔，冻结直接是 captured；
+// 分两步锁会让收入科目晚锁，与别的订单结算交叉成环（40P01）。返回冻结与 order_paid 交易 ID。在调用方事务里执行。
+func (s *Service) CaptureFromBalance(ctx context.Context, in HoldInput) (Hold, uuid.UUID, error) {
+	if err := validateHoldInput(in); err != nil {
+		return Hold{}, uuid.Nil, err
+	}
+	var h Hold
+	var txnID uuid.UUID
+	err := s.tx.Do(ctx, func(ctx context.Context) error {
+		_, err := s.lockAccounts(ctx, in.Currency, []AccountRef{
+			UserAccount(UserBalance, in.UserID),
+			UserAccount(UserBalanceHold, in.UserID),
+			PlatformAccount(PlatformRevenue, RefMain),
+		})
+		if err != nil {
+			return err
+		}
+		h, err = s.holdForOrder(ctx, in)
+		if err != nil {
+			return err
+		}
+		txnID, err = s.postOrderPaid(ctx, OrderPaid{
+			OrderID:  in.OrderID,
+			UserID:   in.UserID,
+			Currency: in.Currency,
+			Total:    in.Amount,
+			Paid:     decimal.Zero,
+			Fee:      decimal.Zero,
+		})
+		if err != nil {
+			return err
+		}
+		h.Status = HoldCaptured
+		h.CaptureTxnID = &txnID
+		return nil
+	})
+	if err != nil {
+		return Hold{}, uuid.Nil, err
+	}
+	return h, txnID, nil
+}
+
 // PostOrderPaid 记订单结算（kind order_paid）并扣掉冻结；在调用方事务里执行。
+// 冻结已释放时回 ErrHoldReleased；同一订单已结算回 ErrDuplicatePosting（先查，不让调用方事务作废）。
 func (s *Service) PostOrderPaid(ctx context.Context, p OrderPaid) (uuid.UUID, error) {
 	if err := validateOrderPaid(p); err != nil {
 		return uuid.Nil, err
@@ -242,6 +294,10 @@ func (s *Service) postOrderPaid(ctx context.Context, p OrderPaid) (uuid.UUID, er
 		if !holdFound {
 			return uuid.Nil, fmt.Errorf("%w: 有余额抵扣但没有冻结记录", ErrInvalidPosting)
 		}
+		// 冻结已释放（订单取消或超时）后支付才到，order 据此转挂账。
+		if h.Status == HoldReleased {
+			return uuid.Nil, ErrHoldReleased
+		}
 		if h.Status != HoldHeld {
 			return uuid.Nil, fmt.Errorf("%w: 冻结状态不是 held", ErrInvalidPosting)
 		}
@@ -261,7 +317,7 @@ func (s *Service) postOrderPaid(ctx context.Context, p OrderPaid) (uuid.UUID, er
 		return uuid.Nil, nil
 	}
 	legs := orderPaidLegs(p, applied)
-	txnID, err := s.Post(ctx, Posting{
+	txnID, err := s.postChecked(ctx, Posting{
 		Kind:       KindOrderPaid,
 		Currency:   p.Currency,
 		SourceType: SourceOrder,

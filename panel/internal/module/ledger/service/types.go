@@ -99,6 +99,28 @@ func (k Kind) Valid() bool {
 	}
 }
 
+// Dedicated 报告该 kind 是否只能走专门的方法（HoldForOrder、ReleaseOrderHold、PostOrderPaid、CaptureFromBalance、AdjustBalance），Post 拒收。
+func (k Kind) Dedicated() bool {
+	switch k {
+	case KindBalanceHold, KindBalanceRelease, KindOrderPaid, KindBalanceAdjusted:
+		return true
+	default:
+		return false
+	}
+}
+
+// OnePerSource 报告该 kind 是否同一来源只能记一笔；清单与迁移里 ledger_transactions_source_once_key 一致，改一边要同步另一边。
+func (k Kind) OnePerSource() bool {
+	switch k {
+	case KindBalanceTopup, KindBalanceHold, KindBalanceRelease, KindOrderPaid,
+		KindLatePaymentSuspense, KindPlanChangeRefund, KindCommissionSettled,
+		KindCommissionPaid, KindGiftCardBalance:
+		return true
+	default:
+		return false
+	}
+}
+
 // Direction 是分录方向。
 type Direction string
 
@@ -167,6 +189,9 @@ var ErrHoldExists = errs.Newf(errs.Conflict, "这张订单已经冻结过余额"
 
 // ErrHoldCaptured 是冻结已经扣款，不能再释放。
 var ErrHoldCaptured = errs.Newf(errs.Conflict, "这张订单的余额已经扣款，不能释放")
+
+// ErrHoldReleased 是这张订单的余额冻结已经释放，不能再扣款。
+var ErrHoldReleased = errs.Newf(errs.Conflict, "这张订单的余额冻结已经释放，不能再扣款")
 
 // ErrUserNotFound 是科目归属的用户不存在。
 var ErrUserNotFound = errs.New(errs.NotFound)
