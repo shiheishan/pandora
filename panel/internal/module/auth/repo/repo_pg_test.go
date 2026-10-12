@@ -19,11 +19,12 @@ func newRepoPG(t *testing.T) (*repo.Repo, *db.DB, context.Context) {
 // addUser 在回滚事务里建一个用户（只填必填列）。
 func addUser(t *testing.T, d *db.DB, ctx context.Context, email string) uuid.UUID {
 	t.Helper()
-	var id uuid.UUID
-	if err := d.Conn(ctx).Raw("INSERT INTO users (email) VALUES (?) RETURNING id", email).Scan(&id).Error; err != nil {
+	// GORM 的 Raw().Scan 不认 uuid.UUID（[16]byte 会被当成字节数组逐个扫），先取文本再解析
+	var id string
+	if err := d.Conn(ctx).Raw("INSERT INTO users (email) VALUES (?) RETURNING id::text", email).Scan(&id).Error; err != nil {
 		t.Fatalf("insert user: %v", err)
 	}
-	return id
+	return uuid.MustParse(id)
 }
 
 func TestAdminsCRUD(t *testing.T) {
@@ -77,8 +78,8 @@ func TestAdminsForeignKeys(t *testing.T) {
 	if err := d.Conn(ctx).Exec("DELETE FROM users WHERE id = ?", a).Error; err != nil {
 		t.Fatal(err)
 	}
-	var grantedBy *uuid.UUID
-	if err := d.Conn(ctx).Raw("SELECT granted_by FROM admins WHERE user_id = ?", b).Scan(&grantedBy).Error; err != nil {
+	var grantedBy *string
+	if err := d.Conn(ctx).Raw("SELECT granted_by::text FROM admins WHERE user_id = ?", b).Scan(&grantedBy).Error; err != nil {
 		t.Fatal(err)
 	}
 	if grantedBy != nil {
