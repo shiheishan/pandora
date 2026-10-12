@@ -179,6 +179,8 @@ func TestSecretStringDoesNotLeak(t *testing.T) {
 
 // 没设 env 时按生产处理：生产要求 https 的 public_base_url，缺省的本机地址启动不了。
 func TestDefaultEnvIsProduction(t *testing.T) {
+	// CI 在 job 级设了 PANDORA_ENV=development；空值在 viper 里等同没设
+	t.Setenv("PANDORA_ENV", "")
 	t.Setenv("PANDORA_DATABASE_URL", "postgres://u:p@127.0.0.1:5432/db")
 	t.Setenv("PANDORA_REDIS_URL", "redis://127.0.0.1:6379/0")
 	t.Setenv("PANDORA_SECRETS_MASTER_KEY", testMasterKeyB64)
