@@ -36,7 +36,8 @@ export function QueryView<T>({ query, empty, isEmpty, rows = 3, children }: Quer
     )
   }
   if (query.isError || query.data === undefined) {
-    if (isApiError(query.error) && query.error.status === 404) return <Empty bare title="无权限或不存在" description="当前账号没有查看这部分数据的权限。" />
+    // 接口 404 是正常结果（地址里的 id 已被删除或从未存在），不当作报错
+    if (isApiError(query.error) && query.error.status === 404) return <Empty bare title="不存在或已删除" description="要查看的数据不存在，或已被删除。" />
     return (
       <Empty
         bare

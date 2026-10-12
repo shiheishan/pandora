@@ -1,17 +1,11 @@
-import { isApiError } from '../../../core/api'
 import { href } from '../../../core/router'
 import { Button, Skeleton } from '../../../ui'
-import { modulePath, type Permissions } from '../../modules'
+import { modulePath } from '../../modules'
 import css from './Dash.module.css'
 import type { Target, Tone } from './model'
 
-/** 缺权限的接口回 404：按「无权限或不存在」处理，整张卡不画，不当作报错 */
-export function isForbidden(error: unknown): boolean {
-  return isApiError(error, 'not_found')
-}
-
-export function targetHref(target: Target, perms: Permissions): string {
-  return href(modulePath(target.module, target.tab, perms), target.query)
+export function targetHref(target: Target): string {
+  return href(modulePath(target.module, target.tab), target.query)
 }
 
 export function Dot({ tone }: { tone: Tone }) {

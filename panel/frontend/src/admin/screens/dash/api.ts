@@ -197,38 +197,35 @@ export const activitySchema = z.object({ points: z.array(activityPointSchema) })
 export type ActivityPoint = z.output<typeof activityPointSchema>
 
 // ---------------------------------------------------------------------------
-// 查询 hook。enabled 由页面按权限决定：缺权限不发请求（DASH-01：不制造无意义的 404）。
+// 查询 hook。
 // GET v1/dashboard/tasks 不在这里：它与侧栏徽标共用，在 src/admin/tasks.ts。
 // ---------------------------------------------------------------------------
 const MINUTE = 60_000
 
-export function useBacklog(enabled: boolean) {
+export function useBacklog() {
   const api = useApi()
   return useQuery({
     queryKey: ['admin', 'dash', 'backlog'],
     queryFn: ({ signal }) => api.get('v1/dashboard/backlog/notifications', backlogSchema, { signal }),
-    enabled,
     refetchInterval: MINUTE,
   })
 }
 
-export function useOverview(enabled: boolean) {
+export function useOverview() {
   const api = useApi()
   return useQuery({
     queryKey: ['admin', 'dash', 'overview'],
     queryFn: ({ signal }) => api.get('v1/overview', overviewSchema, { signal }),
-    enabled,
     meta: { topics: ['orders.changed', 'subscriptions.changed', 'nodes.changed'] },
     refetchInterval: MINUTE,
   })
 }
 
-export function useRevenue(enabled: boolean, cur: RevenueCurrency, days: RevenueDays) {
+export function useRevenue(cur: RevenueCurrency, days: RevenueDays) {
   const api = useApi()
   return useQuery({
     queryKey: ['admin', 'dash', 'revenue', cur, days],
     queryFn: ({ signal }) => api.get('v1/revenue/timeseries', revenueSchema, { signal, query: { currency: cur, days } }),
-    enabled,
     meta: { topics: ['orders.changed'] },
     // 切币种、切区间时保留上一张图，不闪骨架
     placeholderData: keepPreviousData,
@@ -238,17 +235,16 @@ export function useRevenue(enabled: boolean, cur: RevenueCurrency, days: Revenue
 /** 仪表盘固定取近 24 小时前 5 名；「流量」KPI 读同一条查询的 totals，只发一次请求 */
 const TRAFFIC_QUERY = { range: '24h', limit: 5 } as const
 
-export function useNodeTraffic(enabled: boolean) {
+export function useNodeTraffic() {
   const api = useApi()
   return useQuery({
     queryKey: ['admin', 'dash', 'traffic', 'nodes'],
     queryFn: ({ signal }) => api.get('v1/dashboard/traffic/nodes', nodeTrafficSchema, { signal, query: TRAFFIC_QUERY }),
-    enabled,
     refetchInterval: 5 * MINUTE,
   })
 }
 
-/** DASH-01：两张流量卡都可读时，以先成功那张的 snapshot_at 为锚点，两边口径一致 */
+/** DASH-01：以节点排行的 snapshot_at 为锚点，两张排行口径一致；切到「用户」才请求 */
 export function useUserTraffic(enabled: boolean, snapshotAt: string | undefined) {
   const api = useApi()
   return useQuery({
@@ -260,22 +256,20 @@ export function useUserTraffic(enabled: boolean, snapshotAt: string | undefined)
   })
 }
 
-export function useSystemStatus(enabled: boolean) {
+export function useSystemStatus() {
   const api = useApi()
   return useQuery({
     queryKey: ['admin', 'dash', 'system'],
     queryFn: ({ signal }) => api.get('v1/system/status', systemStatusSchema, { signal }),
-    enabled,
     refetchInterval: MINUTE,
   })
 }
 
-export function useActivity(enabled: boolean) {
+export function useActivity() {
   const api = useApi()
   return useQuery({
     queryKey: ['admin', 'dash', 'activity'],
     queryFn: ({ signal }) => api.get('v1/stats/timeseries', activitySchema, { signal, query: { days: 14 } }),
-    enabled,
     refetchInterval: 5 * MINUTE,
   })
 }

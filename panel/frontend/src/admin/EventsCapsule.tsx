@@ -60,7 +60,7 @@ export function describeEvent(event: SseEvent, key: number, at = new Date()): Ev
 
 const MAX_ITEMS = 12
 
-export function EventsCapsule({ enabled, onNavigate }: { enabled: boolean; onNavigate: (module: ModuleKey, tab?: string) => void }) {
+export function EventsCapsule({ onNavigate }: { onNavigate: (module: ModuleKey, tab?: string) => void }) {
   const [items, setItems] = useState<EventItem[]>([])
   const [unread, setUnread] = useState(0)
   const [open, setOpen] = useState(false)
@@ -78,7 +78,7 @@ export function EventsCapsule({ enabled, onNavigate }: { enabled: boolean; onNav
     setItems((list) => [item, ...list].slice(0, MAX_ITEMS))
     if (!openRef.current) setUnread((n) => n + 1)
   }, [])
-  const status = useRealtime(enabled, onEvent)
+  const status = useRealtime(true, onEvent)
 
   // 相对时间每 30 秒刷新一次
   useEffect(() => {
@@ -102,7 +102,7 @@ export function EventsCapsule({ enabled, onNavigate }: { enabled: boolean; onNav
     }
   }, [open])
 
-  if (!enabled || status === 'unavailable' || status === 'off') return null
+  if (status === 'unavailable' || status === 'off') return null
 
   const live = status === 'open'
   return (
