@@ -256,12 +256,12 @@ func (s *Service) releaseOrder(ctx context.Context, o model.Order, to, reason, e
 		return model.Order{}, err
 	}
 
-	cols := map[string]any{
-		"status":        to,
-		"cancel_reason": reason,
-	}
+	// 超时只写 status 与 expired_at，不写 cancel_reason（旧 release.go 同口径；后台只要 cancel_reason 非空就显示「取消原因」）。
+	// 超时原因只记在预留的 release_reason、预留流水与审计里。
+	cols := map[string]any{"status": to}
 	if to == StatusCancelled {
 		cols["cancelled_at"] = now
+		cols["cancel_reason"] = reason
 	} else {
 		cols["expired_at"] = now
 	}

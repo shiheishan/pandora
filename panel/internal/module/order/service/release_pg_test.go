@@ -152,8 +152,11 @@ func TestExpireDue(t *testing.T) {
 		t.Fatalf("统计 %+v", stats)
 	}
 	o := e.order(t, ctx, dueID)
-	if o.Status != StatusExpired || o.ExpiredAt == nil || o.CancelReason == nil || *o.CancelReason != ReasonExpired {
-		t.Fatalf("到期单 status=%s expired_at=%v reason=%v", o.Status, o.ExpiredAt, o.CancelReason)
+	if o.Status != StatusExpired || o.ExpiredAt == nil || o.CancelReason != nil {
+		t.Fatalf("到期单 status=%s expired_at=%v cancel_reason=%v（超时不写取消原因）", o.Status, o.ExpiredAt, o.CancelReason)
+	}
+	if r := e.strCol(t, ctx, `SELECT release_reason FROM order_reservations WHERE order_id = ?`, dueID); r != ReasonExpired {
+		t.Fatalf("预留的释放原因 %q，期望 expired", r)
 	}
 	if n := e.count(t, ctx, `SELECT count(*) FROM order_reservation_events WHERE order_id = ? AND event_kind = 'expire' AND actor_kind = 'system'`, dueID); n != 1 {
 		t.Fatalf("expire 流水应由 system 写")
