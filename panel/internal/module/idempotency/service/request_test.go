@@ -19,6 +19,7 @@ func TestValidKey(t *testing.T) {
 		{"255 字节", key255, true},
 		{"256 字节", key256, false},
 		{"含 NUL", "a\x00b", false},
+		{"非法 UTF-8", "a\xffb", false},
 		{"含 0x1f", "a\x1fb", false},
 		{"含 0x7f", "a\x7fb", false},
 		{"含中文", "幂等键-测试", true},

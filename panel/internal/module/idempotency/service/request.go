@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -23,7 +24,7 @@ type Fingerprint [sha256.Size]byte
 
 // ValidKey 判断 Idempotency-Key 是否合法。
 func ValidKey(key string) bool {
-	if len(key) == 0 || len(key) > 255 {
+	if len(key) == 0 || len(key) > 255 || !utf8.ValidString(key) {
 		return false
 	}
 	for index := 0; index < len(key); index++ {

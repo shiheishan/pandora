@@ -86,9 +86,33 @@ func (h *Handler) Middleware(scope string) gin.HandlerFunc {
 		orig := c.Writer
 		rec := &recorder{ResponseWriter: orig}
 		c.Writer = rec
+		defer func() {
+			// 业务 panic 时 finish 不会执行，先释放认领再交给外层 Recovery，否则这个键要等 30 天保留期才能再用
+			if r := recover(); r != nil {
+				c.Writer = orig
+				h.release(c, scope, claim, http.StatusInternalServerError)
+				panic(r)
+			}
+		}()
 		c.Next()
 		c.Writer = orig
 		h.finish(c, scope, claim, rec, orig)
+	}
+}
+
+func (h *Handler) release(c *gin.Context, scope string, claim *service.Claim, status int) {
+	if claim.Completed() {
+		return
+	}
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 5*time.Second)
+	defer cancel()
+	if err := h.svc.Release(wctx, claim, status); err != nil {
+		plog.From(c.Request.Context()).Error("idempotency release failed",
+			zap.String("scope", scope),
+			zap.String("claim_id", claim.ID.String()),
+			zap.Int("status", status),
+			zap.Error(err),
+		)
 	}
 }
 

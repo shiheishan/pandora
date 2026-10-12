@@ -320,6 +320,22 @@ func TestMiddlewareFailRelease(t *testing.T) {
 	}
 }
 
+func TestMiddlewarePanicReleases(t *testing.T) {
+	actor := uuid.New()
+	fake := &fakeService{claimResult: defaultClaim()}
+	gin.SetMode(gin.TestMode)
+	e := gin.New()
+	e.Use(httpx.Recovery(), httpx.Errors(), withActor(actor))
+	e.POST("/v1/things", New(fake).Middleware("thing_create"), func(c *gin.Context) { panic("boom") })
+	w := post(t, e, "/v1/things", "{}", "k1")
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	if len(fake.releaseCalls) != 1 || fake.releaseCalls[0] != http.StatusInternalServerError {
+		t.Fatalf("Release %v", fake.releaseCalls)
+	}
+}
+
 func TestMiddlewareJSON500Release(t *testing.T) {
 	actor := uuid.New()
 	fake := &fakeService{claimResult: defaultClaim()}

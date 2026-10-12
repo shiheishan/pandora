@@ -48,8 +48,9 @@ func (m *Module) Periodic() []jobs.Periodic {
 			Type:     TypeRetention,
 			Opts: []asynq.Option{
 				asynq.Queue("low"),
+				asynq.MaxRetry(0),
 				asynq.Timeout(5 * time.Minute),
-				asynq.MaxRetry(3),
+				asynq.Unique(23 * time.Hour),
 			},
 		},
 	}
