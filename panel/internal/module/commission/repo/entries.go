@@ -189,11 +189,12 @@ ORDER BY currency`, monthStart).Scan(&out).Error
 	return out, mapErr(err)
 }
 
-// EntryCurrenciesOf 返回推荐人有佣金条目的全部币种（升序）。提现与转余额只会发生在这些币种里。
+// EntryCurrenciesOf 返回推荐人有（未作废的）佣金条目的全部币种（升序）。提现与转余额只会发生在这些币种里；
+// 只有作废条目的币种既没有可用额也不该出现在汇总里。
 func (r *Repo) EntryCurrenciesOf(ctx context.Context, referrerID uuid.UUID) ([]string, error) {
 	var out []string
 	err := r.d.Conn(ctx).Raw(
-		`SELECT DISTINCT currency FROM commission_entries WHERE referrer_user_id = ? ORDER BY currency`,
+		`SELECT DISTINCT currency FROM commission_entries WHERE referrer_user_id = ? AND status <> 'voided' ORDER BY currency`,
 		referrerID,
 	).Scan(&out).Error
 	return out, mapErr(err)
