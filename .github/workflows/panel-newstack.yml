@@ -54,6 +54,8 @@ jobs:
       - uses: golangci/golangci-lint-action@v8
         with:
           version: v2.5.0
+          # 官方预编译包用 Go 1.25 构建，读不了 go 1.26 的模块；用 setup-go 装的版本现编
+          install-mode: goinstall
           working-directory: panel
           args: ./internal/pkg/... ./internal/app/... ./cmd/pandora/... ./db/...
 
