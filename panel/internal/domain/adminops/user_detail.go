@@ -193,6 +193,8 @@ func (s *Service) GetUser(ctx context.Context, tenantID, userID string) (*UserDe
 		return nil, httpx.Internal(err)
 	}
 	d.EmailVerified = verifiedAt != nil
+	// 新前端只认「是不是管理员」（后台权限扁平化）；旧栈持有任何有效角色即算
+	d.IsAdmin = len(d.Roles) > 0
 	for i := range d.Subscriptions {
 		if q := quotas[d.Subscriptions[i].ID]; q != nil {
 			d.Subscriptions[i].Quotas = q

@@ -314,6 +314,7 @@ type UserDetail struct {
 	Subscriptions []SubscriptionRow `json:"subscriptions"`
 	Orders        []OrderRow        `json:"recent_orders"`
 	Roles         []string          `json:"roles"`
+	IsAdmin       bool              `json:"is_admin"`
 	Stats         UserStats         `json:"stats"`
 	Referrer      *UserRef          `json:"referrer"`
 	Telegram      *TelegramRef      `json:"telegram"`

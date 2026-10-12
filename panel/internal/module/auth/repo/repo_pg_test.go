@@ -85,9 +85,16 @@ func TestAdminsForeignKeys(t *testing.T) {
 	if grantedBy != nil {
 		t.Fatalf("granted_by=%v want NULL", grantedBy)
 	}
-	// 还在名单里的账号不能删（RESTRICT）：必须先取消管理员
-	if err := d.Conn(ctx).Exec("DELETE FROM users WHERE id = ?", b).Error; err == nil {
+	// 还在名单里的账号不能删（RESTRICT）：必须先取消管理员。测试跑在事务里，失败的语句会弄坏事务，包一层保存点
+	conn := d.Conn(ctx)
+	if err := conn.Exec("SAVEPOINT restrict_check").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.Exec("DELETE FROM users WHERE id = ?", b).Error; err == nil {
 		t.Fatal("外键应拒绝删除仍是管理员的账号")
+	}
+	if err := conn.Exec("ROLLBACK TO SAVEPOINT restrict_check").Error; err != nil {
+		t.Fatal(err)
 	}
 	if ok, err := r.IsAdmin(ctx, b); err != nil || !ok {
 		t.Fatalf("删除被拒后 IsAdmin=%v err=%v", ok, err)
