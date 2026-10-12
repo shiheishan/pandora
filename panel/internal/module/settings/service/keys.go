@@ -13,7 +13,7 @@ const (
 	keyMailPort        = "mail.smtp_port"     // int，1–65535
 	keyMailEncryption  = "mail.encryption"    // string：ssl / tls / none
 	keyMailUsername    = "mail.smtp_username" // string
-	keyMailPassword    = "mail.smtp_password" // string：Sealer 封存后的 base64，AAD 为键名
+	keyMailPassword    = "mail.smtp_password" //nolint:gosec // 这是设置键名，不是口令；值经 Sealer 封存后存，AAD 为键名
 	keyMailFromAddress = "mail.from_address"  // string，空或邮箱
 	keyMailFromName    = "mail.from_name"     // string
 )

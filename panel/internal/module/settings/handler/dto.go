@@ -65,7 +65,7 @@ func (h *Handler) setSite(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	httpx.OK(c, siteResponse{Timezone: req.Timezone})
+	httpx.OK(c, siteResponse(req))
 }
 
 type switchItem struct {
