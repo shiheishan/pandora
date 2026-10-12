@@ -60,9 +60,6 @@ func (h *Handler) list(c *gin.Context) {
 	for i, r := range rows {
 		events[i] = toAuditEvent(r)
 	}
-	if events == nil {
-		events = []auditEventResponse{}
-	}
 	httpx.OK(c, listAuditResponse{Events: events, Total: total})
 }
 

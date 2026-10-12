@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/aegispanel/aegis/internal/module/audit/model"
@@ -23,21 +24,21 @@ const maxDataBytes = 16 << 10
 
 var ipAAD = []byte("audit_events.ip")
 
-// 结果取值；调用方在 Data["outcome"] 里放非 success 的结果（如登录失败）。
+// Event.Outcome 的取值；空串即 success。
 const (
 	OutcomeSuccess = "success"
 	OutcomeFailure = "failure"
 	OutcomeDenied  = "denied"
 	OutcomePartial = "partial"
-	DataKeyOutcome = "outcome"
 )
 
-// Event 是一条审计（字段一字不改，别的模块正按它写）。
+// Event 是一条审计。
 type Event struct {
 	Action       string // 动作名，如 "user.login"
 	ResourceType string
 	ResourceID   *uuid.UUID
 	ActorID      *uuid.UUID     // 为空时取 ctx 里 authn 主体的 UserID；都没有就记为系统或匿名
+	Outcome      string         // 空串即 success；失败类事件（登录失败、重认证失败）填 failure / denied / partial
 	Data         map[string]any // 不放秘密
 }
 
@@ -87,13 +88,12 @@ func (s *Service) Write(ctx context.Context, e Event) error {
 	if data == nil {
 		data = map[string]any{}
 	}
-	outcome := OutcomeSuccess
-	if raw, ok := data[DataKeyOutcome]; ok {
-		os, ok := raw.(string)
-		if !ok || !validOutcome(os) {
-			return fmt.Errorf("data.outcome 必须是 success、failure、denied、partial 之一")
-		}
-		outcome = os
+	outcome := e.Outcome
+	if outcome == "" {
+		outcome = OutcomeSuccess
+	}
+	if !validOutcome(outcome) {
+		return fmt.Errorf("审计 outcome 必须是 success、failure、denied、partial 之一")
 	}
 
 	rawJSON, err := json.Marshal(data)
@@ -153,7 +153,6 @@ func validOutcome(o string) bool {
 }
 
 // fillActor 根据 Event 与 ctx 主体填写 actor 相关列。
-// reauth 暂时写不出来（Principal 里没有重认证时间），匹配到登录主体时只写 auth_context = "session"。
 func fillActor(ctx context.Context, row *model.Event, actorID *uuid.UUID, p authn.Principal, hasPrincipal bool) {
 	var uid uuid.UUID
 	var isCtxSubject bool
@@ -196,10 +195,12 @@ func actorFromPrincipal(p authn.Principal) (kind string, audience *string, authC
 		return "user", nil, nil
 	}
 	audience = &p.Audience
-	// 主体尚无重认证时间戳，无法区分 reauth，仅记录 session。
 	if p.SessionID != "" {
-		session := "session"
-		authCtx = &session
+		c := "session"
+		if p.RecentlyReauthed(time.Now()) {
+			c = "reauth"
+		}
+		authCtx = &c
 	}
 	return kind, audience, authCtx
 }

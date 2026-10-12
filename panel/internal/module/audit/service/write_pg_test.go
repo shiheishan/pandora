@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/aegispanel/aegis/internal/module/audit/repo"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
@@ -170,7 +171,7 @@ func TestWriteOutcomeAndValidation(t *testing.T) {
 	svc := mustService(t, repo.New(d))
 
 	aFail := uniqueAction(t)
-	if err := svc.Write(ctx, Event{Action: aFail, Data: map[string]any{"outcome": "failure"}}); err != nil {
+	if err := svc.Write(ctx, Event{Action: aFail, Outcome: OutcomeFailure}); err != nil {
 		t.Fatal(err)
 	}
 	raw := scanRaw(t, d.Conn(ctx).Raw(rawColsSQL, aFail).Row())
@@ -179,7 +180,7 @@ func TestWriteOutcomeAndValidation(t *testing.T) {
 	}
 
 	aBogus := uniqueAction(t)
-	if err := svc.Write(ctx, Event{Action: aBogus, Data: map[string]any{"outcome": "bogus"}}); err == nil {
+	if err := svc.Write(ctx, Event{Action: aBogus, Outcome: "bogus"}); err == nil {
 		t.Fatal("bogus outcome should error")
 	}
 
@@ -244,5 +245,25 @@ func TestWriteSameIPSameHashDifferentEnc(t *testing.T) {
 	}
 	if bytes.Equal(r1.IPEnc, r2.IPEnc) {
 		t.Fatal("ip_enc should differ (random nonce)")
+	}
+}
+
+func TestWriteReauthContext(t *testing.T) {
+	d := testkit.DB(t)
+	ctx := testkit.TxCtx(t, d)
+	svc := mustService(t, repo.New(d))
+	u := uuid.New()
+	a := uniqueAction(t)
+
+	ctx = reqCtx(ctx, u, authn.AudienceAdmin)
+	p, _ := authn.From(ctx)
+	p.ReauthAt = time.Now().Add(-time.Minute)
+	ctx = authn.With(ctx, p)
+	if err := svc.Write(ctx, Event{Action: a}); err != nil {
+		t.Fatal(err)
+	}
+	raw := scanRaw(t, d.Conn(ctx).Raw(rawColsSQL, a).Row())
+	if raw.AuthContext == nil || *raw.AuthContext != "reauth" {
+		t.Fatalf("auth_context %v", raw.AuthContext)
 	}
 }

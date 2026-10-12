@@ -107,7 +107,7 @@ func TestListFilterAndPagination(t *testing.T) {
 	for i, act := range actions {
 		e := Event{Action: act}
 		if i == 2 {
-			e.Data = map[string]any{"outcome": "failure"}
+			e.Outcome = OutcomeFailure
 		}
 		if i == 4 {
 			e.ResourceType = "user"
