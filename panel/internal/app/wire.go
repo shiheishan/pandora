@@ -18,6 +18,8 @@ import (
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
 	notifyrepo "github.com/aegispanel/aegis/internal/module/notify/repo"
 	notifysvc "github.com/aegispanel/aegis/internal/module/notify/service"
+	paymentrepo "github.com/aegispanel/aegis/internal/module/payment/repo"
+	paymentsvc "github.com/aegispanel/aegis/internal/module/payment/service"
 	promorepo "github.com/aegispanel/aegis/internal/module/promo/repo"
 	promosvc "github.com/aegispanel/aegis/internal/module/promo/service"
 	settingsrepo "github.com/aegispanel/aegis/internal/module/settings/repo"
@@ -45,6 +47,7 @@ type services struct {
 	catalog  *catalogsvc.Service
 	promo    *promosvc.Service
 	sub      *subsvc.Service
+	payment  *paymentsvc.Service
 	limiter  *ratelimit.Limiter
 	queue    *asynq.Client
 	tx       *tx.Manager
@@ -122,6 +125,12 @@ func buildServices(r *runtime) (*services, error) {
 	ledgerSvc := ledgersvc.New(ledgerrepo.New(r.db), txm, settingsSvc, auditSvc)
 	catalogSvc := catalogsvc.New(catalogrepo.New(r.db), txm, auditSvc, identitySvc)
 	promoSvc := promosvc.New(promorepo.New(r.db), txm, auditSvc, settingsSvc)
+	paymentSvc := paymentsvc.New(paymentrepo.New(r.db), txm, ledgerSvc, identitySvc, settingsSvc, auditSvc, sealer,
+		paymentsvc.Config{
+			PublicBaseURL: cfg.PublicBaseURL,
+			// 渠道地址允许内网只在开发环境（防 SSRF）
+			AllowPrivateHosts: cfg.Env == config.EnvDevelopment,
+		})
 	subSvc := subsvc.New(subrepo.New(r.db), txm, auditSvc, settingsSvc, catalogSvc, identitySvc, sealer)
 
 	// 模块间注入：identity 定义接口，auth、notify 实现；audit 经 identity 显示操作者与资源
@@ -146,6 +155,7 @@ func buildServices(r *runtime) (*services, error) {
 		catalog:  catalogSvc,
 		promo:    promoSvc,
 		sub:      subSvc,
+		payment:  paymentSvc,
 		limiter:  limiter,
 		queue:    queue,
 		tx:       txm,
