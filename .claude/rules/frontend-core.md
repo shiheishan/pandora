@@ -16,7 +16,11 @@ paths:
   - 两个网关的令牌互不通用；后台还要另外注入 reauth 对话框
 - 两个入口同源（后台只是一个反代前缀），所以令牌的 localStorage 键必须按入口区分（`core/token.ts` 的 `tokenStorageKey`）
   - 守卫：`token.test.ts` 的 "keeps admin and portal tokens apart on the shared origin"
-  - 只存 access_token，后端没有 refresh 接口
+  - 只存 access_token（15 分钟）；refresh 值在 HttpOnly cookie（Path=/v1/auth），前端碰不到
+- 401 的处理只在 `api.ts` 一处：先单飞调 `v1/auth/refresh`（`navigator.locks` 跨标签页互斥，拿到锁先看令牌是否已被别的标签页换掉），成功就重放原请求一次；refresh 被拒才掉线，refresh 的 503/断网原样抛出、不清令牌
+  - 口令校验接口（`passwordCheck`）也先刷新再重放：重放仍 401 才是口令错，交给表单，不登出
+  - 只有 refresh 与 logout 带 cookie（`withCookies`），其余请求 `credentials: 'omit'`
+  - 守卫：`api.test.ts` 的 "access token refresh on 401"
 - 幂等键约定（契约 1.5）只有 `core/intent.ts` 这一份，后台的 `admin/actions.ts` 与门户的 `screens/common/intent.ts` 都是原样转出
   - 一次用户意图一把键，按意图的 JSON 指纹决定：双击、断网或 5xx 后重试、reauth 重放都复用同一把键
   - 意图变了就换新键，因为同键换请求体后端回 409 `idempotency_key_reuse`；成功后调 `reset`
