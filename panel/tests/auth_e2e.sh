@@ -3,7 +3,7 @@
 #   1. 注册、登录：响应体只有 access，refresh 在 HttpOnly + SameSite=Strict 的 cookie 里；
 #   2. refresh 轮换；随便拼的值只回 401 不吊销；上一枚超出 30 秒宽限再用 = 重放，整条会话吊销；
 #   3. 跨域令牌：门户令牌进不了后台，后台令牌进不了门户；
-#   4. IAM-006：口令错、邮箱不存在、无角色账号登后台，对外完全一样；
+#   4. IAM-006：口令错、邮箱不存在、非管理员账号登后台，对外完全一样；
 #   5. 重认证：口令错 401，口令对发新令牌；
 #   6. 停用即吊销：停用后令牌与 refresh 立即失效，口令对也登不进（与口令错一样）；
 #   7. 改密：门户保留当前会话、吊销其余；旧口令失效；
@@ -125,7 +125,7 @@ sec "4. IAM-006：后台登录的三种失败对外一样"
 S1=$(json -X POST "$ADM/v1/auth/login" -H 'X-Real-IP: 192.0.2.11' -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"wrong-pass-e2e\"}" | errsig)
 S2=$(json -X POST "$ADM/v1/auth/login" -H 'X-Real-IP: 192.0.2.12' -d "{\"email\":\"nobody_${RUN}@example.test\",\"password\":\"wrong-pass-e2e\"}" | errsig)
 S3=$(json -X POST "$ADM/v1/auth/login" -H 'X-Real-IP: 192.0.2.13' -d "{\"email\":\"$UE\",\"password\":\"$UP\"}" | errsig)
-[[ "$S1" == unauthorized\|* ]] && [ "$S1" = "$S2" ] && [ "$S2" = "$S3" ] && ok "口令错 / 邮箱不存在 / 无角色：$S1" || bad "回应可区分" "$S1 / $S2 / $S3"
+[[ "$S1" == unauthorized\|* ]] && [ "$S1" = "$S2" ] && [ "$S2" = "$S3" ] && ok "口令错 / 邮箱不存在 / 非管理员：$S1" || bad "回应可区分" "$S1 / $S2 / $S3"
 
 #-------------------------------------------------------------------------------
 sec "5. 重认证"

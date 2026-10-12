@@ -38,8 +38,8 @@ func (h *Handler) RegisterPublic(v1 *gin.RouterGroup, k route.Kit) {
 
 // RegisterAdmin 注册管理端路由。
 func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
-	v1.GET("/settings/site", k.RequireAuth, k.Permission("security.audit.read"), h.getSite)
-	v1.POST("/settings/site", k.RequireAuth, k.Permission("platform.settings.write"), k.RecentReauth, h.setSite)
-	v1.GET("/switches", k.RequireAuth, k.Permission("security.audit.read"), h.listSwitches)
-	v1.POST("/switches/:code", k.RequireAuth, k.Permission("platform.settings.write"), k.RecentReauth, h.setSwitch)
+	v1.GET("/settings/site", k.RequireAuth, h.getSite)
+	v1.POST("/settings/site", k.RequireAuth, k.RecentReauth, h.setSite)
+	v1.GET("/switches", k.RequireAuth, h.listSwitches)
+	v1.POST("/switches/:code", k.RequireAuth, k.RecentReauth, h.setSwitch)
 }

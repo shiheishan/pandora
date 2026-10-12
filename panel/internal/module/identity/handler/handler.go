@@ -37,12 +37,6 @@ type Service interface {
 var _ Service = (*service.Service)(nil)
 var _ route.Module = (*Handler)(nil)
 
-// 后台权限码（沿用旧代码，由 auth 模块登记）。
-const (
-	PermUserRead  = "iam.user.read"
-	PermUserWrite = "iam.user.write"
-)
-
 // Handler 是 identity 模块的 HTTP 入口。
 type Handler struct {
 	svc        Service
@@ -69,17 +63,17 @@ func (h *Handler) RegisterPublic(v1 *gin.RouterGroup, k route.Kit) {
 	v1.GET("/me/invite", k.RequireAuth, h.myInvite)
 }
 
-// RegisterAdmin 注册后台路由。Permission 自带登录检查，有权限码的路由不再挂 RequireAuth。
+// RegisterAdmin 注册后台路由。后台不分权限：已登录的后台主体（管理员）就能访问。
 func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
-	v1.GET("/users", k.Permission(PermUserRead), h.listUsers)
-	v1.GET("/users/:id", k.Permission(PermUserRead), h.getUser)
-	v1.POST("/users/:id/status", k.Permission(PermUserWrite), k.RecentReauth, h.setUserStatus)
-	v1.POST("/users/:id/reset-password", k.Permission(PermUserWrite), k.RecentReauth, h.resetUserPassword)
-	v1.POST("/users/:id/group", k.Permission(PermUserWrite), h.assignUserGroup)
-	v1.GET("/user-groups", k.Permission(PermUserRead), h.listUserGroups)
-	v1.POST("/user-groups", k.Permission(PermUserWrite), h.createUserGroup)
-	v1.POST("/user-groups/:id", k.Permission(PermUserWrite), h.updateUserGroup)
-	v1.DELETE("/user-groups/:id", k.Permission(PermUserWrite), h.deleteUserGroup)
+	v1.GET("/users", k.RequireAuth, h.listUsers)
+	v1.GET("/users/:id", k.RequireAuth, h.getUser)
+	v1.POST("/users/:id/status", k.RequireAuth, k.RecentReauth, h.setUserStatus)
+	v1.POST("/users/:id/reset-password", k.RequireAuth, k.RecentReauth, h.resetUserPassword)
+	v1.POST("/users/:id/group", k.RequireAuth, h.assignUserGroup)
+	v1.GET("/user-groups", k.RequireAuth, h.listUserGroups)
+	v1.POST("/user-groups", k.RequireAuth, h.createUserGroup)
+	v1.POST("/user-groups/:id", k.RequireAuth, h.updateUserGroup)
+	v1.DELETE("/user-groups/:id", k.RequireAuth, h.deleteUserGroup)
 	v1.POST("/me/password", k.RequireAuth, h.mePasswordLimit(), h.changePassword)
 }
 

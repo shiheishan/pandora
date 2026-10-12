@@ -13,6 +13,7 @@ import (
 
 	"github.com/aegispanel/aegis/internal/module/identity/service"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
+	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
 	"github.com/aegispanel/aegis/internal/pkg/ratelimit"
 	"github.com/aegispanel/aegis/internal/pkg/route"
@@ -71,7 +72,6 @@ func newEngineWith(h *Handler, admin bool, p *authn.Principal) *gin.Engine {
 	pass := func(c *gin.Context) { c.Next() }
 	kit := route.Kit{
 		RequireAuth:  pass,
-		Permission:   func(string) gin.HandlerFunc { return pass },
 		RecentReauth: pass,
 		Idempotency:  func(string) gin.HandlerFunc { return pass },
 		Switch:       func(string) gin.HandlerFunc { return pass },
@@ -126,6 +126,28 @@ func TestRoutes(t *testing.T) {
 	}
 }
 
+// 后台不分权限，但每条后台路由都必须挂 RequireAuth：未登录（或门户主体，由引擎级 DomainGuard 拦成未登录）一律 401。
+func TestAdminRoutesRequireAuth(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	e := gin.New()
+	e.Use(httpx.RequestID(zap.NewNop()), httpx.Errors())
+	pass := func(c *gin.Context) { c.Next() }
+	deny := func(c *gin.Context) { httpx.Fail(c, errs.New(errs.Unauthorized)) }
+	New(&fakeSvc{}, nil, 0).RegisterAdmin(e.Group("/v1"), route.Kit{
+		RequireAuth:  deny,
+		RecentReauth: pass,
+		Idempotency:  func(string) gin.HandlerFunc { return pass },
+		Switch:       func(string) gin.HandlerFunc { return pass },
+	})
+	for _, r := range e.Routes() {
+		path := strings.ReplaceAll(r.Path, ":id", uuid.NewString())
+		w := do(e, r.Method, path, "")
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s 未登录 status %d", r.Method, r.Path, w.Code)
+		}
+	}
+}
+
 func TestRegisterStartShape(t *testing.T) {
 	exp := time.Date(2026, 5, 6, 7, 8, 9, 0, time.FixedZone("x", 8*3600))
 	f := &fakeSvc{start: service.RegistrationStart{Token: "tok", ExpiresAt: exp, VerificationRequired: true}}
@@ -158,7 +180,7 @@ func TestMeShapeAndAuth(t *testing.T) {
 		t.Fatalf("status %d %s", w.Code, w.Body)
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, `"permissions":[]`) || !strings.Contains(body, `"created_at":"2026-01-01T19:04:05Z"`) ||
+	if strings.Contains(body, `"permissions"`) || !strings.Contains(body, `"created_at":"2026-01-01T19:04:05Z"`) ||
 		!strings.Contains(body, `"user_id":"`+p.UserID.String()+`"`) {
 		t.Fatalf("响应 %s", body)
 	}

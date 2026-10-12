@@ -54,14 +54,13 @@ type pubOKResponse struct {
 	OK bool `json:"ok"`
 }
 
-// /me：门户没有权限码，permissions 恒为空数组。
+// meResponse 是门户 /me。
 type meResponse struct {
-	UserID      string   `json:"user_id"`
-	Email       string   `json:"email"`
-	DisplayName *string  `json:"display_name"`
-	Status      string   `json:"status"`
-	CreatedAt   string   `json:"created_at"` // RFC3339 UTC
-	Permissions []string `json:"permissions"`
+	UserID      string  `json:"user_id"`
+	Email       string  `json:"email"`
+	DisplayName *string `json:"display_name"`
+	Status      string  `json:"status"`
+	CreatedAt   string  `json:"created_at"` // RFC3339 UTC
 }
 
 // 改密（门户与后台共用请求，响应分开）。

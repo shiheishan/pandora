@@ -17,9 +17,9 @@ import (
 //
 //	sess:{sid}     hash   uid aud amr created_at last_seen reauth_at abs_exp ua ip_hash rt_cur rt_prev rt_rotated_at epoch
 //	usess:{uid}    set    该用户的全部 sid（可能含已过期的，读与吊销时顺手清掉）
-//	uepoch:{uid}   string 凭据纪元：改密、重置、停用、授予或收回后台角色时 INCR；会话里的 epoch 与它不等即失效
+//	uepoch:{uid}   string 凭据纪元：改密、重置、停用、授予或取消管理员时 INCR；会话里的 epoch 与它不等即失效
 //	ql:{sha256}    string 快捷登录：<源 sid>|<uid>，60 秒；qls:{sid} 记源会话当前那一条的哈希
-//	lf:{aud}:{h}   string 登录失败计数（h 是邮箱的 HMAC）；lfa:* 是失败审计的去重标记
+//	lf:{uid}       string 登录失败计数，跨域共用（邮箱不存在时是 lf:{邮箱 HMAC}）；lfa:* 是失败审计的去重标记
 //
 // 时间一律存 Unix 秒。脚本里会拼出不在 KEYS 里的键（sess:、ql:、uepoch:），只适用于单实例 Redis（部署就是单实例）。
 

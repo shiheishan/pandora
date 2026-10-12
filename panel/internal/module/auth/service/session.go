@@ -118,6 +118,20 @@ func (s *Service) Refresh(ctx context.Context, audience, raw string) (Tokens, er
 			return Tokens{}, errSessionInvalid
 		}
 
+		if audience == authn.AudienceAdmin {
+			// 兜底：取消管理员或停用账号时的吊销万一漏了（如提交后补扫失败），续期这一步也不放行，最坏窗口是一个 access 寿命
+			ok, err := s.stillAdmin(ctx, st.UserID)
+			if err != nil {
+				return Tokens{}, err
+			}
+			if !ok {
+				if _, err := s.sessions.revokeOne(ctx, sid, st.UserID, audience); err != nil {
+					return Tokens{}, errs.Wrap(errs.Unavailable, err)
+				}
+				return Tokens{}, errSessionInvalid
+			}
+		}
+
 		status, ss, err := s.sessions.rotate(ctx, sid, st.UserID, audience, now, s.idleTimeout(audience), mode, expect, newHash)
 		if err != nil {
 			return Tokens{}, errs.Wrap(errs.Unavailable, err)
@@ -407,48 +421,23 @@ func (s *Service) Reauth(ctx context.Context, password string) (Tokens, error) {
 	}, nil
 }
 
-// Permissions 返回用户当前生效的权限码列表。
-func (s *Service) Permissions(ctx context.Context, userID uuid.UUID) ([]string, error) {
-	perms, err := s.store.Permissions(ctx, userID)
-	if err != nil {
-		return nil, errs.Wrap(errs.Internal, err)
-	}
-	if perms == nil {
-		return []string{}, nil
-	}
-	return perms, nil
-}
-
-// AdminProfile 返回后台当前登录用户的资料与权限。
+// AdminProfile 返回后台当前登录用户的资料。
 func (s *Service) AdminProfile(ctx context.Context) (AdminProfile, error) {
 	p, err := principal(ctx, authn.AudienceAdmin)
 	if err != nil {
 		return AdminProfile{}, err
 	}
-	u, err := s.users.Get(ctx, p.UserID)
+	u, err := s.users.Profile(ctx, p.UserID)
 	if err != nil {
-		if errs.As(err).Code == errs.NotFound {
+		if c := errs.As(err).Code; c == errs.NotFound || c == errs.Unauthorized {
 			return AdminProfile{}, errSessionInvalid
 		}
 		return AdminProfile{}, err
 	}
-	roles, err := s.store.UserRoles(ctx, p.UserID)
-	if err != nil {
-		return AdminProfile{}, errs.Wrap(errs.Internal, err)
-	}
-	perms, err := s.Permissions(ctx, p.UserID)
-	if err != nil {
-		return AdminProfile{}, err
-	}
-	refs := make([]RoleRef, 0, len(roles))
-	for _, r := range roles {
-		refs = append(refs, RoleRef{Code: r.Code, Name: r.Name})
-	}
 	return AdminProfile{
 		UserID:      p.UserID,
 		Email:       u.Email,
-		Roles:       refs,
-		Permissions: perms,
+		DisplayName: u.DisplayName,
 		Reauthed:    p.RecentlyReauthed(s.now()),
 	}, nil
 }

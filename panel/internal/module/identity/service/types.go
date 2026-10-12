@@ -122,6 +122,8 @@ type UserRef struct {
 type UserDetail struct {
 	UserRow
 	EmailVerified bool
+	// IsAdmin 是否在管理员名单里（后台不分角色，只有是或不是）
+	IsAdmin       bool
 	Referrer      *UserRef
 	ReferralCount int64
 }

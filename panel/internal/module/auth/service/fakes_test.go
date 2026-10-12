@@ -39,6 +39,8 @@ type fakeUsers struct {
 	onAuth func()
 	// touched 记录 TouchLastLogin 的调用。
 	touched []uuid.UUID
+	// displayNames 是 Profile 返回的显示名。
+	displayNames map[uuid.UUID]*string
 }
 
 func (f *fakeUsers) TouchLastLogin(ctx context.Context, userID uuid.UUID) error {
@@ -93,6 +95,18 @@ func (f *fakeUsers) Get(ctx context.Context, id uuid.UUID) (identitysvc.User, er
 	return u, nil
 }
 
+func (f *fakeUsers) Profile(ctx context.Context, id uuid.UUID) (identitysvc.Profile, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u, ok := f.users[id]
+	if !ok {
+		return identitysvc.Profile{}, errs.New(errs.Unauthorized)
+	}
+	return identitysvc.Profile{
+		ID: u.ID, Email: u.Email, DisplayName: f.displayNames[id], Status: u.Status, CreatedAt: u.CreatedAt,
+	}, nil
+}
+
 func (f *fakeUsers) GetMany(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]identitysvc.User, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -131,109 +145,66 @@ func (f *fakeUsers) addUser(email, password, status string) uuid.UUID {
 	return id
 }
 
-type upsertCall struct {
-	userID, roleID uuid.UUID
-	grantedBy      *uuid.UUID
-}
-
-type deleteCall struct {
-	userID, roleID uuid.UUID
-}
-
-// fakeStore 是 store 的假实现。
+// fakeStore 是 store 的假实现：admins 是管理员名单（值为加入时间）。
 type fakeStore struct {
-	mu         sync.Mutex
-	perms      map[uuid.UUID][]string
-	roles      map[uuid.UUID][]repo.RoleRow
-	roleByCode map[string]repo.RoleRow
-	holders    []uuid.UUID
-	expired    map[uuid.UUID]bool // 只有过期绑定的用户
-	upserts    []upsertCall
-	deletes    []deleteCall
+	mu      sync.Mutex
+	admins  map[uuid.UUID]time.Time
+	locks   int
+	inserts []uuid.UUID
+	grantBy []*uuid.UUID
 }
 
-func (f *fakeStore) Permissions(ctx context.Context, userID uuid.UUID) ([]string, error) {
+func (f *fakeStore) IsAdmin(ctx context.Context, userID uuid.UUID) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	p := f.perms[userID]
-	if p == nil {
-		return []string{}, nil
+	_, ok := f.admins[userID]
+	return ok, nil
+}
+
+func (f *fakeStore) InsertAdmin(ctx context.Context, userID uuid.UUID, grantedBy *uuid.UUID) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.admins[userID]; ok {
+		return false, nil
 	}
-	return append([]string(nil), p...), nil
-}
-
-func (f *fakeStore) HasActiveRole(ctx context.Context, userID uuid.UUID) (bool, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return len(f.roles[userID]) > 0, nil
-}
-
-func (f *fakeStore) HasAnyRole(ctx context.Context, userID uuid.UUID) (bool, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return len(f.roles[userID]) > 0 || f.expired[userID], nil
-}
-
-func (f *fakeStore) Covers(ctx context.Context, actorID, targetID uuid.UUID) (bool, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	have := map[string]bool{}
-	for _, c := range f.perms[actorID] {
-		have[c] = true
-	}
-	for _, c := range f.perms[targetID] {
-		if !have[c] {
-			return false, nil
-		}
-	}
+	f.admins[userID] = time.Now()
+	f.inserts = append(f.inserts, userID)
+	f.grantBy = append(f.grantBy, grantedBy)
 	return true, nil
 }
 
-func (f *fakeStore) UserRoles(ctx context.Context, userID uuid.UUID) ([]repo.RoleRow, error) {
+func (f *fakeStore) DeleteAdmin(ctx context.Context, userID uuid.UUID) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	r := f.roles[userID]
-	if r == nil {
-		return []repo.RoleRow{}, nil
+	if _, ok := f.admins[userID]; !ok {
+		return false, nil
 	}
-	return append([]repo.RoleRow(nil), r...), nil
+	delete(f.admins, userID)
+	return true, nil
 }
 
-func (f *fakeStore) RoleByCode(ctx context.Context, code string) (repo.RoleRow, bool, error) {
+func (f *fakeStore) Admins(ctx context.Context) ([]repo.AdminRow, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	r, ok := f.roleByCode[code]
-	return r, ok, nil
+	out := make([]repo.AdminRow, 0, len(f.admins))
+	for id, at := range f.admins {
+		out = append(out, repo.AdminRow{UserID: id, CreatedAt: at})
+	}
+	return out, nil
 }
 
-func (f *fakeStore) UpsertUserRole(ctx context.Context, userID, roleID uuid.UUID, grantedBy *uuid.UUID) error {
+func (f *fakeStore) LockAdminSet(ctx context.Context) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.upserts = append(f.upserts, upsertCall{userID, roleID, grantedBy})
+	f.locks++
 	return nil
 }
 
-func (f *fakeStore) DeleteUserRole(ctx context.Context, userID, roleID uuid.UUID) (bool, error) {
+// addAdmin 把用户放进管理员名单。
+func (f *fakeStore) addAdmin(id uuid.UUID) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.deletes = append(f.deletes, deleteCall{userID, roleID})
-	return true, nil
-}
-
-func (f *fakeStore) LockAdminSet(ctx context.Context) error { return nil }
-
-func (f *fakeStore) PermanentHolders(ctx context.Context, permission string) ([]uuid.UUID, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]uuid.UUID(nil), f.holders...), nil
-}
-
-func (f *fakeStore) RoleHolders(ctx context.Context) ([]repo.HolderRow, error) {
-	return []repo.HolderRow{}, nil
-}
-
-func (f *fakeStore) Roles(ctx context.Context) ([]repo.RoleSummaryRow, error) {
-	return []repo.RoleSummaryRow{}, nil
+	f.admins[id] = time.Now()
 }
 
 type fakeTx struct{}
@@ -307,13 +278,10 @@ func newTestService(t *testing.T) *testHarness {
 		users:     map[uuid.UUID]identitysvc.User{},
 		byEmail:   map[string]uuid.UUID{},
 		passwords: map[uuid.UUID]string{},
+
+		displayNames: map[uuid.UUID]*string{},
 	}
-	st := &fakeStore{
-		perms:      map[uuid.UUID][]string{},
-		roles:      map[uuid.UUID][]repo.RoleRow{},
-		roleByCode: map[string]repo.RoleRow{},
-		expired:    map[uuid.UUID]bool{},
-	}
+	st := &fakeStore{admins: map[uuid.UUID]time.Time{}}
 	al := &auditLog{}
 	// 与 miniredis 的真实时钟对齐：会话用 EXPIREAT，固定日期过几天就会落到过去
 	clk := &testNow{t: time.Now().UTC().Truncate(time.Second)}

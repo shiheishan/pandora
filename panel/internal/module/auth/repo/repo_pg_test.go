@@ -2,145 +2,110 @@ package repo_test
 
 import (
 	"context"
-	"sort"
 	"testing"
 
 	"github.com/aegispanel/aegis/internal/module/auth/repo"
-	"github.com/aegispanel/aegis/internal/module/auth/service"
+	"github.com/aegispanel/aegis/internal/pkg/db"
 	"github.com/aegispanel/aegis/internal/pkg/testkit"
 	"github.com/google/uuid"
 )
 
-func newRepoPG(t *testing.T) (*repo.Repo, context.Context) {
+func newRepoPG(t *testing.T) (*repo.Repo, *db.DB, context.Context) {
 	t.Helper()
 	d := testkit.DB(t)
-	return repo.New(d), testkit.TxCtx(t, d)
+	return repo.New(d), d, testkit.TxCtx(t, d)
 }
 
-func sortedStrings(ss []string) []string {
-	out := append([]string(nil), ss...)
-	sort.Strings(out)
-	return out
+// addUser 在回滚事务里建一个用户（只填必填列）。
+func addUser(t *testing.T, d *db.DB, ctx context.Context, email string) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	if err := d.Conn(ctx).Raw("INSERT INTO users (email) VALUES (?) RETURNING id", email).Scan(&id).Error; err != nil {
+		t.Fatalf("insert user: %v", err)
+	}
+	return id
 }
 
-func TestPermissionSeedMatchesConstants(t *testing.T) {
-	r, ctx := newRepoPG(t)
-	fromDB, err := r.PermissionCodes(ctx)
+func TestAdminsCRUD(t *testing.T) {
+	r, d, ctx := newRepoPG(t)
+	a := addUser(t, d, ctx, "a@example.com")
+	b := addUser(t, d, ctx, "b@example.com")
+
+	if ok, err := r.IsAdmin(ctx, a); err != nil || ok {
+		t.Fatalf("IsAdmin 空名单=%v err=%v", ok, err)
+	}
+	if ok, err := r.InsertAdmin(ctx, a, nil); err != nil || !ok {
+		t.Fatalf("InsertAdmin=%v err=%v", ok, err)
+	}
+	// 已在名单里：不报错、返回 false
+	if ok, err := r.InsertAdmin(ctx, a, &b); err != nil || ok {
+		t.Fatalf("重复 InsertAdmin=%v err=%v", ok, err)
+	}
+	if ok, err := r.InsertAdmin(ctx, b, &a); err != nil || !ok {
+		t.Fatalf("InsertAdmin b=%v err=%v", ok, err)
+	}
+	if ok, err := r.IsAdmin(ctx, a); err != nil || !ok {
+		t.Fatalf("IsAdmin=%v err=%v", ok, err)
+	}
+	rows, err := r.Admins(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := sortedStrings(service.AllPermissions())
-	got := sortedStrings(fromDB)
-	if len(got) != 44 {
-		t.Fatalf("count %d want 44", len(got))
+	if len(rows) != 2 || rows[0].CreatedAt.IsZero() {
+		t.Fatalf("Admins=%+v", rows)
 	}
-	if len(want) != 44 {
-		t.Fatalf("AllPermissions count %d want 44", len(want))
+
+	if ok, err := r.DeleteAdmin(ctx, a); err != nil || !ok {
+		t.Fatalf("DeleteAdmin=%v err=%v", ok, err)
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("[%d] db=%q const=%q", i, got[i], want[i])
-		}
+	if ok, err := r.DeleteAdmin(ctx, a); err != nil || ok {
+		t.Fatalf("重复 DeleteAdmin=%v err=%v", ok, err)
+	}
+	if ok, err := r.IsAdmin(ctx, a); err != nil || ok {
+		t.Fatalf("删除后 IsAdmin=%v err=%v", ok, err)
 	}
 }
 
-func TestRolesSeeded(t *testing.T) {
-	r, ctx := newRepoPG(t)
-	rows, err := r.Roles(ctx)
-	if err != nil {
+func TestAdminsForeignKeys(t *testing.T) {
+	r, d, ctx := newRepoPG(t)
+	a := addUser(t, d, ctx, "fk-a@example.com")
+	b := addUser(t, d, ctx, "fk-b@example.com")
+	if _, err := r.InsertAdmin(ctx, b, &a); err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 6 {
-		t.Fatalf("count %d want 6", len(rows))
-	}
-	expected := map[string]bool{
-		service.RolePlatformAdmin:    true,
-		service.RoleTenantAdmin:      true,
-		service.RoleFinance:          true,
-		service.RoleCustomerSupport:  true,
-		service.RoleResourceOperator: true,
-		service.RoleSecurityAuditor:  true,
-	}
-	for _, row := range rows {
-		if !expected[row.Code] {
-			t.Fatalf("unexpected role code %q", row.Code)
-		}
-		delete(expected, row.Code)
-		if row.Code == service.RolePlatformAdmin {
-			if row.Permissions != 44 {
-				t.Fatalf("platform_admin permissions %d want 44", row.Permissions)
-			}
-		} else if row.Permissions <= 0 {
-			t.Fatalf("role %q permissions %d want > 0", row.Code, row.Permissions)
-		}
-	}
-	if len(expected) != 0 {
-		t.Fatalf("missing roles: %v", expected)
-	}
-}
-
-func TestRoleByCode(t *testing.T) {
-	r, ctx := newRepoPG(t)
-	row, ok, err := r.RoleByCode(ctx, service.RoleFinance)
-	if err != nil {
+	// 授予人被删：granted_by 置空，名单保留
+	if err := d.Conn(ctx).Exec("DELETE FROM users WHERE id = ?", a).Error; err != nil {
 		t.Fatal(err)
 	}
-	if !ok {
-		t.Fatal("finance: ok=false")
+	var grantedBy *uuid.UUID
+	if err := d.Conn(ctx).Raw("SELECT granted_by FROM admins WHERE user_id = ?", b).Scan(&grantedBy).Error; err != nil {
+		t.Fatal(err)
 	}
-	if row.Name == "" {
-		t.Fatal("finance: empty name")
+	if grantedBy != nil {
+		t.Fatalf("granted_by=%v want NULL", grantedBy)
 	}
-
-	_, ok, err = r.RoleByCode(ctx, "nope")
-	if err != nil {
-		t.Fatalf("nope: err=%v want nil", err)
+	// 还在名单里的账号不能删（RESTRICT）：必须先取消管理员
+	if err := d.Conn(ctx).Exec("DELETE FROM users WHERE id = ?", b).Error; err == nil {
+		t.Fatal("外键应拒绝删除仍是管理员的账号")
 	}
-	if ok {
-		t.Fatal("nope: ok=true want false")
+	if ok, err := r.IsAdmin(ctx, b); err != nil || !ok {
+		t.Fatalf("删除被拒后 IsAdmin=%v err=%v", ok, err)
+	}
+	if _, err := r.DeleteAdmin(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Conn(ctx).Exec("DELETE FROM users WHERE id = ?", b).Error; err != nil {
+		t.Fatalf("取消管理员后应能删账号: %v", err)
+	}
+	// 不存在的用户不能进名单
+	if _, err := r.InsertAdmin(ctx, uuid.New(), nil); err == nil {
+		t.Fatal("外键应拒绝不存在的用户")
 	}
 }
 
 func TestLockAdminSetInTx(t *testing.T) {
-	r, ctx := newRepoPG(t)
+	r, _, ctx := newRepoPG(t)
 	if err := r.LockAdminSet(ctx); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestEveryRolePermissionIsKnown(t *testing.T) {
-	d := testkit.DB(t)
-	ctx := context.Background()
-
-	var codes []string
-	if err := d.Base().WithContext(ctx).Raw(
-		"SELECT DISTINCT permission_code FROM role_permissions",
-	).Scan(&codes).Error; err != nil {
-		t.Fatal(err)
-	}
-	for _, code := range codes {
-		if !service.IsPermission(code) {
-			t.Fatalf("unknown permission in role_permissions: %q", code)
-		}
-	}
-}
-
-func TestStaffQueriesWithoutBindings(t *testing.T) {
-	r, ctx := newRepoPG(t)
-	a, b := uuid.New(), uuid.New()
-	staff, err := r.HasAnyRole(ctx, a)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if staff {
-		t.Fatal("HasAnyRole: 没有绑定却为 true")
-	}
-	// 目标没有任何生效权限：任何操作者都覆盖它
-	ok, err := r.Covers(ctx, a, b)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ok {
-		t.Fatal("Covers: 目标无权限时应为 true")
 	}
 }

@@ -1,11 +1,9 @@
 package handler
 
 import (
-	"slices"
 	"strings"
 	"time"
 
-	"github.com/aegispanel/aegis/internal/module/auth/service"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
@@ -13,9 +11,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
-
-// permissionsKey 是同一请求里权限列表的缓存键。
-const permissionsKey = "auth.permissions"
 
 var errLoginRequired = errs.Newf(errs.Unauthorized, "需要登录")
 
@@ -59,7 +54,8 @@ func (h *Handler) DomainGuard(audience string) gin.HandlerFunc {
 	}
 }
 
-// RequireAuth 要求已登录。
+// RequireAuth 要求已登录：主体由本引擎的 Authenticate 按本域校验过会话，DomainGuard 挡掉别的域。
+// 后台不分权限：后台引擎上有效的会话就是管理员（取消管理员时其后台会话当场吊销）。
 func (h *Handler) RequireAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if _, ok := authn.FromGin(c); !ok {
@@ -68,50 +64,6 @@ func (h *Handler) RequireAuth() gin.HandlerFunc {
 		}
 		c.Next()
 	}
-}
-
-// Permission 要求后台权限码：未登录或不是后台主体 401，缺权限 404（不暴露接口存在）。code 未登记时注册路由即 panic。
-func (h *Handler) Permission(code string) gin.HandlerFunc {
-	if !service.IsPermission(code) {
-		panic("auth: 未登记的权限码 " + code)
-	}
-	return func(c *gin.Context) {
-		p, ok := authn.FromGin(c)
-		if !ok {
-			httpx.Fail(c, errLoginRequired)
-			return
-		}
-		if p.Audience != authn.AudienceAdmin {
-			httpx.Fail(c, errs.New(errs.Unauthorized))
-			return
-		}
-		perms, err := h.permissions(c, p)
-		if err != nil {
-			httpx.Fail(c, err)
-			return
-		}
-		if !slices.Contains(perms, code) {
-			plog.From(c.Request.Context()).Info("权限不足", zap.String("required", code))
-			httpx.Fail(c, errs.New(errs.NotFound))
-			return
-		}
-		c.Next()
-	}
-}
-
-// permissions 取主体的权限；同一请求只查一次。
-func (h *Handler) permissions(c *gin.Context, p authn.Principal) ([]string, error) {
-	if v, ok := c.Get(permissionsKey); ok {
-		if perms, ok := v.([]string); ok {
-			return perms, nil
-		}
-	}
-	perms, err := h.svc.Permissions(c.Request.Context(), p.UserID)
-	if err != nil {
-		return nil, err
-	}
-	c.Set(permissionsKey, perms)
-	return perms, nil
 }
 
 // RecentReauth 要求 15 分钟内重认证过。

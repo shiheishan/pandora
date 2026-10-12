@@ -7,10 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aegispanel/aegis/internal/module/auth/repo"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/google/uuid"
 )
 
 func TestLoginPublicSuccess(t *testing.T) {
@@ -64,16 +62,17 @@ func TestLoginIAM006(t *testing.T) {
 		h.Redis.FastForward(failureAuditWindow + time.Second)
 		return err
 	}
-	errNoRole := step("203.0.113.1", "admin@example.com", "right-pass")
+	// admin@example.com 口令对、但不在管理员名单里
+	errNotAdmin := step("203.0.113.1", "admin@example.com", "right-pass")
 	errBadPass := step("203.0.113.2", "admin@example.com", "wrong-pass")
 	errMissing := step("203.0.113.3", "nobody@example.com", "any")
 	errInactive := step("203.0.113.4", "off@example.com", "right-pass")
 
 	for name, err := range map[string]error{
-		"no_admin_role": errNoRole,
-		"bad_password":  errBadPass,
-		"no_user":       errMissing,
-		"inactive":      errInactive,
+		"not_admin":    errNotAdmin,
+		"bad_password": errBadPass,
+		"no_user":      errMissing,
+		"inactive":     errInactive,
 	} {
 		if !errors.Is(err, errInvalidCredentials) {
 			t.Fatalf("%s: 应 Is errInvalidCredentials, 得 %v", name, err)
@@ -97,7 +96,7 @@ func TestLoginIAM006(t *testing.T) {
 			t.Fatalf("失败审计应 anonymous: %+v", r.ev)
 		}
 	}
-	if reasons[reasonNoAdminRole] != 1 || reasons[reasonInvalidCredentials] != 2 || reasons[reasonAccountInactive] != 1 {
+	if reasons[reasonNotAdmin] != 1 || reasons[reasonInvalidCredentials] != 2 || reasons[reasonAccountInactive] != 1 {
 		t.Fatalf("reason 统计=%v", reasons)
 	}
 	// 账号存在的失败把被撞账号放 ResourceID，不存在的不放
@@ -115,23 +114,50 @@ func TestLoginIAM006(t *testing.T) {
 	}
 }
 
-func TestLoginAdminPermissions(t *testing.T) {
+func TestLoginAdmin(t *testing.T) {
 	h := newTestService(t)
 	ctx := testCtx("203.0.113.7")
 	uid := h.Users.addUser("admin@example.com", "pass", UserStatusActive)
-	h.Store.perms[uid] = []string{"iam.user.read", "catalog.read"}
+	h.Store.addAdmin(uid)
 
 	tok, err := h.S.Login(ctx, authn.AudienceAdmin, "admin@example.com", "pass")
 	if err != nil {
 		t.Fatalf("admin login: %v", err)
 	}
-	if len(tok.Permissions) != 2 || tok.Permissions[0] != "iam.user.read" {
-		t.Fatalf("Permissions=%v", tok.Permissions)
+	if tok.UserID != uid || tok.AccessToken == "" {
+		t.Fatalf("tokens=%+v", tok)
 	}
 
 	_, err = h.S.Authenticate(ctx, authn.AudiencePublic, tok.AccessToken)
 	if !errors.Is(err, errSessionInvalid) {
 		t.Fatalf("跨域 public authenticate 应 401, 得 %v", err)
+	}
+}
+
+// 非管理员口令对也算一次失败：满 10 次后暂停，口令对也 429。
+func TestLoginNotAdminCountsFailure(t *testing.T) {
+	h := newTestService(t)
+	uid := h.Users.addUser("plain@example.com", "pass", UserStatusActive)
+	for i := 0; i < failureThreshold; i++ {
+		_, err := h.S.Login(testCtx("203.0.113.9"), authn.AudienceAdmin, "plain@example.com", "pass")
+		if !errors.Is(err, errInvalidCredentials) {
+			t.Fatalf("第 %d 次: %v", i+1, err)
+		}
+	}
+	if n, _ := h.RDB.Get(testCtx("203.0.113.9"), failureKey(uid, "")).Int(); n != failureThreshold {
+		t.Fatalf("失败计数=%d want %d", n, failureThreshold)
+	}
+	h.Store.addAdmin(uid)
+	_, err := h.S.Login(testCtx("203.0.113.9"), authn.AudienceAdmin, "plain@example.com", "pass")
+	if errs.As(err).Code != errs.RateLimited {
+		t.Fatalf("暂停期内应 429: %v", err)
+	}
+	// 运维 reset-password 后清掉计数，立刻能登
+	if err := h.S.ClearLoginFailures(testCtx("203.0.113.9"), uid); err != nil {
+		t.Fatalf("ClearLoginFailures: %v", err)
+	}
+	if _, err := h.S.Login(testCtx("203.0.113.9"), authn.AudienceAdmin, "plain@example.com", "pass"); err != nil {
+		t.Fatalf("清计数后应可登录: %v", err)
 	}
 }
 
@@ -170,7 +196,7 @@ func TestLoginLockout(t *testing.T) {
 func TestLoginStaffPortalBlocked(t *testing.T) {
 	h := newTestService(t)
 	uid := h.Users.addUser("staff@example.com", "pass", UserStatusActive)
-	h.Store.roles[uid] = []repo.RoleRow{{ID: uuid.Must(uuid.NewV7()), Code: "ops", Name: "运维"}}
+	h.Store.addAdmin(uid)
 
 	// 口令是对的：不占失败名额，超过阈值次数也不会被暂停
 	for i := 0; i < failureThreshold+2; i++ {
@@ -298,7 +324,7 @@ func TestLoginLockoutSharedAcrossDomains(t *testing.T) {
 	h := newTestService(t)
 	ctx := testCtx("203.0.113.7")
 	uid := h.Users.addUser("both@example.com", "good", UserStatusActive)
-	h.Store.perms[uid] = []string{PermIAMUserRead}
+	h.Store.addAdmin(uid)
 
 	for i := 0; i < failureThreshold; i++ {
 		_, _ = h.S.Login(ctx, authn.AudiencePublic, "both@example.com", "bad")

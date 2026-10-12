@@ -35,19 +35,19 @@ func exitCode(err error) int {
 	return 1
 }
 
-// newAdminCmd 是 pandora admin：在服务器本地管理后台账号与角色。
+// newAdminCmd 是 pandora admin：在服务器本地管理后台管理员。后台不分角色：是管理员就能做全部后台操作。
 // 第一个管理员只能从这里来（后台本身要登录才能进），所以不开放成 HTTP 接口。口令只从标准输入读，不进进程参数与 shell 历史。
 func newAdminCmd(configPath *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "admin",
-		Short: "管理后台账号与角色（create、reset-password、grant、revoke、list、roles、has-admin）",
+		Short: "管理后台管理员（create、reset-password、grant、revoke、list、has-admin）",
 	}
 
-	var email, role string
+	var email string
 	var passwordStdin bool
 	create := &cobra.Command{
 		Use:   "create",
-		Short: "建后台账号并授予角色（口令从标准输入读）",
+		Short: "建账号并设为管理员（口令从标准输入读）",
 		RunE: func(c *cobra.Command, _ []string) error {
 			if email == "" || !passwordStdin {
 				return errors.New("--email 与 --password-stdin 必填")
@@ -57,7 +57,7 @@ func newAdminCmd(configPath *string) *cobra.Command {
 				return err
 			}
 			return withServices(c.Context(), *configPath, func(ctx context.Context, svc *services) error {
-				// 建账号与授角色同一个事务：授权失败不留下没有角色的账号
+				// 建账号与设为管理员同一个事务：授予失败不留下不是管理员的账号
 				var id string
 				err := svc.tx.Do(ctx, func(ctx context.Context) error {
 					u, err := svc.identity.CreateUser(ctx, email, password)
@@ -65,25 +65,24 @@ func newAdminCmd(configPath *string) *cobra.Command {
 						return err
 					}
 					id = u.ID.String()
-					return svc.auth.GrantRole(ctx, u.ID, role)
+					return svc.auth.GrantAdmin(ctx, u.ID)
 				})
 				if err != nil {
 					return err
 				}
-				fmt.Fprintf(c.OutOrStdout(), "管理员已就绪\n  user_id = %s\n  email   = %s\n  role    = %s\n", id, email, role)
+				fmt.Fprintf(c.OutOrStdout(), "管理员已就绪\n  user_id = %s\n  email   = %s\n", id, email)
 				return nil
 			})
 		},
 	}
 	create.Flags().StringVar(&email, "email", "", "管理员邮箱（必填）")
 	create.Flags().BoolVar(&passwordStdin, "password-stdin", false, "从标准输入读口令（必填）")
-	create.Flags().StringVar(&role, "role", "platform_admin", "初始角色码")
 
 	var resetEmail string
 	var resetStdin bool
 	reset := &cobra.Command{
 		Use:   "reset-password",
-		Short: "重置后台账号口令并吊销其全部会话（口令从标准输入读）",
+		Short: "重置管理员口令、吊销其全部会话并清掉登录失败暂停（口令从标准输入读）",
 		RunE: func(c *cobra.Command, _ []string) error {
 			if resetEmail == "" || !resetStdin {
 				return errors.New("--email 与 --password-stdin 必填")
@@ -100,6 +99,10 @@ func newAdminCmd(configPath *string) *cobra.Command {
 				if err := svc.identity.ResetStaffPassword(ctx, u.ID, password); err != nil {
 					return err
 				}
+				// 运维在服务器上重置口令就是要恢复登录，不该再等失败暂停过去；清不掉只提示，口令已经改好
+				if err := svc.auth.ClearLoginFailures(ctx, u.ID); err != nil {
+					fmt.Fprintf(c.ErrOrStderr(), "警告：清除登录失败计数失败（%v），若账号处于暂停期需等暂停结束\n", err)
+				}
 				fmt.Fprintf(c.OutOrStdout(), "管理员口令已重置，全部既有会话已失效\n  user_id = %s\n  email   = %s\n", u.ID, u.Email)
 				return nil
 			})
@@ -109,28 +112,27 @@ func newAdminCmd(configPath *string) *cobra.Command {
 	reset.Flags().BoolVar(&resetStdin, "password-stdin", false, "从标准输入读新口令（必填）")
 
 	cmd.AddCommand(create, reset,
-		newRoleBindCmd(configPath, true),
-		newRoleBindCmd(configPath, false),
+		newAdminBindCmd(configPath, true),
+		newAdminBindCmd(configPath, false),
 		newAdminListCmd(configPath),
-		newAdminRolesCmd(configPath),
 		newHasAdminCmd(configPath),
 	)
 	return cmd
 }
 
-// newRoleBindCmd 是 grant / revoke。
-func newRoleBindCmd(configPath *string, grant bool) *cobra.Command {
-	use, short := "grant", "授予角色（长期）"
+// newAdminBindCmd 是 grant / revoke：把已有账号设为管理员或取消。幂等：已是 / 已不是管理员时直接成功。
+func newAdminBindCmd(configPath *string, grant bool) *cobra.Command {
+	use, short, done := "grant", "把已有账号设为管理员（会吊销其门户会话）", "已设为管理员"
 	if !grant {
-		use, short = "revoke", "收回角色"
+		use, short, done = "revoke", "取消管理员（会吊销其后台会话；不能取消最后一个有效管理员）", "已取消管理员"
 	}
-	var email, role string
+	var email string
 	c := &cobra.Command{
 		Use:   use,
 		Short: short,
 		RunE: func(c *cobra.Command, _ []string) error {
-			if email == "" || role == "" {
-				return errors.New("--email 与 --role 必填")
+			if email == "" {
+				return errors.New("--email 必填")
 			}
 			return withServices(c.Context(), *configPath, func(ctx context.Context, svc *services) error {
 				u, err := svc.identity.FindByEmail(ctx, email)
@@ -138,27 +140,26 @@ func newRoleBindCmd(configPath *string, grant bool) *cobra.Command {
 					return err
 				}
 				if grant {
-					err = svc.auth.GrantRole(ctx, u.ID, role)
+					err = svc.auth.GrantAdmin(ctx, u.ID)
 				} else {
-					err = svc.auth.RevokeRole(ctx, u.ID, role)
+					err = svc.auth.RevokeAdmin(ctx, u.ID)
 				}
 				if err != nil {
 					return err
 				}
-				fmt.Fprintf(c.OutOrStdout(), "已%s：%s %s\n", map[bool]string{true: "授予", false: "收回"}[grant], u.Email, role)
+				fmt.Fprintf(c.OutOrStdout(), "%s：%s\n", done, u.Email)
 				return nil
 			})
 		},
 	}
-	c.Flags().StringVar(&email, "email", "", "管理员邮箱（必填）")
-	c.Flags().StringVar(&role, "role", "", "角色码（必填，见 pandora admin roles）")
+	c.Flags().StringVar(&email, "email", "", "账号邮箱（必填）")
 	return c
 }
 
 func newAdminListCmd(configPath *string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
-		Short: "列出后台人员与角色",
+		Short: "列出管理员",
 		RunE: func(c *cobra.Command, _ []string) error {
 			return withServices(c.Context(), *configPath, func(ctx context.Context, svc *services) error {
 				admins, err := svc.auth.ListAdmins(ctx)
@@ -166,30 +167,9 @@ func newAdminListCmd(configPath *string) *cobra.Command {
 					return err
 				}
 				w := tabwriter.NewWriter(c.OutOrStdout(), 0, 4, 2, ' ', 0)
-				fmt.Fprintln(w, "USER_ID\tEMAIL\tSTATUS\tROLES\tPERMISSIONS")
+				fmt.Fprintln(w, "USER_ID\tEMAIL\tSTATUS\tCREATED_AT")
 				for _, a := range admins {
-					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\n", a.UserID, a.Email, a.Status, strings.Join(a.Roles, ","), a.Permissions)
-				}
-				return w.Flush()
-			})
-		},
-	}
-}
-
-func newAdminRolesCmd(configPath *string) *cobra.Command {
-	return &cobra.Command{
-		Use:   "roles",
-		Short: "列出内置角色",
-		RunE: func(c *cobra.Command, _ []string) error {
-			return withServices(c.Context(), *configPath, func(ctx context.Context, svc *services) error {
-				roles, err := svc.auth.Roles(ctx)
-				if err != nil {
-					return err
-				}
-				w := tabwriter.NewWriter(c.OutOrStdout(), 0, 4, 2, ' ', 0)
-				fmt.Fprintln(w, "CODE\tNAME\tPERMISSIONS")
-				for _, r := range roles {
-					fmt.Fprintf(w, "%s\t%s\t%d\n", r.Code, r.Name, r.Permissions)
+					fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", a.UserID, a.Email, a.Status, a.CreatedAt.UTC().Format(time.RFC3339))
 				}
 				return w.Flush()
 			})

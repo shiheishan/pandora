@@ -1,13 +1,11 @@
 package handler
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
-	"github.com/aegispanel/aegis/internal/module/auth/service"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
@@ -15,17 +13,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
-
-type countingAuth struct {
-	fakeAuth
-	permCalls int
-	perms     []string
-}
-
-func (c *countingAuth) Permissions(ctx context.Context, userID uuid.UUID) ([]string, error) {
-	c.permCalls++
-	return c.perms, nil
-}
 
 func TestBearerParsing(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -103,78 +90,42 @@ func newAdminProbeEngine(fake Auth) (*gin.Engine, route.Kit, *Handler) {
 	e.Use(h.Authenticate(authn.AudienceAdmin), h.DomainGuard(authn.AudienceAdmin))
 	k := route.Kit{
 		RequireAuth:  h.RequireAuth(),
-		Permission:   h.Permission,
 		RecentReauth: h.RecentReauth(),
 	}
 	v1 := e.Group("/v1")
-	perm := service.PermSecurityAuditRead
-	v1.GET("/probe/perm", k.Permission(perm), k.Permission(perm), probeOK)
+	v1.GET("/probe/auth", k.RequireAuth, probeOK)
 	v1.POST("/probe/reauth", k.RequireAuth, k.RecentReauth, probeOK)
 	return e, k, h
 }
 
-func TestPermission(t *testing.T) {
-	perm := service.PermSecurityAuditRead
-	e, _, _ := newAdminProbeEngine(&countingAuth{})
-	rec := doJSON(e, http.MethodGet, "/v1/probe/perm", "", nil)
+// 后台不分权限：后台引擎上有效的后台会话就能过 RequireAuth；未登录与门户主体一律 401。
+func TestRequireAuthAdmin(t *testing.T) {
+	uid := uuid.New()
+	fake := &fakeAuth{
+		principals: map[string]authn.Principal{
+			"adm": {UserID: uid, Audience: authn.AudienceAdmin},
+			"pub": {UserID: uid, Audience: authn.AudiencePublic},
+		},
+	}
+	e, _, _ := newAdminProbeEngine(fake)
+
+	rec := doJSON(e, http.MethodGet, "/v1/probe/auth", "", nil)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("anon status %d", rec.Code)
 	}
+	if errCode(t, rec) != string(errs.Unauthorized) {
+		t.Fatalf("anon code %s", errCode(t, rec))
+	}
 
-	uid := uuid.New()
-	fake := &countingAuth{
-		fakeAuth: fakeAuth{
-			principals: map[string]authn.Principal{
-				"adm": {UserID: uid, Audience: authn.AudienceAdmin},
-			},
-		},
-		perms: []string{"other.code"},
-	}
-	e, _, _ = newAdminProbeEngine(fake)
-	rec = doJSON(e, http.MethodGet, "/v1/probe/perm", "", map[string]string{
-		"Authorization": "Bearer adm",
-	})
-	// 缺权限回 404 not_found（不暴露接口存在）
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("missing permission status %d", rec.Code)
-	}
-	if errCode(t, rec) != string(errs.NotFound) {
-		t.Fatalf("code %s", errCode(t, rec))
-	}
-	// 门户主体访问后台权限路由：401
-	fake.principals["pub"] = authn.Principal{UserID: uid, Audience: authn.AudiencePublic}
-	h := New(fake, nil, Options{AuthPerMin: 10})
-	pe := gin.New()
-	pe.Use(httpx.Errors(), h.Authenticate(authn.AudienceAdmin))
-	pe.GET("/probe", h.Permission(perm), probeOK)
-	rec = doJSON(pe, http.MethodGet, "/probe", "", map[string]string{"Authorization": "Bearer pub"})
+	rec = doJSON(e, http.MethodGet, "/v1/probe/auth", "", map[string]string{"Authorization": "Bearer pub"})
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("public principal status %d", rec.Code)
 	}
 
-	fake.perms = []string{perm}
-	fake.permCalls = 0
-	e, _, _ = newAdminProbeEngine(fake)
-	rec = doJSON(e, http.MethodGet, "/v1/probe/perm", "", map[string]string{
-		"Authorization": "Bearer adm",
-	})
+	rec = doJSON(e, http.MethodGet, "/v1/probe/auth", "", map[string]string{"Authorization": "Bearer adm"})
 	if rec.Code != http.StatusOK {
-		t.Fatalf("ok status %d %s", rec.Code, rec.Body.String())
+		t.Fatalf("admin status %d %s", rec.Code, rec.Body.String())
 	}
-	if fake.permCalls != 1 {
-		t.Fatalf("Permissions calls %d want 1", fake.permCalls)
-	}
-}
-
-func TestPermissionUnknownCodePanics(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	h := New(&fakeAuth{}, nil, Options{AuthPerMin: 10})
-	defer func() {
-		if recover() == nil {
-			t.Fatal("expected panic")
-		}
-	}()
-	h.Permission("no.such.code")
 }
 
 func TestRecentReauth(t *testing.T) {

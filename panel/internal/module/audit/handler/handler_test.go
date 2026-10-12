@@ -50,9 +50,9 @@ func (f *fakeSvc) ExportCSV(ctx context.Context, filter service.Filter, open fun
 	return err
 }
 
+// kitTrace 按顺序记录挂上的路由级中间件（auth = RequireAuth，reauth = RecentReauth）。
 type kitTrace struct {
-	perms  []string
-	reauth bool
+	steps []string
 }
 
 func newTestRouter(svc Service) (*gin.Engine, *kitTrace) {
@@ -62,15 +62,12 @@ func newTestRouter(svc Service) (*gin.Engine, *kitTrace) {
 	e.Use(httpx.RequestID(zap.NewNop()), httpx.Errors())
 	v1 := e.Group("/v1")
 	kit := route.Kit{
-		RequireAuth: func(c *gin.Context) { c.Next() },
-		Permission: func(code string) gin.HandlerFunc {
-			return func(c *gin.Context) {
-				tr.perms = append(tr.perms, code)
-				c.Next()
-			}
+		RequireAuth: func(c *gin.Context) {
+			tr.steps = append(tr.steps, "auth")
+			c.Next()
 		},
 		RecentReauth: func(c *gin.Context) {
-			tr.reauth = true
+			tr.steps = append(tr.steps, "reauth")
 			c.Next()
 		},
 		Idempotency: func(scope string) gin.HandlerFunc {
@@ -177,8 +174,8 @@ func TestListAuditQueryAndResponse(t *testing.T) {
 		fake.lastListF.Outcome != "failure" || fake.lastListF.Query != "abc" {
 		t.Fatalf("Filter %+v", fake.lastListF)
 	}
-	if len(tr.perms) != 1 || tr.perms[0] != "security.audit.read" {
-		t.Fatalf("权限 %v", tr.perms)
+	if strings.Join(tr.steps, ",") != "auth" {
+		t.Fatalf("中间件 %v", tr.steps)
 	}
 }
 
@@ -265,11 +262,8 @@ func TestExportAuditHeadersAndFilter(t *testing.T) {
 	if fake.lastExportF.To == nil || !fake.lastExportF.To.Equal(wantTo) {
 		t.Fatalf("To %v want %v", fake.lastExportF.To, wantTo)
 	}
-	if tr.perms[0] != "security.audit.read" || tr.perms[1] != "ops.export" {
-		t.Fatalf("权限顺序 %v", tr.perms)
-	}
-	if !tr.reauth {
-		t.Fatal("RecentReauth 未调用")
+	if strings.Join(tr.steps, ",") != "auth,reauth" {
+		t.Fatalf("中间件顺序 %v", tr.steps)
 	}
 }
 

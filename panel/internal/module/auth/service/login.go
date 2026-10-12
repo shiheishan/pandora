@@ -27,7 +27,7 @@ const (
 const (
 	reasonInvalidCredentials = "invalid_credentials" //nolint:gosec // 审计原因码，不是凭据
 	reasonAccountInactive    = "account_inactive"
-	reasonNoAdminRole        = "no_admin_role"
+	reasonNotAdmin           = "not_admin"
 	reasonStaffPortal        = "staff_portal_blocked"
 )
 
@@ -87,7 +87,7 @@ func (s *Service) Login(ctx context.Context, audience, email, password string) (
 }
 
 // login 是名额占好之后的登录本体。counted 为 true 表示这是一次算数的凭据失败（口令错、账号不存在、
-// 停用、后台无角色）；其余错误（故障、后台人员登门户等口令其实是对的）由调用方退回名额。
+// 停用、登后台的不是管理员）；其余错误（故障、后台人员登门户等口令其实是对的）由调用方退回名额。
 func (s *Service) login(ctx context.Context, audience, email, password, eh string, uid0 uuid.UUID) (Tokens, bool, error) {
 	now := s.now()
 	// 纪元在验口令之前读：验口令到建会话之间改了密，建会话会被拒
@@ -134,26 +134,19 @@ func (s *Service) login(ctx context.Context, audience, email, password, eh strin
 		return Tokens{}, true, errInvalidCredentials
 	}
 
-	var perms []string
+	admin, err := s.store.IsAdmin(ctx, u.ID)
+	if err != nil {
+		return Tokens{}, false, errs.Wrap(errs.Internal, err)
+	}
 	if audience == authn.AudienceAdmin {
-		perms, err = s.store.Permissions(ctx, u.ID)
-		if err != nil {
-			return Tokens{}, false, errs.Wrap(errs.Internal, err)
-		}
-		if len(perms) == 0 {
-			// IAM-006：与口令错完全相同，也计数
-			s.loginFailed(ctx, audience, eh, knownUID, reasonNoAdminRole)
+		if !admin {
+			// IAM-006：不是管理员与口令错完全相同，也计数
+			s.loginFailed(ctx, audience, eh, knownUID, reasonNotAdmin)
 			return Tokens{}, true, errInvalidCredentials
 		}
-	} else {
-		staff, err := s.store.HasActiveRole(ctx, u.ID)
-		if err != nil {
-			return Tokens{}, false, errs.Wrap(errs.Internal, err)
-		}
-		if staff {
-			s.loginFailed(ctx, audience, eh, knownUID, reasonStaffPortal)
-			return Tokens{}, false, ErrStaffPortalLogin
-		}
+	} else if admin {
+		s.loginFailed(ctx, audience, eh, knownUID, reasonStaffPortal)
+		return Tokens{}, false, ErrStaffPortalLogin
 	}
 
 	rec, refresh, err := s.newSession(ctx, u.ID, audience, []string{amrPassword}, epoch0, true, now)
@@ -205,8 +198,15 @@ func (s *Service) login(ctx context.Context, audience, email, password, eh strin
 		UserID:         u.ID,
 		Refresh:        refresh,
 		RefreshExpires: rec.AbsExp,
-		Permissions:    perms,
 	}, false, nil
+}
+
+// ClearLoginFailures 清掉该账号的登录失败计数与暂停（pandora admin reset-password 成功后调用：运维重置口令就是要恢复登录）。
+func (s *Service) ClearLoginFailures(ctx context.Context, userID uuid.UUID) error {
+	if err := s.sessions.clearAttempts(ctx, failureKey(userID, "")); err != nil {
+		return errs.Wrap(errs.Unavailable, err)
+	}
+	return nil
 }
 
 // loginFailed 写登录失败审计（anonymous：不传 ActorID 与 Audience，被撞账号放 ResourceID，audience 放 Data）。
@@ -274,11 +274,11 @@ func (s *Service) ConsumeQuickLogin(ctx context.Context, token string) (Tokens, 
 		return Tokens{}, errs.Newf(errs.Forbidden, "账号当前不可登录")
 	}
 
-	staff, err := s.store.HasActiveRole(ctx, uid)
+	admin, err := s.store.IsAdmin(ctx, uid)
 	if err != nil {
 		return Tokens{}, errs.Wrap(errs.Internal, err)
 	}
-	if staff {
+	if admin {
 		return Tokens{}, ErrStaffPortalLogin
 	}
 

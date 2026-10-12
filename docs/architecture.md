@@ -17,7 +17,7 @@
 | 5 | 库内只保留约束类的东西（CHECK、UNIQUE、FK、追加写触发器、账本配平、认证材料守卫），业务状态机和编排搬进 Go | 规矩 1、4、5：业务规则放 service，数据约束放库 |
 | 6 | 钱：库里用 `NUMERIC(20,2)`，单位是元，Go 里用 `decimal.Decimal`；/v1 的 JSON 仍是整数分；所有按比例的计算向零截断，只截一次 | 前端不改；逐分与现状一致 |
 | 7 | 鉴权：15 分钟 JWT（HS256 钉死，按域分密钥，带 kid）；会话存 Redis；refresh 放 HttpOnly cookie，带轮换和重放检测；Redis 不可用时回 503 | 栈表要求；吊销保持「下一个请求就生效」 |
-| 8 | 后台权限不进令牌，每个请求从库里展开；缺权限仍回 404 | 撤权即时生效；前端依赖 404 |
+| 8 | 后台权限只分有和没有：在管理员名单里且账号 active 就能做全部后台操作；没有角色、权限码、临时提权，后台路由只要求已登录 | 用户 2026-10-12 定（Q8）；非管理员登不进后台，取消管理员时当场吊销其后台会话，不需要每请求查库 |
 | 9 | 节点通道：一台服务器一个身份、一条 `Session` 双向流，节点通过消息里的 node_id 区分；`Enroll` 用一次性令牌换客户端证书 | 用户先前定过「无逐节点安装命令、服务器卡片显示会话状态」；一台机器 60 个节点不用 60 份身份 |
 | 10 | 删掉 UniProxy、Ed25519 签名通道、配置签名、节点 SSE、nonce；离线发布密钥（签二进制）的位置保留，不在本阶段实现 | mTLS 直达面板进程后，签名和 nonce 防的东西已由 TLS 承担 |
 | 11 | 定时和异步工作全部进 asynq，Scheduler 只在 worker 里跑一份；库里的 `SKIP LOCKED`、租约和状态条件原样保留，作为第二道保险 | 库仍是事实来源；任务丢了有对账任务补 |
@@ -39,7 +39,7 @@
 | `serve` | public HTTP（缺省 127.0.0.1:9000）、admin HTTP（127.0.0.1:9001）、节点 gRPC（公网端口，缺省 8444）；SSE hub；节点会话管理；心跳合并；pprof 只监听回环 |
 | `worker` | asynq Server 和 Scheduler，跑第 12 节的全部任务 |
 | `migrate up / down / status / redo` | goose；使用迁移专用 DSN（表属主角色） |
-| `admin …` | 原 adminctl：create、reset-password、grant、revoke、list、roles、has-admin；口令只从 stdin 读 |
+| `admin …` | 原 adminctl：create、reset-password、grant、revoke、list、has-admin；口令只从 stdin 读 |
 | `pay …` | 原 payctl：upsert-epay、list；**密钥改从 stdin 读**（现在走 `--key` 会出现在 argv 里） |
 | `backup …` | 原 backup-webdav；使用自己的最小配置加载器，不读完整的 viper 配置 |
 
@@ -127,7 +127,7 @@ nodeapi/                         buf 生成的 Go 代码，单独的 Go module�
 | 模块 | 拥有的表 | 说明 |
 |---|---|---|
 | identity | users、user_passwords、user_groups、registration_sessions、verification_codes、invite_codes、referrals、user_generation_jobs | 注册、口令、用户资料、批量建用户。user_groups 从 adminops 收回来；referrals 在注册时写入，佣金模块调 identity 读 |
-| auth | roles、role_permissions、permissions、user_roles；Redis 里的会话、refresh、快捷登录 | 登录、刷新、登出、重认证、权限展开、最后一个管理员保护。原 sessions、refresh_tokens、quick_login_tokens 三张表不再建 |
+| auth | admins（管理员名单）；Redis 里的会话、refresh、快捷登录 | 登录、刷新、登出、重认证、管理员授予与取消、最后一个管理员保护。原 sessions、refresh_tokens、quick_login_tokens 三张表不再建 |
 | settings | settings（键值加类型化访问器）、feature_switches | 原 system_settings 和 tenants.settings 合到这里。各模块通过 settings service 的类型化方法读写自己那组键（如 `settings.Commission()`） |
 | catalog | products、plans（含库存三列）、plan_versions、prices、entitlements、quota_definitions、plan_node_pools、traffic_packs | 库存由 catalog service 暴露 `ReserveStock / ReleaseStock / CaptureStock`，order 模块调用，不再直接写 plans |
 | order | orders、order_items、order_reservations、order_reservation_events、order_stock_reservations、order_purchase_limit_reservations、plan_purchase_counters | 下单、报价、结算编排、预留与释放 |
@@ -265,10 +265,10 @@ identity, auth ─► settings, audit
 |---|---|---|---|
 | `sess:{sid}` | hash | uid、aud、amr、created_at、last_seen、reauth_at、abs_exp、ua、ip_hash、rt_cur、rt_prev、rt_rotated_at、epoch | EXPIREAT abs_exp |
 | `usess:{uid}` | set | 该用户的全部 sid | 跟随最长的会话 |
-| `uepoch:{uid}` | string | 凭据纪元；改密、重置、停用、授予或收回后台角色时 INCR | 不过期 |
+| `uepoch:{uid}` | string | 凭据纪元；改密、重置、停用、授予或取消管理员时 INCR | 不过期 |
 | `ql:{sha256}` | string | 快捷登录：源 sid、uid | 60 秒，消费时 GETDEL |
 
-- 每个请求的验证：解析 JWT（0 次往返），再用一个 Lua 脚本一次完成三件事：读会话、核对 uid/aud/abs_exp/epoch、按 5 分钟节流更新 last_seen（1 次 Redis 往返）。门户鉴权从 1 次 DB 往返变成 1 次 Redis 往返；后台另加 1 次 DB 往返展开权限。
+- 每个请求的验证：解析 JWT（0 次往返），再用一个 Lua 脚本一次完成三件事：读会话、核对 uid/aud/abs_exp/epoch、按 5 分钟节流更新 last_seen（1 次 Redis 往返）。门户与后台鉴权都从 1 次 DB 往返变成 1 次 Redis 往返（后台不分权限，不再每请求查库）。
 - 会话状态不在 PG 里留副本。登录、登出、踢人、刷新重放这些事件写进审计。
 - 会话寿命：门户 30 天；后台绝对寿命 7 天、空闲 2 小时失效（Q4），空闲按 last_seen 判断。
 
@@ -289,7 +289,7 @@ identity, auth ─► settings, audit
 | 场景 | 做法 |
 |---|---|
 | 登出 | DEL `sess:{sid}`、SREM `usess`；清 cookie；审计 |
-| 改密、重置、停用、授予后台角色 | 业务事务里先在 Redis 吊销会话（Redis 失败就回滚事务，回 503）；提交后再扫一遍，防止提交前新建的会话漏网；INCR `uepoch:{uid}`，堵住登录与改密之间的竞态（登录建会话前比对纪元） |
+| 改密、重置、停用、授予或取消管理员 | 业务事务里先在 Redis 吊销会话（Redis 失败就回滚事务，回 503）；提交后再扫一遍，防止提交前新建的会话漏网；INCR `uepoch:{uid}`，堵住登录与改密之间的竞态（登录建会话前比对纪元） |
 | 门户改密 | 保留当前会话，吊销其余会话（产品语义不变） |
 | SSE | 吊销时向 `rt:sess:{sid}` 发布消息，SSE 处理器订阅这个频道，收到就关流 |
 
@@ -299,7 +299,7 @@ identity, auth ─► settings, audit
 
 ### 8.6 保留的语义
 
-- public 与 admin 两个域互不相通；staff 不能登录门户；后台用户没有角色时，登录返回与口令错误相同的 401（IAM-006）；用户不存在时用 DummyVerify 对齐耗时。
+- public 与 admin 两个域互不相通；管理员不能登录门户（403，提示去后台登录入口）；不是管理员的账号（含被取消的）登后台时，返回与口令错误相同的 401，也计失败次数（IAM-006）；用户不存在时用 DummyVerify 对齐耗时。
 - Argon2id 参数不变，事务外计算哈希，public 与 admin 各一个并发闸。
 - 重认证窗口 15 分钟，排在幂等之前；reauth 接口改写会话里的 reauth_at（现在不写），并且按 audience 校验会话（现在不校验）。
 - 登录限流改为 Strict（Redis 故障时回 503）；同一账号 15 分钟内失败 10 次暂停 15 分钟（Q7），计数放 Redis，按账号跨两个域共用（`lf:{uid 或邮箱哈希}`）；先占名额再验口令（并发请求不能绕过上限），成功清零，结论不明（繁忙、内部错）退回名额。
@@ -320,11 +320,16 @@ identity, auth ─► settings, audit
 
 ## 9. 后台权限
 
-- 表：permissions（字典，由迁移种子维护）、roles、role_permissions、user_roles(user_id, role_id, expires_at, granted_by)。去掉 scope_type、scope_id、approval_request_id。
-- 权限码在 Go 里定义成常量，迁移种子与常量表由一个测试对齐。
-- 每个请求从库里展开权限（一条 SQL），不缓存，撤权在下一个请求生效。缺权限回 404。
-- 授予、收回仍然只有 `pandora admin grant / revoke`。授予后台角色时吊销该用户的门户会话（现在不吊销）。
-- 28 个从不检查的权限码不再种（Q6）。
+后台权限只分有和没有（用户 2026-10-12 定，Q8）：没有角色分级、权限码、临时提权，管理员之间对等。
+
+- 表：只有 `admins(user_id PK → users ON DELETE RESTRICT（删账号前先取消管理员）, granted_by → users ON DELETE SET NULL, created_at)`，属 auth。「管理员」= 在这张表里且 `users.status = 'active'`。
+- 登录：后台登录只接受管理员；不是管理员与口令错完全一样（401，计失败次数，IAM-006）。管理员用正确口令登门户回 403。
+- 路由：后台所有业务路由只挂 `RequireAuth`（后台引擎上有效的后台会话就是管理员），不再有缺权限回 404 这一层，也不每请求查库。`app` 的 `TestAdminRoutesRequireLogin` 匿名打遍后台路由（登录、续期、登出、探活除外），漏挂即红。
+- 续期兜底：后台 refresh 时再查一次「在名单里且 active」，不是就删会话回 401。吊销万一漏了（如提交后补扫失败），最坏窗口也只是一个 access 寿命（15 分钟）。
+- 授予与取消只有 `pandora admin create / grant / revoke`（幂等：已是 / 已不是管理员时直接成功、不写审计），审计动作 `adminctl.admin_granted` / `adminctl.admin_revoked`。授予时同事务吊销门户会话并推进纪元；取消时同事务吊销后台会话，提交后再补扫一遍，所以取消在下一个请求就生效。
+- 管理员集合的所有变动（授予、取消、停用或封禁管理员）先取同一把事务级咨询锁；取消或停用后没有可登录的管理员时拒绝（409）：取消是先查后删，被拒时什么都没改。
+- identity 经 `StaffGuard.IsStaff`（在名单里，不看状态）给管理员定 12 位口令、拦门户自助找回密码；后台替人改状态、重置口令不做越级检查，只保留「不能对自己」与最后一个管理员保护。
+- `pandora admin reset-password` 成功后清掉该账号的登录失败计数，运维重置口令后立刻能登。
 
 ---
 
@@ -332,7 +337,7 @@ identity, auth ─► settings, audit
 
 | 项 | 做法 |
 |---|---|
-| 框架 | gin。public 和 admin 各一个 `gin.Engine`；中间件链：reqid → 访问日志 → 恢复 → 安全头 → 超时 → 鉴权 → 域守卫 → 限流 → 路由级（权限、重认证、开关、幂等） |
+| 框架 | gin。public 和 admin 各一个 `gin.Engine`；中间件链：reqid → 访问日志 → 恢复 → 安全头 → 超时 → 鉴权 → 域守卫 → 限流 → 路由级（登录要求、重认证、开关、幂等） |
 | req_id | 接受合法 UUID 形式的 `X-Request-ID`，否则生成 UUIDv7；写进 ctx、响应头、zap 字段、错误信封、gRPC metadata（`x-request-id`）、asynq 任务载荷（`req_id`）、审计行 |
 | 成功响应 | 直接返回 DTO（与现在相同，不包信封） |
 | 错误 | 一个 `errs.Error{Code, Status, Message, Fields}`。service 返回它或领域错误，handler 用 `c.Error(err)` 交给错误中间件统一写 `{"error":{code,message,fields?,request_id?}}`。未知错误一律回 500 `internal_error`，原因只写日志。15 个错误码不变；加一个测试，对齐 Go 的码表和前端的 `SERVER_ERROR_CODES` |
@@ -530,7 +535,7 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 |---|---|---|
 | 纯函数 | 金额公式（F1–F11）、状态机转换表、令牌校验、限流维度、proto 编解码；现有的纯 Go 单测（purchase/balance、money、epay、plan_change_preview 等）原样搬过去，把期望值换算成元 | 本机、CI |
 | repo 与 service | 连真实的 PG 18，每个测试一个事务、结束后回滚，或者每个包一个模板库；Redis 用 miniredis 跑单测，集成测试连真实 Redis | CI（本机没有 docker，跳过的不算通过） |
-| 迁移 | 新基线 up → down → up；对照 Go 常量检查种子数据（权限码、开关） | CI |
+| 迁移 | 新基线 up → down → up；对照 Go 常量检查种子数据（开关、通知模板） | CI |
 | 契约 | 错误码表对齐前端；`buf breaking`；指标、设备键、端口声明三项跨 module 对照，改成比较 proto 字段 | CI |
 | 黑盒 | `panel/tests/*.sh` 的 e2e（下单、回调重放 10 次只记一笔账、易支付签名与篡改、到期与续费、后台、风控）把目标从旧二进制改成新二进制；只要 /v1 的 JSON 形状不变，就能直接跑 | CI |
 | 节点 | 重写 nodesim 和 acceptancepanel 为 gRPC 客户端和服务端；保留「200 用户、5 节点、60 秒，零 5xx」「面板挂掉时用磁盘缓存冷启」「SIGTERM 收尾」等判据；真机矩阵用 node-e2e skill | CI、测试机 |
@@ -567,8 +572,9 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 | Q3 | 佣金的基数包不包括余额抵扣的部分？ | 包括（基数 = 订单总额，含余额抵扣） | **按订单总额，含余额抵扣**（维持现状） |
 | Q4 | 后台会话的寿命和空闲超时？ | 与门户相同，30 天，没有空闲超时 | **后台**：绝对寿命 7 天，空闲 2 小时失效；**门户**维持 30 天 |
 | Q5 | 各类数据保留多久？ | 审计永久保留；6 张表从不清理 | **按此执行**：审计 400 天；幂等键 30 天；注册会话和验证码 7 天；插件和通知投递记录 90 天；批量建用户的 job 30 天；流量与指标沿用现有期限（48 小时到 400 天） |
-| Q6 | 28 个种了但从不检查的权限码删不删？ | 种子里有，路由不检查 | **删除**，用到时再加 |
+| Q6 | 28 个种了但从不检查的权限码删不删？ | 种子里有，路由不检查 | **删除**；随后 Q8 把权限码整体取消 |
 | Q7 | 登录要不要按账号限制失败次数？阈值多少？ | 只按 IP、路由和 /24 网段限流；Redis 故障时放行 | **按此执行**：同一账号 15 分钟内失败 10 次，暂停 15 分钟（期间口令正确也拒绝，提示稍后再试）。已知代价：可能被人拿来锁别人的账号 |
+| Q8 | 后台要不要分角色、权限码、临时提权？ | 6 个内置角色、44 个权限码、可临时绑定，缺权限回 404 | **不分**：后台权限只分有和没有，是管理员就能做全部后台操作（第 9 节） |
 
 ---
 
@@ -580,7 +586,7 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 | 登录与改密之间有竞态 | 凭据纪元 `uepoch` |
 | SSE 不随吊销断开 | `rt:sess:{sid}` 关流 |
 | reauth 不按 audience 校验、不写 last_reauth_at | reauth_at 记在会话里 |
-| 授予后台角色不踢门户会话 | 授予时吊销 |
+| 设为管理员不踢门户会话 | 授予时吊销 |
 | 主密钥直接当 AES 密钥和 HMAC 盐 | HKDF 子密钥 |
 | `pay --key` 让密钥出现在 argv 里 | 改从 stdin 读 |
 | 节点手工吊销不吊销 UniProxy 令牌，也不断开在途的 SSE | 通道整体替换；吊销即关流 |
