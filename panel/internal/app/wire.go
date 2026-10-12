@@ -22,6 +22,8 @@ import (
 	promosvc "github.com/aegispanel/aegis/internal/module/promo/service"
 	settingsrepo "github.com/aegispanel/aegis/internal/module/settings/repo"
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
+	subrepo "github.com/aegispanel/aegis/internal/module/subscription/repo"
+	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/aegispanel/aegis/internal/pkg/config"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
 	"github.com/aegispanel/aegis/internal/pkg/jwtx"
@@ -42,6 +44,7 @@ type services struct {
 	ledger   *ledgersvc.Service
 	catalog  *catalogsvc.Service
 	promo    *promosvc.Service
+	sub      *subsvc.Service
 	limiter  *ratelimit.Limiter
 	queue    *asynq.Client
 	tx       *tx.Manager
@@ -119,6 +122,7 @@ func buildServices(r *runtime) (*services, error) {
 	ledgerSvc := ledgersvc.New(ledgerrepo.New(r.db), txm, settingsSvc, auditSvc)
 	catalogSvc := catalogsvc.New(catalogrepo.New(r.db), txm, auditSvc, identitySvc)
 	promoSvc := promosvc.New(promorepo.New(r.db), txm, auditSvc, settingsSvc)
+	subSvc := subsvc.New(subrepo.New(r.db), txm, auditSvc, settingsSvc, catalogSvc, identitySvc, sealer)
 
 	// 模块间注入：identity 定义接口，auth、notify 实现；audit 经 identity 显示操作者与资源
 	identitySvc.UseSessionRevoker(authSvc)
@@ -141,6 +145,7 @@ func buildServices(r *runtime) (*services, error) {
 		ledger:   ledgerSvc,
 		catalog:  catalogSvc,
 		promo:    promoSvc,
+		sub:      subSvc,
 		limiter:  limiter,
 		queue:    queue,
 		tx:       txm,
