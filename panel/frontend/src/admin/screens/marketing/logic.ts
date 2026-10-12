@@ -423,6 +423,22 @@ export function buildGenerateRequest(f: GenerateForm): Built<{ count: number; pr
 // 佣金与提现
 // ---------------------------------------------------------------------------
 
+/** 作废原因：去掉首尾空白后按字符数 5～500；合格返回 null，否则返回提示 */
+export function voidReasonError(reason: string): string | null {
+  const trimmed = reason.trim()
+  const len = [...trimmed].length
+  if (len < 5) return '作废必须填写原因，至少 5 个字'
+  if (len > 500) return '原因最多 500 个字'
+  return null
+}
+
+/** 冻结期说明：未到期「冻结至 MM-DD HH:mm」；已到期「冻结期已过，通过后下一轮自动解冻」 */
+export function freezeLabel(frozenUntil: string, now: Date): string {
+  const until = new Date(frozenUntil)
+  if (until.getTime() <= now.getTime()) return '冻结期已过，通过后下一轮自动解冻'
+  return `冻结至 ${formatDateTime(frozenUntil)}`
+}
+
 /** 状态映射（契约 GET v1/withdrawals）；打款只对 approved 开放（processing 由后端拒绝标记） */
 export function withdrawalState(status: string): { label: string; tone: Tone; canReview: boolean; canPay: boolean } {
   switch (status) {

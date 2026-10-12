@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback } from 'react'
 import { useApi } from '../../../shell/runtime'
 import {
@@ -9,6 +9,7 @@ import {
   overviewSchema,
   plansResponse,
   redemptionsResponse,
+  reviewEntriesResponse,
   templatesResponse,
   usagesResponse,
   withdrawalsResponse,
@@ -104,6 +105,19 @@ export function useWithdrawals() {
   return useQuery({
     queryKey: [...MK, 'withdrawals'],
     queryFn: ({ signal }) => api.get('v1/withdrawals', withdrawalsResponse, { signal }).then((r) => r.withdrawals),
+  })
+}
+
+export const REVIEW_PAGE = 20
+export function useReviewEntries() {
+  const api = useApi()
+  return useInfiniteQuery({
+    queryKey: [...MK, 'review-entries'],
+    queryFn: ({ signal, pageParam }) =>
+      api.get('v1/commission/entries', reviewEntriesResponse, { signal, query: { review: 'required', limit: REVIEW_PAGE, cursor: pageParam || undefined } }),
+    initialPageParam: '',
+    getNextPageParam: (last) => last.next_cursor || undefined,
+    meta: { topics: ['orders.changed'] },
   })
 }
 

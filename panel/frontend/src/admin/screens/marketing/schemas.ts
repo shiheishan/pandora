@@ -241,3 +241,18 @@ export type Withdrawal = z.output<typeof withdrawalSchema>
 
 export const reviewResponse = z.object({ status: z.enum(['approved', 'rejected']) })
 export const paidResponse = z.object({ status: z.literal('paid') })
+
+export const reviewEntrySchema = z.object({
+  id: uuid,
+  order_no: z.string(),
+  referrer_email: z.string(),
+  referee_email: z.string(),
+  amount: z.number().int(),
+  currency: z.string(),
+  review_reason: z.string(),
+  created_at: iso,
+  frozen_until: iso,
+})
+export type ReviewEntry = z.output<typeof reviewEntrySchema>
+export const reviewEntriesResponse = z.object({ entries: z.array(reviewEntrySchema), next_cursor: z.string() })
+export const entryReviewResponse = z.object({ status: z.enum(['pending', 'voided']) })

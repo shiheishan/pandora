@@ -17,6 +17,7 @@ import {
   discountLabel,
   emptyCouponForm,
   formatGB,
+  freezeLabel,
   grantedLabel,
   minorToYuan,
   parseCount,
@@ -27,10 +28,20 @@ import {
   templateToForm,
   usage,
   validUntilLabel,
+  voidReasonError,
   withdrawalState,
   yuanToMinor,
 } from './logic'
-import { couponSchema, overviewSchema, templatesResponse, type CommissionOverview, type GiftTemplate, type Plan } from './schemas'
+import {
+  couponSchema,
+  entryReviewResponse,
+  overviewSchema,
+  reviewEntriesResponse,
+  templatesResponse,
+  type CommissionOverview,
+  type GiftTemplate,
+  type Plan,
+} from './schemas'
 
 const PLANS: Plan[] = [
   { id: 'p1', name: '基础版', status: 'active', prices: [] },
@@ -316,5 +327,52 @@ describe('commission', () => {
     expect(buildCommissionConfig({ ...form, scope: 'first_order' })).toEqual({ ok: true, body: { rate_percent: 20, freeze_days: 7, min_withdraw: 10050, scope: 'first_order' } })
     const bad = buildCommissionConfig({ rate: 51, scope: 'every_order', freezeDays: '91', minWithdraw: 'x' })
     expect(!bad.ok && Object.keys(bad.errors).sort()).toEqual(['freeze_days', 'min_withdraw', 'rate_percent'])
+  })
+
+  describe('review entries', () => {
+    const iso = '2026-10-01T12:00:00Z'
+    const row = {
+      id: 'a0000000-0000-4000-8000-000000000001',
+      order_no: 'ORD-1',
+      referrer_email: 'ref@example.com',
+      referee_email: 'buy@example.com',
+      amount: 1234,
+      currency: 'CNY',
+      review_reason: '同源嫌疑',
+      created_at: iso,
+      frozen_until: iso,
+    }
+
+    it('parses review list and entry review responses', () => {
+      const list = reviewEntriesResponse.parse({
+        entries: [row, { ...row, id: 'a0000000-0000-4000-8000-000000000002', order_no: 'ORD-2' }],
+        next_cursor: 'abc',
+      })
+      expect(list.entries).toHaveLength(2)
+      expect(list.next_cursor).toBe('abc')
+      expect(reviewEntriesResponse.safeParse({ entries: [{ ...row, amount: 12.5 }], next_cursor: '' }).success).toBe(false)
+      expect(reviewEntriesResponse.safeParse({ entries: [{ ...row, referee_email: undefined }], next_cursor: '' }).success).toBe(false)
+      expect(entryReviewResponse.parse({ status: 'pending' }).status).toBe('pending')
+      expect(entryReviewResponse.parse({ status: 'voided' }).status).toBe('voided')
+      expect(entryReviewResponse.safeParse({ status: 'approved' }).success).toBe(false)
+    })
+
+    it('validates void reason length by character count', () => {
+      expect(voidReasonError('')).toBe('作废必须填写原因，至少 5 个字')
+      expect(voidReasonError('   ')).toBe('作废必须填写原因，至少 5 个字')
+      expect(voidReasonError('四个字啊')).toBe('作废必须填写原因，至少 5 个字')
+      expect(voidReasonError('  abcd  ')).toBe('作废必须填写原因，至少 5 个字')
+      expect(voidReasonError('同源刷单确认')).toBeNull()
+      expect(voidReasonError('abcde')).toBeNull()
+      expect(voidReasonError('长'.repeat(501))).toBe('原因最多 500 个字')
+      expect(voidReasonError('长'.repeat(500))).toBeNull()
+    })
+
+    it('labels freeze period relative to now', () => {
+      const future = new Date('2026-12-31T23:59:00Z')
+      const past = new Date('2025-01-01T00:00:00Z')
+      expect(freezeLabel('2026-12-31T12:00:00Z', future)).toContain('冻结至')
+      expect(freezeLabel('2025-06-01T00:00:00Z', past)).toBe('冻结期已过，通过后下一轮自动解冻')
+    })
   })
 })

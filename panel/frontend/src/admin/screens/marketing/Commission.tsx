@@ -6,6 +6,7 @@ import { Button, Empty, Input, Modal, QueryView, Segmented, StatStrip, Tag, Text
 import local from './Commission.module.css'
 import { buildCommissionConfig, commissionStats, commissionToForm, formatDateTime, withdrawalState, type CommissionForm, type FieldErrors } from './logic'
 import css from './marketing.module.css'
+import { ReviewEntries } from './ReviewEntries'
 import { useCommissionOverview, useFailure, useIntentKey, useInvalidateMarketing, useWithdrawals } from './queries'
 import { okResponse, paidResponse, reviewResponse, type CommissionOverview, type Withdrawal } from './schemas'
 
@@ -14,6 +15,7 @@ export function Commission() {
   return (
     <div className={css.stack}>
       <StatStrip label="佣金统计" items={overview.data ? commissionStats(overview.data) : undefined} />
+      <ReviewEntries />
       <div className={local.columns}>
         <Withdrawals />
         <section className={`${css.panel} ${local.settings}`}>
