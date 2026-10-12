@@ -30,7 +30,7 @@ func TestPGRegistrationOpenNoVerify(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u.Email != email {
+	if u.Email != strings.ToLower(email) {
 		t.Fatalf("email %q", u.Email)
 	}
 	_, err = e.svc.Authenticate(ctx, authn.AudiencePublic, email, "abc12345")

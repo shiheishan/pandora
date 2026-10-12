@@ -176,6 +176,7 @@ func TestPGSetStatus(t *testing.T) {
 		t.Fatal("reactivate should not revoke")
 	}
 
+	e.guard.err = nil
 	norev := e.build()
 	norev.UseAdminGuard(e.guard)
 	norev.UseStaffGuard(e.staff)
@@ -329,8 +330,9 @@ func TestPGPurgeRegistrations(t *testing.T) {
 			t.Fatal(err)
 		}
 		email := uniqEmail(t, fmt.Sprintf("purge%d", i))
-		q := `INSERT INTO registration_sessions (token_hash, email, status, expires_at, created_at) VALUES (?, ?, 'pending', ?, ?)`
-		if err := e.exec(ctx, q, h, email, old, old); err != nil {
+		// GORM 把紧跟「(」的切片参数展开成列表（给 IN (?) 用），[]byte 不能放在左括号后第一个
+		q := `INSERT INTO registration_sessions (email, token_hash, status, expires_at, created_at) VALUES (?, ?, 'pending', ?, ?)`
+		if err := e.exec(ctx, q, email, h, old, old); err != nil {
 			t.Fatal(err)
 		}
 	}
