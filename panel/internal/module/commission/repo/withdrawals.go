@@ -127,19 +127,23 @@ WHERE user_id = ? AND currency = ?`, userID, currency).Scan(&t).Error
 	return t, mapErr(err)
 }
 
-// WithdrawalOverview 是全站某币种的提现汇总：PaidOut 已打款总额，Waiting 申请中笔数。
+// WithdrawalOverview 是全站某一币种的提现汇总：PaidOut 已打款总额，Waiting 申请中笔数。
 type WithdrawalOverview struct {
-	PaidOut decimal.Decimal `gorm:"column:paid_out"`
-	Waiting int64           `gorm:"column:waiting"`
+	Currency string          `gorm:"column:currency"`
+	PaidOut  decimal.Decimal `gorm:"column:paid_out"`
+	Waiting  int64           `gorm:"column:waiting"`
 }
 
-// WithdrawalOverviewOf 全站提现概览（waiting 统计全币种申请中笔数）。
-func (r *Repo) WithdrawalOverviewOf(ctx context.Context, currency string) (WithdrawalOverview, error) {
-	var o WithdrawalOverview
+// WithdrawalOverviewByCurrency 按币种分组的全站提现概览，币种升序；没有提现的币种不出现。
+func (r *Repo) WithdrawalOverviewByCurrency(ctx context.Context) ([]WithdrawalOverview, error) {
+	var out []WithdrawalOverview
 	err := r.d.Conn(ctx).Raw(`
 SELECT
-  COALESCE(sum(amount) FILTER (WHERE status = 'paid' AND currency = ?), 0) AS paid_out,
+  currency,
+  COALESCE(sum(amount) FILTER (WHERE status = 'paid'), 0) AS paid_out,
   count(*) FILTER (WHERE status = 'requested') AS waiting
-FROM withdrawals`, currency).Scan(&o).Error
-	return o, mapErr(err)
+FROM withdrawals
+GROUP BY currency
+ORDER BY currency`).Scan(&out).Error
+	return out, mapErr(err)
 }

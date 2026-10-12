@@ -13,7 +13,7 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// TransferToBalance 把可提现佣金转成账户余额（站点币种），返回账本交易 id。
+// TransferToBalance 把可提现佣金转成同币种的账户余额，返回账本交易 id。币种取用户唯一有可用佣金的那个（见 pickCurrency）。
 // 提现要审批、要等打款、有最低门槛；多数人只是想拿佣金续费，这条路让钱直接回到站内。
 // 账本：借 可提现佣金 / 贷 用户余额，负债在科目间搬家。与提现申请用同一把用户锁、同一口径：在途提现占用的部分不能再转。
 func (s *Service) TransferToBalance(ctx context.Context, userID uuid.UUID, amount decimal.Decimal) (uuid.UUID, error) {
@@ -28,15 +28,11 @@ func (s *Service) TransferToBalance(ctx context.Context, userID uuid.UUID, amoun
 		if err := s.repo.LockUser(ctx, userID); err != nil {
 			return err
 		}
-		cur, err := s.ledger.DefaultCurrency(ctx)
+		cur, avail, ok, err := s.pickCurrency(ctx, userID)
 		if err != nil {
 			return err
 		}
-		avail, err := s.available(ctx, userID, cur)
-		if err != nil {
-			return err
-		}
-		if avail.LessThan(amount) {
+		if !ok || avail.LessThan(amount) {
 			return ErrTransferInsufficient
 		}
 		transferID, err := uuid.NewV7()

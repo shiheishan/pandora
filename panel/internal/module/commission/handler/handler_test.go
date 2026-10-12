@@ -26,6 +26,7 @@ type fakeSvc struct {
 	Service
 	my          service.MyCommission
 	withdrawals []service.AdminWithdrawal
+	overview    service.Overview
 	gotAmount   decimal.Decimal
 	gotPayout   string
 	gotConfig   service.ConfigUpdate
@@ -45,6 +46,10 @@ func (f *fakeSvc) RequestWithdrawal(_ context.Context, _ uuid.UUID, amount decim
 func (f *fakeSvc) TransferToBalance(_ context.Context, _ uuid.UUID, amount decimal.Decimal) (uuid.UUID, error) {
 	f.gotAmount = amount
 	return uuid.New(), nil
+}
+
+func (f *fakeSvc) AdminOverview(context.Context) (service.Overview, error) {
+	return f.overview, nil
 }
 
 func (f *fakeSvc) AdminWithdrawals(context.Context, string) ([]service.AdminWithdrawal, error) {
@@ -268,5 +273,69 @@ func TestListWithdrawalsShape(t *testing.T) {
 	}
 	if _, ok := row["completed_at"]; !ok {
 		t.Fatal("completed_at 字段应输出为 null")
+	}
+}
+
+// 审核、打款、改配置必须挂 RecentReauth：把它换成直接回 428 的桩，这三条应被挡下、两条只读的不受影响。
+func TestAdminWritesRequireRecentReauth(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	e := gin.New()
+	e.Use(httpx.RequestID(zap.NewNop()), httpx.Errors())
+	p := authn.Principal{UserID: uuid.New(), SessionID: "s", Audience: authn.AudienceAdmin}
+	e.Use(func(c *gin.Context) { authn.Set(c, p); c.Next() })
+	kit := route.Kit{
+		RequireAuth:  pass,
+		RecentReauth: func(c *gin.Context) { c.AbortWithStatus(http.StatusPreconditionRequired) },
+		Idempotency:  func(string) gin.HandlerFunc { return pass },
+		Switch:       func(string) gin.HandlerFunc { return pass },
+	}
+	New(&fakeSvc{}).RegisterAdmin(e.Group("/v1"), kit)
+
+	id := uuid.New().String()
+	guarded := map[string]string{
+		"/v1/withdrawals/" + id + "/review": `{"action":"approve"}`,
+		"/v1/withdrawals/" + id + "/paid":   `{"payout_reference":"TX-1"}`,
+		"/v1/commission/config":             `{"rate_percent":10}`,
+	}
+	for path, body := range guarded {
+		if w := do(e, http.MethodPost, path, body); w.Code != http.StatusPreconditionRequired {
+			t.Errorf("POST %s 应要求近期重认证，得到 %d", path, w.Code)
+		}
+	}
+	for _, path := range []string{"/v1/commission/overview", "/v1/withdrawals"} {
+		if w := do(e, http.MethodGet, path, ""); w.Code == http.StatusPreconditionRequired {
+			t.Errorf("GET %s 是只读的，不该要求重认证", path)
+		}
+	}
+}
+
+// 概览：顶层是站点币种那一组，by_currency 按币种列出。
+func TestOverviewShape(t *testing.T) {
+	f := &fakeSvc{overview: service.Overview{
+		Currency: "USD", Pending: decimal.RequireFromString("1.5"), Entries: 3, NeedReview: 1,
+		MinWithdraw: decimal.RequireFromString("100"), Scope: "every_order",
+		ByCurrency: []service.CurrencyOverview{
+			{Currency: "CNY", Pending: decimal.RequireFromString("20"), Entries: 2, NeedReview: 1},
+			{Currency: "USD", Pending: decimal.RequireFromString("1.5"), Entries: 1},
+		},
+	}}
+	w := do(newEngine(f, true, nil), http.MethodGet, "/v1/commission/overview", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	var resp struct {
+		Currency   string           `json:"currency"`
+		Pending    int64            `json:"pending"`
+		NeedReview int64            `json:"need_review"`
+		ByCurrency []map[string]any `json:"by_currency"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Currency != "USD" || resp.Pending != 150 || resp.NeedReview != 1 || len(resp.ByCurrency) != 2 {
+		t.Fatalf("概览 %s", w.Body)
+	}
+	if resp.ByCurrency[0]["currency"] != "CNY" || resp.ByCurrency[0]["pending"] != float64(2000) || resp.ByCurrency[0]["need_review"] != float64(1) {
+		t.Fatalf("by_currency %v", resp.ByCurrency[0])
 	}
 }

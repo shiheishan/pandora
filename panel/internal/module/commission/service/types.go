@@ -101,9 +101,11 @@ var (
 	ErrWithdrawalHandled    = errs.Newf(errs.Conflict, "该提现申请已被处理过")
 	ErrWithdrawalNotPayable = errs.Newf(errs.Conflict, "只有已批准的提现才能标记为已打款")
 	ErrWithdrawalNotFound   = errs.Newf(errs.NotFound, "提现申请不存在")
+	// ErrWithdrawCurrencyAmbiguous 是可用佣金分在多个币种：请求里没有币种，不合并、不猜。
+	ErrWithdrawCurrencyAmbiguous = errs.Newf(errs.Conflict, "可提现佣金包含多个币种，请联系管理员分币种处理")
 )
 
-// Summary 是门户「我的佣金」的汇总，金额都是站点币种。
+// Summary 是门户「我的佣金」的汇总，金额都是 Currency 这一个币种（取法见 summaryCurrency）。
 type Summary struct {
 	Currency     money.Currency
 	Pending      decimal.Decimal // 冻结中
@@ -159,8 +161,23 @@ type MyCommission struct {
 	Transfers   []TransferView
 }
 
-// Overview 是后台分销概览：站点币种下的汇总与当前参数。
+// CurrencyOverview 是后台分销概览里某一币种的汇总。
+type CurrencyOverview struct {
+	Currency           money.Currency
+	Pending            decimal.Decimal
+	Available          decimal.Decimal
+	PaidOut            decimal.Decimal
+	ThisMonth          decimal.Decimal
+	TotalEarned        decimal.Decimal
+	Entries            int64
+	NeedReview         int64
+	WaitingWithdrawals int64
+}
+
+// Overview 是后台分销概览：金额字段是站点币种（Currency）那一组，笔数字段是全部币种合计；
+// ByCurrency 按币种列出每一组（只列有数据的币种，站点币种总在里面）。
 type Overview struct {
+	Currency           money.Currency
 	Pending            decimal.Decimal
 	Available          decimal.Decimal
 	PaidOut            decimal.Decimal
@@ -170,6 +187,7 @@ type Overview struct {
 	NeedReview         int64
 	WaitingWithdrawals int64
 	InvitedUsers       int64
+	ByCurrency         []CurrencyOverview
 	RatePercent        int
 	FreezeDays         int
 	MinWithdraw        decimal.Decimal
@@ -201,8 +219,9 @@ type ConfigUpdate struct {
 
 // SettleStats 是一轮解冻的统计。
 type SettleStats struct {
-	Scanned int
-	Settled int
-	Skipped int
-	Failed  int
+	Scanned     int
+	Settled     int
+	Skipped     int
+	Quarantined int // 确定性失败（待结科目余额不足）转人工复核的条数
+	Failed      int
 }

@@ -22,7 +22,7 @@ var errPayoutStateLost = errs.Newf(errs.Conflict, "提现状态已变化，请�
 // errPayoutUnderfunded 是可提现佣金科目余额不够这笔打款（账本与提现记录对不上，需要人工核对）。
 var errPayoutUnderfunded = errs.Newf(errs.Conflict, "可提现佣金账户余额不足，无法打款")
 
-// available 按唯一口径算用户某币种的可用佣金：已解冻 − 未驳回的提现（在途与已打款）− 已转余额。可能为负（只在账本被手工改过时）。
+// available 按唯一口径算用户某一币种的可用佣金：已解冻 − 未驳回的提现（在途与已打款）− 已转余额。可能为负（只在账本被手工改过时）。
 // 要据此放行动账的调用方必须先在本事务里 LockUser。
 func (s *Service) available(ctx context.Context, userID uuid.UUID, cur money.Currency) (decimal.Decimal, error) {
 	et, err := s.repo.EntryTotalsOf(ctx, userID, string(cur))
@@ -40,7 +40,7 @@ func (s *Service) available(ctx context.Context, userID uuid.UUID, cur money.Cur
 	return et.Available.Sub(wt.InFlight).Sub(wt.Paid).Sub(tr), nil
 }
 
-// RequestWithdrawal 发起一笔提现申请（站点币种），返回申请 id。只改状态不记账，钱在打款那一步才离开可提现佣金。
+// RequestWithdrawal 发起一笔提现申请，返回申请 id。币种取用户唯一有可用佣金的那个（见 pickCurrency）。只改状态不记账，钱在打款那一步才离开可提现佣金。
 // 一个用户同一时间只能有一笔在途；与转余额用同一把用户锁、同一口径，后到的一方一定看得见前一方。
 func (s *Service) RequestWithdrawal(ctx context.Context, userID uuid.UUID, amount decimal.Decimal, payoutDetail string) (uuid.UUID, error) {
 	payout, err := validateWithdrawal(amount, payoutDetail)
@@ -66,15 +66,11 @@ func (s *Service) RequestWithdrawal(ctx context.Context, userID uuid.UUID, amoun
 		if inFlight {
 			return ErrWithdrawPending
 		}
-		cur, err := s.ledger.DefaultCurrency(ctx)
+		cur, avail, ok, err := s.pickCurrency(ctx, userID)
 		if err != nil {
 			return err
 		}
-		avail, err := s.available(ctx, userID, cur)
-		if err != nil {
-			return err
-		}
-		if !avail.IsPositive() {
+		if !ok {
 			return ErrNoCommission
 		}
 		if amount.GreaterThan(avail) {

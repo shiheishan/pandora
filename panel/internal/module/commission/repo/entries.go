@@ -160,8 +160,9 @@ GROUP BY referrer_user_id, currency`, userIDs).Scan(&rows).Error
 	return out, nil
 }
 
-// EntryOverview 是全站某币种的佣金汇总。
+// EntryOverview 是全站某一币种的佣金汇总。
 type EntryOverview struct {
+	Currency   string          `gorm:"column:currency"`
 	Pending    decimal.Decimal `gorm:"column:pending"`
 	Available  decimal.Decimal `gorm:"column:available"`
 	ThisMonth  decimal.Decimal `gorm:"column:this_month"`
@@ -170,11 +171,12 @@ type EntryOverview struct {
 	NeedReview int64           `gorm:"column:need_review"`
 }
 
-// EntryOverviewOf 全站某币种佣金概览（本月按 created_at 统计）。
-func (r *Repo) EntryOverviewOf(ctx context.Context, currency string, monthStart time.Time) (EntryOverview, error) {
-	var o EntryOverview
+// EntryOverviewByCurrency 按币种分组的全站佣金概览（本月按 created_at 统计），币种升序；没有条目的币种不出现。
+func (r *Repo) EntryOverviewByCurrency(ctx context.Context, monthStart time.Time) ([]EntryOverview, error) {
+	var out []EntryOverview
 	err := r.d.Conn(ctx).Raw(`
 SELECT
+  currency,
   COALESCE(sum(commission_amount) FILTER (WHERE status = 'pending'), 0) AS pending,
   COALESCE(sum(commission_amount) FILTER (WHERE status = 'available'), 0) AS available,
   COALESCE(sum(commission_amount) FILTER (WHERE created_at >= ?), 0) AS this_month,
@@ -182,6 +184,32 @@ SELECT
   count(*) AS entries,
   count(*) FILTER (WHERE review_required AND status = 'pending') AS need_review
 FROM commission_entries
-WHERE currency = ?`, monthStart, currency).Scan(&o).Error
-	return o, mapErr(err)
+GROUP BY currency
+ORDER BY currency`, monthStart).Scan(&out).Error
+	return out, mapErr(err)
+}
+
+// EntryCurrenciesOf 返回推荐人有佣金条目的全部币种（升序）。提现与转余额只会发生在这些币种里。
+func (r *Repo) EntryCurrenciesOf(ctx context.Context, referrerID uuid.UUID) ([]string, error) {
+	var out []string
+	err := r.d.Conn(ctx).Raw(
+		`SELECT DISTINCT currency FROM commission_entries WHERE referrer_user_id = ? ORDER BY currency`,
+		referrerID,
+	).Scan(&out).Error
+	return out, mapErr(err)
+}
+
+// MarkEntryReview 把一条待解冻的条目转人工复核（之后不再参与自动解冻）；只改 pending 且尚未待复核的行。
+func (r *Repo) MarkEntryReview(ctx context.Context, id uuid.UUID, reason string, at time.Time) (bool, error) {
+	res := r.d.Conn(ctx).Model(&model.Entry{}).
+		Where("id = ? AND status = ? AND NOT review_required", id, "pending").
+		Updates(map[string]any{
+			"review_required": true,
+			"review_reason":   reason,
+			"updated_at":      at,
+		})
+	if res.Error != nil {
+		return false, mapErr(res.Error)
+	}
+	return res.RowsAffected == 1, nil
 }

@@ -66,6 +66,7 @@ func (m *Module) settle(ctx context.Context, _ *asynq.Task) error {
 			zap.Int("scanned", stats.Scanned),
 			zap.Int("settled", stats.Settled),
 			zap.Int("skipped", stats.Skipped),
+			zap.Int("quarantined", stats.Quarantined),
 			zap.Int("failed", stats.Failed))
 	}
 	if err != nil {

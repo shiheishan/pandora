@@ -125,8 +125,9 @@ type myCommissionResponse struct {
 	Transfers   []myTransferResponse      `json:"transfers"`
 }
 
-// overviewResponse 是后台分销概览（平铺字段）。
-type overviewResponse struct {
+// currencyOverviewResponse 是后台分销概览里某一币种的一组（金额为分）。
+type currencyOverviewResponse struct {
+	Currency           string `json:"currency"`
 	Pending            int64  `json:"pending"`
 	Available          int64  `json:"available"`
 	PaidOut            int64  `json:"paid_out"`
@@ -135,11 +136,25 @@ type overviewResponse struct {
 	Entries            int64  `json:"entries"`
 	NeedReview         int64  `json:"need_review"`
 	WaitingWithdrawals int64  `json:"waiting_withdrawals"`
-	InvitedUsers       int64  `json:"invited_users"`
-	RatePercent        int    `json:"rate_percent"`
-	FreezeDays         int    `json:"freeze_days"`
-	MinWithdraw        int64  `json:"min_withdraw"`
-	Scope              string `json:"scope"`
+}
+
+// overviewResponse 是后台分销概览：平铺的金额字段是站点币种（currency）那一组，笔数是全部币种合计；by_currency 按币种列出。
+type overviewResponse struct {
+	Currency           string                     `json:"currency"`
+	ByCurrency         []currencyOverviewResponse `json:"by_currency"`
+	Pending            int64                      `json:"pending"`
+	Available          int64                      `json:"available"`
+	PaidOut            int64                      `json:"paid_out"`
+	ThisMonth          int64                      `json:"this_month"`
+	TotalEarned        int64                      `json:"total_earned"`
+	Entries            int64                      `json:"entries"`
+	NeedReview         int64                      `json:"need_review"`
+	WaitingWithdrawals int64                      `json:"waiting_withdrawals"`
+	InvitedUsers       int64                      `json:"invited_users"`
+	RatePercent        int                        `json:"rate_percent"`
+	FreezeDays         int                        `json:"freeze_days"`
+	MinWithdraw        int64                      `json:"min_withdraw"`
+	Scope              string                     `json:"scope"`
 }
 
 // adminWithdrawalResponse 是后台提现列表一行。
@@ -298,23 +313,10 @@ func myCommissionFrom(mc service.MyCommission) (myCommissionResponse, error) {
 
 // overviewFrom 把 service.Overview 转成响应 DTO。
 func overviewFrom(o service.Overview) (overviewResponse, error) {
-	pending, err := cents(o.Pending)
-	if err != nil {
-		return overviewResponse{}, err
-	}
-	avail, err := cents(o.Available)
-	if err != nil {
-		return overviewResponse{}, err
-	}
-	paid, err := cents(o.PaidOut)
-	if err != nil {
-		return overviewResponse{}, err
-	}
-	month, err := cents(o.ThisMonth)
-	if err != nil {
-		return overviewResponse{}, err
-	}
-	total, err := cents(o.TotalEarned)
+	top, err := currencyOverviewFrom(service.CurrencyOverview{
+		Currency: o.Currency, Pending: o.Pending, Available: o.Available, PaidOut: o.PaidOut,
+		ThisMonth: o.ThisMonth, TotalEarned: o.TotalEarned,
+	})
 	if err != nil {
 		return overviewResponse{}, err
 	}
@@ -322,12 +324,22 @@ func overviewFrom(o service.Overview) (overviewResponse, error) {
 	if err != nil {
 		return overviewResponse{}, err
 	}
+	rows := make([]currencyOverviewResponse, 0, len(o.ByCurrency))
+	for _, c := range o.ByCurrency {
+		row, err := currencyOverviewFrom(c)
+		if err != nil {
+			return overviewResponse{}, err
+		}
+		rows = append(rows, row)
+	}
 	return overviewResponse{
-		Pending:            pending,
-		Available:          avail,
-		PaidOut:            paid,
-		ThisMonth:          month,
-		TotalEarned:        total,
+		Currency:           string(o.Currency),
+		ByCurrency:         rows,
+		Pending:            top.Pending,
+		Available:          top.Available,
+		PaidOut:            top.PaidOut,
+		ThisMonth:          top.ThisMonth,
+		TotalEarned:        top.TotalEarned,
 		Entries:            o.Entries,
 		NeedReview:         o.NeedReview,
 		WaitingWithdrawals: o.WaitingWithdrawals,
@@ -336,6 +348,30 @@ func overviewFrom(o service.Overview) (overviewResponse, error) {
 		FreezeDays:         o.FreezeDays,
 		MinWithdraw:        minW,
 		Scope:              o.Scope,
+	}, nil
+}
+
+// currencyOverviewFrom 把一组币种汇总转成分。
+func currencyOverviewFrom(c service.CurrencyOverview) (currencyOverviewResponse, error) {
+	vals := []decimal.Decimal{c.Pending, c.Available, c.PaidOut, c.ThisMonth, c.TotalEarned}
+	out := make([]int64, len(vals))
+	for i, v := range vals {
+		n, err := cents(v)
+		if err != nil {
+			return currencyOverviewResponse{}, err
+		}
+		out[i] = n
+	}
+	return currencyOverviewResponse{
+		Currency:           string(c.Currency),
+		Pending:            out[0],
+		Available:          out[1],
+		PaidOut:            out[2],
+		ThisMonth:          out[3],
+		TotalEarned:        out[4],
+		Entries:            c.Entries,
+		NeedReview:         c.NeedReview,
+		WaitingWithdrawals: c.WaitingWithdrawals,
 	}, nil
 }
 
