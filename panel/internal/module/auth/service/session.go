@@ -118,6 +118,20 @@ func (s *Service) Refresh(ctx context.Context, audience, raw string) (Tokens, er
 			return Tokens{}, errSessionInvalid
 		}
 
+		if audience == authn.AudienceAdmin {
+			// 兜底：取消管理员或停用账号时的吊销万一漏了（如提交后补扫失败），续期这一步也不放行，最坏窗口是一个 access 寿命
+			ok, err := s.stillAdmin(ctx, st.UserID)
+			if err != nil {
+				return Tokens{}, err
+			}
+			if !ok {
+				if _, err := s.sessions.revokeOne(ctx, sid, st.UserID, audience); err != nil {
+					return Tokens{}, errs.Wrap(errs.Unavailable, err)
+				}
+				return Tokens{}, errSessionInvalid
+			}
+		}
+
 		status, ss, err := s.sessions.rotate(ctx, sid, st.UserID, audience, now, s.idleTimeout(audience), mode, expect, newHash)
 		if err != nil {
 			return Tokens{}, errs.Wrap(errs.Unavailable, err)

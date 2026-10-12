@@ -134,17 +134,17 @@ func (s *Service) GrantAdmin(ctx context.Context, userID uuid.UUID) error {
 }
 
 // RevokeAdmin 取消用户的管理员身份（pandora admin revoke）。本来就不是管理员时什么都不做、不写审计；
-// 取消后没有可登录的管理员时整体回滚；成功时同事务吊销其后台会话（提交后再补扫一遍）。
+// 取消后没有可登录的管理员时拒绝（先查后删，什么都不改）；成功时同事务吊销其后台会话（提交后再补扫一遍）。
 func (s *Service) RevokeAdmin(ctx context.Context, userID uuid.UUID) error {
 	return s.tx.Do(ctx, func(ctx context.Context) error {
 		if err := s.store.LockAdminSet(ctx); err != nil {
 			return errs.Wrap(errs.Internal, err)
 		}
-		deleted, err := s.store.DeleteAdmin(ctx, userID)
+		admin, err := s.store.IsAdmin(ctx, userID)
 		if err != nil {
 			return errs.Wrap(errs.Internal, err)
 		}
-		if !deleted {
+		if !admin {
 			return nil
 		}
 		left, err := s.activeAdmins(ctx, userID)
@@ -153,6 +153,9 @@ func (s *Service) RevokeAdmin(ctx context.Context, userID uuid.UUID) error {
 		}
 		if len(left) == 0 {
 			return errLastAdmin
+		}
+		if _, err := s.store.DeleteAdmin(ctx, userID); err != nil {
+			return errs.Wrap(errs.Internal, err)
 		}
 		if err := s.audit.Write(ctx, auditsvc.Event{
 			Action:       ActionAdminRevoked,
@@ -163,6 +166,26 @@ func (s *Service) RevokeAdmin(ctx context.Context, userID uuid.UUID) error {
 		}
 		return s.revokeSessions(ctx, userID, "", revokeAdmin)
 	})
+}
+
+// stillAdmin 报告用户此刻是否仍是可登录的管理员（在名单里且账号 active）；后台 refresh 用它兜底，
+// 不只靠取消管理员、停用账号时的会话吊销。
+func (s *Service) stillAdmin(ctx context.Context, userID uuid.UUID) (bool, error) {
+	admin, err := s.store.IsAdmin(ctx, userID)
+	if err != nil {
+		return false, errs.Wrap(errs.Internal, err)
+	}
+	if !admin {
+		return false, nil
+	}
+	u, err := s.users.Get(ctx, userID)
+	if err != nil {
+		if errs.As(err).Code == errs.NotFound {
+			return false, nil
+		}
+		return false, err
+	}
+	return u.Status == UserStatusActive, nil
 }
 
 // ListAdmins 列出管理员名单（pandora admin list），按邮箱升序。

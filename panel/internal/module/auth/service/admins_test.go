@@ -103,7 +103,10 @@ func TestRevokeAdmin(t *testing.T) {
 	if err := h.S.RevokeAdmin(ctx, a); !errors.Is(err, errLastAdmin) || errs.As(err).Code != errs.Conflict {
 		t.Fatalf("取消最后一个管理员应 409: %v", err)
 	}
-	// 假事务不回滚：这里只断言错误；真回滚由 PG 用例覆盖
+	// 先查后删：被拒时名单不变（不依赖事务回滚）
+	if ok, _ := h.Store.IsAdmin(ctx, a); !ok {
+		t.Fatal("取消被拒后 a 应仍在名单里")
+	}
 }
 
 func TestEnsureNotLastAdmin(t *testing.T) {

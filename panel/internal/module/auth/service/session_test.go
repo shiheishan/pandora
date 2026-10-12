@@ -77,6 +77,38 @@ func TestRefreshRotateGraceReuse(t *testing.T) {
 	}
 }
 
+func TestAdminRefreshRechecksAdmin(t *testing.T) {
+	h := newTestService(t)
+	ctx := testCtx("203.0.113.7")
+	a := h.Users.addUser("keep@example.com", "pass", UserStatusActive)
+	b := h.Users.addUser("gone@example.com", "pass", UserStatusActive)
+	h.Store.addAdmin(a)
+	h.Store.addAdmin(b)
+
+	tokA := adminLogin(t, h, ctx, "keep@example.com", "pass")
+	tokB := adminLogin(t, h, ctx, "gone@example.com", "pass")
+	if _, err := h.S.Refresh(ctx, authn.AudienceAdmin, tokB.Refresh); err != nil {
+		t.Fatalf("仍是管理员时 refresh: %v", err)
+	}
+
+	// 绕过 RevokeAdmin 直接移出名单，模拟会话吊销漏掉的情形：refresh 也要拒绝并删掉会话
+	delete(h.Store.admins, b)
+	if _, err := h.S.Refresh(ctx, authn.AudienceAdmin, tokB.Refresh); !errors.Is(err, errSessionInvalid) {
+		t.Fatalf("已不是管理员的 refresh 应 401: %v", err)
+	}
+	if _, err := h.S.Authenticate(ctx, authn.AudienceAdmin, tokB.AccessToken); err == nil {
+		t.Fatal("refresh 被拒后会话应已删除")
+	}
+
+	// 账号不再 active 同理
+	u := h.Users.users[a]
+	u.Status = "suspended"
+	h.Users.users[a] = u
+	if _, err := h.S.Refresh(ctx, authn.AudienceAdmin, tokA.Refresh); !errors.Is(err, errSessionInvalid) {
+		t.Fatalf("停用账号的 refresh 应 401: %v", err)
+	}
+}
+
 func TestRefreshWrongAudience(t *testing.T) {
 	h := newTestService(t)
 	ctx := testCtx("203.0.113.7")

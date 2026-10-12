@@ -84,12 +84,18 @@ func TestAdminsForeignKeys(t *testing.T) {
 	if grantedBy != nil {
 		t.Fatalf("granted_by=%v want NULL", grantedBy)
 	}
-	// 管理员账号被删：名单行跟着删
-	if err := d.Conn(ctx).Exec("DELETE FROM users WHERE id = ?", b).Error; err != nil {
+	// 还在名单里的账号不能删（RESTRICT）：必须先取消管理员
+	if err := d.Conn(ctx).Exec("DELETE FROM users WHERE id = ?", b).Error; err == nil {
+		t.Fatal("外键应拒绝删除仍是管理员的账号")
+	}
+	if ok, err := r.IsAdmin(ctx, b); err != nil || !ok {
+		t.Fatalf("删除被拒后 IsAdmin=%v err=%v", ok, err)
+	}
+	if _, err := r.DeleteAdmin(ctx, b); err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := r.IsAdmin(ctx, b); err != nil || ok {
-		t.Fatalf("账号删除后 IsAdmin=%v err=%v", ok, err)
+	if err := d.Conn(ctx).Exec("DELETE FROM users WHERE id = ?", b).Error; err != nil {
+		t.Fatalf("取消管理员后应能删账号: %v", err)
 	}
 	// 不存在的用户不能进名单
 	if _, err := r.InsertAdmin(ctx, uuid.New(), nil); err == nil {
