@@ -82,17 +82,17 @@ function SmtpCard({ saved }: { saved: MailSettings }) {
         </>
       }
     >
-      <Input label="服务器" mono value={form.host} placeholder="smtp.example.com" disabled={disabled} onChange={(e) => edit({ host: e.target.value })} />
+      <Input label="服务器" mono value={form.host} error={errors.smtp_host} placeholder="smtp.example.com" disabled={disabled} onChange={(e) => edit({ host: e.target.value })} />
       <div className={css.pair}>
         <Input label="端口" mono inputMode="numeric" value={form.port} error={errors.smtp_port} disabled={disabled} onChange={(e) => edit({ port: e.target.value })} />
         <Select label="加密" value={form.encryption} disabled={disabled} options={ENCRYPTIONS.map((v) => ({ value: v, label: v === 'ssl' ? 'SSL' : v === 'tls' ? 'STARTTLS' : '不加密' }))} onChange={(e) => edit({ encryption: e.target.value as SmtpForm['encryption'] })} />
       </div>
-      <Input label="用户名" mono value={form.username} disabled={disabled} onChange={(e) => edit({ username: e.target.value })} />
+      <Input label="用户名" mono value={form.username} error={errors.smtp_username} disabled={disabled} onChange={(e) => edit({ username: e.target.value })} />
       <div>
-        <Input label="密码" type="password" autoComplete="new-password" value={form.password} placeholder={saved.has_password ? '已设置，留空不修改' : '未设置'} disabled={disabled || form.clearPassword} onChange={(e) => edit({ password: e.target.value })} />
+        <Input label="密码" type="password" autoComplete="new-password" value={form.password} error={errors.smtp_password} placeholder={saved.has_password ? '已设置，留空不修改' : '未设置'} disabled={disabled || form.clearPassword} onChange={(e) => edit({ password: e.target.value })} />
         {saved.has_password && writable && <Checkbox className={css.inlineCheck} label="清除已存密码" checked={form.clearPassword} disabled={disabled} onChange={(e) => edit({ clearPassword: e.target.checked, password: '' })} />}
       </div>
-      <Input label="发件人" fieldClassName={css.span2} mono value={form.sender} error={errors.from_address} placeholder="Pandora <noreply@example.com>" disabled={disabled} onChange={(e) => edit({ sender: e.target.value })} />
+      <Input label="发件人" fieldClassName={css.span2} mono value={form.sender} error={errors.from_address ?? errors.from_name} placeholder="Pandora <noreply@example.com>" disabled={disabled} onChange={(e) => edit({ sender: e.target.value })} />
       {dirty && <div className={`${css.span2} ${css.faint}`}>有未保存的修改；发送测试用的是已保存的配置，保存后再测。</div>}
     </ChannelCard>
   )
