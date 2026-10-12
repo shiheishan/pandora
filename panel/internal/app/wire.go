@@ -172,6 +172,10 @@ func buildServices(r *runtime) (*services, error) {
 		_ = queue.Close()
 		return nil, fmt.Errorf("giftcard 缺少装配: %v", missing)
 	}
+	if missing := commissionSvc.MissingPorts(); len(missing) > 0 {
+		_ = queue.Close()
+		return nil, fmt.Errorf("commission 缺少装配: %v", missing)
+	}
 
 	return &services{
 		settings:   settingsSvc,
