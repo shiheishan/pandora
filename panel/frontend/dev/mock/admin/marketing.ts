@@ -332,6 +332,13 @@ function csvCell(v: string) {
 // 佣金与提现（契约后台-06 · 佣金与提现，R4 R6；overview 的 total_earned / invited_users / scope
 // 与 config 的 scope 后端已上线（R67 R68），前端 schema 按必填收紧，这里必须恒返回）
 // ---------------------------------------------------------------------------
+// 待复核佣金：同源嫌疑、同源检查失败、解冻时余额不足三种来源各一条
+const reviewEntries = [
+  { id: '01900000-0000-7000-8000-00000000c001', order_no: 'P20261001A1', referrer_email: 'alice@example.com', referee_email: 'bob@example.com', amount: 2580, currency: 'CNY', review_reason: '推荐人与被推荐人有相同的来源 IP', created_at: '2026-10-01T03:20:00Z', frozen_until: '2026-10-04T03:20:00Z' },
+  { id: '01900000-0000-7000-8000-00000000c002', order_no: 'P20261003B7', referrer_email: 'carol@example.com', referee_email: 'dave@example.com', amount: 990, currency: 'CNY', review_reason: '同源检查失败，转人工复核', created_at: '2026-10-03T11:05:00Z', frozen_until: '2026-10-06T11:05:00Z' },
+  { id: '01900000-0000-7000-8000-00000000c003', order_no: 'P20261005C2', referrer_email: 'erin@example.com', referee_email: 'frank@example.com', amount: 4200, currency: 'USD', review_reason: '待结佣金科目余额不足，无法解冻', created_at: '2026-10-05T08:40:00Z', frozen_until: '2026-10-08T08:40:00Z' },
+]
+
 const commission = { rate_percent: 20, freeze_days: 7, min_withdraw: 10000, scope: 'first_order' as 'first_order' | 'every_order' }
 interface Withdrawal {
   id: string
@@ -628,6 +635,28 @@ export const marketing: MockModule = {
         invited_users: 2318,
         scope: commission.scope,
       })
+    },
+    'GET /v1/commission/entries': (ctx) => {
+      if (ctx.query.get('review') !== 'required') return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { review: '只支持 review=required' })
+      const limit = Math.min(Math.max(Number(ctx.query.get('limit')) || 50, 1), 100)
+      const start = Number(ctx.query.get('cursor') || '0')
+      const page = reviewEntries.slice(start, start + limit)
+      const next = start + limit < reviewEntries.length ? String(start + limit) : ''
+      ctx.send(200, { entries: page, next_cursor: next })
+    },
+    'POST /v1/commission/entries/:id/review': async (ctx) => {
+      if (!ctx.requireReauth()) return
+      const body = await ctx.body()
+      if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
+      const extra = unknownField(body, ['action', 'reason'])
+      if (extra) return ctx.fail(400, 'bad_request', `请求体包含未知字段 "${extra}"`)
+      if (body.action !== 'approve' && body.action !== 'void') return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { action: '操作只能是 approve 或 void' })
+      const reason = text(body.reason).trim()
+      if (body.action === 'void' && [...reason].length < 5) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { reason: '作废原因至少 5 个字' })
+      const i = reviewEntries.findIndex((x) => x.id === ctx.params.id)
+      if (i < 0) return reply(ctx, notFound())
+      reviewEntries.splice(i, 1)
+      ctx.send(200, { status: body.action === 'void' ? 'voided' : 'pending' })
     },
     'GET /v1/withdrawals': (ctx) => {
       const status = ctx.query.get('status') ?? ''

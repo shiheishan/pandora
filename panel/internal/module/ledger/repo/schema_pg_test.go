@@ -359,6 +359,7 @@ func TestSourceOnceUnique(t *testing.T) {
 		{"commission_settled", "commission_entry"},
 		{"commission_paid", "withdrawal"},
 		{"gift_card_balance", "gift_card_code"},
+		{"commission_voided", "commission_entry"},
 	}
 	for _, c := range once {
 		t.Run(c.kind, func(t *testing.T) {

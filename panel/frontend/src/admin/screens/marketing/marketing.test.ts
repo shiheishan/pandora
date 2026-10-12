@@ -369,10 +369,10 @@ describe('commission', () => {
     })
 
     it('labels freeze period relative to now', () => {
-      const future = new Date('2026-12-31T23:59:00Z')
-      const past = new Date('2025-01-01T00:00:00Z')
-      expect(freezeLabel('2026-12-31T12:00:00Z', future)).toContain('冻结至')
-      expect(freezeLabel('2025-06-01T00:00:00Z', past)).toBe('冻结期已过，通过后下一轮自动解冻')
+      const before = new Date('2026-12-01T00:00:00Z')
+      const after = new Date('2025-07-01T00:00:00Z')
+      expect(freezeLabel('2026-12-31T12:00:00Z', before)).toContain('冻结至')
+      expect(freezeLabel('2025-06-01T00:00:00Z', after)).toBe('冻结期已过，通过后下一轮自动解冻')
     })
   })
 })

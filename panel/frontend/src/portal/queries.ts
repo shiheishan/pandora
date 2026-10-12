@@ -155,7 +155,7 @@ export function useActivePlanName(): string | null {
 // ---------------------------------------------------------------------------
 // CHECK 允许六种；Go 只写 pending / available，冲销由 SQL 写 reversed
 export const COMMISSION_SCOPES = ['every_order', 'first_order'] as const
-export const COMMISSION_ENTRY_STATUSES = ['pending', 'available', 'reversed', 'frozen', 'settled', 'rejected'] as const
+export const COMMISSION_ENTRY_STATUSES = ['pending', 'available', 'reversed', 'frozen', 'settled', 'rejected', 'voided'] as const
 export const WITHDRAWAL_STATUSES = ['requested', 'reviewing', 'approved', 'rejected', 'processing', 'paid', 'failed', 'returned'] as const
 
 export const commissionSchema = z.object({
