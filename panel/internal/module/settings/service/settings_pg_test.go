@@ -94,6 +94,10 @@ func TestSiteDefaultsAndRoundTrip(t *testing.T) {
 	if errs.As(err).Code != errs.ValidationFailed {
 		t.Fatalf("lowercase currency: %v", err)
 	}
+	err = svc.SetSite(ctx, SiteUpdate{Currency: ptr("EUR")})
+	if errs.As(err).Code != errs.ValidationFailed {
+		t.Fatalf("unsupported currency: %v", err)
+	}
 }
 
 // 只改时区不会把别人刚改的站点名写回旧值。

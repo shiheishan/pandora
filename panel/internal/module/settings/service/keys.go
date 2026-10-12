@@ -4,7 +4,7 @@ package service
 const (
 	keySiteName     = "site.name"     // string，1–40 字
 	keySiteTimezone = "site.timezone" // string，IANA 时区名
-	keySiteCurrency = "site.currency" // string，ISO 4217 三位大写
+	keySiteCurrency = "site.currency" // string，CNY 或 USD（pkg/money 支持的币种）
 
 	keyRegistrationMode  = "auth.registration_mode"  // string：closed / invite_only / open
 	keyEmailVerification = "auth.email_verification" // bool

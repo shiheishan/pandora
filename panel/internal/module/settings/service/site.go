@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
 // Site 读取站点级设置。
@@ -105,15 +106,9 @@ func validateSite(v Site) error {
 	if !validTimezone(v.Timezone) {
 		fields["timezone"] = "不是有效的时区"
 	}
-	if len(v.Currency) != 3 {
-		fields["currency"] = "币种须为三位大写字母代码"
-	} else {
-		for _, r := range v.Currency {
-			if r < 'A' || r > 'Z' {
-				fields["currency"] = "币种须为三位大写字母代码"
-				break
-			}
-		}
+	// 只收 money 支持的币种：别的值会让一切涉及金额的请求失败
+	if !money.Currency(v.Currency).Valid() {
+		fields["currency"] = "币种只支持 CNY 或 USD"
 	}
 	if len(fields) > 0 {
 		return errs.Invalid(fields)
