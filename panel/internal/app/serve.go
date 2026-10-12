@@ -55,8 +55,6 @@ func runServe(ctx context.Context, configPath string) error {
 
 	publicEng, adminEng := newEngines(r, svc)
 
-	// 开关缓存按纪元失效：监听变更，进程退出时随 ctx 结束
-	go svc.settings.WatchSwitches(ctx)
 
 	publicSrv := newHTTPServer(r.cfg.HTTP.Public, publicEng)
 	adminSrv := newHTTPServer(r.cfg.HTTP.Admin, adminEng)
@@ -75,6 +73,12 @@ func runServe(ctx context.Context, configPath string) error {
 	)
 
 	g, gctx := errgroup.WithContext(ctx)
+
+	// 开关缓存按纪元失效：监听变更，随 gctx 结束（监听端口失败也会收尾）
+	g.Go(func() error {
+		svc.settings.WatchSwitches(gctx)
+		return nil
+	})
 
 	g.Go(func() error {
 		if err := publicSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -138,10 +142,7 @@ func newHTTPServer(sc config.HTTPServer, h http.Handler) *http.Server {
 // 限流、权限、重认证、幂等、开关是路由级，由各模块从 Kit 取。
 func newEngines(r *runtime, svc *services) (*gin.Engine, *gin.Engine) {
 	settingsH := settingsh.New(svc.settings)
-	authH := authh.New(svc.auth, svc.limiter, authh.Options{
-		AuthPerMin:   r.cfg.RateLimit.AuthPerMin,
-		SecureCookie: r.cfg.IsProduction(),
-	})
+	authH := authh.New(svc.auth, svc.limiter, authOptions(r.cfg))
 	idemH := idemh.New(svc.idem)
 	kit := route.Kit{
 		RequireAuth:  authH.RequireAuth(),
@@ -174,6 +175,11 @@ func newEngines(r *runtime, svc *services) (*gin.Engine, *gin.Engine) {
 		m.RegisterAdmin(adminV1, kit)
 	}
 	return publicEng, adminEng
+}
+
+// authOptions 是 auth handler 的选项：refresh cookie 只在生产带 Secure（本机开发走 http）。
+func authOptions(cfg *config.Config) authh.Options {
+	return authh.Options{AuthPerMin: cfg.RateLimit.AuthPerMin, SecureCookie: cfg.IsProduction()}
 }
 
 func newEngine(r *runtime, sc config.HTTPServer, extra ...gin.HandlerFunc) *gin.Engine {

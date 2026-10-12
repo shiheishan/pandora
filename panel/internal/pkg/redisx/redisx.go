@@ -10,6 +10,15 @@ import (
 
 // New 按配置解析 URL 并创建客户端。
 func New(cfg config.Redis) (*redis.Client, error) {
+	opt, err := Options(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return redis.NewClient(opt), nil
+}
+
+// Options 按配置解析 URL 并套上池大小与超时；业务客户端与 asynq 共用这一份。
+func Options(cfg config.Redis) (*redis.Options, error) {
 	opt, err := redis.ParseURL(cfg.URL.Reveal())
 	if err != nil {
 		return nil, err
@@ -22,7 +31,7 @@ func New(cfg config.Redis) (*redis.Client, error) {
 	opt.WriteTimeout = cfg.OpTimeout
 	opt.DialTimeout = cfg.OpTimeout
 	opt.PoolTimeout = cfg.OpTimeout
-	return redis.NewClient(opt), nil
+	return opt, nil
 }
 
 // Ping 检查 Redis 是否可达。

@@ -21,7 +21,7 @@ func TestPGResetStaffPassword(t *testing.T) {
 
 	staff := e.mkUser(t, ctx, uniqEmail(t, "clis"), "Passw0rdLong1")
 	e.staff.staff[staff.ID] = true
-	if err := e.svc.ResetStaffPassword(ctx, staff.ID, "short1"); codeOf(err) != errs.ValidationFailed {
+	if err := e.svc.ResetStaffPassword(ctx, staff.ID, "Passw0rd12"); codeOf(err) != errs.ValidationFailed {
 		t.Fatalf("后台口令规则: %v", err)
 	}
 	e.revoker.calls = nil

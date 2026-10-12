@@ -7,6 +7,7 @@ import (
 
 	"github.com/aegispanel/aegis/internal/pkg/config"
 	"github.com/gin-gonic/gin"
+	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
@@ -83,5 +84,28 @@ func TestAdminCommandsAndExitCode(t *testing.T) {
 	}
 	if exitCode(&exitCodeError{code: exitNoAdministrator}) != 3 || exitCode(errors.New("x")) != 1 {
 		t.Fatal("退出码")
+	}
+}
+
+// refresh cookie 只在生产带 Secure；env 缺省就是 production。
+func TestAuthOptionsSecureCookieInProduction(t *testing.T) {
+	if !authOptions(&config.Config{Env: config.EnvProduction}).SecureCookie {
+		t.Fatal("生产环境 refresh cookie 必须带 Secure")
+	}
+	if authOptions(&config.Config{Env: config.EnvDevelopment}).SecureCookie {
+		t.Fatal("开发环境走 http，不带 Secure")
+	}
+}
+
+// asynq 与业务客户端同源解析：URL 里的用户名、口令、库号都要带上。
+func TestAsynqRedisKeepsCredentials(t *testing.T) {
+	cfg := &config.Config{Redis: config.Redis{URL: "redis://worker:pw@127.0.0.1:6380/3"}}
+	opt, err := asynqRedis(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := opt.(asynq.RedisClientOpt)
+	if o.Username != "worker" || o.Password != "pw" || o.DB != 3 || o.Addr != "127.0.0.1:6380" {
+		t.Fatalf("%+v", o)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/spf13/cobra"
@@ -216,8 +217,13 @@ func newHasAdminCmd(configPath *string) *cobra.Command {
 	}
 }
 
+// adminTimeout 是一条 pandora admin 命令的总时限：库或 Redis 不通时安装器不至于卡到 TCP 超时。
+const adminTimeout = 60 * time.Second
+
 // withServices 打开运行时与业务服务，执行 fn 后关闭。
 func withServices(ctx context.Context, configPath string, fn func(context.Context, *services) error) error {
+	ctx, cancel := context.WithTimeout(ctx, adminTimeout)
+	defer cancel()
 	r, err := openRuntime(ctx, configPath)
 	if err != nil {
 		return err

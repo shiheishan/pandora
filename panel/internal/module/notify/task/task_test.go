@@ -106,7 +106,7 @@ func TestPeriodic(t *testing.T) {
 	if ps[0].Type != service.TaskDispatch || ps[0].Cronspec != "@every 30s" {
 		t.Fatalf("dispatch %+v", ps[0])
 	}
-	if ps[1].Type != TypeRetention || ps[1].Cronspec != "47 3 * * *" {
+	if ps[1].Type != TypeRetention || ps[1].Cronspec != "53 3 * * *" {
 		t.Fatalf("retention %+v", ps[1])
 	}
 }

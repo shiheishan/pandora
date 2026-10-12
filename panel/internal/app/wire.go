@@ -20,6 +20,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
 	"github.com/aegispanel/aegis/internal/pkg/jwtx"
 	"github.com/aegispanel/aegis/internal/pkg/ratelimit"
+	"github.com/aegispanel/aegis/internal/pkg/redisx"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 	"github.com/hibiken/asynq"
 )
@@ -37,13 +38,24 @@ type services struct {
 	tx       *tx.Manager
 }
 
-// asynqRedis 从配置的 Redis URL 得到 asynq 的连接参数（与业务共用同一个 Redis）。
+// asynqRedis 给 asynq 的连接参数：与业务客户端同一套解析（redisx.Options），用户名、口令、库号、TLS、超时都同源。
 func asynqRedis(cfg *config.Config) (asynq.RedisConnOpt, error) {
-	opt, err := asynq.ParseRedisURI(cfg.Redis.URL.Reveal())
+	opt, err := redisx.Options(cfg.Redis)
 	if err != nil {
 		return nil, fmt.Errorf("解析 Redis URL: %w", err)
 	}
-	return opt, nil
+	return asynq.RedisClientOpt{
+		Network:      opt.Network,
+		Addr:         opt.Addr,
+		Username:     opt.Username,
+		Password:     opt.Password,
+		DB:           opt.DB,
+		DialTimeout:  opt.DialTimeout,
+		ReadTimeout:  opt.ReadTimeout,
+		WriteTimeout: opt.WriteTimeout,
+		PoolSize:     opt.PoolSize,
+		TLSConfig:    opt.TLSConfig,
+	}, nil
 }
 
 // buildServices 构造全部业务服务并完成模块间注入。

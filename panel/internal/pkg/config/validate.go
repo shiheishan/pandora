@@ -91,6 +91,14 @@ func (c *Config) Validate() error {
 
 	errs = append(errs, validateHTTPServer("http.public", c.HTTP.Public)...)
 	errs = append(errs, validateHTTPServer("http.admin", c.HTTP.Admin)...)
+	if c.Env == EnvProduction {
+		// 引擎只信 nginx 覆写的 X-Real-IP：监听若不在回环上，任何客户端都能伪造来源 IP，按 IP 的限流与审计聚合失效
+		for field, addr := range map[string]string{"http.public.addr": c.HTTP.Public.Addr, "http.admin.addr": c.HTTP.Admin.Addr} {
+			if host, _, err := net.SplitHostPort(addr); err == nil && !isLoopbackHost(host) {
+				errs = append(errs, fmt.Errorf("production 环境下 %s 必须绑回环地址（前面是 nginx）", field))
+			}
+		}
+	}
 
 	if c.Database.MaxConns < 2 || c.Database.MaxConns > 500 {
 		errs = append(errs, fmt.Errorf("database.max_conns 须在 [2, 500]，当前 %d", c.Database.MaxConns))

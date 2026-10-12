@@ -79,6 +79,7 @@ C=$(code "$PUB/v1/me" -H "Authorization: Bearer $UTOK")
 sec "2. refresh 轮换、随便拼的值、重放"
 
 RT1=$(rt_of "$TMP/u1" pandora_rt)
+[ -n "$RT1" ] || { bad "登录后 cookie jar 里没有 refresh" ""; exit 1; }
 R=$(curl -s -b "$TMP/u1" -c "$TMP/u1" -X POST "$PUB/v1/auth/refresh")
 NEW=$(echo "$R" | jqr "['access_token']")
 RT2=$(rt_of "$TMP/u1" pandora_rt)
@@ -113,7 +114,9 @@ C=$(code "$ADM/v1/me" -H "Authorization: Bearer $UTOK")
 [ "$C" = 401 ] && ok "门户令牌进后台 401" || bad "门户令牌进了后台" "HTTP $C"
 C=$(code "$PUB/v1/me" -H "Authorization: Bearer $ATOK")
 [ "$C" = 401 ] && ok "后台令牌进门户 401" || bad "后台令牌进了门户" "HTTP $C"
-C=$(code -X POST "$ADM/v1/auth/refresh" -b "pandora_admin_rt=$(rt_of "$TMP/u2" pandora_rt)")
+PRT=$(rt_of "$TMP/u2" pandora_rt)
+[ -n "$PRT" ] || bad "门户登录后 cookie jar 里没有 refresh" ""
+C=$(code -X POST "$ADM/v1/auth/refresh" -b "pandora_admin_rt=$PRT")
 [ "$C" = 401 ] && ok "门户 refresh 换不到后台令牌" || bad "门户 refresh 在后台可用" "HTTP $C"
 
 #-------------------------------------------------------------------------------
@@ -122,7 +125,7 @@ sec "4. IAM-006：后台登录的三种失败对外一样"
 S1=$(json -X POST "$ADM/v1/auth/login" -H 'X-Real-IP: 192.0.2.11' -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"wrong-pass-e2e\"}" | errsig)
 S2=$(json -X POST "$ADM/v1/auth/login" -H 'X-Real-IP: 192.0.2.12' -d "{\"email\":\"nobody_${RUN}@example.test\",\"password\":\"wrong-pass-e2e\"}" | errsig)
 S3=$(json -X POST "$ADM/v1/auth/login" -H 'X-Real-IP: 192.0.2.13' -d "{\"email\":\"$UE\",\"password\":\"$UP\"}" | errsig)
-[ -n "$S1" ] && [ "$S1" = "$S2" ] && [ "$S2" = "$S3" ] && ok "口令错 / 邮箱不存在 / 无角色：$S1" || bad "回应可区分" "$S1 / $S2 / $S3"
+[[ "$S1" == unauthorized\|* ]] && [ "$S1" = "$S2" ] && [ "$S2" = "$S3" ] && ok "口令错 / 邮箱不存在 / 无角色：$S1" || bad "回应可区分" "$S1 / $S2 / $S3"
 
 #-------------------------------------------------------------------------------
 sec "5. 重认证"
@@ -138,6 +141,7 @@ RTOK=$(echo "$R" | jqr "['access_token']")
 sec "6. 停用即吊销"
 
 UTOK=$(login "$PUB" "$UE" "$UP" "$TMP/u3")
+[ -n "$(rt_of "$TMP/u3" pandora_rt)" ] || bad "登录后 cookie jar 里没有 refresh" ""
 C=$(code -X POST "$ADM/v1/users/$UID_/status" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
   -d '{"status":"suspended","reason":"auth e2e"}')
 [ "$C" = 200 ] && ok "后台停用用户" || bad "停用失败" "HTTP $C"
@@ -147,7 +151,7 @@ C=$(code -X POST "$PUB/v1/auth/refresh" -b "$TMP/u3")
 [ "$C" = 401 ] && ok "停用后 refresh 401" || bad "停用后 refresh 仍可用" "HTTP $C"
 S1=$(json -X POST "$PUB/v1/auth/login" -H 'X-Real-IP: 192.0.2.21' -d "{\"email\":\"$UE\",\"password\":\"$UP\"}" | errsig)
 S2=$(json -X POST "$PUB/v1/auth/login" -H 'X-Real-IP: 192.0.2.22' -d "{\"email\":\"$UE\",\"password\":\"wrong-pass-e2e\"}" | errsig)
-[ -n "$S1" ] && [ "$S1" = "$S2" ] && ok "停用账号口令对也与口令错一样：$S1" || bad "停用状态可被探知" "$S1 / $S2"
+[[ "$S1" == unauthorized\|* ]] && [ "$S1" = "$S2" ] && ok "停用账号口令对也与口令错一样：$S1" || bad "停用状态可被探知" "$S1 / $S2"
 C=$(code -X POST "$ADM/v1/users/$UID_/status" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
   -d '{"status":"active","reason":""}')
 [ "$C" = 200 ] && ok "恢复用户" || bad "恢复失败" "HTTP $C"

@@ -190,3 +190,20 @@ func TestDefaultEnvIsProduction(t *testing.T) {
 		t.Fatalf("缺省 env 应按 production 校验: %v", err)
 	}
 }
+
+// 生产环境两个 HTTP 监听必须在回环上（只信 nginx 覆写的 X-Real-IP）；开发环境不限制。
+func TestValidateProductionHTTPAddrLoopback(t *testing.T) {
+	setMinimalValidEnv(t)
+	t.Setenv("PANDORA_ENV", "production")
+	t.Setenv("PANDORA_PUBLIC_BASE_URL", "https://panel.example.test")
+	t.Setenv("PANDORA_HTTP_ADMIN_ADDR", "0.0.0.0:9001")
+	_, err := Load("")
+	if err == nil || !strings.Contains(err.Error(), "http.admin.addr") {
+		t.Fatalf("应拒绝非回环的 admin 监听: %v", err)
+	}
+
+	t.Setenv("PANDORA_ENV", "development")
+	if _, err := Load(""); err != nil {
+		t.Fatalf("开发环境不限制: %v", err)
+	}
+}

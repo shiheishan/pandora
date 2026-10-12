@@ -57,7 +57,7 @@ func (m *Module) Periodic() []jobs.Periodic {
 			},
 		},
 		{
-			Cronspec: "47 3 * * *",
+			Cronspec: "53 3 * * *",
 			Type:     TypeRetention,
 			Opts: []asynq.Option{
 				asynq.Queue("low"),
