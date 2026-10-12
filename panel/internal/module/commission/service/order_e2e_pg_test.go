@@ -59,6 +59,7 @@ type oeEnv struct {
 	commission *Service
 	settings   *settingssvc.Service
 	audit      *auditsvc.Service
+	plans      []uuid.UUID // oeMkPlan 建的套餐，真提交用例结束时下架
 	row        func(ctx context.Context, q string, args ...any) *sql.Row
 	exec       func(ctx context.Context, q string, args ...any) error
 }
@@ -102,7 +103,7 @@ func (a oePromoCatalog) PackSubtotal(ctx context.Context, packID uuid.UUID) (str
 }
 
 // newOEEnv 按 wire.go 装配真 service；commit 为 false 时整例在测试事务里回滚。
-func newOEEnv(t *testing.T, commit bool) (*oeEnv, context.Context) {
+func newOEEnv(t *testing.T, commit bool) (e *oeEnv, ctx context.Context) {
 	t.Helper()
 	d := testkit.DB(t)
 	_, rdb := testkit.Redis(t)
@@ -140,13 +141,13 @@ func newOEEnv(t *testing.T, commit bool) (*oeEnv, context.Context) {
 	paymentSvc.UseSettler(orderSvc)
 	orderSvc.UsePaidHook(commissionSvc)
 
-	ctx := context.Background()
+	ctx = context.Background()
 	if !commit {
 		ctx = testkit.TxCtx(t, d)
 	}
 	ctx = withMeta(ctx)
 
-	e := &oeEnv{
+	e = &oeEnv{
 		order:      orderSvc,
 		payments:   paymentSvc,
 		commission: commissionSvc,
@@ -158,6 +159,26 @@ func newOEEnv(t *testing.T, commit bool) (*oeEnv, context.Context) {
 		exec: func(ctx context.Context, q string, args ...any) error {
 			return d.Conn(ctx).Exec(q, args...).Error
 		},
+	}
+	if commit {
+		// 真提交：前后都清（同 order 包的 newCommitEnv），不给共享测试库留启用的渠道、在售套餐、待解冻条目
+		clean := func() {
+			testkit.Truncate(t, d, commitTables...)
+			bg := context.Background()
+			if err := d.Conn(bg).Exec(`DELETE FROM payment_providers WHERE code <> 'offline'`).Error; err != nil {
+				t.Fatal(err)
+			}
+			if len(e.plans) > 0 {
+				if err := d.Conn(bg).Exec(`UPDATE prices SET status = 'archived' WHERE plan_id IN ?`, e.plans).Error; err != nil {
+					t.Fatal(err)
+				}
+				if err := d.Conn(bg).Exec(`UPDATE plans SET status = 'archived' WHERE id IN ?`, e.plans).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		clean()
+		t.Cleanup(clean)
 	}
 	return e, ctx
 }
@@ -205,6 +226,7 @@ func (e *oeEnv) oeMkPlan(t *testing.T, ctx context.Context, unitCents int64) (pl
 		planID, money.FromCents(unitCents)).Scan(&priceID); err != nil {
 		t.Fatal(err)
 	}
+	e.plans = append(e.plans, planID)
 	return planID, priceID
 }
 

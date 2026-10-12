@@ -72,6 +72,7 @@ func TestSettleUnderfundedQuarantines(t *testing.T) {
 // 多个 SettleDue 真并发（各自提交）：每条到期佣金恰好解冻一次，可提现科目等于佣金合计。
 func TestConcurrentSettleDue(t *testing.T) {
 	e, _ := newEnv(t)
+	e.cleanCommitted(t)
 	ctx := commitCtx()
 	admin := newUser(t, e, ctx)
 	prev, err := e.settings.Commission(ctx)

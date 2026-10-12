@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -263,5 +264,55 @@ func TestAccrueSourceCheckFailClosed(t *testing.T) {
 	}
 	if bal := accountBalance(t, e, ctx, referrer, ledgersvc.UserCommissionAvailable); !bal.IsZero() {
 		t.Fatalf("待复核的佣金被解冻了: %s", bal)
+	}
+}
+
+// divZeroSources 在同源查询里真执行一条会失败的 SQL：事务被作废，只有保存点能把它救回来。
+type divZeroSources struct {
+	exec func(ctx context.Context, q string, args ...any) error
+}
+
+func (d divZeroSources) SharesSource(ctx context.Context, _, _ uuid.UUID) (bool, error) {
+	return false, d.exec(ctx, `SELECT 1/0`)
+}
+
+// 同源查询里的 SQL 失败后，保存点把事务救回：计提分录与条目照常写入并转复核，事务里后续语句照常执行。
+func TestAccrueSourceSQLFailureRescuedBySavepoint(t *testing.T) {
+	e, ctx := newEnv(t)
+	admin := newUser(t, e, ctx)
+	setConfig(t, e, ctx, admin, 10, 3, "100.00", "every_order")
+	referrer, buyer := newUser(t, e, ctx), newUser(t, e, ctx)
+	refer(e, buyer, referrer)
+	e.svc.UseSourceMatcher(divZeroSources{exec: e.exec})
+
+	o := newPaidOrder(t, e, ctx, buyer, "100.00")
+	if err := e.svc.OnOrderPaid(ctx, o); err != nil {
+		t.Fatalf("同源查询 SQL 失败不该挡结算: %v", err)
+	}
+	var review bool
+	var reason *string
+	if err := e.row(ctx, `SELECT review_required, review_reason FROM commission_entries WHERE order_id = ?`, o.OrderID).
+		Scan(&review, &reason); err != nil {
+		t.Fatalf("事务应已被保存点救回: %v", err)
+	}
+	if !review || reason == nil || *reason != reviewSourceCheckFailed {
+		t.Fatalf("应转复核: review=%v reason=%v", review, reason)
+	}
+	var n int
+	if err := e.row(ctx, `SELECT count(*) FROM ledger_transactions WHERE kind = 'commission_accrued' AND source_id = ?`, o.OrderID).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("计提分录 %d 笔 err=%v", n, err)
+	}
+	if bal := accountBalance(t, e, ctx, referrer, ledgersvc.UserCommissionPending); !bal.Equal(dec2("10.00")) {
+		t.Fatalf("待结佣金科目 %s", bal)
+	}
+	// 同一事务里接着计提另一单（查询照旧失败、照旧被救回），写库照常
+	b2 := newUser(t, e, ctx)
+	refer(e, b2, referrer)
+	o2 := newPaidOrder(t, e, ctx, b2, "50.00")
+	if err := e.svc.OnOrderPaid(ctx, o2); err != nil {
+		t.Fatalf("第二单: %v", err)
+	}
+	if bal := accountBalance(t, e, ctx, referrer, ledgersvc.UserCommissionPending); !bal.Equal(dec2("15.00")) {
+		t.Fatalf("两单后待结佣金科目 %s", bal)
 	}
 }

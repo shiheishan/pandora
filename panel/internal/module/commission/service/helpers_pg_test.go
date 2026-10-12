@@ -96,6 +96,16 @@ func (f *fakeSources) SharesSource(_ context.Context, a, b uuid.UUID) (bool, err
 	return f.same[[2]uuid.UUID{a, b}], nil
 }
 
+// commitTables 是真提交用例前后要清的表（同 order 包的 orderCommitTables，加上本模块的三张表；
+// CASCADE 带走订单子表、预留、订阅子表等）。不留会被别的包或解冻扫描扫到的数据。
+var commitTables = []string{
+	"commission_transfers", "withdrawals", "commission_entries",
+	"orders", "plan_purchase_counters",
+	"late_payment_cases", "payment_events", "payments", "payment_intents",
+	"balance_holds", "coupon_redemptions", "subscriptions",
+	"ledger_entries", "ledger_transactions", "ledger_accounts",
+}
+
 type env struct {
 	svc      *Service
 	ledger   *ledgersvc.Service
@@ -103,6 +113,15 @@ type env struct {
 	refs     *fakeRefs
 	row      func(ctx context.Context, q string, args ...any) *sql.Row
 	exec     func(ctx context.Context, q string, args ...any) error
+	truncate func(t *testing.T) // 清 commitTables
+}
+
+// cleanCommitted 给真提交的用例在开始前、结束后各清一次表（同 order 包的 newCommitEnv）。
+// 要在改分销参数之前调用：t.Cleanup 后进先出，参数先还原、表后清。
+func (e *env) cleanCommitted(t *testing.T) {
+	t.Helper()
+	e.truncate(t)
+	t.Cleanup(func() { e.truncate(t) })
 }
 
 // newEnv 建好全部真依赖（settings、ledger、audit 连测试库），推荐关系用假实现。
@@ -147,11 +166,15 @@ func newEnv(t *testing.T) (*env, context.Context) {
 		exec: func(ctx context.Context, q string, args ...any) error {
 			return d.Conn(ctx).Exec(q, args...).Error
 		},
+		truncate: func(t *testing.T) {
+			t.Helper()
+			testkit.Truncate(t, d, commitTables...)
+		},
 	}
 	return e, withMeta(testkit.TxCtx(t, d))
 }
 
-// commitCtx 是不在测试事务里的 ctx：service 自己开事务、真提交（并发用例用）。数据靠随机邮箱与订单号互不干扰，不清理。
+// commitCtx 是不在测试事务里的 ctx：service 自己开事务、真提交（并发用例用）。用它的用例先调 cleanCommitted。
 func commitCtx() context.Context { return withMeta(context.Background()) }
 
 func withMeta(ctx context.Context) context.Context {

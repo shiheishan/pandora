@@ -108,6 +108,7 @@ func TestTransferRespectsInFlightWithdrawal(t *testing.T) {
 // TestConcurrentWithdrawAndTransfer 让同一用户的提现与转余额真并发（各自提交），全额只能被拿走一次。
 func TestConcurrentWithdrawAndTransfer(t *testing.T) {
 	e, _ := newEnv(t)
+	e.cleanCommitted(t)
 	ctx := commitCtx()
 	admin := newUser(t, e, ctx)
 
