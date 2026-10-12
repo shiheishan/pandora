@@ -8,6 +8,7 @@ import (
 	"github.com/aegispanel/aegis/internal/module/auth/repo"
 	"github.com/aegispanel/aegis/internal/module/auth/service"
 	"github.com/aegispanel/aegis/internal/pkg/testkit"
+	"github.com/google/uuid"
 )
 
 func newRepoPG(t *testing.T) (*repo.Repo, context.Context) {
@@ -121,5 +122,25 @@ func TestEveryRolePermissionIsKnown(t *testing.T) {
 		if !service.IsPermission(code) {
 			t.Fatalf("unknown permission in role_permissions: %q", code)
 		}
+	}
+}
+
+func TestStaffQueriesWithoutBindings(t *testing.T) {
+	r, ctx := newRepoPG(t)
+	a, b := uuid.New(), uuid.New()
+	staff, err := r.HasAnyRole(ctx, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if staff {
+		t.Fatal("HasAnyRole: 没有绑定却为 true")
+	}
+	// 目标没有任何生效权限：任何操作者都覆盖它
+	ok, err := r.Covers(ctx, a, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("Covers: 目标无权限时应为 true")
 	}
 }
