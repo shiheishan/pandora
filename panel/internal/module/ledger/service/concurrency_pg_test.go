@@ -2,10 +2,10 @@ package service
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"testing"
 
+	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
@@ -14,6 +14,7 @@ func TestConcurrentDebitsNoOverdraft(t *testing.T) {
 		t.Skip()
 	}
 	e, ctx := newCommitEnv(t)
+	admin := e.mkUser(t, ctx)
 	user := e.mkUser(t, ctx)
 	cur := money.CNY
 	e.fund(t, ctx, user, cur, "10.00")
@@ -21,31 +22,24 @@ func TestConcurrentDebitsNoOverdraft(t *testing.T) {
 	const n = 20
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	var okCount, insufCount int
+	var okCount, conflictCount int
 	var other []error
-
-	amt := dec("1.00")
-	susp := PlatformAccount(Suspense, RefManualAdjust)
-	userBal := UserAccount(UserBalance, user)
 
 	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := e.svc.Post(context.Background(), Posting{
-				Kind:     KindBalanceAdjusted,
-				Currency: cur,
-				Memo:     "并发扣减测试",
-				Legs: []Leg{
-					{Account: userBal, Direction: Debit, Amount: amt},
-					{Account: susp, Direction: Credit, Amount: amt},
-				},
+			_, err := e.svc.AdjustBalance(asAdmin(ctx, admin), Adjustment{
+				UserID:   user,
+				Amount:   dec("-1.00"),
+				Currency: string(cur),
+				Reason:   "并发扣减测试",
 			})
 			mu.Lock()
 			if err == nil {
 				okCount++
-			} else if errors.Is(err, ErrInsufficientBalance) {
-				insufCount++
+			} else if codeOf(err) == errs.Conflict {
+				conflictCount++
 			} else {
 				other = append(other, err)
 			}
@@ -57,8 +51,8 @@ func TestConcurrentDebitsNoOverdraft(t *testing.T) {
 	for _, err := range other {
 		t.Errorf("意外错误: %v", err)
 	}
-	if okCount != 10 || insufCount != 10 {
-		t.Fatalf("成功应为 10、余额不足应为 10，得 ok=%d insuf=%d", okCount, insufCount)
+	if okCount != 10 || conflictCount != 10 {
+		t.Fatalf("成功应为 10、Conflict 应为 10，得 ok=%d conflict=%d", okCount, conflictCount)
 	}
 	if !e.balanceOf(t, ctx, user, cur).Equal(dec("0.00")) {
 		t.Fatalf("最终余额应为 0，得 %s", e.balanceOf(t, ctx, user, cur))
@@ -80,7 +74,7 @@ func TestConcurrentOppositeOrderNoDeadlock(t *testing.T) {
 	const n = 40
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	var errs []error
+	var errList []error
 	amt := dec("1.00")
 
 	for i := 0; i < n; i++ {
@@ -107,14 +101,14 @@ func TestConcurrentOppositeOrderNoDeadlock(t *testing.T) {
 			})
 			if err != nil {
 				mu.Lock()
-				errs = append(errs, err)
+				errList = append(errList, err)
 				mu.Unlock()
 			}
 		}(i)
 	}
 	wg.Wait()
 
-	for _, err := range errs {
+	for _, err := range errList {
 		t.Errorf("Post 失败: %v", err)
 	}
 	if !e.balanceOf(t, ctx, a, cur).Equal(dec("100.00")) || !e.balanceOf(t, ctx, b, cur).Equal(dec("100.00")) {
@@ -134,7 +128,7 @@ func TestConcurrentEnsureSameAccount(t *testing.T) {
 	const n = 10
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	var errs []error
+	var errList []error
 
 	for i := 0; i < n; i++ {
 		wg.Add(1)
@@ -150,14 +144,14 @@ func TestConcurrentEnsureSameAccount(t *testing.T) {
 			})
 			if err != nil {
 				mu.Lock()
-				errs = append(errs, err)
+				errList = append(errList, err)
 				mu.Unlock()
 			}
 		}()
 	}
 	wg.Wait()
 
-	for _, err := range errs {
+	for _, err := range errList {
 		t.Errorf("fund 失败: %v", err)
 	}
 	if !e.balanceOf(t, ctx, user, cur).Equal(dec("10.00")) {

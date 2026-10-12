@@ -76,12 +76,10 @@ func newEnv(t *testing.T) (*env, context.Context) {
 func newCommitEnv(t *testing.T) (*env, context.Context) {
 	t.Helper()
 	d := testkit.DB(t)
-	testkit.Truncate(t, d,
-		"balance_holds",
-		"ledger_entries",
-		"ledger_transactions",
-		"ledger_accounts",
-	)
+	// 真提交的用例开头清空本模块四张表，结束时再清一次，不把已提交的账留给后面在回滚事务里跑的用例
+	ledgerTables := []string{"balance_holds", "ledger_entries", "ledger_transactions", "ledger_accounts"}
+	testkit.Truncate(t, d, ledgerTables...)
+	t.Cleanup(func() { testkit.Truncate(t, d, ledgerTables...) })
 	_, rdb := testkit.Redis(t)
 
 	master := make([]byte, 32)

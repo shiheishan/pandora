@@ -17,6 +17,9 @@ func TestAdjustCredit(t *testing.T) {
 	user := e.mkUser(t, ctx)
 	ctx = asAdmin(ctx, admin)
 	reason := "补偿线路故障"
+	susp := PlatformAccount(Suspense, RefManualAdjust)
+	// suspense/manual_adjust 是全库共用的平台科目，只核对本用例带来的变化
+	suspBefore := e.accountBalance(t, ctx, susp, money.CNY)
 
 	res, err := e.svc.AdjustBalance(ctx, Adjustment{
 		UserID:   user,
@@ -33,9 +36,8 @@ func TestAdjustCredit(t *testing.T) {
 	if !e.balanceOf(t, ctx, user, money.CNY).Equal(dec("12.50")) {
 		t.Fatalf("用户余额应为 12.50")
 	}
-	susp := PlatformAccount(Suspense, RefManualAdjust)
-	if !e.accountBalance(t, ctx, susp, money.CNY).Equal(dec("12.50")) {
-		t.Fatalf("suspense/manual_adjust 应为 12.50")
+	if got := e.accountBalance(t, ctx, susp, money.CNY).Sub(suspBefore); !got.Equal(dec("12.50")) {
+		t.Fatalf("suspense/manual_adjust 应增加 12.50，得 %s", got)
 	}
 
 	var kind, memo, actorKind, sourceType string
@@ -111,8 +113,9 @@ func TestAdjustOverdraft(t *testing.T) {
 	if err := e.row(ctx, `SELECT count(*) FROM audit_events WHERE action = 'balance.adjusted' AND resource_id = ?`, user).Scan(&auditN); err != nil {
 		t.Fatal(err)
 	}
-	if auditN != 0 {
-		t.Fatalf("失败调账不应写审计，得 %d", auditN)
+	// 只有前面成功的那笔 +3 写了审计；失败的扣减不写（随事务回滚）
+	if auditN != 1 {
+		t.Fatalf("审计应只有成功调账的 1 条，得 %d", auditN)
 	}
 }
 

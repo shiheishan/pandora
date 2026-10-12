@@ -405,3 +405,35 @@ func TestHolds(t *testing.T) {
 		}
 	})
 }
+
+func TestTransactionExists(t *testing.T) {
+	d := testkit.DB(t)
+	ctx := testkit.TxCtx(t, d)
+	r := New(d)
+	g := d.Conn(ctx)
+
+	src := "order"
+	order := uuid.New()
+	if _, err := insertTxn(g, "order_paid", "CNY", &src, &order); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name   string
+		kind   string
+		source uuid.UUID
+		want   bool
+	}{
+		{"同 kind 同来源", "order_paid", order, true},
+		{"别的 kind", "balance_hold", order, false},
+		{"别的来源", "order_paid", uuid.New(), false},
+	}
+	for _, c := range cases {
+		got, err := r.TransactionExists(ctx, c.kind, "order", c.source)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if got != c.want {
+			t.Fatalf("%s: want %v, got %v", c.name, c.want, got)
+		}
+	}
+}

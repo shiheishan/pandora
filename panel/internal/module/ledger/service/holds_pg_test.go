@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
 )
@@ -90,6 +91,9 @@ func TestHoldTwice(t *testing.T) {
 	if !errors.Is(err, ErrHoldExists) {
 		t.Fatalf("第二次冻结应 ErrHoldExists，得 %v", err)
 	}
+	if !e.balanceOf(t, ctx, user, cur).Equal(dec("9.00")) {
+		t.Fatalf("ErrHoldExists 后同一 ctx 可用余额应为 9，得 %s", e.balanceOf(t, ctx, user, cur))
+	}
 }
 
 func TestPostOrderPaidMixed(t *testing.T) {
@@ -158,6 +162,109 @@ func TestPostOrderPaidChannelOnly(t *testing.T) {
 	})
 	if !errors.Is(err, ErrDuplicatePosting) {
 		t.Fatalf("第二笔应 ErrDuplicatePosting，得 %v", err)
+	}
+	var paidN int64
+	if err := e.row(ctx, `SELECT count(*) FROM ledger_transactions WHERE kind='order_paid' AND source_id = ?`, order).Scan(&paidN); err != nil {
+		t.Fatal(err)
+	}
+	if paidN != 1 {
+		t.Fatalf("重复后 order_paid 应仍为 1 笔，得 %d", paidN)
+	}
+}
+
+func TestPostOrderPaidAfterRelease(t *testing.T) {
+	e, ctx := newEnv(t)
+	user := e.mkUser(t, ctx)
+	cur := money.USD
+	order := uuid.New()
+	e.fund(t, ctx, user, cur, "10.00")
+	if _, err := e.svc.HoldForOrder(ctx, HoldInput{
+		OrderID: order, UserID: user, Currency: cur, Amount: dec("3.00"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ok, err := e.svc.ReleaseOrderHold(ctx, order, "释放后支付")
+	if err != nil || !ok {
+		t.Fatalf("释放应成功: ok=%v err=%v", ok, err)
+	}
+	_, err = e.svc.PostOrderPaid(ctx, OrderPaid{
+		OrderID: order, UserID: user, Currency: cur,
+		Total: dec("10.00"), Paid: dec("7.00"), Provider: "epay",
+	})
+	if !errors.Is(err, ErrHoldReleased) {
+		t.Fatalf("冻结已释放后结算应 ErrHoldReleased，得 %v", err)
+	}
+	if codeOf(err) != errs.Conflict {
+		t.Fatalf("ErrHoldReleased 应为 Conflict，得 %s", codeOf(err))
+	}
+	if !e.balanceOf(t, ctx, user, cur).Equal(dec("10.00")) {
+		t.Fatalf("余额应仍为 10，得 %s", e.balanceOf(t, ctx, user, cur))
+	}
+	e.assertNoDrift(t, ctx)
+}
+
+func TestCaptureFromBalance(t *testing.T) {
+	e, ctx := newEnv(t)
+	user := e.mkUser(t, ctx)
+	cur := money.USD
+	order := uuid.New()
+	e.fund(t, ctx, user, cur, "10.00")
+
+	h, txnID, err := e.svc.CaptureFromBalance(ctx, HoldInput{
+		OrderID: order, UserID: user, Currency: cur, Amount: dec("4.00"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.Status != HoldCaptured {
+		t.Fatalf("状态应为 captured，得 %s", h.Status)
+	}
+	if h.CaptureTxnID == nil || *h.CaptureTxnID != txnID || txnID == uuid.Nil {
+		t.Fatalf("CaptureTxnID 应等于返回的 txnID: cap=%v txn=%v", h.CaptureTxnID, txnID)
+	}
+	if !e.balanceOf(t, ctx, user, cur).Equal(dec("6.00")) {
+		t.Fatalf("用户余额应为 6")
+	}
+	if !e.accountBalance(t, ctx, UserAccount(UserBalanceHold, user), cur).Equal(dec("0")) {
+		t.Fatalf("hold 科目应为 0")
+	}
+	if !e.accountBalance(t, ctx, PlatformAccount(PlatformRevenue, RefMain), cur).Equal(dec("4.00")) {
+		t.Fatalf("revenue 应为 4")
+	}
+	var st string
+	var capID string
+	if err := e.row(ctx, `SELECT status, capture_txn_id::text FROM balance_holds WHERE order_id = ?`, order).Scan(&st, &capID); err != nil {
+		t.Fatal(err)
+	}
+	if st != HoldCaptured || capID != txnID.String() {
+		t.Fatalf("hold 行应为 captured 且 capture_txn_id 匹配: %s %s", st, capID)
+	}
+	_, err = e.svc.ReleaseOrderHold(ctx, order, "")
+	if !errors.Is(err, ErrHoldCaptured) {
+		t.Fatalf("已扣款后释放应 ErrHoldCaptured，得 %v", err)
+	}
+	_, _, err = e.svc.CaptureFromBalance(ctx, HoldInput{
+		OrderID: order, UserID: user, Currency: cur, Amount: dec("4.00"),
+	})
+	if !errors.Is(err, ErrHoldExists) {
+		t.Fatalf("同单再 Capture 应 ErrHoldExists，得 %v", err)
+	}
+	if !e.balanceOf(t, ctx, user, cur).Equal(dec("6.00")) {
+		t.Fatalf("ErrHoldExists 后余额应仍为 6，得 %s", e.balanceOf(t, ctx, user, cur))
+	}
+	e.assertNoDrift(t, ctx)
+}
+
+func TestCaptureFromBalanceInsufficient(t *testing.T) {
+	e, ctx := newEnv(t)
+	user := e.mkUser(t, ctx)
+	cur := money.USD
+	e.fund(t, ctx, user, cur, "3.00")
+	_, _, err := e.svc.CaptureFromBalance(ctx, HoldInput{
+		OrderID: uuid.New(), UserID: user, Currency: cur, Amount: dec("4.00"),
+	})
+	if !errors.Is(err, ErrInsufficientBalance) {
+		t.Fatalf("余额不足应 ErrInsufficientBalance，得 %v", err)
 	}
 }
 

@@ -19,6 +19,14 @@ import (
 // ledgerTables 是需要真提交的用例开头要清的表。
 var ledgerTables = []string{"balance_holds", "ledger_entries", "ledger_transactions", "ledger_accounts"}
 
+// cleanLedger 给真提交的用例用：开头清空本模块四张表，用例结束时再清一次，
+// 不把已提交的账（尤其是绕过 Go、余额缓存与分录对不上的原始 SQL 账）留给后面在回滚事务里跑的用例。
+func cleanLedger(t *testing.T, d *db.DB) {
+	t.Helper()
+	testkit.Truncate(t, d, ledgerTables...)
+	t.Cleanup(func() { testkit.Truncate(t, d, ledgerTables...) })
+}
+
 // pgCode 取 PostgreSQL 错误码，取不到返回空串。
 func pgCode(err error) string {
 	var pgErr *pgconn.PgError
@@ -39,16 +47,22 @@ func mkUser(t *testing.T, g *gorm.DB) uuid.UUID {
 	return id
 }
 
-// mkPlatformAccount 直接插一个平台类科目。
+// mkPlatformAccount 直接插一个平台类科目。平台科目按 (类型, 币种, owner_ref) 全库唯一，
+// 所以 owner_ref 在 ref 后面拼一段随机后缀，每次都是本用例独有的科目，不会撞到别处已提交的同名科目。
 func mkPlatformAccount(t *testing.T, g *gorm.DB, typ, cur, ref string) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID
 	err := g.Raw(`INSERT INTO ledger_accounts (account_type, currency, owner_ref) VALUES (?, ?, ?) RETURNING id`,
-		typ, cur, ref).Row().Scan(&id)
+		typ, cur, uniqueRef(ref)).Row().Scan(&id)
 	if err != nil {
 		t.Fatalf("建平台科目: %v", err)
 	}
 	return id
+}
+
+// uniqueRef 返回 ref 加一段随机后缀，给测试里的平台科目用。
+func uniqueRef(ref string) string {
+	return ref + "-" + uuid.NewString()[:8]
 }
 
 // mkUserAccount 直接插一个用户类科目。
@@ -100,7 +114,7 @@ func postRaw(t *testing.T, g *gorm.DB, debitAmt, creditAmt string) (uuid.UUID, e
 
 func TestLedgerBalancedCommits(t *testing.T) {
 	d := testkit.DB(t)
-	testkit.Truncate(t, d, ledgerTables...)
+	cleanLedger(t, d)
 	err := d.Base().Transaction(func(g *gorm.DB) error {
 		_, err := postRaw(t, g, "10.00", "10.00")
 		return err
@@ -112,7 +126,7 @@ func TestLedgerBalancedCommits(t *testing.T) {
 
 func TestLedgerUnbalancedRejectedAtCommit(t *testing.T) {
 	d := testkit.DB(t)
-	testkit.Truncate(t, d, ledgerTables...)
+	cleanLedger(t, d)
 	var txnID uuid.UUID
 	err := d.Base().Transaction(func(g *gorm.DB) error {
 		id, err := postRaw(t, g, "10.00", "9.99")
@@ -137,7 +151,7 @@ func TestLedgerUnbalancedRejectedAtCommit(t *testing.T) {
 
 func TestLedgerSingleEntryRejectedAtCommit(t *testing.T) {
 	d := testkit.DB(t)
-	testkit.Truncate(t, d, ledgerTables...)
+	cleanLedger(t, d)
 	err := d.Base().Transaction(func(g *gorm.DB) error {
 		cash := mkPlatformAccount(t, g, "channel_cash", "CNY", "test")
 		txnID, err := insertTxn(g, "balance_topup", "CNY", nil, nil)
@@ -153,7 +167,7 @@ func TestLedgerSingleEntryRejectedAtCommit(t *testing.T) {
 
 func TestLedgerTxnWithoutEntriesRejectedAtCommit(t *testing.T) {
 	d := testkit.DB(t)
-	testkit.Truncate(t, d, ledgerTables...)
+	cleanLedger(t, d)
 	err := d.Base().Transaction(func(g *gorm.DB) error {
 		_, err := insertTxn(g, "balance_topup", "CNY", nil, nil)
 		return err
@@ -203,7 +217,7 @@ func TestLedgerMixedCurrencyRejected(t *testing.T) {
 
 func TestLedgerAppendOnly(t *testing.T) {
 	d := testkit.DB(t)
-	testkit.Truncate(t, d, ledgerTables...)
+	cleanLedger(t, d)
 	var txnID uuid.UUID
 	if err := d.Base().Transaction(func(g *gorm.DB) error {
 		id, err := postRaw(t, g, "10.00", "10.00")
@@ -306,9 +320,12 @@ func TestAccountOwnerShape(t *testing.T) {
 func TestAccountOwnerKeyUnique(t *testing.T) {
 	d := testkit.DB(t)
 	g := txConn(t, d)
-	mkPlatformAccount(t, g, "platform_revenue", "CNY", "main")
-	err := g.Exec(`INSERT INTO ledger_accounts (account_type, currency, owner_ref) VALUES ('platform_revenue', 'CNY', 'main')`).Error
-	if pgCode(err) != "23505" {
+	ref := uniqueRef("main")
+	ins := `INSERT INTO ledger_accounts (account_type, currency, owner_ref) VALUES ('platform_revenue', 'CNY', ?)`
+	if err := g.Exec(ins, ref).Error; err != nil {
+		t.Fatalf("第一个平台科目: %v", err)
+	}
+	if err := g.Exec(ins, ref).Error; pgCode(err) != "23505" {
 		t.Fatalf("同一平台科目建两次: want 23505, got %v", err)
 	}
 }
@@ -372,7 +389,7 @@ func TestSourceOnceUnique(t *testing.T) {
 // 另一个事务往它追加一对借贷相等的分录也会被拒（23001）。
 func TestLedgerEntryAfterCommitRejected(t *testing.T) {
 	d := testkit.DB(t)
-	testkit.Truncate(t, d, ledgerTables...)
+	cleanLedger(t, d)
 	var txnID, cash, susp uuid.UUID
 	err := d.Base().Transaction(func(g *gorm.DB) error {
 		cash = mkPlatformAccount(t, g, "channel_cash", "CNY", "test")
