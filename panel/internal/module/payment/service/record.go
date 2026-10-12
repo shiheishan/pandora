@@ -5,6 +5,7 @@ import (
 	"errors"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
@@ -19,6 +20,9 @@ import (
 )
 
 var orderStatusPattern = regexp.MustCompile(`^[a-z_]{1,32}$`)
+
+// settleSavepoint 是调 Settler 前开的保存点名。
+const settleSavepoint = "payment_settle"
 
 // offlineTarget 是线下收款的订单信息（没有支付意图）。
 type offlineTarget struct {
@@ -40,6 +44,8 @@ type recordInput struct {
 	Method            string
 	Raw               map[string]string
 	SignatureVerified bool
+	// FeeUnknown 为 true 时 Fee 不是渠道给的真实值（查单接口不回手续费）：与已入账的那笔比对时不比手续费。
+	FeeUnknown bool
 }
 
 // recordHook 在入账事务里、结算之后执行（后台查单写审计用）。
@@ -68,9 +74,9 @@ func (s *Service) recordPaymentTx(ctx context.Context, in recordInput, hook reco
 			EventType:         in.EventType,
 			SignatureVerified: false,
 			ProcessingStatus:  eventPending,
-			RawPayload:        cloneRaw(in.Raw),
+			RawPayload:        unverifiedEvidence(in),
 		}
-		// 未验签的报文不可信：流水号超长就不存（库里限 200 字），整份报文仍留在 raw_payload
+		// 未验签的报文不可信：流水号超长就不存（库里限 200 字）
 		if pr := strings.TrimSpace(in.PaymentRef); pr != "" && len(pr) <= 200 {
 			ev.ProviderPaymentID = &pr
 		}
@@ -184,7 +190,7 @@ func (s *Service) recordPaymentTx(ctx context.Context, in recordInput, hook reco
 			return RecordResult{}, ErrPaymentReused
 		}
 		if !existing.Amount.Equal(in.Amount) || existing.Currency != string(in.Currency) ||
-			!existing.FeeAmount.Equal(in.Fee) {
+			(!in.FeeUnknown && !existing.FeeAmount.Equal(in.Fee)) {
 			return RecordResult{}, errs.Newf(errs.Conflict, "重放的渠道收款与已记录的金额不一致")
 		}
 		msg := "这笔收款此前已入账"
@@ -229,6 +235,10 @@ func (s *Service) recordPaymentTx(ctx context.Context, in recordInput, hook reco
 		return RecordResult{}, errors.New("payment: 没有注册 Settler")
 	}
 
+	// 保存点：Settler 出任何错都先撤回它这次的写入（写了一半、甚至语句已失败也不会带进挂账或让事务作废）
+	if err := s.repo.SavePoint(ctx, settleSavepoint); err != nil {
+		return RecordResult{}, err
+	}
 	settleErr := s.settler.SettlePayment(ctx, SettleInput{
 		OrderID:      orderID,
 		PaymentID:    paymentID,
@@ -238,23 +248,24 @@ func (s *Service) recordPaymentTx(ctx context.Context, in recordInput, hook reco
 		ProviderCode: in.Provider.Code,
 		Method:       method,
 	})
+	if settleErr != nil {
+		if err := s.repo.RollbackToSavePoint(ctx, settleSavepoint); err != nil {
+			return RecordResult{}, errors.Join(settleErr, err)
+		}
+	}
 
 	var result RecordResult
-	if settleErr == nil {
+	var npe *NotPayableError
+	switch {
+	case settleErr == nil:
 		result, err = s.afterSettleSuccess(ctx, evID, in, haveIntent, intent, orderID, paymentID, method)
-		if err != nil {
-			return RecordResult{}, err
-		}
-	} else {
-		var npe *NotPayableError
-		if errors.As(settleErr, &npe) {
-			result, err = s.afterSettleQuarantine(ctx, evID, in, npe, haveIntent, intent, orderID, userID, orderNo, paymentID)
-			if err != nil {
-				return RecordResult{}, err
-			}
-		} else {
-			return RecordResult{}, settleErr
-		}
+	case errors.As(settleErr, &npe):
+		result, err = s.afterSettleQuarantine(ctx, evID, in, npe, haveIntent, intent, orderID, userID, orderNo, paymentID)
+	default:
+		return RecordResult{}, settleErr
+	}
+	if err != nil {
+		return RecordResult{}, err
 	}
 
 	if hook != nil {
@@ -304,12 +315,8 @@ func (s *Service) afterSettleSuccess(ctx context.Context, evID uuid.UUID, in rec
 	if haveIntent {
 		except = &intent.ID
 		if intent.Status == string(IntentRequiresAction) {
-			ok, err := s.repo.SetIntentStatus(ctx, intent.ID, string(IntentRequiresAction), string(IntentSucceeded))
-			if err != nil {
+			if err := s.markIntentSucceeded(ctx, intent); err != nil {
 				return RecordResult{}, err
-			}
-			if !ok {
-				return RecordResult{}, errors.New("payment: 支付意图状态更新失败")
 			}
 		}
 	}
@@ -389,12 +396,8 @@ func (s *Service) afterSettleQuarantine(ctx context.Context, evID uuid.UUID, in 
 	}
 
 	if haveIntent && intent.Status == string(IntentRequiresAction) {
-		ok, err := s.repo.SetIntentStatus(ctx, intent.ID, string(IntentRequiresAction), string(IntentSucceeded))
-		if err != nil {
+		if err := s.markIntentSucceeded(ctx, intent); err != nil {
 			return RecordResult{}, err
-		}
-		if !ok {
-			return RecordResult{}, errors.New("payment: 支付意图状态更新失败")
 		}
 	}
 
@@ -429,6 +432,57 @@ func (s *Service) afterSettleQuarantine(ctx context.Context, evID uuid.UUID, in 
 		QuarantineKind: npe.Kind,
 		LedgerTxnID:    txnID,
 	}, nil
+}
+
+// markIntentSucceeded 把付款对应的意图转成 succeeded。意图是读时的快照、没加锁，这期间可能已被「换个方式付」作废：
+// 钱已经结算或挂账，意图状态只是记录，所以更新不到时记日志、不让整笔入账回滚（回滚了渠道重推也一样）。
+func (s *Service) markIntentSucceeded(ctx context.Context, intent model.Intent) error {
+	ok, err := s.repo.SetIntentStatus(ctx, intent.ID, string(IntentRequiresAction), string(IntentSucceeded))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		plog.From(ctx).Warn("付款对应的支付意图已被并发作废，保留其状态",
+			zap.String("intent_id", intent.ID.String()),
+			zap.String("order_id", intent.OrderID.String()))
+	}
+	return nil
+}
+
+// unverifiedEvidenceKeys 是验签失败时留证的字段（易支付与 demo 的关键字段），其余一律丢弃。
+var unverifiedEvidenceKeys = []string{
+	"out_trade_no", "trade_no", "money", "trade_status", "pid", "type",
+	"event_id", "event_type", "payment_id", "order_no", "amount", "currency",
+}
+
+// unverifiedEvidenceValueMax 是验签失败时每个留证字段的上限（字节）；12 个字段加上解析出的 3 个，总量在 2 KiB 以内。
+const unverifiedEvidenceValueMax = 64
+
+// unverifiedEvidence 只留白名单字段、每个截到 64 字节：回调是匿名接口，伪造报文不能把任意大小的内容写进禁删的表。
+func unverifiedEvidence(in recordInput) map[string]string {
+	out := make(map[string]string, len(unverifiedEvidenceKeys)+3)
+	for _, k := range unverifiedEvidenceKeys {
+		if v, ok := in.Raw[k]; ok {
+			out[k] = clip(v, unverifiedEvidenceValueMax)
+		}
+	}
+	out["parsed_event_id"] = clip(in.EventID, unverifiedEvidenceValueMax)
+	out["parsed_out_trade_no"] = clip(in.OutTradeNo, unverifiedEvidenceValueMax)
+	out["parsed_payment_ref"] = clip(in.PaymentRef, unverifiedEvidenceValueMax)
+	return out
+}
+
+// clip 把 s 截到不超过 n 字节，不切断 UTF-8 字符，并去掉 NUL（jsonb 不收）。
+func clip(s string, n int) string {
+	s = strings.ReplaceAll(s, "\x00", "")
+	if len(s) <= n {
+		return s
+	}
+	s = s[:n]
+	for len(s) > 0 && !utf8.ValidString(s) {
+		s = s[:len(s)-1]
+	}
+	return s
 }
 
 func buildSuspenseLegs(in recordInput) []ledgersvc.Leg {

@@ -54,23 +54,30 @@ func (stubDirectory) Emails(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID
 }
 
 // stubSettler 模拟 order 结算：成功则记 order_paid，可配置 NotPayable。
+// 返回 NotPayable 前先照常记一笔 order_paid（模拟真 Settler 写到一半才发现不可付），
+// 用来核对 payment 在保存点上撤回了它的写入。
 type stubSettler struct {
 	mu         sync.Mutex
 	users      map[uuid.UUID]uuid.UUID
 	notPayable map[uuid.UUID]error
 	calls      atomic.Int64
 	ledger     *ledgersvc.Service
+	// before 非空时在结算最前面调用（并发用例在这里拿订单锁）；返回错误即结算失败。
+	before func(ctx context.Context, in SettleInput) error
 }
 
 func (s *stubSettler) SettlePayment(ctx context.Context, in SettleInput) error {
 	s.calls.Add(1)
 	s.mu.Lock()
-	if err, ok := s.notPayable[in.OrderID]; ok {
-		s.mu.Unlock()
-		return err
-	}
+	before := s.before
+	npErr, notPayable := s.notPayable[in.OrderID]
 	userID := s.users[in.OrderID]
 	s.mu.Unlock()
+	if before != nil {
+		if err := before(ctx, in); err != nil {
+			return err
+		}
+	}
 	if userID == uuid.Nil {
 		return fmt.Errorf("payment test: 未登记订单 %s", in.OrderID)
 	}
@@ -83,7 +90,13 @@ func (s *stubSettler) SettlePayment(ctx context.Context, in SettleInput) error {
 		Fee:      in.Fee,
 		Provider: in.ProviderCode,
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	if notPayable {
+		return npErr
+	}
+	return nil
 }
 
 type env struct {
@@ -92,6 +105,10 @@ type env struct {
 	exec    func(ctx context.Context, q string, args ...any) error
 	settler *stubSettler
 	ledger  *ledgersvc.Service
+	// txm 给并发用例另开事务（只在 newCommitEnv 下有意义）。
+	txm *tx.Manager
+	// settings 用来改站点时区等设置。
+	settings *settingssvc.Service
 }
 
 // newEnv 的用例整例回滚（testkit.TxCtx）；newCommitEnv 的用例真提交（并发用），前后清表。
@@ -159,9 +176,11 @@ func setupEnv(t *testing.T, commit bool) (*env, context.Context) {
 	ctx = reqmeta.With(ctx, reqmeta.Meta{IP: "203.0.113.42", UserAgent: "payment-pg-test/1.0"})
 
 	e := &env{
-		svc:     svc,
-		settler: settler,
-		ledger:  ledgerSvc,
+		svc:      svc,
+		settler:  settler,
+		ledger:   ledgerSvc,
+		txm:      tx.NewManager(d),
+		settings: settings,
 		row: func(ctx context.Context, q string, args ...any) *sql.Row {
 			return d.Conn(ctx).Raw(q, args...).Row()
 		},
@@ -256,7 +275,7 @@ func demoInbound(eventID, eventType, paymentRef, orderNo string, cents int64) pr
 		"method":     "alipay",
 	})
 	h := http.Header{}
-	h.Set("X-Aegis-Signature", demo.Sign([]byte(demoSecret), eventID, orderNo, cents, "CNY"))
+	h.Set("X-Aegis-Signature", demo.Sign([]byte(demoSecret), eventID, eventType, paymentRef, orderNo, cents, 0, "CNY"))
 	return provider.Inbound{Method: http.MethodPost, Header: h, Body: body}
 }
 

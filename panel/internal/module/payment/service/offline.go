@@ -13,7 +13,8 @@ import (
 )
 
 // RecordOffline 记一笔线下收款（后台「标记已支付」、人工单「线下已收款」），在调用方事务里执行，与回调走同一条入账路径。
-// 订单不可付时不开挂账，回 409（调用方事务回滚）。
+// 订单不可付时不开挂账，回 409。加入调用方事务时不开保存点：返回错误后调用方必须回滚，不能吞掉错误继续提交。
+// 线下收款没有支付意图，金额是否等于订单应付只由 Settler 核对。
 func (s *Service) RecordOffline(ctx context.Context, in OfflineInput) (RecordResult, error) {
 	if in.OrderID == uuid.Nil || in.UserID == uuid.Nil {
 		return RecordResult{}, errs.Newf(errs.BadRequest, "线下收款参数不完整")

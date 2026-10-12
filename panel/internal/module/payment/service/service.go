@@ -18,9 +18,10 @@ import (
 
 // Config 是 payment 的部署参数，app 从配置装配。
 type Config struct {
-	// PublicBaseURL 是门户对外地址（如 https://example.com），拼回调地址与回跳地址；末尾的 / 会去掉。
+	// PublicBaseURL 是门户对外地址（如 https://example.com），拼回调地址与回跳地址；末尾的 / 会去掉。为空时 CreateIntent 报错。
 	PublicBaseURL string
-	// AllowPrivateHosts 只在开发环境为 true：允许渠道地址是内网或 http（生产恒为 false，防 SSRF）。
+	// AllowPrivateHosts 只在开发环境打开（装配时按 cfg 的环境传 env == development）：允许渠道地址是内网或 http。
+	// 生产必须为 false：查单请求在拨号时按真实 IP 拦内网、环回、链路本地与元数据地址，防 SSRF。
 	AllowPrivateHosts bool
 }
 

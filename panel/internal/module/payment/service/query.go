@@ -63,6 +63,11 @@ func nextQueryAt(now time.Time, attempts int, expires *time.Time, p patrolConfig
 }
 
 // Query 向订单发起过支付的渠道查单，查到已付就走与回调同一条入账路径补记。
+//
+// 调用约定（order 的 /orders/{id}/query 调它）：
+//   - 不能在事务里、也不能在持有订单锁时调：它要在事务外请求渠道；补记时先拿咨询锁再由 Settler 锁订单，
+//     调用方先持有订单锁会与回调的锁序相反。
+//   - 本方法不核对订单归属，订单存在且属于当前用户由 order 先判断。
 func (s *Service) Query(ctx context.Context, orderID uuid.UUID) (QueryResult, error) {
 	princ, isAdmin := authn.From(ctx)
 	admin := isAdmin && princ.Audience == authn.AudienceAdmin
@@ -191,7 +196,17 @@ func (s *Service) queryRef(ctx context.Context, orderID uuid.UUID, ref repo.Quer
 			Method:            chRes.Method,
 			Raw:               map[string]string{"source": "active_query", "method": chRes.Method},
 			SignatureVerified: true,
+			FeeUnknown:        true,
 		}, payHook)
+		if errors.Is(rerr, ErrAmountMismatch) {
+			// 渠道说已付、金额却和意图对不上：比普通失败严重，要人看
+			plog.From(ctx).Error("查单结果与支付意图金额不符，未入账",
+				zap.String("order_id", orderID.String()),
+				zap.String("provider", ref.ProviderCode),
+				zap.String("out_trade_no", ref.OutTradeNo),
+				zap.String("channel_amount", chRes.Amount.StringFixed(2)),
+				zap.String("currency", string(chRes.Currency)))
+		}
 		if rerr != nil {
 			return out, false, rerr
 		}

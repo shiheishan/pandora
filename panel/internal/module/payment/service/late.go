@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
@@ -141,4 +142,10 @@ func (s *Service) ApplyLatePayment(ctx context.Context, caseID uuid.UUID, reason
 		return uuid.Nil, err
 	}
 	return txnID, nil
+}
+
+// PurgeUnverifiedEvents 删一批早于 before、验签失败的回调事件（库函数只删 30 天以前的），返回删除行数；
+// retention:payment_unverified_events 任务循环调用。
+func (s *Service) PurgeUnverifiedEvents(ctx context.Context, before time.Time, batch int) (int, error) {
+	return s.repo.PurgeUnverifiedEvents(ctx, before, batch)
 }

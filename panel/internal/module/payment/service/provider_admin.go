@@ -392,6 +392,11 @@ func (s *Service) UpdateProvider(ctx context.Context, code string, in ProviderSe
 			creds.Key = norm.key
 		}
 		missing := map[string]string{}
+		// 改了站点地址必须重填密钥（同 settings 改 SMTP 服务器须重填口令）：查单时密钥以明文出现在发往该地址的 URL 里，
+		// 不能让只改地址的人把现有密钥带去别的站点
+		if norm.baseURL != before.BaseURL && norm.key == "" {
+			missing["key"] = "改了站点地址，需要重新填写密钥"
+		}
 		if creds.MerchantID == "" {
 			missing["merchant_id"] = "该渠道还没有商户号，需填写"
 		}

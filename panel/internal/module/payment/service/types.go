@@ -18,13 +18,19 @@ import (
 // ---------------------------------------------------------------------------
 
 // Settler 由 order 实现：在回调入账的同一事务里结算订单。
-// 返回 ErrOrderNotPayable（用 NotPayable 构造）之前不得让事务里的语句失败，payment 要在同一事务里接着开挂账案；
-// 其余错误让整笔入账回滚。
+//
+// 调用约定：
+//   - 无论线上还是线下收款，Settler 都必须核对 Amount、Currency 等于订单应付；不一致返回普通错误（整笔入账回滚，渠道会重推）。
+//   - 订单此刻不收这笔钱（已取消、超时、已付、订阅不再收）时返回 NotPayable(kind, orderStatus)，payment 转挂账。
+//   - payment 调用前开了保存点：Settler 返回任何错误，payment 都先回滚到保存点，Settler 这次的写入（哪怕写了一半、
+//     哪怕有语句已失败）一律撤销。返回 NotPayable 时 payment 接着在同一事务里记挂账；其他错误原样返回，整笔回滚。
+//   - 锁序：Settler 先锁订单行；payment 在调它之前不锁意图（插收款时外键检查只对意图加 KEY SHARE）。
 type Settler interface {
 	SettlePayment(ctx context.Context, in SettleInput) error
 }
 
-// SettleInput 是一笔已确认、已落库的收款。Amount 与 Currency 已核对等于支付意图的快照（线下收款没有意图，由 Settler 自己核对应付）。
+// SettleInput 是一笔已确认、已落库的收款。有支付意图时 Amount 与 Currency 已核对等于意图快照，
+// 但 Settler 仍要核对等于订单应付（钱的最后一道兜底；线下收款没有意图，只有这一道）。
 // Fee 与 ProviderCode 给 ledger.PostOrderPaid 用（渠道实收 = Amount，手续费 = Fee，渠道科目按 ProviderCode）。
 type SettleInput struct {
 	OrderID      uuid.UUID
@@ -36,8 +42,8 @@ type SettleInput struct {
 	Method       string
 }
 
-// ErrOrderNotPayable 由 Settler 返回：订单已取消、超时或已付，payment 转挂账。用 NotPayable 带上挂账类型与订单状态。
-var ErrOrderNotPayable = errors.New("payment: 订单不可付")
+// errOrderNotPayable 是 NotPayableError 的哨兵；不导出，免得 Settler 返回不带挂账类型的裸哨兵（那会被当成普通错误回滚）。
+var errOrderNotPayable = errors.New("payment: 订单不可付")
 
 // CaseKind 是挂账类型。
 type CaseKind string
@@ -58,22 +64,29 @@ func (k CaseKind) Valid() bool {
 	}
 }
 
-// NotPayableError 是 Settler 拒收一笔收款的原因；errors.Is(err, ErrOrderNotPayable) 为真。
+// NotPayableError 是 Settler 拒收一笔收款的原因；用 NotPayable 构造，用 IsNotPayable 或 errors.As 判断。
 type NotPayableError struct {
-	Kind        CaseKind
-	OrderStatus string // 订单此刻的状态（如 cancelled、expired、paid），记进挂账案
+	Kind CaseKind
+	// OrderStatus 是订单此刻的状态，记进挂账案；必须是前端 ORDER_STATUSES 里的值（后台挂账列表按它校验），由 order 保证。
+	OrderStatus string
 }
 
 func (e *NotPayableError) Error() string {
 	return "payment: 订单不可付（" + string(e.Kind) + "，订单状态 " + e.OrderStatus + "）"
 }
 
-// Is 让 errors.Is(err, ErrOrderNotPayable) 成立。
-func (e *NotPayableError) Is(target error) bool { return target == ErrOrderNotPayable }
+// Is 让 errors.Is(err, errOrderNotPayable) 成立（包内用）。
+func (e *NotPayableError) Is(target error) bool { return target == errOrderNotPayable }
 
 // NotPayable 构造 Settler 的拒收错误。
 func NotPayable(kind CaseKind, orderStatus string) error {
 	return &NotPayableError{Kind: kind, OrderStatus: orderStatus}
+}
+
+// IsNotPayable 报告 err 是不是 NotPayable 构造的拒收错误。
+func IsNotPayable(err error) bool {
+	var npe *NotPayableError
+	return errors.As(err, &npe)
 }
 
 // ---------------------------------------------------------------------------

@@ -264,8 +264,12 @@ SELECT case_kind, order_status, status, amount::text FROM late_payment_cases WHE
 	if e.ledgerTxnCount(t, ctx, ledgersvc.KindLatePaymentSuspense) != 1 {
 		t.Fatal("应有 late_payment_suspense")
 	}
+	// 桩 Settler 在返回 NotPayable 前已记了一笔 order_paid，保存点必须把它撤回
+	if e.settler.calls.Load() != 1 {
+		t.Fatalf("settler 应调用 1 次，实际 %d", e.settler.calls.Load())
+	}
 	if e.ledgerTxnCount(t, ctx, ledgersvc.KindOrderPaid) != 0 {
-		t.Fatal("不应 order_paid")
+		t.Fatal("不应 order_paid：Settler 的写入应在保存点上撤回")
 	}
 	susp := ledgersvc.PlatformAccount(ledgersvc.LatePaymentSuspense, ledgersvc.RefMain)
 	bal := e.accountBalance(t, ctx, susp, money.CNY)
@@ -351,6 +355,9 @@ func TestRecordOffline(t *testing.T) {
 	}
 	if e.count(t, ctx, `SELECT count(*) FROM late_payment_cases`) != 0 {
 		t.Fatal("线下 NotPayable 不开挂账")
+	}
+	if e.ledgerTxnCount(t, ctx, ledgersvc.KindOrderPaid) != 1 {
+		t.Fatal("线下 NotPayable 时 Settler 的写入应在保存点上撤回，order_paid 仍只有第一笔")
 	}
 
 	_, err = e.svc.RecordOffline(ctx, OfflineInput{

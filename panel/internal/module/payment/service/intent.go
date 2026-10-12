@@ -22,6 +22,7 @@ import (
 const intentTTL = 30 * time.Minute
 
 // CreateIntent 为订单发起一次支付并返回收银台跳转信息；在调用方事务里执行（order 已锁订单行）。
+// 加入调用方事务时不开保存点：返回错误后调用方必须回滚，不能吞掉错误继续提交。
 func (s *Service) CreateIntent(ctx context.Context, in CreateIntentInput) (IntentResult, error) {
 	if in.OrderID == uuid.Nil || in.UserID == uuid.Nil {
 		return IntentResult{}, errs.Newf(errs.BadRequest, "发起支付的参数不完整")
@@ -34,6 +35,10 @@ func (s *Service) CreateIntent(ctx context.Context, in CreateIntentInput) (Inten
 		return IntentResult{}, errs.Newf(errs.BadRequest, "发起支付的参数不完整")
 	}
 
+	if s.cfg.PublicBaseURL == "" {
+		// 没有对外地址就拼不出回调与回跳地址（回跳前缀还会退化成 "/"，放过 //evil.example）
+		return IntentResult{}, errs.Wrap(errs.Internal, errors.New("payment: 未配置 PublicBaseURL"))
+	}
 	p, ad, err := s.adapterFor(ctx, in.ProviderCode, true)
 	if err != nil {
 		return IntentResult{}, err
