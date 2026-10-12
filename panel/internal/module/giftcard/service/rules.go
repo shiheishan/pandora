@@ -44,8 +44,6 @@ const (
 	// 用户输入的卡密长度范围（前缀 0–8 位 + 随机段 12 位，留点余量）
 	minCodeLen = 8
 	maxCodeLen = 32
-	// codeHashPrefix 是卡密 HMAC 的域分隔前缀（子密钥与 identity 的标识哈希同一把，靠前缀隔开用途）
-	codeHashPrefix = "giftcard-code:"
 )
 
 // codeAlphabet 去掉了 I、L、O、0、1：卡密常要人工抄写或电话报读，这几个字符在多数字体里分不清。
@@ -260,9 +258,9 @@ func MaskCode(code string) string {
 	return string(runes[:n-maskedTail]) + strings.Repeat("•", maskedTail)
 }
 
-// hashCode 是卡密落库与查找用的 HMAC-SHA256（主密钥派生的子密钥，带用途前缀）。输入必须已规范化。
+// hashCode 是卡密落库与查找用的 HMAC-SHA256（礼品卡专用的子密钥，不与别的用途共用）。输入必须已规范化。
 func (s *Service) hashCode(code string) []byte {
-	return s.hasher.HMAC(crypto.InfoHMACIdentity, []byte(codeHashPrefix+code))
+	return s.hasher.HMAC(crypto.InfoHMACGiftCard, []byte(code))
 }
 
 // batchAAD 是批次密文的附加数据：绑批次 id，密文换到别的批次上打不开。
