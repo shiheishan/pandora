@@ -92,18 +92,26 @@ func TestLoginIAM006(t *testing.T) {
 	for _, r := range failed {
 		reason, _ := r.ev.Data["reason"].(string)
 		reasons[reason]++
-		if r.ev.Audience != authn.AudienceAdmin {
-			t.Fatalf("失败审计 Audience=%q", r.ev.Audience)
+		// anonymous：不带 ActorID 与 Audience，audience 在 Data 里
+		if r.ev.ActorID != nil || r.ev.Audience != "" || r.ev.Data["audience"] != authn.AudienceAdmin {
+			t.Fatalf("失败审计应 anonymous: %+v", r.ev)
 		}
 	}
 	if reasons[reasonNoAdminRole] != 1 || reasons[reasonInvalidCredentials] != 2 || reasons[reasonAccountInactive] != 1 {
 		t.Fatalf("reason 统计=%v", reasons)
 	}
-	// 账号存在的失败带 ActorID，不存在的不带
+	// 账号存在的失败把被撞账号放 ResourceID，不存在的不放
+	withResource := 0
 	for _, r := range failed {
-		if r.ev.ActorID == nil && r.ev.Data["reason"] != reasonInvalidCredentials {
-			t.Fatalf("账号存在的失败应带 ActorID: %+v", r.ev)
+		if r.ev.ResourceID != nil {
+			if r.ev.ResourceType != "user" {
+				t.Fatalf("ResourceType=%q", r.ev.ResourceType)
+			}
+			withResource++
 		}
+	}
+	if withResource != 3 {
+		t.Fatalf("带 ResourceID 的失败审计=%d want 3", withResource)
 	}
 }
 
@@ -164,7 +172,8 @@ func TestLoginStaffPortalBlocked(t *testing.T) {
 	uid := h.Users.addUser("staff@example.com", "pass", UserStatusActive)
 	h.Store.roles[uid] = []repo.RoleRow{{ID: uuid.Must(uuid.NewV7()), Code: "ops", Name: "运维"}}
 
-	for i := 0; i < 2; i++ {
+	// 口令是对的：不占失败名额，超过阈值次数也不会被暂停
+	for i := 0; i < failureThreshold+2; i++ {
 		ctx := testCtx(fmt.Sprintf("203.0.113.%d", i+10))
 		_, err := h.S.Login(ctx, authn.AudiencePublic, "staff@example.com", "pass")
 		if !errors.Is(err, ErrStaffPortalLogin) {
@@ -180,8 +189,11 @@ func TestLoginStaffPortalBlocked(t *testing.T) {
 			blocked++
 		}
 	}
-	if blocked != 2 {
-		t.Fatalf("staff_portal_blocked 审计=%d want 2", blocked)
+	if blocked != failureThreshold+2 {
+		t.Fatalf("staff_portal_blocked 审计=%d want %d", blocked, failureThreshold+2)
+	}
+	if n, _ := h.RDB.Get(testCtx("203.0.113.1"), failureKey(uid, "")).Int(); n != 0 {
+		t.Fatalf("后台人员登门户不应留下失败计数，得 %d", n)
 	}
 }
 
@@ -279,5 +291,62 @@ func TestQuickLogin(t *testing.T) {
 	_, err = h2.S.ConsumeQuickLogin(ctxB, linkB.Token)
 	if errs.As(err).Code != errs.Unauthorized {
 		t.Fatalf("源会话登出后消费应 401, 得 %v", err)
+	}
+}
+
+func TestLoginLockoutSharedAcrossDomains(t *testing.T) {
+	h := newTestService(t)
+	ctx := testCtx("203.0.113.7")
+	uid := h.Users.addUser("both@example.com", "good", UserStatusActive)
+	h.Store.perms[uid] = []string{PermIAMUserRead}
+
+	for i := 0; i < failureThreshold; i++ {
+		_, _ = h.S.Login(ctx, authn.AudiencePublic, "both@example.com", "bad")
+	}
+	// 同一账号在后台入口也被暂停（计数不分域）
+	_, err := h.S.Login(ctx, authn.AudienceAdmin, "both@example.com", "good")
+	if e := errs.As(err); e.Code != errs.RateLimited || e.RetryAfterSeconds <= 0 {
+		t.Fatalf("跨域应同样暂停: %v", err)
+	}
+	// 暂停期过后恢复
+	h.Redis.FastForward(failurePause + time.Second)
+	if _, err := h.S.Login(ctx, authn.AudienceAdmin, "both@example.com", "good"); err != nil {
+		t.Fatalf("暂停期后应可登录: %v", err)
+	}
+}
+
+func TestLoginSuccessClearsAndTouches(t *testing.T) {
+	h := newTestService(t)
+	ctx := testCtx("203.0.113.7")
+	uid := h.Users.addUser("ok@example.com", "good", UserStatusActive)
+
+	for i := 0; i < failureThreshold-1; i++ {
+		_, _ = h.S.Login(ctx, authn.AudiencePublic, "ok@example.com", "bad")
+	}
+	if _, err := h.S.Login(ctx, authn.AudiencePublic, "ok@example.com", "good"); err != nil {
+		t.Fatalf("第 10 次口令对应成功: %v", err)
+	}
+	if h.Redis.Exists(failureKey(uid, "")) {
+		t.Fatal("成功后应清掉失败计数")
+	}
+	if len(h.Users.touched) != 1 || h.Users.touched[0] != uid {
+		t.Fatalf("成功后应记最近登录时间: %v", h.Users.touched)
+	}
+}
+
+func TestLoginBackendErrorReleasesAttempt(t *testing.T) {
+	h := newTestService(t)
+	ctx := testCtx("203.0.113.7")
+	uid := h.Users.addUser("busy@example.com", "good", UserStatusActive)
+	h.Users.authErr = errs.Newf(errs.Unavailable, "口令校验繁忙，请稍后重试")
+
+	for i := 0; i < failureThreshold+2; i++ {
+		_, err := h.S.Login(ctx, authn.AudiencePublic, "busy@example.com", "good")
+		if errs.As(err).Code != errs.Unavailable {
+			t.Fatalf("第 %d 次应透传 503: %v", i+1, err)
+		}
+	}
+	if n, _ := h.RDB.Get(ctx, failureKey(uid, "")).Int(); n != 0 {
+		t.Fatalf("没有结论的结果应退回名额，计数=%d", n)
 	}
 }

@@ -412,16 +412,16 @@ func TestStampReauth(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 	uid := uuid.Must(uuid.NewV7())
-	rec := newRec(uid, "public", now, "0")
+	rec := newRec(uid, "admin", now, "0")
 	mustCreate(t, st, rec, now)
+	idle := 2 * time.Hour
 
 	at := now.Add(5 * time.Minute)
-	ok, err := st.stampReauth(ctx, rec.ID, uid, at)
+	ok, err := st.stampReauth(ctx, rec.ID, uid, "admin", at, idle)
 	if err != nil || !ok {
 		t.Fatalf("stampReauth 应 true，ok=%v err=%v", ok, err)
 	}
-
-	state, chk, err := st.check(ctx, rec.ID, uid, "public", now, 0)
+	state, chk, err := st.check(ctx, rec.ID, uid, "admin", at, idle)
 	if err != nil || !chk {
 		t.Fatal("check 应 ok")
 	}
@@ -429,9 +429,47 @@ func TestStampReauth(t *testing.T) {
 		t.Fatalf("ReauthAt 应为 %v，得 %v", at, state.ReauthAt)
 	}
 
-	ok, err = st.stampReauth(ctx, "missing-sid", uid, at)
-	if err != nil || ok {
+	if ok, err = st.stampReauth(ctx, "missing-sid", uid, "admin", at, idle); err != nil || ok {
 		t.Fatal("不存在 sid stampReauth 应 false")
+	}
+	if ok, err = st.stampReauth(ctx, rec.ID, uid, "public", at, idle); err != nil || ok {
+		t.Fatal("域不符 stampReauth 应 false")
+	}
+	// 后台空闲超时后不再盖章
+	later := at.Add(idle)
+	if ok, err = st.stampReauth(ctx, rec.ID, uid, "admin", later, idle); err != nil || ok {
+		t.Fatal("空闲超时后 stampReauth 应 false")
+	}
+	// 纪元推进（改密）后不再盖章
+	rec2 := newRec(uid, "admin", now, "0")
+	mustCreate(t, st, rec2, now)
+	if err := rdb.Incr(ctx, epochKey(uid)).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err = st.stampReauth(ctx, rec2.ID, uid, "admin", at, idle); err != nil || ok {
+		t.Fatal("纪元变了 stampReauth 应 false")
+	}
+}
+
+func TestCheckReturnsSessionAudience(t *testing.T) {
+	_, rdb := testkit.Redis(t)
+	st := newSessionStore(rdb)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+	uid := uuid.Must(uuid.NewV7())
+	adm := newRec(uid, "admin", now, "0")
+	pub := newRec(uid, "public", now, "0")
+	mustCreate(t, st, adm, now)
+	mustCreate(t, st, pub, now)
+
+	state, ok, err := st.check(ctx, adm.ID, uid, "", now, time.Hour)
+	if err != nil || !ok || state.Audience != "admin" {
+		t.Fatalf("不比较域时应带回 admin：ok=%v aud=%q err=%v", ok, state.Audience, err)
+	}
+	// 空闲只作用于后台会话：门户会话两小时不动仍有效
+	state, ok, err = st.check(ctx, pub.ID, uid, "", now.Add(2*time.Hour), time.Hour)
+	if err != nil || !ok || state.Audience != "public" {
+		t.Fatalf("门户会话不受后台空闲限制：ok=%v aud=%q err=%v", ok, state.Audience, err)
 	}
 }
 
@@ -528,47 +566,55 @@ func TestStoreQuickLogin(t *testing.T) {
 	}
 }
 
-func TestFailureCounter(t *testing.T) {
-	_, rdb := testkit.Redis(t)
+func TestClaimAttempt(t *testing.T) {
+	mr, rdb := testkit.Redis(t)
 	st := newSessionStore(rdb)
 	ctx := context.Background()
-	key := "lf:public:testhash"
+	key := "lf:testhash"
 	window := 15 * time.Minute
-	threshold := 10
-	pause := 15 * time.Minute
+	pause := 20 * time.Minute
 
-	var last int
-	var err error
-	for i := 1; i <= 10; i++ {
-		last, err = st.recordFailure(ctx, key, window, threshold, pause)
-		if err != nil {
-			t.Fatalf("recordFailure %d: %v", i, err)
+	for i := 1; i <= 9; i++ {
+		n, ttl, err := st.claimAttempt(ctx, key, window, 10, pause)
+		if err != nil || n != i || ttl <= 0 || ttl > window {
+			t.Fatalf("第 %d 次：n=%d ttl=%v err=%v", i, n, ttl, err)
 		}
 	}
-	if last != 10 {
-		t.Fatalf("第 10 次应返回 10，得 %d", last)
+	// 到阈值那一次期限改成暂停时长
+	n, ttl, err := st.claimAttempt(ctx, key, window, 10, pause)
+	if err != nil || n != 10 || ttl <= window {
+		t.Fatalf("第 10 次：n=%d ttl=%v err=%v", n, ttl, err)
+	}
+	n, _, _ = st.claimAttempt(ctx, key, window, 10, pause)
+	if n != 11 {
+		t.Fatalf("第 11 次 n=%d", n)
 	}
 
-	n, ttl, err := st.failures(ctx, key)
-	if err != nil {
-		t.Fatalf("failures: %v", err)
+	// 退名额
+	if err := st.releaseAttempt(ctx, key); err != nil {
+		t.Fatal(err)
 	}
-	if n != 10 {
-		t.Fatalf("failures 计数应为 10，得 %d", n)
+	if v, _ := rdb.Get(ctx, key).Int(); v != 10 {
+		t.Fatalf("退名额后=%d want 10", v)
 	}
-	if ttl <= 0 {
-		t.Fatal("failures ttl 应 > 0")
+	// 清零
+	if err := st.clearAttempts(ctx, key); err != nil {
+		t.Fatal(err)
 	}
-
-	if err := st.clearFailures(ctx, key); err != nil {
-		t.Fatalf("clearFailures: %v", err)
+	if mr.Exists(key) {
+		t.Fatal("clear 后键应不存在")
 	}
-	n, _, err = st.failures(ctx, key)
-	if err != nil {
-		t.Fatalf("failures after clear: %v", err)
+	// 键不存在时退名额不留下负数的新键
+	if err := st.releaseAttempt(ctx, key); err != nil {
+		t.Fatal(err)
 	}
-	if n != 0 {
-		t.Fatalf("clear 后 failures 应为 0，得 %d", n)
+	if mr.Exists(key) {
+		t.Fatal("键不存在时 release 不应建键")
+	}
+	// threshold 为 0：不改期限
+	n, ttl, err = st.claimAttempt(ctx, "rf:x", window, 0, 0)
+	if err != nil || n != 1 || ttl <= 0 || ttl > window {
+		t.Fatalf("无阈值：n=%d ttl=%v err=%v", n, ttl, err)
 	}
 }
 
@@ -588,8 +634,9 @@ func TestMarkOnce(t *testing.T) {
 		t.Fatal("a 已存在时 markOnce 应 false")
 	}
 
+	// 上一轮没成功时什么都不写：c 仍是新的
 	ok, err = st.markOnce(ctx, ttl, "lfa:c")
-	if err != nil || ok {
-		t.Fatal("上一轮未全成功时单独 c 应 false")
+	if err != nil || !ok {
+		t.Fatal("上一轮失败不应写 c，单独 c 应 true")
 	}
 }

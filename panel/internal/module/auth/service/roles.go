@@ -32,7 +32,8 @@ func (s *Service) revokeSessions(ctx context.Context, uid uuid.UUID, except, aud
 	}
 	tx.AfterCommit(ctx, "auth:revoke:"+uid.String()+":"+aud, func(ctx context.Context) {
 		if _, err := s.sessions.revokeUser(ctx, uid, except, aud); err != nil {
-			plog.From(ctx).Warn("提交后再次吊销会话失败",
+			// 事务里已吊销过一次；这次补扫失败只记错误，不另排重试
+			plog.From(ctx).Error("提交后再次吊销会话失败",
 				zap.String("user_id", uid.String()), zap.Error(err))
 		}
 	})

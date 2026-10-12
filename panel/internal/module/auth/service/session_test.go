@@ -62,6 +62,11 @@ func TestRefreshRotateGraceReuse(t *testing.T) {
 	for _, r := range h.Audit.events {
 		if r.ev.Action == "session.refresh_reuse" {
 			reuseAudit++
+			// anonymous：不带 ActorID/Audience；被影响的用户放 ResourceID，audience 放 Data
+			if r.ev.ActorID != nil || r.ev.Audience != "" || r.ev.ResourceType != "user" ||
+				r.ev.ResourceID == nil || *r.ev.ResourceID != tok.UserID || r.ev.Data["audience"] != authn.AudiencePublic {
+				t.Fatalf("refresh_reuse 审计字段: %+v", r.ev)
+			}
 		}
 	}
 	if reuseAudit != 1 {
@@ -395,5 +400,61 @@ func TestStaffGuard(t *testing.T) {
 	err := h.S.EnsureCanManage(ctx, support, admin)
 	if !errors.Is(err, errTargetOutranksActor) || errs.As(err).Code != errs.Forbidden {
 		t.Fatalf("越级应 403: %v", err)
+	}
+}
+
+func TestRefreshRandomSecretDoesNotRevoke(t *testing.T) {
+	h := newTestService(t)
+	ctx := testCtx("203.0.113.7")
+	h.Users.addUser("rnd@example.com", "pass", UserStatusActive)
+	tok, err := h.S.Login(ctx, authn.AudiencePublic, "rnd@example.com", "pass")
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	sid, _, ok := parseRefresh(tok.Refresh)
+	if !ok {
+		t.Fatal("refresh 格式")
+	}
+	// 只知道 sid（不保密）配一个随机值：401，但不吊销、不写重放审计
+	if _, err := h.S.Refresh(ctx, authn.AudiencePublic, formatRefresh(sid, "random-guess")); !errors.Is(err, errSessionInvalid) {
+		t.Fatalf("随机值应 401: %v", err)
+	}
+	for _, r := range h.Audit.events {
+		if r.ev.Action == "session.refresh_reuse" {
+			t.Fatal("随机值不应写重放审计")
+		}
+	}
+	if _, err := h.S.Authenticate(ctx, authn.AudiencePublic, tok.AccessToken); err != nil {
+		t.Fatalf("会话应仍有效: %v", err)
+	}
+	if _, err := h.S.Refresh(ctx, authn.AudiencePublic, tok.Refresh); err != nil {
+		t.Fatalf("真 refresh 应仍可用: %v", err)
+	}
+}
+
+func TestAuthenticateUsesSessionAudience(t *testing.T) {
+	h := newTestService(t)
+	ctx := testCtx("203.0.113.7")
+	uid := h.Users.addUser("aud@example.com", "pass", UserStatusActive)
+	now := h.Clock.Now()
+
+	// 门户会话，却拿后台签发器签了一枚 access（模拟密钥配错之类的纵深场景）
+	rec, _, err := h.S.newSession(ctx, uid, authn.AudiencePublic, []string{amrPassword}, "0", false, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := h.S.sessions.create(ctx, rec, now); err != nil || !ok {
+		t.Fatalf("create: ok=%v err=%v", ok, err)
+	}
+	access, _, err := h.S.issueAccess(authn.AudienceAdmin, uid, rec.ID, rec.AMR, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := h.S.Authenticate(ctx, authn.AudienceAdmin, access)
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+	if p.Audience != authn.AudiencePublic {
+		t.Fatalf("主体的域应取会话自己的域，得 %q", p.Audience)
 	}
 }

@@ -31,6 +31,8 @@ type Users interface {
 	GetMany(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]identitysvc.User, error)
 	// VerifyPassword 校验已知用户的口令；错了返回 errs.Unauthorized。
 	VerifyPassword(ctx context.Context, audience string, userID uuid.UUID, password string) error
+	// TouchLastLogin 记最近登录时间（会话建成后调用）。
+	TouchLastLogin(ctx context.Context, userID uuid.UUID) error
 }
 
 // UserStatusActive 是 identity 里可登录用户的状态取值。

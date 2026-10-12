@@ -37,6 +37,15 @@ type fakeUsers struct {
 	authErr   error
 	// onAuth 在 Authenticate 校验通过后、返回前调用（测纪元竞态）。
 	onAuth func()
+	// touched 记录 TouchLastLogin 的调用。
+	touched []uuid.UUID
+}
+
+func (f *fakeUsers) TouchLastLogin(ctx context.Context, userID uuid.UUID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.touched = append(f.touched, userID)
+	return nil
 }
 
 func (f *fakeUsers) Authenticate(ctx context.Context, audience, email, password string) (identitysvc.User, error) {
@@ -306,7 +315,8 @@ func newTestService(t *testing.T) *testHarness {
 		expired:    map[uuid.UUID]bool{},
 	}
 	al := &auditLog{}
-	clk := &testNow{t: time.Date(2026, 10, 12, 10, 0, 0, 0, time.UTC)}
+	// 与 miniredis 的真实时钟对齐：会话用 EXPIREAT，固定日期过几天就会落到过去
+	clk := &testNow{t: time.Now().UTC().Truncate(time.Second)}
 	cfg := Config{
 		AccessTTL:        15 * time.Minute,
 		PublicSessionTTL: 720 * time.Hour,

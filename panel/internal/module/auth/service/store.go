@@ -59,6 +59,7 @@ type sessionState struct {
 	AMR      []string
 	ReauthAt time.Time
 	AbsExp   time.Time
+	Audience string // 会话自己的域（只有 check 填）
 }
 
 // refreshState 是 refresh 第一步读出的会话字段（比较在 Go 里用常量时间做）。
@@ -141,17 +142,18 @@ func (st *sessionStore) create(ctx context.Context, rec sessionRecord, now time.
 	return n == 1, nil
 }
 
-// 每个请求的会话校验：uid/aud 对得上、没过绝对期、后台没空闲超时、纪元一致；失效的顺手删掉。
-// 通过时按节流更新 last_seen，返回 {1, reauth_at, amr, abs_exp}。
+// 每个请求的会话校验：uid 对得上（ARGV[2] 非空时 aud 也要对得上）、没过绝对期、后台会话没空闲超时、纪元一致；
+// 失效的顺手删掉。通过时按节流更新 last_seen，返回 {1, reauth_at, amr, abs_exp, aud}。
 var checkScript = redis.NewScript(`
 local h = redis.call('HMGET', KEYS[1], 'uid', 'aud', 'abs_exp', 'last_seen', 'epoch', 'reauth_at', 'amr')
 if not h[1] then
   redis.call('SREM', KEYS[2], ARGV[6])
   return {0}
 end
-if h[1] ~= ARGV[1] or h[2] ~= ARGV[2] then return {0} end
+if h[1] ~= ARGV[1] or (ARGV[2] ~= '' and h[2] ~= ARGV[2]) then return {0} end
 local now = tonumber(ARGV[3])
-local idle = tonumber(ARGV[4])
+local idle = 0
+if h[2] == 'admin' then idle = tonumber(ARGV[4]) end
 local ls = tonumber(h[4]) or 0
 local ep = redis.call('GET', KEYS[3]) or '0'
 if (tonumber(h[3]) or 0) <= now or (idle > 0 and now - ls >= idle) or ep ~= h[5] then
@@ -163,25 +165,27 @@ end
 if now - ls >= tonumber(ARGV[5]) then
   redis.call('HSET', KEYS[1], 'last_seen', ARGV[3])
 end
-return {1, h[6] or '0', h[7] or '', h[3]}
+return {1, h[6] or '0', h[7] or '', h[3], h[2]}
 `)
 
-// check 校验会话；ok 为 false 表示会话无效（不是 Redis 故障）。
+// check 校验会话；aud 为空表示不比较域（结果里带回会话自己的域）；adminIdle 只作用于后台会话。
+// ok 为 false 表示会话无效（不是 Redis 故障）。
 func (st *sessionStore) check(ctx context.Context, sid string, uid uuid.UUID, aud string,
-	now time.Time, idle time.Duration) (sessionState, bool, error) {
+	now time.Time, adminIdle time.Duration) (sessionState, bool, error) {
 	keys := []string{sessKey(sid), userSessKey(uid), epochKey(uid)}
 	res, err := checkScript.Run(ctx, st.rdb, keys,
-		uid.String(), aud, now.Unix(), int64(idle/time.Second), int64(lastSeenEvery/time.Second), sid).Slice()
+		uid.String(), aud, now.Unix(), int64(adminIdle/time.Second), int64(lastSeenEvery/time.Second), sid).Slice()
 	if err != nil {
 		return sessionState{}, false, err
 	}
-	if len(res) == 0 || toInt64(res[0]) != 1 || len(res) < 4 {
+	if len(res) < 5 || toInt64(res[0]) != 1 {
 		return sessionState{}, false, nil
 	}
 	return sessionState{
 		ReauthAt: fromUnix(toInt64(res[1])),
 		AMR:      splitAMR(toString(res[2])),
 		AbsExp:   fromUnix(toInt64(res[3])),
+		Audience: toString(res[4]),
 	}, true, nil
 }
 
@@ -307,16 +311,25 @@ func (st *sessionStore) revokeUser(ctx context.Context, uid uuid.UUID, exceptSID
 	return int(n), err
 }
 
-// 重认证：给会话盖时间戳。
+// 重认证：会话有效（与 check 同样的条件：uid、aud、绝对期、后台空闲、纪元）才盖时间戳，否则不写、返回 0。
 var stampReauthScript = redis.NewScript(`
-if redis.call('HGET', KEYS[1], 'uid') ~= ARGV[1] then return 0 end
-redis.call('HSET', KEYS[1], 'reauth_at', ARGV[2])
+local h = redis.call('HMGET', KEYS[1], 'uid', 'aud', 'abs_exp', 'last_seen', 'epoch')
+if not h[1] or h[1] ~= ARGV[1] or h[2] ~= ARGV[3] then return 0 end
+local now = tonumber(ARGV[2])
+local idle = 0
+if h[2] == 'admin' then idle = tonumber(ARGV[4]) end
+local ls = tonumber(h[4]) or 0
+local ep = redis.call('GET', KEYS[2]) or '0'
+if (tonumber(h[3]) or 0) <= now or (idle > 0 and now - ls >= idle) or ep ~= h[5] then return 0 end
+redis.call('HSET', KEYS[1], 'reauth_at', ARGV[2], 'last_seen', ARGV[2])
 return 1
 `)
 
-// stampReauth 把会话的 reauth_at 改成 now；会话不存在返回 false。
-func (st *sessionStore) stampReauth(ctx context.Context, sid string, uid uuid.UUID, now time.Time) (bool, error) {
-	n, err := stampReauthScript.Run(ctx, st.rdb, []string{sessKey(sid)}, uid.String(), now.Unix()).Int64()
+// stampReauth 把有效会话的 reauth_at 改成 now；会话无效返回 false。
+func (st *sessionStore) stampReauth(ctx context.Context, sid string, uid uuid.UUID, aud string,
+	now time.Time, adminIdle time.Duration) (bool, error) {
+	n, err := stampReauthScript.Run(ctx, st.rdb, []string{sessKey(sid), epochKey(uid)},
+		uid.String(), now.Unix(), aud, int64(adminIdle/time.Second)).Int64()
 	if err != nil {
 		return false, err
 	}
@@ -449,58 +462,22 @@ func (st *sessionStore) consumeQuickLogin(ctx context.Context, hash, aud string,
 	return toString(res[1]), uid, true, nil
 }
 
-// 登录失败计数：窗口内第一次失败设窗口期；到阈值那一次把期限改成暂停时长。
-var failureScript = redis.NewScript(`
-local n = redis.call('INCR', KEYS[1])
-if n == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end
-if n == tonumber(ARGV[2]) then redis.call('EXPIRE', KEYS[1], ARGV[3]) end
-return n
-`)
-
-// recordFailure 记一次登录失败，返回窗口内的累计次数。
-func (st *sessionStore) recordFailure(ctx context.Context, key string, window time.Duration, threshold int, pause time.Duration) (int, error) {
-	n, err := failureScript.Run(ctx, st.rdb, []string{key},
-		int64(window/time.Second), threshold, int64(pause/time.Second)).Int64()
-	return int(n), err
-}
-
-// failures 读失败次数与剩余期限。
-func (st *sessionStore) failures(ctx context.Context, key string) (int, time.Duration, error) {
-	pipe := st.rdb.Pipeline()
-	getCmd := pipe.Get(ctx, key)
-	ttlCmd := pipe.TTL(ctx, key)
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return 0, 0, err
-	}
-	v, err := getCmd.Result()
-	if errors.Is(err, redis.Nil) {
-		return 0, 0, nil
-	}
-	if err != nil {
-		return 0, 0, err
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil {
-		return 0, 0, fmt.Errorf("登录失败计数不是整数: %w", err)
-	}
-	return n, ttlCmd.Val(), nil
-}
-
-// clearFailures 登录成功后清掉失败计数。
-func (st *sessionStore) clearFailures(ctx context.Context, key string) error {
-	return st.rdb.Del(ctx, key).Err()
-}
-
-// 先占名额再验：INCR 后返回累计次数与剩余期限，并发请求各占一个名额，绕不过上限。
+// 先占名额再验：INCR；第一次设窗口期；到阈值（ARGV[2] > 0 时）那一次把期限改成暂停时长。
+// 返回 {累计次数（含本次）, 剩余秒数}。并发请求各占一个名额，绕不过上限。
 var claimScript = redis.NewScript(`
 local n = redis.call('INCR', KEYS[1])
 if n == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end
+local th = tonumber(ARGV[2])
+if th > 0 and n == th then redis.call('EXPIRE', KEYS[1], ARGV[3]) end
 return {n, redis.call('TTL', KEYS[1])}
 `)
 
 // claimAttempt 占一次试错名额，返回窗口内累计次数（含本次）与剩余期限。
-func (st *sessionStore) claimAttempt(ctx context.Context, key string, window time.Duration) (int, time.Duration, error) {
-	res, err := claimScript.Run(ctx, st.rdb, []string{key}, int64(window/time.Second)).Int64Slice()
+// threshold 为 0 时不改期限；否则第 threshold 次把期限改成 pause。
+func (st *sessionStore) claimAttempt(ctx context.Context, key string, window time.Duration,
+	threshold int, pause time.Duration) (int, time.Duration, error) {
+	res, err := claimScript.Run(ctx, st.rdb, []string{key},
+		int64(window/time.Second), threshold, int64(pause/time.Second)).Int64Slice()
 	if err != nil {
 		return 0, 0, err
 	}
@@ -510,28 +487,40 @@ func (st *sessionStore) claimAttempt(ctx context.Context, key string, window tim
 	return int(res[0]), time.Duration(res[1]) * time.Second, nil
 }
 
-// releaseAttempt 退回一次名额（校验因故障没有结论时）。
-func (st *sessionStore) releaseAttempt(ctx context.Context, key string) error {
-	return st.rdb.Decr(ctx, key).Err()
+// clearAttempts 成功后清掉试错计数。
+func (st *sessionStore) clearAttempts(ctx context.Context, key string) error {
+	return st.rdb.Del(ctx, key).Err()
 }
 
-// markOnce 对每个键 SET NX EX；全部是新设的才返回 true（窗口内第一次）。
+// 退名额：键还在才 DECR（过期后不留下负数的新键）。
+var releaseScript = redis.NewScript(`
+if redis.call('EXISTS', KEYS[1]) == 1 then return redis.call('DECR', KEYS[1]) end
+return 0
+`)
+
+// releaseAttempt 退回一次名额（校验没有结论，或口令其实是对的）。
+func (st *sessionStore) releaseAttempt(ctx context.Context, key string) error {
+	return releaseScript.Run(ctx, st.rdb, []string{key}).Err()
+}
+
+// 全部键都不存在时才一起 SET EX 并返回 1；否则返回 0、什么都不写。
+var markOnceScript = redis.NewScript(`
+for _, k in ipairs(KEYS) do
+  if redis.call('EXISTS', k) == 1 then return 0 end
+end
+for _, k in ipairs(KEYS) do
+  redis.call('SET', k, '1', 'EX', ARGV[1])
+end
+return 1
+`)
+
+// markOnce 窗口内第一次（所有键都没出现过）返回 true，并把这些键一起记下。
 func (st *sessionStore) markOnce(ctx context.Context, ttl time.Duration, keys ...string) (bool, error) {
-	pipe := st.rdb.Pipeline()
-	cmds := make([]*redis.BoolCmd, len(keys))
-	for i, k := range keys {
-		cmds[i] = pipe.SetNX(ctx, k, 1, ttl)
-	}
-	if _, err := pipe.Exec(ctx); err != nil {
+	n, err := markOnceScript.Run(ctx, st.rdb, keys, int64(ttl/time.Second)).Int64()
+	if err != nil {
 		return false, err
 	}
-	all := true
-	for _, c := range cmds {
-		if !c.Val() {
-			all = false
-		}
-	}
-	return all, nil
+	return n == 1, nil
 }
 
 func unixOrZero(t time.Time) int64 {

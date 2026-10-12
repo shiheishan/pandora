@@ -54,7 +54,8 @@ func (s *Service) Authenticate(ctx context.Context, audience, bearer string) (au
 	if _, err := uuid.Parse(claims.SessionID); err != nil {
 		return authn.Principal{}, errSessionInvalid
 	}
-	st, ok, err := s.sessions.check(ctx, claims.SessionID, uid, audience, now, s.idleTimeout(audience))
+	// 不按引擎的域比较：主体的域取会话自己记的域，跨域由 DomainGuard 拦
+	st, ok, err := s.sessions.check(ctx, claims.SessionID, uid, "", now, s.idleTimeout(authn.AudienceAdmin))
 	if err != nil {
 		return authn.Principal{}, errs.Wrap(errs.Unavailable, err)
 	}
@@ -64,7 +65,7 @@ func (s *Service) Authenticate(ctx context.Context, audience, bearer string) (au
 	return authn.Principal{
 		UserID:    uid,
 		SessionID: claims.SessionID,
-		Audience:  audience,
+		Audience:  st.Audience,
 		AMR:       st.AMR,
 		ReauthAt:  st.ReauthAt,
 	}, nil
@@ -104,31 +105,16 @@ func (s *Service) Refresh(ctx context.Context, audience, raw string) (Tokens, er
 			}
 			newSecretPlain = sec
 			newHash = hashSecret(sec)
-		} else if st.RTPrev != "" && sameHash(h, st.RTPrev) && now.Sub(st.RTRotatedAt) <= refreshGrace {
-			mode = refreshModeGrace
-			expect = h
+		} else if st.RTPrev != "" && sameHash(h, st.RTPrev) {
+			if now.Sub(st.RTRotatedAt) <= refreshGrace {
+				mode = refreshModeGrace
+				expect = h
+			} else {
+				// 上一枚 refresh 在宽限外又被用：判为重放，吊销整条会话
+				return Tokens{}, s.refreshReused(ctx, sid, st.UserID, audience)
+			}
 		} else {
-			sidUUID, parseErr := uuid.Parse(sid)
-			if parseErr != nil {
-				return Tokens{}, errSessionInvalid
-			}
-			actor := st.UserID
-			err := s.tx.Do(ctx, func(ctx context.Context) error {
-				if _, err := s.sessions.revokeOne(ctx, sid, st.UserID, audience); err != nil {
-					return errs.Wrap(errs.Unavailable, err)
-				}
-				return s.audit.Write(ctx, auditsvc.Event{
-					Action:       "session.refresh_reuse",
-					ResourceType: "session",
-					ResourceID:   &sidUUID,
-					ActorID:      &actor,
-					Audience:     audience,
-					Outcome:      auditsvc.OutcomeDenied,
-				})
-			})
-			if err != nil {
-				return Tokens{}, err
-			}
+			// 对不上任何一枚：只回 401，不吊销（sid 不保密，随机值不能踢掉别人的会话）
 			return Tokens{}, errSessionInvalid
 		}
 
@@ -158,6 +144,26 @@ func (s *Service) Refresh(ctx context.Context, audience, raw string) (Tokens, er
 		return tok, nil
 	}
 	return Tokens{}, errSessionInvalid
+}
+
+// refreshReused 处理 refresh 重放：吊销会话并写 anonymous 的 session.refresh_reuse 审计，返回 401。
+func (s *Service) refreshReused(ctx context.Context, sid string, uid uuid.UUID, audience string) error {
+	err := s.tx.Do(ctx, func(ctx context.Context) error {
+		if _, err := s.sessions.revokeOne(ctx, sid, uid, audience); err != nil {
+			return errs.Wrap(errs.Unavailable, err)
+		}
+		return s.audit.Write(ctx, auditsvc.Event{
+			Action:       "session.refresh_reuse",
+			ResourceType: "user",
+			ResourceID:   &uid,
+			Outcome:      auditsvc.OutcomeDenied,
+			Data:         map[string]any{"audience": audience, "session_id": sid},
+		})
+	})
+	if err != nil {
+		return err
+	}
+	return errSessionInvalid
 }
 
 // Logout 吊销会话；找不到会话也视为成功（幂等）。
@@ -326,7 +332,7 @@ func (s *Service) Reauth(ctx context.Context, password string) (Tokens, error) {
 
 	// 试错上限：先原子占名额再验口令，并发请求绕不过；验对后清零
 	key := reauthFailureKey(p.UserID)
-	n, ttl, err := s.sessions.claimAttempt(ctx, key, reauthWindow)
+	n, ttl, err := s.sessions.claimAttempt(ctx, key, reauthWindow, 0, 0)
 	if err != nil {
 		return Tokens{}, errs.Wrap(errs.Unavailable, err)
 	}
@@ -342,7 +348,7 @@ func (s *Service) Reauth(ctx context.Context, password string) (Tokens, error) {
 
 	err = s.users.VerifyPassword(ctx, authn.AudienceAdmin, p.UserID, password)
 	if err == nil {
-		if cerr := s.sessions.clearFailures(ctx, key); cerr != nil {
+		if cerr := s.sessions.clearAttempts(ctx, key); cerr != nil {
 			plog.From(ctx).Warn("清除重认证试错计数失败", zap.Error(cerr))
 		}
 	} else if errs.As(err).Code != errs.Unauthorized {
@@ -374,7 +380,7 @@ func (s *Service) Reauth(ctx context.Context, password string) (Tokens, error) {
 	p2 := p
 	p2.ReauthAt = now
 	if err := s.tx.Do(authn.With(ctx, p2), func(ctx context.Context) error {
-		ok, err := s.sessions.stampReauth(ctx, p.SessionID, p.UserID, now)
+		ok, err := s.sessions.stampReauth(ctx, p.SessionID, p.UserID, authn.AudienceAdmin, now, s.idleTimeout(authn.AudienceAdmin))
 		if err != nil {
 			return errs.Wrap(errs.Unavailable, err)
 		}

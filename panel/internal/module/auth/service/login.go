@@ -33,53 +33,73 @@ const (
 
 var errQuickLoginInvalid = errs.Newf(errs.Unauthorized, "快捷登录链接无效或已过期")
 
-func failureKey(aud, emailHash string) string { return "lf:" + aud + ":" + emailHash }
+// failureKey 是登录失败计数键：按账号跨域共用；邮箱不存在时用邮箱哈希（对外行为一致，不暴露账号是否存在）。
+func failureKey(uid uuid.UUID, emailHash string) string {
+	if uid != uuid.Nil {
+		return "lf:" + uid.String()
+	}
+	return "lf:" + emailHash
+}
 
-// Login 校验邮箱与口令并建立会话（门户或后台）。
+// Login 校验邮箱与口令并建立会话（门户或后台）。失败计数先占名额再验：
+// 窗口内第 11 次起直接 429（口令对也拒）；成功清零；没有结论的结果退回名额。
 func (s *Service) Login(ctx context.Context, audience, email, password string) (Tokens, error) {
 	if s.issuer(audience) == nil {
 		return Tokens{}, errs.Newf(errs.BadRequest, "未知的登录域")
 	}
 
-	now := s.now()
 	eh := s.emailHash(email)
-	key := failureKey(audience, eh)
+	u0, err := s.users.FindByEmail(ctx, normalizeEmail(email))
+	if err != nil {
+		if errs.As(err).Code != errs.NotFound {
+			return Tokens{}, err
+		}
+		u0 = identitysvc.User{}
+	}
+	key := failureKey(u0.ID, eh)
 
-	n, ttl, err := s.sessions.failures(ctx, key)
+	n, ttl, err := s.sessions.claimAttempt(ctx, key, failureWindow, failureThreshold, failurePause)
 	if err != nil {
 		return Tokens{}, errs.Wrap(errs.Unavailable, err)
 	}
-	if n >= failureThreshold {
+	if n > failureThreshold {
 		retry := int(math.Ceil(ttl.Seconds()))
-		if ttl <= 0 {
-			retry = int(failurePause / time.Second)
-		}
 		if retry < 1 {
-			retry = 1
+			retry = int(failurePause / time.Second)
 		}
 		e := errs.Newf(errs.RateLimited, "登录失败次数过多，请稍后再试")
 		e.RetryAfterSeconds = retry
 		return Tokens{}, e
 	}
 
-	u0, err := s.users.FindByEmail(ctx, normalizeEmail(email))
-	uid0 := uuid.Nil
-	if err != nil {
-		if errs.As(err).Code != errs.NotFound {
-			return Tokens{}, err
+	t, counted, err := s.login(ctx, audience, email, password, eh, u0.ID)
+	switch {
+	case err == nil:
+		if cerr := s.sessions.clearAttempts(ctx, key); cerr != nil {
+			plog.From(ctx).Warn("清除登录失败计数失败", zap.Error(cerr))
 		}
-	} else {
-		uid0 = u0.ID
+	case !counted:
+		if rerr := s.sessions.releaseAttempt(ctx, key); rerr != nil {
+			plog.From(ctx).Warn("退回登录失败名额失败", zap.Error(rerr))
+		}
 	}
+	return t, err
+}
 
+// login 是名额占好之后的登录本体。counted 为 true 表示这是一次算数的凭据失败（口令错、账号不存在、
+// 停用、后台无角色）；其余错误（故障、后台人员登门户等口令其实是对的）由调用方退回名额。
+func (s *Service) login(ctx context.Context, audience, email, password, eh string, uid0 uuid.UUID) (Tokens, bool, error) {
+	now := s.now()
+	// 纪元在验口令之前读：验口令到建会话之间改了密，建会话会被拒
 	epoch0, err := s.sessions.epoch(ctx, uid0)
 	if err != nil {
-		return Tokens{}, errs.Wrap(errs.Unavailable, err)
+		return Tokens{}, false, errs.Wrap(errs.Unavailable, err)
 	}
 
 	var knownUID *uuid.UUID
 	if uid0 != uuid.Nil {
-		knownUID = &u0.ID
+		id := uid0
+		knownUID = &id
 	}
 
 	u, err := s.users.Authenticate(ctx, audience, email, password)
@@ -91,58 +111,59 @@ func (s *Service) Login(ctx context.Context, audience, email, password string) (
 		}
 		switch {
 		case errors.Is(err, identitysvc.ErrAccountInactive):
-			s.loginFailed(ctx, audience, eh, knownUID, reasonAccountInactive, true)
-			return Tokens{}, errInvalidCredentials
+			s.loginFailed(ctx, audience, eh, knownUID, reasonAccountInactive)
+			return Tokens{}, true, errInvalidCredentials
 		case errs.As(err).Code == errs.Unauthorized, errs.As(err).Code == errs.NotFound:
-			s.loginFailed(ctx, audience, eh, knownUID, reasonInvalidCredentials, true)
-			return Tokens{}, errInvalidCredentials
+			s.loginFailed(ctx, audience, eh, knownUID, reasonInvalidCredentials)
+			return Tokens{}, true, errInvalidCredentials
 		default:
-			return Tokens{}, err
+			return Tokens{}, false, err
 		}
 	}
 
 	if u.ID != uid0 {
 		epoch0, err = s.sessions.epoch(ctx, u.ID)
 		if err != nil {
-			return Tokens{}, errs.Wrap(errs.Unavailable, err)
+			return Tokens{}, false, errs.Wrap(errs.Unavailable, err)
 		}
 		knownUID = &u.ID
 	}
 
 	if u.Status != UserStatusActive {
-		s.loginFailed(ctx, audience, eh, knownUID, reasonAccountInactive, true)
-		return Tokens{}, errInvalidCredentials
+		s.loginFailed(ctx, audience, eh, knownUID, reasonAccountInactive)
+		return Tokens{}, true, errInvalidCredentials
 	}
 
 	var perms []string
 	if audience == authn.AudienceAdmin {
 		perms, err = s.store.Permissions(ctx, u.ID)
 		if err != nil {
-			return Tokens{}, errs.Wrap(errs.Internal, err)
+			return Tokens{}, false, errs.Wrap(errs.Internal, err)
 		}
 		if len(perms) == 0 {
-			s.loginFailed(ctx, audience, eh, knownUID, reasonNoAdminRole, true)
-			return Tokens{}, errInvalidCredentials
+			// IAM-006：与口令错完全相同，也计数
+			s.loginFailed(ctx, audience, eh, knownUID, reasonNoAdminRole)
+			return Tokens{}, true, errInvalidCredentials
 		}
 	} else {
 		staff, err := s.store.HasActiveRole(ctx, u.ID)
 		if err != nil {
-			return Tokens{}, errs.Wrap(errs.Internal, err)
+			return Tokens{}, false, errs.Wrap(errs.Internal, err)
 		}
 		if staff {
-			s.loginFailed(ctx, audience, eh, knownUID, reasonStaffPortal, false)
-			return Tokens{}, ErrStaffPortalLogin
+			s.loginFailed(ctx, audience, eh, knownUID, reasonStaffPortal)
+			return Tokens{}, false, ErrStaffPortalLogin
 		}
 	}
 
 	rec, refresh, err := s.newSession(ctx, u.ID, audience, []string{amrPassword}, epoch0, true, now)
 	if err != nil {
-		return Tokens{}, err
+		return Tokens{}, false, err
 	}
 
 	access, expiresIn, err := s.issueAccess(audience, u.ID, rec.ID, rec.AMR, now)
 	if err != nil {
-		return Tokens{}, err
+		return Tokens{}, false, err
 	}
 
 	p := authn.Principal{
@@ -171,11 +192,11 @@ func (s *Service) Login(ctx context.Context, audience, email, password string) (
 		}
 		return nil
 	}); err != nil {
-		return Tokens{}, err
+		return Tokens{}, false, err
 	}
 
-	if err := s.sessions.clearFailures(ctx, key); err != nil {
-		plog.From(ctx).Warn("清除登录失败计数失败", zap.Error(err))
+	if err := s.users.TouchLastLogin(ctx, u.ID); err != nil {
+		plog.From(ctx).Warn("更新最后登录时间失败", zap.Error(err))
 	}
 
 	return Tokens{
@@ -185,16 +206,12 @@ func (s *Service) Login(ctx context.Context, audience, email, password string) (
 		Refresh:        refresh,
 		RefreshExpires: rec.AbsExp,
 		Permissions:    perms,
-	}, nil
+	}, false, nil
 }
 
-func (s *Service) loginFailed(ctx context.Context, aud, emailHash string, uid *uuid.UUID, reason string, count bool) {
-	if count {
-		if _, err := s.sessions.recordFailure(ctx, failureKey(aud, emailHash), failureWindow, failureThreshold, failurePause); err != nil {
-			plog.From(ctx).Warn("记录登录失败计数失败", zap.Error(err))
-		}
-	}
-
+// loginFailed 写登录失败审计（anonymous：不传 ActorID 与 Audience，被撞账号放 ResourceID，audience 放 Data）。
+// 同一邮箱或同一 IP 在窗口内只记一条；后台人员登门户每次都记。
+func (s *Service) loginFailed(ctx context.Context, aud, emailHash string, uid *uuid.UUID, reason string) {
 	if reason != reasonStaffPortal {
 		keys := []string{"lfa:em:" + aud + ":" + emailHash}
 		if ih := s.ipHash(ctx); ih != "" {
@@ -210,11 +227,9 @@ func (s *Service) loginFailed(ctx context.Context, aud, emailHash string, uid *u
 	}
 
 	ev := auditsvc.Event{
-		Action:   loginFailedAction,
-		ActorID:  uid,
-		Audience: aud,
-		Outcome:  auditsvc.OutcomeFailure,
-		Data:     map[string]any{"reason": reason, "email_hash": emailHash},
+		Action:  loginFailedAction,
+		Outcome: auditsvc.OutcomeFailure,
+		Data:    map[string]any{"reason": reason, "email_hash": emailHash, "audience": aud},
 	}
 	if uid != nil {
 		ev.ResourceType = "user"
@@ -308,6 +323,10 @@ func (s *Service) ConsumeQuickLogin(ctx context.Context, token string) (Tokens, 
 		return nil
 	}); err != nil {
 		return Tokens{}, err
+	}
+
+	if err := s.users.TouchLastLogin(ctx, uid); err != nil {
+		plog.From(ctx).Warn("更新最后登录时间失败", zap.Error(err))
 	}
 
 	return Tokens{
