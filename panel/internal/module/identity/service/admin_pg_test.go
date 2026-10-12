@@ -108,6 +108,13 @@ func TestPGUserDetail(t *testing.T) {
 	if err != nil || cnt.ReferralCount < 1 {
 		t.Fatalf("ref count %d err=%v", cnt.ReferralCount, err)
 	}
+	if cnt.IsAdmin {
+		t.Fatal("普通用户 IsAdmin 应为 false")
+	}
+	e.staff.staff[ref.ID] = true
+	if adm, err := e.svc.UserDetail(actx, ref.ID); err != nil || !adm.IsAdmin {
+		t.Fatalf("管理员 IsAdmin=%v err=%v", adm.IsAdmin, err)
+	}
 }
 
 func TestPGSetStatus(t *testing.T) {

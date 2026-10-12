@@ -42,6 +42,7 @@ type admUserRefResponse struct {
 type userDetailResponse struct {
 	userRowResponse
 	EmailVerified bool                 `json:"email_verified"`
+	IsAdmin       bool                 `json:"is_admin"`
 	Referrer      *admUserRefResponse  `json:"referrer"`
 	Stats         admUserStatsResponse `json:"stats"`
 }
@@ -143,6 +144,7 @@ func admUserDetailFrom(d service.UserDetail) userDetailResponse {
 	out := userDetailResponse{
 		userRowResponse: admUserRowFrom(d.UserRow),
 		EmailVerified:   d.EmailVerified,
+		IsAdmin:         d.IsAdmin,
 		Stats:           admUserStatsResponse{ReferralCount: d.ReferralCount},
 	}
 	if d.Referrer != nil {

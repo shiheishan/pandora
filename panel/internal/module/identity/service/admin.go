@@ -89,6 +89,9 @@ func (s *Service) UserDetail(ctx context.Context, id uuid.UUID) (UserDetail, err
 		UserRow:       row,
 		EmailVerified: r.EmailVerifiedAt != nil,
 	}
+	if d.IsAdmin, err = s.isStaff(ctx, id); err != nil {
+		return UserDetail{}, err
+	}
 	if ref, ok, err := s.repo.Referrer(ctx, id); err != nil {
 		return UserDetail{}, err
 	} else if ok {
