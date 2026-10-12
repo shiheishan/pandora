@@ -33,3 +33,13 @@ type AdminGuard interface {
 type VerificationMailer interface {
 	SendToAddress(ctx context.Context, templateCode, address string, vars map[string]string, userID *uuid.UUID) error
 }
+
+// StaffGuard 由 auth 实现（p2-identity 追加，角色数据归 auth）。identity 用它做三件事：
+// 后台人员的口令至少 12 位；后台人员不能走门户的自助找回密码；后台改状态、替人重置口令前的越级检查。
+type StaffGuard interface {
+	// IsStaff 报告用户是否持有后台角色绑定（含已过期的绑定，口令策略宁可多要求几位）。
+	IsStaff(ctx context.Context, userID uuid.UUID) (bool, error)
+	// EnsureCanManage 在调用方事务里调用：target 持有 actor 没有的有效权限时返回 errs.Forbidden，
+	// 文案「目标账号持有你没有的权限，不能由你重置密码或变更状态」。
+	EnsureCanManage(ctx context.Context, actorID, targetID uuid.UUID) error
+}

@@ -323,20 +323,23 @@ export function mockApi(app: MockApp): Plugin {
     )
     if (anon) return anon.handler({ ...base, params: anon.params })
 
-    // --- 以下需登录 ----------------------------------------------------------
-    const auth = bearer(req)
-    const user = auth ? userById(auth.session.userId) : undefined
-    if (!auth || !user) return fail(res, 401, 'unauthorized', '需要登录')
-    const reauthed = Date.now() - auth.session.rat < REAUTH_WINDOW_MS
-
+    // 登出不要求 access 有效（照 Go：凭 cookie 吊销会话；带着有效 Bearer 也一并作废；两样都没有也回 204）
     if (route === 'POST /v1/auth/logout') {
-      sessions.delete(auth.token)
+      const current = bearer(req)
+      if (current) sessions.delete(current.token)
       const cookies = parseCookieHeader(req.headers.cookie)
       const rt = cookies[RT_COOKIE[app]]
       if (rt) revokeRefreshValue(rt)
       clearRefreshCookie(res, app)
       return send(res, 204)
     }
+
+    // --- 以下需登录 ----------------------------------------------------------
+    const auth = bearer(req)
+    const user = auth ? userById(auth.session.userId) : undefined
+    if (!auth || !user) return fail(res, 401, 'unauthorized', '需要登录')
+    const reauthed = Date.now() - auth.session.rat < REAUTH_WINDOW_MS
+
     if (route === 'GET /v1/events') return stream(req, res)
 
     if (app === 'admin') {

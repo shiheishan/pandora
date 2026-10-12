@@ -56,10 +56,11 @@ export function useSignedIn(): boolean {
   return useSyncExternalStore(tokens.subscribe, () => tokens.get() !== null, () => false)
 }
 
-/** 退出：先请求后端吊销当前会话（失败也不拦），再清本地令牌。 */
+/** 退出：先凭 refresh cookie 请求后端吊销当前会话（失败也不拦），再清本地令牌。
+ *  不带 Bearer：access 过期时也能登出，不会先触发一轮刷新。 */
 export async function signOut(runtime: AppRuntime): Promise<void> {
   try {
-    await runtime.api.post('v1/auth/logout', noContent, { withCookies: true })
+    await runtime.api.post('v1/auth/logout', noContent, { auth: false, withCookies: true })
   } catch {
     // 会话已失效或网络断开：本地照样退出
   }

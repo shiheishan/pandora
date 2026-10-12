@@ -280,8 +280,8 @@ identity, auth ─► settings, audit
 | 存放 | HttpOnly、Secure、SameSite=Strict 的 cookie，Path=`/v1/auth`；public 叫 `pandora_rt`，admin 叫 `pandora_admin_rt`（admin 经 nginx 的 `proxy_cookie_path` 改成带后台前缀的路径） |
 | 轮换 | `POST /v1/auth/refresh` 每次生成新值：`rt_prev ← rt_cur`、`rt_cur ← 新值`，Lua 原子完成 |
 | 宽限 | 30 秒内拿 rt_prev 来的请求（多标签页同时刷新）：只发新的 access，不轮换，也不 Set-Cookie |
-| 重放 | 超出宽限还拿旧值，或者值对不上：吊销整个会话，审计记 `session.refresh_reuse`，回 401 |
-| CSRF | cookie 只在 refresh 和 logout 两个接口上用；SameSite=Strict，再加 Go 标准库的 `http.CrossOriginProtection` 做来源检查 |
+| 重放 | 超出宽限还拿 rt_prev：吊销整个会话，审计记 `session.refresh_reuse`（记 anonymous，会话主人放资源），回 401。值既不是 rt_cur 也不是 rt_prev：只回 401，不吊销——sid 不保密（JWT 明文、审计、会话列表），按「对不上就吊销」任何拿到 sid 的人都能踢掉别人；重放的信号是用过的旧值再出现 |
+| CSRF | cookie 只在 refresh 和 logout 两个接口上读；SameSite=Strict，再加 Go 标准库的 `http.CrossOriginProtection` 做来源检查。下发 cookie 的登录、快捷登录也挂同一个来源检查（防登录 CSRF：跨站 text/plain 表单能拼出合法 JSON，把受害者浏览器登进攻击者账号） |
 | 刷新不续 rat | 新 access 沿用会话里的 amr；重认证时间只由 reauth 接口改写 |
 
 ### 8.4 吊销
@@ -302,7 +302,9 @@ identity, auth ─► settings, audit
 - public 与 admin 两个域互不相通；staff 不能登录门户；后台用户没有角色时，登录返回与口令错误相同的 401（IAM-006）；用户不存在时用 DummyVerify 对齐耗时。
 - Argon2id 参数不变，事务外计算哈希，public 与 admin 各一个并发闸。
 - 重认证窗口 15 分钟，排在幂等之前；reauth 接口改写会话里的 reauth_at（现在不写），并且按 audience 校验会话（现在不校验）。
-- 登录限流改为 Strict（Redis 故障时回 503）；同一账号 15 分钟内失败 10 次暂停 15 分钟（Q7），计数放 Redis。
+- 登录限流改为 Strict（Redis 故障时回 503）；同一账号 15 分钟内失败 10 次暂停 15 分钟（Q7），计数放 Redis，按账号跨两个域共用（`lf:{uid 或邮箱哈希}`）；先占名额再验口令（并发请求不能绕过上限），成功清零，结论不明（繁忙、内部错）退回名额。
+- 登录失败、刷新重放这类失败事件的审计记 anonymous：被撞账号放资源（user），audience 放 data，不把它记成操作者。
+- 后台空闲 2 小时：服务端按 last_seen 判断；后台页面有定时轮询，所以前端另记用户操作，2 小时无操作主动登出（服务端空闲判断兜底关掉的标签页）。
 
 ### 8.7 前端要改的
 
@@ -454,7 +456,7 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 | `report:activity_daily`、`node:traffic_rollup` | `*/10 * * * *`（错开 2 分钟） | 2m | low |
 | `identity:generate_users` | 建 job 的事务提交后入队，TaskID = `gen_users:<job_id>` | 10m | default |
 | `certs:patrol` / `certs:issue` | `@every 1m` / patrol 入队，TaskID = `cert:<order_id>` | 30s / 15m | default |
-| `retention:<表>` | 每小时一次，各表错开 | 2–5m | low |
+| `retention:<表>` | 每天一次（03:40 起各表错开几分钟），分批删到删完或到批数上限 | 2–5m | low |
 | `reconcile:user_generation` | `@every 1m`，把 queued 或租约过期的 job 重新入队 | 30s | low |
 
 - 保留期清理覆盖的表：原有的 node_metrics、node_traffic_reports、各级流量汇总、node_alive_ips、subscription_fetch_log、activity_daily；新补的 idempotency_keys、registration_sessions、verification_codes、plugin_hook_deliveries、user_generation_jobs（结果清除后 N 天删行）、notification_deliveries。各表的保留期按第 18 节 Q5。
@@ -485,6 +487,7 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 - 秘密只能来自环境变量（systemd `EnvironmentFile=`，0600），或者 `*_FILE` 指向的 0600 文件；放在配置文件里会启动失败。
 - 启动时 Unmarshal 进结构体，再统一 `Validate()`。现有的校验规则（长度、两个 JWT 密钥不同、生产环境禁用某些项、pprof 只能回环）原样搬过去。
 - 段落：`env`、`http.public`、`http.admin`、`grpc.node`、`database`（另有 `migration_url`，只在 migrate 时读）、`redis`、`worker`、`auth`、`ratelimit`、`secrets`、`public_base_url`、`geoip`、`node`、`subscription.singbox`、`acme`、`log`、`backup`。
+- `env` 缺省为 `production`（失败即关闭）：注册、找回回显 `dev_code`，以及开发格式的日志，只在显式设成 `development` 或 `test` 时打开；CI 与本地开发显式设 `PANDORA_ENV=development`。
 - 只有部署脚本用的变量（POSTGRES_*、后台路径前缀、告警 Telegram、备份钩子）留在 `.env` 给脚本读，不进应用配置。
 
 ### 14.2 日志

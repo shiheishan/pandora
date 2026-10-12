@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
+	identitysvc "github.com/aegispanel/aegis/internal/module/identity/service"
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
@@ -47,7 +48,7 @@ func validateTestRecipient(to string) (string, error) {
 	if to == "" {
 		return "", errs.Invalid(map[string]string{"to": "请填写收件地址"})
 	}
-	if strings.ContainsRune(to, 0) || checkBareAddress(to) != nil {
+	if strings.ContainsRune(to, 0) || !identitysvc.ValidEmail(to) {
 		return "", errs.Invalid(map[string]string{"to": "邮箱格式不正确"})
 	}
 	return to, nil

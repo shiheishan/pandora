@@ -319,3 +319,17 @@ func TestSwitchesListShape(t *testing.T) {
 }
 
 func ptr(s string) *string { return &s }
+
+func TestSetMailRejectsControlCharsInFromName(t *testing.T) {
+	svc, _, ctx, _ := newPG(t)
+	err := svc.SetMail(ctx, MailUpdate{
+		Host:        "smtp.example.test",
+		Port:        465,
+		Encryption:  MailEncryptionSSL,
+		FromAddress: "noreply@example.test",
+		FromName:    "名字\r\nBcc: x@example.test",
+	})
+	if e := errs.As(err); e.Code != errs.ValidationFailed || e.Fields["from_name"] == "" {
+		t.Fatalf("err %v", err)
+	}
+}

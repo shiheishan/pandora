@@ -109,17 +109,6 @@ func TestBuildMessageSubjectNewline(t *testing.T) {
 	}
 }
 
-func TestValidAddress(t *testing.T) {
-	for addr, want := range map[string]bool{
-		"a@b.com": true, "a..b@x.com": false, "a,b@x.com": false, "a@b@x.com": false,
-		"Name <a@b.com>": false, "a@b.com\r\nBcc: c@d.com": false,
-	} {
-		if got := ValidAddress(addr); got != want {
-			t.Errorf("ValidAddress(%q) = %v", addr, got)
-		}
-	}
-}
-
 func TestDescribeError(t *testing.T) {
 	d, perm := describeError(&textproto.Error{Code: 550, Msg: "5.1.1 <user@example.com>: Recipient address rejected"})
 	if perm != true || strings.Contains(d, "user@example.com") || !strings.Contains(d, "<地址>") {

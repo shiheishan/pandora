@@ -13,6 +13,7 @@ import (
 const testMasterKeyB64 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
 func setMinimalValidEnv(t *testing.T) {
+	t.Setenv("PANDORA_ENV", "development")
 	t.Setenv("PANDORA_DATABASE_URL", "postgres://u:p@127.0.0.1:5432/db")
 	t.Setenv("PANDORA_REDIS_URL", "redis://127.0.0.1:6379/0")
 	t.Setenv("PANDORA_SECRETS_MASTER_KEY", testMasterKeyB64)
@@ -61,6 +62,7 @@ func TestSecretFromFileOK(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PANDORA_SECRETS_MASTER_KEY_FILE", mkPath)
+	t.Setenv("PANDORA_ENV", "development")
 	t.Setenv("PANDORA_DATABASE_URL", "postgres://u:p@127.0.0.1/db")
 	t.Setenv("PANDORA_REDIS_URL", "redis://127.0.0.1/0")
 	t.Setenv("PANDORA_AUTH_PUBLIC_JWT_SECRET", strings.Repeat("a", 32))
@@ -81,6 +83,7 @@ func TestSecretFilePermTooOpen(t *testing.T) {
 	if err := os.WriteFile(mkPath, []byte(testMasterKeyB64), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("PANDORA_ENV", "development")
 	t.Setenv("PANDORA_DATABASE_URL", "postgres://u:p@127.0.0.1:5432/db")
 	t.Setenv("PANDORA_REDIS_URL", "redis://127.0.0.1:6379/0")
 	t.Setenv("PANDORA_AUTH_PUBLIC_JWT_SECRET", strings.Repeat("a", 32))
@@ -171,5 +174,19 @@ func TestSecretStringDoesNotLeak(t *testing.T) {
 	formatted := fmt.Sprintf("%v", cfg.Auth.PublicJWTSecret)
 	if strings.Contains(formatted, secretVal) || formatted != "***" {
 		t.Fatalf("Sprintf leaked: %q", formatted)
+	}
+}
+
+// 没设 env 时按生产处理：生产要求 https 的 public_base_url，缺省的本机地址启动不了。
+func TestDefaultEnvIsProduction(t *testing.T) {
+	// CI 在 job 级设了 PANDORA_ENV=development；空值在 viper 里等同没设
+	t.Setenv("PANDORA_ENV", "")
+	t.Setenv("PANDORA_DATABASE_URL", "postgres://u:p@127.0.0.1:5432/db")
+	t.Setenv("PANDORA_REDIS_URL", "redis://127.0.0.1:6379/0")
+	t.Setenv("PANDORA_SECRETS_MASTER_KEY", testMasterKeyB64)
+	t.Setenv("PANDORA_AUTH_PUBLIC_JWT_SECRET", strings.Repeat("a", 32))
+	t.Setenv("PANDORA_AUTH_ADMIN_JWT_SECRET", strings.Repeat("b", 32))
+	if _, err := Load(""); err == nil || !strings.Contains(err.Error(), "production") {
+		t.Fatalf("缺省 env 应按 production 校验: %v", err)
 	}
 }

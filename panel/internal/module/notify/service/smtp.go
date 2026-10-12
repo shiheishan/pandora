@@ -19,8 +19,10 @@ import (
 	"syscall"
 	"time"
 
-	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/google/uuid"
+
+	identitysvc "github.com/aegispanel/aegis/internal/module/identity/service"
+	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 )
 
 // SMTPConfig 是一次发信用的配置（口令为明文，只在内存里用）。
@@ -233,29 +235,11 @@ func isLocalhost(host string) bool {
 	}
 }
 
-// checkBareAddress 检查 s 是不是一个裸邮箱地址（无显示名、无换行、≤254 字节）。
-func checkBareAddress(s string) error {
-	if strings.ContainsAny(s, "\r\n") {
-		return errors.New("invalid")
-	}
-	if len(s) > 254 {
-		return errors.New("invalid")
-	}
-	a, err := mail.ParseAddress(s)
-	if err != nil {
-		return err
-	}
-	if a.Name != "" || a.Address != s {
-		return errors.New("invalid")
-	}
-	return nil
-}
-
 func buildMessage(cfg SMTPConfig, m Message, now time.Time) ([]byte, error) {
-	if err := checkBareAddress(m.To); err != nil {
+	if !identitysvc.ValidEmail(m.To) {
 		return nil, errors.New("收件地址格式不正确")
 	}
-	if err := checkBareAddress(cfg.FromAddress); err != nil {
+	if !identitysvc.ValidEmail(cfg.FromAddress) {
 		return nil, errors.New("发件地址格式不正确")
 	}
 	if strings.ContainsAny(m.Subject, "\r\n") || strings.ContainsAny(cfg.FromName, "\r\n") {

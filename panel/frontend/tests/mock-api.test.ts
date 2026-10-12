@@ -205,4 +205,12 @@ describe('mock api · refresh cookie', () => {
     expect(out.headers.get('set-cookie')).toMatch(/pandora_rt=;.*Max-Age=0/)
     expect((await refresh(rt)).status).toBe(401)
   })
+
+  it('logout works with only the refresh cookie (expired access)', async () => {
+    const login = await fetch(`${base}/v1/auth/login`, { method: 'POST', body: JSON.stringify(MOCK_ACCOUNTS.portal) })
+    const rt = rtFrom(login)
+    const out = await fetch(`${base}/v1/auth/logout`, { method: 'POST', headers: { Cookie: `pandora_rt=${rt}` } })
+    expect(out.status).toBe(204)
+    expect((await refresh(rt)).status).toBe(401)
+  })
 })

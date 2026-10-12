@@ -68,14 +68,15 @@ func v1Path(c *gin.Context) string {
 }
 
 // adminWriteAllowlist 是只读模式下仍放行的写接口（路由模板，去掉 /v1 前缀）：
-// 登录、刷新、登出、重认证、改自己密码、切开关本身。逐条列出，新挂的写接口默认受只读模式约束。
+// 登录、刷新、登出、重认证、改自己密码、切开关本身，以及只渲染不写库的模板预览。逐条列出，新挂的写接口默认受只读模式约束。
 var adminWriteAllowlist = map[string]bool{
-	"POST /auth/login":     true,
-	"POST /auth/refresh":   true,
-	"POST /auth/logout":    true,
-	"POST /auth/reauth":    true,
-	"POST /me/password":    true,
-	"POST /switches/:code": true,
+	"POST /auth/login":             true,
+	"POST /auth/refresh":           true,
+	"POST /auth/logout":            true,
+	"POST /auth/reauth":            true,
+	"POST /me/password":            true,
+	"POST /switches/:code":         true,
+	"POST /mail/templates/preview": true,
 }
 
 func adminWriteExempt(method, path string) bool {

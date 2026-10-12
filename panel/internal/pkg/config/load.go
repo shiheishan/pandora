@@ -72,7 +72,8 @@ func (c *Config) IsProduction() bool {
 }
 
 func defaults(v *viper.Viper) {
-	v.SetDefault("env", EnvDevelopment)
+	// 缺省按生产处理（失败即关闭）：dev_code 回显、开发日志这些只在显式设了 development / test 时才开
+	v.SetDefault("env", EnvProduction)
 	v.SetDefault("public_base_url", "http://127.0.0.1:9000")
 
 	for _, side := range []string{"public", "admin"} {

@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { navigate, useHashLocation } from '../core/router'
 import { NotFoundScreen, ScreenFallback, ScreenFrame } from '../shell/ScreenFrame'
+import { signOut, useRuntime } from '../shell/runtime'
 import { Button, Empty, Tabs } from '../ui'
 import { ChangePasswordDialog } from './ChangePasswordDialog'
 import { CommandPalette } from './CommandPalette'
 import { EventsCapsule } from './EventsCapsule'
+import { ADMIN_IDLE_MS, startIdleWatch } from './idle'
 import { useAdminMe } from './me'
 import { MODULES, canRead, modulePath, resolveRoute, visibleTabs, type AdminRoute, type ModuleKey, type Permissions } from './modules'
 import { SCREENS } from './screens'
@@ -19,6 +21,10 @@ export function Shell() {
   const def = MODULES[route.module]
   const [palette, setPalette] = useState(false)
   const [password, setPassword] = useState(false)
+  const runtime = useRuntime()
+
+  // 2 小时无操作自动退出（后台轮询会让服务端的空闲计时一直续上，见 idle.ts）
+  useEffect(() => startIdleWatch({ timeoutMs: ADMIN_IDLE_MS, onIdle: () => void signOut(runtime) }), [runtime])
 
   // 未知模块、缺省标签一律改写成规范地址，刷新与分享都落在同一处；
   // 等 GET v1/me 回来再改写，缺省标签才能落在第一个有权限的标签上。
