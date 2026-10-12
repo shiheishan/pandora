@@ -652,3 +652,35 @@ func TestReauth(t *testing.T) {
 		t.Fatalf("token %v", tok)
 	}
 }
+
+func TestLoginCrossSiteForbidden(t *testing.T) {
+	cross := map[string]string{"Sec-Fetch-Site": "cross-site", "Origin": "https://evil.example"}
+	for _, aud := range []string{authn.AudiencePublic, authn.AudienceAdmin} {
+		fake := &fakeAuth{}
+		e := newEngine(fake, aud)
+		rec := doJSON(e, http.MethodPost, "/v1/auth/login", `{"email":"u@example.com","password":"p"}`, cross)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("%s login cross-site status %d", aud, rec.Code)
+		}
+		if fake.loginAud != "" {
+			t.Fatalf("%s: 跨站请求不应调到 Login", aud)
+		}
+		if findSetCookie(rec, cookieName(aud)) != nil {
+			t.Fatalf("%s: 跨站请求不应下发 cookie", aud)
+		}
+	}
+	fake := &fakeAuth{}
+	e := newEngine(fake, authn.AudiencePublic)
+	rec := doJSON(e, http.MethodPost, "/v1/auth/quick-login", `{"token":"t"}`, cross)
+	if rec.Code != http.StatusForbidden || fake.quickConsumeToken != "" {
+		t.Fatalf("quick-login cross-site status %d token %q", rec.Code, fake.quickConsumeToken)
+	}
+	// 同源仍放行
+	fake = &fakeAuth{loginOut: service.Tokens{AccessToken: "at", Refresh: "s.r", RefreshExpires: time.Now().Add(time.Hour)}}
+	e = newEngine(fake, authn.AudiencePublic)
+	rec = doJSON(e, http.MethodPost, "/v1/auth/login", `{"email":"u@example.com","password":"p"}`,
+		map[string]string{"Sec-Fetch-Site": "same-origin"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("same-origin login status %d", rec.Code)
+	}
+}

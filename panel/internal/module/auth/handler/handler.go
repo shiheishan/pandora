@@ -38,7 +38,7 @@ var _ route.Module = (*Handler)(nil)
 // Options 是 handler 的可调参数。
 type Options struct {
 	AuthPerMin   int  // config.RateLimit.AuthPerMin：认证入口每分钟次数
-	SecureCookie bool // refresh cookie 带 Secure（生产必须为 true）
+	SecureCookie bool // refresh cookie 带 Secure；装配方传 cfg.IsProduction()，handler 不另设缺省
 }
 
 // Handler 是 auth 模块的 HTTP 入口。
@@ -81,8 +81,9 @@ func (h *Handler) RegisterPublic(v1 *gin.RouterGroup, k route.Kit) {
 		ratelimit.Dimension{Rule: ratelimit.PerMinute("auth_route", n).StrictMode(), Key: ratelimit.ByRoute},
 		ratelimit.Dimension{Rule: ratelimit.PerWindow("auth_net", n*6, 10*time.Minute).StrictMode(), Key: ratelimit.ByIPPrefix},
 	)
-	v1.POST("/auth/login", authLimit, h.login(authn.AudiencePublic))
-	v1.POST("/auth/quick-login", authLimit, h.consumeQuickLogin)
+	// 登录类接口会下发 HttpOnly 的 refresh cookie：挡跨站（防登录 CSRF）
+	v1.POST("/auth/login", h.sameOrigin, authLimit, h.login(authn.AudiencePublic))
+	v1.POST("/auth/quick-login", h.sameOrigin, authLimit, h.consumeQuickLogin)
 	v1.POST("/auth/refresh", h.sameOrigin,
 		h.limit(ratelimit.Dimension{Rule: ratelimit.PerMinute("auth_refresh", n*6).StrictMode(), Key: ratelimit.ByIP}),
 		h.refresh(authn.AudiencePublic))
@@ -96,7 +97,7 @@ func (h *Handler) RegisterPublic(v1 *gin.RouterGroup, k route.Kit) {
 // RegisterAdmin 注册管理端路由。/auth/login、/auth/refresh、/auth/logout、/auth/reauth 不能改名：后台只读模式按这几个模板放行。
 func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	n := h.opt.AuthPerMin
-	v1.POST("/auth/login",
+	v1.POST("/auth/login", h.sameOrigin,
 		h.limit(ratelimit.Dimension{Rule: ratelimit.PerMinute("adm_auth", n).StrictMode(), Key: ratelimit.ByRoute}),
 		h.login(authn.AudienceAdmin))
 	v1.POST("/auth/refresh", h.sameOrigin,

@@ -70,7 +70,7 @@ func (h *Handler) RequireAuth() gin.HandlerFunc {
 	}
 }
 
-// Permission 要求后台权限码：未登录 401，缺权限 403。code 未登记时注册路由即 panic。
+// Permission 要求后台权限码：未登录或不是后台主体 401，缺权限 404（不暴露接口存在）。code 未登记时注册路由即 panic。
 func (h *Handler) Permission(code string) gin.HandlerFunc {
 	if !service.IsPermission(code) {
 		panic("auth: 未登记的权限码 " + code)
@@ -92,7 +92,7 @@ func (h *Handler) Permission(code string) gin.HandlerFunc {
 		}
 		if !slices.Contains(perms, code) {
 			plog.From(c.Request.Context()).Info("权限不足", zap.String("required", code))
-			httpx.Fail(c, errs.New(errs.Forbidden))
+			httpx.Fail(c, errs.New(errs.NotFound))
 			return
 		}
 		c.Next()

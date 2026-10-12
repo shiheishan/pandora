@@ -134,11 +134,22 @@ func TestPermission(t *testing.T) {
 	rec = doJSON(e, http.MethodGet, "/v1/probe/perm", "", map[string]string{
 		"Authorization": "Bearer adm",
 	})
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("forbidden status %d", rec.Code)
+	// 缺权限回 404 not_found（不暴露接口存在）
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("missing permission status %d", rec.Code)
 	}
-	if errCode(t, rec) != string(errs.Forbidden) {
+	if errCode(t, rec) != string(errs.NotFound) {
 		t.Fatalf("code %s", errCode(t, rec))
+	}
+	// 门户主体访问后台权限路由：401
+	fake.principals["pub"] = authn.Principal{UserID: uid, Audience: authn.AudiencePublic}
+	h := New(fake, nil, Options{AuthPerMin: 10})
+	pe := gin.New()
+	pe.Use(httpx.Errors(), h.Authenticate(authn.AudienceAdmin))
+	pe.GET("/probe", h.Permission(perm), probeOK)
+	rec = doJSON(pe, http.MethodGet, "/probe", "", map[string]string{"Authorization": "Bearer pub"})
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("public principal status %d", rec.Code)
 	}
 
 	fake.perms = []string{perm}
