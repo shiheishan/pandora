@@ -306,7 +306,14 @@ func TestPGAuthenticate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Authenticate 不记登录时间；由 auth 建好会话后调 TouchLastLogin
 	var loginAt *time.Time
+	if err := e.row(ctx, `SELECT last_login_at FROM users WHERE id = ?`, real.ID).Scan(&loginAt); err != nil || loginAt != nil {
+		t.Fatalf("Authenticate 不应记 login_at: %v err=%v", loginAt, err)
+	}
+	if err := e.svc.TouchLastLogin(ctx, real.ID); err != nil {
+		t.Fatal(err)
+	}
 	if err := e.row(ctx, `SELECT last_login_at FROM users WHERE id = ?`, real.ID).Scan(&loginAt); err != nil || loginAt == nil {
 		t.Fatalf("login_at=%v err=%v", loginAt, err)
 	}
