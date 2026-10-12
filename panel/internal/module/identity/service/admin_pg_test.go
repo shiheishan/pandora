@@ -52,7 +52,7 @@ func TestPGListUsers(t *testing.T) {
 	if err != nil || total != 1 || len(rows) != 1 || rows[0].ID != u1.ID {
 		t.Fatalf("by id total=%d err=%v", total, err)
 	}
-	rows, total, err = e.svc.ListUsers(actx, UserFilter{Statuses: []string{StatusSuspended}}, 50, 0)
+	rows, _, err = e.svc.ListUsers(actx, UserFilter{Statuses: []string{StatusSuspended}}, 50, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

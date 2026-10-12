@@ -108,10 +108,10 @@ func verifyPHC(password, phc string) (ok, needsRehash bool, err error) {
 		return false, false, errors.New("盐值不是合法 base64")
 	}
 	want, err := base64.RawStdEncoding.DecodeString(parts[5])
-	if err != nil || len(want) == 0 {
+	if err != nil || len(want) == 0 || len(want) > 1024 {
 		return false, false, errors.New("哈希不是合法 base64")
 	}
-	got := argon2.IDKey([]byte(password), salt, p.iterations, p.memory, p.parallelism, uint32(len(want)))
+	got := argon2.IDKey([]byte(password), salt, p.iterations, p.memory, p.parallelism, uint32(len(want))) //nolint:gosec // 上面已限制 len(want) ≤ 1024
 	ok = subtle.ConstantTimeCompare(got, want) == 1
 	needsRehash = p.memory < defaultArgon.memory || p.iterations < defaultArgon.iterations
 	return ok, needsRehash, nil

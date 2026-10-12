@@ -86,6 +86,7 @@ linters:
         module-audit-boundary:
           files:
             - "**/internal/module/audit/**"
+            - "!$test"
           deny:
             - pkg: github.com/aegispanel/aegis/internal/module/idempotency/repo
               desc: 别的模块的数据经它的 service 取
@@ -105,6 +106,29 @@ linters:
               desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/settings/repo
               desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/settings/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/settings/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/settings/task
+              desc: 模块之间只调 service
+        # 测试可以用别的模块的 repo 装出真的 service（和 app 装配一样），但不碰它的 model、handler、task
+        module-audit-boundary-test:
+          files:
+            - "**/internal/module/audit/**/*_test.go"
+          deny:
+            - pkg: github.com/aegispanel/aegis/internal/module/idempotency/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/idempotency/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/idempotency/task
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/identity/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/identity/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/identity/task
+              desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/settings/model
               desc: 别的模块的数据经它的 service 取
             - pkg: github.com/aegispanel/aegis/internal/module/settings/handler
@@ -114,6 +138,7 @@ linters:
         module-idempotency-boundary:
           files:
             - "**/internal/module/idempotency/**"
+            - "!$test"
           deny:
             - pkg: github.com/aegispanel/aegis/internal/module/audit/repo
               desc: 别的模块的数据经它的 service 取
@@ -139,9 +164,33 @@ linters:
               desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/settings/task
               desc: 模块之间只调 service
+        # 测试可以用别的模块的 repo 装出真的 service（和 app 装配一样），但不碰它的 model、handler、task
+        module-idempotency-boundary-test:
+          files:
+            - "**/internal/module/idempotency/**/*_test.go"
+          deny:
+            - pkg: github.com/aegispanel/aegis/internal/module/audit/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/audit/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/audit/task
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/identity/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/identity/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/identity/task
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/settings/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/settings/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/settings/task
+              desc: 模块之间只调 service
         module-identity-boundary:
           files:
             - "**/internal/module/identity/**"
+            - "!$test"
           deny:
             - pkg: github.com/aegispanel/aegis/internal/module/audit/repo
               desc: 别的模块的数据经它的 service 取
@@ -167,9 +216,33 @@ linters:
               desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/settings/task
               desc: 模块之间只调 service
+        # 测试可以用别的模块的 repo 装出真的 service（和 app 装配一样），但不碰它的 model、handler、task
+        module-identity-boundary-test:
+          files:
+            - "**/internal/module/identity/**/*_test.go"
+          deny:
+            - pkg: github.com/aegispanel/aegis/internal/module/audit/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/audit/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/audit/task
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/idempotency/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/idempotency/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/idempotency/task
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/settings/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/settings/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/settings/task
+              desc: 模块之间只调 service
         module-settings-boundary:
           files:
             - "**/internal/module/settings/**"
+            - "!$test"
           deny:
             - pkg: github.com/aegispanel/aegis/internal/module/audit/repo
               desc: 别的模块的数据经它的 service 取
@@ -189,6 +262,29 @@ linters:
               desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/identity/repo
               desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/identity/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/identity/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/identity/task
+              desc: 模块之间只调 service
+        # 测试可以用别的模块的 repo 装出真的 service（和 app 装配一样），但不碰它的 model、handler、task
+        module-settings-boundary-test:
+          files:
+            - "**/internal/module/settings/**/*_test.go"
+          deny:
+            - pkg: github.com/aegispanel/aegis/internal/module/audit/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/audit/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/audit/task
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/idempotency/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/idempotency/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/idempotency/task
+              desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/identity/model
               desc: 别的模块的数据经它的 service 取
             - pkg: github.com/aegispanel/aegis/internal/module/identity/handler

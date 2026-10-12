@@ -200,7 +200,7 @@ func TestTruncateToPtr(t *testing.T) {
 	}
 	p = truncateToPtr("\xffabc", 512)
 	if p == nil || strings.Contains(*p, "\xff") {
-		t.Fatalf("非法 UTF-8: %q", p)
+		t.Fatalf("非法 UTF-8: %v", p)
 	}
 }
 
