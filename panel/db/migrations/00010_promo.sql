@@ -1,7 +1,7 @@
 -- +goose Up
 -- promo 模块：优惠券与券的占用记录。
--- 依赖 00005_identity.sql 的 users、user_groups。限定的套餐放在关联表 coupon_plans，plan_id 写入前由 promo
--- service 经 catalog service 校验；它指向 plans 的外键等 catalog 合入后在本迁移里补。
+-- 依赖 00005_identity.sql 的 users、user_groups 与 00008_catalog.sql 的 plans。限定的套餐放在关联表 coupon_plans，
+-- plan_id 写入前由 promo service 经 catalog service 校验，库里再用外键兜底。
 -- order_id 指向订单，外键由 00013 补。
 --
 -- 金额一律 NUMERIC(20,2)、单位元（docs/architecture.md 第 6 节）；面值拆成定额 amount_off 与
@@ -54,10 +54,10 @@ CREATE INDEX coupons_created_idx ON coupons (created_at DESC, code);
 CREATE INDEX coupons_user_group_idx ON coupons (user_group_id) WHERE user_group_id IS NOT NULL;
 
 -- 券限定的套餐：没有行即适用全部套餐；流量包订单没有套餐，限定了套餐的券对它不适用。
--- plan_id 指向 plans 的外键等 catalog 合入后补（由主 Agent 加在本迁移里）。
+-- 套餐只归档不删，外键用 RESTRICT。
 CREATE TABLE coupon_plans (
   coupon_id uuid NOT NULL REFERENCES coupons(id) ON DELETE CASCADE,
-  plan_id   uuid NOT NULL,
+  plan_id   uuid NOT NULL REFERENCES plans(id) ON DELETE RESTRICT,
   PRIMARY KEY (coupon_id, plan_id)
 );
 CREATE INDEX coupon_plans_plan_idx ON coupon_plans (plan_id);

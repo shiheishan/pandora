@@ -12,10 +12,12 @@ import (
 
 	audith "github.com/aegispanel/aegis/internal/module/audit/handler"
 	authh "github.com/aegispanel/aegis/internal/module/auth/handler"
+	catalogh "github.com/aegispanel/aegis/internal/module/catalog/handler"
 	idemh "github.com/aegispanel/aegis/internal/module/idempotency/handler"
 	identityh "github.com/aegispanel/aegis/internal/module/identity/handler"
 	ledgerh "github.com/aegispanel/aegis/internal/module/ledger/handler"
 	notifyh "github.com/aegispanel/aegis/internal/module/notify/handler"
+	promoh "github.com/aegispanel/aegis/internal/module/promo/handler"
 	settingsh "github.com/aegispanel/aegis/internal/module/settings/handler"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/config"
@@ -157,6 +159,8 @@ func newEngines(r *runtime, svc *services) (*gin.Engine, *gin.Engine) {
 		authH,
 		notifyh.New(svc.notify),
 		ledgerh.New(svc.ledger),
+		catalogh.New(svc.catalog),
+		promoh.New(svc.promo),
 	}
 
 	publicEng := newEngine(r, r.cfg.HTTP.Public,

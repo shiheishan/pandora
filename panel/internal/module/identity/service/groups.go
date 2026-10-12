@@ -111,7 +111,7 @@ func (s *Service) DeleteGroup(ctx context.Context, id uuid.UUID) error {
 		ok, err = s.repo.DeleteGroup(ctx, id)
 		if err != nil {
 			if errors.Is(err, repo.ErrForeignKey) {
-				return errs.Newf(errs.Conflict, "这个分组还被套餐、价格、优惠券或节点池引用，先解除")
+				return errs.Newf(errs.Conflict, "这个分组还被价格、优惠券或节点池引用，先解除")
 			}
 			return err
 		}

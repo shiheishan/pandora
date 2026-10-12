@@ -8,6 +8,8 @@ import (
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	authrepo "github.com/aegispanel/aegis/internal/module/auth/repo"
 	authsvc "github.com/aegispanel/aegis/internal/module/auth/service"
+	catalogrepo "github.com/aegispanel/aegis/internal/module/catalog/repo"
+	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
 	idemrepo "github.com/aegispanel/aegis/internal/module/idempotency/repo"
 	idemsvc "github.com/aegispanel/aegis/internal/module/idempotency/service"
 	identityrepo "github.com/aegispanel/aegis/internal/module/identity/repo"
@@ -16,6 +18,8 @@ import (
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
 	notifyrepo "github.com/aegispanel/aegis/internal/module/notify/repo"
 	notifysvc "github.com/aegispanel/aegis/internal/module/notify/service"
+	promorepo "github.com/aegispanel/aegis/internal/module/promo/repo"
+	promosvc "github.com/aegispanel/aegis/internal/module/promo/service"
 	settingsrepo "github.com/aegispanel/aegis/internal/module/settings/repo"
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/pkg/config"
@@ -36,6 +40,8 @@ type services struct {
 	auth     *authsvc.Service
 	notify   *notifysvc.Service
 	ledger   *ledgersvc.Service
+	catalog  *catalogsvc.Service
+	promo    *promosvc.Service
 	limiter  *ratelimit.Limiter
 	queue    *asynq.Client
 	tx       *tx.Manager
@@ -111,6 +117,8 @@ func buildServices(r *runtime) (*services, error) {
 	}
 
 	ledgerSvc := ledgersvc.New(ledgerrepo.New(r.db), txm, settingsSvc, auditSvc)
+	catalogSvc := catalogsvc.New(catalogrepo.New(r.db), txm, auditSvc, identitySvc)
+	promoSvc := promosvc.New(promorepo.New(r.db), txm, auditSvc, settingsSvc)
 
 	// 模块间注入：identity 定义接口，auth、notify 实现；audit 经 identity 显示操作者与资源
 	identitySvc.UseSessionRevoker(authSvc)
@@ -119,6 +127,9 @@ func buildServices(r *runtime) (*services, error) {
 	identitySvc.UseVerificationMailer(notifySvc)
 	auditSvc.UseActorDirectory(identitySvc)
 	auditSvc.UseResourceLabeler(identitysvc.ResourceUser, identitySvc.UserLabels)
+	// promo 经 identity 取用户组与邮箱、经适配器取 catalog 的在售价格
+	promoSvc.UseUsers(identitySvc)
+	promoSvc.UseCatalog(promoCatalog{c: catalogSvc})
 
 	return &services{
 		settings: settingsSvc,
@@ -128,6 +139,8 @@ func buildServices(r *runtime) (*services, error) {
 		auth:     authSvc,
 		notify:   notifySvc,
 		ledger:   ledgerSvc,
+		catalog:  catalogSvc,
+		promo:    promoSvc,
 		limiter:  limiter,
 		queue:    queue,
 		tx:       txm,

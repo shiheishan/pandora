@@ -163,6 +163,20 @@ func newUser(t *testing.T, e *env, ctx context.Context) uuid.UUID {
 	return id
 }
 
+// newPlan 在 plans 表里建一个草稿套餐（coupon_plans.plan_id 有外键），并登记到假 catalog。
+func newPlan(t *testing.T, e *env, ctx context.Context) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	if err := e.row(ctx,
+		`INSERT INTO plans (code, name) VALUES (?, ?) RETURNING id`,
+		"p-"+randHex(8), "测试套餐",
+	).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	e.cat.plans[id] = true
+	return id
+}
+
 func newGroup(t *testing.T, e *env, ctx context.Context) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID

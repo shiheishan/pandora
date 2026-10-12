@@ -250,8 +250,7 @@ func TestReserveRules(t *testing.T) {
 	}
 
 	// 限定套餐
-	P := uuid.New()
-	e.cat.plans[P] = true
+	P := newPlan(t, e, ctx)
 	codePlan := randCode("PLN")
 	ps := fixedSpec("1.00")
 	ps.PlanIDs = []uuid.UUID{P}
@@ -364,10 +363,9 @@ func TestPreview(t *testing.T) {
 	admin := newUser(t, e, ctx)
 	u := newUser(t, e, ctx)
 
-	P := uuid.New()
+	P := newPlan(t, e, ctx)
 	R := uuid.New()
 	K := uuid.New()
-	e.cat.plans[P] = true
 	e.cat.prices[R] = fakePrice{plan: P, currency: "CNY", amount: decimal.RequireFromString("30.00")}
 	e.cat.packs[K] = fakePrice{currency: "CNY", amount: decimal.RequireFromString("12.00")}
 

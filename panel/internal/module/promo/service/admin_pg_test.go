@@ -104,8 +104,7 @@ func TestCreateAndList(t *testing.T) {
 		t.Fatalf("审计条数 %d", auditN)
 	}
 
-	P1, P2 := uuid.New(), uuid.New()
-	e.cat.plans[P1], e.cat.plans[P2] = true, true
+	P1, P2 := newPlan(t, e, ctx), newPlan(t, e, ctx)
 	planSpec := fixedSpec("1.00")
 	planSpec.PlanIDs = []uuid.UUID{P1, P2, P1}
 	planCode := randCode("PL2")
@@ -348,8 +347,7 @@ func TestConstraints(t *testing.T) {
 	okCode := "A-B_" + strings.ToUpper(randHex(8))
 	execSQL(t, e, ctx, `INSERT INTO coupons (code, name, amount_off, currency) VALUES (?, 'n', 1, 'CNY')`, okCode)
 
-	planID := uuid.New()
-	e.cat.plans[planID] = true
+	planID := newPlan(t, e, ctx)
 	execSQL(t, e, ctx, `INSERT INTO coupon_plans (coupon_id, plan_id) VALUES (?, ?)`, cid, planID)
 	assertSQLFails(t, e, ctx, `INSERT INTO coupon_plans (coupon_id, plan_id) VALUES (?, ?)`, cid, planID)
 }
