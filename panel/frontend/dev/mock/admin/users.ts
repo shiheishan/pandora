@@ -54,7 +54,8 @@ export interface User {
   unattached_bytes: number
   referrer: string | null
   telegram: { username: string; bound_at: string } | null
-  roles: string[]
+  /** 后台不分角色：是不是管理员 */
+  is_admin: boolean
 }
 
 export interface Group {
@@ -151,7 +152,7 @@ const users: User[] = Array.from({ length: 48 }, (_, i) => {
     unattached_bytes: 0,
     referrer: null,
     telegram: i % 3 === 0 ? { username: NAMES[i % NAMES.length]!.replace(/[._]/g, ''), bound_at: iso((i + 1) * DAY) } : null,
-    roles: i === 0 ? ['support'] : [],
+    is_admin: i === 0,
   }
 })
 // 邀请关系：每隔几个人由第 0 号邀请
@@ -329,7 +330,7 @@ function detail(u: User) {
         pack_remaining_bytes: s.pack_bytes,
       })),
     recent_orders: orders.sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 20),
-    roles: u.roles,
+    is_admin: u.is_admin,
     stats: {
       // R114：paid_total 已弃用但 Go 仍回（跨币种直接相加）；paid_totals 按币种分组、币种升序、只列大于 0 的
       paid_total: orders.filter((o) => o.status === 'paid' || o.status === 'fulfilled').reduce((sum, o) => sum + o.paid_amount, 0),

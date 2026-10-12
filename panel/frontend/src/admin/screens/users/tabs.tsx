@@ -38,7 +38,7 @@ export function ProfileTab({ d, now }: { d: UserDetail; now: Date }) {
     ['显示名', d.display_name || '—'],
     ['邮箱验证', d.email_verified ? '已验证' : <span className={css.tone_warn}>未验证</span>],
     ['风险等级', <Tag tone={risk.tone}>{risk.label}</Tag>],
-    ['角色', d.roles.length ? d.roles.join('、') : '普通用户'],
+    ['身份', d.is_admin ? '管理员' : '普通用户'],
     ['余额', <span className={css.mono}>{formatMoney(d.balance, d.currency)}</span>],
     [
       '邀请人',

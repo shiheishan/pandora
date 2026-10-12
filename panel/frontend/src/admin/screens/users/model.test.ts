@@ -208,7 +208,7 @@ describe('schema', () => {
       email_verified: true,
       subscriptions: [subscription],
       recent_orders: [],
-      roles: [],
+      is_admin: false,
       stats: { paid_totals: [], order_count: 0, referral_count: 0 },
       referrer: null,
       telegram: null,

@@ -60,7 +60,7 @@ export type UserRow = z.output<typeof userRowSchema>
 export type CurrentSub = z.output<typeof currentSubSchema>
 
 // ---------------------------------------------------------------------------
-// GET v1/users/{id}：列表行 + 资料、全部订阅（含配额与设备）、最近 20 单、角色、统计
+// GET v1/users/{id}：列表行 + 资料、全部订阅（含配额与设备）、最近 20 单、是否管理员、统计
 // （列表行里的 subscription_count / active_plan / current_subscription 在这里是零值，不用）
 // ---------------------------------------------------------------------------
 const quotaSchema = z.object({ metric: z.string(), limit: int.nullable(), consumed: count, remaining: int.nullable() })
@@ -88,7 +88,7 @@ export const userDetailSchema = z.object({
   email_verified: z.boolean(),
   subscriptions: z.array(subscriptionSchema),
   recent_orders: z.array(orderRowSchema),
-  roles: z.array(z.string()),
+  is_admin: z.boolean(),
   // R80 / R114：实收按币种（币种升序、只列大于 0 的）；paid_total 已弃用（跨币种直接相加），不收
   stats: z.object({ paid_totals: z.array(z.object({ currency: z.string(), amount: int })), order_count: count, referral_count: count }),
   referrer: z.object({ id: z.string(), email: z.string() }).nullable(),

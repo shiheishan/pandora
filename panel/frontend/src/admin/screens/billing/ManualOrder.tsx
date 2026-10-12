@@ -256,7 +256,7 @@ function UserPicker({
         error={error}
         data-autofocus=""
       />
-      {enabled && term.trim() !== '' && (
+      {term.trim() !== '' && (
         <ul className={css.pickList} aria-label="匹配的用户">
           {pick.isPending ? (
             <li className={css.pickEmpty}>搜索中…</li>

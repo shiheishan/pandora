@@ -371,7 +371,7 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
             unattached_bytes: 0,
             referrer: null,
             telegram: null,
-            roles: [],
+            is_admin: false,
           })
           made.push({ email, password })
         }

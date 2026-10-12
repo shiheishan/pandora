@@ -320,7 +320,7 @@ const cluster = (ip: string, idx: number[], lastMin: number, review: Review | nu
   last: iso(lastMin * MIN),
   review,
 })
-// 成员挑的是真实种子：0 号是后台账号（roles 非空，停用时跳过），9 号已停用，24 / 39 已停用、40 已封禁
+// 成员挑的是真实种子：0 号是管理员（停用时跳过），9 号已停用，24 / 39 已停用、40 已封禁
 const clusters: MockCluster[] = [
   cluster('223.104.63.18', [3, 9, 13, 18, 23], 6),
   cluster('45.76.9.102', [5, 25, 45], 20),
@@ -369,7 +369,7 @@ async function disableAccounts(ctx: MockContext): Promise<MockResult> {
     const u = findUser(id)
     if (id === ctx.user.userId) skipped.push({ user_id: id, reason: 'self' })
     else if (!c.members.includes(id) || !u) skipped.push({ user_id: id, reason: 'not_member' })
-    else if (u.roles.length > 0) skipped.push({ user_id: id, reason: 'administrator' })
+    else if (u.is_admin) skipped.push({ user_id: id, reason: 'administrator' })
     else if (u.status === 'suspended' || u.status === 'banned') skipped.push({ user_id: id, reason: 'already_disabled' })
     else done.push(u)
   }
