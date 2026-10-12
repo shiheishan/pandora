@@ -4,7 +4,7 @@ import { formatCount, formatDateTime } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
 import { Button, Empty, Input, Modal, Pager, QueryView, Select, Table, Tag, useToast, type TableColumn } from '../../../ui'
 import { ACTOR_LABEL, actorLabel, AUDIT_PAGE, authLabel, clockTime, EMPTY_AUDIT_FILTER, exportQuery, hasAuditFilter, objectLabel, OUTCOME_LABEL, OUTCOME_TONE, validateExportRange, type AuditFilter } from './logic'
-import { useAudit, useCan, useFailure, useInvalidateSecurity } from './queries'
+import { useAudit, useFailure, useInvalidateSecurity } from './queries'
 import { ACTOR_KINDS, OUTCOMES, type ActorKind, type AuditEvent, type Outcome } from './schemas'
 import css from './security.module.css'
 
@@ -63,7 +63,6 @@ const columns: TableColumn<AuditEvent>[] = [
 ]
 
 export function AuditTab() {
-  const can = useCan()
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<AuditFilter>(EMPTY_AUDIT_FILTER)
   const [offset, setOffset] = useState(0)
@@ -102,11 +101,9 @@ export function AuditTab() {
             清空筛选
           </Button>
         )}
-        {can('ops.export') && (
-          <Button size="sm" className={css.push} onClick={() => setExporting(true)}>
-            导出
-          </Button>
-        )}
+        <Button size="sm" className={css.push} onClick={() => setExporting(true)}>
+          导出
+        </Button>
       </div>
 
       <div className={`${css.panel} ${css.fixedTable}`}>

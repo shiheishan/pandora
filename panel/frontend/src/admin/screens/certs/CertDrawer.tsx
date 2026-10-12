@@ -6,7 +6,7 @@ import { Button, ConfirmModal, Drawer, QueryView, Tag, useToast } from '../../..
 import { noContent } from '../../../core/api'
 import { CertFormModal } from './CertFormModal'
 import { CA_LABEL, errorCodeLabel, EXPIRY_VIEW, ORDER_REASON_LABEL, ORDER_STATE_VIEW, PROVIDER_META, remainingText, statusView, WILDCARD_WARNING } from './logic'
-import { useCan, useCertificate, useFailure, useInvalidateCerts } from './queries'
+import { useCertificate, useFailure, useInvalidateCerts } from './queries'
 import { certificateSchema, orderBriefSchema, type CertificateDetail } from './schemas'
 import css from './certs.module.css'
 
@@ -28,7 +28,6 @@ function fmt(at: string | null): string {
 
 function DetailBody({ detail, onDeleted }: { detail: CertificateDetail; onDeleted: () => void }) {
   const api = useApi()
-  const can = useCan()
   const toast = useToast()
   const fail = useFailure()
   const invalidate = useInvalidateCerts()
@@ -37,7 +36,6 @@ function DetailBody({ detail, onDeleted }: { detail: CertificateDetail; onDelete
   const c = detail.certificate
   const status = statusView(c)
   const expiry = EXPIRY_VIEW[c.expiry_level]
-  const writable = can('node.certificate.write')
   const busy = c.active_order !== null
 
   const renew = useMutation({
@@ -68,36 +66,34 @@ function DetailBody({ detail, onDeleted }: { detail: CertificateDetail; onDelete
 
   return (
     <div className={css.stack}>
-      {writable && (
-        <div className={css.toolbar}>
-          <Button
-            size="sm"
-            variant="primary"
-            busy={renew.isPending}
-            disabled={busy || c.status === 'paused' || c.status === 'blocked_credential'}
-            title={busy ? '已有进行中的签发' : undefined}
-            onClick={() => renew.mutate()}
-          >
-            立即续期
+      <div className={css.toolbar}>
+        <Button
+          size="sm"
+          variant="primary"
+          busy={renew.isPending}
+          disabled={busy || c.status === 'paused' || c.status === 'blocked_credential'}
+          title={busy ? '已有进行中的签发' : undefined}
+          onClick={() => renew.mutate()}
+        >
+          立即续期
+        </Button>
+        {c.status === 'paused' ? (
+          <Button size="sm" busy={pause.isPending} onClick={() => pause.mutate(false)}>
+            恢复
           </Button>
-          {c.status === 'paused' ? (
-            <Button size="sm" busy={pause.isPending} onClick={() => pause.mutate(false)}>
-              恢复
-            </Button>
-          ) : (
-            <Button size="sm" busy={pause.isPending} disabled={c.status === 'blocked_credential'} onClick={() => pause.mutate(true)}>
-              暂停
-            </Button>
-          )}
-          <Button size="sm" onClick={() => setEditing(true)}>
-            编辑
+        ) : (
+          <Button size="sm" busy={pause.isPending} disabled={c.status === 'blocked_credential'} onClick={() => pause.mutate(true)}>
+            暂停
           </Button>
-          <span className={css.spacer} />
-          <Button size="sm" variant="danger" disabled={c.active_order?.state === 'running'} onClick={() => setConfirmDelete(true)}>
-            删除
-          </Button>
-        </div>
-      )}
+        )}
+        <Button size="sm" onClick={() => setEditing(true)}>
+          编辑
+        </Button>
+        <span className={css.spacer} />
+        <Button size="sm" variant="danger" disabled={c.active_order?.state === 'running'} onClick={() => setConfirmDelete(true)}>
+          删除
+        </Button>
+      </div>
       {c.status === 'blocked_credential' && (
         <div className={css.alarm}>DNS 凭据「{c.dns_credential_name}」校验没通过，自动签发已停。去「DNS 凭据」改好并重新校验，通过后会自动恢复。</div>
       )}

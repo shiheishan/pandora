@@ -6,7 +6,7 @@ import { useApi } from '../../../shell/runtime'
 import { Button, Checkbox, ConfirmModal, Input, Menu, Select, TextArea, useToast, type MenuEntry } from '../../../ui'
 import css from './content.module.css'
 import { audienceChanged, emptyKbForm, KIND_LABEL, kbBody, kbFormFrom, PLATFORM_LABEL, validateKb, VISIBILITY_LABEL, type Article, type KbBody, type KbForm } from './logic'
-import { useCan, useFailure, useIntentKey, useInvalidateContent, usePlanCatalog } from './queries'
+import { useFailure, useIntentKey, useInvalidateContent, usePlanCatalog } from './queries'
 import { KINDS, pageArchived, pageSaved, PLATFORMS, VISIBILITIES, type Kind, type Page, type Visibility } from './schemas'
 
 interface Props {
@@ -26,7 +26,6 @@ export function KbEditor({ article, page, kind, categories, takenSlugs }: Props)
   const toast = useToast()
   const fail = useFailure()
   const intent = useIntentKey()
-  const can = useCan()
   const invalidate = useInvalidateContent()
   const ids = useId()
   const fresh = () => (page ? kbFormFrom(page) : emptyKbForm(kind))
@@ -86,8 +85,7 @@ export function KbEditor({ article, page, kind, categories, takenSlugs }: Props)
   }
 
   const busy = save.isPending || archive.isPending
-  const canPlans = can('catalog.read')
-  const catalog = usePlanCatalog(canPlans)
+  const catalog = usePlanCatalog()
   const planName = (id: string) => catalog.data?.find((p) => p.id === id)?.name ?? (catalog.isPending ? '…' : '不可用套餐')
   const changedAudience = page !== null && audienceChanged(form, page)
 
@@ -156,7 +154,7 @@ export function KbEditor({ article, page, kind, categories, takenSlugs }: Props)
           </div>
           <div className={css.full}>
             <div className={css.groupLabel}>限定套餐（不选 = 所有登录用户）</div>
-            <PlanPicker planIds={form.planIds} plans={canPlans ? (catalog.data ?? []) : null} planName={planName} disabled={busy} onChange={(planIds) => edit({ planIds })} />
+            <PlanPicker planIds={form.planIds} plans={catalog.data ?? []} planName={planName} disabled={busy} onChange={(planIds) => edit({ planIds })} />
           </div>
           {changedAudience && <div className={`${css.full} ${css.banner} ${css.warnBanner}`}>受众（语言、平台、客户端版本、限定套餐或可见性）和上一版不同：保存后上一版的发布内容不会被自动归档，两版会同时对各自的用户可见；不需要旧版时请在版本历史里查看并归档。</div>}
         </div>
@@ -199,10 +197,9 @@ export function KbEditor({ article, page, kind, categories, takenSlugs }: Props)
   )
 }
 
-/** 限定套餐：有 catalog.read 时是开关菜单；没有时只列出沿用的 id 数，保存时原样带上 */
-function PlanPicker({ planIds, plans, planName, disabled, onChange }: { planIds: string[]; plans: ReadonlyArray<{ id: string; name: string; status: string }> | null; planName: (id: string) => string; disabled: boolean; onChange: (ids: string[]) => void }) {
-  const label = planIds.length === 0 ? '所有登录用户' : plans ? planIds.map(planName).join('、') : `已限定 ${planIds.length} 个套餐`
-  if (!plans) return <span className={css.faint}>{planIds.length === 0 ? '不限套餐（没有套餐读取权限，无法在这里选择）' : `${label}（没有套餐读取权限，保存时原样沿用）`}</span>
+/** 限定套餐：开关菜单；目录里已没有的 id 也列出来，保存时原样带上 */
+function PlanPicker({ planIds, plans, planName, disabled, onChange }: { planIds: string[]; plans: ReadonlyArray<{ id: string; name: string; status: string }>; planName: (id: string) => string; disabled: boolean; onChange: (ids: string[]) => void }) {
+  const label = planIds.length === 0 ? '所有登录用户' : planIds.map(planName).join('、')
   const options = [...plans.map((p) => ({ id: p.id, name: p.status === 'archived' ? `${p.name}（已归档）` : p.name }))]
   for (const id of planIds) if (!options.some((p) => p.id === id)) options.push({ id, name: planName(id) })
   if (disabled) return <span className={css.picker}>{label}</span>

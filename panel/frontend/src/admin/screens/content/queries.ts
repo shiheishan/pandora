@@ -5,7 +5,7 @@ import { planOptionsKey } from '../plans/api'
 import type { Kind } from './schemas'
 import { announcementsResponse, pageResponse, pagesResponse, planCatalogResponse, siteSettingsSchema, slotsResponse, themesResponse } from './schemas'
 
-export { useCan, useFailure, useIntentKey } from '../../actions'
+export { useFailure, useIntentKey } from '../../actions'
 
 export const CK = ['admin', 'content'] as const
 
@@ -45,14 +45,13 @@ export function useContentPage(id: string, slug: string) {
   })
 }
 
-/** 知识库「限定套餐」的名字：只在有 catalog.read 时请求 */
-export function usePlanCatalog(enabled: boolean) {
+/** 知识库「限定套餐」的候选与名字 */
+export function usePlanCatalog() {
   const api = useApi()
   return useQuery({
     // 挂在套餐的键前缀下：套餐页写后按前缀失效会一并刷新
     queryKey: planOptionsKey('content'),
     queryFn: ({ signal }) => api.get('v1/plans', planCatalogResponse, { signal }).then((r) => r.plans),
-    enabled,
     staleTime: 5 * 60_000,
     meta: { topics: ['plans.changed'] },
   })
@@ -71,10 +70,10 @@ export function useSlots() {
   return useQuery({ queryKey: [...CK, 'slots'], queryFn: ({ signal }) => api.get('v1/slots', slotsResponse, { signal }).then((r) => r.slots) })
 }
 
-/** 站点时区：读权限与邮件设置相同（security.audit.read），没有就不请求、不画卡片 */
-export function useSiteSettings(enabled: boolean) {
+/** 站点时区 */
+export function useSiteSettings() {
   const api = useApi()
-  return useQuery({ queryKey: [...CK, 'site'], queryFn: ({ signal }) => api.get('v1/settings/site', siteSettingsSchema, { signal }), enabled })
+  return useQuery({ queryKey: [...CK, 'site'], queryFn: ({ signal }) => api.get('v1/settings/site', siteSettingsSchema, { signal }) })
 }
 
 export function useInvalidateContent() {
