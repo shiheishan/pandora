@@ -6,13 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aegispanel/aegis/internal/module/auth/repo"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/google/uuid"
 )
 
-// adminLogin 后台登录并返回令牌（需事先写入 perms）。
+// adminLogin 后台登录并返回令牌（需事先 addAdmin）。
 func adminLogin(t *testing.T, h *testHarness, ctx context.Context, email, pass string) Tokens {
 	t.Helper()
 	tok, err := h.S.Login(ctx, authn.AudienceAdmin, email, pass)
@@ -83,7 +81,7 @@ func TestRefreshWrongAudience(t *testing.T) {
 	h := newTestService(t)
 	ctx := testCtx("203.0.113.7")
 	uid := h.Users.addUser("adm@example.com", "pass", UserStatusActive)
-	h.Store.perms[uid] = []string{PermIAMUserRead}
+	h.Store.addAdmin(uid)
 
 	tok := adminLogin(t, h, ctx, "adm@example.com", "pass")
 	_, err := h.S.Refresh(ctx, authn.AudiencePublic, tok.Refresh)
@@ -131,7 +129,7 @@ func TestAdminIdleTimeout(t *testing.T) {
 	h := newTestService(t)
 	ctx := testCtx("203.0.113.7")
 	uid := h.Users.addUser("idle@example.com", "pass", UserStatusActive)
-	h.Store.perms[uid] = []string{PermIAMUserRead}
+	h.Store.addAdmin(uid)
 
 	tok := adminLogin(t, h, ctx, "idle@example.com", "pass")
 	h.Clock.Advance(2*time.Hour + time.Second)
@@ -182,7 +180,7 @@ func TestReauth(t *testing.T) {
 	h := newTestService(t)
 	ctx := testCtx("203.0.113.7")
 	uid := h.Users.addUser("re@example.com", "pass", UserStatusActive)
-	h.Store.perms[uid] = []string{PermIAMUserRead}
+	h.Store.addAdmin(uid)
 
 	tok := adminLogin(t, h, ctx, "re@example.com", "pass")
 	p, err := h.S.Authenticate(ctx, authn.AudienceAdmin, tok.AccessToken)
@@ -277,68 +275,11 @@ func TestListAndRevokeSession(t *testing.T) {
 	}
 }
 
-func TestGrantRoleRevokesPortal(t *testing.T) {
-	h := newTestService(t)
-	ctx := testCtx("203.0.113.7")
-	target := h.Users.addUser("grant@example.com", "pass", UserStatusActive)
-	roleID := uuid.Must(uuid.NewV7())
-	h.Store.roleByCode["support"] = repo.RoleRow{ID: roleID, Code: "support", Name: "客服"}
-
-	tok, err := h.S.Login(ctx, authn.AudiencePublic, "grant@example.com", "pass")
-	if err != nil {
-		t.Fatalf("public login: %v", err)
-	}
-
-	actor := h.Users.addUser("actor@example.com", "apass", UserStatusActive)
-	h.Store.perms[actor] = []string{AdminPermission}
-	actx := authn.With(testCtx("203.0.113.8"), authn.Principal{
-		UserID: actor, Audience: authn.AudienceAdmin, SessionID: uuid.Must(uuid.NewV7()).String(),
-	})
-	if err := h.S.GrantRole(actx, target, "support"); err != nil {
-		t.Fatalf("GrantRole: %v", err)
-	}
-	_, err = h.S.Authenticate(ctx, authn.AudiencePublic, tok.AccessToken)
-	if !errors.Is(err, errSessionInvalid) {
-		t.Fatalf("授角后门户会话应失效: %v", err)
-	}
-	if len(h.Store.upserts) != 1 || h.Store.upserts[0].userID != target {
-		t.Fatalf("upsert=%v", h.Store.upserts)
-	}
-}
-
-func TestEnsureNotLastAdmin(t *testing.T) {
-	h := newTestService(t)
-	ctx := testCtx("203.0.113.7")
-	only := h.Users.addUser("only@example.com", "pass", UserStatusActive)
-	h.Store.holders = []uuid.UUID{only}
-
-	if err := h.S.EnsureNotLastAdmin(ctx, only); !errors.Is(err, errLastAdmin) {
-		t.Fatalf("唯一管理员应 Conflict: %v", err)
-	}
-
-	other := h.Users.addUser("other@example.com", "pass", UserStatusActive)
-	h.Store.holders = []uuid.UUID{only, other}
-	if err := h.S.EnsureNotLastAdmin(ctx, only); err != nil {
-		t.Fatalf("两名活跃管理员应允许停用其一: %v", err)
-	}
-
-	u := h.Users.users[other]
-	u.Status = "disabled"
-	h.Users.users[other] = u
-	if err := h.S.EnsureNotLastAdmin(ctx, only); !errors.Is(err, errLastAdmin) {
-		t.Fatalf("另一管理员非活跃时仍应保护: %v", err)
-	}
-
-	if err := h.S.EnsureNotLastAdmin(ctx, uuid.Must(uuid.NewV7())); err != nil {
-		t.Fatalf("非 holder 应直接通过: %v", err)
-	}
-}
-
 func TestReauthAttemptLimit(t *testing.T) {
 	h := newTestService(t)
 	ctx := testCtx("203.0.113.7")
 	uid := h.Users.addUser("lim@example.com", "pass", UserStatusActive)
-	h.Store.perms[uid] = []string{PermIAMUserRead}
+	h.Store.addAdmin(uid)
 	tok := adminLogin(t, h, ctx, "lim@example.com", "pass")
 	p, err := h.S.Authenticate(ctx, authn.AudienceAdmin, tok.AccessToken)
 	if err != nil {
@@ -370,36 +311,6 @@ func TestReauthAttemptLimit(t *testing.T) {
 	h.Redis.FastForward(reauthWindow + time.Second)
 	if _, err := h.S.Reauth(actx, "pass"); err != nil {
 		t.Fatalf("窗口过后应恢复: %v", err)
-	}
-}
-
-func TestStaffGuard(t *testing.T) {
-	h := newTestService(t)
-	ctx := testCtx("203.0.113.7")
-	plain := h.Users.addUser("plain@example.com", "pass", UserStatusActive)
-	lapsed := h.Users.addUser("lapsed@example.com", "pass", UserStatusActive)
-	support := h.Users.addUser("support@example.com", "pass", UserStatusActive)
-	admin := h.Users.addUser("root@example.com", "pass", UserStatusActive)
-	h.Store.expired[lapsed] = true
-	h.Store.roles[support] = []repo.RoleRow{{ID: uuid.Must(uuid.NewV7()), Code: RoleCustomerSupport}}
-	h.Store.perms[support] = []string{PermIAMUserRead, PermIAMUserWrite}
-	h.Store.perms[admin] = AllPermissions()
-
-	for id, want := range map[uuid.UUID]bool{plain: false, lapsed: true, support: true} {
-		got, err := h.S.IsStaff(ctx, id)
-		if err != nil || got != want {
-			t.Fatalf("IsStaff(%v)=%v err=%v want %v", id, got, err, want)
-		}
-	}
-	if err := h.S.EnsureCanManage(ctx, support, plain); err != nil {
-		t.Fatalf("客服管普通用户应允许: %v", err)
-	}
-	if err := h.S.EnsureCanManage(ctx, admin, support); err != nil {
-		t.Fatalf("全权限管理员管客服应允许: %v", err)
-	}
-	err := h.S.EnsureCanManage(ctx, support, admin)
-	if !errors.Is(err, errTargetOutranksActor) || errs.As(err).Code != errs.Forbidden {
-		t.Fatalf("越级应 403: %v", err)
 	}
 }
 

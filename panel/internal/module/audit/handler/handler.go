@@ -31,13 +31,8 @@ func (h *Handler) RegisterPublic(_ *gin.RouterGroup, _ route.Kit) {}
 
 // RegisterAdmin 挂后台 /v1/audit 路由。
 func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
-	v1.GET("/audit", k.Permission("security.audit.read"), h.list)
-	v1.GET("/audit/export",
-		k.Permission("security.audit.read"),
-		k.Permission("ops.export"),
-		k.RecentReauth,
-		h.export,
-	)
+	v1.GET("/audit", k.RequireAuth, h.list)
+	v1.GET("/audit/export", k.RequireAuth, k.RecentReauth, h.export)
 }
 
 func (h *Handler) list(c *gin.Context) {

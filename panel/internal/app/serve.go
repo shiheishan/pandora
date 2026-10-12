@@ -55,7 +55,6 @@ func runServe(ctx context.Context, configPath string) error {
 
 	publicEng, adminEng := newEngines(r, svc)
 
-
 	publicSrv := newHTTPServer(r.cfg.HTTP.Public, publicEng)
 	adminSrv := newHTTPServer(r.cfg.HTTP.Admin, adminEng)
 
@@ -139,14 +138,13 @@ func newHTTPServer(sc config.HTTPServer, h http.Handler) *http.Server {
 
 // newEngines 建门户与后台两个引擎并挂上各模块路由。
 // 引擎级顺序：基础中间件（请求号、日志、恢复、错误、安全头、并发、超时）→（后台）只读门 → 鉴权 → 域守卫；
-// 限流、权限、重认证、幂等、开关是路由级，由各模块从 Kit 取。
+// 限流、登录要求、重认证、幂等、开关是路由级，由各模块从 Kit 取；后台不分权限，登录了就是管理员。
 func newEngines(r *runtime, svc *services) (*gin.Engine, *gin.Engine) {
 	settingsH := settingsh.New(svc.settings)
 	authH := authh.New(svc.auth, svc.limiter, authOptions(r.cfg))
 	idemH := idemh.New(svc.idem)
 	kit := route.Kit{
 		RequireAuth:  authH.RequireAuth(),
-		Permission:   authH.Permission,
 		RecentReauth: authH.RecentReauth(),
 		Idempotency:  idemH.Middleware,
 		Switch:       settingsH.Switch,

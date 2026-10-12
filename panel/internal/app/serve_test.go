@@ -41,7 +41,7 @@ func TestEnginesRegisterModuleRoutes(t *testing.T) {
 			"POST /v1/auth/register/start", "POST /v1/auth/password-reset/start", "GET /v1/site-config",
 		},
 		adminEng: {
-			"POST /v1/auth/login", "POST /v1/auth/refresh", "POST /v1/auth/reauth", "GET /v1/users",
+			"POST /v1/auth/login", "POST /v1/auth/refresh", "POST /v1/auth/reauth", "GET /v1/me", "GET /v1/users",
 			"GET /v1/audit", "GET /v1/switches", "POST /v1/settings/site", "GET /v1/settings/mail",
 			"GET /v1/mail/templates",
 		},
@@ -77,9 +77,19 @@ func TestAdminCommandsAndExitCode(t *testing.T) {
 	for _, c := range cmd.Commands() {
 		names[c.Name()] = true
 	}
-	for _, n := range []string{"create", "reset-password", "grant", "revoke", "list", "roles", "has-admin"} {
+	want := []string{"create", "reset-password", "grant", "revoke", "list", "has-admin"}
+	for _, n := range want {
 		if !names[n] {
 			t.Errorf("缺子命令 %s", n)
+		}
+	}
+	// 后台不分角色：没有 roles 子命令，create 没有 --role，grant / revoke 只要 --email
+	if names["roles"] {
+		t.Error("不应再有 roles 子命令")
+	}
+	for _, c := range cmd.Commands() {
+		if c.Flags().Lookup("role") != nil {
+			t.Errorf("%s 不应再有 --role", c.Name())
 		}
 	}
 	if exitCode(&exitCodeError{code: exitNoAdministrator}) != 3 || exitCode(errors.New("x")) != 1 {

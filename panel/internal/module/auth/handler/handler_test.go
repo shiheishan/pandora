@@ -104,11 +104,6 @@ func (f *fakeAuth) Authenticate(ctx context.Context, audience, bearer string) (a
 	return p, nil
 }
 
-func (f *fakeAuth) Permissions(ctx context.Context, userID uuid.UUID) ([]string, error) {
-	_ = userID
-	return nil, nil
-}
-
 func (f *fakeAuth) AdminProfile(ctx context.Context) (service.AdminProfile, error) {
 	if f.adminProfErr != nil {
 		return service.AdminProfile{}, f.adminProfErr
@@ -151,7 +146,6 @@ func newEngine(f *fakeAuth, aud string) *gin.Engine {
 	e.Use(h.Authenticate(aud), h.DomainGuard(aud))
 	k := route.Kit{
 		RequireAuth:  h.RequireAuth(),
-		Permission:   h.Permission,
 		RecentReauth: h.RecentReauth(),
 	}
 	v1 := e.Group("/v1")
@@ -159,7 +153,6 @@ func newEngine(f *fakeAuth, aud string) *gin.Engine {
 		h.RegisterPublic(v1, k)
 	} else {
 		h.RegisterAdmin(v1, k)
-		v1.GET("/probe/perm", k.Permission(service.PermSecurityAuditRead), probeOK)
 		v1.POST("/probe/reauth", k.RequireAuth, k.RecentReauth, probeOK)
 	}
 	return e
@@ -268,6 +261,24 @@ func TestPublicLoginShape(t *testing.T) {
 	}
 }
 
+// assertKeys 断言 JSON 对象恰好有这些键，返回解出的对象。
+func assertKeys(t *testing.T, raw []byte, want ...string) map[string]json.RawMessage {
+	t.Helper()
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(m) != len(want) {
+		t.Fatalf("keys %v want exactly %v", mapKeys(m), want)
+	}
+	for _, k := range want {
+		if _, ok := m[k]; !ok {
+			t.Fatalf("missing key %q (have %v)", k, mapKeys(m))
+		}
+	}
+	return m
+}
+
 func mapKeys(m map[string]json.RawMessage) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
@@ -285,7 +296,6 @@ func TestAdminLoginShape(t *testing.T) {
 			UserID:         uid,
 			Refresh:        "sid.secret",
 			RefreshExpires: time.Now().UTC().Add(time.Hour),
-			Permissions:    nil,
 		},
 	}
 	e := newEngine(fake, authn.AudienceAdmin)
@@ -294,17 +304,10 @@ func TestAdminLoginShape(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d", rec.Code)
 	}
-	var body struct {
-		Permissions []string `json:"permissions"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if body.Permissions == nil {
-		t.Fatal("permissions is null")
-	}
-	if len(body.Permissions) != 0 {
-		t.Fatalf("permissions %v", body.Permissions)
+	// 后台不分权限：登录响应与门户同形，不带 permissions
+	m := assertKeys(t, rec.Body.Bytes(), "access_token", "token_type", "expires_in", "user_id")
+	if string(m["token_type"]) != `"Bearer"` || string(m["user_id"]) != `"`+uid.String()+`"` {
+		t.Fatalf("body %s", rec.Body.String())
 	}
 	if findSetCookie(rec, adminRefreshCookie) == nil {
 		t.Fatal("no pandora_admin_rt cookie")
@@ -585,8 +588,7 @@ func TestAdminMeShape(t *testing.T) {
 			bearer: {UserID: uid, Audience: authn.AudienceAdmin},
 		},
 		adminProfile: service.AdminProfile{
-			UserID: uid, Email: "a@example.com",
-			Permissions: nil, Roles: nil, Reauthed: true,
+			UserID: uid, Email: "a@example.com", Reauthed: true,
 		},
 	}
 	e := newEngine(fake, authn.AudienceAdmin)
@@ -596,13 +598,16 @@ func TestAdminMeShape(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d %s", rec.Code, rec.Body.String())
 	}
+	// 契约：恰好这四个键，没有 permissions、roles、kind
+	m := assertKeys(t, rec.Body.Bytes(), "user_id", "email", "display_name", "reauthed")
+	if string(m["display_name"]) != "null" {
+		t.Fatalf("display_name %s", m["display_name"])
+	}
 	var body struct {
-		UserID      string    `json:"user_id"`
-		Email       string    `json:"email"`
-		DisplayName *string   `json:"display_name"`
-		Permissions []string  `json:"permissions"`
-		Reauthed    bool      `json:"reauthed"`
-		Roles       []roleDTO `json:"roles"`
+		UserID      string  `json:"user_id"`
+		Email       string  `json:"email"`
+		DisplayName *string `json:"display_name"`
+		Reauthed    bool    `json:"reauthed"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -612,9 +617,6 @@ func TestAdminMeShape(t *testing.T) {
 	}
 	if body.DisplayName != nil {
 		t.Fatalf("display_name %v", body.DisplayName)
-	}
-	if body.Permissions == nil || body.Roles == nil {
-		t.Fatal("permissions or roles null")
 	}
 	if !body.Reauthed {
 		t.Fatal("reauthed false")

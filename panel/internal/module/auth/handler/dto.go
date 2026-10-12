@@ -23,19 +23,12 @@ type tokenResponse struct {
 	ExpiresIn   int    `json:"expires_in"`
 }
 
+// loginResponse 门户与后台登录共用。
 type loginResponse struct {
 	AccessToken string `json:"access_token"`
 	TokenType   string `json:"token_type"`
 	ExpiresIn   int    `json:"expires_in"`
 	UserID      string `json:"user_id"`
-}
-
-type adminLoginResponse struct {
-	AccessToken string   `json:"access_token"`
-	ExpiresIn   int      `json:"expires_in"`
-	Permissions []string `json:"permissions"`
-	TokenType   string   `json:"token_type"`
-	UserID      string   `json:"user_id"`
 }
 
 type sessionDTO struct {
@@ -61,17 +54,9 @@ type quickLoginResponse struct {
 	ExpiresIn int    `json:"expires_in"`
 }
 
-type roleDTO struct {
-	Code string `json:"code"`
-	Name string `json:"name"`
-}
-
 type adminMeResponse struct {
-	UserID      string    `json:"user_id"`
-	Email       string    `json:"email"`
-	DisplayName *string   `json:"display_name"`
-	Kind        string    `json:"kind"`
-	Permissions []string  `json:"permissions"`
-	Reauthed    bool      `json:"reauthed"`
-	Roles       []roleDTO `json:"roles"`
+	UserID      string  `json:"user_id"`
+	Email       string  `json:"email"`
+	DisplayName *string `json:"display_name"`
+	Reauthed    bool    `json:"reauthed"`
 }

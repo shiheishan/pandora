@@ -101,7 +101,7 @@ func (s *Service) UserDetail(ctx context.Context, id uuid.UUID) (UserDetail, err
 	return d, nil
 }
 
-// SetStatus 停用、封禁或恢复一个账号：不能改自己；先做越级检查与「最后一个管理员」保护，停用与封禁同事务吊销全部会话。
+// SetStatus 停用、封禁或恢复一个账号：不能改自己；有「最后一个管理员」保护，停用与封禁同事务吊销全部会话。
 func (s *Service) SetStatus(ctx context.Context, userID uuid.UUID, status, reason string) error {
 	p, err := principal(ctx)
 	if err != nil {
@@ -127,13 +127,6 @@ func (s *Service) SetStatus(ctx context.Context, userID uuid.UUID, status, reaso
 		}
 		if !ok {
 			return errs.New(errs.NotFound)
-		}
-		staff, err := s.needStaff()
-		if err != nil {
-			return err
-		}
-		if err := staff.EnsureCanManage(ctx, p.UserID, userID); err != nil {
-			return err
 		}
 		if u.Status == status {
 			return nil
@@ -176,7 +169,7 @@ func (s *Service) SetStatus(ctx context.Context, userID uuid.UUID, status, reaso
 	})
 }
 
-// AdminResetPassword 管理员替用户设新口令：不能改自己（自己走改密）；越级检查；吊销该用户全部会话；新口令不回显不记录。
+// AdminResetPassword 管理员替用户设新口令：不能改自己（自己走改密）；吊销该用户全部会话；新口令不回显不记录。
 func (s *Service) AdminResetPassword(ctx context.Context, userID uuid.UUID, newPassword, reason string) error {
 	p, err := principal(ctx)
 	if err != nil {
@@ -213,13 +206,7 @@ func (s *Service) AdminResetPassword(ctx context.Context, userID uuid.UUID, newP
 		if !ok {
 			return errs.New(errs.NotFound)
 		}
-		staffGuard, err := s.needStaff()
-		if err != nil {
-			return err
-		}
-		if err := staffGuard.EnsureCanManage(ctx, p.UserID, userID); err != nil {
-			return err
-		}
+		// 事务里再查一次：算口令前后对方可能刚被设为管理员
 		staff2, err := s.isStaff(ctx, userID)
 		if err != nil {
 			return err

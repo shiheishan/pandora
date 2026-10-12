@@ -158,12 +158,7 @@ func TestPGSetStatus(t *testing.T) {
 		t.Fatal("no extra revoke")
 	}
 
-	e.staff.manageErr = errs.New(errs.Forbidden)
 	victim := e.mkUser(t, ctx, uniqEmail(t, "staff"), "Passw0rdLong1")
-	if err := e.svc.SetStatus(actx, victim.ID, StatusSuspended, "x"); codeOf(err) != errs.Forbidden {
-		t.Fatalf("staff manage: %v", err)
-	}
-	e.staff.manageErr = nil
 
 	if err := e.svc.SetStatus(actx, target.ID, StatusActive, ""); err != nil {
 		t.Fatal(err)
@@ -215,6 +210,10 @@ func TestPGAdminResetPassword(t *testing.T) {
 	e.staff.staff[target.ID] = true
 	if err := e.svc.AdminResetPassword(actx, target.ID, "short1", "x"); codeOf(err) != errs.ValidationFailed {
 		t.Fatalf("staff short: %v", err)
+	}
+	// 管理员之间对等，没有越级检查：可以替另一个管理员重置口令（12 位以上）
+	if err := e.svc.AdminResetPassword(actx, target.ID, "PeerResetPass12", "x"); err != nil {
+		t.Fatalf("peer reset: %v", err)
 	}
 }
 

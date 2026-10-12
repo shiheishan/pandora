@@ -14,7 +14,6 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/ratelimit"
 	"github.com/aegispanel/aegis/internal/pkg/route"
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 )
 
 // Auth 是 handler 用到的 auth service 方法；*service.Service 实现它。
@@ -24,7 +23,6 @@ type Auth interface {
 	Refresh(ctx context.Context, audience, raw string) (service.Tokens, error)
 	Logout(ctx context.Context, audience, rawRefresh string) error
 	Authenticate(ctx context.Context, audience, bearer string) (authn.Principal, error)
-	Permissions(ctx context.Context, userID uuid.UUID) ([]string, error)
 	AdminProfile(ctx context.Context) (service.AdminProfile, error)
 	ListSessions(ctx context.Context) ([]service.SessionInfo, error)
 	RevokeSession(ctx context.Context, sid string) error
@@ -134,20 +132,6 @@ func (h *Handler) login(aud string) gin.HandlerFunc {
 			return
 		}
 		h.setRefreshCookie(c, aud, t.Refresh, t.RefreshExpires)
-		if aud == authn.AudienceAdmin {
-			perms := t.Permissions
-			if perms == nil {
-				perms = []string{}
-			}
-			httpx.OK(c, adminLoginResponse{
-				AccessToken: t.AccessToken,
-				ExpiresIn:   t.ExpiresIn,
-				Permissions: perms,
-				TokenType:   "Bearer",
-				UserID:      t.UserID.String(),
-			})
-			return
-		}
 		httpx.OK(c, loginResponse{
 			AccessToken: t.AccessToken,
 			TokenType:   "Bearer",
@@ -265,22 +249,11 @@ func (h *Handler) adminMe(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	perms := p.Permissions
-	if perms == nil {
-		perms = []string{}
-	}
-	roles := make([]roleDTO, 0, len(p.Roles))
-	for _, r := range p.Roles {
-		roles = append(roles, roleDTO{Code: r.Code, Name: r.Name})
-	}
 	httpx.OK(c, adminMeResponse{
 		UserID:      p.UserID.String(),
 		Email:       p.Email,
-		DisplayName: nil,
-		Kind:        "user",
-		Permissions: perms,
+		DisplayName: p.DisplayName,
 		Reauthed:    p.Reauthed,
-		Roles:       roles,
 	})
 }
 

@@ -87,15 +87,13 @@ func (f *fakeSettings) SwitchEnabled(ctx context.Context, code string) (bool, er
 
 func testKit(h *Handler) route.Kit {
 	return route.Kit{
-		RequireAuth: func(c *gin.Context) { c.Next() },
-		Permission: func(code string) gin.HandlerFunc {
-			return func(c *gin.Context) {
-				if c.GetHeader("X-Test-Perm") != code {
-					httpx.Fail(c, errs.New(errs.NotFound))
-					return
-				}
-				c.Next()
+		// 后台不分权限：带 X-Test-Auth: 1 就当已登录的后台主体
+		RequireAuth: func(c *gin.Context) {
+			if c.GetHeader("X-Test-Auth") != "1" {
+				httpx.Fail(c, errs.New(errs.Unauthorized))
+				return
 			}
+			c.Next()
 		},
 		RecentReauth: func(c *gin.Context) {
 			if c.GetHeader("X-Test-Reauth") != "1" {
@@ -173,7 +171,7 @@ func TestSiteConfig(t *testing.T) {
 	}
 }
 
-func TestGetSitePermission(t *testing.T) {
+func TestGetSiteRequiresAuth(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	fake := &fakeSettings{site: service.Site{Name: "N", Timezone: "Asia/Shanghai", Currency: "CNY"}}
 	h := New(fake)
@@ -182,11 +180,11 @@ func TestGetSitePermission(t *testing.T) {
 	h.RegisterAdmin(e.Group("/v1"), testKit(h))
 
 	rec := do(e, http.MethodGet, "/v1/settings/site", "", nil)
-	if rec.Code != http.StatusNotFound || errCode(t, rec) != "not_found" {
+	if rec.Code != http.StatusUnauthorized || errCode(t, rec) != "unauthorized" {
 		t.Fatalf("status %d code %s", rec.Code, errCode(t, rec))
 	}
 
-	rec = do(e, http.MethodGet, "/v1/settings/site", "", map[string]string{"X-Test-Perm": "security.audit.read"})
+	rec = do(e, http.MethodGet, "/v1/settings/site", "", map[string]string{"X-Test-Auth": "1"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d", rec.Code)
 	}
@@ -209,11 +207,11 @@ func TestSetSite(t *testing.T) {
 	e.Use(httpx.Errors())
 	h.RegisterAdmin(e.Group("/v1"), testKit(h))
 	hdrs := map[string]string{
-		"X-Test-Perm":   "platform.settings.write",
+		"X-Test-Auth":   "1",
 		"X-Test-Reauth": "1",
 	}
 
-	rec := do(e, http.MethodPost, "/v1/settings/site", `{"timezone":"Asia/Tokyo"}`, map[string]string{"X-Test-Perm": "platform.settings.write"})
+	rec := do(e, http.MethodPost, "/v1/settings/site", `{"timezone":"Asia/Tokyo"}`, map[string]string{"X-Test-Auth": "1"})
 	if rec.Code != http.StatusForbidden || errCode(t, rec) != "reauth_required" {
 		t.Fatalf("status %d code %s", rec.Code, errCode(t, rec))
 	}
@@ -244,13 +242,13 @@ func TestListSwitchesJSON(t *testing.T) {
 	e.Use(httpx.Errors())
 	h.RegisterAdmin(e.Group("/v1"), testKit(h))
 
-	rec := do(e, http.MethodGet, "/v1/switches", "", map[string]string{"X-Test-Perm": "security.audit.read"})
+	rec := do(e, http.MethodGet, "/v1/switches", "", map[string]string{"X-Test-Auth": "1"})
 	if !strings.Contains(rec.Body.String(), `"reason":null`) {
 		t.Fatalf("body %s", rec.Body.String())
 	}
 
 	fake.switches = nil
-	rec = do(e, http.MethodGet, "/v1/switches", "", map[string]string{"X-Test-Perm": "security.audit.read"})
+	rec = do(e, http.MethodGet, "/v1/switches", "", map[string]string{"X-Test-Auth": "1"})
 	if !strings.Contains(rec.Body.String(), `"switches":[]`) {
 		t.Fatalf("body %s", rec.Body.String())
 	}
@@ -264,7 +262,7 @@ func TestSetSwitch(t *testing.T) {
 	e.Use(httpx.Errors())
 	h.RegisterAdmin(e.Group("/v1"), testKit(h))
 	hdrs := map[string]string{
-		"X-Test-Perm":   "platform.settings.write",
+		"X-Test-Auth":   "1",
 		"X-Test-Reauth": "1",
 	}
 	rec := do(e, http.MethodPost, "/v1/switches/billing.checkout", `{"enabled":false,"reason":"维护"}`, hdrs)
@@ -334,7 +332,7 @@ func TestAdminWritesGate(t *testing.T) {
 	e.POST("/admin-x/v1/auth/staff", func(c *gin.Context) { httpx.OK(c, gin.H{}) })
 
 	hdrs := map[string]string{
-		"X-Test-Perm":   "platform.settings.write",
+		"X-Test-Auth":   "1",
 		"X-Test-Reauth": "1",
 	}
 	rec := do(e, http.MethodPost, "/admin-x/v1/settings/site", `{"timezone":"X"}`, hdrs)
@@ -351,7 +349,7 @@ func TestAdminWritesGate(t *testing.T) {
 		t.Fatalf("message %q", errBody.Error.Message)
 	}
 
-	rec = do(e, http.MethodGet, "/admin-x/v1/settings/site", "", map[string]string{"X-Test-Perm": "security.audit.read"})
+	rec = do(e, http.MethodGet, "/admin-x/v1/settings/site", "", map[string]string{"X-Test-Auth": "1"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("get site status %d", rec.Code)
 	}

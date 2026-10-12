@@ -63,17 +63,15 @@ func (f *fakeNotify) TestTemplate(ctx context.Context, in service.TemplateTest) 
 }
 
 type notifyTestKit struct {
-	perms       []string
+	authCalls   int
 	reauthCalls int
 }
 
 func (k *notifyTestKit) kit() route.Kit {
 	return route.Kit{
-		Permission: func(code string) gin.HandlerFunc {
-			return func(c *gin.Context) {
-				k.perms = append(k.perms, code)
-				c.Next()
-			}
+		RequireAuth: func(c *gin.Context) {
+			k.authCalls++
+			c.Next()
 		},
 		RecentReauth: func(c *gin.Context) {
 			k.reauthCalls++
@@ -333,7 +331,8 @@ func TestTestTemplateDraftPointersAndReauth(t *testing.T) {
 	}
 }
 
-func TestAdminRoutePermissionCodes(t *testing.T) {
+// 后台不分权限：每条后台路由都挂 RequireAuth，且只挂一次。
+func TestAdminRoutesRequireAuth(t *testing.T) {
 	e, k := setupEngine(&fakeNotify{
 		mail: service.MailSettings{RegistrationMode: "open"},
 		templates: []service.TemplateView{{
@@ -345,40 +344,26 @@ func TestAdminRoutePermissionCodes(t *testing.T) {
 		method string
 		path   string
 		body   string
-		perm   string
 	}{
-		{http.MethodGet, "/v1/settings/mail", "", "security.audit.read"},
-		{http.MethodPost, "/v1/settings/mail", `{"smtp_port":25,"encryption":"none"}`, "platform.settings.write"},
-		{http.MethodPost, "/v1/settings/mail/test", `{"to":"a@b.c"}`, "ops.notification.write"},
-		{http.MethodGet, "/v1/mail/templates", "", "ops.notification.read"},
-		{http.MethodPost, "/v1/mail/templates/preview", `{"code":"c","channel":"email","subject":"","body":""}`, "ops.notification.read"},
-		{http.MethodPost, "/v1/mail/templates", `{"code":"c","channel":"email","subject":"","body":""}`, "platform.settings.write"},
-		{http.MethodPost, "/v1/mail/templates/reset", `{"code":"c","channel":"email"}`, "platform.settings.write"},
-		{http.MethodPost, "/v1/mail/templates/test", `{"code":"c","channel":"email","to":"a@b.c"}`, "ops.notification.write"},
+		{http.MethodGet, "/v1/settings/mail", ""},
+		{http.MethodPost, "/v1/settings/mail", `{"smtp_port":25,"encryption":"none"}`},
+		{http.MethodPost, "/v1/settings/mail/test", `{"to":"a@b.c"}`},
+		{http.MethodGet, "/v1/mail/templates", ""},
+		{http.MethodPost, "/v1/mail/templates/preview", `{"code":"c","channel":"email","subject":"","body":""}`},
+		{http.MethodPost, "/v1/mail/templates", `{"code":"c","channel":"email","subject":"","body":""}`},
+		{http.MethodPost, "/v1/mail/templates/reset", `{"code":"c","channel":"email"}`},
+		{http.MethodPost, "/v1/mail/templates/test", `{"code":"c","channel":"email","to":"a@b.c"}`},
 	}
-
-	wantPerms := make(map[string]int)
-	for _, c := range calls {
-		wantPerms[c.perm]++
+	if n := len(e.Routes()); n != len(calls) {
+		t.Fatalf("后台路由 %d 条，用例覆盖 %d 条", n, len(calls))
+	}
+	for i, c := range calls {
 		rec := doNotify(e, c.method, c.path, c.body)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%s %s status %d %s", c.method, c.path, rec.Code, rec.Body.String())
 		}
-	}
-
-	if len(k.perms) != len(calls) {
-		t.Fatalf("perm records %v", k.perms)
-	}
-	gotPerms := make(map[string]int)
-	for i, c := range calls {
-		if k.perms[i] != c.perm {
-			t.Fatalf("call %d: want perm %q got %q", i, c.perm, k.perms[i])
-		}
-		gotPerms[k.perms[i]]++
-	}
-	for p, n := range wantPerms {
-		if gotPerms[p] != n {
-			t.Fatalf("perm %q count want %d got %d", p, n, gotPerms[p])
+		if k.authCalls != i+1 {
+			t.Fatalf("%s %s: RequireAuth 调用 %d 次，want %d", c.method, c.path, k.authCalls, i+1)
 		}
 	}
 }

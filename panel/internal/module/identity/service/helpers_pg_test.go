@@ -64,16 +64,11 @@ func (f *fakeMailer) SendToAddress(_ context.Context, templateCode, address stri
 }
 
 type fakeStaff struct {
-	staff     map[uuid.UUID]bool
-	manageErr error
+	staff map[uuid.UUID]bool
 }
 
 func (f *fakeStaff) IsStaff(_ context.Context, userID uuid.UUID) (bool, error) {
 	return f.staff[userID], nil
-}
-
-func (f *fakeStaff) EnsureCanManage(_ context.Context, _, _ uuid.UUID) error {
-	return f.manageErr
 }
 
 type env struct {

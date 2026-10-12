@@ -120,7 +120,7 @@ func (s *Service) needStaff() (StaffGuard, error) {
 	return s.staff, nil
 }
 
-// isStaff 经 StaffGuard 判断用户是否后台人员。
+// isStaff 经 StaffGuard 判断用户是否管理员。
 func (s *Service) isStaff(ctx context.Context, userID uuid.UUID) (bool, error) {
 	g, err := s.needStaff()
 	if err != nil {

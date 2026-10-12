@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	auditrepo "github.com/aegispanel/aegis/internal/module/audit/repo"
+	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	authrepo "github.com/aegispanel/aegis/internal/module/auth/repo"
 	authsvc "github.com/aegispanel/aegis/internal/module/auth/service"
 	idemrepo "github.com/aegispanel/aegis/internal/module/idempotency/repo"
