@@ -7,6 +7,10 @@ import (
 	"net/http"
 	"time"
 
+	audittask "github.com/aegispanel/aegis/internal/module/audit/task"
+	idemtask "github.com/aegispanel/aegis/internal/module/idempotency/task"
+	identitytask "github.com/aegispanel/aegis/internal/module/identity/task"
+	notifytask "github.com/aegispanel/aegis/internal/module/notify/task"
 	"github.com/aegispanel/aegis/internal/pkg/jobs"
 	"github.com/hibiken/asynq"
 	"github.com/spf13/cobra"
@@ -30,10 +34,16 @@ func runWorker(ctx context.Context, configPath string) error {
 	}
 	defer r.close()
 
-	redisOpt, err := asynq.ParseRedisURI(r.cfg.Redis.URL.Reveal())
+	redisOpt, err := asynqRedis(r.cfg)
 	if err != nil {
-		return fmt.Errorf("解析 Redis URL: %w", err)
+		return err
 	}
+	svc, err := buildServices(r)
+	if err != nil {
+		return err
+	}
+	defer svc.close()
+	go svc.settings.WatchSwitches(ctx)
 
 	zapAsynq := jobs.ZapLogger{SugaredLogger: r.log.Sugar()}
 	cfg := r.cfg.Worker
@@ -52,7 +62,7 @@ func runWorker(ctx context.Context, configPath string) error {
 
 	mux := asynq.NewServeMux()
 	mux.Use(jobs.Middleware(r.log))
-	if err := jobs.Register(mux, sched, modules()...); err != nil {
+	if err := jobs.Register(mux, sched, modules(svc)...); err != nil {
 		return fmt.Errorf("注册任务模块: %w", err)
 	}
 
@@ -94,6 +104,11 @@ func runWorker(ctx context.Context, configPath string) error {
 }
 
 // modules 返回已迁移的业务任务模块；迁移时在此登记。
-func modules() []jobs.Module {
-	return nil
+func modules(svc *services) []jobs.Module {
+	return []jobs.Module{
+		audittask.New(svc.audit),
+		idemtask.New(svc.idem),
+		identitytask.New(svc.identity),
+		notifytask.New(svc.notify),
+	}
 }

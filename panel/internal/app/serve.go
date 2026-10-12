@@ -10,10 +10,18 @@ import (
 	"sync"
 	"time"
 
+	audith "github.com/aegispanel/aegis/internal/module/audit/handler"
+	authh "github.com/aegispanel/aegis/internal/module/auth/handler"
+	idemh "github.com/aegispanel/aegis/internal/module/idempotency/handler"
+	identityh "github.com/aegispanel/aegis/internal/module/identity/handler"
+	notifyh "github.com/aegispanel/aegis/internal/module/notify/handler"
+	settingsh "github.com/aegispanel/aegis/internal/module/settings/handler"
+	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/config"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
 	"github.com/aegispanel/aegis/internal/pkg/redisx"
+	"github.com/aegispanel/aegis/internal/pkg/route"
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -39,10 +47,16 @@ func runServe(ctx context.Context, configPath string) error {
 	}
 	defer r.close()
 
-	publicEng := newEngine(r, r.cfg.HTTP.Public)
-	adminEng := newEngine(r, r.cfg.HTTP.Admin)
+	svc, err := buildServices(r)
+	if err != nil {
+		return err
+	}
+	defer svc.close()
 
-	// 业务路由由各模块在迁移时注册到 publicEng / adminEng。
+	publicEng, adminEng := newEngines(r, svc)
+
+	// 开关缓存按纪元失效：监听变更，进程退出时随 ctx 结束
+	go svc.settings.WatchSwitches(ctx)
 
 	publicSrv := newHTTPServer(r.cfg.HTTP.Public, publicEng)
 	adminSrv := newHTTPServer(r.cfg.HTTP.Admin, adminEng)
@@ -119,7 +133,50 @@ func newHTTPServer(sc config.HTTPServer, h http.Handler) *http.Server {
 	}
 }
 
-func newEngine(r *runtime, sc config.HTTPServer) *gin.Engine {
+// newEngines 建门户与后台两个引擎并挂上各模块路由。
+// 引擎级顺序：基础中间件（请求号、日志、恢复、错误、安全头、并发、超时）→（后台）只读门 → 鉴权 → 域守卫；
+// 限流、权限、重认证、幂等、开关是路由级，由各模块从 Kit 取。
+func newEngines(r *runtime, svc *services) (*gin.Engine, *gin.Engine) {
+	settingsH := settingsh.New(svc.settings)
+	authH := authh.New(svc.auth, svc.limiter, authh.Options{
+		AuthPerMin:   r.cfg.RateLimit.AuthPerMin,
+		SecureCookie: r.cfg.IsProduction(),
+	})
+	idemH := idemh.New(svc.idem)
+	kit := route.Kit{
+		RequireAuth:  authH.RequireAuth(),
+		Permission:   authH.Permission,
+		RecentReauth: authH.RecentReauth(),
+		Idempotency:  idemH.Middleware,
+		Switch:       settingsH.Switch,
+	}
+	mods := []route.Module{
+		settingsH,
+		audith.New(svc.audit),
+		identityh.New(svc.identity, svc.limiter, r.cfg.RateLimit.AuthPerMin),
+		authH,
+		notifyh.New(svc.notify),
+	}
+
+	publicEng := newEngine(r, r.cfg.HTTP.Public,
+		authH.Authenticate(authn.AudiencePublic),
+		authH.DomainGuard(authn.AudiencePublic),
+	)
+	adminEng := newEngine(r, r.cfg.HTTP.Admin,
+		settingsH.AdminWritesGate(),
+		authH.Authenticate(authn.AudienceAdmin),
+		authH.DomainGuard(authn.AudienceAdmin),
+	)
+	publicV1 := publicEng.Group("/v1")
+	adminV1 := adminEng.Group("/v1")
+	for _, m := range mods {
+		m.RegisterPublic(publicV1, kit)
+		m.RegisterAdmin(adminV1, kit)
+	}
+	return publicEng, adminEng
+}
+
+func newEngine(r *runtime, sc config.HTTPServer, extra ...gin.HandlerFunc) *gin.Engine {
 	if r.cfg.Env != config.EnvDevelopment {
 		ginReleaseOnce.Do(func() { gin.SetMode(gin.ReleaseMode) })
 	}
@@ -140,6 +197,7 @@ func newEngine(r *runtime, sc config.HTTPServer) *gin.Engine {
 		httpx.Concurrency(sc.MaxConcurrency),
 		httpx.Timeout(sc.RequestTimeout, isStream),
 	)
+	e.Use(extra...)
 
 	e.GET("/healthz", func(c *gin.Context) {
 		httpx.OK(c, gin.H{"status": "ok"})

@@ -46,10 +46,11 @@ func Execute() int {
 	root.AddCommand(newServeCmd(&configPath))
 	root.AddCommand(newWorkerCmd(&configPath))
 	root.AddCommand(newMigrateCmd(&configPath))
+	root.AddCommand(newAdminCmd(&configPath))
 
 	if err := root.ExecuteContext(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return exitCode(err)
 	}
 	return 0
 }
