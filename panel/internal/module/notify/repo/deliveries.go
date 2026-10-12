@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"sort"
@@ -18,7 +19,7 @@ func (r *Repo) InsertDelivery(ctx context.Context, d *model.Delivery) error {
 	return r.d.Conn(ctx).Create(d).Error
 }
 
-// ClaimDeliveries 认领到期的 queued 行：next_retry_at 推到 now()+lease，租约内别的实例看不到它们；按 created_at 升序返回。
+// ClaimDeliveries 认领到期的 queued 行：next_retry_at 推到 now()+lease，租约内别的实例看不到它们；按 created_at、id 升序返回。
 func (r *Repo) ClaimDeliveries(ctx context.Context, channel string, limit int, lease time.Duration) ([]model.Delivery, error) {
 	out := []model.Delivery{}
 	err := r.d.Conn(ctx).Raw(
@@ -26,7 +27,7 @@ func (r *Repo) ClaimDeliveries(ctx context.Context, channel string, limit int, l
 		    SET next_retry_at = now() + make_interval(secs => ?), updated_at = now()
 		   FROM (SELECT id FROM notification_deliveries
 		          WHERE status = 'queued' AND channel = ? AND next_retry_at <= now()
-		          ORDER BY created_at
+		          ORDER BY created_at, id
 		          LIMIT ?
 		          FOR UPDATE SKIP LOCKED) due
 		  WHERE d.id = due.id
@@ -35,7 +36,12 @@ func (r *Repo) ClaimDeliveries(ctx context.Context, channel string, limit int, l
 		return nil, err
 	}
 	// RETURNING 不保证顺序
-	sort.SliceStable(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return bytes.Compare(out[i].ID[:], out[j].ID[:]) < 0
+	})
 	return out, nil
 }
 
