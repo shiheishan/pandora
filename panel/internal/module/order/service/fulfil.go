@@ -135,9 +135,13 @@ func (s *Service) fulfil(ctx context.Context, o model.Order, at time.Time, actor
 	return s.reload(ctx, o.ID)
 }
 
-// settleZeroPay 建单事务里应付为 0 的单当场履约：有余额抵扣时 CaptureFromBalance 一步冻结并扣款（不先 HoldForOrder），
-// 确认预留，转 paid，再履约。不调 PaidHook（旧代码零应付单不计佣）。
+// settleZeroPay 建单事务里应付为 0 的单当场履约：先确认预留（库存、限购、券），再在有余额抵扣时
+// CaptureFromBalance 一步冻结并扣款（不先 HoldForOrder），转 paid，再履约。锁序与 SettlePayment 一致：
+// 套餐 / 券在前、账务科目（含平台收入）在后。不调 PaidHook（旧代码零应付单不计佣）。
 func (s *Service) settleZeroPay(ctx context.Context, o model.Order, actor Actor) (model.Order, error) {
+	if err := s.captureReservation(ctx, o, actor); err != nil {
+		return model.Order{}, err
+	}
 	if o.BalanceApplied.IsPositive() {
 		if _, _, err := s.ledger.CaptureFromBalance(ctx, ledgersvc.HoldInput{
 			OrderID:  o.ID,
@@ -147,9 +151,6 @@ func (s *Service) settleZeroPay(ctx context.Context, o model.Order, actor Actor)
 		}); err != nil {
 			return model.Order{}, err
 		}
-	}
-	if err := s.captureReservation(ctx, o, actor); err != nil {
-		return model.Order{}, err
 	}
 	now := s.clock()
 	paid, err := s.markPaid(ctx, o, now)

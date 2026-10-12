@@ -477,6 +477,10 @@ type PaidOrder struct {
 // PaidHook 是结算成功后的可选回调（commission 在第四波实现）。在结算事务里调用：返回错误整笔结算回滚。
 // 调用时机沿用旧代码计佣的口径：只在收款结算（SettlePayment：渠道到账、后台标记已付）把订单转为 paid 时调用，
 // 且 Kind 不是 topup、Total > 0。零应付的单（余额全额付、全额折扣）建单时当场履约，旧代码不计佣，这里也不调用。
+//
+// 锁序约定：调用时本事务已持有订单、目标订阅、套餐 / 券与本单的账务科目（含平台收入科目 platform_revenue）。
+// 实现方（commission）要锁的科目（推荐人余额、佣金科目等）必须排在平台收入科目之后锁，
+// 不得先锁自己的科目再等平台收入，也不得回头锁套餐、券、订阅，否则会与别的结算成环（40P01）。
 type PaidHook interface {
 	OnOrderPaid(ctx context.Context, o PaidOrder) error
 }

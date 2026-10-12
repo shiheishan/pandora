@@ -1,7 +1,9 @@
 // Package service 是 order 模块的业务层：报价、下单（新购、续费、流量包、充值）、结算编排（实现 payment 的 Settler）、
 // 取消与超时释放、我的订单与后台订单。别的模块只调本包。
 //
-// 锁序：订单 → 订阅 → 配额 → 流量包；下单时先锁套餐行（catalog.Offer Lock）再锁限购计数。
+// 锁序（全模块同向，避免 40P01）：订单 → 订阅 → 套餐行 → 限购计数 → 券 → 账务科目（用户余额、冻结、平台收入、渠道）。
+// 建单没有订单锁：续费、流量包先锁订阅，新购先锁套餐行（catalog.Offer Lock）；结算、取消、超时先锁订单。
+// 结算先确认预留（库存、限购、券）再记账，见 SettlePayment。
 // 下单事务里一律先插订单行，再调 promo.Reserve、ledger.HoldForOrder 等（它们的 order_id 有外键）。
 package service
 

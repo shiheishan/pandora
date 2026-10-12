@@ -12,6 +12,7 @@ import (
 	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
 	paymentsvc "github.com/aegispanel/aegis/internal/module/payment/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
 // 库存 5、20 个用户并发新购（券 + 部分余额）：恰好 5 单成功、其余售罄；
@@ -265,4 +266,84 @@ func TestConcurrentRenewalsOneWins(t *testing.T) {
 	if n := e.count(t, ctx, `SELECT count(*) FROM orders WHERE subscription_id = ? AND kind = 'renewal' AND status = 'pending_payment'`, sub.ID); n != 1 {
 		t.Fatalf("待付续费单 %d 张", n)
 	}
+}
+
+// 锁序回归（审查 B1）：用户 A 用余额全额零元新购（限量套餐 + 券 C），同时用户 B 同套餐、同券的订单回调到账，并发多轮。
+// 结算若先锁平台收入科目再锁套餐 / 券，就会与零元建单（先套餐 / 券、后平台收入）成环（40P01）。断言每轮两边都成功、库存与券计数守恒。
+func TestConcurrentZeroPayVersusWebhookNoDeadlock(t *testing.T) {
+	e, ctx := newCommitEnv(t)
+	code := demoCode()
+	e.mkDemoProvider(t, ctx, code)
+	planID, _, priceID := e.mkPlan(t, ctx, 2000, "month", intp(100), nil)
+	cc := couponCode()
+	couponID := e.mkCoupon(t, ctx, cc, 500)
+
+	const rounds = 8
+	for round := 0; round < rounds; round++ {
+		// B：待付单（券 C），先发起支付拿收银台单号
+		userB := e.mkUser(t, ctx)
+		b := e.buyNew(t, ctx, userB, planID, priceID, Checkout{CouponCode: cc})
+		intent, err := e.svc.Pay(asUser(ctx, userB), PayInput{OrderID: b.OrderID, Provider: code})
+		if err != nil {
+			t.Fatalf("第 %d 轮 B 发起支付: %v", round, err)
+		}
+		cents, err := money.ToCents(intent.Amount)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// A：余额够全额付
+		userA := e.mkUser(t, ctx)
+		e.giveBalance(t, ctx, userA, 2000)
+
+		var wg sync.WaitGroup
+		var errA, errB error
+		var createdA Created
+		start := make(chan struct{})
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			createdA, errA = e.svc.CreateNewOrder(asUser(ctx, userA), NewOrderInput{
+				PlanID: planID, PriceID: priceID,
+				Checkout: Checkout{UseBalance: dec("20"), CouponCode: cc},
+			})
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			ref := fmt.Sprintf("pay-dl-%d-%s", round, randHex(6))
+			ack, err := e.payments.HandleWebhook(ctx, code, demoInbound("evt-"+ref, "payment.succeeded", ref, intent.OutTradeNo, cents))
+			if err == nil && ack.HTTPStatus != http.StatusOK {
+				err = fmt.Errorf("回执 %d: %s", ack.HTTPStatus, ack.Body)
+			}
+			errB = err
+		}()
+		close(start)
+		wg.Wait()
+		if errA != nil {
+			t.Fatalf("第 %d 轮 A 零元新购失败（可能是死锁）: %v", round, errA)
+		}
+		if errB != nil {
+			t.Fatalf("第 %d 轮 B 回调失败（可能是死锁）: %v", round, errB)
+		}
+		if createdA.Status != StatusFulfilled {
+			t.Fatalf("第 %d 轮 A 状态 %s", round, createdA.Status)
+		}
+		if st := e.order(t, ctx, b.OrderID).Status; st != StatusFulfilled {
+			t.Fatalf("第 %d 轮 B 状态 %s", round, st)
+		}
+	}
+
+	reserved, sold := e.stock(t, ctx, planID)
+	if reserved != 0 || sold != 2*rounds {
+		t.Fatalf("库存 reserved=%d sold=%d，期望 0 与 %d", reserved, sold, 2*rounds)
+	}
+	var cReserved, cRedeemed int
+	if err := e.row(ctx, `SELECT reserved_count, redeemed_count FROM coupons WHERE id = ?`, couponID).Scan(&cReserved, &cRedeemed); err != nil {
+		t.Fatal(err)
+	}
+	if cReserved != 0 || cRedeemed != 2*rounds {
+		t.Fatalf("券 reserved=%d redeemed=%d，期望 0 与 %d", cReserved, cRedeemed, 2*rounds)
+	}
+	e.assertNoDrift(t, ctx)
 }

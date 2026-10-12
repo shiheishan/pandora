@@ -393,6 +393,10 @@ func (s *Service) CreatePackOrder(ctx context.Context, in PackOrderInput) (Creat
 		if err != nil {
 			return err
 		}
+		// 先锁目标订阅再动券与科目：与流量包单结算「订单 → 订阅 → 券 → 科目」同向（零元单当场履约时也要锁它）
+		if _, err := s.subs.Lock(ctx, in.SubscriptionID, &userID); err != nil {
+			return err
+		}
 		if err := s.subs.CheckPackTarget(ctx, userID, in.SubscriptionID); err != nil {
 			return err
 		}

@@ -20,13 +20,17 @@ var errAmountMismatch = errs.Newf(errs.Conflict, "收款金额与订单应付不
 
 // SettlePayment 实现 paymentsvc.Settler：在 payment 入账的同一事务（与它开的保存点）里结算订单。
 // 订单此刻不收这笔钱时返回 paymentsvc.NotPayable，由 payment 转挂账；其他错误整笔回滚。
+//
+// 锁序（与建单「订阅 → 套餐 / 券 → 科目」、取消「订单 → 套餐 → 计数 → 券 → 用户科目」同向，避免 40P01）：
+// 订单 → 订阅（续费、流量包）→ 预留（库存、限购、券）→ 账务科目（含平台收入）→ 订单状态 → PaidHook → 履约。
+// 记账回 ErrHoldReleased 转 NotPayable 时，payment 回滚到保存点，前面已确认的预留一并撤销。
 func (s *Service) SettlePayment(ctx context.Context, in paymentsvc.SettleInput) error {
 	o, ok, err := s.repo.OrderByID(ctx, in.OrderID, repo.ForNoKeyUpdate)
 	if err != nil {
 		return err
 	}
 	if !ok {
-		return fmt.Errorf("order: 结算的订单不存在 %s", in.OrderID)
+		return errs.Newf(errs.NotFound, "订单不存在")
 	}
 	switch o.Status {
 	case StatusPending:
@@ -42,23 +46,25 @@ func (s *Service) SettlePayment(ctx context.Context, in paymentsvc.SettleInput) 
 	}
 	now := s.clock()
 
-	if o.Kind == KindRenewal {
+	// 续费、流量包先锁目标订阅（履约时 Renew / GrantTrafficPack 会再锁同一行，同一事务内不冲突）
+	if o.Kind == KindRenewal || o.Kind == KindAddon {
 		if o.SubscriptionID == nil {
-			return fmt.Errorf("order: 续费订单缺订阅 %s", o.ID)
+			return fmt.Errorf("order: %s 订单缺订阅 %s", o.Kind, o.ID)
 		}
 		sub, err := s.subs.Lock(ctx, *o.SubscriptionID, &o.UserID)
 		if err != nil {
 			return err
 		}
-		if !sub.StateAt(now).AcceptsChange() {
+		// 只有续费查订阅是否停用（流量包不查，旧 subscriptionBoundOrderKind 同口径）
+		if o.Kind == KindRenewal && !sub.StateAt(now).AcceptsChange() {
 			return paymentsvc.NotPayable(paymentsvc.CaseIneligibleSubscription, o.Status)
 		}
 	}
 
-	if err := s.postSettlement(ctx, o, in); err != nil {
+	if err := s.captureReservation(ctx, o, Actor{Kind: ActorPayment}); err != nil {
 		return err
 	}
-	if err := s.captureReservation(ctx, o, Actor{Kind: ActorPayment}); err != nil {
+	if err := s.postSettlement(ctx, o, in); err != nil {
 		return err
 	}
 	paid, err := s.markPaid(ctx, o, now)
