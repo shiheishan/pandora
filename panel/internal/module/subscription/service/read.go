@@ -184,3 +184,13 @@ func keys(set map[uuid.UUID]struct{}) []uuid.UUID {
 	}
 	return out
 }
+
+// PeriodOrderIDs 是本周期的付费来源订单（按发生先后，永不为 nil）：order 换套餐时据此算剩余价值的基数与付费总时长。
+// 礼品卡、后台加时长没有订单，不在里面（它们加的天数折不成钱）。调用方建单时已锁订阅行。
+func (s *Service) PeriodOrderIDs(ctx context.Context, subID uuid.UUID) ([]uuid.UUID, error) {
+	ids, err := s.repo.PeriodOrderIDs(ctx, subID)
+	if err != nil {
+		return nil, subErr(err)
+	}
+	return ids, nil
+}

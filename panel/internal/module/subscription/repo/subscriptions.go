@@ -137,3 +137,38 @@ func (r *Repo) InsertEvent(ctx context.Context, e *model.Event) error {
 func (r *Repo) InsertCredential(ctx context.Context, c *model.Credential) error {
 	return mapErr(r.d.Conn(ctx).Create(c).Error)
 }
+
+// PeriodOrderIDs 读一份订阅本周期的付费来源订单：最近一次让周期重新起算的事件（开通、换套餐、过期后续回、救回的延期）
+// 及其之后的开通、续期、换套餐事件上挂的订单，按事件先后。事件按 id（uuidv7，插入有序）排：同一订阅的事件由订阅行锁
+// 串行写入，插入顺序就是发生顺序（occurred_at 是事务开始时刻，等锁的事务会比先提交的还早，不能用它排）。
+// 用 Rows 逐行读：GORM 的 Scan 读不进 []uuid.UUID。
+func (r *Repo) PeriodOrderIDs(ctx context.Context, subID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := r.d.Conn(ctx).Raw(`
+		WITH restart AS (
+			SELECT id FROM subscription_events
+			 WHERE subscription_id = ?
+			   AND (event_type IN ('activated', 'plan_changed')
+			        OR (event_type = 'renewed' AND from_status = 'expired')
+			        OR (event_type = 'extended' AND payload->>'restart' = 'true'))
+			 ORDER BY id DESC LIMIT 1
+		)
+		SELECT e.order_id
+		  FROM subscription_events e JOIN restart r ON e.id >= r.id
+		 WHERE e.subscription_id = ?
+		   AND e.event_type IN ('activated', 'renewed', 'plan_changed')
+		   AND e.order_id IS NOT NULL
+		 ORDER BY e.id`, subID, subID).Rows()
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer func() { _ = rows.Close() }()
+	ids := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, mapErr(err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, mapErr(rows.Err())
+}
