@@ -35,7 +35,6 @@ type Coupon struct {
 	MaxRedemptionsPerUser int              `gorm:"column:max_redemptions_per_user"`
 	RedeemedCount         int              `gorm:"column:redeemed_count"`
 	ReservedCount         int              `gorm:"column:reserved_count"`
-	ApplicablePlanIDs     UUIDs            `gorm:"column:applicable_plan_ids;type:uuid[]"`
 	UserGroupID           *uuid.UUID       `gorm:"column:user_group_id;type:uuid"`
 	ValidFrom             *time.Time       `gorm:"column:valid_from"`
 	ValidUntil            *time.Time       `gorm:"column:valid_until"`
@@ -47,6 +46,15 @@ type Coupon struct {
 
 // TableName 固定表名。
 func (Coupon) TableName() string { return "coupons" }
+
+// CouponPlan 是 coupon_plans 表的一行：券限定的一个套餐。
+type CouponPlan struct {
+	CouponID uuid.UUID `gorm:"column:coupon_id;type:uuid;primaryKey"`
+	PlanID   uuid.UUID `gorm:"column:plan_id;type:uuid;primaryKey"`
+}
+
+// TableName 固定表名。
+func (CouponPlan) TableName() string { return "coupon_plans" }
 
 // Redemption 是 coupon_redemptions 表的一行。
 type Redemption struct {

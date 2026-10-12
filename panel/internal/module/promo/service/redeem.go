@@ -32,7 +32,11 @@ func (s *Service) apply(ctx context.Context, c model.Coupon, t Target) (*Applied
 			return nil, ErrCouponNotForUser
 		}
 	}
-	if err := checkPlan(c, t.PlanID); err != nil {
+	plans, err := s.repo.PlanIDsByCoupons(ctx, []uuid.UUID{c.ID})
+	if err != nil {
+		return nil, err
+	}
+	if err := checkPlan(plans[c.ID], t.PlanID); err != nil {
 		return nil, err
 	}
 	n, err := s.repo.CountActiveByUser(ctx, c.ID, t.UserID)

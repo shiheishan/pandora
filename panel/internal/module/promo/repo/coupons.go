@@ -26,8 +26,8 @@ func checkCouponMoney(c *model.Coupon) error {
 	return checkMoney(vals...)
 }
 
-// InsertCouponIfAbsent 插入一张券，券码已存在时跳过（ON CONFLICT DO NOTHING，不让事务出错）；返回是否插入。
-func (r *Repo) InsertCouponIfAbsent(ctx context.Context, c *model.Coupon) (bool, error) {
+// InsertCouponIfAbsent 插入一张券及其限定的套餐，券码已存在时跳过（ON CONFLICT DO NOTHING，不让事务出错）；返回是否插入。
+func (r *Repo) InsertCouponIfAbsent(ctx context.Context, c *model.Coupon, planIDs []uuid.UUID) (bool, error) {
 	if err := checkCouponMoney(c); err != nil {
 		return false, err
 	}
@@ -38,7 +38,43 @@ func (r *Repo) InsertCouponIfAbsent(ctx context.Context, c *model.Coupon) (bool,
 	if res.Error != nil {
 		return false, mapErr(res.Error)
 	}
-	return res.RowsAffected == 1, nil
+	if res.RowsAffected != 1 {
+		return false, nil
+	}
+	if len(planIDs) > 0 {
+		rows := make([]model.CouponPlan, len(planIDs))
+		for i, id := range planIDs {
+			rows[i] = model.CouponPlan{CouponID: c.ID, PlanID: id}
+		}
+		if err := r.d.Conn(ctx).Create(&rows).Error; err != nil {
+			return false, mapErr(err)
+		}
+	}
+	return true, nil
+}
+
+// PlanIDsByCoupons 批量取券限定的套餐（一条 SQL）；没有限定的券不在结果里。
+func (r *Repo) PlanIDsByCoupons(ctx context.Context, couponIDs []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error) {
+	out := make(map[uuid.UUID][]uuid.UUID, len(couponIDs))
+	if len(couponIDs) == 0 {
+		return out, nil
+	}
+	// 逐行用 database/sql 扫：GORM 的 Scan 会把 uuid.UUID 当 [16]byte 逐元素扫
+	rows, err := r.d.Conn(ctx).Raw(
+		"SELECT coupon_id, plan_id FROM coupon_plans WHERE coupon_id IN ? ORDER BY coupon_id, plan_id", couponIDs,
+	).Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, pid uuid.UUID
+		if err := rows.Scan(&cid, &pid); err != nil {
+			return nil, err
+		}
+		out[cid] = append(out[cid], pid)
+	}
+	return out, rows.Err()
 }
 
 // CouponByCode 按券码查券。

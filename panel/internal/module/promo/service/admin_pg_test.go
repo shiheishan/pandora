@@ -7,14 +7,13 @@ import (
 	"testing"
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/testkit"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
 
 func TestCreateAndList(t *testing.T) {
 	e := newEnv(t)
-	ctx := testkit.TxCtx(t, e.d)
+	ctx := e.txCtx()
 	admin := newUser(t, e, ctx)
 	actx := adminCtx(ctx, admin)
 
@@ -88,7 +87,7 @@ func TestCreateAndList(t *testing.T) {
 	}
 
 	var createdBy *uuid.UUID
-	if err := e.d.Conn(ctx).Raw(`SELECT created_by FROM coupons WHERE id = ?`, id).Scan(&createdBy).Error; err != nil {
+	if err := e.row(ctx, `SELECT created_by FROM coupons WHERE id = ?`, id).Scan(&createdBy); err != nil {
 		t.Fatal(err)
 	}
 	if createdBy == nil || *createdBy != admin {
@@ -96,19 +95,57 @@ func TestCreateAndList(t *testing.T) {
 	}
 
 	var auditN int64
-	if err := e.d.Conn(ctx).Raw(
+	if err := e.row(ctx,
 		`SELECT count(*) FROM audit_events WHERE action = ?`, ActionCreated,
-	).Scan(&auditN).Error; err != nil {
+	).Scan(&auditN); err != nil {
 		t.Fatal(err)
 	}
 	if auditN < 1 {
 		t.Fatalf("审计条数 %d", auditN)
 	}
+
+	P1, P2 := uuid.New(), uuid.New()
+	e.cat.plans[P1], e.cat.plans[P2] = true, true
+	planSpec := fixedSpec("1.00")
+	planSpec.PlanIDs = []uuid.UUID{P1, P2, P1}
+	planCode := randCode("PL2")
+	planID, _, err := e.svc.CreateCoupon(actx, planCode, planSpec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows2, _, err := e.svc.ListCoupons(ctx, ListFilter{Query: planCode}, 25, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var planCoupon *Coupon
+	for i := range rows2 {
+		if rows2[i].ID == planID {
+			planCoupon = &rows2[i]
+			break
+		}
+	}
+	if planCoupon == nil {
+		t.Fatal("列表未找到限定套餐券")
+	}
+	if len(planCoupon.PlanIDs) != 2 {
+		t.Fatalf("PlanIDs 长度 %d，期望 2", len(planCoupon.PlanIDs))
+	}
+	got := map[uuid.UUID]bool{planCoupon.PlanIDs[0]: true, planCoupon.PlanIDs[1]: true}
+	if !got[P1] || !got[P2] {
+		t.Fatalf("PlanIDs=%v 期望含 %v %v", planCoupon.PlanIDs, P1, P2)
+	}
+	var planRows int64
+	if err := e.row(ctx, `SELECT count(*) FROM coupon_plans WHERE coupon_id = ?`, planID).Scan(&planRows); err != nil {
+		t.Fatal(err)
+	}
+	if planRows != 2 {
+		t.Fatalf("coupon_plans 行数 %d，期望 2", planRows)
+	}
 }
 
 func TestDiscountedTotalAndRedemptions(t *testing.T) {
 	e := newEnv(t)
-	ctx := testkit.TxCtx(t, e.d)
+	ctx := e.txCtx()
 	admin := newUser(t, e, ctx)
 
 	code := randCode("DSC")
@@ -177,7 +214,7 @@ func TestDiscountedTotalAndRedemptions(t *testing.T) {
 
 func TestGenerateCoupons(t *testing.T) {
 	e := newEnv(t)
-	ctx := testkit.TxCtx(t, e.d)
+	ctx := e.txCtx()
 	admin := newUser(t, e, ctx)
 	actx := adminCtx(ctx, admin)
 
@@ -205,9 +242,9 @@ func TestGenerateCoupons(t *testing.T) {
 	}
 
 	var dbN int64
-	if err := e.d.Conn(ctx).Raw(
+	if err := e.row(ctx,
 		`SELECT count(*) FROM coupons WHERE code IN ? AND max_redemptions = 1`, codes,
-	).Scan(&dbN).Error; err != nil {
+	).Scan(&dbN); err != nil {
 		t.Fatal(err)
 	}
 	if dbN != 50 {
@@ -236,9 +273,9 @@ func TestGenerateCoupons(t *testing.T) {
 	}
 
 	var dataJSON string
-	if err := e.d.Conn(ctx).Raw(
+	if err := e.row(ctx,
 		`SELECT data::text FROM audit_events WHERE action = ? ORDER BY occurred_at DESC LIMIT 1`, ActionBatchGenerated,
-	).Scan(&dataJSON).Error; err != nil {
+	).Scan(&dataJSON); err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range codes {
@@ -250,7 +287,7 @@ func TestGenerateCoupons(t *testing.T) {
 
 func TestSetStatus(t *testing.T) {
 	e := newEnv(t)
-	ctx := testkit.TxCtx(t, e.d)
+	ctx := e.txCtx()
 	admin := newUser(t, e, ctx)
 	actx := adminCtx(ctx, admin)
 
@@ -263,7 +300,7 @@ func TestSetStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	var st string
-	if err := e.d.Conn(ctx).Raw(`SELECT status FROM coupons WHERE id = ?`, id).Scan(&st).Error; err != nil {
+	if err := e.row(ctx, `SELECT status FROM coupons WHERE id = ?`, id).Scan(&st); err != nil {
 		t.Fatal(err)
 	}
 	if st != StatusPaused {
@@ -280,7 +317,7 @@ func TestSetStatus(t *testing.T) {
 
 func TestConstraints(t *testing.T) {
 	e := newEnv(t)
-	ctx := testkit.TxCtx(t, e.d)
+	ctx := e.txCtx()
 
 	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name, amount_off, percent_off_bp, currency)
 		VALUES ('X1', 'n', 1, 1, 'CNY')`)
@@ -301,19 +338,24 @@ func TestConstraints(t *testing.T) {
 	assertSQLFails(t, e, ctx, `UPDATE coupons SET reserved_count = 2 WHERE code = ?`, code)
 
 	var cid uuid.UUID
-	if err := e.d.Conn(ctx).Raw(`SELECT id FROM coupons WHERE code = ?`, code).Scan(&cid).Error; err != nil {
+	if err := e.row(ctx, `SELECT id FROM coupons WHERE code = ?`, code).Scan(&cid); err != nil {
 		t.Fatal(err)
 	}
 	uid := newUser(t, e, ctx)
 	execSQL(t, e, ctx, `INSERT INTO coupon_redemptions (coupon_id, user_id, order_id, order_no, discount_amount, currency, status)
 		VALUES (?, ?, uuidv7(), 'O1', 1, 'CNY', 'held')`, cid, uid)
 	assertSQLFails(t, e, ctx, `DELETE FROM coupon_redemptions WHERE coupon_id = ?`, cid)
+
+	planID := uuid.New()
+	e.cat.plans[planID] = true
+	execSQL(t, e, ctx, `INSERT INTO coupon_plans (coupon_id, plan_id) VALUES (?, ?)`, cid, planID)
+	assertSQLFails(t, e, ctx, `INSERT INTO coupon_plans (coupon_id, plan_id) VALUES (?, ?)`, cid, planID)
 }
 
 func assertSQLFails(t *testing.T, e *env, ctx context.Context, sql string, args ...any) {
 	t.Helper()
 	execSQL(t, e, ctx, "SAVEPOINT sp")
-	err := e.d.Conn(ctx).Exec(sql, args...).Error
+	err := e.exec(ctx, sql, args...)
 	if err == nil {
 		t.Fatalf("期望失败: %s", sql)
 	}

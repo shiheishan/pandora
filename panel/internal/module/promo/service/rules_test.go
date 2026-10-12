@@ -110,22 +110,20 @@ func TestCheckPlan(t *testing.T) {
 	planA := uuid.MustParse("00000000-0000-4000-8000-000000000001")
 	planB := uuid.MustParse("00000000-0000-4000-8000-000000000002")
 
-	empty := model.Coupon{ApplicablePlanIDs: nil}
-	if err := checkPlan(empty, &planA); err != nil {
+	if err := checkPlan(nil, &planA); err != nil {
 		t.Fatalf("空列表任意 plan: %v", err)
 	}
-	if err := checkPlan(empty, nil); err != nil {
+	if err := checkPlan(nil, nil); err != nil {
 		t.Fatalf("空列表 nil plan: %v", err)
 	}
 
-	listed := model.Coupon{ApplicablePlanIDs: []uuid.UUID{planA}}
-	if err := checkPlan(listed, &planA); err != nil {
+	if err := checkPlan([]uuid.UUID{planA}, &planA); err != nil {
 		t.Fatalf("A 应通过: %v", err)
 	}
-	if !errors.Is(checkPlan(listed, &planB), ErrCouponNotForPlan) {
+	if !errors.Is(checkPlan([]uuid.UUID{planA}, &planB), ErrCouponNotForPlan) {
 		t.Fatal("B 应拒绝")
 	}
-	if !errors.Is(checkPlan(listed, nil), ErrCouponNotForPlan) {
+	if !errors.Is(checkPlan([]uuid.UUID{planA}, nil), ErrCouponNotForPlan) {
 		t.Fatal("nil plan 应拒绝")
 	}
 }

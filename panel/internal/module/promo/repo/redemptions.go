@@ -46,14 +46,22 @@ func (r *Repo) FinishHeld(ctx context.Context, orderID uuid.UUID, to string, rea
 		return uuid.Nil, false, fmt.Errorf("promo: 非法占用终态 %q", to)
 	}
 
-	var ids []uuid.UUID
-	if err := r.d.Conn(ctx).Raw(sql, args...).Scan(&ids).Error; err != nil {
+	// 逐行用 database/sql 扫：GORM 的 Scan 会把 uuid.UUID 当 [16]byte 逐元素扫
+	rows, err := r.d.Conn(ctx).Raw(sql, args...).Rows()
+	if err != nil {
 		return uuid.Nil, false, err
 	}
-	if len(ids) == 0 {
-		return uuid.Nil, false, nil
+	defer rows.Close()
+	for rows.Next() {
+		if err := rows.Scan(&couponID); err != nil {
+			return uuid.Nil, false, err
+		}
+		ok = true
 	}
-	return ids[0], true, nil
+	if err := rows.Err(); err != nil {
+		return uuid.Nil, false, err
+	}
+	return couponID, ok, nil
 }
 
 // RedemptionRow 是单张券的一条核销明细行。

@@ -33,7 +33,7 @@ func (s *Service) CreateCoupon(ctx context.Context, code string, spec Spec) (uui
 	var id uuid.UUID
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
 		// ON CONFLICT DO NOTHING 判重：撞码不让调用方的事务进入出错状态
-		inserted, err := s.repo.InsertCouponIfAbsent(ctx, &c)
+		inserted, err := s.repo.InsertCouponIfAbsent(ctx, &c, spec.PlanIDs)
 		if err != nil {
 			if errors.Is(err, repo.ErrForeignKey) {
 				return errs.Invalid(map[string]string{"user_group_id": "用户组不存在"})
@@ -93,7 +93,7 @@ func (s *Service) GenerateCoupons(ctx context.Context, prefix string, count int,
 			}
 			c := couponFromSpec(gen, spec)
 			c.CreatedBy = actorID(ctx)
-			inserted, err := s.repo.InsertCouponIfAbsent(ctx, &c)
+			inserted, err := s.repo.InsertCouponIfAbsent(ctx, &c, spec.PlanIDs)
 			if err != nil {
 				if errors.Is(err, repo.ErrForeignKey) {
 					return errs.Invalid(map[string]string{"user_group_id": "用户组不存在"})
@@ -176,9 +176,17 @@ func (s *Service) ListCoupons(ctx context.Context, f ListFilter, limit, offset i
 	if err != nil {
 		return nil, 0, err
 	}
+	ids := make([]uuid.UUID, len(rows))
+	for i, row := range rows {
+		ids[i] = row.ID
+	}
+	plans, err := s.repo.PlanIDsByCoupons(ctx, ids)
+	if err != nil {
+		return nil, 0, err
+	}
 	out := make([]Coupon, 0, len(rows))
 	for _, row := range rows {
-		planIDs := []uuid.UUID(row.ApplicablePlanIDs)
+		planIDs := plans[row.ID]
 		if planIDs == nil {
 			planIDs = []uuid.UUID{}
 		}
@@ -260,7 +268,6 @@ func couponFromSpec(code string, spec Spec) model.Coupon {
 		MinOrderAmount:        spec.MinOrder,
 		MaxRedemptions:        spec.MaxRedemptions,
 		MaxRedemptionsPerUser: spec.MaxPerUser,
-		ApplicablePlanIDs:     model.UUIDs(spec.PlanIDs),
 		UserGroupID:           spec.UserGroupID,
 		ValidFrom:             spec.ValidFrom,
 		ValidUntil:            spec.ValidUntil,

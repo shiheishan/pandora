@@ -182,14 +182,15 @@ func checkBasics(c model.Coupon, t Target, now time.Time) error {
 	return nil
 }
 
-func checkPlan(c model.Coupon, planID *uuid.UUID) error {
-	if len(c.ApplicablePlanIDs) == 0 {
+// checkPlan 判断券限定的套餐（planIDs 为空即不限）是否包含这一单的套餐；流量包订单 planID 为 nil。
+func checkPlan(planIDs []uuid.UUID, planID *uuid.UUID) error {
+	if len(planIDs) == 0 {
 		return nil
 	}
 	if planID == nil {
 		return ErrCouponNotForPlan
 	}
-	for _, id := range c.ApplicablePlanIDs {
+	for _, id := range planIDs {
 		if id == *planID {
 			return nil
 		}

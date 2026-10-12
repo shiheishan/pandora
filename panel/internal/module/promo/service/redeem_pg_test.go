@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/testkit"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -62,9 +61,9 @@ func TestReserveConcurrentCapacity(t *testing.T) {
 	}
 
 	var reserved, redeemed int
-	if err := e.d.Conn(ctx).Raw(
+	if err := e.row(ctx,
 		`SELECT reserved_count, redeemed_count FROM coupons WHERE code = ?`, code,
-	).Row().Scan(&reserved, &redeemed); err != nil {
+	).Scan(&reserved, &redeemed); err != nil {
 		t.Fatal(err)
 	}
 	if reserved != 5 || redeemed != 0 {
@@ -72,10 +71,10 @@ func TestReserveConcurrentCapacity(t *testing.T) {
 	}
 
 	var held int64
-	if err := e.d.Conn(ctx).Raw(
+	if err := e.row(ctx,
 		`SELECT count(*) FROM coupon_redemptions r JOIN coupons c ON c.id = r.coupon_id WHERE c.code = ? AND r.status = 'held'`,
 		code,
-	).Scan(&held).Error; err != nil {
+	).Scan(&held); err != nil {
 		t.Fatal(err)
 	}
 	if held != 5 {
@@ -127,7 +126,7 @@ func TestReservePerUserConcurrent(t *testing.T) {
 
 func TestReleaseThenReuse(t *testing.T) {
 	e := newEnv(t)
-	ctx := testkit.TxCtx(t, e.d)
+	ctx := e.txCtx()
 	admin := newUser(t, e, ctx)
 
 	max := 1
@@ -152,7 +151,7 @@ func TestReleaseThenReuse(t *testing.T) {
 	}
 
 	var reserved int
-	if err := e.d.Conn(ctx).Raw(`SELECT reserved_count FROM coupons WHERE code = ?`, code).Scan(&reserved).Error; err != nil {
+	if err := e.row(ctx, `SELECT reserved_count FROM coupons WHERE code = ?`, code).Scan(&reserved); err != nil {
 		t.Fatal(err)
 	}
 	if reserved != 0 {
@@ -167,8 +166,8 @@ func TestReleaseThenReuse(t *testing.T) {
 	}
 
 	var redeemed int
-	if err := e.d.Conn(ctx).Raw(`SELECT reserved_count, redeemed_count FROM coupons WHERE code = ?`, code).
-		Row().Scan(&reserved, &redeemed); err != nil {
+	if err := e.row(ctx, `SELECT reserved_count, redeemed_count FROM coupons WHERE code = ?`, code).
+		Scan(&reserved, &redeemed); err != nil {
 		t.Fatal(err)
 	}
 	if reserved != 0 || redeemed != 1 {
@@ -177,9 +176,9 @@ func TestReleaseThenReuse(t *testing.T) {
 
 	var status string
 	var capturedAt *string
-	if err := e.d.Conn(ctx).Raw(
+	if err := e.row(ctx,
 		`SELECT status, captured_at::text FROM coupon_redemptions WHERE order_id = ?`, o2.ID,
-	).Row().Scan(&status, &capturedAt); err != nil {
+	).Scan(&status, &capturedAt); err != nil {
 		t.Fatal(err)
 	}
 	if status != "captured" || capturedAt == nil || *capturedAt == "" {
@@ -197,9 +196,9 @@ func TestReleaseThenReuse(t *testing.T) {
 	}
 
 	var reason *string
-	if err := e.d.Conn(ctx).Raw(
+	if err := e.row(ctx,
 		`SELECT status, release_reason FROM coupon_redemptions WHERE order_id = ?`, o1.ID,
-	).Row().Scan(&status, &reason); err != nil {
+	).Scan(&status, &reason); err != nil {
 		t.Fatal(err)
 	}
 	if status != "released" || reason == nil || *reason != "超时" {
@@ -209,7 +208,7 @@ func TestReleaseThenReuse(t *testing.T) {
 
 func TestReserveRules(t *testing.T) {
 	e := newEnv(t)
-	ctx := testkit.TxCtx(t, e.d)
+	ctx := e.txCtx()
 	admin := newUser(t, e, ctx)
 
 	// 百分比折扣
@@ -229,9 +228,9 @@ func TestReserveRules(t *testing.T) {
 		t.Fatal(err)
 	}
 	var discDB string
-	if err := e.d.Conn(ctx).Raw(
+	if err := e.row(ctx,
 		`SELECT discount_amount::text FROM coupon_redemptions WHERE order_id = ?`, ordPct.ID,
-	).Scan(&discDB).Error; err != nil {
+	).Scan(&discDB); err != nil {
 		t.Fatal(err)
 	}
 	if discDB != "3.32" {
@@ -348,7 +347,7 @@ func TestReserveRules(t *testing.T) {
 
 func TestPreview(t *testing.T) {
 	e := newEnv(t)
-	ctx := testkit.TxCtx(t, e.d)
+	ctx := e.txCtx()
 	admin := newUser(t, e, ctx)
 	u := newUser(t, e, ctx)
 

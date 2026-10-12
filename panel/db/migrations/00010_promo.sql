@@ -1,7 +1,8 @@
 -- +goose Up
 -- promo 模块：优惠券与券的占用记录。
--- 依赖 00005_identity.sql 的 users、user_groups。限定的套餐只存 ID（catalog 的表在并行的迁移里建），
--- 写入前由 promo service 经 catalog service 校验；order_id 指向订单，外键由 00013 补。
+-- 依赖 00005_identity.sql 的 users、user_groups。限定的套餐放在关联表 coupon_plans，plan_id 写入前由 promo
+-- service 经 catalog service 校验；它指向 plans 的外键等 catalog 合入后在本迁移里补。
+-- order_id 指向订单，外键由 00013 补。
 --
 -- 金额一律 NUMERIC(20,2)、单位元（docs/architecture.md 第 6 节）；面值拆成定额 amount_off 与
 -- 万分比 percent_off_bp 两列，恰好一个非空（R10）。
@@ -25,8 +26,6 @@ CREATE TABLE coupons (
   -- 已确认（订单已支付）与占用中（订单待支付）的次数，与 coupon_redemptions 同事务维护
   redeemed_count           int NOT NULL DEFAULT 0 CHECK (redeemed_count >= 0),
   reserved_count           int NOT NULL DEFAULT 0 CHECK (reserved_count >= 0),
-  -- 限定套餐（空数组为全部套餐）；流量包订单没有套餐，限定了套餐的券对它不适用
-  applicable_plan_ids      uuid[] NOT NULL DEFAULT '{}',
   -- 限定用户组（NULL 为不限）；组被券引用时不许删组
   user_group_id            uuid REFERENCES user_groups(id) ON DELETE RESTRICT,
   valid_from               timestamptz,
@@ -43,13 +42,21 @@ CREATE TABLE coupons (
   CONSTRAINT coupons_capacity
     CHECK (max_redemptions IS NULL OR redeemed_count + reserved_count <= max_redemptions),
   CONSTRAINT coupons_valid_window
-    CHECK (valid_from IS NULL OR valid_until IS NULL OR valid_until > valid_from),
-  CONSTRAINT coupons_plan_ids_no_null CHECK (array_position(applicable_plan_ids, NULL) IS NULL)
+    CHECK (valid_from IS NULL OR valid_until IS NULL OR valid_until > valid_from)
 );
 
 -- 后台列表按 (created_at DESC, code) 翻页
 CREATE INDEX coupons_created_idx ON coupons (created_at DESC, code);
 CREATE INDEX coupons_user_group_idx ON coupons (user_group_id) WHERE user_group_id IS NOT NULL;
+
+-- 券限定的套餐：没有行即适用全部套餐；流量包订单没有套餐，限定了套餐的券对它不适用。
+-- plan_id 指向 plans 的外键等 catalog 合入后补（由主 Agent 加在本迁移里）。
+CREATE TABLE coupon_plans (
+  coupon_id uuid NOT NULL REFERENCES coupons(id) ON DELETE CASCADE,
+  plan_id   uuid NOT NULL,
+  PRIMARY KEY (coupon_id, plan_id)
+);
+CREATE INDEX coupon_plans_plan_idx ON coupon_plans (plan_id);
 
 -- 券在一张订单上的占用：下单时 held，订单取消或超时 released，支付成功 captured。
 -- 只能从 held 走到另外两种终态（service 的转换表 + WHERE status = 'held'）；行不许删，是折扣的凭据。
@@ -92,4 +99,5 @@ CREATE TRIGGER coupon_redemptions_no_delete
 
 -- +goose Down
 DROP TABLE IF EXISTS coupon_redemptions;
+DROP TABLE IF EXISTS coupon_plans;
 DROP TABLE IF EXISTS coupons;

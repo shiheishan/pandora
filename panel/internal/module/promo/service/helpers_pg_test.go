@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -14,7 +15,6 @@ import (
 	"github.com/aegispanel/aegis/internal/module/promo/repo"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
-	"github.com/aegispanel/aegis/internal/pkg/db"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/reqid"
 	"github.com/aegispanel/aegis/internal/pkg/testkit"
@@ -87,7 +87,9 @@ func (f *fakeUsers) UserGroupID(_ context.Context, userID uuid.UUID) (*uuid.UUID
 }
 
 type env struct {
-	d     *db.DB
+	row   func(ctx context.Context, q string, args ...any) *sql.Row
+	exec  func(ctx context.Context, q string, args ...any) error
+	txCtx func() context.Context
 	svc   *Service
 	txm   *tx.Manager
 	cat   *fakeCatalog
@@ -122,14 +124,26 @@ func newEnv(t *testing.T) *env {
 	}
 	svc.UseCatalog(cat)
 	svc.UseUsers(users)
-	return &env{d: d, svc: svc, txm: txm, cat: cat, users: users}
+	return &env{
+		row: func(ctx context.Context, q string, args ...any) *sql.Row {
+			return d.Conn(ctx).Raw(q, args...).Row()
+		},
+		exec: func(ctx context.Context, q string, args ...any) error {
+			return d.Conn(ctx).Exec(q, args...).Error
+		},
+		txCtx: func() context.Context { return testkit.TxCtx(t, d) },
+		svc:   svc,
+		txm:   txm,
+		cat:   cat,
+		users: users,
+	}
 }
 
 func newUser(t *testing.T, e *env, ctx context.Context) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID
 	email := fmt.Sprintf("promo-%s@example.test", randHex(16))
-	if err := e.d.Conn(ctx).Raw(`INSERT INTO users (email) VALUES (?) RETURNING id`, email).Scan(&id).Error; err != nil {
+	if err := e.row(ctx, `INSERT INTO users (email) VALUES (?) RETURNING id`, email).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
 	e.users.emails[id] = email
@@ -140,10 +154,10 @@ func newGroup(t *testing.T, e *env, ctx context.Context) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID
 	code := "g-" + randHex(8)
-	if err := e.d.Conn(ctx).Raw(
+	if err := e.row(ctx,
 		`INSERT INTO user_groups (code, name) VALUES (?, ?) RETURNING id`,
 		code, "测试组",
-	).Scan(&id).Error; err != nil {
+	).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
 	return id
@@ -231,7 +245,7 @@ func createCoupon(t *testing.T, e *env, ctx context.Context, adminID uuid.UUID, 
 
 func execSQL(t *testing.T, e *env, ctx context.Context, sql string, args ...any) {
 	t.Helper()
-	if err := e.d.Conn(ctx).Exec(sql, args...).Error; err != nil {
+	if err := e.exec(ctx, sql, args...); err != nil {
 		t.Fatal(err)
 	}
 }
