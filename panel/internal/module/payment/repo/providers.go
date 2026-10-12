@@ -82,6 +82,13 @@ func (r *Repo) InsertProvider(ctx context.Context, p *model.Provider) error {
 	if err := money.Check(p.MinAmount); err != nil {
 		return err
 	}
+	// json 序列化器把 nil 切片写成 SQL NULL，两列都是 NOT NULL 的 jsonb 数组
+	if p.Methods == nil {
+		p.Methods = []string{}
+	}
+	if p.Currencies == nil {
+		p.Currencies = []string{}
+	}
 	return mapErr(r.d.Conn(ctx).Create(p).Error)
 }
 

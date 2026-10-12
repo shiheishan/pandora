@@ -145,8 +145,11 @@ func TestSaveTemplateValidation(t *testing.T) {
 	mustCode(t, err, errs.ValidationFailed)
 
 	tpl := e.mkTemplate(t, ctx, TemplateInput{Name: "唯一名", Type: TypeGeneral, Rewards: Rewards{Balance: dec("1")}})
+	// 重名靠库里的唯一约束挡：失败的语句会中止测试事务，包在保存点里
+	e.mustExec(t, ctx, `SAVEPOINT sp_dup_name`)
 	_, err = e.svc.SaveTemplate(admin, TemplateInput{Name: "唯一名", Type: TypeGeneral, Rewards: Rewards{Balance: dec("2")}})
 	mustCode(t, err, errs.ValidationFailed)
+	e.mustExec(t, ctx, `ROLLBACK TO SAVEPOINT sp_dup_name`)
 
 	id := tpl.ID
 	_, err = e.svc.SaveTemplate(admin, TemplateInput{ID: &id, Name: "唯一名", Type: TypeMystery, Rewards: Rewards{Pool: []Prize{

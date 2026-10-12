@@ -160,7 +160,8 @@ func TestManualOrderChange(t *testing.T) {
 		Settlement: SettlementOffline, Reference: "BANK-1", Target: &Choice{Kind: PlacementChange, SubscriptionID: &otherSub.ID},
 	})
 	mustErrMsg(t, "应付为 0 的线下收款", err, errOfflineChangeNothingDue)
-	if n := e.count(t, ctx, `SELECT count(*) FROM orders WHERE user_id = ?`, other); n != 0 {
+	// activeSub 自己买下原套餐落过一张新购单，只数换套餐单
+	if n := e.count(t, ctx, `SELECT count(*) FROM orders WHERE user_id = ? AND kind = 'upgrade'`, other); n != 0 {
 		t.Fatalf("应付为 0 的线下收款不该落订单，有 %d 张", n)
 	}
 }

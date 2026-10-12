@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 
 	"github.com/aegispanel/aegis/internal/pkg/db"
@@ -22,7 +23,8 @@ var ErrDuplicate = errors.New("identity: 唯一约束冲突")
 // ErrForeignKey 表示外键约束冲突。
 var ErrForeignKey = errors.New("identity: 外键约束冲突")
 
-// mapErr 把 GORM 翻译后的约束错误转成模块哨兵。
+// mapErr 把 GORM 翻译后的约束错误转成模块哨兵。别的模块指向 users、user_groups 的外键多是 ON DELETE RESTRICT，
+// 删除被引用的行回 23001（restrict_violation），GORM 不翻译它，这里同样当外键冲突。
 func mapErr(err error) error {
 	if err == nil {
 		return nil
@@ -31,6 +33,10 @@ func mapErr(err error) error {
 		return ErrDuplicate
 	}
 	if errors.Is(err, gorm.ErrForeignKeyViolated) {
+		return ErrForeignKey
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23001" {
 		return ErrForeignKey
 	}
 	return err

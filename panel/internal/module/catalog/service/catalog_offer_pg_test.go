@@ -234,8 +234,9 @@ func TestDeleteUserGroupReferencedByPriceRestricted(t *testing.T) {
 	_ = groupOnlyPublishedPlan(t, ctx, e, g)
 	err := execSavepoint(t, ctx, e, "sp_delgrp", `DELETE FROM user_groups WHERE id = ?`, g)
 	var pg *pgconn.PgError
-	if !errors.As(err, &pg) || pg.Code != "23503" {
-		t.Fatalf("期望 23503，得到 %v", err)
+	// ON DELETE RESTRICT 回 restrict_violation（23001），不是 23503；identity 的 repo 把两者都当外键冲突
+	if !errors.As(err, &pg) || pg.Code != "23001" {
+		t.Fatalf("期望 23001，得到 %v", err)
 	}
 }
 

@@ -296,7 +296,12 @@ func (e *env) mkCodes(t *testing.T, ctx context.Context, templateID uuid.UUID, n
 // balanceOf 取用户可用余额（CNY）。
 func (e *env) balanceOf(t *testing.T, ctx context.Context, user uuid.UUID) decimal.Decimal {
 	t.Helper()
-	b, err := e.ledger.Balance(ctx, user, money.CNY)
+	// 礼品卡按站点币种发余额（缺省 USD），不能写死 CNY
+	cur, err := e.ledger.DefaultCurrency(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := e.ledger.Balance(ctx, user, cur)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -40,6 +40,7 @@ func TestPeriodOrderIDsPG(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
+		fulfilOrder(t, e, ctx, oid)
 		return oid
 	}
 
@@ -95,6 +96,7 @@ func TestPeriodOrderIDsPG(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	fulfilOrder(t, e, ctx, o6)
 	if res.Restarted || res.FromStatus != StatusExpired {
 		t.Fatalf("回调晚到应接在原到期之后：restarted=%v from=%s", res.Restarted, res.FromStatus)
 	}

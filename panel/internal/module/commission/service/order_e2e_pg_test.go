@@ -169,10 +169,10 @@ func newOEEnv(t *testing.T, commit bool) (e *oeEnv, ctx context.Context) {
 				t.Fatal(err)
 			}
 			if len(e.plans) > 0 {
-				if err := d.Conn(bg).Exec(`UPDATE prices SET status = 'archived' WHERE plan_id IN ?`, e.plans).Error; err != nil {
+				if err := d.Conn(bg).Exec(`UPDATE prices SET status = 'archived', row_version = row_version + 1 WHERE plan_id IN ? AND status = 'active'`, e.plans).Error; err != nil {
 					t.Fatal(err)
 				}
-				if err := d.Conn(bg).Exec(`UPDATE plans SET status = 'archived' WHERE id IN ?`, e.plans).Error; err != nil {
+				if err := d.Conn(bg).Exec(`UPDATE plans SET status = 'archived' WHERE id IN ? AND status <> 'archived'`, e.plans).Error; err != nil {
 					t.Fatal(err)
 				}
 			}

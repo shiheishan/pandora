@@ -202,6 +202,13 @@ func newOrder(t *testing.T, e *env, ctx context.Context, user uuid.UUID, kind st
 	return id
 }
 
+// fulfilOrder 把 newOrder 建的待付单改成已履约：同一订阅同时只许一张未完结的续费或变更单
+// （orders_one_open_subscription_change），连续续费的用例每续一次要把上一张关掉。
+func fulfilOrder(t *testing.T, e *env, ctx context.Context, id uuid.UUID) {
+	t.Helper()
+	e.exec(t, ctx, `UPDATE orders SET status = 'fulfilled', paid_amount = total_amount, paid_at = now(), fulfilled_at = now() WHERE id = ?`, id)
+}
+
 // quotaSpec 是建测试版本时的一条配额定义；limit 为 nil 表示不限。
 type quotaSpec struct {
 	metric string
