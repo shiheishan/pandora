@@ -17,13 +17,6 @@ describe('mock api · admin notifications and hooks', () => {
   const call = (method: string, path: string, body?: unknown, key?: string) => mockFetch(base, auth, method, path, body, key)
   const json = async (res: Response) => (await res.json()) as Record<string, unknown>
 
-  it('lets the viewer read templates only', async () => {
-    const res = await fetch(`${base}/v1/auth/login`, { method: 'POST', body: JSON.stringify(MOCK_ACCOUNTS.viewer) })
-    const viewer = { Authorization: `Bearer ${((await res.json()) as { access_token: string }).access_token}` }
-    expect((await fetch(`${base}/v1/mail/templates`, { headers: viewer })).status).toBe(200)
-    for (const path of ['/v1/settings/mail', '/v1/settings/telegram', '/v1/plugin-hooks']) expect((await fetch(`${base}${path}`, { headers: viewer })).status, path).toBe(404)
-  })
-
   it('overwrites SMTP fields, keeps the password when empty and validates registration', async () => {
     const saved = mailSettingsSchema.parse(await json(await call('GET', '/v1/settings/mail')))
     expect(saved).toMatchObject({ has_password: true, from_name: 'Pandora' })

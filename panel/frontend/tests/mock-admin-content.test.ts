@@ -18,12 +18,6 @@ describe('mock api · admin content', () => {
   const anns = async () => announcementsResponse.parse(await (await call('GET', '/v1/announcements')).json())
   const draft = { title: '测试公告', body: '测试正文', severity: 'notice', pinned: false, target_plan_ids: [], target_user_group_ids: [], publish_at: '', expires_at: '', publish: false, expected_version: 0 }
 
-  it('hides the content module from the viewer', async () => {
-    const res = await fetch(`${base}/v1/auth/login`, { method: 'POST', body: JSON.stringify(MOCK_ACCOUNTS.viewer) })
-    const viewer = { Authorization: `Bearer ${((await res.json()) as { access_token: string }).access_token}` }
-    for (const path of ['/v1/announcements', '/v1/content-pages', '/v1/themes', '/v1/slots', '/v1/settings/site']) expect((await fetch(`${base}${path}`, { headers: viewer })).status, path).toBe(404)
-  })
-
   it('walks an announcement from draft to scheduled, published and withdrawn', async () => {
     const data = await anns()
     expect(data.announcements.map((a) => a.status)).toEqual(expect.arrayContaining(['draft', 'scheduled', 'published', 'withdrawn']))

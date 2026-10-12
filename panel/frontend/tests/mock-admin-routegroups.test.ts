@@ -97,14 +97,4 @@ describe('mock api · admin route groups (00096)', () => {
     const dropped = await call('PUT', '/v1/nodes/routing', { expected_revision: g.revision, outbounds: g.outbounds.filter((o) => o.tag !== 'HK-RELAY'), routes: g.routes.filter((x) => x.outbound_tag !== 'HK-RELAY') }, 'rx-2')
     expect(await dropped.json()).toMatchObject({ error: { code: 'conflict', message: `要删除的全局出站仍被规则引用：路由组 ${hk.name} → HK-RELAY` } })
   })
-
-  it('lets a read-only account (node.read) read but hides every write behind node.config.publish', async () => {
-    const viewer = bearer((await loginAs(base, MOCK_ACCOUNTS.viewer)).access_token)
-    const g = (await groups())[0]!
-    expect((await mockFetch(base, viewer, 'GET', '/v1/route-groups')).status).toBe(200)
-    expect((await mockFetch(base, viewer, 'GET', `/v1/route-groups/${g.id}/routing`)).status).toBe(200)
-    expect((await mockFetch(base, viewer, 'POST', '/v1/route-groups', { name: 'x' }, 'v-1')).status).toBe(404)
-    expect((await mockFetch(base, viewer, 'PUT', `/v1/route-groups/${g.id}/members`, { row_version: g.row_version, node_ids: [] }, 'v-2')).status).toBe(404)
-    expect((await mockFetch(base, viewer, 'PUT', `/v1/nodes/${g.members[0]!.id}/route-groups`, { row_version: 1, group_ids: [] })).status).toBe(404)
-  })
 })

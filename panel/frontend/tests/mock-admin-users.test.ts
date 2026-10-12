@@ -72,10 +72,6 @@ describe('mock api · admin users ops', () => {
     const history = (await (await get(`/v1/users/${SEED_USER}/traffic-resets`)).json()) as { logs: Array<Record<string, unknown>> }
     expect(history.logs[0]).toMatchObject({ reason: 'manual', plan_name: first!.plan_name, consumed_before: before, actor_email: MOCK_ACCOUNTS.admin.email, note: '补偿断线时长' })
     expect((await get('/v1/traffic-resets?reason=admin')).status).toBe(400)
-
-    // 只读账号没有 metering.reset.write：404，不暴露接口
-    const viewer = bearer((await loginAs(base, MOCK_ACCOUNTS.viewer)).access_token)
-    expect((await mockFetch(base, viewer, 'POST', path(second!.id), { note: '补偿断线时长' }, 'reset-viewer')).status).toBe(404)
   })
 
   it('answers 422 without fields for a subscription that is not active', async () => {
@@ -192,10 +188,6 @@ describe('mock api · admin users ops', () => {
     const active = detail.subscriptions.find((s) => s.status === 'active' && s.current_period_end)!
     const path = `/v1/subscriptions/${active.id}/extend`
     const body = { days: 7, reason: '补偿线路故障' }
-
-    // 只读账号没有 billing.adjustment.write：404，不暴露接口
-    const viewer = bearer((await loginAs(base, MOCK_ACCOUNTS.viewer)).access_token)
-    expect((await mockFetch(base, viewer, 'POST', path, body, 'extend-viewer')).status).toBe(404)
 
     await fetch(`${base}/__mock/expire-reauth`, { method: 'POST' })
     const blocked = await send('POST', path, body, 'extend-1')

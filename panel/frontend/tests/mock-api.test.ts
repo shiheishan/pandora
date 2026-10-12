@@ -23,7 +23,7 @@ describe('mock api · admin', () => {
   const login = async (account: { email: string; password: string }) => {
     const res = await fetch(`${base}/v1/auth/login`, { method: 'POST', body: JSON.stringify(account) })
     expect(res.status).toBe(200)
-    return (await res.json()) as { access_token: string; permissions: string[] }
+    return (await res.json()) as { access_token: string; user_id: string }
   }
   // dev/mock/admin/users.ts 的第 2 个种子用户（前 6 个 id 固定，与仪表盘流量排行一致），种子余额非 0
   const SEED_USER = '1a2b3c42-0000-4000-8000-000000000002'
@@ -38,14 +38,13 @@ describe('mock api · admin', () => {
     expect((await fetch(`${base}/index.html`)).status).toBe(418)
   })
 
-  it('logs the viewer in with read-only permissions and reports them from GET v1/me', async () => {
-    const viewer = await login(MOCK_ACCOUNTS.viewer)
-    expect(viewer.permissions).toContain('node.read')
-    expect(viewer.permissions).not.toContain('marketing.coupon.read')
-    const me = await fetch(`${base}/v1/me`, { headers: { Authorization: `Bearer ${viewer.access_token}` } })
-    expect(await me.json()).toMatchObject({ email: MOCK_ACCOUNTS.viewer.email, roles: [{ code: 'viewer' }], reauthed: true })
+  it('logs the admin in and reports the flat identity from GET v1/me (no permission codes)', async () => {
     const admin = await login(MOCK_ACCOUNTS.admin)
-    expect(admin.permissions.length).toBeGreaterThan(viewer.permissions.length)
+    expect(Object.keys(admin).sort()).toEqual(['access_token', 'expires_in', 'token_type', 'user_id'])
+    const me = await fetch(`${base}/v1/me`, { headers: { Authorization: `Bearer ${admin.access_token}` } })
+    const body = (await me.json()) as Record<string, unknown>
+    expect(Object.keys(body).sort()).toEqual(['display_name', 'email', 'reauthed', 'user_id'])
+    expect(body).toMatchObject({ user_id: admin.user_id, email: MOCK_ACCOUNTS.admin.email, reauthed: true })
   })
 
   it('answers unknown routes with the 404 envelope and requires a token for module routes', async () => {
@@ -56,10 +55,22 @@ describe('mock api · admin', () => {
     expect((await adjust('bogus', 'k', { amount: 1, reason: '测试调账理由' })).status).toBe(401)
   })
 
-  it('checks permission first: a viewer gets 404, not a reauth prompt', async () => {
-    const { access_token } = await login(MOCK_ACCOUNTS.viewer)
-    const res = await adjust(access_token, 'viewer-key', { amount: 100, reason: '测试调账理由' })
-    expect(res.status).toBe(404)
+  it('checks reauth before the idempotency key: a stale session without a key gets reauth_required, not 400', async () => {
+    const { access_token } = await login(MOCK_ACCOUNTS.admin)
+    await fetch(`${base}/__mock/expire-reauth`, { method: 'POST' })
+    const stale = await adjust(access_token, null, { amount: 100, reason: '测试调账理由' })
+    expect(stale.status).toBe(403)
+    expect(await stale.json()).toMatchObject({ error: { code: 'reauth_required' } })
+
+    const reauth = await fetch(`${base}/v1/auth/reauth`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${access_token}` },
+      body: JSON.stringify({ password: MOCK_ACCOUNTS.admin.password }),
+    })
+    const fresh = ((await reauth.json()) as { access_token: string }).access_token
+    const missingKey = await adjust(fresh, null, { amount: 100, reason: '测试调账理由' })
+    expect(missingKey.status).toBe(400)
+    expect(await missingKey.json()).toMatchObject({ error: { code: 'bad_request' } })
   })
 
   it('rejects with reauth_required before touching the idempotency key, then replays with the same key', async () => {

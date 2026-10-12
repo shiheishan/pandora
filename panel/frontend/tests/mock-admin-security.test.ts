@@ -26,18 +26,6 @@ describe('mock api · admin security and operations', () => {
   const audit = async (query = '') => auditResponse.parse(await json(await call('GET', `/v1/audit${query}`)))
   const clusters = async (all = false) => clustersResponse.parse(await json(await call('GET', `/v1/ip-clusters${all ? '?include_reviewed=1' : ''}`))).clusters
 
-  it('hides the whole module from the viewer, permission before reauth', async () => {
-    const viewer = bearer((await loginAs(base, MOCK_ACCOUNTS.viewer)).access_token)
-    for (const path of ['/v1/audit', '/v1/audit/export', '/v1/access-log', '/v1/ip-clusters', '/v1/switches']) expect((await fetch(`${base}${path}`, { headers: viewer })).status, path).toBe(404)
-    await fetch(`${base}/__mock/expire-reauth`, { method: 'POST' })
-    const res = await mockFetch(base, viewer, 'POST', '/v1/ip-clusters/ab/disable-accounts', { user_ids: [], reason: '' }, 'viewer-1')
-    expect(res.status).toBe(404)
-    expect((await mockFetch(base, viewer, 'POST', '/v1/switches/billing.checkout', { enabled: false, reason: 'x' })).status).toBe(404)
-    // 管理员这边要重新认证一次，后面的用例才能直接写
-    const res2 = await call('POST', '/v1/auth/reauth', { password: MOCK_ACCOUNTS.admin.password })
-    auth = bearer(((await res2.json()) as { access_token: string }).access_token)
-  })
-
   it('serves audit rows the page schema accepts, with legacy rows and filters that match Go', async () => {
     const page = await audit()
     expect(page.events).toHaveLength(50)
