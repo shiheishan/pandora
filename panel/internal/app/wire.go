@@ -10,6 +10,8 @@ import (
 	authsvc "github.com/aegispanel/aegis/internal/module/auth/service"
 	catalogrepo "github.com/aegispanel/aegis/internal/module/catalog/repo"
 	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
+	commissionrepo "github.com/aegispanel/aegis/internal/module/commission/repo"
+	commissionsvc "github.com/aegispanel/aegis/internal/module/commission/service"
 	giftcardrepo "github.com/aegispanel/aegis/internal/module/giftcard/repo"
 	giftcardsvc "github.com/aegispanel/aegis/internal/module/giftcard/service"
 	idemrepo "github.com/aegispanel/aegis/internal/module/idempotency/repo"
@@ -41,22 +43,23 @@ import (
 
 // services 是 serve、worker、admin 子命令共用的业务服务，各模块的互相注入在 buildServices 一处完成。
 type services struct {
-	settings *settingssvc.Service
-	audit    *auditsvc.Service
-	idem     *idemsvc.Service
-	identity *identitysvc.Service
-	auth     *authsvc.Service
-	notify   *notifysvc.Service
-	ledger   *ledgersvc.Service
-	catalog  *catalogsvc.Service
-	promo    *promosvc.Service
-	sub      *subsvc.Service
-	payment  *paymentsvc.Service
-	order    *ordersvc.Service
-	giftcard *giftcardsvc.Service
-	limiter  *ratelimit.Limiter
-	queue    *asynq.Client
-	tx       *tx.Manager
+	settings   *settingssvc.Service
+	audit      *auditsvc.Service
+	idem       *idemsvc.Service
+	identity   *identitysvc.Service
+	auth       *authsvc.Service
+	notify     *notifysvc.Service
+	ledger     *ledgersvc.Service
+	catalog    *catalogsvc.Service
+	promo      *promosvc.Service
+	sub        *subsvc.Service
+	payment    *paymentsvc.Service
+	order      *ordersvc.Service
+	commission *commissionsvc.Service
+	giftcard   *giftcardsvc.Service
+	limiter    *ratelimit.Limiter
+	queue      *asynq.Client
+	tx         *tx.Manager
 }
 
 // asynqRedis 给 asynq 的连接参数：与业务客户端同一套解析（redisx.Options），用户名、口令、库号、TLS、超时都同源。
@@ -140,6 +143,7 @@ func buildServices(r *runtime) (*services, error) {
 	subSvc := subsvc.New(subrepo.New(r.db), txm, auditSvc, settingsSvc, catalogSvc, identitySvc, sealer)
 
 	orderSvc := ordersvc.New(orderrepo.New(r.db), txm, catalogSvc, ledgerSvc, promoSvc, subSvc, paymentSvc, identitySvc, idemSvc, auditSvc)
+	commissionSvc := commissionsvc.New(commissionrepo.New(r.db), txm, ledgerSvc, settingsSvc, sealer, auditSvc)
 	giftcardSvc := giftcardsvc.New(giftcardrepo.New(r.db), txm, auditSvc, idemSvc, catalogSvc, subSvc, ledgerSvc, identitySvc, keys, sealer)
 
 	// 模块间注入：identity 定义接口，auth、notify 实现；audit 经 identity 显示操作者与资源
@@ -154,6 +158,10 @@ func buildServices(r *runtime) (*services, error) {
 	promoSvc.UseCatalog(promoCatalog{c: catalogSvc})
 	// 渠道到账与线下收款经 order 结算（没注册时入账一律失败）
 	paymentSvc.UseSettler(orderSvc)
+	// 订单结算时按推荐关系计提佣金（同一结算事务）；同源（审计里共用来源 IP）的佣金转人工复核
+	commissionSvc.UseReferrals(identitySvc)
+	commissionSvc.UseSourceMatcher(auditSvc)
+	orderSvc.UsePaidHook(commissionSvc)
 	// 礼品卡：套餐卡「换掉那一份」按 order 的折算退剩余价值；新用户、付费用户、受邀用户三种条件
 	giftcardSvc.UsePlanChangeValuer(orderSvc)
 	giftcardSvc.UsePaidHistory(orderSvc)
@@ -164,22 +172,23 @@ func buildServices(r *runtime) (*services, error) {
 	}
 
 	return &services{
-		settings: settingsSvc,
-		audit:    auditSvc,
-		idem:     idemSvc,
-		identity: identitySvc,
-		auth:     authSvc,
-		notify:   notifySvc,
-		ledger:   ledgerSvc,
-		catalog:  catalogSvc,
-		promo:    promoSvc,
-		sub:      subSvc,
-		payment:  paymentSvc,
-		order:    orderSvc,
-		giftcard: giftcardSvc,
-		limiter:  limiter,
-		queue:    queue,
-		tx:       txm,
+		settings:   settingsSvc,
+		audit:      auditSvc,
+		idem:       idemSvc,
+		identity:   identitySvc,
+		auth:       authSvc,
+		notify:     notifySvc,
+		ledger:     ledgerSvc,
+		catalog:    catalogSvc,
+		promo:      promoSvc,
+		sub:        subSvc,
+		payment:    paymentSvc,
+		order:      orderSvc,
+		commission: commissionSvc,
+		giftcard:   giftcardSvc,
+		limiter:    limiter,
+		queue:      queue,
+		tx:         txm,
 	}, nil
 }
 

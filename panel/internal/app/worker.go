@@ -8,6 +8,7 @@ import (
 	"time"
 
 	audittask "github.com/aegispanel/aegis/internal/module/audit/task"
+	commissiontask "github.com/aegispanel/aegis/internal/module/commission/task"
 	idemtask "github.com/aegispanel/aegis/internal/module/idempotency/task"
 	identitytask "github.com/aegispanel/aegis/internal/module/identity/task"
 	notifytask "github.com/aegispanel/aegis/internal/module/notify/task"
@@ -114,5 +115,6 @@ func modules(svc *services) []jobs.Module {
 		notifytask.New(svc.notify),
 		paymenttask.New(svc.payment),
 		ordertask.New(svc.order),
+		commissiontask.New(svc.commission),
 	}
 }
