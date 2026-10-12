@@ -288,11 +288,11 @@ describe('data views', () => {
     expect(last).toMatch(/<button[^>]*disabled=""[^>]*>下一页/)
   })
 
-  it('QueryView renders loading, 404 as missing-or-forbidden, other errors with retry, empty, then data', () => {
+  it('QueryView renders loading, 404 as missing, other errors with retry, empty, then data', () => {
     const view = (q: ReturnType<typeof query<string[]>>) => html(<QueryView query={q} empty={<p>空的</p>}>{(rows) => <p>{rows.join(',')}</p>}</QueryView>)
     expect(view(query({ isPending: true }))).toContain('aria-label="加载中"')
-    const missing = view(query({ isError: true, error: new ApiError({ status: 404, code: 'not_found', message: '资源不存在或无权访问' }) }))
-    expect(missing).toContain('无权限或不存在')
+    const missing = view(query({ isError: true, error: new ApiError({ status: 404, code: 'not_found', message: '资源不存在' }) }))
+    expect(missing).toContain('不存在或已删除')
     expect(missing).not.toContain('重试')
     const broken = view(query({ isError: true, error: new ApiError({ status: 500, code: 'internal_error', message: '服务暂时不可用' }) }))
     expect(broken).toContain('服务暂时不可用')

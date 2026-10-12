@@ -4,7 +4,7 @@ import { formatBytes, formatCount, formatDateTime } from '../../../core/format'
 import { navigate, useHashLocation } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, Empty, Input, Pager, QueryView, Segmented, Select, StatStrip, Table, Tag, TextArea, useToast, type TableColumn } from '../../../ui'
-import { endsIntent, useCan, useFailure, useIntentKey } from '../../actions'
+import { endsIntent, useFailure, useIntentKey } from '../../actions'
 import {
   RESET_REASONS,
   RESETS_PAGE,
@@ -36,7 +36,6 @@ function isReason(v: string | null): v is ResetReason {
 // ===========================================================================
 export function ResetsTab() {
   const location = useHashLocation()
-  const can = useCan()
   const r = location.query.get('r')
   const reason: ReasonFilter = isReason(r) ? r : 'all'
   const offset = Math.max(0, Number.parseInt(location.query.get('o') ?? '', 10) || 0)
@@ -63,7 +62,7 @@ export function ResetsTab() {
         }
       />
       <div className={css.toolbar}>
-        {can('metering.reset.write') && <ManualReset />}
+        <ManualReset />
         <div className={css.spacer} />
         <Segmented size="sm" label="重置方式" options={REASON_FILTERS} value={reason} onChange={(v) => go({ reason: v, offset: 0 })} />
       </div>
@@ -170,7 +169,6 @@ function ManualReset() {
 // 抽屉「流量重置」标签：最近 50 条 + 立即重置本期
 // ===========================================================================
 export function ResetHistory({ d }: { d: UserDetail }) {
-  const can = useCan()
   const history = useUserResets(d.id)
   const [open, setOpen] = useState(false)
   const has = resettableSubs(d.subscriptions).length > 0
@@ -178,11 +176,9 @@ export function ResetHistory({ d }: { d: UserDetail }) {
     <>
       <div className={ops.historyHead}>
         <span className={css.muted}>此用户的流量重置历史</span>
-        {can('metering.reset.write') && (
-          <Button size="xs" disabled={!has} title={has ? undefined : '没有生效中的订阅（试用订阅不能手动重置）'} onClick={() => setOpen(true)}>
-            立即重置本期
-          </Button>
-        )}
+        <Button size="xs" disabled={!has} title={has ? undefined : '没有生效中的订阅（试用订阅不能手动重置）'} onClick={() => setOpen(true)}>
+          立即重置本期
+        </Button>
       </div>
       <QueryView query={history} rows={3} isEmpty={(h) => h.logs.length === 0} empty={<Empty bare title="还没有重置记录" description="续费或周期滚动时会自动重置，手动重置也记在这里。" />}>
         {(h) => (
@@ -206,7 +202,7 @@ export function ResetHistory({ d }: { d: UserDetail }) {
 }
 
 // ===========================================================================
-// 确认框：POST v1/subscriptions/{id}/traffic-reset（metering.reset.write + reauth + 幂等 traffic_manual_reset）。
+// 确认框：POST v1/subscriptions/{id}/traffic-reset（reauth + 幂等 traffic_manual_reset）。
 // 重置按份：订阅行上点的是哪份重置哪份（subscriptionId）；从邮箱或历史页进来没指定，多份时自己选，
 // 预选本期用得最多的
 // ===========================================================================

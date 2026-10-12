@@ -5,7 +5,7 @@ import { formatDateTime } from '../../../core/format'
 import { href } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, Empty, Modal, Select, Skeleton, Tag, TextArea, useToast } from '../../../ui'
-import { useCan, useFailure, useIntentKey } from '../../actions'
+import { useFailure, useIntentKey } from '../../actions'
 import { okSchema, useAssignees, useInvalidateTickets, useTicketDetail, type TicketDetail, type TicketStatus } from './api'
 import { Composer } from './Composer'
 import { assigneeOptions, CATEGORY_LABELS, CLOSED_REASON_LABELS, messageView, PRIORITY_VIEW, slaLines, STATUS_OPTIONS, systemText } from './model'
@@ -25,7 +25,7 @@ export function Detail({ id }: { id: string | null }) {
     )
   }
   if (q.isError) {
-    // 契约：工单不存在回 404（CodeNotFound）；缺读权限的人进不来这一页
+    // 契约：工单不存在回 404（CodeNotFound）
     if (isApiError(q.error, 'not_found')) return <Empty bare className={css.detailEmpty} title="工单不存在" description="它可能已被删除，或链接有误。" />
     return (
       <Empty
@@ -45,8 +45,6 @@ export function Detail({ id }: { id: string | null }) {
 }
 
 function Loaded({ t }: { t: TicketDetail }) {
-  const can = useCan()
-  const canWrite = can('ops.ticket.write')
   const now = useNow()
   const pri = PRIORITY_VIEW[t.priority]
   const sla = slaLines(t, now)
@@ -63,13 +61,9 @@ function Loaded({ t }: { t: TicketDetail }) {
               {t.related_order && (
                 <>
                   {' · 关联订单 '}
-                  {can('billing.order.read') ? (
-                    <a href={href(`/billing/orders/${encodeURIComponent(t.related_order.id)}`)} className={css.mono}>
-                      {t.related_order.order_no}
-                    </a>
-                  ) : (
-                    <span className={css.mono}>{t.related_order.order_no}</span>
-                  )}
+                  <a href={href(`/billing/orders/${encodeURIComponent(t.related_order.id)}`)} className={css.mono}>
+                    {t.related_order.order_no}
+                  </a>
                 </>
               )}
             </div>
@@ -87,10 +81,10 @@ function Loaded({ t }: { t: TicketDetail }) {
             ))}
           </div>
         )}
-        <Controls t={t} canWrite={canWrite} canViewUser={can('iam.user.read')} />
+        <Controls t={t} />
       </header>
       <Messages t={t} now={now} />
-      {canWrite ? <Composer ticket={t} /> : <div className={css.readonly}>当前账号只能查看工单，回复与处理需要工单处理权限。</div>}
+      <Composer ticket={t} />
     </div>
   )
 }
@@ -98,12 +92,12 @@ function Loaded({ t }: { t: TicketDetail }) {
 // ---------------------------------------------------------------------------
 // 状态 / 指派 / 查看用户 / 升级
 // ---------------------------------------------------------------------------
-function Controls({ t, canWrite, canViewUser }: { t: TicketDetail; canWrite: boolean; canViewUser: boolean }) {
+function Controls({ t }: { t: TicketDetail }) {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
   const invalidate = useInvalidateTickets()
-  const assignees = useAssignees(true)
+  const assignees = useAssignees()
   const statusKey = useIntentKey()
   const assignKey = useIntentKey()
   const [closing, setClosing] = useState(false)
@@ -147,7 +141,7 @@ function Controls({ t, canWrite, canViewUser }: { t: TicketDetail; canWrite: boo
           aria-label="状态"
           options={STATUS_OPTIONS(t.status)}
           value={t.status}
-          disabled={!canWrite || setStatus.isPending}
+          disabled={setStatus.isPending}
           onChange={(e) => onStatus(e.target.value)}
         />
       </label>
@@ -158,25 +152,19 @@ function Controls({ t, canWrite, canViewUser }: { t: TicketDetail; canWrite: boo
           aria-label="指派"
           options={assigneeOptions(assignees.data, { id: t.assigned_to, email: t.assignee_email })}
           value={t.assigned_to ?? ''}
-          disabled={!canWrite || assign.isPending || assignees.isPending}
+          disabled={assign.isPending || assignees.isPending}
           onChange={(e) => assign.mutate(e.target.value)}
         />
       </label>
       <div className={css.spacer} />
-      {canViewUser && t.user_id ? (
+      {t.user_id && (
         <a className={css.linkButton} href={href(`/users/list/${encodeURIComponent(t.user_id)}`)}>
           查看用户
         </a>
-      ) : (
-        <Button size="sm" disabled title="需要用户读取权限">
-          查看用户
-        </Button>
       )}
-      {canWrite && (
-        <Button size="sm" variant="secondary" className={css.escalate} disabled={t.escalated_at !== undefined} onClick={() => setEscalating(true)}>
-          升级到 L2
-        </Button>
-      )}
+      <Button size="sm" variant="secondary" className={css.escalate} disabled={t.escalated_at !== undefined} onClick={() => setEscalating(true)}>
+        升级到 L2
+      </Button>
       <ConfirmModal
         open={escalating}
         title="升级到 L2？"

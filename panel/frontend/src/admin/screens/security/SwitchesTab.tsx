@@ -3,15 +3,13 @@ import { useState } from 'react'
 import { useApi } from '../../../shell/runtime'
 import { Button, Empty, Modal, QueryView, Switch, Tag, TextArea, useToast } from '../../../ui'
 import { switchBody, switchViews, validateSwitchReason, type SwitchView } from './logic'
-import { useCan, useFailure, useInvalidateSecurity, useSwitches } from './queries'
+import { useFailure, useInvalidateSecurity, useSwitches } from './queries'
 import { switchSaved } from './schemas'
 import css from './security.module.css'
 
 export function SwitchesTab() {
   const switches = useSwitches()
-  const can = useCan()
   const [target, setTarget] = useState<SwitchView | null>(null)
-  const writable = can('platform.settings.write')
 
   return (
     <div className={css.stack}>
@@ -25,7 +23,7 @@ export function SwitchesTab() {
               {readonly && <div className={css.alarm}>管理端只读模式已开启：除降级开关、登录与二次认证、修改自己的密码外，后台所有写操作都会被拒绝。{readonly.reason && `原因：${readonly.reason}`}</div>}
               <div className={css.panel}>
                 {views.map((v) => (
-                  <SwitchLine key={v.code} view={v} writable={writable} onToggle={() => setTarget(v)} />
+                  <SwitchLine key={v.code} view={v} onToggle={() => setTarget(v)} />
                 ))}
               </div>
             </>
@@ -37,8 +35,8 @@ export function SwitchesTab() {
   )
 }
 
-function SwitchLine({ view: v, writable, onToggle }: { view: SwitchView; writable: boolean; onToggle: () => void }) {
-  const toggleable = v.kind === 'toggle' && writable
+function SwitchLine({ view: v, onToggle }: { view: SwitchView; onToggle: () => void }) {
+  const toggleable = v.kind === 'toggle'
   return (
     <div className={`${css.switchRow} ${v.degraded && v.kind === 'toggle' ? css.switchOn : ''}`}>
       <div className={css.switchMain}>
@@ -61,7 +59,6 @@ function SwitchLine({ view: v, writable, onToggle }: { view: SwitchView; writabl
           aria-label={v.title}
           checked={v.degraded}
           disabled={!toggleable}
-          title={v.kind === 'toggle' && !writable ? '需要平台设置写权限' : undefined}
           // 受控开关：点了先弹确认，确认成功后由重拉的数据改状态
           onChange={onToggle}
         />

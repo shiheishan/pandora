@@ -14,7 +14,7 @@ import {
   VERIFY_VIEW,
   type CredentialForm,
 } from './logic'
-import { useCan, useDnsCredentials, useFailure, useIntentKey, useInvalidateCerts } from './queries'
+import { useDnsCredentials, useFailure, useIntentKey, useInvalidateCerts } from './queries'
 import { verifyResultSchema, type DnsCredential, type Provider, type VerifyResult } from './schemas'
 import css from './certs.module.css'
 
@@ -48,24 +48,20 @@ const columns: TableColumn<DnsCredential>[] = [
 
 export function DnsTab() {
   const creds = useDnsCredentials()
-  const can = useCan()
   const [editing, setEditing] = useState<DnsCredential | 'new' | null>(null)
-  const writable = can('node.certificate.write')
   return (
     <div className={css.stack}>
       <div className={css.toolbar}>
         <span className={css.faint}>签证书时面板用这些凭据在域名下临时写一条 _acme-challenge TXT 记录，验证完就删。凭据只能写入，保存后不再显示。</span>
         <span className={css.spacer} />
-        {writable && (
-          <Button variant="primary" onClick={() => setEditing('new')}>
-            添加凭据
-          </Button>
-        )}
+        <Button variant="primary" onClick={() => setEditing('new')}>
+          添加凭据
+        </Button>
       </div>
       <QueryView query={creds} rows={4} empty={<Empty title="还没有 DNS 凭据" description="支持 Cloudflare、阿里云 DNS、腾讯云 DNSPod。添加时会按服务商给出最小权限的做法。" />}>
         {(list) => (
           <div className={css.panel}>
-            <Table columns={columns} rows={list} rowKey={(c) => c.id} label="DNS 凭据" onRowClick={writable ? (c) => setEditing(c) : undefined} />
+            <Table columns={columns} rows={list} rowKey={(c) => c.id} label="DNS 凭据" onRowClick={(c) => setEditing(c)} />
           </div>
         )}
       </QueryView>

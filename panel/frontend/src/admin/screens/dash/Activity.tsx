@@ -3,11 +3,10 @@ import { Empty } from '../../../ui'
 import { useActivity } from './api'
 import css from './Dash.module.css'
 import { activitySummary } from './model'
-import { CardError, isForbidden, PanelSkeleton } from './parts'
+import { CardError, PanelSkeleton } from './parts'
 
 export function Activity() {
-  const q = useActivity(true)
-  if (q.isError && isForbidden(q.error)) return null
+  const q = useActivity()
   const summary = q.data ? activitySummary(q.data.points) : null
 
   return (

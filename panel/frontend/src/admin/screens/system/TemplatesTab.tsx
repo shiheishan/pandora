@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, Empty, Input, QueryView, Segmented, TextArea, useToast } from '../../../ui'
 import { CHANNEL_LABEL, insertVariable, templateKey, templateMeta, templateName, validateTemplate, type Draft } from './logic'
-import { SK, useCan, useFailure, useTemplates } from './queries'
+import { SK, useFailure, useTemplates } from './queries'
 import { CHANNELS, templatePreview, templateReset, templateSaved, templateTested, type Channel, type Template, type TemplateRow } from './schemas'
 import css from './system.module.css'
 
@@ -77,7 +77,6 @@ function useDebounced<T>(value: T, delay: number): T {
 
 function TemplateEditor({ template: t, draft, onDraft }: { template: Template; draft: Draft | undefined; onDraft: (d: Draft | null) => void }) {
   const api = useApi()
-  const can = useCan()
   const toast = useToast()
   const fail = useFailure()
   const client = useQueryClient()
@@ -87,7 +86,6 @@ function TemplateEditor({ template: t, draft, onDraft }: { template: Template; d
   const [to, setTo] = useState('')
   const value: Draft = draft ?? { subject: t.subject, body: t.body }
   const dirty = value.subject !== t.subject || value.body !== t.body
-  const writable = can('platform.settings.write')
   const edit = (patch: Partial<Draft>) => {
     setErrors({})
     const next = { ...value, ...patch }
@@ -166,9 +164,9 @@ function TemplateEditor({ template: t, draft, onDraft }: { template: Template; d
           </span>
         </div>
         {t.description && <div className={css.faint}>{t.description}</div>}
-        <Input label="主题" value={value.subject} error={errors.subject} readOnly={!writable} disabled={busy} onChange={(e) => edit({ subject: e.target.value })} />
-        <TextArea ref={body} label="正文" mono rows={11} value={value.body} error={errors.body} readOnly={!writable} disabled={busy} onChange={(e) => edit({ body: e.target.value })} />
-        {writable && t.allowed_variables.length > 0 && (
+        <Input label="主题" value={value.subject} error={errors.subject} disabled={busy} onChange={(e) => edit({ subject: e.target.value })} />
+        <TextArea ref={body} label="正文" mono rows={11} value={value.body} error={errors.body} disabled={busy} onChange={(e) => edit({ body: e.target.value })} />
+        {t.allowed_variables.length > 0 && (
           <div className={css.chips} aria-label="插入变量">
             {t.allowed_variables.map((v) => (
               <button key={v} type="button" className={css.chip} onClick={() => insert(v)}>
@@ -182,22 +180,20 @@ function TemplateEditor({ template: t, draft, onDraft }: { template: Template; d
             用到了这个模板不提供的变量：{shown.unknown_variables.join('、')}，保存会被拒绝。可用变量：{t.allowed_variables.join('、') || '无'}
           </div>
         )}
-        {writable && (
-          <div className={css.row}>
-            <Button size="sm" disabled={busy || resetBlock !== null} title={resetBlock ?? undefined} busy={reset.isPending} onClick={() => setResetting(true)}>
-              恢复默认
+        <div className={css.row}>
+          <Button size="sm" disabled={busy || resetBlock !== null} title={resetBlock ?? undefined} busy={reset.isPending} onClick={() => setResetting(true)}>
+            恢复默认
+          </Button>
+          {dirty && (
+            <Button size="sm" variant="ghost" disabled={busy} onClick={() => onDraft(null)}>
+              放弃修改
             </Button>
-            {dirty && (
-              <Button size="sm" variant="ghost" disabled={busy} onClick={() => onDraft(null)}>
-                放弃修改
-              </Button>
-            )}
-            <span className={css.spacer} />
-            <Button size="sm" variant="primary" disabled={!dirty} busy={save.isPending} onClick={submit}>
-              保存
-            </Button>
-          </div>
-        )}
+          )}
+          <span className={css.spacer} />
+          <Button size="sm" variant="primary" disabled={!dirty} busy={save.isPending} onClick={submit}>
+            保存
+          </Button>
+        </div>
       </section>
 
       <section className={css.previewCard} aria-label="示例数据预览">
@@ -209,7 +205,7 @@ function TemplateEditor({ template: t, draft, onDraft }: { template: Template; d
           <div className={css.previewSubject}>{shown.preview_subject}</div>
           <div className={css.previewText}>{shown.preview_body}</div>
         </div>
-        {t.channel === 'email' && can('ops.notification.write') && (
+        {t.channel === 'email' && (
           <div className={css.cardFoot}>
             <Input size="sm" type="email" aria-label="测试收件地址" fieldClassName={css.grow} placeholder="收件地址" value={to} error={errors.to} onChange={(e) => setTo(e.target.value)} />
             <Button size="sm" disabled={!to.trim()} busy={test.isPending} title={dirty ? '发送的是当前未保存的草稿' : undefined} onClick={() => test.mutate(to.trim())}>

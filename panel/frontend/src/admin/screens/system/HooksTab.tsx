@@ -5,24 +5,22 @@ import { Button, ConfirmModal, Empty, Input, QueryView, Switch, useToast } from 
 import { useSaveHook } from './hookActions'
 import { EventPicker, HookModal, SecretModal } from './HookDialogs'
 import { deliveryRow, durationLabel, eventsLabel, hookBody, hookFormFrom, hookTone, hostOf, newHookCode, successRate, validateHook } from './logic'
-import { useCan, useDeliveries, useFailure, useHooks, useInvalidateSystem } from './queries'
+import { useDeliveries, useFailure, useHooks, useInvalidateSystem } from './queries'
 import { hookDeleted, hookTested, type Hook, type HookEvent } from './schemas'
 import css from './system.module.css'
 
 export function HooksTab() {
   const hooks = useHooks()
-  const can = useCan()
   const [secret, setSecret] = useState<{ secret: string; hint: string } | null>(null)
-  const writable = can('platform.plugin.write')
 
   return (
     <QueryView query={hooks} rows={4} empty={null}>
       {({ hooks: list, events }) => (
         <div className={css.stack}>
-          {writable && <CreateBar events={events} existing={list.map((h) => h.code)} onSecret={setSecret} />}
-          {list.length === 0 && <Empty title="还没有 Webhook 钩子" description={writable ? '填上端点地址、选好事件，新建一个钩子；事件发生时面板会带签名 POST 过去。' : '有插件管理权限的同事可以在这里新建钩子。'} />}
+          <CreateBar events={events} existing={list.map((h) => h.code)} onSecret={setSecret} />
+          {list.length === 0 && <Empty title="还没有 Webhook 钩子" description="填上端点地址、选好事件，新建一个钩子；事件发生时面板会带签名 POST 过去。" />}
           {list.map((h) => (
-            <HookCard key={h.code} hook={h} events={events} writable={writable} onSecret={setSecret} />
+            <HookCard key={h.code} hook={h} events={events} onSecret={setSecret} />
           ))}
           <SecretModal secret={secret} onClose={() => setSecret(null)} />
         </div>
@@ -69,7 +67,7 @@ function CreateBar({ events, existing, onSecret }: { events: HookEvent[]; existi
   )
 }
 
-function HookCard({ hook: h, events, writable, onSecret }: { hook: Hook; events: HookEvent[]; writable: boolean; onSecret: (s: { secret: string; hint: string }) => void }) {
+function HookCard({ hook: h, events, onSecret }: { hook: Hook; events: HookEvent[]; onSecret: (s: { secret: string; hint: string }) => void }) {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
@@ -113,23 +111,19 @@ function HookCard({ hook: h, events, writable, onSecret }: { hook: Hook; events:
             {h.last_sent_at && ` · 最近送达 ${h.last_sent_at.slice(5)}`}
           </div>
         </div>
-        {writable && <Switch aria-label={`启用钩子 ${h.name}`} checked={h.enabled} disabled={toggle.isPending} onChange={(e) => flip(e.target.checked)} />}
+        <Switch aria-label={`启用钩子 ${h.name}`} checked={h.enabled} disabled={toggle.isPending} onChange={(e) => flip(e.target.checked)} />
         <Button size="xs" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
           {open ? '收起记录' : '投递记录'}
         </Button>
-        {writable && (
-          <>
-            <Button size="xs" busy={test.isPending} onClick={() => test.mutate()}>
-              测试投递
-            </Button>
-            <Button size="xs" onClick={() => setEditing(true)}>
-              编辑
-            </Button>
-            <Button size="xs" variant="ghost" className={css.dangerText} disabled={remove.isPending} onClick={() => setRemoving(true)}>
-              删除
-            </Button>
-          </>
-        )}
+        <Button size="xs" busy={test.isPending} onClick={() => test.mutate()}>
+          测试投递
+        </Button>
+        <Button size="xs" onClick={() => setEditing(true)}>
+          编辑
+        </Button>
+        <Button size="xs" variant="ghost" className={css.dangerText} disabled={remove.isPending} onClick={() => setRemoving(true)}>
+          删除
+        </Button>
       </div>
       {open && <Deliveries code={h.code} />}
       {editing && (

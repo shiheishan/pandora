@@ -4,7 +4,7 @@ import { useApi } from '../../../shell/runtime'
 import { Button, Input, QueryView, Switch, useToast } from '../../../ui'
 import { ChannelCard } from './ChannelCard'
 import { parseChatId, telegramBody, telegramFormFrom, telegramStatus, type TelegramForm } from './logic'
-import { useCan, useFailure, useInvalidateSystem, useTelegramSettings } from './queries'
+import { useFailure, useInvalidateSystem, useTelegramSettings } from './queries'
 import { telegramSaved, telegramTested, type TelegramSettings } from './schemas'
 import css from './system.module.css'
 
@@ -19,7 +19,6 @@ export function TelegramCard() {
 
 function TelegramForm({ saved }: { saved: TelegramSettings }) {
   const api = useApi()
-  const can = useCan()
   const toast = useToast()
   const fail = useFailure()
   const invalidate = useInvalidateSystem()
@@ -28,7 +27,6 @@ function TelegramForm({ saved }: { saved: TelegramSettings }) {
   const [to, setTo] = useState('')
   const form = draft ?? telegramFormFrom(saved)
   const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(telegramFormFrom(saved))
-  const writable = can('platform.settings.write')
   const edit = (patch: Partial<TelegramForm>) => setDraft({ ...form, ...patch })
 
   const save = useMutation({
@@ -61,7 +59,7 @@ function TelegramForm({ saved }: { saved: TelegramSettings }) {
     test.mutate(chat.value)
   }
 
-  const disabled = !writable || save.isPending
+  const disabled = save.isPending
   return (
     <ChannelCard
       title="Telegram"
@@ -69,16 +67,12 @@ function TelegramForm({ saved }: { saved: TelegramSettings }) {
       foot={
         <>
           <Input size="sm" aria-label="测试 chat id" mono fieldClassName={css.grow} placeholder={saved.admin_chat_id === null ? '接收测试的 chat id' : '留空发送到管理员群组'} value={to} error={errors.chat_id} onChange={(e) => setTo(e.target.value)} />
-          {can('ops.notification.write') && (
-            <Button size="sm" disabled={dirty} busy={test.isPending} title={dirty ? '测试用的是已保存的配置，请先保存' : undefined} onClick={sendTest}>
-              发送测试
-            </Button>
-          )}
-          {writable && (
-            <Button size="sm" variant="primary" disabled={!dirty} busy={save.isPending} onClick={submit}>
-              保存
-            </Button>
-          )}
+          <Button size="sm" disabled={dirty} busy={test.isPending} title={dirty ? '测试用的是已保存的配置，请先保存' : undefined} onClick={sendTest}>
+            发送测试
+          </Button>
+          <Button size="sm" variant="primary" disabled={!dirty} busy={save.isPending} onClick={submit}>
+            保存
+          </Button>
         </>
       }
     >

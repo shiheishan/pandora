@@ -30,12 +30,11 @@ import {
   type ProtocolField,
 } from './logic'
 import css from './nodes.module.css'
-import { endsIntent, useCan, useFailure, useIntentKey, useInvalidateNodes, usePools, useProtocolSchemas, useServers } from './queries'
+import { endsIntent, useFailure, useIntentKey, useInvalidateNodes, usePools, useProtocolSchemas, useServers } from './queries'
 import { adminNodeSchema, realityKeypairResponse, type AdminNode, type NodeDetail, type ProtocolSchema } from './schemas'
 
 export function NodeForm({ node, onSaved, onCancel }: { node: NodeDetail | null; onSaved: (saved: AdminNode) => void; onCancel?: () => void }) {
   const api = useApi()
-  const can = useCan()
   const toast = useToast()
   const fail = useFailure()
   const invalidate = useInvalidateNodes()
@@ -44,7 +43,6 @@ export function NodeForm({ node, onSaved, onCancel }: { node: NodeDetail | null;
   const servers = useServers()
   const pools = usePools()
   const creating = node === null
-  const writable = can(creating ? 'node.provision' : 'node.write')
 
   const [basic, setBasic] = useState<BasicForm>(() => (node ? basicFromRow(node) : emptyBasic()))
   const schema = schemas.data?.find((s) => s.node_type === basic.nodeType)
@@ -132,7 +130,7 @@ export function NodeForm({ node, onSaved, onCancel }: { node: NodeDetail | null;
 
   const stable = (schemas.data ?? []).filter(isStable)
   const legacy = node && node.node_type && !stable.some((s) => s.node_type === node.node_type)
-  const disabled = !writable || save.isPending
+  const disabled = save.isPending
 
   return (
     <form className={css.form} onSubmit={submit} noValidate>
@@ -239,18 +237,16 @@ export function NodeForm({ node, onSaved, onCancel }: { node: NodeDetail | null;
         )}
       </section>
 
-      {writable && (
-        <div className={css.formActions}>
-          {onCancel && (
-            <Button onClick={onCancel} disabled={save.isPending}>
-              取消
-            </Button>
-          )}
-          <Button type="submit" variant="primary" busy={save.isPending}>
-            {creating ? '创建草稿节点' : '保存（自动下发到在线节点）'}
+      <div className={css.formActions}>
+        {onCancel && (
+          <Button onClick={onCancel} disabled={save.isPending}>
+            取消
           </Button>
-        </div>
-      )}
+        )}
+        <Button type="submit" variant="primary" busy={save.isPending}>
+          {creating ? '创建草稿节点' : '保存（自动下发到在线节点）'}
+        </Button>
+      </div>
 
       <ConfirmModal
         open={confirmClear !== null}

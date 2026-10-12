@@ -184,7 +184,7 @@ export function messageView(m: Message, userEmail: string | undefined, now: Date
 }
 
 // ===========================================================================
-// 指派下拉：选项文字 display_name ?? email；当前指派人不在目录里（停用、失去权限）时也要能显示
+// 指派下拉：选项文字 display_name ?? email；当前指派人不在目录里（停用、不再是管理员）时也要能显示
 // ===========================================================================
 export function assigneeOptions(list: readonly Assignee[] | undefined, current: { id?: string; email?: string }) {
   const options = (list ?? []).map((a) => ({ value: a.id, label: a.display_name || a.email }))

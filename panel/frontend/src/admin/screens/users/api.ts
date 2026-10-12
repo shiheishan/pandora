@@ -60,7 +60,7 @@ export type UserRow = z.output<typeof userRowSchema>
 export type CurrentSub = z.output<typeof currentSubSchema>
 
 // ---------------------------------------------------------------------------
-// GET v1/users/{id}：列表行 + 资料、全部订阅（含配额与设备）、最近 20 单、角色、统计
+// GET v1/users/{id}：列表行 + 资料、全部订阅（含配额与设备）、最近 20 单、是否管理员、统计
 // （列表行里的 subscription_count / active_plan / current_subscription 在这里是零值，不用）
 // ---------------------------------------------------------------------------
 const quotaSchema = z.object({ metric: z.string(), limit: int.nullable(), consumed: count, remaining: int.nullable() })
@@ -88,7 +88,7 @@ export const userDetailSchema = z.object({
   email_verified: z.boolean(),
   subscriptions: z.array(subscriptionSchema),
   recent_orders: z.array(orderRowSchema),
-  roles: z.array(z.string()),
+  is_admin: z.boolean(),
   // R80 / R114：实收按币种（币种升序、只列大于 0 的）；paid_total 已弃用（跨币种直接相加），不收
   stats: z.object({ paid_totals: z.array(z.object({ currency: z.string(), amount: int })), order_count: count, referral_count: count }),
   referrer: z.object({ id: z.string(), email: z.string() }).nullable(),
@@ -124,7 +124,7 @@ export const userGroupsSchema = z.object({ groups: z.array(userGroupSchema) })
 export type UserGroup = z.output<typeof userGroupSchema>
 
 // ---------------------------------------------------------------------------
-// GET v1/users/{id}/profile（security.audit.read）：风控画像，明文 IP 只在这里
+// GET v1/users/{id}/profile：风控画像，明文 IP 只在这里
 // ---------------------------------------------------------------------------
 export const profileSchema = z.object({
   events: z.array(z.object({ action: z.string(), outcome: z.string(), ip: z.string(), ua: z.string(), domain: z.string(), at: time })),
@@ -186,12 +186,11 @@ export function useGenerationJob(id: string | null) {
 }
 
 /** 最近的批量生成任务（最多 20 个，最新在前） */
-export function useGenerationJobs(enabled = true) {
+export function useGenerationJobs() {
   const api = useApi()
   return useQuery({
     queryKey: [...UK, 'generation-jobs'],
     queryFn: ({ signal }) => api.get('v1/users/bulk/generate/jobs', generationJobsSchema, { signal }).then((r) => r.jobs),
-    enabled,
   })
 }
 export const bulkMailSchema = z.object({ queued: count, skipped: count })
@@ -224,7 +223,7 @@ export type OnlineDevice = z.output<typeof onlineDeviceSchema>
 export type DeviceMode = z.output<typeof devicesSchema>['mode']
 
 // ---------------------------------------------------------------------------
-// 流量重置（metering.reset.*）：日志的 plan_name / actor_email / note 是 omitempty，空时整键省略
+// 流量重置：日志的 plan_name / actor_email / note 是 omitempty，空时整键省略
 // ---------------------------------------------------------------------------
 export const RESET_REASONS = ['renewal', 'cycle_roll', 'manual', 'gift_card', 'plan_change'] as const
 export type ResetReason = (typeof RESET_REASONS)[number]
@@ -252,7 +251,7 @@ export type ResetStats = z.output<typeof resetStatsSchema>
 export const resetDoneSchema = z.object({ reset: z.literal(true), freed_bytes: count })
 
 // ---------------------------------------------------------------------------
-// GET v1/plans（catalog.read）：批量筛选的「套餐」下拉只要 id / 名称 / 状态
+// GET v1/plans：批量筛选的「套餐」下拉只要 id / 名称 / 状态
 // ---------------------------------------------------------------------------
 export const planOptionsSchema = z.object({ plans: z.array(z.object({ id: z.string(), name: z.string(), status: z.enum(['draft', 'active', 'archived']) })) })
 export type PlanOption = z.output<typeof planOptionsSchema>['plans'][number]
@@ -291,23 +290,20 @@ export function useUser(id: string | null) {
   })
 }
 
-/** enabled：别的模块借用时（套餐的可见用户组、组专属价）按 iam.user.read 决定取不取 */
-export function useUserGroups(enabled = true) {
+export function useUserGroups() {
   const api = useApi()
   return useQuery({
     queryKey: [...UK, 'groups'],
     queryFn: ({ signal }) => api.get('v1/user-groups', userGroupsSchema, { signal }).then((r) => r.groups),
     staleTime: 5 * 60_000,
-    enabled,
   })
 }
 
-export function useUserProfile(id: string, enabled: boolean) {
+export function useUserProfile(id: string) {
   const api = useApi()
   return useQuery({
     queryKey: [...UK, 'profile', id],
     queryFn: ({ signal }) => api.get(`v1/users/${encodeURIComponent(id)}/profile`, profileSchema, { signal }),
-    enabled,
   })
 }
 
@@ -326,13 +322,12 @@ export function useFindUserByEmail() {
   )
 }
 
-export function usePlanOptions(enabled: boolean) {
+export function usePlanOptions() {
   const api = useApi()
   return useQuery({
     // 挂在套餐的键前缀下：套餐页写后按前缀失效会一并刷新；别的管理员改了套餐靠 plans.changed
     queryKey: planOptionsKey('users'),
     queryFn: ({ signal }) => api.get('v1/plans', planOptionsSchema, { signal }).then((r) => r.plans),
-    enabled,
     staleTime: 5 * 60_000,
     meta: { topics: ['plans.changed'] },
   })

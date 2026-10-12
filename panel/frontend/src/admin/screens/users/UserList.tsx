@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { formatMoney, relativeTime } from '../../../core/format'
+import { href } from '../../../core/router'
 import { Empty, Pager, QueryView, Segmented, Select, Table, Tag, type TableColumn } from '../../../ui'
 import { useUserGroups, useUsers, USERS_PAGE, type UserRow } from './api'
 import { deviceView, expiryView, initial, listParams, shortId, STATUS_FILTERS, trafficView, USER_STATUS_VIEW, type StatusFilter } from './model'
@@ -16,15 +17,12 @@ export function UserList({
   state,
   onChange,
   linkFor,
-  bulkHref,
   now,
 }: {
   state: ListState
   onChange: (next: Partial<ListState>) => void
   /** 打开某个用户抽屉的地址（保留当前筛选） */
   linkFor: (id: string) => string
-  /** 「批量生成」入口；无写权限时不给 */
-  bulkHref: string | null
   now: Date
 }) {
   const users = useUsers(listParams(state.filter, state.group, state.q, state.offset))
@@ -57,11 +55,9 @@ export function UserList({
             显示 {shown} / 共 {total.toLocaleString('en-US')}
           </span>
         )}
-        {bulkHref && (
-          <a className={css.linkButton} href={bulkHref}>
-            批量生成
-          </a>
-        )}
+        <a className={css.linkButton} href={href('/users/bulk')}>
+          批量生成
+        </a>
       </div>
       <div className={css.tableBox}>
         <QueryView

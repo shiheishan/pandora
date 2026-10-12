@@ -22,11 +22,9 @@ describe('mock api · admin billing', () => {
   let server: Server
   let base: string
   let admin: string
-  let viewer: string
   beforeAll(async () => {
     ;({ server, base } = await serve('admin'))
     admin = await login(MOCK_ACCOUNTS.admin)
-    viewer = await login(MOCK_ACCOUNTS.viewer)
   })
   afterAll(() => close(server))
 
@@ -47,17 +45,6 @@ describe('mock api · admin billing', () => {
     const plan = plans.plans.find((p) => p.status === 'active')!
     return { plan_id: plan.id, price_id: plan.prices.find((x) => x.status === 'active' && x.currency === 'CNY')!.id }
   }
-
-  it('shows the viewer the order list and nothing else', async () => {
-    const list = ordersSchema.parse(await json(await get(viewer, 'orders')))
-    expect(list.total).toBeGreaterThan(list.orders.length - 1)
-    expect((await get(viewer, `orders/${list.orders[0]!.id}/payments`)).status).toBe(404)
-    expect((await get(viewer, 'late-payments')).status).toBe(404)
-    expect((await get(viewer, 'payment-providers')).status).toBe(404)
-    expect((await get(viewer, 'revenue/adjustments')).status).toBe(404)
-    // 权限先于 reauth：只读账号拿到的是 404，不是 reauth 提示
-    expect((await post(viewer, 'orders/manual', {}, 'viewer-manual')).status).toBe(404)
-  })
 
   it('counts the dashboard stale-pending card from the same orders the pending filter lists', async () => {
     const pending = ordersSchema.parse(await json(await get(admin, 'orders?status=pending_payment&limit=100'))).orders
@@ -219,10 +206,9 @@ describe('mock api · admin billing', () => {
     expect(fresh.default_key).toBe('new')
   })
 
-  it('guards the preview: permission, unknown fields, malformed ids land on their fields (F9)', async () => {
+  it('guards the preview: unknown fields, malformed ids land on their fields (F9)', async () => {
     const standard = await planByName('标准版')
     const body = { user_id: DUO, plan_id: standard.plan_id, price_id: standard.price_id }
-    expect((await post(viewer, 'orders/manual/preview', body)).status).toBe(404)
     expect((await post(admin, 'orders/manual/preview', { ...body, settlement: 'grant' })).status).toBe(400)
     expect((await post(admin, 'orders/manual/preview', { ...body, user_id: 'nope' })).status).toBe(400)
     // 价格档、入口订阅不是合法标识：422 并带对应的 fields，两项一起报
@@ -383,7 +369,7 @@ describe('mock api · admin billing', () => {
     expect(await refused.json()).toMatchObject({ error: { code: 'conflict', message: '订单已支付，不能取消' } })
   })
 
-  it('queries the channel with write permission and a key, no reauth, and reconciles a lost callback (PAY-009)', async () => {
+  it('queries the channel with a key, no reauth, and reconciles a lost callback (PAY-009)', async () => {
     const pending = ordersSchema.parse(await json(await get(admin, 'orders?status=pending_payment,processing&limit=100'))).orders
     const lost = pending.find((o) => o.provider_code === 'epay' && Date.now() - Date.parse(o.created_at) > 3600 * 1000)!
     const fresh = pending.find((o) => o.provider_code === 'epay' && Date.now() - Date.parse(o.created_at) < 3600 * 1000)!
@@ -391,7 +377,6 @@ describe('mock api · admin billing', () => {
     const neverPaid = pending.find((o) => o.provider_code === null)!
     const query = (token: string, id: string, key?: string) => mockFetch(base, bearer(token), 'POST', `/v1/orders/${id}/query`, undefined, key)
 
-    expect((await query(viewer, lost.id, 'pq-viewer')).status).toBe(404)
     expect((await query(admin, lost.id)).status).toBe(400)
     const first = await query(admin, lost.id, 'pq-lost')
     expect(first.status).toBe(200)
@@ -467,8 +452,6 @@ describe('mock api · admin billing', () => {
 
   it('creates and edits an epay provider; secrets are write-only (w2pay)', async () => {
     const settings = { display_name: '易支付 · 新', base_url: 'https://pay3.example.com', submit_path: '', api_path: '', methods: ['wxpay', 'alipay'], default_method: '', allow_private_host: false }
-    // 只读财务看得到渠道，建不了
-    expect((await post(viewer, 'payment-providers', { code: 'epay3', adapter: 'epay', ...settings, merchant_id: '2001', key: 'k' }, 'prov-v')).status).toBe(404)
     expect(await json(await post(admin, 'payment-providers', { code: 'offline', adapter: 'demo', ...settings, methods: ['paypal'], merchant_id: '', key: '' }, 'prov-0'))).toMatchObject({
       error: { code: 'validation_failed', fields: { code: expect.any(String), adapter: expect.any(String), methods: expect.any(String), merchant_id: '必填', key: '必填' } },
     })

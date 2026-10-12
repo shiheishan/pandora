@@ -9,7 +9,7 @@ import { runState, sameRunState, type RunState } from './runtime'
 import { DRAWER_TABS, NodeDrawer, type DrawerTab } from './NodeDrawer'
 import { NodeForm } from './NodeForm'
 import css from './nodes.module.css'
-import { NODE_PAGE, useCan, useFailure, useIntentKey, useInvalidateNodes, useNodeDetail, useNodePage, useNodes } from './queries'
+import { NODE_PAGE, useFailure, useIntentKey, useInvalidateNodes, useNodeDetail, useNodePage, useNodes } from './queries'
 import { batchStatusResponse, okUpdated, type NodeRow } from './schemas'
 
 const FILTERS: ReadonlyArray<{ value: NodeFilter; label: string }> = [
@@ -34,7 +34,6 @@ function useDebounced<T>(value: T, ms: number): T {
 
 export function NodesTab({ rest }: { rest: string[] }) {
   const api = useApi()
-  const can = useCan()
   const toast = useToast()
   const fail = useFailure()
   const invalidate = useInvalidateNodes()
@@ -137,7 +136,7 @@ export function NodesTab({ rest }: { rest: string[] }) {
           options={FILTERS.map((f) => ({ ...f }))}
           className={sorting ? css.dimmed : undefined}
         />
-        {picked.size > 0 && can('node.lifecycle') && (
+        {picked.size > 0 && (
           <span className={css.batchBar}>
             <span>已选 {picked.size}</span>
             <Button size="xs" busy={batch.isPending && batch.variables === 'active'} onClick={() => batch.mutate('active')}>
@@ -152,7 +151,7 @@ export function NodesTab({ rest }: { rest: string[] }) {
           </span>
         )}
         <span className={css.spacer} />
-        {can('node.write') && filter !== 'retired' && (
+        {filter !== 'retired' && (
           <Button onClick={toggleSort} busy={saveOrder.isPending} variant={sorting ? 'outline' : 'secondary'}>
             {sorting ? '完成排序' : '调整排序'}
           </Button>
@@ -162,7 +161,7 @@ export function NodesTab({ rest }: { rest: string[] }) {
             取消
           </Button>
         )}
-        {can('node.provision') && !sorting && (
+        {!sorting && (
           <Button variant="primary" onClick={() => setCreating(true)}>
             新建节点
           </Button>
@@ -188,7 +187,7 @@ export function NodesTab({ rest }: { rest: string[] }) {
             list.data?.nodes.some((n) => n.serving_status !== 'retired') || filter === 'retired' ? (
               <Empty bare title="没有匹配的节点" description="换个筛选条件或搜索词试试。" />
             ) : (
-              <Empty bare title="还没有节点" description={can('node.provision') ? '新建节点后，用一键安装命令把它接入面板。' : '有节点部署权限的同事可以在这里新建节点。'} />
+              <Empty bare title="还没有节点" description="新建节点后，用一键安装命令把它接入面板。" />
             )
           }
         >

@@ -10,7 +10,7 @@ import { GRANT_GB_MAX, GRANT_GB_PRESETS, grantReasonProblem, parseGrantGB } from
 import css from './Users.module.css'
 
 // ---------------------------------------------------------------------------
-// 加流量包：POST v1/subscriptions/{id}/traffic-pack（billing.adjustment.write + reauth + 幂等
+// 加流量包：POST v1/subscriptions/{id}/traffic-pack（reauth + 幂等
 // subscription_admin_traffic_grant）。发一笔不过期的流量包，挂在这一份订阅上（流量包按订阅挂，
 // 不再是用户名下一个总数），这份每周期先扣套餐额度、再扣流量包；只列还在用的订阅
 // ---------------------------------------------------------------------------

@@ -2,17 +2,13 @@ import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
 import { useApi } from '../shell/runtime'
 
+// 后台不分角色：登录了后台就是管理员。me 只用来画侧栏账户块、认出当前管理员（如工单「指派给我」）
 export const adminMeSchema = z.object({
   user_id: z.string(),
-  permissions: z
-    .array(z.string())
-    .nullable()
-    .transform((p) => p ?? []),
-  reauthed: z.boolean(),
-  // identity.AdminProfile：display_name 为空白时 null；roles 由 pgx.CollectRows 给出，没有绑定时是 []
   email: z.string(),
+  // display_name 为空白时 null
   display_name: z.string().nullable(),
-  roles: z.array(z.object({ code: z.string(), name: z.string() })),
+  reauthed: z.boolean(),
 })
 export type AdminMe = z.output<typeof adminMeSchema>
 
@@ -28,15 +24,15 @@ export function useAdminMe() {
 }
 
 /**
- * 侧栏账户块的三段文字（契约映射）：角色 ← roles[0].name；姓名 ← display_name ?? email 本地部分；
- * 头像字 ← 角色名首字。没有租户级角色时退回「管理员」。
+ * 侧栏账户块的三段文字：标题「管理员 · 姓名」，姓名 ← display_name ?? email 本地部分；
+ * 头像字取姓名首字，me 还没回来时取「管」。
  */
 export function identityLabels(me: AdminMe | undefined) {
-  const role = me?.roles[0]?.name ?? '管理员'
+  const role = '管理员'
   const name = me?.display_name || me?.email.split('@')[0] || ''
   return {
     title: name ? `${role} · ${name}` : role,
     subtitle: me?.email ?? '',
-    initial: role.slice(0, 1),
+    initial: (name || role).slice(0, 1),
   }
 }

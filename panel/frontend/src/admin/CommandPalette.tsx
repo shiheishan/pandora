@@ -1,17 +1,13 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import css from './CommandPalette.module.css'
-import { paletteItems, type PaletteItem, type Permissions } from './modules'
-
-const NO_PERMISSIONS: Permissions = new Set()
+import { paletteItems, type PaletteItem } from './modules'
 
 export function CommandPalette({
   open,
-  perms = NO_PERMISSIONS,
   onClose,
   onPick,
 }: {
   open: boolean
-  perms?: Permissions
   onClose: () => void
   onPick: (item: PaletteItem) => void
 }) {
@@ -19,7 +15,7 @@ export function CommandPalette({
   const input = useRef<HTMLInputElement>(null)
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
-  const items = paletteItems(query, perms)
+  const items = paletteItems(query)
   const index = Math.min(active, Math.max(0, items.length - 1))
 
   useEffect(() => {

@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { useApi } from '../../../shell/runtime'
 import { Button, Card, Checkbox, Input, QueryView, Switch, useToast } from '../../../ui'
 import { acmeBody, acmeFormFrom, type AcmeForm } from './logic'
-import { useAcmeSettings, useCan, useFailure, useInvalidateCerts } from './queries'
+import { useAcmeSettings, useFailure, useInvalidateCerts } from './queries'
 import { acmeSettingsSchema, type AcmeSettings } from './schemas'
 import css from './certs.module.css'
 
@@ -18,7 +18,6 @@ export function AcmeTab() {
 
 function AcmeFormView({ saved }: { saved: AcmeSettings }) {
   const api = useApi()
-  const can = useCan()
   const toast = useToast()
   const fail = useFailure()
   const invalidate = useInvalidateCerts()
@@ -26,7 +25,6 @@ function AcmeFormView({ saved }: { saved: AcmeSettings }) {
   const [errors, setErrors] = useState<Record<string, string>>({})
   const form = draft ?? acmeFormFrom(saved)
   const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(acmeFormFrom(saved))
-  const writable = can('node.certificate.write')
   const edit = (patch: Partial<AcmeForm>) => setDraft({ ...form, ...patch })
 
   const save = useMutation({
@@ -43,7 +41,7 @@ function AcmeFormView({ saved }: { saved: AcmeSettings }) {
     setErrors({})
     save.mutate(out.body)
   }
-  const disabled = !writable || save.isPending
+  const disabled = save.isPending
 
   return (
     <div className={css.stack}>
@@ -91,15 +89,13 @@ function AcmeFormView({ saved }: { saved: AcmeSettings }) {
           )}
         </div>
       </Card>
-      {writable && (
-        <div className={css.toolbar}>
-          {dirty && <span className={css.faint}>有未保存的修改</span>}
-          <span className={css.spacer} />
-          <Button variant="primary" disabled={!dirty} busy={save.isPending} onClick={submit}>
-            保存
-          </Button>
-        </div>
-      )}
+      <div className={css.toolbar}>
+        {dirty && <span className={css.faint}>有未保存的修改</span>}
+        <span className={css.spacer} />
+        <Button variant="primary" disabled={!dirty} busy={save.isPending} onClick={submit}>
+          保存
+        </Button>
+      </div>
     </div>
   )
 }

@@ -33,9 +33,9 @@ export function close(server: Server): Promise<void> {
 }
 
 /** POST v1/auth/login，回登录响应（不做断言，要断言的用例自己看 status） */
-export async function loginAs(base: string, account: MockAccount): Promise<{ access_token: string; permissions: string[] }> {
+export async function loginAs(base: string, account: MockAccount): Promise<{ access_token: string; user_id: string }> {
   const res = await fetch(`${base}/v1/auth/login`, { method: 'POST', body: JSON.stringify(account) })
-  return (await res.json()) as { access_token: string; permissions: string[] }
+  return (await res.json()) as { access_token: string; user_id: string }
 }
 
 export function bearer(token: string): Record<string, string> {

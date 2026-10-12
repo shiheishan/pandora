@@ -30,7 +30,6 @@ export const meSchema = z.object({
   display_name: z.string().nullable(),
   status: z.string(),
   created_at: z.string(),
-  permissions: z.array(z.string()).nullable(),
 })
 export type PortalMe = z.output<typeof meSchema>
 // 余额与流水（契约门户-05）：外框只读 balance，钱包页读 history，同键一份全字段

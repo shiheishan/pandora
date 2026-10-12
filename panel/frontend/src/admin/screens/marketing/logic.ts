@@ -84,7 +84,7 @@ export function usage(c: Pick<Coupon, 'redeemed_count' | 'max_redemptions'>): { 
 
 export const validUntilLabel = (iso: string | null) => (iso ? formatDate(iso) : '长期')
 
-/** 适用套餐：空 →「全部套餐」；套餐目录不可读（无 catalog.read 或加载失败）时退回「N 个套餐」 */
+/** 适用套餐：空 →「全部套餐」；套餐目录没取到（加载中或失败）时退回「N 个套餐」 */
 export function planScopeLabel(ids: readonly string[], plans: readonly Plan[] | undefined): string {
   if (ids.length === 0) return '全部套餐'
   if (!plans) return `${ids.length} 个套餐`

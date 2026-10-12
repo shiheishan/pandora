@@ -2,11 +2,10 @@ import type { UseQueryResult } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
 import { formatBytes, formatCount, formatMoney } from '../../../core/format'
 import { Skeleton } from '../../../ui'
-import type { Permissions } from '../../modules'
 import type { NodeTraffic, Overview } from './api'
 import css from './Dash.module.css'
-import { kpiRevenueDelta, reachable, type Target, type Tone } from './model'
-import { CardError, isForbidden, targetHref, toneText } from './parts'
+import { kpiRevenueDelta, type Target, type Tone } from './model'
+import { CardError, targetHref, toneText } from './parts'
 
 interface Tile {
   key: string
@@ -66,27 +65,11 @@ function trafficTile(traffic: NodeTraffic | undefined, nodes: Overview['nodes'] 
   }
 }
 
-export function Kpis({
-  perms,
-  overview,
-  traffic,
-  canOverview,
-  canTraffic,
-}: {
-  perms: Permissions
-  overview: UseQueryResult<Overview>
-  traffic: UseQueryResult<NodeTraffic>
-  canOverview: boolean
-  canTraffic: boolean
-}) {
-  const showOverview = canOverview && !(overview.isError && isForbidden(overview.error))
-  const showTraffic = canTraffic && !(traffic.isError && isForbidden(traffic.error))
-  if (!showOverview && !showTraffic) return null
-
-  const loading = (showOverview && overview.isPending) || (showTraffic && traffic.isPending)
+export function Kpis({ overview, traffic }: { overview: UseQueryResult<Overview>; traffic: UseQueryResult<NodeTraffic> }) {
+  const loading = overview.isPending || traffic.isPending
   const tiles: Tile[] = []
-  if (showOverview && overview.data) tiles.push(...overviewTiles(overview.data))
-  if (showTraffic || overview.data?.nodes) tiles.push(trafficTile(traffic.data, overview.data?.nodes))
+  if (overview.data) tiles.push(...overviewTiles(overview.data))
+  tiles.push(trafficTile(traffic.data, overview.data?.nodes))
 
   // 流量查询失败不在这里报：同一条查询的错误与重试由流量排行卡给出，这一格显示 —
   let content: ReactNode
@@ -95,14 +78,12 @@ export function Kpis({
   } else {
     content = (
       <>
-        {showOverview && overview.isError && <CardError boxed what="经营总览" error={overview.error} onRetry={() => void overview.refetch()} />}
-        {tiles.length > 0 && (
-          <div className={css.kpis}>
-            {tiles.map((t) => (
-              <KpiTile key={t.key} tile={t} perms={perms} />
-            ))}
-          </div>
-        )}
+        {overview.isError && <CardError boxed what="经营总览" error={overview.error} onRetry={() => void overview.refetch()} />}
+        <div className={css.kpis}>
+          {tiles.map((t) => (
+            <KpiTile key={t.key} tile={t} />
+          ))}
+        </div>
       </>
     )
   }
@@ -120,22 +101,12 @@ export function Kpis({
   )
 }
 
-function KpiTile({ tile, perms }: { tile: Tile; perms: Permissions }) {
-  const body = (
-    <>
+function KpiTile({ tile }: { tile: Tile }) {
+  return (
+    <a className={css.kpi} href={targetHref(tile.target)} title={tile.tip}>
       <span className={css.kpiLabel}>{tile.label}</span>
       <span className={css.kpiValue}>{tile.value}</span>
       <span className={`${css.kpiSub} ${(tile.subTone && toneText(tile.subTone)) ?? ''}`}>{tile.sub || ' '}</span>
-    </>
-  )
-  const target = reachable(tile.target, perms)
-  return target ? (
-    <a className={css.kpi} href={targetHref(target, perms)} title={tile.tip}>
-      {body}
     </a>
-  ) : (
-    <div className={css.kpi} title={tile.tip}>
-      {body}
-    </div>
   )
 }

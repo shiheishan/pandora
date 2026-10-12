@@ -48,7 +48,7 @@ const SLA: Record<Priority, [number, number]> = { urgent: [1, 8], high: [4, 24],
 const PRIORITY_ORDER: Record<Priority, number> = { urgent: 0, high: 1, normal: 2, low: 3 }
 const AGENT_SETTABLE = new Set(['resolved', 'closed', 'escalated', 'pending_agent'])
 
-/** 固定的另外三位客服；当前登录的管理员（有 ops.ticket.write 时）也会出现在可指派目录里 */
+/** 固定的另外三位客服；当前登录的管理员也会出现在可指派目录里 */
 const STAFF = [
   { id: '0b6f1c2a-1111-4a00-8000-000000000001', email: 'zhoumin@pandora.dev', display_name: '周敏' },
   { id: '0b6f1c2a-1111-4a00-8000-000000000002', email: 'tangyiming@pandora.dev', display_name: '唐一鸣' },
@@ -238,11 +238,8 @@ function view(t: Row, assignees: ReadonlyArray<{ id: string; email: string }>, d
 }
 
 function assigneesFor(ctx: MockContext) {
-  const list: Array<{ id: string; email: string; display_name?: string }> = [...STAFF]
-  if (ctx.user.permissions.includes('ops.ticket.write')) {
-    list.unshift({ id: ctx.user.userId, email: ctx.user.email, ...(ctx.user.displayName ? { display_name: ctx.user.displayName } : {}) })
-  }
-  return list
+  // 后台不分权限：当前管理员总在可指派名单里
+  return [{ id: ctx.user.userId, email: ctx.user.email, ...(ctx.user.displayName ? { display_name: ctx.user.displayName } : {}) }, ...STAFF]
 }
 
 function find(ctx: MockContext): Row | undefined {
@@ -261,13 +258,11 @@ const touch = (t: Row) => {
 export const tickets: MockModule = {
   routes: {
     'GET /v1/tickets/assignees': (ctx) => {
-      if (!ctx.requirePermission('ops.ticket.read')) return
       ctx.send(200, { assignees: assigneesFor(ctx) })
     },
 
     // 队列：status 逗号分隔（R60）、assigned_to、q（编号 / 标题 / 邮箱模糊）、breached=1、limit ≤ 100（默认 25）、offset
     'GET /v1/tickets': (ctx) => {
-      if (!ctx.requirePermission('ops.ticket.read')) return
       const qs = ctx.query
       const statuses = (qs.get('status') ?? '').replaceAll(' ', '').split(',').filter(Boolean)
       const priority = qs.get('priority') ?? ''
@@ -292,7 +287,6 @@ export const tickets: MockModule = {
 
     // 立即执行 SLA 扫描：静态段，要排在 :id 之前（findRoute 按键顺序匹配）
     'POST /v1/tickets/escalate': async (ctx) => {
-      if (!ctx.requirePermission('ops.ticket.write')) return
       await ctx.idempotent('admin_ticket_escalate', () => {
         let n = 0
         for (const t of rows) {
@@ -309,7 +303,6 @@ export const tickets: MockModule = {
     },
 
     'GET /v1/tickets/:id': (ctx) => {
-      if (!ctx.requirePermission('ops.ticket.read')) return
       const t = find(ctx)
       if (!t) return ctx.fail(404, 'not_found', '工单不存在')
       ctx.send(200, view(t, assigneesFor(ctx), true))
@@ -317,7 +310,6 @@ export const tickets: MockModule = {
 
     // 回复 / 内部备注：非内部回复 → pending_user、清 resolved_at，首回记 first_responded_at；备注不改状态
     'POST /v1/tickets/:id/reply': async (ctx) => {
-      if (!ctx.requirePermission('ops.ticket.write')) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('admin_ticket_reply', () => {
@@ -340,7 +332,6 @@ export const tickets: MockModule = {
     },
 
     'POST /v1/tickets/:id/assign': async (ctx) => {
-      if (!ctx.requirePermission('ops.ticket.write')) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('admin_ticket_assign', () => {
@@ -359,7 +350,6 @@ export const tickets: MockModule = {
     // 改状态：只收 resolved / closed / escalated / pending_agent；写 system 消息；
     // 人工升级把优先级提到至少 high（R60）；客服关闭写 agent_closed，重新打开清空（R25）
     'POST /v1/tickets/:id/status': async (ctx) => {
-      if (!ctx.requirePermission('ops.ticket.write')) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('admin_ticket_status', () => {
@@ -387,14 +377,12 @@ export const tickets: MockModule = {
 
     // 快捷回复（R42）：配置类写操作，不带幂等、不要 reauth
     'GET /v1/ticket-macros': (ctx) => {
-      if (!ctx.requirePermission('ops.ticket.read')) return
       const sorted = [...macros].sort((a, b) => a.sort_order - b.sort_order || a.created_at.localeCompare(b.created_at))
       ctx.send(200, { macros: sorted.map((m) => ({ id: m.id, title: m.title, body: m.body, sort_order: m.sort_order, updated_at: m.updated_at })) })
     },
     'POST /v1/ticket-macros': (ctx) => saveMacro(ctx, null),
     'POST /v1/ticket-macros/:id': (ctx) => saveMacro(ctx, ctx.params.id ?? null),
     'DELETE /v1/ticket-macros/:id': (ctx) => {
-      if (!ctx.requirePermission('ops.ticket.write')) return
       const before = macros.length
       macros = macros.filter((m) => m.id !== ctx.params.id)
       if (macros.length === before) return ctx.fail(404, 'not_found', '资源不存在或无权访问')
@@ -404,7 +392,6 @@ export const tickets: MockModule = {
 }
 
 async function saveMacro(ctx: MockContext, id: string | null) {
-  if (!ctx.requirePermission('ops.ticket.write')) return
   const body = await ctx.body()
   if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
   const unknown = Object.keys(body).filter((k) => !['title', 'body', 'sort_order'].includes(k))

@@ -3,7 +3,7 @@ import { useCallback } from 'react'
 import { useApi } from '../../../shell/runtime'
 import { acmeSettingsSchema, certificateDetailSchema, certificateListSchema, dnsCredentialListSchema } from './schemas'
 
-export { useCan, useFailure, useIntentKey } from '../../actions'
+export { useFailure, useIntentKey } from '../../actions'
 
 export const CK = ['admin', 'certs'] as const
 

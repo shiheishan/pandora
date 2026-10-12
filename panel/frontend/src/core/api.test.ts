@@ -128,9 +128,9 @@ describe('responses and error envelope', () => {
   })
 
   it('validates the body with zod and returns the parsed value', async () => {
-    const { client } = setup([json(200, { user_id: 'u1', permissions: null, extra: 1 })])
-    const me = await client.get('v1/me', z.object({ user_id: z.string(), permissions: z.array(z.string()).nullable() }))
-    expect(me).toEqual({ user_id: 'u1', permissions: null })
+    const { client } = setup([json(200, { user_id: 'u1', display_name: null, extra: 1 })])
+    const me = await client.get('v1/me', z.object({ user_id: z.string(), display_name: z.string().nullable() }))
+    expect(me).toEqual({ user_id: 'u1', display_name: null })
   })
 
   it('a shape mismatch becomes invalid_response instead of leaking undefined into pages', async () => {
@@ -394,8 +394,8 @@ describe('401 handling', () => {
     expect(onUnauthorized).not.toHaveBeenCalled()
   })
 
-  it('a 404 is not a logout (missing permission looks like not_found)', async () => {
-    const env = setup([envelope(404, 'not_found', '资源不存在或无权访问')])
+  it('a 404 is not a logout', async () => {
+    const env = setup([envelope(404, 'not_found', '资源不存在')])
     const error = await rejection(env.client.get('v1/tickets', ok))
     expect(error.code).toBe('not_found')
     expect(env.tokens.get()).toBe('tok-1')

@@ -8,7 +8,7 @@ import { groupCreateBody, groupFormErrors, groupFormFrom, groupPatchBody, nodeSt
 import { ScopeRoutingEditor, type RoutingPayload } from './ScopeRouting'
 import x from './infra.module.css'
 import css from './nodes.module.css'
-import { endsIntent, useCan, useFailure, useGlobalRouting, useGroupRouting, useIntentKey, useInvalidateNodes, useNodes } from './queries'
+import { endsIntent, useFailure, useGlobalRouting, useGroupRouting, useIntentKey, useInvalidateNodes, useNodes } from './queries'
 import { groupRoutingSaved, routeGroupDeleted, routeGroupSchema, routeGroupUpdated, type GroupRouting, type RouteGroup } from './schemas'
 
 /** 写失败的共同处理：行版本冲突刷新、其余 409 / 422 原文交给调用方就地显示 */
@@ -29,12 +29,10 @@ function useGroupFailure(setError: (m: string | null) => void) {
 
 export function RouteGroupPanel({ group }: { group: RouteGroup }) {
   const api = useApi()
-  const can = useCan()
   const toast = useToast()
   const invalidate = useInvalidateNodes()
   const intent = useIntentKey()
   const routing = useGroupRouting(group.id)
-  const writable = can('node.config.publish')
   const [editing, setEditing] = useState(false)
   const [members, setMembers] = useState(false)
   const [removing, setRemoving] = useState(false)
@@ -76,19 +74,17 @@ export function RouteGroupPanel({ group }: { group: RouteGroup }) {
             )}
           </div>
           {deleteError && <div className={css.errorBox}>{deleteError}</div>}
-          {writable && (
-            <div className={css.formActions}>
-              <Button size="sm" onClick={() => setEditing(true)}>
-                编辑信息
-              </Button>
-              <Button size="sm" onClick={() => setMembers(true)}>
-                成员（{group.members.length}）
-              </Button>
-              <Button size="sm" variant="ghost" busy={remove.isPending} onClick={() => (setDeleteError(null), setRemoving(true))}>
-                删除路由组
-              </Button>
-            </div>
-          )}
+          <div className={css.formActions}>
+            <Button size="sm" onClick={() => setEditing(true)}>
+              编辑信息
+            </Button>
+            <Button size="sm" onClick={() => setMembers(true)}>
+              成员（{group.members.length}）
+            </Button>
+            <Button size="sm" variant="ghost" busy={remove.isPending} onClick={() => (setDeleteError(null), setRemoving(true))}>
+              删除路由组
+            </Button>
+          </div>
         </div>
       </section>
 
@@ -115,7 +111,6 @@ export function RouteGroupPanel({ group }: { group: RouteGroup }) {
 
 function GroupEditor({ group, data }: { group: RouteGroup; data: GroupRouting }) {
   const api = useApi()
-  const can = useCan()
   const toast = useToast()
   const invalidate = useInvalidateNodes()
   const intent = useIntentKey()
@@ -150,11 +145,9 @@ function GroupEditor({ group, data }: { group: RouteGroup; data: GroupRouting })
         references={referenceOutbounds([{ label: '全局', tags: (global.data?.outbounds ?? []).map((o) => o.tag) }])}
         ruleHint="成员节点上排在节点私有规则之后、全局规则之前；同名出站覆盖全局的。规则可以指向本组与全局出站"
         emptyHint="组内没有规则。成员节点只用全局与私有规则。"
-        writable={can('node.config.publish')}
         busy={publish.isPending}
         formError={formError}
         publishLabel={`发布到组内 ${group.members.length} 个节点`}
-        readOnlyHint="当前账号只能查看，发布需要配置发布权限。"
         onSubmit={submit}
       />
       <ConfirmModal

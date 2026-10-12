@@ -126,22 +126,20 @@ export function useTicketDetail(id: string | null) {
   })
 }
 
-export function useAssignees(enabled: boolean) {
+export function useAssignees() {
   const api = useApi()
   return useQuery({
     queryKey: [...TK, 'assignees'],
     queryFn: ({ signal }) => api.get('v1/tickets/assignees', assigneesSchema, { signal }).then((r) => r.assignees),
-    enabled,
     staleTime: 5 * 60_000,
   })
 }
 
-export function useMacros(enabled: boolean) {
+export function useMacros() {
   const api = useApi()
   return useQuery({
     queryKey: [...TK, 'macros'],
     queryFn: ({ signal }) => api.get('v1/ticket-macros', macrosSchema, { signal }).then((r) => r.macros),
-    enabled,
     staleTime: 5 * 60_000,
   })
 }

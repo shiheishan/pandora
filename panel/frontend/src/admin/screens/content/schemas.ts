@@ -136,7 +136,7 @@ export const slotSaved = z.object({ saved: z.literal(true), dropped: z.array(z.s
 export const siteSettingsSchema = z.object({ timezone: z.string() })
 
 // ---------------------------------------------------------------------------
-// 套餐目录子集（GET v1/plans，catalog.read）：知识库「限定套餐」只要名字与状态
+// 套餐目录子集（GET v1/plans）：知识库「限定套餐」只要名字与状态
 // ---------------------------------------------------------------------------
 export const planCatalogResponse = z.object({ plans: z.array(z.object({ id: uuid, name: z.string(), status: z.enum(['draft', 'active', 'archived']) })) })
 export type CatalogPlan = z.output<typeof planCatalogResponse>['plans'][number]

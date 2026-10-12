@@ -4,7 +4,7 @@ import { filenameFromDisposition, saveFile } from '../../../core/download'
 import { formatCount, formatDateTime } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
 import { Button, Card, ConfirmModal, Empty, Input, QueryView, Select, Tag, TextArea, useToast } from '../../../ui'
-import { useCan, useFailure, useIntentKey } from '../../actions'
+import { useFailure, useIntentKey } from '../../actions'
 import {
   bulkMailSchema,
   generationJobSchema,
@@ -37,26 +37,23 @@ import ops from './Ops.module.css'
 import css from './Users.module.css'
 
 export function BulkTab({ now }: { now: Date }) {
-  const can = useCan()
-  const canGenerate = can('iam.user.write')
   return (
-    <div className={canGenerate ? ops.splitBulk : undefined}>
+    <div className={ops.splitBulk}>
       <FilterPanel now={now} />
-      {canGenerate && <GeneratePanel />}
+      <GeneratePanel />
     </div>
   )
 }
 
 // ===========================================================================
-// 按条件筛选：预览（iam.user.read）→ 导出 / 群发
+// 按条件筛选：预览 → 导出 / 群发
 // ===========================================================================
 function FilterPanel({ now }: { now: Date }) {
-  const can = useCan()
   const [form, setForm] = useState<BulkForm>({ plan: '', status: '', expiry: '', group: '' })
   const filter = bulkFilter(form)
   const preview = useBulkPreview(filter)
-  // 套餐下拉读 GET v1/plans，要 catalog.read；没有就不给这个条件
-  const plans = usePlanOptions(can('catalog.read'))
+  // 套餐下拉读 GET v1/plans
+  const plans = usePlanOptions()
   const groups = useUserGroups()
   const [mailOpen, setMailOpen] = useState(false)
   const total = preview.data?.total ?? null
@@ -72,16 +69,14 @@ function FilterPanel({ now }: { now: Date }) {
       }
     >
       <div className={ops.filterGrid}>
-        {can('catalog.read') && (
-          <Select
-            label="套餐"
-            size="sm"
-            emptyOption="不限"
-            options={(plans.data ?? []).map((p) => ({ value: p.id, label: p.status === 'archived' ? `${p.name}（已归档）` : p.name }))}
-            value={form.plan}
-            onChange={(e) => set({ plan: e.target.value })}
-          />
-        )}
+        <Select
+          label="套餐"
+          size="sm"
+          emptyOption="不限"
+          options={(plans.data ?? []).map((p) => ({ value: p.id, label: p.status === 'archived' ? `${p.name}（已归档）` : p.name }))}
+          value={form.plan}
+          onChange={(e) => set({ plan: e.target.value })}
+        />
         <Select label="状态" size="sm" emptyOption="不限" options={BULK_STATUS.map(([value, label]) => ({ value, label }))} value={form.status} onChange={(e) => set({ status: e.target.value as BulkStatus })} />
         <Select label="到期时间" size="sm" emptyOption="不限" options={BULK_EXPIRY.map(([value, label]) => ({ value, label }))} value={form.expiry} onChange={(e) => set({ expiry: e.target.value as BulkExpiry })} />
         <Select
@@ -97,12 +92,10 @@ function FilterPanel({ now }: { now: Date }) {
         <span className={ops.hitCount}>{total === null ? '—' : formatCount(total)}</span>
         <span className={css.muted}>位用户命中</span>
         <span className={css.spacer} />
-        {can('iam.user.write') && <ExportButton filter={filter} total={total} />}
-        {can('ops.notification.write') && (
-          <Button size="sm" variant="primary" aria-expanded={mailOpen} onClick={() => setMailOpen((v) => !v)}>
-            群发邮件
-          </Button>
-        )}
+        <ExportButton filter={filter} total={total} />
+        <Button size="sm" variant="primary" aria-expanded={mailOpen} onClick={() => setMailOpen((v) => !v)}>
+          群发邮件
+        </Button>
       </div>
       {mailOpen && <MailForm filter={filter} total={total} onSent={() => setMailOpen(false)} />}
       <QueryView
@@ -130,7 +123,7 @@ function FilterPanel({ now }: { now: Date }) {
   )
 }
 
-/** 导出：GET v1/users/bulk/export（iam.user.write + reauth，R9）。没有 cookie，只能 fetch 带 Bearer 取回再存文件 */
+/** 导出：GET v1/users/bulk/export（reauth，R9）。没有 cookie，只能 fetch 带 Bearer 取回再存文件 */
 function ExportButton({ filter, total }: { filter: BulkFilter; total: number | null }) {
   const api = useApi()
   const toast = useToast()
@@ -169,7 +162,7 @@ function ExportButton({ filter, total }: { filter: BulkFilter; total: number | n
   )
 }
 
-/** 群发：POST v1/users/bulk/mail（ops.notification.write + reauth + 幂等 user_bulk_mail），筛选字段放在请求体顶层 */
+/** 群发：POST v1/users/bulk/mail（reauth + 幂等 user_bulk_mail），筛选字段放在请求体顶层 */
 function MailForm({ filter, total, onSent }: { filter: BulkFilter; total: number | null; onSent: () => void }) {
   const api = useApi()
   const toast = useToast()
@@ -250,7 +243,7 @@ function MailForm({ filter, total, onSent }: { filter: BulkFilter; total: number
 }
 
 // ===========================================================================
-// 批量生成：POST v1/users/bulk/generate（iam.user.write + reauth + 幂等 user_bulk_generate）
+// 批量生成：POST v1/users/bulk/generate（reauth + 幂等 user_bulk_generate）
 // 是后台任务：提交即回，worker 逐个生成（一次只占 1 个 Argon2 名额，不挡登录）。
 // 这里轮询进度画进度条；完成后从服务端下载结果 CSV（含初始口令，24 小时内、只有提交人能下，
 // 要近期重认证，每次下载都进审计）

@@ -21,11 +21,6 @@ export function ScreenFallback() {
   )
 }
 
-/** 缺权限的地址与接口 404 统一显示成这一页，不当作报错。 */
-export function NotFoundScreen() {
-  return <Empty title="无权限或不存在" description="这个页面不存在，或当前账号没有查看它的权限。" />
-}
-
 interface BoundaryProps {
   /** 路由变化即重置：换到别的页面时不再显示上一页的错误 */
   resetKey: string

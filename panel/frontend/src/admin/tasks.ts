@@ -3,10 +3,7 @@ import { z } from 'zod'
 import { useApi } from '../shell/runtime'
 
 // ---------------------------------------------------------------------------
-// 条目按 kind 区分，处理器已按各条目的原读权限过滤（没有权限的条目不出现）：
-// tickets_open←ops.ticket.read、withdrawals_pending←marketing.commission.read（R51）、
-// nodes_offline←node.read、orders_pending_stale←billing.order.read、
-// notifications_backlog←ops.notification.read、ledger_drift←billing.ledger.read。
+// 条目按 kind 区分；某类条目可以缺席（如没有待处理时），缺席按 0 计。
 // 写严：未知 kind 判为不符约定，而不是悄悄吞掉。
 // ---------------------------------------------------------------------------
 const int = z.number().int()
@@ -31,19 +28,17 @@ export type Tasks = z.output<typeof tasksSchema>
 
 export const TASKS_QUERY_KEY = ['admin', 'dashboard', 'tasks'] as const
 
-/** enabled 由调用方按 ops.dashboard.read 决定：缺权限不发请求（接口会回 404） */
-export function useDashboardTasks(enabled: boolean) {
+export function useDashboardTasks() {
   const api = useApi()
   return useQuery({
     queryKey: TASKS_QUERY_KEY,
     queryFn: ({ signal }) => api.get('v1/dashboard/tasks', tasksSchema, { signal }),
-    enabled,
     meta: { topics: ['tickets.changed', 'orders.changed', 'nodes.changed'] },
     refetchInterval: 60_000,
   })
 }
 
-/** 某类条目的计数；条目不在（无权限）或该类没有 count（通知积压）时为 0 */
+/** 某类条目的计数；条目不在或该类没有 count（通知积压）时为 0 */
 export function taskCount(items: readonly TaskItem[] | undefined, kind: Exclude<TaskItem['kind'], 'notifications_backlog'>): number {
   const item = items?.find((i) => i.kind === kind)
   return item && 'count' in item ? item.count : 0

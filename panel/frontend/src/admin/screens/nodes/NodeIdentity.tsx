@@ -4,7 +4,7 @@ import { formatDateTime } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, Modal, QueryView, Tag, useToast } from '../../../ui'
 import css from './nodes.module.css'
-import { useCan, useFailure, useIntentKey, useInvalidateNodes, useNodeIdentity } from './queries'
+import { useFailure, useIntentKey, useInvalidateNodes, useNodeIdentity } from './queries'
 import { bootstrapTokenResponse, okResponse, serverTokenResponse, type NodeRow } from './schemas'
 
 interface Secret {
@@ -23,7 +23,6 @@ const IDENTITY_STATUS: Readonly<Record<string, [string, 'ok' | 'warn' | 'danger'
 
 export function NodeIdentity({ node }: { node: NodeRow }) {
   const api = useApi()
-  const can = useCan()
   const toast = useToast()
   const fail = useFailure()
   const invalidate = useInvalidateNodes()
@@ -95,17 +94,17 @@ export function NodeIdentity({ node }: { node: NodeRow }) {
         )}
       </QueryView>
 
-      <Action title="签发一键安装令牌" detail="生成一条在新机器上执行的安装命令，30 分钟内有效。" disabledReason={retired ? '已退役的节点不能签发' : !can('node.provision') ? '需要节点部署权限' : null}>
+      <Action title="签发一键安装令牌" detail="生成一条在新机器上执行的安装命令，30 分钟内有效。" disabledReason={retired ? '已退役的节点不能签发' : null}>
         <Button size="sm" busy={bootstrap.isPending} onClick={() => bootstrap.mutate()}>
           签发
         </Button>
       </Action>
-      <Action title="重签服务端令牌" detail="旧令牌立即失效，节点要换上新令牌才能继续上报。" disabledReason={retired ? '已退役的节点不能签发' : !can('node.provision') ? '需要节点部署权限' : null}>
+      <Action title="重签服务端令牌" detail="旧令牌立即失效，节点要换上新令牌才能继续上报。" disabledReason={retired ? '已退役的节点不能签发' : null}>
         <Button size="sm" busy={serverToken.isPending} onClick={() => setConfirm('server')}>
           重签
         </Button>
       </Action>
-      <Action title="吊销节点身份" detail="节点会被拒绝接入，需要重新注册。用于机器被入侵或转让。" disabledReason={!can('node.identity.revoke') ? '需要吊销身份权限' : null}>
+      <Action title="吊销节点身份" detail="节点会被拒绝接入，需要重新注册。用于机器被入侵或转让。">
         <Button size="sm" className={css.dangerButton} busy={revoke.isPending} onClick={() => setConfirm('revoke')}>
           吊销
         </Button>
@@ -139,7 +138,7 @@ export function NodeIdentity({ node }: { node: NodeRow }) {
   )
 }
 
-function Action({ title, detail, disabledReason, children }: { title: string; detail: string; disabledReason: string | null; children: ReactNode }) {
+function Action({ title, detail, disabledReason, children }: { title: string; detail: string; disabledReason?: string | null; children: ReactNode }) {
   return (
     <div className={css.action}>
       <div className={css.actionText}>

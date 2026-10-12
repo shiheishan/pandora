@@ -4,7 +4,7 @@ import { formatMoney } from '../../../core/format'
 import { navigate, useHashLocation } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, Empty, Input, Modal, QueryView, Select, TextArea, useToast } from '../../../ui'
-import { useCan, useFailure, useIntentKey } from '../../actions'
+import { useFailure, useIntentKey } from '../../actions'
 import { parseYuan } from '../users/model'
 import { adjustmentSchema, useAdjustments, useInvalidateBilling, type Adjustment, type Currency } from './api'
 import css from './Billing.module.css'
@@ -17,11 +17,9 @@ const CURRENCY_OPTIONS = [
 
 export function AdjustTab() {
   const location = useHashLocation()
-  const can = useCan()
   const c = location.query.get('c')
   const currency = c === 'CNY' || c === 'USD' ? c : ''
   const list = useAdjustments(currency)
-  const writable = can('billing.adjustment.write')
   const [formOpen, setFormOpen] = useState(false)
   const [reversing, setReversing] = useState<Adjustment | null>(null)
 
@@ -39,11 +37,9 @@ export function AdjustTab() {
           value={currency}
           onChange={(e) => navigate('/billing/adjust', { replace: true, query: { c: e.target.value || undefined } })}
         />
-        {writable && (
-          <Button size="sm" variant="primary" aria-expanded={formOpen} onClick={() => setFormOpen((v) => !v)}>
-            登记调整
-          </Button>
-        )}
+        <Button size="sm" variant="primary" aria-expanded={formOpen} onClick={() => setFormOpen((v) => !v)}>
+          登记调整
+        </Button>
       </div>
       {formOpen && <AdjustFormRow onClose={() => setFormOpen(false)} />}
       <QueryView
@@ -70,7 +66,7 @@ export function AdjustTab() {
               <span role="columnheader" />
             </div>
             {rows.map((a) => (
-              <Row key={a.id} a={a} writable={writable} onReverse={() => setReversing(a)} />
+              <Row key={a.id} a={a} onReverse={() => setReversing(a)} />
             ))}
           </div>
         )}
@@ -80,7 +76,7 @@ export function AdjustTab() {
   )
 }
 
-function Row({ a, writable, onReverse }: { a: Adjustment; writable: boolean; onReverse: () => void }) {
+function Row({ a, onReverse }: { a: Adjustment; onReverse: () => void }) {
   const v = adjustmentView(a)
   return (
     <div role="row" className={`${css.adjRow} ${v.state === 'reversed' ? css.faded : ''}`}>
@@ -102,11 +98,11 @@ function Row({ a, writable, onReverse }: { a: Adjustment; writable: boolean; onR
       <span role="cell" className={css.right}>
         {v.state !== 'open' ? (
           <span className={css.small}>{v.state === 'reversal' ? '冲销单' : '已冲销'}</span>
-        ) : writable ? (
+        ) : (
           <button type="button" className={css.textAction} onClick={onReverse}>
             冲销
           </button>
-        ) : null}
+        )}
       </span>
     </div>
   )

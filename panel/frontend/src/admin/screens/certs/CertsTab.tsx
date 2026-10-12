@@ -5,7 +5,7 @@ import { Button, Empty, QueryView, Table, Tag, type TableColumn } from '../../..
 import { CertDrawer } from './CertDrawer'
 import { CertFormModal } from './CertFormModal'
 import { errorCodeLabel, EXPIRY_VIEW, remainingText, statusView, summaryBanner } from './logic'
-import { useCan, useCertificates } from './queries'
+import { useCertificates } from './queries'
 import type { Certificate } from './schemas'
 import css from './certs.module.css'
 
@@ -76,21 +76,17 @@ const columns: TableColumn<Certificate>[] = [
 
 export function CertsTab({ rest }: { rest: string[] }) {
   const list = useCertificates()
-  const can = useCan()
   const [creating, setCreating] = useState(false)
   const selected = rest[0] ?? null
-  const writable = can('node.certificate.write')
 
   return (
     <div className={css.stack}>
       <div className={css.toolbar}>
         <span className={css.faint}>面板用 DNS-01 向 CA 集中签发与自动续期；节点拿到的私钥端到端加密（节点接入在后续版本）。</span>
         <span className={css.spacer} />
-        {writable && (
-          <Button variant="primary" onClick={() => setCreating(true)}>
-            新建证书
-          </Button>
-        )}
+        <Button variant="primary" onClick={() => setCreating(true)}>
+          新建证书
+        </Button>
       </div>
       <QueryView
         query={list}

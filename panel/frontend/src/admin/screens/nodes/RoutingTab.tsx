@@ -7,20 +7,19 @@ import { ConfirmModal, QueryView, Segmented, useToast } from '../../../ui'
 import { GroupFormModal, RouteGroupPanel } from './RouteGroupPanel'
 import { ScopeRoutingEditor, type RoutingPayload } from './ScopeRouting'
 import css from './nodes.module.css'
-import { endsIntent, useCan, useFailure, useGlobalRouting, useIntentKey, useInvalidateNodes, useRouteGroups } from './queries'
+import { endsIntent, useFailure, useGlobalRouting, useIntentKey, useInvalidateNodes, useRouteGroups } from './queries'
 import { globalRoutingSaved, type GlobalRouting } from './schemas'
 
 const GLOBAL = 'global'
 const NEW = 'new'
 
 export function RoutingTab({ rest }: { rest: readonly string[] }) {
-  const can = useCan()
   const groups = useRouteGroups()
   const [creating, setCreating] = useState(false)
   const picked = rest[0] ?? GLOBAL
   const current = groups.data?.find((g) => g.id === picked)
   const scope = current ? current.id : GLOBAL
-  const options = [{ value: GLOBAL, label: '全局' }, ...(groups.data ?? []).map((g) => ({ value: g.id, label: `${g.name} · ${g.members.length}` })), ...(can('node.config.publish') ? [{ value: NEW, label: '＋ 新建路由组' }] : [])]
+  const options = [{ value: GLOBAL, label: '全局' }, ...(groups.data ?? []).map((g) => ({ value: g.id, label: `${g.name} · ${g.members.length}` })), { value: NEW, label: '＋ 新建路由组' }]
 
   return (
     <div className={css.stack}>
@@ -59,7 +58,6 @@ function GlobalRouting() {
 
 function GlobalEditor({ data }: { data: GlobalRouting }) {
   const api = useApi()
-  const can = useCan()
   const toast = useToast()
   const fail = useFailure()
   const invalidate = useInvalidateNodes()
@@ -98,11 +96,9 @@ function GlobalEditor({ data }: { data: GlobalRouting }) {
         routes={data.routes}
         ruleHint="自上而下匹配，命中即停；节点私有规则与所在路由组的规则排在这些规则之前，它们的兜底规则会遮住全部全局规则"
         emptyHint="没有全局规则。加的规则会下发到全部节点。"
-        writable={can('node.config.publish')}
         busy={publish.isPending}
         formError={formError}
         publishLabel="发布到全部节点"
-        readOnlyHint="当前账号只能查看，发布需要配置发布权限。"
         onSubmit={submit}
       />
       <ConfirmModal

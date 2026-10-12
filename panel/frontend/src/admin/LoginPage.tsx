@@ -11,7 +11,6 @@ const loginSchema = z.object({
   token_type: z.literal('Bearer'),
   expires_in: z.number(),
   user_id: z.string(),
-  permissions: z.array(z.string()).nullable(),
 })
 
 export function LoginPage() {

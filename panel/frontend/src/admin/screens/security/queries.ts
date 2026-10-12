@@ -4,7 +4,7 @@ import { useApi } from '../../../shell/runtime'
 import { accessQuery, auditQuery, TAIL_MS, type AccessFilter, type AuditFilter } from './logic'
 import { accessResponse, auditResponse, clustersResponse, switchesResponse } from './schemas'
 
-export { useCan, useFailure, useIntentKey } from '../../actions'
+export { useFailure, useIntentKey } from '../../actions'
 
 export const SK = ['admin', 'security'] as const
 

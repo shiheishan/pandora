@@ -3,7 +3,7 @@ import { useCallback } from 'react'
 import { useApi } from '../../../shell/runtime'
 import { deliveriesResponse, hooksResponse, mailSettingsSchema, telegramSettingsSchema, templatesResponse } from './schemas'
 
-export { useCan, useFailure, useIntentKey } from '../../actions'
+export { useFailure, useIntentKey } from '../../actions'
 
 export const SK = ['admin', 'system'] as const
 

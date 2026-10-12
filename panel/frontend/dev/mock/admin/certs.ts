@@ -247,7 +247,6 @@ const findCred = (id: string) => creds.find((c) => c.id === id)
 export const certsModule: MockModule = {
   routes: {
     'GET /v1/certificates': (ctx) => {
-      if (!ctx.requirePermission('node.certificate.read')) return
       const items = [...certs].sort((a, b) => a.name.localeCompare(b.name)).map(certView)
       const summary = { total: items.length, warning: 0, critical: 0, expired: 0, failing: 0, paused: 0, blocked: 0 }
       for (const c of items) {
@@ -261,7 +260,6 @@ export const certsModule: MockModule = {
       ctx.send(200, { items, summary })
     },
     'GET /v1/certificates/:id': (ctx) => {
-      if (!ctx.requirePermission('node.certificate.read')) return
       const c = findCert(ctx.params.id!)
       if (!c) return reply(ctx, NOT_FOUND)
       const view = certView(c)
@@ -272,7 +270,6 @@ export const certsModule: MockModule = {
       })
     },
     'POST /v1/certificates': async (ctx) => {
-      if (!ctx.requirePermission('node.certificate.write')) return
       await ctx.idempotent('certificate_create', async () => {
         const read = await readBody(ctx, ['name', 'identifiers', 'dns_credential_id', 'key_type'])
         if (!read.ok) return read.result
@@ -298,7 +295,6 @@ export const certsModule: MockModule = {
       })
     },
     'PATCH /v1/certificates/:id': async (ctx) => {
-      if (!ctx.requirePermission('node.certificate.write')) return
       const c = findCert(ctx.params.id!)
       if (!c) return reply(ctx, NOT_FOUND)
       const read = await readBody(ctx, ['name', 'identifiers', 'dns_credential_id', 'key_type'])
@@ -320,14 +316,13 @@ export const certsModule: MockModule = {
       ctx.send(200, certView(c))
     },
     'DELETE /v1/certificates/:id': (ctx) => {
-      if (!ctx.requirePermission('node.certificate.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const i = certs.findIndex((c) => c.id === ctx.params.id)
       if (i < 0) return reply(ctx, NOT_FOUND)
       certs.splice(i, 1)
       ctx.send(204)
     },
     'POST /v1/certificates/:id/renew': (ctx) => {
-      if (!ctx.requirePermission('node.certificate.write')) return
       const c = findCert(ctx.params.id!)
       if (!c) return reply(ctx, NOT_FOUND)
       if (c.status === 'paused') return reply(ctx, err(409, 'conflict', '证书已暂停自动签发，先点「恢复」'))
@@ -336,7 +331,6 @@ export const certsModule: MockModule = {
       ctx.send(202, { id: o.id, state: o.state, reason: o.reason, created_at: o.created_at })
     },
     'POST /v1/certificates/:id/pause': (ctx) => {
-      if (!ctx.requirePermission('node.certificate.write')) return
       const c = findCert(ctx.params.id!)
       if (!c) return reply(ctx, NOT_FOUND)
       if (c.status === 'paused') return reply(ctx, err(409, 'conflict', '证书已经是暂停状态'))
@@ -345,7 +339,6 @@ export const certsModule: MockModule = {
       ctx.send(200, certView(c))
     },
     'POST /v1/certificates/:id/resume': (ctx) => {
-      if (!ctx.requirePermission('node.certificate.write')) return
       const c = findCert(ctx.params.id!)
       if (!c) return reply(ctx, NOT_FOUND)
       if (c.status !== 'paused') return reply(ctx, err(409, 'conflict', '证书没有暂停'))
@@ -356,11 +349,10 @@ export const certsModule: MockModule = {
     },
 
     'GET /v1/dns-credentials': (ctx) => {
-      if (!ctx.requirePermission('node.certificate.read')) return
       ctx.send(200, { items: [...creds].sort((a, b) => a.name.localeCompare(b.name)).map(credView) })
     },
     'POST /v1/dns-credentials': async (ctx) => {
-      if (!ctx.requirePermission('node.certificate.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       await ctx.idempotent('dns_credential_create', async () => {
         const read = await readBody(ctx, ['name', 'provider', 'zone', 'secret'])
         if (!read.ok) return read.result
@@ -380,7 +372,7 @@ export const certsModule: MockModule = {
       })
     },
     'PATCH /v1/dns-credentials/:id': async (ctx) => {
-      if (!ctx.requirePermission('node.certificate.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const c = findCred(ctx.params.id!)
       if (!c) return reply(ctx, NOT_FOUND)
       const read = await readBody(ctx, ['name', 'zone', 'secret'])
@@ -400,7 +392,7 @@ export const certsModule: MockModule = {
       ctx.send(200, reverify ? verify(c) : { credential: credView(c), ok: c.verify_status === 'ok', message: '', warnings: [], resumed: 0 })
     },
     'DELETE /v1/dns-credentials/:id': (ctx) => {
-      if (!ctx.requirePermission('node.certificate.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const c = findCred(ctx.params.id!)
       if (!c) return reply(ctx, NOT_FOUND)
       const using = certs.filter((x) => x.dns_credential_id === c.id).map((x) => x.name)
@@ -409,19 +401,17 @@ export const certsModule: MockModule = {
       ctx.send(204)
     },
     'POST /v1/dns-credentials/:id/verify': (ctx) => {
-      if (!ctx.requirePermission('node.certificate.write')) return
       const c = findCred(ctx.params.id!)
       if (!c) return reply(ctx, NOT_FOUND)
       ctx.send(200, verify(c))
     },
 
     'GET /v1/settings/acme': (ctx) => {
-      if (!ctx.requirePermission('node.certificate.read')) return
       const { hmac, ...rest } = acme
       ctx.send(200, { ...rest, zerossl_eab_hmac_set: hmac !== '', directory_override: false })
     },
     'PUT /v1/settings/acme': async (ctx) => {
-      if (!ctx.requirePermission('node.certificate.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const read = await readBody(ctx, ['contact_email', 'use_staging', 'zerossl_enabled', 'zerossl_eab_kid', 'zerossl_eab_hmac'])
       if (!read.ok) return reply(ctx, read.result)
       const body = read.body

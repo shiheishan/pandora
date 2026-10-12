@@ -54,7 +54,8 @@ export interface User {
   unattached_bytes: number
   referrer: string | null
   telegram: { username: string; bound_at: string } | null
-  roles: string[]
+  /** 后台不分角色：是不是管理员 */
+  is_admin: boolean
 }
 
 export interface Group {
@@ -151,7 +152,7 @@ const users: User[] = Array.from({ length: 48 }, (_, i) => {
     unattached_bytes: 0,
     referrer: null,
     telegram: i % 3 === 0 ? { username: NAMES[i % NAMES.length]!.replace(/[._]/g, ''), bound_at: iso((i + 1) * DAY) } : null,
-    roles: i === 0 ? ['support'] : [],
+    is_admin: i === 0,
   }
 })
 // 邀请关系：每隔几个人由第 0 号邀请
@@ -329,7 +330,7 @@ function detail(u: User) {
         pack_remaining_bytes: s.pack_bytes,
       })),
     recent_orders: orders.sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 20),
-    roles: u.roles,
+    is_admin: u.is_admin,
     stats: {
       // R114：paid_total 已弃用但 Go 仍回（跨币种直接相加）；paid_totals 按币种分组、币种升序、只列大于 0 的
       paid_total: orders.filter((o) => o.status === 'paid' || o.status === 'fulfilled').reduce((sum, o) => sum + o.paid_amount, 0),
@@ -387,7 +388,6 @@ export const users_: MockModule = {
   routes: {
     // ---- 读 -----------------------------------------------------------------
     'GET /v1/users': (ctx) => {
-      if (!ctx.requirePermission('iam.user.read')) return
       const qs = ctx.query
       const group = (qs.get('group_id') ?? '').trim()
       const subState = qs.get('sub_state') ?? ''
@@ -419,20 +419,17 @@ export const users_: MockModule = {
     },
 
     'GET /v1/user-groups': (ctx) => {
-      if (!ctx.requirePermission('iam.user.read')) return
       ctx.send(200, { groups: GROUPS.map((g) => ({ ...g, users: users.filter((u) => u.group_id === g.id).length, exclusive_pools: exclusivePoolsOf(g.id) })) })
     },
 
     'GET /v1/users/:id': (ctx) => {
-      if (!ctx.requirePermission('iam.user.read')) return
       const u = findUser(ctx)
       if (!u) return ctx.fail(404, 'not_found', '资源不存在或无权访问')
       ctx.send(200, detail(u))
     },
 
-    // 风控画像：security.audit.read；明文 IP 只在这里
+    // 风控画像：明文 IP 只在这里
     'GET /v1/users/:id/profile': (ctx) => {
-      if (!ctx.requirePermission('security.audit.read')) return
       const u = findUser(ctx)
       const n = u ? users.indexOf(u) : 0
       const ip = (k: number) => `112.64.${(n * 7 + k) % 250}.${(k * 31 + 18) % 250}`
@@ -448,9 +445,9 @@ export const users_: MockModule = {
     },
 
     // ---- 写 -----------------------------------------------------------------
-    // 启用 / 停用 / 封禁：iam.user.write + reauth（R9），无幂等；停用封禁要原因（422 无 fields）
+    // 启用 / 停用 / 封禁：reauth（R9），无幂等；停用封禁要原因（422 无 fields）
     'POST /v1/users/:id/status': async (ctx) => {
-      if (!ctx.requirePermission('iam.user.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       const status = typeof body.status === 'string' ? body.status : ''
@@ -463,9 +460,9 @@ export const users_: MockModule = {
       ctx.send(200, { ok: true, status })
     },
 
-    // 设新密码：iam.user.write + reauth，无幂等；不回显新密码
+    // 设新密码：reauth，无幂等；不回显新密码
     'POST /v1/users/:id/reset-password': async (ctx) => {
-      if (!ctx.requirePermission('iam.user.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       // R101：reason 可选，缺省或空串不校验；给了就限 500 字（照旧写进审计）
@@ -477,9 +474,9 @@ export const users_: MockModule = {
       ctx.send(200, { ok: true, sessions_revoked: true })
     },
 
-    // 换发订阅链接：path 是订阅 id；iam.user.write + reauth；R11 不回令牌
+    // 换发订阅链接：path 是订阅 id；reauth；R11 不回令牌
     'POST /v1/subscriptions/:id/rotate': async (ctx) => {
-      if (!ctx.requirePermission('iam.user.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       if (!reasonOk(body.reason)) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { reason: '请写清为什么要换这条订阅链接，至少 5 个字。这条会进审计' })
@@ -490,9 +487,9 @@ export const users_: MockModule = {
       ctx.send(200, { user_email: owner.email, old_revoked: true })
     },
 
-    // 人工调账：billing.provider.write + reauth + 幂等 admin_user_balance_adjust
+    // 人工调账：reauth + 幂等 admin_user_balance_adjust
     'POST /v1/users/:id/balance': async (ctx) => {
-      if (!ctx.requirePermission('billing.provider.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('admin_user_balance_adjust', () => {
@@ -507,9 +504,8 @@ export const users_: MockModule = {
       })
     },
 
-    // 分配用户组：iam.user.write，无幂等；空串移出分组；不存在 422 无 fields
+    // 分配用户组：无 reauth、无幂等；空串移出分组；不存在 422 无 fields
     'POST /v1/users/:id/group': async (ctx) => {
-      if (!ctx.requirePermission('iam.user.write')) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       const groupId = typeof body.group_id === 'string' ? body.group_id : ''
@@ -519,9 +515,8 @@ export const users_: MockModule = {
       ctx.send(200, { ok: true })
     },
 
-    // 单订阅设备上限：iam.user.write，无幂等；limit 0–1000 或 null（R12：不存在 404）
+    // 单订阅设备上限：无 reauth、无幂等；limit 0–1000 或 null（R12：不存在 404）
     'POST /v1/subscriptions/:id/device-limit': async (ctx) => {
-      if (!ctx.requirePermission('iam.user.write')) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       const limit = body.limit

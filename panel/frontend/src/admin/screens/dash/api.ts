@@ -13,7 +13,7 @@ const decimalBytes = z.string().regex(/^\d+$/)
 const currency = z.string().min(1)
 
 // ---------------------------------------------------------------------------
-// GET v1/dashboard/backlog/notifications（DASH-01 冻结，ops.notification.read）
+// GET v1/dashboard/backlog/notifications（DASH-01 冻结）
 // ---------------------------------------------------------------------------
 export const backlogSchema = z.object({
   as_of: z.string(),
@@ -38,7 +38,7 @@ export const backlogSchema = z.object({
 export type Backlog = z.output<typeof backlogSchema>
 
 // ---------------------------------------------------------------------------
-// GET v1/overview（adminops.Overview，billing.ledger.read）
+// GET v1/overview（adminops.Overview）
 // ---------------------------------------------------------------------------
 const revenueRowSchema = z.object({
   currency,
@@ -69,7 +69,7 @@ export type RevenueRow = z.output<typeof revenueRowSchema>
 export type Overview = z.output<typeof overviewSchema>
 
 // ---------------------------------------------------------------------------
-// GET v1/revenue/timeseries（previous_total 为紧邻前一等长区间的 displayed_net 合计，billing.ledger.read）
+// GET v1/revenue/timeseries（previous_total 为紧邻前一等长区间的 displayed_net 合计）
 // ---------------------------------------------------------------------------
 export type RevenueCurrency = 'CNY' | 'USD'
 export type RevenueDays = 7 | 30 | 90
@@ -123,7 +123,7 @@ export type NodeTraffic = z.output<typeof nodeTrafficSchema>
 export type UserTraffic = z.output<typeof userTrafficSchema>
 
 // ---------------------------------------------------------------------------
-// GET v1/system/status（backup / database / state / components，security.audit.read）。
+// GET v1/system/status（backup / database / state / components）。
 // backup 段是 Go 按条件放键的 map：读不到目录时只有 dir / readable / message，没有备份时没有 latest 等，故保持可选
 // ---------------------------------------------------------------------------
 // has_seal：本地备份的封条（<归档>.seal）在不在；没有封条的恢复不了，后端不把它算作最新备份
@@ -183,7 +183,7 @@ export type SystemComponent = z.output<typeof componentSchema>
 export type SystemStatus = z.output<typeof systemStatusSchema>
 
 // ---------------------------------------------------------------------------
-// GET v1/stats/timeseries（security.audit.read）
+// GET v1/stats/timeseries
 // ---------------------------------------------------------------------------
 const activityPointSchema = z.object({
   day: z.string().regex(/^\d{2}-\d{2}$/),
@@ -197,38 +197,35 @@ export const activitySchema = z.object({ points: z.array(activityPointSchema) })
 export type ActivityPoint = z.output<typeof activityPointSchema>
 
 // ---------------------------------------------------------------------------
-// 查询 hook。enabled 由页面按权限决定：缺权限不发请求（DASH-01：不制造无意义的 404）。
+// 查询 hook。
 // GET v1/dashboard/tasks 不在这里：它与侧栏徽标共用，在 src/admin/tasks.ts。
 // ---------------------------------------------------------------------------
 const MINUTE = 60_000
 
-export function useBacklog(enabled: boolean) {
+export function useBacklog() {
   const api = useApi()
   return useQuery({
     queryKey: ['admin', 'dash', 'backlog'],
     queryFn: ({ signal }) => api.get('v1/dashboard/backlog/notifications', backlogSchema, { signal }),
-    enabled,
     refetchInterval: MINUTE,
   })
 }
 
-export function useOverview(enabled: boolean) {
+export function useOverview() {
   const api = useApi()
   return useQuery({
     queryKey: ['admin', 'dash', 'overview'],
     queryFn: ({ signal }) => api.get('v1/overview', overviewSchema, { signal }),
-    enabled,
     meta: { topics: ['orders.changed', 'subscriptions.changed', 'nodes.changed'] },
     refetchInterval: MINUTE,
   })
 }
 
-export function useRevenue(enabled: boolean, cur: RevenueCurrency, days: RevenueDays) {
+export function useRevenue(cur: RevenueCurrency, days: RevenueDays) {
   const api = useApi()
   return useQuery({
     queryKey: ['admin', 'dash', 'revenue', cur, days],
     queryFn: ({ signal }) => api.get('v1/revenue/timeseries', revenueSchema, { signal, query: { currency: cur, days } }),
-    enabled,
     meta: { topics: ['orders.changed'] },
     // 切币种、切区间时保留上一张图，不闪骨架
     placeholderData: keepPreviousData,
@@ -238,17 +235,16 @@ export function useRevenue(enabled: boolean, cur: RevenueCurrency, days: Revenue
 /** 仪表盘固定取近 24 小时前 5 名；「流量」KPI 读同一条查询的 totals，只发一次请求 */
 const TRAFFIC_QUERY = { range: '24h', limit: 5 } as const
 
-export function useNodeTraffic(enabled: boolean) {
+export function useNodeTraffic() {
   const api = useApi()
   return useQuery({
     queryKey: ['admin', 'dash', 'traffic', 'nodes'],
     queryFn: ({ signal }) => api.get('v1/dashboard/traffic/nodes', nodeTrafficSchema, { signal, query: TRAFFIC_QUERY }),
-    enabled,
     refetchInterval: 5 * MINUTE,
   })
 }
 
-/** DASH-01：两张流量卡都可读时，以先成功那张的 snapshot_at 为锚点，两边口径一致 */
+/** DASH-01：以节点排行的 snapshot_at 为锚点，两张排行口径一致；切到「用户」才请求 */
 export function useUserTraffic(enabled: boolean, snapshotAt: string | undefined) {
   const api = useApi()
   return useQuery({
@@ -260,22 +256,20 @@ export function useUserTraffic(enabled: boolean, snapshotAt: string | undefined)
   })
 }
 
-export function useSystemStatus(enabled: boolean) {
+export function useSystemStatus() {
   const api = useApi()
   return useQuery({
     queryKey: ['admin', 'dash', 'system'],
     queryFn: ({ signal }) => api.get('v1/system/status', systemStatusSchema, { signal }),
-    enabled,
     refetchInterval: MINUTE,
   })
 }
 
-export function useActivity(enabled: boolean) {
+export function useActivity() {
   const api = useApi()
   return useQuery({
     queryKey: ['admin', 'dash', 'activity'],
     queryFn: ({ signal }) => api.get('v1/stats/timeseries', activitySchema, { signal, query: { days: 14 } }),
-    enabled,
     refetchInterval: 5 * MINUTE,
   })
 }

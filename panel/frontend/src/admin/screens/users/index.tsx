@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
 import { href, navigate, useHashLocation } from '../../../core/router'
-import { useCan } from '../../actions'
 import type { AdminScreenProps } from '../index'
 import { BulkTab } from './BulkTab'
 import { DevicePolicy } from './DevicePolicy'
@@ -21,7 +20,6 @@ export default function Users({ tab, rest }: AdminScreenProps) {
 
 function ListTab({ rest, now }: { rest: string[]; now: Date }) {
   const location = useHashLocation()
-  const can = useCan()
   const f = location.query.get('f')
   const state: ListState = {
     filter: isStatusFilter(f) ? f : 'all',
@@ -51,7 +49,6 @@ function ListTab({ rest, now }: { rest: string[]; now: Date }) {
         state={state}
         onChange={onChange}
         linkFor={(id) => href(path(id), query(state))}
-        bulkHref={can('iam.user.write') ? href('/users/bulk') : null}
         now={now}
       />
       <UserDrawer

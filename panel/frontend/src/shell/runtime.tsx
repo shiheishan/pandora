@@ -70,7 +70,7 @@ export async function signOut(runtime: AppRuntime): Promise<void> {
 // ---------------------------------------------------------------------------
 // 实时事件：登录后连 GET v1/events，事件交给失效器按 meta.topics 刷新查询，
 // 同时转给调用方（后台顶栏的「实时事件」胶囊要列出来）。
-// unavailable = 4xx 停止（后台没有 ops.notification.read 时是 404），胶囊隐藏。
+// unavailable = 4xx 停止，胶囊隐藏。
 // ---------------------------------------------------------------------------
 export type RealtimeStatus = 'off' | 'connecting' | 'open' | 'reconnecting' | 'unavailable'
 

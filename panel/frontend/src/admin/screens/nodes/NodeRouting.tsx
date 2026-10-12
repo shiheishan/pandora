@@ -6,7 +6,7 @@ import { Button, Checkbox, Empty, IconClose, Input, QueryView, Select, TextArea,
 import { MATCH_KINDS, OUTBOUND_TYPES, insertRule, outboundToRow, routeToRow, rowsToOutbounds, rowsToRoutes, sourceLabel, type MatchKind, type OutboundRow, type RuleRow } from './logic'
 import { EffectivePreview, NodeGroupMembership } from './NodeRouteGroups'
 import css from './nodes.module.css'
-import { useCan, useEffectiveRouting, useFailure, useGlobalRouting, useInvalidateNodes, useNodeRouting } from './queries'
+import { useEffectiveRouting, useFailure, useGlobalRouting, useInvalidateNodes, useNodeRouting } from './queries'
 import { routingSaved, type NodeRouting as Routing } from './schemas'
 
 export function NodeRouting({ nodeId }: { nodeId: string }) {
@@ -26,13 +26,11 @@ export function NodeRouting({ nodeId }: { nodeId: string }) {
 
 function RoutingEditor({ nodeId, data }: { nodeId: string; data: Routing }) {
   const api = useApi()
-  const can = useCan()
   const toast = useToast()
   const fail = useFailure()
   const invalidate = useInvalidateNodes()
   const global = useGlobalRouting()
   const effective = useEffectiveRouting(nodeId)
-  const writable = can('node.config.publish')
   const [rules, setRules] = useState<RuleRow[]>(() => data.routes.map(routeToRow))
   const [outbounds, setOutbounds] = useState<OutboundRow[]>(() => data.outbounds.map(outboundToRow))
   const [ruleErrors, setRuleErrors] = useState<Record<number, string>>({})
@@ -81,7 +79,7 @@ function RoutingEditor({ nodeId, data }: { nodeId: string; data: Routing }) {
           <h4 className={css.sectionTitle}>分流规则</h4>
           <span className={css.faint}>本节点的规则排在所在路由组与全局规则之前，自上而下匹配，命中即停；这里的兜底规则会遮住组与全局的全部规则</span>
         </div>
-        <RuleRows rows={rules} errors={ruleErrors} outbounds={tags} disabled={!writable || save.isPending} onChange={setRules} emptyHint="沿用路由组与全局规则。加一条规则只影响这个节点。" />
+        <RuleRows rows={rules} errors={ruleErrors} outbounds={tags} disabled={save.isPending} onChange={setRules} emptyHint="沿用路由组与全局规则。加一条规则只影响这个节点。" />
       </section>
 
       <section>
@@ -89,19 +87,15 @@ function RoutingEditor({ nodeId, data }: { nodeId: string; data: Routing }) {
           <h4 className={css.sectionTitle}>本节点私有出站</h4>
           <span className={css.faint}>全局与路由组的出站在「路由」标签统一管理，这里可以直接引用；同名时本节点的覆盖它们</span>
         </div>
-        <OutboundRows rows={outbounds} errors={outErrors} disabled={!writable || save.isPending} onChange={setOutbounds} emptyHint="没有私有出站。" />
+        <OutboundRows rows={outbounds} errors={outErrors} disabled={save.isPending} onChange={setOutbounds} emptyHint="没有私有出站。" />
       </section>
 
       {formError && <div className={css.errorBox}>{formError}</div>}
-      {writable ? (
-        <div className={css.formActions}>
-          <Button variant="primary" busy={save.isPending} onClick={submit}>
-            保存并通知节点
-          </Button>
-        </div>
-      ) : (
-        <div className={css.faint}>当前账号只能查看，修改需要配置发布权限。</div>
-      )}
+      <div className={css.formActions}>
+        <Button variant="primary" busy={save.isPending} onClick={submit}>
+          保存并通知节点
+        </Button>
+      </div>
     </div>
   )
 }

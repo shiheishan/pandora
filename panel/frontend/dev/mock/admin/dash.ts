@@ -95,18 +95,6 @@ function bytes(gb: bigint, scale: bigint, share: bigint) {
   return { upload_bytes: String(upload), download_bytes: String(total - upload), total_bytes: String(total) }
 }
 
-// ---------------------------------------------------------------------------
-// 需要处理：条目按各自读权限过滤。withdrawals_pending 挂 marketing.commission.read（修订 R51）
-// ---------------------------------------------------------------------------
-const TASK_PERMS: Record<string, string> = {
-  tickets_open: 'ops.ticket.read',
-  withdrawals_pending: 'marketing.commission.read',
-  nodes_offline: 'node.read',
-  orders_pending_stale: 'billing.order.read',
-  notifications_backlog: 'ops.notification.read',
-  ledger_drift: 'billing.ledger.read',
-}
-
 const BACKLOG = {
   backlog_state: 'backlogged' as const,
   counts: { ready: 186, ready_retry: 12, scheduled: 28, scheduled_retry: 9, sending_unobservable: 0, failed_total: 9, suppressed_total: 4, bounced_total: 2 },
@@ -119,9 +107,7 @@ function isInt(raw: string | null): boolean {
 
 export const dash: MockModule = {
   routes: {
-    // ops.dashboard.read，处理器内再按条目权限过滤
     'GET /v1/dashboard/tasks': (ctx) => {
-      if (!ctx.requirePermission('ops.dashboard.read')) return
       const items = [
         { kind: 'tickets_open', count: 7, high_priority: 2, oldest_wait_seconds: 3 * 3600 + 540 },
         { kind: 'withdrawals_pending', count: 3, amounts: [{ currency: 'CNY', amount: 128_000 }] },
@@ -130,13 +116,11 @@ export const dash: MockModule = {
         { kind: 'orders_pending_stale', count: stalePendingCount(1800 * 1000), threshold_seconds: 1800 },
         { kind: 'notifications_backlog', queued: BACKLOG.counts.ready + BACKLOG.counts.scheduled, failed_total: BACKLOG.counts.failed_total, backlog_state: BACKLOG.backlog_state },
         { kind: 'ledger_drift', count: 0 },
-      ].filter((item) => ctx.user.permissions.includes(TASK_PERMS[item.kind]!))
+      ]
       ctx.send(200, { as_of: new Date().toISOString(), items })
     },
 
-    // DASH-01 冻结：ops.notification.read
     'GET /v1/dashboard/backlog/notifications': (ctx) => {
-      if (!ctx.requirePermission('ops.notification.read')) return
       const now = Date.now()
       ctx.send(200, {
         as_of: micros(new Date(now)),
@@ -151,9 +135,8 @@ export const dash: MockModule = {
       })
     },
 
-    // billing.ledger.read；yesterday / actual_yesterday / new_7_days / nodes 与 Go 一样必回
+    // yesterday / actual_yesterday / new_7_days / nodes 与 Go 一样必回
     'GET /v1/overview': (ctx) => {
-      if (!ctx.requirePermission('billing.ledger.read')) return
       const revenue = ['CNY', 'USD'].map((currency) => {
         const today = dailyRevenue(currency, 0)
         const yesterday = dailyRevenue(currency, 1)
@@ -185,9 +168,8 @@ export const dash: MockModule = {
       })
     },
 
-    // billing.ledger.read；previous_total 必回
+    // previous_total 必回
     'GET /v1/revenue/timeseries': (ctx) => {
-      if (!ctx.requirePermission('billing.ledger.read')) return
       const currency = (ctx.query.get('currency') ?? '').toUpperCase()
       if (currency !== 'CNY' && currency !== 'USD') return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { currency: '仅支持 CNY 或 USD' })
       const daysRaw = ctx.query.get('days')
@@ -201,9 +183,7 @@ export const dash: MockModule = {
       ctx.send(200, { currency, days, points, previous_total: sumNet(currency, days, days * 2) })
     },
 
-    // DASH-01 冻结：metering.read + node.read
     'GET /v1/dashboard/traffic/nodes': (ctx) => {
-      if (!ctx.requirePermission('metering.read') || !ctx.requirePermission('node.read')) return
       const w = trafficWindow(ctx)
       if (!w) return
       const all = NODE_ROWS.map((n, i) => ({
@@ -232,9 +212,8 @@ export const dash: MockModule = {
       })
     },
 
-    // DASH-01 冻结：metering.read + iam.user.read；带 identity 参数（任何值）直接 422
+    // 带 identity 参数（任何值）直接 422
     'GET /v1/dashboard/traffic/users': (ctx) => {
-      if (!ctx.requirePermission('metering.read') || !ctx.requirePermission('iam.user.read')) return
       if (ctx.query.has('identity')) return ctx.fail(422, 'validation_failed', '用户流量排行只提供脱敏邮箱')
       const w = trafficWindow(ctx)
       if (!w) return
@@ -263,9 +242,8 @@ export const dash: MockModule = {
       })
     },
 
-    // security.audit.read；state / components 必回，8 个组件总在
+    // state / components 必回，8 个组件总在
     'GET /v1/system/status': (ctx) => {
-      if (!ctx.requirePermission('security.audit.read')) return
       const now = Date.now()
       const files = Array.from({ length: 10 }, (_, i) => {
         const at = new Date(now - (i * 24 + 5) * 3_600_000)
@@ -307,9 +285,8 @@ export const dash: MockModule = {
       })
     },
 
-    // security.audit.read；active_users 必回；days 1–90，非法按 14
+    // active_users 必回；days 1–90，非法按 14
     'GET /v1/stats/timeseries': (ctx) => {
-      if (!ctx.requirePermission('security.audit.read')) return
       const raw = ctx.query.get('days')
       const n = isInt(raw) ? Number(raw) : 14
       const days = n >= 1 && n <= 90 ? n : 14

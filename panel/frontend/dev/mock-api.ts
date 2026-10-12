@@ -17,8 +17,6 @@ import { findRoute, type AnonContext, type Json, type MockApp, type MockContext,
 // ---------------------------------------------------------------------------
 export const MOCK_ACCOUNTS = {
   admin: { email: 'admin@pandora.dev', password: 'pandora-dev-pass' },
-  /** 只读管理员：用来实测侧栏、⌘K 与页头标签按权限隐藏 */
-  viewer: { email: 'viewer@pandora.dev', password: 'pandora-dev-pass' },
   portal: { email: 'user@pandora.dev', password: 'pandora-dev-pass' },
 } as const
 
@@ -59,11 +57,9 @@ function clearRefreshCookie(res: ServerResponse, app: MockApp) {
   setRefreshCookie(res, app, '', 0)
 }
 
-function tokenPayload(app: MockApp, token: string, user: MockUser) {
-  const base = { access_token: token, token_type: 'Bearer' as const, expires_in: ACCESS_EXPIRES_IN }
-  return app === 'admin'
-    ? { ...base, user_id: user.userId, permissions: user.permissions }
-    : { ...base, user_id: user.userId }
+// 后台与门户的登录响应同形：后台不分权限，不带权限码
+function tokenPayload(token: string, user: MockUser) {
+  return { access_token: token, token_type: 'Bearer' as const, expires_in: ACCESS_EXPIRES_IN, user_id: user.userId }
 }
 
 interface Session {
@@ -133,11 +129,8 @@ function parseObject(text: string): Json | null {
 const str = (v: unknown) => (typeof v === 'string' ? v : '')
 
 function initialUsers(app: MockApp): MockUser[] {
-  if (app === 'portal') return [{ ...MOCK_ACCOUNTS.portal, userId: randomUUID(), displayName: '张伟', permissions: [], roles: [] }]
-  return [
-    { ...MOCK_ACCOUNTS.admin, userId: randomUUID(), displayName: '林舟', permissions: ADMIN_PERMISSIONS, roles: [{ code: 'ops', name: '运维' }] },
-    { ...MOCK_ACCOUNTS.viewer, userId: randomUUID(), displayName: '只读', permissions: VIEWER_PERMISSIONS, roles: [{ code: 'viewer', name: '只读' }] },
-  ]
+  if (app === 'portal') return [{ ...MOCK_ACCOUNTS.portal, userId: randomUUID(), displayName: '张伟' }]
+  return [{ ...MOCK_ACCOUNTS.admin, userId: randomUUID(), displayName: '林舟' }]
 }
 
 export function mockApi(app: MockApp): Plugin {
@@ -205,7 +198,7 @@ export function mockApi(app: MockApp): Plugin {
       if (!user || user.password !== str(body.password)) return fail(res, 401, 'unauthorized', '邮箱或密码不正确')
       const token = issue(user.userId, req)
       bindRefresh(res, user.userId)
-      return send(res, 200, tokenPayload(app, token, user))
+      return send(res, 200, tokenPayload(token, user))
     }
     if (route === 'POST /v1/auth/refresh') {
       const cookies = parseCookieHeader(req.headers.cookie)
@@ -258,7 +251,7 @@ export function mockApi(app: MockApp): Plugin {
       if (password.length < 8) return fail(res, 422, 'validation_failed', '请求参数校验未通过', { password: '密码至少需要 8 个字符' })
       if (!/[a-z]/i.test(password) || !/\d/.test(password)) return fail(res, 422, 'validation_failed', '请求参数校验未通过', { password: '密码必须同时包含字母和数字' })
       registrations.delete(str(body.registration_token))
-      const user: MockUser = { email: reg.email, password, userId: randomUUID(), displayName: null, permissions: [], roles: [] }
+      const user: MockUser = { email: reg.email, password, userId: randomUUID(), displayName: null }
       users.set(reg.email, user)
       return send(res, 201, { user_id: user.userId, email: user.email })
     }
@@ -344,15 +337,7 @@ export function mockApi(app: MockApp): Plugin {
 
     if (app === 'admin') {
       if (route === 'GET /v1/me') {
-        return send(res, 200, {
-          user_id: user.userId,
-          kind: 'user',
-          permissions: user.permissions,
-          reauthed,
-          email: user.email,
-          display_name: user.displayName,
-          roles: user.roles,
-        })
+        return send(res, 200, { user_id: user.userId, email: user.email, display_name: user.displayName, reauthed })
       }
       if (route === 'POST /v1/auth/reauth') {
         const body = await base.body()
@@ -382,7 +367,6 @@ export function mockApi(app: MockApp): Plugin {
         display_name: user.displayName,
         status: 'active',
         created_at: '2026-05-04T11:40:00Z',
-        permissions: null,
       })
     }
 
@@ -403,11 +387,6 @@ export function mockApi(app: MockApp): Plugin {
           .filter(([token, s]) => s.userId === user.userId && token !== auth.token)
           .map(([token, s]) => ({ token, created: s.created, userAgent: s.userAgent })),
       revokeSession: (token) => sessions.get(token)?.userId === user.userId && sessions.delete(token),
-      requirePermission: (code) => {
-        if (user.permissions.includes(code)) return true
-        fail(res, 404, 'not_found', '资源不存在或无权访问')
-        return false
-      },
       requireReauth: () => {
         if (reauthed) return true
         fail(res, 403, 'reauth_required', '此操作需要重新验证身份')
@@ -474,65 +453,11 @@ export function mockApi(app: MockApp): Plugin {
           if (!res.headersSent) fail(res, 500, 'internal_error', '服务暂时不可用，请稍后重试')
         })
       })
-      const accounts = app === 'admin' ? [MOCK_ACCOUNTS.admin, MOCK_ACCOUNTS.viewer] : [MOCK_ACCOUNTS.portal]
-      server.config.logger.info(`  mock api (${app}): ${accounts.map((a) => a.email).join(' / ')}，口令 ${MOCK_ACCOUNTS.admin.password}`)
+      const account = app === 'admin' ? MOCK_ACCOUNTS.admin : MOCK_ACCOUNTS.portal
+      server.config.logger.info(`  mock api (${app}): ${account.email}，口令 ${account.password}`)
     },
   }
 }
-
-// ---------------------------------------------------------------------------
-// 管理员拿契约第 3 节出现过的全部权限码；只读账号只有几项读权限，
-// 看得到仪表盘、工单、用户（除流量重置）、套餐、订单、节点、邮件模板，
-// 看不到营销、内容与外观、安全与运维，以及各模块里缺权限的标签。
-// ---------------------------------------------------------------------------
-const ADMIN_PERMISSIONS: readonly string[] = [
-  'billing.adjustment.write',
-  'billing.ledger.read',
-  'billing.order.read',
-  'billing.order.write',
-  'billing.payment.read',
-  'billing.provider.write',
-  'catalog.publish',
-  'catalog.read',
-  'catalog.write',
-  'iam.user.read',
-  'iam.user.write',
-  'marketing.commission.read',
-  'marketing.commission.write',
-  'marketing.coupon.read',
-  'marketing.coupon.write',
-  'marketing.giftcard.read',
-  'marketing.giftcard.write',
-  'marketing.withdrawal.approve',
-  'metering.read',
-  'metering.reset.read',
-  'metering.reset.write',
-  'node.certificate.read',
-  'node.certificate.write',
-  'node.config.publish',
-  'node.identity.revoke',
-  'node.lifecycle',
-  'node.provision',
-  'node.read',
-  'node.write',
-  'ops.announcement.write',
-  'ops.content.write',
-  'ops.dashboard.read',
-  'ops.export',
-  'ops.notification.read',
-  'ops.notification.write',
-  'ops.ticket.read',
-  'ops.ticket.write',
-  'platform.appearance.read',
-  'platform.appearance.write',
-  'platform.plugin.read',
-  'platform.plugin.write',
-  'platform.settings.write',
-  'security.audit.read',
-  'security.risk.review',
-]
-
-const VIEWER_PERMISSIONS: readonly string[] = ['ops.ticket.read', 'iam.user.read', 'catalog.read', 'billing.order.read', 'node.read', 'ops.notification.read']
 
 const ADMIN_TOPICS: ReadonlyArray<readonly [string, string]> = [
   ['orders.changed', 'orders'],

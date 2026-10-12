@@ -455,13 +455,6 @@
   gap: var(--space-8);
 }
 
-.readonly {
-  padding: var(--space-12) 14px;
-  border-top: 1px solid var(--surface-3);
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-}
-
 .dialogText {
   margin: 0 0 var(--space-12);
   color: var(--text-2);

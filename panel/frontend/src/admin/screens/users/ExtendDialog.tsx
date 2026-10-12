@@ -9,7 +9,7 @@ import { EXTEND_DAYS_MAX, EXTEND_PRESETS, expiredDays, extendableSubscriptions, 
 import css from './Users.module.css'
 
 // ---------------------------------------------------------------------------
-// 加时长：POST v1/subscriptions/{id}/extend（billing.adjustment.write + reauth + 幂等 subscription_admin_extend）
+// 加时长：POST v1/subscriptions/{id}/extend（reauth + 幂等 subscription_admin_extend）
 // 订阅周期末、本周期流量配额、订阅链接有效期一起往后推；已用流量不清零，不开新周期。
 // 已过期 30 天内或试用中的订阅可以救回（w5expiry）：状态回到正常、流量按天数折算，
 // 提交前二次确认「已过期 N 天，延长后旧链接恢复可用」。

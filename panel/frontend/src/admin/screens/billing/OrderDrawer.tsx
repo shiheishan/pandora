@@ -4,7 +4,7 @@ import { formatDateTime, formatMoney, relativeTime } from '../../../core/format'
 import { href } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, Drawer, Empty, Input, Modal, Skeleton, Tag, TextArea, useToast } from '../../../ui'
-import { useCan, useFailure, useIntentKey } from '../../actions'
+import { useFailure, useIntentKey } from '../../actions'
 import { useInvalidateUsers } from '../users/api'
 import { cancelledSchema, markedPaidSchema, orderQueriedSchema, useInvalidateBilling, useOrder, useOrderPayments, type OrderDetail } from './api'
 import css from './Billing.module.css'
@@ -12,10 +12,9 @@ import { canCancel, canMarkPaid, canQueryChannel, ORDER_STATUS_VIEW, orderFacts,
 
 export function OrderDrawer({ id, onClose, now }: { id: string | null; onClose: () => void; now: Date }) {
   const q = useOrder(id)
-  const can = useCan()
   const [cancelling, setCancelling] = useState(false)
   const o = q.data
-  const cancellable = !!o && can('billing.order.write') && canCancel(o)
+  const cancellable = !!o && canCancel(o)
   return (
     <Drawer
       open={id !== null}
@@ -36,7 +35,7 @@ export function OrderDrawer({ id, onClose, now }: { id: string | null; onClose: 
         </div>
       ) : q.isError ? (
         isApiError(q.error, 'not_found') ? (
-          <Empty bare title="订单不存在" description="链接可能有误，或你没有查看订单的权限。" />
+          <Empty bare title="订单不存在" description="链接可能有误，或订单已被删除。" />
         ) : (
           <Empty
             bare
@@ -71,13 +70,12 @@ function Title({ o, now }: { o: OrderDetail; now: Date }) {
 }
 
 function Body({ o }: { o: OrderDetail }) {
-  const can = useCan()
   return (
     <div className={css.drawerBody}>
       <dl className={css.facts}>
         {orderFacts(o).map(([k, v]) => (
           <Fact key={k} k={k}>
-            {k === '用户' && can('iam.user.read') ? (
+            {k === '用户' ? (
               <a className={css.link} href={href(`/users/list/${encodeURIComponent(o.user_id)}`)}>
                 {v}
               </a>
@@ -101,9 +99,9 @@ function Body({ o }: { o: OrderDetail }) {
           </ul>
         </section>
       )}
-      {can('billing.payment.read') && <Payments id={o.id} />}
-      {can('billing.order.write') && canQueryChannel(o) && <QueryChannel o={o} />}
-      {can('billing.order.write') && canMarkPaid(o) && <MarkPaid o={o} />}
+      <Payments id={o.id} />
+      {canQueryChannel(o) && <QueryChannel o={o} />}
+      {canMarkPaid(o) && <MarkPaid o={o} />}
     </div>
   )
 }
@@ -119,15 +117,15 @@ function Fact({ k, children }: { k: string; children: React.ReactNode }) {
 
 /** 支付记录：以支付尝试为行，有入账看入账；线下入账标「人工确认」（契约后台-05） */
 function Payments({ id }: { id: string }) {
-  const q = useOrderPayments(id, true)
+  const q = useOrderPayments(id)
   return (
     <section className={css.section}>
       <h3 className={css.sectionTitle}>支付记录</h3>
       {q.isPending ? (
         <Skeleton height={44} />
       ) : q.isError ? (
-        // 404 = 没有 billing.payment.read（进来前已判过，这里只可能是订单刚被删）：不当报错
-        <span className={css.small}>{isApiError(q.error, 'not_found') ? '无权查看或记录不存在' : `读取失败：${q.error.message}`}</span>
+        // 404 只可能是订单刚被删：不当报错
+        <span className={css.small}>{isApiError(q.error, 'not_found') ? '记录不存在' : `读取失败：${q.error.message}`}</span>
       ) : paymentLines(q.data).length === 0 ? (
         <span className={css.small}>尚无支付尝试</span>
       ) : (
@@ -151,7 +149,7 @@ function Payments({ id }: { id: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// 向渠道查单：POST v1/orders/{id}/query（billing.order.write + 幂等，不挂 reauth）
+// 向渠道查单：POST v1/orders/{id}/query（幂等，不挂 reauth）
 // 查到已付就按回调同一流程补记；结果留在框里，补记后详情与列表经整体失效重画
 // ---------------------------------------------------------------------------
 function QueryChannel({ o }: { o: OrderDetail }) {
@@ -203,7 +201,7 @@ function QueryChannel({ o }: { o: OrderDetail }) {
 }
 
 // ---------------------------------------------------------------------------
-// 手工标记已支付：POST v1/orders/{id}/mark-paid（billing.order.write + reauth + 幂等）
+// 手工标记已支付：POST v1/orders/{id}/mark-paid（reauth + 幂等）
 // 金额由服务端从订单读；设计稿只有凭证号，契约补必填的收款说明
 // ---------------------------------------------------------------------------
 function MarkPaid({ o }: { o: OrderDetail }) {
@@ -287,7 +285,7 @@ function MarkPaid({ o }: { o: OrderDetail }) {
 }
 
 // ---------------------------------------------------------------------------
-// 取消订单：POST v1/orders/{id}/cancel（billing.order.write + 幂等，不挂 reauth）
+// 取消订单：POST v1/orders/{id}/cancel（幂等，不挂 reauth）
 // 设计确认框没有原因输入，契约补必填的取消原因（后端 5–500 字，错了回 400 不是 422）
 // ---------------------------------------------------------------------------
 function CancelDialog({ o, open, onClose }: { o: OrderDetail; open: boolean; onClose: () => void }) {
