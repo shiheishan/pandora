@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -127,10 +128,14 @@ func (f *fakeNodes) ServingNodeCounts(_ context.Context, versionIDs []uuid.UUID)
 type fakeSales struct {
 	counts map[uuid.UUID]int64
 	ids    []uuid.UUID
+	err    error
 }
 
 func (f *fakeSales) PackSoldCounts(_ context.Context, packIDs []uuid.UUID) (map[uuid.UUID]int64, error) {
 	f.ids = packIDs
+	if f.err != nil {
+		return nil, f.err
+	}
 	return f.counts, nil
 }
 
@@ -616,6 +621,37 @@ func TestAdminSetTrafficPackStatus(t *testing.T) {
 	}
 	if resp.Pack.SoldCount != 99 {
 		t.Fatalf("sold_count %d", resp.Pack.SoldCount)
+	}
+}
+
+// 12b. 写操作已提交后取已售份数失败：只记日志，仍回 200，sold_count 按 0
+func TestAdminPackWriteIgnoresSalesError(t *testing.T) {
+	packID := mustParseUUID("77777777-7777-4777-8777-777777777777")
+	f := &fakeSvc{
+		setPackStatusOut: service.TrafficPack{
+			ID: packID, Name: "p", TrafficBytes: 1, Currency: money.CNY,
+			UnitAmount: decimal.Zero, Status: service.PackArchived,
+		},
+	}
+	h := New(f)
+	h.UsePackSales(&fakeSales{err: errors.New("统计库不可用")})
+	e := newAdminEngine(h, nil)
+	path := "/v1/traffic-packs/" + packID.String() + "/status"
+	w := doJSON(e, http.MethodPost, path, `{"status":"archived","expected_updated_at":"2026-03-01T12:00:00Z"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d %s", w.Code, w.Body)
+	}
+	var resp struct {
+		Pack struct {
+			ID        string `json:"id"`
+			SoldCount int64  `json:"sold_count"`
+		} `json:"pack"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Pack.ID != packID.String() || resp.Pack.SoldCount != 0 {
+		t.Fatalf("pack %+v", resp.Pack)
 	}
 }
 

@@ -110,27 +110,28 @@ type wizardPriceRequest struct {
 }
 
 type createPlanCompleteRequest struct {
-	Code                 string               `json:"code"`
-	Name                 string               `json:"name"`
-	Description          *string              `json:"description"`
-	Visibility           string               `json:"visibility"`
-	SortOrder            int                  `json:"sort_order"`
-	AllowNewPurchase     *bool                `json:"allow_new_purchase"`
-	AllowRenewal         *bool                `json:"allow_renewal"`
-	AllowUpgrade         *bool                `json:"allow_upgrade"`
-	VisibleGroupIDs      []string             `json:"visible_group_ids"`
-	PurchaseLimitPerUser *int                 `json:"purchase_limit_per_user"`
-	StockTotal           *int                 `json:"stock_total"`
-	Highlights           []string             `json:"highlights"`
-	Recommended          bool                 `json:"recommended"`
-	TrafficGB            *int64               `json:"traffic_gb"`
-	MaxDevices           *int                 `json:"max_devices"`
-	ThrottleKbps         *int                 `json:"throttle_kbps"`
-	QuotaResetStrategy   string               `json:"quota_reset_strategy"`
-	QuotaResetDay        *int16               `json:"quota_reset_day"`
-	PoolIDs              []string             `json:"pool_ids"` // P5 专用端点绑定线路，此处仅收下 JSON 字段
-	Prices               []wizardPriceRequest `json:"prices"`
-	Publish              bool                 `json:"publish"`
+	Code                 string   `json:"code"`
+	Name                 string   `json:"name"`
+	Description          *string  `json:"description"`
+	Visibility           string   `json:"visibility"`
+	SortOrder            int      `json:"sort_order"`
+	AllowNewPurchase     *bool    `json:"allow_new_purchase"`
+	AllowRenewal         *bool    `json:"allow_renewal"`
+	AllowUpgrade         *bool    `json:"allow_upgrade"`
+	VisibleGroupIDs      []string `json:"visible_group_ids"`
+	PurchaseLimitPerUser *int     `json:"purchase_limit_per_user"`
+	StockTotal           *int     `json:"stock_total"`
+	Highlights           []string `json:"highlights"`
+	Recommended          bool     `json:"recommended"`
+	TrafficGB            *int64   `json:"traffic_gb"`
+	MaxDevices           *int     `json:"max_devices"`
+	ThrottleKbps         *int     `json:"throttle_kbps"`
+	QuotaResetStrategy   string   `json:"quota_reset_strategy"`
+	QuotaResetDay        *int16   `json:"quota_reset_day"`
+	// PoolIDs：前端向导要上架就必须选节点池，会发非空列表；节点池 P5 做，P5 之前收下后忽略（不回 422，免得向导没法用）。
+	PoolIDs []string             `json:"pool_ids"`
+	Prices  []wizardPriceRequest `json:"prices"`
+	Publish bool                 `json:"publish"`
 }
 
 type updatePlanCompleteRequest struct {
@@ -152,7 +153,8 @@ type updatePlanCompleteRequest struct {
 	MaxDevices           optionalInt           `json:"max_devices"`
 	ThrottleKbps         optionalInt           `json:"throttle_kbps"`
 	Prices               *[]wizardPriceRequest `json:"prices"`
-	PoolIDs              *[]string             `json:"pool_ids"` // P5 专用端点绑定线路，此处仅收下 JSON 字段
+	// PoolIDs：前端改了线路才发非空列表（没改发 null）；节点池 P5 做，P5 之前收下后忽略。
+	PoolIDs *[]string `json:"pool_ids"`
 }
 
 // optionalInt 区分字段缺省与显式 null（与旧 adminops.OptionalInt 一致）。

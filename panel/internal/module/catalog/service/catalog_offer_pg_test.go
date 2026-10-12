@@ -193,22 +193,46 @@ func TestTrafficPackLifecycle(t *testing.T) {
 	}
 }
 
-// --- 12. 删用户组外键 ---
+// --- 12. 删用户组：可见组级联删除，只往收紧方向变 ---
 
-func TestDeleteUserGroupReferencedByPlan(t *testing.T) {
+func TestDeleteUserGroupCascadesPlanVisibility(t *testing.T) {
 	e, ctx := newEnv(t)
 	ctx, _ = seedAdmin(t, ctx, e)
 	g := seedGroup(t, ctx, e, "")
-	_ = publishedPlan(t, ctx, e, publishedPlanOpts{
+	plan := publishedPlan(t, ctx, e, publishedPlanOpts{
 		Visibility: VisibilityGroup, VisibleGroupIDs: []uuid.UUID{g},
-		ExtraPrices: []WizardPrice{
-			{BillingInterval: "month", IntervalCount: 1, UnitAmount: decimal.RequireFromString("9.00"), Currency: "CNY"},
-		},
 	})
-	err := e.exec(ctx, `DELETE FROM user_groups WHERE id = ?`, g)
-	if err == nil {
-		t.Fatal("应外键拒绝删除")
+	if err := e.exec(ctx, `DELETE FROM user_groups WHERE id = ?`, g); err != nil {
+		t.Fatalf("只被套餐可见组引用的分组应能删除：%v", err)
 	}
+	if n := scanInt64(t, ctx, e, `SELECT count(*) FROM plan_visible_groups WHERE plan_id = ?`, plan.ID); n != 0 {
+		t.Fatalf("可见组关联行应被级联删除，剩 %d", n)
+	}
+	got, err := e.svc.GetPlan(ctx, plan.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Visibility != VisibilityGroup || len(got.VisibleGroupIDs) != 0 {
+		t.Fatalf("可见性应仍是 group 且组为空：%s %v", got.Visibility, got.VisibleGroupIDs)
+	}
+	other := seedGroup(t, ctx, e, "")
+	viewer := seedUser(t, ctx, e, &other)
+	list, err := e.svc.PortalCatalog(ctx, &viewer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if portalHasPlan(list, plan.ID) {
+		t.Fatal("删掉最后一个可见组后套餐不应对任何人可见")
+	}
+}
+
+// 组价仍引用分组时不许删组（prices.user_group_id 保持 RESTRICT）。
+func TestDeleteUserGroupReferencedByPriceRestricted(t *testing.T) {
+	e, ctx := newEnv(t)
+	ctx, _ = seedAdmin(t, ctx, e)
+	g := seedGroup(t, ctx, e, "")
+	_ = groupOnlyPublishedPlan(t, ctx, e, g)
+	err := execSavepoint(t, ctx, e, "sp_delgrp", `DELETE FROM user_groups WHERE id = ?`, g)
 	var pg *pgconn.PgError
 	if !errors.As(err, &pg) || pg.Code != "23503" {
 		t.Fatalf("期望 23503，得到 %v", err)

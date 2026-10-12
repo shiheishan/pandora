@@ -354,7 +354,10 @@ type OfferRequest struct {
 	UserID *uuid.UUID
 	// Manual 为真是后台人工开单：不看可见性、上架窗口与用户组。
 	Manual bool
-	// Lock 为真时把套餐行与价格行 FOR SHARE 锁到事务结束（建单时用，与后台改目录互斥）。
+	// PlanID 是期望的套餐；非 nil 时 Offer 校验价格属于它（续费传订阅的套餐，防止拿别的套餐的价格续费）。
+	PlanID *uuid.UUID
+	// Lock 为真时套餐行 FOR NO KEY UPDATE、价格行 FOR SHARE，锁到事务结束（建单时用）：
+	// 与后台改目录互斥，同一套餐的建单排队，同一事务随后的 ReserveStock 不会死锁。
 	Lock bool
 	// Now 为零值时取当前时间。
 	Now time.Time

@@ -6,9 +6,11 @@ import (
 	"github.com/aegispanel/aegis/internal/module/catalog/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
+	plog "github.com/aegispanel/aegis/internal/pkg/log"
 	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 // packRow 与旧 adminops.TrafficPackRow JSON 一致。
@@ -111,6 +113,18 @@ func packRowsFrom(ctx *gin.Context, h *Handler, packs []service.TrafficPack) ([]
 	return rows, nil
 }
 
+// packRowAfterWrite 在写操作提交之后拼响应行：已售份数取不到时只记日志、按 0 返回，
+// 不能因为统计失败把已提交的写回成 500（幂等记录会把失败当结果重放）。
+func packRowAfterWrite(c *gin.Context, h *Handler, pack service.TrafficPack) packRow {
+	counts, err := packSoldCounts(c, h, []uuid.UUID{pack.ID})
+	if err != nil {
+		plog.From(c.Request.Context()).Warn("traffic pack sold count failed after write",
+			zap.String("pack_id", pack.ID.String()), zap.Error(err))
+		return packRowFrom(pack, 0)
+	}
+	return packRowFrom(pack, counts[pack.ID])
+}
+
 func (h *Handler) listTrafficPacks(c *gin.Context) {
 	status := c.Query("status")
 	packs, err := h.svc.ListTrafficPacks(c.Request.Context(), status)
@@ -141,12 +155,8 @@ func (h *Handler) createTrafficPack(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	rows, err := packRowsFrom(c, h, []service.TrafficPack{pack})
-	if err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	httpx.Created(c, createTrafficPackResponse{Pack: rows[0]})
+	row := packRowAfterWrite(c, h, pack)
+	httpx.Created(c, createTrafficPackResponse{Pack: row})
 }
 
 func (h *Handler) updateTrafficPack(c *gin.Context) {
@@ -166,12 +176,8 @@ func (h *Handler) updateTrafficPack(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	rows, err := packRowsFrom(c, h, []service.TrafficPack{pack})
-	if err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	httpx.OK(c, updateTrafficPackResponse{Pack: rows[0]})
+	row := packRowAfterWrite(c, h, pack)
+	httpx.OK(c, updateTrafficPackResponse{Pack: row})
 }
 
 func (h *Handler) setTrafficPackStatus(c *gin.Context) {
@@ -190,10 +196,6 @@ func (h *Handler) setTrafficPackStatus(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	rows, err := packRowsFrom(c, h, []service.TrafficPack{pack})
-	if err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	httpx.OK(c, setTrafficPackStatusResponse{Pack: rows[0]})
+	row := packRowAfterWrite(c, h, pack)
+	httpx.OK(c, setTrafficPackStatusResponse{Pack: row})
 }

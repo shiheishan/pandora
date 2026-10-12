@@ -3,7 +3,7 @@
 --
 -- 与旧表相比：去掉租户列与 RLS；不再有与套餐一一对应的商品表，价格直接挂在套餐上；
 -- 金额改为 NUMERIC(20,2)（元），不加「x = round(x, 2)」的 CHECK：该类型先舍入再查约束，那条永远成立，
--- 多余小数只靠 repo 写入前的 money.Check 拦下；套餐可见的用户组从 uuid 数组改为关联表，删组时由外键挡住；
+-- 多余小数只靠 repo 写入前的 money.Check 拦下；套餐可见的用户组从 uuid 数组改为关联表，删组时级联删掉关联行（见该表注释）；
 -- 卖点从 text[] 改为 jsonb 数组；版本状态只留有写入方的 draft、published；超额策略只有「停止服务」一种，不再建列。
 -- 状态转换的规则在 Go（service 的转换表）；库里只兜「已发布快照不可改、价格只能归档」与行级约束。
 
@@ -50,10 +50,12 @@ CREATE TABLE plans (
 
 CREATE INDEX plans_sort_idx ON plans (sort_order, created_at, id);
 
--- 分组可见（visibility = 'group'）的套餐对哪些用户组可见。组里还被套餐引用时不许删组（RESTRICT）。
+-- 分组可见（visibility = 'group'）的套餐对哪些用户组可见。是否对所有人可见由 plans.visibility 决定，
+-- 这里的空集只表示「没有组能看到」。所以删组时级联删掉关联行：被删组的用户看不到，其他人不受影响，
+-- 只会往收紧的方向变（删掉最后一个组时套餐对谁都不可见，不会放宽成公开）。
 CREATE TABLE plan_visible_groups (
   plan_id       uuid NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
-  user_group_id uuid NOT NULL REFERENCES user_groups(id) ON DELETE RESTRICT,
+  user_group_id uuid NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
   created_at    timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (plan_id, user_group_id)
 );
@@ -278,7 +280,25 @@ CREATE TRIGGER prices_guard
   BEFORE UPDATE OR DELETE ON prices
   FOR EACH ROW EXECUTE FUNCTION catalog_guard_price();
 
+-- 行级触发器挡不住 TRUNCATE：已发布快照、价格与流量包被订单快照引用，语句级一律拒绝。
+-- 测试清库（session_replication_role = replica）不触发它。
+CREATE TRIGGER plan_versions_deny_truncate
+  BEFORE TRUNCATE ON plan_versions FOR EACH STATEMENT EXECUTE FUNCTION deny_mutation();
+CREATE TRIGGER entitlements_deny_truncate
+  BEFORE TRUNCATE ON entitlements FOR EACH STATEMENT EXECUTE FUNCTION deny_mutation();
+CREATE TRIGGER quota_definitions_deny_truncate
+  BEFORE TRUNCATE ON quota_definitions FOR EACH STATEMENT EXECUTE FUNCTION deny_mutation();
+CREATE TRIGGER prices_deny_truncate
+  BEFORE TRUNCATE ON prices FOR EACH STATEMENT EXECUTE FUNCTION deny_mutation();
+CREATE TRIGGER traffic_packs_deny_truncate
+  BEFORE TRUNCATE ON traffic_packs FOR EACH STATEMENT EXECUTE FUNCTION deny_mutation();
+
 -- +goose Down
+DROP TRIGGER IF EXISTS traffic_packs_deny_truncate ON traffic_packs;
+DROP TRIGGER IF EXISTS prices_deny_truncate ON prices;
+DROP TRIGGER IF EXISTS quota_definitions_deny_truncate ON quota_definitions;
+DROP TRIGGER IF EXISTS entitlements_deny_truncate ON entitlements;
+DROP TRIGGER IF EXISTS plan_versions_deny_truncate ON plan_versions;
 DROP TABLE IF EXISTS traffic_packs;
 DROP TABLE IF EXISTS prices;
 DROP TABLE IF EXISTS quota_definitions;

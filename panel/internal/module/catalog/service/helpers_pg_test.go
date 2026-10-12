@@ -28,6 +28,8 @@ import (
 type fakeUsers struct {
 	emails  map[uuid.UUID]string
 	groupBy map[uuid.UUID]*uuid.UUID
+	// deleted 里的用户按「已被删」处理：UserGroupID 回 NotFound（与 identity 的约定一致）。
+	deleted map[uuid.UUID]bool
 }
 
 func (f *fakeUsers) Emails(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error) {
@@ -41,6 +43,9 @@ func (f *fakeUsers) Emails(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]st
 }
 
 func (f *fakeUsers) UserGroupID(_ context.Context, userID uuid.UUID) (*uuid.UUID, error) {
+	if f.deleted[userID] {
+		return nil, errs.New(errs.NotFound)
+	}
 	if f.groupBy == nil {
 		return nil, nil
 	}

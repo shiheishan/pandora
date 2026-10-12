@@ -227,3 +227,15 @@ func TestFreezeTriggerPriceArchiveOK(t *testing.T) {
 		t.Fatalf("active→archived 且 row_version+1 应成功: %v", err)
 	}
 }
+
+// 行级触发器挡不住 TRUNCATE：五张表都有语句级守卫（CASCADE 也挡，避免先撞外键检查）。
+func TestFreezeTriggerDenyTruncate(t *testing.T) {
+	e, ctx := newEnv(t)
+	publishedFixture(t, e, ctx)
+	for _, table := range []string{"plan_versions", "entitlements", "quota_definitions", "prices", "traffic_packs"} {
+		t.Run(table, func(t *testing.T) {
+			err := execSavepoint(t, ctx, e, "sp_trunc", "TRUNCATE "+table+" CASCADE")
+			assertRestrictViolation(t, err)
+		})
+	}
+}

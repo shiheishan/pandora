@@ -8,6 +8,7 @@ import (
 
 	"github.com/aegispanel/aegis/internal/module/catalog/model"
 	"github.com/aegispanel/aegis/internal/module/catalog/repo"
+	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
 
 // offerNow 返回 req.Now，为零值时 s.now()。
@@ -31,7 +32,8 @@ func (s *Service) offerViewer(ctx context.Context, req OfferRequest) (viewer, er
 	return viewer{LoggedIn: false, GroupID: nil}, nil
 }
 
-// currentVersions 批量取这些套餐的当前版本：收齐非 nil 的 CurrentVersionID，一次 repo.VersionsByIDs → s.versionsWithChildren，返回 版本 id → Version。
+// currentVersions 批量取这些套餐的当前版本：收齐非 nil 的 CurrentVersionID，固定 3 条 SQL（版本、权益、配额），返回 版本 id → Version。
+// 库里只保证当前版本属于本套餐，不保证已发布；不是 published 的版本不放进结果，调用方按「没有发布版本」处理。
 func (s *Service) currentVersions(ctx context.Context, plans []Plan) (map[uuid.UUID]Version, error) {
 	ids := make([]uuid.UUID, 0, len(plans))
 	for _, p := range plans {
@@ -52,16 +54,36 @@ func (s *Service) currentVersions(ctx context.Context, plans []Plan) (map[uuid.U
 	}
 	out := make(map[uuid.UUID]Version, len(versions))
 	for _, v := range versions {
+		if v.Status != VersionPublished {
+			continue
+		}
 		out[v.ID] = v
 	}
 	return out, nil
 }
 
+// planLock：建单时套餐行用 FOR NO KEY UPDATE（同一套餐的建单排队，随后的 ReserveStock 不会升级锁而死锁）。
 func planLock(req OfferRequest) repo.Lock {
+	if req.Lock {
+		return repo.ForNoKeyUpdate
+	}
+	return repo.NoLock
+}
+
+// priceLock：建单时价格行用 FOR SHARE（与后台归档价格互斥）。
+func priceLock(req OfferRequest) repo.Lock {
 	if req.Lock {
 		return repo.ForShare
 	}
 	return repo.NoLock
+}
+
+// priceGone 是价格不存在或不属于期望套餐时的错误：续费 ErrRenewPriceGone，其它 ErrNotFound。
+func priceGone(use Use) error {
+	if use == UseRenewal {
+		return ErrRenewPriceGone
+	}
+	return ErrNotFound
 }
 
 func packLock(lock bool) repo.Lock {
@@ -72,6 +94,9 @@ func packLock(lock bool) repo.Lock {
 }
 
 // Offer 按价格取下单快照（新购、续费、换套餐目标共用）。
+// req.PlanID 非 nil 时校验价格属于这个套餐（续费必须传订阅的套餐）：不属于时续费回 ErrRenewPriceGone，其它用途回 ErrNotFound。
+// 返回的 Version 是套餐的当前发布版本；续费时订阅要沿用自己的版本，调用方另用 VersionsByIDs 取。
+// req.Lock 为真时：先把套餐行 FOR NO KEY UPDATE，再把价格行 FOR SHARE，锁到事务结束；之后同一事务里可以直接 ReserveStock。
 func (s *Service) Offer(ctx context.Context, priceID uuid.UUID, req OfferRequest) (Offer, error) {
 	now := s.offerNow(req)
 	v, err := s.offerViewer(ctx, req)
@@ -84,12 +109,13 @@ func (s *Service) Offer(ctx context.Context, priceID uuid.UUID, req OfferRequest
 		return Offer{}, catalogErr(err)
 	}
 	if !found {
-		if req.Use == UseRenewal {
-			return Offer{}, ErrRenewPriceGone
-		}
-		return Offer{}, ErrNotFound
+		return Offer{}, priceGone(req.Use)
 	}
 	price := priceFromModel(mPrice)
+	// 价格的 plan_id 被冻结触发器钉死，这里查一次即可，锁后不必再查。
+	if req.PlanID != nil && price.PlanID != *req.PlanID {
+		return Offer{}, priceGone(req.Use)
+	}
 
 	lk := planLock(req)
 	mPlan, found, err := s.repo.PlanByID(ctx, price.PlanID, lk)
@@ -106,15 +132,12 @@ func (s *Service) Offer(ctx context.Context, priceID uuid.UUID, req OfferRequest
 	plan := plans[0]
 
 	if req.Lock {
-		mPrice, found, err = s.repo.PriceByID(ctx, priceID, repo.ForShare)
+		mPrice, found, err = s.repo.PriceByID(ctx, priceID, priceLock(req))
 		if err != nil {
 			return Offer{}, catalogErr(err)
 		}
 		if !found {
-			if req.Use == UseRenewal {
-				return Offer{}, ErrRenewPriceGone
-			}
-			return Offer{}, ErrNotFound
+			return Offer{}, priceGone(req.Use)
 		}
 		price = priceFromModel(mPrice)
 	}
@@ -141,7 +164,7 @@ func (s *Service) Offer(ctx context.Context, priceID uuid.UUID, req OfferRequest
 	return Offer{Plan: plan, Version: ver, Price: price}, nil
 }
 
-// PlanOffers 取一个套餐对这次用途能用的价格。
+// PlanOffers 取一个套餐对这次用途能用的价格（req.PlanID 不看，套餐由 planID 指定）。
 func (s *Service) PlanOffers(ctx context.Context, planID uuid.UUID, req OfferRequest) (OfferPlan, error) {
 	now := s.offerNow(req)
 	v, err := s.offerViewer(ctx, req)
@@ -167,7 +190,7 @@ func (s *Service) PlanOffers(ctx context.Context, planID uuid.UUID, req OfferReq
 		return OfferPlan{}, err
 	}
 
-	mPrices, err := s.repo.ActivePrices(ctx, []uuid.UUID{planID}, lk)
+	mPrices, err := s.repo.ActivePrices(ctx, []uuid.UUID{planID}, priceLock(req))
 	if err != nil {
 		return OfferPlan{}, catalogErr(err)
 	}
@@ -263,7 +286,11 @@ func (s *Service) PortalCatalog(ctx context.Context, userID *uuid.UUID) ([]Offer
 	now := s.offerNow(req)
 	v, err := s.offerViewer(ctx, req)
 	if err != nil {
-		return nil, catalogErr(err)
+		// 令牌还有效但用户已被删：目录只是浏览，按匿名处理；下单路径仍报错。
+		if errs.As(err).Code != errs.NotFound {
+			return nil, catalogErr(err)
+		}
+		v = viewer{}
 	}
 
 	rows, err := s.repo.SellablePlans(ctx)
@@ -317,7 +344,7 @@ func (s *Service) PortalCatalog(ctx context.Context, userID *uuid.UUID) ([]Offer
 	return out, nil
 }
 
-// PlansByIDs 批量取套餐（含已归档），给订单、订阅列表展示用；一条 SQL 读套餐 + 一次可见组。
+// PlansByIDs 批量取套餐（含已归档），给订单、订阅列表展示用；与 id 个数无关，固定 2 条 SQL（套餐、可见组）。
 func (s *Service) PlansByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]Plan, error) {
 	out := make(map[uuid.UUID]Plan)
 	if len(ids) == 0 {
@@ -337,7 +364,7 @@ func (s *Service) PlansByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUI
 	return out, nil
 }
 
-// VersionsByIDs 批量取版本（含权益与配额）。
+// VersionsByIDs 批量取版本（含权益与配额）；与 id 个数无关，固定 3 条 SQL（版本、权益、配额）。
 func (s *Service) VersionsByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]Version, error) {
 	out := make(map[uuid.UUID]Version)
 	if len(ids) == 0 {
@@ -357,7 +384,7 @@ func (s *Service) VersionsByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.
 	return out, nil
 }
 
-// PricesByIDs 批量取价格（含已归档）。
+// PricesByIDs 批量取价格（含已归档）；一条 SQL。
 func (s *Service) PricesByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]Price, error) {
 	out := make(map[uuid.UUID]Price)
 	if len(ids) == 0 {
@@ -374,7 +401,7 @@ func (s *Service) PricesByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UU
 	return out, nil
 }
 
-// TrafficPacksByIDs 批量取流量包（含已下架）。
+// TrafficPacksByIDs 批量取流量包（含已下架）；一条 SQL。
 func (s *Service) TrafficPacksByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]TrafficPack, error) {
 	out := make(map[uuid.UUID]TrafficPack)
 	if len(ids) == 0 {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"strings"
 	"time"
@@ -21,6 +22,10 @@ const (
 	maxPlanHighlights     = 5
 	maxPlanHighlightRunes = 40
 	maxPackBytes          = int64(1 << 50)
+	// maxInt4 是库里 int 列的上界；超出时回 422，不让它变成 22003 → 500。
+	maxInt4 = math.MaxInt32
+	// maxTrafficGB 是向导里流量额度的上界（1 PiB，与流量包同口径），乘 BytesPerGB 不会溢出 int64。
+	maxTrafficGB = int64(1 << 20)
 )
 
 var maxPackAmountYuan = decimal.New(1_000_000, 0)
@@ -93,11 +98,11 @@ func validatePlanFields(code, name, visibility string, groupIDs []uuid.UUID, fro
 	if from != nil && until != nil && !until.After(*from) {
 		fields["visible_until"] = "必须晚于 visible_from"
 	}
-	if purchaseLimit != nil && *purchaseLimit <= 0 {
-		fields["purchase_limit_per_user"] = "必须为正整数"
+	if purchaseLimit != nil && (*purchaseLimit <= 0 || *purchaseLimit > maxInt4) {
+		fields["purchase_limit_per_user"] = "必须为正整数，且不超过 2147483647"
 	}
-	if stock != nil && *stock < 0 {
-		fields["stock_total"] = "不能为负数"
+	if stock != nil && (*stock < 0 || *stock > maxInt4) {
+		fields["stock_total"] = "不能为负数，且不超过 2147483647"
 	}
 	return fields
 }
@@ -126,6 +131,9 @@ func preparePlanInput(in *PlanInput) error {
 	for k, v := range hlFields {
 		fields[k] = v
 	}
+	if in.SortOrder < -maxInt4 || in.SortOrder > maxInt4 {
+		fields["sort_order"] = "排序号超出范围"
+	}
 	if len(fields) > 0 {
 		return errs.Invalid(fields)
 	}
@@ -147,17 +155,17 @@ func validateVersionInput(in *VersionInput) error {
 	} else if in.QuotaResetDay != nil {
 		fields["quota_reset_day"] = "非固定日策略不能设置该字段"
 	}
-	if in.GracePeriodHours < 0 {
-		fields["grace_period_hours"] = "不能为负数"
+	if in.GracePeriodHours < 0 || in.GracePeriodHours > maxInt4 {
+		fields["grace_period_hours"] = "不能为负数，且不超过 2147483647"
 	}
-	if in.MaxDevices != nil && *in.MaxDevices <= 0 {
-		fields["max_devices"] = "必须为正整数"
+	if in.MaxDevices != nil && (*in.MaxDevices <= 0 || *in.MaxDevices > maxInt4) {
+		fields["max_devices"] = "必须为正整数，且不超过 2147483647"
 	}
-	if in.MaxConcurrent != nil && *in.MaxConcurrent <= 0 {
-		fields["max_concurrent"] = "必须为正整数"
+	if in.MaxConcurrent != nil && (*in.MaxConcurrent <= 0 || *in.MaxConcurrent > maxInt4) {
+		fields["max_concurrent"] = "必须为正整数，且不超过 2147483647"
 	}
-	if in.DeviceReleaseHours < 0 {
-		fields["device_release_hours"] = "不能为负数"
+	if in.DeviceReleaseHours < 0 || in.DeviceReleaseHours > maxInt4 {
+		fields["device_release_hours"] = "不能为负数，且不超过 2147483647"
 	}
 	switch in.OveragePolicy {
 	case "", OveragePolicySuspend:
@@ -167,8 +175,8 @@ func validateVersionInput(in *VersionInput) error {
 	if in.OveragePolicy == "" {
 		in.OveragePolicy = OveragePolicySuspend
 	}
-	if in.ThrottleKbps != nil && *in.ThrottleKbps <= 0 {
-		fields["throttle_kbps"] = "必须为正整数；不限速请留空"
+	if in.ThrottleKbps != nil && (*in.ThrottleKbps <= 0 || *in.ThrottleKbps > maxInt4) {
+		fields["throttle_kbps"] = "必须为正整数且不超过 2147483647；不限速请留空"
 	}
 	if in.Notes != nil && (hasNUL(*in.Notes) || utf8.RuneCountInString(*in.Notes) > 2000) {
 		fields["notes"] = "最多 2000 个字符，且不能包含非法字符"
@@ -297,6 +305,8 @@ func validateWizardCreate(in *WizardCreate) error {
 	}
 	if in.TrafficGB != nil && *in.TrafficGB < 0 {
 		fields["traffic_gb"] = "流量不能是负数；不限流量请留空"
+	} else if in.TrafficGB != nil && *in.TrafficGB > maxTrafficGB {
+		fields["traffic_gb"] = "流量不能超过 1048576 GB（1 PiB）"
 	}
 	if in.MaxDevices != nil && *in.MaxDevices < 0 {
 		fields["max_devices"] = "设备数不能是负数；不限请留空"
@@ -394,6 +404,8 @@ func validateWizardQuotaEdits(in WizardUpdate) error {
 	fields := map[string]string{}
 	if in.TrafficGB != nil && *in.TrafficGB < 0 {
 		fields["traffic_gb"] = "流量不能是负数；不限流量填 0"
+	} else if in.TrafficGB != nil && *in.TrafficGB > maxTrafficGB {
+		fields["traffic_gb"] = "流量不能超过 1048576 GB（1 PiB）"
 	}
 	if in.MaxDevices.Set && in.MaxDevices.Value != nil && *in.MaxDevices.Value <= 0 {
 		fields["max_devices"] = "必须为正整数；不限设备请传 null"

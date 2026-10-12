@@ -23,6 +23,9 @@ type Lock int
 const (
 	NoLock Lock = iota
 	ForShare
+	// ForNoKeyUpdate 用于建单时锁套餐行：同一事务随后要 UPDATE 这一行（库存），
+	// 先拿 FOR SHARE 再升级会让两笔并发下单互等死锁；它不挡外键检查的 FOR KEY SHARE。
+	ForNoKeyUpdate
 	ForUpdate
 )
 
@@ -31,6 +34,8 @@ func (l Lock) suffix() string {
 	switch l {
 	case ForShare:
 		return " FOR SHARE"
+	case ForNoKeyUpdate:
+		return " FOR NO KEY UPDATE"
 	case ForUpdate:
 		return " FOR UPDATE"
 	}
