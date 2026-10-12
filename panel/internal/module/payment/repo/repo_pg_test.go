@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -164,6 +165,13 @@ func TestMinAcceptingAmount(t *testing.T) {
 	loCode := "pgp_lo_" + uuid.NewString()[:6]
 	hiID := insertProvider(t, r, ctx, hiCode, "1.00", true, true, []string{"alipay"})
 	loID := insertProvider(t, r, ctx, loCode, "0.50", true, true, []string{"alipay"})
+	// 只有在线渠道（epay）算数：demo 与 offline 不参与最低额
+	for _, id := range []uuid.UUID{hiID, loID} {
+		if _, err := r.UpdateProviderFields(ctx, id, map[string]any{"adapter": "epay"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insertProvider(t, r, ctx, "pgp_demo_"+uuid.NewString()[:6], "0.02", true, true, []string{"alipay"})
 
 	min, found, err := r.MinAcceptingAmount(ctx, "CNY")
 	if err != nil {
@@ -172,6 +180,9 @@ func TestMinAcceptingAmount(t *testing.T) {
 	wantLo := decimal.RequireFromString("0.50")
 	if !found || min.GreaterThan(wantLo) {
 		t.Fatalf("want min <= 0.50 among accepting (含本事务两渠道), got %s found=%v", min, found)
+	}
+	if min.Equal(decimal.RequireFromString("0.02")) {
+		t.Fatal("demo 渠道不应参与最低额")
 	}
 	if !min.Equal(wantLo) {
 		// 共享库上可能有更低 min 的已提交渠道，只断言本事务插入的 0.50 在候选里
@@ -324,5 +335,101 @@ func TestPayments(t *testing.T) {
 	badFee.Amount = decimal.RequireFromString("9.90")
 	if err := inSavepoint(t, g, func() error { return r.InsertPayment(ctx, badFee) }); !errors.Is(err, ErrCheck) {
 		t.Fatalf("fee > amount: want ErrCheck, got %v", err)
+	}
+}
+
+// payments 只追加：UPDATE、DELETE 都被拒（23001）。
+func TestPaymentsAppendOnly(t *testing.T) {
+	r, ctx, g := newRepo(t)
+	user := mkUser(t, g)
+	prov := insertProvider(t, r, ctx, "pgp_ao_"+uuid.NewString()[:6], "0", true, true, []string{"alipay"})
+	p := basePayment(uuid.Must(uuid.NewV7()), user, prov, "pay-ao-"+uuid.NewString())
+	if err := r.InsertPayment(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	err := inSavepoint(t, g, func() error {
+		return g.Exec(`UPDATE payments SET amount = 1.00 WHERE id = ?`, p.ID).Error
+	})
+	if pgCode(err) != "23001" {
+		t.Fatalf("UPDATE payments: want 23001, got code=%s err=%v", pgCode(err), err)
+	}
+	err = inSavepoint(t, g, func() error {
+		return g.Exec(`DELETE FROM payments WHERE id = ?`, p.ID).Error
+	})
+	if pgCode(err) != "23001" {
+		t.Fatalf("DELETE payments: want 23001, got code=%s err=%v", pgCode(err), err)
+	}
+}
+
+// ProviderLastEvents 只看验过签的事件；PurgeUnverifiedEvents 只删 30 天以前、验签失败的事件。
+func TestUnverifiedEventsLastSeenAndPurge(t *testing.T) {
+	r, ctx, g := newRepo(t)
+	prov := insertProvider(t, r, ctx, "pgp_pu_"+uuid.NewString()[:6], "0", true, true, []string{"alipay"})
+	ins := func(eventID string, verified bool, age string) {
+		t.Helper()
+		status, processed := "pending", "NULL"
+		if !verified {
+			status, processed = "ignored", "now()"
+		}
+		q := `INSERT INTO payment_events (provider_id, provider_event_id, event_type, signature_verified, processing_status, processed_at, received_at)
+VALUES (?, ?, 'payment.unknown', ?, ?, ` + processed + `, now() - ?::interval)`
+		if err := g.Exec(q, prov, eventID, verified, status, age).Error; err != nil {
+			t.Fatalf("insert %s: %v", eventID, err)
+		}
+	}
+	ins("ok-old", true, "40 days")
+	ins("ok-recent", true, "2 hours")
+	ins("unverified:recent", false, "1 hour")
+	ins("unverified:old", false, "40 days")
+
+	var okRecentAt time.Time
+	if err := g.Raw(`SELECT received_at FROM payment_events WHERE provider_id = ? AND provider_event_id = 'ok-recent'`, prov).
+		Scan(&okRecentAt).Error; err != nil {
+		t.Fatal(err)
+	}
+	last, err := r.ProviderLastEvents(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := last[prov]; !ok || !got.Equal(okRecentAt) {
+		t.Fatalf("最近回调应是验过签的 %v，得 %v（ok=%v）", okRecentAt, got, ok)
+	}
+
+	remaining := func() map[string]bool {
+		t.Helper()
+		var ids []string
+		if err := g.Raw(`SELECT provider_event_id FROM payment_events WHERE provider_id = ?`, prov).Scan(&ids).Error; err != nil {
+			t.Fatal(err)
+		}
+		m := map[string]bool{}
+		for _, id := range ids {
+			m[id] = true
+		}
+		return m
+	}
+
+	// before 早于 40 天前：什么都不删
+	if _, err := r.PurgeUnverifiedEvents(ctx, time.Now().AddDate(0, 0, -60), 100); err != nil {
+		t.Fatal(err)
+	}
+	if !remaining()["unverified:old"] {
+		t.Fatal("before 之后的事件不应删")
+	}
+	// before 是现在：库函数仍只删 30 天以前的
+	n, err := r.PurgeUnverifiedEvents(ctx, time.Now(), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n < 1 {
+		t.Fatalf("应删掉至少 1 行，得 %d", n)
+	}
+	left := remaining()
+	if left["unverified:old"] {
+		t.Fatal("30 天以前验签失败的事件应删")
+	}
+	for _, id := range []string{"unverified:recent", "ok-old", "ok-recent"} {
+		if !left[id] {
+			t.Fatalf("%s 不应删", id)
+		}
 	}
 }

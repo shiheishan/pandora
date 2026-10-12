@@ -44,12 +44,14 @@ type OrderSummaryRow struct {
 	ProviderName *string
 }
 
-// LockActiveIntent 读订单的在途意图（status='requires_action'）并 FOR UPDATE；没有时 found=false。
+// LockActiveIntent 读订单的在途意图（status='requires_action'）并 FOR NO KEY UPDATE；没有时 found=false。
+// 不用 FOR UPDATE：回调插收款时外键检查会对意图行加 KEY SHARE，FOR UPDATE 与它冲突，
+// 会和「订单锁 → 去支付」的事务互相等成死锁；NO KEY UPDATE 与 KEY SHARE 相容。
 func (r *Repo) LockActiveIntent(ctx context.Context, orderID uuid.UUID) (model.Intent, bool, error) {
 	var rows []model.Intent
 	if err := r.d.Conn(ctx).
 		Where("order_id = ? AND status = 'requires_action'", orderID).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: "NO KEY UPDATE"}).
 		Limit(1).Find(&rows).Error; err != nil {
 		return model.Intent{}, false, err
 	}

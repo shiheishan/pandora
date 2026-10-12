@@ -96,6 +96,11 @@ CREATE TABLE payments (
 CREATE INDEX payments_order_idx ON payments (order_id, paid_at DESC);
 CREATE INDEX payments_provider_paid_idx ON payments (provider_id, paid_at DESC);
 
+-- 收款是「钱收到了」的证据，代码里只插不改：挡住改与删（加外键之类的 DDL 不受影响）。
+CREATE TRIGGER payments_append_only
+  BEFORE UPDATE OR DELETE OR TRUNCATE ON payments
+  FOR EACH STATEMENT EXECUTE FUNCTION deny_mutation();
+
 -- 渠道回调与查单事件：(provider_id, provider_event_id) 唯一是重放的防线；证据，不许删。
 CREATE TABLE payment_events (
   id                  uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -120,6 +125,50 @@ CREATE TRIGGER payment_events_no_delete
   BEFORE DELETE OR TRUNCATE ON payment_events
   FOR EACH STATEMENT EXECUTE FUNCTION deny_delete();
 
+-- 只按 signature_verified 查最近回调（后台渠道卡），验签失败的伪造请求不算
+CREATE INDEX payment_events_unverified_idx ON payment_events (received_at) WHERE NOT signature_verified;
+
+-- 保留期清理：只删验签失败、早于 p_before 的事件（匿名请求留下的证据，30 天后不再有用），每次最多 p_batch_limit 行，
+-- 由定时任务 retention:payment_unverified_events 循环调用。截止时间不晚于 30 天前：调用方传更晚的时间也只删 30 天以前的。
+-- 验过签的事件与被挂账案引用的事件一律不删。SECURITY DEFINER 以迁移角色执行；session_replication_role = replica
+-- 只在本函数执行期间让禁删触发器不触发（也会跳过外键触发器，所以上面用 NOT EXISTS 自己排除被引用的行）。
+-- +goose StatementBegin
+CREATE FUNCTION purge_unverified_payment_events(p_before timestamptz, p_batch_limit int)
+RETURNS int
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+SET session_replication_role = replica
+AS $$
+DECLARE
+  v_cutoff  timestamptz;
+  v_deleted int;
+BEGIN
+  IF p_before IS NULL THEN
+    RAISE EXCEPTION '截止时间不能为空' USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+  IF p_batch_limit IS NULL OR p_batch_limit < 1 OR p_batch_limit > 10000 THEN
+    RAISE EXCEPTION '每批删除行数必须在 1 到 10000 之间' USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+  v_cutoff := least(p_before, now() - interval '30 days');
+
+  DELETE FROM public.payment_events e
+   USING (SELECT x.id
+            FROM public.payment_events x
+           WHERE NOT x.signature_verified
+             AND x.received_at < v_cutoff
+             AND NOT EXISTS (SELECT 1 FROM public.late_payment_cases c WHERE c.payment_event_id = x.id)
+           ORDER BY x.received_at
+           LIMIT p_batch_limit) d
+   WHERE e.id = d.id;
+  GET DIAGNOSTICS v_deleted = ROW_COUNT;
+  RETURN v_deleted;
+END $$;
+-- +goose StatementEnd
+
+-- 运行角色的 EXECUTE 由部署时的角色配置授予（运行角色不是本函数的属主）
+REVOKE ALL ON FUNCTION purge_unverified_payment_events(timestamptz, int) FROM PUBLIC;
+
 -- 迟到支付挂账：订单已取消、超时或已付之后才到的钱，记进 late_payment_suspense 科目，等管理员处理。
 -- 每笔收款至多一个挂账案；处理只有一种：转入用户余额（applied）。
 CREATE TABLE late_payment_cases (
@@ -127,7 +176,7 @@ CREATE TABLE late_payment_cases (
   -- 外键由 00013 补
   order_id          uuid NOT NULL,
   order_no          text NOT NULL CHECK (char_length(order_no) BETWEEN 1 AND 64),
-  -- 收款到达时订单的状态（由 order 的结算回调告知）
+  -- 收款到达时订单的状态（由 order 的结算回调告知）；取值必须是前端 ORDER_STATUSES 里的值，由 order 保证
   order_status      text NOT NULL CHECK (order_status ~ '^[a-z_]{1,32}$'),
   user_id           uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   payment_id        uuid NOT NULL REFERENCES payments(id) ON DELETE RESTRICT,
@@ -164,6 +213,7 @@ CREATE TRIGGER late_payment_cases_no_delete
   FOR EACH STATEMENT EXECUTE FUNCTION deny_delete();
 
 -- +goose Down
+DROP FUNCTION IF EXISTS purge_unverified_payment_events(timestamptz, int);
 DROP TABLE IF EXISTS late_payment_cases;
 DROP TABLE IF EXISTS payment_events;
 DROP TABLE IF EXISTS payments;

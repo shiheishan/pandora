@@ -2,6 +2,7 @@ package repo
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -91,4 +92,21 @@ func (r *Repo) PaymentsByOrder(ctx context.Context, orderID uuid.UUID) ([]Paymen
 		return []PaymentRow{}, nil
 	}
 	return out, nil
+}
+
+// SavePoint 在当前事务里开保存点 name（只用常量名，不拼接外部输入）。
+func (r *Repo) SavePoint(ctx context.Context, name string) error {
+	return r.d.Conn(ctx).Exec("SAVEPOINT " + name).Error
+}
+
+// RollbackToSavePoint 回滚到保存点 name：其后的写入撤销，失败过的语句也不再让事务作废。
+func (r *Repo) RollbackToSavePoint(ctx context.Context, name string) error {
+	return r.d.Conn(ctx).Exec("ROLLBACK TO SAVEPOINT " + name).Error
+}
+
+// PurgeUnverifiedEvents 调库函数 purge_unverified_payment_events(before, batch)，返回删除行数。
+func (r *Repo) PurgeUnverifiedEvents(ctx context.Context, before time.Time, batch int) (int, error) {
+	var n int
+	err := r.d.Conn(ctx).Raw("SELECT purge_unverified_payment_events(?, ?)", before, batch).Scan(&n).Error
+	return n, err
 }

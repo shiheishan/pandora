@@ -33,7 +33,7 @@ func (r *Repo) ProviderByID(ctx context.Context, id uuid.UUID) (model.Provider, 
 	return r.providerOne(ctx, "id = ?", id, false)
 }
 
-// LockProviderByCode 按代码读一行并 FOR UPDATE。
+// LockProviderByCode 按代码读一行并 FOR NO KEY UPDATE（不挡回调、建意图对渠道行的外键检查）。
 func (r *Repo) LockProviderByCode(ctx context.Context, code string) (model.Provider, bool, error) {
 	return r.providerOne(ctx, "code = ?", code, true)
 }
@@ -41,7 +41,7 @@ func (r *Repo) LockProviderByCode(ctx context.Context, code string) (model.Provi
 func (r *Repo) providerOne(ctx context.Context, where string, arg any, lock bool) (model.Provider, bool, error) {
 	q := r.d.Conn(ctx).Where(where, arg).Limit(1)
 	if lock {
-		q = q.Clauses(clause.Locking{Strength: "UPDATE"})
+		q = q.Clauses(clause.Locking{Strength: "NO KEY UPDATE"})
 	}
 	var rows []model.Provider
 	if err := q.Find(&rows).Error; err != nil {
@@ -125,12 +125,14 @@ func (r *Repo) UpdateProviderFields(ctx context.Context, id uuid.UUID, fields ma
 	return res.RowsAffected == 1, nil
 }
 
-// MinAcceptingAmount 启用、收新单、币种含 cur 的渠道里最小的 min_amount；一个都没有时 found=false。
+// MinAcceptingAmount 启用、收新单、币种含 cur 的在线渠道里最小的 min_amount；一个都没有时 found=false。
+// 线下与 demo 渠道不算（它们的 min_amount 是 0，会把门槛拉没）。
 func (r *Repo) MinAcceptingAmount(ctx context.Context, cur string) (decimal.Decimal, bool, error) {
 	var min sql.NullString
 	err := r.d.Conn(ctx).Raw(
 		`SELECT MIN(min_amount) FROM payment_providers
-		 WHERE enabled AND accepting_new AND currencies @> jsonb_build_array(?::text)`,
+		 WHERE enabled AND accepting_new AND adapter NOT IN ('offline', 'demo_hmac')
+		   AND currencies @> jsonb_build_array(?::text)`,
 		cur,
 	).Scan(&min).Error
 	if err != nil {
@@ -193,14 +195,14 @@ func (r *Repo) ProviderSuccessRates(ctx context.Context, since time.Time) (map[u
 	return out, nil
 }
 
-// ProviderLastEvents 各渠道最近一条事件的 received_at。
+// ProviderLastEvents 各渠道最近一条验过签的事件的 received_at（伪造的回调不算）。
 func (r *Repo) ProviderLastEvents(ctx context.Context) (map[uuid.UUID]time.Time, error) {
 	var rows []struct {
 		ProviderID uuid.UUID
 		LastAt     time.Time
 	}
 	err := r.d.Conn(ctx).Raw(
-		`SELECT provider_id, MAX(received_at) AS last_at FROM payment_events GROUP BY provider_id`,
+		`SELECT provider_id, MAX(received_at) AS last_at FROM payment_events WHERE signature_verified GROUP BY provider_id`,
 	).Scan(&rows).Error
 	if err != nil {
 		return nil, err
