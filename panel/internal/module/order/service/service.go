@@ -21,6 +21,7 @@ import (
 	paymentsvc "github.com/aegispanel/aegis/internal/module/payment/service"
 	promosvc "github.com/aegispanel/aegis/internal/module/promo/service"
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
+	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
@@ -191,4 +192,43 @@ func (s *Service) completeCreate(ctx context.Context, orderID uuid.UUID, build f
 		return errs.Wrap(errs.Internal, err)
 	}
 	return s.idem.CompleteBound(ctx, claim, resp, idemsvc.Resource{Type: ResourceOrder, ID: orderID})
+}
+
+// principal 取 ctx 里的登录主体；没有主体回 401。
+func principal(ctx context.Context) (authn.Principal, error) {
+	p, ok := authn.From(ctx)
+	if !ok || p.UserID == uuid.Nil {
+		return authn.Principal{}, errs.New(errs.Unauthorized)
+	}
+	return p, nil
+}
+
+// portalUser 取门户登录用户的 ID（门户接口用；后台会话也有 UserID，但门户路由只挂门户鉴权）。
+func portalUser(ctx context.Context) (uuid.UUID, error) {
+	p, err := principal(ctx)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return p.UserID, nil
+}
+
+// adminPrincipal 取后台登录主体；不是后台会话回 403。
+func adminPrincipal(ctx context.Context) (authn.Principal, error) {
+	p, err := principal(ctx)
+	if err != nil {
+		return p, err
+	}
+	if p.Audience != authn.AudienceAdmin {
+		return p, errs.New(errs.Forbidden)
+	}
+	return p, nil
+}
+
+// actorFrom 把登录主体转成预留流水上的操作者（后台 admin、门户 user）。
+func actorFrom(p authn.Principal) Actor {
+	id := p.UserID
+	if p.Audience == authn.AudienceAdmin {
+		return Actor{Kind: ActorAdmin, ID: &id}
+	}
+	return Actor{Kind: ActorUser, ID: &id}
 }
