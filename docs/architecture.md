@@ -215,7 +215,10 @@ identity, auth ─► settings, audit
 每个状态机在 service 里写成一张转换表，加一个纯函数 `CanTransition(from, to)`；repo 的状态更新带上 `WHERE status = 旧状态`，影响 0 行就当并发冲突。库里只保留 `CHECK (status IN (…))`。
 
 佣金的两个状态机比旧代码简化：
-- 佣金条目：pending → available（解冻）。没有 reversed。需要人工复核的条目（同源、同源检查失败或未装配、解冻时待结科目余额不足）标 `review_required`，停在 pending、不参与自动解冻。
+- 佣金条目：pending → available（解冻）、pending → voided（复核作废，终态）。没有 reversed。需要人工复核的条目（同源、同源检查失败或未装配、解冻时待结科目余额不足）标 `review_required`，停在 pending、不参与自动解冻；后台在「待复核佣金」里处理（`POST /commission/entries/:id/review`，RequireAuth → RecentReauth，不挂幂等，只对 `status = 'pending' AND review_required` 的条目有效，否则 409）：
+  - 通过：清 `review_required`、记 `reviewed_by` / `reviewed_at`，状态仍是 pending，`review_reason` 留作历史；之后由 `commission:settle` 照常解冻（冻结期已过的下一轮就解冻）。审计 `commission.entry_approved`，原因可选。
+  - 作废：同一事务里记 `commission_voided`（借 推荐人待结佣金 / 贷 平台收入 main，按来源即这条佣金唯一），条目转 voided，写 `void_txn_id`、`void_reason`（≥5 字）与复核人、复核时间。审计 `commission.entry_voided`。作废的条目不计入任何佣金汇总与概览金额。
+  - 形状由 00016 的 CHECK 钉住：复核人与复核时间成对；有原因而不再待复核的必须复核过；voided 必须有冲回交易、作废原因与复核时间。
 - 提现：requested → approved / rejected，approved → paid。没有 reviewing、processing、failed、returned；只有打款这一步记账（commission_paid）。
 
 ---
