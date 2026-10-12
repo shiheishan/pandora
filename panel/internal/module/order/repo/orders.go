@@ -119,6 +119,20 @@ SELECT COUNT(*) FROM orders
 	return n > 0, nil
 }
 
+// HasPaidOrder 判断用户有没有付过钱的订单（已支付或已履约、应付大于 0；余额全额付的单应付为 0，不算）。
+func (r *Repo) HasPaidOrder(ctx context.Context, userID uuid.UUID) (bool, error) {
+	var ok bool
+	err := r.d.Conn(ctx).Raw(`
+SELECT EXISTS (SELECT 1 FROM orders
+ WHERE user_id = ?
+   AND status IN ('paid', 'fulfilled')
+   AND payable_amount > 0)`, userID).Scan(&ok).Error
+	if err != nil {
+		return false, mapErr(err)
+	}
+	return ok, nil
+}
+
 // ExpiryCandidates 扫描已到期的 held 预留对应、仍待支付的订单 id（SKIP LOCKED）。
 func (r *Repo) ExpiryCandidates(ctx context.Context, at time.Time, limit int) ([]uuid.UUID, error) {
 	var rows []struct{ OrderID uuid.UUID }
