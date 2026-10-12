@@ -1,6 +1,6 @@
 # 面板后端架构（换栈设计，P0）
 
-状态：草案。工程取舍已经按根 CLAUDE.md 的原则定下，第 18 节的产品问题等用户定。
+状态：已定稿（2026-10-12）。工程取舍按根 CLAUDE.md 的原则定；第 18 节的产品问题由用户定：Q3 佣金按订单总额（含余额抵扣），其余按建议。
 依据：2026-10-12 的六份只读调查（`.claude/p0/` 下的 api、auth、db-money、db-rest、jobs-infra、node，不入库）。
 下文的「现状」只写到能说明取舍的程度；细节和出处以调查报告为准。
 
@@ -239,7 +239,7 @@ identity, auth ─► settings, audit
 ## 7. 订阅
 
 - 状态口径（生效、可救回、已停用）只在 subscription service 里定义，其他模块调它，不再各写一份 SQL。
-- 现在定义了 8 个状态，Go 只写入其中 4 个（pending、active、expired，以及没有入口的 trialing）。精简是产品问题，见第 18 节 Q1。设计按建议方案写：`active`、`expired` 两个状态加 `renewal_closed_at`，建单直接插入 active。
+- 现在定义了 8 个状态，Go 只写入其中 4 个（pending、active、expired，以及没有入口的 trialing）。用户已定（Q1）：只留 `active`、`expired` 两个状态加 `renewal_closed_at`，建单直接插入 active。
 - 到期：`billing:expire_subscriptions` 每分钟跑一次；另外，节点会话管理器按「下一个最早到期时刻」安排一次名单重算，保证到期的用户在秒级内从节点上断开（现在就是这样）。
 - 订阅拉取的限流（每个凭据每小时若干次）从 PG 计数改为 Redis 限流；`subscription_fetch_log` 仍留在 PG，作为日志。
 
@@ -270,7 +270,7 @@ identity, auth ─► settings, audit
 
 - 每个请求的验证：解析 JWT（0 次往返），再用一个 Lua 脚本一次完成三件事：读会话、核对 uid/aud/abs_exp/epoch、按 5 分钟节流更新 last_seen（1 次 Redis 往返）。门户鉴权从 1 次 DB 往返变成 1 次 Redis 往返；后台另加 1 次 DB 往返展开权限。
 - 会话状态不在 PG 里留副本。登录、登出、踢人、刷新重放这些事件写进审计。
-- 会话寿命：门户 30 天；后台的寿命和空闲超时见第 18 节 Q4。
+- 会话寿命：门户 30 天；后台绝对寿命 7 天、空闲 2 小时失效（Q4），空闲按 last_seen 判断。
 
 ### 8.3 refresh
 
@@ -302,7 +302,7 @@ identity, auth ─► settings, audit
 - public 与 admin 两个域互不相通；staff 不能登录门户；后台用户没有角色时，登录返回与口令错误相同的 401（IAM-006）；用户不存在时用 DummyVerify 对齐耗时。
 - Argon2id 参数不变，事务外计算哈希，public 与 admin 各一个并发闸。
 - 重认证窗口 15 分钟，排在幂等之前；reauth 接口改写会话里的 reauth_at（现在不写），并且按 audience 校验会话（现在不校验）。
-- 登录限流改为 Strict（Redis 故障时回 503）。是否按账号锁定，见第 18 节 Q7。
+- 登录限流改为 Strict（Redis 故障时回 503）；同一账号 15 分钟内失败 10 次暂停 15 分钟（Q7），计数放 Redis。
 
 ### 8.7 前端要改的
 
@@ -322,7 +322,7 @@ identity, auth ─► settings, audit
 - 权限码在 Go 里定义成常量，迁移种子与常量表由一个测试对齐。
 - 每个请求从库里展开权限（一条 SQL），不缓存，撤权在下一个请求生效。缺权限回 404。
 - 授予、收回仍然只有 `pandora admin grant / revoke`。授予后台角色时吊销该用户的门户会话（现在不吊销）。
-- 28 个从不检查的权限码去留，见第 18 节 Q6。
+- 28 个从不检查的权限码不再种（Q6）。
 
 ---
 
@@ -457,7 +457,7 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 | `retention:<表>` | 每小时一次，各表错开 | 2–5m | low |
 | `reconcile:user_generation` | `@every 1m`，把 queued 或租约过期的 job 重新入队 | 30s | low |
 
-- 保留期清理覆盖的表：原有的 node_metrics、node_traffic_reports、各级流量汇总、node_alive_ips、subscription_fetch_log、activity_daily；新补的 idempotency_keys、registration_sessions、verification_codes、plugin_hook_deliveries、user_generation_jobs（结果清除后 N 天删行）、notification_deliveries。各表的保留期见第 18 节 Q5。
+- 保留期清理覆盖的表：原有的 node_metrics、node_traffic_reports、各级流量汇总、node_alive_ips、subscription_fetch_log、activity_daily；新补的 idempotency_keys、registration_sessions、verification_codes、plugin_hook_deliveries、user_generation_jobs（结果清除后 N 天删行）、notification_deliveries。各表的保留期按第 18 节 Q5。
 - 「支付开通后发通知」改为在开通的事务里直接写 delivery，不再靠 `ScanPaidOrders` 回看 2 小时（扫描器停机超过 2 小时会漏发）。
 - 留在 serve 里、不进 asynq 的：心跳合并、节点会话、SSE hub。删除的：nonce 清理、epoch LISTEN、节点存活巡检（会话在不在就是在线状态）。
 
@@ -555,17 +555,17 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 
 ---
 
-## 18. 需要你定的产品问题
+## 18. 产品问题与结论（用户 2026-10-12 定）
 
-| # | 问题 | 现状 | 建议 |
+| # | 问题 | 现状 | 结论 |
 |---|---|---|---|
-| Q1 | 订阅状态要不要精简为 active、expired 两个，外加「续费窗口已关」标记？ | 定义了 8 个状态，trialing、past_due、grace、paused、cancelled 都没有写入入口 | 精简。以后真做试用、暂停、取消时再加 |
-| Q2 | 退款要不要做？ | 退款表都在，但没有任何写入方，后台和门户也没有退款入口 | 本阶段不做，相关表和守卫不建；以后做的话按新规矩单独设计 |
-| Q3 | 佣金的基数包不包括余额抵扣的部分？ | 包括（基数 = 订单总额，含余额抵扣） | 你定。不包括的话，返佣只按实付现金算，用余额刷单返佣的空间会小一些 |
-| Q4 | 后台会话的寿命和空闲超时？ | 与门户相同，30 天，没有空闲超时 | 后台：绝对寿命 7 天，空闲 2 小时失效；门户维持 30 天 |
-| Q5 | 各类数据保留多久？ | 审计永久保留；6 张表从不清理 | 审计 400 天；幂等键 30 天；注册会话和验证码 7 天；插件和通知投递记录 90 天；批量建用户的 job 30 天；流量与指标沿用现有期限（48 小时到 400 天） |
-| Q6 | 28 个种了但从不检查的权限码删不删？ | 种子里有，路由不检查 | 删除，用到时再加 |
-| Q7 | 登录要不要按账号限制失败次数？阈值多少？ | 只按 IP、路由和 /24 网段限流；Redis 故障时放行 | 同一账号 15 分钟内失败 10 次，暂停 15 分钟（期间口令正确也拒绝，提示稍后再试）。注意：按账号锁定可能被人拿来锁别人的账号 |
+| Q1 | 订阅状态要不要精简为 active、expired 两个，外加「续费窗口已关」标记？ | 定义了 8 个状态，trialing、past_due、grace、paused、cancelled 都没有写入入口 | **精简**。以后真做试用、暂停、取消时再加 |
+| Q2 | 退款要不要做？ | 退款表都在，但没有任何写入方，后台和门户也没有退款入口 | **本阶段不做**，相关表和守卫不建；以后做的话按新规矩单独设计 |
+| Q3 | 佣金的基数包不包括余额抵扣的部分？ | 包括（基数 = 订单总额，含余额抵扣） | **按订单总额，含余额抵扣**（维持现状） |
+| Q4 | 后台会话的寿命和空闲超时？ | 与门户相同，30 天，没有空闲超时 | **后台**：绝对寿命 7 天，空闲 2 小时失效；**门户**维持 30 天 |
+| Q5 | 各类数据保留多久？ | 审计永久保留；6 张表从不清理 | **按此执行**：审计 400 天；幂等键 30 天；注册会话和验证码 7 天；插件和通知投递记录 90 天；批量建用户的 job 30 天；流量与指标沿用现有期限（48 小时到 400 天） |
+| Q6 | 28 个种了但从不检查的权限码删不删？ | 种子里有，路由不检查 | **删除**，用到时再加 |
+| Q7 | 登录要不要按账号限制失败次数？阈值多少？ | 只按 IP、路由和 /24 网段限流；Redis 故障时放行 | **按此执行**：同一账号 15 分钟内失败 10 次，暂停 15 分钟（期间口令正确也拒绝，提示稍后再试）。已知代价：可能被人拿来锁别人的账号 |
 
 ---
 
