@@ -5,6 +5,7 @@ import (
 	"context"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // 两个域的 audience。
@@ -15,7 +16,7 @@ const (
 
 // Principal 是通过鉴权的请求主体。
 type Principal struct {
-	UserID    int64
+	UserID    uuid.UUID
 	SessionID string
 	Audience  string
 	AMR       []string
