@@ -294,70 +294,17 @@ func (s *Service) CreateRenewalOrder(ctx context.Context, in RenewalOrderInput) 
 
 	var created Created
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
-		now := s.clock()
 		sub, err := s.subs.Lock(ctx, in.SubscriptionID, &userID)
 		if err != nil {
 			return err
 		}
-		if !sub.StateAt(now).AcceptsChange() {
-			return subsvc.ErrRenewalWindowClosed
-		}
-		open, err := s.repo.OpenChangeOrderExists(ctx, sub.ID)
-		if err != nil {
-			return err
-		}
-		if open {
-			return ErrOpenChange
-		}
-		priceID := in.PriceID
-		if priceID == nil {
-			priceID = sub.Price.PriceID
-		}
-		if priceID == nil {
-			return errs.Newf(errs.Conflict, "这条订阅没有关联价格，无法自动续费")
-		}
-		uid := userID
-		// 续费不锁套餐行（Lock: false）：价格行由冻结触发器钉死不可改，续费也不动库存与限购，
-		// 锁了只会让同套餐的续费与新购在整段建单事务里排队，还多出一条与结算成环的路径，不值得。
-		// 与旧代码的 FOR SHARE 相比，只差在后台恰好同时关掉「允许续费」或下架价格的那一瞬间：这张单按改之前的状态建成，可接受。
-		offer, err := s.catalog.Offer(ctx, *priceID, catalogsvc.OfferRequest{
-			Use:    catalogsvc.UseRenewal,
-			UserID: &uid,
-			PlanID: &sub.PlanID,
-			Lock:   false,
-			Now:    now,
-		})
-		if err != nil {
-			return err
-		}
-		verMap, err := s.catalog.VersionsByIDs(ctx, []uuid.UUID{sub.PlanVersionID})
-		if err != nil {
-			return err
-		}
-		ver, ok := verMap[sub.PlanVersionID]
-		if !ok {
-			return catalogsvc.ErrNoPublishedVersion
-		}
-		item, err := renewalOrderItem(sub, ver, offer.Price, offer.Plan.Name)
-		if err != nil {
-			return err
-		}
-		subID := sub.ID
-		created, _, err = s.place(ctx, draft{
-			Kind:           KindRenewal,
-			UserID:         userID,
-			Currency:       offer.Price.Currency,
-			Subtotal:       offer.Price.UnitAmount,
-			CouponPlanID:   &sub.PlanID,
-			SubscriptionID: &subID,
-			Item:           item,
-			Checkout:       in.Checkout,
-			Actor:          actor,
-			AuditAction:    ActionRenewalCreated,
-			AuditData: map[string]any{
-				"subscription_id": sub.ID.String(),
-				"price_id":        (*priceID).String(),
-			},
+		created, _, err = s.placeRenewal(ctx, renewalDraft{
+			Sub:      sub,
+			PriceID:  in.PriceID,
+			UserID:   userID,
+			Checkout: in.Checkout,
+			Actor:    actor,
+			Audit:    ActionRenewalCreated,
 		})
 		if err != nil {
 			return err
@@ -373,6 +320,87 @@ func (s *Service) CreateRenewalOrder(ctx context.Context, in RenewalOrderInput) 
 		return Created{}, err
 	}
 	return created, nil
+}
+
+// renewalDraft 是一张续费单的输入（门户与后台人工单共用）。调用方已锁住 Sub。
+type renewalDraft struct {
+	Sub subsvc.Subscription
+	// PriceID 为 nil 时续订阅当前的价格档
+	PriceID  *uuid.UUID
+	UserID   uuid.UUID
+	Checkout Checkout
+	Manual   *manualDraft
+	Actor    Actor
+	// Audit 为空时不写审计（人工单自己写）
+	Audit string
+}
+
+// placeRenewal 在调用方事务里建一张续费单：订阅未停用、没有未完结的续费或变更单，价格档属于订阅的套餐。
+func (s *Service) placeRenewal(ctx context.Context, d renewalDraft) (Created, model.Order, error) {
+	now := s.clock()
+	sub := d.Sub
+	if !sub.StateAt(now).AcceptsChange() {
+		return Created{}, model.Order{}, subsvc.ErrRenewalWindowClosed
+	}
+	open, err := s.repo.OpenChangeOrderExists(ctx, sub.ID)
+	if err != nil {
+		return Created{}, model.Order{}, err
+	}
+	if open {
+		return Created{}, model.Order{}, ErrOpenChange
+	}
+	priceID := d.PriceID
+	if priceID == nil {
+		priceID = sub.Price.PriceID
+	}
+	if priceID == nil {
+		return Created{}, model.Order{}, errs.Newf(errs.Conflict, "这条订阅没有关联价格，无法自动续费")
+	}
+	uid := d.UserID
+	// 续费不锁套餐行（Lock: false）：价格行由冻结触发器钉死不可改，续费也不动库存与限购，
+	// 锁了只会让同套餐的续费与新购在整段建单事务里排队，还多出一条与结算成环的路径，不值得。
+	// 与旧代码的 FOR SHARE 相比，只差在后台恰好同时关掉「允许续费」或下架价格的那一瞬间：这张单按改之前的状态建成，可接受。
+	offer, err := s.catalog.Offer(ctx, *priceID, catalogsvc.OfferRequest{
+		Use:    catalogsvc.UseRenewal,
+		UserID: &uid,
+		PlanID: &sub.PlanID,
+		Manual: d.Manual != nil,
+		Lock:   false,
+		Now:    now,
+	})
+	if err != nil {
+		return Created{}, model.Order{}, err
+	}
+	verMap, err := s.catalog.VersionsByIDs(ctx, []uuid.UUID{sub.PlanVersionID})
+	if err != nil {
+		return Created{}, model.Order{}, err
+	}
+	ver, ok := verMap[sub.PlanVersionID]
+	if !ok {
+		return Created{}, model.Order{}, catalogsvc.ErrNoPublishedVersion
+	}
+	item, err := renewalOrderItem(sub, ver, offer.Price, offer.Plan.Name)
+	if err != nil {
+		return Created{}, model.Order{}, err
+	}
+	subID := sub.ID
+	return s.place(ctx, draft{
+		Kind:           KindRenewal,
+		UserID:         d.UserID,
+		Currency:       offer.Price.Currency,
+		Subtotal:       offer.Price.UnitAmount,
+		CouponPlanID:   &sub.PlanID,
+		SubscriptionID: &subID,
+		Item:           item,
+		Checkout:       d.Checkout,
+		Manual:         d.Manual,
+		Actor:          d.Actor,
+		AuditAction:    d.Audit,
+		AuditData: map[string]any{
+			"subscription_id": sub.ID.String(),
+			"price_id":        (*priceID).String(),
+		},
+	})
 }
 
 // CreatePackOrder 门户流量包下单。
