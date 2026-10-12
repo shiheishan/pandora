@@ -88,6 +88,8 @@ jobs:
     env:
       PANDORA_TEST_DATABASE_URL: postgres://pandora:pandora@127.0.0.1:5432/pandora_test?sslmode=disable
       PANDORA_TEST_REDIS_URL: redis://127.0.0.1:6379/0
+      # env 缺省按 production（要求 https 地址、关掉 dev_code）；CI 显式用 development
+      PANDORA_ENV: development
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
