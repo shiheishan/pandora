@@ -7,16 +7,25 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"gorm.io/gorm/clause"
 
 	"github.com/aegispanel/aegis/internal/module/promo/model"
 )
 
-// InsertRedemption 插入一条占用记录。
-func (r *Repo) InsertRedemption(ctx context.Context, rd *model.Redemption) error {
+// InsertRedemptionIfAbsent 插入一条占用记录；这张订单已有占用时跳过（ON CONFLICT (order_id) DO NOTHING，
+// 不让事务出错），返回是否插入。
+func (r *Repo) InsertRedemptionIfAbsent(ctx context.Context, rd *model.Redemption) (bool, error) {
 	if err := checkMoney(rd.DiscountAmount); err != nil {
-		return err
+		return false, err
 	}
-	return mapErr(r.d.Conn(ctx).Create(rd).Error)
+	res := r.d.Conn(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "order_id"}},
+		DoNothing: true,
+	}).Create(rd)
+	if res.Error != nil {
+		return false, mapErr(res.Error)
+	}
+	return res.RowsAffected == 1, nil
 }
 
 // CountActiveByUser 统计用户在某券上 held 或 captured 的条数。

@@ -1,8 +1,6 @@
 package handler
 
 import (
-	"strings"
-
 	"github.com/aegispanel/aegis/internal/module/promo/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
@@ -61,7 +59,7 @@ func (h *Handler) createCoupon(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	code := strings.ToUpper(strings.TrimSpace(req.Code))
+	code := service.NormalizeCode(req.Code)
 	if code == "" {
 		httpx.Fail(c, errs.Invalid(map[string]string{"code": "请填写优惠码"}))
 		return

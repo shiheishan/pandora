@@ -51,10 +51,8 @@ func (r couponRequest) spec() (service.Spec, error) {
 		face = service.Face{Kind: service.KindFixed, AmountOff: money.FromCents(r.DiscountValue)}
 	}
 
+	// 没给币种时留空，由 service 填站点币种
 	cur := strings.TrimSpace(r.Currency)
-	if cur == "" {
-		cur = "CNY"
-	}
 
 	var maxDisc *decimal.Decimal
 	if r.MaxDiscount != nil {

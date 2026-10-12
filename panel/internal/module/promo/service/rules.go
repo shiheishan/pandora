@@ -8,7 +8,6 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
@@ -21,7 +20,11 @@ import (
 // couponAlphabet 去掉 I、L、O、0、1：人工抄写易混。
 const couponAlphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 
-var prefixPattern = regexp.MustCompile(`^[A-Z0-9]{0,8}$`)
+// codePattern 与 prefixPattern 是券码字符集，与 00010 里 coupons.code 的 CHECK 一致。
+var (
+	codePattern   = regexp.MustCompile(`^[A-Z0-9_-]{1,64}$`)
+	prefixPattern = regexp.MustCompile(`^[A-Z0-9_-]{0,8}$`)
+)
 
 var redemptionTransitions = map[string]map[string]bool{
 	RedemptionHeld: {
@@ -30,28 +33,38 @@ var redemptionTransitions = map[string]map[string]bool{
 	},
 }
 
-// NormalizeCode 规范化用户输入的券码。
+// NormalizeCode 规范化用户输入的券码：去首尾空白，只把 ASCII 小写字母转大写。
+// 不用 strings.ToUpper：它会把 ı、ſ 这类字符折成 ASCII，与 PG 的 upper() 口径不同。
 func NormalizeCode(code string) string {
-	return strings.ToUpper(strings.TrimSpace(code))
+	return upperASCII(strings.TrimSpace(code))
+}
+
+func upperASCII(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if c >= 'a' && c <= 'z' {
+			b[i] = c - 'a' + 'A'
+		}
+	}
+	return string(b)
+}
+
+// validCode 报告规范化后的券码是否合法：1 到 64 位 ASCII 大写字母、数字、下划线、短横线（与迁移里的 CHECK 同一字符集）。
+func validCode(code string) bool {
+	return codePattern.MatchString(code)
 }
 
 func validateCode(code string) error {
-	n := len([]rune(code))
-	if n < 1 || n > 64 {
-		return errs.Invalid(map[string]string{"code": "优惠码 1 到 64 位，不能含空格"})
-	}
-	for _, r := range code {
-		if unicode.IsSpace(r) || unicode.IsControl(r) {
-			return errs.Invalid(map[string]string{"code": "优惠码 1 到 64 位，不能含空格"})
-		}
+	if !validCode(code) {
+		return errs.Invalid(map[string]string{"code": "优惠码 1 到 64 位，只能用字母、数字、下划线和短横线"})
 	}
 	return nil
 }
 
 func normalizePrefix(prefix string) (string, error) {
-	p := strings.ToUpper(strings.TrimSpace(prefix))
+	p := upperASCII(strings.TrimSpace(prefix))
 	if !prefixPattern.MatchString(p) {
-		return "", errs.Invalid(map[string]string{"prefix": "前缀只能用大写字母和数字，最多 8 位"})
+		return "", errs.Invalid(map[string]string{"prefix": "前缀只能用字母、数字、下划线和短横线，最多 8 位"})
 	}
 	return p, nil
 }

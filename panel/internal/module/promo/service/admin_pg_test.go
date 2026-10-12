@@ -267,11 +267,6 @@ func TestGenerateCoupons(t *testing.T) {
 		t.Fatalf("空名称: %v", err)
 	}
 
-	_, err = e.svc.GenerateCoupons(actx, "a-b", 1, spec)
-	if err == nil || errs.As(err).Fields["prefix"] == "" {
-		t.Fatalf("非法前缀: %v", err)
-	}
-
 	var dataJSON string
 	if err := e.row(ctx,
 		`SELECT data::text FROM audit_events WHERE action = ? ORDER BY occurred_at DESC LIMIT 1`, ActionBatchGenerated,
@@ -326,7 +321,9 @@ func TestConstraints(t *testing.T) {
 	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name, percent_off_bp, currency)
 		VALUES ('X3', 'n', 10001, 'CNY')`)
 	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name, amount_off, currency)
-		VALUES ('X4', 'n', 1.234, 'CNY')`)
+		VALUES ('ÄB', 'n', 1, 'CNY')`)
+	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name, amount_off, currency)
+		VALUES ('A B', 'n', 1, 'CNY')`)
 	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name, amount_off, max_discount, currency)
 		VALUES ('X5', 'n', 1, 10, 'CNY')`)
 	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name, amount_off, currency)
@@ -344,12 +341,115 @@ func TestConstraints(t *testing.T) {
 	uid := newUser(t, e, ctx)
 	execSQL(t, e, ctx, `INSERT INTO coupon_redemptions (coupon_id, user_id, order_id, order_no, discount_amount, currency, status)
 		VALUES (?, ?, uuidv7(), 'O1', 1, 'CNY', 'held')`, cid, uid)
+	assertSQLFails(t, e, ctx, `INSERT INTO coupon_redemptions (coupon_id, user_id, order_id, order_no, discount_amount, currency, status)
+		VALUES (?, ?, uuidv7(), 'O2', 1, 'USD', 'held')`, cid, uid)
 	assertSQLFails(t, e, ctx, `DELETE FROM coupon_redemptions WHERE coupon_id = ?`, cid)
+
+	okCode := "A-B_" + strings.ToUpper(randHex(8))
+	execSQL(t, e, ctx, `INSERT INTO coupons (code, name, amount_off, currency) VALUES (?, 'n', 1, 'CNY')`, okCode)
 
 	planID := uuid.New()
 	e.cat.plans[planID] = true
 	execSQL(t, e, ctx, `INSERT INTO coupon_plans (coupon_id, plan_id) VALUES (?, ?)`, cid, planID)
 	assertSQLFails(t, e, ctx, `INSERT INTO coupon_plans (coupon_id, plan_id) VALUES (?, ?)`, cid, planID)
+}
+
+func TestCurrencyDefaultsToSite(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.txCtx()
+	admin := newUser(t, e, ctx)
+	actx := adminCtx(ctx, admin)
+
+	e.site.currency = "USD"
+	spec := percentSpec(1000)
+	spec.Currency = ""
+	id, _, err := e.svc.CreateCoupon(actx, randCode("CUR"), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cur string
+	if err := e.row(ctx, `SELECT currency FROM coupons WHERE id = ?`, id).Scan(&cur); err != nil {
+		t.Fatal(err)
+	}
+	if cur != "USD" {
+		t.Fatalf("默认站点币种: %q", cur)
+	}
+
+	spec2 := percentSpec(1000)
+	id2, _, err := e.svc.CreateCoupon(actx, randCode("CUR2"), spec2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.row(ctx, `SELECT currency FROM coupons WHERE id = ?`, id2).Scan(&cur); err != nil {
+		t.Fatal(err)
+	}
+	if cur != "CNY" {
+		t.Fatalf("显式币种: %q", cur)
+	}
+
+	spec3 := fixedSpec("1.00")
+	spec3.Currency = ""
+	codes, err := e.svc.GenerateCoupons(actx, "CU", 2, spec3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.row(ctx, `SELECT currency FROM coupons WHERE code = ?`, codes[0]).Scan(&cur); err != nil {
+		t.Fatal(err)
+	}
+	if cur != "USD" {
+		t.Fatalf("批量默认币种: %q", cur)
+	}
+
+	e.site.currency = "EUR"
+	spec4 := fixedSpec("1.00")
+	spec4.Currency = ""
+	_, _, err = e.svc.CreateCoupon(actx, randCode("EUR"), spec4)
+	if err == nil || errs.As(err).Fields["currency"] == "" {
+		t.Fatalf("不支持站点币种: %v", err)
+	}
+}
+
+func TestCreateRejectsBadCode(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.txCtx()
+	admin := newUser(t, e, ctx)
+	actx := adminCtx(ctx, admin)
+
+	for _, code := range []string{"新年", "AB\x00", "A.B"} {
+		_, _, err := e.svc.CreateCoupon(actx, code, fixedSpec("1.00"))
+		if err == nil || errs.As(err).Fields["code"] == "" {
+			t.Fatalf("CreateCoupon %q: %v", code, err)
+		}
+	}
+	_, err := e.svc.GenerateCoupons(actx, "新", 1, fixedSpec("1.00"))
+	if err == nil || errs.As(err).Fields["prefix"] == "" {
+		t.Fatalf("非法前缀: %v", err)
+	}
+	codes, err := e.svc.GenerateCoupons(actx, "a-", 1, fixedSpec("1.00"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(codes[0], "A-") {
+		t.Fatalf("码 %q 应以 A- 开头", codes[0])
+	}
+}
+
+func TestListRejectsBadQuery(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.txCtx()
+
+	_, _, err := e.svc.ListCoupons(ctx, ListFilter{Query: "a\x00b"}, 10, 0)
+	if err == nil || errs.As(err).Fields["q"] == "" {
+		t.Fatalf("NUL 查询: %v", err)
+	}
+	_, _, err = e.svc.ListCoupons(ctx, ListFilter{Query: "\xff"}, 10, 0)
+	if err == nil || errs.As(err).Fields["q"] == "" {
+		t.Fatalf("非法 UTF-8: %v", err)
+	}
+	_, _, err = e.svc.ListCoupons(ctx, ListFilter{Query: "正常"}, 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 func assertSQLFails(t *testing.T, e *env, ctx context.Context, sql string, args ...any) {

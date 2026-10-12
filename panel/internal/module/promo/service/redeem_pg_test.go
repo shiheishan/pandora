@@ -328,8 +328,7 @@ func TestReserveRules(t *testing.T) {
 		t.Fatalf("释放后再占用: %v", err)
 	}
 
-	// 同一订单两张券（SAVEPOINT 避免污染事务）
-	execSQL(t, e, ctx, "SAVEPOINT sp")
+	// 同一订单两张券：冲突不让事务出错
 	codeA := randCode("ORDA")
 	codeB := randCode("ORDB")
 	createCoupon(t, e, ctx, admin, codeA, fixedSpec("1.00"))
@@ -342,7 +341,21 @@ func TestReserveRules(t *testing.T) {
 	if _, err := e.svc.Reserve(ctx, codeB, target(u9, "10.00"), ordDup); !errors.Is(err, ErrOrderHasCoupon) {
 		t.Fatalf("第二张券: %v", err)
 	}
-	execSQL(t, e, ctx, "ROLLBACK TO SAVEPOINT sp")
+	// 事务仍可用，第二张券的计数没动、订单上只有一条占用
+	var reservedB int
+	if err := e.row(ctx, `SELECT reserved_count FROM coupons WHERE code = ?`, codeB).Scan(&reservedB); err != nil {
+		t.Fatalf("冲突后事务不可用: %v", err)
+	}
+	if reservedB != 0 {
+		t.Fatalf("第二张券 reserved_count=%d，期望 0", reservedB)
+	}
+	var cnt int64
+	if err := e.row(ctx, `SELECT count(*) FROM coupon_redemptions WHERE order_id = ?`, ordDup.ID).Scan(&cnt); err != nil {
+		t.Fatal(err)
+	}
+	if cnt != 1 {
+		t.Fatalf("订单占用行 %d，期望 1", cnt)
+	}
 }
 
 func TestPreview(t *testing.T) {

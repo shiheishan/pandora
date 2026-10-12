@@ -13,6 +13,7 @@ import (
 	auditrepo "github.com/aegispanel/aegis/internal/module/audit/repo"
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/module/promo/repo"
+	settingsvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
@@ -86,6 +87,15 @@ func (f *fakeUsers) UserGroupID(_ context.Context, userID uuid.UUID) (*uuid.UUID
 	return nil, nil
 }
 
+// fakeSite 实现 SiteSettings，供建券默认币种测试。
+type fakeSite struct {
+	currency string
+}
+
+func (f *fakeSite) Site(context.Context) (settingsvc.Site, error) {
+	return settingsvc.Site{Name: "测试站", Timezone: "UTC", Currency: f.currency}, nil
+}
+
 type env struct {
 	row   func(ctx context.Context, q string, args ...any) *sql.Row
 	exec  func(ctx context.Context, q string, args ...any) error
@@ -94,6 +104,7 @@ type env struct {
 	txm   *tx.Manager
 	cat   *fakeCatalog
 	users *fakeUsers
+	site  *fakeSite
 }
 
 func newEnv(t *testing.T) *env {
@@ -112,7 +123,8 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	txm := tx.NewManager(d)
-	svc := New(repo.New(d), txm, auditSvc)
+	site := &fakeSite{currency: "CNY"}
+	svc := New(repo.New(d), txm, auditSvc, site)
 	cat := &fakeCatalog{
 		plans:  map[uuid.UUID]bool{},
 		prices: map[uuid.UUID]fakePrice{},
@@ -136,6 +148,7 @@ func newEnv(t *testing.T) *env {
 		txm:   txm,
 		cat:   cat,
 		users: users,
+		site:  site,
 	}
 }
 

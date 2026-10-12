@@ -248,7 +248,7 @@ func TestCreateCouponMapping(t *testing.T) {
 	if f.createSpec.Face.Kind != service.KindFixed || !f.createSpec.Face.AmountOff.Equal(decFixed(t, "10.50")) {
 		t.Fatalf("Face fixed %v", f.createSpec.Face)
 	}
-	if f.createSpec.Currency != "CNY" || !f.createSpec.MinOrder.Equal(decFixed(t, "50.00")) || f.createSpec.MaxPerUser != 2 {
+	if f.createSpec.Currency != "" || !f.createSpec.MinOrder.Equal(decFixed(t, "50.00")) || f.createSpec.MaxPerUser != 2 {
 		t.Fatalf("Spec %+v", f.createSpec)
 	}
 	if f.createSpec.Name != "SUMMER" {

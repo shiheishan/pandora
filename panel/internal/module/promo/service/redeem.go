@@ -10,7 +10,6 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/aegispanel/aegis/internal/module/promo/model"
-	"github.com/aegispanel/aegis/internal/module/promo/repo"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
 
@@ -64,6 +63,10 @@ func (s *Service) Evaluate(ctx context.Context, code string, t Target) (*Applied
 	if err := checkTarget(t); err != nil {
 		return nil, err
 	}
+	// 字符集外的码（含 NUL、非 ASCII）不可能存在，不查库
+	if !validCode(code) {
+		return nil, ErrCouponNotFound
+	}
 	c, ok, err := s.repo.CouponByCode(ctx, code)
 	if err != nil {
 		return nil, err
@@ -86,6 +89,9 @@ func (s *Service) Reserve(ctx context.Context, code string, t Target, o OrderRef
 	if err := validateOrderRef(o); err != nil {
 		return nil, err
 	}
+	if !validCode(code) {
+		return nil, ErrCouponNotFound
+	}
 
 	var applied *Applied
 	err := s.tx.Do(ctx, func(ctx context.Context) error {
@@ -100,27 +106,30 @@ func (s *Service) Reserve(ctx context.Context, code string, t Target, o OrderRef
 		if err != nil {
 			return err
 		}
-		inc, err := s.repo.IncrementReserved(ctx, c.ID)
-		if err != nil {
-			return err
-		}
-		if !inc {
-			return ErrCouponUsedUp
-		}
-		rd := &model.Redemption{
+		// 先插占用行（ON CONFLICT (order_id) DO NOTHING）：同一订单重复占用时什么都没改，
+		// 回 ErrOrderHasCoupon 也不让调用方的事务进入出错状态
+		inserted, err := s.repo.InsertRedemptionIfAbsent(ctx, &model.Redemption{
 			CouponID:       c.ID,
 			UserID:         t.UserID,
 			OrderID:        o.ID,
 			OrderNo:        strings.TrimSpace(o.No),
 			DiscountAmount: a.Discount,
-			Currency:       t.Currency,
+			Currency:       c.Currency,
 			Status:         model.RedemptionHeld,
-		}
-		if err := s.repo.InsertRedemption(ctx, rd); err != nil {
-			if errors.Is(err, repo.ErrDuplicate) {
-				return ErrOrderHasCoupon
-			}
+		})
+		if err != nil {
 			return err
+		}
+		if !inserted {
+			return ErrOrderHasCoupon
+		}
+		// 券行已锁、apply 已按锁内的计数查过容量，这里不应失败；失败即计数对不上
+		inc, err := s.repo.IncrementReserved(ctx, c.ID)
+		if err != nil {
+			return err
+		}
+		if !inc {
+			return errs.Wrap(errs.Internal, errors.New("promo: 锁内已查容量，占用计数仍加不上"))
 		}
 		applied = a
 		return nil
@@ -201,6 +210,9 @@ func (s *Service) Codes(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]str
 
 // Preview 门户试算套餐或流量包应付金额。
 func (s *Service) Preview(ctx context.Context, userID uuid.UUID, code string, item PreviewItem) (Preview, error) {
+	if c := NormalizeCode(code); c != "" && !validCode(c) {
+		return Preview{}, ErrCouponNotFound
+	}
 	cat, err := s.needCatalog()
 	if err != nil {
 		return Preview{}, err
@@ -248,7 +260,7 @@ func (s *Service) Preview(ctx context.Context, userID uuid.UUID, code string, it
 }
 
 func normalizeReleaseReason(reason string) *string {
-	r := strings.TrimSpace(reason)
+	r := strings.ToValidUTF8(strings.TrimSpace(reason), "")
 	r = strings.ReplaceAll(r, "\x00", "")
 	if r == "" {
 		return nil

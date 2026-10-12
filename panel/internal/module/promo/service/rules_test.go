@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -229,14 +230,23 @@ func TestValidateSpec(t *testing.T) {
 
 func TestValidateCodeAndPrefix(t *testing.T) {
 	if NormalizeCode("  ab-1 ") != "AB-1" {
-		t.Fatal("NormalizeCode")
+		t.Fatal("NormalizeCode 空白与短横线")
 	}
-	for _, bad := range []string{"", "A B", "\x00", strings.Repeat("A", 65)} {
+	if NormalizeCode("ıd") == "ID" {
+		t.Fatal("土耳其无点 i 不应折成 ID")
+	}
+	if NormalizeCode("ſale") == "SALE" {
+		t.Fatal("长 s 不应折成 SALE")
+	}
+	for _, bad := range []string{
+		"", "A B", "\x00", "AB\x00C", strings.Repeat("A", 65),
+		"新年", "ÄB", "ab", "A.B",
+	} {
 		if err := validateCode(bad); err == nil {
 			t.Fatalf("validateCode 应拒 %q", bad)
 		}
 	}
-	for _, ok := range []string{"SUMMER2026", "新年"} {
+	for _, ok := range []string{"SUMMER2026", "A-B_1", strings.Repeat("Z", 64)} {
 		if err := validateCode(ok); err != nil {
 			t.Fatalf("validateCode 应过 %q: %v", ok, err)
 		}
@@ -245,10 +255,60 @@ func TestValidateCodeAndPrefix(t *testing.T) {
 	if err != nil || p != "VIP" {
 		t.Fatalf("normalizePrefix vip: %q %v", p, err)
 	}
-	for _, bad := range []string{"TOOLONGXX", "A-B"} {
+	for _, pair := range []struct{ in, want string }{
+		{"a-b", "A-B"},
+		{"x_1", "X_1"},
+	} {
+		got, err := normalizePrefix(pair.in)
+		if err != nil || got != pair.want {
+			t.Fatalf("normalizePrefix %q: got %q err %v", pair.in, got, err)
+		}
+	}
+	for _, bad := range []string{"TOOLONGXX", "新", "A.B", "A B"} {
 		if _, err := normalizePrefix(bad); err == nil {
 			t.Fatalf("prefix 应拒 %q", bad)
 		}
+	}
+}
+
+func TestInvalidCodeNotFound(t *testing.T) {
+	ctx := context.Background()
+	s := &Service{now: time.Now}
+	tg := Target{
+		UserID:   uuid.New(),
+		Currency: "CNY",
+		Subtotal: decimal.RequireFromString("10.00"),
+	}
+	badCodes := []string{
+		"AB\x00C", "新年", "ÄB", strings.Repeat("A", 65), "A B",
+	}
+	for _, code := range badCodes {
+		_, err := s.Evaluate(ctx, code, tg)
+		if !errors.Is(err, ErrCouponNotFound) {
+			t.Fatalf("Evaluate %q: %v", code, err)
+		}
+		if fe := errs.As(err); fe.Code == errs.Internal {
+			t.Fatalf("Evaluate %q 不应 Internal", code)
+		}
+		_, err = s.Reserve(ctx, code, tg, OrderRef{ID: uuid.New(), No: "T1"})
+		if !errors.Is(err, ErrCouponNotFound) {
+			t.Fatalf("Reserve %q: %v", code, err)
+		}
+		if fe := errs.As(err); fe.Code == errs.Internal {
+			t.Fatalf("Reserve %q 不应 Internal", code)
+		}
+		pid, prid := uuid.New(), uuid.New()
+		_, err = s.Preview(ctx, tg.UserID, code, PreviewItem{PlanID: &pid, PriceID: &prid})
+		if !errors.Is(err, ErrCouponNotFound) {
+			t.Fatalf("Preview %q: %v", code, err)
+		}
+		if fe := errs.As(err); fe.Code == errs.Internal {
+			t.Fatalf("Preview %q 不应 Internal", code)
+		}
+	}
+	got, err := s.Evaluate(ctx, "   ", tg)
+	if err != nil || got != nil {
+		t.Fatalf("空白码 Evaluate: got=%v err=%v", got, err)
 	}
 }
 

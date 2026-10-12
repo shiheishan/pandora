@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -19,7 +20,11 @@ func (s *Service) CreateCoupon(ctx context.Context, code string, spec Spec) (uui
 	if err := validateCode(code); err != nil {
 		return uuid.Nil, "", err
 	}
-	spec, err := validateSpec(spec)
+	spec, err := s.withSiteCurrency(ctx, spec)
+	if err != nil {
+		return uuid.Nil, "", err
+	}
+	spec, err = validateSpec(spec)
 	if err != nil {
 		return uuid.Nil, "", err
 	}
@@ -68,6 +73,10 @@ func (s *Service) GenerateCoupons(ctx context.Context, prefix string, count int,
 	}
 	if strings.TrimSpace(spec.Name) == "" {
 		return nil, errs.Invalid(map[string]string{"name": "批量生成必须填活动名称，之后要靠它把整批券找回来"})
+	}
+	spec, err = s.withSiteCurrency(ctx, spec)
+	if err != nil {
+		return nil, err
 	}
 	spec, err = validateSpec(spec)
 	if err != nil {
@@ -168,6 +177,10 @@ func (s *Service) checkPlans(ctx context.Context, ids []uuid.UUID) error {
 func (s *Service) ListCoupons(ctx context.Context, f ListFilter, limit, offset int) ([]Coupon, int64, error) {
 	if f.Status != "" && f.Status != StatusActive && f.Status != StatusPaused {
 		return nil, 0, errs.Invalid(map[string]string{"status": "状态只能是 active 或 paused"})
+	}
+	// 查询串里的 NUL 或非法 UTF-8 会让 PG 报错变 500，先拦成 422
+	if !utf8.ValidString(f.Query) || strings.ContainsRune(f.Query, 0) {
+		return nil, 0, errs.Invalid(map[string]string{"q": "搜索词含非法字符"})
 	}
 	rows, total, err := s.repo.ListCoupons(ctx, repo.CouponListQuery{
 		Query:  strings.TrimSpace(f.Query),
