@@ -442,6 +442,10 @@ func TestNoReadOnlyInTx(t *testing.T) {
 		if rel == "internal/platform/db" {
 			return nil // InTx 的定义处
 		}
+		switch rel {
+		case "internal/pkg", "internal/app", "internal/module":
+			return filepath.SkipDir // 新栈目录不用旧的 InTx，P7 随旧代码删
+		}
 		ix := a.load(rel)
 		if ix.pkg == nil {
 			return nil
