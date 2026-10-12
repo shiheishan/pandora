@@ -28,6 +28,12 @@ func (s *Service) UserGroupID(ctx context.Context, userID uuid.UUID) (*uuid.UUID
 	return u.UserGroupID, nil
 }
 
+// HasReferrer 判断用户是不是经邀请注册的（giftcard「仅受邀用户」条件用）。
+func (s *Service) HasReferrer(ctx context.Context, userID uuid.UUID) (bool, error) {
+	_, ok, err := s.repo.Referrer(ctx, userID)
+	return ok, err
+}
+
 // IDsByEmail 返回邮箱包含 q 的用户 id（一条 SQL，最多 limit 个，limit 超过 1000 按 1000）；实现 audit 的 ActorDirectory。
 func (s *Service) IDsByEmail(ctx context.Context, q string, limit int) ([]uuid.UUID, error) {
 	q = strings.TrimSpace(q)

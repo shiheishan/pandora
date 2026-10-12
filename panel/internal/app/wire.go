@@ -10,6 +10,8 @@ import (
 	authsvc "github.com/aegispanel/aegis/internal/module/auth/service"
 	catalogrepo "github.com/aegispanel/aegis/internal/module/catalog/repo"
 	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
+	giftcardrepo "github.com/aegispanel/aegis/internal/module/giftcard/repo"
+	giftcardsvc "github.com/aegispanel/aegis/internal/module/giftcard/service"
 	idemrepo "github.com/aegispanel/aegis/internal/module/idempotency/repo"
 	idemsvc "github.com/aegispanel/aegis/internal/module/idempotency/service"
 	identityrepo "github.com/aegispanel/aegis/internal/module/identity/repo"
@@ -51,6 +53,7 @@ type services struct {
 	sub      *subsvc.Service
 	payment  *paymentsvc.Service
 	order    *ordersvc.Service
+	giftcard *giftcardsvc.Service
 	limiter  *ratelimit.Limiter
 	queue    *asynq.Client
 	tx       *tx.Manager
@@ -137,6 +140,7 @@ func buildServices(r *runtime) (*services, error) {
 	subSvc := subsvc.New(subrepo.New(r.db), txm, auditSvc, settingsSvc, catalogSvc, identitySvc, sealer)
 
 	orderSvc := ordersvc.New(orderrepo.New(r.db), txm, catalogSvc, ledgerSvc, promoSvc, subSvc, paymentSvc, identitySvc, idemSvc, auditSvc)
+	giftcardSvc := giftcardsvc.New(giftcardrepo.New(r.db), txm, auditSvc, idemSvc, catalogSvc, subSvc, ledgerSvc, identitySvc, keys, sealer)
 
 	// 模块间注入：identity 定义接口，auth、notify 实现；audit 经 identity 显示操作者与资源
 	identitySvc.UseSessionRevoker(authSvc)
@@ -150,6 +154,14 @@ func buildServices(r *runtime) (*services, error) {
 	promoSvc.UseCatalog(promoCatalog{c: catalogSvc})
 	// 渠道到账与线下收款经 order 结算（没注册时入账一律失败）
 	paymentSvc.UseSettler(orderSvc)
+	// 礼品卡：套餐卡「换掉那一份」按 order 的折算退剩余价值；新用户、付费用户、受邀用户三种条件
+	giftcardSvc.UsePlanChangeValuer(orderSvc)
+	giftcardSvc.UsePaidHistory(orderSvc)
+	giftcardSvc.UseReferrals(identitySvc)
+	if missing := giftcardSvc.MissingPorts(); len(missing) > 0 {
+		_ = queue.Close()
+		return nil, fmt.Errorf("giftcard 缺少装配: %v", missing)
+	}
 
 	return &services{
 		settings: settingsSvc,
@@ -164,6 +176,7 @@ func buildServices(r *runtime) (*services, error) {
 		sub:      subSvc,
 		payment:  paymentSvc,
 		order:    orderSvc,
+		giftcard: giftcardSvc,
 		limiter:  limiter,
 		queue:    queue,
 		tx:       txm,

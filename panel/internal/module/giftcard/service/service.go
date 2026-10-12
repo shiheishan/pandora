@@ -154,6 +154,21 @@ func (s *Service) UsePaidHistory(p PaidHistory) { s.paid = p }
 // UseReferrals 注册邀请关系查询（identity）；只在启动装配时调用。
 func (s *Service) UseReferrals(r Referrals) { s.refs = r }
 
+// MissingPorts 列出还没注册的可选依赖；app 装配完调用，非空就拒绝启动（缺了它们对应的卡会一直回 503 或少了「换掉」）。
+func (s *Service) MissingPorts() []string {
+	var out []string
+	if s.valuer == nil {
+		out = append(out, "PlanChangeValuer")
+	}
+	if s.paid == nil {
+		out = append(out, "PaidHistory")
+	}
+	if s.refs == nil {
+		out = append(out, "Referrals")
+	}
+	return out
+}
+
 // clock 返回当前时刻（UTC、截到微秒，与库里的精度一致）。
 func (s *Service) clock() time.Time {
 	return s.now().UTC().Truncate(time.Microsecond)
