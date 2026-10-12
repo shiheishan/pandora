@@ -176,11 +176,24 @@ CREATE INDEX gift_card_redemptions_plan_idx ON gift_card_redemptions (plan_id) W
 CREATE INDEX gift_card_redemptions_subscription_idx ON gift_card_redemptions (subscription_id) WHERE subscription_id IS NOT NULL;
 CREATE INDEX gift_card_redemptions_ledger_idx ON gift_card_redemptions (ledger_txn_id) WHERE ledger_txn_id IS NOT NULL;
 
+-- 兑换流水只追加（00001_base 的约定：语句级，连 TRUNCATE 一起挡）
 CREATE TRIGGER gift_card_redemptions_append_only
-  BEFORE UPDATE OR DELETE ON gift_card_redemptions
-  FOR EACH ROW EXECUTE FUNCTION deny_mutation();
+  BEFORE UPDATE OR DELETE OR TRUNCATE ON gift_card_redemptions
+  FOR EACH STATEMENT EXECUTE FUNCTION deny_mutation();
+
+-- 行级约束挡不住 TRUNCATE：码表是等价现金的唯一凭据，批次上挂着未导出的密文，模板被码与流水引用，语句级一律拒绝
+CREATE TRIGGER gift_card_codes_deny_truncate
+  BEFORE TRUNCATE ON gift_card_codes FOR EACH STATEMENT EXECUTE FUNCTION deny_mutation();
+CREATE TRIGGER gift_card_batches_deny_truncate
+  BEFORE TRUNCATE ON gift_card_batches FOR EACH STATEMENT EXECUTE FUNCTION deny_mutation();
+CREATE TRIGGER gift_card_templates_deny_truncate
+  BEFORE TRUNCATE ON gift_card_templates FOR EACH STATEMENT EXECUTE FUNCTION deny_mutation();
 
 -- +goose Down
+DROP TRIGGER IF EXISTS gift_card_templates_deny_truncate ON gift_card_templates;
+DROP TRIGGER IF EXISTS gift_card_batches_deny_truncate ON gift_card_batches;
+DROP TRIGGER IF EXISTS gift_card_codes_deny_truncate ON gift_card_codes;
+DROP TRIGGER IF EXISTS gift_card_redemptions_append_only ON gift_card_redemptions;
 DROP TABLE IF EXISTS gift_card_redemptions;
 DROP TABLE IF EXISTS gift_card_codes;
 DROP TABLE IF EXISTS gift_card_batches;
