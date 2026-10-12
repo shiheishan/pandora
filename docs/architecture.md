@@ -220,7 +220,7 @@ identity, auth ─► settings, audit
 | # | 规则 |
 |---|---|
 | R1 | 库里的金额列一律 `NUMERIC(20,2)`，单位是元；币种列加 `CHECK (currency IN ('CNY','USD'))`，两种都是 2 位小数 |
-| R2 | repo 写入前断言 `d.Equal(d.Truncate(2))`，不满足就报错；库里加 `CHECK (amount = round(amount, 2))` 兜底。PostgreSQL 遇到多余小数会静默四舍五入，必须在写入前拦住 |
+| R2 | repo 写入前断言 `d.Equal(d.Truncate(2))`（`money.Check`），不满足就报错。PostgreSQL 遇到多余小数会静默四舍五入，必须在写入前拦住；库里拦不住：`NUMERIC(20,2)` 列先舍入再查 CHECK，`CHECK (amount = round(amount, 2))` 永远成立，不要加这种假兜底 |
 | R3 | 所有按比例得出的金额（百分比券、换套餐折算、待开始周期额度、佣金）一律**向零截断**，与现状逐分一致 |
 | R4 | 只在 service 的领域计算函数里舍入，每个公式只在最后一步舍入一次；handler 只做单位换算，repo 只存不算，SQL 里不做金额算术 |
 | R5 | 比值与取最小（换套餐的 min(时间比, 流量比)）用 `big.Rat` 或交叉相乘比较，不先 `Div` 出小数再比 |
