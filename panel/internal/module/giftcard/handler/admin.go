@@ -179,7 +179,7 @@ func (h *Handler) toggleCode(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	httpx.OK(c, toggleResponse{Disabled: req.Disabled})
+	httpx.OK(c, toggleResponse(req))
 }
 
 // stats 后台礼品卡统计。
