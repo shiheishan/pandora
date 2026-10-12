@@ -100,7 +100,7 @@ func TestPostInsufficientBalance(t *testing.T) {
 	}
 
 	_, err := e.svc.Post(ctx, Posting{
-		Kind:     KindBalanceAdjusted,
+		Kind:     KindCommissionToBalance,
 		Currency: cur,
 		Memo:     "测试扣减原因说明",
 		Legs: []Leg{
@@ -143,16 +143,17 @@ func TestPostUnknownUser(t *testing.T) {
 	}
 }
 
-func TestPostDuplicateOrderPaid(t *testing.T) {
+func TestPostDuplicateBySource(t *testing.T) {
 	e, ctx := newEnv(t)
+	user := e.mkUser(t, ctx)
 	orderID := uuid.New()
 	cur := money.USD
 	leg := []Leg{
 		{Account: PlatformAccount(ChannelCash, "p"), Direction: Debit, Amount: dec("1.00")},
-		{Account: PlatformAccount(PlatformRevenue, RefMain), Direction: Credit, Amount: dec("1.00")},
+		{Account: UserAccount(UserBalance, user), Direction: Credit, Amount: dec("1.00")},
 	}
 	p := Posting{
-		Kind:       KindOrderPaid,
+		Kind:       KindBalanceTopup,
 		Currency:   cur,
 		SourceType: SourceOrder,
 		SourceID:   orderID,
@@ -163,7 +164,17 @@ func TestPostDuplicateOrderPaid(t *testing.T) {
 	}
 	_, err := e.svc.Post(ctx, p)
 	if !errors.Is(err, ErrDuplicatePosting) {
-		t.Fatalf("第二笔 order_paid 应 ErrDuplicatePosting，得 %v", err)
+		t.Fatalf("第二笔 balance_topup 应 ErrDuplicatePosting，得 %v", err)
+	}
+	var cnt int64
+	if err := e.row(ctx, `SELECT count(*) FROM ledger_transactions WHERE kind = 'balance_topup' AND source_id = ?`, orderID).Scan(&cnt); err != nil {
+		t.Fatal(err)
+	}
+	if cnt != 1 {
+		t.Fatalf("同一来源应只有 1 笔交易，得 %d", cnt)
+	}
+	if !e.balanceOf(t, ctx, user, cur).Equal(dec("1.00")) {
+		t.Fatalf("余额应为 1.00，得 %s", e.balanceOf(t, ctx, user, cur))
 	}
 }
 
@@ -183,6 +194,46 @@ func TestPostRejectsInvalid(t *testing.T) {
 		t.Fatalf("借贷不平应 ErrInvalidPosting，得 %v", err)
 	}
 	e.fund(t, ctx, user, cur, "1.00")
+}
+
+func TestPostRejectsDedicatedKinds(t *testing.T) {
+	e, ctx := newEnv(t)
+	user := e.mkUser(t, ctx)
+	cur := money.USD
+
+	var before int64
+	if err := e.row(ctx, `SELECT count(*) FROM ledger_transactions`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+
+	baseLegs := []Leg{
+		{Account: PlatformAccount(ChannelCash, "test"), Direction: Debit, Amount: dec("1.00")},
+		{Account: UserAccount(UserBalance, user), Direction: Credit, Amount: dec("1.00")},
+	}
+	dedicated := []Kind{
+		KindBalanceHold,
+		KindBalanceRelease,
+		KindOrderPaid,
+		KindBalanceAdjusted,
+	}
+	for _, k := range dedicated {
+		p := Posting{Kind: k, Currency: cur, Legs: baseLegs}
+		if k == KindBalanceAdjusted {
+			p.Memo = "五个字以上原因"
+		}
+		_, err := e.svc.Post(ctx, p)
+		if !errors.Is(err, ErrInvalidPosting) {
+			t.Fatalf("kind %s 应 ErrInvalidPosting，得 %v", k, err)
+		}
+	}
+
+	var after int64
+	if err := e.row(ctx, `SELECT count(*) FROM ledger_transactions`).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("专用 kind 不应落库: before=%d after=%d", before, after)
+	}
 }
 
 func TestBalancesBatch(t *testing.T) {
@@ -217,17 +268,15 @@ func TestBalancesBatch(t *testing.T) {
 func TestMyWallet(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
+	admin := e.mkUser(t, ctx)
 	cur := money.USD
 	e.fund(t, ctx, user, cur, "10.00")
 
-	_, err := e.svc.Post(ctx, Posting{
-		Kind:     KindBalanceAdjusted,
-		Currency: cur,
-		Memo:     "测试扣减原因",
-		Legs: []Leg{
-			{Account: UserAccount(UserBalance, user), Direction: Debit, Amount: dec("3.00")},
-			{Account: PlatformAccount(Suspense, RefManualAdjust), Direction: Credit, Amount: dec("3.00")},
-		},
+	_, err := e.svc.AdjustBalance(asAdmin(ctx, admin), Adjustment{
+		UserID:   user,
+		Amount:   dec("-3.00"),
+		Currency: "USD",
+		Reason:   "测试扣减原因",
 	})
 	if err != nil {
 		t.Fatal(err)
