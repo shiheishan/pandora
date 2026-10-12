@@ -82,7 +82,7 @@ CREATE TABLE payments (
   user_id             uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   payment_intent_id   uuid REFERENCES payment_intents(id) ON DELETE RESTRICT,
   provider_id         uuid NOT NULL REFERENCES payment_providers(id) ON DELETE RESTRICT,
-  provider_payment_id text NOT NULL CHECK (char_length(provider_payment_id) BETWEEN 1 AND 128),
+  provider_payment_id text NOT NULL CHECK (char_length(provider_payment_id) BETWEEN 1 AND 200),
   currency            text NOT NULL CHECK (currency IN ('CNY', 'USD')),
   amount              numeric(20,2) NOT NULL CHECK (amount > 0),
   fee_amount          numeric(20,2) NOT NULL DEFAULT 0 CHECK (fee_amount >= 0 AND fee_amount <= amount),
@@ -103,7 +103,7 @@ CREATE TABLE payment_events (
   provider_event_id   text NOT NULL CHECK (char_length(provider_event_id) BETWEEN 1 AND 200),
   event_type          text NOT NULL CHECK (event_type IN (
                         'payment.succeeded', 'payment.failed', 'payment.refunded', 'payment.unknown')),
-  provider_payment_id text CHECK (char_length(provider_payment_id) <= 128),
+  provider_payment_id text CHECK (char_length(provider_payment_id) <= 200),
   raw_payload         jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(raw_payload) = 'object'),
   signature_verified  boolean NOT NULL,
   processing_status   text NOT NULL DEFAULT 'pending'
