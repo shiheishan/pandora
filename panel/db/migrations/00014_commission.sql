@@ -24,8 +24,8 @@ CREATE TABLE commission_entries (
   -- 需要人工复核的条目不自动解冻
   review_required   boolean NOT NULL DEFAULT false,
   review_reason     text CHECK (char_length(review_reason) BETWEEN 1 AND 200),
-  accrual_txn_id    uuid NOT NULL REFERENCES ledger_transactions(id) ON DELETE RESTRICT,
-  settle_txn_id     uuid REFERENCES ledger_transactions(id) ON DELETE RESTRICT,
+  accrual_txn_id    uuid NOT NULL,
+  settle_txn_id     uuid,
   settled_at        timestamptz,
   created_at        timestamptz NOT NULL DEFAULT now(),
   updated_at        timestamptz NOT NULL DEFAULT now(),
@@ -33,6 +33,11 @@ CREATE TABLE commission_entries (
   CONSTRAINT commission_entries_order_referrer_key UNIQUE (order_id, referrer_user_id),
   CONSTRAINT commission_entries_accrual_txn_key UNIQUE (accrual_txn_id),
   CONSTRAINT commission_entries_settle_txn_key UNIQUE (settle_txn_id),
+  -- 交易外键带上币种（同 balance_holds）：条目币种必须等于账本交易币种
+  CONSTRAINT commission_entries_accrual_txn_fk FOREIGN KEY (accrual_txn_id, currency)
+    REFERENCES ledger_transactions (id, currency) ON DELETE RESTRICT,
+  CONSTRAINT commission_entries_settle_txn_fk FOREIGN KEY (settle_txn_id, currency)
+    REFERENCES ledger_transactions (id, currency) ON DELETE RESTRICT,
   CONSTRAINT commission_entries_no_self CHECK (referrer_user_id <> referee_user_id),
   CONSTRAINT commission_entries_formula
     CHECK (commission_amount = trunc(base_amount * rate_bp / 10000, 2)),
@@ -68,7 +73,7 @@ CREATE TABLE withdrawals (
   reject_reason    text CHECK (char_length(btrim(reject_reason)) BETWEEN 1 AND 500),
   -- 转账流水号，日后对账用
   payout_reference text CHECK (char_length(btrim(payout_reference)) BETWEEN 1 AND 128),
-  payout_txn_id    uuid REFERENCES ledger_transactions(id) ON DELETE RESTRICT,
+  payout_txn_id    uuid,
   reviewed_by      uuid REFERENCES users(id) ON DELETE RESTRICT,
   reviewed_at      timestamptz,
   paid_by          uuid REFERENCES users(id) ON DELETE RESTRICT,
@@ -76,6 +81,8 @@ CREATE TABLE withdrawals (
   completed_at     timestamptz,
   updated_at       timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT withdrawals_payout_txn_key UNIQUE (payout_txn_id),
+  CONSTRAINT withdrawals_payout_txn_fk FOREIGN KEY (payout_txn_id, currency)
+    REFERENCES ledger_transactions (id, currency) ON DELETE RESTRICT,
   CONSTRAINT withdrawals_state_shape CHECK (
     (status = 'requested' AND reviewed_at IS NULL AND reject_reason IS NULL
        AND payout_reference IS NULL AND payout_txn_id IS NULL AND completed_at IS NULL)
@@ -105,9 +112,11 @@ CREATE TABLE commission_transfers (
   user_id       uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   currency      text NOT NULL CHECK (currency IN ('CNY', 'USD')),
   amount        numeric(20,2) NOT NULL CHECK (amount > 0),
-  ledger_txn_id uuid NOT NULL REFERENCES ledger_transactions(id) ON DELETE RESTRICT,
+  ledger_txn_id uuid NOT NULL,
   created_at    timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT commission_transfers_ledger_txn_key UNIQUE (ledger_txn_id)
+  CONSTRAINT commission_transfers_ledger_txn_key UNIQUE (ledger_txn_id),
+  CONSTRAINT commission_transfers_ledger_txn_fk FOREIGN KEY (ledger_txn_id, currency)
+    REFERENCES ledger_transactions (id, currency) ON DELETE RESTRICT
 );
 CREATE INDEX commission_transfers_user_idx ON commission_transfers (user_id, created_at DESC);
 
@@ -116,6 +125,7 @@ CREATE TRIGGER commission_transfers_append_only
   FOR EACH STATEMENT EXECUTE FUNCTION deny_mutation();
 
 -- +goose Down
+-- 复合外键、触发器、索引随表删除。
 DROP TABLE IF EXISTS commission_transfers;
 DROP TABLE IF EXISTS withdrawals;
 DROP TABLE IF EXISTS commission_entries;
