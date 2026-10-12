@@ -15,101 +15,16 @@ package service
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/shopspring/decimal"
 
 	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
 	idemsvc "github.com/aegispanel/aegis/internal/module/idempotency/service"
 	"github.com/aegispanel/aegis/internal/module/order/model"
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 )
-
-// paidKinds 是参与剩余价值基数的订单种类（买下订阅时长的那几种）。
-var paidKinds = map[string]bool{KindNew: true, KindRenewal: true, KindUpgrade: true}
-
-// loadBasis 读原订阅本周期的折算输入：subscription 给出本周期挂了订单的事件（按先后），本模块读这些订单的付费与计费周期；
-// 流量取 cycle / total 的 traffic.bytes 配额（有上限的），cycle 行加上提前续费后还没开始的几期。
-// 本周期付费单币种不一致回 errProrationMixedCurrency。
-func (s *Service) loadBasis(ctx context.Context, sub subsvc.Subscription) (prorationBasis, error) {
-	b := prorationBasis{PeriodStart: sub.PeriodStart, PeriodEnd: sub.PeriodEnd, Value: decimal.Zero}
-	ids, err := s.subs.PeriodOrderIDs(ctx, sub.ID)
-	if err != nil {
-		return b, err
-	}
-	orders, err := s.repo.OrdersByIDs(ctx, ids)
-	if err != nil {
-		return b, err
-	}
-	byID := make(map[uuid.UUID]model.Order, len(orders))
-	for _, o := range orders {
-		byID[o.ID] = o
-	}
-	items, err := s.repo.ItemsByOrders(ctx, ids)
-	if err != nil {
-		return b, err
-	}
-	// 每张单取第一条套餐行（按创建先后）的计费周期
-	planItem := make(map[uuid.UUID]model.Item, len(items))
-	for _, it := range items {
-		if it.PlanID == nil {
-			continue
-		}
-		if _, seen := planItem[it.OrderID]; !seen {
-			planItem[it.OrderID] = it
-		}
-	}
-	paidUntil := sub.PeriodStart
-	for _, id := range ids {
-		o, ok := byID[id]
-		if !ok || !paidKinds[o.Kind] || o.Status != StatusFulfilled {
-			continue
-		}
-		it, ok := planItem[id]
-		if !ok || it.SnapshotInterval == nil || it.SnapshotIntervalCount == nil {
-			continue
-		}
-		cur := money.Currency(o.Currency)
-		if b.Currency != "" && b.Currency != cur {
-			return b, errProrationMixedCurrency
-		}
-		b.Currency = cur
-		// 付费 = max(小计 − 折扣 − 免掉的零头, 0)：0 元单、全额券、人工赠送单为 0
-		b.Value = b.Value.Add(decimal.Max(o.SubtotalAmount.Sub(o.DiscountAmount).Sub(o.WaivedAmount), decimal.Zero))
-		paidUntil = subsvc.AddInterval(paidUntil, *it.SnapshotInterval, *it.SnapshotIntervalCount)
-	}
-	b.PaidSpan = paidUntil.Sub(sub.PeriodStart)
-
-	quotas, err := s.subs.Quotas(ctx, sub.ID)
-	if err != nil {
-		return b, err
-	}
-	for _, q := range quotas {
-		if q.Metric != catalogsvc.MetricTraffic || q.Limit == nil ||
-			(q.Period != catalogsvc.PeriodCycle && q.Period != catalogsvc.PeriodTotal) {
-			continue
-		}
-		t := trafficAllowance{Cap: *q.Limit, Consumed: q.Consumed}
-		if q.Period == catalogsvc.PeriodCycle && q.PeriodEnd != nil {
-			t.Cap += pendingCycleAllowance(t.Cap, q.PeriodStart, *q.PeriodEnd, sub.PeriodEnd)
-		}
-		b.Traffic = append(b.Traffic, t)
-	}
-	return b, nil
-}
-
-// sourceCredit 是原订阅在 asOf 时刻的剩余价值与明细；本期付费单的币种与新价不同就不能换。
-func sourceCredit(b prorationBasis, asOf time.Time, cur money.Currency) (decimal.Decimal, *CreditDetail, error) {
-	if b.Currency != "" && b.Currency != cur {
-		return decimal.Zero, nil, ErrPlanChangeCurrency
-	}
-	credit, d := prorationCredit(b, asOf)
-	return credit, &d, nil
-}
 
 // checkChangeSource 校验原订阅此刻能换：未停用（已停用回 ErrRenewalWindowClosed），且没有未完结的续费或变更单。
 func (s *Service) checkChangeSource(ctx context.Context, sub subsvc.Subscription, now time.Time) error {
@@ -126,6 +41,56 @@ func (s *Service) checkChangeSource(ctx context.Context, sub subsvc.Subscription
 	return nil
 }
 
+// quoteSource 是换套餐报价的一份原订阅与它的折算输入。
+type quoteSource struct {
+	sub   subsvc.Subscription
+	basis prorationBasis
+}
+
+// changeSourcesFor 是「把哪一份换成 planID」的候选：本人未停用、不是这个套餐、没有未完结续费或变更单、本期币种一致的订阅，
+// 最多 maxQuoteRows 份。未完结单与折算基数都按批读。
+func (s *Service) changeSourcesFor(ctx context.Context, userID, planID uuid.UUID) ([]quoteSource, error) {
+	us, err := s.subs.ByUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	var cands []subsvc.Summary
+	ids := make([]uuid.UUID, 0, len(us.Subscriptions))
+	for _, sum := range us.Subscriptions {
+		if sum.State == subsvc.StateEnded || sum.PlanID == planID {
+			continue
+		}
+		cands = append(cands, sum)
+		ids = append(ids, sum.ID)
+	}
+	open, err := s.repo.OpenChangeSubscriptions(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	srcs := make([]basisSource, 0, len(cands))
+	for _, sum := range cands {
+		if open[sum.ID] {
+			continue // 有未完结的续费或变更单：这一份现在不能换，不列
+		}
+		srcs = append(srcs, basisSource{Sub: sum.Subscription, Quotas: sum.Quotas})
+	}
+	bases, mixed, err := s.loadBases(ctx, srcs)
+	if err != nil {
+		return nil, err
+	}
+	out := []quoteSource{}
+	for _, src := range srcs {
+		if len(out) >= maxQuoteRows {
+			break
+		}
+		if mixed[src.Sub.ID] {
+			continue
+		}
+		out = append(out, quoteSource{sub: src.Sub, basis: bases[src.Sub.ID]})
+	}
+	return out, nil
+}
+
 // quoteChangeLines 换套餐报价：给了订阅没给套餐，按这份能换成的每个套餐展开；给了套餐没给订阅，按每份能换的订阅展开
 // （「把哪一份换成它」）；都给就一个套餐。每个价格档一条，周期从现在起算，剩余价值按现在算。
 func quoteChangeLines(ctx context.Context, s *Service, userID uuid.UUID, in QuoteInput, now time.Time) ([]Quote, error) {
@@ -134,11 +99,7 @@ func quoteChangeLines(ctx context.Context, s *Service, userID uuid.UUID, in Quot
 	if !hasSub && !hasPlan {
 		return nil, errs.Invalid(map[string]string{"subscription_id": "订阅与套餐至少给一个"})
 	}
-	type source struct {
-		sub   subsvc.Subscription
-		basis prorationBasis
-	}
-	var sources []source
+	var sources []quoteSource
 	if hasSub {
 		sub, err := s.subs.Get(ctx, *in.SubscriptionID, &userID)
 		if err != nil {
@@ -154,35 +115,13 @@ func quoteChangeLines(ctx context.Context, s *Service, userID uuid.UUID, in Quot
 		if err != nil {
 			return nil, err
 		}
-		sources = append(sources, source{sub: sub, basis: basis})
+		sources = append(sources, quoteSource{sub: sub, basis: basis})
 	} else {
-		us, err := s.subs.ByUser(ctx, userID)
+		srcs, err := s.changeSourcesFor(ctx, userID, *in.PlanID)
 		if err != nil {
 			return nil, err
 		}
-		for _, sum := range us.Subscriptions {
-			if len(sources) >= maxQuoteRows {
-				break
-			}
-			if sum.State == subsvc.StateEnded || sum.PlanID == *in.PlanID {
-				continue
-			}
-			open, err := s.repo.OpenChangeOrderExists(ctx, sum.ID)
-			if err != nil {
-				return nil, err
-			}
-			if open {
-				continue // 有未完结的续费或变更单：这一份现在不能换，不列
-			}
-			basis, err := s.loadBasis(ctx, sum.Subscription)
-			if errors.Is(err, errProrationMixedCurrency) {
-				continue
-			}
-			if err != nil {
-				return nil, err
-			}
-			sources = append(sources, source{sub: sum.Subscription, basis: basis})
-		}
+		sources = srcs
 	}
 	if len(sources) == 0 {
 		return []Quote{}, nil
@@ -293,6 +232,7 @@ func (s *Service) placeChange(ctx context.Context, d changeDraft) (Created, mode
 	auditData := map[string]any{
 		"subscription_id":  subID.String(),
 		"to_plan_id":       planID.String(),
+		"price_id":         d.PriceID.String(),
 		"proration_credit": credit.StringFixed(2),
 	}
 	for k, v := range d.AuditData {

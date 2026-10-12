@@ -9,6 +9,8 @@ package service
 //	审计   order.manual_created，与订单同一事务：没有审计的人工单等于没人负责
 //
 // 人工单不用券、不用余额；不受门户「同套餐只续不新开」与「同套餐只能有一张待付新购单」限制，限购与库存照常。
+// 另开一份照门户的可见性校验（隐藏、不在上架窗口、别组的组价回 404，旧 loadNewPurchasePlanTx 同口径）；
+// 续一期与换套餐不看可见性（续的是自己的套餐；换套餐只看目标套餐允许变更，旧代码同）。
 
 import (
 	"context"
@@ -17,7 +19,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
-	"github.com/shopspring/decimal"
 
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
@@ -72,95 +73,6 @@ func (s *Service) requireUser(ctx context.Context, userID uuid.UUID) error {
 	return nil
 }
 
-// previewPrice 是预览用的价格档：给了且属于这个套餐就用它（ok 为真，报应付）；
-// 周期取它，没给取套餐最早建的在售价格，都没有按一个月（对照旧 offerPeriod）。
-func previewPrice(plan catalogsvc.PlanDetail, priceID *uuid.UUID) (catalogsvc.Price, string, int, bool) {
-	if priceID != nil {
-		for _, pr := range plan.Prices {
-			if pr.ID == *priceID {
-				return pr, pr.BillingInterval, pr.IntervalCount, true
-			}
-		}
-		return catalogsvc.Price{}, "month", 1, false
-	}
-	var first *catalogsvc.Price
-	for i := range plan.Prices {
-		pr := &plan.Prices[i]
-		if pr.Status != catalogsvc.PriceActive {
-			continue
-		}
-		if first == nil || pr.CreatedAt.Before(first.CreatedAt) {
-			first = pr
-		}
-	}
-	if first == nil {
-		return catalogsvc.Price{}, "month", 1, false
-	}
-	return catalogsvc.Price{}, first.BillingInterval, first.IntervalCount, false
-}
-
-// ManualPreview 后台开单前看「这单落到哪一份」：规则同 planPlacements，从订阅行进来时预选那一份。只读。
-// change 选项按每份订阅读一次折算基数（候选最多 maxCandidates 份，后台低频，与旧代码同）。
-func (s *Service) ManualPreview(ctx context.Context, in ManualPreviewInput) (ManualPreview, error) {
-	if _, err := adminPrincipal(ctx); err != nil {
-		return ManualPreview{}, err
-	}
-	if err := s.requireUser(ctx, in.UserID); err != nil {
-		return ManualPreview{}, err
-	}
-	plan, err := s.catalog.GetPlan(ctx, in.PlanID)
-	if err != nil {
-		return ManualPreview{}, err
-	}
-	price, interval, count, priced := previewPrice(plan, in.PriceID)
-	out := ManualPreview{Options: []Placement{}, MinPayment: decimal.Zero}
-	if priced {
-		if out.MinPayment, err = s.payments.MinPayment(ctx, price.Currency); err != nil {
-			return ManualPreview{}, err
-		}
-	}
-	us, err := s.subs.ByUser(ctx, in.UserID)
-	if err != nil {
-		return ManualPreview{}, err
-	}
-	cands := candidatesFrom(us)
-	byID := make(map[uuid.UUID]candidate, len(cands))
-	for _, c := range cands {
-		byID[c.Sub.ID] = c
-	}
-	opts, def := planPlacements(in.PlanID, cands, in.EntrySubscriptionID)
-	out.DefaultKey = def
-	now := s.clock()
-	for _, op := range opts {
-		end := newPeriodEnd(op, now, interval, count)
-		op.NewPeriodEnd = &end
-		op.Credit, op.Due = decimal.Zero, decimal.Zero
-		if op.Kind == PlacementChange && op.SubscriptionID != nil {
-			basis, err := s.loadBasis(ctx, byID[*op.SubscriptionID].Sub)
-			switch {
-			case errors.Is(err, errProrationMixedCurrency):
-				// 本期付费单币种不一致：展示时不报价值，落地时会给出原因
-			case err != nil:
-				return ManualPreview{}, err
-			default:
-				op.Credit, _ = prorationCredit(basis, now)
-				op.Currency = basis.Currency
-				op.GiftDaysLost = giftedDaysLeft(basis, now)
-			}
-		}
-		if priced {
-			credit := decimal.Zero
-			if op.Kind == PlacementChange && (op.Currency == "" || op.Currency == price.Currency) {
-				credit = op.Credit
-			}
-			op.Due = OrderTotal(price.UnitAmount, decimal.Zero, credit)
-			op.BelowMinimum = manualDueBelowMinimum(op.Due, out.MinPayment)
-		}
-		out.Options = append(out.Options, op)
-	}
-	return out, nil
-}
-
 // CreateManualOrder 后台人工开单（POST /v1/orders/manual）。落点在事务里按当时的订阅重新算，选的那一项不在了回 422。
 func (s *Service) CreateManualOrder(ctx context.Context, in ManualOrderInput) (Created, error) {
 	p, err := adminPrincipal(ctx)
@@ -204,7 +116,7 @@ func (s *Service) CreateManualOrder(ctx context.Context, in ManualOrderInput) (C
 		}
 		var rec *paymentsvc.RecordResult
 		if md.Offline {
-			r, err := s.settleManualOffline(ctx, o, op, reference, reason)
+			r, err := s.settleManualOffline(ctx, o, reference, reason)
 			if err != nil {
 				return err
 			}
@@ -271,7 +183,8 @@ func (s *Service) placeManual(ctx context.Context, in ManualOrderInput, op Place
 	})
 }
 
-// placeManualNew 另开一份：锁套餐行（与门户新购同序），限购与库存照常，不看可见性与上架窗口。
+// placeManualNew 另开一份：锁套餐行（与门户新购同序），限购与库存照常；可见性、上架窗口与用户组价按这个用户看
+// （Manual: false，与门户新购同一道目录校验）。
 func (s *Service) placeManualNew(ctx context.Context, in ManualOrderInput, md *manualDraft, actor Actor) (Created, model.Order, error) {
 	uid := in.UserID
 	planID := in.PlanID
@@ -279,7 +192,7 @@ func (s *Service) placeManualNew(ctx context.Context, in ManualOrderInput, md *m
 		Use:    catalogsvc.UseNew,
 		UserID: &uid,
 		PlanID: &planID,
-		Manual: true,
+		Manual: false,
 		Lock:   true,
 		Now:    s.clock(),
 	})
@@ -307,15 +220,9 @@ func (s *Service) placeManualNew(ctx context.Context, in ManualOrderInput, md *m
 	})
 }
 
-// settleManualOffline 在建单事务里按线下渠道结清人工单（与标记已支付同一条入账路径）。
-// 应付为 0 的单不需要收款，回 409 让管理员改用赠送；没有入账就整笔回滚。
-func (s *Service) settleManualOffline(ctx context.Context, o model.Order, op Placement, reference, reason string) (paymentsvc.RecordResult, error) {
-	if !o.PayableAmount.IsPositive() {
-		if op.Kind == PlacementChange {
-			return paymentsvc.RecordResult{}, errOfflineChangeNothingDue
-		}
-		return paymentsvc.RecordResult{}, errOfflineNothingDue
-	}
+// settleManualOffline 在建单事务里按线下渠道结清人工单（与标记已支付同一条入账路径）。应付为 0 的单 place 已在建单前拒掉；
+// 没有入账就整笔回滚。
+func (s *Service) settleManualOffline(ctx context.Context, o model.Order, reference, reason string) (paymentsvc.RecordResult, error) {
 	rec, err := s.payments.RecordOffline(ctx, paymentsvc.OfflineInput{
 		OrderID:   o.ID,
 		OrderNo:   o.OrderNo,
@@ -358,6 +265,7 @@ func manualDigest(in ManualOrderInput, op Placement, settlement, reason, referen
 		d["subscription_id"] = op.SubscriptionID.String()
 	}
 	if c.Change != nil {
+		d["direction"] = changeAuditData(o, o.TotalAmount)["direction"]
 		d["proration_credit"] = c.Change.ProrationCredit.StringFixed(2)
 		d["balance_refund"] = c.Change.BalanceRefund.StringFixed(2)
 	}

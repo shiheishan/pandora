@@ -80,8 +80,8 @@ type Subscriptions interface {
 	GrantTrafficPack(ctx context.Context, in subsvc.PackGrant) (subsvc.Pack, error)
 	ChangePlan(ctx context.Context, in subsvc.PlanChange) (subsvc.PlanChangeResult, error)
 	Quotas(ctx context.Context, subID uuid.UUID) ([]subsvc.Quota, error)
-	// PeriodOrderIDs 是本周期的付费来源订单（按发生先后）：换套餐折算剩余价值的基数
-	PeriodOrderIDs(ctx context.Context, subID uuid.UUID) ([]uuid.UUID, error)
+	// PeriodOrderIDsBySubscriptions 是每份订阅本周期的付费来源订单（按发生先后）：换套餐折算剩余价值的基数
+	PeriodOrderIDsBySubscriptions(ctx context.Context, subIDs []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error)
 }
 
 // Payments 是 payment service 用到的面。

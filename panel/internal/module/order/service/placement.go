@@ -36,6 +36,8 @@ type candidate struct {
 	TrafficUsed   int64
 	TrafficCap    int64
 	PackRemaining int64
+	// Quotas 是这一份的配额（折算剩余价值用）
+	Quotas []subsvc.Quota
 }
 
 // candidatesFrom 从用户的订阅摘要里取还能落地的（未停用的），生效中的优先、新的优先，最多 maxCandidates 份。
@@ -45,7 +47,7 @@ func candidatesFrom(us subsvc.UserSubscriptions) []candidate {
 		if sum.State == subsvc.StateEnded {
 			continue
 		}
-		c := candidate{Sub: sum.Subscription, PlanName: sum.PlanName, State: sum.State, PackRemaining: sum.PackRemainingBytes}
+		c := candidate{Sub: sum.Subscription, PlanName: sum.PlanName, State: sum.State, PackRemaining: sum.PackRemainingBytes, Quotas: sum.Quotas}
 		for _, q := range sum.Quotas {
 			if q.Metric != catalogsvc.MetricTraffic || q.Limit == nil ||
 				(q.Period != catalogsvc.PeriodCycle && q.Period != catalogsvc.PeriodTotal) {

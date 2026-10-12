@@ -129,6 +129,13 @@ func (s *Service) place(ctx context.Context, d draft) (Created, model.Order, err
 	if err != nil {
 		return Created{}, model.Order{}, err
 	}
+	// 线下已收款而应付为 0：没有东西可收，建单之前就拒（不先履约再整笔回滚）
+	if d.Manual != nil && d.Manual.Offline && !bal.Payable.IsPositive() {
+		if d.Kind == KindUpgrade {
+			return Created{}, model.Order{}, errOfflineChangeNothingDue
+		}
+		return Created{}, model.Order{}, errOfflineNothingDue
+	}
 	if err := checkExpect(d.Checkout.Expect, total, bal, now); err != nil {
 		return Created{}, model.Order{}, err
 	}
@@ -241,6 +248,11 @@ func (s *Service) place(ctx context.Context, d draft) (Created, model.Order, err
 			"currency": string(d.Currency),
 			"total":    o.TotalAmount.StringFixed(2),
 		}
+		if d.Kind == KindUpgrade {
+			for k, v := range changeAuditData(o, total) {
+				auditData[k] = v
+			}
+		}
 		for k, v := range d.AuditData {
 			auditData[k] = v
 		}
@@ -262,6 +274,7 @@ func (s *Service) place(ctx context.Context, d draft) (Created, model.Order, err
 		Discount:       o.DiscountAmount,
 		BalanceApplied: o.BalanceApplied,
 		Payable:        o.PayableAmount,
+		Waived:         o.WaivedAmount,
 		Status:         o.Status,
 	}
 	if d.Kind == KindUpgrade {
@@ -271,4 +284,18 @@ func (s *Service) place(ctx context.Context, d draft) (Created, model.Order, err
 		}
 	}
 	return created, o, nil
+}
+
+// changeAuditData 是换套餐单审计多记的几项（对照旧 plan_change_created）：方向（免零头之前的应付为正是升级，否则降级）、
+// 履约时退进余额的钱、免掉的零头（放弃的收入）。
+func changeAuditData(o model.Order, total decimal.Decimal) map[string]any {
+	direction := "downgrade"
+	if total.IsPositive() {
+		direction = "upgrade"
+	}
+	return map[string]any{
+		"direction":        direction,
+		"balance_refund":   planChangeRefund(o.ProrationCreditAmount, o.SubtotalAmount, o.DiscountAmount).StringFixed(2),
+		"small_due_waived": o.WaivedAmount.StringFixed(2),
+	}
 }

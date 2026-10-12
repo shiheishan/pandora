@@ -119,6 +119,31 @@ SELECT COUNT(*) FROM orders
 	return n > 0, nil
 }
 
+// OpenChangeSubscriptions 是 subIDs 里挂着未完结续费或变更单的订阅（OpenChangeOrderExists 的批量版，报价与开单预览用）。
+func (r *Repo) OpenChangeSubscriptions(ctx context.Context, subIDs []uuid.UUID) (map[uuid.UUID]bool, error) {
+	out := make(map[uuid.UUID]bool, len(subIDs))
+	if len(subIDs) == 0 {
+		return out, nil
+	}
+	rows, err := r.d.Conn(ctx).Raw(`
+SELECT DISTINCT subscription_id FROM orders
+ WHERE subscription_id IN ?
+   AND kind IN ('renewal', 'upgrade')
+   AND status IN ('pending_payment', 'paid')`, subIDs).Rows()
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, mapErr(err)
+		}
+		out[id] = true
+	}
+	return out, mapErr(rows.Err())
+}
+
 // HasPaidOrder 判断用户有没有付过钱的订单（已支付或已履约、应付大于 0；余额全额付的单应付为 0，不算）。
 func (r *Repo) HasPaidOrder(ctx context.Context, userID uuid.UUID) (bool, error) {
 	var ok bool

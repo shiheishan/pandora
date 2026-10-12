@@ -163,8 +163,10 @@ type Created struct {
 	Discount       decimal.Decimal
 	BalanceApplied decimal.Decimal
 	Payable        decimal.Decimal
-	Status         string
-	Change         *ChangeAmounts
+	// Waived 是免掉的零头（只有门户换套餐会有）；对外的 discount_amount 照旧含它
+	Waived decimal.Decimal
+	Status string
+	Change *ChangeAmounts
 }
 
 // ChangeAmounts 是换套餐单另给的两项：原订阅的剩余价值，与履约时退进余额的差额（降级才有）。

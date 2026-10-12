@@ -59,6 +59,12 @@ func (s *Service) SettlePayment(ctx context.Context, in paymentsvc.SettleInput) 
 		if o.Kind != KindAddon && !sub.StateAt(now).AcceptsChange() {
 			return paymentsvc.NotPayable(paymentsvc.CaseIneligibleSubscription, o.Status)
 		}
+		// 换套餐单冻结的剩余价值只对建单时的那一段周期成立：之后订阅被套餐卡换过套餐、或过期后被救回或续回（周期起点都会
+		// 挪到那一刻），再按冻结的数换一次、退一次就重复了。周期起点晚于建单时刻即视为已变，钱进挂账。
+		// 两个时刻都由应用时钟写入（订单 created_at 由 GORM 在插入时取，周期起点由 subscription 取 now）。
+		if o.Kind == KindUpgrade && sub.PeriodStart.After(o.CreatedAt) {
+			return paymentsvc.NotPayable(paymentsvc.CaseIneligibleSubscription, o.Status)
+		}
 	}
 
 	if err := s.captureReservation(ctx, o, Actor{Kind: ActorPayment}); err != nil {

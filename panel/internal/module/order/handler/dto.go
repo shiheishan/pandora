@@ -170,7 +170,8 @@ type createPlanChangeRequest struct {
 	checkoutReq
 }
 
-// orderCreatedResponse 是建单的 201 响应（旧 billing.CreateOrderOutput）。换套餐单另有 proration_credit 与
+// orderCreatedResponse 是建单的 201 响应（旧 billing.CreateOrderOutput）。discount_amount 照旧含免掉的零头（旧 waiveIntoDiscount），
+// 前端按「小计 − 折扣 − 剩余价值 = 总额」核对；库里零头单独记在 waived_amount。换套餐单另有 proration_credit 与
 // balance_refund 两项（旧 PlanChangeOrderOutput），其余种类不出现。
 type orderCreatedResponse struct {
 	DiscountAmount  int64  `json:"discount_amount"`
@@ -189,7 +190,7 @@ type orderCreatedResponse struct {
 func orderCreatedFrom(c service.Created) (orderCreatedResponse, error) {
 	var cc cents
 	out := orderCreatedResponse{
-		DiscountAmount: cc.of(c.Discount),
+		DiscountAmount: cc.of(c.Discount.Add(c.Waived)),
 		OrderID:        c.OrderID.String(),
 		OrderNo:        c.OrderNo,
 		Currency:       string(c.Currency),
@@ -547,7 +548,7 @@ func myOrderRowFrom(cc *cents, v service.MyOrderView) myOrderRowResponse {
 		Status:           v.Status,
 		Currency:         string(v.Currency),
 		TotalAmount:      cc.of(v.Total),
-		DiscountAmount:   cc.of(v.Discount),
+		DiscountAmount:   cc.of(v.Discount.Add(v.Waived)),
 		BalanceApplied:   cc.of(v.BalanceApplied),
 		PayableAmount:    cc.of(v.Payable),
 		PaidAmount:       cc.of(v.Paid),

@@ -102,4 +102,7 @@ type Placement struct {
 	// Due 是按「待用户支付」开时用户要付多少（change 先抵 Credit）；BelowMinimum 是它低于站点最低额、用户没法在线付
 	Due          decimal.Decimal
 	BelowMinimum bool
+	// Unavailable 非空表示按这个价格档开不了这一项，内容是建单会回的那句话（目录不允许、价格下架、币种不一致、
+	// 已有未完结的续费或变更单等）；只在给了价格档时检查目录
+	Unavailable string
 }

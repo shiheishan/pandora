@@ -61,6 +61,8 @@ type placementResponse struct {
 	PackRemaining  int64      `json:"pack_remaining,omitempty"`
 	Due            int64      `json:"due"`
 	BelowMinimum   bool       `json:"below_minimum"`
+	// UnavailableReason 非空表示这一项开不了，内容与建单会回的错误相同
+	UnavailableReason string `json:"unavailable_reason,omitempty"`
 }
 
 // manualPreviewResponse 是开单预览（default_key 为空表示不预选）。
@@ -79,25 +81,26 @@ func manualPreviewFrom(p service.ManualPreview) (manualPreviewResponse, error) {
 	}
 	for _, o := range p.Options {
 		out.Options = append(out.Options, placementResponse{
-			Key:            o.Key,
-			Kind:           o.Kind,
-			SubscriptionID: idOrEmpty(o.SubscriptionID),
-			Expired:        o.Expired,
-			Badge:          o.Badge,
-			Label:          o.Label,
-			PlanID:         idOrEmpty(o.PlanID),
-			PlanName:       o.PlanName,
-			State:          string(o.State),
-			PeriodEnd:      o.PeriodEnd,
-			NewPeriodEnd:   o.NewPeriodEnd,
-			Credit:         cc.of(o.Credit),
-			Currency:       string(o.Currency),
-			GiftDaysLost:   o.GiftDaysLost,
-			TrafficUsed:    o.TrafficUsed,
-			TrafficCap:     o.TrafficCap,
-			PackRemaining:  o.PackRemaining,
-			Due:            cc.of(o.Due),
-			BelowMinimum:   o.BelowMinimum,
+			Key:               o.Key,
+			Kind:              o.Kind,
+			SubscriptionID:    idOrEmpty(o.SubscriptionID),
+			Expired:           o.Expired,
+			Badge:             o.Badge,
+			Label:             o.Label,
+			PlanID:            idOrEmpty(o.PlanID),
+			PlanName:          o.PlanName,
+			State:             string(o.State),
+			PeriodEnd:         o.PeriodEnd,
+			NewPeriodEnd:      o.NewPeriodEnd,
+			Credit:            cc.of(o.Credit),
+			Currency:          string(o.Currency),
+			GiftDaysLost:      o.GiftDaysLost,
+			TrafficUsed:       o.TrafficUsed,
+			TrafficCap:        o.TrafficCap,
+			PackRemaining:     o.PackRemaining,
+			Due:               cc.of(o.Due),
+			BelowMinimum:      o.BelowMinimum,
+			UnavailableReason: o.Unavailable,
 		})
 	}
 	return out, cc.err
