@@ -18,6 +18,9 @@ on:
       - "panel/go.mod"
       - "panel/go.sum"
       - ".github/workflows/panel-newstack.yml"
+      - "panel/tests/auth_e2e.sh"
+      - "panel/tests/password_reset_e2e.sh"
+      - "panel/tests/portal_staff_e2e.sh"
   pull_request:
     paths:
       - "panel/internal/pkg/**"
@@ -30,6 +33,9 @@ on:
       - "panel/go.mod"
       - "panel/go.sum"
       - ".github/workflows/panel-newstack.yml"
+      - "panel/tests/auth_e2e.sh"
+      - "panel/tests/password_reset_e2e.sh"
+      - "panel/tests/portal_staff_e2e.sh"
 
 permissions:
   contents: read
@@ -140,3 +146,92 @@ jobs:
           test -n "$ok"
           # SIGTERM 后应干净退出
           test "$rc" = 0
+
+  e2e:
+    name: E2E on the new binary (auth, password reset, portal staff)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: pandora
+          POSTGRES_PASSWORD: pandora
+          POSTGRES_DB: pandora_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pandora"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:8
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      PANDORA_ENV: development
+      PANDORA_DATABASE_URL: postgres://pandora:pandora@127.0.0.1:5432/pandora_e2e?sslmode=disable
+      PANDORA_DATABASE_MIGRATION_URL: postgres://pandora:pandora@127.0.0.1:5432/pandora_e2e?sslmode=disable
+      PANDORA_REDIS_URL: redis://127.0.0.1:6379/0
+      # 脚本在几分钟里登录、注册几十次：放宽认证限流（失败 10 次暂停是按账号，不受影响）
+      PANDORA_RATELIMIT_AUTH_PER_MIN: "1000"
+      AUTH_E2E_DISPOSABLE: YES_DELETE_FIXTURES
+      PASSWORD_RESET_E2E_DISPOSABLE: YES_DELETE_FIXTURES
+      PORTAL_STAFF_E2E_DISPOSABLE: YES_DELETE_FIXTURES
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: panel/go.mod
+          cache-dependency-path: panel/go.sum
+      - name: Build pandora
+        run: go build -mod=readonly -o "$RUNNER_TEMP/pandora" ./cmd/pandora
+      - name: Run e2e scripts
+        run: |
+          # CI 一次性的假密钥与管理员口令，只经环境变量与标准输入传
+          export PANDORA_SECRETS_MASTER_KEY="$(head -c 32 /dev/urandom | base64)"
+          export PANDORA_AUTH_PUBLIC_JWT_SECRET="$(head -c 32 /dev/urandom | base64)"
+          export PANDORA_AUTH_ADMIN_JWT_SECRET="$(head -c 32 /dev/urandom | base64)"
+          export ADMIN_EMAIL="admin-e2e@example.test"
+          export ADMIN_PASS="E2e!Admin-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+          bin="$RUNNER_TEMP/pandora"
+          "$bin" migrate up
+          printf '%s\n' "$ADMIN_PASS" | "$bin" admin create --email "$ADMIN_EMAIL" --password-stdin
+          "$bin" admin has-admin
+
+          # 脚本用 $PSQL 查库（主机自带的 psql 客户端）
+          export PSQL="$RUNNER_TEMP/psql.sh"
+          printf '#!/usr/bin/env bash\nexec psql "$PANDORA_DATABASE_URL" "$@"\n' > "$PSQL"
+          chmod +x "$PSQL"
+
+          "$bin" serve > "$RUNNER_TEMP/serve.log" 2>&1 &
+          serve_pid=$!
+          "$bin" worker > "$RUNNER_TEMP/worker.log" 2>&1 &
+          worker_pid=$!
+          ok=
+          for _ in $(seq 1 50); do
+            if curl -fsS http://127.0.0.1:9000/readyz >/dev/null && curl -fsS http://127.0.0.1:9001/readyz >/dev/null; then ok=1; break; fi
+            sleep 0.2
+          done
+          test -n "$ok" || { cat "$RUNNER_TEMP/serve.log"; exit 1; }
+
+          failed=0
+          for s in auth_e2e.sh password_reset_e2e.sh portal_staff_e2e.sh; do
+            echo "::group::$s"
+            if bash "tests/$s"; then echo "$s 通过"; else echo "::error::$s 失败"; failed=$((failed+1)); fi
+            echo "::endgroup::"
+          done
+
+          kill -TERM "$serve_pid" "$worker_pid"
+          wait "$serve_pid" || true
+          wait "$worker_pid" || true
+          if [ "$failed" -ne 0 ]; then
+            echo "::group::serve.log"; tail -n 300 "$RUNNER_TEMP/serve.log"; echo "::endgroup::"
+            echo "::group::worker.log"; tail -n 100 "$RUNNER_TEMP/worker.log"; echo "::endgroup::"
+            exit 1
+          fi

@@ -79,7 +79,8 @@ C=$(status_of -X POST "$PUB/v1/auth/login" -H 'Content-Type: application/json' \
 sec "4. 登录失败审计：被拦与口令错都记，同一 IP 窗口内只记一条"
 
 N=$("$PSQL" -X -qAtc "SELECT count(*) FROM audit_events a JOIN users u ON u.id = a.resource_id
-  WHERE u.email = '$ADMIN_EMAIL' AND a.action = 'user.login_failed' AND a.error_code = 'staff_portal_blocked'
+  WHERE u.email = '$ADMIN_EMAIL' AND a.action = 'user.login_failed'
+    AND COALESCE(to_jsonb(a)->>'error_code', to_jsonb(a)->'data'->>'reason') = 'staff_portal_blocked'
     AND a.occurred_at > now() - interval '10 minutes'" | tr -d '[:space:]')
 [ "${N:-0}" -ge 1 ] && ok "门户禁登记了审计（staff_portal_blocked）" || bad "门户禁登没有审计" "count=$N"
 
