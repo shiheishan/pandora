@@ -9,8 +9,9 @@ import (
 )
 
 // 佣金按订单币种计提，可能和站点币种不同，也可能一个人有多个币种。
-// 汇总、提现、转余额都按用户实际有佣金的币种来：请求里没有币种字段，只有一个币种有可用额时就用它，
+// 汇总、提现按用户实际有佣金的币种来：请求里没有币种字段，只有一个币种有可用额时就用它，
 // 多个币种都有可用额时不合并、不猜，回 ErrWithdrawCurrencyAmbiguous（旧行为）。
+// 转余额只认站点币种（门户钱包只显示站点币种），别的币种的佣金走提现。
 
 // currencyAvail 是某币种的可用佣金。
 type currencyAvail struct {
@@ -36,7 +37,7 @@ func (s *Service) availableByCurrency(ctx context.Context, userID uuid.UUID) ([]
 	return out, nil
 }
 
-// pickCurrency 选提现、转余额用的币种：恰一个币种可用额为正就是它；多于一个回 ErrWithdrawCurrencyAmbiguous；
+// pickCurrency 选提现用的币种：恰一个币种可用额为正就是它；多于一个回 ErrWithdrawCurrencyAmbiguous；
 // 一个都没有时 ok 为 false（调用方按各自的「没有可用佣金」报错）。调用方必须已在本事务里 LockUser。
 func (s *Service) pickCurrency(ctx context.Context, userID uuid.UUID) (cur money.Currency, avail decimal.Decimal, ok bool, err error) {
 	list, err := s.availableByCurrency(ctx, userID)
@@ -89,4 +90,30 @@ func (s *Service) summaryCurrency(ctx context.Context, userID uuid.UUID) (money.
 		return site, nil
 	}
 	return list[0].cur, nil
+}
+
+// transferCurrency 返回转余额用的币种（站点币种）及其可用额。站点币种没有可用额、而别的币种有时
+// 回 ErrTransferNotSiteCurrency，提示走提现。调用方必须已在本事务里 LockUser。
+func (s *Service) transferCurrency(ctx context.Context, userID uuid.UUID) (money.Currency, decimal.Decimal, error) {
+	site, err := s.ledger.DefaultCurrency(ctx)
+	if err != nil {
+		return "", decimal.Zero, err
+	}
+	list, err := s.availableByCurrency(ctx, userID)
+	if err != nil {
+		return "", decimal.Zero, err
+	}
+	siteAvail, otherPositive := decimal.Zero, false
+	for _, ca := range list {
+		switch {
+		case ca.cur == site:
+			siteAvail = ca.avail
+		case ca.avail.IsPositive():
+			otherPositive = true
+		}
+	}
+	if !siteAvail.IsPositive() && otherPositive {
+		return "", decimal.Zero, ErrTransferNotSiteCurrency
+	}
+	return site, siteAvail, nil
 }

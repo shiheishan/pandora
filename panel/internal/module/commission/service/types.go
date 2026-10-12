@@ -103,6 +103,8 @@ var (
 	ErrWithdrawalNotFound   = errs.Newf(errs.NotFound, "提现申请不存在")
 	// ErrWithdrawCurrencyAmbiguous 是可用佣金分在多个币种：请求里没有币种，不合并、不猜。
 	ErrWithdrawCurrencyAmbiguous = errs.Newf(errs.Conflict, "可提现佣金包含多个币种，请联系管理员分币种处理")
+	// ErrTransferNotSiteCurrency 是可用佣金只有非站点币种：钱包只显示站点币种，这部分请走提现。
+	ErrTransferNotSiteCurrency = errs.Newf(errs.Conflict, "这部分佣金不是站点币种，不能转入余额，请走提现")
 )
 
 // Summary 是门户「我的佣金」的汇总，金额都是 Currency 这一个币种（取法见 summaryCurrency）。
