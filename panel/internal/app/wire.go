@@ -18,6 +18,8 @@ import (
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
 	notifyrepo "github.com/aegispanel/aegis/internal/module/notify/repo"
 	notifysvc "github.com/aegispanel/aegis/internal/module/notify/service"
+	orderrepo "github.com/aegispanel/aegis/internal/module/order/repo"
+	ordersvc "github.com/aegispanel/aegis/internal/module/order/service"
 	paymentrepo "github.com/aegispanel/aegis/internal/module/payment/repo"
 	paymentsvc "github.com/aegispanel/aegis/internal/module/payment/service"
 	promorepo "github.com/aegispanel/aegis/internal/module/promo/repo"
@@ -48,6 +50,7 @@ type services struct {
 	promo    *promosvc.Service
 	sub      *subsvc.Service
 	payment  *paymentsvc.Service
+	order    *ordersvc.Service
 	limiter  *ratelimit.Limiter
 	queue    *asynq.Client
 	tx       *tx.Manager
@@ -133,6 +136,8 @@ func buildServices(r *runtime) (*services, error) {
 		})
 	subSvc := subsvc.New(subrepo.New(r.db), txm, auditSvc, settingsSvc, catalogSvc, identitySvc, sealer)
 
+	orderSvc := ordersvc.New(orderrepo.New(r.db), txm, catalogSvc, ledgerSvc, promoSvc, subSvc, paymentSvc, identitySvc, idemSvc, auditSvc)
+
 	// 模块间注入：identity 定义接口，auth、notify 实现；audit 经 identity 显示操作者与资源
 	identitySvc.UseSessionRevoker(authSvc)
 	identitySvc.UseAdminGuard(authSvc)
@@ -143,6 +148,8 @@ func buildServices(r *runtime) (*services, error) {
 	// promo 经 identity 取用户组与邮箱、经适配器取 catalog 的在售价格
 	promoSvc.UseUsers(identitySvc)
 	promoSvc.UseCatalog(promoCatalog{c: catalogSvc})
+	// 渠道到账与线下收款经 order 结算（没注册时入账一律失败）
+	paymentSvc.UseSettler(orderSvc)
 
 	return &services{
 		settings: settingsSvc,
@@ -156,6 +163,7 @@ func buildServices(r *runtime) (*services, error) {
 		promo:    promoSvc,
 		sub:      subSvc,
 		payment:  paymentSvc,
+		order:    orderSvc,
 		limiter:  limiter,
 		queue:    queue,
 		tx:       txm,
