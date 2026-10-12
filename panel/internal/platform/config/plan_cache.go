@@ -20,7 +20,7 @@ import (
 // 计划时设 force_custom_plan。
 //
 // 缺省为空 = 不往连接上带这个参数，行为与以前完全一致。这里只做开关，没有量测结论之前不要
-// 设：generic plan 在带倾斜数据的参数上可能变慢，必须经 bench-eval 判分。
+// 设：generic plan 在带倾斜数据的参数上可能变慢，必须先在 5k 库副本上 A/B 量过。
 //
 // 实现是把 plan_cache_mode 作为运行参数拼到该网关的连接串上（pgx 把不认识的键当作启动参数
 // 交给服务端），所以不改连接池，也不动 db 包；网关用 Config.DatabaseURLFor 取连接串。

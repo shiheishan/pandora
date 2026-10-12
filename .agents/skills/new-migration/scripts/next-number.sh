@@ -69,4 +69,4 @@ for m in "$local_max" "$inflight_max"; do
   if [ "$((10#$m))" -gt "$next" ]; then next=$((10#$m)); fi
 done
 printf '下一个可用号：%05d\n' "$((next + 1))"
-echo "在途分支可能已经废弃，也可能还要合：拿不准就问总协调（.claude/TASKS.md 记着各路号段）。"
+echo "在途分支可能已经废弃，也可能还要合：拿不准就问主 Agent（.claude/TASKS.md 记着各路号段）。"

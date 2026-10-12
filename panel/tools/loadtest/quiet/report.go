@@ -23,7 +23,7 @@ import (
 //   - B 档 30% 在线（缺省 0.3）：面板 + 数据库 ≤ 25（push 计费 N2 第 7 项查清后收到 ≤ 20），nginx ≤ 6；
 //   - 两档相同：整机已用 ≤ 950 MiB（不改内核参数），窗口内换入、换出都为 0。
 //
-// 改这里要同步 prod-retest skill 的静默一节与 loadtest README 第 11 节。
+// 改这里要同步 loadtest README 第 11 节。
 type tierLimits struct{ cpu, nginx float64 }
 
 var tiers = map[string]tierLimits{"A": {cpu: 10, nginx: 3}, "B": {cpu: 25, nginx: 6}}
@@ -271,7 +271,7 @@ func run(args []string, stdout io.Writer) error {
 	cpuLimit := fs.Float64("cpu-limit", 0, "override the tier's panel + database CPU ceiling, single core = 100")
 	nginxLimit := fs.Float64("nginx-limit", 0, "override the tier's nginx CPU ceiling, single core = 100")
 	memLimit := fs.Float64("mem-limit-mib", DefaultMemLimitMiB, "whole-machine used memory ceiling in MiB (MemTotal - MemAvailable, no cache)")
-	asJSON := fs.Bool("json", false, "print the verdict as JSON (read by the perf-gate skill's verdict.py) instead of markdown")
+	asJSON := fs.Bool("json", false, "print the verdict as JSON instead of markdown")
 	strict := fs.Bool("strict", false, "exit non-zero when the CPU, nginx or memory standard is not met")
 	if err := fs.Parse(args); err != nil {
 		return err

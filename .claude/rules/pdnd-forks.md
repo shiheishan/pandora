@@ -54,4 +54,4 @@ paths:
 
 - 边界与 `dgram/` 等自研包的区别见 `internal/nativewire/README.md`；生产调用方是 `kernel/` 里对应的适配器。
 - 共同的本仓库改动是用户表的同步发布（热更新用户与认证读不竞争）；hysteria2 / tuic 的 UDP 路径改动多，合上游时冲突主要在 `packet.go`、`service_packet.go`。
-- 改完要跑 `internal/nativewire/...`、`-tags interop` 的 AnyTLS 组（`TestAnyTLSNativeClientTCPAndUOTUDP`），hysteria2 / tuic 还要按 node-accept 在 Linux 上复测 UDP。
+- 改完要跑 `internal/nativewire/...`、`-tags interop` 的 AnyTLS 组（`TestAnyTLSNativeClientTCPAndUOTUDP`），hysteria2 / tuic 还要在 Linux 测试机上复测 UDP。

@@ -1,5 +1,5 @@
 # 依赖更新提醒：只开 Go 模块与 GitHub Actions，每周一次。
-# - Go 只登记 panel 与 pdnd 两个独立 module。.claude/skills/subscription-e2e/tools 经 replace
+# - Go 只登记 panel 与 pdnd 两个独立 module。.agents/skills/subscription-e2e/tools 经 replace
 #   跟随 pdnd，不单独登记；pdnd 的依赖 PR 合入前要到那里 go mod tidy（见 deps-upgrade skill）。
 # - pdnd 内 fork 的目录（internal/reality、realityquic、nativewire 的 anytls、hysteria2、
 #   shadowtls、tuic）不是模块依赖，dependabot 看不到，上游出公告要人工合（rules/pdnd-forks.md）。

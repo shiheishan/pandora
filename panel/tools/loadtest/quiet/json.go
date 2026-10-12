@@ -7,8 +7,8 @@ import (
 	"sort"
 )
 
-// -json 的输出：perf-gate skill 的 verdict.py 读它做改前改后对比，判定口径只在这个包里一份。
-// 字段不改名；单位：CPU 单核 = 100，内存 MiB。docker / containerd 两列随 Docker 布局删掉了（verdict.py 不读）。
+// -json 的输出：给改前改后对比的脚本读，判定口径只在这个包里一份。
+// 字段不改名；单位：CPU 单核 = 100，内存 MiB。docker / containerd 两列随 Docker 布局删掉了。
 type jsonReport struct {
 	Tier    string    `json:"tier"`
 	WindowS float64   `json:"window_s"`

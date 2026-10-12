@@ -409,7 +409,7 @@ SQL 热点看 `pgstat-*-total.csv` 前十，结合 pprof 的 CPU 火焰图定位
 | 整机已用（`free` 的 used，不含 cache；不改内核参数） | ≤ 950 MiB | 同 A |
 | 窗口内换入、换出 | 都为 0 | 同 A |
 
-负载下的及格线与第 9.2 节、prod-retest skill 相同。
+负载下的及格线与第 9.2 节相同。
 
 ### 11.1 造数：1000 节点、1 万用户
 
@@ -485,7 +485,7 @@ setsid -f /root/lt/quiet-collect.sh $P $T 15 > $P.out 2>&1 < /dev/null
 # 压测机（A 档在前面加 ONLINE_RATIO=0）
 setsid -f ~/run-quiet.sh $M https://<PANEL_DOMAIN> $T 1000 $R > /dev/null 2>&1 < /dev/null
 # 采集结束后，在任何有 loadtest 的机器上判定；-tier 要和压测机的在线比例对上（nodes.json 的 meta.online_ratio）
-loadtest quiet-report -dir $P -tier B    # 加 -strict 则任一标准不达标退出码非 0；-json 给 perf-gate skill 读
+loadtest quiet-report -dir $P -tier B    # 加 -strict 则任一标准不达标退出码非 0；-json 输出机器可读的判定
 ```
 
 - **采样口径**（与 5k-r4 一致，刻意很轻——`sample-procs.sh` / `sample-pgact.sh` 自身占 2–9 个百分点，会把静默 CPU 抬过线，静默期间不要开）：
@@ -495,5 +495,5 @@ loadtest quiet-report -dir $P -tier B    # 加 -strict 则任一标准不达标�
   - 拆账用的旁证同一时刻写在 `kern-{before,after}.txt`（min_free_kbytes、THP、完整 meminfo、sockstat、slab、zoneinfo）与 `pg-smaps-{before,after}.txt`（PG 每个进程的 smaps_rollup），`host.txt` 记机器指纹与面板版本。
   - 只认直装布局的单元名（`postgresql@*-main.service`、`valkey-server.service` 或 `redis-server.service`）；认不出 postgres 或 valkey 就在判定里明说并判不过，不当 0 算。
 - 口径曾用 5k-r4 的原始快照（`ops-local/vultr-test2/5k-r4/quiet/panel`）核对：面板 + 数据库 15.90、含 nginx 18.39、整机忙 22.12、已用内存 918 MiB，与当时人工算的一致。那一轮是 Docker 布局，容器 cgroup 的翻译已随 Docker 布局删掉，这批旧快照不再能直接喂给 `quiet-report`。
-- 分支改前改后的同机 A/B 判分（A/A 噪声底、两档、稳态、比值线）见 perf-gate skill，本节只管单次测量。
+- 本节只管单次测量，分支改前改后的同机 A/B 判分不在这里。
 - 出成绩单时，静默一节单列这几项：面板 + 数据库 CPU、各部分拆分、整机已用内存、swap、节点侧的 QPS / 错误数（`nodes.txt`）、aegis-node 的 `nr_throttled`。

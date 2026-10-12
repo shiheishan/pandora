@@ -8,7 +8,7 @@ paths:
 
 # 写 SQL 时的性能坑（2026-10-06 生产规模实测踩过的）
 
-5k 用户、200 节点在 2c4g 上实测，慢的全是下面这些写法，不是框架。改 SQL 前后用 bench-eval skill 在 5k 库副本上对照。
+5k 用户、200 节点在 2c4g 上实测，慢的全是下面这些写法，不是框架。改 SQL 前后在 5k 库副本上用 `EXPLAIN (ANALYZE, BUFFERS)` 对照。
 
 - **整表聚合的视图被按单行 JOIN**：视图里先 GROUP BY 全表、外面再 JOIN，过滤条件推不进去，只查一条也扫全表（在线设备视图曾单条 82ms、后台用户列表因此 470 秒）。视图写成按驱动行 LATERAL 聚合，或调用方自己按单行 LATERAL
 - **LATERAL / 相关子查询在 LIMIT 之前**：对全部行算完读模型再取一页。先在主表上按排序键取一页 id（配 `(tenant_id, created_at DESC, id DESC)` 这类索引），再只对这一页拼读模型

@@ -1,6 +1,6 @@
 ---
 name: test-machine
-description: pandora 一次性 Vultr 测试机（压测面板机、压测机、真节点、开发对照机）与租用机的规格、要不要 VPC、费用与公网出流量估算、用 Vultr API 开机、挂 VPC、查账单与超额、删机，以及开通登记与回收（租用机只登记，不走 Vultr 脚本）。用户发来新机器 IP、要开或删测试机、要给机器挂内网、要查流量超额或估算压测流量费、要在测试机上装 Docker / Go / Node（不装面板时）使用。在机器上装面板见 panel-install，面板压测见 prod-retest，节点大流量验收见 node-accept。
+description: pandora 一次性 Vultr 测试机（压测面板机、压测机、真节点、开发对照机）与租用机的规格、要不要 VPC、费用与公网出流量估算、用 Vultr API 开机、挂 VPC、查账单与超额、删机，以及开通登记与回收（租用机只登记，不走 Vultr 脚本）。用户发来新机器 IP、要开或删测试机、要给机器挂内网、要查流量超额或估算压测流量费、要在测试机上装 Docker / Go / Node（不装面板时）使用。
 ---
 
 # 一次性测试机
@@ -29,8 +29,8 @@ Vultr 新加坡，Debian 13 x64（与生产同版），开机时用 Vultr SSH Ke
   - 账户流量池 = 免费 2TB + 按各机开机时长折算的额度；超出约 $0.01/GB。Vultr 只计公网**出**方向，入方向和 VPC 内网流量不计。
   - 10-08 节点验收没开内网，5 台公网出流量合计约 4.11TB，流量池只有约 2.64TB，超了约 1.3TB。
 - **估算**：1Gbps 跑 1 小时，每个方向约 450GB。节点过 X Gbps（一半上行、一半下行）跑 H 小时：节点出 ≈ 450·X·H GB，目标机与压测机合计再出 ≈ 450·X·H GB，**全走公网时合计约 900·X·H GB**（10-08 约 4.6 Gbps·小时，实测 4.11TB，与公式吻合）。全走 VPC 时公网只剩 ssh、拉数据、apt、推二进制，几 GB 量级。
-- **跑前报用户**：计划多少 Gbps、多少小时、走不走内网、预计公网出流量多少 GB（节点验收的报法见 node-accept）。
-- **跑中、跑后核对**：各机 `/proc/net/dev` 的 tx，默认路由那块网卡才是公网（`bash .claude/skills/node-accept/scripts/netdev.sh <别名>...`）。开跑前、收尾各记一次，差值写进报告。
+- **跑前报用户**：计划多少 Gbps、多少小时、走不走内网、预计公网出流量多少 GB。
+- **跑中、跑后核对**：各机 `/proc/net/dev` 的 tx，默认路由那块网卡才是公网（`bash .claude/skills/test-machine/scripts/netdev.sh <别名>...`）。开跑前、收尾各记一次，差值写进报告。
 
 ## 用 API 开机、挂 VPC、删机（用户 10-08 授权 agent 开机）
 
@@ -66,7 +66,7 @@ bash .claude/skills/test-machine/scripts/register.sh [--vpc <内网IP>] [--renta
 - 同名目录已存在就换序号：删过的旧机目录保留作记录（如 node1/node2 已删，新开的叫 node3/node4）。
 - 一次性机不建 1Password 条目（用户定的）。
 
-准备：要 Docker 用 Debian 主仓的 `docker.io` 与 `docker-compose`；要构建就 `ssh <别名> 'bash -s' < .claude/skills/test-machine/scripts/install-toolchain.sh`，装与 CI 同小版本的 Go（go.mod 的 1.26 系列最新版）和 Node 22，官方包都核 sha256。装面板、构建发布包见 panel-install。
+准备：要 Docker 用 Debian 主仓的 `docker.io` 与 `docker-compose`；要构建就 `ssh <别名> 'bash -s' < .claude/skills/test-machine/scripts/install-toolchain.sh`，装与 CI 同小版本的 Go（go.mod 的 1.26 系列最新版）和 Node 22，官方包都核 sha256。
 
 ## 回收
 
@@ -74,13 +74,13 @@ bash .claude/skills/test-machine/scripts/register.sh [--vpc <内网IP>] [--renta
 
 ### 删前只读巡检
 
-列删机清单之前先做一次只读巡检，可交 Cursor 的 Composer。brief 抄 dispatch-task 的 `templates/server-readonly.md`（服务器只读红线）并填好机器清单，用 `cursor-launch.sh --dir <ops-local 下的目录>` 起；10-10 的实例是 `ops-local/vultr-test2/idle-check-1010/`（当时仍用 Grok，Grok 已于 10-10 停用）。
+列删机清单之前先做一次只读巡检，由主 Agent 自己做：先读 `~/ai/servers/README.md` 和该机 `AGENTS.md`，只跑查看类命令，不读不抄秘密，写进文件的 IP 换成占位符。
 
-判断机器上的结果有没有拉回时，先看对应 skill 的同步方向，再决定要不要拉。例：bench-eval 的 evalset 是本机 `ops-local/bench/remote/` 推上去的同步副本，结果已由 `run.sh` 拉回，不用再拉；容器 `bench-pg` 里的 5k 实测库和模板库才要处理，见 bench-eval「删对照机之前」。
+判断机器上的结果有没有拉回时，先看对应 skill 的同步方向，再决定要不要拉。
 
 ## 坑
 
 - 刚开机头一次 ssh 常报 `Connection timed out during banner exchange`，隔 15 秒重试即可，不是密钥问题（register.sh 已内置重试 3 次）。
 - ssh 起后台脚本、限时故障注入：照根 CLAUDE.md「环境与工具坑」的远端那一条。
-- 镜像开着 ufw。面板机的 80/443 由 install.sh 放行（见 panel-install）；**节点机的协议端口**（约定 20000–20099 的 tcp 与 udp）要手工放行。10-08 节点验收时端口段规则计数一直为 0、SYN 被 DROP（原因没查），按来源地址放行才通；VPC 下按内网来源或内网网段放行。放行后先实测连通（node-accept、node-e2e 都按这条办）。
-- 测试流量走内网时，pdnd 默认拒绝私网目标，要改节点配置，见 node-accept 第 2 节。
+- 镜像开着 ufw。面板机的 80/443 由 install.sh 放行；**节点机的协议端口**（约定 20000–20099 的 tcp 与 udp）要手工放行。10-08 节点验收时端口段规则计数一直为 0、SYN 被 DROP（原因没查），按来源地址放行才通；VPC 下按内网来源或内网网段放行。放行后先实测连通（node-e2e 也按这条办）。
+- 测试流量走内网时，pdnd 默认拒绝私网目标，要在节点配置里打开 `runtime.allow_private_destinations`。

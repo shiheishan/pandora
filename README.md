@@ -2,7 +2,7 @@
 
 Xboard 类代理订阅面板 + 自研节点端（Pandora NativeCore）。目标是提供 XBoard 级运营能力，并把协议、传输、路由与流量统计逐步收回单一自研内核。别名：AegisPanel / pandora-native。
 
-本文件是项目事实的唯一入口：架构、功能、构建、部署、验证状态、进度与路线图都在这里。AI 协作规则不在这里：根目录 [CLAUDE.md](CLAUDE.md) 是给 Claude Code 的全局约定，仓库公开、不写部署专属值的红线在它的「红线：仓库公开」一节；按目录生效的模块约定在 [.claude/rules/](.claude/rules/)，验证流程与 CI 说明在 [.claude/skills/verify/](.claude/skills/verify/SKILL.md)。
+本文件是项目事实的唯一入口：架构、功能、构建、部署、验证状态、进度与路线图都在这里。AI 协作规则不在这里：根目录 [CLAUDE.md](CLAUDE.md) 是给 Claude Code 的全局约定，仓库公开、不写部署专属值的红线在它的「红线：仓库公开」一节；按目录生效的模块约定在 [.claude/rules/](.claude/rules/)，验证流程与 CI 说明在 [.agents/skills/verify/](.agents/skills/verify/SKILL.md)。
 
 ## 架构
 
@@ -54,7 +54,7 @@ aegis-public    aegis-admin     aegis-node
 | `pdnd/release/` | Linux amd64/arm64 构建、能力矩阵一致性检查、运行时验收 |
 | `.githooks/`、`.gitleaks.toml` | 提交前密钥扫描：clone 后执行 `git config core.hooksPath .githooks` 启用，需先 `brew install gitleaks`；未装 gitleaks 时拒绝提交 |
 | `.github/workflows/` | `pandora-native.yml`（pdnd 门禁、panel-frontend、nodefabric 契约、双架构发布构建）、`panel-pg18.yml`（panel-unit 全量单测 + PG18 集成门禁）、`panel-smoke.yml`（新前端对真实网关的联调冒烟）、`panel-deploy.yml`（deploy 脚本的桩测试，迁移脚本拿真实迁移目录校验；含安装脚本的首装对外地址闸门） |
-| `CLAUDE.md`、`.claude/rules/`、`.claude/skills/` | 给 Claude Code 的说明：根 CLAUDE.md 是全局约定与红线，rules 是按路径自动加载的模块约定，skills 是验证流程 |
+| `CLAUDE.md`、`.claude/rules/`、`.agents/skills/` | 给 Claude Code 的说明：根 CLAUDE.md 是全局约定与红线，rules 是按路径自动加载的模块约定，skills 是验证与常用流程（`.claude/skills` 是指向 `.agents/skills` 的链接） |
 
 本地快照不含 `.env`、密钥、私钥和编译产物（二进制、`node_modules`、`dist`）。
 
@@ -297,7 +297,7 @@ cd /opt/pandora/deploy && ./backup-postgres.sh         # 立刻做一份加密�
 
 ### 回归测试
 
-安装链的回归测试是 `panel/deploy/` 下的 `*_mock_test.sh` 与 `*_static_test.sh`：把 systemctl、apt、psql 等换成桩，不需要 Docker 或目标机器（个别项要 root，只在 CI 里跑），随 CI 的 `panel-deploy` 跑（各项覆盖什么见脚本开头的注释）。真机上的首装与原地升级用一次性测试机验证，步骤见 `.claude/skills/panel-install/SKILL.md`。
+安装链的回归测试是 `panel/deploy/` 下的 `*_mock_test.sh` 与 `*_static_test.sh`：把 systemctl、apt、psql 等换成桩，不需要 Docker 或目标机器（个别项要 root，只在 CI 里跑），随 CI 的 `panel-deploy` 跑（各项覆盖什么见脚本开头的注释）。真机上的首装与原地升级用一次性测试机验证。
 
 ### 配置
 
@@ -321,7 +321,7 @@ cd /opt/pandora/deploy && ./backup-postgres.sh         # 立刻做一份加密�
 
 ### 已有证据（FACT）
 
-**CI 门禁**：四个 workflow（`pandora-native.yml`、`panel-pg18.yml`、`panel-smoke.yml`、`panel-deploy.yml`）各管什么、改了什么要等哪个结论、PG18 必须 0 SKIP，一律以 `.claude/skills/verify/SKILL.md` 为准，这里不重复（数字和 job 清单一改就过时）。只改仓库根的文档不触发 workflow；被路径过滤的目录里的任何文件改动都会触发对应的 workflow。2026-09-26 `main` 上三组全绿的 run：`36230330995` / `36230331009` / `36230331011`。
+**CI 门禁**：四个 workflow（`pandora-native.yml`、`panel-pg18.yml`、`panel-smoke.yml`、`panel-deploy.yml`）各管什么、改了什么要等哪个结论、PG18 必须 0 SKIP，一律以 `.agents/skills/verify/SKILL.md` 为准，这里不重复（数字和 job 清单一改就过时）。只改仓库根的文档不触发 workflow；被路径过滤的目录里的任何文件改动都会触发对应的 workflow。2026-09-26 `main` 上三组全绿的 run：`36230330995` / `36230331009` / `36230331011`。
 
 - **仓库守卫**（随 `go test ./...`）：panel 与 pdnd 两道 800 行守卫、表登记簿与权限字典契约。第 5 阶段拆分超长文件时，每步都用 `panel/tools/refactorcheck` 证明是纯挪动。
 - 2026-09-23 起 workflow 默认 `shell: bash`（`-eo pipefail`）。在此之前 `go test … | tee` 的失败会被 `tee` 吞掉，**那之前的 race 绿灯不能当证据**。

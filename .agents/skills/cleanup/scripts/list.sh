@@ -67,7 +67,7 @@ ignored_claude_files() {
 echo "主目录 $MAIN"
 echo "基线   本地 $BASE @ $(G rev-parse --short "$BASE")；远端 $RBASE @ $(G rev-parse --short "$RBASE" 2>/dev/null || echo 无)"
 if [[ -f "$MAIN/.git/FETCH_HEAD" ]]; then
-  echo "远端引用最后一次 fetch：$(date -r "$MAIN/.git/FETCH_HEAD" '+%F %T')（远端结论以此为准；要最新先由总协调 git fetch --prune）"
+  echo "远端引用最后一次 fetch：$(date -r "$MAIN/.git/FETCH_HEAD" '+%F %T')（远端结论以此为准；要最新先由主 Agent git fetch --prune）"
 fi
 if (( TABLE_FOUND )); then
   echo "运行中（取自 TASKS.md「正在跑」表与 KEEP）：$(tr ' ' '\n' <<<"$RUNNING" | sed '/^$/d' | sort -u | tr '\n' ' ')"

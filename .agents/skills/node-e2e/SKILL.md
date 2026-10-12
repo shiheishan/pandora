@@ -88,7 +88,7 @@ description: pandora 真节点逐协议验证：在两台 1c1g 测试机上（�
 - `python3 $S/kick-run.py rotate 75`：换发订阅链接（是否换节点密码取决于面板版本，记下面板版本号）。
 - `python3 $S/kick-db.py 90`：把被处理用户订阅的 `current_period_end` 直接在 PG 里改到过去（与「到期」等价，名单按 `current_period_end > now()` 过滤），测完还原。再 `python3 $S/kick-db-analyze.py` 出「PG 提交 -> 各节点应用移除 -> 连接断开」表。需要后台把订阅状态翻回来时用「加时长」（扫描器会把状态翻成 expired）。
 - 三者共用 `holders.py`：user4（对照）与 user5（被处理）各起一组长连接，每个节点一条长 TCP（读客户端机上 `tcp-stream.py 20051` 的持续流）加一条长 UDP（每 100 ms 一包到 `udp-echo.py 20050`）。管理员动作在**客户端机上**用本机拿到的短期令牌（经 stdin，不落盘）执行，所有时间戳取客户端机时钟；三台机器 chrony 偏差在 0.1 ms 量级。
-- 回显/持续流目标默认用公网地址（客户端机自己的公网 IP）：pdnd 默认拒绝回环与内网目标；要走内网目标，节点配置打开 `runtime.allow_private_destinations`（见 node-accept）。
+- 回显/持续流目标默认用公网地址（客户端机自己的公网 IP）：pdnd 默认拒绝回环与内网目标；要走内网目标，节点配置打开 `runtime.allow_private_destinations`。
 
 ### 5. 整份订阅原样加载（sing-box TUN，在网络命名空间里）
 

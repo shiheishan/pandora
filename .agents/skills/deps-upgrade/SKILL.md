@@ -1,6 +1,6 @@
 ---
 name: deps-upgrade
-description: pandora 的依赖与工具链升级和漏洞扫描：govulncheck 扫 panel、pdnd、subscription-e2e/tools 三个模块（只看被调用的，另出只含发布物的视图）；升 Go 补丁版或小版本时要同步的全部位置；升级后必须重点跑的测试（防探测回落、REALITY H3、interop、runtime-acceptance、PG18）；go mod tidy 与新依赖审查；npm audit 与前端依赖；pdnd 里 fork 来的代码合上游；interop 与真机客户端的版本和 SHA 在哪改。用户或总协调说「扫漏洞」「govulncheck」「升 Go」「升依赖」「go.mod 不 tidy」「引入新库」「npm audit」「合上游」「升 Xray / sing-box / mihomo 客户端」「dependabot PR」「依赖更新 PR 怎么处理」时使用。改完后的常规本地检查与等 CI 见 verify，CI 红了见 ci-triage。
+description: pandora 的依赖与工具链升级和漏洞扫描：govulncheck 扫 panel、pdnd、subscription-e2e/tools 三个模块（只看被调用的，另出只含发布物的视图）；升 Go 补丁版或小版本时要同步的全部位置；升级后必须重点跑的测试（防探测回落、REALITY H3、interop、runtime-acceptance、PG18）；go mod tidy 与新依赖审查；npm audit 与前端依赖；pdnd 里 fork 来的代码合上游；interop 与真机客户端的版本和 SHA 在哪改。用户或主 Agent 说「扫漏洞」「govulncheck」「升 Go」「升依赖」「go.mod 不 tidy」「引入新库」「npm audit」「合上游」「升 Xray / sing-box / mihomo 客户端」「dependabot PR」「依赖更新 PR 怎么处理」时使用。改完后的常规本地检查与等 CI 见 verify，CI 红了见 ci-triage。
 ---
 
 # 依赖与工具链升级
@@ -63,7 +63,7 @@ git grep -nE 'go1\.2[0-9]|golang:1\.|GO_SERIES|Go 1\.2[0-9]|go 1\.2[0-9]' -- ':!
 | `panel/deploy/platform.sh` 的 `pandora_go_version_ok`（`-ge 26`）与 `migrate-to-new-host.sh:74` 的「Go 1.26+」提示 | 不用改 | 改，跟 go 指令的最低小版本一致 |
 | `README.md:9`、`README.md:215`、根 `CLAUDE.md:5` 的「Go 1.26」 | 不用改 | 改 |
 | 根 `CLAUDE.md`「环境与工具坑」里写死的本机 `GOTOOLCHAIN=go1.26.9`（verify 已写成 `go<go.mod 版本>`，不用改） | 改（并确认本机模块缓存里有新版本的工具链） | 改 |
-| `rules/pdnd-kernel.md:24`（「认证失败的回落」末条）写死的 `GOTOOLCHAIN=go1.26.9`（adversarial-review 的模板由 `review-prompt.py` 从 go.mod 读，不用改） | 改 | 改 |
+| `rules/pdnd-kernel.md:24`（「认证失败的回落」末条）写死的 `GOTOOLCHAIN=go1.26.9` | 改 | 改 |
 | **sing-box 的 go:linkname 前提**：`pdnd/go.mod` 的 sing-box v1.13.14 在 `transport/v2rayhttp/force_close.go:46` 用 `//go:linkname` 取 `golang.org/x/net/http2.(*Transport).connPool`；Go 1.27 下该符号不存在（本机 1.27.1 已复现：pdnd 与 subscription-e2e/tools 链接失败） | 不涉及 | **先解决再升**：换到不再依赖该符号的 sing-box 版本，或等 x/net 在 1.27 下可用；两个模块的 sing-box 版本要一致（第 4 节） |
 | `.github/workflows/*.yml`：setup-go 全部用 `go-version-file`，装 go 指令那个精确版本（go.mod 没有 `toolchain` 行），没有写死版本 | 不用改 | 不用改 |
 
@@ -138,7 +138,6 @@ GOTOOLCHAIN=go<go.mod 版本> go test -count=1 -tags compat -p 1 ./...   # compa
 - 扫描在 `panel/frontend/` 下：
   - 先跑 `npm audit --omit=dev`，它只看进页面的运行时依赖，这一项必须为 0；
   - 再跑 `npm audit`：开发依赖只在构建机、CI 上运行，按严重度排期。10-09 的结果：运行时 0；开发依赖 1 个 high（source-map-js，经构建链进来）。
-  - `.claude/skills/web-perf/` 有自己的 package-lock，同样扫。
 - 升级：`npm install <包>@<版本> --save-exact` 改 package.json 与 lock，再 `npm ci` 确认 lock 能复现，lint、typecheck、test 照 verify，推送后等 `wait-github.sh`（双入口构建、冒烟、Playwright）。
 - 升 `@playwright/test` 时，CI 浏览器缓存的键会跟着变，第一次会慢。
 - `npm ci` 不要和 `go build`、`go test` 并发（见根 CLAUDE.md「环境与工具坑」）。
@@ -158,7 +157,7 @@ pdnd 里共有 6 处 fork。上游基点、导入时的差异和本仓库在基�
    - `TestNativeRealityH3RoundTrip`、`TestProcessProbeRoundTrip`；
    - `kernel/probe_resistance_test.go`、shadowtls 的 `service_test.go`；
    - `-tags interop` 的 AnyTLS 与 Xray 组；
-   - 改到 hysteria2 / tuic 的，还要跑 `internal/nativewire/...`，并按 node-accept 在 Linux 上复测 UDP。
+   - 改到 hysteria2 / tuic 的，还要跑 `internal/nativewire/...`，并在 Linux 测试机上复测 UDP。
 5. **更新规则表**：把 `rules/pdnd-forks.md` 的基点改成目标 commit，提交说明也写上基点和目标 commit。
 
 ## 7. interop 与真机客户端的版本和 SHA
@@ -170,7 +169,7 @@ pdnd 里共有 6 处 fork。上游基点、导入时的差异和本仓库在基�
 | sing-box（作 Go 模块） | `pdnd/go.mod` 与 `subscription-e2e/tools/go.mod`，两处必须一致 | subscription-e2e | tools 模块跑 tidy |
 | mihomo、sing-box、Juicity、Naive 外部二进制 | 不入库，跑测试时经 `*_BIN` + `*_SHA256` 环境变量传入（`interop_mihomo`、`interop_external` 标签） | 本机或测试机手动门禁 | SHA 用 GitHub release 页公布的值，不用自己下载后算出来的；`pdnd/release/README.md` 里的 mihomo 实测记录是历史结论，换版本后要重测 |
 | node-e2e 真客户端（sing-box、mihomo、Xray、Juicity、mieru） | ops-local `vultr-test2/node-e2e/scripts/install-clients.sh` 里的版本变量和逐个写死的 SHA-256 | node-e2e skill | 版本与 SHA 成对改，sing-box 用 `-glibc` 包 |
-| 官方 pdnd 发布包 | 面板 `release-artifact.env` 钉的版本与 SHA | panel-install、node-e2e 的接入证据 | 见 panel-install |
+| 官方 pdnd 发布包 | 面板 `release-artifact.env` 钉的版本与 SHA | node-e2e 的接入证据 | 见 node-e2e |
 
 ## 8. dependabot PR（暂不启用）
 

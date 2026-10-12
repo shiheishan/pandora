@@ -1,6 +1,6 @@
 ---
 name: flow-walk
-description: pandora 的产品验证：像用户一样用内置浏览器把门户和后台的业务流程真点一遍（注册登录、买套餐、续费、换套餐看报价、加流量包、添加到 App、兑换卡、换新链接、钱包；后台开单、换发链接、加时长、重置流量、建节点拿接入命令），每步读页面文字或截图核对，出一张记录表证明功能真能用。改了门户或后台的页面和流程后、验收前端分支、用户说「点一遍」「走一遍流程」「像用户一样验证」「功能真能用吗」时使用；新手看不看得懂、符合不符合直觉用 ux-review。不覆盖单元测试与 CI（见 verify）、接口级 e2e（panel/tests/*.sh）、订阅渲染（subscription-e2e）、性能（web-perf）。
+description: pandora 的产品验证：像用户一样用内置浏览器把门户和后台的业务流程真点一遍（注册登录、买套餐、续费、换套餐看报价、加流量包、添加到 App、兑换卡、换新链接、钱包；后台开单、换发链接、加时长、重置流量、建节点拿接入命令），每步读页面文字或截图核对，出一张记录表证明功能真能用。改了门户或后台的页面和流程后、验收前端分支、用户说「点一遍」「走一遍流程」「像用户一样验证」「功能真能用吗」时使用；新手看不看得懂、符合不符合直觉用 ux-review。不覆盖单元测试与 CI（见 verify）、接口级 e2e（panel/tests/*.sh）、订阅渲染（subscription-e2e）。
 ---
 
 # 像用户一样走一遍流程
@@ -15,7 +15,6 @@ description: pandora 的产品验证：像用户一样用内置浏览器把门�
 | 接口在真库上的行为 | `panel/tests/*.sh`（CI 冒烟栈上跑） |
 | 页面拿真数据不崩 | `panel/frontend/tests/smoke/`（CI） |
 | 订阅文件能渲染、能连 | subscription-e2e |
-| 打开快不快 | web-perf |
 | 购买路径（新购、续费、换套餐、流量包、礼品卡、换链接、后台开单）每次改动后自动在页面上点一遍 | `panel/frontend/tests/browser/paths.ts`（Playwright，CI 冒烟栈上跑，见 `.claude/rules/frontend-browser-e2e.md`） |
 | 新手看不看得懂、好不好用 | ux-review |
 | **CI 测不到的「点得通」**：测试机真后端、手机宽度、视觉、注册登录、添加到 App、后台加时长与重置流量等 | **本 skill** |
@@ -24,17 +23,17 @@ description: pandora 的产品验证：像用户一样用内置浏览器把门�
 
 | | 假后端（本机） | 测试机真后端 |
 |---|---|---|
-| 起法 | `bash .claude/skills/flow-walk/scripts/mock-up.sh up` | 按 panel-install 装好的面板，别名与后台前缀看 `~/ai/servers/README.md` 和 `ops-local/` |
+| 起法 | `bash .claude/skills/flow-walk/scripts/mock-up.sh up` | 按 `panel/deploy/install.sh` 装好的面板，别名与后台前缀看 `~/ai/servers/README.md` 和 `ops-local/` |
 | 速度 | 秒级起，状态在内存，重启复原 | 数据真实，状态累积 |
 | 能验 | 页面交互、文案、表单校验、错误态；页面按契约走通 | 真实数据流：下单入账、佣金、订阅文件、节点接入、权限 |
 | 不能验 | 后端逻辑、真支付、真节点、邮件 | 破坏性场景（空/错/慢）造不出来 |
-| 账号 | 门户 `user@pandora.dev`，后台 `admin@pandora.dev`（另有只读 `viewer@pandora.dev`），口令见 `panel/frontend/dev/mock-api.ts` 的 `MOCK_ACCOUNTS` | 管理员由 `aegis-adminctl create` 建（panel-install 第 9 步）；凭据在 `ops-local/<目录>/admin-cred.txt`、`admin-path.txt`（0600；一次性测试机不建 1Password 条目，红线见根 CLAUDE.md） |
+| 账号 | 门户 `user@pandora.dev`，后台 `admin@pandora.dev`（另有只读 `viewer@pandora.dev`），口令见 `panel/frontend/dev/mock-api.ts` 的 `MOCK_ACCOUNTS` | 管理员由 `aegis-adminctl create` 建；凭据在 `ops-local/<目录>/admin-cred.txt`、`admin-path.txt`（0600；一次性测试机不建 1Password 条目，红线见根 CLAUDE.md） |
 
 怎么选：
 - 改的是页面布局、文案、表单、前端状态：只跑假后端。
 - 改的是接口、金额、履约、权限，或要出验收结论：假后端过一遍，再在测试机上过一遍。
 - 假后端上的「通」只证明页面符合契约。钱和订阅的对错以测试机为准。
-- 测试机只有一台时，**压测、复测期间不要跑**（先和总协调确认），登录和下单会混进压测的数据与限流里。
+- 测试机只有一台时，**压测、复测期间不要跑**（先和主 Agent 确认），登录和下单会混进压测的数据与限流里。
 
 ### 假后端
 
@@ -53,7 +52,7 @@ description: pandora 的产品验证：像用户一样用内置浏览器把门�
 
 ### 测试机
 
-- 面板怎么装、后台前缀、管理员账号：先读 `~/ai/servers/README.md` 找到那台，再读它目录下的 `AGENTS.md`，装机按 panel-install。仓库里不写任何 IP、域名、前缀。
+- 面板怎么装、后台前缀、管理员账号：先读 `~/ai/servers/README.md` 找到那台，再读它目录下的 `AGENTS.md`，装机用 `panel/deploy/install.sh`。仓库里不写任何 IP、域名、前缀。
 - **登录由用户本人在浏览器里完成**（门户口令、后台口令、后台写操作弹出的重新认证口令都一样）。agent 不输入口令和令牌；用户说「已登录」后，在那个标签页上接着点。
 - 支付：真支付渠道在测试机上通常没配。买套餐有三条路，走哪条由当次任务定：
   - 先在后台给用户调余额，结账页的「用余额」开关（默认打开）全额抵扣；
@@ -64,7 +63,7 @@ description: pandora 的产品验证：像用户一样用内置浏览器把门�
 
 ## 操作方法
 
-1. **自己开标签页，记下 tabId。** `tabs_create` 开一个，之后每个调用都显式带 `tabId`（窗格是共用的，同时开着两个标签时「当前标签」会在调用之间跳）；不碰别的任务开的标签。标签数到上限（`tabs_create` 报「Could not open a new tab」）时只关自己开过的（`preview_start` 自动开的也算），向总协调说明。用完 `tabs_close`，`mock-up.sh down` 停服务。
+1. **自己开标签页，记下 tabId。** `tabs_create` 开一个，之后每个调用都显式带 `tabId`（窗格是共用的，同时开着两个标签时「当前标签」会在调用之间跳）；不碰别的任务开的标签。标签数到上限（`tabs_create` 报「Could not open a new tab」）时只关自己开过的（`preview_start` 自动开的也算），向主 Agent 说明。用完 `tabs_close`，`mock-up.sh down` 停服务。
 2. **两种尺寸都走。** 桌面用 `resize_window` `preset: "desktop"`，手机用 `preset: "mobile"`（375x812）。每条流程至少在桌面完整走一遍，手机上走关键几步（导航、表单、弹窗是否可点、有没有横向滚动）。测完把尺寸恢复成 `desktop`。切尺寸后刷新页面。
 3. **截图只用来核对视觉**（布局错位、遮挡、截断、颜色与状态标签、深浅色主题、手机宽度），文字核对读页面文字。
    - 窗格没显示时（用户没打开 Browser 面板），新标签的视口是 0x0，`read_page` 返回空，截图超时。先对该标签 `resize_window`（例如 1280x900）再读；要截图就得请用户把窗格打开，否则这一项记「未测」。
@@ -134,7 +133,7 @@ description: pandora 的产品验证：像用户一样用内置浏览器把门�
 ## 坑
 
 - **SSE 让网络永远不空闲**：页面开着实时事件长连接，不要等「网络空闲」。导航后等页面的 `load`，再固定等 1 到 2 秒，或直接等某个文字出现（`find`）。只差 `#路由` 的 `navigate` 是同文档跳转，不重新加载、渲染晚 1 到 2 秒：要验「刷新后还在」就显式刷新，马上 `find` 找不到先 `wait` 2 秒。
-- **令牌存储键**：`localStorage` 里门户是 `pandora-portal-token`，后台是 `pandora-admin-token`（`panel/frontend/src/core/token.ts` 的 `tokenStorageKey`，web-perf 的脚本也用它）。
+- **令牌存储键**：`localStorage` 里门户是 `pandora-portal-token`，后台是 `pandora-admin-token`（`panel/frontend/src/core/token.ts` 的 `tokenStorageKey`）。
   - 同源的两个入口键不同、互不通用。
   - 验退出、验令牌被清、验登录态是否保持时看它；不要把令牌值贴进记录表。
   - 存储被禁用时令牌只留在内存，刷新后要重新登录，这是设计行为。

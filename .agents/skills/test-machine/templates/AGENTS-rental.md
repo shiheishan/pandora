@@ -12,7 +12,7 @@
 | 商家 / 机房 | <商家机房>；<套餐>。**租用的别人的机器** |
 | 系统 | <系统与内核>，时区 UTC，北京 = 本机 + 8h |
 | 用途 | <一句话：pandora 的哪项测试、装什么、和哪台配合> |
-| 日常运维 | Claude Code 的 pandora 总协调会话（主目录 `~/ai/projects/pandora`，清单 `.claude/TASKS.md`） |
+| 日常运维 | Claude Code 的 pandora 主 Agent 会话（主目录 `~/ai/projects/pandora`，清单 `.claude/TASKS.md`） |
 | 代码 | pandora 仓库（本地 clone `~/ai/projects/pandora`）；压测 runbook 是 `panel/tools/loadtest/README.md` |
 
 **租用的测试机**，<日期> 登记，用到 **<到期日> 到期**。不进 git 仓库，机器上的 `/root/README.md` 只是说明，不版本化。

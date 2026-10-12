@@ -9,7 +9,7 @@ import { findRoute } from '../dev/mock/types.ts'
 import { MODULES, NAV_GROUPS, type ModuleKey } from '../src/admin/modules'
 import { close, loginAs, serve } from './mock-helpers'
 
-// 后台模块登记点守卫（new-admin-module skill）：新模块在 admin/modules.ts 登记之后，
+// 后台模块登记点守卫：新模块在 admin/modules.ts 登记之后，
 // 侧栏 NAV_GROUPS 与 dev 假后端也要登记（dev/mock/admin/index.ts 的 ADMIN_MODULES、
 // dev/mock-api.ts 的 ADMIN_PERMISSIONS），否则侧栏没有入口，或 dev:admin 上该页整页 404。
 // w9cert 合入时假后端漏过一次，由总协调手补（fdc0ae2）。SCREENS 与 SCREEN_CHUNKS 由类型和 prefetch.test.ts 管。

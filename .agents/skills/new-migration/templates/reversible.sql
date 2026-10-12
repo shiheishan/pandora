@@ -5,7 +5,7 @@
 --
 -- 文件头标记（按需，写在 `-- +goose Up` 之前，格式由 migrationlint 解析）：
 --   -- backfill: batched-by=<分批方式>; rerunnable=<为什么重跑安全>   大表回填 / 批量改写
---   -- rewrite: <表> rows=<行数> est=<预估耗时>                      大表整表重写（数字用 bench-eval 量）
+--   -- rewrite: <表> rows=<行数> est=<预估耗时>                      大表整表重写（数字在测试机的库副本上量）
 --   -- contract-of: <扩展迁移编号>                                    删列、改名的收缩阶段
 
 -- +goose Up

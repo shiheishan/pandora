@@ -3,7 +3,7 @@ name: Go vulnerability report
 # govulncheck 只报「被调用」的漏洞（默认文本输出的 Symbol Results）。每个模块用它 go.mod
 # 的 go 指令对应的工具链扫（GOTOOLCHAIN=go<版本>），标准库漏洞与发布物用的 Go 一致。
 # 每个模块先扫 ./...；panel 与 pdnd 再单扫发布的二进制（发布物视图，不含 tools/、测试辅助、
-# -tags compat 才链进来的 core/xray 等）。本地同口径见 .claude/skills/deps-upgrade/scripts/vulncheck.sh。
+# -tags compat 才链进来的 core/xray 等）。本地同口径见 .agents/skills/deps-upgrade/scripts/vulncheck.sh。
 #
 # 现阶段只报告、不挡合并：步骤永远退出 0，结论写进 job summary 与告警注解
 # （有被调用漏洞记 warning，扫描出错记 error）。检查机的 ci-replay.py 也会回放本 job，
@@ -48,7 +48,7 @@ jobs:
           cache-dependency-path: |
             panel/go.sum
             pdnd/go.sum
-            .claude/skills/subscription-e2e/tools/go.sum
+            .agents/skills/subscription-e2e/tools/go.sum
       - name: Scan called vulnerabilities
         env:
           # 锁死扫描器版本，结论可复现
@@ -92,5 +92,5 @@ jobs:
           scan pdnd pdnd full ./...
           scan pdnd pdnd release . ./cmd/pandora-h3-probe
           # 经 replace 跟随 pdnd；不 tidy 时这里会扫描出错，提示去该目录 go mod tidy
-          scan subscription-e2e-tools .claude/skills/subscription-e2e/tools full ./...
+          scan subscription-e2e-tools .agents/skills/subscription-e2e/tools full ./...
           exit 0

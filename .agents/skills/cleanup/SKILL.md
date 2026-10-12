@@ -1,6 +1,6 @@
 ---
 name: cleanup
-description: pandora 开发侧资源清理：列出已合并且干净的 worktree、已合并的分支、遗留的 worktree 与 ops-local 原始数据，归档 worktree 里被 git 忽略的报告，清单经用户确认后再删；对照库与测试机的清理分别见 bench-eval 与 test-machine。一波任务合完、worktree 或分支太多、磁盘紧张，或用户说「清理」「删掉合完的 worktree / 分支」时使用。产品的备份恢复不归这里。
+description: pandora 开发侧资源清理：列出已合并且干净的 worktree、已合并的分支、遗留的 worktree 与 ops-local 原始数据，归档 worktree 里被 git 忽略的报告，清单经用户确认后再删；测试机的清理见 test-machine。一波任务合完、worktree 或分支太多、磁盘紧张，或用户说「清理」「删掉合完的 worktree / 分支」时使用。产品的备份恢复不归这里。
 ---
 
 # 开发侧资源清理
@@ -13,7 +13,7 @@ description: pandora 开发侧资源清理：列出已合并且干净的 worktre
 
 - `main`、`feat/panel-redesign`、集成分支 `feat/panel-redesign-s`，以及主目录本身和集成分支的 worktree `../pandora-s`（相对主目录）。`list.sh` 的 `is_protected_branch` 跳过这三个分支；`pandora-s` 这个路径同样跳过，不进候选。运行中表只认 `w<数字><名字>`，挡不住 `s`，所以不能靠那张表。
 - 正在跑的任务：以主目录 `.claude/TASKS.md`「正在跑」表为准。状态不以 ✅ 开头的行里出现的 `w<波次><名字>` 一律保留，包括「运行中」「退回修复中」「已交回待合」。
-- 刚派出、还没有提交的 worktree：它的头就是基线，看起来「已合并且干净」，**只有 TASKS 表能保护它**。所以派工时先登记再开工（dispatch-task）。表里漏了的，用 `KEEP="w7xxx …"` 补。
+- 刚派出、还没有提交的 worktree：它的头就是基线，看起来「已合并且干净」，**只有 TASKS 表能保护它**。所以派工时先在 TASKS.md「正在跑」表登记再开工（dispatch-task 第 1 节）。表里漏了的，用 `KEEP="w7xxx …"` 补。
 
 ## 步骤
 
@@ -39,10 +39,10 @@ bash .claude/skills/cleanup/scripts/list.sh --size   # 另统计每个候选 wor
 
 最后打印建议命令，**不执行**。
 
-### 2. 删前核对（总协调）
+### 2. 删前核对（主 Agent）
 
 - 候选对应的任务确实验收合并完了：TASKS 里那一条已打勾，CI 结论已记。
-- 报告在不在：任务会话的报告在 worktree 的 `.claude/report.md`。Agent 派的子 agent 的报告要先用 accept-task 的 `save-report.sh` 代存进去，否则归档里没有报告。
+- 报告在不在：任务会话的报告在 worktree 的 `.claude/report.md`。
 - 「待确认」的逐个看：问清有没有人在用。确认已结束的，等改动过了 `ACTIVE_MIN` 再列一次，或用 `ACTIVE_MIN=0` 重跑，并在给用户的清单里注明。
 - 有没有开发服务器还从候选目录里跑着：`mock-up.sh status`、`mock-multi.sh status`、`preview_list`。
 
@@ -77,7 +77,6 @@ bash .claude/skills/cleanup/scripts/list.sh --size   # 另统计每个候选 wor
 
 | 资源 | 怎么清 |
 |---|---|
-| 对照机上的 `aegis_cmp_*` 库 | 见 bench-eval 第 6 节「结果在哪、对照机上留下什么」：先列给用户确认（动对照机属于改仓库外的东西），只删本任务建的，基线库和模板不碰 |
 | 测试机 | 见 test-machine「回收」（只删用户点名或明说授权的，规则见根 CLAUDE.md） |
 | ops-local 原始数据 | 见下 |
 | 会话 scratchpad 里的文件 | 不管，会话结束随系统临时目录清；只处理登记在 git 里的 worktree |
@@ -94,4 +93,4 @@ bash .claude/skills/cleanup/scripts/list.sh --size   # 另统计每个候选 wor
 
 - **`git worktree remove` 会连同被忽略的文件一起删**：`.claude/` 下的 brief、TASKS、report、ownership 都被 git 忽略，删完就没了，只能靠第 4 步第 1 条的归档。
 - **合并判定看的是本地 `feat/panel-redesign`**：主目录没 pull 到最新时，刚在别处合进去的分支会显示「未合并」，这只会让清单更保守。远端那组看 `origin/feat/panel-redesign`，要新就先 fetch。
-- 远端分支删了，正在跑的任务下次 push 会重建它。运行中的不会进清单，但如果总协调手里有 TASKS 表没登记的任务，先补 `KEEP`。
+- 远端分支删了，正在跑的任务下次 push 会重建它。运行中的不会进清单，但如果主 Agent 手里有 TASKS 表没登记的任务，先补 `KEEP`。

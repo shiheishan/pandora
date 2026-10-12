@@ -12,7 +12,7 @@
 #   各网关 cgroup 的 memory.current；
 #   同一时刻另写 kern-<标签>.txt（内核记账：min_free_kbytes、THP、完整 meminfo、sockstat、slab 前 30、zoneinfo）
 #   与 pg-smaps-<标签>.txt（PG 每个进程的 smaps_rollup），用来拆「已用」里内核水位、slab、PG 共享内存各占多少。
-#   开头写一份 host.txt（machine-id、核数、内核、面板版本），perf-gate 据此核对改前改后是不是同一台机器。
+#   开头写一份 host.txt（machine-id、核数、内核、面板版本），改前改后对比时据此核对是不是同一台机器。
 # 产物目录交给 `loadtest quiet-report -dir <目录> -tier <A|B>` 出判定。
 #
 # 只认 deploy/install.sh 的直装布局（库与缓存是 system.slice 下的 postgresql@*-main、valkey-server / redis-server）；
@@ -90,7 +90,7 @@ kern() { # kern <标签>：内核侧内存记账，quiet-report 不读，拆账�
   } > "$OUT/pg-smaps-$1.txt" 2>&1
 }
 
-host() { # 机器指纹：perf-gate 核对改前改后同机同配置；不含 IP、主机名
+host() { # 机器指纹：改前改后对比时核对同机同配置；不含 IP、主机名
   local f=/opt/pandora/deploy/release-artifact.env rel=""
   [[ -r "$f" ]] && rel="$(awk -F= '$1=="PANDORA_NATIVE_RELEASE_VERSION"{print $2}' "$f")"
   {
