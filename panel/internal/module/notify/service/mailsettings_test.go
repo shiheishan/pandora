@@ -93,7 +93,7 @@ func TestSaveMailSettingsRejectsNUL(t *testing.T) {
 func TestTestMailSettings(t *testing.T) {
 	ctx := context.Background()
 
-	svc, al, snd := newUnit(t, &fakeSettings{})
+	svc, _, snd := newUnit(t, &fakeSettings{})
 	if err := svc.TestMailSettings(ctx, "to@example.com"); err == nil || len(snd.sent) != 0 {
 		t.Fatalf("未配置时应拒绝且不发：%v", err)
 	}
@@ -105,7 +105,7 @@ func TestTestMailSettings(t *testing.T) {
 	}
 
 	st := &fakeSettings{mail: configuredMail(), site: settingssvc.Site{Name: "站点"}}
-	svc, al, snd = newUnit(t, st)
+	svc, al, snd := newUnit(t, st)
 	if err := svc.TestMailSettings(ctx, " to@example.com "); err != nil {
 		t.Fatal(err)
 	}

@@ -114,7 +114,7 @@ func TestDescribeError(t *testing.T) {
 	if perm != true || strings.Contains(d, "user@example.com") || !strings.Contains(d, "<地址>") {
 		t.Fatalf("550: %q perm=%v", d, perm)
 	}
-	d, perm = describeError(&textproto.Error{Code: 421, Msg: "try later"})
+	_, perm = describeError(&textproto.Error{Code: 421, Msg: "try later"})
 	if perm {
 		t.Fatalf("421 permanent")
 	}

@@ -281,6 +281,9 @@ func buildMessage(cfg SMTPConfig, m Message, now time.Time) ([]byte, error) {
 
 	body := strings.ReplaceAll(m.Body, "\r\n", "\n")
 	body = strings.ReplaceAll(body, "\n", "\r\n")
+	if !strings.HasSuffix(body, "\r\n") {
+		body += "\r\n" // 正文以换行结尾
+	}
 	enc := base64.StdEncoding.EncodeToString([]byte(body))
 	for i := 0; i < len(enc); i += 76 {
 		end := i + 76
