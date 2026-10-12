@@ -138,37 +138,42 @@ func (r *Repo) InsertCredential(ctx context.Context, c *model.Credential) error 
 	return mapErr(r.d.Conn(ctx).Create(c).Error)
 }
 
-// PeriodOrderIDs 读一份订阅本周期的付费来源订单：最近一次让周期重新起算的事件（开通、换套餐、过期后续回、救回的延期）
-// 及其之后的开通、续期、换套餐事件上挂的订单，按事件先后。事件按 id（uuidv7，插入有序）排：同一订阅的事件由订阅行锁
-// 串行写入，插入顺序就是发生顺序（occurred_at 是事务开始时刻，等锁的事务会比先提交的还早，不能用它排）。
-// 用 Rows 逐行读：GORM 的 Scan 读不进 []uuid.UUID。
-func (r *Repo) PeriodOrderIDs(ctx context.Context, subID uuid.UUID) ([]uuid.UUID, error) {
+// PeriodOrderIDsBySubscriptions 批量读订阅本周期的付费来源订单：每份订阅最近一次让周期重新起算的事件（开通、换套餐、
+// payload.restart 为真的续期或延期，即过期后续回、救回）及其之后的开通、续期、换套餐事件上挂的订单，按事件先后。
+// 重起只认 payload.restart：到期前下单、回调晚到的续费接在原到期之后，不重起，但事件的 from_status 可能已是 expired。
+// 事件按 id（uuidv7，插入有序）排：同一订阅的事件由订阅行锁串行写入，插入顺序就是发生顺序（occurred_at 是事务开始时刻，
+// 等锁的事务会比先提交的还早，不能用它排）。没有订单的订阅不在结果里。用 Rows 逐行读：GORM 的 Scan 读不进 uuid 切片。
+func (r *Repo) PeriodOrderIDsBySubscriptions(ctx context.Context, subIDs []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error) {
+	out := make(map[uuid.UUID][]uuid.UUID, len(subIDs))
+	if len(subIDs) == 0 {
+		return out, nil
+	}
 	rows, err := r.d.Conn(ctx).Raw(`
 		WITH restart AS (
-			SELECT id FROM subscription_events
-			 WHERE subscription_id = ?
+			SELECT DISTINCT ON (subscription_id) subscription_id, id
+			  FROM subscription_events
+			 WHERE subscription_id IN ?
 			   AND (event_type IN ('activated', 'plan_changed')
-			        OR (event_type = 'renewed' AND from_status = 'expired')
-			        OR (event_type = 'extended' AND payload->>'restart' = 'true'))
-			 ORDER BY id DESC LIMIT 1
+			        OR (event_type IN ('renewed', 'extended') AND payload->>'restart' = 'true'))
+			 ORDER BY subscription_id, id DESC
 		)
-		SELECT e.order_id
-		  FROM subscription_events e JOIN restart r ON e.id >= r.id
-		 WHERE e.subscription_id = ?
+		SELECT e.subscription_id, e.order_id
+		  FROM subscription_events e
+		  JOIN restart r ON r.subscription_id = e.subscription_id AND e.id >= r.id
+		 WHERE e.subscription_id IN ?
 		   AND e.event_type IN ('activated', 'renewed', 'plan_changed')
 		   AND e.order_id IS NOT NULL
-		 ORDER BY e.id`, subID, subID).Rows()
+		 ORDER BY e.subscription_id, e.id`, subIDs, subIDs).Rows()
 	if err != nil {
 		return nil, mapErr(err)
 	}
 	defer func() { _ = rows.Close() }()
-	ids := []uuid.UUID{}
 	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
+		var subID, orderID uuid.UUID
+		if err := rows.Scan(&subID, &orderID); err != nil {
 			return nil, mapErr(err)
 		}
-		ids = append(ids, id)
+		out[subID] = append(out[subID], orderID)
 	}
-	return ids, mapErr(rows.Err())
+	return out, mapErr(rows.Err())
 }

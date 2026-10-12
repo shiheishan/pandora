@@ -188,9 +188,24 @@ func keys(set map[uuid.UUID]struct{}) []uuid.UUID {
 // PeriodOrderIDs 是本周期的付费来源订单（按发生先后，永不为 nil）：order 换套餐时据此算剩余价值的基数与付费总时长。
 // 礼品卡、后台加时长没有订单，不在里面（它们加的天数折不成钱）。调用方建单时已锁订阅行。
 func (s *Service) PeriodOrderIDs(ctx context.Context, subID uuid.UUID) ([]uuid.UUID, error) {
-	ids, err := s.repo.PeriodOrderIDs(ctx, subID)
+	m, err := s.PeriodOrderIDsBySubscriptions(ctx, []uuid.UUID{subID})
+	if err != nil {
+		return nil, err
+	}
+	return m[subID], nil
+}
+
+// PeriodOrderIDsBySubscriptions 是 PeriodOrderIDs 的批量版（报价、后台开单预览一次读多份）：每个传入的订阅都有一项，
+// 没有订单时是空切片（永不为 nil）。
+func (s *Service) PeriodOrderIDsBySubscriptions(ctx context.Context, subIDs []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error) {
+	m, err := s.repo.PeriodOrderIDsBySubscriptions(ctx, subIDs)
 	if err != nil {
 		return nil, subErr(err)
 	}
-	return ids, nil
+	for _, id := range subIDs {
+		if m[id] == nil {
+			m[id] = []uuid.UUID{}
+		}
+	}
+	return m, nil
 }
