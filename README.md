@@ -356,9 +356,9 @@ cd /opt/pandora/deploy && ./backup-postgres.sh         # 立刻做一份加密�
 | 项 | 状态 |
 |---|---|
 | 方向 | 后端换主流技术栈（见「架构」开头的说明与 [docs/architecture.md](docs/architecture.md)）；还没有任何生产部署，新栈直接替换，不做数据迁移与兼容期 |
-| 换栈 | P0 设计定稿；P1 骨架完成；P2 鉴权与用户进行中：settings、audit、idempotency 三个模块与前端的 refresh 单飞已合入，identity、auth、notify（邮件部分）在开发 |
+| 换栈 | P0 设计定稿；P1 骨架完成；P2 鉴权与用户完成：settings、audit、idempotency、identity、auth、notify（邮件部分）六个模块已装进 `pandora serve` / `worker`，`pandora admin` 管后台账号与角色；新二进制上的鉴权、找回密码、门户禁登三组 e2e 在 CI 全绿；前端改为 15 分钟 access + refresh cookie，后台 2 小时无操作自动退出。下一步 P3 交易 |
 | 开发分支 | `feat/panel-redesign`（`main` 停在 2026-09-26 的面板重构合入之后） |
-| CI | `feat/panel-redesign` 上四组全绿：新栈、PG18 集成门禁、前端冒烟、Go 漏洞扫描 |
+| CI | `feat/panel-redesign` 上四组全绿：新栈（含新二进制 e2e）、PG18 集成门禁、前端冒烟、Go 漏洞扫描 |
 | 旧栈 | 只修阻断性 bug；Xboard 功能验收 PARTIAL，未 RELEASED；未在真实机器上部署或实测 |
 | 前端 | `panel/frontend` 不换，接口 JSON 形状保持不变；P2 起改为短期 access 令牌 + refresh cookie |
 | 客户端登录（CLIENT-AUTH） | 2026-10-05 移出主线，专心做面板：设备码登录与设备签名的实现代码、发布门禁脚本和 8 个 `pandora-*` 命令在 tag `archive/client-auth`；三份冻结设计稿和 `frozen-client-auth/` 下两个从未应用的迁移也一并存档在该 tag，以后做客户端时从那里取 |
@@ -372,7 +372,7 @@ cd /opt/pandora/deploy && ./backup-postgres.sh         # 立刻做一份加密�
 | 步 | 内容 | 状态 |
 |---|---|---|
 | P1 | 骨架：`pandora` 单二进制、基础设施包、asynq、goose、lint 与 CI | 完成 |
-| P2 | 鉴权与用户：identity、auth、settings、audit、idempotency；refresh；前端令牌改造 | 进行中 |
+| P2 | 鉴权与用户：identity、auth、settings、audit、idempotency；refresh；前端令牌改造 | 完成 |
 | P3 | 交易：目录、订单、支付、账本、优惠、佣金、礼品卡（decimal） | 未开始 |
 | P4 | 订阅：订阅模块、订阅链接渲染、到期与配额任务 | 未开始 |
 | P5 | 节点：gRPC 双向流 + mTLS，pdnd 客户端改造 | 未开始 |
