@@ -89,7 +89,6 @@ func (h *Handler) me(c *gin.Context) {
 		DisplayName: prof.DisplayName,
 		Status:      prof.Status,
 		CreatedAt:   rfc3339UTC(prof.CreatedAt),
-		Permissions: []string{},
 	})
 }
 

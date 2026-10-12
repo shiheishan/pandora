@@ -180,7 +180,7 @@ func TestMeShapeAndAuth(t *testing.T) {
 		t.Fatalf("status %d %s", w.Code, w.Body)
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, `"permissions":[]`) || !strings.Contains(body, `"created_at":"2026-01-01T19:04:05Z"`) ||
+	if strings.Contains(body, `"permissions"`) || !strings.Contains(body, `"created_at":"2026-01-01T19:04:05Z"`) ||
 		!strings.Contains(body, `"user_id":"`+p.UserID.String()+`"`) {
 		t.Fatalf("响应 %s", body)
 	}
