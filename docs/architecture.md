@@ -454,7 +454,7 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 | `report:activity_daily`、`node:traffic_rollup` | `*/10 * * * *`（错开 2 分钟） | 2m | low |
 | `identity:generate_users` | 建 job 的事务提交后入队，TaskID = `gen_users:<job_id>` | 10m | default |
 | `certs:patrol` / `certs:issue` | `@every 1m` / patrol 入队，TaskID = `cert:<order_id>` | 30s / 15m | default |
-| `retention:<表>` | 每小时一次，各表错开 | 2–5m | low |
+| `retention:<表>` | 每天一次（03:40 起各表错开几分钟），分批删到删完或到批数上限 | 2–5m | low |
 | `reconcile:user_generation` | `@every 1m`，把 queued 或租约过期的 job 重新入队 | 30s | low |
 
 - 保留期清理覆盖的表：原有的 node_metrics、node_traffic_reports、各级流量汇总、node_alive_ips、subscription_fetch_log、activity_daily；新补的 idempotency_keys、registration_sessions、verification_codes、plugin_hook_deliveries、user_generation_jobs（结果清除后 N 天删行）、notification_deliveries。各表的保留期按第 18 节 Q5。
