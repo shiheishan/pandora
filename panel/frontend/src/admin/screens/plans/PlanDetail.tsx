@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { formatBytes, formatCount, formatDateTime } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, QueryView, StatStrip, Tag, useToast } from '../../../ui'
-import { useCan, useIntentKey } from '../../actions'
+import { useIntentKey } from '../../actions'
 import { rowVersionSchema, useInvalidatePlans, usePlan, type PlanDetail, type PlanRow } from './api'
 import { useCatalogFailure } from './failure'
 import { PLAN_STATUS_VIEW, trafficOf, VISIBILITY_LABELS } from './model'
@@ -22,8 +22,6 @@ export function PlanDetailView({ id, row, onEdit }: { id: string; row: PlanRow |
 }
 
 function Loaded({ plan, row, onEdit }: { plan: PlanDetail; row: PlanRow | undefined; onEdit: () => void }) {
-  const can = useCan()
-  const publish = can('catalog.publish')
   const archived = plan.status === 'archived'
   const [archiving, setArchiving] = useState(false)
   const [sales, setSales] = useState(false)
@@ -35,7 +33,7 @@ function Loaded({ plan, row, onEdit }: { plan: PlanDetail; row: PlanRow | undefi
   const notes: Array<{ text: string; info?: boolean }> = []
   // node_count 只数当前发布版本的池；从没发布过的草稿不适用，发布时后端会拦「池里没有可服务节点」
   if (!archived && row && row.version !== null && row.node_count === 0)
-    notes.push({ text: `当前版本没有在线节点：买了这个套餐的用户会拿到一份空订阅。${publish ? '在「线路 · 节点池」里绑定有在线节点的池。' : ''}` })
+    notes.push({ text: '当前版本没有在线节点：买了这个套餐的用户会拿到一份空订阅。在「线路 · 节点池」里绑定有在线节点的池。' })
   if (!archived && !plan.allow_new_purchase) notes.push({ text: '已关闭新购：门户看得到也买不了，已有订阅照常续费。', info: true })
   if (!archived && plan.visibility !== 'public') notes.push({ text: `可见范围：${VISIBILITY_LABELS[plan.visibility]}。`, info: true })
   if (plan.highlights.length) notes.push({ text: `门户卖点：${plan.highlights.join(' · ')}。`, info: true })
@@ -54,7 +52,7 @@ function Loaded({ plan, row, onEdit }: { plan: PlanDetail; row: PlanRow | undefi
           </div>
           <p className={css.desc}>{plan.description || '没有说明'}</p>
         </div>
-        {publish && !archived && (
+        {!archived && (
           <div className={css.headActions}>
             <Button size="sm" variant="outline" onClick={onEdit}>
               用向导编辑

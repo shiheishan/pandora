@@ -7,12 +7,11 @@ import { Button, Checkbox, QueryView, Tag, useToast } from '../../../ui'
 import { ruleSummary, sameIds, sourceLabel, sourceTone } from './logic'
 import x from './infra.module.css'
 import css from './nodes.module.css'
-import { useCan, useEffectiveRouting, useFailure, useInvalidateNodes, useRouteGroups } from './queries'
+import { useEffectiveRouting, useFailure, useInvalidateNodes, useRouteGroups } from './queries'
 import { routingSaved, type Route, type RouteGroupRef } from './schemas'
 
 export function NodeGroupMembership({ nodeId, rowVersion, current }: { nodeId: string; rowVersion: number; current: readonly RouteGroupRef[] }) {
   const api = useApi()
-  const can = useCan()
   const toast = useToast()
   const fail = useFailure()
   const invalidate = useInvalidateNodes()
@@ -20,7 +19,6 @@ export function NodeGroupMembership({ nodeId, rowVersion, current }: { nodeId: s
   const initial = current.map((g) => g.id)
   const [picked, setPicked] = useState<string[]>(initial)
   const [error, setError] = useState<string | null>(null)
-  const writable = can('node.config.publish')
   const toggle = (id: string) => setPicked(picked.includes(id) ? picked.filter((p) => p !== id) : [...picked, id])
 
   const save = useMutation({
@@ -51,20 +49,18 @@ export function NodeGroupMembership({ nodeId, rowVersion, current }: { nodeId: s
           <div className={css.stack}>
             <div className={x.groupChecks}>
               {data.map((g) => (
-                <Checkbox key={g.id} label={`${g.name}（排序 ${g.sort_order}）`} checked={picked.includes(g.id)} disabled={!writable || save.isPending} onChange={() => toggle(g.id)} />
+                <Checkbox key={g.id} label={`${g.name}（排序 ${g.sort_order}）`} checked={picked.includes(g.id)} disabled={save.isPending} onChange={() => toggle(g.id)} />
               ))}
             </div>
             {error && <div className={css.errorBox}>{error}</div>}
-            {writable && (
-              <div className={css.formActions}>
-                <Button size="sm" disabled={sameIds(picked, initial)} busy={save.isPending} onClick={() => (setError(null), save.mutate())}>
-                  保存所属组
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => navigate('/nodes/routing')}>
-                  管理路由组
-                </Button>
-              </div>
-            )}
+            <div className={css.formActions}>
+              <Button size="sm" disabled={sameIds(picked, initial)} busy={save.isPending} onClick={() => (setError(null), save.mutate())}>
+                保存所属组
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => navigate('/nodes/routing')}>
+                管理路由组
+              </Button>
+            </div>
           </div>
         )}
       </QueryView>

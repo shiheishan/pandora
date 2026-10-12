@@ -291,14 +291,12 @@ export function useUser(id: string | null) {
   })
 }
 
-/** enabled：别的模块借用时（套餐的可见用户组、组专属价）按 iam.user.read 决定取不取 */
-export function useUserGroups(enabled = true) {
+export function useUserGroups() {
   const api = useApi()
   return useQuery({
     queryKey: [...UK, 'groups'],
     queryFn: ({ signal }) => api.get('v1/user-groups', userGroupsSchema, { signal }).then((r) => r.groups),
     staleTime: 5 * 60_000,
-    enabled,
   })
 }
 

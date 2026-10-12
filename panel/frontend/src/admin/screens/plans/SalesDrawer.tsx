@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useApi } from '../../../shell/runtime'
 import { Button, Checkbox, Drawer, Input, Select, Switch, useToast } from '../../../ui'
-import { useCan, useIntentKey } from '../../actions'
+import { useIntentKey } from '../../actions'
 import { useUserGroups } from '../users/api'
 import { rowVersionSchema, useInvalidatePlans, VISIBILITIES, type PlanDetail } from './api'
 import { useCatalogFailure } from './failure'
@@ -116,18 +116,14 @@ function SalesBody({ plan, open, onClose }: { plan: PlanDetail; open: boolean; o
   )
 }
 
-/** 可见用户组多选：要 iam.user.read 才能列出名字，没有就说明原因 */
+/** 可见用户组多选 */
 export function GroupPicker({ picked, onChange, error }: { picked: readonly string[]; onChange: (ids: string[]) => void; error?: string }) {
-  const can = useCan()
-  const readable = can('iam.user.read')
-  const groups = useUserGroups(readable)
+  const groups = useUserGroups()
   const toggle = (id: string) => onChange(picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id])
   return (
     <fieldset className={`${css.stack} ${css.fieldset}`}>
       <legend className={css.small}>可见的用户组</legend>
-      {!readable ? (
-        <p className={css.small}>没有读取用户组的权限（iam.user.read），看不到组名；已选 {picked.length} 个。</p>
-      ) : groups.data?.length === 0 ? (
+      {groups.data?.length === 0 ? (
         <p className={css.small}>还没有用户组，先到「用户 · 用户组」建一个。</p>
       ) : (
         <div className={css.toggles}>

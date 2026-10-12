@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useApi } from '../../../shell/runtime'
 import { Button, Input, Modal, Select, Switch, TextArea, useToast } from '../../../ui'
-import { useCan, useIntentKey } from '../../actions'
+import { useIntentKey } from '../../actions'
 import { planCreatedSchema, planUpdatedSchema, useInvalidatePlans, usePlanPools, usePoolOptions, type PlanDetail } from './api'
 import { useCatalogFailure } from './failure'
 import {
@@ -307,17 +307,14 @@ function StepPrices({ form, set, errors, original }: StepProps & { original: Wiz
 }
 
 function StepPools({ form, set, errors, plan }: StepProps & { plan: PlanDetail | null }) {
-  const can = useCan()
-  // 新建时没有套餐 id，候选取节点池列表（node.read）；编辑时取本套餐的绑定候选（catalog.read）
-  const options = usePoolOptions(!plan && can('node.read'))
+  // 新建时没有套餐 id，候选取节点池列表；编辑时取本套餐的绑定候选
+  const options = usePoolOptions(!plan)
   const planPools = usePlanPools(plan?.id ?? null)
   const pools = plan ? planPools.data?.pools : options.data
-  const loading = plan ? planPools.isPending : can('node.read') && options.isPending
+  const loading = plan ? planPools.isPending : options.isPending
   return (
     <>
-      {!plan && !can('node.read') ? (
-        <p className={css.note}>没有读取节点池的权限（node.read），这里列不出线路。可以关掉第 5 步的「立即发布」先存草稿，建好后在详情「线路 · 节点池」里绑定。</p>
-      ) : loading ? (
+      {loading ? (
         <p className={css.small}>正在读取节点池…</p>
       ) : !pools?.length ? (
         <p className={css.small}>还没有可用的节点池，先到「节点与服务器 · 节点池」建一个。</p>

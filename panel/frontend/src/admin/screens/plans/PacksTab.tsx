@@ -4,7 +4,7 @@ import { formatBytes, formatCount, formatMoney } from '../../../core/format'
 import { navigate, useHashLocation } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, Drawer, Empty, Input, QueryView, Segmented, Select, Switch, Table, Tag, useToast, type TableColumn } from '../../../ui'
-import { endsIntent, useCan, useIntentKey } from '../../actions'
+import { endsIntent, useIntentKey } from '../../actions'
 import { packResponseSchema, useInvalidatePlans, useTrafficPacks, type PackStatus, type TrafficPack } from './api'
 import { useCatalogFailure } from './failure'
 import { PACK_STATUS_VIEW, packBody, packForm, packProblems, type PackForm } from './model'
@@ -27,8 +27,6 @@ export function PacksTab() {
   const s = location.query.get('s')
   const filter: Filter = s === 'active' || s === 'archived' ? s : 'all'
   const packs = useTrafficPacks(filter === 'all' ? '' : filter)
-  const can = useCan()
-  const writable = can('catalog.publish')
   const [editing, setEditing] = useState<TrafficPack | 'new' | null>(null)
   const [toggling, setToggling] = useState<TrafficPack | null>(null)
 
@@ -49,23 +47,22 @@ export function PacksTab() {
     { key: 'sold', header: '已售', width: '80px', mono: true, align: 'right', render: (p) => formatCount(p.sold_count) },
     { key: 'sort', header: '排序', width: '70px', mono: true, align: 'right', render: (p) => p.sort_order },
   ]
-  if (writable)
-    columns.push({
-      key: 'actions',
-      header: '',
-      width: '140px',
-      align: 'right',
-      render: (p) => (
-        <span className={css.rowActions}>
-          <Button size="xs" variant="link" onClick={() => setEditing(p)}>
-            编辑
-          </Button>
-          <Button size="xs" variant="ghost" onClick={() => setToggling(p)}>
-            {p.status === 'active' ? '下架' : '上架'}
-          </Button>
-        </span>
-      ),
-    })
+  columns.push({
+    key: 'actions',
+    header: '',
+    width: '140px',
+    align: 'right',
+    render: (p) => (
+      <span className={css.rowActions}>
+        <Button size="xs" variant="link" onClick={() => setEditing(p)}>
+          编辑
+        </Button>
+        <Button size="xs" variant="ghost" onClick={() => setToggling(p)}>
+          {p.status === 'active' ? '下架' : '上架'}
+        </Button>
+      </span>
+    ),
+  })
 
   return (
     <>
@@ -73,17 +70,15 @@ export function PacksTab() {
         <Segmented label="流量包状态" size="sm" options={FILTERS} value={filter} onChange={(v) => navigate('/plans/packs', { replace: true, query: { s: v === 'all' ? undefined : v } })} />
         <span className={css.small}>用户在门户「选购」里购买，买完立即叠加到流量余额，永不过期、用完为止</span>
         <span className={css.spacer} />
-        {writable && (
-          <Button size="sm" variant="primary" onClick={() => setEditing('new')}>
-            ＋ 新建流量包
-          </Button>
-        )}
+        <Button size="sm" variant="primary" onClick={() => setEditing('new')}>
+          ＋ 新建流量包
+        </Button>
       </div>
       <QueryView
         query={packs}
         isEmpty={(d) => d.length === 0}
         empty={
-          <Empty title={filter === 'archived' ? '没有已下架的流量包' : '还没有流量包'} description={writable ? '新建一个，用户在门户「选购」里就能买到。' : '有发布权限的管理员新建后会出现在这里。'} />
+          <Empty title={filter === 'archived' ? '没有已下架的流量包' : '还没有流量包'} description="新建一个，用户在门户「选购」里就能买到。" />
         }
       >
         {(rows) => (

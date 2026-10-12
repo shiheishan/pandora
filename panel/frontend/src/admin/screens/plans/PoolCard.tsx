@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useApi } from '../../../shell/runtime'
 import { Button, Card, QueryView, useToast } from '../../../ui'
-import { useCan, useIntentKey } from '../../actions'
+import { useIntentKey } from '../../actions'
 import { planUpdatedSchema, poolsBoundSchema, useInvalidatePlans, usePlanPools, type PlanDetail, type PlanPools } from './api'
 import { useCatalogFailure } from './failure'
 import { updateBody, wizardFromPlan } from './model'
@@ -27,7 +27,6 @@ export function PoolCard({ plan }: { plan: PlanDetail }) {
 
 function Binding({ plan, data }: { plan: PlanDetail; data: PlanPools }) {
   const api = useApi()
-  const can = useCan()
   const toast = useToast()
   const fail = useCatalogFailure()
   const intent = useIntentKey()
@@ -35,7 +34,7 @@ function Binding({ plan, data }: { plan: PlanDetail; data: PlanPools }) {
   const initial = data.pools.filter((p) => p.bound).map((p) => p.id)
   const [picked, setPicked] = useState<string[]>(initial)
   const [busy, setBusy] = useState(false)
-  const writable = can('catalog.publish') && plan.status !== 'archived' && data.version_id !== ''
+  const writable = plan.status !== 'archived' && data.version_id !== ''
   const draft = plan.versions.find((v) => v.id === data.version_id)
   const dirty = picked.length !== initial.length || picked.some((id) => !initial.includes(id))
 

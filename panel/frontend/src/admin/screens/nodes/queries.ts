@@ -3,7 +3,7 @@ import { useCallback } from 'react'
 import { useApi } from '../../../shell/runtime'
 import { effectiveRoutingSchema, globalRoutingSchema, groupRoutingSchema, identitySchema, metricsSchema, nodeDetailResponse, nodeRoutingSchema, nodesResponse, poolsResponse, protocolSchemasResponse, routeGroupsResponse, serverNodesResponse, serverSchema, serversResponse } from './schemas'
 
-export { endsIntent, useCan, useFailure, useIntentKey } from '../../actions'
+export { endsIntent, useFailure, useIntentKey } from '../../actions'
 
 export const NK = ['admin', 'nodes'] as const
 

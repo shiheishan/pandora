@@ -13,7 +13,6 @@ export function Queue({
   query,
   params,
   selected,
-  canWrite,
   onFilter,
   onQuery,
 }: {
@@ -21,7 +20,6 @@ export function Queue({
   query: string
   params: QueueParams
   selected: string | null
-  canWrite: boolean
   onFilter: (f: QueueFilter) => void
   onQuery: (q: string) => void
 }) {
@@ -36,7 +34,7 @@ export function Queue({
         <Segmented size="sm" label="工单筛选" className={css.filters} options={FILTERS.map(([value, label]) => ({ value, label }))} value={filter} onChange={onFilter} />
         <div className={css.searchRow}>
           <SearchBox value={query} onChange={onQuery} />
-          {canWrite && <EscalateButton />}
+          <EscalateButton />
         </div>
       </div>
       <div className={css.queueList} aria-busy={q.isFetching || undefined}>

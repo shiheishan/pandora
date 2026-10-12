@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { isApiError } from '../../../core/api'
 import { useApi } from '../../../shell/runtime'
 import { Button, Card, Checkbox, ConfirmModal, Input, Select, Tag, TextArea, useToast } from '../../../ui'
-import { endsIntent, useCan, useIntentKey } from '../../actions'
+import { endsIntent, useIntentKey } from '../../actions'
 import { poolsBoundSchema, publishedSchema, rowVersionSchema, useInvalidatePlans, versionCreatedSchema, type PlanDetail, type VersionRow } from './api'
 import { useCatalogFailure } from './failure'
 import { publishBlockers, RESET_LABELS, versionBody, versionForm, versionNote, versionProblems, versionSummary, versionView, type VersionForm } from './model'
@@ -15,7 +15,6 @@ const mapFields = (fields: Record<string, string>) => Object.fromEntries(Object.
 
 export function Versions({ plan }: { plan: PlanDetail }) {
   const api = useApi()
-  const can = useCan()
   const toast = useToast()
   const fail = useCatalogFailure()
   const invalidate = useInvalidatePlans()
@@ -43,7 +42,7 @@ export function Versions({ plan }: { plan: PlanDetail }) {
         body: versionBody(form ?? versionForm(from), from, created.row_version),
       })
       let pools = ''
-      if (from.pool_ids.length && can('catalog.publish')) {
+      if (from.pool_ids.length) {
         const body = { version_id: created.id, expected_version_row_version: saved.row_version, pool_ids: from.pool_ids }
         await api.post(`v1/plans/${encodeURIComponent(plan.id)}/pools`, poolsBoundSchema, { body, idempotencyKey: poolIntent.keyFor([plan.id, body]) })
         poolIntent.reset()
@@ -74,7 +73,6 @@ export function Versions({ plan }: { plan: PlanDetail }) {
         </>
       }
       extra={
-        can('catalog.write') &&
         !archived && (
           <Button
             size="xs"
@@ -106,9 +104,9 @@ export function Versions({ plan }: { plan: PlanDetail }) {
               </span>
               <span className={css.versionActions}>
                 <Button size="xs" variant="link" aria-expanded={expanded} onClick={() => setOpen(expanded ? null : v.id)}>
-                  {expanded ? '收起' : v.status === 'draft' && can('catalog.write') && !archived ? '编辑' : '查看'}
+                  {expanded ? '收起' : v.status === 'draft' && !archived ? '编辑' : '查看'}
                 </Button>
-                {v.status === 'draft' && can('catalog.publish') && !archived && (
+                {v.status === 'draft' && !archived && (
                   <Button size="xs" variant="ghost" onClick={() => setPublishing(v)}>
                     发布
                   </Button>
@@ -120,8 +118,8 @@ export function Versions({ plan }: { plan: PlanDetail }) {
                 key={`${v.id}:${v.row_version}`}
                 plan={plan}
                 version={v}
-                editable={v.status === 'draft' && can('catalog.write') && !archived}
-                saveAs={v.status !== 'draft' && !draft && can('catalog.write') && !archived ? (form) => void createDraft(v, form) : null}
+                editable={v.status === 'draft' && !archived}
+                saveAs={v.status !== 'draft' && !draft && !archived ? (form) => void createDraft(v, form) : null}
                 draft={draft}
               />
             )}
