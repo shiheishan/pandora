@@ -14,7 +14,9 @@ import (
 	"github.com/aegispanel/aegis/internal/module/identity/service"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
+	"github.com/aegispanel/aegis/internal/pkg/ratelimit"
 	"github.com/aegispanel/aegis/internal/pkg/route"
+	"github.com/aegispanel/aegis/internal/pkg/testkit"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -50,8 +52,16 @@ func (f *fakeSvc) ListUsers(_ context.Context, fl service.UserFilter, _, _ int) 
 
 func (f *fakeSvc) ListGroups(context.Context) ([]service.Group, error) { return nil, nil }
 
+func (f *fakeSvc) UserDetail(_ context.Context, id uuid.UUID) (service.UserDetail, error) {
+	return service.UserDetail{UserRow: service.UserRow{ID: id, Email: "u@example.test"}, ReferralCount: 3}, nil
+}
+
 // newEngine 建一个挂好 identity 路由的引擎；principal 非 nil 时模拟已登录。
 func newEngine(svc Service, admin bool, p *authn.Principal) *gin.Engine {
+	return newEngineWith(New(svc, nil, 0), admin, p)
+}
+
+func newEngineWith(h *Handler, admin bool, p *authn.Principal) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	e := gin.New()
 	e.Use(httpx.RequestID(zap.NewNop()), httpx.Errors())
@@ -66,7 +76,6 @@ func newEngine(svc Service, admin bool, p *authn.Principal) *gin.Engine {
 		Idempotency:  func(string) gin.HandlerFunc { return pass },
 		Switch:       func(string) gin.HandlerFunc { return pass },
 	}
-	h := New(svc, nil, 0)
 	if admin {
 		h.RegisterAdmin(e.Group("/v1"), kit)
 	} else {
@@ -187,5 +196,34 @@ func TestListUsersQuery(t *testing.T) {
 	}
 	if w := do(e, http.MethodGet, "/v1/user-groups", ""); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"groups":[]`) {
 		t.Fatalf("用户组 status %d %s", w.Code, w.Body)
+	}
+}
+
+// 改密接口按账号、按 IP 限流：每分钟 authPerMin 次，超出 429，门户与后台都挂。
+func TestMePasswordRateLimited(t *testing.T) {
+	for _, admin := range []bool{false, true} {
+		_, rdb := testkit.Redis(t)
+		aud := authn.AudiencePublic
+		if admin {
+			aud = authn.AudienceAdmin
+		}
+		p := &authn.Principal{UserID: uuid.New(), SessionID: "s", Audience: aud}
+		e := newEngineWith(New(&fakeSvc{}, ratelimit.New(rdb), 2), admin, p)
+		for i := 0; i < 2; i++ {
+			if w := do(e, http.MethodPost, "/v1/me/password", `{"old_password":"a","new_password":"b"}`); w.Code != http.StatusOK {
+				t.Fatalf("admin=%v 第 %d 次 status %d %s", admin, i+1, w.Code, w.Body)
+			}
+		}
+		if w := do(e, http.MethodPost, "/v1/me/password", `{"old_password":"a","new_password":"b"}`); w.Code != http.StatusTooManyRequests {
+			t.Fatalf("admin=%v 第 3 次应 429，实际 %d", admin, w.Code)
+		}
+	}
+}
+
+func TestUserDetailStats(t *testing.T) {
+	e := newEngine(&fakeSvc{}, true, nil)
+	w := do(e, http.MethodGet, "/v1/users/"+uuid.NewString(), "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"stats":{"referral_count":3}`) {
+		t.Fatalf("status %d %s", w.Code, w.Body)
 	}
 }

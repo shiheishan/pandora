@@ -189,12 +189,8 @@ func (s *Service) CompletePasswordReset(ctx context.Context, email, code, newPas
 		if err := revoker.RevokeUser(ctx, u.ID, ""); err != nil {
 			return err
 		}
-		return s.writeAudit(ctx, auditsvc.Event{
-			Action:       ActionPasswordReset,
-			ResourceType: ResourceUser,
-			ResourceID:   &u.ID,
-			ActorID:      &u.ID,
-			Audience:     authn.AudiencePublic,
+		return s.writeSelfAudit(ctx, u.ID, auditsvc.Event{
+			Action: ActionPasswordReset,
 			Data: map[string]any{
 				"method":           "email_code",
 				"sessions_revoked": true,

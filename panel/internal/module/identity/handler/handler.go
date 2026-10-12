@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/aegispanel/aegis/internal/module/identity/service"
+	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/ratelimit"
 	"github.com/aegispanel/aegis/internal/pkg/route"
 	"github.com/gin-gonic/gin"
@@ -64,7 +65,7 @@ func (h *Handler) RegisterPublic(v1 *gin.RouterGroup, k route.Kit) {
 	v1.POST("/auth/password-reset/start", h.strict("pwreset_start", true), h.passwordResetStart)
 	v1.POST("/auth/password-reset/complete", h.strict("pwreset_complete", false), h.passwordResetComplete)
 	v1.GET("/me", k.RequireAuth, h.me)
-	v1.POST("/me/password", k.RequireAuth, h.changePassword)
+	v1.POST("/me/password", k.RequireAuth, h.mePasswordLimit(), h.changePassword)
 	v1.GET("/me/invite", k.RequireAuth, h.myInvite)
 }
 
@@ -79,7 +80,7 @@ func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	v1.POST("/user-groups", k.Permission(PermUserWrite), h.createUserGroup)
 	v1.POST("/user-groups/:id", k.Permission(PermUserWrite), h.updateUserGroup)
 	v1.DELETE("/user-groups/:id", k.Permission(PermUserWrite), h.deleteUserGroup)
-	v1.POST("/me/password", k.RequireAuth, h.changePassword)
+	v1.POST("/me/password", k.RequireAuth, h.mePasswordLimit(), h.changePassword)
 }
 
 // strict 是注册与找回密码的严格限流：按路由加 IP、按网段，global 时再加整站一维；Redis 故障回 503。
@@ -102,4 +103,25 @@ func (h *Handler) strict(prefix string, global bool) gin.HandlerFunc {
 		})
 	}
 	return h.limiter.Middleware(dims...)
+}
+
+// mePasswordLimit 是改密接口的严格限流：按账号、按 IP 两维，每分钟 authPerMin 次（与旧 adm_password、adm_password_ip 同口径）。
+// 挂在 RequireAuth 之后，按账号那一维取登录主体；没有主体时跳过该维（RequireAuth 已经拦下）。
+func (h *Handler) mePasswordLimit() gin.HandlerFunc {
+	if h.limiter == nil {
+		return func(c *gin.Context) { c.Next() }
+	}
+	return h.limiter.Middleware(
+		ratelimit.Dimension{
+			Rule: ratelimit.PerMinute("me_password", h.authPerMin).StrictMode(),
+			Key: func(c *gin.Context) (string, bool) {
+				p, ok := authn.FromGin(c)
+				if !ok {
+					return "", false
+				}
+				return p.UserID.String(), true
+			},
+		},
+		ratelimit.Dimension{Rule: ratelimit.PerMinute("me_password_ip", h.authPerMin).StrictMode(), Key: ratelimit.ByIP},
+	)
 }

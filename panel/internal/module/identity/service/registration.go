@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"strconv"
 	"strings"
@@ -73,6 +74,10 @@ func (s *Service) StartRegistration(ctx context.Context, email, inviteCode strin
 			return err
 		}
 		if !taken && policy.EmailVerification {
+			// 同一邮箱此前没用掉的注册验证码一律作废，只认最新一条（与找回密码一致）。
+			if err := s.repo.ExpireCodes(ctx, model.PurposeEmailVerify, s.targetHash(email)); err != nil {
+				return err
+			}
 			if err := s.repo.InsertCode(ctx, &model.VerificationCode{
 				Purpose: model.PurposeEmailVerify, TargetHash: s.targetHash(email),
 				CodeHash: s.codeHash(code), MaxAttempts: registrationMaxAttempts, ExpiresAt: expiresAt,
@@ -110,6 +115,14 @@ func (s *Service) CompleteRegistration(ctx context.Context, token, code, passwor
 	}
 	if err := s.limit(ctx, ruleRegisterToken, token); err != nil {
 		return User{}, err
+	}
+	// 先不加锁看一眼令牌：无效、已用或错满次数直接拒，不白算 Argon2；事务里照旧加锁复核。
+	pre, ok, err := s.repo.RegistrationByToken(ctx, hashToken(token))
+	if err != nil {
+		return User{}, err
+	}
+	if !ok || pre.Status != model.RegistrationPending || pre.Attempts >= registrationMaxAttempts {
+		return User{}, ErrRegistrationUnavailable
 	}
 	release, err := s.hasher.acquire(ctx, authn.AudiencePublic)
 	if err != nil {
@@ -155,11 +168,24 @@ func (s *Service) CompleteRegistration(ctx context.Context, token, code, passwor
 			if !validNumericCode(code, verificationCodeDigits) {
 				return incRegReject(ctx, s, sess.ID, &rejected)
 			}
-			vc, hit, err := s.repo.LockCodeByHash(ctx, model.PurposeEmailVerify, s.targetHash(sess.Email), s.codeHash(code))
+			target := s.targetHash(sess.Email)
+			vc, hit, err := s.repo.LockLatestCode(ctx, model.PurposeEmailVerify, target)
 			if err != nil {
 				return err
 			}
-			if !hit {
+			if !hit || vc.Attempts >= vc.MaxAttempts {
+				return incRegReject(ctx, s, sess.ID, &rejected)
+			}
+			if subtle.ConstantTimeCompare(vc.CodeHash, s.codeHash(code)) != 1 {
+				// 验错累加这条码的次数，满 max_attempts 作废
+				if err := s.repo.IncCodeAttempts(ctx, vc.ID); err != nil {
+					return err
+				}
+				if vc.Attempts+1 >= vc.MaxAttempts {
+					if err := s.repo.ExpireCodes(ctx, model.PurposeEmailVerify, target); err != nil {
+						return err
+					}
+				}
 				return incRegReject(ctx, s, sess.ID, &rejected)
 			}
 			codeRow = &vc
@@ -206,10 +232,7 @@ func (s *Service) CompleteRegistration(ctx context.Context, token, code, passwor
 				return ErrRegistrationUnavailable
 			}
 		}
-		if err := s.writeAudit(ctx, auditsvc.Event{
-			Action: ActionRegistered, ResourceType: ResourceUser, ResourceID: &u.ID,
-			ActorID: &u.ID, Audience: authn.AudiencePublic,
-		}); err != nil {
+		if err := s.writeSelfAudit(ctx, u.ID, auditsvc.Event{Action: ActionRegistered}); err != nil {
 			return err
 		}
 		out = User{ID: u.ID, Email: u.Email, Status: u.Status, CreatedAt: u.CreatedAt}

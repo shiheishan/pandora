@@ -41,8 +41,14 @@ type admUserRefResponse struct {
 // userDetailResponse 是后台用户详情（identity 字段）。
 type userDetailResponse struct {
 	userRowResponse
-	EmailVerified bool                `json:"email_verified"`
-	Referrer      *admUserRefResponse `json:"referrer"`
+	EmailVerified bool                 `json:"email_verified"`
+	Referrer      *admUserRefResponse  `json:"referrer"`
+	Stats         admUserStatsResponse `json:"stats"`
+}
+
+// admUserStatsResponse 是详情里的统计；identity 只填 referral_count，其余字段（如 paid_totals、order_count）由别的模块接入时补。
+type admUserStatsResponse struct {
+	ReferralCount int64 `json:"referral_count"`
 }
 
 type admSetUserStatusRequest struct {
@@ -137,6 +143,7 @@ func admUserDetailFrom(d service.UserDetail) userDetailResponse {
 	out := userDetailResponse{
 		userRowResponse: admUserRowFrom(d.UserRow),
 		EmailVerified:   d.EmailVerified,
+		Stats:           admUserStatsResponse{ReferralCount: d.ReferralCount},
 	}
 	if d.Referrer != nil {
 		out.Referrer = &admUserRefResponse{

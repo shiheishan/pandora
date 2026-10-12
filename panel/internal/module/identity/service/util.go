@@ -6,9 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"errors"
 	"fmt"
-	"math"
 	"net/mail"
 	"strings"
 	"time"
@@ -16,9 +14,11 @@ import (
 
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	plog "github.com/aegispanel/aegis/internal/pkg/log"
 	"github.com/aegispanel/aegis/internal/pkg/ratelimit"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 )
 
 // normalizeEmail 去空白并转小写；库里是 citext，判重本来就不分大小写，这里只为哈希与限流键稳定。
@@ -133,7 +133,7 @@ var (
 // limit 按 subject（邮箱、邀请码、令牌）限流；键是 HMAC，Redis 里不出现明文。
 func (s *Service) limit(ctx context.Context, rule ratelimit.Rule, subject string) error {
 	if s.limiter == nil {
-		return nil
+		return errs.Wrap(errs.Internal, errNotWired)
 	}
 	sum := s.keys.HMAC(crypto.InfoHMACIdentity, []byte("rl:"+rule.Name+":"+subject))
 	return s.limiter.Allow(ctx, rule, hex.EncodeToString(sum[:16]))
@@ -157,8 +157,8 @@ func padSince(ctx context.Context, start time.Time, d time.Duration) {
 	}
 }
 
-// 改密时当前口令的试错上限：同一账号 15 分钟窗口内错满 5 次，之后（含口令正确）一律 429，
-// 直到窗口过去。拿到会话的人不能借改密接口在线猜当前口令。计数在 Redis，故障回 503。
+// 改密时当前口令的试错上限：同一账号 15 分钟窗口内最多 5 次进入校验，超出（含口令正确）一律 429，
+// 直到窗口过去；校验通过后清零。拿到会话的人不能借改密接口在线猜当前口令。计数在 Redis，故障回 503。
 const (
 	passwordFailLimit  = 5
 	passwordFailWindow = 15 * time.Minute
@@ -166,37 +166,41 @@ const (
 
 func passwordFailKey(userID uuid.UUID) string { return "pwfail:" + userID.String() }
 
-// checkPasswordFailures 在校验当前口令之前调用：已错满就回 429 并带 Retry-After。
-func (s *Service) checkPasswordFailures(ctx context.Context, userID uuid.UUID) error {
-	key := passwordFailKey(userID)
-	n, err := s.rdb.Get(ctx, key).Int()
-	if errors.Is(err, redis.Nil) {
-		return nil
+// claimScript 原子地给试错计数加一，首次（键无过期时间）设窗口；返回 {计数, 剩余秒数}。
+var claimScript = redis.NewScript(`
+local n = redis.call('INCR', KEYS[1])
+if redis.call('TTL', KEYS[1]) < 0 then
+  redis.call('EXPIRE', KEYS[1], ARGV[1])
+end
+return {n, redis.call('TTL', KEYS[1])}
+`)
+
+// claimPasswordAttempt 在校验当前口令之前先占一个名额（先占再验，并发请求也最多 5 个进入校验）：
+// 超出上限回 429 并带 Retry-After（剩余窗口），不进哈希闸。
+func (s *Service) claimPasswordAttempt(ctx context.Context, userID uuid.UUID) error {
+	if s.rdb == nil {
+		return errs.Wrap(errs.Internal, errNotWired)
 	}
-	if err != nil {
-		return errs.Wrap(errs.Unavailable, err)
+	res, err := claimScript.Run(ctx, s.rdb, []string{passwordFailKey(userID)}, int(passwordFailWindow/time.Second)).Int64Slice()
+	if err != nil || len(res) != 2 {
+		return errs.Wrap(errs.Unavailable, fmt.Errorf("改密试错计数: %v", err))
 	}
-	if n < passwordFailLimit {
+	if res[0] <= passwordFailLimit {
 		return nil
 	}
 	e := errs.Newf(errs.RateLimited, "当前密码错误次数过多，请 15 分钟后再试")
 	e.RetryAfterSeconds = int(passwordFailWindow / time.Second)
-	if ttl, err := s.rdb.TTL(ctx, key).Result(); err == nil && ttl > 0 {
-		e.RetryAfterSeconds = int(math.Ceil(ttl.Seconds()))
+	if res[1] > 0 {
+		e.RetryAfterSeconds = int(res[1])
 	}
 	return e
 }
 
-// recordPasswordFailure 记一次当前口令错误；窗口从第一次错误起算。
-func (s *Service) recordPasswordFailure(ctx context.Context, userID uuid.UUID) error {
-	key := passwordFailKey(userID)
-	pipe := s.rdb.TxPipeline()
-	pipe.Incr(ctx, key)
-	pipe.ExpireNX(ctx, key, passwordFailWindow)
-	if _, err := pipe.Exec(ctx); err != nil {
-		return errs.Wrap(errs.Unavailable, err)
+// clearPasswordAttempts 在当前口令校验通过后清零计数；失败只记日志（计数留着最多让本人多等一个窗口）。
+func (s *Service) clearPasswordAttempts(ctx context.Context, userID uuid.UUID) {
+	if err := s.rdb.Del(ctx, passwordFailKey(userID)).Err(); err != nil {
+		plog.From(ctx).Warn("清零改密试错计数失败", zap.Error(err))
 	}
-	return nil
 }
 
 // cleanText 规整来自请求的自由文本：去首尾空白；含 NUL 或非法 UTF-8 时 ok 为 false（调用方回 422）。

@@ -30,6 +30,22 @@ func (r *Repo) LockRegistrationByToken(ctx context.Context, tokenHash []byte) (m
 	return s, true, nil
 }
 
+// RegistrationByToken 按令牌哈希读未过期的注册会话，不加锁（进事务前的预检用，事务里仍要 LockRegistrationByToken 复核）。
+func (r *Repo) RegistrationByToken(ctx context.Context, tokenHash []byte) (model.RegistrationSession, bool, error) {
+	var s model.RegistrationSession
+	err := r.d.Conn(ctx).Raw(
+		"SELECT * FROM registration_sessions WHERE token_hash = ? AND expires_at > now()",
+		tokenHash,
+	).Scan(&s).Error
+	if err != nil {
+		return model.RegistrationSession{}, false, err
+	}
+	if s.ID == uuid.Nil {
+		return model.RegistrationSession{}, false, nil
+	}
+	return s, true, nil
+}
+
 // IncRegistrationAttempts 注册会话验证码尝试次数加一。
 func (r *Repo) IncRegistrationAttempts(ctx context.Context, id uuid.UUID) error {
 	return r.d.Conn(ctx).Exec(
@@ -48,23 +64,6 @@ func (r *Repo) ConsumeRegistration(ctx context.Context, id uuid.UUID) error {
 // InsertCode 插入验证码行。
 func (r *Repo) InsertCode(ctx context.Context, c *model.VerificationCode) error {
 	return mapErr(r.d.Conn(ctx).Create(c).Error)
-}
-
-// LockCodeByHash 按用途与哈希锁定一条未消费的验证码。
-func (r *Repo) LockCodeByHash(ctx context.Context, purpose string, targetHash, codeHash []byte) (model.VerificationCode, bool, error) {
-	var c model.VerificationCode
-	err := r.d.Conn(ctx).Raw(
-		`SELECT * FROM verification_codes WHERE purpose = ? AND target_hash = ? AND code_hash = ? AND consumed_at IS NULL AND expires_at > now()
-		 ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
-		purpose, targetHash, codeHash,
-	).Scan(&c).Error
-	if err != nil {
-		return model.VerificationCode{}, false, err
-	}
-	if c.ID == uuid.Nil {
-		return model.VerificationCode{}, false, nil
-	}
-	return c, true, nil
 }
 
 // LockLatestCode 锁定目标上最新一条未过期验证码。

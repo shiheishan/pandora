@@ -143,6 +143,21 @@ func (s *Service) writeAudit(ctx context.Context, e auditsvc.Event) error {
 	return s.audit.Write(ctx, e)
 }
 
+// writeSelfAudit 写匿名流程（注册、找回密码）里「本人对自己账号」的审计：被操作的用户记为资源 user；
+// ctx 里没有登录主体时操作者也记成这个用户（门户域），有主体时不传 ActorID，由审计记那个主体。
+func (s *Service) writeSelfAudit(ctx context.Context, userID uuid.UUID, e auditsvc.Event) error {
+	e.ResourceType = ResourceUser
+	e.ResourceID = &userID
+	if p, ok := authn.From(ctx); !ok || p.UserID == uuid.Nil {
+		e.ActorID = &userID
+		e.Audience = authn.AudiencePublic
+	} else {
+		e.ActorID = nil
+		e.Audience = ""
+	}
+	return s.writeAudit(ctx, e)
+}
+
 // 对外的固定错误。同一个变量只读共享，调用方可以 errors.Is 比较。
 var (
 	// ErrInvalidCredentials 是邮箱不存在或口令不对。

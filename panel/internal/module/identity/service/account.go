@@ -103,7 +103,7 @@ func (s *Service) Authenticate(ctx context.Context, audience, email, password st
 		log.Warn("更新最后登录时间失败", zap.Error(err))
 	}
 	if newPHC != "" {
-		if _, err := s.repo.ReplacePassword(ctx, cred.ID, *cred.PHC, newPHC); err != nil {
+		if _, err := s.repo.RehashPassword(ctx, cred.ID, *cred.PHC, newPHC); err != nil {
 			log.Warn("静默升级口令哈希失败", zap.Error(err))
 		}
 	}
@@ -274,7 +274,8 @@ func (s *Service) ChangePassword(ctx context.Context, oldPassword, newPassword s
 		})
 	}
 
-	if err := s.checkPasswordFailures(ctx, p.UserID); err != nil {
+	// 先占试错名额再验：并发请求也最多 5 个能进入校验，超出直接 429、不进哈希闸。
+	if err := s.claimPasswordAttempt(ctx, p.UserID); err != nil {
 		return err
 	}
 
@@ -302,9 +303,6 @@ func (s *Service) ChangePassword(ctx context.Context, oldPassword, newPassword s
 
 	if !passwordOK {
 		release()
-		if err := s.recordPasswordFailure(ctx, p.UserID); err != nil {
-			return err
-		}
 		_ = s.tx.Do(ctx, func(ctx context.Context) error {
 			return s.writeAudit(ctx, auditsvc.Event{
 				Action:       ActionPasswordChanged,
@@ -316,6 +314,7 @@ func (s *Service) ChangePassword(ctx context.Context, oldPassword, newPassword s
 		})
 		return ErrWrongCurrentPassword
 	}
+	s.clearPasswordAttempts(ctx, p.UserID)
 
 	if newPassword == oldPassword {
 		release()

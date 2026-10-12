@@ -336,3 +336,109 @@ func TestPGAuthenticateRehashWeakPHC(t *testing.T) {
 		t.Fatalf("phc %q", stored)
 	}
 }
+
+// 注册第 2 步：令牌无效直接拒（进事务前的预检），不报别的错。
+func TestPGCompleteRegistrationUnknownToken(t *testing.T) {
+	e, ctx := newEnv(t)
+	if _, err := e.svc.CompleteRegistration(ctx, "no-such-token", "", "abc12345"); !errors.Is(err, ErrRegistrationUnavailable) {
+		t.Fatalf("%v", err)
+	}
+}
+
+// 注册验证码：再次 start 作废旧码；验错累加该码 attempts，满 max_attempts 作废。
+func TestPGRegistrationCodeRotationAndAttempts(t *testing.T) {
+	e, ctx := newEnv(t)
+	admin := e.mkUser(t, ctx, uniqEmail(t, "rotadm"), "Passw0rdLong1")
+	setRegistration(t, asAdmin(ctx, admin.ID), e.settings, settingssvc.RegistrationOpen, true)
+	email := uniqEmail(t, "rotate")
+	target := e.svc.targetHash(email)
+	const liveSQL = `SELECT count(*) FROM verification_codes WHERE purpose = 'email_verify' AND target_hash = ? AND consumed_at IS NULL AND expires_at > now()`
+
+	if _, err := e.svc.StartRegistration(ctx, email, ""); err != nil {
+		t.Fatal(err)
+	}
+	second, err := e.svc.StartRegistration(ctx, email, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var live int64
+	if err := e.row(ctx, liveSQL, target).Scan(&live); err != nil || live != 1 {
+		t.Fatalf("再次 start 后有效码应只剩 1 条，实际 %d err=%v", live, err)
+	}
+
+	wrong := "000000"
+	if wrong == second.DevCode {
+		wrong = "111111"
+	}
+	for i := 0; i < registrationMaxAttempts; i++ {
+		if _, err := e.svc.CompleteRegistration(ctx, second.Token, wrong, "abc12345"); !errors.Is(err, ErrRegistrationUnavailable) {
+			t.Fatalf("第 %d 次错码: %v", i+1, err)
+		}
+		if i == 0 {
+			var attempts int
+			if err := e.row(ctx, `SELECT attempts FROM verification_codes WHERE purpose = 'email_verify' AND target_hash = ? AND consumed_at IS NULL AND expires_at > now()`,
+				target).Scan(&attempts); err != nil || attempts != 1 {
+				t.Fatalf("码 attempts=%d err=%v", attempts, err)
+			}
+		}
+	}
+	if err := e.row(ctx, liveSQL, target).Scan(&live); err != nil || live != 0 {
+		t.Fatalf("错满后该邮箱的码应作废，剩 %d err=%v", live, err)
+	}
+}
+
+// 匿名流程的审计：没有主体时操作者记成本人；有主体时记主体。
+func TestPGSelfAuditActor(t *testing.T) {
+	e, ctx := newEnv(t)
+	admin := e.mkUser(t, ctx, uniqEmail(t, "audadm"), "Passw0rdLong1")
+	setRegistration(t, asAdmin(ctx, admin.ID), e.settings, settingssvc.RegistrationOpen, false)
+
+	start, err := e.svc.StartRegistration(ctx, uniqEmail(t, "anon"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := e.svc.CompleteRegistration(ctx, start.Token, "", "abc12345")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var actor *uuid.UUID
+	if err := e.row(ctx, `SELECT actor_id FROM audit_events WHERE action = ? AND resource_id = ?`, ActionRegistered, u.ID).Scan(&actor); err != nil || actor == nil || *actor != u.ID {
+		t.Fatalf("匿名注册 actor=%v err=%v", actor, err)
+	}
+
+	other := e.mkUser(t, ctx, uniqEmail(t, "logged"), "Passw0rdLong1")
+	start2, err := e.svc.StartRegistration(ctx, uniqEmail(t, "withp"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	u2, err := e.svc.CompleteRegistration(asUser(ctx, other.ID), start2.Token, "", "abc12345")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.row(ctx, `SELECT actor_id FROM audit_events WHERE action = ? AND resource_id = ?`, ActionRegistered, u2.ID).Scan(&actor); err != nil || actor == nil || *actor != other.ID {
+		t.Fatalf("带主体 actor=%v err=%v", actor, err)
+	}
+}
+
+// 登录时静默重算哈希不动 rotated_at。
+func TestPGRehashKeepsRotatedAt(t *testing.T) {
+	e, ctx := newEnv(t)
+	email := uniqEmail(t, "rot")
+	pw := "Passw0rdLong1"
+	u := e.mkUser(t, ctx, email, pw)
+	old := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := e.exec(ctx, `UPDATE user_passwords SET phc = ?, rotated_at = ? WHERE user_id = ?`, weakPHC(t, pw), old, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.Authenticate(ctx, authn.AudiencePublic, email, pw); err != nil {
+		t.Fatal(err)
+	}
+	var phc string
+	var rotated time.Time
+	if err := e.row(ctx, `SELECT phc, rotated_at FROM user_passwords WHERE user_id = ?`, u.ID).Scan(&phc, &rotated); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(phc, "m=19456") || !rotated.Equal(old) {
+		t.Fatalf("phc=%q rotated=%v", phc, rotated)
+	}
+}

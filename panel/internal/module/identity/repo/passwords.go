@@ -98,3 +98,15 @@ func (r *Repo) ReplacePassword(ctx context.Context, userID uuid.UUID, oldPHC, ne
 	}
 	return res.RowsAffected == 1, nil
 }
+
+// RehashPassword 登录时静默升级哈希参数：只换 phc 与 updated_at，不动 rotated_at（口令本身没变）；旧哈希不匹配时不改。
+func (r *Repo) RehashPassword(ctx context.Context, userID uuid.UUID, oldPHC, newPHC string) (bool, error) {
+	res := r.d.Conn(ctx).Exec(
+		"UPDATE user_passwords SET phc = ?, updated_at = now() WHERE user_id = ? AND phc = ?",
+		newPHC, userID, oldPHC,
+	)
+	if res.Error != nil {
+		return false, mapErr(res.Error)
+	}
+	return res.RowsAffected == 1, nil
+}
