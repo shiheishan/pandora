@@ -11,7 +11,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/testkit"
 )
 
 // endSub 把订阅改成已停用（过期且关窗）。
@@ -23,7 +22,7 @@ func endSub(t *testing.T, e *env, ctx context.Context, subID uuid.UUID) {
 
 func TestPacksPG(t *testing.T) {
 	e := newEnv(t)
-	ctx := testkit.TxCtx(t, e.d)
+	ctx := e.txCtx()
 	user := newUser(t, e, ctx)
 	planID, versionID := newPlan(t, e, ctx, quotaSpec{MetricTraffic, PeriodCycle, i64(100 * gib)})
 	old := provision(t, e, ctx, user, planID, versionID, "旧的")
@@ -35,14 +34,13 @@ func TestPacksPG(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 唯一冲突会让事务失效：在保存点里试，试完回滚到保存点
-	conn := e.d.Conn(ctx)
-	if err := conn.SavePoint("dup").Error; err != nil {
+	if err := e.rawExec(ctx, "SAVEPOINT dup"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.svc.GrantTrafficPack(ctx, PackGrant{UserID: user, SubscriptionID: &live.ID, Source: PackSourceOrder, SourceID: src, Bytes: gib}); errs.As(err).Code != errs.Conflict {
 		t.Fatalf("重复发放: %v", err)
 	}
-	if err := conn.RollbackTo("dup").Error; err != nil {
+	if err := e.rawExec(ctx, "ROLLBACK TO SAVEPOINT dup"); err != nil {
 		t.Fatal(err)
 	}
 	e.exec(t, ctx, `UPDATE traffic_pack_grants SET consumed_bytes = ? WHERE id = ?`, 4*gib, g.ID)
@@ -108,7 +106,7 @@ func TestPacksPG(t *testing.T) {
 
 func TestManualResetPG(t *testing.T) {
 	e := newEnv(t)
-	ctx := testkit.TxCtx(t, e.d)
+	ctx := e.txCtx()
 	user := newUser(t, e, ctx)
 	admin := newUser(t, e, ctx)
 	planID, versionID := newPlan(t, e, ctx,
@@ -160,7 +158,7 @@ func TestManualResetPG(t *testing.T) {
 
 func TestDeviceLimitAndLabelPG(t *testing.T) {
 	e := newEnv(t)
-	ctx := testkit.TxCtx(t, e.d)
+	ctx := e.txCtx()
 	user := newUser(t, e, ctx)
 	admin := newUser(t, e, ctx)
 	planID, versionID := newPlan(t, e, ctx, quotaSpec{MetricTraffic, PeriodCycle, i64(100 * gib)})
@@ -217,7 +215,7 @@ func TestDeviceLimitAndLabelPG(t *testing.T) {
 
 func TestSummariesByUsersPG(t *testing.T) {
 	e := newEnv(t)
-	ctx := testkit.TxCtx(t, e.d)
+	ctx := e.txCtx()
 	u1, u2, u3 := newUser(t, e, ctx), newUser(t, e, ctx), newUser(t, e, ctx)
 	planID, versionID := newPlan(t, e, ctx,
 		quotaSpec{MetricTraffic, PeriodDay, i64(gib)},
@@ -259,7 +257,7 @@ func TestSummariesByUsersPG(t *testing.T) {
 
 func TestAppendOnlyGuardsPG(t *testing.T) {
 	e := newEnv(t)
-	setup := testkit.TxCtx(t, e.d)
+	setup := e.txCtx()
 	user := newUser(t, e, setup)
 	planID, versionID := newPlan(t, e, setup, quotaSpec{MetricTraffic, PeriodCycle, i64(gib)})
 	sub := provision(t, e, setup, user, planID, versionID, "")
@@ -273,15 +271,14 @@ func TestAppendOnlyGuardsPG(t *testing.T) {
 		`DELETE FROM traffic_pack_grants WHERE subscription_id = ?`,
 	} {
 		// 每条在自己的保存点里试：违例会让外层事务失效
-		conn := e.d.Conn(setup)
-		if err := conn.SavePoint("guard").Error; err != nil {
+		if err := e.rawExec(setup, "SAVEPOINT guard"); err != nil {
 			t.Fatal(err)
 		}
-		err := conn.Exec(q, sub.ID).Error
+		err := e.rawExec(setup, q, sub.ID)
 		if err == nil || !strings.Contains(err.Error(), "23001") && !strings.Contains(strings.ToLower(err.Error()), "restrict") {
 			t.Fatalf("%s 应被拒: %v", q, err)
 		}
-		if err := conn.RollbackTo("guard").Error; err != nil {
+		if err := e.rawExec(setup, "ROLLBACK TO SAVEPOINT guard"); err != nil {
 			t.Fatal(err)
 		}
 	}

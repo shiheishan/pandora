@@ -21,7 +21,6 @@ import (
 	"github.com/aegispanel/aegis/internal/module/subscription/repo"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
-	"github.com/aegispanel/aegis/internal/pkg/db"
 	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/aegispanel/aegis/internal/pkg/reqid"
 	"github.com/aegispanel/aegis/internal/pkg/testkit"
@@ -79,11 +78,14 @@ func (s *spyRoster) count(id uuid.UUID) int {
 	return n
 }
 
+// env 只经闭包取连接：service 包的测试不 import pkg/db（depguard）。
 type env struct {
-	d      *db.DB
-	svc    *Service
-	users  *fakeUsers
-	roster *spyRoster
+	rawRow  func(ctx context.Context, q string, args ...any) *sql.Row
+	rawExec func(ctx context.Context, q string, args ...any) error
+	txCtx   func() context.Context
+	svc     *Service
+	users   *fakeUsers
+	roster  *spyRoster
 }
 
 func newEnv(t *testing.T) *env {
@@ -111,16 +113,23 @@ func newEnv(t *testing.T) *env {
 	svc := New(repo.New(d), txm, auditSvc, fakeSite{}, cat, users, sealer)
 	roster := &spyRoster{}
 	svc.UseRosterNotifier(roster)
-	return &env{d: d, svc: svc, users: users, roster: roster}
+	return &env{
+		rawRow:  func(ctx context.Context, q string, args ...any) *sql.Row { return d.Conn(ctx).Raw(q, args...).Row() },
+		rawExec: func(ctx context.Context, q string, args ...any) error { return d.Conn(ctx).Exec(q, args...).Error },
+		txCtx:   func() context.Context { return testkit.TxCtx(t, d) },
+		svc:     svc,
+		users:   users,
+		roster:  roster,
+	}
 }
 
 func (e *env) row(ctx context.Context, q string, args ...any) *sql.Row {
-	return e.d.Conn(ctx).Raw(q, args...).Row()
+	return e.rawRow(ctx, q, args...)
 }
 
 func (e *env) exec(t *testing.T, ctx context.Context, q string, args ...any) {
 	t.Helper()
-	if err := e.d.Conn(ctx).Exec(q, args...).Error; err != nil {
+	if err := e.rawExec(ctx, q, args...); err != nil {
 		t.Fatalf("exec %q: %v", q, err)
 	}
 }

@@ -27,7 +27,7 @@ func TestNormalizeLabel(t *testing.T) {
 		"a\nb",
 		"a\tb",
 		"a\x00b",
-		"a‮b", // 从右到左覆盖：能伪造文件名
+		"a\u202eb", // 从右到左覆盖：能伪造文件名
 		"a b",
 		"a\xffb",
 	}

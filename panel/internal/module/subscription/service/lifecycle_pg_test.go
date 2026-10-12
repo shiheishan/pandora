@@ -9,7 +9,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/testkit"
 )
 
 // lapse 把订阅改成 days 天前已到期（状态改 expired），cycle 行跟到旧到期，day 行停在到期前一天。
@@ -25,7 +24,7 @@ func lapse(t *testing.T, e *env, ctx context.Context, subID uuid.UUID, days int)
 
 func TestProvisionPG(t *testing.T) {
 	e := newEnv(t)
-	ctx := testkit.TxCtx(t, e.d)
+	ctx := e.txCtx()
 	user := newUser(t, e, ctx)
 	planID, versionID := newPlan(t, e, ctx,
 		quotaSpec{MetricTraffic, PeriodCycle, i64(100 * gib)},
@@ -92,7 +91,7 @@ func TestProvisionPG(t *testing.T) {
 
 func TestRenewEarlyPG(t *testing.T) {
 	e := newEnv(t)
-	ctx := testkit.TxCtx(t, e.d)
+	ctx := e.txCtx()
 	user := newUser(t, e, ctx)
 	planID, versionID := newPlan(t, e, ctx, quotaSpec{MetricTraffic, PeriodCycle, i64(100 * gib)})
 	sub := provision(t, e, ctx, user, planID, versionID, "")
@@ -126,7 +125,7 @@ func TestRenewEarlyPG(t *testing.T) {
 
 func TestRenewRestartPG(t *testing.T) {
 	e := newEnv(t)
-	ctx := testkit.TxCtx(t, e.d)
+	ctx := e.txCtx()
 	user := newUser(t, e, ctx)
 	planID, versionID := newPlan(t, e, ctx,
 		quotaSpec{MetricTraffic, PeriodCycle, i64(100 * gib)},
@@ -172,7 +171,7 @@ func TestRenewRestartPG(t *testing.T) {
 
 func TestExtendRescuePG(t *testing.T) {
 	e := newEnv(t)
-	ctx := testkit.TxCtx(t, e.d)
+	ctx := e.txCtx()
 	user := newUser(t, e, ctx)
 	planID, versionID := newPlan(t, e, ctx,
 		quotaSpec{MetricTraffic, PeriodCycle, i64(100 * gib)},
@@ -243,7 +242,7 @@ func TestExtendRescuePG(t *testing.T) {
 
 func TestChangePlanPG(t *testing.T) {
 	e := newEnv(t)
-	ctx := testkit.TxCtx(t, e.d)
+	ctx := e.txCtx()
 	user := newUser(t, e, ctx)
 	planA, versionA := newPlan(t, e, ctx,
 		quotaSpec{MetricTraffic, PeriodCycle, i64(100 * gib)},
