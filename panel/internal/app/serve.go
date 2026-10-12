@@ -14,6 +14,7 @@ import (
 	authh "github.com/aegispanel/aegis/internal/module/auth/handler"
 	idemh "github.com/aegispanel/aegis/internal/module/idempotency/handler"
 	identityh "github.com/aegispanel/aegis/internal/module/identity/handler"
+	ledgerh "github.com/aegispanel/aegis/internal/module/ledger/handler"
 	notifyh "github.com/aegispanel/aegis/internal/module/notify/handler"
 	settingsh "github.com/aegispanel/aegis/internal/module/settings/handler"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
@@ -155,6 +156,7 @@ func newEngines(r *runtime, svc *services) (*gin.Engine, *gin.Engine) {
 		identityh.New(svc.identity, svc.limiter, r.cfg.RateLimit.AuthPerMin),
 		authH,
 		notifyh.New(svc.notify),
+		ledgerh.New(svc.ledger),
 	}
 
 	publicEng := newEngine(r, r.cfg.HTTP.Public,

@@ -12,6 +12,8 @@ import (
 	idemsvc "github.com/aegispanel/aegis/internal/module/idempotency/service"
 	identityrepo "github.com/aegispanel/aegis/internal/module/identity/repo"
 	identitysvc "github.com/aegispanel/aegis/internal/module/identity/service"
+	ledgerrepo "github.com/aegispanel/aegis/internal/module/ledger/repo"
+	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
 	notifyrepo "github.com/aegispanel/aegis/internal/module/notify/repo"
 	notifysvc "github.com/aegispanel/aegis/internal/module/notify/service"
 	settingsrepo "github.com/aegispanel/aegis/internal/module/settings/repo"
@@ -33,6 +35,7 @@ type services struct {
 	identity *identitysvc.Service
 	auth     *authsvc.Service
 	notify   *notifysvc.Service
+	ledger   *ledgersvc.Service
 	limiter  *ratelimit.Limiter
 	queue    *asynq.Client
 	tx       *tx.Manager
@@ -107,6 +110,8 @@ func buildServices(r *runtime) (*services, error) {
 		return nil, fmt.Errorf("notify: %w", err)
 	}
 
+	ledgerSvc := ledgersvc.New(ledgerrepo.New(r.db), txm, settingsSvc, auditSvc)
+
 	// 模块间注入：identity 定义接口，auth、notify 实现；audit 经 identity 显示操作者与资源
 	identitySvc.UseSessionRevoker(authSvc)
 	identitySvc.UseAdminGuard(authSvc)
@@ -122,6 +127,7 @@ func buildServices(r *runtime) (*services, error) {
 		identity: identitySvc,
 		auth:     authSvc,
 		notify:   notifySvc,
+		ledger:   ledgerSvc,
 		limiter:  limiter,
 		queue:    queue,
 		tx:       txm,
