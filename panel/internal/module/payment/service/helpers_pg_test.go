@@ -109,6 +109,28 @@ type env struct {
 	txm *tx.Manager
 	// settings 用来改站点时区等设置。
 	settings *settingssvc.Service
+	// orders 记下 mkOrder 建的订单；真提交的用例结束时删掉它们。
+	orders *orderLog
+}
+
+// orderLog 记下用例建的订单 ID（并发安全）。
+type orderLog struct {
+	mu  sync.Mutex
+	ids []uuid.UUID
+}
+
+func (l *orderLog) add(id uuid.UUID) {
+	l.mu.Lock()
+	l.ids = append(l.ids, id)
+	l.mu.Unlock()
+}
+
+func (l *orderLog) take() []uuid.UUID {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	ids := l.ids
+	l.ids = nil
+	return ids
 }
 
 // newEnv 的用例整例回滚（testkit.TxCtx）；newCommitEnv 的用例真提交（并发用），前后清表。
@@ -126,7 +148,33 @@ func newCommitEnv(t *testing.T) (*env, context.Context) {
 func setupEnv(t *testing.T, commit bool) (*env, context.Context) {
 	t.Helper()
 	d := testkit.DB(t)
+	orders := &orderLog{}
 	if commit {
+		// 最先登记、最后执行：clean 截掉引用订单的意图、收款、挂账、冻结之后，再删本用例建的订单。
+		// orders 有禁删触发器，在 session_replication_role = replica 的事务里删（测试库是超级用户）。
+		t.Cleanup(func() {
+			ids := orders.take()
+			if len(ids) == 0 {
+				return
+			}
+			g := d.Base().Begin()
+			if g.Error != nil {
+				t.Errorf("清订单: %v", g.Error)
+				return
+			}
+			defer g.Rollback()
+			if err := g.Exec("SET LOCAL session_replication_role = replica").Error; err != nil {
+				t.Errorf("清订单: %v", err)
+				return
+			}
+			if err := g.Exec(`DELETE FROM orders WHERE id IN ?`, ids).Error; err != nil {
+				t.Errorf("清订单: %v", err)
+				return
+			}
+			if err := g.Commit().Error; err != nil {
+				t.Errorf("清订单: %v", err)
+			}
+		})
 		clean := func() {
 			testkit.Truncate(t, d, paymentCommitTables...)
 			if err := d.Conn(context.Background()).Exec(`DELETE FROM payment_providers WHERE code <> 'offline'`).Error; err != nil {
@@ -181,6 +229,7 @@ func setupEnv(t *testing.T, commit bool) (*env, context.Context) {
 		ledger:   ledgerSvc,
 		txm:      tx.NewManager(d),
 		settings: settings,
+		orders:   orders,
 		row: func(ctx context.Context, q string, args ...any) *sql.Row {
 			return d.Conn(ctx).Raw(q, args...).Row()
 		},
@@ -230,14 +279,21 @@ func (e *env) mkDemoProvider(t *testing.T, ctx context.Context, code string) pro
 	return rec
 }
 
+// mkOrder 插一张待付的充值单（9.90 CNY）并登记给 stubSettler，返回 ID 与订单号：
+// 意图、收款、挂账的 order_id 都有指向 orders 的外键。订单号满足 ^[A-Z0-9-]{1,64}$，随机取，全局唯一。
 func (e *env) mkOrder(t *testing.T, ctx context.Context, user uuid.UUID) (uuid.UUID, string) {
 	t.Helper()
-	orderID := uuid.Must(uuid.NewV7())
 	n, err := rand.Int(rand.Reader, big.NewInt(1_000_000_000_000))
 	if err != nil {
 		t.Fatal(err)
 	}
 	orderNo := fmt.Sprintf("T%012d", n.Int64())
+	var orderID uuid.UUID
+	if err := e.row(ctx, `INSERT INTO orders (order_no, user_id, kind, currency, subtotal_amount, total_amount, payable_amount, expires_at)
+		VALUES (?, ?, 'topup', 'CNY', 9.90, 9.90, 9.90, now() + interval '30 minutes') RETURNING id`, orderNo, user).Scan(&orderID); err != nil {
+		t.Fatalf("建订单: %v", err)
+	}
+	e.orders.add(orderID)
 	e.settler.mu.Lock()
 	e.settler.users[orderID] = user
 	e.settler.mu.Unlock()

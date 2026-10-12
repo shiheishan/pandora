@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,6 +35,20 @@ func mkUser(t *testing.T, g *gorm.DB) uuid.UUID {
 		t.Fatalf("建用户: %v", err)
 	}
 	return id
+}
+
+// newOrder 插一张待付的充值单（9.90 CNY，与 baseIntent / basePayment 的金额一致），返回 ID 与订单号：
+// 意图、收款、挂账的 order_id 都有指向 orders 的外键。订单号用随机串，满足 ^[A-Z0-9-]{1,64}$ 且全局唯一。
+func newOrder(t *testing.T, g *gorm.DB, user uuid.UUID) (uuid.UUID, string) {
+	t.Helper()
+	var id uuid.UUID
+	no := "T-" + strings.ToUpper(strings.ReplaceAll(uuid.NewString(), "-", ""))
+	err := g.Raw(`INSERT INTO orders (order_no, user_id, kind, currency, subtotal_amount, total_amount, payable_amount, expires_at)
+		VALUES (?, ?, 'topup', 'CNY', 9.90, 9.90, 9.90, now() + interval '30 minutes') RETURNING id`, no, user).Row().Scan(&id)
+	if err != nil {
+		t.Fatalf("建订单: %v", err)
+	}
+	return id, no
 }
 
 // inSavepoint 在保存点里执行预期会失败的语句，执行完回滚到保存点：PG 事务里一条语句失败后整个事务作废，
@@ -211,8 +226,7 @@ func TestIntentConstraints(t *testing.T) {
 	r, ctx, g := newRepo(t)
 	user := mkUser(t, g)
 	prov := insertProvider(t, r, ctx, "pgp_int_"+uuid.NewString()[:6], "0", true, true, []string{"alipay"})
-	orderID := uuid.Must(uuid.NewV7())
-	orderNo := "T" + uuid.NewString()[:12]
+	orderID, orderNo := newOrder(t, g, user)
 
 	it1 := baseIntent(orderID, user, prov, orderNo, orderNo)
 	if err := r.InsertIntent(ctx, it1); err != nil {
@@ -235,8 +249,7 @@ func TestIntentConstraints(t *testing.T) {
 		t.Fatal("旧状态不对时 SetIntentStatus 应为 false")
 	}
 
-	orderB := uuid.Must(uuid.NewV7())
-	orderNoB := "T" + uuid.NewString()[:12]
+	orderB, orderNoB := newOrder(t, g, user)
 	keep := baseIntent(orderB, user, prov, orderNoB, orderNoB)
 	if err := r.InsertIntent(ctx, keep); err != nil {
 		t.Fatal(err)
@@ -318,7 +331,7 @@ func TestPayments(t *testing.T) {
 	r, ctx, g := newRepo(t)
 	user := mkUser(t, g)
 	prov := insertProvider(t, r, ctx, "pgp_pay_"+uuid.NewString()[:6], "0", true, true, []string{"alipay"})
-	orderID := uuid.Must(uuid.NewV7())
+	orderID, _ := newOrder(t, g, user)
 	payRef := "pay-" + uuid.NewString()
 
 	p1 := basePayment(orderID, user, prov, payRef)
@@ -343,7 +356,8 @@ func TestPaymentsAppendOnly(t *testing.T) {
 	r, ctx, g := newRepo(t)
 	user := mkUser(t, g)
 	prov := insertProvider(t, r, ctx, "pgp_ao_"+uuid.NewString()[:6], "0", true, true, []string{"alipay"})
-	p := basePayment(uuid.Must(uuid.NewV7()), user, prov, "pay-ao-"+uuid.NewString())
+	orderID, _ := newOrder(t, g, user)
+	p := basePayment(orderID, user, prov, "pay-ao-"+uuid.NewString())
 	if err := r.InsertPayment(ctx, p); err != nil {
 		t.Fatal(err)
 	}
