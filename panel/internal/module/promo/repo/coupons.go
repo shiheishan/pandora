@@ -26,15 +26,7 @@ func checkCouponMoney(c *model.Coupon) error {
 	return checkMoney(vals...)
 }
 
-// InsertCoupon 插入一张券。
-func (r *Repo) InsertCoupon(ctx context.Context, c *model.Coupon) error {
-	if err := checkCouponMoney(c); err != nil {
-		return err
-	}
-	return mapErr(r.d.Conn(ctx).Create(c).Error)
-}
-
-// InsertCouponIfAbsent 按 code 冲突则跳过；返回是否插入成功（批量生成撞码时用）。
+// InsertCouponIfAbsent 插入一张券，券码已存在时跳过（ON CONFLICT DO NOTHING，不让事务出错）；返回是否插入。
 func (r *Repo) InsertCouponIfAbsent(ctx context.Context, c *model.Coupon) (bool, error) {
 	if err := checkCouponMoney(c); err != nil {
 		return false, err
