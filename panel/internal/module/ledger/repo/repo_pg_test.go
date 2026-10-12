@@ -230,7 +230,7 @@ func TestHolds(t *testing.T) {
 		r := New(d)
 		g := d.Conn(ctx)
 		user := mkUser(t, g)
-		order := uuid.New()
+		order := newOrder(t, g, user, "CNY")
 
 		keys := []AccountKey{
 			userKey("user_balance", user),
@@ -292,7 +292,7 @@ func TestHolds(t *testing.T) {
 		r := New(d)
 		g := d.Conn(ctx)
 		user := mkUser(t, g)
-		order := uuid.New()
+		order := newOrder(t, g, user, "CNY")
 		src := "order"
 		txnID, err := insertTxn(g, "balance_hold", "CNY", &src, &order)
 		if err != nil {
@@ -333,7 +333,7 @@ func TestHolds(t *testing.T) {
 		r := New(d)
 		g := d.Conn(ctx)
 		user := mkUser(t, g)
-		order := uuid.New()
+		order := newOrder(t, g, user, "CNY")
 		src := "order"
 
 		keys := []AccountKey{

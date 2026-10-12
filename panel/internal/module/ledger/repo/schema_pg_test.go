@@ -6,6 +6,7 @@ package repo
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -43,6 +44,20 @@ func mkUser(t *testing.T, g *gorm.DB) uuid.UUID {
 	email := fmt.Sprintf("ledger-%s@example.test", uuid.NewString())
 	if err := g.Raw("INSERT INTO users (email) VALUES (?) RETURNING id", email).Row().Scan(&id); err != nil {
 		t.Fatalf("建用户: %v", err)
+	}
+	return id
+}
+
+// newOrder 插一张待付的新购订单并返回 ID：balance_holds.order_id 有指向 orders 的外键，冻结要挂在真订单上。
+// 订单号用随机串，满足 ^[A-Z0-9-]{1,64}$ 且全局唯一。
+func newOrder(t *testing.T, g *gorm.DB, user uuid.UUID, cur string) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	no := "T-" + strings.ToUpper(strings.ReplaceAll(uuid.NewString(), "-", ""))
+	err := g.Raw(`INSERT INTO orders (order_no, user_id, kind, currency, subtotal_amount, total_amount, payable_amount, expires_at)
+		VALUES (?, ?, 'new', ?, 10, 10, 10, now() + interval '30 minutes') RETURNING id`, no, user, cur).Row().Scan(&id)
+	if err != nil {
+		t.Fatalf("建订单: %v", err)
 	}
 	return id
 }
@@ -463,7 +478,7 @@ func TestBalanceHoldOneHoldPerOrder(t *testing.T) {
 	d := testkit.DB(t)
 	g := txConn(t, d)
 	user := mkUser(t, g)
-	order := uuid.New()
+	order := newOrder(t, g, user, "CNY")
 	src := "order"
 	txnID, err := insertTxn(g, "balance_hold", "CNY", &src, &order)
 	if err != nil {

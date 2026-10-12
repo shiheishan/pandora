@@ -30,6 +30,9 @@ type env struct {
 	svc  *Service
 	row  func(ctx context.Context, q string, args ...any) *sql.Row
 	exec func(ctx context.Context, q string, args ...any) error
+	// replica 只在真提交的环境里有：在一个 session_replication_role = replica 的事务里执行 q，
+	// 用来删掉本用例建的订单（orders 有禁删触发器）。回滚事务的环境为 nil。
+	replica func(q string, args ...any) error
 }
 
 func newEnv(t *testing.T) (*env, context.Context) {
@@ -109,6 +112,20 @@ func newCommitEnv(t *testing.T) (*env, context.Context) {
 		exec: func(ctx context.Context, q string, args ...any) error {
 			return d.Conn(ctx).Exec(q, args...).Error
 		},
+		replica: func(q string, args ...any) error {
+			g := d.Base().Begin()
+			if g.Error != nil {
+				return g.Error
+			}
+			defer g.Rollback()
+			if err := g.Exec("SET LOCAL session_replication_role = replica").Error; err != nil {
+				return err
+			}
+			if err := g.Exec(q, args...).Error; err != nil {
+				return err
+			}
+			return g.Commit().Error
+		},
 	}
 	ctx := context.Background()
 	ctx = reqid.With(ctx, reqid.New())
@@ -122,6 +139,30 @@ func (e *env) mkUser(t *testing.T, ctx context.Context) uuid.UUID {
 	var id uuid.UUID
 	if err := e.row(ctx, `INSERT INTO users (email) VALUES (?) RETURNING id`, email).Scan(&id); err != nil {
 		t.Fatal(err)
+	}
+	return id
+}
+
+// newOrder 插一张待付的新购订单并返回 ID：balance_holds.order_id 有指向 orders 的外键，冻结要挂在真订单上。
+// 订单号用随机串，满足 ^[A-Z0-9-]{1,64}$ 且全局唯一。真提交的环境在用例结束时连同它的冻结一起删掉。
+func (e *env) newOrder(t *testing.T, ctx context.Context, user uuid.UUID, cur money.Currency) uuid.UUID {
+	t.Helper()
+	no := "T-" + strings.ToUpper(strings.ReplaceAll(uuid.NewString(), "-", ""))
+	var id uuid.UUID
+	if err := e.row(ctx, `INSERT INTO orders (order_no, user_id, kind, currency, subtotal_amount, total_amount, payable_amount, expires_at)
+		VALUES (?, ?, 'new', ?, 10, 10, 10, now() + interval '30 minutes') RETURNING id`, no, user, string(cur)).Scan(&id); err != nil {
+		t.Fatalf("建订单: %v", err)
+	}
+	if e.replica != nil {
+		// 先删引用订单的冻结，再删订单
+		t.Cleanup(func() {
+			if err := e.replica(`DELETE FROM balance_holds WHERE order_id = ?`, id); err != nil {
+				t.Errorf("清冻结: %v", err)
+			}
+			if err := e.replica(`DELETE FROM orders WHERE id = ?`, id); err != nil {
+				t.Errorf("清订单: %v", err)
+			}
+		})
 	}
 	return id
 }
