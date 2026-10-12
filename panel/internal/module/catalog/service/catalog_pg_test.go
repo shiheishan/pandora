@@ -258,48 +258,38 @@ func TestOptimisticLockConflicts(t *testing.T) {
 	e, ctx := newEnv(t)
 	ctx, _ = seedAdmin(t, ctx, e)
 	base := publishedPlan(t, ctx, e, publishedPlanOpts{})
+	draft, err := e.svc.CreateVersion(ctx, base.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 建草稿可能动了套餐的 row_version，取最新的再造「过期」版本号。
 	detail, err := e.svc.GetPlan(ctx, base.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var draft Version
-	for _, v := range detail.Versions {
-		if v.Status == VersionDraft {
-			draft = v
-		}
-	}
-	if draft.ID == uuid.Nil {
-		draft, err = e.svc.CreateVersion(ctx, base.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
 	activePrice := detail.Prices[0]
 
-	wrong := detail.RowVersion - 1
-	if wrong < 1 {
-		wrong = 0
-	}
-	_, err = e.svc.UpdatePlan(ctx, base.ID, wrong, PlanInput{
+	// 过期的版本号用「当前 + 1」：仍是合法的正整数，不会先撞「必须为正整数」的 422。
+	_, err = e.svc.UpdatePlan(ctx, base.ID, detail.RowVersion+1, PlanInput{
 		Code: base.Code, Name: base.Name, Visibility: base.Visibility,
 		AllowNewPurchase: true, AllowRenewal: true, AllowUpgrade: true, Highlights: []string{},
 	})
 	assertRowVersionConflict(t, err)
 
-	_, err = e.svc.ArchivePlan(ctx, base.ID, wrong)
+	_, err = e.svc.ArchivePlan(ctx, base.ID, detail.RowVersion+1)
 	assertRowVersionConflict(t, err)
 
-	_, err = e.svc.UpdateVersion(ctx, base.ID, draft.ID, draft.RowVersion-1, VersionInput{
+	_, err = e.svc.UpdateVersion(ctx, base.ID, draft.ID, draft.RowVersion+1, VersionInput{
 		QuotaResetStrategy: ResetBillingCycle, GraceKeepsService: true,
 		RenewalExtendsPeriod: true, RenewalResetsQuota: true, RenewalKeepsAddons: true,
 		DeviceReleaseHours: 24, OveragePolicy: OveragePolicySuspend,
 	})
 	assertRowVersionConflict(t, err)
 
-	_, _, err = e.svc.PublishVersion(ctx, base.ID, draft.ID, detail.RowVersion, draft.RowVersion-1)
+	_, _, err = e.svc.PublishVersion(ctx, base.ID, draft.ID, detail.RowVersion, draft.RowVersion+1)
 	assertRowVersionConflict(t, err)
 
-	_, err = e.svc.ArchivePrice(ctx, base.ID, activePrice.ID, activePrice.RowVersion-1)
+	_, err = e.svc.ArchivePrice(ctx, base.ID, activePrice.ID, activePrice.RowVersion+1)
 	assertRowVersionConflict(t, err)
 }
 
@@ -389,15 +379,25 @@ func TestDuplicateActivePrice(t *testing.T) {
 	ctx, _ = seedAdmin(t, ctx, e)
 	plan := publishedPlan(t, ctx, e, publishedPlanOpts{})
 
-	_, err := e.svc.CreatePrice(ctx, plan.ID, PriceInput{
-		Currency: "CNY", UnitAmount: decimal.RequireFromString("12.00"),
-		BillingInterval: "month", IntervalCount: 1,
+	// 撞唯一索引会中止整个测试事务，包在保存点里。
+	err := inSavepoint(t, ctx, e, "sp_dup", func() error {
+		_, err := e.svc.CreatePrice(ctx, plan.ID, PriceInput{
+			Currency: "CNY", UnitAmount: decimal.RequireFromString("12.00"),
+			BillingInterval: "month", IntervalCount: 1,
+		})
+		return err
 	})
 	if errCode(err) != errs.Conflict {
 		t.Fatalf("重复在售价应 409，得到 %v", err)
 	}
 
-	detail, _ := e.svc.GetPlan(ctx, plan.ID)
+	detail, err := e.svc.GetPlan(ctx, plan.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(detail.Prices) == 0 {
+		t.Fatal("套餐没有价格")
+	}
 	p := detail.Prices[0]
 	_, err = e.svc.ArchivePrice(ctx, plan.ID, p.ID, p.RowVersion)
 	if err != nil {

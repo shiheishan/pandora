@@ -61,6 +61,9 @@ type env struct {
 	users *fakeUsers
 	exec  func(ctx context.Context, sql string, args ...any) error
 	row   func(ctx context.Context, sql string, args ...any) *sql.Row
+	// committed 为真时数据真实提交；publishedPlan 建的套餐记进 plans，用例结束时删掉。
+	committed bool
+	plans     []uuid.UUID
 }
 
 func newEnv(t *testing.T) (*env, context.Context) {
@@ -131,8 +134,48 @@ func newEnvCommitted(t *testing.T) (*env, context.Context) {
 		exec: func(ctx context.Context, q string, args ...any) error {
 			return d.Conn(ctx).Exec(q, args...).Error
 		},
+		committed: true,
 	}
+	t.Cleanup(func() { deleteCommittedPlans(t, e) })
 	return e, ctx
+}
+
+// deleteCommittedPlans 删掉提交态用例自己建的套餐及其版本、权益、配额、价格、可见组，
+// 免得读全表的用例（门户、换套餐列表）看到别人的套餐。已发布快照与价格有冻结触发器，
+// 这里在事务里临时 session_replication_role = replica 跳过（触发器与外键都不触发，删除顺序无所谓）。
+// 用户行与审计行留着：审计只追加，且引用用户。
+func deleteCommittedPlans(t *testing.T, e *env) {
+	t.Helper()
+	if len(e.plans) == 0 {
+		return
+	}
+	ids := e.plans
+	stmts := []string{
+		`SET LOCAL session_replication_role = replica`,
+		`DELETE FROM entitlements WHERE plan_version_id IN (SELECT id FROM plan_versions WHERE plan_id IN ?)`,
+		`DELETE FROM quota_definitions WHERE plan_version_id IN (SELECT id FROM plan_versions WHERE plan_id IN ?)`,
+		`DELETE FROM prices WHERE plan_id IN ?`,
+		`DELETE FROM plan_visible_groups WHERE plan_id IN ?`,
+		`DELETE FROM plan_versions WHERE plan_id IN ?`,
+		`DELETE FROM plans WHERE id IN ?`,
+	}
+	err := e.svc.tx.Do(context.Background(), func(ctx context.Context) error {
+		for i, q := range stmts {
+			var err error
+			if i == 0 {
+				err = e.exec(ctx, q)
+			} else {
+				err = e.exec(ctx, q, ids)
+			}
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Errorf("清理提交态套餐: %v", err)
+	}
 }
 
 func seedAdmin(t *testing.T, ctx context.Context, e *env) (context.Context, uuid.UUID) {
@@ -255,6 +298,9 @@ func publishedPlan(t *testing.T, ctx context.Context, e *env, opts publishedPlan
 	if err != nil {
 		t.Fatal(err)
 	}
+	if e.committed {
+		e.plans = append(e.plans, created.Plan.ID)
+	}
 	return created.Plan
 }
 
@@ -284,6 +330,42 @@ func execSavepoint(t *testing.T, ctx context.Context, e *env, name, sql string, 
 		return err
 	}
 	return e.exec(ctx, "RELEASE SAVEPOINT "+name)
+}
+
+// inSavepoint 在 SAVEPOINT 里调 fn，fn 出错则 ROLLBACK TO SAVEPOINT。
+// 用例整体跑在一个事务里，service 撞到库约束（唯一、外键、触发器）会让整个事务中止，
+// 之后还要继续读写的用例必须把会失败的调用包在这里。
+func inSavepoint(t *testing.T, ctx context.Context, e *env, name string, fn func() error) error {
+	t.Helper()
+	if err := e.exec(ctx, "SAVEPOINT "+name); err != nil {
+		t.Fatal(err)
+	}
+	err := fn()
+	if err != nil {
+		if rerr := e.exec(ctx, "ROLLBACK TO SAVEPOINT "+name); rerr != nil {
+			t.Fatal(rerr)
+		}
+		return err
+	}
+	if rerr := e.exec(ctx, "RELEASE SAVEPOINT "+name); rerr != nil {
+		t.Fatal(rerr)
+	}
+	return nil
+}
+
+// execBypassTriggers 在测试事务里临时关掉触发器（冻结守卫、外键）执行一条 SQL，
+// 只用来造产品代码造不出来的状态（例如已发布价格的窗口已过期）。CHECK 约束仍然生效。
+func execBypassTriggers(t *testing.T, ctx context.Context, e *env, q string, args ...any) {
+	t.Helper()
+	if err := e.exec(ctx, "SET LOCAL session_replication_role = replica"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.exec(ctx, q, args...); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.exec(ctx, "SET LOCAL session_replication_role = origin"); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // assertRestrictViolation 断言错误为 PostgreSQL restrict_violation (23001)。

@@ -60,10 +60,10 @@ func TestPortalSkipsExpiredPriceAndNoPrice(t *testing.T) {
 	e, ctx := newEnv(t)
 	ctx, _ = seedAdmin(t, ctx, e)
 	expired := publishedPlan(t, ctx, e, publishedPlanOpts{})
-	past := time.Now().UTC().Add(-time.Hour)
-	if err := e.exec(ctx, `UPDATE prices SET valid_until = ? WHERE plan_id = ?`, past, expired.ID); err != nil {
-		t.Fatal(err)
-	}
+	// 已发布套餐的价格整行冻结，产品代码造不出「窗口已过期」的在售价；绕过触发器直接改（CHECK 仍生效，窗口两端都设成过去）。
+	now := time.Now().UTC()
+	execBypassTriggers(t, ctx, e, `UPDATE prices SET valid_from = ?, valid_until = ? WHERE plan_id = ?`,
+		now.Add(-2*time.Hour), now.Add(-time.Hour), expired.ID)
 
 	noprice, err := e.svc.CreatePlanComplete(ctx, WizardCreate{
 		Plan: PlanInput{
