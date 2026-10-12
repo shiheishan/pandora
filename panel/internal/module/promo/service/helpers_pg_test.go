@@ -24,9 +24,9 @@ import (
 )
 
 type fakePrice struct {
-	plan   uuid.UUID
+	plan     uuid.UUID
 	currency string
-	amount decimal.Decimal
+	amount   decimal.Decimal
 }
 
 // fakeCatalog 实现 CatalogReader，供试算与建券时校验套餐。

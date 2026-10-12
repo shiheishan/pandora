@@ -23,11 +23,11 @@ func ptrInt(n int) *int { return &n }
 
 func TestDiscountFor(t *testing.T) {
 	cases := []struct {
-		name      string
-		face      Face
-		max       *decimal.Decimal
-		subtotal  decimal.Decimal
-		want      string
+		name     string
+		face     Face
+		max      *decimal.Decimal
+		subtotal decimal.Decimal
+		want     string
 	}{
 		{"百分比向零 9.99×33.33%", Face{Kind: KindPercent, PercentBP: 3333}, nil, dec("9.99"), "3.32"},
 		{"百分比向零 0.01×50%", Face{Kind: KindPercent, PercentBP: 5000}, nil, dec("0.01"), "0.00"},
@@ -55,12 +55,12 @@ func TestCheckBasicsOrder(t *testing.T) {
 
 	baseCoupon := func() model.Coupon {
 		return model.Coupon{
-			Status:           model.CouponActive,
-			Currency:         "CNY",
-			MinOrderAmount:   decimal.Zero,
-			MaxRedemptions:   nil,
-			RedeemedCount:    0,
-			ReservedCount:    0,
+			Status:         model.CouponActive,
+			Currency:       "CNY",
+			MinOrderAmount: decimal.Zero,
+			MaxRedemptions: nil,
+			RedeemedCount:  0,
+			ReservedCount:  0,
 		}
 	}
 	baseTarget := Target{Currency: "CNY", Subtotal: dec("50.00")}

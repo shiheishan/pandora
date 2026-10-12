@@ -128,24 +128,24 @@ func parseOptionalRFC3339(v, field string) (*time.Time, error) {
 
 // couponResponse 是后台券列表/详情的一行。
 type couponResponse struct {
-	ID                   string     `json:"id"`
-	Code                 string     `json:"code"`
-	Name                 string     `json:"name"`
-	DiscountType         string     `json:"discount_type"`
-	DiscountValue        int64      `json:"discount_value"`
-	Currency             string     `json:"currency"`
-	MaxDiscount          *int64     `json:"max_discount"`
-	MinOrderAmount       int64      `json:"min_order_amount"`
-	MaxRedemptions       *int       `json:"max_redemptions"`
-	MaxRedemptionsPerUser int       `json:"max_redemptions_per_user"`
-	RedeemedCount        int        `json:"redeemed_count"`
-	ApplicablePlanIDs    []string   `json:"applicable_plan_ids"`
-	UserGroupID          *string    `json:"user_group_id"`
-	ValidFrom            *time.Time `json:"valid_from"`
-	ValidUntil           *time.Time `json:"valid_until"`
-	Status               string     `json:"status"`
-	CreatedAt            time.Time  `json:"created_at"`
-	DiscountedTotal      int64      `json:"discounted_total"`
+	ID                    string     `json:"id"`
+	Code                  string     `json:"code"`
+	Name                  string     `json:"name"`
+	DiscountType          string     `json:"discount_type"`
+	DiscountValue         int64      `json:"discount_value"`
+	Currency              string     `json:"currency"`
+	MaxDiscount           *int64     `json:"max_discount"`
+	MinOrderAmount        int64      `json:"min_order_amount"`
+	MaxRedemptions        *int       `json:"max_redemptions"`
+	MaxRedemptionsPerUser int        `json:"max_redemptions_per_user"`
+	RedeemedCount         int        `json:"redeemed_count"`
+	ApplicablePlanIDs     []string   `json:"applicable_plan_ids"`
+	UserGroupID           *string    `json:"user_group_id"`
+	ValidFrom             *time.Time `json:"valid_from"`
+	ValidUntil            *time.Time `json:"valid_until"`
+	Status                string     `json:"status"`
+	CreatedAt             time.Time  `json:"created_at"`
+	DiscountedTotal       int64      `json:"discounted_total"`
 }
 
 // couponFrom 把 service.Coupon 转成响应 DTO。

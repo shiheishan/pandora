@@ -31,7 +31,7 @@ type Coupon struct {
 	Currency              string           `gorm:"column:currency"`
 	MaxDiscount           *decimal.Decimal `gorm:"column:max_discount"`
 	MinOrderAmount        decimal.Decimal  `gorm:"column:min_order_amount"`
-	MaxRedemptions        *int            `gorm:"column:max_redemptions"`
+	MaxRedemptions        *int             `gorm:"column:max_redemptions"`
 	MaxRedemptionsPerUser int              `gorm:"column:max_redemptions_per_user"`
 	RedeemedCount         int              `gorm:"column:redeemed_count"`
 	ReservedCount         int              `gorm:"column:reserved_count"`
