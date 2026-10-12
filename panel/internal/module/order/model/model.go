@@ -30,7 +30,7 @@ type Order struct {
 	ManualReason          *string         `gorm:"column:manual_reason"`
 	SubscriptionID        *uuid.UUID      `gorm:"column:subscription_id;type:uuid"`
 	SubscriptionLabel     *string         `gorm:"column:subscription_label"`
-	StateVersion          int64           `gorm:"column:state_version"`
+	StateVersion          int64           `gorm:"column:state_version;default:1"`
 	ExpiresAt             time.Time       `gorm:"column:expires_at"`
 	PaidAt                *time.Time      `gorm:"column:paid_at"`
 	FulfilledAt           *time.Time      `gorm:"column:fulfilled_at"`

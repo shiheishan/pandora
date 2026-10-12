@@ -293,14 +293,14 @@ type CancelResult struct {
 
 // QueryResult 是主动查单的结果（payment.Query 的结果加上查完后的订单状态）。
 type QueryResult struct {
-	OrderID        uuid.UUID
-	OrderNo        string
-	ProviderCode   string
-	ChannelStatus  string
-	Reconciled     bool
+	OrderID         uuid.UUID
+	OrderNo         string
+	ProviderCode    string
+	ChannelStatus   string
+	Reconciled      bool
 	AlreadyRecorded bool
-	QuarantineKind *string
-	OrderStatus    string
+	QuarantineKind  *string
+	OrderStatus     string
 }
 
 // MarkPaidInput 是后台标记已支付（线下收款）。
@@ -321,10 +321,10 @@ type MarkPaidResult struct {
 
 // ExpireStats 是一轮超时释放的统计。
 type ExpireStats struct {
-	Scanned  int
-	Expired  int
-	Skipped  int
-	Failed   int
+	Scanned int
+	Expired int
+	Skipped int
+	Failed  int
 }
 
 // OrderRow 是列表与详情共用的一行订单（金额是元，handler 换成分）。
@@ -361,23 +361,23 @@ type OrderRow struct {
 
 // ItemRow 是一条订单行快照。Entitlements、Quotas 是快照的 JSON 数组原文。
 type ItemRow struct {
-	ID              uuid.UUID
-	PriceID         *uuid.UUID
-	PlanID          *uuid.UUID
-	PlanVersionID   *uuid.UUID
-	TrafficPackID   *uuid.UUID
-	Name            string
-	PlanVersion     *int
-	Interval        *string
-	IntervalCount   *int
-	TrafficBytes    *int64
-	Entitlements    string
-	Quotas          string
-	Quantity        int
-	UnitAmount      decimal.Decimal
-	LineAmount      decimal.Decimal
-	Currency        money.Currency
-	CreatedAt       time.Time
+	ID            uuid.UUID
+	PriceID       *uuid.UUID
+	PlanID        *uuid.UUID
+	PlanVersionID *uuid.UUID
+	TrafficPackID *uuid.UUID
+	Name          string
+	PlanVersion   *int
+	Interval      *string
+	IntervalCount *int
+	TrafficBytes  *int64
+	Entitlements  string
+	Quotas        string
+	Quantity      int
+	UnitAmount    decimal.Decimal
+	LineAmount    decimal.Decimal
+	Currency      money.Currency
+	CreatedAt     time.Time
 }
 
 // ListFilter 是订单列表的筛选。门户只用 Statuses、Limit、Offset（用户取自登录态）。
