@@ -111,6 +111,9 @@ func nonTestGoSource(t *testing.T, root string) string {
 			if err != nil {
 				return err
 			}
+			if entry.IsDir() && isNewStackDir(root, path) {
+				return filepath.SkipDir
+			}
 			if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 				return nil
 			}
@@ -154,4 +157,14 @@ func registeredTables(t *testing.T, root string) map[string]bool {
 		t.Fatal("RESERVED-TABLES.md registers no tables")
 	}
 	return registered
+}
+
+// isNewStackDir 报告 dir 是否是新栈目录（换栈期间与旧代码并存，表由 db/migrations 建，不归本登记簿管；P7 随旧代码删）。
+func isNewStackDir(panel, dir string) bool {
+	for _, d := range []string{"internal/pkg", "internal/app", "internal/module", "cmd/pandora"} {
+		if dir == filepath.Join(panel, filepath.FromSlash(d)) {
+			return true
+		}
+	}
+	return false
 }

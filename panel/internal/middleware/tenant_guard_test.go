@@ -29,7 +29,7 @@ func TestSingleTenantAssumptionGuard(t *testing.T) {
 				return err
 			}
 			if d.IsDir() {
-				if d.Name() == "testdata" || d.Name() == "node_modules" {
+				if d.Name() == "testdata" || d.Name() == "node_modules" || newStackDir(path) {
 					return filepath.SkipDir
 				}
 				return nil
@@ -74,4 +74,15 @@ func TestSingleTenantAssumptionGuard(t *testing.T) {
 	if got != DefaultTenantID {
 		t.Fatalf("middleware.Tenant injected %q, want %s: %s", got, DefaultTenantID, tenantSeedHint)
 	}
+}
+
+// newStackDir 报告 path 是否是新栈目录（换栈期间与旧代码并存，新栈本来就没有租户；P7 随旧代码删）。
+func newStackDir(path string) bool {
+	p := filepath.ToSlash(filepath.Clean(path))
+	for _, d := range []string{"internal/pkg", "internal/app", "internal/module", "cmd/pandora"} {
+		if strings.HasSuffix(p, "/"+d) || p == d {
+			return true
+		}
+	}
+	return false
 }

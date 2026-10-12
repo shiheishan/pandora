@@ -57,7 +57,7 @@ jobs:
           # 官方预编译包用 Go 1.25 构建，读不了 go 1.26 的模块；用 setup-go 装的版本现编
           install-mode: goinstall
           working-directory: panel
-          args: ./internal/pkg/... ./internal/app/... ./cmd/pandora/... ./db/...
+          args: ./internal/pkg/... ./internal/app/... ./internal/module/... ./cmd/pandora/... ./db/...
 
   test:
     name: Tests on PostgreSQL 18 and Redis
@@ -98,7 +98,7 @@ jobs:
         run: go build -mod=readonly -o "$RUNNER_TEMP/pandora" ./cmd/pandora
       # 测试按包串行（-p 1）：迁移往返与事务测试共用同一个库
       - name: Tests
-        run: go test -mod=readonly -race -p 1 -count=1 ./internal/pkg/... ./internal/app/... ./db/...
+        run: go test -mod=readonly -race -p 1 -count=1 ./internal/pkg/... ./internal/app/... ./internal/module/... ./db/...
       - name: Migration round trip through the binary
         env:
           PANDORA_DATABASE_MIGRATION_URL: ${{ env.PANDORA_TEST_DATABASE_URL }}

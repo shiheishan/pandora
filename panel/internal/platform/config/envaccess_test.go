@@ -33,8 +33,13 @@ var envAccessExemptions = map[string]string{
 func TestEnvironmentIsReadOnlyThroughConfig(t *testing.T) {
 	panel := filepath.Join("..", "..", "..")
 	configDir := filepath.Join(panel, "internal", "platform", "config")
-	// 新栈的配置包（换栈期间与旧 config 并存，P7 删旧代码时连同本守卫一起删）。
-	newConfigDir := filepath.Join(panel, "internal", "pkg", "config")
+	// 新栈目录（换栈期间与旧代码并存）由 .golangci.yml 管，本守卫只看旧代码；P7 随旧代码一起删。
+	newStack := map[string]bool{
+		filepath.Join(panel, "internal", "pkg"):    true,
+		filepath.Join(panel, "internal", "app"):    true,
+		filepath.Join(panel, "internal", "module"): true,
+		filepath.Join(panel, "cmd", "pandora"):     true,
+	}
 
 	offenders := map[string][]string{} // 相对 panel/ 的文件 → 引用
 	for _, root := range []string{"internal", "cmd"} {
@@ -45,10 +50,10 @@ func TestEnvironmentIsReadOnlyThroughConfig(t *testing.T) {
 			if !d.IsDir() {
 				return nil
 			}
-			if d.Name() == "testdata" {
+			if d.Name() == "testdata" || newStack[dir] {
 				return filepath.SkipDir
 			}
-			if dir == configDir || dir == newConfigDir || !hasNonTestGo(t, dir) {
+			if dir == configDir || !hasNonTestGo(t, dir) {
 				return nil
 			}
 			pkg := sourcetest.Load(t, dir)

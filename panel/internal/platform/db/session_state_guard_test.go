@@ -45,7 +45,7 @@ func TestNoSessionLevelStateOnPooledConnections(t *testing.T) {
 			if !d.IsDir() {
 				return nil
 			}
-			if d.Name() == "testdata" {
+			if d.Name() == "testdata" || isNewStackDir(panel, dir) {
 				return filepath.SkipDir
 			}
 			if !hasNonTestGoFile(t, dir) {
