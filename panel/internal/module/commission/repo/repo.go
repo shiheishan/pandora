@@ -76,3 +76,32 @@ func (r *Repo) LockUser(ctx context.Context, userID uuid.UUID) error {
 	).Error
 	return mapErr(err)
 }
+
+// LockReferee 在当前事务里对被推荐人加咨询锁，串行化「首单」口径的计提判定（不同币种的订单不共用平台收入科目锁）。
+func (r *Repo) LockReferee(ctx context.Context, refereeID uuid.UUID) error {
+	key := "commission:referee:" + refereeID.String()
+	err := r.d.Conn(ctx).Exec(
+		"SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+		key,
+	).Error
+	return mapErr(err)
+}
+
+// probeSavepoint 是 Probe 用的保存点名（常量，不拼外部输入）。
+const probeSavepoint = "commission_probe"
+
+// Probe 在当前事务里开保存点执行一次只读探查 fn：fn 出错时回滚到保存点，让外层事务还能继续用，fn 的错误放在 probeErr 里交调用方处理；
+// 保存点开不了、回滚或释放失败时放在 txErr（外层事务已不可用，调用方必须返回它）。必须在事务里调用。
+func (r *Repo) Probe(ctx context.Context, fn func(ctx context.Context) error) (probeErr, txErr error) {
+	conn := r.d.Conn(ctx)
+	if err := conn.Exec("SAVEPOINT " + probeSavepoint).Error; err != nil {
+		return nil, mapErr(err)
+	}
+	if err := fn(ctx); err != nil {
+		if rerr := conn.Exec("ROLLBACK TO SAVEPOINT " + probeSavepoint).Error; rerr != nil {
+			return err, mapErr(rerr)
+		}
+		return err, nil
+	}
+	return nil, mapErr(conn.Exec("RELEASE SAVEPOINT " + probeSavepoint).Error)
+}

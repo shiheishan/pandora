@@ -63,7 +63,8 @@ type Referrals interface {
 	Emails(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error)
 }
 
-// SourceMatcher 判断两个用户是否来自同一来源地址（可选，UseSourceMatcher 注入）；命中时佣金转人工复核、不自动解冻。
+// SourceMatcher 判断两个用户是否来自同一来源地址，由 audit 实现（UseSourceMatcher 注入）；命中时佣金转人工复核、不自动解冻。
+// 没注入或查询出错时同样转人工复核（失败即关）。
 type SourceMatcher interface {
 	SharesSource(ctx context.Context, a, b uuid.UUID) (bool, error)
 }
@@ -77,13 +78,13 @@ type Service struct {
 	sealer   *crypto.Sealer
 	audit    auditWriter
 	refs     Referrals     // UseReferrals 注入
-	sources  SourceMatcher // UseSourceMatcher 注入，可为 nil
+	sources  SourceMatcher // UseSourceMatcher 注入；为 nil 时每条佣金都转人工复核
 	now      func() time.Time
 }
 
 var _ ordersvc.PaidHook = (*Service)(nil)
 
-// New 构造 commission service。构造后由 app 调 UseReferrals(identity) 与 orderSvc.UsePaidHook(commissionSvc)。
+// New 构造 commission service。构造后由 app 调 UseReferrals(identity)、UseSourceMatcher(audit) 与 orderSvc.UsePaidHook(commissionSvc)。
 func New(r *repo.Repo, txm *tx.Manager, ledger *ledgersvc.Service, settings *settingssvc.Service,
 	sealer *crypto.Sealer, audit *auditsvc.Service) *Service {
 	return &Service{
@@ -102,6 +103,9 @@ func (s *Service) UseReferrals(r Referrals) { s.refs = r }
 
 // UseSourceMatcher 注入同源判断；只在启动装配时调用（不并发安全）。
 func (s *Service) UseSourceMatcher(m SourceMatcher) { s.sources = m }
+
+// SourceMatcherWired 报告是否已注入同源判断（装配测试用）。
+func (s *Service) SourceMatcherWired() bool { return s.sources != nil }
 
 var errNotWired = errors.New("commission: 依赖未注入")
 

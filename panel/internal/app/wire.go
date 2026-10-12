@@ -154,8 +154,9 @@ func buildServices(r *runtime) (*services, error) {
 	promoSvc.UseCatalog(promoCatalog{c: catalogSvc})
 	// 渠道到账与线下收款经 order 结算（没注册时入账一律失败）
 	paymentSvc.UseSettler(orderSvc)
-	// 订单结算时按推荐关系计提佣金（同一结算事务）
+	// 订单结算时按推荐关系计提佣金（同一结算事务）；同源（审计里共用来源 IP）的佣金转人工复核
 	commissionSvc.UseReferrals(identitySvc)
+	commissionSvc.UseSourceMatcher(auditSvc)
 	orderSvc.UsePaidHook(commissionSvc)
 
 	return &services{

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -37,8 +38,8 @@ func TestAccrueOnOrderPaid(t *testing.T) {
 		!amount.Equal(dec2("12.34")) || status != EntryPending || orderNo != o.OrderNo {
 		t.Fatalf("条目不对: %s %s base=%s bp=%d amount=%s status=%s no=%s", gotReferrer, gotReferee, base, rateBP, amount, status, orderNo)
 	}
-	if frozen.Before(time.Now().Add(48 * time.Hour)) {
-		t.Fatalf("冻结到 %s，应在 3 天后", frozen)
+	if want := o.PaidAt.Add(72 * time.Hour); frozen.Sub(want).Abs() > time.Second {
+		t.Fatalf("冻结到 %s，应为付款时间 + 3 天 %s", frozen, want)
 	}
 	if bal := accountBalance(t, e, ctx, referrer, ledgersvc.UserCommissionPending); !bal.Equal(dec2("12.34")) {
 		t.Fatalf("待结佣金科目 %s", bal)
@@ -211,5 +212,56 @@ func TestSettleDue(t *testing.T) {
 	}
 	if bal := accountBalance(t, e, ctx, referrer, ledgersvc.UserCommissionAvailable); !bal.Equal(dec2("10.00")) {
 		t.Fatalf("第二轮后可提现佣金科目 %s", bal)
+	}
+}
+
+// 同源检查失败或没装配时失败即关：照样计提（不挡结算），但转人工复核；查询放在保存点里，事务照常可用。
+func TestAccrueSourceCheckFailClosed(t *testing.T) {
+	e, ctx := newEnv(t)
+	admin := newUser(t, e, ctx)
+	setConfig(t, e, ctx, admin, 10, 0, "100.00", "every_order")
+	referrer := newUser(t, e, ctx)
+
+	reasonOf := func(orderID uuid.UUID) string {
+		t.Helper()
+		var review bool
+		var reason *string
+		if err := e.row(ctx, `SELECT review_required, review_reason FROM commission_entries WHERE order_id = ?`, orderID).
+			Scan(&review, &reason); err != nil {
+			t.Fatal(err)
+		}
+		if !review || reason == nil {
+			t.Fatalf("应转人工复核: review=%v reason=%v", review, reason)
+		}
+		return *reason
+	}
+
+	e.svc.UseSourceMatcher(&fakeSources{err: errors.New("查询超时")})
+	b1 := newUser(t, e, ctx)
+	refer(e, b1, referrer)
+	o1 := newPaidOrder(t, e, ctx, b1, "100.00")
+	if err := e.svc.OnOrderPaid(ctx, o1); err != nil {
+		t.Fatalf("同源检查失败不该挡结算: %v", err)
+	}
+	if r := reasonOf(o1.OrderID); r != reviewSourceCheckFailed {
+		t.Fatalf("原因 %q", r)
+	}
+
+	e.svc.UseSourceMatcher(nil)
+	b2 := newUser(t, e, ctx)
+	refer(e, b2, referrer)
+	o2 := newPaidOrder(t, e, ctx, b2, "100.00")
+	if err := e.svc.OnOrderPaid(ctx, o2); err != nil {
+		t.Fatal(err)
+	}
+	if r := reasonOf(o2.OrderID); r != reviewSourceCheckMissing {
+		t.Fatalf("原因 %q", r)
+	}
+	// 两条都不自动解冻
+	if _, err := e.svc.SettleDue(ctx, SettleBatchDefault); err != nil {
+		t.Fatal(err)
+	}
+	if bal := accountBalance(t, e, ctx, referrer, ledgersvc.UserCommissionAvailable); !bal.IsZero() {
+		t.Fatalf("待复核的佣金被解冻了: %s", bal)
 	}
 }

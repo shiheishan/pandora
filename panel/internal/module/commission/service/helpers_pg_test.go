@@ -83,10 +83,16 @@ func (f *fakeRefs) Emails(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]str
 	return out, nil
 }
 
-// fakeSources 实现 SourceMatcher：same 里登记的一对用户算同源。
-type fakeSources struct{ same map[[2]uuid.UUID]bool }
+// fakeSources 实现 SourceMatcher：same 里登记的一对用户算同源；err 非空时查询失败。
+type fakeSources struct {
+	same map[[2]uuid.UUID]bool
+	err  error
+}
 
 func (f *fakeSources) SharesSource(_ context.Context, a, b uuid.UUID) (bool, error) {
+	if f.err != nil {
+		return false, f.err
+	}
 	return f.same[[2]uuid.UUID{a, b}], nil
 }
 
@@ -127,6 +133,8 @@ func newEnv(t *testing.T) (*env, context.Context) {
 	svc := New(repo.New(d), txm, ledger, settings, sealer, auditSvc)
 	refs := &fakeRefs{referrer: map[uuid.UUID]uuid.UUID{}, emails: map[uuid.UUID]string{}}
 	svc.UseReferrals(refs)
+	// 缺省谁都不同源；没装配时每条佣金都会转人工复核（失败即关）
+	svc.UseSourceMatcher(&fakeSources{})
 
 	e := &env{
 		svc:      svc,
@@ -206,12 +214,18 @@ func setConfig(t *testing.T, e *env, ctx context.Context, admin uuid.UUID, rate,
 // newPaidOrder 给 user 插一张已付的新购订单（金额 total、币种 testCurrency），返回交给 PaidHook 的摘要。
 func newPaidOrder(t *testing.T, e *env, ctx context.Context, user uuid.UUID, total string) ordersvc.PaidOrder {
 	t.Helper()
+	return newPaidOrderIn(t, e, ctx, user, total, testCurrency)
+}
+
+// newPaidOrderIn 同 newPaidOrder，币种由调用方给。
+func newPaidOrderIn(t *testing.T, e *env, ctx context.Context, user uuid.UUID, total string, cur money.Currency) ordersvc.PaidOrder {
+	t.Helper()
 	no := "CM-" + strings.ToUpper(randHex(16))
 	var id uuid.UUID
 	if err := e.row(ctx, `INSERT INTO orders (order_no, user_id, kind, status, currency, subtotal_amount, total_amount,
 		payable_amount, paid_amount, paid_at, expires_at)
 		VALUES (?, ?, 'new', 'paid', ?, ?, ?, ?, ?, now(), now() + interval '30 minutes') RETURNING id`,
-		no, user, string(testCurrency), total, total, total, total).Scan(&id); err != nil {
+		no, user, string(cur), total, total, total, total).Scan(&id); err != nil {
 		t.Fatalf("建订单: %v", err)
 	}
 	amt := dec2(total)
@@ -220,7 +234,7 @@ func newPaidOrder(t *testing.T, e *env, ctx context.Context, user uuid.UUID, tot
 		OrderNo:  no,
 		UserID:   user,
 		Kind:     ordersvc.KindNew,
-		Currency: testCurrency,
+		Currency: cur,
 		Total:    amt,
 		Paid:     amt,
 		PaidAt:   time.Now().UTC(),
@@ -230,8 +244,14 @@ func newPaidOrder(t *testing.T, e *env, ctx context.Context, user uuid.UUID, tot
 // accrueAvailable 让 referrer 通过 referee 的一张订单拿到一笔已解冻的佣金（冻结天数须为 0），返回佣金额。
 func accrueAvailable(t *testing.T, e *env, ctx context.Context, referrer, referee uuid.UUID, total string) decimal.Decimal {
 	t.Helper()
+	return accrueAvailableIn(t, e, ctx, referrer, referee, total, testCurrency)
+}
+
+// accrueAvailableIn 同 accrueAvailable，订单币种由调用方给。
+func accrueAvailableIn(t *testing.T, e *env, ctx context.Context, referrer, referee uuid.UUID, total string, cur money.Currency) decimal.Decimal {
+	t.Helper()
 	refer(e, referee, referrer)
-	o := newPaidOrder(t, e, ctx, referee, total)
+	o := newPaidOrderIn(t, e, ctx, referee, total, cur)
 	if err := e.svc.OnOrderPaid(ctx, o); err != nil {
 		t.Fatalf("计提: %v", err)
 	}
@@ -248,12 +268,18 @@ func accrueAvailable(t *testing.T, e *env, ctx context.Context, referrer, refere
 	return amt
 }
 
-// accountBalance 读用户某类科目的余额缓存（没有科目时为 0）。
+// accountBalance 读用户某类科目（testCurrency）的余额缓存（没有科目时为 0）。
 func accountBalance(t *testing.T, e *env, ctx context.Context, user uuid.UUID, typ ledgersvc.AccountType) decimal.Decimal {
+	t.Helper()
+	return accountBalanceIn(t, e, ctx, user, typ, testCurrency)
+}
+
+// accountBalanceIn 同 accountBalance，币种由调用方给。
+func accountBalanceIn(t *testing.T, e *env, ctx context.Context, user uuid.UUID, typ ledgersvc.AccountType, cur money.Currency) decimal.Decimal {
 	t.Helper()
 	var bal decimal.Decimal
 	if err := e.row(ctx, `SELECT COALESCE((SELECT balance FROM ledger_accounts WHERE account_type = ? AND owner_user_id = ? AND currency = ?), 0)`,
-		string(typ), user, string(testCurrency)).Scan(&bal); err != nil {
+		string(typ), user, string(cur)).Scan(&bal); err != nil {
 		t.Fatal(err)
 	}
 	return bal
