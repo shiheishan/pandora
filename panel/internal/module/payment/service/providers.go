@@ -145,6 +145,10 @@ func (s *Service) adapterFor(ctx context.Context, code string, forNew bool) (pro
 		return providerRecord{}, nil, ErrProviderPaused
 	}
 	ad, err := s.adapter(p)
+	if errors.Is(err, ErrProviderNotFound) {
+		// 线下渠道没有适配器：对回调与查单就是「没有这个渠道」
+		return providerRecord{}, nil, err
+	}
 	if err != nil {
 		return providerRecord{}, nil, errs.Wrap(errs.Internal, err)
 	}
