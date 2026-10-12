@@ -12,11 +12,10 @@ paths:
   - 形状、错误码、`fields` 键名、中文文案都照 `panel/internal/api` 的 Go 处理器写
   - 只有 Go 带 omitempty 的字段才可以缺席
   - 不要为了让页面好写而偏离 Go
-- 写接口按 Go 中间件的顺序调用 `types.ts` 里的三个守卫：
-  - `requirePermission`：缺权限回 404
+- 后台不分权限，所有 admin 路由只要登录；写接口按 Go 中间件的顺序调用 `types.ts` 里的两个守卫：
   - `requireReauth`：回 403 `reauth_required`，不消耗幂等键
   - `idempotent(scope, run)`：scope 照 Go 路由上的幂等 scope 写
-  - 守卫测试：`tests/mock-api.test.ts` 的 "checks permission first…"、"rejects with reauth_required before touching the idempotency key…"
+  - 守卫测试：`tests/mock-api.test.ts` 的 "checks reauth before the idempotency key…"、"rejects with reauth_required before touching the idempotency key…"
 - `idempotent` 与 Go 中间件一致：只重放 2xx，非 2xx 的同键同请求会重新执行。所以 `run` 里先校验，回 4xx 之前不要改任何状态
 - 带 raw 的结果（CSV 等）重放时只回 `Content-Type` 与 `Cache-Control`，与后端一致；只在首次响应里带的头放进 `MockRaw.headers`
 - 请求体照 Go 的 `DisallowUnknownFields` 拒绝多余字段，各模块已有现成的 `unknownField` / `readStrict` 辅助，前端字段拼错时能在这里暴露
