@@ -92,7 +92,7 @@ func TestPeriodicSchedule(t *testing.T) {
 	}
 
 	r := ps[1]
-	if r.Type != TypeRetention || r.Type != "retention:payment_unverified_events" || r.Cronspec != "53 3 * * *" {
+	if r.Type != TypeRetention || TypeRetention != "retention:payment_unverified_events" || r.Cronspec != "53 3 * * *" {
 		t.Fatalf("retention periodic = %+v", r)
 	}
 	queue, retry, unique, timeout := optsOf(r.Opts)
