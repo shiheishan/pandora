@@ -2,7 +2,8 @@
 -- catalog 模块：套餐、套餐可见的用户组、套餐版本、权益、配额定义、价格、流量包。
 --
 -- 与旧表相比：去掉租户列与 RLS；不再有与套餐一一对应的商品表，价格直接挂在套餐上；
--- 金额改为 NUMERIC(20,2)（元）；套餐可见的用户组从 uuid 数组改为关联表，删组时由外键挡住；
+-- 金额改为 NUMERIC(20,2)（元），不加「x = round(x, 2)」的 CHECK：该类型先舍入再查约束，那条永远成立，
+-- 多余小数只靠 repo 写入前的 money.Check 拦下；套餐可见的用户组从 uuid 数组改为关联表，删组时由外键挡住；
 -- 卖点从 text[] 改为 jsonb 数组；版本状态只留有写入方的 draft、published；超额策略只有「停止服务」一种，不再建列。
 -- 状态转换的规则在 Go（service 的转换表）；库里只兜「已发布快照不可改、价格只能归档」与行级约束。
 
@@ -126,7 +127,7 @@ CREATE TABLE prices (
   id               uuid PRIMARY KEY DEFAULT uuidv7(),
   plan_id          uuid NOT NULL REFERENCES plans(id) ON DELETE RESTRICT,
   currency         text NOT NULL CHECK (currency IN ('CNY', 'USD')),
-  unit_amount      numeric(20,2) NOT NULL CHECK (unit_amount >= 0 AND unit_amount = round(unit_amount, 2)),
+  unit_amount      numeric(20,2) NOT NULL CHECK (unit_amount >= 0),
   billing_interval text NOT NULL DEFAULT 'month'
                      CHECK (billing_interval IN ('day', 'week', 'month', 'quarter', 'year', 'one_time')),
   interval_count   smallint NOT NULL DEFAULT 1 CHECK (interval_count > 0),
@@ -156,7 +157,7 @@ CREATE TABLE traffic_packs (
   -- 上限 1 PiB：用户余额按笔累加，求和不会逼近 bigint
   traffic_bytes bigint NOT NULL CHECK (traffic_bytes > 0 AND traffic_bytes <= 1125899906842624),
   currency      text NOT NULL DEFAULT 'CNY' CHECK (currency IN ('CNY', 'USD')),
-  unit_amount   numeric(20,2) NOT NULL CHECK (unit_amount > 0 AND unit_amount = round(unit_amount, 2)),
+  unit_amount   numeric(20,2) NOT NULL CHECK (unit_amount > 0),
   recommended   boolean NOT NULL DEFAULT false,
   status        text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
   sort_order    int NOT NULL DEFAULT 0,

@@ -323,8 +323,9 @@ func validateWizardCreate(in *WizardCreate) error {
 		fields["max_devices"] = "设备数不能是负数；不限请留空"
 	}
 	seen := map[string]int{}
-	for i, p := range in.Prices {
-		if err := validateWizardPriceFields(p, i, seen, fields); err != nil {
+	for i := range in.Prices {
+		in.Prices[i].Currency = strings.ToUpper(strings.TrimSpace(in.Prices[i].Currency))
+		if err := validateWizardPriceFields(in.Prices[i], i, seen, fields); err != nil {
 			return err
 		}
 	}
@@ -537,6 +538,8 @@ func prepareWizardPrices(raw []WizardPrice) (map[string]WizardPrice, error) {
 	seen := map[string]int{}
 	fields := map[string]string{}
 	for i, p := range raw {
+		// 币种先规整成大写：键与库里的价格比对、写库都用它
+		p.Currency = strings.ToUpper(strings.TrimSpace(p.Currency))
 		if err := validateWizardPriceFields(p, i, seen, fields); err != nil {
 			return nil, err
 		}
