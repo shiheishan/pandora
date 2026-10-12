@@ -187,10 +187,24 @@ linters:
         module-{{$m}}-boundary:
           files:
             - "**/internal/module/{{$m}}/**"
+            - "!$test"
           deny:
 {{- range .Others}}
             - pkg: {{$.Module}}/internal/module/{{.}}/repo
               desc: 别的模块的数据经它的 service 取
+            - pkg: {{$.Module}}/internal/module/{{.}}/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: {{$.Module}}/internal/module/{{.}}/handler
+              desc: 模块之间只调 service
+            - pkg: {{$.Module}}/internal/module/{{.}}/task
+              desc: 模块之间只调 service
+{{- end}}
+        # 测试可以用别的模块的 repo 装出真的 service（和 app 装配一样），但不碰它的 model、handler、task
+        module-{{$m}}-boundary-test:
+          files:
+            - "**/internal/module/{{$m}}/**/*_test.go"
+          deny:
+{{- range .Others}}
             - pkg: {{$.Module}}/internal/module/{{.}}/model
               desc: 别的模块的数据经它的 service 取
             - pkg: {{$.Module}}/internal/module/{{.}}/handler

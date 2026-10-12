@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	netmail "net/mail"
@@ -125,6 +126,9 @@ func (s *Service) SetMail(ctx context.Context, v MailUpdate) error {
 	}
 	if utf8.RuneCountInString(v.FromName) > 64 {
 		fields["from_name"] = "最多 64 个字"
+	} else if strings.ContainsFunc(v.FromName, unicode.IsControl) {
+		// 发件人名进邮件头，带换行等控制字符会让所有邮件组装失败
+		fields["from_name"] = "不能包含换行等控制字符"
 	}
 	if len(fields) > 0 {
 		return errs.Invalid(fields)

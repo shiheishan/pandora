@@ -6,6 +6,8 @@ Xboard 类代理订阅面板 + 自研节点端（Pandora NativeCore）。目标�
 
 ## 架构
 
+> **换栈进行中（2026-10-12 起）**：后端正在换成 gin + GORM + Redis + asynq + viper + zap + JWT/Redis 会话 + gRPC/mTLS + decimal + goose，新代码是单二进制 `pandora`（`serve` / `worker` / `migrate` 子命令），设计全文见 [docs/architecture.md](docs/architecture.md)，进度见下文「当前进度」与「路线图」。本节与「部署」描述的是**当前可部署的旧栈**（三个 `aegis-*` 网关），新旧两栈在切换（P7）前并存，切换时本节与部署说明一并重写。
+
 技术栈：**Go 1.26 + PostgreSQL 18 + Valkey 8（Redis 兼容）**。Go 让面板与节点端都是无运行时依赖、可交叉编译的单文件，常驻内存小；PostgreSQL 18 内置 `uuidv7()`，租户隔离靠 FORCE RLS 由数据库强制，复式记账靠 DEFERRABLE 约束触发器在提交时配平；Valkey 协议兼容 Redis，许可证仍是 BSD。
 
 ```text
@@ -41,8 +43,10 @@ aegis-public    aegis-admin     aegis-node
 | 路径 | 内容 |
 |---|---|
 | `panel/` | 面板：用户门户、管理后台、订阅分发、计费、节点编排、审计 |
-| `panel/cmd/` | 各域网关与运维工具的可执行入口 |
-| `panel/internal/` | `api/`（public、admin、node 路由与处理器）、`domain/`（业务域）、`middleware/`（认证、限流、幂等、租户注入）、`platform/`（配置、数据库、加密、日志、审计、令牌） |
+| `panel/cmd/` | 各域网关与运维工具的可执行入口；`cmd/pandora` 是新栈的单二进制 |
+| `panel/internal/pkg/`、`app/`、`module/` | 新栈：`pkg` 是基础设施（config、log、db、tx、redisx、errs、httpx、jwtx、crypto、ratelimit、jobs、authn、route、testkit…），`app` 是 cobra 子命令与装配，`module/<模块>/{model,repo,service,handler,task}` 是按表属主划分的业务模块；分层与模块边界由 `panel/.golangci.yml` 的 depguard 规则钉住（`go run ./tools/depguardgen` 生成） |
+| `panel/db/migrations/` | 新栈的 goose 迁移（每个都有 Down，CI 跑 up → down → up），嵌入 `pandora migrate` |
+| `panel/internal/` | 旧栈：`api/`（public、admin、node 路由与处理器）、`domain/`（业务域）、`middleware/`（认证、限流、幂等、租户注入）、`platform/`（配置、数据库、加密、日志、审计、令牌） |
 | `panel/tests/` | 数据层不变量 SQL 与端到端脚本 |
 | `panel/frontend/` | 面板前端，2026-09-23 起按设计稿从零重写、2026-09-26 完成（React + TypeScript + Vite，管理后台与用户门户双入口），构建后经 `make frontend-embed` 嵌入 `panel/web/` |
 | `panel/web/` | 面板前端的 `go:embed` 嵌入点：两个网关在根 `/` 下发入口、`/assets/*` 下发产物；仓库只存占位入口，由 `make frontend-embed` 覆盖 |
@@ -53,7 +57,7 @@ aegis-public    aegis-admin     aegis-node
 | `pdnd/core/` | 内核适配层：xray-core / sing-box 兼容与外部进程 |
 | `pdnd/release/` | Linux amd64/arm64 构建、能力矩阵一致性检查、运行时验收 |
 | `.githooks/`、`.gitleaks.toml` | 提交前密钥扫描：clone 后执行 `git config core.hooksPath .githooks` 启用，需先 `brew install gitleaks`；未装 gitleaks 时拒绝提交 |
-| `.github/workflows/` | `pandora-native.yml`（pdnd 门禁、panel-frontend、nodefabric 契约、双架构发布构建）、`panel-pg18.yml`（panel-unit 全量单测 + PG18 集成门禁）、`panel-smoke.yml`（新前端对真实网关的联调冒烟）、`panel-deploy.yml`（deploy 脚本的桩测试，迁移脚本拿真实迁移目录校验；含安装脚本的首装对外地址闸门） |
+| `.github/workflows/` | `pandora-native.yml`（pdnd 门禁、panel-frontend、nodefabric 契约、双架构发布构建）、`panel-pg18.yml`（panel-unit 全量单测 + PG18 集成门禁）、`panel-smoke.yml`（新前端对真实网关的联调冒烟）、`panel-deploy.yml`（deploy 脚本的桩测试，迁移脚本拿真实迁移目录校验；含安装脚本的首装对外地址闸门）、`panel-newstack.yml`（新栈：golangci-lint 与 depguard 配置一致性、迁移往返、`pandora serve` 的 healthz/readyz、新目录在 PG18 + Redis 上的单测）、`go-vulncheck.yml`（Go 依赖漏洞扫描） |
 | `CLAUDE.md`、`.claude/rules/`、`.agents/skills/` | 给 Claude Code 的说明：根 CLAUDE.md 是全局约定与红线，rules 是按路径自动加载的模块约定，skills 是验证与常用流程（`.claude/skills` 是指向 `.agents/skills` 的链接） |
 
 本地快照不含 `.env`、密钥、私钥和编译产物（二进制、`node_modules`、`dist`）。
@@ -347,22 +351,34 @@ cd /opt/pandora/deploy && ./backup-postgres.sh         # 立刻做一份加密�
 
 ## 当前进度
 
-截至 2026-09-26：
+截至 2026-10-12：
 
 | 项 | 状态 |
 |---|---|
-| 仓库基线 | 面板重构第 1–5 阶段于 `d04513e` 合入 `main`，其后只有文档合并 |
-| CI | `main` 上三组全绿（`36230330995` / `36230331009` / `36230331011`）：PG18 集成门禁 0 SKIP，NativeCore（含 race、原生 ARM64、interop），新前端对真实网关的联调冒烟 |
-| Xboard 功能验收 | PARTIAL，未 RELEASED |
-| 前端 | 旧的手写单页与 React 候选已删除，管理后台与用户门户按设计稿在 `panel/frontend` 重写完成并补齐后端缺口 |
-| 部署 | 这一版尚未在任何真实机器上部署或实测；真机测试待换新机器再做 |
+| 方向 | 后端换主流技术栈（见「架构」开头的说明与 [docs/architecture.md](docs/architecture.md)）；还没有任何生产部署，新栈直接替换，不做数据迁移与兼容期 |
+| 换栈 | P0 设计定稿；P1 骨架完成；P2 鉴权与用户进行中：settings、audit、idempotency 三个模块与前端的 refresh 单飞已合入，identity、auth、notify（邮件部分）在开发 |
+| 开发分支 | `feat/panel-redesign`（`main` 停在 2026-09-26 的面板重构合入之后） |
+| CI | `feat/panel-redesign` 上四组全绿：新栈、PG18 集成门禁、前端冒烟、Go 漏洞扫描 |
+| 旧栈 | 只修阻断性 bug；Xboard 功能验收 PARTIAL，未 RELEASED；未在真实机器上部署或实测 |
+| 前端 | `panel/frontend` 不换，接口 JSON 形状保持不变；P2 起改为短期 access 令牌 + refresh cookie |
 | 客户端登录（CLIENT-AUTH） | 2026-10-05 移出主线，专心做面板：设备码登录与设备签名的实现代码、发布门禁脚本和 8 个 `pandora-*` 命令在 tag `archive/client-auth`；三份冻结设计稿和 `frozen-client-auth/` 下两个从未应用的迁移也一并存档在该 tag，以后做客户端时从那里取 |
 
 历史上还有一项未收口的工作：2026-08-09 起的 H-001（验证并收口当时未提交的 SSE / Redis / Node / Portal / NativeCore 集成），当时状态为 PARTIAL at INTEGRATED，之后没有它完成的证据；相关门禁仍列在上文“未关闭的门禁”里的跨进程 SSE 一项。
 
 ## 路线图
 
-待定。
+换栈分步走，每步的内容与完成标准见 [docs/architecture.md](docs/architecture.md) 第 17 节：
+
+| 步 | 内容 | 状态 |
+|---|---|---|
+| P1 | 骨架：`pandora` 单二进制、基础设施包、asynq、goose、lint 与 CI | 完成 |
+| P2 | 鉴权与用户：identity、auth、settings、audit、idempotency；refresh；前端令牌改造 | 进行中 |
+| P3 | 交易：目录、订单、支付、账本、优惠、佣金、礼品卡（decimal） | 未开始 |
+| P4 | 订阅：订阅模块、订阅链接渲染、到期与配额任务 | 未开始 |
+| P5 | 节点：gRPC 双向流 + mTLS，pdnd 客户端改造 | 未开始 |
+| P6 | 其余模块：证书、通知、工单、内容、外观、插件、报表 | 未开始 |
+| P7 | 切换与删旧：安装脚本改单二进制与 Redis，删除旧代码与旧迁移，重写本 README 的架构与部署 | 未开始 |
+| P8 | 换栈后的性能与占用优化 | 另行规划 |
 
 ## 许可证
 
@@ -374,6 +390,7 @@ fork 进来的第三方代码保留各自的许可证：`pdnd/internal/reality/`
 
 ## 相关文档
 
+- [docs/architecture.md](docs/architecture.md)：换栈的设计全文（技术选型、模块与表属主、鉴权与会话、迁移、任务、配置、分步计划与产品结论）。
 - [docs/backlog.md](docs/backlog.md)：面板待办清单（重构接口契约删除前核对出的未完成项）；前后端接口以代码为准：后端看 `panel/internal/api` 的路由与处理器，前端看 `panel/frontend/src/core/api.ts` 与各页面的 `api.ts`。
 - [pdnd/release/README.md](pdnd/release/README.md)：NativeCore Linux 发布与运行时验收。
 - [panel/deploy/RUNBOOK.md](panel/deploy/RUNBOOK.md)：已装面板的排障手册（按症状分章，巡检告警逐条有对应章节）。
