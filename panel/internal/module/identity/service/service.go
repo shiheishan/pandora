@@ -1,0 +1,166 @@
+// Package service 是 identity 模块的业务层：用户、口令、注册、找回密码、改密、邀请码、用户组，
+// 以及后台的用户管理。别的模块只调本包；auth、notify 经 ports.go 的接口反向提供能力，启动装配时注入。
+//
+// 账号枚举防护（IAM-006）贯穿注册、登录、找回密码三个入口：账号存不存在，对外的状态码、正文与耗时都一样。
+package service
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
+	"github.com/aegispanel/aegis/internal/module/identity/repo"
+	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
+	"github.com/aegispanel/aegis/internal/pkg/authn"
+	"github.com/aegispanel/aegis/internal/pkg/config"
+	"github.com/aegispanel/aegis/internal/pkg/crypto"
+	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/ratelimit"
+	"github.com/aegispanel/aegis/internal/pkg/tx"
+	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
+)
+
+// auditWriter 是 audit service 的写入面。
+type auditWriter interface {
+	Write(ctx context.Context, e auditsvc.Event) error
+}
+
+// settingsReader 是 identity 用到的 settings 读取面。
+type settingsReader interface {
+	RegistrationPolicy(ctx context.Context) (settingssvc.Registration, error)
+	MailConfigured(ctx context.Context) (bool, error)
+}
+
+// txRunner 是 *tx.Manager 的事务入口。
+type txRunner interface {
+	Do(ctx context.Context, fn func(ctx context.Context) error) error
+}
+
+// Service 是 identity 模块对外的唯一入口。
+type Service struct {
+	repo     *repo.Repo
+	tx       txRunner
+	settings settingsReader
+	audit    auditWriter
+	keys     *crypto.Keys
+	rdb      *redis.Client
+	limiter  *ratelimit.Limiter
+	hasher   *passwordHasher
+	// devMode 为 true（非生产环境）时注册与找回的 start 响应带验证码，e2e 依赖它。
+	devMode bool
+	now     func() time.Time
+
+	// 下面四个由 auth、notify 实现，启动装配时经 Use* 注入。
+	revoker    SessionRevoker
+	adminGuard AdminGuard
+	mailer     VerificationMailer
+	staff      StaffGuard
+}
+
+// New 构造 identity service。keys 用于验证码、收件目标与限流键的 HMAC；rdb 存改密失败计数；
+// limiter 做按账号维度的严格限流；cfg 取口令哈希并发闸与是否生产环境。
+func New(r *repo.Repo, txm *tx.Manager, settings *settingssvc.Service, audit *auditsvc.Service,
+	keys *crypto.Keys, rdb *redis.Client, limiter *ratelimit.Limiter, cfg *config.Config) *Service {
+	return &Service{
+		repo:     r,
+		tx:       txm,
+		settings: settings,
+		audit:    audit,
+		keys:     keys,
+		rdb:      rdb,
+		limiter:  limiter,
+		hasher:   newPasswordHasher(cfg.Auth.PasswordHash),
+		devMode:  !cfg.IsProduction(),
+		now:      time.Now,
+	}
+}
+
+// UseSessionRevoker 只在启动装配时调用（不并发安全）。
+func (s *Service) UseSessionRevoker(r SessionRevoker) { s.revoker = r }
+
+// UseAdminGuard 只在启动装配时调用（不并发安全）。
+func (s *Service) UseAdminGuard(g AdminGuard) { s.adminGuard = g }
+
+// UseVerificationMailer 只在启动装配时调用（不并发安全）。
+func (s *Service) UseVerificationMailer(m VerificationMailer) { s.mailer = m }
+
+// UseStaffGuard 只在启动装配时调用（不并发安全）。
+func (s *Service) UseStaffGuard(g StaffGuard) { s.staff = g }
+
+// 没注入就调用到时返回 internal_error，不 panic。
+var errNotWired = errors.New("identity: 依赖未注入")
+
+func (s *Service) needRevoker() (SessionRevoker, error) {
+	if s.revoker == nil {
+		return nil, errs.Wrap(errs.Internal, errNotWired)
+	}
+	return s.revoker, nil
+}
+
+func (s *Service) needAdminGuard() (AdminGuard, error) {
+	if s.adminGuard == nil {
+		return nil, errs.Wrap(errs.Internal, errNotWired)
+	}
+	return s.adminGuard, nil
+}
+
+func (s *Service) needMailer() (VerificationMailer, error) {
+	if s.mailer == nil {
+		return nil, errs.Wrap(errs.Internal, errNotWired)
+	}
+	return s.mailer, nil
+}
+
+func (s *Service) needStaff() (StaffGuard, error) {
+	if s.staff == nil {
+		return nil, errs.Wrap(errs.Internal, errNotWired)
+	}
+	return s.staff, nil
+}
+
+// isStaff 经 StaffGuard 判断用户是否后台人员。
+func (s *Service) isStaff(ctx context.Context, userID uuid.UUID) (bool, error) {
+	g, err := s.needStaff()
+	if err != nil {
+		return false, err
+	}
+	return g.IsStaff(ctx, userID)
+}
+
+// principal 取 ctx 里的登录主体；没有时回 401。
+func principal(ctx context.Context) (authn.Principal, error) {
+	p, ok := authn.From(ctx)
+	if !ok || p.UserID == uuid.Nil {
+		return authn.Principal{}, errs.New(errs.Unauthorized)
+	}
+	return p, nil
+}
+
+// writeAudit 在 ctx 的事务里写一条审计。
+func (s *Service) writeAudit(ctx context.Context, e auditsvc.Event) error {
+	return s.audit.Write(ctx, e)
+}
+
+// 对外的固定错误。同一个变量只读共享，调用方可以 errors.Is 比较。
+var (
+	// ErrInvalidCredentials 是邮箱不存在或口令不对。
+	ErrInvalidCredentials = errs.Newf(errs.Unauthorized, "邮箱或密码不正确")
+	// ErrAccountInactive 是账号已停用或封禁：对外与 ErrInvalidCredentials 完全相同（IAM-006），
+	// 单独一个变量只为让 auth 在失败审计里区分原因。
+	ErrAccountInactive = errs.Newf(errs.Unauthorized, "邮箱或密码不正确")
+	// ErrWrongCurrentPassword 是改密时当前口令不对。
+	ErrWrongCurrentPassword = errs.Newf(errs.Unauthorized, "当前密码不正确")
+	// ErrRegistrationUnavailable 是注册关闭、邀请码无效、注册令牌无效或验证码错（统一一句）。
+	ErrRegistrationUnavailable = errs.Newf(errs.Forbidden, "注册当前不可用或邀请码无效")
+	// ErrPasswordResetUnavailable 是没配邮件服务时的找回密码（入口本该隐藏）。
+	ErrPasswordResetUnavailable = errs.Newf(errs.Forbidden, "找回密码当前不可用，请联系客服")
+	// ErrPasswordHashBusy 是排队等口令哈希名额超时。
+	ErrPasswordHashBusy = errs.Newf(errs.Unavailable, "口令校验繁忙，请稍后重试")
+)
+
+// errCodeInvalid 是找回密码第 2 步一切「对不上」的统一回应：没有验证码、过期、次数用完、账号不可用。
+func errCodeInvalid() error {
+	return errs.Invalid(map[string]string{"code": "验证码错误或已失效，请重新获取"})
+}
