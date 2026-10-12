@@ -251,7 +251,7 @@ func (s *Service) Quote(ctx context.Context, in QuoteInput) (QuoteResult, error)
 	case QuoteChange:
 		return QuoteResult{}, errs.Invalid(map[string]string{"action": "换套餐报价暂未开放"})
 	default:
-		return QuoteResult{}, errs.Invalid(map[string]string{"action": "不支持的操作"})
+		return QuoteResult{}, errs.Invalid(map[string]string{"action": "只能是 renew、change、new 或 pack"})
 	}
 	if err != nil {
 		return QuoteResult{}, err

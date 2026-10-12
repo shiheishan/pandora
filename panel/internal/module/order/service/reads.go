@@ -180,7 +180,7 @@ func (s *Service) enrich(ctx context.Context, orders []model.Order, withEmails b
 	return out, nil
 }
 
-// myView 组门户订单视图：首条订单行给商品名与周期，套餐行给套餐名；充值单商品名固定。
+// myView 组门户订单视图：首条订单行给商品名、周期与 plan_name；充值单商品名固定。
 func (e enriched) myView(o model.Order) MyOrderView {
 	v := MyOrderView{
 		OrderRow:         toRow(o),
@@ -192,10 +192,9 @@ func (e enriched) myView(o model.Order) MyOrderView {
 		v.ItemName = first.SnapshotName
 		v.Interval = first.SnapshotInterval
 		v.IntervalCount = first.SnapshotIntervalCount
-		if first.PlanID != nil {
-			name := first.SnapshotName
-			v.PlanName = &name
-		}
+		// 旧接口的 plan_name 是首项快照名（流量包订单即流量包名）
+		name := first.SnapshotName
+		v.PlanName = &name
 	}
 	if v.ItemName == "" && o.Kind == KindTopup {
 		v.ItemName = topupItemName
