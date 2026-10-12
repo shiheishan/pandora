@@ -1,7 +1,7 @@
 -- +goose Up
 CREATE EXTENSION IF NOT EXISTS citext;
 
--- 通用追加写守卫：挂在只追加的表上（BEFORE UPDATE OR DELETE ... FOR EACH STATEMENT），挡应用误改；
+-- 通用追加写守卫：挂在只追加的表上（BEFORE UPDATE OR DELETE OR TRUNCATE ... FOR EACH STATEMENT），挡应用误改；
 -- 运行角色同时收回这些表的 UPDATE、DELETE、TRUNCATE 权限，挡直连的人。
 -- +goose StatementBegin
 CREATE FUNCTION deny_mutation() RETURNS trigger LANGUAGE plpgsql AS $$

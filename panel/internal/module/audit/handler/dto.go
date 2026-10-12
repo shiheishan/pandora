@@ -11,7 +11,7 @@ import (
 // listAuditRequest 是审计列表的查询参数。
 type listAuditRequest struct {
 	Action    string `form:"action" binding:"max=100"`
-	ActorKind string `form:"actor_kind" binding:"omitempty,oneof=user admin system agent node plugin anonymous"`
+	ActorKind string `form:"actor_kind" binding:"omitempty,oneof=user admin system anonymous"`
 	Outcome   string `form:"outcome" binding:"omitempty,oneof=success failure denied partial"`
 	Q         string `form:"q" binding:"max=200"`
 }
@@ -19,7 +19,7 @@ type listAuditRequest struct {
 // exportAuditRequest 是审计 CSV 导出的查询参数。
 type exportAuditRequest struct {
 	Action    string `form:"action" binding:"max=100"`
-	ActorKind string `form:"actor_kind" binding:"omitempty,oneof=user admin system agent node plugin anonymous"`
+	ActorKind string `form:"actor_kind" binding:"omitempty,oneof=user admin system anonymous"`
 	Outcome   string `form:"outcome" binding:"omitempty,oneof=success failure denied partial"`
 	Q         string `form:"q" binding:"max=200"`
 	From      string `form:"from"`

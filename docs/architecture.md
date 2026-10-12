@@ -184,7 +184,7 @@ identity, auth ─► settings, audit
 | RLS、`current_tenant_id`、`set_config`、`db.Scope` | 全部删除 |
 | 每租户种子触发器 | 改成基线迁移里的普通 INSERT：降级开关、通知模板、线下收款渠道 |
 | 最后一个管理员的锁锚 | 改为 `pg_advisory_xact_lock(常量)` |
-| 运行角色 | 保留「应用角色不是超级用户、不是表属主、没有 CREATE/TEMP、search_path 固定」；去掉 BYPASSRLS 和 row_security 两项检查。迁移用单独的属主角色 |
+| 运行角色 | 保留「应用角色不是超级用户、不是表属主、没有 CREATE/TEMP、search_path 固定」；去掉 BYPASSRLS 和 row_security 两项检查。迁移用单独的属主角色（不是超级用户）；保留期清理函数靠函数定义上的 `SET session_replication_role = replica` 绕开只追加守卫，这个参数要超级用户才能设，所以部署时由超级用户执行一次 `GRANT SET ON PARAMETER session_replication_role TO <属主角色>`（PG15+），P7 的初始化脚本与 CI 都按这个角色跑迁移 |
 | RLS 实际承担的安全目的 | 只有一条要换成普通做法保住：幂等键按操作者隔离，改为 `UNIQUE(scope, actor_id, key)`，repo 的查找、认领、完成都带 actor_id。用户之间的隔离本来就不靠 RLS，仍由 repo 的 `WHERE user_id = ?` 保证，门户侧 repo 方法一律把 userID 作为必传参数 |
 
 ### 5.2 新基线迁移

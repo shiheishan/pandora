@@ -19,6 +19,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 // DSNEnv 是测试库 DSN 的环境变量。
@@ -70,14 +71,21 @@ func TxCtx(t testing.TB, d *db.DB) context.Context {
 }
 
 // Truncate 清空表（RESTART IDENTITY CASCADE），给需要真实提交的用例（并发、提交后钩子）用。
-// 只追加的表挂了禁改触发器，TRUNCATE 不触发行级与语句级的 UPDATE/DELETE 触发器，可以清。
+// 只追加的表连 TRUNCATE 也挡，这里在事务内临时 session_replication_role = replica 跳过守卫
+// （测试库用超级用户连，产品代码不这么做）。
 func Truncate(t testing.TB, d *db.DB, tables ...string) {
 	t.Helper()
 	if len(tables) == 0 {
 		return
 	}
 	q := fmt.Sprintf("TRUNCATE %s RESTART IDENTITY CASCADE", strings.Join(tables, ", "))
-	if err := d.Base().Exec(q).Error; err != nil {
+	err := d.Base().Transaction(func(g *gorm.DB) error {
+		if err := g.Exec("SET LOCAL session_replication_role = replica").Error; err != nil {
+			return err
+		}
+		return g.Exec(q).Error
+	})
+	if err != nil {
 		t.Fatalf("清表: %v", err)
 	}
 }

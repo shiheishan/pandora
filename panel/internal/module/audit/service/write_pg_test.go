@@ -104,30 +104,95 @@ func TestWriteSubjectIsActorPublic(t *testing.T) {
 	}
 }
 
-func TestWriteExplicitActorNotSubject(t *testing.T) {
+func TestWriteExplicitActorMismatchRejected(t *testing.T) {
 	d := testkit.DB(t)
 	ctx := testkit.TxCtx(t, d)
 	svc := mustService(t, repo.New(d))
 	subject := uuid.New()
 	explicit := uuid.New()
-	a := uniqueAction(t)
 	ctx = reqCtx(ctx, subject, authn.AudienceAdmin)
-	if err := svc.Write(ctx, Event{Action: a, ActorID: &explicit}); err != nil {
-		t.Fatal(err)
+	if err := svc.Write(ctx, Event{Action: uniqueAction(t), ActorID: &explicit}); err == nil {
+		t.Fatal("ActorID 与主体不同应报错")
 	}
-	raw := scanRaw(t, d.Conn(ctx).Raw(rawColsSQL, a).Row())
-	if raw.ActorKind != "user" {
+	a := uniqueAction(t)
+	if err := svc.Write(ctx, Event{Action: a, ActorID: &subject}); err != nil {
+		t.Fatalf("ActorID 等于主体应放行: %v", err)
+	}
+	if raw := scanRaw(t, d.Conn(ctx).Raw(rawColsSQL, a).Row()); raw.ActorKind != "admin" {
 		t.Fatalf("actor_kind %q", raw.ActorKind)
 	}
-	if raw.ActorID == nil || *raw.ActorID != explicit {
-		t.Fatalf("actor_id %v", raw.ActorID)
+}
+
+func TestWriteExplicitActorWithoutSubject(t *testing.T) {
+	d := testkit.DB(t)
+	ctx := testkit.TxCtx(t, d)
+	svc := mustService(t, repo.New(d))
+	ctx = reqmeta.With(ctx, reqmeta.Meta{IP: "203.0.113.7"})
+	u := uuid.New()
+
+	cases := []struct {
+		audience, kind string
+		wantAud        *string
+	}{
+		{authn.AudienceAdmin, "admin", ptr(authn.AudienceAdmin)},
+		{authn.AudiencePublic, "user", ptr(authn.AudiencePublic)},
+		{"", "user", nil},
 	}
-	if raw.ActorAudience != nil {
-		t.Fatalf("actor_audience should be nil, got %v", raw.ActorAudience)
+	for _, tc := range cases {
+		a := uniqueAction(t)
+		if err := svc.Write(ctx, Event{Action: a, ActorID: &u, Audience: tc.audience, Outcome: OutcomeFailure}); err != nil {
+			t.Fatal(err)
+		}
+		raw := scanRaw(t, d.Conn(ctx).Raw(rawColsSQL, a).Row())
+		if raw.ActorKind != tc.kind || raw.ActorID == nil || *raw.ActorID != u {
+			t.Fatalf("audience %q: kind=%q id=%v", tc.audience, raw.ActorKind, raw.ActorID)
+		}
+		if (raw.ActorAudience == nil) != (tc.wantAud == nil) || (raw.ActorAudience != nil && *raw.ActorAudience != *tc.wantAud) {
+			t.Fatalf("audience %q: actor_audience=%v", tc.audience, raw.ActorAudience)
+		}
+		if raw.AuthContext != nil {
+			t.Fatalf("auth_context should be nil, got %v", raw.AuthContext)
+		}
 	}
-	if raw.AuthContext != nil {
-		t.Fatalf("auth_context should be nil, got %v", raw.AuthContext)
+	if err := svc.Write(ctx, Event{Action: uniqueAction(t), ActorID: &u, Audience: "node"}); err == nil {
+		t.Fatal("未知 Audience 应报错")
 	}
+}
+
+// 攻击者能控制的 UA 与 data 里的字符串带 NUL 或非法 UTF-8，审计照样写得进去。
+func TestWriteSanitizesHostileText(t *testing.T) {
+	d := testkit.DB(t)
+	ctx := testkit.TxCtx(t, d)
+	svc := mustService(t, repo.New(d))
+	ctx = reqmeta.With(ctx, reqmeta.Meta{IP: "203.0.113.7", UserAgent: "ua\xff\x00x"})
+	a := uniqueAction(t)
+	err := svc.Write(ctx, Event{Action: a, Outcome: OutcomeFailure, Data: map[string]any{
+		"email":      "a\x00b@example.test",
+		"bad\x00key": []any{"\xfe", "c\x00"},
+	}})
+	if err != nil {
+		t.Fatalf("写入应成功: %v", err)
+	}
+	raw := scanRaw(t, d.Conn(ctx).Raw(rawColsSQL, a).Row())
+	if raw.UserAgent == nil || *raw.UserAgent != "ua\uFFFDx" {
+		t.Fatalf("user_agent %q", deref(raw.UserAgent))
+	}
+	var email string
+	if err := d.Conn(ctx).Raw(`SELECT data->>'email' FROM audit_events WHERE action = ?`, a).Row().Scan(&email); err != nil {
+		t.Fatal(err)
+	}
+	if email != "ab@example.test" {
+		t.Fatalf("email %q", email)
+	}
+}
+
+func ptr(s string) *string { return &s }
+
+func deref(s *string) string {
+	if s == nil {
+		return "<nil>"
+	}
+	return *s
 }
 
 func TestWriteAnonymousAndSystem(t *testing.T) {

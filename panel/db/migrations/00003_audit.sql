@@ -45,7 +45,7 @@ CREATE INDEX audit_events_resource_idx ON audit_events (resource_id, occurred_at
 
 -- 只追加：应用不能改、不能删；清理只走下面的函数
 CREATE TRIGGER audit_events_append_only
-  BEFORE UPDATE OR DELETE ON audit_events
+  BEFORE UPDATE OR DELETE OR TRUNCATE ON audit_events
   FOR EACH STATEMENT EXECUTE FUNCTION deny_mutation();
 
 -- 保留期清理：删 p_before 之前的记录，每次最多 p_batch_limit 行，由定时任务循环调用。
