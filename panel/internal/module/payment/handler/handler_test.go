@@ -16,7 +16,9 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
 	"github.com/aegispanel/aegis/internal/pkg/money"
+	"github.com/aegispanel/aegis/internal/pkg/ratelimit"
 	"github.com/aegispanel/aegis/internal/pkg/route"
+	"github.com/aegispanel/aegis/internal/pkg/testkit"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
@@ -95,6 +97,10 @@ type kitHooks struct {
 func pass(c *gin.Context) { c.Next() }
 
 func newPublicEngine(svc Service, p *authn.Principal) *gin.Engine {
+	return newPublicEngineWith(svc, p, nil)
+}
+
+func newPublicEngineWith(svc Service, p *authn.Principal, lim *ratelimit.Limiter) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	e := gin.New()
 	e.Use(httpx.RequestID(zap.NewNop()), httpx.Errors())
@@ -107,7 +113,7 @@ func newPublicEngine(svc Service, p *authn.Principal) *gin.Engine {
 		Idempotency:  func(string) gin.HandlerFunc { return pass },
 		Switch:       func(string) gin.HandlerFunc { return pass },
 	}
-	New(svc).RegisterPublic(e.Group("/v1"), kit)
+	New(svc, lim).RegisterPublic(e.Group("/v1"), kit)
 	return e
 }
 
@@ -140,7 +146,7 @@ func newAdminEngine(svc Service, p *authn.Principal, hooks *kitHooks) *gin.Engin
 		},
 		Switch: func(string) gin.HandlerFunc { return pass },
 	}
-	New(svc).RegisterAdmin(e.Group("/v1"), kit)
+	New(svc, nil).RegisterAdmin(e.Group("/v1"), kit)
 	return e
 }
 
@@ -376,5 +382,33 @@ func TestApplyLatePaymentUUIDAndMiddleware(t *testing.T) {
 	}
 	if hooks.idempotencyScope != ApplyLateScope || !hooks.reauthCalled {
 		t.Fatalf("中间件 scope=%q reauth=%v", hooks.idempotencyScope, hooks.reauthCalled)
+	}
+}
+
+func TestWebhookRateLimitedPerIP(t *testing.T) {
+	_, rdb := testkit.Redis(t)
+	f := &fakeSvc{webhookAck: provider.AckOutput{HTTPStatus: http.StatusOK, ContentType: "text/plain", Body: []byte("success")}}
+	e := newPublicEngineWith(f, nil, ratelimit.New(rdb))
+	hit := func(ip string) int {
+		req := httptest.NewRequest(http.MethodPost, "/v1/webhooks/payments/p1", bytes.NewReader([]byte("x")))
+		req.RemoteAddr = ip + ":40000"
+		w := httptest.NewRecorder()
+		e.ServeHTTP(w, req)
+		return w.Code
+	}
+	for i := 0; i < WebhookPerIPPerMin; i++ {
+		if code := hit("203.0.113.7"); code != http.StatusOK {
+			t.Fatalf("第 %d 次 status %d", i+1, code)
+		}
+	}
+	f.webhookCode = ""
+	if code := hit("203.0.113.7"); code != http.StatusTooManyRequests {
+		t.Fatalf("超限应 429，实际 %d", code)
+	}
+	if f.webhookCode != "" {
+		t.Fatal("超限后不应再进 service")
+	}
+	if code := hit("203.0.113.8"); code != http.StatusOK {
+		t.Fatalf("别的 IP 不受影响，实际 %d", code)
 	}
 }

@@ -6,6 +6,7 @@ import (
 
 	"github.com/aegispanel/aegis/internal/module/payment/provider"
 	"github.com/aegispanel/aegis/internal/module/payment/service"
+	"github.com/aegispanel/aegis/internal/pkg/ratelimit"
 	"github.com/aegispanel/aegis/internal/pkg/route"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -27,10 +28,17 @@ var _ Service = (*service.Service)(nil)
 var _ route.Module = (*Handler)(nil)
 
 // Handler 是 payment 模块的 HTTP 入口。
-type Handler struct{ svc Service }
+type Handler struct {
+	svc Service
+	lim *ratelimit.Limiter
+}
 
-// New 构造 Handler。
-func New(svc Service) *Handler { return &Handler{svc: svc} }
+// WebhookPerIPPerMin 是渠道回调每个来源 IP 每分钟的上限。旧代码不限；渠道正常重试远低于这个数，
+// 只为挡住刷验签失败的请求。非严格模式：Redis 故障时放行，不让限流挡掉真回调。
+const WebhookPerIPPerMin = 120
+
+// New 构造 Handler；lim 为 nil 时回调不限流（只用于测试）。
+func New(svc Service, lim *ratelimit.Limiter) *Handler { return &Handler{svc: svc, lim: lim} }
 
 // CreateProviderScope 是新建渠道的幂等作用域。
 const CreateProviderScope = "payment_provider_create"

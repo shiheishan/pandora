@@ -6,6 +6,7 @@ import (
 	"github.com/aegispanel/aegis/internal/module/payment/provider"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
+	"github.com/aegispanel/aegis/internal/pkg/ratelimit"
 	"github.com/gin-gonic/gin"
 )
 
@@ -25,6 +26,14 @@ func (h *Handler) paymentMethods(c *gin.Context) {
 
 // paymentWebhook 接收支付渠道回调，回执由 service 按渠道原样输出。
 func (h *Handler) paymentWebhook(c *gin.Context) {
+	if h.lim != nil {
+		if ip, ok := ratelimit.ByIP(c); ok {
+			if err := h.lim.Allow(c.Request.Context(), ratelimit.PerMinute("payment_webhook_ip", WebhookPerIPPerMin), ip); err != nil {
+				httpx.Fail(c, err)
+				return
+			}
+		}
+	}
 	body, err := io.ReadAll(io.LimitReader(c.Request.Body, httpx.MaxBodyBytes+1))
 	if err != nil {
 		httpx.Fail(c, err)
