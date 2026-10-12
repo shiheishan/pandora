@@ -3,6 +3,7 @@ package authn
 
 import (
 	"context"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -14,12 +15,22 @@ const (
 	AudienceAdmin  = "admin"
 )
 
+// ReauthWindow 是后台重认证的有效窗口。
+const ReauthWindow = 15 * time.Minute
+
 // Principal 是通过鉴权的请求主体。
 type Principal struct {
 	UserID    uuid.UUID
 	SessionID string
 	Audience  string
 	AMR       []string
+	// ReauthAt 是本会话最近一次重认证的时间（只有后台会话会有），零值表示没有。
+	ReauthAt time.Time
+}
+
+// RecentlyReauthed 报告 now 时是否仍在重认证窗口内。
+func (p Principal) RecentlyReauthed(now time.Time) bool {
+	return !p.ReauthAt.IsZero() && now.Sub(p.ReauthAt) < ReauthWindow
 }
 
 type key struct{}
