@@ -1,0 +1,64 @@
+// Package crypto 提供主密钥派生、HMAC 与 AES-GCM 封存。
+package crypto
+
+import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"errors"
+	"fmt"
+
+	"golang.org/x/crypto/hkdf"
+)
+
+// HKDF info 串（域分隔，勿复用）。
+const (
+	InfoSeal         = "pandora/seal/v1"
+	InfoHMACIP       = "pandora/hmac/ip/v1"
+	InfoHMACIdentity = "pandora/hmac/identity/v1"
+	InfoHMACSubAudit = "pandora/hmac/sub-audit/v1"
+	InfoHMACNotify   = "pandora/hmac/notify/v1"
+)
+
+const minMasterLen = 32
+
+// Keys 持有主密钥材料，用于 HKDF 派生与 HMAC。
+type Keys struct {
+	master []byte
+}
+
+// NewKeys 从 base64 编码的主密钥构造 Keys；解码后少于 32 字节则报错。
+func NewKeys(masterB64 string) (*Keys, error) {
+	master, err := base64.StdEncoding.DecodeString(masterB64)
+	if err != nil {
+		return nil, fmt.Errorf("decode master: %w", err)
+	}
+	if len(master) < minMasterLen {
+		return nil, errors.New("master key shorter than 32 bytes")
+	}
+	return &Keys{master: master}, nil
+}
+
+// Derive 用 HKDF-SHA256 从主密钥派生 n 字节。
+func (k *Keys) Derive(info string, n int) []byte {
+	r := hkdf.New(sha256.New, k.master, nil, []byte(info))
+	out := make([]byte, n)
+	if _, err := r.Read(out); err != nil {
+		panic("hkdf read: " + err.Error())
+	}
+	return out
+}
+
+// HMAC 用派生密钥对 data 做 HMAC-SHA256。
+func (k *Keys) HMAC(info string, data []byte) []byte {
+	key := k.Derive(info, 32)
+	mac := hmac.New(sha256.New, key)
+	mac.Write(data)
+	return mac.Sum(nil)
+}
+
+// Sealer 返回用于信封加密的封存器（keyID=1）。
+func (k *Keys) Sealer() (*Sealer, error) {
+	key := k.Derive(InfoSeal, 32)
+	return NewSealer(key, 1)
+}

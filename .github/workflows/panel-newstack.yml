@@ -1,0 +1,138 @@
+name: Panel new stack
+
+# 换栈期间新栈（internal/pkg、internal/app、internal/module、cmd/pandora、db/migrations）
+# 的门禁：lint（含 depguard 分层）、生成的 lint 配置不漂移、真库与真 Redis 上的测试。
+# 旧代码仍由 panel-pg18.yml 管，P7 删旧时两边合并。
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "panel/internal/pkg/**"
+      - "panel/internal/app/**"
+      - "panel/internal/module/**"
+      - "panel/cmd/pandora/**"
+      - "panel/db/**"
+      - "panel/tools/depguardgen/**"
+      - "panel/.golangci.yml"
+      - "panel/go.mod"
+      - "panel/go.sum"
+      - ".github/workflows/panel-newstack.yml"
+  pull_request:
+    paths:
+      - "panel/internal/pkg/**"
+      - "panel/internal/app/**"
+      - "panel/internal/module/**"
+      - "panel/cmd/pandora/**"
+      - "panel/db/**"
+      - "panel/tools/depguardgen/**"
+      - "panel/.golangci.yml"
+      - "panel/go.mod"
+      - "panel/go.sum"
+      - ".github/workflows/panel-newstack.yml"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+    working-directory: panel
+
+jobs:
+  lint:
+    name: Lint (golangci-lint + depguard)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: panel/go.mod
+          cache-dependency-path: panel/go.sum
+      - name: depguard rules match module directories
+        run: go run ./tools/depguardgen -check
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.5.0
+          working-directory: panel
+          args: ./internal/pkg/... ./internal/app/... ./cmd/pandora/... ./db/...
+
+  test:
+    name: Tests on PostgreSQL 18 and Redis
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: pandora
+          POSTGRES_PASSWORD: pandora
+          POSTGRES_DB: pandora_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pandora"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:8
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      PANDORA_TEST_DATABASE_URL: postgres://pandora:pandora@127.0.0.1:5432/pandora_test?sslmode=disable
+      PANDORA_TEST_REDIS_URL: redis://127.0.0.1:6379/0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: panel/go.mod
+          cache-dependency-path: panel/go.sum
+      - name: Build pandora
+        run: go build -mod=readonly -o "$RUNNER_TEMP/pandora" ./cmd/pandora
+      # 测试按包串行（-p 1）：迁移往返与事务测试共用同一个库
+      - name: Tests
+        run: go test -mod=readonly -race -p 1 -count=1 ./internal/pkg/... ./internal/app/... ./db/...
+      - name: Migration round trip through the binary
+        env:
+          PANDORA_DATABASE_MIGRATION_URL: ${{ env.PANDORA_TEST_DATABASE_URL }}
+          PANDORA_DATABASE_URL: ${{ env.PANDORA_TEST_DATABASE_URL }}
+          PANDORA_REDIS_URL: ${{ env.PANDORA_TEST_REDIS_URL }}
+        run: |
+          # 只为通过配置校验：CI 一次性的假密钥
+          export PANDORA_SECRETS_MASTER_KEY="$(head -c 32 /dev/urandom | base64)"
+          export PANDORA_AUTH_PUBLIC_JWT_SECRET="$(head -c 32 /dev/urandom | base64)"
+          export PANDORA_AUTH_ADMIN_JWT_SECRET="$(head -c 32 /dev/urandom | base64)"
+          bin="$RUNNER_TEMP/pandora"
+          "$bin" migrate up
+          "$bin" migrate status
+          "$bin" migrate down
+          "$bin" migrate up
+      - name: serve answers healthz and readyz
+        env:
+          PANDORA_DATABASE_URL: ${{ env.PANDORA_TEST_DATABASE_URL }}
+          PANDORA_REDIS_URL: ${{ env.PANDORA_TEST_REDIS_URL }}
+        run: |
+          export PANDORA_SECRETS_MASTER_KEY="$(head -c 32 /dev/urandom | base64)"
+          export PANDORA_AUTH_PUBLIC_JWT_SECRET="$(head -c 32 /dev/urandom | base64)"
+          export PANDORA_AUTH_ADMIN_JWT_SECRET="$(head -c 32 /dev/urandom | base64)"
+          "$RUNNER_TEMP/pandora" serve > "$RUNNER_TEMP/serve.log" 2>&1 &
+          pid=$!
+          ok=
+          for _ in $(seq 1 50); do
+            if curl -fsS http://127.0.0.1:9000/readyz && curl -fsS http://127.0.0.1:9001/readyz; then ok=1; break; fi
+            sleep 0.2
+          done
+          curl -fsS -D - http://127.0.0.1:9000/healthz | tee "$RUNNER_TEMP/healthz.txt"
+          grep -qi '^x-request-id:' "$RUNNER_TEMP/healthz.txt"
+          kill -TERM "$pid"
+          rc=0
+          wait "$pid" || rc=$?
+          cat "$RUNNER_TEMP/serve.log"
+          test -n "$ok"
+          # SIGTERM 后应干净退出
+          test "$rc" = 0

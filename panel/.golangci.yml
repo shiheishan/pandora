@@ -1,0 +1,106 @@
+# 由 tools/depguardgen 生成，不要手改；改规则改生成器，加模块后重新运行。
+# 只检查新栈目录（internal/pkg、internal/app、internal/module、cmd/pandora、db），
+# 旧代码在 P7 删除前不进 lint。
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - depguard
+    - errcheck
+    - gosec
+    - govet
+    - ineffassign
+    - sqlclosecheck
+    - staticcheck
+    - unused
+  settings:
+    depguard:
+      rules:
+        handler-no-db:
+          files:
+            - "**/internal/module/*/handler/**"
+            - "**/internal/module/*/task/**"
+          deny:
+            - pkg: gorm.io
+              desc: handler 与 task 不碰数据库，经 service 访问
+            - pkg: github.com/aegispanel/aegis/internal/pkg/db
+              desc: handler 与 task 不碰数据库，经 service 访问
+            - pkg: github.com/aegispanel/aegis/internal/pkg/tx
+              desc: 事务边界在 service
+        service-no-gorm:
+          files:
+            - "**/internal/module/*/service/**"
+          deny:
+            - pkg: gorm.io
+              desc: service 不直接用 GORM，读写经本模块 repo，事务经 internal/pkg/tx
+            - pkg: github.com/aegispanel/aegis/internal/pkg/db
+              desc: service 不直接取连接，事务经 internal/pkg/tx
+        model-plain:
+          files:
+            - "**/internal/module/*/model/**"
+          deny:
+            - pkg: github.com/aegispanel/aegis/internal/module
+              desc: model 只放字段与标签，不依赖任何模块
+        pkg-no-business:
+          files:
+            - "**/internal/pkg/**"
+          deny:
+            - pkg: github.com/aegispanel/aegis/internal/module
+              desc: 基础设施不依赖业务模块
+            - pkg: github.com/aegispanel/aegis/internal/app
+              desc: 基础设施不依赖装配层
+        httpx-no-db:
+          files:
+            - "**/internal/pkg/httpx/**"
+            - "**/internal/pkg/ratelimit/**"
+          deny:
+            - pkg: gorm.io
+              desc: 中间件不碰数据库
+            - pkg: github.com/aegispanel/aegis/internal/pkg/db
+              desc: 中间件不碰数据库
+        new-stack-no-legacy:
+          files:
+            - "**/internal/pkg/**"
+            - "**/internal/app/**"
+            - "**/internal/module/**"
+            - "**/cmd/pandora/**"
+            - "**/db/migrations/**"
+          deny:
+            - pkg: github.com/aegispanel/aegis/internal/api
+              desc: 新栈不引用旧代码
+            - pkg: github.com/aegispanel/aegis/internal/domain
+              desc: 新栈不引用旧代码
+            - pkg: github.com/aegispanel/aegis/internal/middleware
+              desc: 新栈不引用旧代码
+            - pkg: github.com/aegispanel/aegis/internal/platform
+              desc: 新栈不引用旧代码
+            - pkg: github.com/go-chi/chi
+              desc: 新栈用 gin
+            - pkg: github.com/jackc/pgx/v5/pgxpool
+              desc: 新栈经 GORM 访问数据库
+    gosec:
+      excludes:
+        # G104 与 errcheck 重复
+        - G104
+  exclusions:
+    # 社区通用预设：不强制检查写终端、Close、Unsetenv 一类的错误
+    presets:
+      - std-error-handling
+    paths:
+      - internal/api
+      - internal/domain
+      - internal/middleware
+      - internal/platform
+      - cmd/aegis-
+      - tools
+      - tests
+      - web
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
