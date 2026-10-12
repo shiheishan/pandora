@@ -59,9 +59,10 @@ type smtpSender struct {
 	ioTimeout   time.Duration
 }
 
-// newSMTPSender 返回生产用的发信器：拨号 10 秒、整次会话读写 30 秒超时。
+// newSMTPSender 返回生产用的发信器：拨号 5 秒、整次会话读写 15 秒超时。
+// 两者之和小于后台请求超时（缺省 25 秒），「测试发信」能在请求结束前拿到明确的失败原因。
 func newSMTPSender() *smtpSender {
-	return &smtpSender{dialTimeout: 10 * time.Second, ioTimeout: 30 * time.Second}
+	return &smtpSender{dialTimeout: 5 * time.Second, ioTimeout: 15 * time.Second}
 }
 
 func (s *smtpSender) Send(ctx context.Context, cfg SMTPConfig, m Message) error {
@@ -99,12 +100,16 @@ func (s *smtpSender) Send(ctx context.Context, cfg SMTPConfig, m Message) error 
 	}
 	defer c.Close()
 
-	if cfg.Encryption == settingssvc.MailEncryptionTLS {
-		if ok, _ := c.Extension("STARTTLS"); !ok {
+	// tls 强制 STARTTLS；none 是「服务器支持就升级」（照旧），不支持才走明文
+	if cfg.Encryption != settingssvc.MailEncryptionSSL {
+		ok, _ := c.Extension("STARTTLS")
+		if !ok && cfg.Encryption == settingssvc.MailEncryptionTLS {
 			return &SendError{Stage: "STARTTLS", Detail: "服务器不支持 STARTTLS，请改用 ssl", Permanent: true}
 		}
-		if err := c.StartTLS(tlsCfg); err != nil {
-			return wrapErr(ctx, "STARTTLS", err)
+		if ok {
+			if err := c.StartTLS(tlsCfg); err != nil {
+				return wrapErr(ctx, "STARTTLS", err)
+			}
 		}
 	}
 

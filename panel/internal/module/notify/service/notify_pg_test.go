@@ -141,11 +141,14 @@ func TestSendToAddressWritesSealedDelivery(t *testing.T) {
 	}
 }
 
-func TestSendToAddressRejectsBadAddress(t *testing.T) {
+// 坏地址不报错也不入队：报错会让找回、注册的 start 对存在与不存在的账号响应不同。
+func TestSendToAddressSkipsBadAddress(t *testing.T) {
 	e := newPG(t)
-	err := e.svc.SendToAddress(e.ctx, TemplateEmailVerify, "a@b.com\r\nBcc: c@d.com", nil, nil)
-	if !isCode(err, errs.ValidationFailed) {
+	if err := e.svc.SendToAddress(e.ctx, TemplateEmailVerify, "a@b.com\r\nBcc: c@d.com", nil, nil); err != nil {
 		t.Fatalf("err %v", err)
+	}
+	if rows := e.rows(t); len(rows) != 0 {
+		t.Fatalf("坏地址不应入队: %+v", rows)
 	}
 	if err := e.svc.SendToAddress(e.ctx, "nope.code", "a@b.com", nil, nil); !isCode(err, errs.Internal) {
 		t.Fatalf("err %v", err)

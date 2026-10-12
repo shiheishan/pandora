@@ -15,22 +15,27 @@ import (
 // Dispatch 认领到期的 queued 邮件投递并逐封发送，返回处理条数。notify.email 开关关闭时不认领：
 // 记录留在队列里，开关恢复后按原顺序发送。
 func (s *Service) Dispatch(ctx context.Context) (int, error) {
-	on, err := s.settings.SwitchEnabled(ctx, settingssvc.SwitchNotifyEmail)
-	if err != nil {
-		return 0, err
-	}
-	if !on {
-		return 0, nil
-	}
-
 	cfg, configured, err := s.smtpConfig(ctx)
 	if err != nil {
 		return 0, err
+	}
+	if n, err := s.store.FailExhausted(ctx, ChannelEmail); err != nil {
+		return 0, err
+	} else if n > 0 {
+		plog.From(ctx).Warn("notify: 尝试用尽的投递置为失败", zap.Int("count", n))
 	}
 
 	var total int
 	for batch := 0; batch < dispatchMaxBatches; batch++ {
 		if err := ctx.Err(); err != nil {
+			break
+		}
+		// 每批认领前都看开关（有短缓存），关掉后最多再发完手上这一批
+		on, err := s.settings.SwitchEnabled(ctx, settingssvc.SwitchNotifyEmail)
+		if err != nil {
+			return total, err
+		}
+		if !on {
 			break
 		}
 		rows, err := s.store.ClaimDeliveries(ctx, ChannelEmail, dispatchBatch, dispatchLease)
@@ -54,15 +59,18 @@ func (s *Service) Dispatch(ctx context.Context) (int, error) {
 // deliver 发送一条已认领的投递并写回状态；问题只记日志（不含收件地址）。
 func (s *Service) deliver(ctx context.Context, configured bool, cfg SMTPConfig, d model.Delivery) {
 	lg := plog.From(ctx).With(zap.String("delivery_id", d.ID.String()), zap.String("template", d.TemplateCode))
+	// 状态回写不跟随任务取消：发完正好碰上超时也要记成 sent，否则租约到期后重发
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
 
-	finish := func(status, msg string, count bool) {
-		if _, err := s.store.MarkFinal(ctx, d.ID, status, msg, count); err != nil {
+	finish := func(status, msg string) {
+		if _, err := s.store.MarkFinal(wctx, d.ID, status, msg); err != nil {
 			lg.Error("notify: 标记投递终态失败", zap.Error(err))
 		}
 	}
 
 	if !configured {
-		finish(model.StatusSuppressed, "渠道未配置", false)
+		finish(model.StatusSuppressed, "渠道未配置")
 		return
 	}
 
@@ -70,18 +78,18 @@ func (s *Service) deliver(ctx context.Context, configured bool, cfg SMTPConfig, 
 	raw, err := s.sealer.Open(d.PayloadEnc, deliveryAAD(d.ID))
 	if err != nil {
 		lg.Error("notify: 解封投递内容失败", zap.Error(err))
-		finish(model.StatusFailed, "投递内容无法解开", true)
+		finish(model.StatusFailed, "投递内容无法解开")
 		return
 	}
 	if err := json.Unmarshal(raw, &p); err != nil {
 		lg.Error("notify: 解析投递内容失败", zap.Error(err))
-		finish(model.StatusFailed, "投递内容无法解开", true)
+		finish(model.StatusFailed, "投递内容无法解开")
 		return
 	}
 
 	def, ok := lookupDef(d.TemplateCode, d.Channel)
 	if !ok {
-		finish(model.StatusSuppressed, "模板未登记", false)
+		finish(model.StatusSuppressed, "模板未登记")
 		return
 	}
 
@@ -91,24 +99,24 @@ func (s *Service) deliver(ctx context.Context, configured bool, cfg SMTPConfig, 
 		return
 	}
 	if !ok {
-		finish(model.StatusSuppressed, "模板缺失", false)
+		finish(model.StatusSuppressed, "模板缺失")
 		return
 	}
 
 	subject, err := renderText(t.Subject, def.Allowed, p.Vars)
 	if err != nil {
-		finish(model.StatusFailed, "模板渲染失败", true)
+		finish(model.StatusFailed, "模板渲染失败")
 		return
 	}
 	body, err := renderText(t.Body, def.Allowed, p.Vars)
 	if err != nil {
-		finish(model.StatusFailed, "模板渲染失败", true)
+		finish(model.StatusFailed, "模板渲染失败")
 		return
 	}
 
 	sendErr := s.sender.Send(ctx, cfg, Message{To: p.To, Subject: headerSafe(subject), Body: body})
 	if sendErr == nil {
-		if _, err := s.store.MarkSent(ctx, d.ID); err != nil {
+		if _, err := s.store.MarkSent(wctx, d.ID); err != nil {
 			lg.Error("notify: 标记已发送失败", zap.Error(err))
 		}
 		return
@@ -125,14 +133,14 @@ func (s *Service) deliver(ctx context.Context, configured bool, cfg SMTPConfig, 
 	}
 	lg.Warn("notify: 发送失败",
 		zap.String("reason", msg),
-		zap.Int("attempt", d.Attempts+1),
+		zap.Int("attempt", d.Attempts),
 	)
 
-	if permanent || d.Attempts+1 >= d.MaxAttempts {
-		finish(model.StatusFailed, msg, true)
+	if permanent || d.Attempts >= d.MaxAttempts {
+		finish(model.StatusFailed, msg)
 		return
 	}
-	if _, err := s.store.MarkRetry(ctx, d.ID, backoff(d.Attempts+1), msg); err != nil {
+	if _, err := s.store.MarkRetry(wctx, d.ID, backoff(d.Attempts), msg); err != nil {
 		lg.Error("notify: 标记重试失败", zap.Error(err))
 	}
 }

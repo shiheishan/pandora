@@ -2,13 +2,15 @@
 -- notify 模块（P2 只有邮件）：通知模板与投递记录。
 -- 依赖 00005_identity.sql 的 users 表（投递记录的 user_id 外键）。
 
+-- channel 目前只有 email；P6 加站内信、Telegram 时放宽 CHECK，并改 notification_deliveries_payload_state
+-- （站内信送达后要靠内容展示，不能在终态清空）。
 -- 通知模板：每个 (code, channel) 一行，后台只能改主题与正文，每改一次 version 加 1。
 -- 模板代码、类别、变量白名单、说明和默认内容定义在 notify service 的 registry.go，
 -- 下面的种子与那里的默认内容逐字一致（PG 测试对照）；不在 registry 里的 code 不会被发送。
 CREATE TABLE notification_templates (
   id         uuid PRIMARY KEY DEFAULT uuidv7(),
   code       text NOT NULL,
-  channel    text NOT NULL CHECK (channel IN ('email', 'inapp', 'telegram')),
+  channel    text NOT NULL CHECK (channel IN ('email')),
   version    int NOT NULL DEFAULT 1 CHECK (version >= 1),
   subject    text NOT NULL CHECK (char_length(subject) BETWEEN 1 AND 200),
   body       text NOT NULL CHECK (char_length(body) BETWEEN 1 AND 20000),
@@ -28,7 +30,7 @@ CREATE TABLE notification_deliveries (
   -- 按地址投递（注册验证码、找回密码）可以没有用户
   user_id        uuid REFERENCES users(id) ON DELETE CASCADE,
   template_code  text NOT NULL CHECK (char_length(template_code) BETWEEN 1 AND 64),
-  channel        text NOT NULL CHECK (channel IN ('email', 'inapp', 'telegram')),
+  channel        text NOT NULL CHECK (channel IN ('email')),
   recipient_hash bytea NOT NULL CHECK (octet_length(recipient_hash) = 32),
   payload_enc    bytea,
   status         text NOT NULL DEFAULT 'queued'

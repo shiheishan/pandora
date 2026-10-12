@@ -80,14 +80,16 @@ type store interface {
 
 	// InsertDelivery 写一条投递（ID 由调用方生成）。
 	InsertDelivery(ctx context.Context, d *model.Delivery) error
-	// ClaimDeliveries 认领到期的 queued 行（指定渠道），把 next_retry_at 推到 now()+lease，按 created_at 升序返回。
+	// ClaimDeliveries 认领到期的 queued 行（指定渠道），把 next_retry_at 推到 now()+lease、attempts 加 1，按 created_at 升序返回。
 	ClaimDeliveries(ctx context.Context, channel string, limit int, lease time.Duration) ([]model.Delivery, error)
-	// MarkSent 置为 sent：attempts+1、sent_at=now()、清空 payload_enc 与 error_message。行已不是 queued 时返回 false。
+	// FailExhausted 把尝试用尽、租约已过仍为 queued 的行置为 failed。
+	FailExhausted(ctx context.Context, channel string) (int, error)
+	// MarkSent 置为 sent：sent_at=now()、清空 payload_enc 与 error_message。行已不是 queued 时返回 false。
 	MarkSent(ctx context.Context, id uuid.UUID) (bool, error)
-	// MarkRetry 记一次失败：attempts+1、error_message、next_retry_at=now()+delay，仍为 queued。
+	// MarkRetry 记一次失败：error_message、next_retry_at=now()+delay，仍为 queued。
 	MarkRetry(ctx context.Context, id uuid.UUID, delay time.Duration, msg string) (bool, error)
-	// MarkFinal 置为终态 failed / suppressed：清空 payload_enc、写 error_message；countAttempt 为真时 attempts+1。
-	MarkFinal(ctx context.Context, id uuid.UUID, status, msg string, countAttempt bool) (bool, error)
+	// MarkFinal 置为终态 failed / suppressed：清空 payload_enc、写 error_message。
+	MarkFinal(ctx context.Context, id uuid.UUID, status, msg string) (bool, error)
 	// PurgeDeliveries 删 created_at < before 的投递，每次至多 batch 行，返回删除行数。
 	PurgeDeliveries(ctx context.Context, before time.Time, batch int) (int, error)
 }

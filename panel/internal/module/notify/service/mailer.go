@@ -42,7 +42,10 @@ func (s *Service) recipientHash(address string) []byte {
 func (s *Service) SendToAddress(ctx context.Context, templateCode, address string, vars map[string]string, userID *uuid.UUID) error {
 	address = strings.TrimSpace(address)
 	if err := checkBareAddress(address); err != nil {
-		return errs.Invalid(map[string]string{"email": "邮箱格式不正确"})
+		// 不回字段错误：找回、注册的 start 对存在与不存在的账号必须同样响应，这里报错会成为判别口。
+		// 地址格式由 identity 在注册时用 ValidAddress 拒绝，走到这里只记日志、不发
+		plog.From(ctx).Warn("notify: 收件地址格式不正确，不发送", zap.String("template", templateCode))
+		return nil
 	}
 	def, ok := lookupDef(templateCode, ChannelEmail)
 	if !ok {
@@ -140,4 +143,10 @@ func (s *Service) kick(ctx context.Context) {
 		}
 		plog.From(ctx).Warn("notify: 入队投递任务失败，等周期任务补发", zap.Error(err))
 	}
+}
+
+// ValidAddress 报告 address 是否是 notify 能投递的裸邮箱地址（net/mail 严格解析，不带显示名）。
+// identity 注册、改邮箱时用它校验，保证写进库的地址都能收信。
+func ValidAddress(address string) bool {
+	return checkBareAddress(address) == nil
 }
