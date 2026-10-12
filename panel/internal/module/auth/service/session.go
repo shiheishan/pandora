@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"crypto/subtle"
+	"math"
 	"time"
 
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
@@ -306,6 +307,13 @@ func (s *Service) IssueQuickLogin(ctx context.Context) (QuickLoginLink, error) {
 	}, nil
 }
 
+const (
+	reauthLimit  = 5                // 窗口内允许的重认证口令试错次数
+	reauthWindow = 15 * time.Minute // 试错计数窗口（与改密一致）
+)
+
+func reauthFailureKey(uid uuid.UUID) string { return "rf:" + uid.String() }
+
 // Reauth 后台用当前口令刷新重认证时间并签发新 access（不换 refresh）。
 func (s *Service) Reauth(ctx context.Context, password string) (Tokens, error) {
 	p, err := principal(ctx, authn.AudienceAdmin)
@@ -316,7 +324,33 @@ func (s *Service) Reauth(ctx context.Context, password string) (Tokens, error) {
 		return Tokens{}, errs.Invalid(map[string]string{"password": "请输入当前密码"})
 	}
 
+	// 试错上限：先原子占名额再验口令，并发请求绕不过；验对后清零
+	key := reauthFailureKey(p.UserID)
+	n, ttl, err := s.sessions.claimAttempt(ctx, key, reauthWindow)
+	if err != nil {
+		return Tokens{}, errs.Wrap(errs.Unavailable, err)
+	}
+	if n > reauthLimit {
+		retry := int(math.Ceil(ttl.Seconds()))
+		if retry < 1 {
+			retry = int(reauthWindow / time.Second)
+		}
+		e := errs.Newf(errs.RateLimited, "密码错误次数过多，请稍后再试")
+		e.RetryAfterSeconds = retry
+		return Tokens{}, e
+	}
+
 	err = s.users.VerifyPassword(ctx, authn.AudienceAdmin, p.UserID, password)
+	if err == nil {
+		if cerr := s.sessions.clearFailures(ctx, key); cerr != nil {
+			plog.From(ctx).Warn("清除重认证试错计数失败", zap.Error(cerr))
+		}
+	} else if errs.As(err).Code != errs.Unauthorized {
+		// 口令校验没有结论（繁忙、故障）：退回名额
+		if rerr := s.sessions.releaseAttempt(ctx, key); rerr != nil {
+			plog.From(ctx).Warn("退回重认证试错名额失败", zap.Error(rerr))
+		}
+	}
 	if err != nil {
 		if errs.As(err).Code == errs.Unauthorized {
 			_ = s.tx.Do(ctx, func(ctx context.Context) error {

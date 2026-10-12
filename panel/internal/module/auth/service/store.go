@@ -493,6 +493,30 @@ func (st *sessionStore) clearFailures(ctx context.Context, key string) error {
 	return st.rdb.Del(ctx, key).Err()
 }
 
+// 先占名额再验：INCR 后返回累计次数与剩余期限，并发请求各占一个名额，绕不过上限。
+var claimScript = redis.NewScript(`
+local n = redis.call('INCR', KEYS[1])
+if n == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end
+return {n, redis.call('TTL', KEYS[1])}
+`)
+
+// claimAttempt 占一次试错名额，返回窗口内累计次数（含本次）与剩余期限。
+func (st *sessionStore) claimAttempt(ctx context.Context, key string, window time.Duration) (int, time.Duration, error) {
+	res, err := claimScript.Run(ctx, st.rdb, []string{key}, int64(window/time.Second)).Int64Slice()
+	if err != nil {
+		return 0, 0, err
+	}
+	if len(res) != 2 {
+		return 0, 0, fmt.Errorf("试错计数脚本返回 %d 项", len(res))
+	}
+	return int(res[0]), time.Duration(res[1]) * time.Second, nil
+}
+
+// releaseAttempt 退回一次名额（校验因故障没有结论时）。
+func (st *sessionStore) releaseAttempt(ctx context.Context, key string) error {
+	return st.rdb.Decr(ctx, key).Err()
+}
+
 // markOnce 对每个键 SET NX EX；全部是新设的才返回 true（窗口内第一次）。
 func (st *sessionStore) markOnce(ctx context.Context, ttl time.Duration, keys ...string) (bool, error) {
 	pipe := st.rdb.Pipeline()
