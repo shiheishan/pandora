@@ -280,8 +280,8 @@ identity, auth ─► settings, audit
 | 存放 | HttpOnly、Secure、SameSite=Strict 的 cookie，Path=`/v1/auth`；public 叫 `pandora_rt`，admin 叫 `pandora_admin_rt`（admin 经 nginx 的 `proxy_cookie_path` 改成带后台前缀的路径） |
 | 轮换 | `POST /v1/auth/refresh` 每次生成新值：`rt_prev ← rt_cur`、`rt_cur ← 新值`，Lua 原子完成 |
 | 宽限 | 30 秒内拿 rt_prev 来的请求（多标签页同时刷新）：只发新的 access，不轮换，也不 Set-Cookie |
-| 重放 | 超出宽限还拿旧值，或者值对不上：吊销整个会话，审计记 `session.refresh_reuse`，回 401 |
-| CSRF | cookie 只在 refresh 和 logout 两个接口上用；SameSite=Strict，再加 Go 标准库的 `http.CrossOriginProtection` 做来源检查 |
+| 重放 | 超出宽限还拿 rt_prev：吊销整个会话，审计记 `session.refresh_reuse`（记 anonymous，会话主人放资源），回 401。值既不是 rt_cur 也不是 rt_prev：只回 401，不吊销——sid 不保密（JWT 明文、审计、会话列表），按「对不上就吊销」任何拿到 sid 的人都能踢掉别人；重放的信号是用过的旧值再出现 |
+| CSRF | cookie 只在 refresh 和 logout 两个接口上读；SameSite=Strict，再加 Go 标准库的 `http.CrossOriginProtection` 做来源检查。下发 cookie 的登录、快捷登录也挂同一个来源检查（防登录 CSRF：跨站 text/plain 表单能拼出合法 JSON，把受害者浏览器登进攻击者账号） |
 | 刷新不续 rat | 新 access 沿用会话里的 amr；重认证时间只由 reauth 接口改写 |
 
 ### 8.4 吊销
@@ -302,7 +302,9 @@ identity, auth ─► settings, audit
 - public 与 admin 两个域互不相通；staff 不能登录门户；后台用户没有角色时，登录返回与口令错误相同的 401（IAM-006）；用户不存在时用 DummyVerify 对齐耗时。
 - Argon2id 参数不变，事务外计算哈希，public 与 admin 各一个并发闸。
 - 重认证窗口 15 分钟，排在幂等之前；reauth 接口改写会话里的 reauth_at（现在不写），并且按 audience 校验会话（现在不校验）。
-- 登录限流改为 Strict（Redis 故障时回 503）；同一账号 15 分钟内失败 10 次暂停 15 分钟（Q7），计数放 Redis。
+- 登录限流改为 Strict（Redis 故障时回 503）；同一账号 15 分钟内失败 10 次暂停 15 分钟（Q7），计数放 Redis，按账号跨两个域共用（`lf:{uid 或邮箱哈希}`）；先占名额再验口令（并发请求不能绕过上限），成功清零，结论不明（繁忙、内部错）退回名额。
+- 登录失败、刷新重放这类失败事件的审计记 anonymous：被撞账号放资源（user），audience 放 data，不把它记成操作者。
+- 后台空闲 2 小时：服务端按 last_seen 判断；后台页面有定时轮询，所以前端另记用户操作，2 小时无操作主动登出（服务端空闲判断兜底关掉的标签页）。
 
 ### 8.7 前端要改的
 
