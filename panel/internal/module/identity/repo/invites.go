@@ -85,7 +85,7 @@ func (r *Repo) InsertOwnerInvite(ctx context.Context, ownerID uuid.UUID, code st
 	if res.Error != nil {
 		return model.InviteCode{}, false, mapErr(res.Error)
 	}
-	return inv, res.RowsAffected == 1, nil
+	return inv, inv.ID != uuid.Nil, nil
 }
 
 // InviteeRow 是我邀请来的一个人。
