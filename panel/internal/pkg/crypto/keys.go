@@ -18,6 +18,7 @@ const (
 	InfoHMACIdentity = "pandora/hmac/identity/v1"
 	InfoHMACSubAudit = "pandora/hmac/sub-audit/v1"
 	InfoHMACNotify   = "pandora/hmac/notify/v1"
+	InfoHMACGiftCard = "pandora/hmac/giftcard/v1"
 )
 
 const minMasterLen = 32

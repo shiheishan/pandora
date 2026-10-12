@@ -135,7 +135,7 @@ nodeapi/                         buf 生成的 Go 代码，单独的 Go module�
 | ledger | ledger_accounts、ledger_transactions、ledger_entries、balance_holds | 记账、余额、冻结、调账 |
 | promo | coupons、coupon_redemptions | 优惠券 |
 | commission | commission_entries、withdrawals | 佣金计提、解冻、提现 |
-| giftcard | gift_card_templates、gift_card_codes、gift_card_redemptions、gift_card_batches | 发放调 subscription、ledger 的 service |
+| giftcard | gift_card_templates、gift_card_prizes、gift_card_template_plans、gift_card_codes、gift_card_redemptions、gift_card_batches | 发放调 subscription、ledger 的 service |
 | subscription | subscriptions、subscription_events、subscription_credentials、quota_balances、traffic_pack_grants、traffic_pack_transfers、traffic_reset_logs、subscription_usage_daily、subscription_fetch_log | 状态口径（生效、可救回、已停用）只在这里定义；节点上报的扣量调它的批量扣量方法 |
 | node | servers、nodes、node_pools、node_pool_user_groups、server_identities、bootstrap_tokens、node_configs、node_config_applications、node_outbounds、node_routes、route_groups、route_group_members、node_traffic_hourly、node_user_traffic_hourly、node_user_traffic_daily、node_metrics、node_alive_ips、node_traffic_reports、node_tasks；面板 CA | 后台编排、gRPC 会话、接入、流量入账（入账后调 subscription 扣量） |
 | certs | dns_credentials、acme_accounts、certificates、certificate_versions、certificate_orders、certificate_issuances | ACME 签发入站 TLS 证书 |
@@ -508,6 +508,7 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 | 封存（AES-256-GCM，密文头带 key id） | `pandora/seal/v1` |
 | IP、标识的 HMAC 哈希 | `pandora/hmac/ip/v1`、`pandora/hmac/identity/v1` |
 | 订阅审计盐、通知收件人盐 | `pandora/hmac/sub-audit/v1`、`pandora/hmac/notify/v1` |
+| 礼品卡卡密的 HMAC（码表只存它与掩码） | `pandora/hmac/giftcard/v1` |
 | 插件钩子签名 | 每个钩子自己的密钥（不变） |
 
 被封存的数据：渠道凭据、DNS 凭据、ACME 账户私钥、证书私钥、面板 CA 私钥、批量建用户的结果、提现收款信息。原来的 `Envelope` 没有 DEK，名不副实，改名为 `Sealer`。
