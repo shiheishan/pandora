@@ -34,9 +34,19 @@ func (f *fakeSettings) Site(ctx context.Context) (service.Site, error) {
 	return f.site, nil
 }
 
-func (f *fakeSettings) SetSite(ctx context.Context, v service.Site) error {
+func (f *fakeSettings) SetSite(ctx context.Context, u service.SiteUpdate) error {
 	if f.setSiteErr != nil {
 		return f.setSiteErr
+	}
+	v := f.site
+	if u.Name != nil {
+		v.Name = *u.Name
+	}
+	if u.Timezone != nil {
+		v.Timezone = *u.Timezone
+	}
+	if u.Currency != nil {
+		v.Currency = *u.Currency
 	}
 	f.setSiteVal = v
 	return nil
@@ -321,6 +331,7 @@ func TestAdminWritesGate(t *testing.T) {
 	e.Use(httpx.Errors(), h.AdminWritesGate())
 	h.RegisterAdmin(e.Group("/admin-x/v1"), testKit(h))
 	e.POST("/admin-x/v1/auth/login", func(c *gin.Context) { httpx.OK(c, gin.H{}) })
+	e.POST("/admin-x/v1/auth/staff", func(c *gin.Context) { httpx.OK(c, gin.H{}) })
 
 	hdrs := map[string]string{
 		"X-Test-Perm":   "platform.settings.write",
@@ -353,6 +364,12 @@ func TestAdminWritesGate(t *testing.T) {
 	rec = do(e, http.MethodPost, "/admin-x/v1/auth/login", "", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("auth login status %d", rec.Code)
+	}
+
+	// /auth/ 下没登记的写接口照样受只读模式约束
+	rec = do(e, http.MethodPost, "/admin-x/v1/auth/staff", "", nil)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("auth staff status %d", rec.Code)
 	}
 
 	fake.enabled[service.SwitchAdminWrites] = true

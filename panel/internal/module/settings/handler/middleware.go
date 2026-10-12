@@ -35,7 +35,7 @@ func (h *Handler) Switch(code string) gin.HandlerFunc {
 	}
 }
 
-// AdminWritesGate 在 admin.writes 关闭时后台只读：除 GET/HEAD/OPTIONS、切开关本身、/auth/ 下的登录与重认证、改自己密码外，一律 503。装在 admin 引擎上。
+// AdminWritesGate 在 admin.writes 关闭时后台只读：除 GET/HEAD/OPTIONS 与 adminWriteAllowlist 外一律 503。装在 admin 引擎上（按 FullPath 路由模板判断）。
 func (h *Handler) AdminWritesGate() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if adminWriteExempt(c.Request.Method, v1Path(c)) {
@@ -67,16 +67,21 @@ func v1Path(c *gin.Context) string {
 	return p
 }
 
+// adminWriteAllowlist 是只读模式下仍放行的写接口（路由模板，去掉 /v1 前缀）：
+// 登录、刷新、登出、重认证、改自己密码、切开关本身。逐条列出，新挂的写接口默认受只读模式约束。
+var adminWriteAllowlist = map[string]bool{
+	"POST /auth/login":     true,
+	"POST /auth/refresh":   true,
+	"POST /auth/logout":    true,
+	"POST /auth/reauth":    true,
+	"POST /me/password":    true,
+	"POST /switches/:code": true,
+}
+
 func adminWriteExempt(method, path string) bool {
 	switch method {
 	case "GET", "HEAD", "OPTIONS":
 		return true
 	}
-	if method == "POST" && strings.HasPrefix(path, "/switches/") {
-		return true
-	}
-	if strings.HasPrefix(path, "/auth/") || path == "/me/password" {
-		return true
-	}
-	return false
+	return adminWriteAllowlist[method+" "+path]
 }

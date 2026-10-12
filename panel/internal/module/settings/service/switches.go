@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -14,6 +15,9 @@ import (
 
 // switchTTL 是开关在进程内缓存的时长：关掉后几秒内全部生效就够。
 const switchTTL = 3 * time.Second
+
+// switchLoadTimeout 是一次读开关的上限。
+const switchLoadTimeout = 2 * time.Second
 
 // SwitchChannel 是开关变更的 Redis pub/sub 频道；收到消息的进程清空本地缓存。
 const SwitchChannel = "settings:switches"
@@ -34,8 +38,12 @@ func (s *Service) SwitchEnabled(ctx context.Context, code string) (bool, error) 
 	gen := s.swGen
 	s.swMu.Unlock()
 
-	v, err, _ := s.swGroup.Do(code, func() (any, error) {
-		sw, ok, err := s.store.GetSwitch(ctx, code)
+	// 键带上纪元：失效之后来的调用不会挂到失效前开始的那趟读库上拿旧值。
+	// 读库不跟随第一个调用者的取消，否则它被取消时同时在等的请求全部失败。
+	v, err, _ := s.swGroup.Do(code+"#"+strconv.FormatUint(gen, 10), func() (any, error) {
+		lctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), switchLoadTimeout)
+		defer cancel()
+		sw, ok, err := s.store.GetSwitch(lctx, code)
 		if err != nil {
 			return false, err
 		}

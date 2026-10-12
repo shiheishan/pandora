@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
 	"github.com/gin-gonic/gin"
 )
@@ -55,13 +56,7 @@ func (h *Handler) setSite(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	cur, err := h.svc.Site(ctx)
-	if err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	cur.Timezone = req.Timezone
-	if err := h.svc.SetSite(ctx, cur); err != nil {
+	if err := h.svc.SetSite(ctx, service.SiteUpdate{Timezone: &req.Timezone}); err != nil {
 		httpx.Fail(c, err)
 		return
 	}

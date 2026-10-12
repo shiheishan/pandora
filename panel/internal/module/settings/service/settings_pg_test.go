@@ -65,7 +65,7 @@ func TestSiteDefaultsAndRoundTrip(t *testing.T) {
 	}
 
 	want := Site{Name: "示例站", Timezone: "Asia/Shanghai", Currency: "CNY"}
-	if err := svc.SetSite(ctx, want); err != nil {
+	if err := svc.SetSite(ctx, fullSite(want)); err != nil {
 		t.Fatal(err)
 	}
 	site, err = svc.Site(ctx)
@@ -79,21 +79,43 @@ func TestSiteDefaultsAndRoundTrip(t *testing.T) {
 		t.Fatalf("audit %+v", al.entries)
 	}
 
-	if err := svc.SetSite(ctx, want); err != nil {
+	if err := svc.SetSite(ctx, fullSite(want)); err != nil {
 		t.Fatal(err)
 	}
 	if len(al.entries) != 1 {
 		t.Fatalf("same-value set should not audit, count %d", len(al.entries))
 	}
 
-	err = svc.SetSite(ctx, Site{Name: want.Name, Timezone: "Local", Currency: want.Currency})
+	err = svc.SetSite(ctx, SiteUpdate{Timezone: ptr("Local")})
 	if errs.As(err).Code != errs.ValidationFailed {
 		t.Fatalf("Local tz: %v", err)
 	}
-	err = svc.SetSite(ctx, Site{Name: want.Name, Timezone: want.Timezone, Currency: "cny"})
+	err = svc.SetSite(ctx, SiteUpdate{Currency: ptr("cny")})
 	if errs.As(err).Code != errs.ValidationFailed {
 		t.Fatalf("lowercase currency: %v", err)
 	}
+}
+
+// 只改时区不会把别人刚改的站点名写回旧值。
+func TestSetSitePartialKeepsOtherFields(t *testing.T) {
+	svc, _, ctx, _ := newPG(t)
+	if err := svc.SetSite(ctx, SiteUpdate{Name: ptr("别处改的名")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SetSite(ctx, SiteUpdate{Timezone: ptr("Asia/Tokyo")}); err != nil {
+		t.Fatal(err)
+	}
+	site, err := svc.Site(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if site.Name != "别处改的名" || site.Timezone != "Asia/Tokyo" {
+		t.Fatalf("site %+v", site)
+	}
+}
+
+func fullSite(v Site) SiteUpdate {
+	return SiteUpdate{Name: &v.Name, Timezone: &v.Timezone, Currency: &v.Currency}
 }
 
 func TestMailPasswordSealRoundTrip(t *testing.T) {
@@ -154,6 +176,17 @@ func TestMailPasswordSealRoundTrip(t *testing.T) {
 	m2, err := svc.Mail(ctx)
 	if err != nil || !m2.HasPassword || m2.Password != secret {
 		t.Fatalf("nil password keep: %+v err=%v", m2, err)
+	}
+
+	// 换服务器不给新口令：拒绝，旧口令不会被带去新服务器
+	err = svc.SetMail(ctx, MailUpdate{
+		Host:        "smtp.attacker.example.test",
+		Port:        m.Port,
+		Encryption:  m.Encryption,
+		FromAddress: m.FromAddress,
+	})
+	if e := errs.As(err); e.Code != errs.ValidationFailed || e.Fields["password"] == "" {
+		t.Fatalf("host change without password: %v", err)
 	}
 
 	empty := ""
@@ -284,3 +317,5 @@ func TestSwitchesListShape(t *testing.T) {
 		}
 	}
 }
+
+func ptr(s string) *string { return &s }

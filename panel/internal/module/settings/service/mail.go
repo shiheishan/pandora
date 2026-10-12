@@ -178,6 +178,17 @@ func (s *Service) SetMail(ctx context.Context, v MailUpdate) error {
 		}
 		changes, b, a := diff(before, after)
 
+		// 换了服务器、端口或用户名却沿用旧口令，等于把旧口令发给新服务器：要求重填或清除。
+		if v.Password == nil && (v.Host != oldHost || v.Port != oldPort || v.Username != oldUser) {
+			if stored, err := decodeOr(vals, keyMailPassword, ""); err != nil {
+				return err
+			} else if stored != "" {
+				return errs.Invalid(map[string]string{
+					"password": "改了服务器、端口或用户名，需要重新填写口令",
+				})
+			}
+		}
+
 		if v.Password != nil {
 			if *v.Password == "" {
 				if err := s.store.Delete(ctx, keyMailPassword); err != nil {

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
@@ -17,6 +18,10 @@ func (s *Service) Registration(ctx context.Context) (Registration, error) {
 	if err != nil {
 		return Registration{}, err
 	}
+	if !validRegistrationMode(mode) {
+		// 库里被手改成不认识的值：报内部错误，不让注册流程按未知模式往下走
+		return Registration{}, fmt.Errorf("设置 %s 的值 %q 不是合法的注册模式", keyRegistrationMode, mode)
+	}
 	verify, err := decodeOr(vals, keyEmailVerification, defaultEmailVerification)
 	if err != nil {
 		return Registration{}, err
@@ -26,9 +31,7 @@ func (s *Service) Registration(ctx context.Context) (Registration, error) {
 
 // SetRegistration 写入注册相关设置。
 func (s *Service) SetRegistration(ctx context.Context, v Registration) error {
-	switch v.Mode {
-	case RegistrationClosed, RegistrationInviteOnly, RegistrationOpen:
-	default:
+	if !validRegistrationMode(v.Mode) {
 		return errs.Invalid(map[string]string{
 			"registration_mode": "注册模式只能是 closed / invite_only / open",
 		})
@@ -97,4 +100,13 @@ func (s *Service) RegistrationPolicy(ctx context.Context) (Registration, error) 
 		reg.Mode = RegistrationClosed
 	}
 	return reg, nil
+}
+
+func validRegistrationMode(m string) bool {
+	switch m {
+	case RegistrationClosed, RegistrationInviteOnly, RegistrationOpen:
+		return true
+	default:
+		return false
+	}
 }

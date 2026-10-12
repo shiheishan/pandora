@@ -12,7 +12,7 @@ import (
 // Settings 是 handler 用到的 settings service 方法；*service.Service 实现它。
 type Settings interface {
 	Site(ctx context.Context) (service.Site, error)
-	SetSite(ctx context.Context, v service.Site) error
+	SetSite(ctx context.Context, u service.SiteUpdate) error
 	RegistrationPolicy(ctx context.Context) (service.Registration, error)
 	MailConfigured(ctx context.Context) (bool, error)
 	Switches(ctx context.Context) ([]service.Switch, error)
