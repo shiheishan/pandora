@@ -3,7 +3,7 @@
 //
 // 给别的模块用的写方法（Provision、Renew、Extend、ChangePlan、GrantTrafficPack、TransferPacks、ResetTraffic）
 // 都经 s.tx.Do 执行：ctx 里已有事务就加入调用方的事务，钱与订阅在同一个事务里落库。
-// 这些方法自己锁订阅行（FOR UPDATE）；调用方先锁订单、再调这里（锁序：订单 → 订阅 → 配额 → 流量包）。
+// 这些方法自己锁订阅行（FOR NO KEY UPDATE）；调用方先锁订单、再调这里（锁序：订单 → 订阅 → 配额 → 流量包）。
 //
 // 状态口径（生效、可救回、已停用）只在 state.go 定义；别的模块调 StateAt 或 SummariesByUsers，不再自己写这类 SQL。
 // 名单变化（会影响节点下发的事实）在提交后经可选的 RosterNotifier 通知（P5 由 node 注册）。
@@ -57,7 +57,7 @@ type SiteSettings interface {
 	Site(ctx context.Context) (settingssvc.Site, error)
 }
 
-// Sealer 封存订阅链接令牌的原文（AAD 绑定订阅 id）；*crypto.Sealer 直接满足。
+// Sealer 封存订阅链接令牌的原文（AAD 是 CredentialAAD：用途前缀加订阅 id）；*crypto.Sealer 直接满足。
 type Sealer interface {
 	Seal(plain, aad []byte) ([]byte, error)
 }

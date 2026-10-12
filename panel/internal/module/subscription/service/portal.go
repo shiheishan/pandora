@@ -101,22 +101,14 @@ func renewalPriceUsable(pr catalogsvc.Price, planID uuid.UUID, groupID *uuid.UUI
 	return pr.ValidUntil == nil || pr.ValidUntil.After(now)
 }
 
-// nextResetAt 取流量配额里周期起点最晚那一行的周期末。
+// nextResetAt 取第一条流量配额行（已按 sortQuotas 排好：周期起点最晚的在前）的周期末，与前端显示的那一行是同一行。
 func nextResetAt(qs []Quota) *time.Time {
-	var best *Quota
 	for i := range qs {
-		q := &qs[i]
-		if q.Metric != MetricTraffic {
-			continue
-		}
-		if best == nil || q.PeriodStart.After(best.PeriodStart) {
-			best = q
+		if qs[i].Metric == MetricTraffic {
+			return qs[i].PeriodEnd
 		}
 	}
-	if best == nil {
-		return nil
-	}
-	return best.PeriodEnd
+	return nil
 }
 
 // SetMyLabel 给本人的一份订阅起名、改名或清除名字（label 为 nil 或空白）。不论状态都能改。

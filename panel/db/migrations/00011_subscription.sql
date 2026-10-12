@@ -68,6 +68,9 @@ CREATE INDEX subscriptions_expired_open_idx ON subscriptions (current_period_end
 -- 订阅不删：子表（事件、流量包、转移、重置日志）都要能对质
 CREATE TRIGGER subscriptions_deny_delete
   BEFORE DELETE ON subscriptions FOR EACH ROW EXECUTE FUNCTION deny_delete();
+-- 行级触发器挡不住 TRUNCATE：语句级一律拒绝（测试清库用 session_replication_role = replica，不触发它）。
+CREATE TRIGGER subscriptions_deny_truncate
+  BEFORE TRUNCATE ON subscriptions FOR EACH STATEMENT EXECUTE FUNCTION deny_mutation();
 
 -- 订阅事件（只追加）：「为什么我的订阅变了」的自助解释。payload 不放钱。
 CREATE TABLE subscription_events (
@@ -176,6 +179,8 @@ CREATE INDEX traffic_pack_grants_user_idx ON traffic_pack_grants (user_id, creat
 -- 余额不删：「我买的 100G 去哪了」要能逐笔对质
 CREATE TRIGGER traffic_pack_grants_deny_delete
   BEFORE DELETE ON traffic_pack_grants FOR EACH ROW EXECUTE FUNCTION deny_delete();
+CREATE TRIGGER traffic_pack_grants_deny_truncate
+  BEFORE TRUNCATE ON traffic_pack_grants FOR EACH STATEMENT EXECUTE FUNCTION deny_mutation();
 
 -- 流量包改挂流水（只追加）：每改挂一笔一条，来源为空表示原来未分配。
 CREATE TABLE traffic_pack_transfers (
@@ -237,6 +242,7 @@ CREATE TRIGGER traffic_reset_logs_append_only
   FOR EACH STATEMENT EXECUTE FUNCTION deny_mutation();
 
 -- +goose Down
+-- 触发器（含 TRUNCATE 守卫）与索引随表删除。
 DROP TABLE IF EXISTS traffic_reset_logs;
 DROP TABLE IF EXISTS traffic_pack_transfers;
 DROP TABLE IF EXISTS traffic_pack_grants;

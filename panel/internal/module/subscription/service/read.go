@@ -11,7 +11,7 @@ import (
 	"github.com/aegispanel/aegis/internal/module/subscription/repo"
 )
 
-// Lock 在 ctx 的事务里锁住一份订阅（FOR UPDATE）并返回；owner 非 nil 时校验归属（不符回 ErrNotFound）。
+// Lock 在 ctx 的事务里锁住一份订阅（FOR NO KEY UPDATE）并返回；owner 非 nil 时校验归属（不符回 ErrNotFound）。
 // 给 order、giftcard 在同一事务里先锁订阅、再算价与记账用（锁序：订单 → 订阅）。必须在事务里调用。
 func (s *Service) Lock(ctx context.Context, id uuid.UUID, owner *uuid.UUID) (Subscription, error) {
 	m, err := s.lockOwned(ctx, id, owner)
@@ -30,7 +30,7 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID, owner *uuid.UUID) (Subs
 	return toSubscription(m), nil
 }
 
-// Quotas 读一份订阅的配额行（按 metric、period 升序；永不为 nil）。
+// Quotas 读一份订阅的配额行（按 metric 升序、周期起点倒序；永不为 nil）。
 func (s *Service) Quotas(ctx context.Context, subID uuid.UUID) ([]Quota, error) {
 	rows, err := s.repo.QuotasBySubscriptions(ctx, []uuid.UUID{subID}, false)
 	if err != nil {
@@ -81,8 +81,8 @@ func (s *Service) RenewableForPlan(ctx context.Context, userID, planID uuid.UUID
 	if err != nil {
 		return Subscription{}, false, err
 	}
-	// 锁住后复核：读和锁之间可能刚被关窗
-	if !StateAt(m.Status, m.CurrentPeriodEnd, m.RenewalClosedAt, s.clock()).AcceptsChange() {
+	// 锁住后复核：读和锁之间可能刚被关窗，或被并发的换套餐换到了别的套餐
+	if m.PlanID != planID || !StateAt(m.Status, m.CurrentPeriodEnd, m.RenewalClosedAt, s.clock()).AcceptsChange() {
 		return Subscription{}, false, nil
 	}
 	return toSubscription(m), true, nil

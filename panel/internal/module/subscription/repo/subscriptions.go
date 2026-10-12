@@ -2,18 +2,24 @@ package repo
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 
 	"github.com/aegispanel/aegis/internal/module/subscription/model"
+	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
 // now 返回写库用的当前时刻（UTC、截到微秒）。
 func now() time.Time { return time.Now().UTC().Truncate(time.Microsecond) }
 
-// CreateSubscription 插入一份订阅，并回填库里生成的列（id、proxy_uuid、node_uid、时间戳）。
+// CreateSubscription 插入一份订阅（金额先过 money.Check），并回填库里生成的列（id、proxy_uuid、node_uid、时间戳）。
 func (r *Repo) CreateSubscription(ctx context.Context, s *model.Subscription) error {
+	if err := money.Check(s.SnapshotAmount); err != nil {
+		return err
+	}
 	conn := r.d.Conn(ctx)
 	if err := conn.Create(s).Error; err != nil {
 		return mapErr(err)
@@ -63,8 +69,17 @@ func (r *Repo) SubscriptionsByUserPlan(ctx context.Context, userID, planID uuid.
 	return out, mapErr(err)
 }
 
-// UpdateSubscription 带旧状态条件更新订阅的若干列；返回是否恰好改到一行。
+// UpdateSubscription 带旧状态条件更新订阅的若干列（含 snapshot_amount 时先过 money.Check）；返回是否恰好改到一行。
 func (r *Repo) UpdateSubscription(ctx context.Context, id uuid.UUID, fromStatus string, cols map[string]any) (bool, error) {
+	if v, ok := cols["snapshot_amount"]; ok {
+		d, isDec := v.(decimal.Decimal)
+		if !isDec {
+			return false, fmt.Errorf("subscription: snapshot_amount 必须是 decimal.Decimal，得到 %T", v)
+		}
+		if err := money.Check(d); err != nil {
+			return false, err
+		}
+	}
 	cols["updated_at"] = now()
 	res := r.d.Conn(ctx).Model(&model.Subscription{}).
 		Where("id = ? AND status = ?", id, fromStatus).Updates(cols)

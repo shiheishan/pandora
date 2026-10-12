@@ -33,15 +33,9 @@ func TestPacksPG(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 唯一冲突会让事务失效：在保存点里试，试完回滚到保存点
-	if err := e.rawExec(ctx, "SAVEPOINT dup"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := e.svc.GrantTrafficPack(ctx, PackGrant{UserID: user, SubscriptionID: &live.ID, Source: PackSourceOrder, SourceID: src, Bytes: gib}); errs.As(err).Code != errs.Conflict {
+	// 重复发放先查后插：回 ErrPackDuplicate，事务仍可用（后面的语句照常执行）
+	if _, err := e.svc.GrantTrafficPack(ctx, PackGrant{UserID: user, SubscriptionID: &live.ID, Source: PackSourceOrder, SourceID: src, Bytes: gib}); !errors.Is(err, ErrPackDuplicate) {
 		t.Fatalf("重复发放: %v", err)
-	}
-	if err := e.rawExec(ctx, "ROLLBACK TO SAVEPOINT dup"); err != nil {
-		t.Fatal(err)
 	}
 	e.exec(t, ctx, `UPDATE traffic_pack_grants SET consumed_bytes = ? WHERE id = ?`, 4*gib, g.ID)
 
@@ -101,6 +95,24 @@ func TestPacksPG(t *testing.T) {
 	}
 	if _, err := e.svc.AdminGrantTraffic(userCtx(ctx, user), live.ID, gib, "补偿线路故障"); errs.As(err).Code != errs.Forbidden {
 		t.Fatalf("门户主体调后台: %v", err)
+	}
+	// 后台一次最多 10 TiB；通用入口最多 1 PiB
+	if _, err := e.svc.AdminGrantTraffic(adminCtx(ctx, admin), live.ID, 11<<40, "补偿线路故障"); errs.As(err).Code != errs.ValidationFailed {
+		t.Fatalf("后台超 10 TiB: %v", err)
+	}
+	if _, err := e.svc.GrantTrafficPack(ctx, PackGrant{UserID: user, SubscriptionID: &live.ID, Source: PackSourceOrder, SourceID: uuid.New(), Bytes: 1<<50 + 1}); errs.As(err).Code != errs.ValidationFailed {
+		t.Fatalf("超 1 PiB: %v", err)
+	}
+	// 来源是订单：钱已收、包不过期，挂到已停用的那份上也照发（只校验归属）；礼品卡仍要求生效中
+	big, err := e.svc.GrantTrafficPack(ctx, PackGrant{UserID: user, SubscriptionID: &old.ID, Source: PackSourceOrder, SourceID: uuid.New(), Bytes: 20 << 40})
+	if err != nil || big.SubscriptionID == nil || *big.SubscriptionID != old.ID {
+		t.Fatalf("订单流量包挂到停用的: %+v %v", big, err)
+	}
+	if _, err := e.svc.GrantTrafficPack(ctx, PackGrant{UserID: user, SubscriptionID: &old.ID, Source: PackSourceGiftCard, SourceID: uuid.New(), Bytes: gib}); !errors.Is(err, ErrPackNeedsLive) {
+		t.Fatalf("礼品卡挂到停用的: %v", err)
+	}
+	if _, err := e.svc.GrantTrafficPack(ctx, PackGrant{UserID: other, SubscriptionID: &old.ID, Source: PackSourceOrder, SourceID: uuid.New(), Bytes: gib}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("订单流量包挂到别人的: %v", err)
 	}
 }
 
@@ -261,26 +273,110 @@ func TestAppendOnlyGuardsPG(t *testing.T) {
 	user := newUser(t, e, setup)
 	planID, versionID := newPlan(t, e, setup, quotaSpec{MetricTraffic, PeriodCycle, i64(gib)})
 	sub := provision(t, e, setup, user, planID, versionID, "")
-	if _, err := e.svc.GrantTrafficPack(setup, PackGrant{UserID: user, SubscriptionID: &sub.ID, Source: PackSourceAdmin, SourceID: uuid.New(), Bytes: 1}); err != nil {
+	gone := provision(t, e, setup, user, planID, versionID, "")
+	if _, err := e.svc.GrantTrafficPack(setup, PackGrant{UserID: user, SubscriptionID: &gone.ID, Source: PackSourceAdmin, SourceID: uuid.New(), Bytes: 1}); err != nil {
 		t.Fatal(err)
 	}
-	for _, q := range []string{
-		`UPDATE subscription_events SET payload = '{}'::jsonb WHERE subscription_id = ?`,
-		`DELETE FROM subscription_events WHERE subscription_id = ?`,
-		`DELETE FROM subscriptions WHERE id = ?`,
-		`DELETE FROM traffic_pack_grants WHERE subscription_id = ?`,
-	} {
-		// 每条在自己的保存点里试：违例会让外层事务失效
+	endSub(t, e, setup, gone.ID)
+	// 造一条转移流水与一条重置日志
+	if n, err := e.svc.TransferPacks(setup, Transfer{UserID: user, From: &gone.ID, To: sub.ID, Actor: Actor{Kind: ActorSystem}}); err != nil || n != 1 {
+		t.Fatalf("转移: %d %v", n, err)
+	}
+	if _, err := e.svc.ResetTraffic(setup, TrafficReset{SubscriptionID: sub.ID, Reason: ResetGiftCard}); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		q    string
+		args []any
+	}{
+		{`UPDATE subscription_events SET payload = '{}'::jsonb WHERE subscription_id = ?`, []any{sub.ID}},
+		{`DELETE FROM subscription_events WHERE subscription_id = ?`, []any{sub.ID}},
+		{`TRUNCATE subscription_events`, nil},
+		{`UPDATE traffic_pack_transfers SET remaining_bytes = 0 WHERE to_subscription_id = ?`, []any{sub.ID}},
+		{`DELETE FROM traffic_pack_transfers WHERE to_subscription_id = ?`, []any{sub.ID}},
+		{`TRUNCATE traffic_pack_transfers`, nil},
+		{`UPDATE traffic_reset_logs SET consumed_before = 0 WHERE subscription_id = ?`, []any{sub.ID}},
+		{`DELETE FROM traffic_reset_logs WHERE subscription_id = ?`, []any{sub.ID}},
+		{`TRUNCATE traffic_reset_logs`, nil},
+		{`DELETE FROM subscriptions WHERE id = ?`, []any{sub.ID}},
+		// 被外键引用的表不带 CASCADE 会先报 0A000；带上 CASCADE 才走到 TRUNCATE 守卫
+		{`TRUNCATE subscriptions CASCADE`, nil},
+		{`DELETE FROM traffic_pack_grants WHERE subscription_id = ?`, []any{sub.ID}},
+		{`TRUNCATE traffic_pack_grants CASCADE`, nil},
+	}
+	for _, c := range cases {
+		// 每条在自己的保存点里试：违例会让外层事务失效；回滚到保存点也释放 TRUNCATE 拿的锁
 		if err := e.rawExec(setup, "SAVEPOINT guard"); err != nil {
 			t.Fatal(err)
 		}
-		err := e.rawExec(setup, q, sub.ID)
-		if err == nil || !strings.Contains(err.Error(), "23001") && !strings.Contains(strings.ToLower(err.Error()), "restrict") {
-			t.Fatalf("%s 应被拒: %v", q, err)
+		err := e.rawExec(setup, c.q, c.args...)
+		if err == nil || !strings.Contains(err.Error(), "SQLSTATE 23001") {
+			t.Fatalf("%s 应被 23001 拒绝: %v", c.q, err)
 		}
 		if err := e.rawExec(setup, "ROLLBACK TO SAVEPOINT guard"); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+// TestRenewableForPlanRecheckPG 用真实提交：A 在事务里把那一份换成别的套餐并持锁，B 按原套餐找可续的那份，
+// 读到旧套餐后等锁；A 提交后 B 复核到套餐已变，返回没有可续的。B 读得晚了（直接读到新套餐）结果也一样。
+func TestRenewableForPlanRecheckPG(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	user := newUser(t, e, ctx)
+	planA, versionA := newPlan(t, e, ctx, quotaSpec{MetricTraffic, PeriodCycle, i64(gib)})
+	planB, versionB := newPlan(t, e, ctx, quotaSpec{MetricTraffic, PeriodCycle, i64(2 * gib)})
+	sub := provision(t, e, ctx, user, planA, versionA, "")
+
+	locked, release := make(chan struct{}), make(chan struct{})
+	errA := make(chan error, 1)
+	go func() {
+		errA <- e.svc.tx.Do(ctx, func(ctx context.Context) error {
+			orderID := uuid.New()
+			if _, err := e.svc.ChangePlan(ctx, PlanChange{
+				SubscriptionID: sub.ID, UserID: user, PlanID: planB, PlanVersionID: versionB,
+				Price: monthly(), OrderID: &orderID, Actor: Actor{Kind: ActorPayment},
+			}); err != nil {
+				return err
+			}
+			close(locked)
+			<-release
+			return nil
+		})
+	}()
+	select {
+	case <-locked:
+	case err := <-errA:
+		t.Fatalf("换套餐: %v", err)
+	}
+	type result struct {
+		sub Subscription
+		ok  bool
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		var r result
+		r.err = e.svc.tx.Do(ctx, func(ctx context.Context) error {
+			var err error
+			r.sub, r.ok, err = e.svc.RenewableForPlan(ctx, user, planA, true)
+			return err
+		})
+		done <- r
+	}()
+	time.Sleep(200 * time.Millisecond) // 让 B 先读到旧套餐、卡在行锁上
+	close(release)
+	if err := <-errA; err != nil {
+		t.Fatal(err)
+	}
+	r := <-done
+	if r.err != nil || r.ok {
+		t.Fatalf("套餐已变仍当成可续: %+v", r)
+	}
+	// 按新套餐找得到
+	if got, ok, err := e.svc.RenewableForPlan(ctx, user, planB, false); err != nil || !ok || got.ID != sub.ID {
+		t.Fatalf("新套餐: %v %v %v", got.ID, ok, err)
 	}
 }
 

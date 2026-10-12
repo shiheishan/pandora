@@ -24,6 +24,8 @@ const rescueResetNote = "救回已过期订阅，日 / 月配额从今天重新�
 // 救回（已过期或已走过到期日）：状态回到 active；cycle 配额按「延长天数 ÷ 一个计费周期」折算加进上限；
 // 走过到期日的，日、月配额从现在重新起算并写重置日志（礼品卡记 gift_card，后台记 manual 带操作人）。
 // 已停用回 ErrExtendWindowClosed。在 ctx 的事务里执行，自己锁订阅行；提交后通知名单变化。
+// 不按来源防重：同一张卡或同一次后台操作调两次就延两次。防重靠调用方——卡密兑换的唯一约束，
+// 或后台入口的幂等键——卡密那种要在同一事务里先于这里完成。
 func (s *Service) Extend(ctx context.Context, in Extension) (ExtensionResult, error) {
 	if in.Days < 1 || in.Days > maxExtendDays {
 		return ExtensionResult{}, errs.Invalid(map[string]string{"days": "天数须在 1 到 3650 之间"})

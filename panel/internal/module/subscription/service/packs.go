@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"errors"
 	"sort"
 
 	"github.com/google/uuid"
@@ -12,12 +13,23 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
 
-// maxPackBytes 是一笔流量包的上限（10 TiB），与后台加流量的校验一致。
-const maxPackBytes int64 = 10 << 40
+// maxPackBytes 是一笔流量包的上限（1 PiB），与 catalog 流量包的上限一致；后台加流量另有 10 TiB 的上限（admin.go）。
+const maxPackBytes int64 = 1 << 50
 
-// GrantTrafficPack 发一笔流量包余额。SubscriptionID 非 nil 时这一份必须属于该用户且生效中（否则 ErrPackNeedsLive）；
-// 为 nil 时留作未分配（无订阅时兑换的送流量卡），下次开通唯一一份生效订阅时自动挂上。
-// (Source, SourceID) 唯一，重复发放回 409。在 ctx 的事务里执行；挂到订阅上的提交后通知名单变化。
+// GrantTrafficPack 发一笔流量包余额，是 order、giftcard、后台共用的发放入口。
+//
+// 挂到订阅上（SubscriptionID 非 nil）时，订阅必须属于该用户（否则 ErrNotFound）；是否要求生效中按来源分：
+//
+//	PackSourceOrder      只校验归属，不校验是否生效：钱已经收了、包不过期，付款窗口里订阅刚好到期也照发，
+//	                     续费后照样能用，停用后也能转走（与旧的流量包订单履约一致）。下单前用 CheckPackTarget 拦
+//	PackSourceGiftCard、PackSourceAdmin  必须生效中，否则 ErrPackNeedsLive
+//
+// SubscriptionID 为 nil 时留作未分配（无订阅时兑换的送流量卡），下次开通唯一一份生效订阅时自动挂上。
+//
+// 防重：(Source, SourceID) 唯一。这里先查再插，已发过回 ErrPackDuplicate（409），调用方事务仍可用，
+// 可以当作重放处理；并发的两笔同来源发放由调用方先锁订单或卡密串行，万一撞上库里的唯一约束，
+// 返回同样的 409，但那时调用方事务已作废，只能整体回滚。
+// 在 ctx 的事务里执行；挂到订阅上的提交后通知名单变化。
 func (s *Service) GrantTrafficPack(ctx context.Context, in PackGrant) (Pack, error) {
 	if in.UserID == uuid.Nil || in.SourceID == uuid.Nil {
 		return Pack{}, errs.Wrap(errs.Internal, errMissing("UserID / SourceID"))
@@ -28,18 +40,25 @@ func (s *Service) GrantTrafficPack(ctx context.Context, in PackGrant) (Pack, err
 		return Pack{}, errs.Wrap(errs.Internal, errMissing("Source"))
 	}
 	if in.Bytes < 1 || in.Bytes > maxPackBytes {
-		return Pack{}, errs.Invalid(map[string]string{"bytes": "流量须在 1 字节到 10 TiB 之间"})
+		return Pack{}, errs.Invalid(map[string]string{"bytes": "流量须在 1 字节到 1 PiB 之间"})
 	}
 	var out Pack
 	err := s.tx.Do(ctx, func(ctx context.Context) error {
 		if in.SubscriptionID != nil {
-			m, err := s.loadSub(ctx, *in.SubscriptionID, &in.UserID, repo.ForUpdate)
+			m, err := s.loadSub(ctx, *in.SubscriptionID, &in.UserID, repo.ForNoKeyUpdate)
 			if err != nil {
 				return err
 			}
-			if StateAt(m.Status, m.CurrentPeriodEnd, m.RenewalClosedAt, s.clock()) != StateLive {
+			if in.Source != PackSourceOrder && StateAt(m.Status, m.CurrentPeriodEnd, m.RenewalClosedAt, s.clock()) != StateLive {
 				return ErrPackNeedsLive
 			}
+		}
+		dup, err := s.repo.PackGrantExists(ctx, in.Source, in.SourceID)
+		if err != nil {
+			return subErr(err)
+		}
+		if dup {
+			return ErrPackDuplicate
 		}
 		g := model.PackGrant{
 			UserID:         in.UserID,
@@ -49,6 +68,9 @@ func (s *Service) GrantTrafficPack(ctx context.Context, in PackGrant) (Pack, err
 			GrantedBytes:   in.Bytes,
 		}
 		if err := s.repo.InsertPackGrant(ctx, &g); err != nil {
+			if errors.Is(err, repo.ErrDuplicate) {
+				return ErrPackDuplicate
+			}
 			return subErr(err)
 		}
 		if in.SubscriptionID != nil {

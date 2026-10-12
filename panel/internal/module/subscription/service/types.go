@@ -89,6 +89,8 @@ var (
 	ErrExtendWindowClosed = errs.Newf(errs.Conflict, "这条订阅已过期超过 30 天，不能再延长，只能重新购买（会换新的订阅链接）")
 	// ErrPackNeedsLive 是流量包要加到的那一份不在生效中。
 	ErrPackNeedsLive = errs.Newf(errs.Conflict, "流量包只能加到在用的套餐上，先续费或买个套餐")
+	// ErrPackDuplicate 是同一来源（Source, SourceID）的流量包已经发过。
+	ErrPackDuplicate = errs.Newf(errs.Conflict, "这笔流量包已经发放过")
 	// ErrTransferTarget 是流量包转移的目标已停用。
 	ErrTransferTarget = errs.Newf(errs.Conflict, "只能转到一份还在用（或过期不满 30 天）的套餐上")
 	// ErrTransferSource 是流量包转移的来源还在用（生效中或可救回）。
@@ -161,7 +163,7 @@ type Summary struct {
 	PlanVersion        int
 	PlanMaxDevices     *int
 	QuotaResetStrategy string
-	// Quotas 按 metric、period 升序；永不为 nil
+	// Quotas 按 metric 升序、同一指标内周期起点倒序（与旧接口一致）；永不为 nil
 	Quotas []Quota
 	// PackRemainingBytes 是挂在这一份上的流量包余量
 	PackRemainingBytes int64
@@ -191,8 +193,6 @@ type Provision struct {
 	Label string
 	// Actor 写进 activated 事件（订单结算 payment，礼品卡 user，后台 admin）
 	Actor Actor
-	// At 是周期起点（订单付款时刻）；零值取当前时刻
-	At time.Time
 }
 
 // Renewal 是在原订阅上续一期的输入（续费订单、同套餐的套餐卡）。版本沿用订阅自己的，不换。
@@ -260,8 +260,6 @@ type PlanChange struct {
 	OrderID    *uuid.UUID
 	GiftCodeID *uuid.UUID
 	Actor      Actor
-	// At 是新周期起点；零值取当前时刻
-	At time.Time
 }
 
 // PlanChangeResult 是一次换套餐的结果。

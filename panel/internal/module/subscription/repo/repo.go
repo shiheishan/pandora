@@ -24,7 +24,9 @@ type Lock int
 const (
 	NoLock Lock = iota
 	ForKeyShare
-	ForUpdate
+	// ForNoKeyUpdate 是改订阅行前加的锁：与 UPDATE（不改主键）默认的强度相同，
+	// 不挡别的事务往子表插行时外键检查要的 FOR KEY SHARE，免得与节点扣量等「先锁配额、再插子表行」的路径成环。
+	ForNoKeyUpdate
 )
 
 // suffix 返回追加在 SELECT 末尾的锁子句。
@@ -32,8 +34,8 @@ func (l Lock) suffix() string {
 	switch l {
 	case ForKeyShare:
 		return " FOR KEY SHARE"
-	case ForUpdate:
-		return " FOR UPDATE"
+	case ForNoKeyUpdate:
+		return " FOR NO KEY UPDATE"
 	}
 	return ""
 }

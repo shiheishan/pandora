@@ -38,7 +38,7 @@ func NormalizeLabel(s string) (string, error) {
 		return "", errs.Invalid(map[string]string{"label": msgLabelTooLong})
 	}
 	for _, r := range s {
-		if unicode.IsControl(r) || (unicode.Is(unicode.Cf, r) && r != '‍') || r == ' ' || r == ' ' {
+		if unicode.IsControl(r) || (unicode.Is(unicode.Cf, r) && r != '\u200d') || r == '\u2028' || r == '\u2029' {
 			return "", errs.Invalid(map[string]string{"label": msgLabelInvalid})
 		}
 	}

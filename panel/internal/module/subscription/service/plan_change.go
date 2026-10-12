@@ -10,10 +10,12 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
 
-// ChangePlan 把原订阅原地换成另一个套餐（换套餐订单、套餐卡遇到不同套餐）：周期从 At 起按新价格档重开一整期，
+// ChangePlan 把原订阅原地换成另一个套餐（换套餐订单、套餐卡遇到不同套餐）：周期从现在起按新价格档重开一整期，
 // 全部配额行按新版本重置（新版本没有的指标上限置空即不限，多出来的指标补行），写 plan_change 重置日志与
 // plan_changed 事件。凭据不换（链接不变）；流量包不碰。剩余价值与退余额由调用方算并记账。
 // 已停用回 ErrRenewalWindowClosed。在 ctx 的事务里执行，自己锁订阅行；提交后通知名单变化。
+// 不按来源防重：同一笔订单或卡密调两次就换两次。防重靠调用方——订单的状态转换（paid → fulfilled，带旧状态条件）
+// 或卡密兑换的唯一约束——且要在同一事务里先于这里完成。
 func (s *Service) ChangePlan(ctx context.Context, in PlanChange) (PlanChangeResult, error) {
 	if err := validatePrice(in.Price); err != nil {
 		return PlanChangeResult{}, err
@@ -39,9 +41,6 @@ func (s *Service) ChangePlan(ctx context.Context, in PlanChange) (PlanChangeResu
 			return ErrRenewalWindowClosed
 		}
 		start := now
-		if !in.At.IsZero() {
-			start = in.At.UTC().Truncate(time.Microsecond)
-		}
 		end := AddInterval(start, in.Price.Interval, in.Price.IntervalCount).Truncate(time.Microsecond)
 		// 换套餐不沿用原价格档：新价格档为空（套餐卡）时 price_id 置空
 		cols := snapshotCols(in.Price, nil)

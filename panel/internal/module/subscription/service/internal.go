@@ -62,11 +62,15 @@ func toQuota(m model.QuotaBalance) Quota {
 	}
 }
 
-// sortQuotas 按 metric、period 升序排（原地）。
+// sortQuotas 按 metric 升序、同一指标内 period_start 倒序排（原地），与旧接口一致：
+// 前端取第一条 traffic.bytes 显示，门户的 next_reset_at 也取同一条（nextResetAt）。起点相同时按 period 升序，保证稳定。
 func sortQuotas(qs []Quota) {
-	sort.Slice(qs, func(i, j int) bool {
+	sort.SliceStable(qs, func(i, j int) bool {
 		if qs[i].Metric != qs[j].Metric {
 			return qs[i].Metric < qs[j].Metric
+		}
+		if !qs[i].PeriodStart.Equal(qs[j].PeriodStart) {
+			return qs[i].PeriodStart.After(qs[j].PeriodStart)
 		}
 		return qs[i].Period < qs[j].Period
 	})
@@ -142,9 +146,9 @@ func (s *Service) loadSub(ctx context.Context, id uuid.UUID, owner *uuid.UUID, l
 	return m, nil
 }
 
-// lockOwned 在 ctx 的事务里锁住一份订阅（FOR UPDATE）。
+// lockOwned 在 ctx 的事务里锁住一份订阅（FOR NO KEY UPDATE）。
 func (s *Service) lockOwned(ctx context.Context, id uuid.UUID, owner *uuid.UUID) (model.Subscription, error) {
-	return s.loadSub(ctx, id, owner, repo.ForUpdate)
+	return s.loadSub(ctx, id, owner, repo.ForNoKeyUpdate)
 }
 
 // versionFor 取开通、换套餐用的版本：必须存在、属于 planID、已发布。
@@ -215,7 +219,11 @@ func (s *Service) logResets(ctx context.Context, sub model.Subscription, before 
 // tokenBytes 是订阅链接令牌的熵（字节）。
 const tokenBytes = 32
 
-// issueCredential 给订阅签发一条订阅链接凭据：库里存令牌的 SHA-256 与封存后的原文（AAD 绑定订阅 id）。
+// CredentialAAD 是封存订阅链接令牌用的附加数据：用途前缀加订阅 id。封存器的密钥被多处共用，
+// 前缀把订阅凭据与别的密文隔开；P4 解封时用同一个函数。
+func CredentialAAD(subID uuid.UUID) []byte { return []byte("sub-credential:" + subID.String()) }
+
+// issueCredential 给订阅签发一条订阅链接凭据：库里存令牌的 SHA-256 与封存后的原文（AAD 见 CredentialAAD）。
 // 令牌原文不返回、不进日志；轮换与渲染归 P4。
 func (s *Service) issueCredential(ctx context.Context, sub model.Subscription) error {
 	if s.sealer == nil {
@@ -227,7 +235,7 @@ func (s *Service) issueCredential(ctx context.Context, sub model.Subscription) e
 	}
 	token := base64.RawURLEncoding.EncodeToString(b)
 	sum := sha256.Sum256([]byte(token))
-	sealed, err := s.sealer.Seal([]byte(token), []byte(sub.ID.String()))
+	sealed, err := s.sealer.Seal([]byte(token), CredentialAAD(sub.ID))
 	if err != nil {
 		return errs.Wrap(errs.Internal, fmt.Errorf("subscription: 封存令牌: %w", err))
 	}

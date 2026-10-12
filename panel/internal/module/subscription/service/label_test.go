@@ -13,8 +13,8 @@ func TestNormalizeLabel(t *testing.T) {
 		"":            "",
 		"   ":         "",
 		"一二三四五六七八九十一二三四五六": "一二三四五六七八九十一二三四五六",
-		"👨‍👩‍👧":  "👨‍👩‍👧",
-		"Work 2": "Work 2",
+		"👨\u200d👩\u200d👧":  "👨\u200d👩\u200d👧",
+		"Work 2":           "Work 2",
 	}
 	for in, want := range ok {
 		got, err := NormalizeLabel(in)
@@ -28,7 +28,7 @@ func TestNormalizeLabel(t *testing.T) {
 		"a\tb",
 		"a\x00b",
 		"a\u202eb", // 从右到左覆盖：能伪造文件名
-		"a b",
+		"a\u2028b",
 		"a\xffb",
 	}
 	for _, in := range bad {

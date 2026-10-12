@@ -13,6 +13,8 @@ const (
 	minReasonRunes = 5
 	maxReasonRunes = 500
 	maxDeviceLimit = 1000
+	// maxAdminGrantBytes 是后台一次加流量的上限（10 TiB），只管后台入口；通用发放入口的上限见 maxPackBytes。
+	maxAdminGrantBytes int64 = 10 << 40
 )
 
 // AdminExtend 是后台给一份订阅加时长（可救回过期 30 天内的），写审计。
@@ -64,6 +66,9 @@ func (s *Service) AdminExtend(ctx context.Context, subID uuid.UUID, days int, re
 func (s *Service) AdminGrantTraffic(ctx context.Context, subID uuid.UUID, bytes int64, reason string) (AdminTrafficGrantResult, error) {
 	if _, err := adminPrincipal(ctx); err != nil {
 		return AdminTrafficGrantResult{}, err
+	}
+	if bytes < 1 || bytes > maxAdminGrantBytes {
+		return AdminTrafficGrantResult{}, errs.Invalid(map[string]string{"bytes": "流量须在 1 字节到 10 TiB 之间"})
 	}
 	reason, err := cleanText(reason, minReasonRunes, maxReasonRunes, "reason", "请写清原因，5 到 500 个字")
 	if err != nil {
@@ -128,6 +133,10 @@ func (s *Service) AdminResetTraffic(ctx context.Context, subID uuid.UUID, note s
 	actorID := p.UserID
 	var freed int64
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
+		m, err := s.lockOwned(ctx, subID, nil)
+		if err != nil {
+			return err
+		}
 		n, err := s.ResetTraffic(ctx, TrafficReset{
 			SubscriptionID: subID,
 			Reason:         ResetManual,
@@ -139,6 +148,7 @@ func (s *Service) AdminResetTraffic(ctx context.Context, subID uuid.UUID, note s
 		}
 		freed = n
 		return s.writeAudit(ctx, ActionManualReset, subID, map[string]any{
+			"user_id":     m.UserID,
 			"freed_bytes": n,
 			"note":        note,
 		})

@@ -19,6 +19,8 @@ import (
 //
 // 已停用（续费窗口关了）回 ErrRenewalWindowClosed。凭据不动（链接不变）；流量包不碰。
 // 在 ctx 的事务里执行（没有就自己开），自己锁订阅行；提交后通知名单变化。
+// 不按来源防重：同一笔订单或卡密调两次就续两次。防重靠调用方——订单的状态转换（paid → fulfilled，带旧状态条件）
+// 或卡密兑换的唯一约束——且要在同一事务里先于这里完成。
 func (s *Service) Renew(ctx context.Context, in Renewal) (RenewalResult, error) {
 	if err := validatePrice(in.Price); err != nil {
 		return RenewalResult{}, err

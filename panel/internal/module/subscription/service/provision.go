@@ -14,7 +14,7 @@ import (
 // maxLabelTries 是开通时给备注名加序号去重的最多次数；试满仍撞名就不起名。
 const maxLabelTries = 20
 
-// Provision 开通一份新订阅：建 active 订阅（周期从 At 起一整期）、按套餐版本建配额行、起备注名、
+// Provision 开通一份新订阅：建 active 订阅（周期从现在起一整期，与旧代码一致；不取付款时刻，免得晚到的付款开出一份已过半的订阅）、按套餐版本建配额行、起备注名、
 // 签发订阅链接凭据、写 activated 事件；用户只有这一份生效中的订阅时，把他未分配的流量包挂上来。
 // 在 ctx 的事务里执行（没有就自己开）；提交后通知名单变化。
 func (s *Service) Provision(ctx context.Context, in Provision) (Subscription, error) {
@@ -38,9 +38,6 @@ func (s *Service) Provision(ctx context.Context, in Provision) (Subscription, er
 	var out Subscription
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
 		start := s.clock()
-		if !in.At.IsZero() {
-			start = in.At.UTC().Truncate(time.Microsecond)
-		}
 		end := AddInterval(start, in.Price.Interval, in.Price.IntervalCount).Truncate(time.Microsecond)
 		m := model.Subscription{
 			UserID:                in.UserID,

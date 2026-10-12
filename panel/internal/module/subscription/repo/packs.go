@@ -14,6 +14,13 @@ func (r *Repo) InsertPackGrant(ctx context.Context, g *model.PackGrant) error {
 	return mapErr(r.d.Conn(ctx).Create(g).Error)
 }
 
+// PackGrantExists 判断某个来源是否已经发过流量包（(source, source_id) 唯一）。
+func (r *Repo) PackGrantExists(ctx context.Context, source string, sourceID uuid.UUID) (bool, error) {
+	var n int64
+	err := r.d.Conn(ctx).Model(&model.PackGrant{}).Where("source = ? AND source_id = ?", source, sourceID).Count(&n).Error
+	return n > 0, mapErr(err)
+}
+
 // PackGrantsByUser 读用户最近的流量包（含已用完的），创建时间倒序。
 func (r *Repo) PackGrantsByUser(ctx context.Context, userID uuid.UUID, limit int) ([]model.PackGrant, error) {
 	var out []model.PackGrant

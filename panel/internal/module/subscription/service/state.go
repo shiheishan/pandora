@@ -35,6 +35,8 @@ func (s Subscription) StateAt(now time.Time) State {
 }
 
 // transitions 是 status 列的转换表：active→active 续期，expired→active 续费或延期救回，active→expired 到期扫描。
+// 没有 expired→expired：P4 关窗只写 renewal_closed_at、状态不变，直接走 repo.UpdateSubscription(from=expired)，
+// 不经 transition()，也不要为它在这里加一条 expired→expired。
 var transitions = map[string][]string{
 	StatusActive:  {StatusActive, StatusExpired},
 	StatusExpired: {StatusActive},
