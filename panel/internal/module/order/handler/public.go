@@ -96,6 +96,52 @@ func (h *Handler) createRenewal(c *gin.Context) {
 	writeCreated(c, created)
 }
 
+// createPlanChange 门户换套餐：换哪一份由路径给出，plan_id 与 price_id 必填；金额与 as_of、expect 来自 action=change 的报价。
+func (h *Handler) createPlanChange(c *gin.Context) {
+	subID, ok := pathID(c)
+	if !ok {
+		return
+	}
+	var req createPlanChangeRequest
+	if err := httpx.BindJSON(c, &req); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	fields := map[string]string{}
+	if strings.TrimSpace(req.PlanID) == "" {
+		fields["plan_id"] = "必填"
+	}
+	if strings.TrimSpace(req.PriceID) == "" {
+		fields["price_id"] = "必填"
+	}
+	if len(fields) > 0 {
+		httpx.Fail(c, errs.Invalid(fields))
+		return
+	}
+	planID, err := parseID("plan_id", req.PlanID)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	priceID, err := parseID("price_id", req.PriceID)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	created, err := h.svc.CreatePlanChangeOrder(c.Request.Context(), service.PlanChangeOrderInput{
+		SubscriptionID: subID,
+		PlanID:         planID,
+		PriceID:        priceID,
+		Checkout:       req.checkout(),
+		Reply:          createdReply,
+	})
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	writeCreated(c, created)
+}
+
 // createPackOrder 门户流量包下单：必须选加到哪一份。
 func (h *Handler) createPackOrder(c *gin.Context) {
 	var req createPackOrderRequest

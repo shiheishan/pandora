@@ -167,7 +167,7 @@ func TestReplyStatus(t *testing.T) {
 	}
 }
 
-// 报价：金额是分；credit_detail 恒 null；券为空时 coupon / coupon_error 都是 null；有券时 coupon 是对象。
+// 报价：金额是分；没有剩余价值明细时 credit_detail 为 null；券为空时 coupon / coupon_error 都是 null；有券时 coupon 是对象。
 func TestQuoteShape(t *testing.T) {
 	planID, priceID := uuid.New(), uuid.New()
 	start := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)

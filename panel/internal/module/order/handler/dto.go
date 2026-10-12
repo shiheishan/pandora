@@ -163,16 +163,26 @@ type createTopupRequest struct {
 	Currency string `json:"currency"`
 }
 
-// orderCreatedResponse 是三种建单的 201 响应（旧 billing.CreateOrderOutput）。
+// createPlanChangeRequest 是 POST /me/subscriptions/:id/change-plan：换成 plan_id 的 price_id 档。
+type createPlanChangeRequest struct {
+	PlanID  string `json:"plan_id"`
+	PriceID string `json:"price_id"`
+	checkoutReq
+}
+
+// orderCreatedResponse 是建单的 201 响应（旧 billing.CreateOrderOutput）。换套餐单另有 proration_credit 与
+// balance_refund 两项（旧 PlanChangeOrderOutput），其余种类不出现。
 type orderCreatedResponse struct {
-	DiscountAmount int64  `json:"discount_amount"`
-	OrderID        string `json:"order_id"`
-	OrderNo        string `json:"order_no"`
-	Currency       string `json:"currency"`
-	TotalAmount    int64  `json:"total_amount"`
-	BalanceApplied int64  `json:"balance_applied"`
-	PayableAmount  int64  `json:"payable_amount"`
-	Status         string `json:"status"`
+	DiscountAmount  int64  `json:"discount_amount"`
+	OrderID         string `json:"order_id"`
+	OrderNo         string `json:"order_no"`
+	Currency        string `json:"currency"`
+	TotalAmount     int64  `json:"total_amount"`
+	BalanceApplied  int64  `json:"balance_applied"`
+	PayableAmount   int64  `json:"payable_amount"`
+	Status          string `json:"status"`
+	ProrationCredit *int64 `json:"proration_credit,omitempty"`
+	BalanceRefund   *int64 `json:"balance_refund,omitempty"`
 }
 
 // orderCreatedFrom 是建单首发与幂等重放共用的唯一转换。
@@ -187,6 +197,10 @@ func orderCreatedFrom(c service.Created) (orderCreatedResponse, error) {
 		BalanceApplied: cc.of(c.BalanceApplied),
 		PayableAmount:  cc.of(c.Payable),
 		Status:         c.Status,
+	}
+	if c.Change != nil {
+		credit, refund := cc.of(c.Change.ProrationCredit), cc.of(c.Change.BalanceRefund)
+		out.ProrationCredit, out.BalanceRefund = &credit, &refund
 	}
 	return out, cc.err
 }
@@ -259,7 +273,7 @@ type quoteCouponResponse struct {
 	Code string `json:"code"`
 }
 
-// creditDetailResponse 是换套餐剩余价值的明细；第一期恒为 null。
+// creditDetailResponse 是换套餐剩余价值的明细（只在 action=change 的报价行上非 null）。
 type creditDetailResponse struct {
 	Paid         int64 `json:"paid"`
 	DaysLeft     int   `json:"days_left"`
@@ -344,6 +358,16 @@ func quoteFrom(q service.QuoteResult) (quoteResponse, error) {
 		}
 		if r.CouponCode != nil {
 			row.Coupon = &quoteCouponResponse{Code: *r.CouponCode}
+		}
+		if d := r.CreditDetail; d != nil {
+			row.CreditDetail = &creditDetailResponse{
+				Paid:         cc.of(d.Paid),
+				DaysLeft:     d.DaysLeft,
+				DaysTotal:    d.DaysTotal,
+				TrafficLeft:  d.TrafficLeft,
+				TrafficTotal: d.TrafficTotal,
+				RatioPPM:     d.RatioPPM,
+			}
 		}
 		out.Quotes = append(out.Quotes, row)
 	}
