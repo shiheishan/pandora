@@ -100,17 +100,6 @@ func (s *Service) loadProvider(ctx context.Context, code string) (providerRecord
 	return s.record(m)
 }
 
-func (s *Service) loadProviderByID(ctx context.Context, id uuid.UUID) (providerRecord, error) {
-	m, ok, err := s.repo.ProviderByID(ctx, id)
-	if err != nil {
-		return providerRecord{}, err
-	}
-	if !ok {
-		return providerRecord{}, ErrProviderNotFound
-	}
-	return s.record(m)
-}
-
 func (s *Service) buildAdapter(p providerRecord) (provider.Provider, error) {
 	switch p.Adapter {
 	case AdapterEpay:

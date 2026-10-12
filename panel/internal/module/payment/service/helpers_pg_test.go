@@ -275,9 +275,9 @@ func (e *env) count(t *testing.T, ctx context.Context, sql string, args ...any) 
 	return n
 }
 
-func (e *env) ledgerTxnCount(t *testing.T, ctx context.Context, kind string) int64 {
+func (e *env) ledgerTxnCount(t *testing.T, ctx context.Context, kind ledgersvc.Kind) int64 {
 	t.Helper()
-	return e.count(t, ctx, `SELECT count(*) FROM ledger_transactions WHERE kind = ?`, kind)
+	return e.count(t, ctx, `SELECT count(*) FROM ledger_transactions WHERE kind = ?`, string(kind))
 }
 
 func (e *env) assertNoDrift(t *testing.T, ctx context.Context) {

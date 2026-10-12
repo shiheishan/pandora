@@ -13,7 +13,7 @@ package epay
 
 import (
 	"context"
-	"crypto/md5"
+	"crypto/md5" //nolint:gosec // 易支付协议规定用 MD5 签名，不能换
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -301,7 +301,7 @@ func (p *Provider) QueryPayment(ctx context.Context, outTradeNo string) (provide
 
 // Sign 按易支付规则计算 MD5 签名。
 func Sign(params map[string]string, key string) string {
-	sum := md5.Sum([]byte(signPayload(params, key)))
+	sum := md5.Sum([]byte(signPayload(params, key))) //nolint:gosec // 协议规定的签名算法
 	return hex.EncodeToString(sum[:])
 }
 

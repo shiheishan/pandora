@@ -128,6 +128,14 @@ linters:
               desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/notify/task
               desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/repo
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/task
+              desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/promo/repo
               desc: 别的模块的数据经它的 service 取
             - pkg: github.com/aegispanel/aegis/internal/module/promo/model
@@ -178,6 +186,12 @@ linters:
             - pkg: github.com/aegispanel/aegis/internal/module/notify/handler
               desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/notify/task
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/task
               desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/promo/model
               desc: 别的模块的数据经它的 service 取
@@ -236,6 +250,14 @@ linters:
               desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/notify/task
               desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/repo
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/task
+              desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/promo/repo
               desc: 别的模块的数据经它的 service 取
             - pkg: github.com/aegispanel/aegis/internal/module/promo/model
@@ -286,6 +308,12 @@ linters:
             - pkg: github.com/aegispanel/aegis/internal/module/notify/handler
               desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/notify/task
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/task
               desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/promo/model
               desc: 别的模块的数据经它的 service 取
@@ -344,6 +372,14 @@ linters:
               desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/notify/task
               desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/repo
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/task
+              desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/promo/repo
               desc: 别的模块的数据经它的 service 取
             - pkg: github.com/aegispanel/aegis/internal/module/promo/model
@@ -394,6 +430,12 @@ linters:
             - pkg: github.com/aegispanel/aegis/internal/module/notify/handler
               desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/notify/task
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/task
               desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/promo/model
               desc: 别的模块的数据经它的 service 取
@@ -452,6 +494,14 @@ linters:
               desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/notify/task
               desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/repo
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/task
+              desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/promo/repo
               desc: 别的模块的数据经它的 service 取
             - pkg: github.com/aegispanel/aegis/internal/module/promo/model
@@ -502,6 +552,12 @@ linters:
             - pkg: github.com/aegispanel/aegis/internal/module/notify/handler
               desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/notify/task
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/task
               desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/promo/model
               desc: 别的模块的数据经它的 service 取
@@ -560,6 +616,14 @@ linters:
               desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/notify/task
               desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/repo
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/task
+              desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/promo/repo
               desc: 别的模块的数据经它的 service 取
             - pkg: github.com/aegispanel/aegis/internal/module/promo/model
@@ -610,6 +674,12 @@ linters:
             - pkg: github.com/aegispanel/aegis/internal/module/notify/handler
               desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/notify/task
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/task
               desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/promo/model
               desc: 别的模块的数据经它的 service 取
@@ -668,6 +738,14 @@ linters:
               desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/ledger/task
               desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/repo
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/task
+              desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/promo/repo
               desc: 别的模块的数据经它的 service 取
             - pkg: github.com/aegispanel/aegis/internal/module/promo/model
@@ -718,6 +796,134 @@ linters:
             - pkg: github.com/aegispanel/aegis/internal/module/ledger/handler
               desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/ledger/task
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/task
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/promo/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/promo/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/promo/task
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/settings/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/settings/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/settings/task
+              desc: 模块之间只调 service
+        module-payment-boundary:
+          files:
+            - "**/internal/module/payment/**"
+            - "!$test"
+          deny:
+            - pkg: github.com/aegispanel/aegis/internal/module/audit/repo
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/audit/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/audit/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/audit/task
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/auth/repo
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/auth/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/auth/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/auth/task
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/idempotency/repo
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/idempotency/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/idempotency/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/idempotency/task
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/identity/repo
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/identity/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/identity/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/identity/task
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/ledger/repo
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/ledger/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/ledger/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/ledger/task
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/notify/repo
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/notify/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/notify/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/notify/task
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/promo/repo
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/promo/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/promo/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/promo/task
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/settings/repo
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/settings/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/settings/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/settings/task
+              desc: 模块之间只调 service
+        # 测试可以用别的模块的 repo 装出真的 service（和 app 装配一样），但不碰它的 model、handler、task
+        module-payment-boundary-test:
+          files:
+            - "**/internal/module/payment/**/*_test.go"
+          deny:
+            - pkg: github.com/aegispanel/aegis/internal/module/audit/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/audit/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/audit/task
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/auth/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/auth/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/auth/task
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/idempotency/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/idempotency/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/idempotency/task
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/identity/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/identity/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/identity/task
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/ledger/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/ledger/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/ledger/task
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/notify/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/notify/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/notify/task
               desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/promo/model
               desc: 别的模块的数据经它的 service 取
@@ -784,6 +990,14 @@ linters:
               desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/notify/task
               desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/repo
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/task
+              desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/settings/repo
               desc: 别的模块的数据经它的 service 取
             - pkg: github.com/aegispanel/aegis/internal/module/settings/model
@@ -832,6 +1046,12 @@ linters:
             - pkg: github.com/aegispanel/aegis/internal/module/notify/handler
               desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/notify/task
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/task
               desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/settings/model
               desc: 别的模块的数据经它的 service 取
@@ -892,6 +1112,14 @@ linters:
               desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/notify/task
               desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/repo
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/task
+              desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/promo/repo
               desc: 别的模块的数据经它的 service 取
             - pkg: github.com/aegispanel/aegis/internal/module/promo/model
@@ -940,6 +1168,12 @@ linters:
             - pkg: github.com/aegispanel/aegis/internal/module/notify/handler
               desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/notify/task
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/model
+              desc: 别的模块的数据经它的 service 取
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/handler
+              desc: 模块之间只调 service
+            - pkg: github.com/aegispanel/aegis/internal/module/payment/task
               desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/promo/model
               desc: 别的模块的数据经它的 service 取
