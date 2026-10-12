@@ -152,8 +152,7 @@ func TestManualOrderChange(t *testing.T) {
 	}
 	e.assertNoDrift(t, ctx)
 
-	// 另一个用户：新价 10 元低于剩余价值 15 元，线下已收款没东西可收。放在最后：测试环境整例一个事务，
-	// 建单事务不开保存点，出错时已写的部分留在外层事务里，之后不再断言
+	// 另一个用户：新价 10 元低于剩余价值 15 元，线下已收款没东西可收，建单前就拒掉、不落订单（审查 S4）
 	other := e.mkUser(t, ctx)
 	otherSub := e.activeSub(t, ctx, other, 3000, 50)
 	_, err = e.svc.CreateManualOrder(actx, ManualOrderInput{
@@ -161,6 +160,9 @@ func TestManualOrderChange(t *testing.T) {
 		Settlement: SettlementOffline, Reference: "BANK-1", Target: &Choice{Kind: PlacementChange, SubscriptionID: &otherSub.ID},
 	})
 	mustErrMsg(t, "应付为 0 的线下收款", err, errOfflineChangeNothingDue)
+	if n := e.count(t, ctx, `SELECT count(*) FROM orders WHERE user_id = ?`, other); n != 0 {
+		t.Fatalf("应付为 0 的线下收款不该落订单，有 %d 张", n)
+	}
 }
 
 // 人工单原因与结算方式校验：去掉首尾空白后不足 5 个字、超过 500 字回 422；balance 与未知结算方式 422；
