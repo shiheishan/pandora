@@ -573,3 +573,64 @@ func TestQueryPaymentTransportErrorOmitsKey(t *testing.T) {
 		t.Fatalf("error = %q", err)
 	}
 }
+
+func TestCheckDialAddr(t *testing.T) {
+	blocked := []string{
+		"127.0.0.1:443", "10.1.2.3:443", "172.16.0.1:443", "192.168.1.1:443",
+		"169.254.169.254:80", "100.100.100.200:80", "100.64.0.1:443", "0.0.0.0:443",
+		"0.1.2.3:443", "224.0.0.1:443", "255.255.255.255:443", "198.18.0.1:443",
+		"[::1]:443", "[fc00::1]:443", "[fd00:ec2::254]:80", "[fe80::1]:443", "[::]:443",
+		"[::ffff:127.0.0.1]:443", "[64:ff9b::a00:1]:443", "[ff02::1]:443",
+	}
+	for _, a := range blocked {
+		if err := checkDialAddr(a); err == nil {
+			t.Errorf("%s 应当被拒绝", a)
+		}
+	}
+	for _, a := range []string{"203.0.113.10:443", "[2001:db8::1]:443", "8.8.8.8:443"} {
+		if err := checkDialAddr(a); err != nil {
+			t.Errorf("%s 不应被拒绝: %v", a, err)
+		}
+	}
+}
+
+func TestQueryPaymentRefusesPrivateHostAtDial(t *testing.T) {
+	hit := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = true
+		fmt.Fprint(w, `{"code":1}`)
+	}))
+	defer srv.Close()
+
+	// 不允许内网：New 不再解析域名，拦截发生在拨号时
+	p, err := New(Config{BaseURL: "https://pay.example.test", MerchantID: "1001", Key: "TESTKEY"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	p.cfg.BaseURL = srv.URL
+	if _, err := p.QueryPayment(context.Background(), "AO-1"); err == nil {
+		t.Fatal("连 127.0.0.1 应当失败")
+	} else if strings.Contains(err.Error(), "TESTKEY") {
+		t.Fatalf("错误里不能带密钥: %v", err)
+	}
+	if hit {
+		t.Fatal("请求不应到达内网服务")
+	}
+}
+
+func TestQueryPaymentRejectsForeignOutTradeNo(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"code":1,"trade_no":"T-1","out_trade_no":"OTHER","type":"alipay","money":"9.90","status":1}`)
+	}))
+	defer srv.Close()
+
+	p := testProvider(t)
+	p.cfg.BaseURL = srv.URL
+	res, err := p.QueryPayment(context.Background(), "AO-1")
+	if err != nil {
+		t.Fatalf("查询失败: %v", err)
+	}
+	if res.Found {
+		t.Fatal("对端回了别的单号，应按没找到处理")
+	}
+}

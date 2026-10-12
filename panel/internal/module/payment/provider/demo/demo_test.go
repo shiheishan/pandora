@@ -25,11 +25,7 @@ func testProvider(t *testing.T) *Provider {
 func signedInbound(t *testing.T, body string, secret []byte) provider.Inbound {
 	t.Helper()
 	// 默认与 TestParseNotificationValidSignature 一致
-	eventID := "ev-1"
-	orderNo := "ORD-1"
-	amount := int64(990)
-	currency := "CNY"
-	sig := Sign(secret, eventID, orderNo, amount, currency)
+	sig := Sign(secret, "ev-1", "payment.succeeded", "pay-1", "ORD-1", 990, 0, "CNY")
 	return provider.Inbound{
 		Method: http.MethodPost,
 		Header: http.Header{"X-Aegis-Signature": {sig}},
@@ -58,7 +54,7 @@ func TestParseNotificationTamperedAmount(t *testing.T) {
 	p := testProvider(t)
 	body := `{"event_id":"ev-1","event_type":"payment.succeeded","payment_id":"pay-1","order_no":"ORD-1","amount":991,"currency":"CNY","fee":0}`
 	// 签名仍按 990 造，与 body 不一致
-	sig := Sign([]byte(testSecret), "ev-1", "ORD-1", 990, "CNY")
+	sig := Sign([]byte(testSecret), "ev-1", "payment.succeeded", "pay-1", "ORD-1", 990, 0, "CNY")
 	in := provider.Inbound{
 		Method: http.MethodPost,
 		Header: http.Header{"X-Aegis-Signature": {sig}},
@@ -76,7 +72,7 @@ func TestParseNotificationTamperedAmount(t *testing.T) {
 func TestParseNotificationWrongSecret(t *testing.T) {
 	p := testProvider(t)
 	body := `{"event_id":"ev-1","event_type":"payment.succeeded","payment_id":"pay-1","order_no":"ORD-1","amount":990,"currency":"CNY","fee":0}`
-	sig := Sign([]byte("other-secret"), "ev-1", "ORD-1", 990, "CNY")
+	sig := Sign([]byte("other-secret"), "ev-1", "payment.succeeded", "pay-1", "ORD-1", 990, 0, "CNY")
 	in := provider.Inbound{
 		Method: http.MethodPost,
 		Header: http.Header{"X-Aegis-Signature": {sig}},
@@ -145,5 +141,28 @@ func TestQueryPaymentNotSupported(t *testing.T) {
 	_, err := p.QueryPayment(context.Background(), "X")
 	if !errors.Is(err, provider.ErrNotSupported) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// 类型、流水号、手续费都在签名里：把签好的 failed 改成 succeeded、改手续费都过不了验签。
+func TestParseNotificationTamperedTypeOrFee(t *testing.T) {
+	p := testProvider(t)
+	sig := Sign([]byte(testSecret), "ev-1", "payment.failed", "pay-1", "ORD-1", 990, 0, "CNY")
+	for _, body := range []string{
+		`{"event_id":"ev-1","event_type":"payment.succeeded","payment_id":"pay-1","order_no":"ORD-1","amount":990,"currency":"CNY","fee":0}`,
+		`{"event_id":"ev-1","event_type":"payment.failed","payment_id":"pay-1","order_no":"ORD-1","amount":990,"currency":"CNY","fee":5}`,
+		`{"event_id":"ev-1","event_type":"payment.failed","payment_id":"pay-2","order_no":"ORD-1","amount":990,"currency":"CNY","fee":0}`,
+	} {
+		n, err := p.ParseNotification(context.Background(), provider.Inbound{
+			Method: http.MethodPost,
+			Header: http.Header{"X-Aegis-Signature": {sig}},
+			Body:   []byte(body),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n.SignatureVerified {
+			t.Errorf("篡改后验签应失败: %s", body)
+		}
 	}
 }

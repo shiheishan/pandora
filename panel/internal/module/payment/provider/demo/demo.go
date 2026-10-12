@@ -100,8 +100,7 @@ func (p *Provider) ParseNotification(ctx context.Context, in provider.Inbound) (
 		return provider.Notification{}, errors.New("demo: 缺少 order_no")
 	}
 
-	canonical := b.EventID + "|" + b.OrderNo + "|" +
-		strconv.FormatInt(b.Amount, 10) + "|" + b.Currency
+	canonical := canonicalString(b.EventID, b.EventType, b.PaymentID, b.OrderNo, b.Amount, b.Fee, b.Currency)
 	sigHex := strings.TrimSpace(in.Header.Get("X-Aegis-Signature"))
 	sig, _ := hex.DecodeString(sigHex)
 	mac := hmac.New(sha256.New, p.cfg.Secret)
@@ -182,10 +181,17 @@ func (p *Provider) QueryPayment(ctx context.Context, outTradeNo string) (provide
 	return provider.QueryResult{}, fmt.Errorf("demo: %w", provider.ErrNotSupported)
 }
 
+// canonicalString 是参与签名的字段（入账要用的都在里面：事件号、类型、流水号、单号、金额、手续费、币种）。
+func canonicalString(eventID, eventType, paymentID, orderNo string, amountCents, feeCents int64, currency string) string {
+	return strings.Join([]string{
+		eventID, eventType, paymentID, orderNo,
+		strconv.FormatInt(amountCents, 10), strconv.FormatInt(feeCents, 10), currency,
+	}, "|")
+}
+
 // Sign 计算回调 HMAC-SHA256 签名（十六进制），供测试与本地联调造回调。
-func Sign(secret []byte, eventID, orderNo string, amountCents int64, currency string) string {
-	canonical := eventID + "|" + orderNo + "|" + strconv.FormatInt(amountCents, 10) + "|" + currency
+func Sign(secret []byte, eventID, eventType, paymentID, orderNo string, amountCents, feeCents int64, currency string) string {
 	mac := hmac.New(sha256.New, secret)
-	mac.Write([]byte(canonical))
+	mac.Write([]byte(canonicalString(eventID, eventType, paymentID, orderNo, amountCents, feeCents, currency)))
 	return hex.EncodeToString(mac.Sum(nil))
 }
