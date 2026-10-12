@@ -1,11 +1,14 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +18,7 @@ import (
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
 	"github.com/aegispanel/aegis/internal/module/payment/provider"
 	"github.com/aegispanel/aegis/internal/module/payment/provider/demo"
+	"github.com/aegispanel/aegis/internal/pkg/crypto"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
 
@@ -412,8 +416,7 @@ WHERE p.order_id = ? AND pp.code = 'offline'`, c.OrderID); n != 1 {
 	e.assertNoDrift(t, ctx)
 }
 
-// 查单：查别人的订单 404；门户主体调后台查单 403。
-// demo 渠道不支持主动查单，「查到已付即补记」只能靠 payment 自己的查单测试与上线前用真实渠道核对。
+// 查单：查别人的订单 404；门户主体调后台查单 403（补记见 TestQueryReconcilesPaidOrder）。
 func TestQueryOwnership(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
@@ -503,6 +506,93 @@ func TestPaidHookErrorRollsBack(t *testing.T) {
 	}
 	if st := e.order(t, ctx, c.OrderID).Status; st != StatusFulfilled {
 		t.Fatalf("重发后订单 %s", st)
+	}
+	e.assertNoDrift(t, ctx)
+}
+
+// mkEpayProvider 用 SQL 插一条指向本地假易支付的 epay 渠道（允许内网地址，只在测试里），查单会打到 baseURL。
+func (e *env) mkEpayProvider(t *testing.T, ctx context.Context, code, baseURL string) {
+	t.Helper()
+	sealer, err := crypto.NewSealer(bytes.Repeat([]byte{7}, 32), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := uuid.Must(uuid.NewV7())
+	plain, err := json.Marshal(map[string]string{"merchant_id": "1001", "key": "epay-test-key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := sealer.Seal(plain, []byte("payment_provider:"+id.String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.mustExec(t, ctx, `
+INSERT INTO payment_providers (id, code, adapter, display_name, credentials_sealed, currencies, base_url, methods, default_method,
+                               allow_private_host, min_amount, enabled, accepting_new)
+VALUES (?, ?, 'epay', '易支付测试', ?, '["CNY"]'::jsonb, ?, '["alipay"]'::jsonb, 'alipay', true, 0.01, true, true)`,
+		id, code, sealed, baseURL)
+}
+
+// 门户「我已支付，刷新状态」：渠道（假易支付）查到已付时补记入账，订单履约，Reconciled = true；再查一次是 AlreadyRecorded。
+func TestQueryReconcilesPaidOrder(t *testing.T) {
+	e, ctx := newEnv(t)
+	var paid atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		otn := r.URL.Query().Get("out_trade_no")
+		w.Header().Set("Content-Type", "application/json")
+		status := 0
+		if paid.Load() {
+			status = 1
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code": 1, "trade_no": "EP-" + otn, "out_trade_no": otn,
+			"type": "alipay", "money": "10.00", "status": status,
+		})
+	}))
+	defer srv.Close()
+	code := "epay-" + randHex(8)
+	e.mkEpayProvider(t, ctx, code, srv.URL)
+
+	user := e.mkUser(t, ctx)
+	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	c := e.buyNew(t, ctx, user, planID, priceID, Checkout{})
+	if _, err := e.svc.Pay(asUser(ctx, user), PayInput{OrderID: c.OrderID, Provider: code}); err != nil {
+		t.Fatalf("发起支付: %v", err)
+	}
+
+	// 渠道还没收到钱：不补记
+	res, err := e.svc.Query(asUser(ctx, user), c.OrderID)
+	if err != nil {
+		t.Fatalf("查单（未付）: %v", err)
+	}
+	if res.Reconciled || res.OrderStatus != StatusPending {
+		t.Fatalf("未付时结果 %+v", res)
+	}
+
+	paid.Store(true)
+	res, err = e.svc.Query(asUser(ctx, user), c.OrderID)
+	if err != nil {
+		t.Fatalf("查单（已付）: %v", err)
+	}
+	if !res.Reconciled || res.OrderStatus != StatusFulfilled || res.ProviderCode != code {
+		t.Fatalf("已付时结果 %+v", res)
+	}
+	if n := e.txnCount(t, ctx, ledgersvc.KindOrderPaid, c.OrderID); n != 1 {
+		t.Fatalf("order_paid %d 笔", n)
+	}
+	if n := e.count(t, ctx, `SELECT count(*) FROM subscriptions WHERE source_order_id = ?`, c.OrderID); n != 1 {
+		t.Fatalf("订阅 %d 份", n)
+	}
+
+	again, err := e.svc.Query(asUser(ctx, user), c.OrderID)
+	if err != nil {
+		t.Fatalf("再查一次: %v", err)
+	}
+	if again.Reconciled || !again.AlreadyRecorded {
+		t.Fatalf("再查应 AlreadyRecorded，得到 %+v", again)
+	}
+	if n := e.count(t, ctx, `SELECT count(*) FROM payments WHERE order_id = ?`, c.OrderID); n != 1 {
+		t.Fatalf("收款 %d 行", n)
 	}
 	e.assertNoDrift(t, ctx)
 }
