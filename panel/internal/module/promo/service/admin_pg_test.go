@@ -152,8 +152,8 @@ func TestDiscountedTotalAndRedemptions(t *testing.T) {
 
 	u1 := newUser(t, e, ctx)
 	u2 := newUser(t, e, ctx)
-	o1 := order()
-	o2 := order()
+	o1 := newOrder(t, e, ctx, u1)
+	o2 := newOrder(t, e, ctx, u2)
 
 	if _, err := e.svc.Reserve(ctx, code, target(u1, "10.00"), o1); err != nil {
 		t.Fatal(err)
@@ -338,10 +338,13 @@ func TestConstraints(t *testing.T) {
 		t.Fatal(err)
 	}
 	uid := newUser(t, e, ctx)
+	ord1 := newOrder(t, e, ctx, uid)
+	ord2 := newOrder(t, e, ctx, uid)
 	execSQL(t, e, ctx, `INSERT INTO coupon_redemptions (coupon_id, user_id, order_id, order_no, discount_amount, currency, status)
-		VALUES (?, ?, uuidv7(), 'O1', 1, 'CNY', 'held')`, cid, uid)
+		VALUES (?, ?, ?, ?, 1, 'CNY', 'held')`, cid, uid, ord1.ID, ord1.No)
+	// 订单是真的，失败只能来自币种与券不一致
 	assertSQLFails(t, e, ctx, `INSERT INTO coupon_redemptions (coupon_id, user_id, order_id, order_no, discount_amount, currency, status)
-		VALUES (?, ?, uuidv7(), 'O2', 1, 'USD', 'held')`, cid, uid)
+		VALUES (?, ?, ?, ?, 1, 'USD', 'held')`, cid, uid, ord2.ID, ord2.No)
 	assertSQLFails(t, e, ctx, `DELETE FROM coupon_redemptions WHERE coupon_id = ?`, cid)
 
 	okCode := "A-B_" + strings.ToUpper(randHex(8))
