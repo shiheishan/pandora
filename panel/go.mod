@@ -22,6 +22,7 @@ require (
 	github.com/miekg/dns v1.1.72
 	github.com/pressly/goose/v3 v3.29.0
 	github.com/redis/go-redis/v9 v9.21.0
+	github.com/shopspring/decimal v1.5.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.3.83
