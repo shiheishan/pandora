@@ -22,7 +22,8 @@ export interface AppRuntime {
 export function createAppRuntime(app: AppName, options: { requestReauth?: () => Promise<boolean> } = {}): AppRuntime {
   const tokens = createTokenStore(app)
   const queryClient = createQueryClient()
-  const api = createApiClient({ tokens, requestReauth: options.requestReauth })
+  const refreshLockName = app === 'portal' ? 'pandora-portal-refresh' : 'pandora-admin-refresh'
+  const api = createApiClient({ tokens, requestReauth: options.requestReauth, refreshLockName })
   tokens.subscribe(() => {
     if (tokens.get() === null) queryClient.clear()
   })
@@ -58,7 +59,7 @@ export function useSignedIn(): boolean {
 /** 退出：先请求后端吊销当前会话（失败也不拦），再清本地令牌。 */
 export async function signOut(runtime: AppRuntime): Promise<void> {
   try {
-    await runtime.api.post('v1/auth/logout', noContent)
+    await runtime.api.post('v1/auth/logout', noContent, { withCookies: true })
   } catch {
     // 会话已失效或网络断开：本地照样退出
   }

@@ -23,7 +23,48 @@ export const MOCK_ACCOUNTS = {
 } as const
 
 const REAUTH_WINDOW_MS = 15 * 60 * 1000
+/** access 令牌有效期（秒），与架构 8.3 一致 */
+const ACCESS_EXPIRES_IN = 15 * 60
 const TTL_SECONDS = 2592000
+
+const RT_COOKIE: Record<MockApp, string> = { portal: 'pandora_rt', admin: 'pandora_admin_rt' }
+
+interface RefreshRecord {
+  userId: string
+  app: MockApp
+}
+
+function parseCookieHeader(header: string | undefined): Record<string, string> {
+  const out: Record<string, string> = {}
+  if (!header) return out
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=')
+    if (eq < 0) continue
+    const name = part.slice(0, eq).trim()
+    const value = part.slice(eq + 1).trim()
+    if (name) out[name] = value
+  }
+  return out
+}
+
+function setRefreshCookie(res: ServerResponse, app: MockApp, value: string, maxAge?: number) {
+  const name = RT_COOKIE[app]
+  const attrs = ['HttpOnly', 'SameSite=Strict', 'Path=/v1/auth']
+  if (maxAge === 0) attrs.push('Max-Age=0')
+  else attrs.push(`Max-Age=${maxAge ?? TTL_SECONDS}`)
+  res.setHeader('Set-Cookie', `${name}=${value}; ${attrs.join('; ')}`)
+}
+
+function clearRefreshCookie(res: ServerResponse, app: MockApp) {
+  setRefreshCookie(res, app, '', 0)
+}
+
+function tokenPayload(app: MockApp, token: string, user: MockUser) {
+  const base = { access_token: token, token_type: 'Bearer' as const, expires_in: ACCESS_EXPIRES_IN }
+  return app === 'admin'
+    ? { ...base, user_id: user.userId, permissions: user.permissions }
+    : { ...base, user_id: user.userId }
+}
 
 interface Session {
   userId: string
@@ -105,7 +146,22 @@ export function mockApi(app: MockApp): Plugin {
   const registrations = new Map<string, { email: string; code: string }>()
   const resets = new Map<string, { code: string; attempts: number }>()
   const replays = new Map<string, Replay>()
+  const refreshTokens = new Map<string, RefreshRecord>()
   const modules = app === 'admin' ? ADMIN_MODULES : PORTAL_MODULES
+
+  const mintRefresh = (userId: string) => {
+    const value = randomUUID()
+    refreshTokens.set(value, { userId, app })
+    return value
+  }
+  const revokeRefreshValue = (value: string) => {
+    refreshTokens.delete(value)
+  }
+  const bindRefresh = (res: ServerResponse, userId: string) => {
+    const value = mintRefresh(userId)
+    setRefreshCookie(res, app, value)
+    return value
+  }
   // 后台假后端启动即按内存初值重写共享的生效主题：上次会话激活过的主题不会残留到门户
   if (app === 'admin') shareAppearance()
 
@@ -148,9 +204,23 @@ export function mockApi(app: MockApp): Plugin {
       const user = users.get(str(body.email).trim().toLowerCase())
       if (!user || user.password !== str(body.password)) return fail(res, 401, 'unauthorized', '邮箱或密码不正确')
       const token = issue(user.userId, req)
-      return app === 'admin'
-        ? send(res, 200, { access_token: token, token_type: 'Bearer', expires_in: TTL_SECONDS, user_id: user.userId, permissions: user.permissions })
-        : send(res, 200, { access_token: token, refresh_token: randomUUID(), token_type: 'Bearer', expires_in: TTL_SECONDS, user_id: user.userId })
+      bindRefresh(res, user.userId)
+      return send(res, 200, tokenPayload(app, token, user))
+    }
+    if (route === 'POST /v1/auth/refresh') {
+      const cookies = parseCookieHeader(req.headers.cookie)
+      const rt = cookies[RT_COOKIE[app]]
+      const rec = rt ? refreshTokens.get(rt) : undefined
+      if (!rt || !rec || rec.app !== app) return fail(res, 401, 'unauthorized', '需要登录')
+      const refreshedUser = userById(rec.userId)
+      if (!refreshedUser) {
+        revokeRefreshValue(rt)
+        return fail(res, 401, 'unauthorized', '需要登录')
+      }
+      revokeRefreshValue(rt)
+      const access = issue(refreshedUser.userId, req)
+      bindRefresh(res, refreshedUser.userId)
+      return send(res, 200, { access_token: access, token_type: 'Bearer', expires_in: ACCESS_EXPIRES_IN })
     }
     if (app === 'portal' && route === 'GET /v1/site-config') {
       return send(res, 200, { registration_mode: 'invite_only', email_verification: true, password_reset: true })
@@ -233,7 +303,9 @@ export function mockApi(app: MockApp): Plugin {
       const body = await base.body()
       const userId = consumeQuickLogin(str(body?.token))
       if (!userId) return fail(res, 401, 'unauthorized', '快捷登录链接无效或已过期')
-      return send(res, 200, { access_token: issue(userId, req), refresh_token: randomUUID(), expires_in: TTL_SECONDS })
+      const token = issue(userId, req)
+      bindRefresh(res, userId)
+      return send(res, 200, { access_token: token, token_type: 'Bearer', expires_in: ACCESS_EXPIRES_IN })
     }
     if (route === 'POST /__mock/expire-reauth') {
       sessions.forEach((s) => (s.rat = 0))
@@ -259,6 +331,10 @@ export function mockApi(app: MockApp): Plugin {
 
     if (route === 'POST /v1/auth/logout') {
       sessions.delete(auth.token)
+      const cookies = parseCookieHeader(req.headers.cookie)
+      const rt = cookies[RT_COOKIE[app]]
+      if (rt) revokeRefreshValue(rt)
+      clearRefreshCookie(res, app)
       return send(res, 204)
     }
     if (route === 'GET /v1/events') return stream(req, res)
