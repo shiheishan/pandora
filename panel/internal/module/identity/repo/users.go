@@ -245,3 +245,10 @@ func applyUserListWhere(tx *gorm.DB, q UserListQuery) *gorm.DB {
 	}
 	return tx
 }
+
+// TotalReferrals 统计全站邀请关系总数。
+func (r *Repo) TotalReferrals(ctx context.Context) (int64, error) {
+	var n int64
+	err := r.d.Conn(ctx).Raw("SELECT count(*) FROM referrals").Scan(&n).Error
+	return n, err
+}
