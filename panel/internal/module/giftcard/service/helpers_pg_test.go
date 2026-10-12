@@ -45,7 +45,7 @@ const gib = int64(1) << 30
 // giftCommitTables 是真提交用例前后要清的表（CASCADE 带走码、批次、兑换流水、订阅子表等）。
 var giftCommitTables = []string{
 	"gift_card_redemptions", "gift_card_codes", "gift_card_batches", "gift_card_templates",
-	"subscriptions", "ledger_entries", "ledger_transactions", "ledger_accounts",
+	"subscriptions", "ledger_entries", "ledger_transactions", "ledger_accounts", "idempotency_keys",
 }
 
 // fakeUsers 代替 identity：邮箱与用户组（恒无组）。
@@ -68,13 +68,17 @@ func (f *fakeUsers) Emails(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]st
 
 func (f *fakeUsers) UserGroupID(context.Context, uuid.UUID) (*uuid.UUID, error) { return nil, nil }
 
-// fakeValuer 代替 order 的换套餐折算：固定退 value。
+// fakeValuer 代替 order 的换套餐折算：固定退 value；err 非 nil 时回它（模拟订阅上有没完结的单）。
 type fakeValuer struct {
 	value decimal.Decimal
 	lost  int
+	err   error
 }
 
 func (f fakeValuer) RemainingValue(context.Context, uuid.UUID, time.Time) (decimal.Decimal, money.Currency, int, error) {
+	if f.err != nil {
+		return decimal.Zero, "", 0, f.err
+	}
 	return f.value, money.CNY, f.lost, nil
 }
 
@@ -325,6 +329,16 @@ func (e *env) codeStatus(t *testing.T, ctx context.Context, code string) string 
 // redeem 以 user 身份兑换。
 func (e *env) redeem(ctx context.Context, user uuid.UUID, code string, choice *Choice) (RedeemResult, error) {
 	return e.svc.Redeem(asUser(ctx, user), RedeemInput{Code: code, Choice: choice})
+}
+
+// codeID 按明文取码的 id。
+func (e *env) codeID(t *testing.T, ctx context.Context, code string) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	if err := e.row(ctx, `SELECT id FROM gift_card_codes WHERE code_hash = ?`, e.svc.hashCode(code)).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
 
 // count 数一条 SQL 的结果。

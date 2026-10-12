@@ -30,6 +30,8 @@ type fakeSvc struct {
 	exportBatch  func(uuid.UUID) (service.BatchExport, error)
 	listCodes    func(service.CodeFilter, int, int) ([]service.Code, int64, error)
 	preview      func(string) (service.CardPreview, error)
+	toggle       func(uuid.UUID, bool) error
+	exportCodes  func(service.CodeFilter) ([]service.CodeReportRow, error)
 	redeem       func(service.RedeemInput) (service.RedeemResult, error)
 }
 
@@ -47,6 +49,14 @@ func (f *fakeSvc) ExportBatch(_ context.Context, id uuid.UUID) (service.BatchExp
 
 func (f *fakeSvc) ListCodes(_ context.Context, cf service.CodeFilter, limit, offset int) ([]service.Code, int64, error) {
 	return f.listCodes(cf, limit, offset)
+}
+
+func (f *fakeSvc) ToggleCode(_ context.Context, id uuid.UUID, disabled bool) error {
+	return f.toggle(id, disabled)
+}
+
+func (f *fakeSvc) ExportCodes(_ context.Context, cf service.CodeFilter) ([]service.CodeReportRow, error) {
+	return f.exportCodes(cf)
 }
 
 func (f *fakeSvc) Preview(_ context.Context, code string) (service.CardPreview, error) {
@@ -280,4 +290,68 @@ func TestSaveTemplateCents(t *testing.T) {
 
 	bad := do(newEngine(f, true, nil), http.MethodPost, "/v1/gift-cards", `{"name":"卡","type":"plan","rewards":{"plan_id":"nope"}}`)
 	mustStatus(t, bad, http.StatusUnprocessableEntity)
+}
+
+// 启停卡密要重认证（恢复等于让码重新生效）；disabled 透传。
+func TestToggleCodeRequiresReauth(t *testing.T) {
+	cid := uuid.New()
+	var gotID uuid.UUID
+	var gotDisabled bool
+	f := &fakeSvc{toggle: func(id uuid.UUID, d bool) error { gotID, gotDisabled = id, d; return nil }}
+	rec := &kitRec{}
+	w := do(newEngine(f, true, rec), http.MethodPost, "/v1/gift-cards/codes/"+cid.String()+"/toggle", `{"disabled":false}`)
+	mustStatus(t, w, http.StatusOK)
+	if rec.reauth != 1 {
+		t.Fatalf("启停应挂重认证，reauth=%d", rec.reauth)
+	}
+	if gotID != cid || gotDisabled {
+		t.Fatalf("service 收到 %s %v", gotID, gotDisabled)
+	}
+	if m := obj(t, w.Body.Bytes()); m["disabled"] != false {
+		t.Fatalf("响应 %v", m)
+	}
+}
+
+// 掩码报表：重认证、BOM、不缓存、文件名、列名、筛选透传、公式注入防护、时间按 UTC。
+func TestExportCodesReportCSV(t *testing.T) {
+	tid, bid := uuid.New(), uuid.New()
+	created := time.Date(2030, 1, 2, 3, 4, 0, 0, time.UTC)
+	var got service.CodeFilter
+	f := &fakeSvc{exportCodes: func(cf service.CodeFilter) ([]service.CodeReportRow, error) {
+		got = cf
+		return []service.CodeReportRow{{
+			CodeMasked: "VIPABCD••••••••", Status: service.CodeUsed, TemplateName: "+sum", BatchID: bid,
+			CreatedAt: created, UsedEmail: "@evil.example", UsedAt: &created,
+		}}, nil
+	}}
+	rec := &kitRec{}
+	w := do(newEngine(f, true, rec), http.MethodGet, "/v1/gift-cards/codes/report?template_id="+tid.String()+"&status=used", "")
+	mustStatus(t, w, http.StatusOK)
+	if rec.reauth != 1 {
+		t.Fatalf("掩码报表应挂重认证，reauth=%d", rec.reauth)
+	}
+	if got.TemplateID == nil || *got.TemplateID != tid || got.Status != service.CodeUsed || got.BatchID != nil {
+		t.Fatalf("筛选 %+v", got)
+	}
+	if w.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("缺 Cache-Control: no-store")
+	}
+	if cd := w.Header().Get("Content-Disposition"); !strings.Contains(cd, "gift-codes-report-") || !strings.HasSuffix(cd, `.csv"`) {
+		t.Fatalf("文件名 %q", cd)
+	}
+	body := w.Body.Bytes()
+	if !bytes.HasPrefix(body, utf8BOM) {
+		t.Fatal("缺 BOM")
+	}
+	rows, err := csv.NewReader(bytes.NewReader(body[len(utf8BOM):])).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || strings.Join(rows[0], ",") != "卡密（掩码）,状态,模板,批次,有效期,生成时间,兑换人,兑换时间" {
+		t.Fatalf("CSV %v", rows)
+	}
+	want := []string{"VIPABCD••••••••", "used", "'+sum", bid.String(), "", "2030-01-02 03:04", "'@evil.example", "2030-01-02 03:04"}
+	if strings.Join(rows[1], "|") != strings.Join(want, "|") {
+		t.Fatalf("数据行 %v，期望 %v", rows[1], want)
+	}
 }
