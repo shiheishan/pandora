@@ -46,6 +46,11 @@ func TestTransitions(t *testing.T) {
 	if !CanEntryTransition(EntryPending, EntryAvailable) || CanEntryTransition(EntryAvailable, EntryPending) {
 		t.Fatal("条目转换表不对")
 	}
+	// 作废只从 pending 来，且是终态；已解冻的不能作废
+	if !CanEntryTransition(EntryPending, EntryVoided) || CanEntryTransition(EntryAvailable, EntryVoided) ||
+		CanEntryTransition(EntryVoided, EntryPending) || CanEntryTransition(EntryVoided, EntryAvailable) {
+		t.Fatal("作废转换不对")
+	}
 	ok := [][2]string{
 		{WithdrawalRequested, WithdrawalApproved},
 		{WithdrawalRequested, WithdrawalRejected},

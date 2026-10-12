@@ -1,4 +1,4 @@
-// Package model 是 commission 模块的 GORM 结构体：只有字段和标签，表结构见迁移 00014_commission.sql。
+// Package model 是 commission 模块的 GORM 结构体：只有字段和标签，表结构见迁移 00014_commission.sql 与 00016_commission_review.sql。
 package model
 
 import (
@@ -27,6 +27,10 @@ type Entry struct {
 	AccrualTxnID     uuid.UUID       `gorm:"column:accrual_txn_id;type:uuid"`
 	SettleTxnID      *uuid.UUID      `gorm:"column:settle_txn_id;type:uuid"`
 	SettledAt        *time.Time      `gorm:"column:settled_at"`
+	ReviewedBy       *uuid.UUID      `gorm:"column:reviewed_by;type:uuid"`
+	ReviewedAt       *time.Time      `gorm:"column:reviewed_at"`
+	VoidReason       *string         `gorm:"column:void_reason"`
+	VoidTxnID        *uuid.UUID      `gorm:"column:void_txn_id;type:uuid"`
 	CreatedAt        time.Time       `gorm:"column:created_at;autoCreateTime"`
 	UpdatedAt        time.Time       `gorm:"column:updated_at;autoUpdateTime"`
 }
