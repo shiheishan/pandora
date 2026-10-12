@@ -26,7 +26,6 @@ import (
 	settingsrepo "github.com/aegispanel/aegis/internal/module/settings/repo"
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
-	"github.com/aegispanel/aegis/internal/pkg/db"
 	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/aegispanel/aegis/internal/pkg/reqid"
 	"github.com/aegispanel/aegis/internal/pkg/reqmeta"
@@ -95,8 +94,31 @@ type env struct {
 	ledger  *ledgersvc.Service
 }
 
-func newPaymentStack(t *testing.T, d *db.DB) (*Service, *ledgersvc.Service, *stubSettler) {
+// newEnv 的用例整例回滚（testkit.TxCtx）；newCommitEnv 的用例真提交（并发用），前后清表。
+func newEnv(t *testing.T) (*env, context.Context) {
 	t.Helper()
+	return setupEnv(t, false)
+}
+
+func newCommitEnv(t *testing.T) (*env, context.Context) {
+	t.Helper()
+	return setupEnv(t, true)
+}
+
+// setupEnv 搭 payment 及其依赖（audit、settings、ledger）；service 测试不直接引用 db 包（depguard），连接类型靠推导。
+func setupEnv(t *testing.T, commit bool) (*env, context.Context) {
+	t.Helper()
+	d := testkit.DB(t)
+	if commit {
+		clean := func() {
+			testkit.Truncate(t, d, paymentCommitTables...)
+			if err := d.Conn(context.Background()).Exec(`DELETE FROM payment_providers WHERE code <> 'offline'`).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+		clean()
+		t.Cleanup(clean)
+	}
 	_, rdb := testkit.Redis(t)
 
 	master := make([]byte, 32)
@@ -111,7 +133,6 @@ func newPaymentStack(t *testing.T, d *db.DB) (*Service, *ledgersvc.Service, *stu
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	auditSvc, err := auditsvc.New(auditrepo.New(d), keys)
 	if err != nil {
 		t.Fatal(err)
@@ -123,56 +144,19 @@ func newPaymentStack(t *testing.T, d *db.DB) (*Service, *ledgersvc.Service, *stu
 		AllowPrivateHosts: true,
 	})
 	svc.identity = stubDirectory{}
-
 	settler := &stubSettler{
 		users:      map[uuid.UUID]uuid.UUID{},
 		notPayable: map[uuid.UUID]error{},
 		ledger:     ledgerSvc,
 	}
 	svc.UseSettler(settler)
-	return svc, ledgerSvc, settler
-}
-
-func newEnv(t *testing.T) (*env, context.Context) {
-	t.Helper()
-	d := testkit.DB(t)
-	svc, ledgerSvc, settler := newPaymentStack(t, d)
-
-	ctx := testkit.TxCtx(t, d)
-	ctx = reqid.With(ctx, reqid.New())
-	ctx = reqmeta.With(ctx, reqmeta.Meta{IP: "203.0.113.42", UserAgent: "payment-pg-test/1.0"})
-
-	e := &env{
-		svc:     svc,
-		settler: settler,
-		ledger:  ledgerSvc,
-		row: func(ctx context.Context, q string, args ...any) *sql.Row {
-			return d.Conn(ctx).Raw(q, args...).Row()
-		},
-		exec: func(ctx context.Context, q string, args ...any) error {
-			return d.Conn(ctx).Exec(q, args...).Error
-		},
-	}
-	return e, ctx
-}
-
-func newCommitEnv(t *testing.T) (*env, context.Context) {
-	t.Helper()
-	d := testkit.DB(t)
-	testkit.Truncate(t, d, paymentCommitTables...)
-	if err := d.Conn(context.Background()).Exec(`DELETE FROM payment_providers WHERE code <> 'offline'`).Error; err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		testkit.Truncate(t, d, paymentCommitTables...)
-		_ = d.Conn(context.Background()).Exec(`DELETE FROM payment_providers WHERE code <> 'offline'`)
-	})
-
-	svc, ledgerSvc, settler := newPaymentStack(t, d)
 
 	ctx := context.Background()
+	if !commit {
+		ctx = testkit.TxCtx(t, d)
+	}
 	ctx = reqid.With(ctx, reqid.New())
-	ctx = reqmeta.With(ctx, reqmeta.Meta{IP: "203.0.113.43", UserAgent: "payment-pg-test/1.0"})
+	ctx = reqmeta.With(ctx, reqmeta.Meta{IP: "203.0.113.42", UserAgent: "payment-pg-test/1.0"})
 
 	e := &env{
 		svc:     svc,
