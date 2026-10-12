@@ -34,7 +34,7 @@ func bodyAllowedForStatus(status int) bool {
 
 func (r *recorder) Write(b []byte) (int, error) {
 	r.snapshot()
-	if len(b) > 0 && !bodyAllowedForStatus(r.ResponseWriter.Status()) {
+	if len(b) > 0 && !bodyAllowedForStatus(r.Status()) {
 		r.invalidate()
 	}
 	n, err := r.ResponseWriter.Write(b)
@@ -55,7 +55,7 @@ func (r *recorder) Write(b []byte) (int, error) {
 
 func (r *recorder) WriteString(s string) (int, error) {
 	r.snapshot()
-	if len(s) > 0 && !bodyAllowedForStatus(r.ResponseWriter.Status()) {
+	if len(s) > 0 && !bodyAllowedForStatus(r.Status()) {
 		r.invalidate()
 	}
 	n, err := r.ResponseWriter.WriteString(s)
@@ -87,7 +87,7 @@ func whitelistHeader(hdr http.Header, name string) (string, bool) {
 
 func (r *recorder) result() (status int, resp service.Response, replayable bool) {
 	r.snapshot()
-	status = r.ResponseWriter.Status()
+	status = r.Status()
 	if r.incomplete {
 		return status, service.Response{}, false
 	}
