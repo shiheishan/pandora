@@ -475,7 +475,7 @@ func TestListFiltersAndSorts(t *testing.T) {
 	}
 }
 
-func TestQuickLogin(t *testing.T) {
+func TestStoreQuickLogin(t *testing.T) {
 	_, rdb := testkit.Redis(t)
 	st := newSessionStore(rdb)
 	ctx := context.Background()

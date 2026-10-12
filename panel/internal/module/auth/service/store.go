@@ -28,8 +28,6 @@ const (
 	lastSeenEvery = 5 * time.Minute
 	// refreshGrace 内拿上一代 refresh 来的请求只发 access、不轮换。
 	refreshGrace = 30 * time.Second
-	// sessionRevokedChannelPrefix 是会话吊销的发布频道前缀（SSE 收到就关流）。
-	sessionRevokedChannelPrefix = "rt:sess:"
 )
 
 func sessKey(sid string) string           { return "sess:" + sid }

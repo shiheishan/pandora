@@ -25,7 +25,7 @@ const (
 
 // 失败原因（写进审计 data.reason）
 const (
-	reasonInvalidCredentials = "invalid_credentials"
+	reasonInvalidCredentials = "invalid_credentials" //nolint:gosec // 审计原因码，不是凭据
 	reasonAccountInactive    = "account_inactive"
 	reasonNoAdminRole        = "no_admin_role"
 	reasonStaffPortal        = "staff_portal_blocked"
