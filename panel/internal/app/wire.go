@@ -179,6 +179,12 @@ func buildServices(r *runtime) (*services, error) {
 	})
 	// 订阅里影响节点名单的事实变了（开通、续期、换套餐…），提交后推进节点名单纪元
 	subSvc.UseRosterNotifier(nodeSvc)
+	// 节点池与套餐绑池：绑池表归 catalog，池归 node；node 经 catalog 读绑池、经 identity 读用户组名，
+	// catalog 发布前、向导绑池时回调 node（发布门禁、锁池）
+	nodeSvc.UseCatalog(catalogSvc)
+	nodeSvc.UseUserGroups(identitySvc)
+	catalogSvc.UsePublishGate(nodeSvc)
+	catalogSvc.UsePoolGuard(nodeSvc)
 	// 渠道到账与线下收款经 order 结算（没注册时入账一律失败）
 	paymentSvc.UseSettler(orderSvc)
 	// 订单结算时按推荐关系计提佣金（同一结算事务）；同源（审计里共用来源 IP）的佣金转人工复核
