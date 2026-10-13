@@ -46,19 +46,48 @@ func (s *Service) emitOrderCreated(ctx context.Context, o model.Order) error {
 }
 
 // emitOrderPaid 订单支付完成（外部支付结算与 0 元单都发）。dedupe 用订单 id：支付回调会重放，同一笔只通知一次。
-func (s *Service) emitOrderPaid(ctx context.Context, o model.Order) error {
+// zeroPay 为 true 时 currency 发 ""、amount 发 0（与旧代码 0 元单口径一致）。
+func (s *Service) emitOrderPaid(ctx context.Context, o model.Order, zeroPay bool) error {
+	currency, amount := o.Currency, money.MustCents(o.TotalAmount)
+	if zeroPay {
+		currency, amount = "", 0
+	}
 	p := map[string]any{
 		"event":    "order.paid",
 		"order_id": o.ID.String(),
 		"user_id":  o.UserID.String(),
 		"kind":     o.Kind,
-		"currency": o.Currency,
-		"amount":   money.MustCents(o.TotalAmount),
+		"currency": currency,
+		"amount":   amount,
 	}
-	if (o.Kind == KindNew || o.Kind == KindRenewal || o.Kind == KindUpgrade) && o.SubscriptionID != nil {
-		p["subscription_id"] = o.SubscriptionID.String()
+	if sub, ok := provisionedSub(o); ok {
+		p["subscription_id"] = sub
 	}
 	return s.emitPlugin(ctx, "order.paid", "order.paid:"+o.ID.String(), p)
+}
+
+// emitSubscriptionProvisioned 外部支付结算开通或续期了订阅（与旧代码一致：只在这条路径发，
+// 0 元单、后台开单、礼品卡开通都不发）。dedupe 带订单 id：同一订阅会续费很多次。reason 是订单类型。
+func (s *Service) emitSubscriptionProvisioned(ctx context.Context, o model.Order) error {
+	sub, ok := provisionedSub(o)
+	if !ok {
+		return nil
+	}
+	return s.emitPlugin(ctx, "subscription.provisioned", "sub.prov:"+sub+":"+o.ID.String(), map[string]any{
+		"event":           "subscription.provisioned",
+		"subscription_id": sub,
+		"user_id":         o.UserID.String(),
+		"order_id":        o.ID.String(),
+		"reason":          o.Kind,
+	})
+}
+
+// provisionedSub 返回履约后订单落到的订阅 id；只有新购、续费、换套餐单有。
+func provisionedSub(o model.Order) (string, bool) {
+	if (o.Kind == KindNew || o.Kind == KindRenewal || o.Kind == KindUpgrade) && o.SubscriptionID != nil {
+		return o.SubscriptionID.String(), true
+	}
+	return "", false
 }
 
 // emitOrderCancelled 订单取消或超时作废。target 是目标状态（cancelled / expired）。

@@ -31,24 +31,6 @@ func (s *Service) emitPlugin(ctx context.Context, event, dedupeKey string, paylo
 	return s.events.Emit(ctx, event, dedupeKey, payload)
 }
 
-// emitProvisioned 订阅开通或续期（只在由订单驱动时发，与旧代码一致：卡密兑换不发）。
-// dedupe 带订单 id：同一份订阅会被续很多次，只按订阅去重的话第二次续费就发不出去了。
-// reason 是订单种类：new（开通）、renewal（续期）、upgrade（换套餐）。
-func (s *Service) emitProvisioned(ctx context.Context, subID, userID uuid.UUID, orderID *uuid.UUID, reason string) error {
-	if orderID == nil {
-		return nil
-	}
-	return s.emitPlugin(ctx, "subscription.provisioned",
-		"sub.prov:"+subID.String()+":"+orderID.String(),
-		map[string]any{
-			"event":           "subscription.provisioned",
-			"subscription_id": subID.String(),
-			"user_id":         userID.String(),
-			"order_id":        orderID.String(),
-			"reason":          reason,
-		})
-}
-
 // emitExpired 对一批刚改成 expired 的订阅发 subscription.expired 插件事件。
 func (s *Service) emitExpired(ctx context.Context, subs []model.Subscription, changed map[uuid.UUID]struct{}) error {
 	if s.events == nil || len(changed) == 0 {

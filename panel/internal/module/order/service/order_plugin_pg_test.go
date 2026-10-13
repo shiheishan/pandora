@@ -138,6 +138,17 @@ func TestPluginOrderPaidZeroPay(t *testing.T) {
 	if o.SubscriptionID == nil || subID != o.SubscriptionID.String() {
 		t.Fatalf("subscription_id %s vs 订单 %v", subID, o.SubscriptionID)
 	}
+	// 0 元单照旧代码口径：currency 为 ""、amount 为 0
+	if v, ok := paid["currency"]; !ok || v != "" {
+		t.Fatalf("currency %v", paid["currency"])
+	}
+	if v, ok := paid["amount"]; !ok || v != float64(0) {
+		t.Fatalf("amount %v", paid["amount"])
+	}
+	// 0 元单不发 subscription.provisioned（只在外部支付结算发）
+	if n := len(rec.find("subscription.provisioned")); n != 0 {
+		t.Fatalf("0 元单不应有 subscription.provisioned，得 %d 条", n)
+	}
 }
 
 func TestPluginOrderPaidWebhook(t *testing.T) {
@@ -168,6 +179,20 @@ func TestPluginOrderPaidWebhook(t *testing.T) {
 	}
 	if payloadStr(p, "subscription_id") != o.SubscriptionID.String() {
 		t.Fatalf("subscription_id %v", p["subscription_id"])
+	}
+
+	prov := rec.find("subscription.provisioned")
+	if len(prov) != 1 {
+		t.Fatalf("subscription.provisioned %d 条", len(prov))
+	}
+	wantKey := "sub.prov:" + o.SubscriptionID.String() + ":" + orderID.String()
+	if prov[0].Key != wantKey {
+		t.Fatalf("key %q want %q", prov[0].Key, wantKey)
+	}
+	pp := prov[0].Payload
+	if payloadStr(pp, "subscription_id") != o.SubscriptionID.String() || payloadStr(pp, "user_id") != user.String() ||
+		payloadStr(pp, "order_id") != orderID.String() || payloadStr(pp, "reason") != o.Kind {
+		t.Fatalf("payload %+v", pp)
 	}
 }
 

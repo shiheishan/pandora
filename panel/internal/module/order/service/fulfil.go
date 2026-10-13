@@ -214,7 +214,7 @@ func (s *Service) settleZeroPay(ctx context.Context, o model.Order, actor Actor)
 	if err != nil {
 		return model.Order{}, err
 	}
-	if err := s.emitOrderPaid(ctx, done); err != nil {
+	if err := s.emitOrderPaid(ctx, done, true); err != nil {
 		return model.Order{}, err
 	}
 	return done, nil

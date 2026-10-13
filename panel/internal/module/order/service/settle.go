@@ -96,7 +96,10 @@ func (s *Service) SettlePayment(ctx context.Context, in paymentsvc.SettleInput) 
 	if err != nil {
 		return err
 	}
-	if err := s.emitOrderPaid(ctx, done); err != nil {
+	if err := s.emitOrderPaid(ctx, done, false); err != nil {
+		return err
+	}
+	if err := s.emitSubscriptionProvisioned(ctx, done); err != nil {
 		return err
 	}
 	return s.audit.Write(ctx, auditsvc.Event{

@@ -100,9 +100,6 @@ func (s *Service) ChangePlan(ctx context.Context, in PlanChange) (PlanChangeResu
 		if err := s.writeEvent(ctx, m.ID, EventPlanChanged, &from, StatusActive, in.Actor, in.OrderID, payload); err != nil {
 			return err
 		}
-		if err := s.emitProvisioned(ctx, m.ID, m.UserID, in.OrderID, "upgrade"); err != nil {
-			return err
-		}
 		s.notifyRoster(ctx, m.ID)
 		out = PlanChangeResult{
 			SubscriptionID:    m.ID,
