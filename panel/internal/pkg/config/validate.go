@@ -171,6 +171,9 @@ func (c *Config) Validate() error {
 	if c.Pdnd.DistDir == "" || !path.IsAbs(c.Pdnd.DistDir) {
 		errs = append(errs, errors.New("pdnd.dist_dir 必须是绝对路径"))
 	}
+	if c.Backup.Dir != "" && !path.IsAbs(c.Backup.Dir) {
+		errs = append(errs, errors.New("backup.dir 必须是绝对路径（或留空表示不探测）"))
+	}
 
 	return errors.Join(errs...)
 }

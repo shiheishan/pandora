@@ -27,6 +27,7 @@ import (
 	paymenth "github.com/aegispanel/aegis/internal/module/payment/handler"
 	pluginh "github.com/aegispanel/aegis/internal/module/plugin/handler"
 	promoh "github.com/aegispanel/aegis/internal/module/promo/handler"
+	reporth "github.com/aegispanel/aegis/internal/module/report/handler"
 	settingsh "github.com/aegispanel/aegis/internal/module/settings/handler"
 	subh "github.com/aegispanel/aegis/internal/module/subscription/handler"
 	supporth "github.com/aegispanel/aegis/internal/module/support/handler"
@@ -197,6 +198,7 @@ func newEngines(r *runtime, svc *services) (*gin.Engine, *gin.Engine) {
 		supporth.New(svc.support, svc.limiter),
 		certsh.New(svc.certs),
 		pluginh.New(svc.plugin),
+		reporth.New(svc.report),
 	}
 
 	publicEng := newEngine(r, r.cfg.HTTP.Public,

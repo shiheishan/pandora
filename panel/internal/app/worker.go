@@ -17,6 +17,7 @@ import (
 	ordertask "github.com/aegispanel/aegis/internal/module/order/task"
 	paymenttask "github.com/aegispanel/aegis/internal/module/payment/task"
 	plugintask "github.com/aegispanel/aegis/internal/module/plugin/task"
+	reporttask "github.com/aegispanel/aegis/internal/module/report/task"
 	subtask "github.com/aegispanel/aegis/internal/module/subscription/task"
 	supporttask "github.com/aegispanel/aegis/internal/module/support/task"
 	"github.com/aegispanel/aegis/internal/pkg/jobs"
@@ -126,5 +127,6 @@ func modules(svc *services) []jobs.Module {
 		supporttask.New(svc.support),
 		certstask.New(svc.certs),
 		plugintask.New(svc.plugin),
+		reporttask.New(svc.report),
 	}
 }

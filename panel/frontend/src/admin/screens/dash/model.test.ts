@@ -233,8 +233,8 @@ const NODE_TRAFFIC: NodeTraffic = {
   to: '2026-09-24T08:00:00.000000Z',
   basis: 'strict_raw_report_entries',
   items: [
-    { node_id: 'n1', name: 'hk-hkg-01', display_name: 'HK-HKG-01', upload_bytes: '100', download_bytes: '900', total_bytes: '1000', contributing_entry_count: 5, report_count: 3, last_report_at: '2026-09-24T07:59:00.000000Z' },
-    { node_id: 'n2', name: 'sg-sin-02', display_name: null, upload_bytes: '0', download_bytes: '10', total_bytes: '10', contributing_entry_count: 1, report_count: 1, last_report_at: '2026-09-24T07:00:00.000000Z' },
+    { node_id: 'n1', name: 'hk-hkg-01', display_name: 'HK-HKG-01', upload_bytes: '100', download_bytes: '900', total_bytes: '1000', last_report_at: '2026-09-24T07:59:00.000000Z' },
+    { node_id: 'n2', name: 'sg-sin-02', display_name: null, upload_bytes: '0', download_bytes: '10', total_bytes: '10', last_report_at: '2026-09-24T07:00:00.000000Z' },
   ],
   totals: { reported_bytes: '1010', attributed_bytes: '1000', unattributed_bytes: '10' },
   ranking: { returned_bytes: '1010', other_node_bytes: '0' },
@@ -248,14 +248,14 @@ describe('流量排行', () => {
       ['HK-HKG-01', 100, '1000 B'],
       ['sg-sin-02', 2, '10 B'],
     ])
-    expect(rows[0]!.tip).toBe('上行 100 B · 下行 900 B · 3 次上报 · 最近 1 分钟')
+    expect(rows[0]!.tip).toBe('上行 100 B · 下行 900 B · 最近 1 分钟')
     expect(rows[0]!.userId).toBeUndefined()
   })
 
   it('用户行带 user_id、只显示脱敏邮箱', () => {
     const users: UserTraffic = {
       ...NODE_TRAFFIC,
-      items: [{ user_id: 'u1', email_masked: 'a***@example.com', upload_bytes: '1', download_bytes: '1', total_bytes: '2', subscription_count: 2, contributing_entry_count: 1, last_report_at: '2026-09-24T07:59:00.000000Z' }],
+      items: [{ user_id: 'u1', email_masked: 'a***@example.com', upload_bytes: '1', download_bytes: '1', total_bytes: '2', subscription_count: 2, last_report_at: '2026-09-24T07:59:00.000000Z' }],
       ranking: { returned_bytes: '2', other_user_bytes: '0' },
     }
     expect(trafficRows(users)[0]).toMatchObject({ name: 'a***@example.com', userId: 'u1' })

@@ -39,6 +39,8 @@ import (
 	pluginsvc "github.com/aegispanel/aegis/internal/module/plugin/service"
 	promorepo "github.com/aegispanel/aegis/internal/module/promo/repo"
 	promosvc "github.com/aegispanel/aegis/internal/module/promo/service"
+	reportrepo "github.com/aegispanel/aegis/internal/module/report/repo"
+	reportsvc "github.com/aegispanel/aegis/internal/module/report/service"
 	settingsrepo "github.com/aegispanel/aegis/internal/module/settings/repo"
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/module/subscription/render"
@@ -54,6 +56,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
+	"github.com/redis/go-redis/v9"
 )
 
 // services 是 serve、worker、admin 子命令共用的业务服务，各模块的互相注入在 buildServices 一处完成。
@@ -78,6 +81,7 @@ type services struct {
 	support    *supportsvc.Service
 	certs      *certssvc.Service
 	plugin     *pluginsvc.Service
+	report     *reportsvc.Service
 	// idemFPKey 是幂等请求指纹的 HMAC 密钥（从主密钥派生）
 	idemFPKey []byte
 	limiter   *ratelimit.Limiter
@@ -289,6 +293,17 @@ func buildServices(r *runtime) (*services, error) {
 			return nil, fmt.Errorf("%s 缺少装配: 插件事件口", m.name)
 		}
 	}
+	// 看板与营收报表：数字一律经各属主模块的聚合读；report 只拥有报表调整与按天行为汇总两张表
+	reportSvc := reportsvc.New(reportrepo.New(r.db), txm, auditSvc, reportsvc.Deps{
+		Settings: settingsSvc, Users: identitySvc, Subscriptions: subSvc, Nodes: nodeSvc, Ledger: ledgerSvc,
+		Orders: orderSvc, Payments: paymentSvc, Commissions: commissionSvc, Tickets: supportSvc, Notices: notifySvc,
+		Activity: auditSvc, Redis: reportRedis{c: r.redis},
+	}, reportsvc.Options{BackupDir: cfg.Backup.Dir})
+	reportSvc.UseCache(r.redis)
+	if missing := reportSvc.MissingPorts(); len(missing) > 0 {
+		_ = queue.Close()
+		return nil, fmt.Errorf("report 缺少装配: %v", missing)
+	}
 
 	return &services{
 		settings:   settingsSvc,
@@ -311,6 +326,7 @@ func buildServices(r *runtime) (*services, error) {
 		support:    supportSvc,
 		certs:      certsSvc,
 		plugin:     pluginSvc,
+		report:     reportSvc,
 		idemFPKey:  keys.Derive(crypto.InfoHMACIdempotency, 32),
 		limiter:    limiter,
 		sealer:     sealer,
@@ -379,3 +395,11 @@ var (
 	_ supportsvc.PlanNames     = supportPlans{}
 	_ supportsvc.ReplyNotifier = supportReplyNotifier{}
 )
+
+// reportRedis 让 report 的系统状态页探测 Redis 是否可达。
+type reportRedis struct{ c *redis.Client }
+
+// Ping 做一次 PING 往返。
+func (a reportRedis) Ping(ctx context.Context) error { return redisx.Ping(ctx, a.c) }
+
+var _ reportsvc.Pinger = reportRedis{}

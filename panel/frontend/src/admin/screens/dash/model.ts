@@ -429,9 +429,9 @@ export function trafficRows(data: NodeTraffic | UserTraffic, now: Date = new Dat
     const tip = [
       `上行 ${formatBytes(item.upload_bytes)}`,
       `下行 ${formatBytes(item.download_bytes)}`,
-      isNode ? `${item.report_count} 次上报` : `${item.subscription_count} 个订阅`,
+      isNode ? '' : `${item.subscription_count} 个订阅`,
       `最近 ${relativeTime(item.last_report_at, now)}`,
-    ].join(' · ')
+    ].filter(Boolean).join(' · ')
     return {
       key: isNode ? item.node_id : item.user_id,
       rank: i + 1,
