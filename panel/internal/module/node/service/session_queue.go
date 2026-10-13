@@ -279,7 +279,7 @@ func (s *Session) onDequeueLocked(it *outItem) {
 			delete(s.rosters, id)
 		}
 		if st := s.nodes[id]; st != nil {
-			st.shiftSent(it.msg.Roster)
+			st.shiftSent(it.msg.Roster, s.m.now(), s.removedGrace())
 		}
 	}
 }
