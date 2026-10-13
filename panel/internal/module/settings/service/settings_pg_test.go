@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aegispanel/aegis/internal/module/settings/repo"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/aegispanel/aegis/internal/pkg/testkit"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 )
@@ -336,4 +338,15 @@ func TestSetMailRejectsControlCharsInFromName(t *testing.T) {
 	if e := errs.As(err); e.Code != errs.ValidationFailed || e.Fields["from_name"] == "" {
 		t.Fatalf("err %v", err)
 	}
+}
+
+// 事务没提交（测试事务最后回滚）时不推开关变更。
+func TestSetSwitchUncommittedDoesNotPublish(t *testing.T) {
+	svc, _, ctx, _ := newPG(t)
+	pub, spy := newRTSpy(t, realtime.ChannelAdmin(), realtime.ChannelPublic())
+	svc.UseRealtime(pub)
+	if err := svc.SetSwitch(ctx, SwitchAuthRegistration, false, "演练"); err != nil {
+		t.Fatal(err)
+	}
+	spy.expectNone(t, 300*time.Millisecond)
 }
