@@ -95,13 +95,15 @@ func scanAnnouncementRows(rows []announcementScanRow) []AnnouncementRow {
 	return out
 }
 
-// ListAnnouncements 后台列表：按 pinned 降序、COALESCE(published_at, created_at) 降序、id 降序取前 limit 条。
+// ListAnnouncements 后台列表：未撤回/未下线的在前，再按 pinned 降序、发布时间降序取前 limit 条；
+// 超过 limit 时只会截掉已撤回或已下线的旧公告。
 func (r *Repo) ListAnnouncements(ctx context.Context, limit int) ([]AnnouncementRow, error) {
 	var rows []announcementScanRow
 	err := r.d.Conn(ctx).Raw(
 		`SELECT `+announcementSelectCols+`
 		   FROM announcements a
-		  ORDER BY a.pinned DESC, COALESCE(a.published_at, a.created_at) DESC, a.id DESC
+		  ORDER BY (a.status = 'withdrawn' OR (a.expires_at IS NOT NULL AND a.expires_at <= now())),
+		           a.pinned DESC, COALESCE(a.published_at, a.created_at) DESC, a.id DESC
 		  LIMIT ?`, limit,
 	).Scan(&rows).Error
 	if err != nil {

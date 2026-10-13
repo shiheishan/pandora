@@ -345,3 +345,59 @@ func TestTelegramBindingAndUnbind(t *testing.T) {
 		t.Fatalf("audit %+v", e.audit.events)
 	}
 }
+
+func TestUnbindTelegramSuppressesQueuedDeliveries(t *testing.T) {
+	e := newPG(t)
+	uid := e.insertTestUser(t, nil)
+	if err := e.repo.InsertBinding(e.ctx, &model.TelegramBinding{UserID: uid, ChatID: 9, Username: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+	insertQueued := func(channel string) uuid.UUID {
+		id, err := uuid.NewV7()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := e.svc.store.InsertDelivery(e.ctx, &model.Delivery{
+			ID: id, UserID: &uid, TemplateCode: TemplateSubscriptionExpiring,
+			Channel: channel, Status: model.StatusQueued, MaxAttempts: 5,
+			PayloadEnc: []byte("x"),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	insertQueued(ChannelTelegram)
+	insertQueued(ChannelTelegram)
+	emailID := insertQueued(ChannelEmail)
+
+	if err := e.svc.UnbindTelegram(e.ctx, uid); err != nil {
+		t.Fatal(err)
+	}
+	rows := tgdRows(t, e, ChannelTelegram)
+	if len(rows) != 2 {
+		t.Fatalf("telegram rows %d", len(rows))
+	}
+	for _, r := range rows {
+		if r.Status != model.StatusSuppressed || r.HasPayload {
+			t.Fatalf("telegram %+v", r)
+		}
+	}
+	var email deliveryRow
+	if err := e.scan(e.ctx, &email, `SELECT id::text AS id, template_code, status, attempts, error_message,
+	        payload_enc IS NOT NULL AS has_payload
+	   FROM notification_deliveries WHERE id = ?`, emailID); err != nil {
+		t.Fatal(err)
+	}
+	if email.Status != model.StatusQueued || !email.HasPayload {
+		t.Fatalf("email %+v", email)
+	}
+	for _, ev := range e.audit.events {
+		if ev.Action == "telegram.unbound" {
+			if ev.Data == nil || ev.Data["suppressed_deliveries"] != 2 {
+				t.Fatalf("audit data %+v", ev.Data)
+			}
+			return
+		}
+	}
+	t.Fatal("missing telegram.unbound audit")
+}

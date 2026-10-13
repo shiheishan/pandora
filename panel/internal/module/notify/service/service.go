@@ -96,6 +96,8 @@ type store interface {
 	MarkRetry(ctx context.Context, id uuid.UUID, delay time.Duration, msg string) (bool, error)
 	// MarkFinal 置为终态 failed / suppressed：清空 payload_enc、写 error_message。
 	MarkFinal(ctx context.Context, id uuid.UUID, status, msg string) (bool, error)
+	// SuppressQueuedTelegram 把某用户还在排队的 Telegram 投递置为 suppressed 并清空封存内容，返回行数。
+	SuppressQueuedTelegram(ctx context.Context, userID uuid.UUID) (int, error)
 	// PurgeDeliveries 删 created_at < before 的投递，每次至多 batch 行，返回删除行数。
 	PurgeDeliveries(ctx context.Context, before time.Time, batch int) (int, error)
 

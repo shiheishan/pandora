@@ -172,6 +172,8 @@ func newEngines(r *runtime, svc *services) (*gin.Engine, *gin.Engine) {
 	// 套餐列表的可服务节点数由 node 数（catalog 不依赖 node）
 	catalogH := catalogh.New(svc.catalog)
 	catalogH.UseNodeCounter(svc.node)
+	notifyH := notifyh.New(svc.notify)
+	notifyH.UseLimiter(svc.limiter)
 	kit := route.Kit{
 		RequireAuth:  authH.RequireAuth(),
 		RecentReauth: authH.RecentReauth(),
@@ -183,7 +185,7 @@ func newEngines(r *runtime, svc *services) (*gin.Engine, *gin.Engine) {
 		audith.New(svc.audit),
 		identityh.New(svc.identity, svc.limiter, r.cfg.RateLimit.AuthPerMin),
 		authH,
-		notifyh.New(svc.notify),
+		notifyH,
 		ledgerh.New(svc.ledger),
 		catalogH,
 		promoh.New(svc.promo),

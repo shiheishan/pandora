@@ -67,6 +67,36 @@ func TestNoticeTimeTimezone(t *testing.T) {
 	}
 }
 
+func TestDaysLeftSince(t *testing.T) {
+	base := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	casesLeft := []struct {
+		end  time.Time
+		want int
+	}{
+		{base.Add(4*24*time.Hour + time.Hour), 5},
+		{base.Add(3 * 24 * time.Hour), 3},
+		{base.Add(10 * time.Minute), 1},
+	}
+	for _, c := range casesLeft {
+		if got := daysLeft(c.end, base); got != c.want {
+			t.Fatalf("daysLeft(%v): got %d want %d", c.end, got, c.want)
+		}
+	}
+	casesSince := []struct {
+		end  time.Time
+		want int
+	}{
+		{base.Add(-24 * time.Hour), 1},
+		{base.Add(-5*24*time.Hour - 23*time.Hour), 5},
+		{base.Add(-10 * time.Minute), 1},
+	}
+	for _, c := range casesSince {
+		if got := daysSince(c.end, base); got != c.want {
+			t.Fatalf("daysSince(%v): got %d want %d", c.end, got, c.want)
+		}
+	}
+}
+
 func TestScanDedupeKeyFormats(t *testing.T) {
 	sub := uuid.MustParse("018f1234-5678-7abc-8def-0123456789ab")
 	end := time.Unix(1700000000, 0).UTC()

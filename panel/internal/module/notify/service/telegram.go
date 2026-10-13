@@ -111,10 +111,15 @@ func (s *Service) UnbindTelegram(ctx context.Context, userID uuid.UUID) error {
 		if !ok {
 			return errs.Newf(errs.NotFound, "你还没有绑定 Telegram")
 		}
+		n, err := s.store.SuppressQueuedTelegram(ctx, userID)
+		if err != nil {
+			return err
+		}
 		return s.audit.Write(ctx, auditsvc.Event{
 			Action:       "telegram.unbound",
 			ResourceType: "user",
 			ResourceID:   &userID,
+			Data:         map[string]any{"suppressed_deliveries": n},
 		})
 	})
 }
