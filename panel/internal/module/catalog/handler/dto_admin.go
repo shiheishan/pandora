@@ -128,7 +128,7 @@ type createPlanCompleteRequest struct {
 	ThrottleKbps         *int     `json:"throttle_kbps"`
 	QuotaResetStrategy   string   `json:"quota_reset_strategy"`
 	QuotaResetDay        *int16   `json:"quota_reset_day"`
-	// PoolIDs：前端向导要上架就必须选节点池，会发非空列表；节点池 P5 做，P5 之前收下后忽略（不回 422，免得向导没法用）。
+	// PoolIDs 是新建草稿版本要绑定的节点池 id 列表。
 	PoolIDs []string             `json:"pool_ids"`
 	Prices  []wizardPriceRequest `json:"prices"`
 	Publish bool                 `json:"publish"`
@@ -153,7 +153,7 @@ type updatePlanCompleteRequest struct {
 	MaxDevices           optionalInt           `json:"max_devices"`
 	ThrottleKbps         optionalInt           `json:"throttle_kbps"`
 	Prices               *[]wizardPriceRequest `json:"prices"`
-	// PoolIDs：前端改了线路才发非空列表（没改发 null）；节点池 P5 做，P5 之前收下后忽略。
+	// PoolIDs：null 表示线路不动；数组表示换成这些池（有变化时会滚出新版本并发布）。
 	PoolIDs *[]string `json:"pool_ids"`
 }
 
@@ -353,6 +353,30 @@ func parseUserGroupID(s *string) (*uuid.UUID, error) {
 	return &uid, nil
 }
 
+// parseWizardPoolIDs 把向导里的池 id 解析成去重后的 UUID 列表（保持首次出现的顺序）。
+func parseWizardPoolIDs(ids []string) ([]uuid.UUID, error) {
+	if ids == nil {
+		return []uuid.UUID{}, nil
+	}
+	seen := make(map[string]bool, len(ids))
+	out := make([]uuid.UUID, 0, len(ids))
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		uid, err := uuid.Parse(id)
+		if err != nil {
+			return nil, errs.Invalid(map[string]string{"pool_ids": "必须是节点池 UUID 列表"})
+		}
+		seen[id] = true
+		out = append(out, uid)
+	}
+	if len(out) > 500 {
+		return nil, errs.Invalid(map[string]string{"pool_ids": "一次最多绑定 500 个节点池"})
+	}
+	return out, nil
+}
+
 func planInputFromCreate(req createPlanRequest) (service.PlanInput, error) {
 	groups, err := parseVisibleGroupIDs(req.VisibleGroupIDs)
 	if err != nil {
@@ -485,6 +509,10 @@ func wizardCreateFromRequest(req createPlanCompleteRequest) (service.WizardCreat
 		d := int(*req.QuotaResetDay)
 		resetDay = &d
 	}
+	poolIDs, err := parseWizardPoolIDs(req.PoolIDs)
+	if err != nil {
+		return service.WizardCreate{}, err
+	}
 	return service.WizardCreate{
 		Plan:               plan,
 		TrafficGB:          req.TrafficGB,
@@ -492,6 +520,7 @@ func wizardCreateFromRequest(req createPlanCompleteRequest) (service.WizardCreat
 		ThrottleKbps:       req.ThrottleKbps,
 		QuotaResetStrategy: req.QuotaResetStrategy,
 		QuotaResetDay:      resetDay,
+		PoolIDs:            poolIDs,
 		Prices:             wizardPricesFromRequest(req.Prices),
 		Publish:            req.Publish,
 	}, nil
@@ -524,6 +553,13 @@ func wizardUpdateFromRequest(req updatePlanCompleteRequest) (service.WizardUpdat
 	if req.Prices != nil {
 		wp := wizardPricesFromRequest(*req.Prices)
 		out.Prices = &wp
+	}
+	if req.PoolIDs != nil {
+		ids, err := parseWizardPoolIDs(*req.PoolIDs)
+		if err != nil {
+			return service.WizardUpdate{}, err
+		}
+		out.PoolIDs = &ids
 	}
 	return out, nil
 }
@@ -610,7 +646,7 @@ func versionRowFrom(v service.Version) versionRowResponse {
 		Notes:                v.Notes,
 		Entitlements:         ents,
 		Quotas:               quotas,
-		PoolIDs:              []string{},
+		PoolIDs:              uuidsToStrings(v.PoolIDs),
 		CreatedByEmail:       v.CreatedByEmail,
 		CreatedAt:            v.CreatedAt,
 	}

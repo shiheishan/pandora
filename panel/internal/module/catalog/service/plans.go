@@ -131,6 +131,23 @@ func (s *Service) loadDetail(ctx context.Context, planID uuid.UUID) (PlanDetail,
 	if versions == nil {
 		versions = []Version{}
 	}
+	if len(versions) > 0 {
+		versionIDs := make([]uuid.UUID, len(versions))
+		for i, v := range versions {
+			versionIDs[i] = v.ID
+		}
+		poolMap, err := s.repo.VersionPools(ctx, versionIDs)
+		if err != nil {
+			return PlanDetail{}, err
+		}
+		for i := range versions {
+			pools := poolMap[versions[i].ID]
+			if pools == nil {
+				pools = []uuid.UUID{}
+			}
+			versions[i].PoolIDs = pools
+		}
+	}
 
 	creatorIDs := make([]uuid.UUID, 0)
 	seen := map[uuid.UUID]bool{}
