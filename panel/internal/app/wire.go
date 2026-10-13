@@ -188,6 +188,7 @@ func buildServices(r *runtime) (*services, error) {
 	identitySvc.UseRosterNotifier(nodeSvc)
 	// 节点上报的流量经 subscription 扣量（配额 → 流量包 → 按日用量）
 	nodeSvc.UseTrafficCharger(subSvc)
+	nodeSvc.UseKeys(keys)
 	// 节点池与套餐绑池：绑池表归 catalog，池归 node；node 经 catalog 读绑池、经 identity 读用户组名，
 	// catalog 发布前、向导绑池时回调 node（发布门禁、锁池）
 	nodeSvc.UseCatalog(catalogSvc)

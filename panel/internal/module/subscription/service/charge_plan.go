@@ -118,7 +118,7 @@ func planTrafficCharges(items []chargeItem, rows []repo.TrafficQuotaRow, packs [
 		room := rooms[item.SubID]
 		packRemaining := int64(0)
 		for _, g := range packBySub[item.SubID] {
-			packRemaining += g.Remaining
+			packRemaining = satAdd(packRemaining, g.Remaining)
 		}
 		hadRoom := room != nil && (*room > 0 || packRemaining > 0)
 

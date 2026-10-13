@@ -21,7 +21,11 @@ import (
 // maxTrafficEntryBytes 是一条上报里单个用户单个方向的上限：链路 2 Gbps 跑满两个上报周期（120 秒）约 30 GB，超过的不可能来自正常节点。
 const maxTrafficEntryBytes uint64 = 30_000_000_000
 
-// ErrTrafficReportInvalid 是上报编号不合规（1–64 个 [A-Za-z0-9._:-]）。只有节点端缺陷才会出现；
+// maxTrafficReportEntries 是一份上报的条目上限（契约：节点端每份至多 5000 条）。超过的整份按不合规处理：
+// 记 ERROR、照样回 ack、不入账；否则去重后的 uid 可能超出单条 SQL 的占位符上限，报错后节点无限重发。
+const maxTrafficReportEntries = 5000
+
+// ErrTrafficReportInvalid 是上报编号不合规（1–64 个 [A-Za-z0-9._:-]）或条目超过 maxTrafficReportEntries。只有节点端缺陷才会出现；
 // 会话层按 ErrTrafficReportConflict 同样处理（记日志、回 ack、不入账），否则节点会原样重发、死循环。
 var ErrTrafficReportInvalid = errors.New("node: 流量上报编号不合规")
 
@@ -183,6 +187,12 @@ func tallyTraffic(entries []TrafficEntry, rates map[uuid.UUID]decimal.Decimal, m
 		u.Upload, u.Download = satAdd(u.Upload, up), satAdd(u.Download, down)
 	}
 	for k, u := range t.Users {
+		// 同一 (节点, uid) 拆成多条可以绕过单条上限：合并后再判一次，超限的整键不计费、记为不合规
+		if u.Upload > int64(maxTrafficEntryBytes) || u.Download > int64(maxTrafficEntryBytes) {
+			delete(t.Users, k)
+			t.Invalid++
+			continue
+		}
 		u.Billed = billedBytes(satAdd(u.Upload, u.Download), rates[k.NodeID])
 	}
 	return t

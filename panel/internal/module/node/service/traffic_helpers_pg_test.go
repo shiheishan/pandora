@@ -5,6 +5,8 @@ package service
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"database/sql"
 	"sync"
 	"testing"
@@ -75,6 +77,7 @@ func newTrafficEnv(t *testing.T) (*trafficEnv, context.Context) {
 	svc := New(repo.New(d), tx.NewManager(d), nil, nil)
 	ch := &fakeCharger{subs: map[int64]uuid.UUID{}}
 	svc.UseTrafficCharger(ch)
+	svc.UseKeys(testDeviceKeys{})
 	fixed := time.Now().UTC().Truncate(time.Hour).Add(30 * time.Minute)
 	svc.now = func() time.Time { return fixed }
 	e := &trafficEnv{
@@ -144,4 +147,13 @@ func seedTrafficSub(t *testing.T, ctx context.Context, e *trafficEnv) (uuid.UUID
 	}
 	e.charger.subs[uid] = subID
 	return subID, uid
+}
+
+// testDeviceKeys 是测试用的设备键 HMAC（固定密钥）。
+type testDeviceKeys struct{}
+
+func (testDeviceKeys) HMAC(info string, data []byte) []byte {
+	m := hmac.New(sha256.New, []byte("test-"+info))
+	m.Write(data)
+	return m.Sum(nil)
 }

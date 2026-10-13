@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// AliveRow 是一条在线来源（JSON 标签给 jsonb_to_recordset 用）。IPHash 是设备键 SHA-256 的小写 hex。
+// AliveRow 是一条在线来源（JSON 标签给 jsonb_to_recordset 用）。IPHash 是设备键 HMAC-SHA256（InfoHMACNodeDevice）的小写 hex。
 type AliveRow struct {
 	NodeID         uuid.UUID `json:"node_id"`
 	SubscriptionID uuid.UUID `json:"subscription_id"`
@@ -76,7 +76,7 @@ func (r *Repo) NodeLiveStats(ctx context.Context, nodeIDs []uuid.UUID, onlineSin
 		   WHERE node_id IN ? AND last_seen_at > ?
 		   GROUP BY node_id
 		), t AS (
-		  SELECT node_id, LEAST(sum(upload_bytes + download_bytes), 9223372036854775807)::bigint AS bytes
+		  SELECT node_id, LEAST(sum(upload_bytes::numeric + download_bytes), 9223372036854775807)::bigint AS bytes
 		    FROM node_traffic_hourly
 		   WHERE node_id IN ? AND hour_start >= ?
 		   GROUP BY node_id

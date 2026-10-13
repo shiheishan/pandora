@@ -91,8 +91,8 @@ CREATE TRIGGER node_metrics_append_only
   BEFORE UPDATE OR DELETE OR TRUNCATE ON node_metrics
   FOR EACH STATEMENT EXECUTE FUNCTION deny_mutation();
 
--- 在线来源：节点 × 订阅 × 设备键，记最后在线时间（upsert）。只存设备键的 SHA-256
--- （IPv4 按地址、IPv6 按 /64），在线设备数是运营指标，不留可回溯到个人的原始地址。
+-- 在线来源：节点 × 订阅 × 设备键，记最后在线时间（upsert）。只存设备键的 HMAC-SHA256
+-- （IPv4 按地址、IPv6 按 /64；密钥由主密钥派生，库里的摘要无法穷举还原），在线设备数是运营指标，不留可回溯到个人的原始地址。
 CREATE TABLE node_alive_ips (
   node_id         uuid NOT NULL REFERENCES nodes(id) ON DELETE RESTRICT,
   subscription_id uuid NOT NULL REFERENCES subscriptions(id) ON DELETE RESTRICT,

@@ -32,9 +32,9 @@ const trafficRetryAttempts = 3
 // 配额行 → 流量包 → 按日用量）→ 两张小时汇总（一条语句）。回滚则都不留，提交则都在。
 // 同一 (服务器, report_id) 重复到达且内容摘要相同：什么都不做，返回 nil（会话层照样回 TrafficAck）；内容不同返回 ErrTrafficReportConflict。
 // 倍率是节点当前的 traffic_rate，decimal 向零截断（每个节点上每个用户一次）。名单外（m）与不合规的条目照样留档、计入留档的计数，不扣费。
-// 遇 40P01 / 40001 整笔重试，最多 trafficRetryAttempts 次。
+// 遇 40P01 / 40001 整笔重试，最多 trafficRetryAttempts 次；所以不要在已有事务里调（已中止的事务里重试只会报 25P02）。
 func (s *Service) IngestTraffic(ctx context.Context, serverID uuid.UUID, r TrafficReport, m RosterMembership) error {
-	if !validReportID(r.ReportID) {
+	if !validReportID(r.ReportID) || len(r.Entries) > maxTrafficReportEntries {
 		return ErrTrafficReportInvalid
 	}
 	if s.charger == nil {

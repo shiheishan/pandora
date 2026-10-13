@@ -99,8 +99,8 @@ func (s *Service) ChargeTraffic(ctx context.Context, charges []TrafficCharge) (m
 		if err := s.repo.AddUsageDaily(ctx, day, plan.Usage); err != nil {
 			return subErr(err)
 		}
-		// 提交后通知，名单秒级摘掉用尽的人
-		s.notifyRoster(ctx, plan.Exhausted...)
+		// 提交后通知，名单秒级摘掉用尽的人；一批只登记一个钩子（每次通知都会让全部会话重算名单）
+		s.notifyRosterBatch(ctx, plan.Exhausted)
 		return nil
 	})
 	if err != nil {

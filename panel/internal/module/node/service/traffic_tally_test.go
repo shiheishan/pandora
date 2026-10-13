@@ -168,3 +168,25 @@ func TestSatAdd(t *testing.T) {
 		t.Fatal("satAdd")
 	}
 }
+
+// 同一 (节点, uid) 拆成多条、每条都在单条上限内，合并后超限：整键不计费、记一次不合规。
+func TestTallyTrafficMergedCap(t *testing.T) {
+	n1 := tid(1)
+	rates := map[uuid.UUID]decimal.Decimal{n1: decimal.RequireFromString("1")}
+	m := fakeMembers{{n1, 10}: true, {n1, 11}: true}
+	half := maxTrafficEntryBytes/2 + 1
+	tl := tallyTraffic([]TrafficEntry{
+		{NodeID: n1, UID: 10, Upload: half},
+		{NodeID: n1, UID: 10, Upload: half},
+		{NodeID: n1, UID: 11, Download: 5},
+	}, rates, m)
+	if tl.Invalid != 1 {
+		t.Fatalf("Invalid=%d，应为 1", tl.Invalid)
+	}
+	if _, ok := tl.Users[trafficKey{NodeID: n1, UID: 10}]; ok {
+		t.Fatal("合并超限的键不应计费")
+	}
+	if u := tl.Users[trafficKey{NodeID: n1, UID: 11}]; u == nil || u.Billed != 5 {
+		t.Fatalf("正常的键照扣：%+v", u)
+	}
+}

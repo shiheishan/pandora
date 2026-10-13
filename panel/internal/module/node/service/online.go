@@ -5,8 +5,8 @@ package service
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"net/netip"
 	"sort"
 	"time"
@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/aegispanel/aegis/internal/module/node/repo"
+	"github.com/aegispanel/aegis/internal/pkg/crypto"
 )
 
 // OnlineWindow 是「在线」的时间窗：最近这么久内上报过的来源算在线（旧设备识别窗口的缺省 5 分钟；可调的设备窗口第三波做）。
@@ -75,13 +76,24 @@ func (s *Service) IngestOnline(ctx context.Context, serverID uuid.UUID, entries 
 	if err != nil {
 		return err
 	}
-	rows := aliveRows(kept, subs)
+	if s.keys == nil {
+		return errors.New("node: 在线设备键的 HMAC 密钥未装配")
+	}
+	rows := aliveRows(kept, subs, func(b []byte) []byte { return s.keys.HMAC(crypto.InfoHMACNodeDevice, b) })
 	return s.repo.UpsertAliveIPs(ctx, s.now().UTC().Truncate(time.Microsecond), aliveRefresh, rows)
 }
 
+// DeviceKeyHasher 是 *crypto.Keys 的 HMAC 面：在线设备键只落带密钥的摘要（InfoHMACNodeDevice）。
+type DeviceKeyHasher interface {
+	HMAC(info string, data []byte) []byte
+}
+
+// UseKeys 只在启动装配时调用。没装配时在线上报不落库并回错误。
+func (s *Service) UseKeys(k DeviceKeyHasher) { s.keys = k }
+
 // aliveRows 把条目摊平成 (节点, 订阅, 设备键哈希)，去重并按 (节点, 订阅, 哈希) 排序：
 // 一条 INSERT … ON CONFLICT DO UPDATE 不能两次碰同一行，同一设备也可能报两遍。找不到订阅的 uid、无效地址跳过。
-func aliveRows(entries []OnlineEntry, subs map[int64]uuid.UUID) []repo.AliveRow {
+func aliveRows(entries []OnlineEntry, subs map[int64]uuid.UUID, mac func([]byte) []byte) []repo.AliveRow {
 	seen := map[repo.AliveRow]bool{}
 	var out []repo.AliveRow
 	for _, e := range entries {
@@ -93,8 +105,7 @@ func aliveRows(entries []OnlineEntry, subs map[int64]uuid.UUID) []repo.AliveRow 
 			if !ip.IsValid() {
 				continue
 			}
-			sum := sha256.Sum256([]byte(deviceKey(ip)))
-			r := repo.AliveRow{NodeID: e.NodeID, SubscriptionID: subID, IPHash: hex.EncodeToString(sum[:])}
+			r := repo.AliveRow{NodeID: e.NodeID, SubscriptionID: subID, IPHash: hex.EncodeToString(mac([]byte(deviceKey(ip))))}
 			if !seen[r] {
 				seen[r] = true
 				out = append(out, r)

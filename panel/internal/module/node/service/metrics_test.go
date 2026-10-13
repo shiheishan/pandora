@@ -1,6 +1,7 @@
 package service
 
 import (
+	"crypto/sha256"
 	"math"
 	"net/netip"
 	"testing"
@@ -34,7 +35,7 @@ func TestAliveRowsDedupAndOrder(t *testing.T) {
 			netip.MustParseAddr("2001:db8:1:2::1"), netip.MustParseAddr("2001:db8:1:2::2"), {},
 		}},
 		{NodeID: n1, UID: 8, IPs: []netip.Addr{netip.MustParseAddr("5.6.7.8")}}, // 找不到订阅
-	}, map[int64]uuid.UUID{7: sub})
+	}, map[int64]uuid.UUID{7: sub}, func(b []byte) []byte { h := sha256.Sum256(b); return h[:] })
 	if len(rows) != 3 || rows[0].NodeID != n1 || rows[1].NodeID != n1 || rows[2].NodeID != n2 {
 		t.Fatalf("行 %v", rows)
 	}

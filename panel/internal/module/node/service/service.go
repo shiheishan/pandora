@@ -47,6 +47,9 @@ type Service struct {
 	// 第二波 p5-traffic 注入（traffic_charger.go 的 UseTrafficCharger）：流量扣量
 	charger TrafficCharger
 
+	// keys 给在线设备键做 HMAC（online.go 的 UseKeys）
+	keys DeviceKeyHasher
+
 	// 第二波 p5-delivery 注入（delivery.go）：名单要的订阅、账号、套餐版本读取面
 	subs     ServingSubscriptions
 	users    ServingUsers
