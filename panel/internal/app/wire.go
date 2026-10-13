@@ -13,6 +13,8 @@ import (
 	authsvc "github.com/aegispanel/aegis/internal/module/auth/service"
 	catalogrepo "github.com/aegispanel/aegis/internal/module/catalog/repo"
 	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
+	certsrepo "github.com/aegispanel/aegis/internal/module/certs/repo"
+	certssvc "github.com/aegispanel/aegis/internal/module/certs/service"
 	commissionrepo "github.com/aegispanel/aegis/internal/module/commission/repo"
 	commissionsvc "github.com/aegispanel/aegis/internal/module/commission/service"
 	contentrepo "github.com/aegispanel/aegis/internal/module/content/repo"
@@ -72,6 +74,7 @@ type services struct {
 	content    *contentsvc.Service
 	appearance *appearancesvc.Service
 	support    *supportsvc.Service
+	certs      *certssvc.Service
 	// idemFPKey 是幂等请求指纹的 HMAC 密钥（从主密钥派生）
 	idemFPKey []byte
 	limiter   *ratelimit.Limiter
@@ -171,6 +174,8 @@ func buildServices(r *runtime) (*services, error) {
 	contentSvc := contentsvc.New(contentrepo.New(r.db), txm, auditSvc, catalogSvc, subSvc, identitySvc)
 	// 外观：插槽更新时间按 settings 的站点时区显示
 	appearanceSvc := appearancesvc.New(appearancerepo.New(r.db), txm, auditSvc, settingsSvc)
+	// 节点证书：ACME 设置在 settings；建单后经 queue 立刻入队签发任务
+	certsSvc := certssvc.New(certsrepo.New(r.db), txm, auditSvc, settingsSvc, sealer, queue, certssvc.Options{Log: r.log})
 
 	// 模块间注入：identity 定义接口，auth、notify 实现；audit 经 identity 显示操作者与资源
 	identitySvc.UseSessionRevoker(authSvc)
@@ -264,6 +269,7 @@ func buildServices(r *runtime) (*services, error) {
 		content:    contentSvc,
 		appearance: appearanceSvc,
 		support:    supportSvc,
+		certs:      certsSvc,
 		idemFPKey:  keys.Derive(crypto.InfoHMACIdempotency, 32),
 		limiter:    limiter,
 		sealer:     sealer,

@@ -14,6 +14,7 @@ import (
 	audith "github.com/aegispanel/aegis/internal/module/audit/handler"
 	authh "github.com/aegispanel/aegis/internal/module/auth/handler"
 	catalogh "github.com/aegispanel/aegis/internal/module/catalog/handler"
+	certsh "github.com/aegispanel/aegis/internal/module/certs/handler"
 	commissionh "github.com/aegispanel/aegis/internal/module/commission/handler"
 	contenth "github.com/aegispanel/aegis/internal/module/content/handler"
 	giftcardh "github.com/aegispanel/aegis/internal/module/giftcard/handler"
@@ -193,6 +194,7 @@ func newEngines(r *runtime, svc *services) (*gin.Engine, *gin.Engine) {
 		contenth.New(svc.content, svc.limiter, r.cfg.RateLimit.AccountPerMin),
 		appearanceh.New(svc.appearance),
 		supporth.New(svc.support, svc.limiter),
+		certsh.New(svc.certs),
 	}
 
 	publicEng := newEngine(r, r.cfg.HTTP.Public,
