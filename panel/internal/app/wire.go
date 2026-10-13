@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -39,12 +40,15 @@ import (
 	"github.com/aegispanel/aegis/internal/module/subscription/render"
 	subrepo "github.com/aegispanel/aegis/internal/module/subscription/repo"
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
+	supportrepo "github.com/aegispanel/aegis/internal/module/support/repo"
+	supportsvc "github.com/aegispanel/aegis/internal/module/support/service"
 	"github.com/aegispanel/aegis/internal/pkg/config"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
 	"github.com/aegispanel/aegis/internal/pkg/jwtx"
 	"github.com/aegispanel/aegis/internal/pkg/ratelimit"
 	"github.com/aegispanel/aegis/internal/pkg/redisx"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
+	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 )
 
@@ -67,6 +71,7 @@ type services struct {
 	node       *nodesvc.Service
 	content    *contentsvc.Service
 	appearance *appearancesvc.Service
+	support    *supportsvc.Service
 	// idemFPKey 是幂等请求指纹的 HMAC 密钥（从主密钥派生）
 	idemFPKey []byte
 	limiter   *ratelimit.Limiter
@@ -229,6 +234,16 @@ func buildServices(r *runtime) (*services, error) {
 		_ = queue.Close()
 		return nil, fmt.Errorf("commission 缺少装配: %v", missing)
 	}
+	// 工单：提单人与客服的邮箱、显示名经 identity，可指派客服是 auth 的管理员名单；
+	// 关联订单经 order 校验归属（建单时存下订单号），队列与详情的在用套餐经 subscription 批量读；审计页显示工单号
+	supportSvc := supportsvc.New(supportrepo.New(r.db), txm, auditSvc, idemSvc, identitySvc, authSvc)
+	supportSvc.UseOrders(supportOrders{o: orderSvc})
+	supportSvc.UsePlanNames(supportPlans{s: subSvc})
+	auditSvc.UseResourceLabeler(supportsvc.ResourceTicket, supportSvc.TicketLabels)
+	if missing := supportSvc.MissingPorts(); len(missing) > 0 {
+		_ = queue.Close()
+		return nil, fmt.Errorf("support 缺少装配: %v", missing)
+	}
 
 	return &services{
 		settings:   settingsSvc,
@@ -248,6 +263,7 @@ func buildServices(r *runtime) (*services, error) {
 		node:       nodeSvc,
 		content:    contentSvc,
 		appearance: appearanceSvc,
+		support:    supportSvc,
 		idemFPKey:  keys.Derive(crypto.InfoHMACIdempotency, 32),
 		limiter:    limiter,
 		sealer:     sealer,
@@ -270,3 +286,39 @@ func newIssuer(domain jwtx.Domain, current, previous config.Secret, ttl time.Dur
 	}
 	return jwtx.NewIssuer(domain, []byte(current.Reveal()), prev, ttl)
 }
+
+// supportOrders 让 support 经 order 校验门户用户关联的订单：MyOrder 按 ctx 里的门户主体限定本人，
+// 不存在或不是本人的回 errs.NotFound。
+type supportOrders struct{ o *ordersvc.Service }
+
+// OwnedOrderNo 返回门户主体名下这张订单的订单号。
+func (a supportOrders) OwnedOrderNo(ctx context.Context, orderID uuid.UUID) (string, error) {
+	d, err := a.o.MyOrder(ctx, orderID)
+	if err != nil {
+		return "", err
+	}
+	return d.Order.OrderNo, nil
+}
+
+// supportPlans 让 support 经 subscription 批量取提单人当前生效订阅的套餐名（与订阅的「当前订阅」同一口径）。
+type supportPlans struct{ s *subsvc.Service }
+
+// ActivePlanNames 返回当前订阅生效的用户的套餐名；没有生效订阅的用户不在结果里。
+func (a supportPlans) ActivePlanNames(ctx context.Context, userIDs []uuid.UUID) (map[uuid.UUID]string, error) {
+	sums, err := a.s.SummariesByUsers(ctx, userIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[uuid.UUID]string, len(sums))
+	for id, us := range sums {
+		if us.Current != nil && us.Current.State == subsvc.StateLive {
+			out[id] = us.Current.PlanName
+		}
+	}
+	return out, nil
+}
+
+var (
+	_ supportsvc.Orders    = supportOrders{}
+	_ supportsvc.PlanNames = supportPlans{}
+)

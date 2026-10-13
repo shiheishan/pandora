@@ -27,6 +27,7 @@ import (
 	promoh "github.com/aegispanel/aegis/internal/module/promo/handler"
 	settingsh "github.com/aegispanel/aegis/internal/module/settings/handler"
 	subh "github.com/aegispanel/aegis/internal/module/subscription/handler"
+	supporth "github.com/aegispanel/aegis/internal/module/support/handler"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/config"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
@@ -191,6 +192,7 @@ func newEngines(r *runtime, svc *services) (*gin.Engine, *gin.Engine) {
 		commissionh.New(svc.commission),
 		contenth.New(svc.content, svc.limiter, r.cfg.RateLimit.AccountPerMin),
 		appearanceh.New(svc.appearance),
+		supporth.New(svc.support, svc.limiter),
 	}
 
 	publicEng := newEngine(r, r.cfg.HTTP.Public,
