@@ -8,6 +8,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
+	"github.com/shopspring/decimal"
 )
 
 // 本文件由块负责人定稿：批量运营（预览、导出、群发收件人、批量生成）、用户画像、访问明细、
@@ -82,6 +83,8 @@ type ExportRow struct {
 	Status      string
 	GroupName   string
 	ActiveSubs  int
+	Orders      int64
+	Paid        string
 	CreatedAt   time.Time
 	LastLoginAt *time.Time
 }
@@ -299,6 +302,17 @@ type OpsSubscriptions interface {
 	UserFetches(ctx context.Context, userID uuid.UUID) ([]FetchRecord, int, error)
 }
 
+// OrderStat 是一个用户的订单总数与按币种划分的实付金额汇总。
+type OrderStat struct {
+	Orders int64
+	Paid   map[string]decimal.Decimal
+}
+
+// OpsOrders 由 order 模块经适配器实现（app/adapters.go），启动装配时经 UseOpsOrders 注入。
+type OpsOrders interface {
+	UserOrderStats(ctx context.Context, userIDs []uuid.UUID) (map[uuid.UUID]OrderStat, error)
+}
+
 // JobQueue 入队一次性任务；*asynq.Client 实现。
 type JobQueue interface {
 	EnqueueContext(ctx context.Context, task *asynq.Task, opts ...asynq.Option) (*asynq.TaskInfo, error)
@@ -320,6 +334,9 @@ var _ auditOps = (*auditsvc.Service)(nil)
 // UseOpsSubscriptions 只在启动装配时调用（不并发安全）。
 func (s *Service) UseOpsSubscriptions(o OpsSubscriptions) { s.subs = o }
 
+// UseOpsOrders 只在启动装配时调用（不并发安全）。
+func (s *Service) UseOpsOrders(o OpsOrders) { s.orders = o }
+
 // UseJobQueue 只在启动装配时调用（不并发安全）。没注入时批量生成任务只靠 reconcile:user_generation 每分钟补排。
 func (s *Service) UseJobQueue(q JobQueue) { s.queue = q }
 
@@ -328,4 +345,11 @@ func (s *Service) needSubs() (OpsSubscriptions, error) {
 		return nil, errs.Wrap(errs.Internal, errNotWired)
 	}
 	return s.subs, nil
+}
+
+func (s *Service) needOrders() (OpsOrders, error) {
+	if s.orders == nil {
+		return nil, errs.Wrap(errs.Unavailable, errNotWired)
+	}
+	return s.orders, nil
 }

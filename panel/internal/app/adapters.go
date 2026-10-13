@@ -5,6 +5,8 @@ import (
 	"errors"
 
 	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
+	identitysvc "github.com/aegispanel/aegis/internal/module/identity/service"
+	ordersvc "github.com/aegispanel/aegis/internal/module/order/service"
 	promosvc "github.com/aegispanel/aegis/internal/module/promo/service"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
@@ -63,3 +65,24 @@ func asNotFound(err error) error {
 	}
 	return err
 }
+
+// opsOrderAdapter 把 order 的订单统计适配成 identity 要的 OpsOrders。
+type opsOrderAdapter struct{ s *ordersvc.Service }
+
+var _ identitysvc.OpsOrders = opsOrderAdapter{}
+
+func (a opsOrderAdapter) UserOrderStats(ctx context.Context, userIDs []uuid.UUID) (map[uuid.UUID]identitysvc.OrderStat, error) {
+	stats, err := a.s.UserOrderStats(ctx, userIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[uuid.UUID]identitysvc.OrderStat, len(stats))
+	for id, st := range stats {
+		out[id] = identitysvc.OrderStat{
+			Orders: st.Orders,
+			Paid:   st.Paid,
+		}
+	}
+	return out, nil
+}
+
