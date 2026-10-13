@@ -191,8 +191,8 @@ func (r *Repo) HasActiveIdentity(ctx context.Context, serverID uuid.UUID, now ti
 	return row.OK, err
 }
 
-// ActiveIdentitySeqs 批量取这些服务器当前 active 身份的 seq（一条 SQL，不看是否过期）；没有 active 身份的服务器不在结果里。
-func (r *Repo) ActiveIdentitySeqs(ctx context.Context, serverIDs []uuid.UUID) (map[uuid.UUID]int32, error) {
+// ActiveIdentitySeqs 批量取这些服务器当前 active 且未过期身份的 seq（一条 SQL，与 HasActiveIdentity 同口径）；没有的服务器不在结果里。
+func (r *Repo) ActiveIdentitySeqs(ctx context.Context, serverIDs []uuid.UUID, now time.Time) (map[uuid.UUID]int32, error) {
 	out := make(map[uuid.UUID]int32, len(serverIDs))
 	if len(serverIDs) == 0 {
 		return out, nil
@@ -202,7 +202,7 @@ func (r *Repo) ActiveIdentitySeqs(ctx context.Context, serverIDs []uuid.UUID) (m
 		Seq      int32     `gorm:"column:seq"`
 	}
 	err := r.d.Conn(ctx).Raw(
-		`SELECT server_id, seq FROM server_identities WHERE server_id IN ? AND status = 'active'`, serverIDs,
+		`SELECT server_id, seq FROM server_identities WHERE server_id IN ? AND status = 'active' AND expires_at > ?`, serverIDs, now,
 	).Scan(&rows).Error
 	if err != nil {
 		return nil, err

@@ -9,11 +9,13 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 
 	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
 	"github.com/aegispanel/aegis/internal/module/node/protocol"
 	"github.com/aegispanel/aegis/internal/module/node/repo"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	plog "github.com/aegispanel/aegis/internal/pkg/log"
 )
 
 var nodeListStates = []string{"", "all", "online", "offline", "disabled", "retired"}
@@ -30,7 +32,7 @@ type nodeListExtras struct {
 }
 
 // QueryNodes 返回后台节点列表的一页与筛选后的总数；只读，ListNodePage 一次，
-// 非空页再固定五条批量读（在线与流量、最新指标、身份序号、池套餐引用、期望配置文档），与页大小无关；
+// 非空页再做固定条数的批量读（在线与流量、最新指标、身份序号、池套餐引用、期望配置文档，共约 8 条查询），与页大小无关；
 // granted_plans 来自 catalog PoolUsage（绑定了该池的任意套餐版本所属套餐名）。
 func (s *Service) QueryNodes(ctx context.Context, q NodeQuery) ([]NodeRow, int64, error) {
 	q.Search = strings.TrimSpace(q.Search)
@@ -85,7 +87,7 @@ func dedupeUUIDs(ids []uuid.UUID) []uuid.UUID {
 	return slices.Compact(ids)
 }
 
-// nodeListExtrasFor 对一页节点做固定五条批量读，不逐行查。
+// nodeListExtrasFor 对一页节点做固定条数的批量读，不逐行查。
 func (s *Service) nodeListExtrasFor(ctx context.Context, rows []repo.NodeListRow) (nodeListExtras, error) {
 	var nodeIDs, serverIDs, poolIDs []uuid.UUID
 	for _, row := range rows {
@@ -108,7 +110,7 @@ func (s *Service) nodeListExtrasFor(ctx context.Context, rows []repo.NodeListRow
 	if err != nil {
 		return nodeListExtras{}, err
 	}
-	seqs, err := s.repo.ActiveIdentitySeqs(ctx, serverIDs)
+	seqs, err := s.repo.ActiveIdentitySeqs(ctx, serverIDs, s.identityNow())
 	if err != nil {
 		return nodeListExtras{}, err
 	}
@@ -116,11 +118,14 @@ func (s *Service) nodeListExtrasFor(ctx context.Context, rows []repo.NodeListRow
 	if err != nil {
 		return nodeListExtras{}, err
 	}
+	desired := make(map[uuid.UUID]string)
+	// 某个节点的配置拼不出文档（协议配置不是对象等）时不让整个列表 500，否则连去修它的页面都打不开；
+	// 记警告，期望摘要留空，生效状态退回只看节点回报。
 	configs, err := s.ServerConfigs(ctx, serverIDs)
 	if err != nil {
-		return nodeListExtras{}, err
+		plog.From(ctx).Warn("节点列表算期望配置失败，生效状态只看节点回报", zap.Error(err))
+		configs = nil
 	}
-	desired := make(map[uuid.UUID]string)
 	for _, docs := range configs {
 		for _, doc := range docs {
 			desired[doc.NodeID] = doc.SHA256

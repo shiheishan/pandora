@@ -73,11 +73,25 @@ func (s *Service) Enroll(ctx context.Context, in EnrollInput) (EnrollResult, err
 	var res EnrollResult
 	var deny string // 只进日志的内部原因
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
+		// 锁序统一为「服务器 → 令牌」（与吊销、退役、删除一致，免得互相死锁）：
+		// 先不加锁查出令牌属于哪台服务器，锁服务器行，再锁令牌行重读。令牌的 server_id 有触发器保证不变。
+		peekServerID, err := s.repo.BootstrapTokenServerByHash(ctx, tokenHash)
+		if err != nil {
+			return err
+		}
+		if peekServerID == nil {
+			deny = "token_unknown"
+			return ErrEnrollDenied
+		}
+		st, err := s.repo.LockServerForIdentity(ctx, *peekServerID)
+		if err != nil {
+			return err
+		}
 		tok, err := s.repo.BootstrapTokenByHashForUpdate(ctx, tokenHash)
 		if err != nil {
 			return err
 		}
-		if tok == nil {
+		if tok == nil || tok.ServerID != *peekServerID {
 			deny = "token_unknown"
 			return ErrEnrollDenied
 		}
@@ -103,10 +117,6 @@ func (s *Service) Enroll(ctx context.Context, in EnrollInput) (EnrollResult, err
 			return ErrEnrollDenied
 		}
 		serverID := tok.ServerID
-		st, err := s.repo.LockServerForIdentity(ctx, serverID)
-		if err != nil {
-			return err
-		}
 		if st == nil || st.Deleted || st.Status == "retired" {
 			deny = "server_unavailable"
 			return ErrEnrollDenied

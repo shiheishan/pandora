@@ -28,6 +28,20 @@ func (r *Repo) BootstrapTokenByHashForUpdate(ctx context.Context, tokenSHA256 st
 	return &rows[0], nil
 }
 
+// BootstrapTokenServerByHash 不加锁地查未作废令牌所属的服务器；没有返回 nil。接入用它先定锁哪台服务器。
+func (r *Repo) BootstrapTokenServerByHash(ctx context.Context, tokenSHA256 string) (*uuid.UUID, error) {
+	var rows []struct {
+		ServerID uuid.UUID `gorm:"column:server_id"`
+	}
+	err := r.d.Conn(ctx).Raw(
+		`SELECT server_id FROM bootstrap_tokens WHERE token_sha256 = ? AND voided_at IS NULL LIMIT 1`, tokenSHA256,
+	).Scan(&rows).Error
+	if err != nil || len(rows) == 0 {
+		return nil, err
+	}
+	return &rows[0].ServerID, nil
+}
+
 // MarkBootstrapTokenUsed 把令牌标成已用（只从未用变成已用一次）；返回是否真的改了一行。
 func (r *Repo) MarkBootstrapTokenUsed(ctx context.Context, id uuid.UUID, requestID string, at time.Time) (bool, error) {
 	res := r.d.Conn(ctx).Exec(
