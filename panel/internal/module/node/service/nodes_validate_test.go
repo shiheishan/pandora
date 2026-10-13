@@ -38,7 +38,7 @@ func TestNodeValidateDisplay(t *testing.T) {
 	}
 	for _, bad := range []string{strings.Repeat("a", 65), "a\x00"} {
 		_, err := nodeValidateDisplay(bad)
-		nodeTestErr(t, err, errs.ValidationFailed)
+		_ = nodeTestErr(t, err, errs.ValidationFailed)
 	}
 }
 
@@ -126,6 +126,6 @@ func TestNodeValidateReason(t *testing.T) {
 	}
 	for _, bad := range []string{strings.Repeat("字", 501), "a\x00"} {
 		_, err := nodeValidateReason(bad)
-		nodeTestErr(t, err, errs.ValidationFailed)
+		_ = nodeTestErr(t, err, errs.ValidationFailed)
 	}
 }

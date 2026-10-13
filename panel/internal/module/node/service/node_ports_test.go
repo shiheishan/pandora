@@ -36,7 +36,7 @@ func TestNodePortPanelReserved(t *testing.T) {
 	p := defaultNodePortPolicy
 	for _, addrs := range [][]string{{"127.0.0.1"}, {"localhost"}, {"::1"}} {
 		_, err := p.checkReserved(443, p.panelHost(addrs))
-		nodeTestErr(t, err, errs.ValidationFailed)
+		_ = nodeTestErr(t, err, errs.ValidationFailed)
 	}
 	// 普通公网地址：判断不了是不是面板机，只提示
 	w, err := p.checkReserved(443, p.panelHost([]string{"203.0.113.10", "edge.example.test"}))
@@ -52,7 +52,7 @@ func TestNodePortPanelReserved(t *testing.T) {
 	// 命中面板地址（规整大小写与结尾的点）
 	q.PanelHosts = []string{"Panel.Example.Test."}
 	_, err = q.checkReserved(443, q.panelHost([]string{"panel.example.test"}))
-	nodeTestErr(t, err, errs.ValidationFailed)
+	_ = nodeTestErr(t, err, errs.ValidationFailed)
 }
 
 func TestNodePortOrdinary(t *testing.T) {
@@ -86,7 +86,7 @@ func TestNodeWriteErr(t *testing.T) {
 	if e.Fields["name"] == "" {
 		t.Fatalf("重名应标在 name：%v", e.Fields)
 	}
-	nodeTestErr(t, nodeWriteErr(fmt.Errorf("%w: x", repo.ErrInventoryCheck), 0, ""), errs.Conflict)
+	_ = nodeTestErr(t, nodeWriteErr(fmt.Errorf("%w: x", repo.ErrInventoryCheck), 0, ""), errs.Conflict)
 	other := errors.New("boom")
 	if got := nodeWriteErr(other, 0, ""); got != other {
 		t.Fatalf("其它错误应原样返回：%v", got)

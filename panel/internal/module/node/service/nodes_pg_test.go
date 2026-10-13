@@ -74,7 +74,7 @@ func TestNodeCreateConflicts(t *testing.T) {
 		Name: e.name("bad-pool"), ServerID: srv.ID, PoolID: &pool, NodeType: "shadowsocks",
 		ServerHost: "203.0.113.10", ServerPort: 22012, ProtocolConfig: json.RawMessage(invSSConfig),
 	})
-	invWantCode(t, err, errs.ValidationFailed)
+	_ = invWantCode(t, err, errs.ValidationFailed)
 	small := e.server(t, ctx, "nd-cap")
 	one := 1
 	_, err = e.svc.PatchServer(ctx, small.ID, ServerPatch{RowVersion: small.RowVersion, CapacityNodes: &one})
@@ -86,7 +86,7 @@ func TestNodeCreateConflicts(t *testing.T) {
 		Name: e.name("full-2"), ServerID: small.ID, NodeType: "shadowsocks",
 		ServerHost: "203.0.113.10", ServerPort: 22014, ProtocolConfig: json.RawMessage(invSSConfig),
 	})
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 	ret := e.server(t, ctx, "nd-ret")
 	if err := e.exec(ctx, `UPDATE servers SET status = 'retired', retired_at = now() WHERE id = ?`, ret.ID); err != nil {
 		t.Fatal(err)
@@ -95,7 +95,7 @@ func TestNodeCreateConflicts(t *testing.T) {
 		Name: e.name("on-ret"), ServerID: ret.ID, NodeType: "shadowsocks",
 		ServerHost: "203.0.113.10", ServerPort: 22015, ProtocolConfig: json.RawMessage(invSSConfig),
 	})
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 }
 
 func TestNodePatchSecretsAndPool(t *testing.T) {
@@ -110,7 +110,7 @@ func TestNodePatchSecretsAndPool(t *testing.T) {
 	}
 	stale := hy2.RowVersion + 1
 	_, err = e.svc.PatchNode(ctx, hy2.ID, NodePatch{RowVersion: stale, ProtocolConfig: json.RawMessage(`{"bandwidth":{"up":100}}`)})
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 	patchCfg := json.RawMessage(`{"cert_path":"/etc/pandora-native/certs/t.pem","key_path":"/etc/pandora-native/certs/t.key","bandwidth":{"up":100},"obfs":{"type":"salamander"}}`)
 	got, err := e.svc.PatchNode(ctx, hy2.ID, NodePatch{RowVersion: hy2.RowVersion, ProtocolConfig: patchCfg})
 	if err != nil {
@@ -140,13 +140,13 @@ func TestNodePatchSecretsAndPool(t *testing.T) {
 	}
 	active, _ = e.svc.GetAdminNode(ctx, active.ID)
 	_, err = e.svc.PatchNode(ctx, active.ID, NodePatch{RowVersion: active.RowVersion, PoolID: OptionalUUID{Set: true}})
-	invWantCode(t, err, errs.ValidationFailed)
+	_ = invWantCode(t, err, errs.ValidationFailed)
 	retired, err := e.svc.RetireNode(ctx, active.ID, active.RowVersion, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = e.svc.PatchNode(ctx, retired.ID, NodePatch{RowVersion: retired.RowVersion, PoolID: OptionalUUID{Set: true, Value: &pool}})
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 }
 
 func TestNodePatchEpochOnlyWhenNeededCommitted(t *testing.T) {
@@ -248,7 +248,7 @@ func TestNodeCopyAndReorder(t *testing.T) {
 		{ID: a.ID, RowVersion: a.RowVersion - 1, SortOrder: 99},
 		{ID: b.ID, RowVersion: b.RowVersion, SortOrder: 88},
 	})
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 	_ = e.row(ctx, `SELECT sort_order FROM nodes WHERE id = ?`, a.ID).Scan(&sa)
 	_ = e.row(ctx, `SELECT sort_order FROM nodes WHERE id = ?`, b.ID).Scan(&sb)
 	if sa != 5 || sb != 15 {

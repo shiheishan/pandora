@@ -94,7 +94,7 @@ func TestNodePortClaimOnMove(t *testing.T) {
 	n := e.ssNode(t, ctx, a.ID, "ss-a", 20007)
 
 	_, err := e.svc.MoveNode(ctx, n.ID, NodeMoveInput{RowVersion: n.RowVersion, ServerID: b.ID})
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 }
 
 func TestNodePortReserved(t *testing.T) {

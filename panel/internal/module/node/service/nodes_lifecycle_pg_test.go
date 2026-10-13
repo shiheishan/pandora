@@ -42,7 +42,7 @@ func TestBatchNodeStatusNeedsReadyServer(t *testing.T) {
 	n := e.ssNode(t, ctx, srv.ID, "n", 21001)
 
 	err := e.svc.BatchNodeStatus(ctx, NodeStatusBatch{Items: []NodeVersionRef{{ID: n.ID, RowVersion: n.RowVersion}}, ServingStatus: NodeActive})
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 
 	if err := e.exec(ctx, `UPDATE servers SET status = 'ready', last_heartbeat_at = now() WHERE id = ?`, srv.ID); err != nil {
 		t.Fatal(err)
@@ -68,7 +68,7 @@ func TestBatchNodeStatusAllOrNothing(t *testing.T) {
 	err = e.svc.BatchNodeStatus(ctx, NodeStatusBatch{ServingStatus: NodeActive, Items: []NodeVersionRef{
 		{ID: a.ID, RowVersion: a.RowVersion}, {ID: b.ID, RowVersion: b.RowVersion},
 	}})
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 	if st, v := invServingOf(t, e, ctx, a.ID); st != NodeDraft || v != a.RowVersion {
 		t.Fatalf("整批失败后 a 不应改动：%s %d", st, v)
 	}
@@ -81,9 +81,9 @@ func TestBatchNodeStatusAllOrNothing(t *testing.T) {
 	}
 	// 未知状态、不存在的 id
 	err = e.svc.BatchNodeStatus(ctx, NodeStatusBatch{ServingStatus: "draining", Items: []NodeVersionRef{{ID: a.ID, RowVersion: a.RowVersion}}})
-	invWantCode(t, err, errs.ValidationFailed)
+	_ = invWantCode(t, err, errs.ValidationFailed)
 	err = e.svc.BatchNodeStatus(ctx, NodeStatusBatch{ServingStatus: NodeDisabled, Items: []NodeVersionRef{{ID: uuid.New(), RowVersion: 1}}})
-	invWantCode(t, err, errs.NotFound)
+	_ = invWantCode(t, err, errs.NotFound)
 }
 
 // 两个请求拿同一个版本改同一个节点：恰好一个成功、一个 409。
@@ -195,7 +195,7 @@ func TestActivateRetiredNodeRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = e.svc.ActivateNode(ctx, n.ID, n.RowVersion)
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 }
 
 func TestRetireNode(t *testing.T) {
@@ -217,20 +217,20 @@ func TestRetireNode(t *testing.T) {
 		t.Fatal("retired_at 应非空")
 	}
 	_, err = e.svc.RetireNode(ctx, n.ID, got.RowVersion, "")
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 	err = e.svc.BatchNodeStatus(ctx, NodeStatusBatch{ServingStatus: NodeActive, Items: []NodeVersionRef{{ID: n.ID, RowVersion: got.RowVersion}}})
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 }
 
 func TestDeleteNode(t *testing.T) {
 	e, ctx := newInvEnv(t)
 	srv, active := invActiveNode(t, e, ctx, "del-a", "active", 21010)
 	err := e.svc.DeleteNode(ctx, active.ID, active.RowVersion, "")
-	invWantCode(t, err, errs.ValidationFailed)
+	_ = invWantCode(t, err, errs.ValidationFailed)
 
 	draft := e.ssNode(t, ctx, srv.ID, "draft", 21011)
 	err = e.svc.DeleteNode(ctx, draft.ID, draft.RowVersion+1, "")
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 	if err := e.svc.DeleteNode(ctx, draft.ID, draft.RowVersion, "建错了"); err != nil {
 		t.Fatal(err)
 	}
@@ -293,12 +293,12 @@ func TestMoveNode(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = e.svc.MoveNode(ctx, served.ID, NodeMoveInput{RowVersion: served.RowVersion, ServerID: b.ID})
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 
 	// 在役节点不能迁移
 	_, active := invActiveNode(t, e, ctx, "move-c", "active", 21014)
 	_, err = e.svc.MoveNode(ctx, active.ID, NodeMoveInput{RowVersion: active.RowVersion, ServerID: b.ID})
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 }
 
 func TestRepublishNode(t *testing.T) {
@@ -316,9 +316,9 @@ func TestRepublishNode(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = e.svc.RepublishNode(ctx, n.ID)
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 	_, err = e.svc.RepublishNode(ctx, uuid.New())
-	invWantCode(t, err, errs.NotFound)
+	_ = invWantCode(t, err, errs.NotFound)
 }
 
 func TestNodeLifecycleEpochs(t *testing.T) {
@@ -329,7 +329,7 @@ func TestNodeLifecycleEpochs(t *testing.T) {
 	users, config := e.epoch(t, UsersEpochKey), e.epoch(t, ConfigEpochKey)
 	// 失败的调用（版本不对）不推纪元
 	_, err := e.svc.ActivateNode(ctx, n.ID, n.RowVersion+3)
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 	if e.epoch(t, UsersEpochKey) != users || e.epoch(t, ConfigEpochKey) != config {
 		t.Fatal("失败的调用不应推进纪元")
 	}

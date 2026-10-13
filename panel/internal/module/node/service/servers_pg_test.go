@@ -114,10 +114,10 @@ func TestServerStatusIllegalAndReadyRequiresActive(t *testing.T) {
 	}
 	s = e.readyServer(t, ctx, "st-ready-ret")
 	_, err = e.svc.SetServerStatus(ctx, s.ID, s.RowVersion, ServerRetired, "")
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 	s = e.server(t, ctx, "st-draft-drain")
 	_, err = e.svc.SetServerStatus(ctx, s.ID, s.RowVersion, ServerDraining, "")
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 }
 
 func TestServerStatusLegalPathToRetired(t *testing.T) {
@@ -161,21 +161,21 @@ func TestServerStatusRetiredNoChange(t *testing.T) {
 	}
 	s, _ = e.svc.GetServer(ctx, s.ID)
 	_, err = e.svc.SetServerStatus(ctx, s.ID, s.RowVersion, ServerMaintenance, "")
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 }
 
 func TestServerDeleteReadyConflictDraftSuccess(t *testing.T) {
 	e, ctx := newInvEnv(t)
 	ready := e.readyServer(t, ctx, "del-ready")
 	err := e.svc.DeleteServer(ctx, ready.ID, ready.RowVersion)
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 	draft := e.server(t, ctx, "del-draft")
 	id := draft.ID
 	if err := e.svc.DeleteServer(ctx, id, draft.RowVersion); err != nil {
 		t.Fatal(err)
 	}
 	_, err = e.svc.GetServer(ctx, id)
-	invWantCode(t, err, errs.NotFound)
+	_ = invWantCode(t, err, errs.NotFound)
 	list, _ := e.svc.ListServers(ctx, ServerFilter{Query: draft.Name})
 	if invServerListed(list, id) {
 		t.Fatal("列表不应再含已删服务器")
@@ -240,7 +240,7 @@ func TestListServerNodesAndMissingServer(t *testing.T) {
 		t.Fatalf("应按 sort_order 列出、含已退役：%+v", rows)
 	}
 	_, err = e.svc.ListServerNodes(ctx, uuid.New())
-	invWantCode(t, err, errs.NotFound)
+	_ = invWantCode(t, err, errs.NotFound)
 }
 
 func TestServerSetStatusBumpsEpochsCommitted(t *testing.T) {

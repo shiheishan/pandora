@@ -71,7 +71,7 @@ func TestServerValidateQuery(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, f := range []ServerFilter{{Status: "unhealthy"}, {Query: strings.Repeat("字", 121)}} {
-		nodeTestErr(t, serverValidateQuery(&f), errs.ValidationFailed)
+		_ = nodeTestErr(t, serverValidateQuery(&f), errs.ValidationFailed)
 	}
 }
 

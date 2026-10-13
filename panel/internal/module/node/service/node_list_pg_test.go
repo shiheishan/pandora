@@ -112,9 +112,9 @@ func TestQueryNodesFilters(t *testing.T) {
 	}
 
 	_, _, err := e.svc.QueryNodes(ctx, NodeQuery{State: "bogus", Limit: 10})
-	invWantCode(t, err, errs.ValidationFailed)
+	_ = invWantCode(t, err, errs.ValidationFailed)
 	_, _, err = e.svc.QueryNodes(ctx, NodeQuery{Search: strings.Repeat("字", 121), Limit: 10})
-	invWantCode(t, err, errs.ValidationFailed)
+	_ = invWantCode(t, err, errs.ValidationFailed)
 }
 
 func TestQueryNodesDetail(t *testing.T) {
