@@ -105,7 +105,7 @@ func (r *Repo) Messages(ctx context.Context, ticketID uuid.UUID, includeInternal
 	return out, nil
 }
 
-// EscalateOverdue 把首次响应超时、未响应、未解决未关闭、从没升级过的工单置为 escalated，返回改动的工单。
+// EscalateOverdue 把首次响应超时、未响应、未解决未关闭、从没升级过的工单置为 escalated，返回改动的工单（含 user_id）。
 // 只看 escalated_at IS NULL：每张单只自动升级一次，客服手动降回后不会被反复升级、优先级不会一路涨到 urgent。
 func (r *Repo) EscalateOverdue(ctx context.Context, t time.Time, limit int) ([]Escalated, error) {
 	var out []Escalated
@@ -126,9 +126,9 @@ WITH candidates AS MATERIALIZED (
          priority = CASE t.priority WHEN 'low' THEN 'normal' WHEN 'normal' THEN 'high' ELSE 'urgent' END
     FROM candidates AS c
    WHERE t.id = c.id
-  RETURNING t.id, c.before_status, c.before_priority, t.priority
+  RETURNING t.id, t.user_id, c.before_status, c.before_priority, t.priority
 )
-SELECT id, before_status, before_priority, priority FROM updated ORDER BY id`,
+SELECT id, user_id, before_status, before_priority, priority FROM updated ORDER BY id`,
 		t, limit, t, t,
 	).Scan(&out).Error
 	if err != nil {
