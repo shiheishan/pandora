@@ -207,7 +207,7 @@ func TestEscalateOverdue(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	n, err := e.svc.EscalateOverdue(ctx, nil)
+	n, err := e.svc.EscalateOverdueScheduled(ctx)
 	if err != nil || n != 1 {
 		t.Fatalf("首轮应升级 1 张，得到 n=%d err=%v", n, err)
 	}
@@ -226,9 +226,21 @@ func TestEscalateOverdue(t *testing.T) {
 		t.Fatal("应有 SLA 系统消息")
 	}
 
-	n, err = e.svc.EscalateOverdue(ctx, func(int) (idemsvc.Response, error) { return idemsvc.Response{}, nil })
+	if _, err := e.svc.EscalateOverdue(uctx, nil); err == nil {
+		t.Fatal("门户会话不应能手动触发升级")
+	}
+	n, err = e.svc.EscalateOverdue(e.asAdmin(ctx, admin), func(int) (idemsvc.Response, error) { return idemsvc.Response{}, nil })
 	if err != nil || n != 0 {
 		t.Fatalf("第二轮应 0，得到 n=%d err=%v", n, err)
+	}
+
+	// 客服手动降回待处理、仍没公开回复：不会被再次自动升级
+	if err := e.exec(ctx, `UPDATE tickets SET status = 'pending_agent' WHERE id = ?`, t1.ID); err != nil {
+		t.Fatal(err)
+	}
+	n, err = e.svc.EscalateOverdueScheduled(ctx)
+	if err != nil || n != 0 {
+		t.Fatalf("升级过的单不应再次自动升级，n=%d err=%v", n, err)
 	}
 
 	if err := e.exec(ctx, `UPDATE tickets SET sla_first_response_due = now() - interval '2 hour' WHERE id = ?`, t2.ID); err != nil {
@@ -237,7 +249,7 @@ func TestEscalateOverdue(t *testing.T) {
 	if err := e.svc.AgentReply(e.asAdmin(ctx, admin), AgentReplyInput{TicketID: t2.ID, Body: "已回复"}); err != nil {
 		t.Fatal(err)
 	}
-	n, err = e.svc.EscalateOverdue(ctx, nil)
+	n, err = e.svc.EscalateOverdueScheduled(ctx)
 	if err != nil || n != 0 {
 		t.Fatalf("已公开回复的过期单不应升级，n=%d err=%v", n, err)
 	}

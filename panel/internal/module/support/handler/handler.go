@@ -92,7 +92,7 @@ func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 
 // limitCreate 是按登录账号的建单限流；排在 RequireAuth 之后。
 func (h *Handler) limitCreate() gin.HandlerFunc {
-	rule := ratelimit.PerWindow("ticket_create", CreatePerHour, time.Hour)
+	rule := ratelimit.FixedWindow("ticket_create", CreatePerHour, time.Hour)
 	return func(c *gin.Context) {
 		if h.lim == nil {
 			c.Next()

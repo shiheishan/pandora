@@ -8,7 +8,6 @@ import (
 
 	"github.com/hibiken/asynq"
 
-	idemsvc "github.com/aegispanel/aegis/internal/module/idempotency/service"
 )
 
 type fakeService struct {
@@ -18,9 +17,9 @@ type fakeService struct {
 	gotNilR bool
 }
 
-func (f *fakeService) EscalateOverdue(_ context.Context, reply func(int) (idemsvc.Response, error)) (int, error) {
+func (f *fakeService) EscalateOverdueScheduled(_ context.Context) (int, error) {
 	f.calls++
-	f.gotNilR = reply == nil
+	f.gotNilR = true
 	return f.n, f.err
 }
 

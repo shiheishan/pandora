@@ -63,7 +63,7 @@ type store interface {
 	Queue(ctx context.Context, f repo.QueueFilter) ([]repo.TicketRow, int64, error)
 	// Messages 一张工单的消息，按 created_at、id 升序；includeInternal 为 false 时 SQL 里排除内部备注。
 	Messages(ctx context.Context, ticketID uuid.UUID, includeInternal bool) ([]model.Message, error)
-	// EscalateOverdue 把首次响应超时、未响应、未解决未关闭未升级的工单（最多 limit 张，FOR UPDATE SKIP LOCKED）
+	// EscalateOverdue 把首次响应超时、未响应、未解决未关闭、从没升级过的工单（最多 limit 张，FOR UPDATE SKIP LOCKED）
 	// 置为 escalated、写 escalated_at、优先级升一级（low→normal→high→urgent），返回改动的工单（按 id 升序）。
 	EscalateOverdue(ctx context.Context, now time.Time, limit int) ([]repo.Escalated, error)
 	// TicketNos 批量取工单号。

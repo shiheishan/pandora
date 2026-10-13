@@ -53,7 +53,8 @@ CREATE INDEX tickets_queue_idx ON tickets (status, priority, created_at);
 CREATE INDEX tickets_assigned_idx ON tickets (assigned_to) WHERE assigned_to IS NOT NULL;
 CREATE INDEX tickets_order_idx ON tickets (related_order_id) WHERE related_order_id IS NOT NULL;
 -- SLA 扫描：只看还没首次响应的
-CREATE INDEX tickets_sla_idx ON tickets (sla_first_response_due) WHERE first_responded_at IS NULL;
+CREATE INDEX tickets_sla_idx ON tickets (sla_first_response_due)
+  WHERE first_responded_at IS NULL AND escalated_at IS NULL AND status NOT IN ('resolved', 'closed', 'escalated');
 
 -- 工单消息：只追加。内部备注只能由客服或系统写（用户读取路径在 SQL 里排除内部备注）。
 CREATE TABLE ticket_messages (

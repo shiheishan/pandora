@@ -16,8 +16,21 @@ func _() {
 	var _ auditsvc.ResourceLabeler = s.TicketLabels
 }
 
-// EscalateOverdue 扫描首次响应超时工单并自动升级（后台手动与定时任务共用）。
+// EscalateOverdue 是后台手动触发的升级：只给管理员会话。
 func (s *Service) EscalateOverdue(ctx context.Context, reply func(int) (idemsvc.Response, error)) (int, error) {
+	if _, err := adminUser(ctx); err != nil {
+		return 0, err
+	}
+	return s.escalateOverdue(ctx, reply)
+}
+
+// EscalateOverdueScheduled 是定时任务的入口：没有登录主体，审计记为 system。
+func (s *Service) EscalateOverdueScheduled(ctx context.Context) (int, error) {
+	return s.escalateOverdue(ctx, nil)
+}
+
+// escalateOverdue 扫描首次响应超时工单并自动升级（后台手动与定时任务共用）。
+func (s *Service) escalateOverdue(ctx context.Context, reply func(int) (idemsvc.Response, error)) (int, error) {
 	now := s.now()
 	var n int
 	err := s.tx.Do(ctx, func(ctx context.Context) error {

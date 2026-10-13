@@ -9,7 +9,6 @@ import (
 	"github.com/hibiken/asynq"
 	"go.uber.org/zap"
 
-	idemsvc "github.com/aegispanel/aegis/internal/module/idempotency/service"
 	"github.com/aegispanel/aegis/internal/module/support/service"
 	"github.com/aegispanel/aegis/internal/pkg/jobs"
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
@@ -23,7 +22,7 @@ const escalateTimeout = 30 * time.Second
 
 // Service 是任务用到的 service 方法。
 type Service interface {
-	EscalateOverdue(ctx context.Context, reply func(int) (idemsvc.Response, error)) (int, error)
+	EscalateOverdueScheduled(ctx context.Context) (int, error)
 }
 
 var _ Service = (*service.Service)(nil)
@@ -62,7 +61,7 @@ func (m *Module) Periodic() []jobs.Periodic {
 func (m *Module) escalate(ctx context.Context, _ *asynq.Task) error {
 	ctx, cancel := context.WithTimeout(ctx, escalateTimeout)
 	defer cancel()
-	n, err := m.svc.EscalateOverdue(ctx, nil)
+	n, err := m.svc.EscalateOverdueScheduled(ctx)
 	if err != nil {
 		return fmt.Errorf("工单 SLA 升级: %w", err)
 	}

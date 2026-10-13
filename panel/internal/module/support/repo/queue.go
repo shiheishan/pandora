@@ -47,6 +47,11 @@ func buildQueueWhere(f QueueFilter) (string, []any) {
 	return strings.Join(parts, " AND "), args
 }
 
+// queueOrder 是后台队列的排序：升级的最前，再按优先级、建单时间、id。
+const queueOrder = `(t.status = 'escalated') DESC,
+          CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END,
+          t.created_at, t.id`
+
 // Queue 后台队列：升级的最前，再按优先级、建单时间、id；统计数全部消息。返回本页与总数。
 func (r *Repo) Queue(ctx context.Context, f QueueFilter) ([]TicketRow, int64, error) {
 	where, args := buildQueueWhere(f)
@@ -60,22 +65,25 @@ func (r *Repo) Queue(ctx context.Context, f QueueFilter) ([]TicketRow, int64, er
 	listArgs := append([]any{}, args...)
 	listArgs = append(listArgs, f.Limit, f.Offset)
 	var rows []TicketRow
-	sql := `SELECT t.*, coalesce(m.cnt, 0) AS message_count, coalesce(m.last_at, t.created_at) AS last_reply_at,
-          coalesce(lk.author_kind, '') AS last_author_kind
-     FROM tickets t
-     LEFT JOIN LATERAL (
-       SELECT count(*)::int AS cnt, max(created_at) AS last_at FROM ticket_messages WHERE ticket_id = t.id
-     ) m ON true
-     LEFT JOIN LATERAL (
-       SELECT author_kind FROM ticket_messages
-        WHERE ticket_id = t.id AND internal_note = false
-        ORDER BY created_at DESC, id DESC LIMIT 1
-     ) lk ON true
-    WHERE ` + where + `
-    ORDER BY (t.status = 'escalated') DESC,
-             CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END,
-             t.created_at, t.id
-    LIMIT ? OFFSET ?`
+	// 先按排序取出本页的工单，再只对这一页做消息统计：LATERAL 放在 LIMIT 之前会对全部命中行各跑一遍。
+	sql := `WITH page AS MATERIALIZED (
+  SELECT t.* FROM tickets t
+   WHERE ` + where + `
+   ORDER BY ` + queueOrder + `
+   LIMIT ? OFFSET ?
+)
+SELECT t.*, coalesce(m.cnt, 0) AS message_count, coalesce(m.last_at, t.created_at) AS last_reply_at,
+       coalesce(lk.author_kind, '') AS last_author_kind
+  FROM page t
+  LEFT JOIN LATERAL (
+    SELECT count(*)::int AS cnt, max(created_at) AS last_at FROM ticket_messages WHERE ticket_id = t.id
+  ) m ON true
+  LEFT JOIN LATERAL (
+    SELECT author_kind FROM ticket_messages
+     WHERE ticket_id = t.id AND internal_note = false
+     ORDER BY created_at DESC, id DESC LIMIT 1
+  ) lk ON true
+ ORDER BY ` + queueOrder
 	if err := conn.Raw(sql, listArgs...).Scan(&rows).Error; err != nil {
 		return nil, 0, mapErr(err)
 	}

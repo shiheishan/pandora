@@ -105,7 +105,8 @@ func (r *Repo) Messages(ctx context.Context, ticketID uuid.UUID, includeInternal
 	return out, nil
 }
 
-// EscalateOverdue 把首次响应超时、未响应、未解决未关闭未升级的工单置为 escalated，返回改动的工单。
+// EscalateOverdue 把首次响应超时、未响应、未解决未关闭、从没升级过的工单置为 escalated，返回改动的工单。
+// 只看 escalated_at IS NULL：每张单只自动升级一次，客服手动降回后不会被反复升级、优先级不会一路涨到 urgent。
 func (r *Repo) EscalateOverdue(ctx context.Context, t time.Time, limit int) ([]Escalated, error) {
 	var out []Escalated
 	err := r.d.Conn(ctx).Raw(`
@@ -114,6 +115,7 @@ WITH candidates AS MATERIALIZED (
     FROM tickets
    WHERE first_responded_at IS NULL
      AND sla_first_response_due < ?
+     AND escalated_at IS NULL
      AND status NOT IN ('resolved', 'closed', 'escalated')
    ORDER BY sla_first_response_due, id
    LIMIT ?
