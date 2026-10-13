@@ -10,8 +10,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// setPeriod 把订阅改成指定状态与周期末（起点为终点减一个月，满足 period_end > period_start）。
-func setPeriod(t *testing.T, e *env, ctx context.Context, subID uuid.UUID, status string, end time.Time) {
+// expireSetPeriod 把订阅改成指定状态与周期末（起点为终点减一个月，满足 period_end > period_start）。
+func expireSetPeriod(t *testing.T, e *env, ctx context.Context, subID uuid.UUID, status string, end time.Time) {
 	t.Helper()
 	start := end.AddDate(0, -1, 0)
 	e.exec(t, ctx, `UPDATE subscriptions SET status = ?, current_period_start = ?, current_period_end = ? WHERE id = ?`, status, start, end, subID)
@@ -25,10 +25,10 @@ func TestExpireDuePG(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Microsecond)
 
 	a := provision(t, e, ctx, user, planID, versionID, "")
-	setPeriod(t, e, ctx, a.ID, StatusActive, now.Add(-1*time.Hour))
+	expireSetPeriod(t, e, ctx, a.ID, StatusActive, now.Add(-1*time.Hour))
 
 	b := provision(t, e, ctx, user, planID, versionID, "")
-	setPeriod(t, e, ctx, b.ID, StatusActive, now.Add(1*time.Hour))
+	expireSetPeriod(t, e, ctx, b.ID, StatusActive, now.Add(1*time.Hour))
 
 	st, err := e.svc.ExpireDue(ctx)
 	if err != nil {
@@ -87,13 +87,13 @@ func TestExpireClosesRenewalWindowPG(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Microsecond)
 
 	c := provision(t, e, ctx, user, planID, versionID, "")
-	setPeriod(t, e, ctx, c.ID, StatusExpired, now.AddDate(0, 0, -31))
+	expireSetPeriod(t, e, ctx, c.ID, StatusExpired, now.AddDate(0, 0, -31))
 
 	d := provision(t, e, ctx, user, planID, versionID, "")
-	setPeriod(t, e, ctx, d.ID, StatusExpired, now.AddDate(0, 0, -29))
+	expireSetPeriod(t, e, ctx, d.ID, StatusExpired, now.AddDate(0, 0, -29))
 
 	f := provision(t, e, ctx, user, planID, versionID, "")
-	setPeriod(t, e, ctx, f.ID, StatusActive, now.AddDate(0, 0, -31))
+	expireSetPeriod(t, e, ctx, f.ID, StatusActive, now.AddDate(0, 0, -31))
 
 	_, err := e.svc.ExpireDue(ctx)
 	if err != nil {
@@ -164,7 +164,7 @@ func TestExpireConcurrentPG(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Microsecond)
 
 	g := provision(t, e, ctx, user, planID, versionID, "")
-	setPeriod(t, e, ctx, g.ID, StatusActive, now.Add(-1*time.Hour))
+	expireSetPeriod(t, e, ctx, g.ID, StatusActive, now.Add(-1*time.Hour))
 	before := e.roster.count(g.ID)
 
 	var wg sync.WaitGroup
