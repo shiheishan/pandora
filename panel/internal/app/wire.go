@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"time"
 
+	appearancerepo "github.com/aegispanel/aegis/internal/module/appearance/repo"
+	appearancesvc "github.com/aegispanel/aegis/internal/module/appearance/service"
 	auditrepo "github.com/aegispanel/aegis/internal/module/audit/repo"
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	authrepo "github.com/aegispanel/aegis/internal/module/auth/repo"
@@ -12,6 +14,8 @@ import (
 	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
 	commissionrepo "github.com/aegispanel/aegis/internal/module/commission/repo"
 	commissionsvc "github.com/aegispanel/aegis/internal/module/commission/service"
+	contentrepo "github.com/aegispanel/aegis/internal/module/content/repo"
+	contentsvc "github.com/aegispanel/aegis/internal/module/content/service"
 	giftcardrepo "github.com/aegispanel/aegis/internal/module/giftcard/repo"
 	giftcardsvc "github.com/aegispanel/aegis/internal/module/giftcard/service"
 	idemrepo "github.com/aegispanel/aegis/internal/module/idempotency/repo"
@@ -61,6 +65,8 @@ type services struct {
 	commission *commissionsvc.Service
 	giftcard   *giftcardsvc.Service
 	node       *nodesvc.Service
+	content    *contentsvc.Service
+	appearance *appearancesvc.Service
 	// idemFPKey 是幂等请求指纹的 HMAC 密钥（从主密钥派生）
 	idemFPKey []byte
 	limiter   *ratelimit.Limiter
@@ -156,6 +162,10 @@ func buildServices(r *runtime) (*services, error) {
 	// 节点端一键安装：二进制从发布包的 pdnd-dist 目录发，安装脚本里写入面板地址
 	nodeSvc.UsePdndDist(cfg.Pdnd.DistDir, cfg.PublicBaseURL)
 	giftcardSvc := giftcardsvc.New(giftcardrepo.New(r.db), txm, auditSvc, idemSvc, catalogSvc, subSvc, ledgerSvc, identitySvc, keys, sealer)
+	// 内容页：发版经 catalog 校验限定套餐、门户经 subscription 取生效套餐、后台经 identity 显示作者
+	contentSvc := contentsvc.New(contentrepo.New(r.db), txm, auditSvc, catalogSvc, subSvc, identitySvc)
+	// 外观：插槽更新时间按 settings 的站点时区显示
+	appearanceSvc := appearancesvc.New(appearancerepo.New(r.db), txm, auditSvc, settingsSvc)
 
 	// 模块间注入：identity 定义接口，auth、notify 实现；audit 经 identity 显示操作者与资源
 	identitySvc.UseSessionRevoker(authSvc)
@@ -236,6 +246,8 @@ func buildServices(r *runtime) (*services, error) {
 		commission: commissionSvc,
 		giftcard:   giftcardSvc,
 		node:       nodeSvc,
+		content:    contentSvc,
+		appearance: appearanceSvc,
 		idemFPKey:  keys.Derive(crypto.InfoHMACIdempotency, 32),
 		limiter:    limiter,
 		sealer:     sealer,

@@ -10,10 +10,12 @@ import (
 	"sync"
 	"time"
 
+	appearanceh "github.com/aegispanel/aegis/internal/module/appearance/handler"
 	audith "github.com/aegispanel/aegis/internal/module/audit/handler"
 	authh "github.com/aegispanel/aegis/internal/module/auth/handler"
 	catalogh "github.com/aegispanel/aegis/internal/module/catalog/handler"
 	commissionh "github.com/aegispanel/aegis/internal/module/commission/handler"
+	contenth "github.com/aegispanel/aegis/internal/module/content/handler"
 	giftcardh "github.com/aegispanel/aegis/internal/module/giftcard/handler"
 	idemh "github.com/aegispanel/aegis/internal/module/idempotency/handler"
 	identityh "github.com/aegispanel/aegis/internal/module/identity/handler"
@@ -187,6 +189,8 @@ func newEngines(r *runtime, svc *services) (*gin.Engine, *gin.Engine) {
 		orderh.New(svc.order, svc.limiter),
 		giftcardh.New(svc.giftcard, svc.limiter),
 		commissionh.New(svc.commission),
+		contenth.New(svc.content, svc.limiter, r.cfg.RateLimit.AccountPerMin),
+		appearanceh.New(svc.appearance),
 	}
 
 	publicEng := newEngine(r, r.cfg.HTTP.Public,
