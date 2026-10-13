@@ -132,9 +132,9 @@ func (s *Service) ExportUsers(ctx context.Context, f BulkFilter, limit int) ([]E
 			if cs, ok := cur[row.ID]; ok {
 				r.ActiveSubs = cs.LiveCount
 			}
-			if os, ok := ordStats[row.ID]; ok {
-				r.Orders = os.Orders
-				r.Paid = formatPaid(os.Paid)
+			if st, ok := ordStats[row.ID]; ok {
+				r.Orders = st.Orders
+				r.Paid = formatPaid(st.Paid)
 			} else {
 				r.Paid = "0"
 			}

@@ -85,4 +85,3 @@ func (a opsOrderAdapter) UserOrderStats(ctx context.Context, userIDs []uuid.UUID
 	}
 	return out, nil
 }
-

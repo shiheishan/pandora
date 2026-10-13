@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,7 +27,7 @@ func TestUserOrderStatsPG(t *testing.T) {
 				fulfilledAt = &now
 			}
 		}
-		orderNo := fmt.Sprintf("TOPUP%s", randHex(12))
+		orderNo := fmt.Sprintf("TOPUP%s", strings.ToUpper(randHex(12))) // order_no 只许大写（CHECK）
 		e.mustExec(t, ctx, `
 			INSERT INTO orders (
 				order_no, user_id, kind, status, currency,
