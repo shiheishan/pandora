@@ -141,6 +141,8 @@ type Version struct {
 	Entitlements []Entitlement
 	// Quotas 按 metric、period 升序，永不为 nil。
 	Quotas []Quota
+	// PoolIDs 是版本绑定的节点池（按 id 升序）；只在后台详情（loadDetail）里填，其余读取为 nil。
+	PoolIDs []uuid.UUID
 }
 
 // TrafficLimit 返回 traffic.bytes 配额的上限（有多条时取第一条）；没有这项或不限时为 nil。
@@ -275,7 +277,6 @@ type WizardPrice struct {
 }
 
 // WizardCreate 是「一次建成」向导的输入。Plan 里三个 Allow* 已由调用方把缺省落成 true。
-// 线路（节点池）绑定在 P5 与 node 模块一起做，这里不收。
 type WizardCreate struct {
 	Plan PlanInput
 	// TrafficGB 为 nil 或 0 表示不限流量。
@@ -286,8 +287,10 @@ type WizardCreate struct {
 	ThrottleKbps       *int
 	QuotaResetStrategy string
 	QuotaResetDay      *int
-	Prices             []WizardPrice
-	Publish            bool
+	// PoolIDs 是草稿版本要绑定的节点池（已去重）；空表示不绑（要发布时由 PublishGate 拒绝）。
+	PoolIDs []uuid.UUID
+	Prices  []WizardPrice
+	Publish bool
 }
 
 // WizardCreated 是向导建成的结果。
@@ -326,6 +329,8 @@ type WizardUpdate struct {
 	ThrottleKbps OptionalInt
 	// Prices 为 nil 或空表示不动；否则只同步清单里出现的币种的公开价。
 	Prices *[]WizardPrice
+	// PoolIDs 为 nil 表示线路不动；否则（已去重，空数组即清空）与当前版本不同时滚出新版本并发布。
+	PoolIDs *[]uuid.UUID
 }
 
 // WizardUpdated 是向导改完的结果；Changed 逐条说明改了什么、什么时候生效（界面直接显示）。

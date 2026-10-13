@@ -32,6 +32,9 @@ func (s *Service) CreatePlanComplete(ctx context.Context, in WizardCreate) (Wiza
 		if err != nil {
 			return err
 		}
+		if err := s.bindWizardPoolsTx(ctx, v.ID, in.PoolIDs); err != nil {
+			return err
+		}
 
 		priceIDs := make([]uuid.UUID, 0, len(in.Prices))
 		for _, p := range in.Prices {
@@ -156,11 +159,18 @@ func (s *Service) UpdatePlanComplete(ctx context.Context, planID uuid.UUID, in W
 		}
 
 		cur := currentVersionFromDetail(before)
-		if quotaDiffers(cur, in) {
+		quotaChanged := quotaDiffers(cur, in)
+		poolsChanged := in.PoolIDs != nil && poolSetDiffers(cur, *in.PoolIDs)
+		if quotaChanged || poolsChanged {
 			if err := s.rollVersionTx(ctx, planID, before, in); err != nil {
 				return err
 			}
-			changed = append(changed, "流量、设备数与限速已更新；新购买的用户按新额度，已经买了的用户仍按原额度")
+			if quotaChanged {
+				changed = append(changed, "流量、设备数与限速已更新；新购买的用户按新额度，已经买了的用户仍按原额度")
+			}
+			if poolsChanged {
+				changed = append(changed, "可用线路已更新；新购买的用户立即拿到，已经买了的用户要到续费时才切过来")
+			}
 		}
 
 		if priceChanges > 0 {
@@ -203,6 +213,15 @@ func (s *Service) rollVersionTx(ctx context.Context, planID uuid.UUID, before Pl
 	if err != nil {
 		return err
 	}
+	pools := []uuid.UUID{}
+	if in.PoolIDs != nil {
+		pools = *in.PoolIDs
+	} else if cur != nil && cur.PoolIDs != nil {
+		pools = cur.PoolIDs
+	}
+	if err := s.bindWizardPoolsTx(ctx, ver.ID, pools); err != nil {
+		return err
+	}
 
 	plan, found, err := s.repo.PlanByID(ctx, planID, repo.NoLock)
 	if err != nil {
@@ -240,4 +259,24 @@ func boolOr(v *bool, fallback bool) bool {
 		return fallback
 	}
 	return *v
+}
+
+func poolSetDiffers(cur *Version, want []uuid.UUID) bool {
+	have := []uuid.UUID{}
+	if cur != nil && cur.PoolIDs != nil {
+		have = cur.PoolIDs
+	}
+	if len(have) != len(want) {
+		return true
+	}
+	set := make(map[uuid.UUID]bool, len(have))
+	for _, id := range have {
+		set[id] = true
+	}
+	for _, id := range want {
+		if !set[id] {
+			return true
+		}
+	}
+	return false
 }
