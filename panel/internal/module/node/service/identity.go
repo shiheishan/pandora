@@ -155,6 +155,11 @@ func (s *Service) RevokeNodeIdentity(ctx context.Context, nodeID uuid.UUID) erro
 		if len(revoked) == 0 {
 			return errs.Newf(errs.Conflict, "这台服务器没有有效的接入身份")
 		}
+		// 事发处置：吊销前签出的未用令牌不能再把这台机器接回来
+		voided, err := s.repo.VoidBootstrapTokens(ctx, sid, now)
+		if err != nil {
+			return err
+		}
 		ids := make([]string, len(revoked))
 		for i, id := range revoked {
 			ids[i] = id.String()
@@ -164,8 +169,9 @@ func (s *Service) RevokeNodeIdentity(ctx context.Context, nodeID uuid.UUID) erro
 			ResourceType: "server",
 			ResourceID:   &sid,
 			Data: map[string]any{
-				"node_id":      nodeID.String(),
-				"identity_ids": ids,
+				"node_id":       nodeID.String(),
+				"identity_ids":  ids,
+				"voided_tokens": voided,
 			},
 		}); err != nil {
 			return err

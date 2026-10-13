@@ -24,12 +24,24 @@ import (
 // ErrSessionRevoked 是建流时身份已无效；会话层先发 Command.tombstone 再结束流。
 var ErrSessionRevoked = errors.New("node: 接入身份已失效")
 
+// renewEarliestRemaining：active 证书剩余有效期超过它时不受理续期。pdnd 在剩余不到 10 天时续期
+// （pdnd/panel/types.go 的 RenewBefore），这里多给 1 天容忍两边时钟差；改其一要同步改另一边。
+const renewEarliestRemaining = 11 * 24 * time.Hour
+
+// renewMinInterval：上一次续期签出的 pending 不到这么久时不再签新的，防节点异常时高频写身份行。
+const renewMinInterval = time.Minute
+
+var (
+	errRenewTooEarly    = errors.New("node: 证书剩余有效期还长，暂不续期")
+	errRenewTooFrequent = errors.New("node: 刚续过期，稍后再试")
+)
+
 // identityNow 是身份相关写库用的当前时间（UTC，截到微秒，与 timestamptz 精度一致）。
 func (s *Service) identityNow() time.Time { return s.now().UTC().Truncate(time.Microsecond) }
 
 // AuthorizeSession 在每次建流时调：客户端证书（已由 TLS 层按面板 CA 验过链）的序列号必须是这台服务器当前的
 // active 身份，或它续期后还没用过的 pending 身份；pending 第一次通过时转为 active、旧的 active 置 superseded。
-// 无效（吊销、过期、被新身份取代、服务器已删）回 ErrSessionRevoked。
+// 无效（吊销、过期、被新身份取代、服务器已删或已退役）回 ErrSessionRevoked。
 func (s *Service) AuthorizeSession(ctx context.Context, serverID uuid.UUID, certSerial *big.Int) error {
 	if certSerial == nil || certSerial.Sign() <= 0 {
 		return ErrSessionRevoked
@@ -59,7 +71,7 @@ func (s *Service) activatePendingIdentity(ctx context.Context, serverID uuid.UUI
 		if err != nil {
 			return err
 		}
-		if st == nil || st.Deleted {
+		if st == nil || st.Deleted || st.Status == "retired" {
 			return ErrSessionRevoked
 		}
 		now := s.identityNow()
@@ -77,7 +89,7 @@ func (s *Service) activatePendingIdentity(ctx context.Context, serverID uuid.UUI
 		if err != nil {
 			return err
 		}
-		ok, err := s.repo.ActivatePendingIdentity(ctx, ident.ID)
+		ok, err := s.repo.ActivatePendingIdentity(ctx, ident.ID, now)
 		if err != nil {
 			return err
 		}
@@ -100,8 +112,12 @@ func (s *Service) activatePendingIdentity(ctx context.Context, serverID uuid.UUI
 
 // RenewCertificate 用会话里的 CSR 给这台服务器签一张新证书（新私钥由节点生成），登记为 pending；旧的 active
 // 保持有效，直到节点用新证书建流。之前续期留下、还没用过的 pending 先置 superseded（至多一份 pending）。
+// 续期只认建这条流时出示的证书仍是 active：它被取代或吊销后，拿着旧流不能再换出新证书。
 // 返回 PEM 证书链（叶子在前）与 CA bundle。续期不断当前流。
-func (s *Service) RenewCertificate(ctx context.Context, serverID uuid.UUID, csrDER []byte) (chainPEM, caPEM []byte, err error) {
+func (s *Service) RenewCertificate(ctx context.Context, serverID uuid.UUID, certSerial *big.Int, csrDER []byte) (chainPEM, caPEM []byte, err error) {
+	if certSerial == nil || certSerial.Sign() <= 0 {
+		return nil, nil, ErrSessionRevoked
+	}
 	ca := s.enroll.ca
 	if ca == nil {
 		return nil, nil, errCANotLoaded
@@ -117,16 +133,28 @@ func (s *Service) RenewCertificate(ctx context.Context, serverID uuid.UUID, csrD
 		if err != nil {
 			return err
 		}
-		if st == nil || st.Deleted {
+		if st == nil || st.Deleted || st.Status == "retired" {
 			return ErrSessionRevoked
 		}
-		// 当前流建立之后身份可能已被吊销或取代：没有有效身份就不续
 		active, err := s.repo.ActiveIdentity(ctx, serverID)
 		if err != nil {
 			return err
 		}
 		if active == nil || !active.ExpiresAt.After(now) {
 			return ErrSessionRevoked
+		}
+		if active.CertSerial != certSerial.Text(16) {
+			return ErrSessionRevoked
+		}
+		if active.ExpiresAt.Sub(now) > renewEarliestRemaining {
+			return errRenewTooEarly
+		}
+		pendingAt, err := s.repo.PendingIdentityIssuedAt(ctx, serverID)
+		if err != nil {
+			return err
+		}
+		if pendingAt != nil && now.Sub(*pendingAt) < renewMinInterval {
+			return errRenewTooFrequent
 		}
 		prevID, hadPending, err := s.repo.SupersedeIdentity(ctx, serverID, identityPending, now)
 		if err != nil {
