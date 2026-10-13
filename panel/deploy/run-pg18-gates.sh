@@ -230,6 +230,9 @@ import re, os
 pat = re.compile(r'INSERT\s+INTO\s+([a-z_][a-z0-9_]*)\s*\(([^)]*)\)', re.I | re.S)
 seen = set()
 for root, _, files in os.walk('internal'):
+    # 新栈（internal/module）用 panel/db/migrations 的另一套库，不走旧库的列级授权；P7 删旧代码时整段一起删
+    if root == 'internal/module' or root.startswith('internal/module/'):
+        continue
     for fn in files:
         if not fn.endswith('.go') or fn.endswith('_test.go'):
             continue
