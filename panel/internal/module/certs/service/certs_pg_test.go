@@ -41,6 +41,10 @@ func TestCertsPG(t *testing.T) {
 		if err := e.exec(e.ctx, `UPDATE certificates SET current_version_id = NULL, not_before = NULL, not_after = NULL, status = 'pending' WHERE id = ?`, cert.ID); err != nil {
 			t.Fatal(err)
 		}
+		// 与删证书同序：先删订单（订单引用版本），再删版本
+		if err := e.exec(e.ctx, `DELETE FROM certificate_orders WHERE certificate_id = ?`, cert.ID); err != nil {
+			t.Fatal(err)
+		}
 		if err := e.exec(e.ctx, `DELETE FROM certificate_versions WHERE certificate_id = ?`, cert.ID); err != nil {
 			t.Fatalf("DELETE certificate_versions after clearing current_version must be allowed, got %v", err)
 		}
