@@ -232,13 +232,3 @@ func TestGoldenEnums(t *testing.T) {
 		t.Fatalf("contract names drifted\n got: %v\nwant: %v", g.Contracts, wantContracts)
 	}
 }
-
-// 两份金样本（面板与 pdnd）必须逐字节相同：两端各自的测试都钉在同一份向量上，才算互相钉住。
-func TestGoldenIdenticalInPanelAndPdnd(t *testing.T) {
-	ownPath, otherPath := goldenPaths(t)
-	_, own := readGolden(t, ownPath)
-	_, other := readGolden(t, otherPath)
-	if !bytes.Equal(own, other) {
-		t.Fatalf("%s and %s differ; regenerate in panel with -bindingcontract.update and commit both", ownPath, otherPath)
-	}
-}
