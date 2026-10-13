@@ -10,6 +10,7 @@ import (
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/module/node/model"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 )
 
 // nodeStatusBatchMax 是一次批量改状态最多的节点数。
@@ -104,6 +105,7 @@ func (s *Service) BatchNodeStatus(ctx context.Context, in NodeStatusBatch) error
 			if !ok {
 				return nodeVersionConflict(n.RowVersion)
 			}
+			s.nodeChanged(ctx, realtime.OpUpdate, n.ID)
 		}
 		if err := s.audit.Write(ctx, auditsvc.Event{Action: "node.status_batch", ResourceType: "node_set",
 			Data: map[string]any{"count": len(rows), "serving_status": to, "reason": reason}}); err != nil {
@@ -186,6 +188,7 @@ func (s *Service) ActivateNode(ctx context.Context, id uuid.UUID, rowVersion int
 		if !ok {
 			return nodeVersionConflict(n.RowVersion)
 		}
+		s.nodeChanged(ctx, realtime.OpUpdate, id)
 		if readied {
 			ok, err := s.repo.SetServerStatus(ctx, srv.ID, srv.Status, srv.RowVersion, ServerReady, nil)
 			if err != nil {
@@ -194,6 +197,7 @@ func (s *Service) ActivateNode(ctx context.Context, id uuid.UUID, rowVersion int
 			if !ok {
 				return serverVersionConflict(srv.RowVersion)
 			}
+			s.serverChanged(ctx, realtime.OpUpdate, srv.ID)
 		}
 		if err := s.nodeAudit(ctx, "node.activate", id, map[string]any{
 			"serving_status_before": n.ServingStatus, "server_id": srv.ID.String(),
@@ -246,6 +250,7 @@ func (s *Service) RetireNode(ctx context.Context, id uuid.UUID, rowVersion int64
 		if !ok {
 			return nodeVersionConflict(n.RowVersion)
 		}
+		s.nodeChanged(ctx, realtime.OpUpdate, id)
 		if err := s.nodeAudit(ctx, "node.retire", id, map[string]any{
 			"serving_status_before": n.ServingStatus, "reason": reason,
 		}); err != nil {
@@ -299,6 +304,7 @@ func (s *Service) DeleteNode(ctx context.Context, id uuid.UUID, rowVersion int64
 		if !ok {
 			return nodeVersionConflict(n.RowVersion)
 		}
+		s.nodeChanged(ctx, realtime.OpDelete, id)
 		return s.nodeAudit(ctx, "node.delete", id, map[string]any{
 			"name": n.Name, "serving_status_before": n.ServingStatus, "reason": reason,
 		})
@@ -327,6 +333,7 @@ func (s *Service) RepublishNode(ctx context.Context, id uuid.UUID) (int64, error
 			return errs.New(errs.NotFound)
 		}
 		version = v
+		s.nodeChanged(ctx, realtime.OpUpdate, id)
 		if err := s.nodeAudit(ctx, "node.config.publish", id, map[string]any{"row_version": v}); err != nil {
 			return err
 		}

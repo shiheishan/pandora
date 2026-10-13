@@ -15,6 +15,7 @@ import (
 	"github.com/aegispanel/aegis/internal/module/node/model"
 	"github.com/aegispanel/aegis/internal/module/node/repo"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 )
 
 // serverNameTaken 是服务器重名的 409。
@@ -153,6 +154,7 @@ func (s *Service) CreateServer(ctx context.Context, in ServerInput) (Server, err
 		if err := s.repo.InsertServer(ctx, &m); err != nil {
 			return serverWriteErr(err)
 		}
+		s.serverChanged(ctx, realtime.OpInsert, m.ID)
 		return s.serverAudit(ctx, "server.create", m.ID, map[string]any{"name": m.Name, "status": ServerDraft})
 	})
 	if err != nil {
@@ -224,6 +226,7 @@ func (s *Service) PatchServer(ctx context.Context, id uuid.UUID, in ServerPatch)
 		if !ok {
 			return serverVersionConflict(m.RowVersion)
 		}
+		s.serverChanged(ctx, realtime.OpUpdate, id)
 		return s.serverAudit(ctx, "server.update", id, map[string]any{"before_row_version": in.RowVersion, "name": m.Name})
 	})
 	if err != nil {
@@ -278,6 +281,7 @@ func (s *Service) SetServerStatus(ctx context.Context, id uuid.UUID, rowVersion 
 		if !ok {
 			return serverVersionConflict(m.RowVersion)
 		}
+		s.serverChanged(ctx, realtime.OpUpdate, id)
 		var revoked []uuid.UUID
 		var voided int64
 		if status == ServerRetired {
@@ -319,7 +323,7 @@ func (s *Service) DeleteServer(ctx context.Context, id uuid.UUID, rowVersion int
 			return &errs.Error{Code: errs.Conflict, Message: "服务器仍在服务，请先在「状态」里退役",
 				Fields: map[string]string{"status": m.Status}}
 		}
-		silenced, err := s.repo.RetireServerNodes(ctx, id)
+		silenced, nodeIDs, err := s.repo.RetireServerNodes(ctx, id)
 		if err != nil {
 			return serverWriteErr(err)
 		}
@@ -330,6 +334,8 @@ func (s *Service) DeleteServer(ctx context.Context, id uuid.UUID, rowVersion int
 		if !ok {
 			return serverVersionConflict(m.RowVersion)
 		}
+		s.serverChanged(ctx, realtime.OpDelete, id)
+		s.nodesChanged(ctx, nodeIDs)
 		revoked, voided, err := s.revokeServerIdentities(ctx, id, identityRevokeReasonDeleted, TombstoneServerDeleted)
 		if err != nil {
 			return err
