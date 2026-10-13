@@ -8,6 +8,7 @@ import (
 	"time"
 
 	audittask "github.com/aegispanel/aegis/internal/module/audit/task"
+	certstask "github.com/aegispanel/aegis/internal/module/certs/task"
 	commissiontask "github.com/aegispanel/aegis/internal/module/commission/task"
 	idemtask "github.com/aegispanel/aegis/internal/module/idempotency/task"
 	identitytask "github.com/aegispanel/aegis/internal/module/identity/task"
@@ -16,6 +17,7 @@ import (
 	ordertask "github.com/aegispanel/aegis/internal/module/order/task"
 	paymenttask "github.com/aegispanel/aegis/internal/module/payment/task"
 	subtask "github.com/aegispanel/aegis/internal/module/subscription/task"
+	supporttask "github.com/aegispanel/aegis/internal/module/support/task"
 	"github.com/aegispanel/aegis/internal/pkg/jobs"
 	"github.com/hibiken/asynq"
 	"github.com/spf13/cobra"
@@ -120,5 +122,7 @@ func modules(svc *services) []jobs.Module {
 		commissiontask.New(svc.commission),
 		subtask.New(svc.sub),
 		nodetask.New(svc.node),
+		supporttask.New(svc.support),
+		certstask.New(svc.certs),
 	}
 }

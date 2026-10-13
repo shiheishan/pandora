@@ -12,9 +12,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// Dispatch 认领到期的 queued 邮件投递并逐封发送，返回处理条数。notify.email 开关关闭时不认领：
+// dispatchEmail 认领到期的 queued 邮件投递并逐封发送，返回处理条数。notify.email 开关关闭时不认领：
 // 记录留在队列里，开关恢复后按原顺序发送。
-func (s *Service) Dispatch(ctx context.Context) (int, error) {
+func (s *Service) dispatchEmail(ctx context.Context) (int, error) {
 	cfg, configured, err := s.smtpConfig(ctx)
 	if err != nil {
 		return 0, err

@@ -1,17 +1,24 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"time"
 
+	appearancerepo "github.com/aegispanel/aegis/internal/module/appearance/repo"
+	appearancesvc "github.com/aegispanel/aegis/internal/module/appearance/service"
 	auditrepo "github.com/aegispanel/aegis/internal/module/audit/repo"
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	authrepo "github.com/aegispanel/aegis/internal/module/auth/repo"
 	authsvc "github.com/aegispanel/aegis/internal/module/auth/service"
 	catalogrepo "github.com/aegispanel/aegis/internal/module/catalog/repo"
 	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
+	certsrepo "github.com/aegispanel/aegis/internal/module/certs/repo"
+	certssvc "github.com/aegispanel/aegis/internal/module/certs/service"
 	commissionrepo "github.com/aegispanel/aegis/internal/module/commission/repo"
 	commissionsvc "github.com/aegispanel/aegis/internal/module/commission/service"
+	contentrepo "github.com/aegispanel/aegis/internal/module/content/repo"
+	contentsvc "github.com/aegispanel/aegis/internal/module/content/service"
 	giftcardrepo "github.com/aegispanel/aegis/internal/module/giftcard/repo"
 	giftcardsvc "github.com/aegispanel/aegis/internal/module/giftcard/service"
 	idemrepo "github.com/aegispanel/aegis/internal/module/idempotency/repo"
@@ -35,12 +42,15 @@ import (
 	"github.com/aegispanel/aegis/internal/module/subscription/render"
 	subrepo "github.com/aegispanel/aegis/internal/module/subscription/repo"
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
+	supportrepo "github.com/aegispanel/aegis/internal/module/support/repo"
+	supportsvc "github.com/aegispanel/aegis/internal/module/support/service"
 	"github.com/aegispanel/aegis/internal/pkg/config"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
 	"github.com/aegispanel/aegis/internal/pkg/jwtx"
 	"github.com/aegispanel/aegis/internal/pkg/ratelimit"
 	"github.com/aegispanel/aegis/internal/pkg/redisx"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
+	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 )
 
@@ -61,6 +71,10 @@ type services struct {
 	commission *commissionsvc.Service
 	giftcard   *giftcardsvc.Service
 	node       *nodesvc.Service
+	content    *contentsvc.Service
+	appearance *appearancesvc.Service
+	support    *supportsvc.Service
+	certs      *certssvc.Service
 	// idemFPKey 是幂等请求指纹的 HMAC 密钥（从主密钥派生）
 	idemFPKey []byte
 	limiter   *ratelimit.Limiter
@@ -156,6 +170,12 @@ func buildServices(r *runtime) (*services, error) {
 	// 节点端一键安装：二进制从发布包的 pdnd-dist 目录发，安装脚本里写入面板地址
 	nodeSvc.UsePdndDist(cfg.Pdnd.DistDir, cfg.PublicBaseURL)
 	giftcardSvc := giftcardsvc.New(giftcardrepo.New(r.db), txm, auditSvc, idemSvc, catalogSvc, subSvc, ledgerSvc, identitySvc, keys, sealer)
+	// 内容页：发版经 catalog 校验限定套餐、门户经 subscription 取生效套餐、后台经 identity 显示作者
+	contentSvc := contentsvc.New(contentrepo.New(r.db), txm, auditSvc, catalogSvc, subSvc, identitySvc)
+	// 外观：插槽更新时间按 settings 的站点时区显示
+	appearanceSvc := appearancesvc.New(appearancerepo.New(r.db), txm, auditSvc, settingsSvc)
+	// 节点证书：ACME 设置在 settings；建单后经 queue 立刻入队签发任务
+	certsSvc := certssvc.New(certsrepo.New(r.db), txm, auditSvc, settingsSvc, sealer, queue, certssvc.Options{Log: r.log})
 
 	// 模块间注入：identity 定义接口，auth、notify 实现；audit 经 identity 显示操作者与资源
 	identitySvc.UseSessionRevoker(authSvc)
@@ -219,6 +239,29 @@ func buildServices(r *runtime) (*services, error) {
 		_ = queue.Close()
 		return nil, fmt.Errorf("commission 缺少装配: %v", missing)
 	}
+	// 工单：提单人与客服的邮箱、显示名经 identity，可指派客服是 auth 的管理员名单；
+	// 关联订单经 order 校验归属（建单时存下订单号），队列与详情的在用套餐经 subscription 批量读；审计页显示工单号
+	supportSvc := supportsvc.New(supportrepo.New(r.db), txm, auditSvc, idemSvc, identitySvc, authSvc)
+	supportSvc.UseOrders(supportOrders{o: orderSvc})
+	supportSvc.UsePlanNames(supportPlans{s: subSvc})
+	// 客服公开回复后，在回复的同一事务里经 notify 给提单人写「工单有新回复」
+	supportSvc.UseReplyNotifier(supportReplyNotifier{n: notifySvc})
+	auditSvc.UseResourceLabeler(supportsvc.ResourceTicket, supportSvc.TicketLabels)
+	if missing := supportSvc.MissingPorts(); len(missing) > 0 {
+		_ = queue.Close()
+		return nil, fmt.Errorf("support 缺少装配: %v", missing)
+	}
+
+	// 通知：扫描与公告定向要读用户、套餐、订阅，支付成功通知读最近履约的订单；Telegram webhook 地址由对外地址拼出
+	notifySvc.UseDirectory(identitySvc)
+	notifySvc.UsePlans(catalogSvc)
+	notifySvc.UseSubscriptions(subSvc)
+	notifySvc.UseOrders(orderSvc)
+	notifySvc.UsePublicBaseURL(cfg.PublicBaseURL)
+	if missing := notifySvc.MissingPorts(); len(missing) > 0 {
+		_ = queue.Close()
+		return nil, fmt.Errorf("notify 缺少装配: %v", missing)
+	}
 
 	return &services{
 		settings:   settingsSvc,
@@ -236,6 +279,10 @@ func buildServices(r *runtime) (*services, error) {
 		commission: commissionSvc,
 		giftcard:   giftcardSvc,
 		node:       nodeSvc,
+		content:    contentSvc,
+		appearance: appearanceSvc,
+		support:    supportSvc,
+		certs:      certsSvc,
 		idemFPKey:  keys.Derive(crypto.InfoHMACIdempotency, 32),
 		limiter:    limiter,
 		sealer:     sealer,
@@ -258,3 +305,49 @@ func newIssuer(domain jwtx.Domain, current, previous config.Secret, ttl time.Dur
 	}
 	return jwtx.NewIssuer(domain, []byte(current.Reveal()), prev, ttl)
 }
+
+// supportOrders 让 support 经 order 校验门户用户关联的订单：MyOrder 按 ctx 里的门户主体限定本人，
+// 不存在或不是本人的回 errs.NotFound。
+type supportOrders struct{ o *ordersvc.Service }
+
+// OwnedOrderNo 返回门户主体名下这张订单的订单号。
+func (a supportOrders) OwnedOrderNo(ctx context.Context, orderID uuid.UUID) (string, error) {
+	d, err := a.o.MyOrder(ctx, orderID)
+	if err != nil {
+		return "", err
+	}
+	return d.Order.OrderNo, nil
+}
+
+// supportPlans 让 support 经 subscription 批量取提单人当前生效订阅的套餐名（与订阅的「当前订阅」同一口径）。
+type supportPlans struct{ s *subsvc.Service }
+
+// ActivePlanNames 返回当前订阅生效的用户的套餐名；没有生效订阅的用户不在结果里。
+func (a supportPlans) ActivePlanNames(ctx context.Context, userIDs []uuid.UUID) (map[uuid.UUID]string, error) {
+	sums, err := a.s.SummariesByUsers(ctx, userIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[uuid.UUID]string, len(sums))
+	for id, us := range sums {
+		if us.Current != nil && us.Current.State == subsvc.StateLive {
+			out[id] = us.Current.PlanName
+		}
+	}
+	return out, nil
+}
+
+// supportReplyNotifier 让 support 经 notify 给提单人写「工单有新回复」；去重键按回复 id，同一条回复只通知一次。
+type supportReplyNotifier struct{ n *notifysvc.Service }
+
+// TicketReplied 在调用方事务里写通知。
+func (a supportReplyNotifier) TicketReplied(ctx context.Context, n supportsvc.ReplyNotice) error {
+	return a.n.NotifyUser(ctx, n.UserID, notifysvc.TemplateTicketReplied,
+		map[string]string{"subject": n.Subject}, "ticket-replied:"+n.MessageID.String())
+}
+
+var (
+	_ supportsvc.Orders        = supportOrders{}
+	_ supportsvc.PlanNames     = supportPlans{}
+	_ supportsvc.ReplyNotifier = supportReplyNotifier{}
+)

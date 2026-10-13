@@ -17,6 +17,8 @@ import (
 )
 
 type fakeNotify struct {
+	p6Fake // P6 的方法与记录，见 p6fake_test.go
+
 	mail        service.MailSettings
 	mailSave    service.MailSettingsUpdate
 	mailSaveErr error
@@ -65,6 +67,7 @@ func (f *fakeNotify) TestTemplate(ctx context.Context, in service.TemplateTest) 
 type notifyTestKit struct {
 	authCalls   int
 	reauthCalls int
+	idemScopes  []string // 经过幂等中间件的作用域，按请求顺序
 }
 
 func (k *notifyTestKit) kit() route.Kit {
@@ -76,6 +79,12 @@ func (k *notifyTestKit) kit() route.Kit {
 		RecentReauth: func(c *gin.Context) {
 			k.reauthCalls++
 			c.Next()
+		},
+		Idempotency: func(scope string) gin.HandlerFunc {
+			return func(c *gin.Context) {
+				k.idemScopes = append(k.idemScopes, scope)
+				c.Next()
+			}
 		},
 	}
 }
@@ -353,6 +362,13 @@ func TestAdminRoutesRequireAuth(t *testing.T) {
 		{http.MethodPost, "/v1/mail/templates", `{"code":"c","channel":"email","subject":"","body":""}`},
 		{http.MethodPost, "/v1/mail/templates/reset", `{"code":"c","channel":"email"}`},
 		{http.MethodPost, "/v1/mail/templates/test", `{"code":"c","channel":"email","to":"a@b.c"}`},
+		{http.MethodGet, "/v1/settings/telegram", ""},
+		{http.MethodPost, "/v1/settings/telegram", `{"enabled":false,"bot_username":"","bot_token":""}`},
+		{http.MethodPost, "/v1/settings/telegram/test", `{"chat_id":1}`},
+		{http.MethodGet, "/v1/announcements", ""},
+		{http.MethodPost, "/v1/announcements", `{"title":"t","body":"b"}`},
+		{http.MethodPost, "/v1/announcements/018f0000-0000-7000-8000-000000000001", `{"title":"t","body":"b","expected_version":1}`},
+		{http.MethodPost, "/v1/announcements/018f0000-0000-7000-8000-000000000001/withdraw", `{"expected_version":1}`},
 	}
 	if n := len(e.Routes()); n != len(calls) {
 		t.Fatalf("后台路由 %d 条，用例覆盖 %d 条", n, len(calls))
