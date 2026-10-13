@@ -133,17 +133,24 @@ func runServe(ctx context.Context, configPath string) error {
 		<-gctx.Done()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
+		// 先让 SSE 长连接全部结束，否则 HTTP Shutdown 会一直等它们到超时
 		hub.Close()
 		// 节点会话错峰重连要约 12 秒发完，给它 15 秒，剩下的留给 HTTP
 		nodeCtx, nodeCancel := context.WithTimeout(shutCtx, 15*time.Second)
 		nodeCh.shutdown(nodeCtx, r.log)
 		nodeCancel()
-		if err := publicSrv.Shutdown(shutCtx); err != nil {
-			r.log.Warn("关闭门户 HTTP", zap.Error(err))
+		// 两个监听并发排空：一个拖到超时，另一个的在途请求照样等得到
+		var wg sync.WaitGroup
+		for name, srv := range map[string]*http.Server{"门户": publicSrv, "管理": adminSrv} {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if err := srv.Shutdown(shutCtx); err != nil {
+					r.log.Warn("关闭 HTTP", zap.String("server", name), zap.Error(err))
+				}
+			}()
 		}
-		if err := adminSrv.Shutdown(shutCtx); err != nil {
-			r.log.Warn("关闭管理 HTTP", zap.Error(err))
-		}
+		wg.Wait()
 		for _, ps := range pprofSrvs {
 			if err := ps.Shutdown(shutCtx); err != nil {
 				r.log.Warn("关闭 pprof", zap.String("addr", ps.Addr), zap.Error(err))

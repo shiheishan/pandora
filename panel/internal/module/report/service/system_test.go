@@ -369,9 +369,13 @@ func TestSystemStatusChannelsEmptyOK(t *testing.T) {
 	}
 }
 
-type fakeStreamCounter struct{ n int }
+type fakeStreamCounter struct {
+	n    int
+	down bool
+}
 
 func (f fakeStreamCounter) Count() int { return f.n }
+func (f fakeStreamCounter) Live() bool { return !f.down }
 
 func TestSystemStatusSSEWithStreams(t *testing.T) {
 	e, _ := setupSystemStatusOK(t)
@@ -390,5 +394,18 @@ func TestSystemStatusSSEWithStreams(t *testing.T) {
 	}
 	if sse.Message != "" {
 		t.Fatalf("message %q", sse.Message)
+	}
+}
+
+func TestSystemStatusSSESubscriptionDown(t *testing.T) {
+	e, _ := setupSystemStatusOK(t)
+	e.svc.UseStreams(fakeStreamCounter{n: 0, down: true})
+
+	out, err := e.svc.SystemStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sse := componentByKey(out.Components, "sse"); sse.State != StateWarn {
+		t.Fatalf("state %q", sse.State)
 	}
 }

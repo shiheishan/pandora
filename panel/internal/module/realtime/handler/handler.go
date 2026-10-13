@@ -23,8 +23,8 @@ type Handler struct {
 	maxLife time.Duration
 }
 
-// New 构造 Handler；maxLife 是单条连接的最长存活时间，传访问令牌有效期，
-// 到点断开让客户端带新令牌重连（见 realtime.Stream）。
+// New 构造 Handler；maxLife 是单条连接的最长存活时间，传访问令牌有效期；
+// 实际按令牌剩余时间再截短，到点断开让客户端带新令牌重连（见 realtime.Stream）。
 func New(hub *realtime.Hub, maxLife time.Duration) *Handler {
 	return &Handler{hub: hub, maxLife: maxLife}
 }
@@ -53,7 +53,7 @@ func (h *Handler) publicEvents(c *gin.Context) {
 		realtime.ChannelPublic(),
 		realtime.ChannelUser(p.UserID),
 		realtime.ChannelSession(p.SessionID),
-	}, h.maxLife)
+	}, h.lifeFor(p))
 }
 
 func (h *Handler) adminEvents(c *gin.Context) {
@@ -69,5 +69,16 @@ func (h *Handler) adminEvents(c *gin.Context) {
 	realtime.Stream(c, h.hub, p.UserID, []string{
 		realtime.ChannelAdmin(),
 		realtime.ChannelSession(p.SessionID),
-	}, h.maxLife)
+	}, h.lifeFor(p))
+}
+
+// lifeFor 是这条连接最多活多久：不超过 maxLife，也不超过访问令牌剩下的时间。
+func (h *Handler) lifeFor(p authn.Principal) time.Duration {
+	life := h.maxLife
+	if !p.ExpiresAt.IsZero() {
+		if left := time.Until(p.ExpiresAt); life <= 0 || left < life {
+			life = max(left, time.Second)
+		}
+	}
+	return life
 }

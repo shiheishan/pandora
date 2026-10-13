@@ -113,6 +113,10 @@ func (s *Service) buildComponents(ctx context.Context, now time.Time, db *Databa
 			State:   StateOK,
 			Metrics: map[string]any{"connections": s.streams.Count()},
 		}
+		if !s.streams.Live() {
+			sse.State = StateWarn
+			sse.Message = "实时广播订阅中断，正在重连"
+		}
 	}
 	out = append(out, sse)
 

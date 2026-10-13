@@ -42,13 +42,18 @@ func TestChannelsFor(t *testing.T) {
 		},
 		{
 			name:  "public",
-			topic: TopicOrders,
+			topic: TopicPlans,
 			want:  []string{ChannelPublic(), ChannelAdmin()},
+		},
+		{
+			name:  "user-scoped without owner fails closed",
+			topic: TopicOrders,
+			want:  []string{ChannelAdmin()},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := channelsFor(tc.topic, tc.owner)
+			got := channelsFor(context.Background(), tc.topic, tc.owner)
 			if len(got) != len(tc.want) {
 				t.Fatalf("got %v want %v", got, tc.want)
 			}
@@ -82,7 +87,7 @@ func TestChangedPublishesAfterCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	p.Changed(ctx, TopicOrders, "orders", OpInsert, id, nil)
+	p.Changed(ctx, TopicPlans, "plans", OpInsert, id, nil)
 
 	msg, err := sub.ReceiveMessage(ctx)
 	if err != nil {
@@ -95,7 +100,7 @@ func TestChangedPublishesAfterCommit(t *testing.T) {
 	if err := json.Unmarshal([]byte(msg.Payload), &ev); err != nil {
 		t.Fatal(err)
 	}
-	if ev.Topic != TopicOrders || ev.Payload["table"] != "orders" || ev.Payload["op"] != OpInsert {
+	if ev.Topic != TopicPlans || ev.Payload["table"] != "plans" || ev.Payload["op"] != OpInsert {
 		t.Fatalf("ev %+v", ev)
 	}
 	if ev.Payload["id"] != id.String() {

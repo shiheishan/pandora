@@ -86,24 +86,39 @@ export function useRealtime(enabled: boolean, onEvent?: (event: SseEvent) => voi
     if (!enabled) return
     const invalidator = createRealtimeInvalidator(queryClient)
     let opened = false
-    const close = openEventStream({
-      connect: async (signal) => {
-        setStatus(opened ? 'reconnecting' : 'connecting')
-        return api.openStream('v1/events', signal)
-      },
-      onOpen: ({ reconnected }) => {
-        opened = true
-        setStatus('open')
-        if (reconnected) invalidator.onReconnect()
-      },
-      onEvent: (event) => {
-        invalidator.onEvent(event.event)
-        listener.current?.(event)
-      },
-      onStop: (error) => setStatus(isApiError(error) && error.status !== 401 ? 'unavailable' : 'off'),
-    })
+    let close: (() => void) | null = null
+    // 页面隐藏时断开，可见时重连并全部重拉：与查询轮询在后台标签页暂停的口径一致，
+    // 否则后台标签页靠事件流到点重连不断续上会话，后台的「空闲过期」永远不触发。
+    const start = () => {
+      if (close) return
+      close = openEventStream({
+        connect: async (signal) => {
+          setStatus(opened ? 'reconnecting' : 'connecting')
+          return api.openStream('v1/events', signal)
+        },
+        onOpen: ({ reconnected }) => {
+          if (reconnected || opened) invalidator.onReconnect()
+          opened = true
+          setStatus('open')
+        },
+        onEvent: (event) => {
+          invalidator.onEvent(event.event)
+          listener.current?.(event)
+        },
+        onStop: (error) => setStatus(isApiError(error) && error.status !== 401 ? 'unavailable' : 'off'),
+      })
+    }
+    const pause = () => {
+      close?.()
+      close = null
+    }
+    // 4xx 停下的流（onStop）不因切回页面重开：close 仍非空，start 直接返回
+    const onVisibility = () => (document.visibilityState === 'hidden' ? pause() : start())
+    if (document.visibilityState !== 'hidden') start()
+    document.addEventListener('visibilitychange', onVisibility)
     return () => {
-      close()
+      document.removeEventListener('visibilitychange', onVisibility)
+      pause()
       invalidator.dispose()
       setStatus('off')
     }

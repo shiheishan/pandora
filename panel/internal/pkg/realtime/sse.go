@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -19,9 +20,13 @@ import (
 // sseHeartbeat 是没有事件时的保活间隔；同时是「连接活得够不够久」的判据。
 const sseHeartbeat = 25 * time.Second
 
+// sseWriteTimeout 是每次写的期限：客户端不读、TCP 缓冲写满时，写会一直阻塞，
+// 期间结束信号和到点都处理不了，名额也不释放。每次写前重设，写不出去就断。
+const sseWriteTimeout = 10 * time.Second
+
 // Stream 处理一条 SSE 长连接。
 //
-// maxLife 是连接最长存活时间（handler 传访问令牌的有效期）：鉴权只在建连时做一次，
+// maxLife 是连接最长存活时间（handler 传访问令牌剩余的有效期）：鉴权只在建连时做一次，
 // 到点主动结束，客户端带新令牌重连，空闲过期、停用之类不发吊销信号的失效也能及时生效。
 // 0 表示不限。
 func Stream(c *gin.Context, hub *Hub, owner uuid.UUID, channels []string, maxLife time.Duration) {
@@ -30,8 +35,7 @@ func Stream(c *gin.Context, hub *Hub, owner uuid.UUID, channels []string, maxLif
 		return
 	}
 
-	flusher, ok := c.Writer.(http.Flusher)
-	if !ok {
+	if _, ok := c.Writer.(http.Flusher); !ok {
 		httpx.Fail(c, errs.Wrap(errs.Internal, fmt.Errorf("响应不支持流式输出")))
 		return
 	}
@@ -41,7 +45,7 @@ func Stream(c *gin.Context, hub *Hub, owner uuid.UUID, channels []string, maxLif
 		switch {
 		case errors.Is(err, ErrTooManyUserStreams):
 			httpx.Fail(c, errs.New(errs.RateLimited))
-		case errors.Is(err, ErrTooManyStreams):
+		case errors.Is(err, ErrTooManyStreams), errors.Is(err, ErrNotLive):
 			httpx.Fail(c, errs.New(errs.Unavailable))
 		default:
 			httpx.Fail(c, errs.Wrap(errs.Internal, err))
@@ -63,9 +67,16 @@ func Stream(c *gin.Context, hub *Hub, owner uuid.UUID, channels []string, maxLif
 		l.Info("事件流已断开", zap.String("存活", lived.Round(time.Second).String()))
 	}()
 
+	// 服务端统一的读写期限按普通请求定，长连接改为每次写前单独设
 	rc := http.NewResponseController(c.Writer)
-	_ = rc.SetWriteDeadline(time.Time{})
 	_ = rc.SetReadDeadline(time.Time{})
+	write := func(s string) bool {
+		_ = rc.SetWriteDeadline(time.Now().Add(sseWriteTimeout))
+		if _, err := io.WriteString(c.Writer, s); err != nil {
+			return false
+		}
+		return rc.Flush() == nil
+	}
 
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache, no-transform")
@@ -73,8 +84,9 @@ func Stream(c *gin.Context, hub *Hub, owner uuid.UUID, channels []string, maxLif
 	c.Header("X-Accel-Buffering", "no")
 	c.Status(http.StatusOK)
 
-	fmt.Fprintf(c.Writer, "retry: 5000\n\n")
-	flusher.Flush()
+	if !write("retry: 5000\n\n") {
+		return
+	}
 
 	ping := time.NewTicker(sseHeartbeat)
 	defer ping.Stop()
@@ -92,21 +104,19 @@ func Stream(c *gin.Context, hub *Hub, owner uuid.UUID, channels []string, maxLif
 		select {
 		case <-ctx.Done():
 			return
-		case <-sub.Revoked:
+		case <-sub.Ended:
 			return
 		case <-expire:
 			return
 		case ev := <-sub.Events:
 			seq++
-			if _, err := fmt.Fprint(c.Writer, formatSSE(seq, ev)); err != nil {
+			if !write(formatSSE(seq, ev)) {
 				return
 			}
-			flusher.Flush()
 		case <-ping.C:
-			if _, err := fmt.Fprint(c.Writer, ": ping\n\n"); err != nil {
+			if !write(": ping\n\n") {
 				return
 			}
-			flusher.Flush()
 		}
 	}
 }

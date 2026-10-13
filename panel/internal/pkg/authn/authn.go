@@ -26,6 +26,8 @@ type Principal struct {
 	AMR       []string
 	// ReauthAt 是本会话最近一次重认证的时间（只有后台会话会有），零值表示没有。
 	ReauthAt time.Time
+	// ExpiresAt 是本次请求所用访问令牌的过期时刻；长连接（SSE）据此到点断开重新鉴权。
+	ExpiresAt time.Time
 }
 
 // RecentlyReauthed 报告 now 时是否仍在重认证窗口内。

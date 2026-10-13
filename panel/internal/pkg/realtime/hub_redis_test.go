@@ -24,9 +24,14 @@ func TestHubRealRedis(t *testing.T) {
 	rdb := redis.NewClient(opt)
 	t.Cleanup(func() { _ = rdb.Close() })
 
-	h := NewHub(rdb, nil, 100)
+	// 健康间隔调短，空闲一会儿让 PING 在 RESP3 下走一遍
+	h := newHub(rdb, nil, 100, 200*time.Millisecond)
 	t.Cleanup(h.Close)
 	waitReady(t, h)
+	time.Sleep(700 * time.Millisecond)
+	if !h.Live() {
+		t.Fatal("空闲后不再 live：PING 回包没认出来")
+	}
 
 	owner := uuid.New()
 	sid := "real-" + uuid.NewString()
@@ -51,7 +56,7 @@ func TestHubRealRedis(t *testing.T) {
 		t.Fatal("等订单事件超时")
 	}
 	select {
-	case <-sub.Revoked:
+	case <-sub.Ended:
 	case <-time.After(3 * time.Second):
 		t.Fatal("等会话吊销超时")
 	}

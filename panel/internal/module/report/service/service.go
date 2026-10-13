@@ -145,9 +145,10 @@ type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
-// StreamCounter 统计本机 SSE 连接数（系统状态页的 sse 组件），由 app 装配 Hub 实现。
+// StreamCounter 报告本机 SSE 连接数与广播订阅是否正常（系统状态页的 sse 组件），由 app 装配 Hub 实现。
 type StreamCounter interface {
 	Count() int
+	Live() bool
 }
 
 // Deps 是 report 依赖的各属主模块端口，app 装配时一次给全；缺哪个 MissingPorts 报哪个。

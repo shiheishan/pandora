@@ -68,6 +68,7 @@ func (s *Service) Authenticate(ctx context.Context, audience, bearer string) (au
 		Audience:  st.Audience,
 		AMR:       st.AMR,
 		ReauthAt:  st.ReauthAt,
+		ExpiresAt: claims.ExpiresAt.Time,
 	}, nil
 }
 

@@ -3,6 +3,8 @@ package realtime
 import (
 	"context"
 	"encoding/json"
+	"strings"
+	"time"
 
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
@@ -21,7 +23,10 @@ func NewPublisher(rdb *redis.Client) *Publisher {
 	return &Publisher{rdb: rdb}
 }
 
-// Publish 对给定频道发布一条事件。
+// publishTimeout 是一次发布的上限：发布在事务提交后同步做，Redis 抖动时不能把已提交的请求拖住。
+const publishTimeout = 500 * time.Millisecond
+
+// Publish 对给定频道发布一条事件，多个频道一次往返发完。
 //
 // 失败只记日志不返回错误：推送是锦上添花，数据已经写进数据库了。
 // 让一次推送失败回滚业务操作，是本末倒置。
@@ -33,13 +38,17 @@ func (p *Publisher) Publish(ctx context.Context, ev Event, channels ...string) {
 	if err != nil {
 		return
 	}
+	ctx, cancel := context.WithTimeout(ctx, publishTimeout)
+	defer cancel()
+	pipe := p.rdb.Pipeline()
 	for _, ch := range channels {
-		if err := p.rdb.Publish(ctx, ch, body).Err(); err != nil {
-			plog.From(ctx).Warn("实时事件发布失败",
-				zap.String("channel", ch),
-				zap.String("topic", ev.Topic),
-				zap.Error(err))
-		}
+		pipe.Publish(ctx, ch, body)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		plog.From(ctx).Warn("实时事件发布失败",
+			zap.Strings("channels", channels),
+			zap.String("topic", ev.Topic),
+			zap.Error(err))
 	}
 }
 
@@ -56,7 +65,7 @@ func (p *Publisher) Changed(ctx context.Context, topic, table, op string, id uui
 			"id":    id.String(),
 		},
 	}
-	chans := channelsFor(topic, owner)
+	chans := channelsFor(ctx, topic, owner)
 	key := "rt:" + topic + ":" + id.String()
 	tx.AfterCommit(ctx, key, func(ctx context.Context) {
 		p.Publish(ctx, ev, chans...)
@@ -73,7 +82,8 @@ func (p *Publisher) Notify(ctx context.Context, topic string, payload map[string
 	if err != nil {
 		return
 	}
-	key := "rt:" + topic + ":" + string(body)
+	// 去重键带上频道：同一事务里同一载荷发给不同频道是两件事
+	key := "rt:" + topic + ":" + string(body) + ":" + strings.Join(channels, ",")
 	tx.AfterCommit(ctx, key, func(ctx context.Context) {
 		p.Publish(ctx, ev, channels...)
 	})
@@ -81,16 +91,20 @@ func (p *Publisher) Notify(ctx context.Context, topic string, payload map[string
 
 // channelsFor 决定一条变更推到哪些频道。
 //
-// 有归属的变更只推给本人，没有的推给公共（nodes 只推管理端）。
-// 这个判断是权限边界：把一条带 user_id 的变更误推成全租户广播，
-// 等于告诉所有人「某某刚下了单」。所以宁可判断得保守 ——
-// 只要行里有 user_id，就只发给他一个人。
-func channelsFor(topic string, owner *uuid.UUID) []string {
+// 这个判断是权限边界：把一条带 user_id 的变更误推成全站广播，
+// 等于告诉所有人「某某刚下了单」。所以失败即关闭：只有明确公开的主题才发公共频道，
+// 按用户划分的主题漏传 owner 时只发管理端，并记日志等修调用方。
+func channelsFor(ctx context.Context, topic string, owner *uuid.UUID) []string {
 	if owner != nil {
 		return []string{ChannelUser(*owner), ChannelAdmin()}
 	}
-	if topic == TopicNodes {
+	switch topic {
+	case TopicPlans, TopicAnnouncements, TopicSwitches:
+		return []string{ChannelPublic(), ChannelAdmin()}
+	case TopicNodes:
+		return []string{ChannelAdmin()}
+	default:
+		plog.From(ctx).Warn("按用户划分的实时事件缺 owner，只发管理端", zap.String("topic", topic))
 		return []string{ChannelAdmin()}
 	}
-	return []string{ChannelPublic(), ChannelAdmin()}
 }
