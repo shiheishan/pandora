@@ -7,6 +7,9 @@ import (
 	"github.com/google/uuid"
 )
 
+// CSVCell 是导出 CSV 的单元格防注入（以 = + - @ 等开头的前面加单引号），口径与审计导出相同。
+func CSVCell(s string) string { return auditsvc.CSVSafe(s) }
+
 // PreviewBulk 按筛选条件预览命中人数与前 10 个样本。
 func (s *Service) PreviewBulk(ctx context.Context, f BulkFilter) (BulkPreview, error) {
 	_, q, err := s.bulkQuery(ctx, f)

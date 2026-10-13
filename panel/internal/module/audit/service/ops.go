@@ -229,7 +229,7 @@ func (s *Service) RecordSourceIPView(ctx context.Context, view string, userID *u
 }
 
 // CSVSafe 防止表格软件把单元格当公式（identity 用户导出复用）。
-func (s *Service) CSVSafe(str string) string {
+func CSVSafe(str string) string {
 	return csvSafe(str)
 }
 
