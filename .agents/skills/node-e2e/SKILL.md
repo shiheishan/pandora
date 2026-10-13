@@ -52,8 +52,8 @@ description: pandora 真节点逐协议验证：在两台 1c1g 测试机上（�
 1. `python3 $S/panel-setup.py <域名> <IP>`：建 server、节点池、套餐（草稿）和 `nodes.py` 里列的全部节点（`protocol_config` 用后台表单的形状），写 `$R/manifest.json`。加协议或改配置只改 `nodes.py`；第二批追加节点用 `nodes.extra()` + `panel-add-nodes.py`。
 2. `python3 $S/issue-tokens.py`：给每个节点签一次性接入令牌（120 分钟），写 `$R/tokens.json`（0600）。
 3. 节点接入（服务端机）：把 `node3-enroll.sh` 与 `manifest.json` 传到服务端机，`$S/sshx <服务端机别名> 'bash /root/node-e2e/enroll.sh <面板https地址> /root/node-e2e/manifest.json' < $R/tokens.json`。
-   - **接入证据必须由面板分发的官方 pdnd 来做**：面板 `release-artifact.env` 钉了官方包的 SHA-256 与版本，`enrollment commit` 拒绝别的二进制。脚本用官方包做 begin / commit / verify-identity，服务二进制再换成待测构建，这也是"升级二进制不重新接入"的真实路径。
-   - 多节点同进程：`config.json` 的 `nodes[]` 每项一个 node_id / token / identity_path，身份文件一节点一份。
+   - 接入走面板下发的一键安装命令（后台签发令牌时给的 `curl … /pdnd/install.sh | sudo bash -s -- --panel <host:port> --ca-sha256 sha256:<指纹> --token <令牌>`）：脚本下载面板 `pdnd-dist` 里的官方包、核对校验和，用它 `pandora-native enroll --token-stdin` 换客户端证书（身份目录 `/var/lib/pandora-native/identity/`），写配置与 unit 并启动。之后服务二进制再换成待测构建，这也是"升级二进制不重新接入"的真实路径。
+   - 一台服务器一个进程、一个身份：名下全部节点由面板经 gRPC 会话下发，`config.json` 里只有 `panel.address` 与 `panel.identity_dir`，没有节点列表。
    - 换服务二进制用 `node3-swap.sh`（`official | new | 绝对路径`），它会重启并等入站就绪。
 4. `python3 $S/panel-activate.py`：激活全部节点，**再**发布套餐（顺序同 loadtest seed；节点没激活时 pdnd 拉名单 401）。
 5. `JOB=... python3 $S/user-setup.py <个数> <前缀>`：后台批量生成用户 -> 赠送开单 -> 门户登录取订阅链接，追加写 `$R/users.json`（0600）。脚本中途失败时用 `JOB=<任务id>` 复用已生成的任务，免得多造用户。

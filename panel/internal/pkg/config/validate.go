@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -165,6 +166,10 @@ func (c *Config) Validate() error {
 		if err := validateRuleSetPrefix(f.name, f.val); err != nil {
 			errs = append(errs, err)
 		}
+	}
+
+	if c.Pdnd.DistDir == "" || !path.IsAbs(c.Pdnd.DistDir) {
+		errs = append(errs, errors.New("pdnd.dist_dir 必须是绝对路径"))
 	}
 
 	return errors.Join(errs...)
