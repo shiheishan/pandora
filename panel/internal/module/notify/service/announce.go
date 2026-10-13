@@ -17,6 +17,7 @@ import (
 	"github.com/aegispanel/aegis/internal/module/notify/repo"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/google/uuid"
 )
 
@@ -384,6 +385,7 @@ func (s *Service) SaveAnnouncement(ctx context.Context, in AnnouncementInput) (A
 			if err := s.store.InsertAnnouncement(ctx, &row); err != nil {
 				return err
 			}
+			s.announcementChanged(ctx, realtime.OpInsert, row.ID)
 			saved = AnnouncementSaved{ID: row.ID, Status: row.Status, Version: row.Version}
 		} else {
 			cur, ok, err := s.store.LockAnnouncement(ctx, *in.ID)
@@ -425,6 +427,7 @@ func (s *Service) SaveAnnouncement(ctx context.Context, in AnnouncementInput) (A
 			if !ok {
 				return annVersionConflict()
 			}
+			s.announcementChanged(ctx, realtime.OpUpdate, row.ID)
 			saved = AnnouncementSaved{ID: row.ID, Status: status, Version: newVer}
 			row.Version = newVer
 		}
@@ -482,6 +485,7 @@ func (s *Service) WithdrawAnnouncement(ctx context.Context, id uuid.UUID, expect
 		if !ok {
 			return annVersionConflict()
 		}
+		s.announcementChanged(ctx, realtime.OpUpdate, id)
 		newVersion = ver
 		return s.audit.Write(ctx, auditsvc.Event{
 			Action:       annAuditActionWithdrawn,
@@ -508,6 +512,7 @@ func (s *Service) PublishDueAnnouncements(ctx context.Context) (int, error) {
 			return err
 		}
 		for _, p := range published {
+			s.announcementChanged(ctx, realtime.OpUpdate, p.ID)
 			resID := p.ID
 			if err := s.audit.Write(ctx, auditsvc.Event{
 				Action:       annAuditActionPublished,

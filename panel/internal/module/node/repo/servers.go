@@ -173,17 +173,28 @@ func (r *Repo) ServerHasActiveNode(ctx context.Context, serverID uuid.UUID) (boo
 	return row.Found, err
 }
 
-// RetireServerNodes 删服务器时退役它名下未退役的节点，再把全部节点从这台服务器上摘下（级联静默）；返回退役的行数。
-func (r *Repo) RetireServerNodes(ctx context.Context, serverID uuid.UUID) (int64, error) {
+// RetireServerNodes 删服务器时退役它名下未退役的节点，再把全部节点从这台服务器上摘下（级联静默）；
+// 返回退役的行数与被摘下的未删除节点 id（给实时推送用）。
+func (r *Repo) RetireServerNodes(ctx context.Context, serverID uuid.UUID) (retired int64, nodeIDs []uuid.UUID, err error) {
 	res := r.d.Conn(ctx).Exec(`UPDATE nodes SET serving_status = 'retired', retired_at = now(),
 		row_version = row_version + 1, updated_at = now()
 		WHERE server_id = ? AND deleted_at IS NULL AND serving_status <> 'retired'`, serverID)
 	if res.Error != nil {
-		return 0, inventoryErr(res.Error)
+		return 0, nil, inventoryErr(res.Error)
 	}
-	retired := res.RowsAffected
-	if err := r.d.Conn(ctx).Exec(`UPDATE nodes SET server_id = NULL, updated_at = now() WHERE server_id = ?`, serverID).Error; err != nil {
-		return 0, inventoryErr(err)
+	retired = res.RowsAffected
+	var rows []struct {
+		ID   uuid.UUID `gorm:"column:id"`
+		Live bool      `gorm:"column:live"`
 	}
-	return retired, nil
+	if err := r.d.Conn(ctx).Raw(`UPDATE nodes SET server_id = NULL, updated_at = now() WHERE server_id = ? RETURNING id, deleted_at IS NULL AS live`, serverID).Scan(&rows).Error; err != nil {
+		return 0, nil, inventoryErr(err)
+	}
+	nodeIDs = []uuid.UUID{}
+	for _, row := range rows {
+		if row.Live {
+			nodeIDs = append(nodeIDs, row.ID)
+		}
+	}
+	return retired, nodeIDs, nil
 }

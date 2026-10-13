@@ -1,4 +1,4 @@
-// Package task 是 node 模块的 asynq 任务：节点数据的保留期清理、strict 设备模式的重新判定。
+// Package task 是 node 模块的 asynq 任务：节点数据的保留期清理、strict 设备模式的重新判定、节点在线巡检。
 package task
 
 import (
@@ -19,6 +19,9 @@ const TypeRetention = "retention:node"
 // TypeDevicesStrict 是 strict 设备模式的重新判定任务类型。
 const TypeDevicesStrict = "devices:strict"
 
+// TypeLiveness 是节点在线巡检任务类型（推送离线翻转）。
+const TypeLiveness = "node:liveness"
+
 const (
 	purgeBatch = 5000
 	maxBatches = 200
@@ -29,6 +32,8 @@ type Service interface {
 	PurgeRetention(ctx context.Context, table string, now time.Time, batch int) (int64, error)
 	// RecheckStrictDevices：strict 模式下重算超限订阅集合，变了推进名单纪元；loose 时什么都不做。
 	RecheckStrictDevices(ctx context.Context) error
+	// PatrolLiveness 给心跳刚跨过 NodeStaleAfter 或 nodeDeliveryFreshWindow 的服务器各推一条 servers UPDATE，返回推了几台（去重后）。
+	PatrolLiveness(ctx context.Context) (int, error)
 }
 
 // Module 注册 node 相关的 asynq 任务与定时调度。
@@ -46,9 +51,10 @@ func New(svc Service) *Module {
 func (m *Module) Register(mux *asynq.ServeMux) {
 	mux.HandleFunc(TypeRetention, m.retention)
 	mux.HandleFunc(TypeDevicesStrict, m.devicesStrict)
+	mux.HandleFunc(TypeLiveness, m.liveness)
 }
 
-// Periodic 声明节点数据保留期清理（每天凌晨）与 strict 设备判定（每分钟）。
+// Periodic 声明节点数据保留期清理（每天凌晨）、strict 设备判定（每分钟）与节点在线巡检（每 30 秒）。
 func (m *Module) Periodic() []jobs.Periodic {
 	return []jobs.Periodic{
 		{
@@ -69,6 +75,16 @@ func (m *Module) Periodic() []jobs.Periodic {
 				asynq.MaxRetry(0),
 				asynq.Timeout(30 * time.Second),
 				asynq.Unique(50 * time.Second),
+			},
+		},
+		{
+			Cronspec: "@every 30s",
+			Type:     TypeLiveness,
+			Opts: []asynq.Option{
+				asynq.Queue("default"),
+				asynq.MaxRetry(0),
+				asynq.Timeout(20 * time.Second),
+				asynq.Unique(25 * time.Second),
 			},
 		},
 	}
@@ -111,6 +127,18 @@ func (m *Module) retention(ctx context.Context, _ *asynq.Task) error {
 func (m *Module) devicesStrict(ctx context.Context, _ *asynq.Task) error {
 	if err := m.svc.RecheckStrictDevices(ctx); err != nil {
 		return fmt.Errorf("strict 设备判定: %w", err)
+	}
+	return nil
+}
+
+// liveness 调 service 在线巡检；出错原样返回（MaxRetry 0，下一轮再算）。
+func (m *Module) liveness(ctx context.Context, _ *asynq.Task) error {
+	n, err := m.svc.PatrolLiveness(ctx)
+	if err != nil {
+		return fmt.Errorf("节点在线巡检: %w", err)
+	}
+	if n > 0 {
+		plog.From(ctx).Debug("node liveness pushed", zap.Int("servers", n))
 	}
 	return nil
 }

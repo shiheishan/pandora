@@ -16,6 +16,7 @@ import (
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/module/node/repo"
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 )
 
@@ -152,6 +153,7 @@ func (s *Service) Enroll(ctx context.Context, in EnrollInput) (EnrollResult, err
 		if err := s.repo.UpdateServerHostInfo(ctx, serverID, host); err != nil {
 			return err
 		}
+		s.serverChanged(ctx, realtime.OpUpdate, serverID)
 		if region != "" {
 			if err := s.repo.FillServerRegionIfEmpty(ctx, serverID, region); err != nil {
 				return err

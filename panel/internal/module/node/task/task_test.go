@@ -24,6 +24,10 @@ type fakeSvc struct {
 
 	rechecks   int
 	recheckErr error
+
+	patrols   int
+	patrolN   int
+	patrolErr error
 }
 
 func (f *fakeSvc) PurgeRetention(_ context.Context, table string, now time.Time, batch int) (int64, error) {
@@ -41,6 +45,14 @@ func (f *fakeSvc) PurgeRetention(_ context.Context, table string, now time.Time,
 func (f *fakeSvc) RecheckStrictDevices(_ context.Context) error {
 	f.rechecks++
 	return f.recheckErr
+}
+
+func (f *fakeSvc) PatrolLiveness(_ context.Context) (int, error) {
+	f.patrols++
+	if f.patrolErr != nil {
+		return 0, f.patrolErr
+	}
+	return f.patrolN, nil
 }
 
 func optsOf(p []asynq.Option) (queue string, retry int, unique, timeout time.Duration) {
@@ -62,7 +74,7 @@ func optsOf(p []asynq.Option) (queue string, retry int, unique, timeout time.Dur
 
 func TestPeriodicSchedule(t *testing.T) {
 	ps := New(&fakeSvc{}).Periodic()
-	if len(ps) != 2 {
+	if len(ps) != 3 {
 		t.Fatalf("periodic: got %d", len(ps))
 	}
 	e := ps[0]
@@ -84,6 +96,15 @@ func TestPeriodicSchedule(t *testing.T) {
 	}
 	if unique >= time.Minute {
 		t.Fatalf("unique %v should be < 1m", unique)
+	}
+
+	e = ps[2]
+	if e.Type != TypeLiveness || e.Cronspec != "@every 30s" {
+		t.Fatalf("liveness periodic = %+v", e)
+	}
+	queue, retry, unique, timeout = optsOf(e.Opts)
+	if queue != "default" || retry != 0 || unique != 25*time.Second || timeout != 20*time.Second {
+		t.Fatalf("liveness opts: queue=%q retry=%d unique=%v timeout=%v", queue, retry, unique, timeout)
 	}
 }
 
@@ -168,6 +189,30 @@ func TestDevicesStrictErrorWrapped(t *testing.T) {
 	fp := &fakeSvc{recheckErr: sentinel}
 	mod := New(fp)
 	err := mod.devicesStrict(context.Background(), asynq.NewTask(TypeDevicesStrict, nil))
+	if err == nil {
+		t.Fatal("want error")
+	}
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("errors.Is: %v", err)
+	}
+}
+
+func TestLivenessCallsService(t *testing.T) {
+	fp := &fakeSvc{patrolN: 2}
+	mod := New(fp)
+	if err := mod.liveness(context.Background(), asynq.NewTask(TypeLiveness, nil)); err != nil {
+		t.Fatalf("liveness: %v", err)
+	}
+	if fp.patrols != 1 {
+		t.Fatalf("patrols=%d want 1", fp.patrols)
+	}
+}
+
+func TestLivenessErrorWrapped(t *testing.T) {
+	sentinel := errors.New("patrol failed")
+	fp := &fakeSvc{patrolErr: sentinel}
+	mod := New(fp)
+	err := mod.liveness(context.Background(), asynq.NewTask(TypeLiveness, nil))
 	if err == nil {
 		t.Fatal("want error")
 	}

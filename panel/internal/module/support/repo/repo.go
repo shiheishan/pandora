@@ -111,6 +111,7 @@ type QueueFilter struct {
 // Escalated 是 SLA 升级里被改动的一张工单。
 type Escalated struct {
 	ID             uuid.UUID `gorm:"column:id"`
+	UserID         uuid.UUID `gorm:"column:user_id"`
 	BeforeStatus   string    `gorm:"column:before_status"`
 	BeforePriority string    `gorm:"column:before_priority"`
 	Priority       string    `gorm:"column:priority"`

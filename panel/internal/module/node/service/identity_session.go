@@ -19,6 +19,7 @@ import (
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/module/node/model"
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 )
 
 // ErrSessionRevoked 是建流时身份已无效；会话层先发 Command.tombstone 再结束流。
@@ -96,6 +97,7 @@ func (s *Service) activatePendingIdentity(ctx context.Context, serverID uuid.UUI
 		if !ok {
 			return ErrSessionRevoked
 		}
+		s.serverChanged(ctx, realtime.OpUpdate, serverID)
 		data := map[string]any{"identity_id": ident.ID.String()}
 		if superseded {
 			data["superseded_identity_id"] = oldID.String()
@@ -215,5 +217,6 @@ func (s *Service) issueIdentity(ctx context.Context, ca *CA, serverID uuid.UUID,
 	if err := s.repo.InsertIdentity(ctx, row); err != nil {
 		return nil, err
 	}
+	s.serverChanged(ctx, realtime.OpUpdate, serverID)
 	return row, nil
 }

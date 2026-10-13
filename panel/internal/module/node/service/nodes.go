@@ -16,6 +16,7 @@ import (
 	"github.com/aegispanel/aegis/internal/module/node/model"
 	"github.com/aegispanel/aegis/internal/module/node/protocol"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 )
 
 // nodeKernelAuto 是内核的缺省值。
@@ -168,6 +169,7 @@ func (s *Service) CreateNode(ctx context.Context, in NodeInput) (AdminNode, erro
 		if err := s.repo.InsertNode(ctx, &n); err != nil {
 			return nodeWriteErr(err, port, l4)
 		}
+		s.nodeChanged(ctx, realtime.OpInsert, n.ID)
 		id = n.ID
 		if err := s.nodeAudit(ctx, "node.create", id, map[string]any{
 			"name": name, "server_id": serverID.String(), "node_type": nodeType, "schema_version": version,
@@ -356,6 +358,7 @@ func (s *Service) PatchNode(ctx context.Context, id uuid.UUID, in NodePatch) (Ad
 		if !ok {
 			return nodeVersionConflict(before.RowVersion)
 		}
+		s.nodeChanged(ctx, realtime.OpUpdate, id)
 		var poolID any
 		if next.PoolID != nil {
 			poolID = next.PoolID.String()

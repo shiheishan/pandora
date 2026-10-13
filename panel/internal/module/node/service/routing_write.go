@@ -15,6 +15,7 @@ import (
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/module/node/repo"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/google/uuid"
 )
 
@@ -335,6 +336,7 @@ func (s *Service) SetNodeRouting(ctx context.Context, nodeID uuid.UUID, rowVersi
 		if err := s.repo.BumpNodeRowVersions(ctx, []uuid.UUID{nodeID}); err != nil {
 			return err
 		}
+		s.nodeChanged(ctx, realtime.OpUpdate, nodeID)
 		if err := s.audit.Write(ctx, auditsvc.Event{
 			Action: "node.routing.update", ResourceType: "node", ResourceID: &nodeID,
 			Data: map[string]any{

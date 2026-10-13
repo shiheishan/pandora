@@ -272,6 +272,7 @@ func (s *Service) DeleteRouteGroup(ctx context.Context, id uuid.UUID, rowVersion
 		if err := s.repo.BumpNodeRowVersions(ctx, members); err != nil {
 			return err
 		}
+		s.nodesChanged(ctx, members)
 		affected, err = s.repo.LiveNodeCount(ctx, members)
 		if err != nil {
 			return err
