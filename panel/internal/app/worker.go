@@ -11,6 +11,7 @@ import (
 	commissiontask "github.com/aegispanel/aegis/internal/module/commission/task"
 	idemtask "github.com/aegispanel/aegis/internal/module/idempotency/task"
 	identitytask "github.com/aegispanel/aegis/internal/module/identity/task"
+	nodetask "github.com/aegispanel/aegis/internal/module/node/task"
 	notifytask "github.com/aegispanel/aegis/internal/module/notify/task"
 	ordertask "github.com/aegispanel/aegis/internal/module/order/task"
 	paymenttask "github.com/aegispanel/aegis/internal/module/payment/task"
@@ -118,5 +119,6 @@ func modules(svc *services) []jobs.Module {
 		ordertask.New(svc.order),
 		commissiontask.New(svc.commission),
 		subtask.New(svc.sub),
+		nodetask.New(svc.node),
 	}
 }
