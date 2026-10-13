@@ -44,7 +44,7 @@ func TestPullOK(t *testing.T) {
 	}
 
 	setConsumed(t, de.env, ctx, sub.ID, MetricTraffic, PeriodCycle, 1*gib)
-	de.env.exec(t, ctx, `INSERT INTO traffic_pack_grants (user_id, subscription_id, source, source_id, granted_bytes)
+	de.exec(t, ctx, `INSERT INTO traffic_pack_grants (user_id, subscription_id, source, source_id, granted_bytes)
 		VALUES (?, ?, 'admin', gen_random_uuid(), ?)`, sub.UserID, sub.ID, 2*gib)
 
 	res2, err := pull(de, ctx, token, testPrefix)
@@ -139,7 +139,7 @@ func TestPullDeliveryUnavailable(t *testing.T) {
 
 func TestPullExpiredRevivable(t *testing.T) {
 	de, ctx, _, sub, token := setupPull(t)
-	de.env.exec(t, ctx, `UPDATE subscriptions SET status = 'expired', current_period_end = now() - interval '1 day',
+	de.exec(t, ctx, `UPDATE subscriptions SET status = 'expired', current_period_end = now() - interval '1 day',
 		current_period_start = now() - interval '31 days' WHERE id = ?`, sub.ID)
 	res, err := pull(de, ctx, token, testPrefix)
 	if err != nil {
@@ -159,7 +159,7 @@ func TestPullExpiredRevivable(t *testing.T) {
 
 func TestPullActivePastPeriodEnd(t *testing.T) {
 	de, ctx, _, sub, token := setupPull(t)
-	de.env.exec(t, ctx, `UPDATE subscriptions SET current_period_start = now() - interval '31 days', current_period_end = now() - interval '1 hour' WHERE id = ?`, sub.ID)
+	de.exec(t, ctx, `UPDATE subscriptions SET current_period_start = now() - interval '31 days', current_period_end = now() - interval '1 hour' WHERE id = ?`, sub.ID)
 	res, err := pull(de, ctx, token, testPrefix)
 	if err != nil {
 		t.Fatalf("active 已过到期: %v", err)
@@ -171,7 +171,7 @@ func TestPullActivePastPeriodEnd(t *testing.T) {
 
 func TestPullRenewalClosed(t *testing.T) {
 	de, ctx, _, sub, token := setupPull(t)
-	de.env.exec(t, ctx, `UPDATE subscriptions SET status = 'expired', renewal_closed_at = now() WHERE id = ?`, sub.ID)
+	de.exec(t, ctx, `UPDATE subscriptions SET status = 'expired', renewal_closed_at = now() WHERE id = ?`, sub.ID)
 	_, err := pull(de, ctx, token, testPrefix)
 	if !errors.Is(err, ErrPullDenied) {
 		t.Fatalf("已关窗: %v", err)
@@ -183,16 +183,16 @@ func TestPullRevokedGrace(t *testing.T) {
 	if _, err := pull(de, ctx, token, testPrefix); err != nil {
 		t.Fatalf("吊销前应先成功: %v", err)
 	}
-	de.env.exec(t, ctx, `UPDATE subscription_credentials SET status = 'revoked', revoked_at = now(), revoked_reason = 'rotated' WHERE subscription_id = ?`, sub.ID)
+	de.exec(t, ctx, `UPDATE subscription_credentials SET status = 'revoked', revoked_at = now(), revoked_reason = 'rotated' WHERE subscription_id = ?`, sub.ID)
 	_, err := pull(de, ctx, token, testPrefix)
 	if !errors.Is(err, ErrPullDenied) {
 		t.Fatalf("吊销无宽限: %v", err)
 	}
-	de.env.exec(t, ctx, `UPDATE subscription_credentials SET grace_until = now() + interval '1 hour' WHERE subscription_id = ?`, sub.ID)
+	de.exec(t, ctx, `UPDATE subscription_credentials SET grace_until = now() + interval '1 hour' WHERE subscription_id = ?`, sub.ID)
 	if _, err := pull(de, ctx, token, testPrefix); err != nil {
 		t.Fatalf("宽限内: %v", err)
 	}
-	de.env.exec(t, ctx, `UPDATE subscription_credentials SET grace_until = now() - interval '1 minute' WHERE subscription_id = ?`, sub.ID)
+	de.exec(t, ctx, `UPDATE subscription_credentials SET grace_until = now() - interval '1 minute' WHERE subscription_id = ?`, sub.ID)
 	_, err = pull(de, ctx, token, testPrefix)
 	if !errors.Is(err, ErrPullDenied) {
 		t.Fatalf("宽限外: %v", err)
@@ -206,7 +206,7 @@ func TestPullOwnerSuspended(t *testing.T) {
 	if !errors.Is(err, ErrPullDenied) {
 		t.Fatalf("主人停用: %v", err)
 	}
-	de.env.exec(t, ctx, `UPDATE subscriptions SET status = 'expired', current_period_start = now() - interval '31 days', current_period_end = now() - interval '1 day' WHERE id = ?`, sub.ID)
+	de.exec(t, ctx, `UPDATE subscriptions SET status = 'expired', current_period_start = now() - interval '31 days', current_period_end = now() - interval '1 day' WHERE id = ?`, sub.ID)
 	_, err = pull(de, ctx, token, testPrefix)
 	if !errors.Is(err, ErrPullDenied) {
 		t.Fatalf("过期+主人停用仍应 denied 非过期提示: %v", err)

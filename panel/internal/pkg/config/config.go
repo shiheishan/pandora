@@ -25,17 +25,18 @@ func (Secret) MarshalText() ([]byte, error) { return []byte("***"), nil }
 func (s Secret) Reveal() string { return string(s) }
 
 type Config struct {
-	Env           string    `mapstructure:"env"`
-	PublicBaseURL string    `mapstructure:"public_base_url"`
-	HTTP          HTTP      `mapstructure:"http"`
-	GRPC          GRPC      `mapstructure:"grpc"`
-	Database      Database  `mapstructure:"database"`
-	Redis         Redis     `mapstructure:"redis"`
-	Worker        Worker    `mapstructure:"worker"`
-	Auth          Auth      `mapstructure:"auth"`
-	RateLimit     RateLimit `mapstructure:"ratelimit"`
-	Secrets       Secrets   `mapstructure:"secrets"`
-	Log           Log       `mapstructure:"log"`
+	Env           string       `mapstructure:"env"`
+	PublicBaseURL string       `mapstructure:"public_base_url"`
+	HTTP          HTTP         `mapstructure:"http"`
+	GRPC          GRPC         `mapstructure:"grpc"`
+	Database      Database     `mapstructure:"database"`
+	Redis         Redis        `mapstructure:"redis"`
+	Worker        Worker       `mapstructure:"worker"`
+	Auth          Auth         `mapstructure:"auth"`
+	RateLimit     RateLimit    `mapstructure:"ratelimit"`
+	Secrets       Secrets      `mapstructure:"secrets"`
+	Log           Log          `mapstructure:"log"`
+	Subscription  Subscription `mapstructure:"subscription"`
 }
 
 type HTTP struct {
@@ -123,4 +124,18 @@ type Log struct {
 	MaxBackups int    `mapstructure:"max_backups"`
 	MaxAgeDays int    `mapstructure:"max_age_days"`
 	Compress   bool   `mapstructure:"compress"`
+}
+
+// Subscription 是订阅渲染的可配项。
+type Subscription struct {
+	Singbox Singbox `mapstructure:"singbox"`
+}
+
+// Singbox 是 sing-box 订阅附带模板的可配项；规则集前缀为空用缺省（SagerNet 公开发布的规则集）。
+type Singbox struct {
+	// GeositeURLPrefix / GeoIPURLPrefix 是规则集地址前缀：https、以 / 结尾，换镜像时改
+	GeositeURLPrefix string `mapstructure:"geosite_url_prefix"`
+	GeoIPURLPrefix   string `mapstructure:"geoip_url_prefix"`
+	// BlockAds 为真时按广告域名规则集拦截
+	BlockAds bool `mapstructure:"block_ads"`
 }

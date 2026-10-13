@@ -47,7 +47,10 @@ type Service interface {
 }
 
 var _ Service = (*service.Service)(nil)
-var _ route.Module = (*Handler)(nil)
+var (
+	_ route.Module     = (*Handler)(nil)
+	_ route.RootModule = (*Handler)(nil)
+)
 
 // Handler 是 subscription 模块的 HTTP 入口。
 type Handler struct {
