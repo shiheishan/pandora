@@ -1,0 +1,1024 @@
+[
+  {
+    "group": "form",
+    "name": "ss-aes128",
+    "type": "shadowsocks",
+    "host": "node.example.com",
+    "port": 8388,
+    "traffic_rate": 1,
+    "config": {
+      "method": "aes-128-gcm"
+    }
+  },
+  {
+    "group": "form",
+    "name": "ss-chacha",
+    "type": "shadowsocks",
+    "host": "node.example.com",
+    "port": 8389,
+    "traffic_rate": 1,
+    "config": {
+      "method": "chacha20-ietf-poly1305"
+    }
+  },
+  {
+    "group": "form",
+    "name": "hy2-obfs",
+    "type": "hysteria2",
+    "host": "node.example.com",
+    "port": 8443,
+    "traffic_rate": 1,
+    "config": {
+      "allow_insecure": true,
+      "cert_path": "/etc/pandora-native/certs/example.com/fullchain.pem",
+      "down_mbps": 200,
+      "key_path": "/etc/pandora-native/certs/example.com/privkey.pem",
+      "obfs": {
+        "password": "obfs-pass-1",
+        "type": "salamander"
+      },
+      "server_name": "sni.example.com",
+      "up_mbps": 100
+    }
+  },
+  {
+    "group": "form",
+    "name": "hy2-plain",
+    "type": "hysteria2",
+    "host": "node.example.com",
+    "port": 8444,
+    "traffic_rate": 1,
+    "config": {
+      "cert_path": "/etc/pandora-native/certs/example.com/fullchain.pem",
+      "key_path": "/etc/pandora-native/certs/example.com/privkey.pem"
+    }
+  },
+  {
+    "group": "form",
+    "name": "tuic",
+    "type": "tuic",
+    "host": "node.example.com",
+    "port": 5443,
+    "traffic_rate": 1,
+    "config": {
+      "cert_path": "/etc/pandora-native/certs/example.com/fullchain.pem",
+      "congestion_control": "cubic",
+      "key_path": "/etc/pandora-native/certs/example.com/privkey.pem",
+      "server_name": "sni.example.com"
+    }
+  },
+  {
+    "group": "form",
+    "name": "anytls",
+    "type": "anytls",
+    "host": "node.example.com",
+    "port": 6443,
+    "traffic_rate": 1,
+    "config": {
+      "allow_insecure": true,
+      "cert_path": "/etc/pandora-native/certs/example.com/fullchain.pem",
+      "key_path": "/etc/pandora-native/certs/example.com/privkey.pem",
+      "server_name": "sni.example.com",
+      "tls": true
+    }
+  },
+  {
+    "group": "form",
+    "name": "anytls-utls-fallback",
+    "type": "anytls",
+    "host": "node.example.com",
+    "port": 6445,
+    "traffic_rate": 1,
+    "config": {
+      "allow_insecure": true,
+      "cert_path": "/etc/pandora-native/certs/example.com/fullchain.pem",
+      "fallback": "decoy.example.net:80",
+      "fingerprint": "safari",
+      "key_path": "/etc/pandora-native/certs/example.com/privkey.pem",
+      "server_name": "sni.example.com",
+      "tls": true
+    }
+  },
+  {
+    "group": "form",
+    "name": "naive",
+    "type": "naive",
+    "host": "node.example.com",
+    "port": 9443,
+    "traffic_rate": 1,
+    "config": {
+      "cert_path": "/etc/pandora-native/certs/example.com/fullchain.pem",
+      "key_path": "/etc/pandora-native/certs/example.com/privkey.pem",
+      "server_name": "sni.example.com",
+      "tls": true
+    }
+  },
+  {
+    "group": "form",
+    "name": "naive-insecure",
+    "type": "naive",
+    "host": "node.example.com",
+    "port": 9444,
+    "traffic_rate": 1,
+    "config": {
+      "allow_insecure": true,
+      "cert_path": "/etc/pandora-native/certs/example.com/fullchain.pem",
+      "key_path": "/etc/pandora-native/certs/example.com/privkey.pem",
+      "tls": true
+    }
+  },
+  {
+    "group": "form",
+    "name": "naive-fallback",
+    "type": "naive",
+    "host": "node.example.com",
+    "port": 9445,
+    "traffic_rate": 1,
+    "config": {
+      "cert_path": "/etc/pandora-native/certs/example.com/fullchain.pem",
+      "fallback": "decoy.example.net:80",
+      "key_path": "/etc/pandora-native/certs/example.com/privkey.pem",
+      "server_name": "sni.example.com",
+      "tls": true
+    }
+  },
+  {
+    "group": "form",
+    "name": "juicity",
+    "type": "juicity",
+    "host": "node.example.com",
+    "port": 8445,
+    "traffic_rate": 1,
+    "config": {
+      "cert_path": "/etc/pandora-native/certs/example.com/fullchain.pem",
+      "congestion_control": "bbr",
+      "key_path": "/etc/pandora-native/certs/example.com/privkey.pem"
+    }
+  },
+  {
+    "group": "form",
+    "name": "socks",
+    "type": "socks",
+    "host": "node.example.com",
+    "port": 1080,
+    "traffic_rate": 1,
+    "config": {
+      "network": "tcp"
+    }
+  },
+  {
+    "group": "form",
+    "name": "socks-udp",
+    "type": "socks",
+    "host": "node.example.com",
+    "port": 1081,
+    "traffic_rate": 1,
+    "config": {
+      "network": "udp"
+    }
+  },
+  {
+    "group": "form",
+    "name": "socks-tls",
+    "type": "socks",
+    "host": "node.example.com",
+    "port": 1082,
+    "traffic_rate": 1,
+    "config": {
+      "cert_path": "/etc/pandora-native/certs/example.com/fullchain.pem",
+      "key_path": "/etc/pandora-native/certs/example.com/privkey.pem",
+      "tls": true
+    }
+  },
+  {
+    "group": "form",
+    "name": "http",
+    "type": "http",
+    "host": "node.example.com",
+    "port": 8080,
+    "traffic_rate": 1,
+    "config": {}
+  },
+  {
+    "group": "form",
+    "name": "http-tls",
+    "type": "http",
+    "host": "node.example.com",
+    "port": 8081,
+    "traffic_rate": 1,
+    "config": {
+      "cert_path": "/etc/pandora-native/certs/example.com/fullchain.pem",
+      "key_path": "/etc/pandora-native/certs/example.com/privkey.pem",
+      "tls": true
+    }
+  },
+  {
+    "group": "form",
+    "name": "mieru-tcp",
+    "type": "mieru",
+    "host": "node.example.com",
+    "port": 2999,
+    "traffic_rate": 1,
+    "config": {
+      "transport": "tcp"
+    }
+  },
+  {
+    "group": "form",
+    "name": "mieru-udp",
+    "type": "mieru",
+    "host": "node.example.com",
+    "port": 3000,
+    "traffic_rate": 1,
+    "config": {
+      "transport": "udp"
+    }
+  },
+  {
+    "group": "form",
+    "name": "shadowtls",
+    "type": "shadowtls",
+    "host": "node.example.com",
+    "port": 4443,
+    "traffic_rate": 1,
+    "config": {
+      "handshake_server": "www.example.com",
+      "method": "aes-128-gcm",
+      "password": "stls-pass-1",
+      "server": "www.example.com:443",
+      "server_port": 443,
+      "version": 3
+    }
+  },
+  {
+    "group": "form",
+    "name": "trojan-tls-tcp",
+    "type": "trojan",
+    "host": "node.example.com",
+    "port": 7443,
+    "traffic_rate": 1,
+    "config": {
+      "allow_insecure": true,
+      "cert_path": "/etc/pandora-native/certs/example.com/fullchain.pem",
+      "fingerprint": "firefox",
+      "key_path": "/etc/pandora-native/certs/example.com/privkey.pem",
+      "network": "tcp",
+      "security": "none",
+      "server_name": "sni.example.com",
+      "tls": true
+    }
+  },
+  {
+    "group": "form",
+    "name": "trojan-tls-ws",
+    "type": "trojan",
+    "host": "node.example.com",
+    "port": 7444,
+    "traffic_rate": 1,
+    "config": {
+      "cert_path": "/etc/pandora-native/certs/example.com/fullchain.pem",
+      "host": "cdn.example.com",
+      "key_path": "/etc/pandora-native/certs/example.com/privkey.pem",
+      "network": "ws",
+      "path": "/tw",
+      "security": "none",
+      "tls": true
+    }
+  },
+  {
+    "group": "form",
+    "name": "trojan-tls-grpc",
+    "type": "trojan",
+    "host": "node.example.com",
+    "port": 7445,
+    "traffic_rate": 1,
+    "config": {
+      "cert_path": "/etc/pandora-native/certs/example.com/fullchain.pem",
+      "grpc_service_name": "tgrpc",
+      "key_path": "/etc/pandora-native/certs/example.com/privkey.pem",
+      "network": "grpc",
+      "security": "none",
+      "tls": true
+    }
+  },
+  {
+    "group": "form",
+    "name": "trojan-tls-grpc-sni",
+    "type": "trojan",
+    "host": "node.example.com",
+    "port": 7448,
+    "traffic_rate": 1,
+    "config": {
+      "cert_path": "/etc/pandora-native/certs/example.com/fullchain.pem",
+      "grpc_service_name": "tg2",
+      "key_path": "/etc/pandora-native/certs/example.com/privkey.pem",
+      "network": "grpc",
+      "security": "none",
+      "server_name": "sni.example.com",
+      "tls": true
+    }
+  },
+  {
+    "group": "form",
+    "name": "trojan-tls-httpupgrade",
+    "type": "trojan",
+    "host": "node.example.com",
+    "port": 7447,
+    "traffic_rate": 1,
+    "config": {
+      "cert_path": "/etc/pandora-native/certs/example.com/fullchain.pem",
+      "key_path": "/etc/pandora-native/certs/example.com/privkey.pem",
+      "network": "httpupgrade",
+      "path": "/tu",
+      "security": "none",
+      "tls": true
+    }
+  },
+  {
+    "group": "form",
+    "name": "trojan-tls-fallback",
+    "type": "trojan",
+    "host": "node.example.com",
+    "port": 7449,
+    "traffic_rate": 1,
+    "config": {
+      "allow_insecure": true,
+      "cert_path": "/etc/pandora-native/certs/example.com/fullchain.pem",
+      "fallback": "decoy.example.net:80",
+      "key_path": "/etc/pandora-native/certs/example.com/privkey.pem",
+      "network": "tcp",
+      "security": "none",
+      "server_name": "sni.example.com",
+      "tls": true
+    }
+  },
+  {
+    "group": "form",
+    "name": "trojan-reality",
+    "type": "trojan",
+    "host": "node.example.com",
+    "port": 7446,
+    "traffic_rate": 1,
+    "config": {
+      "dest": "www.example.com:443",
+      "fingerprint": "firefox",
+      "network": "tcp",
+      "private_key": "u03CTWUF4qEGT24p7bBnBU7OM0VUUrHThNjlklFEfcg",
+      "public_key": "EVmCoU4Swh5-Pv9WHB68iac25hNF2VwABHEnIZOTfyE",
+      "security": "reality",
+      "server_names": [
+        "www.example.com"
+      ],
+      "short_ids": [
+        "0a1b2c3d"
+      ],
+      "tls": false
+    }
+  },
+  {
+    "group": "form",
+    "name": "trojan-reality-fallback",
+    "type": "trojan",
+    "host": "node.example.com",
+    "port": 7450,
+    "traffic_rate": 1,
+    "config": {
+      "dest": "www.example.com:443",
+      "fallback": "decoy.example.net:80",
+      "network": "tcp",
+      "private_key": "u03CTWUF4qEGT24p7bBnBU7OM0VUUrHThNjlklFEfcg",
+      "public_key": "EVmCoU4Swh5-Pv9WHB68iac25hNF2VwABHEnIZOTfyE",
+      "security": "reality",
+      "server_names": [
+        "www.example.com"
+      ],
+      "short_ids": [
+        "0a1b2c3d"
+      ],
+      "tls": false
+    }
+  },
+  {
+    "group": "form",
+    "name": "vless-reality-vision",
+    "type": "vless",
+    "host": "node.example.com",
+    "port": 443,
+    "traffic_rate": 1,
+    "config": {
+      "dest": "www.example.com:443",
+      "fingerprint": "chrome",
+      "flow": "xtls-rprx-vision",
+      "network": "tcp",
+      "private_key": "u03CTWUF4qEGT24p7bBnBU7OM0VUUrHThNjlklFEfcg",
+      "public_key": "EVmCoU4Swh5-Pv9WHB68iac25hNF2VwABHEnIZOTfyE",
+      "security": "reality",
+      "server_names": [
+        "www.example.com"
+      ],
+      "short_ids": [
+        "0a1b2c3d"
+      ]
+    }
+  },
+  {
+    "group": "form",
+    "name": "vless-reality-multi",
+    "type": "vless",
+    "host": "node.example.com",
+    "port": 449,
+    "traffic_rate": 1,
+    "config": {
+      "dest": "www.example.com:443",
+      "flow": "xtls-rprx-vision",
+      "network": "tcp",
+      "private_key": "u03CTWUF4qEGT24p7bBnBU7OM0VUUrHThNjlklFEfcg",
+      "public_key": "EVmCoU4Swh5-Pv9WHB68iac25hNF2VwABHEnIZOTfyE",
+      "security": "reality",
+      "server_names": [
+        "www.example.com",
+        "static.example.com"
+      ],
+      "short_ids": [
+        "0a1b2c3d",
+        "4e5f",
+        "6a7b8c9d0e1f2a3b"
+      ]
+    }
+  },
+  {
+    "group": "form",
+    "name": "vless-reality-grpc",
+    "type": "vless",
+    "host": "node.example.com",
+    "port": 444,
+    "traffic_rate": 1,
+    "config": {
+      "dest": "www.example.com:443",
+      "fingerprint": "safari",
+      "grpc_service_name": "vgrpc",
+      "network": "grpc",
+      "private_key": "u03CTWUF4qEGT24p7bBnBU7OM0VUUrHThNjlklFEfcg",
+      "public_key": "EVmCoU4Swh5-Pv9WHB68iac25hNF2VwABHEnIZOTfyE",
+      "security": "reality",
+      "server_names": [
+        "www.example.com"
+      ],
+      "short_ids": [
+        "0a1b2c3d"
+      ]
+    }
+  },
+  {
+    "group": "form",
+    "name": "vless-reality-xhttp",
+    "type": "vless",
+    "host": "node.example.com",
+    "port": 445,
+    "traffic_rate": 1,
+    "config": {
+      "dest": "www.example.com:443",
+      "mode": "auto",
+      "network": "xhttp",
+      "path": "/xh",
+      "private_key": "u03CTWUF4qEGT24p7bBnBU7OM0VUUrHThNjlklFEfcg",
+      "public_key": "EVmCoU4Swh5-Pv9WHB68iac25hNF2VwABHEnIZOTfyE",
+      "security": "reality",
+      "server_names": [
+        "www.example.com"
+      ],
+      "short_ids": [
+        "0a1b2c3d"
+      ]
+    }
+  },
+  {
+    "group": "form",
+    "name": "vless-xhttp-header",
+    "type": "vless",
+    "host": "node.example.com",
+    "port": 447,
+    "traffic_rate": 1,
+    "config": {
+      "dest": "www.example.com:443",
+      "network": "xhttp",
+      "path": "/xh",
+      "private_key": "u03CTWUF4qEGT24p7bBnBU7OM0VUUrHThNjlklFEfcg",
+      "public_key": "EVmCoU4Swh5-Pv9WHB68iac25hNF2VwABHEnIZOTfyE",
+      "security": "reality",
+      "server_names": [
+        "www.example.com"
+      ],
+      "session_placement": "header",
+      "short_ids": [
+        "0a1b2c3d"
+      ]
+    }
+  },
+  {
+    "group": "form",
+    "name": "vless-ws",
+    "type": "vless",
+    "host": "node.example.com",
+    "port": 10080,
+    "traffic_rate": 1,
+    "config": {
+      "host": "cdn.example.com",
+      "network": "ws",
+      "path": "/vw",
+      "security": "none"
+    }
+  },
+  {
+    "group": "form",
+    "name": "vless-ws-nohost",
+    "type": "vless",
+    "host": "node.example.com",
+    "port": 10084,
+    "traffic_rate": 1,
+    "config": {
+      "network": "ws",
+      "path": "/vw",
+      "security": "none"
+    }
+  },
+  {
+    "group": "form",
+    "name": "vless-httpupgrade",
+    "type": "vless",
+    "host": "node.example.com",
+    "port": 10081,
+    "traffic_rate": 1,
+    "config": {
+      "host": "cdn.example.com",
+      "network": "httpupgrade",
+      "path": "/vu",
+      "security": "none"
+    }
+  },
+  {
+    "group": "form",
+    "name": "vless-grpc",
+    "type": "vless",
+    "host": "node.example.com",
+    "port": 10082,
+    "traffic_rate": 1,
+    "config": {
+      "grpc_service_name": "vg",
+      "network": "grpc",
+      "security": "none"
+    }
+  },
+  {
+    "group": "form",
+    "name": "vless-grpc-cdnhost",
+    "type": "vless",
+    "host": "node.example.com",
+    "port": 10085,
+    "traffic_rate": 1,
+    "config": {
+      "grpc_service_name": "vg",
+      "host": "cdn.example.com",
+      "network": "grpc",
+      "security": "none"
+    }
+  },
+  {
+    "group": "form",
+    "name": "vless-mkcp",
+    "type": "vless",
+    "host": "node.example.com",
+    "port": 10083,
+    "traffic_rate": 1,
+    "config": {
+      "network": "mkcp",
+      "security": "none"
+    }
+  },
+  {
+    "group": "form",
+    "name": "vless-mkcp-mask",
+    "type": "vless",
+    "host": "node.example.com",
+    "port": 10086,
+    "traffic_rate": 1,
+    "config": {
+      "mask": "mkcp-aes128gcm",
+      "mask_password": "mask-pass-1",
+      "network": "mkcp",
+      "security": "none"
+    }
+  },
+  {
+    "group": "form",
+    "name": "vmess-ws",
+    "type": "vmess",
+    "host": "node.example.com",
+    "port": 10091,
+    "traffic_rate": 1,
+    "config": {
+      "host": "cdn.example.com",
+      "network": "ws",
+      "path": "/mw",
+      "security": "none"
+    }
+  },
+  {
+    "group": "form",
+    "name": "vmess-tcp",
+    "type": "vmess",
+    "host": "node.example.com",
+    "port": 10090,
+    "traffic_rate": 1,
+    "config": {
+      "network": "tcp",
+      "security": "none"
+    }
+  },
+  {
+    "group": "form",
+    "name": "vmess-grpc",
+    "type": "vmess",
+    "host": "node.example.com",
+    "port": 10092,
+    "traffic_rate": 1,
+    "config": {
+      "grpc_service_name": "mg",
+      "network": "grpc",
+      "security": "none"
+    }
+  },
+  {
+    "group": "form",
+    "name": "vmess-httpupgrade",
+    "type": "vmess",
+    "host": "node.example.com",
+    "port": 10093,
+    "traffic_rate": 1,
+    "config": {
+      "network": "httpupgrade",
+      "path": "/mu",
+      "security": "none"
+    }
+  },
+  {
+    "group": "form",
+    "name": "vmess-xhttp",
+    "type": "vmess",
+    "host": "node.example.com",
+    "port": 10094,
+    "traffic_rate": 1,
+    "config": {
+      "network": "xhttp",
+      "path": "/mx",
+      "security": "none"
+    }
+  },
+  {
+    "group": "legacy",
+    "name": "vless-tcp-plain",
+    "type": "vless",
+    "host": "node.example.com",
+    "port": 10087,
+    "traffic_rate": 1,
+    "config": {
+      "network": "tcp",
+      "security": "none"
+    }
+  },
+  {
+    "group": "legacy",
+    "name": "vless-reality-xhttp-h3",
+    "type": "vless",
+    "host": "node.example.com",
+    "port": 448,
+    "traffic_rate": 1,
+    "config": {
+      "dest": "www.example.com:443",
+      "network": "xhttp-h3",
+      "path": "/h3",
+      "private_key": "u03CTWUF4qEGT24p7bBnBU7OM0VUUrHThNjlklFEfcg",
+      "public_key": "EVmCoU4Swh5-Pv9WHB68iac25hNF2VwABHEnIZOTfyE",
+      "security": "reality",
+      "server_names": [
+        "www.example.com"
+      ],
+      "short_ids": [
+        "0a1b2c3d"
+      ]
+    }
+  },
+  {
+    "group": "legacy",
+    "name": "trojan-legacy-cert",
+    "type": "trojan",
+    "host": "node.example.com",
+    "port": 7451,
+    "traffic_rate": 1,
+    "config": {
+      "cert_path": "/etc/pdnd/c.pem",
+      "key_path": "/etc/pdnd/k.pem",
+      "network": "tcp",
+      "security": "none",
+      "tls": true
+    }
+  },
+  {
+    "group": "extra",
+    "name": "香港",
+    "type": "vless",
+    "host": "node.example.com",
+    "port": 20000,
+    "traffic_rate": 1,
+    "config": {
+      "dest": "www.example.com:443",
+      "fingerprint": "chrome",
+      "grpc_service_name": "svc",
+      "network": "grpc",
+      "private_key": "k",
+      "public_key": "pk",
+      "security": "reality",
+      "server_names": [
+        "a.example.com"
+      ],
+      "short_ids": [
+        "01ab"
+      ]
+    }
+  },
+  {
+    "group": "extra",
+    "name": "香港",
+    "type": "vmess",
+    "host": "node.example.com",
+    "port": 20001,
+    "traffic_rate": 1,
+    "config": {
+      "host": "edge.example.com",
+      "network": "ws",
+      "path": "/ws",
+      "security": "none"
+    }
+  },
+  {
+    "group": "extra",
+    "name": "自动选择",
+    "type": "trojan",
+    "host": "node.example.com",
+    "port": 20002,
+    "traffic_rate": 1,
+    "config": {
+      "allow_insecure": true,
+      "cert_path": "/c",
+      "key_path": "/k",
+      "network": "tcp",
+      "security": "none",
+      "server_name": "edge.example.com",
+      "tls": true
+    }
+  },
+  {
+    "group": "extra",
+    "name": "",
+    "type": "hysteria2",
+    "host": "node.example.com",
+    "port": 20003,
+    "traffic_rate": 1,
+    "config": {
+      "cert_path": "/c",
+      "down_mbps": 20,
+      "key_path": "/k",
+      "obfs": {
+        "password": "secret",
+        "type": "salamander"
+      },
+      "up_mbps": 10
+    }
+  },
+  {
+    "group": "extra",
+    "name": "东京",
+    "type": "shadowsocks",
+    "host": "node.example.com",
+    "port": 20004,
+    "traffic_rate": 1,
+    "config": {
+      "method": "aes-128-gcm"
+    }
+  },
+  {
+    "group": "extra",
+    "name": "东京",
+    "type": "tuic",
+    "host": "node.example.com",
+    "port": 20005,
+    "traffic_rate": 1,
+    "config": {
+      "cert_path": "/c",
+      "congestion_control": "bbr",
+      "key_path": "/k"
+    }
+  },
+  {
+    "group": "extra",
+    "name": "新加坡",
+    "type": "vless",
+    "host": "node.example.com",
+    "port": 20006,
+    "traffic_rate": 1,
+    "config": {
+      "mask": "wechat-video",
+      "mask_password": "x",
+      "network": "mkcp",
+      "security": "none"
+    }
+  },
+  {
+    "group": "extra",
+    "name": "首尔",
+    "type": "anytls",
+    "host": "node.example.com",
+    "port": 20007,
+    "traffic_rate": 1,
+    "config": {
+      "cert_path": "/c",
+      "key_path": "/k",
+      "tls": true
+    }
+  },
+  {
+    "group": "extra",
+    "name": "首尔",
+    "type": "shadowtls",
+    "host": "node.example.com",
+    "port": 20008,
+    "traffic_rate": 1,
+    "config": {
+      "handshake_server": "www.example.com",
+      "password": "p",
+      "server": "www.example.com:443",
+      "server_port": 443,
+      "version": 3
+    }
+  },
+  {
+    "group": "extra",
+    "name": "旧",
+    "type": "vless",
+    "host": "node.example.com",
+    "port": 20009,
+    "traffic_rate": 1,
+    "config": {
+      "flow": "xtls-rprx-vision",
+      "network": "tcp",
+      "public_key": "pk",
+      "security": "reality",
+      "server_names": [
+        "a.example.com",
+        "b.example.com"
+      ],
+      "short_ids": [
+        "01ab"
+      ]
+    }
+  },
+  {
+    "group": "extra",
+    "name": "香港 · 1",
+    "type": "shadowsocks",
+    "host": "node.example.com",
+    "port": 21000,
+    "traffic_rate": 1,
+    "config": {
+      "method": "aes-128-gcm"
+    }
+  },
+  {
+    "group": "extra",
+    "name": "direct",
+    "type": "shadowsocks",
+    "host": "node.example.com",
+    "port": 21001,
+    "traffic_rate": 1,
+    "config": {
+      "method": "aes-128-gcm"
+    }
+  },
+  {
+    "group": "extra",
+    "name": "DIRECT",
+    "type": "shadowsocks",
+    "host": "node.example.com",
+    "port": 21002,
+    "traffic_rate": 1,
+    "config": {
+      "method": "aes-128-gcm"
+    }
+  },
+  {
+    "group": "extra",
+    "name": "REJECT",
+    "type": "shadowsocks",
+    "host": "node.example.com",
+    "port": 21003,
+    "traffic_rate": 1,
+    "config": {
+      "method": "aes-128-gcm"
+    }
+  },
+  {
+    "group": "extra",
+    "name": "block",
+    "type": "shadowsocks",
+    "host": "node.example.com",
+    "port": 21004,
+    "traffic_rate": 1,
+    "config": {
+      "method": "aes-128-gcm"
+    }
+  },
+  {
+    "group": "extra",
+    "name": "节点选择",
+    "type": "shadowsocks",
+    "host": "node.example.com",
+    "port": 21005,
+    "traffic_rate": 1,
+    "config": {
+      "method": "aes-128-gcm"
+    }
+  },
+  {
+    "group": "extra",
+    "name": "   ",
+    "type": "shadowsocks",
+    "host": "node.example.com",
+    "port": 21006,
+    "traffic_rate": 1,
+    "config": {
+      "method": "aes-128-gcm"
+    }
+  },
+  {
+    "group": "extra",
+    "name": "shadowtls · shadowtls",
+    "type": "shadowsocks",
+    "host": "node.example.com",
+    "port": 21007,
+    "traffic_rate": 1,
+    "config": {
+      "method": "aes-128-gcm"
+    }
+  },
+  {
+    "group": "extra",
+    "name": "plain-anytls",
+    "type": "anytls",
+    "host": "node.example.com",
+    "port": 22000,
+    "traffic_rate": 1,
+    "config": {}
+  },
+  {
+    "group": "extra",
+    "name": "hk-01",
+    "type": "vless",
+    "host": "node.example.com",
+    "port": 22001,
+    "traffic_rate": 1,
+    "config": {
+      "dest": "www.example.com:443",
+      "fingerprint": "chrome",
+      "network": "tcp",
+      "public_key": "EVmCoU4Swh5-Pv9WHB68iac25hNF2VwABHEnIZOTfyE",
+      "security": "reality",
+      "server_names": [
+        "www.example.com"
+      ],
+      "short_ids": [
+        "0a1b2c3d"
+      ]
+    }
+  },
+  {
+    "group": "extra",
+    "name": "hk-02",
+    "type": "vless",
+    "host": "node.example.com",
+    "port": 22002,
+    "traffic_rate": 1,
+    "config": {
+      "dest": "www.example.com:443",
+      "fingerprint": "chrome",
+      "network": "tcp",
+      "public_key": "EVmCoU4Swh5-Pv9WHB68iac25hNF2VwABHEnIZOTfyE",
+      "security": "reality",
+      "server_names": [
+        "www.example.com"
+      ],
+      "short_ids": [
+        "0a1b2c3d"
+      ]
+    }
+  }
+]

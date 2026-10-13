@@ -24,3 +24,9 @@ type Module interface {
 	RegisterPublic(v1 *gin.RouterGroup, k Kit)
 	RegisterAdmin(v1 *gin.RouterGroup, k Kit)
 }
+
+// RootModule 由要在 public 根路径（不在 /v1 下）挂路由的模块另外实现；目前只有订阅拉取
+// （订阅地址是两段随机路径，不带 /v1 这类可识别的字样）。
+type RootModule interface {
+	RegisterRoot(r gin.IRoutes)
+}

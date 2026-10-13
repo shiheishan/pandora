@@ -1,0 +1,13 @@
+mixed-port: 7890
+allow-lan: false
+mode: rule
+log-level: info
+
+proxies: []
+
+proxy-groups:
+  - {name: 节点选择, type: select, proxies: [DIRECT]}
+
+rules:
+  - GEOIP,CN,DIRECT
+  - MATCH,节点选择
