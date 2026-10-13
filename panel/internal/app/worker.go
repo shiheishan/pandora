@@ -14,6 +14,7 @@ import (
 	notifytask "github.com/aegispanel/aegis/internal/module/notify/task"
 	ordertask "github.com/aegispanel/aegis/internal/module/order/task"
 	paymenttask "github.com/aegispanel/aegis/internal/module/payment/task"
+	subtask "github.com/aegispanel/aegis/internal/module/subscription/task"
 	"github.com/aegispanel/aegis/internal/pkg/jobs"
 	"github.com/hibiken/asynq"
 	"github.com/spf13/cobra"
@@ -116,5 +117,6 @@ func modules(svc *services) []jobs.Module {
 		paymenttask.New(svc.payment),
 		ordertask.New(svc.order),
 		commissiontask.New(svc.commission),
+		subtask.New(svc.sub),
 	}
 }
