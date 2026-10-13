@@ -12,10 +12,10 @@ import (
 )
 
 const (
-	keyACMEContactEmail   = "acme.contact_email"   // string，空或邮箱
-	keyACMEUseStaging     = "acme.use_staging"     // bool
-	keyACMEZeroSSLEnabled = "acme.zerossl_enabled" // bool
-	keyACMEZeroSSLEABKID  = "acme.zerossl_eab_kid" // string
+	keyACMEContactEmail   = "acme.contact_email"    // string，空或邮箱
+	keyACMEUseStaging     = "acme.use_staging"      // bool
+	keyACMEZeroSSLEnabled = "acme.zerossl_enabled"  // bool
+	keyACMEZeroSSLEABKID  = "acme.zerossl_eab_kid"  // string
 	keyACMEZeroSSLEABHMAC = "acme.zerossl_eab_hmac" //nolint:gosec // 设置键名；值经 Sealer 封存（AAD 为键名）后 base64 存
 	auditACMEChanged      = "acme_settings.updated"
 )

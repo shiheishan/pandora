@@ -1,9 +1,13 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"time"
+
+	"github.com/aegispanel/aegis/internal/module/certs/model"
+	"github.com/google/uuid"
 )
 
 // 本地限额对账：下单前按只追加的签发流水（certificate_issuances）数过去 7 天签了多少，预计会超
@@ -85,4 +89,35 @@ func checkLocalLimits(recent []recentIssuance, ids []string, ca string, renewal,
 func unblockAt(times []time.Time, limit int) time.Time {
 	slices.SortFunc(times, func(a, b time.Time) int { return a.Compare(b) })
 	return times[len(times)-limit].Add(limitWindow)
+}
+
+// loadRecentIssuances 读过去 7 天的签发流水，连同库时钟（限额对账用）。
+func (s *Service) loadRecentIssuances(ctx context.Context) ([]recentIssuance, time.Time, error) {
+	now, err := s.store.DBNow(ctx)
+	if err != nil {
+		return nil, now, err
+	}
+	rows, err := s.store.IssuancesSince(ctx, now.Add(-limitWindow))
+	if err != nil {
+		return nil, now, err
+	}
+	out := make([]recentIssuance, 0, len(rows))
+	for _, r := range rows {
+		ids, err := decodeIDs(r.Identifiers)
+		if err != nil {
+			return nil, now, err
+		}
+		out = append(out, recentIssuance{ca: r.CA, identifiers: ids, isRenewal: r.IsRenewal, createdAt: r.CreatedAt})
+	}
+	return out, now, nil
+}
+
+// recordIssuance 在 CA 签出时写签发流水；用不随任务取消的 context，签发协程可能比任务活得久。
+func (s *Service) recordIssuance(ctx context.Context, certID uuid.UUID, target caTarget, ids []string, renewal, ariReplaces bool, iss *issued) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer cancel()
+	return s.store.InsertIssuance(ctx, &model.CertificateIssuance{
+		ID: uuid.Must(uuid.NewV7()), CertificateID: certID, CA: target.CA, Identifiers: encodeIDs(ids),
+		IsRenewal: renewal, ARIReplaces: ariReplaces, Serial: serialHex(iss.leaf),
+	})
 }

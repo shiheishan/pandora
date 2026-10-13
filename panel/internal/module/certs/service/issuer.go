@@ -96,8 +96,12 @@ func configureLegoLog(log *zap.Logger) {
 
 type legoLogger struct{ log *zap.Logger }
 
-func (l legoLogger) Fatal(args ...any)   { l.log.Error("lego", zap.String("detail", fmt.Sprint(args...))) }
-func (l legoLogger) Fatalln(args ...any) { l.log.Error("lego", zap.String("detail", fmt.Sprint(args...))) }
+func (l legoLogger) Fatal(args ...any) {
+	l.log.Error("lego", zap.String("detail", fmt.Sprint(args...)))
+}
+func (l legoLogger) Fatalln(args ...any) {
+	l.log.Error("lego", zap.String("detail", fmt.Sprint(args...)))
+}
 func (l legoLogger) Fatalf(format string, args ...any) {
 	l.log.Error("lego", zap.String("detail", fmt.Sprintf(format, args...)))
 }

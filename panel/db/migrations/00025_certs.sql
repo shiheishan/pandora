@@ -9,7 +9,7 @@
 -- certificate_versions   每次签出一行，只插不改；私钥是 PKCS#8 DER 的封存密文（AAD = certificate:<证书>:<版本>:private_key）
 -- certificate_orders     签发订单兼签发历史；部分唯一索引保证一张证书同时最多一张进行中的订单，
 --                        认领次数 attempt 是落库时的栅栏令牌（asynq 的 TaskID 只防重复入队，挡不住
---                        lego 协程在任务超时或租约过期后仍在跑、被重新认领的情况）
+--                        lego 协程在任务超时后仍在跑、订单已被巡检按中断收掉的情况）
 -- certificate_issuances  CA 每签出一张记一行，只追加，删证书不删它；本地限额对账按它数过去 7 天
 --
 -- 标识（域名）列用 jsonb 字符串数组（小写、去重、排好序，格式在 service 里校验）。
@@ -152,9 +152,9 @@ CREATE TABLE certificate_orders (
   -- 实际下单的 CA（切到备用 CA 后是 zerossl）
   ca               text CHECK (ca IN ('letsencrypt', 'letsencrypt_staging', 'zerossl', 'custom')),
   replaces_ari_id  text CHECK (char_length(replaces_ari_id) <= 256),
-  -- 被认领的次数；落库时核对 attempt 没变，过期后被别人重新认领的那一次结果直接丢弃
+  -- 被认领的次数（栅栏令牌）；落库时核对订单仍是 running 且 attempt 没变，否则丢弃这次结果
   attempt          int NOT NULL DEFAULT 0 CHECK (attempt >= 0),
-  -- 认领有效期（签发任务的超时加余量）；过了还在 running 就当处理它的进程已经不在，可重新认领
+  -- 认领有效期（签发任务的超时加余量）；过了还在 running 就当签发任务已中断，巡检把订单记为失败
   lease_until      timestamptz,
   error_code       text CHECK (char_length(error_code) <= 64),
   error_detail     text CHECK (char_length(error_detail) <= 2048),

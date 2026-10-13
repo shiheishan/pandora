@@ -24,7 +24,7 @@ const certificateFrom = ` FROM certificates c
 // ListCertificates 按 lower(name), id 排序列出全部证书。
 func (r *Repo) ListCertificates(ctx context.Context) ([]CertificateRow, error) {
 	var rows []CertificateRow
-	err := r.d.Conn(ctx).Raw(`SELECT `+certificateColumns+certificateFrom+` ORDER BY lower(c.name), c.id`).Scan(&rows).Error
+	err := r.d.Conn(ctx).Raw(`SELECT ` + certificateColumns + certificateFrom + ` ORDER BY lower(c.name), c.id`).Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}

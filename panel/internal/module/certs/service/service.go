@@ -5,10 +5,14 @@
 //   - 备用 CA（ZeroSSL，要 EAB）可选、默认关；
 //   - 到期与失败只在后台显示（列表的 summary 给横幅用），不发 Telegram、不发邮件。
 //
-// 签发流程：certs:patrol 每分钟给到期的证书排订单，把待处理的订单以 TaskID cert:<订单> 入队 certs:issue；
-// certs:issue 先在库里认领订单（attempt 是栅栏令牌）→ 凭据预检 → 本地限额对账（必要时切备用 CA）→ ACME 账号 →
-// lego 签发 → 落库前核对 attempt 没变。asynq 的 TaskID 只防同一张订单重复入队；lego 不认 context，任务超时或
-// asynq 租约过期后签发协程可能还在跑，所以「同一张订单不会写出两个版本」仍由库里的认领与栅栏保证。
+// 签发流程：certs:patrol 每分钟给到期的证书排订单，把 queued 的订单以 TaskID cert:<订单> 入队 certs:issue；
+// certs:issue 先在库里认领订单（queued → running，attempt 是栅栏令牌）→ 凭据预检 → 本地限额对账（必要时切
+// 备用 CA）→ ACME 账号 → lego 签发 → 落库前核对订单仍是这次认领的。
+//
+// 为什么 asynq 的 TaskID 之外还留库里的认领：TaskID 只防同一张订单同时排两个任务；lego 不认 context，任务
+// 超时、停机或 asynq 回收任务后签发协程可能还在跑，「同一张订单不会写出两个版本」只能靠库里的状态与 attempt。
+// 不做重新认领：running 且租约过期的订单由巡检按中断记失败（MaxRetry 0 的任务失败会被归档并占住 TaskID，
+// 同一张订单无法再入队；按退避重排的新订单是新的 TaskID）。
 //
 // 秘密（DNS 凭据、ACME 账号私钥、证书私钥、ZeroSSL EAB HMAC）只以封存密文落库，AAD 绑定行；
 // 读形状里没有任何密文字段。证书私钥是 PKCS#8 DER。
