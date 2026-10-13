@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
+	idemsvc "github.com/aegispanel/aegis/internal/module/idempotency/service"
 	"github.com/aegispanel/aegis/internal/module/plugin/model"
 	"github.com/aegispanel/aegis/internal/module/plugin/repo"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
@@ -392,6 +393,18 @@ func (fakeTx) Do(ctx context.Context, fn func(ctx context.Context) error) error 
 	return fn(ctx)
 }
 
+// fakeIdem 记下以「不可重放」完成的认领。
+type fakeIdem struct {
+	unreplayable []*idemsvc.Claim
+	status       []int
+}
+
+func (f *fakeIdem) CompleteUnreplayable(_ context.Context, c *idemsvc.Claim, status int) error {
+	f.unreplayable = append(f.unreplayable, c)
+	f.status = append(f.status, status)
+	return nil
+}
+
 // fakeAudit 记下写过的审计。
 type fakeAudit struct {
 	events []auditsvc.Event
@@ -418,7 +431,7 @@ func testSealer(t *testing.T) *crypto.Sealer {
 func newTestService(t *testing.T, st *fakeStore, allowPrivate bool) (*Service, *fakeAudit) {
 	t.Helper()
 	audit := &fakeAudit{}
-	svc := newService(st, fakeTx{}, audit, testSealer(t), nil, Options{AllowPrivate: allowPrivate})
+	svc := newService(st, fakeTx{}, audit, &fakeIdem{}, testSealer(t), nil, Options{AllowPrivate: allowPrivate})
 	return svc, audit
 }
 

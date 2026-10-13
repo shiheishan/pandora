@@ -13,6 +13,7 @@ import (
 	"github.com/hibiken/asynq"
 
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
+	idemsvc "github.com/aegispanel/aegis/internal/module/idempotency/service"
 	"github.com/aegispanel/aegis/internal/module/plugin/model"
 	"github.com/aegispanel/aegis/internal/module/plugin/repo"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
@@ -116,6 +117,13 @@ type sealer interface {
 
 var _ sealer = (*crypto.Sealer)(nil)
 
+// idempotency 是幂等 service 在业务事务内完成认领的方法；*idemsvc.Service 直接满足。
+type idempotency interface {
+	CompleteUnreplayable(ctx context.Context, c *idemsvc.Claim, status int) error
+}
+
+var _ idempotency = (*idemsvc.Service)(nil)
+
 // Queue 是入队任务的接口；*asynq.Client 实现它。
 type Queue interface {
 	EnqueueContext(ctx context.Context, task *asynq.Task, opts ...asynq.Option) (*asynq.TaskInfo, error)
@@ -133,6 +141,7 @@ type Service struct {
 	store  store
 	tx     txRunner
 	audit  auditWriter
+	idem   idempotency
 	sealer sealer
 	queue  Queue
 	opts   Options
@@ -141,15 +150,16 @@ type Service struct {
 }
 
 // New 构造 plugin service。queue 可以为 nil（不入队，只靠周期任务）。
-func New(r *repo.Repo, txm *tx.Manager, audit *auditsvc.Service, sl *crypto.Sealer, queue Queue, opts Options) *Service {
-	return newService(r, txm, audit, sl, queue, opts)
+func New(r *repo.Repo, txm *tx.Manager, audit *auditsvc.Service, idem *idemsvc.Service, sl *crypto.Sealer, queue Queue, opts Options) *Service {
+	return newService(r, txm, audit, idem, sl, queue, opts)
 }
 
-func newService(st store, txr txRunner, audit auditWriter, sl sealer, queue Queue, opts Options) *Service {
+func newService(st store, txr txRunner, audit auditWriter, idem idempotency, sl sealer, queue Queue, opts Options) *Service {
 	return &Service{
 		store:  st,
 		tx:     txr,
 		audit:  audit,
+		idem:   idem,
 		sealer: sl,
 		queue:  queue,
 		opts:   opts,

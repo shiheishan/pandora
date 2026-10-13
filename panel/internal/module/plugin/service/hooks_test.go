@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
+	idemsvc "github.com/aegispanel/aegis/internal/module/idempotency/service"
 	"github.com/aegispanel/aegis/internal/module/plugin/model"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
@@ -310,5 +311,43 @@ func TestSaveHookLowercasesSchemeAndHost(t *testing.T) {
 	}
 	if h.EndpointURL != "https://hooks.example.com/Path?Q=A" {
 		t.Fatalf("endpoint %q", h.EndpointURL)
+	}
+}
+
+// 新建且自动生成密钥时，幂等认领以「不可重放」完成（响应里的明文密钥不落进幂等表）；
+// 修改或自带密钥的保存不碰认领，照常由中间件存响应、可重放。
+func TestSaveHookGeneratedSecretUnreplayable(t *testing.T) {
+	st := newFakeStore()
+	svc, _ := newTestService(t, st, true)
+	idem := svc.idem.(*fakeIdem)
+	claim := &idemsvc.Claim{Scope: "plugin_hook_save", Key: "k1"}
+	ctx := idemsvc.WithClaim(context.Background(), claim)
+
+	gen, err := svc.SaveHook(ctx, SaveHookInput{
+		Code: "gen", Name: "n", EndpointURL: "https://example.com/h",
+		Enabled: true, Events: []string{"order.paid"},
+	})
+	if err != nil || gen == "" {
+		t.Fatalf("gen %q err %v", gen, err)
+	}
+	if len(idem.unreplayable) != 1 || idem.unreplayable[0] != claim || idem.status[0] != http.StatusOK {
+		t.Fatalf("应以不可重放完成认领: %+v %v", idem.unreplayable, idem.status)
+	}
+
+	// 修改已有钩子（不生成密钥）与新建时自带密钥：都不碰认领
+	if _, err := svc.SaveHook(ctx, SaveHookInput{
+		Code: "gen", Name: "改名", EndpointURL: "https://example.com/h",
+		Enabled: true, Events: []string{"order.paid"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SaveHook(ctx, SaveHookInput{
+		Code: "own", Name: "n", EndpointURL: "https://example.com/h",
+		Enabled: true, Events: []string{"order.paid"}, Secret: "whsec_own",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(idem.unreplayable) != 1 {
+		t.Fatalf("不带出密钥的保存不应完成认领: %d", len(idem.unreplayable))
 	}
 }

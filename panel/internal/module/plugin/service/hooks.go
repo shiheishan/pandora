@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"go.uber.org/zap"
 
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
+	idemsvc "github.com/aegispanel/aegis/internal/module/idempotency/service"
 	"github.com/aegispanel/aegis/internal/module/plugin/model"
 	"github.com/aegispanel/aegis/internal/module/plugin/repo"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
@@ -233,7 +235,7 @@ func (s *Service) SaveHook(ctx context.Context, in SaveHookInput) (string, error
 			}
 			id = h.ID
 		}
-		return s.audit.Write(ctx, auditsvc.Event{
+		if err := s.audit.Write(ctx, auditsvc.Event{
 			Action:       ActionHookSave,
 			ResourceType: ResourceHook,
 			ResourceID:   &id,
@@ -245,7 +247,17 @@ func (s *Service) SaveHook(ctx context.Context, in SaveHookInput) (string, error
 				"created":        !found,
 				"secret_changed": secretWork != "", // 含新建时自动生成
 			},
-		})
+		}); err != nil {
+			return err
+		}
+		// 本次响应会带出自动生成的密钥明文：幂等认领在业务事务里完成成「不可重放」，
+		// 响应体不落进幂等表（否则明文密钥会在库里存到幂等记录过期）。其它保存照常可重放。
+		if generated != "" {
+			if claim, ok := idemsvc.ClaimFrom(ctx); ok {
+				return s.idem.CompleteUnreplayable(ctx, claim, http.StatusOK)
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return "", err
