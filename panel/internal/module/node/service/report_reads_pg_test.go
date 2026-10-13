@@ -30,7 +30,7 @@ func TestReportNodeCountsAndOfflinePG(t *testing.T) {
 	port2 := 30002
 	nActiveS1 := seedTrafficNode(t, ctx, e, &s1, "1.00")
 	nActiveS2 := seedTrafficNode(t, ctx, e, &s2, "1.00")
-	seedTrafficNode(t, ctx, e, &s1, "1.00") // S1 上的草稿节点：计入 Total，不算在线也不算失联
+	seedTrafficNode(t, ctx, e, &s1, "1.00") // S1 上的草稿节点：不计入 Total（只数服务中的节点），也不算在线、失联
 
 	activateNode := func(nodeID uuid.UUID, port int) {
 		e.mustExec(t, ctx, `UPDATE nodes SET serving_status = 'active', node_type = 'vless', server_host = 'node.example.test',
@@ -43,8 +43,8 @@ func TestReportNodeCountsAndOfflinePG(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c1.Total != c0.Total+3 {
-		t.Fatalf("Total: want %d got %d", c0.Total+3, c1.Total)
+	if c1.Total != c0.Total+2 {
+		t.Fatalf("Total: want %d got %d", c0.Total+2, c1.Total)
 	}
 	if c1.Online != c0.Online+1 {
 		t.Fatalf("Online: want %d got %d", c0.Online+1, c1.Online)
