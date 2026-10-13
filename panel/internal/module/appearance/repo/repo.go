@@ -81,9 +81,14 @@ func (r *Repo) UpsertTheme(ctx context.Context, t *model.Theme) error {
 	return mapErr(res.Error)
 }
 
-// DeactivateThemes 关闭全部生效主题。
+// DeactivateThemes 关闭全部生效主题。先取事务级咨询锁，把并发的切换串成一列：
+// 否则两个事务各自「全关」看不到对方刚开的那套，后开的会撞上 site_themes_one_active。
 func (r *Repo) DeactivateThemes(ctx context.Context) error {
-	return r.d.Conn(ctx).Exec(
+	conn := r.d.Conn(ctx)
+	if err := conn.Exec("SELECT pg_advisory_xact_lock(hashtextextended('appearance:activate', 0))").Error; err != nil {
+		return err
+	}
+	return conn.Exec(
 		"UPDATE site_themes SET is_active = false, updated_at = now() WHERE is_active",
 	).Error
 }
@@ -96,7 +101,7 @@ func (r *Repo) ActivateTheme(ctx context.Context, code string) (uuid.UUID, bool,
 		code,
 	).Scan(&ids).Error
 	if err != nil {
-		return uuid.Nil, false, err
+		return uuid.Nil, false, mapErr(err)
 	}
 	if len(ids) == 0 {
 		return uuid.Nil, false, nil

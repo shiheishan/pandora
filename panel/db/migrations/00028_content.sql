@@ -17,8 +17,11 @@ CREATE TABLE content_pages (
   summary            text NOT NULL DEFAULT '' CHECK (char_length(summary) <= 500),
   body               text NOT NULL CHECK (char_length(body) BETWEEN 10 AND 100000),
   locale             text NOT NULL CHECK (locale ~ '^[a-z]{2,3}(-[A-Z]{2})?$'),
-  sanitizer_version  text NOT NULL DEFAULT 'plain-v1',
-  target_platforms   jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(target_platforms) = 'array'),
+  sanitizer_version  text NOT NULL DEFAULT 'plain-v1' CHECK (sanitizer_version IN ('plain-v1')),
+  target_platforms   jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (
+    jsonb_typeof(target_platforms) = 'array'
+    AND target_platforms <@ '["web","windows","macos","linux","android","ios"]'::jsonb
+  ),
   min_client_version text NOT NULL DEFAULT '' CHECK (min_client_version = '' OR min_client_version ~ '^v?[0-9]+(\.[0-9]+){0,2}$'),
   max_client_version text NOT NULL DEFAULT '' CHECK (max_client_version = '' OR max_client_version ~ '^v?[0-9]+(\.[0-9]+){0,2}$'),
   target_plan_ids    jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(target_plan_ids) = 'array'),

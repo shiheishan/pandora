@@ -141,54 +141,9 @@ func TestSanitizeHTML_丢弃说明可读(t *testing.T) {
 	}
 }
 
-func TestSanitizeCSS(t *testing.T) {
-	cases := []struct {
-		name   string
-		in     string
-		forbid []string
-		expect []string
-	}{
-		{"外部 import", `@import url("https://evil.example/x.css"); .a{color:red}`,
-			[]string{"@import", "evil.example"}, []string{"color:red"}},
-		{"外链背景图", `.a{background:url(https://evil.example/track.png)}`,
-			[]string{"evil.example"}, []string{"about:blank"}},
-		{"expression", `.a{width:expression(alert(1))}`,
-			[]string{"expression("}, nil},
-		{"闭合 style 标签", `.a{}</style><script>alert(1)</script>`,
-			[]string{"</style", "<script"}, nil},
-		{"注释里藏 import", `/* @import url(https://evil.example/x) */ .a{color:red}`,
-			[]string{"evil.example", "@import"}, []string{"color:red"}},
-		{"内嵌图片放行", `.a{background:url(data:image/png;base64,iVBORw0KGgo=)}`,
-			nil, []string{"data:image/png;base64"}},
-		{"站内图片放行", `.a{background:url(/static/bg.png)}`,
-			nil, []string{"/static/bg.png"}},
-		{"正常样式原样留下", `.card{border-radius:12px;padding:16px}`,
-			nil, []string{"border-radius:12px", "padding:16px"}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			out, _ := SanitizeCSS(tc.in)
-			low := strings.ToLower(out)
-			for _, bad := range tc.forbid {
-				if strings.Contains(low, strings.ToLower(bad)) {
-					t.Errorf("仍含 %q：%s", bad, out)
-				}
-			}
-			for _, want := range tc.expect {
-				if !strings.Contains(out, want) {
-					t.Errorf("丢了 %q：%s", want, out)
-				}
-			}
-		})
-	}
-}
-
 func TestSanitize_空输入(t *testing.T) {
 	if out, notes := SanitizeHTML("   "); out != "" || notes != nil {
 		t.Errorf("空 HTML 应当原样返回空，得到 %q / %v", out, notes)
-	}
-	if out, notes := SanitizeCSS("\n\t "); out != "" || notes != nil {
-		t.Errorf("空 CSS 应当原样返回空，得到 %q / %v", out, notes)
 	}
 }
 

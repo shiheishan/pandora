@@ -152,6 +152,9 @@ func (s *Service) ActivateTheme(ctx context.Context, code string) error {
 			return err
 		}
 		id, ok, err := s.repo.ActivateTheme(ctx, code)
+		if errors.Is(err, repo.ErrDuplicate) {
+			return errs.Newf(errs.Conflict, "另一套主题正在切换，请刷新后重试")
+		}
 		if err != nil {
 			return err
 		}

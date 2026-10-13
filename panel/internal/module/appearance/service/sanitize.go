@@ -17,14 +17,14 @@ import (
 // 不在名单上的标签和属性一律丢弃，而不是「把已知的坏东西过滤掉」——
 // 黑名单永远漏，绕过 XSS 黑名单是一项成熟到有教科书的手艺。
 //
-// 净化在写入时做一次，库里只存净化后的结果（见 00051 迁移的注释）。
+// 净化在写入时做一次，库里只存净化后的结果。
 
 // allowedTags 是能保留的标签。
 //
 // 没有 form / input / button：插槽是用来讲话的，不是用来收集东西的。
 // 一个长得像登录框的插槽会是很有效的钓鱼页，而且就长在真站点上。
 // 没有 iframe / object / embed：它们能把任意第三方页面嵌进来。
-// 没有 style 标签：自定义样式走主题的 custom_css，那里有单独的处理。
+// 没有 style 标签：任意 CSS 是注入面，样式只走主题令牌。
 var allowedTags = map[string]bool{
 	"p": true, "br": true, "hr": true, "span": true, "div": true,
 	"b": true, "strong": true, "i": true, "em": true, "u": true,
@@ -170,7 +170,7 @@ func cleanAttrs(tag string, attrs []html.Attribute, dropped map[string]bool) []h
 			continue
 		}
 		if key == "style" {
-			dropped["style 属性不允许，请改用主题里的自定义 CSS"] = true
+			dropped["style 属性不允许，样式请改用主题令牌"] = true
 			continue
 		}
 		if !globalAttrs[key] && !allowedAttrs[tag][key] {
@@ -266,108 +266,4 @@ func isVoid(tag string) bool {
 		return true
 	}
 	return false
-}
-
-// SanitizeCSS 处理主题里的自定义 CSS。
-//
-// CSS 不像 HTML 那样能直接执行脚本，但它能做两件坏事：
-// 一是 @import 和 url() 把请求发到第三方，等于给外部站点一份访问日志
-// （谁、什么时候打开了面板）；二是配合属性选择器可以把输入框里已有的
-// 内容一个字符一个字符地漏出去。所以外部 url 一律不放行。
-//
-// 用文本扫描而不是完整解析：完整的 CSS 解析器不值得为这件事引进来，
-// 而这里要挡的东西 —— 外部请求和表达式 —— 都能靠关键字识别。
-func SanitizeCSS(in string) (string, []string) {
-	if strings.TrimSpace(in) == "" {
-		return "", nil
-	}
-	var notes []string
-	out := in
-
-	// 先去掉注释，免得 /* */ 里藏着的东西被下面漏掉又被浏览器执行
-	out = stripCSSComments(out)
-
-	lower := strings.ToLower(out)
-	for _, bad := range []struct {
-		token string
-		why   string
-	}{
-		{"@import", "@import 会去外部拉样式，已移除"},
-		{"expression(", "expression() 是老式 IE 的脚本入口，已移除"},
-		{"javascript:", "javascript: 链接，已移除"},
-		{"</style", "</style 会提前闭合样式块，已移除"},
-		{"<script", "样式里不能出现 <script，已移除"},
-		{"behavior:", "behavior 能绑定脚本，已移除"},
-	} {
-		if strings.Contains(lower, bad.token) {
-			notes = append(notes, bad.why)
-			out = removeFold(out, bad.token)
-			lower = strings.ToLower(out)
-		}
-	}
-
-	// url() 只允许 data:image 与站内相对路径
-	out, urlNotes := filterCSSURLs(out)
-	notes = append(notes, urlNotes...)
-	return strings.TrimSpace(out), notes
-}
-
-func stripCSSComments(s string) string {
-	var b strings.Builder
-	for {
-		i := strings.Index(s, "/*")
-		if i < 0 {
-			b.WriteString(s)
-			return b.String()
-		}
-		b.WriteString(s[:i])
-		j := strings.Index(s[i+2:], "*/")
-		if j < 0 {
-			return b.String() // 未闭合的注释：后面全丢
-		}
-		s = s[i+2+j+2:]
-	}
-}
-
-func removeFold(s, token string) string {
-	var b strings.Builder
-	for {
-		i := strings.Index(strings.ToLower(s), token)
-		if i < 0 {
-			b.WriteString(s)
-			return b.String()
-		}
-		b.WriteString(s[:i])
-		s = s[i+len(token):]
-	}
-}
-
-func filterCSSURLs(s string) (string, []string) {
-	var b strings.Builder
-	var notes []string
-	rest := s
-	for {
-		i := strings.Index(strings.ToLower(rest), "url(")
-		if i < 0 {
-			b.WriteString(rest)
-			break
-		}
-		j := strings.Index(rest[i:], ")")
-		if j < 0 {
-			// 未闭合：从这里往后整段丢，别赌浏览器怎么补
-			notes = append(notes, "有未闭合的 url()，其后内容已丢弃")
-			b.WriteString(rest[:i])
-			break
-		}
-		inner := strings.Trim(rest[i+4:i+j], " \t'\"")
-		if _, ok := safeURL(inner); ok && !strings.HasPrefix(strings.ToLower(inner), "http") {
-			b.WriteString(rest[:i+j+1])
-		} else {
-			notes = append(notes, "url() 里只允许 data:image 图片和站内相对路径，外链已移除")
-			b.WriteString(rest[:i])
-			b.WriteString("url(about:blank)")
-		}
-		rest = rest[i+j+1:]
-	}
-	return b.String(), notes
 }
