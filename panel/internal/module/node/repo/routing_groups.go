@@ -97,14 +97,21 @@ func (r *Repo) RouteGroupForUpdate(ctx context.Context, id uuid.UUID) (model.Rou
 
 // InsertRouteGroup 插入路由组并回填 id、row_version、时间戳。
 func (r *Repo) InsertRouteGroup(ctx context.Context, g *model.RouteGroup) error {
+	var got struct {
+		ID         uuid.UUID `gorm:"column:id"`
+		RowVersion int64     `gorm:"column:row_version"`
+		CreatedAt  time.Time `gorm:"column:created_at"`
+		UpdatedAt  time.Time `gorm:"column:updated_at"`
+	}
 	err := r.d.Conn(ctx).Raw(
 		`INSERT INTO route_groups (name, description, sort_order) VALUES (?, ?, ?)
 		 RETURNING id, row_version, created_at, updated_at`,
 		g.Name, g.Description, g.SortOrder,
-	).Scan(g).Error
+	).Scan(&got).Error
 	if err != nil {
 		return routingErr(err)
 	}
+	g.ID, g.RowVersion, g.CreatedAt, g.UpdatedAt = got.ID, got.RowVersion, got.CreatedAt, got.UpdatedAt
 	return nil
 }
 
