@@ -26,11 +26,10 @@ const (
 )
 
 // 夹具分组：form 是后台表单能存进库的形状，legacy 是存量里还有、新写入已被拒的形状，
-// extra 是重名、保留名、空名与其它回归用的节点。form 与 legacy 每个都要在渲染矩阵里有一行。
+// 其余（extra）是重名、保留名、空名与其它回归用的节点。form 与 legacy 每个都要在渲染矩阵里有一行。
 const (
 	groupForm   = "form"
 	groupLegacy = "legacy"
-	groupExtra  = "extra"
 )
 
 const regenerateHint = "先在 panel 目录运行 go run ./tools/subgolden -out internal/module/subscription/render/testdata 生成"
