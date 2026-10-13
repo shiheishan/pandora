@@ -64,7 +64,8 @@ type SessionBackend interface {
 
 // SessionOptions 是会话管理的参数；零值项取缺省（见 withDefaults）。
 type SessionOptions struct {
-	// QueueLimit 是每条流发送队列的条数上限（配置与每个节点的名单各只占一条），缺省 256
+	// QueueLimit 是每条流发送队列里普通消息（Welcome、TrafficAck、Certificate）的条数上限，缺省 256；
+	// 配置只留一份、名单每节点只留一份，以节点数为界，不计入
 	QueueLimit int
 	// PushInterval、HeartbeatInterval 写进 Welcome，缺省 60 秒、30 秒
 	PushInterval, HeartbeatInterval time.Duration

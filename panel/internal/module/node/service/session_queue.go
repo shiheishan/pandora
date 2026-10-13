@@ -18,6 +18,8 @@ type outItem struct {
 	cfg map[uuid.UUID]string
 	// terminal 为真：发出后会话以 termErr 结束
 	terminal bool
+	// plain 为真：普通消息（Welcome、TrafficAck、Certificate），计入队列上限
+	plain bool
 }
 
 // Session 是一台服务器的一条在途控制流。传输层：Next 取要发的消息，Handle* 交收到的消息，结束时 Close。
@@ -29,8 +31,9 @@ type Session struct {
 	delta    bool
 
 	mu sync.Mutex
-	// 发送队列
+	// 发送队列；plain 是其中普通消息的条数（配置与名单按节点合并，条数以节点数为界，不计入上限）
 	items   []*outItem
+	plain   int
 	cfgItem *outItem
 	rosters map[uuid.UUID]*outItem
 	wake    chan struct{}
@@ -99,14 +102,17 @@ func (s *Session) signal() {
 // accepting 报告还收不收新消息（调用方持有 s.mu）。
 func (s *Session) acceptingLocked() bool { return s.err == nil && s.termErr == nil }
 
-// pushLocked 追加一条；队列满了就断流（调用方持有 s.mu）。返回 false 表示没收下。
+// pushLocked 追加一条；普通消息超过上限就断流，让节点重连后重新对齐（调用方持有 s.mu）。返回 false 表示没收下。
 func (s *Session) pushLocked(it *outItem) bool {
 	if !s.acceptingLocked() {
 		return false
 	}
-	if len(s.items) >= s.m.opt.QueueLimit {
-		s.closeLocked(ErrSessionOverflow)
-		return false
+	if it.plain {
+		if s.plain >= s.m.opt.QueueLimit {
+			s.closeLocked(ErrSessionOverflow)
+			return false
+		}
+		s.plain++
 	}
 	s.items = append(s.items, it)
 	s.signal()
@@ -117,7 +123,7 @@ func (s *Session) pushLocked(it *outItem) bool {
 func (s *Session) enqueue(msg Outbound) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.pushLocked(&outItem{msg: msg})
+	s.pushLocked(&outItem{msg: msg, plain: true})
 }
 
 // putConfigLocked 排一份全量配置；队列里还有没发出的配置就原地换掉。
@@ -173,6 +179,7 @@ func (s *Session) terminate(msg Outbound, err error) {
 		return
 	}
 	s.items = []*outItem{{msg: msg, terminal: true}}
+	s.plain = 0
 	s.cfgItem = nil
 	clear(s.rosters)
 	s.termErr = err
@@ -194,6 +201,7 @@ func (s *Session) closeLocked(err error) {
 	}
 	s.err = err
 	s.items = nil
+	s.plain = 0
 	s.cfgItem = nil
 	clear(s.rosters)
 	close(s.done)
@@ -241,8 +249,12 @@ func (s *Session) onDequeueLocked(it *outItem) {
 	switch {
 	case it.terminal:
 		s.closeLocked(s.termErr)
-	case it == s.cfgItem:
-		s.cfgItem = nil
+	case it.plain:
+		s.plain--
+	case it.msg.Kind == OutConfig:
+		if s.cfgItem == it {
+			s.cfgItem = nil
+		}
 		s.cfgSent = it.cfg
 	case it.msg.Roster != nil:
 		id := it.msg.Roster.NodeID
