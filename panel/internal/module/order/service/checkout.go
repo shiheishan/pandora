@@ -233,6 +233,10 @@ func (s *Service) place(ctx context.Context, d draft) (Created, model.Order, err
 		}
 	}
 
+	if err := s.emitOrderCreated(ctx, o); err != nil {
+		return Created{}, model.Order{}, err
+	}
+
 	if bal.Payable.IsZero() {
 		settled, err := s.settleZeroPay(ctx, o, d.Actor)
 		if err != nil {

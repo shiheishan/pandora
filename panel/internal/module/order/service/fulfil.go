@@ -210,7 +210,14 @@ func (s *Service) settleZeroPay(ctx context.Context, o model.Order, actor Actor)
 	if err != nil {
 		return model.Order{}, err
 	}
-	return s.fulfil(ctx, paid, now, subActor(actor))
+	done, err := s.fulfil(ctx, paid, now, subActor(actor))
+	if err != nil {
+		return model.Order{}, err
+	}
+	if err := s.emitOrderPaid(ctx, done); err != nil {
+		return model.Order{}, err
+	}
+	return done, nil
 }
 
 // subActor 把 order 的操作者映射成 subscription 的操作者（user、admin 带 ID，payment、system 不带）。
