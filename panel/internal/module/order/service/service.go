@@ -26,6 +26,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/money"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 )
 
@@ -126,6 +127,7 @@ type Service struct {
 	audit    auditWriter
 	hook     PaidHook // UsePaidHook 注入，可为 nil
 	now      func() time.Time
+	rt       *realtime.Publisher // 实时推送，装配时注入（realtime.go）；nil 时不推
 }
 
 var _ paymentsvc.Settler = (*Service)(nil)

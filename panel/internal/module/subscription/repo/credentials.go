@@ -139,22 +139,25 @@ func (r *Repo) ActiveCredential(ctx context.Context, subID uuid.UUID) (model.Cre
 	return c, true, nil
 }
 
-// RevokeActiveCredentials 吊销一份订阅的有效凭据（换链接）；返回影响行数。
-func (r *Repo) RevokeActiveCredentials(ctx context.Context, subID uuid.UUID, reason string, at time.Time, grace *time.Time) (int64, error) {
-	res := r.d.Conn(ctx).Model(&model.Credential{}).
-		Where("subscription_id = ? AND status = 'active'", subID).
-		Updates(map[string]any{
-			"status":         "revoked",
-			"revoked_at":     at,
-			"revoked_reason": reason,
-			"rotated_count":  gorm.Expr("rotated_count + 1"),
-			"rotated_at":     at,
-			"grace_until":    grace,
-		})
-	if res.Error != nil {
-		return 0, mapErr(res.Error)
+// RevokeActiveCredentials 吊销一份订阅的有效凭据（换链接）；返回被吊销凭据的 id（实时推送用）。
+func (r *Repo) RevokeActiveCredentials(ctx context.Context, subID uuid.UUID, reason string, at time.Time, grace *time.Time) ([]uuid.UUID, error) {
+	var rows []struct {
+		ID uuid.UUID `gorm:"column:id"`
 	}
-	return res.RowsAffected, nil
+	err := r.d.Conn(ctx).Raw(`
+		UPDATE subscription_credentials
+		   SET status = 'revoked', revoked_at = ?, revoked_reason = ?,
+		       rotated_count = rotated_count + 1, rotated_at = ?, grace_until = ?
+		 WHERE subscription_id = ? AND status = 'active'
+	RETURNING id`, at, reason, at, grace, subID).Scan(&rows).Error
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	out := make([]uuid.UUID, len(rows))
+	for i, row := range rows {
+		out[i] = row.ID
+	}
+	return out, nil
 }
 
 // RotateProxyUUID 给订阅换一个新的节点身份，返回新值；订阅不存在返回 uuid.Nil 与 nil 错误。

@@ -9,6 +9,7 @@ import (
 	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
 	"github.com/aegispanel/aegis/internal/module/subscription/model"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 )
 
 // maxLabelTries 是开通时给备注名加序号去重的最多次数；试满仍撞名就不起名。
@@ -56,6 +57,7 @@ func (s *Service) Provision(ctx context.Context, in Provision) (Subscription, er
 		if err := s.repo.CreateSubscription(ctx, &m); err != nil {
 			return subErr(err)
 		}
+		s.rtChanged(ctx, tableSubscriptions, realtime.OpInsert, m.ID, m.UserID)
 		if err := s.repo.InsertQuotas(ctx, quotaRows(m.ID, v.Quotas, start, end)); err != nil {
 			return subErr(err)
 		}
