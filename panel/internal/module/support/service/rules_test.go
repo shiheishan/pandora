@@ -17,7 +17,7 @@ func TestSubjectFromBody(t *testing.T) {
 		want string
 	}{
 		{"首行非空", "第一行标题\n第二行", "第一行标题"},
-		{"跳过空行", "\n\n  有效行  ", "有效行"},
+		{"跳过空行", "\n\n  有效的行  ", "有效的行"},
 		{"中文截断", strings.Repeat("测", 130), strings.Repeat("测", 120)},
 		{"emoji按rune截断", "🎉" + strings.Repeat("a", 130), "🎉" + strings.Repeat("a", 119)},
 		{"少于4字加前缀", "ab", "用户咨询：ab"},

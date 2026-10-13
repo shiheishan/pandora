@@ -250,7 +250,8 @@ func TestPortalDetailMessagesAndOrder(t *testing.T) {
 	}}
 	w2 := do(newEngine(f2, false, nil), http.MethodGet, "/v1/support/tickets/"+tid.String(), "")
 	mustStatus(t, w2, http.StatusOK)
-	if msgs2 := obj(t, w2.Body.Bytes())["messages"]; msgs2 == nil {
+	msgs2 := obj(t, w2.Body.Bytes())["messages"]
+	if msgs2 == nil {
 		t.Fatal("messages 不应为 null")
 	}
 	if len(msgs2.([]any)) != 0 {
