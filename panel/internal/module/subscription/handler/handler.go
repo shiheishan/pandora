@@ -1,5 +1,6 @@
-// Package handler 是 subscription 模块的 HTTP 层：门户「我的套餐」、改名、流量包与转移，后台加时长、加流量、
-// 手动重置流量、改设备数与重置日志。只做参数绑定与校验、调 service、写响应。
+// Package handler 是 subscription 模块的 HTTP 层：订阅链接拉取、链接列表与换链接、线路预览、按日用量、后台换链接，
+// 门户「我的套餐」、改名、流量包与转移，后台加时长、加流量、手动重置流量、改设备数与重置日志。
+// 只做参数绑定与校验、调 service、写响应。
 package handler
 
 import (
@@ -37,6 +38,12 @@ type Service interface {
 	AdminSetDeviceLimit(ctx context.Context, subID uuid.UUID, limit *int) error
 	ListTrafficResets(ctx context.Context, f service.ResetLogFilter) ([]service.ResetLogView, int64, error)
 	TrafficResetStats(ctx context.Context) (service.ResetStats, error)
+	Pull(ctx context.Context, req service.PullRequest) (service.PullResult, error)
+	MyLinks(ctx context.Context) ([]service.Link, error)
+	MyRotate(ctx context.Context, subID uuid.UUID) (string, error)
+	MyNodes(ctx context.Context, subID uuid.UUID) ([]service.NodePreview, error)
+	MyUsage(ctx context.Context, subID uuid.UUID, days int) (service.DailyUsage, error)
+	AdminRotate(ctx context.Context, subID uuid.UUID, reason string) (service.AdminRotateResult, error)
 }
 
 var _ Service = (*service.Service)(nil)
@@ -68,7 +75,7 @@ func byAccount(c *gin.Context) (string, bool) {
 	return p.UserID.String(), true
 }
 
-// RegisterPublic 注册门户路由。/me/subscriptions/:id/nodes 归 P5，订阅链接归 P4。
+// RegisterPublic 注册门户路由。
 func (h *Handler) RegisterPublic(v1 *gin.RouterGroup, k route.Kit) {
 	v1.GET("/me/subscriptions", k.RequireAuth, h.mySubscriptions)
 	// 改名不影响节点下发，按账号每分钟 10 次
@@ -78,6 +85,11 @@ func (h *Handler) RegisterPublic(v1 *gin.RouterGroup, k route.Kit) {
 	v1.GET("/me/traffic-packs", k.RequireAuth, h.myTrafficPacks)
 	// 不要幂等键：重复调用第二次没有东西可转，moved_bytes=0
 	v1.POST("/me/traffic-packs/transfer", k.RequireAuth, h.transferTrafficPacks)
+	v1.GET("/me/subscription-links", k.RequireAuth, h.mySubscriptionLinks)
+	// 换链接按份限频：每份间隔 10 分钟、每份每天 5 次，加按账号每天 20 次（rotateLimit）
+	v1.POST("/me/subscriptions/:id/rotate", k.RequireAuth, h.rotateLimit(), h.rotateSubscriptionLink)
+	v1.GET("/me/subscriptions/:id/nodes", k.RequireAuth, h.mySubscriptionNodes)
+	v1.GET("/me/subscriptions/:id/usage", k.RequireAuth, h.mySubscriptionUsage)
 }
 
 // RegisterAdmin 注册后台路由。加时长、加流量每执行一次多一份，要近期重认证与独立的幂等作用域。
@@ -89,6 +101,14 @@ func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	v1.GET("/traffic-resets", k.RequireAuth, h.listTrafficResets)
 	v1.GET("/traffic-resets/stats", k.RequireAuth, h.trafficResetStats)
 	v1.GET("/users/:id/traffic-resets", k.RequireAuth, h.userTrafficResets)
+	// 换掉别人的链接会让他所有设备断开：要近期重认证；不是「多一份」的操作，不挂幂等
+	v1.POST("/subscriptions/:id/rotate", k.RequireAuth, k.RecentReauth, h.adminRotateLink)
+}
+
+// RegisterRoot 注册订阅链接拉取 GET /:prefix/:token：公开、不在 /v1 下（链接里出现 /v1/subscribe 这样的字样等于自带指纹）。
+// 由 app 挂在门户引擎的根上、全局限流之后。
+func (h *Handler) RegisterRoot(r gin.IRoutes) {
+	r.GET("/:prefix/:token", h.subscribe)
 }
 
 // utc 把时间转成 UTC 输出。
