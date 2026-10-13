@@ -31,4 +31,5 @@ func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	h.registerPools(v1, k)
 	h.registerIdentity(v1, k)
 	h.registerMetrics(v1, k)
+	h.registerRouting(v1, k)
 }

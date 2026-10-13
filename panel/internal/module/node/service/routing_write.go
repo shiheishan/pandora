@@ -145,14 +145,11 @@ func loadScope(ctx context.Context, s *Service, sc repo.RoutingScope) ([]Routing
 func routingRevision(outs []RoutingOutbound, routes []RoutingRule) (string, error) {
 	revOuts := make([]revOutbound, len(outs))
 	for i, o := range outs {
-		revOuts[i] = revOutbound{Tag: o.Tag, Type: o.Type, Settings: o.Settings}
+		revOuts[i] = revOutbound(o)
 	}
 	revRoutes := make([]revRule, len(routes))
 	for i, r := range routes {
-		revRoutes[i] = revRule{
-			Priority: r.Priority, Matcher: r.Matcher, OutboundTag: r.OutboundTag,
-			Enabled: r.Enabled, Note: r.Note,
-		}
+		revRoutes[i] = revRule(r)
 	}
 	canonical, err := json.Marshal(struct {
 		Outbounds []revOutbound `json:"outbounds"`

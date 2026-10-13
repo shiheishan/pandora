@@ -3,7 +3,6 @@ package service
 // 全局与节点私有路由、生效预览的 PostgreSQL 集成测试。
 
 import (
-	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -67,7 +66,7 @@ func TestRoutingGlobalStaleRevisionPG(t *testing.T) {
 	_, err := e.svc.SetGlobalRouting(ctx, "deadbeef", RoutingInput{
 		Outbounds: []RoutingOutbound{ob("x", "socks")},
 	})
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 	if fieldErr(err, "expected_revision") == "" {
 		t.Fatalf("期望 Fields expected_revision，得到 %v", err)
 	}
@@ -82,13 +81,13 @@ func TestRoutingGlobalUnknownOutboundRefPG(t *testing.T) {
 	_, err = e.svc.SetGlobalRouting(ctx, g.Revision, RoutingInput{
 		Routes: []RoutingRule{rule(`{"port":[443]}`, "missing-out")},
 	})
-	invWantCode(t, err, errs.ValidationFailed)
+	_ = invWantCode(t, err, errs.ValidationFailed)
 }
 
 func TestRoutingNodeNotFoundPG(t *testing.T) {
 	e, ctx := newInvEnv(t)
 	_, err := e.svc.GetNodeRouting(ctx, uuid.New())
-	invWantCode(t, err, errs.NotFound)
+	_ = invWantCode(t, err, errs.NotFound)
 }
 
 func TestRoutingNodeRowVersionConflictPG(t *testing.T) {
@@ -97,7 +96,7 @@ func TestRoutingNodeRowVersionConflictPG(t *testing.T) {
 	nid := rtNode(t, ctx, e, srv, "active", 20100)
 	ver := rtNodeVersion(t, ctx, e, nid)
 	_, err := e.svc.SetNodeRouting(ctx, nid, ver-1, RoutingInput{})
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 	if fieldErr(err, "row_version") == "" {
 		t.Fatalf("期望 row_version 字段，得到 %v", err)
 	}
@@ -164,7 +163,7 @@ func TestRoutingNodeRefsGlobalAndGroupOutboundPG(t *testing.T) {
 	_, err := e.svc.SetNodeRouting(ctx, nid, ver, RoutingInput{
 		Routes: []RoutingRule{rule(`{"port":[3]}`, "OTHER")},
 	})
-	invWantCode(t, err, errs.ValidationFailed)
+	_ = invWantCode(t, err, errs.ValidationFailed)
 }
 
 func TestRoutingDanglingRefBlocksNewDeletePG(t *testing.T) {
@@ -187,7 +186,7 @@ func TestRoutingDanglingRefBlocksNewDeletePG(t *testing.T) {
 	_, err := e.svc.SetGlobalRouting(ctx, g1.Revision, RoutingInput{
 		Outbounds: []RoutingOutbound{ob("G2", "socks")},
 	})
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 	if !strings.Contains(errs.As(err).Message, "G1") {
 		t.Fatalf("消息应含 G1 与节点名，得到 %q", errs.As(err).Message)
 	}
@@ -263,7 +262,7 @@ func TestRoutingDuplicateTagSameScopePG(t *testing.T) {
 	_, err := e.svc.SetNodeRouting(ctx, nid, ver, RoutingInput{
 		Outbounds: []RoutingOutbound{ob("HK", "socks"), ob("hk", "http")},
 	})
-	invWantCode(t, err, errs.ValidationFailed)
+	_ = invWantCode(t, err, errs.ValidationFailed)
 
 	g0, _ := e.svc.GetGlobalRouting(ctx)
 	if _, err := e.svc.SetGlobalRouting(ctx, g0.Revision, RoutingInput{
@@ -442,7 +441,7 @@ func TestRoutingConfigEpochUnchangedOn422PG(t *testing.T) {
 	_, err := e.svc.SetNodeRouting(ctx, nid, ver, RoutingInput{
 		Routes: []RoutingRule{rule(`{"port":[45]}`, "no-such-out")},
 	})
-	invWantCode(t, err, errs.ValidationFailed)
+	_ = invWantCode(t, err, errs.ValidationFailed)
 	if e.epoch(t, ConfigEpochKey) != before {
 		t.Fatal("422 不应推进配置纪元")
 	}

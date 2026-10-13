@@ -17,7 +17,7 @@ func TestRouteGroupCreateDuplicateNamePG(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := e.svc.CreateRouteGroup(ctx, RouteGroupCreate{Name: " " + strings.ToUpper(base) + " ", SortOrder: 0})
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 	if fieldErr(err, "name") == "" {
 		t.Fatalf("期望 Fields name，得到 %v", err)
 	}
@@ -26,14 +26,14 @@ func TestRouteGroupCreateDuplicateNamePG(t *testing.T) {
 func TestRouteGroupCreateValidationPG(t *testing.T) {
 	e, ctx := newInvEnv(t)
 	_, err := e.svc.CreateRouteGroup(ctx, RouteGroupCreate{Name: "   ", SortOrder: 0})
-	invWantCode(t, err, errs.ValidationFailed)
+	_ = invWantCode(t, err, errs.ValidationFailed)
 
 	long := strings.Repeat("字", 65)
 	_, err = e.svc.CreateRouteGroup(ctx, RouteGroupCreate{Name: long, SortOrder: 0})
-	invWantCode(t, err, errs.ValidationFailed)
+	_ = invWantCode(t, err, errs.ValidationFailed)
 
 	_, err = e.svc.CreateRouteGroup(ctx, RouteGroupCreate{Name: e.name("sort"), SortOrder: 1_000_001})
-	invWantCode(t, err, errs.ValidationFailed)
+	_ = invWantCode(t, err, errs.ValidationFailed)
 	if fieldErr(err, "sort_order") == "" {
 		t.Fatal("期望 sort_order 字段")
 	}
@@ -99,7 +99,7 @@ func TestRouteGroupPatchRowVersionPG(t *testing.T) {
 	g := rtGroup(t, ctx, e, "patch-v", 0)
 	name := e.name("new")
 	_, _, err := e.svc.UpdateRouteGroup(ctx, g.ID, RouteGroupPatch{RowVersion: g.RowVersion - 1, Name: &name})
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 }
 
 func TestRouteGroupPatchSortOrderAffectedPG(t *testing.T) {
@@ -153,7 +153,7 @@ func TestRouteGroupRoutingConflictAndRefsPG(t *testing.T) {
 	g := rtGroup(t, ctx, e, "grt", 0)
 	gr, _ := e.svc.GetGroupRouting(ctx, g.ID)
 	_, err := e.svc.SetGroupRouting(ctx, g.ID, gr.RowVersion-1, RoutingInput{})
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 
 	ver := rtNodeVersion(t, ctx, e, nid)
 	if _, err := e.svc.SetNodeRouting(ctx, nid, ver, RoutingInput{
@@ -165,7 +165,7 @@ func TestRouteGroupRoutingConflictAndRefsPG(t *testing.T) {
 	_, err = e.svc.SetGroupRouting(ctx, g.ID, grt.RowVersion, RoutingInput{
 		Routes: []RoutingRule{rule(`{"port":[1]}`, "priv")},
 	})
-	invWantCode(t, err, errs.ValidationFailed)
+	_ = invWantCode(t, err, errs.ValidationFailed)
 
 	g0, _ := e.svc.GetGlobalRouting(ctx)
 	if _, err := e.svc.SetGlobalRouting(ctx, g0.Revision, RoutingInput{
@@ -199,7 +199,7 @@ func TestRouteGroupRoutingConflictAndRefsPG(t *testing.T) {
 	_, err = e.svc.SetGroupRouting(ctx, g.ID, grt.RowVersion, RoutingInput{
 		Outbounds: []RoutingOutbound{ob("gone", "socks")},
 	})
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 }
 
 func TestRouteGroupMembersValidationPG(t *testing.T) {
@@ -210,7 +210,7 @@ func TestRouteGroupMembersValidationPG(t *testing.T) {
 	gr := routeGroupRow(t, ctx, e, g.ID)
 	bad := uuid.New()
 	_, err := e.svc.SetRouteGroupMembers(ctx, g.ID, gr.RowVersion, []uuid.UUID{bad})
-	invWantCode(t, err, errs.ValidationFailed)
+	_ = invWantCode(t, err, errs.ValidationFailed)
 	if fieldErr(err, "node_ids") == "" {
 		t.Fatal("期望 node_ids")
 	}
@@ -254,7 +254,7 @@ func TestRouteGroupMemberDanglingOnLeavePG(t *testing.T) {
 	}
 	gr = routeGroupRow(t, ctx, e, g.ID)
 	_, err := e.svc.SetRouteGroupMembers(ctx, g.ID, gr.RowVersion, []uuid.UUID{})
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 }
 
 func TestRouteGroupNodeGroupsSyncPG(t *testing.T) {
@@ -265,14 +265,14 @@ func TestRouteGroupNodeGroupsSyncPG(t *testing.T) {
 	g2 := rtGroup(t, ctx, e, "ng2", 2)
 	ver := rtNodeVersion(t, ctx, e, nid)
 	_, err := e.svc.SetNodeRouteGroups(ctx, nid, ver, []uuid.UUID{uuid.New()})
-	invWantCode(t, err, errs.ValidationFailed)
+	_ = invWantCode(t, err, errs.ValidationFailed)
 	if fieldErr(err, "group_ids") == "" {
 		t.Fatal("期望 group_ids")
 	}
 
 	ver = rtNodeVersion(t, ctx, e, nid)
 	_, err = e.svc.SetNodeRouteGroups(ctx, nid, ver-1, []uuid.UUID{g1.ID})
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 
 	ver = rtNodeVersion(t, ctx, e, nid)
 	wr, err := e.svc.SetNodeRouteGroups(ctx, nid, ver, []uuid.UUID{g1.ID, g2.ID})
@@ -298,7 +298,7 @@ func TestRouteGroupNodeGroupsSyncPG(t *testing.T) {
 
 	gr := routeGroupRow(t, ctx, e, g2.ID)
 	_, err = e.svc.SetRouteGroupMembers(ctx, g2.ID, gr.RowVersion-1, []uuid.UUID{nid})
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 }
 
 func TestRouteGroupDeletePG(t *testing.T) {
@@ -308,7 +308,7 @@ func TestRouteGroupDeletePG(t *testing.T) {
 	g := rtGroup(t, ctx, e, "del", 0)
 	gr := routeGroupRow(t, ctx, e, g.ID)
 	_, err := e.svc.DeleteRouteGroup(ctx, g.ID, gr.RowVersion-1)
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 
 	grt, _ := e.svc.GetGroupRouting(ctx, g.ID)
 	if _, err := e.svc.SetGroupRouting(ctx, g.ID, grt.RowVersion, RoutingInput{
@@ -328,7 +328,7 @@ func TestRouteGroupDeletePG(t *testing.T) {
 	}
 	gr = routeGroupRow(t, ctx, e, g.ID)
 	_, err = e.svc.DeleteRouteGroup(ctx, g.ID, gr.RowVersion)
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 
 	ver = rtNodeVersion(t, ctx, e, nid)
 	if _, err := e.svc.SetNodeRouting(ctx, nid, ver, RoutingInput{}); err != nil {
