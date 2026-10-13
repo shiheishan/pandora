@@ -52,6 +52,17 @@ func (f *fakePoolCatalog) PoolUsage(_ context.Context, poolIDs []uuid.UUID) (map
 	out := map[uuid.UUID]catalogsvc.PoolUsage{}
 	for _, id := range poolIDs {
 		if u, ok := f.usage[id]; ok {
+			if u.Bindings == nil {
+				bindings := make([]catalogsvc.PoolBinding, 0, len(u.PlanNames))
+				for _, name := range u.PlanNames {
+					bindings = append(bindings, catalogsvc.PoolBinding{
+						VersionID: uuid.New(),
+						PlanName:  name,
+						OnSale:    true,
+					})
+				}
+				u.Bindings = bindings
+			}
 			out[id] = u
 		}
 	}
@@ -69,6 +80,22 @@ func (f *fakePoolCatalog) SetVersionPools(_ context.Context, _, versionID uuid.U
 	}
 	f.versionPools[versionID] = poolIDs
 	return expected + 1, nil
+}
+
+// fakeVersionsInUse 是 VersionsInUse 端口的假实现：默认返回空 map。
+type fakeVersionsInUse struct {
+	inUse map[uuid.UUID]bool
+	err   error
+}
+
+func (f *fakeVersionsInUse) VersionsInUse(_ context.Context, _ []uuid.UUID) (map[uuid.UUID]bool, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.inUse == nil {
+		return map[uuid.UUID]bool{}, nil
+	}
+	return f.inUse, nil
 }
 
 // fakePoolGroups 是内存里的 UserGroups；seedPoolGroup 建组时同步追加。
@@ -127,6 +154,7 @@ func newPoolEnvMode(t *testing.T, committed bool) (*poolEnv, context.Context) {
 	groups := &fakePoolGroups{}
 	svc.UseCatalog(cat)
 	svc.UseUserGroups(groups)
+	svc.UseVersionsInUse(&fakeVersionsInUse{})
 
 	e := &poolEnv{
 		svc: svc, cat: cat, groups: groups, mr: mr, committed: committed,

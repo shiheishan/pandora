@@ -10,6 +10,7 @@ import (
 
 	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
 	identitysvc "github.com/aegispanel/aegis/internal/module/identity/service"
+	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 )
 
 // Catalog 是 node 要的目录读写面（套餐版本绑池，表归 catalog），由 catalog service 实现。
@@ -29,9 +30,15 @@ type UserGroups interface {
 	ListGroups(ctx context.Context) ([]identitysvc.Group, error)
 }
 
+// VersionsInUse 是 node 要的订阅侧读取面：哪些套餐版本有生效订阅，由 subscription service 实现。
+type VersionsInUse interface {
+	VersionsInUse(ctx context.Context, versionIDs []uuid.UUID) (map[uuid.UUID]bool, error)
+}
+
 var (
 	_ Catalog                = (*catalogsvc.Service)(nil)
 	_ UserGroups             = (*identitysvc.Service)(nil)
+	_ VersionsInUse          = (*subsvc.Service)(nil)
 	_ catalogsvc.PublishGate = (*Service)(nil)
 	_ catalogsvc.PoolGuard   = (*Service)(nil)
 )
@@ -41,3 +48,6 @@ func (s *Service) UseCatalog(c Catalog) { s.catalog = c }
 
 // UseUserGroups 只在启动装配时调用（不并发安全）。
 func (s *Service) UseUserGroups(g UserGroups) { s.groups = g }
+
+// UseVersionsInUse 只在启动装配时调用（不并发安全）。
+func (s *Service) UseVersionsInUse(v VersionsInUse) { s.inUse = v }

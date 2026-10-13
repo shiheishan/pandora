@@ -563,3 +563,90 @@ func TestWizardUpdateQuotaKeepsPools(t *testing.T) {
 	}
 	t.Fatal("未找到新当前版本")
 }
+
+func TestPoolUsageOnSaleDistinction(t *testing.T) {
+	e, ctx := newEnv(t)
+	ctx, _ = seedAdmin(t, ctx, e)
+	g := &fakePoolGuard{}
+	e.svc.UsePoolGuard(g)
+
+	p1 := seedPool(t, ctx, e, "active")
+
+	// 1. 创建并发布套餐，版本 1 绑池 p1（初始为当前发布版本）
+	created, err := e.svc.CreatePlanComplete(ctx, WizardCreate{
+		Plan: PlanInput{
+			Code: uniqCode(t, "onsale"), Name: "在售测试套餐", Visibility: VisibilityPublic,
+			AllowNewPurchase: true, AllowRenewal: true, AllowUpgrade: true, Highlights: []string{},
+		},
+		TrafficGB: int64Ptr(10),
+		PoolIDs:   []uuid.UUID{p1},
+		Prices: []WizardPrice{{BillingInterval: "month", IntervalCount: 1,
+			UnitAmount: decimal.RequireFromString("9.90"), Currency: "CNY"}},
+		Publish: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vOldPub := created.VersionID
+
+	// 2. 更新套餐配额，滚出版本 2 并发布；版本 2 继承绑池 p1，成为当前发布版本，版本 1 变为已被取代的旧发布版本
+	upd, err := e.svc.UpdatePlanComplete(ctx, created.Plan.ID, WizardUpdate{
+		ExpectedRowVersion: created.Plan.RowVersion,
+		Code:               created.Plan.Code,
+		Name:               created.Plan.Name,
+		Visibility:         VisibilityPublic,
+		TrafficGB:          int64Ptr(20),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if upd.Plan.CurrentVersionID == nil || *upd.Plan.CurrentVersionID == vOldPub {
+		t.Fatal("未生成新当前版本")
+	}
+	vCurPub := *upd.Plan.CurrentVersionID
+
+	// 3. 为该套餐建一个草稿版本 3，并绑定池 p1
+	draft := draftOf(t, ctx, e, created.Plan.ID)
+	_, err = e.svc.SetVersionPools(ctx, created.Plan.ID, draft.ID, draft.RowVersion, []uuid.UUID{p1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vDraft := draft.ID
+
+	// 查 PoolUsage
+	usage, err := e.svc.PoolUsage(ctx, []uuid.UUID{p1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, ok := usage[p1]
+	if !ok {
+		t.Fatal("p1 应在 usage 中")
+	}
+	if len(u.Bindings) != 3 {
+		t.Fatalf("Bindings 期望 3 行，得到 %d: %+v", len(u.Bindings), u.Bindings)
+	}
+
+	var onSaleCount int
+	for _, b := range u.Bindings {
+		switch b.VersionID {
+		case vCurPub:
+			if !b.OnSale {
+				t.Fatalf("当前发布版本 %s OnSale 应为 true", vCurPub)
+			}
+			onSaleCount++
+		case vOldPub:
+			if b.OnSale {
+				t.Fatalf("旧发布版本 %s OnSale 应为 false", vOldPub)
+			}
+		case vDraft:
+			if b.OnSale {
+				t.Fatalf("草稿版本 %s OnSale 应为 false", vDraft)
+			}
+		default:
+			t.Fatalf("未知版本: %s", b.VersionID)
+		}
+	}
+	if onSaleCount != 1 {
+		t.Fatalf("OnSale 为 true 的绑定数期望 1，得到 %d", onSaleCount)
+	}
+}

@@ -24,16 +24,17 @@ const nodeSearchMax = 120
 
 // nodeListExtras 是一页节点批量取来的附加读数，按 id 查。
 type nodeListExtras struct {
-	live    map[uuid.UUID]NodeLiveStat          // 节点 id →
-	metrics map[uuid.UUID]ServerMetricsSnapshot // 服务器 id →
-	seqs    map[uuid.UUID]int32                 // 服务器 id → active 身份 seq
-	usage   map[uuid.UUID]catalogsvc.PoolUsage  // 池 id →
-	desired map[uuid.UUID]string                // 节点 id → 期望配置文档 SHA-256
+	live      map[uuid.UUID]NodeLiveStat          // 节点 id →
+	metrics   map[uuid.UUID]ServerMetricsSnapshot // 服务器 id →
+	seqs      map[uuid.UUID]int32                 // 服务器 id → active 身份 seq
+	usage     map[uuid.UUID]catalogsvc.PoolUsage  // 池 id →
+	desired   map[uuid.UUID]string                // 节点 id → 期望配置文档 SHA-256
+	livePlans map[uuid.UUID][]string              // 池 id → 在用套餐名（去重升序）
 }
 
 // QueryNodes 返回后台节点列表的一页与筛选后的总数；只读，ListNodePage 一次，
-// 非空页再做固定条数的批量读（在线与流量、最新指标、身份序号、池套餐引用、期望配置文档，共约 8 条查询），与页大小无关；
-// granted_plans 来自 catalog PoolUsage（绑定了该池的任意套餐版本所属套餐名）。
+// 非空页再做固定条数的批量读（在线与流量、最新指标、身份序号、池套餐引用与在用版本、期望配置文档），与页大小无关；
+// granted_plans 来自池的在用套餐绑定（在售或有人在用的版本所属套餐名，去重升序）。
 func (s *Service) QueryNodes(ctx context.Context, q NodeQuery) ([]NodeRow, int64, error) {
 	q.Search = strings.TrimSpace(q.Search)
 	if utf8.RuneCountInString(q.Search) > nodeSearchMax {
@@ -45,7 +46,7 @@ func (s *Service) QueryNodes(ctx context.Context, q NodeQuery) ([]NodeRow, int64
 	if q.State != "" {
 		q.IncludeRetired = true
 	}
-	if s.catalog == nil {
+	if s.catalog == nil || s.inUse == nil {
 		return nil, 0, errPoolPortMissing
 	}
 
@@ -118,6 +119,24 @@ func (s *Service) nodeListExtrasFor(ctx context.Context, rows []repo.NodeListRow
 	if err != nil {
 		return nodeListExtras{}, err
 	}
+	var notOnSale []uuid.UUID
+	for _, u := range usage {
+		for _, b := range u.Bindings {
+			if !b.OnSale {
+				notOnSale = append(notOnSale, b.VersionID)
+			}
+		}
+	}
+	notOnSale = dedupeUUIDs(notOnSale)
+	var inUse map[uuid.UUID]bool
+	if len(notOnSale) > 0 {
+		inUse, err = s.inUse.VersionsInUse(ctx, notOnSale)
+		if err != nil {
+			return nodeListExtras{}, err
+		}
+	}
+	livePlans := livePlanNames(usage, inUse)
+
 	desired := make(map[uuid.UUID]string)
 	// 某个节点的配置拼不出文档（协议配置不是对象等）时不让整个列表 500，否则连去修它的页面都打不开；
 	// 记警告，期望摘要留空，生效状态退回只看节点回报。
@@ -132,12 +151,38 @@ func (s *Service) nodeListExtrasFor(ctx context.Context, rows []repo.NodeListRow
 		}
 	}
 	return nodeListExtras{
-		live:    live,
-		metrics: metrics,
-		seqs:    seqs,
-		usage:   usage,
-		desired: desired,
+		live:      live,
+		metrics:   metrics,
+		seqs:      seqs,
+		usage:     usage,
+		desired:   desired,
+		livePlans: livePlans,
 	}, nil
+}
+
+// livePlanNames 计算每个池的在用套餐名列表（在售或有人在用的版本所属套餐名，去重升序）。
+// usage 为空或池无在用绑定时返回空切片。
+func livePlanNames(usage map[uuid.UUID]catalogsvc.PoolUsage, inUse map[uuid.UUID]bool) map[uuid.UUID][]string {
+	out := make(map[uuid.UUID][]string, len(usage))
+	for pid, u := range usage {
+		seen := make(map[string]bool)
+		var names []string
+		for _, b := range u.Bindings {
+			if b.OnSale || inUse[b.VersionID] {
+				if !seen[b.PlanName] {
+					seen[b.PlanName] = true
+					names = append(names, b.PlanName)
+				}
+			}
+		}
+		if names == nil {
+			names = []string{}
+		} else {
+			slices.Sort(names)
+		}
+		out[pid] = names
+	}
+	return out
 }
 
 // nodeRowFromList 把一行读模型转成 NodeRow：心跳取所在服务器的，下发说明按 nodeDeliveryVerdict；
@@ -152,7 +197,7 @@ func nodeRowFromList(row repo.NodeListRow, now time.Time, detail bool, x nodeLis
 
 	poolBound := false
 	if row.PoolID != nil {
-		poolBound = x.usage[*row.PoolID].Versions > 0
+		poolBound = len(x.livePlans[*row.PoolID]) > 0
 	}
 
 	var desired *string
@@ -231,8 +276,8 @@ func nodeRowFromList(row repo.NodeListRow, now time.Time, detail bool, x nodeLis
 		}
 	}
 	if row.PoolID != nil {
-		if u, ok := x.usage[*row.PoolID]; ok && len(u.PlanNames) > 0 {
-			nr.GrantedPlans = slices.Clone(u.PlanNames)
+		if names, ok := x.livePlans[*row.PoolID]; ok && len(names) > 0 {
+			nr.GrantedPlans = slices.Clone(names)
 		}
 	}
 

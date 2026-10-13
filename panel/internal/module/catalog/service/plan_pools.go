@@ -38,12 +38,21 @@ type PoolBindingVersion struct {
 	PoolIDs []uuid.UUID
 }
 
+// PoolBinding 是一个节点池与套餐版本的单条绑定关系。
+type PoolBinding struct {
+	VersionID uuid.UUID
+	PlanName  string
+	OnSale    bool
+}
+
 // PoolUsage 是一个节点池被套餐版本引用的情况。
 type PoolUsage struct {
 	// Versions 是绑定了这个池的套餐版本数（任何状态）。
 	Versions int
-	// PlanNames 是这些版本所属套餐的名字，去重后按名字升序，永不为 nil。
+	// PlanNames 是这些版本所属套餐的名字（任何状态），去重后按名字升序，永不为 nil。
 	PlanNames []string
+	// Bindings 是这个池的全部绑定（带在售标记），按套餐名、版本 id 排序，永不为 nil。
+	Bindings []PoolBinding
 }
 
 // VersionPools 批量取版本绑定的池（一条 SQL）：版本 id → 池 id（升序）。没绑的版本不在 map 里。
@@ -69,9 +78,24 @@ func (s *Service) PoolUsage(ctx context.Context, poolIDs []uuid.UUID) (map[uuid.
 		u := out[row.PoolID]
 		u.Versions++
 		u.PlanNames = append(u.PlanNames, row.PlanName)
+		u.Bindings = append(u.Bindings, PoolBinding{
+			VersionID: row.PlanVersionID,
+			PlanName:  row.PlanName,
+			OnSale:    row.OnSale,
+		})
 		out[row.PoolID] = u
 	}
 	for pid, u := range out {
+		if u.Bindings == nil {
+			u.Bindings = []PoolBinding{}
+		} else {
+			sort.Slice(u.Bindings, func(i, j int) bool {
+				if u.Bindings[i].PlanName != u.Bindings[j].PlanName {
+					return u.Bindings[i].PlanName < u.Bindings[j].PlanName
+				}
+				return u.Bindings[i].VersionID.String() < u.Bindings[j].VersionID.String()
+			})
+		}
 		seen := make(map[string]bool, len(u.PlanNames))
 		uniq := make([]string, 0, len(u.PlanNames))
 		for _, name := range u.PlanNames {
@@ -83,6 +107,9 @@ func (s *Service) PoolUsage(ctx context.Context, poolIDs []uuid.UUID) (map[uuid.
 		}
 		sort.Strings(uniq)
 		u.PlanNames = uniq
+		if u.PlanNames == nil {
+			u.PlanNames = []string{}
+		}
 		out[pid] = u
 	}
 	return out, nil
