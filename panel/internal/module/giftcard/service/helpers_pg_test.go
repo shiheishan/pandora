@@ -308,6 +308,16 @@ func (e *env) balanceOf(t *testing.T, ctx context.Context, user uuid.UUID) decim
 	return b
 }
 
+// balanceIn 读用户某币种的余额。
+func (e *env) balanceIn(t *testing.T, ctx context.Context, user uuid.UUID, cur money.Currency) decimal.Decimal {
+	t.Helper()
+	b, err := e.ledger.Balance(ctx, user, cur)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
 // subOf 读一份订阅。
 func (e *env) subOf(t *testing.T, ctx context.Context, id uuid.UUID) subsvc.Subscription {
 	t.Helper()

@@ -10,6 +10,7 @@ import (
 
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
 // 余额卡：余额入账一笔 gift_card_balance（平台赠送费用 → 用户余额），码转 used，写一条兑换流水；
@@ -196,7 +197,8 @@ func TestRedeemPlanCardChangesPlan(t *testing.T) {
 	if after := e.subOf(t, ctx, sub.ID); after.PlanID != newPlan {
 		t.Fatalf("订阅套餐 %s，期望换成 %s", after.PlanID, newPlan)
 	}
-	mustEq(t, "退回余额", e.balanceOf(t, ctx, user), dec("12.34"))
+	// 换掉退的钱跟原订阅的付费单走（fakeValuer 回 CNY），不一定是站点币种
+	mustEq(t, "退回余额", e.balanceIn(t, ctx, user, money.CNY), dec("12.34"))
 	if n := e.count(t, ctx, `SELECT count(*) FROM ledger_transactions WHERE kind = 'plan_change_refund' AND source_type = 'gift_card_code'`); n != 1 {
 		t.Fatalf("退款交易 %d 笔，期望 1", n)
 	}
