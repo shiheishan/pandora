@@ -145,6 +145,11 @@ type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
+// StreamCounter 统计本机 SSE 连接数（系统状态页的 sse 组件），由 app 装配 Hub 实现。
+type StreamCounter interface {
+	Count() int
+}
+
 // Deps 是 report 依赖的各属主模块端口，app 装配时一次给全；缺哪个 MissingPorts 报哪个。
 type Deps struct {
 	Settings      Settings
@@ -169,13 +174,14 @@ type Options struct {
 
 // Service 是 report 模块对外的唯一入口。
 type Service struct {
-	repo  store
-	tx    txRunner
-	audit auditWriter
-	deps  Deps
-	opt   Options
-	now   func() time.Time
-	rdb   *redis.Client
+	repo    store
+	tx      txRunner
+	audit   auditWriter
+	deps    Deps
+	opt     Options
+	now     func() time.Time
+	rdb     *redis.Client
+	streams StreamCounter
 }
 
 // New 构造 report service。

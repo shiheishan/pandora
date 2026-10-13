@@ -122,9 +122,14 @@ func Timeout(d time.Duration, exempt func(*gin.Context) bool) gin.HandlerFunc {
 }
 
 // Concurrency 限制同时处理的请求数，满了立即回 503，不排队。
-func Concurrency(n int) gin.HandlerFunc {
+// exempt 返回 true 的请求不占名额（如 SSE 长连接）。
+func Concurrency(n int, exempt func(*gin.Context) bool) gin.HandlerFunc {
 	sem := make(chan struct{}, n)
 	return func(c *gin.Context) {
+		if exempt != nil && exempt(c) {
+			c.Next()
+			return
+		}
 		select {
 		case sem <- struct{}{}:
 			defer func() { <-sem }()

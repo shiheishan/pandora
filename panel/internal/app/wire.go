@@ -57,6 +57,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/geoip"
 	"github.com/aegispanel/aegis/internal/pkg/jwtx"
 	"github.com/aegispanel/aegis/internal/pkg/ratelimit"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/aegispanel/aegis/internal/pkg/redisx"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 	"github.com/google/uuid"
@@ -88,6 +89,7 @@ type services struct {
 	certs      *certssvc.Service
 	plugin     *pluginsvc.Service
 	report     *reportsvc.Service
+	rt         *realtime.Publisher
 	// idemFPKey 是幂等请求指纹的 HMAC 密钥（从主密钥派生）
 	idemFPKey []byte
 	limiter   *ratelimit.Limiter
@@ -351,6 +353,7 @@ func buildServices(r *runtime) (*services, error) {
 		certs:      certsSvc,
 		plugin:     pluginSvc,
 		report:     reportSvc,
+		rt:         realtime.NewPublisher(r.redis),
 		idemFPKey:  keys.Derive(crypto.InfoHMACIdempotency, 32),
 		limiter:    limiter,
 		sealer:     sealer,
