@@ -44,9 +44,34 @@ func TestSessionTombstoneSetsReenrollTrailer(t *testing.T) {
 	}
 }
 
+// 登记前复核就失效：不登记、不发 Welcome，直接 PermissionDenied 加 reenroll trailer。
+func TestSessionPrecheckRevokedRejects(t *testing.T) {
+	b := newFakeBackend()
+	client, m := startControlAuth(t, b, testSessionOpt, true, &fakeAuth{err: service.ErrSessionRevoked})
+	ctx, cancel := streamCtx(t)
+	defer cancel()
+	stream, err := client.Session(ctx)
+	if err != nil {
+		t.Fatalf("Session: %v", err)
+	}
+	if err := stream.Send(helloMsg(&nodev1.Hello{})); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if st, ok := status.FromError(recvErr(t, stream)); !ok || st.Code() != codes.PermissionDenied {
+		t.Fatalf("期望 PermissionDenied，得到 %v", st)
+	}
+	if got := stream.Trailer().Get(TrailerReenroll); len(got) != 1 || got[0] != "required" {
+		t.Fatalf("trailer %s=%v", TrailerReenroll, got)
+	}
+	if m.Len() != 0 {
+		t.Fatalf("登记前复核失败不应登记，Len=%d", m.Len())
+	}
+}
+
+// 登记前通过、登记后复核失效（与吊销并发）：会话已登记，送出 Tombstone 后断流。
 func TestSessionRecheckRevokedTombstones(t *testing.T) {
 	b := newFakeBackend()
-	client, _ := startControlAuth(t, b, testSessionOpt, true, &fakeAuth{err: service.ErrSessionRevoked})
+	client, _ := startControlAuth(t, b, testSessionOpt, true, &fakeAuth{err: service.ErrSessionRevoked, failFrom: 2})
 	ctx, cancel := streamCtx(t)
 	defer cancel()
 	stream, err := client.Session(ctx)

@@ -140,14 +140,18 @@ type fakeAuth struct {
 	mu    sync.Mutex
 	err   error
 	calls int
+	// failFrom > 0 时只有第 failFrom 次及以后的调用回 err（登记后复核失败的情形）
+	failFrom int
 }
 
 func (f *fakeAuth) AuthorizeSession(_ context.Context, _ uuid.UUID, _ *big.Int) error {
 	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls++
-	err := f.err
-	f.mu.Unlock()
-	return err
+	if f.failFrom > 0 && f.calls < f.failFrom {
+		return nil
+	}
+	return f.err
 }
 
 // startControl 起内存 gRPC 服务端并返回 Control 客户端与会话管理器。

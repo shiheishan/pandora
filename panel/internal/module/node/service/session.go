@@ -84,6 +84,11 @@ type SessionOptions struct {
 	TerminateGrace time.Duration
 	// ShutdownBase、ShutdownSpread：停机时第 i 个会话的 reconnect in_ms = Base + i×Spread/n，缺省 2 秒、10 秒
 	ShutdownBase, ShutdownSpread time.Duration
+	// AlignConcurrency 是同时在做建流对齐（配置与名单首读）的流数上限，缺省 8：面板重启后全部节点一起重连时，
+	// 不让对齐读占满连接池、拖住后台与鉴权
+	AlignConcurrency int
+	// AlignTimeout 是建流对齐（排队加读）的总时限，缺省 10 秒，短于节点端等 Welcome 的 15 秒；超时回 Unavailable，节点退避重连
+	AlignTimeout time.Duration
 }
 
 func (o SessionOptions) withDefaults() SessionOptions {
@@ -106,6 +111,10 @@ func (o SessionOptions) withDefaults() SessionOptions {
 	def(&o.TerminateGrace, 5*time.Second)
 	def(&o.ShutdownBase, 2*time.Second)
 	def(&o.ShutdownSpread, 10*time.Second)
+	def(&o.AlignTimeout, 10*time.Second)
+	if o.AlignConcurrency <= 0 {
+		o.AlignConcurrency = 8
+	}
 	return o
 }
 
@@ -123,6 +132,9 @@ type Sessions struct {
 	byServer map[uuid.UUID]*Session
 	closing  bool
 
+	// alignSem 限制同时做建流对齐的流数（AlignConcurrency）
+	alignSem chan struct{}
+
 	// 纪元轮次的待办（session_epoch.go）
 	dirtyMu                 sync.Mutex
 	dirtyUsers, dirtyConfig bool
@@ -131,8 +143,10 @@ type Sessions struct {
 
 // NewSessionManager 构造会话管理器。rdb 为 nil 时不订阅通知，按 FullResync 周期全量比对。
 func NewSessionManager(b SessionBackend, rdb *redis.Client, opt SessionOptions) *Sessions {
+	opt = opt.withDefaults()
 	return &Sessions{
-		b: b, rdb: rdb, opt: opt.withDefaults(), now: time.Now,
+		b: b, rdb: rdb, opt: opt, now: time.Now,
+		alignSem: make(chan struct{}, opt.AlignConcurrency),
 		byServer: map[uuid.UUID]*Session{},
 		wake:     make(chan struct{}, 1),
 	}
@@ -189,6 +203,22 @@ func (m *Sessions) onlineIDs() []uuid.UUID {
 // 所以这次对齐（配置与名单的首读）在任何消息发出、任何上报被处理之前已经完成，每个节点的 latest 名单已就位，
 // 新会话一开始收到的流量上报照样能按名单计费。同一服务器的旧流被取代；出错时会话已关闭并移出登记。
 func (m *Sessions) Open(ctx context.Context, serverID uuid.UUID, h Hello) (*Session, error) {
+	return m.OpenVerified(ctx, serverID, h, nil)
+}
+
+// ErrAlignBusy 是建流对齐在 AlignTimeout 内没排上或没读完：回 Unavailable，节点退避重连。
+var ErrAlignBusy = errors.New("node: 建流对齐超时")
+
+// OpenVerified 同 Open，另在两处调 verify 复核身份（传输层传 AuthorizeSession；nil 表示不复核）：
+//   - 登记前：已失效的身份不取代合法的在途流，直接回 ErrSessionRevoked，不留任何副作用；
+//   - 登记后、记 Hello 与对齐读之前：与吊销并发时，要么吊销方的 Tombstone 找得到已登记的流，要么这次复核看到吊销。
+//     复核失败时会话已登记并已 Tombstone（发出后断流），返回的会话照常交给收发循环送出 Tombstone，不做对齐读、不记 Hello。
+func (m *Sessions) OpenVerified(ctx context.Context, serverID uuid.UUID, h Hello, verify func(context.Context) error) (*Session, error) {
+	if verify != nil {
+		if err := verify(ctx); err != nil {
+			return nil, err
+		}
+	}
 	sid, err := uuid.NewV7()
 	if err != nil {
 		sid = uuid.New()
@@ -217,30 +247,63 @@ func (m *Sessions) Open(ctx context.Context, serverID uuid.UUID, h Hello) (*Sess
 		log.Info("同一服务器的新流到达，关闭旧流", zap.String("old_session_id", old.id))
 		old.closeWith(ErrSessionSuperseded)
 	}
+	if verify != nil {
+		if err := verify(ctx); err != nil {
+			if errors.Is(err, ErrSessionRevoked) {
+				log.Warn("登记后复核发现身份已失效，发 Tombstone")
+				s.Tombstone(TombstoneIdentityRevoked)
+				return s, nil
+			}
+			s.Close(ErrSessionPeerGone)
+			return nil, err
+		}
+	}
 
-	if err := m.b.RecordHello(ctx, serverID, h, at); err != nil {
+	// 对齐读限并发、限时：排队与读共用一个期限
+	actx, cancel := context.WithTimeout(ctx, m.opt.AlignTimeout)
+	defer cancel()
+	select {
+	case m.alignSem <- struct{}{}:
+		defer func() { <-m.alignSem }()
+	case <-actx.Done():
+		s.Close(ErrSessionPeerGone)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, ErrAlignBusy
+	}
+
+	if err := m.b.RecordHello(actx, serverID, h, at); err != nil {
 		// 主机信息与心跳时间只是展示；对齐照常做
 		log.Warn("记录 Hello 失败", zap.Error(err))
 	}
 
 	ids := []uuid.UUID{serverID}
 	cfgSeq := m.seq.Add(1)
-	cfgs, err := m.b.ServerConfigs(ctx, ids)
+	cfgs, err := m.b.ServerConfigs(actx, ids)
 	if err != nil {
 		s.Close(ErrSessionPeerGone)
-		return nil, err
+		return nil, alignErr(ctx, actx, err)
 	}
 	usersSeq := m.seq.Add(1)
-	rosters, err := m.b.Rosters(ctx, ids)
+	rosters, err := m.b.Rosters(actx, ids)
 	if err != nil {
 		s.Close(ErrSessionPeerGone)
-		return nil, err
+		return nil, alignErr(ctx, actx, err)
 	}
 	// 先配置后名单：新节点先有入站再收用户
 	s.applyConfig(cfgSeq, cfgs[serverID])
 	s.applyRosters(usersSeq, rosters[serverID])
 	log.Info("节点会话已建立", zap.String("agent_version", h.AgentVersion), zap.Strings("features", s.features))
 	return s, nil
+}
+
+// alignErr 把对齐读因 AlignTimeout 到期的失败归成 ErrAlignBusy（流本身没断时）。
+func alignErr(ctx, actx context.Context, err error) error {
+	if ctx.Err() == nil && actx.Err() != nil {
+		return ErrAlignBusy
+	}
+	return err
 }
 
 // unregister 把 s 移出登记（只移除自己，不动取代者）。

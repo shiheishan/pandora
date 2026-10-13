@@ -70,38 +70,34 @@ func (c *controlServer) Session(stream nodev1.ControlService_SessionServer) erro
 		return status.Error(codes.Unavailable, "面板暂不可用")
 	}
 
-	first, err := stream.Recv()
+	if c.auth == nil {
+		log.Error("身份复核未装配，拒绝建流")
+		return status.Error(codes.Unavailable, "面板暂不可用")
+	}
+
+	hello, err := recvHello(stream)
 	if err != nil {
 		return err
 	}
-	hello := first.GetHello()
-	if hello == nil {
-		return status.Error(codes.InvalidArgument, "流上第一条消息必须是 Hello")
-	}
-	sess, err := m.Open(ctx, serverID, helloFromProto(hello))
+	// 拦截器的鉴权可能是很久之前做的（流建好后迟迟不发 Hello），登记前后各复核一次，副作用都落在复核之后
+	verify := func(ctx context.Context) error { return c.auth.AuthorizeSession(ctx, serverID, serial) }
+	sess, err := m.OpenVerified(ctx, serverID, helloFromProto(hello), verify)
 	if err != nil {
-		if errors.Is(err, service.ErrSessionShutdown) {
+		switch {
+		case errors.Is(err, service.ErrSessionRevoked):
+			log.Warn("建流复核发现身份已失效，拒绝")
+			stream.SetTrailer(metadata.Pairs(TrailerReenroll, "required"))
+			return status.Error(codes.PermissionDenied, "接入身份已失效，需要在后台生成新令牌重新接入")
+		case errors.Is(err, service.ErrSessionShutdown):
 			return status.Error(codes.Unavailable, "面板正在停止")
+		case errors.Is(err, service.ErrAlignBusy):
+			log.Warn("建流对齐超时，请节点稍后重连")
+			return status.Error(codes.Unavailable, "面板繁忙，稍后重连")
 		}
 		log.Error("建立节点会话失败", zap.Error(err))
 		return status.Error(codes.Unavailable, "面板暂不可用")
 	}
 	defer sess.Close(nil)
-
-	// 先登记、再复核：与吊销并发时，要么吊销方的 Tombstone 找得到已登记的流，要么这次复核看到吊销。
-	if c.auth == nil {
-		log.Error("身份复核未装配，拒绝建流")
-		return status.Error(codes.Unavailable, "面板暂不可用")
-	}
-	if err := c.auth.AuthorizeSession(ctx, serverID, serial); err != nil {
-		if errors.Is(err, service.ErrSessionRevoked) {
-			log.Warn("登记后复核发现身份已失效，发 Tombstone")
-			sess.Tombstone(service.TombstoneIdentityRevoked)
-		} else {
-			log.Error("登记后复核身份失败", zap.Error(err))
-			return status.Error(codes.Unavailable, "暂时无法校验身份")
-		}
-	}
 
 	sendDone := make(chan error, 1)
 	go func() { sendDone <- sendLoop(ctx, stream, sess) }()
@@ -123,6 +119,36 @@ func (c *controlServer) Session(stream nodev1.ControlService_SessionServer) erro
 		stream.SetTrailer(metadata.Pairs(TrailerReenroll, "required"))
 	}
 	return err
+}
+
+// helloTimeout 是建流后等第一条 Hello 的时限：拦截器的鉴权只在建流时做一次，不能让一条没发 Hello 的流无限期挂着。
+const helloTimeout = 10 * time.Second
+
+// recvHello 在 helloTimeout 内收第一条消息，它必须是 Hello。超时时 handler 返回会取消流，阻塞的 Recv 随之返回。
+func recvHello(stream nodev1.ControlService_SessionServer) (*nodev1.Hello, error) {
+	type recvd struct {
+		msg *nodev1.SessionRequest
+		err error
+	}
+	ch := make(chan recvd, 1)
+	go func() {
+		msg, err := stream.Recv()
+		ch <- recvd{msg, err}
+	}()
+	t := time.NewTimer(helloTimeout)
+	defer t.Stop()
+	select {
+	case r := <-ch:
+		if r.err != nil {
+			return nil, r.err
+		}
+		if h := r.msg.GetHello(); h != nil {
+			return h, nil
+		}
+		return nil, status.Error(codes.InvalidArgument, "流上第一条消息必须是 Hello")
+	case <-t.C:
+		return nil, status.Error(codes.DeadlineExceeded, "建流后没有按时发 Hello")
+	}
 }
 
 // sendLoop 从会话取下一条要发的消息并写入流；只能由一个 goroutine 调用。
