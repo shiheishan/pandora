@@ -156,3 +156,73 @@ func TestRuntimeRows(t *testing.T) {
 		t.Fatalf("running 应无原因: reason=%v reasonNode=%v", rows[1].Reason, rows[1].ReasonNodeID)
 	}
 }
+
+func TestCleanTextStripsControls(t *testing.T) {
+	ptr := func(s string) *string { return &s }
+	cases := []struct {
+		name string
+		in   string
+		max  int
+		want *string
+	}{
+		{"NUL", "a\x00b", 10, ptr("ab")},
+		{"换行回车", "a\nb\rc", 10, ptr("abc")},
+		{"TAB", "a\tb", 10, ptr("ab")},
+		{"ESC", "a\x1b[31mb", 10, ptr("a[31mb")},
+		{"DEL", "a\x7fb", 10, ptr("ab")},
+		{"C1", "a\u0085b", 10, ptr("ab")},
+		{"非法 UTF-8 夹在中间", "a\xffb", 10, ptr("ab")},
+		{"只有空白与控制符", " \x00\n\x1b\t ", 10, nil},
+		{"按字符截断", strings.Repeat("节", 10), 3, ptr("节节节")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := cleanText(tc.in, tc.max)
+			if (got == nil) != (tc.want == nil) {
+				t.Fatalf("nil 不一致: got %v want %v", got, tc.want)
+			}
+			if got == nil {
+				return
+			}
+			if *got != *tc.want {
+				t.Fatalf("got %q want %q", *got, *tc.want)
+			}
+			if !utf8.ValidString(*got) {
+				t.Fatalf("结果不是合法 UTF-8: %q", *got)
+			}
+		})
+	}
+}
+
+// 接入与 Hello 写的是同一组列，必须得到同样的规整结果。
+func TestEnrollAndHelloNormalizeAlike(t *testing.T) {
+	h := HostInfo{
+		Hostname: " host\x1b-1\n", OS: "linux\x00", Arch: "amd64", CPUCores: 8,
+		MemoryBytes: 16 << 30, DiskBytes: 200 << 30,
+	}
+	agent := "pdnd/1.2\r\n"
+	e := enrollHostInfo(h, agent)
+	a := agentInfo(Hello{AgentVersion: agent, Host: h})
+	eqStr := func(field string, x, y *string) {
+		t.Helper()
+		if (x == nil) != (y == nil) || (x != nil && *x != *y) {
+			t.Fatalf("%s 不一致: %v vs %v", field, x, y)
+		}
+	}
+	eqInt := func(field string, x, y *int32) {
+		t.Helper()
+		if (x == nil) != (y == nil) || (x != nil && *x != *y) {
+			t.Fatalf("%s 不一致: %v vs %v", field, x, y)
+		}
+	}
+	eqStr("hostname", e.Hostname, a.Hostname)
+	eqStr("os", e.OSName, a.OSName)
+	eqStr("arch", e.Architecture, a.Architecture)
+	eqStr("agent", e.AgentVersion, a.AgentVersion)
+	eqInt("cpu", e.CPUCores, a.CPUCores)
+	eqInt("mem", e.MemoryMB, a.MemoryMB)
+	eqInt("disk", e.DiskGB, a.DiskGB)
+	if *e.Hostname != "host-1" || *e.AgentVersion != "pdnd/1.2" {
+		t.Fatalf("规整结果: %q %q", *e.Hostname, *e.AgentVersion)
+	}
+}

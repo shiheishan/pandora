@@ -60,6 +60,7 @@ func (e *enrollServer) Enroll(ctx context.Context, req *nodev1.EnrollRequest) (*
 		CSRDER:       req.GetCsrDer(),
 		RequestID:    req.GetRequestId(),
 		AgentVersion: req.GetAgentVersion(),
+		RemoteIP:     peerIP(ctx),
 	}
 	if h := req.GetHost(); h != nil {
 		in.Host = service.EnrollHostInfo{

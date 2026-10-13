@@ -9,8 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"strings"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -32,13 +30,8 @@ var enrollRequestIDPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,64}$`)
 
 const enrollTokenMaxLen = 256
 
-// EnrollHostInfo 是节点接入时自报的主机信息（proto HostInfo），采不到的项为零。
-type EnrollHostInfo struct {
-	Hostname, OS, Arch string
-	CPUCores           uint32
-	MemoryBytes        uint64
-	DiskBytes          uint64
-}
+// EnrollHostInfo 与 Hello 自报的是同一组主机信息（proto HostInfo）。
+type EnrollHostInfo = HostInfo
 
 // EnrollInput 是一次接入请求。
 type EnrollInput struct {
@@ -47,6 +40,8 @@ type EnrollInput struct {
 	RequestID    string
 	Host         EnrollHostInfo
 	AgentVersion string
+	// RemoteIP 是对端 IP，只进审计。
+	RemoteIP string
 }
 
 // EnrollResult 是接入结果：服务器 id、客户端证书链（PEM，叶子在前）、CA（PEM）。
@@ -181,34 +176,16 @@ func (s *Service) Enroll(ctx context.Context, in EnrollInput) (EnrollResult, err
 	return res, nil
 }
 
-// enrollHostInfo 把自报主机信息整理成库里的列：去控制字符、按列宽截断，零值与空串记为未知（nil）。
+// enrollHostInfo 把自报主机信息整理成库里的列（与 Hello 走同一套 agentInfo 规整）。
 func enrollHostInfo(h EnrollHostInfo, agentVersion string) repo.ServerHostInfo {
+	a := agentInfo(Hello{AgentVersion: agentVersion, Host: h})
 	return repo.ServerHostInfo{
-		Hostname:     cleanHostText(h.Hostname, 255),
-		OSName:       cleanHostText(h.OS, 64),
-		Architecture: cleanHostText(h.Arch, 32),
-		AgentVersion: cleanHostText(agentVersion, 64),
-		CPUCores:     positiveInt32(uint64(h.CPUCores)),
-		MemoryMB:     positiveInt32(h.MemoryBytes >> 20),
-		DiskGB:       positiveInt32(h.DiskBytes >> 30),
+		Hostname:     a.Hostname,
+		OSName:       a.OSName,
+		Architecture: a.Architecture,
+		AgentVersion: a.AgentVersion,
+		CPUCores:     a.CPUCores,
+		MemoryMB:     a.MemoryMB,
+		DiskGB:       a.DiskGB,
 	}
-}
-
-// cleanHostText 去掉非法 UTF-8 与控制字符（含 NUL），去首尾空白，按 rune 截到 limit；结果为空返回 nil。
-func cleanHostText(v string, limit int) *string {
-	v = strings.ToValidUTF8(v, "")
-	v = strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
-			return -1
-		}
-		return r
-	}, v)
-	v = strings.TrimSpace(v)
-	if utf8.RuneCountInString(v) > limit {
-		v = strings.TrimSpace(string([]rune(v)[:limit]))
-	}
-	if v == "" {
-		return nil
-	}
-	return &v
 }
