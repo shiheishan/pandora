@@ -134,7 +134,7 @@ func TestOffsiteConfigPathAndServiceName(t *testing.T) {
 	e := newTestEnv()
 	e.svc.opt.BackupDir = filepath.Join(t.TempDir(), "no-such-backup-dir")
 	st := e.svc.probeBackup(testNow)
-	if !strings.Contains(st.Message, "pandora-backup.service") || strings.Contains(st.Message, "aegis") {
+	if !strings.Contains(st.Message, "systemctl status pandora-backup.service") {
 		t.Fatalf("message=%q", st.Message)
 	}
 }

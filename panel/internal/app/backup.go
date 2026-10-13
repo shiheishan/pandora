@@ -153,7 +153,7 @@ func backupArgs(n int, usage string) cobra.PositionalArgs {
 
 // runWebDAVUpload 是 webdav-upload 的完整流程：核本地归档与校验文件 → 读 WebDAV 配置 → 准备清单事务 →
 // 探测 → 传归档、校验文件、清单（各自核摘要）→ 提交检查点 → 交独立 hook 复制检查点。
-// 失败只报阶段名（不带远端地址、凭据与底层错误），与旧 aegis-backup-webdav 的报错一致。
+// 失败只报阶段名（不带远端地址、凭据与底层错误），与移植前的独立上传工具报错一致。
 func runWebDAVUpload(ctx context.Context, configPath, archive, checksum string) (string, error) {
 	fail := func(stage string) error { return errors.New("webdav backup upload failed: " + stage) }
 	pair, err := dbbackup.VerifyLocalPair(archive, checksum)

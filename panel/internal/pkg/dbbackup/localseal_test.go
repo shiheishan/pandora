@@ -222,7 +222,7 @@ func TestLocalSealKeyIgnoresFileFormatting(t *testing.T) {
 }
 
 // I8：私钥行要是一把完整的 age 私钥（Bech32 校验和对、32 字节），推出来的收件人要和 .env 的
-// BACKUP_AGE_RECIPIENT 一样；对不上不封（封了也解不开）
+// PANDORA_BACKUP_AGE_RECIPIENT 一样；对不上不封（封了也解不开）
 func TestSealChecksTheIdentityAgainstTheRecipient(t *testing.T) {
 	sealTestTrustCurrentUser(t)
 	keys, dir := t.TempDir(), t.TempDir()

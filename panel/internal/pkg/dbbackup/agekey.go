@@ -9,7 +9,7 @@ import (
 
 // age 的私钥与收件人都是 Bech32（BIP-173）编码：私钥的人类可读部分是 age-secret-key-（文件里写成大写），
 // 收件人是 age。封条前要核两件事：私钥行是不是一把完整、校验和对得上的 X25519 私钥（截断、改了一个字都能看出来）；
-// 它推出来的收件人是不是 .env 的 BACKUP_AGE_RECIPIENT（备份就是加密给这个收件人的；对不上，封条有效、
+// 它推出来的收件人是不是 .env 的 PANDORA_BACKUP_AGE_RECIPIENT（备份就是加密给这个收件人的；对不上，封条有效、
 // 备份却解不开）。不依赖外部的 age-keygen
 
 const bech32Charset = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"

@@ -16,7 +16,7 @@ import (
 //
 // 没配 WebDAV 时备份只在本机，没有签名清单（清单与可信检查点是给异地副本防替换、防回滚的）。
 // backup-postgres.sh 给每份本地备份另写一份封条 pandora-postgres-<时间>.dump.age.seal：
-// 用这台安装的 age 解密私钥（BACKUP_AGE_IDENTITY）派生的 HMAC，签「归档文件名、归档 SHA256、
+// 用这台安装的 age 解密私钥（PANDORA_BACKUP_AGE_IDENTITY）派生的 HMAC，签「归档文件名、归档 SHA256、
 // 归档字节数、校验文件 SHA256」。
 //
 // 信任根就是这把私钥：恢复本来就离不开它（解密），机器整体丢失时要另存的也只有它，不另造密钥。
@@ -101,7 +101,7 @@ func loadSealKey(identityPath string) ([]byte, error) {
 }
 
 // SealLocalBackup 核过归档与校验文件（SHA256 对得上、路径与权限合规），再核私钥推出的收件人就是备份加密给的那个
-// （.env 的 BACKUP_AGE_RECIPIENT；对不上的话封条有效、备份却解不开），之后在归档旁写 <归档>.seal（0600，
+// （.env 的 PANDORA_BACKUP_AGE_RECIPIENT；对不上的话封条有效、备份却解不开），之后在归档旁写 <归档>.seal（0600，
 // 已存在就拒绝），返回封条路径
 func SealLocalBackup(archive, checksum, identityPath, recipient string) (string, error) {
 	pair, err := VerifyLocalPair(archive, checksum)
@@ -113,7 +113,7 @@ func SealLocalBackup(archive, checksum, identityPath, recipient string) (string,
 		return "", err
 	}
 	if strings.TrimSpace(recipient) != own {
-		return "", errors.New("备份解密私钥与 BACKUP_AGE_RECIPIENT 对不上：用这把私钥解不开这份备份，不封")
+		return "", errors.New("备份解密私钥与 PANDORA_BACKUP_AGE_RECIPIENT 对不上：用这把私钥解不开这份备份，不封")
 	}
 	sealPath := archive + ".seal"
 	parent, err := validateSecureParent(sealPath)

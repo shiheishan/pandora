@@ -1,10 +1,10 @@
 {
-  "endpoint": "https://dav.example.com",
+  "endpoint": "https://dav.example.test",
   "base_path": "/pandora-backups",
   "username": "pandora-backup",
-  "password_file": "/etc/aegispanel/backup-webdav.password",
-  "manifest_signing_key_file": "/etc/aegispanel/backup-manifest-ed25519.seed",
-  "manifest_checkpoint_file": "/var/lib/aegispanel/backup-webdav/latest.manifest.json",
+  "password_file": "/etc/pandora/backup-webdav.password",
+  "manifest_signing_key_file": "/etc/pandora/backup-manifest-ed25519.seed",
+  "manifest_checkpoint_file": "/var/lib/pandora/backup-webdav/latest.manifest.json",
   "checkpoint_replication_hook": "/opt/pandora/checkpoint-sink/replicate-checkpoint",
   "allow_private_network": false
 }
