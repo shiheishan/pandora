@@ -56,9 +56,9 @@ func tgdInsert(t *testing.T, e *pgEnv, vars map[string]string) {
 func tgdRows(t *testing.T, e *pgEnv, channel string) []deliveryRow {
 	t.Helper()
 	var out []deliveryRow
-	err := e.db.Conn(e.ctx).Raw(`SELECT id::text AS id, template_code, status, attempts, error_message,
+	err := e.scan(e.ctx, &out, `SELECT id::text AS id, template_code, status, attempts, error_message,
 	        payload_enc IS NOT NULL AS has_payload
-	   FROM notification_deliveries WHERE channel = ? ORDER BY created_at, id`, channel).Scan(&out).Error
+	   FROM notification_deliveries WHERE channel = ? ORDER BY created_at, id`, channel)
 	if err != nil {
 		t.Fatal(err)
 	}

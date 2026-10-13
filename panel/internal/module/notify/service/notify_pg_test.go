@@ -11,14 +11,13 @@ import (
 	"github.com/aegispanel/aegis/internal/module/notify/repo"
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
-	"github.com/aegispanel/aegis/internal/pkg/db"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/testkit"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 )
 
 type pgEnv struct {
-	db     *db.DB
+	scan   func(ctx context.Context, dest any, q string, args ...any) error
 	svc    *Service
 	repo   *repo.Repo
 	ctx    context.Context
@@ -45,7 +44,9 @@ func newPG(t *testing.T) *pgEnv {
 	d := testkit.DB(t)
 	r := repo.New(d)
 	e := &pgEnv{
-		db:     d,
+		scan: func(ctx context.Context, dest any, q string, args ...any) error {
+			return d.Conn(ctx).Raw(q, args...).Scan(dest).Error
+		},
 		repo:   r,
 		ctx:    testkit.TxCtx(t, d),
 		st:     &fakeSettings{mail: configuredMail(), site: settingssvc.Site{Name: "测试站"}},

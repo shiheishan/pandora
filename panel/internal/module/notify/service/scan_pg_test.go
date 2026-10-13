@@ -139,7 +139,7 @@ func TestScanExpiringWindowArgs(t *testing.T) {
 	wantAfter := now.AddDate(0, 0, 1)
 	wantUntil := now.AddDate(0, 0, 3)
 	for _, call := range subs.expiringCalls {
-		if call[0] == wantAfter && call[1] == wantUntil {
+		if call[0].Equal(wantAfter) && call[1].Equal(wantUntil) {
 			return
 		}
 	}

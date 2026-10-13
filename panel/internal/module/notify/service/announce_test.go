@@ -38,7 +38,7 @@ func TestAnnouncementStatus(t *testing.T) {
 		t.Fatalf("draft: st=%s pubAt=%v pubd=%v", st, pubAt, pubd)
 	}
 
-	st, pubAt, pubd = announcementStatus(false, &future, now)
+	st, _, pubd = announcementStatus(false, &future, now)
 	if st != model.AnnouncementDraft || pubd != nil {
 		t.Fatalf("draft+future publish_at: st=%s pubd=%v", st, pubd)
 	}
@@ -58,7 +58,7 @@ func TestAnnouncementStatus(t *testing.T) {
 		t.Fatalf("publish past: st=%s pubAt=%v pubd=%v", st, pubAt, pubd)
 	}
 
-	st, pubAt, pubd = announcementStatus(true, &now, now)
+	st, _, pubd = announcementStatus(true, &now, now)
 	if st != model.AnnouncementPublished || pubd == nil || !pubd.Equal(now) {
 		t.Fatalf("publish at now: st=%s pubd=%v", st, pubd)
 	}

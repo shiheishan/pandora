@@ -122,7 +122,8 @@ func (s *Service) HandleTelegramUpdate(ctx context.Context, secret string, body 
 	if err != nil {
 		return err
 	}
-	if cfg.WebhookSecret == "" || subtle.ConstantTimeCompare([]byte(secret), []byte(cfg.WebhookSecret)) != 1 {
+	// 关闭即拒绝：关闭期间 Telegram 可能仍按旧 webhook 推送，不处理绑定、不用 token 回消息
+	if !cfg.Enabled || cfg.WebhookSecret == "" || subtle.ConstantTimeCompare([]byte(secret), []byte(cfg.WebhookSecret)) != 1 {
 		return errs.New(errs.Unauthorized)
 	}
 

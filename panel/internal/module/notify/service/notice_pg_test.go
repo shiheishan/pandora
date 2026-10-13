@@ -49,7 +49,7 @@ func noticeOpenPayload(t *testing.T, e *pgEnv, d model.Delivery) deliveryPayload
 func noticeCountInbox(t *testing.T, e *pgEnv, userID uuid.UUID) int {
 	t.Helper()
 	var n int64
-	if err := e.db.Conn(e.ctx).Raw(`SELECT count(*) FROM notification_inbox WHERE user_id = ?`, userID).Scan(&n).Error; err != nil {
+	if err := e.scan(e.ctx, &n, `SELECT count(*) FROM notification_inbox WHERE user_id = ?`, userID); err != nil {
 		t.Fatal(err)
 	}
 	return int(n)

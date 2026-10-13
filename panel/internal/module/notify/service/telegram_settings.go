@@ -47,10 +47,6 @@ func (s *Service) SaveTelegramSettings(ctx context.Context, in TelegramSettingsI
 	if err != nil {
 		return err
 	}
-	effectiveToken := in.BotToken
-	if effectiveToken == "" {
-		effectiveToken = cur.BotToken
-	}
 	if in.Enabled && in.BotToken == "" && !cur.HasToken {
 		return errs.Invalid(map[string]string{"bot_token": "启用前要填 Bot Token"})
 	}
@@ -62,7 +58,16 @@ func (s *Service) SaveTelegramSettings(ctx context.Context, in TelegramSettingsI
 		AdminChatID:  in.AdminChatID,
 	}
 	if in.BotToken != "" {
-		update.BotToken = &in.BotToken
+		token := in.BotToken
+		update.BotToken = &token
+	}
+	// 先把字段全部校验完，再向 Telegram 注册 webhook：否则 Telegram 已换成新 secret、落库却被拒，绑定会静默失效
+	if err := settingssvc.ValidateTelegram(&update); err != nil {
+		return err
+	}
+	effectiveToken := cur.BotToken
+	if update.BotToken != nil {
+		effectiveToken = *update.BotToken
 	}
 
 	if in.Enabled && effectiveToken != "" && strings.HasPrefix(s.publicBaseURL, "https://") {
@@ -81,6 +86,13 @@ func (s *Service) SaveTelegramSettings(ctx context.Context, in TelegramSettingsI
 		update.WebhookSecret = &secret
 	} else if in.Enabled && effectiveToken != "" {
 		plog.From(ctx).Warn("notify: 面板对外地址不是 https，未注册 Telegram webhook，用户无法完成绑定")
+	} else if !in.Enabled {
+		// 关闭时换一个不注册给 Telegram 的随机 secret，旧 webhook 带来的请求一律 401
+		secret, err := newWebhookSecret()
+		if err != nil {
+			return errs.Wrap(errs.Internal, err)
+		}
+		update.WebhookSecret = &secret
 	}
 
 	return s.settings.SetTelegram(ctx, update)

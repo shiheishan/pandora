@@ -84,9 +84,6 @@ func TestPortalListNotificationsJSONShape(t *testing.T) {
 			t.Fatalf("missing key %q: %s", k, body)
 		}
 	}
-	if !strings.Contains(body, `"notifications":[]`) && !strings.Contains(body, `"notifications":[`) {
-		// empty case below
-	}
 	var out listNotificationsResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)

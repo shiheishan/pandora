@@ -85,7 +85,8 @@ func (c *telegramClient) post(ctx context.Context, token, method string, body []
 	urlStr := c.base + "/bot" + token + "/" + method
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, urlStr, bytes.NewReader(body))
 	if err != nil {
-		return err
+		// 错误文本带完整 URL，也就带着 token
+		return c.wrapConnErr(err, token)
 	}
 	req.Header.Set("Content-Type", "application/json")
 

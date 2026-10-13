@@ -147,7 +147,7 @@ func (e *pgEnv) insertTestUser(t *testing.T, dir *fakeDir) uuid.UUID {
 	}
 	email := "notify-" + hex.EncodeToString(b) + "@example.test"
 	var row struct{ ID uuid.UUID }
-	if err := e.db.Conn(e.ctx).Raw(`INSERT INTO users (email) VALUES (?) RETURNING id`, email).Scan(&row).Error; err != nil {
+	if err := e.scan(e.ctx, &row, `INSERT INTO users (email) VALUES (?) RETURNING id`, email); err != nil {
 		t.Fatal(err)
 	}
 	id := row.ID

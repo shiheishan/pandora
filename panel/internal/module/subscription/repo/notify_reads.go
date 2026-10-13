@@ -70,16 +70,17 @@ func (r *Repo) ExpiredForNotify(ctx context.Context, endedAfter, endedUntil time
 }
 
 // QuotaUsageForNotify 取生效订阅本期限量 traffic.bytes 配额行，用量达到 Total 的 minPercent% 及以上。
+// 比较一律用 numeric：consumed 允许超额上报、流量包余量是多行之和，bigint 乘 100 会溢出；Total 封顶到 bigint 上限。
 func (r *Repo) QuotaUsageForNotify(ctx context.Context, now time.Time, minPercent int) ([]QuotaNoticeRow, error) {
 	var out []QuotaNoticeRow
 	err := r.d.Conn(ctx).Raw(`
 		WITH usage AS (
 			SELECT q.subscription_id, s.user_id, s.plan_id, q.consumed, q.limit_value, q.period_start,
-			       q.limit_value + pk.pack_left AS total
+			       q.limit_value::numeric + pk.pack_left AS total
 			  FROM quota_balances q
 			  JOIN subscriptions s ON s.id = q.subscription_id
 			 CROSS JOIN LATERAL (
-			       SELECT COALESCE(sum(g.granted_bytes - g.consumed_bytes), 0)::bigint AS pack_left
+			       SELECT COALESCE(sum(g.granted_bytes - g.consumed_bytes), 0) AS pack_left
 			         FROM traffic_pack_grants g
 			        WHERE g.subscription_id = q.subscription_id
 			          AND g.consumed_bytes < g.granted_bytes) pk
@@ -89,10 +90,11 @@ func (r *Repo) QuotaUsageForNotify(ctx context.Context, now time.Time, minPercen
 			   AND q.limit_value > 0
 			   AND q.period_start <= ?
 			   AND (q.period_end IS NULL OR q.period_end > ?)
-			   AND q.consumed * 100 >= q.limit_value * ?)
-		SELECT subscription_id, user_id, plan_id, consumed, total, period_start
+			   AND q.consumed::numeric * 100 >= q.limit_value::numeric * ?)
+		SELECT subscription_id, user_id, plan_id, consumed,
+		       LEAST(total, 9223372036854775807)::bigint AS total, period_start
 		  FROM usage
-		 WHERE consumed * 100 >= total * ?
+		 WHERE consumed::numeric * 100 >= total * ?
 		 ORDER BY subscription_id, period_start`, now, now, now, minPercent, minPercent).Scan(&out).Error
 	if err != nil {
 		return nil, mapErr(err)

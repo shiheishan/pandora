@@ -20,6 +20,9 @@ const TaskScan = "notify:scan"
 // ScanTimeout 是 notify:scan 的任务超时。
 const ScanTimeout = 2 * time.Minute
 
+// scanBatch 是每轮扫描最多写的通知件数。
+const scanBatch = 1000
+
 // 到期提醒窗口：剩余天数落在 (lower, upper] 天。
 var expiryWindows = []struct {
 	label int
@@ -266,6 +269,13 @@ func (s *Service) Scan(ctx context.Context) (int, error) {
 	}
 	if len(pending) == 0 {
 		return 0, nil
+	}
+	// 每轮最多写 scanBatch 件，余下的下一轮接着写（已写的靠去重键跳过）：首次上线或长时间停机后
+	// 待发件可能很多，一轮全写会超任务时限，联系人查询的参数也会超过 PG 单条语句的上限
+	if len(pending) > scanBatch {
+		plog.From(ctx).Info("notify: 待发通知超过单轮上限，余下的下一轮写",
+			zap.Int("pending", len(pending)), zap.Int("batch", scanBatch))
+		pending = pending[:scanBatch]
 	}
 
 	env, err := s.loadNoticeEnv(ctx)

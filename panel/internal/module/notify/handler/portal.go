@@ -128,9 +128,6 @@ func (h *Handler) myAnnouncements(c *gin.Context) {
 			PublishedAt: a.PublishedAt,
 		}
 	}
-	if items == nil {
-		items = []portalAnnouncementDTO{}
-	}
 	httpx.OK(c, portalAnnouncementsResponse{Announcements: items})
 }
 

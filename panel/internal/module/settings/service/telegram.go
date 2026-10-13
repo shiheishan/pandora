@@ -17,9 +17,9 @@ import (
 const (
 	keyTelegramEnabled       = "telegram.enabled"
 	keyTelegramBotUsername   = "telegram.bot_username"
-	keyTelegramBotToken      = "telegram.bot_token"
+	keyTelegramBotToken      = "telegram.bot_token"      //nolint:gosec // 设置键名；值经 Sealer 封存（AAD 为键名）
 	keyTelegramAdminChatID   = "telegram.admin_chat_id"
-	keyTelegramWebhookSecret = "telegram.webhook_secret"
+	keyTelegramWebhookSecret = "telegram.webhook_secret" //nolint:gosec // 设置键名；值经 Sealer 封存（AAD 为键名）
 
 	auditTelegramChanged = "settings.telegram_updated"
 )
@@ -95,8 +95,9 @@ func (s *Service) Telegram(ctx context.Context) (Telegram, error) {
 	return m, nil
 }
 
-// SetTelegram 写入 Telegram 通知设置。
-func (s *Service) SetTelegram(ctx context.Context, v TelegramUpdate) error {
+// ValidateTelegram 规整并校验一份 Telegram 设置更新（SetTelegram 落库前同样调它）。
+// 调用方要在动外部状态（如向 Telegram 注册 webhook）之前先调，免得外部已改、落库却被拒。
+func ValidateTelegram(v *TelegramUpdate) error {
 	v.BotUsername = strings.TrimPrefix(strings.TrimSpace(v.BotUsername), "@")
 	if v.BotToken != nil {
 		*v.BotToken = strings.TrimSpace(*v.BotToken)
@@ -130,6 +131,14 @@ func (s *Service) SetTelegram(ctx context.Context, v TelegramUpdate) error {
 		if len(sec) < 16 || len(sec) > 256 || !telegramWebhookRe.MatchString(sec) {
 			return errs.Wrap(errs.Internal, errors.New("settings: webhook_secret 格式无效"))
 		}
+	}
+	return nil
+}
+
+// SetTelegram 写入 Telegram 通知设置。
+func (s *Service) SetTelegram(ctx context.Context, v TelegramUpdate) error {
+	if err := ValidateTelegram(&v); err != nil {
+		return err
 	}
 
 	return s.tx.Do(ctx, func(ctx context.Context) error {

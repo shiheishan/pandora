@@ -320,9 +320,6 @@ func (s *Service) ListAnnouncements(ctx context.Context) (AdminAnnouncements, er
 			CreatedAt:    row.CreatedAt,
 		}
 	}
-	if anns == nil {
-		anns = []AnnouncementView{}
-	}
 	return AdminAnnouncements{
 		Announcements: anns,
 		Plans:         annPlanRefsForList(planList),
@@ -549,9 +546,6 @@ func (s *Service) MyAnnouncements(ctx context.Context, userID uuid.UUID) ([]Port
 			Pinned:      a.Pinned,
 			PublishedAt: pub,
 		}
-	}
-	if out == nil {
-		return []PortalAnnouncement{}, nil
 	}
 	return out, nil
 }

@@ -27,9 +27,9 @@ func tgbSave(e *pgEnv, in TelegramSettingsInput) error {
 func tgbCountUnusedCodes(t *testing.T, e *pgEnv, userID uuid.UUID) int {
 	t.Helper()
 	var n int64
-	if err := e.db.Conn(e.ctx).Raw(
+	if err := e.scan(e.ctx, &n,
 		`SELECT count(*) FROM telegram_bind_codes WHERE user_id = ? AND used_at IS NULL`, userID,
-	).Scan(&n).Error; err != nil {
+	); err != nil {
 		t.Fatal(err)
 	}
 	return int(n)
@@ -182,9 +182,9 @@ func TestIssueBindCode(t *testing.T) {
 		t.Fatalf("code %q exp %v", bc.Code, bc.ExpiresAt)
 	}
 	var hash string
-	if err := e.db.Conn(e.ctx).Raw(
+	if err := e.scan(e.ctx, &hash,
 		`SELECT encode(code_hash, 'hex') FROM telegram_bind_codes WHERE user_id = ?`, uid,
-	).Scan(&hash).Error; err != nil {
+	); err != nil {
 		t.Fatal(err)
 	}
 	if hash == bc.Code {
@@ -218,6 +218,12 @@ func TestHandleTelegramUpdateBind(t *testing.T) {
 	if err := e.svc.HandleTelegramUpdate(e.ctx, "wrong", tgbWebhookBody("", 1, "private", "ABCD1234")); !isCode(err, errs.Unauthorized) {
 		t.Fatalf("err %v", err)
 	}
+	// 关闭即拒绝：secret 对得上也不处理
+	e.st.tg.Enabled = false
+	if err := e.svc.HandleTelegramUpdate(e.ctx, "whsec", tgbWebhookBody("", 1, "private", "ABCD1234")); !isCode(err, errs.Unauthorized) {
+		t.Fatalf("disabled telegram must reject webhook, got %v", err)
+	}
+	e.st.tg.Enabled = true
 
 	bc, err := e.svc.IssueBindCode(e.ctx, uid)
 	if err != nil {
@@ -233,9 +239,9 @@ func TestHandleTelegramUpdateBind(t *testing.T) {
 		t.Fatalf("binding %+v ok %v err %v", b, ok, err)
 	}
 	var usedAt *time.Time
-	if err := e.db.Conn(e.ctx).Raw(
+	if err := e.scan(e.ctx, &usedAt,
 		`SELECT used_at FROM telegram_bind_codes WHERE user_id = ?`, uid,
-	).Scan(&usedAt).Error; err != nil || usedAt == nil {
+	); err != nil || usedAt == nil {
 		t.Fatalf("used_at %v err %v", usedAt, err)
 	}
 	if len(e.audit.events) == 0 || e.audit.events[len(e.audit.events)-1].Action != "telegram.bound" {
@@ -287,9 +293,9 @@ func TestHandleTelegramUpdateBind(t *testing.T) {
 		t.Fatalf("reply %q", txt)
 	}
 	var used2 *time.Time
-	if err := e.db.Conn(e.ctx).Raw(
+	if err := e.scan(e.ctx, &used2,
 		`SELECT used_at FROM telegram_bind_codes WHERE user_id = ?`, uid2,
-	).Scan(&used2).Error; err != nil || used2 != nil {
+	); err != nil || used2 != nil {
 		t.Fatalf("uid2 code should stay unused: %v err %v", used2, err)
 	}
 }
