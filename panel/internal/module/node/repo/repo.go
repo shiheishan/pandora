@@ -21,3 +21,11 @@ func New(d *db.DB) *Repo { return &Repo{d: d} }
 // 订阅线路、套餐页每个池的可下发数、后台节点列表的「是否下发」都用它，不另写变体。
 const DeliverableNodeCond = `n.deleted_at IS NULL AND n.serving_status = 'active'
  AND s.deleted_at IS NULL AND s.status = 'ready' AND s.last_heartbeat_at IS NOT NULL`
+
+// ServedOnServerCond 是「一台服务器上该跑哪些节点」的唯一口径：节点未删除且在役，服务器未删除、
+// 处于 ready / draining / maintenance（排空与维护中照常服务已有用户，只是不再发给新拉取的订阅）。
+// 节点通道下发的名单（Rosters）与配置（ServerConfigs）按同一个节点集合给；不在集合里的节点由节点端停掉。
+//
+// 别名约定同 DeliverableNodeCond（n、s）。
+const ServedOnServerCond = `n.deleted_at IS NULL AND n.serving_status = 'active'
+ AND s.deleted_at IS NULL AND s.status IN ('ready', 'draining', 'maintenance')`
