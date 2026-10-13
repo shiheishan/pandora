@@ -36,7 +36,7 @@ func (h *Handler) listUsers(c *gin.Context) {
 		}
 		f.GroupID = &gid
 	}
-	_ = q.SubState // 订阅模块接入前不生效
+	f.SubState = q.SubState
 
 	ctx := c.Request.Context()
 	rows, total, err := h.svc.ListUsers(ctx, f, limit, offset)
