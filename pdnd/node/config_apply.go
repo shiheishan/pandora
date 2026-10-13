@@ -1,9 +1,6 @@
 package node
 
 import (
-	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,90 +12,12 @@ import (
 	"github.com/aegispanel/nodeagent/panel"
 )
 
-// syncOnce 是一轮轮询：先配置、后用户。
-func (n *Node) syncOnce(ctx context.Context) {
-	cfgErr, usersErr := n.syncOnceErr(ctx)
-	if cfgErr != nil {
-		n.log.Error("同步配置失败", "err", cfgErr)
-	}
-	if usersErr != nil {
-		n.log.Error("同步用户失败", "err", usersErr)
-	}
-}
-
-// syncOnceErr 是 syncOnce 的本体，把两段错误交给调用方（冷启动要据此决定能不能
-// 用落盘缓存）。
-//
-// 配置同步失败不挡用户同步：签名回执补报失败、换钥检查失败、新发布验签不过，
-// 都与「该放行谁」无关。原先这里配置一出错就 return，回执接口持续 5xx 时用户
-// 名单整个冻结（该删的人不删、新用户连不上）。只要入站在服务就照常拉用户。
-func (n *Node) syncOnceErr(ctx context.Context) (cfgErr, usersErr error) {
-	cfgErr = n.syncConfig(ctx)
-	if cfgErr == nil {
-		// 面板确认过配置（204 / 304 / 新版本已装上），不再是「只靠缓存在服务」。
-		n.fromCache = false
-	}
-	if n.started {
-		usersErr = n.syncUsers(ctx)
-	}
-	n.flushUsersCache()
-	return cfgErr, usersErr
-}
-
-// compatApplyFailure 是兼容通道「新配置装不上、旧配置仍在服务」的重试台账。
-//
-// 配置 ETag 在解析成功时就记下了，不作废的话每轮都换回 304、永不再试（审计 E2：
-// 端口一度被占、随后释放，节点仍停在旧端口，面板却以为它在新端口）。作废得
-// 太勤又会每轮重建入站。所以按 applyRetryDelay 退避：到点才作废 ETag 再拉一次。
-type compatApplyFailure struct {
-	etag      string
-	attempts  int
-	nextRetry time.Time
-}
-
-func (n *Node) syncConfig(ctx context.Context) error {
-	if n.signed != nil {
-		return n.syncSignedConfig(ctx)
-	}
-	if f := n.compatFailure; f != nil && n.started && !n.clock().Before(f.nextRetry) {
-		n.log.Info("重试之前装不上的配置", "第几次", f.attempts+1)
-		n.client.ForgetConfigVersion()
-	}
-	cfg, changed, err := n.client.Config(ctx)
-	if err != nil {
-		return err
-	}
-	if !changed {
-		return nil
-	}
-	if err := n.applyConfig(cfg); err != nil {
-		if !n.started {
-			// 节点已不在服务（首次就没装上，或回滚也失败了）：作废配置
-			// ETag，下一轮重拉重试——没有旧配置可保，重试没有代价。
-			n.client.ForgetConfigVersion()
-			return err
-		}
-		etag := n.client.ConfigVersion()
-		f := n.compatFailure
-		if f == nil || f.etag != etag {
-			f = &compatApplyFailure{etag: etag}
-			n.compatFailure = f
-		}
-		f.attempts++
-		f.nextRetry = n.clock().Add(applyRetryDelay(f.attempts))
-		return err
-	}
-	n.compatFailure = nil
-	n.saveCompatConfigCache(cfg)
-	return nil
-}
-
 // applyRetryMax 是装失败重试的退避上限。
 const applyRetryMax = 5 * time.Minute
 
 // applyRetryDelay 是第 attempts 次装失败之后、下一次重试之前的等待：1、2、4 分钟，
 // 之后封顶 5 分钟，各带 ±10% 抖动。只用于「旧配置仍在服务」：这时每次重试都可能
-// 重建入站、断一次在线连接，不能每轮都试；节点已停时没有可保的东西，每轮都试。
+// 重建入站、断一次在线连接，不能频繁试；节点已停时没有可保的东西，按 stoppedRetryInterval 试。
 func applyRetryDelay(attempts int) time.Duration {
 	if attempts < 1 {
 		attempts = 1
@@ -110,9 +29,9 @@ func applyRetryDelay(attempts int) time.Duration {
 	return panel.Jitter(d)
 }
 
-// registerInboundOwner 告诉内核这个入站属于哪个面板的哪个节点（可选契约）。
-// 只影响端口冲突时能不能写出对方节点 ID：同一面板（同一 panel URL 加同一租户）
-// 才写，别的面板一律「本机其他服务」。租户不明（兼容通道）时范围为空，不透露。
+// registerInboundOwner 告诉内核这个入站属于哪台服务器的哪个节点（可选契约）。
+// 只影响端口冲突时能不能写出对方节点 id：同一台服务器（同一 scope）的节点之间才写，
+// 别的一律「本机其他服务」。
 func (n *Node) registerInboundOwner() {
 	registrar, ok := n.kernel.(interface {
 		SetInboundOwner(tag, scope, nodeID string)
@@ -120,47 +39,31 @@ func (n *Node) registerInboundOwner() {
 	if !ok {
 		return
 	}
-	scope := ""
-	if n.tenantID != "" {
-		sum := sha256.Sum256([]byte(panelKey(n.client.BaseURL()) + "\n" + n.tenantID))
-		scope = hex.EncodeToString(sum[:16])
-	}
-	registrar.SetInboundOwner(n.tag, scope, n.client.NodeID())
+	registrar.SetInboundOwner(n.tag, n.scope, n.id)
 }
 
-// panelKey 把面板地址规整成比较与哈希用的形式。
-func panelKey(base string) string {
-	return strings.TrimRight(strings.ToLower(strings.TrimSpace(base)), "/")
-}
-
-// applyConfig 装一份配置并记下结果：失败原因留给 degraded 上报，成功即清空。
-// 冷启动时先排队（StartupOrder），保证同机端口按 nodes[] 顺序先到先得。
-func (n *Node) applyConfig(cfg map[string]any) error {
-	n.awaitStartupTurn()
-	err := n.applyConfigOnce(cfg)
+// applyConfig 装一份配置并记下结果：失败原因留给心跳上报，成功即清空。
+// 主循环按 ServerConfig 的顺序逐个装，同机端口天然先到先得，不用另外排队。
+func (n *Node) applyConfig(cfg map[string]any, nodeType string) error {
+	err := n.applyConfigOnce(cfg, nodeType)
 	n.lastApplyErr = err
 	return err
 }
 
-func (n *Node) applyConfigOnce(cfg map[string]any) error {
+func (n *Node) applyConfigOnce(cfg map[string]any, nodeType string) error {
 	snapshot, err := cloneConfigMap(cfg)
 	if err != nil {
 		return fmt.Errorf("snapshot config: %w", err)
 	}
 	previous := n.activeConfig
-	previousPull, previousPush := n.pullInterval, n.pushInterval
+	previousType := n.nodeType
 	previousUsers := make([]core.User, 0, len(n.known))
 	for _, user := range n.known {
 		previousUsers = append(previousUsers, user)
 	}
 
-	prepared := n.prepareInstallUsers(cfg)
-	if err := n.installConfig(cfg, prepared); err != nil {
-		if prepared != nil && prepared.fresh {
-			// 客户端已记下新名单的 ETag，内核却没装上：作废它，下一轮全量对齐。
-			n.client.ForgetUsersVersion()
-		}
-		n.pullInterval, n.pushInterval = previousPull, previousPush
+	prepared := n.prepareInstallUsers()
+	if err := n.installConfig(cfg, nodeType, prepared); err != nil {
 		var applyErr *core.ConfigApplyError
 		if errors.As(err, &applyErr) && applyErr.PreviousPreserved {
 			if len(previousUsers) > 0 {
@@ -174,7 +77,7 @@ func (n *Node) applyConfigOnce(cfg map[string]any) error {
 		if previous == nil {
 			return err
 		}
-		if restoreErr := n.installConfig(previous, nil); restoreErr != nil {
+		if restoreErr := n.installConfig(previous, previousType, nil); restoreErr != nil {
 			n.markInboundLost()
 			return errors.Join(err, fmt.Errorf("restore previous config: %w", restoreErr))
 		}
@@ -185,24 +88,27 @@ func (n *Node) applyConfigOnce(cfg map[string]any) error {
 			}
 		}
 		// 旧入站已装回、正在服务。节点此前可能因回滚失败被标成已停：不在这里
-		// 恢复 started，用户就一直不同步，下一轮还会把同一份坏配置当成「节点
-		// 已停、该重试」再重建两次入站。用户镜像若已作废，下一轮自会全量补回。
+		// 恢复 started，名单就一直不装，下一次重试还会把同一份坏配置当成「节点
+		// 已停」再重建两次入站。用户镜像若已作废，面板收到 resync 回执会发全量。
 		n.started = true
 		n.log.Warn("新配置应用失败，已恢复上一版本", "err", err)
 		return err
 	}
 
 	n.activeConfig = snapshot
-	// 入站重建会丢掉内核里的用户表：带名单装的，本地镜像对齐到那份名单；没带的
-	// 整个作废（否则下一轮要么 diff 认为「都已下发」，要么拿旧 ETag 换回 304——
-	// 两种都是谁也连不上）。
+	n.nodeType = strings.TrimSpace(nodeType)
+	// 入站重建会丢掉内核里的用户表：带名单装的，本地镜像对齐到那份名单；兼容内核补回手上的名单
+	// （否则 diff 认为「都已下发」，谁也连不上）。
 	n.adoptInstalledUsers(prepared)
 	n.started = true
-	n.log.Info("入站已就绪", "port", intFrom(cfg, "server_port"))
 	return nil
 }
 
-func (n *Node) installConfig(cfg map[string]any, prepared *preparedUsers) error {
+func (n *Node) installConfig(cfg map[string]any, nodeType string, prepared *preparedUsers) error {
+	protocol := strings.TrimSpace(nodeType)
+	if protocol == "" {
+		return errors.New("面板没给 node_type")
+	}
 	port := intFrom(cfg, "server_port")
 	if port <= 0 || port > 65535 {
 		return errInvalidPort(port)
@@ -211,7 +117,7 @@ func (n *Node) installConfig(cfg map[string]any, prepared *preparedUsers) error 
 	kernel, _ := cfg["kernel"].(string)
 	inbound := &core.InboundConfig{
 		Tag:      n.tag,
-		Protocol: n.protocolFrom(cfg),
+		Protocol: protocol,
 		Port:     port,
 		Kernel:   kernel,
 		Raw:      cfg,
@@ -226,8 +132,8 @@ func (n *Node) installConfig(cfg map[string]any, prepared *preparedUsers) error 
 			if !isUsersPreloadError(err) {
 				return err
 			}
-			// 入站已起、名单没装上：与原先「装完再同步用户失败」一样，留给下一轮同步。
-			n.log.Warn("入站已就绪，随入站一起装的用户名单失败，等下一轮同步", "err", err)
+			// 入站已起、名单没装上：作废镜像，面板收到 resync 回执会发全量。
+			n.log.Warn("入站已就绪，随入站一起装的用户名单失败，等面板发全量", "err", err)
 			prepared.failed = true
 		}
 	} else if applier, ok := n.kernel.(core.ConfigApplier); ok {
@@ -238,18 +144,10 @@ func (n *Node) installConfig(cfg map[string]any, prepared *preparedUsers) error 
 		if err := n.kernel.AddInbound(inbound); err != nil {
 			return err
 		}
-		// Compatibility cores do not expose a generation-level apply contract.
+		// 兼容内核没有整代应用的契约。
 		if err := n.kernel.SetRouting(n.tag, routing); err != nil {
 			_ = n.kernel.DelInbound(n.tag)
 			return err
-		}
-	}
-	if base, ok := cfg["base_config"].(map[string]any); ok {
-		if v := intFrom(base, "pull_interval"); v > 0 {
-			n.pullInterval = time.Duration(v) * time.Second
-		}
-		if v := intFrom(base, "push_interval"); v > 0 {
-			n.pushInterval = time.Duration(v) * time.Second
 		}
 	}
 	return nil

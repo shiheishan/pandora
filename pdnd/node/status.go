@@ -1,50 +1,54 @@
 package node
 
 import (
-	"context"
 	"errors"
 	"strings"
 
-	"github.com/aegispanel/nodeagent/panel"
+	nodev1 "github.com/aegispanel/nodeapi/pandora/node/v1"
 )
 
 // 运行状态如实上报。
 //
-// 原先 reportStatus 无条件报 running，面板据此给健康分 90、照常进订阅——入站
-// 根本没起来、或新配置装不上停在旧端口的节点，在后台看起来和好节点一模一样
-// （审计 multinode 第 4 节）。现在按节点的真实处境报：
+// 心跳里每个节点一条 NodeRuntime，按节点的真实处境报：入站没起来、或新配置装不上停在旧配置、
+// 或面板还没确认正靠落盘缓存服务的节点，不能在后台看起来和好节点一模一样。
 //
-//	running   入站在服务，面板最新确认过的配置已装上
-//	degraded  以下任一：入站没起来（not_started 或具体原因）；新配置装不上、
-//	          旧配置仍在服务（config_apply_failed 或具体原因）；面板还没确认、
-//	          正靠落盘缓存服务（serving_cached_config）
+//	RUNNING   入站在服务，面板最新确认过的配置已装上
+//	DEGRADED  新配置装不上、旧配置仍在服务（config_apply_failed 或具体原因）；
+//	          面板还没确认、正靠落盘缓存服务（serving_cached_config）
+//	DOWN      入站没起来（not_started 或具体原因）
 //
-// 原因是纯 ASCII 的机器可读串，端口冲突时是内核给的
-// port_in_use:<端口>/<tcp|udp>:<同面板节点 ID 或 other>。
+// 原因是纯 ASCII 的机器可读串。端口冲突时内核给 port_in_use:<端口>/<tcp|udp>:<占用者节点 id 或 other>，
+// 上报时拆成 reason（port_in_use:<端口>/<L4>）与 reason_node_id。
 
 const (
-	runtimeRunning  = "running"
-	runtimeDegraded = "degraded"
-
 	reasonNotStarted    = "not_started"
 	reasonApplyFailed   = "config_apply_failed"
 	reasonServingCached = "serving_cached_config"
+	reasonPortInUse     = "port_in_use"
+
+	// maxRuntimeReasonBytes 限制原因串长度：面板只拿来展示与归类。
+	maxRuntimeReasonBytes = 200
 )
 
-// maxRuntimeReasonBytes 限制原因串长度：它走请求头，面板侧也只拿来展示。
-const maxRuntimeReasonBytes = 200
-
-// runtimeHealth 返回要上报的运行状态与原因（running 时原因为空）。
-func (n *Node) runtimeHealth() (status, reason string) {
+// runtime 是这个节点要上报的运行状态。
+func (n *Node) runtime() *nodev1.NodeRuntime {
+	rt := &nodev1.NodeRuntime{NodeId: n.id}
+	var reason string
 	switch {
 	case !n.started:
-		return runtimeDegraded, applyErrReason(n.lastApplyErr, reasonNotStarted)
-	case n.failedSigned != nil || n.compatFailure != nil:
-		return runtimeDegraded, applyErrReason(n.lastApplyErr, reasonApplyFailed)
+		rt.Status = nodev1.RuntimeStatus_RUNTIME_STATUS_DOWN
+		reason = applyErrReason(n.lastApplyErr, reasonNotStarted)
+	case n.failed != nil:
+		rt.Status = nodev1.RuntimeStatus_RUNTIME_STATUS_DEGRADED
+		reason = applyErrReason(n.lastApplyErr, reasonApplyFailed)
 	case n.fromCache:
-		return runtimeDegraded, reasonServingCached
+		rt.Status = nodev1.RuntimeStatus_RUNTIME_STATUS_DEGRADED
+		reason = reasonServingCached
+	default:
+		rt.Status = nodev1.RuntimeStatus_RUNTIME_STATUS_RUNNING
 	}
-	return runtimeRunning, ""
+	rt.Reason, rt.ReasonNodeId = splitPortReason(reason)
+	return rt
 }
 
 // applyErrReason 取内核给的机器可读原因（如端口占用），没有就用 fallback。
@@ -58,7 +62,7 @@ func applyErrReason(err error, fallback string) string {
 	return fallback
 }
 
-// asciiReason 只留可打印 ASCII 并截断：原因要放进 HTTP 请求头。
+// asciiReason 只留可打印 ASCII 并截断。
 func asciiReason(s string) string {
 	var b strings.Builder
 	for i := 0; i < len(s) && b.Len() < maxRuntimeReasonBytes; i++ {
@@ -69,50 +73,43 @@ func asciiReason(s string) string {
 	return b.String()
 }
 
-// reportStatus 把本机资源占用与运行状态报给面板。
-//
-// 面板拿它更新 last_heartbeat_at 和 health_score——也就是后台节点列表上
-// 「这个节点还活着吗」的唯一依据。不报的话那几列一直空着，服务挂了后台
-// 也不变色，只能等用户报障。
-//
-// 两条通道都带资源占用，面板都写进 node_metrics（后台资源曲线读那张表）：
-// 签名通道随 Heartbeat 带 metrics（另含负载、网络累计、TCP 连接数、开机
-// 时长），兼容通道走 /status，只有 CPU、内存、磁盘。
-//
-// 状态只用已有字段：签名心跳的 runtime_status 本来就有；原因（以及兼容通道
-// 的状态）走请求头 X-Node-Runtime-Reason / X-Node-Runtime-Status，不进正文——
-// 面板按 DisallowUnknownFields 解码，正文多一个字段整条 400。面板侧接住之前
-// 这两个头只是被忽略。
-//
-// 失败只记日志不重试：下一个节拍会再来一次，而卡在这里重试会挤掉同一个
-// 循环里的配置同步和流量上报——那两件比状态上报重要。
-func (n *Node) reportStatus(ctx context.Context) {
-	status, reason := n.runtimeHealth()
-	if status != runtimeRunning {
-		n.log.Warn("节点降级运行", "原因", reason, "err", n.lastApplyErr)
+// splitPortReason 把 port_in_use:443/tcp:<节点 id> 拆成 port_in_use:443/tcp 与占用者节点 id
+// （占用者是 other，即本机别的进程时为空）；其他原因原样返回。
+func splitPortReason(reason string) (code, nodeID string) {
+	if !strings.HasPrefix(reason, reasonPortInUse+":") {
+		return reason, ""
 	}
-	if n.signed != nil {
-		input := panel.HeartbeatInput{
-			AgentVersion: "pandora-native", RuntimeVersion: n.kernel.Type(),
-			RuntimeStatus: status, RuntimeReason: reason,
-			ConfigVersion: n.appliedConfigVersion, ConfigSigningKeyID: n.signed.ConfigSigningKeyID(),
-		}
-		if n.appliedReleaseID != "" {
-			input.AppliedReleaseID = n.appliedReleaseID
-			input.AppliedGeneration = n.appliedGeneration
-			input.AppliedContentSHA256 = n.appliedConfigHash
-		} else {
-			input.ConfigHash = n.appliedConfigHash
-		}
-		input.AttachHostMetrics()
-		if _, err := n.signed.Heartbeat(ctx, input); err != nil {
-			n.log.Error("签名上报运行状态失败", "err", err)
-		}
+	rest := reason[len(reasonPortInUse)+1:]
+	port, owner, ok := strings.Cut(rest, ":")
+	if !ok {
+		return reason, ""
+	}
+	code = reasonPortInUse + ":" + port
+	if owner == "other" {
+		return code, ""
+	}
+	return code, owner
+}
+
+// sendHeartbeat 报本机资源占用与各节点运行状态。面板拿它判断「这台机器还活着吗」与各节点健康。
+// 没连着就不采样（省掉 CPU 采样的 100ms）；失败不重试，下个节拍再来。
+func (s *Server) sendHeartbeat() {
+	if !s.connected || s.link == nil {
 		return
 	}
-	runtime := panel.CollectRuntimeStatus()
-	runtime.Status, runtime.Reason = status, reason
-	if err := n.client.Status(ctx, runtime); err != nil {
-		n.log.Error("上报运行状态失败", "err", err)
+	hb := &nodev1.Heartbeat{Metrics: s.metric()}
+	for _, id := range s.order {
+		n := s.nodes[id]
+		if n == nil {
+			continue
+		}
+		rt := n.runtime()
+		if rt.Status != nodev1.RuntimeStatus_RUNTIME_STATUS_RUNNING {
+			n.log.Warn("节点降级运行", "状态", rt.Status.String(), "原因", rt.Reason, "err", n.lastApplyErr)
+		}
+		hb.Nodes = append(hb.Nodes, rt)
+	}
+	if !s.link.SendHeartbeat(hb) {
+		s.log.Debug("心跳没发出去，等下个节拍")
 	}
 }

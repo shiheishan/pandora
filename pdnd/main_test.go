@@ -3,11 +3,16 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/aegispanel/nodeagent/panel"
 )
 
+const testConfig = `{"panel":{"address":"panel.example.test:9443"}}`
+
 func TestConfigDefaultsToNativeOnly(t *testing.T) {
-	cfg := loadTestConfig(t, `{"panel":{"url":"https://panel.invalid"},"nodes":[{"node_id":"n1","node_type":"vless","token":"token"}]}`)
+	cfg := loadTestConfig(t, testConfig)
 	if cfg.NativeOnly != nil || !cfg.nativeOnly() {
 		t.Fatalf("omitted native_only must default true: raw=%v effective=%v", cfg.NativeOnly, cfg.nativeOnly())
 	}
@@ -19,30 +24,45 @@ func TestDefaultConfigPathMatchesNativeReleaseService(t *testing.T) {
 	}
 }
 
-func TestConfigIdentityPathDefaultsToBootstrapDefault(t *testing.T) {
-	cfg := loadTestConfig(t, `{"panel":{"url":"https://panel.invalid"},"nodes":[{"node_id":"n1","node_type":"vless","token":"token"}]}`)
-	if got := cfg.identityPath(""); got != "/var/lib/pandora-native/identity.json" {
-		t.Fatalf("identity path = %q", got)
+// 身份目录缺省落在状态目录下：会话里续期要原地换证书，必须是服务可写的路径。
+func TestConfigIdentityDirDefaultsToStateDirectory(t *testing.T) {
+	cfg := loadTestConfig(t, testConfig)
+	if got := cfg.identityDir(); got != "/var/lib/pandora-native/identity" || got != panel.DefaultIdentityDir {
+		t.Fatalf("identity dir = %q", got)
 	}
 }
 
-func TestConfigIdentityPathCanMatchPackagedInstaller(t *testing.T) {
-	cfg := loadTestConfig(t, `{"panel":{"url":"https://panel.invalid","identity_path":"/etc/pandora-native/identity.json"},"nodes":[{"node_id":"n1","node_type":"vless","token":"token"}]}`)
-	if got := cfg.identityPath(""); got != "/etc/pandora-native/identity.json" {
-		t.Fatalf("identity path = %q", got)
+func TestConfigIdentityDirOverride(t *testing.T) {
+	cfg := loadTestConfig(t, `{"panel":{"address":"panel.example.test","identity_dir":"/srv/pandora/identity"}}`)
+	if got := cfg.identityDir(); got != "/srv/pandora/identity" {
+		t.Fatalf("identity dir = %q", got)
 	}
 }
 
-func TestNodeIdentityPathOverridesPanelDefault(t *testing.T) {
-	cfg := loadTestConfig(t, `{"panel":{"url":"https://panel.invalid","identity_path":"/shared/identity.json"},"nodes":[{"node_id":"n1","node_type":"vless","token":"token","identity_path":"/nodes/n1.json"}]}`)
-	if got := cfg.identityPath(cfg.Nodes[0].IdentityPath); got != "/nodes/n1.json" {
-		t.Fatalf("identity path = %q", got)
+func TestConfigRequiresPanelAddress(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"panel":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadConfig(path); err == nil {
+		t.Fatal("panel.address 为空时应拒绝")
 	}
 }
 
-func TestVerifyIdentityRequiresNodeIDBeforeNetworkAccess(t *testing.T) {
-	if err := verifyIdentityCommand([]string{"--identity", filepath.Join(t.TempDir(), "missing.json")}); err == nil || err.Error() != "node-id is required" {
-		t.Fatalf("verifyIdentityCommand error = %v", err)
+// 旧通道的字段（url、token、signed_required、nodes[]）已删除，留在配置里要报错而不是被静默忽略。
+func TestConfigRejectsRemovedFields(t *testing.T) {
+	for _, body := range []string{
+		`{"panel":{"address":"p.example.test","url":"https://p.example.test"}}`,
+		`{"panel":{"address":"p.example.test","signed_required":true}}`,
+		`{"panel":{"address":"p.example.test"},"nodes":[{"node_id":"n1","node_type":"vless","token":"t"}]}`,
+	} {
+		path := filepath.Join(t.TempDir(), "config.json")
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := loadConfig(path); err == nil {
+			t.Fatalf("应拒绝已删除的字段: %s", body)
+		}
 	}
 }
 
@@ -56,11 +76,50 @@ func TestConfigExplicitCompatibilityOverride(t *testing.T) {
 		{name: "true", json: "true", want: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := loadTestConfig(t, `{"native_only":`+tc.json+`,"panel":{"url":"https://panel.invalid"},"nodes":[{"node_id":"n1","node_type":"vless","token":"token"}]}`)
+			cfg := loadTestConfig(t, `{"native_only":`+tc.json+`,"panel":{"address":"panel.example.test"}}`)
 			if cfg.NativeOnly == nil || cfg.nativeOnly() != tc.want {
 				t.Fatalf("native_only=%s: raw=%v effective=%v want=%v", tc.json, cfg.NativeOnly, cfg.nativeOnly(), tc.want)
 			}
 		})
+	}
+}
+
+// 令牌不进 argv：没有 --token 这个参数。
+func TestEnrollRejectsTokenOnCommandLine(t *testing.T) {
+	err := enrollCommand([]string{"--panel", "127.0.0.1:9443", "--ca-sha256", "sha256:" + strings.Repeat("0", 64), "--token", "secret"}, strings.NewReader(""))
+	if err == nil {
+		t.Fatal("--token 应被拒绝")
+	}
+}
+
+func TestEnrollRequiresExactlyOneTokenSource(t *testing.T) {
+	base := []string{"--panel", "127.0.0.1:9443", "--ca-sha256", "sha256:" + strings.Repeat("0", 64)}
+	if err := enrollCommand(base, strings.NewReader("")); err == nil || !strings.Contains(err.Error(), "--token-file") {
+		t.Fatalf("没有令牌来源时应报错，得 %v", err)
+	}
+	file := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(file, []byte("t\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	both := append(append([]string{}, base...), "--token-file", file, "--token-stdin")
+	if err := enrollCommand(both, strings.NewReader("t\n")); err == nil || !strings.Contains(err.Error(), "只能给一个") {
+		t.Fatalf("两个来源同时给时应报错，得 %v", err)
+	}
+}
+
+func TestReadToken(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(file, []byte("  abc123 \n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := readToken(file, false, nil); err != nil || got != "abc123" {
+		t.Fatalf("token-file = %q, %v", got, err)
+	}
+	if got, err := readToken("", true, strings.NewReader("xyz\nignored\n")); err != nil || got != "xyz" {
+		t.Fatalf("token-stdin = %q, %v", got, err)
+	}
+	if _, err := readToken("", true, strings.NewReader("\n")); err == nil {
+		t.Fatal("空令牌应报错")
 	}
 }
 
