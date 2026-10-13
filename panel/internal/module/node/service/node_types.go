@@ -1,0 +1,330 @@
+package service
+
+// 本文件归 p5-inventory：服务器与节点后台编排的对外类型与共用的错误构造。
+// 对外方法的参数与返回值只用这里的类型，不暴露 model。
+
+import (
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
+
+	"github.com/aegispanel/aegis/internal/pkg/errs"
+)
+
+// ---------------------------------------------------------------------------
+// 服务器
+// ---------------------------------------------------------------------------
+
+// Server 是后台读到的一台服务器（含名下节点计数）。
+type Server struct {
+	ID              uuid.UUID
+	Name            string
+	Status          string
+	StatusReason    *string
+	RowVersion      int64
+	Region          *string
+	Hostname        *string
+	PublicIPv4      *string
+	PublicIPv6      *string
+	PrivateIPv4     *string
+	Architecture    *string
+	OSName          *string
+	AgentVersion    *string
+	LastHeartbeatAt *time.Time
+	// HeartbeatOnline：status = ready 且最近心跳在 NodeStaleAfter 之内
+	HeartbeatOnline bool
+	CPUCores        *int
+	MemoryMB        *int
+	DiskGB          *int
+	CapacityNodes   int
+	Notes           *string
+	// NodeCount 是名下未删除的节点数（含已退役）
+	NodeCount int
+	// ActiveNodeCount 是名下 serving_status = active 的节点数
+	ActiveNodeCount int
+	// ServingNodeCount 是在役且服务器见过心跳的节点数；NeverSeenNodeCount 是在役但服务器从没心跳的节点数
+	ServingNodeCount   int
+	NeverSeenNodeCount int
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}
+
+// ServerFilter 是服务器列表的筛选：Status 为空不筛；Query 按名称、主机名子串（不分大小写）。
+type ServerFilter struct {
+	Status string
+	Query  string
+}
+
+// ServerInput 是新建服务器的输入；空串表示不填。CapacityNodes 为 0 取缺省 32。
+type ServerInput struct {
+	Name          string
+	Region        string
+	Hostname      string
+	PublicIPv4    string
+	PublicIPv6    string
+	PrivateIPv4   string
+	Architecture  string
+	OSName        string
+	CapacityNodes int
+	Notes         string
+}
+
+// ServerPatch 是改服务器的输入：nil = 不改，空串 = 清空（Name 不能清空）。
+type ServerPatch struct {
+	RowVersion    int64
+	Name          *string
+	Region        *string
+	Hostname      *string
+	PublicIPv4    *string
+	PublicIPv6    *string
+	PrivateIPv4   *string
+	Architecture  *string
+	OSName        *string
+	CapacityNodes *int
+	Notes         *string
+}
+
+// ServerNode 是服务器名下的一个节点（GET /servers/:id/nodes，含已退役）。
+type ServerNode struct {
+	ID                uuid.UUID
+	Name              string
+	ServingStatus     string
+	NodeType          *string
+	DisplayName       *string
+	ServerHost        *string
+	ServerPort        *int
+	Kernel            string
+	TrafficRate       decimal.Decimal
+	ConfigValidatedAt *time.Time
+	// LastHeartbeatAt 取所在服务器的心跳（心跳是服务器级的）
+	LastHeartbeatAt *time.Time
+	CreatedAt       time.Time
+}
+
+// ---------------------------------------------------------------------------
+// 节点：写接口
+// ---------------------------------------------------------------------------
+
+// AdminNode 是节点写接口（建、改、复制、迁移、上线、退役）回的节点；ProtocolConfig 已抹掉敏感值。
+type AdminNode struct {
+	ID                    uuid.UUID
+	NodeNo                int64
+	RowVersion            int64
+	Name                  string
+	ServerID              *uuid.UUID
+	PoolID                *uuid.UUID
+	ServingStatus         string
+	NodeType              *string
+	ServerHost            *string
+	ServerPort            *int
+	Kernel                string
+	TrafficRate           decimal.Decimal
+	DisplayName           *string
+	CountryCode           *string
+	ProtocolConfig        json.RawMessage
+	ProtocolSchemaVersion int
+	ConfigValidatedAt     *time.Time
+	SortOrder             int
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
+	// Warnings 是只提示、不拒绝的说明（保留端口、存量协议不满足现行规则、上线后不服务任何人）；没有时为 nil
+	Warnings []string
+}
+
+// NodeInput 是新建节点的输入。TrafficRate 为 nil 取 1.00；PoolID 为 nil 不划池。
+type NodeInput struct {
+	Name           string
+	ServerID       uuid.UUID
+	PoolID         *uuid.UUID
+	NodeType       string
+	ServerHost     string
+	ServerPort     int
+	Kernel         string
+	TrafficRate    *decimal.Decimal
+	DisplayName    string
+	CountryCode    string
+	ProtocolConfig json.RawMessage
+	SortOrder      int
+}
+
+// OptionalUUID 区分「没给」与「给了 null」：Set 为 false 不改；Set 且 Value 为 nil 表示清空。
+type OptionalUUID struct {
+	Set   bool
+	Value *uuid.UUID
+}
+
+// OptionalString 区分「没给」与「给了 null」：Set 为 false 不改；Set 且 Value 为 nil 或空串表示清空。
+type OptionalString struct {
+	Set   bool
+	Value *string
+}
+
+// NodePatch 是改节点的输入：指针为 nil = 不改；ProtocolConfig 为 nil = 不改（给了就整体替换）。
+type NodePatch struct {
+	RowVersion     int64
+	Name           *string
+	PoolID         OptionalUUID
+	NodeType       *string
+	ServerHost     *string
+	ServerPort     *int
+	Kernel         *string
+	TrafficRate    *decimal.Decimal
+	DisplayName    *string
+	CountryCode    OptionalString
+	ProtocolConfig json.RawMessage
+}
+
+// NodeCopyInput 是复制节点的输入：TargetServerID、PoolID 为 nil 沿用原节点；Name 为空取「原名-copy」；
+// SortOrder 为 nil 取原节点 +1；ServerPort 为 nil 沿用原端口。CopyRouting 第二波（路由）才生效。
+type NodeCopyInput struct {
+	RowVersion     int64
+	Name           string
+	TargetServerID *uuid.UUID
+	PoolID         *uuid.UUID
+	SortOrder      *int
+	ServerPort     *int
+	CopyRouting    bool
+}
+
+// NodeMoveInput 是把草稿节点迁到另一台服务器的输入。
+type NodeMoveInput struct {
+	RowVersion int64
+	ServerID   uuid.UUID
+	Reason     string
+}
+
+// NodeOrderItem 是排序的一项。
+type NodeOrderItem struct {
+	ID         uuid.UUID
+	RowVersion int64
+	SortOrder  int
+}
+
+// NodeVersionRef 是带乐观锁版本的节点引用。
+type NodeVersionRef struct {
+	ID         uuid.UUID
+	RowVersion int64
+}
+
+// NodeStatusBatch 是批量改服务状态的输入：整批有一条不合法就整批 409，不做部分更新。
+type NodeStatusBatch struct {
+	Items         []NodeVersionRef
+	ServingStatus string
+	Reason        string
+}
+
+// RealityKeypair 是新生成的一对 REALITY 密钥与一个随机 short_id（私钥只在这一次返回）。
+type RealityKeypair struct {
+	PrivateKey string
+	PublicKey  string
+	ShortID    string
+}
+
+// ---------------------------------------------------------------------------
+// 节点：列表与详情
+// ---------------------------------------------------------------------------
+
+// NodeQuery 是后台节点列表的筛选与分页。
+type NodeQuery struct {
+	// IncludeRetired 只在 State 为空时生效：State 给了就由它决定含不含已退役
+	IncludeRetired bool
+	// State：all（不含已退役）/ online / offline / disabled / retired；空串不筛
+	State string
+	// Search 在名称、展示名、服务器名、国家、协议、地址、编号里按子串找（不分大小写），最长 120 字
+	Search string
+	// ID 非空时只取这一个节点，并带上 Detail
+	ID     *uuid.UUID
+	Limit  int
+	Offset int
+}
+
+// ApplyFailure 是最近一次配置应用失败。
+type ApplyFailure struct {
+	Phase  string
+	Detail string
+	At     time.Time
+}
+
+// NodeRow 是后台节点列表的一行。第二波才有数据的指标（在线数、流量、探针、身份）不在这里，handler 给固定值。
+type NodeRow struct {
+	ID            uuid.UUID
+	NodeNo        int64
+	RowVersion    int64
+	Name          string
+	ServingStatus string
+	ServerID      *uuid.UUID
+	ServerName    *string
+	PoolID        *uuid.UUID
+	PoolName      *string
+	// 以下取自所在服务器（心跳与主机信息是服务器级的）
+	AgentVersion    *string
+	Hostname        *string
+	PublicIPv4      *string
+	CPUCores        *int
+	MemoryMB        *int
+	DiskGB          *int
+	LastHeartbeatAt *time.Time
+	// Stale：服务器从没心跳或心跳超过 NodeStaleAfter
+	Stale bool
+	// Delivered / DeliveryNote：这个节点现在会不会出现在用户订阅里、为什么
+	Delivered    bool
+	DeliveryNote string
+	CreatedAt    time.Time
+	NodeType     *string
+	ServerHost   *string
+	ServerPort   *int
+	DisplayName  *string
+	CountryCode  *string
+	SortOrder    int
+	// EffectiveState：'' / applied / failed（pending 第二波有期望版本后才有）
+	EffectiveState    string
+	LastApplyFailure  *ApplyFailure
+	RuntimeStatus     *string
+	RuntimeReason     *string
+	RuntimeStateAt    *time.Time
+	RuntimeReasonNode *string
+	DeliveryDegraded  bool
+	// Detail 只在 NodeQuery.ID 非空（单取）时填
+	Detail *NodeDetail
+}
+
+// NodeDetail 是单取时才带的编辑字段；ProtocolConfig 已抹掉敏感值。
+type NodeDetail struct {
+	TrafficRate           decimal.Decimal
+	Kernel                string
+	ProtocolConfig        json.RawMessage
+	ProtocolSchemaVersion int
+	ConfigValidatedAt     *time.Time
+	// Warnings 是存量协议配置不满足现行规则的提示；没有时为 nil
+	Warnings []string
+}
+
+// NodeStaleAfter 是后台「失联」的判定：服务器心跳超过它即视为失联（列表的 stale、筛选 online / offline）。
+const NodeStaleAfter = 90 * time.Second
+
+// ---------------------------------------------------------------------------
+// 共用的错误
+// ---------------------------------------------------------------------------
+
+// nodeVersionConflict 是节点乐观锁冲突。
+func nodeVersionConflict(current int64) error {
+	return &errs.Error{Code: errs.Conflict, Message: "节点已被其他管理员修改，请刷新后重试",
+		Fields: map[string]string{"row_version": fmt.Sprintf("current=%d", current)}}
+}
+
+// serverVersionConflict 是服务器乐观锁冲突。
+func serverVersionConflict(current int64) error {
+	return &errs.Error{Code: errs.Conflict, Message: "服务器已被其他管理员修改，请刷新后重试",
+		Fields: map[string]string{"row_version": fmt.Sprintf("current=%d", current)}}
+}
+
+// inventoryConflict 是带自定义中文文案的 409。
+func inventoryConflict(message string) error { return errs.Newf(errs.Conflict, message) }
+
+// inventoryInvalid 是单个字段的 422。
+func inventoryInvalid(field, message string) error {
+	return errs.Invalid(map[string]string{field: message})
+}

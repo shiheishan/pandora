@@ -22,7 +22,8 @@ var (
 )
 
 // mapPoolErr：唯一冲突（gorm.ErrDuplicatedKey 或 pgconn.PgError.Code == "23505"）→ onUnique；
-// 外键冲突（gorm.ErrForeignKeyViolated 或 "23503"）→ onFK；onUnique / onFK 为 nil 时原样返回；其余原样返回。
+// 外键冲突（gorm.ErrForeignKeyViolated、"23503"，以及 ON DELETE RESTRICT 报的 "23001"）→ onFK；
+// onUnique / onFK 为 nil 时原样返回；其余原样返回。
 func mapPoolErr(err, onUnique, onFK error) error {
 	if err == nil {
 		return nil
@@ -34,7 +35,7 @@ func mapPoolErr(err, onUnique, onFK error) error {
 		switch pgErr.Code {
 		case "23505":
 			isUnique = true
-		case "23503":
+		case "23503", "23001":
 			isFK = true
 		}
 	}
