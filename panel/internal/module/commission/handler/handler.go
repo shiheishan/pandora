@@ -1,4 +1,4 @@
-// Package handler 是 commission 模块的 HTTP 层：门户我的佣金、提现申请、佣金转余额；后台分销概览、提现审核与打款、分销参数。
+// Package handler 是 commission 模块的 HTTP 层：门户我的佣金、提现申请、佣金转余额；后台分销概览、提现审核与打款、分销参数、待复核佣金。
 package handler
 
 import (
@@ -28,6 +28,8 @@ type Service interface {
 	ReviewWithdrawal(ctx context.Context, id uuid.UUID, approve bool, reason string) (string, error)
 	MarkWithdrawalPaid(ctx context.Context, id uuid.UUID, reference string) error
 	SetConfig(ctx context.Context, u service.ConfigUpdate) error
+	AdminReviewEntries(ctx context.Context, cursor string, limit int) (service.ReviewEntryPage, error)
+	ReviewEntry(ctx context.Context, id uuid.UUID, approve bool, reason string) (string, error)
 }
 
 var _ Service = (*service.Service)(nil)
@@ -46,11 +48,14 @@ func (h *Handler) RegisterPublic(v1 *gin.RouterGroup, k route.Kit) {
 	v1.POST("/me/commission/transfer", k.RequireAuth, k.Idempotency(TransferScope), h.transferToBalance)
 }
 
-// RegisterAdmin 注册后台分销路由；审核、打款、改比例都要近期重认证，打款另挂幂等。
+// RegisterAdmin 注册后台分销路由；审核、打款、改比例、佣金复核都要近期重认证，打款另挂幂等。
+// 佣金复核与提现审核一样不挂幂等：只对待复核的条目有效，重放只会得到 409。
 func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	v1.GET("/commission/overview", k.RequireAuth, h.overview)
 	v1.GET("/withdrawals", k.RequireAuth, h.listWithdrawals)
 	v1.POST("/withdrawals/:id/review", k.RequireAuth, k.RecentReauth, h.reviewWithdrawal)
 	v1.POST("/withdrawals/:id/paid", k.RequireAuth, k.RecentReauth, k.Idempotency(MarkPaidScope), h.markWithdrawalPaid)
 	v1.POST("/commission/config", k.RequireAuth, k.RecentReauth, h.setConfig)
+	v1.GET("/commission/entries", k.RequireAuth, h.listReviewEntries)
+	v1.POST("/commission/entries/:id/review", k.RequireAuth, k.RecentReauth, h.reviewEntry)
 }

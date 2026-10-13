@@ -42,9 +42,31 @@ func TestRateBPBounds(t *testing.T) {
 	}
 }
 
+// 待复核来源按原因常量归类；解冻余额不足的原因带金额后缀。
+func TestReviewSource(t *testing.T) {
+	cases := map[string]string{
+		reviewSameSource:         ReviewSourceSameSource,
+		reviewSourceCheckFailed:  ReviewSourceSourceCheck,
+		reviewSourceCheckMissing: ReviewSourceSourceCheck,
+		reviewUnderfundedPrefix + "，无法解冻 10.00 USD": ReviewSourceUnderfunded,
+		"手工标记": ReviewSourceOther,
+		"":     ReviewSourceOther,
+	}
+	for reason, want := range cases {
+		if got := reviewSource(reason); got != want {
+			t.Errorf("reviewSource(%q) = %s，期望 %s", reason, got, want)
+		}
+	}
+}
+
 func TestTransitions(t *testing.T) {
 	if !CanEntryTransition(EntryPending, EntryAvailable) || CanEntryTransition(EntryAvailable, EntryPending) {
 		t.Fatal("条目转换表不对")
+	}
+	// 作废只从 pending 来，且是终态；已解冻的不能作废
+	if !CanEntryTransition(EntryPending, EntryVoided) || CanEntryTransition(EntryAvailable, EntryVoided) ||
+		CanEntryTransition(EntryVoided, EntryPending) || CanEntryTransition(EntryVoided, EntryAvailable) {
+		t.Fatal("作废转换不对")
 	}
 	ok := [][2]string{
 		{WithdrawalRequested, WithdrawalApproved},

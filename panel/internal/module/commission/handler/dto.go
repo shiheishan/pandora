@@ -35,13 +35,20 @@ type transferResponse struct {
 	Amount      int64  `json:"amount"`
 }
 
-// reviewRequest 是后台审批提现的请求体。
+// listEntriesQuery 是后台佣金条目列表的查询参数（目前只有待复核这一种）。
+type listEntriesQuery struct {
+	Review string `form:"review"`
+	Cursor string `form:"cursor"`
+	Limit  int    `form:"limit"`
+}
+
+// reviewRequest 是后台审批提现（approve / reject）与复核佣金（approve / void）的请求体。
 type reviewRequest struct {
 	Action string `json:"action"`
 	Reason string `json:"reason"`
 }
 
-// reviewResponse 是审批提现成功响应。
+// reviewResponse 是审批提现、复核佣金成功响应：复核后的状态。
 type reviewResponse struct {
 	Status string `json:"status"`
 }
@@ -170,6 +177,26 @@ type adminWithdrawalResponse struct {
 	RequestedAt  time.Time  `json:"requested_at"`
 	CompletedAt  *time.Time `json:"completed_at"`
 	EarnedTotal  int64      `json:"earned_total"`
+}
+
+// reviewEntryResponse 是后台待复核佣金列表一行。
+type reviewEntryResponse struct {
+	ID            string    `json:"id"`
+	OrderNo       string    `json:"order_no"`
+	ReferrerEmail string    `json:"referrer_email"`
+	RefereeEmail  string    `json:"referee_email"`
+	Amount        int64     `json:"amount"`
+	Currency      string    `json:"currency"`
+	ReviewReason  string    `json:"review_reason"`
+	ReviewSource  string    `json:"review_source"` // same_source / source_check / underfunded / other
+	CreatedAt     time.Time `json:"created_at"`
+	FrozenUntil   time.Time `json:"frozen_until"`
+}
+
+// reviewEntriesResponse 是后台待复核佣金列表响应；next_cursor 为空串表示没有下一页。
+type reviewEntriesResponse struct {
+	Entries    []reviewEntryResponse `json:"entries"`
+	NextCursor string                `json:"next_cursor"`
 }
 
 // listWithdrawalsResponse 是后台提现列表响应。
@@ -397,6 +424,29 @@ func adminWithdrawalFrom(w service.AdminWithdrawal) (adminWithdrawalResponse, er
 		CompletedAt:  w.CompletedAt,
 		EarnedTotal:  earned,
 	}, nil
+}
+
+func reviewEntriesFrom(p service.ReviewEntryPage) (reviewEntriesResponse, error) {
+	out := reviewEntriesResponse{Entries: make([]reviewEntryResponse, 0, len(p.Entries)), NextCursor: p.NextCursor}
+	for _, e := range p.Entries {
+		amount, err := cents(e.Amount)
+		if err != nil {
+			return reviewEntriesResponse{}, err
+		}
+		out.Entries = append(out.Entries, reviewEntryResponse{
+			ID:            e.ID.String(),
+			OrderNo:       e.OrderNo,
+			ReferrerEmail: e.ReferrerEmail,
+			RefereeEmail:  e.RefereeEmail,
+			Amount:        amount,
+			Currency:      e.Currency,
+			ReviewReason:  e.ReviewReason,
+			ReviewSource:  e.ReviewSource,
+			CreatedAt:     e.CreatedAt,
+			FrozenUntil:   e.FrozenUntil,
+		})
+	}
+	return out, nil
 }
 
 // configToUpdate 把请求体转成 service.ConfigUpdate。

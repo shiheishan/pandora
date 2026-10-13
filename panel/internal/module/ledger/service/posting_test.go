@@ -287,7 +287,7 @@ func TestKindOnePerSource(t *testing.T) {
 	for _, k := range []Kind{
 		KindBalanceTopup, KindBalanceHold, KindBalanceRelease, KindOrderPaid,
 		KindLatePaymentSuspense, KindPlanChangeRefund, KindCommissionSettled,
-		KindCommissionPaid, KindGiftCardBalance,
+		KindCommissionPaid, KindGiftCardBalance, KindCommissionVoided,
 	} {
 		if !k.OnePerSource() {
 			t.Fatalf("%s should be one per source", k)

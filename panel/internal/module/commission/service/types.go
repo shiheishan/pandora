@@ -9,10 +9,11 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// 佣金条目状态：pending 冻结中，available 已解冻入可提现。
+// 佣金条目状态：pending 冻结中，available 已解冻入可提现，voided 复核作废（终态，计提已冲回）。
 const (
 	EntryPending   = "pending"
 	EntryAvailable = "available"
+	EntryVoided    = "voided"
 )
 
 // 提现状态：requested 申请中，approved 已批准待打款，rejected 已驳回，paid 已打款。
@@ -24,8 +25,9 @@ const (
 )
 
 // entryTransitions 是佣金条目的转换表。
+// 复核通过不换状态（只清 review_required），所以不在表里；作废只对待复核的 pending 条目做，另由 WHERE 条件把关。
 var entryTransitions = map[string][]string{
-	EntryPending: {EntryAvailable},
+	EntryPending: {EntryAvailable, EntryVoided},
 }
 
 // withdrawalTransitions 是提现的转换表：审批只在申请中做一次，打款只对已批准的做。
@@ -62,9 +64,12 @@ const (
 	ActionWithdrawalReject    = "withdrawal.reject"
 	ActionWithdrawalPaid      = "withdrawal.paid"
 	ActionTransferredToBal    = "commission.transferred_to_balance"
+	ActionEntryApproved       = "commission.entry_approved"
+	ActionEntryVoided         = "commission.entry_voided"
 
 	ResourceWithdrawal        = "withdrawal"
 	ResourceLedgerTransaction = "ledger_transaction"
+	ResourceCommissionEntry   = "commission_entry"
 )
 
 // 账本来源类型。
@@ -80,6 +85,9 @@ const (
 	MyWithdrawalsLimit    = 50
 	MyTransfersLimit      = 50
 	AdminWithdrawalsLimit = 200
+	// ReviewEntriesDefault、ReviewEntriesMax 是后台待复核列表的默认与最大每页条数。
+	ReviewEntriesDefault = 50
+	ReviewEntriesMax     = 100
 	// SettleBatchDefault 是解冻任务一轮最多处理的条数。
 	SettleBatchDefault = 500
 )
@@ -89,6 +97,9 @@ const (
 	MaxPayoutDetailRunes    = 500
 	MaxRejectReasonRunes    = 500
 	MaxPayoutReferenceRunes = 128
+	MaxEntryReviewRunes     = 500
+	// MinVoidReasonRunes 是作废原因的最少字数（库里有同样的 CHECK）。
+	MinVoidReasonRunes = 5
 )
 
 // 对外错误（文案沿用旧代码）。
@@ -105,6 +116,11 @@ var (
 	ErrWithdrawCurrencyAmbiguous = errs.Newf(errs.Conflict, "可提现佣金包含多个币种，请联系管理员分币种处理")
 	// ErrTransferNotSiteCurrency 是可用佣金只有非站点币种：钱包只显示站点币种，这部分请走提现。
 	ErrTransferNotSiteCurrency = errs.Newf(errs.Conflict, "这部分佣金不是站点币种，不能转入余额，请走提现")
+	ErrEntryNotFound           = errs.Newf(errs.NotFound, "佣金条目不存在")
+	// ErrEntryNotReviewable 是条目不在待复核状态（已复核过、已解冻或已作废）：重放与并发的第二次都落在这里。
+	ErrEntryNotReviewable = errs.Newf(errs.Conflict, "这条佣金不在待复核状态，可能已被处理，请刷新")
+	// ErrVoidUnderfunded 是推荐人的待结佣金科目不够冲回这一条（账本与条目对不上，需要人工核对账本）。
+	ErrVoidUnderfunded = errs.Newf(errs.Conflict, "待结佣金科目余额不足，无法冲回这条佣金，请先核对账本")
 )
 
 // Summary 是门户「我的佣金」的汇总，金额都是 Currency 这一个币种（取法见 summaryCurrency）。
@@ -226,4 +242,32 @@ type SettleStats struct {
 	Skipped     int
 	Quarantined int // 确定性失败（待结科目余额不足）转人工复核的条数
 	Failed      int
+}
+
+// 待复核的来源（由 review_reason 归类，给后台区分提示）：同源嫌疑、同源检查失败或未装配、解冻时待结科目余额不足、其它。
+const (
+	ReviewSourceSameSource  = "same_source"
+	ReviewSourceSourceCheck = "source_check"
+	ReviewSourceUnderfunded = "underfunded"
+	ReviewSourceOther       = "other"
+)
+
+// ReviewEntryRow 是后台待复核列表的一行；邮箱不打码（管理员核对用）。
+type ReviewEntryRow struct {
+	ID            uuid.UUID
+	OrderNo       string
+	ReferrerEmail string
+	RefereeEmail  string
+	Amount        decimal.Decimal
+	Currency      string
+	ReviewReason  string
+	ReviewSource  string // ReviewSource* 之一
+	CreatedAt     time.Time
+	FrozenUntil   time.Time
+}
+
+// ReviewEntryPage 是后台待复核列表的一页；NextCursor 为空表示没有下一页。
+type ReviewEntryPage struct {
+	Entries    []ReviewEntryRow
+	NextCursor string
 }

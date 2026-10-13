@@ -18,6 +18,8 @@ const (
 	reviewSameSource         = "推荐人与购买人来自同一来源地址" // 旧文案
 	reviewSourceCheckFailed  = "同源检查失败，需人工确认推荐人与购买人是否同源"
 	reviewSourceCheckMissing = "同源检查未装配，需人工确认推荐人与购买人是否同源"
+	// reviewUnderfundedPrefix 是解冻时待结科目余额不足转复核的原因开头（后面跟金额与币种，见 settleOne）。
+	reviewUnderfundedPrefix = "待结佣金科目余额不足"
 )
 
 // OnOrderPaid 实现 ordersvc.PaidHook：在订单结算事务里给推荐人计提一条冻结中的佣金。
@@ -52,6 +54,7 @@ func (s *Service) OnOrderPaid(ctx context.Context, o ordersvc.PaidOrder) error {
 		}
 		if cfg.Scope == settingssvc.CommissionScopeFirstOrder {
 			// 「首单」按佣金记录判：被推荐人已有别的订单计过佣，这一单就不再计。
+			// 已作废（voided）的条目也算「已有首单」（用户 10-13 定）：首单佣金被复核作废后，第二单不再计佣。
 			// 先锁被推荐人：不同币种的两张单不共用平台收入科目锁，不加这把锁会并发各计一条
 			if err := s.repo.LockReferee(ctx, o.UserID); err != nil {
 				return err

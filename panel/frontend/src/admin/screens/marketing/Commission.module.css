@@ -117,6 +117,10 @@
   gap: 10px;
 }
 
+.more {
+  padding: var(--space-12) var(--space-16);
+}
+
 @media (max-width: 640px) {
   .row {
     flex-wrap: wrap;

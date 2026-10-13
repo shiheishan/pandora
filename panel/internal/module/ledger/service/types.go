@@ -84,15 +84,16 @@ const (
 	KindCommissionSettled   Kind = "commission_settled"
 	KindCommissionPaid      Kind = "commission_paid"
 	KindCommissionToBalance Kind = "commission_to_balance"
+	KindCommissionVoided    Kind = "commission_voided" // 作废待复核佣金：冲回计提（00016）
 )
 
-// Valid 报告交易类型是否在库里登记的 13 种之一。
+// Valid 报告交易类型是否在库里登记的 14 种之一。
 func (k Kind) Valid() bool {
 	switch k {
 	case KindBalanceTopup, KindBalanceAdjusted, KindBalanceHold, KindBalanceRelease,
 		KindOrderPaid, KindPlanChangeRefund, KindLatePaymentSuspense, KindLatePaymentApplied,
 		KindGiftCardBalance, KindCommissionAccrued, KindCommissionSettled,
-		KindCommissionPaid, KindCommissionToBalance:
+		KindCommissionPaid, KindCommissionToBalance, KindCommissionVoided:
 		return true
 	default:
 		return false
@@ -114,7 +115,7 @@ func (k Kind) OnePerSource() bool {
 	switch k {
 	case KindBalanceTopup, KindBalanceHold, KindBalanceRelease, KindOrderPaid,
 		KindLatePaymentSuspense, KindPlanChangeRefund, KindCommissionSettled,
-		KindCommissionPaid, KindGiftCardBalance:
+		KindCommissionPaid, KindGiftCardBalance, KindCommissionVoided:
 		return true
 	default:
 		return false

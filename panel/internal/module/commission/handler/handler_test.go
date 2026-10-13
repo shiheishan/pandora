@@ -32,6 +32,9 @@ type fakeSvc struct {
 	gotConfig   service.ConfigUpdate
 	gotApprove  bool
 	gotReason   string
+	reviewPage  service.ReviewEntryPage
+	gotCursor   string
+	gotLimit    int
 }
 
 func (f *fakeSvc) MyCommission(context.Context, uuid.UUID) (service.MyCommission, error) {
@@ -144,7 +147,8 @@ func TestRoutes(t *testing.T) {
 	}
 	adm := routesOf(newEngine(&fakeSvc{}, true, &admScopes))
 	wantAdm := []string{
-		"GET /v1/commission/overview", "GET /v1/withdrawals", "POST /v1/commission/config",
+		"GET /v1/commission/entries", "GET /v1/commission/overview", "GET /v1/withdrawals",
+		"POST /v1/commission/config", "POST /v1/commission/entries/:id/review",
 		"POST /v1/withdrawals/:id/paid", "POST /v1/withdrawals/:id/review",
 	}
 	if strings.Join(adm, ",") != strings.Join(wantAdm, ",") {
@@ -276,7 +280,7 @@ func TestListWithdrawalsShape(t *testing.T) {
 	}
 }
 
-// 审核、打款、改配置必须挂 RecentReauth：把它换成直接回 428 的桩，这三条应被挡下、两条只读的不受影响。
+// 审核、打款、改配置、佣金复核必须挂 RecentReauth：把它换成直接回 428 的桩，这四条应被挡下、三条只读的不受影响。
 func TestAdminWritesRequireRecentReauth(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	e := gin.New()
@@ -293,16 +297,17 @@ func TestAdminWritesRequireRecentReauth(t *testing.T) {
 
 	id := uuid.New().String()
 	guarded := map[string]string{
-		"/v1/withdrawals/" + id + "/review": `{"action":"approve"}`,
-		"/v1/withdrawals/" + id + "/paid":   `{"payout_reference":"TX-1"}`,
-		"/v1/commission/config":             `{"rate_percent":10}`,
+		"/v1/withdrawals/" + id + "/review":        `{"action":"approve"}`,
+		"/v1/withdrawals/" + id + "/paid":          `{"payout_reference":"TX-1"}`,
+		"/v1/commission/config":                    `{"rate_percent":10}`,
+		"/v1/commission/entries/" + id + "/review": `{"action":"void","reason":"同源刷单确认"}`,
 	}
 	for path, body := range guarded {
 		if w := do(e, http.MethodPost, path, body); w.Code != http.StatusPreconditionRequired {
 			t.Errorf("POST %s 应要求近期重认证，得到 %d", path, w.Code)
 		}
 	}
-	for _, path := range []string{"/v1/commission/overview", "/v1/withdrawals"} {
+	for _, path := range []string{"/v1/commission/overview", "/v1/withdrawals", "/v1/commission/entries?review=required"} {
 		if w := do(e, http.MethodGet, path, ""); w.Code == http.StatusPreconditionRequired {
 			t.Errorf("GET %s 是只读的，不该要求重认证", path)
 		}

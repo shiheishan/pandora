@@ -110,3 +110,50 @@ func (h *Handler) setConfig(c *gin.Context) {
 	}
 	httpx.OK(c, okResponse{OK: true})
 }
+
+// listReviewEntries 是待复核佣金列表（review=required，按计提时间倒序键集翻页）。
+func (h *Handler) listReviewEntries(c *gin.Context) {
+	var q listEntriesQuery
+	if err := httpx.BindQuery(c, &q); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	if q.Review != "required" {
+		httpx.Fail(c, errs.Invalid(map[string]string{"review": "目前只支持 review=required"}))
+		return
+	}
+	page, err := h.svc.AdminReviewEntries(c.Request.Context(), q.Cursor, q.Limit)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	resp, err := reviewEntriesFrom(page)
+	if err != nil {
+		httpx.Fail(c, errs.Wrap(errs.Internal, err))
+		return
+	}
+	httpx.OK(c, resp)
+}
+
+// reviewEntry 通过或作废一条待复核的佣金。
+func (h *Handler) reviewEntry(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	var req reviewRequest
+	if err := httpx.BindJSON(c, &req); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	if req.Action != "approve" && req.Action != "void" {
+		httpx.Fail(c, errs.Invalid(map[string]string{"action": "操作只能是 approve 或 void"}))
+		return
+	}
+	status, err := h.svc.ReviewEntry(c.Request.Context(), id, req.Action == "approve", req.Reason)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	httpx.OK(c, reviewResponse{Status: status})
+}

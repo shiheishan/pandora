@@ -153,9 +153,10 @@ export function useActivePlanName(): string | null {
 // R69 的 paid_invitees / total_earned / transfers 已上线且必回（Go 无 omitempty）。
 // 三个列表 Go 端都以空切片初始化，没有记录时是 []，不是 null。
 // ---------------------------------------------------------------------------
-// CHECK 允许六种；Go 只写 pending / available，冲销由 SQL 写 reversed
+// 新栈库里只有 pending / available / voided（复核作废，门户显示「已作废」）；reversed、frozen、settled、rejected 是旧接口的取值，
+// 新后端不再返回，留在枚举里只为不让解析失败
 export const COMMISSION_SCOPES = ['every_order', 'first_order'] as const
-export const COMMISSION_ENTRY_STATUSES = ['pending', 'available', 'reversed', 'frozen', 'settled', 'rejected'] as const
+export const COMMISSION_ENTRY_STATUSES = ['pending', 'available', 'reversed', 'frozen', 'settled', 'rejected', 'voided'] as const
 export const WITHDRAWAL_STATUSES = ['requested', 'reviewing', 'approved', 'rejected', 'processing', 'paid', 'failed', 'returned'] as const
 
 export const commissionSchema = z.object({

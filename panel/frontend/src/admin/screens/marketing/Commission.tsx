@@ -6,6 +6,7 @@ import { Button, Empty, Input, Modal, QueryView, Segmented, StatStrip, Tag, Text
 import local from './Commission.module.css'
 import { buildCommissionConfig, commissionStats, commissionToForm, formatDateTime, withdrawalState, type CommissionForm, type FieldErrors } from './logic'
 import css from './marketing.module.css'
+import { ReviewEntries } from './ReviewEntries'
 import { useCommissionOverview, useFailure, useIntentKey, useInvalidateMarketing, useWithdrawals } from './queries'
 import { okResponse, paidResponse, reviewResponse, type CommissionOverview, type Withdrawal } from './schemas'
 
@@ -14,6 +15,7 @@ export function Commission() {
   return (
     <div className={css.stack}>
       <StatStrip label="佣金统计" items={overview.data ? commissionStats(overview.data) : undefined} />
+      <ReviewEntries />
       <div className={local.columns}>
         <Withdrawals />
         <section className={`${css.panel} ${local.settings}`}>
@@ -42,7 +44,7 @@ function Withdrawals() {
     <section className={`${css.panel} ${local.withdrawals}`}>
       <div className={css.panelHead}>
         <h3 className={css.panelTitle}>提现申请</h3>
-        <span className={css.faint}>审核通过后打款，审核与打款都需二次认证</span>
+        <span className={css.faint}>审核通过后打款，审核与打款都需要重新验证身份</span>
       </div>
       <QueryView query={list} empty={<Empty bare title="还没有提现申请" description="用户在门户申请提现后会出现在这里。" />}>
         {(rows) => rows.map((w) => <WithdrawalRow key={w.id} withdrawal={w} onDialog={setDialog} />)}
