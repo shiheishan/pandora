@@ -90,6 +90,8 @@ pandora_url_host() {
   printf '%s\n' "${BASH_REMATCH[1],,}"
 }
 
+# 首装生成三个配置文件，口令与密钥现生成，只经 printf（内建，不进参数表）写进 umask 077 的临时文件再改名。
+# secrets.env 最后写：它在不在就是「首装 / 升级」的判据，前面任何一步失败重跑仍按首装处理。
 pandora_write_new_config() {
   local public_base_url="$1" grpc_public_host="$2" pg_port="$3"
   local app_pw owner_pw redis_pw super_pw master jwt_pub jwt_admin admin_path
@@ -157,6 +159,7 @@ pandora_write_new_config() {
   )
 }
 
+# 升级前核对三个配置文件是 install.sh 生成的（键齐全），并把属主与权限收回到约定值；内容一个字节不改。
 pandora_require_config_files() {
   local k v missing=()
   [ -f "$DEPLOY_ENV" ] && [ -f "$SECRETS_FILE" ] && [ -f "$CONFIG_FILE" ] || die "不是 install.sh 生成的，拒绝升级（缺少配置文件）"
@@ -369,6 +372,8 @@ pandora_pg_online_budget() {
   echo $(( 30 + 3 * ($(date +%s) - started) ))
 }
 
+# 调参文件进 conf.d、资源约束与隔离进 drop-in；两样都没变就不重启 PG。改了起不来：两样都还原成这次之前的样子、
+# 再起一次；还原后在线返回 1（install.sh 记进 HARDEN_FAILED，服务照常装完再报错），还原后仍起不来直接 die。
 pandora_apply_pg_config() {
   local ver="$1" port="$2" src="$3" unit="postgresql@$1-main.service"
   local conf dropin had_conf=0 prev_conf="" had_dropin=0 prev_dropin="" conf_changed=0 dropin_changed=0
@@ -458,6 +463,7 @@ pandora_db_has_schema() {
   [ "$out" = 1 ]
 }
 
+# 升级前整库 pg_dump -Fc 到备份目录（0600 root），pg_restore --list 能读才算成功；库里还没有迁移表就跳过。
 pandora_pre_upgrade_dump() {
   local port="$1" f ts
   PANDORA_PRE_UPGRADE_DUMP=""
@@ -634,6 +640,7 @@ pandora_redis_conf_step() {
   pandora_redis_after_revert "$REDIS_UNIT" "$what（$conf）" "$hint"
 }
 
+# 依次改 requirepass、pandora 配置块、drop-in；每改一样就重启 redis-server 核一次，起不来就还原这一样并返回 1。
 pandora_harden_redis() {
   local conf="$1" pass="$2" unit="$REDIS_UNIT" file had=0 prev="" what hint bind
   bind="$(pandora_redis_bind_addrs)"
@@ -707,6 +714,8 @@ pandora_release_version() {
 }
 
 #---- 7. 调 pandora 与数据库角色
+# 以 pandora 用户跑 pandora 子命令：先清空继承来的环境（安装时 sudo 带进来的变量不进应用），只给 PATH、HOME、LANG
+# 与 secrets.env 的键；第一个参数 yes 时另给迁移 DSN（只有 migrate 需要 pandora_owner）。秘密只在环境里，不进参数表。
 pandora_cli() {
   local mig="$1"
   shift
@@ -764,6 +773,7 @@ pandora_start_services() {
   fi
 }
 
+# 两个 readyz（门户 9000、后台 9001）都 200 且 worker 在跑才算健康；最多约一分钟。
 pandora_services_healthy() {
   local _ code
   for _ in $(seq 1 30); do
@@ -795,6 +805,8 @@ pandora_open_firewall() {
 }
 
 #---- 9. 管理员与收尾
+# 没有可登录的管理员时建第一个：无人值守用 PANDORA_PRESET_ADMIN_EMAIL / _PW（install.sh 从标准输入读的一行），
+# 交互终端现场问（不回显），都没有就留给收尾提示里的手工命令。口令只经管道给 --password-stdin，用完清空。
 pandora_admin_bootstrap() {
   local email="" pw="" pw2="" attempt has_rc=0 create_rc out
   PANDORA_ADMIN_STATE=manual
