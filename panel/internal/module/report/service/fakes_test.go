@@ -254,8 +254,9 @@ type fakePorts struct {
 	revenueCalls  [][2]time.Time
 	drift         int64
 
-	orderCounts ordersvc.ReportOrderCounts
-	stuck       int64
+	orderCounts  ordersvc.ReportOrderCounts
+	pendingStale int64
+	stuck        int64
 	withdrawals []commissionsvc.PendingWithdrawalSum
 	tickets     supportsvc.OpenTicketStats
 	backlog     notifysvc.DeliveryBacklog
@@ -364,6 +365,13 @@ func (f *fakePorts) DriftAccounts(context.Context) (int64, error) {
 
 func (f *fakePorts) ReportOrderCounts(context.Context, time.Time, time.Time) (ordersvc.ReportOrderCounts, error) {
 	return f.orderCounts, f.err("ReportOrderCounts")
+}
+
+func (f *fakePorts) PendingStaleCount(context.Context, time.Time) (int64, error) {
+	if f.pendingStale != 0 {
+		return f.pendingStale, f.err("PendingStaleCount")
+	}
+	return f.orderCounts.PendingStale, f.err("PendingStaleCount")
 }
 
 func (f *fakePorts) StuckCallbackCount(context.Context, time.Time) (int64, error) {

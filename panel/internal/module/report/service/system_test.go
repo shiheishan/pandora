@@ -344,3 +344,24 @@ func TestSystemStatusDegrades(t *testing.T) {
 		})
 	}
 }
+
+func TestSystemStatusChannelsEmptyOK(t *testing.T) {
+	e, _ := setupSystemStatusOK(t)
+	// 没有投递记录时，GROUP BY 结果为空 map
+	e.ports.channels = map[string]notifysvc.ChannelDeliveryCounts{}
+
+	out, err := e.svc.SystemStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, ch := range []string{"mail", "telegram"} {
+		c := componentByKey(out.Components, ch)
+		if c.State != StateOK {
+			t.Fatalf("%s state=%q want %q", ch, c.State, StateOK)
+		}
+		if c.Metrics["queued"] != int64(0) || c.Metrics["retrying"] != int64(0) || c.Metrics["failed_total"] != int64(0) {
+			t.Fatalf("%s metrics mismatch: %+v", ch, c.Metrics)
+		}
+	}
+}

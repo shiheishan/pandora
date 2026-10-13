@@ -50,7 +50,6 @@ func (r *Repo) RevenueTotals(ctx context.Context) ([]RevenueTotalRow, error) {
 		       coalesce(sum(e.amount) FILTER (WHERE e.direction = 'credit'), 0) AS credit,
 		       coalesce(sum(e.amount) FILTER (WHERE e.direction = 'debit'), 0) AS debit
 		  FROM ledger_entries e
-		  JOIN ledger_transactions t ON t.id = e.transaction_id
 		  JOIN ledger_accounts a ON a.id = e.account_id
 		 WHERE a.account_type = 'platform_revenue'
 		 GROUP BY e.currency

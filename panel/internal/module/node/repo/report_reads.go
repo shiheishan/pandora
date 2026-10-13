@@ -13,14 +13,14 @@ type ReportNodeCountsRow struct {
 	Online int64 `gorm:"column:online"`
 }
 
-// ReportNodeCounts 一条 SQL 数出未删除、未退役的节点总数与在线数（active 且服务器心跳在 onlineSince 之后）。
+// ReportNodeCounts 一条 SQL 数出未删除、未退役且 serving_status='active' 的节点总数与在线数（active 且服务器心跳在 onlineSince 之后）。
 func (r *Repo) ReportNodeCounts(ctx context.Context, onlineSince time.Time) (ReportNodeCountsRow, error) {
 	var out ReportNodeCountsRow
 	err := r.d.Conn(ctx).Raw(`
 SELECT count(*) AS total,
-       count(*) FILTER (WHERE n.serving_status = 'active' AND s.last_heartbeat_at >= ?) AS online
+       count(*) FILTER (WHERE s.last_heartbeat_at >= ?) AS online
   FROM nodes n LEFT JOIN servers s ON s.id = n.server_id
- WHERE n.deleted_at IS NULL AND n.serving_status <> 'retired'`, onlineSince).Scan(&out).Error
+ WHERE n.deleted_at IS NULL AND n.serving_status = 'active'`, onlineSince).Scan(&out).Error
 	if err != nil {
 		return ReportNodeCountsRow{}, err
 	}

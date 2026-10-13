@@ -27,6 +27,12 @@ var offsiteConfigPaths = []string{"/etc/aegispanel/backup-webdav.json"}
 // SystemStatus 逐项探测数据库、Redis、节点、支付回调、邮件与 Telegram 投递、实时推送、备份。
 // 任何一项失败只把那一项标成 down / unknown，不让整个接口报错：系统状态页恰恰要在部分组件坏掉时还能打开。
 func (s *Service) SystemStatus(ctx context.Context) (SystemStatus, error) {
+	return cached(ctx, s, "report:v1:system:status", func(ctx context.Context) (SystemStatus, error) {
+		return s.loadSystemStatus(ctx)
+	})
+}
+
+func (s *Service) loadSystemStatus(ctx context.Context) (SystemStatus, error) {
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	now := s.now()
@@ -176,9 +182,17 @@ func (s *Service) mailTelegramComponents(ctx context.Context) (Component, Compon
 	return mail, telegram
 }
 
-// deliveryChannelComponent 有正在重试的投递为 warn；failed_total 是累计值，不参与判定；渠道从没投递过为 unknown。
+// deliveryChannelComponent 有正在重试的投递为 warn；failed_total 是累计值，不参与判定；渠道从没投递过为 ok、计数全 0。
 func deliveryChannelComponent(key, channel string, channels map[string]notifysvc.ChannelDeliveryCounts) Component {
-	c := Component{Key: key, State: StateUnknown, Metrics: map[string]any{}}
+	c := Component{
+		Key:   key,
+		State: StateOK,
+		Metrics: map[string]any{
+			"queued":       int64(0),
+			"retrying":     int64(0),
+			"failed_total": int64(0),
+		},
+	}
 	d, ok := channels[channel]
 	if !ok {
 		return c
@@ -188,7 +202,6 @@ func deliveryChannelComponent(key, channel string, channels map[string]notifysvc
 		"retrying":     d.Retrying,
 		"failed_total": d.Failed,
 	}
-	c.State = StateOK
 	if d.Retrying > 0 {
 		c.State = StateWarn
 	}

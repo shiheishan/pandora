@@ -11,7 +11,6 @@ import (
 	commissionsvc "github.com/aegispanel/aegis/internal/module/commission/service"
 	nodesvc "github.com/aegispanel/aegis/internal/module/node/service"
 	notifysvc "github.com/aegispanel/aegis/internal/module/notify/service"
-	ordersvc "github.com/aegispanel/aegis/internal/module/order/service"
 	supportsvc "github.com/aegispanel/aegis/internal/module/support/service"
 	"github.com/aegispanel/aegis/internal/pkg/money"
 )
@@ -137,7 +136,7 @@ func TestTasksMapping(t *testing.T) {
 		},
 		LongestOfflineSeconds: &long900,
 	}
-	e.ports.orderCounts = ordersvc.ReportOrderCounts{PendingStale: 6}
+	e.ports.pendingStale = 6
 	oneMinAgo := testNow.Add(-time.Minute)
 	e.ports.backlog = notifysvc.DeliveryBacklog{
 		Ready:         2,
@@ -202,6 +201,13 @@ func TestTasksPortError(t *testing.T) {
 	e := newTestEnv()
 	e.ports.errFor["PendingWithdrawalSums"] = errBoom
 	_, err := e.svc.Tasks(context.Background())
+	if !errors.Is(err, errBoom) {
+		t.Fatalf("err=%v want errBoom", err)
+	}
+
+	e2 := newTestEnv()
+	e2.ports.errFor["PendingStaleCount"] = errBoom
+	_, err = e2.svc.Tasks(context.Background())
 	if !errors.Is(err, errBoom) {
 		t.Fatalf("err=%v want errBoom", err)
 	}

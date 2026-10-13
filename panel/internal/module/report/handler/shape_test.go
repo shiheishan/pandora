@@ -197,10 +197,10 @@ func TestShapeTrafficNodes(t *testing.T) {
 		Quality: service.TrafficQuality{InvalidReports: 1, InvalidEntries: 2},
 		Items: []service.NodeTrafficItem{{
 			NodeID: uuid.New(), Name: "n1", DisplayName: nil,
-			Upload: 10, Download: 20, Total: 30, Entries: 3, Reports: 2, LastAt: snap,
+			Upload: 10, Download: 20, Total: 30, LastAt: snap,
 		}, {
 			NodeID: uuid.New(), Name: "n2", DisplayName: &dn,
-			Upload: 1, Download: 1, Total: 2, Entries: 1, Reports: 1, LastAt: snap,
+			Upload: 1, Download: 1, Total: 2, LastAt: snap,
 		}},
 		Returned: 32, Other: 968,
 	}}
@@ -220,6 +220,7 @@ func TestShapeTrafficNodes(t *testing.T) {
 		}
 	}
 	item0 := root["items"].([]any)[0].(map[string]any)
+	wantKeys(t, "node item", item0, "node_id", "name", "display_name", "upload_bytes", "download_bytes", "total_bytes", "last_report_at")
 	if item0["display_name"] != nil {
 		t.Fatalf("display_name null")
 	}
@@ -237,7 +238,7 @@ func TestShapeTrafficUsers(t *testing.T) {
 		Totals: service.TrafficTotals{Reported: 1, Attributed: 1, Unattributed: 0},
 		Items: []service.UserTrafficItem{{
 			UserID: uuid.New(), EmailMasked: "a***@example.test", SubscriptionCount: 2,
-			Upload: 5, Download: 5, Total: 10, Entries: 1, LastAt: snap,
+			Upload: 5, Download: 5, Total: 10, LastAt: snap,
 		}},
 		Returned: 10, Other: 0,
 	}}
@@ -247,6 +248,8 @@ func TestShapeTrafficUsers(t *testing.T) {
 	}
 	var root map[string]any
 	_ = json.Unmarshal(w.Body.Bytes(), &root)
+	userItem0 := root["items"].([]any)[0].(map[string]any)
+	wantKeys(t, "user item", userItem0, "user_id", "email_masked", "subscription_count", "upload_bytes", "download_bytes", "total_bytes", "last_report_at")
 	wantKeys(t, "ranking", root["ranking"].(map[string]any), "returned_bytes", "other_user_bytes")
 }
 

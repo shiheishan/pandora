@@ -273,6 +273,7 @@ func buildServices(r *runtime) (*services, error) {
 		Orders: orderSvc, Payments: paymentSvc, Commissions: commissionSvc, Tickets: supportSvc, Notices: notifySvc,
 		Activity: auditSvc, Redis: reportRedis{c: r.redis},
 	}, reportsvc.Options{BackupDir: cfg.Backup.Dir})
+	reportSvc.UseCache(r.redis)
 	if missing := reportSvc.MissingPorts(); len(missing) > 0 {
 		_ = queue.Close()
 		return nil, fmt.Errorf("report 缺少装配: %v", missing)

@@ -142,6 +142,11 @@ func TestRefreshActivity(t *testing.T) {
 		{Day: "2026-03-08", Users: 5},
 		{Day: "2026-03-09", Users: 6},
 	}
+	// 大前天及更早的日子都已定稿，本用例只看前天、昨天（补漏见 TestRefreshActivityBackfillMax7Days）
+	for d := time.Date(2026, 3, 7, 0, 0, 0, 0, sh); !d.Before(time.Date(2026, 3, 10, 0, 0, 0, 0, sh).AddDate(0, 0, -90)); d = d.AddDate(0, 0, -1) {
+		day := d.Format("2006-01-02")
+		e.store.activity["Asia/Shanghai|"+day] = model.ActivityDaily{TZ: "Asia/Shanghai", Day: day, ComputedAt: testNow}
+	}
 
 	if err := e.svc.RefreshActivity(ctx); err != nil {
 		t.Fatal(err)
@@ -200,6 +205,58 @@ func TestRefreshActivity(t *testing.T) {
 	}
 	if len(e.ports.activityCalls) != callsBefore {
 		t.Fatalf("third refresh should not call activity port")
+	}
+}
+
+func TestRefreshActivityBackfillMax7Days(t *testing.T) {
+	e := newTestEnv()
+	ctx := context.Background()
+	sh, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 昨天（03-09）和前天（03-08）设为已定稿
+	finalAt := time.Date(2026, 3, 12, 0, 0, 0, 0, sh)
+	e.store.activity["Asia/Shanghai|2026-03-08"] = model.ActivityDaily{
+		TZ: "Asia/Shanghai", Day: "2026-03-08", ComputedAt: finalAt,
+	}
+	e.store.activity["Asia/Shanghai|2026-03-09"] = model.ActivityDaily{
+		TZ: "Asia/Shanghai", Day: "2026-03-09", ComputedAt: finalAt,
+	}
+
+	// 历史从 02-20 到 03-07 全部缺失（超过 7 天）
+	e.ports.activityDays = []auditsvc.ActivityDay{
+		{Day: "2026-03-07", Registered: 10},
+		{Day: "2026-03-06", Registered: 20},
+		{Day: "2026-03-05", Registered: 30},
+		{Day: "2026-03-04", Registered: 40},
+		{Day: "2026-03-03", Registered: 50},
+		{Day: "2026-03-02", Registered: 60},
+		{Day: "2026-03-01", Registered: 70},
+		{Day: "2026-02-28", Registered: 80},
+	}
+
+	if err := e.svc.RefreshActivity(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(e.store.upserts) != 1 {
+		t.Fatalf("expected 1 upsert batch, got %d", len(e.store.upserts))
+	}
+	batch := e.store.upserts[0]
+	// 前天昨天已定稿，历史缺漏最多补 7 天（03-01 到 03-07）
+	if len(batch) != 7 {
+		t.Fatalf("expected 7 backfilled rows, got %d", len(batch))
+	}
+	wantDays := []string{
+		"2026-03-01", "2026-03-02", "2026-03-03", "2026-03-04",
+		"2026-03-05", "2026-03-06", "2026-03-07",
+	}
+	for i, w := range wantDays {
+		if batch[i].Day != w {
+			t.Fatalf("batch[%d].Day = %q, want %q", i, batch[i].Day, w)
+		}
 	}
 }
 

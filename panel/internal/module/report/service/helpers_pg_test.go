@@ -78,3 +78,47 @@ func (e *pgEnv) asAdmin(t *testing.T, ctx context.Context) (context.Context, uui
 	e.ports.emails[id] = email
 	return authn.With(ctx, authn.Principal{UserID: id, SessionID: uuid.NewString(), Audience: authn.AudienceAdmin}), id
 }
+
+// newCommitPGEnv 构造支持真实提交的环境（并发用例专用）。
+func newCommitPGEnv(t *testing.T) (*pgEnv, context.Context) {
+	t.Helper()
+	d := testkit.DB(t)
+
+	reportTables := []string{"revenue_report_adjustments", "audit_events"}
+	testkit.Truncate(t, d, reportTables...)
+	t.Cleanup(func() { testkit.Truncate(t, d, reportTables...) })
+
+	master := make([]byte, 32)
+	for i := range master {
+		master[i] = 0x02
+	}
+	keys, err := crypto.NewKeys(base64.StdEncoding.EncodeToString(master))
+	if err != nil {
+		t.Fatal(err)
+	}
+	au, err := auditsvc.New(auditrepo.New(d), keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := newFakePorts()
+	deps := Deps{
+		Settings: p, Users: p, Subscriptions: p, Nodes: p, Ledger: p, Orders: p, Payments: p,
+		Commissions: p, Tickets: p, Notices: p, Activity: p, Redis: &fakeRedis{},
+	}
+	svc := New(repo.New(d), tx.NewManager(d), au, deps, Options{})
+
+	ctx := context.Background()
+	ctx = reqid.With(ctx, reqid.New())
+	ctx = reqmeta.With(ctx, reqmeta.Meta{IP: "203.0.113.9", UserAgent: "report-test/1.0"})
+	e := &pgEnv{
+		svc:   svc,
+		ports: p,
+		row: func(ctx context.Context, q string, args ...any) *sql.Row {
+			return d.Conn(ctx).Raw(q, args...).Row()
+		},
+		exec: func(ctx context.Context, q string, args ...any) error {
+			return d.Conn(ctx).Exec(q, args...).Error
+		},
+	}
+	return e, ctx
+}

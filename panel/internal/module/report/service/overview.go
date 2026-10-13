@@ -67,6 +67,12 @@ func revenueRowForCurrency(
 
 // Overview 给看板概览：用户、订阅、节点、订单计数，两币种的营收（实际、调整、展示），账本漂移科目数。
 func (s *Service) Overview(ctx context.Context) (Overview, error) {
+	return cached(ctx, s, "report:v1:overview", func(ctx context.Context) (Overview, error) {
+		return s.loadOverview(ctx)
+	})
+}
+
+func (s *Service) loadOverview(ctx context.Context) (Overview, error) {
 	loc, err := s.location(ctx)
 	if err != nil {
 		return Overview{}, err

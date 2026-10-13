@@ -18,7 +18,9 @@ func (r *Repo) OpenTicketStats(ctx context.Context, now time.Time) (OpenTicketSt
 	err := r.d.Conn(ctx).Raw(`
 SELECT count(*) AS n,
        count(*) FILTER (WHERE t.priority IN ('high', 'urgent')) AS high,
-       floor(extract(epoch FROM ?::timestamptz - min(coalesce(m.last_user_at, t.created_at))))::bigint AS oldest_wait
+       CASE WHEN min(coalesce(m.last_user_at, t.created_at)) IS NULL THEN NULL
+            ELSE greatest(0, floor(extract(epoch FROM ?::timestamptz - min(coalesce(m.last_user_at, t.created_at))))::bigint)
+       END AS oldest_wait
   FROM tickets t
   LEFT JOIN LATERAL (
         SELECT max(tm.created_at) AS last_user_at FROM ticket_messages tm

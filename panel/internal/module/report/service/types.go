@@ -148,10 +148,7 @@ type NodeTrafficItem struct {
 	Upload      int64
 	Download    int64
 	Total       int64
-	// Entries 是有流量的（订阅, 小时）格子数；Reports 是有流量的小时桶数（新通道不再按节点记上报份数）
-	Entries int64
-	Reports int64
-	LastAt  time.Time
+	LastAt      time.Time
 }
 
 // NodeTraffic 是节点流量排行。Returned 是排行里各行之和，Other = Reported − Returned。
@@ -172,7 +169,6 @@ type UserTrafficItem struct {
 	Download          int64
 	Total             int64
 	SubscriptionCount int64
-	Entries           int64
 	LastAt            time.Time
 }
 

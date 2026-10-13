@@ -29,6 +29,7 @@ import (
 	supportsvc "github.com/aegispanel/aegis/internal/module/support/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
+	"github.com/redis/go-redis/v9"
 )
 
 // txRunner 是 *tx.Manager 的事务入口。
@@ -110,6 +111,7 @@ type Ledger interface {
 // Orders 是 order 的聚合读；*ordersvc.Service 直接满足。
 type Orders interface {
 	ReportOrderCounts(ctx context.Context, since, staleBefore time.Time) (ordersvc.ReportOrderCounts, error)
+	PendingStaleCount(ctx context.Context, staleBefore time.Time) (int64, error)
 }
 
 // Payments 是 payment 的聚合读；*paymentsvc.Service 直接满足。
@@ -173,6 +175,7 @@ type Service struct {
 	deps  Deps
 	opt   Options
 	now   func() time.Time
+	rdb   *redis.Client
 }
 
 // New 构造 report service。

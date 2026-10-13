@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -31,6 +32,13 @@ var trafficLimits = map[int]struct{}{
 
 // NodeTraffic 给窗口内按实际字节排序的节点排行。
 func (s *Service) NodeTraffic(ctx context.Context, q TrafficQuery) (NodeTraffic, error) {
+	key := fmt.Sprintf("report:v1:traffic:nodes:%s:%d:%s", q.Range, q.Limit, q.SnapshotAt)
+	return cached(ctx, s, key, func(ctx context.Context) (NodeTraffic, error) {
+		return s.loadNodeTraffic(ctx, q)
+	})
+}
+
+func (s *Service) loadNodeTraffic(ctx context.Context, q TrafficQuery) (NodeTraffic, error) {
 	w, limit, err := s.trafficWindow(q)
 	if err != nil {
 		return NodeTraffic{}, err
@@ -70,8 +78,6 @@ func (s *Service) NodeTraffic(ctx context.Context, q TrafficQuery) (NodeTraffic,
 			Upload:      n.Upload,
 			Download:    n.Download,
 			Total:       n.Upload + n.Download,
-			Entries:     n.Cells,
-			Reports:     n.ActiveHours,
 			LastAt:      n.LastAt,
 		}
 	}
@@ -117,6 +123,13 @@ func (s *Service) NodeTraffic(ctx context.Context, q TrafficQuery) (NodeTraffic,
 
 // UserTraffic 给窗口内按入账字节排序的用户排行（只给脱敏邮箱）。
 func (s *Service) UserTraffic(ctx context.Context, q TrafficQuery) (UserTraffic, error) {
+	key := fmt.Sprintf("report:v1:traffic:users:%s:%d:%s", q.Range, q.Limit, q.SnapshotAt)
+	return cached(ctx, s, key, func(ctx context.Context) (UserTraffic, error) {
+		return s.loadUserTraffic(ctx, q)
+	})
+}
+
+func (s *Service) loadUserTraffic(ctx context.Context, q TrafficQuery) (UserTraffic, error) {
 	w, limit, err := s.trafficWindow(q)
 	if err != nil {
 		return UserTraffic{}, err
@@ -170,7 +183,6 @@ func (s *Service) UserTraffic(ctx context.Context, q TrafficQuery) (UserTraffic,
 		userID            uuid.UUID
 		upload, download  int64
 		subscriptionCount int64
-		entries           int64
 		lastAt            time.Time
 	}
 	byUser := map[uuid.UUID]*agg{}
@@ -187,7 +199,6 @@ func (s *Service) UserTraffic(ctx context.Context, q TrafficQuery) (UserTraffic,
 		a.upload += sub.Upload
 		a.download += sub.Download
 		a.subscriptionCount++
-		a.entries += sub.Cells
 		if sub.LastAt.After(a.lastAt) {
 			a.lastAt = sub.LastAt
 		}
@@ -201,7 +212,6 @@ func (s *Service) UserTraffic(ctx context.Context, q TrafficQuery) (UserTraffic,
 			Download:          a.download,
 			Total:             a.upload + a.download,
 			SubscriptionCount: a.subscriptionCount,
-			Entries:           a.entries,
 			LastAt:            a.lastAt,
 		})
 	}

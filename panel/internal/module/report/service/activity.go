@@ -133,7 +133,7 @@ func (s *Service) ActivityTimeseries(ctx context.Context, days int) ([]ActivityP
 	return out, nil
 }
 
-// RefreshActivity 重算前天与昨天的汇总写进 activity_daily（已定稿的跳过）；定时任务调。
+// RefreshActivity 补齐漏算的日子并重算前天与昨天写进 activity_daily（已定稿的跳过）；定时任务调。
 func (s *Service) RefreshActivity(ctx context.Context) error {
 	loc, err := s.location(ctx)
 	if err != nil {
@@ -142,9 +142,9 @@ func (s *Service) RefreshActivity(ctx context.Context) error {
 	tz := loc.String()
 	now := s.now()
 	today := midnight(now, loc)
-	start := addDays(today, -2)
+	windowStart := addDays(today, -90)
 
-	rows, err := s.repo.ActivityRows(ctx, tz, dayString(start), dayString(today))
+	rows, err := s.repo.ActivityRows(ctx, tz, dayString(windowStart), dayString(today))
 	if err != nil {
 		return err
 	}
@@ -153,27 +153,49 @@ func (s *Service) RefreshActivity(ctx context.Context) error {
 		stored[r.Day] = r
 	}
 
-	needLive := false
-	for d := start; !d.After(addDays(today, -1)); d = addDays(d, 1) {
+	// 查读窗口（90 天）里已结束、但未定稿的历史日子（大前天及更早），从新到旧最多补 7 天
+	var missing []time.Time
+	for d := addDays(today, -3); !d.Before(windowStart); d = addDays(d, -1) {
 		r, ok := stored[dayString(d)]
 		if !ok || !finalized(r, loc) {
-			needLive = true
-			break
+			missing = append(missing, d)
+			if len(missing) == 7 {
+				break
+			}
 		}
 	}
-	if !needLive {
+
+	daysToCompute := map[string]time.Time{}
+	for _, d := range missing {
+		daysToCompute[dayString(d)] = d
+	}
+	// 再照旧算前天和昨天（未定稿的）
+	for d := addDays(today, -2); !d.After(addDays(today, -1)); d = addDays(d, 1) {
+		r, ok := stored[dayString(d)]
+		if !ok || !finalized(r, loc) {
+			daysToCompute[dayString(d)] = d
+		}
+	}
+	if len(daysToCompute) == 0 {
 		return nil
 	}
 
-	live, err := s.liveActivity(ctx, start, today)
+	minDay := today
+	for _, d := range daysToCompute {
+		if d.Before(minDay) {
+			minDay = d
+		}
+	}
+
+	live, err := s.liveActivity(ctx, minDay, today)
 	if err != nil {
 		return err
 	}
 	computedAt := s.now()
 	var upsert []model.ActivityDaily
-	for d := start; !d.After(addDays(today, -1)); d = addDays(d, 1) {
+	for d := minDay; d.Before(today); d = addDays(d, 1) {
 		key := dayString(d)
-		if r, ok := stored[key]; ok && finalized(r, loc) {
+		if _, ok := daysToCompute[key]; !ok {
 			continue
 		}
 		row := model.ActivityDaily{TZ: tz, Day: key, ComputedAt: computedAt}

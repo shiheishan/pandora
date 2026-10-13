@@ -277,26 +277,23 @@ type trafficQualityResponse struct {
 }
 
 type nodeTrafficItemResponse struct {
-	NodeID                 string  `json:"node_id"`
-	Name                   string  `json:"name"`
-	DisplayName            *string `json:"display_name"`
-	ReportCount            int64   `json:"report_count"`
-	UploadBytes            string  `json:"upload_bytes"`
-	DownloadBytes          string  `json:"download_bytes"`
-	TotalBytes             string  `json:"total_bytes"`
-	ContributingEntryCount int64   `json:"contributing_entry_count"`
-	LastReportAt           string  `json:"last_report_at"`
+	NodeID        string  `json:"node_id"`
+	Name          string  `json:"name"`
+	DisplayName   *string `json:"display_name"`
+	UploadBytes   string  `json:"upload_bytes"`
+	DownloadBytes string  `json:"download_bytes"`
+	TotalBytes    string  `json:"total_bytes"`
+	LastReportAt  string  `json:"last_report_at"`
 }
 
 type userTrafficItemResponse struct {
-	UserID                 string `json:"user_id"`
-	EmailMasked            string `json:"email_masked"`
-	SubscriptionCount      int64  `json:"subscription_count"`
-	UploadBytes            string `json:"upload_bytes"`
-	DownloadBytes          string `json:"download_bytes"`
-	TotalBytes             string `json:"total_bytes"`
-	ContributingEntryCount int64  `json:"contributing_entry_count"`
-	LastReportAt           string `json:"last_report_at"`
+	UserID            string `json:"user_id"`
+	EmailMasked       string `json:"email_masked"`
+	SubscriptionCount int64  `json:"subscription_count"`
+	UploadBytes       string `json:"upload_bytes"`
+	DownloadBytes     string `json:"download_bytes"`
+	TotalBytes        string `json:"total_bytes"`
+	LastReportAt      string `json:"last_report_at"`
 }
 
 type nodeRankingResponse struct {
@@ -490,8 +487,8 @@ func nodeTrafficFrom(t service.NodeTraffic) nodeTrafficResponse {
 	for _, it := range t.Items {
 		items = append(items, nodeTrafficItemResponse{
 			NodeID: it.NodeID.String(), Name: it.Name, DisplayName: it.DisplayName,
-			ReportCount: it.Reports, UploadBytes: decBytes(it.Upload), DownloadBytes: decBytes(it.Download),
-			TotalBytes: decBytes(it.Total), ContributingEntryCount: it.Entries, LastReportAt: trafficTime(it.LastAt),
+			UploadBytes: decBytes(it.Upload), DownloadBytes: decBytes(it.Download),
+			TotalBytes: decBytes(it.Total), LastReportAt: trafficTime(it.LastAt),
 		})
 	}
 	return nodeTrafficResponse{
@@ -517,7 +514,7 @@ func userTrafficFrom(t service.UserTraffic) userTrafficResponse {
 		items = append(items, userTrafficItemResponse{
 			UserID: it.UserID.String(), EmailMasked: it.EmailMasked, SubscriptionCount: it.SubscriptionCount,
 			UploadBytes: decBytes(it.Upload), DownloadBytes: decBytes(it.Download), TotalBytes: decBytes(it.Total),
-			ContributingEntryCount: it.Entries, LastReportAt: trafficTime(it.LastAt),
+			LastReportAt: trafficTime(it.LastAt),
 		})
 	}
 	return userTrafficResponse{

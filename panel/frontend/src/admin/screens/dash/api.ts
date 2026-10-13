@@ -106,12 +106,11 @@ const trafficItemBase = {
   upload_bytes: decimalBytes,
   download_bytes: decimalBytes,
   total_bytes: decimalBytes,
-  contributing_entry_count: count,
   last_report_at: z.string(),
 }
 export const nodeTrafficSchema = z.object({
   ...trafficBase,
-  items: z.array(z.object({ node_id: z.string(), name: z.string(), display_name: z.string().nullable(), report_count: count, ...trafficItemBase })),
+  items: z.array(z.object({ node_id: z.string(), name: z.string(), display_name: z.string().nullable(), ...trafficItemBase })),
   ranking: z.object({ returned_bytes: decimalBytes, other_node_bytes: decimalBytes }),
 })
 export const userTrafficSchema = z.object({

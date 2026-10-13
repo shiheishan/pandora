@@ -9,11 +9,11 @@ import (
 
 // ReportNodeCounts 是看板的节点计数。
 type ReportNodeCounts struct {
-	Total  int64 // 未删除、未退役的节点
-	Online int64 // 其中 active 且所在服务器心跳在 NodeStaleAfter 之内（与节点列表的 online 筛选同口径）
+	Total  int64 // 未删除、未退役且 serving_status='active' 的节点
+	Online int64 // 其中所在服务器心跳在 NodeStaleAfter 之内（与节点列表的 online 筛选同口径）
 }
 
-// ReportNodeCounts 一条 SQL 数出节点总数与在线数。
+// ReportNodeCounts 一条 SQL 数出活跃节点总数与在线数。
 func (s *Service) ReportNodeCounts(ctx context.Context, now time.Time) (ReportNodeCounts, error) {
 	onlineSince := now.Add(-NodeStaleAfter)
 	row, err := s.repo.ReportNodeCounts(ctx, onlineSince)

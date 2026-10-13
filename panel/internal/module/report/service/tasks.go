@@ -85,7 +85,7 @@ func (s *Service) Tasks(ctx context.Context) (Tasks, error) {
 		sample[i] = NodeRef{ID: n.ID, Name: n.Name}
 	}
 
-	orderCounts, err := s.deps.Orders.ReportOrderCounts(ctx, now, now.Add(-StaleOrderAfter))
+	staleOrders, err := s.deps.Orders.PendingStaleCount(ctx, now.Add(-StaleOrderAfter))
 	if err != nil {
 		return Tasks{}, err
 	}
@@ -118,7 +118,7 @@ func (s *Service) Tasks(ctx context.Context) (Tasks, error) {
 			LongestOfflineSeconds: offline.LongestOfflineSeconds,
 		},
 		OrdersPendingStale: OrdersPendingStaleTask{
-			Count:            orderCounts.PendingStale,
+			Count:            staleOrders,
 			ThresholdSeconds: int64(StaleOrderAfter / time.Second),
 		},
 		NotificationsBacklog: NotificationsBacklogTask{

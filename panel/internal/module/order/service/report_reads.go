@@ -26,3 +26,8 @@ func (s *Service) ReportOrderCounts(ctx context.Context, since, staleBefore time
 		PendingStale: row.PendingStale,
 	}, nil
 }
+
+// PendingStaleCount 查超过 staleBefore 仍未支付的订单数。
+func (s *Service) PendingStaleCount(ctx context.Context, staleBefore time.Time) (int64, error) {
+	return s.repo.PendingStaleCount(ctx, staleBefore)
+}

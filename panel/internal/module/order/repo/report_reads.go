@@ -27,3 +27,16 @@ func (r *Repo) ReportOrderCounts(ctx context.Context, since, staleBefore time.Ti
 	}
 	return out, nil
 }
+
+// PendingStaleCount 查超过 staleBefore 仍未支付的订单数（走 status + created_at 索引）。
+func (r *Repo) PendingStaleCount(ctx context.Context, staleBefore time.Time) (int64, error) {
+	var count int64
+	err := r.d.Conn(ctx).Raw(`
+		SELECT count(*)
+		  FROM orders
+		 WHERE status = 'pending_payment' AND created_at < ?`, staleBefore).Scan(&count).Error
+	if err != nil {
+		return 0, mapErr(err)
+	}
+	return count, nil
+}
