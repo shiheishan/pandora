@@ -21,11 +21,21 @@ type fakeDNS struct {
 func startDNS(t *testing.T, zones ...string) *fakeDNS {
 	t.Helper()
 	f := &fakeDNS{zones: zones, txt: map[string][]string{}}
-	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	// UDP 随机端口上的同号 TCP 可能已被占用（CI 上偶发 bind: address already in use），换端口重试
+	var (
+		pc  net.PacketConn
+		ln  net.Listener
+		err error
+	)
+	for i := 0; i < 20; i++ {
+		if pc, err = net.ListenPacket("udp", "127.0.0.1:0"); err != nil {
+			t.Fatal(err)
+		}
+		if ln, err = net.Listen("tcp", pc.LocalAddr().String()); err == nil {
+			break
+		}
+		_ = pc.Close()
 	}
-	ln, err := net.Listen("tcp", pc.LocalAddr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
