@@ -18,6 +18,7 @@ import (
 	idemh "github.com/aegispanel/aegis/internal/module/idempotency/handler"
 	identityh "github.com/aegispanel/aegis/internal/module/identity/handler"
 	ledgerh "github.com/aegispanel/aegis/internal/module/ledger/handler"
+	nodeh "github.com/aegispanel/aegis/internal/module/node/handler"
 	notifyh "github.com/aegispanel/aegis/internal/module/notify/handler"
 	orderh "github.com/aegispanel/aegis/internal/module/order/handler"
 	paymenth "github.com/aegispanel/aegis/internal/module/payment/handler"
@@ -167,6 +168,7 @@ func newEngines(r *runtime, svc *services) (*gin.Engine, *gin.Engine) {
 		catalogh.New(svc.catalog),
 		promoh.New(svc.promo),
 		subh.New(svc.sub, svc.limiter, r.cfg.RateLimit.IPPerMin),
+		nodeh.New(svc.node),
 		paymenth.New(svc.payment, svc.limiter),
 		orderh.New(svc.order, svc.limiter),
 		giftcardh.New(svc.giftcard, svc.limiter),

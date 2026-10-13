@@ -80,6 +80,8 @@ panel/
         handler/                 gin 处理器、每个接口的请求与响应 DTO、路由注册
         task/                    asynq 任务处理器（只调本模块 service）
         render/                  （仅 subscription）订阅格式渲染：纯函数，不依赖任何模块、不碰数据库；node 模块用它的 Node 类型交线路
+        protocol/                （仅 node）协议 schema、校验、抹敏感值、端口 L4、内核字段翻译：纯函数，规则同 render
+        grpc/                    （仅 node）节点通道的 gRPC 服务（接入与会话），地位同 handler：只调本模块 service
   db/migrations/                 新基线（goose，embed 进二进制）
 proto/                           节点协议源文件（buf）
 nodeapi/                         buf 生成的 Go 代码，单独的 Go module，panel 和 pdnd 用 replace 引用
@@ -92,12 +94,12 @@ nodeapi/                         buf 生成的 Go 代码，单独的 Go module�
 | 规则 | depguard 写法 |
 |---|---|
 | handler 不碰数据库 | `**/module/*/handler/**` 禁止 `gorm.io/gorm`、`internal/module/*/repo`、`internal/pkg/db` |
-| task 不碰数据库 | `**/module/*/task/**` 同上 |
+| task、grpc 不碰数据库 | `**/module/*/task/**`、`**/module/*/grpc/**` 同上 |
 | service 不直接用 GORM | `**/module/*/service/**` 禁止 `gorm.io/gorm`；事务通过 `pkg/tx` 的接口 |
 | 只 import 本模块的 repo | 每个模块一条规则：`module/<m>/**` 禁止 `module/<其他>/repo`、`module/<其他>/model` |
 | 跨模块只调 service | 同上；允许 `module/<其他>/service` |
 | 中间件不碰数据库 | `internal/pkg/httpx/**` 禁止 `gorm.io/gorm`、`internal/pkg/db` |
-| 渲染是纯函数 | `**/module/*/render/**` 禁止 `internal/module`、`gorm.io`、`internal/pkg/db`、`internal/pkg/tx` |
+| 纯函数包 | `**/module/*/render/**`、`**/module/*/protocol/**` 禁止 `internal/module`、`gorm.io`、`internal/pkg/db`、`internal/pkg/tx` |
 | 模块之间不循环 | Go 编译器本身会拒绝包循环；另外在 service 之间约定依赖方向（第 4.2 节） |
 
 每个模块的规则由一个小脚本从 `internal/module/` 目录生成到 `.golangci.yml`，CI 检查生成结果没有漂移。不再写自研的源码扫描测试。
@@ -384,47 +386,18 @@ handler 里现在的业务逻辑（第 4 节附表：公告状态机、访问日
 | 安装证据 | Hello 里带 agent_version 和 binary_sha256，面板记录下来，与当前发布版本不一致时在后台提示。这是节点自报的数据，原来的「两阶段 commit 拒绝」也只是自报，从来不是安全控制，所以改成提示 |
 | 离线发布密钥 | 位置保留：以后升级二进制时，用离线密钥签发布清单。不在本阶段实现 |
 
-### 11.2 proto 草案
+### 11.2 proto
 
-```proto
-syntax = "proto3";
-package pandora.node.v1;
+定稿在 `proto/pandora/node/v1/node.proto`（buf v2，lint 用 STANDARD，所以服务名带 Service 后缀、流消息叫 SessionRequest / SessionResponse）：
 
-service Enrollment {
-  rpc Enroll(EnrollRequest) returns (EnrollResponse);           // 服务端 TLS，不要求客户端证书
-}
-service Control {
-  rpc Session(stream AgentMessage) returns (stream PanelMessage); // mTLS
-}
+- `EnrollmentService.Enroll(EnrollRequest) → EnrollResponse`：服务端 TLS，令牌 + CSR（DER）+ request_id + 主机信息，回 server_id、客户端证书链、CA。
+- `ControlService.Session(stream SessionRequest) → stream SessionResponse`：mTLS 双向流。
+  - 节点发：Hello（版本、二进制摘要、能力、主机信息、各节点已应用的配置摘要与名单版本）、Heartbeat（整数口径的机器指标 + 各节点运行状态）、TrafficReport（report_id + 按节点、uid 的增量）、OnlineIPs、ConfigAck（按节点、按配置摘要）、UsersAck、RenewRequest。
+  - 面板发：Welcome、ServerConfig（这台服务器全部节点的全量配置，每个节点一份 JSON 配置文档 + 摘要）、UsersFull（按 5000 人分块）、UsersDelta、TrafficAck、Certificate、Command（reconnect / tombstone）。
+- 名单里的用户号 `uid` 是 `subscriptions.node_uid`（bigint），代理身份是 `proxy_uuid`。
+- 节点配置是 JSON 文档而不是逐协议的消息：协议种类多、字段各异，文档形状由面板 node 模块的配置组装与 pdnd `node/config_apply.go` 共同约定。
 
-message AgentMessage {
-  uint64 seq = 1;
-  oneof body {
-    Hello hello = 10;             // agent_version, binary_sha256, features[], host, applied_config{release_id, content_sha256}, applied_users[{node_id, version}]
-    Heartbeat heartbeat = 11;     // metrics（整数口径）, runtime_reason
-    TrafficReport traffic = 12;   // report_id, entries[{node_id, user_id, up, down}]
-    OnlineIPs online = 13;        // entries[{node_id, user_id, ips[]}]
-    ConfigAck config_ack = 14;    // release_id, content_sha256, phase(switched/health_passed/failed), reason_code, detail(≤2KB)
-    UsersAck users_ack = 15;      // node_id, version, ok, reason_code
-    RenewRequest renew = 16;      // csr
-  }
-}
-
-message PanelMessage {
-  uint64 seq = 1;
-  oneof body {
-    Welcome welcome = 10;         // session_id, features[], push_interval, heartbeat_interval, server_time
-    ServerConfig config = 11;     // release_id, content_sha256, nodes[{node_id, 协议配置, outbounds, routes}]
-    UsersFull users_full = 12;    // node_id, version, chunk_index, chunk_total, users[{id, uuid, speed_limit, device_limit}]
-    UsersDelta users_delta = 13;  // node_id, from_version, to_version, added[], removed_ids[]
-    TrafficAck traffic_ack = 14;  // report_id（落库提交后才发）
-    Certificate certificate = 15; // cert_chain_pem, ca_bundle_pem
-    Command command = 16;         // reconnect{in_ms, jitter_ms} | tombstone{reason}
-  }
-}
-```
-
-proto 放在仓库根的 `proto/`，用 buf 管理；生成的代码放进单独的 Go module `nodeapi/`，panel 和 pdnd 都用 replace 引用。CI 检查 `buf generate` 之后没有差异，并跑 `buf breaking`。
+生成的代码放进单独的 Go module `nodeapi/`（`github.com/aegispanel/nodeapi`），panel 和 pdnd 都用 replace 引用。插件用 `go run` 按固定版本取（`proto/buf.gen.yaml`），不走 BSR 远程插件。CI（`.github/workflows/nodeapi.yml`）检查 lint、格式、`buf generate` 之后没有差异，并对上一次提交跑 `buf breaking`。
 
 ### 11.3 会话语义
 
@@ -434,7 +407,7 @@ proto 放在仓库根的 `proto/`，用 buf 管理；生成的代码放进单独
 | 对齐 | Hello 报告已应用的配置版本和各节点的名单版本；面板比较后，相同就不发，不同就发全量（xDS 的 initial_resource_versions 思路） |
 | 名单版本 | 沿用内容哈希 `u1-<hex>`。增量只在面板确知节点处于 from 版本时发送，否则发全量。全量按 5000 个用户一块分块发送，单条消息不会超过 gRPC 缺省的 4 MB 上限 |
 | 背压 | 每个会话一个有界发送队列；配置和全量名单只保留最新一份；队列满了就断流，让节点重连后重新对齐 |
-| 流量 | report_id 必填；面板在 `UNIQUE(node_id, client_report_id)` 下落库，提交后发 TrafficAck；同一个 id 内容不同就报错。节点在收到 ack 之前保留这一批，重连后按原 id 重发。缓冲只在内存里，进程崩溃最多丢一个节拍（60 秒），落盘放到换栈之后再评估 |
+| 流量 | report_id 必填（一份报告含这台服务器各节点的条目）；面板在 `UNIQUE(server_id, report_id)` 下落库，提交后发 TrafficAck；同一个 id 内容不同就报错。节点在收到 ack 之前保留这一批，重连后按原 id 重发。缓冲只在内存里，进程崩溃最多丢一个节拍（60 秒），落盘放到换栈之后再评估 |
 | 在线 IP | 只接受该服务器所服务用户的条目（现在不过滤） |
 | 心跳 | gRPC keepalive 30 秒 ping、10 秒超时；应用层 Heartbeat 30 秒一次，带指标；「在线」= 有活动的流，最后心跳时间用于展示 |
 | 重连 | 全抖动指数退避，1 秒起，封顶 30 秒；面板重启前给每个会话发 reconnect 提示，错峰重连 |
@@ -606,7 +579,7 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 | 节点手工吊销不吊销 UniProxy 令牌，也不断开在途的 SSE | 通道整体替换；吊销即关流 |
 | 节点身份 90 天硬过期，不能续期 | 会话内续期 |
 | 在线 IP 不按服务用户过滤 | 第 11.3 节 |
-| 流量计费用 float64 | 整数千分比倍率 |
+| 流量计费用 float64 | 倍率存 NUMERIC(6,2)、Go 里用 decimal，扣量向零截断 |
 | agent_version 写死，HeartbeatOutput 被丢弃 | Hello 带真实版本；会话双向 |
 | 幂等键因为禁止删除而永远清理不掉 | 去掉禁删触发器，加保留期任务 |
 | 6 张表无限增长 | 第 12 节的保留期任务 |

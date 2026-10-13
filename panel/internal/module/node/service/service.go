@@ -1,0 +1,45 @@
+// Package service 是 node 模块的业务层：服务器与节点的后台编排、节点池、
+// 节点通道（接入、会话、名单与配置下发、流量入账），以及给 subscription 的可下发线路。
+//
+// 状态机写成转换表加 CanTransition（docs/architecture.md 第 5.4 节）；影响节点下发的写，
+// 在事务里调 MarkUsersChanged / MarkConfigChanged，提交后才推进纪元（epoch.go）。
+package service
+
+import (
+	"context"
+	"time"
+
+	"github.com/redis/go-redis/v9"
+
+	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
+	"github.com/aegispanel/aegis/internal/module/node/repo"
+	"github.com/aegispanel/aegis/internal/pkg/tx"
+)
+
+// auditWriter 是 audit service 的写入面。
+type auditWriter interface {
+	Write(ctx context.Context, e auditsvc.Event) error
+}
+
+// txRunner 是 *tx.Manager 的事务入口。
+type txRunner interface {
+	Do(ctx context.Context, fn func(ctx context.Context) error) error
+}
+
+// Service 是 node 模块对外的唯一入口。别的模块的依赖经 Use* 在启动装配时注入（各主题文件里定义）。
+type Service struct {
+	repo  *repo.Repo
+	tx    txRunner
+	audit auditWriter
+	rdb   *redis.Client
+	now   func() time.Time
+
+	// p5-pools 注入（pools 主题文件里定义接口与 Use* 方法）
+	catalog Catalog
+	groups  UserGroups
+}
+
+// New 构造 node service。rdb 用于下发纪元（epoch.go），为 nil 时只跳过通知。
+func New(r *repo.Repo, txm *tx.Manager, audit *auditsvc.Service, rdb *redis.Client) *Service {
+	return &Service{repo: r, tx: txm, audit: audit, rdb: rdb, now: time.Now}
+}

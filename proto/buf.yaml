@@ -1,0 +1,11 @@
+# 节点通道的 proto（docs/architecture.md 第 11 节）。生成代码在仓库根的 nodeapi/（单独的 Go module）。
+#   cd proto && go run github.com/bufbuild/buf/cmd/buf@v1.71.0 generate
+version: v2
+modules:
+  - path: .
+lint:
+  use:
+    - STANDARD
+breaking:
+  use:
+    - WIRE_JSON

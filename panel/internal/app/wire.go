@@ -20,6 +20,8 @@ import (
 	identitysvc "github.com/aegispanel/aegis/internal/module/identity/service"
 	ledgerrepo "github.com/aegispanel/aegis/internal/module/ledger/repo"
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
+	noderepo "github.com/aegispanel/aegis/internal/module/node/repo"
+	nodesvc "github.com/aegispanel/aegis/internal/module/node/service"
 	notifyrepo "github.com/aegispanel/aegis/internal/module/notify/repo"
 	notifysvc "github.com/aegispanel/aegis/internal/module/notify/service"
 	orderrepo "github.com/aegispanel/aegis/internal/module/order/repo"
@@ -58,6 +60,7 @@ type services struct {
 	order      *ordersvc.Service
 	commission *commissionsvc.Service
 	giftcard   *giftcardsvc.Service
+	node       *nodesvc.Service
 	// idemFPKey 是幂等请求指纹的 HMAC 密钥（从主密钥派生）
 	idemFPKey []byte
 	limiter   *ratelimit.Limiter
@@ -147,6 +150,7 @@ func buildServices(r *runtime) (*services, error) {
 
 	orderSvc := ordersvc.New(orderrepo.New(r.db), txm, catalogSvc, ledgerSvc, promoSvc, subSvc, paymentSvc, identitySvc, idemSvc, auditSvc)
 	commissionSvc := commissionsvc.New(commissionrepo.New(r.db), txm, ledgerSvc, settingsSvc, sealer, auditSvc)
+	nodeSvc := nodesvc.New(noderepo.New(r.db), txm, auditSvc, r.redis)
 	giftcardSvc := giftcardsvc.New(giftcardrepo.New(r.db), txm, auditSvc, idemSvc, catalogSvc, subSvc, ledgerSvc, identitySvc, keys, sealer)
 
 	// 模块间注入：identity 定义接口，auth、notify 实现；audit 经 identity 显示操作者与资源
@@ -173,6 +177,8 @@ func buildServices(r *runtime) (*services, error) {
 			BlockAds:         cfg.Subscription.Singbox.BlockAds,
 		}},
 	})
+	// 订阅里影响节点名单的事实变了（开通、续期、换套餐…），提交后推进节点名单纪元
+	subSvc.UseRosterNotifier(nodeSvc)
 	// 渠道到账与线下收款经 order 结算（没注册时入账一律失败）
 	paymentSvc.UseSettler(orderSvc)
 	// 订单结算时按推荐关系计提佣金（同一结算事务）；同源（审计里共用来源 IP）的佣金转人工复核
@@ -207,6 +213,7 @@ func buildServices(r *runtime) (*services, error) {
 		order:      orderSvc,
 		commission: commissionSvc,
 		giftcard:   giftcardSvc,
+		node:       nodeSvc,
 		idemFPKey:  keys.Derive(crypto.InfoHMACIdempotency, 32),
 		limiter:    limiter,
 		queue:      queue,

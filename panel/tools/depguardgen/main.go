@@ -123,9 +123,10 @@ linters:
           files:
             - "**/internal/module/*/handler/**"
             - "**/internal/module/*/task/**"
+            - "**/internal/module/*/grpc/**"
           deny:
             - pkg: gorm.io
-              desc: handler 与 task 不碰数据库，经 service 访问
+              desc: handler、task 与 grpc 不碰数据库，经 service 访问
             - pkg: {{.Module}}/internal/pkg/db
               desc: handler 与 task 不碰数据库，经 service 访问
             - pkg: {{.Module}}/internal/pkg/tx
@@ -144,18 +145,19 @@ linters:
           deny:
             - pkg: {{.Module}}/internal/module
               desc: model 只放字段与标签，不依赖任何模块
-        render-pure:
+        pure-packages:
           files:
             - "**/internal/module/*/render/**"
+            - "**/internal/module/*/protocol/**"
           deny:
             - pkg: {{.Module}}/internal/module
-              desc: 渲染是纯函数，不依赖任何模块
+              desc: 纯函数包（订阅渲染、节点协议），不依赖任何模块
             - pkg: gorm.io
-              desc: 渲染是纯函数，不碰数据库
+              desc: 纯函数包不碰数据库
             - pkg: {{.Module}}/internal/pkg/db
-              desc: 渲染是纯函数，不碰数据库
+              desc: 纯函数包不碰数据库
             - pkg: {{.Module}}/internal/pkg/tx
-              desc: 渲染是纯函数，不碰数据库
+              desc: 纯函数包不碰数据库
         pkg-no-business:
           files:
             - "**/internal/pkg/**"

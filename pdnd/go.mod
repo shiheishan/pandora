@@ -3,6 +3,7 @@ module github.com/aegispanel/nodeagent
 go 1.26.9
 
 require (
+	github.com/aegispanel/nodeapi v0.0.0-00010101000000-000000000000
 	github.com/anytls/sing-anytls v0.0.13
 	github.com/daeuniverse/outbound v0.0.0-20250219135309-c607702d1c85
 	github.com/enfein/mieru/v3 v3.34.1
@@ -184,3 +185,5 @@ require (
 	google.golang.org/grpc v1.83.2 // indirect
 	lukechampine.com/blake3 v1.4.1
 )
+
+replace github.com/aegispanel/nodeapi => ../nodeapi

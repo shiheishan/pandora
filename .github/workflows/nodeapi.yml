@@ -1,0 +1,68 @@
+name: Node API (proto)
+
+# 节点通道的 proto 与生成代码（docs/architecture.md 第 11 节）：
+# buf lint、格式、生成后无差异、对上一次提交不做破坏性改动，nodeapi 能编译。
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "proto/**"
+      - "nodeapi/**"
+      - ".github/workflows/nodeapi.yml"
+  pull_request:
+    paths:
+      - "proto/**"
+      - "nodeapi/**"
+      - ".github/workflows/nodeapi.yml"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  BUF: go run github.com/bufbuild/buf/cmd/buf@v1.71.0
+
+jobs:
+  proto:
+    name: buf lint, format, generate, breaking
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: nodeapi/go.mod
+          cache-dependency-path: nodeapi/go.sum
+      - name: lint and format
+        working-directory: proto
+        run: |
+          $BUF lint
+          $BUF format --diff --exit-code
+      - name: generated code is up to date
+        working-directory: proto
+        run: |
+          $BUF generate
+          git diff --exit-code -- ../nodeapi
+          test -z "$(git status --porcelain -- ../nodeapi)"
+      - name: no breaking change against the previous commit
+        working-directory: proto
+        env:
+          BEFORE: ${{ github.event.before || github.event.pull_request.base.sha }}
+        run: |
+          # 上一次提交还没有 proto（首次引入）或拿不到时跳过
+          if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] \
+             && git cat-file -e "$BEFORE:proto/buf.yaml" 2>/dev/null; then
+            $BUF breaking --against "../.git#ref=$BEFORE,subdir=proto"
+          else
+            echo "上一次提交没有 proto，跳过 breaking 检查"
+          fi
+      - name: build and vet nodeapi
+        working-directory: nodeapi
+        run: |
+          go build -mod=readonly ./...
+          go vet ./...

@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - "pdnd/**"
+      - "nodeapi/**"
       - "panel/internal/domain/nodefabric/**"
       - "panel/internal/api/**"
       - "panel/internal/platform/db/**"
@@ -17,6 +18,7 @@ on:
   pull_request:
     paths:
       - "pdnd/**"
+      - "nodeapi/**"
       - "panel/internal/domain/nodefabric/**"
       - "panel/internal/api/**"
       - "panel/internal/platform/db/**"

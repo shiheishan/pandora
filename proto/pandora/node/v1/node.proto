@@ -1,0 +1,319 @@
+// 节点端（pdnd）与面板之间的通道：接入（EnrollmentService）与控制会话（ControlService）。
+// 会话里节点发 SessionRequest、面板发 SessionResponse（双向流，两边各自随时发）。
+//
+// 设计见 docs/architecture.md 第 11 节。要点：
+//   - 一台服务器一个身份，会话按服务器建；一台服务器上的多个节点（入站）在同一条流里。
+//   - Enroll 只要求服务端 TLS（节点按安装命令里的 CA 指纹校验），成功后拿到客户端证书；
+//     Session 是 mTLS，面板从证书的 URI SAN 取服务器 id，每次建流查库确认身份有效。
+//   - 消息里没有的东西不要靠约定塞进字符串；字段只增不改号，删字段要 reserved。
+syntax = "proto3";
+
+package pandora.node.v1;
+
+option go_package = "github.com/aegispanel/nodeapi/pandora/node/v1;nodev1";
+
+// EnrollmentService 是首次接入：一次性令牌 + CSR 换客户端证书。
+service EnrollmentService {
+  // Enroll 只要求服务端 TLS，不要求客户端证书。
+  rpc Enroll(EnrollRequest) returns (EnrollResponse);
+}
+
+// ControlService 是接入之后的长连接会话（mTLS）。同一身份的新流会关掉旧流（supersede）。
+service ControlService {
+  rpc Session(stream SessionRequest) returns (stream SessionResponse);
+}
+
+// ---------------------------------------------------------------------------
+// 接入
+// ---------------------------------------------------------------------------
+
+message EnrollRequest {
+  // 一次性接入令牌（安装命令里给的明文，面板只存哈希）。
+  string token = 1;
+  // PKCS#10 证书请求（DER），密钥是节点本地生成的 ECDSA P-256，私钥不出机器。
+  bytes csr_der = 2;
+  // 崩溃重试用：同一令牌、同一 request_id 重复调用返回同一张证书。1–64 个 [A-Za-z0-9._:-]。
+  string request_id = 3;
+  HostInfo host = 4;
+  string agent_version = 5;
+}
+
+message EnrollResponse {
+  // 这台服务器在面板里的 id（UUID 文本），与证书 URI SAN 里的一致。
+  string server_id = 1;
+  // 客户端证书链（PEM，叶子在前）。
+  bytes cert_chain_pem = 2;
+  // 面板 CA（PEM），会话时用它校验面板的服务端证书。
+  bytes ca_bundle_pem = 3;
+}
+
+// HostInfo 是机器信息，接入与每次 Hello 都带。采不到的项留零，面板按「未知」存。
+message HostInfo {
+  string hostname = 1;
+  string os = 2;
+  string arch = 3;
+  uint32 cpu_cores = 4;
+  uint64 memory_bytes = 5;
+  uint64 disk_bytes = 6;
+}
+
+// ---------------------------------------------------------------------------
+// 会话：节点 → 面板
+// ---------------------------------------------------------------------------
+
+message SessionRequest {
+  // 本条流里节点发出的序号，从 1 递增（日志与排障用）。
+  uint64 seq = 1;
+  oneof body {
+    Hello hello = 10;
+    Heartbeat heartbeat = 11;
+    TrafficReport traffic = 12;
+    OnlineIPs online = 13;
+    ConfigAck config_ack = 14;
+    UsersAck users_ack = 15;
+    RenewRequest renew = 16;
+  }
+}
+
+// Hello 是流上的第一条消息。面板按它报告的已应用版本对齐：相同的不发，不同的发全量。
+message Hello {
+  string agent_version = 1;
+  // 节点二进制的 SHA-256（hex）。自报数据，面板只用来在后台提示版本不一致。
+  string binary_sha256 = 2;
+  // 节点支持的可选能力（如 "users_delta"），面板只用双方都有的。
+  repeated string features = 3;
+  HostInfo host = 4;
+  // 各节点已应用的配置（按节点）。
+  repeated AppliedConfig applied_configs = 5;
+  // 各节点内核里已是哪一版名单。
+  repeated AppliedUsers applied_users = 6;
+}
+
+message AppliedConfig {
+  string node_id = 1;
+  string content_sha256 = 2;
+}
+
+message AppliedUsers {
+  string node_id = 1;
+  // 名单版本（u1-<hex>，内容哈希）。
+  string version = 2;
+}
+
+// Heartbeat 每 30 秒一次，带机器指标与各节点的运行状态。指标全是整数口径。
+message Heartbeat {
+  HostMetrics metrics = 1;
+  repeated NodeRuntime nodes = 2;
+}
+
+message HostMetrics {
+  // CPU 占用，万分比（0–10000）。
+  uint32 cpu_bp = 1;
+  uint64 mem_used_bytes = 2;
+  uint64 mem_total_bytes = 3;
+  uint64 disk_used_bytes = 4;
+  uint64 disk_total_bytes = 5;
+  // 1/5/15 分钟负载 × 100。
+  uint32 load1_cp = 6;
+  uint32 load5_cp = 7;
+  uint32 load15_cp = 8;
+  // 网卡累计收发字节（单调，重启归零）。
+  uint64 net_rx_bytes = 9;
+  uint64 net_tx_bytes = 10;
+  uint32 tcp_conns = 11;
+  uint64 uptime_sec = 12;
+  // 有数据源读不到（非 Linux、被裁的容器），对应字段为零。
+  bool partial = 13;
+}
+
+// NodeRuntime 是一个节点（入站）在本机的运行状态。
+message NodeRuntime {
+  string node_id = 1;
+  RuntimeStatus status = 2;
+  // 降级原因码（如 port_in_use、start_failed、config_rejected），running 时为空。
+  string reason = 3;
+  // 端口被同机另一个节点占用时，占用者的 node_id。
+  string reason_node_id = 4;
+}
+
+enum RuntimeStatus {
+  RUNTIME_STATUS_UNSPECIFIED = 0;
+  RUNTIME_STATUS_RUNNING = 1;
+  // 新配置没装上，旧配置或磁盘缓存仍在服务。
+  RUNTIME_STATUS_DEGRADED = 2;
+  // 入站没在服务。
+  RUNTIME_STATUS_DOWN = 3;
+}
+
+// TrafficReport 是一个统计周期的流量增量。面板在 UNIQUE(server, report_id) 下落库，
+// 提交后回 TrafficAck；同一 report_id 内容不同就报错。节点收到 ack 之前保留这一批，重连后按原 id 重发。
+message TrafficReport {
+  // 1–64 个 [A-Za-z0-9._:-]，同一台服务器内唯一。
+  string report_id = 1;
+  repeated TrafficEntry entries = 2;
+}
+
+message TrafficEntry {
+  string node_id = 1;
+  // 订阅的整数用户号（名单里的 User.uid）。
+  int64 uid = 2;
+  uint64 upload = 3;
+  uint64 download = 4;
+}
+
+// OnlineIPs 是各节点当前在线的来源地址（设备键：IPv4 按地址，IPv6 按 /64）。
+// 面板只收该服务器所服务用户的条目。
+message OnlineIPs {
+  repeated OnlineEntry entries = 1;
+}
+
+message OnlineEntry {
+  string node_id = 1;
+  int64 uid = 2;
+  repeated string ips = 3;
+}
+
+// ConfigAck 是一个节点应用某版配置的回执。switched / health_passed 每版本报一次，failed 每版本只报一次。
+message ConfigAck {
+  string node_id = 1;
+  string content_sha256 = 2;
+  ConfigPhase phase = 3;
+  // 失败原因码，failed 时必填。
+  string reason_code = 4;
+  // 失败详情，至多 2KB，面板截断。
+  string detail = 5;
+}
+
+enum ConfigPhase {
+  CONFIG_PHASE_UNSPECIFIED = 0;
+  // 已切到新配置。
+  CONFIG_PHASE_SWITCHED = 1;
+  // 新配置通过本机健康检查。
+  CONFIG_PHASE_HEALTH_PASSED = 2;
+  // 装不上，已回滚或仍在用旧配置。
+  CONFIG_PHASE_FAILED = 3;
+}
+
+// UsersAck 是一个节点应用某版名单的回执。
+message UsersAck {
+  string node_id = 1;
+  string version = 2;
+  bool ok = 3;
+  string reason_code = 4;
+}
+
+// RenewRequest 是会话内续期：证书剩余不到 10 天时，节点生成新私钥发来 CSR。
+message RenewRequest {
+  bytes csr_der = 1;
+}
+
+// ---------------------------------------------------------------------------
+// 会话：面板 → 节点
+// ---------------------------------------------------------------------------
+
+message SessionResponse {
+  // 本条流里面板发出的序号，从 1 递增。
+  uint64 seq = 1;
+  oneof body {
+    Welcome welcome = 10;
+    ServerConfig config = 11;
+    UsersFull users_full = 12;
+    UsersDelta users_delta = 13;
+    TrafficAck traffic_ack = 14;
+    Certificate certificate = 15;
+    Command command = 16;
+  }
+}
+
+// Welcome 是面板对 Hello 的应答，之后才发配置与名单。
+message Welcome {
+  string session_id = 1;
+  // 双方都支持的可选能力。
+  repeated string features = 2;
+  // 流量上报间隔、心跳间隔（秒）。
+  uint32 push_interval_sec = 3;
+  uint32 heartbeat_interval_sec = 4;
+  // 面板当前时间（Unix 毫秒），节点用来提示时钟偏差。
+  int64 server_time_unix_ms = 5;
+}
+
+// ServerConfig 是这台服务器上全部节点的配置（全量）。不在列表里的节点，节点端停掉它。
+message ServerConfig {
+  // 这一份全量配置的版本（内容哈希），日志与排障用。
+  string release_id = 1;
+  repeated NodeConfig nodes = 2;
+}
+
+// NodeConfig 是一个节点（入站）的配置。
+message NodeConfig {
+  string node_id = 1;
+  // 规范化后的协议名（vless、trojan、hysteria2…）。
+  string node_type = 2;
+  // 节点的生效配置文档（JSON 对象）：协议配置（内核字段名）、端口、出站与分流规则。
+  // 协议种类多、各自字段不同，所以这里是 JSON 文档而不是逐协议的消息；
+  // 文档的形状由面板 node 模块的配置组装与 pdnd 的 node/config_apply.go 共同约定。
+  bytes config_json = 3;
+  // config_json 的 SHA-256（hex），节点回执与 Hello 里按它报已应用版本。
+  string content_sha256 = 4;
+}
+
+// UsersFull 是一个节点的全量名单，按 5000 人一块分块发送；chunk_index 从 0 起，
+// 收齐 chunk_total 块后整体替换。
+message UsersFull {
+  string node_id = 1;
+  string version = 2;
+  uint32 chunk_index = 3;
+  uint32 chunk_total = 4;
+  repeated User users = 5;
+}
+
+// UsersDelta 只在面板确知节点处于 from_version 时发，否则发全量。
+message UsersDelta {
+  string node_id = 1;
+  string from_version = 2;
+  string to_version = 3;
+  // 新增或属性有变的用户（按 uid 覆盖）。
+  repeated User upserted = 4;
+  repeated int64 removed_uids = 5;
+}
+
+message User {
+  // 订阅的整数用户号，流量与在线上报按它回传。
+  int64 uid = 1;
+  // 代理身份（订阅的 proxy_uuid）。
+  string uuid = 2;
+  // 限速 kbps，0 表示不限。
+  uint32 speed_limit_kbps = 3;
+  // 设备数上限，0 表示不限。
+  uint32 device_limit = 4;
+}
+
+// TrafficAck 在流量落库提交后才发。
+message TrafficAck {
+  string report_id = 1;
+}
+
+// Certificate 是续期结果：新的客户端证书链与 CA。
+message Certificate {
+  bytes cert_chain_pem = 1;
+  bytes ca_bundle_pem = 2;
+}
+
+message Command {
+  oneof kind {
+    Reconnect reconnect = 1;
+    Tombstone tombstone = 2;
+  }
+}
+
+// Reconnect 让节点在 in_ms 加上 [0, jitter_ms) 的随机延迟后重连（面板重启前错峰）。
+message Reconnect {
+  uint32 in_ms = 1;
+  uint32 jitter_ms = 2;
+}
+
+// Tombstone 表示这台服务器的身份已吊销或服务器已删除：节点停止重连，继续用磁盘缓存服务，
+// 要在后台生成新令牌重新接入。
+message Tombstone {
+  string reason = 1;
+}
