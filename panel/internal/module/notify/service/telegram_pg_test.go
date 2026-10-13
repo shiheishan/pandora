@@ -360,7 +360,7 @@ func TestUnbindTelegramSuppressesQueuedDeliveries(t *testing.T) {
 		if err := e.svc.store.InsertDelivery(e.ctx, &model.Delivery{
 			ID: id, UserID: &uid, TemplateCode: TemplateSubscriptionExpiring,
 			Channel: channel, Status: model.StatusQueued, MaxAttempts: 5,
-			PayloadEnc: []byte("x"),
+			RecipientHash: e.svc.recipientHash("9"), PayloadEnc: []byte("x"),
 		}); err != nil {
 			t.Fatal(err)
 		}
