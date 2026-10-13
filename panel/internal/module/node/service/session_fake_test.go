@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"math/big"
 	"sync"
 	"testing"
 	"time"
@@ -32,6 +33,7 @@ type fakeBackend struct {
 	hellos                   []Hello
 	heartbeats               [][]NodeRuntime
 	configAcks               []ConfigAck
+	renewSerials             []*big.Int
 }
 
 func newFakeBackend() *fakeBackend {
@@ -103,9 +105,10 @@ func (f *fakeBackend) RecordMetrics(_ context.Context, _ uuid.UUID, m HostMetric
 	return nil
 }
 
-func (f *fakeBackend) RenewCertificate(_ context.Context, _ uuid.UUID, _ []byte) ([]byte, []byte, error) {
+func (f *fakeBackend) RenewCertificate(_ context.Context, _ uuid.UUID, serial *big.Int, _ []byte) ([]byte, []byte, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.renewSerials = append(f.renewSerials, serial)
 	if f.renewErr != nil {
 		return nil, nil, f.renewErr
 	}

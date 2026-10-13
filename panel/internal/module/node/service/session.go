@@ -6,13 +6,16 @@ package service
 // 并发模型：
 //   - Sessions.mu 只护登记表（服务器 id → 在途会话）；Session.mu 护这条会话的发送队列与下发状态。
 //     持有 Sessions.mu 时不调 Session 的方法，反之亦然，所以没有锁序问题。
-//   - 名单与配置的计算（Hello 对齐、纪元轮次）各取一个递增序号；会话只接受比上次更大的序号，
-//     先开始的计算晚到时直接丢掉，不会用旧数据覆盖新数据（变更在提交后才推进纪元，所以序号大的那次一定看得到它）。
+//   - 每次读名单或读配置之前各取一个新的递增序号（配置与名单分开取）；会话只接受比上次更大的序号的结果，
+//     先取号的读晚到时直接丢掉。保证的是：取号之前已提交的变更，这次读一定看得到；取号之后才提交的变更，
+//     提交后会推进纪元、触发新一轮，新一轮的序号更大，最终以它为准。序号大不代表读到的数据一定更新（两次读可能交错），
+//     由「每次提交后必有一轮序号更大的重算」兜底。
 
 import (
 	"bytes"
 	"context"
 	"errors"
+	"math/big"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -56,7 +59,7 @@ type SessionBackend interface {
 	IngestTraffic(ctx context.Context, serverID uuid.UUID, r TrafficReport, m RosterMembership) error
 	IngestOnline(ctx context.Context, serverID uuid.UUID, entries []OnlineEntry, m RosterMembership) error
 	RecordMetrics(ctx context.Context, serverID uuid.UUID, m HostMetrics, at time.Time) error
-	RenewCertificate(ctx context.Context, serverID uuid.UUID, csrDER []byte) (chainPEM, caPEM []byte, err error)
+	RenewCertificate(ctx context.Context, serverID uuid.UUID, certSerial *big.Int, csrDER []byte) (chainPEM, caPEM []byte, err error)
 	RecordHello(ctx context.Context, serverID uuid.UUID, h Hello, at time.Time) error
 	RecordHeartbeat(ctx context.Context, serverID uuid.UUID, nodes []NodeRuntime, at time.Time) error
 	RecordConfigAck(ctx context.Context, serverID uuid.UUID, ack ConfigAck, at time.Time) error
@@ -73,8 +76,10 @@ type SessionOptions struct {
 	EpochPoll, FullResync time.Duration
 	// MinRoundGap 是两轮重算之间的最小间隔，缺省 1 秒；RetryDelay 是一轮失败后的重试间隔，缺省 5 秒
 	MinRoundGap, RetryDelay time.Duration
-	// ForcedFullGap 是同一节点因 UsersAck 失败而重发全量的最小间隔，缺省 5 秒（防节点反复装不上时空转）
+	// ForcedFullGap 是同一节点因 UsersAck 失败而重发全量的起始间隔，缺省 5 秒；连续失败每次翻倍，封顶 ForcedFullMax，成功回执复位
 	ForcedFullGap time.Duration
+	// ForcedFullMax 是 UsersAck 失败后强制重发全量的退避上限，缺省 5 分钟
+	ForcedFullMax time.Duration
 	// TerminateGrace 是发了 Tombstone / reconnect 之后等它发出去的最长时间，过了就强关，缺省 5 秒
 	TerminateGrace time.Duration
 	// ShutdownBase、ShutdownSpread：停机时第 i 个会话的 reconnect in_ms = Base + i×Spread/n，缺省 2 秒、10 秒
@@ -97,6 +102,7 @@ func (o SessionOptions) withDefaults() SessionOptions {
 	def(&o.MinRoundGap, time.Second)
 	def(&o.RetryDelay, 5*time.Second)
 	def(&o.ForcedFullGap, 5*time.Second)
+	def(&o.ForcedFullMax, 5*time.Minute)
 	def(&o.TerminateGrace, 5*time.Second)
 	def(&o.ShutdownBase, 2*time.Second)
 	def(&o.ShutdownSpread, 10*time.Second)
@@ -179,8 +185,9 @@ func (m *Sessions) onlineIDs() []uuid.UUID {
 	return ids
 }
 
-// Open 登记一条新流（收到 Hello 之后调）：同一服务器的旧流被取代；记下 Hello 里的版本与主机信息，
-// 排上 Welcome，再算这台服务器的配置与名单、只发与 Hello 报告不同的。出错时会话已关闭并移出登记。
+// Open 登记一条新流（收到 Hello 之后调）：Welcome 在登记前排进队列，所以一定是第一条；传输层在 Open 返回后才起发送与接收循环，
+// 所以这次对齐（配置与名单的首读）在任何消息发出、任何上报被处理之前已经完成，每个节点的 latest 名单已就位，
+// 新会话一开始收到的流量上报照样能按名单计费。同一服务器的旧流被取代；出错时会话已关闭并移出登记。
 func (m *Sessions) Open(ctx context.Context, serverID uuid.UUID, h Hello) (*Session, error) {
 	sid, err := uuid.NewV7()
 	if err != nil {
@@ -188,6 +195,15 @@ func (m *Sessions) Open(ctx context.Context, serverID uuid.UUID, h Hello) (*Sess
 	}
 	s := newSession(m, serverID, sid.String(), h)
 	log := plog.From(ctx).With(zap.String("server_id", serverID.String()), zap.String("session_id", s.id))
+
+	at := m.now()
+	s.enqueue(Outbound{Kind: OutWelcome, Welcome: Welcome{
+		SessionID:         s.id,
+		Features:          s.features,
+		PushInterval:      m.opt.PushInterval,
+		HeartbeatInterval: m.opt.HeartbeatInterval,
+		ServerTime:        at,
+	}})
 
 	m.mu.Lock()
 	if m.closing {
@@ -202,34 +218,27 @@ func (m *Sessions) Open(ctx context.Context, serverID uuid.UUID, h Hello) (*Sess
 		old.closeWith(ErrSessionSuperseded)
 	}
 
-	at := m.now()
-	s.enqueue(Outbound{Kind: OutWelcome, Welcome: Welcome{
-		SessionID:         s.id,
-		Features:          s.features,
-		PushInterval:      m.opt.PushInterval,
-		HeartbeatInterval: m.opt.HeartbeatInterval,
-		ServerTime:        at,
-	}})
 	if err := m.b.RecordHello(ctx, serverID, h, at); err != nil {
 		// 主机信息与心跳时间只是展示；对齐照常做
 		log.Warn("记录 Hello 失败", zap.Error(err))
 	}
 
-	seq := m.seq.Add(1)
 	ids := []uuid.UUID{serverID}
+	cfgSeq := m.seq.Add(1)
 	cfgs, err := m.b.ServerConfigs(ctx, ids)
 	if err != nil {
 		s.Close(ErrSessionPeerGone)
 		return nil, err
 	}
+	usersSeq := m.seq.Add(1)
 	rosters, err := m.b.Rosters(ctx, ids)
 	if err != nil {
 		s.Close(ErrSessionPeerGone)
 		return nil, err
 	}
 	// 先配置后名单：新节点先有入站再收用户
-	s.applyConfig(seq, cfgs[serverID])
-	s.applyRosters(seq, rosters[serverID])
+	s.applyConfig(cfgSeq, cfgs[serverID])
+	s.applyRosters(usersSeq, rosters[serverID])
 	log.Info("节点会话已建立", zap.String("agent_version", h.AgentVersion), zap.Strings("features", s.features))
 	return s, nil
 }
