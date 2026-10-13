@@ -95,7 +95,7 @@ func TestOpsReadsPG(t *testing.T) {
 	if ca.PlanName == "" {
 		t.Fatal("A 应有套餐名")
 	}
-	if !ca.PeriodEnd.Equal(now.Add(48 * time.Hour)) && ca.PeriodEnd.Sub(now.Add(48*time.Hour)).Abs() > time.Second {
+	if !ca.PeriodEnd.Equal(now.Add(48*time.Hour)) && ca.PeriodEnd.Sub(now.Add(48*time.Hour)).Abs() > time.Second {
 		t.Fatalf("A 当前订阅到期应对齐生效份，得 %v", ca.PeriodEnd)
 	}
 	cb, ok := subs[userB]
@@ -126,7 +126,7 @@ func assertUserFilter(t *testing.T, svc *Service, ctx context.Context, f identit
 	}
 	for _, id := range want {
 		if !slices.Contains(ids, id) {
-		t.Fatalf("missing %v in %v", id, ids)
+			t.Fatalf("missing %v in %v", id, ids)
 		}
 	}
 }
