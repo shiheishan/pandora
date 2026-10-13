@@ -79,7 +79,8 @@ func poolAdmits(poolGroups []uuid.UUID, userGroup *uuid.UUID) bool {
 }
 
 // rosterLimits 算一份订阅在节点上的限速与设备数：限速取套餐版本的 throttle_kbps（没有 = 0 不限）；
-// 设备数 = coalesce(订阅的覆盖, 版本的 max_devices, 0)，0 = 不限。设备模式这一波按 loose（每个节点各自限）。
+// 设备数 = coalesce(订阅的覆盖, 版本的 max_devices, 0)，0 = 不限。设备数两种模式都下发（节点端各自限）；
+// strict 另在 poolRosters 里把跨节点超限的订阅整条摘掉（devices.go）。
 func rosterLimits(subDeviceLimit *int, v catalogsvc.Version) (speedKbps, devices uint32) {
 	if v.ThrottleKbps != nil {
 		speedKbps = clampUint32(*v.ThrottleKbps)

@@ -197,6 +197,10 @@ func buildServices(r *runtime) (*services, error) {
 	nodeSvc.UseUserGroups(identitySvc)
 	catalogSvc.UsePublishGate(nodeSvc)
 	catalogSvc.UsePoolGuard(nodeSvc)
+	// 设备数限制：策略存在 settings；后台总览经 subscription、identity、catalog 批量取订阅、邮箱、套餐名；
+	// 门户「我的套餐」的在线设备数经 node 取
+	nodeSvc.UseDevices(settingsSvc, subSvc, identitySvc, catalogSvc)
+	subSvc.UseOnlineDeviceCounter(nodeSvc)
 	// 渠道到账与线下收款经 order 结算（没注册时入账一律失败）
 	paymentSvc.UseSettler(orderSvc)
 	// 订单结算时按推荐关系计提佣金（同一结算事务）；同源（审计里共用来源 IP）的佣金转人工复核
