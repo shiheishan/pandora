@@ -61,6 +61,11 @@ type Service struct {
 
 	// roster 由 node 实现（roster_notify.go）：账号状态、用户组变了，提交后通知节点名单重算。
 	roster RosterNotifier
+
+	// 批量运营与风控（ops_types.go）：ops 是 audit 的读与复核写；subs 由 subscription 实现、queue 是 asynq 客户端，装配时注入。
+	ops   auditOps
+	subs  OpsSubscriptions
+	queue JobQueue
 }
 
 // New 构造 identity service。keys 用于验证码、收件目标与限流键的 HMAC；rdb 存改密失败计数；
@@ -72,6 +77,7 @@ func New(r *repo.Repo, txm *tx.Manager, settings *settingssvc.Service, audit *au
 		tx:       txm,
 		settings: settings,
 		audit:    audit,
+		ops:      audit,
 		keys:     keys,
 		rdb:      rdb,
 		limiter:  limiter,
