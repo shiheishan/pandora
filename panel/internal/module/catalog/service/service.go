@@ -50,6 +50,8 @@ type Service struct {
 	audit auditWriter
 	users Users
 	gate  PublishGate
+	// pools 由 node 实现（plan_pools.go 的 PoolGuard），向导绑池时锁池。
+	pools PoolGuard
 	now   func() time.Time
 }
 

@@ -6,7 +6,7 @@ on:
     paths:
       - "pdnd/**"
       - "nodeapi/**"
-      - "panel/internal/domain/nodefabric/**"
+      - "panel/internal/module/node/protocol/**"
       - "panel/internal/api/**"
       - "panel/internal/platform/db/**"
       - "panel/migrations/**"
@@ -19,7 +19,7 @@ on:
     paths:
       - "pdnd/**"
       - "nodeapi/**"
-      - "panel/internal/domain/nodefabric/**"
+      - "panel/internal/module/node/protocol/**"
       - "panel/internal/api/**"
       - "panel/internal/platform/db/**"
       - "panel/migrations/**"

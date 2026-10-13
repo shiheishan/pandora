@@ -37,6 +37,9 @@ type Service struct {
 	// p5-pools 注入（pools 主题文件里定义接口与 Use* 方法）
 	catalog Catalog
 	groups  UserGroups
+
+	// 第二波：会话管理（channel.go）
+	sessions SessionControl
 }
 
 // New 构造 node service。rdb 用于下发纪元（epoch.go），为 nil 时只跳过通知。

@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -300,7 +301,6 @@ func TestJuicityUDPRouteIdleReclaim(t *testing.T) {
 		_, _, err := readJuicityPacket(udp)
 		return err == nil
 	}
-	baseG := runtime.NumGoroutine()
 	if !echo(2001) || !echo(2002) {
 		t.Fatal("上限以内的路由应能收发")
 	}
@@ -327,11 +327,16 @@ func TestJuicityUDPRouteIdleReclaim(t *testing.T) {
 	if !echo(2003) {
 		t.Fatal("回收后新目标仍被丢")
 	}
-	// 全部停发：两条都回收，名额归零，读 goroutine 退出。
+	// 计数确实数得到活着的路由读 goroutine（2001 与 2003 各一条），下面「归零」才有意义
+	if n := juicityUDPReaders(adapter); n != 2 {
+		t.Fatalf("在途两条路由时读 goroutine %d，期望 2", n)
+	}
+	// 全部停发：两条都回收，名额归零，读 goroutine 退出。只数本适配器的路由读 goroutine：
+	// 按全进程 goroutine 总数比基线会被同包并行用例与运行时自己的 goroutine 干扰（CI 偶发多 1 个）。
 	deadline := time.Now().Add(3 * time.Second)
-	for juicityQuotaInUse(adapter, userID) != 0 || runtime.NumGoroutine() > baseG {
+	for juicityQuotaInUse(adapter, userID) != 0 || juicityUDPReaders(adapter) != 0 {
 		if time.Now().After(deadline) {
-			t.Fatalf("全部空闲后在途 %d、goroutine %d（基线 %d）", juicityQuotaInUse(adapter, userID), runtime.NumGoroutine(), baseG)
+			t.Fatalf("全部空闲后在途 %d、路由读 goroutine %d", juicityQuotaInUse(adapter, userID), juicityUDPReaders(adapter))
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
@@ -370,4 +375,11 @@ func TestJuicityUDPUplinkKeepsRouteActive(t *testing.T) {
 	if allocs := testing.AllocsPerRun(100, func() { _ = routes.lookup([]byte("k")) }); allocs != 0 {
 		t.Fatalf("查表每次分配 %.1f 次，期望 0", allocs)
 	}
+}
+
+// juicityUDPReaders 数属于 a 的路由读 goroutine（栈里带接收者地址，不数同包其他用例的）。
+func juicityUDPReaders(a *juicityAdapter) int {
+	buf := make([]byte, 8<<20)
+	buf = buf[:runtime.Stack(buf, true)]
+	return strings.Count(string(buf), fmt.Sprintf("(*juicityAdapter).juicityUDPReader(%p", a))
 }
