@@ -53,7 +53,7 @@ const (
 )
 
 // ErrTombstoned 表示面板发来 Tombstone：身份已吊销或服务器已删除，会话不再重连。
-var ErrTombstoned = errors.New("面板已吊销本机身份或删除了这台服务器：停止重连，继续用磁盘缓存服务；需要在后台生成新令牌重新接入")
+var ErrTombstoned = errors.New("面板已吊销本机身份或删除了这台服务器：停止重连、停掉全部代理服务；需要在后台生成新令牌重新接入")
 
 // Dialer 拨号函数（测试注入 bufconn 用），签名与 grpc.WithContextDialer 一致。
 type Dialer func(ctx context.Context, addr string) (net.Conn, error)

@@ -28,6 +28,7 @@ func invServingOf(t *testing.T, e *invEnv, ctx context.Context, id uuid.UUID) (s
 func invActiveNode(t *testing.T, e *invEnv, ctx context.Context, srvName, name string, port int) (Server, AdminNode) {
 	t.Helper()
 	srv := e.readyServer(t, ctx, srvName)
+	e.enroll(t, ctx, srv.ID)
 	n := e.ssNode(t, ctx, srv.ID, name, port)
 	got, err := e.svc.ActivateNode(ctx, n.ID, n.RowVersion)
 	if err != nil {
@@ -39,6 +40,7 @@ func invActiveNode(t *testing.T, e *invEnv, ctx context.Context, srvName, name s
 func TestBatchNodeStatusNeedsReadyServer(t *testing.T) {
 	e, ctx := newInvEnv(t)
 	srv := e.server(t, ctx, "batch-a")
+	e.enroll(t, ctx, srv.ID)
 	n := e.ssNode(t, ctx, srv.ID, "n", 21001)
 
 	err := e.svc.BatchNodeStatus(ctx, NodeStatusBatch{Items: []NodeVersionRef{{ID: n.ID, RowVersion: n.RowVersion}}, ServingStatus: NodeActive})
@@ -58,6 +60,7 @@ func TestBatchNodeStatusNeedsReadyServer(t *testing.T) {
 func TestBatchNodeStatusAllOrNothing(t *testing.T) {
 	e, ctx := newInvEnv(t)
 	srv := e.readyServer(t, ctx, "batch-b")
+	e.enroll(t, ctx, srv.ID)
 	a := e.ssNode(t, ctx, srv.ID, "a", 21002)
 	b := e.ssNode(t, ctx, srv.ID, "b", 21003)
 	b, err := e.svc.RetireNode(ctx, b.ID, b.RowVersion, "")
@@ -122,6 +125,7 @@ func TestBatchNodeStatusConcurrent(t *testing.T) {
 func TestActivateNodeReadiesServer(t *testing.T) {
 	e, ctx := newInvEnv(t)
 	srv := e.server(t, ctx, "act-a")
+	e.enroll(t, ctx, srv.ID)
 	n := e.ssNode(t, ctx, srv.ID, "n", 21005)
 
 	got, err := e.svc.ActivateNode(ctx, n.ID, n.RowVersion)
@@ -152,6 +156,7 @@ func TestActivateNodeReadiesServer(t *testing.T) {
 func TestActivateNodeWithPoolNoWarning(t *testing.T) {
 	e, ctx := newInvEnv(t)
 	srv := e.server(t, ctx, "act-b")
+	e.enroll(t, ctx, srv.ID)
 	pool := e.pool(t, ctx, "active")
 	n := e.ssNode(t, ctx, srv.ID, "n", 21006)
 	n, err := e.svc.PatchNode(ctx, n.ID, NodePatch{RowVersion: n.RowVersion, PoolID: OptionalUUID{Set: true, Value: &pool}})
@@ -170,6 +175,7 @@ func TestActivateNodeWithPoolNoWarning(t *testing.T) {
 func TestActivateNodeFromDrainingServer(t *testing.T) {
 	e, ctx := newInvEnv(t)
 	srv := e.server(t, ctx, "act-c")
+	e.enroll(t, ctx, srv.ID)
 	n := e.ssNode(t, ctx, srv.ID, "n", 21007)
 	if err := e.exec(ctx, `UPDATE servers SET status = 'draining' WHERE id = ?`, srv.ID); err != nil {
 		t.Fatal(err)
@@ -223,7 +229,7 @@ func TestRetireNode(t *testing.T) {
 }
 
 func TestDeleteNode(t *testing.T) {
-	e, ctx := newInvEnv(t)
+	e, _, ctx := newInvListEnv(t)
 	srv, active := invActiveNode(t, e, ctx, "del-a", "active", 21010)
 	err := e.svc.DeleteNode(ctx, active.ID, active.RowVersion, "")
 	_ = invWantCode(t, err, errs.ValidationFailed)
@@ -324,6 +330,7 @@ func TestRepublishNode(t *testing.T) {
 func TestNodeLifecycleEpochs(t *testing.T) {
 	e, ctx := newInvEnvCommitted(t)
 	srv := e.server(t, ctx, "epoch-a")
+	e.enroll(t, ctx, srv.ID)
 	n := e.ssNode(t, ctx, srv.ID, "n", 21016)
 
 	users, config := e.epoch(t, UsersEpochKey), e.epoch(t, ConfigEpochKey)

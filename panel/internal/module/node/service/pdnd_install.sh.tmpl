@@ -1,0 +1,427 @@
+#!/usr/bin/env bash
+# Pandora NativeCore 一键安装（gRPC 接入）。
+#
+#   curl --proto '=https' -fsSL '@@PANEL_ORIGIN@@/pdnd/install.sh' | sudo bash -s -- \
+#     --panel '<host:port>' --ca-sha256 'sha256:<64 hex>' --token '<一次性令牌>'
+#
+# 幂等：重复执行会升级二进制、用新令牌重新接入面板（新身份取代旧身份）并重启服务。
+#
+# 令牌：安装的几秒内令牌会出现在「bash -s -- --token …」的进程 argv 里（本机 ps 可见），
+# 这是接受的——令牌单次有效、TTL 短。脚本用 bash 内建 printf 经管道交给
+# pandora-native enroll --token-stdin（不产生带令牌子进程 argv），用完立即 unset，
+# 不写进 unit、配置或日志。
+set -euo pipefail
+umask 022
+
+PANEL_ORIGIN_DEFAULT="@@PANEL_ORIGIN@@"
+INSTALL_DIR="${PANDORA_INSTALL_DIR:-/usr/local/bin}"
+CONFIG_DIR="${PANDORA_CONFIG_DIR:-/etc/pandora-native}"
+UNIT_DIR="${PANDORA_UNIT_DIR:-/etc/systemd/system}"
+STATE_DIR="/var/lib/pandora-native"
+IDENTITY_DIR="${STATE_DIR}/identity"
+SERVICE="pandora-native"
+PANEL_ADDR="" CA_SHA256="" TOKEN="" ORIGIN="" CURL_PROTO="" ARCH="" ARTIFACT=""
+TMP="" ENROLLED=0 DONE=0
+
+die() {
+  local msg="$1"
+  local code="${2:-1}"
+  echo "错误：${msg}" >&2
+  exit "$code"
+}
+
+say() {
+  echo "==> $*"
+}
+
+usage() {
+  cat <<'EOF'
+用法：
+  curl --proto '=https' -fsSL '<面板>/pdnd/install.sh' | sudo bash -s -- \
+    --panel '<host:port>' --ca-sha256 'sha256:<64 hex>' --token '<令牌>'
+
+参数：
+  --panel       面板 gRPC 地址（host:port，IPv6 写成 [addr]:port）
+  --ca-sha256   面板 CA 指纹（sha256: 加 64 位十六进制）
+  --token       后台签发的一次性安装令牌
+  -h, --help    显示本帮助
+EOF
+}
+
+pandora_parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --panel)
+        [[ $# -ge 2 ]] || die "--panel 缺少取值" 2
+        PANEL_ADDR="$2"
+        shift 2
+        ;;
+      --ca-sha256)
+        [[ $# -ge 2 ]] || die "--ca-sha256 缺少取值" 2
+        CA_SHA256="$2"
+        shift 2
+        ;;
+      --token)
+        [[ $# -ge 2 ]] || die "--token 缺少取值" 2
+        TOKEN="$2"
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        die "未知参数：$1" 2
+        ;;
+    esac
+  done
+}
+
+pandora_validate_args() {
+  [[ -n "$PANEL_ADDR" ]] || die "缺少 --panel" 2
+  [[ -n "$CA_SHA256" ]] || die "缺少 --ca-sha256" 2
+  [[ -n "$TOKEN" ]] || die "缺少 --token" 2
+
+  local re='^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?):([0-9]{1,5})$'
+  if [[ ! $PANEL_ADDR =~ $re ]]; then
+    die "--panel 应为 host:port（IPv6 写成 [addr]:port）" 2
+  fi
+  local port="${BASH_REMATCH[3]}"
+  local port_n=$((10#$port))
+  if (( port_n < 1 || port_n > 65535 )); then
+    die "--panel 应为 host:port（IPv6 写成 [addr]:port）" 2
+  fi
+
+  # 不用 ${var,,}：macOS 自带的 bash 3.2 没有它（本地跑测试）
+  CA_SHA256="$(printf '%s' "$CA_SHA256" | tr '[:upper:]' '[:lower:]')"
+  re='^sha256:[0-9a-f]{64}$'
+  if [[ ! $CA_SHA256 =~ $re ]]; then
+    die "--ca-sha256 应为 sha256: 加 64 位十六进制" 2
+  fi
+
+  re='^[A-Za-z0-9_-]{16,255}$'  # 上限不超过 255：macOS 的 regcomp 只认到 RE_DUP_MAX=255
+  if [[ ! $TOKEN =~ $re ]]; then
+    die "--token 格式不对（请从后台复制完整的安装命令）" 2
+  fi
+}
+
+pandora_resolve_origin() {
+  ORIGIN="${PANDORA_PANEL_URL:-$PANEL_ORIGIN_DEFAULT}"
+  ORIGIN="${ORIGIN%/}"
+  if [[ "$ORIGIN" == *@@* ]]; then
+    die "安装脚本里的面板地址没有渲染，请用面板下发的 install.sh" 2
+  fi
+  # 方括号表达式里反斜杠不转义（POSIX）：] 放第一位、- 放最后才是字面量
+  local re='^https://[]A-Za-z0-9._~:/[-]+$'
+  if [[ $ORIGIN =~ $re ]]; then
+    CURL_PROTO='=https'
+    return 0
+  fi
+  re='^http://(127\.0\.0\.1|localhost|\[::1\])(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$'
+  if [[ $ORIGIN =~ $re ]]; then
+    CURL_PROTO='=http'
+    return 0
+  fi
+  die "面板地址必须是 https：$ORIGIN" 2
+}
+
+pandora_preflight() {
+  [[ "$(id -u)" == 0 ]] || die "需要 root 权限（用 sudo 运行）"
+
+  if [[ ! -d /run/systemd/system ]] || ! command -v systemctl >/dev/null; then
+    die "需要 systemd"
+  fi
+
+  local cmd
+  for cmd in curl sha256sum awk sed grep tr wc install mktemp getent groupadd useradd runuser chown chmod mv id uname; do
+    command -v "$cmd" >/dev/null || die "缺少命令：${cmd}"
+  done
+
+  local m
+  m="$(uname -m)"
+  case "$m" in
+    x86_64|amd64) ARCH=amd64 ;;
+    aarch64|arm64) ARCH=arm64 ;;
+    *) die "不支持的架构：${m}（仅 amd64 / arm64）" ;;
+  esac
+  ARTIFACT="pandora-native-linux-${ARCH}"
+}
+
+pandora_check_existing_config() {
+  local cfg="${CONFIG_DIR}/config.json"
+  [[ -f "$cfg" ]] || return 0
+  local idir
+  idir="$(sed -n 's/.*"identity_dir"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$cfg")"
+  # 只取第一行（不接 head：pipefail 下 head 提前关管道会让 sed 收 SIGPIPE）
+  idir="${idir%%$'\n'*}"
+  if [[ -n "$idir" && "$idir" != "$IDENTITY_DIR" ]]; then
+    die "已有配置的 panel.identity_dir 是 ${idir}，安装器只接入到 ${IDENTITY_DIR}；改回缺省或删掉这一项后重跑"
+  fi
+  # 改不了面板地址就在用掉令牌之前停下，免得带着旧地址装完、服务连错面板
+  if [[ "$(pandora_address_count "$cfg")" != 1 ]] && ! grep -qF "\"${PANEL_ADDR}\"" "$cfg"; then
+    die "已有配置里找不到唯一的 \"address\" 键，没法把 panel.address 改成 ${PANEL_ADDR}；手工改好 ${cfg} 后重跑"
+  fi
+}
+
+# pandora_address_count 数配置里 "address" 键的个数（grep 没匹配时退出 1，pipefail 下兜成 true）。
+pandora_address_count() {
+  { grep -o '"address"[[:space:]]*:' "$1" || true; } | wc -l | tr -d ' '
+}
+
+# 依据节点容量实测（10 万连接、1c1g 单位数据）：重启风暴时 conntrack 峰值 31 万，
+# 超过 Debian 默认的 262144，1c1g 镜像默认只有 8192、约 4000 条连接就静默丢包；
+# TIME_WAIT 顶到 32768；QUIC 需要 7.5MB 以上的收发缓冲。写成持久的 sysctl.d
+# drop-in，只调大不调小：机器上已有更大的值按原值写回。conntrack 模块晚于
+# systemd-sysctl 加载时，udev 会对 net.netfilter 前缀再应用一次 sysctl.d；
+# hashsize 只能走模块参数，另写一份 modprobe.d。
+pandora_tune_sysctl() {
+  SYSCTL_DIR="${PANDORA_SYSCTL_DIR:-/etc/sysctl.d}"
+  MODPROBE_DIR="${PANDORA_MODPROBE_DIR:-/etc/modprobe.d}"
+  HASHSIZE_PARAM="${PANDORA_CONNTRACK_HASHSIZE_PATH:-/sys/module/nf_conntrack/parameters/hashsize}"
+  if ! command -v sysctl >/dev/null 2>&1; then
+    echo "==> 跳过系统参数：找不到 sysctl" >&2
+    return 0
+  fi
+  mkdir -p "$SYSCTL_DIR" "$MODPROBE_DIR"
+  DROPIN="${SYSCTL_DIR}/90-pandora-native.conf"
+  echo "# 由 pandora-native 安装器生成：只调大不调小，重装时按当时的取值重算。" > "${DROPIN}.new"
+  for pair in net.netfilter.nf_conntrack_max=524288 net.ipv4.tcp_max_tw_buckets=262144 \
+      net.core.somaxconn=65535 net.ipv4.tcp_max_syn_backlog=65535 \
+      net.core.rmem_max=16777216 net.core.wmem_max=16777216 net.core.netdev_max_backlog=16384; do
+    key="${pair%%=*}"
+    want="${pair#*=}"
+    cur="$(sysctl -n "$key" 2>/dev/null || true)"
+    case "$cur" in ''|*[!0-9]*) cur=0 ;; esac
+    if [ "$cur" -gt "$want" ]; then want="$cur"; fi
+    echo "$key = $want" >> "${DROPIN}.new"
+  done
+  # 本地端口范围只放宽不收窄。
+  range="$(sysctl -n net.ipv4.ip_local_port_range 2>/dev/null || true)"
+  low="$(echo "$range" | awk '{print $1}')"
+  high="$(echo "$range" | awk '{print $2}')"
+  case "$low" in ''|*[!0-9]*) low=1024 ;; esac
+  case "$high" in ''|*[!0-9]*) high=65535 ;; esac
+  if [ "$low" -gt 1024 ]; then low=1024; fi
+  if [ "$high" -lt 65535 ]; then high=65535; fi
+  echo "net.ipv4.ip_local_port_range = $low $high" >> "${DROPIN}.new"
+  # tcp_tw_reuse：1 是对外连接也复用；默认 2 只管回环。
+  echo "net.ipv4.tcp_tw_reuse = 1" >> "${DROPIN}.new"
+  chmod 0644 "${DROPIN}.new"
+  mv -f "${DROPIN}.new" "$DROPIN"
+  hashsize=131072
+  cur="$(cat "$HASHSIZE_PARAM" 2>/dev/null || true)"
+  case "$cur" in ''|*[!0-9]*) cur=0 ;; esac
+  if [ "$cur" -gt "$hashsize" ]; then hashsize="$cur"; fi
+  echo "options nf_conntrack hashsize=${hashsize}" > "${MODPROBE_DIR}/pandora-native.conf"
+  chmod 0644 "${MODPROBE_DIR}/pandora-native.conf"
+  if [ "$cur" -gt 0 ] && [ "$cur" -lt "$hashsize" ] && [ -w "$HASHSIZE_PARAM" ]; then
+    echo "$hashsize" > "$HASHSIZE_PARAM" 2>/dev/null || true
+  fi
+  if ! sysctl -e -p "$DROPIN" >/dev/null 2>&1; then
+    echo "==> 部分系统参数没能立即生效（容器或只读 /proc/sys），已写入 ${DROPIN}，重启后生效" >&2
+  fi
+  echo "==> 系统参数已写入 ${DROPIN}"
+}
+
+pandora_ensure_user() {
+  if ! getent group pandora >/dev/null 2>&1; then
+    groupadd --system pandora
+  fi
+  if ! getent passwd pandora >/dev/null 2>&1; then
+    useradd --system --gid pandora --home-dir "$STATE_DIR" --no-create-home --shell /usr/sbin/nologin pandora
+  fi
+}
+
+pandora_download() {
+  local curl_base=(curl --fail --silent --show-error --proto "$CURL_PROTO" --max-redirs 0 --connect-timeout 15 --retry 3 --retry-delay 2)
+  say "下载 ${ARTIFACT}"
+  "${curl_base[@]}" "${ORIGIN}/pdnd/bin/${ARTIFACT}" -o "${TMP}/${ARTIFACT}"
+  "${curl_base[@]}" "${ORIGIN}/pdnd/sha256/${ARTIFACT}" -o "${TMP}/${ARTIFACT}.sha256"
+  local expected
+  expected="$(awk 'NR==1{print $1}' "${TMP}/${ARTIFACT}.sha256")"
+  [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || die "面板返回的校验和格式不对"
+  local actual
+  actual="$(sha256sum "${TMP}/${ARTIFACT}" | awk '{print $1}')"
+  [[ "$expected" == "$actual" ]] || die "校验和不匹配：期望 ${expected}，实际 ${actual}"
+  say "校验通过"
+}
+
+pandora_stage_binary() {
+  install -m 0755 "${TMP}/${ARTIFACT}" "${INSTALL_DIR}/${SERVICE}.new"
+}
+
+# 服务以 pandora 用户运行，证书续期要在身份目录原地写文件，故身份目录属主为 pandora。
+# enroll 直接以 pandora 身份跑（runuser），root 不往 pandora 可写的目录里写文件、也不做 chown -R：
+# 否则被攻破的服务进程可以预先把身份目录换成指向 /etc 等处的符号链接，等管理员重装时借 root 提权。
+# 状态目录的上级 /var/lib 只有 root 可写，所以 install -d 这一步本身不会被符号链接带偏。
+pandora_enroll() {
+  say "接入面板 ${PANEL_ADDR}"
+  install -d -o pandora -g pandora -m 0750 "$STATE_DIR"
+  if ! printf '%s\n' "$TOKEN" | runuser -u pandora -- "${INSTALL_DIR}/${SERVICE}.new" enroll --panel "$PANEL_ADDR" --ca-sha256 "$CA_SHA256" --token-stdin --identity-dir "$IDENTITY_DIR"; then
+    unset TOKEN
+    die "接入失败：令牌过期或已用过请在后台重新签发；网络中断可用同一条命令重跑（同一令牌会沿用上次的接入请求）"
+  fi
+  unset TOKEN
+  ENROLLED=1
+}
+
+# 不依赖 jq：只改 panel.address，其余键（runtime 调优等）原样保留。
+# 若 sed 改坏，随后的 validate-install 会拦下，且拦下时原 config.json 未动。
+pandora_render_config() {
+  local src="$1"
+  local dst="$2"
+  if [[ ! -f "$src" ]]; then
+    cat >"$dst" <<JSON
+{
+  "log_level": "info",
+  "panel": {
+    "address": "${PANEL_ADDR}",
+    "identity_dir": "${IDENTITY_DIR}"
+  }
+}
+JSON
+    return 0
+  fi
+  if [[ "$(pandora_address_count "$src")" == 1 ]]; then
+    # PANEL_ADDR 经 pandora_validate_args 校验，只含 [A-Za-z0-9.:[]-]，放进 sed 替换串安全。
+    sed -E 's/("address"[[:space:]]*:[[:space:]]*")[^"]*(")/\1'"$PANEL_ADDR"'\2/' "$src" > "$dst"
+  else
+    cp "$src" "$dst"
+    # pandora_check_existing_config 已保证这时配置里本来就是这个地址
+    echo "已有配置里找不到唯一的 panel.address，原样保留（已含 ${PANEL_ADDR}）" >&2
+  fi
+}
+
+pandora_write_unit() {
+  local dst="$1"
+  cat >"$dst" <<UNIT
+[Unit]
+Description=Pandora NativeCore node agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pandora
+Group=pandora
+ExecStart=${INSTALL_DIR}/${SERVICE} -c ${CONFIG_DIR}/config.json
+Restart=on-failure
+RestartSec=5s
+KillSignal=SIGTERM
+TimeoutStopSec=30s
+NoNewPrivileges=true
+UMask=0077
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectClock=true
+ProtectHostname=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+SystemCallArchitectures=native
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+StateDirectory=pandora-native
+LogsDirectory=pandora-native
+ReadWritePaths=/var/lib/pandora-native /var/log/pandora-native
+LimitNOFILE=1048576
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+}
+
+pandora_prepare_files() {
+  install -d -o root -g pandora -m 0750 "$CONFIG_DIR"
+  mkdir -p "$UNIT_DIR"
+  pandora_render_config "${CONFIG_DIR}/config.json" "${CONFIG_DIR}/config.json.new"
+  # 服务以 pandora 运行需读配置；配置内无秘密。
+  chown root:pandora "${CONFIG_DIR}/config.json.new"
+  chmod 0640 "${CONFIG_DIR}/config.json.new"
+  pandora_write_unit "${UNIT_DIR}/${SERVICE}.service.new"
+  chmod 0644 "${UNIT_DIR}/${SERVICE}.service.new"
+}
+
+pandora_validate() {
+  say "校验安装"
+  # 以服务用户跑：校验会在身份目录里挪文件（提升待生效证书），root 不在 pandora 可写的目录里动文件
+  runuser -u pandora -- "${INSTALL_DIR}/${SERVICE}.new" validate-install --config "${CONFIG_DIR}/config.json.new" --unit "${UNIT_DIR}/${SERVICE}.service.new" --identity-dir "$IDENTITY_DIR"
+}
+
+# 全部校验通过后才 mv 换上；此前任一步失败，机器上原有的二进制、配置、unit 均未改动。
+pandora_commit_files() {
+  mv -f "${INSTALL_DIR}/${SERVICE}.new" "${INSTALL_DIR}/${SERVICE}"
+  mv -f "${CONFIG_DIR}/config.json.new" "${CONFIG_DIR}/config.json"
+  mv -f "${UNIT_DIR}/${SERVICE}.service.new" "${UNIT_DIR}/${SERVICE}.service"
+}
+
+pandora_start() {
+  systemctl daemon-reload
+  systemctl enable "$SERVICE" >/dev/null
+  systemctl restart "$SERVICE"
+  local i=0
+  while (( i < 15 )); do
+    if systemctl is-active --quiet "$SERVICE"; then
+      systemctl --no-pager status "$SERVICE" || true
+      echo "安装完成，服务已运行。"
+      echo "日志：journalctl -u pandora-native -f"
+      return 0
+    fi
+    i=$((i + 1))
+    sleep 1
+  done
+  journalctl -u "$SERVICE" -n 30 --no-pager >&2 || true
+  die "服务没能进入运行状态，看上面的日志"
+}
+
+pandora_cleanup() {
+  local rc=$?
+  trap - EXIT
+  [[ -n "$TMP" ]] && rm -rf "$TMP"
+  rm -f "${INSTALL_DIR}/${SERVICE}.new" "${CONFIG_DIR}/config.json.new" "${UNIT_DIR}/${SERVICE}.service.new"
+  if [[ $rc -ne 0 && $DONE -ne 1 ]]; then
+    if [[ $ENROLLED -eq 1 ]]; then
+      echo "已接入面板，但安装没有完成：处理上面的错误后，在后台重新签发令牌再跑安装命令" >&2
+    else
+      echo "安装失败，机器上原有的安装没有改动" >&2
+    fi
+  fi
+  exit "$rc"
+}
+
+main() {
+  pandora_parse_args "$@"
+  pandora_validate_args
+  pandora_resolve_origin
+  if [[ "${PANDORA_INSTALL_DRY_RUN:-}" == 1 ]]; then
+    echo "dry run: panel=$PANEL_ADDR ca=$CA_SHA256 origin=$ORIGIN"
+    exit 0
+  fi
+  pandora_preflight
+  pandora_check_existing_config
+  TMP="$(mktemp -d)"
+  trap pandora_cleanup EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  pandora_download
+  pandora_ensure_user
+  pandora_stage_binary
+  pandora_enroll
+  pandora_prepare_files
+  pandora_validate
+  pandora_commit_files
+  say "调整系统参数（conntrack、监听队列、端口范围、收发缓冲）"
+  pandora_tune_sysctl || echo "==> 系统参数调整失败，不影响安装，可稍后手动处理" >&2
+  pandora_start
+  DONE=1
+}
+
+if [[ "${PANDORA_INSTALL_LIB_ONLY:-}" != 1 ]]; then main "$@" </dev/null; fi

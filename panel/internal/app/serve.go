@@ -62,6 +62,11 @@ func runServe(ctx context.Context, configPath string) error {
 	}
 	defer svc.close()
 
+	nodeCh, err := setupNodeChannel(ctx, r, svc)
+	if err != nil {
+		return err
+	}
+
 	publicEng, adminEng := newEngines(r, svc)
 
 	publicSrv := newHTTPServer(r.cfg.HTTP.Public, publicEng)
@@ -78,6 +83,7 @@ func runServe(ctx context.Context, configPath string) error {
 	r.log.Info("serve started",
 		zap.String("public", r.cfg.HTTP.Public.Addr),
 		zap.String("admin", r.cfg.HTTP.Admin.Addr),
+		zap.String("node_grpc", r.cfg.GRPC.Node.Addr),
 	)
 
 	g, gctx := errgroup.WithContext(ctx)
@@ -100,6 +106,7 @@ func runServe(ctx context.Context, configPath string) error {
 		}
 		return nil
 	})
+	nodeCh.run(gctx, g.Go)
 	for _, ps := range pprofSrvs {
 		pprofSrv := ps
 		g.Go(func() error {
@@ -114,6 +121,10 @@ func runServe(ctx context.Context, configPath string) error {
 		<-gctx.Done()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
+		// 节点会话错峰重连要约 12 秒发完，给它 15 秒，剩下的留给 HTTP
+		nodeCtx, nodeCancel := context.WithTimeout(shutCtx, 15*time.Second)
+		nodeCh.shutdown(nodeCtx, r.log)
+		nodeCancel()
 		if err := publicSrv.Shutdown(shutCtx); err != nil {
 			r.log.Warn("关闭门户 HTTP", zap.Error(err))
 		}

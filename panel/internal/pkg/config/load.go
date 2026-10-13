@@ -92,7 +92,9 @@ func defaults(v *viper.Viper) {
 		v.SetDefault(prefix+"pprof_addr", "")
 	}
 
-	v.SetDefault("grpc.node.addr", ":8444")
+	v.SetDefault("grpc.node.addr", ":9443")
+	v.SetDefault("grpc.node.public_host", "")
+	v.SetDefault("grpc.node.public_port", 0)
 
 	v.SetDefault("database.url", "")
 	v.SetDefault("database.migration_url", "")
@@ -135,6 +137,8 @@ func defaults(v *viper.Viper) {
 	v.SetDefault("subscription.singbox.geosite_url_prefix", "")
 	v.SetDefault("subscription.singbox.geoip_url_prefix", "")
 	v.SetDefault("subscription.singbox.block_ads", false)
+
+	v.SetDefault("pdnd.dist_dir", "/opt/pandora/pdnd-dist")
 }
 
 func envVarName(configKey string) string {

@@ -1,0 +1,270 @@
+package service
+
+// 安装令牌与接入（Enroll）的 PG 测试；环境与夹具在 identity_pg_test.go。
+
+import (
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/hex"
+	"errors"
+	"math/big"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/google/uuid"
+
+	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/reqid"
+)
+
+func TestIssueBootstrapTokenPG(t *testing.T) {
+	e, ctx := newIdentEnv(t, false)
+	sid := seedIdentServer(t, ctx, e, "ready")
+	nodeID := seedIdentNode(t, ctx, e, sid)
+
+	out, err := e.svc.IssueBootstrapToken(e.admin, sid, 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"'https://panel.example.test/pdnd/install.sh'",
+		"--panel 'node.example.test:9443'",
+		"--ca-sha256 '" + e.ca.Fingerprint() + "'",
+		"--token '" + out.Token + "'",
+	} {
+		if !strings.Contains(out.InstallCommand, want) {
+			t.Fatalf("安装命令缺 %q：%s", want, out.InstallCommand)
+		}
+	}
+	// 库里只有哈希
+	sum := sha256.Sum256([]byte(out.Token))
+	var n int64
+	if err := e.row(ctx, `SELECT count(*) FROM bootstrap_tokens WHERE server_id = ? AND token_sha256 = ? AND issued_by IS NOT NULL`,
+		sid, hex.EncodeToString(sum[:])).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("应存一行令牌哈希，得到 %d", n)
+	}
+	if err := e.row(ctx, `SELECT count(*) FROM bootstrap_tokens WHERE token_sha256 = ?`, out.Token).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("不应存明文：n=%d err=%v", n, err)
+	}
+	if c := identAuditCount(t, ctx, e, "node.bootstrap_token.issue", sid); c != 1 {
+		t.Fatalf("签发审计应 1 条，得到 %d", c)
+	}
+	view, err := e.svc.NodeIdentity(ctx, nodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.PendingTokens != 1 || view.Identity != nil {
+		t.Fatalf("应有 1 张待用令牌、还没有身份：%+v", view)
+	}
+
+	if _, err := e.svc.IssueBootstrapToken(e.admin, sid, 61); poolErrCode(err) != errs.ValidationFailed {
+		t.Fatalf("ttl 61 应 422，得到 %v", err)
+	}
+	if _, err := e.svc.IssueBootstrapToken(e.admin, uuid.New(), 0); poolErrCode(err) != errs.NotFound {
+		t.Fatalf("服务器不存在应 404，得到 %v", err)
+	}
+	retired := seedIdentServer(t, ctx, e, "retired")
+	if _, err := e.svc.IssueBootstrapToken(e.admin, retired, 0); poolErrCode(err) != errs.Conflict {
+		t.Fatalf("已退役的服务器应 409，得到 %v", err)
+	}
+}
+
+func TestEnrollPG(t *testing.T) {
+	e, ctx := newIdentEnv(t, false)
+	sid := seedIdentServer(t, ctx, e, "ready")
+	token := identIssueToken(t, e, sid)
+	res, err := e.svc.Enroll(ctx, EnrollInput{
+		Token: token, CSRDER: identCSR(t, identKey(t)), RequestID: reqid.New(), AgentVersion: "pdnd/1.0", RemoteIP: "192.0.2.10",
+		Host: EnrollHostInfo{Hostname: "host.example.test", OS: "linux", Arch: "amd64", CPUCores: 2, MemoryBytes: 2 << 30, DiskBytes: 40 << 30},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ServerID != sid || string(res.CAPEM) != string(e.ca.CertPEM()) {
+		t.Fatalf("结果不对：%v", res.ServerID)
+	}
+	leaf := identLeaf(t, res.ChainPEM)
+	roots := x509.NewCertPool()
+	roots.AddCert(e.ca.Certificate())
+	if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); err != nil {
+		t.Fatalf("客户端证书应由面板 CA 签发：%v", err)
+	}
+	if id, ok := ServerIDFromCert(leaf); !ok || id != sid {
+		t.Fatalf("证书里的服务器 id = %v, %v", id, ok)
+	}
+	if !strings.Contains(string(res.ChainPEM), strings.TrimSpace(string(e.ca.CertPEM()))) {
+		t.Fatal("证书链应带 CA")
+	}
+	if err := e.svc.AuthorizeSession(ctx, sid, leaf.SerialNumber); err != nil {
+		t.Fatalf("新证书应能建流：%v", err)
+	}
+	if got := identStatus(t, ctx, e, leaf.SerialNumber); got != "active" {
+		t.Fatalf("接入签出的证书直接 active，得到 %s", got)
+	}
+
+	var hostname, osName, agent string
+	var cpu, mem, disk int32
+	if err := e.row(ctx, `SELECT hostname, os_name, agent_version, cpu_cores, memory_mb, disk_gb FROM servers WHERE id = ?`, sid).
+		Scan(&hostname, &osName, &agent, &cpu, &mem, &disk); err != nil {
+		t.Fatal(err)
+	}
+	if hostname != "host.example.test" || osName != "linux" || agent != "pdnd/1.0" || cpu != 2 || mem != 2048 || disk != 40 {
+		t.Fatalf("主机信息 = %s %s %s %d %d %d", hostname, osName, agent, cpu, mem, disk)
+	}
+	var actor, remoteIP string
+	if err := e.row(ctx, `SELECT actor_kind, coalesce(data->>'remote_ip', '') FROM audit_events
+		WHERE action = 'server.enrollment.commit' AND resource_id = ?`, sid).Scan(&actor, &remoteIP); err != nil {
+		t.Fatal(err)
+	}
+	if actor != "system" {
+		t.Fatalf("接入审计的操作者应为 system，得到 %s", actor)
+	}
+	if remoteIP != "192.0.2.10" {
+		t.Fatalf("接入审计应记来源 IP，得到 %q", remoteIP)
+	}
+}
+
+func TestEnrollDeniedPG(t *testing.T) {
+	e, ctx := newIdentEnv(t, false)
+	sid := seedIdentServer(t, ctx, e, "ready")
+	token := identIssueToken(t, e, sid)
+	if _, err := e.svc.Enroll(ctx, EnrollInput{Token: token, CSRDER: identCSR(t, identKey(t)), RequestID: "req-1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 已用（别的 request_id）、不存在
+	for _, in := range []EnrollInput{
+		{Token: token, CSRDER: identCSR(t, identKey(t)), RequestID: "req-2"},
+		{Token: "no-such-token", CSRDER: identCSR(t, identKey(t)), RequestID: "req-3"},
+	} {
+		if _, err := e.svc.Enroll(ctx, in); !errors.Is(err, ErrEnrollDenied) {
+			t.Fatalf("应拒绝，得到 %v", err)
+		}
+	}
+
+	// 过期
+	expired := "expired-token-example"
+	sum := sha256.Sum256([]byte(expired))
+	if err := e.exec(ctx, `INSERT INTO bootstrap_tokens (server_id, token_sha256, created_at, expires_at)
+		VALUES (?, ?, now() - interval '30 minutes', now() - interval '10 minutes')`, sid, hex.EncodeToString(sum[:])); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.Enroll(ctx, EnrollInput{Token: expired, CSRDER: identCSR(t, identKey(t)), RequestID: "req-4"}); !errors.Is(err, ErrEnrollDenied) {
+		t.Fatalf("过期令牌应拒绝，得到 %v", err)
+	}
+
+	// 签令牌之后服务器退役
+	sid2 := seedIdentServer(t, ctx, e, "ready")
+	token2 := identIssueToken(t, e, sid2)
+	if err := e.exec(ctx, `UPDATE servers SET status = 'retired', retired_at = now() WHERE id = ?`, sid2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.Enroll(ctx, EnrollInput{Token: token2, CSRDER: identCSR(t, identKey(t)), RequestID: "req-5"}); !errors.Is(err, ErrEnrollDenied) {
+		t.Fatalf("已退役的服务器应拒绝，得到 %v", err)
+	}
+
+	// 请求本身不合法
+	for _, in := range []EnrollInput{
+		{Token: "", CSRDER: identCSR(t, identKey(t)), RequestID: "req-6"},
+		{Token: "t", CSRDER: identCSR(t, identKey(t)), RequestID: "bad id"},
+		{Token: "t", CSRDER: []byte("bad"), RequestID: "req-7"},
+	} {
+		if _, err := e.svc.Enroll(ctx, in); !errors.Is(err, ErrEnrollInvalid) {
+			t.Fatalf("应回 ErrEnrollInvalid，得到 %v", err)
+		}
+	}
+}
+
+func TestEnrollRetrySameRequestPG(t *testing.T) {
+	e, ctx := newIdentEnv(t, false)
+	sid := seedIdentServer(t, ctx, e, "ready")
+	token := identIssueToken(t, e, sid)
+	key := identKey(t)
+	first, err := e.svc.Enroll(ctx, EnrollInput{Token: token, CSRDER: identCSR(t, key), RequestID: "req-retry"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 节点崩溃后用同一把钥匙重签 CSR（字节不同）重试：同一张证书
+	again, err := e.svc.Enroll(ctx, EnrollInput{Token: token, CSRDER: identCSR(t, key), RequestID: "req-retry"})
+	if err != nil {
+		t.Fatalf("同一 request_id 同一公钥重试应成功：%v", err)
+	}
+	if string(again.ChainPEM) != string(first.ChainPEM) || again.ServerID != sid {
+		t.Fatal("重试应返回同一张证书")
+	}
+	var n int64
+	if err := e.row(ctx, `SELECT count(*) FROM server_identities WHERE server_id = ?`, sid).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("重试不应再签：n=%d err=%v", n, err)
+	}
+	// 同一 request_id 换了公钥：拒绝
+	if _, err := e.svc.Enroll(ctx, EnrollInput{Token: token, CSRDER: identCSR(t, identKey(t)), RequestID: "req-retry"}); !errors.Is(err, ErrEnrollDenied) {
+		t.Fatalf("换了公钥应拒绝，得到 %v", err)
+	}
+}
+
+func TestEnrollReenrollSupersedesPG(t *testing.T) {
+	e, ctx := newIdentEnv(t, false)
+	sid := seedIdentServer(t, ctx, e, "ready")
+	a := identEnroll(t, ctx, e, sid)
+	e.advance(renewWindow)
+	b := identRenew(t, ctx, e, sid, a)
+	c := identEnroll(t, ctx, e, sid)
+	for _, s := range []*big.Int{a, b} {
+		if got := identStatus(t, ctx, e, s); got != "superseded" {
+			t.Fatalf("重新接入后旧的 active 与 pending 都应 superseded，%s 得到 %s", s.Text(16), got)
+		}
+	}
+	if got := identStatus(t, ctx, e, c); got != "active" {
+		t.Fatalf("新接入的应 active，得到 %s", got)
+	}
+	wantSessionRevoked(t, e.svc.AuthorizeSession(ctx, sid, a), "重新接入后的旧证书")
+	wantSessionRevoked(t, e.svc.AuthorizeSession(ctx, sid, b), "重新接入后的 pending")
+	if err := e.svc.AuthorizeSession(ctx, sid, c); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// 真提交：同一张令牌并发接入只成功一次；重新接入在提交后通知会话层断掉旧身份的流。
+func TestEnrollConcurrentSameTokenPG(t *testing.T) {
+	e, ctx := newIdentEnv(t, true)
+	sid := seedIdentServer(t, ctx, e, "ready")
+	token := identIssueToken(t, e, sid)
+
+	const n = 4
+	var wg sync.WaitGroup
+	results := make([]error, n)
+	for i := range n {
+		csr := identCSR(t, identKey(t))
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, results[i] = e.svc.Enroll(ctx, EnrollInput{Token: token, CSRDER: csr, RequestID: "req-" + uuid.NewString()[:8]})
+		}()
+	}
+	wg.Wait()
+	ok := 0
+	for _, err := range results {
+		switch {
+		case err == nil:
+			ok++
+		case !errors.Is(err, ErrEnrollDenied):
+			t.Fatalf("并发失败的一方应是 ErrEnrollDenied，得到 %v", err)
+		}
+	}
+	if ok != 1 {
+		t.Fatalf("同一张令牌应只成功一次，成功 %d 次", ok)
+	}
+	if got := e.tombs.list(); len(got) != 0 {
+		t.Fatalf("第一次接入没有旧身份，不应 Tombstone：%v", got)
+	}
+
+	identEnroll(t, ctx, e, sid)
+	want := sid.String() + ":" + TombstoneIdentitySuperseded
+	if got := e.tombs.list(); len(got) != 1 || got[0] != want {
+		t.Fatalf("重新接入提交后应 Tombstone %s，得到 %v", want, got)
+	}
+}

@@ -124,6 +124,7 @@ func TestServerStatusIllegalAndReadyRequiresActive(t *testing.T) {
 func TestServerStatusLegalPathToRetired(t *testing.T) {
 	e, ctx := newInvEnv(t)
 	s := e.server(t, ctx, "st-path")
+	e.enroll(t, ctx, s.ID)
 	n := e.ssNode(t, ctx, s.ID, "st-node", 21003)
 	s, err := e.svc.SetServerStatus(ctx, s.ID, s.RowVersion, ServerMaintenance, "m")
 	if err != nil {
@@ -186,6 +187,7 @@ func TestServerDeleteReadyConflictDraftSuccess(t *testing.T) {
 func TestServerDeleteRetiredDetachesActiveNodes(t *testing.T) {
 	e, ctx := newInvEnv(t)
 	s := e.server(t, ctx, "del-cascade")
+	e.enroll(t, ctx, s.ID)
 	n := e.ssNode(t, ctx, s.ID, "live", 21004)
 	if _, err := e.svc.ActivateNode(ctx, n.ID, n.RowVersion); err != nil {
 		t.Fatal(err)
@@ -247,6 +249,7 @@ func TestListServerNodesAndMissingServer(t *testing.T) {
 func TestServerSetStatusBumpsEpochsCommitted(t *testing.T) {
 	e, ctx := newInvEnvCommitted(t)
 	s := e.server(t, ctx, "epoch-srv")
+	e.enroll(t, ctx, s.ID)
 	n := e.ssNode(t, ctx, s.ID, "epoch-n", 21007)
 	if _, err := e.svc.ActivateNode(ctx, n.ID, n.RowVersion); err != nil {
 		t.Fatal(err)

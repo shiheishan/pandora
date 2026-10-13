@@ -19,6 +19,7 @@ import (
 func invPooledActive(t *testing.T, e *invEnv, ctx context.Context, srvName, name string, port int) (Server, AdminNode) {
 	t.Helper()
 	srv := e.readyServer(t, ctx, srvName)
+	e.enroll(t, ctx, srv.ID)
 	pool := e.pool(t, ctx, "active")
 	n := e.ssNode(t, ctx, srv.ID, name, port)
 	n, err := e.svc.PatchNode(ctx, n.ID, NodePatch{RowVersion: n.RowVersion, PoolID: OptionalUUID{Set: true, Value: &pool}})
@@ -49,7 +50,7 @@ func invFindRow(t *testing.T, e *invEnv, ctx context.Context, id uuid.UUID) Node
 }
 
 func TestQueryNodesPaging(t *testing.T) {
-	e, ctx := newInvEnv(t)
+	e, _, ctx := newInvListEnv(t)
 	srv := e.server(t, ctx, "list-a")
 	for i := 0; i < 3; i++ {
 		e.ssNode(t, ctx, srv.ID, "n"+strconv.Itoa(i), 22001+i)
@@ -71,7 +72,7 @@ func TestQueryNodesPaging(t *testing.T) {
 }
 
 func TestQueryNodesFilters(t *testing.T) {
-	e, ctx := newInvEnv(t)
+	e, _, ctx := newInvListEnv(t)
 	srv := e.server(t, ctx, "list-b")
 	draft := e.ssNode(t, ctx, srv.ID, "draft", 22011)
 	gone := e.ssNode(t, ctx, srv.ID, "gone", 22012)
@@ -118,7 +119,7 @@ func TestQueryNodesFilters(t *testing.T) {
 }
 
 func TestQueryNodesDetail(t *testing.T) {
-	e, ctx := newInvEnv(t)
+	e, _, ctx := newInvListEnv(t)
 	srv := e.server(t, ctx, "list-c")
 	n, err := e.svc.CreateNode(ctx, NodeInput{
 		Name: e.name("hy2"), ServerID: srv.ID, NodeType: "hysteria2", ServerHost: "203.0.113.10",
@@ -149,7 +150,7 @@ func TestQueryNodesDetail(t *testing.T) {
 }
 
 func TestQueryNodesDelivery(t *testing.T) {
-	e, ctx := newInvEnv(t)
+	e, _, ctx := newInvListEnv(t)
 
 	_, ok := invPooledActive(t, e, ctx, "dl-ok", "ok", 22031)
 	if r := invFindRow(t, e, ctx, ok.ID); !r.Delivered || r.DeliveryNote != "" || r.Stale {
@@ -157,6 +158,7 @@ func TestQueryNodesDelivery(t *testing.T) {
 	}
 
 	srv := e.readyServer(t, ctx, "dl-nopool")
+	e.enroll(t, ctx, srv.ID)
 	np := e.ssNode(t, ctx, srv.ID, "nopool", 22032)
 	if _, err := e.svc.ActivateNode(ctx, np.ID, np.RowVersion); err != nil {
 		t.Fatal(err)
@@ -191,7 +193,7 @@ func TestQueryNodesDelivery(t *testing.T) {
 }
 
 func TestQueryNodesServerColumns(t *testing.T) {
-	e, ctx := newInvEnv(t)
+	e, _, ctx := newInvListEnv(t)
 	srv := e.server(t, ctx, "list-d")
 	n := e.ssNode(t, ctx, srv.ID, "n", 22041)
 	if err := e.exec(ctx, `UPDATE servers SET agent_version = '1.2.3', hostname = 'edge-1.example.test', cpu_cores = 4 WHERE id = ?`, srv.ID); err != nil {

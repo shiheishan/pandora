@@ -41,7 +41,7 @@ paths:
   （Welcome 之前收到 Tombstone 也认）；Welcome 之前 `Send*` 一律返回 false。
 - 每条流带 metadata `x-request-id`（新 UUID）。发送队列有界，满了就断流重连，不阻塞主循环。
 - 断线全抖动退避 1s–30s，拿到过 Welcome 的流结束后复位。`Command.reconnect` 按 in_ms + [0, jitter_ms) 重连；
-  Tombstone 后 `Run` 返回 `ErrTombstoned`、不再重连，节点继续用磁盘缓存服务。
+  Tombstone（或建流被拒并带重新接入 trailer）后 `Run` 返回 `ErrTombstoned`、不再重连；`Server.stopAllForTombstone` 立刻停掉全部入站并删掉落盘缓存，重启也不靠缓存恢复（用户 10-13 定）。
 - UsersFull 分块在 `panel/` 里收齐（`usersAssembler`），不全就回 `UsersAck{ok:false, reason:incomplete_chunks}`。
 
 ## 编排不变式

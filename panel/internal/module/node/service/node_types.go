@@ -50,6 +50,13 @@ type Server struct {
 	NeverSeenNodeCount int
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
+	// 以下取自最新一个指标点（node_metrics）；没有点时全为 nil。MB、GB 按 1024 进制整除
+	CPUBp       *int
+	MemUsedMB   *int64
+	MemTotalMB  *int64
+	DiskUsedGB  *int64
+	DiskTotalGB *int64
+	MetricsAt   *time.Time
 }
 
 // ServerFilter 是服务器列表的筛选：Status 为空不筛；Query 按名称、主机名子串（不分大小写）。
@@ -248,7 +255,7 @@ type ApplyFailure struct {
 	At     time.Time
 }
 
-// NodeRow 是后台节点列表的一行。第二波才有数据的指标（在线数、流量、探针、身份）不在这里，handler 给固定值。
+// NodeRow 是后台节点列表的一行。在线、流量、指标、身份序号、授权套餐按当前页批量取，不逐行查。
 type NodeRow struct {
 	ID            uuid.UUID
 	NodeNo        int64
@@ -279,7 +286,8 @@ type NodeRow struct {
 	DisplayName  *string
 	CountryCode  *string
 	SortOrder    int
-	// EffectiveState：'' / applied / failed（pending 第二波有期望版本后才有）
+	// EffectiveState：'' / applied / pending / failed。pending = 节点已应用的配置摘要与面板现在为它算出的文档摘要不同；
+	// 新设计没有代数（generation），只比 SHA-256
 	EffectiveState    string
 	LastApplyFailure  *ApplyFailure
 	RuntimeStatus     *string
@@ -287,6 +295,18 @@ type NodeRow struct {
 	RuntimeStateAt    *time.Time
 	RuntimeReasonNode *string
 	DeliveryDegraded  bool
+	// OnlineUsers、OnlineIPs、TrafficBytes24h 来自 NodeLiveStats；没有数据为 0
+	OnlineUsers     int
+	OnlineIPs       int
+	TrafficBytes24h int64
+	// CPUPercent、MemPercent、MetricsAt 取所在服务器最新一个指标点；没有点为 nil
+	CPUPercent *float64
+	MemPercent *float64
+	MetricsAt  *time.Time
+	// IdentitySerial 是所在服务器当前 active 身份的 seq；没有为 nil
+	IdentitySerial *int64
+	// GrantedPlans 是绑定了节点所在池的套餐名（去重、升序），永不为 nil
+	GrantedPlans []string
 	// Detail 只在 NodeQuery.ID 非空（单取）时填
 	Detail *NodeDetail
 }

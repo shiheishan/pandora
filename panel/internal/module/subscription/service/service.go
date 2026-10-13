@@ -132,6 +132,25 @@ func (s *Service) notifyRoster(ctx context.Context, subIDs ...uuid.UUID) {
 	}
 }
 
+// notifyRosterBatch 在提交后把一批订阅一次通知出去（扣量一批可能有很多份同时用尽）。
+func (s *Service) notifyRosterBatch(ctx context.Context, subIDs []uuid.UUID) {
+	ids := make([]uuid.UUID, 0, len(subIDs))
+	for _, id := range subIDs {
+		if id != uuid.Nil {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	// 键每批唯一：同一事务里两批不能互相吞掉
+	tx.AfterCommit(ctx, "subscription:roster:batch:"+uuid.NewString(), func(ctx context.Context) {
+		if s.roster != nil {
+			s.roster.SubscriptionsChanged(ctx, ids)
+		}
+	})
+}
+
 // writeEvent 追加一条订阅事件；payload 不放钱。
 func (s *Service) writeEvent(ctx context.Context, subID uuid.UUID, eventType string, from *string, to string, actor Actor, orderID *uuid.UUID, payload map[string]any) error {
 	if payload == nil {

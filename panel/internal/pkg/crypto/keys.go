@@ -21,6 +21,8 @@ const (
 	InfoHMACGiftCard = "pandora/hmac/giftcard/v1"
 	// InfoHMACIdempotency 是幂等请求指纹（落库的请求体摘要）
 	InfoHMACIdempotency = "pandora/hmac/idempotency/v1"
+	// InfoHMACNodeDevice 是节点在线设备键（IPv4 地址 / IPv6 /64）：IPv4 只有 2^32 个，不加密钥的摘要可穷举还原
+	InfoHMACNodeDevice = "pandora/hmac/node-device/v1"
 )
 
 const minMasterLen = 32

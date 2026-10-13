@@ -12,9 +12,6 @@ public HEAD    /                                                  -   -
 public GET     /assets/*                                          -   -
 public HEAD    /assets/*                                          -   -
 public GET     /healthz                                           0   1
-public GET     /pdnd/bin/{name}                                   -   -
-public GET     /pdnd/install.sh                                   -   -
-public GET     /pdnd/sha256/{name}                                -   -
 public GET     /readyz                                            -   -
 public GET     /v1/appearance                                     5   1
 public POST    /v1/auth/login                                    12   2

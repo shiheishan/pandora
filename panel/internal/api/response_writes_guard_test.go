@@ -33,9 +33,6 @@ var directWriteAllowed = map[string]string{
 	"public/subscribe.go writeDecoy":                        "订阅失败的诱饵 HTML 404 页",
 	"public/subscribe.go handlers.writeExpiredSubscription": "过期订阅的提示配置（YAML / JSON / base64）与 429 纯文本",
 	// pdnd 安装引导：shell 脚本、二进制与校验和，给 curl 用的纯文本 / 字节流
-	"public/pdnd_install.go handlers.pdndInstallScript": "pdnd 安装脚本",
-	"public/pdnd_install.go handlers.pdndBinary":        "pdnd 二进制分发（ServeContent 支持断点续传）与纯文本 404",
-	"public/pdnd_install.go handlers.pdndChecksum":      "pdnd 校验和（sha256sum 格式纯文本）",
 	// 回调回执：格式由对端规定
 	"public/handlers.go handlers.paymentWebhook": "支付回调回执，格式与状态由渠道适配器决定",
 	"public/telegram.go handlers.telegramUpdate": "Telegram webhook 回执，无论成败固定 200 {\"ok\":true}",

@@ -38,13 +38,25 @@ type Service struct {
 	catalog Catalog
 	groups  UserGroups
 
-	// 第二波：会话管理（channel.go）
+	// 第二波：会话管理（channel.go；p5-session 的 *Sessions 经 UseSessions 注入）
 	sessions SessionControl
+
+	// 第二波 p5-enroll 注入（identity.go 的 UseEnrollment）：节点 CA 与安装命令的对外地址
+	enroll enrollState
+
+	// 第二波 p5-traffic 注入（traffic_charger.go 的 UseTrafficCharger）：流量扣量
+	charger TrafficCharger
+
+	// keys 给在线设备键做 HMAC（online.go 的 UseKeys）
+	keys DeviceKeyHasher
 
 	// 第二波 p5-delivery 注入（delivery.go）：名单要的订阅、账号、套餐版本读取面
 	subs     ServingSubscriptions
 	users    ServingUsers
 	versions PlanVersions
+
+	// 节点端一键安装的分发（pdnd_dist.go 的 UsePdndDist）：二进制目录与写进安装脚本的面板地址
+	pdnd pdndDist
 }
 
 // New 构造 node service。rdb 用于下发纪元（epoch.go），为 nil 时只跳过通知。
