@@ -118,7 +118,7 @@ paths:
 | juicity | network（只 udp）、cert_path、key_path（必填）、`congestion_control` |
 | naive | network（只 tcp）、security、tls / cert_path / key_path、fallback |
 | socks、http | network（tcp；socks 另可 udp）、security、tls / cert_path / key_path |
-| shadowtls | network（只 tcp）、`password`、`version`（缺省 3）、`strict`、`server` 或 `handshake_server`、`server_port`（握手服务器端口，缺省 443）、`wildcard_sni`、`method`（内层 shadowsocks 方法） |
+| shadowtls | network（只 tcp）、`password`、`version`（缺省 3）、`strict`、`server` 或 `handshake_server`（必须写成 host:port：配置文档摊平后 `server_port` 永远是入站端口）、`wildcard_sni`、`method`（内层 shadowsocks 方法） |
 | mieru | `transport`（tcp / udp） |
 
 数字一律经 `internal/confnum` 解析（JSON 数字与数字串都认）；时长类键（udp_timeout、auth_timeout、heartbeat、max_time_diff）
