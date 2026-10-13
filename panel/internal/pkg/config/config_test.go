@@ -240,3 +240,93 @@ func TestSingboxRuleSetPrefixRejected(t *testing.T) {
 		})
 	}
 }
+
+func TestGRPCNodeDefaults(t *testing.T) {
+	setMinimalValidEnv(t)
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.GRPC.Node.Addr != ":9443" {
+		t.Fatalf("addr: got %q", cfg.GRPC.Node.Addr)
+	}
+	if cfg.GRPC.Node.PublicHost != "" {
+		t.Fatalf("public_host: got %q", cfg.GRPC.Node.PublicHost)
+	}
+	if cfg.GRPC.Node.EffectivePublicPort() != 9443 {
+		t.Fatalf("EffectivePublicPort: got %d", cfg.GRPC.Node.EffectivePublicPort())
+	}
+}
+
+func TestGRPCNodePublicPortOverride(t *testing.T) {
+	setMinimalValidEnv(t)
+	t.Setenv("PANDORA_GRPC_NODE_PUBLIC_HOST", "node.example.test")
+	t.Setenv("PANDORA_GRPC_NODE_PUBLIC_PORT", "443")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.GRPC.Node.PublicHost != "node.example.test" {
+		t.Fatalf("public_host: got %q", cfg.GRPC.Node.PublicHost)
+	}
+	if cfg.GRPC.Node.EffectivePublicPort() != 443 {
+		t.Fatalf("EffectivePublicPort: got %d", cfg.GRPC.Node.EffectivePublicPort())
+	}
+}
+
+func TestGRPCNodePublicHostRequiredInProduction(t *testing.T) {
+	setMinimalValidEnv(t)
+	t.Setenv("PANDORA_ENV", "production")
+	t.Setenv("PANDORA_PUBLIC_BASE_URL", "https://panel.example.test")
+	_, err := Load("")
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "grpc.node.public_host") {
+		t.Fatalf("应含 grpc.node.public_host: %v", err)
+	}
+	t.Setenv("PANDORA_GRPC_NODE_PUBLIC_HOST", "203.0.113.7")
+	_, err = Load("")
+	if err == nil {
+		t.Fatal("production 仍可能因 http 监听等报错")
+	}
+	if strings.Contains(err.Error(), "grpc.node.public_host") {
+		t.Fatalf("设 public_host 后不应再报该字段: %v", err)
+	}
+}
+
+func TestGRPCNodePublicHostInvalid(t *testing.T) {
+	for _, bad := range []string{
+		"https://x.example.test",
+		"x.example.test:9443",
+		"bad host",
+	} {
+		t.Run(bad, func(t *testing.T) {
+			setMinimalValidEnv(t)
+			t.Setenv("PANDORA_GRPC_NODE_PUBLIC_HOST", bad)
+			_, err := Load("")
+			if err == nil || !strings.Contains(err.Error(), "grpc.node.public_host") {
+				t.Fatalf("应拒绝 %q: %v", bad, err)
+			}
+		})
+	}
+	for _, ok := range []string{"::1", "x.example.test"} {
+		t.Run(ok, func(t *testing.T) {
+			setMinimalValidEnv(t)
+			t.Setenv("PANDORA_GRPC_NODE_PUBLIC_HOST", ok)
+			_, err := Load("")
+			if err != nil {
+				t.Fatalf("应接受 %q: %v", ok, err)
+			}
+		})
+	}
+}
+
+func TestGRPCNodeAddrInvalid(t *testing.T) {
+	setMinimalValidEnv(t)
+	t.Setenv("PANDORA_GRPC_NODE_ADDR", "9443")
+	_, err := Load("")
+	if err == nil || !strings.Contains(err.Error(), "grpc.node.addr") {
+		t.Fatalf("应拒绝无冒号的 addr: %v", err)
+	}
+}

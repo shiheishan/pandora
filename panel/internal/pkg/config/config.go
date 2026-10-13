@@ -4,7 +4,11 @@
 // 后续模块需要的配置段在各自迁移时追加到这里。
 package config
 
-import "time"
+import (
+	"net"
+	"strconv"
+	"time"
+)
 
 // Env 取值。
 const (
@@ -62,7 +66,28 @@ type GRPC struct {
 }
 
 type GRPCServer struct {
+	// Addr 是监听地址（host:port）
 	Addr string `mapstructure:"addr"`
+	// PublicHost 是节点连面板用的主机名或 IP（进服务端证书 SAN 与安装命令）；为空时不起节点 gRPC（生产必填）
+	PublicHost string `mapstructure:"public_host"`
+	// PublicPort 是节点连面板用的端口；0 表示取 Addr 的端口（前面有端口映射时另设）
+	PublicPort int `mapstructure:"public_port"`
+}
+
+// EffectivePublicPort 返回对外端口：PublicPort 非 0 用它，否则取 Addr 的端口；Addr 解析不了返回 0。
+func (g GRPCServer) EffectivePublicPort() int {
+	if g.PublicPort != 0 {
+		return g.PublicPort
+	}
+	_, portStr, err := net.SplitHostPort(g.Addr)
+	if err != nil {
+		return 0
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return 0
+	}
+	return port
 }
 
 type Database struct {

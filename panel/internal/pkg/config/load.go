@@ -92,7 +92,9 @@ func defaults(v *viper.Viper) {
 		v.SetDefault(prefix+"pprof_addr", "")
 	}
 
-	v.SetDefault("grpc.node.addr", ":8444")
+	v.SetDefault("grpc.node.addr", ":9443")
+	v.SetDefault("grpc.node.public_host", "")
+	v.SetDefault("grpc.node.public_port", 0)
 
 	v.SetDefault("database.url", "")
 	v.SetDefault("database.migration_url", "")
