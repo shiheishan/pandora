@@ -19,6 +19,7 @@ type PoolPlanRow struct {
 	PoolID        uuid.UUID
 	PlanVersionID uuid.UUID
 	PlanName      string
+	OnSale        bool
 }
 
 // versionPoolScanRow 是 VersionPools 查询的一行。
@@ -53,7 +54,8 @@ func (r *Repo) PoolPlanRows(ctx context.Context, poolIDs []uuid.UUID) ([]PoolPla
 		return []PoolPlanRow{}, nil
 	}
 	var rows []PoolPlanRow
-	err := r.d.Conn(ctx).Raw(`SELECT pnp.pool_id, pnp.plan_version_id, pl.name AS plan_name
+	err := r.d.Conn(ctx).Raw(`SELECT pnp.pool_id, pnp.plan_version_id, pl.name AS plan_name,
+		(pv.status = 'published' AND pl.status = 'active' AND pl.current_version_id = pv.id) AS on_sale
 		FROM plan_node_pools pnp
 		JOIN plan_versions pv ON pv.id = pnp.plan_version_id
 		JOIN plans pl ON pl.id = pv.plan_id

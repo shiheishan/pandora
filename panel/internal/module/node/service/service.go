@@ -37,6 +37,7 @@ type Service struct {
 	// p5-pools 注入（pools 主题文件里定义接口与 Use* 方法）
 	catalog Catalog
 	groups  UserGroups
+	inUse   VersionsInUse
 
 	// 第二波：会话管理（channel.go；p5-session 的 *Sessions 经 UseSessions 注入）
 	sessions SessionControl

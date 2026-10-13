@@ -100,7 +100,19 @@ func (c *invListCatalog) PoolUsage(_ context.Context, poolIDs []uuid.UUID) (map[
 		if names == nil {
 			names = []string{"默认套餐"}
 		}
-		out[id] = catalogsvc.PoolUsage{Versions: 1, PlanNames: names}
+		bindings := make([]catalogsvc.PoolBinding, 0, len(names))
+		for _, name := range names {
+			bindings = append(bindings, catalogsvc.PoolBinding{
+				VersionID: uuid.New(),
+				PlanName:  name,
+				OnSale:    true,
+			})
+		}
+		out[id] = catalogsvc.PoolUsage{
+			Versions:  len(bindings),
+			PlanNames: names,
+			Bindings:  bindings,
+		}
 	}
 	return out, nil
 }
@@ -109,6 +121,7 @@ func (c *invListCatalog) PoolUsage(_ context.Context, poolIDs []uuid.UUID) (map[
 func invUseListCatalog(e *invEnv) *invListCatalog {
 	c := &invListCatalog{unbound: map[uuid.UUID]bool{}, plans: map[uuid.UUID][]string{}}
 	e.svc.UseCatalog(c)
+	e.svc.UseVersionsInUse(&fakeVersionsInUse{})
 	return c
 }
 
