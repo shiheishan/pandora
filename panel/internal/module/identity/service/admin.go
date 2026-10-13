@@ -31,6 +31,18 @@ func (s *Service) ListUsers(ctx context.Context, f UserFilter, limit, offset int
 		}
 		q.Statuses = f.Statuses
 	}
+	if f.SubState != "" {
+		if f.SubState != "active" && f.SubState != "expired" && f.SubState != "none" {
+			return nil, 0, errs.Invalid(map[string]string{"sub_state": "订阅状态只能是 active、expired 或 none"})
+		}
+		subFilter, subIDs, subExclude, err := s.subIDs(ctx, SubFilter{State: f.SubState})
+		if err != nil {
+			return nil, 0, err
+		}
+		q.SubFilter = subFilter
+		q.SubIDs = subIDs
+		q.SubExclude = subExclude
+	}
 	total, err := s.repo.CountUsers(ctx, q)
 	if err != nil {
 		return nil, 0, err

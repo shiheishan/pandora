@@ -13,11 +13,14 @@ import (
 
 // UserListQuery 是后台用户列表的筛选；零值不筛。
 type UserListQuery struct {
-	Pattern  string     // 非空时：email::text ILIKE Pattern ESCAPE '\' OR coalesce(display_name,'') ILIKE Pattern ESCAPE '\'
-	ExactID  *uuid.UUID // 非空时与 Pattern 的条件 OR 在一起：OR u.id = ExactID
-	Statuses []string   // 非空时 u.status IN ?
-	GroupID  *uuid.UUID // 非空时 u.user_group_id = ?
-	NoGroup  bool       // true 时 u.user_group_id IS NULL
+	Pattern    string      // 非空时：email::text ILIKE Pattern ESCAPE '\' OR coalesce(display_name,'') ILIKE Pattern ESCAPE '\'
+	ExactID    *uuid.UUID  // 非空时与 Pattern 的条件 OR 在一起：OR u.id = ExactID
+	Statuses   []string    // 非空时 u.status IN ?
+	GroupID    *uuid.UUID  // 非空时 u.user_group_id = ?
+	NoGroup    bool        // true 时 u.user_group_id IS NULL
+	SubFilter  bool        // true 时按订阅条件圈人（见 applySubIDs）
+	SubIDs     []uuid.UUID // subscription 按订阅条件给出的用户 id
+	SubExclude bool        // true 时排除 SubIDs，false 时只保留 SubIDs
 }
 
 // UserListRow 是列表的一行：users 的列加组名（左连 user_groups）。
@@ -243,7 +246,7 @@ func applyUserListWhere(tx *gorm.DB, q UserListQuery) *gorm.DB {
 	if q.NoGroup {
 		tx = tx.Where("u.user_group_id IS NULL")
 	}
-	return tx
+	return applySubIDs(tx, q.SubFilter, q.SubIDs, q.SubExclude)
 }
 
 // TotalReferrals 统计全站邀请关系总数。
