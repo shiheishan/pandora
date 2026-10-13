@@ -2,7 +2,11 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"strings"
 	"time"
 
 	appearancerepo "github.com/aegispanel/aegis/internal/module/appearance/repo"
@@ -50,6 +54,7 @@ import (
 	supportsvc "github.com/aegispanel/aegis/internal/module/support/service"
 	"github.com/aegispanel/aegis/internal/pkg/config"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
+	"github.com/aegispanel/aegis/internal/pkg/geoip"
 	"github.com/aegispanel/aegis/internal/pkg/jwtx"
 	"github.com/aegispanel/aegis/internal/pkg/ratelimit"
 	"github.com/aegispanel/aegis/internal/pkg/redisx"
@@ -57,6 +62,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 )
 
 // services 是 serve、worker、admin 子命令共用的业务服务，各模块的互相注入在 buildServices 一处完成。
@@ -89,6 +95,7 @@ type services struct {
 	sealer *crypto.Sealer
 	queue  *asynq.Client
 	tx     *tx.Manager
+	geo    *geoip.Resolver
 }
 
 // asynqRedis 给 asynq 的连接参数：与业务客户端同一套解析（redisx.Options），用户名、口令、库号、TLS、超时都同源。
@@ -176,6 +183,18 @@ func buildServices(r *runtime) (*services, error) {
 	nodeSvc := nodesvc.New(noderepo.New(r.db), txm, auditSvc, r.redis)
 	// 节点端一键安装：二进制从发布包的 pdnd-dist 目录发，安装脚本里写入面板地址
 	nodeSvc.UsePdndDist(cfg.Pdnd.DistDir, cfg.PublicBaseURL)
+	// IP 归属地（ip2region 离线库）：没放数据文件只记一条 Info、归属地留空；文件在却打不开才 Warn。启动都不受影响
+	var geo *geoip.Resolver
+	if _, statErr := os.Stat(cfg.GeoIP.IPv4DB); errors.Is(statErr, fs.ErrNotExist) || strings.TrimSpace(cfg.GeoIP.IPv4DB) == "" {
+		r.log.Info("没有 IP 归属地数据文件，归属地留空", zap.String("ipv4_db", cfg.GeoIP.IPv4DB))
+	} else if g, err := geoip.Open(cfg.GeoIP.IPv4DB, cfg.GeoIP.IPv6DB, r.log); err != nil {
+		r.log.Warn("打开 IP 归属地数据库失败，归属地留空",
+			zap.String("ipv4_db", cfg.GeoIP.IPv4DB), zap.String("ipv6_db", cfg.GeoIP.IPv6DB), zap.Error(err))
+	} else {
+		geo = g
+	}
+	identitySvc.UseGeo(geo)
+	nodeSvc.UseGeo(geo)
 	giftcardSvc := giftcardsvc.New(giftcardrepo.New(r.db), txm, auditSvc, idemSvc, catalogSvc, subSvc, ledgerSvc, identitySvc, keys, sealer)
 	// 内容页：发版经 catalog 校验限定套餐、门户经 subscription 取生效套餐、后台经 identity 显示作者
 	contentSvc := contentsvc.New(contentrepo.New(r.db), txm, auditSvc, catalogSvc, subSvc, identitySvc)
@@ -336,12 +355,16 @@ func buildServices(r *runtime) (*services, error) {
 		sealer:     sealer,
 		queue:      queue,
 		tx:         txm,
+		geo:        geo,
 	}, nil
 }
 
 func (s *services) close() {
 	if s != nil && s.queue != nil {
 		_ = s.queue.Close()
+	}
+	if s != nil && s.geo != nil {
+		s.geo.Close()
 	}
 }
 

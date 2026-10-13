@@ -141,6 +141,9 @@ func defaults(v *viper.Viper) {
 	v.SetDefault("pdnd.dist_dir", "/opt/pandora/pdnd-dist")
 
 	v.SetDefault("backup.dir", "/var/backups/pandora")
+
+	v.SetDefault("geoip.ipv4_db", "/opt/pandora/geoip/ip2region_v4.xdb")
+	v.SetDefault("geoip.ipv6_db", "")
 }
 
 func envVarName(configKey string) string {

@@ -43,6 +43,7 @@ type Config struct {
 	Subscription  Subscription `mapstructure:"subscription"`
 	Pdnd          Pdnd         `mapstructure:"pdnd"`
 	Backup        Backup       `mapstructure:"backup"`
+	GeoIP         GeoIP        `mapstructure:"geoip"`
 }
 
 type HTTP struct {
@@ -177,4 +178,10 @@ type Pdnd struct {
 type Backup struct {
 	// Dir 是加密备份所在目录（绝对路径）；为空表示没配置，系统状态页报「读不到」并给提示
 	Dir string `mapstructure:"dir"`
+}
+
+// GeoIP 是 IP 归属地离线库配置；ip2region xdb 文件绝对路径；没有文件时归属地留空、不报错。
+type GeoIP struct {
+	IPv4DB string `mapstructure:"ipv4_db"`
+	IPv6DB string `mapstructure:"ipv6_db"`
 }

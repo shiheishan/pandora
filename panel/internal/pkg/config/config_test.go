@@ -368,3 +368,26 @@ func TestBackupDir(t *testing.T) {
 		t.Fatalf("应拒绝相对路径: %v", err)
 	}
 }
+
+// GeoIP 离线库路径：缺省为标准路径与空 IPv6，支持环境变量覆盖。
+func TestGeoIPDefaults(t *testing.T) {
+	setMinimalValidEnv(t)
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.GeoIP.IPv4DB != "/opt/pandora/geoip/ip2region_v4.xdb" {
+		t.Fatalf("IPv4DB 缺省 %q", cfg.GeoIP.IPv4DB)
+	}
+	if cfg.GeoIP.IPv6DB != "" {
+		t.Fatalf("IPv6DB 缺省 %q", cfg.GeoIP.IPv6DB)
+	}
+	t.Setenv("PANDORA_GEOIP_IPV4_DB", "/data/ip2region.xdb")
+	t.Setenv("PANDORA_GEOIP_IPV6_DB", "/data/ip2region_v6.xdb")
+	if cfg, err = Load(""); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.GeoIP.IPv4DB != "/data/ip2region.xdb" || cfg.GeoIP.IPv6DB != "/data/ip2region_v6.xdb" {
+		t.Fatalf("环境变量覆盖得到 %+v", cfg.GeoIP)
+	}
+}

@@ -167,7 +167,7 @@ func (s *Service) IPClusters(ctx context.Context, includeReviewed bool) ([]IPClu
 
 	out := make([]IPCluster, 0, len(clusters))
 	for _, c := range clusters {
-		geo, kind := locate(c.IP)
+		geo, kind := s.locate(c.IP)
 		ic := IPCluster{
 			Key:         c.Key,
 			IP:          c.IP,

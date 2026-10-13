@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"net/netip"
 	"sort"
 	"strings"
 
@@ -53,21 +52,6 @@ func auditCategoryFilter(category string) (include, exclude []string, ok bool) {
 		return nil, earlier, true
 	}
 	return nil, nil, false
-}
-
-// locate 根据 IP 给出展示用归属与网络类型；新栈尚未接入 GeoIP 库，仅做本地/内网判断。
-func locate(ip string) (display, kind string) {
-	addr, err := netip.ParseAddr(strings.TrimSpace(ip))
-	if err != nil {
-		return "", ""
-	}
-	if addr.IsLoopback() {
-		return "本机回环地址", "loopback"
-	}
-	if addr.IsPrivate() || addr.IsLinkLocalUnicast() {
-		return "内网地址", "private"
-	}
-	return "", ""
 }
 
 // clusterRisk 给同源 IP 聚类定风险等级（机房出口或账号数偏多判高）。
@@ -272,7 +256,7 @@ func (s *Service) AccessLog(ctx context.Context, q AccessLogQuery) ([]AccessItem
 	}
 
 	for i := range items {
-		items[i].Geo, items[i].NetworkKind = locate(items[i].IP)
+		items[i].Geo, items[i].NetworkKind = s.locate(items[i].IP)
 	}
 	if items == nil {
 		items = []AccessItem{}
