@@ -10,6 +10,7 @@ import (
 	"github.com/aegispanel/aegis/internal/module/catalog/model"
 	"github.com/aegispanel/aegis/internal/module/catalog/repo"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 )
 
 // ListPlans 后台套餐列表：全部套餐（含已归档），按 sort_order, created_at, id。
@@ -238,6 +239,7 @@ func (s *Service) createPlanTx(ctx context.Context, in PlanInput) (uuid.UUID, er
 	if err := s.repo.InsertPlan(ctx, m); err != nil {
 		return uuid.Nil, err
 	}
+	s.catalogChanged(ctx, rtTablePlans, realtime.OpInsert, m.ID)
 	if len(in.VisibleGroupIDs) > 0 {
 		if err := s.repo.SetVisibleGroups(ctx, m.ID, in.VisibleGroupIDs); err != nil {
 			if errors.Is(err, repo.ErrForeignKey) {
@@ -320,6 +322,7 @@ func (s *Service) updatePlanTx(ctx context.Context, planID uuid.UUID, expected i
 	if !ok {
 		return 0, rowConflict("套餐", cur.RowVersion)
 	}
+	s.catalogChanged(ctx, rtTablePlans, realtime.OpUpdate, planID)
 
 	groups := in.VisibleGroupIDs
 	if in.Visibility != VisibilityGroup {
@@ -369,6 +372,7 @@ func (s *Service) ArchivePlan(ctx context.Context, planID uuid.UUID, expected in
 		if !ok {
 			return rowConflict("套餐", cur.RowVersion)
 		}
+		s.catalogChanged(ctx, rtTablePlans, realtime.OpUpdate, planID)
 		next = expected + 1
 		return s.writeAudit(ctx, ActionPlanArchive, ResourcePlan, planID, map[string]any{
 			"before": map[string]any{"status": cur.Status, "row_version": expected},

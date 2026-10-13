@@ -9,6 +9,7 @@ import (
 	"github.com/aegispanel/aegis/internal/module/catalog/model"
 	"github.com/aegispanel/aegis/internal/module/catalog/repo"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 )
 
 // ListTrafficPacks 后台列表；status 只能是 ""、active、archived，否则 errs.Invalid。
@@ -63,6 +64,7 @@ func (s *Service) CreateTrafficPack(ctx context.Context, in PackInput) (TrafficP
 		if err := s.repo.InsertPack(ctx, &m); err != nil {
 			return err
 		}
+		s.catalogChanged(ctx, rtTablePacks, realtime.OpInsert, m.ID)
 		row, found, err := s.repo.PackByID(ctx, m.ID, repo.NoLock)
 		if err != nil {
 			return err
@@ -116,6 +118,7 @@ func (s *Service) UpdateTrafficPack(ctx context.Context, packID uuid.UUID, expec
 			}
 			return packConflict(packFromModel(row).UpdatedAt)
 		}
+		s.catalogChanged(ctx, rtTablePacks, realtime.OpUpdate, packID)
 		row, found, err := s.repo.PackByID(ctx, packID, repo.NoLock)
 		if err != nil {
 			return err
@@ -178,6 +181,7 @@ func (s *Service) SetTrafficPackStatus(ctx context.Context, packID uuid.UUID, st
 			}
 			return packConflict(packFromModel(row).UpdatedAt)
 		}
+		s.catalogChanged(ctx, rtTablePacks, realtime.OpUpdate, packID)
 		row, found, err := s.repo.PackByID(ctx, packID, repo.NoLock)
 		if err != nil {
 			return err

@@ -12,6 +12,7 @@ import (
 
 	"github.com/aegispanel/aegis/internal/module/catalog/repo"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/google/uuid"
 )
 
@@ -209,6 +210,7 @@ func (s *Service) SetVersionPools(ctx context.Context, planID, versionID uuid.UU
 		if !ok {
 			return rowConflict("套餐版本", cur.RowVersion)
 		}
+		s.catalogChanged(ctx, rtTableVersions, realtime.OpUpdate, versionID)
 
 		next = expectedRowVersion + 1
 		auditPools := poolIDs
@@ -236,5 +238,9 @@ func (s *Service) bindWizardPoolsTx(ctx context.Context, versionID uuid.UUID, po
 			return err
 		}
 	}
-	return s.repo.ReplaceVersionPools(ctx, versionID, poolIDs)
+	if err := s.repo.ReplaceVersionPools(ctx, versionID, poolIDs); err != nil {
+		return err
+	}
+	s.catalogChanged(ctx, rtTableVersions, realtime.OpUpdate, versionID)
+	return nil
 }
