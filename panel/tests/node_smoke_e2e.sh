@@ -364,7 +364,8 @@ register_one() {
   [ "$HTTP_CODE" = 200 ] || return 1
   local rt dc
   rt=$(printf '%s' "$HTTP_BODY" | python3 -c 'import json,sys; print(json.load(sys.stdin)["registration_token"])') || return 1
-  dc=$(printf '%s' "$HTTP_BODY" | python3 -c 'import json,sys; print(json.load(sys.stdin)["dev_code"])') || return 1
+  # 没开邮箱验证（缺省）时响应里没有 dev_code，code 传空串照样能完成注册
+  dc=$(printf '%s' "$HTTP_BODY" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("dev_code", ""))') || return 1
   api POST "$PUB/v1/auth/register/complete" -H 'Content-Type: application/json' \
     -d "{\"registration_token\":\"$rt\",\"code\":\"$dc\",\"password\":\"$USER_PASS\"}"
   [ "$HTTP_CODE" = 201 ] || return 1
