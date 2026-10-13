@@ -49,7 +49,12 @@ func TestUserOrderStatsPG(t *testing.T) {
 	insertOrder(u1, "CNY", "fulfilled", dec("20.25"))
 	insertOrder(u1, "CNY", "pending_payment", dec("5.00"))
 	insertOrder(u1, "USD", "fulfilled", dec("15.00"))
-	// u2 无订单
+	// u2：全额用余额买一单（payable 为 0）：算订单数，不算实付
+	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	e.giveBalance(t, ctx, u2, 1000)
+	if c := e.buyNew(t, ctx, u2, planID, priceID, Checkout{UseBalance: dec("10")}); c.Status != StatusFulfilled {
+		t.Fatalf("余额单状态 %s", c.Status)
+	}
 
 	stats, err := e.svc.UserOrderStats(ctx, []uuid.UUID{u1, u2})
 	if err != nil {
@@ -72,8 +77,8 @@ func TestUserOrderStatsPG(t *testing.T) {
 		t.Fatalf("u1 USD 实付 got %s want %s", gotUSD, wantUSD)
 	}
 
-	if st2, ok := stats[u2]; ok && st2.Orders != 0 {
-		t.Fatalf("u2 无订单但统计结果 got %+v", st2)
+	if st2 := stats[u2]; st2.Orders != 1 || !st2.Paid["CNY"].IsZero() {
+		t.Fatalf("u2 余额单应计 1 单、实付 0，got %+v", st2)
 	}
 
 	// 测试空输入返回空 map
