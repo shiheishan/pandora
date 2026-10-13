@@ -1,20 +1,14 @@
 package panel
 
 import (
-	"context"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 )
 
-// 运行状态上报。
-//
-// 面板的节点管理页要显示节点是否存活、Agent 版本、CPU/内存/磁盘占用，
-// 这些字段只能由节点端自己报——面板没法从外面探到。不报的后果是那几列
-// 一直空着，服务挂了后台也不变色，只能等用户报障或者上服务器看。
-//
-// 走 UniProxy 的 /status，和 config / user / push / alive 是同一套认证。
+// 本机资源采样：心跳的 HostMetrics 与 Hello 的 HostInfo 都从这里取（heartbeat_metrics.go）。
+// 刻意只采粗粒度的机器指标，不含任何用户或地址信息。
 
 // ResourcePair 是「已用 / 总量」，单位字节。
 type ResourcePair struct {
@@ -22,38 +16,12 @@ type ResourcePair struct {
 	Total uint64 `json:"total"`
 }
 
-// RuntimeStatus 是一次状态上报的内容。
-//
-// 字段名和面板的 uniProxyStatus 对齐。刻意只报粗粒度的机器指标，
-// 不含任何用户或地址信息——这条链路上的数据会长期留存在 node_metrics
-// 里，往里塞用户级信息等于给自己造一个不该存在的数据副本。
+// RuntimeStatus 是一次资源采样。
 type RuntimeStatus struct {
 	CPU  float64      `json:"cpu"` // 百分比，0–100
 	Mem  ResourcePair `json:"mem"`
 	Swap ResourcePair `json:"swap"`
 	Disk ResourcePair `json:"disk"`
-	// Status / Reason 与签名心跳的 runtime_status 同义：入站没起来或新配置装
-	// 不上时为 degraded 并带原因。走请求头（RuntimeStatusHeader /
-	// RuntimeReasonHeader）不进正文：/status 的结构里没有这两个字段，往正文
-	// 加字段在按 DisallowUnknownFields 解码的面板上会整条 400。面板侧接住之前
-	// 它们只是被忽略。
-	Status string `json:"-"`
-	Reason string `json:"-"`
-}
-
-// RuntimeStatusHeader 带兼容通道 /status 的运行状态（running / degraded）。
-const RuntimeStatusHeader = "X-Node-Runtime-Status"
-
-// Status 上报一次运行状态。
-func (c *Client) Status(ctx context.Context, s RuntimeStatus) error {
-	headers := map[string]string{}
-	if s.Status != "" {
-		headers[RuntimeStatusHeader] = s.Status
-	}
-	if s.Reason != "" {
-		headers[RuntimeReasonHeader] = s.Reason
-	}
-	return c.postWith(ctx, "status", s, headers)
 }
 
 // CollectRuntimeStatus 采集本机的资源占用。

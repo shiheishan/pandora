@@ -6,35 +6,15 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+
+	nodev1 "github.com/aegispanel/nodeapi/pandora/node/v1"
 )
 
 //------------------------------------------------------------------------------
-// 签名心跳的资源指标
+// 心跳的机器指标与 Hello 的机器信息（proto 的整数口径）
 //------------------------------------------------------------------------------
 
-// HeartbeatMetrics 是签名心跳里的 metrics 对象，字段名与面板
-// nodefabric.Metrics 一一对应，面板收到后原样写进 node_metrics——后台的
-// 资源曲线和节点列表的 CPU / 内存列都读那张表。
-//
-// 口径全是放大后的整数：CPU 为万分比（100% = 10000），负载放大 100 倍，
-// 内存按 MiB、磁盘按 GiB 取整，网络是开机以来的累计字节（速率由面板
-// 相邻两点差分，节点重启归零只会让一段差值为负、被面板丢弃）。
-type HeartbeatMetrics struct {
-	CPUBasisPoints int   `json:"cpu_bp"`
-	MemUsedMB      int   `json:"mem_used_mb"`
-	MemTotalMB     int   `json:"mem_total_mb"`
-	DiskUsedGB     int   `json:"disk_used_gb"`
-	DiskTotalGB    int   `json:"disk_total_gb"`
-	Load1CBP       int   `json:"load1_cbp"`
-	Load5CBP       int   `json:"load5_cbp"`
-	Load15CBP      int   `json:"load15_cbp"`
-	NetRxBytes     int64 `json:"net_rx_bytes"`
-	NetTxBytes     int64 `json:"net_tx_bytes"`
-	TCPConns       int   `json:"tcp_conns"`
-	UptimeSec      int64 `json:"uptime_sec"`
-}
-
-// hostCounters 是 RuntimeStatus 之外、只有签名心跳要的几项内核计数。
+// hostCounters 是 RuntimeStatus 之外、只有心跳要的几项内核计数。
 type hostCounters struct {
 	load          [3]float64
 	uptimeSec     float64
@@ -44,68 +24,51 @@ type hostCounters struct {
 	missingSource bool
 }
 
-// AttachHostMetrics 采集一次本机资源，填进心跳的 metrics 与机器容量字段。
+// CollectHostMetrics 采一次本机资源，换算成心跳的 HostMetrics。
 //
-// 容量字段（cpu_cores / memory_mb / disk_gb）面板按「非零才覆盖」写进
-// nodes 与 servers，报零等于不改，所以采不到时留零是安全的。
-func (in *HeartbeatInput) AttachHostMetrics() {
-	m, partial := CollectHeartbeatMetrics()
-	in.Metrics = m
-	in.MetricsPartial = partial
-	c := capacityFrom(m)
-	in.CPUCores, in.MemoryMB, in.DiskGB = c.CPUCores, c.MemoryMB, c.DiskGB
-}
-
-// HostCapacity 是机器容量，签名心跳与 enrollment begin 报给面板的
-// cpu_cores / memory_mb / disk_gb。两处共用同一份采集与换算，面板在接入
-// 时看到的容量就和之后心跳刷新的口径一致。
-type HostCapacity struct {
-	CPUCores int
-	MemoryMB int
-	DiskGB   int
-}
-
-// CollectHostCapacity 采一次本机容量；读不到的项为零，面板按「未知」存。
-func CollectHostCapacity() HostCapacity {
-	m, _ := CollectHeartbeatMetrics()
-	return capacityFrom(m)
-}
-
-func capacityFrom(m *HeartbeatMetrics) HostCapacity {
-	return HostCapacity{CPUCores: runtime.NumCPU(), MemoryMB: m.MemTotalMB, DiskGB: m.DiskTotalGB}
-}
-
-// CollectHeartbeatMetrics 采一次本机资源。partial 为真表示有数据源读不到
-// （非 Linux 开发机，或被裁掉 /proc 的容器），对应字段留零。
-//
-// 取不到也照报而不是整组丢掉：心跳本身比指标重要，少一项只是曲线上那一
-// 格为零。
-func CollectHeartbeatMetrics() (*HeartbeatMetrics, bool) {
+// 有数据源读不到（非 Linux 开发机，或被裁掉 /proc 的容器）时对应字段为零、partial 为真；
+// 取不到也照报而不是整组丢掉：心跳本身比指标重要，少一项只是曲线上那一格为零。
+// CPU 要两次采样求差（约 100ms），在主循环里调用即可，节拍是 30 秒。
+func CollectHostMetrics() *nodev1.HostMetrics {
 	s := CollectRuntimeStatus()
 	h := readHostCounters()
-	m := heartbeatMetricsFrom(s, h)
-	return &m, h.missingSource || s.Mem.Total == 0
+	m := hostMetricsFrom(s, h)
+	m.Partial = h.missingSource || s.Mem.Total == 0
+	return m
 }
 
-// heartbeatMetricsFrom 把采样换算成面板口径，并钳到面板能收的范围。
-//
-// 钳位不是装饰：node_metrics.cpu_bp 有 0–10000 的 CHECK，其余列是 int4。
-// 一个越界值会让面板心跳事务整体回滚——节点在后台上就成了「没心跳」，
-// 比少一个点严重得多。
-func heartbeatMetricsFrom(s RuntimeStatus, h hostCounters) HeartbeatMetrics {
-	return HeartbeatMetrics{
-		CPUBasisPoints: int(clampRound(s.CPU*100, 0, 10000)),
-		MemUsedMB:      int(bytesTo(s.Mem.Used, 1<<20)),
-		MemTotalMB:     int(bytesTo(s.Mem.Total, 1<<20)),
-		DiskUsedGB:     int(bytesTo(s.Disk.Used, 1<<30)),
-		DiskTotalGB:    int(bytesTo(s.Disk.Total, 1<<30)),
-		Load1CBP:       int(clampRound(h.load[0]*100, 0, math.MaxInt32)),
-		Load5CBP:       int(clampRound(h.load[1]*100, 0, math.MaxInt32)),
-		Load15CBP:      int(clampRound(h.load[2]*100, 0, math.MaxInt32)),
-		NetRxBytes:     int64(min(h.rxBytes, math.MaxInt64)),
-		NetTxBytes:     int64(min(h.txBytes, math.MaxInt64)),
-		TCPConns:       int(min(h.tcpConns, math.MaxInt32)),
-		UptimeSec:      int64(clampRound(h.uptimeSec, 0, 1<<53)),
+// hostMetricsFrom 把采样换算成 proto 口径并钳到字段范围：CPU 万分比（0–10000），
+// 负载 ×100，内存与磁盘按字节，网卡是开机以来的累计字节。
+func hostMetricsFrom(s RuntimeStatus, h hostCounters) *nodev1.HostMetrics {
+	return &nodev1.HostMetrics{
+		CpuBp:          uint32(clampRound(s.CPU*100, 0, 10000)),
+		MemUsedBytes:   s.Mem.Used,
+		MemTotalBytes:  s.Mem.Total,
+		DiskUsedBytes:  s.Disk.Used,
+		DiskTotalBytes: s.Disk.Total,
+		Load1Cp:        uint32(clampRound(h.load[0]*100, 0, math.MaxUint32)),
+		Load5Cp:        uint32(clampRound(h.load[1]*100, 0, math.MaxUint32)),
+		Load15Cp:       uint32(clampRound(h.load[2]*100, 0, math.MaxUint32)),
+		NetRxBytes:     h.rxBytes,
+		NetTxBytes:     h.txBytes,
+		TcpConns:       uint32(min(h.tcpConns, math.MaxUint32)),
+		UptimeSec:      uint64(clampRound(h.uptimeSec, 0, 1<<53)),
+	}
+}
+
+// CollectHostInfo 采一次机器信息（接入与每次 Hello 都带）。不采 CPU 占用，不睡眠；
+// 读不到的项留零，面板按「未知」存。
+func CollectHostInfo() *nodev1.HostInfo {
+	hostname, _ := os.Hostname()
+	memTotal, _ := memoryBytes()
+	diskTotal, _ := diskBytes("/")
+	return &nodev1.HostInfo{
+		Hostname:    hostname,
+		Os:          runtime.GOOS,
+		Arch:        runtime.GOARCH,
+		CpuCores:    uint32(runtime.NumCPU()),
+		MemoryBytes: memTotal,
+		DiskBytes:   diskTotal,
 	}
 }
 
@@ -119,9 +82,6 @@ func clampRound(v, lo, hi float64) float64 {
 	}
 	return r
 }
-
-// bytesTo 与面板兼容通道的 metricUnit 同一口径：向下取整，封顶 int4。
-func bytesTo(v, unit uint64) uint64 { return min(v/unit, math.MaxInt32) }
 
 //------------------------------------------------------------------------------
 // /proc 读取：解析与读文件分开，解析部分可以喂夹具测
