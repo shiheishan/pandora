@@ -90,11 +90,11 @@ func (s *Service) Pull(ctx context.Context, req PullRequest) (PullResult, error)
 		return PullResult{}, ErrPullDenied
 	}
 	sum := sha256.Sum256([]byte(token))
-	row, found, err := s.repo.PullByTokenHash(ctx, sum[:])
+	now := s.clock()
+	row, found, err := s.repo.PullByTokenHash(ctx, sum[:], now)
 	if err != nil {
 		return PullResult{}, subErr(err)
 	}
-	now := s.clock()
 	verdict := pullDenied
 	// 库里按唯一索引等值查到之后，再做一次定时安全比较
 	if found && hmac.Equal(row.TokenHash, sum[:]) {

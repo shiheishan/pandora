@@ -7,8 +7,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// ServingSubscription 是一份订阅侧可服务的订阅：生效中（status=active 且未到期），流量没耗尽（最近一期的流量配额
-// 不限或还有余量，或挂在这一份上的流量包还有余量，与拉取的用量口径相同）。
+// ServingSubscription 是一份订阅侧可服务的订阅：生效中（status=active 且未到期），流量没耗尽（本期窗口里
+// 没有任何一行限量流量配额用满，或挂在这一份上的流量包还有余量；与扣量同一口径，窗口见 repo.TrafficQuotaGrace）。
 // 账号状态、套餐绑池、池的用户组限定不在这里判（属主分别是 identity、catalog、node）。
 type ServingSubscription struct {
 	ID            uuid.UUID
