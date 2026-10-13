@@ -158,15 +158,19 @@ func TestRoundsCoalesceAndThrottle(t *testing.T) {
 	m := NewSessionManager(b, nil, op)
 	_, _, _ = openTestSession(t, m, b)
 	baseR, _ := b.counts()
+	start := time.Now()
 	startRun(t, m)
 	for i := 0; i < 20; i++ {
 		m.markDirty(true, false)
 		time.Sleep(time.Millisecond)
 	}
-	// 300ms 内：首轮 + 至少隔 100ms 的后续轮次，合并后不超过 4 轮
 	time.Sleep(300 * time.Millisecond)
-	if r, _ := b.counts(); r-baseR < 1 || r-baseR > 4 {
-		t.Fatalf("300ms 内 Rosters 应调 1–4 次，得 %d", r-baseR)
+	r, _ := b.counts()
+	elapsed := time.Since(start)
+	// 上限按实际耗时算（繁忙的 CI 上 sleep 会拉长）：首轮 + 启动时的一次全量比对 + 每个最小间隔至多一轮
+	limit := 2 + int(elapsed/op.MinRoundGap)
+	if r-baseR < 1 || r-baseR > limit {
+		t.Fatalf("%v 内 Rosters 应调 1–%d 次，得 %d", elapsed, limit, r-baseR)
 	}
 }
 

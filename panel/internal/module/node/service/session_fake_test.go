@@ -24,6 +24,8 @@ type fakeBackend struct {
 	trafficErr error
 	// renewErr 是 RenewCertificate 的返回值
 	renewErr error
+	// configsHook 非 nil 时 ServerConfigs 一进来（加锁之前）先调它：在 Open 读配置的当口插入并发动作
+	configsHook func()
 
 	// 调用记录
 	rosterCalls, configCalls [][]uuid.UUID
@@ -69,6 +71,9 @@ func (f *fakeBackend) Rosters(_ context.Context, ids []uuid.UUID) (map[uuid.UUID
 }
 
 func (f *fakeBackend) ServerConfigs(_ context.Context, ids []uuid.UUID) (map[uuid.UUID][]NodeConfigDoc, error) {
+	if f.configsHook != nil {
+		f.configsHook()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.configCalls = append(f.configCalls, append([]uuid.UUID(nil), ids...))
@@ -141,6 +146,28 @@ func (f *fakeBackend) counts() (rosters, configs int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.rosterCalls), len(f.configCalls)
+}
+
+// fakeClock 是可手动拨动的时钟（并发安全）。
+type fakeClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func newFakeClock() *fakeClock {
+	return &fakeClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+}
+
+func (c *fakeClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *fakeClock) Add(d time.Duration) {
+	c.mu.Lock()
+	c.t = c.t.Add(d)
+	c.mu.Unlock()
 }
 
 // fastOptions 是测试用的短间隔参数。
