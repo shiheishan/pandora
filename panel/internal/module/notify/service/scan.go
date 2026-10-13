@@ -71,7 +71,8 @@ func quotaAtOrAbove(consumed, total int64, percent int) bool {
 	if percent <= 0 || total <= 0 {
 		return false
 	}
-	if total > math.MaxInt64/100 {
+	// 用量可能远超额度：两边任一乘 100 会溢出就走大数
+	if total > math.MaxInt64/100 || consumed > math.MaxInt64/100 || consumed < -math.MaxInt64/100 {
 		c := big.NewInt(consumed)
 		c.Mul(c, big.NewInt(100))
 		t := big.NewInt(total)

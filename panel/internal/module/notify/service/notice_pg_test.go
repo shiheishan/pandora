@@ -246,7 +246,7 @@ func TestInboxReadAndList(t *testing.T) {
 	if err := e.svc.NotifyUser(e.ctx, other, TemplateTicketReplied, map[string]string{"subject": "other"}, "inbox:other"); err != nil {
 		t.Fatal(err)
 	}
-	otherList, _, _ := e.repo.ListInbox(e.ctx, other, false, 10)
+	otherList, _ := e.repo.ListInbox(e.ctx, other, false, 10)
 	if len(otherList) == 0 {
 		t.Fatal("need other inbox id")
 	}

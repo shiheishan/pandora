@@ -355,14 +355,16 @@ func (s *Service) SaveAnnouncement(ctx context.Context, in AnnouncementInput) (A
 	err := s.tx.Do(ctx, func(ctx context.Context) error {
 		var before *annAuditSnap
 		row := repo.AnnouncementRow{
-			Title:              in.Title,
-			Body:               in.Body,
-			Severity:           severity,
-			Pinned:             in.Pinned,
-			Status:             status,
-			PublishAt:          publishAt,
-			ExpiresAt:          in.ExpiresAt,
-			PublishedAt:        publishedAt,
+			Announcement: model.Announcement{
+				Title:       in.Title,
+				Body:        in.Body,
+				Severity:    severity,
+				Pinned:      in.Pinned,
+				Status:      status,
+				PublishAt:   publishAt,
+				ExpiresAt:   in.ExpiresAt,
+				PublishedAt: publishedAt,
+			},
 			TargetPlanIDs:      planIDs,
 			TargetUserGroupIDs: groupIDs,
 		}

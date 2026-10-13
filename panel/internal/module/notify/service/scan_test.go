@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -31,9 +32,13 @@ func TestQuotaTier(t *testing.T) {
 		t.Fatal("total 0 应为 0")
 	}
 	bigTotal := int64(1 << 62)
-	bigConsumed := bigTotal * 96 / 100
+	bigConsumed := bigTotal / 100 * 96
 	if quotaTier(bigConsumed, bigTotal) != 95 {
 		t.Fatal("大数 96% 应为 95 档")
+	}
+	// 额度不大、用量远超（consumed*100 会溢出）仍判最高档
+	if quotaTier(math.MaxInt64/50, 100) != 95 {
+		t.Fatal("用量远超额度应为 95 档")
 	}
 }
 
