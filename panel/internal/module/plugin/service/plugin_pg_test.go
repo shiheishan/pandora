@@ -48,6 +48,11 @@ func newPG(t *testing.T, commit bool) *pgEnv {
 	sl := testSealer(t)
 	svc := newService(r, txm, audit, &fakeIdem{}, sl, nil, Options{AllowPrivate: true})
 	scan := func(ctx context.Context, dest any, q string, args ...any) error {
+		switch dest.(type) {
+		case *[]byte, *uuid.UUID:
+			// gorm 的 Scan 把 []byte、[16]byte 当成多行的切片或数组逐元素扫，单列单值走 database/sql 的 Row
+			return d.Conn(ctx).Raw(q, args...).Row().Scan(dest)
+		}
 		return d.Conn(ctx).Raw(q, args...).Scan(dest).Error
 	}
 	exec := func(ctx context.Context, q string, args ...any) error {
