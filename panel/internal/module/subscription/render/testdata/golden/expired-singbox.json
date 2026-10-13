@@ -1,0 +1,24 @@
+{
+  "log": {
+    "level": "warn"
+  },
+  "outbounds": [
+    {
+      "outbounds": [
+        "已于 2026-10-07 14:32 到期，续费后更新订阅即可恢复"
+      ],
+      "tag": "节点选择",
+      "type": "selector"
+    },
+    {
+      "server": "127.0.0.1",
+      "server_port": 1,
+      "tag": "已于 2026-10-07 14:32 到期，续费后更新订阅即可恢复",
+      "type": "socks",
+      "version": "5"
+    }
+  ],
+  "route": {
+    "final": "节点选择"
+  }
+}

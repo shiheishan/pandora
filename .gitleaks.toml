@@ -61,4 +61,8 @@ regexes = [
   '''^2Jnm\-\-0Nr3YlgsMuyFKAR2fTdydQcGB8hPYKEdSGrlE$''',
   '''^DW0FPJZ6KRhnWdZx5FumHMJlWtm_QGc2e3McEoKxJKM$''',
   '''^NF2h6ozOcOEIXDkOgjgoYhUIyuLM4ORHo\-VrQu4gOa8$''',
+  # 订阅渲染夹具（旧 render_fixtures_test.go，10-07 起在仓库里）的虚构用户 UUID 与测试专用 REALITY 私钥；
+  # 新栈 render/testdata 的 golden 与 nodes.json 由旧实现生成，原样带着这两个值
+  '''^3f1c2b4a\-5d6e\-4f70\-8a9b\-0c1d2e3f4a5b$''',
+  '''^u03CTWUF4qEGT24p7bBnBU7OM0VUUrHThNjlklFEfcg$''',
 ]
