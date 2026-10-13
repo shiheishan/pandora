@@ -9,8 +9,6 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
-	"gorm.io/gorm"
 )
 
 // newReviewEntryIn 同 newReviewEntry，订单币种由调用方给。
@@ -28,12 +26,6 @@ func newReviewEntryIn(t *testing.T, e *env, ctx context.Context, referrer, buyer
 		t.Fatalf("读待复核条目: %v", err)
 	}
 	return id
-}
-
-// isCheckViolation 判断是不是 CHECK 约束失败（GORM 开了 TranslateError，两种形态都认）。
-func isCheckViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.Is(err, gorm.ErrCheckConstraintViolated) || (errors.As(err, &pgErr) && pgErr.Code == "23514")
 }
 
 // 只计首单时，作废的佣金也算「已有首单」（用户 10-13 定）：首单佣金作废后，第二单不再计佣。
@@ -139,42 +131,48 @@ func TestReviewShapeChecks(t *testing.T) {
 	setConfig(t, e, ctx, admin, 10, 0, "100.00", "every_order")
 	id, _ := newReviewEntry(t, e, ctx, newUser(t, e, ctx), newUser(t, e, ctx), "100.00")
 
-	// 冲回交易借用这条的计提交易（外键只要求交易存在且币种相同）；所有写都在保存点里，回滚后条目原样
-	try := func(name, set string, args ...any) error {
+	// 冲回交易借用这条的计提交易（外键只要求交易存在且币种相同）；所有写都在保存点里，回滚后条目原样。
+	// 管理员与条目 id 经事务内的会话参数传给 SQL（DO 块里不能带绑定参数）。
+	if err := e.exec(ctx, `SELECT set_config('pandora_test.admin', ?, true), set_config('pandora_test.entry', ?, true)`,
+		admin.String(), id.String()); err != nil {
+		t.Fatal(err)
+	}
+	const where = ` WHERE id = current_setting('pandora_test.entry')::uuid`
+	try := func(name, q string) error {
 		t.Helper()
 		if err := e.exec(ctx, `SAVEPOINT shape_check`); err != nil {
 			t.Fatal(err)
 		}
-		err := e.exec(ctx, `UPDATE commission_entries SET `+set+` WHERE id = ?`, append(args, id)...)
+		err := e.exec(ctx, q)
 		if rerr := e.exec(ctx, `ROLLBACK TO SAVEPOINT shape_check`); rerr != nil {
 			t.Fatalf("%s: 回滚保存点: %v", name, rerr)
 		}
 		return err
 	}
+	const by = `reviewed_by = current_setting('pandora_test.admin')::uuid`
 	const voidedOK = `status = 'voided', review_required = false, void_txn_id = accrual_txn_id,
-		void_reason = '同源刷单确认', reviewed_by = ?, reviewed_at = now()`
-	if err := try("合法的作废形状", voidedOK, admin); err != nil {
+		void_reason = '同源刷单确认', ` + by + `, reviewed_at = now()`
+	if err := try("合法的作废形状", `UPDATE commission_entries SET `+voidedOK+where); err != nil {
 		t.Fatalf("基准写法应能通过: %v", err)
 	}
-	if err := try("合法的通过形状", `review_required = false, reviewed_by = ?, reviewed_at = now()`, admin); err != nil {
+	if err := try("合法的通过形状", `UPDATE commission_entries SET review_required = false, `+by+`, reviewed_at = now()`+where); err != nil {
 		t.Fatalf("通过形状应能通过: %v", err)
 	}
 
-	bad := []struct {
-		name string
-		set  string
-		args []any
-	}{
-		{"voided 缺冲回交易", `status = 'voided', review_required = false, void_reason = '同源刷单确认', reviewed_by = ?, reviewed_at = now()`, []any{admin}},
-		{"voided 缺作废原因", `status = 'voided', review_required = false, void_txn_id = accrual_txn_id, reviewed_by = ?, reviewed_at = now()`, []any{admin}},
-		{"复核人有、复核时间空", `review_required = false, reviewed_by = ?`, []any{admin}},
-		{"复核时间有、复核人空", `review_required = false, reviewed_at = now()`, nil},
-		{"有复核原因却没复核过", `review_required = false`, nil},
+	bad := []struct{ name, set string }{
+		{"voided 缺冲回交易", `status = 'voided', review_required = false, void_reason = '同源刷单确认', ` + by + `, reviewed_at = now()`},
+		{"voided 缺作废原因", `status = 'voided', review_required = false, void_txn_id = accrual_txn_id, ` + by + `, reviewed_at = now()`},
+		{"复核人有、复核时间空", `review_required = false, ` + by},
+		{"复核时间有、复核人空", `review_required = false, reviewed_at = now()`},
+		{"有复核原因却没复核过", `review_required = false`},
 		{"作废原因只有 4 个字", `status = 'voided', review_required = false, void_txn_id = accrual_txn_id,
-			void_reason = '四个字啊', reviewed_by = ?, reviewed_at = now()`, []any{admin}},
+			void_reason = '四个字啊', ` + by + `, reviewed_at = now()`},
 	}
 	for _, c := range bad {
-		if err := try(c.name, c.set, c.args...); !isCheckViolation(err) {
+		// 只吞 check_violation；写成功或别的错误都会抛到外面
+		q := `DO $$ BEGIN UPDATE commission_entries SET ` + c.set + where + `;
+			RAISE EXCEPTION 'no check_violation'; EXCEPTION WHEN check_violation THEN NULL; END $$`
+		if err := try(c.name, q); err != nil {
 			t.Errorf("%s：应被 CHECK 拦下，得到 %v", c.name, err)
 		}
 	}
