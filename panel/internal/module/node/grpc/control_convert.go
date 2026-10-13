@@ -219,7 +219,7 @@ func outboundToProto(o service.Outbound) []*nodev1.SessionResponse {
 			lo, hi := i*service.UsersChunkSize, min((i+1)*service.UsersChunkSize, len(r.Users))
 			out = append(out, &nodev1.SessionResponse{Body: &nodev1.SessionResponse_UsersFull{UsersFull: &nodev1.UsersFull{
 				NodeId: r.NodeID.String(), Version: r.Version,
-				ChunkIndex: uint32(i), ChunkTotal: uint32(total),
+				ChunkIndex: uint32(i), ChunkTotal: uint32(total), //nolint:gosec // 块数以名单人数 / 5000 为界，远小于 uint32
 				Users: usersToProto(r.Users[lo:hi]),
 			}}})
 		}

@@ -137,7 +137,7 @@ func TestRosterOnlyLatestPerNode(t *testing.T) {
 
 func TestStaleSeqIgnored(t *testing.T) {
 	b := newFakeBackend()
-	m, s := openRosterSession(t, b, Hello{})
+	_, s := openRosterSession(t, b, Hello{})
 	drainSession(t, s)
 
 	docsX := []NodeConfigDoc{mkDoc(nodeA, 'a')}

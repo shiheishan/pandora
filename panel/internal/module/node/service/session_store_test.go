@@ -48,7 +48,7 @@ func TestTruncateBytes(t *testing.T) {
 	}{
 		{"空串", "", 8, nil},
 		{"未超长", "abc", 8, ptr("abc")},
-		{"中文边界", "一二三四", 7, ptr("一二三")},
+		{"中文边界", "一二三四", 8, ptr("一二")},
 		{"纯 ASCII 截断", "hello world", 5, ptr("hello")},
 	}
 	for _, tc := range cases {

@@ -85,10 +85,7 @@ func openTestSession(t *testing.T, m *Sessions, b *fakeBackend) (*Session, uuid.
 func waitUsersOnSession(t *testing.T, s *Session) {
 	t.Helper()
 	waitFor(t, 3*time.Second, func() bool {
-		if hasUsersOutbound(pending(s)) {
-			return true
-		}
-		return false
+		return hasUsersOutbound(pending(s))
 	}, "会话收到名单下发")
 }
 
@@ -123,13 +120,13 @@ func TestPollDetectsEpochChange(t *testing.T) {
 	m := NewSessionManager(b, rdb, fastOptions())
 	_, _, _ = openTestSession(t, m, b)
 	baseR, baseC := b.counts()
-	mr.Set(UsersEpochKey, "1")
-	mr.Set(ConfigEpochKey, "1")
+	_ = mr.Set(UsersEpochKey, "1")
+	_ = mr.Set(ConfigEpochKey, "1")
 	startRun(t, m)
 	waitInitialPollRound(t, b, baseR, baseC)
 	ro0, cf0 := b.counts()
 
-	mr.Set(UsersEpochKey, "7")
+	_ = mr.Set(UsersEpochKey, "7")
 	waitFor(t, 3*time.Second, func() bool {
 		r, _ := b.counts()
 		return r > ro0

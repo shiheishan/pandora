@@ -67,7 +67,7 @@ func positiveInt32(v uint64) *int32 {
 	if v > math.MaxInt32 {
 		v = math.MaxInt32
 	}
-	n := int32(v)
+	n := int32(v) //nolint:gosec // 上面已封顶到 MaxInt32
 	return &n
 }
 
