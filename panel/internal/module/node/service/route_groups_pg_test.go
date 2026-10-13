@@ -44,12 +44,13 @@ func TestRouteGroupListMembersCountsPG(t *testing.T) {
 	srv := rtServer(t, ctx, e, "ready")
 	active := rtNode(t, ctx, e, srv, "active", 21001)
 	gone := rtNode(t, ctx, e, srv, "active", 21002)
-	if err := e.exec(ctx, `UPDATE nodes SET serving_status = 'retired', retired_at = now(), deleted_at = now() WHERE id = ?`, gone); err != nil {
-		t.Fatal(err)
-	}
 	g := rtGroup(t, ctx, e, "list-g", 5)
 	gr := routeGroupRow(t, ctx, e, g.ID)
 	if _, err := e.svc.SetRouteGroupMembers(ctx, g.ID, gr.RowVersion, []uuid.UUID{active, gone}); err != nil {
+		t.Fatal(err)
+	}
+	// 入组之后再删：成员数只算未删除的节点（加成员时就拒绝已删节点）
+	if err := e.exec(ctx, `UPDATE nodes SET serving_status = 'retired', retired_at = now(), deleted_at = now() WHERE id = ?`, gone); err != nil {
 		t.Fatal(err)
 	}
 	grt, _ := e.svc.GetGroupRouting(ctx, g.ID)
