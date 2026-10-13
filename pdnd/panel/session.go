@@ -26,7 +26,14 @@ const (
 	defaultWelcomeTimeout = 15 * time.Second
 	defaultRenewCheck     = time.Hour
 	defaultQueueSize      = 256
-	eventBuffer           = 64
+	// stableStreamAfter：流在 Welcome 之后活够这么久才算健康、把退避复位。面板一收 Hello 就发
+	// Welcome、随后又把流踢掉（比如处理 Hello 出错）时，不复位才不会每秒重连一次。
+	stableStreamAfter = 30 * time.Second
+	// renewTimeoutChecks：发了 RenewRequest 后这么多个检查周期还没收到证书，就丢掉待配对私钥重新申请。
+	renewTimeoutChecks = 2
+	// expiredLogEvery：证书已过期时 Error 日志的最短间隔（重连照常，不刷屏）。
+	expiredLogEvery = time.Hour
+	eventBuffer     = 64
 )
 
 var (
@@ -75,6 +82,9 @@ type Session struct {
 
 	mu  sync.Mutex
 	cur *liveStream
+
+	// expiredLoggedAt 是上次记「证书已过期」的时刻（只在 Run 的 goroutine 里读写）。
+	expiredLoggedAt time.Time
 }
 
 // liveStream 是一条已收到 Welcome 的流的发送端。
@@ -85,10 +95,12 @@ type liveStream struct {
 
 // streamResult 是一条流结束的原因。
 type streamResult struct {
-	welcomed  bool
-	err       error
-	reconnect *nodev1.Reconnect
-	tombstone bool
+	welcomed bool
+	// welcomedAt 是收到 Welcome 的时刻，退避复位按它算这条流活了多久。
+	welcomedAt time.Time
+	err        error
+	reconnect  *nodev1.Reconnect
+	tombstone  bool
 }
 
 // NewSession 校验参数并建会话（不拨号，Run 才拨）。
@@ -205,8 +217,8 @@ func (s *Session) emit(ctx context.Context, ev Event) bool {
 
 // Run 建流并一直跑到 ctx 结束（返回 ctx.Err()）或收到 Tombstone（返回 ErrTombstoned）。
 //
-// 断流后按全抖动指数退避重连（1 秒起、封顶 30 秒），收到过 Welcome 的流断开时退避复位；
-// 面板发 Command.reconnect 时改按它给的 in_ms + [0, jitter_ms) 重连。
+// 断流后按全抖动指数退避重连（1 秒起、封顶 30 秒），流在 Welcome 之后活过 stableStreamAfter
+// 才把退避复位；面板发 Command.reconnect 时改按它给的 in_ms + [0, jitter_ms) 重连。
 func (s *Session) Run(ctx context.Context) error {
 	bo := Backoff{Base: backoffBase, Max: backoffMax, Rand: s.o.Rand}
 	for {
@@ -219,18 +231,9 @@ func (s *Session) Run(ctx context.Context) error {
 			return ErrTombstoned
 		}
 		if res.welcomed {
-			bo.Reset()
 			s.emit(ctx, Event{Kind: EventDisconnected, Err: res.err})
 		}
-		var delay time.Duration
-		if r := res.reconnect; r != nil {
-			delay = time.Duration(r.GetInMs()) * time.Millisecond
-			if j := int64(r.GetJitterMs()); j > 0 {
-				delay += time.Duration(s.o.Rand(j)) * time.Millisecond
-			}
-		} else {
-			delay = bo.Next()
-		}
+		delay := s.reconnectDelay(&bo, res)
 		// 连不上很常见（面板重启、网络抖动），记 Info：记成 Error 会把真正的问题埋掉。
 		s.log.Info("会话断开，稍后重连", "err", res.err, "等待", delay.Round(time.Millisecond))
 		t := time.NewTimer(delay)
@@ -241,6 +244,37 @@ func (s *Session) Run(ctx context.Context) error {
 		case <-t.C:
 		}
 	}
+}
+
+// reconnectDelay 算一条流断开后到下次重连的等待：面板给了 reconnect 就按它；否则走退避，
+// 流在 Welcome 之后活够 stableStreamAfter 才先把退避复位。
+func (s *Session) reconnectDelay(bo *Backoff, res streamResult) time.Duration {
+	if r := res.reconnect; r != nil {
+		delay := time.Duration(r.GetInMs()) * time.Millisecond
+		if j := int64(r.GetJitterMs()); j > 0 {
+			delay += time.Duration(s.o.Rand(j)) * time.Millisecond
+		}
+		return delay
+	}
+	if res.welcomed && s.o.Now().Sub(res.welcomedAt) >= stableStreamAfter {
+		bo.Reset()
+	}
+	return bo.Next()
+}
+
+// warnIfExpired 在建流前发现客户端证书已过期时记 Error（至多每 expiredLogEvery 一次）：
+// 过期证书握手必然失败，只靠 Info 级的重连日志看不出要人去处理。重连照常。
+func (s *Session) warnIfExpired() {
+	now := s.o.Now()
+	notAfter := s.o.Identity.NotAfter()
+	if !now.After(notAfter) {
+		return
+	}
+	if !s.expiredLoggedAt.IsZero() && now.Sub(s.expiredLoggedAt) < expiredLogEvery {
+		return
+	}
+	s.expiredLoggedAt = now
+	s.log.Error("客户端证书已过期，需要在后台生成新令牌重新接入", "到期", notAfter)
 }
 
 func (s *Session) dialOptions() []grpc.DialOption {
@@ -272,6 +306,7 @@ func (s *Session) hello() *nodev1.Hello {
 func (s *Session) runStream(ctx context.Context) (res streamResult) {
 	sctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
+	s.warnIfExpired()
 
 	// 每条流新建连接，续期后的握手一定用新证书；重连本来就少，多一次握手无所谓。
 	conn, err := grpc.NewClient("passthrough:///"+s.hostport, s.dialOptions()...)
@@ -321,6 +356,7 @@ func (s *Session) runStream(ctx context.Context) (res streamResult) {
 		return early
 	}
 	res.welcomed = true
+	res.welcomedAt = s.o.Now()
 	live := &liveStream{q: make(chan *nodev1.SessionRequest, s.o.QueueSize), cancel: cancel}
 	s.setLive(live)
 	defer s.setLive(nil)
@@ -332,8 +368,8 @@ func (s *Session) runStream(ctx context.Context) (res streamResult) {
 	}
 
 	users := newUsersAssembler()
-	var pendingKey []byte
-	if pendingKey, err = s.maybeRenew(send, nil); err != nil {
+	renewal := &pendingRenew{}
+	if err := s.maybeRenew(send, renewal); err != nil {
 		res.err = err
 		return res
 	}
@@ -353,15 +389,13 @@ func (s *Session) runStream(ctx context.Context) (res streamResult) {
 				return res
 			}
 		case <-renew.C:
-			if pendingKey, err = s.maybeRenew(send, pendingKey); err != nil {
+			if err := s.maybeRenew(send, renewal); err != nil {
 				res.err = err
 				return res
 			}
 		case m := <-recv:
-			stop, next := s.handle(sctx, m, users, send, pendingKey)
-			pendingKey = next
-			if stop != nil {
-				stop.welcomed = true
+			if stop := s.handle(sctx, m, users, send, renewal); stop != nil {
+				stop.welcomed, stop.welcomedAt = true, res.welcomedAt
 				return *stop
 			}
 		}
@@ -393,7 +427,7 @@ func (s *Session) awaitWelcome(ctx context.Context, recv <-chan *nodev1.SessionR
 
 // handle 处理一条面板消息。返回非 nil 的 streamResult 表示这条流到此结束。
 func (s *Session) handle(ctx context.Context, m *nodev1.SessionResponse, users *usersAssembler,
-	send func(*nodev1.SessionRequest) error, pendingKey []byte) (*streamResult, []byte) {
+	send func(*nodev1.SessionRequest) error, renewal *pendingRenew) *streamResult {
 	switch body := m.GetBody().(type) {
 	case *nodev1.SessionResponse_Config:
 		s.emit(ctx, Event{Kind: EventConfig, Config: body.Config})
@@ -404,7 +438,7 @@ func (s *Session) handle(ctx context.Context, m *nodev1.SessionResponse, users *
 			s.log.Warn("名单分块不完整，已丢弃", "node", body.UsersFull.GetNodeId(), "version", body.UsersFull.GetVersion(), "err", err)
 			ack := &nodev1.UsersAck{NodeId: body.UsersFull.GetNodeId(), Version: body.UsersFull.GetVersion(), ReasonCode: UsersReasonIncomplete}
 			if err := send(&nodev1.SessionRequest{Body: &nodev1.SessionRequest_UsersAck{UsersAck: ack}}); err != nil {
-				return &streamResult{err: err}, pendingKey
+				return &streamResult{err: err}
 			}
 		} else if full != nil {
 			s.emit(ctx, Event{Kind: EventUsersFull, UsersFull: full})
@@ -414,53 +448,67 @@ func (s *Session) handle(ctx context.Context, m *nodev1.SessionResponse, users *
 	case *nodev1.SessionResponse_TrafficAck:
 		s.emit(ctx, Event{Kind: EventTrafficAck, ReportID: body.TrafficAck.GetReportId()})
 	case *nodev1.SessionResponse_Certificate:
-		s.finishRenew(body.Certificate, pendingKey)
-		return nil, nil
+		s.finishRenew(body.Certificate, renewal)
 	case *nodev1.SessionResponse_Command:
 		if r := body.Command.GetReconnect(); r != nil {
-			return &streamResult{err: errReconnectRequested, reconnect: r}, pendingKey
+			return &streamResult{err: errReconnectRequested, reconnect: r}
 		}
 		if tomb := body.Command.GetTombstone(); tomb != nil {
 			s.emit(ctx, Event{Kind: EventTombstone, Reason: tomb.GetReason()})
-			return &streamResult{err: ErrTombstoned, tombstone: true}, pendingKey
+			return &streamResult{err: ErrTombstoned, tombstone: true}
 		}
 	case *nodev1.SessionResponse_Welcome:
 		s.log.Warn("同一条流上收到第二个 Welcome，忽略")
 	default:
 		s.log.Warn("收到不认识的面板消息，忽略", "seq", m.GetSeq())
 	}
-	return nil, pendingKey
+	return nil
 }
 
-// maybeRenew 在证书剩余不到 RenewBefore 且还没申请时，生成新私钥并在会话里发 RenewRequest。
-// 返回待配对的新私钥（PEM）；新私钥只在内存里，收到证书后才和证书一起落盘。
-func (s *Session) maybeRenew(send func(*nodev1.SessionRequest) error, pending []byte) ([]byte, error) {
-	if pending != nil {
-		return pending, nil
+// pendingRenew 是一条流上待配对的续期私钥：只在内存里，收到证书后才和证书一起落盘。
+type pendingRenew struct {
+	key    []byte
+	sentAt time.Time
+}
+
+// maybeRenew 在证书剩余不到 RenewBefore 且没有在途申请时，生成新私钥并在会话里发 RenewRequest。
+// 在途申请超过 renewTimeoutChecks 个检查周期还没回证书，就丢掉那把私钥重新申请（面板续期时
+// 不立刻作废旧证书，重新申请是安全的）。
+func (s *Session) maybeRenew(send func(*nodev1.SessionRequest) error, p *pendingRenew) error {
+	now := s.o.Now()
+	if p.key != nil {
+		if now.Sub(p.sentAt) < renewTimeoutChecks*s.o.RenewCheck {
+			return nil
+		}
+		s.log.Warn("续期申请迟迟没有回证书，丢掉待配对私钥重新申请", "申请于", p.sentAt)
+		p.key = nil
 	}
 	notAfter := s.o.Identity.NotAfter()
-	if notAfter.Sub(s.o.Now()) >= RenewBefore {
-		return nil, nil
+	if notAfter.Sub(now) >= RenewBefore {
+		return nil
 	}
 	keyPEM, csr, err := newKeyAndCSR(s.o.Identity.ServerID())
 	if err != nil {
 		s.log.Error("生成续期私钥失败，下次检查再试", "err", err)
-		return nil, nil
+		return nil
 	}
 	if err := send(&nodev1.SessionRequest{Body: &nodev1.SessionRequest_Renew{Renew: &nodev1.RenewRequest{CsrDer: csr}}}); err != nil {
-		return nil, err
+		return err
 	}
+	p.key, p.sentAt = keyPEM, now
 	s.log.Info("客户端证书即将到期，已在会话里申请续期", "到期", notAfter)
-	return keyPEM, nil
+	return nil
 }
 
-// finishRenew 把面板签回的证书与待配对的私钥原子换上；装不上就丢掉这把私钥，下次检查再申请。
-func (s *Session) finishRenew(c *nodev1.Certificate, pendingKey []byte) {
-	if pendingKey == nil {
+// finishRenew 把面板签回的证书与待配对的私钥原子换上；不管装没装上都清掉这把私钥，下次检查再申请。
+func (s *Session) finishRenew(c *nodev1.Certificate, p *pendingRenew) {
+	key := p.key
+	p.key = nil
+	if key == nil {
 		s.log.Warn("收到没有申请过的证书，忽略")
 		return
 	}
-	if err := s.o.Identity.Replace(c.GetCertChainPem(), c.GetCaBundlePem(), pendingKey); err != nil {
+	if err := s.o.Identity.Replace(c.GetCertChainPem(), c.GetCaBundlePem(), key); err != nil {
 		s.log.Error("续期证书装不上，下次检查再申请", "err", err)
 		return
 	}

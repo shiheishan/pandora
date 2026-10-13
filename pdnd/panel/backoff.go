@@ -32,5 +32,5 @@ func (b *Backoff) Ceiling() time.Duration {
 	return ceil
 }
 
-// Reset 在一条流健康地跑起来（收到 Welcome）之后调用，下次断线从 Base 起算。
+// Reset 在一条流健康地跑够一段时间（见 stableStreamAfter）之后调用，下次断线从 Base 起算。
 func (b *Backoff) Reset() { b.attempt = 0 }
