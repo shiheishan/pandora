@@ -38,7 +38,7 @@ func TestCertsPG(t *testing.T) {
 			!strings.Contains(err.Error(), "23001") {
 			t.Fatalf("DELETE certificate_issuances must be denied, got %v", err)
 		}
-		if err := e.exec(e.ctx, `UPDATE certificates SET current_version_id = NULL WHERE id = ?`, cert.ID); err != nil {
+		if err := e.exec(e.ctx, `UPDATE certificates SET current_version_id = NULL, not_before = NULL, not_after = NULL, status = 'pending' WHERE id = ?`, cert.ID); err != nil {
 			t.Fatal(err)
 		}
 		if err := e.exec(e.ctx, `DELETE FROM certificate_versions WHERE certificate_id = ?`, cert.ID); err != nil {
