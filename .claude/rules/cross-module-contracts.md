@@ -16,7 +16,7 @@ panel 与 pdnd 是两个独立的 Go module，下面两组包是同一份契约�
 | 契约 | 面板 | pdnd | 金样本（两份必须逐字节相同） | 文档 |
 |---|---|---|---|---|
 | 证书包（HPKE 加密、签名、原像） | `panel/internal/platform/certbundle` | `pdnd/certbundle`（`pdnd/certstore` 消费解开后的证书） | 各自的 `testdata/certbundle-v1-golden.json` | `docs/node-certificates.md` |
-| 服务器绑定（请求签名、清单、名单、钉住、升级、枚举） | `panel/internal/platform/bindingcontract` | `pdnd/bindingcontract` | 各自的 `testdata/bindingcontract-v1-golden.json` | `docs/server-binding-contract.md` |
+| 服务器绑定（旧签名通道） | `panel/internal/platform/bindingcontract`（P7 随旧代码删） | 已删（10-13 pdnd 换 gRPC） | 只剩面板一份，`TestGoldenIdenticalInPanelAndPdnd` 已删 | `docs/server-binding-contract.md` |
 
 - 改一端的格式、原像、枚举、失败码，必须同改另一端和文档，再重跑两端的金样本测试。只改一端时两边的测试都可能是绿的（各自对着旧金样本），坏在线上。
 - 金样本只在面板侧生成，一次写两份（面板和 pdnd 的 `testdata/`），两份一起提交：
