@@ -69,7 +69,7 @@ func TestRevenueTimeseriesFillsAndPrevious(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantFrom := time.Date(2026, 2, 26, 0, 0, 0, 0, sh)
+	wantFrom := time.Date(2026, 2, 25, 0, 0, 0, 0, sh) // 上一窗口 7 天：02-25 … 03-03（2026 年 2 月 28 天）
 	wantTo := time.Date(2026, 3, 11, 0, 0, 0, 0, sh)
 	if len(e.ports.revenueCalls) < 1 {
 		t.Fatal("no RevenueByDay call")
