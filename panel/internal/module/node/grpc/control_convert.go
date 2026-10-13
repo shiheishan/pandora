@@ -1,6 +1,6 @@
 package grpc
 
-// ControlService 的 proto 与 service 类型互转。节点发来的 id 解析不了的条目丢掉；摘要一律转小写。
+// ControlService 的 proto 与 service 类型互转。节点发来的 id 解析不了的条目丢掉（流量上报除外，见 trafficFromProto）；摘要一律转小写。
 
 import (
 	"net/netip"
@@ -91,7 +91,8 @@ func heartbeatFromProto(hb *nodev1.Heartbeat) service.Heartbeat {
 	return out
 }
 
-// trafficFromProto 转流量上报；编号不合法时 ok 为 false。节点 id 解析不了的条目丢掉。
+// trafficFromProto 转流量上报；编号不合法时 ok 为 false。节点 id 解析不了的条目以 uuid.Nil 保留，
+// 服务端把不属于这台服务器的节点（uuid.Nil 必然不是）记为不合规并计入 invalid_count，不能在这里丢。
 func trafficFromProto(r *nodev1.TrafficReport) (service.TrafficReport, bool) {
 	if !reportIDPattern.MatchString(r.GetReportId()) {
 		return service.TrafficReport{}, false
@@ -100,7 +101,7 @@ func trafficFromProto(r *nodev1.TrafficReport) (service.TrafficReport, bool) {
 	for _, e := range r.GetEntries() {
 		id, ok := parseID(e.GetNodeId())
 		if !ok {
-			continue
+			id = uuid.Nil
 		}
 		out.Entries = append(out.Entries, service.TrafficEntry{
 			NodeID: id, UID: e.GetUid(), Upload: e.GetUpload(), Download: e.GetDownload(),

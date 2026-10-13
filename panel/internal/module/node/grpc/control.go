@@ -1,11 +1,15 @@
 package grpc
 
-// ControlService 的实现（p5-session）：一条流一个发送循环（本 goroutine）加一个接收循环。
+// ControlService 的实现（p5-session）：发送循环在单独 goroutine，接收循环在另一 goroutine。
 // 业务都在 service 的会话管理（service/session*.go）；这里只做收发、proto 互转与状态码。
+// handler 在 sess.Done() 后最多再等 sessionEndGrace 让 Tombstone / reconnect 发出去，然后返回；
+// 身份失效（PermissionDenied）时附带 TrailerReenroll。
 
 import (
 	"context"
 	"errors"
+	"math/big"
+	"time"
 
 	nodev1 "github.com/aegispanel/nodeapi/pandora/node/v1"
 	"go.uber.org/zap"
@@ -18,22 +22,39 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/reqid"
 )
 
+// sessionEndGrace 是会话结束后再等多久让最后一条（Tombstone / reconnect）发出去；
+// 过了就返回、取消流 ctx，卡在 Send 上的发送循环随之解除。
+const sessionEndGrace = 2 * time.Second
+
 type controlServer struct {
 	nodev1.UnimplementedControlServiceServer
-	svc *service.Service
+	svc  *service.Service
+	auth sessionAuthorizer
+}
+
+func newControlServer(svc *service.Service, auth sessionAuthorizer) *controlServer {
+	return &controlServer{svc: svc, auth: auth}
 }
 
 // NewControlServer 构造 ControlService 的服务端实现；server.go 注册它。会话管理器每次建流时经
 // svc.SessionManager() 取（装配时 svc.UseSessions(svc.NewSessions(...))），没装配时建流回 Unavailable。
 func NewControlServer(svc *service.Service) nodev1.ControlServiceServer {
-	return &controlServer{svc: svc}
+	c := &controlServer{svc: svc}
+	if svc != nil {
+		c.auth = svc
+	}
+	return c
 }
 
-// Session 处理一条控制流：先收 Hello、登记会话（取代同一服务器的旧流），之后发送循环在本 goroutine、
-// 接收循环在另一个 goroutine；任一方结束都结束会话并移出登记。
+// Session 处理一条控制流：先收 Hello、登记会话（取代同一服务器的旧流），登记后复核身份，
+// 发送循环在单独 goroutine、接收循环在另一个；handler 在发送结束或 sess.Done() 加宽限后返回。
 func (c *controlServer) Session(stream nodev1.ControlService_SessionServer) error {
 	ctx := stream.Context()
 	serverID, ok := ServerIDFrom(ctx)
+	if !ok {
+		return status.Error(codes.Unauthenticated, "未认证的节点")
+	}
+	serial, ok := CertSerialFrom(ctx)
 	if !ok {
 		return status.Error(codes.Unauthenticated, "未认证的节点")
 	}
@@ -67,8 +88,45 @@ func (c *controlServer) Session(stream nodev1.ControlService_SessionServer) erro
 	}
 	defer sess.Close(nil)
 
-	go recvLoop(ctx, stream, sess)
+	// 先登记、再复核：与吊销并发时，要么吊销方的 Tombstone 找得到已登记的流，要么这次复核看到吊销。
+	if c.auth == nil {
+		log.Error("身份复核未装配，拒绝建流")
+		return status.Error(codes.Unavailable, "面板暂不可用")
+	}
+	if err := c.auth.AuthorizeSession(ctx, serverID, serial); err != nil {
+		if errors.Is(err, service.ErrSessionRevoked) {
+			log.Warn("登记后复核发现身份已失效，发 Tombstone")
+			sess.Tombstone(service.TombstoneIdentityRevoked)
+		} else {
+			log.Error("登记后复核身份失败", zap.Error(err))
+			return status.Error(codes.Unavailable, "暂时无法校验身份")
+		}
+	}
 
+	sendDone := make(chan error, 1)
+	go func() { sendDone <- sendLoop(ctx, stream, sess) }()
+	go recvLoop(ctx, stream, sess, serial)
+
+	select {
+	case err = <-sendDone:
+	case <-sess.Done():
+		t := time.NewTimer(sessionEndGrace)
+		select {
+		case err = <-sendDone:
+		case <-t.C:
+			err = sessionStatus(sess.Err())
+		}
+		t.Stop()
+	}
+
+	if status.Code(err) == codes.PermissionDenied {
+		stream.SetTrailer(metadata.Pairs(TrailerReenroll, "required"))
+	}
+	return err
+}
+
+// sendLoop 从会话取下一条要发的消息并写入流；只能由一个 goroutine 调用。
+func sendLoop(ctx context.Context, stream nodev1.ControlService_SessionServer, sess *service.Session) error {
 	var seq uint64
 	for {
 		out, err := sess.Next(ctx)
@@ -87,12 +145,16 @@ func (c *controlServer) Session(stream nodev1.ControlService_SessionServer) erro
 }
 
 // recvLoop 逐条处理节点发来的消息；Recv 出错（节点断开、流结束）时结束会话，唤醒发送循环。
-func recvLoop(ctx context.Context, stream nodev1.ControlService_SessionServer, sess *service.Session) {
+// 会话已在结束时丢掉后续消息，不入账流量与在线。
+func recvLoop(ctx context.Context, stream nodev1.ControlService_SessionServer, sess *service.Session, serial *big.Int) {
 	log := plog.From(ctx)
 	for {
 		req, err := stream.Recv()
 		if err != nil {
 			sess.Close(service.ErrSessionPeerGone)
+			return
+		}
+		if sess.Ending() {
 			return
 		}
 		switch body := req.GetBody().(type) {
@@ -124,7 +186,7 @@ func recvLoop(ctx context.Context, stream nodev1.ControlService_SessionServer, s
 			}
 			sess.HandleUsersAck(a)
 		case *nodev1.SessionRequest_Renew:
-			sess.HandleRenew(ctx, body.Renew.GetCsrDer())
+			sess.HandleRenew(ctx, serial, body.Renew.GetCsrDer())
 		case *nodev1.SessionRequest_Hello:
 			log.Warn("流中途又收到 Hello，忽略", zap.Uint64("seq", req.GetSeq()))
 		default:
