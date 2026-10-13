@@ -219,6 +219,15 @@ func buildServices(r *runtime) (*services, error) {
 		_ = queue.Close()
 		return nil, fmt.Errorf("commission 缺少装配: %v", missing)
 	}
+	// 通知：扫描与公告定向要读用户、套餐、订阅；Telegram webhook 地址由对外地址拼出
+	notifySvc.UseDirectory(identitySvc)
+	notifySvc.UsePlans(catalogSvc)
+	notifySvc.UseSubscriptions(subSvc)
+	notifySvc.UsePublicBaseURL(cfg.PublicBaseURL)
+	if missing := notifySvc.MissingPorts(); len(missing) > 0 {
+		_ = queue.Close()
+		return nil, fmt.Errorf("notify 缺少装配: %v", missing)
+	}
 
 	return &services{
 		settings:   settingsSvc,
