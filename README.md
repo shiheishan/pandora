@@ -356,7 +356,7 @@ cd /opt/pandora/deploy && ./backup-postgres.sh         # 立刻做一份加密�
 | 项 | 状态 |
 |---|---|
 | 方向 | 后端换主流技术栈（见「架构」开头的说明与 [docs/architecture.md](docs/architecture.md)）；还没有任何生产部署，新栈直接替换，不做数据迁移与兼容期 |
-| 换栈 | P0 设计定稿；P1 骨架完成；P2 鉴权与用户完成：settings、audit、idempotency、identity、auth、notify（邮件部分）六个模块已装进 `pandora serve` / `worker`，`pandora admin` 管后台管理员；后台权限只分有和没有（无角色、权限码与临时提权）；新二进制上的鉴权、找回密码、门户禁登三组 e2e 在 CI 全绿；前端改为 15 分钟 access + refresh cookie，后台 2 小时无操作自动退出。下一步 P3 交易 |
+| 换栈 | P0 设计定稿；P1 骨架完成；P2 鉴权与用户完成：settings、audit、idempotency、identity、auth、notify（邮件部分）六个模块已装进 `pandora serve` / `worker`，`pandora admin` 管后台管理员；后台权限只分有和没有（无角色、权限码与临时提权）；新二进制上的鉴权、找回密码、门户禁登三组 e2e 在 CI 全绿；前端改为 15 分钟 access + refresh cookie，后台 2 小时无操作自动退出。P3 交易完成：catalog、ledger、promo、subscription 核心、payment、order、commission（含待复核佣金的后台通过 / 作废）、giftcard 已装进新二进制，金额用 decimal、账本配平由库强制；下单、结算、换套餐、佣金、挂账、查单的 PG 集成测试与回调重放只记一笔账、易支付金额与篡改用例在 CI 全绿。下一步 P4 订阅 |
 | 开发分支 | `feat/panel-redesign`（`main` 停在 2026-09-26 的面板重构合入之后） |
 | CI | `feat/panel-redesign` 上四组全绿：新栈（含新二进制 e2e）、PG18 集成门禁、前端冒烟、Go 漏洞扫描 |
 | 旧栈 | 只修阻断性 bug；Xboard 功能验收 PARTIAL，未 RELEASED；未在真实机器上部署或实测 |
@@ -373,7 +373,7 @@ cd /opt/pandora/deploy && ./backup-postgres.sh         # 立刻做一份加密�
 |---|---|---|
 | P1 | 骨架：`pandora` 单二进制、基础设施包、asynq、goose、lint 与 CI | 完成 |
 | P2 | 鉴权与用户：identity、auth、settings、audit、idempotency；refresh；前端令牌改造 | 完成 |
-| P3 | 交易：目录、订单、支付、账本、优惠、佣金、礼品卡（decimal） | 未开始 |
+| P3 | 交易：目录、订单、支付、账本、优惠、佣金、礼品卡（decimal） | 完成 |
 | P4 | 订阅：订阅模块、订阅链接渲染、到期与配额任务 | 未开始 |
 | P5 | 节点：gRPC 双向流 + mTLS，pdnd 客户端改造 | 未开始 |
 | P6 | 其余模块：证书、通知、工单、内容、外观、插件、报表 | 未开始 |
