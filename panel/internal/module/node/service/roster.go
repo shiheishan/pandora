@@ -13,8 +13,9 @@ import (
 // 会话层在名单纪元变了、节点新建流时调；一批服务器共用一次查询，同一内容的名单只编码一次。
 // 不存在或已删除的服务器不在结果里；存在但没有该跑节点的服务器对应空切片（节点端停掉全部入站）。
 //
-// 一轮固定 6 次读（与服务器、节点、订阅个数无关）：该跑的节点与池、池的用户组名单、可服务的订阅、
-// active 账号与组、套餐版本（catalog 内 3 条：版本、权益、配额）、版本绑池；然后在内存里按池分发。
+// 一轮固定 7 次读（与服务器、节点、订阅个数无关）：该跑的节点与池、池的用户组名单、可服务的订阅、
+// active 账号与组、套餐版本（catalog 内 3 条：版本、权益、配额）、版本绑池，另读一次设备限制策略；
+// strict 模式再读一次 Redis 里周期任务算好的超限集合（不扫在线表）。然后在内存里按池分发。
 // 名单只取决于节点所在的池（节点自身条件已在 ServedOnServerCond 里），所以按池算一次、同池的节点共用
 // 同一个 Users 切片与版本（只读，调用方不得修改）。
 func (s *Service) Rosters(ctx context.Context, serverIDs []uuid.UUID) (map[uuid.UUID][]NodeRoster, error) {
@@ -73,7 +74,8 @@ type poolRoster struct {
 }
 
 // poolRosters 按池算名单：订阅侧可服务、主人账号 active、套餐版本绑了这个池、池的用户组限定放行（poolAdmits）。
-// 每个池都有结果（没人可放行的是空名单）；pools 为空时不查库。
+// 每个池都有结果（没人可放行的是空名单）；pools 为空时不查库。strict 模式下跨节点去重后超限的订阅整条不下发
+// （设备数字段两种模式照样下发，节点端各自限）。
 func (s *Service) poolRosters(ctx context.Context, pools []uuid.UUID) (map[uuid.UUID]poolRoster, error) {
 	out := make(map[uuid.UUID]poolRoster, len(pools))
 	if len(pools) == 0 {
@@ -110,6 +112,8 @@ func (s *Service) poolRosters(ctx context.Context, pools []uuid.UUID) (map[uuid.
 	if err != nil {
 		return nil, err
 	}
+	// strict：周期任务算好的超限订阅不进任何池的名单（devices.go）；loose 或集合缺失时为 nil
+	excluded := s.strictExcluded(ctx)
 
 	wanted := make(map[uuid.UUID]bool, len(pools))
 	for _, p := range pools {
@@ -118,6 +122,9 @@ func (s *Service) poolRosters(ctx context.Context, pools []uuid.UUID) (map[uuid.
 	users := make(map[uuid.UUID][]RosterUser, len(pools))
 	// subs 已按 NodeUID 升序，追加后每个池的名单天然有序
 	for _, sub := range subs {
+		if excluded[sub.ID] {
+			continue
+		}
 		group, active := groups[sub.UserID]
 		if !active {
 			continue

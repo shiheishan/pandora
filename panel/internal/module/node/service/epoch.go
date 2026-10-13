@@ -39,13 +39,19 @@ func (s *Service) SubscriptionsChanged(ctx context.Context, _ []uuid.UUID) {
 
 // bump 推进纪元并发通知。Redis 出错只记日志：会话管理器的纪元比对与 15 秒全量比对兜底。
 func (s *Service) bump(ctx context.Context, key, kind string) {
+	if err := s.bumpErr(ctx, key, kind); err != nil {
+		plog.From(ctx).Warn("推进节点下发纪元失败", zap.String("kind", kind), zap.Error(err))
+	}
+}
+
+// bumpErr 推进纪元并发通知，把 Redis 错误交给调用方（要据此决定是否重试的周期任务用）。
+func (s *Service) bumpErr(ctx context.Context, key, kind string) error {
 	if s.rdb == nil {
-		return
+		return nil
 	}
 	pipe := s.rdb.Pipeline()
 	pipe.Incr(ctx, key)
 	pipe.Publish(ctx, ChangedChannel, kind)
-	if _, err := pipe.Exec(ctx); err != nil {
-		plog.From(ctx).Warn("推进节点下发纪元失败", zap.String("kind", kind), zap.Error(err))
-	}
+	_, err := pipe.Exec(ctx)
+	return err
 }

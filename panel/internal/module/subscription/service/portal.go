@@ -5,9 +5,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 
 	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	plog "github.com/aegispanel/aegis/internal/pkg/log"
 )
 
 // maxPackList 是门户流量包明细的最多笔数。
@@ -50,7 +52,28 @@ func (s *Service) MySubscriptions(ctx context.Context) (MySubscriptions, error) 
 	for _, sm := range us.Subscriptions {
 		out.Subscriptions = append(out.Subscriptions, mySubscription(sm, plans[sm.PlanID], prices, groupID, site.Name, now))
 	}
+	s.fillOnlineDevices(ctx, out.Subscriptions)
 	return out, nil
+}
+
+// fillOnlineDevices 按订阅批量取在线设备数（一次调用）。计数口没装配或读失败时记 warn、照常返回 0：
+// 在线数只是展示，不能让「我的套餐」整页失败。
+func (s *Service) fillOnlineDevices(ctx context.Context, subs []MySubscription) {
+	if len(subs) == 0 || s.online == nil {
+		return
+	}
+	ids := make([]uuid.UUID, len(subs))
+	for i := range subs {
+		ids[i] = subs[i].ID
+	}
+	counts, err := s.online.OnlineDeviceCounts(ctx, ids)
+	if err != nil {
+		plog.From(ctx).Warn("读取在线设备数失败，按 0 显示", zap.Error(err))
+		return
+	}
+	for i := range subs {
+		subs[i].OnlineDevices = counts[subs[i].ID]
+	}
 }
 
 // mySubscription 拼门户的一份订阅。

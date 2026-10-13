@@ -354,10 +354,12 @@ func TestConfigAckOnlyLatest(t *testing.T) {
 	}
 }
 
-// 成员判定看最近真正发出的两版：只在上一版里的 uid 仍计费，只在更早那一版里的不计费；同一版重发不挤掉上一版。
+// 成员判定看最近真正发出的两版：只在上一版里的 uid 仍计费，只在更早那一版里、且移出超过 removedGrace 的不计费；
+// 同一版重发不挤掉上一版。
 func TestMembershipCoversPreviousRoster(t *testing.T) {
 	b := newFakeBackend()
-	m, s := openRosterSession(t, b, Hello{Features: []string{FeatureUsersDelta}})
+	clk := newFakeClock()
+	m, s := openRosterSessionWith(t, b, Hello{Features: []string{FeatureUsersDelta}}, fastOptions(), clk)
 	drainSession(t, s)
 
 	send := func(r NodeRoster) {
@@ -374,9 +376,10 @@ func TestMembershipCoversPreviousRoster(t *testing.T) {
 		t.Fatalf("当前版 v2 的 uid 应算名单内")
 	}
 
+	clk.Add(s.removedGrace() + time.Second)
 	send(mkRoster(nodeA, "v3", 3, 4))
 	if s.Has(nodeA, 1) {
-		t.Fatalf("uid 1 只在更早的 v1 里，不应再算名单内")
+		t.Fatalf("uid 1 只在更早的 v1 里、移出已超过 removedGrace，不应再算名单内")
 	}
 	if !s.Has(nodeA, 2) {
 		t.Fatalf("uid 2 在上一版 v2 里，应仍算名单内")
@@ -392,5 +395,53 @@ func TestMembershipCoversPreviousRoster(t *testing.T) {
 	}
 	if !s.Has(nodeA, 2) {
 		t.Fatalf("同一版重发后上一版仍应是 v2")
+	}
+}
+
+// 审查 M2：名单在一个上报周期内连换两版，刚移出的 uid 在 removedGrace 内仍算名单内，过了就不算；重新加回的不受影响。
+func TestMembershipRemovedGrace(t *testing.T) {
+	b := newFakeBackend()
+	clk := newFakeClock()
+	m, s := openRosterSessionWith(t, b, Hello{Features: []string{FeatureUsersDelta}}, fastOptions(), clk)
+	drainSession(t, s)
+	send := func(r NodeRoster) {
+		t.Helper()
+		s.applyRosters(m.seq.Add(1), []NodeRoster{r})
+		_ = nextNow(t, s, time.Second)
+	}
+	send(mkRoster(nodeA, "v1", 1, 2, 3))
+	send(mkRoster(nodeA, "v2", 2, 3))
+	clk.Add(10 * time.Second)
+	send(mkRoster(nodeA, "v3", 3))
+	if !s.Has(nodeA, 1) {
+		t.Fatalf("uid 1 刚在 v2 移出，两版之外但仍在 removedGrace 内，应算名单内")
+	}
+	if !s.Has(nodeA, 2) {
+		t.Fatalf("uid 2 在上一版 v2 里，应算名单内")
+	}
+	send(mkRoster(nodeA, "v4", 1, 3))
+	clk.Add(s.removedGrace() + time.Second)
+	send(mkRoster(nodeA, "v5", 1, 4))
+	send(mkRoster(nodeA, "v6", 1, 5))
+	if !s.Has(nodeA, 1) {
+		t.Fatalf("uid 1 已加回当前版，应算名单内")
+	}
+	if s.Has(nodeA, 2) {
+		t.Fatalf("uid 2 移出已超过 removedGrace，不应再算名单内")
+	}
+	if !s.Has(nodeA, 4) {
+		t.Fatalf("uid 4 在上一版 v5 里，应算名单内")
+	}
+	if !s.Has(nodeA, 3) {
+		t.Fatalf("uid 3 在 v5 刚移出，仍在 removedGrace 内，应算名单内")
+	}
+	// 移出 → 加回 → 旧时刻已过 grace 后再移出：按新的移出时刻算
+	clk.Add(s.removedGrace() + time.Second)
+	send(mkRoster(nodeA, "v7", 3, 6))
+	clk.Add(s.removedGrace() + time.Second)
+	send(mkRoster(nodeA, "v8", 6))
+	send(mkRoster(nodeA, "v9", 7))
+	if !s.Has(nodeA, 3) {
+		t.Fatalf("uid 3 加回后再移出，应按新的移出时刻留 removedGrace")
 	}
 }

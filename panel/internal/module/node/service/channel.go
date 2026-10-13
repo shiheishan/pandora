@@ -81,7 +81,8 @@ type HostMetrics struct {
 }
 
 // RosterMembership 回答「最近真正发给这台服务器的两版名单（当前与上一版）里，节点 nodeID 有没有 uid」，由会话层按自己已下发的名单实现。
-// 看两版是为了刚被摘掉的用户在摘掉前那个上报周期里用的流量照样扣（10-13 定）。
+// 看两版是为了刚被摘掉的用户在摘掉前那个上报周期里用的流量照样扣（10-13 定）；名单短时间内连换几版时，
+// 刚移出的 uid 另按时间留两个上报周期（session_roster.go removed）。
 // 流量只扣名单内的 uid、在线 IP 只收名单内的 uid；名单外的条目照样留档，不扣费。
 type RosterMembership interface {
 	Has(nodeID uuid.UUID, uid int64) bool

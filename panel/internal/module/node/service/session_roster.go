@@ -23,6 +23,9 @@ type rosterState struct {
 	sent *NodeRoster
 	// prevSent 是 sent 之前真正发出去的那一版（只留一版）：刚被移出名单的用户，移出前用的流量照样计费
 	prevSent *NodeRoster
+	// removed 是最近从发出的名单里移出的 uid → 移出时刻：名单短时间内连换两版（strict 设备限制、批量改动）时
+	// 只看两版会把刚移出用户的最后一段上报记成名单外，所以另按时间留 removedGrace（两个上报周期）
+	removed map[int64]time.Time
 	// confirmed 是节点确认在用的版本（Hello 报告或 UsersAck ok）；增量只在 confirmed == sent.Version 时发
 	confirmed string
 	// 因 UsersAck 失败而强制重发全量（forceFullLocked）的状态：
@@ -36,14 +39,49 @@ type rosterState struct {
 	forcePending bool
 }
 
-// shiftSent 记下真正发出去的一版名单（全量或增量都算）：版本变了才把当前的挪成上一版；
-// 同一版重发（如回执失败后的全量）不挪，免得把真正的上一版挤掉。
-func (st *rosterState) shiftSent(r *NodeRoster) {
+// shiftSent 记下真正发出去的一版名单（全量或增量都算）：版本变了才把当前的挪成上一版，并把这次移出的 uid
+// 记进 removed（重新加回的删掉，过了 grace 的清掉）；同一版重发（如回执失败后的全量）不挪，免得把真正的上一版挤掉。
+func (st *rosterState) shiftSent(r *NodeRoster, now time.Time, grace time.Duration) {
 	if st.sent != nil && st.sent.Version != r.Version {
 		st.prevSent = st.sent
+		st.noteRemoved(st.sent, r, now, grace)
 	}
 	st.sent = r
 }
+
+// noteRemoved 按 UID 升序归并 old 与 cur：只在 old 里的记移出时刻，在 cur 里的从 removed 删掉；再清掉过期的。
+func (st *rosterState) noteRemoved(old, cur *NodeRoster, now time.Time, grace time.Duration) {
+	a, b := old.Users, cur.Users
+	i, j := 0, 0
+	for i < len(a) {
+		switch {
+		case j < len(b) && b[j].UID < a[i].UID:
+			delete(st.removed, b[j].UID)
+			j++
+		case j < len(b) && b[j].UID == a[i].UID:
+			delete(st.removed, b[j].UID)
+			i++
+			j++
+		default:
+			if st.removed == nil {
+				st.removed = map[int64]time.Time{}
+			}
+			st.removed[a[i].UID] = now
+			i++
+		}
+	}
+	for ; j < len(b); j++ {
+		delete(st.removed, b[j].UID)
+	}
+	for uid, at := range st.removed {
+		if now.Sub(at) > grace {
+			delete(st.removed, uid)
+		}
+	}
+}
+
+// removedGrace 是刚移出名单的 uid 仍算名单内的时长：两个上报周期，覆盖移出前最后一份上报的在途与重发。
+func (s *Session) removedGrace() time.Duration { return 2 * s.m.opt.PushInterval }
 
 // rosterHas 报告按 UID 升序的名单里有没有 uid。
 func rosterHas(r *NodeRoster, uid int64) bool {
@@ -236,7 +274,7 @@ func (s *Session) sendForcedFullLocked(nodeID uuid.UUID, st *rosterState, now ti
 }
 
 // Has 实现 RosterMembership：节点 nodeID 上 uid 是否应计费。
-// sent 非空时看当前与上一版真正发出过的名单；sent 为空（会话刚建、名单尚未出队）时看 latest，
+// sent 非空时看当前与上一版真正发出过的名单，以及 removedGrace 内刚移出的 uid；sent 为空（会话刚建、名单尚未出队）时看 latest，
 // 因节点会重发上一条流未确认的流量，这些用户仍属面板算出的正当名单。
 func (s *Session) Has(nodeID uuid.UUID, uid int64) bool {
 	s.mu.Lock()
@@ -248,7 +286,11 @@ func (s *Session) Has(nodeID uuid.UUID, uid int64) bool {
 	if st.sent == nil {
 		return rosterHas(st.latest, uid)
 	}
-	return rosterHas(st.sent, uid) || rosterHas(st.prevSent, uid)
+	if rosterHas(st.sent, uid) || rosterHas(st.prevSent, uid) {
+		return true
+	}
+	at, ok := st.removed[uid]
+	return ok && s.m.now().Sub(at) <= s.removedGrace()
 }
 
 var _ RosterMembership = (*Session)(nil)

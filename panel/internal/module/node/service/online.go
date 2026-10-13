@@ -17,10 +17,8 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
 )
 
-// OnlineWindow 是「在线」的时间窗：最近这么久内上报过的来源算在线（旧设备识别窗口的缺省 5 分钟；可调的设备窗口第三波做）。
-const OnlineWindow = 5 * time.Minute
-
-// aliveRefresh 是在线记录 last_seen_at 的刷新粒度，必须远小于 OnlineWindow：时间戳最多落后 2 分钟加一个上报间隔，仍在窗口内。
+// aliveRefresh 是在线记录 last_seen_at 的刷新粒度，必须远小于最短的设备识别窗口（5 分钟，settings 的 devices.window_minutes
+// 最小档；「在线」的窗口见 devices.go 的 onlineWindow）：时间戳最多落后 2 分钟加一个上报间隔，仍在窗口内。
 const aliveRefresh = 2 * time.Minute
 
 // trafficListWindow 是节点列表里流量的时间窗。
@@ -126,7 +124,7 @@ func aliveRows(entries []OnlineEntry, subs map[int64]uuid.UUID, mac func([]byte)
 
 // NodeLiveStat 是节点列表一行的在线与流量读数。
 type NodeLiveStat struct {
-	// OnlineUsers 是窗口（OnlineWindow）内在线的订阅数
+	// OnlineUsers 是设备识别窗口（设置 devices.window_minutes）内在线的订阅数
 	OnlineUsers int
 	// OnlineIPs 是窗口内在线的 (订阅, 设备键) 数
 	OnlineIPs int
@@ -141,7 +139,7 @@ func (s *Service) NodeLiveStats(ctx context.Context, nodeIDs []uuid.UUID) (map[u
 		return out, nil
 	}
 	now := s.now()
-	rows, err := s.repo.NodeLiveStats(ctx, nodeIDs, now.Add(-OnlineWindow), now.Add(-trafficListWindow))
+	rows, err := s.repo.NodeLiveStats(ctx, nodeIDs, now.Add(-s.onlineWindow(ctx)), now.Add(-trafficListWindow))
 	if err != nil {
 		return nil, err
 	}

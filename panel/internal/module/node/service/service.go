@@ -55,6 +55,12 @@ type Service struct {
 	users    ServingUsers
 	versions PlanVersions
 
+	// p5-devices 注入（devices.go 的 UseDevices）：设备限制策略、按 id 读订阅、邮箱、套餐名
+	devSettings DeviceSettings
+	devSubs     DeviceSubscriptions
+	devUsers    DeviceUsers
+	devPlans    DevicePlans
+
 	// 节点端一键安装的分发（pdnd_dist.go 的 UsePdndDist）：二进制目录与写进安装脚本的面板地址
 	pdnd pdndDist
 }

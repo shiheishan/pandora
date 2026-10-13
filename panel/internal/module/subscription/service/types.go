@@ -347,7 +347,7 @@ type MySubscription struct {
 	Summary
 	// EffectiveDeviceLimit = 订阅覆盖 → 套餐版本上限；nil 表示不限（覆盖为 0 时是 0，与旧接口同）
 	EffectiveDeviceLimit *int
-	// OnlineDevices 来自节点在线数据，P5 之前恒为 0
+	// OnlineDevices 是设备识别窗口内跨节点去重的在线设备数（node 经 OnlineDeviceCounter 提供，读不到按 0）
 	OnlineDevices int
 	// NextResetAt 是流量配额行的周期末
 	NextResetAt *time.Time
