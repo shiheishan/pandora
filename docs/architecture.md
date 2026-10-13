@@ -544,7 +544,7 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 | P5 节点 | node 模块后台编排；proto 与 nodeapi；Enroll 与 Session；pdnd 客户端改造；nodesim 与 acceptancepanel；实现并装配 subscription 的 `NodeSource`（可下发资格、内核字段翻译、线路缓存与纪元） | expiry_e2e 在新二进制上全绿（要真实节点夹具，随 P5 做）；冒烟：200 用户、5 节点、60 秒零 5xx；删人后节点秒级断线（node-e2e 真机）；证书续期、吊销断流、supersede 都有集成测试 |
 | P6 其余 | certs、notify、support、content、appearance、plugin、report；看板改为调属主 service | 后台各页面 flow-walk 通过；admin_e2e 全绿 |
 | P7 切换与删旧 | 安装脚本（Redis、单二进制、systemd、nginx）；删除旧代码、旧迁移、旧守卫（行数豁免表、RESERVED-TABLES、routebudget）；更新 README 和 `.claude/rules` | 全新测试机上安装成功；全部 e2e、Playwright、节点验收在新二进制上通过；仓库里不再有 `aegis-*` 命令和 `internal/domain` |
-| P8 换栈后 | 用旧成绩单作基线复测，再做性能与占用优化 | 另行规划 |
+| P8 换栈后 | 用旧成绩单作基线复测，再做性能与占用优化 | 第一轮测试范围见 [perf-test-plan.md](perf-test-plan.md) |
 
 每一步的提交都要求：本机 lint 和单测通过（本机 Go 1.26.9），推送后 CI 全绿。涉及认证、钱、迁移、节点通道的改动，合入前另派一个没参与实现的 opus 子 Agent 做只读审查。
 
