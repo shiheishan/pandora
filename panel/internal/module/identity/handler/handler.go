@@ -1,4 +1,4 @@
-// Package handler 是 identity 模块的 HTTP 层：注册、找回密码、个人资料与改密、邀请，以及后台用户与用户组管理。
+// Package handler 是 identity 模块的 HTTP 层：注册、找回密码、个人资料与改密、邀请，以及后台用户与用户组管理、批量运营、用户画像、访问明细与同源 IP 风控。
 package handler
 
 import (
@@ -32,6 +32,18 @@ type Service interface {
 	CreateGroup(ctx context.Context, code, name, description string) (uuid.UUID, error)
 	UpdateGroup(ctx context.Context, id uuid.UUID, name, description string) error
 	DeleteGroup(ctx context.Context, id uuid.UUID) error
+
+	PreviewBulk(ctx context.Context, f service.BulkFilter) (service.BulkPreview, error)
+	ExportUsers(ctx context.Context, f service.BulkFilter, limit int) ([]service.ExportRow, error)
+	SubmitGeneration(ctx context.Context, in service.GenerateInput) (service.GenerationJob, error)
+	ListGenerationJobs(ctx context.Context) ([]service.GenerationJob, error)
+	GetGenerationJob(ctx context.Context, id uuid.UUID) (service.GenerationJob, error)
+	GenerationResult(ctx context.Context, id uuid.UUID) ([]service.GeneratedUser, error)
+	UserProfile(ctx context.Context, id uuid.UUID) (service.UserProfile, error)
+	AccessLog(ctx context.Context, q service.AccessLogQuery) ([]service.AccessItem, error)
+	IPClusters(ctx context.Context, includeReviewed bool) ([]service.IPCluster, error)
+	ReviewIPCluster(ctx context.Context, key, note string) (time.Time, error)
+	DisableIPClusterAccounts(ctx context.Context, key string, ids []uuid.UUID, reason string) (service.DisableClusterResult, error)
 }
 
 var _ Service = (*service.Service)(nil)
@@ -65,6 +77,18 @@ func (h *Handler) RegisterPublic(v1 *gin.RouterGroup, k route.Kit) {
 
 // RegisterAdmin 注册后台路由。后台不分权限：已登录的后台主体（管理员）就能访问。
 func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
+	v1.POST("/users/bulk/preview", k.RequireAuth, h.bulkPreview)
+	v1.GET("/users/bulk/export", k.RequireAuth, k.RecentReauth, h.bulkExport)
+	v1.POST("/users/bulk/generate", k.RequireAuth, k.RecentReauth, k.Idempotency("user_bulk_generate"), h.bulkGenerate)
+	v1.GET("/users/bulk/generate/jobs", k.RequireAuth, h.listGenerationJobs)
+	v1.GET("/users/bulk/generate/jobs/:id", k.RequireAuth, h.getGenerationJob)
+	v1.GET("/users/bulk/generate/jobs/:id/result", k.RequireAuth, k.RecentReauth, h.generationResult)
+	v1.GET("/users/:id/profile", k.RequireAuth, h.userProfile)
+	v1.GET("/access-log", k.RequireAuth, h.accessLog)
+	v1.GET("/ip-clusters", k.RequireAuth, h.ipClusters)
+	v1.POST("/ip-clusters/:key/review", k.RequireAuth, h.reviewIPCluster)
+	v1.POST("/ip-clusters/:key/disable-accounts", k.RequireAuth, k.RecentReauth, k.Idempotency("ip_cluster_disable"), h.disableIPCluster)
+
 	v1.GET("/users", k.RequireAuth, h.listUsers)
 	v1.GET("/users/:id", k.RequireAuth, h.getUser)
 	v1.POST("/users/:id/status", k.RequireAuth, k.RecentReauth, h.setUserStatus)
