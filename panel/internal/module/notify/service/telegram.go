@@ -60,7 +60,8 @@ func (s *Service) IssueBindCode(ctx context.Context, userID uuid.UUID) (BindCode
 		return BindCode{}, errs.Newf(errs.ValidationFailed, "站点还没有启用 Telegram 通知")
 	}
 
-	expiresAt := s.now().Add(BindCodeTTL)
+	now := s.now()
+	expiresAt := now.Add(BindCodeTTL)
 	var code string
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
 		_, ok, err := s.store.Binding(ctx, userID)
@@ -83,6 +84,8 @@ func (s *Service) IssueBindCode(ctx context.Context, userID uuid.UUID) (BindCode
 			UserID:    userID,
 			CodeHash:  s.bindCodeHash(c),
 			ExpiresAt: expiresAt,
+			// created_at 与 expires_at 取同一个时钟（表上有 expires_at > created_at 的 CHECK）
+			CreatedAt: now,
 		}); err != nil {
 			if errors.Is(err, repo.ErrDuplicate) {
 				return errs.Wrap(errs.Internal, errors.New("notify: 绑定码撞上已有的码"))

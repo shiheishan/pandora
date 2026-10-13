@@ -292,11 +292,11 @@ func TestHandleTelegramUpdateBind(t *testing.T) {
 	if txt := tgbLastSentText(t, tg); !strings.Contains(txt, "已经绑定了其它用户") {
 		t.Fatalf("reply %q", txt)
 	}
-	var used2 *time.Time
+	var used2 bool
 	if err := e.scan(e.ctx, &used2,
-		`SELECT used_at FROM telegram_bind_codes WHERE user_id = ?`, uid2,
-	); err != nil || used2 != nil {
-		t.Fatalf("uid2 code should stay unused: %v err %v", used2, err)
+		`SELECT used_at IS NOT NULL FROM telegram_bind_codes WHERE user_id = ?`, uid2,
+	); err != nil || used2 {
+		t.Fatalf("uid2 code should stay unused: used=%v err %v", used2, err)
 	}
 }
 

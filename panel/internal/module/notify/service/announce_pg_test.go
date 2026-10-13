@@ -74,7 +74,8 @@ func TestAnnouncementLifecyclePG(t *testing.T) {
 
 	id := draft.ID
 	edit := annInput("维护通知（更新）")
-	edit.ID, edit.ExpectedVersion, edit.Publish = &id, 1, true
+	// 保存是整份替换（与前端表单一致），定向套餐要随表单一起带上
+	edit.ID, edit.ExpectedVersion, edit.Publish, edit.PlanIDs = &id, 1, true, []uuid.UUID{planID}
 	pub := a.annSave(t, edit)
 	if pub.Status != model.AnnouncementPublished || pub.Version != 2 {
 		t.Fatalf("publish %+v", pub)
