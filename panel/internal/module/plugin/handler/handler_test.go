@@ -321,7 +321,7 @@ func TestRoutesNeedAuth(t *testing.T) {
 	f := &fakeSvc{}
 	e := newEngine(f, k)
 
-	for _, tc := range []struct{method, path string}{
+	for _, tc := range []struct{ method, path string }{
 		{http.MethodGet, "/v1/plugin-hooks"},
 		{http.MethodPost, "/v1/plugin-hooks"},
 		{http.MethodDelete, "/v1/plugin-hooks/x"},
