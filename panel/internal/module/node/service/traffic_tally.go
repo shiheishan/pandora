@@ -31,12 +31,15 @@ func validReportID(id string) bool {
 		return false
 	}
 	for i := 0; i < len(id); i++ {
-		c := id[i]
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == ':' || c == '-') {
+		if !reportIDByte(id[i]) {
 			return false
 		}
 	}
 	return true
+}
+
+func reportIDByte(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == ':' || c == '-'
 }
 
 // compareEntry 是条目的规范顺序：NodeID 字节序、UID、Upload、Download。
@@ -72,7 +75,7 @@ func canonicalTraffic(entries []TrafficEntry) ([]TrafficEntry, [32]byte) {
 	var buf [40]byte
 	for _, e := range sorted {
 		copy(buf[:16], e.NodeID[:])
-		binary.BigEndian.PutUint64(buf[16:24], uint64(e.UID))
+		binary.BigEndian.PutUint64(buf[16:24], uint64(e.UID)) //nolint:gosec // 只取位模式算摘要，负数也确定
 		binary.BigEndian.PutUint64(buf[24:32], e.Upload)
 		binary.BigEndian.PutUint64(buf[32:40], e.Download)
 		h.Write(buf[:])

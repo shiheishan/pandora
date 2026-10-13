@@ -72,7 +72,7 @@ func (s *Service) ChargeTraffic(ctx context.Context, charges []TrafficCharge) (m
 		for _, it := range items {
 			subIDs = append(subIDs, it.SubID)
 		}
-		rows, err := s.repo.LockTrafficQuotas(ctx, sortedUniqueIDs(subIDs), now, now.Add(-rolloverGrace))
+		rows, err := s.repo.LockTrafficQuotas(ctx, sortedUniqueIDs(subIDs), now)
 		if err != nil {
 			return subErr(err)
 		}

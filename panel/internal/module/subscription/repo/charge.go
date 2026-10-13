@@ -67,19 +67,19 @@ func (r *Repo) SubscriptionIDsByNodeUIDs(ctx context.Context, uids []int64) (map
 	return out, nil
 }
 
-// LockTrafficQuotas 锁住本批订阅在扣量窗口内的 traffic.bytes 配额行（按 id 排序）。
-// graceStart = now - rolloverGrace：period_end > graceStart 覆盖本周期与滚动空窗那一行。
-func (r *Repo) LockTrafficQuotas(ctx context.Context, subIDs []uuid.UUID, now, graceStart time.Time) ([]TrafficQuotaRow, error) {
+// LockTrafficQuotas 锁住本批订阅在本期窗口内的 traffic.bytes 配额行（按 id 排序）。
+// 窗口与名单资格同一口径（quota_window.go 的 trafficQuotaWindowCond）：本周期与滚动空窗那一行。
+func (r *Repo) LockTrafficQuotas(ctx context.Context, subIDs []uuid.UUID, now time.Time) ([]TrafficQuotaRow, error) {
 	if len(subIDs) == 0 {
 		return nil, nil
 	}
 	var out []TrafficQuotaRow
+	wNow, wGrace := trafficQuotaWindow(now)
 	err := r.d.Conn(ctx).Raw(`
-		SELECT id, subscription_id, period, remaining AS room
-		  FROM quota_balances
-		 WHERE subscription_id IN ? AND metric = 'traffic.bytes'
-		   AND period_start <= ? AND (period_end IS NULL OR period_end > ?)
-		 ORDER BY id FOR UPDATE`, subIDs, now, graceStart).Scan(&out).Error
+		SELECT qb.id, qb.subscription_id, qb.period, qb.remaining AS room
+		  FROM quota_balances qb
+		 WHERE qb.subscription_id IN ? AND `+trafficQuotaWindowCond+`
+		 ORDER BY qb.id FOR UPDATE`, subIDs, wNow, wGrace).Scan(&out).Error
 	return out, mapErr(err)
 }
 

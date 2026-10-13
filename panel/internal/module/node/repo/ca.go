@@ -3,9 +3,7 @@ package repo
 
 import (
 	"context"
-	"errors"
 
-	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/aegispanel/aegis/internal/module/node/model"

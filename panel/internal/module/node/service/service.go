@@ -38,8 +38,14 @@ type Service struct {
 	catalog Catalog
 	groups  UserGroups
 
-	// 第二波：会话管理（channel.go）
+	// 第二波：会话管理（channel.go；p5-session 的 *Sessions 经 UseSessions 注入）
 	sessions SessionControl
+
+	// 第二波 p5-enroll 注入（identity.go 的 UseEnrollment）：节点 CA 与安装命令的对外地址
+	enroll enrollState
+
+	// 第二波 p5-traffic 注入（traffic_charger.go 的 UseTrafficCharger）：流量扣量
+	charger TrafficCharger
 
 	// 第二波 p5-delivery 注入（delivery.go）：名单要的订阅、账号、套餐版本读取面
 	subs     ServingSubscriptions

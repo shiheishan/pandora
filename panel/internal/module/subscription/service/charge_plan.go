@@ -4,15 +4,11 @@ import (
 	"bytes"
 	"math"
 	"sort"
-	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/aegispanel/aegis/internal/module/subscription/repo"
 )
-
-// rolloverGrace 是「周期已结束、还没滚动」的配额行仍照扣的时长。滚动每 10 分钟一次（被锁跳过时顺延），一天足够覆盖。
-const rolloverGrace = 24 * time.Hour
 
 // maxInt64 用于饱和加法。
 const maxInt64 = math.MaxInt64

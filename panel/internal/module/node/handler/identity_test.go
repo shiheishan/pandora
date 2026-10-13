@@ -164,7 +164,7 @@ func TestNodeIdentityResponseShape(t *testing.T) {
 
 	revoked := now.Add(time.Hour)
 	reason := "后台吊销"
-	keys, m = poolJSONKeys(t, nodeIdentityResponseFrom(service.NodeIdentityView{
+	_, m = poolJSONKeys(t, nodeIdentityResponseFrom(service.NodeIdentityView{
 		Identity: &service.IdentityInfo{
 			Seq:               1,
 			Status:            "revoked",

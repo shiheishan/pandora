@@ -114,7 +114,7 @@ func (i *interceptors) streamAuth(srv interface{}, ss grpc.ServerStream, info *g
 	ctx, err := i.authorize(ss.Context())
 	if err != nil {
 		if status.Code(err) == codes.PermissionDenied {
-			_ = ss.SetTrailer(metadata.Pairs(TrailerReenroll, "required"))
+			ss.SetTrailer(metadata.Pairs(TrailerReenroll, "required"))
 		}
 		return err
 	}

@@ -64,8 +64,10 @@ type services struct {
 	// idemFPKey 是幂等请求指纹的 HMAC 密钥（从主密钥派生）
 	idemFPKey []byte
 	limiter   *ratelimit.Limiter
-	queue     *asynq.Client
-	tx        *tx.Manager
+	// sealer 是封存密钥（节点 CA 私钥的封存在 serve 里用）
+	sealer *crypto.Sealer
+	queue  *asynq.Client
+	tx     *tx.Manager
 }
 
 // asynqRedis 给 asynq 的连接参数：与业务客户端同一套解析（redisx.Options），用户名、口令、库号、TLS、超时都同源。
@@ -184,6 +186,8 @@ func buildServices(r *runtime) (*services, error) {
 	nodeSvc.UseDelivery(subSvc, identitySvc, catalogSvc)
 	subSvc.UseNodeSource(nodeSvc)
 	identitySvc.UseRosterNotifier(nodeSvc)
+	// 节点上报的流量经 subscription 扣量（配额 → 流量包 → 按日用量）
+	nodeSvc.UseTrafficCharger(subSvc)
 	// 节点池与套餐绑池：绑池表归 catalog，池归 node；node 经 catalog 读绑池、经 identity 读用户组名，
 	// catalog 发布前、向导绑池时回调 node（发布门禁、锁池）
 	nodeSvc.UseCatalog(catalogSvc)
@@ -227,6 +231,7 @@ func buildServices(r *runtime) (*services, error) {
 		node:       nodeSvc,
 		idemFPKey:  keys.Derive(crypto.InfoHMACIdempotency, 32),
 		limiter:    limiter,
+		sealer:     sealer,
 		queue:      queue,
 		tx:         txm,
 	}, nil

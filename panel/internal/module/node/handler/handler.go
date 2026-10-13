@@ -29,4 +29,6 @@ func (h *Handler) RegisterPublic(_ *gin.RouterGroup, _ route.Kit) {}
 func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	h.registerInventory(v1, k)
 	h.registerPools(v1, k)
+	h.registerIdentity(v1, k)
+	h.registerMetrics(v1, k)
 }

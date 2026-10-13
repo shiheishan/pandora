@@ -286,11 +286,9 @@ func TestGRPCNodePublicHostRequiredInProduction(t *testing.T) {
 		t.Fatalf("应含 grpc.node.public_host: %v", err)
 	}
 	t.Setenv("PANDORA_GRPC_NODE_PUBLIC_HOST", "203.0.113.7")
+	// 生产环境的其它校验可能仍报错，只要求不再报这个字段
 	_, err = Load("")
-	if err == nil {
-		t.Fatal("production 仍可能因 http 监听等报错")
-	}
-	if strings.Contains(err.Error(), "grpc.node.public_host") {
+	if err != nil && strings.Contains(err.Error(), "grpc.node.public_host") {
 		t.Fatalf("设 public_host 后不应再报该字段: %v", err)
 	}
 }

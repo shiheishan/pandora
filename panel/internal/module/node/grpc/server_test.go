@@ -139,7 +139,7 @@ func (c *testCA) clientCert(t *testing.T, serverID uuid.UUID) tls.Certificate {
 		KeyUsage:              x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 		BasicConstraintsValid: true,
-		URIs:                  []*x509.URL{u},
+		URIs:                  []*url.URL{u},
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tpl, c.cert, &key.PublicKey, c.key)
 	if err != nil {

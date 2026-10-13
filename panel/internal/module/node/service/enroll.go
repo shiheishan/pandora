@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"math"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -211,17 +210,5 @@ func cleanHostText(v string, limit int) *string {
 	if v == "" {
 		return nil
 	}
-	return &v
-}
-
-// positiveInt32 零记为未知（nil），超过 int32 上限的截断。
-func positiveInt32(n uint64) *int32 {
-	if n == 0 {
-		return nil
-	}
-	if n > math.MaxInt32 {
-		n = math.MaxInt32
-	}
-	v := int32(n) //nolint:gosec // 上面已截到 MaxInt32
 	return &v
 }

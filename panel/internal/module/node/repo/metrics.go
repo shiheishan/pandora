@@ -61,15 +61,3 @@ func (r *Repo) LatestMetrics(ctx context.Context, serverIDs []uuid.UUID) ([]Metr
 		 WHERE s.id IN ?`, serverIDs).Scan(&out).Error
 	return out, err
 }
-
-// NodeServerID 取未删除节点所在的服务器（没挂服务器为 nil）；节点不存在或已删除 found=false。
-func (r *Repo) NodeServerID(ctx context.Context, nodeID uuid.UUID) (*uuid.UUID, bool, error) {
-	var rows []struct {
-		ServerID *uuid.UUID `gorm:"column:server_id"`
-	}
-	err := r.d.Conn(ctx).Raw(`SELECT server_id FROM nodes WHERE id = ? AND deleted_at IS NULL`, nodeID).Scan(&rows).Error
-	if err != nil || len(rows) == 0 {
-		return nil, false, err
-	}
-	return rows[0].ServerID, true, nil
-}
