@@ -35,9 +35,18 @@ const (
 const (
 	TombstoneIdentityRevoked    = "identity_revoked"
 	TombstoneIdentitySuperseded = "identity_superseded"
+	// TombstoneServerRetired 服务器退役后断流
+	TombstoneServerRetired = "server_retired"
+	// TombstoneServerDeleted 服务器删除后断流
+	TombstoneServerDeleted = "server_deleted"
 )
 
 const identityRevokeReasonAdmin = "后台吊销"
+
+const (
+	identityRevokeReasonRetired = "服务器已退役"
+	identityRevokeReasonDeleted = "服务器已删除"
+)
 
 var (
 	errCANotLoaded    = errs.Newf(errs.Unavailable, "节点 CA 未装配")
@@ -146,23 +155,12 @@ func (s *Service) RevokeNodeIdentity(ctx context.Context, nodeID uuid.UUID) erro
 		if st == nil {
 			return errs.New(errs.NotFound)
 		}
-		now := s.identityNow()
-		// 有效身份与续期后还没用过的待生效身份一起吊销，免得待生效的那张之后还能转正
-		revoked, err := s.repo.RevokeIdentities(ctx, sid, identityRevokeReasonAdmin, now)
+		revoked, voided, err := s.revokeServerIdentities(ctx, sid, identityRevokeReasonAdmin, TombstoneIdentityRevoked)
 		if err != nil {
 			return err
 		}
 		if len(revoked) == 0 {
 			return errs.Newf(errs.Conflict, "这台服务器没有有效的接入身份")
-		}
-		// 事发处置：吊销前签出的未用令牌不能再把这台机器接回来
-		voided, err := s.repo.VoidBootstrapTokens(ctx, sid, now)
-		if err != nil {
-			return err
-		}
-		ids := make([]string, len(revoked))
-		for i, id := range revoked {
-			ids[i] = id.String()
 		}
 		if err := s.audit.Write(ctx, auditsvc.Event{
 			Action:       "node.identity.revoke",
@@ -170,17 +168,43 @@ func (s *Service) RevokeNodeIdentity(ctx context.Context, nodeID uuid.UUID) erro
 			ResourceID:   &sid,
 			Data: map[string]any{
 				"node_id":       nodeID.String(),
-				"identity_ids":  ids,
+				"identity_ids":  identityIDStrings(revoked),
 				"voided_tokens": voided,
 			},
 		}); err != nil {
 			return err
 		}
-		tx.AfterCommit(ctx, "node:tombstone:"+sid.String(), func(context.Context) {
-			s.tombstone(sid, TombstoneIdentityRevoked)
-		})
 		return nil
 	})
+}
+
+// revokeServerIdentities 在调用方事务里吊销这台服务器的有效与待生效身份、作废未用未过期的接入令牌，
+// 并登记提交后让会话层断掉这台服务器的流。调用方已锁住服务器行。
+func (s *Service) revokeServerIdentities(ctx context.Context, serverID uuid.UUID, reason, tombstoneReason string) (revoked []uuid.UUID, voided int64, err error) {
+	now := s.identityNow()
+	// 有效身份与续期后还没用过的待生效身份一起吊销，免得待生效的那张之后还能转正
+	revoked, err = s.repo.RevokeIdentities(ctx, serverID, reason, now)
+	if err != nil {
+		return nil, 0, err
+	}
+	// 事发处置：吊销前签出的未用令牌不能再把这台机器接回来
+	voided, err = s.repo.VoidBootstrapTokens(ctx, serverID, now)
+	if err != nil {
+		return nil, 0, err
+	}
+	tx.AfterCommit(ctx, "node:tombstone:"+serverID.String(), func(context.Context) {
+		s.tombstone(serverID, tombstoneReason)
+	})
+	return revoked, voided, nil
+}
+
+// identityIDStrings 把身份 id 转成字符串（审计 Data 用），永不为 nil。
+func identityIDStrings(ids []uuid.UUID) []string {
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		out[i] = id.String()
+	}
+	return out
 }
 
 // tombstone 通知会话层（没装配时什么也不做）。

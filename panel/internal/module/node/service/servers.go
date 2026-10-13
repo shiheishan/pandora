@@ -40,6 +40,38 @@ func (s *Service) serverAudit(ctx context.Context, action string, id uuid.UUID, 
 	return s.audit.Write(ctx, auditsvc.Event{Action: action, ResourceType: "server", ResourceID: &id, Data: data})
 }
 
+// serverMetricsByID 批量取服务器最新一个指标点（一条 SQL）。
+func (s *Service) serverMetricsByID(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]repo.MetricRow, error) {
+	out := make(map[uuid.UUID]repo.MetricRow, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := s.repo.LatestMetrics(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		out[r.ServerID] = r
+	}
+	return out, nil
+}
+
+// applyServerMetrics 把最新指标点填进 Server：MB、GB 按 1024 进制整除（与 buildNodeMetrics 一致）。
+func applyServerMetrics(out *Server, m repo.MetricRow) {
+	cpu := int(m.CPUBp)
+	memU := m.MemUsedBytes >> 20
+	memT := m.MemTotalBytes >> 20
+	diskU := m.DiskUsedBytes >> 30
+	diskT := m.DiskTotalBytes >> 30
+	at := m.RecordedAt
+	out.CPUBp = &cpu
+	out.MemUsedMB = &memU
+	out.MemTotalMB = &memT
+	out.DiskUsedGB = &diskU
+	out.DiskTotalGB = &diskT
+	out.MetricsAt = &at
+}
+
 // ListServers 列出未删除的服务器（最多 500 台），带名下节点计数。
 func (s *Service) ListServers(ctx context.Context, f ServerFilter) ([]Server, error) {
 	if err := serverValidateQuery(&f); err != nil {
@@ -61,9 +93,17 @@ func (s *Service) ListServers(ctx context.Context, f ServerFilter) ([]Server, er
 	if err != nil {
 		return nil, err
 	}
+	metrics, err := s.serverMetricsByID(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
 	now := s.now()
 	for _, r := range rows {
-		out = append(out, serverFromModel(r, counts[r.ID], now))
+		srv := serverFromModel(r, counts[r.ID], now)
+		if m, ok := metrics[r.ID]; ok {
+			applyServerMetrics(&srv, m)
+		}
+		out = append(out, srv)
 	}
 	return out, nil
 }
@@ -81,7 +121,15 @@ func (s *Service) GetServer(ctx context.Context, id uuid.UUID) (Server, error) {
 	if err != nil {
 		return Server{}, err
 	}
-	return serverFromModel(m, counts[id], s.now()), nil
+	srv := serverFromModel(m, counts[id], s.now())
+	metrics, err := s.serverMetricsByID(ctx, []uuid.UUID{id})
+	if err != nil {
+		return Server{}, err
+	}
+	if m, ok := metrics[id]; ok {
+		applyServerMetrics(&srv, m)
+	}
+	return srv, nil
 }
 
 // CreateServer 新建一台草稿服务器。
@@ -185,6 +233,7 @@ func (s *Service) PatchServer(ctx context.Context, id uuid.UUID, in ServerPatch)
 }
 
 // SetServerStatus 改服务器状态：按转换表；进 ready 要求名下有在役节点。改动影响下发，推进两个纪元。
+// 退役时在同一事务里吊销身份、作废未用令牌，提交后让会话层发 Tombstone 断流。
 func (s *Service) SetServerStatus(ctx context.Context, id uuid.UUID, rowVersion int64, status, reason string) (Server, error) {
 	status = strings.TrimSpace(status)
 	reason = strings.TrimSpace(reason)
@@ -229,8 +278,20 @@ func (s *Service) SetServerStatus(ctx context.Context, id uuid.UUID, rowVersion 
 		if !ok {
 			return serverVersionConflict(m.RowVersion)
 		}
-		if err := s.serverAudit(ctx, "server.status_change", id,
-			map[string]any{"from": m.Status, "to": status, "reason": reason}); err != nil {
+		var revoked []uuid.UUID
+		var voided int64
+		if status == ServerRetired {
+			revoked, voided, err = s.revokeServerIdentities(ctx, id, identityRevokeReasonRetired, TombstoneServerRetired)
+			if err != nil {
+				return err
+			}
+		}
+		auditData := map[string]any{"from": m.Status, "to": status, "reason": reason}
+		if status == ServerRetired {
+			auditData["revoked_identity_ids"] = identityIDStrings(revoked)
+			auditData["voided_tokens"] = voided
+		}
+		if err := s.serverAudit(ctx, "server.status_change", id, auditData); err != nil {
 			return err
 		}
 		s.MarkUsersChanged(ctx)
@@ -244,6 +305,7 @@ func (s *Service) SetServerStatus(ctx context.Context, id uuid.UUID, rowVersion 
 }
 
 // DeleteServer 软删一台草稿或已退役的服务器：名下未退役的节点一并退役，全部节点从这台服务器上摘下。
+// 删除时在同一事务里吊销身份、作废未用令牌，提交后让会话层发 Tombstone 断流。
 func (s *Service) DeleteServer(ctx context.Context, id uuid.UUID, rowVersion int64) error {
 	if rowVersion <= 0 {
 		return inventoryInvalid("row_version", serverRowVersionNeeded)
@@ -268,8 +330,15 @@ func (s *Service) DeleteServer(ctx context.Context, id uuid.UUID, rowVersion int
 		if !ok {
 			return serverVersionConflict(m.RowVersion)
 		}
-		if err := s.serverAudit(ctx, "server.delete", id,
-			map[string]any{"status": m.Status, "silenced_nodes": silenced}); err != nil {
+		revoked, voided, err := s.revokeServerIdentities(ctx, id, identityRevokeReasonDeleted, TombstoneServerDeleted)
+		if err != nil {
+			return err
+		}
+		if err := s.serverAudit(ctx, "server.delete", id, map[string]any{
+			"status": m.Status, "silenced_nodes": silenced,
+			"revoked_identity_ids": identityIDStrings(revoked),
+			"voided_tokens":        voided,
+		}); err != nil {
 			return err
 		}
 		s.MarkUsersChanged(ctx)
