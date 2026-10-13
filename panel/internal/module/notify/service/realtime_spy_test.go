@@ -118,28 +118,3 @@ func (s *rtSpy) expectNone(t *testing.T, d time.Duration) {
 		t.Fatalf("不该有推送，收到 %+v", m)
 	}
 }
-
-// expectNoneOn 断言 d 内 channel 上没有推送（别的频道的推送收下不管）。
-func (s *rtSpy) expectNoneOn(t *testing.T, channel string, d time.Duration) {
-	t.Helper()
-	for _, m := range s.seen {
-		if m.Channel == channel {
-			t.Fatalf("频道 %s 不该有推送，收到 %+v", channel, m)
-		}
-	}
-	deadline := time.Now().Add(d)
-	for {
-		left := time.Until(deadline)
-		if left <= 0 {
-			return
-		}
-		m, ok := s.read(t, left)
-		if !ok {
-			return
-		}
-		if m.Channel == channel {
-			t.Fatalf("频道 %s 不该有推送，收到 %+v", channel, m)
-		}
-		s.seen = append(s.seen, m)
-	}
-}

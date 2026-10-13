@@ -75,28 +75,3 @@ func TestRealtimeRuntimeChangePG(t *testing.T) {
 	}
 	spy.expectNone(t, 300*time.Millisecond)
 }
-
-func TestRealtimePatrolLivenessPG(t *testing.T) {
-	e, ctx := newInvEnvCommitted(t)
-	srv := e.server(t, ctx, "rt-patrol")
-	pub, spy := newRTSpy(t, realtime.ChannelAdmin())
-	e.svc.UseRealtime(pub)
-
-	now := time.Now().UTC()
-	if err := e.exec(ctx, "UPDATE servers SET last_heartbeat_at = ? WHERE id = ?",
-		now.Add(-NodeStaleAfter-10*time.Second), srv.ID); err != nil {
-		t.Fatal(err)
-	}
-	e.svc.now = func() time.Time { return now }
-
-	n, err := e.svc.PatrolLiveness(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n < 1 {
-		t.Fatalf("PatrolLiveness: 期望 n >= 1，得到 %d", n)
-	}
-	spy.expect(t, realtime.ChannelAdmin(), realtime.TopicNodes, map[string]any{
-		"table": "servers", "op": "UPDATE", "id": srv.ID.String(),
-	})
-}

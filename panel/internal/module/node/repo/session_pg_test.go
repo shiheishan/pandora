@@ -166,7 +166,7 @@ func TestTouchServerHeartbeat(t *testing.T) {
 	sessReadHeartbeat(t, d, ctx, serverID, at2)
 
 	missing := uuid.New()
-	prev, found, err = r.TouchServerHeartbeat(ctx, missing, at2)
+	_, found, err = r.TouchServerHeartbeat(ctx, missing, at2)
 	if err != nil {
 		t.Fatal(err)
 	}
