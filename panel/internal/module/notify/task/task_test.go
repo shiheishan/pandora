@@ -22,6 +22,32 @@ type fakeService struct {
 
 	counts []int // 每次清理返回的行数；负数表示出错
 	calls  []purgeCall
+
+	scanN, publishN        int
+	scanErr, publishErr    error
+	inboxCalls, eventCalls []purgeCall
+	codeCalls              []purgeCall
+}
+
+func (f *fakeService) Scan(context.Context) (int, error) { return f.scanN, f.scanErr }
+
+func (f *fakeService) PublishDueAnnouncements(context.Context) (int, error) {
+	return f.publishN, f.publishErr
+}
+
+func (f *fakeService) PurgeInbox(_ context.Context, before time.Time, batch int) (int, error) {
+	f.inboxCalls = append(f.inboxCalls, purgeCall{before: before, batch: batch})
+	return 0, nil
+}
+
+func (f *fakeService) PurgeEvents(_ context.Context, before time.Time, batch int) (int, error) {
+	f.eventCalls = append(f.eventCalls, purgeCall{before: before, batch: batch})
+	return 0, nil
+}
+
+func (f *fakeService) PurgeBindCodes(_ context.Context, before time.Time, batch int) (int, error) {
+	f.codeCalls = append(f.codeCalls, purgeCall{before: before, batch: batch})
+	return 0, nil
 }
 
 func (f *fakeService) Dispatch(context.Context) (int, error) {
@@ -100,13 +126,56 @@ func TestDispatch(t *testing.T) {
 
 func TestPeriodic(t *testing.T) {
 	ps := New(&fakeService{}).Periodic()
-	if len(ps) != 2 {
+	want := []struct{ typ, cron string }{
+		{service.TaskDispatch, "@every 30s"},
+		{service.TaskScan, "@every 5m"},
+		{TypePublishAnnouncements, "@every 1m"},
+		{TypeRetention, "53 3 * * *"},
+	}
+	if len(ps) != len(want) {
 		t.Fatalf("len %d", len(ps))
 	}
-	if ps[0].Type != service.TaskDispatch || ps[0].Cronspec != "@every 30s" {
-		t.Fatalf("dispatch %+v", ps[0])
+	for i, w := range want {
+		if ps[i].Type != w.typ || ps[i].Cronspec != w.cron {
+			t.Fatalf("periodic %d: %+v", i, ps[i])
+		}
 	}
-	if ps[1].Type != TypeRetention || ps[1].Cronspec != "53 3 * * *" {
-		t.Fatalf("retention %+v", ps[1])
+}
+
+func TestRetentionAllKinds(t *testing.T) {
+	fixed := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	fs := &fakeService{counts: []int{-1}} // 投递清理出错，其余照常
+	m := New(fs)
+	m.now = func() time.Time { return fixed }
+	if err := m.retention(context.Background(), asynq.NewTask(TypeRetention, nil)); err == nil {
+		t.Fatal("want error")
+	}
+	if len(fs.inboxCalls) != 1 || !fs.inboxCalls[0].before.Equal(fixed.AddDate(0, 0, -service.InboxRetentionDays)) {
+		t.Fatalf("inbox %+v", fs.inboxCalls)
+	}
+	if len(fs.eventCalls) != 1 || !fs.eventCalls[0].before.Equal(fixed.AddDate(0, 0, -service.EventRetentionDays)) {
+		t.Fatalf("events %+v", fs.eventCalls)
+	}
+	if len(fs.codeCalls) != 1 || !fs.codeCalls[0].before.Equal(fixed.Add(-bindCodeGrace)) {
+		t.Fatalf("codes %+v", fs.codeCalls)
+	}
+}
+
+func TestScanAndPublish(t *testing.T) {
+	boom := errors.New("boom")
+	fs := &fakeService{scanN: 3, publishN: 1}
+	m := New(fs)
+	if err := m.scan(context.Background(), asynq.NewTask(service.TaskScan, nil)); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.publish(context.Background(), asynq.NewTask(TypePublishAnnouncements, nil)); err != nil {
+		t.Fatal(err)
+	}
+	fs.scanErr, fs.publishErr = boom, boom
+	if err := m.scan(context.Background(), asynq.NewTask(service.TaskScan, nil)); !errors.Is(err, boom) {
+		t.Fatalf("scan err %v", err)
+	}
+	if err := m.publish(context.Background(), asynq.NewTask(TypePublishAnnouncements, nil)); !errors.Is(err, boom) {
+		t.Fatalf("publish err %v", err)
 	}
 }
