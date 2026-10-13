@@ -1,0 +1,147 @@
+package service
+
+import (
+	"strings"
+	"testing"
+	"time"
+
+	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
+	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
+	"github.com/google/uuid"
+)
+
+func scanFixedNow() time.Time {
+	return time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+}
+
+func TestScanExpiringWritesInboxAndEmail(t *testing.T) {
+	e := newPG(t)
+	dir, plans, subs := e.usePorts()
+	uid := e.insertTestUser(t, dir)
+	planID := uuid.MustParse("018f0000-0000-7000-8000-000000000001")
+	subID := uuid.MustParse("018f0000-0000-7000-8000-000000000002")
+	plans.plans = []catalogsvc.Plan{{ID: planID, Name: "基础套餐"}}
+	periodEnd := time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC)
+	subs.expiring = []subsvc.NotifyCandidate{{
+		SubscriptionID: subID,
+		UserID:         uid,
+		PlanID:         planID,
+		PeriodEnd:      periodEnd,
+	}}
+	e.svc.now = scanFixedNow
+
+	n, err := e.svc.Scan(e.ctx)
+	if err != nil || n != 1 {
+		t.Fatalf("scan %d %v", n, err)
+	}
+	if noticeCountInbox(t, e, uid) != 1 {
+		t.Fatal("应有 1 条站内信")
+	}
+	items, err := e.repo.ListInbox(e.ctx, uid, false, 5)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("inbox %v", err)
+	}
+	if items[0].TemplateCode != TemplateSubscriptionExpiring || !strings.Contains(items[0].Body, "基础套餐") {
+		t.Fatalf("inbox %+v", items[0])
+	}
+	em := noticeClaimEmail(t, e)
+	pe := noticeOpenPayload(t, e, em)
+	if pe.Vars["plan"] != "基础套餐" || pe.Vars["days"] != "3" {
+		t.Fatalf("email vars %+v", pe.Vars)
+	}
+
+	n2, err := e.svc.Scan(e.ctx)
+	if err != nil || n2 != 0 {
+		t.Fatalf("second scan %d %v", n2, err)
+	}
+	if noticeCountInbox(t, e, uid) != 1 {
+		t.Fatal("不应重复写")
+	}
+}
+
+func TestScanExpiredAndRecall(t *testing.T) {
+	e := newPG(t)
+	dir, plans, subs := e.usePorts()
+	uidExp := e.insertTestUser(t, dir)
+	uidRecall := e.insertTestUser(t, dir)
+	planID := uuid.MustParse("018f0000-0000-7000-8000-000000000010")
+	plans.plans = []catalogsvc.Plan{{ID: planID, Name: "月付"}}
+	now := scanFixedNow()
+	subs.expired[false] = []subsvc.NotifyCandidate{{
+		SubscriptionID: uuid.New(),
+		UserID:         uidExp,
+		PlanID:         planID,
+		PeriodEnd:      now.Add(-2 * time.Hour),
+	}}
+	subs.expired[true] = []subsvc.NotifyCandidate{{
+		SubscriptionID: uuid.New(),
+		UserID:         uidRecall,
+		PlanID:         planID,
+		PeriodEnd:      now.Add(-48 * time.Hour),
+	}}
+	e.svc.now = scanFixedNow
+
+	n, err := e.svc.Scan(e.ctx)
+	if err != nil || n != 2 {
+		t.Fatalf("scan %d %v", n, err)
+	}
+	if noticeCountInbox(t, e, uidExp) != 1 {
+		t.Fatal("过期应有站内信")
+	}
+	if noticeCountInbox(t, e, uidRecall) != 1 {
+		t.Fatal("召回应有站内信")
+	}
+	items, _ := e.repo.ListInbox(e.ctx, uidRecall, false, 5)
+	if len(items) != 1 || items[0].TemplateCode != TemplateSubscriptionRecall {
+		t.Fatalf("recall %+v", items)
+	}
+}
+
+func TestScanQuota96Only95Tier(t *testing.T) {
+	e := newPG(t)
+	dir, plans, subs := e.usePorts()
+	uid := e.insertTestUser(t, dir)
+	planID := uuid.MustParse("018f0000-0000-7000-8000-000000000020")
+	plans.plans = []catalogsvc.Plan{{ID: planID, Name: "流量包"}}
+	subs.quota = []subsvc.QuotaNotice{{
+		SubscriptionID: uuid.New(),
+		UserID:         uid,
+		PlanID:         planID,
+		Consumed:       96,
+		Total:          100,
+		PeriodStart:    time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+	}}
+	e.svc.now = scanFixedNow
+
+	n, err := e.svc.Scan(e.ctx)
+	if err != nil || n != 1 {
+		t.Fatalf("scan %d %v", n, err)
+	}
+	items, _ := e.repo.ListInbox(e.ctx, uid, false, 5)
+	if len(items) != 1 || !strings.Contains(items[0].Body, "95%") {
+		t.Fatalf("应只发 95 档: %+v", items[0])
+	}
+}
+
+func TestScanExpiringWindowArgs(t *testing.T) {
+	e := newPG(t)
+	_, _, subs := e.usePorts()
+	now := scanFixedNow()
+	e.svc.now = func() time.Time { return now }
+
+	_, err := e.svc.Scan(e.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(subs.expiringCalls) < 3 {
+		t.Fatalf("expiring 应调 3 次窗口，得 %d", len(subs.expiringCalls))
+	}
+	wantAfter := now.AddDate(0, 0, 1)
+	wantUntil := now.AddDate(0, 0, 3)
+	for _, call := range subs.expiringCalls {
+		if call[0] == wantAfter && call[1] == wantUntil {
+			return
+		}
+	}
+	t.Fatalf("缺 3 天窗口 after=%v until=%v，calls=%v", wantAfter, wantUntil, subs.expiringCalls)
+}
