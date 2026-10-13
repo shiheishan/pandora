@@ -170,22 +170,39 @@ func (s *Session) dropRosterLocked(nodeID uuid.UUID) {
 	}
 }
 
-// terminate 清空队列、只排一条终止消息（Tombstone 或 reconnect），发出后以 err 结束；
-// TerminateGrace 内没发出去（节点不读）就强关。已在结束中的会话不再处理。
+// terminate 清空队列、只排一条终止消息（Tombstone 或 reconnect），发出后以 err 结束；还没发出的 Welcome 留在队首
+// （流上第一条一定是 Welcome，终止消息紧随其后）。TerminateGrace 内没发出去（节点不读）就强关。已在结束中的会话不再处理。
 func (s *Session) terminate(msg Outbound, err error) {
 	s.mu.Lock()
 	if !s.acceptingLocked() {
 		s.mu.Unlock()
 		return
 	}
-	s.items = []*outItem{{msg: msg, terminal: true}}
-	s.plain = 0
+	var keep []*outItem
+	if len(s.items) > 0 && s.items[0].msg.Kind == OutWelcome {
+		keep = append(keep, s.items[0])
+	}
+	s.items = append(keep, &outItem{msg: msg, terminal: true})
+	s.plain = len(keep)
 	s.cfgItem = nil
 	clear(s.rosters)
 	s.termErr = err
 	s.signal()
 	s.mu.Unlock()
 	time.AfterFunc(s.m.opt.TerminateGrace, func() { s.closeWith(err) })
+}
+
+// Tombstone 给这一条会话发 Command.tombstone 再结束它（以 ErrSessionTombstoned 结束）。只作用于这条会话，
+// 不按服务器找：登记后复核身份失败、续期发现身份已失效时用，免得误伤已经取代它的新流。
+func (s *Session) Tombstone(reason string) {
+	s.terminate(Outbound{Kind: OutTombstone, Reason: reason}, ErrSessionTombstoned)
+}
+
+// Ending 报告会话是否已排上终止消息或已结束；接收循环据此丢掉之后收到的消息（不再入账流量与在线）。
+func (s *Session) Ending() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return !s.acceptingLocked()
 }
 
 // closeWith 结束会话（只认第一次的原因），唤醒阻塞在 Next 上的发送循环。不动登记表。

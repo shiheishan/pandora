@@ -41,6 +41,15 @@ func TestEnrollHostInfo(t *testing.T) {
 	if n := len([]rune(*long.Hostname)); n != 255 {
 		t.Fatalf("hostname 应截到 255 个字符: %d", n)
 	}
+
+	esc := enrollHostInfo(EnrollHostInfo{Hostname: "a\x1b[31mb\tc\u0085d"}, "")
+	if *esc.Hostname != "a[31mbcd" {
+		t.Fatalf("ANSI/控制符: got %q", *esc.Hostname)
+	}
+	ver := enrollHostInfo(EnrollHostInfo{}, "v1\n2")
+	if ver.AgentVersion == nil || *ver.AgentVersion != "v12" {
+		t.Fatalf("AgentVersion 去换行: got %v", ver.AgentVersion)
+	}
 }
 
 func TestEnrollRequestIDPattern(t *testing.T) {

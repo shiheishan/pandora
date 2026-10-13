@@ -25,8 +25,14 @@ type rosterState struct {
 	prevSent *NodeRoster
 	// confirmed 是节点确认在用的版本（Hello 报告或 UsersAck ok）；增量只在 confirmed == sent.Version 时发
 	confirmed string
-	// lastForced 是最近一次因 UsersAck 失败重发全量的时刻；forcePending 表示有一次重发在等间隔
+	// 因 UsersAck 失败而强制重发全量（forceFullLocked）的状态：
+	// forceWanted：有一次失败还没用全量回应；排上这个节点的任何一份全量（强制的或新版本的）都清掉它
+	// lastForced：最近一次强制重发的时刻；forceGap：下一次强制重发离 lastForced 至少隔多久（0 = 不用等），
+	// 从 ForcedFullGap 起每次强制重发后翻倍，封顶 ForcedFullMax，成功回执复位为 0
+	// forcePending：有一个延后的定时器在等
+	forceWanted  bool
 	lastForced   time.Time
+	forceGap     time.Duration
 	forcePending bool
 }
 
@@ -107,6 +113,7 @@ func (s *Session) applyRosters(seq uint64, rosters []NodeRoster) {
 	for id, st := range s.nodes {
 		if !seen[id] {
 			st.latestVersion, st.latest, st.confirmed = "", nil, ""
+			st.forceWanted = false
 			s.dropRosterLocked(id)
 		}
 	}
@@ -130,14 +137,20 @@ func (s *Session) offerRosterLocked(st *rosterState, r *NodeRoster) {
 		s.dropRosterLocked(r.NodeID)
 		return
 	}
-	s.putRosterLocked(r.NodeID, s.rosterMessageLocked(st, r))
+	msg := s.rosterMessageLocked(st, r)
+	if msg.Kind == OutUsersFull {
+		st.forceWanted = false
+	}
+	s.putRosterLocked(r.NodeID, msg)
 }
 
-// rosterMessageLocked 选增量还是全量：双方支持增量、节点确认在用的正是上次发出的版本、增量比全量小，才发增量。
+// rosterMessageLocked 选增量还是全量：双方支持增量、节点确认在用的正是上次发出的版本，
+// 且变更条数不超过 UsersChunkSize、又小于全量人数，才发增量（增量不分块，全量按块发）。
 func (s *Session) rosterMessageLocked(st *rosterState, r *NodeRoster) Outbound {
 	if s.delta && st.sent != nil && st.confirmed != "" && st.confirmed == st.sent.Version && st.sent.Version != r.Version {
 		upserted, removed := diffRoster(st.sent.Users, r.Users)
-		if len(upserted)+len(removed) < len(r.Users) {
+		n := len(upserted) + len(removed)
+		if n <= UsersChunkSize && n < len(r.Users) {
 			return Outbound{Kind: OutUsersDelta, Roster: r, DeltaFrom: st.sent.Version, Upserted: upserted, Removed: removed}
 		}
 	}
@@ -166,8 +179,7 @@ func diffRoster(from, to []RosterUser) (upserted []RosterUser, removed []int64) 
 	return upserted, removed
 }
 
-// HandleUsersAck 处理名单回执：ok 记为节点确认在用的版本；失败（version_mismatch、apply_failed 等）发这个节点的全量。
-// 同一节点因失败重发全量至少隔 ForcedFullGap，防节点反复装不上时空转。
+// HandleUsersAck 处理名单回执：ok 记确认版本并复位强制全量退避；失败则清空确认、标记待强制全量并走 forceFullLocked（指数退避）。
 func (s *Session) HandleUsersAck(a UsersAck) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -177,42 +189,58 @@ func (s *Session) HandleUsersAck(a UsersAck) {
 	}
 	if a.OK {
 		st.confirmed = a.Version
+		st.forceGap = 0
+		st.forceWanted = false
 		return
 	}
 	st.confirmed = ""
+	st.forceWanted = true
 	s.forceFullLocked(a.NodeID, st)
 }
 
-// forceFullLocked 排这个节点最新名单的全量；离上次强制重发不到 ForcedFullGap 就延后到间隔满了再排。
+// forceFullLocked 在 UsersAck 失败后排最新名单全量：首次立即发，之后按 forceGap 退避（翻倍至 ForcedFullMax）。
+// forceWanted 被新版本全量清掉时到点也不再发；排上强制全量会清 forceWanted，避免与新版本全量重复。
 func (s *Session) forceFullLocked(nodeID uuid.UUID, st *rosterState) {
-	if st.latest == nil || st.forcePending || !s.acceptingLocked() {
+	if !st.forceWanted || st.latest == nil || st.forcePending || !s.acceptingLocked() {
 		return
 	}
 	now := s.m.now()
-	if wait := s.m.opt.ForcedFullGap - now.Sub(st.lastForced); !st.lastForced.IsZero() && wait > 0 {
-		st.forcePending = true
-		time.AfterFunc(wait, func() {
-			s.mu.Lock()
-			defer s.mu.Unlock()
-			st.forcePending = false
-			if s.nodes[nodeID] == st && st.confirmed == "" {
-				s.forceFullLocked(nodeID, st)
-			}
-		})
-		return
+	if st.forceGap > 0 {
+		if wait := st.forceGap - now.Sub(st.lastForced); wait > 0 {
+			st.forcePending = true
+			time.AfterFunc(wait, func() {
+				s.mu.Lock()
+				defer s.mu.Unlock()
+				st.forcePending = false
+				if s.nodes[nodeID] == st {
+					s.forceFullLocked(nodeID, st)
+				}
+			})
+			return
+		}
 	}
 	st.lastForced = now
+	st.forceWanted = false
+	if st.forceGap == 0 {
+		st.forceGap = s.m.opt.ForcedFullGap
+	} else {
+		st.forceGap = min(2*st.forceGap, s.m.opt.ForcedFullMax)
+	}
 	s.putRosterLocked(nodeID, Outbound{Kind: OutUsersFull, Roster: st.latest})
 }
 
-// Has 实现 RosterMembership：最近真正发给这台服务器的两版名单（当前与上一版）里，节点 nodeID 有没有 uid。
-// 用户在名单上时用的流量是正当服务，移出名单那一刻上报里的残量照样计费；两版都没有的不计费。
+// Has 实现 RosterMembership：节点 nodeID 上 uid 是否应计费。
+// sent 非空时看当前与上一版真正发出过的名单；sent 为空（会话刚建、名单尚未出队）时看 latest，
+// 因节点会重发上一条流未确认的流量，这些用户仍属面板算出的正当名单。
 func (s *Session) Has(nodeID uuid.UUID, uid int64) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st := s.nodes[nodeID]
 	if st == nil {
 		return false
+	}
+	if st.sent == nil {
+		return rosterHas(st.latest, uid)
 	}
 	return rosterHas(st.sent, uid) || rosterHas(st.prevSent, uid)
 }

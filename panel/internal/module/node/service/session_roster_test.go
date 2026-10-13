@@ -24,6 +24,20 @@ func openRosterSession(t *testing.T, b *fakeBackend, h Hello) (*Sessions, *Sessi
 	return m, s
 }
 
+// openRosterSessionWith 同 openRosterSession，但用给定参数与假时钟（clk 为 nil 时用真时钟）。
+func openRosterSessionWith(t *testing.T, b *fakeBackend, h Hello, opt SessionOptions, clk *fakeClock) (*Sessions, *Session) {
+	t.Helper()
+	m := NewSessionManager(b, nil, opt)
+	if clk != nil {
+		m.now = clk.Now
+	}
+	s, err := m.Open(context.Background(), rosterServerID, h)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	return m, s
+}
+
 func drainSession(t *testing.T, s *Session) {
 	t.Helper()
 	for _, o := range pending(s) {
@@ -228,10 +242,13 @@ func TestNoDeltaWithoutFeature(t *testing.T) {
 
 func TestUsersAckFailureSendsFull(t *testing.T) {
 	b := newFakeBackend()
-	m, s := openRosterSession(t, b, Hello{
+	// 假时钟不动：第二次失败一定落在间隔内，不依赖实际耗时；延后的那次按实际时间 300ms 到点
+	opt := fastOptions()
+	opt.ForcedFullGap = 300 * time.Millisecond
+	m, s := openRosterSessionWith(t, b, Hello{
 		Features:     []string{FeatureUsersDelta},
 		AppliedUsers: map[uuid.UUID]string{nodeA: "u1-v1"},
-	})
+	}, opt, newFakeClock())
 	drainSession(t, s)
 
 	v2 := mkRoster(nodeA, "v2", 1, 3)
@@ -249,7 +266,7 @@ func TestUsersAckFailureSendsFull(t *testing.T) {
 		t.Fatalf("间隔内不应再排全量")
 	}
 	var got []Outbound
-	waitFor(t, 500*time.Millisecond, func() bool {
+	waitFor(t, 3*time.Second, func() bool {
 		got = append(got, pending(s)...)
 		return len(got) >= 1
 	}, "ForcedFullGap 后第二条全量")

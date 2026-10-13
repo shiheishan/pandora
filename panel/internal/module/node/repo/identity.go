@@ -59,10 +59,12 @@ func (r *Repo) ActiveIdentity(ctx context.Context, serverID uuid.UUID) (*model.S
 	return r.firstIdentity(ctx, "", "server_id = ? AND status = 'active'", serverID)
 }
 
-// LatestIdentity 取这台服务器最近签发（seq 最大）且不是待生效的身份；没有返回 nil, nil。
-// pending 只和 active 并存，所以有 active 时取到的就是它。
+// LatestIdentity 取这台服务器最近一份曾经生效过的身份；没有返回 nil, nil。
+// 先给 active；没有 active 时给最近一份曾经生效过的（被取代或吊销的）；pending 与从没转正就被取代/吊销的续期证书一律不算。
 func (r *Repo) LatestIdentity(ctx context.Context, serverID uuid.UUID) (*model.ServerIdentity, error) {
-	return r.firstIdentity(ctx, "seq DESC", "server_id = ? AND status <> 'pending'", serverID)
+	return r.firstIdentity(ctx,
+		"(status = 'active') DESC, activated_at DESC, seq DESC",
+		"server_id = ? AND activated_at IS NOT NULL", serverID)
 }
 
 // IdentityByEnrollToken 取用这张令牌签发的身份；没有返回 nil, nil。
@@ -81,9 +83,26 @@ func (r *Repo) NextIdentitySeq(ctx context.Context, serverID uuid.UUID) (int32, 
 	return row.N, err
 }
 
-// InsertIdentity 写入一份身份（调用方填好全部列）；写回 ID。
+// identityInsertRow 是写入 server_identities 用的行：在 model 之外补上 activated_at（active 签发时即生效）。
+type identityInsertRow struct {
+	model.ServerIdentity
+	ActivatedAt *time.Time `gorm:"column:activated_at"`
+}
+
+func (identityInsertRow) TableName() string { return "server_identities" }
+
+// InsertIdentity 写入一份身份（调用方填好全部列）；写回 ID、CreatedAt。
 func (r *Repo) InsertIdentity(ctx context.Context, id *model.ServerIdentity) error {
-	return r.d.Conn(ctx).Create(id).Error
+	row := identityInsertRow{ServerIdentity: *id}
+	if id.Status == "active" {
+		at := id.IssuedAt
+		row.ActivatedAt = &at
+	}
+	if err := r.d.Conn(ctx).Create(&row).Error; err != nil {
+		return err
+	}
+	*id = row.ServerIdentity
+	return nil
 }
 
 type identityIDRow struct {
@@ -104,10 +123,30 @@ func (r *Repo) SupersedeIdentity(ctx context.Context, serverID uuid.UUID, status
 	return rows[0].ID, true, nil
 }
 
-// ActivatePendingIdentity 把一份待生效身份置为 active；返回是否真的改了一行。调用方已锁住服务器行、已取代旧的 active。
-func (r *Repo) ActivatePendingIdentity(ctx context.Context, id uuid.UUID) (bool, error) {
-	res := r.d.Conn(ctx).Exec(`UPDATE server_identities SET status = 'active' WHERE id = ? AND status = 'pending'`, id)
+// ActivatePendingIdentity 把一份待生效身份置为 active 并写入 activated_at；返回是否真的改了一行。调用方已锁住服务器行、已取代旧的 active。
+func (r *Repo) ActivatePendingIdentity(ctx context.Context, id uuid.UUID, at time.Time) (bool, error) {
+	res := r.d.Conn(ctx).Exec(
+		`UPDATE server_identities SET status = 'active', activated_at = ? WHERE id = ? AND status = 'pending'`,
+		at, id)
 	return res.RowsAffected == 1, res.Error
+}
+
+// PendingIdentityIssuedAt 取这台服务器待生效身份的签发时刻；没有返回 nil, nil。
+func (r *Repo) PendingIdentityIssuedAt(ctx context.Context, serverID uuid.UUID) (*time.Time, error) {
+	var rows []struct {
+		IssuedAt time.Time `gorm:"column:issued_at"`
+	}
+	err := r.d.Conn(ctx).Raw(
+		`SELECT issued_at FROM server_identities WHERE server_id = ? AND status = 'pending'`, serverID,
+	).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	t := rows[0].IssuedAt
+	return &t, nil
 }
 
 // RevokeIdentities 把这台服务器的有效与待生效身份都置为 revoked；返回被吊销的身份 id（active 在前），没有返回空。
@@ -139,12 +178,12 @@ type SessionIdentity struct {
 	Status string    `gorm:"column:status"` // active 或 pending
 }
 
-// SessionIdentity 建流时的身份校验（一条 SQL）：这台服务器该序列号的身份须是 active 或 pending、未过期，且服务器未删除。
-// 不符合返回 nil, nil。加 forUpdate 时锁住身份行（pending 转正前用）。
+// SessionIdentity 建流时的身份校验（一条 SQL）：这台服务器该序列号的身份须是 active 或 pending、未过期，
+// 且服务器未删除、未退役。不符合返回 nil, nil。加 forUpdate 时锁住身份行（pending 转正前用）。
 func (r *Repo) SessionIdentity(ctx context.Context, serverID uuid.UUID, serialHex string, now time.Time, forUpdate bool) (*SessionIdentity, error) {
 	q := `SELECT i.id, i.status FROM server_identities i JOIN servers s ON s.id = i.server_id
 		 WHERE i.server_id = ? AND i.cert_serial = ? AND i.status IN ('active', 'pending') AND i.expires_at > ?
-		   AND s.deleted_at IS NULL`
+		   AND s.deleted_at IS NULL AND s.status <> 'retired'`
 	if forUpdate {
 		q += ` FOR UPDATE OF i`
 	}

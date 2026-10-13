@@ -63,7 +63,19 @@ type identEnv struct {
 	admin     context.Context
 	committed bool
 	servers   []uuid.UUID
+	// offset 是服务时钟相对真实时间拨过的量（advance 累计）
+	offset time.Duration
 }
+
+// advance 把服务的时钟往后拨 d（累计）；证书签发、过期判断、续期限频都按它。
+func (e *identEnv) advance(d time.Duration) {
+	e.offset += d
+	off := e.offset
+	e.svc.now = func() time.Time { return time.Now().Add(off) }
+}
+
+// renewWindow 是接入后拨到续期窗口要拨的量：剩余 10 天，小于 renewEarliestRemaining。
+const renewWindow = 20 * 24 * time.Hour
 
 func identMasterKeys(t *testing.T, b byte) *crypto.Keys {
 	t.Helper()
@@ -226,10 +238,11 @@ func identEnroll(t *testing.T, ctx context.Context, e *identEnv, serverID uuid.U
 	return identLeaf(t, res.ChainPEM).SerialNumber
 }
 
-// identRenew 续期，返回新证书的序列号。
-func identRenew(t *testing.T, ctx context.Context, e *identEnv, serverID uuid.UUID) *big.Int {
+// identRenew 用建流证书 current（当前 active 那张）续期，返回新证书的序列号；先把时钟拨 2 分钟，躲开续期限频。
+func identRenew(t *testing.T, ctx context.Context, e *identEnv, serverID uuid.UUID, current *big.Int) *big.Int {
 	t.Helper()
-	chain, caPEM, err := e.svc.RenewCertificate(ctx, serverID, identCSR(t, identKey(t)))
+	e.advance(2 * time.Minute)
+	chain, caPEM, err := e.svc.RenewCertificate(ctx, serverID, current, identCSR(t, identKey(t)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,9 +299,10 @@ func TestRenewTwoStepPG(t *testing.T) {
 	e, ctx := newIdentEnv(t, false)
 	sid := seedIdentServer(t, ctx, e, "ready")
 	a := identEnroll(t, ctx, e, sid)
+	e.advance(renewWindow)
 
 	// 续期：新证书 pending，旧证书照常可用
-	b := identRenew(t, ctx, e, sid)
+	b := identRenew(t, ctx, e, sid, a)
 	if got := identStatus(t, ctx, e, b); got != "pending" {
 		t.Fatalf("续期证书应为 pending，得到 %s", got)
 	}
@@ -300,7 +314,7 @@ func TestRenewTwoStepPG(t *testing.T) {
 	}
 
 	// 再次续期：没用过的 pending 被取代，旧 active 仍有效
-	c := identRenew(t, ctx, e, sid)
+	c := identRenew(t, ctx, e, sid, a)
 	if got := identStatus(t, ctx, e, b); got != "superseded" {
 		t.Fatalf("没用过的 pending 应被取代，得到 %s", got)
 	}
@@ -337,14 +351,15 @@ func TestRenewTwoStepPG(t *testing.T) {
 func TestRenewRequiresActiveIdentityPG(t *testing.T) {
 	e, ctx := newIdentEnv(t, false)
 	sid := seedIdentServer(t, ctx, e, "ready")
-	if _, _, err := e.svc.RenewCertificate(ctx, sid, identCSR(t, identKey(t))); !errors.Is(err, ErrSessionRevoked) {
+	if _, _, err := e.svc.RenewCertificate(ctx, sid, big.NewInt(1), identCSR(t, identKey(t))); !errors.Is(err, ErrSessionRevoked) {
 		t.Fatalf("没有有效身份时续期应回 ErrSessionRevoked，得到 %v", err)
 	}
-	if _, _, err := e.svc.RenewCertificate(ctx, uuid.New(), identCSR(t, identKey(t))); !errors.Is(err, ErrSessionRevoked) {
+	if _, _, err := e.svc.RenewCertificate(ctx, uuid.New(), big.NewInt(1), identCSR(t, identKey(t))); !errors.Is(err, ErrSessionRevoked) {
 		t.Fatalf("服务器不存在时续期应回 ErrSessionRevoked，得到 %v", err)
 	}
-	identEnroll(t, ctx, e, sid)
-	if _, _, err := e.svc.RenewCertificate(ctx, sid, []byte("bad")); !errors.Is(err, errCSRInvalid) {
+	a := identEnroll(t, ctx, e, sid)
+	e.advance(renewWindow)
+	if _, _, err := e.svc.RenewCertificate(ctx, sid, a, []byte("bad")); !errors.Is(err, errCSRInvalid) {
 		t.Fatalf("坏 CSR 应回 errCSRInvalid，得到 %v", err)
 	}
 }
@@ -358,9 +373,9 @@ func TestAuthorizeSessionRejectsPG(t *testing.T) {
 	wantSessionRevoked(t, e.svc.AuthorizeSession(ctx, sid, nil), "空序列号")
 
 	// 证书过期：把时钟拨到 31 天后
-	e.svc.now = func() time.Time { return time.Now().Add(31 * 24 * time.Hour) }
+	e.advance(31 * 24 * time.Hour)
 	wantSessionRevoked(t, e.svc.AuthorizeSession(ctx, sid, a), "过期证书")
-	e.svc.now = time.Now
+	e.advance(-31 * 24 * time.Hour)
 
 	// 服务器软删（先退役）
 	if err := e.exec(ctx, `UPDATE servers SET status = 'retired', retired_at = now(), deleted_at = now() WHERE id = ?`, sid); err != nil {
@@ -374,7 +389,8 @@ func TestRevokeNodeIdentityPG(t *testing.T) {
 	sid := seedIdentServer(t, ctx, e, "ready")
 	nodeID := seedIdentNode(t, ctx, e, sid)
 	a := identEnroll(t, ctx, e, sid)
-	b := identRenew(t, ctx, e, sid)
+	e.advance(renewWindow)
+	b := identRenew(t, ctx, e, sid, a)
 
 	// 后台展示的是 active 那份，不是 pending
 	view, err := e.svc.NodeIdentity(ctx, nodeID)
@@ -412,7 +428,8 @@ func TestIdentityGuardPG(t *testing.T) {
 	e, ctx := newIdentEnv(t, false)
 	sid := seedIdentServer(t, ctx, e, "ready")
 	a := identEnroll(t, ctx, e, sid)
-	b := identRenew(t, ctx, e, sid)
+	e.advance(renewWindow)
+	b := identRenew(t, ctx, e, sid, a)
 	serialA, serialB := a.Text(16), b.Text(16)
 
 	bad := []struct {

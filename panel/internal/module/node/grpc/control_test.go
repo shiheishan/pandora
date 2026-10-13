@@ -5,6 +5,7 @@ package grpc
 import (
 	"context"
 	"errors"
+	"math/big"
 	"net"
 	"slices"
 	"sync"
@@ -32,10 +33,13 @@ var testSessionOpt = service.SessionOptions{
 
 // fakeBackend 实现 service.SessionBackend，供本包 gRPC 测试用。
 type fakeBackend struct {
-	mu         sync.Mutex
-	rosters    map[uuid.UUID][]service.NodeRoster
-	configs    map[uuid.UUID][]service.NodeConfigDoc
-	trafficErr error
+	mu           sync.Mutex
+	rosters      map[uuid.UUID][]service.NodeRoster
+	configs      map[uuid.UUID][]service.NodeConfigDoc
+	trafficErr   error
+	ingested     []service.TrafficReport
+	has          []bool
+	renewSerials []*big.Int
 }
 
 func newFakeBackend() *fakeBackend {
@@ -87,9 +91,13 @@ func (f *fakeBackend) ServerConfigs(_ context.Context, ids []uuid.UUID) (map[uui
 	return out, nil
 }
 
-func (f *fakeBackend) IngestTraffic(_ context.Context, _ uuid.UUID, _ service.TrafficReport, _ service.RosterMembership) error {
+func (f *fakeBackend) IngestTraffic(_ context.Context, _ uuid.UUID, r service.TrafficReport, m service.RosterMembership) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.ingested = append(f.ingested, r)
+	for _, e := range r.Entries {
+		f.has = append(f.has, m.Has(e.NodeID, e.UID))
+	}
 	return f.trafficErr
 }
 
@@ -101,7 +109,10 @@ func (f *fakeBackend) RecordMetrics(context.Context, uuid.UUID, service.HostMetr
 	return nil
 }
 
-func (f *fakeBackend) RenewCertificate(context.Context, uuid.UUID, []byte) ([]byte, []byte, error) {
+func (f *fakeBackend) RenewCertificate(_ context.Context, _ uuid.UUID, certSerial *big.Int, _ []byte) ([]byte, []byte, error) {
+	f.mu.Lock()
+	f.renewSerials = append(f.renewSerials, new(big.Int).Set(certSerial))
+	f.mu.Unlock()
 	return []byte("CHAIN"), []byte("CA"), nil
 }
 
@@ -124,8 +135,27 @@ type serverIDStream struct {
 
 func (s *serverIDStream) Context() context.Context { return s.ctx }
 
+// fakeAuth 实现 sessionAuthorizer，供登记后复核测试用。
+type fakeAuth struct {
+	mu    sync.Mutex
+	err   error
+	calls int
+}
+
+func (f *fakeAuth) AuthorizeSession(_ context.Context, _ uuid.UUID, _ *big.Int) error {
+	f.mu.Lock()
+	f.calls++
+	err := f.err
+	f.mu.Unlock()
+	return err
+}
+
 // startControl 起内存 gRPC 服务端并返回 Control 客户端与会话管理器。
 func startControl(t *testing.T, b service.SessionBackend, opt service.SessionOptions, inject bool) (nodev1.ControlServiceClient, *service.Sessions) {
+	return startControlAuth(t, b, opt, inject, &fakeAuth{})
+}
+
+func startControlAuth(t *testing.T, b service.SessionBackend, opt service.SessionOptions, inject bool, auth sessionAuthorizer) (nodev1.ControlServiceClient, *service.Sessions) {
 	t.Helper()
 	svc := service.New(nil, nil, nil, nil)
 	m := service.NewSessionManager(b, nil, opt)
@@ -135,17 +165,22 @@ func startControl(t *testing.T, b service.SessionBackend, opt service.SessionOpt
 	var opts []ggrpc.ServerOption
 	if inject {
 		opts = append(opts, ggrpc.StreamInterceptor(func(srv interface{}, ss ggrpc.ServerStream, _ *ggrpc.StreamServerInfo, handler ggrpc.StreamHandler) error {
-			wrapped := &serverIDStream{ServerStream: ss, ctx: WithServerID(ss.Context(), testServerID)}
+			ctx := WithServerID(ss.Context(), testServerID)
+			ctx = WithCertSerial(ctx, big.NewInt(1))
+			wrapped := &serverIDStream{ServerStream: ss, ctx: ctx}
 			return handler(srv, wrapped)
 		}))
 	}
 	gs := ggrpc.NewServer(opts...)
-	nodev1.RegisterControlServiceServer(gs, NewControlServer(svc))
+	nodev1.RegisterControlServiceServer(gs, newControlServer(svc, auth))
 	go func() { _ = gs.Serve(lis) }()
 
 	conn, err := ggrpc.NewClient("passthrough:///bufnet",
 		ggrpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
 		ggrpc.WithTransportCredentials(insecure.NewCredentials()),
+		// 固定 64KB 窗口（关掉 BDP 自动放大）：节点不读时服务端的 Send 一定卡在流控上，测试才稳定
+		ggrpc.WithInitialWindowSize(1<<16),
+		ggrpc.WithInitialConnWindowSize(1<<16),
 	)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)

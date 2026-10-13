@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -29,16 +30,26 @@ const (
 
 var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
-// cleanText 去掉 NUL 与非法 UTF-8、首尾空白，按字符数截断；空串返回 nil（存 NULL）。
+// cleanText 是节点自报文本（Hello、心跳原因、配置回执原因码、接入时的主机信息）唯一的规整入口：
+// 去非法 UTF-8、去掉全部 unicode.IsControl（含 NUL、换行、TAB、ESC、DEL、C1）、TrimSpace、按 rune 截到 maxChars、再 TrimSpace；空串返回 nil。
 func cleanText(s string, maxChars int) *string {
 	s = strings.ToValidUTF8(s, "")
-	s = strings.ReplaceAll(s, "\x00", "")
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, s)
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return nil
 	}
 	if utf8.RuneCountInString(s) > maxChars {
 		s = string([]rune(s)[:maxChars])
+		s = strings.TrimSpace(s)
+	}
+	if s == "" {
+		return nil
 	}
 	return &s
 }

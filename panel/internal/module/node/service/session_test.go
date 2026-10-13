@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/big"
 	"sync"
 	"testing"
 	"time"
@@ -126,6 +127,10 @@ func TestTombstone(t *testing.T) {
 
 	m.Tombstone(serverID, "revoked")
 
+	// 还没发出的 Welcome 留在队首，终止消息紧随其后
+	if out := nextNow(t, s, time.Second); out.Kind != OutWelcome {
+		t.Fatalf("第一条仍应是 Welcome，得 %v", out.Kind)
+	}
 	out := nextNow(t, s, time.Second)
 	if out.Kind != OutTombstone || out.Reason != "revoked" {
 		t.Fatalf("应先 OutTombstone，得 kind=%v reason=%q", out.Kind, out.Reason)
@@ -157,7 +162,8 @@ func TestTombstoneForceClosesWhenNotDrained(t *testing.T) {
 	}
 	m.Tombstone(serverID, "revoked")
 
-	waitFor(t, 500*time.Millisecond, func() bool {
+	// TerminateGrace 是 200ms；上限放宽到 3 秒，繁忙的 CI 上 -race 也不偶发失败
+	waitFor(t, 3*time.Second, func() bool {
 		select {
 		case <-s.Done():
 			return true
@@ -282,7 +288,7 @@ func TestRenew(t *testing.T) {
 	_ = nextNow(t, s, time.Second)
 
 	b.renewErr = nil
-	s.HandleRenew(ctx, []byte("csr"))
+	s.HandleRenew(ctx, big.NewInt(7), []byte("csr"))
 	out := nextNow(t, s, time.Second)
 	if out.Kind != OutCertificate || string(out.CertChainPEM) != "CHAIN" || string(out.CAPEM) != "CA" {
 		t.Fatalf("续期成功应 Certificate，得 %v", out.Kind)
@@ -294,10 +300,10 @@ func TestRenew(t *testing.T) {
 		t.Fatalf("Open s2: %v", err)
 	}
 	_ = nextNow(t, s2, time.Second)
-	s2.HandleRenew(ctx, []byte("csr"))
+	s2.HandleRenew(ctx, big.NewInt(7), []byte("csr"))
 	out = nextNow(t, s2, time.Second)
-	if out.Kind != OutTombstone {
-		t.Fatalf("吊销应 Tombstone，得 %v", out.Kind)
+	if out.Kind != OutTombstone || out.Reason != TombstoneIdentityRevoked {
+		t.Fatalf("吊销应 Tombstone（%s），得 %v %q", TombstoneIdentityRevoked, out.Kind, out.Reason)
 	}
 	_, err = s2.Next(context.Background())
 	if !errors.Is(err, ErrSessionTombstoned) {
@@ -310,7 +316,7 @@ func TestRenew(t *testing.T) {
 		t.Fatalf("Open s3: %v", err)
 	}
 	_ = nextNow(t, s3, time.Second)
-	s3.HandleRenew(ctx, []byte("csr"))
+	s3.HandleRenew(ctx, big.NewInt(7), []byte("csr"))
 	if len(pending(s3)) != 0 {
 		t.Fatalf("其它续期错误不应发消息")
 	}

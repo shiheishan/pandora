@@ -174,9 +174,9 @@ func (m *Sessions) round(ctx context.Context, users, config bool) (failUsers, fa
 	if len(ids) == 0 {
 		return false, false
 	}
-	seq := m.seq.Add(1)
 	log := plog.From(ctx)
 	if config {
+		seq := m.seq.Add(1)
 		cfgs, err := m.b.ServerConfigs(ctx, ids)
 		if err != nil {
 			log.Error("重算节点配置失败", zap.Int("servers", len(ids)), zap.Error(err))
@@ -190,6 +190,7 @@ func (m *Sessions) round(ctx context.Context, users, config bool) (failUsers, fa
 		}
 	}
 	if users {
+		seq := m.seq.Add(1)
 		rosters, err := m.b.Rosters(ctx, ids)
 		if err != nil {
 			log.Error("重算节点名单失败", zap.Int("servers", len(ids)), zap.Error(err))

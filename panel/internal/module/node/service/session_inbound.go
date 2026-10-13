@@ -6,6 +6,7 @@ package service
 import (
 	"context"
 	"errors"
+	"math/big"
 
 	"go.uber.org/zap"
 
@@ -41,14 +42,14 @@ func (s *Session) HandleConfigAck(ctx context.Context, a ConfigAck) {
 	}
 }
 
-// HandleTraffic 入账一份流量上报。成功或同 id 内容不同（ErrTrafficReportConflict，节点端 bug，记 ERROR 不入账）
-// 都回 TrafficAck；其它错误不回 ack（节点保留这一批，重连后按原 id 重发）。
+// HandleTraffic 入账一份流量上报。成功、同 id 内容不同（ErrTrafficReportConflict）或上报不合规（ErrTrafficReportInvalid）
+// 都回 TrafficAck；后两种是节点端缺陷，不回 ack 节点会原样重发、死循环。其它错误不回 ack（节点保留这一批，重连后按原 id 重发）。
 func (s *Session) HandleTraffic(ctx context.Context, r TrafficReport) {
 	err := s.m.b.IngestTraffic(ctx, s.serverID, r, s)
 	switch {
 	case err == nil:
-	case errors.Is(err, ErrTrafficReportConflict):
-		s.log(ctx).Error("同一上报编号内容不同，不入账，照样回 ack", zap.String("report_id", r.ReportID))
+	case errors.Is(err, ErrTrafficReportConflict), errors.Is(err, ErrTrafficReportInvalid):
+		s.log(ctx).Error("上报与已入账的同编号内容不同或上报不合规：不入账，照样回 ack", zap.String("report_id", r.ReportID), zap.Error(err))
 	default:
 		s.log(ctx).Error("流量入账失败，不回 ack，等节点重发", zap.String("report_id", r.ReportID), zap.Error(err))
 		return
@@ -68,13 +69,15 @@ func (s *Session) HandleOnline(ctx context.Context, entries []OnlineEntry) {
 	}
 }
 
-// HandleRenew 用会话里的 CSR 续期，成功回 Certificate。身份已失效时发 Tombstone 关流；其它错误只记日志（节点稍后再试）。
-func (s *Session) HandleRenew(ctx context.Context, csrDER []byte) {
-	chain, ca, err := s.m.b.RenewCertificate(ctx, s.serverID, csrDER)
+// HandleRenew 用建流时出示的证书序列号与 CSR 续期，成功回 Certificate。certSerial 是建流时出示的证书序列号，
+// 续期只在它仍是这台服务器 active 那张时受理；证书剩余有效期还长或刚续过时面板拒绝（普通错误，只记日志，不断流）。
+// 身份已失效时对本会话 Tombstone；其它错误只记日志（节点稍后再试）。
+func (s *Session) HandleRenew(ctx context.Context, certSerial *big.Int, csrDER []byte) {
+	chain, ca, err := s.m.b.RenewCertificate(ctx, s.serverID, certSerial, csrDER)
 	if err != nil {
 		if errors.Is(err, ErrSessionRevoked) {
 			s.log(ctx).Warn("续期时发现身份已失效，发 Tombstone")
-			s.terminate(Outbound{Kind: OutTombstone, Reason: "identity revoked"}, ErrSessionTombstoned)
+			s.Tombstone(TombstoneIdentityRevoked)
 			return
 		}
 		s.log(ctx).Error("续期失败", zap.Error(err))
