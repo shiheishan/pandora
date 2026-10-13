@@ -65,6 +65,36 @@ func TestHealthPassedAfterStabilityWindow(t *testing.T) {
 	assertStrings(t, "回执", ts.link.acks("n1"), "CONFIG_PHASE_SWITCHED:"+nc.ContentSha256[:8], hp)
 }
 
+// 新流上补报 health_passed：上一条流上报过的可能没送到（入队后流断了），Welcome 时重新挂上；
+// 靠缓存起来、还没被面板确认的节点不挂。
+func TestHealthPassedReArmedOnWelcome(t *testing.T) {
+	ts := newTestServer(t, newFakeKernel(), "")
+	ts.welcome()
+	nc := portConfig(t, "n1", "vless", 20001)
+	ts.config(nc)
+	ts.clock.advance(healthStabilityWindow)
+	ts.housekeeping()
+	sw, hp := "CONFIG_PHASE_SWITCHED:"+nc.ContentSha256[:8], "CONFIG_PHASE_HEALTH_PASSED:"+nc.ContentSha256[:8]
+	assertStrings(t, "第一条流", ts.link.acks("n1"), sw, hp)
+
+	ts.disconnect()
+	ts.welcome()
+	if !ts.node(t, "n1").healthPending {
+		t.Fatal("新流没重新挂上 health_passed")
+	}
+	ts.housekeeping()
+	ts.housekeeping()
+	assertStrings(t, "新流补报", ts.link.acks("n1"), sw, hp, hp)
+
+	n := ts.node(t, "n1")
+	n.fromCache = true
+	ts.disconnect()
+	ts.welcome()
+	if n.healthPending {
+		t.Fatal("靠缓存起来的节点不该挂 health_passed")
+	}
+}
+
 // 不在列表里的节点被停掉，最后一轮流量先收进缓冲。
 func TestNodeMissingFromConfigIsRemoved(t *testing.T) {
 	k := newFakeKernel()

@@ -230,9 +230,14 @@ func (s *Server) onWelcome(w *nodev1.Welcome) {
 			s.log.Warn("本机时钟与面板相差超过 1 分钟，证书校验可能失败", "偏差", skew.Round(time.Second))
 		}
 	}
+	// 回执台账每条流各一份：上一条流上没送到的 health_passed（流断在稳定窗口里、或发送队列满）
+	// 在这条流上补报，对在服务、没装失败、不是靠缓存起来的节点重新挂上，下个内务节拍按稳定窗口报。
 	// 面板认面板缓存里已装上的版本；从这一刻起不再算「只靠缓存在服务」。
 	for _, n := range s.nodes {
 		n.resetAcks()
+		if n.started && n.failed == nil && !n.fromCache && n.appliedSHA != "" {
+			n.healthPending = true
+		}
 		n.fromCache = false
 	}
 	s.flushTraffic()
