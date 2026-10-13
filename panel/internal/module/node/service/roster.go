@@ -15,7 +15,7 @@ import (
 //
 // 一轮固定 7 次读（与服务器、节点、订阅个数无关）：该跑的节点与池、池的用户组名单、可服务的订阅、
 // active 账号与组、套餐版本（catalog 内 3 条：版本、权益、配额）、版本绑池，另读一次设备限制策略；
-// strict 模式再多一次窗口内的在线设备计数。然后在内存里按池分发。
+// strict 模式再读一次 Redis 里周期任务算好的超限集合（不扫在线表）。然后在内存里按池分发。
 // 名单只取决于节点所在的池（节点自身条件已在 ServedOnServerCond 里），所以按池算一次、同池的节点共用
 // 同一个 Users 切片与版本（只读，调用方不得修改）。
 func (s *Service) Rosters(ctx context.Context, serverIDs []uuid.UUID) (map[uuid.UUID][]NodeRoster, error) {
@@ -112,11 +112,8 @@ func (s *Service) poolRosters(ctx context.Context, pools []uuid.UUID) (map[uuid.
 	if err != nil {
 		return nil, err
 	}
-	// strict：跨节点去重后超限的订阅不进任何池的名单（devices.go）；loose 返回 nil
-	excluded, err := s.strictExcluded(ctx, subs, versions)
-	if err != nil {
-		return nil, err
-	}
+	// strict：周期任务算好的超限订阅不进任何池的名单（devices.go）；loose 或集合缺失时为 nil
+	excluded := s.strictExcluded(ctx)
 
 	wanted := make(map[uuid.UUID]bool, len(pools))
 	for _, p := range pools {

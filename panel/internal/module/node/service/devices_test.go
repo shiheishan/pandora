@@ -180,14 +180,17 @@ func TestRecheckStrictLooseClearsDigest(t *testing.T) {
 	if err := mr.Set(StrictDigestKey, "x"); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
+	if err := mr.Set(StrictSetKey, ""); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
 	svc := New(nil, nil, nil, rdb)
 	svc.UseDevices(&devFakeSettings{policy: settingssvc.DefaultDevicePolicy()}, devFakeSubs{}, nil, nil)
 	svc.UseDelivery(nil, nil, devFakeVersions{})
 	if err := svc.RecheckStrictDevices(context.Background()); err != nil {
 		t.Fatalf("RecheckStrictDevices: %v", err)
 	}
-	if mr.Exists(StrictDigestKey) {
-		t.Fatal("loose 应删掉摘要键")
+	if mr.Exists(StrictDigestKey) || mr.Exists(StrictSetKey) {
+		t.Fatal("loose 应删掉集合与摘要键")
 	}
 	if mr.Exists(UsersEpochKey) {
 		t.Fatal("纪元键不应存在")
@@ -198,5 +201,56 @@ func TestRecheckStrictNoRedis(t *testing.T) {
 	svc := New(nil, nil, nil, nil)
 	if err := svc.RecheckStrictDevices(context.Background()); err != nil {
 		t.Fatalf("无 Redis 应直接 nil: %v", err)
+	}
+}
+
+func TestStrictSetRoundTrip(t *testing.T) {
+	a, b := uuid.New(), uuid.New()
+	for _, ids := range [][]uuid.UUID{nil, {a}, {a, b}} {
+		got, err := parseStrictSet(formatStrictSet(ids))
+		if err != nil || len(got) != len(ids) {
+			t.Fatalf("%v → %v %v", ids, got, err)
+		}
+		for i := range ids {
+			if got[i] != ids[i] {
+				t.Fatalf("%v → %v", ids, got)
+			}
+		}
+	}
+	if _, err := parseStrictSet("not-a-uuid"); err == nil {
+		t.Fatal("坏格式应报错")
+	}
+}
+
+// strictExcluded 只读任务写下的集合：loose、集合缺失、格式坏都不摘；strict 且有集合时按集合摘。
+func TestStrictExcludedReadsTaskSet(t *testing.T) {
+	mr, rdb := testkit.Redis(t)
+	strict := settingssvc.DefaultDevicePolicy()
+	strict.Mode = settingssvc.DeviceModeStrict
+	st := &devFakeSettings{policy: settingssvc.DefaultDevicePolicy()}
+	svc := New(nil, nil, nil, rdb)
+	svc.UseDevices(st, nil, nil, nil)
+	ctx := context.Background()
+	a := uuid.New()
+
+	if err := mr.Set(StrictSetKey, a.String()); err != nil {
+		t.Fatal(err)
+	}
+	if got := svc.strictExcluded(ctx); got != nil {
+		t.Fatalf("loose 不摘: %v", got)
+	}
+	st.policy = strict
+	if got := svc.strictExcluded(ctx); !got[a] || len(got) != 1 {
+		t.Fatalf("strict 按集合摘: %v", got)
+	}
+	mr.Del(StrictSetKey)
+	if got := svc.strictExcluded(ctx); got != nil {
+		t.Fatalf("集合缺失不摘: %v", got)
+	}
+	if err := mr.Set(StrictSetKey, "garbage"); err != nil {
+		t.Fatal(err)
+	}
+	if got := svc.strictExcluded(ctx); got != nil {
+		t.Fatalf("格式坏不摘: %v", got)
 	}
 }

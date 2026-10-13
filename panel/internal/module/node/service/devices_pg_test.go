@@ -203,11 +203,64 @@ func TestStrictRosterExcludesPG(t *testing.T) {
 		}
 	}
 
+	recheck := func() {
+		t.Helper()
+		if err := e.svc.RecheckStrictDevices(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
 	assertRoster(true, true)
 	e.setPolicy(t, ctx, "strict", 1, 5)
+	// 名单只读周期任务写下的集合：任务还没跑时谁都不摘
+	assertRoster(true, true)
+	recheck()
 	assertRoster(false, true)
 	e.setPolicy(t, ctx, "strict", 2, 5)
+	recheck()
 	assertRoster(true, true)
+}
+
+// 审查 H1：被摘的订阅在线数回落后，任务必须看出集合变了、推进纪元，名单把人放回来。
+func TestStrictRosterRestoresAfterDropPG(t *testing.T) {
+	e, ctx := newDevicesEnv(t)
+	e.clearAlive(t, ctx)
+	f := seedDevices(t, ctx, e)
+	e.setPolicy(t, ctx, "strict", 1, 5)
+	e.alive(t, ctx, f.n1, f.A.ID, "d1", 30*time.Second)
+	e.alive(t, ctx, f.n1, f.A.ID, "d2", 30*time.Second)
+	e.alive(t, ctx, f.n2, f.A.ID, "d3", 30*time.Second)
+	if err := e.svc.RecheckStrictDevices(ctx); err != nil {
+		t.Fatal(err)
+	}
+	before := e.epoch(t)
+	inRoster := func() bool {
+		rosters, err := e.svc.Rosters(ctx, []uuid.UUID{f.srv})
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, ok := rosterOf(rosters, f.srv, f.n1)
+		if !ok {
+			t.Fatal("缺节点 n1")
+		}
+		_, has := hasUID(r, f.A.UID)
+		return has
+	}
+	if inRoster() {
+		t.Fatal("A 超限应被摘")
+	}
+	// 最早那台设备滑出窗口：A 回到 上限+宽容 以内
+	e.clearAlive(t, ctx)
+	e.alive(t, ctx, f.n1, f.A.ID, "d1", 30*time.Second)
+	e.alive(t, ctx, f.n2, f.A.ID, "d3", 30*time.Second)
+	if err := e.svc.RecheckStrictDevices(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if e.epoch(t) != before+1 {
+		t.Fatalf("集合变空应推进纪元：前 %d 后 %d", before, e.epoch(t))
+	}
+	if !inRoster() {
+		t.Fatal("A 回落后应放回名单")
+	}
 }
 
 func TestRecheckStrictDevicesPG(t *testing.T) {
@@ -224,8 +277,8 @@ func TestRecheckStrictDevicesPG(t *testing.T) {
 	if e.epoch(t) != 1 {
 		t.Fatalf("第一次纪元 %d", e.epoch(t))
 	}
-	if !e.mr.Exists(StrictDigestKey) {
-		t.Fatal("应有 strict 摘要键")
+	if !e.mr.Exists(StrictDigestKey) || !e.mr.Exists(StrictSetKey) {
+		t.Fatal("应有 strict 集合与摘要键")
 	}
 	if err := e.svc.RecheckStrictDevices(ctx); err != nil {
 		t.Fatal(err)
@@ -250,7 +303,7 @@ func TestRecheckStrictDevicesPG(t *testing.T) {
 	if e.epoch(t) != 2 {
 		t.Fatalf("loose 后纪元应仍为 2，得 %d", e.epoch(t))
 	}
-	if e.mr.Exists(StrictDigestKey) {
-		t.Fatal("loose 后摘要键应删除")
+	if e.mr.Exists(StrictDigestKey) || e.mr.Exists(StrictSetKey) {
+		t.Fatal("loose 后集合与摘要键应删除")
 	}
 }

@@ -4,8 +4,10 @@ package service
 //
 // 两种模式：loose 下设备数随名单下发，每个节点各自限；strict 另把跨节点去重后在线设备超过「上限+宽容」的订阅
 // 从所有池的名单里整条摘掉（poolRosters 调 strictExcluded）。超限只经 deviceExceeded 判，上限只经
-// effectiveDeviceLimit（与名单下发的设备数同一口径）取。名单是推送的，strict 下超限集合随在线数变化，
-// 由周期任务 devices:strict 调 RecheckStrictDevices 比对摘要、变了推进名单纪元。
+// effectiveDeviceLimit（与名单下发的设备数同一口径）取。名单是推送的，会话层只在纪元变了时重算，所以超限集合
+// 只能有一个来源：周期任务 devices:strict（RecheckStrictDevices）算出后写进 Redis，变了才推进名单纪元；
+// poolRosters 只读这份集合，不自己按在线数现算（否则重连、无关的纪元推进各自算出不同的中间状态，
+// 而集合回落时任务看不出变化、不推进，被摘的人一直摘着）。
 
 import (
 	"context"
@@ -13,6 +15,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -63,11 +66,17 @@ func (s *Service) UseDevices(st DeviceSettings, subs DeviceSubscriptions, users 
 // deviceOverviewLimit 是在线设备总览最多列出的订阅数（与旧接口相同）。
 const deviceOverviewLimit = 200
 
-// StrictDigestKey 是 strict 周期任务记下的上一轮超限订阅集合摘要（Redis，node 模块键前缀）。
-const StrictDigestKey = "node:devices_strict_digest"
+// StrictSetKey 是 strict 下当前的超限订阅集合（排好序的 uuid 用逗号连起来，空集是空串），只由
+// RecheckStrictDevices 写；poolRosters 读它。StrictDigestKey 是上一次「推进纪元成功」时这份集合的摘要：
+// 两个键分开，推进失败或进程在两步之间退出时摘要没更新，下一轮会再推进。
+const (
+	StrictSetKey    = "node:devices_strict_set"
+	StrictDigestKey = "node:devices_strict_digest"
+)
 
-// strictDigestTTL 是摘要的存活期：任务每分钟刷新一次，停跑一小时后自然过期。
-const strictDigestTTL = time.Hour
+// strictSetTTL 是超限集合的存活期：任务每分钟刷新，停跑 10 分钟后集合过期，名单回到不摘（各节点仍按设备数各自限）。
+// 摘要同样过期，任务恢复后会多推进一次，无害。
+const strictSetTTL = 10 * time.Minute
 
 // OnlineDevice 是在线设备总览的一行（一份订阅）。
 type OnlineDevice struct {
@@ -248,36 +257,63 @@ func (s *Service) OnlineDeviceCounts(ctx context.Context, subIDs []uuid.UUID) (m
 	return s.repo.DeviceCounts(ctx, subIDs, s.now().Add(-s.onlineWindow(ctx)))
 }
 
-// strictExcluded 是 strict 模式下要从名单里摘掉的订阅（subs、versions 是 poolRosters 已读出的，只多一次在线计数）；
-// loose 返回 nil。上限至少 1、超限要 > 上限+宽容，所以只取设备数 > 宽容+1 的一小撮。
-func (s *Service) strictExcluded(ctx context.Context, subs []subsvc.ServingSubscription, versions map[uuid.UUID]catalogsvc.Version) (map[uuid.UUID]bool, error) {
-	p := s.devicePolicy(ctx)
-	if !p.Strict() {
-		return nil, nil
+// strictExcluded 是 strict 模式下要从名单里摘掉的订阅：只读周期任务写下的集合（StrictSetKey）；loose 返回 nil。
+// 集合不存在（任务还没跑、已停跑）或 Redis 读不到时不摘：设备数限制不是安全边界，节点仍按下发的设备数各自限，
+// 不能因为 Redis 抖动把名单整轮算失败、阻断新流。
+func (s *Service) strictExcluded(ctx context.Context) map[uuid.UUID]bool {
+	if s.rdb == nil || !s.devicePolicy(ctx).Strict() {
+		return nil
 	}
-	counts, err := s.repo.DeviceCountsAbove(ctx, s.now().Add(-p.Window()), p.Grace+1)
+	v, err := s.rdb.Get(ctx, StrictSetKey).Result()
 	if err != nil {
-		return nil, err
+		if !errors.Is(err, redis.Nil) {
+			plog.From(ctx).Warn("读 strict 超限集合失败，本轮名单不摘人", zap.Error(err))
+		}
+		return nil
 	}
-	if len(counts) == 0 {
+	ids, err := parseStrictSet(v)
+	if err != nil {
+		plog.From(ctx).Warn("strict 超限集合格式不对，本轮名单不摘人", zap.Error(err))
+		return nil
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	out := make(map[uuid.UUID]bool, len(ids))
+	for _, id := range ids {
+		out[id] = true
+	}
+	return out
+}
+
+// formatStrictSet / parseStrictSet 是超限集合在 Redis 里的编码：排好序的 uuid 用逗号连起来，空集是空串。
+func formatStrictSet(ids []uuid.UUID) string {
+	parts := make([]string, len(ids))
+	for i, id := range ids {
+		parts[i] = id.String()
+	}
+	return strings.Join(parts, ",")
+}
+
+func parseStrictSet(v string) ([]uuid.UUID, error) {
+	if v == "" {
 		return nil, nil
 	}
-	out := map[uuid.UUID]bool{}
-	for _, sub := range subs {
-		c, ok := counts[sub.ID]
-		if !ok {
-			continue
+	parts := strings.Split(v, ",")
+	out := make([]uuid.UUID, 0, len(parts))
+	for _, p := range parts {
+		id, err := uuid.Parse(p)
+		if err != nil {
+			return nil, err
 		}
-		if deviceExceeded(effectiveDeviceLimit(sub.DeviceLimit, versions[sub.PlanVersionID]), c, p.Grace) {
-			out[sub.ID] = true
-		}
+		out = append(out, id)
 	}
 	return out, nil
 }
 
-// RecheckStrictDevices 由周期任务 devices:strict（每分钟）调：名单是推送的，strict 下超限集合随在线数变化而变，
-// 这里比对超限集合的摘要，变了就推进名单纪元让会话层重算；loose 时删掉摘要键、什么都不做。
-// 任务里没有事务，直接 bump（与 UsersChanged 同一个非事务入口）。
+// RecheckStrictDevices 由周期任务 devices:strict（每分钟）调，是超限集合唯一的计算者：算出集合、写进 StrictSetKey，
+// 与上次推进成功时的摘要不同就推进名单纪元，成功后才记摘要（推进失败返回错误，下一轮重试）。
+// 顺序是先写集合再推进：会话层收到纪元变化重算名单时读到的一定是新集合。loose 时删掉两个键、什么都不做。
 func (s *Service) RecheckStrictDevices(ctx context.Context) error {
 	if s.rdb == nil {
 		return nil
@@ -290,10 +326,13 @@ func (s *Service) RecheckStrictDevices(ctx context.Context) error {
 		return err
 	}
 	if !p.Strict() {
-		return s.rdb.Del(ctx, StrictDigestKey).Err()
+		return s.rdb.Del(ctx, StrictSetKey, StrictDigestKey).Err()
 	}
 	ids, err := s.strictExceededIDs(ctx, p)
 	if err != nil {
+		return err
+	}
+	if err := s.rdb.Set(ctx, StrictSetKey, formatStrictSet(ids), strictSetTTL).Err(); err != nil {
 		return err
 	}
 	digest := strictDigest(ids)
@@ -304,14 +343,13 @@ func (s *Service) RecheckStrictDevices(ctx context.Context) error {
 	case err != nil:
 		return err
 	}
-	if err := s.rdb.Set(ctx, StrictDigestKey, digest, strictDigestTTL).Err(); err != nil {
-		return err
-	}
 	if old != digest {
-		s.bump(ctx, UsersEpochKey, "users")
+		if err := s.bumpErr(ctx, UsersEpochKey, "users"); err != nil {
+			return err
+		}
 		plog.From(ctx).Info("strict 设备超限集合变了，推进名单纪元", zap.Int("exceeded", len(ids)))
 	}
-	return nil
+	return s.rdb.Set(ctx, StrictDigestKey, digest, strictSetTTL).Err()
 }
 
 // strictExceededIDs 是当前超限的订阅 id（按字节序）：读数一次、订阅一次、版本一次，只针对设备数 > 宽容+1 的一小撮。
