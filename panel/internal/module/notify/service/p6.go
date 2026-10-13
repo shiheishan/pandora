@@ -139,7 +139,7 @@ type p6Store interface {
 	// UpsertPreference 按主键写一条偏好。
 	UpsertPreference(ctx context.Context, p *model.Preference) error
 
-	// ListAnnouncements 后台列表：按 pinned 降序、COALESCE(published_at, created_at) 降序、id 降序取前 limit 条。
+	// ListAnnouncements 后台列表：未撤回/未下线的在前，再按 pinned 降序、发布时间降序取前 limit 条。
 	ListAnnouncements(ctx context.Context, limit int) ([]repo.AnnouncementRow, error)
 	// LockAnnouncement 读一条公告并加 FOR UPDATE；不存在 ok 为 false。
 	LockAnnouncement(ctx context.Context, id uuid.UUID) (repo.AnnouncementRow, bool, error)

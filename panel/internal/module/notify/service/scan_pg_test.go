@@ -47,7 +47,7 @@ func TestScanExpiringWritesInboxAndEmail(t *testing.T) {
 	}
 	em := noticeClaimEmail(t, e)
 	pe := noticeOpenPayload(t, e, em)
-	if pe.Vars["plan"] != "基础套餐" || pe.Vars["days"] != "3" {
+	if pe.Vars["plan"] != "基础套餐" || pe.Vars["days"] != "2" {
 		t.Fatalf("email vars %+v", pe.Vars)
 	}
 

@@ -396,6 +396,10 @@ func (s *Service) SaveAnnouncement(ctx context.Context, in AnnouncementInput) (A
 			if cur.Version != in.ExpectedVersion {
 				return annVersionConflict()
 			}
+			if cur.Status == model.AnnouncementPublished && in.PublishAt != nil &&
+				(cur.PublishAt == nil || !in.PublishAt.Equal(*cur.PublishAt)) {
+				return errs.Invalid(map[string]string{"publish_at": "已发布公告不能修改发布时间"})
+			}
 			if err := canSaveAs(cur.Status, status); err != nil {
 				return err
 			}

@@ -75,6 +75,15 @@ func (r *Repo) MarkRetry(ctx context.Context, id uuid.UUID, delay time.Duration,
 	return res.RowsAffected == 1, res.Error
 }
 
+// SuppressQueuedTelegram 把某用户还在排队的 Telegram 投递置为 suppressed 并清空封存内容（解绑后不再发往旧 chat），返回行数。
+func (r *Repo) SuppressQueuedTelegram(ctx context.Context, userID uuid.UUID) (int, error) {
+	res := r.d.Conn(ctx).Exec(
+		`UPDATE notification_deliveries
+		    SET status = 'suppressed', error_message = '用户已解绑 Telegram', payload_enc = NULL, updated_at = now()
+		  WHERE user_id = ? AND channel = 'telegram' AND status = 'queued'`, userID)
+	return int(res.RowsAffected), res.Error
+}
+
 // MarkFinal 置为终态 failed / suppressed 并清空封存内容。
 func (r *Repo) MarkFinal(ctx context.Context, id uuid.UUID, status, msg string) (bool, error) {
 	if status != model.StatusFailed && status != model.StatusSuppressed {

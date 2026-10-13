@@ -5,6 +5,7 @@ import (
 	"context"
 
 	"github.com/aegispanel/aegis/internal/module/notify/service"
+	"github.com/aegispanel/aegis/internal/pkg/ratelimit"
 	"github.com/aegispanel/aegis/internal/pkg/route"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -51,16 +52,31 @@ var _ Notify = (*service.Service)(nil)
 var _ route.Module = (*Handler)(nil)
 
 // Handler 是 notify 模块的 HTTP 入口。
-type Handler struct{ svc Notify }
+type Handler struct {
+	svc Notify
+	lim *ratelimit.Limiter
+}
 
 // New 构造 Handler。
 func New(svc Notify) *Handler {
 	return &Handler{svc: svc}
 }
 
+// UseLimiter 挂上限流器；不挂时（单测）webhook 不限流。
+func (h *Handler) UseLimiter(lim *ratelimit.Limiter) { h.lim = lim }
+
+// limit 挂限流；没有 Limiter 时放行。
+func (h *Handler) limit(dims ...ratelimit.Dimension) gin.HandlerFunc {
+	if h.lim == nil {
+		return func(c *gin.Context) { c.Next() }
+	}
+	return h.lim.Middleware(dims...)
+}
+
 // RegisterPublic 注册门户路由与 Telegram bot webhook（webhook 靠请求头里的 secret 认证，不挂登录）。
 func (h *Handler) RegisterPublic(v1 *gin.RouterGroup, k route.Kit) {
-	v1.POST("/webhooks/telegram", h.telegramWebhook)
+	// 按来源 IP 每分钟 300 次，挡伪造请求刷 secret 校验；Telegram 正常推送远低于此；非严格模式，Redis 不可用时放行。
+	v1.POST("/webhooks/telegram", h.limit(ratelimit.Dimension{Rule: ratelimit.PerMinute("tg_webhook", 300), Key: ratelimit.ByIP}), h.telegramWebhook)
 
 	v1.GET("/me/announcements", k.RequireAuth, h.myAnnouncements)
 	v1.GET("/me/notifications", k.RequireAuth, h.listNotifications)

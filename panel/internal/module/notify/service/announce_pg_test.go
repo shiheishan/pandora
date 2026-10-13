@@ -245,9 +245,8 @@ func TestAnnouncementEditPublishedKeepsWindowPG(t *testing.T) {
 	edit.ID = &pub.ID
 	edit.ExpectedVersion = pub.Version
 	edit.Publish = true
-	editPubAt := a.now.Add(-3 * time.Hour)
+	edit.PublishAt = &publishAt
 	editExpAt := a.now.Add(-2 * time.Hour)
-	edit.PublishAt = &editPubAt
 	edit.ExpiresAt = &editExpAt
 
 	_, err := a.svc.SaveAnnouncement(a.admin, edit)
@@ -256,5 +255,60 @@ func TestAnnouncementEditPublishedKeepsWindowPG(t *testing.T) {
 	}
 	if annFieldErr(err, "expires_at") == "" {
 		t.Fatalf("expected expires_at field error, got %v", err)
+	}
+}
+
+func TestAnnouncementPublishedPublishAtLockedPG(t *testing.T) {
+	a := annSetup(t)
+	publishAt := a.now.Add(-1 * time.Hour)
+	in := annInput("已发布")
+	in.Publish = true
+	in.PublishAt = &publishAt
+	pub := a.annSave(t, in)
+
+	edit := annInput("已发布改标题")
+	edit.ID = &pub.ID
+	edit.ExpectedVersion = pub.Version
+	edit.Publish = true
+	changed := a.now.Add(-3 * time.Hour)
+	edit.PublishAt = &changed
+	_, err := a.svc.SaveAnnouncement(a.admin, edit)
+	if !isCode(err, errs.ValidationFailed) || annFieldErr(err, "publish_at") == "" {
+		t.Fatalf("change publish_at: %v", err)
+	}
+
+	ok := annInput("已发布改标题")
+	ok.ID = &pub.ID
+	ok.ExpectedVersion = pub.Version
+	ok.Publish = true
+	ok.PublishAt = &publishAt
+	saved, err := a.svc.SaveAnnouncement(a.admin, ok)
+	if err != nil || saved.Version != pub.Version+1 {
+		t.Fatalf("same publish_at save: %+v %v", saved, err)
+	}
+}
+
+func TestAnnouncementListOrderActiveFirstPG(t *testing.T) {
+	a := annSetup(t)
+	// 较新的已撤回
+	w := annInput("撤回较新")
+	w.Publish = true
+	withdrawn := a.annSave(t, w)
+	_, err := a.svc.WithdrawAnnouncement(a.admin, withdrawn.ID, withdrawn.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.now = a.now.Add(-time.Hour)
+	// 较旧的仍发布
+	p := annInput("仍发布较旧")
+	p.Publish = true
+	published := a.annSave(t, p)
+
+	list, err := a.svc.ListAnnouncements(a.admin)
+	if err != nil || len(list.Announcements) < 2 {
+		t.Fatalf("list %+v %v", list, err)
+	}
+	if list.Announcements[0].ID != published.ID {
+		t.Fatalf("published should be first, got %+v", list.Announcements)
 	}
 }

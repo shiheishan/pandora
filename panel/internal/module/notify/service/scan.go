@@ -107,6 +107,27 @@ func noticeTime(t time.Time, loc *time.Location) string {
 	return t.In(loc).Format("2006-01-02 15:04")
 }
 
+// daysLeft 返回到期时刻还剩多少整天（按 24 小时向上取整，至少 1）。
+func daysLeft(end, now time.Time) int {
+	d := int(end.Sub(now).Hours() / 24)
+	if end.Sub(now) > time.Duration(d)*24*time.Hour {
+		d++
+	}
+	if d < 1 {
+		return 1
+	}
+	return d
+}
+
+// daysSince 返回自某时刻起已过多少整天（按 24 小时向下取整，至少 1）。
+func daysSince(end, now time.Time) int {
+	d := int(now.Sub(end).Hours() / 24)
+	if d < 1 {
+		return 1
+	}
+	return d
+}
+
 func scanSiteLocation(ctx context.Context, s *Service) (*time.Location, error) {
 	site, err := s.settings.Site(ctx)
 	if err != nil {
@@ -143,7 +164,7 @@ func (s *Service) collectScanItems(ctx context.Context, now time.Time, loc *time
 				Code:   TemplateSubscriptionExpiring,
 				Vars: map[string]string{
 					"plan":       c.PlanID.String(),
-					"days":       fmt.Sprint(win.label),
+					"days":       fmt.Sprint(daysLeft(c.PeriodEnd, now)),
 					"expires_at": endAt,
 				},
 				Key: fmt.Sprintf("expiring:%s:%dd:%d", c.SubscriptionID, win.label, c.PeriodEnd.Unix()),
@@ -177,7 +198,7 @@ func (s *Service) collectScanItems(ctx context.Context, now time.Time, loc *time
 			}
 			key := fmt.Sprintf("expired:%s:%d", c.SubscriptionID, c.PeriodEnd.Unix())
 			if win.label > 0 {
-				vars["days"] = fmt.Sprint(win.label)
+				vars["days"] = fmt.Sprint(daysSince(c.PeriodEnd, now))
 				key = fmt.Sprintf("recall:%s:%dd:%d", c.SubscriptionID, win.label, c.PeriodEnd.Unix())
 			}
 			items = append(items, scanItem{
