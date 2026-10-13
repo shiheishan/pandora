@@ -146,16 +146,33 @@ func TestTouchServerHeartbeat(t *testing.T) {
 	serverID := sessInsertServer(t, d, ctx)
 
 	at1 := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-	if err := r.TouchServerHeartbeat(ctx, serverID, at1); err != nil {
+	prev, found, err := r.TouchServerHeartbeat(ctx, serverID, at1)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !found || prev != nil {
+		t.Fatalf("第一次写入: 期望 prev=nil found=true，得到 prev=%v found=%v", prev, found)
 	}
 	sessReadHeartbeat(t, d, ctx, serverID, at1)
 
 	at2 := time.Date(2026, 1, 2, 4, 0, 0, 0, time.UTC)
-	if err := r.TouchServerHeartbeat(ctx, serverID, at2); err != nil {
+	prev, found, err = r.TouchServerHeartbeat(ctx, serverID, at2)
+	if err != nil {
 		t.Fatal(err)
 	}
+	if !found || prev == nil || !prev.Equal(at1) {
+		t.Fatalf("第二次写入: 期望 prev=%v found=true，得到 prev=%v found=%v", at1, prev, found)
+	}
 	sessReadHeartbeat(t, d, ctx, serverID, at2)
+
+	missing := uuid.New()
+	prev, found, err = r.TouchServerHeartbeat(ctx, missing, at2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found {
+		t.Fatalf("不存在的 id: 期望 found=false，得到 true")
+	}
 }
 
 func sessReadHeartbeat(t *testing.T, d *db.DB, ctx context.Context, serverID uuid.UUID, want time.Time) {
@@ -186,24 +203,27 @@ func TestUpdateNodeRuntimes(t *testing.T) {
 		{NodeID: n2, Status: "degraded", Reason: reason, ReasonNodeID: &n1},
 		{NodeID: n3, Status: "down"},
 	}
-	n, err := r.UpdateNodeRuntimes(ctx, sS, rows1, at1)
+	ids, err := r.UpdateNodeRuntimes(ctx, sS, rows1, at1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 2 {
-		t.Fatalf("第一次写: 期望影响 2 行，得到 %d", n)
+	if len(ids) != 2 {
+		t.Fatalf("第一次写: 期望 2 个 id，得到 %d (%v)", len(ids), ids)
+	}
+	if ids[0] != n1 && ids[0] != n2 || ids[1] != n1 && ids[1] != n2 {
+		t.Fatalf("第一次写: 期望 id 为 %v 与 %v，得到 %v", n1, n2, ids)
 	}
 	assertNodeRuntime(t, d, ctx, n1, sessStr("running"), nil, nil, at1)
 	assertNodeRuntime(t, d, ctx, n2, sessStr("degraded"), reason, &n1, at1)
 	assertNodeRuntimeNull(t, d, ctx, n3)
 
 	at2 := time.Date(2026, 2, 1, 11, 0, 0, 0, time.UTC)
-	n, err = r.UpdateNodeRuntimes(ctx, sS, rows1, at2)
+	ids, err = r.UpdateNodeRuntimes(ctx, sS, rows1, at2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 0 {
-		t.Fatalf("同样内容 at2: 期望影响 0 行，得到 %d", n)
+	if len(ids) != 0 {
+		t.Fatalf("同样内容 at2: 期望 0 个 id，得到 %d (%v)", len(ids), ids)
 	}
 	assertNodeRuntime(t, d, ctx, n1, sessStr("running"), nil, nil, at1)
 	assertNodeRuntime(t, d, ctx, n2, sessStr("degraded"), reason, &n1, at1)
@@ -213,22 +233,22 @@ func TestUpdateNodeRuntimes(t *testing.T) {
 		{NodeID: n1, Status: "running"},
 		{NodeID: n2, Status: "running"},
 	}
-	n, err = r.UpdateNodeRuntimes(ctx, sS, rows3, at3)
+	ids, err = r.UpdateNodeRuntimes(ctx, sS, rows3, at3)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 1 {
-		t.Fatalf("n2 改为 running: 期望影响 1 行，得到 %d", n)
+	if len(ids) != 1 || ids[0] != n2 {
+		t.Fatalf("n2 改为 running: 期望 [%v]，得到 %v", n2, ids)
 	}
 	assertNodeRuntime(t, d, ctx, n1, sessStr("running"), nil, nil, at1)
 	assertNodeRuntime(t, d, ctx, n2, sessStr("running"), nil, nil, at3)
 
-	n, err = r.UpdateNodeRuntimes(ctx, sS, nil, at3)
+	ids, err = r.UpdateNodeRuntimes(ctx, sS, nil, at3)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 0 {
-		t.Fatalf("空切片: 期望影响 0 行，得到 %d", n)
+	if len(ids) != 0 {
+		t.Fatalf("空切片: 期望 0 个 id，得到 %d (%v)", len(ids), ids)
 	}
 }
 

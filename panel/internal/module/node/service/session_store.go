@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/aegispanel/aegis/internal/module/node/repo"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 )
 
 // 与 00018 的列约束一致的上限。
@@ -100,12 +101,19 @@ func agentInfo(h Hello) repo.ServerAgentInfo {
 	}
 }
 
-// RecordHello 记 Hello：自报信息变了才写；最后心跳时间照写（建流即视为一拍心跳）。
+// RecordHello 记 Hello：自报信息变了才写（自报信息不推，后台靠轮询）；最后心跳时间照写（建流即视为一拍心跳）。
 func (s *Service) RecordHello(ctx context.Context, serverID uuid.UUID, h Hello, at time.Time) error {
 	if _, err := s.repo.UpdateServerAgent(ctx, serverID, agentInfo(h)); err != nil {
 		return err
 	}
-	return s.repo.TouchServerHeartbeat(ctx, serverID, at)
+	prev, found, err := s.repo.TouchServerHeartbeat(ctx, serverID, at)
+	if err != nil {
+		return err
+	}
+	if found && beatFlipsOnline(prev, at) {
+		s.serverChanged(ctx, realtime.OpUpdate, serverID)
+	}
+	return nil
 }
 
 // runtimeRows 把心跳里的运行状态规整成列值：认不出的状态丢掉，同一节点后出现的为准，running 不带原因。
@@ -136,11 +144,19 @@ func runtimeRows(nodes []NodeRuntime) []repo.NodeRuntimeRow {
 // RecordHeartbeat 记一拍心跳：服务器的最后心跳时间每拍写；节点运行状态只写这台服务器名下、真的变了的
 // （不属于这台服务器的节点 id 由 SQL 条件忽略）。
 func (s *Service) RecordHeartbeat(ctx context.Context, serverID uuid.UUID, nodes []NodeRuntime, at time.Time) error {
-	if err := s.repo.TouchServerHeartbeat(ctx, serverID, at); err != nil {
+	prev, found, err := s.repo.TouchServerHeartbeat(ctx, serverID, at)
+	if err != nil {
 		return err
 	}
-	_, err := s.repo.UpdateNodeRuntimes(ctx, serverID, runtimeRows(nodes), at)
-	return err
+	if found && beatFlipsOnline(prev, at) {
+		s.serverChanged(ctx, realtime.OpUpdate, serverID)
+	}
+	ids, err := s.repo.UpdateNodeRuntimes(ctx, serverID, runtimeRows(nodes), at)
+	if err != nil {
+		return err
+	}
+	s.nodesChanged(ctx, ids)
+	return nil
 }
 
 // RecordConfigAck 记配置回执（会话层已核对摘要是最近下发的那份）：
@@ -154,15 +170,27 @@ func (s *Service) RecordConfigAck(ctx context.Context, serverID uuid.UUID, a Con
 	}
 	switch a.Phase {
 	case ConfigSwitched, ConfigHealthPassed:
-		_, err := s.repo.MarkConfigApplied(ctx, serverID, a.NodeID, sha, at)
-		return err
+		wrote, err := s.repo.MarkConfigApplied(ctx, serverID, a.NodeID, sha, at)
+		if err != nil {
+			return err
+		}
+		if wrote {
+			s.nodeChanged(ctx, realtime.OpUpdate, a.NodeID)
+		}
+		return nil
 	case ConfigFailed:
 		reason := "unknown"
 		if r := cleanText(a.ReasonCode, maxFailReasonChars); r != nil {
 			reason = *r
 		}
-		_, err := s.repo.MarkConfigFailed(ctx, serverID, a.NodeID, sha, reason, truncateBytes(a.Detail, maxFailDetailBytes), at)
-		return err
+		wrote, err := s.repo.MarkConfigFailed(ctx, serverID, a.NodeID, sha, reason, truncateBytes(a.Detail, maxFailDetailBytes), at)
+		if err != nil {
+			return err
+		}
+		if wrote {
+			s.nodeChanged(ctx, realtime.OpUpdate, a.NodeID)
+		}
+		return nil
 	}
 	return nil
 }
