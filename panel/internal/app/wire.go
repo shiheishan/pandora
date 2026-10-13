@@ -179,6 +179,11 @@ func buildServices(r *runtime) (*services, error) {
 	})
 	// 订阅里影响节点名单的事实变了（开通、续期、换套餐…），提交后推进节点名单纪元
 	subSvc.UseRosterNotifier(nodeSvc)
+	// 名单与线路：node 经 subscription 取可服务订阅、经 identity 取账号状态与用户组、经 catalog 取版本限速与绑池；
+	// 订阅拉取经 node 取线路；identity 改账号状态、用户组后推进名单纪元
+	nodeSvc.UseDelivery(subSvc, identitySvc, catalogSvc)
+	subSvc.UseNodeSource(nodeSvc)
+	identitySvc.UseRosterNotifier(nodeSvc)
 	// 节点池与套餐绑池：绑池表归 catalog，池归 node；node 经 catalog 读绑池、经 identity 读用户组名，
 	// catalog 发布前、向导绑池时回调 node（发布门禁、锁池）
 	nodeSvc.UseCatalog(catalogSvc)
