@@ -1,7 +1,7 @@
 package node
 
 import (
-	"context"
+	nodev1 "github.com/aegispanel/nodeapi/pandora/node/v1"
 
 	"github.com/aegispanel/nodeagent/core"
 	"github.com/aegispanel/nodeagent/panel"
@@ -9,7 +9,7 @@ import (
 
 // applyUsers 把一份完整用户列表落到内核上。
 //
-// 轮询和事件流两条路都走这里——所有对 n.known 的改动集中在一个地方，
+// 全量名单都走这里——所有对 n.known 的改动集中在一个地方，
 // 才好保证它和内核里的实际状态一致。
 //
 // 按用户 ID 对比：同一 ID 换了凭据（重置订阅换 proxy_uuid）是「删旧凭据、加新凭据」，
@@ -107,20 +107,22 @@ func mirrorOf(users []core.User) map[int64]core.User {
 
 // resetUserMirror 宣告「内核里的用户表已被清空」。
 //
-// 节点端对内核用户表的认知有三份：n.known（算 diff 用）、n.userVersion
-// （判断增量能不能打）、客户端里的用户 ETag（换 304 用）。三者说的是
-// 同一件事——「内核里已经是这一版了」——所以只能在这一处一起作废：
-// 漏掉 ETag，下一轮拉用户换回 304，内核一直是空表；漏掉 userVersion，
-// 基于旧版的增量会被打在空表上，只剩增量里新加的那几个人。
+// 节点端对内核用户表的认知有两份：n.known（算 diff 用）、n.userVersion（判断增量能不能打、
+// Hello 里报给面板）。两者说的是同一件事——「内核里已经是这一版了」——所以只能在这一处
+// 一起作废：漏掉 userVersion，基于旧版的增量会被打在空表上，只剩增量里新加的那几个人。
+// 作废前有版本的，回一条 ok=false/resync 的名单回执，面板据此发全量。
 func (n *Node) resetUserMirror() {
+	prev := n.userVersion
 	n.known = make(map[int64]core.User)
 	n.userVersion = ""
-	n.client.ForgetUsersVersion()
+	if prev != "" {
+		n.pendingUsersAck = &nodev1.UsersAck{NodeId: n.id, Version: prev, Ok: false, ReasonCode: panel.UsersReasonResync}
+	}
 }
 
 // markInboundLost 在回滚也失败时调用：入站已不可用，内核用户表处于未知
-// 状态。下一次 applyConfig 成功前不同步用户（syncOnce 看 started），
-// 成功之后从无条件全量开始。
+// 状态。下一次 applyConfig 成功前不装名单（入站没起来时收到的全量先存着），
+// 成功之后从全量开始。
 func (n *Node) markInboundLost() {
 	n.started = false
 	n.resetUserMirror()
@@ -128,20 +130,20 @@ func (n *Node) markInboundLost() {
 
 // applyUserDelta 在现有列表上打补丁。
 //
-// 增量按用户 ID 说话：Removed 是「这个 ID 不再放行」，Added 里的一条是「这个 ID
-// 现在的完整记录」。同一 ID 两边都出现时以 Added 为准（面板对换了凭据的用户就是
-// 先删后加）。只看 Added 也要挡住换凭据：Added 的 UUID 与手上的不同，就删掉手上那份
+// 增量按用户 ID 说话：removed 是「这个 ID 不再放行」，upserted 里的一条是「这个 ID
+// 现在的完整记录」。同一 ID 两边都出现时以 upserted 为准（面板对换了凭据的用户就是
+// 先删后加）。只看 upserted 也要挡住换凭据：UUID 与手上的不同，就删掉手上那份
 // 旧凭据并断开它的连接，不让新旧凭据并存——用户重置订阅后，旧链接必须立刻失效。
-// Added 里凭据为空的记录按「这个 ID 已没有可用凭据」处理（删旧，不加）。
-func (n *Node) applyUserDelta(ev panel.StreamEvent) error {
-	next := deltaTargets(ev)
-	var removed []string
+// upserted 里凭据为空的记录按「这个 ID 已没有可用凭据」处理（删旧，不加）。
+func (n *Node) applyUserDelta(upserted []core.User, removed []int64) error {
+	next := deltaTargets(upserted, removed)
+	var dropped []string
 	var added, updated []core.User
 	for _, u := range next {
 		before, exists := n.known[u.ID]
 		credentialChanged := !exists || before.UUID != u.UUID
 		if exists && credentialChanged {
-			removed = append(removed, before.UUID)
+			dropped = append(dropped, before.UUID)
 		}
 		switch {
 		case u.UUID == "":
@@ -151,7 +153,7 @@ func (n *Node) applyUserDelta(ev panel.StreamEvent) error {
 			updated = append(updated, u)
 		}
 	}
-	if err := n.applyKernelUsers(removed, added, updated); err != nil {
+	if err := n.applyKernelUsers(dropped, added, updated); err != nil {
 		return err
 	}
 	for _, u := range next {
@@ -163,22 +165,22 @@ func (n *Node) applyUserDelta(ev panel.StreamEvent) error {
 	}
 	n.usersDirty = true
 	n.log.Info("用户增量已应用",
-		"总数", len(n.known), "新增", len(added), "更新", len(updated), "移除", len(removed))
+		"总数", len(n.known), "新增", len(added), "更新", len(updated), "移除", len(dropped))
 	return nil
 }
 
 // deltaTargets 把增量化成「每个涉及的用户 ID 一条终态记录」：Removed 的 ID 终态是
-// 空凭据，Added 覆盖它；同一 ID 多次出现以最后一条为准（面板不会这样发，万一发了，
+// 空凭据，upserted 覆盖它；同一 ID 多次出现以最后一条为准（面板不会这样发，万一发了，
 // 装进内核的与镜像里记的也得是同一份，否则多出来的凭据以后永远删不掉）。
 // 绝大多数增量只动一个用户，那时不建表。
-func deltaTargets(ev panel.StreamEvent) []core.User {
+func deltaTargets(upserted []core.User, removed []int64) []core.User {
 	switch {
-	case len(ev.Removed) == 0 && len(ev.Added) <= 1:
-		return ev.Added
-	case len(ev.Removed) == 1 && len(ev.Added) == 0:
-		return []core.User{{ID: ev.Removed[0]}}
+	case len(removed) == 0 && len(upserted) <= 1:
+		return upserted
+	case len(removed) == 1 && len(upserted) == 0:
+		return []core.User{{ID: removed[0]}}
 	}
-	out := make([]core.User, 0, len(ev.Removed)+len(ev.Added))
+	out := make([]core.User, 0, len(removed)+len(upserted))
 	at := make(map[int64]int, cap(out))
 	put := func(u core.User) {
 		if i, seen := at[u.ID]; seen {
@@ -188,38 +190,98 @@ func deltaTargets(ev panel.StreamEvent) []core.User {
 		at[u.ID] = len(out)
 		out = append(out, u)
 	}
-	for _, id := range ev.Removed {
+	for _, id := range removed {
 		put(core.User{ID: id})
 	}
-	for _, u := range ev.Added {
+	for _, u := range upserted {
 		put(u)
 	}
 	return out
 }
 
-func (n *Node) syncUsers(ctx context.Context) error {
-	users, changed, err := n.client.Users(ctx)
-	if err != nil {
-		return err
+// usersFromProto 把面板名单换成内核口径。
+func usersFromProto(in []*nodev1.User) []core.User {
+	out := make([]core.User, 0, len(in))
+	for _, u := range in {
+		out = append(out, core.User{
+			ID: u.GetUid(), UUID: u.GetUuid(),
+			SpeedLimit: int(u.GetSpeedLimitKbps()), DeviceLimit: int(u.GetDeviceLimit()),
+		})
 	}
-	if !changed {
-		// 面板回了 304，列表和上一轮一样。直接返回——不能往下走：
-		// changed 为 false 时 users 是 nil，下面那段会把它当成「一个用户
-		// 都没有」，然后把所有人从内核里删掉。
-		return nil
-	}
+	return out
+}
 
-	if err := n.applyUsers(users); err != nil {
-		// 客户端在解析成功时已记下这一版的 ETag，内核却没装齐：作废它与增量
-		// 基准，下一轮无条件全量对齐。不作废的话下一轮拿它换回 304，这份名单
-		// 就再也装不上了；增量也不能再按旧基准往上打。
-		n.userVersion = ""
-		n.client.ForgetUsersVersion()
-		return err
+// onUsersFull 处理某节点的全量名单。
+//
+// 入站还没起来（面板先发名单后发配置，或配置装不上）时先存着，装入站时带上（先有名单、
+// 再开 accept），装上之后再回执。节点还不存在时先建一个占位节点存名单：它不进 s.order，
+// 下一份 ServerConfig 里没有它就会被删。
+func (s *Server) onUsersFull(full *panel.UsersFull) {
+	if full == nil || full.NodeID == "" {
+		return
 	}
-	// 记下这一版作为增量基准。REST 的 ETag 与事件流的版本出自面板同一个计算
-	// 函数，装上了全量就等于手上是这一版：基于它的增量直接打，不必再拉一次
-	// 全量（原先这里不记，轮询之后的每条增量都对不上基准、退化成拉全量）。
-	n.userVersion = panel.UsersVersionKey(n.client.UsersVersion())
-	return nil
+	n := s.nodes[full.NodeID]
+	if n == nil {
+		n = s.newNode(full.NodeID, "")
+		s.nodes[full.NodeID] = n
+	}
+	users := normalizeUsers(usersFromProto(full.Users))
+	if !n.started {
+		n.staged = &stagedUsers{version: full.Version, users: users}
+		n.log.Info("入站还没起来，名单先存着，装入站时一起装", "版本", full.Version, "用户数", len(users))
+		return
+	}
+	if err := n.applyUsers(users); err != nil {
+		// 内核没装齐：作废增量基准，面板收到 apply_failed 会重发全量。
+		n.userVersion = ""
+		s.sendUsersAck(n, full.Version, false, panel.UsersReasonApplyFailed)
+		n.log.Error("名单装进内核失败，等面板重发全量", "版本", full.Version, "err", err)
+	} else {
+		n.userVersion = full.Version
+		n.staged = nil
+		s.sendUsersAck(n, full.Version, true, "")
+	}
+	s.flushUsersAck(n)
+	s.publishApplied()
+}
+
+// onUsersDelta 处理名单增量：只在本地确实是 from_version 时打，否则回 version_mismatch，
+// 面板据此发全量。
+func (s *Server) onUsersDelta(d *nodev1.UsersDelta) {
+	if d == nil {
+		return
+	}
+	n := s.nodes[d.GetNodeId()]
+	if n == nil || !n.started || n.userVersion == "" || d.GetFromVersion() != n.userVersion {
+		local := ""
+		if n != nil {
+			local = n.userVersion
+		}
+		s.log.Info("增量基准版本对不上，等面板发全量", "node", d.GetNodeId(),
+			"基准", d.GetFromVersion(), "本地", local)
+		s.sendUsersAckByID(d.GetNodeId(), d.GetToVersion(), false, panel.UsersReasonVersionMismatch)
+		return
+	}
+	if err := n.applyUserDelta(usersFromProto(d.GetUpserted()), d.GetRemovedUids()); err != nil {
+		n.userVersion = ""
+		s.sendUsersAck(n, d.GetToVersion(), false, panel.UsersReasonApplyFailed)
+		n.log.Error("名单增量装进内核失败，等面板重发全量", "err", err)
+	} else {
+		n.userVersion = d.GetToVersion()
+		s.sendUsersAck(n, d.GetToVersion(), true, "")
+	}
+	s.flushUsersAck(n)
+	s.publishApplied()
+}
+
+// sendUsersAck 回一条名单回执；没连着就不发（重连的 Hello 会报真实版本）。
+func (s *Server) sendUsersAck(n *Node, version string, ok bool, reason string) bool {
+	return s.sendUsersAckByID(n.id, version, ok, reason)
+}
+
+func (s *Server) sendUsersAckByID(nodeID, version string, ok bool, reason string) bool {
+	if !s.connected || s.link == nil {
+		return false
+	}
+	return s.link.SendUsersAck(&nodev1.UsersAck{NodeId: nodeID, Version: version, Ok: ok, ReasonCode: reason})
 }

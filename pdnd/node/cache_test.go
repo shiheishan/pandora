@@ -2,289 +2,147 @@ package node
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
-	"sync"
 	"testing"
 	"time"
 
+	nodev1 "github.com/aegispanel/nodeapi/pandora/node/v1"
+
 	"github.com/aegispanel/nodeagent/core"
 	nativekernel "github.com/aegispanel/nodeagent/kernel"
-	"github.com/aegispanel/nodeagent/panel"
 )
 
-// ---------------------------------------------------------------------------
-// 夹具：可以「宕机」的签名面板
-// ---------------------------------------------------------------------------
+// 落盘缓存读写：权限、往返、身份不符整个丢弃、摘要不符丢弃该文件。
+func TestCacheRoundTripAndPermissions(t *testing.T) {
+	root := t.TempDir()
+	c := newServerCache(root, testServerID)
+	must(t, c.saveOrder([]string{"n2", "n1"}))
+	nc := portConfig(t, "n1", "vless", 20001)
+	nCache := c.node("n1")
+	must(t, nCache.saveConfig(nc))
+	must(t, nCache.saveUsers("u1-a", map[int64]core.User{1: {ID: 1, UUID: "a", SpeedLimit: 5, DeviceLimit: 2}}))
 
-// signedWorld 是一个签名面板加一份节点身份。down 之后面板一律断连（模拟宕机），
-// 同一份身份可以造多个节点——「重启」就是用同一身份、同一缓存目录再造一个。
-type signedWorld struct {
-	fake     *fakeSignedPanel
-	srv      *httptest.Server
-	identity panel.Identity
-	cacheDir string
-	mu       sync.Mutex
-	down     bool
-	// reject 非零时 effective-config 回这个状态码（面板明确拒绝）。
-	reject int
-	// heartbeats 记下收到的心跳正文与原因请求头。
-	heartbeats []recordedHeartbeat
-}
-
-type recordedHeartbeat struct {
-	body   map[string]any
-	reason string
-}
-
-func newSignedWorld(t *testing.T) *signedWorld {
-	t.Helper()
-	configPub, configPriv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
+	order, err := c.loadOrder()
+	must(t, err)
+	assertStrings(t, "顺序", order, "n2", "n1")
+	got, err := nCache.loadConfig()
+	must(t, err)
+	if string(got.GetConfigJson()) != string(nc.GetConfigJson()) || got.GetContentSha256() != nc.GetContentSha256() || got.GetNodeType() != "vless" {
+		t.Fatalf("读回的配置 = %v", got)
 	}
-	_, nodePriv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
+	version, users, err := nCache.loadUsers()
+	must(t, err)
+	if version != "u1-a" || len(users) != 1 || users[0] != (core.User{ID: 1, UUID: "a", SpeedLimit: 5, DeviceLimit: 2}) {
+		t.Fatalf("读回的名单 = %s %v", version, users)
 	}
-	keySum := sha256.Sum256(configPub)
-	keyID := base64.RawURLEncoding.EncodeToString(keySum[:8])
-	uni := &fakeUniProxy{}
-	uni.setUsers(`"users-1"`, "user-a", "user-b")
-	w := &signedWorld{
-		fake:     &fakeSignedPanel{uni: uni, priv: configPriv, keyID: keyID, honorApplied: true},
-		cacheDir: t.TempDir(),
-	}
-	w.fake.publish(releaseGood, 1, 18080)
-	w.srv = httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
-		w.mu.Lock()
-		down, reject := w.down, w.reject
-		w.mu.Unlock()
-		if down {
-			// 像宕机的面板：连接直接断掉，没有任何 HTTP 答复。
-			if hj, ok := rw.(http.Hijacker); ok {
-				if conn, _, err := hj.Hijack(); err == nil {
-					_ = conn.Close()
-					return
-				}
-			}
-			rw.WriteHeader(http.StatusBadGateway)
-			return
-		}
-		if r.URL.Path == "/v1/nodes/heartbeat" {
-			raw, _ := io.ReadAll(r.Body)
-			var body map[string]any
-			_ = json.Unmarshal(raw, &body)
-			w.mu.Lock()
-			w.heartbeats = append(w.heartbeats, recordedHeartbeat{body: body, reason: r.Header.Get(panel.RuntimeReasonHeader)})
-			w.mu.Unlock()
-			_ = json.NewEncoder(rw).Encode(map[string]any{"node_status": "active"})
-			return
-		}
-		if reject != 0 && r.URL.Path == "/v1/nodes/effective-config" {
-			http.Error(rw, "rejected", reject)
-			return
-		}
-		w.fake.ServeHTTP(rw, r)
-	}))
-	t.Cleanup(w.srv.Close)
-	w.identity = panel.Identity{
-		Server: w.srv.URL, NodeID: testNodeID, Serial: 1,
-		PrivateKey:      base64.StdEncoding.EncodeToString(nodePriv),
-		ConfigPublicKey: base64.StdEncoding.EncodeToString(configPub),
-		ConfigKeyID:     keyID,
-	}
-	return w
-}
-
-func (w *signedWorld) setDown(down bool) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.down = down
-}
-
-// newNode 造一个挂着落盘缓存的签名节点（模拟一次进程启动）。
-func (w *signedWorld) newNode(t *testing.T, kernel core.Core) *Node {
-	t.Helper()
-	identity := w.identity
-	signed, err := panel.NewSignedClient(&identity)
-	if err != nil {
-		t.Fatal(err)
-	}
-	client := panel.New(panel.Options{BaseURL: w.srv.URL, NodeID: testNodeID, NodeType: "vless", Token: "token",
-		Timeout: 2 * time.Second})
-	n := NewWithSignedClient(client, kernel, testLogger(), signed)
-	n.SetCacheDir(w.cacheDir)
-	return n
-}
-
-// ---------------------------------------------------------------------------
-// 回归测试
-// ---------------------------------------------------------------------------
-
-// 面板宕机时重启节点：用落盘的、重新验过签的配置与用户名单照常起服务，
-// 状态如实报 degraded（serving_cached_config）；面板回来后切回 running。
-//
-// 原先 pdnd 只落盘 identity.json，这种情况下节点彻底停服直到面板恢复。
-func TestSignedNodeStartsFromCacheWhenPanelDown(t *testing.T) {
-	w := newSignedWorld(t)
-	first := w.newNode(t, newUserTableCore())
-	first.startup(context.Background())
-	if !first.started {
-		t.Fatal("面板正常时首次启动没有装上配置")
-	}
-	for _, name := range []string{"config.json", "users.json"} {
-		path := filepath.Join(first.cache.dir, name)
+	for path, want := range map[string]os.FileMode{
+		filepath.Join(root, "nodes"):                      0o700,
+		filepath.Join(root, "nodes", "n1"):                0o700,
+		filepath.Join(root, "nodes", "server.json"):       0o600,
+		filepath.Join(root, "nodes", "n1", "config.json"): 0o600,
+		filepath.Join(root, "nodes", "n1", "users.json"):  0o600,
+	} {
 		info, err := os.Stat(path)
-		if err != nil {
-			t.Fatalf("没有落盘 %s：%v", name, err)
-		}
-		if info.Mode().Perm() != 0o600 {
-			t.Fatalf("%s 权限 %v，期望 0600", name, info.Mode().Perm())
+		must(t, err)
+		if info.Mode().Perm() != want {
+			t.Errorf("%s 权限 %v，期望 %v", path, info.Mode().Perm(), want)
 		}
 	}
 
-	w.setDown(true)
-	kernel := newUserTableCore()
-	restarted := w.newNode(t, kernel)
-	restarted.startup(context.Background())
-	if !restarted.started || kernel.port != 18080 {
-		t.Fatalf("面板宕机时重启没有用缓存起服务：started=%v port=%d", restarted.started, kernel.port)
+	// 另一个身份读：整个缓存目录丢弃。
+	other := newServerCache(root, "00000000-0000-4000-8000-000000000002")
+	if _, err := other.loadOrder(); err == nil {
+		t.Fatal("别的身份的缓存应被拒")
 	}
-	assertKernelUsers(t, kernel, "缓存起服务之后", "user-a", "user-b")
-	if status, reason := restarted.runtimeHealth(); status != runtimeDegraded || reason != reasonServingCached {
-		t.Fatalf("缓存起服务时上报 %s/%s，期望 degraded/%s", status, reason, reasonServingCached)
-	}
-
-	// 面板回来：已应用版本仍是当前版（204），用户名单 ETag 也对得上（304），不重建入站。
-	w.setDown(false)
-	before := len(w.fake.uni.userIfNoneMatch)
-	restarted.syncOnce(context.Background())
-	if status, _ := restarted.runtimeHealth(); status != runtimeRunning {
-		t.Fatalf("面板恢复后仍报 %s", status)
-	}
-	w.fake.mu.Lock()
-	unchanged := w.fake.unchangedReplies
-	w.fake.mu.Unlock()
-	if unchanged == 0 {
-		t.Fatal("面板恢复后没有带上缓存里的已应用版本（应当换到 204）")
-	}
-	if got := w.fake.uni.lastUserIfNoneMatch(); got != `"users-1"` || len(w.fake.uni.userIfNoneMatch) == before {
-		t.Fatalf("面板恢复后拉用户带的 If-None-Match = %s，期望缓存里的 \"users-1\"", got)
+	if _, err := os.Stat(filepath.Join(root, "nodes")); !os.IsNotExist(err) {
+		t.Fatal("别的身份的缓存应整个删掉")
 	}
 }
 
-// 缓存被改过（签名对不上）：丢弃缓存，fail-closed，不起服务。
-func TestSignedCacheWithBadSignatureIsDiscarded(t *testing.T) {
-	w := newSignedWorld(t)
-	first := w.newNode(t, newUserTableCore())
-	first.startup(context.Background())
-	path := filepath.Join(first.cache.dir, "config.json")
-	var file cachedConfigFile
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
+// 配置缓存的摘要对不上：丢弃这个文件。
+func TestCachedConfigDigestMismatchDiscarded(t *testing.T) {
+	c := newServerCache(t.TempDir(), testServerID).node("n1")
+	must(t, c.saveConfig(portConfig(t, "n1", "vless", 20001)))
+	body, err := os.ReadFile(c.configPath())
+	must(t, err)
+	var f map[string]any
+	must(t, json.Unmarshal(body, &f))
+	f["config_json"] = []byte(`{"server_port":20002}`)
+	must(t, os.WriteFile(c.configPath(), mustJSON(t, f), 0o600))
+	if _, err := c.loadConfig(); err == nil {
+		t.Fatal("摘要不符的配置应被拒")
 	}
-	if err := json.Unmarshal(raw, &file); err != nil {
-		t.Fatal(err)
-	}
-	file.Signed.Payload = json.RawMessage(`{"server_port":18081,"protocol":"vless"}`)
-	tampered, _ := json.Marshal(file)
-	if err := os.WriteFile(path, tampered, 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	w.setDown(true)
-	kernel := newUserTableCore()
-	restarted := w.newNode(t, kernel)
-	restarted.startup(context.Background())
-	if restarted.started || kernel.port != 0 {
-		t.Fatalf("改过的缓存被装上了：started=%v port=%d", restarted.started, kernel.port)
-	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("验签不过的缓存没有被删掉：%v", err)
-	}
-	if status, reason := restarted.runtimeHealth(); status != runtimeDegraded || reason != reasonNotStarted {
-		t.Fatalf("没起来却报 %s/%s", status, reason)
+	if _, err := os.Stat(c.configPath()); !os.IsNotExist(err) {
+		t.Fatal("摘要不符的配置文件应删掉")
 	}
 }
 
-// 面板明确拒绝这个节点（身份吊销、节点被删）不是「不可达」：不拿缓存绕过去。
-func TestSignedCacheNotUsedWhenPanelRejects(t *testing.T) {
-	w := newSignedWorld(t)
-	first := w.newNode(t, newUserTableCore())
-	first.startup(context.Background())
+func TestSafePathSegment(t *testing.T) {
+	for _, id := range []string{"n1", "node_7.a-b"} {
+		if got := safePathSegment(id); got != id {
+			t.Errorf("safePathSegment(%q) = %q", id, got)
+		}
+	}
+	for _, id := range []string{".", "..", "../x", "a/b", "", string(make([]byte, 65))} {
+		got := safePathSegment(id)
+		if len(got) != len("node-")+24 || got[:5] != "node-" {
+			t.Errorf("safePathSegment(%q) = %q，应是哈希名", id, got)
+		}
+	}
+}
 
-	w.mu.Lock()
-	w.reject = http.StatusUnauthorized
-	w.mu.Unlock()
-	kernel := newUserTableCore()
-	restarted := w.newNode(t, kernel)
-	restarted.startup(context.Background())
-	if restarted.started {
-		t.Fatal("面板明确拒绝后仍用缓存起了服务")
+// 面板下发：装上的配置与顺序落盘；不在列表里的节点连缓存一起删掉。
+func TestServerCachesConfigAndRemovesGoneNodes(t *testing.T) {
+	dir := t.TempDir()
+	ts := newTestServer(t, newFakeKernel(), dir)
+	ts.welcome()
+	ts.config(portConfig(t, "n1", "vless", 20001), portConfig(t, "n2", "trojan", 20002))
+	c := newServerCache(dir, testServerID)
+	order, err := c.loadOrder()
+	must(t, err)
+	assertStrings(t, "顺序", order, "n1", "n2")
+	if _, err := c.node("n2").loadConfig(); err != nil {
+		t.Fatalf("n2 的配置没落盘：%v", err)
+	}
+	ts.config(portConfig(t, "n1", "vless", 20001))
+	if _, err := os.Stat(filepath.Join(dir, "nodes", "n2")); !os.IsNotExist(err) {
+		t.Fatal("删掉的节点缓存还在")
+	}
+	order, err = c.loadOrder()
+	must(t, err)
+	assertStrings(t, "顺序", order, "n1")
+}
+
+// 冷启动按缓存顺序装：同机端口冲突时赢家与上次一致；坏掉的节点缓存跳过，其余照装。
+func TestColdStartFollowsCachedOrder(t *testing.T) {
+	dir := t.TempDir()
+	c := newServerCache(dir, testServerID)
+	must(t, c.saveOrder([]string{"n2", "n1", "n3"}))
+	must(t, c.node("n1").saveConfig(portConfig(t, "n1", "vless", 20001)))
+	must(t, c.node("n2").saveConfig(portConfig(t, "n2", "trojan", 20001)))
+	k := newFakeKernel()
+	ts := newTestServer(t, k, dir)
+	ts.Start()
+	if k.port("n2") != 20001 || k.port("n1") != 0 {
+		t.Fatal("冷启动没按缓存顺序装")
+	}
+	if _, ok := ts.nodes["n3"]; ok {
+		t.Fatal("没有配置缓存的节点不该建")
+	}
+	configs, _ := ts.Applied()
+	if len(configs) != 1 || configs[0].GetNodeId() != "n2" {
+		t.Fatalf("Hello 快照 = %v", configs)
 	}
 }
 
 // ---------------------------------------------------------------------------
-// 兼容通道 + 真 NativeCore：面板宕机重启后入站照常监听、用户能认证
+// 真 NativeCore：面板不可达时重启，入站照常监听、名单里的用户能认证
 // ---------------------------------------------------------------------------
-
-// socksPanel 是只下发 socks 入站的 UniProxy 假面板，可宕机。
-type socksPanel struct {
-	mu      sync.Mutex
-	port    int
-	down    bool
-	served  int
-	pushes  []http.Header
-	reports []map[string][2]int64
-}
-
-func (p *socksPanel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.down {
-		if hj, ok := w.(http.Hijacker); ok {
-			if conn, _, err := hj.Hijack(); err == nil {
-				_ = conn.Close()
-				return
-			}
-		}
-		w.WriteHeader(http.StatusBadGateway)
-		return
-	}
-	switch r.URL.Path {
-	case "/api/v1/server/UniProxy/config":
-		if r.Header.Get("If-None-Match") == `"socks-1"` {
-			w.WriteHeader(http.StatusNotModified)
-			return
-		}
-		p.served++
-		w.Header().Set("ETag", `"socks-1"`)
-		_ = json.NewEncoder(w).Encode(map[string]any{"server_port": p.port, "protocol": "socks", "listen_ip": "127.0.0.1"})
-	case "/api/v1/server/UniProxy/user":
-		if r.Header.Get("If-None-Match") == `"u-1"` {
-			w.WriteHeader(http.StatusNotModified)
-			return
-		}
-		w.Header().Set("ETag", `"u-1"`)
-		_ = json.NewEncoder(w).Encode(map[string]any{"users": []map[string]any{
-			{"id": 1, "uuid": "alice-uuid-0001"}, {"id": 2, "uuid": "bob-uuid-00002"},
-		}})
-	default:
-		w.WriteHeader(http.StatusOK)
-	}
-}
 
 func newNativeKernel(t *testing.T) *nativekernel.NativeCore {
 	t.Helper()
@@ -339,56 +197,53 @@ func socks5Auth(t *testing.T, port int, uuid string) bool {
 	return reply[1] == 0
 }
 
-func TestCompatNodeServesUsersFromCacheWhenPanelDown(t *testing.T) {
-	fake := &socksPanel{port: freeTCPPort(t)}
-	srv := httptest.NewServer(fake)
-	defer srv.Close()
-	cacheDir := t.TempDir()
-	newNode := func(kernel core.Core) *Node {
-		client := panel.New(panel.Options{BaseURL: srv.URL, NodeID: "7", NodeType: "socks", Token: "token",
-			Timeout: 2 * time.Second})
-		n := New(client, kernel, testLogger())
-		n.SetCacheDir(cacheDir)
-		return n
-	}
+func TestServesFromCacheWhenPanelDown(t *testing.T) {
+	dir := t.TempDir()
+	port := freeTCPPort(t)
+	nc := nodeConfig(t, "7", "socks", map[string]any{"server_port": port})
 
 	firstKernel := newNativeKernel(t)
-	first := newNode(firstKernel)
-	first.startup(context.Background())
-	if !first.started || !socks5Auth(t, fake.port, "alice-uuid-0001") {
-		t.Fatal("面板正常时首次启动没有起来")
+	first := newTestServer(t, firstKernel, dir)
+	first.welcome()
+	first.config(nc)
+	first.usersFull("7", "u-1", "alice-uuid-0001", "bob-uuid-00002")
+	first.report()
+	if !socks5Auth(t, port, "alice-uuid-0001") {
+		t.Fatal("面板正常时没起来")
 	}
 	// 「进程退出」：关掉内核，端口让出来。
 	_ = firstKernel.Close()
 
-	fake.mu.Lock()
-	fake.down = true
-	fake.mu.Unlock()
-	restarted := newNode(newNativeKernel(t))
-	restarted.startup(context.Background())
-	if !restarted.started {
-		t.Fatal("面板宕机时重启没有用缓存起服务")
+	// 重启时面板不可达：只有冷启动，没有 Welcome。
+	restartedKernel := newNativeKernel(t)
+	restarted := newTestServer(t, restartedKernel, dir)
+	restarted.Start()
+	n := restarted.node(t, "7")
+	if !n.started {
+		t.Fatal("面板不可达时重启没用缓存起服务")
 	}
-	if !socks5Auth(t, fake.port, "alice-uuid-0001") {
+	if !socks5Auth(t, port, "alice-uuid-0001") {
 		t.Fatal("缓存起服务后已授权用户认证不过")
 	}
-	if socks5Auth(t, fake.port, "mallory-uuid-999") {
+	if socks5Auth(t, port, "mallory-uuid-999") {
 		t.Fatal("缓存起服务后未授权用户也认证通过了")
 	}
+	if rt := n.runtime(); rt.Status != nodev1.RuntimeStatus_RUNTIME_STATUS_DEGRADED || rt.Reason != reasonServingCached {
+		t.Fatalf("面板确认前状态 = %v", rt)
+	}
 
-	// 面板回来：配置 ETag 来自缓存，换到 304，不再拉全量、不重建入站。
-	fake.mu.Lock()
-	fake.down = false
-	servedBefore := fake.served
-	fake.mu.Unlock()
-	restarted.syncOnce(context.Background())
-	fake.mu.Lock()
-	servedAfter := fake.served
-	fake.mu.Unlock()
-	if servedAfter != servedBefore {
-		t.Fatalf("面板恢复后又拉了一次全量配置（%d → %d），缓存里的 ETag 没用上", servedBefore, servedAfter)
+	// 面板回来：Hello 报的就是缓存版本；同一版配置再下发不重建入站。
+	configs, users := restarted.Applied()
+	if len(configs) != 1 || configs[0].GetContentSha256() != nc.GetContentSha256() || len(users) != 1 || users[0].GetVersion() != "u-1" {
+		t.Fatalf("Hello 快照 = %v %v", configs, users)
 	}
-	if status, _ := restarted.runtimeHealth(); status != runtimeRunning {
-		t.Fatalf("面板恢复后仍报 %s", status)
+	restarted.welcome()
+	restarted.config(nc)
+	if !socks5Auth(t, port, "bob-uuid-00002") {
+		t.Fatal("面板回来后已授权用户认证不过")
 	}
+	if rt := n.runtime(); rt.Status != nodev1.RuntimeStatus_RUNTIME_STATUS_RUNNING {
+		t.Fatalf("面板回来后状态 = %v", rt)
+	}
+	assertStrings(t, "回执", restarted.link.acks("7"), "CONFIG_PHASE_SWITCHED:"+nc.GetContentSha256()[:8])
 }

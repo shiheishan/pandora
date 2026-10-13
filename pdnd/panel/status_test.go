@@ -6,8 +6,7 @@ import (
 	"testing"
 )
 
-// 采集出来的值必须自洽，否则面板会以「状态上报数值非法」整条拒掉——
-// 那时节点看上去就是没心跳，和根本没上报没区别。
+// 采集出来的值必须自洽：已用不超过总量，CPU 在 0–100 之间。
 func TestCollectRuntimeStatusIsSelfConsistent(t *testing.T) {
 	s := CollectRuntimeStatus()
 
@@ -28,9 +27,7 @@ func TestCollectRuntimeStatusIsSelfConsistent(t *testing.T) {
 	}
 }
 
-// 序列化出来的字段名要和面板的 uniProxyStatus 对齐。
-// 对不上不会报错，只会让面板收到一堆零值，然后把节点显示成 CPU 0%、
-// 内存 0——比没数据更误导，因为看上去像是真的很闲。
+// 采样结构的 JSON 字段名（日志与排障时打印）保持稳定。
 func TestRuntimeStatusJSONMatchesPanelContract(t *testing.T) {
 	raw, err := json.Marshal(RuntimeStatus{
 		CPU:  12.5,

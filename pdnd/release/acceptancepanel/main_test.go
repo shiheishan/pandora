@@ -2,84 +2,199 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
-	"net/http"
-	"net/http/httptest"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"log/slog"
+	"net"
 	"path/filepath"
+	"slices"
 	"testing"
+	"time"
+
+	nodev1 "github.com/aegispanel/nodeapi/pandora/node/v1"
 
 	nodepanel "github.com/aegispanel/nodeagent/panel"
 )
 
-// 夹具是按面板实现独立重写的；这里用节点自己的签名客户端对打，保证它签出的
-// effective release 能被节点验过、节点的签名请求能被它验过。任何一边的协议
-// 改了而另一边没跟上，CI 在这里变红，而不是等到有人在验收机上跑脚本。
-func TestSignedChannelRoundTripWithNodeClient(t *testing.T) {
-	p := &panel{nodePort: 18443, statePath: filepath.Join(t.TempDir(), "state.json"), state: State{ReportPhases: []string{}}}
-	server := httptest.NewServer(p)
-	defer server.Close()
-	id, err := p.enableSigned("6f1c1f0e-2b7a-4c55-9a3e-1d2c3b4a5f60", server.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	client, err := nodepanel.NewSignedClient(&nodepanel.Identity{
-		Server: id.Server, NodeID: id.NodeID, Serial: id.Serial, PrivateKey: id.PrivateKey,
-		ConfigPublicKey: id.ConfigPublicKey, ConfigKeyID: id.ConfigKeyID, RuntimeToken: id.RuntimeToken,
+// 夹具是按面板契约独立实现的；这里用节点自己的接入与会话客户端对打，保证节点信得过它的证书、
+// 它认得节点的客户端证书与消息。任何一边的协议改了而另一边没跟上，CI 在这里变红，
+// 而不是等到有人在验收机上跑脚本。
+
+const testToken = "acceptance-token"
+
+func startPanel(t *testing.T) (*fakePanel, string) {
+	t.Helper()
+	p, err := newFakePanel(options{
+		serverName: "127.0.0.1", nodePort: 18443, token: testToken,
+		statePath: filepath.Join(t.TempDir(), "state.json"),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := context.Background()
-
-	cfg, err := client.Config(ctx)
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := client.VerifyConfig(cfg); err != nil {
-		t.Fatalf("node rejects the fixture's effective release: %v", err)
-	}
-	if err := client.ReportEffectiveConfig(ctx, cfg, "switched", ""); err != nil {
-		t.Fatal(err)
-	}
-	in := nodepanel.HeartbeatInput{AgentVersion: "test", RuntimeStatus: "running"}
-	in.AttachHostMetrics()
-	if _, err := client.Heartbeat(ctx, in); err != nil {
-		t.Fatal(err)
-	}
-
-	s := p.state
-	if s.Mode != "signed" || s.EffectiveConfigFetches != 1 || len(s.ReportPhases) != 1 || s.ReportPhases[0] != "switched" ||
-		s.Heartbeats != 1 || s.HeartbeatsWithMetrics != 1 || s.BadSignatures != 0 || s.UniProxyConfigHits != 0 {
-		t.Fatalf("unexpected observations: %+v", s)
-	}
+	go func() { _ = p.serve(lis) }()
+	t.Cleanup(func() { _ = lis.Close() })
+	return p, lis.Addr().String()
 }
 
-// 签名不对的请求必须被拒并计数，否则脚本的 bad_signatures == 0 断言形同虚设。
-func TestSignedChannelRejectsForgedRequest(t *testing.T) {
-	p := &panel{nodePort: 18443, statePath: filepath.Join(t.TempDir(), "state.json"), state: State{ReportPhases: []string{}}}
-	server := httptest.NewServer(p)
-	defer server.Close()
-	if _, err := p.enableSigned("6f1c1f0e-2b7a-4c55-9a3e-1d2c3b4a5f60", server.URL); err != nil {
-		t.Fatal(err)
-	}
-	req, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/nodes/heartbeat", nil)
-	req.Header.Set("X-Node-Id", p.nodeID)
-	req.Header.Set("X-Node-Sig", base64.StdEncoding.EncodeToString(make([]byte, 64)))
-	resp, err := http.DefaultClient.Do(req)
+func enroll(t *testing.T, p *fakePanel, addr string) (*nodepanel.Identity, error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return nodepanel.Enroll(ctx, nodepanel.EnrollOptions{
+		Panel: addr, CAFingerprint: p.caFingerprint(), Token: testToken,
+		Dir: t.TempDir(), AgentVersion: "test", Timeout: 5 * time.Second,
+	})
+}
+
+// startSession 接入并开会话，测试结束时取消并等 Run 返回。
+func startSession(t *testing.T, addr string, id *nodepanel.Identity, applied nodepanel.AppliedFunc) *nodepanel.Session {
+	t.Helper()
+	sess, err := nodepanel.NewSession(nodepanel.SessionOptions{
+		Address: addr, Identity: id, AgentVersion: "test", Applied: applied,
+		Logger: slog.New(slog.DiscardHandler),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized || p.state.BadSignatures != 1 || p.state.Heartbeats != 0 {
-		t.Fatalf("forged request: status %d, state %+v", resp.StatusCode, p.state)
-	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = sess.Run(ctx); close(done) }()
+	t.Cleanup(func() { cancel(); <-done })
+	return sess
 }
 
-func TestEnableSignedRequiresCanonicalNodeID(t *testing.T) {
-	p := &panel{}
-	for _, id := range []string{"", "runtime-acceptance", "6F1C1F0E-2B7A-4C55-9A3E-1D2C3B4A5F60", "00000000-0000-0000-0000-000000000000"} {
-		if _, err := p.enableSigned(id, "http://127.0.0.1:1"); err == nil {
-			t.Errorf("node id %q accepted", id)
+func nextEvent(t *testing.T, sess *nodepanel.Session, kind nodepanel.EventKind) nodepanel.Event {
+	t.Helper()
+	timeout := time.After(5 * time.Second)
+	for {
+		select {
+		case ev := <-sess.Events():
+			if ev.Kind == kind {
+				return ev
+			}
+			if ev.Kind != nodepanel.EventDisconnected {
+				t.Fatalf("等 %v，先来了 %v", kind, ev.Kind)
+			}
+		case <-timeout:
+			t.Fatalf("5 秒内没等到事件 %v", kind)
 		}
+	}
+}
+
+// waitState 轮询状态直到 ok，至多 5 秒。
+func waitState(t *testing.T, p *fakePanel, what string, ok func(State) bool) State {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		s := p.snapshot()
+		if ok(s) {
+			return s
+		}
+		if time.Now().After(deadline) {
+			raw, _ := json.Marshal(s)
+			t.Fatalf("5 秒内没看到%s：%s", what, raw)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestEnrollAndSessionAgainstNodeClient(t *testing.T) {
+	p, addr := startPanel(t)
+	id, err := enroll(t, p, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id.ServerID() != p.serverID {
+		t.Fatalf("server_id = %s，期望 %s", id.ServerID(), p.serverID)
+	}
+	sess := startSession(t, addr, id, func() ([]*nodev1.AppliedConfig, []*nodev1.AppliedUsers) { return nil, nil })
+
+	nextEvent(t, sess, nodepanel.EventWelcome)
+	cfg := nextEvent(t, sess, nodepanel.EventConfig).Config
+	if len(cfg.GetNodes()) != 1 {
+		t.Fatalf("配置里应有一个节点：%v", cfg)
+	}
+	nc := cfg.GetNodes()[0]
+	var doc map[string]any
+	if err := json.Unmarshal(nc.GetConfigJson(), &doc); err != nil || doc["server_port"] != float64(18443) || nc.GetNodeType() != "socks" {
+		t.Fatalf("节点配置不对：%s %s %v", nc.GetNodeType(), nc.GetConfigJson(), err)
+	}
+	sum := sha256.Sum256(nc.GetConfigJson())
+	if nc.GetContentSha256() != hex.EncodeToString(sum[:]) {
+		t.Fatal("content_sha256 与 config_json 对不上")
+	}
+	users := nextEvent(t, sess, nodepanel.EventUsersFull).UsersFull
+	if len(users.Users) != 1 || users.Version != usersVersion {
+		t.Fatalf("名单不对：%+v", users)
+	}
+
+	if !sess.SendHeartbeat(&nodev1.Heartbeat{Metrics: &nodev1.HostMetrics{CpuBp: 100},
+		Nodes: []*nodev1.NodeRuntime{{NodeId: nc.GetNodeId(), Status: nodev1.RuntimeStatus_RUNTIME_STATUS_RUNNING}}}) {
+		t.Fatal("心跳没发出去")
+	}
+	if !sess.SendConfigAck(&nodev1.ConfigAck{NodeId: nc.GetNodeId(), ContentSha256: nc.GetContentSha256(),
+		Phase: nodev1.ConfigPhase_CONFIG_PHASE_HEALTH_PASSED}) {
+		t.Fatal("配置回执没发出去")
+	}
+	if !sess.SendUsersAck(&nodev1.UsersAck{NodeId: nc.GetNodeId(), Version: usersVersion, Ok: true}) {
+		t.Fatal("名单回执没发出去")
+	}
+	if !sess.SendTraffic(&nodev1.TrafficReport{ReportId: "r1",
+		Entries: []*nodev1.TrafficEntry{{NodeId: nc.GetNodeId(), Uid: 1, Upload: 1, Download: 2}}}) {
+		t.Fatal("流量没发出去")
+	}
+	if ack := nextEvent(t, sess, nodepanel.EventTrafficAck); ack.ReportID != "r1" {
+		t.Fatalf("TrafficAck report_id = %q", ack.ReportID)
+	}
+	s := waitState(t, p, "心跳、回执与流量", func(s State) bool {
+		return s.HeartbeatsWithMetrics >= 1 && s.UsersAcksOK >= 1 && s.TrafficReports >= 1 &&
+			slices.Contains(s.ConfigPhases, "CONFIG_PHASE_HEALTH_PASSED")
+	})
+	if s.Enrolls != 1 || s.Hellos < 1 || s.BadClientCerts != 0 || s.MissingRequestIDs != 0 {
+		t.Fatalf("状态不对：%+v", s)
+	}
+	if !slices.Equal(s.LastRuntime, []string{"RUNTIME_STATUS_RUNNING"}) {
+		t.Fatalf("last_runtime = %v", s.LastRuntime)
+	}
+}
+
+// 同一令牌换一个身份目录（新的 request_id）再接入：令牌已用过，必须被拒。
+func TestEnrollRejectsReusedToken(t *testing.T) {
+	p, addr := startPanel(t)
+	if _, err := enroll(t, p, addr); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := enroll(t, p, addr); err == nil {
+		t.Fatal("令牌重用没被拒")
+	}
+	if s := p.snapshot(); s.Enrolls != 1 || s.EnrollRejections != 1 {
+		t.Fatalf("状态不对：%+v", s)
+	}
+}
+
+// Hello 报的已应用版本与面板当前一致时，面板不再重发配置与名单。
+func TestHelloWithAppliedVersionsSkipsResend(t *testing.T) {
+	p, addr := startPanel(t)
+	id, err := enroll(t, p, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := startSession(t, addr, id, func() ([]*nodev1.AppliedConfig, []*nodev1.AppliedUsers) {
+		return []*nodev1.AppliedConfig{{NodeId: p.nodeID, ContentSha256: p.configSHA}},
+			[]*nodev1.AppliedUsers{{NodeId: p.nodeID, Version: usersVersion}}
+	})
+	nextEvent(t, sess, nodepanel.EventWelcome)
+	select {
+	case ev := <-sess.Events():
+		t.Fatalf("Welcome 之后不该再有事件，来了 %v", ev.Kind)
+	case <-time.After(300 * time.Millisecond):
+	}
+	if s := p.snapshot(); s.HellosWithAppliedConfig != 1 {
+		t.Fatalf("hellos_with_applied_config = %d", s.HellosWithAppliedConfig)
 	}
 }

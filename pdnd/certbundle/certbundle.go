@@ -3,7 +3,7 @@
 //
 // 面板侧另有一份独立实现（panel/internal/platform/certbundle），两边用同一份金样本
 // testdata/certbundle-v1-golden.json 互相钉住，改一边必须同步另一边并重新生成金样本。
-// 写法沿用生效发布契约 aegis-node-effective-config-release-v1（pdnd/panel/effective_release.go）。
+// 写法沿用已删除的生效发布契约 aegis-node-effective-config-release-v1（节点通道换成 gRPC 之前的签名发布）。
 package certbundle
 
 import (

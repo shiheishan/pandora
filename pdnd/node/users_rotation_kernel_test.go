@@ -2,7 +2,6 @@ package node
 
 import (
 	"bufio"
-	"context"
 	"encoding/binary"
 	"errors"
 	"io"
@@ -12,11 +11,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
+	nodev1 "github.com/aegispanel/nodeapi/pandora/node/v1"
+
 	"github.com/aegispanel/nodeagent/core"
 	nativekernel "github.com/aegispanel/nodeagent/kernel"
 	"github.com/aegispanel/nodeagent/outbound"
-	"github.com/aegispanel/nodeagent/panel"
-	"github.com/google/uuid"
 )
 
 // 换凭据的端到端用例：真 NativeCore、真入站、真客户端握手。
@@ -44,20 +45,20 @@ func TestCredentialRotationOnRealKernel(t *testing.T) {
 	}
 	shapes := []struct {
 		name  string
-		delta func(id int64, fresh string) panel.StreamEvent
+		delta rotationDelta
 	}{
 		{
-			// 面板修复前的增量形状：同 ID 只给新记录。节点端单独也要挡住。
+			// 同 ID 只给新记录。节点端单独也要挡住。
 			name: "增量只给新记录",
-			delta: func(id int64, fresh string) panel.StreamEvent {
-				return panel.StreamEvent{Type: panel.EventSyncUserDelta, Added: []core.User{{ID: id, UUID: fresh}}}
+			delta: func(id int64, fresh string) ([]*nodev1.User, []int64) {
+				return []*nodev1.User{protoUser(id, fresh)}, nil
 			},
 		},
 		{
-			// 面板现在的形状：同 ID 先删旧、再加新。
+			// 同 ID 先删旧、再加新。
 			name: "增量删旧加新",
-			delta: func(id int64, fresh string) panel.StreamEvent {
-				return panel.StreamEvent{Type: panel.EventSyncUserDelta, Removed: []int64{id}, Added: []core.User{{ID: id, UUID: fresh}}}
+			delta: func(id int64, fresh string) ([]*nodev1.User, []int64) {
+				return []*nodev1.User{protoUser(id, fresh)}, []int64{id}
 			},
 		},
 	}
@@ -70,7 +71,10 @@ func TestCredentialRotationOnRealKernel(t *testing.T) {
 	}
 }
 
-func runRealKernelRotation(t *testing.T, protocol string, dial tunnelDialer, delta func(int64, string) panel.StreamEvent) {
+// rotationDelta 造一条换凭据的增量：(upserted, removed)。
+type rotationDelta func(id int64, fresh string) ([]*nodev1.User, []int64)
+
+func runRealKernelRotation(t *testing.T, protocol string, dial tunnelDialer, delta rotationDelta) {
 	const (
 		aliceID  = int64(7)
 		aliceOld = "6f1e0c1a-2b3d-4c5e-8f70-000000000001"
@@ -80,8 +84,11 @@ func runRealKernelRotation(t *testing.T, protocol string, dial tunnelDialer, del
 	)
 	echo := startEchoServer(t)
 	kernel := &addHookKernel{NativeCore: newNativeKernel(t)}
-	client := panel.New(panel.Options{BaseURL: "http://127.0.0.1:1", NodeID: "9", NodeType: protocol, Token: "token"})
-	n := New(client, kernel, testLogger())
+	ts := newTestServer(t, kernel, "")
+	ts.welcome()
+	n := ts.newNode("9", protocol)
+	ts.nodes["9"] = n
+	ts.order = []string{"9"}
 	port := freeTCPPort(t)
 	if err := kernel.AddInbound(&core.InboundConfig{Tag: n.tag, Protocol: protocol, Listen: "127.0.0.1", Port: port}); err != nil {
 		t.Fatal(err)
@@ -90,7 +97,7 @@ func runRealKernelRotation(t *testing.T, protocol string, dial tunnelDialer, del
 	if err := n.applyUsers([]core.User{{ID: aliceID, UUID: aliceOld}, {ID: bobID, UUID: bob}}); err != nil {
 		t.Fatal(err)
 	}
-	n.userVersion = panel.UsersVersionKey(`"v1"`)
+	n.userVersion = "v1"
 
 	oldTunnel := mustTunnel(t, dial, port, aliceOld, echo)
 	bobTunnel := mustTunnel(t, dial, port, bob, echo)
@@ -106,11 +113,10 @@ func runRealKernelRotation(t *testing.T, protocol string, dial tunnelDialer, del
 			}
 		}
 	}
-	ev := delta(aliceID, aliceNew)
-	ev.FromVersion, ev.ToVersion = `"v1"`, `"v2"`
-	n.applyStreamEvent(context.Background(), ev)
+	upserted, removed := delta(aliceID, aliceNew)
+	ts.usersDelta("9", "v1", "v2", upserted, removed...)
 	kernel.afterAdd = nil
-	if n.userVersion != panel.UsersVersionKey(`"v2"`) {
+	if n.userVersion != "v2" {
 		t.Fatalf("增量没有被应用（userVersion=%q）", n.userVersion)
 	}
 

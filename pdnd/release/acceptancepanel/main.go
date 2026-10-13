@@ -1,331 +1,383 @@
-// Command acceptancepanel 是 runtime-acceptance.sh 的模拟面板。
+// Command acceptancepanel 是 runtime-acceptance.sh 的模拟面板（gRPC）。
 //
-// 为什么是 Go 而不是 Python：签名通道要 Ed25519，Python 标准库没有；
-// 在发布门禁里塞一份纯 Python 椭圆曲线实现，出了错比被测对象还难查。
-// Go 本来就是构建前提，交叉编译一下就能带到没有 Go 的验收机上。
+// 实现面板的两个服务：EnrollmentService（一次性令牌 + CSR 换客户端证书）与 ControlService
+// （mTLS 会话：Hello → Welcome，按 Hello 报的已应用版本决定发不发配置与名单，收心跳、回执、
+// 流量并回 TrafficAck，会话内续期）。观测到的计数写进状态文件，脚本据此判定。
 //
-// 签名通道的原像与校验规则按面板实现独立重写一遍，而不是 import
-// pdnd/panel：夹具借用被测代码的实现，两边一起错时验收照样是绿的。
+// 为什么是 Go：要 gRPC、mTLS 与证书签发，Go 本来就是构建前提，交叉编译一下就能带到没有 Go 的验收机上。
+//
+// CA 指纹、证书、会话规则按面板契约独立实现，刻意不 import pdnd/panel：夹具借用被测代码的实现，
+// 两边一起错时验收照样是绿的。只有 main_test.go 用节点自己的客户端与它对打。
 package main
 
 import (
-	"crypto/ed25519"
-	"crypto/rand"
+	"context"
 	"crypto/sha256"
-	"encoding/base64"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
+	"net"
 	"os"
-	"strconv"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	nodev1 "github.com/aegispanel/nodeapi/pandora/node/v1"
+	"github.com/google/uuid"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/status"
 )
 
-const effectiveReleaseContract = "aegis-node-effective-config-release-v1"
+// usersVersion 是模拟面板下发的名单版本。
+const usersVersion = "u1-acceptance"
 
-// State 是脚本在验收结束时读取的观测结果。
+// State 是写进状态文件的观测计数。
 type State struct {
-	Mode                   string   `json:"mode"`
-	UniProxyConfigHits     int      `json:"uniproxy_config_hits"`
-	UniProxyStatusReports  int      `json:"uniproxy_status_reports"`
-	EffectiveConfigFetches int      `json:"effective_config_fetches"`
-	ReportPhases           []string `json:"report_phases"`
-	Heartbeats             int      `json:"heartbeats"`
-	HeartbeatsWithMetrics  int      `json:"heartbeats_with_metrics"`
-	BadSignatures          int      `json:"bad_signatures"`
+	Enrolls                 int      `json:"enrolls"`
+	EnrollRejections        int      `json:"enroll_rejections"`
+	Sessions                int      `json:"sessions"`
+	Hellos                  int      `json:"hellos"`
+	HellosWithAppliedConfig int      `json:"hellos_with_applied_config"`
+	Heartbeats              int      `json:"heartbeats"`
+	HeartbeatsWithMetrics   int      `json:"heartbeats_with_metrics"`
+	ConfigPhases            []string `json:"config_phases"`
+	UsersAcksOK             int      `json:"users_acks_ok"`
+	UsersAcksFailed         int      `json:"users_acks_failed"`
+	TrafficReports          int      `json:"traffic_reports"`
+	OnlineReports           int      `json:"online_reports"`
+	Renewals                int      `json:"renewals"`
+	BadClientCerts          int      `json:"bad_client_certs"`
+	MissingRequestIDs       int      `json:"missing_request_ids"`
+	LastRuntime             []string `json:"last_runtime"`
 }
 
-type identity struct {
-	Server          string `json:"server"`
-	NodeID          string `json:"node_id"`
-	Serial          int    `json:"serial"`
-	PrivateKey      string `json:"private_key"`
-	ConfigPublicKey string `json:"config_public_key"`
-	ConfigKeyID     string `json:"config_key_id"`
-	RuntimeToken    string `json:"runtime_token"`
+type options struct {
+	serverName string
+	nodePort   int
+	statePath  string
+	token      string
 }
 
-type panel struct {
-	nodePort  int
-	statePath string
+type fakePanel struct {
+	nodev1.UnimplementedEnrollmentServiceServer
+	nodev1.UnimplementedControlServiceServer
 
-	// 签名通道：nodePub 验节点请求，configPriv 签下发的配置
+	pki        *pki
+	creds      credentials.TransportCredentials
+	statePath  string
+	token      string
+	serverID   string
 	nodeID     string
-	nodePub    ed25519.PublicKey
-	configPriv ed25519.PrivateKey
-	keyID      string
-	tenantID   string
-	releaseID  string
+	userUUID   string
+	configJSON []byte
+	configSHA  string
 
-	mu    sync.Mutex
-	state State
+	mu sync.Mutex
+	// issued 按 request_id 记已签发的证书（同一 request_id 重放返回同一张）；tokenUsedBy 是令牌被哪个 request_id 用了。
+	issued      map[string][]byte
+	tokenUsedBy string
+	state       State
+}
+
+func newFakePanel(o options) (*fakePanel, error) {
+	if o.nodePort <= 0 || o.nodePort > 65535 {
+		return nil, fmt.Errorf("node-port 非法: %d", o.nodePort)
+	}
+	if strings.TrimSpace(o.token) == "" {
+		return nil, errors.New("令牌为空")
+	}
+	p, err := newPKI()
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := p.tlsConfig(o.serverName)
+	if err != nil {
+		return nil, err
+	}
+	configJSON, err := json.Marshal(map[string]any{"server_port": o.nodePort})
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(configJSON)
+	return &fakePanel{
+		pki:        p,
+		creds:      credentials.NewTLS(cfg),
+		statePath:  o.statePath,
+		token:      strings.TrimSpace(o.token),
+		serverID:   uuid.NewString(),
+		nodeID:     uuid.NewString(),
+		userUUID:   uuid.NewString(),
+		configJSON: configJSON,
+		configSHA:  hex.EncodeToString(sum[:]),
+		issued:     make(map[string][]byte),
+		state:      State{ConfigPhases: []string{}, LastRuntime: []string{}},
+	}, nil
+}
+
+func (p *fakePanel) caFingerprint() string { return p.pki.fingerprint() }
+
+// serve 在 lis 上跑 gRPC，直到 lis 关闭。
+func (p *fakePanel) serve(lis net.Listener) error {
+	srv := grpc.NewServer(grpc.Creds(p.creds))
+	nodev1.RegisterEnrollmentServiceServer(srv, p)
+	nodev1.RegisterControlServiceServer(srv, p)
+	return srv.Serve(lis)
+}
+
+// Enroll：令牌对且没被别的 request_id 用过才签；同一 request_id 重放返回同一张证书。
+func (p *fakePanel) Enroll(_ context.Context, req *nodev1.EnrollRequest) (*nodev1.EnrollResponse, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	reject := func(msg string) (*nodev1.EnrollResponse, error) {
+		p.state.EnrollRejections++
+		p.saveLocked()
+		return nil, status.Error(codes.PermissionDenied, msg)
+	}
+	if subtle.ConstantTimeCompare([]byte(req.GetToken()), []byte(p.token)) != 1 {
+		return reject("令牌无效")
+	}
+	rid := req.GetRequestId()
+	if rid == "" {
+		return nil, status.Error(codes.InvalidArgument, "request_id 为空")
+	}
+	if cert, ok := p.issued[rid]; ok {
+		return p.enrollResponse(cert), nil
+	}
+	if p.tokenUsedBy != "" {
+		return reject("令牌已用过")
+	}
+	cert, err := p.pki.signClient(req.GetCsrDer(), p.serverID)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	p.tokenUsedBy = rid
+	p.issued[rid] = cert
+	p.state.Enrolls++
+	p.saveLocked()
+	return p.enrollResponse(cert), nil
+}
+
+func (p *fakePanel) enrollResponse(cert []byte) *nodev1.EnrollResponse {
+	return &nodev1.EnrollResponse{ServerId: p.serverID, CertChainPem: cert, CaBundlePem: p.pki.caPEM}
+}
+
+// Session 是控制会话。
+func (p *fakePanel) Session(stream grpc.BidiStreamingServer[nodev1.SessionRequest, nodev1.SessionResponse]) error {
+	ctx := stream.Context()
+	p.record(func(s *State) { s.Sessions++ })
+	if !p.clientCertOK(ctx) {
+		p.record(func(s *State) { s.BadClientCerts++ })
+		return status.Error(codes.Unauthenticated, "客户端证书不对")
+	}
+	if md, _ := metadata.FromIncomingContext(ctx); len(md.Get("x-request-id")) == 0 || md.Get("x-request-id")[0] == "" {
+		p.record(func(s *State) { s.MissingRequestIDs++ })
+	}
+	first, err := stream.Recv()
+	if err != nil {
+		return err
+	}
+	hello := first.GetHello()
+	if hello == nil {
+		return status.Error(codes.InvalidArgument, "第一条消息必须是 Hello")
+	}
+	p.record(func(s *State) { s.Hellos++ })
+
+	var seq uint64
+	send := func(r *nodev1.SessionResponse) error {
+		seq++
+		r.Seq = seq
+		return stream.Send(r)
+	}
+	if err := send(&nodev1.SessionResponse{Body: &nodev1.SessionResponse_Welcome{Welcome: &nodev1.Welcome{
+		SessionId: uuid.NewString(), PushIntervalSec: 1, HeartbeatIntervalSec: 1, ServerTimeUnixMs: time.Now().UnixMilli(),
+	}}}); err != nil {
+		return err
+	}
+	if p.helloHasConfig(hello) {
+		p.record(func(s *State) { s.HellosWithAppliedConfig++ })
+	} else if err := send(&nodev1.SessionResponse{Body: &nodev1.SessionResponse_Config{Config: &nodev1.ServerConfig{
+		ReleaseId: p.configSHA[:16],
+		Nodes:     []*nodev1.NodeConfig{{NodeId: p.nodeID, NodeType: "socks", ConfigJson: p.configJSON, ContentSha256: p.configSHA}},
+	}}}); err != nil {
+		return err
+	}
+	if !p.helloHasUsers(hello) {
+		if err := send(&nodev1.SessionResponse{Body: &nodev1.SessionResponse_UsersFull{UsersFull: &nodev1.UsersFull{
+			NodeId: p.nodeID, Version: usersVersion, ChunkIndex: 0, ChunkTotal: 1,
+			Users: []*nodev1.User{{Uid: 1, Uuid: p.userUUID}},
+		}}}); err != nil {
+			return err
+		}
+	}
+
+	for {
+		req, err := stream.Recv()
+		if err != nil {
+			return err
+		}
+		switch body := req.GetBody().(type) {
+		case *nodev1.SessionRequest_Heartbeat:
+			hb := body.Heartbeat
+			p.record(func(s *State) {
+				s.Heartbeats++
+				if hb.GetMetrics() != nil {
+					s.HeartbeatsWithMetrics++
+				}
+				s.LastRuntime = s.LastRuntime[:0]
+				for _, n := range hb.GetNodes() {
+					s.LastRuntime = append(s.LastRuntime, n.GetStatus().String())
+				}
+			})
+		case *nodev1.SessionRequest_ConfigAck:
+			phase := body.ConfigAck.GetPhase().String()
+			p.record(func(s *State) { s.ConfigPhases = append(s.ConfigPhases, phase) })
+		case *nodev1.SessionRequest_UsersAck:
+			ok := body.UsersAck.GetOk()
+			p.record(func(s *State) {
+				if ok {
+					s.UsersAcksOK++
+				} else {
+					s.UsersAcksFailed++
+				}
+			})
+		case *nodev1.SessionRequest_Traffic:
+			p.record(func(s *State) { s.TrafficReports++ })
+			if err := send(&nodev1.SessionResponse{Body: &nodev1.SessionResponse_TrafficAck{
+				TrafficAck: &nodev1.TrafficAck{ReportId: body.Traffic.GetReportId()},
+			}}); err != nil {
+				return err
+			}
+		case *nodev1.SessionRequest_Online:
+			p.record(func(s *State) { s.OnlineReports++ })
+		case *nodev1.SessionRequest_Renew:
+			cert, err := p.pki.signClient(body.Renew.GetCsrDer(), p.serverID)
+			if err != nil {
+				return status.Error(codes.InvalidArgument, err.Error())
+			}
+			p.record(func(s *State) { s.Renewals++ })
+			if err := send(&nodev1.SessionResponse{Body: &nodev1.SessionResponse_Certificate{
+				Certificate: &nodev1.Certificate{CertChainPem: cert, CaBundlePem: p.pki.caPEM},
+			}}); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+// clientCertOK：带了本 CA 签的客户端证书（TLS 层已验链），且 URI SAN 是本服务器。
+func (p *fakePanel) clientCertOK(ctx context.Context) bool {
+	pr, ok := peer.FromContext(ctx)
+	if !ok {
+		return false
+	}
+	info, ok := pr.AuthInfo.(credentials.TLSInfo)
+	if !ok || len(info.State.VerifiedChains) == 0 || len(info.State.PeerCertificates) == 0 {
+		return false
+	}
+	want := "spiffe://pandora/server/" + p.serverID
+	for _, u := range info.State.PeerCertificates[0].URIs {
+		if u.String() == want {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *fakePanel) helloHasConfig(h *nodev1.Hello) bool {
+	for _, a := range h.GetAppliedConfigs() {
+		if a.GetNodeId() == p.nodeID && a.GetContentSha256() == p.configSHA {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *fakePanel) helloHasUsers(h *nodev1.Hello) bool {
+	for _, a := range h.GetAppliedUsers() {
+		if a.GetNodeId() == p.nodeID && a.GetVersion() == usersVersion {
+			return true
+		}
+	}
+	return false
+}
+
+// record 改状态并立即落盘：脚本随时可能读，也可能在任意时刻杀掉本进程。
+func (p *fakePanel) record(change func(*State)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	change(&p.state)
+	p.saveLocked()
+}
+
+// snapshot 返回状态的一份拷贝（测试用）。
+func (p *fakePanel) snapshot() State {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	s := p.state
+	s.ConfigPhases = append([]string(nil), s.ConfigPhases...)
+	s.LastRuntime = append([]string(nil), s.LastRuntime...)
+	return s
+}
+
+// saveLocked 原子写状态文件（写临时文件再 rename）；statePath 为空不写。
+func (p *fakePanel) saveLocked() {
+	if p.statePath == "" {
+		return
+	}
+	raw, _ := json.Marshal(p.state)
+	tmp, err := os.CreateTemp(filepath.Dir(p.statePath), ".state-*")
+	if err != nil {
+		return
+	}
+	_, werr := tmp.Write(raw)
+	cerr := tmp.Close()
+	if werr != nil || cerr != nil {
+		_ = os.Remove(tmp.Name())
+		return
+	}
+	if err := os.Rename(tmp.Name(), p.statePath); err != nil {
+		_ = os.Remove(tmp.Name())
+	}
 }
 
 func main() {
-	listen := flag.String("listen", "127.0.0.1:0", "listen address")
-	nodePort := flag.Int("node-port", 0, "inbound port handed to the node")
-	statePath := flag.String("state", "", "where to write observed events (JSON)")
-	identityPath := flag.String("identity", "", "signed mode: write a node identity here")
-	nodeID := flag.String("node-id", "", "signed mode: canonical lowercase UUID of the node")
+	listen := flag.String("listen", "127.0.0.1:0", "监听地址")
+	serverName := flag.String("server-name", "127.0.0.1", "面板证书的主机名或 IP")
+	nodePort := flag.Int("node-port", 0, "下发给节点的入站端口（必填）")
+	statePath := flag.String("state", "", "状态文件（必填）")
+	tokenFile := flag.String("token-file", "", "接入令牌文件（必填）")
+	fpOut := flag.String("ca-fingerprint-out", "", "CA 指纹写到这个文件（必填）")
 	flag.Parse()
-	if *nodePort <= 0 || *statePath == "" {
-		log.Fatal("-node-port and -state are required")
+	if *statePath == "" || *tokenFile == "" || *fpOut == "" || *nodePort == 0 {
+		log.Fatal("-node-port、-state、-token-file、-ca-fingerprint-out 都必填")
 	}
-
-	p := &panel{nodePort: *nodePort, statePath: *statePath, state: State{Mode: "compat", ReportPhases: []string{}}}
-	if *identityPath != "" {
-		id, err := p.enableSigned(*nodeID, "http://"+*listen)
-		if err != nil {
-			log.Fatal(err)
-		}
-		raw, _ := json.Marshal(id)
-		if err := os.WriteFile(*identityPath, raw, 0o600); err != nil {
-			log.Fatal(err)
-		}
-	}
-	p.save()
-	log.Fatal(http.ListenAndServe(*listen, p))
-}
-
-// enableSigned 生成节点密钥与配置签名密钥，返回要写给节点的身份。
-func (p *panel) enableSigned(nodeID, server string) (*identity, error) {
-	if !canonicalUUID(nodeID) {
-		return nil, fmt.Errorf("-node-id must be a canonical lowercase UUID, got %q", nodeID)
-	}
-	nodePub, nodePriv, err := ed25519.GenerateKey(rand.Reader)
+	token, err := os.ReadFile(*tokenFile)
 	if err != nil {
-		return nil, err
+		log.Fatal(err)
 	}
-	configPub, configPriv, err := ed25519.GenerateKey(rand.Reader)
+	p, err := newFakePanel(options{serverName: *serverName, nodePort: *nodePort, statePath: *statePath, token: string(token)})
 	if err != nil {
-		return nil, err
+		log.Fatal(err)
 	}
-	keySum := sha256.Sum256(configPub)
-	p.nodeID, p.nodePub, p.configPriv = nodeID, nodePub, configPriv
-	p.keyID = base64.RawURLEncoding.EncodeToString(keySum[:8])
-	p.tenantID, p.releaseID = newUUID(), newUUID()
-	p.state.Mode = "signed"
-	return &identity{
-		Server: server, NodeID: nodeID, Serial: 1,
-		PrivateKey:      base64.StdEncoding.EncodeToString(nodePriv),
-		ConfigPublicKey: base64.StdEncoding.EncodeToString(configPub),
-		ConfigKeyID:     p.keyID,
-		RuntimeToken:    "acceptance-runtime-token",
-	}, nil
-}
-
-func (p *panel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-	path := r.URL.Path
-	switch {
-	case strings.HasPrefix(path, "/api/v1/server/UniProxy/"):
-		p.uniProxy(w, r, strings.TrimPrefix(path, "/api/v1/server/UniProxy/"))
-	case strings.HasPrefix(path, "/v1/nodes/"):
-		if p.nodePub == nil || !p.verifyNodeRequest(r, body) {
-			p.record(func(s *State) { s.BadSignatures++ })
-			http.Error(w, `{"error":"invalid node signature"}`, http.StatusUnauthorized)
-			return
-		}
-		p.signed(w, r, path, body)
-	default:
-		w.WriteHeader(http.StatusNotFound)
+	if err := os.WriteFile(*fpOut, []byte(p.caFingerprint()+"\n"), 0o600); err != nil {
+		log.Fatal(err)
 	}
-}
-
-//------------------------------------------------------------------------------
-// UniProxy 兼容通道：配置只在兼容模式下发，用户表两种模式都要（节点的用户
-// 同步、流量与在线上报目前只走这条通道）
-//------------------------------------------------------------------------------
-
-func (p *panel) uniProxy(w http.ResponseWriter, r *http.Request, name string) {
-	switch {
-	case r.Method == http.MethodGet && name == "config":
-		p.record(func(s *State) { s.UniProxyConfigHits++ })
-		if p.nodePub != nil {
-			// 签名模式下节点不该来这里拿配置：拒掉并计数，真走错了路径，
-			// 入站起不来、状态里的计数也会暴露出来。
-			http.Error(w, `{"error":"config is served over the signed channel"}`, http.StatusGone)
-			return
-		}
-		w.Header().Set("ETag", `"runtime-v1"`)
-		writeJSON(w, p.nodeConfig())
-	case r.Method == http.MethodGet && name == "user":
-		writeJSON(w, map[string]any{"users": []any{}})
-	case r.Method == http.MethodPost:
-		if name == "status" {
-			p.record(func(s *State) { s.UniProxyStatusReports++ })
-		}
-		w.WriteHeader(http.StatusOK)
-	default:
-		// stream 等其余接口：告诉节点「没有」，它会退避重连，不影响验收
-		w.WriteHeader(http.StatusNoContent)
-	}
-}
-
-func (p *panel) nodeConfig() map[string]any {
-	return map[string]any{
-		"protocol": "socks", "server_port": p.nodePort,
-		"base_config": map[string]any{"pull_interval": 1, "push_interval": 1},
-	}
-}
-
-//------------------------------------------------------------------------------
-// 签名通道
-//------------------------------------------------------------------------------
-
-func (p *panel) signed(w http.ResponseWriter, r *http.Request, path string, body []byte) {
-	switch {
-	case r.Method == http.MethodGet && path == "/v1/nodes/config-signing-key":
-		w.WriteHeader(http.StatusNoContent)
-	case r.Method == http.MethodGet && path == "/v1/nodes/effective-config":
-		cfg, err := p.effectiveRelease(time.Now())
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		p.record(func(s *State) { s.EffectiveConfigFetches++ })
-		writeJSON(w, cfg)
-	case r.Method == http.MethodPost && path == "/v1/nodes/config/report":
-		var in struct {
-			ReleaseID string `json:"release_id"`
-			Phase     string `json:"phase"`
-			Detail    string `json:"detail"`
-		}
-		_ = json.Unmarshal(body, &in)
-		if in.ReleaseID != p.releaseID {
-			http.Error(w, `{"error":"unknown release"}`, http.StatusConflict)
-			return
-		}
-		p.record(func(s *State) { s.ReportPhases = append(s.ReportPhases, in.Phase) })
-		if in.Detail != "" {
-			log.Printf("config report %s: %s", in.Phase, in.Detail)
-		}
-		w.WriteHeader(http.StatusNoContent)
-	case r.Method == http.MethodPost && path == "/v1/nodes/heartbeat":
-		var in struct {
-			Metrics json.RawMessage `json:"metrics"`
-		}
-		_ = json.Unmarshal(body, &in)
-		withMetrics := len(in.Metrics) > 0 && string(in.Metrics) != "null"
-		p.record(func(s *State) {
-			s.Heartbeats++
-			if withMetrics {
-				s.HeartbeatsWithMetrics++
-			}
-		})
-		writeJSON(w, map[string]any{"node_status": "active", "interval_seconds": 30})
-	default:
-		w.WriteHeader(http.StatusNotFound)
-	}
-}
-
-// verifyNodeRequest 按面板 requireNodeSignature 的 V2 原像验节点签名。
-func (p *panel) verifyNodeRequest(r *http.Request, body []byte) bool {
-	if r.Header.Get("X-Node-Id") != p.nodeID {
-		return false
-	}
-	ts, err := time.Parse(time.RFC3339, r.Header.Get("X-Node-Ts"))
-	if err != nil || time.Since(ts).Abs() > 5*time.Minute {
-		return false
-	}
-	sig, err := base64.StdEncoding.DecodeString(r.Header.Get("X-Node-Sig"))
-	if err != nil {
-		return false
-	}
-	sum := sha256.Sum256(body)
-	payload := "PANDORA-NODE-REQUEST-V2\n" + r.Method + "\n" + r.URL.Path + "\n" + p.nodeID + "\n" +
-		r.Header.Get("X-Node-Ts") + "\n" + r.Header.Get("X-Node-Nonce") + "\n" + base64.StdEncoding.EncodeToString(sum[:])
-	return ed25519.Verify(p.nodePub, []byte(payload), sig)
-}
-
-// effectiveRelease 签发一份 effective release，原像与面板 effective_release_codec 同构。
-func (p *panel) effectiveRelease(now time.Time) (map[string]any, error) {
-	payload, err := json.Marshal(p.nodeConfig())
-	if err != nil {
-		return nil, err
-	}
-	manifest := []byte(`{"sources":["runtime-acceptance"]}`)
-	contentSum, manifestSum := sha256.Sum256(payload), sha256.Sum256(manifest)
-	content := base64.StdEncoding.EncodeToString(contentSum[:])
-	manifestHash := base64.StdEncoding.EncodeToString(manifestSum[:])
-	issued := now.UTC().Truncate(time.Microsecond)
-	expires := issued.Add(5 * time.Minute)
-	preimage := effectiveReleaseContract + "\n" +
-		"tenant_id=" + p.tenantID + "\n" +
-		"node_id=" + p.nodeID + "\n" +
-		"release_id=" + p.releaseID + "\n" +
-		"generation=" + strconv.Itoa(1) + "\n" +
-		"content_sha256=" + content + "\n" +
-		"source_manifest_sha256=" + manifestHash + "\n" +
-		"key_id=" + p.keyID + "\n" +
-		"issued_at=" + issued.Format(time.RFC3339Nano) + "\n" +
-		"expires_at=" + expires.Format(time.RFC3339Nano) + "\n"
-	return map[string]any{
-		"config_contract": effectiveReleaseContract,
-		"tenant_id":       p.tenantID, "node_id": p.nodeID, "release_id": p.releaseID, "generation": 1,
-		"content_sha256": content, "hash": content,
-		"source_manifest": json.RawMessage(manifest), "source_manifest_sha256": manifestHash,
-		"issued_at": issued, "expires_at": expires, "key_id": p.keyID,
-		"payload":   json.RawMessage(payload),
-		"signature": base64.StdEncoding.EncodeToString(ed25519.Sign(p.configPriv, []byte(preimage))),
-	}, nil
-}
-
-//------------------------------------------------------------------------------
-// 杂项
-//------------------------------------------------------------------------------
-
-// record 改状态并立即落盘：脚本随时可能读，也可能在任意时刻杀掉本进程。
-func (p *panel) record(change func(*State)) {
 	p.mu.Lock()
-	change(&p.state)
+	p.saveLocked()
 	p.mu.Unlock()
-	p.save()
-}
-
-func (p *panel) save() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	raw, _ := json.Marshal(p.state)
-	tmp := p.statePath + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0o600); err == nil {
-		_ = os.Rename(tmp, p.statePath)
+	lis, err := net.Listen("tcp", *listen)
+	if err != nil {
+		log.Fatal(err)
 	}
-}
-
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-func newUUID() string {
-	var b [16]byte
-	_, _ = rand.Read(b[:])
-	b[6] = b[6]&0x0f | 0x40
-	b[8] = b[8]&0x3f | 0x80
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
-}
-
-func canonicalUUID(s string) bool {
-	if len(s) != 36 || strings.ToLower(s) != s || s == "00000000-0000-0000-0000-000000000000" {
-		return false
-	}
-	for i, c := range s {
-		switch i {
-		case 8, 13, 18, 23:
-			if c != '-' {
-				return false
-			}
-		default:
-			if !strings.ContainsRune("0123456789abcdef", c) {
-				return false
-			}
-		}
-	}
-	return true
+	log.Printf("acceptance panel listening on %s", lis.Addr())
+	log.Fatal(p.serve(lis))
 }

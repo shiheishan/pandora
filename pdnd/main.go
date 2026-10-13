@@ -1,25 +1,27 @@
 // pandora-native 是 AegisPanel 的自研节点端（module 沿用旧名 aegispanel/nodeagent）。
 //
-// 与 XrayR / V2bX 的接入面相同，区别在于：
 //   - Pandora NativeCore 负责协议、传输、路由和统计；默认构建只跑 NativeCore，兼容层只在
 //     -tags compat 的迁移构建里出现
 //   - 流量按用户在连接层统计，TCP 与 UDP 都计入
-//   - 一个进程可带多个节点（不同协议、不同端口），互不影响
+//   - 一台服务器一个进程、一个身份、一条到面板的 gRPC 会话（mTLS），名下多个节点（入站），
+//     节点列表与配置都由面板下发
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"os/signal"
-	"runtime"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -37,189 +39,96 @@ type config struct {
 	// NativeCore-only default) and an explicit false migration override in a
 	// separately built compat binary.
 	NativeOnly *bool `json:"native_only"`
-	// CacheDir 是状态目录：落盘缓存（最后一份装上的配置与用户名单）与迁出只读
-	// 目录的身份文件都放在 <cache_dir>/panel-<面板哈希>/<节点 ID>/ 下。缺省
-	// /var/lib/pandora-native，与 systemd 单元的 StateDirectory 一致。
+	// CacheDir 是状态目录：落盘缓存（各节点最后一份装上的配置与名单）放在
+	// <cache_dir>/nodes/ 下。缺省 /var/lib/pandora-native，与 systemd 单元的 StateDirectory 一致。
 	CacheDir string `json:"cache_dir"`
 	Panel    struct {
-		URL string `json:"url"`
-		// IdentityPath is the Ed25519 node identity created by bootstrap.
-		// Keep it configurable so packaged installations and custom layouts
-		// use the exact same path at bootstrap and runtime.
-		IdentityPath   string `json:"identity_path"`
-		SignedRequired bool   `json:"signed_required"`
-		// TimeoutSeconds 是单次面板请求的上限。
-		// 比拉取间隔小才有意义，否则请求会互相堆叠。
-		TimeoutSeconds int `json:"timeout_seconds"`
+		// Address 是面板节点通道的 host:port（只给 host 时补缺省端口 9443）。
+		Address string `json:"address"`
+		// IdentityDir 是 enroll 写下的身份目录（ca.pem、cert.pem、key.pem、server_id）。
+		// 续期要原地换证书，所以必须在服务可写的路径里（缺省在 StateDirectory 下）。
+		IdentityDir string `json:"identity_dir"`
 	} `json:"panel"`
 	// Runtime 是可选的连接回收、停机排空与内存上限调优，见 runtime_tuning.go。
 	Runtime runtimeTuning `json:"runtime"`
-	Nodes   []struct {
-		NodeID       string `json:"node_id"`
-		NodeType     string `json:"node_type"`
-		Token        string `json:"token"`
-		IdentityPath string `json:"identity_path"`
-	} `json:"nodes"`
 }
 
 // buildVersion is injected by the release builder and intentionally defaults
 // to dev for local builds.
 var buildVersion = "dev"
 
-func bootstrapCommand(args []string) error {
-	fs := flag.NewFlagSet("bootstrap", flag.ContinueOnError)
-	server := fs.String("server", "", "控制面地址")
-	token := fs.String("token", "", "一次性引导令牌")
-	name := fs.String("name", "", "节点名称")
-	path := fs.String("identity", panel.DefaultIdentityPath, "身份文件路径")
+// enrollCommand 是首次接入：一次性令牌 + 本机生成的 CSR 换客户端证书，写进身份目录。
+//
+// 令牌只从文件或标准输入读，不收命令行参数：argv 对本机所有用户可见（ps、/proc），
+// 也会留在 shell 历史里。
+func enrollCommand(args []string, stdin io.Reader) error {
+	fs := flag.NewFlagSet("enroll", flag.ContinueOnError)
+	panelAddr := fs.String("panel", "", "面板节点通道 host:port")
+	caSHA := fs.String("ca-sha256", "", "面板 CA 指纹（sha256:<hex>，安装命令给的）")
+	tokenFile := fs.String("token-file", "", "从这个文件读一次性接入令牌")
+	tokenStdin := fs.Bool("token-stdin", false, "从标准输入读一次性接入令牌")
+	identityDir := fs.String("identity-dir", panel.DefaultIdentityDir, "身份目录")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	// 单阶段引导已经下线：服务端的 POST /v1/nodes/bootstrap 不看内容一律返回
-	// 426，要求走 /v1/nodes/enrollments。这个子命令的参数和 `enrollment begin`
-	// 逐个对应，所以保留命令名、把语义改成两阶段接入的第一步——照旧习惯敲
-	// bootstrap 的人不会再撞在一个光秃秃的 HTTP 426 上。
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	if fs.NArg() > 0 {
+		return fmt.Errorf("多余的参数：%v", fs.Args())
+	}
+	if *panelAddr == "" || *caSHA == "" {
+		return errors.New("--panel 与 --ca-sha256 必填")
+	}
+	token, err := readToken(*tokenFile, *tokenStdin, stdin)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	j, err := panel.BeginEnrollment(ctx, panel.BootstrapOptions{Server: *server, Token: *token, Name: *name, Path: *path})
-	if err != nil {
-		return err
-	}
-	fmt.Printf("enrollment pending\n  enrollment id: %s\n  node id: %s\n  serial: %d\n  journal: %s\n",
-		j.EnrollmentID, j.NodeID, j.Serial, panel.EnrollmentJournalPath(*path))
-	fmt.Printf("下一步：装好配置与 unit 之后执行\n"+
-		"  %s enrollment commit --identity %s \\\n"+
-		"    --binary-sha256 <二进制> --config-sha256 <配置> \\\n"+
-		"    --unit-sha256 <unit> --preflight-sha256 <预检证据>\n",
-		os.Args[0], *path)
-	return nil
-}
-
-func enrollmentCommand(args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("enrollment subcommand is required: begin, status, commit, abort")
-	}
-	subcommand := args[0]
-	fs := flag.NewFlagSet("enrollment "+subcommand, flag.ContinueOnError)
-	identityPath := fs.String("identity", panel.DefaultIdentityPath, "final identity file path")
-	server := fs.String("server", "", "control-plane URL")
-	token := fs.String("token", "", "one-time bootstrap token")
-	tokenFile := fs.String("token-file", "", "read one-time bootstrap token from a protected file")
-	name := fs.String("name", "", "node name")
-	reason := fs.String("reason", "local installation failed before commit", "abort reason")
-	binarySHA := fs.String("binary-sha256", "", "installed binary SHA-256")
-	configSHA := fs.String("config-sha256", "", "installed config SHA-256")
-	unitSHA := fs.String("unit-sha256", "", "installed unit SHA-256")
-	preflightSHA := fs.String("preflight-sha256", "", "preflight evidence SHA-256")
-	if err := fs.Parse(args[1:]); err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	switch subcommand {
-	case "begin":
-		if *tokenFile != "" {
-			if *token != "" {
-				return fmt.Errorf("token and token-file are mutually exclusive")
-			}
-			raw, readErr := os.ReadFile(*tokenFile)
-			if readErr != nil {
-				return readErr
-			}
-			*token = strings.TrimSpace(string(raw))
-		}
-		j, err := panel.BeginEnrollment(ctx, panel.BootstrapOptions{Server: *server, Token: *token, Name: *name, Path: *identityPath})
-		if err != nil {
-			return err
-		}
-		fmt.Printf("enrollment pending\n  enrollment id: %s\n  node id: %s\n  serial: %d\n  journal: %s\n", j.EnrollmentID, j.NodeID, j.Serial, panel.EnrollmentJournalPath(*identityPath))
-		return nil
-	case "status":
-		j, err := panel.LoadEnrollmentJournal(*identityPath)
-		if err != nil {
-			return err
-		}
-		if err := panel.EnrollmentStatus(ctx, *identityPath, j); err != nil {
-			return err
-		}
-		fmt.Printf("enrollment state: %s\n", j.State)
-		if j.State == "committed" {
-			if _, err := panel.PromoteCommittedEnrollment(*identityPath, j); err != nil {
-				return err
-			}
-		}
-		return nil
-	case "commit":
-		j, err := panel.LoadEnrollmentJournal(*identityPath)
-		if err != nil {
-			return err
-		}
-		_, err = panel.CommitEnrollment(ctx, *identityPath, j, panel.EnrollmentEvidence{AgentVersion: buildVersion,
-			Architecture: runtime.GOARCH, BinarySHA256: *binarySHA, ConfigSHA256: *configSHA, UnitSHA256: *unitSHA, PreflightSHA256: *preflightSHA})
-		return err
-	case "abort":
-		j, err := panel.LoadEnrollmentJournal(*identityPath)
-		if err != nil {
-			return err
-		}
-		return panel.AbortEnrollment(ctx, *identityPath, j, *reason)
-	default:
-		return fmt.Errorf("unknown enrollment subcommand %q", subcommand)
-	}
-}
-
-func verifyIdentityCommand(args []string) error {
-	fs := flag.NewFlagSet("verify-identity", flag.ContinueOnError)
-	path := fs.String("identity", panel.DefaultIdentityPath, "identity file path")
-	nodeID := fs.String("node-id", "", "expected node ID")
-	expectedServer := fs.String("expected-server", "", "expected control-plane URL")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if *nodeID == "" {
-		return fmt.Errorf("node-id is required")
-	}
-	identity, err := panel.LoadIdentity(*path)
-	if err != nil {
-		return err
-	}
-	if identity.NodeID != *nodeID {
-		return fmt.Errorf("identity node %s does not match configured node %s", identity.NodeID, *nodeID)
-	}
-	if *expectedServer == "" {
-		return fmt.Errorf("expected-server is required")
-	}
-	expected, err := panel.CanonicalSignedServer(*expectedServer)
-	if err != nil {
-		return err
-	}
-	actual, err := panel.CanonicalSignedServer(identity.Server)
-	if err != nil || actual != expected {
-		return fmt.Errorf("identity control plane does not match expected server")
-	}
-	client, err := panel.NewSignedClientAt(identity, *path)
-	if err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	out, err := client.Heartbeat(ctx, panel.HeartbeatInput{
-		AgentVersion:  buildVersion,
-		RuntimeStatus: "installing",
+	id, err := panel.Enroll(ctx, panel.EnrollOptions{
+		Panel: *panelAddr, CAFingerprint: *caSHA, Token: token, Dir: *identityDir,
+		AgentVersion: buildVersion, Host: panel.CollectHostInfo(),
 	})
 	if err != nil {
-		return fmt.Errorf("signed heartbeat failed: %w", err)
+		return err
 	}
-	if out == nil || out.NodeStatus == "" {
-		return fmt.Errorf("signed heartbeat response is incomplete")
-	}
+	fmt.Printf("enrolled\n  server id: %s\n  identity: %s\n  certificate expires: %s\n",
+		id.ServerID(), id.Dir(), id.NotAfter().UTC().Format(time.RFC3339))
 	return nil
+}
+
+// readToken 从 --token-file 或 --token-stdin 取令牌，二者必须且只能给一个。
+func readToken(file string, fromStdin bool, stdin io.Reader) (string, error) {
+	switch {
+	case file != "" && fromStdin:
+		return "", errors.New("--token-file 与 --token-stdin 只能给一个")
+	case file != "":
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			return "", err
+		}
+		return nonEmptyToken(string(raw))
+	case fromStdin:
+		line, err := bufio.NewReader(io.LimitReader(stdin, 4096)).ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return "", err
+		}
+		return nonEmptyToken(line)
+	default:
+		return "", errors.New("需要 --token-file 或 --token-stdin（令牌不收命令行参数）")
+	}
+}
+
+func nonEmptyToken(raw string) (string, error) {
+	token := strings.TrimSpace(raw)
+	if token == "" {
+		return "", errors.New("接入令牌为空")
+	}
+	return token, nil
 }
 
 func validateInstallCommand(args []string) error {
 	fs := flag.NewFlagSet("validate-install", flag.ContinueOnError)
 	configPath := fs.String("config", defaultConfigPath, "config file")
-	identityPath := fs.String("identity", panel.DefaultIdentityPath, "final or pending identity file")
+	identityDir := fs.String("identity-dir", "", "身份目录（缺省取配置里的 panel.identity_dir）")
 	unitPath := fs.String("unit", "", "systemd unit file")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -227,13 +136,16 @@ func validateInstallCommand(args []string) error {
 	if *unitPath == "" {
 		return fmt.Errorf("unit is required")
 	}
-	if _, err := loadConfig(*configPath); err != nil {
+	cfg, err := loadConfig(*configPath)
+	if err != nil {
 		return fmt.Errorf("config validation failed: %w", err)
 	}
-	if _, err := panel.LoadIdentity(*identityPath); err != nil {
-		if _, journalErr := panel.LoadEnrollmentJournal(*identityPath); journalErr != nil {
-			return fmt.Errorf("identity validation failed: %w", err)
-		}
+	dir := *identityDir
+	if dir == "" {
+		dir = cfg.identityDir()
+	}
+	if _, err := panel.LoadIdentity(dir); err != nil {
+		return fmt.Errorf("identity validation failed: %w", err)
 	}
 	unit, err := os.ReadFile(*unitPath)
 	if err != nil {
@@ -267,8 +179,8 @@ func validateInstallCommand(args []string) error {
 	if directives["ExecStart"] == "" {
 		return fmt.Errorf("unit validation failed: missing ExecStart=")
 	}
-	if strings.Contains(unitText, "--token ") || strings.Contains(unitText, "--token=") {
-		return fmt.Errorf("unit validation failed: runtime token in ExecStart")
+	if strings.Contains(unitText, "--token") {
+		return fmt.Errorf("unit validation failed: token in ExecStart")
 	}
 	fmt.Println("install validation passed: config identity unit")
 	return nil
@@ -277,16 +189,9 @@ func validateInstallCommand(args []string) error {
 const defaultConfigPath = "/etc/pandora-native/config.json"
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "bootstrap" {
-		if err := bootstrapCommand(os.Args[2:]); err != nil {
-			fmt.Fprintln(os.Stderr, "bootstrap failed:", err)
-			os.Exit(1)
-		}
-		return
-	}
-	if len(os.Args) > 1 && os.Args[1] == "verify-identity" {
-		if err := verifyIdentityCommand(os.Args[2:]); err != nil {
-			fmt.Fprintln(os.Stderr, "identity verification failed:", err)
+	if len(os.Args) > 1 && os.Args[1] == "enroll" {
+		if err := enrollCommand(os.Args[2:], os.Stdin); err != nil {
+			fmt.Fprintln(os.Stderr, "enroll failed:", err)
 			os.Exit(1)
 		}
 		return
@@ -294,13 +199,6 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "validate-install" {
 		if err := validateInstallCommand(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "install validation failed:", err)
-			os.Exit(1)
-		}
-		return
-	}
-	if len(os.Args) > 1 && os.Args[1] == "enrollment" {
-		if err := enrollmentCommand(os.Args[2:]); err != nil {
-			fmt.Fprintln(os.Stderr, "enrollment failed:", err)
 			os.Exit(1)
 		}
 		return
@@ -348,82 +246,89 @@ func main() {
 		fmt.Fprintln(os.Stderr, "读取配置失败:", err)
 		os.Exit(1)
 	}
-
 	log := installLogger(cfg.LogLevel, os.Stdout)
 	cfg.Runtime.apply(log)
+	if err := run(cfg, log); err != nil {
+		log.Error(err.Error())
+		os.Exit(1)
+	}
+}
+
+// run 是守护进程：读身份、起内核、按落盘缓存冷启动、连面板，收到 SIGTERM 后按序收尾。
+func run(cfg *config, log *slog.Logger) error {
+	id, err := panel.LoadIdentity(cfg.identityDir())
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("还没接入面板：先运行 pandora-native enroll --panel <host:port> --ca-sha256 <指纹> --token-file <文件>（身份目录 %s）", cfg.identityDir())
+		}
+		return fmt.Errorf("身份目录不可用: %w", err)
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	kernel, err := newRuntime(log, cfg.nativeOnly())
 	if err != nil {
-		log.Error("创建内核失败", "err", err)
-		os.Exit(1)
+		return fmt.Errorf("创建内核失败: %w", err)
 	}
 	if err := kernel.Start(ctx); err != nil {
-		log.Error("启动内核失败", "err", err)
-		os.Exit(1)
+		return fmt.Errorf("启动内核失败: %w", err)
 	}
 	defer kernel.Close()
-	log.Info("内核已启动", "kernel", kernel.Type(), "version", buildVersion, "节点数", len(cfg.Nodes))
+	log.Info("内核已启动", "kernel", kernel.Type(), "version", buildVersion, "server", id.ServerID())
 
-	stateDir := cfg.stateDir()
-	var nodes []runningNode
-	for _, nc := range cfg.Nodes {
-		client := panel.New(panel.Options{
-			BaseURL:  cfg.Panel.URL,
-			NodeID:   nc.NodeID,
-			NodeType: nc.NodeType,
-			Token:    nc.Token,
-			Timeout:  time.Duration(cfg.Panel.TimeoutSeconds) * time.Second,
-		})
-		var signed *panel.SignedClient
-		identityPath := cfg.identityPath(nc.IdentityPath)
-		// 身份文件所在目录对服务不可写（安装脚本放在 /etc 下）时迁到状态目录，
-		// 否则面板轮换配置签名密钥时新公钥写不回去，节点从此验签失败。
-		if resolved, resolveErr := panel.ResolveIdentityPath(identityPath, stateDir, cfg.Panel.URL, nc.NodeID); resolveErr != nil {
-			log.Warn("身份文件不能迁到状态目录，配置签名密钥轮换将无法持久化", "node", nc.NodeID, "identity", identityPath, "err", resolveErr)
-		} else if resolved != identityPath {
-			log.Info("身份文件所在目录不可写，改用状态目录里的副本（原文件保留作回退）", "node", nc.NodeID, "from", identityPath, "to", resolved)
-			identityPath = resolved
-		}
-		identity, identityErr := panel.LoadIdentity(identityPath)
-		if identityErr == nil && identity.NodeID != nc.NodeID {
-			identityErr = fmt.Errorf("identity node %s does not match configured node %s", identity.NodeID, nc.NodeID)
-		}
-		if identityErr == nil {
-			signed, identityErr = panel.NewSignedClientAt(identity, identityPath)
-		}
-		if identityErr != nil {
-			if cfg.Panel.SignedRequired {
-				log.Error("签名身份不可用，已拒绝启动该节点", "node", nc.NodeID, "identity", identityPath, "err", identityErr)
-				continue
-			}
-			log.Warn("签名客户端不可用，使用兼容通道", "node", nc.NodeID, "identity", identityPath, "err", identityErr)
-		}
-		n := node.NewWithSignedClient(client, kernel, log, signed)
-		n.SetCacheDir(stateDir)
-		nodes = append(nodes, runningNode{n: n, done: make(chan struct{})})
+	srv := node.New(node.Options{ServerID: id.ServerID(), Kernel: kernel, Logger: log, CacheDir: cfg.stateDir()})
+	// 先用落盘缓存把上次的节点装起来：面板不可达也照常服务，第一条 Hello 就带着这些版本。
+	srv.Start()
+
+	sess, err := panel.NewSession(panel.SessionOptions{
+		Address: cfg.Panel.Address, Identity: id, AgentVersion: buildVersion,
+		BinarySHA256: binarySHA256(), Applied: srv.Applied, Logger: log,
+	})
+	if err != nil {
+		return err
 	}
-	// 冷启动按 nodes[] 顺序首装入站：同机端口先到先得，赢家不随 goroutine 竞速变。
-	// 次序只排真正起来的节点（被拒绝启动的不占位，否则后面的节点会一直等它）。
-	order := node.NewStartupOrder(len(nodes))
-	for index, running := range nodes {
-		running.n.SetStartupOrder(order, index)
-		go func() {
-			defer close(running.done)
-			running.n.Run(ctx)
-		}()
-	}
+	// 会话比主循环活得久：关停时主循环先停，最后一轮流量还要经会话交给面板。
+	sessCtx, sessCancel := context.WithCancel(context.Background())
+	sessDone := make(chan struct{})
+	go func() {
+		defer close(sessDone)
+		// Tombstone 之后不再重连（会话已记日志），节点继续用缓存服务直到进程退出。
+		_ = sess.Run(sessCtx)
+	}()
+	loopDone := make(chan struct{})
+	go func() {
+		defer close(loopDone)
+		srv.Run(ctx, sess)
+	}()
 
 	<-ctx.Done()
 	log.Info("收到退出信号，正在收尾")
-	shutdown(log, kernel, nodes)
+	shutdown(log, kernel, srv, loopDone)
+	sessCancel()
+	select {
+	case <-sessDone:
+	case <-time.After(2 * time.Second):
+	}
+	return nil
 }
 
-// runningNode 是一个在跑的节点与它主循环结束的信号。
-type runningNode struct {
-	n    *node.Node
-	done chan struct{}
+// binarySHA256 是本进程二进制的 SHA-256（Hello 里自报，面板据此提示版本不一致）；读不到返回空串。
+func binarySHA256() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	f, err := os.Open(exe)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // trafficDrainer 是内核「先关停、再交出最后一轮流量」的可选契约（NativeCore 实现）。
@@ -431,16 +336,15 @@ type trafficDrainer interface {
 	CloseAndDrainTraffic() (map[string][]core.UserTraffic, error)
 }
 
-// shutdown 是退出顺序：等各节点主循环停下 → 关内核（在途 TCP 连接此时把流量
-// 入账）→ 各节点把最后一轮流量与积压的待报流量交给面板。
+// shutdown 是退出顺序：等主循环停下 → 关内核（在途 TCP 连接此时把流量入账）→ 把最后一轮
+// 流量与积压的待报流量经会话交给面板、等它确认。
 //
-// 原先是各节点先报、main 的 defer 再关内核，在途连接的流量每次重启都丢。给足
-// 时限但不无限等：面板不可达时死等会让 systemd 最终强杀（TimeoutStopSec=30s：
-// 内核排空 5 秒 + 强制关闭至多 3 秒 + 最后一次上报至多 10 秒，留出余量）。
-func shutdown(log *slog.Logger, kernel core.Core, nodes []runningNode) {
-	// 内核关停（停 accept → 排空 → 强制关）与等各节点主循环停下并行：排空要等
-	// 几秒，没必要排在主循环后面，总时长才压得进 TimeoutStopSec。内核关停不碰
-	// 节点状态；主循环此刻若还在调内核，只会拿到「已关闭」错误。
+// 原先是先报、再关内核，在途连接的流量每次重启都丢。给足时限但不无限等：面板不可达时
+// 死等会让 systemd 最终强杀（TimeoutStopSec=30s：内核排空 5 秒 + 强制关闭至多 3 秒 +
+// 最后一次上报至多 10 秒，留出余量）。
+func shutdown(log *slog.Logger, kernel core.Core, srv *node.Server, loopDone <-chan struct{}) {
+	// 内核关停（停 accept → 排空 → 强制关）与等主循环停下并行：排空要等几秒，没必要排在
+	// 主循环后面。内核关停不碰节点状态；主循环此刻若还在调内核，只会拿到「已关闭」错误。
 	drained := map[string][]core.UserTraffic{}
 	haveDrained := false
 	drainDone := make(chan struct{})
@@ -458,39 +362,21 @@ func shutdown(log *slog.Logger, kernel core.Core, nodes []runningNode) {
 		close(drainDone)
 	}
 
-	stopped := make([]bool, len(nodes))
-	loopDeadline := time.After(5 * time.Second)
-	for i, item := range nodes {
-		select {
-		case <-item.done:
-			stopped[i] = true
-		case <-loopDeadline:
-		}
+	stopped := false
+	select {
+	case <-loopDone:
+		stopped = true
+	case <-time.After(5 * time.Second):
 	}
 	<-drainDone
 
-	finalCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	var wg sync.WaitGroup
-	for i, item := range nodes {
-		n := item.n
-		if !stopped[i] {
-			// 主循环还没停（卡在某个内核调用里），不能和它并发动节点状态。
-			log.Warn("节点主循环未在时限内停下，跳过最后一次上报", "node", n.Tag())
-			continue
-		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			n.Shutdown(finalCtx, drained[n.Tag()], haveDrained)
-		}()
-	}
-	done := make(chan struct{})
-	go func() { wg.Wait(); close(done) }()
-	select {
-	case <-done:
-	case <-finalCtx.Done():
-		log.Warn("收尾超时，强制退出")
+	if stopped {
+		finalCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		srv.Shutdown(finalCtx, drained, haveDrained)
+		cancel()
+	} else {
+		// 主循环还没停（卡在某个内核调用里），不能和它并发动节点状态。
+		log.Warn("主循环未在时限内停下，跳过最后一次上报")
 	}
 	if !haveDrained {
 		_ = kernel.Close()
@@ -511,14 +397,11 @@ func (c *config) nativeOnly() bool {
 	return *c.NativeOnly
 }
 
-func (c *config) identityPath(nodePath string) string {
-	if nodePath != "" {
-		return nodePath
+func (c *config) identityDir() string {
+	if c == nil || strings.TrimSpace(c.Panel.IdentityDir) == "" {
+		return panel.DefaultIdentityDir
 	}
-	if c == nil || c.Panel.IdentityPath == "" {
-		return panel.DefaultIdentityPath
-	}
-	return c.Panel.IdentityPath
+	return c.Panel.IdentityDir
 }
 
 func loadConfig(path string) (*config, error) {
@@ -532,16 +415,8 @@ func loadConfig(path string) (*config, error) {
 	if err := dec.Decode(&cfg); err != nil {
 		return nil, err
 	}
-	if cfg.Panel.URL == "" {
-		return nil, fmt.Errorf("panel.url 不能为空")
-	}
-	if len(cfg.Nodes) == 0 {
-		return nil, fmt.Errorf("至少要配置一个节点")
-	}
-	for i, n := range cfg.Nodes {
-		if n.NodeID == "" || n.NodeType == "" || n.Token == "" {
-			return nil, fmt.Errorf("节点 #%d 缺少 node_id / node_type / token", i+1)
-		}
+	if _, _, err := panel.PanelHost(cfg.Panel.Address); err != nil {
+		return nil, fmt.Errorf("panel.address: %w", err)
 	}
 	if err := cfg.Runtime.validate(); err != nil {
 		return nil, err

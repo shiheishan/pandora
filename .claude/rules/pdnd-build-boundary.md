@@ -31,5 +31,5 @@ paths:
 
 ## 发布物
 
-- `release/runtime-acceptance.sh` 的模拟面板是 `release/acceptancepanel`（Go 写，因为签名通道要 Ed25519），规则见 pdnd-node-panel 规则文件的签名契约一节。
+- `release/runtime-acceptance.sh` 的模拟面板是 `release/acceptancepanel`（Go 写的假 gRPC 面板：自签 CA、Enroll 与 Session），按 pdnd-node-panel 规则文件的通道契约独立实现，不 import 节点代码。
 - `main_test.go` 钉住缺省配置路径与 `release/pandora-native.service` 一致、身份路径缺省值；改 systemd 单元或安装路径要一起改。
