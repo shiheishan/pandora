@@ -147,6 +147,9 @@ func (s *Service) Enroll(ctx context.Context, in EnrollInput) (EnrollResult, err
 			"request_id":    in.RequestID,
 			"agent_version": agent,
 		}
+		if in.RemoteIP != "" {
+			data["remote_ip"] = in.RemoteIP
+		}
 		if superseded {
 			data["superseded_identity_id"] = oldID.String()
 		}
