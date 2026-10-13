@@ -263,9 +263,9 @@ func applyKernelShapeFixups(nodeType string, cfg map[string]any) {
 		// 4443，握手失败、所有客户端连不上。折进 server 之后与监听端口无关。
 		// 已经带端口的、IPv6 字面量（含冒号）原样不动。
 		//
-		// 只在表单显式填了 server_port 时折：没填的存量配置（迁移前的形状）
-		// 下发字节必须一字不变（TestMigratedConfigsTranslateBackToOriginalKernelShape），
-		// 它们仍按节点端的老规则取端口，见报告遗留。
+		// 只在表单显式填了 server_port 时折：没填的存量形状下发字节一字不变
+		// （TestMigratedConfigsTranslateBackToOriginalKernelShape），节点端对没带端口的握手目标固定补 443，
+		// 不再读 server_port（pdnd/kernel/shadowtls.go 的 shadowTLSServer）。
 		target := strings.TrimSpace(firstString(cfg["server"], cfg["handshake_server"]))
 		raw, hasPort := cfg["server_port"]
 		if target != "" && !strings.Contains(target, ":") && hasPort && isNumeric(raw) && asInt(raw) > 0 {

@@ -199,8 +199,10 @@ func shadowTLSServer(raw map[string]any) M.Socksaddr {
 	if server == "" {
 		return M.Socksaddr{}
 	}
+	// 握手目标没写端口时固定补 443。不读 server_port：配置文档摊平后它是本节点的入站监听端口，
+	// 拿来连握手站点会连错端口（面板在下发前已把表单里的握手端口折进 server）。
 	if !strings.Contains(server, ":") {
-		server += ":" + strconv.Itoa(shadowRawInt(raw, "server_port", 443))
+		server += ":443"
 	}
 	return M.ParseSocksaddr(server)
 }
