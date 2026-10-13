@@ -187,6 +187,9 @@ func newEngines(r *runtime, svc *services) (*gin.Engine, *gin.Engine) {
 	for _, m := range mods {
 		m.RegisterPublic(publicV1, kit)
 		m.RegisterAdmin(adminV1, kit)
+		if rm, ok := m.(route.RootModule); ok {
+			rm.RegisterRoot(publicEng)
+		}
 	}
 	return publicEng, adminEng
 }
