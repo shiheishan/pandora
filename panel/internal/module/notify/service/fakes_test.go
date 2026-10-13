@@ -121,10 +121,14 @@ func (f *fakeSender) Send(_ context.Context, cfg SMTPConfig, m Message) error {
 }
 
 // fakeQueue 记下入队的任务。
-type fakeQueue struct{ tasks []*asynq.Task }
+type fakeQueue struct {
+	tasks []*asynq.Task
+	opts  [][]asynq.Option
+}
 
-func (f *fakeQueue) EnqueueContext(_ context.Context, t *asynq.Task, _ ...asynq.Option) (*asynq.TaskInfo, error) {
+func (f *fakeQueue) EnqueueContext(_ context.Context, t *asynq.Task, opts ...asynq.Option) (*asynq.TaskInfo, error) {
 	f.tasks = append(f.tasks, t)
+	f.opts = append(f.opts, opts)
 	return &asynq.TaskInfo{}, nil
 }
 

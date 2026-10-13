@@ -69,7 +69,7 @@ func (m *Module) Periodic() []jobs.Periodic {
 				asynq.Queue("default"),
 				asynq.MaxRetry(0),
 				asynq.Timeout(service.DispatchTimeout),
-				asynq.Unique(25 * time.Second),
+				asynq.Unique(service.DispatchTimeout),
 			},
 		},
 		{

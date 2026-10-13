@@ -22,6 +22,9 @@ import (
 
 var _ identitysvc.VerificationMailer = (*Service)(nil)
 
+// kickTaskID 提交后补派用固定 ID，已在排队或运行就冲突丢弃；同时最多一个补派加一个周期派发。
+const kickTaskID = TaskDispatch + ":kick"
+
 // deliveryPayload 是封存在 payload_enc 里的内容。
 type deliveryPayload struct {
 	To   string            `json:"to"`
@@ -122,7 +125,7 @@ func payloadVarsHas(m map[string]string, key string) bool {
 	return ok
 }
 
-// kick 入队一次 notify:dispatch（TaskID 按秒分桶去重）；失败只记日志，周期任务会补发。
+// kick 入队一次 notify:dispatch（固定 TaskID，排队或运行中就不再入队）；失败只记日志，周期任务会补发。
 func (s *Service) kick(ctx context.Context) {
 	if s.queue == nil {
 		return
@@ -133,7 +136,7 @@ func (s *Service) kick(ctx context.Context) {
 		return
 	}
 	_, err = s.queue.EnqueueContext(ctx, task,
-		asynq.TaskID(fmt.Sprintf("%s:%d", TaskDispatch, s.now().Unix())),
+		asynq.TaskID(kickTaskID),
 		asynq.Queue("default"),
 		asynq.MaxRetry(0),
 		asynq.Timeout(DispatchTimeout),
