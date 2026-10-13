@@ -23,6 +23,9 @@ const ScanTimeout = 2 * time.Minute
 // scanBatch 是每轮扫描最多写的通知件数。
 const scanBatch = 1000
 
+// paidLookback 是支付成功通知回看的履约时间：只补最近的，通知上线前就履约的老订单不补发。
+const paidLookback = 2 * time.Hour
+
 // 到期提醒窗口：剩余天数落在 (lower, upper] 天。
 var expiryWindows = []struct {
 	label int
@@ -200,6 +203,12 @@ func (s *Service) collectScanItems(ctx context.Context, now time.Time, loc *time
 		})
 	}
 
+	paid, err := s.paidItems(ctx, now, loc)
+	if err != nil {
+		return nil, err
+	}
+	items = append(items, paid...)
+
 	planIDs := make([]uuid.UUID, 0)
 	seen := map[uuid.UUID]bool{}
 	for _, it := range items {
@@ -227,7 +236,41 @@ func (s *Service) collectScanItems(ctx context.Context, now time.Time, loc *time
 	return items, nil
 }
 
-// Scan 扫到期、过期召回与流量预警，给尚未去重的用户写通知；返回新写件数。
+// paidItems 取最近履约的订单，套餐与到期时间按订单挂的订阅（续费、换套餐后的那一期）；一单一件。
+func (s *Service) paidItems(ctx context.Context, now time.Time, loc *time.Location) ([]scanItem, error) {
+	paid, err := s.orders.PaidForNotify(ctx, now.Add(-paidLookback), scanBatch)
+	if err != nil || len(paid) == 0 {
+		return nil, err
+	}
+	ids := make([]uuid.UUID, len(paid))
+	for i, p := range paid {
+		ids[i] = p.SubscriptionID
+	}
+	subs, err := s.subs.SubscriptionsByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]scanItem, 0, len(paid))
+	for _, p := range paid {
+		sub, ok := subs[p.SubscriptionID]
+		if !ok {
+			continue
+		}
+		items = append(items, scanItem{
+			UserID: p.UserID,
+			Code:   TemplateOrderPaid,
+			Vars: map[string]string{
+				"order_no":   p.OrderNo,
+				"plan":       sub.PlanID.String(),
+				"expires_at": noticeTime(sub.PeriodEnd, loc),
+			},
+			Key: "order-paid:" + p.OrderID.String(),
+		})
+	}
+	return items, nil
+}
+
+// Scan 扫到期、过期召回、流量预警与支付成功，给尚未去重的用户写通知；返回新写件数。
 func (s *Service) Scan(ctx context.Context) (int, error) {
 	if s.subs == nil {
 		return 0, errs.Wrap(errs.Internal, fmt.Errorf("notify: Subscriptions 未装配"))
@@ -237,6 +280,9 @@ func (s *Service) Scan(ctx context.Context) (int, error) {
 	}
 	if s.dir == nil {
 		return 0, errs.Wrap(errs.Internal, fmt.Errorf("notify: Directory 未装配"))
+	}
+	if s.orders == nil {
+		return 0, errs.Wrap(errs.Internal, fmt.Errorf("notify: Orders 未装配"))
 	}
 
 	now := s.now()

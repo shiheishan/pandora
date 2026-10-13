@@ -10,6 +10,7 @@ import (
 
 	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
 	identitysvc "github.com/aegispanel/aegis/internal/module/identity/service"
+	ordersvc "github.com/aegispanel/aegis/internal/module/order/service"
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/google/uuid"
 )
@@ -82,6 +83,9 @@ type fakeSubs struct {
 	expired  map[bool][]subsvc.NotifyCandidate // 键：onlyWithoutLive
 	quota    []subsvc.QuotaNotice
 	live     map[uuid.UUID][]uuid.UUID
+	byID     map[uuid.UUID]subsvc.Subscription
+	// paid 是 Orders 端口的预设结果（同一个假对象兼当 order 读取面）
+	paid []ordersvc.PaidNotice
 
 	expiringCalls [][2]time.Time
 	expiredCalls  [][2]time.Time
@@ -123,18 +127,37 @@ func (f *fakeSubs) QuotaUsageForNotify(context.Context, int) ([]subsvc.QuotaNoti
 	return append([]subsvc.QuotaNotice(nil), f.quota...), nil
 }
 
+func (f *fakeSubs) SubscriptionsByIDs(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]subsvc.Subscription, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := map[uuid.UUID]subsvc.Subscription{}
+	for _, id := range ids {
+		if s, ok := f.byID[id]; ok {
+			out[id] = s
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeSubs) PaidForNotify(context.Context, time.Time, int) ([]ordersvc.PaidNotice, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]ordersvc.PaidNotice(nil), f.paid...), nil
+}
+
 func (f *fakeSubs) LivePlanIDs(_ context.Context, userID uuid.UUID) ([]uuid.UUID, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]uuid.UUID{}, f.live[userID]...), nil
 }
 
-// usePorts 给 PG 环境装上三个假端口并返回它们。
+// usePorts 给 PG 环境装上假端口并返回它们（fakeSubs 同时当 Orders）。
 func (e *pgEnv) usePorts() (*fakeDir, *fakePlans, *fakeSubs) {
 	d, p, s := newFakeDir(), &fakePlans{}, newFakeSubs()
 	e.svc.UseDirectory(d)
 	e.svc.UsePlans(p)
 	e.svc.UseSubscriptions(s)
+	e.svc.UseOrders(s)
 	return d, p, s
 }
 

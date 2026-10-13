@@ -120,6 +120,7 @@ type Service struct {
 	dir           Directory
 	plans         Plans
 	subs          Subscriptions
+	orders        Orders
 	tg            telegramAPI
 	publicBaseURL string
 }

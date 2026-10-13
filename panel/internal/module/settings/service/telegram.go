@@ -17,7 +17,7 @@ import (
 const (
 	keyTelegramEnabled       = "telegram.enabled"
 	keyTelegramBotUsername   = "telegram.bot_username"
-	keyTelegramBotToken      = "telegram.bot_token"      //nolint:gosec // 设置键名；值经 Sealer 封存（AAD 为键名）
+	keyTelegramBotToken      = "telegram.bot_token" //nolint:gosec // 设置键名；值经 Sealer 封存（AAD 为键名）
 	keyTelegramAdminChatID   = "telegram.admin_chat_id"
 	keyTelegramWebhookSecret = "telegram.webhook_secret" //nolint:gosec // 设置键名；值经 Sealer 封存（AAD 为键名）
 

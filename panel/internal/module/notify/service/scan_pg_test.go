@@ -6,6 +6,7 @@ import (
 	"time"
 
 	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
+	ordersvc "github.com/aegispanel/aegis/internal/module/order/service"
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/google/uuid"
 )
@@ -56,6 +57,35 @@ func TestScanExpiringWritesInboxAndEmail(t *testing.T) {
 	}
 	if noticeCountInbox(t, e, uid) != 1 {
 		t.Fatal("不应重复写")
+	}
+}
+
+func TestScanOrderPaid(t *testing.T) {
+	e := newPG(t)
+	dir, plans, subs := e.usePorts()
+	uid := e.insertTestUser(t, dir)
+	planID := uuid.MustParse("018f0000-0000-7000-8000-000000000011")
+	subID := uuid.MustParse("018f0000-0000-7000-8000-000000000012")
+	orderID := uuid.MustParse("018f0000-0000-7000-8000-000000000013")
+	plans.plans = []catalogsvc.Plan{{ID: planID, Name: "进阶套餐"}}
+	subs.byID = map[uuid.UUID]subsvc.Subscription{subID: {ID: subID, UserID: uid, PlanID: planID,
+		PeriodEnd: time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)}}
+	subs.paid = []ordersvc.PaidNotice{{OrderID: orderID, UserID: uid, OrderNo: "PD20260601001", SubscriptionID: subID}}
+	e.svc.now = scanFixedNow
+
+	if n, err := e.svc.Scan(e.ctx); err != nil || n != 1 {
+		t.Fatalf("scan %d %v", n, err)
+	}
+	items, err := e.repo.ListInbox(e.ctx, uid, false, 5)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("inbox %d %v", len(items), err)
+	}
+	if items[0].TemplateCode != TemplateOrderPaid || !strings.Contains(items[0].Body, "PD20260601001") ||
+		!strings.Contains(items[0].Body, "进阶套餐") {
+		t.Fatalf("inbox %+v", items[0])
+	}
+	if n, err := e.svc.Scan(e.ctx); err != nil || n != 0 {
+		t.Fatalf("second scan must dedupe per order: %d %v", n, err)
 	}
 }
 

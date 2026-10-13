@@ -8,6 +8,7 @@ import (
 	identitysvc "github.com/aegispanel/aegis/internal/module/identity/service"
 	"github.com/aegispanel/aegis/internal/module/notify/model"
 	"github.com/aegispanel/aegis/internal/module/notify/repo"
+	ordersvc "github.com/aegispanel/aegis/internal/module/order/service"
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/google/uuid"
@@ -44,13 +45,24 @@ type Subscriptions interface {
 	QuotaUsageForNotify(ctx context.Context, minPercent int) ([]subsvc.QuotaNotice, error)
 	// LivePlanIDs 取用户名下生效订阅的套餐 id（去重）。
 	LivePlanIDs(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error)
+	// SubscriptionsByIDs 按 id 批量读订阅；支付成功通知取套餐与到期时间用。
+	SubscriptionsByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]subsvc.Subscription, error)
+}
+
+// Orders 是 notify 读订单的端口（order 实现）：扫描给最近履约的订单补写支付成功通知。
+type Orders interface {
+	PaidForNotify(ctx context.Context, since time.Time, limit int) ([]ordersvc.PaidNotice, error)
 }
 
 var (
 	_ Directory     = (*identitysvc.Service)(nil)
 	_ Plans         = (*catalogsvc.Service)(nil)
 	_ Subscriptions = (*subsvc.Service)(nil)
+	_ Orders        = (*ordersvc.Service)(nil)
 )
+
+// UseOrders 只在启动装配时调用（不并发安全）。
+func (s *Service) UseOrders(o Orders) { s.orders = o }
 
 // UseDirectory 只在启动装配时调用（不并发安全）。
 func (s *Service) UseDirectory(d Directory) { s.dir = d }
@@ -75,6 +87,9 @@ func (s *Service) MissingPorts() []string {
 	}
 	if s.subs == nil {
 		out = append(out, "Subscriptions")
+	}
+	if s.orders == nil {
+		out = append(out, "Orders")
 	}
 	return out
 }

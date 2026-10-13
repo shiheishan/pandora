@@ -19,7 +19,7 @@ const (
 	maxRunningIssues = 2
 	// interruptedBackoff：订单因进程退出、任务丢失而中断时的重排间隔，不计连续失败
 	interruptedBackoff = 15 * time.Minute
-	dueBatch    = 50
+	dueBatch           = 50
 
 	// pauseAfterFailures 连续失败几次后暂停自动重试。
 	pauseAfterFailures = 3
