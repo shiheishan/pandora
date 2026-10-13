@@ -234,10 +234,11 @@ func (r *Repo) UpdateServerHostInfo(ctx context.Context, serverID uuid.UUID, h S
 }
 
 // FillServerRegionIfEmpty 在服务器 region 为空时写入地区文本，管理员填过的不覆盖。
+// region 是后台可编辑列，所以推进 row_version：接入前就打开了编辑页的管理员再保存会撞版本冲突，而不是静默把地区改回空。
 func (r *Repo) FillServerRegionIfEmpty(ctx context.Context, serverID uuid.UUID, region string) error {
 	return r.d.Conn(ctx).Exec(
-		`UPDATE servers SET region = ? WHERE id = ? AND (region IS NULL OR btrim(region) = '')`,
+		`UPDATE servers SET region = ?, row_version = row_version + 1, updated_at = now()
+		  WHERE id = ? AND (region IS NULL OR btrim(region) = '')`,
 		region, serverID,
 	).Error
 }
-

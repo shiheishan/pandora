@@ -185,4 +185,3 @@ type GeoIP struct {
 	IPv4DB string `mapstructure:"ipv4_db"`
 	IPv6DB string `mapstructure:"ipv6_db"`
 }
-

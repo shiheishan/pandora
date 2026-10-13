@@ -2,7 +2,11 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"strings"
 	"time"
 
 	appearancerepo "github.com/aegispanel/aegis/internal/module/appearance/repo"
@@ -179,14 +183,15 @@ func buildServices(r *runtime) (*services, error) {
 	nodeSvc := nodesvc.New(noderepo.New(r.db), txm, auditSvc, r.redis)
 	// 节点端一键安装：二进制从发布包的 pdnd-dist 目录发，安装脚本里写入面板地址
 	nodeSvc.UsePdndDist(cfg.Pdnd.DistDir, cfg.PublicBaseURL)
-	geo, err := geoip.Open(cfg.GeoIP.IPv4DB, cfg.GeoIP.IPv6DB, r.log)
-	if err != nil {
-		r.log.Warn("打开 GeoIP 数据库失败，归属地查询将降级为空",
-			zap.String("ipv4_db", cfg.GeoIP.IPv4DB),
-			zap.String("ipv6_db", cfg.GeoIP.IPv6DB),
-			zap.Error(err),
-		)
-		geo = nil
+	// IP 归属地（ip2region 离线库）：没放数据文件只记一条 Info、归属地留空；文件在却打不开才 Warn。启动都不受影响
+	var geo *geoip.Resolver
+	if _, statErr := os.Stat(cfg.GeoIP.IPv4DB); errors.Is(statErr, fs.ErrNotExist) || strings.TrimSpace(cfg.GeoIP.IPv4DB) == "" {
+		r.log.Info("没有 IP 归属地数据文件，归属地留空", zap.String("ipv4_db", cfg.GeoIP.IPv4DB))
+	} else if g, err := geoip.Open(cfg.GeoIP.IPv4DB, cfg.GeoIP.IPv6DB, r.log); err != nil {
+		r.log.Warn("打开 IP 归属地数据库失败，归属地留空",
+			zap.String("ipv4_db", cfg.GeoIP.IPv4DB), zap.String("ipv6_db", cfg.GeoIP.IPv6DB), zap.Error(err))
+	} else {
+		geo = g
 	}
 	identitySvc.UseGeo(geo)
 	nodeSvc.UseGeo(geo)

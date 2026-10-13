@@ -391,4 +391,3 @@ func TestGeoIPDefaults(t *testing.T) {
 		t.Fatalf("环境变量覆盖得到 %+v", cfg.GeoIP)
 	}
 }
-

@@ -40,7 +40,7 @@ type EnrollInput struct {
 	RequestID    string
 	Host         EnrollHostInfo
 	AgentVersion string
-	// RemoteIP 是对端 IP，只进审计。
+	// RemoteIP 是 gRPC 对端 IP（TCP 源地址，不读任何头）：进审计，并用来给地区为空的服务器回填地区。
 	RemoteIP string
 }
 
@@ -72,6 +72,11 @@ func (s *Service) Enroll(ctx context.Context, in EnrollInput) (EnrollResult, err
 
 	var res EnrollResult
 	var deny string // 只进日志的内部原因
+	// 归属地查询要读磁盘、拿解析器的全局锁，放在事务外算好，别在持有令牌行、服务器行锁时做
+	var region string
+	if in.RemoteIP != "" && s.geo != nil {
+		region = regionText(s.geo.Lookup(in.RemoteIP))
+	}
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
 		// 锁序统一为「服务器 → 令牌」（与吊销、退役、删除一致，免得互相死锁）：
 		// 先不加锁查出令牌属于哪台服务器，锁服务器行，再锁令牌行重读。令牌的 server_id 有触发器保证不变。
@@ -147,11 +152,9 @@ func (s *Service) Enroll(ctx context.Context, in EnrollInput) (EnrollResult, err
 		if err := s.repo.UpdateServerHostInfo(ctx, serverID, host); err != nil {
 			return err
 		}
-		if in.RemoteIP != "" && s.geo != nil {
-			if region := regionText(s.geo.Lookup(in.RemoteIP)); region != "" {
-				if err := s.repo.FillServerRegionIfEmpty(ctx, serverID, region); err != nil {
-					return err
-				}
+		if region != "" {
+			if err := s.repo.FillServerRegionIfEmpty(ctx, serverID, region); err != nil {
+				return err
 			}
 		}
 		agent := ""

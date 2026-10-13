@@ -16,7 +16,6 @@ package geoip
 
 import (
 	"errors"
-	"fmt"
 	"net/netip"
 	"strings"
 	"sync"
@@ -90,10 +89,10 @@ func Open(path, ipv6Path string, log *zap.Logger) (*Resolver, error) {
 		logger:       log,
 	}
 	if ipv6Path = strings.TrimSpace(ipv6Path); ipv6Path != "" {
-		r.ipv6Searcher, err = xdb.NewWithFileOnly(xdb.IPv6, ipv6Path)
-		if err != nil {
-			ipv4Searcher.Close()
-			return nil, fmt.Errorf("打开 IPv6 GeoIP 数据库 %q: %w", ipv6Path, err)
+		// IPv6 库打不开只记警告、保留 IPv4：缺一半总比整个归属地都没有强
+		if r.ipv6Searcher, err = xdb.NewWithFileOnly(xdb.IPv6, ipv6Path); err != nil {
+			r.ipv6Searcher = nil
+			log.Warn("打开 IPv6 GeoIP 数据库失败，IPv6 地址不标归属地", zap.String("path", ipv6Path), zap.Error(err))
 		}
 	}
 	return r, nil
@@ -186,7 +185,7 @@ func (r *Resolver) searcherFor(addr netip.Addr) (*xdb.Searcher, *sync.Mutex) {
 
 const maxCacheEntries = 50000
 
-// parseRegion 拆 ip2region 的「国家|区域|省份|城市|ISP」五段格式。
+// parseRegion 拆 ip2region 新版的「国家|省份|城市|ISP|ISO」格式（取前四段）。
 // 缺失的段是字面量 "0"，不是空串——直接展示会变成一串没意义的零。
 func parseRegion(raw string) Location {
 	parts := strings.Split(raw, "|")
