@@ -30,6 +30,14 @@ func (k *kvStore) LockValues(ctx context.Context, keys []string) (map[string]jso
 	return k.Values(ctx, keys)
 }
 
+func (k *kvStore) InsertIfAbsent(_ context.Context, key string, value json.RawMessage) (bool, error) {
+	if _, ok := k.kv[key]; ok {
+		return false, nil
+	}
+	k.kv[key] = value
+	return true, nil
+}
+
 func (k *kvStore) Upsert(_ context.Context, key string, value json.RawMessage, _ *uuid.UUID) error {
 	if k.kv == nil {
 		k.kv = map[string]json.RawMessage{}

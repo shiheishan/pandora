@@ -78,7 +78,7 @@ func newEngine(svc Service, admin bool) *gin.Engine {
 		Idempotency:  func(string) gin.HandlerFunc { return pass },
 		Switch:       func(string) gin.HandlerFunc { return pass },
 	}
-	h := New(svc, nil)
+	h := New(svc, nil, 0)
 	if admin {
 		h.RegisterAdmin(e.Group("/v1"), kit)
 	} else {

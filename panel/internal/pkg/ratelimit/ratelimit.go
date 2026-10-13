@@ -1,4 +1,7 @@
-// Package ratelimit 基于 Redis 的 GCRA 限流（go-redis/redis_rate），供 Gin 中间件与直接调用。
+// Package ratelimit 基于 Redis 的限流，供 Gin 中间件与直接调用。
+//
+// 缺省是 GCRA（go-redis/redis_rate）：平滑、防刷用；它允许一次用满 Burst 后按速率回补，
+// 任意一个窗口里最多约 2n−1 次。产品规则里写死的「每天 5 次」这类严格上限用 FixedWindow（计数加过期）。
 package ratelimit
 
 import (
@@ -22,6 +25,8 @@ type Rule struct {
 	Name   string
 	Limit  redis_rate.Limit
 	Strict bool
+	// Fixed 为真时按固定窗口计数（见 FixedWindow），不走 GCRA
+	Fixed bool
 }
 
 // PerMinute 构造每分钟最多 n 次的规则。
@@ -40,6 +45,15 @@ func PerWindow(name string, n int, window time.Duration) Rule {
 	}
 }
 
+// FixedWindow 构造固定窗口的严格上限：从窗口内第一次起算，window 内最多 n 次，窗口过期后重新计数。
+func FixedWindow(name string, n int, window time.Duration) Rule {
+	return Rule{
+		Name:  name,
+		Limit: redis_rate.Limit{Rate: n, Burst: n, Period: window},
+		Fixed: true,
+	}
+}
+
 // Cooldown 构造每个窗口仅允许 1 次的规则。
 func Cooldown(name string, window time.Duration) Rule {
 	return PerWindow(name, 1, window)
@@ -54,11 +68,12 @@ func (r Rule) StrictMode() Rule {
 // Limiter 封装 redis_rate 限流器。
 type Limiter struct {
 	inner *redis_rate.Limiter
+	rdb   *redis.Client
 }
 
 // New 用 Redis 客户端构造限流器。
 func New(rdb *redis.Client) *Limiter {
-	return &Limiter{inner: redis_rate.NewLimiter(rdb)}
+	return &Limiter{inner: redis_rate.NewLimiter(rdb), rdb: rdb}
 }
 
 // Dimension 将规则与从请求提取的键绑定；Key 返回 false 时跳过该维度。
@@ -70,6 +85,9 @@ type Dimension struct {
 // Allow 检查 key 是否仍有余量；key 为业务维度，不含规则名。
 func (l *Limiter) Allow(ctx context.Context, rule Rule, key string) error {
 	redisKey := "rl:" + rule.Name + ":" + key
+	if rule.Fixed {
+		return l.allowFixed(ctx, rule, redisKey)
+	}
 	res, err := l.inner.Allow(ctx, redisKey, rule.Limit)
 	if err != nil {
 		if rule.Strict {
@@ -81,6 +99,33 @@ func (l *Limiter) Allow(ctx context.Context, rule Rule, key string) error {
 	if res.Allowed == 0 {
 		e := errs.New(errs.RateLimited)
 		e.RetryAfterSeconds = retryAfterSeconds(res.RetryAfter)
+		return e
+	}
+	return nil
+}
+
+// fixedWindowScript 计数加一；第一次时设过期。返回 {计数, 剩余毫秒}。
+var fixedWindowScript = redis.NewScript(`
+local n = redis.call('INCR', KEYS[1])
+if n == 1 then
+  redis.call('PEXPIRE', KEYS[1], ARGV[1])
+end
+return {n, redis.call('PTTL', KEYS[1])}
+`)
+
+// allowFixed 是固定窗口计数：超过上限回 RateLimited，RetryAfter 是窗口剩余时间。
+func (l *Limiter) allowFixed(ctx context.Context, rule Rule, redisKey string) error {
+	res, err := fixedWindowScript.Run(ctx, l.rdb, []string{redisKey}, rule.Limit.Period.Milliseconds()).Int64Slice()
+	if err != nil {
+		if rule.Strict {
+			return errs.Wrap(errs.Unavailable, err)
+		}
+		plog.From(ctx).Warn("限流 Redis 不可用，非严格模式放行", zap.Error(err))
+		return nil
+	}
+	if len(res) == 2 && res[0] > int64(rule.Limit.Burst) {
+		e := errs.New(errs.RateLimited)
+		e.RetryAfterSeconds = retryAfterSeconds(time.Duration(res[1]) * time.Millisecond)
 		return e
 	}
 	return nil

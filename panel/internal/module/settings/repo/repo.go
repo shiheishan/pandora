@@ -59,6 +59,15 @@ func (r *Repo) Upsert(ctx context.Context, key string, value json.RawMessage, by
 	).Error
 }
 
+// InsertIfAbsent 只在键不存在时写入，返回是否写入（已存在就不动它）。
+func (r *Repo) InsertIfAbsent(ctx context.Context, key string, value json.RawMessage) (bool, error) {
+	res := r.d.Conn(ctx).Exec(
+		"INSERT INTO settings (key, value) VALUES (?, ?::jsonb) ON CONFLICT (key) DO NOTHING",
+		key, string(value),
+	)
+	return res.RowsAffected == 1, res.Error
+}
+
 // Delete 删除给定键；不存在不算错。
 func (r *Repo) Delete(ctx context.Context, keys ...string) error {
 	if len(keys) == 0 {

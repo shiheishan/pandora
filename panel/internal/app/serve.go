@@ -166,7 +166,7 @@ func newEngines(r *runtime, svc *services) (*gin.Engine, *gin.Engine) {
 		ledgerh.New(svc.ledger),
 		catalogh.New(svc.catalog),
 		promoh.New(svc.promo),
-		subh.New(svc.sub, svc.limiter),
+		subh.New(svc.sub, svc.limiter, r.cfg.RateLimit.IPPerMin),
 		paymenth.New(svc.payment, svc.limiter),
 		orderh.New(svc.order, svc.limiter),
 		giftcardh.New(svc.giftcard, svc.limiter),

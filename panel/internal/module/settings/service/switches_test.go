@@ -32,6 +32,9 @@ func (f *fakeStore) LockValues(context.Context, []string) (map[string]json.RawMe
 }
 
 func (f *fakeStore) Upsert(context.Context, string, json.RawMessage, *uuid.UUID) error { return nil }
+func (f *fakeStore) InsertIfAbsent(context.Context, string, json.RawMessage) (bool, error) {
+	return true, nil
+}
 
 func (f *fakeStore) Delete(context.Context, ...string) error { return nil }
 

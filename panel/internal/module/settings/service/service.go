@@ -36,6 +36,8 @@ type store interface {
 	LockValues(ctx context.Context, keys []string) (map[string]json.RawMessage, error)
 	// Upsert 写一个键（插入或覆盖值）。
 	Upsert(ctx context.Context, key string, value json.RawMessage, by *uuid.UUID) error
+	// InsertIfAbsent 只在键不存在时写入，返回是否写入。
+	InsertIfAbsent(ctx context.Context, key string, value json.RawMessage) (bool, error)
 	// Delete 删除给定键；不存在不算错。
 	Delete(ctx context.Context, keys ...string) error
 

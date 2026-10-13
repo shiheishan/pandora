@@ -207,3 +207,36 @@ func TestValidateProductionHTTPAddrLoopback(t *testing.T) {
 		t.Fatalf("开发环境不限制: %v", err)
 	}
 }
+
+func TestSingboxRuleSetPrefixFromEnv(t *testing.T) {
+	setMinimalValidEnv(t)
+	t.Setenv("PANDORA_SUBSCRIPTION_SINGBOX_GEOSITE_URL_PREFIX", "https://mirror.example.com/geosite/")
+	t.Setenv("PANDORA_SUBSCRIPTION_SINGBOX_BLOCK_ADS", "true")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sb := cfg.Subscription.Singbox
+	if sb.GeositeURLPrefix != "https://mirror.example.com/geosite/" || sb.GeoIPURLPrefix != "" || !sb.BlockAds {
+		t.Fatalf("得到 %+v", sb)
+	}
+}
+
+func TestSingboxRuleSetPrefixRejected(t *testing.T) {
+	for _, bad := range []string{
+		"http://mirror.example.com/geosite/",
+		"https://mirror.example.com/geosite",
+		"https://mirror.example.com/geosite/?x=1",
+		"https://user@mirror.example.com/geosite/",
+		"https:///geosite/",
+	} {
+		t.Run(bad, func(t *testing.T) {
+			setMinimalValidEnv(t)
+			t.Setenv("PANDORA_SUBSCRIPTION_SINGBOX_GEOIP_URL_PREFIX", bad)
+			_, err := Load("")
+			if err == nil || !strings.Contains(err.Error(), "geoip_url_prefix") {
+				t.Fatalf("应拒绝 %q，得到 %v", bad, err)
+			}
+		})
+	}
+}
