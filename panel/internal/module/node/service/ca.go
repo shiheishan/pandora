@@ -309,8 +309,8 @@ func (c *CA) IssueServerCert(host string, now time.Time) (*tls.Certificate, erro
 	}, nil
 }
 
-// chainPEM 返回叶子 PEM 后接 CA PEM。
-func chainPEM(c *CA, leafPEM []byte) []byte {
+// certChainPEM 返回叶子 PEM 后接 CA PEM。
+func certChainPEM(c *CA, leafPEM []byte) []byte {
 	out := make([]byte, 0, len(leafPEM)+len(c.certPEM))
 	out = append(out, leafPEM...)
 	out = append(out, c.certPEM...)
