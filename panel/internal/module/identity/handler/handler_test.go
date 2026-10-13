@@ -117,9 +117,14 @@ func TestRoutes(t *testing.T) {
 	adm := routesOf(newEngine(&fakeSvc{}, true, nil))
 	wantAdm := []string{
 		"DELETE /v1/user-groups/:id",
-		"GET /v1/user-groups", "GET /v1/users", "GET /v1/users/:id",
+		"GET /v1/access-log", "GET /v1/ip-clusters",
+		"GET /v1/user-groups", "GET /v1/users", "GET /v1/users/:id", "GET /v1/users/:id/profile",
+		"GET /v1/users/bulk/export", "GET /v1/users/bulk/generate/jobs",
+		"GET /v1/users/bulk/generate/jobs/:id", "GET /v1/users/bulk/generate/jobs/:id/result",
+		"POST /v1/ip-clusters/:key/disable-accounts", "POST /v1/ip-clusters/:key/review",
 		"POST /v1/me/password", "POST /v1/user-groups", "POST /v1/user-groups/:id",
 		"POST /v1/users/:id/group", "POST /v1/users/:id/reset-password", "POST /v1/users/:id/status",
+		"POST /v1/users/bulk/generate", "POST /v1/users/bulk/preview",
 	}
 	if strings.Join(adm, "\n") != strings.Join(wantAdm, "\n") {
 		t.Fatalf("后台路由:\n%s", strings.Join(adm, "\n"))

@@ -131,7 +131,7 @@ func TestUserActivityPG(t *testing.T) {
 			t.Fatalf("IP %q", e.IP)
 		}
 	}
-	if act.IPs == nil || len(act.IPs) < 2 {
+	if len(act.IPs) < 2 {
 		t.Fatalf("IPs len %d", len(act.IPs))
 	}
 	if act.IPs[0].IP != ipA || act.IPs[0].Count != 3 || act.IPs[0].Accounts != 2 {
