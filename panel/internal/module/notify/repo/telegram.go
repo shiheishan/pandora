@@ -56,8 +56,16 @@ func (r *Repo) BindingsForUsers(ctx context.Context, userIDs []uuid.UUID) ([]mod
 }
 
 // InsertBinding 写一条绑定；用户或 chat_id 已绑定返回 repo.ErrDuplicate。
+// 用 ON CONFLICT DO NOTHING 而不是等唯一约束报错：报错会让所在事务整体作废，调用方就没法在同一事务里接着做别的。
 func (r *Repo) InsertBinding(ctx context.Context, b *model.TelegramBinding) error {
-	return mapDuplicateErr(r.d.Conn(ctx).Create(b).Error)
+	res := r.d.Conn(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(b)
+	if res.Error != nil {
+		return mapDuplicateErr(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrDuplicate
+	}
+	return nil
 }
 
 // DeleteBinding 删本人的绑定；没有返回 false。
