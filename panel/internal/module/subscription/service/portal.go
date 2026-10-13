@@ -10,6 +10,7 @@ import (
 	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 )
 
 // maxPackList 是门户流量包明细的最多笔数。
@@ -164,6 +165,7 @@ func (s *Service) SetMyLabel(ctx context.Context, subID uuid.UUID, label *string
 		if !ok {
 			return s.labelTaken(ctx, p.UserID, m.ID, norm)
 		}
+		s.rtChanged(ctx, tableSubscriptions, realtime.OpUpdate, m.ID, m.UserID)
 		plans, err := s.catalog.PlansByIDs(ctx, []uuid.UUID{m.PlanID})
 		if err != nil {
 			return err

@@ -24,6 +24,7 @@ import (
 	"github.com/aegispanel/aegis/internal/module/subscription/repo"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 	"github.com/google/uuid"
 )
@@ -92,6 +93,7 @@ type Service struct {
 	roster   RosterNotifier
 	online   OnlineDeviceCounter
 	now      func() time.Time
+	rt       *realtime.Publisher // 实时推送，装配时注入（realtime.go）；nil 时不推
 
 	// 订阅分发（P4）：nodes 与 delivery 由装配注入（nodes.go）。
 	nodes    NodeSource

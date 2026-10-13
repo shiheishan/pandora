@@ -74,24 +74,25 @@ func (r *Repo) CloseRenewalWindows(ctx context.Context, ids []uuid.UUID, at time
 	return out, nil
 }
 
-// RevokeCredentialsOnClose 吊销一组订阅的有效链接凭据（关窗后旧链接作废），返回每份订阅吊销的条数。
-func (r *Repo) RevokeCredentialsOnClose(ctx context.Context, subIDs []uuid.UUID, at time.Time, reason string) (map[uuid.UUID]int, error) {
-	out := make(map[uuid.UUID]int)
+// RevokedCredential 是关窗时被吊销的一条凭据。
+type RevokedCredential struct {
+	ID             uuid.UUID `gorm:"column:id"`
+	SubscriptionID uuid.UUID `gorm:"column:subscription_id"`
+	UserID         uuid.UUID `gorm:"column:user_id"`
+}
+
+// RevokeCredentialsOnClose 吊销一组订阅的有效链接凭据（关窗后旧链接作废），返回被吊销的每条凭据。
+func (r *Repo) RevokeCredentialsOnClose(ctx context.Context, subIDs []uuid.UUID, at time.Time, reason string) ([]RevokedCredential, error) {
 	if len(subIDs) == 0 {
-		return out, nil
+		return []RevokedCredential{}, nil
 	}
-	var rows []struct {
-		SubscriptionID uuid.UUID `gorm:"column:subscription_id"`
-	}
+	var rows []RevokedCredential
 	err := r.d.Conn(ctx).Raw(
-		`UPDATE subscription_credentials SET status = 'revoked', revoked_at = ?, revoked_reason = ? WHERE subscription_id IN ? AND status = 'active' RETURNING subscription_id`,
+		`UPDATE subscription_credentials SET status = 'revoked', revoked_at = ?, revoked_reason = ? WHERE subscription_id IN ? AND status = 'active' RETURNING id, subscription_id, user_id`,
 		at, reason, subIDs,
 	).Scan(&rows).Error
 	if err != nil {
 		return nil, mapErr(err)
 	}
-	for _, row := range rows {
-		out[row.SubscriptionID]++
-	}
-	return out, nil
+	return rows, nil
 }

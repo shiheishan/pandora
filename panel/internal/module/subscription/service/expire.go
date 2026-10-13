@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/google/uuid"
 )
 
@@ -105,6 +106,7 @@ func (s *Service) expireBatch(ctx context.Context) (selected, expired int, err e
 			if _, ok := changedSet[m.ID]; !ok {
 				continue
 			}
+			s.rtChanged(ctx, tableSubscriptions, realtime.OpUpdate, m.ID, m.UserID)
 			from := StatusActive
 			if err := s.writeEvent(ctx, m.ID, EventExpired, &from, StatusExpired, Actor{Kind: ActorScheduler}, nil, map[string]any{"period_end": m.CurrentPeriodEnd}); err != nil {
 				return err
@@ -143,9 +145,14 @@ func (s *Service) closeBatch(ctx context.Context) (selected, closed, revoked int
 		if err != nil {
 			return subErr(err)
 		}
-		counts, err := s.repo.RevokeCredentialsOnClose(ctx, closedIDs, now, RevokedRenewalClosed)
+		revokedCreds, err := s.repo.RevokeCredentialsOnClose(ctx, closedIDs, now, RevokedRenewalClosed)
 		if err != nil {
 			return subErr(err)
+		}
+		counts := make(map[uuid.UUID]int, len(revokedCreds))
+		for _, c := range revokedCreds {
+			counts[c.SubscriptionID]++
+			s.rtChanged(ctx, tableCredentials, realtime.OpUpdate, c.ID, c.UserID)
 		}
 		closedSet := make(map[uuid.UUID]struct{}, len(closedIDs))
 		for _, id := range closedIDs {
@@ -156,6 +163,7 @@ func (s *Service) closeBatch(ctx context.Context) (selected, closed, revoked int
 			if _, ok := closedSet[m.ID]; !ok {
 				continue
 			}
+			s.rtChanged(ctx, tableSubscriptions, realtime.OpUpdate, m.ID, m.UserID)
 			from := StatusExpired
 			if err := s.writeEvent(ctx, m.ID, EventRenewalClosed, &from, StatusExpired, Actor{Kind: ActorScheduler}, nil, map[string]any{
 				"window_days":         windowDays,
