@@ -133,7 +133,7 @@ pandora_preflight() {
   fi
 
   local cmd
-  for cmd in curl sha256sum awk sed grep tr wc install mktemp getent groupadd useradd chown chmod mv id uname; do
+  for cmd in curl sha256sum awk sed grep tr wc install mktemp getent groupadd useradd runuser chown chmod mv id uname; do
     command -v "$cmd" >/dev/null || die "缺少命令：${cmd}"
   done
 
@@ -242,18 +242,18 @@ pandora_stage_binary() {
 }
 
 # 服务以 pandora 用户运行，证书续期要在身份目录原地写文件，故身份目录属主为 pandora。
-# enroll 以 root 执行，写出文件属 root，接入成功后必须 chown。
+# enroll 直接以 pandora 身份跑（runuser），root 不往 pandora 可写的目录里写文件、也不做 chown -R：
+# 否则被攻破的服务进程可以预先把身份目录换成指向 /etc 等处的符号链接，等管理员重装时借 root 提权。
+# 状态目录的上级 /var/lib 只有 root 可写，所以 install -d 这一步本身不会被符号链接带偏。
 pandora_enroll() {
   say "接入面板 ${PANEL_ADDR}"
-  if ! printf '%s\n' "$TOKEN" | "${INSTALL_DIR}/${SERVICE}.new" enroll --panel "$PANEL_ADDR" --ca-sha256 "$CA_SHA256" --token-stdin --identity-dir "$IDENTITY_DIR"; then
+  install -d -o pandora -g pandora -m 0750 "$STATE_DIR"
+  if ! printf '%s\n' "$TOKEN" | runuser -u pandora -- "${INSTALL_DIR}/${SERVICE}.new" enroll --panel "$PANEL_ADDR" --ca-sha256 "$CA_SHA256" --token-stdin --identity-dir "$IDENTITY_DIR"; then
     unset TOKEN
     die "接入失败：令牌过期或已用过请在后台重新签发；网络中断可用同一条命令重跑（同一令牌会沿用上次的接入请求）"
   fi
   unset TOKEN
   ENROLLED=1
-  chown pandora:pandora "$STATE_DIR"
-  chown -R pandora:pandora "$IDENTITY_DIR"
-  chmod 0700 "$IDENTITY_DIR"
 }
 
 # 不依赖 jq：只改 panel.address，其余键（runtime 调优等）原样保留。

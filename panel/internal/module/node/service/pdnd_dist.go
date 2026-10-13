@@ -12,7 +12,6 @@ import (
 	"io"
 	"net/url"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -76,8 +75,8 @@ func (s *Service) OpenPdndArtifact(name string) (*PdndArtifact, error) {
 	if s.pdnd.dir == "" {
 		return nil, errPdndArtifactMissing
 	}
-	path := filepath.Join(s.pdnd.dir, name)
-	f, err := os.Open(path)
+	// 名字已过白名单；OpenInRoot 再保证打开的文件跑不出分发目录（含符号链接）
+	f, err := os.OpenInRoot(s.pdnd.dir, name)
 	if err != nil {
 		return nil, errPdndArtifactMissing
 	}
