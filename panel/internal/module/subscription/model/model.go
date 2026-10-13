@@ -1,4 +1,4 @@
-// Package model 是 subscription 模块的 GORM 结构体：只有字段和标签，表结构见迁移 00011_subscription.sql。
+// Package model 是 subscription 模块的 GORM 结构体：只有字段和标签，表结构见迁移 00011_subscription.sql 与 00017_subscription_delivery.sql。
 //
 // jsonb 列（事件 payload）用 string 承载 JSON 文本，由 service 编解码。
 // 库里生成或带默认值、写入时不该由 Go 给出的列（proxy_uuid、node_uid、remaining）标 `<-:false`。
@@ -143,3 +143,36 @@ type ResetLog struct {
 
 // TableName 固定表名。
 func (ResetLog) TableName() string { return "traffic_reset_logs" }
+
+// FetchLog 是 subscription_fetch_log 表的一行（只追加）。未认证失败（not_found）的 CredentialID、SubscriptionID 为 nil。
+type FetchLog struct {
+	ID             uuid.UUID  `gorm:"column:id;type:uuid;primaryKey;default:uuidv7()"`
+	CredentialID   *uuid.UUID `gorm:"column:credential_id;type:uuid"`
+	SubscriptionID *uuid.UUID `gorm:"column:subscription_id;type:uuid"`
+	FetchedAt      time.Time  `gorm:"column:fetched_at;autoCreateTime"`
+	IPHash         []byte     `gorm:"column:ip_hash;type:bytea"`
+	UAHash         []byte     `gorm:"column:ua_hash;type:bytea"`
+	IPEnc          []byte     `gorm:"column:ip_enc;type:bytea"`
+	UAEnc          []byte     `gorm:"column:ua_enc;type:bytea"`
+	UAFamily       string     `gorm:"column:ua_family"`
+	Result         string     `gorm:"column:result"`
+	Format         *string    `gorm:"column:format"`
+	NodeCount      int        `gorm:"column:node_count"`
+	BytesSent      int        `gorm:"column:bytes_sent"`
+}
+
+// TableName 固定表名。
+func (FetchLog) TableName() string { return "subscription_fetch_log" }
+
+// UsageDaily 是 subscription_usage_daily 表的一行：一份订阅一个自然日（站点时区）的计费后字节数。
+type UsageDaily struct {
+	ID             uuid.UUID `gorm:"column:id;type:uuid;primaryKey;default:uuidv7()"`
+	SubscriptionID uuid.UUID `gorm:"column:subscription_id;type:uuid"`
+	Day            time.Time `gorm:"column:day;type:date"`
+	Bytes          int64     `gorm:"column:bytes"`
+	CreatedAt      time.Time `gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt      time.Time `gorm:"column:updated_at;autoUpdateTime"`
+}
+
+// TableName 固定表名。
+func (UsageDaily) TableName() string { return "subscription_usage_daily" }

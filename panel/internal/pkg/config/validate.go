@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -152,6 +153,15 @@ func (c *Config) Validate() error {
 		errs = append(errs, errors.New("production 环境下 public_base_url 必须以 https:// 开头"))
 	}
 
+	for _, f := range []struct{ name, val string }{
+		{"subscription.singbox.geosite_url_prefix", c.Subscription.Singbox.GeositeURLPrefix},
+		{"subscription.singbox.geoip_url_prefix", c.Subscription.Singbox.GeoIPURLPrefix},
+	} {
+		if err := validateRuleSetPrefix(f.name, f.val); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
 	return errors.Join(errs...)
 }
 
@@ -193,4 +203,19 @@ func isLoopbackHost(host string) bool {
 	default:
 		return false
 	}
+}
+
+// validateRuleSetPrefix 校验规则集地址前缀：客户端直接拿它拼文件名下载，写错整份配置起不来。
+// 只收 https、带主机、不带账号、查询与片段、以 / 结尾；空值表示用缺省。
+func validateRuleSetPrefix(field, raw string) error {
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil ||
+		u.RawQuery != "" || u.Fragment != "" || !strings.HasSuffix(u.Path, "/") ||
+		strings.ContainsAny(raw, "\"\\ \t\r\n") {
+		return fmt.Errorf("%s 必须是以 / 结尾的 https:// 地址前缀（不带查询与片段）", field)
+	}
+	return nil
 }

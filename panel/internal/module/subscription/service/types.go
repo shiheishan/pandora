@@ -35,6 +35,8 @@ const (
 	EventPlanChanged   = "plan_changed"
 	EventExpired       = "expired"
 	EventRenewalClosed = "renewal_closed"
+	// EventLinkRotated 是换订阅链接（旧凭据吊销、签新凭据、节点身份一起换）；状态不变
+	EventLinkRotated = "link_rotated"
 )
 
 // 流量重置原因。
@@ -76,6 +78,8 @@ const (
 	ActionDeviceLimitChanged = "subscription.device_limit_changed"
 	ActionLabelChanged       = "subscription.label_changed"
 	ActionPackTransferred    = "traffic_pack.transferred"
+	ActionLinkRotated        = "subscription.link_rotated"
+	ActionLinkRotatedByAdmin = "subscription.link_rotated_by_admin"
 	ResourceSubscription     = "subscription"
 )
 
@@ -103,6 +107,13 @@ var (
 	ErrVersionUnavailable = errs.Newf(errs.Conflict, "该套餐尚未发布可用版本")
 	// ErrStateChanged 是带旧状态的条件更新影响 0 行（并发改了状态）。
 	ErrStateChanged = errs.Newf(errs.Conflict, "订阅状态已变化，请刷新后重试")
+	// ErrRotateWhileExpired 是门户在订阅不生效时换链接：续费后原链接自动恢复，过期期间换掉会让所有设备上的旧链接在续费后失效。
+	ErrRotateWhileExpired = errs.Newf(errs.Conflict, "订阅已过期，续费后原链接会自动恢复；过期期间不能更换订阅链接")
+	// ErrPullDenied 是订阅拉取认证不通过（前缀或令牌不对、凭据失效、订阅已停用、主人账号停用）：
+	// handler 一律回伪装 404，不区分原因。
+	ErrPullDenied = errs.New(errs.NotFound)
+	// ErrDeliveryUnavailable 是订阅分发要的依赖（UseDelivery、UseNodeSource）还没装配：回 503，不伪造空结果。
+	ErrDeliveryUnavailable = errs.Newf(errs.Unavailable, "订阅分发暂不可用，请稍后再试")
 )
 
 // Actor 是事件与流水上的操作者。Kind 为 ActorUser、ActorAdmin 时 ID 必填，其余为 nil。
@@ -410,4 +421,80 @@ type ResetStats struct {
 	ByReason    map[string]int
 	FreedBytes  int64
 	ManualCount int
+}
+
+// PullRequest 是一次订阅拉取（GET /{prefix}/{token}）的输入。来源 IP 与 UA 由 service 从 ctx 的 reqmeta 取。
+type PullRequest struct {
+	Prefix string
+	// Token 是路径里的原样令牌，可能带客户端加的扩展名（.yaml、.json 等），由 service 剥掉
+	Token string
+	// Target 是显式指定的格式（查询参数 target / flag / type 里第一个非空的）；空串按 UA 判断
+	Target string
+}
+
+// Userinfo 是 Subscription-Userinfo 头的四个数：字节与 Unix 秒。Expire 为 0 时不写 expire。
+type Userinfo struct {
+	Upload   int64
+	Download int64
+	Total    int64
+	Expire   int64
+}
+
+// PullResult 是一次成功的拉取（含过期订阅的提示配置），handler 原样写响应头与正文。
+type PullResult struct {
+	Body        []byte
+	ContentType string
+	Userinfo    Userinfo
+	// UpdateIntervalHours 是 Profile-Update-Interval：正常 12，过期 1（续费后客户端很快拉回真实线路）
+	UpdateIntervalHours int
+	// ContentDisposition 带客户端里的配置名（与门户 client_name 同一个 ProfileName）
+	ContentDisposition string
+	// Expired 为真是过期订阅的提示配置；WebPageURL 是门户续费页（Profile-Web-Page-Url），只在过期时非空
+	Expired    bool
+	WebPageURL string
+}
+
+// Link 是门户「订阅链接」里的一条：一份订阅当前的有效凭据。
+type Link struct {
+	SubscriptionID uuid.UUID
+	URL            string
+	FetchCount     int64
+	LastFetchedAt  *time.Time
+	// DistinctSources24h 是近 24 小时成功拉取的不同来源数；明显偏高多半是链接被分享出去了
+	DistinctSources24h int
+	// Expired：订阅不在生效中、链接暂停（只读展示，续费后原链接自动恢复）
+	Expired bool
+}
+
+// NodePreview 是门户看到的一条线路：只有名称、协议与倍率，地址、端口与协议配置只经订阅链接下发。
+type NodePreview struct {
+	Name        string
+	Protocol    string
+	TrafficRate float64
+}
+
+// MaxUsageDays 是按日用量一次最多回看的天数（约一个季度）。
+const MaxUsageDays = 93
+
+// UsageDay 是一天的计费字节数；Date 形如 2026-10-12（站点时区的自然日）。
+type UsageDay struct {
+	Date  string
+	Bytes int64
+}
+
+// DailyUsage 是一份订阅在一个窗口内的按日用量：Days 覆盖窗口内每一天（没流量的补 0），按日期升序，最后一天是今天。
+type DailyUsage struct {
+	// Timezone 是切日用的时区（站点时区）
+	Timezone      string
+	PeriodStart   time.Time
+	PeriodEnd     *time.Time
+	Days          []UsageDay
+	TodayBytes    int64
+	AvgDailyBytes int64
+}
+
+// AdminRotateResult 是后台替用户换链接的结果；刻意没有令牌与链接（后台看不到用户的订阅地址）。
+type AdminRotateResult struct {
+	SubscriptionID uuid.UUID
+	UserEmail      string
 }

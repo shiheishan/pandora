@@ -131,6 +131,10 @@ func defaults(v *viper.Viper) {
 	v.SetDefault("log.max_backups", 14)
 	v.SetDefault("log.max_age_days", 30)
 	v.SetDefault("log.compress", true)
+
+	v.SetDefault("subscription.singbox.geosite_url_prefix", "")
+	v.SetDefault("subscription.singbox.geoip_url_prefix", "")
+	v.SetDefault("subscription.singbox.block_ads", false)
 }
 
 func envVarName(configKey string) string {

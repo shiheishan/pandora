@@ -1,5 +1,6 @@
 // Package service 是 subscription 模块的业务层：订阅、配额、流量包的开通、续期、延期、换套餐、
-// 加流量包与转移、手动重置、改设备数、备注名，以及状态口径与按用户批量读。
+// 加流量包与转移、手动重置、改设备数、备注名，以及状态口径与按用户批量读；
+// P4 起还有订阅分发：链接拉取、链接列表与换链接、线路预览、按日用量、拉取日志的保留期清理。
 //
 // 给别的模块用的写方法（Provision、Renew、Extend、ChangePlan、GrantTrafficPack、TransferPacks、ResetTraffic）
 // 都经 s.tx.Do 执行：ctx 里已有事务就加入调用方的事务，钱与订阅在同一个事务里落库。
@@ -13,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync/atomic"
 	"time"
 
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
@@ -57,9 +59,11 @@ type SiteSettings interface {
 	Site(ctx context.Context) (settingssvc.Site, error)
 }
 
-// Sealer 封存订阅链接令牌的原文（AAD 是 CredentialAAD：用途前缀加订阅 id）；*crypto.Sealer 直接满足。
+// Sealer 封存与解开订阅链接令牌的原文（AAD 是 CredentialAAD：用途前缀加订阅 id），也封存拉取日志里的 IP 与 UA；
+// *crypto.Sealer 直接满足。
 type Sealer interface {
 	Seal(plain, aad []byte) ([]byte, error)
+	Open(sealed, aad []byte) ([]byte, error)
 }
 
 // RosterNotifier 由 node 模块实现（P5）：一份订阅里影响节点下发名单的事实变了
@@ -80,6 +84,14 @@ type Service struct {
 	sealer   Sealer
 	roster   RosterNotifier
 	now      func() time.Time
+
+	// 订阅分发（P4）：nodes 与 delivery 由装配注入（nodes.go）。
+	nodes    NodeSource
+	delivery *Delivery
+	// prefix 是订阅路径前缀的进程内副本：前缀生成后不再变，读到一次就一直用，前缀不对的请求不碰库。
+	prefix atomic.Pointer[string]
+	// failures 给未认证失败的拉取日志采样（fetchlog.go）。
+	failures *failureSampler
 }
 
 // New 构造 subscription service。catalog 一般是 catalog service，users 是 identity service，sealer 是 crypto.Keys.Sealer()。
@@ -93,6 +105,7 @@ func New(r *repo.Repo, txm *tx.Manager, audit *auditsvc.Service, settings SiteSe
 		users:    users,
 		sealer:   sealer,
 		now:      time.Now,
+		failures: newFailureSampler(failureSampleWindow, failureSamplesPerWindow),
 	}
 }
 

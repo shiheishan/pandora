@@ -1,0 +1,1006 @@
+{
+  "dns": {
+    "final": "dns-remote",
+    "rules": [
+      {
+        "action": "reject",
+        "rule_set": [
+          "geosite-category-ads-all"
+        ]
+      },
+      {
+        "action": "route",
+        "rule_set": [
+          "geosite-cn"
+        ],
+        "server": "dns-direct"
+      }
+    ],
+    "servers": [
+      {
+        "detour": "节点选择",
+        "server": "1.1.1.1",
+        "tag": "dns-remote",
+        "type": "https"
+      },
+      {
+        "server": "223.5.5.5",
+        "tag": "dns-direct",
+        "type": "https"
+      }
+    ],
+    "strategy": "ipv4_only"
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true
+    }
+  },
+  "http_clients": [
+    {
+      "detour": "自动选择",
+      "tag": "rule-set-download"
+    }
+  ],
+  "inbounds": [
+    {
+      "address": [
+        "172.19.0.1/30",
+        "fdfe:dcba:9876::1/126"
+      ],
+      "auto_route": true,
+      "strict_route": true,
+      "tag": "tun-in",
+      "type": "tun"
+    }
+  ],
+  "log": {
+    "level": "warn"
+  },
+  "outbounds": [
+    {
+      "outbounds": [
+        "自动选择",
+        "ss-aes128",
+        "ss-chacha",
+        "hy2-obfs",
+        "hy2-plain",
+        "tuic",
+        "anytls",
+        "anytls-utls-fallback",
+        "naive",
+        "naive-fallback",
+        "socks",
+        "socks-udp",
+        "http",
+        "http-tls",
+        "shadowtls",
+        "trojan-tls-tcp",
+        "trojan-tls-ws",
+        "trojan-tls-grpc",
+        "trojan-tls-httpupgrade",
+        "trojan-tls-fallback",
+        "trojan-reality",
+        "trojan-reality-fallback",
+        "vless-reality-vision",
+        "vless-reality-multi",
+        "vless-reality-grpc",
+        "vless-ws",
+        "vless-ws-nohost",
+        "vless-httpupgrade",
+        "vless-grpc",
+        "vmess-ws",
+        "vmess-tcp",
+        "vmess-grpc",
+        "vmess-httpupgrade",
+        "vless-tcp-plain",
+        "trojan-legacy-cert",
+        "香港 · 2",
+        "香港 · 3",
+        "自动选择 · 1",
+        "节点 · 1",
+        "东京 · 1",
+        "东京 · 2",
+        "首尔 · 1",
+        "首尔 · 2",
+        "旧",
+        "香港 · 1",
+        "direct · 1",
+        "DIRECT · 1",
+        "REJECT · 1",
+        "block · 1",
+        "节点选择 · 1",
+        "节点 · 2",
+        "shadowtls · shadowtls",
+        "hk-01",
+        "hk-02"
+      ],
+      "tag": "节点选择",
+      "type": "selector"
+    },
+    {
+      "interval": "5m",
+      "outbounds": [
+        "ss-aes128",
+        "ss-chacha",
+        "hy2-obfs",
+        "hy2-plain",
+        "tuic",
+        "anytls",
+        "anytls-utls-fallback",
+        "naive",
+        "naive-fallback",
+        "socks",
+        "socks-udp",
+        "http",
+        "http-tls",
+        "shadowtls",
+        "trojan-tls-tcp",
+        "trojan-tls-ws",
+        "trojan-tls-grpc",
+        "trojan-tls-httpupgrade",
+        "trojan-tls-fallback",
+        "trojan-reality",
+        "trojan-reality-fallback",
+        "vless-reality-vision",
+        "vless-reality-multi",
+        "vless-reality-grpc",
+        "vless-ws",
+        "vless-ws-nohost",
+        "vless-httpupgrade",
+        "vless-grpc",
+        "vmess-ws",
+        "vmess-tcp",
+        "vmess-grpc",
+        "vmess-httpupgrade",
+        "vless-tcp-plain",
+        "trojan-legacy-cert",
+        "香港 · 2",
+        "香港 · 3",
+        "自动选择 · 1",
+        "节点 · 1",
+        "东京 · 1",
+        "东京 · 2",
+        "首尔 · 1",
+        "首尔 · 2",
+        "旧",
+        "香港 · 1",
+        "direct · 1",
+        "DIRECT · 1",
+        "REJECT · 1",
+        "block · 1",
+        "节点选择 · 1",
+        "节点 · 2",
+        "shadowtls · shadowtls",
+        "hk-01",
+        "hk-02"
+      ],
+      "tag": "自动选择",
+      "type": "urltest",
+      "url": "http://www.gstatic.com/generate_204"
+    },
+    {
+      "method": "aes-128-gcm",
+      "network": "tcp",
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 8388,
+      "tag": "ss-aes128",
+      "type": "shadowsocks"
+    },
+    {
+      "method": "chacha20-ietf-poly1305",
+      "network": "tcp",
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 8389,
+      "tag": "ss-chacha",
+      "type": "shadowsocks"
+    },
+    {
+      "obfs": {
+        "password": "obfs-pass-1",
+        "type": "salamander"
+      },
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 8443,
+      "tag": "hy2-obfs",
+      "tls": {
+        "enabled": true,
+        "insecure": true,
+        "server_name": "sni.example.com"
+      },
+      "type": "hysteria2"
+    },
+    {
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 8444,
+      "tag": "hy2-plain",
+      "tls": {
+        "enabled": true
+      },
+      "type": "hysteria2"
+    },
+    {
+      "congestion_control": "cubic",
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 5443,
+      "tag": "tuic",
+      "tls": {
+        "alpn": [
+          "h3"
+        ],
+        "enabled": true,
+        "server_name": "sni.example.com"
+      },
+      "type": "tuic",
+      "uuid": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b"
+    },
+    {
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 6443,
+      "tag": "anytls",
+      "tls": {
+        "enabled": true,
+        "insecure": true,
+        "server_name": "sni.example.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        }
+      },
+      "type": "anytls"
+    },
+    {
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 6445,
+      "tag": "anytls-utls-fallback",
+      "tls": {
+        "enabled": true,
+        "insecure": true,
+        "server_name": "sni.example.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "safari"
+        }
+      },
+      "type": "anytls"
+    },
+    {
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 9443,
+      "tag": "naive",
+      "tls": {
+        "enabled": true,
+        "server_name": "sni.example.com"
+      },
+      "type": "naive",
+      "username": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b"
+    },
+    {
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 9445,
+      "tag": "naive-fallback",
+      "tls": {
+        "enabled": true,
+        "server_name": "sni.example.com"
+      },
+      "type": "naive",
+      "username": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b"
+    },
+    {
+      "network": "tcp",
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 1080,
+      "tag": "socks",
+      "type": "socks",
+      "username": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "version": "5"
+    },
+    {
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 1081,
+      "tag": "socks-udp",
+      "type": "socks",
+      "username": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "version": "5"
+    },
+    {
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 8080,
+      "tag": "http",
+      "type": "http",
+      "username": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b"
+    },
+    {
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 8081,
+      "tag": "http-tls",
+      "tls": {
+        "enabled": true
+      },
+      "type": "http",
+      "username": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b"
+    },
+    {
+      "detour": "shadowtls · shadowtls 2",
+      "method": "aes-128-gcm",
+      "network": "tcp",
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 4443,
+      "tag": "shadowtls",
+      "type": "shadowsocks"
+    },
+    {
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 7443,
+      "tag": "trojan-tls-tcp",
+      "tls": {
+        "enabled": true,
+        "insecure": true,
+        "server_name": "sni.example.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        }
+      },
+      "type": "trojan"
+    },
+    {
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 7444,
+      "tag": "trojan-tls-ws",
+      "tls": {
+        "enabled": true,
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        }
+      },
+      "transport": {
+        "headers": {
+          "Host": "cdn.example.com"
+        },
+        "path": "/tw",
+        "type": "ws"
+      },
+      "type": "trojan"
+    },
+    {
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 7445,
+      "tag": "trojan-tls-grpc",
+      "tls": {
+        "enabled": true,
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        }
+      },
+      "transport": {
+        "service_name": "tgrpc",
+        "type": "grpc"
+      },
+      "type": "trojan"
+    },
+    {
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 7447,
+      "tag": "trojan-tls-httpupgrade",
+      "tls": {
+        "enabled": true,
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        }
+      },
+      "transport": {
+        "host": "node.example.com",
+        "path": "/tu",
+        "type": "httpupgrade"
+      },
+      "type": "trojan"
+    },
+    {
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 7449,
+      "tag": "trojan-tls-fallback",
+      "tls": {
+        "enabled": true,
+        "insecure": true,
+        "server_name": "sni.example.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        }
+      },
+      "type": "trojan"
+    },
+    {
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 7446,
+      "tag": "trojan-reality",
+      "tls": {
+        "enabled": true,
+        "reality": {
+          "enabled": true,
+          "public_key": "EVmCoU4Swh5-Pv9WHB68iac25hNF2VwABHEnIZOTfyE",
+          "short_id": "0a1b2c3d"
+        },
+        "server_name": "www.example.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        }
+      },
+      "type": "trojan"
+    },
+    {
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 7450,
+      "tag": "trojan-reality-fallback",
+      "tls": {
+        "enabled": true,
+        "reality": {
+          "enabled": true,
+          "public_key": "EVmCoU4Swh5-Pv9WHB68iac25hNF2VwABHEnIZOTfyE",
+          "short_id": "0a1b2c3d"
+        },
+        "server_name": "www.example.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        }
+      },
+      "type": "trojan"
+    },
+    {
+      "flow": "xtls-rprx-vision",
+      "server": "node.example.com",
+      "server_port": 443,
+      "tag": "vless-reality-vision",
+      "tls": {
+        "enabled": true,
+        "reality": {
+          "enabled": true,
+          "public_key": "EVmCoU4Swh5-Pv9WHB68iac25hNF2VwABHEnIZOTfyE",
+          "short_id": "0a1b2c3d"
+        },
+        "server_name": "www.example.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        }
+      },
+      "type": "vless",
+      "uuid": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b"
+    },
+    {
+      "flow": "xtls-rprx-vision",
+      "server": "node.example.com",
+      "server_port": 449,
+      "tag": "vless-reality-multi",
+      "tls": {
+        "enabled": true,
+        "reality": {
+          "enabled": true,
+          "public_key": "EVmCoU4Swh5-Pv9WHB68iac25hNF2VwABHEnIZOTfyE",
+          "short_id": "4e5f"
+        },
+        "server_name": "static.example.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        }
+      },
+      "type": "vless",
+      "uuid": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b"
+    },
+    {
+      "server": "node.example.com",
+      "server_port": 444,
+      "tag": "vless-reality-grpc",
+      "tls": {
+        "enabled": true,
+        "reality": {
+          "enabled": true,
+          "public_key": "EVmCoU4Swh5-Pv9WHB68iac25hNF2VwABHEnIZOTfyE",
+          "short_id": "0a1b2c3d"
+        },
+        "server_name": "www.example.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "safari"
+        }
+      },
+      "transport": {
+        "service_name": "vgrpc",
+        "type": "grpc"
+      },
+      "type": "vless",
+      "uuid": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b"
+    },
+    {
+      "server": "node.example.com",
+      "server_port": 10080,
+      "tag": "vless-ws",
+      "transport": {
+        "headers": {
+          "Host": "cdn.example.com"
+        },
+        "path": "/vw",
+        "type": "ws"
+      },
+      "type": "vless",
+      "uuid": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b"
+    },
+    {
+      "server": "node.example.com",
+      "server_port": 10084,
+      "tag": "vless-ws-nohost",
+      "transport": {
+        "headers": {
+          "Host": "node.example.com"
+        },
+        "path": "/vw",
+        "type": "ws"
+      },
+      "type": "vless",
+      "uuid": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b"
+    },
+    {
+      "server": "node.example.com",
+      "server_port": 10081,
+      "tag": "vless-httpupgrade",
+      "transport": {
+        "host": "cdn.example.com",
+        "path": "/vu",
+        "type": "httpupgrade"
+      },
+      "type": "vless",
+      "uuid": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b"
+    },
+    {
+      "server": "node.example.com",
+      "server_port": 10082,
+      "tag": "vless-grpc",
+      "transport": {
+        "service_name": "vg",
+        "type": "grpc"
+      },
+      "type": "vless",
+      "uuid": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b"
+    },
+    {
+      "security": "auto",
+      "server": "node.example.com",
+      "server_port": 10091,
+      "tag": "vmess-ws",
+      "transport": {
+        "headers": {
+          "Host": "cdn.example.com"
+        },
+        "path": "/mw",
+        "type": "ws"
+      },
+      "type": "vmess",
+      "uuid": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b"
+    },
+    {
+      "security": "auto",
+      "server": "node.example.com",
+      "server_port": 10090,
+      "tag": "vmess-tcp",
+      "type": "vmess",
+      "uuid": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b"
+    },
+    {
+      "security": "auto",
+      "server": "node.example.com",
+      "server_port": 10092,
+      "tag": "vmess-grpc",
+      "transport": {
+        "service_name": "mg",
+        "type": "grpc"
+      },
+      "type": "vmess",
+      "uuid": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b"
+    },
+    {
+      "security": "auto",
+      "server": "node.example.com",
+      "server_port": 10093,
+      "tag": "vmess-httpupgrade",
+      "transport": {
+        "host": "node.example.com",
+        "path": "/mu",
+        "type": "httpupgrade"
+      },
+      "type": "vmess",
+      "uuid": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b"
+    },
+    {
+      "server": "node.example.com",
+      "server_port": 10087,
+      "tag": "vless-tcp-plain",
+      "type": "vless",
+      "uuid": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b"
+    },
+    {
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 7451,
+      "tag": "trojan-legacy-cert",
+      "tls": {
+        "enabled": true,
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        }
+      },
+      "type": "trojan"
+    },
+    {
+      "server": "node.example.com",
+      "server_port": 20000,
+      "tag": "香港 · 2",
+      "tls": {
+        "enabled": true,
+        "reality": {
+          "enabled": true,
+          "public_key": "pk",
+          "short_id": "01ab"
+        },
+        "server_name": "a.example.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        }
+      },
+      "transport": {
+        "service_name": "svc",
+        "type": "grpc"
+      },
+      "type": "vless",
+      "uuid": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b"
+    },
+    {
+      "security": "auto",
+      "server": "node.example.com",
+      "server_port": 20001,
+      "tag": "香港 · 3",
+      "transport": {
+        "headers": {
+          "Host": "edge.example.com"
+        },
+        "path": "/ws",
+        "type": "ws"
+      },
+      "type": "vmess",
+      "uuid": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b"
+    },
+    {
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 20002,
+      "tag": "自动选择 · 1",
+      "tls": {
+        "enabled": true,
+        "insecure": true,
+        "server_name": "edge.example.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        }
+      },
+      "type": "trojan"
+    },
+    {
+      "obfs": {
+        "password": "secret",
+        "type": "salamander"
+      },
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 20003,
+      "tag": "节点 · 1",
+      "tls": {
+        "enabled": true
+      },
+      "type": "hysteria2"
+    },
+    {
+      "method": "aes-128-gcm",
+      "network": "tcp",
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 20004,
+      "tag": "东京 · 1",
+      "type": "shadowsocks"
+    },
+    {
+      "congestion_control": "bbr",
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 20005,
+      "tag": "东京 · 2",
+      "tls": {
+        "alpn": [
+          "h3"
+        ],
+        "enabled": true
+      },
+      "type": "tuic",
+      "uuid": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b"
+    },
+    {
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 20007,
+      "tag": "首尔 · 1",
+      "tls": {
+        "enabled": true,
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        }
+      },
+      "type": "anytls"
+    },
+    {
+      "detour": "首尔 · 2 · shadowtls",
+      "method": "aes-256-gcm",
+      "network": "tcp",
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 20008,
+      "tag": "首尔 · 2",
+      "type": "shadowsocks"
+    },
+    {
+      "flow": "xtls-rprx-vision",
+      "server": "node.example.com",
+      "server_port": 20009,
+      "tag": "旧",
+      "tls": {
+        "enabled": true,
+        "reality": {
+          "enabled": true,
+          "public_key": "pk",
+          "short_id": "01ab"
+        },
+        "server_name": "b.example.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        }
+      },
+      "type": "vless",
+      "uuid": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b"
+    },
+    {
+      "method": "aes-128-gcm",
+      "network": "tcp",
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 21000,
+      "tag": "香港 · 1",
+      "type": "shadowsocks"
+    },
+    {
+      "method": "aes-128-gcm",
+      "network": "tcp",
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 21001,
+      "tag": "direct · 1",
+      "type": "shadowsocks"
+    },
+    {
+      "method": "aes-128-gcm",
+      "network": "tcp",
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 21002,
+      "tag": "DIRECT · 1",
+      "type": "shadowsocks"
+    },
+    {
+      "method": "aes-128-gcm",
+      "network": "tcp",
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 21003,
+      "tag": "REJECT · 1",
+      "type": "shadowsocks"
+    },
+    {
+      "method": "aes-128-gcm",
+      "network": "tcp",
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 21004,
+      "tag": "block · 1",
+      "type": "shadowsocks"
+    },
+    {
+      "method": "aes-128-gcm",
+      "network": "tcp",
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 21005,
+      "tag": "节点选择 · 1",
+      "type": "shadowsocks"
+    },
+    {
+      "method": "aes-128-gcm",
+      "network": "tcp",
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 21006,
+      "tag": "节点 · 2",
+      "type": "shadowsocks"
+    },
+    {
+      "method": "aes-128-gcm",
+      "network": "tcp",
+      "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+      "server": "node.example.com",
+      "server_port": 21007,
+      "tag": "shadowtls · shadowtls",
+      "type": "shadowsocks"
+    },
+    {
+      "server": "node.example.com",
+      "server_port": 22001,
+      "tag": "hk-01",
+      "tls": {
+        "enabled": true,
+        "reality": {
+          "enabled": true,
+          "public_key": "EVmCoU4Swh5-Pv9WHB68iac25hNF2VwABHEnIZOTfyE",
+          "short_id": "0a1b2c3d"
+        },
+        "server_name": "www.example.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        }
+      },
+      "type": "vless",
+      "uuid": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b"
+    },
+    {
+      "server": "node.example.com",
+      "server_port": 22002,
+      "tag": "hk-02",
+      "tls": {
+        "enabled": true,
+        "reality": {
+          "enabled": true,
+          "public_key": "EVmCoU4Swh5-Pv9WHB68iac25hNF2VwABHEnIZOTfyE",
+          "short_id": "0a1b2c3d"
+        },
+        "server_name": "www.example.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        }
+      },
+      "type": "vless",
+      "uuid": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b"
+    },
+    {
+      "password": "stls-pass-1",
+      "server": "node.example.com",
+      "server_port": 4443,
+      "tag": "shadowtls · shadowtls 2",
+      "tls": {
+        "enabled": true,
+        "server_name": "www.example.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        }
+      },
+      "type": "shadowtls",
+      "version": 3
+    },
+    {
+      "password": "p",
+      "server": "node.example.com",
+      "server_port": 20008,
+      "tag": "首尔 · 2 · shadowtls",
+      "tls": {
+        "enabled": true,
+        "server_name": "www.example.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        }
+      },
+      "type": "shadowtls",
+      "version": 3
+    },
+    {
+      "tag": "direct",
+      "type": "direct"
+    }
+  ],
+  "route": {
+    "auto_detect_interface": true,
+    "default_domain_resolver": {
+      "server": "dns-direct",
+      "strategy": "prefer_ipv4"
+    },
+    "default_http_client": "rule-set-download",
+    "final": "节点选择",
+    "rule_set": [
+      {
+        "format": "binary",
+        "tag": "geosite-category-ads-all",
+        "type": "remote",
+        "url": "https://mirror.example.test/geosite/geosite-category-ads-all.srs"
+      },
+      {
+        "format": "binary",
+        "tag": "geosite-cn",
+        "type": "remote",
+        "url": "https://mirror.example.test/geosite/geosite-cn.srs"
+      },
+      {
+        "format": "binary",
+        "tag": "geoip-cn",
+        "type": "remote",
+        "url": "https://mirror.example.test/geoip/geoip-cn.srs"
+      }
+    ],
+    "rules": [
+      {
+        "action": "sniff"
+      },
+      {
+        "action": "hijack-dns",
+        "protocol": "dns"
+      },
+      {
+        "action": "route",
+        "ip_is_private": true,
+        "outbound": "direct"
+      },
+      {
+        "action": "reject",
+        "rule_set": [
+          "geosite-category-ads-all"
+        ]
+      },
+      {
+        "action": "route",
+        "outbound": "direct",
+        "rule_set": [
+          "geosite-cn",
+          "geoip-cn"
+        ]
+      }
+    ]
+  }
+}

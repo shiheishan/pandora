@@ -30,6 +30,7 @@ import (
 	promosvc "github.com/aegispanel/aegis/internal/module/promo/service"
 	settingsrepo "github.com/aegispanel/aegis/internal/module/settings/repo"
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
+	"github.com/aegispanel/aegis/internal/module/subscription/render"
 	subrepo "github.com/aegispanel/aegis/internal/module/subscription/repo"
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/aegispanel/aegis/internal/pkg/config"
@@ -158,6 +159,20 @@ func buildServices(r *runtime) (*services, error) {
 	// promo 经 identity 取用户组与邮箱、经适配器取 catalog 的在售价格
 	promoSvc.UseUsers(identitySvc)
 	promoSvc.UseCatalog(promoCatalog{c: catalogSvc})
+	// 订阅分发（拉取、链接列表、换链接）：前缀与拉取上限在 settings、主人状态在 identity、限流在 Redis；
+	// 可下发线路的来源（UseNodeSource）由 P5 的 node 模块装配，没装配前生效订阅的拉取回 503
+	subSvc.UseDelivery(subsvc.Delivery{
+		Settings:      settingsSvc,
+		Owners:        identitySvc,
+		Hasher:        keys,
+		Limiter:       limiter,
+		PublicBaseURL: cfg.PublicBaseURL,
+		Render: render.Options{Singbox: render.SingboxTemplate{
+			GeositeURLPrefix: cfg.Subscription.Singbox.GeositeURLPrefix,
+			GeoIPURLPrefix:   cfg.Subscription.Singbox.GeoIPURLPrefix,
+			BlockAds:         cfg.Subscription.Singbox.BlockAds,
+		}},
+	})
 	// 渠道到账与线下收款经 order 结算（没注册时入账一律失败）
 	paymentSvc.UseSettler(orderSvc)
 	// 订单结算时按推荐关系计提佣金（同一结算事务）；同源（审计里共用来源 IP）的佣金转人工复核

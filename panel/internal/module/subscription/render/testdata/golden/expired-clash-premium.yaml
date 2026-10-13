@@ -1,0 +1,13 @@
+mixed-port: 7890
+allow-lan: false
+mode: rule
+log-level: info
+
+proxies:
+  - {name: "已于 2026-10-07 14:32 到期，续费后更新订阅即可恢复", type: "socks5", server: "127.0.0.1", port: 1, udp: false}
+
+proxy-groups:
+  - {name: 节点选择, type: select, proxies: ["已于 2026-10-07 14:32 到期，续费后更新订阅即可恢复"]}
+
+rules:
+  - MATCH,节点选择
