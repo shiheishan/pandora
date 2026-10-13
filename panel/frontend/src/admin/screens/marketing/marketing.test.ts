@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   GB,
+  approveReasonError,
   basisPointsToPercent,
   batchFileName,
   batchLabel,
@@ -339,6 +340,7 @@ describe('commission', () => {
       amount: 1234,
       currency: 'CNY',
       review_reason: '同源嫌疑',
+      review_source: 'same_source',
       created_at: iso,
       frozen_until: iso,
     }
@@ -352,6 +354,7 @@ describe('commission', () => {
       expect(list.next_cursor).toBe('abc')
       expect(reviewEntriesResponse.safeParse({ entries: [{ ...row, amount: 12.5 }], next_cursor: '' }).success).toBe(false)
       expect(reviewEntriesResponse.safeParse({ entries: [{ ...row, referee_email: undefined }], next_cursor: '' }).success).toBe(false)
+      expect(reviewEntriesResponse.safeParse({ entries: [{ ...row, review_source: 'mystery' }], next_cursor: '' }).success).toBe(false)
       expect(entryReviewResponse.parse({ status: 'pending' }).status).toBe('pending')
       expect(entryReviewResponse.parse({ status: 'voided' }).status).toBe('voided')
       expect(entryReviewResponse.safeParse({ status: 'approved' }).success).toBe(false)
@@ -368,11 +371,24 @@ describe('commission', () => {
       expect(voidReasonError('长'.repeat(500))).toBeNull()
     })
 
+    it('lets the approve reason be blank but caps it at 500 characters', () => {
+      expect(approveReasonError('')).toBeNull()
+      expect(approveReasonError('  核实无误  ')).toBeNull()
+      expect(approveReasonError('长'.repeat(500))).toBeNull()
+      expect(approveReasonError('长'.repeat(501))).toBe('原因最多 500 个字')
+    })
+
     it('labels freeze period relative to now', () => {
       const before = new Date('2026-12-01T00:00:00Z')
       const after = new Date('2025-07-01T00:00:00Z')
-      expect(freezeLabel('2026-12-31T12:00:00Z', before)).toContain('冻结至')
-      expect(freezeLabel('2025-06-01T00:00:00Z', after)).toBe('冻结期已过，通过后下一轮自动解冻')
+      expect(freezeLabel({ frozen_until: '2026-12-31T12:00:00Z', review_source: 'same_source' }, before)).toContain('冻结至')
+      expect(freezeLabel({ frozen_until: '2025-06-01T00:00:00Z', review_source: 'source_check' }, after)).toBe('冻结期已过，通过后下一轮自动解冻')
+      // 余额不足转来的：不论冻结期，都不说「会自动解冻」
+      for (const at of [before, after]) {
+        const label = freezeLabel({ frozen_until: '2025-06-01T00:00:00Z', review_source: 'underfunded' }, at)
+        expect(label).toContain('余额不足')
+        expect(label).not.toContain('自动解冻')
+      }
     })
   })
 })

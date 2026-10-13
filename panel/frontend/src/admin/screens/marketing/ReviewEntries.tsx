@@ -4,14 +4,16 @@ import { formatMoney } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
 import { Button, Empty, Modal, QueryView, TextArea, useToast } from '../../../ui'
 import local from './Commission.module.css'
-import { formatDateTime, freezeLabel, voidReasonError, type FieldErrors } from './logic'
+import { approveReasonError, formatDateTime, freezeLabel, voidReasonError, type FieldErrors } from './logic'
 import css from './marketing.module.css'
 import { useFailure, useInvalidateMarketing, useReviewEntries } from './queries'
 import { entryReviewResponse, type ReviewEntry } from './schemas'
 
+type Dialog = { kind: 'approve' | 'void'; entry: ReviewEntry } | null
+
 export function ReviewEntries() {
   const q = useReviewEntries()
-  const [dialog, setDialog] = useState<ReviewEntry | null>(null)
+  const [dialog, setDialog] = useState<Dialog>(null)
   const flat = q.data?.pages.flatMap((p) => p.entries)
   const query = { ...q, data: flat }
 
@@ -19,7 +21,7 @@ export function ReviewEntries() {
     <section className={css.panel}>
       <div className={css.panelHead}>
         <h3 className={css.panelTitle}>待复核佣金</h3>
-        <span className={css.faint}>同源嫌疑或解冻异常的佣金不会自动解冻；通过后照常解冻，作废会冲回计提。两个操作都需二次认证</span>
+        <span className={css.faint}>同源嫌疑或解冻异常的佣金不会自动解冻；通过后照常解冻，作废会冲回计提。两个操作都需要重新验证身份</span>
       </div>
       <QueryView
         query={query}
@@ -28,7 +30,7 @@ export function ReviewEntries() {
         {(rows) => (
           <>
             {rows.map((e) => (
-              <ReviewRow key={e.id} entry={e} onVoid={() => setDialog(e)} />
+              <ReviewRow key={e.id} entry={e} onDialog={setDialog} />
             ))}
             {q.hasNextPage && (
               <div className={local.more}>
@@ -40,28 +42,13 @@ export function ReviewEntries() {
           </>
         )}
       </QueryView>
-      <VoidDialog entry={dialog} onClose={() => setDialog(null)} />
+      <ApproveDialog entry={dialog?.kind === 'approve' ? dialog.entry : null} onClose={() => setDialog(null)} />
+      <VoidDialog entry={dialog?.kind === 'void' ? dialog.entry : null} onClose={() => setDialog(null)} />
     </section>
   )
 }
 
-function ReviewRow({ entry: e, onVoid }: { entry: ReviewEntry; onVoid: () => void }) {
-  const api = useApi()
-  const toast = useToast()
-  const fail = useFailure()
-  const invalidate = useInvalidateMarketing()
-  const approve = useMutation({
-    mutationFn: () => api.post(`v1/commission/entries/${e.id}/review`, entryReviewResponse, { body: { action: 'approve' } }),
-    onSuccess: () => {
-      toast('已通过，冻结期满后自动解冻')
-      void invalidate()
-    },
-    onError: (error) => {
-      fail(error)
-      void invalidate()
-    },
-  })
-
+function ReviewRow({ entry: e, onDialog }: { entry: ReviewEntry; onDialog: (d: Dialog) => void }) {
   return (
     <div className={local.row}>
       <span className={local.who}>
@@ -70,20 +57,93 @@ function ReviewRow({ entry: e, onVoid }: { entry: ReviewEntry; onVoid: () => voi
           来自 {e.referee_email} · 订单 {e.order_no} · {formatDateTime(e.created_at)}
         </span>
         <span className={`${css.faint} ${local.ellipsis}`}>复核原因：{e.review_reason}</span>
-        <span className={`${css.faint} ${local.ellipsis}`}>{freezeLabel(e.frozen_until, new Date())}</span>
+        <span className={`${css.faint} ${local.ellipsis}`}>{freezeLabel(e, new Date())}</span>
       </span>
       <span className={local.amount}>
         <span className={local.money}>{formatMoney(e.amount, e.currency)}</span>
       </span>
       <span className={local.actions}>
-        <Button size="xs" className={local.reject} onClick={onVoid} disabled={approve.isPending}>
+        <Button size="xs" className={local.reject} onClick={() => onDialog({ kind: 'void', entry: e })}>
           作废
         </Button>
-        <Button size="xs" variant="primary" busy={approve.isPending} onClick={() => approve.mutate()}>
+        <Button size="xs" variant="primary" onClick={() => onDialog({ kind: 'approve', entry: e })}>
           通过
         </Button>
       </span>
     </div>
+  )
+}
+
+// 通过后冻结期已过的条目一小时内就进可提现，之后不能再作废：先确认一次，可选填通过原因（只进审计）
+function ApproveDialog({ entry, onClose }: { entry: ReviewEntry | null; onClose: () => void }) {
+  const api = useApi()
+  const toast = useToast()
+  const fail = useFailure()
+  const invalidate = useInvalidateMarketing()
+  const [reason, setReason] = useState('')
+  const [errors, setErrors] = useState<FieldErrors>({})
+  const close = () => {
+    setReason('')
+    setErrors({})
+    onClose()
+  }
+  const approve = useMutation({
+    mutationFn: (body: { action: 'approve'; reason?: string }) => api.post(`v1/commission/entries/${entry!.id}/review`, entryReviewResponse, { body }),
+    onSuccess: () => {
+      toast(entry?.review_source === 'underfunded' ? '已通过；待结科目余额不足时解冻仍会失败，请核对账本' : '已通过，冻结期满后自动解冻')
+      void invalidate()
+      close()
+    },
+    onError: (error) => {
+      if (!fail(error, setErrors)) close()
+      void invalidate()
+    },
+  })
+  const submit = (event: FormEvent) => {
+    event.preventDefault()
+    const msg = approveReasonError(reason)
+    if (msg) return setErrors({ reason: msg })
+    const trimmed = reason.trim()
+    approve.mutate(trimmed ? { action: 'approve', reason: trimmed } : { action: 'approve' })
+  }
+  return (
+    <Modal
+      open={entry !== null}
+      onClose={close}
+      dismissible={!approve.isPending}
+      title="通过这笔佣金？"
+      actions={
+        <>
+          <Button size="dialog" onClick={close} disabled={approve.isPending}>
+            取消
+          </Button>
+          <Button size="dialog" variant="primary" type="submit" form="commission-approve" busy={approve.isPending}>
+            通过
+          </Button>
+        </>
+      }
+    >
+      {entry && (
+        <form id="commission-approve" className={css.stack} onSubmit={submit} noValidate>
+          <div className={css.muted}>
+            {entry.referrer_email} 的佣金 {formatMoney(entry.amount, entry.currency)}（订单 {entry.order_no}）。复核原因：{entry.review_reason}
+          </div>
+          <div className={css.muted}>
+            {freezeLabel(entry, new Date())}
+            {entry.review_source === 'underfunded' ? '。' : '。解冻后进入可提现，之后不能再作废。'}
+          </div>
+          <TextArea
+            label="通过原因（选填）"
+            rows={2}
+            value={reason}
+            onChange={(ev) => setReason(ev.target.value)}
+            error={errors.reason}
+            data-autofocus=""
+            placeholder="如：已核实为同一家庭的不同用户"
+          />
+        </form>
+      )}
+    </Modal>
   )
 }
 

@@ -332,12 +332,28 @@ function csvCell(v: string) {
 // 佣金与提现（契约后台-06 · 佣金与提现，R4 R6；overview 的 total_earned / invited_users / scope
 // 与 config 的 scope 后端已上线（R67 R68），前端 schema 按必填收紧，这里必须恒返回）
 // ---------------------------------------------------------------------------
-// 待复核佣金：同源嫌疑、同源检查失败、解冻时余额不足三种来源各一条
-const reviewEntries = [
-  { id: '01900000-0000-7000-8000-00000000c001', order_no: 'P20261001A1', referrer_email: 'alice@example.com', referee_email: 'bob@example.com', amount: 2580, currency: 'CNY', review_reason: '推荐人与被推荐人有相同的来源 IP', created_at: '2026-10-01T03:20:00Z', frozen_until: '2026-10-04T03:20:00Z' },
-  { id: '01900000-0000-7000-8000-00000000c002', order_no: 'P20261003B7', referrer_email: 'carol@example.com', referee_email: 'dave@example.com', amount: 990, currency: 'CNY', review_reason: '同源检查失败，转人工复核', created_at: '2026-10-03T11:05:00Z', frozen_until: '2026-10-06T11:05:00Z' },
-  { id: '01900000-0000-7000-8000-00000000c003', order_no: 'P20261005C2', referrer_email: 'erin@example.com', referee_email: 'frank@example.com', amount: 4200, currency: 'USD', review_reason: '待结佣金科目余额不足，无法解冻', created_at: '2026-10-05T08:40:00Z', frozen_until: '2026-10-08T08:40:00Z' },
+// 待复核佣金：同源嫌疑、同源检查失败、解冻时余额不足三种来源各一条（原因文案同 Go 的常量）。
+// 处理过的条目不删，只改 status（与库里一样）：列表只列 pending 且待复核的，再次处理回 409。
+interface ReviewEntryRow {
+  id: string
+  order_no: string
+  referrer_email: string
+  referee_email: string
+  amount: number
+  currency: string
+  review_reason: string
+  review_source: 'same_source' | 'source_check' | 'underfunded' | 'other'
+  created_at: string
+  frozen_until: string
+  status: 'pending' | 'voided'
+  review_required: boolean
+}
+const reviewEntries: ReviewEntryRow[] = [
+  { id: '01900000-0000-7000-8000-00000000c003', order_no: 'P20261005C2', referrer_email: 'erin@example.com', referee_email: 'frank@example.com', amount: 4200, currency: 'USD', review_reason: '待结佣金科目余额不足，无法解冻 42.00 USD', review_source: 'underfunded', created_at: '2026-10-05T08:40:00Z', frozen_until: '2026-10-08T08:40:00Z', status: 'pending', review_required: true },
+  { id: '01900000-0000-7000-8000-00000000c002', order_no: 'P20261003B7', referrer_email: 'carol@example.com', referee_email: 'dave@example.com', amount: 990, currency: 'CNY', review_reason: '同源检查失败，需人工确认推荐人与购买人是否同源', review_source: 'source_check', created_at: '2026-10-03T11:05:00Z', frozen_until: '2026-10-06T11:05:00Z', status: 'pending', review_required: true },
+  { id: '01900000-0000-7000-8000-00000000c001', order_no: 'P20261001A1', referrer_email: 'alice@example.com', referee_email: 'bob@example.com', amount: 2580, currency: 'CNY', review_reason: '推荐人与购买人来自同一来源地址', review_source: 'same_source', created_at: '2026-10-01T03:20:00Z', frozen_until: '2026-12-31T03:20:00Z', status: 'pending', review_required: true },
 ]
+const awaitingReview = () => reviewEntries.filter((x) => x.status === 'pending' && x.review_required)
 
 const commission = { rate_percent: 20, freeze_days: 7, min_withdraw: 10000, scope: 'first_order' as 'first_order' | 'every_order' }
 interface Withdrawal {
@@ -626,7 +642,7 @@ export const marketing: MockModule = {
         paid_out: withdrawals.filter((w) => w.status === 'paid').reduce((s, w) => s + w.amount, 3166000 - 260000),
         this_month: 482100,
         entries: 1840,
-        need_review: 3,
+        need_review: awaitingReview().length,
         waiting_withdrawals: waiting,
         rate_percent: commission.rate_percent,
         freeze_days: commission.freeze_days,
@@ -640,8 +656,20 @@ export const marketing: MockModule = {
       if (ctx.query.get('review') !== 'required') return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { review: '只支持 review=required' })
       const limit = Math.min(Math.max(Number(ctx.query.get('limit')) || 50, 1), 100)
       const start = Number(ctx.query.get('cursor') || '0')
-      const page = reviewEntries.slice(start, start + limit)
-      const next = start + limit < reviewEntries.length ? String(start + limit) : ''
+      const rows = awaitingReview()
+      const page = rows.slice(start, start + limit).map((x) => ({
+        id: x.id,
+        order_no: x.order_no,
+        referrer_email: x.referrer_email,
+        referee_email: x.referee_email,
+        amount: x.amount,
+        currency: x.currency,
+        review_reason: x.review_reason,
+        review_source: x.review_source,
+        created_at: x.created_at,
+        frozen_until: x.frozen_until,
+      }))
+      const next = start + limit < rows.length ? String(start + limit) : ''
       ctx.send(200, { entries: page, next_cursor: next })
     },
     'POST /v1/commission/entries/:id/review': async (ctx) => {
@@ -652,11 +680,16 @@ export const marketing: MockModule = {
       if (extra) return ctx.fail(400, 'bad_request', `请求体包含未知字段 "${extra}"`)
       if (body.action !== 'approve' && body.action !== 'void') return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { action: '操作只能是 approve 或 void' })
       const reason = text(body.reason).trim()
-      if (body.action === 'void' && [...reason].length < 5) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { reason: '作废原因至少 5 个字' })
-      const i = reviewEntries.findIndex((x) => x.id === ctx.params.id)
-      if (i < 0) return reply(ctx, notFound())
-      reviewEntries.splice(i, 1)
-      ctx.send(200, { status: body.action === 'void' ? 'voided' : 'pending' })
+      if (body.action === 'void' && [...reason].length < 5) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { reason: '作废必须填写原因，至少 5 个字' })
+      if ([...reason].length > 500) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { reason: '原因最多 500 个字' })
+      const row = reviewEntries.find((x) => x.id === ctx.params.id)
+      if (!row) return reply(ctx, notFound())
+      if (row.status !== 'pending' || !row.review_required) return ctx.fail(409, 'conflict', '这条佣金不在待复核状态，可能已被处理，请刷新')
+      // 与真实接口一致：余额不足来源的条目作废时冲回失败
+      if (body.action === 'void' && row.review_source === 'underfunded') return ctx.fail(409, 'conflict', '待结佣金科目余额不足，无法冲回这条佣金，请先核对账本')
+      row.review_required = false
+      if (body.action === 'void') row.status = 'voided'
+      ctx.send(200, { status: row.status })
     },
     'GET /v1/withdrawals': (ctx) => {
       const status = ctx.query.get('status') ?? ''

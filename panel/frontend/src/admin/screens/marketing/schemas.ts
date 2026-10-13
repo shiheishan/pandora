@@ -250,6 +250,8 @@ export const reviewEntrySchema = z.object({
   amount: z.number().int(),
   currency: z.string(),
   review_reason: z.string(),
+  /** 由原因归类：underfunded（解冻时待结科目余额不足）的条目通过后仍会解冻失败 */
+  review_source: z.enum(['same_source', 'source_check', 'underfunded', 'other']),
   created_at: iso,
   frozen_until: iso,
 })

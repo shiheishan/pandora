@@ -44,7 +44,7 @@ function Withdrawals() {
     <section className={`${css.panel} ${local.withdrawals}`}>
       <div className={css.panelHead}>
         <h3 className={css.panelTitle}>提现申请</h3>
-        <span className={css.faint}>审核通过后打款，审核与打款都需二次认证</span>
+        <span className={css.faint}>审核通过后打款，审核与打款都需要重新验证身份</span>
       </div>
       <QueryView query={list} empty={<Empty bare title="还没有提现申请" description="用户在门户申请提现后会出现在这里。" />}>
         {(rows) => rows.map((w) => <WithdrawalRow key={w.id} withdrawal={w} onDialog={setDialog} />)}
