@@ -43,8 +43,7 @@ async function build(): Promise<World> {
   const pool = smokePoolId()
 
   // 演示易支付渠道：商户号与密钥本次随机生成，收银台地址指向回环上没人听的端口（只用来拼跳转地址，
-  // 测试从不打开它）；allow_private_host 只在非生产（AEGIS_ENV=test）放行，与 run-smoke-e2e.sh 的
-  // aegis-payctl --allow-private-host 同一口子，没有放宽任何校验
+  // 测试从不打开它）；allow_private_host 只在 env=development 放行（冒烟栈就是），没有放宽任何校验
   const provider = { code: 'w9pay', merchant: `w9b${randomBytes(3).toString('hex')}`, key: randomBytes(16).toString('hex') }
   await admin('/v1/payment-providers', {
     body: {
@@ -130,7 +129,7 @@ export async function giftCode(templateId: string): Promise<string> {
 
 /**
  * 只留本测试的渠道收新单：w8walk 的路径要求站点最低付款额是 ¥1.00（凑最低额、免零头、低于最低额被拦），
- * 而冒烟种子的演示渠道没有最低额（站点最低额取所有收单渠道里最小的那个）。暂停（enabled 留着、
+ * 而冒烟种子与写路径冒烟建的渠道各有各的最低额（站点最低额取所有收单渠道里最小的那个）。暂停（enabled 留着、
  * accepting_new 关掉）只影响新单，与后台卡片上的开关同一个接口；这一步在 panel-smoke 的最后跑，不影响别的步骤
  */
 async function onlyOurChannel(world: World): Promise<void> {
