@@ -59,6 +59,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 - **主 Agent**（当前会话）：先调查，再拆解任务、分配子 Agent；负责任务管理、冲突解决、build / test、集成、提交、推送和等 CI。
 - **opus 子 Agent**（Agent 工具，显式传 `model: opus`）：只在大任务里用，每个负责一块（一个模块或一个主题），在自己的 worktree 里读代码、定细节、把编码派给 composer、核对 composer 的改动并提交。
 - **composer-2.5**：写代码的主力，用 composer-dispatch skill 派（`claude -p` 经本机 magpie 代理，参数在它的 launch.sh 里），不用 Agent 工具。它只有读写文件的工具，不能跑命令。
+  - 模型用 magpie 的顺序分组 `group/gemini`：composer-2.5 不可用时依次换到 vef、兔子的 gemini-3.8-flash，所以同一次派活实际可能由三者之一完成。核对改动不因模型降低标准；Gemini 常见小错是排序、测试夹具不合库约束、漏装配。
 
 ### 按任务大小选路
 
