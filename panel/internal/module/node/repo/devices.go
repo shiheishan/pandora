@@ -15,7 +15,7 @@ type DeviceOnlineRow struct {
 	// Online 是跨节点去重的设备数（count(DISTINCT ip_hash)）
 	Online int `gorm:"column:online"`
 	// Nodes 是有在线记录的节点数（count(DISTINCT node_id)）
-	Nodes int `gorm:"column:nodes"`
+	Nodes      int       `gorm:"column:nodes"`
 	LastSeenAt time.Time `gorm:"column:last_seen_at"`
 }
 

@@ -184,3 +184,19 @@ func (s *Service) AdminSetDeviceLimit(ctx context.Context, subID uuid.UUID, limi
 		})
 	})
 }
+
+// SubscriptionsByIDs 按 id 批量读订阅（不加锁，一条 SQL）；不存在的 id 不在结果里。node 的在线设备总览用。
+func (s *Service) SubscriptionsByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]Subscription, error) {
+	if len(ids) == 0 {
+		return map[uuid.UUID]Subscription{}, nil
+	}
+	rows, err := s.repo.SubscriptionsByIDs(ctx, ids)
+	if err != nil {
+		return nil, subErr(err)
+	}
+	out := make(map[uuid.UUID]Subscription, len(rows))
+	for _, m := range rows {
+		out[m.ID] = toSubscription(m)
+	}
+	return out, nil
+}

@@ -73,6 +73,12 @@ type RosterNotifier interface {
 	SubscriptionsChanged(ctx context.Context, subscriptionIDs []uuid.UUID)
 }
 
+// OnlineDeviceCounter 由 node 模块实现（P5）：订阅在设备识别窗口内跨节点去重的在线设备数。
+// 没有在线记录的订阅不在结果里。没注册时一律按 0。
+type OnlineDeviceCounter interface {
+	OnlineDeviceCounts(ctx context.Context, subIDs []uuid.UUID) (map[uuid.UUID]int, error)
+}
+
 // Service 是 subscription 模块对外的唯一入口。
 type Service struct {
 	repo     *repo.Repo
@@ -83,6 +89,7 @@ type Service struct {
 	users    Users
 	sealer   Sealer
 	roster   RosterNotifier
+	online   OnlineDeviceCounter
 	now      func() time.Time
 
 	// 订阅分发（P4）：nodes 与 delivery 由装配注入（nodes.go）。
@@ -111,6 +118,9 @@ func New(r *repo.Repo, txm *tx.Manager, audit *auditsvc.Service, settings SiteSe
 
 // UseRosterNotifier 只在启动装配时调用（不并发安全）。
 func (s *Service) UseRosterNotifier(n RosterNotifier) { s.roster = n }
+
+// UseOnlineDeviceCounter 只在启动装配时调用（不并发安全）。
+func (s *Service) UseOnlineDeviceCounter(c OnlineDeviceCounter) { s.online = c }
 
 // clock 返回当前时刻（UTC、截到微秒，与库里的精度一致）。
 func (s *Service) clock() time.Time {
