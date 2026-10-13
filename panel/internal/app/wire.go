@@ -35,6 +35,8 @@ import (
 	ordersvc "github.com/aegispanel/aegis/internal/module/order/service"
 	paymentrepo "github.com/aegispanel/aegis/internal/module/payment/repo"
 	paymentsvc "github.com/aegispanel/aegis/internal/module/payment/service"
+	pluginrepo "github.com/aegispanel/aegis/internal/module/plugin/repo"
+	pluginsvc "github.com/aegispanel/aegis/internal/module/plugin/service"
 	promorepo "github.com/aegispanel/aegis/internal/module/promo/repo"
 	promosvc "github.com/aegispanel/aegis/internal/module/promo/service"
 	settingsrepo "github.com/aegispanel/aegis/internal/module/settings/repo"
@@ -75,6 +77,7 @@ type services struct {
 	appearance *appearancesvc.Service
 	support    *supportsvc.Service
 	certs      *certssvc.Service
+	plugin     *pluginsvc.Service
 	// idemFPKey 是幂等请求指纹的 HMAC 密钥（从主密钥派生）
 	idemFPKey []byte
 	limiter   *ratelimit.Limiter
@@ -263,6 +266,29 @@ func buildServices(r *runtime) (*services, error) {
 		return nil, fmt.Errorf("notify 缺少装配: %v", missing)
 	}
 
+	// 插件钩子：六个发事件的模块在业务事务里经 plugin 写待投递记录，提交后入队 plugin:dispatch；
+	// 钩子地址允许 http 与内网只在开发环境（防 SSRF）
+	pluginSvc := pluginsvc.New(pluginrepo.New(r.db), txm, auditSvc, idemSvc, sealer, queue,
+		pluginsvc.Options{AllowPrivate: cfg.Env == config.EnvDevelopment})
+	orderSvc.UsePluginEvents(pluginSvc)
+	subSvc.UsePluginEvents(pluginSvc)
+	identitySvc.UsePluginEvents(pluginSvc)
+	supportSvc.UsePluginEvents(pluginSvc)
+	giftcardSvc.UsePluginEvents(pluginSvc)
+	notifySvc.UsePluginEvents(pluginSvc)
+	for _, m := range []struct {
+		name string
+		svc  interface{ PluginEventsWired() bool }
+	}{
+		{"order", orderSvc}, {"subscription", subSvc}, {"identity", identitySvc},
+		{"support", supportSvc}, {"giftcard", giftcardSvc}, {"notify", notifySvc},
+	} {
+		if !m.svc.PluginEventsWired() {
+			_ = queue.Close()
+			return nil, fmt.Errorf("%s 缺少装配: 插件事件口", m.name)
+		}
+	}
+
 	return &services{
 		settings:   settingsSvc,
 		audit:      auditSvc,
@@ -283,6 +309,7 @@ func buildServices(r *runtime) (*services, error) {
 		appearance: appearanceSvc,
 		support:    supportSvc,
 		certs:      certsSvc,
+		plugin:     pluginSvc,
 		idemFPKey:  keys.Derive(crypto.InfoHMACIdempotency, 32),
 		limiter:    limiter,
 		sealer:     sealer,

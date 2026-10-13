@@ -235,6 +235,9 @@ func (s *Service) CompleteRegistration(ctx context.Context, token, code, passwor
 		if err := s.writeSelfAudit(ctx, u.ID, auditsvc.Event{Action: ActionRegistered}); err != nil {
 			return err
 		}
+		if err := s.emitPlugin(ctx, "user.registered", "user.registered:"+u.ID.String(), map[string]any{"event": "user.registered", "user_id": u.ID.String(), "email": u.Email}); err != nil {
+			return err
+		}
 		out = User{ID: u.ID, Email: u.Email, Status: u.Status, CreatedAt: u.CreatedAt}
 		return nil
 	})

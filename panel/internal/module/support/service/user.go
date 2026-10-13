@@ -90,6 +90,9 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Ticket, error) {
 		}); err != nil {
 			return err
 		}
+		if err := s.emitPlugin(ctx, "ticket.created", "ticket.created:"+t.ID.String(), map[string]any{"event": "ticket.created", "ticket_id": t.ID.String(), "ticket_no": t.TicketNo, "user_id": uid.String(), "category": t.Category, "priority": t.Priority, "subject": t.Subject}); err != nil {
+			return err
+		}
 
 		view = ticketFrom(*t, now)
 		view.MessageCount = 1

@@ -57,6 +57,7 @@ type scanItem struct {
 	Code   string
 	Vars   map[string]string
 	Key    string
+	Plugin *scanPlugin // 要同时发的插件事件，nil 表示不发
 }
 
 // quotaTier 返回 consumed/total 已跨过的最高一档；都没跨或 total<=0 返回 0。
@@ -146,6 +147,16 @@ func (s *Service) collectScanItems(ctx context.Context, now time.Time, loc *time
 					"expires_at": endAt,
 				},
 				Key: fmt.Sprintf("expiring:%s:%dd:%d", c.SubscriptionID, win.label, c.PeriodEnd.Unix()),
+				Plugin: &scanPlugin{
+					Event: "subscription.expiring",
+					Payload: map[string]any{
+						"event":           "subscription.expiring",
+						"subscription_id": c.SubscriptionID.String(),
+						"user_id":         c.UserID.String(),
+						"expires_at":      endAt,
+						"days_left":       win.label,
+					},
+				},
 			})
 		}
 	}
@@ -200,6 +211,17 @@ func (s *Service) collectScanItems(ctx context.Context, now time.Time, loc *time
 				"remaining": humanBytes(remain),
 			},
 			Key: fmt.Sprintf("quota:%s:%d:%d", q.SubscriptionID, pct, q.PeriodStart.Unix()),
+			Plugin: &scanPlugin{
+				Event: "traffic.exhausted",
+				Payload: map[string]any{
+					"event":           "traffic.exhausted",
+					"subscription_id": q.SubscriptionID.String(),
+					"user_id":         q.UserID.String(),
+					"consumed_bytes":  q.Consumed,
+					"total_bytes":     q.Total,
+					"percent":         pct,
+				},
+			},
 		})
 	}
 
@@ -348,6 +370,9 @@ func (s *Service) writeScanItems(ctx context.Context, items []scanItem) (written
 		err := s.tx.Do(ctx, func(ctx context.Context) error {
 			ok, err := s.writeNotice(ctx, env, it.UserID, c, it.Code, it.Vars, it.Key)
 			if err != nil {
+				return err
+			}
+			if err := s.emitScanPlugin(ctx, it); err != nil {
 				return err
 			}
 			if ok {

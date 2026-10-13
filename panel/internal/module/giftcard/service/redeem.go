@@ -116,6 +116,16 @@ func (s *Service) Redeem(ctx context.Context, in RedeemInput) (RedeemResult, err
 		if err := s.writeAudit(ctx, ActionRedeemed, ResourceCode, &codeID, auditGranted(t, g)); err != nil {
 			return err
 		}
+		gr, err := pluginGranted(g)
+		if err != nil {
+			return err
+		}
+		if err := s.emitPlugin(ctx, "giftcard.redeemed", "giftcard.redeemed:"+codeID.String(), map[string]any{
+			"event": "giftcard.redeemed", "code_id": codeID.String(), "user_id": user.String(),
+			"template": t.Name, "type": t.Type, "granted": gr,
+		}); err != nil {
+			return err
+		}
 		out = g.result(t)
 		if in.Reply == nil {
 			return nil

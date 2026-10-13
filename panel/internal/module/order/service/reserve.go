@@ -304,6 +304,10 @@ func (s *Service) releaseOrder(ctx context.Context, o model.Order, to, reason, e
 		return model.Order{}, err
 	}
 
+	if err := s.emitOrderCancelled(ctx, o, to, reason); err != nil {
+		return model.Order{}, err
+	}
+
 	out, found, err := s.repo.OrderByID(ctx, o.ID, repo.NoLock)
 	if err != nil {
 		return model.Order{}, err

@@ -113,6 +113,9 @@ func (s *Service) expireBatch(ctx context.Context) (selected, expired int, err e
 				return err
 			}
 		}
+		if err := s.emitExpired(ctx, subs, changedSet); err != nil {
+			return err
+		}
 		s.notifyRoster(ctx, changed...)
 		expired = len(changed)
 		return nil

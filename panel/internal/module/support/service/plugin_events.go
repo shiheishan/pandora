@@ -15,3 +15,10 @@ func (s *Service) UsePluginEvents(p PluginEvents) { s.events = p }
 // PluginEventsWired 报告事件口是否已注入（装配完成后检查）。
 func (s *Service) PluginEventsWired() bool { return s.events != nil }
 
+// emitPlugin 发一个插件事件；没注入事件口时什么都不做。
+func (s *Service) emitPlugin(ctx context.Context, event, dedupeKey string, payload map[string]any) error {
+	if s.events == nil {
+		return nil
+	}
+	return s.events.Emit(ctx, event, dedupeKey, payload)
+}
