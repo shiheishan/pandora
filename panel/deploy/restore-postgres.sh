@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# 把一份备份恢复进库（以 root 跑）：
+#   PANDORA_RESTORE_CONFIRM=RESTORE:<库名> ./restore-postgres.sh --archive /var/backups/pandora/pandora-postgres-<时间>.dump.age --target-db <库名>
+# 恢复进正式库（deploy.env 的 POSTGRES_DB）还要 PANDORA_RESTORE_PRODUCTION_CONFIRM=OVERWRITE_CONFIGURED_DATABASE:<库名>，
+# 目标库已存在还要 PANDORA_RESTORE_EXISTING_CONFIRM=OVERWRITE_EXISTING:<库名>；三个确认都只认这一次调用的环境，不读 deploy.env。
+# 正式库：先停 pandora-serve / pandora-worker（以及备份、巡检单元），恢复期间运行时 mask、库连接闸门关着，成功后才放开。
 set -Eeuo pipefail
 umask 077
 cd "$(dirname "$0")"
@@ -34,15 +39,24 @@ load_trusted_env() {
   path_id="$(stat -Lc %d:%i -- "$env_file")"
   fd_id="$(stat -Lc %d:%i -- "/proc/self/fd/$env_fd")"
   [ "$path_id" = "$fd_id" ] || die "environment file changed while opening"
-  # shellcheck disable=SC1090
-  . "/proc/self/fd/$env_fd"
+  # 逐行读 KEY=VALUE，不 source、不展开：值原样取（去掉一层成对引号）。只收 POSTGRES_* 与 PANDORA_* 两组键，
+  # 文件里写了 PATH、IFS 之类也不会改到本脚本的运行环境；赋的是普通变量，不导出给子进程
+  local line key value
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}"
+    [[ "$line" =~ ^([A-Z][A-Z0-9_]*)=(.*)$ ]] || continue
+    key="${BASH_REMATCH[1]}" value="${BASH_REMATCH[2]}"
+    [[ "$key" == POSTGRES_* || "$key" == PANDORA_* ]] || continue
+    if [[ "$value" =~ ^\"(.*)\"$ ]] || [[ "$value" =~ ^\'(.*)\'$ ]]; then value="${BASH_REMATCH[1]}"; fi
+    printf -v "$key" '%s' "$value"
+  done <&"$env_fd"
   exec {env_fd}<&-
 }
 # 以超级用户跑 PostgreSQL 客户端（psql、pg_dump、pg_restore、createdb、dropdb）：本机客户端经
 # 127.0.0.1:POSTGRES_PORT 以 postgres 超级用户连（不用 runuser 切到 postgres：备份单元的系统调用过滤
 # 不许切换用户）。口令只经环境变量 PGPASSWORD 给这一个客户端，不进命令行参数、不导出给整个脚本。
 # 只读归档目录（pg_restore --list）不连库，不要求凭据；要连库的先过 pandora_pg_require_login。
-# 备份、校验、恢复三件套各带一份（只信任自己，不 source 共用文件），db-scripts_mock_test.sh 核对逐字一致。
+# 备份、校验、恢复三件套各带一份（只信任自己，不 source 共用文件），backup-scripts_mock_test.sh 核对逐字一致。
 pandora_pg() {
   local tool="$1"; shift
   PGPASSWORD="${POSTGRES_SUPER_PASSWORD-}" PGHOST=127.0.0.1 PGPORT="${POSTGRES_PORT-}" PGUSER=postgres \
@@ -60,13 +74,14 @@ pandora_pg_require_login() {
 }
 require_command readlink
 require_command stat
-invocation_restore_confirm="${AEGIS_RESTORE_CONFIRM-}"
-invocation_existing_confirm="${AEGIS_RESTORE_EXISTING_CONFIRM-}"
-invocation_production_confirm="${AEGIS_RESTORE_PRODUCTION_CONFIRM-}"
-load_trusted_env "$PWD/.env"
-if [ -n "$invocation_restore_confirm" ]; then AEGIS_RESTORE_CONFIRM="$invocation_restore_confirm"; else unset AEGIS_RESTORE_CONFIRM; fi
-if [ -n "$invocation_existing_confirm" ]; then AEGIS_RESTORE_EXISTING_CONFIRM="$invocation_existing_confirm"; else unset AEGIS_RESTORE_EXISTING_CONFIRM; fi
-if [ -n "$invocation_production_confirm" ]; then AEGIS_RESTORE_PRODUCTION_CONFIRM="$invocation_production_confirm"; else unset AEGIS_RESTORE_PRODUCTION_CONFIRM; fi
+invocation_restore_confirm="${PANDORA_RESTORE_CONFIRM-}"
+invocation_existing_confirm="${PANDORA_RESTORE_EXISTING_CONFIRM-}"
+invocation_production_confirm="${PANDORA_RESTORE_PRODUCTION_CONFIRM-}"
+# 部署脚本的变量文件（安装器写的 /etc/pandora/deploy.env，root 所有、0600）；PANDORA_DEPLOY_ENV 只给桩测试改路径
+load_trusted_env "${PANDORA_DEPLOY_ENV:-/etc/pandora/deploy.env}"
+if [ -n "$invocation_restore_confirm" ]; then PANDORA_RESTORE_CONFIRM="$invocation_restore_confirm"; else unset PANDORA_RESTORE_CONFIRM; fi
+if [ -n "$invocation_existing_confirm" ]; then PANDORA_RESTORE_EXISTING_CONFIRM="$invocation_existing_confirm"; else unset PANDORA_RESTORE_EXISTING_CONFIRM; fi
+if [ -n "$invocation_production_confirm" ]; then PANDORA_RESTORE_PRODUCTION_CONFIRM="$invocation_production_confirm"; else unset PANDORA_RESTORE_PRODUCTION_CONFIRM; fi
 
 archive=""
 target_db=""
@@ -82,20 +97,22 @@ done
 [ -n "$target_db" ] || die "--target-db is required"
 [[ "$archive" = /* ]] || die "--archive must be an absolute path"
 [[ "$target_db" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || die "unsafe target database name"
-[ "${AEGIS_RESTORE_CONFIRM:-}" = "RESTORE:${target_db}" ] \
-  || die "set AEGIS_RESTORE_CONFIRM=RESTORE:${target_db} for this invocation"
+[ "${PANDORA_RESTORE_CONFIRM:-}" = "RESTORE:${target_db}" ] \
+  || die "set PANDORA_RESTORE_CONFIRM=RESTORE:${target_db} for this invocation"
 : "${POSTGRES_DB:?POSTGRES_DB is required}"
-: "${POSTGRES_USER:?POSTGRES_USER is required}"
-[[ "$POSTGRES_USER" =~ ^[a-z_][a-z0-9_]*$ ]] || die "unsafe POSTGRES_USER"
-: "${AEGIS_BACKUP_AGE_IDENTITY:?AEGIS_BACKUP_AGE_IDENTITY is required}"
+: "${PANDORA_BACKUP_AGE_IDENTITY:?PANDORA_BACKUP_AGE_IDENTITY is required}"
+# 库属主：迁移属主角色（与全新安装一致；它建了库里全部对象）
+db_owner=pandora_owner
+# 正式库恢复期间要停住、mask 的单元：面板两个服务，以及会连库的备份与巡检
+quiesce_units=(pandora-serve.service pandora-worker.service pandora-backup.service pandora-health.service)
 require_command age
 pandora_pg_require psql pg_restore createdb dropdb
 pandora_pg_require_login
 
 require_command flock
 require_command install
-maintenance_lock_dir=/run/aegispanel
-maintenance_lock=/run/aegispanel/database-maintenance.lock
+maintenance_lock_dir=/run/pandora-maintenance
+maintenance_lock=/run/pandora-maintenance/database-maintenance.lock
 install -d -o root -g root -m 0700 -- "$maintenance_lock_dir"
 exec 8>"$maintenance_lock"
 flock -n 8 || die "database backup or restore is already running"
@@ -104,7 +121,7 @@ assert_production_quiesced() {
   local unit property value sessions
   [ "$target_db" = "$POSTGRES_DB" ] || return 0
   require_command systemctl
-  for unit in aegis-public.service aegis-admin.service aegis-node.service aegis-backup.service; do
+  for unit in "${quiesce_units[@]}"; do
     for property in ActiveState SubState MainPID ControlPID; do
       value="$(systemctl show "$unit" --property "$property" --value 2>/dev/null)" \
         || die "cannot verify $unit $property"
@@ -131,7 +148,7 @@ reinstate_production_guard() {
 
   # Fail closed after any interrupted or partial commit. Mask every service,
   # including units that were already unmasked during a failed commit attempt.
-  for unit in aegis-public.service aegis-admin.service aegis-node.service aegis-backup.service; do
+  for unit in "${quiesce_units[@]}"; do
     systemctl mask --runtime -- "$unit" >/dev/null 2>&1 || recovery_rc=1
   done
 
@@ -170,7 +187,7 @@ begin_production_guard() {
   [ "$target_db" = "$POSTGRES_DB" ] || return 0
   assert_production_quiesced
   production_guard_started=1
-  for unit in aegis-public.service aegis-admin.service aegis-node.service aegis-backup.service; do
+  for unit in "${quiesce_units[@]}"; do
     state="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
     case "$state" in
       masked|masked-runtime) ;;
@@ -220,14 +237,14 @@ commit_production_guard() {
 }
 
 if [ "$target_db" = "$POSTGRES_DB" ] && \
-   [ "${AEGIS_RESTORE_PRODUCTION_CONFIRM:-}" != "OVERWRITE_CONFIGURED_DATABASE:${target_db}" ]; then
-  die "configured database restore needs AEGIS_RESTORE_PRODUCTION_CONFIRM=OVERWRITE_CONFIGURED_DATABASE:${target_db}"
+   [ "${PANDORA_RESTORE_PRODUCTION_CONFIRM:-}" != "OVERWRITE_CONFIGURED_DATABASE:${target_db}" ]; then
+  die "configured database restore needs PANDORA_RESTORE_PRODUCTION_CONFIRM=OVERWRITE_CONFIGURED_DATABASE:${target_db}"
 fi
 
 #------------------------------------------------------------------------------
-# 保留属主与权限的恢复（不带 --no-owner / --no-privileges）：备份由同一种安装导出，对象属主是跑迁移的
-# postgres，00038/00039 的 SECURITY DEFINER 函数属专用角色 aegis_idempotency_owner，授权照迁移原样。
-# 下面几个函数由 db-scripts_mock_test.sh 抽出来、换上桩跑真调用。
+# 保留属主与权限的恢复（不带 --no-owner / --no-privileges）：备份由同一种安装导出，对象（含保留期清理用的
+# SECURITY DEFINER 函数）属迁移属主角色 pandora_owner，运行角色 pandora_app 的授权照原样恢复。
+# 下面几个函数由 backup-scripts_mock_test.sh 抽出来、换上桩跑真调用。
 #------------------------------------------------------------------------------
 # 读 pg_restore --schema-only 的 SQL（标准输入），打印恢复要用到的角色（一行一个，去重）：
 # 对象属主、默认权限的主人、被授权者（PUBLIC 不算）
@@ -241,18 +258,18 @@ archive_role_plan() {
 }
 
 # 本机集群里缺的角色先建好（恢复时 ALTER … OWNER TO、GRANT 才不失败）。备份里合法的角色只有三个：
-# postgres（跑迁移、对象属主、默认权限的主人）、aegis_idempotency_owner（两个 SECURITY DEFINER 函数的属主）、
-# aegis_app（运行角色，被授权者）。库的属主 POSTGRES_USER 不在归档里（不带 --create 的导出不含库本身）。
+# pandora_owner（迁移属主、对象属主、默认权限的主人）、pandora_app（运行角色，被授权者）、postgres（超级用户，
+# 扩展等少数对象可能归它）。库本身不在归档里（不带 --create 的导出），库属主由 create_target_db 设成 pandora_owner。
 # 分两遍：check_restore_roles 只核、不动手（有一个认不出就停，什么都没建）；全部输入核完之后
-# create_missing_restore_roles 才建缺的，一律 NOLOGIN、不带任何特权（运行角色的登录与口令随后由 bootstrap.sh 设）。
+# create_missing_restore_roles 才建缺的，一律 NOLOGIN、不带任何特权（登录与口令随后由安装器的角色配置补上）。
 #   check_restore_roles <archive_role_plan 的输出>
 check_restore_roles() {
   local plan="$1" role
   while read -r role; do
     [ -n "$role" ] || continue
     case "$role" in
-      aegis_app|aegis_idempotency_owner|postgres) ;;
-      *) die "archive references role $role: this backup was not exported by this kind of installation and cannot be restored with this script (restore it by hand into a new database, see MIGRATION-RUNBOOK.md section 3, then run ./bootstrap.sh); nothing was changed" ;;
+      pandora_owner|pandora_app|postgres) ;;
+      *) die "archive references role $role: this backup was not exported by this kind of installation and cannot be restored with this script (restore it by hand into a new database, see RUNBOOK.md, restoring a backup of unknown origin); nothing was changed" ;;
     esac
   done <<<"$plan"
 }
@@ -271,25 +288,25 @@ create_missing_restore_roles() {
   done <<<"$plan"
 }
 
-# 目标库的属主 POSTGRES_USER（安装器建的）要先在：createdb 在删掉旧库之后才跑，到那时再发现就晚了
+# 目标库的属主 pandora_owner（安装器建的）要先在：createdb 在删掉旧库之后才跑，到那时再发现就晚了
 require_db_owner_role() {
   local exists
-  exists="$(pandora_pg psql -X -d postgres -tAc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '$POSTGRES_USER'" | tr -d '[:space:]')" \
-    || die "cannot check the database owner role $POSTGRES_USER"
-  [ "$exists" = 1 ] || die "database owner role $POSTGRES_USER does not exist; run the installer first"
+  exists="$(pandora_pg psql -X -d postgres -tAc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '$db_owner'" | tr -d '[:space:]')" \
+    || die "cannot check the database owner role $db_owner"
+  [ "$exists" = 1 ] || die "database owner role $db_owner does not exist; run the installer first"
 }
 
-# 目标库：template0、UTF8，属主 POSTGRES_USER（与全新安装一致）；正式库先关连接闸门
+# 目标库：template0、UTF8，属主 pandora_owner（与全新安装一致）；正式库先关连接闸门
 create_target_db() {
   local args=(--template=template0 --encoding=UTF8)
   [ "$target_db" != "$POSTGRES_DB" ] || args+=(--connection-limit=0)
-  args+=(--owner="$POSTGRES_USER")
+  args+=(--owner="$db_owner")
   pandora_pg createdb "${args[@]}" "$target_db"
 }
 
 # 照原样恢复属主与权限（不带 --no-owner / --no-privileges）
 restore_into_target() {
-  age --decrypt --identity "$AEGIS_BACKUP_AGE_IDENTITY" "$archive" \
+  age --decrypt --identity "$PANDORA_BACKUP_AGE_IDENTITY" "$archive" \
     | pandora_pg pg_restore -d "$target_db" --exit-on-error
 }
 
@@ -299,19 +316,19 @@ restore_into_target() {
 # restore-time SQL can still fail.
 "$PWD/verify-backup.sh" "$archive"
 # --schema-only 不一定读到归档末尾：剩下的读掉，免得 age 因 SIGPIPE 失败（同 verify-backup.sh 的 --list）
-role_plan="$(age --decrypt --identity "$AEGIS_BACKUP_AGE_IDENTITY" "$archive" \
+role_plan="$(age --decrypt --identity "$PANDORA_BACKUP_AGE_IDENTITY" "$archive" \
   | { pandora_pg pg_restore --schema-only -f -; plan_rc=$?; cat >/dev/null; exit "$plan_rc"; } | archive_role_plan)" \
   || die "cannot read the roles this archive needs"
 check_restore_roles "$role_plan"
 require_db_owner_role
 create_missing_restore_roles "$role_plan"
-AEGIS_VERIFY_RESTORE=owners "$PWD/verify-backup.sh" "$archive"
+PANDORA_BACKUP_VERIFY_RESTORE=owners "$PWD/verify-backup.sh" "$archive"
 begin_production_guard
 exists="$(pandora_pg psql -X -d postgres -tAc \
     "SELECT 1 FROM pg_database WHERE datname = '$target_db'" | tr -d '[:space:]')"
 if [ "$exists" = "1" ]; then
-  [ "${AEGIS_RESTORE_EXISTING_CONFIRM:-}" = "OVERWRITE_EXISTING:${target_db}" ] \
-    || die "existing target needs AEGIS_RESTORE_EXISTING_CONFIRM=OVERWRITE_EXISTING:${target_db}"
+  [ "${PANDORA_RESTORE_EXISTING_CONFIRM:-}" = "OVERWRITE_EXISTING:${target_db}" ] \
+    || die "existing target needs PANDORA_RESTORE_EXISTING_CONFIRM=OVERWRITE_EXISTING:${target_db}"
   assert_production_quiesced
   pandora_pg dropdb --force "$target_db"
   target_dropped=1
@@ -324,6 +341,6 @@ restore_into_target
 commit_production_guard
 
 echo "restore complete: $archive -> database $target_db"
-# 库级的东西不在归档里（不带 --create 的导出）：运行角色在这个库上的设置（search_path、jit、statement_timeout）
-# 与收回 PUBLIC 的 TEMPORARY，新建的库上都没有；新建的运行角色还没有登录口令。都由 bootstrap.sh 补上
-echo "restore-postgres: NOTE run ./bootstrap.sh before starting the services (runtime role login and its per-database settings)" >&2
+# 库级的东西不在归档里（不带 --create 的导出）：运行角色在这个库上的设置（search_path 等）与收回 PUBLIC 的 TEMPORARY，
+# 新建的库上都没有；新建的运行角色还没有登录口令。由安装器的角色配置补上；备份比当前二进制旧时还要先迁移
+echo "restore-postgres: NOTE before starting the services: re-apply the database roles (deploy/bootstrap.sh), then run /opt/pandora/bin/pandora migrate up" >&2

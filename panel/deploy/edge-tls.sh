@@ -1,25 +1,26 @@
 #!/usr/bin/env bash
 # 面板 HTTPS 边缘：证书 → nginx 配置 → 续期，一处管完。install.sh 调它，装完后由
-# aegis-tls-renew.timer 每天两次调 renew；出了问题，运维也直接用它补救。
+# pandora-tls-renew.timer 每天两次调 renew；出了问题，运维也直接用它补救。
+# 只管面板自身的 HTTPS（nginx 用的证书）；节点证书由面板的证书模块在库里管，不归这里。
 #
-#   edge-tls.sh setup  [.env]   放行防火墙 → 确保有证书（没有就先自签）→ 渲染 nginx 并生效
+#   edge-tls.sh setup  [deploy.env]   放行防火墙 → 确保有证书（没有就先自签）→ 渲染 nginx 并生效
 #                               → 申请 Let's Encrypt 正规证书 → 启用续期 timer
-#   edge-tls.sh issue  [.env]   只申请正规证书并换上（nginx 已在 80 上提供校验目录）
-#   edge-tls.sh renew  [.env]   timer 入口：续期、自签兜底时重试申请、证书换了就 reload、到期告警
-#   edge-tls.sh status [.env]   打印当前证书来源、主机、到期时间与上次续期结论
-#   edge-tls.sh ensure [.env]   只确保 live 下有一张覆盖面板主机的证书（setup 的第一步）
-#   edge-tls.sh apply  [.env]   只渲染 nginx 配置 → nginx -t → reload（setup 的第二步）
+#   edge-tls.sh issue  [deploy.env]   只申请正规证书并换上（nginx 已在 80 上提供校验目录）
+#   edge-tls.sh renew  [deploy.env]   timer 入口：续期、自签兜底时重试申请、证书换了就 reload、到期告警
+#   edge-tls.sh status [deploy.env]   打印当前证书来源、主机、到期时间与上次续期结论
+#   edge-tls.sh ensure [deploy.env]   只确保 live 下有一张覆盖面板主机的证书（setup 的第一步）
+#   edge-tls.sh apply  [deploy.env]   只渲染 nginx 配置 → nginx -t → reload（setup 的第二步）
 #
-# 证书按面板对外地址（.env 的 AEGIS_PUBLIC_BASE_URL，不 source，逐键读）的主机选：
+# 证书按面板对外地址（/etc/pandora/config.yaml 顶层的 public_base_url，逐键读）的主机选：
 #   DNS 域名   → certbot webroot 申请 Let's Encrypt 证书（90 天，Debian 的 certbot.timer 续期）
 #   公网 IPv4  → lego webroot 申请 Let's Encrypt IP 证书（shortlived 配置，约 6 天，本脚本续期）。
 #               Debian 13 主仓的 certbot 4.0 不支持 IP 证书（--ip-address 要 5.3+），主仓的
 #               lego 4.9 不支持 ACME profiles（要 4.22+）；Debian 上自动从官方 backports 装 lego
 #   申请不到   → 自签证书兜底（浏览器提示不安全），续期 timer 每次都重试申请，成功即无缝换上
-# nginx 只认 /etc/aegispanel/tls/live/{fullchain,privkey}.pem：live 是指向证书目录的链接，
+# nginx 只认 /etc/pandora/tls/live/{fullchain,privkey}.pem：live 是指向证书目录的链接，
 # 换证书只改链接再 reload，不重新渲染配置。
 #
-# 环境变量（安装器透传，第一次 setup / ensure 时记进 /etc/aegispanel/tls/acme.env，renew 沿用）：
+# 环境变量（安装器透传，第一次 setup / ensure 时记进 /etc/pandora/tls/acme.env，renew 沿用）：
 #   PANDORA_ACME=0            不联系任何 CA，只用自签（也认旧名 PANDORA_CERTBOT=0）
 #   PANDORA_ACME_EMAIL=邮箱    ACME 账号联系邮箱，可选（也认旧名 PANDORA_CERTBOT_EMAIL）
 #   PANDORA_ACME_SERVER=URL   ACME 目录地址，缺省 Let's Encrypt 正式环境；真机演练可指向 staging
@@ -29,24 +30,30 @@
 #   setup / issue：0 在用正规证书（或运维自己指定的证书）；3 在用自签（申请失败或 PANDORA_ACME=0，
 #                  nginx 已能用 https 打开）；1 出错，nginx 保持原配置（原因在 stderr）
 #   renew：0 正常（含 PANDORA_ACME=0 的自签）；1 续期失败、证书快到期 / 已过期、或该申请却还在自签，
-#          续期单元记为 failed，结论写进 /var/lib/aegispanel/tls/status
+#          续期单元记为 failed，结论写进 /var/lib/pandora/tls/status
+#
+# [deploy.env] 是部署脚本的变量文件（缺省 /etc/pandora/deploy.env）：告警渠道 PANDORA_ALERT_TG_TOKEN / PANDORA_ALERT_TG_CHAT
+# 从这里读，也原样交给 render-nginx.sh（它从里面读后台路径前缀）。
 set -Eeuo pipefail
 umask 022
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # 主机上的路径。PANDORA_* 覆盖只给桩测试用（edge-tls_mock_test.sh 指到临时目录）
-TLS_DIR="${PANDORA_TLS_DIR:-/etc/aegispanel/tls}"
-STATE_DIR="${PANDORA_TLS_STATE_DIR:-/var/lib/aegispanel/tls}"
+TLS_DIR="${PANDORA_TLS_DIR:-/etc/pandora/tls}"
+STATE_DIR="${PANDORA_TLS_STATE_DIR:-/var/lib/pandora/tls}"
 LE_LIVE_DIR="${PANDORA_LE_LIVE_DIR:-/etc/letsencrypt/live}"
 # certbot 的续期配置（<证书名>.conf）与 live 并排
 LE_RENEWAL_DIR="${LE_LIVE_DIR%/*}/renewal"
-ACME_WEBROOT="${PANDORA_ACME_WEBROOT:-/var/www/aegis-acme}"
+ACME_WEBROOT="${PANDORA_ACME_WEBROOT:-/var/www/pandora-acme}"
 NGINX_DIR="${PANDORA_NGINX_DIR:-/etc/nginx}"
-REALIP_FILE="${PANDORA_REALIP_FILE:-/etc/aegispanel/cloudflare-realip.conf}"
-BACKUP_DIR="${PANDORA_BACKUP_DIR:-/var/backups/pandora}"
+REALIP_FILE="${PANDORA_REALIP_FILE:-/etc/pandora/cloudflare-realip.conf}"
+# 改 nginx 配置、certbot 续期配置前的备份放这里（不放数据库备份目录：那里的属组与权限归备份脚本管）
+BACKUP_DIR="${PANDORA_EDGE_BACKUP_DIR:-/var/backups/pandora-edge}"
+# 面板配置：对外地址 public_base_url 从这里读
+CONFIG_FILE="${PANDORA_CONFIG_FILE:-/etc/pandora/config.yaml}"
 OS_RELEASE="${PANDORA_OS_RELEASE:-/etc/os-release}"
 APT_SOURCES_DIR="${PANDORA_APT_SOURCES_DIR:-/etc/apt}"
-RENEW_TIMER=aegis-tls-renew.timer
+RENEW_TIMER=pandora-tls-renew.timer
 
 LIVE="$TLS_DIR/live"
 SELFSIGNED_DIR="$TLS_DIR/selfsigned"
@@ -71,13 +78,20 @@ file_value() {
   awk -F= -v key="$2" '$1 == key { sub(/^[^=]*=/, ""); sub(/\r$/, ""); v = $0 } END { print v }' "$1"
 }
 
+# 读 config.yaml 顶层的一个标量（「键: 值」一行，去掉行尾注释与一层引号），不解析整份 YAML
+config_scalar() {
+  [[ -f "$1" ]] || return 0
+  awk -v k="$2" 'index($0, k ":") == 1 { sub(/^[^:]*:[[:space:]]*/, ""); sub(/[[:space:]]+#.*$/, ""); sub(/[[:space:]]+$/, ""); sub(/\r$/, ""); v = $0 } END { print v }' "$1" \
+    | sed -E "s/^\"(.*)\"$/\\1/; s/^'(.*)'$/\\1/"
+}
+
 # 面板主机与种类（domain / ip）。规则与 render-nginx.sh 相同；不合规就停
 read_host() {
   local url
-  [[ -f "$ENV_FILE" ]] || die "找不到 $ENV_FILE"
-  url="$(file_value "$ENV_FILE" AEGIS_PUBLIC_BASE_URL)"
+  [[ -f "$CONFIG_FILE" ]] || die "找不到 $CONFIG_FILE"
+  url="$(config_scalar "$CONFIG_FILE" public_base_url)"
   [[ "$url" =~ ^https://([^/:]+)/?$ ]] \
-    || die "AEGIS_PUBLIC_BASE_URL 不是 https://域名 或 https://公网IPv4（当前：${url:-空}），没法按它配证书"
+    || die "public_base_url 不是 https://域名 或 https://公网IPv4（当前：${url:-空}），没法按它配证书"
   HOST="${BASH_REMATCH[1],,}"
   if public_ipv4 "$HOST"; then
     HOST_KIND=ip
@@ -85,7 +99,7 @@ read_host() {
           && "$HOST" =~ ^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]([a-z0-9-]*[a-z0-9])?$ ]]; then
     HOST_KIND=domain
   else
-    die "AEGIS_PUBLIC_BASE_URL 的主机 $HOST 不是 DNS 域名或公网 IPv4"
+    die "public_base_url 的主机 $HOST 不是 DNS 域名或公网 IPv4"
   fi
 }
 
@@ -417,7 +431,7 @@ nginx_reload() {
   fi
 }
 
-# Debian/Ubuntu 的 nginx 包自带默认站点，它也 listen 80 default_server，与 aegis.conf 抢同一个
+# Debian/Ubuntu 的 nginx 包自带默认站点，它也 listen 80 default_server，与 pandora.conf 抢同一个
 # 位置，nginx -t 报 duplicate default server。只停用包里原样的那个链接（sites-enabled/default →
 # sites-available/default），原文件留着，随时能链回去；别的冲突不替人处理，交给 nginx -t 报出来
 disable_stock_default_site() {
@@ -434,7 +448,7 @@ disable_stock_default_site() {
 }
 
 cmd_apply() {
-  local render="$SCRIPT_DIR/render-nginx.sh" out="$NGINX_DIR/conf.d/aegis.conf" prev="" log
+  local render="$SCRIPT_DIR/render-nginx.sh" out="$NGINX_DIR/conf.d/pandora.conf" prev="" log
   # render-nginx.sh 顺带把主配置 nginx.conf 的 worker_connections / worker_rlimit_nofile 抬上去，
   # 它同样先备份、nginx -t 不过就一起换回
   local main_conf="$NGINX_DIR/nginx.conf" main_prev=""
@@ -445,14 +459,14 @@ cmd_apply() {
     install -d -m 0700 "$BACKUP_DIR" || return 1
   fi
   if [[ -f "$out" ]]; then
-    prev="$BACKUP_DIR/nginx-aegis.conf.$(date +%Y%m%d-%H%M%S)"
+    prev="$BACKUP_DIR/nginx-pandora.conf.$(date +%Y%m%d-%H%M%S)"
     cp -p -- "$out" "$prev" || { warn "备份原 nginx 配置失败，没有改动"; return 1; }
   fi
   if [[ -f "$main_conf" ]]; then
     main_prev="$BACKUP_DIR/nginx-main.conf.$(date +%Y%m%d-%H%M%S)"
     cp -p -- "$main_conf" "$main_prev" || { warn "备份 nginx.conf 失败，没有改动"; return 1; }
   fi
-  if ! PANDORA_NGINX_MAIN_CONF="$main_conf" bash "$render" "$ENV_FILE" "$out" "$REALIP_FILE"; then
+  if ! PANDORA_NGINX_MAIN_CONF="$main_conf" bash "$render" "$CONFIG_FILE" "$ENV_FILE" "$out" "$REALIP_FILE"; then
     warn "render-nginx.sh 拒绝渲染（原因见上），nginx 配置没动"
     return 1
   fi
@@ -460,7 +474,7 @@ cmd_apply() {
     if [[ -n "$prev" ]]; then cp -p -- "$prev" "$out"; else rm -f -- "$out"; fi
     if [[ -n "$main_prev" ]]; then cp -p -- "$main_prev" "$main_conf"; fi
     printf '%s\n' "$log" | sed 's/^/    /' >&2
-    warn "新渲染的 nginx 配置没通过 nginx -t，已换回原来的（${prev:-原来没有 aegis.conf}${main_prev:+；nginx.conf 也已换回}）"
+    warn "新渲染的 nginx 配置没通过 nginx -t，已换回原来的（${prev:-原来没有 pandora.conf}${main_prev:+；nginx.conf 也已换回}）"
     return 1
   }
   nginx_reload
@@ -668,15 +682,17 @@ write_status() {
   mv -f -- "$tmp" "$STATUS_FILE"
 }
 
-# 走巡检同一个告警渠道（.env 的 AEGIS_ALERT_TG_TOKEN / AEGIS_ALERT_TG_CHAT，可选）。
+# 走巡检同一个告警渠道（deploy.env 的 PANDORA_ALERT_TG_TOKEN / PANDORA_ALERT_TG_CHAT，可选）。
 # 只在结论变了、或正规证书快到期 / 已过期时推，不每次都推
 alert() {
   local text="$1" token chat
-  token="$(file_value "$ENV_FILE" AEGIS_ALERT_TG_TOKEN)"
-  chat="$(file_value "$ENV_FILE" AEGIS_ALERT_TG_CHAT)"
+  token="$(file_value "$ENV_FILE" PANDORA_ALERT_TG_TOKEN)"
+  chat="$(file_value "$ENV_FILE" PANDORA_ALERT_TG_CHAT)"
   [[ -n "$token" && -n "$chat" ]] || return 0
-  curl -sS -m 15 -X POST "https://api.telegram.org/bot${token}/sendMessage" \
-    --data-urlencode "chat_id=${chat}" --data-urlencode "text=${text}" >/dev/null 2>&1 \
+  # 令牌在 URL 里：经 curl 的标准输入配置（-K -）传，不进命令行参数
+  printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$token" \
+    | curl -sS -m 15 -K - -X POST \
+        --data-urlencode "chat_id=${chat}" --data-urlencode "text=${text}" >/dev/null 2>&1 \
     || warn "告警推送失败"
 }
 
@@ -732,7 +748,7 @@ cmd_renew() {
         if (( left < threshold )) && [[ "$mode" = certbot && "$ACME_ENABLED" = 1 ]] && command -v certbot >/dev/null 2>&1; then
           # 失败不能吞掉：原因记进 status 并告警（certbot 的报错在 stderr，进续期单元的日志）
           if ! certbot renew --cert-name "$(certbot_lineage)" --non-interactive -q; then
-            REASON="${REASON:+$REASON；}certbot 续期失败（报错见 journalctl -u aegis-tls-renew 与 /var/log/letsencrypt/letsencrypt.log）"
+            REASON="${REASON:+$REASON；}certbot 续期失败（报错见 journalctl -u pandora-tls-renew 与 /var/log/letsencrypt/letsencrypt.log）"
             result=error message="$REASON"
             warn "$REASON"
           fi
@@ -818,7 +834,7 @@ cmd_setup() {
 
 #------------------------------------------------------------------------------
 cmd="${1:-}"
-ENV_FILE="${2:-$SCRIPT_DIR/.env}"
+ENV_FILE="${2:-/etc/pandora/deploy.env}"
 HOST="" HOST_KIND="" REASON=""
 
 # 安装器与 timer 可能同时动 live：串行化
@@ -835,5 +851,5 @@ case "$cmd" in
   issue) cmd_issue ;;
   renew) cmd_renew ;;
   status) cmd_status ;;
-  *) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
+  *) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
 esac

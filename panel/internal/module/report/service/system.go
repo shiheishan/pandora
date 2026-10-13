@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -11,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	notifysvc "github.com/aegispanel/aegis/internal/module/notify/service"
+	"github.com/aegispanel/aegis/internal/pkg/dbbackup"
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
 )
 
@@ -21,8 +21,8 @@ const (
 	probeTimeout     = 5 * time.Second
 )
 
-// offsiteConfigPaths 是异地备份（WebDAV）配置可能在的位置；备份目录里的 backup-webdav.json 另算。单测可替换。
-var offsiteConfigPaths = []string{"/etc/aegispanel/backup-webdav.json"}
+// offsiteConfigPaths 是异地备份（WebDAV）配置的位置：pandora backup webdav-upload 读它，备份脚本见它在才上传。单测可替换。
+var offsiteConfigPaths = []string{dbbackup.DefaultWebDAVConfigPath}
 
 // SystemStatus 逐项探测数据库、Redis、节点、支付回调、邮件与 Telegram 投递、实时推送、备份。
 // 任何一项失败只把那一项标成 down / unknown，不让整个接口报错：系统状态页恰恰要在部分组件坏掉时还能打开。
@@ -240,7 +240,7 @@ func (s *Service) probeBackup(now time.Time) BackupStatus {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		st.Readable = false
-		st.Message = "面板读不到备份目录（" + dir + "）。可能是权限或 systemd 沙箱限制，不代表备份没在跑；用 systemctl status aegis-backup.service 直接确认。"
+		st.Message = "面板读不到备份目录（" + dir + "）。可能是权限或 systemd 沙箱限制，不代表备份没在跑；用 systemctl status pandora-backup.service 直接确认。"
 		return st
 	}
 	st.Readable = true
@@ -319,14 +319,10 @@ func (s *Service) probeBackup(now time.Time) BackupStatus {
 	st.Recent = files[:min(backupRecent, len(files))]
 
 	offsite := false
-	if _, err := os.Stat(filepath.Join(dir, "backup-webdav.json")); err == nil {
-		offsite = true
-	} else {
-		for _, p := range offsiteConfigPaths {
-			if _, err := os.Stat(p); err == nil {
-				offsite = true
-				break
-			}
+	for _, p := range offsiteConfigPaths {
+		if _, err := os.Stat(p); err == nil {
+			offsite = true
+			break
 		}
 	}
 	st.OffsiteConfigured = offsite

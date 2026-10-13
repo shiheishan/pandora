@@ -1,0 +1,33 @@
+[Unit]
+Description=Pandora panel health check
+Documentation=file:///opt/pandora/deploy/RUNBOOK.md
+After=pandora-serve.service pandora-worker.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/opt/pandora/deploy/healthcheck.sh
+WorkingDirectory=/opt/pandora
+# 巡检自己卡住就没意义了：数据库连接挂起、curl 卡在 TLS 握手都可能让它永远不返回，然后下一次触发被 systemd 跳过
+TimeoutStartSec=120
+
+# 以 root 跑（要读 /etc/pandora/deploy.env 与 /etc/pandora/secrets.env 里的连库与 Redis 口令），但只读：
+# 唯一可写的是巡检日志目录 /var/log/pandora（health.log）
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+ReadWritePaths=-/var/log/pandora

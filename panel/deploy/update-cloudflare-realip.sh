@@ -9,7 +9,7 @@
 set -euo pipefail
 umask 077
 
-TARGET_FILE="${1:-/etc/aegispanel/cloudflare-realip.conf}"
+TARGET_FILE="${1:-/etc/pandora/cloudflare-realip.conf}"
 [[ "$TARGET_FILE" = /* ]] || { printf 'update-cloudflare-realip: target path must be absolute\n' >&2; exit 1; }
 TARGET_DIR="$(dirname -- "$TARGET_FILE")"
 WORK_DIR="$(mktemp -d)"

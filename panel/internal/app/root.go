@@ -47,6 +47,7 @@ func Execute() int {
 	root.AddCommand(newWorkerCmd(&configPath))
 	root.AddCommand(newMigrateCmd(&configPath))
 	root.AddCommand(newAdminCmd(&configPath))
+	root.AddCommand(newBackupCmd(&configPath))
 
 	if err := root.ExecuteContext(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, err)
