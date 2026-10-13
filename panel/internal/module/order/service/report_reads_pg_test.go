@@ -20,21 +20,22 @@ func TestReportOrderCountsPG(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	user := e.mkUser(t, ctx)
+	// 同一用户同一套餐只能有一张待付新购单，四张单分给四个用户
 	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
 
-	stalePending := e.buyNew(t, ctx, user, planID, priceID, Checkout{})
+	stalePending := e.buyNew(t, ctx, e.mkUser(t, ctx), planID, priceID, Checkout{})
 	e.mustExec(t, ctx, `UPDATE orders SET created_at = ? WHERE id = ?`, now.Add(-2*time.Hour), stalePending.OrderID)
 
-	e.buyNew(t, ctx, user, planID, priceID, Checkout{})
+	e.buyNew(t, ctx, e.mkUser(t, ctx), planID, priceID, Checkout{})
 
-	e.giveBalance(t, ctx, user, 1000)
-	fulfilled := e.buyNew(t, ctx, user, planID, priceID, Checkout{UseBalance: dec("10")})
+	payer := e.mkUser(t, ctx)
+	e.giveBalance(t, ctx, payer, 1000)
+	fulfilled := e.buyNew(t, ctx, payer, planID, priceID, Checkout{UseBalance: dec("10")})
 	if fulfilled.Status != StatusFulfilled {
 		t.Fatalf("履约单状态 %s", fulfilled.Status)
 	}
 
-	expiring := e.buyNew(t, ctx, user, planID, priceID, Checkout{})
+	expiring := e.buyNew(t, ctx, e.mkUser(t, ctx), planID, priceID, Checkout{})
 	e.mustExec(t, ctx, `UPDATE orders SET expires_at = now() - interval '1 minute' WHERE id = ?`, expiring.OrderID)
 	e.mustExec(t, ctx, `UPDATE order_reservations SET expires_at = now() - interval '1 minute' WHERE order_id = ?`, expiring.OrderID)
 	stats, err := e.svc.ExpireDue(ctx, 0)
