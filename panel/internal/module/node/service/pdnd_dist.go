@@ -4,6 +4,7 @@ package service
 // 面板自己发二进制（落地机只需要面板地址，不需要任何代码仓库凭据）；产物名只认白名单，公开端点不拼用户给的路径。
 
 import (
+	"context"
 	"crypto/sha256"
 	_ "embed"
 	"encoding/hex"
@@ -14,9 +15,13 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	plog "github.com/aegispanel/aegis/internal/pkg/log"
 )
 
 //go:embed pdnd_install.sh.tmpl
@@ -41,11 +46,25 @@ type pdndDist struct {
 	dir       string
 	origin    string // 规范化后的面板地址；originErr 非空时为空
 	originErr error
+	digests   *pdndDigestCache
+}
+
+// pdndDigestCache 按（大小、修改时间）缓存产物的 SHA-256：公开的校验和接口不能每个匿名请求都把几十 MB 读一遍。
+// 发布时整份替换文件，大小或修改时间必变；万一都没变（同大小且保留了旧时间戳），最坏是旧摘要配新文件，安装端校验失败、不会装错。
+type pdndDigestCache struct {
+	mu      sync.Mutex
+	entries map[string]pdndDigest
+}
+
+type pdndDigest struct {
+	size    int64
+	modTime time.Time
+	hex     string
 }
 
 // UsePdndDist 只在启动装配时调用：dir 是二进制目录，publicBaseURL 是 config 的 public_base_url。
 func (s *Service) UsePdndDist(dir, publicBaseURL string) {
-	d := pdndDist{dir: dir}
+	d := pdndDist{dir: dir, digests: &pdndDigestCache{entries: map[string]pdndDigest{}}}
 	d.origin, d.originErr = pdndOrigin(publicBaseURL)
 	s.pdnd = d
 }
@@ -64,10 +83,11 @@ type PdndArtifact struct {
 	File    *os.File
 	Size    int64
 	ModTime time.Time
+	SHA256  string // 小写 hex；handler 拿它做强 ETag，CDN 重新验证时二进制与校验和不会错配
 }
 
-// OpenPdndArtifact 打开白名单里的产物。
-func (s *Service) OpenPdndArtifact(name string) (*PdndArtifact, error) {
+// OpenPdndArtifact 打开白名单里的产物并带上（缓存的）摘要；文件读位置在开头。
+func (s *Service) OpenPdndArtifact(ctx context.Context, name string) (*PdndArtifact, error) {
 	if !PdndArtifactAllowed(name) {
 		return nil, errs.New(errs.NotFound)
 	}
@@ -78,32 +98,62 @@ func (s *Service) OpenPdndArtifact(name string) (*PdndArtifact, error) {
 	// 名字已过白名单；OpenInRoot 再保证打开的文件跑不出分发目录（含符号链接）
 	f, err := os.OpenInRoot(s.pdnd.dir, name)
 	if err != nil {
+		// 不存在之外的原因（权限、指向目录外的符号链接）对外同样是 404，但要留日志给运维
+		if !errors.Is(err, os.ErrNotExist) {
+			plog.From(ctx).Warn("打开节点端安装包失败", zap.String("artifact", name), zap.Error(err))
+		}
 		return nil, errPdndArtifactMissing
 	}
 	info, err := f.Stat()
+	if err != nil || info.IsDir() {
+		_ = f.Close()
+		if err != nil {
+			plog.From(ctx).Warn("读取节点端安装包信息失败", zap.String("artifact", name), zap.Error(err))
+		}
+		return nil, errPdndArtifactMissing
+	}
+	sum, err := s.pdnd.digest(name, f, info)
 	if err != nil {
 		_ = f.Close()
-		return nil, errPdndArtifactMissing
+		return nil, errs.Wrap(errs.Internal, err)
 	}
-	if info.IsDir() {
-		_ = f.Close()
-		return nil, errPdndArtifactMissing
+	return &PdndArtifact{File: f, Size: info.Size(), ModTime: info.ModTime(), SHA256: sum}, nil
+}
+
+// digest 取产物摘要：（大小、修改时间）没变就用缓存，否则读一遍算并把读位置倒回开头。
+func (d pdndDist) digest(name string, f *os.File, info os.FileInfo) (string, error) {
+	if d.digests != nil {
+		d.digests.mu.Lock()
+		e, ok := d.digests.entries[name]
+		d.digests.mu.Unlock()
+		if ok && e.size == info.Size() && e.modTime.Equal(info.ModTime()) {
+			return e.hex, nil
+		}
 	}
-	return &PdndArtifact{File: f, Size: info.Size(), ModTime: info.ModTime()}, nil
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return "", err
+	}
+	sum := hex.EncodeToString(h.Sum(nil))
+	if d.digests != nil {
+		d.digests.mu.Lock()
+		d.digests.entries[name] = pdndDigest{size: info.Size(), modTime: info.ModTime(), hex: sum}
+		d.digests.mu.Unlock()
+	}
+	return sum, nil
 }
 
 // PdndChecksum 返回 "<64 位小写 hex>  <name>\n"（两个空格，与 sha256sum 输出一致）。
-func (s *Service) PdndChecksum(name string) (string, error) {
-	a, err := s.OpenPdndArtifact(name)
+func (s *Service) PdndChecksum(ctx context.Context, name string) (string, error) {
+	a, err := s.OpenPdndArtifact(ctx, name)
 	if err != nil {
 		return "", err
 	}
-	defer a.File.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, a.File); err != nil {
-		return "", errs.Wrap(errs.Internal, err)
-	}
-	return fmt.Sprintf("%s  %s\n", hex.EncodeToString(h.Sum(nil)), name), nil
+	_ = a.File.Close()
+	return fmt.Sprintf("%s  %s\n", a.SHA256, name), nil
 }
 
 // PdndInstallScript 返回渲染好的安装脚本。

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Pandora NativeCore 一键安装（gRPC 接入）。
 #
-#   curl -fsSL '@@PANEL_ORIGIN@@/pdnd/install.sh' | sudo bash -s -- \
+#   curl --proto '=https' -fsSL '@@PANEL_ORIGIN@@/pdnd/install.sh' | sudo bash -s -- \
 #     --panel '<host:port>' --ca-sha256 'sha256:<64 hex>' --token '<一次性令牌>'
 #
 # 幂等：重复执行会升级二进制、用新令牌重新接入面板（新身份取代旧身份）并重启服务。
@@ -37,7 +37,7 @@ say() {
 usage() {
   cat <<'EOF'
 用法：
-  curl -fsSL '<面板>/pdnd/install.sh' | sudo bash -s -- \
+  curl --proto '=https' -fsSL '<面板>/pdnd/install.sh' | sudo bash -s -- \
     --panel '<host:port>' --ca-sha256 'sha256:<64 hex>' --token '<令牌>'
 
 参数：
@@ -157,6 +157,15 @@ pandora_check_existing_config() {
   if [[ -n "$idir" && "$idir" != "$IDENTITY_DIR" ]]; then
     die "已有配置的 panel.identity_dir 是 ${idir}，安装器只接入到 ${IDENTITY_DIR}；改回缺省或删掉这一项后重跑"
   fi
+  # 改不了面板地址就在用掉令牌之前停下，免得带着旧地址装完、服务连错面板
+  if [[ "$(pandora_address_count "$cfg")" != 1 ]] && ! grep -qF "\"${PANEL_ADDR}\"" "$cfg"; then
+    die "已有配置里找不到唯一的 \"address\" 键，没法把 panel.address 改成 ${PANEL_ADDR}；手工改好 ${cfg} 后重跑"
+  fi
+}
+
+# pandora_address_count 数配置里 "address" 键的个数（grep 没匹配时退出 1，pipefail 下兜成 true）。
+pandora_address_count() {
+  { grep -o '"address"[[:space:]]*:' "$1" || true; } | wc -l | tr -d ' '
 }
 
 # 依据节点容量实测（10 万连接、1c1g 单位数据）：重启风暴时 conntrack 峰值 31 万，
@@ -219,7 +228,7 @@ pandora_ensure_user() {
     groupadd --system pandora
   fi
   if ! getent passwd pandora >/dev/null 2>&1; then
-    useradd --system --gid pandora --home-dir "$STATE_DIR" --create-home --shell /usr/sbin/nologin pandora
+    useradd --system --gid pandora --home-dir "$STATE_DIR" --no-create-home --shell /usr/sbin/nologin pandora
   fi
 }
 
@@ -273,15 +282,13 @@ pandora_render_config() {
 JSON
     return 0
   fi
-  local n
-  # grep 没匹配时退出 1，pipefail 下会让整条管道失败：兜成 true
-  n="$( { grep -o '"address"[[:space:]]*:' "$src" || true; } | wc -l | tr -d ' ')"
-  if [[ "$n" == 1 ]]; then
+  if [[ "$(pandora_address_count "$src")" == 1 ]]; then
     # PANEL_ADDR 经 pandora_validate_args 校验，只含 [A-Za-z0-9.:[]-]，放进 sed 替换串安全。
     sed -E 's/("address"[[:space:]]*:[[:space:]]*")[^"]*(")/\1'"$PANEL_ADDR"'\2/' "$src" > "$dst"
   else
     cp "$src" "$dst"
-    echo "已有配置里找不到唯一的 panel.address，原样保留；面板地址应为 ${PANEL_ADDR}，请手工核对" >&2
+    # pandora_check_existing_config 已保证这时配置里本来就是这个地址
+    echo "已有配置里找不到唯一的 panel.address，原样保留（已含 ${PANEL_ADDR}）" >&2
   fi
 }
 
@@ -344,7 +351,8 @@ pandora_prepare_files() {
 
 pandora_validate() {
   say "校验安装"
-  "${INSTALL_DIR}/${SERVICE}.new" validate-install --config "${CONFIG_DIR}/config.json.new" --unit "${UNIT_DIR}/${SERVICE}.service.new" --identity-dir "$IDENTITY_DIR"
+  # 以服务用户跑：校验会在身份目录里挪文件（提升待生效证书），root 不在 pandora 可写的目录里动文件
+  runuser -u pandora -- "${INSTALL_DIR}/${SERVICE}.new" validate-install --config "${CONFIG_DIR}/config.json.new" --unit "${UNIT_DIR}/${SERVICE}.service.new" --identity-dir "$IDENTITY_DIR"
 }
 
 # 全部校验通过后才 mv 换上；此前任一步失败，机器上原有的二进制、配置、unit 均未改动。

@@ -32,21 +32,23 @@ func (h *Handler) pdndInstallScript(c *gin.Context) {
 
 func (h *Handler) pdndBinary(c *gin.Context) {
 	name := c.Param("name")
-	a, err := h.svc.OpenPdndArtifact(name)
+	a, err := h.svc.OpenPdndArtifact(c.Request.Context(), name)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
 	}
 	defer a.File.Close()
 	c.Header("Content-Type", "application/octet-stream")
+	// 文件名不带版本：每次都要重新验证，强 ETag 用内容摘要，CDN 不会拿旧二进制配新校验和
 	c.Header("Cache-Control", "no-cache")
+	c.Header("ETag", `"`+a.SHA256+`"`)
 	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", name))
 	http.ServeContent(c.Writer, c.Request, name, a.ModTime, a.File)
 }
 
 func (h *Handler) pdndChecksum(c *gin.Context) {
 	name := c.Param("name")
-	body, err := h.svc.PdndChecksum(name)
+	body, err := h.svc.PdndChecksum(c.Request.Context(), name)
 	if err != nil {
 		httpx.Fail(c, err)
 		return

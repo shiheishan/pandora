@@ -8,7 +8,7 @@ import (
 func TestBuildInstallCommand(t *testing.T) {
 	fp := "sha256:" + strings.Repeat("a", 64)
 	got := buildInstallCommand(InstallTarget{BaseURL: "https://panel.example.test/", Host: "node.example.test", Port: 9443}, fp, "tok_ABC-123")
-	want := "curl -fsSL 'https://panel.example.test/pdnd/install.sh' | sudo bash -s -- --panel 'node.example.test:9443' --ca-sha256 '" +
+	want := "curl --proto '=https' -fsSL 'https://panel.example.test/pdnd/install.sh' | sudo bash -s -- --panel 'node.example.test:9443' --ca-sha256 '" +
 		fp + "' --token 'tok_ABC-123'"
 	if got != want {
 		t.Fatalf("安装命令:\n got %s\nwant %s", got, want)

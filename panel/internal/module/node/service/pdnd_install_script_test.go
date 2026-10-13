@@ -438,3 +438,28 @@ func unitLines(s string) []string {
 	slices.Sort(out)
 	return out
 }
+
+func TestInstallScriptRejectsUnrewritableAddress(t *testing.T) {
+	bash := bashOrSkip(t)
+	script := writeRenderedScript(t)
+	dir := t.TempDir()
+	env := []string{"PANDORA_CONFIG_DIR=" + dir}
+	check := func() (string, int) {
+		return runLib(t, bash, script, `PANEL_ADDR=new.example.com:9443; pandora_check_existing_config`, env)
+	}
+	cfg := filepath.Join(dir, "config.json")
+	// 两个 address 键、都不是新地址：用掉令牌之前就要停下
+	if err := os.WriteFile(cfg, []byte(`{"panel":{"address":"old.example.com:9443"},"runtime":{"address":"x"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, code := check(); code == 0 || !strings.Contains(out, "new.example.com:9443") {
+		t.Fatalf("改不了地址应拒绝：%d\n%s", code, out)
+	}
+	// 本来就是新地址：放行
+	if err := os.WriteFile(cfg, []byte(`{"panel":{"address":"new.example.com:9443"},"runtime":{"address":"x"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, code := check(); code != 0 {
+		t.Fatalf("已是新地址应通过：%d\n%s", code, out)
+	}
+}

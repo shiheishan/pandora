@@ -115,13 +115,18 @@ func (s *Service) IssueBootstrapToken(ctx context.Context, serverID uuid.UUID, t
 }
 
 // buildInstallCommand 拼安装命令（每个参数都用单引号包起来）：
-// curl -fsSL '<BaseURL 去掉末尾 />/pdnd/install.sh' | sudo bash -s -- --panel '<host:port>' --ca-sha256 '<fp>' --token '<token>'
-// host:port 用 net.JoinHostPort（IPv6 自动加方括号）。
+// curl --proto '=https' -fsSL '<BaseURL 去掉末尾 />/pdnd/install.sh' | sudo bash -s -- --panel '<host:port>' --ca-sha256 '<fp>' --token '<token>'
+// host:port 用 net.JoinHostPort（IPv6 自动加方括号）。https 面板加 --proto '=https'：以 root 运行的脚本不许被降级到 http；
+// 本机开发的回环 http 面板不加。
 func buildInstallCommand(t InstallTarget, caFingerprint, token string) string {
 	base := strings.TrimSuffix(strings.TrimSpace(t.BaseURL), "/")
 	script := base + "/pdnd/install.sh"
 	hostPort := net.JoinHostPort(t.Host, strconv.Itoa(t.Port))
-	return "curl -fsSL " + shellQuote(script) + " | sudo bash -s -- --panel " + shellQuote(hostPort) +
+	curl := "curl -fsSL "
+	if strings.HasPrefix(base, "https://") {
+		curl = "curl --proto '=https' -fsSL "
+	}
+	return curl + shellQuote(script) + " | sudo bash -s -- --panel " + shellQuote(hostPort) +
 		" --ca-sha256 " + shellQuote(caFingerprint) + " --token " + shellQuote(token)
 }
 
