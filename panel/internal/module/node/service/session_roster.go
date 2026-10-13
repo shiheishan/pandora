@@ -212,13 +212,19 @@ func (s *Session) forceFullLocked(nodeID uuid.UUID, st *rosterState) {
 				s.mu.Lock()
 				defer s.mu.Unlock()
 				st.forcePending = false
-				if s.nodes[nodeID] == st {
-					s.forceFullLocked(nodeID, st)
+				// 等够了就发，不再按时钟复核间隔（时钟可注入，复核会让冻结的时钟永远等下去）
+				if s.nodes[nodeID] == st && st.forceWanted && st.latest != nil && s.acceptingLocked() {
+					s.sendForcedFullLocked(nodeID, st, s.m.now())
 				}
 			})
 			return
 		}
 	}
+	s.sendForcedFullLocked(nodeID, st, now)
+}
+
+// sendForcedFullLocked 排一次强制全量并推进退避间隔。
+func (s *Session) sendForcedFullLocked(nodeID uuid.UUID, st *rosterState, now time.Time) {
 	st.lastForced = now
 	st.forceWanted = false
 	if st.forceGap == 0 {
