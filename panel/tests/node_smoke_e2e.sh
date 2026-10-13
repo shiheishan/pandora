@@ -5,21 +5,23 @@
 #   0  一次性库与环境变量守卫
 #   1  后台登录 + 重认证（RecentReauth 路由用新令牌）
 #   2  读 shadowsocks 协议 schema，取 cipher
-#   3  后台建池、服务器、节点、套餐（全走 API）
-#   4  并发注册并登录门户用户（并发 4，避免口令哈希排队 503）
-#   5  后台人工开单 grant（并发 4）+ SQL 核对 active 订阅数
-#   6  各服务器签接入令牌，写入 0600 令牌文件（名 s1..sN，供 nodesim）
-#   7  启动 nodesim，等全部 enrolled + connected
-#   8  逐个节点 activate（须服务器已接入）；SQL 核对服务器 ready
-#   9  等名单：每服 1 节点、config_sha256 非空、user_count = 用户数
-#  10  用户 1 验证订阅含 5 条线路 + proxy_uuid；并发取全用户订阅链接
-#  11  多轮负载（默认 6 轮 × 10s）：拉订阅 + 门户读；模拟器持续上报流量
-#  12  等待最后一轮流量上报被确认
-#  13  判定：客户端状态码、serve 日志 5xx/ERROR、模拟器、流量入账 SQL、门户用量
-#  14  停模拟器
-#  15  汇总通过/失败项
+#   3  后台建池、服务器、节点（全走 API）
+#   4  各服务器签接入令牌，写入 0600 令牌文件（名 s1..sN，供 nodesim）
+#   5  启动 nodesim，等全部 enrolled + connected
+#   6  逐个节点 activate（须服务器已接入）；SQL 核对服务器 ready
+#   7  建套餐并发布（发布要求绑定的池里至少有一个可服务节点，所以在上线之后）
+#   8  并发注册并登录门户用户（并发 4，避免口令哈希排队 503）
+#   9  后台人工开单 grant（并发 4）+ SQL 核对 active 订阅数
+#  10  等名单：每服 1 节点、config_sha256 非空、user_count = 用户数
+#  11  用户 1 验证订阅含 5 条线路 + proxy_uuid；并发取全用户订阅链接
+#  12  多轮负载（默认 6 轮 × 10s）：拉订阅 + 门户读；模拟器持续上报流量
+#  13  等待最后一轮流量上报被确认
+#  14  判定：客户端状态码、serve 日志 5xx/ERROR、模拟器、流量入账 SQL、门户用量
+#  15  停模拟器
+#  16  汇总通过/失败项
 #
-# 顺序说明：上线要求服务器已 gRPC 接入（先 nodesim 再 activate）；名单只下发给 active 节点（先上线再等名单）。
+# 顺序说明：上线要求服务器已 gRPC 接入（先 nodesim 再 activate）；套餐发布要求池里有可服务节点（先上线再建套餐）；
+# 名单只下发给 active 节点（先上线再等名单）。
 #
 # SQL 仅用于核对（不写库）：
 #   - 开通后 active 订阅数 = 用户数
@@ -224,7 +226,7 @@ raise SystemExit("shadowsocks schema not found")
 ok "shadowsocks cipher=$CIPHER"
 
 #-------------------------------------------------------------------------------
-sec "3. 夹具（池、服务器、节点、套餐）"
+sec "3. 夹具（池、服务器、节点）"
 
 POOL_CODE="smk-$RUN"
 api POST "$ADM/v1/node-pools" -H "$AH" -H 'Content-Type: application/json' \
@@ -255,80 +257,11 @@ for i in $(seq 1 "$SMOKE_SERVERS"); do
   ok "服务器/节点 $i"
 done
 
-api POST "$ADM/v1/plans/complete" -H "$AH" -H 'Content-Type: application/json' \
-  -H "Idempotency-Key: smoke-plan-$RUN" \
-  -d "{\"code\":\"smoke-$RUN\",\"name\":\"Smoke $RUN\",\"visibility\":\"public\",\"traffic_gb\":100,\"pool_ids\":[\"$POOL_ID\"],\"prices\":[{\"billing_interval\":\"month\",\"interval_count\":1,\"unit_amount\":1000,\"currency\":\"CNY\",\"trial_days\":0}],\"publish\":true}"
-[ "$HTTP_CODE" = 201 ] || fatal "plans/complete" "HTTP $HTTP_CODE"
-PLAN=$(jget_body plan.id) || fatal "plan id"
-PRICE=$(jget_body price_ids.0) || fatal "price id"
-ok "套餐 smoke-$RUN"
 
 SERVER_ID_LIST=$(awk '{print $2}' "$TMP/fixture/servers" | paste -sd, -)
 
 #-------------------------------------------------------------------------------
-sec "4. 门户用户（并发 4）"
-
-register_one() {
-  local k=$1
-  local email="smoke_${RUN}_${k}@example.com"
-  api POST "$PUB/v1/auth/register/start" -H 'Content-Type: application/json' -d "{\"email\":\"$email\"}"
-  [ "$HTTP_CODE" = 200 ] || return 1
-  local rt dc
-  rt=$(printf '%s' "$HTTP_BODY" | python3 -c 'import json,sys; print(json.load(sys.stdin)["registration_token"])') || return 1
-  dc=$(printf '%s' "$HTTP_BODY" | python3 -c 'import json,sys; print(json.load(sys.stdin)["dev_code"])') || return 1
-  api POST "$PUB/v1/auth/register/complete" -H 'Content-Type: application/json' \
-    -d "{\"registration_token\":\"$rt\",\"code\":\"$dc\",\"password\":\"$USER_PASS\"}"
-  [ "$HTTP_CODE" = 201 ] || return 1
-  local uid
-  uid=$(printf '%s' "$HTTP_BODY" | python3 -c 'import json,sys; print(json.load(sys.stdin)["user_id"])') || return 1
-  api POST "$PUB/v1/auth/login" -H 'Content-Type: application/json' \
-    -d "{\"email\":\"$email\",\"password\":\"$USER_PASS\"}"
-  [ "$HTTP_CODE" = 200 ] || return 1
-  local tok
-  tok=$(printf '%s' "$HTTP_BODY" | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])') || return 1
-  printf '%s %s\n' "$uid" "$tok" > "$TMP/users/$k"
-}
-export -f register_one api
-export PUB TMP RUN USER_PASS HTTP_CODE HTTP_BODY
-
-reg_fail=0
-seq 1 "$SMOKE_USERS" | xargs -P 4 -I {} bash -c 'register_one "$1" || exit 1' _ {} || reg_fail=1
-if [ "$reg_fail" -ne 0 ]; then
-  n_ok=$(find "$TMP/users" -type f 2>/dev/null | wc -l | tr -d ' ')
-  fatal "用户注册/登录失败" "成功 $n_ok / $SMOKE_USERS"
-fi
-ok "$SMOKE_USERS 个门户用户"
-
-#-------------------------------------------------------------------------------
-sec "5. 后台开通（grant，并发 4）"
-
-admin_auth
-
-grant_one() {
-  local k=$1
-  local uid
-  uid=$(awk '{print $1}' "$TMP/users/$k") || return 1
-  api POST "$ADM/v1/orders/manual" -H "$AH" -H 'Content-Type: application/json' \
-    -H "Idempotency-Key: smoke-order-$RUN-$k" \
-    -d "{\"user_id\":\"$uid\",\"plan_id\":\"$PLAN\",\"price_id\":\"$PRICE\",\"reason\":\"node smoke e2e\",\"settlement\":\"grant\"}"
-  [ "$HTTP_CODE" = 201 ] || return 1
-}
-export -f grant_one
-export ADM AH PLAN PRICE RUN TMP
-
-grant_fail=0
-seq 1 "$SMOKE_USERS" | xargs -P 4 -I {} bash -c 'grant_one "$1" || exit 1' _ {} || grant_fail=1
-if [ "$grant_fail" -ne 0 ]; then
-  fatal "人工开单 grant 失败" "见上方 HTTP 码"
-fi
-ok "$SMOKE_USERS 笔 grant 订单"
-
-sub_cnt=$(db "SELECT count(*) FROM subscriptions WHERE plan_id='$PLAN' AND status='active'")
-[ "$sub_cnt" = "$SMOKE_USERS" ] && ok "SQL：active 订阅数 = $SMOKE_USERS" \
-  || bad "SQL：active 订阅数" "got $sub_cnt want $SMOKE_USERS"
-
-#-------------------------------------------------------------------------------
-sec "6. 接入令牌"
+sec "4. 接入令牌"
 
 admin_auth
 umask 077
@@ -376,7 +309,7 @@ echo "nodesim --panel '$PANEL' --ca-sha256 '$CA'"
 ok "$SMOKE_SERVERS 枚 bootstrap 令牌已写入令牌文件"
 
 #-------------------------------------------------------------------------------
-sec "7. 启动 nodesim"
+sec "5. 启动 nodesim"
 
 mkdir -p "$TMP/state"
 "$NODESIM" --panel "$PANEL" --ca-sha256 "$CA" --tokens-file "$TMP/tokens" \
@@ -392,7 +325,7 @@ wait_status 60 "nodesim 接入并连接" "$enroll_expr"
 ok "nodesim：$SMOKE_SERVERS 台 enrolled + connected"
 
 #-------------------------------------------------------------------------------
-sec "8. 节点上线（activate）"
+sec "6. 节点上线（activate）"
 
 admin_auth
 for i in $(seq 1 "$SMOKE_SERVERS"); do
@@ -410,7 +343,81 @@ ready_cnt=$(db "SELECT count(*) FROM servers WHERE id IN ('$(echo "$SERVER_ID_LI
   || bad "SQL：ready 服务器数" "got $ready_cnt want $SMOKE_SERVERS"
 
 #-------------------------------------------------------------------------------
-sec "9. 等名单下发"
+sec "7. 套餐（池里有可服务节点后才能发布）"
+
+admin_auth
+api POST "$ADM/v1/plans/complete" -H "$AH" -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: smoke-plan-$RUN" \
+  -d "{\"code\":\"smoke-$RUN\",\"name\":\"Smoke $RUN\",\"visibility\":\"public\",\"traffic_gb\":100,\"pool_ids\":[\"$POOL_ID\"],\"prices\":[{\"billing_interval\":\"month\",\"interval_count\":1,\"unit_amount\":1000,\"currency\":\"CNY\",\"trial_days\":0}],\"publish\":true}"
+[ "$HTTP_CODE" = 201 ] || fatal "plans/complete" "HTTP $HTTP_CODE"
+PLAN=$(jget_body plan.id) || fatal "plan id"
+PRICE=$(jget_body price_ids.0) || fatal "price id"
+ok "套餐 smoke-$RUN"
+
+#-------------------------------------------------------------------------------
+sec "8. 门户用户（并发 4）"
+
+register_one() {
+  local k=$1
+  local email="smoke_${RUN}_${k}@example.com"
+  api POST "$PUB/v1/auth/register/start" -H 'Content-Type: application/json' -d "{\"email\":\"$email\"}"
+  [ "$HTTP_CODE" = 200 ] || return 1
+  local rt dc
+  rt=$(printf '%s' "$HTTP_BODY" | python3 -c 'import json,sys; print(json.load(sys.stdin)["registration_token"])') || return 1
+  dc=$(printf '%s' "$HTTP_BODY" | python3 -c 'import json,sys; print(json.load(sys.stdin)["dev_code"])') || return 1
+  api POST "$PUB/v1/auth/register/complete" -H 'Content-Type: application/json' \
+    -d "{\"registration_token\":\"$rt\",\"code\":\"$dc\",\"password\":\"$USER_PASS\"}"
+  [ "$HTTP_CODE" = 201 ] || return 1
+  local uid
+  uid=$(printf '%s' "$HTTP_BODY" | python3 -c 'import json,sys; print(json.load(sys.stdin)["user_id"])') || return 1
+  api POST "$PUB/v1/auth/login" -H 'Content-Type: application/json' \
+    -d "{\"email\":\"$email\",\"password\":\"$USER_PASS\"}"
+  [ "$HTTP_CODE" = 200 ] || return 1
+  local tok
+  tok=$(printf '%s' "$HTTP_BODY" | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])') || return 1
+  printf '%s %s\n' "$uid" "$tok" > "$TMP/users/$k"
+}
+export -f register_one api
+export PUB TMP RUN USER_PASS HTTP_CODE HTTP_BODY
+
+reg_fail=0
+seq 1 "$SMOKE_USERS" | xargs -P 4 -I {} bash -c 'register_one "$1" || exit 1' _ {} || reg_fail=1
+if [ "$reg_fail" -ne 0 ]; then
+  n_ok=$(find "$TMP/users" -type f 2>/dev/null | wc -l | tr -d ' ')
+  fatal "用户注册/登录失败" "成功 $n_ok / $SMOKE_USERS"
+fi
+ok "$SMOKE_USERS 个门户用户"
+
+#-------------------------------------------------------------------------------
+sec "9. 后台开通（grant，并发 4）"
+
+admin_auth
+
+grant_one() {
+  local k=$1
+  local uid
+  uid=$(awk '{print $1}' "$TMP/users/$k") || return 1
+  api POST "$ADM/v1/orders/manual" -H "$AH" -H 'Content-Type: application/json' \
+    -H "Idempotency-Key: smoke-order-$RUN-$k" \
+    -d "{\"user_id\":\"$uid\",\"plan_id\":\"$PLAN\",\"price_id\":\"$PRICE\",\"reason\":\"node smoke e2e\",\"settlement\":\"grant\"}"
+  [ "$HTTP_CODE" = 201 ] || return 1
+}
+export -f grant_one
+export ADM AH PLAN PRICE RUN TMP
+
+grant_fail=0
+seq 1 "$SMOKE_USERS" | xargs -P 4 -I {} bash -c 'grant_one "$1" || exit 1' _ {} || grant_fail=1
+if [ "$grant_fail" -ne 0 ]; then
+  fatal "人工开单 grant 失败" "见上方 HTTP 码"
+fi
+ok "$SMOKE_USERS 笔 grant 订单"
+
+sub_cnt=$(db "SELECT count(*) FROM subscriptions WHERE plan_id='$PLAN' AND status='active'")
+[ "$sub_cnt" = "$SMOKE_USERS" ] && ok "SQL：active 订阅数 = $SMOKE_USERS" \
+  || bad "SQL：active 订阅数" "got $sub_cnt want $SMOKE_USERS"
+
+#-------------------------------------------------------------------------------
+sec "10. 等名单下发"
 
 roster_expr=$(python3 <<PY
 import json
@@ -437,7 +444,7 @@ wait_status 90 "名单与 config_sha256、user_count" "$roster_expr"
 ok "名单：每服 1 节点、user_count=$SMOKE_USERS"
 
 #-------------------------------------------------------------------------------
-sec "10. 订阅线路与全用户链接"
+sec "11. 订阅线路与全用户链接"
 
 uid1=$(awk '{print $1}' "$TMP/users/1")
 tok1=$(awk '{print $2}' "$TMP/users/1")
@@ -499,7 +506,7 @@ fi
 ok "$SMOKE_USERS 个用户订阅链接"
 
 #-------------------------------------------------------------------------------
-sec "11. 负载（${SMOKE_SECONDS}s / ${SMOKE_ROUNDS} 轮）"
+sec "12. 负载（${SMOKE_SECONDS}s / ${SMOKE_ROUNDS} 轮）"
 
 OFFSET=$(wc -c < "$SERVE_LOG" | tr -d ' ')
 ROUND_SEC=$((SMOKE_SECONDS / SMOKE_ROUNDS))
@@ -544,7 +551,7 @@ done
 ok "负载 ${SMOKE_ROUNDS} 轮完成"
 
 #-------------------------------------------------------------------------------
-sec "12. 等待流量上报确认"
+sec "13. 等待流量上报确认"
 
 WAIT_SEC=$(python3 -c '
 import re, sys
@@ -563,7 +570,7 @@ sleep "$WAIT_SEC"
 ok "已等待 ${WAIT_SEC}s（2×上报间隔 + 2）"
 
 #-------------------------------------------------------------------------------
-sec "13. 判定"
+sec "14. 判定"
 
 if python3 - "$TMP/results" "$SMOKE_USERS" <<'PY'
 import os, sys, collections
@@ -694,7 +701,7 @@ else
 fi
 
 #-------------------------------------------------------------------------------
-sec "14. 停止 nodesim"
+sec "15. 停止 nodesim"
 
 kill -TERM "$SIM_PID" 2>/dev/null || true
 if wait "$SIM_PID"; then
@@ -706,7 +713,7 @@ fi
 SIM_PID=
 
 #-------------------------------------------------------------------------------
-sec "15. 汇总"
+sec "16. 汇总"
 
 echo
 echo "通过 $pass 项，失败 $fail 项"
