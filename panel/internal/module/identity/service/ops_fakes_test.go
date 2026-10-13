@@ -75,11 +75,12 @@ func writeEvent(t *testing.T, e *env, ctx context.Context, user uuid.UUID, ip, a
 	}
 }
 
-// opsEnv 在 newEnv 上挂假订阅端口。
+// opsEnv 在 newEnv 上挂假订阅端口与假订单统计端口（无订单）。
 func opsEnv(t *testing.T) (*env, context.Context, *fakeOpsSubs) {
 	e, ctx := newEnv(t)
 	fs := &fakeOpsSubs{current: map[uuid.UUID]CurrentSub{}}
 	e.svc.UseOpsSubscriptions(fs)
+	e.svc.UseOpsOrders(&fakeExportOpsOrders{})
 	return e, ctx, fs
 }
 

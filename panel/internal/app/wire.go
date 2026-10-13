@@ -237,6 +237,7 @@ func buildServices(r *runtime) (*services, error) {
 	// 后台批量运营与风控：订阅条件、当前订阅与拉取日志经 subscription 取；批量生成经 queue 入队；
 	// notify 群发经已注入的 Directory（identitySvc）取收件人
 	identitySvc.UseOpsSubscriptions(subSvc)
+	identitySvc.UseOpsOrders(opsOrderAdapter{s: orderSvc})
 	identitySvc.UseJobQueue(queue)
 	// 节点上报的流量经 subscription 扣量（配额 → 流量包 → 按日用量）
 	nodeSvc.UseTrafficCharger(subSvc)

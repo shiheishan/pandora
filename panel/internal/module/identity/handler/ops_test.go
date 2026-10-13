@@ -68,7 +68,7 @@ func (f *opsFake) ExportUsers(_ context.Context, fl service.BulkFilter, limit in
 	f.lastExportLim = limit
 	return []service.ExportRow{{
 		Email: "=cmd@example.test", Status: "active", GroupName: "+grp",
-		ActiveSubs: 1, CreatedAt: time.Date(2026, 1, 1, 8, 0, 0, 0, time.UTC), LastLoginAt: nil,
+		ActiveSubs: 1, Orders: 3, Paid: "CNY 12.30", CreatedAt: time.Date(2026, 1, 1, 8, 0, 0, 0, time.UTC), LastLoginAt: nil,
 	}}, nil
 }
 
@@ -317,10 +317,10 @@ func TestOpsBulkExportCSV(t *testing.T) {
 	if err != nil || len(recs) != 2 {
 		t.Fatalf("csv %v %d", err, len(recs))
 	}
-	if strings.Join(recs[0], ",") != "邮箱,状态,分组,生效订阅,注册时间,最近登录" {
+	if strings.Join(recs[0], ",") != "邮箱,状态,分组,生效订阅,订单数,累计实付,注册时间,最近登录" {
 		t.Fatalf("表头 %v", recs[0])
 	}
-	if recs[1][0] != "'=cmd@example.test" || recs[1][2] != "'+grp" || recs[1][5] != "" {
+	if recs[1][0] != "'=cmd@example.test" || recs[1][2] != "'+grp" || recs[1][3] != "1" || recs[1][4] != "3" || recs[1][5] != "CNY 12.30" || recs[1][7] != "" {
 		t.Fatalf("行 %v", recs[1])
 	}
 	if f.lastExportLim != 5 || f.lastBulk.HasActiveSub == nil || !*f.lastBulk.HasActiveSub || f.lastBulk.ExpiresWithinDays != -1 {

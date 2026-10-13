@@ -33,7 +33,7 @@ func (h *Handler) bulkPreview(c *gin.Context) {
 	httpx.OK(c, previewFrom(out))
 }
 
-// bulkExport 导出用户 CSV。旧版的「订单数」「累计实付」两列需要订单聚合读，本块不做，待产品定。
+// bulkExport 导出用户 CSV。
 func (h *Handler) bulkExport(c *gin.Context) {
 	var q bulkExportQuery
 	if err := httpx.BindQuery(c, &q); err != nil {
@@ -54,7 +54,7 @@ func (h *Handler) bulkExport(c *gin.Context) {
 	writeCSVHead(c, "users.csv")
 	_, _ = c.Writer.Write([]byte{0xEF, 0xBB, 0xBF})
 	cw := csv.NewWriter(c.Writer)
-	_ = cw.Write([]string{"邮箱", "状态", "分组", "生效订阅", "注册时间", "最近登录"})
+	_ = cw.Write([]string{"邮箱", "状态", "分组", "生效订阅", "订单数", "累计实付", "注册时间", "最近登录"})
 	for _, u := range rows {
 		last := ""
 		if u.LastLoginAt != nil {
@@ -65,6 +65,8 @@ func (h *Handler) bulkExport(c *gin.Context) {
 			u.Status,
 			service.CSVCell(u.GroupName),
 			strconv.Itoa(u.ActiveSubs),
+			strconv.FormatInt(u.Orders, 10),
+			u.Paid,
 			u.CreatedAt.UTC().Format("2006-01-02 15:04"),
 			last,
 		})

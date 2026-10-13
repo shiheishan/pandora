@@ -64,9 +64,10 @@ type Service struct {
 	roster RosterNotifier
 
 	// 批量运营与风控（ops_types.go）：ops 是 audit 的读与复核写；subs 由 subscription 实现、queue 是 asynq 客户端，装配时注入。
-	ops   auditOps
-	subs  OpsSubscriptions
-	queue JobQueue
+	ops    auditOps
+	subs   OpsSubscriptions
+	orders OpsOrders
+	queue  JobQueue
 
 	geo *geoip.Resolver
 }
