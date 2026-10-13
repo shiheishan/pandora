@@ -19,6 +19,7 @@ import (
 //     每次新流的 Welcome 都原样重发（同一 report_id、同样内容）：面板可能已经落库、只是 ack
 //     丢在断开的流上，原样重发才能让面板按 report_id 去重；把它和新流量合并成另一份，
 //     面板就分不出来，只能重复计费。
+//   - 一份至多 maxTrafficEntriesPerReport 条；多出来的留在 pending，上一份确认后再封下一份。
 //   - pending 是还没封的流量，按 (节点, uid) 累加（上行、下行分别累加），所以面板不可达多久
 //     内存都只随用户数增长、不随断线时长增长。inflight 确认之后，pending 立刻封成下一份发出。
 //   - 上限 maxBufferedTrafficUsers 条（inflight + pending）。超限时先丢最旧的 inflight；
@@ -28,6 +29,9 @@ import (
 
 // maxBufferedTrafficUsers 是待报缓冲的条目上限（约每条 60 字节，13 万条约 8MB）。
 const maxBufferedTrafficUsers = 1 << 17
+
+// maxTrafficEntriesPerReport 是一份流量报告的条目上限（每条约 60 字节，5000 条远低于 gRPC 缺省 4MB 接收上限）。
+const maxTrafficEntriesPerReport = 5000
 
 // maxOnlineEntriesPerMessage 是一条 OnlineIPs 消息里的条目上限，超了分多条发。
 const maxOnlineEntriesPerMessage = 5000
@@ -111,23 +115,28 @@ func (b *trafficBuffer) dropInflight() int64 {
 }
 
 // seal 在没有 inflight 时把 pending 封成新的一份，带新的 report_id。
-// 条目按 (节点, uid) 排序，同一份重发时内容逐字节一致。
+// 条目按 (节点, uid) 排序，同一份重发时内容逐字节一致。一份至多 maxTrafficEntriesPerReport 条，
+// 剩下的留在 pending，等这一份的 ack 之后再封下一份（一份太大会超过 gRPC 的接收上限被拒，
+// 原样重发就会死循环）。
 func (b *trafficBuffer) seal() {
 	if b.inflight != nil || len(b.pending) == 0 {
 		return
 	}
-	out := make([]*nodev1.TrafficEntry, 0, len(b.pending))
+	all := make([]*nodev1.TrafficEntry, 0, len(b.pending))
 	for _, e := range b.pending {
-		out = append(out, e)
+		all = append(all, e)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].NodeId != out[j].NodeId {
-			return out[i].NodeId < out[j].NodeId
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].NodeId != all[j].NodeId {
+			return all[i].NodeId < all[j].NodeId
 		}
-		return out[i].Uid < out[j].Uid
+		return all[i].Uid < all[j].Uid
 	})
+	out := all[:min(len(all), maxTrafficEntriesPerReport)]
+	for _, e := range out {
+		delete(b.pending, trafficKey{node: e.NodeId, uid: e.Uid})
+	}
 	b.inflight = &sealedReport{id: uuid.NewString(), entries: out}
-	b.pending = make(map[trafficKey]*nodev1.TrafficEntry)
 }
 
 // bytes 是缓冲里 inflight 与 pending 的字节合计（日志用）。

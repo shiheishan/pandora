@@ -132,11 +132,51 @@ func TestTrafficBufferCap(t *testing.T) {
 		t.Fatalf("计数不对：%+v size=%d", b.droppedBytes, b.size())
 	}
 	b.seal()
-	if dropped := b.add("n2", []core.UserTraffic{trafficOf(1, 2, 3)}); dropped != maxBufferedTrafficUsers+1 {
-		t.Fatalf("应丢掉整份 inflight，丢了 %d 字节", dropped)
+	if dropped := b.add("n2", []core.UserTraffic{trafficOf(1, 2, 3)}); dropped != maxTrafficEntriesPerReport+1 {
+		t.Fatalf("应丢掉整份 inflight（uid 1 两字节、其余各一字节），丢了 %d 字节", dropped)
 	}
-	if b.inflight != nil || b.droppedReports != 1 || len(b.pending) != 1 {
+	if b.inflight != nil || b.droppedReports != 1 || len(b.pending) != maxBufferedTrafficUsers-maxTrafficEntriesPerReport+1 {
 		t.Fatalf("丢 inflight 后状态不对：reports=%d pending=%d", b.droppedReports, len(b.pending))
+	}
+}
+
+// pending 超过单份上限：分多份发，每份收到 ack 之后才发下一份，内容不重不漏。
+func TestTrafficSplitIntoReportsAckedOneByOne(t *testing.T) {
+	ts, k := twoNodes(t)
+	total := 2*maxTrafficEntriesPerReport + 1
+	batch := make([]core.UserTraffic, total)
+	for i := range batch {
+		batch[i] = trafficOf(int64(i+1), 1, 2)
+	}
+	k.feed("n1", batch...)
+	ts.report()
+	seen := make(map[int64]bool, total)
+	for i, want := range []int{maxTrafficEntriesPerReport, maxTrafficEntriesPerReport, 1} {
+		reports := ts.link.trafficReports()
+		if len(reports) != i+1 {
+			t.Fatalf("第 %d 份：已发 %d 份（没 ack 不该发下一份）", i+1, len(reports))
+		}
+		cur := reports[i]
+		if len(cur.GetEntries()) != want {
+			t.Fatalf("第 %d 份 %d 条，期望 %d", i+1, len(cur.GetEntries()), want)
+		}
+		for _, e := range cur.GetEntries() {
+			if seen[e.GetUid()] {
+				t.Fatalf("uid %d 报了两次", e.GetUid())
+			}
+			seen[e.GetUid()] = true
+		}
+		ts.report()
+		if again := ts.link.trafficReports(); len(again) != i+2 || again[i+1].GetReportId() != cur.GetReportId() {
+			t.Fatalf("第 %d 份没确认前应原样重发同一份", i+1)
+		}
+		ts.link.mu.Lock()
+		ts.link.traffic = ts.link.traffic[:i+1]
+		ts.link.mu.Unlock()
+		ts.handleEvent(panel.Event{Kind: panel.EventTrafficAck, ReportID: cur.GetReportId()})
+	}
+	if len(seen) != total || !ts.traffic.empty() {
+		t.Fatalf("报了 %d 个用户，期望 %d；缓冲空 = %v", len(seen), total, ts.traffic.empty())
 	}
 }
 
