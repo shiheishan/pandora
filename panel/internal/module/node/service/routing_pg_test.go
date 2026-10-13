@@ -95,7 +95,7 @@ func TestRoutingNodeRowVersionConflictPG(t *testing.T) {
 	srv := rtServer(t, ctx, e, "ready")
 	nid := rtNode(t, ctx, e, srv, "active", 20100)
 	ver := rtNodeVersion(t, ctx, e, nid)
-	_, err := e.svc.SetNodeRouting(ctx, nid, ver-1, RoutingInput{})
+	_, err := e.svc.SetNodeRouting(ctx, nid, ver+1, RoutingInput{})
 	_ = invWantCode(t, err, errs.Conflict)
 	if fieldErr(err, "row_version") == "" {
 		t.Fatalf("期望 row_version 字段，得到 %v", err)

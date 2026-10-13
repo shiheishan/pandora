@@ -44,7 +44,7 @@ func TestRouteGroupListMembersCountsPG(t *testing.T) {
 	srv := rtServer(t, ctx, e, "ready")
 	active := rtNode(t, ctx, e, srv, "active", 21001)
 	gone := rtNode(t, ctx, e, srv, "active", 21002)
-	if err := e.exec(ctx, `UPDATE nodes SET deleted_at = now() WHERE id = ?`, gone); err != nil {
+	if err := e.exec(ctx, `UPDATE nodes SET serving_status = 'retired', retired_at = now(), deleted_at = now() WHERE id = ?`, gone); err != nil {
 		t.Fatal(err)
 	}
 	g := rtGroup(t, ctx, e, "list-g", 5)
@@ -98,7 +98,7 @@ func TestRouteGroupPatchRowVersionPG(t *testing.T) {
 	e, ctx := newInvEnv(t)
 	g := rtGroup(t, ctx, e, "patch-v", 0)
 	name := e.name("new")
-	_, _, err := e.svc.UpdateRouteGroup(ctx, g.ID, RouteGroupPatch{RowVersion: g.RowVersion - 1, Name: &name})
+	_, _, err := e.svc.UpdateRouteGroup(ctx, g.ID, RouteGroupPatch{RowVersion: g.RowVersion + 1, Name: &name})
 	_ = invWantCode(t, err, errs.Conflict)
 }
 
@@ -152,7 +152,7 @@ func TestRouteGroupRoutingConflictAndRefsPG(t *testing.T) {
 	nid := rtNode(t, ctx, e, srv, "active", 21020)
 	g := rtGroup(t, ctx, e, "grt", 0)
 	gr, _ := e.svc.GetGroupRouting(ctx, g.ID)
-	_, err := e.svc.SetGroupRouting(ctx, g.ID, gr.RowVersion-1, RoutingInput{})
+	_, err := e.svc.SetGroupRouting(ctx, g.ID, gr.RowVersion+1, RoutingInput{})
 	_ = invWantCode(t, err, errs.Conflict)
 
 	ver := rtNodeVersion(t, ctx, e, nid)
@@ -271,7 +271,7 @@ func TestRouteGroupNodeGroupsSyncPG(t *testing.T) {
 	}
 
 	ver = rtNodeVersion(t, ctx, e, nid)
-	_, err = e.svc.SetNodeRouteGroups(ctx, nid, ver-1, []uuid.UUID{g1.ID})
+	_, err = e.svc.SetNodeRouteGroups(ctx, nid, ver+1, []uuid.UUID{g1.ID})
 	_ = invWantCode(t, err, errs.Conflict)
 
 	ver = rtNodeVersion(t, ctx, e, nid)
@@ -297,7 +297,7 @@ func TestRouteGroupNodeGroupsSyncPG(t *testing.T) {
 	}
 
 	gr := routeGroupRow(t, ctx, e, g2.ID)
-	_, err = e.svc.SetRouteGroupMembers(ctx, g2.ID, gr.RowVersion-1, []uuid.UUID{nid})
+	_, err = e.svc.SetRouteGroupMembers(ctx, g2.ID, gr.RowVersion+1, []uuid.UUID{nid})
 	_ = invWantCode(t, err, errs.Conflict)
 }
 
@@ -307,7 +307,7 @@ func TestRouteGroupDeletePG(t *testing.T) {
 	nid := rtNode(t, ctx, e, srv, "active", 21050)
 	g := rtGroup(t, ctx, e, "del", 0)
 	gr := routeGroupRow(t, ctx, e, g.ID)
-	_, err := e.svc.DeleteRouteGroup(ctx, g.ID, gr.RowVersion-1)
+	_, err := e.svc.DeleteRouteGroup(ctx, g.ID, gr.RowVersion+1)
 	_ = invWantCode(t, err, errs.Conflict)
 
 	grt, _ := e.svc.GetGroupRouting(ctx, g.ID)
