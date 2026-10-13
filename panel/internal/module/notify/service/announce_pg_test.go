@@ -231,3 +231,30 @@ func TestAnnouncementPortalVisibilityPG(t *testing.T) {
 		t.Fatalf("置顶应排第一：%+v", mine)
 	}
 }
+
+func TestAnnouncementEditPublishedKeepsWindowPG(t *testing.T) {
+	a := annSetup(t)
+
+	in := annInput("窗口")
+	in.Publish = true
+	publishAt := a.now.Add(-1 * time.Hour)
+	in.PublishAt = &publishAt
+	pub := a.annSave(t, in)
+
+	edit := annInput("窗口")
+	edit.ID = &pub.ID
+	edit.ExpectedVersion = pub.Version
+	edit.Publish = true
+	editPubAt := a.now.Add(-3 * time.Hour)
+	editExpAt := a.now.Add(-2 * time.Hour)
+	edit.PublishAt = &editPubAt
+	edit.ExpiresAt = &editExpAt
+
+	_, err := a.svc.SaveAnnouncement(a.admin, edit)
+	if !isCode(err, errs.ValidationFailed) {
+		t.Fatalf("expected Invalid, got %v", err)
+	}
+	if annFieldErr(err, "expires_at") == "" {
+		t.Fatalf("expected expires_at field error, got %v", err)
+	}
+}
