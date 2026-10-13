@@ -74,6 +74,9 @@ func (s *Service) Provision(ctx context.Context, in Provision) (Subscription, er
 		}); err != nil {
 			return err
 		}
+		if err := s.emitProvisioned(ctx, m.ID, m.UserID, in.SourceOrderID, "new"); err != nil {
+			return err
+		}
 		if err := s.attachUnassignedPacks(ctx, m); err != nil {
 			return err
 		}

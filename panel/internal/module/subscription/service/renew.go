@@ -68,6 +68,9 @@ func (s *Service) Renew(ctx context.Context, in Renewal) (RenewalResult, error) 
 		}); err != nil {
 			return err
 		}
+		if err := s.emitProvisioned(ctx, m.ID, m.UserID, in.OrderID, "renewal"); err != nil {
+			return err
+		}
 		s.notifyRoster(ctx, m.ID)
 		out = RenewalResult{
 			SubscriptionID: m.ID,
