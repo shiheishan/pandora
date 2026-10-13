@@ -127,35 +127,21 @@ func TestFallbackOnlyWhereNodeAgentHonoursIt(t *testing.T) {
 }
 
 func TestFallbackIsDeliveredVerbatim(t *testing.T) {
-	svc := &Service{}
-	body, _, err := svc.节点配置文档(&ServingNode{
-		Name: "t", NodeType: "trojan", ServerPort: 443, Kernel: "auto",
-		Protocol: json.RawMessage(`{"tls":1,"network":"tcp",` + policyCert + `,"fallback":"www.example.com:80"}`),
-	})
-	if err != nil {
-		t.Fatal(err)
+	// 回落只下发给节点、不进订阅：翻译成内核字段时原样保留 host:port（节点配置文档由第二波组装）
+	cases := []struct{ nodeType, raw, want string }{
+		{"trojan", `{"tls":1,"network":"tcp",` + policyCert + `,"fallback":"www.example.com:80"}`, "www.example.com:80"},
+		// VLESS 同样原样下发给节点（pdnd vless.go 用 parseProbeFallback 读）
+		{"vless", `{"tls":2,"network":"tcp","flow":"xtls-rprx-vision",` + policyReality(t, "") + `,"fallback":"127.0.0.1:80"}`, "127.0.0.1:80"},
 	}
-	var got map[string]any
-	if err := json.Unmarshal(body, &got); err != nil {
-		t.Fatal(err)
-	}
-	if got["fallback"] != "www.example.com:80" {
-		t.Fatalf("fallback = %#v, want the host:port as configured", got["fallback"])
-	}
-	// VLESS 同样原样下发给节点（pdnd vless.go 用 parseProbeFallback 读）
-	body, _, err = svc.节点配置文档(&ServingNode{
-		Name: "v", NodeType: "vless", ServerPort: 443, Kernel: "auto",
-		Protocol: json.RawMessage(`{"tls":2,"network":"tcp","flow":"xtls-rprx-vision",` + policyReality(t, "") + `,"fallback":"127.0.0.1:80"}`),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	got = nil
-	if err := json.Unmarshal(body, &got); err != nil {
-		t.Fatal(err)
-	}
-	if got["fallback"] != "127.0.0.1:80" {
-		t.Fatalf("vless fallback = %#v, want the host:port as configured", got["fallback"])
+	for _, c := range cases {
+		var cfg map[string]any
+		if err := json.Unmarshal([]byte(c.raw), &cfg); err != nil {
+			t.Fatal(err)
+		}
+		got := KernelConfig(c.nodeType, cfg)
+		if got["fallback"] != c.want {
+			t.Fatalf("%s fallback = %#v, want %q", c.nodeType, got["fallback"], c.want)
+		}
 	}
 }
 

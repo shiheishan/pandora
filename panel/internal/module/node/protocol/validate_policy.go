@@ -141,7 +141,7 @@ func numericTLSValue(raw json.RawMessage) (int, bool) {
 }
 
 // vmessRawTCPWarning：VMess 自带加密，裸 tcp 放行（用户 2026-10-07 定），但协议特征明显。
-const vmessRawTCPWarning = "VMess 裸 tcp 特征明显、容易被识别封锁：建议改用 VLESS REALITY，或换 ws / grpc 等传输套 CDN"
+const vmessRawTCPWarning = "VMess 裸 tcp 特征明显、容易被识别封锁：建议改用 VLESS REALITY，或换 ws / grpc 等传输套 CDN" //nolint:gosec // G101 误报：提示文案，不是凭据
 
 // plainTLSNotYetMessage 是 vless / vmess 选普通 TLS（tls=1）时的报错。
 const plainTLSNotYetMessage = "普通 TLS 需要证书，证书自动申请上线后开放；现在请选 REALITY（vless），或不加密并套 CDN"
