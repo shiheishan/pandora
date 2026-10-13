@@ -22,4 +22,3 @@ func (s *Service) emitPlugin(ctx context.Context, event, dedupeKey string, paylo
 	}
 	return s.events.Emit(ctx, event, dedupeKey, payload)
 }
-

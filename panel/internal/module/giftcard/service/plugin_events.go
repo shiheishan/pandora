@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/aegispanel/aegis/internal/pkg/money"
 )
@@ -28,13 +29,18 @@ func (s *Service) emitPlugin(ctx context.Context, event, dedupeKey string, paylo
 }
 
 // pluginGranted 是 giftcard.redeemed 事件里的 granted：字段名与旧代码的兑换记录一致，没有的项不出现；金额是分。
-func pluginGranted(g granted) map[string]any {
+// 金额换算失败时返回错误，让兑换失败。
+func pluginGranted(g granted) (map[string]any, error) {
 	m := map[string]any{}
 	if g.prizeLabel != "" {
 		m["prize_label"] = g.prizeLabel
 	}
 	if g.balance.IsPositive() {
-		m["balance"] = money.MustCents(g.balance)
+		cents, err := money.ToCents(g.balance)
+		if err != nil {
+			return nil, fmt.Errorf("礼品卡余额: %w", err)
+		}
+		m["balance"] = cents
 	}
 	if g.traffic > 0 {
 		m["traffic_bytes"] = g.traffic
@@ -55,11 +61,15 @@ func pluginGranted(g granted) map[string]any {
 		m["subscription_id"] = g.subID.String()
 	}
 	if g.refund.IsPositive() {
-		m["plan_refund"] = money.MustCents(g.refund)
+		cents, err := money.ToCents(g.refund)
+		if err != nil {
+			return nil, fmt.Errorf("套餐退款: %w", err)
+		}
+		m["plan_refund"] = cents
 		m["refund_currency"] = string(g.refundCur)
 	}
 	if g.ledgerTxn != nil {
 		m["ledger_txn_id"] = g.ledgerTxn.String()
 	}
-	return m
+	return m, nil
 }

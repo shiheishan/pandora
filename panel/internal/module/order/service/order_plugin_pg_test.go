@@ -220,6 +220,61 @@ func TestPluginOrderCancelled(t *testing.T) {
 	}
 }
 
+// 超时作废：事件里的 reason 沿用旧值 reservation_expired，预留的 release_reason 仍是 expired。
+func TestPluginOrderExpiredReason(t *testing.T) {
+	e, ctx := newEnv(t)
+	rec := &pluginRec{}
+	e.svc.UsePluginEvents(rec)
+
+	_, _, orderID := e.pendingWithEverything(t, ctx)
+	e.mustExec(t, ctx, `UPDATE orders SET expires_at = now() - interval '1 minute' WHERE id = ?`, orderID)
+	e.mustExec(t, ctx, `UPDATE order_reservations SET expires_at = now() - interval '1 minute' WHERE order_id = ?`, orderID)
+	if _, err := e.svc.ExpireDue(ctx, 0); err != nil {
+		t.Fatalf("超时释放: %v", err)
+	}
+
+	var mine []pluginEvt
+	for _, ev := range rec.find("order.cancelled") {
+		if payloadStr(ev.Payload, "order_id") == orderID.String() {
+			mine = append(mine, ev)
+		}
+	}
+	if len(mine) != 1 {
+		t.Fatalf("order.cancelled %d 条", len(mine))
+	}
+	if payloadStr(mine[0].Payload, "target") != StatusExpired || payloadStr(mine[0].Payload, "reason") != "reservation_expired" {
+		t.Fatalf("payload %+v", mine[0].Payload)
+	}
+	if r := e.strCol(t, ctx, `SELECT release_reason FROM order_reservations WHERE order_id = ?`, orderID); r != ReasonExpired {
+		t.Fatalf("release_reason %q，期望 expired", r)
+	}
+}
+
+// 0 元续费照旧代码不发 order.paid（旧代码只有新购与流量包的 0 元单发）。
+func TestPluginZeroPayRenewalNoPaid(t *testing.T) {
+	e, ctx := newEnv(t)
+	user := e.mkUser(t, ctx)
+	planID, v1, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	sub := e.provision(t, ctx, user, planID, v1, priceID, 1000)
+	e.giveBalance(t, ctx, user, 5000)
+
+	rec := &pluginRec{}
+	e.svc.UsePluginEvents(rec)
+	c, err := e.svc.CreateRenewalOrder(asUser(ctx, user), RenewalOrderInput{SubscriptionID: sub.ID, Checkout: Checkout{UseBalance: dec("10")}})
+	if err != nil {
+		t.Fatalf("续费建单: %v", err)
+	}
+	if st := e.order(t, ctx, c.OrderID).Status; st != StatusFulfilled {
+		t.Fatalf("0 元续费单应已履约，得 %s", st)
+	}
+	if n := len(rec.find("order.paid")); n != 0 {
+		t.Fatalf("0 元续费不应发 order.paid，得 %d 条", n)
+	}
+	if n := len(rec.find("subscription.provisioned")); n != 0 {
+		t.Fatalf("0 元续费不应发 subscription.provisioned，得 %d 条", n)
+	}
+}
+
 func TestPluginPackOrderCreated(t *testing.T) {
 	e, ctx := newEnv(t)
 	rec := &pluginRec{}

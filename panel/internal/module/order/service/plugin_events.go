@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/aegispanel/aegis/internal/module/order/model"
 	"github.com/aegispanel/aegis/internal/pkg/money"
@@ -35,22 +36,36 @@ func (s *Service) emitOrderCreated(ctx context.Context, o model.Order) error {
 	default:
 		return nil
 	}
+	total, err := money.ToCents(o.TotalAmount)
+	if err != nil {
+		return fmt.Errorf("order.created 金额: %w", err)
+	}
 	return s.emitPlugin(ctx, "order.created", "order.created:"+o.ID.String(), map[string]any{
 		"event":    "order.created",
 		"order_id": o.ID.String(),
 		"order_no": o.OrderNo,
 		"user_id":  o.UserID.String(),
 		"currency": o.Currency,
-		"total":    money.MustCents(o.TotalAmount),
+		"total":    total,
 	})
 }
 
 // emitOrderPaid 订单支付完成（外部支付结算与 0 元单都发）。dedupe 用订单 id：支付回调会重放，同一笔只通知一次。
-// zeroPay 为 true 时 currency 发 ""、amount 发 0（与旧代码 0 元单口径一致）。
+// zeroPay 为 true 时照旧代码口径：只有新购与流量包的 0 元单发（0 元续费、0 元换套餐不发），
+// currency 发 ""、amount 发 0。金额换算失败时返回错误，让业务事务失败。
 func (s *Service) emitOrderPaid(ctx context.Context, o model.Order, zeroPay bool) error {
-	currency, amount := o.Currency, money.MustCents(o.TotalAmount)
+	var currency string
+	var amount int64
 	if zeroPay {
-		currency, amount = "", 0
+		if o.Kind != KindNew && o.Kind != KindAddon {
+			return nil
+		}
+	} else {
+		cents, err := money.ToCents(o.TotalAmount)
+		if err != nil {
+			return fmt.Errorf("order.paid 金额: %w", err)
+		}
+		currency, amount = o.Currency, cents
 	}
 	p := map[string]any{
 		"event":    "order.paid",
@@ -91,7 +106,11 @@ func provisionedSub(o model.Order) (string, bool) {
 }
 
 // emitOrderCancelled 订单取消或超时作废。target 是目标状态（cancelled / expired）。
+// 超时作废的原因在事件里沿用旧值 reservation_expired（插件那边按旧值判断）；release_reason 与审计不受影响。
 func (s *Service) emitOrderCancelled(ctx context.Context, o model.Order, target, reason string) error {
+	if reason == ReasonExpired {
+		reason = "reservation_expired"
+	}
 	return s.emitPlugin(ctx, "order.cancelled", "order.cancelled:"+o.ID.String(), map[string]any{
 		"event":    "order.cancelled",
 		"order_id": o.ID.String(),
