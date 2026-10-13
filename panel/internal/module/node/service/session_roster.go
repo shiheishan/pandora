@@ -21,11 +21,32 @@ type rosterState struct {
 	latest *NodeRoster
 	// sent 是最近真正发出去（出队）或 Hello 时已一致的名单：名单成员判定与增量的起点按它
 	sent *NodeRoster
+	// prevSent 是 sent 之前真正发出去的那一版（只留一版）：刚被移出名单的用户，移出前用的流量照样计费
+	prevSent *NodeRoster
 	// confirmed 是节点确认在用的版本（Hello 报告或 UsersAck ok）；增量只在 confirmed == sent.Version 时发
 	confirmed string
 	// lastForced 是最近一次因 UsersAck 失败重发全量的时刻；forcePending 表示有一次重发在等间隔
 	lastForced   time.Time
 	forcePending bool
+}
+
+// shiftSent 记下真正发出去的一版名单（全量或增量都算）：版本变了才把当前的挪成上一版；
+// 同一版重发（如回执失败后的全量）不挪，免得把真正的上一版挤掉。
+func (st *rosterState) shiftSent(r *NodeRoster) {
+	if st.sent != nil && st.sent.Version != r.Version {
+		st.prevSent = st.sent
+	}
+	st.sent = r
+}
+
+// rosterHas 报告按 UID 升序的名单里有没有 uid。
+func rosterHas(r *NodeRoster, uid int64) bool {
+	if r == nil {
+		return false
+	}
+	users := r.Users
+	i := sort.Search(len(users), func(k int) bool { return users[k].UID >= uid })
+	return i < len(users) && users[i].UID == uid
 }
 
 // configReleaseID 是一份全量配置的内容哈希：按给定顺序（节点 id 升序）拼「节点 id:摘要」。
@@ -184,17 +205,16 @@ func (s *Session) forceFullLocked(nodeID uuid.UUID, st *rosterState) {
 	s.putRosterLocked(nodeID, Outbound{Kind: OutUsersFull, Roster: st.latest})
 }
 
-// Has 实现 RosterMembership：最近真正发给这台服务器的名单里，节点 nodeID 有没有 uid。
+// Has 实现 RosterMembership：最近真正发给这台服务器的两版名单（当前与上一版）里，节点 nodeID 有没有 uid。
+// 用户在名单上时用的流量是正当服务，移出名单那一刻上报里的残量照样计费；两版都没有的不计费。
 func (s *Session) Has(nodeID uuid.UUID, uid int64) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st := s.nodes[nodeID]
-	if st == nil || st.sent == nil {
+	if st == nil {
 		return false
 	}
-	users := st.sent.Users
-	i := sort.Search(len(users), func(k int) bool { return users[k].UID >= uid })
-	return i < len(users) && users[i].UID == uid
+	return rosterHas(st.sent, uid) || rosterHas(st.prevSent, uid)
 }
 
 var _ RosterMembership = (*Session)(nil)

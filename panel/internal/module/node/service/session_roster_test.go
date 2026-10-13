@@ -336,3 +336,44 @@ func TestConfigAckOnlyLatest(t *testing.T) {
 		t.Fatalf("摘要不对不应再落库，得 %d 次", len(b.configAcks))
 	}
 }
+
+// 成员判定看最近真正发出的两版：只在上一版里的 uid 仍计费，只在更早那一版里的不计费；同一版重发不挤掉上一版。
+func TestMembershipCoversPreviousRoster(t *testing.T) {
+	b := newFakeBackend()
+	m, s := openRosterSession(t, b, Hello{Features: []string{FeatureUsersDelta}})
+	drainSession(t, s)
+
+	send := func(r NodeRoster) {
+		t.Helper()
+		s.applyRosters(m.seq.Add(1), []NodeRoster{r})
+		_ = nextNow(t, s, time.Second)
+	}
+	send(mkRoster(nodeA, "v1", 1, 2))
+	send(mkRoster(nodeA, "v2", 2, 3))
+	if !s.Has(nodeA, 1) {
+		t.Fatalf("uid 1 只在上一版 v1 里，应仍算名单内")
+	}
+	if !s.Has(nodeA, 3) || !s.Has(nodeA, 2) {
+		t.Fatalf("当前版 v2 的 uid 应算名单内")
+	}
+
+	send(mkRoster(nodeA, "v3", 3, 4))
+	if s.Has(nodeA, 1) {
+		t.Fatalf("uid 1 只在更早的 v1 里，不应再算名单内")
+	}
+	if !s.Has(nodeA, 2) {
+		t.Fatalf("uid 2 在上一版 v2 里，应仍算名单内")
+	}
+	if s.Has(nodeA, 5) || s.Has(nodeB, 3) {
+		t.Fatalf("两版都没有的 uid、别的节点都不算名单内")
+	}
+
+	// 回执失败后重发同一版 v3 的全量：上一版仍是 v2
+	s.HandleUsersAck(UsersAck{NodeID: nodeA, Version: "u1-v3", OK: false, ReasonCode: "apply_failed"})
+	if out := nextNow(t, s, time.Second); out.Kind != OutUsersFull || out.Roster.Version != "u1-v3" {
+		t.Fatalf("回执失败应重发 v3 全量，得 %v", out.Kind)
+	}
+	if !s.Has(nodeA, 2) {
+		t.Fatalf("同一版重发后上一版仍应是 v2")
+	}
+}
