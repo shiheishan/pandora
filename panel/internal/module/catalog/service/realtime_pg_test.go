@@ -92,11 +92,7 @@ func TestRealtimeCatalogTrafficPack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		if err := e.exec(context.Background(), "DELETE FROM traffic_packs WHERE id = ?", pack.ID); err != nil {
-			t.Errorf("清理流量包: %v", err)
-		}
-	})
+	// traffic_packs 由库禁止删除，不清理；名字带随机后缀，不与别的用例冲突
 
 	spy.expect(t, realtime.ChannelPublic(), realtime.TopicPlans, map[string]any{
 		"table": rtTablePacks, "op": realtime.OpInsert, "id": pack.ID.String(),
