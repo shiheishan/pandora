@@ -2,7 +2,7 @@ package service
 
 // 节点配置文档（p5-routing 实现）。
 //
-// 文档形状：协议字段经 protocol.KernelConfig 摊平在顶层；必有 server_port、kernel；
+// 文档形状：协议字段经 protocol.KernelConfig 摊平在顶层；必有 server_port、kernel、protocol（只进摘要）；
 // 有生效路由时才有 outbounds、routes、final。JSON 用 json.Marshal(map) 确定性编码（键排序、无多余空白）。
 
 import (
@@ -116,6 +116,9 @@ func buildNodeConfigDoc(nodeID uuid.UUID, nodeType string, port int, kernel stri
 	}
 	doc["server_port"] = port
 	doc["kernel"] = protocol.EffectiveKernel(kernel)
+	// protocol 只为让摘要区分协议：改了协议、配置原样不变时 SHA 也要变，节点端才会重装；
+	// 节点端装入站以 NodeConfig.node_type 为准，不读这个键。
+	doc["protocol"] = protocol.CanonicalType(nodeType)
 
 	outs, routes := mergeRouting(layers)
 	if len(outs) > 0 || len(routes) > 0 {

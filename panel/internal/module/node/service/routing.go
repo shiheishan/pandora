@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/netip"
 	"sort"
 	"strconv"
@@ -347,8 +348,9 @@ func validateRoutingInput(in *RoutingInput) (map[string]bool, error) {
 
 	for i := range in.Routes {
 		r := &in.Routes[i]
-		if r.Priority < 0 {
-			return nil, errs.Invalid(map[string]string{"routes": fmt.Sprintf("第 %d 条规则的 priority 不能为负", i+1)})
+		// 列是 integer，超出 int32 会在写库时才报 500
+		if r.Priority < 0 || r.Priority > math.MaxInt32 {
+			return nil, errs.Invalid(map[string]string{"routes": fmt.Sprintf("第 %d 条规则的 priority 要在 0 到 %d 之间", i+1, math.MaxInt32)})
 		}
 		if r.Priority == 0 {
 			r.Priority = (i + 1) * 10

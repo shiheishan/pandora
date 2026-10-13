@@ -145,3 +145,26 @@ func TestBuildNodeConfigDocProtocolNotObject(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestBuildNodeConfigDocProtocolInDigest(t *testing.T) {
+	id := uuid.New()
+	// 同一份配置换协议，摘要必须不同；协议配置里夹带的 protocol 不能顶替
+	a, err := buildNodeConfigDoc(id, "vless", 443, "auto", `{"protocol":"trojan"}`, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := buildNodeConfigDoc(id, "trojan", 443, "auto", `{"protocol":"trojan"}`, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.SHA256 == b.SHA256 {
+		t.Fatal("换协议后摘要没变")
+	}
+	var m map[string]any
+	if err := json.Unmarshal(a.JSON, &m); err != nil {
+		t.Fatal(err)
+	}
+	if m["protocol"] != "vless" {
+		t.Fatalf("protocol %v", m["protocol"])
+	}
+}

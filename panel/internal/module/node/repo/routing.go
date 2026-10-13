@@ -208,8 +208,10 @@ func (r *Repo) BumpNodeRowVersions(ctx context.Context, ids []uuid.UUID) error {
 	if len(ids) == 0 {
 		return nil
 	}
+	// 先按 id 顺序锁行再更新，并发保存不同路由组时不会互相死锁
 	return r.d.Conn(ctx).Exec(
-		`UPDATE nodes SET row_version = row_version + 1, updated_at = now() WHERE id IN ?`, ids,
+		`WITH locked AS (SELECT id FROM nodes WHERE id IN ? ORDER BY id FOR UPDATE)
+		 UPDATE nodes n SET row_version = n.row_version + 1, updated_at = now() FROM locked WHERE n.id = locked.id`, ids,
 	).Error
 }
 
