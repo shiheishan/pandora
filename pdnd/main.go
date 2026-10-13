@@ -293,7 +293,7 @@ func run(cfg *config, log *slog.Logger) error {
 	sessDone := make(chan struct{})
 	go func() {
 		defer close(sessDone)
-		// Tombstone 之后不再重连（会话已记日志），节点继续用缓存服务直到进程退出。
+		// Tombstone 之后不再重连；节点端已停掉全部代理服务并清掉缓存（Server.stopAllForTombstone）。
 		_ = sess.Run(sessCtx)
 	}()
 	loopDone := make(chan struct{})

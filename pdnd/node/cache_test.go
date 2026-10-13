@@ -15,6 +15,7 @@ import (
 
 	"github.com/aegispanel/nodeagent/core"
 	nativekernel "github.com/aegispanel/nodeagent/kernel"
+	"github.com/aegispanel/nodeagent/panel"
 )
 
 // 落盘缓存读写：权限、往返、身份不符整个丢弃、摘要不符丢弃该文件。
@@ -246,4 +247,34 @@ func TestServesFromCacheWhenPanelDown(t *testing.T) {
 		t.Fatalf("面板回来后状态 = %v", rt)
 	}
 	assertStrings(t, "回执", restarted.link.acks("7"), "CONFIG_PHASE_SWITCHED:"+nc.GetContentSha256()[:8])
+}
+
+// 身份失效：立刻停掉全部入站、删掉节点缓存；重启后冷启动也起不来任何节点。
+func TestTombstoneStopsServingAndClearsCache(t *testing.T) {
+	dir := t.TempDir()
+	c := newServerCache(dir, testServerID)
+	must(t, c.saveOrder([]string{"n1", "n2"}))
+	must(t, c.node("n1").saveConfig(portConfig(t, "n1", "vless", 20001)))
+	must(t, c.node("n2").saveConfig(portConfig(t, "n2", "trojan", 20002)))
+	k := newFakeKernel()
+	ts := newTestServer(t, k, dir)
+	ts.Start()
+	if k.port("n1") != 20001 || k.port("n2") != 20002 {
+		t.Fatal("前提：两个节点先从缓存起来")
+	}
+
+	ts.handleEvent(panel.Event{Kind: panel.EventTombstone, Reason: "server_retired"})
+	if k.port("n1") != 0 || k.port("n2") != 0 {
+		t.Fatal("身份失效后入站还在")
+	}
+	if len(ts.nodes) != 0 || len(ts.order) != 0 {
+		t.Fatalf("身份失效后还留着节点：%v", ts.order)
+	}
+
+	k2 := newFakeKernel()
+	again := newTestServer(t, k2, dir)
+	again.Start()
+	if len(again.nodes) != 0 || k2.port("n1") != 0 {
+		t.Fatal("重启后又靠缓存起了服务")
+	}
 }

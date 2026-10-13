@@ -210,9 +210,25 @@ func (s *Server) handleEvent(ev panel.Event) {
 		s.connected = false
 	case panel.EventTombstone:
 		s.connected = false
-		s.log.Error("面板吊销了本机身份或删除了这台服务器：继续用磁盘缓存服务现有用户与配置，需要在后台生成新令牌重新接入",
-			"reason", ev.Reason)
+		s.stopAllForTombstone(ev.Reason)
 	}
+}
+
+// stopAllForTombstone 处理身份失效（面板发 Tombstone，或建流被拒并要求重新接入）：立刻停掉全部入站、删掉落盘缓存。
+// 产品定（10-13）：服务器退役、删除或身份被吊销后，机器不能在面板管不到（不扣量、不按到期摘人）的情况下继续服务；
+// 缓存一并删掉，进程重启也不会靠缓存恢复服务，只能在后台生成新令牌重新接入。
+func (s *Server) stopAllForTombstone(reason string) {
+	for _, n := range s.nodes {
+		s.removeNode(n)
+	}
+	s.order = nil
+	if s.cache != nil {
+		if err := s.cache.saveOrder(nil); err != nil {
+			s.log.Warn("清空节点顺序缓存失败", "err", err)
+		}
+	}
+	s.log.Error("面板吊销了本机身份或删除了这台服务器：已停掉全部代理服务并清掉缓存，需要在后台生成新令牌重新接入",
+		"reason", reason)
 }
 
 // onWelcome：新流建立。复位各节点的回执台账（每条流各报一次），按面板给的节拍调整，
