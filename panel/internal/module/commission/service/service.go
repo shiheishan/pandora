@@ -6,6 +6,7 @@
 //	计提  订单结算 → 借 平台收入 / 贷 推荐人待结佣金（commission_accrued）
 //	解冻  冻结期满 → 借 待结佣金 / 贷 可提现佣金（commission_settled）
 //	打款  提现完成 → 借 可提现佣金 / 贷 打款渠道资金（commission_paid）
+//	作废  复核作废 → 借 待结佣金 / 贷 平台收入（commission_voided，冲回计提；条目转 voided）
 //
 // 转余额：借 可提现佣金 / 贷 用户余额（commission_to_balance）。提现申请与审批不记账，只改状态。
 package service

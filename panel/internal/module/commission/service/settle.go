@@ -87,7 +87,7 @@ func (s *Service) settleOne(ctx context.Context, id uuid.UUID) (settleOutcome, e
 		})
 		if errors.Is(err, ledgersvc.ErrInsufficientBalance) {
 			// ledger 在写库前判出余额不足，事务还能用：同一事务里隔离这一条（旧行为）
-			reason := fmt.Sprintf("待结佣金科目余额不足，无法解冻 %s %s", e.CommissionAmount.StringFixed(2), e.Currency)
+			reason := fmt.Sprintf("%s，无法解冻 %s %s", reviewUnderfundedPrefix, e.CommissionAmount.StringFixed(2), e.Currency)
 			changed, err := s.repo.MarkEntryReview(ctx, e.ID, reason, now)
 			if err != nil {
 				return err

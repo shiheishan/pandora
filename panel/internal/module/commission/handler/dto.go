@@ -188,6 +188,7 @@ type reviewEntryResponse struct {
 	Amount        int64     `json:"amount"`
 	Currency      string    `json:"currency"`
 	ReviewReason  string    `json:"review_reason"`
+	ReviewSource  string    `json:"review_source"` // same_source / source_check / underfunded / other
 	CreatedAt     time.Time `json:"created_at"`
 	FrozenUntil   time.Time `json:"frozen_until"`
 }
@@ -440,6 +441,7 @@ func reviewEntriesFrom(p service.ReviewEntryPage) (reviewEntriesResponse, error)
 			Amount:        amount,
 			Currency:      e.Currency,
 			ReviewReason:  e.ReviewReason,
+			ReviewSource:  e.ReviewSource,
 			CreatedAt:     e.CreatedAt,
 			FrozenUntil:   e.FrozenUntil,
 		})

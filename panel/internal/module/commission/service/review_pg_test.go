@@ -316,7 +316,7 @@ func TestAdminReviewEntriesPaging(t *testing.T) {
 	}
 	row := p1.Entries[0]
 	if row.ReferrerEmail != e.refs.emails[referrer] || row.RefereeEmail != e.refs.emails[buyers[ids[2]]] ||
-		row.ReviewReason == "" || !row.Amount.Equal(dec2("10.00")) || row.Currency != string(testCurrency) || row.OrderNo == "" {
+		row.ReviewReason == "" || row.ReviewSource != ReviewSourceSameSource || !row.Amount.Equal(dec2("10.00")) || row.Currency != string(testCurrency) || row.OrderNo == "" {
 		t.Fatalf("行 %+v", row)
 	}
 	p2, err := e.svc.AdminReviewEntries(ctx, p1.NextCursor, 2)

@@ -181,11 +181,26 @@ func (s *Service) AdminReviewEntries(ctx context.Context, cursor string, limit i
 			Amount:        e.CommissionAmount,
 			Currency:      e.Currency,
 			ReviewReason:  deref(e.ReviewReason),
+			ReviewSource:  reviewSource(deref(e.ReviewReason)),
 			CreatedAt:     e.CreatedAt,
 			FrozenUntil:   e.FrozenUntil,
 		})
 	}
 	return out, nil
+}
+
+// reviewSource 按原因文案归类待复核的来源；文案都是本包的常量，前端不用再匹配中文。
+func reviewSource(reason string) string {
+	switch {
+	case reason == reviewSameSource:
+		return ReviewSourceSameSource
+	case reason == reviewSourceCheckFailed || reason == reviewSourceCheckMissing:
+		return ReviewSourceSourceCheck
+	case strings.HasPrefix(reason, reviewUnderfundedPrefix):
+		return ReviewSourceUnderfunded
+	default:
+		return ReviewSourceOther
+	}
 }
 
 // errBadCursor 是翻页位置解析不了（每次新建，不共享可变的 Fields）。

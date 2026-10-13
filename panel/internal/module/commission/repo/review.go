@@ -18,7 +18,8 @@ type EntryCursor struct {
 // ListReviewEntries 列出待复核条目（status pending 且 review_required），按计提时间倒序；after 非空时从它之后接着取。
 // 走部分索引 commission_entries_review_idx。
 func (r *Repo) ListReviewEntries(ctx context.Context, after *EntryCursor, limit int) ([]model.Entry, error) {
-	q := r.d.Conn(ctx).Where("status = ? AND review_required", "pending")
+	// 状态写成字面量：与部分索引的条件逐字一致，通用计划下也能用上它（同 DueEntryIDs）
+	q := r.d.Conn(ctx).Where("status = 'pending' AND review_required")
 	if after != nil {
 		q = q.Where("(created_at, id) < (?, ?)", after.CreatedAt, after.ID)
 	}

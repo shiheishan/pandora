@@ -244,6 +244,14 @@ type SettleStats struct {
 	Failed      int
 }
 
+// 待复核的来源（由 review_reason 归类，给后台区分提示）：同源嫌疑、同源检查失败或未装配、解冻时待结科目余额不足、其它。
+const (
+	ReviewSourceSameSource  = "same_source"
+	ReviewSourceSourceCheck = "source_check"
+	ReviewSourceUnderfunded = "underfunded"
+	ReviewSourceOther       = "other"
+)
+
 // ReviewEntryRow 是后台待复核列表的一行；邮箱不打码（管理员核对用）。
 type ReviewEntryRow struct {
 	ID            uuid.UUID
@@ -253,6 +261,7 @@ type ReviewEntryRow struct {
 	Amount        decimal.Decimal
 	Currency      string
 	ReviewReason  string
+	ReviewSource  string // ReviewSource* 之一
 	CreatedAt     time.Time
 	FrozenUntil   time.Time
 }
