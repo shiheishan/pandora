@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
 
@@ -48,9 +49,9 @@ func TestIngestOnlineFiltersAndLiveStatsPG(t *testing.T) {
 		t.Fatal("N2 没有数据，不该在结果里")
 	}
 
-	// 窗口外：时钟拨到 OnlineWindow 之后，不再算在线
+	// 窗口外：时钟拨到缺省窗口（5 分钟，没装配设置时）之后，不再算在线
 	base := e.svc.now()
-	e.svc.now = func() time.Time { return base.Add(OnlineWindow + time.Second) }
+	e.svc.now = func() time.Time { return base.Add(settingssvc.DefaultDevicePolicy().Window() + time.Second) }
 	stats, err = e.svc.NodeLiveStats(ctx, []uuid.UUID{f.n1})
 	if err != nil {
 		t.Fatal(err)

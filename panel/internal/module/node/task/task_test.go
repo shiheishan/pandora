@@ -21,6 +21,9 @@ type fakeSvc struct {
 	// returns 按调用顺序脚本化返回值；超出长度则返回 0。
 	returns  []int64
 	purgeErr error
+
+	rechecks   int
+	recheckErr error
 }
 
 func (f *fakeSvc) PurgeRetention(_ context.Context, table string, now time.Time, batch int) (int64, error) {
@@ -33,6 +36,11 @@ func (f *fakeSvc) PurgeRetention(_ context.Context, table string, now time.Time,
 		return f.returns[i], nil
 	}
 	return 0, nil
+}
+
+func (f *fakeSvc) RecheckStrictDevices(_ context.Context) error {
+	f.rechecks++
+	return f.recheckErr
 }
 
 func optsOf(p []asynq.Option) (queue string, retry int, unique, timeout time.Duration) {
@@ -54,7 +62,7 @@ func optsOf(p []asynq.Option) (queue string, retry int, unique, timeout time.Dur
 
 func TestPeriodicSchedule(t *testing.T) {
 	ps := New(&fakeSvc{}).Periodic()
-	if len(ps) != 1 {
+	if len(ps) != 2 {
 		t.Fatalf("periodic: got %d", len(ps))
 	}
 	e := ps[0]
@@ -64,6 +72,18 @@ func TestPeriodicSchedule(t *testing.T) {
 	queue, retry, unique, timeout := optsOf(e.Opts)
 	if queue != "low" || retry != 0 || unique != 23*time.Hour || timeout != 10*time.Minute {
 		t.Fatalf("retention opts: queue=%q retry=%d unique=%v timeout=%v", queue, retry, unique, timeout)
+	}
+
+	e = ps[1]
+	if e.Type != TypeDevicesStrict || e.Cronspec != "@every 1m" {
+		t.Fatalf("devices strict periodic = %+v", e)
+	}
+	queue, retry, unique, timeout = optsOf(e.Opts)
+	if queue != "low" || retry != 0 || unique != 50*time.Second || timeout != 30*time.Second {
+		t.Fatalf("devices strict opts: queue=%q retry=%d unique=%v timeout=%v", queue, retry, unique, timeout)
+	}
+	if unique >= time.Minute {
+		t.Fatalf("unique %v should be < 1m", unique)
 	}
 }
 
@@ -129,5 +149,29 @@ func TestRetentionErrorWrapped(t *testing.T) {
 	}
 	if len(fp.calls) != 1 {
 		t.Fatalf("calls=%d want 1", len(fp.calls))
+	}
+}
+
+func TestDevicesStrictCallsService(t *testing.T) {
+	fp := &fakeSvc{}
+	mod := New(fp)
+	if err := mod.devicesStrict(context.Background(), asynq.NewTask(TypeDevicesStrict, nil)); err != nil {
+		t.Fatalf("devicesStrict: %v", err)
+	}
+	if fp.rechecks != 1 {
+		t.Fatalf("rechecks=%d want 1", fp.rechecks)
+	}
+}
+
+func TestDevicesStrictErrorWrapped(t *testing.T) {
+	sentinel := errors.New("recheck failed")
+	fp := &fakeSvc{recheckErr: sentinel}
+	mod := New(fp)
+	err := mod.devicesStrict(context.Background(), asynq.NewTask(TypeDevicesStrict, nil))
+	if err == nil {
+		t.Fatal("want error")
+	}
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("errors.Is: %v", err)
 	}
 }

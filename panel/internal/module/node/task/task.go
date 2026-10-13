@@ -1,4 +1,4 @@
-// Package task 是 node 模块的 asynq 任务：节点数据的保留期清理。
+// Package task 是 node 模块的 asynq 任务：节点数据的保留期清理、strict 设备模式的重新判定。
 package task
 
 import (
@@ -16,6 +16,9 @@ import (
 // TypeRetention 是节点数据保留期清理任务类型。
 const TypeRetention = "retention:node"
 
+// TypeDevicesStrict 是 strict 设备模式的重新判定任务类型。
+const TypeDevicesStrict = "devices:strict"
+
 const (
 	purgeBatch = 5000
 	maxBatches = 200
@@ -24,6 +27,8 @@ const (
 // Service 是任务用到的 node service 方法。
 type Service interface {
 	PurgeRetention(ctx context.Context, table string, now time.Time, batch int) (int64, error)
+	// RecheckStrictDevices：strict 模式下重算超限订阅集合，变了推进名单纪元；loose 时什么都不做。
+	RecheckStrictDevices(ctx context.Context) error
 }
 
 // Module 注册 node 相关的 asynq 任务与定时调度。
@@ -40,9 +45,10 @@ func New(svc Service) *Module {
 // Register 把任务处理函数挂到 mux。
 func (m *Module) Register(mux *asynq.ServeMux) {
 	mux.HandleFunc(TypeRetention, m.retention)
+	mux.HandleFunc(TypeDevicesStrict, m.devicesStrict)
 }
 
-// Periodic 声明节点数据保留期清理（每天凌晨）。
+// Periodic 声明节点数据保留期清理（每天凌晨）与 strict 设备判定（每分钟）。
 func (m *Module) Periodic() []jobs.Periodic {
 	return []jobs.Periodic{
 		{
@@ -53,6 +59,16 @@ func (m *Module) Periodic() []jobs.Periodic {
 				asynq.MaxRetry(0),
 				asynq.Timeout(10 * time.Minute),
 				asynq.Unique(23 * time.Hour),
+			},
+		},
+		{
+			Cronspec: "@every 1m",
+			Type:     TypeDevicesStrict,
+			Opts: []asynq.Option{
+				asynq.Queue("low"),
+				asynq.MaxRetry(0),
+				asynq.Timeout(30 * time.Second),
+				asynq.Unique(50 * time.Second),
 			},
 		},
 	}
@@ -88,6 +104,14 @@ func (m *Module) retention(ctx context.Context, _ *asynq.Task) error {
 		fields = append(fields, zap.Int64(table, perTable[table]))
 	}
 	plog.From(ctx).Info("node retention done", fields...)
+	return nil
+}
+
+// devicesStrict 调 service 重新判定；出错原样返回（MaxRetry 0，下一分钟再算）。
+func (m *Module) devicesStrict(ctx context.Context, _ *asynq.Task) error {
+	if err := m.svc.RecheckStrictDevices(ctx); err != nil {
+		return fmt.Errorf("strict 设备判定: %w", err)
+	}
 	return nil
 }
 
