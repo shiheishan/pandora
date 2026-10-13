@@ -1,6 +1,10 @@
 package service
 
-import "context"
+import (
+	"context"
+
+	"github.com/aegispanel/aegis/internal/pkg/money"
+)
 
 // PluginEvents 是插件钩子的出站事件口，由 plugin 模块实现、装配时注入。
 // Emit 在调用方的事务里（ctx 带事务时）写一条待投递记录，事件与业务变更同生共死；
@@ -15,3 +19,47 @@ func (s *Service) UsePluginEvents(p PluginEvents) { s.events = p }
 // PluginEventsWired 报告事件口是否已注入（装配完成后检查）。
 func (s *Service) PluginEventsWired() bool { return s.events != nil }
 
+// emitPlugin 发一个插件事件；没注入事件口时什么都不做。
+func (s *Service) emitPlugin(ctx context.Context, event, dedupeKey string, payload map[string]any) error {
+	if s.events == nil {
+		return nil
+	}
+	return s.events.Emit(ctx, event, dedupeKey, payload)
+}
+
+// pluginGranted 是 giftcard.redeemed 事件里的 granted：字段名与旧代码的兑换记录一致，没有的项不出现；金额是分。
+func pluginGranted(g granted) map[string]any {
+	m := map[string]any{}
+	if g.prizeLabel != "" {
+		m["prize_label"] = g.prizeLabel
+	}
+	if g.balance.IsPositive() {
+		m["balance"] = money.MustCents(g.balance)
+	}
+	if g.traffic > 0 {
+		m["traffic_bytes"] = g.traffic
+	}
+	if g.days > 0 {
+		m["expire_days"] = g.days
+	}
+	if g.reset {
+		m["quota_reset"] = true
+	}
+	if g.planID != nil {
+		m["plan_id"] = g.planID.String()
+	}
+	if g.planMode != "" {
+		m["plan_mode"] = g.planMode
+	}
+	if g.subID != nil {
+		m["subscription_id"] = g.subID.String()
+	}
+	if g.refund.IsPositive() {
+		m["plan_refund"] = money.MustCents(g.refund)
+		m["refund_currency"] = string(g.refundCur)
+	}
+	if g.ledgerTxn != nil {
+		m["ledger_txn_id"] = g.ledgerTxn.String()
+	}
+	return m
+}
