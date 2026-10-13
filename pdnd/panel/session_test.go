@@ -253,12 +253,15 @@ func TestSessionFirstMessageMustBeWelcome(t *testing.T) {
 	id := newTestIdentity(t, pki, newServerID(), time.Now().Add(30*24*time.Hour))
 	var n atomic.Int32
 	var fc *fakeControl
+	// 第二条流等测试查完「第一条没连上」再发 Welcome，否则 Connected 可能已被第二条流置真
+	release := make(chan struct{})
 	fc = newFakeControl(func(st *fakeStream) error {
 		fc.streamCh <- st
 		if n.Add(1) == 1 {
 			_ = st.SendTrafficAck("x")
 			return errors.New("非 Welcome 首条")
 		}
+		<-release
 		_ = st.SendWelcome(1, 1)
 		<-st.done
 		return nil
@@ -268,6 +271,7 @@ func TestSessionFirstMessageMustBeWelcome(t *testing.T) {
 	if s.Connected() {
 		t.Fatal("首条非 Welcome 时不应 Connected")
 	}
+	close(release)
 	nextEvent(t, s, EventWelcome)
 	fc.takeStream(t, 5*time.Second).end()
 }

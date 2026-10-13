@@ -27,8 +27,13 @@ func TestDefaultConfigPathMatchesNativeReleaseService(t *testing.T) {
 // 身份目录缺省落在状态目录下：会话里续期要原地换证书，必须是服务可写的路径。
 func TestConfigIdentityDirDefaultsToStateDirectory(t *testing.T) {
 	cfg := loadTestConfig(t, testConfig)
-	if got := cfg.identityDir(); got != "/var/lib/pandora-native/identity" || got != panel.DefaultIdentityDir {
-		t.Fatalf("identity dir = %q", got)
+	got := cfg.identityDir()
+	if got != panel.DefaultIdentityDir {
+		t.Fatalf("identity dir = %q, want %q", got, panel.DefaultIdentityDir)
+	}
+	// 写死字面量：缺省值改了要同步 release/pandora-native.service 的 StateDirectory
+	if want := "/var/lib/pandora-native/identity"; panel.DefaultIdentityDir != want {
+		t.Fatalf("DefaultIdentityDir = %q, want %q", panel.DefaultIdentityDir, want)
 	}
 }
 
