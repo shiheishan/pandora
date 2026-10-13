@@ -59,5 +59,6 @@ func fillParams(p string) string {
 			parts[i] = "00000000-0000-4000-8000-000000000001"
 		}
 	}
-	return strings.Join(parts, "/")
+	// gin 路由里字面冒号写成 `\:`（如 status\:batch），真实请求路径里是 `:`
+	return strings.ReplaceAll(strings.Join(parts, "/"), `\:`, ":")
 }

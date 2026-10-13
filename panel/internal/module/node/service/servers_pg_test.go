@@ -79,10 +79,11 @@ func TestServerPatchVersionCapacityNameRegion(t *testing.T) {
 	}
 	s2 := e.server(t, ctx, "patch-b")
 	_ = e.ssNode(t, ctx, s2.ID, "occ", 21002)
+	_ = e.ssNode(t, ctx, s2.ID, "occ2", 21003)
 	one := 1
 	_, err = e.svc.PatchServer(ctx, s2.ID, ServerPatch{RowVersion: s2.RowVersion, CapacityNodes: &one})
 	ee = invWantCode(t, err, errs.Conflict)
-	if ee.Fields["capacity_nodes"] != "minimum=1" {
+	if ee.Fields["capacity_nodes"] != "minimum=2" {
 		t.Fatalf("容量下限：%v", ee.Fields)
 	}
 	dup := s.Name
