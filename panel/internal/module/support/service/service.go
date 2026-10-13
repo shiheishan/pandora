@@ -128,6 +128,7 @@ type ReplyNotice struct {
 type Service struct {
 	repo     store
 	tx       txRunner
+	events   PluginEvents // 插件钩子出站事件，装配时注入（plugin_events.go）
 	audit    auditWriter
 	idem     idempotency
 	users    Users

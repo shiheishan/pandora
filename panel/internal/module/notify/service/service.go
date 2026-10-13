@@ -108,6 +108,7 @@ var _ store = (*repo.Repo)(nil)
 type Service struct {
 	store    store
 	tx       txRunner
+	events   PluginEvents // 插件钩子出站事件，装配时注入（plugin_events.go）
 	settings Settings
 	audit    auditWriter
 	queue    Queue

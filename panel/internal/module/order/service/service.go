@@ -115,6 +115,7 @@ type auditWriter interface {
 type Service struct {
 	repo     *repo.Repo
 	tx       txRunner
+	events   PluginEvents // 插件钩子出站事件，装配时注入（plugin_events.go）
 	catalog  Catalog
 	ledger   Ledger
 	promo    Promo
