@@ -1,0 +1,306 @@
+package service
+
+import (
+	"context"
+	"database/sql"
+	"encoding/base64"
+	"encoding/json"
+	"strings"
+	"testing"
+
+	"github.com/aegispanel/aegis/internal/module/appearance/repo"
+	auditrepo "github.com/aegispanel/aegis/internal/module/audit/repo"
+	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
+	"github.com/aegispanel/aegis/internal/pkg/authn"
+	"github.com/aegispanel/aegis/internal/pkg/crypto"
+	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/reqid"
+	"github.com/aegispanel/aegis/internal/pkg/testkit"
+	"github.com/aegispanel/aegis/internal/pkg/tx"
+	"github.com/google/uuid"
+)
+
+type apEnv struct {
+	row   func(ctx context.Context, q string, args ...any) *sql.Row
+	txCtx func() context.Context
+	svc   *Service
+}
+
+func newApEnv(t *testing.T) *apEnv {
+	t.Helper()
+	d := testkit.DB(t)
+	master := make([]byte, 32)
+	for i := range master {
+		master[i] = 0x01
+	}
+	keys, err := crypto.NewKeys(base64.StdEncoding.EncodeToString(master))
+	if err != nil {
+		t.Fatal(err)
+	}
+	auditSvc, err := auditsvc.New(auditrepo.New(d), keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	txm := tx.NewManager(d)
+	svc := New(repo.New(d), txm, auditSvc, nil)
+	return &apEnv{
+		row: func(ctx context.Context, q string, args ...any) *sql.Row {
+			return d.Conn(ctx).Raw(q, args...).Row()
+		},
+		txCtx: func() context.Context { return testkit.TxCtx(t, d) },
+		svc:   svc,
+	}
+}
+
+func apAdminCtx(ctx context.Context, adminID uuid.UUID) context.Context {
+	ctx = authn.With(ctx, authn.Principal{
+		UserID:    adminID,
+		SessionID: "s-admin",
+		Audience:  authn.AudienceAdmin,
+	})
+	return reqid.With(ctx, reqid.New())
+}
+
+func apNewUser(t *testing.T, e *apEnv, ctx context.Context) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	email := "appearance-" + strings.ReplaceAll(uuid.New().String(), "-", "") + "@example.test"
+	if err := e.row(ctx, `INSERT INTO users (email) VALUES (?) RETURNING id`, email).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func apErrCode(err error) errs.Code {
+	if err == nil {
+		return ""
+	}
+	return errs.As(err).Code
+}
+
+func TestAppearanceSeedAndPublic(t *testing.T) {
+	e := newApEnv(t)
+	ctx := e.txCtx()
+
+	themes, err := e.svc.ListThemes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var paper *Theme
+	for i := range themes {
+		if themes[i].Code == "paper" {
+			paper = &themes[i]
+			break
+		}
+	}
+	if paper == nil || !paper.IsBuiltin || !paper.IsActive {
+		t.Fatalf("paper: %+v", paper)
+	}
+
+	pub, err := e.svc.Public(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pub.Theme == nil || pub.Theme.Code != "paper" {
+		t.Fatalf("public theme: %+v", pub.Theme)
+	}
+	var tokens map[string]map[string]string
+	if err := json.Unmarshal(pub.Theme.Tokens, &tokens); err != nil {
+		t.Fatal(err)
+	}
+	if tokens["light"] == nil || tokens["dark"] == nil {
+		t.Fatalf("tokens groups: %v", tokens)
+	}
+	var branding map[string]string
+	if err := json.Unmarshal(pub.Theme.Branding, &branding); err != nil {
+		t.Fatal(err)
+	}
+	if branding["site_name"] != "Pandora" {
+		t.Fatalf("site_name=%q", branding["site_name"])
+	}
+}
+
+func TestAppearanceThemeSaveAndConflict(t *testing.T) {
+	e := newApEnv(t)
+	ctx := e.txCtx()
+	actx := apAdminCtx(ctx, apNewUser(t, e, ctx))
+
+	// 输入本身合法，被拒只因为 paper 是内置主题
+	_, err := e.svc.SaveTheme(actx, SaveThemeInput{Code: "paper", Name: "改", Create: false,
+		Branding: json.RawMessage(`{"site_name":"Pandora"}`)})
+	if ae := errs.As(err); ae.Code != errs.ValidationFailed || len(ae.Fields) != 0 {
+		t.Fatalf("改内置: %v", err)
+	}
+
+	_, err = e.svc.SaveTheme(actx, SaveThemeInput{
+		Code: "my-theme", Name: "我的", Create: true,
+		Branding: json.RawMessage(`{"site_name":"星河"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = e.svc.SaveTheme(actx, SaveThemeInput{
+		Code: "my-theme", Name: "别的", Create: true,
+		Branding: json.RawMessage(`{"site_name":"x"}`),
+	})
+	if apErrCode(err) != errs.Conflict || errs.As(err).Fields["code"] == "" {
+		t.Fatalf("重复 Create: %v", err)
+	}
+
+	_, err = e.svc.SaveTheme(actx, SaveThemeInput{
+		Code: "my-theme", Name: "覆盖名", Create: false,
+		Branding: json.RawMessage(`{"site_name":"星河"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	themes, err := e.svc.ListThemes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, th := range themes {
+		if th.Code == "my-theme" && th.Name != "覆盖名" {
+			t.Fatalf("name=%q", th.Name)
+		}
+	}
+}
+
+func TestAppearanceActivateTheme(t *testing.T) {
+	e := newApEnv(t)
+	ctx := e.txCtx()
+	actx := apAdminCtx(ctx, apNewUser(t, e, ctx))
+
+	_, err := e.svc.SaveTheme(actx, SaveThemeInput{
+		Code: "my-theme", Name: "我的", Create: true,
+		Branding: json.RawMessage(`{"site_name":"星河"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.ActivateTheme(actx, "my-theme"); err != nil {
+		t.Fatal(err)
+	}
+	pub, err := e.svc.Public(ctx)
+	if err != nil || pub.Theme == nil || pub.Theme.Code != "my-theme" {
+		t.Fatalf("public after activate: %+v err=%v", pub.Theme, err)
+	}
+	var activeN int64
+	if err := e.row(ctx, `SELECT count(*) FROM site_themes WHERE is_active`).Scan(&activeN); err != nil {
+		t.Fatal(err)
+	}
+	if activeN != 1 {
+		t.Fatalf("active count=%d", activeN)
+	}
+
+	if err := e.svc.ActivateTheme(actx, "no-such-theme"); apErrCode(err) != errs.NotFound {
+		t.Fatalf("missing theme: %v", err)
+	}
+	pub2, err := e.svc.Public(ctx)
+	if err != nil || pub2.Theme == nil || pub2.Theme.Code != "my-theme" {
+		t.Fatalf("theme unchanged: %+v", pub2.Theme)
+	}
+}
+
+func TestAppearanceDeleteTheme(t *testing.T) {
+	e := newApEnv(t)
+	ctx := e.txCtx()
+	actx := apAdminCtx(ctx, apNewUser(t, e, ctx))
+
+	_, err := e.svc.SaveTheme(actx, SaveThemeInput{
+		Code: "my-theme", Name: "我的", Create: true,
+		Branding: json.RawMessage(`{"site_name":"星河"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.ActivateTheme(actx, "my-theme"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := e.svc.DeleteTheme(actx, "paper"); apErrCode(err) != errs.ValidationFailed {
+		t.Fatalf("删内置: %v", err)
+	}
+	if err := e.svc.DeleteTheme(actx, "my-theme"); apErrCode(err) != errs.ValidationFailed {
+		t.Fatalf("删生效: %v", err)
+	}
+
+	if err := e.svc.ActivateTheme(actx, "paper"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.DeleteTheme(actx, "my-theme"); err != nil {
+		t.Fatal(err)
+	}
+	themes, err := e.svc.ListThemes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, th := range themes {
+		if th.Code == "my-theme" {
+			t.Fatal("my-theme 仍在列表")
+		}
+	}
+}
+
+func TestAppearanceSaveSlotAndPublic(t *testing.T) {
+	e := newApEnv(t)
+	ctx := e.txCtx()
+	actx := apAdminCtx(ctx, apNewUser(t, e, ctx))
+
+	raw := `<p onclick="x()">hi</p><script>alert(1)</script>`
+	dropped, err := e.svc.SaveSlot(actx, SaveSlotInput{
+		Key: "portal.footer", Content: raw, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dropped) == 0 {
+		t.Fatal("期望 dropped 非空")
+	}
+	var stored string
+	if err := e.row(ctx, `SELECT content FROM site_slots WHERE slot_key = ?`, "portal.footer").Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(stored, "script") || strings.Contains(stored, "onclick") {
+		t.Fatalf("未净化: %q", stored)
+	}
+
+	slots, err := e.svc.ListSlots(ctx)
+	if err != nil || len(slots) < 7 {
+		t.Fatalf("ListSlots: len=%d err=%v", len(slots), err)
+	}
+	footer := slots[6]
+	if footer.Key != "portal.footer" || !footer.Enabled || footer.Content != stored || footer.UpdatedAt == "" {
+		t.Fatalf("footer slot: %+v", footer)
+	}
+	if slots[0].UpdatedAt != "" {
+		t.Fatalf("未保存的插槽应有空 UpdatedAt: %+v", slots[0])
+	}
+
+	pub, err := e.svc.Public(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pub.Slots["portal.footer"] != stored {
+		t.Fatalf("public footer: %q", pub.Slots["portal.footer"])
+	}
+	for k, v := range pub.Slots {
+		if v == "" {
+			t.Fatalf("public 含空内容 key=%s", k)
+		}
+	}
+
+	_, err = e.svc.SaveSlot(actx, SaveSlotInput{
+		Key: "portal.footer", Content: stored, Enabled: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub2, err := e.svc.Public(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := pub2.Slots["portal.footer"]; ok {
+		t.Fatal("禁用后不应出现在 Public.Slots")
+	}
+}

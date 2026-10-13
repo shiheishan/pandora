@@ -1,0 +1,120 @@
+package service
+
+import (
+	"encoding/json"
+	"regexp"
+	"strings"
+
+	"github.com/aegispanel/aegis/internal/pkg/errs"
+)
+
+// DesignTokenKeys 是主题能覆盖的全部 CSS 变量，键即变量名（带 --）。
+//
+// 唯一来源是前端 panel/frontend/src/styles/design-tokens.ts 的 COLOR_TOKENS：
+// 模块文件 html:root 的 33 个 + 设计规范页补充的 10 个（危险按钮字色、Toast
+// 圆点、分段控件阴影、后台侧栏配色）。tokens_test.go 逐条对照那个文件，
+// 两边改一边测试就会红。主题只管颜色：字号、间距、圆角是设计规范的骨架，
+// 换主题不该让排版走样，所以不在白名单里。门户照这张表 setProperty(键, 值)。
+var DesignTokenKeys = []string{
+	"--bg", "--surface", "--surface-2", "--surface-3",
+	"--border", "--border-strong", "--border-hover",
+	"--text", "--text-2", "--text-3",
+	"--brand", "--brand-hover", "--brand-ink", "--brand-soft", "--brand-tint", "--on-brand",
+	"--ok", "--ok-soft", "--ok-line",
+	"--warn", "--warn-soft", "--warn-line",
+	"--danger", "--danger-soft", "--danger-line", "--danger-tint",
+	"--info", "--info-soft", "--info-line",
+	"--on-ink", "--hdr", "--scrim", "--shadow",
+	"--on-danger", "--toast-ok", "--toast-danger", "--shadow-segment",
+	"--sidebar", "--sidebar-active", "--sidebar-text", "--sidebar-text-2", "--sidebar-text-3", "--sidebar-brand",
+}
+
+// TokenGroups 是 tokens 的两个分组。主题值按深浅两套分开存：旧主题是一组
+// 扁平值，用户切到暗色时照样被浅色值覆盖，这正是要消灭的问题。
+var TokenGroups = []string{"light", "dark"}
+
+var (
+	designTokenSet = func() map[string]bool {
+		m := make(map[string]bool, len(DesignTokenKeys))
+		for _, k := range DesignTokenKeys {
+			m[k] = true
+		}
+		return m
+	}()
+	// 取值里出现这些字符就可能跳出 CSS 声明（;）、打开规则块（{}）或拼出标签（<>）
+	tokenValueBad = regexp.MustCompile(`[;{}<>\\\x00]`)
+)
+
+const maxTokenValueLen = 200
+
+// normalizeTokens 校验管理员提交的 tokens，返回规范化后的 JSON。
+//
+// 形状只能是 {"light":{键:值}, "dark":{键:值}}，两组都可省略；键必须在
+// DesignTokenKeys 里，值必须是不含危险字符的短字符串。不认识的一律拒绝而
+// 不是静默丢掉：管理员以为生效了、页面上却没有，是最难查的那种问题。
+// 取值不合法的逐个标在 tokens.<组>.<变量名> 上（后台据此标到对应输入框），
+// 形状与键名的问题标在 tokens 上。
+func normalizeTokens(raw json.RawMessage) (json.RawMessage, error) {
+	if len(raw) == 0 {
+		return json.RawMessage(`{}`), nil
+	}
+	var groups map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &groups); err != nil || groups == nil {
+		return nil, errs.Invalid(map[string]string{
+			"tokens": `必须是 {"light":{…},"dark":{…}} 形状的对象`})
+	}
+	fields := map[string]string{}
+	out := map[string]map[string]string{}
+	for name, body := range groups {
+		if name != "light" && name != "dark" {
+			fields["tokens"] = "只允许 light 与 dark 两组，不认识：" + name
+			continue
+		}
+		var vals map[string]any
+		if err := json.Unmarshal(body, &vals); err != nil || vals == nil {
+			fields["tokens"] = name + " 必须是对象"
+			continue
+		}
+		group := map[string]string{}
+		for k, v := range vals {
+			if !designTokenSet[k] {
+				fields["tokens"] = name + "." + k + " 不是设计稿的变量名"
+				continue
+			}
+			s, ok := v.(string)
+			s = strings.TrimSpace(s)
+			if !ok || s == "" || len(s) > maxTokenValueLen || tokenValueBad.MatchString(s) {
+				fields["tokens."+name+"."+k] = "取值不合法：须为 200 字符以内的非空字符串，不含 ; { } < > \\"
+				continue
+			}
+			group[k] = s
+		}
+		out[name] = group
+	}
+	if len(fields) > 0 {
+		return nil, errs.Invalid(fields)
+	}
+	b, err := json.Marshal(out)
+	return b, err
+}
+
+// filterTokens 是门户读取时的防线：不论库里存了什么（旧主题的扁平键、
+// 迁移前留下的自定义主题），只放行 light/dark 两组里白名单内的字符串值。
+func filterTokens(raw json.RawMessage) json.RawMessage {
+	var groups map[string]map[string]any
+	_ = json.Unmarshal(raw, &groups)
+	out := map[string]map[string]string{}
+	for _, name := range TokenGroups {
+		group := map[string]string{}
+		for k, v := range groups[name] {
+			if s, ok := v.(string); ok && designTokenSet[k] && !tokenValueBad.MatchString(s) {
+				group[k] = s
+			}
+		}
+		if len(group) > 0 {
+			out[name] = group
+		}
+	}
+	b, _ := json.Marshal(out)
+	return b
+}
