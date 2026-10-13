@@ -23,7 +23,7 @@ const ScanTimeout = 2 * time.Minute
 // scanBatch 是每轮扫描最多写的通知件数。
 const scanBatch = 1000
 
-// paidLookback 是支付成功通知回看的履约时间：只补最近的，通知上线前就履约的老订单不补发。
+// paidLookback 是支付成功通知第一次（还没有游标时）回看的履约时间：通知上线前就履约的老订单不补发。
 const paidLookback = 2 * time.Hour
 
 // 到期提醒窗口：剩余天数落在 (lower, upper] 天。
@@ -203,12 +203,14 @@ func (s *Service) collectScanItems(ctx context.Context, now time.Time, loc *time
 		})
 	}
 
-	paid, err := s.paidItems(ctx, now, loc)
-	if err != nil {
+	if err := s.resolvePlanNames(ctx, items); err != nil {
 		return nil, err
 	}
-	items = append(items, paid...)
+	return items, nil
+}
 
+// resolvePlanNames 把 Vars["plan"] 里的套餐 id 换成套餐名（一次批量读）；解析不了或已下架的显示「套餐」。
+func (s *Service) resolvePlanNames(ctx context.Context, items []scanItem) error {
 	planIDs := make([]uuid.UUID, 0)
 	seen := map[uuid.UUID]bool{}
 	for _, it := range items {
@@ -223,7 +225,7 @@ func (s *Service) collectScanItems(ctx context.Context, now time.Time, loc *time
 	}
 	plans, err := s.plans.PlansByIDs(ctx, planIDs)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for i := range items {
 		id, err := uuid.Parse(items[i].Vars["plan"])
@@ -233,44 +235,10 @@ func (s *Service) collectScanItems(ctx context.Context, now time.Time, loc *time
 		}
 		items[i].Vars["plan"] = planName(plans, id)
 	}
-	return items, nil
+	return nil
 }
 
-// paidItems 取最近履约的订单，套餐与到期时间按订单挂的订阅（续费、换套餐后的那一期）；一单一件。
-func (s *Service) paidItems(ctx context.Context, now time.Time, loc *time.Location) ([]scanItem, error) {
-	paid, err := s.orders.PaidForNotify(ctx, now.Add(-paidLookback), scanBatch)
-	if err != nil || len(paid) == 0 {
-		return nil, err
-	}
-	ids := make([]uuid.UUID, len(paid))
-	for i, p := range paid {
-		ids[i] = p.SubscriptionID
-	}
-	subs, err := s.subs.SubscriptionsByIDs(ctx, ids)
-	if err != nil {
-		return nil, err
-	}
-	items := make([]scanItem, 0, len(paid))
-	for _, p := range paid {
-		sub, ok := subs[p.SubscriptionID]
-		if !ok {
-			continue
-		}
-		items = append(items, scanItem{
-			UserID: p.UserID,
-			Code:   TemplateOrderPaid,
-			Vars: map[string]string{
-				"order_no":   p.OrderNo,
-				"plan":       sub.PlanID.String(),
-				"expires_at": noticeTime(sub.PeriodEnd, loc),
-			},
-			Key: "order-paid:" + p.OrderID.String(),
-		})
-	}
-	return items, nil
-}
-
-// Scan 扫到期、过期召回、流量预警与支付成功，给尚未去重的用户写通知；返回新写件数。
+// Scan 先写支付成功（按游标，读失败只记日志），再扫到期、过期召回与流量预警，给尚未去重的用户写通知；返回新写件数。
 func (s *Service) Scan(ctx context.Context) (int, error) {
 	if s.subs == nil {
 		return 0, errs.Wrap(errs.Internal, fmt.Errorf("notify: Subscriptions 未装配"))
@@ -290,48 +258,66 @@ func (s *Service) Scan(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	log := plog.From(ctx)
+
+	// 支付成功是交易类通知：先写、单独计额度，不被别的积压挤掉，也不被别的读取失败拖住
+	written, err := s.scanPaid(ctx, now, loc)
+	if err != nil {
+		if ctx.Err() != nil {
+			return written, ctx.Err()
+		}
+		log.Warn("notify: 支付成功通知扫描失败，下一轮从游标处接着写", zap.Error(err))
+	}
 
 	items, err := s.collectScanItems(ctx, now, loc)
 	if err != nil {
-		return 0, err
+		return written, err
 	}
-	if len(items) == 0 {
-		return 0, nil
+	n, _, err := s.writeScanItems(ctx, items)
+	written += n
+	if written > 0 {
+		log.Info("notify: 扫描写入完成", zap.Int("count", written))
 	}
+	return written, err
+}
 
+// writeScanItems 按顺序给尚未去重的条目写通知，最多写 scanBatch 件（余下的下一轮接着写，已写的靠去重键跳过）：
+// 首次上线或长时间停机后待发件可能很多，一轮全写会超任务时限，联系人查询的参数也会超过 PG 单条语句的上限。
+// 返回新写件数，以及从头算起连续处理完（写成或已去重）的条目数，给按游标推进的调用方用。
+func (s *Service) writeScanItems(ctx context.Context, items []scanItem) (written, done int, err error) {
+	if len(items) == 0 {
+		return 0, 0, nil
+	}
 	keys := make([]string, len(items))
 	for i, it := range items {
 		keys[i] = it.Key
 	}
 	existing, err := s.store.ExistingEventKeys(ctx, keys)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	var pending []scanItem
-	for _, it := range items {
-		if !existing[it.Key] {
-			pending = append(pending, it)
+	// 截到前 scanBatch 件待写：limit 是 items 里第一件放不下的下标
+	limit, pending := len(items), 0
+	userSet := map[uuid.UUID]bool{}
+	for i, it := range items {
+		if existing[it.Key] {
+			continue
 		}
+		if pending == scanBatch {
+			limit = i
+			plog.From(ctx).Info("notify: 待发通知超过单轮上限，余下的下一轮写", zap.Int("batch", scanBatch))
+			break
+		}
+		pending++
+		userSet[it.UserID] = true
 	}
-	if len(pending) == 0 {
-		return 0, nil
-	}
-	// 每轮最多写 scanBatch 件，余下的下一轮接着写（已写的靠去重键跳过）：首次上线或长时间停机后
-	// 待发件可能很多，一轮全写会超任务时限，联系人查询的参数也会超过 PG 单条语句的上限
-	if len(pending) > scanBatch {
-		plog.From(ctx).Info("notify: 待发通知超过单轮上限，余下的下一轮写",
-			zap.Int("pending", len(pending)), zap.Int("batch", scanBatch))
-		pending = pending[:scanBatch]
+	if pending == 0 {
+		return 0, len(items), nil
 	}
 
 	env, err := s.loadNoticeEnv(ctx)
 	if err != nil {
-		return 0, err
-	}
-
-	userSet := map[uuid.UUID]bool{}
-	for _, it := range pending {
-		userSet[it.UserID] = true
+		return 0, 0, err
 	}
 	userIDs := make([]uuid.UUID, 0, len(userSet))
 	for id := range userSet {
@@ -339,14 +325,24 @@ func (s *Service) Scan(ctx context.Context) (int, error) {
 	}
 	contacts, err := s.loadContacts(ctx, userIDs)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 
 	log := plog.From(ctx)
-	written := 0
-	for _, it := range pending {
+	done = -1
+	// unfinished 是从头算起第一件没处理完的下标：之前有写失败的就是它，否则是 i
+	unfinished := func(i int) int {
+		if done >= 0 {
+			return done
+		}
+		return i
+	}
+	for i, it := range items[:limit] {
 		if err := ctx.Err(); err != nil {
-			return written, err
+			return written, unfinished(i), err
+		}
+		if existing[it.Key] {
+			continue
 		}
 		c := contacts[it.UserID]
 		err := s.tx.Do(ctx, func(ctx context.Context) error {
@@ -361,13 +357,16 @@ func (s *Service) Scan(ctx context.Context) (int, error) {
 		})
 		if err != nil {
 			if ctx.Err() != nil {
-				return written, ctx.Err()
+				return written, unfinished(i), ctx.Err()
 			}
 			log.Warn("notify: 扫描写入失败", zap.String("key", it.Key), zap.Error(err))
+			if done < 0 {
+				done = i
+			}
 		}
 	}
-	if written > 0 {
-		log.Info("notify: 扫描写入完成", zap.Int("count", written))
+	if done < 0 {
+		done = limit
 	}
-	return written, nil
+	return written, done, nil
 }

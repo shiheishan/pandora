@@ -162,7 +162,7 @@ func (s *Service) UseOrders(o Orders) { s.orders = o }
 // UsePlanNames 接上在用套餐名（启动装配时调用）。没接上时队列与详情不带 user_active_plan。
 func (s *Service) UsePlanNames(p PlanNames) { s.plans = p }
 
-// UseReplyNotifier 接上客服回复通知（启动装配时调用）。没接上时不通知。
+// UseReplyNotifier 接上客服回复通知（启动装配时调用）。
 func (s *Service) UseReplyNotifier(n ReplyNotifier) { s.notifier = n }
 
 // MissingPorts 返回没装配的必需端口名（app 启动时检查）。
@@ -173,6 +173,9 @@ func (s *Service) MissingPorts() []string {
 	}
 	if s.plans == nil {
 		out = append(out, "PlanNames")
+	}
+	if s.notifier == nil {
+		out = append(out, "ReplyNotifier")
 	}
 	return out
 }

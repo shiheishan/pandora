@@ -139,10 +139,19 @@ func (f *fakeSubs) SubscriptionsByIDs(_ context.Context, ids []uuid.UUID) (map[u
 	return out, nil
 }
 
-func (f *fakeSubs) PaidForNotify(context.Context, time.Time, int) ([]ordersvc.PaidNotice, error) {
+func (f *fakeSubs) PaidForNotify(_ context.Context, afterAt time.Time, afterID uuid.UUID, limit int) ([]ordersvc.PaidNotice, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]ordersvc.PaidNotice(nil), f.paid...), nil
+	var out []ordersvc.PaidNotice
+	for _, p := range f.paid {
+		if p.FulfilledAt.After(afterAt) || (p.FulfilledAt.Equal(afterAt) && p.OrderID.String() > afterID.String()) {
+			out = append(out, p)
+		}
+		if len(out) == limit {
+			break
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeSubs) LivePlanIDs(_ context.Context, userID uuid.UUID) ([]uuid.UUID, error) {

@@ -51,7 +51,7 @@ type Subscriptions interface {
 
 // Orders 是 notify 读订单的端口（order 实现）：扫描给最近履约的订单补写支付成功通知。
 type Orders interface {
-	PaidForNotify(ctx context.Context, since time.Time, limit int) ([]ordersvc.PaidNotice, error)
+	PaidForNotify(ctx context.Context, afterAt time.Time, afterID uuid.UUID, limit int) ([]ordersvc.PaidNotice, error)
 }
 
 var (
@@ -106,6 +106,10 @@ func (s *Service) telegramReady(ctx context.Context) (settingssvc.Telegram, bool
 // ---- P6 的 repo 方法（*repo.Repo 实现，见 repo/inbox.go、preferences.go、announcements.go、telegram.go） ----
 
 type p6Store interface {
+	// ScanCursor 读扫描游标；没有时 ok 为 false。
+	ScanCursor(ctx context.Context, name string) (repo.ScanCursor, bool, error)
+	// SetScanCursor 写扫描游标（没有就建）。
+	SetScanCursor(ctx context.Context, name string, c repo.ScanCursor) error
 	// InsertInbox 写一条站内信。
 	InsertInbox(ctx context.Context, it *model.InboxItem) error
 	// ListInbox 按 created_at、id 倒序取本人最近 limit 条站内信；onlyUnread 只取未读。

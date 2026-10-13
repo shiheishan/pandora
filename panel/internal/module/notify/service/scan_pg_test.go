@@ -70,7 +70,13 @@ func TestScanOrderPaid(t *testing.T) {
 	plans.plans = []catalogsvc.Plan{{ID: planID, Name: "进阶套餐"}}
 	subs.byID = map[uuid.UUID]subsvc.Subscription{subID: {ID: subID, UserID: uid, PlanID: planID,
 		PeriodEnd: time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)}}
-	subs.paid = []ordersvc.PaidNotice{{OrderID: orderID, UserID: uid, OrderNo: "PD20260601001", SubscriptionID: subID}}
+	paidAt := scanFixedNow().Add(-10 * time.Minute)
+	subs.paid = []ordersvc.PaidNotice{
+		// 早于首次回看窗口的老订单不补发
+		{OrderID: uuid.MustParse("018f0000-0000-7000-8000-000000000010"), UserID: uid, OrderNo: "PD-OLD",
+			SubscriptionID: subID, FulfilledAt: scanFixedNow().Add(-3 * time.Hour)},
+		{OrderID: orderID, UserID: uid, OrderNo: "PD20260601001", SubscriptionID: subID, FulfilledAt: paidAt},
+	}
 	e.svc.now = scanFixedNow
 
 	if n, err := e.svc.Scan(e.ctx); err != nil || n != 1 {
@@ -86,6 +92,20 @@ func TestScanOrderPaid(t *testing.T) {
 	}
 	if n, err := e.svc.Scan(e.ctx); err != nil || n != 0 {
 		t.Fatalf("second scan must dedupe per order: %d %v", n, err)
+	}
+	// 游标已推进：之后履约的单照写，前面的不再重读
+	subs.paid = append(subs.paid, ordersvc.PaidNotice{OrderID: uuid.MustParse("018f0000-0000-7000-8000-000000000014"),
+		UserID: uid, OrderNo: "PD20260601002", SubscriptionID: subID, FulfilledAt: paidAt.Add(time.Minute)})
+	if n, err := e.svc.Scan(e.ctx); err != nil || n != 1 {
+		t.Fatalf("scan after cursor %d %v", n, err)
+	}
+	var at time.Time
+	if err := e.scan(e.ctx, &at, `SELECT last_at FROM notify_scan_cursors WHERE name = 'order_paid'`); err != nil ||
+		!at.Equal(paidAt.Add(time.Minute)) {
+		t.Fatalf("cursor at %v err %v", at, err)
+	}
+	if noticeCountInbox(t, e, uid) != 2 {
+		t.Fatal("old order must not be notified, the two new ones once each")
 	}
 }
 

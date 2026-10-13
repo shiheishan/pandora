@@ -240,7 +240,7 @@ func (s *Service) writeNotice(ctx context.Context, env noticeEnv, userID uuid.UU
 	return true, nil
 }
 
-// NotifyUser 给用户发一件事的通知（别的模块用：order 支付成功、support 工单回复）。在调用方事务里执行（s.tx.Do 加入），
+// NotifyUser 给用户发一件事的通知（别的模块用，如 support 工单回复）。在调用方事务里执行（s.tx.Do 加入），
 // dedupeKey 必填（同一件事只通知一次）；code 必须在登记表里，否则返回内部错误。
 func (s *Service) NotifyUser(ctx context.Context, userID uuid.UUID, code string, vars map[string]string, dedupeKey string) error {
 	if s.dir == nil {

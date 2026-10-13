@@ -16,16 +16,16 @@ type PaidNoticeRow struct {
 	FulfilledAt    time.Time `gorm:"column:fulfilled_at"`
 }
 
-// PaidForNotify 取 fulfilled_at 晚于 since、挂在订阅上的已履约订单（充值单没有订阅，不在内），
-// 按履约时间升序，至多 limit 张。走 orders_fulfilled_idx。
-func (r *Repo) PaidForNotify(ctx context.Context, since time.Time, limit int) ([]PaidNoticeRow, error) {
+// PaidForNotify 取 (fulfilled_at, id) 在 (afterAt, afterID) 之后、挂在订阅上的已履约订单（充值单没有订阅，不在内），
+// 按 (fulfilled_at, id) 升序，至多 limit 张。走 orders_fulfilled_idx。
+func (r *Repo) PaidForNotify(ctx context.Context, afterAt time.Time, afterID uuid.UUID, limit int) ([]PaidNoticeRow, error) {
 	var out []PaidNoticeRow
 	err := r.d.Conn(ctx).Raw(`
 		SELECT id, user_id, order_no, subscription_id, fulfilled_at
 		  FROM orders
-		 WHERE status = 'fulfilled' AND subscription_id IS NOT NULL AND fulfilled_at > ?
+		 WHERE status = 'fulfilled' AND subscription_id IS NOT NULL AND (fulfilled_at, id) > (?, ?)
 		 ORDER BY fulfilled_at, id
-		 LIMIT ?`, since, limit).Scan(&out).Error
+		 LIMIT ?`, afterAt, afterID, limit).Scan(&out).Error
 	if err != nil {
 		return nil, mapErr(err)
 	}

@@ -217,12 +217,12 @@ var templateDefs = []templateDef{
 		Subject:     "流量预警",
 		Body:        "你的「{{plan}}」已使用 {{percent}}% 流量，剩余 {{remaining}}。",
 	},
-	// ---- 支付成功：订单结算时由 order 经 NotifyUser 在结算事务里写 ----
+	// ---- 支付成功：不进结算事务，由通知扫描按游标读最近履约的订单写 ----
 	{
 		Code:        TemplateOrderPaid,
 		Channel:     ChannelInApp,
 		Category:    categoryTransactional,
-		Description: "订单支付成功、套餐开通后发一条（订单结算时写入）",
+		Description: "订单支付成功、套餐开通后发一条（支付成功后几分钟内由通知扫描写入）",
 		Allowed:     []string{"order_no", "plan", "expires_at"},
 		Subject:     "支付成功",
 		Body:        "订单 {{order_no}} 已支付成功，「{{plan}}」已开通，有效期至 {{expires_at}}。",
@@ -231,7 +231,7 @@ var templateDefs = []templateDef{
 		Code:        TemplateOrderPaid,
 		Channel:     ChannelTelegram,
 		Category:    categoryTransactional,
-		Description: "订单支付成功、套餐开通后发一条给已绑定 Telegram 的用户（订单结算时写入）",
+		Description: "订单支付成功、套餐开通后发一条给已绑定 Telegram 的用户（支付成功后几分钟内由通知扫描写入）",
 		Allowed:     []string{"order_no", "plan", "expires_at"},
 		Subject:     "支付成功",
 		Body:        "订单 {{order_no}} 已支付，「{{plan}}」已开通，有效期至 {{expires_at}}。",
