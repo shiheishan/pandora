@@ -57,7 +57,7 @@ func (r *Repo) UsersByIDs(ctx context.Context, ids []uuid.UUID) ([]model.User, e
 		return []model.User{}, nil
 	}
 	var users []model.User
-	err := r.d.Conn(ctx).Where("id IN ?", ids).Find(&users).Error
+	err := r.d.Conn(ctx).Where("id = ANY(CAST(? AS uuid[]))", uuidArray(ids)).Find(&users).Error
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +141,7 @@ func (r *Repo) Emails(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]strin
 	}
 	var rows []UserRef
 	err := r.d.Conn(ctx).Raw(
-		"SELECT id, email::text AS email FROM users WHERE id IN ?", ids,
+		"SELECT id, email::text AS email FROM users WHERE id = ANY(CAST(? AS uuid[]))", uuidArray(ids),
 	).Scan(&rows).Error
 	if err != nil {
 		return nil, err

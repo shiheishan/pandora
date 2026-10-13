@@ -10,7 +10,9 @@ import (
 
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	plog "github.com/aegispanel/aegis/internal/pkg/log"
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 // UserProfile 返回后台用户画像（含关联账号与订阅拉取摘要）。
@@ -79,7 +81,9 @@ func (s *Service) UserProfile(ctx context.Context, userID uuid.UUID) (UserProfil
 	}
 	if len(relatedIDs) > 0 {
 		emails, err := s.repo.Emails(ctx, relatedIDs)
-		if err == nil {
+		if err != nil {
+			plog.From(ctx).Warn("用户画像查询关联账号邮箱失败", zap.String("user", userID.String()), zap.Error(err))
+		} else {
 			out.Related = make([]UserRef, 0, len(relatedIDs))
 			for _, id := range relatedIDs {
 				if em, ok := emails[id]; ok {
@@ -94,7 +98,9 @@ func (s *Service) UserProfile(ctx context.Context, userID uuid.UUID) (UserProfil
 
 	if subs, err := s.needSubs(); err == nil {
 		fetches, sources, err := subs.UserFetches(ctx, userID)
-		if err == nil {
+		if err != nil {
+			plog.From(ctx).Warn("用户画像查询订阅拉取记录失败", zap.String("user", userID.String()), zap.Error(err))
+		} else {
 			out.Fetches = fetches
 			if out.Fetches == nil {
 				out.Fetches = []FetchRecord{}

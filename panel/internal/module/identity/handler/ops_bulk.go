@@ -135,7 +135,8 @@ func (h *Handler) generationResult(c *gin.Context) {
 	cw := csv.NewWriter(c.Writer)
 	_ = cw.Write([]string{"邮箱", "初始密码"})
 	for _, u := range users {
-		_ = cw.Write([]string{u.Email, u.Password})
+		// 只转义邮箱；口令原样给出（转义会改掉口令本身，生成的口令首字符固定是大写字母，不会被当成公式）
+		_ = cw.Write([]string{service.CSVCell(u.Email), u.Password})
 	}
 	cw.Flush() // csv.Writer.Flush 不回错误，写失败从 Error 取
 	if err := cw.Error(); err != nil {

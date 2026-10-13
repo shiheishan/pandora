@@ -29,10 +29,19 @@ func TestPGSubmitGenerationValidation(t *testing.T) {
 	}
 
 	_, err = e.svc.SubmitGeneration(actx, GenerateInput{
-		Count: 1, EmailPrefix: "gen", EmailDomain: "localhost", Reason: "压测账号批量准备",
+		Count: 1, EmailPrefix: "-leading-hyphen", EmailDomain: "example.test", Reason: "压测账号批量准备",
 	})
-	if codeOf(err) != errs.ValidationFailed || fieldsOf(err)["email_domain"] == "" {
-		t.Fatalf("domain: %v", err)
+	if codeOf(err) != errs.ValidationFailed || fieldsOf(err)["email_prefix"] == "" {
+		t.Fatalf("prefix leading hyphen: %v", err)
+	}
+
+	for _, badDomain := range []string{"localhost", ".example.test", "example.test.", "exam..ple.test"} {
+		_, err = e.svc.SubmitGeneration(actx, GenerateInput{
+			Count: 1, EmailPrefix: "gen", EmailDomain: badDomain, Reason: "压测账号批量准备",
+		})
+		if codeOf(err) != errs.ValidationFailed || fieldsOf(err)["email_domain"] == "" {
+			t.Fatalf("domain %q: %v", badDomain, err)
+		}
 	}
 
 	_, err = e.svc.SubmitGeneration(actx, GenerateInput{
@@ -186,6 +195,13 @@ func TestPGGenerationResultExpiry(t *testing.T) {
 	}
 	if err := e.svc.RunGenerationJob(ctx, job.ID); err != nil {
 		t.Fatal(err)
+	}
+	// 清理任务未跑时，过期 1 秒即不许下载
+	if err := e.exec(ctx, `UPDATE user_generation_jobs SET result_expires_at = now() - interval '1 second' WHERE id = ?`, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.GenerationResult(actx, job.ID); codeOf(err) != errs.Conflict {
+		t.Fatalf("result expired 1s before purge want Conflict, got: %v", err)
 	}
 	if err := e.exec(ctx, `UPDATE user_generation_jobs SET result_expires_at = now() - interval '1 minute' WHERE id = ?`, job.ID); err != nil {
 		t.Fatal(err)

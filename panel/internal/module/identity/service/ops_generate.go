@@ -141,7 +141,7 @@ func (s *Service) GenerationResult(ctx context.Context, id uuid.UUID) ([]Generat
 		if !ok || m.ActorID != p.UserID {
 			return errs.New(errs.NotFound)
 		}
-		if len(m.ResultEncrypted) == 0 {
+		if len(m.ResultEncrypted) == 0 || (m.ResultExpiresAt != nil && !s.now().Before(*m.ResultExpiresAt)) {
 			return errs.Newf(errs.Conflict, "结果不可下载：任务还没生成出账号，或结果已超过 24 小时被清除")
 		}
 		sealer, err := s.keys.Sealer()
@@ -249,7 +249,7 @@ func jobFromModel(m model.UserGenerationJob) GenerationJob {
 }
 
 func isSafeSlug(s string) bool {
-	if len(s) < 1 || len(s) > 20 {
+	if len(s) < 1 || len(s) > 20 || s[0] == '-' {
 		return false
 	}
 	for _, c := range s {
@@ -262,6 +262,9 @@ func isSafeSlug(s string) bool {
 
 func isSafeDomain(s string) bool {
 	if len(s) < 4 || len(s) > 63 || !strings.Contains(s, ".") {
+		return false
+	}
+	if strings.HasPrefix(s, ".") || strings.HasSuffix(s, ".") || strings.Contains(s, "..") {
 		return false
 	}
 	for _, c := range s {

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -123,7 +124,7 @@ func (s *Service) Fetches(ctx context.Context, q identitysvc.FetchQuery) ([]iden
 		if s.delivery == nil || s.delivery.Hasher == nil {
 			return nil, errs.Wrap(errs.Internal, errors.New("subscription: 拉取日志哈希未装配"))
 		}
-		ipHash = s.delivery.Hasher.HMAC(crypto.InfoHMACSubAudit, []byte(strings.TrimSpace(q.IP)))
+		ipHash = s.delivery.Hasher.HMAC(crypto.InfoHMACSubAudit, []byte(normalizeIPForHMAC(q.IP)))
 	}
 
 	rows, err := s.repo.OpsFetches(ctx, repo.OpsFetchFilter{
@@ -178,4 +179,15 @@ func (s *Service) openFetchLogField(enc []byte) string {
 		return ""
 	}
 	return string(plain)
+}
+
+func normalizeIPForHMAC(ip string) string {
+	raw := strings.TrimSpace(ip)
+	if raw == "" {
+		return ""
+	}
+	if addr, err := netip.ParseAddr(raw); err == nil {
+		return addr.String()
+	}
+	return raw
 }

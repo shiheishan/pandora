@@ -16,26 +16,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// TemplateBroadcast 是后台群发外壳模板。
-const TemplateBroadcast = "admin.broadcast"
+// TemplateBroadcast 常量与外壳模板登记见 registry.go。
 
-const (
-	categoryMarketing = "marketing"
-	bulkMailMax       = 20000
-)
-
-// init 把外壳模板追加进登记表（registry.go 不在本块范围，以后挪进 registry.go）。
-func init() {
-	templateDefs = append(templateDefs, templateDef{
-		Code:        TemplateBroadcast,
-		Channel:     ChannelEmail,
-		Category:    categoryMarketing,
-		Description: "后台「批量运营 → 群发邮件」：主题与正文由管理员每次填写，经变量 subject、body 传入；关掉营销邮件的用户不发",
-		Allowed:     []string{"subject", "body"},
-		Subject:     "{{subject}}",
-		Body:        "{{body}}",
-	})
-}
+const bulkMailMax = 20000
 
 // BulkMailInput 是后台群发邮件的输入。
 type BulkMailInput struct {

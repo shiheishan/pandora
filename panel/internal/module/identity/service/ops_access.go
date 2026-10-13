@@ -214,11 +214,7 @@ func (s *Service) AccessLog(ctx context.Context, q AccessLogQuery) ([]AccessItem
 	}
 
 	items := make([]AccessItem, 0, len(audits)+len(fetches))
-	idSet := make(map[uuid.UUID]struct{})
 	for _, a := range audits {
-		if a.ActorID != nil {
-			idSet[*a.ActorID] = struct{}{}
-		}
 		items = append(items, AccessItem{
 			Category:  categoryFromAction(a.Action),
 			Action:    a.Action,
@@ -230,9 +226,6 @@ func (s *Service) AccessLog(ctx context.Context, q AccessLogQuery) ([]AccessItem
 		})
 	}
 	for _, f := range fetches {
-		if f.UserID != nil {
-			idSet[*f.UserID] = struct{}{}
-		}
 		items = append(items, AccessItem{
 			Category:  "subscribe",
 			Action:    "subscription.fetch",
@@ -242,20 +235,6 @@ func (s *Service) AccessLog(ctx context.Context, q AccessLogQuery) ([]AccessItem
 			UserID:    f.UserID,
 			At:        f.At,
 		})
-	}
-
-	ids := make([]uuid.UUID, 0, len(idSet))
-	for id := range idSet {
-		ids = append(ids, id)
-	}
-	emails, err := s.repo.Emails(ctx, ids)
-	if err != nil {
-		return nil, err
-	}
-	for i := range items {
-		if items[i].UserID != nil {
-			items[i].UserEmail = emails[*items[i].UserID]
-		}
 	}
 
 	sort.SliceStable(items, func(i, j int) bool {
@@ -269,6 +248,29 @@ func (s *Service) AccessLog(ctx context.Context, q AccessLogQuery) ([]AccessItem
 	if len(items) > limit {
 		items = items[:limit]
 	}
+
+	pageIDSet := make(map[uuid.UUID]struct{})
+	for _, it := range items {
+		if it.UserID != nil {
+			pageIDSet[*it.UserID] = struct{}{}
+		}
+	}
+	if len(pageIDSet) > 0 {
+		pageIDs := make([]uuid.UUID, 0, len(pageIDSet))
+		for id := range pageIDSet {
+			pageIDs = append(pageIDs, id)
+		}
+		emails, err := s.repo.Emails(ctx, pageIDs)
+		if err != nil {
+			return nil, err
+		}
+		for i := range items {
+			if items[i].UserID != nil {
+				items[i].UserEmail = emails[*items[i].UserID]
+			}
+		}
+	}
+
 	for i := range items {
 		items[i].Geo, items[i].NetworkKind = locate(items[i].IP)
 	}

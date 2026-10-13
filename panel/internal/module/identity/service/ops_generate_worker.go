@@ -203,7 +203,11 @@ func (s *Service) failGeneration(ctx context.Context, job model.UserGenerationJo
 		if !ok {
 			return nil
 		}
-		return s.writeGenerationFinishAudit(ctx, job, auditsvc.OutcomePartial, reason)
+		outcome := auditsvc.OutcomePartial
+		if completed == 0 {
+			outcome = auditsvc.OutcomeFailure
+		}
+		return s.writeGenerationFinishAudit(ctx, job, outcome, reason)
 	})
 }
 
