@@ -247,10 +247,35 @@ func TestStrictExcludedReadsTaskSet(t *testing.T) {
 	if got := svc.strictExcluded(ctx); got != nil {
 		t.Fatalf("集合缺失不摘: %v", got)
 	}
+	if err := mr.Set(StrictDigestKey, "d"); err != nil {
+		t.Fatal(err)
+	}
+	if got := svc.strictExcluded(ctx); got != nil {
+		t.Fatalf("集合缺失不摘: %v", got)
+	}
+	if !mr.Exists(StrictDigestKey) {
+		t.Fatal("集合缺失（任务本来就会推进）不应删摘要")
+	}
 	if err := mr.Set(StrictSetKey, "garbage"); err != nil {
 		t.Fatal(err)
 	}
 	if got := svc.strictExcluded(ctx); got != nil {
 		t.Fatalf("格式坏不摘: %v", got)
+	}
+	if mr.Exists(StrictDigestKey) {
+		t.Fatal("放行时应删摘要，让任务下一轮必推进")
+	}
+	if err := mr.Set(StrictSetKey, a.String()); err != nil {
+		t.Fatal(err)
+	}
+	if err := mr.Set(StrictDigestKey, "d"); err != nil {
+		t.Fatal(err)
+	}
+	st.readErr = errors.New("read")
+	if got := svc.strictExcluded(ctx); got != nil {
+		t.Fatalf("读策略失败不摘: %v", got)
+	}
+	if mr.Exists(StrictDigestKey) {
+		t.Fatal("读策略失败放行时应删摘要")
 	}
 }

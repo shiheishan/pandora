@@ -435,4 +435,13 @@ func TestMembershipRemovedGrace(t *testing.T) {
 	if !s.Has(nodeA, 3) {
 		t.Fatalf("uid 3 在 v5 刚移出，仍在 removedGrace 内，应算名单内")
 	}
+	// 移出 → 加回 → 旧时刻已过 grace 后再移出：按新的移出时刻算
+	clk.Add(s.removedGrace() + time.Second)
+	send(mkRoster(nodeA, "v7", 3, 6))
+	clk.Add(s.removedGrace() + time.Second)
+	send(mkRoster(nodeA, "v8", 6))
+	send(mkRoster(nodeA, "v9", 7))
+	if !s.Has(nodeA, 3) {
+		t.Fatalf("uid 3 加回后再移出，应按新的移出时刻留 removedGrace")
+	}
 }

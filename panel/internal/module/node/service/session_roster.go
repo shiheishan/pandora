@@ -59,6 +59,7 @@ func (st *rosterState) noteRemoved(old, cur *NodeRoster, now time.Time, grace ti
 			delete(st.removed, b[j].UID)
 			j++
 		case j < len(b) && b[j].UID == a[i].UID:
+			delete(st.removed, b[j].UID)
 			i++
 			j++
 		default:

@@ -74,8 +74,8 @@ const (
 	StrictDigestKey = "node:devices_strict_digest"
 )
 
-// strictSetTTL 是超限集合的存活期：任务每分钟刷新，停跑 10 分钟后集合过期，名单回到不摘（各节点仍按设备数各自限）。
-// 摘要同样过期，任务恢复后会多推进一次，无害。
+// strictSetTTL 是超限集合的存活期：任务每分钟刷新；停跑 10 分钟后集合过期，此后重算的名单不再摘人（各节点仍按设备数
+// 各自限），但过期本身不触发重算，已推下去的名单要等下一次纪元推进；摘要同样过期，任务恢复后第一轮必推进一次。
 const strictSetTTL = 10 * time.Minute
 
 // OnlineDevice 是在线设备总览的一行（一份订阅）。
@@ -260,20 +260,31 @@ func (s *Service) OnlineDeviceCounts(ctx context.Context, subIDs []uuid.UUID) (m
 // strictExcluded 是 strict 模式下要从名单里摘掉的订阅：只读周期任务写下的集合（StrictSetKey）；loose 返回 nil。
 // 集合不存在（任务还没跑、已停跑）或 Redis 读不到时不摘：设备数限制不是安全边界，节点仍按下发的设备数各自限，
 // 不能因为 Redis 抖动把名单整轮算失败、阻断新流。
+//
+// 读失败（策略、集合、格式）而放行的这一轮，算出的名单与任务记下的不一致，而任务下一轮集合没变、不会推进：
+// 所以失败时尽力删掉摘要键，让任务下一轮必推进一次、把名单纠正回来（集合缺失是 redis.Nil，任务本来就会推进）。
 func (s *Service) strictExcluded(ctx context.Context) map[uuid.UUID]bool {
-	if s.rdb == nil || !s.devicePolicy(ctx).Strict() {
+	if s.rdb == nil || s.devSettings == nil {
+		return nil
+	}
+	p, err := s.devSettings.DevicePolicy(ctx)
+	if err != nil {
+		s.strictFailOpen(ctx, "读取设备限制策略失败，本轮名单不摘人", err)
+		return nil
+	}
+	if !p.Strict() {
 		return nil
 	}
 	v, err := s.rdb.Get(ctx, StrictSetKey).Result()
 	if err != nil {
 		if !errors.Is(err, redis.Nil) {
-			plog.From(ctx).Warn("读 strict 超限集合失败，本轮名单不摘人", zap.Error(err))
+			s.strictFailOpen(ctx, "读 strict 超限集合失败，本轮名单不摘人", err)
 		}
 		return nil
 	}
 	ids, err := parseStrictSet(v)
 	if err != nil {
-		plog.From(ctx).Warn("strict 超限集合格式不对，本轮名单不摘人", zap.Error(err))
+		s.strictFailOpen(ctx, "strict 超限集合格式不对，本轮名单不摘人", err)
 		return nil
 	}
 	if len(ids) == 0 {
@@ -284,6 +295,14 @@ func (s *Service) strictExcluded(ctx context.Context) map[uuid.UUID]bool {
 		out[id] = true
 	}
 	return out
+}
+
+// strictFailOpen 记 warn 并尽力删摘要键（删不掉只记日志：Redis 正坏着时会话层的纪元轮询也会全量重算）。
+func (s *Service) strictFailOpen(ctx context.Context, msg string, err error) {
+	plog.From(ctx).Warn(msg, zap.Error(err))
+	if derr := s.rdb.Del(ctx, StrictDigestKey).Err(); derr != nil {
+		plog.From(ctx).Warn("删 strict 摘要键失败", zap.Error(derr))
+	}
 }
 
 // formatStrictSet / parseStrictSet 是超限集合在 Redis 里的编码：排好序的 uuid 用逗号连起来，空集是空串。
