@@ -15,6 +15,10 @@ import (
 const (
 	orderLease  = IssueTimeout + time.Minute
 	issueBudget = 13 * time.Minute
+	// maxRunningIssues：同时在跑的签发单上限（旧实现是串行签）
+	maxRunningIssues = 2
+	// interruptedBackoff：订单因进程退出、任务丢失而中断时的重排间隔，不计连续失败
+	interruptedBackoff = 15 * time.Minute
 	dueBatch    = 50
 
 	// pauseAfterFailures 连续失败几次后暂停自动重试。
@@ -101,6 +105,8 @@ type failureOutcome struct {
 	// credRowVersion 是预检时读到的凭据版本：只在凭据没被改过时才标 error、拦下证书，
 	// 免得管理员刚换的新令牌被旧令牌的结论打回去
 	credRowVersion int64
+	// credID 是预检时用的凭据：签发期间证书可能被改到别的凭据，不能用落库时读到的证书值
+	credID uuid.UUID
 	// work 是这一单用的标识与密钥类型；签发期间被改过就补排一张（与成功路径一致）
 	work *orderWork
 }
@@ -150,7 +156,7 @@ func (s *Service) finishFailure(ctx context.Context, c repo.ClaimedOrder, f fail
 		credentialBlocked := false
 		if f.blockCredential {
 			m := truncate(f.detail, 500)
-			wrote, err := s.store.RecordCredentialVerdict(ctx, cert.DNSCredentialID, f.credRowVersion, repo.CredentialVerdict{
+			wrote, err := s.store.RecordCredentialVerdict(ctx, f.credID, f.credRowVersion, repo.CredentialVerdict{
 				Status: VerifyError, VerifyError: &m,
 			})
 			if err != nil {
@@ -158,7 +164,7 @@ func (s *Service) finishFailure(ctx context.Context, c repo.ClaimedOrder, f fail
 			}
 			if wrote {
 				credentialBlocked = true
-				if err := s.store.BlockCertificatesByCredential(ctx, cert.DNSCredentialID); err != nil {
+				if err := s.store.BlockCertificatesByCredential(ctx, f.credID); err != nil {
 					return err
 				}
 			}

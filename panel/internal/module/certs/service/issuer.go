@@ -59,9 +59,10 @@ func (s *Service) primaryTarget(cfg acmeConfig) caTarget {
 	return caTarget{CA: CALetsEncrypt, Directory: lego.LEDirectoryProduction}
 }
 
-// fallbackTarget 是备用 CA（ZeroSSL，要 EAB）；没启用或没配齐时为 nil（用户 10-08 定默认关）。
+// fallbackTarget 是备用 CA（ZeroSSL，要 EAB）；没启用、没配齐或用 staging 时为 nil（用户 10-08 定默认关）。
 func (s *Service) fallbackTarget(cfg acmeConfig) *caTarget {
-	if !cfg.ZeroSSLEnabled || cfg.ZeroSSLEABKID == "" || cfg.eabHMAC == "" {
+	// staging 是测试配置，超限也不切到备用 CA 的正式环境
+	if cfg.UseStaging || !cfg.ZeroSSLEnabled || cfg.ZeroSSLEABKID == "" || cfg.eabHMAC == "" {
 		return nil
 	}
 	return &caTarget{CA: CAZeroSSL, Directory: s.opts.ZeroSSLDirectory, eabKID: cfg.ZeroSSLEABKID, eabHMAC: cfg.eabHMAC}

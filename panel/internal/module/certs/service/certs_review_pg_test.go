@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -26,7 +27,7 @@ func TestCertsReviewPG(t *testing.T) {
 			t.Fatalf("rotate: %+v %v", rotated, err)
 		}
 		if err := e.svc.finishFailure(e.ctx, c, failureOutcome{code: "credential_rejected", detail: "旧令牌被拒",
-			blockCredential: true, credRowVersion: cred.Credential.RowVersion}); err != nil {
+			blockCredential: true, credID: cred.Credential.ID, credRowVersion: cred.Credential.RowVersion}); err != nil {
 			t.Fatal(err)
 		}
 		if v := e.scalar(t, `SELECT verify_status FROM dns_credentials WHERE id = ?`, cred.Credential.ID); v != "ok" {
@@ -40,7 +41,7 @@ func TestCertsReviewPG(t *testing.T) {
 		}
 		c2 := e.claim(t, cert.ID)
 		if err := e.svc.finishFailure(e.ctx, c2, failureOutcome{code: "credential_rejected", detail: "令牌被拒",
-			blockCredential: true, credRowVersion: rotated.Credential.RowVersion}); err != nil {
+			blockCredential: true, credID: cred.Credential.ID, credRowVersion: rotated.Credential.RowVersion}); err != nil {
 			t.Fatal(err)
 		}
 		if s := e.scalar(t, `SELECT status FROM certificates WHERE id = ?`, cert.ID); s != StatusBlockedCredential {
@@ -164,6 +165,58 @@ func TestCertsReviewPG(t *testing.T) {
 		if err := e.row(e.ctx, `SELECT count(*), count(*) FILTER (WHERE status = 'valid') FROM acme_accounts`).
 			Scan(&total, &valid); err != nil || total != 2 || valid != 1 {
 			t.Fatalf("accounts total=%d valid=%d err=%v, want a fresh registration next to the deactivated one", total, valid, err)
+		}
+	})
+
+	t.Run("a rejected preflight marks the credential it checked, not the one switched to", func(t *testing.T) {
+		e := newPGEnv(t)
+		credA := e.credential(t, "cf-a", cfToken)
+		credB := e.credential(t, "cf-b", cfToken)
+		cert := e.certificate(t, "switch", credA.Credential.ID, "switch.example.com")
+		other := e.certificate(t, "on-b", credB.Credential.ID, "on-b.example.com")
+		c := e.claim(t, cert.ID)
+		idB := credB.Credential.ID.String()
+		if _, err := e.svc.UpdateCertificate(e.ctx, cert.ID, CertificatePatch{DNSCredentialID: &idB}); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.svc.finishFailure(e.ctx, c, failureOutcome{code: "credential_rejected", detail: "A 的令牌被拒",
+			blockCredential: true, credID: credA.Credential.ID, credRowVersion: credA.Credential.RowVersion}); err != nil {
+			t.Fatal(err)
+		}
+		if v := e.scalar(t, `SELECT verify_status FROM dns_credentials WHERE id = ?`, credB.Credential.ID); v != "ok" {
+			t.Fatalf("credential B marked %v by A's verdict", v)
+		}
+		if v := e.scalar(t, `SELECT verify_status FROM dns_credentials WHERE id = ?`, credA.Credential.ID); v != "error" {
+			t.Fatalf("credential A = %v, want error", v)
+		}
+		if s := e.scalar(t, `SELECT status FROM certificates WHERE id = ?`, other.ID); s != StatusPending {
+			t.Fatalf("certificate on B blocked by A's verdict: %v", s)
+		}
+	})
+
+	t.Run("at most maxRunningIssues orders run at once", func(t *testing.T) {
+		e := newPGEnv(t)
+		cred := e.credential(t, "cf", cfToken)
+		var certs []Certificate
+		for i := range maxRunningIssues + 1 {
+			certs = append(certs, e.certificate(t, fmt.Sprintf("cap-%d", i), cred.Credential.ID, fmt.Sprintf("cap%d.example.com", i)))
+		}
+		for _, cert := range certs[:maxRunningIssues] {
+			_ = e.claim(t, cert.ID)
+		}
+		var orderID uuid.UUID
+		if err := e.row(e.ctx, `SELECT id FROM certificate_orders WHERE certificate_id = ? AND state = 'queued'`,
+			certs[maxRunningIssues].ID).Scan(&orderID); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok, err := e.svc.claimOrder(e.ctx, orderID); err != nil || ok {
+			t.Fatalf("claim beyond the cap: ok=%v err=%v", ok, err)
+		}
+		if err := e.exec(e.ctx, `UPDATE certificate_orders SET lease_until = now() - interval '1 second' WHERE state = 'running'`); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok, err := e.svc.claimOrder(e.ctx, orderID); err != nil || !ok {
+			t.Fatalf("expired leases must not hold the cap: ok=%v err=%v", ok, err)
 		}
 	})
 }

@@ -159,7 +159,7 @@ func (e *pgEnv) claim(t *testing.T, certID uuid.UUID) repo.ClaimedOrder {
 		certID).Scan(&orderID); err != nil {
 		t.Fatalf("queued order: %v", err)
 	}
-	c, ok, err := e.svc.store.ClaimOrder(e.ctx, orderID, orderLease)
+	c, ok, err := e.svc.claimOrder(e.ctx, orderID)
 	if err != nil || !ok {
 		t.Fatalf("claim order %s: ok=%v err=%v", orderID, ok, err)
 	}

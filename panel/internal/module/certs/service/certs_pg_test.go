@@ -151,7 +151,7 @@ func TestCertsPG(t *testing.T) {
 					cert.ID).Scan(&orderID); err != nil {
 					return
 				}
-				c, ok, err := e.svc.store.ClaimOrder(e.ctx, orderID, orderLease)
+				c, ok, err := e.svc.claimOrder(e.ctx, orderID)
 				if err != nil {
 					t.Error(err)
 					return
@@ -171,7 +171,7 @@ func TestCertsPG(t *testing.T) {
 		if err := e.exec(e.ctx, `UPDATE certificate_orders SET lease_until = now() - interval '1 second' WHERE id = ?`, first.ID); err != nil {
 			t.Fatal(err)
 		}
-		c2, ok, err := e.svc.store.ClaimOrder(e.ctx, first.ID, orderLease)
+		c2, ok, err := e.svc.claimOrder(e.ctx, first.ID)
 		if err != nil || ok || c2.ID != uuid.Nil {
 			t.Fatalf("expired lease must not be re-claimed via ClaimOrder: %+v ok=%v err=%v", c2, ok, err)
 		}
@@ -183,8 +183,8 @@ func TestCertsPG(t *testing.T) {
 		if state != "failed" || code == nil || *code != "interrupted" {
 			t.Fatalf("patrol must fail interrupted order: state=%s code=%v", state, code)
 		}
-		if f := e.scalar(t, `SELECT consecutive_failures FROM certificates WHERE id = ?`, cert.ID); f.(int64) != 1 {
-			t.Fatalf("consecutive_failures = %v", f)
+		if f := e.scalar(t, `SELECT consecutive_failures FROM certificates WHERE id = ?`, cert.ID); f.(int64) != 0 {
+			t.Fatalf("interrupted orders must not count as failures, consecutive_failures = %v", f)
 		}
 		if err := e.svc.finishFailure(e.ctx, first, failureOutcome{code: "x", countsAsFailure: true}); !errors.Is(err, errLeaseLost) {
 			t.Fatalf("old owner must not write results, got %v", err)

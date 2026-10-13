@@ -85,8 +85,9 @@ type store interface {
 	// 按 lease_until, id 取前 limit 张。
 	ExpiredOrders(ctx context.Context, limit int) ([]repo.ClaimedOrder, error)
 	// ClaimOrder 认领一张 queued 的订单：转 running、attempt + 1、lease_until = now() + lease、
-	// started_at = now()。不是 queued（已被认领、已结束、不存在）时 ok=false。
-	ClaimOrder(ctx context.Context, orderID uuid.UUID, lease time.Duration) (repo.ClaimedOrder, bool, error)
+	// started_at = now()。不是 queued（已被认领、已结束、不存在）或在跑的单已达 maxRunning 时 ok=false。
+	// 必须在事务里调。
+	ClaimOrder(ctx context.Context, orderID uuid.UUID, lease time.Duration, maxRunning int) (repo.ClaimedOrder, bool, error)
 	// LockOwnedOrder 以 FOR UPDATE 锁住订单并确认它仍是 running 且 attempt 未变。
 	LockOwnedOrder(ctx context.Context, orderID uuid.UUID, attempt int) (bool, error)
 	// OrderWork 读签发一张订单要的证书侧信息。

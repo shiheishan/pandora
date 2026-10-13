@@ -40,8 +40,8 @@ func (s *Service) Patrol(ctx context.Context) (PatrolResult, error) {
 		return out, err
 	}
 	for _, c := range expired {
-		if err := s.finishFailure(ctx, c, failureOutcome{code: "interrupted", countsAsFailure: true,
-			detail: "签发任务中断（进程退出或任务丢失），这一单作废"}); err != nil {
+		if err := s.finishFailure(ctx, c, failureOutcome{code: "interrupted", retryIn: interruptedBackoff,
+			detail: "签发任务中断（进程退出或任务丢失），这一单作废，稍后重排"}); err != nil {
 			if errors.Is(err, errLeaseLost) {
 				continue
 			}

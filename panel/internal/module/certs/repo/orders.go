@@ -130,10 +130,23 @@ func (r *Repo) ExpiredOrders(ctx context.Context, limit int) ([]ClaimedOrder, er
 	return rows, nil
 }
 
-// ClaimOrder 认领一张 queued 的订单；没认领到 ok=false。
-func (r *Repo) ClaimOrder(ctx context.Context, orderID uuid.UUID, lease time.Duration) (ClaimedOrder, bool, error) {
+// ClaimOrder 认领一张 queued 的订单；没认领到（已被认领、已结束，或在跑的单已达 maxRunning）ok=false。
+// 必须在事务里调：先取事务级咨询锁把并发认领排成队，再数租约未过期的在跑单，免得两边同时数到 N-1 都认领。
+func (r *Repo) ClaimOrder(ctx context.Context, orderID uuid.UUID, lease time.Duration, maxRunning int) (ClaimedOrder, bool, error) {
+	conn := r.d.Conn(ctx)
+	if err := conn.Exec(`SELECT pg_advisory_xact_lock(hashtextextended('certs:claim', 0))`).Error; err != nil {
+		return ClaimedOrder{}, false, err
+	}
+	var running int64
+	if err := conn.Raw(`SELECT count(*) FROM certificate_orders WHERE state = 'running' AND lease_until > now()`).
+		Scan(&running).Error; err != nil {
+		return ClaimedOrder{}, false, err
+	}
+	if running >= int64(maxRunning) {
+		return ClaimedOrder{}, false, nil
+	}
 	var row ClaimedOrder
-	res := r.d.Conn(ctx).Raw(`
+	res := conn.Raw(`
 		UPDATE certificate_orders
 		   SET state = 'running', attempt = attempt + 1, lease_until = now() + make_interval(secs => ?),
 		       started_at = now(), updated_at = now()

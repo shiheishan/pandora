@@ -201,6 +201,10 @@ func (s *Service) UpdateCertificate(ctx context.Context, id uuid.UUID, p Certifi
 			if errors.Is(err, repo.ErrDuplicate) {
 				return errs.Invalid(map[string]string{"name": "已有同名的证书"})
 			}
+			if errors.Is(err, repo.ErrForeignKey) {
+				// 选的凭据在校验后被并发删掉了
+				return errs.Invalid(map[string]string{"dns_credential_id": "选一个 DNS 凭据"})
+			}
 			return err
 		}
 		if reissue && (cur.Status == StatusActive || cur.Status == StatusPending) {
