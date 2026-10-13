@@ -9,6 +9,7 @@ import (
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/module/node/model"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 )
 
@@ -192,6 +193,7 @@ func (s *Service) revokeServerIdentities(ctx context.Context, serverID uuid.UUID
 	if err != nil {
 		return nil, 0, err
 	}
+	s.serverChanged(ctx, realtime.OpUpdate, serverID)
 	tx.AfterCommit(ctx, "node:tombstone:"+serverID.String(), func(context.Context) {
 		s.tombstone(serverID, tombstoneReason)
 	})

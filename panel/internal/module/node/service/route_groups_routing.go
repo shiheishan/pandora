@@ -9,6 +9,7 @@ import (
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/module/node/repo"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/google/uuid"
 )
 
@@ -228,6 +229,7 @@ func (s *Service) SetRouteGroupMembers(ctx context.Context, id uuid.UUID, rowVer
 		if err := s.repo.BumpNodeRowVersions(ctx, changed); err != nil {
 			return err
 		}
+		s.nodesChanged(ctx, changed)
 		out.AffectedNodes, err = s.repo.LiveNodeCount(ctx, changed)
 		if err != nil {
 			return err
@@ -311,6 +313,7 @@ func (s *Service) SetNodeRouteGroups(ctx context.Context, nodeID uuid.UUID, rowV
 		if err := s.repo.BumpNodeRowVersions(ctx, []uuid.UUID{nodeID}); err != nil {
 			return err
 		}
+		s.nodeChanged(ctx, realtime.OpUpdate, nodeID)
 		if len(changed) > 0 && n.ServingStatus != NodeRetired {
 			s.MarkConfigChanged(ctx)
 			out.AffectedNodes = 1
