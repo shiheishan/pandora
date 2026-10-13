@@ -22,6 +22,10 @@ on:
       - "panel/tests/auth_e2e.sh"
       - "panel/tests/password_reset_e2e.sh"
       - "panel/tests/portal_staff_e2e.sh"
+      - "panel/tests/node_smoke_e2e.sh"
+      - "panel/tests/expiry_e2e.sh"
+      - "pdnd/panel/**"
+      - "pdnd/release/nodesim/**"
   pull_request:
     paths:
       - "panel/internal/pkg/**"
@@ -38,6 +42,10 @@ on:
       - "panel/tests/auth_e2e.sh"
       - "panel/tests/password_reset_e2e.sh"
       - "panel/tests/portal_staff_e2e.sh"
+      - "panel/tests/node_smoke_e2e.sh"
+      - "panel/tests/expiry_e2e.sh"
+      - "pdnd/panel/**"
+      - "pdnd/release/nodesim/**"
 
 permissions:
   contents: read
@@ -235,5 +243,109 @@ jobs:
           if [ "$failed" -ne 0 ]; then
             echo "::group::serve.log"; tail -n 300 "$RUNNER_TEMP/serve.log"; echo "::endgroup::"
             echo "::group::worker.log"; tail -n 100 "$RUNNER_TEMP/worker.log"; echo "::endgroup::"
+            exit 1
+          fi
+
+  node-e2e:
+    name: Node channel E2E (nodesim smoke, expiry)
+    # 单独一个 job：到期扫描要等几分钟，放进 e2e job 会拖慢鉴权那几个脚本
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: pandora
+          POSTGRES_PASSWORD: pandora
+          POSTGRES_DB: pandora_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pandora"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:8
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      PANDORA_ENV: development
+      PANDORA_DATABASE_URL: postgres://pandora:pandora@127.0.0.1:5432/pandora_e2e?sslmode=disable
+      PANDORA_DATABASE_MIGRATION_URL: postgres://pandora:pandora@127.0.0.1:5432/pandora_e2e?sslmode=disable
+      PANDORA_REDIS_URL: redis://127.0.0.1:6379/0
+      # 节点 gRPC 只在配了对外主机时监听；模拟器从本机连，证书 SAN 是这个 IP
+      PANDORA_GRPC_NODE_PUBLIC_HOST: 127.0.0.1
+      # 200 个用户都从 127.0.0.1 注册、登录、拉订阅，管理员一分钟里开 200 张单：放宽按 IP、按账号、认证三种限流
+      # （每条凭据每小时 60 次的拉取上限不放宽，冒烟脚本的拉取次数远低于它）
+      PANDORA_RATELIMIT_IP_PER_MIN: "100000"
+      PANDORA_RATELIMIT_ACCOUNT_PER_MIN: "100000"
+      PANDORA_RATELIMIT_AUTH_PER_MIN: "100000"
+      NODE_SMOKE_E2E_DISPOSABLE: YES_DELETE_FIXTURES
+      EXPIRY_E2E_DISPOSABLE: YES_DELETE_FIXTURES
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: panel/go.mod
+          cache-dependency-path: panel/go.sum
+      - name: Build pandora
+        run: go build -mod=readonly -o "$RUNNER_TEMP/pandora" ./cmd/pandora
+      # 模拟器在 pdnd 模块里（用真实的节点客户端 pdnd/panel），按 pdnd 的 go.mod 构建；只编它用到的几个依赖，不开缓存
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: pdnd/go.mod
+          cache: false
+      - name: Build nodesim
+        working-directory: pdnd
+        run: go build -mod=readonly -o "$RUNNER_TEMP/nodesim" ./release/nodesim
+      - name: Run node e2e scripts
+        run: |
+          # CI 一次性的假密钥与管理员口令，只经环境变量与标准输入传
+          export PANDORA_SECRETS_MASTER_KEY="$(head -c 32 /dev/urandom | base64)"
+          export PANDORA_AUTH_PUBLIC_JWT_SECRET="$(head -c 32 /dev/urandom | base64)"
+          export PANDORA_AUTH_ADMIN_JWT_SECRET="$(head -c 32 /dev/urandom | base64)"
+          export ADMIN_EMAIL="admin-node-e2e@example.test"
+          export ADMIN_PASS="E2e!Admin-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+          export NODESIM="$RUNNER_TEMP/nodesim"
+          export SERVE_LOG="$RUNNER_TEMP/serve.log"
+          bin="$RUNNER_TEMP/pandora"
+          "$bin" migrate up
+          printf '%s\n' "$ADMIN_PASS" | "$bin" admin create --email "$ADMIN_EMAIL" --password-stdin
+          "$bin" admin has-admin
+
+          export PSQL="$RUNNER_TEMP/psql.sh"
+          printf '#!/usr/bin/env bash\nexec psql "$PANDORA_DATABASE_URL" "$@"\n' > "$PSQL"
+          chmod +x "$PSQL"
+
+          "$bin" serve > "$SERVE_LOG" 2>&1 &
+          serve_pid=$!
+          "$bin" worker > "$RUNNER_TEMP/worker.log" 2>&1 &
+          worker_pid=$!
+          ok=
+          for _ in $(seq 1 50); do
+            if curl -fsS http://127.0.0.1:9000/readyz >/dev/null && curl -fsS http://127.0.0.1:9001/readyz >/dev/null; then ok=1; break; fi
+            sleep 0.2
+          done
+          test -n "$ok" || { cat "$SERVE_LOG"; exit 1; }
+
+          failed=0
+          for s in node_smoke_e2e.sh expiry_e2e.sh; do
+            echo "::group::$s"
+            if bash "tests/$s"; then echo "$s 通过"; else echo "::error::$s 失败"; failed=$((failed+1)); fi
+            echo "::endgroup::"
+          done
+
+          kill -TERM "$serve_pid" "$worker_pid"
+          wait "$serve_pid" || true
+          wait "$worker_pid" || true
+          if [ "$failed" -ne 0 ]; then
+            echo "::group::serve.log"; tail -n 400 "$SERVE_LOG"; echo "::endgroup::"
+            echo "::group::worker.log"; tail -n 150 "$RUNNER_TEMP/worker.log"; echo "::endgroup::"
             exit 1
           fi
