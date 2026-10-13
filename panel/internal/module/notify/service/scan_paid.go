@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/aegispanel/aegis/internal/module/notify/repo"
+	ordersvc "github.com/aegispanel/aegis/internal/module/order/service"
 	"github.com/google/uuid"
 )
 
@@ -44,7 +45,7 @@ func (s *Service) scanPaid(ctx context.Context, now time.Time, loc *time.Locatio
 		if !ok {
 			continue
 		}
-		items = append(items, scanItem{
+		it := scanItem{
 			UserID: p.UserID,
 			Code:   TemplateOrderPaid,
 			Vars: map[string]string{
@@ -53,7 +54,17 @@ func (s *Service) scanPaid(ctx context.Context, now time.Time, loc *time.Locatio
 				"expires_at": noticeTime(sub.PeriodEnd, loc),
 			},
 			Key: "order-paid:" + p.OrderID.String(),
-		})
+		}
+		// 流量包订单不是「套餐已开通」，换流量包的文案（用户 10-13 定）
+		if p.Kind == ordersvc.KindAddon && p.TrafficBytes != nil {
+			it.Code = TemplatePackPaid
+			it.Vars = map[string]string{
+				"order_no": p.OrderNo,
+				"plan":     sub.PlanID.String(),
+				"traffic":  humanBytes(*p.TrafficBytes),
+			}
+		}
+		items = append(items, it)
 		owner = append(owner, i)
 	}
 	if err := s.resolvePlanNames(ctx, items); err != nil {

@@ -16,6 +16,7 @@ describe('消息', () => {
 
   it('按 code 推导去处，不认识的不跳', () => {
     expect(notificationTarget('order.paid')).toBe('/orders')
+    expect(notificationTarget('order.pack_paid')).toBe('/orders')
     expect(notificationTarget('ticket.replied')).toBe('/tickets')
     expect(notificationTarget('subscription.expiring')).toBe('/subs')
     expect(notificationTarget('quota.warning')).toBe('/subs')

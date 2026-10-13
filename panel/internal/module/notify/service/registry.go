@@ -20,6 +20,7 @@ const (
 	TemplateSubscriptionRecall   = "subscription.recall"
 	TemplateQuotaWarning         = "quota.warning"
 	TemplateOrderPaid            = "order.paid"
+	TemplatePackPaid             = "order.pack_paid"
 	TemplateTicketReplied        = "ticket.replied"
 )
 
@@ -235,6 +236,25 @@ var templateDefs = []templateDef{
 		Allowed:     []string{"order_no", "plan", "expires_at"},
 		Subject:     "支付成功",
 		Body:        "订单 {{order_no}} 已支付，「{{plan}}」已开通，有效期至 {{expires_at}}。",
+	},
+	// ---- 流量包支付成功：同上，流量包订单用这一套 ----
+	{
+		Code:        TemplatePackPaid,
+		Channel:     ChannelInApp,
+		Category:    categoryTransactional,
+		Description: "流量包订单支付成功后发一条（支付成功后几分钟内由通知扫描写入）",
+		Allowed:     []string{"order_no", "traffic", "plan"},
+		Subject:     "支付成功",
+		Body:        "订单 {{order_no}} 已支付成功，{{traffic}} 流量包已加到「{{plan}}」。",
+	},
+	{
+		Code:        TemplatePackPaid,
+		Channel:     ChannelTelegram,
+		Category:    categoryTransactional,
+		Description: "流量包订单支付成功后发一条给已绑定 Telegram 的用户（支付成功后几分钟内由通知扫描写入）",
+		Allowed:     []string{"order_no", "traffic", "plan"},
+		Subject:     "支付成功",
+		Body:        "订单 {{order_no}} 已支付，{{traffic}} 流量包已加到「{{plan}}」。",
 	},
 	// ---- 工单回复：客服回复工单时由 support 经 NotifyUser 写 ----
 	{
