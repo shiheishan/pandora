@@ -41,6 +41,7 @@ type Config struct {
 	Secrets       Secrets      `mapstructure:"secrets"`
 	Log           Log          `mapstructure:"log"`
 	Subscription  Subscription `mapstructure:"subscription"`
+	Pdnd          Pdnd         `mapstructure:"pdnd"`
 }
 
 type HTTP struct {
@@ -163,4 +164,10 @@ type Singbox struct {
 	GeoIPURLPrefix   string `mapstructure:"geoip_url_prefix"`
 	// BlockAds 为真时按广告域名规则集拦截
 	BlockAds bool `mapstructure:"block_ads"`
+}
+
+// Pdnd 是节点端一键安装的分发配置。
+type Pdnd struct {
+	// DistDir 是节点端二进制 pandora-native-linux-{amd64,arm64} 的存放目录（发布包的 pdnd-dist/），绝对路径
+	DistDir string `mapstructure:"dist_dir"`
 }

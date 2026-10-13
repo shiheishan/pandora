@@ -54,6 +54,9 @@ type Service struct {
 	subs     ServingSubscriptions
 	users    ServingUsers
 	versions PlanVersions
+
+	// 节点端一键安装的分发（pdnd_dist.go 的 UsePdndDist）：二进制目录与写进安装脚本的面板地址
+	pdnd pdndDist
 }
 
 // New 构造 node service。rdb 用于下发纪元（epoch.go），为 nil 时只跳过通知。

@@ -137,6 +137,8 @@ func defaults(v *viper.Viper) {
 	v.SetDefault("subscription.singbox.geosite_url_prefix", "")
 	v.SetDefault("subscription.singbox.geoip_url_prefix", "")
 	v.SetDefault("subscription.singbox.block_ads", false)
+
+	v.SetDefault("pdnd.dist_dir", "/opt/pandora/pdnd-dist")
 }
 
 func envVarName(configKey string) string {

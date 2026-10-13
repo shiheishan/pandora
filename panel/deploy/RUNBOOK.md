@@ -757,38 +757,19 @@ QUIC 入站的 UDP 缓冲偏小（UDP 转发的出站 socket 受同一上限）�
 
 ### 12.4 接入装到一半卡住
 
-一键安装脚本的接入是三步：`enrollment begin`（在节点机生成身份、向面板申请）→ 写配置与 unit → `enrollment commit`（带二进制、配置、unit 的哈希交给面板）。中途断了，节点机上留一个日志文件 `/etc/pandora-native/identity.json.enrollment.pending.json`，面板上这次接入的状态是 `pending`、`committed`、`expired`、`aborted` 之一，节点在 `bootstrapping` 或 `bootstrap_failed`。
+后台节点详情「签发一键安装令牌」给出的命令是 `curl -fsSL '<面板地址>/pdnd/install.sh' | sudo bash -s -- --panel '<host:port>' --ca-sha256 'sha256:<指纹>' --token '<令牌>'`。脚本的顺序是：校验参数 → 下载二进制并核对校验和 → 用新二进制 `pandora-native enroll`（按 CA 指纹钉住面板，令牌经 stdin 交给它）→ 写配置与 unit 的临时文件 → `validate-install` 校验 → 换上二进制、配置、unit → 调系统参数 → `systemctl enable` 并重启。
 
-先看状态（节点机，root）：
-
-```bash
-pandora-native enrollment status --identity /etc/pandora-native/identity.json
-```
-
-它向面板问一次并打印 `enrollment state: …`；`committed` 时顺手把待定身份转正为 `identity.json`（写文件）。
-
-| 状态 | 意思 | 处理 |
-|---|---|---|
-| `committed` | 面板已收下，只是本机没装完（commit 的响应丢了、之后一步失败） | **前滚，不要 abort**：重跑安装命令；令牌过期就在后台节点详情重新「签发一键安装令牌」。已有身份时脚本会沿用，不会再注册一次 |
-| `pending` 且没过期 | 在等 commit，面板上这次接入的期限是 15 分钟与令牌有效期中较短的那个 | 重跑安装命令；确定不要了就 abort（下一行） |
-| `expired` 或 `aborted` | 已经作废（`expired` 是超过了期限） | 日志文件是作废的，重跑安装命令之前先把它挪走：**【写】** `mv /etc/pandora-native/identity.json.enrollment.pending.json /root/`，再在后台签发新令牌，用新令牌重装。不挪的话 `enrollment commit` 会报 `enrollment is not pending`，换了节点名重装则报 `existing enrollment journal belongs to a different request` |
-
-确定放弃一次还没 commit 的接入：
-
-```bash
-pandora-native enrollment abort --identity /etc/pandora-native/identity.json --reason "<原因>"
-```
-
-- **【写】** abort 只用于 begin 之后、commit 之前。面板上这次接入变 `aborted`，节点从 `bootstrapping` 回到 `bootstrap_failed`，可以重新签发令牌再装。
-- 已经 `committed` 的接入 abort 会被面板拒绝（`terminal enrollment cannot be aborted`），这时走前滚。
-- 安装脚本自己的失败处理：commit 之前出错，它会自己 abort 并把二进制、配置、unit 回滚到上一版；一旦面板已经 commit（或日志里记了 `commit_attempted`），它保留现场、提示按前滚恢复，不会回滚。
-- 令牌错误：begin 被拒时屏幕上是 `enrollment begin rejected (HTTP 401)`，面板的原因是 `bootstrap token is invalid or expired`（令牌过期、已用完，或 `--name` 与签发令牌时填的节点名不一致）；`node is not in an enrollable lifecycle state`（409）是节点不在 `draft`、`provisioning`、`bootstrap_failed` 这几种可接入的状态。都在后台重新签发令牌。
-- 身份文件的路径以安装器写的 `/etc/pandora-native/identity.json` 为准，二进制的缺省路径（`/var/lib/pandora-native/identity.json`）不是它。
+- **接入之前失败**（参数、下载、校验和、`enroll` 被拒）：机器上原有的安装没动，屏幕最后一行是「安装失败，机器上原有的安装没有改动」。网络中断造成的 `enroll` 失败，用同一条命令重跑即可：身份目录里的接入日志（`/var/lib/pandora-native/identity/` 下）让同一令牌原样重发上次的请求，面板幂等地返回同一张证书。令牌过期或已用过（`enroll failed: 接入请求失败…`，面板拒绝令牌）就在后台重新签发。
+- **接入之后失败**（`validate-install` 不过、服务起不来）：屏幕上是「已接入面板，但安装没有完成」。新身份已经取代了旧身份，旧进程会收到吊销后停止重连。处理掉报错后，在后台重新签发令牌重跑安装命令。
+- **重装、升级**：直接用新令牌重跑安装命令。新身份取代旧身份，二进制、unit 换新，`panel.address` 改成命令里的值，配置里的其他键原样保留；服务随后重启。
+- 指纹不符（`面板证书链里没有指纹匹配的 CA`）：命令里的 `--ca-sha256` 与面板 CA 不一致，或者 `--panel` 指到了别的服务，按后台给的命令原样复制。
+- 已有配置的 `panel.identity_dir` 不是缺省的 `/var/lib/pandora-native/identity`：脚本拒绝继续，改回缺省或删掉这一项再跑。
+- 身份目录 `/var/lib/pandora-native/identity/`（`ca.pem`、`cert.pem`、`key.pem`、`server_id`）属 `pandora` 用户、0700；`key.pem` 是私钥，不要贴出来。配置 `/etc/pandora-native/config.json` 属 `root:pandora`、0640，里面没有秘密。
 
 ### 什么时候升级处理
 
 - 端口确实空闲，节点仍长时间报 `port_in_use` 或 `not_started`：带上节点 id、`ss -lntup` 输出和最近 200 行 `journalctl -u pandora-native`。
-- 接入卡在 `committed` 与本机状态对不上、`enrollment status` 本身报错：带上它的完整输出和面板 `node.log` 里含这个节点 id 的行（日志文件里有私钥和运行令牌，不要贴）。
+- 同一令牌重跑 `enroll` 仍然失败、或新令牌也被拒：带上安装脚本的完整输出（里面不含令牌）和面板日志里含这台服务器 id 的行；身份目录里有私钥，不要贴。
 
 ---
 

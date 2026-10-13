@@ -328,3 +328,23 @@ func TestGRPCNodeAddrInvalid(t *testing.T) {
 		t.Fatalf("应拒绝无冒号的 addr: %v", err)
 	}
 }
+
+// 节点端分发目录：缺省是发布包装到的位置，部署脚本经 PANDORA_PDND_DIST_DIR 改；只收绝对路径。
+func TestPdndDistDir(t *testing.T) {
+	setMinimalValidEnv(t)
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Pdnd.DistDir != "/opt/pandora/pdnd-dist" {
+		t.Fatalf("缺省 %q", cfg.Pdnd.DistDir)
+	}
+	t.Setenv("PANDORA_PDND_DIST_DIR", "/srv/pandora/pdnd-dist")
+	if cfg, err = Load(""); err != nil || cfg.Pdnd.DistDir != "/srv/pandora/pdnd-dist" {
+		t.Fatalf("环境变量覆盖：%+v %v", cfg, err)
+	}
+	t.Setenv("PANDORA_PDND_DIST_DIR", "pdnd-dist")
+	if _, err := Load(""); err == nil || !strings.Contains(err.Error(), "pdnd.dist_dir") {
+		t.Fatalf("应拒绝相对路径: %v", err)
+	}
+}

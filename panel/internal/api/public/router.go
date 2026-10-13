@@ -109,14 +109,6 @@ func NewRouter(d Deps) http.Handler {
 		d.Subscription.AttachRealtime(d.Realtime)
 	}
 
-	// Pandora NativeCore 一键安装。字面量 /pdnd 优先于上面那条通配订阅路由。
-	// 不放在 /v1 下：这些是给 curl | sh 用的，路径越短越不容易抄错。
-	r.Route("/pdnd", func(r chi.Router) {
-		r.Get("/install.sh", h.pdndInstallScript)
-		r.Get("/bin/{name}", h.pdndBinary)
-		r.Get("/sha256/{name}", h.pdndChecksum)
-	})
-
 	r.Route("/v1", func(r chi.Router) {
 		// --- 认证入口：额外收紧限流（SEC-005 撞库防护）---
 		r.Group(func(r chi.Router) {
