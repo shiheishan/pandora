@@ -128,7 +128,7 @@ func TestRetryAfterHeader(t *testing.T) {
 func TestConcurrencyRejectsWhenFull(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	e := gin.New()
-	e.Use(RequestID(zap.NewNop()), Errors(), Concurrency(1))
+	e.Use(RequestID(zap.NewNop()), Errors(), Concurrency(1, nil))
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	e.GET("/slow", func(c *gin.Context) {
@@ -231,5 +231,39 @@ func TestRequestIDSetsReqMeta(t *testing.T) {
 	w, _ := do(t, e, http.MethodGet, "/m", "", map[string]string{"User-Agent": "probe-ua"})
 	if !strings.Contains(w.Body.String(), "probe-ua") || !strings.Contains(w.Body.String(), "192.0.2.1") {
 		t.Fatalf("reqmeta missing: %s", w.Body.String())
+	}
+}
+
+func TestConcurrencyExemptBypassesLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	e := gin.New()
+	e.Use(RequestID(zap.NewNop()), Errors(), Concurrency(1, func(c *gin.Context) bool {
+		return strings.HasSuffix(c.Request.URL.Path, "/events")
+	}))
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	e.GET("/slow", func(c *gin.Context) {
+		close(entered)
+		<-release
+		NoContent(c)
+	})
+	e.GET("/v1/events", func(c *gin.Context) { NoContent(c) })
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		do(t, e, http.MethodGet, "/slow", "", nil)
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first request never entered")
+	}
+	w, _ := do(t, e, http.MethodGet, "/v1/events", "", nil)
+	close(release)
+	wg.Wait()
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("exempt request got %d", w.Code)
 	}
 }

@@ -4,6 +4,7 @@
 // （UPDATE … WHERE status = 旧状态，影响 1 行才继续），再在同一事务里调用；
 // 重复调用 Release/Capture 会吃掉别的订单的预留。
 // 本文件内不开事务，也不先读后写（ReserveStock 在 UPDATE 未命中后用 StockLimited 区分原因）。
+// 库存变化在调用方事务提交后推 plans.changed。
 package service
 
 import (
@@ -13,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 )
 
 func validateStockQty(qty int) error {
@@ -34,6 +36,7 @@ func (s *Service) ReserveStock(ctx context.Context, planID uuid.UUID, qty int) (
 		return false, catalogErr(err)
 	}
 	if ok {
+		s.catalogChanged(ctx, rtTablePlans, realtime.OpUpdate, planID)
 		return true, nil
 	}
 	limited, found, err := s.repo.StockLimited(ctx, planID)
@@ -63,6 +66,7 @@ func (s *Service) ReleaseStock(ctx context.Context, planID uuid.UUID, qty int) e
 	if !ok {
 		return errs.Wrap(errs.Internal, errStockLost)
 	}
+	s.catalogChanged(ctx, rtTablePlans, realtime.OpUpdate, planID)
 	return nil
 }
 
@@ -80,5 +84,6 @@ func (s *Service) CaptureStock(ctx context.Context, planID uuid.UUID, qty int) e
 	if !ok {
 		return errs.Wrap(errs.Internal, errStockLost)
 	}
+	s.catalogChanged(ctx, rtTablePlans, realtime.OpUpdate, planID)
 	return nil
 }

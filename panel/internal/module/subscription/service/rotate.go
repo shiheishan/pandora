@@ -8,6 +8,7 @@ import (
 
 	"github.com/aegispanel/aegis/internal/module/subscription/model"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 )
 
 // rotateReason 是换链接时写在旧凭据上的吊销原因。
@@ -108,8 +109,12 @@ func (s *Service) AdminRotate(ctx context.Context, subID uuid.UUID, reason strin
 func (s *Service) rotateLocked(ctx context.Context, sub model.Subscription, actor Actor, source string) error {
 	now := s.clock()
 	// 节点身份（proxy_uuid）会一起换，宽限期内旧链接仍能把新的节点身份交给泄露方，故 grace 传 nil、立即失效。
-	if _, err := s.repo.RevokeActiveCredentials(ctx, sub.ID, rotateReason, now, nil); err != nil {
+	revoked, err := s.repo.RevokeActiveCredentials(ctx, sub.ID, rotateReason, now, nil)
+	if err != nil {
 		return subErr(err)
+	}
+	for _, credID := range revoked {
+		s.rtChanged(ctx, tableCredentials, realtime.OpUpdate, credID, sub.UserID)
 	}
 	if err := s.issueCredential(ctx, sub); err != nil {
 		return err
@@ -121,6 +126,7 @@ func (s *Service) rotateLocked(ctx context.Context, sub model.Subscription, acto
 	if id == uuid.Nil {
 		return ErrNotFound
 	}
+	s.rtChanged(ctx, tableSubscriptions, realtime.OpUpdate, sub.ID, sub.UserID)
 	from := sub.Status
 	if err := s.writeEvent(ctx, sub.ID, EventLinkRotated, &from, sub.Status, actor, nil, map[string]any{"source": source}); err != nil {
 		return err

@@ -41,14 +41,14 @@ func TestUpdateNodeRuntimesReasonNodeScoped(t *testing.T) {
 	for i, s := range steps {
 		at := base.Add(time.Duration(i) * time.Minute)
 		ref := s.ref
-		n, err := r.UpdateNodeRuntimes(ctx, sS, []NodeRuntimeRow{
+		ids, err := r.UpdateNodeRuntimes(ctx, sS, []NodeRuntimeRow{
 			{NodeID: n1, Status: "degraded", Reason: sessStr(s.reason), ReasonNodeID: &ref},
 		}, at)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if n != 1 {
-			t.Fatalf("%s：期望写 1 行，得到 %d", s.what, n)
+		if len(ids) != 1 || ids[0] != n1 {
+			t.Fatalf("%s：期望写 [%v]，得到 %v", s.what, n1, ids)
 		}
 		assertNodeRuntime(t, d, ctx, n1, sessStr("degraded"), sessStr(s.reason), s.want, at)
 	}

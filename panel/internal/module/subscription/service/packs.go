@@ -11,6 +11,7 @@ import (
 	"github.com/aegispanel/aegis/internal/module/subscription/model"
 	"github.com/aegispanel/aegis/internal/module/subscription/repo"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 )
 
 // maxPackBytes 是一笔流量包的上限（1 PiB），与 catalog 流量包的上限一致；后台加流量另有 10 TiB 的上限（admin.go）。
@@ -73,6 +74,7 @@ func (s *Service) GrantTrafficPack(ctx context.Context, in PackGrant) (Pack, err
 			}
 			return subErr(err)
 		}
+		s.rtChanged(ctx, tablePackGrants, realtime.OpInsert, g.ID, in.UserID)
 		if in.SubscriptionID != nil {
 			s.notifyRoster(ctx, *in.SubscriptionID)
 		}
@@ -181,6 +183,9 @@ func (s *Service) movePacks(ctx context.Context, userID uuid.UUID, from *uuid.UU
 	}
 	if err := s.repo.AttachPackGrants(ctx, ids, to); err != nil {
 		return 0, subErr(err)
+	}
+	for _, id := range ids {
+		s.rtChanged(ctx, tablePackGrants, realtime.OpUpdate, id, userID)
 	}
 	if err := s.repo.InsertPackTransfers(ctx, transfers); err != nil {
 		return 0, subErr(err)

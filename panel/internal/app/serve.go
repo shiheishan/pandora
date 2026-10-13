@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/pprof"
-	"strings"
 	"sync"
 	"time"
 
@@ -27,6 +26,7 @@ import (
 	paymenth "github.com/aegispanel/aegis/internal/module/payment/handler"
 	pluginh "github.com/aegispanel/aegis/internal/module/plugin/handler"
 	promoh "github.com/aegispanel/aegis/internal/module/promo/handler"
+	realtimeh "github.com/aegispanel/aegis/internal/module/realtime/handler"
 	reporth "github.com/aegispanel/aegis/internal/module/report/handler"
 	settingsh "github.com/aegispanel/aegis/internal/module/settings/handler"
 	subh "github.com/aegispanel/aegis/internal/module/subscription/handler"
@@ -35,6 +35,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/config"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/aegispanel/aegis/internal/pkg/redisx"
 	"github.com/aegispanel/aegis/internal/pkg/route"
 	"github.com/gin-gonic/gin"
@@ -73,7 +74,12 @@ func runServe(ctx context.Context, configPath string) error {
 		return err
 	}
 
-	publicEng, adminEng := newEngines(r, svc)
+	// 单实例 SSE 连接总上限，超出回 503。
+	const maxSSEStreams = 10000
+	hub := realtime.NewHub(r.redis, r.log, maxSSEStreams)
+	svc.report.UseStreams(hub)
+
+	publicEng, adminEng := newEngines(r, svc, hub)
 
 	publicSrv := newHTTPServer(r.cfg.HTTP.Public, publicEng)
 	adminSrv := newHTTPServer(r.cfg.HTTP.Admin, adminEng)
@@ -127,16 +133,24 @@ func runServe(ctx context.Context, configPath string) error {
 		<-gctx.Done()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
+		// 先让 SSE 长连接全部结束，否则 HTTP Shutdown 会一直等它们到超时
+		hub.Close()
 		// 节点会话错峰重连要约 12 秒发完，给它 15 秒，剩下的留给 HTTP
 		nodeCtx, nodeCancel := context.WithTimeout(shutCtx, 15*time.Second)
 		nodeCh.shutdown(nodeCtx, r.log)
 		nodeCancel()
-		if err := publicSrv.Shutdown(shutCtx); err != nil {
-			r.log.Warn("关闭门户 HTTP", zap.Error(err))
+		// 两个监听并发排空：一个拖到超时，另一个的在途请求照样等得到
+		var wg sync.WaitGroup
+		for name, srv := range map[string]*http.Server{"门户": publicSrv, "管理": adminSrv} {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if err := srv.Shutdown(shutCtx); err != nil {
+					r.log.Warn("关闭 HTTP", zap.String("server", name), zap.Error(err))
+				}
+			}()
 		}
-		if err := adminSrv.Shutdown(shutCtx); err != nil {
-			r.log.Warn("关闭管理 HTTP", zap.Error(err))
-		}
+		wg.Wait()
 		for _, ps := range pprofSrvs {
 			if err := ps.Shutdown(shutCtx); err != nil {
 				r.log.Warn("关闭 pprof", zap.String("addr", ps.Addr), zap.Error(err))
@@ -165,7 +179,7 @@ func newHTTPServer(sc config.HTTPServer, h http.Handler) *http.Server {
 // newEngines 建门户与后台两个引擎并挂上各模块路由。
 // 引擎级顺序：基础中间件（请求号、日志、恢复、错误、安全头、并发、超时）→（后台）只读门 → 鉴权 → 域守卫；
 // 限流、登录要求、重认证、幂等、开关是路由级，由各模块从 Kit 取；后台不分权限，登录了就是管理员。
-func newEngines(r *runtime, svc *services) (*gin.Engine, *gin.Engine) {
+func newEngines(r *runtime, svc *services, hub *realtime.Hub) (*gin.Engine, *gin.Engine) {
 	settingsH := settingsh.New(svc.settings)
 	authH := authh.New(svc.auth, svc.limiter, authOptions(r.cfg))
 	idemH := idemh.New(svc.idem, svc.idemFPKey)
@@ -201,6 +215,7 @@ func newEngines(r *runtime, svc *services) (*gin.Engine, *gin.Engine) {
 		certsh.New(svc.certs),
 		pluginh.New(svc.plugin),
 		reporth.New(svc.report),
+		realtimeh.New(hub, r.cfg.Auth.AccessTTL),
 	}
 
 	publicEng := newEngine(r, r.cfg.HTTP.Public,
@@ -247,7 +262,7 @@ func newEngine(r *runtime, sc config.HTTPServer, extra ...gin.HandlerFunc) *gin.
 		httpx.Recovery(),
 		httpx.Errors(),
 		httpx.SecurityHeaders(),
-		httpx.Concurrency(sc.MaxConcurrency),
+		httpx.Concurrency(sc.MaxConcurrency, isStream),
 		httpx.Timeout(sc.RequestTimeout, isStream),
 	)
 	e.Use(extra...)
@@ -273,9 +288,10 @@ func newEngine(r *runtime, sc config.HTTPServer, extra ...gin.HandlerFunc) *gin.
 	return e
 }
 
-// isStream 认出 SSE 端点（public、admin 都是 …/events），它们不受请求超时限制。
+// isStream 认出 SSE 端点（public、admin 都是 /v1/events），用于请求超时与并发名额豁免。
+// 按匹配到的路由模板判，未注册的路径（FullPath 为空）不会被豁免。
 func isStream(c *gin.Context) bool {
-	return strings.HasSuffix(c.Request.URL.Path, "/events")
+	return c.FullPath() == "/v1/events"
 }
 
 // startPprofServer 在独立回环地址上暴露 net/http/pprof，不使用 DefaultServeMux。

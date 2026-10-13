@@ -257,10 +257,10 @@ type fakePorts struct {
 	orderCounts  ordersvc.ReportOrderCounts
 	pendingStale int64
 	stuck        int64
-	withdrawals []commissionsvc.PendingWithdrawalSum
-	tickets     supportsvc.OpenTicketStats
-	backlog     notifysvc.DeliveryBacklog
-	channels    map[string]notifysvc.ChannelDeliveryCounts
+	withdrawals  []commissionsvc.PendingWithdrawalSum
+	tickets      supportsvc.OpenTicketStats
+	backlog      notifysvc.DeliveryBacklog
+	channels     map[string]notifysvc.ChannelDeliveryCounts
 
 	activityDays  []auditsvc.ActivityDay
 	activityCalls [][2]time.Time

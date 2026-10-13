@@ -10,6 +10,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/money"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/google/uuid"
 )
 
@@ -54,6 +55,7 @@ func (s *Service) createVersionTx(ctx context.Context, planID uuid.UUID) (Versio
 		}
 		return Version{}, err
 	}
+	s.catalogChanged(ctx, rtTableVersions, realtime.OpInsert, v.ID)
 
 	ver := versionFromModel(v, nil, nil)
 	if err := s.writeAudit(ctx, ActionVersionCreate, ResourcePlanVersion, ver.ID, map[string]any{
@@ -128,6 +130,7 @@ func (s *Service) updateVersionTx(ctx context.Context, planID, versionID uuid.UU
 	if !ok {
 		return 0, rowConflict("套餐版本", cur.RowVersion)
 	}
+	s.catalogChanged(ctx, rtTableVersions, realtime.OpUpdate, versionID)
 	if err := s.repo.ReplaceVersionChildren(ctx, versionID, entitlementModels(in.Entitlements), quotaModels(in.Quotas)); err != nil {
 		return 0, err
 	}
@@ -233,6 +236,7 @@ func (s *Service) publishVersionTx(ctx context.Context, planID, versionID uuid.U
 	if !ok {
 		return 0, 0, rowConflict("套餐版本", ver.RowVersion)
 	}
+	s.catalogChanged(ctx, rtTableVersions, realtime.OpUpdate, versionID)
 	ok, err = s.repo.ActivateVersion(ctx, planID, versionID, expectedPlan)
 	if err != nil {
 		return 0, 0, err
@@ -240,6 +244,7 @@ func (s *Service) publishVersionTx(ctx context.Context, planID, versionID uuid.U
 	if !ok {
 		return 0, 0, rowConflict("套餐", plan.RowVersion)
 	}
+	s.catalogChanged(ctx, rtTablePlans, realtime.OpUpdate, planID)
 
 	priceIDs := qualifyingPublishPriceIDs(plan.Visibility, groups, prices, now)
 	planNext := expectedPlan + 1

@@ -8,6 +8,7 @@ import (
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	idemsvc "github.com/aegispanel/aegis/internal/module/idempotency/service"
 	"github.com/aegispanel/aegis/internal/module/support/model"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 )
 
 // 编译期断言：工单号供审计资源展示。
@@ -55,6 +56,10 @@ func (s *Service) escalateOverdue(ctx context.Context, reply func(int) (idemsvc.
 		}
 		if err := s.repo.InsertMessages(ctx, msgs); err != nil {
 			return err
+		}
+		for i, r := range rows {
+			s.ticketChanged(ctx, realtime.OpUpdate, r.ID, r.UserID)
+			s.messagesAdded(ctx, r.UserID, msgs[i:i+1])
 		}
 		for _, r := range rows {
 			if err := s.writeAudit(ctx, ActionSLAEscalate, ResourceTicket, r.ID, map[string]any{

@@ -126,6 +126,7 @@ func (s *Service) SetSwitch(ctx context.Context, code string, enabled bool, reas
 			s.InvalidateSwitches()
 			s.publishSwitchChange(ctx)
 		})
+		s.switchChanged(ctx, code, enabled)
 		return nil
 	})
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/aegispanel/aegis/internal/module/order/repo"
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/aegispanel/aegis/internal/pkg/money"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 )
 
 // markPaid 把待付订单转 paid：paid_amount = 订单总额（含余额抵扣部分），paid_at = at。返回更新后的订单。
@@ -28,6 +29,7 @@ func (s *Service) markPaid(ctx context.Context, o model.Order, at time.Time) (mo
 	if !ok {
 		return model.Order{}, ErrStateChanged
 	}
+	s.orderChanged(ctx, realtime.OpUpdate, o)
 	return s.reload(ctx, o.ID)
 }
 
@@ -137,6 +139,7 @@ func (s *Service) fulfil(ctx context.Context, o model.Order, at time.Time, actor
 	if !ok {
 		return model.Order{}, ErrStateChanged
 	}
+	s.orderChanged(ctx, realtime.OpUpdate, o)
 	return s.reload(ctx, o.ID)
 }
 

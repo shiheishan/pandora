@@ -23,6 +23,7 @@ import (
 	"github.com/aegispanel/aegis/internal/module/support/model"
 	"github.com/aegispanel/aegis/internal/module/support/repo"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 )
 
@@ -137,6 +138,7 @@ type Service struct {
 	plans    PlanNames
 	notifier ReplyNotifier
 	now      func() time.Time
+	rt       *realtime.Publisher // 实时推送（realtime.go 的 UseRealtime）；nil 时不推
 }
 
 // New 构造 support service。users 是 identity service，admins 是 auth service。

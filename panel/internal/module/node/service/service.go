@@ -14,6 +14,7 @@ import (
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/module/node/repo"
 	"github.com/aegispanel/aegis/internal/pkg/geoip"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 )
 
@@ -67,6 +68,9 @@ type Service struct {
 	pdnd pdndDist
 
 	geo *geoip.Resolver
+
+	// rt 实时推送（realtime.go 的 UseRealtime）；nil 时不推
+	rt *realtime.Publisher
 }
 
 // New 构造 node service。rdb 用于下发纪元（epoch.go），为 nil 时只跳过通知。

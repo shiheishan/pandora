@@ -16,6 +16,7 @@ import (
 	"github.com/aegispanel/aegis/internal/module/subscription/repo"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/money"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/google/uuid"
 )
 
@@ -187,6 +188,7 @@ func (s *Service) transition(ctx context.Context, sub model.Subscription, to str
 	if !ok {
 		return ErrStateChanged
 	}
+	s.rtChanged(ctx, tableSubscriptions, realtime.OpUpdate, sub.ID, sub.UserID)
 	return nil
 }
 
@@ -239,14 +241,20 @@ func (s *Service) issueCredential(ctx context.Context, sub model.Subscription) e
 	if err != nil {
 		return errs.Wrap(errs.Internal, fmt.Errorf("subscription: 封存令牌: %w", err))
 	}
-	return subErr(s.repo.InsertCredential(ctx, &model.Credential{
+	c := model.Credential{
 		SubscriptionID: sub.ID,
 		UserID:         sub.UserID,
 		TokenHash:      sum[:],
 		TokenPrefix:    token[:8],
 		TokenEncrypted: sealed,
 		Status:         "active",
-	}))
+	}
+	if err := s.repo.InsertCredential(ctx, &c); err != nil {
+		return subErr(err)
+	}
+	// c.ID 由库生成，GORM 插入时回填
+	s.rtChanged(ctx, tableCredentials, realtime.OpInsert, c.ID, sub.UserID)
+	return nil
 }
 
 // errMissing 是调用方漏传或传错必填入参的内部错误（程序错误，回 internal_error）。

@@ -10,6 +10,7 @@ import (
 	"github.com/aegispanel/aegis/internal/module/catalog/model"
 	"github.com/aegispanel/aegis/internal/module/catalog/repo"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 )
 
 // CreatePrice 给套餐加一档价格。
@@ -63,6 +64,7 @@ func (s *Service) createPriceTx(ctx context.Context, planID uuid.UUID, in PriceI
 		}
 		return Price{}, err
 	}
+	s.catalogChanged(ctx, rtTablePrices, realtime.OpInsert, m.ID)
 
 	row, found, err := s.repo.PriceByID(ctx, m.ID, repo.NoLock)
 	if err != nil {
@@ -119,6 +121,7 @@ func (s *Service) ArchivePrice(ctx context.Context, planID, priceID uuid.UUID, e
 		if !ok {
 			return rowConflict("价格", cur.RowVersion)
 		}
+		s.catalogChanged(ctx, rtTablePrices, realtime.OpUpdate, priceID)
 		next = expected + 1
 		return s.writeAudit(ctx, ActionPriceArchive, ResourcePrice, priceID, map[string]any{
 			"before": map[string]any{"status": cur.Status, "row_version": expected},
@@ -176,6 +179,7 @@ func (s *Service) syncPublicPricesTx(ctx context.Context, planID uuid.UUID, want
 		if !ok {
 			return 0, rowConflict("价格", old.RowVersion)
 		}
+		s.catalogChanged(ctx, rtTablePrices, realtime.OpUpdate, old.ID)
 		changes++
 	}
 
@@ -206,6 +210,7 @@ func (s *Service) syncPublicPricesTx(ctx context.Context, planID uuid.UUID, want
 			}
 			return 0, err
 		}
+		s.catalogChanged(ctx, rtTablePrices, realtime.OpInsert, m.ID)
 		changes++
 	}
 

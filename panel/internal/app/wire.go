@@ -57,6 +57,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/geoip"
 	"github.com/aegispanel/aegis/internal/pkg/jwtx"
 	"github.com/aegispanel/aegis/internal/pkg/ratelimit"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/aegispanel/aegis/internal/pkg/redisx"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 	"github.com/google/uuid"
@@ -274,6 +275,13 @@ func buildServices(r *runtime) (*services, error) {
 	// 工单：提单人与客服的邮箱、显示名经 identity，可指派客服是 auth 的管理员名单；
 	// 关联订单经 order 校验归属（建单时存下订单号），队列与详情的在用套餐经 subscription 批量读；审计页显示工单号
 	supportSvc := supportsvc.New(supportrepo.New(r.db), txm, auditSvc, idemSvc, identitySvc, authSvc)
+	// 实时推送：各属主模块在事务提交后发「什么变了」；serve 与 worker 都要装（到期、关窗、定时发布在 worker 里跑）
+	rt := realtime.NewPublisher(r.redis)
+	for _, m := range []interface{ UseRealtime(*realtime.Publisher) }{
+		settingsSvc, catalogSvc, subSvc, orderSvc, nodeSvc, notifySvc, supportSvc,
+	} {
+		m.UseRealtime(rt)
+	}
 	supportSvc.UseOrders(supportOrders{o: orderSvc})
 	supportSvc.UsePlanNames(supportPlans{s: subSvc})
 	// 客服公开回复后，在回复的同一事务里经 notify 给提单人写「工单有新回复」

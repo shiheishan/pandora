@@ -220,7 +220,10 @@ func TestSystemStatusAllOK(t *testing.T) {
 		}
 	}
 	if componentByKey(out.Components, "sse").State != StateUnknown {
-		t.Fatal("sse should be unknown")
+		t.Fatal("sse should be unknown when streams not wired")
+	}
+	if componentByKey(out.Components, "sse").Message != "实时推送未启用" {
+		t.Fatalf("sse message %q", componentByKey(out.Components, "sse").Message)
 	}
 	for _, k := range []string{"postgres", "valkey", "node_fabric", "payment_callbacks", "mail", "telegram", "backup"} {
 		if componentByKey(out.Components, k).State != StateOK {
@@ -363,5 +366,46 @@ func TestSystemStatusChannelsEmptyOK(t *testing.T) {
 		if c.Metrics["queued"] != int64(0) || c.Metrics["retrying"] != int64(0) || c.Metrics["failed_total"] != int64(0) {
 			t.Fatalf("%s metrics mismatch: %+v", ch, c.Metrics)
 		}
+	}
+}
+
+type fakeStreamCounter struct {
+	n    int
+	down bool
+}
+
+func (f fakeStreamCounter) Count() int { return f.n }
+func (f fakeStreamCounter) Live() bool { return !f.down }
+
+func TestSystemStatusSSEWithStreams(t *testing.T) {
+	e, _ := setupSystemStatusOK(t)
+	e.svc.UseStreams(fakeStreamCounter{n: 7})
+
+	out, err := e.svc.SystemStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sse := componentByKey(out.Components, "sse")
+	if sse.State != StateOK {
+		t.Fatalf("state %q", sse.State)
+	}
+	if sse.Metrics["connections"] != 7 {
+		t.Fatalf("connections %v", sse.Metrics["connections"])
+	}
+	if sse.Message != "" {
+		t.Fatalf("message %q", sse.Message)
+	}
+}
+
+func TestSystemStatusSSESubscriptionDown(t *testing.T) {
+	e, _ := setupSystemStatusOK(t)
+	e.svc.UseStreams(fakeStreamCounter{n: 0, down: true})
+
+	out, err := e.svc.SystemStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sse := componentByKey(out.Components, "sse"); sse.State != StateWarn {
+		t.Fatalf("state %q", sse.State)
 	}
 }

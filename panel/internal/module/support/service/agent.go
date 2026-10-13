@@ -10,6 +10,7 @@ import (
 	"github.com/aegispanel/aegis/internal/module/support/model"
 	"github.com/aegispanel/aegis/internal/module/support/repo"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 )
 
 // 队列分页的缺省与上限（与旧接口一致）。
@@ -155,6 +156,7 @@ func (s *Service) AgentReply(ctx context.Context, in AgentReplyInput) error {
 		if err := s.repo.InsertMessages(ctx, []*model.Message{msg}); err != nil {
 			return err
 		}
+		s.messagesAdded(ctx, t.UserID, []*model.Message{msg})
 		if in.InternalNote {
 			if err := s.writeAudit(ctx, ActionInternalNote, ResourceTicket, t.ID, map[string]any{
 				"message_id":    msg.ID.String(),
@@ -183,6 +185,8 @@ func (s *Service) AgentReply(ctx context.Context, in AgentReplyInput) error {
 		if !updated {
 			return ErrStatusConflict
 		}
+		s.ticketChanged(ctx, realtime.OpUpdate, t.ID, t.UserID)
+		s.ticketReplied(ctx, t.ID, t.UserID)
 		if err := s.writeAudit(ctx, ActionReply, ResourceTicket, t.ID, map[string]any{
 			"from":          t.Status,
 			"to":            StatusPendingUser,
@@ -236,6 +240,7 @@ func (s *Service) Assign(ctx context.Context, in AssignInput) error {
 		if !updated {
 			return ErrStatusConflict
 		}
+		s.ticketChanged(ctx, realtime.OpUpdate, t.ID, t.UserID)
 		if err := s.writeAudit(ctx, ActionAssign, ResourceTicket, t.ID, map[string]any{
 			"from": idString(t.AssignedTo),
 			"to":   idString(in.AssigneeID),
@@ -279,17 +284,20 @@ func (s *Service) SetStatus(ctx context.Context, in StatusInput) error {
 		if !updated {
 			return ErrStatusConflict
 		}
+		s.ticketChanged(ctx, realtime.OpUpdate, t.ID, t.UserID)
 		note := "客服将工单状态改为 " + to
 		if reason != "" {
 			note += "：" + reason
 		}
-		if err := s.repo.InsertMessages(ctx, []*model.Message{{
+		sysMsg := &model.Message{
 			TicketID:   t.ID,
 			AuthorKind: AuthorSystem,
 			Body:       note,
-		}}); err != nil {
+		}
+		if err := s.repo.InsertMessages(ctx, []*model.Message{sysMsg}); err != nil {
 			return err
 		}
+		s.messagesAdded(ctx, t.UserID, []*model.Message{sysMsg})
 		if err := s.writeAudit(ctx, ActionStatusChange, ResourceTicket, t.ID, map[string]any{
 			"from":       t.Status,
 			"to":         to,

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/aegispanel/aegis/internal/pkg/config"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/gin-gonic/gin"
 	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
@@ -24,7 +25,8 @@ func TestEnginesRegisterModuleRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(svc.close)
-	publicEng, adminEng := newEngines(r, svc)
+	hub := realtime.NewHub(nil, nil, 100)
+	publicEng, adminEng := newEngines(r, svc, hub)
 
 	want := map[*gin.Engine][]string{
 		publicEng: {

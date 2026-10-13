@@ -101,12 +101,24 @@ func (s *Service) buildComponents(ctx context.Context, now time.Time, db *Databa
 	mail, telegram := s.mailTelegramComponents(ctx)
 	out = append(out, mail, telegram)
 
-	out = append(out, Component{
+	sse := Component{
 		Key:     "sse",
 		State:   StateUnknown,
 		Metrics: map[string]any{},
-		Message: "新后端暂无实时推送通道",
-	})
+		Message: "实时推送未启用",
+	}
+	if s.streams != nil {
+		sse = Component{
+			Key:     "sse",
+			State:   StateOK,
+			Metrics: map[string]any{"connections": s.streams.Count()},
+		}
+		if !s.streams.Live() {
+			sse.State = StateWarn
+			sse.Message = "实时广播订阅中断，正在重连"
+		}
+	}
+	out = append(out, sse)
 
 	out = append(out, backupComponent(backup))
 

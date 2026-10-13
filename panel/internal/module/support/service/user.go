@@ -8,6 +8,7 @@ import (
 	idemsvc "github.com/aegispanel/aegis/internal/module/idempotency/service"
 	"github.com/aegispanel/aegis/internal/module/support/model"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 )
 
 // Create 门户建单。
@@ -82,6 +83,8 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Ticket, error) {
 		if err := s.repo.InsertMessages(ctx, msgs); err != nil {
 			return err
 		}
+		s.ticketChanged(ctx, realtime.OpInsert, t.ID, uid)
+		s.messagesAdded(ctx, uid, msgs)
 		if err := s.writeAudit(ctx, ActionCreate, ResourceTicket, t.ID, map[string]any{
 			"ticket_no": t.TicketNo,
 			"category":  t.Category,
@@ -201,6 +204,9 @@ func (s *Service) UserReply(ctx context.Context, id uuid.UUID, body string, repl
 		if !updated {
 			return ErrStatusConflict
 		}
+		s.ticketChanged(ctx, realtime.OpUpdate, t.ID, t.UserID)
+		s.messagesAdded(ctx, t.UserID, []*model.Message{msg})
+		s.ticketReplied(ctx, t.ID, t.UserID)
 		if err := s.writeAudit(ctx, ActionReply, ResourceTicket, t.ID, map[string]any{
 			"from":       t.Status,
 			"to":         StatusPendingAgent,
@@ -243,13 +249,16 @@ func (s *Service) UserClose(ctx context.Context, id uuid.UUID, reply ReplyFunc) 
 		if !updated {
 			return ErrStatusConflict
 		}
-		if err := s.repo.InsertMessages(ctx, []*model.Message{{
+		sysMsg := &model.Message{
 			TicketID:   t.ID,
 			AuthorKind: AuthorSystem,
 			Body:       "用户已关闭此工单",
-		}}); err != nil {
+		}
+		if err := s.repo.InsertMessages(ctx, []*model.Message{sysMsg}); err != nil {
 			return err
 		}
+		s.ticketChanged(ctx, realtime.OpUpdate, t.ID, t.UserID)
+		s.messagesAdded(ctx, t.UserID, []*model.Message{sysMsg})
 		if err := s.writeAudit(ctx, ActionClose, ResourceTicket, t.ID, map[string]any{
 			"from":          t.Status,
 			"to":            StatusClosed,
@@ -310,13 +319,16 @@ func (s *Service) Withdraw(ctx context.Context, id uuid.UUID, reason string) err
 		if reason != "" {
 			body += "：" + reason
 		}
-		if err := s.repo.InsertMessages(ctx, []*model.Message{{
+		sysMsg := &model.Message{
 			TicketID:   t.ID,
 			AuthorKind: AuthorSystem,
 			Body:       body,
-		}}); err != nil {
+		}
+		if err := s.repo.InsertMessages(ctx, []*model.Message{sysMsg}); err != nil {
 			return err
 		}
+		s.ticketChanged(ctx, realtime.OpUpdate, t.ID, t.UserID)
+		s.messagesAdded(ctx, t.UserID, []*model.Message{sysMsg})
 		return s.writeAudit(ctx, ActionWithdraw, ResourceTicket, t.ID, map[string]any{
 			"from":          t.Status,
 			"to":            StatusClosed,

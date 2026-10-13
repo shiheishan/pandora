@@ -12,6 +12,7 @@ import (
 	"github.com/aegispanel/aegis/internal/module/order/repo"
 	paymentsvc "github.com/aegispanel/aegis/internal/module/payment/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 )
 
 // placeOrder 插订单行、预留行（state held，expires_at = o.ExpiresAt，held_at = 现在）与一条 reserve 流水（from nil → held）。
@@ -31,6 +32,7 @@ func (s *Service) placeOrder(ctx context.Context, o *model.Order, actor Actor) (
 		}
 		return model.Reservation{}, err
 	}
+	s.orderChanged(ctx, realtime.OpInsert, *o)
 	now := s.clock()
 	res := model.Reservation{
 		OrderID:   o.ID,
@@ -286,6 +288,7 @@ func (s *Service) releaseOrder(ctx context.Context, o model.Order, to, reason, e
 	if !okOrder {
 		return model.Order{}, ErrStateChanged
 	}
+	s.orderChanged(ctx, realtime.OpUpdate, o)
 
 	action := ActionOrderCancelled
 	if to == StatusExpired {

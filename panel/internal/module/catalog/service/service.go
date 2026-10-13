@@ -15,6 +15,7 @@ import (
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/module/catalog/repo"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 	"github.com/google/uuid"
 )
@@ -53,6 +54,7 @@ type Service struct {
 	// pools 由 node 实现（plan_pools.go 的 PoolGuard），向导绑池时锁池。
 	pools PoolGuard
 	now   func() time.Time
+	rt    *realtime.Publisher // 实时推送（realtime.go 的 UseRealtime）；nil 时不推
 }
 
 // New 构造 catalog service。users 一般是 identity service。

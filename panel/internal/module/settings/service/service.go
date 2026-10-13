@@ -17,6 +17,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -70,6 +71,9 @@ type Service struct {
 	swCache map[string]switchEntry
 	swGen   uint64
 	swGroup singleflight.Group
+
+	// rt 实时推送（realtime.go 的 UseRealtime）；nil 时不推
+	rt *realtime.Publisher
 }
 
 // New 构造 settings service。sealer 用于封存 SMTP 口令；rdb 用于开关缓存失效的 pub/sub；

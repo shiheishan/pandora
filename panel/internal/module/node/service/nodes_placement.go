@@ -14,6 +14,7 @@ import (
 	"github.com/aegispanel/aegis/internal/module/node/model"
 	"github.com/aegispanel/aegis/internal/module/node/protocol"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 )
 
 // nodeReorderMax 是一次排序最多的节点数。
@@ -107,6 +108,7 @@ func (s *Service) CopyNode(ctx context.Context, id uuid.UUID, in NodeCopyInput) 
 		if err := s.repo.InsertNode(ctx, &n); err != nil {
 			return nodeWriteErr(err, port, l4)
 		}
+		s.nodeChanged(ctx, realtime.OpInsert, n.ID)
 		copyID = n.ID
 		var poolID any
 		if pool != nil {
@@ -183,6 +185,7 @@ func (s *Service) MoveNode(ctx context.Context, id uuid.UUID, in NodeMoveInput) 
 		if !ok {
 			return nodeVersionConflict(before.RowVersion)
 		}
+		s.nodeChanged(ctx, realtime.OpUpdate, id)
 		var from any
 		if before.ServerID != nil {
 			from = before.ServerID.String()
@@ -253,6 +256,7 @@ func (s *Service) ReorderNodes(ctx context.Context, items []NodeOrderItem) error
 			if !ok {
 				return nodeVersionConflict(it.RowVersion)
 			}
+			s.nodeChanged(ctx, realtime.OpUpdate, n.ID)
 		}
 		return s.audit.Write(ctx, auditsvc.Event{Action: "node.order_batch", ResourceType: "node_set",
 			Data: map[string]any{"count": len(rows)}})

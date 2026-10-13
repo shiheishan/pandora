@@ -21,6 +21,7 @@ import (
 	"github.com/aegispanel/aegis/internal/module/notify/repo"
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
@@ -126,6 +127,9 @@ type Service struct {
 	orders        Orders
 	tg            telegramAPI
 	publicBaseURL string
+
+	// rt 实时推送（realtime.go 的 UseRealtime）；nil 时不推
+	rt *realtime.Publisher
 }
 
 // New 构造 notify service。queue 可以为 nil（不入队，只靠 notify:dispatch 的周期兜底）。

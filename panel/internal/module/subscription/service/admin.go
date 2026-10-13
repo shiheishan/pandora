@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 )
 
 // 后台入口的文本限制。
@@ -176,6 +177,7 @@ func (s *Service) AdminSetDeviceLimit(ctx context.Context, subID uuid.UUID, limi
 		if !ok {
 			return ErrStateChanged
 		}
+		s.rtChanged(ctx, tableSubscriptions, realtime.OpUpdate, m.ID, m.UserID)
 		s.notifyRoster(ctx, m.ID)
 		return s.writeAudit(ctx, ActionDeviceLimitChanged, m.ID, map[string]any{
 			"user_id": m.UserID,
