@@ -42,6 +42,7 @@ type Config struct {
 	Log           Log          `mapstructure:"log"`
 	Subscription  Subscription `mapstructure:"subscription"`
 	Pdnd          Pdnd         `mapstructure:"pdnd"`
+	Backup        Backup       `mapstructure:"backup"`
 }
 
 type HTTP struct {
@@ -170,4 +171,10 @@ type Singbox struct {
 type Pdnd struct {
 	// DistDir 是节点端二进制 pandora-native-linux-{amd64,arm64} 的存放目录（发布包的 pdnd-dist/），绝对路径
 	DistDir string `mapstructure:"dist_dir"`
+}
+
+// Backup 是系统状态页探测备份产物用的配置；备份本身由部署脚本的定时任务做，面板只读目录。
+type Backup struct {
+	// Dir 是加密备份所在目录（绝对路径）；为空表示没配置，系统状态页报「读不到」并给提示
+	Dir string `mapstructure:"dir"`
 }

@@ -139,6 +139,8 @@ func defaults(v *viper.Viper) {
 	v.SetDefault("subscription.singbox.block_ads", false)
 
 	v.SetDefault("pdnd.dist_dir", "/opt/pandora/pdnd-dist")
+
+	v.SetDefault("backup.dir", "/var/backups/pandora")
 }
 
 func envVarName(configKey string) string {

@@ -348,3 +348,23 @@ func TestPdndDistDir(t *testing.T) {
 		t.Fatalf("应拒绝相对路径: %v", err)
 	}
 }
+
+// 备份目录：缺省同旧部署的 /var/backups/pandora，PANDORA_BACKUP_DIR 覆盖；非空只收绝对路径（配置文件里写空串表示不探测）。
+func TestBackupDir(t *testing.T) {
+	setMinimalValidEnv(t)
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Backup.Dir != "/var/backups/pandora" {
+		t.Fatalf("缺省 %q", cfg.Backup.Dir)
+	}
+	t.Setenv("PANDORA_BACKUP_DIR", "/srv/backups")
+	if cfg, err = Load(""); err != nil || cfg.Backup.Dir != "/srv/backups" {
+		t.Fatalf("环境变量覆盖：%+v %v", cfg, err)
+	}
+	t.Setenv("PANDORA_BACKUP_DIR", "backups")
+	if _, err := Load(""); err == nil || !strings.Contains(err.Error(), "backup.dir") {
+		t.Fatalf("应拒绝相对路径: %v", err)
+	}
+}
