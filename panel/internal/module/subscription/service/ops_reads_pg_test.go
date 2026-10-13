@@ -31,8 +31,10 @@ func TestOpsReadsPG(t *testing.T) {
 	expB := provision(t, e, ctx, userB, planP2, verP2, "B-过期")
 	expireSetPeriod(t, e, ctx, expB.ID, StatusExpired, now.Add(-24*time.Hour))
 
-	assertUserFilter(t, e.svc, ctx, identitysvc.SubFilter{State: "active"}, []uuid.UUID{userA}, false)
-	assertUserFilter(t, e.svc, ctx, identitysvc.SubFilter{State: "expired"}, []uuid.UUID{userB}, false)
+	// 库里可能有别的用例提交的订阅，只比本用例的三个用户
+	scope := []uuid.UUID{userA, userB, userC}
+	assertUserFilter(t, e.svc, ctx, scope, identitysvc.SubFilter{State: "active"}, []uuid.UUID{userA}, false)
+	assertUserFilter(t, e.svc, ctx, scope, identitysvc.SubFilter{State: "expired"}, []uuid.UUID{userB}, false)
 
 	idsNone, exNone, err := e.svc.UserIDsBySubFilter(ctx, identitysvc.SubFilter{State: "none"})
 	if err != nil {
@@ -59,7 +61,7 @@ func TestOpsReadsPG(t *testing.T) {
 		t.Fatalf("有生效订阅的 A 应在排除集，得 %v", idsNoLive)
 	}
 
-	assertUserFilter(t, e.svc, ctx, identitysvc.SubFilter{PlanID: &planP1}, []uuid.UUID{userA}, false)
+	assertUserFilter(t, e.svc, ctx, scope, identitysvc.SubFilter{PlanID: &planP1}, []uuid.UUID{userA}, false)
 
 	idsContradict, exC, err := e.svc.UserIDsBySubFilter(ctx, identitysvc.SubFilter{State: "none", PlanID: &planP1})
 	if err != nil {
@@ -70,7 +72,7 @@ func TestOpsReadsPG(t *testing.T) {
 	}
 
 	within := identitysvc.SubFilter{ExpiresWithinDays: 7}
-	assertUserFilter(t, e.svc, ctx, within, []uuid.UUID{userA}, false)
+	assertUserFilter(t, e.svc, ctx, scope, within, []uuid.UUID{userA}, false)
 
 	outside := identitysvc.SubFilter{ExpiresWithinDays: 1}
 	idsOut, _, err := e.svc.UserIDsBySubFilter(ctx, outside)
@@ -112,11 +114,18 @@ func TestOpsReadsPG(t *testing.T) {
 	}
 }
 
-func assertUserFilter(t *testing.T, svc *Service, ctx context.Context, f identitysvc.SubFilter, want []uuid.UUID, wantEx bool) {
+// assertUserFilter 只看 scope 里的用户：结果与 want 在 scope 内一致。
+func assertUserFilter(t *testing.T, svc *Service, ctx context.Context, scope []uuid.UUID, f identitysvc.SubFilter, want []uuid.UUID, wantEx bool) {
 	t.Helper()
-	ids, ex, err := svc.UserIDsBySubFilter(ctx, f)
+	all, ex, err := svc.UserIDsBySubFilter(ctx, f)
 	if err != nil {
 		t.Fatalf("UserIDsBySubFilter(%+v): %v", f, err)
+	}
+	var ids []uuid.UUID
+	for _, id := range all {
+		if slices.Contains(scope, id) {
+			ids = append(ids, id)
+		}
 	}
 	if ex != wantEx {
 		t.Fatalf("exclude: want %v got %v (ids=%v)", wantEx, ex, ids)
