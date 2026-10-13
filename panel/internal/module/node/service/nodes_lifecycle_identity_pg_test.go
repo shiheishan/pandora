@@ -278,7 +278,8 @@ func TestQueryNodesHookFieldsPG(t *testing.T) {
 	if r.IdentitySerial == nil || *r.IdentitySerial != 1 {
 		t.Fatalf("身份序号应为 1：%v", r.IdentitySerial)
 	}
-	if !slices.Equal(r.GrantedPlans, []string{"乙", "甲"}) // 按字节序升序（乙 U+4E59 在甲 U+7532 前） || r.OnlineUsers != 0 || r.OnlineIPs != 0 || r.TrafficBytes24h != 0 {
+	// 套餐名按字节序升序：乙 U+4E59 在甲 U+7532 前
+	if !slices.Equal(r.GrantedPlans, []string{"乙", "甲"}) || r.OnlineUsers != 0 || r.OnlineIPs != 0 || r.TrafficBytes24h != 0 {
 		t.Fatalf("套餐或在线不对：%v %d %d %d", r.GrantedPlans, r.OnlineUsers, r.OnlineIPs, r.TrafficBytes24h)
 	}
 	if !r.Delivered || r.EffectiveState != "pending" {
