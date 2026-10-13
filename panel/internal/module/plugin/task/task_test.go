@@ -101,7 +101,8 @@ func TestRetentionError(t *testing.T) {
 	}
 }
 
-func TestDispatchError(t *testing.T) {
+// 派发出错时 handler 只记日志、返回 nil（不让任务进归档占住入队用的固定 TaskID）。
+func TestDispatchErrorSwallowed(t *testing.T) {
 	fs := &fakeService{dispatchN: 2}
 	m := New(fs)
 	if err := m.dispatch(context.Background(), asynq.NewTask(service.TaskDispatch, nil)); err != nil {
@@ -109,7 +110,7 @@ func TestDispatchError(t *testing.T) {
 	}
 	boom := errors.New("boom")
 	fs.dispatchErr = boom
-	if err := m.dispatch(context.Background(), asynq.NewTask(service.TaskDispatch, nil)); !errors.Is(err, boom) {
+	if err := m.dispatch(context.Background(), asynq.NewTask(service.TaskDispatch, nil)); err != nil {
 		t.Fatalf("err %v", err)
 	}
 	if fs.dispatched != 2 {

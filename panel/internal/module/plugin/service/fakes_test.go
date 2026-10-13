@@ -30,6 +30,7 @@ type fakeStore struct {
 
 	failExhaustedN int
 	claimErr       error
+	lockBusy       bool // 模拟别的实例正持有派发锁
 	lastDelay      time.Duration
 
 	now func() time.Time
@@ -369,6 +370,17 @@ func (f *fakeStore) PurgeDeliveries(_ context.Context, before time.Time, batch i
 	}
 	f.order = newOrder
 	return len(candidates), nil
+}
+
+// WithDispatchLock 不进 calls：派发用例断言 calls[0] 是 FailExhausted。
+func (f *fakeStore) WithDispatchLock(ctx context.Context, fn func(ctx context.Context) error) (bool, error) {
+	f.mu.Lock()
+	busy := f.lockBusy
+	f.mu.Unlock()
+	if busy {
+		return false, nil
+	}
+	return true, fn(ctx)
 }
 
 func ptrTime(t time.Time) *time.Time { return &t }

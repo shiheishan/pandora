@@ -99,7 +99,12 @@ func (r *Repo) DeliveriesByHook(ctx context.Context, hookID uuid.UUID, limit int
 	return rows, nil
 }
 
-// PurgeDeliveries 批量删除早于 before 的投递记录。
+// PurgeDeliveries 批量删除早于 before 的投递记录，不看状态。
+//
+// 90 天前仍是 queued 的行只会出现在钩子停用之后（启用的钩子最多重试十几小时就会 sent 或 failed），
+// 一并删掉：钩子停用期间的旧事件重新启用后也不该再补发。去重不受影响：去重键都带业务 id
+// （订单、订阅、工单、礼品卡码等）或业务时刻，发事件的一方本身也只在状态变化时发一次
+// （订单状态机、notify 扫描自己的通知记录），同一个业务事件不会在 90 天后再次 Emit，删掉旧行不会让它重投。
 func (r *Repo) PurgeDeliveries(ctx context.Context, before time.Time, batch int) (int, error) {
 	res := r.d.Conn(ctx).Exec(
 		`DELETE FROM plugin_hook_deliveries WHERE id IN (

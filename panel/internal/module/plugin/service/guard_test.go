@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -76,10 +77,26 @@ func TestCheckDialAddr(t *testing.T) {
 		"[::ffff:10.0.0.1]:443",
 		"169.254.169.254:80",
 		"[64:ff9b::a00:1]:443",
+		"[64:ff9b:1::a00:1]:443", // 本地 NAT64
+		"[::a00:1]:443",          // IPv4 兼容地址
+		"[2002:a00:1::1]:443",    // 6to4
+		"[2001:0:0:1::1]:443",    // Teredo
+		"[fec0::1]:443",          // 站点本地
 	}
 	for _, addr := range blocked {
-		if err := checkDialAddr(addr); err == nil {
+		err := checkDialAddr(addr)
+		if err == nil {
 			t.Fatalf("expected block %s", addr)
+		}
+		// 拒绝文案不带地址（会进投递记录与接口响应），地址只给日志
+		if err.Error() != "拒绝连接非公网地址" {
+			t.Fatalf("%s: 文案 %q", addr, err.Error())
+		}
+	}
+	// 文档地址段（当作公网）照常放行
+	for _, addr := range []string{"[2001:db8::1]:443", "[2001:db8:1::10]:443"} {
+		if err := checkDialAddr(addr); err != nil {
+			t.Fatalf("%s should pass: %v", addr, err)
 		}
 	}
 	if err := checkDialAddr("203.0.113.10:443"); err != nil {
@@ -116,6 +133,13 @@ func TestDialGuardBlocksLoopback(t *testing.T) {
 	errStr := err.Error()
 	if strings.Contains(errStr, "/secret/path") || strings.Contains(errStr, "token=abc") {
 		t.Fatalf("error leaks path/query: %s", errStr)
+	}
+	if errStr != "拒绝连接非公网地址" || strings.Contains(errStr, "127.0.0.1") {
+		t.Fatalf("拨号拦截文案应不带地址: %s", errStr)
+	}
+	var be *blockedAddrError
+	if !errors.As(err, &be) || be.addr != "127.0.0.1" {
+		t.Fatalf("地址应留在错误里给日志用: %+v", be)
 	}
 
 	called.Store(false)

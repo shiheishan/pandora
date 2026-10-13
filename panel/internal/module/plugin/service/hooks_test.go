@@ -293,3 +293,22 @@ func TestDisplayTimesAreBeijing(t *testing.T) {
 		t.Fatalf("last sent %q", hooks[0].LastSentAt)
 	}
 }
+
+// scheme 与主机名规整成小写再落库（库里 CHECK 按小写 https:// 判断）；路径与查询串原样保留。
+func TestSaveHookLowercasesSchemeAndHost(t *testing.T) {
+	st := newFakeStore()
+	svc, _ := newTestService(t, st, true)
+	if _, err := svc.SaveHook(context.Background(), SaveHookInput{
+		Code: "upper", Name: "n", EndpointURL: "HTTPS://Hooks.Example.COM/Path?Q=A",
+		Enabled: true, Events: []string{"order.paid"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h, ok, err := st.HookByCode(context.Background(), "upper", false)
+	if err != nil || !ok {
+		t.Fatalf("hook %v %v", ok, err)
+	}
+	if h.EndpointURL != "https://hooks.example.com/Path?Q=A" {
+		t.Fatalf("endpoint %q", h.EndpointURL)
+	}
+}

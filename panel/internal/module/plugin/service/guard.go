@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -17,6 +16,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"go.uber.org/zap"
 
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
 )
@@ -28,18 +29,29 @@ var blockedPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("192.0.0.0/24"),
 	netip.MustParsePrefix("198.18.0.0/15"),
 	netip.MustParsePrefix("240.0.0.0/4"),
-	netip.MustParsePrefix("64:ff9b::/96"),
+	netip.MustParsePrefix("64:ff9b::/96"),   // NAT64 熟知前缀，内嵌 IPv4
+	netip.MustParsePrefix("64:ff9b:1::/48"), // 本地 NAT64
+	netip.MustParsePrefix("::/96"),          // 已废弃的 IPv4 兼容地址，内嵌 IPv4
+	netip.MustParsePrefix("2002::/16"),      // 6to4，内嵌 IPv4
+	netip.MustParsePrefix("2001::/32"),      // Teredo，内嵌（取反的）IPv4
+	netip.MustParsePrefix("fec0::/10"),      // 已废弃的站点本地地址
 }
+
+// blockedAddrError 是拨号或保存时拦下非公网地址的错误。Error() 不带地址：错误文案会进投递记录与接口响应，
+// 地址只经 addr 字段进日志（errors.As 取出）。
+type blockedAddrError struct{ addr string }
+
+func (e *blockedAddrError) Error() string { return "拒绝连接非公网地址" }
 
 func checkIP(ip netip.Addr) error {
 	ip = ip.Unmap()
 	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
 		ip.IsInterfaceLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
-		return fmt.Errorf("拒绝连接非公网地址 %s", ip)
+		return &blockedAddrError{addr: ip.String()}
 	}
 	for _, p := range blockedPrefixes {
 		if p.Contains(ip) {
-			return fmt.Errorf("拒绝连接非公网地址 %s", ip)
+			return &blockedAddrError{addr: ip.String()}
 		}
 	}
 	return nil
@@ -48,9 +60,18 @@ func checkIP(ip netip.Addr) error {
 func checkDialAddr(address string) error {
 	ap, err := netip.ParseAddrPort(address)
 	if err != nil {
-		return fmt.Errorf("无法识别要连接的地址 %q", address)
+		return &blockedAddrError{addr: address}
 	}
 	return checkIP(ap.Addr())
+}
+
+// blockedAddrField 在 err 是被拦下的非公网地址时给出日志字段，否则是空字段。
+func blockedAddrField(err error) zap.Field {
+	var be *blockedAddrError
+	if errors.As(err, &be) {
+		return zap.String("blocked_addr", be.addr)
+	}
+	return zap.Skip()
 }
 
 func parseEndpoint(raw string, allowPrivate bool) (*url.URL, error) {
@@ -167,6 +188,11 @@ func postSigned(ctx context.Context, client *http.Client, endpoint, event, deliv
 	resp, err := client.Do(req)
 	ms := int(time.Since(start).Milliseconds())
 	if err != nil {
+		// 被拨号防护拦下时只回不带地址的文案（net.OpError 的文案里有 IP）；地址留在错误里给日志用
+		var be *blockedAddrError
+		if errors.As(err, &be) {
+			return 0, &ms, be
+		}
 		return 0, &ms, plog.StripURL(err)
 	}
 	defer resp.Body.Close()

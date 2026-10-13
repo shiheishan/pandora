@@ -350,3 +350,20 @@ func TestEmitDedupe(t *testing.T) {
 		}
 	}
 }
+
+func TestDispatchSkipsWhenLockHeld(t *testing.T) {
+	st := newFakeStore()
+	st.lockBusy = true
+	svc, _ := newTestService(t, st, true)
+	addHook(t, svc, st, "busy", "https://example.com/h", "whsec_test", "order.paid")
+	if err := svc.Emit(context.Background(), "order.paid", "k1", map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
+	n, err := svc.Dispatch(context.Background())
+	if err != nil || n != 0 {
+		t.Fatalf("dispatch %d %v", n, err)
+	}
+	if len(st.calls) != 0 {
+		t.Fatalf("抢不到锁不应认领: %v", st.calls)
+	}
+}

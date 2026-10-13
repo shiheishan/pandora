@@ -54,7 +54,8 @@ func (m *Module) Periodic() []jobs.Periodic {
 				asynq.Queue("low"),
 				asynq.MaxRetry(0),
 				asynq.Timeout(service.DispatchTimeout),
-				asynq.Unique(50 * time.Second),
+				// 唯一窗口不短于超时：上一轮还没跑完时不再排一轮
+				asynq.Unique(service.DispatchTimeout + time.Minute),
 			},
 		},
 		{
@@ -70,10 +71,13 @@ func (m *Module) Periodic() []jobs.Periodic {
 	}
 }
 
+// dispatch 出错只记日志、不返回错误：任务不重试（下一分钟的周期任务会再跑），返回错误只会让任务进归档，
+// 而归档的任务会一直占着提交后入队用的固定 TaskID，让之后的入队全部冲突丢弃。
 func (m *Module) dispatch(ctx context.Context, _ *asynq.Task) error {
 	n, err := m.svc.Dispatch(ctx)
 	if err != nil {
-		return fmt.Errorf("插件投递派发: %w", err)
+		plog.From(ctx).Error("插件投递派发失败，等下一轮", zap.Error(err))
+		return nil
 	}
 	if n > 0 {
 		plog.From(ctx).Info("plugin dispatch done", zap.Int("processed", n))

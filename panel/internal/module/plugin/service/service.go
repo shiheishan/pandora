@@ -93,6 +93,7 @@ type store interface {
 	MarkFailed(ctx context.Context, id uuid.UUID, code *int, msg string, durationMS *int) (bool, error)
 	DeliveriesByHook(ctx context.Context, hookID uuid.UUID, limit int) ([]model.Delivery, error)
 	PurgeDeliveries(ctx context.Context, before time.Time, batch int) (int, error)
+	WithDispatchLock(ctx context.Context, fn func(ctx context.Context) error) (bool, error)
 }
 
 var _ store = (*repo.Repo)(nil)

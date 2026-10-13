@@ -47,7 +47,12 @@ func (s *Service) Emit(ctx context.Context, event, dedupeKey string, payload any
 	return nil
 }
 
-// kick 入队一次 plugin:dispatch（TaskID 按秒分桶去重）；失败只记日志，周期任务会补发。
+// kickTaskID 是提交后入队派发任务的固定 TaskID：已在排队或在跑时再入队就冲突丢弃，
+// 同一时刻至多一个由提交触发的派发任务（加上每分钟的周期任务，派发本身另有库里的互斥锁）。
+// 派发任务的处理函数从不返回错误（见 task 包），任务不会进归档，这个 TaskID 不会被长期占住。
+const kickTaskID = "plugin:dispatch:kick"
+
+// kick 入队一次 plugin:dispatch；已有同 TaskID 的任务时丢弃。失败只记日志，周期任务会补发。
 func (s *Service) kick(ctx context.Context) {
 	if s.queue == nil {
 		return
@@ -58,13 +63,14 @@ func (s *Service) kick(ctx context.Context) {
 		return
 	}
 	_, err = s.queue.EnqueueContext(ctx, task,
-		asynq.TaskID(fmt.Sprintf("%s:%d", TaskDispatch, s.now().Unix())),
+		asynq.TaskID(kickTaskID),
 		asynq.Queue("low"),
 		asynq.MaxRetry(0),
 		asynq.Timeout(DispatchTimeout),
 	)
 	if err != nil {
 		if errors.Is(err, asynq.ErrTaskIDConflict) || errors.Is(err, asynq.ErrDuplicateTask) {
+			plog.From(ctx).Debug("plugin: 派发任务已在队列里，本次不再入队")
 			return
 		}
 		plog.From(ctx).Warn("plugin: 入队投递任务失败，等周期任务补发", zap.Error(err))

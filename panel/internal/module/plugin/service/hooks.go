@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -161,6 +162,11 @@ func (s *Service) SaveHook(ctx context.Context, in SaveHookInput) (string, error
 	}
 	if len(fields) > 0 {
 		return "", errs.Invalid(fields)
+	}
+	// scheme 与主机名规整成小写再落库：库里的 CHECK 按小写 http(s):// 判断，主机名本来就不分大小写
+	if u, err := url.Parse(endpointURL); err == nil {
+		u.Host = strings.ToLower(u.Host)
+		endpointURL = u.String() // url.Parse 已把 scheme 小写；路径与查询串按原样保留
 	}
 
 	eventsJSON, _ := json.Marshal(events)
@@ -360,6 +366,7 @@ func (s *Service) TestHook(ctx context.Context, code string) (TestResult, error)
 	respCode, dur, err := postSigned(ctx, s.client, h.EndpointURL, "panel.test", "test-"+h.ID.String(),
 		body, string(plain), time.Duration(h.TimeoutMS)*time.Millisecond, s.now())
 	if err != nil {
+		plog.From(ctx).Warn("plugin: 测试投递发送失败", zap.String("hook", h.Code), zap.Error(err), blockedAddrField(err))
 		return TestResult{}, errs.Newf(errs.ValidationFailed, "发送失败："+err.Error())
 	}
 	if respCode < 200 || respCode >= 300 {
