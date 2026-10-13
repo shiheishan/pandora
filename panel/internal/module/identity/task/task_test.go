@@ -6,6 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aegispanel/aegis/internal/module/identity/service"
+	"github.com/aegispanel/aegis/internal/pkg/jobs"
+	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 )
 
@@ -89,8 +92,28 @@ func TestPurgeAllCanceledContext(t *testing.T) {
 type retentionFake struct {
 	reg       seqPurger
 	codes     seqPurger
+	jobs      seqPurger
 	regErr    error
 	codesSeen bool
+
+	runIDs    []uuid.UUID
+	runErr    error
+	reconErr  error
+	reconRuns int
+}
+
+func (f *retentionFake) PurgeGenerationJobs(ctx context.Context, before time.Time, batch int) (int, error) {
+	return f.jobs.purge(ctx, before, batch)
+}
+
+func (f *retentionFake) RunGenerationJob(_ context.Context, id uuid.UUID) error {
+	f.runIDs = append(f.runIDs, id)
+	return f.runErr
+}
+
+func (f *retentionFake) ReconcileGeneration(context.Context) (int, int64, error) {
+	f.reconRuns++
+	return 1, 2, f.reconErr
 }
 
 func (f *retentionFake) PurgeRegistrations(ctx context.Context, before time.Time, batch int) (int, error) {
@@ -125,6 +148,10 @@ func TestRetentionBeforeAndRegError(t *testing.T) {
 			t.Fatalf("codes before: %v want %v", c.before, wantBefore)
 		}
 	}
+	wantJobsBefore := fixed.AddDate(0, 0, -service.GenerationRetentionDays)
+	if len(rf.jobs.calls) != 1 || !rf.jobs.calls[0].before.Equal(wantJobsBefore) {
+		t.Fatalf("generation jobs calls: %+v want before %v", rf.jobs.calls, wantJobsBefore)
+	}
 
 	rf2 := &retentionFake{regErr: errors.New("reg fail")}
 	m2 := New(rf2)
@@ -140,10 +167,50 @@ func TestRetentionBeforeAndRegError(t *testing.T) {
 func TestPeriodicRetention(t *testing.T) {
 	m := New(&retentionFake{})
 	ps := m.Periodic()
-	if len(ps) != 1 {
+	if len(ps) != 2 {
 		t.Fatalf("periodic len=%d", len(ps))
 	}
-	if ps[0].Type != TypeRetention || ps[0].Cronspec == "" {
-		t.Fatalf("type=%q cronspec=%q", ps[0].Type, ps[0].Cronspec)
+	types := map[string]string{}
+	for _, p := range ps {
+		types[p.Type] = p.Cronspec
+	}
+	if types[TypeRetention] == "" || types[service.TaskReconcileGeneration] != "@every 1m" {
+		t.Fatalf("periodic: %+v", types)
+	}
+}
+
+func TestGenerateHandler(t *testing.T) {
+	f := &retentionFake{runErr: errors.New("boom")}
+	m := New(f)
+	id := uuid.New()
+	task, err := jobs.NewTask(context.Background(), service.TaskGenerateUsers, service.GenerationPayload{JobID: id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 业务出错只记日志、回 nil，免得 asynq 归档占着 TaskID
+	if err := m.generate(context.Background(), task); err != nil {
+		t.Fatalf("generate err=%v", err)
+	}
+	if len(f.runIDs) != 1 || f.runIDs[0] != id {
+		t.Fatalf("run ids=%v", f.runIDs)
+	}
+	// 载荷解不开才回错
+	if err := m.generate(context.Background(), asynq.NewTask(service.TaskGenerateUsers, []byte("{"))); err == nil {
+		t.Fatal("坏载荷应返回错误")
+	}
+}
+
+func TestReconcileHandler(t *testing.T) {
+	f := &retentionFake{}
+	m := New(f)
+	if err := m.reconcile(context.Background(), asynq.NewTask(service.TaskReconcileGeneration, nil)); err != nil {
+		t.Fatal(err)
+	}
+	f.reconErr = errors.New("db down")
+	if err := m.reconcile(context.Background(), asynq.NewTask(service.TaskReconcileGeneration, nil)); err == nil {
+		t.Fatal("应返回错误")
+	}
+	if f.reconRuns != 2 {
+		t.Fatalf("runs=%d", f.reconRuns)
 	}
 }

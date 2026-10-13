@@ -12,7 +12,7 @@ type listUsersQuery struct {
 	Q        string `form:"q" binding:"max=200"`
 	Status   string `form:"status" binding:"max=100"`
 	GroupID  string `form:"group_id" binding:"max=64"`
-	SubState string `form:"sub_state" binding:"omitempty,oneof=active expired none"` // 订阅模块接入前收下但不生效
+	SubState string `form:"sub_state" binding:"omitempty,oneof=active expired none"` // 订阅情况，经 subscription 端口圈人
 }
 
 // userRowResponse 是后台用户列表与详情共用的行形状。

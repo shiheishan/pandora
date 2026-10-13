@@ -22,12 +22,14 @@ const (
 	TemplateOrderPaid            = "order.paid"
 	TemplatePackPaid             = "order.pack_paid"
 	TemplateTicketReplied        = "ticket.replied"
+	TemplateBroadcast            = "admin.broadcast"
 )
 
-// 模板类别：transactional 不可退订；service 是服务提醒，用户可在通知偏好里按渠道关闭。
+// 模板类别：transactional 不可退订；service 是服务提醒，用户可在通知偏好里按渠道关闭；marketing 是营销/群发。
 const (
 	categoryTransactional = "transactional"
 	categoryService       = "service"
+	categoryMarketing     = "marketing"
 )
 
 // templateLocale 与 templateStatus 是对外 DTO 里的固定值（表里不再存）。
@@ -274,6 +276,16 @@ var templateDefs = []templateDef{
 		Allowed:     []string{"subject"},
 		Subject:     "工单有新回复",
 		Body:        "你的工单「{{subject}}」有新回复。",
+	},
+	// ---- 后台群发（admin.broadcast）----
+	{
+		Code:        TemplateBroadcast,
+		Channel:     ChannelEmail,
+		Category:    categoryMarketing,
+		Description: "后台「批量运营 → 群发邮件」：主题与正文由管理员每次填写，经变量 subject、body 传入；关掉营销邮件的用户不发",
+		Allowed:     []string{"subject", "body"},
+		Subject:     "{{subject}}",
+		Body:        "{{body}}",
 	},
 }
 

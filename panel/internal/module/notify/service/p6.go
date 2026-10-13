@@ -24,6 +24,8 @@ type Directory interface {
 	UserGroupID(ctx context.Context, userID uuid.UUID) (*uuid.UUID, error)
 	// ListGroups 列出全部用户组。
 	ListGroups(ctx context.Context) ([]identitysvc.Group, error)
+	// BulkRecipients 按后台批量筛选条件取收件人（与预览、导出同一套条件）；total 为命中人数，total 为 0 或超过 max 时不返回名单。
+	BulkRecipients(ctx context.Context, f identitysvc.BulkFilter, max int) ([]identitysvc.BulkRecipient, int64, error)
 }
 
 // Plans 是 notify 要的套餐读取面；*catalogsvc.Service 满足。
@@ -171,6 +173,11 @@ type p6Store interface {
 	MarkBindCodeUsed(ctx context.Context, id uuid.UUID) (bool, error)
 	// PurgeBindCodes 删 expires_at < before 的绑定码，每次至多 batch 行。
 	PurgeBindCodes(ctx context.Context, before time.Time, batch int) (int, error)
+
+	// InsertDeliveries 批量写投递（ID 由调用方生成）。
+	InsertDeliveries(ctx context.Context, ds []model.Delivery) error
+	// MarketingEmailOptOuts 在 userIDs 里查出关闭了营销邮件偏好的用户（一条 SQL）。
+	MarketingEmailOptOuts(ctx context.Context, userIDs []uuid.UUID) (map[uuid.UUID]bool, error)
 }
 
 // ---- 站内信与偏好（inbox.go） ----

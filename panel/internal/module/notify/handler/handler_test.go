@@ -25,6 +25,7 @@ type fakeNotify struct {
 	templates   []service.TemplateView
 	testTplIn   service.TemplateTest
 	testTplSubj string
+	bulkMailIn  []service.BulkMailInput
 }
 
 func (f *fakeNotify) MailSettings(ctx context.Context) (service.MailSettings, error) {
@@ -369,6 +370,7 @@ func TestAdminRoutesRequireAuth(t *testing.T) {
 		{http.MethodPost, "/v1/announcements", `{"title":"t","body":"b"}`},
 		{http.MethodPost, "/v1/announcements/018f0000-0000-7000-8000-000000000001", `{"title":"t","body":"b","expected_version":1}`},
 		{http.MethodPost, "/v1/announcements/018f0000-0000-7000-8000-000000000001/withdraw", `{"expected_version":1}`},
+		{http.MethodPost, "/v1/users/bulk/mail", `{"subject":"s","body":"b"}`},
 	}
 	if n := len(e.Routes()); n != len(calls) {
 		t.Fatalf("后台路由 %d 条，用例覆盖 %d 条", n, len(calls))

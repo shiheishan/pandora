@@ -97,6 +97,8 @@ type UserFilter struct {
 	// GroupID 为 nil 不筛；NoGroup 为 true 时只要未分组的
 	GroupID *uuid.UUID
 	NoGroup bool
+	// SubState 是 active / expired / none；空不筛
+	SubState string
 }
 
 // UserRow 是后台用户列表的一行（只含 identity 自己的字段）。
