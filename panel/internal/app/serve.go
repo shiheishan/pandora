@@ -38,6 +38,8 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/aegispanel/aegis/internal/pkg/redisx"
 	"github.com/aegispanel/aegis/internal/pkg/route"
+	"github.com/aegispanel/aegis/internal/pkg/webapp"
+	"github.com/aegispanel/aegis/web"
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -227,6 +229,9 @@ func newEngines(r *runtime, svc *services, hub *realtime.Hub) (*gin.Engine, *gin
 		authH.Authenticate(authn.AudienceAdmin),
 		authH.DomainGuard(authn.AudienceAdmin),
 	)
+	// 前端页面：门户与后台各自的构建产物挂在各自引擎的 / 与 /assets/*
+	webapp.Mount(publicEng, web.PortalApp)
+	webapp.Mount(adminEng, web.AdminApp)
 	publicV1 := publicEng.Group("/v1")
 	adminV1 := adminEng.Group("/v1")
 	for _, m := range mods {

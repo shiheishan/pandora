@@ -7,11 +7,13 @@ import { join } from 'node:path'
 //  输入
 // ============================================================================
 
-const stateDir = process.argv[2]
-if (!stateDir) {
+const stateDirArg = process.argv[2]
+if (!stateDirArg) {
   console.error('用法: node seed.ts <状态目录>')
   process.exit(2)
 }
+// 函数里也要用：模块顶层的收窄不会带进函数体
+const stateDir: string = stateDirArg
 
 function readEnvFile(path: string): Record<string, string> {
   const out: Record<string, string> = {}
