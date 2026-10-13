@@ -106,12 +106,36 @@ func TestProbeBackupLatestNeedsChecksumAndSeal(t *testing.T) {
 		t.Fatal("offsite should be false")
 	}
 
+	// 备份目录里的 backup-webdav.json 不算：上传工具只读固定位置（offsiteConfigPaths）
 	if err := os.WriteFile(filepath.Join(dir, "backup-webdav.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st = e.svc.probeBackup(testNow)
+	if st.OffsiteConfigured {
+		t.Fatal("a backup-webdav.json inside the backup dir must not count as offsite configured")
+	}
+
+	etc := t.TempDir()
+	offsiteConfigPaths = []string{filepath.Join(etc, "backup-webdav.json")}
+	if err := os.WriteFile(offsiteConfigPaths[0], []byte("{}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	st = e.svc.probeBackup(testNow)
 	if !st.OffsiteConfigured {
 		t.Fatal("offsite should be true")
+	}
+}
+
+// 异地备份配置的固定位置与 pandora backup webdav-upload 的缺省一致；读不到备份目录时提示新服务名。
+func TestOffsiteConfigPathAndServiceName(t *testing.T) {
+	if len(offsiteConfigPaths) != 1 || offsiteConfigPaths[0] != "/etc/pandora/backup-webdav.json" {
+		t.Fatalf("offsiteConfigPaths=%v", offsiteConfigPaths)
+	}
+	e := newTestEnv()
+	e.svc.opt.BackupDir = filepath.Join(t.TempDir(), "no-such-backup-dir")
+	st := e.svc.probeBackup(testNow)
+	if !strings.Contains(st.Message, "pandora-backup.service") || strings.Contains(st.Message, "aegis") {
+		t.Fatalf("message=%q", st.Message)
 	}
 }
 
@@ -176,7 +200,8 @@ func setupSystemStatusOK(t *testing.T) (*testEnv, string) {
 	if err := os.Chtimes(filepath.Join(dir, name), mod, mod); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "backup-webdav.json"), []byte("{}"), 0o644); err != nil {
+	offsiteConfigPaths = []string{filepath.Join(dir, "backup-webdav.json")}
+	if err := os.WriteFile(offsiteConfigPaths[0], []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
