@@ -26,6 +26,11 @@ on:
       - "panel/tests/expiry_e2e.sh"
       - "pdnd/panel/**"
       - "pdnd/release/nodesim/**"
+      # node_kick_e2e 跑真 pdnd：删人断线走 node 的名单 diff 与 NativeCore（kernel）的按用户踢线
+      - "panel/tests/node_kick_e2e.sh"
+      - "pdnd/core/**"
+      - "pdnd/node/**"
+      - "pdnd/kernel/**"
   pull_request:
     paths:
       - "panel/internal/pkg/**"
@@ -46,6 +51,11 @@ on:
       - "panel/tests/expiry_e2e.sh"
       - "pdnd/panel/**"
       - "pdnd/release/nodesim/**"
+      # node_kick_e2e 跑真 pdnd：删人断线走 node 的名单 diff 与 NativeCore（kernel）的按用户踢线
+      - "panel/tests/node_kick_e2e.sh"
+      - "pdnd/core/**"
+      - "pdnd/node/**"
+      - "pdnd/kernel/**"
 
 permissions:
   contents: read
@@ -247,7 +257,7 @@ jobs:
           fi
 
   node-e2e:
-    name: Node channel E2E (nodesim smoke, expiry)
+    name: Node channel E2E (nodesim smoke, expiry, real pdnd kick)
     # 单独一个 job：到期扫描要等几分钟，放进 e2e job 会拖慢鉴权那几个脚本
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -288,6 +298,7 @@ jobs:
       PANDORA_RATELIMIT_AUTH_PER_MIN: "100000"
       NODE_SMOKE_E2E_DISPOSABLE: YES_DELETE_FIXTURES
       EXPIRY_E2E_DISPOSABLE: YES_DELETE_FIXTURES
+      NODE_KICK_E2E_DISPOSABLE: YES_DELETE_FIXTURES
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -304,6 +315,10 @@ jobs:
       - name: Build nodesim
         working-directory: pdnd
         run: go build -mod=readonly -o "$RUNNER_TEMP/nodesim" ./release/nodesim
+      # 删人断线用真节点端（node_kick_e2e.sh）：与 nodesim 同一个 pdnd 模块与 Go 版本
+      - name: Build pandora-native
+        working-directory: pdnd
+        run: go build -mod=readonly -o "$RUNNER_TEMP/pandora-native" .
       - name: Run node e2e scripts
         run: |
           # CI 一次性的假密钥与管理员口令，只经环境变量与标准输入传
@@ -313,6 +328,8 @@ jobs:
           export ADMIN_EMAIL="admin-node-e2e@example.test"
           export ADMIN_PASS="E2e!Admin-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"
           export NODESIM="$RUNNER_TEMP/nodesim"
+          export PANDORA_NATIVE="$RUNNER_TEMP/pandora-native"
+          # SINGBOX 留空：脚本下载钉住版本的官方 sing-box 并核对 SHA-256
           export SERVE_LOG="$RUNNER_TEMP/serve.log"
           bin="$RUNNER_TEMP/pandora"
           "$bin" migrate up
@@ -335,7 +352,7 @@ jobs:
           test -n "$ok" || { cat "$SERVE_LOG"; exit 1; }
 
           failed=0
-          for s in node_smoke_e2e.sh expiry_e2e.sh; do
+          for s in node_smoke_e2e.sh expiry_e2e.sh node_kick_e2e.sh; do
             echo "::group::$s"
             if bash "tests/$s"; then echo "$s 通过"; else echo "::error::$s 失败"; failed=$((failed+1)); fi
             echo "::endgroup::"
