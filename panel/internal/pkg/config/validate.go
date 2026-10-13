@@ -6,9 +6,13 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
+
+var grpcNodePublicHostDNS = regexp.MustCompile(`^(?i)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$`)
 
 // Validate 收集全部校验问题并一并返回。
 func (c *Config) Validate() error {
@@ -92,6 +96,7 @@ func (c *Config) Validate() error {
 
 	errs = append(errs, validateHTTPServer("http.public", c.HTTP.Public)...)
 	errs = append(errs, validateHTTPServer("http.admin", c.HTTP.Admin)...)
+	errs = append(errs, validateGRPCNode(c.Env, c.GRPC.Node)...)
 	if c.Env == EnvProduction {
 		// 引擎只信 nginx 覆写的 X-Real-IP：监听若不在回环上，任何客户端都能伪造来源 IP，按 IP 的限流与审计聚合失效
 		for field, addr := range map[string]string{"http.public.addr": c.HTTP.Public.Addr, "http.admin.addr": c.HTTP.Admin.Addr} {
@@ -163,6 +168,37 @@ func (c *Config) Validate() error {
 	}
 
 	return errors.Join(errs...)
+}
+
+// validateGRPCNode 校验节点 gRPC：addr 必须是 host:port 且端口 1–65535；public_host 为空只在非生产允许，
+// 非空时必须是 IP 字面量或合法 DNS 名（不带端口、协议、路径）；public_port 在 0–65535。
+func validateGRPCNode(env string, g GRPCServer) []error {
+	var errs []error
+	_, portStr, err := net.SplitHostPort(g.Addr)
+	if err != nil {
+		errs = append(errs, fmt.Errorf("grpc.node.addr 必须是 host:port，端口 1–65535"))
+	} else {
+		port, err := strconv.Atoi(portStr)
+		if err != nil || port < 1 || port > 65535 {
+			errs = append(errs, fmt.Errorf("grpc.node.addr 必须是 host:port，端口 1–65535"))
+		}
+	}
+	if g.PublicHost == "" {
+		if env == EnvProduction {
+			errs = append(errs, errors.New("production 环境下 grpc.node.public_host 必填（节点连面板用的主机名或 IP）"))
+		}
+	} else {
+		h := g.PublicHost
+		if net.ParseIP(h) == nil {
+			if len(h) > 253 || !grpcNodePublicHostDNS.MatchString(h) {
+				errs = append(errs, fmt.Errorf("grpc.node.public_host 必须是 IP 或 DNS 名（不带端口与协议）"))
+			}
+		}
+	}
+	if g.PublicPort < 0 || g.PublicPort > 65535 {
+		errs = append(errs, fmt.Errorf("grpc.node.public_port 须在 [0, 65535]"))
+	}
+	return errs
 }
 
 func validateHTTPServer(prefix string, s HTTPServer) []error {
