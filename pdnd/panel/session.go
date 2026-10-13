@@ -6,15 +6,18 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"slices"
 	"sync"
 	"time"
 
 	nodev1 "github.com/aegispanel/nodeapi/pandora/node/v1"
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 // 会话的缺省节拍（契约：docs/architecture.md 11.3、p5-common「节点通道契约」）。
@@ -36,11 +39,21 @@ const (
 	eventBuffer     = 64
 )
 
+// trailerReenroll 与面板 panel/internal/module/node/grpc/interceptors.go 的 TrailerReenroll 同值。
+const trailerReenroll = "x-pandora-reenroll"
+
 var (
 	errSendQueueFull          = errors.New("发送队列已满，断流重连后重新对齐")
 	errReconnectRequested     = errors.New("面板要求重连")
 	errFirstMessageNotWelcome = errors.New("面板的第一条消息不是 Welcome")
+	errReenrollRequired       = errors.New("接入身份已失效，需要在后台生成新令牌重新接入")
 )
+
+// reenrollRequired 报告流是不是因身份失效被面板结束：PermissionDenied 且 trailer 带 x-pandora-reenroll: required。
+// 只有状态码、没有 trailer 的 PermissionDenied 照常退避重连。
+func reenrollRequired(err error, tr metadata.MD) bool {
+	return status.Code(err) == codes.PermissionDenied && slices.Contains(tr.Get(trailerReenroll), "required")
+}
 
 // SessionOptions 是会话参数。带「测试」的项留零即用缺省值。
 type SessionOptions struct {
@@ -227,7 +240,7 @@ func (s *Session) Run(ctx context.Context) error {
 			return ctx.Err()
 		}
 		if res.tombstone {
-			s.log.Error(ErrTombstoned.Error())
+			s.log.Error("接入身份已失效，需要在后台生成新令牌重新接入", "err", res.err)
 			return ErrTombstoned
 		}
 		if res.welcomed {
@@ -340,6 +353,10 @@ func (s *Session) runStream(ctx context.Context) (res streamResult) {
 		for {
 			m, err := stream.Recv()
 			if err != nil {
+				// Recv 出错后 trailer 已就位：身份失效的结束（PermissionDenied + 重新接入 trailer）当作 Tombstone
+				if reenrollRequired(err, stream.Trailer()) {
+					err = fmt.Errorf("%w: %v", errReenrollRequired, err)
+				}
 				recvErr <- err
 				return
 			}
@@ -381,6 +398,10 @@ func (s *Session) runStream(ctx context.Context) (res streamResult) {
 			res.err = context.Cause(sctx)
 			return res
 		case err := <-recvErr:
+			if r, ok := s.reenrollResult(ctx, err); ok {
+				r.welcomed, r.welcomedAt = true, res.welcomedAt
+				return r
+			}
 			res.err = err
 			return res
 		case req := <-live.q:
@@ -402,6 +423,16 @@ func (s *Session) runStream(ctx context.Context) (res streamResult) {
 	}
 }
 
+// reenrollResult：流因身份失效被面板结束（errReenrollRequired）时，与收到 Tombstone 同样处理：
+// 交给编排层 EventTombstone，结果标记 tombstone（Run 随即停止重连）。
+func (s *Session) reenrollResult(ctx context.Context, err error) (streamResult, bool) {
+	if !errors.Is(err, errReenrollRequired) {
+		return streamResult{}, false
+	}
+	s.emit(ctx, Event{Kind: EventTombstone, Reason: "reenroll_required"})
+	return streamResult{tombstone: true, err: err}, true
+}
+
 // awaitWelcome 等流上的第一条消息。它必须是 Welcome；面板在 Welcome 之前就发 Tombstone 也认。
 func (s *Session) awaitWelcome(ctx context.Context, recv <-chan *nodev1.SessionResponse, recvErr <-chan error) (*nodev1.Welcome, streamResult) {
 	t := time.NewTimer(s.o.WelcomeTimeout)
@@ -410,6 +441,9 @@ func (s *Session) awaitWelcome(ctx context.Context, recv <-chan *nodev1.SessionR
 	case <-ctx.Done():
 		return nil, streamResult{err: context.Cause(ctx)}
 	case err := <-recvErr:
+		if r, ok := s.reenrollResult(ctx, err); ok {
+			return nil, r
+		}
 		return nil, streamResult{err: err}
 	case <-t.C:
 		return nil, streamResult{err: fmt.Errorf("等面板 Welcome 超时（%s）", s.o.WelcomeTimeout)}
@@ -472,6 +506,8 @@ type pendingRenew struct {
 }
 
 // maybeRenew 在证书剩余不到 RenewBefore 且没有在途申请时，生成新私钥并在会话里发 RenewRequest。
+// 面板只在 active 证书剩余不到 RenewBefore + 1 天（11 天）时受理续期（service/identity_session.go 的
+// renewEarliestRemaining），两边阈值一起改；同一台服务器 1 分钟内不重复签发。
 // 在途申请超过 renewTimeoutChecks 个检查周期还没回证书，就丢掉那把私钥重新申请（面板续期时
 // 不立刻作废旧证书，重新申请是安全的）。
 func (s *Session) maybeRenew(send func(*nodev1.SessionRequest) error, p *pendingRenew) error {
