@@ -71,7 +71,7 @@ func nodeRowFromList(row repo.NodeListRow, now time.Time, detail bool) NodeRow {
 		Degraded:    nodeDegraded(row),
 	}
 	delivered, note := nodeDeliveryVerdict(facts)
-	eff, fail := nodeEffectiveState(row)
+	eff, fail := nodeEffectiveState(row, nil)
 
 	nr := NodeRow{
 		ID:                row.ID,

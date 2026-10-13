@@ -83,26 +83,13 @@ func (r *Repo) NextIdentitySeq(ctx context.Context, serverID uuid.UUID) (int32, 
 	return row.N, err
 }
 
-// identityInsertRow 是写入 server_identities 用的行：在 model 之外补上 activated_at（active 签发时即生效）。
-type identityInsertRow struct {
-	model.ServerIdentity
-	ActivatedAt *time.Time `gorm:"column:activated_at"`
-}
-
-func (identityInsertRow) TableName() string { return "server_identities" }
-
-// InsertIdentity 写入一份身份（调用方填好全部列）；写回 ID、CreatedAt。
+// InsertIdentity 写入一份身份（调用方填好全部列）；active 且没给 ActivatedAt 时按签发时刻补上。写回 ID、CreatedAt。
 func (r *Repo) InsertIdentity(ctx context.Context, id *model.ServerIdentity) error {
-	row := identityInsertRow{ServerIdentity: *id}
-	if id.Status == "active" {
+	if id.Status == "active" && id.ActivatedAt == nil {
 		at := id.IssuedAt
-		row.ActivatedAt = &at
+		id.ActivatedAt = &at
 	}
-	if err := r.d.Conn(ctx).Create(&row).Error; err != nil {
-		return err
-	}
-	*id = row.ServerIdentity
-	return nil
+	return r.d.Conn(ctx).Create(id).Error
 }
 
 type identityIDRow struct {
@@ -202,6 +189,28 @@ func (r *Repo) HasActiveIdentity(ctx context.Context, serverID uuid.UUID, now ti
 		 WHERE server_id = ? AND status = 'active' AND expires_at > ?) AS ok`, serverID, now,
 	).Scan(&row).Error
 	return row.OK, err
+}
+
+// ActiveIdentitySeqs 批量取这些服务器当前 active 身份的 seq（一条 SQL，不看是否过期）；没有 active 身份的服务器不在结果里。
+func (r *Repo) ActiveIdentitySeqs(ctx context.Context, serverIDs []uuid.UUID) (map[uuid.UUID]int32, error) {
+	out := make(map[uuid.UUID]int32, len(serverIDs))
+	if len(serverIDs) == 0 {
+		return out, nil
+	}
+	var rows []struct {
+		ServerID uuid.UUID `gorm:"column:server_id"`
+		Seq      int32     `gorm:"column:seq"`
+	}
+	err := r.d.Conn(ctx).Raw(
+		`SELECT server_id, seq FROM server_identities WHERE server_id IN ? AND status = 'active'`, serverIDs,
+	).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		out[row.ServerID] = row.Seq
+	}
+	return out, nil
 }
 
 // ServerHostInfo 是节点自报的主机信息；nil 表示未知（写成 NULL）。

@@ -29,8 +29,10 @@ type BootstrapToken struct {
 	ExpiresAt     time.Time  `gorm:"column:expires_at"`
 	UsedAt        *time.Time `gorm:"column:used_at"`
 	UsedRequestID *string    `gorm:"column:used_request_id"`
-	IssuedBy      *uuid.UUID `gorm:"column:issued_by;type:uuid"`
-	CreatedAt     time.Time  `gorm:"column:created_at"`
+	// VoidedAt 是吊销身份、退役或删除服务器时作废未用令牌的时刻；作废后不能再用于接入
+	VoidedAt  *time.Time `gorm:"column:voided_at"`
+	IssuedBy  *uuid.UUID `gorm:"column:issued_by;type:uuid"`
+	CreatedAt time.Time  `gorm:"column:created_at"`
 }
 
 // TableName 固定表名。
@@ -48,12 +50,14 @@ type ServerIdentity struct {
 	EnrollTokenID   *uuid.UUID `gorm:"column:enroll_token_id;type:uuid"`
 	EnrollRequestID *string    `gorm:"column:enroll_request_id"`
 	Status          string     `gorm:"column:status"` // pending、active、superseded、revoked
-	IssuedAt        time.Time  `gorm:"column:issued_at"`
-	ExpiresAt       time.Time  `gorm:"column:expires_at"`
-	SupersededAt    *time.Time `gorm:"column:superseded_at"`
-	RevokedAt       *time.Time `gorm:"column:revoked_at"`
-	RevokedReason   *string    `gorm:"column:revoked_reason"`
-	CreatedAt       time.Time  `gorm:"column:created_at;default:now()"`
+	// ActivatedAt 是成为 active 的时刻：接入签发的即签发时刻，续期签出的在第一次建流转正时写；pending 为空
+	ActivatedAt   *time.Time `gorm:"column:activated_at"`
+	IssuedAt      time.Time  `gorm:"column:issued_at"`
+	ExpiresAt     time.Time  `gorm:"column:expires_at"`
+	SupersededAt  *time.Time `gorm:"column:superseded_at"`
+	RevokedAt     *time.Time `gorm:"column:revoked_at"`
+	RevokedReason *string    `gorm:"column:revoked_reason"`
+	CreatedAt     time.Time  `gorm:"column:created_at;default:now()"`
 }
 
 // TableName 固定表名。

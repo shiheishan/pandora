@@ -179,7 +179,9 @@ type nodeApplyFailureResponse struct {
 	Generation *int64    `json:"generation"`
 }
 
-// nodeRowResponse 是后台节点列表的一行（nodeRowSchema）。第二波才有数据的字段给固定值。
+// nodeRowResponse 是后台节点列表的一行（nodeRowSchema）。新设计没有的概念给固定值：health_score、
+// applied/desired_config_version、desired/applied_effective_generation 恒为 null（没有代数，配置是否生效看
+// effective_state，按配置文档 SHA-256 比）。
 type nodeRowResponse struct {
 	ID                         uuid.UUID                 `json:"id"`
 	NodeNo                     int64                     `json:"node_no"`
@@ -354,13 +356,23 @@ func nodeRowFrom(r service.NodeRow) nodeRowResponse {
 		DisplayName:       r.DisplayName,
 		CountryCode:       r.CountryCode,
 		SortOrder:         r.SortOrder,
-		GrantedPlans:      []string{}, // 第二波
+		IdentitySerial:    r.IdentitySerial,
+		OnlineUsers:       r.OnlineUsers,
+		OnlineIPs:         r.OnlineIPs,
+		TrafficBytes24h:   r.TrafficBytes24h,
+		CPUPercent:        r.CPUPercent,
+		MemPercent:        r.MemPercent,
+		MetricsAt:         r.MetricsAt,
+		GrantedPlans:      r.GrantedPlans,
 		EffectiveState:    r.EffectiveState,
 		RuntimeStatus:     r.RuntimeStatus,
 		RuntimeReason:     r.RuntimeReason,
 		RuntimeStateAt:    r.RuntimeStateAt,
 		RuntimeReasonNode: r.RuntimeReasonNode,
 		DeliveryDegraded:  r.DeliveryDegraded,
+	}
+	if out.GrantedPlans == nil {
+		out.GrantedPlans = []string{}
 	}
 	if f := r.LastApplyFailure; f != nil {
 		out.LastApplyFailure = &nodeApplyFailureResponse{Phase: f.Phase, Detail: f.Detail, At: f.At}

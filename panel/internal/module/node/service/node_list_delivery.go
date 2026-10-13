@@ -13,6 +13,7 @@ const (
 	nodeNoteNotActive      = "服务状态不是 active，不下发"
 	nodeNoteNoPool         = "未划入节点池，不服务任何用户"
 	nodeNotePoolInactive   = "所在节点池未启用，不下发"
+	nodeNotePoolUnbound    = "所在节点池没有绑定任何套餐，不会出现在任何用户的订阅里"
 	nodeNoteNeverSeen      = "所在服务器从未上报过心跳，不下发 —— 多半是还没在机器上安装节点端。发出去就是一条必然连不上的线路"
 	nodeNoteServerNotReady = "所属服务器未就绪或已删除，不下发"
 	nodeNoteNodeNotReady   = "协议、端口或可连地址不完整，不下发"
@@ -22,9 +23,11 @@ const (
 
 // nodeDeliveryFacts 是判定「是否下发」时用的输入事实。
 type nodeDeliveryFacts struct {
-	Serving     string
-	Pooled      bool
-	PoolActive  bool
+	Serving    string
+	Pooled     bool
+	PoolActive bool
+	// PoolBound：所在池被至少一个套餐版本绑定（catalog PoolUsage）
+	PoolBound   bool
 	EverSeen    bool
 	BeatFresh   bool
 	Deliverable bool
@@ -33,7 +36,7 @@ type nodeDeliveryFacts struct {
 }
 
 // nodeDeliveryVerdict 按顺序判定节点会不会出现在用户订阅里及说明文案。
-// Deliverable 来自 repo.DeliverableNodeCond（订阅、套餐页、后台三处同一口径）；「池没绑套餐」第二波补。
+// Deliverable 来自 repo.DeliverableNodeCond（订阅、套餐页、后台三处同一口径）；「池没绑套餐」在池未启用之后判。
 func nodeDeliveryVerdict(f nodeDeliveryFacts) (bool, string) {
 	if f.Serving != "active" {
 		return false, nodeNoteNotActive
@@ -43,6 +46,9 @@ func nodeDeliveryVerdict(f nodeDeliveryFacts) (bool, string) {
 	}
 	if !f.PoolActive {
 		return false, nodeNotePoolInactive
+	}
+	if !f.PoolBound {
+		return false, nodeNotePoolUnbound
 	}
 	if !f.EverSeen {
 		return false, nodeNoteNeverSeen
@@ -62,8 +68,11 @@ func nodeDeliveryVerdict(f nodeDeliveryFacts) (bool, string) {
 	return true, ""
 }
 
-// nodeEffectiveState 从列表行推出配置生效状态；pending 要等第二波有期望版本。
-func nodeEffectiveState(r repo.NodeListRow) (string, *ApplyFailure) {
+// nodeEffectiveState 从列表行与期望摘要推出配置生效状态。desired 是面板现在为这个节点算出的配置文档 SHA-256
+// （ServerConfigs）；节点不在该跑的集合里（草稿、停用、服务器未就绪）时为 nil，只看节点回报的状态。
+// 新设计没有代数：有期望摘要时，失败的正是它 → failed，已应用的正是它 → applied，否则 → pending。
+func nodeEffectiveState(r repo.NodeListRow, desired *string) (string, *ApplyFailure) {
+	var failure *ApplyFailure
 	if r.ApplyFailedAt != nil {
 		detail := r.ApplyFailedReason
 		if r.ApplyFailedDetail != nil && *r.ApplyFailedDetail != "" {
@@ -73,7 +82,20 @@ func nodeEffectiveState(r repo.NodeListRow) (string, *ApplyFailure) {
 		if detail != nil {
 			d = *detail
 		}
-		return "failed", &ApplyFailure{Phase: "failed", Detail: d, At: *r.ApplyFailedAt}
+		failure = &ApplyFailure{Phase: "failed", Detail: d, At: *r.ApplyFailedAt}
+	}
+	if desired != nil {
+		switch {
+		case r.ApplyFailedSHA256 != nil && *r.ApplyFailedSHA256 == *desired:
+			return "failed", failure
+		case r.AppliedConfigSHA256 != nil && *r.AppliedConfigSHA256 == *desired:
+			return "applied", failure
+		default:
+			return "pending", failure
+		}
+	}
+	if failure != nil {
+		return "failed", failure
 	}
 	if r.AppliedConfigSHA256 != nil {
 		return "applied", nil
