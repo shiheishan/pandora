@@ -89,7 +89,6 @@ type services struct {
 	certs      *certssvc.Service
 	plugin     *pluginsvc.Service
 	report     *reportsvc.Service
-	rt         *realtime.Publisher
 	// idemFPKey 是幂等请求指纹的 HMAC 密钥（从主密钥派生）
 	idemFPKey []byte
 	limiter   *ratelimit.Limiter
@@ -181,6 +180,10 @@ func buildServices(r *runtime) (*services, error) {
 	subSvc := subsvc.New(subrepo.New(r.db), txm, auditSvc, settingsSvc, catalogSvc, identitySvc, sealer)
 
 	orderSvc := ordersvc.New(orderrepo.New(r.db), txm, catalogSvc, ledgerSvc, promoSvc, subSvc, paymentSvc, identitySvc, idemSvc, auditSvc)
+	// 实时推送：各属主模块在事务提交后发「什么变了」；serve 与 worker 都要装（到期、关窗在 worker 里跑）
+	rt := realtime.NewPublisher(r.redis)
+	subSvc.UseRealtime(rt)
+	orderSvc.UseRealtime(rt)
 	commissionSvc := commissionsvc.New(commissionrepo.New(r.db), txm, ledgerSvc, settingsSvc, sealer, auditSvc)
 	nodeSvc := nodesvc.New(noderepo.New(r.db), txm, auditSvc, r.redis)
 	// 节点端一键安装：二进制从发布包的 pdnd-dist 目录发，安装脚本里写入面板地址
@@ -353,7 +356,6 @@ func buildServices(r *runtime) (*services, error) {
 		certs:      certsSvc,
 		plugin:     pluginSvc,
 		report:     reportSvc,
-		rt:         realtime.NewPublisher(r.redis),
 		idemFPKey:  keys.Derive(crypto.InfoHMACIdempotency, 32),
 		limiter:    limiter,
 		sealer:     sealer,
