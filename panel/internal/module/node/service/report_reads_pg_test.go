@@ -30,7 +30,7 @@ func TestReportNodeCountsAndOfflinePG(t *testing.T) {
 	port2 := 30002
 	nActiveS1 := seedTrafficNode(t, ctx, e, &s1, "1.00")
 	nActiveS2 := seedTrafficNode(t, ctx, e, &s2, "1.00")
-	nDraftS1 := seedTrafficNode(t, ctx, e, &s1, "1.00")
+	seedTrafficNode(t, ctx, e, &s1, "1.00") // S1 上的草稿节点：计入 Total，不算在线也不算失联
 
 	activateNode := func(nodeID uuid.UUID, port int) {
 		e.mustExec(t, ctx, `UPDATE nodes SET serving_status = 'active', node_type = 'vless', server_host = 'node.example.test',
