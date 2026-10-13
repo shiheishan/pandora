@@ -2,7 +2,7 @@ package panel
 
 import (
 	"context"
-	"crypto/rand"
+	"crypto/ecdsa"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
@@ -42,19 +42,22 @@ type EnrollOptions struct {
 	Timeout time.Duration
 }
 
-// enrollJournal 是接入日志：发请求之前落盘，崩溃或回包丢失后同令牌重跑沿用同一个 request_id 与私钥，
-// 面板按 (令牌, request_id) 幂等地返回同一张证书。不存明文令牌。
+// enrollJournal 是接入日志：发请求之前落盘，崩溃或回包丢失后同令牌重跑原样重发同一个 request_id
+// 与同一份 CSR（不重签：ECDSA 签名带随机数，重签出的 CSR 字节不同），面板按 request_id 加公钥比对，
+// 幂等地返回同一张证书。不存明文令牌。
 type enrollJournal struct {
-	Format      int       `json:"format"`
-	Panel       string    `json:"panel"`
-	CASHA256    string    `json:"ca_sha256"`
-	TokenSHA256 string    `json:"token_sha256"`
-	RequestID   string    `json:"request_id"`
-	KeyPEM      string    `json:"key_pem"`
-	CreatedAt   time.Time `json:"created_at"`
+	Format      int    `json:"format"`
+	Panel       string `json:"panel"`
+	CASHA256    string `json:"ca_sha256"`
+	TokenSHA256 string `json:"token_sha256"`
+	RequestID   string `json:"request_id"`
+	KeyPEM      string `json:"key_pem"`
+	// CSRDER 是第一次生成的 CSR 原字节（JSON 里是 base64）。
+	CSRDER    []byte    `json:"csr_der"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
-const journalFormat = 1
+const journalFormat = 2
 
 // Enroll 用一次性令牌接入面板：按 CA 指纹钉住面板证书，提交本地生成的 CSR，拿回客户端证书写进身份目录。
 func Enroll(ctx context.Context, o EnrollOptions) (*Identity, error) {
@@ -87,10 +90,6 @@ func Enroll(ctx context.Context, o EnrollOptions) (*Identity, error) {
 		return nil, err
 	}
 	keyPEM := []byte(j.KeyPEM)
-	csr, err := csrFromKeyPEM(keyPEM)
-	if err != nil {
-		return nil, fmt.Errorf("接入日志里的私钥不可用: %w", err)
-	}
 
 	opts := []grpc.DialOption{grpc.WithTransportCredentials(credentials.NewTLS(pinnedTLSConfig(host, fp)))}
 	if o.Dialer != nil {
@@ -110,7 +109,7 @@ func Enroll(ctx context.Context, o EnrollOptions) (*Identity, error) {
 	defer cancel()
 	resp, err := nodev1.NewEnrollmentServiceClient(conn).Enroll(rctx, &nodev1.EnrollRequest{
 		Token:        token,
-		CsrDer:       csr,
+		CsrDer:       j.CSRDER,
 		RequestId:    j.RequestID,
 		Host:         o.Host,
 		AgentVersion: o.AgentVersion,
@@ -153,13 +152,14 @@ func loadOrCreateJournal(dir, hostport, fp, token string) (*enrollJournal, error
 		var j enrollJournal
 		if json.Unmarshal(body, &j) == nil && j.Format == journalFormat &&
 			j.Panel == hostport && j.CASHA256 == fp && j.TokenSHA256 == tokenHash &&
-			j.RequestID != "" && j.KeyPEM != "" {
+			j.RequestID != "" && csrMatchesKey(j.CSRDER, []byte(j.KeyPEM)) == nil {
 			return &j, nil
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	keyPEM, _, err := newKeyAndCSR("")
+	// CN 留空：接入时还不知道 server_id。CSR 只在这里生成一次，之后重试原样重发。
+	keyPEM, csr, err := newKeyAndCSR("")
 	if err != nil {
 		return nil, err
 	}
@@ -170,6 +170,7 @@ func loadOrCreateJournal(dir, hostport, fp, token string) (*enrollJournal, error
 		TokenSHA256: tokenHash,
 		RequestID:   uuid.NewString(),
 		KeyPEM:      string(keyPEM),
+		CSRDER:      csr,
 		CreatedAt:   time.Now().UTC(),
 	}
 	body, err := json.Marshal(j)
@@ -182,17 +183,32 @@ func loadOrCreateJournal(dir, hostport, fp, token string) (*enrollJournal, error
 	return j, nil
 }
 
-// csrFromKeyPEM 用日志里的私钥重新生成 CSR（同一私钥，CN 留空：接入时还不知道 server_id）。
-func csrFromKeyPEM(keyPEM []byte) ([]byte, error) {
+// parseECKeyPEM 解析 PEM 编码的 EC 私钥。
+func parseECKeyPEM(keyPEM []byte) (*ecdsa.PrivateKey, error) {
 	block, _ := pem.Decode(keyPEM)
 	if block == nil {
 		return nil, errors.New("不是 PEM")
 	}
-	key, err := x509.ParseECPrivateKey(block.Bytes)
+	return x509.ParseECPrivateKey(block.Bytes)
+}
+
+// csrMatchesKey 核对日志里的 CSR 签名完好、公钥就是日志里私钥的公钥；不符的日志作废重建。
+func csrMatchesKey(csrDER, keyPEM []byte) error {
+	key, err := parseECKeyPEM(keyPEM)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
+	csr, err := x509.ParseCertificateRequest(csrDER)
+	if err != nil {
+		return err
+	}
+	if err := csr.CheckSignature(); err != nil {
+		return err
+	}
+	if !key.PublicKey.Equal(csr.PublicKey) {
+		return errors.New("CSR 的公钥与私钥不配")
+	}
+	return nil
 }
 
 // bundleHasCA 判断 PEM 里有没有一张指纹为 fp 的 CA 证书。

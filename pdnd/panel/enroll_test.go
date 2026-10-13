@@ -1,8 +1,11 @@
 package panel
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"os"
@@ -199,6 +202,59 @@ func TestEnrollRejectsWrongFingerprint(t *testing.T) {
 	}
 }
 
+// 链里带着真 CA，叶子却是攻击者 CA 签的：必须拒绝，令牌不能发出去。
+func TestEnrollRejectsLeafNotSignedByPinnedCA(t *testing.T) {
+	pki := newTestPKI(t)
+	attacker := newTestPKI(t)
+	forged := attacker.serverCert(t, "127.0.0.1")
+	forged.Certificate = [][]byte{forged.Certificate[0], pki.caCert.Raw}
+	cfg := attacker.serverTLS(t, "127.0.0.1")
+	cfg.Certificates = []tls.Certificate{forged}
+	fake := &fakeEnroll{t: t, pki: pki, serverID: uuid.NewString(), byReqID: make(map[string][]byte)}
+	dialer := startFakeGRPC(t, cfg, fake, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := Enroll(ctx, enrollOpts(t, pki, dialer, t.TempDir(), "tok-forged")); err == nil {
+		t.Fatal("叶子不是钉住的 CA 签的，应失败")
+	}
+	if fake.requestCount() != 0 {
+		t.Fatal("令牌不应发出去")
+	}
+}
+
+// 日志里的 CSR 与私钥不配（被改过或旧格式）：作废重建，换新的 request_id。
+func TestJournalWithMismatchedCSRIsRebuilt(t *testing.T) {
+	dir := t.TempDir()
+	fp := newTestPKI(t).fingerprint
+	j, err := loadOrCreateJournal(dir, "127.0.0.1:9443", fp, "tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := loadOrCreateJournal(dir, "127.0.0.1:9443", fp, "tok")
+	if err != nil || again.RequestID != j.RequestID || !bytes.Equal(again.CSRDER, j.CSRDER) {
+		t.Fatalf("同一次接入应沿用日志：%v", err)
+	}
+	_, otherCSR, err := newKeyAndCSR("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	j.CSRDER = otherCSR
+	body, err := json.Marshal(j)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteFileAtomic(filepath.Join(dir, journalFile), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rebuilt, err := loadOrCreateJournal(dir, "127.0.0.1:9443", fp, "tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rebuilt.RequestID == j.RequestID || csrMatchesKey(rebuilt.CSRDER, []byte(rebuilt.KeyPEM)) != nil {
+		t.Fatal("CSR 与私钥不配的日志应作废重建")
+	}
+}
+
 func TestEnrollRejectsWrongHost(t *testing.T) {
 	pki := newTestPKI(t)
 	fake := &fakeEnroll{t: t, pki: pki, serverID: uuid.NewString(), byReqID: make(map[string][]byte)}
@@ -253,6 +309,9 @@ func TestEnrollRetryReusesRequestID(t *testing.T) {
 	}
 	if reqs[0].RequestId != reqs[1].RequestId {
 		t.Fatal("request_id 应相同")
+	}
+	if !bytes.Equal(reqs[0].CsrDer, reqs[1].CsrDer) {
+		t.Fatal("重试应原样重发第一次的 CSR，不重签")
 	}
 	cert1 := fake.cachedCert(reqs[0].RequestId)
 	if len(cert1) == 0 {
