@@ -244,10 +244,22 @@ func buildServices(r *runtime) (*services, error) {
 	supportSvc := supportsvc.New(supportrepo.New(r.db), txm, auditSvc, idemSvc, identitySvc, authSvc)
 	supportSvc.UseOrders(supportOrders{o: orderSvc})
 	supportSvc.UsePlanNames(supportPlans{s: subSvc})
+	// 客服公开回复后，在回复的同一事务里经 notify 给提单人写「工单有新回复」
+	supportSvc.UseReplyNotifier(supportReplyNotifier{n: notifySvc})
 	auditSvc.UseResourceLabeler(supportsvc.ResourceTicket, supportSvc.TicketLabels)
 	if missing := supportSvc.MissingPorts(); len(missing) > 0 {
 		_ = queue.Close()
 		return nil, fmt.Errorf("support 缺少装配: %v", missing)
+	}
+
+	// 通知：扫描与公告定向要读用户、套餐、订阅；Telegram webhook 地址由对外地址拼出
+	notifySvc.UseDirectory(identitySvc)
+	notifySvc.UsePlans(catalogSvc)
+	notifySvc.UseSubscriptions(subSvc)
+	notifySvc.UsePublicBaseURL(cfg.PublicBaseURL)
+	if missing := notifySvc.MissingPorts(); len(missing) > 0 {
+		_ = queue.Close()
+		return nil, fmt.Errorf("notify 缺少装配: %v", missing)
 	}
 
 	return &services{
@@ -324,7 +336,17 @@ func (a supportPlans) ActivePlanNames(ctx context.Context, userIDs []uuid.UUID) 
 	return out, nil
 }
 
+// supportReplyNotifier 让 support 经 notify 给提单人写「工单有新回复」；去重键按回复 id，同一条回复只通知一次。
+type supportReplyNotifier struct{ n *notifysvc.Service }
+
+// TicketReplied 在调用方事务里写通知。
+func (a supportReplyNotifier) TicketReplied(ctx context.Context, n supportsvc.ReplyNotice) error {
+	return a.n.NotifyUser(ctx, n.UserID, notifysvc.TemplateTicketReplied,
+		map[string]string{"subject": n.Subject}, "ticket-replied:"+n.MessageID.String())
+}
+
 var (
-	_ supportsvc.Orders    = supportOrders{}
-	_ supportsvc.PlanNames = supportPlans{}
+	_ supportsvc.Orders        = supportOrders{}
+	_ supportsvc.PlanNames     = supportPlans{}
+	_ supportsvc.ReplyNotifier = supportReplyNotifier{}
 )

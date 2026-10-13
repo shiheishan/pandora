@@ -35,6 +35,11 @@ type fakeSettings struct {
 	setReg     *settingssvc.Registration
 	setRegErr  error
 	calls      []string
+
+	// Telegram 设置（P6）
+	tg       settingssvc.Telegram
+	setTg    *settingssvc.TelegramUpdate
+	setTgErr error
 }
 
 func (f *fakeSettings) Mail(context.Context) (settingssvc.Mail, error) { return f.mail, nil }
@@ -62,6 +67,14 @@ func (f *fakeSettings) SwitchEnabled(_ context.Context, code string) (bool, erro
 		return !f.emailOff, nil
 	}
 	return true, nil
+}
+
+func (f *fakeSettings) Telegram(context.Context) (settingssvc.Telegram, error) { return f.tg, nil }
+
+func (f *fakeSettings) SetTelegram(_ context.Context, v settingssvc.TelegramUpdate) error {
+	f.calls = append(f.calls, "SetTelegram")
+	f.setTg = &v
+	return f.setTgErr
 }
 
 // configuredMail 是一份齐全的 SMTP 配置。

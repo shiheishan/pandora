@@ -17,6 +17,7 @@ import (
 )
 
 type pgEnv struct {
+	scan   func(ctx context.Context, dest any, q string, args ...any) error
 	svc    *Service
 	repo   *repo.Repo
 	ctx    context.Context
@@ -43,6 +44,9 @@ func newPG(t *testing.T) *pgEnv {
 	d := testkit.DB(t)
 	r := repo.New(d)
 	e := &pgEnv{
+		scan: func(ctx context.Context, dest any, q string, args ...any) error {
+			return d.Conn(ctx).Raw(q, args...).Scan(dest).Error
+		},
 		repo:   r,
 		ctx:    testkit.TxCtx(t, d),
 		st:     &fakeSettings{mail: configuredMail(), site: settingssvc.Site{Name: "测试站"}},
