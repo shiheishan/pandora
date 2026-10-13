@@ -146,6 +146,7 @@ func (i *interceptors) authorize(ctx context.Context) (context.Context, error) {
 	}
 
 	ctx = WithServerID(ctx, id)
+	ctx = WithCertSerial(ctx, leaf.SerialNumber)
 	ctx = plog.With(ctx, plog.From(ctx).With(zap.String("server_id", id.String())))
 	return ctx, nil
 }
