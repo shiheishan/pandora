@@ -147,6 +147,13 @@ func (s *Service) Enroll(ctx context.Context, in EnrollInput) (EnrollResult, err
 		if err := s.repo.UpdateServerHostInfo(ctx, serverID, host); err != nil {
 			return err
 		}
+		if in.RemoteIP != "" && s.geo != nil {
+			if region := regionText(s.geo.Lookup(in.RemoteIP)); region != "" {
+				if err := s.repo.FillServerRegionIfEmpty(ctx, serverID, region); err != nil {
+					return err
+				}
+			}
+		}
 		agent := ""
 		if host.AgentVersion != nil {
 			agent = *host.AgentVersion

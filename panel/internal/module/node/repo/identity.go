@@ -232,3 +232,12 @@ func (r *Repo) UpdateServerHostInfo(ctx context.Context, serverID uuid.UUID, h S
 		args...,
 	).Error
 }
+
+// FillServerRegionIfEmpty 在服务器 region 为空时写入地区文本，管理员填过的不覆盖。
+func (r *Repo) FillServerRegionIfEmpty(ctx context.Context, serverID uuid.UUID, region string) error {
+	return r.d.Conn(ctx).Exec(
+		`UPDATE servers SET region = ? WHERE id = ? AND (region IS NULL OR btrim(region) = '')`,
+		region, serverID,
+	).Error
+}
+
