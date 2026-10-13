@@ -57,6 +57,9 @@ type Service struct {
 	adminGuard AdminGuard
 	mailer     VerificationMailer
 	staff      StaffGuard
+
+	// roster 由 node 实现（roster_notify.go）：账号状态、用户组变了，提交后通知节点名单重算。
+	roster RosterNotifier
 }
 
 // New 构造 identity service。keys 用于验证码、收件目标与限流键的 HMAC；rdb 存改密失败计数；

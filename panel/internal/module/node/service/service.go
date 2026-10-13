@@ -40,6 +40,11 @@ type Service struct {
 
 	// 第二波：会话管理（channel.go）
 	sessions SessionControl
+
+	// 第二波 p5-delivery 注入（delivery.go）：名单要的订阅、账号、套餐版本读取面
+	subs     ServingSubscriptions
+	users    ServingUsers
+	versions PlanVersions
 }
 
 // New 构造 node service。rdb 用于下发纪元（epoch.go），为 nil 时只跳过通知。

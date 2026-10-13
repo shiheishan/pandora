@@ -146,6 +146,7 @@ func (s *Service) SetStatus(ctx context.Context, userID uuid.UUID, status, reaso
 		if err := s.repo.SetUserStatus(ctx, userID, status); err != nil {
 			return err
 		}
+		s.notifyRoster(ctx, userID)
 		if status != StatusActive {
 			revoker, err := s.needRevoker()
 			if err != nil {
@@ -256,6 +257,7 @@ func (s *Service) AssignGroup(ctx context.Context, userID uuid.UUID, groupID *uu
 		if !ok {
 			return errs.Newf(errs.ValidationFailed, "用户或分组不存在")
 		}
+		s.notifyRoster(ctx, userID)
 		gid := ""
 		if groupID != nil {
 			gid = groupID.String()

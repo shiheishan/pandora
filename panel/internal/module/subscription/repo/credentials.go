@@ -32,8 +32,10 @@ type PullRow struct {
 }
 
 // PullByTokenHash 按令牌哈希读拉取所需的一行；没有返回 false。
-func (r *Repo) PullByTokenHash(ctx context.Context, hash []byte) (PullRow, bool, error) {
+// 流量配额取本期窗口里最紧的限量行（余量最小）；窗口里全是不限量行时取到 NULL 上限，按不限显示。
+func (r *Repo) PullByTokenHash(ctx context.Context, hash []byte, now time.Time) (PullRow, bool, error) {
 	var row PullRow
+	wNow, wGrace := trafficQuotaWindow(now)
 	err := r.d.Conn(ctx).Raw(`
 		SELECT sc.id AS credential_id,
 		       sc.token_hash,
@@ -58,11 +60,11 @@ func (r *Repo) PullByTokenHash(ctx context.Context, hash []byte) (PullRow, bool,
 		  LEFT JOIN LATERAL (
 			SELECT qb.limit_value, qb.consumed
 			  FROM quota_balances qb
-			 WHERE qb.subscription_id = s.id AND qb.metric = 'traffic.bytes'
-			 ORDER BY qb.period_end DESC NULLS LAST
+			 WHERE qb.subscription_id = s.id AND `+trafficQuotaWindowCond+`
+			 ORDER BY (qb.limit_value IS NULL), (qb.limit_value - qb.consumed), qb.period_end DESC NULLS LAST
 			 LIMIT 1
 		  ) q ON true
-		 WHERE sc.token_hash = ?`, hash).Scan(&row).Error
+		 WHERE sc.token_hash = ?`, wNow, wGrace, hash).Scan(&row).Error
 	if err != nil {
 		return PullRow{}, false, mapErr(err)
 	}

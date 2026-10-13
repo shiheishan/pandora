@@ -1,4 +1,4 @@
-// 节点池与池的用户组名单；池限定用户组的唯一谓词。
+// 节点池与池的用户组名单（池限定用户组的判定在 service.poolAdmits，名单与线路共用）。
 package repo
 
 import (
@@ -47,14 +47,6 @@ func mapPoolErr(err, onUnique, onFK error) error {
 	}
 	return err
 }
-
-// PoolAdmitsUserCond 是节点池「仅限用户组」的唯一 SQL 谓词：池没有名单（node_pool_user_groups 里没有它的行），
-// 或用户所在的组在名单里。默认组（user_group_id 为 NULL）的用户进不了任何限定了组的池（NULL 与名单连不上）。
-//
-// 调用方 SQL 里节点表别名必须是 n（用 n.pool_id），并提供别名 u、带列 user_group_id 的用户行
-// （users u，或 (SELECT ?::uuid AS user_group_id) u 这样的派生表）。节点名单下发、订阅线路都用它，不另写变体。
-const PoolAdmitsUserCond = `(NOT EXISTS (SELECT 1 FROM node_pool_user_groups npug WHERE npug.pool_id = n.pool_id)
- OR EXISTS (SELECT 1 FROM node_pool_user_groups npug WHERE npug.pool_id = n.pool_id AND npug.user_group_id = u.user_group_id))`
 
 // PoolNodeCount 是一个池的节点数：Nodes 未删除的，Active 其中在役的。
 type PoolNodeCount struct {
