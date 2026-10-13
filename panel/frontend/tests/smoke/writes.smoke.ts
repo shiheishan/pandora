@@ -1,4 +1,4 @@
-import { createHmac, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -19,7 +19,7 @@ import { okSchema as ticketOk, ticketDetailSchema } from '../../src/admin/screen
 import { okSchema as usersOk } from '../../src/admin/screens/users/api'
 import { linksSchema } from '../../src/portal/screens/common/subscriptions'
 import { NOTIFICATION_LIMIT, notificationSchema } from '../../src/portal/screens/messages/api'
-import { lastHeaders, loginToken, pageClient, record, state } from './harness'
+import { freshLogin, lastHeaders, pageClient, record, redisCli, state } from './harness'
 
 const s = state.seed
 
@@ -37,41 +37,40 @@ function writeCase(at: string, path: string, title: string, fn: () => Promise<st
 }
 
 // ============================================================================
-//  上线后下发：以节点身份取用户列表，门户用户的订阅凭据要在里面
+//  上线后下发：nodesim 状态文件里的用户名单，门户用户的订阅凭据要在里面
 // ============================================================================
 
 describe('新服务器 + 新节点一步上线后能下发用户', () => {
-  writeCase('seed.ts（接入 + POST activate）', 'api/v1/server/UniProxy/user', '节点用户列表含门户用户的订阅凭据', async () => {
-    const res = await fetch(`${state.node}/api/v1/server/UniProxy/user?node_id=${s.node_id}&node_type=${s.node_type}`, {
-      headers: { Authorization: `Bearer ${s.node_runtime_token}` },
-    })
-    expect(res.status).toBe(200)
-    const body = (await res.json()) as { users?: Array<{ uuid: string }>; data?: { users?: Array<{ uuid: string }> } }
-    const uuids = (body.users ?? body.data?.users ?? []).map((u) => u.uuid)
-    expect(uuids.length).toBeGreaterThan(0)
+  writeCase('seed.ts（nodesim 接入 + POST activate）', 'nodesim/status.json', '节点会话收到的名单含门户用户的订阅凭据', async () => {
+    const status = JSON.parse(readFileSync(state.nodesimStatus, 'utf8')) as {
+      servers?: { s1?: { nodes?: Record<string, { users?: string[] }> } }
+    }
+    const users = status.servers?.s1?.nodes?.[s.node_id]?.users ?? []
+    const n = users.length
+    expect(n).toBeGreaterThan(0)
     // 门户用户拿不到裸的 proxy_uuid；它随订阅链接下发的配置里就是 shadowsocks 的 password
     const links = await pageClient('portal').get('v1/me/subscription-links', linksSchema)
     const link = links.links.find((l) => l.subscription_id === s.subscription_id)
     expect(link, '门户订阅链接里没有种子订阅').toBeDefined()
     const config = await (await fetch(`${new URL(link!.url, state.portal)}${link!.url.includes('?') ? '&' : '?'}flag=sing-box`)).text()
-    const hit = uuids.filter((u) => config.includes(u))
+    const hit = users.filter((u) => config.includes(u))
     expect(hit.length, '订阅配置里找不到节点用户列表里的任何凭据').toBeGreaterThan(0)
-    return `节点列出 ${uuids.length} 个用户，门户用户的凭据在其中`
+    return `节点名单 ${n} 个用户，门户用户的凭据在其中`
   })
 })
 
 // ============================================================================
-//  重认证：同一个真实会话，把令牌里的 rat 拨回 16 分钟前（等价于 15 分钟窗口已过，免得 CI 空等），
+//  重认证：同一个真实会话，把 Redis 里会话的 reauth_at 拨回 16 分钟前（等价于 15 分钟窗口已过，免得 CI 空等），
 //  由页面的 api 客户端自己走 403 reauth_required → requestReauth → POST auth/reauth → 同键重放
 // ============================================================================
 
-function staleAdminToken(): string {
-  const [v, aud, payload] = loginToken('admin').split('.')
-  const claims = JSON.parse(Buffer.from(payload!, 'base64url').toString('utf8')) as Record<string, unknown>
-  claims.rat = Math.floor(Date.now() / 1000) - 16 * 60
-  const body = `${v}.${aud}.${Buffer.from(JSON.stringify(claims)).toString('base64url')}`
-  const sig = createHmac('sha256', Buffer.from(state.adminJwtSecret, 'base64')).update(body).digest('base64url')
-  return `${body}.${sig}`
+async function staleAdminToken(): Promise<string> {
+  const token = await freshLogin('admin')
+  const claims = JSON.parse(Buffer.from(token.split('.')[1]!, 'base64url').toString('utf8')) as { sid?: string }
+  if (!claims.sid) throw new Error('后台令牌里没有 sid')
+  // 把这个会话的重认证时间拨回 16 分钟前（窗口 15 分钟），等价于窗口已过，免得 CI 空等
+  redisCli(['HSET', `sess:${claims.sid}`, 'reauth_at', String(Math.floor(Date.now() / 1000) - 16 * 60)])
+  return token
 }
 
 describe('reauth_required → reauth → 同键重放', () => {
@@ -84,7 +83,7 @@ describe('reauth_required → reauth → 同键重放', () => {
       return true
     }
     // requestReauth 只在请求被拦下时才调，那时 client 早已建好
-    const client: ApiClient = pageClient('admin', { token: staleAdminToken(), requestReauth })
+    const client: ApiClient = pageClient('admin', { token: await staleAdminToken(), requestReauth })
     const list = await client.get('v1/announcements', announcementsResponse)
     const original = list.announcements.find((a) => a.id === s.announcement_id)
     expect(original, '公告列表里没有种子公告').toBeDefined()
@@ -171,8 +170,8 @@ describe('各模块写操作的响应能被页面 schema 解析', () => {
     expect((await api.post('v1/switches/marketing.giftcard.redeem', switchSaved, { body: { enabled: true, reason: '冒烟：写路径校验恢复' } })).enabled).toBe(true)
   })
 
-  writeCase('billing/ProvidersTab.tsx ToggleDialog', 'v1/payment-providers/{code}/toggle', '财务：演示渠道设为收新单', async () => {
-    await pageClient('admin').post('v1/payment-providers/demo/toggle', toggledSchema, { body: toggleBody('on') })
+  writeCase('billing/ProvidersTab.tsx ToggleDialog', 'v1/payment-providers/{code}/toggle', '财务：冒烟易支付渠道设为收新单', async () => {
+    await pageClient('admin').post(`v1/payment-providers/${encodeURIComponent(s.provider_code)}/toggle`, toggledSchema, { body: toggleBody('on') })
   })
 
   writeCase('portal tickets/api.ts useReplyTicket', 'v1/support/tickets/{id}/reply', '门户：回复自己的工单', async () => {
@@ -190,7 +189,7 @@ describe('各模块写操作的响应能被页面 schema 解析', () => {
 describe('插件钩子投递到本机接收端', () => {
   writeCase('system/queries.ts useDeliveries', 'v1/plugin-hooks/{code}/deliveries', '接收端收到带签名头的 ticket.created', async () => {
     const file = join(state.dir, 'hook-received.jsonl')
-    // 扫描器 20 秒后第一次、之后每 60 秒；读表那行已经等到 sent，这里再给 90 秒兜底
+    // worker 的 plugin:dispatch：建工单提交后入队，另每分钟巡检；读表那行已经等到 sent，这里再给 90 秒兜底
     const deadline = Date.now() + 90_000
     while (!existsSync(file) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5000))
     const got = existsSync(file) ? readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { event: string; signed: boolean }) : []
@@ -204,7 +203,7 @@ describe('插件钩子投递到本机接收端', () => {
 // ============================================================================
 //  工单回复通知（R115）：后台非内部回复给提单人排 ticket.replied，变量 subject 取工单标题。
 //  站内信的标题是模板自己的（「工单有新回复」），工单标题经变量渲染进正文「…」。
-//  admin 网关只排队不派发，要等 public 网关的派发循环（启动约 30 秒后一次、之后每 5 分钟），
+//  回复的事务里写待派发记录，由 worker 的 notify:dispatch 派发（每 30 秒，提交后也入队），
 //  所以轮询到出现为止，6 分钟还没有才算失败
 // ============================================================================
 
