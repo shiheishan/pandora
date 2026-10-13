@@ -71,15 +71,21 @@ reset_calls() { : >"$T/calls.log"; }
 
 export PANDORA_TLS_DIR="$T/tls" PANDORA_TLS_STATE_DIR="$T/state" PANDORA_LE_LIVE_DIR="$T/le"
 export PANDORA_ACME_WEBROOT="$T/webroot" PANDORA_NGINX_DIR="$T/nginx" PANDORA_REALIP_FILE="$T/realip.conf"
-export PANDORA_BACKUP_DIR="$T/backups" PANDORA_NGINX_VERSION=1.26.3
+export PANDORA_EDGE_BACKUP_DIR="$T/backups" PANDORA_NGINX_VERSION=1.26.3
 export PANDORA_OS_RELEASE="$T/os-release" PANDORA_APT_SOURCES_DIR="$T/apt"
 unset PANDORA_ACME PANDORA_CERTBOT PANDORA_ACME_EMAIL PANDORA_CERTBOT_EMAIL PANDORA_ACME_SERVER
 
 ip=203.0.113.10
 domain=panel.example.test
 admin_path=ops_0123456789abcdef0123456789abcdef
-printf 'AEGIS_ADMIN_PATH=%s\nAEGIS_PUBLIC_BASE_URL=https://%s\nAEGIS_ALERT_TG_TOKEN=tok\nAEGIS_ALERT_TG_CHAT=42\n' "$admin_path" "$ip" >"$T/ip.env"
-printf 'AEGIS_ADMIN_PATH=%s\nAEGIS_PUBLIC_BASE_URL=https://%s/\n' "$admin_path" "$domain" >"$T/domain.env"
+# 每个场景一对文件：<名>.env 是 deploy.env（后台前缀、告警渠道），<名>.yaml 是 config.yaml（public_base_url）；
+# edge() / rc_of 按 env 文件名找同名的 yaml 交给 PANDORA_CONFIG_FILE
+site() { # <名> <public_base_url> [deploy.env 内容]
+  printf 'env: production\npublic_base_url: "%s"\n' "$2" >"$T/$1.yaml"
+  printf '%s\n' "${3-}" >"$T/$1.env"
+}
+site ip "https://$ip" "$(printf 'PANDORA_ADMIN_PATH=%s\nPANDORA_ALERT_TG_TOKEN=tok\nPANDORA_ALERT_TG_CHAT=42\n' "$admin_path")"
+site domain "https://$domain/" "$(printf 'PANDORA_ADMIN_PATH=%s\n' "$admin_path")"
 
 fresh() {
   rm -rf "$T/tls" "$T/state" "$T/le" "$T/renewal" "$T/webroot" "$T/nginx" "$T/backups" "$T/apt" \
@@ -90,7 +96,8 @@ fresh() {
     >"$T/apt/sources.list.d/debian.sources"
   reset_calls
 }
-edge() { local rc=0; bash "$EDGE" "$@" >"$T/out" 2>&1 || rc=$?; return "$rc"; }
+cfg_of() { local f="${1:-}"; printf '%s' "${f%.env}.yaml"; }
+edge() { local rc=0; PANDORA_CONFIG_FILE="$(cfg_of "${2:-}")" bash "$EDGE" "$@" >"$T/out" 2>&1 || rc=$?; return "$rc"; }
 rc_of() { local rc=0; edge "$@" || rc=$?; echo "$rc"; }
 live_target() { readlink "$T/tls/live"; }
 covers_ip() { openssl x509 -in "$T/tls/live/fullchain.pem" -noout -checkip "$1" | grep -q 'does match'; }
@@ -106,13 +113,13 @@ covers_ip "$ip" || fail 'live certificate does not cover the IP'
 calls | grep -q "^lego --path $T/tls/acme --accept-tos --key-type ec256 --disable-cn --http --http.webroot $T/webroot --domains $ip run --profile shortlived$" \
   || fail "lego run arguments: $(calls | grep '^lego')"
 calls | grep -qx 'ufw allow 80/tcp' && calls | grep -qx 'ufw allow 443/tcp' || fail 'ufw not opened'
-calls | grep -qx 'systemctl enable --now aegis-tls-renew.timer' || fail 'renew timer not enabled'
+calls | grep -qx 'systemctl enable --now pandora-tls-renew.timer' || fail 'renew timer not enabled'
 calls | grep -qx 'nginx -t' && calls | grep -qx 'systemctl reload nginx' || fail 'nginx not tested and reloaded'
 refute -q '^certbot' "$T/calls.log"
 refute -q '^apt-get' "$T/calls.log"
-conf="$T/nginx/conf.d/aegis.conf"
-grep -Fq "server_name $ip;" "$conf" || fail 'aegis.conf not rendered for the IP'
-grep -Fq 'ssl_certificate /etc/aegispanel/tls/live/fullchain.pem;' "$conf" || fail 'certificate path is not the stable live link'
+conf="$T/nginx/conf.d/pandora.conf"
+grep -Fq "server_name $ip;" "$conf" || fail 'pandora.conf not rendered for the IP'
+grep -Fq 'ssl_certificate /etc/pandora/tls/live/fullchain.pem;' "$conf" || fail 'certificate path is not the stable live link'
 grep -q 'Let.s Encrypt' "$T/out" && grep -q '订户协议' "$T/out" || fail 'issuance does not state the subscriber agreement'
 [ "$(status_of RESULT)" = ok ] && [ "$(status_of MODE)" = lego ] || fail "status: $(cat "$T/state/status")"
 grep -qx 'ACME_ENABLED=1' "$T/tls/acme.env" || fail 'acme.env not written'
@@ -131,7 +138,7 @@ covers_ip "$ip" || fail 'self-signed certificate does not cover the IP'
 [ "$(stat -c %a "$T/tls/selfsigned/privkey.pem" 2>/dev/null || stat -f %Lp "$T/tls/selfsigned/privkey.pem")" = 600 ] || fail 'self-signed key is not 0600'
 grep -Fq "$DEPLOY/edge-tls.sh issue" "$T/out" || fail "fallback does not give the remediation command: $(cat "$T/out")"
 grep -q '80/tcp' "$T/out" && grep -q '自动重试' "$T/out" || fail 'fallback does not explain the cause and the retry'
-grep -Fq "server_name $ip;" "$T/nginx/conf.d/aegis.conf" || fail 'nginx not rendered on the self-signed fallback'
+grep -Fq "server_name $ip;" "$T/nginx/conf.d/pandora.conf" || fail 'nginx not rendered on the self-signed fallback'
 [ "$(status_of RESULT)" = warn ] || fail "fallback status: $(cat "$T/state/status")"
 # renew 仍失败：退出 1，结论写进 status；告警只在结论变化时推
 reset_calls
@@ -204,7 +211,7 @@ openssl x509 -in "$T/tls/live/fullchain.pem" -noout -checkhost "$domain" | grep 
 # --- ⑤ PANDORA_ACME=0：只用自签，不联系 CA ------------------------------------------------
 fresh
 echo 4.35.2 >"$T/lego.version"
-rc=0; PANDORA_ACME=0 bash "$EDGE" setup "$T/ip.env" >"$T/out" 2>&1 || rc=$?
+rc=0; PANDORA_ACME=0 PANDORA_CONFIG_FILE="$T/ip.yaml" bash "$EDGE" setup "$T/ip.env" >"$T/out" 2>&1 || rc=$?
 [ "$rc" = 3 ] || fail "PANDORA_ACME=0 should exit 3, got $rc"
 refute -q -e '^lego --path' -e '^certbot' "$T/calls.log"
 grep -qx 'ACME_ENABLED=0' "$T/tls/acme.env" || fail 'opt-out not remembered'
@@ -214,7 +221,7 @@ refute -q -e '^lego --path' -e '^certbot' "$T/calls.log"
 [ "$(status_of RESULT)" = warn ] || fail 'opt-out status should be warn'
 # 旧名 PANDORA_CERTBOT=0 同义
 fresh
-rc=0; PANDORA_CERTBOT=0 bash "$EDGE" setup "$T/domain.env" >"$T/out" 2>&1 || rc=$?
+rc=0; PANDORA_CERTBOT=0 PANDORA_CONFIG_FILE="$T/domain.yaml" bash "$EDGE" setup "$T/domain.env" >"$T/out" 2>&1 || rc=$?
 [ "$rc" = 3 ] && ! calls | grep -q '^certbot' || fail 'PANDORA_CERTBOT=0 still contacted the CA'
 
 # --- ⑥ 渲染 → nginx -t → reload；失败换回 ---------------------------------------------------
@@ -234,36 +241,36 @@ printf '%s\n' "$stock_main" >"$T/nginx/nginx.conf"
 # 发行版默认站点：只停用原样的链接
 printf 'server {\n    listen 80 default_server;\n}\n' >"$T/nginx/sites-available/default"
 ln -s "$T/nginx/sites-available/default" "$T/nginx/sites-enabled/default"
-bash "$EDGE" ensure "$T/ip.env" >/dev/null
+PANDORA_CONFIG_FILE="$T/ip.yaml" bash "$EDGE" ensure "$T/ip.env" >/dev/null
 edge apply "$T/ip.env" || fail "apply failed: $(cat "$T/out")"
 [ ! -e "$T/nginx/sites-enabled/default" ] && [ -f "$T/nginx/sites-available/default" ] || fail 'stock default site handling'
 grep -Eq '^[[:space:]]*worker_connections 16384;' "$T/nginx/nginx.conf" && grep -Eq '^worker_processes 1;' "$T/nginx/nginx.conf" || fail 'nginx.conf not tuned'
 printf 'server { listen 80 default_server; }\n' >"$T/nginx/sites-available/mine"
 ln -s "$T/nginx/sites-available/mine" "$T/nginx/sites-enabled/default"
-echo '# previous good config' >"$T/nginx/conf.d/aegis.conf"
+echo '# previous good config' >"$T/nginx/conf.d/pandora.conf"
 printf '%s\n' "$stock_main" >"$T/nginx/nginx.conf"
 touch "$T/nginx.fail"; reset_calls
 [ "$(rc_of apply "$T/ip.env")" = 1 ] || fail 'nginx -t failure not reported'
 [ -L "$T/nginx/sites-enabled/default" ] || fail 'a non-stock link named default was removed'
-[ "$(cat "$T/nginx/conf.d/aegis.conf")" = '# previous good config' ] || fail 'previous config not restored'
+[ "$(cat "$T/nginx/conf.d/pandora.conf")" = '# previous good config' ] || fail 'previous config not restored'
 [ "$(cat "$T/nginx/nginx.conf")" = "$stock_main" ] || fail 'nginx.conf not restored'
 refute -q 'reload' "$T/calls.log"
-ls "$T/backups"/nginx-aegis.conf.* "$T/backups"/nginx-main.conf.* >/dev/null 2>&1 || fail 'configs not backed up'
-rm -f "$T/nginx/conf.d/aegis.conf"
-[ "$(rc_of apply "$T/ip.env")" = 1 ] && [ ! -e "$T/nginx/conf.d/aegis.conf" ] || fail 'failed first render left a new aegis.conf'
+ls "$T/backups"/nginx-pandora.conf.* "$T/backups"/nginx-main.conf.* >/dev/null 2>&1 || fail 'configs not backed up'
+rm -f "$T/nginx/conf.d/pandora.conf"
+[ "$(rc_of apply "$T/ip.env")" = 1 ] && [ ! -e "$T/nginx/conf.d/pandora.conf" ] || fail 'failed first render left a new pandora.conf'
 # setup 在 nginx -t 失败时退出 1，不申请证书
 reset_calls
 [ "$(rc_of setup "$T/ip.env")" = 1 ] || fail 'setup ignored the nginx -t failure'
 refute -q '^lego --path' "$T/calls.log"
 rm -f "$T/nginx.fail"
 # 渲染器拒绝（缺后台前缀）：不动 nginx
-echo '# keep me' >"$T/nginx/conf.d/aegis.conf"
-printf 'AEGIS_PUBLIC_BASE_URL=https://%s\n' "$ip" >"$T/bad.env"
+echo '# keep me' >"$T/nginx/conf.d/pandora.conf"
+site bad "https://$ip"
 reset_calls
 [ "$(rc_of apply "$T/bad.env")" = 1 ] || fail 'render refusal not reported'
-[ "$(cat "$T/nginx/conf.d/aegis.conf")" = '# keep me' ] && ! calls | grep -q '^nginx' || fail 'nginx touched after render refusal'
+[ "$(cat "$T/nginx/conf.d/pandora.conf")" = '# keep me' ] && ! calls | grep -q '^nginx' || fail 'nginx touched after render refusal'
 # 不合规的对外地址：一步都不做
-printf 'AEGIS_ADMIN_PATH=%s\nAEGIS_PUBLIC_BASE_URL=https://10.0.0.5\n' "$admin_path" >"$T/private.env"
+site private https://10.0.0.5 "PANDORA_ADMIN_PATH=$admin_path"
 [ "$(rc_of setup "$T/private.env")" = 1 ] || fail 'private IP accepted'
 grep -q '公网' "$T/out" || fail "private IP refusal: $(cat "$T/out")"
 
@@ -302,7 +309,7 @@ reset_calls
 grep -q '已过期' "$T/state/status" && calls | grep -q '^curl' || fail "expired: $(cat "$T/state/status")"
 # 对外地址改了、证书不覆盖：报错，不自己联系 CA
 mkcert "$T/tls/acme/certificates/$ip.crt" "$T/tls/acme/certificates/$ip.key" "$ip" "IP:$ip" 6
-printf 'AEGIS_ADMIN_PATH=%s\nAEGIS_PUBLIC_BASE_URL=https://198.51.100.7\n' "$admin_path" >"$T/moved.env"
+site moved https://198.51.100.7 "PANDORA_ADMIN_PATH=$admin_path"
 reset_calls
 [ "$(rc_of renew "$T/moved.env")" = 1 ] || fail 'host mismatch not reported'
 grep -q '不覆盖面板地址' "$T/state/status" || fail "mismatch: $(cat "$T/state/status")"
@@ -418,10 +425,10 @@ grep -q 'certbot 续期失败' "$T/state/status" && grep -q '小时到期' "$T/s
 grep -q 'certbot 续期失败' "$T/out" || fail 'certbot failure not logged'
 
 # --- 静态：模板、续期单元与本脚本的路径一致 ------------------------------------------------
-grep -Fq 'root /var/www/aegis-acme;' "$DEPLOY/nginx-aegis.conf" && grep -Fq 'ACME_WEBROOT="${PANDORA_ACME_WEBROOT:-/var/www/aegis-acme}"' "$EDGE" \
+grep -Fq 'root /var/www/pandora-acme;' "$DEPLOY/nginx-pandora.conf" && grep -Fq 'ACME_WEBROOT="${PANDORA_ACME_WEBROOT:-/var/www/pandora-acme}"' "$EDGE" \
   || fail 'ACME webroot differs between the template and edge-tls.sh'
-grep -Fq 'ssl_certificate /etc/aegispanel/tls/live/fullchain.pem;' "$DEPLOY/nginx-aegis.conf" && grep -Fq 'TLS_DIR="${PANDORA_TLS_DIR:-/etc/aegispanel/tls}"' "$EDGE" \
+grep -Fq 'ssl_certificate /etc/pandora/tls/live/fullchain.pem;' "$DEPLOY/nginx-pandora.conf" && grep -Fq 'TLS_DIR="${PANDORA_TLS_DIR:-/etc/pandora/tls}"' "$EDGE" \
   || fail 'live certificate path differs between the template and edge-tls.sh'
-grep -Fq 'RENEW_TIMER=aegis-tls-renew.timer' "$EDGE" || fail 'edge-tls.sh enables a different timer'
+grep -Fq 'RENEW_TIMER=pandora-tls-renew.timer' "$EDGE" || fail 'edge-tls.sh enables a different timer'
 
 printf 'edge-tls mock: PASS\n'
