@@ -25,6 +25,7 @@ type fakeNotify struct {
 	templates   []service.TemplateView
 	testTplIn   service.TemplateTest
 	testTplSubj string
+	bulkMailIn  []service.BulkMailInput
 }
 
 func (f *fakeNotify) MailSettings(ctx context.Context) (service.MailSettings, error) {

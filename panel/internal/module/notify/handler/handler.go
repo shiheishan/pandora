@@ -1,4 +1,4 @@
-// Package handler 是 notify 模块的 HTTP 层：后台邮件 / Telegram 设置、邮件模板、公告；门户站内信、通知偏好、公告、Telegram 绑定；bot webhook。
+// Package handler 是 notify 模块的 HTTP 层：后台邮件 / Telegram 设置、邮件模板、公告、群发邮件；门户站内信、通知偏好、公告、Telegram 绑定；bot webhook。
 package handler
 
 import (
@@ -26,6 +26,9 @@ type Notify interface {
 	SaveAnnouncement(ctx context.Context, in service.AnnouncementInput) (service.AnnouncementSaved, error)
 	WithdrawAnnouncement(ctx context.Context, id uuid.UUID, expectedVersion int) (int, error)
 	MyAnnouncements(ctx context.Context, userID uuid.UUID) ([]service.PortalAnnouncement, error)
+
+	// 群发邮件
+	SendBulkMail(ctx context.Context, in service.BulkMailInput) (service.BulkMailResult, error)
 
 	// 站内信与通知偏好
 	Inbox(ctx context.Context, userID uuid.UUID, onlyUnread bool, limit int) ([]service.InboxEntry, int64, error)
@@ -89,4 +92,6 @@ func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	v1.POST("/announcements", k.RequireAuth, k.RecentReauth, k.Idempotency("announcement_save"), h.saveAnnouncement)
 	v1.POST("/announcements/:id", k.RequireAuth, k.RecentReauth, k.Idempotency("announcement_save"), h.saveAnnouncement)
 	v1.POST("/announcements/:id/withdraw", k.RequireAuth, k.RecentReauth, k.Idempotency("announcement_withdraw"), h.withdrawAnnouncement)
+
+	v1.POST("/users/bulk/mail", k.RequireAuth, k.RecentReauth, k.Idempotency("user_bulk_mail"), h.sendBulkMail)
 }
