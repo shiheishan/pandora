@@ -3,11 +3,15 @@
 --
 --   - node_ca：单行（主键钉死为 1）。私钥经 crypto.Keys.Sealer() 封存后存库，明文私钥不落库。
 --     CA 不改不删：换 CA 等于全部服务器重新接入，要另写流程，不靠 UPDATE。
---   - server_identities：一台服务器一份有效身份（部分唯一索引）。接入或续期时签发新证书，
---     旧的置 superseded；后台吊销置 revoked。认证材料守卫（第 5.3 节）在触发器里：
---     证书、指纹、序列号等签发时写下的列不可改；状态只能 active → superseded / revoked，终态不可再改；不许删。
+--   - server_identities：一台服务器至多一份有效身份（active）与一份待生效身份（pending），各一条部分唯一索引。
+--     接入时签发的新证书直接 active，旧的 active / pending 置 superseded。
+--     会话内续期签发的新证书先登记为 pending，旧的 active 照常有效；节点第一次用新证书建流时
+--     pending → active、旧 active → superseded（同一事务）。这样节点没收到新证书、或落盘前崩溃，
+--     仍能用旧证书连上，不会被锁死。再次续期时没用过的 pending 先置 superseded。后台吊销把 active 与 pending 都置 revoked。
+--     认证材料守卫（第 5.3 节）在触发器里：证书、指纹、序列号等签发时写下的列不可改；
+--     状态只能 active → superseded / revoked、pending → active / superseded / revoked，终态不可再改；不许删。
 --   - bootstrap_tokens：令牌只存 SHA-256；单次有效（used_at 只由 NULL 写一次，Go 侧 WHERE used_at IS NULL）；
---     记下用掉它的 request_id，节点崩溃后用同一个 request_id 重试时返回同一张证书（enroll_token_id 唯一）。
+--     记下用掉它的 request_id，节点崩溃后用同一个 request_id、同一把公钥重试时返回同一张证书（enroll_token_id 唯一）。
 --
 -- 服务器只软删，所以外键一律 RESTRICT。
 
@@ -55,16 +59,15 @@ CREATE TABLE server_identities (
   seq               integer NOT NULL CHECK (seq > 0),
   -- 证书序列号（随机 128 位，小写 hex，无前导零）
   cert_serial       text NOT NULL CHECK (cert_serial ~ '^[1-9a-f][0-9a-f]{0,39}$'),
-  -- 客户端证书公钥 SubjectPublicKeyInfo DER 的 SHA-256（小写 hex）
+  -- 客户端证书公钥 SubjectPublicKeyInfo DER 的 SHA-256（小写 hex）；接入崩溃重试时按它认同一个节点
   spki_sha256       text NOT NULL CHECK (spki_sha256 ~ '^[0-9a-f]{64}$'),
   cert_pem          text NOT NULL CHECK (cert_pem LIKE '-----BEGIN CERTIFICATE-----%'),
-  -- 节点送来的 CSR（DER）的 SHA-256：崩溃重试时 CSR 必须相同才返回同一张证书
-  csr_sha256        text NOT NULL CHECK (csr_sha256 ~ '^[0-9a-f]{64}$'),
   -- enroll：经接入令牌签发；renew：会话内续期
   source            text NOT NULL CHECK (source IN ('enroll', 'renew')),
   enroll_token_id   uuid REFERENCES bootstrap_tokens(id) ON DELETE RESTRICT,
   enroll_request_id text CHECK (enroll_request_id ~ '^[A-Za-z0-9._:-]{1,64}$'),
-  status            text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'superseded', 'revoked')),
+  -- pending：续期签出、节点还没用它建过流
+  status            text NOT NULL DEFAULT 'active' CHECK (status IN ('pending', 'active', 'superseded', 'revoked')),
   issued_at         timestamptz NOT NULL,
   expires_at        timestamptz NOT NULL,
   superseded_at     timestamptz,
@@ -79,31 +82,37 @@ CREATE TABLE server_identities (
   CONSTRAINT server_identities_source_shape CHECK (
     (source = 'enroll') = (enroll_token_id IS NOT NULL)
     AND (enroll_token_id IS NULL) = (enroll_request_id IS NULL)),
+  -- 只有续期签出的证书会经过 pending
+  CONSTRAINT server_identities_pending_source CHECK (status <> 'pending' OR source = 'renew'),
   CONSTRAINT server_identities_status_shape CHECK (
-    (status = 'active' AND superseded_at IS NULL AND revoked_at IS NULL AND revoked_reason IS NULL)
+    (status IN ('pending', 'active') AND superseded_at IS NULL AND revoked_at IS NULL AND revoked_reason IS NULL)
     OR (status = 'superseded' AND superseded_at IS NOT NULL AND revoked_at IS NULL AND revoked_reason IS NULL)
     OR (status = 'revoked' AND revoked_at IS NOT NULL AND revoked_reason IS NOT NULL AND superseded_at IS NULL))
 );
 
--- 每台服务器至多一份有效身份
+-- 每台服务器至多一份有效身份、一份待生效身份
 CREATE UNIQUE INDEX server_identities_active_key ON server_identities (server_id) WHERE status = 'active';
+CREATE UNIQUE INDEX server_identities_pending_key ON server_identities (server_id) WHERE status = 'pending';
 
--- 认证材料守卫：签发时写下的列不可改；状态只能 active → superseded / revoked（不可逆，终态整行冻结）；不许删
+-- 认证材料守卫：签发时写下的列不可改；状态只能 active → superseded / revoked、
+-- pending → active / superseded / revoked（不可逆，终态整行冻结）；不许删
 -- +goose StatementBegin
 CREATE FUNCTION server_identities_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF TG_OP = 'DELETE' THEN
     RAISE EXCEPTION 'server_identities 不允许删除' USING ERRCODE = 'restrict_violation';
   END IF;
-  IF (NEW.id, NEW.server_id, NEW.seq, NEW.cert_serial, NEW.spki_sha256, NEW.cert_pem, NEW.csr_sha256,
+  IF (NEW.id, NEW.server_id, NEW.seq, NEW.cert_serial, NEW.spki_sha256, NEW.cert_pem,
       NEW.source, NEW.enroll_token_id, NEW.enroll_request_id, NEW.issued_at, NEW.expires_at, NEW.created_at)
      IS DISTINCT FROM
-     (OLD.id, OLD.server_id, OLD.seq, OLD.cert_serial, OLD.spki_sha256, OLD.cert_pem, OLD.csr_sha256,
+     (OLD.id, OLD.server_id, OLD.seq, OLD.cert_serial, OLD.spki_sha256, OLD.cert_pem,
       OLD.source, OLD.enroll_token_id, OLD.enroll_request_id, OLD.issued_at, OLD.expires_at, OLD.created_at) THEN
     RAISE EXCEPTION 'server_identities 的认证材料不可改' USING ERRCODE = 'restrict_violation';
   END IF;
-  IF OLD.status <> 'active' OR NEW.status NOT IN ('superseded', 'revoked') THEN
-    RAISE EXCEPTION 'server_identities 状态只能 active → superseded / revoked（%→%）', OLD.status, NEW.status
+  IF NOT ((OLD.status = 'active' AND NEW.status IN ('superseded', 'revoked'))
+          OR (OLD.status = 'pending' AND NEW.status IN ('active', 'superseded', 'revoked'))) THEN
+    RAISE EXCEPTION 'server_identities 状态只能 active → superseded / revoked、pending → active / superseded / revoked（%→%）',
+      OLD.status, NEW.status
       USING ERRCODE = 'restrict_violation';
   END IF;
   RETURN NEW;

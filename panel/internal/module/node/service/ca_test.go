@@ -212,12 +212,21 @@ func TestParseNodeCSR(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, sum, err := parseNodeCSR(der)
+	pub, sum, err := parseNodeCSR(der)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(sum) != 64 {
-		t.Fatalf("摘要长度 %d", len(sum))
+	// 摘要是公钥 SPKI 的，与用它签出的证书的 spki_sha256 一致；同一把钥匙重签的 CSR 摘要不变
+	ca, _, err := generateCA(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	iss, err := ca.issueClientCert(pub, uuid.New(), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum != iss.SPKISHA256 {
+		t.Fatalf("CSR 摘要 %s 与证书 spki %s 不一致", sum, iss.SPKISHA256)
 	}
 
 	der384, err := makeCSR(elliptic.P384())

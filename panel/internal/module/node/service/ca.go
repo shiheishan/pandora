@@ -185,7 +185,8 @@ func parseCA(certPEM, keyDER []byte) (*CA, error) {
 	}, nil
 }
 
-// parseNodeCSR 解析并校验节点 CSR（DER）。
+// parseNodeCSR 解析并校验节点 CSR（DER），返回公钥与它的 SPKI 摘要（小写 hex，与签出证书的 spki_sha256 同算法）。
+// 崩溃重试按公钥认同一个节点：ECDSA 签名带随机数，重签的 CSR 字节每次都不同。
 func parseNodeCSR(der []byte) (*ecdsa.PublicKey, string, error) {
 	if len(der) == 0 || len(der) > 4096 {
 		return nil, "", fmt.Errorf("%w: CSR 长度非法", errCSRInvalid)
@@ -201,7 +202,11 @@ func parseNodeCSR(der []byte) (*ecdsa.PublicKey, string, error) {
 	if !ok || pub.Curve != elliptic.P256() {
 		return nil, "", fmt.Errorf("%w: 须为 ECDSA P-256", errCSRInvalid)
 	}
-	sum := sha256.Sum256(der)
+	spki, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		return nil, "", fmt.Errorf("%w: 公钥编码失败", errCSRInvalid)
+	}
+	sum := sha256.Sum256(spki)
 	return pub, hex.EncodeToString(sum[:]), nil
 }
 

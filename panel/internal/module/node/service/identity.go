@@ -25,6 +25,12 @@ type enrollState struct {
 	install InstallTarget
 }
 
+// server_identities.status 的取值。
+const (
+	identityPending = "pending"
+	identityActive  = "active"
+)
+
 // 吊销与取代时给会话层的 Tombstone 原因。
 const (
 	TombstoneIdentityRevoked    = "identity_revoked"
@@ -104,7 +110,7 @@ func (s *Service) NodeIdentity(ctx context.Context, nodeID uuid.UUID) (NodeIdent
 
 func identityInfoFromModel(id *model.ServerIdentity, now time.Time) *IdentityInfo {
 	status := id.Status
-	if status == "active" && !id.ExpiresAt.After(now) {
+	if status == identityActive && !id.ExpiresAt.After(now) {
 		status = "expired"
 	}
 	return &IdentityInfo{
@@ -141,20 +147,25 @@ func (s *Service) RevokeNodeIdentity(ctx context.Context, nodeID uuid.UUID) erro
 			return errs.New(errs.NotFound)
 		}
 		now := s.identityNow()
-		identityID, ok, err := s.repo.RevokeActiveIdentity(ctx, sid, identityRevokeReasonAdmin, now)
+		// 有效身份与续期后还没用过的待生效身份一起吊销，免得待生效的那张之后还能转正
+		revoked, err := s.repo.RevokeIdentities(ctx, sid, identityRevokeReasonAdmin, now)
 		if err != nil {
 			return err
 		}
-		if !ok {
+		if len(revoked) == 0 {
 			return errs.Newf(errs.Conflict, "这台服务器没有有效的接入身份")
+		}
+		ids := make([]string, len(revoked))
+		for i, id := range revoked {
+			ids[i] = id.String()
 		}
 		if err := s.audit.Write(ctx, auditsvc.Event{
 			Action:       "node.identity.revoke",
 			ResourceType: "server",
 			ResourceID:   &sid,
 			Data: map[string]any{
-				"node_id":     nodeID.String(),
-				"identity_id": identityID.String(),
+				"node_id":      nodeID.String(),
+				"identity_ids": ids,
 			},
 		}); err != nil {
 			return err

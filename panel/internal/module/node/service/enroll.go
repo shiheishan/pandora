@@ -59,12 +59,12 @@ type EnrollResult struct {
 
 // Enroll 用一次性令牌与 CSR 换客户端证书。同一事务里：令牌置已用、这台服务器原有的有效身份置 superseded、
 // 写新身份、写主机信息、审计；提交后让会话层断掉旧身份的流。令牌已被同一 request_id 用过（节点崩溃后重试）
-// 且 CSR 相同时，返回同一张证书。
+// 且 CSR 里是同一把公钥时，返回同一张证书（比公钥不比 CSR 字节：ECDSA 签名带随机数，重签的 CSR 每次都不同）。
 func (s *Service) Enroll(ctx context.Context, in EnrollInput) (EnrollResult, error) {
 	if in.Token == "" || len(in.Token) > enrollTokenMaxLen || !enrollRequestIDPattern.MatchString(in.RequestID) {
 		return EnrollResult{}, ErrEnrollInvalid
 	}
-	pub, csrHash, err := parseNodeCSR(in.CSRDER)
+	pub, spki, err := parseNodeCSR(in.CSRDER)
 	if err != nil {
 		return EnrollResult{}, fmt.Errorf("%w: %v", ErrEnrollInvalid, err)
 	}
@@ -92,12 +92,12 @@ func (s *Service) Enroll(ctx context.Context, in EnrollInput) (EnrollResult, err
 				deny = "token_used"
 				return ErrEnrollDenied
 			}
-			// 崩溃重试：同一令牌、同一 request_id、同一 CSR，返回同一张证书，不写库
+			// 崩溃重试：同一令牌、同一 request_id、同一把公钥，返回同一张证书，不写库；换了公钥一律拒绝
 			ident, err := s.repo.IdentityByEnrollToken(ctx, tok.ID)
 			if err != nil {
 				return err
 			}
-			if ident == nil || ident.Status != "active" || ident.CSRSHA256 != csrHash || !ident.ExpiresAt.After(now) {
+			if ident == nil || ident.Status != identityActive || ident.SPKISHA256 != spki || !ident.ExpiresAt.After(now) {
 				deny = "retry_mismatch"
 				return ErrEnrollDenied
 			}
@@ -125,12 +125,17 @@ func (s *Service) Enroll(ctx context.Context, in EnrollInput) (EnrollResult, err
 			deny = "token_used"
 			return ErrEnrollDenied
 		}
-		oldID, superseded, err := s.repo.SupersedeActiveIdentity(ctx, serverID, now)
+		// 重新接入：旧的有效身份与没用过的待生效身份都作废
+		oldID, superseded, err := s.repo.SupersedeIdentity(ctx, serverID, identityActive, now)
+		if err != nil {
+			return err
+		}
+		pendingID, hadPending, err := s.repo.SupersedeIdentity(ctx, serverID, identityPending, now)
 		if err != nil {
 			return err
 		}
 		tokenID, requestID := tok.ID, in.RequestID
-		row, err := s.issueIdentity(ctx, ca, serverID, pub, csrHash, now, &tokenID, &requestID)
+		row, err := s.issueIdentity(ctx, ca, serverID, pub, identityActive, now, &tokenID, &requestID)
 		if err != nil {
 			return err
 		}
@@ -150,6 +155,9 @@ func (s *Service) Enroll(ctx context.Context, in EnrollInput) (EnrollResult, err
 		}
 		if superseded {
 			data["superseded_identity_id"] = oldID.String()
+		}
+		if hadPending {
+			data["superseded_pending_identity_id"] = pendingID.String()
 		}
 		if err := s.audit.Write(ctx, auditsvc.Event{
 			Action: "server.enrollment.commit", ResourceType: "server", ResourceID: &serverID, Data: data,

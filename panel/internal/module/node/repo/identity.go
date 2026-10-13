@@ -59,9 +59,10 @@ func (r *Repo) ActiveIdentity(ctx context.Context, serverID uuid.UUID) (*model.S
 	return r.firstIdentity(ctx, "", "server_id = ? AND status = 'active'", serverID)
 }
 
-// LatestIdentity 取这台服务器最近签发（seq 最大）的身份；没有返回 nil, nil。
+// LatestIdentity 取这台服务器最近签发（seq 最大）且不是待生效的身份；没有返回 nil, nil。
+// pending 只和 active 并存，所以有 active 时取到的就是它。
 func (r *Repo) LatestIdentity(ctx context.Context, serverID uuid.UUID) (*model.ServerIdentity, error) {
-	return r.firstIdentity(ctx, "seq DESC", "server_id = ?", serverID)
+	return r.firstIdentity(ctx, "seq DESC", "server_id = ? AND status <> 'pending'", serverID)
 }
 
 // IdentityByEnrollToken 取用这张令牌签发的身份；没有返回 nil, nil。
@@ -89,12 +90,13 @@ type identityIDRow struct {
 	ID uuid.UUID `gorm:"column:id"`
 }
 
-// SupersedeActiveIdentity 把这台服务器的有效身份置为 superseded；返回被取代的身份 id 与是否有这一行。
-func (r *Repo) SupersedeActiveIdentity(ctx context.Context, serverID uuid.UUID, at time.Time) (uuid.UUID, bool, error) {
+// SupersedeIdentity 把这台服务器处于 status（active 或 pending）的那份身份置为 superseded；
+// 返回被取代的身份 id 与是否有这一行（每种状态至多一行，部分唯一索引）。
+func (r *Repo) SupersedeIdentity(ctx context.Context, serverID uuid.UUID, status string, at time.Time) (uuid.UUID, bool, error) {
 	var rows []identityIDRow
 	err := r.d.Conn(ctx).Raw(
 		`UPDATE server_identities SET status = 'superseded', superseded_at = ?
-		 WHERE server_id = ? AND status = 'active' RETURNING id`, at, serverID,
+		 WHERE server_id = ? AND status = ? RETURNING id`, at, serverID, status,
 	).Scan(&rows).Error
 	if err != nil || len(rows) == 0 {
 		return uuid.Nil, false, err
@@ -102,32 +104,55 @@ func (r *Repo) SupersedeActiveIdentity(ctx context.Context, serverID uuid.UUID, 
 	return rows[0].ID, true, nil
 }
 
-// RevokeActiveIdentity 把这台服务器的有效身份置为 revoked；返回被吊销的身份 id 与是否有这一行。
-func (r *Repo) RevokeActiveIdentity(ctx context.Context, serverID uuid.UUID, reason string, at time.Time) (uuid.UUID, bool, error) {
+// ActivatePendingIdentity 把一份待生效身份置为 active；返回是否真的改了一行。调用方已锁住服务器行、已取代旧的 active。
+func (r *Repo) ActivatePendingIdentity(ctx context.Context, id uuid.UUID) (bool, error) {
+	res := r.d.Conn(ctx).Exec(`UPDATE server_identities SET status = 'active' WHERE id = ? AND status = 'pending'`, id)
+	return res.RowsAffected == 1, res.Error
+}
+
+// RevokeIdentities 把这台服务器的有效与待生效身份都置为 revoked；返回被吊销的身份 id（active 在前），没有返回空。
+func (r *Repo) RevokeIdentities(ctx context.Context, serverID uuid.UUID, reason string, at time.Time) ([]uuid.UUID, error) {
 	var rows []identityIDRow
 	err := r.d.Conn(ctx).Raw(
-		`UPDATE server_identities SET status = 'revoked', revoked_at = ?, revoked_reason = ?
-		 WHERE server_id = ? AND status = 'active' RETURNING id`, at, reason, serverID,
+		`WITH x AS (
+		   UPDATE server_identities SET status = 'revoked', revoked_at = ?, revoked_reason = ?
+		   WHERE server_id = ? AND status IN ('active', 'pending') RETURNING id, seq
+		 ) SELECT id FROM x ORDER BY seq`, at, reason, serverID,
 	).Scan(&rows).Error
-	if err != nil || len(rows) == 0 {
-		return uuid.Nil, false, err
+	if err != nil {
+		return nil, err
 	}
-	return rows[0].ID, true, nil
+	ids := make([]uuid.UUID, len(rows))
+	for i, row := range rows {
+		ids[i] = row.ID
+	}
+	return ids, nil
 }
 
 type identityOKRow struct {
 	OK bool `gorm:"column:ok"`
 }
 
-// SessionIdentityValid 建流时的身份校验（一条 SQL）：这台服务器有该序列号的有效、未过期身份，且服务器未删除。
-func (r *Repo) SessionIdentityValid(ctx context.Context, serverID uuid.UUID, serialHex string, now time.Time) (bool, error) {
-	var row identityOKRow
-	err := r.d.Conn(ctx).Raw(
-		`SELECT EXISTS (SELECT 1 FROM server_identities i JOIN servers s ON s.id = i.server_id
-		 WHERE i.server_id = ? AND i.cert_serial = ? AND i.status = 'active' AND i.expires_at > ?
-		   AND s.deleted_at IS NULL) AS ok`, serverID, serialHex, now,
-	).Scan(&row).Error
-	return row.OK, err
+// SessionIdentity 是建流校验查到的那份身份。
+type SessionIdentity struct {
+	ID     uuid.UUID `gorm:"column:id"`
+	Status string    `gorm:"column:status"` // active 或 pending
+}
+
+// SessionIdentity 建流时的身份校验（一条 SQL）：这台服务器该序列号的身份须是 active 或 pending、未过期，且服务器未删除。
+// 不符合返回 nil, nil。加 forUpdate 时锁住身份行（pending 转正前用）。
+func (r *Repo) SessionIdentity(ctx context.Context, serverID uuid.UUID, serialHex string, now time.Time, forUpdate bool) (*SessionIdentity, error) {
+	q := `SELECT i.id, i.status FROM server_identities i JOIN servers s ON s.id = i.server_id
+		 WHERE i.server_id = ? AND i.cert_serial = ? AND i.status IN ('active', 'pending') AND i.expires_at > ?
+		   AND s.deleted_at IS NULL`
+	if forUpdate {
+		q += ` FOR UPDATE OF i`
+	}
+	var rows []SessionIdentity
+	if err := r.d.Conn(ctx).Raw(q, serverID, serialHex, now).Scan(&rows).Error; err != nil || len(rows) == 0 {
+		return nil, err
+	}
+	return &rows[0], nil
 }
 
 // HasActiveIdentity 这台服务器有没有未过期的有效身份。

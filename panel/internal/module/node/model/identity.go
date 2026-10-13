@@ -44,11 +44,10 @@ type ServerIdentity struct {
 	CertSerial      string     `gorm:"column:cert_serial"`
 	SPKISHA256      string     `gorm:"column:spki_sha256"`
 	CertPEM         string     `gorm:"column:cert_pem"`
-	CSRSHA256       string     `gorm:"column:csr_sha256"`
 	Source          string     `gorm:"column:source"`
 	EnrollTokenID   *uuid.UUID `gorm:"column:enroll_token_id;type:uuid"`
 	EnrollRequestID *string    `gorm:"column:enroll_request_id"`
-	Status          string     `gorm:"column:status"`
+	Status          string     `gorm:"column:status"` // pending、active、superseded、revoked
 	IssuedAt        time.Time  `gorm:"column:issued_at"`
 	ExpiresAt       time.Time  `gorm:"column:expires_at"`
 	SupersededAt    *time.Time `gorm:"column:superseded_at"`
