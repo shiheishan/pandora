@@ -1,0 +1,63 @@
+[Unit]
+Description=Pandora panel (pandora serve: portal, admin and node gRPC)
+Documentation=file:///opt/pandora/deploy/RUNBOOK.md
+# 数据服务先起：PostgreSQL 的各集群（postgresql@）都排在 postgresql.service 之前。只排顺序、不拉起，
+# 数据服务重启也不连带面板（连不上时 /readyz 回 503，库与 Redis 回来后自己恢复）
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pandora
+Group=pandora
+WorkingDirectory=/opt/pandora
+# 非秘密配置 pandora 缺省读 /etc/pandora/config.yaml；秘密只经环境变量（root:pandora 0640）
+EnvironmentFile=/etc/pandora/secrets.env
+Environment=PANDORA_LOG_FILE=/var/log/pandora/serve.log
+ExecStart=/opt/pandora/bin/pandora serve
+
+# 优雅退出：先停接新请求、等在途请求与节点会话收尾，再关库与 Redis
+KillSignal=SIGTERM
+TimeoutStopSec=45
+Restart=on-failure
+RestartSec=5
+
+# 沙箱：只需要监听端口（门户、后台在回环，节点 gRPC 9443 对外）、连库与 Redis、写自己的日志
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/pandora
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallErrorNumber=EPERM
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount @reboot @swap @obsolete
+UMask=0027
+
+# 内存硬上限（原来门户、后台、节点三个网关各 256M）；Go 运行时软上限取 80%，逼近时 GC 加紧回收，
+# 而不是一路长到 cgroup 上限被 OOM 杀掉。口令哈希另有并发闸门（auth.password_hash.*）
+MemoryMax=512M
+Environment=GOMEMLIMIT=410MiB
+# 撞上限宁可被 OOM 杀掉、5 秒后拉起，也不换出到 swap 进入换页抖动（持连接的事务会卡住连接池）
+MemorySwapMax=0
+# 不设 CPUQuota：硬配额在登录潮里会把整个进程停摆。只设争抢时的权重，让库与 nginx 先拿到份额
+CPUWeight=50
+
+[Install]
+WantedBy=multi-user.target
