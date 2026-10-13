@@ -402,7 +402,12 @@ func (ts *testServer) config(nodes ...*nodev1.NodeConfig) {
 
 // usersFull 下发某节点的全量名单，用户号依次是 1、2、3…，UUID 即参数。
 func (ts *testServer) usersFull(nodeID, version string, uuids ...string) {
-	ts.handleEvent(panel.Event{Kind: panel.EventUsersFull, UsersFull: &panel.UsersFull{NodeID: nodeID, Version: version, Users: protoUsers(uuids...)}})
+	ts.handleEvent(usersFullEvent(nodeID, version, protoUsers(uuids...)))
+}
+
+// usersFullEvent 是一份已收齐的全量名单事件。
+func usersFullEvent(nodeID, version string, users []*nodev1.User) panel.Event {
+	return panel.Event{Kind: panel.EventUsersFull, UsersFull: &panel.UsersFull{NodeID: nodeID, Version: version, Users: users}}
 }
 
 // usersDelta 下发名单增量。upserted 的用户号由调用方给（protoUser）。
@@ -456,4 +461,9 @@ func assertStrings(t *testing.T, what string, got []string, want ...string) {
 			t.Fatalf("%s = %v，期望 %v", what, got, want)
 		}
 	}
+}
+
+// trafficOf 造一条内核流量。
+func trafficOf(uid, up, down int64) core.UserTraffic {
+	return core.UserTraffic{ID: uid, Upload: up, Download: down}
 }

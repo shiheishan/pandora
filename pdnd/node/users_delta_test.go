@@ -6,15 +6,14 @@ import (
 	"time"
 
 	"github.com/aegispanel/nodeagent/core"
-	"github.com/aegispanel/nodeagent/panel"
 )
 
 // 增量删除按 ID→UUID 表一次换算（原先每个删除 ID 扫一遍全表，±500 人比整体替换还慢）：
 // 1 万人里删 500 人，内核与本地镜像删得一致，耗时在毫秒级。
 func TestApplyUserDeltaRemovesByIndex(t *testing.T) {
-	kernel := newUserTableCore()
-	client := panel.New(panel.Options{BaseURL: "http://127.0.0.1:1", NodeID: "n1", NodeType: "vless", Token: "token"})
-	n := New(client, kernel, testLogger())
+	kernel := newFakeKernel()
+	ts := startedNode(t, kernel)
+	n := ts.node(t, "n1")
 	const total, removed = 10000, 500
 	users := make([]core.User, total)
 	for i := range users {
@@ -23,12 +22,12 @@ func TestApplyUserDeltaRemovesByIndex(t *testing.T) {
 	if err := n.applyUsers(users); err != nil {
 		t.Fatal(err)
 	}
-	ev := panel.StreamEvent{Type: panel.EventSyncUserDelta}
+	var gone []int64
 	for i := 0; i < removed; i++ {
-		ev.Removed = append(ev.Removed, int64(i+1))
+		gone = append(gone, int64(i+1))
 	}
 	start := time.Now()
-	if err := n.applyUserDelta(ev); err != nil {
+	if err := n.applyUserDelta(nil, gone); err != nil {
 		t.Fatal(err)
 	}
 	took := time.Since(start)
@@ -36,9 +35,7 @@ func TestApplyUserDeltaRemovesByIndex(t *testing.T) {
 	if len(n.known) != total-removed {
 		t.Fatalf("本地镜像剩 %d 人，期望 %d", len(n.known), total-removed)
 	}
-	kernel.mu.Lock()
-	left := len(kernel.users)
-	kernel.mu.Unlock()
+	left := len(kernel.uuids("n1"))
 	if left != total-removed {
 		t.Fatalf("内核剩 %d 人，期望 %d", left, total-removed)
 	}
