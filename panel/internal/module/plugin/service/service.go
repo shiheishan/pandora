@@ -15,7 +15,6 @@ import (
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/module/plugin/model"
 	"github.com/aegispanel/aegis/internal/module/plugin/repo"
-	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 )
@@ -121,11 +120,6 @@ type Queue interface {
 	EnqueueContext(ctx context.Context, task *asynq.Task, opts ...asynq.Option) (*asynq.TaskInfo, error)
 }
 
-// SiteSettings 是 settings service 的只读面：时刻按站点时区显示。
-type SiteSettings interface {
-	Site(ctx context.Context) (settingssvc.Site, error)
-}
-
 // Options 是装配项。
 type Options struct {
 	// AllowPrivate 允许 http 与内网地址：只在开发环境为 true。生产必须为 false，
@@ -138,7 +132,6 @@ type Service struct {
 	store  store
 	tx     txRunner
 	audit  auditWriter
-	site   SiteSettings
 	sealer sealer
 	queue  Queue
 	opts   Options
@@ -147,16 +140,15 @@ type Service struct {
 }
 
 // New 构造 plugin service。queue 可以为 nil（不入队，只靠周期任务）。
-func New(r *repo.Repo, txm *tx.Manager, audit *auditsvc.Service, site SiteSettings, sl *crypto.Sealer, queue Queue, opts Options) *Service {
-	return newService(r, txm, audit, site, sl, queue, opts)
+func New(r *repo.Repo, txm *tx.Manager, audit *auditsvc.Service, sl *crypto.Sealer, queue Queue, opts Options) *Service {
+	return newService(r, txm, audit, sl, queue, opts)
 }
 
-func newService(st store, txr txRunner, audit auditWriter, site SiteSettings, sl sealer, queue Queue, opts Options) *Service {
+func newService(st store, txr txRunner, audit auditWriter, sl sealer, queue Queue, opts Options) *Service {
 	return &Service{
 		store:  st,
 		tx:     txr,
 		audit:  audit,
-		site:   site,
 		sealer: sl,
 		queue:  queue,
 		opts:   opts,
@@ -180,7 +172,7 @@ type Hook struct {
 	QueuedCount int
 	FailedCount int    // 近 7 天
 	SentCount7d int    // 近 7 天
-	LastSentAt  string // 站点时区 2006-01-02 15:04
+	LastSentAt  string // 北京时间 2006-01-02 15:04
 }
 
 // SaveHookInput 是新建或修改钩子的输入（按 code upsert）。Secret 为空表示不修改（新建时由面板生成）。
@@ -196,7 +188,7 @@ type SaveHookInput struct {
 	MaxAttempts int // 0 取缺省 5
 }
 
-// Delivery 是后台投递记录的一行；时刻是站点时区的 2006-01-02 15:04:05，SentAt 为空串表示未送达；
+// Delivery 是后台投递记录的一行；时刻是北京时间的 2006-01-02 15:04:05，SentAt 为空串表示未送达；
 // ResponseCode 0 表示没有响应；DurationMS 为 nil 表示请求没发出去。
 type Delivery struct {
 	Event        string
@@ -218,18 +210,13 @@ type TestResult struct {
 // secretAAD 绑定钩子 code，封存密钥的 AAD。
 func secretAAD(code string) []byte { return []byte("plugin_hook:" + code) }
 
-// location 取站点时区；取不到或不认识时用 UTC。
-func (s *Service) location(ctx context.Context) *time.Location {
-	if s.site == nil {
-		return time.UTC
+// displayLoc 是后台显示投递时刻用的时区：固定北京时间（产品定，不随站点时区）。
+// 主二进制内嵌了 time/tzdata；万一仍取不到，退回固定的 UTC+8。
+var displayLoc = beijing()
+
+func beijing() *time.Location {
+	if loc, err := time.LoadLocation("Asia/Shanghai"); err == nil {
+		return loc
 	}
-	site, err := s.site.Site(ctx)
-	if err != nil {
-		return time.UTC
-	}
-	loc, err := time.LoadLocation(site.Timezone)
-	if err != nil {
-		return time.UTC
-	}
-	return loc
+	return time.FixedZone("CST", 8*60*60)
 }

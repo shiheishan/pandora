@@ -10,7 +10,11 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
+
+	"github.com/aegispanel/aegis/internal/module/plugin/model"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
 
@@ -255,5 +259,37 @@ func TestTestHookAuditFailureBlocksSend(t *testing.T) {
 	}
 	if hits.Load() != 0 {
 		t.Fatalf("server hits %d", hits.Load())
+	}
+}
+
+// 投递记录与最近送达时刻固定按北京时间显示（产品定，不随站点时区）。
+func TestDisplayTimesAreBeijing(t *testing.T) {
+	st := newFakeStore()
+	svc, _ := newTestService(t, st, true)
+	h := addHook(t, svc, st, "bjtime", "https://example.com/h", "whsec_test", "order.paid")
+	created := time.Date(2026, 1, 1, 16, 0, 5, 0, time.UTC)
+	sent := created.Add(time.Minute)
+	code := 200
+	id := uuid.New()
+	st.deliveries[id] = &model.Delivery{
+		ID: id, HookID: h.ID, Event: "order.paid", DedupeKey: "k", Payload: "{}",
+		Status: model.StatusSent, Attempts: 1, MaxAttempts: 5, ResponseCode: &code,
+		SentAt: &sent, CreatedAt: created, UpdatedAt: sent,
+	}
+	st.order = append(st.order, id)
+
+	dels, err := svc.Deliveries(context.Background(), "bjtime", 0)
+	if err != nil || len(dels) != 1 {
+		t.Fatalf("deliveries %d %v", len(dels), err)
+	}
+	if dels[0].CreatedAt != "2026-01-02 00:00:05" || dels[0].SentAt != "2026-01-02 00:01:05" {
+		t.Fatalf("created %q sent %q", dels[0].CreatedAt, dels[0].SentAt)
+	}
+	hooks, err := svc.List(context.Background())
+	if err != nil || len(hooks) != 1 {
+		t.Fatalf("list %d %v", len(hooks), err)
+	}
+	if hooks[0].LastSentAt != "2026-01-02 00:01" {
+		t.Fatalf("last sent %q", hooks[0].LastSentAt)
 	}
 }

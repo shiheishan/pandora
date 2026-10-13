@@ -268,7 +268,7 @@ func buildServices(r *runtime) (*services, error) {
 
 	// 插件钩子：六个发事件的模块在业务事务里经 plugin 写待投递记录，提交后入队 plugin:dispatch；
 	// 钩子地址允许 http 与内网只在开发环境（防 SSRF）
-	pluginSvc := pluginsvc.New(pluginrepo.New(r.db), txm, auditSvc, settingsSvc, sealer, queue,
+	pluginSvc := pluginsvc.New(pluginrepo.New(r.db), txm, auditSvc, sealer, queue,
 		pluginsvc.Options{AllowPrivate: cfg.Env == config.EnvDevelopment})
 	orderSvc.UsePluginEvents(pluginSvc)
 	subSvc.UsePluginEvents(pluginSvc)

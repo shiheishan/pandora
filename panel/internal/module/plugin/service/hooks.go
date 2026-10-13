@@ -39,7 +39,7 @@ func (s *Service) List(ctx context.Context) ([]Hook, error) {
 	for _, st := range stats {
 		statByID[st.HookID] = st
 	}
-	loc := s.location(ctx)
+	loc := displayLoc
 	out := make([]Hook, 0, len(hooks))
 	for _, h := range hooks {
 		var events []string
@@ -290,7 +290,7 @@ func (s *Service) Deliveries(ctx context.Context, code string, limit int) ([]Del
 	if err != nil {
 		return nil, err
 	}
-	loc := s.location(ctx)
+	loc := displayLoc
 	out := make([]Delivery, 0, len(rows))
 	for _, d := range rows {
 		rc := 0

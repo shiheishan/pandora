@@ -14,7 +14,6 @@ import (
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/module/plugin/model"
 	"github.com/aegispanel/aegis/internal/module/plugin/repo"
-	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
 )
 
@@ -395,13 +394,6 @@ func (f *fakeAudit) Write(_ context.Context, e auditsvc.Event) error {
 	return nil
 }
 
-// fakeSite 返回固定站点设置。
-type fakeSite struct{}
-
-func (fakeSite) Site(context.Context) (settingssvc.Site, error) {
-	return settingssvc.Site{Timezone: "Asia/Shanghai"}, nil
-}
-
 func testSealer(t *testing.T) *crypto.Sealer {
 	t.Helper()
 	sl, err := crypto.NewSealer(bytes.Repeat([]byte{7}, 32), 1)
@@ -414,7 +406,7 @@ func testSealer(t *testing.T) *crypto.Sealer {
 func newTestService(t *testing.T, st *fakeStore, allowPrivate bool) (*Service, *fakeAudit) {
 	t.Helper()
 	audit := &fakeAudit{}
-	svc := newService(st, fakeTx{}, audit, fakeSite{}, testSealer(t), nil, Options{AllowPrivate: allowPrivate})
+	svc := newService(st, fakeTx{}, audit, testSealer(t), nil, Options{AllowPrivate: allowPrivate})
 	return svc, audit
 }
 

@@ -46,7 +46,7 @@ func newPG(t *testing.T, commit bool) *pgEnv {
 	txm := tx.NewManager(d)
 	audit := &fakeAudit{}
 	sl := testSealer(t)
-	svc := newService(r, txm, audit, fakeSite{}, sl, nil, Options{AllowPrivate: true})
+	svc := newService(r, txm, audit, sl, nil, Options{AllowPrivate: true})
 	scan := func(ctx context.Context, dest any, q string, args ...any) error {
 		return d.Conn(ctx).Raw(q, args...).Scan(dest).Error
 	}
