@@ -115,6 +115,14 @@ func announcementStatus(publish bool, publishAt *time.Time, now time.Time) (stat
 	return model.AnnouncementPublished, outPublishAt, publishedAt
 }
 
+// checkAnnouncementWindow 下线时间必须晚于发布时间（两者都有时）。
+func checkAnnouncementWindow(publishAt, expiresAt *time.Time) error {
+	if publishAt != nil && expiresAt != nil && !expiresAt.After(*publishAt) {
+		return errs.Invalid(map[string]string{"expires_at": "下线时间必须晚于发布时间"})
+	}
+	return nil
+}
+
 // canSaveAs 检查从 current 保存为 next 是否允许。
 func canSaveAs(current, next string) error {
 	if current == model.AnnouncementWithdrawn {
@@ -338,8 +346,8 @@ func (s *Service) SaveAnnouncement(ctx context.Context, in AnnouncementInput) (A
 	now := s.now().UTC()
 	severity := annNormalizeSeverity(in.Severity)
 	status, publishAt, publishedAt := announcementStatus(in.Publish, in.PublishAt, now)
-	if publishAt != nil && in.ExpiresAt != nil && !in.ExpiresAt.After(*publishAt) {
-		return AnnouncementSaved{}, errs.Invalid(map[string]string{"expires_at": "下线时间必须晚于发布时间"})
+	if err := checkAnnouncementWindow(publishAt, in.ExpiresAt); err != nil {
+		return AnnouncementSaved{}, err
 	}
 	if err := s.annValidateTargets(ctx, in.PlanIDs, in.GroupIDs); err != nil {
 		return AnnouncementSaved{}, err
@@ -398,6 +406,9 @@ func (s *Service) SaveAnnouncement(ctx context.Context, in AnnouncementInput) (A
 				if cur.PublishAt != nil {
 					row.PublishAt = cur.PublishAt
 				}
+			}
+			if err := checkAnnouncementWindow(row.PublishAt, in.ExpiresAt); err != nil {
+				return err
 			}
 			bs := annAuditFromRow(cur.Title, cur.Body, cur)
 			before = &bs
