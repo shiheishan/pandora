@@ -55,7 +55,8 @@ type serverDeleteRequest struct {
 // 响应
 // ---------------------------------------------------------------------------
 
-// serverResponse 是一台服务器（serverSchema）。control_node_id 与资源指标第二波才有，恒为 null。
+// serverResponse 是一台服务器（serverSchema）。control_node_id 恒为 null：新设计一台服务器一条会话，没有「控制节点」。
+// 资源指标取最新一个指标点，没有点时为 null。
 type serverResponse struct {
 	ID                 uuid.UUID  `json:"id"`
 	Name               string     `json:"name"`
@@ -153,6 +154,12 @@ func serverFrom(s service.Server) serverResponse {
 		NeverSeenNodeCount: s.NeverSeenNodeCount,
 		CreatedAt:          s.CreatedAt,
 		UpdatedAt:          s.UpdatedAt,
+		CPUBP:              s.CPUBp,
+		MemUsedMB:          s.MemUsedMB,
+		MemTotalMB:         s.MemTotalMB,
+		DiskUsedGB:         s.DiskUsedGB,
+		DiskTotalGB:        s.DiskTotalGB,
+		MetricsAt:          s.MetricsAt,
 	}
 }
 

@@ -101,6 +101,7 @@ func TestNodeCreateConflicts(t *testing.T) {
 func TestNodePatchSecretsAndPool(t *testing.T) {
 	e, ctx := newInvEnv(t)
 	srv := e.server(t, ctx, "nd-patch")
+	e.enroll(t, ctx, srv.ID)
 	hy2, err := e.svc.CreateNode(ctx, NodeInput{
 		Name: e.name("hy2-p"), ServerID: srv.ID, NodeType: "hysteria2",
 		ServerHost: "203.0.113.10", ServerPort: 22020, ProtocolConfig: json.RawMessage(invHy2SecretField),

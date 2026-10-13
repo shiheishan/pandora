@@ -54,6 +54,7 @@ type NodeListRow struct {
 	RuntimeStateAt        *time.Time      `gorm:"column:runtime_state_at"`
 	RuntimeReasonNode     *string         `gorm:"column:runtime_reason_node"`
 	AppliedConfigSHA256   *string         `gorm:"column:applied_config_sha256"`
+	ApplyFailedSHA256     *string         `gorm:"column:apply_failed_sha256"`
 	ApplyFailedReason     *string         `gorm:"column:apply_failed_reason"`
 	ApplyFailedDetail     *string         `gorm:"column:apply_failed_detail"`
 	ApplyFailedAt         *time.Time      `gorm:"column:apply_failed_at"`
@@ -121,7 +122,7 @@ SELECT n.id, n.node_no, n.row_version, n.name, n.serving_status, n.server_id,
        s.agent_version, s.hostname, host(s.public_ipv4) AS public_ipv4, s.cpu_cores, s.memory_mb, s.disk_gb,
        n.node_type, n.server_host, n.server_port, n.display_name, n.country_code, n.sort_order, n.created_at,
        n.runtime_status, n.runtime_reason, n.runtime_state_at, ro.name AS runtime_reason_node,
-       n.applied_config_sha256, n.apply_failed_reason, n.apply_failed_detail, n.apply_failed_at,
+       n.applied_config_sha256, n.apply_failed_sha256, n.apply_failed_reason, n.apply_failed_detail, n.apply_failed_at,
        n.traffic_rate, n.kernel, ` + protoCol + ` AS protocol_config, n.protocol_schema_version, n.config_validated_at,
        COALESCE(s.status = 'ready' AND s.deleted_at IS NULL, false) AS server_ready,
        COALESCE((` + DeliverableNodeCond + `), false) AS deliverable,

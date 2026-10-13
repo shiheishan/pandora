@@ -18,7 +18,10 @@ const nodeStatusBatchMax = 100
 // nodeNoPoolWarning 是上线后不服务任何人的提示。
 const nodeNoPoolWarning = "未划入节点池，不服务任何用户"
 
-// BatchNodeStatus 批量改服务状态：先全部核对、再写；整批有一条不合法就整批失败。
+// serverNotEnrolledMsg 是上线时服务器还没有有效接入身份的提示。
+const serverNotEnrolledMsg = "服务器还没接入（先在服务器页生成安装命令完成接入）"
+
+// BatchNodeStatus 批量改服务状态：先全部核对、再写；整批有一条不合法就整批失败。转 active 时要求所在服务器有有效接入身份。
 func (s *Service) BatchNodeStatus(ctx context.Context, in NodeStatusBatch) error {
 	ids := make([]uuid.UUID, len(in.Items))
 	versions := make([]int64, len(in.Items))
@@ -48,6 +51,7 @@ func (s *Service) BatchNodeStatus(ctx context.Context, in NodeStatusBatch) error
 			return errs.New(errs.NotFound)
 		}
 		serverReady := map[uuid.UUID]bool{}
+		enrolled := map[uuid.UUID]bool{}
 		for _, n := range rows {
 			if n.RowVersion != want[n.ID] {
 				return nodeVersionConflict(n.RowVersion)
@@ -76,6 +80,20 @@ func (s *Service) BatchNodeStatus(ctx context.Context, in NodeStatusBatch) error
 				return &errs.Error{Code: errs.Conflict,
 					Message: "节点协议未配好或所在服务器未就绪，不能启用；新服务器上的节点请用「上线」",
 					Fields:  map[string]string{"id": n.ID.String()}}
+			}
+			if n.ServerID != nil {
+				e, seen := enrolled[*n.ServerID]
+				if !seen {
+					e, err = s.repo.HasActiveIdentity(ctx, *n.ServerID, s.identityNow())
+					if err != nil {
+						return err
+					}
+					enrolled[*n.ServerID] = e
+				}
+				if !e {
+					return &errs.Error{Code: errs.Conflict, Message: serverNotEnrolledMsg,
+						Fields: map[string]string{"server_id": serverNotEnrolledMsg, "id": n.ID.String()}}
+				}
 			}
 		}
 		for _, n := range rows {
@@ -112,7 +130,7 @@ func (s *Service) nodeLockForWrite(ctx context.Context, id uuid.UUID, rowVersion
 	return n, nil
 }
 
-// ActivateNode 上线一个草稿或停用的节点；所在服务器未就绪时一并转 ready。已在役则什么都不改（幂等）。
+// ActivateNode 上线一个草稿或停用的节点；所在服务器未就绪时一并转 ready。已在役则什么都不改（幂等）。要求所在服务器有有效接入身份。
 func (s *Service) ActivateNode(ctx context.Context, id uuid.UUID, rowVersion int64) (AdminNode, error) {
 	if rowVersion <= 0 {
 		return AdminNode{}, inventoryInvalid("row_version", nodeRowVersionHint)
@@ -148,6 +166,14 @@ func (s *Service) ActivateNode(ctx context.Context, id uuid.UUID, rowVersion int
 		}
 		if !found {
 			return inventoryConflict("节点所在的服务器已删除，不能上线")
+		}
+		enrolled, err := s.repo.HasActiveIdentity(ctx, srv.ID, s.identityNow())
+		if err != nil {
+			return err
+		}
+		if !enrolled {
+			return &errs.Error{Code: errs.Conflict, Message: serverNotEnrolledMsg,
+				Fields: map[string]string{"server_id": serverNotEnrolledMsg}}
 		}
 		readied := srv.Status != ServerReady
 		if readied && !CanServerTransition(srv.Status, ServerReady) {

@@ -9,7 +9,7 @@ import (
 
 func nodeAllDeliveryFacts() nodeDeliveryFacts {
 	return nodeDeliveryFacts{
-		Serving: "active", Pooled: true, PoolActive: true, EverSeen: true,
+		Serving: "active", Pooled: true, PoolActive: true, PoolBound: true, EverSeen: true,
 		BeatFresh: true, Deliverable: true, ServerReady: true, Degraded: false,
 	}
 }
@@ -39,6 +39,41 @@ func TestNodeDeliveryVerdict_poolInactive(t *testing.T) {
 	ok, note := nodeDeliveryVerdict(f)
 	if ok || note != nodeNotePoolInactive {
 		t.Fatalf("got (%v, %q)", ok, note)
+	}
+}
+
+func TestNodeDeliveryVerdict_poolUnbound(t *testing.T) {
+	f := nodeAllDeliveryFacts()
+	f.PoolBound = false
+	ok, note := nodeDeliveryVerdict(f)
+	if ok || note != nodeNotePoolUnbound {
+		t.Fatalf("got (%v, %q), want (false, poolUnbound)", ok, note)
+	}
+	if nodeNotePoolUnbound != "所在节点池没有绑定任何套餐，不会出现在任何用户的订阅里" {
+		t.Fatalf("文案变了: %q", nodeNotePoolUnbound)
+	}
+}
+
+func TestNodeDeliveryVerdict_poolUnbound_order(t *testing.T) {
+	// 没划池、池未启用都排在「池没绑套餐」之前；「池没绑套餐」排在从未心跳之前
+	f := nodeAllDeliveryFacts()
+	f.PoolActive = false
+	f.PoolBound = false
+	if _, note := nodeDeliveryVerdict(f); note != nodeNotePoolInactive {
+		t.Fatalf("池未启用应先于没绑套餐，got %q", note)
+	}
+	f = nodeAllDeliveryFacts()
+	f.Pooled = false
+	f.PoolActive = false
+	f.PoolBound = false
+	if _, note := nodeDeliveryVerdict(f); note != nodeNoteNoPool {
+		t.Fatalf("没划池应最先，got %q", note)
+	}
+	f = nodeAllDeliveryFacts()
+	f.PoolBound = false
+	f.EverSeen = false
+	if _, note := nodeDeliveryVerdict(f); note != nodeNotePoolUnbound {
+		t.Fatalf("没绑套餐应先于从未心跳，got %q", note)
 	}
 }
 
@@ -106,7 +141,7 @@ func TestNodeEffectiveState_failedUsesDetailOverReason(t *testing.T) {
 		ApplyFailedReason: &reason,
 		ApplyFailedDetail: &detail,
 	}
-	st, af := nodeEffectiveState(r)
+	st, af := nodeEffectiveState(r, nil)
 	if st != "failed" || af == nil || af.Detail != detail || af.Phase != "failed" || !af.At.Equal(at) {
 		t.Fatalf("failed 状态与 Detail 不符: st=%q af=%v", st, af)
 	}
@@ -121,7 +156,7 @@ func TestNodeEffectiveState_failedEmptyDetailFallsBackToReason(t *testing.T) {
 		ApplyFailedReason: &reason,
 		ApplyFailedDetail: &empty,
 	}
-	_, af := nodeEffectiveState(r)
+	_, af := nodeEffectiveState(r, nil)
 	if af == nil || af.Detail != reason {
 		t.Fatalf("detail 为空时应取 reason，got Detail=%q", af.Detail)
 	}
@@ -130,7 +165,7 @@ func TestNodeEffectiveState_failedEmptyDetailFallsBackToReason(t *testing.T) {
 func TestNodeEffectiveState_applied(t *testing.T) {
 	hash := "abc"
 	r := repo.NodeListRow{AppliedConfigSHA256: &hash}
-	st, af := nodeEffectiveState(r)
+	st, af := nodeEffectiveState(r, nil)
 	if st != "applied" || af != nil {
 		t.Fatalf("got st=%q af=%v", st, af)
 	}
@@ -138,9 +173,37 @@ func TestNodeEffectiveState_applied(t *testing.T) {
 
 func TestNodeEffectiveState_pendingEmpty(t *testing.T) {
 	r := repo.NodeListRow{}
-	st, af := nodeEffectiveState(r)
+	st, af := nodeEffectiveState(r, nil)
 	if st != "" || af != nil {
 		t.Fatalf("无 applied 且无 failed 应为 (\"\", nil)，got (%q, %v)", st, af)
+	}
+}
+
+func TestNodeEffectiveState_desired(t *testing.T) {
+	at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	reason := "bind_failed"
+	cur, old, other := "aaaa", "bbbb", "cccc"
+	cases := []struct {
+		name     string
+		row      repo.NodeListRow
+		desired  *string
+		want     string
+		wantFail bool
+	}{
+		{"已应用的正是期望", repo.NodeListRow{AppliedConfigSHA256: &cur}, &cur, "applied", false},
+		{"已应用的是旧版", repo.NodeListRow{AppliedConfigSHA256: &old}, &cur, "pending", false},
+		{"从没应用过", repo.NodeListRow{}, &cur, "pending", false},
+		{"失败的正是期望", repo.NodeListRow{AppliedConfigSHA256: &old, ApplyFailedSHA256: &cur,
+			ApplyFailedReason: &reason, ApplyFailedAt: &at}, &cur, "failed", true},
+		{"失败的是别的版本、期望还没应用", repo.NodeListRow{AppliedConfigSHA256: &old, ApplyFailedSHA256: &other,
+			ApplyFailedReason: &reason, ApplyFailedAt: &at}, &cur, "pending", true},
+		{"不在该跑的集合里只看回报", repo.NodeListRow{AppliedConfigSHA256: &old}, nil, "applied", false},
+	}
+	for _, c := range cases {
+		st, af := nodeEffectiveState(c.row, c.desired)
+		if st != c.want || (af != nil) != c.wantFail {
+			t.Fatalf("%s: got (%q, %v), want (%q, fail=%v)", c.name, st, af, c.want, c.wantFail)
+		}
 	}
 }
 
