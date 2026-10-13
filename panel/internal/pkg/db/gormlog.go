@@ -35,6 +35,12 @@ func (l *gormZapLogger) LogMode(level gormlogger.LogLevel) gormlogger.Interface 
 	return &cp
 }
 
+// ParamsFilter 让日志里的 SQL 只带占位符、不带参数值：邮箱、令牌、回调地址、密文都可能是参数，
+// 出错或慢查询时整条 SQL 会进日志。实现 gorm 的 ParamsFilter 接口，GORM 渲染 SQL 前调用。
+func (l *gormZapLogger) ParamsFilter(_ context.Context, sql string, _ ...interface{}) (string, []interface{}) {
+	return sql, nil
+}
+
 func (l *gormZapLogger) Info(ctx context.Context, msg string, data ...interface{}) {
 	plog.From(ctx).Sugar().Infof(msg, data...)
 }
