@@ -166,7 +166,8 @@ func TestPoolUserGroupsReplace(t *testing.T) {
 	}
 
 	bad := []uuid.UUID{uuid.New()}
-	if err := e.svc.UpdatePool(ctx, id, PoolUpdate{UserGroupIDs: &bad}); poolErrCode(err) != errs.ValidationFailed {
+	err = e.svc.UpdatePool(ctx, id, PoolUpdate{UserGroupIDs: &bad})
+	if poolErrCode(err) != errs.ValidationFailed {
 		t.Fatalf("不存在组 id 应为 ValidationFailed，得到 %v", err)
 	}
 	if poolErrFields(err)["allowed_user_group_ids"] == "" {
