@@ -80,7 +80,7 @@ func (p *cloudflareProvider) do(ctx context.Context, method, path string, query 
 	}
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("Cloudflare API 不可达: %w", err)
+		return nil, fmt.Errorf("cloudflare API 不可达: %w", err)
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))

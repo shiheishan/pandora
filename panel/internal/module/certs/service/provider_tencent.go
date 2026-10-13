@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"time"
 
@@ -78,9 +79,9 @@ func (p *tencentProvider) check(ctx context.Context, zone string, write bool) (c
 		if resp.Response.DomainCountInfo != nil && resp.Response.DomainCountInfo.AllTotal != nil {
 			total = *resp.Response.DomainCountInfo.AllTotal
 		}
-		res.VisibleZones = int(total)
+		res.VisibleZones = int(min(total, uint64(math.MaxInt32))) //nolint:gosec // 已夹到 MaxInt32 以内
 		offset += int64(len(resp.Response.DomainList))
-		if len(resp.Response.DomainList) == 0 || uint64(offset) >= total {
+		if len(resp.Response.DomainList) == 0 || offset < 0 || uint64(offset) >= total {
 			break
 		}
 	}

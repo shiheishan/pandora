@@ -8,6 +8,9 @@ import (
 	"github.com/aegispanel/aegis/internal/module/certs/model"
 )
 
+// credentialSelect 是凭据读形状的列清单（不含密文列）。
+//
+//nolint:gosec // 列清单，不含口令或密文
 const credentialSelect = `c.id, c.name, c.provider, c.zone, c.secret_hint, c.verify_status, c.verified_at,
 	c.verify_error, c.visible_zones, c.row_version, c.created_at, c.updated_at,
 	(SELECT count(*)::int FROM certificates x WHERE x.dns_credential_id = c.id) AS certificate_count`
