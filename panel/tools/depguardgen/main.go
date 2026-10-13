@@ -144,6 +144,18 @@ linters:
           deny:
             - pkg: {{.Module}}/internal/module
               desc: model 只放字段与标签，不依赖任何模块
+        render-pure:
+          files:
+            - "**/internal/module/*/render/**"
+          deny:
+            - pkg: {{.Module}}/internal/module
+              desc: 渲染是纯函数，不依赖任何模块
+            - pkg: gorm.io
+              desc: 渲染是纯函数，不碰数据库
+            - pkg: {{.Module}}/internal/pkg/db
+              desc: 渲染是纯函数，不碰数据库
+            - pkg: {{.Module}}/internal/pkg/tx
+              desc: 渲染是纯函数，不碰数据库
         pkg-no-business:
           files:
             - "**/internal/pkg/**"
