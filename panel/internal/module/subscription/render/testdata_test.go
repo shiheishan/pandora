@@ -184,9 +184,5 @@ func loadManifest(t *testing.T) goldenManifest {
 
 // options 把 manifest 里的模板配置变成渲染参数。
 func (g goldenTemplate) options() Options {
-	return Options{Singbox: SingboxTemplate{
-		GeositeURLPrefix: g.GeositeURLPrefix,
-		GeoIPURLPrefix:   g.GeoIPURLPrefix,
-		BlockAds:         g.BlockAds,
-	}}
+	return Options{Singbox: SingboxTemplate(g)}
 }

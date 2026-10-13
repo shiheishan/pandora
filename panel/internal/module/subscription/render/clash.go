@@ -332,7 +332,8 @@ func inlineYAML(m map[string]any) string {
 // yamlKey 只给需要的键加引号（headers 里的 Host 等都是普通标识符）。
 func yamlKey(k string) string {
 	for _, r := range k {
-		if !(r == '-' || r == '_' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z') {
+		plain := r == '-' || r == '_' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z'
+		if !plain {
 			return strconv.Quote(k)
 		}
 	}
