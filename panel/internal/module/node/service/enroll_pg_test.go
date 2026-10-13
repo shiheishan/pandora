@@ -78,7 +78,7 @@ func TestEnrollPG(t *testing.T) {
 	sid := seedIdentServer(t, ctx, e, "ready")
 	token := identIssueToken(t, e, sid)
 	res, err := e.svc.Enroll(ctx, EnrollInput{
-		Token: token, CSRDER: identCSR(t, identKey(t)), RequestID: reqid.New(), AgentVersion: "pdnd/1.0",
+		Token: token, CSRDER: identCSR(t, identKey(t)), RequestID: reqid.New(), AgentVersion: "pdnd/1.0", RemoteIP: "192.0.2.10",
 		Host: EnrollHostInfo{Hostname: "host.example.test", OS: "linux", Arch: "amd64", CPUCores: 2, MemoryBytes: 2 << 30, DiskBytes: 40 << 30},
 	})
 	if err != nil {
@@ -115,13 +115,16 @@ func TestEnrollPG(t *testing.T) {
 	if hostname != "host.example.test" || osName != "linux" || agent != "pdnd/1.0" || cpu != 2 || mem != 2048 || disk != 40 {
 		t.Fatalf("主机信息 = %s %s %s %d %d %d", hostname, osName, agent, cpu, mem, disk)
 	}
-	var actor string
-	if err := e.row(ctx, `SELECT actor_kind FROM audit_events WHERE action = 'server.enrollment.commit' AND resource_id = ?`, sid).
-		Scan(&actor); err != nil {
+	var actor, remoteIP string
+	if err := e.row(ctx, `SELECT actor_kind, coalesce(data->>'remote_ip', '') FROM audit_events
+		WHERE action = 'server.enrollment.commit' AND resource_id = ?`, sid).Scan(&actor, &remoteIP); err != nil {
 		t.Fatal(err)
 	}
 	if actor != "system" {
 		t.Fatalf("接入审计的操作者应为 system，得到 %s", actor)
+	}
+	if remoteIP != "192.0.2.10" {
+		t.Fatalf("接入审计应记来源 IP，得到 %q", remoteIP)
 	}
 }
 
@@ -207,7 +210,8 @@ func TestEnrollReenrollSupersedesPG(t *testing.T) {
 	e, ctx := newIdentEnv(t, false)
 	sid := seedIdentServer(t, ctx, e, "ready")
 	a := identEnroll(t, ctx, e, sid)
-	b := identRenew(t, ctx, e, sid)
+	e.advance(renewWindow)
+	b := identRenew(t, ctx, e, sid, a)
 	c := identEnroll(t, ctx, e, sid)
 	for _, s := range []*big.Int{a, b} {
 		if got := identStatus(t, ctx, e, s); got != "superseded" {
