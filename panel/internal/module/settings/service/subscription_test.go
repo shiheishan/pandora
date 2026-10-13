@@ -130,6 +130,16 @@ func (k *lockedKV) LockValues(ctx context.Context, keys []string) (map[string]js
 	return k.Values(ctx, keys)
 }
 
+func (k *lockedKV) InsertIfAbsent(_ context.Context, key string, value json.RawMessage) (bool, error) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if _, ok := k.kv[key]; ok {
+		return false, nil
+	}
+	k.kv[key] = value
+	return true, nil
+}
+
 func (k *lockedKV) Upsert(_ context.Context, key string, value json.RawMessage, _ *uuid.UUID) error {
 	k.mu.Lock()
 	defer k.mu.Unlock()
@@ -150,5 +160,15 @@ func TestSubscriptionDeliveryPG(t *testing.T) {
 	}
 	if first.PathPrefix != second.PathPrefix || first.FetchLimitPerHour != 60 {
 		t.Fatalf("first=%+v second=%+v", first, second)
+	}
+}
+
+// 别的进程先写好了前缀：补前缀时不覆盖，读回库里那一个。
+func TestEnsurePathPrefixKeepsExisting(t *testing.T) {
+	st := &lockedKV{kv: map[string]json.RawMessage{keySubscriptionPathPrefix: json.RawMessage(`"0123456789ab"`)}}
+	svc := &Service{store: st}
+	got, err := svc.ensurePathPrefix(context.Background())
+	if err != nil || got != "0123456789ab" {
+		t.Fatalf("得到 %q err=%v，应读回已有的前缀", got, err)
 	}
 }

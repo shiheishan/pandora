@@ -107,14 +107,15 @@ func (h *Handler) adminRotateLink(c *gin.Context) {
 }
 
 // 门户换链接的限频（用户 2026-10-07 定，按份）：每份两次之间至少 10 分钟、每份每天 5 次；另按账号每天 20 次兜底
-// （每次换链接都触发节点名单重算）。被前面的维度拦下就不再检查后面的维度。后台替用户换不限频（有审计）。
+// （每次换链接都触发节点名单重算）。5 与 20 是产品规则里的严格上限，用固定窗口计数（GCRA 一天里最多约 2n−1 次）。
+// 被前面的维度拦下就不再检查后面的维度。后台替用户换不限频（有审计）。
 var rotateRules = []struct {
 	rule   ratelimit.Rule
 	perSub bool
 }{
 	{ratelimit.Cooldown("sub_rotate_gap", 10*time.Minute), true},
-	{ratelimit.PerWindow("sub_rotate_day", 5, 24*time.Hour), true},
-	{ratelimit.PerWindow("sub_rotate_acct_day", 20, 24*time.Hour), false},
+	{ratelimit.FixedWindow("sub_rotate_day", 5, 24*time.Hour), true},
+	{ratelimit.FixedWindow("sub_rotate_acct_day", 20, 24*time.Hour), false},
 }
 
 // rotateLimit 依次检查三条规则；超限回 429，文案写明还要等几分钟（N = RetryAfterSeconds 向上取整到分钟，至少 1）。
@@ -130,11 +131,17 @@ func (h *Handler) rotateLimit() gin.HandlerFunc {
 			c.Next()
 			return
 		}
+		// 按份的键用规范化后的 id：uuid.Parse 认大写、带花括号、urn:uuid: 等写法，原样拼键就能换个写法绕过限频
+		id, ok := subID(c)
+		if !ok {
+			c.Abort()
+			return
+		}
 		user := p.UserID.String()
 		for _, r := range rotateRules {
 			key := user
 			if r.perSub {
-				key = user + ":" + c.Param("id")
+				key = user + ":" + id.String()
 			}
 			err := h.lim.Allow(c.Request.Context(), r.rule, key)
 			if err == nil {

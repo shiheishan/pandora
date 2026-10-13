@@ -188,7 +188,7 @@ func (s *Service) Pull(ctx context.Context, req PullRequest) (PullResult, error)
 // allowFetch 按凭据每小时的上限限流（成功与过期提示各算各的）；超限记一条 rate_limited 日志并交回 429。
 // Redis 不可用时放行（普通层，见 pkg/ratelimit）。
 func (s *Service) allowFetch(ctx context.Context, d *Delivery, perHour int, e fetchEntry, result string) error {
-	rule := ratelimit.PerWindow("sub_fetch_"+result, perHour, time.Hour)
+	rule := ratelimit.FixedWindow("sub_fetch_"+result, perHour, time.Hour)
 	err := d.Limiter.Allow(ctx, rule, e.credID.String())
 	if err == nil {
 		return nil

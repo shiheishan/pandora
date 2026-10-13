@@ -77,40 +77,31 @@ func (s *Service) SubscriptionDelivery(ctx context.Context) (SubscriptionDeliver
 	return SubscriptionDelivery{PathPrefix: prefix, FetchLimitPerHour: limit}, nil
 }
 
-// ensurePathPrefix 在事务里补上前缀：先锁读，已有（别的请求刚写好）就用它，没有才生成写入。
-// 不写审计：这是系统自动生成的值，不是谁改了设置。
-//
-// 跨进程的并发首次生成：两边都读到「没有」时，后提交的一方会覆盖前一方（Upsert），先返回的那一方手里的值随即作废。
-// 部署是单实例（serve 一个进程），进程内已由 prefixFlight 合并；worker 不读前缀。
+// ensurePathPrefix 补上前缀：生成一个随机值，只在键不存在时写入（ON CONFLICT DO NOTHING），再读回库里的值。
+// 并发首次生成（进程内由 prefixFlight 合并；跨进程如滚动重启时两个 serve 同时首读）时只有先写入的那个生效，
+// 后到的读回的就是它，不会出现「先返回的值被覆盖」。不写审计：这是系统自动生成的值，不是谁改了设置。
 func (s *Service) ensurePathPrefix(ctx context.Context) (string, error) {
-	var prefix string
-	err := s.tx.Do(ctx, func(ctx context.Context) error {
-		vals, err := s.store.LockValues(ctx, []string{keySubscriptionPathPrefix})
-		if err != nil {
-			return err
-		}
-		existing, err := decodeOr(vals, keySubscriptionPathPrefix, "")
-		if err != nil {
-			return err
-		}
-		if existing != "" {
-			prefix = existing
-			return nil
-		}
-		b := make([]byte, subscriptionPathPrefixBytes)
-		if _, err := rand.Read(b); err != nil {
-			return errs.Wrap(errs.Internal, fmt.Errorf("settings: 生成订阅路径前缀: %w", err))
-		}
-		prefix = hex.EncodeToString(b)
-		raw, err := json.Marshal(prefix)
-		if err != nil {
-			return errs.Wrap(errs.Internal, err)
-		}
-		// updated_by 留空：系统生成，不记到触发这次读取的人头上
-		return s.store.Upsert(ctx, keySubscriptionPathPrefix, raw, nil)
-	})
+	b := make([]byte, subscriptionPathPrefixBytes)
+	if _, err := rand.Read(b); err != nil {
+		return "", errs.Wrap(errs.Internal, fmt.Errorf("settings: 生成订阅路径前缀: %w", err))
+	}
+	raw, err := json.Marshal(hex.EncodeToString(b))
+	if err != nil {
+		return "", errs.Wrap(errs.Internal, err)
+	}
+	if _, err := s.store.InsertIfAbsent(ctx, keySubscriptionPathPrefix, raw); err != nil {
+		return "", err
+	}
+	vals, err := s.store.Values(ctx, []string{keySubscriptionPathPrefix})
 	if err != nil {
 		return "", err
+	}
+	prefix, err := decodeOr(vals, keySubscriptionPathPrefix, "")
+	if err != nil {
+		return "", err
+	}
+	if prefix == "" {
+		return "", errs.Wrap(errs.Internal, fmt.Errorf("settings: 写入 %s 后读不到", keySubscriptionPathPrefix))
 	}
 	return prefix, nil
 }

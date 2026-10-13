@@ -56,10 +56,14 @@ var (
 type Handler struct {
 	svc Service
 	lim *ratelimit.Limiter // nil 时不挂限流（单测用）
+	// pullPerMinPerIP 是订阅拉取按来源 IP 每分钟的上限（配置 ratelimit.ip_per_min）；网段上限是它的 8 倍
+	pullPerMinPerIP int
 }
 
-// New 构造 Handler。
-func New(svc Service, lim *ratelimit.Limiter) *Handler { return &Handler{svc: svc, lim: lim} }
+// New 构造 Handler；pullPerMinPerIP 见 Handler。
+func New(svc Service, lim *ratelimit.Limiter, pullPerMinPerIP int) *Handler {
+	return &Handler{svc: svc, lim: lim, pullPerMinPerIP: pullPerMinPerIP}
+}
 
 // limit 挂限流；没有 Limiter 时放行。
 func (h *Handler) limit(dims ...ratelimit.Dimension) gin.HandlerFunc {
@@ -109,9 +113,12 @@ func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 }
 
 // RegisterRoot 注册订阅链接拉取 GET /:prefix/:token：公开、不在 /v1 下（链接里出现 /v1/subscribe 这样的字样等于自带指纹）。
-// 由 app 挂在门户引擎的根上、全局限流之后。
+// 前缀写在每条链接里、不是秘密，所以按来源 IP 与网段限流（照旧 pub_ip、pub_net），挡住拿前缀乱试令牌对库的放大。
 func (h *Handler) RegisterRoot(r gin.IRoutes) {
-	r.GET("/:prefix/:token", h.subscribe)
+	r.GET("/:prefix/:token", h.limit(
+		ratelimit.Dimension{Rule: ratelimit.PerMinute("sub_pull_ip", h.pullPerMinPerIP), Key: ratelimit.ByIP},
+		ratelimit.Dimension{Rule: ratelimit.PerMinute("sub_pull_net", 8*h.pullPerMinPerIP), Key: ratelimit.ByIPPrefix},
+	), h.subscribe)
 }
 
 // utc 把时间转成 UTC 输出。

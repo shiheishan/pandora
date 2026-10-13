@@ -70,7 +70,7 @@ func rootEngine(svc Service) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	e := gin.New()
 	e.Use(httpx.RequestID(zap.NewNop()), httpx.Errors())
-	New(svc, nil).RegisterRoot(e)
+	New(svc, nil, 0).RegisterRoot(e)
 	return e
 }
 
@@ -330,7 +330,7 @@ func TestRotateLimit(t *testing.T) {
 		Switch:       func(string) gin.HandlerFunc { return pass },
 	}
 	f := &deliverySvc{rotateURL: "https://panel.example.test/p/new"}
-	New(f, ratelimit.New(rdb)).RegisterPublic(e.Group("/v1"), kit)
+	New(f, ratelimit.New(rdb), 60).RegisterPublic(e.Group("/v1"), kit)
 
 	sub := "/v1/me/subscriptions/" + uuid.NewString() + "/rotate"
 	if w := do(e, http.MethodPost, sub, ""); w.Code != http.StatusOK {
@@ -346,5 +346,52 @@ func TestRotateLimit(t *testing.T) {
 	}
 	if w := do(e, http.MethodPost, "/v1/me/subscriptions/"+uuid.NewString()+"/rotate", ""); w.Code != http.StatusOK {
 		t.Fatalf("另一份: %d", w.Code)
+	}
+	// 同一份换个 id 写法（大写、带花括号）仍是同一个限频键
+	id := uuid.New()
+	if w := do(e, http.MethodPost, "/v1/me/subscriptions/"+id.String()+"/rotate", ""); w.Code != http.StatusOK {
+		t.Fatalf("第三份第一次: %d", w.Code)
+	}
+	for _, alias := range []string{strings.ToUpper(id.String()), "{" + id.String() + "}"} {
+		if w := do(e, http.MethodPost, "/v1/me/subscriptions/"+alias+"/rotate", ""); w.Code != http.StatusTooManyRequests {
+			t.Fatalf("写法 %s 应被同一个间隔拦下: %d", alias, w.Code)
+		}
+	}
+	// 坏 id 直接 404，不进限流
+	if w := do(e, http.MethodPost, "/v1/me/subscriptions/not-a-uuid/rotate", ""); w.Code != http.StatusNotFound {
+		t.Fatalf("坏 id: %d", w.Code)
+	}
+}
+
+// 认证之后的 Unavailable（读库、取线路）回伪装页；只有「分发没装配」回 503。
+func TestSubscribeUnavailableOnlyWhenUnwired(t *testing.T) {
+	f := &deliverySvc{pullErr: errs.New(errs.Unavailable)}
+	w := do(rootEngine(f), http.MethodGet, "/a1b2c3d4e5f6/0123456789abcdef", "")
+	if w.Code != http.StatusNotFound || w.Body.String() != decoyPage {
+		t.Fatalf("其它 Unavailable 应回伪装页: %d %q", w.Code, w.Body.String())
+	}
+	f.pullErr = service.ErrDeliveryUnavailable
+	if w := do(rootEngine(f), http.MethodGet, "/a1b2c3d4e5f6/0123456789abcdef", ""); w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("没装配应回 503: %d", w.Code)
+	}
+}
+
+// 拉取按来源 IP 限流：超过每分钟上限回 429。
+func TestSubscribeIPLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	e := gin.New()
+	e.Use(httpx.RequestID(zap.NewNop()), httpx.Errors())
+	f := &deliverySvc{pullErr: service.ErrPullDenied}
+	New(f, ratelimit.New(rdb), 2).RegisterRoot(e)
+	for i := 0; i < 2; i++ {
+		if w := do(e, http.MethodGet, "/a1b2c3d4e5f6/0123456789abcdef", ""); w.Code != http.StatusNotFound {
+			t.Fatalf("第 %d 次: %d", i+1, w.Code)
+		}
+	}
+	if w := do(e, http.MethodGet, "/a1b2c3d4e5f6/0123456789abcdef", ""); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("第 3 次应被限流: %d", w.Code)
 	}
 }

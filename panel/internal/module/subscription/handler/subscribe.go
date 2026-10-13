@@ -77,7 +77,8 @@ func (h *Handler) subscribe(c *gin.Context) {
 			c.Data(http.StatusTooManyRequests, "text/plain; charset=utf-8", []byte("too many requests\n"))
 			return
 		}
-		if errors.As(err, &he) && he.Code == errs.Unavailable {
+		// 只有「分发没装配」回 503；认证之后别的 Unavailable（读库、取线路）也回伪装页，否则 503 就成了「令牌有效」的标志
+		if errors.Is(err, service.ErrDeliveryUnavailable) {
 			httpx.Fail(c, err)
 			return
 		}

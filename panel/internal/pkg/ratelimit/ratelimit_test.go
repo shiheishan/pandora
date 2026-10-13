@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
@@ -148,5 +149,46 @@ func TestAllowRedisErrorWrapped(t *testing.T) {
 	err := lim.Allow(ctx, rule, "k")
 	if err == nil || errs.As(err).Code != errs.Unavailable {
 		t.Fatalf("%v", err)
+	}
+}
+
+func TestFixedWindowStrictCap(t *testing.T) {
+	mr, rdb := testRedis(t)
+	lim := New(rdb)
+	ctx := context.Background()
+	rule := FixedWindow("fw", 5, 24*time.Hour)
+	for i := 0; i < 5; i++ {
+		if err := lim.Allow(ctx, rule, "k"); err != nil {
+			t.Fatalf("第 %d 次应放行: %v", i+1, err)
+		}
+	}
+	// GCRA 会在回补后再放行；固定窗口在整个窗口内都拒绝
+	mr.FastForward(23 * time.Hour)
+	err := lim.Allow(ctx, rule, "k")
+	if err == nil || errs.As(err).Code != errs.RateLimited {
+		t.Fatalf("第 6 次应被拒: %v", err)
+	}
+	if ra := errs.As(err).RetryAfterSeconds; ra < 3500 || ra > 3600 {
+		t.Fatalf("RetryAfter %d，应约为窗口剩余的 1 小时", ra)
+	}
+	mr.FastForward(time.Hour + time.Second)
+	if err := lim.Allow(ctx, rule, "k"); err != nil {
+		t.Fatalf("窗口过后应重新计数: %v", err)
+	}
+	if err := lim.Allow(ctx, rule, "other"); err != nil {
+		t.Fatalf("不同键互不影响: %v", err)
+	}
+}
+
+func TestFixedWindowRedisDown(t *testing.T) {
+	mr, rdb := testRedis(t)
+	lim := New(rdb)
+	mr.Close()
+	if err := lim.Allow(context.Background(), FixedWindow("fw", 1, time.Hour), "k"); err != nil {
+		t.Fatalf("非严格应放行: %v", err)
+	}
+	err := lim.Allow(context.Background(), FixedWindow("fw", 1, time.Hour).StrictMode(), "k")
+	if err == nil || errs.As(err).Code != errs.Unavailable {
+		t.Fatalf("严格应回 Unavailable: %v", err)
 	}
 }

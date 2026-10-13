@@ -75,13 +75,18 @@ func (s *Service) AdminRotate(ctx context.Context, subID uuid.UUID, reason strin
 	if err != nil {
 		return AdminRotateResult{}, err
 	}
-	var userID uuid.UUID
+	// 邮箱在同一事务里读：提交后再读，读失败时链接已经换了、后台却报失败，管理员重试就会再换一次
+	var email string
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
 		sub, err := s.lockOwned(ctx, subID, nil)
 		if err != nil {
 			return err
 		}
-		userID = sub.UserID
+		emails, err := s.users.Emails(ctx, []uuid.UUID{sub.UserID})
+		if err != nil {
+			return err
+		}
+		email = emails[sub.UserID]
 		if err := s.rotateLocked(ctx, sub, actorFrom(p), "admin"); err != nil {
 			return err
 		}
@@ -95,11 +100,7 @@ func (s *Service) AdminRotate(ctx context.Context, subID uuid.UUID, reason strin
 	if err != nil {
 		return AdminRotateResult{}, err
 	}
-	emails, err := s.users.Emails(ctx, []uuid.UUID{userID})
-	if err != nil {
-		return AdminRotateResult{}, err
-	}
-	return AdminRotateResult{SubscriptionID: subID, UserEmail: emails[userID]}, nil
+	return AdminRotateResult{SubscriptionID: subID, UserEmail: email}, nil
 }
 
 // rotateLocked 在调用方事务里换掉一份（已锁住的）订阅的链接：吊销有效凭据（立即失效，不留宽限）、签发新凭据、
