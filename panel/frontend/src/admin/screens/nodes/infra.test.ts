@@ -25,7 +25,7 @@ import {
 } from './infra'
 import { nodeRowSchema, poolsResponse, serverSchema, serversResponse, type NodeRow, type Server } from './schemas'
 
-// Go 的 nodefabric.Server 原样形状：指针字段全是 null
+// Go 的 node/handler serverResponse 原样形状：指针字段全是 null
 const server = (over: Partial<Record<string, unknown>> = {}): Server =>
   serverSchema.parse({
     id: 's1',

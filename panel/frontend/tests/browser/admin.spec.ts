@@ -3,7 +3,7 @@ import { card, expect, go, narrowShot, openAdmin, openPortal, payByCashier, seen
 import type { Locator, Page } from '@playwright/test'
 
 // ============================================================================
-//  后台（w8walk C1–C4 与赠送）：人工开单弹窗。入口是用户抽屉「为其开单」跳的约定地址
+//  后台（C1–C4 与赠送）：人工开单弹窗。入口是用户抽屉「为其开单」跳的约定地址
 //  #/billing/orders?new=<用户 id>（.claude/rules/screens-admin-billing.md），弹窗里预选这个用户
 // ============================================================================
 

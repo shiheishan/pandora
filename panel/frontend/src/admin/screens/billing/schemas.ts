@@ -279,7 +279,7 @@ const providerSchema = z.object({
   has_credentials: z.boolean(),
   base_url: z.string(),
   currencies: z.array(z.string()),
-  // 编辑表单回填用的非机密配置（w2pay）；商户号与密钥只写不读，只有 has_credentials
+  // 编辑表单回填用的非机密配置；商户号与密钥只写不读，只有 has_credentials
   submit_path: z.string(),
   api_path: z.string(),
   methods: z.array(z.string()),

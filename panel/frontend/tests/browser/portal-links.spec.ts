@@ -16,7 +16,7 @@ test('C5：超时单', async ({ browser, world }) => {
     await expect(page).toHaveURL(/#\/checkout\/pay\//)
     await expect(page.getByRole('link', { name: /在这台电脑上付款|付款页/ })).toBeVisible()
     const orderId = decodeURIComponent(/#\/checkout\/pay\/([^?]+)/.exec(page.url())?.[1] ?? '')
-    // SQL 夹具（时间流逝）：付款期限拨到一分钟前，订单仍是待支付（与 w8walk C5 同一做法）。
+    // SQL 夹具（时间流逝）：付款期限拨到一分钟前，订单仍是待支付（与 C5 同一做法）。
     // 只改 orders.expires_at、不动预留：释放任务按预留的到期找单，不会在测试中途把它关掉
     sql('付款期限拨到过去', expireOrderSql(orderId))
     await page.reload()

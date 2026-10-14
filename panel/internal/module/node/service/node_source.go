@@ -1,6 +1,6 @@
 package service
 
-// 订阅的可下发线路（p5-delivery 实现，装配为 subscription 的 NodeSource）。结果按（套餐版本, 用户组）缓存几秒，见 delivery_cache.go。
+// 订阅的可下发线路（装配为 subscription 的 NodeSource）。结果按（套餐版本, 用户组）缓存几秒，见 delivery_cache.go。
 
 import (
 	"context"

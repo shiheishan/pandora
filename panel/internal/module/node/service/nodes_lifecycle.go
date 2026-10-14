@@ -1,6 +1,6 @@
 package service
 
-// 本文件归 p5-inventory：节点的批量改状态、上线、退役、删除与强制重新下发。
+// 节点的批量改状态、上线、退役、删除与强制重新下发。
 
 import (
 	"context"
@@ -311,7 +311,7 @@ func (s *Service) DeleteNode(ctx context.Context, id uuid.UUID, rowVersion int64
 	})
 }
 
-// RepublishNode 强制重新下发一个节点的配置（旧的分层发布已删）：版本加一并推进配置纪元，返回新版本。
+// RepublishNode 强制重新下发一个节点的配置：版本加一并推进配置纪元，返回新版本。
 func (s *Service) RepublishNode(ctx context.Context, id uuid.UUID) (int64, error) {
 	var version int64
 	err := s.tx.Do(ctx, func(ctx context.Context) error {

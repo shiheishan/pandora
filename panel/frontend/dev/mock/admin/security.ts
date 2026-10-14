@@ -56,7 +56,7 @@ const activePlan = (u: User) =>
     .sort((a, b) => b.created_at.localeCompare(a.created_at))[0]?.plan_name ?? null
 
 // ---------------------------------------------------------------------------
-// 审计日志（adminops.AuditRow；按时间倒序存）
+// 审计日志（audit/handler auditEventResponse；按时间倒序存）
 // ---------------------------------------------------------------------------
 interface AuditRow {
   id: string
@@ -412,7 +412,7 @@ export function onSwitchChanged(listener: (payload: { code: string; enabled: boo
   return () => switchListeners.delete(listener)
 }
 
-// R116：与 adminops.switchRefusal 同文——数据库 CHECK 原句只进日志，页面拿到的是中文原因
+// R116：与 settings/service SetSwitch 校验提示同文——数据库 CHECK 原句只进日志，页面拿到的是中文原因
 const CHECK = (name: string) => (name === 'feature_switches_essential_stays_on' ? '核心开关不能关闭' : '关闭开关必须填写原因')
 
 async function setSwitch(ctx: MockContext): Promise<MockResult> {

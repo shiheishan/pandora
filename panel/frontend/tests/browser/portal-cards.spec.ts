@@ -22,7 +22,7 @@ async function lookup(page: Page, code: string): Promise<string> {
 /** 卡面下「会发生什么」那一句 */
 const sentence = (page: Page) => text(page.getByText('会发生什么', { exact: true }).locator('xpath=..'))
 
-/** 前提：后台「线下已收款」开一份——付了钱的一份，换套餐时才有没用完的钱可退（与 w8walk 先渠道付同效） */
+/** 前提：后台「线下已收款」开一份——付了钱的一份，换套餐时才有没用完的钱可退（与先渠道付同效） */
 async function paidCopy(u: User, plan: { id: string; prices: string[] }): Promise<void> {
   await admin('/v1/orders/manual', {
     body: { user_id: u.id, plan_id: plan.id, price_id: plan.prices[0], reason: 'w9browser 造前提：线下已收款开一份', settlement: 'offline', reference: `W9B-${u.id.slice(0, 8)}`, target: { kind: 'new' } },
@@ -50,7 +50,7 @@ test('C6：礼品卡', async ({ browser, world }) => {
   })
 
   await step(page, 'C6b', async () => {
-    // SQL 夹具：这一份本期已用设成 5G（模拟用过；按节点上报造要先查出节点侧的用户编号，绕一大圈），与 w8walk C6b 同一做法
+    // SQL 夹具：这一份本期已用设成 5G（模拟用过；按节点上报造要先查出节点侧的用户编号，绕一大圈），与 C6b 同一做法
     const sub = str((await subscriptionsOf(u))[0], 'id')
     sql('本期已用 5G', `UPDATE quota_balances SET consumed = 5368709120 WHERE subscription_id = '${uuid(sub)}' AND metric = 'traffic.bytes';`)
     const face = await lookup(page, await giftCode(world.cards.reset))

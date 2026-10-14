@@ -1,6 +1,6 @@
 package service
 
-// 本文件归 p5-inventory：节点的读取、新建、修改与 REALITY 密钥生成。
+// 节点的读取、新建、修改与 REALITY 密钥生成。
 
 import (
 	"context"

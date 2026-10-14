@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// 签名通道（UseNumber）下发的出站，server_port 是 json.Number；以前 Int 只认
+// 面板经 gRPC 下发、按 UseNumber 解码的出站，server_port 是 json.Number；以前 Int 只认
 // float64，端口被读成 0，出站整个被判非法。
 func TestServerAcceptsSignedJSONNumberPort(t *testing.T) {
 	var settings map[string]any

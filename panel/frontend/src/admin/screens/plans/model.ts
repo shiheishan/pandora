@@ -4,7 +4,7 @@ import type { BillingInterval, Currency, PlanDetail, PlanRow, PlanStatus, PriceR
 type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'neutral'
 type Fields = Record<string, string>
 
-/** 契约：GB = 字节 ÷ 1024³（与 adminops bytesPerGB 一致） */
+/** 契约：GB = 字节 ÷ 1024³（与 catalog/service BytesPerGB = 1<<30 一致） */
 export const GiB = 1024 ** 3
 
 // ===========================================================================
@@ -670,7 +670,7 @@ function packBytes(gb: string): number | null {
   return bytes > 0 ? bytes : null
 }
 
-/** 与 adminops.validatePackInput 同规则、同键名 */
+/** 与 catalog/service preparePackInput 同规则、同键名 */
 export function packProblems(f: PackForm): Fields {
   const out: Fields = {}
   const name = [...f.name.trim()].length

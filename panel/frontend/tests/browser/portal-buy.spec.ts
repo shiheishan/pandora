@@ -2,7 +2,7 @@ import { expireOrderSql, newUser, setBalance, sql } from './api.ts'
 import { backToSubs, card, expect, go, happened, monthsLater, nav, narrowShot, openPortal, payByCashier, planCard, setSwitch, step, tailOf, test, text, submit } from './fixtures.ts'
 
 // ============================================================================
-//  门户 A 组（w8walk A0–A5）：新购走渠道付、另买一份（不起名被拦、同款提示续费、起名）、
+//  门户 A 组（A0–A5）：新购走渠道付、另买一份（不起名被拦、同款提示续费、起名）、
 //  续费余额够、流量包挂到指定那份。一个用户从头走到尾，和真人一样一步接一步
 // ============================================================================
 
@@ -89,7 +89,7 @@ test('A：新购、另买一份、续费、加流量', async ({ browser, world }
     await expect(page.getByRole('heading', { name: '续费好了' })).toBeVisible({ timeout: 20_000 })
     // 余额读数在下单后才重新拉取：等页面写出扣过之后的余额再读；全用余额付，没有「在线付了」
     await expect(page.getByText(/^余额付了 ¥30\.00；余额还剩 ¥20\.00$/)).toBeVisible()
-    // 到期日会自动重试：页面先渲染、数据随后到齐时不读早（w9audit 报告）
+    // 到期日会自动重试：页面先渲染、数据随后到齐时不读早
     await expect(page.getByRole('heading', { name: '发生了什么' }).locator('xpath=following-sibling::ul[1]').getByRole('listitem').first()).toContainText(`用到 ${to}（原来 ${from}）`)
     const lines = await happened(page)
     return `确认页「${callout}」「余额够付，¥30.00 全部用余额」；完成页「${lines[0]}」「${lines[1]}」`
@@ -170,7 +170,7 @@ test('A0b：那张待付款单已超过付款期限', async ({ browser, world })
 
   await step(page, 'A0b', async () => {
     const orderId = await leavePending(page, std.id, `买${std.name}，付 ¥30.00`)
-    // SQL 夹具（时间流逝）：把这张单的付款期限拨到一分钟前，订单仍是待支付——与 w8walk C5 同一做法。
+    // SQL 夹具（时间流逝）：把这张单的付款期限拨到一分钟前，订单仍是待支付——与 C5 同一做法。
     // 只改 orders.expires_at，不动预留：释放任务按预留的到期找单，不会在测试中途把它关掉
     sql('付款期限拨到过去', expireOrderSql(orderId))
     await nav(page, '选购')

@@ -1,6 +1,6 @@
 package service
 
-// 本文件归 p5-pools：node 要的目录（catalog）与用户组（identity）读写面，以及注入方法；
+// node 要的目录（catalog）与用户组（identity）读写面，以及注入方法；
 // 另有 node 给 catalog 实现的端口的编译期检查。
 
 import (

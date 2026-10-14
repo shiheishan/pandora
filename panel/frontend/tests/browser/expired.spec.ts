@@ -2,7 +2,7 @@ import { grant, newUser, sql, str, subscriptionsOf, uuid } from './api.ts'
 import { card, expect, happened, narrowShot, openPortal, payByCashier, seen, step, test, text, submit } from './fixtures.ts'
 
 // ============================================================================
-//  过期卡片（w8buyfix 第 5 项）：「续费，恢复使用」与并列的次按钮「换个套餐」，再续费恢复。
+//  过期卡片：「续费，恢复使用」与并列的次按钮「换个套餐」，再续费恢复。
 //  文件名排在前面：要等 worker 的到期扫描 subscription:expire（一分钟一轮）把状态翻成 expired，早开始早等完
 // ============================================================================
 

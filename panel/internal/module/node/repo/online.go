@@ -1,6 +1,6 @@
 package repo
 
-// 在线来源（p5-traffic）：upsert 与给节点列表的在线、流量读数。
+// 在线来源：upsert 与给节点列表的在线、流量读数。
 
 import (
 	"context"

@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 // ---------------------------------------------------------------------------
-// 审计日志（adminops.AuditRow）
+// 审计日志（audit/handler auditEventResponse，与 auditEventSchema 对齐）
 // ---------------------------------------------------------------------------
 /** agent 是客服，node 是 Node Agent 进程（迁移 00012），两者不是一回事 */
 export const ACTOR_KINDS = ['user', 'admin', 'system', 'agent', 'node', 'plugin', 'anonymous'] as const
@@ -55,7 +55,7 @@ export type AccessItem = z.output<typeof accessItemSchema>
 export const accessResponse = z.object({ items: z.array(accessItemSchema) })
 
 // ---------------------------------------------------------------------------
-// 共享 IP 聚类（risk.go 的 ipClusterView 内嵌 adminops.IPCluster）
+// 共享 IP 聚类（identity/service IPCluster，由 IPClusters 组装）
 // ---------------------------------------------------------------------------
 const RISKS = ['high', 'mid', 'low'] as const
 export type Risk = (typeof RISKS)[number]
@@ -105,7 +105,7 @@ export const clusterDisabled = z.object({
 export type ClusterDisabled = z.output<typeof clusterDisabled>
 
 // ---------------------------------------------------------------------------
-// 降级开关（adminops.SwitchRow；enabled = 功能可用）
+// 降级开关（settings/service Switch、handler switchItem；enabled = 功能可用）
 // ---------------------------------------------------------------------------
 const switchSchema = z.object({
   code: z.string(),

@@ -106,7 +106,7 @@ function view(a: Article, withBody: boolean) {
   }
 }
 
-/** 可见性参数校验与过滤，照 domain/content visible()；非法参数写好 422 并返回 null */
+/** 可见性参数校验与过滤，照 content/service portal.go 的 visible 判定；非法参数写好 422 并返回 null */
 function visibleArticles(ctx: MockContext): Article[] | null {
   const kind = ctx.query.get('kind') ?? ''
   if (kind && !['page', 'kb_article', 'tutorial', 'legal'].includes(kind)) {

@@ -215,7 +215,7 @@ async function withdrawAnn(ctx: MockContext, rawId: string): Promise<MockResult>
 }
 
 // ---------------------------------------------------------------------------
-// 知识库（domain/content/service.go）：每个版本一行
+// 知识库（content/model Page）：每个版本一行
 // ---------------------------------------------------------------------------
 interface ContentRow {
   id: string

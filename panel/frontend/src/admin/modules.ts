@@ -63,7 +63,7 @@ export const MODULES: Readonly<Record<ModuleKey, ModuleDef>> = {
       ['routing', '路由'],
     ],
   },
-  // 节点证书（P2：面板集中签发 DNS-01）
+  // 节点证书（面板集中签发 DNS-01）
   certs: {
     title: '证书',
     group: '网络',

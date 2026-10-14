@@ -1,6 +1,6 @@
 package repo
 
-// 设备数限制（p5-devices）：在线来源按订阅聚合的读数。
+// 设备数限制：在线来源按订阅聚合的读数。
 
 import (
 	"context"

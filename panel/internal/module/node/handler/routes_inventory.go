@@ -6,9 +6,9 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/route"
 )
 
-// registerInventory 注册服务器与节点的后台路由（本文件归 p5-inventory）。全部要登录；
+// registerInventory 注册服务器与节点的后台路由。全部要登录；
 // 中间件顺序 RequireAuth → RecentReauth → Idempotency。
-// 节点通道相关接口（身份、接入令牌、绑定、指标、路由）第二波注册。
+// 节点通道相关接口（身份、接入令牌、指标、路由）分别在 routes_identity.go、routes_metrics.go、routes_routing.go 注册。
 func (h *Handler) registerInventory(v1 *gin.RouterGroup, k route.Kit) {
 	v1.GET("/nodes", k.RequireAuth, h.listNodes)
 	v1.POST("/nodes", k.RequireAuth, k.Idempotency("node_create"), h.createNode)

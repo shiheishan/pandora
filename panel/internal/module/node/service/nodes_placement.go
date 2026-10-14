@@ -1,6 +1,6 @@
 package service
 
-// 本文件归 p5-inventory：节点的复制、迁移与排序。
+// 节点的复制、迁移与排序。
 
 import (
 	"context"
@@ -113,7 +113,7 @@ func (s *Service) CopyNode(ctx context.Context, id uuid.UUID, in NodeCopyInput) 
 		if pool != nil {
 			poolID = pool.String()
 		}
-		// in.CopyRouting：路由第二波才有，这一波只记进审计
+		// in.CopyRouting 目前不复制节点私有路由，只记进审计
 		if err := s.nodeAudit(ctx, "node.copy", copyID, map[string]any{
 			"source_node_id": id.String(), "name": name, "server_id": target.String(),
 			"pool_id": poolID, "copy_routing": in.CopyRouting,

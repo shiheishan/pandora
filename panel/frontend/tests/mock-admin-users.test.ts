@@ -53,7 +53,7 @@ describe('mock api · admin users ops', () => {
     expect(await short.json()).toMatchObject({ error: { fields: { note: expect.any(String) } } })
     expect((await send('POST', path(first!.id), { note: '补偿断线时长', user_id: SEED_USER }, 'reset-0b')).status).toBe(400)
     expect((await send('POST', path('00000000-0000-4000-8000-000000000000'), { note: '补偿断线时长' }, 'reset-0c')).status).toBe(404)
-    // 按用户重置的老接口删了
+    // 没有按用户重置流量的接口，应回 404
     expect((await send('POST', `/v1/users/${SEED_USER}/traffic-reset`, { note: '补偿断线时长' }, 'reset-0d')).status).toBe(404)
 
     const before = first!.quotas[0]!.consumed

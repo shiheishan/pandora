@@ -38,7 +38,7 @@ export const backlogSchema = z.object({
 export type Backlog = z.output<typeof backlogSchema>
 
 // ---------------------------------------------------------------------------
-// GET v1/overview（adminops.Overview）
+// GET v1/overview（report/service Overview）
 // ---------------------------------------------------------------------------
 const revenueRowSchema = z.object({
   currency,

@@ -2,8 +2,8 @@ import type { NodeRow } from './schemas'
 import type { Tone } from './logic'
 
 // ---------------------------------------------------------------------------
-// 节点的真实运行状态（w4deliver）：pdnd 上报的运行原因 + 生效回执，后端读模型见
-// nodefabric/node_runtime_view.go。界面只显示四种：运行中 / 待生效 / 生效失败：原因 / 降级：用缓存服务
+// 节点的真实运行状态：pdnd 上报的运行原因 + 生效回执，后端读模型见
+// node/service 的 node_list_delivery.go。界面只显示四种：运行中 / 待生效 / 生效失败：原因 / 降级：用缓存服务
 // ---------------------------------------------------------------------------
 
 export type RuntimeFields = Pick<

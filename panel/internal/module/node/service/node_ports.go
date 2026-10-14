@@ -1,6 +1,6 @@
 package service
 
-// 本文件归 p5-inventory：同机端口门禁与保留端口（同机端口先到先得）。
+// 同机端口门禁与保留端口（同机端口先到先得）。
 
 import (
 	"context"
@@ -29,7 +29,7 @@ func (r nodePortRange) contains(port int) bool { return port >= r.From && port <
 //   - PanelHosts：面板机的地址（域名或 IP，已规整）。服务器或节点任一地址命中，或是回环地址，即判为面板机；
 //     其中只要有 IP 字面量，而服务器报过的 IP 都不在表里，就判为「不是面板机」。
 //
-// 旧代码可经配置改这张表；新栈暂用缺省值（要可配再在 Service 上加注入）。
+// 这张表目前不可配置，用缺省值（要可配再在 Service 上加注入）。
 type nodePortPolicy struct {
 	Reserved      []nodePortRange
 	PanelReserved []nodePortRange

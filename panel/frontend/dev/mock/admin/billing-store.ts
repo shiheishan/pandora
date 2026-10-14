@@ -38,7 +38,7 @@ export interface Provider {
   has_credentials: boolean
   base_url: string
   currencies: string[]
-  // 非机密配置（w2pay，Go 无 omitempty）：methods 是 config.methods 原样，没配为空数组
+  // 非机密配置（Go 无 omitempty）：methods 是 config.methods 原样，没配为空数组
   submit_path: string
   api_path: string
   methods: string[]

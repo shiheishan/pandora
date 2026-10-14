@@ -1,6 +1,6 @@
 package repo
 
-// 本文件归 p5-inventory：后台节点列表的读模型。
+// 后台节点列表的读模型。
 
 import (
 	"context"

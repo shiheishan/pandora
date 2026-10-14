@@ -1,6 +1,6 @@
 package service
 
-// 名单（p5-delivery 实现）。
+// 名单。
 
 import (
 	"context"

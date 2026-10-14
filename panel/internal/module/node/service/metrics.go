@@ -1,6 +1,6 @@
 package service
 
-// 机器指标入账与读取（p5-traffic）。指标按服务器记（一台机器一份），节点页按节点所在服务器读。
+// 机器指标入账与读取。指标按服务器记（一台机器一份），节点页按节点所在服务器读。
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
 
-// 指标曲线的窗口（分钟）：缺省 60，最长 1440（与旧接口相同；指标保留 48 小时）。
+// 指标曲线的窗口（分钟）：缺省 60，最长 1440（指标保留 48 小时）。
 const (
 	defaultMetricsMinutes = 60
 	maxMetricsMinutes     = 1440

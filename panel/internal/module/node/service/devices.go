@@ -1,6 +1,6 @@
 package service
 
-// 设备数限制（p5-devices）：判定策略读写、在线设备总览、strict 名单过滤与周期重判、订阅的在线设备数。
+// 设备数限制：判定策略读写、在线设备总览、strict 名单过滤与周期重判、订阅的在线设备数。
 //
 // 两种模式：loose 下设备数随名单下发，每个节点各自限；strict 另把跨节点去重后在线设备超过「上限+宽容」的订阅
 // 从所有池的名单里整条摘掉（poolRosters 调 strictExcluded）。超限只经 deviceExceeded 判，上限只经
@@ -63,7 +63,7 @@ func (s *Service) UseDevices(st DeviceSettings, subs DeviceSubscriptions, users 
 	s.devSettings, s.devSubs, s.devUsers, s.devPlans = st, subs, users, plans
 }
 
-// deviceOverviewLimit 是在线设备总览最多列出的订阅数（与旧接口相同）。
+// deviceOverviewLimit 是在线设备总览最多列出的订阅数。
 const deviceOverviewLimit = 200
 
 // StrictSetKey 是 strict 下当前的超限订阅集合（排好序的 uuid 用逗号连起来，空集是空串），只由
@@ -125,7 +125,7 @@ func effectiveDeviceLimit(subLimit *int, v catalogsvc.Version) int {
 }
 
 // devicePolicy 读判定策略；没装配或读失败按缺省（loose、宽容 1、窗口 5 分钟）并记 warn：
-// 配置读不出来不该把所有人当成超限踢下线（与旧实现一致）。
+// 配置读不出来不该把所有人当成超限踢下线。
 func (s *Service) devicePolicy(ctx context.Context) settingssvc.DevicePolicy {
 	if s.devSettings == nil {
 		return settingssvc.DefaultDevicePolicy()

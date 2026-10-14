@@ -1,6 +1,6 @@
 package service
 
-// 节点配置文档（p5-routing 实现）。
+// 节点配置文档。
 //
 // 文档形状：协议字段经 protocol.KernelConfig 摊平在顶层；必有 server_port、protocol（只进摘要）；
 // 有生效路由时才有 outbounds、routes、final。JSON 用 json.Marshal(map) 确定性编码（键排序、无多余空白）。

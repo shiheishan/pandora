@@ -1,6 +1,6 @@
 package service
 
-// 本文件归 p5-inventory：服务器与节点后台编排的对外类型与共用的错误构造。
+// 服务器与节点后台编排的对外类型与共用的错误构造。
 // 对外方法的参数与返回值只用这里的类型，不暴露 model。
 
 import (
@@ -181,7 +181,7 @@ type NodePatch struct {
 }
 
 // NodeCopyInput 是复制节点的输入：TargetServerID、PoolID 为 nil 沿用原节点；Name 为空取「原名-copy」；
-// SortOrder 为 nil 取原节点 +1；ServerPort 为 nil 沿用原端口。CopyRouting 第二波（路由）才生效。
+// SortOrder 为 nil 取原节点 +1；ServerPort 为 nil 沿用原端口。CopyRouting 目前不复制路由，只记进审计。
 type NodeCopyInput struct {
 	RowVersion     int64
 	Name           string

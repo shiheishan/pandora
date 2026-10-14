@@ -1,6 +1,6 @@
 package service
 
-// 流量上报入账（p5-traffic）。在线 IP 在 online.go，机器指标在 metrics.go。
+// 流量上报入账。在线 IP 在 online.go，机器指标在 metrics.go。
 
 import (
 	"context"

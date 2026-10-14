@@ -19,7 +19,7 @@ export function serverDot(s: Pick<Server, 'status' | 'heartbeat_online'>): Tone 
   return s.heartbeat_online ? 'ok' : 'danger'
 }
 
-/** nodefabric.serverStatusTransitions 原样 */
+/** node/service serverStatusTransitions 原样 */
 const SERVER_EDGES: Readonly<Record<ServerStatus, readonly ServerStatus[]>> = {
   draft: ['ready', 'maintenance', 'retired'],
   ready: ['draining', 'maintenance'],

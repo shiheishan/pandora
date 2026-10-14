@@ -19,8 +19,7 @@ import (
 	"time"
 )
 
-// 金样本由面板侧生成（panel/internal/platform/certbundle 的 -certbundle.update），两份逐字节相同，
-// 面板侧的 TestGoldenVectorsIdenticalInPanelAndPdnd 守着这一点。这里用节点侧实现独立重算并解密。
+// 金样本是固定向量（面板侧目前没有对应实现）。这里用节点侧实现独立重算并解密。
 var goldenPath = filepath.Join("testdata", "certbundle-v1-golden.json")
 
 type goldenFile struct {

@@ -47,7 +47,7 @@ func TestConfigRequiresPanelAddress(t *testing.T) {
 	}
 }
 
-// 已删除的字段（旧通道的 url、token、signed_required、nodes[]，兼容层的 native_only）留在配置里要报错，而不是被静默忽略。
+// 未知字段（url、token、signed_required、nodes[]、native_only）留在配置里要报错，而不是被静默忽略。
 func TestConfigRejectsRemovedFields(t *testing.T) {
 	for _, body := range []string{
 		`{"panel":{"address":"p.example.test","url":"https://p.example.test"}}`,

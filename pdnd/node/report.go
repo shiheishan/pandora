@@ -25,7 +25,7 @@ import (
 //   - 上限 maxBufferedTrafficUsers 条（inflight + pending）。超限时先丢最旧的 inflight；
 //     没有 inflight 时丢新出现的 key。丢弃都计数、记 Error。
 //
-// 缓冲只在内存里：进程崩溃最多丢一个节拍的流量（换栈之后再评估落盘）。
+// 缓冲只在内存里：进程崩溃最多丢一个节拍的流量（是否落盘以后再评估）。
 
 // maxBufferedTrafficUsers 是待报缓冲的条目上限（约每条 60 字节，13 万条约 8MB）。
 const maxBufferedTrafficUsers = 1 << 17

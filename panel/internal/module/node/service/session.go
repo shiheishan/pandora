@@ -1,6 +1,6 @@
 package service
 
-// 会话管理（p5-session）：按服务器维护一条在途控制流，负责对齐、名单与配置下发、回执、心跳、续期、吊销断流、
+// 会话管理：按服务器维护一条在途控制流，负责对齐、名单与配置下发、回执、心跳、续期、吊销断流、
 // 重启前错峰重连。传输层（grpc/control.go）只做收发与 proto 互转，业务都在这里。
 //
 // 并发模型：
@@ -54,8 +54,8 @@ var (
 	ErrSessionPeerGone = errors.New("node: 节点已断开")
 )
 
-// SessionBackend 是会话管理要用的数据面：名单与配置（p5-delivery、p5-routing）、上报入账（p5-traffic）、
-// 续期（p5-enroll）、会话自己的落库（session_store.go）。*Service 实现它；测试换成假的。
+// SessionBackend 是会话管理要用的数据面：名单与配置、上报入账、
+// 续期、会话自己的落库（session_store.go）。*Service 实现它；测试换成假的。
 type SessionBackend interface {
 	Rosters(ctx context.Context, serverIDs []uuid.UUID) (map[uuid.UUID][]NodeRoster, error)
 	ServerConfigs(ctx context.Context, serverIDs []uuid.UUID) (map[uuid.UUID][]NodeConfigDoc, error)

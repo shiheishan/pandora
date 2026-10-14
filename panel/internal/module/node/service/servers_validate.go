@@ -1,6 +1,6 @@
 package service
 
-// 本文件归 p5-inventory：服务器输入校验与读模型转换（纯函数，不碰 repo）。
+// 服务器输入校验与读模型转换（纯函数，不碰 repo）。
 
 import (
 	"fmt"
