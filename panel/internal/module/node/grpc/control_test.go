@@ -422,8 +422,13 @@ func TestSessionUsersFullChunks(t *testing.T) {
 	recvResp(t, stream) // Welcome
 	recvResp(t, stream) // Config
 	counts := []int{service.UsersChunkSize, service.UsersChunkSize, 1}
+	var lastSeq uint64
 	for i := 0; i < 3; i++ {
 		resp := recvResp(t, stream)
+		if i > 0 && resp.GetSeq() != lastSeq+1 {
+			t.Fatalf("chunk %d seq=%d，上一块 %d", i, resp.GetSeq(), lastSeq)
+		}
+		lastSeq = resp.GetSeq()
 		uf := resp.GetUsersFull()
 		if uf == nil {
 			t.Fatalf("chunk %d 不是 UsersFull", i)

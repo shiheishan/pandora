@@ -6,32 +6,36 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"google.golang.org/grpc/mem"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/aegispanel/aegis/internal/module/node/service"
 )
 
-// sendBufferTier 是 gRPC 发送缓冲在 1 MB 之下的最大一档（mem 包的缺省档位）：编码后超过它就占一块 1 MB 的缓冲。
-const sendBufferTier = 32 << 10
-
-// 每个字段都取最长编码时，一块满员的全量名单也放得进 32 KB 那一档（UsersChunkSize 的注释）。
+// 每个字段都取最长编码（负 UID 的 varint 10 字节、seq 取最大）时，每一块满员的全量名单都不落进 gRPC 1 MB 那一档发送缓冲
+// （UsersChunkSize 的注释）。档位直接问 gRPC 的缺省缓冲池，升级 grpc-go 改了档位这里会发现。
 func TestUsersFullChunkFitsSendBuffer(t *testing.T) {
-	users := make([]service.RosterUser, service.UsersChunkSize+1)
+	users := make([]service.RosterUser, 2*service.UsersChunkSize)
 	for i := range users {
 		users[i] = service.RosterUser{
-			UID: math.MaxInt64, UUID: uuid.New(), SpeedLimitKbps: math.MaxUint32, DeviceLimit: math.MaxUint32,
+			UID: math.MinInt64, UUID: uuid.New(), SpeedLimitKbps: math.MaxUint32, DeviceLimit: math.MaxUint32,
 		}
 	}
 	r := &service.NodeRoster{NodeID: uuid.New(), Version: "u1-" + strings.Repeat("f", 64), Users: users}
-	var sizes []int
+	var chunks int
 	for msg := range usersFullChunks(r) {
-		sizes = append(sizes, proto.Size(msg))
+		chunks++
+		msg.Seq = math.MaxUint64
+		size := proto.Size(msg)
+		buf := mem.DefaultBufferPool().Get(size)
+		got := cap(*buf)
+		mem.DefaultBufferPool().Put(buf)
+		if got >= 1<<20 {
+			t.Fatalf("第 %d 块编码后 %d 字节，占了 %d 字节的发送缓冲", chunks, size, got)
+		}
 	}
-	if len(sizes) != 2 {
-		t.Fatalf("块数 %d，应为 2", len(sizes))
-	}
-	if sizes[0] > sendBufferTier {
-		t.Fatalf("满员一块编码后 %d 字节，超过 %d", sizes[0], sendBufferTier)
+	if chunks != 2 {
+		t.Fatalf("块数 %d，应为 2", chunks)
 	}
 }
 
