@@ -151,7 +151,7 @@ func TestShadowsocksUDPTwoUsersBehindOneAddress(t *testing.T) {
 	}
 	a.udpMu.Unlock()
 
-	if len(ids) != 2 || !((ids[0] == 8871 && ids[1] == 8872) || (ids[0] == 8872 && ids[1] == 8871)) {
+	if len(ids) != 2 || (ids[0] != 8871 || ids[1] != 8872) && (ids[0] != 8872 || ids[1] != 8871) {
 		t.Fatalf("会话用户 ID 列表=%v，期望包含 8871 与 8872", ids)
 	}
 

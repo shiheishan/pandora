@@ -69,7 +69,7 @@ func (a *shadowsocksAdapter) encodeUDPPacket(dst, master []byte, source M.Socksa
 			ip16 := addr.As16()
 			n = 1 + copy(plain[1:], ip16[:])
 		}
-	} else if source.IsFqdn() {
+	} else if source.IsDomain() {
 		fqdn := source.Fqdn
 		if len(fqdn) < 1 || len(fqdn) > 255 {
 			return nil, errSSUDPSourceInvalid

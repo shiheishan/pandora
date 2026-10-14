@@ -329,7 +329,7 @@ func TestShadowsocksBindFailureNamesL4(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer pc.Close()
+		defer func() { _ = pc.Close() }()
 		port := pc.LocalAddr().(*net.UDPAddr).Port
 		ln, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(port))
 		if err != nil {
@@ -353,7 +353,7 @@ func TestShadowsocksBindFailureNamesL4(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer ln.Close()
+		defer func() { _ = ln.Close() }()
 		port := ln.Addr().(*net.TCPAddr).Port
 		pc, err := net.ListenPacket("udp", "127.0.0.1:"+strconv.Itoa(port))
 		if err != nil {

@@ -61,7 +61,7 @@ func lifecycleSSUDPClient(t *testing.T, a *shadowsocksAdapter, password string) 
 
 // lifecycleSSUDPRoundTrip 发一包到 target 并在 timeout 内等回显；没回包返回错误。
 func lifecycleSSUDPRoundTrip(pc net.PacketConn, target net.Addr, payload string, timeout time.Duration) error {
-	defer pc.SetReadDeadline(time.Time{})
+	defer func() { _ = pc.SetReadDeadline(time.Time{}) }()
 	deadline := time.Now().Add(timeout)
 	buf := make([]byte, 2048)
 	var lastErr error
