@@ -13,17 +13,20 @@ import (
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
 	"github.com/aegispanel/aegis/internal/pkg/reqid"
 	"github.com/aegispanel/aegis/internal/pkg/reqmeta"
+	"github.com/aegispanel/aegis/internal/pkg/reqstats"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
 
-// RequestID 规范化 X-Request-ID，回写响应头，把带 req_id 字段的 logger 与来源信息（IP、UA）放进请求 ctx。
+// RequestID 规范化 X-Request-ID，回写响应头，把带 req_id 字段的 logger 与来源信息（IP、UA）放进请求 ctx，
+// 并放一个每请求计数器（reqstats），供访问日志与指标读取。
 func RequestID(base *zap.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := reqid.Normalize(c.GetHeader(reqid.Header))
 		c.Header(reqid.Header, id)
 		ctx := plog.WithReqID(c.Request.Context(), base, id)
 		ctx = reqmeta.With(ctx, reqmeta.Meta{IP: c.ClientIP(), UserAgent: c.Request.UserAgent()})
+		ctx = reqstats.With(ctx, reqstats.New())
 		c.Request = c.Request.WithContext(ctx)
 		c.Set("req_id", id)
 		c.Next()
@@ -38,18 +41,22 @@ func route(c *gin.Context) string {
 	return "-"
 }
 
-// AccessLog 每个请求写一行 access 日志。
+// AccessLog 每个请求写一行 access 日志。SQL 条数与耗时、Redis 命令数（pipeline 按命令数）写入 sql_n/sql_ms/redis_n；没有计数器时为 0。
 func AccessLog() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		c.Next()
 		status := c.Writer.Status()
+		st := reqstats.From(c.Request.Context())
 		fields := []zap.Field{
 			zap.String("method", c.Request.Method),
 			zap.String("route", route(c)),
 			zap.Int("status", status),
 			zap.Float64("dur_ms", float64(time.Since(start).Microseconds())/1000),
 			zap.Int("bytes", c.Writer.Size()),
+			zap.Int64("sql_n", st.SQLCount()),
+			zap.Float64("sql_ms", float64(st.SQLDuration().Microseconds())/1000),
+			zap.Int64("redis_n", st.RedisCount()),
 		}
 		l := plog.From(c.Request.Context())
 		if status >= 500 {
