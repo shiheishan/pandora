@@ -77,4 +77,5 @@ gate.sh compare b0-a o1 --aa b0-b --target idle.pg_new_sessions
 
 - 测量与构建、PG 维护不同时跑：`gate.sh run` 先构建再开测；同一时间只跑一个运行。
 - 每次运行的完整数据都在结果目录：`result.json`（汇总）、`snap/`（快照）、`k6/`、`serve.log`、`worker.log`、`nodesim-status.json`、`notes.txt`（异常备注）。
+- 内存退化要定位时跑诊断运行：`GATE_PPROF=1 gate.sh run <label> <提交>`。serve 经 /run 下的运行时 drop-in 开 pprof（`127.0.0.1:6061`，下一次不带 `GATE_PPROF` 的运行重置时撤掉），每个窗口结束取一份堆剖析到 `pprof/<窗口>.heap`（`go tool pprof`）与 `.heap.txt`（带 MemStats）。诊断运行可以缩短各段（`GATE_IDLE_SECS`、`GATE_PULL_RATES` 等），只用来定位，不拿来比。
 - 机器上的服务日志里可能有后台路径前缀：在对话、报告里引用日志前先打码（`gate.sh` 的输出已经打码）。

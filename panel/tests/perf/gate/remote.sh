@@ -29,6 +29,10 @@ GATE_SUB_PREFIX=0123456789ab   # 虚构的订阅路径前缀（12 位十六进�
 IDLE_SECS=${GATE_IDLE_SECS:-300}
 SETTLE_SECS=${GATE_SETTLE_SECS:-60}
 RECONNECTS=${GATE_RECONNECTS:-3}
+# 诊断：GATE_PPROF=1 时 serve 开 pprof（只听回环），每个窗口结束取一份堆剖析；开了 pprof 的运行只用来定位，不拿来比
+PPROF=${GATE_PPROF:-0}
+PPROF_ADDR=127.0.0.1:6061
+PPROF_DROPIN=/run/systemd/system/pandora-serve.service.d/pprof.conf
 # 切核：面板侧（system.slice）0-1 号核、4G；压测进程在 user.slice 的其余核（ops-local 的 cpuset.sh 设置）
 WANT_SYSTEM_CPUS=${GATE_SYSTEM_CPUS:-0-1}
 WANT_USER_CPUS=${GATE_USER_CPUS:-2-7}
@@ -292,8 +296,11 @@ SQL
   redis_clear
   rm -rf "$G/nodesim-state"
   tar -C "$G" -xf "$BASE/nodesim-state.tar"
+  pprof_dropin
   systemctl start pandora-serve pandora-worker
   wait_ready 90 || die "面板没就绪"
+  [ "$PPROF" = 1 ] && echo "诊断运行：serve 开了 pprof（$PPROF_ADDR），只用来定位，不拿来比" >>"$run/notes.txt"
+  return 0
 }
 
 #---- 采集
@@ -309,7 +316,27 @@ window() {
   "$@"
   t1=$(date +%s.%N)
   collect snap --out "$run/snap/$name.1.json"
+  heap_profile "$run" "$name"
   printf '{"name":"%s","t0":%s,"t1":%s}\n' "$name" "$t0" "$t1" >>"$run/windows.jsonl"
+}
+
+# heap_profile <运行目录> <窗口名>：GATE_PPROF=1 时取 serve 的堆剖析（二进制给 go tool pprof）与带 MemStats 的文本版
+heap_profile() {
+  [ "$PPROF" = 1 ] || return 0
+  mkdir -p "$1/pprof"
+  curl -fsS -m 30 -o "$1/pprof/$2.heap" "http://$PPROF_ADDR/debug/pprof/heap" || echo "取 $2 堆剖析失败" >>"$1/notes.txt"
+  curl -fsS -m 30 -o "$1/pprof/$2.heap.txt" "http://$PPROF_ADDR/debug/pprof/heap?debug=1" || true
+}
+
+# pprof_dropin：按 GATE_PPROF 放上或撤掉 serve 的 pprof 运行时 drop-in（/run 下，重启即失效），起服务前调
+pprof_dropin() {
+  if [ "$PPROF" = 1 ]; then
+    mkdir -p "$(dirname "$PPROF_DROPIN")"
+    printf '[Service]\nEnvironment=PANDORA_HTTP_PUBLIC_PPROF_ADDR=%s\n' "$PPROF_ADDR" >"$PPROF_DROPIN"
+  else
+    rm -f "$PPROF_DROPIN"
+  fi
+  systemctl daemon-reload
 }
 
 #---- 场景
