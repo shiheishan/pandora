@@ -59,6 +59,7 @@ type stubSettler struct {
 	notPayable map[uuid.UUID]error
 	calls      atomic.Int64
 	ledger     *ledgersvc.Service
+	last       SettleInput // 最近一次 SettlePayment 入参（测试断言用）
 	// before 非空时在结算最前面调用（并发用例在这里拿订单锁）；返回错误即结算失败。
 	before func(ctx context.Context, in SettleInput) error
 }
@@ -66,6 +67,7 @@ type stubSettler struct {
 func (s *stubSettler) SettlePayment(ctx context.Context, in SettleInput) error {
 	s.calls.Add(1)
 	s.mu.Lock()
+	s.last = in
 	before := s.before
 	npErr, notPayable := s.notPayable[in.OrderID]
 	userID := s.users[in.OrderID]
@@ -79,13 +81,14 @@ func (s *stubSettler) SettlePayment(ctx context.Context, in SettleInput) error {
 		return fmt.Errorf("payment test: 未登记订单 %s", in.OrderID)
 	}
 	_, err := s.ledger.PostOrderPaid(ctx, ledgersvc.OrderPaid{
-		OrderID:  in.OrderID,
-		UserID:   userID,
-		Currency: in.Currency,
-		Total:    in.Amount,
-		Paid:     in.Amount,
-		Fee:      in.Fee,
-		Provider: in.ProviderCode,
+		OrderID:   in.OrderID,
+		UserID:    userID,
+		Currency:  in.Currency,
+		Total:     in.Amount,
+		Paid:      in.Amount,
+		Fee:       in.Fee,
+		Surcharge: in.Surcharge,
+		Provider:  in.ProviderCode,
 	})
 	if err != nil {
 		return err
