@@ -21,6 +21,11 @@ paths:
 - 名单版本 `rosterVersion` 前缀 `u1-`（`service/delivery.go`）；同池节点共用一份 `Users` 切片，不要改切片。
 - 账号须 `identity` 的 `ActiveUserGroups`（封禁即断）；可服务订阅来自 `subscription.ServingSubscriptions`。
 
+## 订阅线路缓存
+- `DeliverableNodes` 的结果按（套餐版本, 用户组）在进程内缓存 5 秒（`service/delivery_cache.go`：expirable LRU 1024 个键 + singleflight 合并同键并发未命中，出错不缓存）。订阅 id、用户 id 不进键，现算也不能依赖它们；要加新输入就得同时改键。
+- 只靠 TTL 失效，不接纪元：线路变化最多晚 5 秒进订阅。不是安全边界：能不能连看节点名单（纪元推送），订阅与账号资格由拉取路径每次现查。
+- 返回的切片与 `render.Node.Config` 被所有命中者共享：调用方只读不改；不要在事务里调（事务内的读会经缓存给到别人）。测分层、过滤逻辑用不经缓存的 `loadDeliverableNodes` / `deliverableFromRows`（`service/node_source.go`）。
+
 ## 生效路由与配置文档
 - 合并只有 `mergeRouting`（`service/routing.go`）：层序节点私有 → 各路由组（`sort_order, id`）→ 全局；规则按层拼接，出站从低到高同 tag 覆盖且保留首次位置。读层用 `nodeRoutingLayers`（`service/routing_layers.go`）。下发配置用 `ServerConfigs`（`service/config_docs.go`），不要另写合并。
 - 内置出站 `direct` / `block` 保存时经 `canonicalRouteTag` 规范成小写；自定义 tag 大小写敏感。
