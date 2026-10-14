@@ -50,17 +50,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "用法: loadgen <probe|hold|connrate|tput|lat|udp> [参数...]\n")
 }
 
-// 后五个子命令由同包其它文件实现；此处仅占位以便编译。
-func runHold(args []string) int     { return stubSubcommand("hold") }
-func runConnrate(args []string) int { return stubSubcommand("connrate") }
-func runTput(args []string) int     { return stubSubcommand("tput") }
-func runLat(args []string) int      { return stubSubcommand("lat") }
-func runUDP(args []string) int      { return stubSubcommand("udp") }
-
-func stubSubcommand(name string) int {
-	fmt.Fprintf(os.Stderr, "%s: 尚未实现\n", name)
-	return 2
-}
+// runHold、runConnrate、runTput、runLat、runUDP 在同包的 hold.go、connrate.go、tput.go、lat.go、udp.go。
 
 type commonFlags struct {
 	profilePath, node, proto, echo, udpEcho, sink, name string
