@@ -28,6 +28,7 @@ paths:
 运行状态与端口（w4deliver）：
 
 - 节点行与详情的运行状态由 `runtime.ts` 的 `runState` 算：生效失败（回执失败或节点报端口被占、没起来、新配置装不上）→ 降级：用缓存服务 → 待生效 → 运行中；列表只标非「运行中」的三种。原因码中文化在 `runtimeReasonText`，端口冲突的占用者名字由后端 `runtime_reason_node` 给，前端不按 id 另查
-- 详情的版本行：有 `desired_effective_generation` 时显示生效版本（签名节点），否则仍是旧的整数配置版本
+- 节点没有健康分与配置代数（后端已删这些恒 null 的键）：配置是否生效只看 `effective_state`，在「运行状态」里显示（`runtime.ts` 的 `runState`）。
+- 节点服务状态只有 draft / active / disabled / retired（没有 draining，draining 只属于服务器与节点池）；转换表 `logic.ts` 的 `EDGES` 与 mock 的 `EDGES` 都照后端 `node_status.go` 的 `nodeServingTransitions`
 - 同机端口门禁的 409 带 `fields.server_port`，表单与复制弹窗都标到端口框；复制弹窗可另给端口（留空沿用原节点），复制到同一台服务器必须换端口
 - 新加的运行状态字段在 `schemas.ts` 里带缺省（`catch` / `nullish`）：开发期假后端（`panel/frontend/dev/`）还没有这些字段，补上后可以收紧
