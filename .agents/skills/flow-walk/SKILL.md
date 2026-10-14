@@ -23,11 +23,11 @@ description: pandora 的产品验证：像用户一样用内置浏览器把门�
 
 | | 假后端（本机） | 测试机真后端 |
 |---|---|---|
-| 起法 | `bash .claude/skills/flow-walk/scripts/mock-up.sh up` | 按 `panel/deploy/install.sh` 装好的面板，别名与后台前缀看 `~/ai/servers/README.md` 和 `ops-local/` |
+| 起法 | `bash .agents/skills/flow-walk/scripts/mock-up.sh up` | 按 `panel/deploy/install.sh` 装好的面板，别名与后台前缀看 `~/ai/servers/README.md` 和 `ops-local/` |
 | 速度 | 秒级起，状态在内存，重启复原 | 数据真实，状态累积 |
 | 能验 | 页面交互、文案、表单校验、错误态；页面按契约走通 | 真实数据流：下单入账、佣金、订阅文件、节点接入、权限 |
 | 不能验 | 后端逻辑、真支付、真节点、邮件 | 破坏性场景（空/错/慢）造不出来 |
-| 账号 | 门户 `user@pandora.dev`，后台 `admin@pandora.dev`（另有只读 `viewer@pandora.dev`），口令见 `panel/frontend/dev/mock-api.ts` 的 `MOCK_ACCOUNTS` | 管理员由 `aegis-adminctl create` 建；凭据在 `ops-local/<目录>/admin-cred.txt`、`admin-path.txt`（0600；一次性测试机不建 1Password 条目，红线见根 CLAUDE.md） |
+| 账号 | 门户 `user@pandora.dev`，后台 `admin@pandora.dev`（另有只读 `viewer@pandora.dev`），口令见 `panel/frontend/dev/mock-api.ts` 的 `MOCK_ACCOUNTS` | 管理员由 `install.sh` 首装时建，或按 `panel/deploy/RUNBOOK.md`「管理员进不来」一节用 `pandora admin create --email … --password-stdin` 建；凭据在 `ops-local/<目录>/admin-cred.txt`、`admin-path.txt`（0600；一次性测试机不建 1Password 条目，红线见根 CLAUDE.md） |
 
 怎么选：
 - 改的是页面布局、文案、表单、前端状态：只跑假后端。
@@ -59,7 +59,7 @@ description: pandora 的产品验证：像用户一样用内置浏览器把门�
   - 后台人工开单选「赠送」或「线下已收款」；
   - 配了演示渠道时，走渠道自己的回调（参考 `panel/tests/epay_e2e.sh`）。
 - 注册要邮件验证码：测试机没配邮件渠道就不测注册，用管理员建好的账号走登录，在记录里写明原因。
-- 后台 IP 限流每分钟 240 次，反复刷页面和反复登录会撞上，别循环刷新（见 `rules/frontend-smoke.md`）。
+- 登录、注册等认证入口按来源每分钟限 `ratelimit.auth_per_min` 次（缺省 10），同一账号连续输错 10 次停 15 分钟；反复登录会撞上，别循环刷新、别反复重登。
 
 ## 操作方法
 
