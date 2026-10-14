@@ -244,10 +244,10 @@ func ValidateTemplate(f Format, content string) error {
 	case FormatSurfboard:
 		hasProxy, hasProxyGroup := false, false
 		for _, line := range lines {
-			trimmed := strings.TrimSpace(line)
-			if trimmed == "[Proxy]" {
+			switch strings.TrimSpace(line) {
+			case "[Proxy]":
 				hasProxy = true
-			} else if trimmed == "[Proxy Group]" {
+			case "[Proxy Group]":
 				hasProxyGroup = true
 			}
 		}

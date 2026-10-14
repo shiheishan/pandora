@@ -136,6 +136,9 @@ func TestAdminSaveResetPreviewTemplatePG(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 保存后又恢复，map 里不应再有 clash；再存一次测 TemplateContents
+	if _, ok := m["clash"]; ok {
+		t.Fatalf("恢复缺省后 TemplateContents 仍有 clash")
+	}
 	_, err = e.svc.AdminSaveTemplate(ctx, "clash", custom)
 	if err != nil {
 		t.Fatal(err)

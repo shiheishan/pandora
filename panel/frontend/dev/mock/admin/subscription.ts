@@ -197,7 +197,7 @@ async function decode(ctx: MockContext, shape: Record<string, 'boolean' | 'strin
   return { ok: true, body }
 }
 
-let extras = { info_nodes: false, protocol_prefix: false, link_base_urls: [] as string[] }
+const extras = { info_nodes: false, protocol_prefix: false, link_base_urls: [] as string[] }
 const custom = new Map<string, { content: string; updated_at: string }>()
 
 function templateDetail(format: SubFormat) {
