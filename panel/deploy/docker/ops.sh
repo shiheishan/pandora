@@ -177,17 +177,20 @@ cmd_gen_env() {
 
   [[ -r "$ENV_EXAMPLE" ]] || die "读不了 $ENV_EXAMPLE"
   out=''
+  left=''
   while IFS= read -r line || [[ -n "$line" ]]; do
     if [[ "$line" =~ ^([A-Z][A-Z0-9_]*)= ]]; then
       key="${BASH_REMATCH[1]}"
       if [[ -n "${GEN[$key]+x}" ]]; then
         line="${key}=${GEN[$key]}"
       fi
+      # 只查赋值行：模板的注释里本来就写着 CHANGE_ME
+      [[ "$line" != *CHANGE_ME* ]] || left+=" $key"
     fi
     out+="$line"$'\n'
   done <"$ENV_EXAMPLE"
 
-  [[ "$out" != *CHANGE_ME* ]] || die '生成结果仍含 CHANGE_ME，请检查 env.example 与生成逻辑'
+  [[ -z "$left" ]] || die "生成结果仍含 CHANGE_ME：${left# }，请检查 env.example 与生成逻辑"
   printf '%s' "$out"
   say '已生成 .env 内容；请 chmod 600 .env，并把 .env 另存到机器之外（含主密钥与备份私钥）。'
 }

@@ -78,7 +78,7 @@ jobs:
           )
 
           # 校验生成的 env：绝不能包含 CHANGE_ME 占位符，且必须包含 PANDORA_ADMIN_PATH 与指定的 PANDORA_IMAGE_REPO
-          if grep -q CHANGE_ME "$RUNNER_TEMP/pandora.env"; then
+          if grep -qE '^[A-Z][A-Z0-9_]*=.*CHANGE_ME' "$RUNNER_TEMP/pandora.env"; then
             echo "::error::生成的 .env 文件中仍有 CHANGE_ME 占位符"
             exit 1
           fi
