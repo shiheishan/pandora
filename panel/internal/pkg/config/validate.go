@@ -110,9 +110,6 @@ func (c *Config) Validate() error {
 	if c.Database.MaxConns < 2 || c.Database.MaxConns > 500 {
 		errs = append(errs, fmt.Errorf("database.max_conns 须在 [2, 500]，当前 %d", c.Database.MaxConns))
 	}
-	if c.Database.MinConns < 0 || c.Database.MinConns > c.Database.MaxConns {
-		errs = append(errs, fmt.Errorf("database.min_conns 须在 [0, max_conns]，当前 %d", c.Database.MinConns))
-	}
 
 	if c.Redis.PoolSize < 1 {
 		errs = append(errs, errors.New("redis.pool_size 至少为 1"))

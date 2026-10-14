@@ -80,7 +80,6 @@ func openRuntime(ctx context.Context, path string) (*runtime, error) {
 	gdb, err := db.Open(ctx, db.Options{
 		URL:      cfg.Database.URL.Reveal(),
 		MaxConns: cfg.Database.MaxConns,
-		MinConns: cfg.Database.MinConns,
 		Logger:   l,
 	})
 	if err != nil {

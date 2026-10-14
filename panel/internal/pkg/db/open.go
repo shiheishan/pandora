@@ -12,15 +12,21 @@ import (
 
 // Options 打开 PostgreSQL 连接时的参数。
 type Options struct {
-	URL           string
+	URL string
+	// MaxConns 是连接池上限（至少 1）；空闲连接也最多留这么多条，闲置超过 connMaxIdleTime 才关
 	MaxConns      int
-	MinConns      int
 	Logger        *zap.Logger
 	SlowThreshold time.Duration
 }
 
+// connMaxIdleTime 是空闲连接留在池里的最长时间：突发过后多开的连接闲置这么久才关。
+const connMaxIdleTime = 5 * time.Minute
+
 // Open 打开 GORM 连接并包装为 *DB。
 func Open(ctx context.Context, o Options) (*DB, error) {
+	if o.MaxConns < 1 {
+		return nil, fmt.Errorf("db: MaxConns 至少为 1，当前 %d", o.MaxConns)
+	}
 	threshold := o.SlowThreshold
 	if threshold == 0 {
 		threshold = 200 * time.Millisecond
@@ -46,14 +52,12 @@ func Open(ctx context.Context, o Options) (*DB, error) {
 		return nil, err
 	}
 
+	// 空闲上限与池上限相同，靠 connMaxIdleTime 回收：空闲上限小于并发时，每次归还都会关掉多出来的连接、
+	// 下一次再新建（P8 实测空闲上限 2、池 30 时，空载每分钟约 17 个新连接，压测时每秒 9–15 个）。
 	sqlDB.SetMaxOpenConns(o.MaxConns)
-	idle := o.MinConns
-	if idle == 0 {
-		idle = 2
-	}
-	sqlDB.SetMaxIdleConns(idle)
+	sqlDB.SetMaxIdleConns(o.MaxConns)
 	sqlDB.SetConnMaxLifetime(30 * time.Minute)
-	sqlDB.SetConnMaxIdleTime(5 * time.Minute)
+	sqlDB.SetConnMaxIdleTime(connMaxIdleTime)
 
 	if err := sqlDB.PingContext(ctx); err != nil {
 		_ = sqlDB.Close()
