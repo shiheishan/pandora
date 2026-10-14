@@ -1,5 +1,5 @@
 # 从源码构建三个镜像 → gen-env 生成 .env → compose 起全栈 → 迁移、/readyz、门户与后台经 nginx、
-# 建管理员并登录、真实来源 IP 两种口径、重建 serve 后 nginx 仍通、备份校验恢复演练 → down -v。
+# 建管理员并登录、真实来源 IP 两种口径、重建与就地杀掉 serve 后 nginx 恢复、备份校验恢复演练 → down -v。
 # 只在部署相关路径或本 workflow 变化时跑。
 name: Panel docker compose smoke
 
