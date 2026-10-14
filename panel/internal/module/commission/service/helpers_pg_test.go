@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -79,6 +80,24 @@ func (f *fakeRefs) Emails(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]str
 		if e, ok := f.emails[id]; ok {
 			out[id] = e
 		}
+	}
+	return out, nil
+}
+
+// IDsByEmail 返回邮箱包含 q（不分大小写）的用户 id，按 id 排序，最多 limit 个。
+func (f *fakeRefs) IDsByEmail(_ context.Context, q string, limit int) ([]uuid.UUID, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	q = strings.ToLower(q)
+	var out []uuid.UUID
+	for id, e := range f.emails {
+		if strings.Contains(strings.ToLower(e), q) {
+			out = append(out, id)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
 	}
 	return out, nil
 }

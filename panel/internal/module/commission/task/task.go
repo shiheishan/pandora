@@ -67,7 +67,8 @@ func (m *Module) settle(ctx context.Context, _ *asynq.Task) error {
 			zap.Int("settled", stats.Settled),
 			zap.Int("skipped", stats.Skipped),
 			zap.Int("quarantined", stats.Quarantined),
-			zap.Int("failed", stats.Failed))
+			zap.Int("failed", stats.Failed),
+			zap.Int("auto_transferred", stats.AutoTransferred))
 	}
 	if err != nil {
 		return fmt.Errorf("佣金解冻: %w", err)
