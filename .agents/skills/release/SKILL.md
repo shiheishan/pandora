@@ -13,6 +13,20 @@ description: pandora 发版：把主线合进 main、在 main 上打 v* 标签�
 
 - 主线 CI 全绿：最新主线提交跑过 `wait-github.sh` 退出 0（verify skill）。
 - 改了热路径的话，性能闸门已过（perf-gate skill）；认证、钱、迁移、节点通道的改动审查过（pre-merge-review skill）。
+- **CoinPayments 发票号临时放行收回**（2026-10-14 起的临时口径，收回前不发版）：文档没写明建单响应的 `invoices[].id` 与回调、回查的 `invoice.id` 是同一个号，`panel/internal/module/payment/service/record.go` 里 CoinPayments 单号不一致时只记日志照常入账。发版前在 CoinPayments 沙箱建几张发票并付掉（至少一笔付成，否则没有样本），在那台面板的库里跑：
+
+  ```sql
+  SELECT p.id, i.out_trade_no, i.provider_ref, p.provider_payment_id
+  FROM payments p
+  JOIN payment_intents i ON i.id = p.payment_intent_id
+  JOIN payment_providers pp ON pp.id = p.provider_id
+  WHERE pp.adapter = 'coinpayments'
+    AND i.provider_ref IS NOT NULL
+    AND i.provider_ref <> p.provider_payment_id;
+  ```
+
+  - 有样本且 0 行：两个号相同。删掉 `record.go` 里 `AdapterCoinPayments` 的放行分支，把 `TestWebhookProviderRefMismatchCoinPaymentsLogsOnly`（`record_ref_pg_test.go`）改成和 BTCPay 一样拒收并落证据，删掉 `.claude/rules/module-payment.md` 里「临时口径（待沙箱核实）」一段，过 CI 后再发版。
+  - 有一行不同：两个号不同。不要删放行分支，改成建单时存回查用的那个号（或入账时按回查结果核对），另开任务做完再发版。
 - 定版本号：`vMAJOR.MINOR.PATCH`，预发布加连字符后缀（如 `v0.1.0-rc.1`，会发成 prerelease）。标签必须匹配 `^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$`，否则 workflow 拒绝。同一个版本号不重发（见第 5 节）。
 - 演练（可选，`release.yml` 已在 `main` 上时才能用）：`gh workflow run release.yml --ref <分支> -f version=v0.0.0-dryrun`，只构建、上传 artifact，不建 Release。改过 `release.yml`、`build-release.sh`、`get.sh` 的话先演练一次。
 - 汇总要发的内容：自上个标签以来的提交（`git log --oneline <上个标签>..main`；第一次发版就写主要能力），供 Release 说明与给用户确认用。

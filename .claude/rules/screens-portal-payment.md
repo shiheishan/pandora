@@ -16,7 +16,7 @@ paths:
 - 下单幂等键按请求体指纹复用：双击、失败重试、关掉支付弹窗后再点都回放同一张订单，改了任何参数才换新键。
 - 刚下的待支付单记住 30 分钟（确认页是跨页面的 `checkout/model.ts` 的 `placedOrders`，指纹去掉 as_of / expect；充值是 `usePlacedOrder`）：同样的意图再点时先 `recallPayable` 问一次还能不能付，能付就重开它的付款、不下第二张（否则余额冻结两次）；已取消、超时或付掉就 `forget()` 按新请求下单。
 - 发起支付失败怎么办在 `common/payRetry.ts`（`payFailureAction` / `afterOrderCheck`），`PayPanel` 按它做：
-  - 409 `payment_in_progress`（同一张单上一次还在去渠道建单）：不 `forget`、不调 `onUnpayable`，显示「正在发起支付，请稍候…」，按 `PAY_IN_PROGRESS_BACKOFF_MS`（2/4/8 秒）自动重发，最多 `PAY_IN_PROGRESS_MAX_RETRIES`（3）次，用完显示错误加「重试」；定时器卸载时清掉。
+  - 409 `payment_in_progress`（同一张单上一次还在去渠道建单）：不 `forget`、不调 `onUnpayable`，显示「正在发起支付，请稍候…」，按 `PAY_IN_PROGRESS_BACKOFF_MS`（2/5/10 秒，合计 17 秒，要盖过后端建单最长 15 秒）自动重发，最多 `PAY_IN_PROGRESS_MAX_RETRIES`（3）次，用完显示错误加「重试」；定时器卸载时清掉。
   - 409 `conflict`（这次发起被新的发起取代，或订单状态变了）：先 `order.refetch()`；仍是 pending_payment 就写「这次付款已被新的发起取代，请重试。」并给「重试」，不是待付才调 `onUnpayable`（`forget`）；刷新失败只显示错误加「重试」。
   - 409 `order_lapsed`：调 `onUnpayable`。
 - 去收银台只做顶层 GET 导航：POST 跳转要自动提交表单，会被入口页 CSP 的 `form-action 'self'` 拦下。支付成功后失效 `['portal']` 前缀下全部查询。
