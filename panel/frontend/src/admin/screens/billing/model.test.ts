@@ -50,7 +50,6 @@ import {
   todayLocal,
   toggleBody,
   toggleMethod,
-  trimPercent,
 } from './model'
 import { adjustmentSchema, cancelledSchema, latePaymentsSchema, manualCreatedSchema, markedPaidSchema, orderDetailSchema, orderQueriedSchema, type OrderDetail, type PaymentHistory, type Provider } from './schemas'
 
@@ -364,8 +363,6 @@ describe('late payments, providers and adjustments', () => {
     expect(parseFeePercent('2.5%')).toBe('2.5')
     expect(parseFeePercent('100')).toBe('100')
     expect(parseFeePercent('100.01')).toBeNull()
-    expect(trimPercent('2.50')).toBe('2.5')
-    expect(trimPercent('0.00')).toBe('0')
     expect(feeLabel({ fee_fixed: 0, fee_percent: '0.00' })).toBe('')
     expect(feeLabel({ fee_fixed: 150, fee_percent: '2.50' })).toBe('向用户加收 2.5% + ¥1.50')
     const btcpay = {

@@ -1,12 +1,5 @@
-import { formatMoney } from '../../../core/format'
+import { formatMoney, trimPercent } from '../../../core/format'
 import type { PaymentMethod } from './catalog'
-
-/** 去掉百分比末尾多余的 0：例如 "2.50" -> "2.5", "0.00" -> "0", "10.00" -> "10" */
-export function trimPercent(s: string): string {
-  const n = Number(s)
-  if (Number.isNaN(n) || n === 0) return '0'
-  return String(parseFloat(s))
-}
 
 /** 是否有手续费：固定 > 0 或比例不为 0 */
 export function hasFee(m: Pick<PaymentMethod, 'fee_fixed' | 'fee_percent'>): boolean {

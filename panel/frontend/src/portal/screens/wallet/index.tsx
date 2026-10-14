@@ -8,6 +8,7 @@ import { methodKey, usePaymentMethods } from '../common/catalog'
 import { endsIntent, recallPayable, useIntentKey, usePlacedOrder } from '../common/intent'
 import { useOrderPayable } from '../common/orders'
 import { PaymentModal, type PayState } from '../common/PayFlow'
+import { useDebounced } from '../common/useDebounced'
 import { useTopup } from './api'
 import { ledgerLabel, parseTopupAmount, TOPUP_PRESETS } from './model'
 import { Redeem } from './Redeem'
@@ -39,6 +40,8 @@ export default function Wallet({ rest }: PortalScreenProps) {
 // ---------------------------------------------------------------------------
 // 账户余额与充值：金额按钮与输入框是元，建单转分；建单成功后走同一个支付弹窗
 // ---------------------------------------------------------------------------
+const FEE_QUOTE_DEBOUNCE_MS = 300
+
 function BalanceCard() {
   const balance = useBalance()
   const topup = useTopup()
@@ -51,8 +54,10 @@ function BalanceCard() {
   const [error, setError] = useState<string | null>(null)
   const [pay, setPay] = useState<PayState | null>(null)
 
-  const parsedAmount = parseTopupAmount(amount)
-  const methods = usePaymentMethods(!('error' in parsedAmount) ? parsedAmount.cents : undefined)
+  // 手续费报价按停手 300 毫秒后的金额取，不每敲一个字请求一次
+  const settledAmount = useDebounced(amount, FEE_QUOTE_DEBOUNCE_MS)
+  const quotedAmount = parseTopupAmount(settledAmount)
+  const methods = usePaymentMethods(!('error' in quotedAmount) ? quotedAmount.cents : undefined)
 
   const list = methods.data ?? []
   const method = list.find((m) => methodKey(m) === methodChoice) ?? list[0] ?? null

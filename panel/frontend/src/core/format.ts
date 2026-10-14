@@ -73,3 +73,13 @@ export function formatDateTime(at: Date | string): string {
   const p = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
+
+/** 后端两位小数的百分比串去掉多余的 0："2.50" → "2.5"，"0.00" → "0"，"10.00" → "10"；不是十进制数时回 "0"。按字符串处理，不经过浮点 */
+export function trimPercent(s: string): string {
+  const t = s.trim()
+  if (!/^\d+(\.\d+)?$/.test(t)) return '0'
+  const [w = '0', f = ''] = t.split('.')
+  const whole = w.replace(/^0+(?=\d)/, '') || '0'
+  const frac = f.replace(/0+$/, '')
+  return frac ? `${whole}.${frac}` : whole
+}

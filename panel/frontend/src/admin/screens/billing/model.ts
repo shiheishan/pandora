@@ -1,4 +1,4 @@
-import { formatDateTime, formatMoney, relativeTime } from '../../../core/format'
+import { formatDateTime, formatMoney, relativeTime, trimPercent } from '../../../core/format'
 import { periodLabel } from '../plans/model'
 import type { PlanRow } from '../plans/schemas'
 import { ORDER_STATUS_VIEW, orderWhat, parseYuan, REASON_MIN, type Tone } from '../users/model'
@@ -469,17 +469,6 @@ export function parseMinAmount(input: string): number | null {
 
 /** 分换成输入框里的元：100 → 1.00 */
 export const minAmountText = (cents: number) => (cents / 100).toFixed(2)
-
-/** 后端两位小数字符串 → 表单百分数："2.50" → "2.5"，"0.00" → "0" */
-export function trimPercent(s: string): string {
-  const t = s.trim()
-  if (!t) return '0'
-  if (!t.includes('.')) return t.replace(/^0+(?=\d)/, '') || '0'
-  const [w = '0', f = ''] = t.split('.')
-  const frac = f.replace(/0+$/, '')
-  const whole = w.replace(/^0+(?=\d)/, '') || '0'
-  return frac ? `${whole}.${frac}` : whole
-}
 
 /** 固定手续费（元）→ 分；空串当 0 */
 export function parseFeeFixed(input: string): number | null {

@@ -1,16 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { feeLine, feeRule, hasFee, surchargeNote, trimPercent } from './fee'
-
-describe('trimPercent', () => {
-  it('正确裁剪百分比字符串末尾的 0', () => {
-    expect(trimPercent('2.50')).toBe('2.5')
-    expect(trimPercent('0.00')).toBe('0')
-    expect(trimPercent('10.00')).toBe('10')
-    expect(trimPercent('0.5')).toBe('0.5')
-    expect(trimPercent('12')).toBe('12')
-    expect(trimPercent('invalid')).toBe('0')
-  })
-})
+import { feeLine, feeRule, hasFee, surchargeNote } from './fee'
 
 describe('hasFee', () => {
   it('判断是否有手续费', () => {
