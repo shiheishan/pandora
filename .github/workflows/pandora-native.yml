@@ -155,6 +155,11 @@ jobs:
             echo "github.com/sagernet/sing-box leaked into pdnd" >&2
             exit 1
           fi
+          # 上面按默认构建标签算，带 interop 等标签的测试看不到；go.mod 里出现就说明有地方又引回来了
+          if grep -q 'github.com/sagernet/sing-box ' go.mod; then
+            echo "github.com/sagernet/sing-box is back in pdnd/go.mod" >&2
+            exit 1
+          fi
       - name: External Xray TLS XHTTP H3 interoperability
         # This is intentionally a non-race opt-in gate: the external Xray
         # client currently contains a known WaitReadCloser race of its own.

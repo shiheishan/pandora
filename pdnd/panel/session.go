@@ -437,6 +437,7 @@ type helloStream interface {
 // helloSendError 把发 Hello 的错误换成真实原因：Send 返回 io.EOF 说明服务端已经结束流，
 // 真实状态和 trailer 要再 Recv 一次才拿得到；身份失效（PermissionDenied + 重新接入 trailer）
 // 包成 errReenrollRequired，交给 reenrollResult 当 Tombstone 处理。
+// 前提：面板在收到 Hello 之前不会往流里发消息，所以这一次 Recv 拿到的只能是流结束的状态，不会吞掉业务消息。
 func helloSendError(err error, stream helloStream) error {
 	if !errors.Is(err, io.EOF) {
 		return fmt.Errorf("发送 Hello: %w", err)
