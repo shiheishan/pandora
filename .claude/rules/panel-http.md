@@ -27,6 +27,7 @@ paths:
 ## handler 与 DTO
 - handler 只做绑定、校验、调 service、写响应。每个接口在 handler 包里单独定义请求与响应 DTO，不把 model 或 service 结构直接序列化，不把请求体直接解码进 service 输入。JSON 键名就是前端契约。
 - 请求体经 `httpx.BindJSON`（1 MiB、`DisallowUnknownFields`），校验失败 422 `validation_failed`，`fields` 写中文；业务校验在 service。
+- 成功响应不包信封：直接回 DTO，状态码表达结果，经 `httpx.OK` / `Created` / `Accepted` / `NoContent` 写；要录进幂等表的经 `idemsvc.JSON`。handler 里不直接调 `c.JSON`。
 - 错误交给 `httpx.Fail`（或 `c.Error`）统一写信封，不要自己拼 JSON。面向用户的文案是中文，页面原样显示。
 
 ## 幂等
