@@ -111,7 +111,7 @@ func ssUDPStackWorkersGone(a *shadowsocksAdapter) (bool, string) {
 	buf := make([]byte, 8<<20)
 	buf = buf[:runtime.Stack(buf, true)]
 	var marks []string
-	for _, method := range []string{"packetLoop", "udpJanitor", "runUDPSession", "acceptLoop"} {
+	for _, method := range []string{"packetLoop", "udpJanitor", "runUDPSession", "acceptLoop", "udpWorker"} {
 		marks = append(marks, fmt.Sprintf("(*shadowsocksAdapter).%s(%p", method, a))
 	}
 	var parts []string

@@ -29,8 +29,9 @@ var (
 // ssUDPMaxPacket 是读循环的收包缓冲（一个 UDP 包的上限）。
 const ssUDPMaxPacket = 65535
 
-// packetLoop 是入站唯一的 UDP 读循环：解密、认证、交给会话，上行在这里同步写上游
-// （非阻塞 UDP 写），不按包起 goroutine。wire、plain、found 归本循环独占。
+// packetLoop 是入站唯一的 UDP 读循环，不按包起 goroutine：快路径（已有会话的用户试解）
+// 与上行写上游在这里同步做（非阻塞 UDP 写）；解不开的包交给慢路径 worker 池
+// （shadowsocks_udp_pool.go）。wire、plain、found 归本循环独占。
 func (a *shadowsocksAdapter) packetLoop() {
 	defer a.wg.Done()
 	wire := make([]byte, ssUDPMaxPacket)
@@ -45,19 +46,22 @@ func (a *shadowsocksAdapter) packetLoop() {
 			continue
 		}
 		from = netip.AddrPortFrom(from.Addr().Unmap(), from.Port())
-		if err := a.handleUDPPacket(wire[:n], plain, &found, from); err != nil {
+		handled, err := a.fastPathUDP(wire[:n], plain, &found, from)
+		if err != nil {
 			a.connErr.addr(StageSession, net.UDPAddrFromAddrPort(from), err)
+		}
+		if !handled {
+			a.dispatchSlowUDP(wire[:n], from)
 		}
 	}
 }
 
-// handleUDPPacket 处理一个客户端包。快路径：来自已有会话地址的包先用该会话的用户
-// 试解；解不开（或会话的用户记录已作废）再走完整的 findSSUser，认证通过后找到或
-// 新建 (地址, 用户) 会话。明文写进 plain（不能原地解：GCM 失败会清零 dst，换下一个
-// 用户就没有密文了），payload 指向 plain，forwardUDP 同步写完上游后不再引用。
-func (a *shadowsocksAdapter) handleUDPPacket(wire, plain []byte, found *[]*ssUDPSession, from netip.AddrPort) error {
+// fastPathUDP 是读循环里的快路径：来自已有会话地址的包先用该会话的用户试解（用户记录
+// retired 就跳过）。解开了就转发并返回 handled=true；过短的包直接判失败（handled=true）；
+// 解不开或该地址没有会话返回 false，由调用方交给慢路径。明文写进读循环独占的 plain。
+func (a *shadowsocksAdapter) fastPathUDP(wire, plain []byte, found *[]*ssUDPSession, from netip.AddrPort) (bool, error) {
 	if len(wire) < a.method.SaltLen+16 {
-		return errSSUDPTooShort
+		return true, errSSUDPTooShort
 	}
 	salt := wire[:a.method.SaltLen]
 	ciphertext := wire[a.method.SaltLen:]
@@ -70,19 +74,10 @@ func (a *shadowsocksAdapter) handleUDPPacket(wire, plain []byte, found *[]*ssUDP
 		dest, payload, ok := a.openUDPWith(sc, s.user, salt, ciphertext, plain)
 		putSSScratch(sc)
 		if ok {
-			return a.forwardUDP(s, dest, payload)
+			return true, a.forwardUDP(s, dest, payload)
 		}
 	}
-	epoch := a.sessions.epoch()
-	user, dest, payload, err := a.decodeUDPPacket(salt, ciphertext, plain, from)
-	if err != nil {
-		return errSSUDPAuth
-	}
-	sess, err := a.getOrOpenUDPSession(from, user, epoch, dest)
-	if err != nil {
-		return err
-	}
-	return a.forwardUDP(sess, dest, payload)
+	return false, nil
 }
 
 func (a *shadowsocksAdapter) openUDPWith(sc *ssScratch, user *ssUser, salt, ciphertext, plain []byte) (vlessDestination, []byte, bool) {

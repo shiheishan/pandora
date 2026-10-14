@@ -85,6 +85,7 @@ type shadowsocksAdapter struct {
 	udpClosed bool                               // Close 之后不再建会话
 	udpQuota  udpSessionQuota                    // 每用户在途 UDP 会话上限（udp_session_quota.go）
 	udpDrops  ssUDPDropStats                     // SS UDP 各原因的丢包数（shadowsocks_udp.go）
+	udpJobs   chan ssUDPJob                      // 慢路径（逐用户试解）的有界队列，见 shadowsocks_udp_pool.go
 	ctx       context.Context
 	cancel    context.CancelFunc
 	closed    bool
@@ -191,11 +192,16 @@ func (a *shadowsocksAdapter) Start(parent context.Context, spec InboundSpec, hoo
 		return fmt.Errorf("shadowsocks UDP listen: unexpected PacketConn type %T", packet)
 	}
 	a.listener, a.packet, a.udpConn = listener, packet, udpConn
+	a.udpJobs = make(chan ssUDPJob, ssUDPSlowQueue)
 	a.mu.Unlock()
-	a.wg.Add(3)
+	workers := ssUDPSlowWorkers()
+	a.wg.Add(3 + workers)
 	go a.acceptLoop()
 	go a.packetLoop()
 	go a.udpJanitor()
+	for i := 0; i < workers; i++ {
+		go a.udpWorker()
+	}
 	return nil
 }
 
