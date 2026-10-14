@@ -484,6 +484,7 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
         const minutes = Number.isInteger(ttl) && ttl >= 1 && ttl <= 30 ? ttl : 20
         return {
           status: 201,
+          unreplayable: true,
           body: { token: `pbt_${randomBytes(24).toString('base64url')}`, expires_at: new Date(Date.now() + minutes * 60_000).toISOString(), install_command: 'curl -fsSL https://panel.pandora.run/pdnd/install.sh | sudo bash -s -- --enroll' },
         }
       })
