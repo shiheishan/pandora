@@ -127,6 +127,9 @@ export function KbEditor({ article, page, kind, categories, takenSlugs }: Props)
         </datalist>
       </div>
       <TextArea aria-label="文章正文" mono rows={14} value={form.body} placeholder="正文，支持 Markdown，至少 10 个字" error={errors.body} disabled={busy} onChange={(e) => edit({ body: e.target.value })} />
+      <div className={css.faint}>
+        可用变量：{'{{siteName}}'} 站点名、{'{{siteUrl}}'} 面板地址、{'{{subscribeUrl}}'} 订阅链接（另有 {'{{urlEncodeSubscribeUrl}}'}、{'{{safeBase64SubscribeUrl}}'}），门户按每个用户替换。把只给有效订阅用户看的内容写在 {'<!--access start-->'} 与 {'<!--access end-->'} 之间，没有有效订阅的用户看到的是一句提示。
+      </div>
 
       <details className={css.settings} open={!article || undefined}>
         <summary>发布设置</summary>

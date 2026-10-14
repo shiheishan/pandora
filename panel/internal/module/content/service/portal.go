@@ -15,7 +15,8 @@ import (
 
 // ListVisible 门户列出当前用户可见的文章。
 func (s *Service) ListVisible(ctx context.Context, userID uuid.UUID, f VisibleFilter) ([]Page, error) {
-	return s.visible(ctx, userID, "", f, false)
+	pages, _, err := s.visible(ctx, userID, "", f, false)
+	return pages, err
 }
 
 // GetVisible 门户读单篇可见文章。
@@ -24,43 +25,68 @@ func (s *Service) GetVisible(ctx context.Context, userID uuid.UUID, slug string,
 	if !slugPattern.MatchString(slug) {
 		return Page{}, errs.New(errs.NotFound)
 	}
-	pages, err := s.visible(ctx, userID, slug, f, true)
+	page, hasAccess, err := s.getVisible(ctx, userID, slug, f)
 	if err != nil {
 		return Page{}, err
 	}
-	if len(pages) == 0 {
-		return Page{}, errs.New(errs.NotFound)
+	// 端口没装时（只有单测会这样，生产由装配自检 MissingPorts 拦住）对应变量替换成空串
+	vars := RenderVars{SiteURL: strings.TrimRight(s.publicBaseURL, "/")}
+	if s.site != nil {
+		site, err := s.site.Site(ctx)
+		if err != nil {
+			return Page{}, err
+		}
+		vars.SiteName = site.Name
 	}
-	return pages[0], nil
+	if s.links != nil && NeedsSubscribeURL(page.Body) {
+		vars.SubscribeURL, err = s.links.CurrentLink(ctx)
+		if err != nil {
+			return Page{}, err
+		}
+	}
+	page.Body = RenderBody(page.Body, vars, hasAccess)
+	return page, nil
 }
 
-func (s *Service) visible(ctx context.Context, userID uuid.UUID, slug string, filter VisibleFilter, includeBody bool) ([]Page, error) {
+func (s *Service) getVisible(ctx context.Context, userID uuid.UUID, slug string, f VisibleFilter) (Page, bool, error) {
+	pages, hasAccess, err := s.visible(ctx, userID, slug, f, true)
+	if err != nil {
+		return Page{}, false, err
+	}
+	if len(pages) == 0 {
+		return Page{}, false, errs.New(errs.NotFound)
+	}
+	return pages[0], hasAccess, nil
+}
+
+func (s *Service) visible(ctx context.Context, userID uuid.UUID, slug string, filter VisibleFilter, includeBody bool) ([]Page, bool, error) {
 	if filter.Kind != "" && !allowedKinds[filter.Kind] {
-		return nil, errs.Invalid(map[string]string{"kind": "无效的内容类型"})
+		return nil, false, errs.Invalid(map[string]string{"kind": "无效的内容类型"})
 	}
 	filter.Platform = strings.ToLower(strings.TrimSpace(filter.Platform))
 	if filter.Platform != "" && filter.Platform != PlatformAny && !allowedPlatforms[filter.Platform] {
-		return nil, errs.Invalid(map[string]string{"platform": "无效的平台"})
+		return nil, false, errs.Invalid(map[string]string{"platform": "无效的平台"})
 	}
 	filter.Query = strings.TrimSpace(filter.Query)
 	if utf8.RuneCountInString(filter.Query) > 100 {
-		return nil, errs.Invalid(map[string]string{"q": "搜索词最多 100 个字"})
+		return nil, false, errs.Invalid(map[string]string{"q": "搜索词最多 100 个字"})
 	}
 	if filter.ClientVersion != "" && !versionPattern.MatchString(filter.ClientVersion) {
-		return nil, errs.Invalid(map[string]string{"client_version": "客户端版本格式不正确"})
+		return nil, false, errs.Invalid(map[string]string{"client_version": "客户端版本格式不正确"})
 	}
 	filter.Locale = strings.TrimSpace(filter.Locale)
 	if filter.Locale == "" {
 		filter.Locale = DefaultLocale
 	}
 	if !localePattern.MatchString(filter.Locale) {
-		return nil, errs.Invalid(map[string]string{"locale": "语言格式不正确"})
+		return nil, false, errs.Invalid(map[string]string{"locale": "语言格式不正确"})
 	}
 
 	planUUIDs, err := s.subs.LivePlanIDs(ctx, userID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
+	hasAccess := len(planUUIDs) > 0
 	planStrs := make([]string, len(planUUIDs))
 	for i, id := range planUUIDs {
 		planStrs[i] = id.String()
@@ -82,7 +108,7 @@ func (s *Service) visible(ctx context.Context, userID uuid.UUID, slug string, fi
 
 	rows, err := s.repo.Visible(ctx, q)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	out := make([]Page, 0)
@@ -110,15 +136,18 @@ func (s *Service) visible(ctx context.Context, userID uuid.UUID, slug string, fi
 		}
 		return out[i].UpdatedAt.After(out[j].UpdatedAt)
 	})
-	return out, nil
+	return out, hasAccess, nil
 }
 
 // SubmitFeedback 记录用户对某版本是否有帮助。
 func (s *Service) SubmitFeedback(ctx context.Context, userID uuid.UUID, slug string, version int, helpful bool, f VisibleFilter) error {
-	if _, err := s.GetVisible(ctx, userID, slug, f); err != nil {
+	slug = strings.ToLower(strings.TrimSpace(slug))
+	if !slugPattern.MatchString(slug) {
+		return errs.New(errs.NotFound)
+	}
+	if _, _, err := s.getVisible(ctx, userID, slug, f); err != nil {
 		return err
 	}
-	slug = strings.ToLower(strings.TrimSpace(slug))
 	versionInvalid := errs.Invalid(map[string]string{"version": "该版本不存在"})
 	if version <= 0 {
 		return versionInvalid
