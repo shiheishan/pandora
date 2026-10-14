@@ -82,7 +82,7 @@ func TestTransferRespectsInFlightWithdrawal(t *testing.T) {
 	accrueAvailable(t, e, ctx, referrer, buyer, "200.00")
 	uctx := userCtx(ctx, referrer)
 
-	id, err := e.svc.RequestWithdrawal(uctx, referrer, dec2("15.00"), "alipay a@example.test")
+	id, err := e.svc.RequestWithdrawal(uctx, referrer, dec2("15.00"), "alipay", "alipay a@example.test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestConcurrentWithdrawAndTransfer(t *testing.T) {
 			<-start
 			var err error
 			if i%2 == 0 {
-				_, err = e.svc.RequestWithdrawal(uctx, referrer, dec2("50.00"), "alipay a@example.test")
+				_, err = e.svc.RequestWithdrawal(uctx, referrer, dec2("50.00"), "alipay", "alipay a@example.test")
 			} else {
 				_, err = e.svc.TransferToBalance(uctx, referrer, dec2("50.00"))
 			}

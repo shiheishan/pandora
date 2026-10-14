@@ -31,8 +31,8 @@ func TestHasFallsBackToLatestBeforeSent(t *testing.T) {
 	}
 }
 
-func TestDeltaCappedAtChunkSize(t *testing.T) {
-	n := 4 * UsersChunkSize
+func TestDeltaCappedAtDeltaMax(t *testing.T) {
+	n := 4 * UsersDeltaMax
 	uids := make([]int64, n)
 	for i := range uids {
 		uids[i] = int64(i + 1)
@@ -46,23 +46,23 @@ func TestDeltaCappedAtChunkSize(t *testing.T) {
 	})
 	drainSession(t, s)
 
-	// 变更 UsersChunkSize+1 条：超过一块，发全量
-	v2 := mkRoster(nodeA, "v2", uids[UsersChunkSize+1:]...)
+	// 变更 UsersDeltaMax+1 条：超过上限，发全量
+	v2 := mkRoster(nodeA, "v2", uids[UsersDeltaMax+1:]...)
 	s.applyRosters(m.seq.Add(1), []NodeRoster{v2})
 	out := nextNow(t, s, time.Second)
 	if out.Kind != OutUsersFull || out.Roster.Version != v2.Version {
-		t.Fatalf("变更超过一块应发全量，得 %v", out.Kind)
+		t.Fatalf("变更超过上限应发全量，得 %v", out.Kind)
 	}
 	s.HandleUsersAck(UsersAck{NodeID: nodeA, Version: v2.Version, OK: true})
 
-	// 变更正好 UsersChunkSize 条、且少于全量人数：发增量
-	v3 := mkRoster(nodeA, "v3", uids[2*UsersChunkSize+1:]...)
+	// 变更正好 UsersDeltaMax 条、且少于全量人数：发增量
+	v3 := mkRoster(nodeA, "v3", uids[2*UsersDeltaMax+1:]...)
 	s.applyRosters(m.seq.Add(1), []NodeRoster{v3})
 	out = nextNow(t, s, time.Second)
 	if out.Kind != OutUsersDelta || out.DeltaFrom != v2.Version {
-		t.Fatalf("变更正好一块应发增量，得 kind=%v from=%q", out.Kind, out.DeltaFrom)
+		t.Fatalf("变更正好到上限应发增量，得 kind=%v from=%q", out.Kind, out.DeltaFrom)
 	}
-	if len(out.Removed) != UsersChunkSize || len(out.Upserted) != 0 {
+	if len(out.Removed) != UsersDeltaMax || len(out.Upserted) != 0 {
 		t.Fatalf("增量内容：removed=%d upserted=%d", len(out.Removed), len(out.Upserted))
 	}
 }

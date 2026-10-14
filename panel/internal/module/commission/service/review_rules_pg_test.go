@@ -79,7 +79,7 @@ func TestVoidedOnlyCurrencyIgnored(t *testing.T) {
 	if mc.Summary.Currency != testCurrency || !mc.Summary.TotalEarned.IsZero() || !mc.Summary.Pending.IsZero() {
 		t.Fatalf("作废后汇总 %+v，币种应回到站点币种 %s", mc.Summary, testCurrency)
 	}
-	if _, err := e.svc.RequestWithdrawal(ctx, referrer, dec2("10.00"), "alipay a@b.test"); !errors.Is(err, ErrNoCommission) {
+	if _, err := e.svc.RequestWithdrawal(ctx, referrer, dec2("10.00"), "alipay", "alipay a@b.test"); !errors.Is(err, ErrNoCommission) {
 		t.Fatalf("只有作废条目时提现应回「没有可提现的佣金」，得到 %v", err)
 	}
 }

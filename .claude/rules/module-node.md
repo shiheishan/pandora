@@ -66,6 +66,7 @@ paths:
 
 ## 并发与单进程假设
 - `Sessions` 的纪元轮次、`MinRoundGap`（缺省 1s）合并推送；发送队列满则 `ErrSessionOverflow` 断流重连。心跳合写、PG LISTEN 纪元、多实例分流尚未做：会话状态在进程内，按单 `serve` 实例设计。
+- 全量名单按 `UsersChunkSize`（500 人，一块编码后不到 32 KB）分块，发送循环逐块现转现发（`grpc/control_convert.go` 的 `usersFullChunks`），不要改回先转整份再发：gRPC 发送缓冲 32 KB 以上直接占 1 MB 一档，合批对齐后几百条流同时发全量，块大或整份先转就是几百 MB 的瞬时内存（10-14 闸门量到，守卫 `TestUsersFullChunkFitsSendBuffer`）。增量上限是另一个常量 `UsersDeltaMax`（5000），增量不分块。
 - 建流对齐合批（`service/session_align.go`）：同一时段到达的建流共用一次 `ServerConfigs` + `Rosters`，批串行（同时只有一批读库）、一批一对序号（先配置后名单）；批的 ctx 用 `context.WithoutCancel` 派生，单条流断开不连累同批。`AlignTimeout`（缺省 10s）既是等待者的总时限（到期 `ErrAlignBusy`）也是一批读库的时限；没有并发数参数，不要再加逐流的对齐读。
 
 ## 保留期

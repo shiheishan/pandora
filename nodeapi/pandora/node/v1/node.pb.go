@@ -1801,7 +1801,7 @@ func (x *NodeConfig) GetContentSha256() string {
 	return ""
 }
 
-// UsersFull 是一个节点的全量名单，按 5000 人一块分块发送；chunk_index 从 0 起，
+// UsersFull 是一个节点的全量名单，按 500 人一块分块发送；chunk_index 从 0 起，
 // 收齐 chunk_total 块后整体替换。
 type UsersFull struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`

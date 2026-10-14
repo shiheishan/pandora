@@ -31,7 +31,7 @@ func TestNonSiteCurrencyCommission(t *testing.T) {
 		t.Fatalf("汇总应按 USD 算: %+v", mc.Summary)
 	}
 
-	id, err := e.svc.RequestWithdrawal(uctx, referrer, dec2("15.00"), "alipay a@example.test")
+	id, err := e.svc.RequestWithdrawal(uctx, referrer, dec2("15.00"), "alipay", "alipay a@example.test")
 	if err != nil {
 		t.Fatalf("USD 佣金提现: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestNonSiteCurrencyCommission(t *testing.T) {
 	if _, err := e.svc.ReviewWithdrawal(actx, id, true, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.svc.MarkWithdrawalPaid(actx, id, "TX-USD-1"); err != nil {
+	if err := e.svc.MarkWithdrawalPaid(actx, id, "TX-USD-1", nil); err != nil {
 		t.Fatalf("USD 打款: %v", err)
 	}
 	if bal := accountBalanceIn(t, e, ctx, referrer, ledgersvc.UserCommissionAvailable, money.USD); !bal.Equal(dec2("5.00")) {
@@ -86,7 +86,7 @@ func TestMultiCurrencyAmbiguous(t *testing.T) {
 	accrueAvailableIn(t, e, ctx, referrer, newUser(t, e, ctx), "300.00", money.USD)
 	uctx := userCtx(ctx, referrer)
 
-	if _, err := e.svc.RequestWithdrawal(uctx, referrer, dec2("10.00"), "alipay a@example.test"); !errors.Is(err, ErrWithdrawCurrencyAmbiguous) {
+	if _, err := e.svc.RequestWithdrawal(uctx, referrer, dec2("10.00"), "alipay", "alipay a@example.test"); !errors.Is(err, ErrWithdrawCurrencyAmbiguous) {
 		t.Fatalf("多币种提现应 409: %v", err)
 	}
 	mc, err := e.svc.MyCommission(ctx, referrer)
@@ -110,7 +110,7 @@ func TestMultiCurrencyAmbiguous(t *testing.T) {
 		t.Fatalf("只剩 USD 可用时转余额应提示走提现: %v", err)
 	}
 	// CNY 转光后只剩 USD 可用，提现就用 USD
-	wid, err := e.svc.RequestWithdrawal(uctx, referrer, dec2("30.00"), "alipay a@example.test")
+	wid, err := e.svc.RequestWithdrawal(uctx, referrer, dec2("30.00"), "alipay", "alipay a@example.test")
 	if err != nil {
 		t.Fatalf("只剩 USD 可用时提现: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestMultiCurrencyAmbiguous(t *testing.T) {
 	if err := e.svc.OnOrderPaid(ctx, newPaidOrderIn(t, e, ctx, b, "300.00", money.USD)); err != nil {
 		t.Fatal(err)
 	}
-	id, err := e.svc.RequestWithdrawal(userCtx(ctx, other), other, dec2("20.00"), "alipay b@example.test")
+	id, err := e.svc.RequestWithdrawal(userCtx(ctx, other), other, dec2("20.00"), "alipay", "alipay b@example.test")
 	if err != nil {
 		t.Fatalf("只有 CNY 可用时应能提现: %v", err)
 	}

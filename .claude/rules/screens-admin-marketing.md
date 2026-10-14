@@ -11,3 +11,6 @@ paths:
 - 卡码的行内停用 / 恢复不要 reauth：发现异常要能立刻止血（契约有意设计）。
 - 后端恒回的字段在 schema 里必填、不写降级分支：`gift-cards/stats` 的 `balance_issued`，`commission/overview` 的 `total_earned` / `invited_users` / `scope`（后端缺设置时已兜底 `every_order`），`commission/config` 的 `scope`。
 - 前端校验的错误键与后端 422 `fields` 同名（`logic.ts` 的表单构建），改字段名两边一起改。
+- 佣金设置分两张表单：比例 / 冻结 / 最低提现 / 范围在 `Commission.tsx` 的 `Settings`；多级分销与提现开关、方式在 `CommissionLevels.tsx`（`levelsModel.ts` 构建请求体，文件名不要和 `CommissionLevels.tsx` 只差大小写；提现方式开关两种状态都至少选一种，关着时管的是其他币种，三级之和与开启全 0 的错误都挂 `distribution_l1`）。两张都发 `POST v1/commission/config`，只发自己那几项。
+- 单独佣金设置（`CommissionOverrides.tsx`）：按邮箱设，比例或范围留空 = 跟全局，再保存整行覆盖；增删都要 reauth、不带幂等键。
+- 打 USDT 提现的款：流水号填链上交易哈希（前端只看形状），实付 USDT 数量可选、十进制字符串；面板不发起链上转账，文案不要暗示会自动打款。

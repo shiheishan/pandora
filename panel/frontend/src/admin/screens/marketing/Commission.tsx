@@ -1,9 +1,17 @@
 import { useMutation } from '@tanstack/react-query'
 import { useState, type FormEvent } from 'react'
 import { formatMoney } from '../../../core/format'
+import {
+  isUSDTMethod,
+  looksLikeTxHash,
+  payoutReferenceHint,
+  withdrawMethodLabel,
+} from '../../../core/withdraw-methods'
 import { useApi } from '../../../shell/runtime'
 import { Button, Empty, Input, Modal, QueryView, Segmented, StatStrip, Tag, TextArea, useToast } from '../../../ui'
 import local from './Commission.module.css'
+import { CommissionLevels } from './CommissionLevels'
+import { CommissionOverrides } from './CommissionOverrides'
 import { buildCommissionConfig, commissionStats, commissionToForm, formatDateTime, withdrawalState, type CommissionForm, type FieldErrors } from './logic'
 import css from './marketing.module.css'
 import { ReviewEntries } from './ReviewEntries'
@@ -23,10 +31,19 @@ export function Commission() {
             <h3 className={css.panelTitle}>邀请与佣金设置</h3>
           </div>
           <QueryView query={overview} rows={4} isEmpty={() => false} empty={null}>
-            {(data) => <Settings key={`${data.rate_percent}-${data.freeze_days}-${data.min_withdraw}-${data.scope}`} overview={data} />}
+            {(data) => (
+              <>
+                <Settings key={`${data.rate_percent}-${data.freeze_days}-${data.min_withdraw}-${data.scope}`} overview={data} />
+                <CommissionLevels
+                  key={`${data.distribution_enabled}-${data.distribution_levels.join('/')}-${data.withdraw_enabled}-${data.withdraw_methods.join(',')}`}
+                  overview={data}
+                />
+              </>
+            )}
           </QueryView>
         </section>
       </div>
+      <CommissionOverrides />
     </div>
   )
 }
@@ -79,8 +96,14 @@ function WithdrawalRow({ withdrawal: w, onDialog }: { withdrawal: Withdrawal; on
       <span className={local.who}>
         <span className={local.ellipsis}>{w.email}</span>
         <span className={`${css.faint} ${local.ellipsis}`}>
-          {formatDateTime(w.requested_at)} · {w.payout_detail || '未填收款信息'}
+          {formatDateTime(w.requested_at)} · {withdrawMethodLabel(w.method)} · {w.payout_detail || '未填收款信息'}
         </span>
+        {w.status === 'paid' && w.payout_reference && (
+          <span className={`${css.faint} ${local.ellipsis}`}>
+            流水号：{w.payout_reference}
+            {w.paid_usdt_amount ? ` · 实付 ${w.paid_usdt_amount} USDT` : ''}
+          </span>
+        )}
         {w.status === 'rejected' && w.reject_reason && <span className={`${css.faint} ${local.ellipsis}`}>拒绝理由：{w.reject_reason}</span>}
       </span>
       <span className={local.amount}>
@@ -178,14 +201,20 @@ function PayDialog({ withdrawal, onClose }: { withdrawal: Withdrawal | null; onC
   const invalidate = useInvalidateMarketing()
   const intent = useIntentKey()
   const [reference, setReference] = useState('')
+  const [usdt, setUsdt] = useState('')
   const [errors, setErrors] = useState<FieldErrors>({})
   const close = () => {
     setReference('')
+    setUsdt('')
     setErrors({})
     onClose()
   }
   const pay = useMutation({
-    mutationFn: (body: { payout_reference: string }) => api.post(`v1/withdrawals/${withdrawal!.id}/paid`, paidResponse, { body, idempotencyKey: intent.keyFor([withdrawal!.id, body]) }),
+    mutationFn: (body: { payout_reference: string; paid_usdt_amount?: string }) =>
+      api.post(`v1/withdrawals/${withdrawal!.id}/paid`, paidResponse, {
+        body,
+        idempotencyKey: intent.keyFor([withdrawal!.id, body]),
+      }),
     onSuccess: () => {
       intent.reset()
       toast('已记录打款')
@@ -197,10 +226,19 @@ function PayDialog({ withdrawal, onClose }: { withdrawal: Withdrawal | null; onC
       void invalidate()
     },
   })
+  const method = withdrawal?.method ?? ''
   const submit = (event: FormEvent) => {
     event.preventDefault()
     if (!reference.trim()) return setErrors({ payout_reference: '请填写转账流水号，日后对账要用' })
-    pay.mutate({ payout_reference: reference.trim() })
+    if (isUSDTMethod(method) && !looksLikeTxHash(method, reference)) {
+      return setErrors({ payout_reference: '交易哈希格式不对：' + payoutReferenceHint(method) })
+    }
+    const body: { payout_reference: string; paid_usdt_amount?: string } = {
+      payout_reference: reference.trim(),
+    }
+    const usdtTrim = usdt.trim()
+    if (usdtTrim) body.paid_usdt_amount = usdtTrim
+    pay.mutate(body)
   }
   return (
     <Modal
@@ -221,8 +259,28 @@ function PayDialog({ withdrawal, onClose }: { withdrawal: Withdrawal | null; onC
     >
       {withdrawal && (
         <form id="withdrawal-pay" className={css.stack} onSubmit={submit} noValidate>
-          <div className={css.muted}>收款：{withdrawal.payout_detail || '未填收款信息'}。记录后这笔佣金从账本扣出，不能撤销。</div>
-          <Input label="转账流水号" mono value={reference} onChange={(e) => setReference(e.target.value)} error={errors.payout_reference} data-autofocus="" />
+          <div className={css.muted}>
+            收款（{withdrawMethodLabel(method)}）：{withdrawal.payout_detail || '未填收款信息'}。记录后这笔佣金从账本扣出，不能撤销。
+            {isUSDTMethod(method) ? ' 面板不发起链上转账，请先在钱包里转账再记录。' : ''}
+          </div>
+          <Input
+            label={payoutReferenceHint(withdrawal.method)}
+            mono
+            value={reference}
+            onChange={(e) => setReference(e.target.value)}
+            error={errors.payout_reference}
+            data-autofocus=""
+          />
+          {isUSDTMethod(method) && (
+            <Input
+              label="实付 USDT 数量（可选，仅记录）"
+              mono
+              inputMode="decimal"
+              value={usdt}
+              onChange={(e) => setUsdt(e.target.value)}
+              error={errors.paid_usdt_amount}
+            />
+          )}
         </form>
       )}
     </Modal>

@@ -1,5 +1,6 @@
 // Package service 是 commission 模块的业务层：订单结算时计提佣金、冻结期满解冻、提现申请与审核打款、佣金转余额、
-// 后台概览与参数、门户我的佣金。别的模块只调本包。
+// 后台概览与参数、门户我的佣金。别的模块只调本包。开了多级分销时一单最多给往上三级邀请人各计一条（每条独立冻结、解冻、复核）；
+// 提现关闭时站点币种的佣金解冻后挂上标记，再在单独的事务里自动转入余额（commission_to_balance）；别的币种照常提现。
 //
 // 三个阶段都在账本上留痕：
 //
@@ -18,6 +19,7 @@ import (
 
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/module/commission/repo"
+	identitysvc "github.com/aegispanel/aegis/internal/module/identity/service"
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
 	ordersvc "github.com/aegispanel/aegis/internal/module/order/service"
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
@@ -50,6 +52,10 @@ type Settings interface {
 	Commission(ctx context.Context) (settingssvc.Commission, error)
 	SetCommission(ctx context.Context, u settingssvc.CommissionUpdate) error
 	Site(ctx context.Context) (settingssvc.Site, error)
+	CommissionDistribution(ctx context.Context) (settingssvc.CommissionDistribution, error)
+	SetCommissionDistribution(ctx context.Context, u settingssvc.CommissionDistributionUpdate) error
+	CommissionWithdraw(ctx context.Context) (settingssvc.CommissionWithdraw, error)
+	SetCommissionWithdraw(ctx context.Context, u settingssvc.CommissionWithdrawUpdate) error
 }
 
 // Referrals 是推荐关系与用户邮箱的读取面，由 identity 实现（UseReferrals 注入）。
@@ -62,6 +68,8 @@ type Referrals interface {
 	ReferralCount(ctx context.Context) (int64, error)
 	// Emails 批量取用户邮箱（一条 SQL）；查不到的 ID 不在结果里。
 	Emails(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error)
+	// FindByEmail 按邮箱精确找人（先规范化再按唯一键等值查）；没有这个人回 errs.NotFound。后台按邮箱设单独佣金用。
+	FindByEmail(ctx context.Context, email string) (identitysvc.User, error)
 }
 
 // SourceMatcher 判断两个用户是否来自同一来源地址，由 audit 实现（UseSourceMatcher 注入）；命中时佣金转人工复核、不自动解冻。

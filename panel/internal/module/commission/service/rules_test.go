@@ -118,19 +118,25 @@ func TestMonthStartUsesSiteTimezone(t *testing.T) {
 }
 
 func TestValidateWithdrawal(t *testing.T) {
-	if _, err := validateWithdrawal(dec("0"), "alipay"); err == nil {
+	if _, err := validateWithdrawal(dec("0"), "alipay", "alipay"); err == nil {
 		t.Fatal("金额 0 应报错")
 	}
-	if _, err := validateWithdrawal(dec("1.001"), "alipay"); err == nil {
+	if _, err := validateWithdrawal(dec("1.001"), "alipay", "alipay"); err == nil {
 		t.Fatal("三位小数应报错")
 	}
-	if _, err := validateWithdrawal(dec("1"), "  "); err == nil {
+	if _, err := validateWithdrawal(dec("1"), "alipay", "  "); err == nil {
 		t.Fatal("空收款方式应报错")
 	}
-	if _, err := validateWithdrawal(dec("1"), "a\x00b"); err == nil {
+	if _, err := validateWithdrawal(dec("1"), "alipay", "a\x00b"); err == nil {
 		t.Fatal("含 NUL 应报错")
 	}
-	got, err := validateWithdrawal(dec("1"), "  支付宝 a@b.test ")
+	if _, err := validateWithdrawal(dec("1"), "", "alipay a@b.test"); err == nil {
+		t.Fatal("没选提现方式应报错")
+	}
+	if _, err := validateWithdrawal(dec("1"), "bitcoin", "alipay a@b.test"); err == nil {
+		t.Fatal("目录外的提现方式应报错")
+	}
+	got, err := validateWithdrawal(dec("1"), "alipay", "  支付宝 a@b.test ")
 	if err != nil || got != "支付宝 a@b.test" {
 		t.Fatalf("got %q err %v", got, err)
 	}
