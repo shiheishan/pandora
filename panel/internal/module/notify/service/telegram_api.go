@@ -21,7 +21,8 @@ type telegramAPI interface {
 	// SendMessage 给 chatID 发一条纯文本消息（不用 parse_mode，关掉链接预览），返回 Telegram 给的 message_id。
 	SendMessage(ctx context.Context, token string, chatID int64, text string) (int64, error)
 	// SetWebhook 把 webhook 设成 url，回调头里带 secret；只收 allowedUpdates 列出的更新类型。
-	SetWebhook(ctx context.Context, token, url, secret string, allowedUpdates []string) error
+	// dropPending 为 true 时丢弃 Telegram 那边排队未推的更新（换 token、换 secret 时用）；只改 allowedUpdates 时传 false。
+	SetWebhook(ctx context.Context, token, url, secret string, allowedUpdates []string, dropPending bool) error
 	// SetMyCommands 设置 bot 在私聊里的命令菜单（scope all_private_chats）。
 	SetMyCommands(ctx context.Context, token string, cmds []botCommand) error
 	// ApproveChatJoinRequest / DeclineChatJoinRequest 批准 / 拒绝 userID 加入 chatID 的申请。
@@ -81,13 +82,14 @@ func (c *telegramClient) SendMessage(ctx context.Context, token string, chatID i
 	var msg struct {
 		MessageID int64 `json:"message_id"`
 	}
-	if len(raw) == 0 || json.Unmarshal(raw, &msg) != nil {
-		return 0, nil
+	if len(raw) == 0 || json.Unmarshal(raw, &msg) != nil || msg.MessageID <= 0 {
+		// 2xx 但 result 读不出 message_id：消息多半已经发出，记永久失败、不重发，免得群里收到重复消息
+		return 0, &TelegramError{Status: http.StatusOK, Detail: "回包缺少 message_id", Permanent: true}
 	}
 	return msg.MessageID, nil
 }
 
-func (c *telegramClient) SetWebhook(ctx context.Context, token, hookURL, secret string, allowedUpdates []string) error {
+func (c *telegramClient) SetWebhook(ctx context.Context, token, hookURL, secret string, allowedUpdates []string, dropPending bool) error {
 	if allowedUpdates == nil {
 		allowedUpdates = []string{"message"}
 	}
@@ -95,7 +97,7 @@ func (c *telegramClient) SetWebhook(ctx context.Context, token, hookURL, secret 
 		"url":                  hookURL,
 		"secret_token":         secret,
 		"allowed_updates":      allowedUpdates,
-		"drop_pending_updates": true,
+		"drop_pending_updates": dropPending,
 	})
 	if err != nil {
 		return err
@@ -164,18 +166,28 @@ func (c *telegramClient) post(ctx context.Context, token, method string, body []
 	return c.readResponse(resp, token)
 }
 
+// tgResponseMax 是回包读取上限。sendMessage 成功时 result 带回整条消息，4096 字的中文按 \uXXXX 转义约 24 KB，
+// 加上 entities、chat、from 也远小于 64 KiB。
+const tgResponseMax = 64 << 10
+
 func (c *telegramClient) readResponse(resp *http.Response, token string) (json.RawMessage, error) {
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, tgResponseMax))
 	if err != nil {
 		return nil, err
 	}
-	var api tgAPIResponse
-	if len(raw) > 0 {
-		_ = json.Unmarshal(raw, &api)
-	}
-
 	status := resp.StatusCode
-	if status >= 200 && status < 300 && api.OK {
+	ok2xx := status >= 200 && status < 300
+
+	var api tgAPIResponse
+	var parseErr error
+	if len(raw) > 0 {
+		parseErr = json.Unmarshal(raw, &api)
+	}
+	if ok2xx && (len(raw) == 0 || parseErr != nil) {
+		// 2xx 却解析不了：请求已被受理，重发可能造成重复消息，按永久失败处理
+		return nil, &TelegramError{Status: status, Detail: fmt.Sprintf("HTTP %d 回包无法解析", status), Permanent: true}
+	}
+	if ok2xx && api.OK {
 		return api.Result, nil
 	}
 

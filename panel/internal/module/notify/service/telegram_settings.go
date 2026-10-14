@@ -106,7 +106,7 @@ func (s *Service) SaveTelegramSettings(ctx context.Context, in TelegramSettingsI
 			return errs.Wrap(errs.Internal, err)
 		}
 		url := strings.TrimRight(s.publicBaseURL, "/") + "/v1/webhooks/telegram"
-		if err := s.tg.SetWebhook(ctx, effectiveToken, url, secret, botAllowedUpdates(ex)); err != nil {
+		if err := s.tg.SetWebhook(ctx, effectiveToken, url, secret, botAllowedUpdates(ex), true); err != nil {
 			var te *TelegramError
 			if errors.As(err, &te) {
 				return errs.Newf(errs.ValidationFailed, "设置 Telegram webhook 失败："+te.Detail)
@@ -208,7 +208,7 @@ func (s *Service) SaveTelegramExtras(ctx context.Context, in TelegramExtrasInput
 
 	if joinReviewChanged && webhookRegistered {
 		url := strings.TrimRight(s.publicBaseURL, "/") + "/v1/webhooks/telegram"
-		if err := s.tg.SetWebhook(ctx, cfg.BotToken, url, cfg.WebhookSecret, botAllowedUpdates(merged)); err != nil {
+		if err := s.tg.SetWebhook(ctx, cfg.BotToken, url, cfg.WebhookSecret, botAllowedUpdates(merged), false); err != nil {
 			var te *TelegramError
 			if errors.As(err, &te) {
 				return errs.Newf(errs.ValidationFailed, "设置 Telegram webhook 失败："+te.Detail)

@@ -60,10 +60,10 @@ func TestTelegramSetWebhookRequest(t *testing.T) {
 
 	c := newTelegramClient(srv.URL)
 	updates := []string{"message", "chat_join_request"}
-	if err := c.SetWebhook(context.Background(), token, "https://panel.example/hook", "sec", updates); err != nil {
+	if err := c.SetWebhook(context.Background(), token, "https://panel.example/hook", "sec", updates, true); err != nil {
 		t.Fatal(err)
 	}
-	if gotBody["url"] != "https://panel.example/hook" || gotBody["secret_token"] != "sec" {
+	if gotBody["url"] != "https://panel.example/hook" || gotBody["secret_token"] != "sec" || gotBody["drop_pending_updates"] != true {
 		t.Fatalf("body %+v", gotBody)
 	}
 	au, ok := gotBody["allowed_updates"].([]interface{})
@@ -82,12 +82,15 @@ func TestTelegramSetWebhookRequest(t *testing.T) {
 	}))
 	defer srv2.Close()
 	c2 := newTelegramClient(srv2.URL)
-	if err := c2.SetWebhook(context.Background(), token, "https://panel.example/hook", "sec", nil); err != nil {
+	if err := c2.SetWebhook(context.Background(), token, "https://panel.example/hook", "sec", nil, false); err != nil {
 		t.Fatal(err)
 	}
 	au, ok = gotBody["allowed_updates"].([]interface{})
 	if !ok || len(au) != 1 || au[0] != "message" {
 		t.Fatalf("default allowed_updates %+v", gotBody["allowed_updates"])
+	}
+	if gotBody["drop_pending_updates"] != false {
+		t.Fatalf("drop_pending_updates %+v", gotBody["drop_pending_updates"])
 	}
 }
 
@@ -221,7 +224,7 @@ func TestTelegramTruncateText(t *testing.T) {
 		}
 		textLen = len([]rune(body["text"].(string)))
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"ok":true}`))
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":1}}`))
 	}))
 	defer srv.Close()
 
@@ -232,5 +235,50 @@ func TestTelegramTruncateText(t *testing.T) {
 	}
 	if textLen != 4096 {
 		t.Fatalf("rune len %d", textLen)
+	}
+}
+
+// sendMessage 成功时 result 带回整条消息；中文按 \uXXXX 转义后远超 8 KiB，仍要读出 message_id。
+func TestTelegramSendMessageLargeEscapedResponse(t *testing.T) {
+	const token = "t:big"
+	text := strings.Repeat("\\u5de5\\u5355", 1500) // 3000 个汉字的转义写法，约 18 KB
+	resp := `{"ok":true,"result":{"message_id":7,"chat":{"id":-100,"type":"supergroup"},"text":"` + text + `"}}`
+	if len(resp) <= 8<<10 {
+		t.Fatalf("夹具不够长：%d", len(resp))
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, resp)
+	}))
+	defer srv.Close()
+
+	c := newTelegramClient(srv.URL)
+	mid, err := c.SendMessage(context.Background(), token, -100, "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mid != 7 {
+		t.Fatalf("message_id %d", mid)
+	}
+}
+
+// 2xx 但回包解析不了、或缺 message_id：当永久失败返回，不吞掉、也不触发重发。
+func TestTelegramUnparsableSuccessIsPermanentError(t *testing.T) {
+	const token = "t:bad"
+	for _, body := range []string{`{"ok":true,"result":{"message_id":`, ``, `{"ok":true}`} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, body)
+		}))
+		c := newTelegramClient(srv.URL)
+		_, err := c.SendMessage(context.Background(), token, 1, "x")
+		srv.Close()
+		te, ok := err.(*TelegramError)
+		if !ok {
+			t.Fatalf("body %q: err %T %v", body, err, err)
+		}
+		if !te.Permanent {
+			t.Fatalf("body %q: want permanent", body)
+		}
 	}
 }

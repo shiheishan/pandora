@@ -226,6 +226,7 @@ type fakeTGWebhook struct {
 	URL            string
 	Secret         string
 	AllowedUpdates []string
+	DropPending    bool
 }
 
 func (f *fakeTG) SendMessage(_ context.Context, token string, chatID int64, text string) (int64, error) {
@@ -238,11 +239,11 @@ func (f *fakeTG) SendMessage(_ context.Context, token string, chatID int64, text
 	return int64(1000 + len(f.sent)), nil
 }
 
-func (f *fakeTG) SetWebhook(_ context.Context, token, url, secret string, allowedUpdates []string) error {
+func (f *fakeTG) SetWebhook(_ context.Context, token, url, secret string, allowedUpdates []string, dropPending bool) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.webhooks = append(f.webhooks, fakeTGWebhook{
-		Token: token, URL: url, Secret: secret, AllowedUpdates: allowedUpdates,
+		Token: token, URL: url, Secret: secret, AllowedUpdates: allowedUpdates, DropPending: dropPending,
 	})
 	return f.webhookErr
 }
