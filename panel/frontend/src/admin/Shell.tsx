@@ -4,6 +4,7 @@ import { ScreenFrame } from '../shell/ScreenFrame'
 import { signOut, useRuntime } from '../shell/runtime'
 import { Tabs } from '../ui'
 import { ChangePasswordDialog } from './ChangePasswordDialog'
+import { TelegramBindDialog } from './TelegramBindDialog'
 import { CommandPalette } from './CommandPalette'
 import { EventsCapsule } from './EventsCapsule'
 import { ADMIN_IDLE_MS, startIdleWatch } from './idle'
@@ -21,6 +22,7 @@ export function Shell() {
   const Screen = SCREENS[route.module]
   const [palette, setPalette] = useState(false)
   const [password, setPassword] = useState(false)
+  const [telegram, setTelegram] = useState(false)
   const runtime = useRuntime()
 
   // 2 小时无操作自动退出（后台轮询会让服务端的空闲计时一直续上，见 idle.ts）
@@ -55,7 +57,7 @@ export function Shell() {
 
   return (
     <div className={css.frame}>
-      <Sidebar current={route.module} me={me.data} onOpenPalette={() => setPalette(true)} onChangePassword={() => setPassword(true)} />
+      <Sidebar current={route.module} me={me.data} onOpenPalette={() => setPalette(true)} onChangePassword={() => setPassword(true)} onBindTelegram={() => setTelegram(true)} />
       <main className={css.main}>
         <header className={css.topbar}>
           <div className={css.crumbs}>
@@ -85,6 +87,7 @@ export function Shell() {
       </main>
       <CommandPalette open={palette} onClose={() => setPalette(false)} onPick={(item) => go(item.module, item.tab)} />
       <ChangePasswordDialog open={password} onClose={() => setPassword(false)} />
+      <TelegramBindDialog open={telegram} onClose={() => setTelegram(false)} />
     </div>
   )
 }

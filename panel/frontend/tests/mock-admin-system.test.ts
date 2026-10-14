@@ -46,7 +46,7 @@ describe('mock api · admin notifications and hooks', () => {
 
   it('saves, previews, resets and test-sends templates within the variable whitelist', async () => {
     const list = templatesResponse.parse(await json(await call('GET', '/v1/mail/templates'))).templates
-    expect(list).toHaveLength(12)
+    expect(list).toHaveLength(15)
     expect(list.find((t) => t.code === 'admin.broadcast')).toMatchObject({ has_default: false, is_default: false })
     const t = list.find((x) => x.code === 'quota.warning' && x.channel === 'email')!
     expect(t).toMatchObject({ has_default: true, is_default: true })

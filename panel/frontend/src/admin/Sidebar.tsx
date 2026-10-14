@@ -19,11 +19,13 @@ export function Sidebar({
   me,
   onOpenPalette,
   onChangePassword,
+  onBindTelegram,
 }: {
   current: ModuleKey
   me: AdminMe | undefined
   onOpenPalette: () => void
   onChangePassword: () => void
+  onBindTelegram: () => void
 }) {
   const runtime = useRuntime()
   const theme = useTheme()
@@ -82,6 +84,7 @@ export function Sidebar({
         entries={[
           { key: 'theme', label: `切换到${theme === 'dark' ? '浅色' : '深色'}模式`, onSelect: toggleTheme },
           { key: 'password', label: '修改我的密码', onSelect: onChangePassword },
+          { key: 'telegram', label: '绑定 Telegram', onSelect: onBindTelegram },
           // 门户与后台同域，后台在前缀下，入口页的上一级就是门户根
           { key: 'portal', label: '打开用户门户 ↗', onSelect: () => window.open('../', '_blank', 'noopener') },
           { kind: 'separator', key: 'sep' },

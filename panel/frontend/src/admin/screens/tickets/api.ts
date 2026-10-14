@@ -46,7 +46,7 @@ const ticketSchema = z.object({
   user_active_plan: z.string().optional(),
   message_count: count,
   last_reply_at: time,
-  closed_reason: z.enum(['user_closed', 'withdrawn', 'agent_closed']).nullable(),
+  closed_reason: z.enum(['user_closed', 'withdrawn', 'agent_closed', 'auto_closed']).nullable(),
   related_order: z.object({ id: z.string(), order_no: z.string() }).nullable(),
 })
 

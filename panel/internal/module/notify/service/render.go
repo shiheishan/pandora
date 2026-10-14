@@ -139,6 +139,12 @@ var sampleVars = map[string]string{
 	"remaining":  "3.2 GB",
 	"order_no":   "AO20260804-XXXXXX",
 	"subject":    "无法连接节点",
+	"amount":     "29.90 CNY",
+	"email":      "us***@example.com",
+	"ticket_no":  "TK20260804-ABCDEFGH",
+	"body":       "节点连不上了，麻烦看一下。",
+	"traffic":    "12.5 GB",
+	"balance":    "88.00 CNY",
 }
 
 // renderPreview 用示例值渲染主题与正文，预览不因语法或白名单错误而失败。

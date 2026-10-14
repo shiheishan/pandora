@@ -6,6 +6,7 @@ import { Button, Empty, Segmented, Skeleton, Tag, useToast } from '../../../ui'
 import { useFailure, useIntentKey } from '../../actions'
 import { escalatedSchema, useInvalidateTickets, useTicketQueue, type QueueParams, type Ticket } from './api'
 import { CATEGORY_LABELS, FILTERS, PRIORITY_VIEW, statusView, waitLabel, type QueueFilter } from './model'
+import { TicketSettingsDialog } from './TicketSettingsDialog'
 import css from './Tickets.module.css'
 
 export function Queue({
@@ -27,6 +28,7 @@ export function Queue({
   const tickets = q.data?.pages.flatMap((p) => p.tickets) ?? []
   const total = q.data?.pages[0]?.total ?? 0
   const now = useNow()
+  const [settings, setSettings] = useState(false)
 
   return (
     <div className={css.queue}>
@@ -35,8 +37,10 @@ export function Queue({
         <div className={css.searchRow}>
           <SearchBox value={query} onChange={onQuery} />
           <EscalateButton />
+          <Button size="sm" onClick={() => setSettings(true)}>工单设置</Button>
         </div>
       </div>
+      <TicketSettingsDialog open={settings} onClose={() => setSettings(false)} />
       <div className={css.queueList} aria-busy={q.isFetching || undefined}>
         {q.isPending ? (
           <div className={css.queueSkeleton} role="status" aria-label="加载中">
