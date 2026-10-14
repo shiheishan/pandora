@@ -281,7 +281,7 @@ func (s *Service) Redemptions(ctx context.Context, id uuid.UUID) ([]Redemption, 
 			Discount: row.DiscountAmount,
 			Currency: row.Currency,
 			At:       row.CreatedAt,
-			Released: row.Status == model.RedemptionReleased,
+			Released: row.Status == RedemptionReleased,
 		})
 	}
 	return out, nil
@@ -299,7 +299,7 @@ func couponFromSpec(code string, spec Spec) model.Coupon {
 		UserGroupID:           spec.UserGroupID,
 		ValidFrom:             spec.ValidFrom,
 		ValidUntil:            spec.ValidUntil,
-		Status:                model.CouponActive,
+		Status:                StatusActive,
 	}
 	switch spec.Face.Kind {
 	case KindPercent:

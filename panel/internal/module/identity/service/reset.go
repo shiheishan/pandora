@@ -47,7 +47,7 @@ func (s *Service) StartPasswordReset(ctx context.Context, email string) (Passwor
 		if err != nil {
 			return err
 		}
-		if !found || u.Status != model.UserActive {
+		if !found || u.Status != StatusActive {
 			return nil
 		}
 		staff, err := s.isStaff(ctx, u.ID)
@@ -58,11 +58,11 @@ func (s *Service) StartPasswordReset(ctx context.Context, email string) (Passwor
 			return nil
 		}
 
-		if err := s.repo.ExpireCodes(ctx, model.PurposePasswordReset, target); err != nil {
+		if err := s.repo.ExpireCodes(ctx, PurposePasswordReset, target); err != nil {
 			return err
 		}
 		vc := model.VerificationCode{
-			Purpose:     model.PurposePasswordReset,
+			Purpose:     PurposePasswordReset,
 			TargetHash:  target,
 			CodeHash:    s.codeHash(code),
 			UserID:      &u.ID,
@@ -140,7 +140,7 @@ func (s *Service) CompletePasswordReset(ctx context.Context, email, code, newPas
 	target := s.targetHash(email)
 	var rejected bool
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
-		c, found, err := s.repo.LockLatestCode(ctx, model.PurposePasswordReset, target)
+		c, found, err := s.repo.LockLatestCode(ctx, PurposePasswordReset, target)
 		if err != nil {
 			return err
 		}
@@ -160,7 +160,7 @@ func (s *Service) CompletePasswordReset(ctx context.Context, email, code, newPas
 		if err != nil {
 			return err
 		}
-		if !ok || u.Status != model.UserActive {
+		if !ok || u.Status != StatusActive {
 			rejected = true
 			return nil
 		}
@@ -179,7 +179,7 @@ func (s *Service) CompletePasswordReset(ctx context.Context, email, code, newPas
 		if err := s.repo.ConsumeCode(ctx, c.ID); err != nil {
 			return err
 		}
-		if err := s.repo.ExpireCodes(ctx, model.PurposePasswordReset, target); err != nil {
+		if err := s.repo.ExpireCodes(ctx, PurposePasswordReset, target); err != nil {
 			return err
 		}
 		revoker, err := s.needRevoker()

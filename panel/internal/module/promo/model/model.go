@@ -8,13 +8,7 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// 券状态（库里可设的两种）。
-const (
-	CouponActive = "active"
-	CouponPaused = "paused"
-)
-
-// 占用状态。
+// 占用状态：repo 写库时用；service 用 service/types.go 里同值的常量。
 const (
 	RedemptionHeld     = "held"
 	RedemptionCaptured = "captured"

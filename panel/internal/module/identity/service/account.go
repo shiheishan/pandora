@@ -86,7 +86,7 @@ func (s *Service) Authenticate(ctx context.Context, audience, email, password st
 		release()
 		return toUser(cred.User), ErrInvalidCredentials
 	}
-	if cred.Status != model.UserActive {
+	if cred.Status != StatusActive {
 		release()
 		return toUser(cred.User), ErrAccountInactive
 	}
@@ -147,7 +147,7 @@ func (s *Service) VerifyPassword(ctx context.Context, audience string, userID uu
 		release()
 		return ErrInvalidCredentials
 	}
-	if cred.Status != model.UserActive {
+	if cred.Status != StatusActive {
 		release()
 		return ErrAccountInactive
 	}
@@ -228,7 +228,7 @@ func (s *Service) CreateUser(ctx context.Context, email, password string) (User,
 	now := s.now()
 	u := model.User{
 		Email:           email,
-		Status:          model.UserActive,
+		Status:          StatusActive,
 		EmailVerifiedAt: &now,
 	}
 
