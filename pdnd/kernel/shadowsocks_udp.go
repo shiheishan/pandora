@@ -128,20 +128,6 @@ func (a *shadowsocksAdapter) decodeUDPPacket(salt, ciphertext, plain []byte, fro
 	return selected, dest, payload, nil
 }
 
-func (a *shadowsocksAdapter) forwardUDP(s *ssUDPSession, dest vlessDestination, payload []byte) error {
-	if !s.ready.Load() && s.enqueuePending(dest, payload) {
-		return nil
-	}
-	n, err := s.writeUplink(dest, payload)
-	if n > 0 {
-		s.sess.up().Add(int64(n))
-	}
-	if err != nil && (errors.Is(err, net.ErrClosed) || s.ctx.Err() != nil) {
-		return nil
-	}
-	return err
-}
-
 // 以下三个函数经典 AEAD 已不用，只剩 SS2022（shadowsocks2022_udp.go）在用；SS2022 多用户重写时一起挪走。
 
 func destinationUDPAddr(destination vlessDestination) (net.Addr, error) {

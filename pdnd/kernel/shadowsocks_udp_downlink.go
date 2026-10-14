@@ -122,7 +122,6 @@ func (w ssUDPClientWriter) WritePacket(buffer *buf.Buffer, source M.Socksaddr) e
 		s.adapter.udpDrops.downlink.Add(1)
 		return nil
 	}
-	s.lastActive.Store(time.Now().UnixNano())
 	return nil
 }
 

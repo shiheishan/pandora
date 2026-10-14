@@ -3,8 +3,9 @@ package kernel
 // Shadowsocks 经典 AEAD 的 UDP 按会话转发：同一 (客户端地址, 用户) 共用一个上游
 // socket 与一个下行 goroutine。下行复用 Hysteria2 的 hy2DownlinkUDP（空闲不占收包
 // 缓冲、借共享批量存货），写回经 ssUDPClientWriter 把包按 SS UDP 格式加密后写回
-// 入站共享 UDP socket。空闲 ssUDPIdleTimeout（与 juicity、UoT 同值 5 分钟）无双向
-// 流量则回收会话；每用户会话数受本入站的 udpSessionQuota 约束（每个入站一份，上限常量
+// 入站共享 UDP socket。客户端上行空闲 ssUDPIdleTimeout（与 juicity、UoT 同值 5 分钟）
+// 即回收会话（下行不续期）；上行空闲 ssUDPDeviceIdleTimeout（60 秒）先让出在线设备名额；
+// 每用户会话数受本入站的 udpSessionQuota 约束（每个入站一份，上限常量
 // udpSessionsPerUser 与 hy2 / TUIC 相同）。建上游（ListenUDP，可能要做中转握手、解析域名）
 // 在会话自己的 goroutine 里做，读循环只登记会话；建立期间到的包进会话的小队列。
 
@@ -23,8 +24,12 @@ import (
 	"github.com/aegispanel/nodeagent/route"
 )
 
-// ssUDPIdleTimeout 是一个 SS UDP 会话两个方向都没有数据多久就关（与 juicity、UoT 的 5 分钟同值）。测试缩短它。
+// ssUDPIdleTimeout 是一个 SS UDP 会话客户端多久没有上行就关（下行不续期；与 juicity、UoT 的 5 分钟同值）。测试缩短它。
 var ssUDPIdleTimeout = 5 * time.Minute
+
+// ssUDPDeviceIdleTimeout 是客户端多久没有上行就先让出在线设备名额（会话本身按 ssUDPIdleTimeout 回收）。
+// 取 60 秒：设备数受限的用户切换网络后，旧地址上的 UDP 会话至多再占一分钟。测试缩短它。
+var ssUDPDeviceIdleTimeout = 60 * time.Second
 
 // ssUDPPendingMax 是会话建立期间最多暂存的上行包数，多出的丢掉（计 udpDrops.pending）。
 const ssUDPPendingMax = 8
@@ -52,7 +57,14 @@ type ssUDPSession struct {
 	limiter    *rate.Limiter // 认证时取一次 a.limiters.For(coreUser)，nil 表示不限速
 	ctx        context.Context
 	cancel     context.CancelFunc
-	lastActive atomic.Int64 // UnixNano，上行与下行都刷新
+	lastUplink atomic.Int64 // UnixNano，只按客户端上行刷新（下行不算：上游一直推包时会话照样按空闲回收）
+	// 在线设备：建会话时占一个；客户端 ssUDPDeviceIdleTimeout 没有上行就先让出（会话保留、下行照常），
+	// 再有上行时重新占，占不到就关会话。devMu 保护 device 与 devDone；deviceHeld 是 device 的
+	// 无锁副本，上行热路径只读它。
+	devMu      sync.Mutex
+	device     bool
+	devDone    bool // finishUDPSession 已撤销，之后不再占
+	deviceHeld atomic.Bool
 	// 域名目标的解析缓存（只缓存最近一个目标），mu 保护；resolving 为真时有一次解析在途。
 	mu        sync.Mutex
 	lastDest  M.Socksaddr
@@ -62,25 +74,6 @@ type ssUDPSession struct {
 }
 
 func (s *ssUDPSession) Close() error { s.cancel(); return nil } // 给 userSessions 踢人用
-
-// enqueuePending 在会话还没建好上游时把包放进小队列并返回 true（队列满就丢、计
-// udpDrops.pending，同样返回 true）；上游已建好返回 false，由调用方直接写。
-func (s *ssUDPSession) enqueuePending(dest vlessDestination, payload []byte) bool {
-	s.estMu.Lock()
-	defer s.estMu.Unlock()
-	if s.upstream != nil {
-		return false
-	}
-	if len(s.pending) >= ssUDPPendingMax {
-		s.adapter.udpDrops.pending.Add(1)
-		return true
-	}
-	s.pending = append(s.pending, ssUDPPendingPacket{
-		dest:    dest,
-		payload: append([]byte(nil), payload...),
-	})
-	return true
-}
 
 // lookupUDPSessions 把 client 名下仍活跃的会话追加到 dst 返回（已取消、还没收尾的
 // 会话跳过；表里的切片会被收尾原地改写）。读循环传自己独占的 dst 复用，每包不分配。
@@ -122,7 +115,9 @@ func (a *shadowsocksAdapter) getOrOpenUDPSession(client netip.AddrPort, user *ss
 		adapter: a, client: client, user: user, coreUser: coreUser, ip: ip,
 		firstDest: firstDest, ctx: ctx, cancel: cancel,
 	}
-	s.lastActive.Store(time.Now().UnixNano())
+	s.device = true
+	s.deviceHeld.Store(true)
+	s.lastUplink.Store(time.Now().UnixNano())
 	s.limiter = a.limiters.For(coreUser)
 	s.sess = a.sessions.open(coreUser, epoch, s)
 	if s.sess == nil {
@@ -221,7 +216,7 @@ func (a *shadowsocksAdapter) finishUDPSession(s *ssUDPSession) {
 		_ = upstream.Close()
 	}
 	a.udpQuota.release(s.coreUser.ID)
-	a.online.leave(s.coreUser, s.ip)
+	s.releaseDevice()
 	s.sess.close()
 }
 
@@ -240,28 +235,33 @@ func (a *shadowsocksAdapter) closeUDPSessions() {
 	}
 }
 
-// udpJanitor 每 ssUDPIdleTimeout/4 扫一遍，取消两个方向都空闲满 ssUDPIdleTimeout 的会话。
+// udpJanitor 定期扫一遍：客户端上行空闲满 ssUDPIdleTimeout 的会话取消；上行空闲满
+// ssUDPDeviceIdleTimeout、还占着设备的先让出在线设备（会话保留）。
 func (a *shadowsocksAdapter) udpJanitor() {
 	defer a.wg.Done()
-	interval := ssUDPIdleTimeout / 4
+	interval := min(ssUDPIdleTimeout, ssUDPDeviceIdleTimeout) / 4
 	if interval < 10*time.Millisecond {
 		interval = 10 * time.Millisecond
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	idle := int64(ssUDPIdleTimeout)
+	devIdle := int64(ssUDPDeviceIdleTimeout)
 	for {
 		select {
 		case <-a.ctx.Done():
 			return
 		case now := <-ticker.C:
 			nowNano := now.UnixNano()
-			var stale []*ssUDPSession
+			var stale, devStale []*ssUDPSession
 			a.udpMu.Lock()
 			for _, list := range a.udp {
 				for _, s := range list {
-					if nowNano-s.lastActive.Load() >= idle {
+					since := nowNano - s.lastUplink.Load()
+					if since >= idle {
 						stale = append(stale, s)
+					} else if since >= devIdle && s.deviceHeld.Load() {
+						devStale = append(devStale, s)
 					}
 				}
 			}
@@ -269,63 +269,9 @@ func (a *shadowsocksAdapter) udpJanitor() {
 			for _, s := range stale {
 				s.cancel()
 			}
+			for _, s := range devStale {
+				s.releaseIdleDevice(nowNano - devIdle)
+			}
 		}
 	}
-}
-
-// writeUplink 把已解密的负载发往上游。读循环所有用户共用，限速超速时丢包，不能 WaitN 阻塞。
-func (s *ssUDPSession) writeUplink(dest vlessDestination, payload []byte) (int, error) {
-	if s.limiter != nil && !s.limiter.AllowN(time.Now(), len(payload)) {
-		return 0, nil
-	}
-	if dest.IP.IsValid() {
-		ip := dest.IP.Unmap()
-		addr := &net.UDPAddr{IP: ip.AsSlice(), Port: int(dest.Port)}
-		n, err := s.upstream.WriteTo(payload, addr)
-		if n > 0 {
-			s.lastActive.Store(time.Now().UnixNano())
-		}
-		return n, err
-	}
-	target := M.ParseSocksaddrHostPort(dest.Host, dest.Port)
-	s.mu.Lock()
-	if s.lastAddr != nil && s.lastDest == target && time.Since(s.resolved) < hy2UDPResolveTTL {
-		addr := s.lastAddr
-		s.mu.Unlock()
-		n, err := s.upstream.WriteTo(payload, addr)
-		if n > 0 {
-			s.lastActive.Store(time.Now().UnixNano())
-		}
-		return n, err
-	}
-	// 域名没命中缓存：解析另起 goroutine 做，不能在所有用户共用的读循环里阻塞；同一
-	// 会话同时只解一个，解析期间到的包丢掉（UDP 允许丢包，客户端会重发）。
-	if s.resolving {
-		s.mu.Unlock()
-		return 0, nil
-	}
-	s.resolving = true
-	copyPayload := append([]byte(nil), payload...)
-	s.mu.Unlock()
-	s.adapter.wg.Add(1)
-	go func() {
-		defer s.adapter.wg.Done()
-		ctx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
-		defer cancel()
-		addr, err := resolveUDPAddr(ctx, target)
-		s.mu.Lock()
-		s.resolving = false
-		if err == nil {
-			s.lastDest, s.lastAddr, s.resolved = target, addr, time.Now()
-		}
-		s.mu.Unlock()
-		if err != nil {
-			return
-		}
-		if n, _ := s.upstream.WriteTo(copyPayload, addr); n > 0 {
-			s.sess.up().Add(int64(n))
-			s.lastActive.Store(time.Now().UnixNano())
-		}
-	}()
-	return 0, nil
 }
