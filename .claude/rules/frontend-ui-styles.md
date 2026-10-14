@@ -20,8 +20,8 @@ paths:
 - 颜色令牌（43 个）有四处同源，增、删、改任何一个都要几处一起改：
   - `styles/tokens.css`：浅色与 `[data-theme='dark']` 两组的键必须完全相同
   - `styles/design-tokens.ts` 的 `COLOR_TOKENS`：`tests/tokens.test.ts` 逐值核对 CSS 文本，showcase 核对浏览器算出的值
-  - Go 端 `panel/internal/domain/appearance/tokens.go` 的 `DesignTokenKeys`，守卫是 `paper_theme_test.go` 的 `TestDesignTokenKeysMatchFrontend`
-  - 内置「默认 · 纸白」主题的种子 `panel/migrations/00075_theme_paper_white.sql`，守卫是同文件的 `TestPaperThemeSeedMatchesFrontend`
+  - Go 端 `panel/internal/module/appearance/service/tokens.go` 的 `DesignTokenKeys`，守卫是同目录 `tokens_test.go` 的 `TestDesignTokenKeysMatchFrontend`
+  - 内置「默认 · 纸白」主题的种子在 `panel/db/migrations/00029_appearance.sql`，守卫是 `tokens_test.go` 的 `TestPaperThemeSeedMatchesFrontend`
 - 上面两个 Go 测试用正则逐行解析 `design-tokens.ts` 里 `c('组', '--名', '浅', '深', '用途'),` 这种写法，并期望正好 43 个。改写法或改个数要同步改 Go 那边的解析
 - `COLOR_TOKENS` 同时是门户主题覆盖的白名单（`portal/appearance.ts` 的 `THEMEABLE_TOKENS`）和后台主题编辑器的键集。主题只覆盖颜色：字号、间距、圆角不进白名单，以免换主题让排版走样
 - `styles/index.css` 的 @import 顺序是 字体 → 令牌 → 角色 → 基础，角色令牌引用前面的令牌

@@ -9,7 +9,7 @@ paths:
 - 假后端只在 `vite serve` 时挂上，永不进产物（守卫：`tests/theme-boot.test.ts` 的 "mounts the dev mock API only while serving…"）
   - 设了 `PANDORA_API` 时 `/v1` 改为代理到真实网关，假后端不挂
 - 假后端的价值在于「页面在它上面走通 = 按契约走通」
-  - 形状、错误码、`fields` 键名、中文文案都照 `panel/internal/api` 的 Go 处理器写
+  - 形状、错误码、`fields` 键名、中文文案都照 `panel/internal/module/*/handler` 的 Go 处理器与 DTO 写
   - 只有 Go 带 omitempty 的字段才可以缺席
   - 不要为了让页面好写而偏离 Go
 - 后台不分权限，所有 admin 路由只要登录；写接口按 Go 中间件的顺序调用 `types.ts` 里的两个守卫：
@@ -19,7 +19,7 @@ paths:
 - `idempotent` 与 Go 中间件一致：只重放 2xx，非 2xx 的同键同请求会重新执行。所以 `run` 里先校验，回 4xx 之前不要改任何状态
 - 带 raw 的结果（CSV 等）重放时只回 `Content-Type` 与 `Cache-Control`，与后端一致；只在首次响应里带的头放进 `MockRaw.headers`
 - 请求体照 Go 的 `DisallowUnknownFields` 拒绝多余字段，各模块已有现成的 `unknownField` / `readStrict` 辅助，前端字段拼错时能在这里暴露
-- 后台的 `admin.writes` 只读门挂在整棵 `/v1` 上、先于认证。豁免表 `adminWriteExempt` 与 Go `panel/internal/middleware/switches.go` 的 `adminWriteExempt` 相同，Go 改了这里要跟着改
+- 后台的 `admin.writes` 只读门挂在整棵 `/v1` 上、先于认证。豁免表 `adminWriteExempt` 与 Go `panel/internal/module/settings/handler/middleware.go` 的 `adminWriteExempt` 相同，Go 改了这里要跟着改
 - 路由按 `ADMIN_MODULES` / `PORTAL_MODULES` 的登记顺序、模块内按键的顺序匹配，先匹配先得（`types.ts` 的 `findRoute`）。字面段路由要排在同形的 `:param` 路由之前，例如 `admin/tickets.ts` 的 `GET /v1/tickets/assignees` 在 `:id` 之前
 - 跨模块的数据只有一份，各有属主：
   - 属主：用户与订阅归 `admin/users.ts`（`userStore`），订单归 `admin/billing-store.ts`，节点池与出站归 `admin/nodes-infra.ts`
@@ -27,8 +27,8 @@ paths:
   - 页面上「同口径」的数字靠这份共享数据成立：仪表盘的超时未支付 = 订单页待支付筛选（`stalePendingCount`），按池在线数 = 节点池列表（`activeNodesInPool`）
   - 套餐绑池的 `deliverable_nodes` 用 `admin/nodes.ts` 的 `deliverableNodesInPool`，与节点列表「是否下发」共用同一个 `deliverable` 判定（`deliveryOf` 照 Go 的 `DeliveryState` 再 `Refine`）；改其一要两处一起对照 Go 的 `subscription.DeliverableNodeSQL`
 - 种子都是确定性的（固定 id、按日期生成），`tests/mock-*.test.ts` 直接用种子里的 id 与数值，改种子要同步改测试
-- `admin/node-schemas.ts` 是 Go `nodefabric.ProtocolSchemas()` 的原样导出，没有自动同步也没有守卫
-  - Go 的协议 schema 一变（改了 `nodefabric/protocol_schema.go` 或字段翻译）就要手动重导：在仓库根（或 worktree 根）跑 `bash .claude/skills/subscription-e2e/scripts/export-schemas.sh`，会覆盖这个文件，再用 `git diff` 看变化、跑页面单测
+- `admin/node-schemas.ts` 是 Go `protocol.Schemas()`（`panel/internal/module/node/protocol/`）的原样导出，没有自动同步也没有守卫
+  - Go 的协议 schema 一变（改了 `panel/internal/module/node/protocol/schema.go` 或字段翻译）就要手动重导。导出脚本 `.claude/skills/subscription-e2e/scripts/export-schemas.sh` 还指着已删的旧包，修好之前只能手工对照 `protocol.Schemas()` 改这个文件，再用 `git diff` 看变化、跑页面单测
   - 页面单测 `src/admin/screens/nodes/nodes.test.ts` 也在用它
 - `dev:admin` 与 `dev:portal` 是两个 vite 进程，生效主题经 `appearance-share.ts` 写到 `node_modules/.cache/pandora-mock/appearance.json` 互通
 - 门户场景（`portal/scenario.ts` 的 `SCENARIOS`，`POST /v1/__mock/portal-scenario` 一切换就重建全部状态）：
