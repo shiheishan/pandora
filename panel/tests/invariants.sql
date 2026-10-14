@@ -8,11 +8,11 @@
 -- 覆盖的验收项：PAY-005 复式记账、DATA-003 追加写、SUB-004 订阅状态（只剩 active / expired）、
 --   NODE-010（改成 nodes_active_shape：在役节点必须挂服务器、协议配好）、SUB-002 版本与价格冻结、
 --   PAY-001 订单金额恒等式与人工单理由、MKT-003 邀请关系、PAY-003 幂等唯一键、MKT-001 优惠券容量、
---   NFR-008 降级开关、OPS-005 事务类通知、OPS-001 内部备注、USE-002（改成 node_traffic_reports 唯一键）。
+--   NFR-008 降级开关、OPS-005 事务类通知、OPS-001 内部备注、USE-002（改成 node_traffic_reports 唯一键）、
+--   SUB-007 试用防刷（subscription_trials 每人终身一次）。
 --
 -- 不覆盖的验收项及原因（没有对应的表或机制）：
 --   SEC-013 双人审批 — 没有审批表：后台权限只分有和没有。
---   SUB-007 试用防刷 — 没有试用发放表（价格上的 trial_days 只存不用）。
 --   EXT-006 / SEC-014 插件验签 — 插件只有 plugin_hooks Webhook，没有可执行插件与签名。
 --   AGT-003 节点任务白名单 — 没有节点任务表。
 --   AGT-007 已发布配置签名 — 节点通道改 gRPC + mTLS，没有配置签名表。
@@ -323,6 +323,34 @@ $sql$);
 -- 订阅不删（subscriptions_deny_delete）
 SELECT _reject('SUB-004', '订阅不可删除', $sql$
   DELETE FROM subscriptions WHERE id = '00000000-0000-7000-8000-000000000702';
+$sql$);
+
+--------------------------------------------------------------------------------
+-- SUB-007 试用防刷（00040_identity_registration.sql 的 subscription_trials：主键 user_id、只追加）
+--------------------------------------------------------------------------------
+
+SELECT _accept('SUB-007', '首次发放注册试用应当通过', $sql$
+  INSERT INTO subscription_trials (user_id, subscription_id, plan_id, hours)
+  VALUES ('00000000-0000-7000-8000-000000000101', '00000000-0000-7000-8000-000000000701',
+          '00000000-0000-7000-8000-000000000501', 24);
+$sql$);
+
+-- subscription_trials_pkey：每人终身一次
+SELECT _reject('SUB-007', '同一用户第二次发放试用必须拒绝', $sql$
+  INSERT INTO subscription_trials (user_id, subscription_id, plan_id, hours)
+  VALUES ('00000000-0000-7000-8000-000000000101', '00000000-0000-7000-8000-000000000702',
+          '00000000-0000-7000-8000-000000000501', 24);
+$sql$);
+
+-- subscription_trials_append_only：发放记录不能改、不能删（删了就能再领一次）
+SELECT _reject('SUB-007', '试用发放记录不可删除', $sql$
+  DELETE FROM subscription_trials WHERE user_id = '00000000-0000-7000-8000-000000000101';
+$sql$);
+
+SELECT _reject('SUB-007', '试用时长越界必须拒绝', $sql$
+  INSERT INTO subscription_trials (user_id, subscription_id, plan_id, hours)
+  VALUES ('00000000-0000-7000-8000-000000000103', '00000000-0000-7000-8000-000000000702',
+          '00000000-0000-7000-8000-000000000501', 0);
 $sql$);
 
 --------------------------------------------------------------------------------

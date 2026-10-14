@@ -1,0 +1,118 @@
+-- +goose Up
+-- 用户 2026-10-14 定的 Xboard 补齐注册与用户条目；属 identity 模块，另有 subscription 的试用表与 notify 的一条模板种子。
+--
+-- 锁与耗时：都是小表上的 ALTER / CREATE，ACCESS EXCLUSIVE 锁持到提交，毫秒级；
+--   预检：无；
+--   失败回滚：整笔回滚，库保持原样。
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '2min';
+
+-- 1. users：状态增加 deleted（注销并匿名化后的账号，不能登录、不能找回）；增加后台备注 admin_note 与注销时间 deleted_at
+ALTER TABLE users DROP CONSTRAINT users_status_check;
+ALTER TABLE users ADD CONSTRAINT users_status_check CHECK (status IN ('active', 'suspended', 'banned', 'deleted'));
+ALTER TABLE users ADD COLUMN admin_note text CHECK (char_length(admin_note) <= 2000), ADD COLUMN deleted_at timestamptz;
+ALTER TABLE users ADD CONSTRAINT users_deleted_shape CHECK ((status = 'deleted') = (deleted_at IS NOT NULL));
+
+-- 2. invite_codes：允许多个有效码（由 identity service 锁用户行后按设置计数）；增加访问量 visit_count（按 IP 去重计数，不存 IP）
+DROP INDEX invite_codes_one_active_per_owner;
+CREATE INDEX invite_codes_owner_idx ON invite_codes (owner_user_id, created_at DESC) WHERE owner_user_id IS NOT NULL;
+ALTER TABLE invite_codes ADD COLUMN visit_count bigint NOT NULL DEFAULT 0 CHECK (visit_count >= 0);
+
+-- 3. referral_changes（属主 identity，只追加）：后台改邀请人的记录
+CREATE TABLE referral_changes (
+  id                        uuid PRIMARY KEY DEFAULT uuidv7(),
+  referee_user_id           uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  -- 改成谁；空 = 后台清除了邀请人
+  referrer_user_id          uuid REFERENCES users(id) ON DELETE RESTRICT,
+  -- 改之前生效的邀请人（审计对照用）
+  previous_referrer_user_id uuid REFERENCES users(id) ON DELETE RESTRICT,
+  -- 操作的管理员；不挂外键，与审计的 actor_id 一样
+  changed_by                uuid NOT NULL,
+  reason                    text NOT NULL CHECK (char_length(reason) BETWEEN 5 AND 500),
+  created_at                timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT referral_changes_no_self CHECK (referrer_user_id IS NULL OR referrer_user_id <> referee_user_id)
+);
+CREATE INDEX referral_changes_referee_idx ON referral_changes (referee_user_id, created_at DESC, id DESC);
+CREATE INDEX referral_changes_referrer_idx ON referral_changes (referrer_user_id) WHERE referrer_user_id IS NOT NULL;
+CREATE TRIGGER referral_changes_append_only
+  BEFORE UPDATE OR DELETE OR TRUNCATE ON referral_changes
+  FOR EACH STATEMENT EXECUTE FUNCTION deny_mutation();
+
+COMMENT ON TABLE referral_changes IS '后台改邀请人的记录（只追加）。referrals 是注册时的原始绑定，不可改（MKT-003）；某人有改动记录时，以最新一条为准（见视图 effective_referrals）。只影响以后的订单计佣。';
+
+-- 4. 视图 effective_referrals（属主 identity）：每个被邀请人当前生效的邀请人
+CREATE VIEW effective_referrals AS
+SELECT r.referee_user_id, r.referrer_user_id, r.invite_code_id, r.risk_flag, r.bound_at
+  FROM referrals r
+ WHERE NOT EXISTS (SELECT 1 FROM referral_changes c WHERE c.referee_user_id = r.referee_user_id)
+UNION ALL
+SELECT l.referee_user_id, l.referrer_user_id, NULL::uuid AS invite_code_id, 'none'::text AS risk_flag, l.created_at AS bound_at
+  FROM (SELECT DISTINCT ON (referee_user_id) referee_user_id, referrer_user_id, created_at
+          FROM referral_changes
+         ORDER BY referee_user_id, created_at DESC, id DESC) l
+ WHERE l.referrer_user_id IS NOT NULL;
+
+COMMENT ON VIEW effective_referrals IS '每个被邀请人当前生效的邀请人；读当前邀请人（计佣、详情、邀请人数）一律读它。';
+
+-- 5. subscription_trials（属主 subscription，只追加）：注册试用发放记录
+CREATE TABLE subscription_trials (
+  -- 主键 = 每人终身只发一次注册试用（SUB-007）
+  user_id         uuid PRIMARY KEY REFERENCES users(id) ON DELETE RESTRICT,
+  subscription_id uuid NOT NULL REFERENCES subscriptions(id) ON DELETE RESTRICT,
+  plan_id         uuid NOT NULL REFERENCES plans(id) ON DELETE RESTRICT,
+  hours           int NOT NULL CHECK (hours BETWEEN 1 AND 8760),
+  granted_at      timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT subscription_trials_subscription_key UNIQUE (subscription_id)
+);
+CREATE TRIGGER subscription_trials_append_only
+  BEFORE UPDATE OR DELETE OR TRUNCATE ON subscription_trials
+  FOR EACH STATEMENT EXECUTE FUNCTION deny_mutation();
+
+COMMENT ON TABLE subscription_trials IS '注册送试用的发放记录；试用不建订单，所以不计佣、不进收入。';
+
+-- 6. notify 模板种子（属主 notify）：免密登录链接模板
+INSERT INTO notification_templates (code, channel, subject, body) VALUES
+('auth.login_link', 'email', '【{{site}}】登录链接',
+'你好，
+
+点击下面的链接登录 {{site}}：
+
+{{link}}
+
+链接 {{minutes}} 分钟内有效，只能用一次。如果这不是你本人的操作，忽略这封邮件即可，你的账号不会有任何变化。
+
+{{site}}');
+
+-- +goose Down
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '2min';
+
+-- 1. notify 模板种子
+DELETE FROM notification_templates WHERE code = 'auth.login_link' AND channel = 'email';
+
+-- 2. 试用表
+DROP TABLE IF EXISTS subscription_trials;
+
+-- 3. 生效邀请人视图
+DROP VIEW IF EXISTS effective_referrals;
+
+-- 4. 邀请人变更记录表
+DROP TABLE IF EXISTS referral_changes;
+
+-- 5. invite_codes：退回后一人只能有一个有效码，保留最早的那个
+UPDATE invite_codes SET status = 'disabled'
+ WHERE status = 'active' AND owner_user_id IS NOT NULL
+   AND id NOT IN (SELECT DISTINCT ON (owner_user_id) id FROM invite_codes
+                   WHERE status = 'active' AND owner_user_id IS NOT NULL
+                   ORDER BY owner_user_id, created_at, id);
+ALTER TABLE invite_codes DROP COLUMN IF EXISTS visit_count;
+DROP INDEX IF EXISTS invite_codes_owner_idx;
+CREATE UNIQUE INDEX invite_codes_one_active_per_owner ON invite_codes (owner_user_id)
+  WHERE status = 'active' AND owner_user_id IS NOT NULL;
+
+-- 6. users：已注销账号退回后改记成封禁（旧结构没有 deleted；banned 同样不能登录，邮箱已是占位值，不会被找回）
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_deleted_shape;
+UPDATE users SET status = 'banned' WHERE status = 'deleted';
+ALTER TABLE users DROP COLUMN IF EXISTS deleted_at, DROP COLUMN IF EXISTS admin_note;
+ALTER TABLE users DROP CONSTRAINT users_status_check;
+ALTER TABLE users ADD CONSTRAINT users_status_check CHECK (status IN ('active', 'suspended', 'banned'));
