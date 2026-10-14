@@ -170,7 +170,8 @@ jobs:
         run: go test -mod=readonly -tags interop -run 'TestAnyTLSNativeClientTCPAndUOTUDP$' -count=3 ./kernel
       - name: External Mihomo interoperability
         # mihomo 是用户最多的客户端：每次都用官方二进制逐协议真连 NativeCore。
-        # 下载包的 SHA-256 取自 GitHub release 公布的 digest；升级时版本与哈希成对改（deps-upgrade skill）。
+        # 下载包的 SHA-256 取自 GitHub release 公布的 digest；升级时版本与哈希成对改（deps-upgrade skill），
+        # 并与 subscription-e2e.yml 里同名的 MIHOMO_VERSION / MIHOMO_GZ_SHA256 一起改。
         # 非 race：外部客户端是独立进程，race 只会拖慢。
         env:
           MIHOMO_VERSION: v1.19.32
