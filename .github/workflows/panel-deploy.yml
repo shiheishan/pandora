@@ -49,7 +49,7 @@ jobs:
             install.sh install-lib.sh bootstrap.sh platform.sh build-release.sh render-nginx.sh
             public-base-url.sh admin-url.sh
             backup-postgres.sh verify-backup.sh restore-postgres.sh healthcheck.sh edge-tls.sh
-            update-cloudflare-realip.sh pg-revive.sh psql.sh
+            update-cloudflare-realip.sh pg-revive.sh psql.sh get.sh
           )
           tests=(
             install_mock_test.sh render-nginx_test.sh build-release_toolchain_mock_test.sh
@@ -57,7 +57,7 @@ jobs:
             backup-scripts_mock_test.sh backup-provenance_mock_test.sh edge-tls_mock_test.sh
             cloudflare-realip_mock_test.sh healthcheck_mock_test.sh healthcheck-install_static_test.sh
             tls-renew_static_test.sh logrotate-pandora_static_test.sh webdav-backup-hardening_mock_test.sh
-            pg-revive_mock_test.sh
+            pg-revive_mock_test.sh get_mock_test.sh
           )
           data=(
             nginx-pandora.conf configure-app-role.sql postgresql-pandora.conf release-artifact.env.example
@@ -94,6 +94,7 @@ jobs:
             logrotate-pandora_static_test.sh
             webdav-backup-hardening_mock_test.sh
             pg-revive_mock_test.sh
+            get_mock_test.sh
           )
           failed=()
           for t in "${tests[@]}"; do
