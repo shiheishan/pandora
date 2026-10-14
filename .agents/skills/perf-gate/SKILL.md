@@ -29,7 +29,7 @@ description: pandora 的同机性能闸门：在固定测试机上先量基线�
 | 连入 | 200 台 nodesim 冷启动全部连上 | `connect.t_all` |
 | 静默 5 分钟 | 只有心跳与上报时的占用 | `idle.cpu.<服务>`、`idle.mem.<服务>`、`idle.pg_new_sessions_per_min`、`idle.pg_stmt_per_min` |
 | 后台读 | 等统计任务跑过一轮后，`k6/admin.js` 10 次/秒 × 70 秒 | `admin.timeseries.p50/p95/sql`、`admin.other.p50` |
-| 订阅拉取阶梯 | 20→50→100→200→400 次/秒各 60 秒，饱和即停 | `pull.<速率>.p50/p95/p99/cpu_ms/pg_cpu_ms/sql/pg_sessions/mem_max`、`pull.max_ok_rate` |
+| 订阅拉取阶梯 | 20→50→100→200→400→800 次/秒各 60 秒，饱和即停 | `pull.<速率>.p50/p95/p99/cpu_ms/pg_cpu_ms/sql/pg_sessions/mem_max`、`pull.max_ok_rate` |
 | 重启重连 ×3 | `systemctl restart pandora-serve` 后 200 台全部回来 | `reconnect.t_all`、`reconnect.align_busy`、`reconnect.pg_stmt` |
 
 改动落在哪条路径，就把对应指标作为 `--target`。例：连接池 → `idle.pg_new_sessions_per_min`；订阅拉取 → `pull.max_ok_rate`；建流 → `reconnect.t_all`；统计曲线 → `admin.timeseries`。
