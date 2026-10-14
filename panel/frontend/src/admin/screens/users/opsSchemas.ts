@@ -6,7 +6,7 @@ const int = z.number().int()
 const count = int.nonnegative()
 const time = z.string()
 
-// 批量生成是后台任务（adminops.UserGenerationJob，无 omitempty）：POST 回 202 与任务，
+// 批量生成是后台任务（identity/service GenerationJob，无 omitempty）：POST 回 202 与任务，
 // 进度轮询 GET v1/users/bulk/generate/jobs/{id}，结果（含初始口令）从 …/result 下载 CSV
 export const generationJobSchema = z.object({
   id: z.string(),

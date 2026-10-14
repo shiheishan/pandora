@@ -188,7 +188,7 @@ export function parseYuan(input: string): number | null {
   return negative ? -cents : cents
 }
 
-/** 与 platform/crypto.ValidatePassword 同一策略的前端预检；返回问题描述或 null */
+/** 与 identity/service validatePassword 同一策略的前端预检；返回问题描述或 null */
 export function passwordProblem(p: string): string | null {
   if ([...p].length < 8) return '密码至少需要 8 个字符'
   if (new TextEncoder().encode(p).length > 256) return '密码过长'
@@ -282,7 +282,7 @@ export interface GenerateForm {
   reason: string
 }
 
-/** 与 adminops.normalizeGenerateUsers 同一套规则（后端先 trim、转小写再校验），返回按字段的问题 */
+/** 与 identity/service normalizeGenerateInput 同一套规则（后端先 trim、转小写再校验），返回按字段的问题 */
 export function generateProblems(f: GenerateForm): Record<string, string> {
   const out: Record<string, string> = {}
   const n = Number(f.count.trim())
@@ -422,7 +422,7 @@ export function expiredDays(periodEnd: string | null, now: Date): number | null 
 }
 
 /**
- * 能加时长的订阅（w5expiry）：生效中，或已过期不满 30 天（救回：状态回到 active、流量按天数折算、
+ * 能加时长的订阅：生效中，或已过期不满 30 天（救回：状态回到 active、流量按天数折算、
  * 旧链接恢复可用）；都要有到期时间。别的状态后端回 409，没有到期时间回 422。后台列表不带关窗时刻，
  * 按周期末推算（关窗由过期扫描一分钟内写上）。
  */

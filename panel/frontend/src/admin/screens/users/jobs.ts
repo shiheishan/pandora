@@ -1,6 +1,6 @@
 import type { GenerationJob } from './opsSchemas'
 
-// 批量生成任务（adminops.UserGenerationJob）的展示口径
+// 批量生成任务（identity/model UserGenerationJob、service GenerationJob）的展示口径
 
 export const JOB_STATUS_VIEW: Record<GenerationJob['status'], { label: string; tone: 'neutral' | 'info' | 'ok' | 'danger' }> = {
   queued: { label: '排队中', tone: 'neutral' },

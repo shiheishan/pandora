@@ -44,7 +44,7 @@ export const annSaved = z.object({ id: uuid, status: z.enum(ANN_STATUSES), versi
 export const annWithdrawn = z.object({ ok: z.literal(true), version: z.number().int() })
 
 // ---------------------------------------------------------------------------
-// 知识库（domain/content Page：category / summary / 客户端版本 / 日期 / 作者都是 omitempty）
+// 知识库（content/model Page：category / summary / 客户端版本 / 日期 / 作者都是 omitempty）
 // ---------------------------------------------------------------------------
 export const KINDS = ['kb_article', 'tutorial', 'page', 'legal'] as const
 export type Kind = (typeof KINDS)[number]
