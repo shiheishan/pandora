@@ -17,6 +17,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/jwtx"
+	"github.com/aegispanel/aegis/internal/pkg/ratelimit"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -86,6 +87,11 @@ type Service struct {
 	audit    auditWriter
 	cfg      Config
 	now      func() time.Time
+
+	mailSettings  MailLinkSettings
+	mailer        MailLinkMailer
+	mailLimiter   *ratelimit.Limiter
+	publicBaseURL string
 }
 
 // New 构造 auth service。public、admin 是两个域各自的签发器（不同密钥）；users 是 identity service。

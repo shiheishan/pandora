@@ -20,12 +20,14 @@ import (
 const (
 	amrPassword   = "password"
 	amrQuickLogin = "quick_login"
+	amrMailLink   = "mail_link"
 )
 
 const (
 	secretBytes   = 32
 	maxUserAgent  = 256
 	quickLoginTTL = 60 * time.Second
+	mailLinkTTL   = 15 * time.Minute
 )
 
 // newSecret 生成 32 字节随机串（base64url，无填充）。
