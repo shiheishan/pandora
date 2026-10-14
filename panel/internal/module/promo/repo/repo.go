@@ -3,8 +3,10 @@ package repo
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 
@@ -24,10 +26,27 @@ var ErrDuplicate = errors.New("promo: 唯一约束冲突")
 // ErrForeignKey 表示外键约束冲突。
 var ErrForeignKey = errors.New("promo: 外键约束冲突")
 
-// mapErr 把 GORM 翻译后的约束错误转成模块哨兵。
+// ErrPlanGone 表示限定的套餐在写入 coupon_plans 时已不存在（coupon_plans_plan_id_fkey）。
+var ErrPlanGone = errors.New("promo: 限定的套餐不存在（coupon_plans 外键）")
+
+const fkCouponPlansPlan = "coupon_plans_plan_id_fkey"
+
+// mapErr 把 GORM 翻译后的约束错误与原始 PG 错误转成模块哨兵。
 func mapErr(err error) error {
 	if err == nil {
 		return nil
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		switch pgErr.Code {
+		case "23503":
+			if pgErr.ConstraintName == fkCouponPlansPlan {
+				return fmt.Errorf("%w: %v", ErrPlanGone, err)
+			}
+			return fmt.Errorf("%w: %v", ErrForeignKey, err)
+		case "23505":
+			return ErrDuplicate
+		}
 	}
 	if errors.Is(err, gorm.ErrDuplicatedKey) {
 		return ErrDuplicate

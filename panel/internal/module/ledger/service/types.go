@@ -182,6 +182,10 @@ const (
 // ErrInsufficientBalance 是用户类科目余额不够扣。
 var ErrInsufficientBalance = errs.Newf(errs.Conflict, "余额不足")
 
+// ErrBalanceConstraint 是写余额撞上库里的不透支约束（预检漏掉的兜底）：语句已失败、调用方事务已作废，必须回滚。
+// 它总是和 ErrInsufficientBalance 一起出现在包装链里；调用方要先判它，判到就不能再在同一事务里写。
+var ErrBalanceConstraint = errors.New("ledger: 写余额撞上库里的不透支约束，事务已作废")
+
 // ErrDuplicatePosting 是同一来源的同类交易已经记过（如一张订单的第二笔 order_paid）。
 var ErrDuplicatePosting = errs.Newf(errs.Conflict, "这笔账已经记过了")
 

@@ -2,9 +2,11 @@ package service
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/aegispanel/aegis/internal/module/ledger/repo"
 	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
@@ -326,5 +328,34 @@ func TestSortedRefs(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("[%d] got %+v want %+v", i, got[i], want[i])
 		}
+	}
+}
+
+// 写余额撞库里不透支 CHECK：包装成 ErrBalanceConstraint 与 ErrInsufficientBalance（调用方 errors.Is 仍认得），同时保留库错误并注明事务已作废；其它错误原样返回。
+func TestSetBalancesErrWrapsCheck(t *testing.T) {
+	dbErr := fmt.Errorf("%w: 违反 CHECK", repo.ErrCheck)
+	got := setBalancesErr(dbErr)
+	if !errors.Is(got, ErrBalanceConstraint) {
+		t.Fatalf("应能按 ErrBalanceConstraint 识别：%v", got)
+	}
+	if !errors.Is(got, ErrInsufficientBalance) {
+		t.Fatalf("应能按 ErrInsufficientBalance 识别：%v", got)
+	}
+	if !errors.Is(got, repo.ErrCheck) {
+		t.Fatalf("应保留库约束错误：%v", got)
+	}
+	if got == ErrInsufficientBalance {
+		t.Fatal("库约束兜底不能与写库前查出的余额不足是同一个值")
+	}
+	if !strings.Contains(got.Error(), "事务已作废") {
+		t.Fatalf("错误应注明事务已作废：%q", got.Error())
+	}
+
+	other := errors.New("连接断了")
+	if setBalancesErr(other) != other {
+		t.Fatal("非约束错误应原样返回")
+	}
+	if errors.Is(setBalancesErr(other), ErrBalanceConstraint) {
+		t.Fatal("非约束错误不应包含 ErrBalanceConstraint")
 	}
 }

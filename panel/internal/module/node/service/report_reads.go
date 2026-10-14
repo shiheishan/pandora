@@ -58,7 +58,8 @@ func (s *Service) OfflineNodes(ctx context.Context, now time.Time, sample int) (
 }
 
 // ConfigLaggingCount 数配置落后的节点：落在 ServedOnServerCond 上、面板算出的期望配置摘要与节点回报的已应用摘要不同（含从没应用过）。
-// 期望摘要经 ServerConfigs 现算（与节点列表的生效状态同一口径）；算不出期望配置的节点不计。
+// 期望摘要经 serverConfigsWithSkips 现算（与节点列表的生效状态同一口径）；面板生成文档失败、本次下发不含的节点算落后
+// （节点端拿不到它的配置，入站已停）；其余没有期望摘要的节点不计。
 func (s *Service) ConfigLaggingCount(ctx context.Context) (int64, error) {
 	rows, err := s.repo.ServedNodeApplied(ctx)
 	if err != nil {
@@ -75,7 +76,7 @@ func (s *Service) ConfigLaggingCount(ctx context.Context) (int64, error) {
 	for id := range serverSet {
 		serverIDs = append(serverIDs, id)
 	}
-	configs, err := s.ServerConfigs(ctx, serverIDs)
+	configs, skips, err := s.serverConfigsWithSkips(ctx, serverIDs)
 	if err != nil {
 		return 0, err
 	}
@@ -87,6 +88,10 @@ func (s *Service) ConfigLaggingCount(ctx context.Context) (int64, error) {
 	}
 	var lagging int64
 	for _, row := range rows {
+		if _, skipped := skips[row.NodeID]; skipped {
+			lagging++
+			continue
+		}
 		exp, ok := desired[row.NodeID]
 		if !ok {
 			continue

@@ -156,6 +156,44 @@ func TestXboardShapeTranslatesToKernelFields(t *testing.T) {
 	}
 }
 
+// host 同时来自 network_settings.host 与 headers.Host 时，下发必须稳定且表单字段优先。
+func TestToKernelConfigHostPriorityDeterministic(t *testing.T) {
+	var first map[string]any
+	for i := 0; i < 200; i++ {
+		in := map[string]any{
+			"network": "ws",
+			"network_settings": map[string]any{
+				"host":    "api.example.com",
+				"headers": map[string]any{"Host": "form.example.com"},
+				"path":    "/p",
+			},
+		}
+		got := toKernelConfig("vless", in)
+		if got["host"] != "form.example.com" {
+			t.Fatalf("第 %d 次 host=%q，期望 form.example.com（headers.Host 优先）", i, got["host"])
+		}
+		if i == 0 {
+			first = got
+			continue
+		}
+		if !reflect.DeepEqual(got, first) {
+			t.Fatalf("第 %d 次结果与第一次不一致\n  第一次 %#v\n  本次 %#v", i, first, got)
+		}
+	}
+
+	onlyAPI := map[string]any{
+		"network": "ws",
+		"network_settings": map[string]any{
+			"host": "api.example.com",
+			"path": "/p",
+		},
+	}
+	got := toKernelConfig("vless", onlyAPI)
+	if got["host"] != "api.example.com" {
+		t.Fatalf("仅 network_settings.host 时 host=%q，期望 api.example.com", got["host"])
+	}
+}
+
 func TestTrojanSchemaUsesXboardNestedShape(t *testing.T) {
 	var schema *Schema
 	for _, candidate := range Schemas() {

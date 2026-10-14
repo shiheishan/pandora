@@ -149,13 +149,21 @@ describe('mock api · admin nodes infra', () => {
     expect(await tight.json()).toMatchObject({ error: { code: 'conflict', fields: { capacity_nodes: expect.stringMatching(/^minimum=[2-9]$/) } } })
   })
 
-  it('issues server install tokens idempotently', async () => {
+  it('issues server install tokens once per idempotency key', async () => {
     const hk = (await servers()).find((x) => x.name === 'hk-hkg-edge-1')!
     const first = await call('POST', `/v1/servers/${hk.id}/bootstrap-token`, { ttl_minutes: 30 }, 'srv-tok-1')
     expect(first.status).toBe(201)
+    const firstJson = (await first.json()) as { token: string }
     const again = await call('POST', `/v1/servers/${hk.id}/bootstrap-token`, { ttl_minutes: 30 }, 'srv-tok-1')
-    expect(await again.json()).toEqual(await first.json())
+    expect(again.status).toBe(409)
+    const againJson = (await again.json()) as { error: { code: string } }
+    expect(againJson.error.code).toBe('conflict')
+    expect(JSON.stringify(againJson)).not.toContain(firstJson.token)
     expect((await call('POST', `/v1/servers/${hk.id}/bootstrap-token`, { ttl_minutes: 20 }, 'srv-tok-1')).status).toBe(409)
+    const otherKey = await call('POST', `/v1/servers/${hk.id}/bootstrap-token`, { ttl_minutes: 30 }, 'srv-tok-2')
+    expect(otherKey.status).toBe(201)
+    const otherJson = (await otherKey.json()) as { token: string }
+    expect(otherJson.token).not.toBe(firstJson.token)
   })
 
   it('creates, edits and guards pool deletion', async () => {

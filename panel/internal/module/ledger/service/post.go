@@ -15,6 +15,7 @@ import (
 // balance_hold、balance_release、order_paid、balance_adjusted 只能走专门的方法，本方法拒收。
 // 参数不合法（ErrInvalidPosting）、余额不足（ErrInsufficientBalance）、按来源唯一的 kind 已记过（ErrDuplicatePosting）
 // 都在写库之前查出，调用方事务还能继续用；其余错误（含并发撞唯一索引）说明库里语句已失败，调用方事务必须回滚。
+// 例外：撞库约束时返回的错误同时 errors.Is ErrBalanceConstraint 与 ErrInsufficientBalance，调用方先判 ErrBalanceConstraint，判到必须回滚。
 func (s *Service) Post(ctx context.Context, p Posting) (uuid.UUID, error) {
 	if p.Kind.Dedicated() {
 		return uuid.Nil, fmt.Errorf("%w: %s 只能走专门的方法", ErrInvalidPosting, p.Kind)
@@ -59,10 +60,7 @@ func (s *Service) post(ctx context.Context, p Posting) (uuid.UUID, error) {
 		return uuid.Nil, err
 	}
 	if err := s.repo.SetBalances(ctx, newBal); err != nil {
-		if errors.Is(err, repo.ErrCheck) {
-			return uuid.Nil, ErrInsufficientBalance
-		}
-		return uuid.Nil, err
+		return uuid.Nil, setBalancesErr(err)
 	}
 	actorKind, actorID := actorOf(ctx)
 	var sourceType *string
@@ -153,4 +151,14 @@ func refOf(a model.Account) AccountRef {
 		return UserAccount(AccountType(a.AccountType), *a.OwnerUserID)
 	}
 	return PlatformAccount(AccountType(a.AccountType), a.OwnerRef)
+}
+
+// setBalancesErr 翻译写余额的错误。撞不透支 CHECK 时包装成 ErrBalanceConstraint 与 ErrInsufficientBalance 并保留库错误：
+// 预检（nextBalances）已在锁内查过余额，走到这里说明库里的约束兜住了预检漏掉的情况，语句已失败、事务已作废，
+// 与写库前查出的余额不足不同，调用方不能接着用这个事务。
+func setBalancesErr(err error) error {
+	if errors.Is(err, repo.ErrCheck) {
+		return fmt.Errorf("%w: %w: %w", ErrBalanceConstraint, ErrInsufficientBalance, err)
+	}
+	return err
 }

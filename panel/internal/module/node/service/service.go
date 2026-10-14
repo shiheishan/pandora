@@ -47,6 +47,9 @@ type Service struct {
 	// 第二波 p5-enroll 注入（identity.go 的 UseEnrollment）：节点 CA 与安装命令的对外地址
 	enroll enrollState
 
+	// idem 在签安装令牌的事务里以不可重放完成幂等认领（bootstrap.go 的 UseIdempotency）
+	idem IdemCompleter
+
 	// 第二波 p5-traffic 注入（traffic_charger.go 的 UseTrafficCharger）：流量扣量
 	charger TrafficCharger
 

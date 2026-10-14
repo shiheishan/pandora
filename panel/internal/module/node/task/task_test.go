@@ -66,7 +66,7 @@ func TestPeriodicSchedule(t *testing.T) {
 		t.Fatalf("periodic: got %d", len(ps))
 	}
 	e := ps[0]
-	if e.Type != TypeRetention || e.Cronspec != "41 3 * * *" {
+	if e.Type != TypeRetention || e.Cronspec != "44 3 * * *" {
 		t.Fatalf("retention periodic = %+v", e)
 	}
 	queue, retry, unique, timeout := optsOf(e.Opts)

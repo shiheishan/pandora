@@ -52,7 +52,7 @@ func (m *Module) Register(mux *asynq.ServeMux) {
 func (m *Module) Periodic() []jobs.Periodic {
 	return []jobs.Periodic{
 		{
-			Cronspec: "41 3 * * *",
+			Cronspec: "44 3 * * *",
 			Type:     TypeRetention,
 			Opts: []asynq.Option{
 				asynq.Queue("low"),

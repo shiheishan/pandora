@@ -80,6 +80,8 @@ interface Replay {
   fingerprint: string
   state: 'in_flight' | 'succeeded' | 'failed'
   result: MockResult | null
+  /** 2xx 以不可重放完成时不存响应体，同 key 同请求再来回 409 conflict */
+  unreplayable?: boolean
 }
 
 /**
@@ -415,6 +417,7 @@ export function mockApi(app: MockApp): Plugin {
         if (seen) {
           if (seen.fingerprint !== fingerprint) return fail(res, 409, 'idempotency_key_reuse', '幂等键已用于另一个请求')
           if (seen.state === 'in_flight') return fail(res, 409, 'conflict', '同一请求正在处理')
+          if (seen.state === 'succeeded' && seen.unreplayable) return fail(res, 409, 'conflict', '同一请求正在处理或需要人工核对，请稍后重试')
           if (seen.state === 'succeeded' && seen.result) return seen.result.raw ? sendRaw(res, seen.result.status, seen.result.raw, true) : send(res, seen.result.status, seen.result.body)
           // failed：接管这一格，重新执行
         }
@@ -422,7 +425,14 @@ export function mockApi(app: MockApp): Plugin {
         try {
           const result = await run()
           const ok = result.status >= 200 && result.status < 300
-          replays.set(slot, ok ? { fingerprint, state: 'succeeded', result } : { fingerprint, state: 'failed', result: null })
+          replays.set(
+            slot,
+            ok
+              ? result.unreplayable
+                ? { fingerprint, state: 'succeeded', result: null, unreplayable: true }
+                : { fingerprint, state: 'succeeded', result }
+              : { fingerprint, state: 'failed', result: null },
+          )
           if (result.raw) sendRaw(res, result.status, result.raw)
           else send(res, result.status, result.body)
         } catch (err) {

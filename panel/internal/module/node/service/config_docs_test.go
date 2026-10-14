@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/aegispanel/aegis/internal/module/node/repo"
 	"github.com/google/uuid"
 )
 
@@ -163,5 +164,50 @@ func TestBuildNodeConfigDocProtocolInDigest(t *testing.T) {
 	}
 	if m["protocol"] != "vless" {
 		t.Fatalf("protocol %v", m["protocol"])
+	}
+}
+
+func TestAssembleServerConfigsSkipsBadNode(t *testing.T) {
+	sA := uuid.New()
+	sB := uuid.New()
+	sC := uuid.New()
+	n1 := uuid.New()
+	n2 := uuid.New()
+	n3 := uuid.New()
+
+	goodProto := "{}"
+	badProto := "[1]"
+	nodeType := "vless"
+	port := 443
+	kernel := "auto"
+
+	rows := []repo.ConfigNodeRow{
+		{ServerID: sA, NodeID: &n1, NodeType: &nodeType, ServerPort: &port, Kernel: &kernel, ProtocolConfig: &goodProto},
+		{ServerID: sA, NodeID: &n2, NodeType: &nodeType, ServerPort: &port, Kernel: &kernel, ProtocolConfig: &badProto},
+		{ServerID: sB, NodeID: &n3, NodeType: &nodeType, ServerPort: &port, Kernel: &kernel, ProtocolConfig: &goodProto},
+		{ServerID: sC, NodeID: nil},
+	}
+
+	out, skips := assembleServerConfigs(rows, map[uuid.UUID][]routingLayer{})
+
+	if len(out[sA]) != 1 || out[sA][0].NodeID != n1 {
+		t.Fatalf("sA docs: %+v, want only n1", out[sA])
+	}
+	if len(out[sB]) != 1 || out[sB][0].NodeID != n3 {
+		t.Fatalf("sB docs: %+v, want only n3", out[sB])
+	}
+	if out[sC] == nil {
+		t.Fatal("sC key missing")
+	}
+	if len(out[sC]) != 0 {
+		t.Fatalf("sC should be empty slice, got %v", out[sC])
+	}
+
+	if len(skips) != 1 {
+		t.Fatalf("跳过集合应只有 n2，got %+v", skips)
+	}
+	sk, ok := skips[n2]
+	if !ok || sk.ServerID != sA || sk.Reason == "" {
+		t.Fatalf("n2 的跳过记录不符: %+v ok=%v", sk, ok)
 	}
 }

@@ -1,6 +1,9 @@
 package service
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -66,6 +69,54 @@ func TestSettleUnderfundedQuarantines(t *testing.T) {
 	if err := e.row(ctx, `SELECT count(*) FROM ledger_transactions WHERE kind = 'commission_settled' AND source_type = ? AND source_id IN (SELECT id FROM commission_entries WHERE order_id = ?)`,
 		SourceCommissionEntry, o.OrderID).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("被隔离的条目记了 %d 笔解冻 err=%v", n, err)
+	}
+}
+
+type constraintLedger struct{ Ledger }
+
+func (c constraintLedger) Post(ctx context.Context, p ledgersvc.Posting) (uuid.UUID, error) {
+	return uuid.Nil, fmt.Errorf("%w: %w: 测试", ledgersvc.ErrBalanceConstraint, ledgersvc.ErrInsufficientBalance)
+}
+
+// 库约束兜底（ErrBalanceConstraint）时语句已失败、事务已作废：不能在同一事务里隔离条目，整笔回滚给下一轮重试。
+func TestSettleBalanceConstraintNoQuarantine(t *testing.T) {
+	e, ctx := newEnv(t)
+	admin := newUser(t, e, ctx)
+	setConfig(t, e, ctx, admin, 10, 0, "100.00", "every_order")
+	referrer, buyer := newUser(t, e, ctx), newUser(t, e, ctx)
+	refer(e, buyer, referrer)
+	o := newPaidOrder(t, e, ctx, buyer, "100.00")
+	if err := e.svc.OnOrderPaid(ctx, o); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.exec(ctx, `UPDATE commission_entries SET frozen_until = now() - interval '1 second' WHERE order_id = ?`, o.OrderID); err != nil {
+		t.Fatal(err)
+	}
+
+	e.svc.ledger = constraintLedger{Ledger: e.svc.ledger}
+
+	st, err := e.svc.SettleDue(ctx, SettleBatchDefault)
+	if !errors.Is(err, ledgersvc.ErrBalanceConstraint) {
+		t.Fatalf("应返回 ErrBalanceConstraint: %v", err)
+	}
+	if st.Failed < 1 {
+		t.Fatalf("st.Failed 应 >= 1: %+v", st)
+	}
+	if st.Quarantined != 0 {
+		t.Fatalf("st.Quarantined 应为 0: %+v", st)
+	}
+
+	var review bool
+	var status string
+	if err := e.row(ctx, `SELECT review_required, status FROM commission_entries WHERE order_id = ?`, o.OrderID).
+		Scan(&review, &status); err != nil {
+		t.Fatal(err)
+	}
+	if review {
+		t.Fatalf("条目不应转人工复核 review_required=%v", review)
+	}
+	if status != EntryPending {
+		t.Fatalf("条目状态应仍为 pending: %s", status)
 	}
 }
 

@@ -72,6 +72,31 @@ func TestOnlineDevicesOverviewPG(t *testing.T) {
 	}
 }
 
+// 在线设备总览只统计生效中（active）的订阅：刚到期的订阅即使窗口内还有在线记录也不出现。
+func TestOnlineDevicesSkipsExpiredPG(t *testing.T) {
+	e, ctx := newDevicesEnv(t)
+	e.clearAlive(t, ctx)
+	f := seedDevices(t, ctx, e)
+	expired := e.dSub(t, ctx, f.user, f.v, subOpts{Expired: true})
+	e.alive(t, ctx, f.n1, f.A.ID, "a1", 30*time.Second)
+	e.alive(t, ctx, f.n1, expired.ID, "x1", 30*time.Second)
+	e.alive(t, ctx, f.n2, expired.ID, "x2", 30*time.Second)
+
+	ov, err := e.svc.OnlineDevices(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := findOnlineDevice(ov.Devices, f.A.ID); !ok {
+		t.Fatal("active 订阅 A 应在总览里")
+	}
+	if _, ok := findOnlineDevice(ov.Devices, expired.ID); ok {
+		t.Fatal("已到期的订阅不应出现在总览里")
+	}
+	if len(ov.Devices) != 1 {
+		t.Fatalf("应只有 A 一行，得 %d", len(ov.Devices))
+	}
+}
+
 func TestOnlineDevicesWindowFollowsSettingPG(t *testing.T) {
 	e, ctx := newDevicesEnv(t)
 	e.clearAlive(t, ctx)

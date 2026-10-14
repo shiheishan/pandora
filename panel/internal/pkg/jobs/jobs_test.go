@@ -108,3 +108,44 @@ func TestMiddlewareReturnsHandlerError(t *testing.T) {
 func TestZapLoggerIsAsynqLogger(t *testing.T) {
 	var _ asynq.Logger = ZapLogger{zap.NewNop().Sugar()}
 }
+
+func TestPeriodicTaskPayloadStable(t *testing.T) {
+	t1 := newPeriodicTask("demo:tick")
+	t2 := newPeriodicTask("demo:tick")
+	if string(t1.Payload()) != string(t2.Payload()) {
+		t.Fatalf("payloads not equal: %q vs %q", t1.Payload(), t2.Payload())
+	}
+	if reqID := payloadReqID(t, t1); reqID != "" {
+		t.Fatalf("expected empty req_id in payload, got %q", reqID)
+	}
+	var got payload
+	if err := Decode(t1, &got); err != nil {
+		t.Fatalf("Decode failed: %v", err)
+	}
+}
+
+func TestPeriodicTaskFreshReqIDPerRun(t *testing.T) {
+	task := newPeriodicTask("demo:tick")
+	var id1, id2 string
+	if err := run(t, task, func(ctx context.Context, _ *asynq.Task) error {
+		id1 = reqid.From(ctx)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(t, task, func(ctx context.Context, _ *asynq.Task) error {
+		id2 = reqid.From(ctx)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !reqid.Valid(id1) {
+		t.Fatalf("run 1 got invalid req_id %q", id1)
+	}
+	if !reqid.Valid(id2) {
+		t.Fatalf("run 2 got invalid req_id %q", id2)
+	}
+	if id1 == id2 {
+		t.Fatalf("expected different req_ids, got %q == %q", id1, id2)
+	}
+}

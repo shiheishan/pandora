@@ -6,6 +6,7 @@ paths:
 # 节点模块：编排、下发与会话
 
 ## 通道与装配
+- 签安装令牌（`IssueBootstrapToken`）带幂等认领时在业务事务里 `CompleteUnreplayable(201)`：响应含令牌明文，不许落进幂等表；端口经 `UseIdempotency` 装配，没装配时带认领的签发失败关闭。
 - 节点只走 gRPC：`EnrollmentService.Enroll`（首次接入）与 `ControlService.Session`（mTLS 双向流），实现见 `panel/internal/module/node/grpc/`；业务在 `service/session*.go`、`session_store.go`、`session_inbound.go`。不再有 UniProxy HTTP、Ed25519 签名心跳、节点 SSE。
 - 会话管理器在启动时装配：`NewSessions` → `UseSessions`；`serve` 里 `go m.Run(ctx)`，gRPC `GracefulStop` 前先 `Sessions.Shutdown`（`service/session.go` 文件头注释）。
 - 节点日志的 `server_id` 只由鉴权拦截器挂到流 ctx 的 logger 上（`grpc/interceptors.go` 的 `authorize`）；`control.go` 的 `withStreamLogger` 只管 req_id，会话层只加 `session_id`，不要再 `With` 一次 server_id。
@@ -31,6 +32,7 @@ paths:
 - 合并只有 `mergeRouting`（`service/routing.go`）：层序节点私有 → 各路由组（`sort_order, id`）→ 全局；规则按层拼接，出站从低到高同 tag 覆盖且保留首次位置。读层用 `nodeRoutingLayers`（`service/routing_layers.go`）。下发配置用 `ServerConfigs`（`service/config_docs.go`），不要另写合并。
 - 内置出站 `direct` / `block` 保存时经 `canonicalRouteTag` 规范成小写；自定义 tag 大小写敏感。
 - 写路由用 `refuseNewDangling`：只拒本次新造成的悬空引用（`service/routing_write.go`）。
+- 单个节点的文档生成失败只跳过该节点（`assembleServerConfigs` 返回跳过集合），同批其余服务器与节点照发；不要改回整批失败。被跳过的节点不在下发的文档里，节点端会停掉它的入站直到配置修好。ERROR 只在下发路径记（`ServerConfigs`，供配置纪元与建流对齐）；只读路径（节点列表、`ConfigLaggingCount`）调 `serverConfigsWithSkips` 不记日志：列表把这些节点显示为 failed（「面板生成配置失败：…」），落后计数算上它们。
 
 ## 同机端口（先到先得）
 - L4 唯一口径：`protocol.ListenL4` = 写入 `nodes.listen_l4` = pdnd `kernel/port_claims.go`（`protocol/port_l4.go`、`protocol/port_l4_test.go`）。
@@ -46,6 +48,7 @@ paths:
 - 只扣当前名单成员（`RosterMembership`）；名单外与不合规条目留档、计 `Invalid`/`Unlisted`，不拒整份。遇 `40P01`/`40001` 整笔重试最多 `trafficRetryAttempts`（3）次。
 
 ## 设备窗口与 strict 名单
+- 改设备策略（`SetDevicePolicy`）只在 settings 报告值真的变了时 `MarkUsersChanged`；在线设备总览 `OnlineDevices` 只统计 active 订阅。
 - 在线统计窗口只读 `settings` 的 `DevicePolicy` / `ValidDeviceWindow`（`service/devices.go`）；strict 超限集合只由任务 `RecheckStrictDevices` 写 Redis `node:devices_strict_set`，`poolRosters` 只读，不在会话里按在线表现算。
 
 ## 并发与单进程假设
