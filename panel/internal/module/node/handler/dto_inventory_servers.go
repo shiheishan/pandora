@@ -101,7 +101,6 @@ type serversResponse struct {
 type serverNodeResponse struct {
 	ID                uuid.UUID  `json:"id"`
 	Name              string     `json:"name"`
-	Status            string     `json:"status"`
 	ServingStatus     string     `json:"serving_status"`
 	NodeType          *string    `json:"node_type"`
 	DisplayName       *string    `json:"display_name"`
@@ -175,7 +174,6 @@ func serverNodeFrom(n service.ServerNode) serverNodeResponse {
 	return serverNodeResponse{
 		ID:                n.ID,
 		Name:              n.Name,
-		Status:            n.ServingStatus,
 		ServingStatus:     n.ServingStatus,
 		NodeType:          n.NodeType,
 		DisplayName:       n.DisplayName,

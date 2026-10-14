@@ -125,7 +125,7 @@ export function NodeOps({ node, onGone }: { node: NodeRow; onGone: () => void })
   return (
     <div className={css.stackLg}>
       {canActivate(node) && (
-        <Action title="上线" detail={`节点已接入（生命周期 ${node.status}），上线后进入服务，所在服务器一并就绪。之后按正常启停管理。`}>
+        <Action title="上线" detail="节点还是草稿。上线后进入服务，所在服务器一并就绪。之后按正常启停管理。">
           <Button size="sm" variant="primary" busy={activate.isPending} onClick={() => activate.mutate()}>
             上线
           </Button>
@@ -154,7 +154,7 @@ export function NodeOps({ node, onGone }: { node: NodeRow; onGone: () => void })
       <Action
         title={enabling ? '启用节点' : '停用节点'}
         detail={enabling ? '启用后心跳正常就开始下发给用户。要求服务器就绪、协议通过校验。' : '停用后不再下发给用户，可随时恢复。'}
-        blocked={retired ? '已退役，不能再启用' : canActivate(node) ? '节点还在接入尾段，先用上面的「上线」' : !canTransition(node.serving_status, toggleTo) ? '当前状态不能直接切换' : null}
+        blocked={retired ? '已退役，不能再启用' : canActivate(node) ? '草稿节点用上面的「上线」' : !canTransition(node.serving_status, toggleTo) ? '当前状态不能直接切换' : null}
       >
         <Button size="sm" busy={toggle.isPending} onClick={() => (enabling ? toggle.mutate() : setConfirm('toggle'))}>
           {enabling ? '启用' : '停用'}
@@ -165,7 +165,7 @@ export function NodeOps({ node, onGone }: { node: NodeRow; onGone: () => void })
           退役
         </Button>
       </Action>
-      <Action title="删除节点" detail="从列表移除，名字可以复用；历史流量与审计保留。在服务中的节点要先停用或退役。" blocked={node.serving_status === 'active' ? '节点还在服务中，先停用或退役' : null}>
+      <Action title="删除节点" detail="从列表移除，名字可以复用；历史流量与审计保留。在服务或已停用的节点要先退役。" blocked={node.serving_status === 'active' || node.serving_status === 'disabled' ? '节点还在服务或已停用，先退役再删除' : null}>
         <Button size="sm" className={css.dangerButton} busy={remove.isPending} onClick={() => setConfirm('delete')}>
           删除
         </Button>

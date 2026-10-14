@@ -183,7 +183,6 @@ type nodeRowResponse struct {
 	NodeNo            int64                     `json:"node_no"`
 	RowVersion        int64                     `json:"row_version"`
 	Name              string                    `json:"name"`
-	Status            string                    `json:"status"`
 	ServingStatus     string                    `json:"serving_status"`
 	ServerID          *uuid.UUID                `json:"server_id"`
 	ServerName        *string                   `json:"server_name"`
@@ -250,7 +249,6 @@ type adminNodeResponse struct {
 	Name                  string          `json:"name"`
 	ServerID              *uuid.UUID      `json:"server_id"`
 	PoolID                *uuid.UUID      `json:"pool_id"`
-	Status                string          `json:"status"`
 	ServingStatus         string          `json:"serving_status"`
 	NodeType              *string         `json:"node_type"`
 	ServerHost            *string         `json:"server_host"`
@@ -321,7 +319,6 @@ func nodeRowFrom(r service.NodeRow) nodeRowResponse {
 		NodeNo:            r.NodeNo,
 		RowVersion:        r.RowVersion,
 		Name:              r.Name,
-		Status:            r.ServingStatus,
 		ServingStatus:     r.ServingStatus,
 		ServerID:          r.ServerID,
 		ServerName:        r.ServerName,
@@ -399,7 +396,6 @@ func adminNodeFrom(n service.AdminNode) adminNodeResponse {
 		Name:                  n.Name,
 		ServerID:              n.ServerID,
 		PoolID:                n.PoolID,
-		Status:                n.ServingStatus,
 		ServingStatus:         n.ServingStatus,
 		NodeType:              n.NodeType,
 		ServerHost:            n.ServerHost,

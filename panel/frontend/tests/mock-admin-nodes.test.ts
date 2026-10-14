@@ -287,41 +287,41 @@ describe('mock api · admin nodes · phase 4 step 3 (R104 R105 R106 R107 R108)',
     expect(cleared.reality_settings.private_key).toBeNull()
   })
 
-  it('R108/R113: activate walks an attesting node to active, readies its server, replays, and refuses others with 409', async () => {
+  it('R108/R113: activate takes a draft node to active, readies its server, replays, and refuses others with 409', async () => {
     const n = (await list()).find((x) => x.name === '大阪 01（待上线）')!
-    expect(n.status).toBe('attesting')
+    expect(n.serving_status).toBe('draft')
     const res = await call('POST', `/v1/nodes/${n.id}/activate`, { row_version: n.row_version }, 'act-1')
     expect(res.status).toBe(200)
     const body = adminNodeSchema.parse(await res.json())
-    expect(body).toMatchObject({ status: 'active', serving_status: 'active', row_version: n.row_version + 1 })
+    expect(body).toMatchObject({ serving_status: 'active', row_version: n.row_version + 1 })
     // R113：池绑着套餐，没有提示时不出现 warnings 这个键
     expect(body).not.toHaveProperty('warnings')
     // 同键重放拿到同一结果；已是 active 再上线是 200 不改动，且先于版本号判断（带过期版本号也回 200）
     expect(adminNodeSchema.parse(await (await call('POST', `/v1/nodes/${n.id}/activate`, { row_version: n.row_version }, 'act-1')).json())).toEqual(body)
     expect((await call('POST', `/v1/nodes/${n.id}/activate`, { row_version: n.row_version }, 'act-2')).status).toBe(200)
     // 无池的在役节点：200 并带「未划入节点池」提示
-    const noPool = (await list()).find((x) => x.pool_id === null && x.status === 'active')!
+    const noPool = (await list()).find((x) => x.pool_id === null && x.serving_status === 'active')!
     const warned = adminNodeSchema.parse(await (await call('POST', `/v1/nodes/${noPool.id}/activate`, { row_version: noPool.row_version }, 'act-5')).json())
     expect(warned.warnings).toEqual(['未划入节点池，不服务任何用户'])
     // 首次搭建：池还没绑套餐，上线成功并带提示
     const fresh = (await list()).find((x) => x.name === '大阪 02（新池待上线）')!
     const unbound = adminNodeSchema.parse(await (await call('POST', `/v1/nodes/${fresh.id}/activate`, { row_version: fresh.row_version }, 'act-8')).json())
-    expect(unbound).toMatchObject({ status: 'active', warnings: ['所在节点池没有绑定任何套餐，暂时不服务任何用户'] })
+    expect(unbound).toMatchObject({ serving_status: 'active', warnings: ['所在节点池没有绑定任何套餐，暂时不服务任何用户'] })
     // 版本号非法先回 422（httpx.Invalid）
     expect((await call('POST', `/v1/nodes/${n.id}/activate`, { row_version: 0 }, 'act-6')).status).toBe(422)
     const srv = serversResponse.parse(await (await call('GET', '/v1/servers')).json()).servers.find((s) => s.id === n.server_id)!
     expect(srv.status).toBe('ready')
     // 版本冲突、终态
     const retired = (await list()).find((x) => x.serving_status === 'retired')!
-        const refused = await call('POST', `/v1/nodes/${retired.id}/activate`, { row_version: retired.row_version }, 'act-4')
+    const refused = await call('POST', `/v1/nodes/${retired.id}/activate`, { row_version: retired.row_version }, 'act-4')
     expect(refused.status).toBe(409)
-    expect(((await refused.json()) as { error: { message: string } }).error.message).toContain('retired')
+    expect(((await refused.json()) as { error: { message: string } }).error.message).toContain('已退役')
     // 过期版本号对未上线节点回 409
-    const pending = (await list()).find((x) => x.status === 'draft')!
+    const pending = (await list()).find((x) => x.serving_status === 'draft' && x.identity_serial === null)!
     expect((await call('POST', `/v1/nodes/${pending.id}/activate`, { row_version: pending.row_version + 9 }, 'act-3')).status).toBe(409)
-    // 还在接入：同版本号回 409 并说「还没完成接入」
+    // 没接入的草稿：同版本号回 409 并说服务器还没接入
     const early = await call('POST', `/v1/nodes/${pending.id}/activate`, { row_version: pending.row_version }, 'act-7')
-    expect(((await early.json()) as { error: { message: string } }).error.message).toContain('还没完成接入')
+    expect(((await early.json()) as { error: { message: string } }).error.message).toContain('还没接入')
   })
 
   it('W2: delivery notes follow the subscription rule, and a serving node cannot drop its pool', async () => {

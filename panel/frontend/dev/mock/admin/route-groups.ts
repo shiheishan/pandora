@@ -63,7 +63,7 @@ export function danglingRefs(nodes: readonly RoutedNode[]): Set<string> {
     }
   }
   for (const n of nodes) {
-    if (n.status === 'destroyed') continue
+    if (n.deleted) continue
     const seen = new Set([...visibleTagsForNode(n.id), ...n.routing.outbounds.map((o) => o.tag)])
     for (const r of n.routing.routes) {
       const tag = text(r.outbound_tag)
@@ -110,7 +110,7 @@ const bump = (g: RouteGroup) => {
   g.row_version += 1
   g.updated_at = now()
 }
-const serving = (n: RoutedNode) => n.status !== 'retired' && n.status !== 'destroyed' && n.serving_status !== 'retired'
+const serving = (n: RoutedNode) => !n.deleted && n.serving_status !== 'retired'
 
 function normalizeIds(raw: unknown, field: string): string[] | MockResult {
   const ids = Array.isArray(raw) ? raw : []
@@ -151,7 +151,7 @@ export function routeGroupRoutes(nodes: RoutedNode[]): Record<string, MockRoute>
     routeGroups[1]!.members = nodes.filter((n) => n.name.startsWith('东京')).map((n) => n.id)
   }
   const findGroup = (id: string | undefined) => (id && UUID.test(id) ? routeGroups.find((g) => g.id === id) : undefined)
-  const findNode = (id: string | undefined) => nodes.find((n) => n.id === id && n.status !== 'destroyed')
+  const findNode = (id: string | undefined) => nodes.find((n) => n.id === id && !n.deleted)
   const live = (ids: readonly string[]) => nodes.filter((n) => ids.includes(n.id) && serving(n)).length
 
   return {

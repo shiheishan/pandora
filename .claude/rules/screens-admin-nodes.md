@@ -18,7 +18,8 @@ paths:
 
 - 保留规则 5：只有从未部署过的草稿（draft / disabled、无心跳、无身份）能迁移，其余引导「复制到新服务器再退役」。
 - 节点列表一次取 1000 条并总带 `include_retired=1`：「全部」里藏掉已退役是前端筛选的事，刚退役的节点抽屉还要能继续删除。
-- 新节点接入完成后停在 attesting 等接入尾段，抽屉「操作 › 上线」（activate）一步推到 active 并让服务器就绪；此时「启用」置灰并指向「上线」。
+- 节点只有 `serving_status` 一个状态（接口里没有 `status`）。草稿节点用抽屉「操作 › 上线」（activate）一步推到 active 并让服务器就绪（服务器没就绪也能用）；草稿时「启用」置灰并指向「上线」。停用后再恢复用「启用」（要求服务器已就绪）。
+- 删除只许 draft 或 retired；在役、停用的按钮置灰，提示先退役（后端 422 同口径）。
 - 节点是否下发给用户直接显示后端的 `delivered_to_users` / `delivery_note`（无池节点不服务任何用户），不要按 `pool_id` 另判。
 - 批量启停整批有一条非法后端就整批 409，所以只提交能转的，其余计数告诉管理员（`batchPlan`）。
 - 服务器只有 draft / ready / draining / maintenance / retired 五态；卡片「标记维护」发 `draining`（显示「维护中」），maintenance 是进一步停机；完整状态走详情里的合法边下拉，`infra.ts` 与 mock 的状态边表照后端 `serverStatusTransitions` 原样写，`infra.test.ts` 逐边钉住。

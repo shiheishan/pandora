@@ -40,7 +40,7 @@ export interface InfraNode {
   node_no: number
   name: string
   display_name: string | null
-  status: string
+  deleted: boolean
   serving_status: string
   server_id: string | null
   pool_id: string | null
@@ -301,7 +301,7 @@ let danglingOf: (nodes: readonly InfraNode[]) => Set<string> = (nodes) => {
   const out = new Set<string>()
   const global = new Set(globalRouting.outbounds.map((o) => o.tag))
   for (const n of nodes) {
-    if (n.status === 'destroyed') continue
+    if (n.deleted) continue
     for (const r of n.routing.routes) {
       const tag = text(r.outbound_tag)
       if (!isBuiltin(tag) && !global.has(tag) && !n.routing.outbounds.some((o) => o.tag === tag)) out.add(`节点 ${n.display_name ?? n.name} → ${tag}`)
@@ -322,11 +322,11 @@ const revisionOf = () => createHash('sha256').update(JSON.stringify({ outbounds:
 // 节点存储由 nodes.ts 经 infraRoutes 交进来；按池统计的在线节点数给套餐假后端用，
 // 与 GET v1/node-pools 的 active_nodes 同一口径（生命周期 active 且已定协议）
 let nodeStore: readonly InfraNode[] = []
-export const activeNodesInPool = (poolId: string): number => nodeStore.filter((n) => n.pool_id === poolId && n.status === 'active' && n.node_type).length
+export const activeNodesInPool = (poolId: string): number => nodeStore.filter((n) => n.pool_id === poolId && n.serving_status === 'active' && n.node_type).length
 
 export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
   nodeStore = nodes
-  const live = () => nodes.filter((n) => n.status !== 'destroyed')
+  const live = () => nodes.filter((n) => !n.deleted)
   return {
     // ---- 全局路由（静态段 routing 先于 /nodes/:id 系列）----
     'GET /v1/nodes/routing': (ctx) => {
@@ -356,7 +356,7 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
           Object.assign(globalRouting, prev)
           return err(409, 'conflict', `要删除的全局出站仍被规则引用：${fresh.join('、')}`)
         }
-        const affected = live().filter((n) => n.status !== 'retired' && n.serving_status !== 'retired').length
+        const affected = live().filter((n) => n.serving_status !== 'retired').length
         return { status: 200, body: { ok: true, revision: revisionOf(), affected_nodes: affected } }
       })
     },
@@ -400,7 +400,7 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
       const rows = nodes
         .filter((n) => n.server_id === s.id)
         .sort((a, b) => a.sort_order - b.sort_order)
-        .map((n) => ({ id: n.id, name: n.name, status: n.status, serving_status: n.serving_status, node_type: n.node_type, display_name: n.display_name, server_host: n.server_host, server_port: n.server_port, traffic_rate: n.traffic_rate, config_validated_at: n.node_type ? n.updated_at : null, last_heartbeat_at: n.last_heartbeat_at, created_at: n.created_at }))
+        .map((n) => ({ id: n.id, name: n.name, serving_status: n.serving_status, node_type: n.node_type, display_name: n.display_name, server_host: n.server_host, server_port: n.server_port, traffic_rate: n.traffic_rate, config_validated_at: n.node_type ? n.updated_at : null, last_heartbeat_at: n.last_heartbeat_at, created_at: n.created_at }))
       ctx.send(200, { nodes: rows, total: rows.length })
     },
     'PATCH /v1/servers/:id': async (ctx) => {
@@ -439,7 +439,7 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
       if (Object.keys(f).length) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', f)
       if (body.row_version !== s.row_version) return reply(ctx, serverConflict(s))
       if (!SERVER_EDGES[s.status]!.includes(to)) return ctx.fail(409, 'conflict', '不允许的服务器状态转换', { status: `${s.status} -> ${to}` })
-      if (to === 'ready' && !nodes.some((n) => n.server_id === s.id && n.serving_status === 'active' && n.node_type && n.status !== 'destroyed')) {
+      if (to === 'ready' && !nodes.some((n) => n.server_id === s.id && n.serving_status === 'active' && n.node_type && !n.deleted)) {
         return ctx.fail(409, 'conflict', '服务器没有通过协议校验且可服务的活动节点，不能进入 ready', { nodes: 'requires_valid_active_node' })
       }
       s.status = to
@@ -493,7 +493,7 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
         .map((p) => {
           const mine = nodes.filter((n) => n.pool_id === p.id)
           const members = mine
-            .filter((n) => n.status !== 'destroyed')
+            .filter((n) => !n.deleted)
             .sort((a, b) => a.sort_order - b.sort_order || a.node_no - b.node_no)
             .map((n) => ({ id: n.id, name: n.name, node_no: n.node_no }))
           return {

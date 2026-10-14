@@ -20,7 +20,6 @@ export const nodeRowSchema = z.object({
   node_no: z.number(),
   row_version: z.number(),
   name: z.string(),
-  status: z.string(),
   serving_status: z.enum(SERVING_STATUSES),
   server_id: uuid.nullable(),
   server_name: z.string().nullable(),
@@ -88,7 +87,6 @@ export const adminNodeSchema = z.object({
   name: z.string(),
   server_id: uuid.nullable(),
   pool_id: uuid.nullable(),
-  status: z.string(),
   serving_status: z.enum(SERVING_STATUSES),
   node_type: z.string().nullable(),
   server_host: z.string().nullable(),
@@ -178,7 +176,6 @@ export type Server = z.output<typeof serverSchema>
 const serverNodeSchema = z.object({
   id: uuid,
   name: z.string(),
-  status: z.string(),
   serving_status: z.string(),
   node_type: z.string().nullable(),
   display_name: z.string().nullable(),
