@@ -170,7 +170,7 @@ admin_reauth || true
 rpc=$(curl -sS -w '\n%{http_code}' -X POST "$ADM/v1/plans/complete" -H "$AH" -H 'Content-Type: application/json' \
   -H "Idempotency-Key: epay-plan-${STAMP}" \
   -d "{\"code\":\"epay-plan-${STAMP}\",\"name\":\"Epay Plan ${STAMP}\",\"visibility\":\"public\",\"traffic_gb\":1,\"pool_ids\":[\"${POOL_ID}\"],\"prices\":[{\"billing_interval\":\"month\",\"interval_count\":1,\"unit_amount\":990,\"currency\":\"CNY\",\"trial_days\":0}],\"publish\":true}")
-rpc_body=${rpc%$'\n'}; rpc_code=${rpc##*$'\n'}
+rpc_body=${rpc%$'\n'*}; rpc_code=${rpc##*$'\n'}
 PLAN_ID=$(echo "$rpc_body" | jqr "['plan']['id']")
 PRICE_ID=$(echo "$rpc_body" | jqr "['price_ids'][0]")
 PLAN_RV=$(echo "$rpc_body" | jqr "['plan']['row_version']")
@@ -191,7 +191,7 @@ DEV_CODE=$(echo "$r1" | jqr "['dev_code']" 2>/dev/null || true)
 
 r2h=$(curl -sS -w '\n%{http_code}' -X POST "$PUB/v1/auth/register/complete" -H 'Content-Type: application/json' \
   -d "{\"registration_token\":\"${RTOK}\",\"code\":\"${DEV_CODE:-}\",\"password\":\"${PASS}\"}")
-r2body=${r2h%$'\n'}; r2code=${r2h##*$'\n'}
+r2body=${r2h%$'\n'*}; r2code=${r2h##*$'\n'}
 USER_ID=$(echo "$r2body" | jqr "['user_id']")
 [ "$r2code" = "201" ] && [ -n "$USER_ID" ] && ok "用户已创建（201）" || bad "注册 complete 失败" "HTTP ${r2code} ${r2body}"
 
@@ -206,7 +206,7 @@ sec "2. 下单"
 r4h=$(curl -sS -w '\n%{http_code}' -X POST "$PUB/v1/orders" -H "$AUTH" -H 'Content-Type: application/json' \
   -H "Idempotency-Key: epay-order-${STAMP}" \
   -d "{\"plan_id\":\"${PLAN_ID}\",\"price_id\":\"${PRICE_ID}\",\"use_balance\":0}")
-r4=${r4h%$'\n'}; r4c=${r4h##*$'\n'}
+r4=${r4h%$'\n'*}; r4c=${r4h##*$'\n'}
 ORDER_ID=$(echo "$r4" | jqr "['order_id']"); ORDER_NO=$(echo "$r4" | jqr "['order_no']")
 PAYABLE=$(echo "$r4" | jqr "['payable_amount']"); CURRENCY=$(echo "$r4" | jqr "['currency']")
 [ "$r4c" = "201" ] && [ -n "$ORDER_ID" ] && [ "$PAYABLE" = "990" ] \
@@ -220,7 +220,7 @@ sec "3. 支付意图与收银台"
 #-------------------------------------------------------------------------------
 pay1=$(curl -sS -w '\n%{http_code}' -X POST "$PUB/v1/orders/${ORDER_ID}/pay" -H "$AUTH" -H 'Content-Type: application/json' \
   -d "{\"provider\":\"${EPAY_CODE}\",\"method\":\"alipay\"}")
-pay_body=${pay1%$'\n'}; pay_c=${pay1##*$'\n'}
+pay_body=${pay1%$'\n'*}; pay_c=${pay1##*$'\n'}
 REDIR=$(echo "$pay_body" | jqr "['redirect_url']")
 INTENT=$(echo "$pay_body" | jqr "['intent_id']")
 [ "$pay_c" = "201" ] && [ -n "$REDIR" ] && [ -n "$INTENT" ] && ok "支付意图已创建 ${INTENT}（201）" || bad "去支付失败" "HTTP ${pay_c} ${pay_body}"

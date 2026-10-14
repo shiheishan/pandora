@@ -192,7 +192,7 @@ weak=$(code -X POST "$PUB/v1/auth/register/complete" \
 r2h=$(curl -sS -w '\n%{http_code}' -X POST "$PUB/v1/auth/register/complete" \
   -H 'Content-Type: application/json' \
   -d "{\"registration_token\":\"${REG_TOKEN}\",\"code\":\"\",\"password\":\"${PASSWORD}\"}")
-r2body=${r2h%$'\n'}
+r2body=${r2h%$'\n'*}
 r2code=${r2h##*$'\n'}
 USER_ID=$(echo "$r2body" | jqr "['user_id']")
 [ "$r2code" = "201" ] && [ -n "$USER_ID" ] && ok "账号已创建 user_id=${USER_ID}（201）" || bad "注册失败 HTTP ${r2code}: ${r2body}"
@@ -220,7 +220,7 @@ if set_email_verification true; then
     -H 'Content-Type: application/json' \
     -d "{\"registration_token\":\"${VTOKEN}\",\"code\":\"000000\",\"password\":\"${PASSWORD}\"}")
   wrongcode=${rw##*$'\n'}
-  rwbody=${rw%$'\n'}
+  rwbody=${rw%$'\n'*}
   errcode=$(echo "$rwbody" | jqr "['error']['code']" 2>/dev/null || true)
   [ "$wrongcode" = "403" ] && [ "$errcode" = "forbidden" ] \
     && ok "错误验证码被拒（403 forbidden）" || bad "错误验证码返回 ${wrongcode}: ${rwbody}"
@@ -229,7 +229,7 @@ if set_email_verification true; then
     -H 'Content-Type: application/json' \
     -d "{\"registration_token\":\"${VTOKEN}\",\"code\":\"${VCODE}\",\"password\":\"${PASSWORD}\"}")
   rvccode=${rvc##*$'\n'}
-  rvcbody=${rvc%$'\n'}
+  rvcbody=${rvc%$'\n'*}
   [ "$rvccode" = "201" ] && [ -n "$(echo "$rvcbody" | jqr "['user_id']")" ] && ok "正确验证码完成注册（201）" || bad "正确验证码注册失败: ${rvcbody}"
 
   set_email_verification orig && MAIL_TOUCHED=0 && ok "邮箱验证已恢复原值" || bad "恢复邮箱验证失败"
@@ -391,7 +391,7 @@ r4h=$(curl -sS -w '\n%{http_code}' -X POST "$PUB/v1/orders" \
   -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json' \
   -H "Idempotency-Key: ${IDEM}" \
   -d "{\"plan_id\":\"${PLAN_ID}\",\"price_id\":\"${PRICE_ID}\",\"use_balance\":0}")
-r4=${r4h%$'\n'}; r4c=${r4h##*$'\n'}
+r4=${r4h%$'\n'*}; r4c=${r4h##*$'\n'}
 ORDER_ID=$(echo "$r4" | jqr "['order_id']"); ORDER_NO=$(echo "$r4" | jqr "['order_no']")
 PAYABLE=$(echo "$r4" | jqr "['payable_amount']"); CURRENCY=$(echo "$r4" | jqr "['currency']")
 [ "$r4c" = "201" ] && [ -n "$ORDER_ID" ] && [ "$PAYABLE" = "990" ] \
@@ -543,7 +543,8 @@ for i in $(seq 1 $RL_PROBE); do
 done
 echo "$codes" | grep -q 429 && ok "认证接口触发限流 429" || bad "未触发限流：${codes}"
 
-nf=$(curl -sS "$PUB/v1/nonexistent-endpoint")
+# 用三段路径：两段的 /<前缀>/<令牌> 会落到订阅拉取路由，那里故意回不带信封的裸 404
+nf=$(curl -sS "$PUB/v1/nonexistent/endpoint")
 echo "$nf" | grep -qi 'stack\|goroutine\|/opt/\|\.go:' && bad "错误响应泄露内部信息" \
   || ok "404 不含堆栈与源码路径"
 echo "$nf" | grep -q 'request_id' && ok "错误响应带 request_id" || bad "错误响应缺 request_id"
