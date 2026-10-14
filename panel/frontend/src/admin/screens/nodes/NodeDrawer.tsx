@@ -1,11 +1,13 @@
 import { navigate } from '../../../core/router'
 import { Drawer, Empty, QueryView, Tabs, Tag, type QueryLike } from '../../../ui'
 import { addressLabel, heartbeatLabel, nodeState, protocolLabel } from './logic'
+import { NodeAccess } from './NodeAccess'
 import { NodeForm } from './NodeForm'
 import { NodeIdentity } from './NodeIdentity'
 import { NodeMonitor } from './NodeMonitor'
 import { NodeOps } from './NodeOps'
 import { NodeRouting } from './NodeRouting'
+import { NodeTraffic } from './NodeTraffic'
 import css from './nodes.module.css'
 import type { NodeDetail, NodeRow } from './schemas'
 
@@ -13,6 +15,8 @@ export const DRAWER_TABS = [
   ['metrics', '监控'],
   ['proto', '协议参数'],
   ['routing', '路由'],
+  ['traffic', '流量与标签'],
+  ['access', '中转与 ECH'],
   ['identity', '身份与令牌'],
   ['ops', '操作'],
 ] as const
@@ -76,6 +80,8 @@ export function NodeDrawer({ node, detail, tab, onClose }: { node: NodeRow | nul
             </QueryView>
           )}
           {tab === 'routing' && <NodeRouting nodeId={node.id} />}
+          {tab === 'traffic' && <NodeTraffic node={node} baseRate={detail.data?.traffic_rate ?? null} />}
+          {tab === 'access' && <NodeAccess node={node} />}
           {tab === 'identity' && <NodeIdentity node={node} />}
           {tab === 'ops' && <NodeOps node={node} onGone={onClose} />}
         </div>
