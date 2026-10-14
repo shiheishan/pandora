@@ -14,6 +14,7 @@ import {
   ordersSchema,
   paymentHistorySchema,
   providersSchema,
+  paymentSettingsSchema,
   providerWrittenSchema,
 } from '../src/admin/screens/billing/schemas'
 import { bearer, close, mockFetch, serve } from './mock-helpers'
@@ -441,10 +442,13 @@ describe('mock api · admin billing', () => {
 
   it('lists providers with card stats and toggles accepting_new (R66)', async () => {
     const list = providersSchema.parse(await json(await get(admin, 'payment-providers'))).providers
-    expect(list.map((p) => p.code)).toEqual(['epay', 'epay_backup', 'offline'])
+    expect(list.map((p) => p.code)).toEqual(['btcpay', 'epay', 'epay_backup', 'offline'])
+    const btcpay = list.find((p) => p.code === 'btcpay')!
+    expect(btcpay).toMatchObject({ has_webhook_secret: true, fee_percent: '1.00' })
+    expect(btcpay.notify_url.endsWith('/v1/webhooks/payments/btcpay')).toBe(true)
     expect(list.find((p) => p.code === 'epay')!.today.CNY).toBeGreaterThan(0)
     // 最低付款额（分）：易支付默认 ¥1.00，线下渠道没有这个概念回 0
-    expect(list.map((p) => [p.code, p.min_amount])).toEqual([['epay', 100], ['epay_backup', 100], ['offline', 0]])
+    expect(list.map((p) => [p.code, p.min_amount])).toEqual([['btcpay', 100], ['epay', 100], ['epay_backup', 100], ['offline', 0]])
     expect((await post(admin, 'payment-providers/nope/toggle', { enabled: true, accepting_new: true })).status).toBe(404)
     expect((await post(admin, 'payment-providers/epay/toggle', { enabled: true })).status).toBe(200)
     const epay = providersSchema.parse(await json(await get(admin, 'payment-providers'))).providers.find((p) => p.code === 'epay')!
@@ -503,6 +507,41 @@ describe('mock api · admin billing', () => {
     })
     expect((await put(admin, 'payment-providers/offline', { ...settings, merchant_id: 'm', key: 'k' }, 'prov-7')).status).toBe(409)
     expect((await put(admin, 'payment-providers/nope', { ...settings, merchant_id: 'm', key: 'k' }, 'prov-9')).status).toBe(404)
+  })
+
+  it('creates btcpay with webhook secret and manages payment callback base URL', async () => {
+    const settings = {
+      display_name: 'BTCPay 测试',
+      base_url: 'https://btcpay.example.com',
+      allow_private_host: false,
+      merchant_id: 'STORE2',
+      key: 'mock-key',
+      webhook_secret: 'mock-hook-2',
+      fee_fixed: 0,
+      fee_percent: '0',
+    }
+    const missingHook = await post(
+      admin,
+      'payment-providers',
+      { code: 'btcpay_x', adapter: 'btcpay', ...settings, webhook_secret: '' },
+      'btcpay-no-hook',
+    )
+    expect(missingHook.status).toBe(422)
+    expect(await json(missingHook)).toMatchObject({ error: { fields: { webhook_secret: '必填' } } })
+
+    await fetch(`${base}/__mock/expire-reauth`, { method: 'POST' })
+    const blocked = await put(admin, 'payment-settings', { notify_base_url: 'https://cb.example.test' })
+    expect(blocked.status).toBe(403)
+    expect(await blocked.json()).toMatchObject({ error: { code: 'reauth_required' } })
+    const reauth = await post(admin, 'auth/reauth', { password: MOCK_ACCOUNTS.admin.password })
+    admin = (await json<{ access_token: string }>(reauth)).access_token
+
+    const saved = paymentSettingsSchema.parse(
+      await json(await put(admin, 'payment-settings', { notify_base_url: 'https://cb.example.test' })),
+    )
+    expect(saved.effective_base).toBe('https://cb.example.test')
+    const after = providersSchema.parse(await json(await get(admin, 'payment-providers'))).providers.find((p) => p.code === 'btcpay')!
+    expect(after.notify_url).toBe('https://cb.example.test/v1/webhooks/payments/btcpay')
   })
 
   it('refuses a pending manual order below the minimum payment, but grants and offline receipts go through (F4)', async () => {

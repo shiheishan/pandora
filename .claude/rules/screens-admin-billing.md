@@ -7,7 +7,9 @@ paths:
 
 - 保留规则 6：设计稿的「欠费单」按后端「挂账」语义做——订单取消后才到账、续费或变更时订阅已结束、超额扣款，是平台欠用户的钱；「转入余额」是贷记，待处理合计按币种分开（分和美分不能相加）。不要改回「欠费 / 催缴」的语义。
 - 支付渠道开关只动 `accepting_new`（关 = 结账页不再显示、进行中的回调照常）；「完全停用」才动 `enabled`，放在「更多」菜单里。系统内置的 `offline` 渠道只读，不给开关（`model.ts` 的 `isOffline` / `toggleBody`）。
-- 新建 / 编辑渠道（`ProviderDialog.tsx`）只对易支付（`isEditableProvider`）：code 与类型建后不可改（PUT 请求体不带这两个键）；「最低付款额（元）」写进渠道 config 的 `min_amount`（分，范围 0.01–1000 元，默认 1.00，`parseMinAmount`），低于它的在线支付不发起，线下收款与赠送不受限，卡片备注里也写出来；留空 = 请求体不带 `min_amount`（后端：编辑保留原值、新建按 ¥1.00），前端从不发 0，说明文字随新建 / 编辑写「留空按默认」/「留空表示不改」（`minAmountHint`）；商户号与密钥只写不读，列表只有 `has_credentials`，编辑留空 = 不改；新建的渠道是「已启用、暂停收新单」，在卡片上打开收单才进结账页。后台改动在门户结账页最多 5 分钟后生效（各网关的渠道缓存），页面上写明了。
+- 新建 / 编辑渠道（`ProviderDialog.tsx`）对易支付、BTCPay Server、CoinPayments 三类在线渠道（`isEditableProvider`、`PROVIDER_ADAPTERS`）：新建时先选类型（`switchAdapter` 换类型保留编码、最低额与手续费），只有易支付有下单 / 查询路径与支付方式；凭据位的标签随类型（`credentialLabels`：商户号与密钥 / Store ID 与 API Key / Client ID 与 Client Secret），BTCPay 另有只写不读的 Webhook 密钥（列表只有 `has_webhook_secret`），CoinPayments 的地址可留空（后端用官方地址）。类型相关的说明在 `ProviderFields.tsx`。code 与类型建后不可改（PUT 请求体不带这两个键）；「最低付款额（元）」写进渠道 config 的 `min_amount`（分，范围 0.01–1000 元，默认 1.00，`parseMinAmount`），低于它的在线支付不发起，线下收款与赠送不受限，卡片备注里也写出来；留空 = 请求体不带 `min_amount`（后端：编辑保留原值、新建按 ¥1.00），前端从不发 0，说明文字随新建 / 编辑写「留空按默认」/「留空表示不改」（`minAmountHint`）；商户号与密钥只写不读，列表只有 `has_credentials`，编辑留空 = 不改；新建的渠道是「已启用、暂停收新单」，在卡片上打开收单才进结账页。后台改动在门户结账页最多 5 分钟后生效（各网关的渠道缓存），页面上写明了。
+- 用户手续费（00042）：每个在线渠道「固定（元）+ 比例（%）」，请求体 `fee_fixed` 是分、`fee_percent` 是字符串（`parseFeeFixed` / `parseFeePercent`），两项都 0 = 不收；卡片备注写「向用户加收 x% + ¥y」（`feeLabel`）。订单抽屉的支付记录在金额后写「含手续费 ¥x」（`surcharge_amount`）。
+- 回调地址：渠道卡显示该渠道的 `notify_url`；「回调地址」卡（`CallbackBaseCard.tsx`，`GET/PUT v1/payment-settings`，PUT 要近期重认证、不带幂等键）读写前缀，留空用站点地址。
 - 人工开单不提供「从余额扣除」（D-C-3 已决），弹窗里引导先到用户详情调账、再用赠送开单。
 - 人工开单的落点由管理员选（购买模型统一，2026-10-07）：选好用户、套餐、价格后调 `POST v1/orders/manual/preview`（只读，不要重新认证、不带幂等键），服务端按 `purchase.Options` 给出选项与默认值，页面（`PlacementPicker.tsx`、`placement.ts`）只负责把每项的结果写成人话，不重算规则、不算钱。
   - 选项：续一期（同款，生效中的按到期从早到晚，再接过期 30 天内的）、恢复并改成 P、另开一份、把某份换成 P。每项写明到期日变化、剩余价值去向与链接是否变化。

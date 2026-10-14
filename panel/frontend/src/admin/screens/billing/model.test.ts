@@ -15,7 +15,9 @@ import {
   effectiveMethods,
   emptyAdjust,
   emptyManual,
+  credentialLabels,
   emptyProviderForm,
+  feeLabel,
   filterStatuses,
   isEditableProvider,
   isOrderFilter,
@@ -28,6 +30,8 @@ import {
   minAmountText,
   orderFacts,
   paymentLines,
+  parseFeeFixed,
+  parseFeePercent,
   parseMinAmount,
   pendingTotals,
   previewParams,
@@ -46,6 +50,7 @@ import {
   todayLocal,
   toggleBody,
   toggleMethod,
+  trimPercent,
 } from './model'
 import { adjustmentSchema, cancelledSchema, latePaymentsSchema, manualCreatedSchema, markedPaidSchema, orderDetailSchema, orderQueriedSchema, type OrderDetail, type PaymentHistory, type Provider } from './schemas'
 
@@ -136,12 +141,12 @@ describe('orders', () => {
   it('merges intents with their payments, offline receipts and refunds into one list', () => {
     const h: PaymentHistory = {
       payment_intents: [
-        { id: 'i1', provider_code: 'epay', provider_name: '聚合收银台', currency: 'CNY', amount: 2500, status: 'cancelled', provider_ref: null, failure_code: 'x', failure_message: '用户取消', expires_at: null, created_at: '2026-09-23T10:00:00Z', updated_at: '2026-09-23T10:00:00Z' },
-        { id: 'i2', provider_code: 'epay', provider_name: '聚合收银台', currency: 'CNY', amount: 2500, status: 'succeeded', provider_ref: 'EP1', failure_code: null, failure_message: null, expires_at: null, created_at: '2026-09-23T10:05:00Z', updated_at: '2026-09-23T10:05:00Z' },
+        { id: 'i1', provider_code: 'epay', provider_name: '聚合收银台', currency: 'CNY', amount: 2500, surcharge_amount: 0, status: 'cancelled', provider_ref: null, failure_code: 'x', failure_message: '用户取消', expires_at: null, created_at: '2026-09-23T10:00:00Z', updated_at: '2026-09-23T10:00:00Z' },
+        { id: 'i2', provider_code: 'epay', provider_name: '聚合收银台', currency: 'CNY', amount: 2500, surcharge_amount: 0, status: 'succeeded', provider_ref: 'EP1', failure_code: null, failure_message: null, expires_at: null, created_at: '2026-09-23T10:05:00Z', updated_at: '2026-09-23T10:05:00Z' },
       ],
       payments: [
-        { id: 'p1', payment_intent_id: 'i2', provider_code: 'epay', provider_name: '聚合收银台', provider_payment_id: 'TX9', currency: 'CNY', amount: 2500, fee_amount: 15, refunded_amount: 500, status: 'succeeded', method: null, paid_at: '2026-09-23T10:06:00Z' },
-        { id: 'p2', payment_intent_id: null, provider_code: 'offline', provider_name: '线下收款', provider_payment_id: 'offline:ICBC-1', currency: 'CNY', amount: 100, fee_amount: 0, refunded_amount: 0, status: 'succeeded', method: null, paid_at: '2026-09-23T11:00:00Z' },
+        { id: 'p1', payment_intent_id: 'i2', provider_code: 'epay', provider_name: '聚合收银台', provider_payment_id: 'TX9', currency: 'CNY', amount: 2500, surcharge_amount: 0, fee_amount: 15, refunded_amount: 500, status: 'succeeded', method: null, paid_at: '2026-09-23T10:06:00Z' },
+        { id: 'p2', payment_intent_id: null, provider_code: 'offline', provider_name: '线下收款', provider_payment_id: 'offline:ICBC-1', currency: 'CNY', amount: 100, surcharge_amount: 0, fee_amount: 0, refunded_amount: 0, status: 'succeeded', method: null, paid_at: '2026-09-23T11:00:00Z' },
       ],
       refunds: [{ id: 'r1', payment_id: 'p1', provider_refund_id: null, currency: 'CNY', amount: 500, reason: '补差', status: 'processing', entitlement_revoked: false, commission_reversed: false, failure_message: null, succeeded_at: null, created_at: '2026-09-23T12:00:00Z' }],
     }
@@ -268,6 +273,10 @@ describe('late payments, providers and adjustments', () => {
     default_method: 'alipay',
     allow_private_host: false,
     min_amount: 100,
+    fee_fixed: 0,
+    fee_percent: '0.00',
+    has_webhook_secret: false,
+    notify_url: 'https://pay.example.test/v1/webhooks/payments/epay',
     today: {},
     success_rate_24h: null,
     last_callback_at: null,
@@ -302,6 +311,9 @@ describe('late payments, providers and adjustments', () => {
     expect(effectiveMethods(provider({ methods: [], default_method: '' }))).toEqual([])
     expect(isEditableProvider(provider({}))).toBe(true)
     expect(isEditableProvider(provider({ code: 'offline', adapter: 'offline' }))).toBe(false)
+    expect(isEditableProvider(provider({ adapter: 'btcpay' }))).toBe(true)
+    expect(emptyProviderForm()).toMatchObject({ adapter: 'epay', fee_fixed: '0', fee_percent: '0', webhook_secret: '' })
+    expect(emptyProviderForm('btcpay')).toMatchObject({ display_name: 'BTCPay', methods: [], webhook_secret: '' })
     const legacy = providerFormFrom(provider({ methods: [], default_method: 'wxpay', submit_path: '', base_url: 'https://pay.example.com' }))
     expect(legacy).toMatchObject({ methods: ['wxpay'], default_method: 'wxpay', submit_path: '/submit.php', merchant_id: '', key: '' })
   })
@@ -340,6 +352,35 @@ describe('late payments, providers and adjustments', () => {
     // 文案和行为一致
     expect(minAmountHint('edit')).toContain('留空表示不改')
     expect(minAmountHint('create')).toContain('留空按默认 ¥1.00')
+  })
+
+  it('parses fees and builds btcpay bodies', () => {
+    expect(parseFeeFixed('')).toBe(0)
+    expect(parseFeeFixed('0.30')).toBe(30)
+    expect(parseFeeFixed('1000')).toBe(100_000)
+    expect(parseFeeFixed('1000.01')).toBeNull()
+    expect(parseFeeFixed('0.001')).toBeNull()
+    expect(parseFeePercent('')).toBe('0')
+    expect(parseFeePercent('2.5%')).toBe('2.5')
+    expect(parseFeePercent('100')).toBe('100')
+    expect(parseFeePercent('100.01')).toBeNull()
+    expect(trimPercent('2.50')).toBe('2.5')
+    expect(trimPercent('0.00')).toBe('0')
+    expect(feeLabel({ fee_fixed: 0, fee_percent: '0.00' })).toBe('')
+    expect(feeLabel({ fee_fixed: 150, fee_percent: '2.50' })).toBe('向用户加收 2.5% + ¥1.50')
+    const btcpay = {
+      ...emptyProviderForm('btcpay'),
+      code: 'b1',
+      base_url: 'https://btcpay.example.com',
+      merchant_id: 's1',
+      key: 'k1',
+      webhook_secret: 'hook',
+    }
+    expect(providerBody(btcpay, 'create')).toMatchObject({ adapter: 'btcpay', webhook_secret: 'hook' })
+    expect(providerBody(btcpay, 'create')).not.toHaveProperty('submit_path')
+    expect(providerProblems(btcpay, 'create', false, false).webhook_secret).toBeDefined()
+    const cp = { ...emptyProviderForm('coinpayments'), code: 'c1', merchant_id: 'm', key: 'k', base_url: '' }
+    expect(providerProblems(cp, 'create').base_url).toBeUndefined()
   })
 
   it('warns before submit from what preview says (due / below_minimum / min_payment), without reading channels', () => {

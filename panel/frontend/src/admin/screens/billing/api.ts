@@ -2,7 +2,7 @@ import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-quer
 import { useCallback } from 'react'
 import { useApi } from '../../../shell/runtime'
 import { usersSchema, type UserRow } from '../users/api'
-import { adjustmentsSchema, latePaymentsSchema, manualPreviewSchema, orderResponseSchema, ordersSchema, paymentHistorySchema, providersSchema, type LateStatus } from './schemas'
+import { adjustmentsSchema, latePaymentsSchema, manualPreviewSchema, orderResponseSchema, ordersSchema, paymentHistorySchema, paymentSettingsSchema, providersSchema, type LateStatus } from './schemas'
 
 export * from './schemas'
 
@@ -102,6 +102,15 @@ export function useProviders() {
   return useQuery({
     queryKey: [...BK, 'providers'],
     queryFn: ({ signal }) => api.get('v1/payment-providers', providersSchema, { signal }).then((r) => r.providers),
+  })
+}
+
+/** 支付回调地址前缀（GET v1/payment-settings） */
+export function usePaymentSettings() {
+  const api = useApi()
+  return useQuery({
+    queryKey: [...BK, 'payment-settings'],
+    queryFn: ({ signal }) => api.get('v1/payment-settings', paymentSettingsSchema, { signal }),
   })
 }
 
