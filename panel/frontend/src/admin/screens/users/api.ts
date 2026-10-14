@@ -75,7 +75,6 @@ const subscriptionSchema = z.object({
   current_period_end: time.nullable(),
   amount: int,
   currency: z.string(),
-  auto_renew: z.boolean(),
   quotas: z.array(quotaSchema),
   device_limit_override: count.nullable(),
   plan_max_devices: count.nullable(),

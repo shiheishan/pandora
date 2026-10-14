@@ -514,7 +514,6 @@ export function fulfil(o: Order, at: string): void {
     current_period_end: new Date(Date.parse(at) + (item.interval === 'year' ? 365 : 30 * (item.interval_count ?? 1)) * DAY).toISOString(),
     amount: o.total_amount,
     currency: o.currency,
-    auto_renew: false,
     traffic_limit: traffic,
     traffic_used: 0,
     device_limit_override: null,

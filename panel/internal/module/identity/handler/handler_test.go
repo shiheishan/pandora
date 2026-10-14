@@ -401,7 +401,7 @@ func TestAdminUserJSONKeys(t *testing.T) {
 	s0, _ := subs[0].(map[string]any)
 	assertKeys(t, s0,
 		"id", "label", "plan_name", "plan_version", "status", "current_period_start", "current_period_end",
-		"amount", "currency", "auto_renew", "quotas", "device_limit_override", "plan_max_devices",
+		"amount", "currency", "quotas", "device_limit_override", "plan_max_devices",
 		"online_devices", "pack_remaining_bytes",
 	)
 	if s0["amount"] != float64(1234) {
