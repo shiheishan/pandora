@@ -7,7 +7,7 @@ import { readSharedTheme } from './mock/appearance-share.ts'
 import { adminWritesEnabled, onSwitchChanged } from './mock/admin/security.ts'
 import { PORTAL_MODULES } from './mock/portal/index.ts'
 import { consumeQuickLogin } from './mock/quick-login.ts'
-import { findRoute, type AnonContext, type Json, type MockApp, type MockContext, type MockRaw, type MockResult, type MockUser } from './mock/types.ts'
+import { findRoute, matchPattern, type AnonContext, type Json, type MockApp, type MockContext, type MockRaw, type MockResult, type MockUser } from './mock/types.ts'
 
 // ---------------------------------------------------------------------------
 // 形状以 panel/internal/module/*/handler 的 Go 处理器为准。这里只放外壳接口与共用设施：
@@ -82,10 +82,24 @@ interface Replay {
   result: MockResult | null
 }
 
-/** middleware.adminWriteExempt：只读模式下仍放行 GET 类、POST v1/switches/*、v1/auth/*、v1/me/password */
+/**
+ * 与 Go settings/handler/middleware.go 的 adminWriteAllowlist 逐条相同（路由模板，去掉 /v1 前缀），
+ * 守卫是 Go 的 TestAdminWriteAllowlistMatchesMock。GET 类一律放行。
+ */
+const ADMIN_WRITE_ALLOWLIST = [
+  'POST /auth/login',
+  'POST /auth/refresh',
+  'POST /auth/logout',
+  'POST /auth/reauth',
+  'POST /me/password',
+  'POST /switches/:code',
+  'POST /mail/templates/preview',
+] as const
+
 function adminWriteExempt(method: string, path: string): boolean {
   if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return true
-  return (method === 'POST' && path.startsWith('/v1/switches/')) || path.startsWith('/v1/auth/') || path === '/v1/me/password'
+  const route = path.startsWith('/v1/') ? path.slice('/v1'.length) : path
+  return ADMIN_WRITE_ALLOWLIST.some((pattern) => matchPattern(pattern, method, route) !== null)
 }
 
 function send(res: ServerResponse, status: number, body?: unknown) {

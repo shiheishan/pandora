@@ -1,7 +1,7 @@
 // Package errs 是对外错误的唯一定义：封闭的错误码表、HTTP 状态和中性文案。
 //
 // 对外只给码和中文文案，内部原因只进日志。前端 core/api.ts 的 SERVER_ERROR_CODES
-// 与 Codes() 没有测试对齐，新增码两处同改。
+// 与 Codes() 由 TestServerErrorCodesMatchFrontend 对齐，新增码两处同改。
 package errs
 
 import (

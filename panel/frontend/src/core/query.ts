@@ -3,9 +3,8 @@ import type { ApiError } from './api'
 import { isApiError } from './api'
 
 // ---------------------------------------------------------------------------
-// 实时 topic：platform/realtime/listener.go 的 topicFor，外加 admin / public 的
-// tickets.go 直接发到用户频道的 ticket.updated，以及 admin handlers.go 降级开关
-// 切换后直接发到管理端频道的 switches.changed（R58）。事件只是「哪块该刷新」
+// 实时 topic：与 Go panel/internal/pkg/realtime/realtime.go 的 Topic* 常量逐个对应，
+// 守卫是 realtime 包的 TestRealtimeTopicsMatchFrontend。事件只是「哪块该刷新」
 // 的信号，不带业务内容；查询在 meta.topics 里声明自己关心哪些 topic，
 // 失效器按它精确失效，页面之间互不知道对方。
 // ---------------------------------------------------------------------------
@@ -16,7 +15,6 @@ export const REALTIME_TOPICS = [
   'plans.changed',
   'nodes.changed',
   'announcements.changed',
-  'data.changed',
   'ticket.updated',
   'switches.changed',
 ] as const

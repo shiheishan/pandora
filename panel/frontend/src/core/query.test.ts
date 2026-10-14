@@ -24,7 +24,7 @@ describe('createRealtimeInvalidator', () => {
     const client = new QueryClient()
     const cache = client.getQueryCache()
     cache.build(client, { queryKey: ['orders'], meta: { topics: ['orders.changed'] } }).setData(1)
-    cache.build(client, { queryKey: ['nodes'], meta: { topics: ['nodes.changed', 'data.changed'] } }).setData(1)
+    cache.build(client, { queryKey: ['nodes'], meta: { topics: ['nodes.changed', 'plans.changed'] } }).setData(1)
     cache.build(client, { queryKey: ['static'] }).setData(1)
     const stale = (key: string) => cache.find({ queryKey: [key] })!.state.isInvalidated
     const reset = () => cache.getAll().forEach((q) => q.setState({ isInvalidated: false }))

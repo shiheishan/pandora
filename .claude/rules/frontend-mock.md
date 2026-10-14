@@ -19,7 +19,7 @@ paths:
 - `idempotent` 与 Go 中间件一致：只重放 2xx，非 2xx 的同键同请求会重新执行。所以 `run` 里先校验，回 4xx 之前不要改任何状态
 - 带 raw 的结果（CSV 等）重放时只回 `Content-Type` 与 `Cache-Control`，与后端一致；只在首次响应里带的头放进 `MockRaw.headers`
 - 请求体照 Go 的 `DisallowUnknownFields` 拒绝多余字段，各模块已有现成的 `unknownField` / `readStrict` 辅助，前端字段拼错时能在这里暴露
-- 后台的 `admin.writes` 只读门挂在整棵 `/v1` 上、先于认证。豁免表 `adminWriteExempt` 与 Go `panel/internal/module/settings/handler/middleware.go` 的 `adminWriteExempt` 相同，Go 改了这里要跟着改
+- 后台的 `admin.writes` 只读门挂在整棵 `/v1` 上、先于认证。豁免表 `ADMIN_WRITE_ALLOWLIST`（`dev/mock-api.ts`）与 Go `panel/internal/module/settings/handler/middleware.go` 的 `adminWriteAllowlist` 逐条相同，守卫是同目录的 `TestAdminWriteAllowlistMatchesMock`
 - 路由按 `ADMIN_MODULES` / `PORTAL_MODULES` 的登记顺序、模块内按键的顺序匹配，先匹配先得（`types.ts` 的 `findRoute`）。字面段路由要排在同形的 `:param` 路由之前，例如 `admin/tickets.ts` 的 `GET /v1/tickets/assignees` 在 `:id` 之前
 - 跨模块的数据只有一份，各有属主：
   - 属主：用户与订阅归 `admin/users.ts`（`userStore`），订单归 `admin/billing-store.ts`，节点池与出站归 `admin/nodes-infra.ts`

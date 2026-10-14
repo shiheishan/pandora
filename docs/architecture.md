@@ -360,7 +360,7 @@ identity, auth ─► settings, audit
 | 框架 | gin。public 和 admin 各一个 `gin.Engine`；中间件链：reqid → 访问日志 → 恢复 → 安全头 → 超时 → 鉴权 → 域守卫 → 限流 → 路由级（登录要求、重认证、开关、幂等） |
 | req_id | 接受合法 UUID 形式的 `X-Request-ID`，否则生成 UUIDv7；写进 ctx、响应头、zap 字段、错误信封、gRPC metadata（`x-request-id`）、asynq 任务载荷（`req_id`）、审计行 |
 | 成功响应 | 直接返回 DTO（与现在相同，不包信封） |
-| 错误 | 一个 `errs.Error{Code, Status, Message, Fields}`。service 返回它或领域错误，handler 用 `c.Error(err)` 交给错误中间件统一写 `{"error":{code,message,fields?,request_id?}}`。未知错误一律回 500 `internal_error`，原因只写日志。15 个错误码不变；加一个测试，对齐 Go 的码表和前端的 `SERVER_ERROR_CODES` |
+| 错误 | 一个 `errs.Error{Code, Status, Message, Fields}`。service 返回它或领域错误，handler 用 `c.Error(err)` 交给错误中间件统一写 `{"error":{code,message,fields?,request_id?}}`。未知错误一律回 500 `internal_error`，原因只写日志。Go 的码表与前端的 `SERVER_ERROR_CODES` 由 `errs` 包的 `TestServerErrorCodesMatchFrontend` 对齐 |
 | DTO | 每个接口单独定义 `XxxRequest` / `XxxResponse`，放在 handler 包里；不把 model 或 service 结构直接序列化出去，也不把请求体直接解码进 service 的输入类型。JSON 字段名和形状与现在一致 |
 | 校验 | gin binding（go-playground/validator v10）做格式校验，失败回 422 `validation_failed`，`fields` 写中文提示；业务校验在 service 里做 |
 | 请求体 | 上限 1 MiB；`DisallowUnknownFields` |

@@ -39,5 +39,5 @@ paths:
 - SSE 只能经 `api.openStream` 用 fetch 流读，不能用 `EventSource`：认证只有 Bearer 头，`EventSource` 带不上
 - 每个入口只开一条 SSE（后台在 `admin/EventsCapsule.tsx`，门户在 `portal/Shell.tsx`，都用 `useRealtime`）
   - 页面要随事件刷新，就在查询的 `meta.topics` 里声明，由 `createRealtimeInvalidator` 失效，不另开连接
-- `core/query.ts` 的 `REALTIME_TOPICS` 要与 Go 对齐：`panel/internal/pkg/realtime/realtime.go` 的 `Topic*` 常量（含 `ticket.updated`、`switches.changed`）。Go 新增 topic 时这里同步加
+- `core/query.ts` 的 `REALTIME_TOPICS` 要与 Go 对齐：`panel/internal/pkg/realtime/realtime.go` 的 `Topic*` 常量（含 `ticket.updated`、`switches.changed`）。Go 新增 topic 时这里同步加，守卫是 `realtime` 包的 `TestRealtimeTopicsMatchFrontend`
 - 令牌清空（退出、任一请求 401、其它标签页退出）时，`createAppRuntime` 会清空查询缓存，下一个登录的人看不到上一个人的数据。不要绕开 runtime 自建 `QueryClient`
