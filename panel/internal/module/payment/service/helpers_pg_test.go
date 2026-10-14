@@ -322,8 +322,13 @@ func (e *env) createIntent(t *testing.T, ctx context.Context, providerCode strin
 	return res
 }
 
-// fakeInbound 构造带 HMAC 签名的替身渠道 JSON 回调。
+// fakeInbound 构造带 HMAC 签名的替身渠道 JSON 回调（不报手续费）。
 func fakeInbound(eventID, eventType, paymentRef, orderNo string, cents int64) provider.Inbound {
+	return fakeInboundFee(eventID, eventType, paymentRef, orderNo, cents, 0)
+}
+
+// fakeInboundFee 同 fakeInbound，另带渠道手续费 feeCents（分），手续费一并签进签名。
+func fakeInboundFee(eventID, eventType, paymentRef, orderNo string, cents, feeCents int64) provider.Inbound {
 	body, _ := json.Marshal(map[string]any{
 		"event_id":   eventID,
 		"event_type": eventType,
@@ -331,11 +336,11 @@ func fakeInbound(eventID, eventType, paymentRef, orderNo string, cents int64) pr
 		"order_no":   orderNo,
 		"amount":     cents,
 		"currency":   "CNY",
-		"fee":        0,
+		"fee":        feeCents,
 		"method":     "alipay",
 	})
 	h := http.Header{}
-	h.Set("X-Aegis-Signature", fakeSign([]byte(fakeSecret), eventID, eventType, paymentRef, orderNo, cents, 0, "CNY"))
+	h.Set("X-Aegis-Signature", fakeSign([]byte(fakeSecret), eventID, eventType, paymentRef, orderNo, cents, feeCents, "CNY"))
 	return provider.Inbound{Method: http.MethodPost, Header: h, Body: body}
 }
 
