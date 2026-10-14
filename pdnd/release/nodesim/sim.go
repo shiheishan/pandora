@@ -44,17 +44,25 @@ type SimOptions struct {
 	// ReportInterval 是流量与在线的上报节拍（CI 用短的压缩时间），<=0 用 10 秒。面板 Welcome 里的 push_interval_sec 不采用。
 	ReportInterval time.Duration
 	// TrafficUsers 是每个节点每轮上报几个用户，<=0 用 5。
-	TrafficUsers int
-	Logger       *slog.Logger // nil 用 slog.Default()
+	TrafficUsers    int
+	Logger          *slog.Logger     // nil 用 slog.Default()
+	Now             func() time.Time // nil 用 time.Now
+	OmitStatusUsers bool             // 为真时 publish 不写 NodeStatus.Users
 }
 
 // simNode 是一个节点的本地镜像（只在 Run 的 goroutine 里访问）。
 type simNode struct {
-	nodeType      string
-	configSHA     string
-	rosterVersion string
-	users         map[int64]*nodev1.User
-	cursor        int
+	nodeType        string
+	configSHA       string
+	rosterVersion   string
+	rosterAppliedAt time.Time
+	fulls           int
+	deltas          int
+	history         []RosterApply
+	users           map[int64]*nodev1.User
+	cursor          int
+	uids            []int64  // 排好序的 uid 缓存，nil 表示要重算
+	uuids           []string // 排好序的 uuid 缓存，nil 表示要重算
 }
 
 // Sim 是一台模拟服务器的编排：全部状态只在 Run 的 goroutine 里改；Applied 的快照单独加锁。
@@ -64,6 +72,8 @@ type Sim struct {
 	log            *slog.Logger
 	reportInterval time.Duration
 	trafficUsers   int
+	now            func() time.Time
+	omitUsers      bool
 	startedAt      time.Time
 
 	connected      bool
@@ -95,13 +105,19 @@ func NewSim(o SimOptions) *Sim {
 	if log == nil {
 		log = slog.Default()
 	}
+	now := o.Now
+	if now == nil {
+		now = time.Now
+	}
 	return &Sim{
 		name:           o.Name,
 		board:          o.Board,
 		log:            log,
 		reportInterval: ri,
 		trafficUsers:   u,
-		startedAt:      time.Now(),
+		now:            now,
+		omitUsers:      o.OmitStatusUsers,
+		startedAt:      now(),
 		nodes:          make(map[string]*simNode),
 		heartbeatEvery: defaultHeartbeatEvery,
 	}
@@ -153,6 +169,7 @@ func (s *Sim) handleEvent(link Link, ev panel.Event, heartbeat *time.Timer) {
 	case panel.EventDisconnected:
 		s.connected = false
 		s.board.RecordError(s.name, fmt.Errorf("会话断开: %v", ev.Err))
+		s.board.Update(s.name, func(st *ServerStatus) { st.DisconnectedAt = s.now() })
 	case panel.EventTombstone:
 		s.onTombstone(ev.Reason)
 	}
@@ -160,6 +177,13 @@ func (s *Sim) handleEvent(link Link, ev panel.Event, heartbeat *time.Timer) {
 
 func (s *Sim) onWelcome(link Link, w *nodev1.Welcome, heartbeat *time.Timer) {
 	s.connected = true
+	t := s.now()
+	s.board.Update(s.name, func(st *ServerStatus) {
+		st.ConnectedAt = t
+		if st.FirstConnectedAt.IsZero() {
+			st.FirstConnectedAt = t
+		}
+	})
 	if w != nil {
 		s.board.Update(s.name, func(st *ServerStatus) {
 			st.Epoch++
@@ -245,6 +269,23 @@ func (s *Sim) sendConfigPhase(link Link, nodeID, sha string, phase nodev1.Config
 	}
 }
 
+func (n *simNode) setRoster(version, via string, at time.Time) {
+	if version == n.rosterVersion {
+		return
+	}
+	n.rosterVersion = version
+	n.rosterAppliedAt = at
+	n.history = append(n.history, RosterApply{Version: version, AppliedAt: at, Via: via})
+	if len(n.history) > rosterHistoryMax {
+		n.history = n.history[len(n.history)-rosterHistoryMax:]
+	}
+}
+
+func (n *simNode) invalidateUserCaches() {
+	n.uids = nil
+	n.uuids = nil
+}
+
 func (s *Sim) onUsersFull(link Link, full *panel.UsersFull) {
 	if full == nil || full.NodeID == "" {
 		return
@@ -260,7 +301,9 @@ func (s *Sim) onUsersFull(link Link, full *panel.UsersFull) {
 			n.users[u.GetUid()] = u
 		}
 	}
-	n.rosterVersion = full.Version
+	n.invalidateUserCaches()
+	n.fulls++
+	n.setRoster(full.Version, "full", s.now())
 	n.cursor = 0
 	if link.SendUsersAck(&nodev1.UsersAck{NodeId: full.NodeID, Version: full.Version, Ok: true}) {
 		s.board.Update(s.name, func(st *ServerStatus) { st.UsersAcks++ })
@@ -275,6 +318,9 @@ func (s *Sim) onUsersDelta(link Link, d *nodev1.UsersDelta) {
 	nodeID := d.GetNodeId()
 	toVer := d.GetToVersion()
 	n := s.nodes[nodeID]
+	if n != nil {
+		n.deltas++
+	}
 	if n == nil || n.rosterVersion == "" || d.GetFromVersion() != n.rosterVersion {
 		if link.SendUsersAck(&nodev1.UsersAck{
 			NodeId: nodeID, Version: toVer, Ok: false, ReasonCode: panel.UsersReasonVersionMismatch,
@@ -294,7 +340,8 @@ func (s *Sim) onUsersDelta(link Link, d *nodev1.UsersDelta) {
 			n.users[u.GetUid()] = u
 		}
 	}
-	n.rosterVersion = toVer
+	n.invalidateUserCaches()
+	n.setRoster(toVer, "delta", s.now())
 	if link.SendUsersAck(&nodev1.UsersAck{NodeId: nodeID, Version: toVer, Ok: true}) {
 		s.board.Update(s.name, func(st *ServerStatus) { st.UsersAcks++ })
 	}
@@ -400,7 +447,10 @@ func (s *Sim) buildTrafficAndOnline() ([]*nodev1.TrafficEntry, []*nodev1.OnlineE
 		if n == nil || len(n.users) == 0 {
 			continue
 		}
-		uids := sortedUIDs(n.users)
+		if n.uids == nil {
+			n.uids = sortedUIDs(n.users)
+		}
+		uids := n.uids
 		if len(uids) == 0 {
 			continue
 		}
@@ -496,13 +546,31 @@ func (s *Sim) publish() {
 			if n == nil {
 				continue
 			}
-			users := sortedUUIDs(n.users)
+			var users []string
+			if !s.omitUsers {
+				if n.uuids == nil {
+					n.uuids = sortedUUIDs(n.users)
+				}
+				if len(n.uuids) == 0 {
+					users = []string{}
+				} else {
+					users = append([]string(nil), n.uuids...)
+				}
+			}
+			var hist []RosterApply
+			if len(n.history) > 0 {
+				hist = append([]RosterApply(nil), n.history...)
+			}
 			st.Nodes[id] = &NodeStatus{
-				NodeType:      n.nodeType,
-				ConfigSHA256:  n.configSHA,
-				RosterVersion: n.rosterVersion,
-				UserCount:     len(users),
-				Users:         users,
+				NodeType:        n.nodeType,
+				ConfigSHA256:    n.configSHA,
+				RosterVersion:   n.rosterVersion,
+				RosterAppliedAt: n.rosterAppliedAt,
+				FullsReceived:   n.fulls,
+				DeltasReceived:  n.deltas,
+				RosterHistory:   hist,
+				UserCount:       len(n.users),
+				Users:           users,
 			}
 		}
 	})

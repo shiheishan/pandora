@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -142,3 +143,56 @@ func TestBoardConcurrent(t *testing.T) {
 type errString string
 
 func (e errString) Error() string { return string(e) }
+
+func TestSnapshotDeepCopyRosterHistory(t *testing.T) {
+	fixed := time.Date(2026, 7, 1, 8, 0, 0, 0, time.UTC)
+	b := NewBoard("", nil)
+	b.Update("s", func(s *ServerStatus) {
+		s.Nodes["n1"] = &NodeStatus{
+			RosterHistory: []RosterApply{{Version: "v1", AppliedAt: fixed, Via: "full"}},
+		}
+	})
+	snap := b.Snapshot()
+	snap.Servers["s"].Nodes["n1"].RosterHistory[0].Version = "mutated"
+	snap2 := b.Snapshot()
+	if snap2.Servers["s"].Nodes["n1"].RosterHistory[0].Version != "v1" {
+		t.Fatalf("Board 内 History 被快照修改污染: %v", snap2.Servers["s"].Nodes["n1"].RosterHistory)
+	}
+}
+
+func TestWriteOmitsZeroTimes(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "status.json")
+	b := NewBoard(path, nil)
+	b.Update("sim", func(s *ServerStatus) {
+		s.Enrolled = true
+	})
+	if err := b.Write(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, key := range []string{"connected_at", "first_connected_at", "disconnected_at", "roster_applied_at"} {
+		if strings.Contains(text, "\""+key+"\"") {
+			t.Fatalf("零值时间不应出现在 JSON: %s", key)
+		}
+	}
+
+	connAt := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
+	b.Update("sim", func(s *ServerStatus) {
+		s.ConnectedAt = connAt
+	})
+	if err := b.Write(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "\"connected_at\"") {
+		t.Fatal("设了 ConnectedAt 后 JSON 应含 connected_at")
+	}
+}

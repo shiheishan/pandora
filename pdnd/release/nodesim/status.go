@@ -8,13 +8,30 @@ import (
 	"github.com/aegispanel/nodeagent/panel"
 )
 
+// RosterApply 是一次名单版本变化：变成哪个版本、什么时候、经全量还是增量。
+type RosterApply struct {
+	Version   string    `json:"version"`
+	AppliedAt time.Time `json:"applied_at"`
+	Via       string    `json:"via"` // "full" 或 "delta"
+}
+
+// rosterHistoryMax 是每个节点保留的最近几次名单变化。
+const rosterHistoryMax = 8
+
 // NodeStatus 是一个节点在模拟器里的当前状态。
 type NodeStatus struct {
 	NodeType      string `json:"node_type"`
 	ConfigSHA256  string `json:"config_sha256"`
 	RosterVersion string `json:"roster_version"`
-	UserCount     int    `json:"user_count"`
+	// RosterAppliedAt 是名单版本最近一次变化（变成 RosterVersion）的时间；同版本重发不更新。
+	RosterAppliedAt time.Time `json:"roster_applied_at,omitzero"`
+	FullsReceived   int       `json:"fulls_received"`
+	DeltasReceived  int       `json:"deltas_received"`
+	// RosterHistory 是最近 rosterHistoryMax 次名单版本变化，旧的在前。
+	RosterHistory []RosterApply `json:"roster_history,omitempty"`
+	UserCount     int           `json:"user_count"`
 	// Users 是名单里各用户的 uuid（订阅的 proxy_uuid），升序；脚本据此判断某个用户在不在名单里。
+	// 启动参数 --status-users=false 时为 null（节点多、名单大时省掉写盘）。
 	Users []string `json:"users"`
 }
 
@@ -28,7 +45,12 @@ type ServerStatus struct {
 	// Epoch 是收到 Welcome 的次数（每建一条新流加一）。
 	Epoch     int    `json:"epoch"`
 	SessionID string `json:"session_id"`
-	ReleaseID string `json:"release_id"`
+	// FirstConnectedAt 是第一次收到 Welcome 的时间；ConnectedAt 是最近一次收到 Welcome 的时间（每条新流更新）。
+	FirstConnectedAt time.Time `json:"first_connected_at,omitzero"`
+	ConnectedAt      time.Time `json:"connected_at,omitzero"`
+	// DisconnectedAt 是最近一次已建立的流断开的时间。
+	DisconnectedAt time.Time `json:"disconnected_at,omitzero"`
+	ReleaseID      string    `json:"release_id"`
 	// Errors 是出错次数：接入失败、已建立的流断开、Tombstone、配置摘要不符或不是 JSON 对象。
 	Errors    int    `json:"errors"`
 	LastError string `json:"last_error"`
@@ -107,6 +129,9 @@ func copyNodeStatus(n *NodeStatus) *NodeStatus {
 	cp := *n
 	if n.Users != nil {
 		cp.Users = append([]string(nil), n.Users...)
+	}
+	if n.RosterHistory != nil {
+		cp.RosterHistory = append([]RosterApply(nil), n.RosterHistory...)
 	}
 	return &cp
 }
