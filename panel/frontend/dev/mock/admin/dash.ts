@@ -274,7 +274,7 @@ export const dash: MockModule = {
         state: 'degraded',
         components: [
           { key: 'postgres', state: 'ok', latency_ms: 3.2, metrics: { size_bytes: 3_418_000_000, connections: 23, max_connections: 200 } },
-          { key: 'valkey', state: 'ok', latency_ms: 0.4, metrics: {} },
+          { key: 'redis', state: 'ok', latency_ms: 0.4, metrics: {} },
           { key: 'node_fabric', state: 'warn', metrics: { total: 44, online: 41, config_lagging: 2 }, message: '3 个节点心跳超过 90 秒' },
           { key: 'payment_callbacks', state: 'ok', metrics: { pending: 0 } },
           { key: 'mail', state: 'warn', metrics: { queued: 214, retrying: 21, failed_total: 9 }, message: 'SMTP 连接超时，正在重试' },

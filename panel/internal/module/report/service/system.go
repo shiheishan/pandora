@@ -84,16 +84,16 @@ func (s *Service) buildComponents(ctx context.Context, now time.Time, db *Databa
 	pingErr := s.repo.Ping(ctx)
 	out = append(out, postgresComponent(pingErr, time.Since(start), db, dbMetrics))
 
-	vk := Component{Key: "valkey", State: StateUnknown, Metrics: map[string]any{}}
+	rc := Component{Key: "redis", State: StateUnknown, Metrics: map[string]any{}}
 	if s.deps.Redis != nil {
 		start = time.Now()
 		if err := s.deps.Redis.Ping(ctx); err != nil {
-			vk.State, vk.Message = StateDown, "Redis 不可达"
+			rc.State, rc.Message = StateDown, "Redis 不可达"
 		} else {
-			vk.State, vk.LatencyMS = StateOK, millis(time.Since(start))
+			rc.State, rc.LatencyMS = StateOK, millis(time.Since(start))
 		}
 	}
-	out = append(out, vk)
+	out = append(out, rc)
 
 	out = append(out, s.nodeFabricComponent(ctx, now))
 	out = append(out, s.paymentCallbacksComponent(ctx, now))

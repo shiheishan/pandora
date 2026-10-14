@@ -151,7 +151,7 @@ const queueMetrics = z.object({ queued: count.optional(), retrying: count.option
 const componentSchema = z.discriminatedUnion('key', [
   // postgres 的三项照抄 database 段：数据库状态读失败而 SELECT 1 成功时 Go 写进去的是 nil（system_components.go），所以可为 null
   z.object({ key: z.literal('postgres'), ...componentBase, metrics: z.object({ size_bytes: count.nullable().optional(), connections: count.nullable().optional(), max_connections: count.nullable().optional() }) }),
-  z.object({ key: z.literal('valkey'), ...componentBase, metrics: z.object({}) }),
+  z.object({ key: z.literal('redis'), ...componentBase, metrics: z.object({}) }),
   z.object({ key: z.literal('node_fabric'), ...componentBase, metrics: z.object({ total: count.optional(), online: count.optional(), config_lagging: count.optional() }) }),
   z.object({ key: z.literal('payment_callbacks'), ...componentBase, metrics: z.object({ pending: count.optional() }) }),
   z.object({ key: z.literal('mail'), ...componentBase, metrics: queueMetrics }),

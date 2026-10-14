@@ -105,7 +105,7 @@ func TestShapeSystemStatusComponents(t *testing.T) {
 		Database: &service.DatabaseStats{SizeBytes: 1, Connections: 1, MaxConnections: 1},
 		State:    "degraded",
 		Components: []service.Component{
-			{Key: "valkey", State: service.StateUnknown, Metrics: nil},
+			{Key: "redis", State: service.StateUnknown, Metrics: nil},
 			{Key: "postgres", State: service.StateOK, LatencyMS: &lat, Metrics: map[string]any{"size_bytes": 1}},
 		},
 	}}

@@ -235,7 +235,7 @@ func TestSystemStatusAllOK(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantKeys := []string{"postgres", "valkey", "node_fabric", "payment_callbacks", "mail", "telegram", "sse", "backup"}
+	wantKeys := []string{"postgres", "redis", "node_fabric", "payment_callbacks", "mail", "telegram", "sse", "backup"}
 	if len(out.Components) != 8 {
 		t.Fatalf("components len=%d", len(out.Components))
 	}
@@ -250,7 +250,7 @@ func TestSystemStatusAllOK(t *testing.T) {
 	if componentByKey(out.Components, "sse").Message != "实时推送未启用" {
 		t.Fatalf("sse message %q", componentByKey(out.Components, "sse").Message)
 	}
-	for _, k := range []string{"postgres", "valkey", "node_fabric", "payment_callbacks", "mail", "telegram", "backup"} {
+	for _, k := range []string{"postgres", "redis", "node_fabric", "payment_callbacks", "mail", "telegram", "backup"} {
 		if componentByKey(out.Components, k).State != StateOK {
 			t.Fatalf("%s state=%q want ok", k, componentByKey(out.Components, k).State)
 		}
@@ -296,11 +296,11 @@ func TestSystemStatusDegrades(t *testing.T) {
 			},
 		},
 		{
-			name: "valkey down",
+			name: "redis down",
 			mutate: func(e *testEnv, _ string) {
 				e.redis.err = errBoom
 			},
-			checkKey: "valkey", checkState: StateDown, wantState: "degraded",
+			checkKey: "redis", checkState: StateDown, wantState: "degraded",
 		},
 		{
 			name: "node_fabric warn",

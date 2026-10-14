@@ -300,7 +300,7 @@ type DatabaseStats struct {
 	MaxConnections int64
 }
 
-// Component 是一个组件的探测结果。Key 是 postgres、valkey、node_fabric、payment_callbacks、mail、telegram、sse、backup 之一（顺序固定）。
+// Component 是一个组件的探测结果。Key 是 postgres、redis、node_fabric、payment_callbacks、mail、telegram、sse、backup 之一（顺序固定）。
 // Metrics 的键与值由 handler 原样输出；LatencyMS 只在探测成功时有。
 type Component struct {
 	Key       string

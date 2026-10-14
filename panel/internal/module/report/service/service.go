@@ -140,7 +140,7 @@ type Activity interface {
 	ActivityByDay(ctx context.Context, from, to time.Time, a auditsvc.ActivityActions) ([]auditsvc.ActivityDay, error)
 }
 
-// Pinger 探测 Redis 是否可达（系统状态页的 valkey 组件），由 app 装配适配器实现。
+// Pinger 探测 Redis 是否可达（系统状态页的 redis 组件），由 app 装配适配器实现。
 type Pinger interface {
 	Ping(ctx context.Context) error
 }
