@@ -5,7 +5,7 @@ import css from './PlanCard.module.css'
 import { devicesText, moneyShort, planTraffic } from './purchase'
 
 /** 套餐卡的事实：每月流量、设备数、限速、3 个月价，后面跟后台写的卖点（R100） */
-export function planFacts(plan: Plan): string[] {
+function planFacts(plan: Plan): string[] {
   const month = priceFor(plan, '1m')
   const three = priceFor(plan, '3m')
   return [

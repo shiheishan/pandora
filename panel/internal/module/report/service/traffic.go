@@ -114,9 +114,8 @@ func (s *Service) loadNodeTraffic(ctx context.Context, q TrafficQuery) (NodeTraf
 		Returned: returned,
 		Other:    other,
 		Quality: TrafficQuality{
-			DuplicateReports: 0,
-			InvalidReports:   qual.InvalidReports,
-			InvalidEntries:   qual.InvalidEntries,
+			InvalidReports: qual.InvalidReports,
+			InvalidEntries: qual.InvalidEntries,
 		},
 	}, nil
 }
@@ -267,9 +266,8 @@ func (s *Service) loadUserTraffic(ctx context.Context, q TrafficQuery) (UserTraf
 		Returned: returned,
 		Other:    other,
 		Quality: TrafficQuality{
-			DuplicateReports: 0,
-			InvalidReports:   qual.InvalidReports,
-			InvalidEntries:   qual.InvalidEntries,
+			InvalidReports: qual.InvalidReports,
+			InvalidEntries: qual.InvalidEntries,
 		},
 	}, nil
 }

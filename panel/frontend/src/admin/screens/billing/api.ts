@@ -6,12 +6,12 @@ import { adjustmentsSchema, latePaymentsSchema, manualPreviewSchema, orderRespon
 
 export * from './schemas'
 
-export const BK = ['admin', 'billing'] as const
+const BK = ['admin', 'billing'] as const
 export const ORDERS_PAGE = 25
 export const LATE_PAGE = 25
 const orderTopics = ['orders.changed'] as const
 
-export interface OrdersParams {
+interface OrdersParams {
   q?: string
   /** 逗号分隔的后端状态（R63 多值白名单） */
   status?: string
@@ -63,7 +63,7 @@ export function useUserPick(q: string, enabled: boolean) {
   })
 }
 
-export interface ManualPreviewParams {
+interface ManualPreviewParams {
   user_id: string
   plan_id: string
   price_id: string

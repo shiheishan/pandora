@@ -2,7 +2,7 @@ import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
 import { useApi } from '../../../shell/runtime'
 
-export const CONTENT_KINDS = ['page', 'kb_article', 'tutorial', 'legal'] as const
+const CONTENT_KINDS = ['page', 'kb_article', 'tutorial', 'legal'] as const
 
 // Go contentPageResponse：category / summary / 客户端版本 / published_at 都是 omitempty，空即缺席
 export const contentPageSchema = z.object({

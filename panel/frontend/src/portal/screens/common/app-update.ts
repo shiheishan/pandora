@@ -12,7 +12,7 @@ import { CLIENTS, DEVICES, detectDevice, type Device } from './clients'
 // 只写「刷新」「更新」这类通用说法。
 // ---------------------------------------------------------------------------
 /** App 界面上的一个按钮或页面名：照它的中文界面原样写；note 是第一次出现时补的半句说明 */
-export interface AppButton {
+interface AppButton {
   button: string
   note?: string
 }
@@ -20,7 +20,7 @@ export interface AppButton {
 /** 一步的文字：纯文字，或文字与 App 按钮名交替 */
 export type GuideText = string | ReadonlyArray<string | AppButton>
 
-export interface AppUpdateSteps {
+interface AppUpdateSteps {
   /** 在哪个页面 */
   where: GuideText
   /** 点哪个按钮 */

@@ -5,7 +5,7 @@ import { useApi } from '../../../shell/runtime'
 import { planSchema, type Plan, type Price } from './catalog-schema'
 
 // GET v1/plans 的形状在 catalog-schema.ts（纯 zod，测试也用），这里转出
-export { planSchema, priceSchema, RESET_STRATEGIES, type Plan, type Price } from './catalog-schema'
+export { type Plan, type Price } from './catalog-schema'
 
 export const plansSchema = z.object({ plans: z.array(planSchema) })
 
@@ -67,7 +67,7 @@ export function usePaymentMethods() {
 // ---------------------------------------------------------------------------
 // 周期：设计稿三档 1m / 3m / 12m，其余组合走通用文案
 // ---------------------------------------------------------------------------
-export type PeriodKey = '1m' | '3m' | '12m' | string
+type PeriodKey = '1m' | '3m' | '12m' | string
 
 export function periodOf(p: Pick<Price, 'billing_interval' | 'interval_count'>): PeriodKey {
   const { billing_interval: i, interval_count: n } = p
@@ -77,8 +77,6 @@ export function periodOf(p: Pick<Price, 'billing_interval' | 'interval_count'>):
   return `${i}:${n}`
 }
 
-/** 设计稿的三档，按这个顺序排；其余组合排在后面 */
-export const PERIODS: readonly PeriodKey[] = ['1m', '3m', '12m']
 const NAMED: Readonly<Record<string, [string, string, number]>> = {
   '1m': ['月付', '月', 1],
   '3m': ['季付', '季', 3],
@@ -152,12 +150,8 @@ export function perGbNote(pack: Pick<Pack, 'unit_amount' | 'traffic_bytes' | 'cu
 }
 
 // ---------------------------------------------------------------------------
-// 额度文案：GB / 月 取 traffic.bytes 的 limit；重置按 quota_reset_strategy
+// 额度文案：重置按 quota_reset_strategy
 // ---------------------------------------------------------------------------
-export function trafficQuotaOf(plan: Pick<Plan, 'quotas'>) {
-  return plan.quotas.find((q) => q.metric === 'traffic.bytes') ?? null
-}
-
 /** 契约门户-03：never「不重置」、natural_month「每月 1 日重置」、fixed_day「每月 N 日重置」；billing_cycle 为「到期日自动重置」 */
 export function resetNote(plan: Pick<Plan, 'quota_reset_strategy' | 'quota_reset_day'>): string {
   switch (plan.quota_reset_strategy) {

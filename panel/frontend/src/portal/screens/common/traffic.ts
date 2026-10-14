@@ -12,7 +12,7 @@ export function bytesParts(bytes: number): [string, string] {
 }
 
 /** 距离某时刻还有几天（向上取整，过去为 0）。 */
-export function daysUntil(at: string | Date, now: Date = new Date()): number {
+function daysUntil(at: string | Date, now: Date = new Date()): number {
   const t = typeof at === 'string' ? new Date(at).getTime() : at.getTime()
   return Math.max(0, Math.ceil((t - now.getTime()) / DAY_MS))
 }
@@ -45,7 +45,7 @@ export const shortDate = (at: string | Date, timeZone?: string) => formatDate(at
 const HOUR_MS = 3_600_000
 
 /** 时刻 YYYY-MM-DD HH:mm，时区口径同 formatDate（切日时区，拿不到退回浏览器本地时区）。 */
-export function formatMinute(at: string | Date, timeZone?: string): string {
+function formatMinute(at: string | Date, timeZone?: string): string {
   const d = typeof at === 'string' ? new Date(at) : at
   if (timeZone) {
     try {
@@ -59,7 +59,7 @@ export function formatMinute(at: string | Date, timeZone?: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-export interface ExpiryInfo {
+interface ExpiryInfo {
   days: number
   /** 剩余小时，向上取整；已到期为 0 */
   hours: number
@@ -83,7 +83,7 @@ export function expiryInfo(periodEnd: string | null, now: Date = new Date(), tim
   return { days, hours, date, urgent: expired || days <= 7, expired, label }
 }
 
-export type UsageLevel = 'ok' | 'warn' | 'danger'
+type UsageLevel = 'ok' | 'warn' | 'danger'
 
 /** 设计稿口径：已用 ≥ 95% 危险、≥ 80% 警示 */
 export const usageLevel = (ratio: number): UsageLevel => (ratio >= 0.95 ? 'danger' : ratio >= 0.8 ? 'warn' : 'ok')
@@ -92,7 +92,7 @@ export const usageLevel = (ratio: number): UsageLevel => (ratio >= 0.95 ? 'dange
 // 流量额度：quotas[] 里 metric = traffic.bytes 的那一行。现有接口不带周期字段，
 // 待补字段上线后同一指标可能有多行，取周期覆盖当前时刻的那行。
 // ---------------------------------------------------------------------------
-export interface QuotaLike {
+interface QuotaLike {
   metric: string
   limit: number | null
   consumed: number
@@ -101,7 +101,7 @@ export interface QuotaLike {
   period_end?: string | null
 }
 
-export const TRAFFIC_METRIC = 'traffic.bytes'
+const TRAFFIC_METRIC = 'traffic.bytes'
 
 export function pickTrafficQuota<Q extends QuotaLike>(quotas: readonly Q[], now: Date = new Date()): Q | null {
   const rows = quotas.filter((q) => q.metric === TRAFFIC_METRIC)
@@ -150,7 +150,7 @@ export function resetAtOf(
 // 预测：「按目前的速度…」。套餐扣完再扣流量包，所以可用量 = 套餐剩余 + 流量包；
 // 预计到重置时用量 ≥ (总量 + 流量包) 的 95% 视为不够用，给「买流量包 →」。
 // ---------------------------------------------------------------------------
-export interface Projection {
+interface Projection {
   text: string
   short: boolean
 }
@@ -172,7 +172,7 @@ export function projectUsage(summary: TrafficSummary, avgDailyBytes: number, res
 // 本期用量柱：days[] 是到今天为止（含今天）的每日字节，日期是接口所用时区的
 // YYYY-MM-DD；period_end 之前剩下的日子画成灰色矮柱「未到」。
 // ---------------------------------------------------------------------------
-export interface UsageBar {
+interface UsageBar {
   date: string
   /** null = 未到 */
   bytes: number | null
@@ -181,7 +181,7 @@ export interface UsageBar {
   height: number
 }
 
-export interface UsageBars {
+interface UsageBars {
   bars: UsageBar[]
   start: string
   /** 右端标签：有周期末为「MM-DD 重置」 */

@@ -1,12 +1,12 @@
 /** 帮助中心只收这两类；legal 与 page 不进来（契约门户-09 列表映射） */
-export const HELP_KINDS: ReadonlySet<string> = new Set(['kb_article', 'tutorial'])
+const HELP_KINDS: ReadonlySet<string> = new Set(['kb_article', 'tutorial'])
 
 /** 后端 q 上限 100 字，超了回 422 fields.q */
 export const SEARCH_MAX = 100
 
 const OTHER = '其他'
 
-export interface HelpGroup<T> {
+interface HelpGroup<T> {
   category: string
   items: T[]
 }
@@ -25,7 +25,7 @@ export function helpGroups<T extends { kind: string; category?: string }>(pages:
   return [...out.filter((g) => g.category !== OTHER), ...out.filter((g) => g.category === OTHER)]
 }
 
-export type ArticleBlock = { kind: 'heading' | 'paragraph'; text: string }
+type ArticleBlock = { kind: 'heading' | 'paragraph'; text: string }
 
 /**
  * 正文是纯文本 / Markdown 源码，后端不渲染（契约门户-09）。这里只认「## 」开头的行作小标题，

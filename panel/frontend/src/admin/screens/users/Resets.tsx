@@ -176,7 +176,7 @@ export function ResetHistory({ d }: { d: UserDetail }) {
     <>
       <div className={ops.historyHead}>
         <span className={css.muted}>此用户的流量重置历史</span>
-        <Button size="xs" disabled={!has} title={has ? undefined : '没有生效中的订阅（试用订阅不能手动重置）'} onClick={() => setOpen(true)}>
+        <Button size="xs" disabled={!has} title={has ? undefined : '没有生效中的订阅'} onClick={() => setOpen(true)}>
           立即重置本期
         </Button>
       </div>
@@ -270,7 +270,7 @@ export function ResetDialog({
     <ActionModal open={user !== null} title="立即重置本期流量？" busy={busy} confirm="重置" tone="danger" disabled={noSub || sub === undefined} onCancel={close} onConfirm={() => void submit()}>
       <p className={css.dialogText}>
         {noSub
-          ? `${user?.email ?? ''} ${subscriptionId ? '这份订阅已不在生效中' : '没有生效中的订阅'}（试用订阅不能手动重置）。`
+          ? `${user?.email ?? ''} ${subscriptionId ? '这份订阅已不在生效中' : '没有生效中的订阅'}。`
           : `${user?.email ?? ''}${sub ? ` 的${subName(sub)}` : ''} 本期已用${used !== undefined ? ` ${formatBytes(used)}` : '流量'}将清零，并记录在重置历史中。只重置这一份；流量包余额不受影响。`}
       </p>
       {!subscriptionId && pool.length > 1 && (

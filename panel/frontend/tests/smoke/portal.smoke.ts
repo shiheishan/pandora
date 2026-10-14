@@ -55,7 +55,7 @@ const rows: Row[] = [
   { at: 'common/orders.ts', path: `v1/orders/${s.order_id}`, schema: orderDetailSchema },
   { at: 'common/orders.ts', path: `v1/orders/${s.pending_order_id}`, schema: orderDetailSchema },
   { at: 'common/orders.ts', path: 'v1/orders', query: { status: 'paid,fulfilled,cancelled,expired,partially_refunded,refunded', limit: 6, offset: 0 }, schema: ordersPageSchema },
-  { at: 'common/orders.ts', path: 'v1/orders', query: { status: 'draft,pending_payment,processing', limit: 20 }, schema: ordersPageSchema },
+  { at: 'common/orders.ts', path: 'v1/orders', query: { status: 'pending_payment', limit: 20 }, schema: ordersPageSchema },
 
   // ---- 工单 ----
   { at: 'tickets/api.ts', path: 'v1/support/categories', schema: z.object({ categories: z.array(z.object({ code: z.string(), name: z.string() })) }) },

@@ -44,7 +44,7 @@ describe('mock api · admin nodes', () => {
     expect((await page('state=retired')).nodes.every((n) => n.serving_status === 'retired')).toBe(true)
     expect((await page('state=retired')).total).toBeGreaterThan(0)
     expect((await page('state=offline')).nodes.every((n) => n.serving_status === 'active' && n.stale)).toBe(true)
-    expect((await page('state=online')).nodes.every((n) => n.serving_status === 'draining' || (n.serving_status === 'active' && !n.stale))).toBe(true)
+    expect((await page('state=online')).nodes.every((n) => n.serving_status === 'active' && !n.stale)).toBe(true)
     expect((await page('state=disabled')).nodes.every((n) => n.serving_status === 'draft' || n.serving_status === 'disabled')).toBe(true)
     // 搜索：名称、国家（不分大小写）、编号
     const hk = await page('q=hk')
@@ -132,7 +132,7 @@ describe('mock api · admin nodes infra', () => {
 
   it('refuses to shrink capacity below the nodes in use and cascades on delete', async () => {
     const kr = (await servers()).find((x) => x.name === 'kr-sel-edge-1')!
-    const made = await call('POST', '/v1/nodes', { name: '首尔 02', server_id: kr.id, node_type: 'shadowsocks', server_host: 'kr2.pandora.run', server_port: 8388, protocol_config: { cipher: 'aes-256-gcm' } }, 'kr-node-1')
+    const made = await call('POST', '/v1/nodes', { name: '首尔 02', server_id: kr.id, node_type: 'shadowsocks', server_host: 'kr2.example.test', server_port: 8388, protocol_config: { cipher: 'aes-256-gcm' } }, 'kr-node-1')
     expect(made.status).toBe(201)
     const low = await call('PATCH', `/v1/servers/${kr.id}`, { row_version: kr.row_version, capacity_nodes: 0 })
     expect(low.status).toBe(422)

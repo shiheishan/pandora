@@ -44,7 +44,7 @@ describe('mock api · admin security and operations', () => {
     expect(failed.events.every((e) => e.outcome === 'failure' && e.actor_kind === 'anonymous')).toBe(true)
     const byEmail = await audit('?q=zhou.min&limit=200')
     expect(byEmail.events.length).toBeGreaterThan(0)
-    expect(byEmail.events.every((e) => e.actor_email === 'zhou.min@pandora.dev' || e.action.includes('zhou.min'))).toBe(true)
+    expect(byEmail.events.every((e) => e.actor_email === 'zhou.min@example.test' || e.action.includes('zhou.min'))).toBe(true)
     const target = all.events.find((e) => e.resource_id)!
     expect((await audit(`?q=${target.resource_id}`)).events.map((e) => e.id)).toContain(target.id)
   })
@@ -89,9 +89,9 @@ describe('mock api · admin security and operations', () => {
     const subs = accessResponse.parse(await json(await call('GET', '/v1/access-log?category=subscribe&limit=200'))).items
     expect(subs.every((i) => i.category === 'subscribe' && i.action === 'subscription.fetch')).toBe(true)
 
-    const ip = accessResponse.parse(await json(await call('GET', '/v1/access-log?ip=223.104.63.18&limit=200'))).items
+    const ip = accessResponse.parse(await json(await call('GET', '/v1/access-log?ip=198.51.100.18&limit=200'))).items
     expect(ip.length).toBeGreaterThan(0)
-    expect(ip.every((i) => i.ip === '223.104.63.18' && i.geo === '中国 广东 移动')).toBe(true)
+    expect(ip.every((i) => i.ip === '198.51.100.18' && i.geo === '中国 广东 移动')).toBe(true)
     const someone = all.find((i) => i.user_id)!
     const mine = accessResponse.parse(await json(await call('GET', `/v1/access-log?user=${someone.user_id}&limit=200`))).items
     expect(mine.every((i) => i.user_id === someone.user_id)).toBe(true)
@@ -120,8 +120,8 @@ describe('mock api · admin security and operations', () => {
   })
 
   it('disables cluster members after reauth, skips staff and the already disabled, and replays', async () => {
-    const withStaff = (await clusters()).find((c) => c.ip === '117.136.2.40')!
-    const big = (await clusters()).find((c) => c.ip === '223.104.63.18')!
+    const withStaff = (await clusters()).find((c) => c.ip === '198.51.100.24')!
+    const big = (await clusters()).find((c) => c.ip === '198.51.100.18')!
     const ids = (c: Cluster) => c.users.map((u) => u.id)
     const path = (c: Cluster) => `/v1/ip-clusters/${c.key}/disable-accounts`
 

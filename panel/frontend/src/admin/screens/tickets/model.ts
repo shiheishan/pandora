@@ -45,9 +45,9 @@ export function queueParams(filter: QueueFilter, me: string | undefined, q: stri
 // ===========================================================================
 // 状态：后端 6 个值 → 设计稿 4 种色 + 「已关闭」（待补·前端）
 // ===========================================================================
-export type Tone = 'danger' | 'neutral' | 'info' | 'ok'
+type Tone = 'danger' | 'neutral' | 'info' | 'ok'
 
-export const STATUS_VIEW: Record<TicketStatus, { label: string; tone: Tone }> = {
+const STATUS_VIEW: Record<TicketStatus, { label: string; tone: Tone }> = {
   open: { label: '待处理', tone: 'danger' },
   pending_user: { label: '等待用户', tone: 'neutral' },
   pending_agent: { label: '处理中', tone: 'info' },
@@ -77,7 +77,7 @@ export function STATUS_OPTIONS(current: TicketStatus) {
   return options
 }
 
-export function isOpenStatus(status: TicketStatus): boolean {
+function isOpenStatus(status: TicketStatus): boolean {
   return status !== 'resolved' && status !== 'closed'
 }
 
@@ -122,7 +122,7 @@ export function waitLabel(t: Pick<Ticket, 'status' | 'last_reply_at' | 'sla_brea
   return t.sla_breached ? { text: `${text} · SLA 超时`, late: true } : { text, late: false }
 }
 
-export interface SlaLine {
+interface SlaLine {
   label: string
   text: string
   tone: 'ok' | 'warn' | 'danger' | 'neutral'
@@ -174,7 +174,7 @@ export function systemText(body: string): string {
   return body.replace(/改为 (open|pending_user|pending_agent|escalated|resolved|closed)(?=：|$)/, (_, code: TicketStatus) => `改为「${code === 'escalated' ? '已升级' : STATUS_VIEW[code].label}」`)
 }
 
-export type BubbleKind = 'user' | 'agent' | 'note' | 'system'
+type BubbleKind = 'user' | 'agent' | 'note' | 'system'
 
 export function messageView(m: Message, userEmail: string | undefined, now: Date): { kind: BubbleKind; who: string; at: string } {
   const kind: BubbleKind = m.author_kind === 'system' ? 'system' : m.internal_note ? 'note' : m.author_kind

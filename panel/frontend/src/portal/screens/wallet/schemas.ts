@@ -5,10 +5,10 @@ import { z } from 'zod'
 // 选项字段 Go 都带 omitempty，零值缺席；placement 本身无 omitempty，纯余额卡为 null。
 // default_key 为空串表示不预选（不同款套餐卡一律不预选），按钮置灰「先选一种用法」。
 // ---------------------------------------------------------------------------
-export const PLACEMENT_KINDS = ['renew', 'change', 'new', 'extend_days', 'reset_traffic', 'add_traffic'] as const
+const PLACEMENT_KINDS = ['renew', 'change', 'new', 'extend_days', 'reset_traffic', 'add_traffic'] as const
 export type PlacementKind = (typeof PLACEMENT_KINDS)[number]
 
-export const placementOptionSchema = z.object({
+const placementOptionSchema = z.object({
   key: z.string(),
   kind: z.enum(PLACEMENT_KINDS),
   subscription_id: z.string().optional(),
@@ -32,8 +32,7 @@ export const placementOptionSchema = z.object({
 })
 export type PlacementOption = z.output<typeof placementOptionSchema>
 
-export const placementSchema = z.object({ question: z.string(), options: z.array(placementOptionSchema), default_key: z.string() })
-export type Placement = z.output<typeof placementSchema>
+const placementSchema = z.object({ question: z.string(), options: z.array(placementOptionSchema), default_key: z.string() })
 
 // ---------------------------------------------------------------------------
 // POST v1/gift-cards/preview（修订 R68：不回发行量，套餐卡补套餐名与周期；设计稿 2.5 加 placement）

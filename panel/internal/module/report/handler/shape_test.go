@@ -67,6 +67,7 @@ func TestShapeOverview(t *testing.T) {
 	}
 	wantKeys(t, "overview", root, "users", "subscriptions", "revenue", "orders", "ledger_drift_accounts", "nodes")
 	wantKeys(t, "users", root["users"].(map[string]any), "total", "active", "today", "last_7_days")
+	wantKeys(t, "subscriptions", root["subscriptions"].(map[string]any), "active", "expiring_7_days", "expired", "new_7_days")
 	rev := root["revenue"].([]any)
 	if len(rev) == 0 {
 		t.Fatal("revenue 空")
@@ -211,6 +212,7 @@ func TestShapeTrafficNodes(t *testing.T) {
 	var root map[string]any
 	_ = json.Unmarshal(w.Body.Bytes(), &root)
 	wantKeys(t, "node traffic", root, "range", "snapshot_at", "from", "to", "basis", "totals", "quality", "items", "ranking")
+	wantKeys(t, "quality", root["quality"].(map[string]any), "invalid_report_count", "invalid_entry_count")
 	if root["basis"] != "strict_raw_report_entries" {
 		t.Fatalf("basis %v", root["basis"])
 	}
@@ -364,7 +366,7 @@ func fullOverview() service.Overview {
 	}
 	return service.Overview{
 		Users:               service.UserCounts{Total: 1, Active: 2, Today: 3, Last7Days: 4},
-		Subscriptions:       service.SubscriptionCounts{Active: 1, Trialing: 0, Expiring7Days: 2, Expired: 3, New7Days: 4},
+		Subscriptions:       service.SubscriptionCounts{Active: 1, Expiring7Days: 2, Expired: 3, New7Days: 4},
 		Revenue:             []service.RevenueRow{row},
 		Orders:              service.OrderCounts{PaidToday: 1, Pending: 2, FailedToday: 3},
 		LedgerDriftAccounts: 5,

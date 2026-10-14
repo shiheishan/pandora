@@ -9,8 +9,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// ActionPasswordResetByCLI 是命令行重置管理员口令的审计动作（沿用旧名）。
-const ActionPasswordResetByCLI = "adminctl.password_reset"
+// ActionPasswordResetByCLI 是命令行重置管理员口令的审计动作。
+const ActionPasswordResetByCLI = "admin.password_reset"
 
 // ResetStaffPassword 是 pandora admin reset-password：在服务器本地重置后台人员的口令并吊销其全部会话。
 // 没有登录主体，审计记 system；只对后台人员生效（普通用户走找回密码），不改账号状态、不改管理员名单。

@@ -9,7 +9,7 @@ export type ActorKind = (typeof ACTOR_KINDS)[number]
 export const OUTCOMES = ['success', 'failure', 'denied', 'partial'] as const
 export type Outcome = (typeof OUTCOMES)[number]
 
-export const auditEventSchema = z.object({
+const auditEventSchema = z.object({
   id: z.string(),
   occurred_at: z.string(),
   actor_kind: z.enum(ACTOR_KINDS),
@@ -30,15 +30,14 @@ export const auditEventSchema = z.object({
 })
 export type AuditEvent = z.output<typeof auditEventSchema>
 export const auditResponse = z.object({ events: z.array(auditEventSchema), total: z.number().int() })
-export type AuditPage = z.output<typeof auditResponse>
 
 // ---------------------------------------------------------------------------
 // 访问日志（安全事件：audit_events 与 subscription_fetch_log 两路归并）
 // ---------------------------------------------------------------------------
-export const ACCESS_CATEGORIES = ['login', 'register', 'reset_password', 'order', 'payment', 'ticket', 'admin', 'other', 'subscribe'] as const
+const ACCESS_CATEGORIES = ['login', 'register', 'reset_password', 'order', 'payment', 'ticket', 'admin', 'other', 'subscribe'] as const
 export type AccessCategory = (typeof ACCESS_CATEGORIES)[number]
 
-export const accessItemSchema = z.object({
+const accessItemSchema = z.object({
   category: z.enum(ACCESS_CATEGORIES),
   action: z.string().optional(),
   user_id: z.string().optional(),
@@ -58,18 +57,17 @@ export const accessResponse = z.object({ items: z.array(accessItemSchema) })
 // ---------------------------------------------------------------------------
 // 共享 IP 聚类（risk.go 的 ipClusterView 内嵌 adminops.IPCluster）
 // ---------------------------------------------------------------------------
-export const RISKS = ['high', 'mid', 'low'] as const
+const RISKS = ['high', 'mid', 'low'] as const
 export type Risk = (typeof RISKS)[number]
 
-export const clusterUserSchema = z.object({
+const clusterUserSchema = z.object({
   id: z.string(),
   email: z.string(),
   status: z.string(),
   active_plan: z.string().nullable(),
 })
-export type ClusterUser = z.output<typeof clusterUserSchema>
 
-export const clusterReviewSchema = z.object({
+const clusterReviewSchema = z.object({
   decision: z.enum(['normal', 'disabled']),
   decided_at: z.string(),
   /** disabled 没有有效期 */
@@ -77,7 +75,7 @@ export const clusterReviewSchema = z.object({
 })
 export type ClusterReview = z.output<typeof clusterReviewSchema>
 
-export const clusterSchema = z.object({
+const clusterSchema = z.object({
   /** 解不开时为 "" */
   ip: z.string(),
   geo: z.string(),
@@ -98,7 +96,7 @@ export const clustersResponse = z.object({ clusters: z.array(clusterSchema) })
 
 export const clusterReviewed = z.object({ key: z.string(), decision: z.literal('normal'), expires_at: z.string() })
 
-export const SKIP_REASONS = ['self', 'administrator', 'not_member', 'already_disabled'] as const
+const SKIP_REASONS = ['self', 'administrator', 'not_member', 'already_disabled'] as const
 export type SkipReason = (typeof SKIP_REASONS)[number]
 export const clusterDisabled = z.object({
   disabled: z.number().int(),
@@ -109,7 +107,7 @@ export type ClusterDisabled = z.output<typeof clusterDisabled>
 // ---------------------------------------------------------------------------
 // 降级开关（adminops.SwitchRow；enabled = 功能可用）
 // ---------------------------------------------------------------------------
-export const switchSchema = z.object({
+const switchSchema = z.object({
   code: z.string(),
   enabled: z.boolean(),
   essential: z.boolean(),

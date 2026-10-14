@@ -165,7 +165,7 @@ export function NodeOps({ node, onGone }: { node: NodeRow; onGone: () => void })
           退役
         </Button>
       </Action>
-      <Action title="删除节点" detail="从列表移除，名字可以复用；历史流量与审计保留。在服务中的节点要先停用或退役。" blocked={node.serving_status === 'active' || node.serving_status === 'draining' ? '节点还在服务中，先停用或退役' : null}>
+      <Action title="删除节点" detail="从列表移除，名字可以复用；历史流量与审计保留。在服务中的节点要先停用或退役。" blocked={node.serving_status === 'active' ? '节点还在服务中，先停用或退役' : null}>
         <Button size="sm" className={css.dangerButton} busy={remove.isPending} onClick={() => setConfirm('delete')}>
           删除
         </Button>

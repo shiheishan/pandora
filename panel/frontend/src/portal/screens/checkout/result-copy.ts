@@ -9,7 +9,7 @@ import type { Subscription } from '../common/subscriptions'
 //   k=renew|change|new|pack  sub=<那一份>  was=<原到期>  old=<原套餐名>  refund=<退回余额>
 //   gb=<流量包字节>  waived=<免掉的差价>  revive=1（过期后恢复：续费或换套餐）
 // ---------------------------------------------------------------------------
-export interface DoneContext {
+interface DoneContext {
   kind: 'renew' | 'change' | 'new' | 'pack'
   subId: string | null
   was: string | null
@@ -69,7 +69,7 @@ export function doneSub(order: Pick<OrderDetail, 'subscription_id'>, ctx: Pick<D
   return id ? held.find((s) => s.id === id) : undefined
 }
 
-export interface DoneLines {
+interface DoneLines {
   title: string
   happened: string[]
   kept: string[]

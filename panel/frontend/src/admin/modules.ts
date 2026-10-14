@@ -1,6 +1,6 @@
 export type ModuleKey = 'dash' | 'tickets' | 'users' | 'plans' | 'billing' | 'marketing' | 'nodes' | 'certs' | 'content' | 'system' | 'security'
 
-export interface ModuleDef {
+interface ModuleDef {
   title: string
   group: string
   /** [标签值, 标签名]；第一项为默认标签 */
@@ -113,7 +113,7 @@ export const NAV_GROUPS: ReadonlyArray<readonly [string, readonly ModuleKey[]]> 
 ]
 
 // ⌘K 里的深链：[模块, 标签, 名称]，名称按后端真实能力（换发订阅链接而不是「更换订阅地址」）
-export const PALETTE_EXTRAS: ReadonlyArray<readonly [ModuleKey, string | null, string]> = [
+const PALETTE_EXTRAS: ReadonlyArray<readonly [ModuleKey, string | null, string]> = [
   ['users', 'list', '重置密码 / 调整余额 / 换发订阅链接'],
   ['users', 'bulk', '批量生成用户 / 群发邮件 / 导出'],
   ['nodes', 'nodes', 'REALITY 密钥 / 一键安装令牌 / 吊销身份'],
@@ -128,7 +128,7 @@ export const PALETTE_EXTRAS: ReadonlyArray<readonly [ModuleKey, string | null, s
 
 const isModule = (value: string): value is ModuleKey => Object.hasOwn(MODULES, value)
 
-export interface AdminRoute {
+interface AdminRoute {
   module: ModuleKey
   tab: string | null
   /** 模块（与标签）之后剩下的路径段，已 URI 解码，交给页面自己解释（如 #/users/list/<用户 id>） */

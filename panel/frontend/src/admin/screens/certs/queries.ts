@@ -5,7 +5,7 @@ import { acmeSettingsSchema, certificateDetailSchema, certificateListSchema, dns
 
 export { useFailure, useIntentKey } from '../../actions'
 
-export const CK = ['admin', 'certs'] as const
+const CK = ['admin', 'certs'] as const
 
 /** 有进行中的订单时 5 秒重拉一次，签发完成后自动停 */
 const busyInterval = (busy: boolean) => (busy ? 5000 : false)

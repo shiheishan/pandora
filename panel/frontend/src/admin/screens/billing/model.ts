@@ -5,12 +5,12 @@ import { ORDER_STATUS_VIEW, orderWhat, parseYuan, REASON_MIN, type Tone } from '
 import type { PlacementChoice } from './placement'
 import type { Adjustment, Currency, LateCase, LateKind, LateStatus, ManualCreated, OrderDetail, OrderQueried, OrderRow, OrderStatus, PaymentHistory, Placement, Provider } from './schemas'
 
-export { ORDER_STATUS_VIEW, orderWhat, type Tone }
+export { ORDER_STATUS_VIEW, orderWhat }
 
 type Fields = Record<string, string>
 const chars = (s: string) => [...s.trim()].length
-export const REASON_MAX = 500
-export const REFERENCE_MAX = 128
+const REASON_MAX = 500
+const REFERENCE_MAX = 128
 
 // ===========================================================================
 // 订单
@@ -19,7 +19,7 @@ export const REFERENCE_MAX = 128
 /** 状态分段 → 后端多值 status（R63）；退款不单列（契约），在「全部」里看 */
 export const ORDER_FILTERS = [
   ['all', '全部', ''],
-  ['pending', '待支付', 'draft,pending_payment,processing'],
+  ['pending', '待支付', 'pending_payment'],
   ['paid', '已支付', 'paid,fulfilled'],
   ['cancelled', '已取消', 'cancelled,expired'],
 ] as const
@@ -44,16 +44,16 @@ export function channelLabel(o: Pick<OrderRow, 'provider_name' | 'balance_applie
 }
 
 /** 来源：人工单按 manual_reason 判断（不是 kind），开单人账号删掉后 email 为 null */
-export function sourceLabel(o: Pick<OrderDetail, 'manual_reason' | 'created_by_email'>): string {
+function sourceLabel(o: Pick<OrderDetail, 'manual_reason' | 'created_by_email'>): string {
   if (o.manual_reason === null) return '门户下单'
   return `人工开单 · ${o.created_by_email ?? '已删除的管理员'}`
 }
 
-const PENDING: readonly OrderStatus[] = ['draft', 'pending_payment', 'processing']
+const PENDING: readonly OrderStatus[] = ['pending_payment']
 
-/** 标记已支付：后端只收 pending_payment / processing，且应付大于 0 */
+/** 标记已支付：后端只收 pending_payment，且应付大于 0 */
 export function canMarkPaid(o: Pick<OrderRow, 'status' | 'payable_amount'>): boolean {
-  return (o.status === 'pending_payment' || o.status === 'processing') && o.payable_amount > 0
+  return o.status === 'pending_payment' && o.payable_amount > 0
 }
 
 /**
@@ -61,7 +61,7 @@ export function canMarkPaid(o: Pick<OrderRow, 'status' | 'payable_amount'>): boo
  * 列表行的 provider_code 就是最近一次支付尝试的渠道；为空说明从没发起过支付（后端回 409）
  */
 export function canQueryChannel(o: Pick<OrderRow, 'status' | 'provider_code'>): boolean {
-  return (o.status === 'pending_payment' || o.status === 'processing') && !!o.provider_code && !isOffline({ code: o.provider_code })
+  return o.status === 'pending_payment' && !!o.provider_code && !isOffline({ code: o.provider_code })
 }
 
 /** 查单结果的一句话与色调：渠道怎么说、这次有没有补记、补记后订单是什么状态 */
@@ -107,7 +107,7 @@ export function orderFacts(o: OrderDetail): Array<[string, string]> {
 // 支付记录：设计每行一个状态——以支付尝试为行，有对应入账的显示入账状态；线下入账没有
 // 支付尝试，单独成行并标「人工确认」；退款（设计缺）按同一行式附在后面
 // ---------------------------------------------------------------------------
-export interface PayLine {
+interface PayLine {
   key: string
   channel: string
   ref: string
@@ -119,20 +119,13 @@ export interface PayLine {
 }
 
 const INTENT_VIEW: Record<string, { label: string; tone: Tone }> = {
-  created: { label: '等待回调', tone: 'warn' },
   requires_action: { label: '等待回调', tone: 'warn' },
-  processing: { label: '等待回调', tone: 'warn' },
   succeeded: { label: '成功', tone: 'ok' },
-  failed: { label: '失败', tone: 'danger' },
   cancelled: { label: '已关闭', tone: 'neutral' },
   expired: { label: '已关闭', tone: 'neutral' },
 }
 const PAYMENT_VIEW: Record<string, { label: string; tone: Tone }> = {
   succeeded: { label: '成功', tone: 'ok' },
-  refunded: { label: '已退款', tone: 'info' },
-  partially_refunded: { label: '部分退款', tone: 'info' },
-  disputed: { label: '争议中', tone: 'danger' },
-  reversed: { label: '已冲回', tone: 'danger' },
 }
 const REFUND_VIEW: Record<string, { label: string; tone: Tone }> = {
   pending: { label: '退款处理中', tone: 'warn' },
@@ -216,7 +209,7 @@ export interface ManualForm {
 
 export const emptyManual = (user: ManualForm['user'] = null): ManualForm => ({ user, choice: '', settlement: 'pending', reference: '', reason: '' })
 
-export interface PriceChoice {
+interface PriceChoice {
   value: string
   label: string
   amount: number
@@ -277,7 +270,7 @@ export function manualBody(f: ManualForm, target: PlacementChoice | null) {
 }
 
 /** 待支付单低于最低付款额：应付与门槛（分），用来在提交前写明原因 */
-export interface BelowMinimum {
+interface BelowMinimum {
   due: number
   min: number
   currency: string
@@ -434,9 +427,9 @@ export interface ProviderForm {
 }
 
 /** 渠道最低付款额的范围（分）：与后端 provider_admin.go 的白名单校验一致，epay 默认 100（¥1.00） */
-export const MIN_AMOUNT_MIN = 1
-export const MIN_AMOUNT_MAX = 100_000
-export const MIN_AMOUNT_DEFAULT = 100
+const MIN_AMOUNT_MIN = 1
+const MIN_AMOUNT_MAX = 100_000
+const MIN_AMOUNT_DEFAULT = 100
 
 /** 元的文本换成分：最多两位小数，范围 0.01 到 1000；否则 null */
 export function parseMinAmount(input: string): number | null {
@@ -558,7 +551,7 @@ export function minAmountHint(mode: 'create' | 'edit'): string {
 // ===========================================================================
 // 收入调整（报表口径，只追加）
 // ===========================================================================
-export const ADJUST_MAX = 1_000_000_000_000
+const ADJUST_MAX = 1_000_000_000_000
 
 export interface AdjustForm {
   currency: Currency

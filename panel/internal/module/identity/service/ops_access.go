@@ -19,7 +19,7 @@ var accessCategoryRules = []struct {
 	{"register", []string{"user.registered"}},
 	{"reset_password", []string{"user.password", "user.reset"}},
 	{"order", []string{"order."}},
-	{"admin", []string{"node.", "route_group.", "adminctl.", "server.", "plan.", "payment_provider."}},
+	{"admin", []string{"node.", "route_group.", "admin.", "server.", "plan.", "payment_provider."}},
 	{"payment", []string{"payment"}},
 	{"ticket", []string{"ticket."}},
 }

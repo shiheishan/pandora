@@ -143,7 +143,6 @@ function freeLabel(state: PortalState, label: string | null): string | null {
 export function renewSub(sub: SubFixture, price: CatalogPrice, now: number) {
   if (isLiveSub(sub)) {
     sub.current_period_end = new Date(addInterval(new Date(sub.current_period_end).getTime(), price)).toISOString()
-    if (sub.status === 'past_due' || sub.status === 'grace') sub.status = 'active'
   } else {
     const end = addInterval(now, price)
     const fresh = makeSub({ planId: sub.plan_id, priceId: price.id, status: 'active', usedGiB: 0, elapsedDays: 0, resetInDays: 30, expiresInDays: 30, online: 0, sources: 0 })
@@ -254,7 +253,7 @@ export function assertNoOpenChange(state: PortalState, subId: string) {
 // 订单读形状（契约门户-04，含修订 R32、R69）；legacy 场景去掉 Go 带 omitempty 的可缺席字段
 // （周期、支付方式、优惠码、有效期至），无 omitempty 的 item_name / provider_name 恒在
 // ---------------------------------------------------------------------------
-const OPEN = new Set(['draft', 'pending_payment', 'processing'])
+const OPEN = new Set(['pending_payment'])
 
 export function orderRow(o: OrderFixture) {
   const legacy = scenario() === 'legacy'

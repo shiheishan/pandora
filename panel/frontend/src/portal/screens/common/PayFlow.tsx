@@ -159,7 +159,7 @@ const POLL_PAY_MS = 3000
 /** 发起支付回 409 order_lapsed：这张单已超过付款期限（billing.ErrOrderPaymentExpired），只能取消后重新下单 */
 export const isPaymentLapsed = (e: unknown) => isApiError(e, 'order_lapsed')
 
-export interface PayPanelProps {
+interface PayPanelProps {
   orderId: string
   amount: number
   currency: string

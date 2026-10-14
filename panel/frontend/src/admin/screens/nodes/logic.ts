@@ -8,11 +8,11 @@ export type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'neutral'
 // ---------------------------------------------------------------------------
 export type NodeFilter = 'all' | 'online' | 'offline' | 'disabled' | 'retired'
 
-export interface NodeState {
+interface NodeState {
   filter: Exclude<NodeFilter, 'all'>
   label: string
   tone: Tone
-  /** 状态旁的小字：排空中 / 草稿 */
+  /** 状态旁的小字：草稿 */
   note: string | null
 }
 
@@ -20,8 +20,6 @@ export function nodeState(n: Pick<NodeRow, 'serving_status' | 'stale'>): NodeSta
   switch (n.serving_status) {
     case 'active':
       return n.stale ? { filter: 'offline', label: '离线', tone: 'danger', note: null } : { filter: 'online', label: '在线', tone: 'ok', note: null }
-    case 'draining':
-      return { filter: 'online', label: '在线', tone: 'ok', note: '排空中' }
     case 'draft':
       return { filter: 'disabled', label: '已停用', tone: 'neutral', note: '草稿' }
     case 'disabled':
@@ -112,7 +110,7 @@ export function canMove(n: Pick<NodeRow, 'serving_status' | 'last_heartbeat_at' 
  * R108「上线」：生命周期停在接入尾段（attesting 至 canary，00005 的合法边）的节点，
  * 由后端一步推到 active 并把服务器置 ready；接入流程本身只推到 attesting，此外没有别的路径
  */
-export const ACTIVATABLE_LIFECYCLES = ['attesting', 'installing', 'validating', 'standby', 'canary'] as const
+const ACTIVATABLE_LIFECYCLES = ['attesting', 'installing', 'validating', 'standby', 'canary'] as const
 export const canActivate = (n: Pick<NodeRow, 'status'>) => (ACTIVATABLE_LIFECYCLES as readonly string[]).includes(n.status)
 
 /**
@@ -149,13 +147,12 @@ export function moveBlockers(fields: Readonly<Record<string, string>>): string[]
 }
 
 // ---------------------------------------------------------------------------
-// 服务状态转换（契约 status:batch 的合法边；retired 只走 retire 接口）
+// 服务状态转换：与后端 node_status.go 的 nodeServingTransitions 一致（retired 只走 retire 接口）
 // ---------------------------------------------------------------------------
 const EDGES: Readonly<Record<ServingStatus, readonly ServingStatus[]>> = {
-  draft: ['active', 'disabled', 'retired'],
-  active: ['draining', 'disabled'],
-  draining: ['active', 'disabled', 'retired'],
-  disabled: ['draft', 'active', 'retired'],
+  draft: ['active', 'retired'],
+  active: ['disabled', 'retired'],
+  disabled: ['active', 'retired'],
   retired: [],
 }
 export const canTransition = (from: ServingStatus, to: ServingStatus) => EDGES[from].includes(to)
@@ -183,7 +180,7 @@ export function orderItems(ordered: readonly Pick<NodeRow, 'id' | 'row_version' 
 // ---------------------------------------------------------------------------
 // 协议表单：字段来自 GET v1/node-protocol-schemas
 // ---------------------------------------------------------------------------
-export type FieldKind = 'enum' | 'number' | 'boolean' | 'json' | 'list' | 'text'
+type FieldKind = 'enum' | 'number' | 'boolean' | 'json' | 'list' | 'text'
 export interface ProtocolField {
   /** 点号路径，如 reality_settings.private_key */
   path: string
@@ -246,7 +243,7 @@ export function toFormValues(fields: readonly ProtocolField[], config: unknown):
  * keepSecrets 只在编辑同一种协议时为真——换协议后端不补旧密钥，必填照常要填。
  * mask_password 跟着开关 mask 走，关掉掩码时它本来就留空不带，无需特别处理
  */
-export interface SecretOptions {
+interface SecretOptions {
   keepSecrets?: boolean
   cleared?: ReadonlySet<string>
 }

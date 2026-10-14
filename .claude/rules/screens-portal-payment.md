@@ -17,7 +17,7 @@ paths:
 - 刚下的待支付单记住 30 分钟（确认页是跨页面的 `checkout/model.ts` 的 `placedOrders`，指纹去掉 as_of / expect；充值是 `usePlacedOrder`）：同样的意图再点时先 `recallPayable` 问一次还能不能付，能付就重开它的付款、不下第二张（否则余额冻结两次）；已取消、超时或付掉就 `forget()` 按新请求下单，付款收到 409 也 `forget`。
 - 去收银台只做顶层 GET 导航：POST 跳转要自动提交表单，会被入口页 CSP 的 `form-action 'self'` 拦下。支付成功后失效 `['portal']` 前缀下全部查询。
 - 「我已支付，刷新状态」（`POST v1/orders/{id}/query`）只对发起过支付（行上 `has_payment_intent`）的单显示，不带幂等键；结果归成已到账 / 渠道尚未确认 / 查询失败三种（订单已关闭才到账的钱也算已到账、引导提工单）。
-- `processing` 的订单是支付已发起、等回调：不能取消也不能再付；待支付卡片取 draft / pending_payment / processing。
+- 订单状态只用库里的 5 态（`00013_order.sql`：pending_payment / paid / fulfilled / cancelled / expired），外加等产品确认的退款两态；没有 draft / processing。发起过支付等回调的单仍是 pending_payment（看 `has_payment_intent`），待支付卡片只取 pending_payment。
 - 订单页展开由地址驱动（`#/orders/<id>`，点行切换用 replace），不在已加载列表里时单独成卡；`?paid=1` 弹支付确认（3 秒轮询、最多 2 分钟），关掉后抹掉 paid。已结束订单按设计是「显示更早」每次多取 6 条，不用分页器。
 - 充值 `POST v1/me/topups` 响应是 200 不是 201；礼品卡兑换（`#/wallet/redeem`，幂等 `gift_card_redeem`）的选项与默认值来自 preview 的 `placement`，没有默认值时按钮置灰「先选一种用法」，兑换带 `choice`；成功后失效整个 `['portal']` 前缀。完成页按选定的用法自己写，不显示服务端 summary（话术里有「订阅」等词）。
 - 钱包「余额明细」里挂账类流水按保留规则 6 称「挂账转入」。

@@ -34,12 +34,12 @@ function sub(over: Partial<Subscription> = {}): Subscription {
     online_devices: 0,
     quota_reset_strategy: 'billing_cycle',
     next_reset_at: null,
-    renewable: ['active', 'trialing', 'grace', 'past_due'].includes(status),
+    renewable: status === 'active',
     renewal_price: null,
     pack_remaining_bytes: 0,
     label: null,
     client_name: 'Pandora · 专业版',
-    changeable: ['active', 'trialing', 'grace', 'past_due'].includes(status),
+    changeable: status === 'active',
     renew_until: null,
     ...over,
   })
@@ -195,10 +195,10 @@ describe('subscriptions', () => {
     const list = [
       sub({ id: 'old', status: 'expired', current_period_end: '2027-01-01T00:00:00Z' }),
       sub({ id: 'a', current_period_end: '2026-10-01T00:00:00Z' }),
-      sub({ id: 'b', status: 'past_due', current_period_end: '2026-12-01T00:00:00Z' }),
+      sub({ id: 'b', current_period_end: '2026-12-01T00:00:00Z' }),
     ]
     expect(pickPrimary(list)?.id).toBe('b')
-    expect(pickPrimary([sub({ status: 'cancelled' })])).toBeNull()
+    expect(pickPrimary([sub({ status: 'expired', renewable: false })])).toBeNull()
   })
 
   it('主订阅：没有生效订阅时回落到能原地续费的已过期订阅（w5expiry）', () => {
@@ -215,7 +215,7 @@ describe('subscriptions', () => {
   it('续费入口：取服务端的 renewable', () => {
     expect(canRenew(sub())).toBe(true)
     expect(canRenew(sub({ renewable: false }))).toBe(false)
-    expect(canRenew(sub({ status: 'paused' }))).toBe(false)
+    expect(canRenew(sub({ status: 'expired', renewable: false }))).toBe(false)
   })
 
   it('按日用量 schema 与契约一致', () => {
@@ -252,7 +252,7 @@ describe('subscriptions', () => {
   })
 
   it('疑似泄露：近 24 小时来源超过设备上限，过期的不提示', () => {
-    const l = { subscription_id: 's1', url: 'u', expires_at: null, fetch_count: 12, last_fetched_at: null, distinct_sources_24h: 7, expired: false }
+    const l = { subscription_id: 's1', url: 'u', fetch_count: 12, last_fetched_at: null, distinct_sources_24h: 7, expired: false }
     expect(leakSources(sub({ device_limit: 2 }), l)).toBe(7)
     expect(leakSources(sub({ device_limit: 8 }), l)).toBeNull()
     expect(leakSources(sub({ device_limit: null }), l)).toBeNull()
@@ -327,12 +327,11 @@ describe('intent', () => {
     expect(asked).toEqual(['order-1'])
   })
 
-  it('可支付：只有 draft / pending_payment 且未到 expires_at', () => {
+  it('可支付：只有 pending_payment 且未到 expires_at', () => {
     const at = Date.parse('2026-09-24T12:00:00Z')
     expect(isPayable({ status: 'pending_payment', expires_at: '2026-09-24T12:10:00Z' }, at)).toBe(true)
-    expect(isPayable({ status: 'draft', expires_at: undefined }, at)).toBe(true)
     expect(isPayable({ status: 'pending_payment', expires_at: '2026-09-24T11:59:59Z' }, at)).toBe(false)
-    for (const status of ['processing', 'paid', 'fulfilled', 'cancelled', 'expired', 'refunded'] as const) expect(isPayable({ status, expires_at: undefined }, at)).toBe(false)
+    for (const status of ['paid', 'fulfilled', 'cancelled', 'expired', 'refunded'] as const) expect(isPayable({ status, expires_at: undefined }, at)).toBe(false)
   })
 })
 

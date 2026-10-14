@@ -14,7 +14,7 @@ export function useTopup() {
   })
 }
 
-export { giftCardSchema, placementOptionSchema, placementSchema, PLACEMENT_KINDS, type GiftCard, type Placement, type PlacementKind, type PlacementOption } from './schemas'
+export { giftCardSchema, type GiftCard, type PlacementOption } from './schemas'
 import { giftCardSchema, type PlacementKind } from './schemas'
 
 export function useGiftPreview() {
@@ -41,7 +41,7 @@ export const redeemResultSchema = z.object({
   summary: z.array(z.string()),
 })
 
-export interface RedeemBody {
+interface RedeemBody {
   code: string
   choice?: { kind: PlacementKind; subscription_id?: string }
 }

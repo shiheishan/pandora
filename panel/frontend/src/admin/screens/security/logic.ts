@@ -166,14 +166,14 @@ export const RISK_LABEL: Record<Risk, string> = { high: '高风险', mid: '中�
 export const RISK_TONE: Record<Risk, TagTone> = { high: 'danger', mid: 'warn', low: 'neutral' }
 
 /** geoip.NetworkKind；空串是判不出来 */
-export const NETWORK_LABEL: Record<string, string> = { residential: '住宅宽带', datacenter: '机房', education: '教育网', mobile: '移动网络', loopback: '本机', private: '内网' }
+const NETWORK_LABEL: Record<string, string> = { residential: '住宅宽带', datacenter: '机房', education: '教育网', mobile: '移动网络', loopback: '本机', private: '内网' }
 
 export function clusterPlace(c: Pick<Cluster, 'geo' | 'network_kind'>): string {
   const kind = NETWORK_LABEL[c.network_kind]
   return [c.geo || '归属地未知', kind].filter(Boolean).join(' · ')
 }
 
-export type ReviewState = { kind: 'open' } | { kind: 'expired' } | { kind: 'normal'; until: string } | { kind: 'disabled'; at: string }
+type ReviewState = { kind: 'open' } | { kind: 'expired' } | { kind: 'normal'; until: string } | { kind: 'disabled'; at: string }
 
 /** 复核结论：标记正常有 30 天有效期，过期即重新提示；停用没有有效期 */
 export function reviewState(review: ClusterReview | null, now: Date = new Date()): ReviewState {
@@ -214,7 +214,7 @@ export function validateDisable(userIds: readonly string[], reason: string): Rec
   return fields
 }
 
-export const SKIP_LABEL: Record<SkipReason, string> = { self: '自己', administrator: '后台账号', not_member: '已不在聚类里', already_disabled: '已停用' }
+const SKIP_LABEL: Record<SkipReason, string> = { self: '自己', administrator: '后台账号', not_member: '已不在聚类里', already_disabled: '已停用' }
 
 export function disableSummary(r: ClusterDisabled): { message: string; ok: boolean } {
   const counts = new Map<SkipReason, number>()
@@ -269,7 +269,7 @@ export const SWITCH_META: Readonly<Record<string, SwitchMeta>> = {
   'client.config_sync': { title: '客户端配置同步', desc: '核心能力，数据库约束保证不能关闭。' },
 }
 
-export type SwitchKind = 'toggle' | 'essential' | 'missing'
+type SwitchKind = 'toggle' | 'essential' | 'missing'
 
 export interface SwitchView {
   code: string

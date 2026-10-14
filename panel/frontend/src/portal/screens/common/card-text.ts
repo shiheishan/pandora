@@ -12,7 +12,7 @@ export function isExpiredNow(sub: Pick<Subscription, 'status' | 'current_period_
   return sub.status === 'expired' || (sub.current_period_end !== null && new Date(sub.current_period_end).getTime() <= now.getTime())
 }
 
-export interface ExpiryText {
+interface ExpiryText {
   main: string
   /** 第二行：到期时刻 */
   sub: string
@@ -45,7 +45,7 @@ export function periodWord(sub: Pick<Subscription, 'quotas'>): string {
   return q.period === 'month' ? '本月' : q.period === 'day' ? '今天' : q.period === 'total' ? '总共' : '本期'
 }
 
-export interface UsageText {
+interface UsageText {
   label: string
   /** 「剩 8G / 共 100G（含流量包 30G）」；不限量为「不限流量」 */
   right: string

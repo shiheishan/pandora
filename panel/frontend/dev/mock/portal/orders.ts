@@ -3,9 +3,9 @@ import { cancelOrder, fulfill, isUuid, orderDetail, orderRow, sweepExpired } fro
 import { channelIntent } from './checkout.ts'
 import { gate, portalState } from './fixtures.ts'
 
-const STATUSES = new Set(['draft', 'pending_payment', 'processing', 'paid', 'fulfilled', 'cancelled', 'expired', 'partially_refunded', 'refunded'])
+const STATUSES = new Set(['pending_payment', 'paid', 'fulfilled', 'cancelled', 'expired', 'partially_refunded', 'refunded'])
 const COUNT_GROUPS = {
-  open: ['draft', 'pending_payment', 'processing'],
+  open: ['pending_payment'],
   paid: ['paid', 'fulfilled'],
   closed: ['cancelled', 'expired'],
   refunded: ['partially_refunded', 'refunded'],
@@ -56,14 +56,14 @@ export const orders: MockModule = {
       const view = () => ({ order_id: order.id, status: 'cancelled', state_version: 2, cancelled_at: order.cancelled_at, cancel_reason: order.cancel_reason })
       if (order.status === 'cancelled') return ctx.send(200, { ...view(), already_terminal: true })
       if (order.status === 'expired') return ctx.fail(409, 'conflict', '订单已过期')
-      if (!['draft', 'pending_payment'].includes(order.status)) return ctx.fail(409, 'conflict', '订单已支付或正在处理，不能取消')
+      if (order.status !== 'pending_payment') return ctx.fail(409, 'conflict', '订单已支付或正在处理，不能取消')
       cancelOrder(state, order)
       ctx.send(200, { ...view(), already_terminal: false })
     },
 
     // 「我已支付，刷新状态」（PAY-009 主动查单）：假渠道按假收银台的记录回答。
     // 「模拟支付成功但回调丢失」过的单查到已付并补记履约；发起过支付但没付的回 unpaid；
-    // 没发起过支付回 409；种子里的「处理中」单发起过支付但假收银台无记录，回 503 用来看「查询失败」；每账号每分钟 6 次
+    // 没发起过支付回 409；种子里那张已发起支付的待支付充值单发起过支付但假收银台无记录，回 503 用来看「查询失败」；每账号每分钟 6 次
     'POST /v1/orders/:id/query': (ctx) => {
       const state = portalState(ctx.user.userId)
       sweepExpired(state)
@@ -75,12 +75,12 @@ export const orders: MockModule = {
       queryLog.set(ctx.user.userId, [...recent, now])
       const intent = channelIntent(ctx.user.userId, order.id)
       if (!intent && !order.hasIntent) return ctx.fail(409, 'conflict', '该订单从未发起过支付，无法向渠道查单')
-      // 种子里的「处理中」单发起过支付，但假收银台里没有它的意图：当作渠道查不到结果
+      // 种子里那张已发起支付的待支付充值单发起过支付，但假收银台里没有它的意图：当作渠道查不到结果
       if (!intent) return ctx.fail(503, 'service_unavailable', '渠道查单失败，请稍后再试')
       const view = (channel: 'paid' | 'unpaid', reconciled: boolean, already: boolean) =>
         ctx.send(200, { order_id: order.id, order_no: order.order_no, provider_code: intent.provider, channel_status: channel, reconciled, already_recorded: already, order_status: order.status })
       if (!intent.channelPaid) return view('unpaid', false, false)
-      if (order.status === 'pending_payment' || order.status === 'processing') {
+      if (order.status === 'pending_payment') {
         fulfill(state, order, { provider: intent.provider, method: intent.method })
         return view('paid', true, false)
       }

@@ -260,7 +260,7 @@ for (const u of userStore) {
 const U = (i: number) => userStore[i]!
 const std = plans[0]!
 const pro = plans[1] ?? std
-const OPS = { created_by: randomUUID(), created_by_email: 'ops@pandora.dev' }
+const OPS = { created_by: randomUUID(), created_by_email: 'ops@example.test' }
 
 function add(u: User, over: Partial<Order>, then?: (o: Order) => void): Order {
   const o = blank(u, { subtotal_amount: over.total_amount ?? 0, ...over })
@@ -277,12 +277,12 @@ const paidVia = (code: string) => (o: Order) => {
 }
 const done = (at: string) => ({ created_at: at, updated_at: at, paid_at: at, fulfilled_at: at, state_version: 3 })
 
-// 待支付：等回调、首笔失败、人工开的待用户支付（还没发起支付）、处理中
+// 待支付：等回调、首笔失败、人工开的待用户支付（还没发起支付）
 add(U(7), { total_amount: 2500, payable_amount: 2500, created_at: iso(4 * MIN), expires_at: iso(-26 * MIN), items: [planItem(std.id, std.name, 2500, 'CNY')] }, (o) =>
   o.intents.push(intentFor(o, 'epay', 'requires_action', iso(3 * MIN))),
 )
 add(U(7), { kind: 'topup', total_amount: 10000, payable_amount: 10000, created_at: iso(9 * MIN), expires_at: iso(-21 * MIN) }, (o) =>
-  o.intents.push(intentFor(o, 'epay', 'failed', iso(8 * MIN), { failure_code: 'user_cancelled', failure_message: '渠道返回：用户取消支付' })),
+  o.intents.push(intentFor(o, 'epay', 'cancelled', iso(8 * MIN), { failure_code: 'user_cancelled', failure_message: '渠道返回：用户取消支付' })),
 )
 add(U(3), { total_amount: 4500, payable_amount: 4500, created_at: iso(15 * MIN), expires_at: iso(-15 * MIN), manual_reason: '对公转账客户，先开单再付款', ...OPS })
 // 超时未支付（仪表盘「超时未支付订单」数的就是这两张）：创建超过 30 分钟、过期作业还没处理，像是回调丢了
@@ -292,8 +292,8 @@ add(U(9), { total_amount: 4500, payable_amount: 4500, created_at: iso(2 * 60 * M
 add(U(6), { total_amount: 2500, payable_amount: 2500, created_at: iso(6 * 60 * MIN), expires_at: iso(5 * 60 * MIN + 30 * MIN), items: [planItem(std.id, std.name, 2500, 'CNY')] }, (o) =>
   o.intents.push(intentFor(o, 'epay_backup', 'requires_action', iso(6 * 60 * MIN - 2 * MIN))),
 )
-add(U(11), { status: 'processing', total_amount: 69000, payable_amount: 69000, created_at: iso(22 * MIN), expires_at: iso(-8 * MIN), state_version: 2, items: [planItem(pro.id, pro.name, 69000, 'CNY', 'year')] }, (o) =>
-  o.intents.push(intentFor(o, 'epay', 'processing', iso(21 * MIN))),
+add(U(11), { total_amount: 69000, payable_amount: 69000, created_at: iso(22 * MIN), expires_at: iso(-8 * MIN), state_version: 2, items: [planItem(pro.id, pro.name, 69000, 'CNY', 'year')] }, (o) =>
+  o.intents.push(intentFor(o, 'epay', 'requires_action', iso(21 * MIN))),
 )
 // 已支付：余额全额、美元、流量包（R32）、多项、充值
 add(U(5), { status: 'fulfilled', total_amount: 6900, balance_applied: 6900, ...done(iso(3 * 60 * MIN)), items: [planItem(std.id, std.name, 6900, 'CNY', 'month', 3)] })
@@ -305,7 +305,7 @@ add(
   paidVia('epay'),
 )
 add(U(9), { kind: 'topup', status: 'paid', total_amount: 20000, payable_amount: 20000, paid_amount: 20000, ...done(iso(DAY)), fulfilled_at: null, state_version: 2 }, (o) => {
-  o.intents.push(intentFor(o, 'epay', 'failed', iso(DAY + 2 * MIN), { failure_code: 'timeout', failure_message: '渠道超时' }))
+  o.intents.push(intentFor(o, 'epay', 'cancelled', iso(DAY + 2 * MIN), { failure_code: 'timeout', failure_message: '渠道超时' }))
   paidVia('epay')(o)
 })
 // 人工：赠送（全额减免）、线下已收款（offline 入账没有支付尝试）
@@ -336,7 +336,6 @@ function refunded(amount: number, reason: string, revoke: boolean) {
   return (o: Order) => {
     paidVia('epay')(o)
     const p = o.payments[0]!
-    p.status = amount === o.paid_amount ? 'refunded' : 'partially_refunded'
     p.refunded_amount = amount
     const at = new Date(Date.parse(o.created_at) + DAY).toISOString()
     o.refunds.push({ id: randomUUID(), payment_id: p.id, provider_refund_id: `RF${o.order_no.slice(2)}`, currency: o.currency, amount, reason, status: 'succeeded', entitlement_revoked: revoke, commission_reversed: true, failure_message: null, succeeded_at: at, created_at: at })
@@ -386,11 +385,9 @@ export function orderDetail(o: Order) {
   return {
     ...orderRow(o),
     user_id: o.user_id,
-    organization_id: null,
     state_version: o.state_version,
     subtotal_amount: o.subtotal_amount,
     discount_amount: o.discount_amount,
-    tax_amount: 0,
     coupon_id: null,
     manual_reason: o.manual_reason,
     created_by: o.created_by,
@@ -404,7 +401,6 @@ export function orderDetail(o: Order) {
     updated_at: o.updated_at,
     items: o.items.map((i) => ({
       ...i,
-      product_id: randomUUIDFor(i.product_name),
       plan_version_id: i.plan_id ? randomUUIDFor(`${i.plan_id}-v${i.plan_version}`) : null,
       snapshot_entitlements: [],
       snapshot_quotas: [],
@@ -461,7 +457,7 @@ function applyEffect(o: Order, u: User, fx: PlacementEffect, at: string): void {
   const interval = item.interval ?? 'month'
   const count = item.interval_count ?? 1
   const now = Date.parse(at)
-  const live = ['active', 'trialing', 'grace', 'past_due'].includes(sub.status)
+  const live = sub.status === 'active'
   if (fx.kind === 'renew') {
     // 生效中的接在原到期日后；过期 30 天内的从付款起算（恢复使用）
     const from = live && sub.current_period_end ? Date.parse(sub.current_period_end) : now
@@ -487,7 +483,6 @@ function applyEffect(o: Order, u: User, fx: PlacementEffect, at: string): void {
   o.subscription_id = sub.id
 }
 
-const LIVE_SUB = new Set<Sub['status']>(['active', 'trialing', 'grace', 'past_due'])
 export function fulfil(o: Order, at: string): void {
   const u = userStore.find((x) => x.id === o.user_id)
   const item = o.items[0]
@@ -526,7 +521,7 @@ export function fulfil(o: Order, at: string): void {
   u.subs.push(sub)
   o.subscription_id = sub.id
   // 未分配的流量包：开通后这是唯一一份在用的订阅，就挂到它上面（billing provision）
-  if (u.unattached_bytes > 0 && u.subs.filter((x) => LIVE_SUB.has(x.status)).length === 1) {
+  if (u.unattached_bytes > 0 && u.subs.filter((x) => x.status === 'active').length === 1) {
     sub.pack_bytes += u.unattached_bytes
     u.unattached_bytes = 0
   }
@@ -601,7 +596,7 @@ export function providerView(p: Provider) {
   const since = Date.now() - DAY
   const terminal = orders
     .flatMap((o) => o.intents)
-    .filter((i) => i.provider_code === p.code && Date.parse(i.created_at) >= since && ['succeeded', 'failed', 'cancelled', 'expired'].includes(i.status))
+    .filter((i) => i.provider_code === p.code && Date.parse(i.created_at) >= since && ['succeeded', 'cancelled', 'expired'].includes(i.status))
   const last = pays.map((x) => x.paid_at).sort().at(-1) ?? null
   return {
     ...p,
@@ -636,8 +631,8 @@ const adjSeed = (currency: Adjustment['currency'], amount: number, reason: strin
   created_at: iso(days * DAY),
 })
 export const adjustments: Adjustment[] = [
-  adjSeed('CNY', 240000, '线下对公转账补录 · 9 月', 12, 'admin@pandora.dev'),
-  adjSeed('USD', -1200, '重复扣款退回，渠道已原路退款', 6, 'ops@pandora.dev'),
+  adjSeed('CNY', 240000, '线下对公转账补录 · 9 月', 12, 'admin@example.test'),
+  adjSeed('USD', -1200, '重复扣款退回，渠道已原路退款', 6, 'ops@example.test'),
   adjSeed('CNY', 31240, '渠道手续费返还 · 8 月', 3, null),
 ]
 

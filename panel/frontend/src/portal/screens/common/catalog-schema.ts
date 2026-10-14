@@ -4,9 +4,9 @@ import { z } from 'zod'
 // GET v1/plans（字段与 Go 的 planView 一一对应，都没有 omitempty：R69 的重置策略与续费 / 变更开关、
 // R99 / R100 的限速、卖点与推荐都必回；重置日与限速在不适用时为 null）
 // ---------------------------------------------------------------------------
-export const RESET_STRATEGIES = ['never', 'natural_month', 'billing_cycle', 'fixed_day'] as const
+const RESET_STRATEGIES = ['never', 'natural_month', 'billing_cycle', 'fixed_day'] as const
 
-export const priceSchema = z.object({
+const priceSchema = z.object({
   id: z.string(),
   currency: z.string(),
   unit_amount: z.number().int(),

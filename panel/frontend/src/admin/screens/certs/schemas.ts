@@ -7,18 +7,17 @@ import { z } from 'zod'
 export const PROVIDERS = ['cloudflare', 'alidns', 'tencentcloud'] as const
 export type Provider = (typeof PROVIDERS)[number]
 
-export const CERT_STATUSES = ['pending', 'active', 'paused', 'blocked_credential'] as const
-export type CertStatus = (typeof CERT_STATUSES)[number]
+const CERT_STATUSES = ['pending', 'active', 'paused', 'blocked_credential'] as const
 
-export const EXPIRY_LEVELS = ['none', 'ok', 'warning', 'critical', 'expired'] as const
+const EXPIRY_LEVELS = ['none', 'ok', 'warning', 'critical', 'expired'] as const
 export type ExpiryLevel = (typeof EXPIRY_LEVELS)[number]
 
-export const KEY_TYPES = ['ecdsa-p256', 'rsa-2048'] as const
+const KEY_TYPES = ['ecdsa-p256', 'rsa-2048'] as const
 export type KeyType = (typeof KEY_TYPES)[number]
 
-export const ORDER_STATES = ['queued', 'running', 'succeeded', 'failed', 'cancelled'] as const
-export const ORDER_REASONS = ['initial', 'renewal', 'ari', 'manual'] as const
-export const CAS = ['letsencrypt', 'letsencrypt_staging', 'zerossl', 'custom'] as const
+const ORDER_STATES = ['queued', 'running', 'succeeded', 'failed', 'cancelled'] as const
+const ORDER_REASONS = ['initial', 'renewal', 'ari', 'manual'] as const
+const CAS = ['letsencrypt', 'letsencrypt_staging', 'zerossl', 'custom'] as const
 
 export const orderBriefSchema = z.object({
   id: z.string(),
@@ -26,7 +25,6 @@ export const orderBriefSchema = z.object({
   reason: z.enum(ORDER_REASONS),
   created_at: z.string(),
 })
-export type OrderBrief = z.output<typeof orderBriefSchema>
 
 export const certificateSchema = z.object({
   id: z.string(),
@@ -59,7 +57,7 @@ export const certificateSchema = z.object({
 })
 export type Certificate = z.output<typeof certificateSchema>
 
-export const certificateSummarySchema = z.object({
+const certificateSummarySchema = z.object({
   total: z.number().int(),
   warning: z.number().int(),
   critical: z.number().int(),
@@ -68,14 +66,13 @@ export const certificateSummarySchema = z.object({
   paused: z.number().int(),
   blocked: z.number().int(),
 })
-export type CertificateSummary = z.output<typeof certificateSummarySchema>
 
 export const certificateListSchema = z.object({
   items: z.array(certificateSchema),
   summary: certificateSummarySchema,
 })
 
-export const versionSchema = z.object({
+const versionSchema = z.object({
   id: z.string(),
   version: z.number().int(),
   ca: z.enum(CAS),
@@ -89,9 +86,8 @@ export const versionSchema = z.object({
   current: z.boolean(),
   created_at: z.string(),
 })
-export type Version = z.output<typeof versionSchema>
 
-export const orderSchema = z.object({
+const orderSchema = z.object({
   id: z.string(),
   reason: z.enum(ORDER_REASONS),
   state: z.enum(ORDER_STATES),
@@ -117,9 +113,9 @@ export type CertificateDetail = z.output<typeof certificateDetailSchema>
 // ---------------------------------------------------------------------------
 // DNS 凭据
 // ---------------------------------------------------------------------------
-export const VERIFY_STATUSES = ['unverified', 'ok', 'error'] as const
+const VERIFY_STATUSES = ['unverified', 'ok', 'error'] as const
 
-export const dnsCredentialSchema = z.object({
+const dnsCredentialSchema = z.object({
   id: z.string(),
   name: z.string(),
   provider: z.enum(PROVIDERS),

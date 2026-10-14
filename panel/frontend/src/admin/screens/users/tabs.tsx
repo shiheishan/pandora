@@ -11,7 +11,7 @@ import {
   deviceLimitLabel,
   expiryView,
   extendableSubscriptions,
-  isLiveSub,
+  isLive,
   isOrderTarget,
   ORDER_STATUS_VIEW,
   orderWhat,
@@ -149,7 +149,7 @@ export function SubscriptionsTab({ d, now }: { d: UserDetail; now: Date }) {
  * （后台没有挪流量包的入口，挪是用户在门户里做的事）
  */
 function UnattachedPacks({ bytes, subscriptions }: { bytes: number; subscriptions: readonly SubscriptionRow[] }) {
-  const live = subscriptions.filter((s) => isLiveSub(s.status)).length
+  const live = subscriptions.filter((s) => isLive(s.status)).length
   return (
     <p className={`${css.notice} ${css.notice_warn}`} role="note" aria-label="未分配的流量包">
       <strong>未分配的流量包 {formatBytes(bytes)}</strong>：还没加到任何一份订阅，暂时不能用。{unattachedNext(live)}
@@ -169,7 +169,7 @@ function SubscriptionCard({ userId, s, now, current, onAction }: { userId: strin
         <span className={css.muted}>{s.label ? `${s.plan_name} · v${s.plan_version}` : `v${s.plan_version}`}</span>
         <Tag tone={st.tone}>{st.label}</Tag>
         <span className={css.spacer} />
-        {isLiveSub(s.status) && <span className={css[`tone_${exp.tone}`]}>{exp.text}</span>}
+        {isLive(s.status) && <span className={css[`tone_${exp.tone}`]}>{exp.text}</span>}
       </div>
       <div className={css.subMeta}>
         {formatMoney(s.amount, s.currency)}
@@ -205,7 +205,7 @@ function SubscriptionCard({ userId, s, now, current, onAction }: { userId: strin
 function RowActions({ userId, s, now, onAction }: { userId: string; s: SubscriptionRow; now: Date; onAction: (kind: RowAction['kind']) => void }) {
   const name = subName(s)
   const extendable = extendableSubscriptions([s], now).length > 0
-  const live = isLiveSub(s.status)
+  const live = isLive(s.status)
   return (
     <div className={css.subActions}>
       <Button
@@ -221,7 +221,7 @@ function RowActions({ userId, s, now, onAction }: { userId: string; s: Subscript
         size="xs"
         aria-label={`给${name}加时长`}
         disabled={!extendable}
-        title={extendable ? undefined : '只有生效中、试用中，或过期不满 30 天的订阅能加时长'}
+        title={extendable ? undefined : '只有生效中，或过期不满 30 天的订阅能加时长'}
         onClick={() => onAction('extend')}
       >
         加时长
@@ -233,7 +233,7 @@ function RowActions({ userId, s, now, onAction }: { userId: string; s: Subscript
         size="xs"
         aria-label={`重置${name}的本期流量`}
         disabled={s.status !== 'active'}
-        title={s.status === 'active' ? undefined : s.status === 'trialing' ? '试用订阅不能手动重置' : '这一份不在生效中'}
+        title={s.status === 'active' ? undefined : '这一份不在生效中'}
         onClick={() => onAction('reset')}
       >
         重置流量
@@ -293,7 +293,7 @@ function DeviceLimit({ s }: { s: SubscriptionRow }) {
 // 设备：D-B-8 已决（5.A.2）方案 A——节点只上报 IP 哈希，没有客户端名与明文 IP，只给台数与上限
 // ===========================================================================
 export function DevicesTab({ d }: { d: UserDetail }) {
-  const live = d.subscriptions.filter((s) => isLiveSub(s.status))
+  const live = d.subscriptions.filter((s) => isLive(s.status))
   if (live.length === 0) return <Empty bare title="暂无在线设备" description="用户没有生效中的订阅。" />
   return (
     <>

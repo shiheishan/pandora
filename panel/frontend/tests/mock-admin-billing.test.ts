@@ -55,10 +55,11 @@ describe('mock api · admin billing', () => {
   })
 
   it('serves orders the page schemas accept, with multi-status and user filters (R63)', async () => {
-    const pending = ordersSchema.parse(await json(await get(admin, 'orders?status=draft,pending_payment,processing&limit=100')))
+    const pending = ordersSchema.parse(await json(await get(admin, 'orders?status=pending_payment,cancelled&limit=100')))
     expect(pending.orders.length).toBeGreaterThan(0)
-    expect(pending.orders.every((o) => ['draft', 'pending_payment', 'processing'].includes(o.status))).toBe(true)
+    expect(pending.orders.every((o) => ['pending_payment', 'cancelled'].includes(o.status))).toBe(true)
     expect((await get(admin, 'orders?status=pending')).status).toBe(400)
+    expect((await get(admin, 'orders?status=processing')).status).toBe(400)
     expect((await get(admin, 'orders?user_id=nope')).status).toBe(400)
     const all = ordersSchema.parse(await json(await get(admin, 'orders?limit=100')))
     expect(all.orders.some((o) => o.kind === 'addon' && o.plan_name.includes('加油包'))).toBe(true)
@@ -370,7 +371,7 @@ describe('mock api · admin billing', () => {
   })
 
   it('queries the channel with a key, no reauth, and reconciles a lost callback (PAY-009)', async () => {
-    const pending = ordersSchema.parse(await json(await get(admin, 'orders?status=pending_payment,processing&limit=100'))).orders
+    const pending = ordersSchema.parse(await json(await get(admin, 'orders?status=pending_payment&limit=100'))).orders
     const lost = pending.find((o) => o.provider_code === 'epay' && Date.now() - Date.parse(o.created_at) > 3600 * 1000)!
     const fresh = pending.find((o) => o.provider_code === 'epay' && Date.now() - Date.parse(o.created_at) < 3600 * 1000)!
     const failing = pending.find((o) => o.provider_code === 'epay_backup')!

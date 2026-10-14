@@ -34,14 +34,14 @@ const GEO: ReadonlyArray<readonly [string, string, string]> = [
   ['10.', '内网地址', 'private'],
   ['192.168.', '内网地址', 'private'],
   ['127.', '本机回环地址', 'loopback'],
-  ['223.104.', '中国 广东 移动', 'mobile'],
-  ['117.136.', '中国 江苏 移动', 'mobile'],
-  ['39.144.', '中国 北京 移动', 'mobile'],
-  ['112.64.', '中国 上海 联通', 'residential'],
-  ['61.216.', '中国 台湾 中华电信', 'residential'],
-  ['202.120.', '中国 上海 教育网', 'education'],
-  ['45.76.', '日本 东京 Vultr', 'datacenter'],
-  ['149.28.', '美国 洛杉矶 Vultr', 'datacenter'],
+  ['198.51.100.1', '中国 广东 移动', 'mobile'],
+  ['198.51.100.2', '中国 江苏 移动', 'mobile'],
+  ['198.51.100.3', '中国 北京 移动', 'mobile'],
+  ['198.51.100.4', '中国 上海 联通', 'residential'],
+  ['198.51.100.5', '中国 台湾 中华电信', 'residential'],
+  ['198.51.100.6', '中国 上海 教育网', 'education'],
+  ['203.0.113.4', '日本 东京 Vultr', 'datacenter'],
+  ['203.0.113.1', '美国 洛杉矶 Vultr', 'datacenter'],
 ]
 function geoOf(ip: string): { geo: string; kind: string } {
   const hit = ip ? GEO.find(([p]) => ip.startsWith(p)) : undefined
@@ -52,7 +52,7 @@ const userAt = (i: number): User => userStore[i % userStore.length]!
 const findUser = (id: string) => userStore.find((u) => u.id === id)
 const activePlan = (u: User) =>
   [...u.subs]
-    .filter((s) => s.status === 'active' || s.status === 'trialing')
+    .filter((s) => s.status === 'active')
     .sort((a, b) => b.created_at.localeCompare(a.created_at))[0]?.plan_name ?? null
 
 // ---------------------------------------------------------------------------
@@ -87,12 +87,12 @@ function record(row: Omit<AuditRow, 'id' | 'occurred_at'> & { at?: string }): Au
 }
 
 const STAFF: ReadonlyArray<readonly [string, string]> = [
-  ['linzhou@pandora.dev', '10.8.0.12'],
-  ['zhou.min@pandora.dev', '10.8.0.31'],
-  ['tang.yiming@pandora.dev', '10.8.0.44'],
+  ['linzhou@example.test', '10.8.0.12'],
+  ['zhou.min@example.test', '10.8.0.31'],
+  ['tang.yiming@example.test', '10.8.0.44'],
 ]
 const BROWSER = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6) AppleWebKit/605.1.15 Safari/605.1.15'
-const PUBLIC_IPS = ['112.64.28.201', '39.144.8.21', '117.136.2.40', '61.216.4.19', '223.104.6.9']
+const PUBLIC_IPS = ['198.51.100.42', '198.51.100.31', '198.51.100.24', '198.51.100.51', '198.51.100.16']
 
 // 种子：14 天，约 140 条；10 天以前的是 00080 之前的存量行（没有 auth_context 与来源 IP）
 ;(function seedAudit() {
@@ -112,15 +112,15 @@ const PUBLIC_IPS = ['112.64.28.201', '39.144.8.21', '117.136.2.40', '61.216.4.19
       { ...base, ...user, action: 'user.login', auth_context: null },
       { ...base, ...staff, action: 'ticket.assign', resource_type: 'ticket', resource_id: randomUUID(), resource_label: `TK20260923-${(1000 + k).toString(36).toUpperCase()}`, auth_context: auth('session') },
       { ...base, ...staff, action: 'node.update', resource_type: 'node', resource_id: randomUUID(), resource_label: `香港 0${(k % 4) + 1}`, auth_context: auth('session') },
-      { ...base, actor_kind: 'anonymous', actor_id: null, actor_email: null, api_domain: 'public', source_ip: legacy ? null : '223.104.63.18', user_agent: 'python-requests/2.31', action: 'user.login', outcome: 'failure' },
+      { ...base, actor_kind: 'anonymous', actor_id: null, actor_email: null, api_domain: 'public', source_ip: legacy ? null : '198.51.100.18', user_agent: 'python-requests/2.31', action: 'user.login', outcome: 'failure' },
       { ...base, ...staff, action: 'gift_card.batch.export', resource_type: 'gift_card_batch', resource_id: randomUUID(), auth_context: auth('reauth') },
       { ...base, ...user, action: 'user.registered', resource_type: 'user', resource_id: u.id, resource_label: u.email },
       { ...base, ...staff, action: 'plan.version.publish', resource_type: 'plan', resource_id: randomUUID(), resource_label: '专业版', auth_context: auth('reauth') },
       { ...base, actor_kind: 'system', actor_id: null, actor_email: null, api_domain: null, source_ip: null, user_agent: null, action: 'payment.succeeded', resource_type: 'order', resource_id: randomUUID(), resource_label: `PD2609-${3400 + k}` },
-      { ...base, actor_kind: 'agent', actor_id: randomUUID(), actor_email: 'support@pandora.dev', api_domain: 'admin', source_ip: legacy ? null : '10.8.0.52', user_agent: BROWSER, action: 'ticket.reply', resource_type: 'ticket', resource_id: randomUUID(), resource_label: `TK20260922-${(2000 + k).toString(36).toUpperCase()}`, auth_context: auth('session') },
+      { ...base, actor_kind: 'agent', actor_id: randomUUID(), actor_email: 'support@example.test', api_domain: 'admin', source_ip: legacy ? null : '10.8.0.52', user_agent: BROWSER, action: 'ticket.reply', resource_type: 'ticket', resource_id: randomUUID(), resource_label: `TK20260922-${(2000 + k).toString(36).toUpperCase()}`, auth_context: auth('session') },
       { ...base, ...staff, action: 'payment_provider.toggle', resource_type: 'payment_provider', auth_context: auth('reauth'), outcome: k % 4 === 0 ? 'denied' : 'success', reason: '渠道维护' },
       { ...base, ...user, action: 'user.password_changed', resource_type: 'user', resource_id: u.id, resource_label: u.email, auth_context: auth('session') },
-      { ...base, actor_kind: 'node', actor_id: null, actor_email: null, api_domain: 'node', source_ip: legacy ? null : '149.28.72.190', user_agent: 'pdnd/1.4.2', action: 'node.enroll', resource_type: 'node', resource_id: randomUUID(), resource_label: `us-lax-edge-${(k % 3) + 1}`, outcome: k % 5 === 0 ? 'failure' : 'success' },
+      { ...base, actor_kind: 'node', actor_id: null, actor_email: null, api_domain: 'node', source_ip: legacy ? null : '203.0.113.14', user_agent: 'pdnd/1.4.2', action: 'node.enroll', resource_type: 'node', resource_id: randomUUID(), resource_label: `us-lax-edge-${(k % 3) + 1}`, outcome: k % 5 === 0 ? 'failure' : 'success' },
       { ...base, actor_kind: 'plugin', actor_id: null, actor_email: null, api_domain: null, source_ip: null, user_agent: null, action: 'plugin.hook.deliver', resource_type: 'plugin_hook', outcome: k % 3 === 0 ? 'failure' : 'success' },
       { ...base, ...staff, action: 'withdrawal.approve', resource_type: 'withdrawal', resource_id: randomUUID(), auth_context: auth('reauth'), outcome: k % 7 === 0 ? 'partial' : 'success' },
     ]
@@ -213,7 +213,7 @@ const CLIENTS = ['clash-verge/2.0.4', 'sing-box/1.10.1', 'Shadowrocket/2.2.53', 
     fetches.push({
       at: iso((k * 53 + 1) * MIN),
       user: scan ? null : userAt(k * 3 + 1),
-      ip: scan ? '149.28.72.190' : PUBLIC_IPS[(k * 2) % PUBLIC_IPS.length]!,
+      ip: scan ? '203.0.113.14' : PUBLIC_IPS[(k * 2) % PUBLIC_IPS.length]!,
       ua: scan ? 'curl/8.4.0' : CLIENTS[k % CLIENTS.length]!,
       result: scan ? 'not_found' : k % 17 === 8 ? 'rate_limited' : k % 19 === 3 ? 'expired' : 'ok',
     })
@@ -241,7 +241,7 @@ const CATEGORY_RULES: ReadonlyArray<readonly [string, readonly string[]]> = [
   ['register', ['user.registered']],
   ['reset_password', ['user.password', 'user.reset']],
   ['order', ['order.']],
-  ['admin', ['node.', 'route_group.', 'adminctl.', 'server.', 'plan.', 'payment_provider.']],
+  ['admin', ['node.', 'route_group.', 'admin.', 'server.', 'plan.', 'payment_provider.']],
   ['payment', ['payment']],
   ['ticket', ['ticket.']],
 ]
@@ -322,13 +322,13 @@ const cluster = (ip: string, idx: number[], lastMin: number, review: Review | nu
 })
 // 成员挑的是真实种子：0 号是管理员（停用时跳过），9 号已停用，24 / 39 已停用、40 已封禁
 const clusters: MockCluster[] = [
-  cluster('223.104.63.18', [3, 9, 13, 18, 23], 6),
-  cluster('45.76.9.102', [5, 25, 45], 20),
-  cluster('117.136.2.40', [0, 7, 27], 45),
-  cluster('112.64.28.201', [1, 21], 60),
-  cluster('61.216.4.19', [15, 35], 180, { decision: 'normal', decided_at: iso(32 * DAY), expires_at: iso(2 * DAY) }),
-  cluster('202.120.1.9', [11, 31], 300, { decision: 'normal', decided_at: iso(10 * DAY), expires_at: iso(-20 * DAY) }),
-  cluster('39.144.8.21', [24, 39, 40], 900, { decision: 'disabled', decided_at: iso(3 * DAY), expires_at: null }),
+  cluster('198.51.100.18', [3, 9, 13, 18, 23], 6),
+  cluster('203.0.113.45', [5, 25, 45], 20),
+  cluster('198.51.100.24', [0, 7, 27], 45),
+  cluster('198.51.100.42', [1, 21], 60),
+  cluster('198.51.100.51', [15, 35], 180, { decision: 'normal', decided_at: iso(32 * DAY), expires_at: iso(2 * DAY) }),
+  cluster('198.51.100.61', [11, 31], 300, { decision: 'normal', decided_at: iso(10 * DAY), expires_at: iso(-20 * DAY) }),
+  cluster('198.51.100.31', [24, 39, 40], 900, { decision: 'disabled', decided_at: iso(3 * DAY), expires_at: null }),
   cluster('', [19, 29], 2000),
 ]
 

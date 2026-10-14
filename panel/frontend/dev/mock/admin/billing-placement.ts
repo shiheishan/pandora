@@ -8,7 +8,6 @@ import type { Sub, User } from './users.ts'
 const DAY = 86_400_000
 /** 原地续费窗口：过期不满 30 天还能续（billing/expire.go 在满 30 天时关窗） */
 const RENEWAL_WINDOW_DAYS = 30
-const LIVE = new Set<Sub['status']>(['active', 'trialing', 'grace', 'past_due'])
 
 export type State = 'live' | 'revivable' | 'dead'
 export interface Candidate {
@@ -17,7 +16,7 @@ export interface Candidate {
 }
 
 export function stateOf(s: Sub, now: number): State {
-  if (LIVE.has(s.status)) return 'live'
+  if (s.status === 'active') return 'live'
   if (s.status === 'expired' && s.current_period_end !== null) {
     const lapsed = now - Date.parse(s.current_period_end)
     if (lapsed >= 0 && lapsed < RENEWAL_WINDOW_DAYS * DAY) return 'revivable'
@@ -100,7 +99,7 @@ export function addInterval(from: number, interval: string, count: number): Date
 
 /** 换套餐时原套餐没用完的部分：本期付费 × min(剩余天数比, 剩余流量比)；已过期的没有 */
 export function prorationCredit(s: Sub, now: number): number {
-  if (!LIVE.has(s.status)) return 0
+  if (s.status !== 'active') return 0
   const start = s.current_period_start ? Date.parse(s.current_period_start) : NaN
   const end = s.current_period_end ? Date.parse(s.current_period_end) : NaN
   const timeRatio = Number.isFinite(start) && Number.isFinite(end) && end > start ? Math.min(1, Math.max(0, (end - now) / (end - start))) : 1

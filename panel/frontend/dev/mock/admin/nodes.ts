@@ -66,7 +66,7 @@ function node(p: Partial<Node> & Pick<Node, 'name' | 'node_type' | 'serving_stat
     status: p.serving_status === 'draft' ? 'draft' : p.serving_status === 'retired' ? 'retired' : 'active',
     server_id: serverAt(server).id,
     pool_id: pools[0]!.id,
-    server_host: `n${nodeNo}.pandora.run`,
+    server_host: `n${nodeNo}.example.test`,
     server_port: 443,
     traffic_rate: 1,
     display_name: null,
@@ -92,7 +92,7 @@ const store: Node[] = [
   node({ name: '香港 02 · IPLC', node_type: 'hysteria2', serving_status: 'active', country_code: 'HK', server_port: 8443, online_users: 288, online_ips: 301, traffic_bytes_24h: Math.round(1.12 * 1024 * GB), protocol_config: { cert_path: '/etc/pandora/tls.crt', key_path: '/etc/pandora/tls.key', 'bandwidth': { up: 200, down: 1000 } } }, 0),
   node({ name: '东京 03', node_type: 'trojan', serving_status: 'active', country_code: 'JP', online_users: 356, online_ips: 402, traffic_bytes_24h: Math.round(1.49 * 1024 * GB), protocol_config: { network: 'tcp', tls: 2, reality_settings: { dest: 'www.apple.com:443', server_name: 'www.apple.com' } } }, 1),
   node({ name: '新加坡 02', node_type: 'shadowsocks', serving_status: 'active', country_code: 'SG', server_port: 8388, last_heartbeat_at: ago(900), online_users: 0, traffic_bytes_24h: 864 * GB, protocol_config: { cipher: 'aes-256-gcm' } }, 2),
-  node({ name: '洛杉矶 01', node_type: 'vless', serving_status: 'draining', country_code: 'US', pool_id: pools[1]!.id, online_users: 96, online_ips: 110, traffic_bytes_24h: 540 * GB, protocol_config: { network: 'ws', tls: 0, ws_path: '/ws' } }, 3),
+  node({ name: '洛杉矶 01', node_type: 'vless', serving_status: 'active', country_code: 'US', pool_id: pools[1]!.id, online_users: 96, online_ips: 110, traffic_bytes_24h: 540 * GB, protocol_config: { network: 'ws', tls: 0, ws_path: '/ws' } }, 3),
   node({ name: '首尔 01 · 灰度', node_type: 'tuic', serving_status: 'disabled', country_code: 'KR', pool_id: pools[2]!.id, protocol_config: { cert_path: '/etc/pandora/tls.crt', key_path: '/etc/pandora/tls.key' } }, 1),
   node({ name: '新加坡 03（草稿）', node_type: 'anytls', serving_status: 'draft', country_code: 'SG', last_heartbeat_at: null, identity_serial: null, serverToken: { present: false }, protocol_config: {} }, 2),
   node({ name: '台北 01', node_type: 'vmess', serving_status: 'retired', country_code: 'TW', last_heartbeat_at: ago(86400 * 9), protocol_config: { network: 'ws', tls: 0 } }, 5),
@@ -140,7 +140,6 @@ const STABLE_TYPES = new Set(SCHEMAS.filter((s) => s.status === 'stable').map((s
 /** subscription.DeliverableNodeSQL 的镜像：与用户、套餐都无关的节点自身条件 */
 function deliverable(n: Node): boolean {
   const srv = servers.find((s) => s.id === n.server_id)
-  // 假后端的服务器没有控制节点（control_node_id 恒为 null），Go 里那一条在这里恒真
   if (!srv || srv.status !== 'ready') return false
   const port = n.server_port ?? 0
   const host = n.server_host || srv.public_ipv4 || ''
@@ -187,9 +186,6 @@ function listRow(n: Node) {
     cpu_cores: 4,
     memory_mb: 4096,
     disk_gb: 80,
-    health_score: n.last_heartbeat_at ? 96 : null,
-    applied_config_version: n.last_heartbeat_at ? 42 : null,
-    desired_config_version: n.serving_status === 'retired' ? null : 42,
     last_heartbeat_at: n.last_heartbeat_at,
     stale,
     delivered_to_users: delivered,
@@ -231,7 +227,7 @@ function matchesState(n: Node, state: string): boolean {
     case 'all':
       return n.serving_status !== 'retired'
     case 'online':
-      return n.serving_status === 'draining' || (n.serving_status === 'active' && !stale)
+      return n.serving_status === 'active' && !stale
     case 'offline':
       return n.serving_status === 'active' && stale
     case 'disabled':
@@ -317,10 +313,9 @@ function validateProtocol(nodeType: string, config: unknown): Record<string, str
 }
 
 const EDGES: Readonly<Record<string, readonly string[]>> = {
-  draft: ['active', 'disabled', 'retired'],
-  active: ['draining', 'disabled'],
-  draining: ['active', 'disabled', 'retired'],
-  disabled: ['draft', 'active', 'retired'],
+  draft: ['active', 'retired'],
+  active: ['disabled', 'retired'],
+  disabled: ['active', 'retired'],
   retired: [],
 }
 
@@ -472,7 +467,7 @@ export const nodes: MockModule = {
         const target = servers.find((s) => s.id === body.server_id)
         if (!target) return invalid({ server_id: '服务器不存在' })
         if (target.id === n.server_id) return { status: 200, body: adminNode(n) }
-        if (n.serving_status === 'active' || n.serving_status === 'draining') return err(409, 'conflict', '活动或排空中的节点不能移动')
+        if (n.serving_status === 'active') return err(409, 'conflict', '活动中的节点不能移动')
         if (n.last_heartbeat_at || n.identity_serial) {
           return err(409, 'conflict', '节点仍绑定控制面或 Agent 资产', { control_node: '0', active_identities: n.identityRevoked ? '0' : '1', runtime_instances: '1', metrics: '288', pending_tasks: '0', provisioning: '1', bootstrap_tokens: '0', config_applications: '12', usage_sources: '1', usage_batches: '30', traffic_reports: '1440', active_server_token: n.serverToken.present ? '1' : '0' })
         }
@@ -536,7 +531,7 @@ export const nodes: MockModule = {
         return {
           status: 201,
           unreplayable: true,
-          body: { token: `pbt_${randomBytes(24).toString('base64url')}`, expires_at: new Date(Date.now() + minutes * 60_000).toISOString(), install_command: 'curl -fsSL https://panel.pandora.run/install.sh | sudo bash -s -- --enroll' },
+          body: { token: `pbt_${randomBytes(24).toString('base64url')}`, expires_at: new Date(Date.now() + minutes * 60_000).toISOString(), install_command: 'curl -fsSL https://panel.example.test/install.sh | sudo bash -s -- --enroll' },
         }
       })
     },
@@ -550,7 +545,7 @@ export const nodes: MockModule = {
       const n = findNode(ctx.params.id)
       if (!n) return reply(ctx, notFound('节点不存在'))
       if (int(body.row_version) && body.row_version !== n.row_version) return reply(ctx, conflict(n))
-      if (n.serving_status === 'active' || n.serving_status === 'draining') return ctx.fail(422, 'validation_failed', '节点还在服务中')
+      if (n.serving_status === 'active') return ctx.fail(422, 'validation_failed', '节点还在服务中')
       if (!['draft', 'provisioning_failed', 'bootstrap_failed', 'retired', 'destroy_failed'].includes(n.status)) return ctx.fail(422, 'validation_failed', '节点当前状态不能直接销毁，请先将其退役')
       n.status = 'destroyed'
       n.name = `${n.name}#destroyed-${Date.now()}`
@@ -660,7 +655,7 @@ export const nodes: MockModule = {
         n.serverToken = { present: true, issued_at: new Date().toISOString(), issued_by: ctx.user.userId, issued_by_name: ctx.user.displayName ?? ctx.user.email }
         return {
           status: 201,
-          body: { token: `srv_${randomBytes(24).toString('hex')}`, node_type: n.node_type ?? '', panel_url: 'https://panel.pandora.run', install_command: 'curl -fsSL https://panel.pandora.run/uniproxy.sh | sudo bash -s --', hint: '旧令牌立即失效；在节点上执行命令后粘贴令牌' },
+          body: { token: `srv_${randomBytes(24).toString('hex')}`, node_type: n.node_type ?? '', panel_url: 'https://panel.example.test', install_command: 'curl -fsSL https://panel.example.test/uniproxy.sh | sudo bash -s --', hint: '旧令牌立即失效；在节点上执行命令后粘贴令牌' },
         }
       })
     },

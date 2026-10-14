@@ -24,9 +24,8 @@ const taskItemSchema = z.discriminatedUnion('kind', [
 ])
 export const tasksSchema = z.object({ as_of: z.string(), items: z.array(taskItemSchema) })
 export type TaskItem = z.output<typeof taskItemSchema>
-export type Tasks = z.output<typeof tasksSchema>
 
-export const TASKS_QUERY_KEY = ['admin', 'dashboard', 'tasks'] as const
+const TASKS_QUERY_KEY = ['admin', 'dashboard', 'tasks'] as const
 
 export function useDashboardTasks() {
   const api = useApi()

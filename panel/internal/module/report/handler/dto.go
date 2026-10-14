@@ -64,7 +64,6 @@ type userCountsResponse struct {
 
 type subscriptionCountsResponse struct {
 	Active        int64 `json:"active"`
-	Trialing      int64 `json:"trialing"`
 	Expiring7Days int64 `json:"expiring_7_days"`
 	Expired       int64 `json:"expired"`
 	New7Days      int64 `json:"new_7_days"`
@@ -271,9 +270,8 @@ type trafficTotalsResponse struct {
 }
 
 type trafficQualityResponse struct {
-	DuplicateReportCount int64 `json:"duplicate_report_count"`
-	InvalidReportCount   int64 `json:"invalid_report_count"`
-	InvalidEntryCount    int64 `json:"invalid_entry_count"`
+	InvalidReportCount int64 `json:"invalid_report_count"`
+	InvalidEntryCount  int64 `json:"invalid_entry_count"`
 }
 
 type nodeTrafficItemResponse struct {
@@ -330,8 +328,7 @@ func overviewFrom(o service.Overview) (overviewResponse, error) {
 			Total: o.Users.Total, Active: o.Users.Active, Today: o.Users.Today, Last7Days: o.Users.Last7Days,
 		},
 		Subscriptions: subscriptionCountsResponse{
-			Active: o.Subscriptions.Active, Trialing: o.Subscriptions.Trialing,
-			Expiring7Days: o.Subscriptions.Expiring7Days, Expired: o.Subscriptions.Expired, New7Days: o.Subscriptions.New7Days,
+			Active: o.Subscriptions.Active, Expiring7Days: o.Subscriptions.Expiring7Days, Expired: o.Subscriptions.Expired, New7Days: o.Subscriptions.New7Days,
 		},
 		Revenue: rev,
 		Orders: orderCountsResponse{
@@ -500,8 +497,7 @@ func nodeTrafficFrom(t service.NodeTraffic) nodeTrafficResponse {
 			UnattributedBytes: decBytes(t.Totals.Unattributed),
 		},
 		Quality: trafficQualityResponse{
-			DuplicateReportCount: t.Quality.DuplicateReports, InvalidReportCount: t.Quality.InvalidReports,
-			InvalidEntryCount: t.Quality.InvalidEntries,
+			InvalidReportCount: t.Quality.InvalidReports, InvalidEntryCount: t.Quality.InvalidEntries,
 		},
 		Items:   items,
 		Ranking: nodeRankingResponse{ReturnedBytes: decBytes(t.Returned), OtherNodeBytes: decBytes(t.Other)},
@@ -526,8 +522,7 @@ func userTrafficFrom(t service.UserTraffic) userTrafficResponse {
 			UnattributedBytes: decBytes(t.Totals.Unattributed),
 		},
 		Quality: trafficQualityResponse{
-			DuplicateReportCount: t.Quality.DuplicateReports, InvalidReportCount: t.Quality.InvalidReports,
-			InvalidEntryCount: t.Quality.InvalidEntries,
+			InvalidReportCount: t.Quality.InvalidReports, InvalidEntryCount: t.Quality.InvalidEntries,
 		},
 		Items:   items,
 		Ranking: userRankingResponse{ReturnedBytes: decBytes(t.Returned), OtherUserBytes: decBytes(t.Other)},

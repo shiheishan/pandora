@@ -30,7 +30,7 @@ import {
 import { accessResponse, auditResponse, clustersResponse, type Cluster, type SwitchRow } from './schemas'
 
 const cluster: Cluster = {
-  ip: '223.104.63.18',
+  ip: '198.51.100.18',
   geo: '中国 广东 移动',
   network_kind: 'mobile',
   risk: 'high',
@@ -39,11 +39,11 @@ const cluster: Cluster = {
   events: 21,
   first: '2026-07-01T00:00:00Z',
   last: '2026-09-25T10:00:00Z',
-  emails: ['a@x.run', 'b@x.run', 'c@x.run'],
+  emails: ['a@example.test', 'b@example.test', 'c@example.test'],
   users: [
-    { id: 'u1', email: 'a@x.run', status: 'active', active_plan: '专业版' },
-    { id: 'u2', email: 'b@x.run', status: 'suspended', active_plan: null },
-    { id: 'u3', email: 'c@x.run', status: 'pending', active_plan: null },
+    { id: 'u1', email: 'a@example.test', status: 'active', active_plan: '专业版' },
+    { id: 'u2', email: 'b@example.test', status: 'suspended', active_plan: null },
+    { id: 'u3', email: 'c@example.test', status: 'pending', active_plan: null },
   ],
   review: null,
 }
@@ -68,7 +68,7 @@ describe('audit log', () => {
   })
 
   it('labels actors, objects and auth context the way the contract maps them', () => {
-    expect(actorLabel({ actor_email: 'a@x.run', actor_kind: 'admin' })).toBe('a@x.run')
+    expect(actorLabel({ actor_email: 'a@example.test', actor_kind: 'admin' })).toBe('a@example.test')
     expect(actorLabel({ actor_email: null, actor_kind: 'system' })).toBe('系统')
     expect(actorLabel({ actor_email: null, actor_kind: 'node' })).toBe('节点代理')
     expect(actorLabel({ actor_email: null, actor_kind: 'agent' })).toBe('客服')
@@ -99,7 +99,7 @@ describe('audit log', () => {
 describe('access log', () => {
   it('maps segments to category or outcome=error and trims the two filters', () => {
     expect(accessQuery(EMPTY_ACCESS_FILTER, 0)).toEqual({ limit: 50, offset: 0, category: undefined, outcome: undefined, ip: undefined, user: undefined })
-    expect(accessQuery({ view: 'error', ip: ' 1.2.3.4 ', user: '' }, 50)).toEqual({ limit: 50, offset: 50, category: undefined, outcome: 'error', ip: '1.2.3.4', user: undefined })
+    expect(accessQuery({ view: 'error', ip: ' 192.0.2.4 ', user: '' }, 50)).toEqual({ limit: 50, offset: 50, category: undefined, outcome: 'error', ip: '192.0.2.4', user: undefined })
     expect(accessQuery({ view: 'subscribe', ip: '', user: 'k.liu' }, 0)).toMatchObject({ category: 'subscribe', outcome: undefined, user: 'k.liu' })
   })
 

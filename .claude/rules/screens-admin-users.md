@@ -11,7 +11,8 @@ paths:
 - 用户组删除拦截先看节点池名单（`exclusive_pools`），再看成员与引用，与后端 409 同序（`model.ts` 的 `groupBlocker`）。
 - 前端口径与后端逐一对齐，改后端这些函数时同步改 `model.ts`：当前订阅挑法 = subscription service 的 `currentIndex`（`panel/internal/module/subscription/service/state.go`）；手动重置按份（只能重置 `status=active` 的订阅，`resettableSubs`；多份时预选用得最多的，`defaultResetSub` 对应 `purchase.Options` 的重置规则，加流量预选剩余最少的 `defaultTrafficSub`）；批量生成校验 = identity service 的 `normalizeGenerateInput`（`ops_generate.go`）；密码预检 = identity service 的 `validatePassword`（`password.go`）。
 - 设备策略请求体：strict 才带 grace，识别窗口改了才带 `window_minutes`。
-- 加时长口径（w5expiry，与 `billing.subscriptionExtendable` / `extendSubscriptionTx` 一致，`model.ts` 的 `extendableSubscriptions`）：可选生效中、试用中、过期不满 30 天（`RENEWAL_WINDOW_DAYS`，后台列表不带关窗时刻，按周期末推算）且有到期时间的订阅。救回（已过期或试用中，`isRescue`）要二次确认「已过期 N 天，延长后旧链接恢复可用」：状态回到正常、流量按延长天数 ÷ 套餐周期天数折算进本周期、已用流量沿用；生效中没到期的只给时间
+- 订阅只有 `active` / `expired` 两态（`00011_subscription.sql`）：「还在用」只有一处判断 `model.ts` 的 `isLive`（`status === 'active'`），不要另写状态集合；换发链接的候选是 `rotatableSubscriptions`（还在用的，一个都没有时退回全部）。
+- 加时长口径（w5expiry，与 `billing.subscriptionExtendable` / `extendSubscriptionTx` 一致，`model.ts` 的 `extendableSubscriptions`）：可选生效中、过期不满 30 天（`RENEWAL_WINDOW_DAYS`，后台列表不带关窗时刻，按周期末推算）且有到期时间的订阅。救回（已过期，状态或周期末，`isRescue`）要二次确认「已过期 N 天，延长后旧链接恢复可用」：状态回到正常、流量按延长天数 ÷ 套餐周期天数折算进本周期、已用流量沿用；生效中没到期的只给时间
 - 订阅卡按份操作（购买模型统一）：每份订阅一张卡，标题是备注名（`label`，没起名用套餐名；后台只读，改名在门户），显示这一份的流量包余量（`pack_remaining_bytes`），行上四个按钮「给这份开单」（跳 `#/billing/orders?new=<用户 id>&sub=<订阅 id>`，要同步 `billing/OrdersTab.tsx`）、「加时长」、「加流量」（只对还在用的订阅，流量包只挂这一份）、「重置流量」（`POST v1/subscriptions/{id}/traffic-reset`，按用户重置的老接口已删）。不适用的按钮灰着并在悬停里写明原因，权限不够的才不画。抽屉顶部的用户级「加时长」「加流量包」「立即重置本期」保留，多份时对话框里自己选。顶层 `unattached_pack_bytes`（还没加到任何一份的流量包）大于 0 时订阅页顶部有一条提示：写明数量、暂时不能用，以及怎样生效（没有在用订阅时开第一份会自动挂上；已有在用的要用户在门户里选一份，后台没有挪包入口，`unattachedNext`）。
 - 批量导出没有 cookie，只能 fetch 带 Bearer 取回再存文件，要 reauth。
 - 用户相关的地址被别处引用：仪表盘排行、工单「查看用户」、订单抽屉都跳 `#/users/list/<用户 id>`，订单标签跳 `#/billing/orders?user_id=`；改地址格式要同步这些入口。

@@ -6,7 +6,7 @@ import { Chips } from '../common/Flow'
 import css from './Help.module.css'
 
 /** 「iPhone / iPad 上怎么点更新」：西文结尾补一个空格 */
-export const guideTitle = (d: Device) => `${DEVICE_SAY[d]}${/[A-Za-z]$/.test(DEVICE_SAY[d]) ? ' ' : ''}上怎么点更新`
+const guideTitle = (d: Device) => `${DEVICE_SAY[d]}${/[A-Za-z]$/.test(DEVICE_SAY[d]) ? ' ' : ''}上怎么点更新`
 
 /** 目录最上面的内置一组「在 App 里更新」：每种设备一篇，和帮助文章并列 */
 export function UpdateGuideToc({ current }: { current: Device | null }) {

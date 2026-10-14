@@ -41,9 +41,9 @@ const mail = {
   smtp_host: 'smtp.exmail.qq.com',
   smtp_port: 465,
   encryption: 'ssl',
-  smtp_username: 'noreply@pandora.run',
+  smtp_username: 'noreply@example.test',
   password: 'secret',
-  from_address: 'noreply@pandora.run',
+  from_address: 'noreply@example.test',
   from_name: '',
   email_verification: false,
   registration_mode: 'invite_only',
@@ -216,7 +216,7 @@ const sent = (event: string, min: number, ms: number, attempts = 1): MockDeliver
 const lost = (event: string, min: number, code: number, attempts: number): MockDelivery => ({ event, status: 'failed', attempts, response_code: code, error_message: code ? `对方返回 HTTP ${code}` : 'dial tcp: i/o timeout', created_at: stamp(-min, true), sent_at: '', duration_ms: code ? 10000 : null })
 const hooks: MockHook[] = [
   { id: randomUUID(), code: 'hook-crm001', name: 'crm.example.com', description: 'CRM 同步新用户', enabled: true, events: ['user.registered'], endpoint_url: 'https://crm.example.com/api/pandora', secret: 'whsec_crm', timeout_ms: 10000, max_attempts: 5, deliveries: [lost('user.registered', 14, 503, 3), sent('user.registered', 40, 240, 3), lost('user.registered', 90, 0, 5), sent('user.registered', 200, 180)] },
-  { id: randomUUID(), code: 'hook-ops001', name: 'ops.pandora.run', description: '', enabled: true, events: ['order.paid', 'order.cancelled'], endpoint_url: 'https://ops.pandora.run/hooks/orders', secret: 'whsec_ops', timeout_ms: 5000, max_attempts: 5, deliveries: [sent('order.paid', 4, 84), sent('order.paid', 32, 91), sent('order.cancelled', 400, 77), { event: 'order.paid', status: 'queued', attempts: 0, response_code: 0, error_message: '', created_at: stamp(0, true), sent_at: '', duration_ms: null }] },
+  { id: randomUUID(), code: 'hook-ops001', name: 'ops.example.test', description: '', enabled: true, events: ['order.paid', 'order.cancelled'], endpoint_url: 'https://ops.example.test/hooks/orders', secret: 'whsec_ops', timeout_ms: 5000, max_attempts: 5, deliveries: [sent('order.paid', 4, 84), sent('order.paid', 32, 91), sent('order.cancelled', 400, 77), { event: 'order.paid', status: 'queued', attempts: 0, response_code: 0, error_message: '', created_at: stamp(0, true), sent_at: '', duration_ms: null }] },
   { id: randomUUID(), code: 'hook-slack01', name: 'hooks.slack.com', description: '工单提醒', enabled: false, events: ['ticket.created'], endpoint_url: 'https://hooks.slack.com/services/T0/B0/mock', secret: '', timeout_ms: 5000, max_attempts: 3, deliveries: [] },
 ]
 const recent = (d: MockDelivery) => Date.now() - new Date(d.created_at.replace(' ', 'T')).getTime() < 7 * 86_400_000

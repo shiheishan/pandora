@@ -1,7 +1,7 @@
 import type { Pack, Plan } from '../common/catalog'
 import { createPlacedOrder } from '../common/intent'
 import { isHeld, leftOf } from '../common/purchase'
-import { balanceSplit, expectation, type BalanceSplit, type Quote, type QuoteRequest, type QuoteRow } from '../common/quote'
+import { expectation, type BalanceSplit, type Quote, type QuoteRequest, type QuoteRow } from '../common/quote'
 import { isLive, type Subscription } from '../common/subscriptions'
 import { renewOrder } from '../plans/labels'
 
@@ -22,7 +22,7 @@ export type Target =
   | { kind: 'pack'; packId: string; subId: string | null; chooser: boolean }
 
 export type Problem = 'missing' | 'plan_gone' | 'pack_gone' | 'sub_gone'
-export type Parsed = { target: Target } | { problem: Problem }
+type Parsed = { target: Target } | { problem: Problem }
 
 /** 能换成 plan 的份：手上的、能付费换套餐的、不是同款的 */
 export const changeCandidates = (held: readonly Subscription[], planId: string) => held.filter((s) => s.changeable && s.plan_id !== planId)
@@ -102,7 +102,7 @@ export { defaultTier, sortTiers } from '../common/quote'
 // 建单：四个接口各自的请求体，都带 as_of + expect（服务端重算比对，不符回 409 quote_changed）。
 // 后端 DisallowUnknownFields：可选字段不用时不传。use_balance 传这一档报价里用掉的余额。
 // ---------------------------------------------------------------------------
-export interface OrderInput {
+interface OrderInput {
   target: Target
   quote: Quote
   row: QuoteRow
@@ -139,5 +139,3 @@ export const placedOrders = createPlacedOrder<{ orderId: string }>()
 export function intentOf(req: { path: string; body: Record<string, unknown> }) {
   return { path: req.path, body: Object.fromEntries(Object.entries(req.body).filter(([k]) => k !== 'as_of' && k !== 'expect')) }
 }
-
-export { balanceSplit }

@@ -3,20 +3,18 @@ import { z } from 'zod'
 // ---------------------------------------------------------------------------
 // 封闭枚举（迁移里的 CHECK 与 Go 校验）：未知值判为不符约定
 // ---------------------------------------------------------------------------
-export const PLAN_STATUSES = ['draft', 'active', 'archived'] as const
+const PLAN_STATUSES = ['draft', 'active', 'archived'] as const
 export const VISIBILITIES = ['public', 'authenticated', 'group', 'invite_only', 'hidden'] as const
-export const VERSION_STATUSES = ['draft', 'published', 'retired'] as const
-export const RESET_STRATEGIES = ['never', 'natural_month', 'billing_cycle', 'fixed_day'] as const
-export const OVERAGE_POLICIES = ['suspend', 'throttle', 'metered_billing'] as const
-export const QUOTA_PERIODS = ['total', 'cycle', 'day', 'month'] as const
-export const BILLING_INTERVALS = ['day', 'week', 'month', 'quarter', 'year', 'one_time'] as const
-export const CURRENCIES = ['CNY', 'USD'] as const
-export const PACK_STATUSES = ['active', 'archived'] as const
+const VERSION_STATUSES = ['draft', 'published', 'retired'] as const
+const RESET_STRATEGIES = ['never', 'natural_month', 'billing_cycle', 'fixed_day'] as const
+const OVERAGE_POLICIES = ['suspend', 'throttle', 'metered_billing'] as const
+const QUOTA_PERIODS = ['total', 'cycle', 'day', 'month'] as const
+const BILLING_INTERVALS = ['day', 'week', 'month', 'quarter', 'year', 'one_time'] as const
+const CURRENCIES = ['CNY', 'USD'] as const
+const PACK_STATUSES = ['active', 'archived'] as const
 export type PlanStatus = (typeof PLAN_STATUSES)[number]
 export type Visibility = (typeof VISIBILITIES)[number]
-export type VersionStatus = (typeof VERSION_STATUSES)[number]
 export type ResetStrategy = (typeof RESET_STRATEGIES)[number]
-export type OveragePolicy = (typeof OVERAGE_POLICIES)[number]
 export type BillingInterval = (typeof BILLING_INTERVALS)[number]
 export type Currency = (typeof CURRENCIES)[number]
 export type PackStatus = (typeof PACK_STATUSES)[number]
@@ -34,7 +32,7 @@ const list = <T extends z.ZodType>(item: T) =>
 // ---------------------------------------------------------------------------
 // 价格行（列表与详情同形，含已归档）
 // ---------------------------------------------------------------------------
-export const priceRowSchema = z.object({
+const priceRowSchema = z.object({
   id: z.string(),
   currency: z.enum(CURRENCIES),
   unit_amount: count,
@@ -79,10 +77,9 @@ export type PlanRow = z.output<typeof planRowSchema>
 // ---------------------------------------------------------------------------
 // GET v1/plans/{id}：详情（版本 version 降序，价格 created_at 降序）
 // ---------------------------------------------------------------------------
-export const quotaSchema = z.object({ metric: z.string(), limit: int.nullable(), unit: z.string(), period: z.enum(QUOTA_PERIODS) })
+const quotaSchema = z.object({ metric: z.string(), limit: int.nullable(), unit: z.string(), period: z.enum(QUOTA_PERIODS) })
 export type Quota = z.output<typeof quotaSchema>
-export const entitlementSchema = z.object({ code: z.string(), value: z.unknown() })
-export type Entitlement = z.output<typeof entitlementSchema>
+const entitlementSchema = z.object({ code: z.string(), value: z.unknown() })
 
 export const versionRowSchema = z.object({
   id: z.string(),
@@ -159,7 +156,6 @@ export type PlanPools = z.output<typeof planPoolsSchema>
 // GET v1/node-pools（节点分段）：新建向导没有套餐 id，只能从这里取候选；
 // 只收向导要的字段，其余字段归节点页的 schema 管，所以查询键与节点页分开
 export const poolOptionsSchema = z.object({ pools: list(z.object({ id: z.string(), name: z.string(), status: z.string(), active_nodes: count })) })
-export type PoolOption = z.output<typeof poolOptionsSchema>['pools'][number]
 
 // ---------------------------------------------------------------------------
 // 流量包（修订 R73）：乐观锁是 updated_at，原样回传

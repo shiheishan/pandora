@@ -20,7 +20,7 @@ const completeSchema = z.object({ ok: z.literal(true) })
 const message = (err: unknown, fallback: string) => (isApiError(err) ? err.message : fallback)
 
 /** 与注册同一套本地预检：至少 8 位、同时有字母和数字（后端仍是最终裁判） */
-export function resetPasswordProblem(value: string): string | null {
+function resetPasswordProblem(value: string): string | null {
   if (value.length < 8) return '密码至少 8 位'
   if (!/[a-z]/i.test(value) || !/\d/.test(value)) return '密码必须同时包含字母和数字'
   return null

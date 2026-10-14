@@ -65,7 +65,7 @@ func TestAdminOrdersValidation(t *testing.T) {
 	}
 }
 
-// 后台详情：新库没有的列输出固定值（organization_id、product_id 为 null，tax_amount 为 0）；
+// 后台详情：库里没有的列不输出（organization_id、tax_amount、行的 product_id）；
 // 可空字段为空时是 null；plan_name 只在套餐行有；快照是原样 JSON，空串输出 []。
 func TestAdminOrderDetailShape(t *testing.T) {
 	orderID, planID := uuid.New(), uuid.New()
@@ -88,9 +88,10 @@ func TestAdminOrderDetailShape(t *testing.T) {
 	w := do(e, http.MethodGet, "/v1/orders/"+orderID.String(), "")
 	mustStatus(t, w, http.StatusOK)
 	o := sub(t, obj(t, w), "order")
-	mustNull(t, o, "organization_id", "coupon_id", "manual_reason", "created_by", "created_by_email", "subscription_id",
+	mustAbsent(t, o, "organization_id", "tax_amount")
+	mustNull(t, o, "coupon_id", "manual_reason", "created_by", "created_by_email", "subscription_id",
 		"fulfilled_at", "cancelled_at", "expired_at", "cancel_reason", "paid_at", "provider_code", "provider_name")
-	if num(t, o, "tax_amount") != 0 || num(t, o, "subtotal_amount") != 3000 || num(t, o, "discount_amount") != 500 || num(t, o, "state_version") != 3 {
+	if num(t, o, "subtotal_amount") != 3000 || num(t, o, "discount_amount") != 500 || num(t, o, "state_version") != 3 {
 		t.Fatalf("金额 %v", o)
 	}
 	if o["expires_at"] == nil {
@@ -98,14 +99,15 @@ func TestAdminOrderDetailShape(t *testing.T) {
 	}
 	items := o["items"].([]any)
 	plan, pack := items[0].(map[string]any), items[1].(map[string]any)
-	mustNull(t, plan, "product_id")
+	mustAbsent(t, plan, "product_id")
 	if plan["plan_name"] != "月付套餐" || plan["product_name"] != "月付套餐" {
 		t.Fatalf("套餐行 %v", plan)
 	}
 	if q, ok := plan["snapshot_quotas"].([]any); !ok || len(q) != 1 {
 		t.Fatalf("快照应原样输出 %#v", plan["snapshot_quotas"])
 	}
-	mustNull(t, pack, "plan_name", "plan_id", "product_id")
+	mustNull(t, pack, "plan_name", "plan_id")
+	mustAbsent(t, pack, "product_id")
 	if q, ok := pack["snapshot_entitlements"].([]any); !ok || len(q) != 0 {
 		t.Fatalf("空快照应是 []，得到 %#v", pack["snapshot_entitlements"])
 	}

@@ -160,7 +160,7 @@ export const dash: MockModule = {
       })
       ctx.send(200, {
         users: { total: 18_204, active: 13_870, today: 96, last_7_days: 612 },
-        subscriptions: { active: 12_408, trialing: 214, expiring_7_days: 731, expired: 5_022, new_7_days: 386 },
+        subscriptions: { active: 12_408, expiring_7_days: 731, expired: 5_022, new_7_days: 386 },
         revenue,
         orders: { paid_today: 142, pending: 17, failed_today: 3 },
         ledger_drift_accounts: 0,
@@ -208,7 +208,7 @@ export const dash: MockModule = {
         items,
         totals: { reported_bytes: String(reported), attributed_bytes: String(reported - unattributed), unattributed_bytes: String(unattributed) },
         ranking: { returned_bytes: String(returned), other_node_bytes: String(reported - returned) },
-        quality: { duplicate_report_count: 2, invalid_report_count: 0, invalid_entry_count: 1 },
+        quality: { invalid_report_count: 0, invalid_entry_count: 1 },
       })
     },
 
@@ -238,7 +238,7 @@ export const dash: MockModule = {
         items,
         totals: { reported_bytes: String(attributed + unattributed), attributed_bytes: String(attributed), unattributed_bytes: String(unattributed) },
         ranking: { returned_bytes: String(returned), other_user_bytes: String(attributed - returned) },
-        quality: { duplicate_report_count: 2, invalid_report_count: 0, invalid_entry_count: 1 },
+        quality: { invalid_report_count: 0, invalid_entry_count: 1 },
       })
     },
 
@@ -248,7 +248,7 @@ export const dash: MockModule = {
       const files = Array.from({ length: 10 }, (_, i) => {
         const at = new Date(now - (i * 24 + 5) * 3_600_000)
         return {
-          name: `aegis-${at.toISOString().slice(0, 19).replace(/[-:]/g, '')}Z.dump.age`,
+          name: `pandora-postgres-${at.toISOString().slice(0, 19).replace(/[-:]/g, '')}Z.dump.age`,
           size: 412_000_000 - i * 1_800_000,
           created_at: at.toISOString(),
           has_checksum: i !== 7,

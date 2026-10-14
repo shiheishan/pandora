@@ -28,7 +28,7 @@ import {
 } from './logic'
 import { deliveriesResponse, hooksResponse, telegramSettingsSchema, templatesResponse, type Hook, type MailSettings, type Template } from './schemas'
 
-const mail: MailSettings = { smtp_host: 'smtp.qq.com', smtp_port: 465, encryption: 'ssl', smtp_username: 'u', has_password: true, from_address: 'noreply@x.run', from_name: 'Pandora', email_verification: false, registration_mode: 'closed' }
+const mail: MailSettings = { smtp_host: 'smtp.qq.com', smtp_port: 465, encryption: 'ssl', smtp_username: 'u', has_password: true, from_address: 'noreply@example.test', from_name: 'Pandora', email_verification: false, registration_mode: 'closed' }
 
 const hook: Hook = { id: '00000000-0000-4000-8000-000000000001', code: 'hook-abc123', name: 'ops', description: '', enabled: true, events: ['order.paid'], endpoint_url: 'https://ops.x/h', has_secret: true, timeout_ms: 5000, max_attempts: 5, queued_count: 0, failed_count: 1, sent_count_7d: 3 }
 
@@ -45,7 +45,7 @@ describe('mail', () => {
 
   it('overwrites all six SMTP fields and leaves registration out', () => {
     const f = smtpFormFrom(mail)
-    expect(smtpBody(f)).toEqual({ smtp_host: 'smtp.qq.com', smtp_port: 465, encryption: 'ssl', smtp_username: 'u', smtp_password: '', from_name: 'Pandora', from_address: 'noreply@x.run' })
+    expect(smtpBody(f)).toEqual({ smtp_host: 'smtp.qq.com', smtp_port: 465, encryption: 'ssl', smtp_username: 'u', smtp_password: '', from_name: 'Pandora', from_address: 'noreply@example.test' })
     expect(smtpBody({ ...f, clearPassword: true, password: 'x' }).smtp_password).toBe('-')
     expect(validateSmtp({ ...f, port: '70000' }).smtp_port).toBeDefined()
     expect(validateSmtp({ ...f, sender: 'Pandora <bad>' }).from_address).toBeDefined()
@@ -55,7 +55,7 @@ describe('mail', () => {
 
   it('saves registration with the saved SMTP fields and no password', () => {
     const body = registrationBody(mail, 'open', true)
-    expect(body).toMatchObject({ smtp_host: 'smtp.qq.com', from_address: 'noreply@x.run', registration_mode: 'open', email_verification: true })
+    expect(body).toMatchObject({ smtp_host: 'smtp.qq.com', from_address: 'noreply@example.test', registration_mode: 'open', email_verification: true })
     expect('smtp_password' in body).toBe(false)
   })
 })

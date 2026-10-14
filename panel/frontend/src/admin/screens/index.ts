@@ -7,7 +7,7 @@ export interface AdminScreenProps {
   rest: string[]
 }
 
-export type AdminScreen = LazyExoticComponent<ComponentType<AdminScreenProps>>
+type AdminScreen = LazyExoticComponent<ComponentType<AdminScreenProps>>
 
 export const SCREENS: Readonly<Record<ModuleKey, AdminScreen>> = {
   dash: lazy(() => import('./dash')),

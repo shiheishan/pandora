@@ -1,8 +1,7 @@
 import { z } from 'zod'
 
-// GET v1/me/subscriptions 的 schema（纯 zod，不依赖运行时）：外框 queries.ts 转出，tests/ 的假后端测试也直接用它
-export const SUBSCRIPTION_STATUSES = ['pending', 'trialing', 'active', 'past_due', 'grace', 'paused', 'cancelled', 'expired'] as const
-export type SubscriptionStatus = (typeof SUBSCRIPTION_STATUSES)[number]
+// GET v1/me/subscriptions 的 schema（纯 zod，不依赖运行时）：库里只有这两态（00011_subscription.sql），外框 queries.ts 转出，tests/ 的假后端测试也直接用它
+const SUBSCRIPTION_STATUSES = ['active', 'expired'] as const
 
 const quotaSchema = z.object({
   metric: z.string(),

@@ -39,7 +39,7 @@ describe('runState', () => {
   })
 
   it('falls back to the failed receipt when the node reports no reason', () => {
-    const failed = { ...base, effective_state: 'failed' as const, last_apply_failure: { phase: 'failed', detail: 'bind: address already in use', at: '2026-10-07T00:00:00Z', generation: 3 } }
+    const failed = { ...base, effective_state: 'failed' as const, last_apply_failure: { phase: 'failed', detail: 'bind: address already in use', at: '2026-10-07T00:00:00Z' } }
     expect(runState(failed)?.label).toBe('生效失败：bind: address already in use')
   })
 

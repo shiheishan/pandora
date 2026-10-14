@@ -11,7 +11,7 @@ import { isLive, type Subscription } from '../common/subscriptions'
 import { useSheets } from './sheets'
 
 /** 「买这个」的卡：同款已有时标「你已有一份」，按钮下写「新链接 · 今天起到 …」 */
-export function NewPlanCard({ plan, held }: { plan: Plan; held: readonly Subscription[] }) {
+function NewPlanCard({ plan, held }: { plan: Plan; held: readonly Subscription[] }) {
   const holders = held.filter((s) => s.plan_id === plan.id)
   const price = headlinePrice(plan)
   const tag = holders.length ? <Tag>你已有{holders.length > 1 ? ` ${holders.length} 份` : '一份'}</Tag> : plan.recommended ? <Tag tone="brand">多数人选这个</Tag> : null

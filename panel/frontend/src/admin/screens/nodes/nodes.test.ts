@@ -64,9 +64,6 @@ const row = (over: Partial<Record<string, unknown>> = {}): NodeDetail =>
     cpu_cores: null,
     memory_mb: null,
     disk_gb: null,
-    health_score: null,
-    applied_config_version: null,
-    desired_config_version: null,
     last_heartbeat_at: '2026-09-24T10:00:00Z',
     stale: false,
     delivered_to_users: true,
@@ -74,7 +71,7 @@ const row = (over: Partial<Record<string, unknown>> = {}): NodeDetail =>
     identity_serial: 3,
     created_at: '2026-09-01T00:00:00Z',
     node_type: 'vless',
-    server_host: 'hk1.pandora.run',
+    server_host: 'hk1.example.test',
     server_port: 443,
     traffic_rate: 1,
     display_name: null,
@@ -125,7 +122,6 @@ describe('state', () => {
   it('maps serving status and staleness onto the design states', () => {
     expect(nodeState({ serving_status: 'active', stale: false })).toMatchObject({ label: '在线', filter: 'online' })
     expect(nodeState({ serving_status: 'active', stale: true })).toMatchObject({ label: '离线', filter: 'offline' })
-    expect(nodeState({ serving_status: 'draining', stale: false })).toMatchObject({ label: '在线', note: '排空中' })
     expect(nodeState({ serving_status: 'draft', stale: true })).toMatchObject({ label: '已停用', note: '草稿' })
     expect(nodeState({ serving_status: 'retired', stale: true })).toMatchObject({ label: '已退役', filter: 'retired' })
   })
@@ -136,7 +132,7 @@ describe('state', () => {
     expect(filterNodes(rows, 'all', 'jp').map((n) => n.id)).toEqual(['n2'])
     expect(filterNodes(rows, 'all', 'VLESS').map((n) => n.id)).toEqual(['n1'])
     expect(filterNodes(rows, 'all', '102').map((n) => n.id)).toEqual(['n2'])
-    expect(filterNodes(rows, 'online', 'hk1.pandora').map((n) => n.id)).toEqual(['n1'])
+    expect(filterNodes(rows, 'online', 'hk1.example').map((n) => n.id)).toEqual(['n1'])
     const withRetired = [...rows, row({ id: 'n3', serving_status: 'retired' })]
     expect(filterNodes(withRetired, 'all', '').map((n) => n.id)).toEqual(['n1', 'n2'])
     expect(filterNodes(withRetired, 'retired', '').map((n) => n.id)).toEqual(['n3'])
@@ -167,7 +163,11 @@ describe('reserved rule 5: move', () => {
 describe('status transitions', () => {
   it('follows the contract edges', () => {
     expect(canTransition('draft', 'active')).toBe(true)
+    expect(canTransition('draft', 'disabled')).toBe(false)
+    expect(canTransition('draft', 'retired')).toBe(true)
+    expect(canTransition('active', 'disabled')).toBe(true)
     expect(canTransition('active', 'draft')).toBe(false)
+    expect(canTransition('disabled', 'draft')).toBe(false)
     expect(canTransition('retired', 'active')).toBe(false)
     expect(canTransition('disabled', 'active')).toBe(true)
   })
@@ -351,7 +351,7 @@ describe('basic info and PATCH', () => {
 
 describe('routing rows', () => {
   it('reads every matcher alias and the empty fallback', () => {
-    expect(routeToRow({ priority: 10, matcher: { domain_suffixes: ['a.com', 'b.com'] }, outbound_tag: 'US', enabled: true, note: '' })).toMatchObject({ kind: 'domain_suffix', value: 'a.com, b.com' })
+    expect(routeToRow({ priority: 10, matcher: { domain_suffixes: ['example.com', 'example.org'] }, outbound_tag: 'US', enabled: true, note: '' })).toMatchObject({ kind: 'domain_suffix', value: 'example.com, example.org' })
     expect(routeToRow({ priority: 20, matcher: { ports: [25, 465] }, outbound_tag: 'block', enabled: true, note: '' })).toMatchObject({ kind: 'port', value: '25, 465' })
     expect(routeToRow({ priority: 30, matcher: {}, outbound_tag: 'direct', enabled: true, note: '' }).kind).toBe('fallback')
   })
@@ -372,7 +372,7 @@ describe('routing rows', () => {
   })
 
   it('inserts new rules before a trailing fallback', () => {
-    const add = { kind: 'domain' as const, value: 'x.com', outbound: 'direct', enabled: true, note: '' }
+    const add = { kind: 'domain' as const, value: 'example.net', outbound: 'direct', enabled: true, note: '' }
     const fb = { kind: 'fallback' as const, value: '', outbound: 'US', enabled: true, note: '' }
     expect(insertRule([fb], add)).toEqual([add, fb])
     expect(insertRule([add], fb)).toEqual([add, fb])

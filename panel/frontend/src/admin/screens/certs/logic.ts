@@ -4,13 +4,13 @@ import type { AcmeSettings, Certificate, DnsCredential, ExpiryLevel, Order, Prov
 // ---------------------------------------------------------------------------
 // DNS 提供方：凭据字段与最小权限指引（与 Go 的 domain/certs providerFields 同键）
 // ---------------------------------------------------------------------------
-export interface ProviderField {
+interface ProviderField {
   key: string
   label: string
   placeholder: string
 }
 
-export interface ProviderMeta {
+interface ProviderMeta {
   label: string
   fields: readonly ProviderField[]
   /** 最小权限的做法，按步骤 */
@@ -59,7 +59,7 @@ export const PROVIDER_OPTIONS = (Object.keys(PROVIDER_META) as Provider[]).map((
 // ---------------------------------------------------------------------------
 // 状态与到期
 // ---------------------------------------------------------------------------
-export interface View {
+interface View {
   label: string
   tone: TagTone
 }
@@ -117,7 +117,7 @@ export const ORDER_STATE_VIEW: Readonly<Record<Order['state'], View>> = {
 }
 
 /** 失败码的中文（后端 error_code）；没收录的原样显示 */
-export const ERROR_CODE_LABEL: Readonly<Record<string, string>> = {
+const ERROR_CODE_LABEL: Readonly<Record<string, string>> = {
   credential_rejected: 'DNS 凭据被拒绝',
   dns_api_unavailable: 'DNS 提供方暂时不可用',
   rate_limited: 'CA 限流',
@@ -197,7 +197,7 @@ export function credentialFormFrom(c: DnsCredential): CredentialForm {
   return { name: c.name, provider: c.provider, zone: c.zone, secret: {} }
 }
 
-export function filledSecret(form: CredentialForm): Record<string, string> {
+function filledSecret(form: CredentialForm): Record<string, string> {
   const out: Record<string, string> = {}
   for (const f of PROVIDER_META[form.provider].fields) {
     const v = (form.secret[f.key] ?? '').trim()

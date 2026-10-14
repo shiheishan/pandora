@@ -92,11 +92,11 @@ function detail(over: Partial<OrderDetail> = {}): OrderDetail {
 }
 
 describe('订单页', () => {
-  it('状态徽标：已退款两类为 info，processing 为「处理中」', () => {
+  it('状态徽标：已退款两类为 info，pending_payment 为「待支付」', () => {
     expect(statusBadge('fulfilled')).toEqual({ label: '已支付', tone: 'ok' })
     expect(statusBadge('expired')).toEqual({ label: '已取消', tone: 'neutral' })
     expect(statusBadge('partially_refunded')).toEqual({ label: '部分退款', tone: 'info' })
-    expect(statusBadge('processing').label).toBe('处理中')
+    expect(statusBadge('pending_payment').label).toBe('待支付')
   })
 
   it('筛选的状态集合：「全部」不含待支付', () => {

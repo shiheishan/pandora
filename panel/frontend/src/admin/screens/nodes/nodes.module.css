@@ -335,10 +335,6 @@
   margin: 0;
 }
 
-.inlineTag {
-  margin-left: 6px;
-}
-
 .breakAll {
   word-break: break-all;
 }

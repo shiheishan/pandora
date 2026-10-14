@@ -15,7 +15,7 @@ export function Callout({ title = '会发生什么', children, id }: { title?: s
   )
 }
 
-export interface ChoiceItem {
+interface ChoiceItem {
   key: string
   label: ReactNode
   desc?: ReactNode
@@ -40,7 +40,7 @@ export function ChoiceList({ items, selected, onSelect, label }: { items: readon
   )
 }
 
-export interface ChipItem {
+interface ChipItem {
   key: string
   label: ReactNode
   note?: ReactNode
@@ -59,7 +59,7 @@ export function Chips({ items, selected, onSelect, label }: { items: readonly Ch
   )
 }
 
-export interface RowItem {
+interface RowItem {
   k: ReactNode
   v: ReactNode
   ok?: boolean

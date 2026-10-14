@@ -6,9 +6,9 @@ import { useApi } from '../../../shell/runtime'
 // ---------------------------------------------------------------------------
 // 枚举：后端封闭列表（00008 的 CHECK、support.Categories），未知值判为不符约定
 // ---------------------------------------------------------------------------
-export const TICKET_STATUSES = ['open', 'pending_user', 'pending_agent', 'escalated', 'resolved', 'closed'] as const
-export const TICKET_PRIORITIES = ['low', 'normal', 'high', 'urgent'] as const
-export const TICKET_CATEGORIES = ['general', 'billing', 'subscription', 'technical', 'account', 'abuse'] as const
+const TICKET_STATUSES = ['open', 'pending_user', 'pending_agent', 'escalated', 'resolved', 'closed'] as const
+const TICKET_PRIORITIES = ['low', 'normal', 'high', 'urgent'] as const
+const TICKET_CATEGORIES = ['general', 'billing', 'subscription', 'technical', 'account', 'abuse'] as const
 export type TicketStatus = (typeof TICKET_STATUSES)[number]
 export type TicketPriority = (typeof TICKET_PRIORITIES)[number]
 export type TicketCategory = (typeof TICKET_CATEGORIES)[number]
@@ -88,8 +88,8 @@ export const macroSavedSchema = z.object({ id: z.string() })
 // ---------------------------------------------------------------------------
 // 查询
 // ---------------------------------------------------------------------------
-export const TK = ['admin', 'tickets'] as const
-export const QUEUE_PAGE = 25
+const TK = ['admin', 'tickets'] as const
+const QUEUE_PAGE = 25
 
 /** 队列筛选（已映射成后端 query，见 model.queueParams） */
 export interface QueueParams {

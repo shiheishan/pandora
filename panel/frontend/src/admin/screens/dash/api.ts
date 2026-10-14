@@ -59,13 +59,12 @@ const revenueRowSchema = z.object({
 })
 export const overviewSchema = z.object({
   users: z.object({ total: count, active: count, today: count, last_7_days: count }),
-  subscriptions: z.object({ active: count, trialing: count, expiring_7_days: count, expired: count, new_7_days: count }),
+  subscriptions: z.object({ active: count, expiring_7_days: count, expired: count, new_7_days: count }),
   revenue: z.array(revenueRowSchema),
   orders: z.object({ paid_today: count, pending: count, failed_today: count }),
   ledger_drift_accounts: count,
   nodes: z.object({ total: count, online: count }),
 })
-export type RevenueRow = z.output<typeof revenueRowSchema>
 export type Overview = z.output<typeof overviewSchema>
 
 // ---------------------------------------------------------------------------
@@ -87,7 +86,6 @@ export const revenueSchema = z.object({
   previous_total: int,
 })
 export type RevenuePoint = z.output<typeof revenuePointSchema>
-export type Revenue = z.output<typeof revenueSchema>
 
 // ---------------------------------------------------------------------------
 // GET v1/dashboard/traffic/{nodes,users}（DASH-01 冻结）。用户排行只有脱敏邮箱
@@ -100,7 +98,7 @@ const trafficBase = {
   to: z.string(),
   basis: z.literal('strict_raw_report_entries'),
   totals: z.object({ reported_bytes: decimalBytes, attributed_bytes: decimalBytes, unattributed_bytes: decimalBytes }),
-  quality: z.object({ duplicate_report_count: count, invalid_report_count: count, invalid_entry_count: count }),
+  quality: z.object({ invalid_report_count: count, invalid_entry_count: count }),
 }
 const trafficItemBase = {
   upload_bytes: decimalBytes,

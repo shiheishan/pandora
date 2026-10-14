@@ -129,7 +129,6 @@ func (s *Service) loadOverview(ctx context.Context) (Overview, error) {
 		},
 		Subscriptions: SubscriptionCounts{
 			Active:        subs.Live,
-			Trialing:      0,
 			Expiring7Days: subs.Expiring,
 			Expired:       subs.NotLive,
 			New7Days:      subs.NewLive,

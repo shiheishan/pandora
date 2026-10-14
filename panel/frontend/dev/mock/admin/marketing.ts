@@ -252,9 +252,9 @@ function mintBatch(t: Template, count: number, prefix: string, expiresAt: string
   [templates[1]!, 24, 'PRO', 12],
   [templates[2]!, 30, '', 5],
 ].forEach(([t, n, prefix, age]) => {
-  const b = mintBatch(t as Template, n as number, prefix as string, null, 'linzhou@pandora.dev', age as number)
+  const b = mintBatch(t as Template, n as number, prefix as string, null, 'linzhou@example.test', age as number)
   b.exported_at = b.created_at
-  b.exported_by_email = 'linzhou@pandora.dev'
+  b.exported_by_email = 'linzhou@example.test'
   codes
     .filter((c) => c.batch_id === b.id)
     .slice(0, 5)
@@ -389,7 +389,7 @@ const withdrawals: Withdrawal[] = [
   withdrawal('m.chen@gmail.com', 30000, 'approved', '支付宝 · 186****0932', 1.2),
   withdrawal('yx_agent@163.com', 260000, 'paid', '银行卡 · 招商 **** 7781', 4, { completed_at: days(-3) }),
   withdrawal('sp4m@mail.ru', 18000, 'rejected', '支付宝 · 150****1188', 5, { reject_reason: '邀请关系异常，多个账号共用同一设备', earned_total: 18000 }),
-  withdrawal('late@pay.io', 50000, 'failed', '银行卡 · 建设 **** 1024', 7),
+  withdrawal('late@example.test', 50000, 'failed', '银行卡 · 建设 **** 1024', 7),
 ]
 
 // ---------------------------------------------------------------------------

@@ -17,8 +17,9 @@ paths:
   - 待支付单低于站点最低付款额时服务端回 422 带 `fields.settlement`（billing.errManualBelowMinimum），随通用的 `useFailure` 落到「结算方式」上，并重取一次 preview。提交前的拦截全用 preview 给的数：顶层 `min_payment`（与报价、建单同一个 minPayment），每个落点的 `due`（按待用户支付开时的应付，换套餐已先抵）与 `below_minimum`（与建单同一个判定）；`manualBelowMinimum` 只把它写成「这单应付 ¥x，低于…¥y」，给「改用赠送」「改用线下已收款」两个按钮，提交按钮灰着写「低于最低付款额」。不再读渠道列表自己算
   - 响应多 `proration_credit` / `balance_refund` 时即落成了换套餐，`manualCreatedToast` 按落点（`kind`）报续费、换套餐或另开，换套餐时带退回余额的金额。
   - 删掉了「自动续同款、自动换别的套餐」的说明：后端不再替管理员挑落点。
+- 枚举只收库里的取值（`schemas.ts`）：订单 5 态加等产品确认的退款两态、类型 5 种（换套餐不论补差退差都是 upgrade）、支付意图 requires_action / succeeded / cancelled / expired、收款只有 succeeded（等产品确认的退款只保留在订单层：订单两态、refunds 数组、refunded_amount；收款层不留退款态）、挂账 suspense / applied；后端不回的键（organization_id、tax_amount、行的 product_id）不写进 schema。
 - 取消订单、标记已支付的失败文案（凭证号重复、订阅已结束款项进挂账都回 409）是后端中文原文，经 `useFailure` 原样 Toast，不要按状态码改写。
 - 会改用户余额或订阅的写（标记已支付、向渠道查单补记、人工开单、转入余额）成功后，除了 `useInvalidateBilling` 还要调 `users/api.ts` 的 `useInvalidateUsers`。
-- 「向渠道查单」只对发起过支付的待支付 / 处理中订单出现（`canQueryChannel`：`provider_code` 非空且非 offline）；查单与取消不挂 reauth，人工开单与标记已支付挂 reauth。
+- 「向渠道查单」只对发起过支付的待支付订单出现（`canQueryChannel`：`provider_code` 非空且非 offline）；查单与取消不挂 reauth，人工开单与标记已支付挂 reauth。
 - 用户抽屉的「为其开单」跳 `#/billing/orders?new=<用户 id>`，订单页靠 `?new=` 打开人工开单弹窗并预选用户；改这个参数要同步 `users/UserDrawer.tsx`。
 - 人工开单（落点、最低付款额、赠送 / 线下已收款）的页面文字或结构改了，同改 `panel/frontend/tests/browser/admin.spec.ts`（按角色与可见文字选元素、按页面文字断言，见 `frontend-browser-e2e.md`），否则要等 CI 的浏览器步骤红了才发现。

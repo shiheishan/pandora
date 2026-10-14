@@ -72,9 +72,9 @@ export function redemptionGain(r: Redemption): string {
 // 兑换卡的用法（原型 redeemOptions / redeemSentence / redeemVerb）：选项与默认值由服务端给（设计稿 2.5），
 // 这里只按选项写字：选项上的一句、选中后「会发生什么」、主按钮的动作。
 // ---------------------------------------------------------------------------
-export const BADGES: Readonly<Record<string, string>> = { same_plan: '同款，最常见', soonest_expiry: '最快到期', most_used: '用得最多', least_remaining: '剩得最少' }
+const BADGES: Readonly<Record<string, string>> = { same_plan: '同款，最常见', soonest_expiry: '最快到期', most_used: '用得最多', least_remaining: '剩得最少' }
 
-export interface RedeemView {
+interface RedeemView {
   key: string
   label: string
   desc: string
@@ -83,7 +83,7 @@ export interface RedeemView {
   verb: string
 }
 
-export interface RedeemCtx {
+interface RedeemCtx {
   card: GiftCard
   held: readonly Subscription[]
   naming: Naming

@@ -8,13 +8,13 @@ const time = z.string()
 // ---------------------------------------------------------------------------
 export const SEVERITIES = ['info', 'notice', 'warning', 'critical'] as const
 export type Severity = (typeof SEVERITIES)[number]
-export const ANN_STATUSES = ['draft', 'scheduled', 'published', 'withdrawn'] as const
+const ANN_STATUSES = ['draft', 'scheduled', 'published', 'withdrawn'] as const
 export type AnnStatus = (typeof ANN_STATUSES)[number]
 
 const planRef = z.object({ id: uuid, name: z.string(), status: z.string() })
 const groupRef = z.object({ id: uuid, name: z.string() })
 
-export const announcementSchema = z.object({
+const announcementSchema = z.object({
   id: uuid,
   title: z.string(),
   body: z.string(),
@@ -32,8 +32,6 @@ export const announcementSchema = z.object({
   created_at: time,
 })
 export type Announcement = z.output<typeof announcementSchema>
-export type PlanRef = z.output<typeof planRef>
-export type GroupRef = z.output<typeof groupRef>
 
 export const announcementsResponse = z.object({
   announcements: z.array(announcementSchema),
@@ -52,8 +50,7 @@ export const KINDS = ['kb_article', 'tutorial', 'page', 'legal'] as const
 export type Kind = (typeof KINDS)[number]
 export const PLATFORMS = ['web', 'windows', 'macos', 'linux', 'android', 'ios'] as const
 export type Platform = (typeof PLATFORMS)[number]
-export const PAGE_STATUSES = ['draft', 'published', 'archived'] as const
-export type PageStatus = (typeof PAGE_STATUSES)[number]
+const PAGE_STATUSES = ['draft', 'published', 'archived'] as const
 export const VISIBILITIES = ['authenticated', 'internal'] as const
 export type Visibility = (typeof VISIBILITIES)[number]
 
@@ -99,7 +96,7 @@ export const pageArchived = z.object({ page: z.object({ id: uuid, version: z.num
 // 组内必须是字符串；多出来的键或非字符串值让这一行解析失败。
 // ---------------------------------------------------------------------------
 const tokenGroup = z.record(z.string(), z.string())
-export const themeSchema = z.object({
+const themeSchema = z.object({
   id: uuid,
   code: z.string(),
   name: z.string(),
@@ -116,7 +113,7 @@ export const themeSaved = z.object({ saved: z.literal(true), dropped: z.array(z.
 export const themeActivated = z.object({ activated: z.literal(true) })
 export const themeDeleted = z.object({ deleted: z.literal(true) })
 
-export const slotSchema = z.object({
+const slotSchema = z.object({
   key: z.string(),
   label: z.string(),
   where: z.string(),
@@ -139,4 +136,3 @@ export const siteSettingsSchema = z.object({ timezone: z.string() })
 // 套餐目录子集（GET v1/plans）：知识库「限定套餐」只要名字与状态
 // ---------------------------------------------------------------------------
 export const planCatalogResponse = z.object({ plans: z.array(z.object({ id: uuid, name: z.string(), status: z.enum(['draft', 'active', 'archived']) })) })
-export type CatalogPlan = z.output<typeof planCatalogResponse>['plans'][number]

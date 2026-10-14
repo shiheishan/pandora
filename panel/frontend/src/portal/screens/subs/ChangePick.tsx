@@ -11,14 +11,14 @@ import type { Subscription } from '../common/subscriptions'
 import css from './Subs.module.css'
 
 /** 换过去要付多少：「换过去，今天付 ¥21.00」/「换过去今天不用付，还退 ¥9.00 到钱包余额」 */
-export function changeResult(row: Pick<QuoteRow, 'total' | 'refund'>): string {
+function changeResult(row: Pick<QuoteRow, 'total' | 'refund'>): string {
   if (row.total > 0) return `换过去，今天付 ${money(row.total)}`
   if (row.refund > 0) return `换过去今天不用付，还退 ${money(row.refund)} 到钱包余额`
   return '换过去今天不用付'
 }
 
 /** 同一档月价比较：比现在贵的标「更大」，便宜的标「更便宜」 */
-export function sizeTag(target: Plan, current: Plan | undefined): 'bigger' | 'cheaper' | null {
+function sizeTag(target: Plan, current: Plan | undefined): 'bigger' | 'cheaper' | null {
   const a = priceFor(target, '1m')?.unit_amount
   const b = current ? priceFor(current, '1m')?.unit_amount : undefined
   if (a === undefined || b === undefined || a === b) return null

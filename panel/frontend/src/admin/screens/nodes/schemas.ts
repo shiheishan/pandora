@@ -12,7 +12,7 @@ const strs = list(z.string())
 // ---------------------------------------------------------------------------
 // 节点：列表行（GET v1/nodes）、单取的详情行（GET v1/nodes?id=）与写接口回的 AdminNode
 // ---------------------------------------------------------------------------
-export const SERVING_STATUSES = ['draft', 'active', 'draining', 'disabled', 'retired'] as const
+const SERVING_STATUSES = ['draft', 'active', 'disabled', 'retired'] as const
 export type ServingStatus = (typeof SERVING_STATUSES)[number]
 
 export const nodeRowSchema = z.object({
@@ -32,9 +32,6 @@ export const nodeRowSchema = z.object({
   cpu_cores: z.number().nullable(),
   memory_mb: z.number().nullable(),
   disk_gb: z.number().nullable(),
-  health_score: z.number().nullable(),
-  applied_config_version: z.number().nullable(),
-  desired_config_version: z.number().nullable(),
   last_heartbeat_at: iso.nullable(),
   stale: z.boolean(),
   delivered_to_users: z.boolean(),
@@ -56,11 +53,9 @@ export const nodeRowSchema = z.object({
   granted_plans: strs,
   // 下发与运行的真实状态（nodefabric.NodeRuntimeView，w4deliver）。后端总是给；开发期假后端
   // 还没跟上时按「没有这项信息」处理，不让整张列表解析失败
-  desired_effective_generation: z.number().nullish().transform((v) => v ?? null),
-  applied_effective_generation: z.number().nullish().transform((v) => v ?? null),
   effective_state: z.enum(['', 'applied', 'pending', 'failed']).catch(''),
   last_apply_failure: z
-    .object({ phase: z.string(), detail: z.string(), at: iso, generation: z.number().nullable() })
+    .object({ phase: z.string(), detail: z.string(), at: iso })
     .nullish()
     .transform((v) => v ?? null),
   runtime_status: z.string().nullish().transform((v) => v ?? null),
@@ -117,7 +112,7 @@ export type AdminNode = z.output<typeof adminNodeSchema>
 // 协议 schema（GET v1/node-protocol-schemas）。13 个 stable，表单只渲染这些。
 // 未配置的草稿 protocol_schema_version 仍是 0，那不是一种协议类型。
 // ---------------------------------------------------------------------------
-export const protocolSchemaSchema = z.object({
+const protocolSchemaSchema = z.object({
   node_type: z.string(),
   version: z.number(),
   status: z.string(),
@@ -137,7 +132,8 @@ export type ProtocolSchema = z.output<typeof protocolSchemaSchema>
 // ---------------------------------------------------------------------------
 // 服务器（GET v1/servers 与 /servers/{id}，nodefabric.Server）：指针字段全是 null 而不是缺键
 // ---------------------------------------------------------------------------
-export const SERVER_STATUSES = ['draft', 'ready', 'draining', 'maintenance', 'unhealthy', 'quarantined', 'retired'] as const
+// 库里只有这五态（00018_node.sql）
+const SERVER_STATUSES = ['draft', 'ready', 'draining', 'maintenance', 'retired'] as const
 export type ServerStatus = (typeof SERVER_STATUSES)[number]
 
 export const serverSchema = z.object({
@@ -161,7 +157,6 @@ export const serverSchema = z.object({
   disk_gb: z.number().nullable(),
   capacity_nodes: z.number(),
   notes: z.string().nullable(),
-  control_node_id: uuid.nullable(),
   node_count: z.number(),
   active_node_count: z.number(),
   serving_node_count: z.number(),
@@ -180,7 +175,7 @@ export const serversResponse = z.object({ servers: z.array(serverSchema), total:
 export type Server = z.output<typeof serverSchema>
 
 /** GET v1/servers/{id}/nodes：含已退役与已销毁，按 sort_order */
-export const serverNodeSchema = z.object({
+const serverNodeSchema = z.object({
   id: uuid,
   name: z.string(),
   status: z.string(),
@@ -195,7 +190,6 @@ export const serverNodeSchema = z.object({
   created_at: iso,
 })
 export const serverNodesResponse = z.object({ nodes: z.array(serverNodeSchema), total: z.number() })
-export type ServerNode = z.output<typeof serverNodeSchema>
 
 // ---------------------------------------------------------------------------
 // 节点池（GET v1/node-pools）：members 不含已销毁节点，plan_names 去重（两者 SQL 里 coalesce 过，恒为数组）；
@@ -204,7 +198,7 @@ export type ServerNode = z.output<typeof serverNodeSchema>
 export const POOL_STATUSES = ['active', 'draining', 'disabled'] as const
 export type PoolStatus = (typeof POOL_STATUSES)[number]
 
-export const poolSchema = z.object({
+const poolSchema = z.object({
   id: uuid,
   code: z.string(),
   name: z.string(),
@@ -242,9 +236,8 @@ export const identitySchema = z.object({
   server_token: z.object({ present: z.boolean(), issued_at: iso.optional(), issued_by: uuid.optional(), issued_by_name: z.string().optional() }),
   bootstrap_tokens_pending: z.number(),
 })
-export type NodeIdentity = z.output<typeof identitySchema>
 
-export const metricPointSchema = z.object({
+const metricPointSchema = z.object({
   at: iso,
   cpu_percent: z.number(),
   mem_percent: z.number(),
@@ -273,10 +266,9 @@ export const metricsSchema = z.object({
     .nullable(),
 })
 export type MetricPoint = z.output<typeof metricPointSchema>
-export type NodeMetrics = z.output<typeof metricsSchema>
 
-export const outboundSchema = z.object({ tag: z.string(), type: z.string(), settings: z.unknown() })
-export const routeSchema = z.object({
+const outboundSchema = z.object({ tag: z.string(), type: z.string(), settings: z.unknown() })
+const routeSchema = z.object({
   priority: z.number(),
   matcher: z.record(z.string(), z.unknown()),
   outbound_tag: z.string(),
@@ -286,7 +278,7 @@ export const routeSchema = z.object({
 export type Outbound = z.output<typeof outboundSchema>
 export type Route = z.output<typeof routeSchema>
 /** 节点所在的路由组（00096），按生效顺序（sort_order 小的先） */
-export const routeGroupRefSchema = z.object({ id: uuid, name: z.string(), sort_order: z.number() })
+const routeGroupRefSchema = z.object({ id: uuid, name: z.string(), sort_order: z.number() })
 export type RouteGroupRef = z.output<typeof routeGroupRefSchema>
 export const nodeRoutingSchema = z.object({ row_version: z.number(), groups: list(routeGroupRefSchema), outbounds: list(outboundSchema), routes: list(routeSchema) })
 export type NodeRouting = z.output<typeof nodeRoutingSchema>
@@ -313,14 +305,13 @@ export const routeGroupsResponse = z.object({ groups: z.array(routeGroupSchema) 
 export const groupRoutingSchema = z.object({ row_version: z.number(), outbounds: list(outboundSchema), routes: list(routeSchema) })
 export type GroupRouting = z.output<typeof groupRoutingSchema>
 /** 生效出站 / 规则的来源层；group_id / group_name 只在 scope = group 时出现（omitempty） */
-export const routingSourceSchema = z.object({ scope: z.enum(['node', 'group', 'global']), group_id: uuid.optional(), group_name: z.string().optional() })
+const routingSourceSchema = z.object({ scope: z.enum(['node', 'group', 'global']), group_id: uuid.optional(), group_name: z.string().optional() })
 export type RoutingSource = z.output<typeof routingSourceSchema>
 export const effectiveRoutingSchema = z.object({
   groups: z.array(routeGroupRefSchema),
   outbounds: z.array(z.object({ tag: z.string(), type: z.string(), settings: z.unknown(), source: routingSourceSchema })),
   routes: z.array(z.object({ matcher: z.record(z.string(), z.unknown()), outbound: z.string(), source: routingSourceSchema })),
 })
-export type EffectiveRouting = z.output<typeof effectiveRoutingSchema>
 
 // ---------------------------------------------------------------------------
 // 写操作的响应
@@ -328,9 +319,7 @@ export type EffectiveRouting = z.output<typeof effectiveRoutingSchema>
 export const okUpdated = z.object({ ok: z.literal(true), updated: z.number() })
 export const batchStatusResponse = z.object({ ok: z.literal(true), updated: z.number(), serving_status: z.string() })
 export const bootstrapTokenResponse = z.object({ token: z.string(), expires_at: iso, install_command: z.string() })
-export type BootstrapToken = z.output<typeof bootstrapTokenResponse>
 export const serverTokenResponse = z.object({ token: z.string(), node_type: z.string(), panel_url: z.string(), install_command: z.string(), hint: z.string() })
-export type ServerToken = z.output<typeof serverTokenResponse>
 export const realityKeypairResponse = z.object({ private_key: z.string(), public_key: z.string(), short_id: z.string(), hint: z.string() })
 export const publishResponse = z.object({ config_id: uuid, version: z.number(), scope: z.string(), affected_nodes: z.number() })
 export const routingSaved = z.object({ ok: z.literal(true), row_version: z.number() })

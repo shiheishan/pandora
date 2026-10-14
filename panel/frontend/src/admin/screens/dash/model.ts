@@ -196,7 +196,7 @@ export function kpiRevenueDelta(today: number, yesterday: number): { text: strin
 // 收入趋势
 // ===========================================================================
 
-export interface Bar {
+interface Bar {
   key: string
   /** 0–100 的高度百分比；负值与 0 画成贴底细线 */
   height: number
@@ -204,7 +204,7 @@ export interface Bar {
   today: boolean
 }
 
-export interface RevenueSummary {
+interface RevenueSummary {
   total: number
   average: number
   /** 较上一区间，previous_total 为 0 时 null */
@@ -239,14 +239,14 @@ export function revenueSummary(points: readonly RevenuePoint[], currency: string
 // 注册与活跃
 // ===========================================================================
 
-export interface ActivityBar {
+interface ActivityBar {
   key: string
   registered: number
   active: number
   tip: string
 }
 
-export interface ActivitySummary {
+interface ActivitySummary {
   registeredTotal: number
   /** 日活均值；没有点时为 0 */
   activeAverage: number
@@ -284,7 +284,7 @@ export function activitySummary(points: readonly ActivityPoint[]): ActivitySumma
 // 系统状态（7 行组件 + 待补·前端的第 8 行「数据库备份」）
 // ===========================================================================
 
-export interface BackupSummary {
+interface BackupSummary {
   state: ComponentState
   meta: string
 }
@@ -320,7 +320,7 @@ export interface SystemRow {
   action?: { kind: 'go'; target: Target } | { kind: 'backup' }
 }
 
-export interface SystemView {
+interface SystemView {
   rows: SystemRow[]
   degraded: number
   label: string
@@ -402,7 +402,7 @@ export function systemRows(status: SystemStatus): SystemView {
 // 流量排行
 // ===========================================================================
 
-export interface TrafficRow {
+interface TrafficRow {
   key: string
   rank: number
   name: string
@@ -449,7 +449,6 @@ export function trafficNotes(data: NodeTraffic | UserTraffic): { notes: string[]
   const t = data.totals
   if (t.unattributed_bytes !== '0') notes.push(`未归属 ${formatBytes(t.unattributed_bytes)}`)
   const q = data.quality
-  if (q.duplicate_report_count > 0) notes.push(`重复上报 ${q.duplicate_report_count}`)
   if (q.invalid_report_count > 0) notes.push(`无效上报 ${q.invalid_report_count}`)
   if (q.invalid_entry_count > 0) notes.push(`无效条目 ${q.invalid_entry_count}`)
   const allUnattributed = data.items.length === 0 && t.reported_bytes !== '0' && t.attributed_bytes === '0'

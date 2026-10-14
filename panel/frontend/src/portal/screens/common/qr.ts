@@ -9,7 +9,7 @@ import { createElement, type ReactElement } from 'react'
 // 公开教程的测试向量，并用内置的解码器把每个版本解回原文。
 // ---------------------------------------------------------------------------
 
-export const MIN_VERSION = 1
+const MIN_VERSION = 1
 export const MAX_VERSION = 40
 
 /** M 级每块纠错码字数，下标是版本（0 不用） */
@@ -54,7 +54,7 @@ export function alignmentPositions(version: number): number[] {
 // ---------------------------------------------------------------------------
 // GF(2^8) 上的 Reed-Solomon，本原多项式 0x11D
 // ---------------------------------------------------------------------------
-export function gfMultiply(x: number, y: number): number {
+function gfMultiply(x: number, y: number): number {
   let z = 0
   for (let i = 7; i >= 0; i--) {
     z = (z << 1) ^ ((z >>> 7) * 0x11d)
@@ -133,7 +133,7 @@ export function dataCodewordsFor(bytes: Uint8Array, version: number): number[] {
 }
 
 /** 分块、算纠错码、交织 */
-export function interleave(data: readonly number[], version: number): number[] {
+function interleave(data: readonly number[], version: number): number[] {
   const numBlocks = BLOCKS[version]!
   const eccLen = ECC_PER_BLOCK[version]!
   const raw = Math.floor(rawDataModules(version) / 8)
@@ -269,7 +269,7 @@ export function maskHit(mask: number, x: number, y: number): boolean {
 }
 
 /** 罚分（标准 4 条）：同色连续、2×2 同色块、类定位图形、深浅比例；选罚分最低的掩码 */
-export function penalty(modules: readonly (readonly boolean[])[]): number {
+function penalty(modules: readonly (readonly boolean[])[]): number {
   const n = modules.length
   let result = 0
   const lines = (get: (i: number, j: number) => boolean) => {
@@ -359,7 +359,7 @@ export function encodeQr(text: string, maxVersion = MAX_VERSION): QrMatrix | nul
 }
 
 /** 深色模块合成一条 path（每个模块一个 1×1 方块），坐标含 quiet 边距 */
-export function qrPath(m: QrMatrix, quiet = 4): string {
+function qrPath(m: QrMatrix, quiet = 4): string {
   const parts: string[] = []
   m.modules.forEach((row, y) =>
     row.forEach((dark, x) => {

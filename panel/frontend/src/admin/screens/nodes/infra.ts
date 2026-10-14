@@ -10,8 +10,6 @@ export const SERVER_STATUS: Readonly<Record<ServerStatus, { label: string; tone:
   ready: { label: '服务中', tone: 'ok' },
   draining: { label: '维护中', tone: 'warn' },
   maintenance: { label: '停机维护', tone: 'warn' },
-  unhealthy: { label: '异常', tone: 'danger' },
-  quarantined: { label: '已隔离', tone: 'danger' },
   retired: { label: '已退役', tone: 'neutral' },
 }
 
@@ -24,16 +22,14 @@ export function serverDot(s: Pick<Server, 'status' | 'heartbeat_online'>): Tone 
 /** nodefabric.serverStatusTransitions 原样 */
 const SERVER_EDGES: Readonly<Record<ServerStatus, readonly ServerStatus[]>> = {
   draft: ['ready', 'maintenance', 'retired'],
-  ready: ['draining', 'unhealthy', 'quarantined'],
+  ready: ['draining', 'maintenance'],
   draining: ['ready', 'maintenance', 'retired'],
-  maintenance: ['ready', 'retired'],
-  unhealthy: ['draining', 'maintenance', 'quarantined', 'retired'],
-  quarantined: ['draining', 'maintenance', 'retired'],
+  maintenance: ['ready', 'draining', 'retired'],
   retired: [],
 }
 export const nextServerStatuses = (from: ServerStatus): readonly ServerStatus[] => SERVER_EDGES[from]
 
-export interface QuickToggle {
+interface QuickToggle {
   to: ServerStatus
   label: string
   done: string

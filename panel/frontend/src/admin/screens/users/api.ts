@@ -8,14 +8,14 @@ import { exactEmail } from './model'
 import { generationJobSchema, generationJobsSchema } from './opsSchemas'
 
 // 订单的封闭枚举与列表行归订单与收款模块（后台-05），用户详情「最近订单」同形
-export { ORDER_KINDS, ORDER_STATUSES, type OrderKind, type OrderRow, type OrderStatus } from '../billing/schemas'
+export { type OrderRow, type OrderStatus } from '../billing/schemas'
 
 // ---------------------------------------------------------------------------
 // 封闭枚举（迁移里的 CHECK）：未知值判为不符约定
 // ---------------------------------------------------------------------------
-export const USER_STATUSES = ['pending', 'active', 'suspended', 'banned', 'deletion_scheduled', 'anonymized'] as const
-export const RISK_LEVELS = ['trusted', 'normal', 'elevated', 'high'] as const
-export const SUB_STATUSES = ['pending', 'trialing', 'active', 'past_due', 'grace', 'paused', 'cancelled', 'expired'] as const
+const USER_STATUSES = ['pending', 'active', 'suspended', 'banned', 'deletion_scheduled', 'anonymized'] as const
+const RISK_LEVELS = ['trusted', 'normal', 'elevated', 'high'] as const
+const SUB_STATUSES = ['active', 'expired'] as const
 export type UserStatus = (typeof USER_STATUSES)[number]
 export type RiskLevel = (typeof RISK_LEVELS)[number]
 export type SubStatus = (typeof SUB_STATUSES)[number]
@@ -57,7 +57,6 @@ const userRowShape = {
 const userRowSchema = z.object(userRowShape)
 export const usersSchema = z.object({ users: z.array(userRowSchema), total: count })
 export type UserRow = z.output<typeof userRowSchema>
-export type CurrentSub = z.output<typeof currentSubSchema>
 
 // ---------------------------------------------------------------------------
 // GET v1/users/{id}：列表行 + 资料、全部订阅（含配额与设备）、最近 20 单、是否管理员、统计
@@ -170,9 +169,8 @@ export const bulkPreviewSchema = z.object({
   samples: z.array(z.string()),
   sample_rows: z.array(z.object({ email: z.string(), plan_name: z.string().nullable(), current_period_end: time.nullable() })),
 })
-export type BulkPreview = z.output<typeof bulkPreviewSchema>
 // 批量生成任务与加流量包的 schema 在 opsSchemas.ts（不依赖 React，假后端测试也引用）
-export { generationJobSchema, generationJobsSchema, trafficGrantedSchema, type GenerationJob } from './opsSchemas'
+export { generationJobSchema, trafficGrantedSchema, type GenerationJob } from './opsSchemas'
 /** 一个批量生成任务的进度：没结束时每 1.5 秒轮询一次，结束即停 */
 export function useGenerationJob(id: string | null) {
   const api = useApi()
@@ -195,7 +193,7 @@ export function useGenerationJobs() {
 export const bulkMailSchema = z.object({ queued: count, skipped: count })
 
 // ---------------------------------------------------------------------------
-// GET v1/devices：active / trialing / grace 订阅按在线数倒序，最多 200 条
+// GET v1/devices：生效中的订阅按在线数倒序，最多 200 条
 // ---------------------------------------------------------------------------
 const onlineDeviceSchema = z.object({
   subscription_id: z.string(),
@@ -246,14 +244,12 @@ export const resetStatsSchema = z.object({
   freed_bytes: count,
   manual_count: count,
 })
-export type ResetStats = z.output<typeof resetStatsSchema>
 export const resetDoneSchema = z.object({ reset: z.literal(true), freed_bytes: count })
 
 // ---------------------------------------------------------------------------
 // GET v1/plans：批量筛选的「套餐」下拉只要 id / 名称 / 状态
 // ---------------------------------------------------------------------------
 export const planOptionsSchema = z.object({ plans: z.array(z.object({ id: z.string(), name: z.string(), status: z.enum(['draft', 'active', 'archived']) })) })
-export type PlanOption = z.output<typeof planOptionsSchema>['plans'][number]
 
 // ---------------------------------------------------------------------------
 // 查询

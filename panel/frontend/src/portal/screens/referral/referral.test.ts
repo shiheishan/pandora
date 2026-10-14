@@ -36,7 +36,7 @@ describe('佣金概况 schema', () => {
 
 describe('邀请横幅', () => {
   it('邀请链接用查询串，不用两段式路径', () => {
-    expect(inviteLink('ZW8KQ4TM', 'https://my.pandora.run')).toBe('https://my.pandora.run/?invite=ZW8KQ4TM')
+    expect(inviteLink('ZW8KQ4TM', 'https://my.example.test')).toBe('https://my.example.test/?invite=ZW8KQ4TM')
   })
 
   it('横幅不写「首单」（公开接口没有计佣范围）；费率为 0 不提佣金', () => {

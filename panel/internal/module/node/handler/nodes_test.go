@@ -110,11 +110,10 @@ var (
 	inventoryNodeRowKeys = []string{
 		"id", "node_no", "row_version", "name", "status", "serving_status", "server_id", "server_name",
 		"pool_id", "pool_name", "agent_version", "hostname", "public_ipv4", "cpu_cores", "memory_mb", "disk_gb",
-		"health_score", "applied_config_version", "desired_config_version", "last_heartbeat_at", "stale",
-		"delivered_to_users", "delivery_note", "identity_serial", "created_at", "node_type", "server_host",
+		"last_heartbeat_at", "stale", "delivered_to_users", "delivery_note", "identity_serial", "created_at", "node_type", "server_host",
 		"server_port", "display_name", "country_code", "sort_order", "online_users", "online_ips",
 		"traffic_bytes_24h", "cpu_percent", "mem_percent", "metrics_at", "granted_plans",
-		"desired_effective_generation", "applied_effective_generation", "effective_state", "last_apply_failure",
+		"effective_state", "last_apply_failure",
 		"runtime_status", "runtime_reason", "runtime_state_at", "runtime_reason_node", "delivery_degraded",
 	}
 	inventoryNodeDetailExtra = []string{
@@ -128,7 +127,7 @@ var (
 	inventoryServerKeys = []string{
 		"id", "name", "status", "status_reason", "row_version", "region", "hostname", "public_ipv4", "public_ipv6",
 		"private_ipv4", "architecture", "os_name", "agent_version", "last_heartbeat_at", "heartbeat_online",
-		"cpu_cores", "memory_mb", "disk_gb", "capacity_nodes", "notes", "control_node_id", "node_count",
+		"cpu_cores", "memory_mb", "disk_gb", "capacity_nodes", "notes", "node_count",
 		"active_node_count", "serving_node_count", "never_seen_node_count", "created_at", "updated_at",
 		"cpu_bp", "mem_used_mb", "mem_total_mb", "disk_used_gb", "disk_total_gb", "metrics_at",
 	}
@@ -356,8 +355,7 @@ func TestNodeRowResponseShape(t *testing.T) {
 	if gp, ok := m["granted_plans"].([]any); !ok || len(gp) != 0 {
 		t.Fatalf("granted_plans 应为空数组：%v", m["granted_plans"])
 	}
-	for _, k := range []string{"health_score", "identity_serial", "cpu_percent", "metrics_at",
-		"desired_effective_generation", "applied_effective_generation", "last_apply_failure"} {
+	for _, k := range []string{"identity_serial", "cpu_percent", "metrics_at", "last_apply_failure"} {
 		if m[k] != nil {
 			t.Fatalf("%s 应为 null：%v", k, m[k])
 		}
@@ -369,7 +367,7 @@ func TestNodeRowResponseShape(t *testing.T) {
 	at := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	_, m = inventoryKeys(t, nodeRowFrom(service.NodeRow{LastApplyFailure: &service.ApplyFailure{Phase: "failed", Detail: "d", At: at}}))
 	f, ok := m["last_apply_failure"].(map[string]any)
-	if !ok || f["phase"] != "failed" || f["detail"] != "d" || f["generation"] != nil {
+	if _, has := f["generation"]; !ok || f["phase"] != "failed" || f["detail"] != "d" || has {
 		t.Fatalf("last_apply_failure 不对：%v", m["last_apply_failure"])
 	}
 }
@@ -401,7 +399,7 @@ func TestAdminNodeResponseShape(t *testing.T) {
 func TestServerResponseShape(t *testing.T) {
 	keys, m := inventoryKeys(t, serverFrom(service.Server{Status: "draft"}))
 	inventoryExpectKeys(t, keys, inventoryServerKeys)
-	for _, k := range []string{"control_node_id", "cpu_bp", "mem_used_mb", "mem_total_mb", "disk_used_gb", "disk_total_gb", "metrics_at"} {
+	for _, k := range []string{"cpu_bp", "mem_used_mb", "mem_total_mb", "disk_used_gb", "disk_total_gb", "metrics_at"} {
 		if m[k] != nil {
 			t.Fatalf("%s 应为 null：%v", k, m[k])
 		}

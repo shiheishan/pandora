@@ -7,7 +7,7 @@ import css from './SubCard.module.css'
 import { expiryText, isExpiredNow, leakSources, usageText } from './card-text'
 import type { Subscription, SubscriptionLink } from './subscriptions'
 
-export interface SubCardActions {
+interface SubCardActions {
   onImport: (sub: Subscription) => void
   onRename: (sub: Subscription) => void
   onRotate: (sub: Subscription) => void
@@ -60,8 +60,6 @@ export function SubCard({ sub, naming, link, minPack, actions, compact = false }
         <div className={css.title}>
           <h2 className={css.name}>{titled ? sub.label || sub.plan_name : sub.plan_name}</h2>
           {titled && <Tag>{sub.label ? sub.plan_name : tail ? `····${tail}` : sub.plan_name}</Tag>}
-          {sub.status === 'past_due' && <Tag tone="danger">待续费</Tag>}
-          {sub.status === 'grace' && <Tag tone="warn">快到期了</Tag>}
         </div>
         <div className={css.exp} data-tone={exp.tone}>
           {exp.main}

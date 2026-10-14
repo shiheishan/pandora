@@ -15,7 +15,7 @@ export const orderQuerySchema = z.object({
   quarantine_kind: z.string().optional(),
   order_status: z.enum(ORDER_STATUSES),
 })
-export type OrderQueryResult = z.output<typeof orderQuerySchema>
+type OrderQueryResult = z.output<typeof orderQuerySchema>
 
 /** 三种结果：settled 已到账、pending 渠道尚未确认、failed 查询失败 */
 export interface QueryOutcome {

@@ -30,11 +30,11 @@ const (
 	StatusExpired   = "expired"
 )
 
-// FilterStatuses 是列表筛选接受的状态（前端 ORDER_STATUSES 全集）：其中 draft、processing、
-// partially_refunded、refunded 库里不会有，筛它们得到空列表；不在这里的回 400。
+// FilterStatuses 是列表筛选接受的状态（前端 ORDER_STATUSES 全集）：库里的 5 态，外加等产品确认的
+// partially_refunded、refunded（库里不会有，筛它们得到空列表）；不在这里的回 400。
 var FilterStatuses = []string{
-	"draft", StatusPending, "processing", StatusPaid, StatusFulfilled,
-	StatusCancelled, StatusExpired, "partially_refunded", "refunded",
+	StatusPending, StatusPaid, StatusFulfilled, StatusCancelled, StatusExpired,
+	"partially_refunded", "refunded",
 }
 
 // 预留状态。

@@ -11,8 +11,6 @@ import { pickTrafficQuota, trafficSummary } from './traffic'
 
 /** 还在手上的一份：生效中，或过期 30 天内还能救回（续费或换套餐都在原链接上） */
 export const isHeld = (s: Subscription) => isLive(s) || (s.status === 'expired' && (s.changeable || s.renewable))
-/** 已过期但还能救回 */
-export const isRevivable = (s: Subscription) => s.status === 'expired' && (s.changeable || s.renewable)
 /** 彻底停用：已取消，或过期且窗口已关 */
 export const isDeadSub = (s: Subscription) => !isHeld(s)
 
@@ -64,7 +62,7 @@ export const profileName = (site: string, label: string, planName: string) => `$
 // ---------------------------------------------------------------------------
 // 名字：候选名排除别的份已用的（不排除自己）；同款没起名时新买的那份必须起名
 // ---------------------------------------------------------------------------
-export const NAME_IDEAS = ['我的', '妈妈的 iPad', '爸爸的手机', '工作电脑', '孩子的平板'] as const
+const NAME_IDEAS = ['我的', '妈妈的 iPad', '爸爸的手机', '工作电脑', '孩子的平板'] as const
 /** 另买一份多半是给别人的：建议名不放「我的」（首次点击测试：预填「我的」容易把家人那份起成自己的） */
 export const NEW_COPY_IDEAS = NAME_IDEAS.filter((n) => n !== '我的')
 
@@ -79,7 +77,7 @@ export const nameRequired = (held: readonly Subscription[], planId: string) => h
 // ---------------------------------------------------------------------------
 // 流量：原型「剩 8G / 共 100G」；剩余 = 套餐本期剩余 + 这一份的流量包
 // ---------------------------------------------------------------------------
-export interface Left {
+interface Left {
   /** 还能用（字节）；null = 不限 */
   left: number | null
   /** 本期总量 + 流量包；null = 不限 */

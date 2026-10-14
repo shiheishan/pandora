@@ -161,7 +161,7 @@ function seedLogs(users: readonly User[]): ResetLog[] {
       plan_name: sub?.plan_name ?? '',
       reason,
       consumed_before: (((i * 37) % 480) + 12) * GiB + ((i * 7919) % 1000) * 1024 ** 2,
-      actor_email: reason === 'manual' ? (i % 2 ? 'admin@pandora.dev' : 'zhou.min@pandora.dev') : '',
+      actor_email: reason === 'manual' ? (i % 2 ? 'admin@example.test' : 'zhou.min@example.test') : '',
       note: reason === 'manual' ? `工单 #${4700 + i} 用户申诉，补偿断线时长` : '',
       created_at: new Date(Date.now() - i * 0.85 * DAY - ((i * 13) % 24) * 3_600_000).toISOString(),
     })
@@ -435,7 +435,7 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
     // ---- 设备策略 -----------------------------------------------------------
     'GET /v1/devices': (ctx) => {
       const rows = users
-        .flatMap((u) => u.subs.filter((s) => s.status === 'active' || s.status === 'trialing' || s.status === 'grace').map((s) => ({ u, s })))
+        .flatMap((u) => u.subs.filter((s) => s.status === 'active').map((s) => ({ u, s })))
         .sort((a, b) => b.s.online_devices - a.s.online_devices || b.s.created_at.localeCompare(a.s.created_at))
         .slice(0, 200)
         .map(({ u, s }, k) => {

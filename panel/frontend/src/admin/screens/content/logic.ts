@@ -24,7 +24,7 @@ export function fromLocalInput(value: string, original?: string | null): string 
   return Number.isNaN(d.getTime()) ? '' : d.toISOString()
 }
 
-export function toDateInput(iso: string | null | undefined): string {
+function toDateInput(iso: string | null | undefined): string {
   return toLocalInput(iso).slice(0, 10)
 }
 
@@ -149,7 +149,7 @@ export function annBody(form: AnnForm, publish: boolean, original: Announcement 
   }
 }
 
-export interface AnnActions {
+interface AnnActions {
   /** 主按钮文字；null = 不显示（已撤回） */
   primary: string | null
   /** 保存草稿（publish=false）：已发布的公告不能退回草稿，后端回 409 */
@@ -206,7 +206,7 @@ export function groupArticles(pages: readonly Page[]): Article[] {
   })
 }
 
-export const UNCATEGORIZED = '未分类'
+const UNCATEGORIZED = '未分类'
 
 /** 左栏：先按分类分组（分类按中文排序、未分类垫底），组内按标题；q 对最新版的标题与 slug 做不区分大小写的包含 */
 export function groupByCategory(articles: readonly Article[], q = ''): Array<{ cat: string; items: Article[] }> {
@@ -362,7 +362,7 @@ export function audienceChanged(form: KbForm, from: Page): boolean {
 // ---------------------------------------------------------------------------
 // 站点时区（R49）：常用 IANA 名，Asia/Shanghai 置顶；当前值不在表里也要能显示
 // ---------------------------------------------------------------------------
-export const COMMON_TIMEZONES: ReadonlyArray<readonly [string, string]> = [
+const COMMON_TIMEZONES: ReadonlyArray<readonly [string, string]> = [
   ['Asia/Shanghai', '中国 · 上海'],
   ['Asia/Hong_Kong', '中国 · 香港'],
   ['Asia/Taipei', '中国 · 台北'],

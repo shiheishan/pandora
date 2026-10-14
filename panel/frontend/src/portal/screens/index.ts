@@ -6,7 +6,7 @@ export interface PortalScreenProps {
   rest: string[]
 }
 
-export type PortalScreen = LazyExoticComponent<ComponentType<PortalScreenProps>>
+type PortalScreen = LazyExoticComponent<ComponentType<PortalScreenProps>>
 
 export const SCREENS: Readonly<Record<PageKey, PortalScreen>> = {
   overview: lazy(() => import('./overview')),

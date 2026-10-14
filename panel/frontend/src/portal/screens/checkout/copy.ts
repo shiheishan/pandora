@@ -12,7 +12,7 @@ import type { Target } from './model'
 // ---------------------------------------------------------------------------
 const DAY_MS = 86_400_000
 
-export interface ConfirmCtx {
+interface ConfirmCtx {
   target: Target
   /** 续费、换套餐、加流量作用的那一份 */
   sub?: Subscription
@@ -29,7 +29,7 @@ export interface ConfirmCtx {
 
 export type Note = string | { b: string; rest: string }
 
-export interface ConfirmCopy {
+interface ConfirmCopy {
   title: string
   /** 主按钮的动作：「续费」「换成进阶版」「买一份新的」「加 100G」 */
   verb: string
@@ -57,7 +57,7 @@ function trafficOf(plan: Plan | undefined, sub: Subscription | undefined): strin
 }
 
 /** 换大还是换便宜：按月价比，没有月价按这一档与原来的价钱比 */
-export function isUpgrade(plan: Plan | undefined, oldPlan: Plan | undefined, row: QuoteRow, sub: Subscription | undefined): boolean {
+function isUpgrade(plan: Plan | undefined, oldPlan: Plan | undefined, row: QuoteRow, sub: Subscription | undefined): boolean {
   const a = plan && priceFor(plan, '1m')?.unit_amount
   const b = oldPlan && priceFor(oldPlan, '1m')?.unit_amount
   if (a !== undefined && b !== undefined) return a > b
@@ -178,7 +178,7 @@ export function confirmCopy(c: ConfirmCtx): ConfirmCopy {
 // ---------------------------------------------------------------------------
 // 付钱那一块：余额开关、合计、凑最低额的说明、主按钮
 // ---------------------------------------------------------------------------
-export interface PayCopy {
+interface PayCopy {
   /** 余额那一行；null = 不显示（不用付钱或没有余额） */
   balanceLine: { on: boolean; locked: boolean; text: string; strong?: string } | null
   sum: { text: string; strong?: string; after?: string }

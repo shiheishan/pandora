@@ -29,7 +29,7 @@ interface EventTargetLike {
   removeEventListener(type: 'storage', listener: (event: Event) => void): void
 }
 
-export interface TokenStoreOptions {
+interface TokenStoreOptions {
   storage?: StorageLike | null
   events?: EventTargetLike | null
 }
