@@ -10,4 +10,6 @@ paths:
   - 这个标记是「占位页不得发布」的判据，三处在用：`panel/deploy/build-release.sh`、`.github/workflows/pandora-native.yml`、`panel/web/app_test.go`。改标记要三处同改。
 - 入口带 `<meta name="pandora-app" content="admin|portal">`，`TestEmbeddedAppsHaveEntryForTheirDomain` 据此确认两个域没有嵌反。
 - 嵌的是真产物时，`app_test.go` 的 `checkBuiltEntry` 还守三条：入口不许有内联脚本和内联样式（CSP 是 `script-src 'self'`、`style-src 'self'`）；入口引用的每个 `./` 资源都在 `assets/` 下且确实嵌进了二进制；不嵌 `.vite` 构建元数据。
-- 新栈的 `serve` 现在还没有引用 `AdminApp` / `PortalApp`，根下也没有设 CSP 头（`panel/internal/app/serve.go`）。接回前端下发时，按上面这条 CSP 前提设头，并保持根下只下发入口与 `/assets/*`：其余路径归 `/v1`、`/healthz`、`/readyz` 和门户的订阅通配（见 `.claude/rules/panel-http.md`）。
+- 下发在 `panel/internal/pkg/webapp`：`serve.go` 用 `webapp.Mount` 把 `PortalApp` / `AdminApp` 挂到两个引擎的根上，只认入口 `/` 与 `/assets/*`，不做 SPA 回退（缺的资源就是 404）；其余路径归 `/v1`、`/healthz`、`/readyz` 和门户的订阅通配（见 `.claude/rules/panel-http.md`）。
+  - 入口的 CSP 是 `webapp.go` 的 `indexCSP`，扩展名到 MIME 的表是 `contentTypes`；产物要带新的资源类型时两处一起改（wasm 还要 `wasm-unsafe-eval`）。
+  - 这两个引擎的根路由是公开的，`internal/app/serve_pg_test.go` 的鉴权清单里登记着 `GET/HEAD /` 与 `/assets/*filepath`。

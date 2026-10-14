@@ -6,13 +6,13 @@ paths:
 # 面板前端：CSP、相对路径与依赖
 
 - 接口形状与后端行为都以 Go 代码为准（`panel/internal/module/*/handler` 的路由、请求与响应 DTO），前端只经 `src/core/api.ts` 发请求
-- 入口按 CSP `script-src 'self'`、`style-src 'self'`（没有 unsafe-inline、unsafe-eval；`font-src 'self'`，`img-src 'self' data:`）来写。新栈的 serve 还没有下发前端与 CSP 头（`panel/internal/app/serve.go` 只有 healthz、readyz），恢复下发时按这套值加回；在那之前照样按它写，否则上线会白屏，所以：
+- 入口按 CSP `script-src 'self'`、`style-src 'self'`（没有 unsafe-inline、unsafe-eval；`font-src 'self'`，`img-src 'self' data:`）来写。这套值就是 `panel/internal/pkg/webapp/webapp.go` 的 `indexCSP`，违反了上线会白屏，所以：
   - `index.html` 里不写内联 `<script>`、`<style>` 或 `style=""`。守卫：`tests/entries.test.ts`，以及嵌入后由 `panel/web/app_test.go` 的 `TestEmbeddedAppsHaveEntryForTheirDomain` 检查
   - 不用 CSS-in-JS，也不在运行时注入 `<style>`。样式只写 `.css` 或 CSS Modules。运行时要改样式就走 CSSOM（`element.style` / `setProperty`，React 的 `style` 属性也算），它不受 style-src 约束，先例是 `src/portal/appearance.ts` 的 `useAppearanceTheme`
   - 首帧前必须执行的脚本只能做成外链经典脚本，参照 `src/core/theme-boot.js` 加 `vite.config.ts` 的 `themeBoot` 插件
   - 不引入运行时要 `eval` / `new Function` 的库；zod 必须保持 `z.config({ jitless: true })`（在 `src/core/api.ts`），守卫是 `src/core/api.test.ts` 的 "turns off zod JIT…"
   - 资源一律不内联成 `data:`（`assetsInlineLimit: 0`）。字体随包自带，样式不引外部来源。守卫：`tests/theme-boot.test.ts` 与 `tests/tokens.test.ts` 的 "stylesheets stay self-contained"
-  - 产物里要带新的资源类型（如 wasm）时，面板下发前端那一层的 MIME 表与 CSP 要一起改（旧栈的 `webapp.go` 已删，新栈恢复下发时再定位置）
+  - 产物里要带新的资源类型（如 wasm）时，`panel/internal/pkg/webapp/webapp.go` 的 `contentTypes` 与 `indexCSP` 要一起改
 - 地址一律相对：后台挂在反向代理的高熵前缀后面，前缀剥掉以后才转发
   - Vite 的 `base` 保持 `'./'`
   - 请求路径只写 `v1/...`，不写 `/v1` 或绝对 URL；`resolveApiUrl` 会拒绝不合规的写法
