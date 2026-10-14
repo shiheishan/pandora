@@ -289,9 +289,10 @@ func TestWebhookAmountMismatchRejected(t *testing.T) {
 	if ackOK(ack) {
 		t.Fatalf("金额不符应回 fail，得到 %s", ack.Body)
 	}
-	// 验签失败会留一条 unverified 的事件证据并照常提交；金额不符是处理错误，整笔回滚，一条事件都不留
-	if n := e.count(t, ctx, `SELECT count(*) FROM payment_events pe JOIN payment_providers pp ON pp.id = pe.provider_id WHERE pp.code = ?`, code); n != 0 {
-		t.Fatalf("金额不符不应留事件行（有行说明走的是验签失败），得到 %d", n)
+	// 验签失败会留一条 signature_verified=false 的事件证据；这里一条都不应有，说明拒收原因是金额。
+	// 用例整例跑在 testkit.TxCtx 的外层事务里，内层 tx.Do 不单独回滚，所以不按「事件行为 0」判断。
+	if n := e.count(t, ctx, `SELECT count(*) FROM payment_events pe JOIN payment_providers pp ON pp.id = pe.provider_id WHERE pp.code = ? AND NOT pe.signature_verified`, code); n != 0 {
+		t.Fatalf("金额不符不应留未验签的事件行（有行说明走的是验签失败），得到 %d", n)
 	}
 	if st := e.order(t, ctx, c.OrderID).Status; st != StatusPending {
 		t.Fatalf("订单 %s", st)
