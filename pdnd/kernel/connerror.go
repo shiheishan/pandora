@@ -215,9 +215,9 @@ func sanitizeConnErrorReason(err error) string {
 
 // maskRemoteAddr 把对端地址截成网段：IPv4 留 /24，IPv6 留 /48，丢掉端口。
 //
-// 与面板 middleware.ByIPPrefix 的聚合粒度一致。网段足够判断「是同一批
+// 与面板 ratelimit.ByIPPrefix 的聚合粒度一致。网段足够判断「是同一批
 // 扫描器」还是「某个用户所在的运营商」，又不在节点日志里留下用户的完整
-// IP——完整在线 IP 只走签名通道交给面板，不该在本机日志里再存一份。
+// IP——完整在线 IP 只经 gRPC 控制流交给面板，不该在本机日志里再存一份。
 func maskRemoteAddr(addr net.Addr) string {
 	if addr == nil {
 		return ""

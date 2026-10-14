@@ -9,7 +9,7 @@ import (
 	"github.com/aegispanel/nodeagent/core"
 )
 
-// decodeSignedRaw 按签名通道（node/signed_config.go）的方式解码：UseNumber，
+// decodeSignedRaw 按 gRPC 下发路径（node/server_config.go）的方式解码：UseNumber，
 // 数字到达适配器时是 json.Number 而不是 float64。
 func decodeSignedRaw(t *testing.T, payload string) map[string]any {
 	t.Helper()
@@ -23,8 +23,8 @@ func decodeSignedRaw(t *testing.T, payload string) map[string]any {
 }
 
 // TestSignedConfigNumericFieldsAccepted：10-08 真节点测试里 hy2 带 bandwidth、
-// tuic 写数值 heartbeat 的节点在签名下发路径上起不来（json.Number 不被认）。
-// 每个协议的数值 / 时长字段都要按签名通道的解码结果喂一遍。
+// tuic 写数值 heartbeat 的节点在下发路径上起不来（json.Number 不被认）。
+// 每个协议的数值 / 时长字段都要按下发路径的解码结果喂一遍。
 func TestSignedConfigNumericFieldsAccepted(t *testing.T) {
 	adapters := map[string]Adapter{
 		"hysteria2": &hysteria2Adapter{},

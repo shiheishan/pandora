@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// 签名通道（UseNumber）下发的路由规则，端口是 json.Number；以前 toStrings
+// 面板经 gRPC 下发、按 UseNumber 解码的路由规则，端口是 json.Number；以前 toStrings
 // 只认 float64 / int，整条规则编译失败。
 func TestToStringsAcceptsSignedJSONNumber(t *testing.T) {
 	var matcher map[string]any

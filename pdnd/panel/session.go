@@ -21,7 +21,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// 会话的缺省节拍（契约：docs/architecture.md 11.3、p5-common「节点通道契约」）。
+// 会话的缺省节拍（契约：docs/architecture.md 11.3）。
 const (
 	backoffBase           = time.Second
 	backoffMax            = 30 * time.Second

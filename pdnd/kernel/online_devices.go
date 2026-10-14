@@ -18,8 +18,8 @@ import (
 // 也被腾了出来，关一条连接就能多接一台设备（计费与限设备都被绕过）。
 //
 // 上报给面板的是设备键本身（IPv4 地址或 "前缀/64"），不是原始地址：面板对上报串
-// 取哈希、按订阅 count(DISTINCT) 计设备数（nodefabric 的 aliveRows 与
-// device_limit_admin），报原始 IPv6 地址会把同一 /64 的轮换地址算成多台、按面板侧
+// 取哈希、按订阅 count(DISTINCT) 计设备数（面板 node/service 的 online.go
+// aliveRows 与 devices.go），报原始 IPv6 地址会把同一 /64 的轮换地址算成多台、按面板侧
 // 宽松/严格模式误停用户；报设备键则节点与面板同一口径，跨节点也按同一键去重。
 //
 // 用法固定成「enter 成功后 defer leave」，enter 与 leave 一一对应；
