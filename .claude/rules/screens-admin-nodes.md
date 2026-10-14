@@ -33,3 +33,14 @@ paths:
 - 节点服务状态只有 draft / active / disabled / retired（没有 draining，draining 只属于服务器与节点池）；转换表 `logic.ts` 的 `EDGES` 与 mock 的 `EDGES` 都照后端 `node_status.go` 的 `nodeServingTransitions`
 - 同机端口门禁的 409 带 `fields.server_port`，表单与复制弹窗都标到端口框；复制弹窗可另给端口（留空沿用原节点），复制到同一台服务器必须换端口
 - 新加的运行状态字段在 `schemas.ts` 里带缺省（`catch` / `nullish`）：开发期假后端（`panel/frontend/dev/`）还没有这些字段，补上后可以收紧
+
+节点补齐 Xboard（迁移 00045；后端口径见 `module-node.md` 的同名一节）：
+
+- 校验与上限照后端写在 `xb.ts`（标签 10 个 × 16 字、时段 12 段、重置日 1–31、批量 100、中转 20），文案与后端逐字相同，`xb.test.ts` 钉住；后端改了这里一起改。
+- 抽屉「流量与标签」（`NodeTraffic.tsx`）一次 PATCH 只带改了的字段：标签整体替换、`traffic_limit_bytes` / `traffic_reset_day` 给 `null` 是清空、时段整体替换。上限输入按 GiB（1024³），倍率按输入原文存成编辑稿（`RateRangeDraft`），提交前转回。
+- 手动重置用量、批量修改、ECH 开启/轮换要重认证（api 层自动弹框，取消时 `useFailure` 静默）并带幂等键；ECH 停用只重认证。
+- 中转（「中转与 ECH」页）只有名称、地址、端口、SNI、Host、启用、排序；其余继承父节点，不占端口、不下发配置。与「路由」页的链式出站是两回事，界面上的说明不要混写。
+- ECH 能不能开以后端 `GET v1/nodes/{id}/ech` 的 `supported` / `unsupported_reason` 为准，前端不按协议另判；轮换后旧钥再下发 7 天（`retired_keys`）。
+- 列表行的标签、本周期用量、中转条数、ECH 在 `NODE_LINE_FIELDS` 里，靠 react-query 的结构共享保持引用；超限（`traffic.exceeded_at`）标「超限」代替「不下发」，原因文案仍取后端 `delivery_note`。
+- 标签筛选精确、区分大小写（与后端 `tags @> [tag]` 一致），搜索词不搜标签（与服务端 `q` 同一组字段）；超过一页时 `tag` 交给服务端。
+- 批量修改（`NodeBatchEdit.tsx`）每项勾选才进 `set`；后端整批一个事务，出错文案已带节点名，原样 toast。
