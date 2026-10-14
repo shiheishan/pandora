@@ -21,6 +21,9 @@ import (
 
 var orderStatusPattern = regexp.MustCompile(`^[a-z_]{1,32}$`)
 
+// ErrProviderRefMismatch 是渠道报来的发票号与意图建单时存下的不一致（同店别的发票、孤儿发票、几套系统共用账户撞单号），整笔拒收。
+var ErrProviderRefMismatch = errs.Newf(errs.Conflict, "渠道单号与支付意图不一致")
+
 // settleSavepoint 是调 Settler 前开的保存点名。
 const settleSavepoint = "payment_settle"
 
@@ -170,6 +173,15 @@ func (s *Service) recordPaymentTx(ctx context.Context, in recordInput, hook reco
 		orderNo = intent.OrderNo
 		if !in.Amount.Equal(intent.Amount) || string(in.Currency) != intent.Currency {
 			return RecordResult{}, ErrAmountMismatch
+		}
+		if intent.ProviderRef != nil && *intent.ProviderRef != pr {
+			log.Error("渠道单号与支付意图不一致，未入账",
+				zap.String("provider", in.Provider.Code),
+				zap.String("out_trade_no", strings.TrimSpace(in.OutTradeNo)),
+				zap.String("intent_ref", *intent.ProviderRef),
+				zap.String("channel_ref", pr),
+			)
+			return RecordResult{}, ErrProviderRefMismatch
 		}
 	}
 
