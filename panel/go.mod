@@ -10,7 +10,6 @@ require (
 	github.com/go-acme/alidns-20150109/v4 v4.7.0
 	github.com/go-acme/lego/v4 v4.35.2
 	github.com/go-acme/tencentclouddnspod v1.3.24
-	github.com/go-chi/chi/v5 v5.3.1
 	github.com/go-playground/validator/v10 v10.30.1
 	github.com/go-redis/redis_rate/v10 v10.0.1
 	github.com/golang-jwt/jwt/v5 v5.3.1

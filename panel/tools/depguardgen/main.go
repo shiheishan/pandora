@@ -97,8 +97,7 @@ func fail(err error) {
 }
 
 var tmpl = template.Must(template.New("golangci").Parse(`# 由 tools/depguardgen 生成，不要手改；改规则改生成器，加模块后重新运行。
-# 只检查新栈目录（internal/pkg、internal/app、internal/module、cmd/pandora、db），
-# 旧代码在 P7 删除前不进 lint。
+# tools、tests、web 不进 lint。
 version: "2"
 
 run:
@@ -175,7 +174,7 @@ linters:
               desc: 中间件不碰数据库
             - pkg: {{.Module}}/internal/pkg/db$
               desc: 中间件不碰数据库
-        new-stack-no-legacy:
+        stack-conventions:
           files:
             - "**/internal/pkg/**"
             - "**/internal/app/**"
@@ -183,14 +182,6 @@ linters:
             - "**/cmd/pandora/**"
             - "**/db/migrations/**"
           deny:
-            - pkg: {{.Module}}/internal/api
-              desc: 新栈不引用旧代码
-            - pkg: {{.Module}}/internal/domain
-              desc: 新栈不引用旧代码
-            - pkg: {{.Module}}/internal/middleware
-              desc: 新栈不引用旧代码
-            - pkg: {{.Module}}/internal/platform
-              desc: 新栈不引用旧代码
             - pkg: github.com/go-chi/chi
               desc: 新栈用 gin
             - pkg: github.com/jackc/pgx/v5/pgxpool
@@ -237,11 +228,6 @@ linters:
     presets:
       - std-error-handling
     paths:
-      - internal/api
-      - internal/domain
-      - internal/middleware
-      - internal/platform
-      - cmd/aegis-
       - tools
       - tests
       - web
