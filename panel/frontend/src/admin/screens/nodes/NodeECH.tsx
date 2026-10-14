@@ -219,7 +219,7 @@ export function NodeECH({ node }: { node: NodeRow }) {
         open={disableConfirmOpen}
         tone="danger"
         title="停用 ECH？"
-        body="立即生效：还缓存着 ECH 配置的客户端在重新拉取订阅前会连不上。需要重新验证身份。"
+        body="立即删掉本节点全部 ECH 密钥（含过渡期内的旧钥）：拿着旧订阅的客户端会因 ECH 被拒而连不上，直到重新拉取订阅。需要重新验证身份。"
         confirmLabel="确认停用"
         onConfirm={() =>
           echDeleteMutation.mutateAsync().then(

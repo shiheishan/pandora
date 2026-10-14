@@ -228,7 +228,8 @@ function NodeRelaysSection({ node }: { node: NodeRow }) {
     }
   }
 
-  const atMaxRelays = (relaysQuery.data?.length ?? 0) >= RELAYS_PER_NODE_MAX
+  const atMaxRelays = (relaysQuery.data?.relays.length ?? 0) >= RELAYS_PER_NODE_MAX
+  const sniHint = relaysQuery.data?.sni_hint ?? ''
 
   return (
     <Card>
@@ -247,16 +248,17 @@ function NodeRelaysSection({ node }: { node: NodeRow }) {
       <div className={css.cardDesc}>
         中转是这条线路的另一个入口（中转机、IPLC 入口等）：只有自己的名称、地址、端口，可选 SNI 与 Host；协议、密钥、倍率、标签都继承本节点，订阅里紧跟在本节点后面。节点端不用改配置。它与「路由」里的链式出站不同：链式出站是节点出去时再经一跳，中转是用户进来时换个地址。
       </div>
+      {sniHint && <div className={css.cardDesc}>{sniHint}</div>}
 
       <QueryView
         query={relaysQuery}
         rows={2}
-        isEmpty={(data) => data.length === 0}
+        isEmpty={(data) => data.relays.length === 0}
         empty={<Empty bare title="还没有中转" description="添加后订阅里会紧跟本节点多出一条线路" />}
       >
-        {(relays) => (
+        {(data) => (
           <div className={css.relayList}>
-            {relays.map((r) => (
+            {data.relays.map((r) => (
               <div key={r.id} className={css.relayItem}>
                 <div className={css.relayMain}>
                   <div className={css.relayName}>{r.name}</div>
@@ -371,6 +373,7 @@ function NodeRelaysSection({ node }: { node: NodeRow }) {
                 label="SNI（可选）"
                 value={formSni}
                 placeholder="留空用本节点的域名"
+                hint={sniHint || undefined}
                 error={formErrors.sni}
                 onChange={(e) => {
                   setFormSni(e.target.value)

@@ -42,13 +42,19 @@ func (s *Service) loadDeliverableNodes(ctx context.Context, planVersionID uuid.U
 	if len(pools) == 0 {
 		return []render.Node{}, nil
 	}
-	loc, err := s.siteLoc(ctx)
-	if err != nil {
-		return nil, err
-	}
 	rows, err := s.repo.DeliveryNodes(ctx, pools, s.now().Add(-HeartbeatFreshWindow))
 	if err != nil {
 		return nil, err
+	}
+	// 只有候选节点里有人配了时段倍率才读站点时区；没配的节点不看时区（effectiveRate 直接回基础倍率）
+	var loc *time.Location
+	for _, row := range rows {
+		if rateScheduleSet(row.RateSchedule) {
+			if loc, err = s.siteLoc(ctx); err != nil {
+				return nil, err
+			}
+			break
+		}
 	}
 	return deliverableFromRows(rows, userGroupID, s.now(), loc)
 }

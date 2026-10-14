@@ -72,7 +72,7 @@ func TestDeliverableNodesXBPG(t *testing.T) {
 
 	// 3. 用 SQL 插一把当前 ECH 钥
 	e.mustExec(t, ctx, `INSERT INTO node_ech_keys (node_id, public_name, config_list, private_key_sealed)
-		VALUES (?, 'ech.example.com', '\x0004fe0d0000'::bytea, '\x01'::bytea)`, nodeID)
+		VALUES (?, 'ech.example.com', '\x0006fe0d00020000'::bytea, '\x01'::bytea)`, nodeID)
 
 	// 节点协议若不支持 ECH（夹具的 protocol_config 是 {"flow":"xtls-rprx-vision"}，默认为 vless 无 tls 或非真实 TLS 握手时 protocol.ECHCapable 为 false）
 	// 断言结果 ECHConfigList 为 nil

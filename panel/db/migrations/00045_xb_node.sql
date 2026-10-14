@@ -31,7 +31,8 @@ ALTER TABLE nodes
   ADD COLUMN traffic_rate_schedule jsonb NOT NULL DEFAULT '[]'::jsonb;
 
 ALTER TABLE nodes
-  ADD CONSTRAINT nodes_tags_shape CHECK (jsonb_typeof(tags) = 'array' AND jsonb_array_length(tags) <= 10),
+  ADD CONSTRAINT nodes_tags_shape CHECK (jsonb_typeof(tags) = 'array' AND jsonb_array_length(tags) <= 10
+    AND NOT jsonb_path_exists(tags, '$[*] ? (@.type() != "string")')),
   ADD CONSTRAINT nodes_traffic_limit_check CHECK (traffic_limit_bytes > 0),
   ADD CONSTRAINT nodes_traffic_reset_day_check CHECK (traffic_reset_day BETWEEN 1 AND 31),
   ADD CONSTRAINT nodes_traffic_used_check CHECK (traffic_used_bytes >= 0),

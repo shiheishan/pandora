@@ -83,22 +83,31 @@ func (s *Service) ingestTrafficTx(ctx context.Context, in trafficIngest, m Roste
 			nodeIDs = append(nodeIDs, e.NodeID)
 		}
 	}
-	loc, err := s.siteLoc(ctx)
-	if err != nil {
-		return err
-	}
 	rules, err := s.repo.ServerNodeRateRules(ctx, in.serverID, nodeIDs)
 	if err != nil {
 		return err
 	}
-	rates := make(map[uuid.UUID]decimal.Decimal, len(rules))
+	scheds := make(map[uuid.UUID][]RateRange, len(rules))
 	for id, rule := range rules {
 		sched, err := decodeRateSchedule(rule.Schedule)
 		if err != nil {
 			plog.From(ctx).Warn("节点时段倍率解析失败，按基础倍率计", zap.String("node_id", id.String()), zap.Error(err))
 			sched = nil
 		}
-		rates[id] = effectiveRate(rule.Rate, sched, now, loc)
+		if len(sched) > 0 {
+			scheds[id] = sched
+		}
+	}
+	// 只有本份上报涉及的节点里有人配了时段倍率，才读站点时区（绝大多数上报省掉这次读库）
+	var loc *time.Location
+	if len(scheds) > 0 {
+		if loc, err = s.siteLoc(ctx); err != nil {
+			return err
+		}
+	}
+	rates := make(map[uuid.UUID]decimal.Decimal, len(rules))
+	for id, rule := range rules {
+		rates[id] = effectiveRate(rule.Rate, scheds[id], now, loc)
 	}
 	t := tallyTraffic(in.entries, rates, m)
 

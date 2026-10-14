@@ -96,7 +96,7 @@ func TestQueryNodesXBFields(t *testing.T) {
 
 	// 4. SQL 插一把当前 ECH 钥 → ECHEnabled == true，另一节点 false
 	if err := e.exec(ctx, `INSERT INTO node_ech_keys (node_id, public_name, config_list, private_key_sealed)
-		VALUES (?, 'ech.example.com', '\x0004fe0d0000'::bytea, '\x01'::bytea)`, nodeA.ID); err != nil {
+		VALUES (?, 'ech.example.com', '\x0006fe0d00020000'::bytea, '\x01'::bytea)`, nodeA.ID); err != nil {
 		t.Fatalf("插 node_ech_keys: %v", err)
 	}
 	rowA = invFindRow(t, e, ctx, nodeA.ID)

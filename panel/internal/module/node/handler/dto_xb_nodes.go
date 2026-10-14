@@ -123,9 +123,10 @@ type nodeRelayDeleteRequest struct {
 	RowVersion int64 `json:"row_version"`
 }
 
-// nodeRelaysListResponse 是列出中转。
+// nodeRelaysListResponse 是列出中转；sni_hint 是父节点 TLS 配置给中转 SNI 的提示，空串表示没有。
 type nodeRelaysListResponse struct {
-	Relays []nodeRelayResponse `json:"relays"`
+	Relays  []nodeRelayResponse `json:"relays"`
+	SNIHint string              `json:"sni_hint"`
 }
 
 // nodeTrafficResetRequest 是手动重置流量。
@@ -243,12 +244,12 @@ func echFrom(e service.NodeECH) nodeECHResponse {
 	return out
 }
 
-func relaysFrom(list []service.NodeRelay) nodeRelaysListResponse {
-	out := make([]nodeRelayResponse, len(list))
-	for i, r := range list {
+func relaysFrom(list service.NodeRelayList) nodeRelaysListResponse {
+	out := make([]nodeRelayResponse, len(list.Relays))
+	for i, r := range list.Relays {
 		out[i] = relayFrom(r)
 	}
-	return nodeRelaysListResponse{Relays: out}
+	return nodeRelaysListResponse{Relays: out, SNIHint: list.SNIHint}
 }
 
 func nodeBatchFieldsToService(set nodeBatchFieldsRequest) service.NodeBatchFields {

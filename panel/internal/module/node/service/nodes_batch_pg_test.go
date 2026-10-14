@@ -67,9 +67,10 @@ func TestBatchEditNodesSuccess(t *testing.T) {
 		t.Errorf("n2 limit = %v want %d", got2.Traffic.LimitBytes, limit)
 	}
 
-	// 审计：node.batch_update 一条、node.update 两条
+	// 审计：node.batch_update 一条、node.update 两条（限定到本用例：库里可能留有别的用例提交的审计行）
 	var batchAuditCount int
-	if err := e.row(ctx, `SELECT count(*) FROM audit_events WHERE action = 'node.batch_update'`).Scan(&batchAuditCount); err != nil {
+	if err := e.row(ctx, `SELECT count(*) FROM audit_events
+		 WHERE action = 'node.batch_update' AND resource_type = 'node_set' AND data->>'reason' = ?`, "批量调整标签与倍率").Scan(&batchAuditCount); err != nil {
 		t.Fatal(err)
 	}
 	if batchAuditCount != 1 {
@@ -77,7 +78,8 @@ func TestBatchEditNodesSuccess(t *testing.T) {
 	}
 
 	var updateAuditCount int
-	if err := e.row(ctx, `SELECT count(*) FROM audit_events WHERE action = 'node.update'`).Scan(&updateAuditCount); err != nil {
+	if err := e.row(ctx, `SELECT count(*) FROM audit_events
+		 WHERE action = 'node.update' AND resource_type = 'node' AND resource_id IN (?, ?)`, n1.ID, n2.ID).Scan(&updateAuditCount); err != nil {
 		t.Fatal(err)
 	}
 	if updateAuditCount != 2 {
@@ -191,16 +193,29 @@ func TestBatchEditNodesValidation(t *testing.T) {
 func TestBatchEditNodesStatusAndFields(t *testing.T) {
 	e, ctx := newInvEnv(t)
 	srv := e.readyServer(t, ctx, "batch-edit-srv5")
+	poolID := e.pool(t, ctx, "active")
 	e.enroll(t, ctx, srv.ID)
 	n1 := e.ssNode(t, ctx, srv.ID, "n1", 22007)
 	n2 := e.ssNode(t, ctx, srv.ID, "n2", 22008)
 
-	// 草稿 -> 停用是允许的转换
+	// 草稿只能转在役或退役：先用 SQL 把两个节点挂池并置为在役，再批量转停用（在役 -> 停用是允许的转换）
+	if err := e.exec(ctx, `UPDATE nodes SET serving_status = 'active', pool_id = ? WHERE id IN (?, ?)`, poolID, n1.ID, n2.ID); err != nil {
+		t.Fatal(err)
+	}
+	cur1, err := e.svc.GetAdminNode(ctx, n1.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cur2, err := e.svc.GetAdminNode(ctx, n2.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	rate := decimal.RequireFromString("2.0")
 	n, err := e.svc.BatchEditNodes(ctx, NodeBatchEdit{
 		Items: []NodeVersionRef{
-			{ID: n1.ID, RowVersion: n1.RowVersion},
-			{ID: n2.ID, RowVersion: n2.RowVersion},
+			{ID: n1.ID, RowVersion: cur1.RowVersion},
+			{ID: n2.ID, RowVersion: cur2.RowVersion},
 		},
 		Set: NodeBatchFields{
 			ServingStatus: NodeDisabled,

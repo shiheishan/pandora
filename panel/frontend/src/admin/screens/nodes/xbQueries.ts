@@ -6,7 +6,7 @@ export function useNodeRelays(id: string) {
   const api = useApi()
   return useQuery({
     queryKey: ['admin', 'nodes', 'relays', id],
-    queryFn: ({ signal }) => api.get(`v1/nodes/${id}/relays`, relaysResponse, { signal }).then((r) => r.relays),
+    queryFn: ({ signal }) => api.get(`v1/nodes/${id}/relays`, relaysResponse, { signal }),
   })
 }
 

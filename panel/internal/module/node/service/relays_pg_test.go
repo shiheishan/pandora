@@ -56,11 +56,11 @@ func TestNodeRelaysPG(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListNodeRelays: %v", err)
 	}
-	if len(list) != 1 {
-		t.Fatalf("列表条数 = %d, want 1", len(list))
+	if len(list.Relays) != 1 {
+		t.Fatalf("列表条数 = %d, want 1", len(list.Relays))
 	}
-	if list[0].ID != created.ID {
-		t.Errorf("列表项 ID = %v, want %v", list[0].ID, created.ID)
+	if list.Relays[0].ID != created.ID {
+		t.Errorf("列表项 ID = %v, want %v", list.Relays[0].ID, created.ID)
 	}
 
 	// 2. 父节点不存在 → 404

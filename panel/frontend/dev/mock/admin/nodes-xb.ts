@@ -311,6 +311,44 @@ function relayValidateSni(raw: unknown): { ok: true; value: string | null } | { 
   return { ok: true, value: v }
 }
 
+/** 父节点与中转 SNI 有关的 TLS 配置（照 Go 的 service/relays_sni.go）：REALITY 只能填 server_names 之一；IP 地址父节点开了 TLS 又没配 server_name 时提示要填 SNI */
+function relayParentTLS(n: XBHost): { reality: boolean; serverNames: string[]; needSni: boolean } {
+  const cfg = (n.protocol_config ?? {}) as Record<string, unknown>
+  if (cfg.tls === 2 || cfg.security === 'reality') {
+    const rs = (cfg.reality_settings ?? {}) as Record<string, unknown>
+    const raw = rs.server_name ?? cfg.server_names
+    const serverNames = (Array.isArray(raw) ? raw : [raw]).filter((x): x is string => typeof x === 'string' && x !== '')
+    return { reality: true, serverNames, needSni: false }
+  }
+  const ts = (cfg.tls_settings ?? {}) as Record<string, unknown>
+  const tlsOn =
+    cfg.tls === true ||
+    (n.node_type === 'trojan' && cfg.tls === 1) ||
+    (typeof cfg.cert_path === 'string' && cfg.cert_path.trim() !== '') ||
+    ['hysteria2', 'tuic', 'juicity'].includes(n.node_type ?? '')
+  const serverName = text(ts.server_name ?? cfg.server_name).trim()
+  const host = (n.server_host ?? '').trim()
+  const isIP = /^\d+\.\d+\.\d+\.\d+$/.test(host) || host.includes(':')
+  return { reality: false, serverNames: [], needSni: tlsOn && serverName === '' && isIP }
+}
+
+function relaySniHint(n: XBHost): string {
+  const p = relayParentTLS(n)
+  if (p.reality) return `父节点是 REALITY：SNI 只能填父节点 server_names 之一（${p.serverNames.join('、')}），留空沿用父节点。`
+  if (p.needSni) return '父节点地址是 IP 且没配 server_name：中转不填 SNI 时会按中转地址握手，请给每条中转填 SNI。'
+  return ''
+}
+
+/** REALITY 父节点的 SNI 覆盖不在 server_names 里时的 422 文案；没问题返回 null */
+function relaySniMismatch(n: XBHost, sni: string | null): string | null {
+  if (sni === null) return null
+  const p = relayParentTLS(n)
+  if (p.reality && !p.serverNames.includes(sni)) {
+    return `父节点是 REALITY，SNI 只能填父节点 server_names 之一（${p.serverNames.join('、')}），或留空沿用父节点`
+  }
+  return null
+}
+
 function relayValidateHostHeader(raw: unknown): { ok: true; value: string | null } | { ok: false } {
   if (raw === null) return { ok: true, value: null }
   const v = text(raw).trim()
@@ -361,7 +399,7 @@ export function xbRoutes(deps: XBRoutesDeps): Record<string, MockRoute> {
       const n = deps.find(ctx.params.id)
       if (!n) return reply(ctx, notFound())
       const relays = [...n.xb.relays].sort((a, b) => a.sort_order - b.sort_order || a.id.localeCompare(b.id))
-      ctx.send(200, { relays: relays.map((r) => relayOut(r, n.id)) })
+      ctx.send(200, { relays: relays.map((r) => relayOut(r, n.id)), sni_hint: relaySniHint(n) })
     },
 
     'POST /v1/nodes/:id/relays': async (ctx) => {
@@ -383,6 +421,8 @@ export function xbRoutes(deps: XBRoutesDeps): Record<string, MockRoute> {
         if (!sni.ok) return invalid({ sni: '必须是域名；留空沿用父节点' })
         const hostHeader = body.host_header === undefined ? { ok: true as const, value: null } : relayValidateHostHeader(body.host_header)
         if (!hostHeader.ok) return invalid({ host_header: '必须是有效的主机名；留空沿用父节点' })
+        const mismatch = relaySniMismatch(n, sni.value)
+        if (mismatch) return invalid({ sni: mismatch })
         if (n.xb.relays.length >= RELAYS_PER_NODE_MAX) return err(409, 'conflict', `每个节点最多 ${RELAYS_PER_NODE_MAX} 条中转`)
         const now = new Date().toISOString()
         const relay: XBRelay = {
@@ -433,6 +473,8 @@ export function xbRoutes(deps: XBRoutesDeps): Record<string, MockRoute> {
       if ('sni' in body) {
         const sni = relayValidateSni(body.sni)
         if (!sni.ok) return reply(ctx, invalid({ sni: '必须是域名；留空沿用父节点' }))
+        const mismatch = relaySniMismatch(n, sni.value)
+        if (mismatch) return reply(ctx, invalid({ sni: mismatch }))
         relay.sni = sni.value
       }
       if ('host_header' in body) {

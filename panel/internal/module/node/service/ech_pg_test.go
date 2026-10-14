@@ -82,8 +82,17 @@ func TestNodeECHPG(t *testing.T) {
 		t.Fatalf("SendAsRetry: %v %v", keys[0].SendAsRetry, keys[1].SendAsRetry)
 	}
 
-	if err := env.exec(ctx, `UPDATE node_ech_keys SET superseded_at = now() - interval '8 days' WHERE node_id = ? AND superseded_at IS NOT NULL`, trojan.ID); err != nil {
+	// 事务内 now() 不变：created_at 要一起前移，否则 superseded_at 早于 created_at 撞 node_ech_keys_superseded_check
+	if err := env.exec(ctx, `UPDATE node_ech_keys SET created_at = now() - interval '9 days', superseded_at = now() - interval '8 days' WHERE node_id = ? AND superseded_at IS NOT NULL`, trojan.ID); err != nil {
 		t.Fatal(err)
+	}
+	// 过渡期已满但清理任务还没跑：读路径不按时间过滤，旧钥照常下发、照常计数（满期只由清理任务判定）
+	docKeys, _, err = env.svc.echDocKeys(ctx, []uuid.UUID{trojan.ID})
+	if err != nil || len(docKeys[trojan.ID]) != 2 {
+		t.Fatalf("清理前 doc keys=%d err=%v want 2", len(docKeys[trojan.ID]), err)
+	}
+	if st, err := env.svc.GetNodeECH(ctx, trojan.ID); err != nil || st.RetiredKeys != 1 {
+		t.Fatalf("清理前 RetiredKeys=%d err=%v want 1", st.RetiredKeys, err)
 	}
 	n, err := env.svc.PurgeRetiredECHKeys(ctx)
 	if err != nil || n != 1 {

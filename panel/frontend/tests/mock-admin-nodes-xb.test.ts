@@ -1,7 +1,7 @@
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'
-import { adminNodeSchema, echSchema, nodesResponse, relaySchema } from '../src/admin/screens/nodes/schemas'
+import { adminNodeSchema, echSchema, nodesResponse, relaySchema, relaysResponse } from '../src/admin/screens/nodes/schemas'
 import { bearer, close, loginAs, mockFetch, serve } from './mock-helpers'
 
 describe('mock api · admin nodes xb', () => {
@@ -100,6 +100,19 @@ describe('mock api · admin nodes xb', () => {
     const full = await call('POST', `/v1/nodes/${draft.id}/relays`, { name: 'one-more', server_host: 'x.example.test', server_port: 30000 }, 'relay-21')
     expect(full.status).toBe(409)
     expect(await full.json()).toMatchObject({ error: { message: expect.stringMatching(/20/) } })
+  })
+
+  it('limits relay SNI to REALITY server_names and returns sni_hint', async () => {
+    const tokyo = (await list()).find((n) => n.name === '东京 03')!
+    const listed = relaysResponse.parse(await (await call('GET', `/v1/nodes/${tokyo.id}/relays`)).json())
+    expect(listed.sni_hint).toMatch(/REALITY/)
+    const bad = await call('POST', `/v1/nodes/${tokyo.id}/relays`, { name: 'sni-bad', server_host: 'r-sni.example.test', server_port: 443, sni: 'other.example.test' }, 'relay-sni-bad')
+    expect(bad.status).toBe(422)
+    expect(await bad.json()).toMatchObject({ error: { fields: { sni: expect.stringMatching(/server_names/) } } })
+    const ok = await call('POST', `/v1/nodes/${tokyo.id}/relays`, { name: 'sni-ok', server_host: 'r-sni.example.test', server_port: 443, sni: 'www.apple.com' }, 'relay-sni-ok')
+    expect(ok.status).toBe(201)
+    const hk2 = (await list()).find((n) => n.name === '香港 02 · IPLC')!
+    expect(relaysResponse.parse(await (await call('GET', `/v1/nodes/${hk2.id}/relays`)).json()).sni_hint).toBe('')
   })
 
   it('resets traffic after reauth and blocks without it', async () => {

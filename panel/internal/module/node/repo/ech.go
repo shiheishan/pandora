@@ -37,8 +37,9 @@ type echKeyRow struct {
 	SupersededAt     *time.Time `gorm:"column:superseded_at"`
 }
 
-// ECHKeysByNodes 批量取仍在下发窗口内的密钥（当前钥或 superseded_at 晚于 retiredAfter）。
-func (r *Repo) ECHKeysByNodes(ctx context.Context, nodeIDs []uuid.UUID, retiredAfter time.Time) ([]model.NodeECHKey, error) {
+// ECHKeysByNodes 批量取节点上的全部 ECH 密钥（当前钥在前）。旧钥不按时间过滤：库里还有就照下发，
+// 过渡期是否已满只由清理任务判定（删行时推配置纪元），期望文档与节点端手里的文档才不会错开。
+func (r *Repo) ECHKeysByNodes(ctx context.Context, nodeIDs []uuid.UUID) ([]model.NodeECHKey, error) {
 	if len(nodeIDs) == 0 {
 		return nil, nil
 	}
@@ -47,8 +48,7 @@ func (r *Repo) ECHKeysByNodes(ctx context.Context, nodeIDs []uuid.UUID, retiredA
 		SELECT node_id, public_name, config_list, private_key_sealed, created_at, superseded_at
 		  FROM node_ech_keys
 		 WHERE node_id IN ?
-		   AND (superseded_at IS NULL OR superseded_at > ?)
-		 ORDER BY node_id, (superseded_at IS NULL) DESC, created_at DESC`, nodeIDs, retiredAfter).Scan(&rows).Error
+		 ORDER BY node_id, (superseded_at IS NULL) DESC, created_at DESC`, nodeIDs).Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +99,7 @@ func (r *Repo) InsertECHKey(ctx context.Context, k *model.NodeECHKey) error {
 	return nil
 }
 
-// DeleteECHKeysOfNode 删除节点上的全部 ECH 密钥（含过渡期内旧钥）。
+// DeleteECHKeysOfNode 删除节点上的全部 ECH 密钥（含尚未清理的旧钥）。
 func (r *Repo) DeleteECHKeysOfNode(ctx context.Context, nodeID uuid.UUID) (int64, error) {
 	res := r.d.Conn(ctx).Exec(`DELETE FROM node_ech_keys WHERE node_id = ?`, nodeID)
 	return res.RowsAffected, res.Error

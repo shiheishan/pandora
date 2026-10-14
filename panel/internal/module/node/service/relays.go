@@ -145,24 +145,30 @@ func relayFromModel(m model.NodeRelay) NodeRelay {
 	}
 }
 
+// NodeRelayList 是一个父节点名下的中转与后台的 SNI 提示（SNIHint 空串表示没有要提示的，见 relaySNIHint）。
+type NodeRelayList struct {
+	Relays  []NodeRelay
+	SNIHint string
+}
+
 // ListNodeRelays 列出一个父节点名下的全部中转节点；父节点不存在时返回 404 NotFound。
-func (s *Service) ListNodeRelays(ctx context.Context, parentID uuid.UUID) ([]NodeRelay, error) {
-	_, found, err := s.repo.NodeByID(ctx, parentID, false)
+func (s *Service) ListNodeRelays(ctx context.Context, parentID uuid.UUID) (NodeRelayList, error) {
+	parent, found, err := s.repo.NodeByID(ctx, parentID, false)
 	if err != nil {
-		return nil, err
+		return NodeRelayList{}, err
 	}
 	if !found {
-		return nil, errs.New(errs.NotFound)
+		return NodeRelayList{}, errs.New(errs.NotFound)
 	}
 	list, err := s.repo.RelaysByParent(ctx, parentID)
 	if err != nil {
-		return nil, err
+		return NodeRelayList{}, err
 	}
 	out := make([]NodeRelay, len(list))
 	for i, m := range list {
 		out[i] = relayFromModel(m)
 	}
-	return out, nil
+	return NodeRelayList{Relays: out, SNIHint: relaySNIHint(parent)}, nil
 }
 
 // CreateNodeRelay 在指定父节点下新建中转。
@@ -202,6 +208,9 @@ func (s *Service) CreateNodeRelay(ctx context.Context, parentID uuid.UUID, in No
 		}
 		if parentNode.ServingStatus == NodeRetired {
 			return inventoryConflict("节点已退役，不能再加中转")
+		}
+		if err := relayCheckSNI(parentNode, sni); err != nil {
+			return err
 		}
 
 		count, err := s.repo.CountRelays(ctx, parentID)
@@ -322,6 +331,18 @@ func (s *Service) PatchNodeRelay(ctx context.Context, id uuid.UUID, in NodeRelay
 			toUpdate.ServerPort = *in.ServerPort
 		}
 		if sniSet {
+			if sniVal != nil {
+				parentNode, found, err := s.repo.NodeByID(ctx, current.ParentNodeID, false)
+				if err != nil {
+					return err
+				}
+				if !found {
+					return errs.New(errs.NotFound)
+				}
+				if err := relayCheckSNI(parentNode, sniVal); err != nil {
+					return err
+				}
+			}
 			toUpdate.SNI = sniVal
 		}
 		if hostHeaderSet {

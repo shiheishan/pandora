@@ -15,8 +15,8 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
 
-// ECHRetiredKeyGrace 是轮换后旧 ECH 密钥继续下发给节点端的时长：拿着旧订阅（旧 ECHConfigList）的客户端在这段时间内仍能连上，
-// 过后由任务 node:ech_purge 删除。
+// ECHRetiredKeyGrace 是轮换后旧 ECH 密钥继续下发给节点端的时长：拿着旧订阅（旧 ECHConfigList）的客户端在这段时间内仍能连上。
+// 满期只由任务 node:ech_purge 判定：它删行并推配置纪元；删之前旧钥照常进配置文档和 RetiredKeys，读路径不按时间过滤。
 const ECHRetiredKeyGrace = 7 * 24 * time.Hour
 
 // echDocKeysMax 是一个节点的配置文档里最多下发几把 ECH 密钥（当前钥在前），与节点端 kernel 的 maxInboundECHKeys 一致。
@@ -34,7 +34,7 @@ type NodeECH struct {
 	ConfigList []byte
 	ConfigPEM  string
 	CreatedAt  *time.Time
-	// RetiredKeys 是过渡期内还在下发的旧钥个数
+	// RetiredKeys 是还在下发（尚未被清理任务删除）的旧钥个数
 	RetiredKeys int
 }
 
@@ -81,8 +81,6 @@ func (s *Service) GetNodeECH(ctx context.Context, nodeID uuid.UUID) (NodeECH, er
 		UnsupportedReason: protocol.ECHUnsupportedReason(nodeStr(n.NodeType), nodeKernelConfig(n)),
 	}
 	out.Supported = out.UnsupportedReason == ""
-	now := s.now()
-	graceStart := now.Add(-ECHRetiredKeyGrace)
 	for _, k := range keys {
 		if k.SupersededAt == nil {
 			out.Enabled = true
@@ -91,7 +89,7 @@ func (s *Service) GetNodeECH(ctx context.Context, nodeID uuid.UUID) (NodeECH, er
 			out.ConfigPEM = protocol.ECHConfigPEM(k.ConfigList)
 			t := k.CreatedAt
 			out.CreatedAt = &t
-		} else if k.SupersededAt.After(graceStart) {
+		} else {
 			out.RetiredKeys++
 		}
 	}
@@ -181,7 +179,7 @@ func (s *Service) GenerateNodeECH(ctx context.Context, nodeID uuid.UUID, publicN
 	return s.GetNodeECH(ctx, nodeID)
 }
 
-// DisableNodeECH 立即停用节点 ECH（含过渡期内旧钥）。
+// DisableNodeECH 立即停用节点 ECH（含尚未清理的旧钥）。
 func (s *Service) DisableNodeECH(ctx context.Context, nodeID uuid.UUID) error {
 	return s.tx.Do(ctx, func(ctx context.Context) error {
 		_, found, err := s.repo.NodeByID(ctx, nodeID, true)
@@ -221,7 +219,7 @@ func (s *Service) PurgeRetiredECHKeys(ctx context.Context) (int64, error) {
 
 // echDocKeys 批量解封配置文档用的 ECH 密钥；第二个 map 是生成失败的节点与原因。
 func (s *Service) echDocKeys(ctx context.Context, nodeIDs []uuid.UUID) (map[uuid.UUID][]echDocKey, map[uuid.UUID]string, error) {
-	rows, err := s.repo.ECHKeysByNodes(ctx, nodeIDs, s.now().Add(-ECHRetiredKeyGrace))
+	rows, err := s.repo.ECHKeysByNodes(ctx, nodeIDs)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -361,7 +361,8 @@ export const relaySchema = z.object({
   updated_at: iso,
 })
 export type Relay = z.output<typeof relaySchema>
-export const relaysResponse = z.object({ relays: z.array(relaySchema) })
+/** 中转列表；sni_hint 是父节点 TLS 配置给中转 SNI 的提示（REALITY 只能填 server_names 之一、IP 地址父节点要填 SNI），空串表示没有 */
+export const relaysResponse = z.object({ relays: z.array(relaySchema), sni_hint: z.string() })
 
 /** 节点 ECH 状态：config_list 是当前钥的 ECHConfigList（标准 base64，没开为 null）；retired_keys 是过渡期内还在下发的旧钥数 */
 export const echSchema = z.object({

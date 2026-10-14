@@ -98,12 +98,19 @@ func encodeRateSchedule(rs []RateRange) string {
 	return string(b)
 }
 
+// rateScheduleSet 报告库里的时段表文本是否配了段（空串、"[]"、"null" 算没配）。
+// 热路径用它判断要不要读站点时区：没有节点配时段倍率时不多一次读库。
+func rateScheduleSet(text string) bool {
+	text = strings.TrimSpace(text)
+	return text != "" && text != "[]" && text != "null"
+}
+
 // decodeRateSchedule 读库里的 JSON 文本；空串、"[]"、"null" 返回 nil, nil。
 func decodeRateSchedule(text string) ([]RateRange, error) {
-	text = strings.TrimSpace(text)
-	if text == "" || text == "[]" || text == "null" {
+	if !rateScheduleSet(text) {
 		return nil, nil
 	}
+	text = strings.TrimSpace(text)
 	var in []RateRangeInput
 	if err := json.Unmarshal([]byte(text), &in); err != nil {
 		return nil, err

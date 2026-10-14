@@ -662,10 +662,36 @@ $sql$);
 -- 用 NODE-011 建的草稿节点 904（不在役，改这些列不碰 nodes_active_shape）。
 --------------------------------------------------------------------------------
 
+-- _reject 的带原因版：拒绝信息里必须出现 p_expect（约束或索引名），被别的约束拒掉、或语句没改到行而没报错，都记失败。
+CREATE OR REPLACE FUNCTION _reject(p_req text, p_name text, p_sql text, p_expect text)
+RETURNS void LANGUAGE plpgsql AS $fn$
+DECLARE v_err text; v_constraint text;
+BEGIN
+  BEGIN
+    EXECUTE p_sql;
+    SET CONSTRAINTS ALL IMMEDIATE;
+    INSERT INTO _results (req, name, expect, passed, detail)
+      VALUES (p_req, p_name, 'reject', false, '未被拒绝 —— 约束失效或没改到行');
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS v_constraint = CONSTRAINT_NAME;
+    v_err := regexp_replace(SQLERRM, E'\n.*', '');
+    INSERT INTO _results (req, name, expect, passed, detail)
+      VALUES (p_req, p_name, 'reject',
+              v_constraint = p_expect OR position(p_expect IN v_err) > 0,
+              left(CASE WHEN v_constraint = p_expect OR position(p_expect IN v_err) > 0 THEN v_err
+                        ELSE '拒绝原因不是 ' || p_expect || '：' || v_err END, 110));
+  END;
+  SET CONSTRAINTS ALL DEFERRED;
+END $fn$;
+
 -- nodes_tags_shape
 SELECT _reject('XB-NODE', '标签不是数组必须拒绝', $sql$
   UPDATE nodes SET tags = '"香港"'::jsonb WHERE id = '00000000-0000-7000-8000-000000000904';
 $sql$);
+
+SELECT _reject('XB-NODE', '标签元素不是字符串必须拒绝', $sql$
+  UPDATE nodes SET tags = '["香港", 1]'::jsonb WHERE id = '00000000-0000-7000-8000-000000000904';
+$sql$, 'nodes_tags_shape');
 
 SELECT _reject('XB-NODE', '标签超过 10 个必须拒绝', $sql$
   UPDATE nodes SET tags = '["a","b","c","d","e","f","g","h","i","j","k"]'::jsonb
@@ -740,18 +766,18 @@ $sql$);
 SELECT _accept('XB-NODE', '一把当前 ECH 钥应当通过', $sql$
   INSERT INTO node_ech_keys (id, node_id, public_name, config_list, private_key_sealed)
   VALUES ('00000000-0000-7000-8000-000000000e11', '00000000-0000-7000-8000-000000000904',
-          'ech.example.test', '\x0004fe0d0000'::bytea, '\x01'::bytea);
+          'ech.example.test', '\x0006fe0d00020000'::bytea, '\x01'::bytea);
 $sql$);
 
 SELECT _reject('XB-NODE', '同一节点第二把当前 ECH 钥必须拒绝', $sql$
   INSERT INTO node_ech_keys (node_id, public_name, config_list, private_key_sealed)
-  VALUES ('00000000-0000-7000-8000-000000000904', 'ech.example.test', '\x0004fe0d0000'::bytea, '\x01'::bytea);
-$sql$);
+  VALUES ('00000000-0000-7000-8000-000000000904', 'ech.example.test', '\x0006fe0d00020000'::bytea, '\x01'::bytea);
+$sql$, 'node_ech_keys_current_key');
 
 SELECT _reject('XB-NODE', '轮换时刻早于建立时刻必须拒绝', $sql$
   UPDATE node_ech_keys SET superseded_at = created_at - interval '1 second'
    WHERE id = '00000000-0000-7000-8000-000000000e11';
-$sql$);
+$sql$, 'node_ech_keys_superseded_check');
 
 SELECT _accept('XB-NODE', '当前钥可以轮换（写 superseded_at）', $sql$
   UPDATE node_ech_keys SET superseded_at = now() WHERE id = '00000000-0000-7000-8000-000000000e11';
@@ -759,13 +785,13 @@ $sql$);
 
 SELECT _accept('XB-NODE', '旧钥轮换后可以再有一把当前钥', $sql$
   INSERT INTO node_ech_keys (node_id, public_name, config_list, private_key_sealed)
-  VALUES ('00000000-0000-7000-8000-000000000904', 'ech.example.test', '\x0004fe0d0000'::bytea, '\x01'::bytea);
+  VALUES ('00000000-0000-7000-8000-000000000904', 'ech.example.test', '\x0006fe0d00020000'::bytea, '\x01'::bytea);
 $sql$);
 
 SELECT _reject('XB-NODE', 'ECHConfigList 过短必须拒绝', $sql$
   INSERT INTO node_ech_keys (node_id, public_name, config_list, private_key_sealed)
   VALUES ('00000000-0000-7000-8000-000000000905', 'ech.example.test', '\x00'::bytea, '\x01'::bytea);
-$sql$);
+$sql, 'node_ech_keys_config_list_check');
 
 --------------------------------------------------------------------------------
 -- 汇总
