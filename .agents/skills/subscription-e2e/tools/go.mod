@@ -163,3 +163,5 @@ require (
 require github.com/aegispanel/nodeagent v0.0.0
 
 replace github.com/aegispanel/nodeagent => ../../../../pdnd
+
+replace github.com/aegispanel/nodeapi => ../../../../nodeapi

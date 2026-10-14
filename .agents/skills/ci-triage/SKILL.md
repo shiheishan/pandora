@@ -10,7 +10,7 @@ description: pandora 的 CI 变红后怎么查：一条命令把某个提交的�
 ## 一条命令
 
 ```bash
-bash .claude/skills/ci-triage/scripts/triage.sh <sha 或分支> [输出目录]
+bash .agents/skills/ci-triage/scripts/triage.sh <sha 或分支> [输出目录]
 ```
 
 - 只读。完整失败日志按 run id 存进输出目录（`<id>.log` 原文、`<id>.txt` 去掉前缀与颜色码），默认 `$TMPDIR/ci-triage-<sha>`；会话里放 scratchpad。
@@ -21,7 +21,6 @@ bash .claude/skills/ci-triage/scripts/triage.sh <sha 或分支> [输出目录]
 
 0. **先核分支**：`wait-github.sh` 退出 1 时，同一个 sha 推到两个分支可能把别的分支的 run 算进来（w9quic 的误判）。先 `gh run view <id> --json headBranch -q .headBranch` 核一下红的 run 是不是当前分支的；`triage.sh` 传分支名（或 sha 加第三个参数）时只取该分支的 run，只给 sha 时每行带 `[headBranch]`，跨了多个分支会提示。
 1. **已知偶发**，不改代码，重跑：
-   - `TestIdempotencyMiddlewarePG18` 锁超时 → `gh run rerun <id> --failed`；
    - Actions 因付款失败没启动 → `gh run rerun <id>`；
    - 同一提交有时先绿、再出一组新运行 → 以最新一组为准；
    - 检查机红、GitHub 同一 job 绿（例：10-07 fda8a31 的 linux-race，GitHub 与本机 `-race -count=3` 都过）→ 先当偶发。`MEMOH_FRESH=1` 不会让检查机重跑，重跑步骤见「检查机自身故障」。第二次还红再查，查时先怀疑检查机的容器环境（`/dev/fd`、apt 包随重启丢失），不要直接改代码。已知原因：检查机的循环忽略 SIGHUP，bash 测试里装不上 HUP trap（入口时已忽略的信号 bash 不能 trap 或复位；10-09 w12native 397b8bc 查清，本机 `trap '' HUP` 可复现）；测试要先用 python3 或 perl 把 SIGHUP 复位成缺省再起被测脚本，做法见该提交。检查机日志在云电脑 `/data/memoh-ci/logs/<sha>/<job>.log`，本机读不到。
@@ -31,17 +30,17 @@ bash .claude/skills/ci-triage/scripts/triage.sh <sha 或分支> [输出目录]
      - `portal-buy.spec.ts` 套餐卡标题断言：见「w9quic 后续」⑥；
      - pdnd `TestLongConnectionTrafficIsReportedEachPeriod`（检查机）：见「节点遗留」；
      - pdnd shadowtls `TestServiceV1HandshakeClearsDeadline`（检查机）：见「节点遗留」；
-     - 检查机的 panel-frontend 单元测试：见「节点遗留」（行里搜 `d4ca344`）；
-     - certs 域的 pebble 端口占用（`bind: address already in use`，GitHub 的 panel-pg18）：见「节点遗留」（行里搜 `pebble`）。
-2. **一处报错连带一片**：先看「SQL 报错」和 e2e 首个失败。同一条 SQLSTATE 出现在几个测试里，通常是一条共享查询坏了，修一处全好（10-07：ListLinks 漏逗号 → 门户链接 500、两个 PG18 用例、expiry/risk e2e、两个前端冒烟一起红）。
+     - 检查机的 panel-frontend 单元测试：见「节点遗留」（行里搜 `d4ca344`）。
+2. **一处报错连带一片**：先看「SQL 报错」和 e2e 首个失败。同一条 SQLSTATE 出现在几个测试里，通常是一条共享查询坏了，修一处全好（旧栈 10-07 的例子：一条查询漏逗号 → 门户链接 500、几个 PG 用例、expiry/risk e2e、两个前端冒烟一起红）。
 3. **整合问题**（几路并行合并后才出现）：
-   - 计数类断言：内置模板数、后台循环数（`workers.Add` 与两份契约测试）、`run-pg18-gates.sh` 的 DOMAINS、`run-smoke-e2e.sh` 的 SCRIPTS；
-   - 同一个函数被两路各自 `CREATE OR REPLACE`（如 `app.seed_tenant_defaults`），见根 CLAUDE.md「环境与工具坑」与 new-migration skill；
+   - 迁移撞号：两路各加了同号的 `panel/db/migrations/NNNNN_*.sql`，goose 报重复版本；后合的那路改号（new-migration skill）；
+   - 种子与代码对照：通知模板（`TestSeedTemplatesMatchRegistry`，notify/service）、降级开关（`TestSeedSwitchesMatchMigration`，settings/service），一路加了种子、另一路加了代码常量；
+   - depguard：一路加了模块，另一路没重新生成 `.golangci.yml`（lint job 的 `depguardgen -check` 红）；
    - 一路改了签名或口径，另一路的新测试还按旧的写（返回值个数、状态名、枚举个数）；
-   - 夹具 id 撞号（同一 PG18 域库共用），见 `.claude/rules/platform-pg18.md`。
-4. **审计、限频类 e2e**：smoke 里各脚本从同一来源 IP 打同一个栈，按 IP 窗口去重的逻辑会被前一个脚本的记录吞掉。先确认是产品语义（要不要豁免）还是脚本假设，再改。
+   - 夹具撞值：CI 的 test job 按包串行、所有包共用一个库，两路的夹具用了同一个邮箱或代码；e2e job 里几个脚本也共用一个库。
+4. **审计、限频类 e2e**：e2e job 里各脚本从同一来源 IP 打同一个栈（限流已在 job 的 env 里放宽），按 IP 窗口去重的逻辑会被前一个脚本的记录吞掉。先确认是产品语义（要不要豁免）还是脚本假设，再改。
 5. **浏览器购买路径**：见下一节。
-6. **真缺陷**：在本机复现（PG18 用例本机没有 Docker 会跳过，跳过不等于通过）。修完按 verify skill 重跑改到的包（本机 go 命令的 `GOTOOLCHAIN` 也见 verify），推送后再等两个脚本。
+6. **真缺陷**：在本机复现（PG 用例本机没有库会跳过，跳过不等于通过）。修完按 verify skill 重跑改到的包（本机 go 命令的 `GOTOOLCHAIN` 也见 verify），推送后再等两个脚本。
 
 ## 检查机自身故障
 
@@ -70,11 +69,11 @@ bash .claude/skills/ci-triage/scripts/triage.sh <sha 或分支> [输出目录]
    - 「门户报价的最低付款额 90 秒内没变成 100」：种子没能把站点最低付款额压到 ¥1.00（其他 CNY 渠道没暂停、或网关渠道缓存没过期）；凑最低额、免零头、低于最低额这几步都会跟着错；
    - 「返回 429」「rate_limited」：来源 IP 没换开、限流打满（每步要用 `freshIp`）；
    - 「套餐 … 没发布出去」「SQL 夹具「…」失败」：种子或夹具本身坏了；
-   - `POST /v1/auth/login 返回 500` 一类接口 5xx：后端问题，按 requestId 去同一提交的 PG18 run 或网关日志找堆栈。
+   - `POST /v1/auth/login 返回 500` 一类接口 5xx：后端问题，按 requestId（`X-Request-ID`）去同一 run 的「Stack logs」步骤里找 pandora 的日志行。
 4. **要看截图和 trace 时**才下产物（十几到几十 MB，本机经代理很慢）：`gh run download <id> -n browser-paths -D <目录>`，看 `shots/<步骤>-fail.png` 和 `test-results/*/trace.zip`（`npx playwright show-trace`）。Playwright 的 `error-context.md` 取的不一定是出错的那个页面。
 5. **分流**：页面文字或结构改了、测试没跟，就同改 `tests/browser`（规则 screens-portal.md、screens-admin-billing.md 有这条）；产品问题一时修不了的 `test.fixme` 与 `PRODUCT_ISSUES` 做法见 `.claude/rules/frontend-browser-e2e.md`；修好了已登记的问题要去掉那一行，否则表里一直显示「失败（产品问题）」。
 
 ## 坑
 
 - 一次推多个提交只有最新那个有 run，旧提交显示「没有 run」不代表没红。
-- 前端冒烟里 `500 internal_error` 只有 requestId，没有后端堆栈；对应的后端报错常常也在同一提交的 PG18 run 里，先看那边。
+- 前端冒烟里 `500 internal_error` 只有 requestId，没有后端堆栈；按 req_id 去同一 run 的「Stack logs」里找，对应的后端报错也常常在同一提交 panel-newstack 的 test job 里，先看那边。

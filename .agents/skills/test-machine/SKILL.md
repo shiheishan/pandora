@@ -15,7 +15,7 @@ Vultr 新加坡，Debian 13 x64（与生产同版），开机时用 Vultr SSH Ke
 |---|---|---|---|
 | 面板机（install.sh 生产方式，5k 档） | vc2-2c-4gb | 和压测机、真节点同测时勾 | `vultr-sgp-pt-panel<N>` |
 | 面板机（1 万用户 / 1000 节点档） | 4c8g 独享（用户 10-09 定：这一档的延迟按 4c8g 面板机考） | 同上 | `vultr-sgp-pt-panel<N>` |
-| 压测机（loadtest、节点验收客户端） | vc2-2c-4gb（1c 在 15k 档不够） | 大流量压测必勾 | `vultr-sgp-pt-loadgen<N>` |
+| 压测机（压测客户端、节点验收客户端） | vc2-2c-4gb（1c 在 15k 档不够） | 大流量压测必勾 | `vultr-sgp-pt-loadgen<N>` |
 | 真节点（pdnd，逐协议验证） | vc2-1c-1gb | 不用（客户端要走真公网） | `vultr-sgp-pt-node<N>` |
 | 大流量验收节点 | 4c8g 独享 | 必勾 | `vultr-sgp-pt-node<N>` |
 | 开发对照机（5k 库 EXPLAIN、构建） | vc2-2c-4gb | 不用 | `vultr-sgp-pt-bench` |
@@ -30,7 +30,7 @@ Vultr 新加坡，Debian 13 x64（与生产同版），开机时用 Vultr SSH Ke
   - 10-08 节点验收没开内网，5 台公网出流量合计约 4.11TB，流量池只有约 2.64TB，超了约 1.3TB。
 - **估算**：1Gbps 跑 1 小时，每个方向约 450GB。节点过 X Gbps（一半上行、一半下行）跑 H 小时：节点出 ≈ 450·X·H GB，目标机与压测机合计再出 ≈ 450·X·H GB，**全走公网时合计约 900·X·H GB**（10-08 约 4.6 Gbps·小时，实测 4.11TB，与公式吻合）。全走 VPC 时公网只剩 ssh、拉数据、apt、推二进制，几 GB 量级。
 - **跑前报用户**：计划多少 Gbps、多少小时、走不走内网、预计公网出流量多少 GB。
-- **跑中、跑后核对**：各机 `/proc/net/dev` 的 tx，默认路由那块网卡才是公网（`bash .claude/skills/test-machine/scripts/netdev.sh <别名>...`）。开跑前、收尾各记一次，差值写进报告。
+- **跑中、跑后核对**：各机 `/proc/net/dev` 的 tx，默认路由那块网卡才是公网（`bash .agents/skills/test-machine/scripts/netdev.sh <别名>...`）。开跑前、收尾各记一次，差值写进报告。
 
 ## 用 API 开机、挂 VPC、删机（用户 10-08 授权 agent 开机）
 
@@ -57,7 +57,7 @@ Vultr 新加坡，Debian 13 x64（与生产同版），开机时用 Vultr SSH Ke
 ## 开通
 
 ```bash
-bash .claude/skills/test-machine/scripts/register.sh [--vpc <内网IP>] [--rental <到期日> --site "<商家 / 机房>"] <别名> <IP> <套餐> "<用途一句话>"
+bash .agents/skills/test-machine/scripts/register.sh [--vpc <内网IP>] [--rental <到期日> --site "<商家 / 机房>"] <别名> <IP> <套餐> "<用途一句话>"
 ```
 
 - 必须 bash 跑；ssh 经 1Password agent，签名失败见根 CLAUDE.md「环境与工具坑」。出错时读 `register.sh` 手工补救。
@@ -66,7 +66,7 @@ bash .claude/skills/test-machine/scripts/register.sh [--vpc <内网IP>] [--renta
 - 同名目录已存在就换序号：删过的旧机目录保留作记录（如 node1/node2 已删，新开的叫 node3/node4）。
 - 一次性机不建 1Password 条目（用户定的）。
 
-准备：要 Docker 用 Debian 主仓的 `docker.io` 与 `docker-compose`；要构建就 `ssh <别名> 'bash -s' < .claude/skills/test-machine/scripts/install-toolchain.sh`，装与 CI 同小版本的 Go（go.mod 的 1.26 系列最新版）和 Node 22，官方包都核 sha256。
+准备：要 Docker 用 Debian 主仓的 `docker.io` 与 `docker-compose`；要构建就 `ssh <别名> 'bash -s' < .agents/skills/test-machine/scripts/install-toolchain.sh`，装与 CI 同小版本的 Go（go.mod 的 1.26 系列最新版）和 Node 22，官方包都核 sha256。
 
 ## 回收
 
@@ -82,5 +82,5 @@ bash .claude/skills/test-machine/scripts/register.sh [--vpc <内网IP>] [--renta
 
 - 刚开机头一次 ssh 常报 `Connection timed out during banner exchange`，隔 15 秒重试即可，不是密钥问题（register.sh 已内置重试 3 次）。
 - ssh 起后台脚本、限时故障注入：照根 CLAUDE.md「环境与工具坑」的远端那一条。
-- 镜像开着 ufw。面板机的 80/443 由 install.sh 放行；**节点机的协议端口**（约定 20000–20099 的 tcp 与 udp）要手工放行。10-08 节点验收时端口段规则计数一直为 0、SYN 被 DROP（原因没查），按来源地址放行才通；VPC 下按内网来源或内网网段放行。放行后先实测连通（node-e2e 也按这条办）。
+- 镜像开着 ufw。面板机的 80/443 与节点 gRPC 的 9443 由 install.sh 放行；**节点机的协议端口**（约定 20000–20099 的 tcp 与 udp）要手工放行。10-08 节点验收时端口段规则计数一直为 0、SYN 被 DROP（原因没查），按来源地址放行才通；VPC 下按内网来源或内网网段放行。放行后先实测连通（node-e2e 也按这条办）。
 - 测试流量走内网时，pdnd 默认拒绝私网目标，要在节点配置里打开 `runtime.allow_private_destinations`。

@@ -1,43 +1,48 @@
--- <一句话：这个迁移做什么>（<谁在什么时候定的，如 用户 2026-10-07 定>；<任务路名>）。
---
--- <为什么要它；读写它的是哪段 Go（包.函数）；锁与耗时：拿什么锁、多大的表、预计多久>。
--- 注释里不写 RESERVED-TABLES.md 登记的保留表名（会被抄进 Go，触发表登记簿测试）。
---
--- 文件头标记（按需，写在 `-- +goose Up` 之前，格式由 migrationlint 解析）：
---   -- backfill: batched-by=<分批方式>; rerunnable=<为什么重跑安全>   大表回填 / 批量改写
---   -- rewrite: <表> rows=<行数> est=<预估耗时>                      大表整表重写（数字在测试机的库副本上量）
---   -- contract-of: <扩展迁移编号>                                    删列、改名的收缩阶段
-
 -- +goose Up
+-- <一句话：这个迁移做什么>（<谁在什么时候定的，如 用户 2026-10-13 定>）。属 <模块> 模块（每张表只有一个属主模块，见 docs/architecture.md 4.1）。
+--
+-- <为什么要它；读写它的是哪个模块的 repo（只有属主模块的 repo 碰这张表）>。
+-- 锁与耗时（整个迁移在一个事务里，锁持到提交）：<拿什么锁、哪张表、现在多大、预计多久>。
+--   预检：<上线前跑的查询，如 SELECT count(*) FROM <表>；到多大时改成什么做法（NOT VALID + VALIDATE、CONCURRENTLY）>。
+--   失败回滚：任一步失败（含 lock_timeout 超时）整笔回滚，库保持原样，<换低峰重试 / 别的处置>。
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '2min';
 
--- 只含普通 DDL 的语句不用包 StatementBegin/End；函数体、DO 块里有分号，必须包。
+-- 约束进库：NOT NULL、CHECK、UNIQUE、外键能加就加。钱用 numeric(20,2)（Go 侧 shopspring/decimal），不用浮点。
 CREATE TABLE <表> (
   id          uuid PRIMARY KEY DEFAULT uuidv7(),
-  tenant_id   uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  -- <业务列>
+  user_id     uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  status      text NOT NULL CHECK (status IN ('<值1>', '<值2>')),
+  amount      numeric(20,2) NOT NULL CHECK (amount >= 0),
   created_at  timestamptz NOT NULL DEFAULT now(),
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
 
 -- <索引用途：哪条查询走它>
-CREATE INDEX idx_<表>_recent ON <表> (tenant_id, created_at DESC);
+CREATE INDEX <表>_user_idx ON <表> (user_id, created_at DESC);
 
--- 租户隔离：ENABLE + FORCE RLS + tenant_isolation 策略（00001 的 app.enable_tenant_rls）
-SELECT app.enable_tenant_rls('<表>');
+-- 只追加的流水表挂通用守卫；configure-app-role.sql 按这个触发器自动收回运行角色的 UPDATE / DELETE：
+-- CREATE TRIGGER <表>_append_only
+--   BEFORE UPDATE OR DELETE OR TRUNCATE ON <表>
+--   FOR EACH STATEMENT EXECUTE FUNCTION deny_mutation();
+-- 允许改状态、不许删的表改挂 deny_delete()（BEFORE DELETE）。
 
--- 运行角色只拿要用的权限。新表的默认权限只有 SELECT，INSERT / UPDATE 要在这里显式给。
--- 不许删的表在这里收 DELETE，并在 configure-app-role.sql 的表级重授之后再收一次（见 SKILL.md）。
-GRANT SELECT, INSERT, UPDATE ON <表> TO aegis_app;
-REVOKE DELETE, TRUNCATE ON <表> FROM aegis_app;
-
-COMMENT ON TABLE <表> IS '<一句话说明>';
+-- 授权不写在迁移里：安装与升级在 migrate up 之后跑 configure-app-role.sql，给 pandora_app 全部表的 DML 再按守卫收回。
 
 -- +goose Down
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '2min';
 
--- 逆操作要把结构退回上一版的逐项原样（列序、函数体原文、触发器、策略、授权、注释）。
--- 有不能丢的数据时加数据守卫（有行就 RAISE、没有就照常退，照 00129 / 00134），这不算 irreversible。
+-- 逆操作把结构退回上一版的逐项原样（列、约束名与内容、索引、触发器、函数体）。
+-- 有退回后放不下的数据时先守卫（去掉下面整段的行首「-- 」）：有行就 RAISE、没有就照常退（照 00016_commission_review.sql 的 Down）。
+-- 不要无条件 RAISE：CI 会在测试库上 down 到底再 up。
+-- -- +goose StatementBegin
+-- DO $$
+-- BEGIN
+--   IF EXISTS (SELECT 1 FROM <表> WHERE <只有新结构才会写出的行>) THEN
+--     RAISE EXCEPTION '<为什么不能退，先怎么人工处理>';
+--   END IF;
+-- END
+-- $$;
+-- -- +goose StatementEnd
 DROP TABLE IF EXISTS <表>;

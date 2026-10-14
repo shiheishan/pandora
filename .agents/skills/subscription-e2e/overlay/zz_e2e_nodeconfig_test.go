@@ -1,16 +1,19 @@
-package nodefabric
+package service
 
-// 由 .claude/skills/subscription-e2e/scripts/run.sh 经 `go test -overlay` 注入 nodefabric 包，不落仓库。
+// 由 .agents/skills/subscription-e2e/scripts/run.sh 经 `go test -overlay` 注入 service 包，不落仓库。
 //
-// 读 subscription 那一步写出的 fixtures_index.json，对每个夹具调用真实的 BuildNodeConfig，
-// 得到面板下发给节点的配置（E2E 服务端用它起入站），写到 E2E_OUT/node_config.json。
-// BuildNodeConfig 拒绝的夹具（如 cipher 与 method 冲突）记进 node_config_errors.json，不判失败。
+// 读 E2E_OUT/fixtures_index.json，对每个夹具调用 buildNodeConfigDoc，写出 node_config.json 与
+// node_config_errors.json。这是面板经 gRPC 下发给节点的配置文档（协议字段经 KernelConfig 摊平，
+// 加 server_port、kernel、protocol）；节点端原样当 InboundConfig.Raw。无路由层（layers 传 nil）。
+// 依赖 buildNodeConfigDoc、NodeConfigDoc。
 
 import (
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestE2ENodeConfig(t *testing.T) {
@@ -30,24 +33,32 @@ func TestE2ENodeConfig(t *testing.T) {
 	if err := json.Unmarshal(raw, &fx); err != nil {
 		t.Fatal(err)
 	}
-	s := &Service{}
 	res := map[string]json.RawMessage{}
 	errs := map[string]string{}
 	for id, f := range fx {
-		body, _, err := s.BuildNodeConfig(&ServingNode{Name: id, NodeType: f.Type, ServerHost: "node.example.com", ServerPort: f.Port, Protocol: f.Config, Kernel: "pandora-native"})
+		doc, err := buildNodeConfigDoc(uuid.New(), f.Type, f.Port, "pandora-native", string(f.Config), nil)
 		if err != nil {
 			errs[id] = err.Error()
 			continue
 		}
-		res[id] = body
+		res[id] = json.RawMessage(doc.JSON)
 	}
-	b, _ := json.MarshalIndent(res, "", " ")
-	if err := os.WriteFile(filepath.Join(out, "node_config.json"), b, 0o644); err != nil {
+	b, err := json.MarshalIndent(res, "", " ")
+	if err != nil {
 		t.Fatal(err)
 	}
-	b, _ = json.MarshalIndent(errs, "", " ")
-	if err := os.WriteFile(filepath.Join(out, "node_config_errors.json"), b, 0o644); err != nil {
+	e2eWriteNodeConfig(t, filepath.Join(out, "node_config.json"), b)
+	b, err = json.MarshalIndent(errs, "", " ")
+	if err != nil {
 		t.Fatal(err)
 	}
+	e2eWriteNodeConfig(t, filepath.Join(out, "node_config_errors.json"), b)
 	t.Logf("下发配置 %d 个，被拒 %d 个", len(res), len(errs))
+}
+
+func e2eWriteNodeConfig(t *testing.T, path string, body []byte) {
+	t.Helper()
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
 }

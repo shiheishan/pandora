@@ -13,7 +13,7 @@
 | 系统 | Debian 13 x64，时区 UTC，北京 = 本机 + 8h |
 | 用途 | <一句话：pandora 的哪项测试、装什么、和哪台配合> |
 | 日常运维 | Claude Code 的 pandora 主 Agent 会话（主目录 `~/ai/projects/pandora`，清单 `.claude/TASKS.md`） |
-| 代码 | pandora 仓库（本地 clone `~/ai/projects/pandora`）；压测 runbook 是 `panel/tools/loadtest/README.md` |
+| 代码 | pandora 仓库（本地 clone `~/ai/projects/pandora`）；压测范围与做法见 `docs/perf-test-plan.md` |
 
 **一次性测试机**，<日期> 开机，用完即删。不进 git 仓库，机器上的 `/root/README.md` 只是说明，不版本化。
 

@@ -1,27 +1,18 @@
--- irreversible: <为什么 Down 无法还原：如「修数据，修复前的值没有留存，分不清哪些行是这条迁移改的」>
--- forward-fix: <出问题怎么前滚补救；要整体回到本迁移之前，走升级前备份恢复（panel/deploy/MIGRATION-RUNBOOK.md 第 3 节）>
--- 以上两行必须在 `-- +goose Up` 之前：migrate.sh rollback-to 与往返门禁都只认文件头里的 irreversible。
--- 大表上的修数据 / 回填再加一行（同样在文件头）：
--- backfill: batched-by=<分批方式，如 租户 × UTC 自然日>; rerunnable=<为什么重跑安全，如 只往前推、已一致的行不动>
---
--- <一句话：修什么>（<谁定的>；<任务路名>）。
--- <哪些行可以安全改、哪些不碰（已吊销、空值、已用量）；修复只往前推、不缩短>。
-
 -- +goose Up
+-- <一句话：修什么数据、补什么种子>（<谁定的>）。属 <模块> 模块。
+--
+-- <哪些行可以安全改、哪些不碰；修复只往前推。重跑一次零改动（WHERE 只命中还没修的行）>。
+-- 大表上分批：<分批方式，如 按 id 范围每批 1 万行>；耗时在测试机的库副本上量过：<行数、耗时>。
+-- 不可逆：<为什么 Down 不能还原，如 修复前的值没有留存，分不清哪些行是这条迁移改的>。
+--   出问题前滚：<另写一个迁移怎么补救>；要整体回到本迁移之前，用升级前备份恢复（panel/deploy/RUNBOOK.md）。
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '10min';
 
 UPDATE <表>
    SET <列> = <新值>, updated_at = now()
- WHERE <只命中需要修的行，重跑一次零改动>;
+ WHERE <只命中需要修的行>;
 
 -- +goose Down
--- irreversible 的 Down 只 RAISE，不要求设超时；不要写成空 Down 或 SELECT 1（会静默「成功」）。
--- +goose StatementBegin
-DO $$
-BEGIN
-  RAISE EXCEPTION
-    'rollback refused (<NNNNN> <名字>): <原因>; <前滚办法>, or restore the pre-upgrade backup';
-END
-$$;
--- +goose StatementEnd
+-- 不可逆：<同上原因>。Down 只留这段说明、不写语句，goose 把它当空操作；
+-- 不要写 RAISE（CI 会在测试库上 down 到底再 up），也不要写看似还原、实际不对的 UPDATE。
+-- 只有数据修复可以这样；结构变化（表、列、约束、索引、函数）必须写真的逆操作。
