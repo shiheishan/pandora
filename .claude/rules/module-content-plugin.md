@@ -9,6 +9,10 @@ paths:
 ## content
 - 正文只当纯文本 / Markdown 源存储与下发，后端与门户都不渲染成可信 HTML，所以这里不是 XSS 边界；不要引入服务端 HTML 渲染或放行 HTML。
 - 门户可见性（状态、可见范围、平台、客户端版本、语言、限定套餐）只在 `panel/internal/module/content/service/portal.go` 的 `visible` 一处判定，列表、详情、反馈共用。反馈先过 `GetVisible`，看不到的文章回 404，免得借反馈接口探测文章是否存在。
+- 占位变量与「有效订阅可见」区块只在门户读单篇（`GetVisible`）时按当前用户在服务端渲染（`render.go` 的 `RenderBody`），库里存的是原文，后台与列表看到的也是原文：
+  - 变量照 Xboard 名字，白名单只有 `{{siteName}}`、`{{siteUrl}}`、`{{subscribeUrl}}`、`{{urlEncodeSubscribeUrl}}`、`{{safeBase64SubscribeUrl}}`，别的 `{{…}}` 原样保留；订阅链接经 `SubscribeLinks` 端口（app 适配 subscription 的 `MyLinks`，多份生效订阅取凭据最新那份），正文里没有订阅变量时不去取。
+  - `<!--access start-->…<!--access end-->` 区块：没有生效订阅时整块换成 `AccessDeniedNotice`；起始标记没闭合时到文末都算区块（宁可多藏）。
+  - 列表的搜索仍按原文匹配（区块里的字也能搜到，只是点开看不到）。
 - 每次保存是一个新版本（同一 slug 版本号递增，乐观锁 `ExpectedLatestVersion`）；发布时只归档「同一受众」（语言、平台、客户端版本范围、限定套餐、可见性都相同）里已发布的旧版本，受众不同的旧版本照常可见。
 
 ## plugin
