@@ -21,7 +21,6 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/aegispanel/nodeagent/core"
-	"github.com/aegispanel/nodeagent/route"
 )
 
 // ssUDPIdleTimeout 是一个 SS UDP 会话客户端多久没有上行就关（下行不续期；与 juicity、UoT 的 5 分钟同值）。测试缩短它。
@@ -47,6 +46,12 @@ type ssUDPSession struct {
 	coreUser  core.User
 	ip        string           // 在线设备的设备 IP（client.Addr().String()）
 	firstDest vlessDestination // 首包目标：会话 goroutine 按它选出站、建上游
+	// 出站：routeTag 是建上游时按首包目标查到的出站，routeOK 为假表示数据面不支持查询（不做
+	// 按目标复查）。两者在会话 goroutine 里、ready 置位前写好，之后只读。routedDest 是最近一个
+	// 通过复查的目标，由 mu 保护（与域名缓存同一把锁）。
+	routeTag   string
+	routeOK    bool
+	routedDest M.Socksaddr
 	// 建立期：upstream 为 nil 时到达的包进 pending（至多 ssUDPPendingMax 个，负载已复制）。
 	// estMu 保护 upstream 的写入与 pending；ready 置位之后 upstream 不再变，读方不加锁直接用。
 	estMu      sync.Mutex
@@ -142,11 +147,9 @@ func (a *shadowsocksAdapter) getOrOpenUDPSession(client netip.AddrPort, user *ss
 // 所以不能在读循环里调；ctx 取消（空闲、删人、关入站）会打断它。
 func (a *shadowsocksAdapter) establishUDPSession(s *ssUDPSession) (net.PacketConn, error) {
 	firstDest := s.firstDest
-	meta := route.Meta{
-		Domain: firstDest.Domain, IP: firstDest.IP, Port: firstDest.Port,
-		Network: "udp", Protocol: "shadowsocks",
-		SourceIP: s.client.Addr(), SourcePort: s.client.Port(),
-	}
+	meta := ssUDPRouteMeta(firstDest, s.client)
+	s.routeTag, s.routeOK = selectUDPRoute(a.plane, meta)
+	s.routedDest = M.ParseSocksaddrHostPort(firstDest.Host, firstDest.Port)
 	upstream, err := a.plane.ListenUDP(s.ctx, meta, M.ParseSocksaddrHostPort(firstDest.Host, firstDest.Port))
 	if err != nil {
 		return nil, err

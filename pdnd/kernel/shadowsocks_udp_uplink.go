@@ -122,6 +122,10 @@ func (s *ssUDPSession) enqueuePending(dest vlessDestination, payload []byte) boo
 // writeUplink 把已解密的负载发往上游。上行在读循环、慢路径 worker 或会话 goroutine 里调用，
 // 都不能阻塞：限速见 allowUplink。
 func (s *ssUDPSession) writeUplink(dest vlessDestination, payload []byte) (int, error) {
+	if !s.routeAllows(dest) {
+		s.adapter.udpDrops.route.Add(1)
+		return 0, nil
+	}
 	if !s.allowUplink(len(payload)) {
 		s.adapter.udpDrops.rate.Add(1)
 		return 0, nil
