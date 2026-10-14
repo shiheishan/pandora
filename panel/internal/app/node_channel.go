@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 
 	nodegrpc "github.com/aegispanel/aegis/internal/module/node/grpc"
 	nodesvc "github.com/aegispanel/aegis/internal/module/node/service"
@@ -19,7 +21,7 @@ type nodeChannel struct {
 
 // setupNodeChannel 加载（首次启动时生成）节点 CA，注入接入与会话，构造 gRPC 服务端（不监听）。
 // 要在 HTTP 开始服务之前调：后台签安装令牌、吊销身份都依赖这里的注入。
-func setupNodeChannel(ctx context.Context, r *runtime, svc *services) (*nodeChannel, error) {
+func setupNodeChannel(ctx context.Context, r *runtime, svc *services, reg prometheus.Registerer) (*nodeChannel, error) {
 	ca, err := svc.node.LoadOrCreateCA(ctx, svc.sealer)
 	if err != nil {
 		return nil, fmt.Errorf("节点 CA: %w", err)
@@ -30,14 +32,18 @@ func setupNodeChannel(ctx context.Context, r *runtime, svc *services) (*nodeChan
 	})
 	sess := svc.node.NewSessions(nodesvc.SessionOptions{})
 	svc.node.UseSessions(sess)
+	registerSessionsGauge(reg, sess)
 	nc := &nodeChannel{sessions: sess}
 	if gc.PublicHost == "" {
 		r.log.Warn("grpc.node.public_host 为空，节点 gRPC 不启动")
 		return nc, nil
 	}
+	gm := newGRPCMetrics(reg)
 	gs, err := nodegrpc.NewServer(nodegrpc.Options{
 		Addr: gc.Addr, PublicHost: gc.PublicHost, CA: ca, Service: svc.node,
 		Limiter: svc.limiter, Logger: r.log,
+		UnaryInterceptors:  []grpc.UnaryServerInterceptor{gm.UnaryServerInterceptor()},
+		StreamInterceptors: []grpc.StreamServerInterceptor{gm.StreamServerInterceptor()},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("节点 gRPC: %w", err)

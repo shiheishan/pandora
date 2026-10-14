@@ -108,6 +108,7 @@ func defaults(v *viper.Viper) {
 	v.SetDefault("worker.concurrency", 8)
 	v.SetDefault("worker.shutdown_timeout", "30s")
 	v.SetDefault("worker.pprof_addr", "")
+	v.SetDefault("worker.metrics_addr", "")
 
 	v.SetDefault("auth.access_ttl", "15m")
 	v.SetDefault("auth.public_session_ttl", "720h")
@@ -144,6 +145,8 @@ func defaults(v *viper.Viper) {
 
 	v.SetDefault("geoip.ipv4_db", "/opt/pandora/geoip/ip2region_v4.xdb")
 	v.SetDefault("geoip.ipv6_db", "")
+
+	v.SetDefault("observability.metrics_addr", "")
 }
 
 func envVarName(configKey string) string {

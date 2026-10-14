@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"net"
+	"slices"
 	"sync"
 	"time"
 
@@ -40,6 +41,9 @@ type Options struct {
 	// EnrollPerMinute 是每个来源 IP 每分钟的接入次数上限，0 用 10
 	EnrollPerMinute int
 	Logger          *zap.Logger
+	// UnaryInterceptors / StreamInterceptors 排在拦截器链最外层（如 Prometheus 指标），可为空
+	UnaryInterceptors  []grpc.UnaryServerInterceptor
+	StreamInterceptors []grpc.StreamServerInterceptor
 }
 
 // Server 是节点 gRPC 服务端。
@@ -94,8 +98,10 @@ func newServer(o Options, enr enroller, auth sessionAuthorizer, ctrl nodev1.Cont
 			Timeout: 20 * time.Second,
 		}),
 		grpc.ConnectionTimeout(20*time.Second),
-		grpc.ChainUnaryInterceptor(ic.unaryReqID, ic.unaryRecover, ic.unaryAuth),
-		grpc.ChainStreamInterceptor(ic.streamReqID, ic.streamRecover, ic.streamAuth),
+		grpc.ChainUnaryInterceptor(slices.Concat(o.UnaryInterceptors,
+			[]grpc.UnaryServerInterceptor{ic.unaryReqID, ic.unaryRecover, ic.unaryAuth})...),
+		grpc.ChainStreamInterceptor(slices.Concat(o.StreamInterceptors,
+			[]grpc.StreamServerInterceptor{ic.streamReqID, ic.streamRecover, ic.streamAuth})...),
 	)
 
 	nodev1.RegisterEnrollmentServiceServer(gs, newEnrollServer(enr, o.Limiter, o.EnrollPerMinute))

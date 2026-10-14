@@ -29,21 +29,22 @@ func (Secret) MarshalText() ([]byte, error) { return []byte("***"), nil }
 func (s Secret) Reveal() string { return string(s) }
 
 type Config struct {
-	Env           string       `mapstructure:"env"`
-	PublicBaseURL string       `mapstructure:"public_base_url"`
-	HTTP          HTTP         `mapstructure:"http"`
-	GRPC          GRPC         `mapstructure:"grpc"`
-	Database      Database     `mapstructure:"database"`
-	Redis         Redis        `mapstructure:"redis"`
-	Worker        Worker       `mapstructure:"worker"`
-	Auth          Auth         `mapstructure:"auth"`
-	RateLimit     RateLimit    `mapstructure:"ratelimit"`
-	Secrets       Secrets      `mapstructure:"secrets"`
-	Log           Log          `mapstructure:"log"`
-	Subscription  Subscription `mapstructure:"subscription"`
-	Pdnd          Pdnd         `mapstructure:"pdnd"`
-	Backup        Backup       `mapstructure:"backup"`
-	GeoIP         GeoIP        `mapstructure:"geoip"`
+	Env           string        `mapstructure:"env"`
+	PublicBaseURL string        `mapstructure:"public_base_url"`
+	HTTP          HTTP          `mapstructure:"http"`
+	GRPC          GRPC          `mapstructure:"grpc"`
+	Database      Database      `mapstructure:"database"`
+	Redis         Redis         `mapstructure:"redis"`
+	Worker        Worker        `mapstructure:"worker"`
+	Auth          Auth          `mapstructure:"auth"`
+	RateLimit     RateLimit     `mapstructure:"ratelimit"`
+	Secrets       Secrets       `mapstructure:"secrets"`
+	Log           Log           `mapstructure:"log"`
+	Subscription  Subscription  `mapstructure:"subscription"`
+	Pdnd          Pdnd          `mapstructure:"pdnd"`
+	Backup        Backup        `mapstructure:"backup"`
+	GeoIP         GeoIP         `mapstructure:"geoip"`
+	Observability Observability `mapstructure:"observability"`
 }
 
 type HTTP struct {
@@ -112,6 +113,8 @@ type Worker struct {
 	Concurrency     int           `mapstructure:"concurrency"`
 	ShutdownTimeout time.Duration `mapstructure:"shutdown_timeout"`
 	PprofAddr       string        `mapstructure:"pprof_addr"`
+	// MetricsAddr 是 worker 进程的 Prometheus 指标端点（GET /metrics）的监听地址；空表示不开。只许回环或私网地址（RFC 1918、IPv6 ULA）
+	MetricsAddr string `mapstructure:"metrics_addr"`
 }
 
 type Auth struct {
@@ -184,4 +187,10 @@ type Backup struct {
 type GeoIP struct {
 	IPv4DB string `mapstructure:"ipv4_db"`
 	IPv6DB string `mapstructure:"ipv6_db"`
+}
+
+// Observability 是 serve 进程的观测配置。
+type Observability struct {
+	// MetricsAddr 是 Prometheus 指标端点（GET /metrics）的监听地址；空表示不开。只许回环或私网地址（RFC 1918、IPv6 ULA）
+	MetricsAddr string `mapstructure:"metrics_addr"`
 }

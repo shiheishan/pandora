@@ -45,3 +45,10 @@ log:
   # debug / info / warn / error。日志文件由 systemd 单元用 PANDORA_LOG_FILE 分别指到
   # /var/log/pandora/serve.log 与 worker.log（自己滚动）；命令行子命令（migrate、admin）只写 stderr
   level: info
+
+# Prometheus 指标端点（GET /metrics），缺省不开。只许回环或私网地址（RFC 1918、IPv6 ULA），
+# 压测时 Prometheus 在同一内网的另一台机器上拉；serve 与 worker 是两个进程，端口要不同。
+# observability:
+#   metrics_addr: 10.0.0.2:9100
+# worker:
+#   metrics_addr: 10.0.0.2:9101
