@@ -49,7 +49,7 @@ paths:
 ## 在线设备与设备数限制
 
 - 各适配器内嵌一份 `online_devices.go` 的 `onlineDevices`（零值可用），不要再各写 `map[用户]map[IP]struct{}`。按设备键记引用计数：同一设备多条连接只占一个名额，计数到 0 才离线；设备上限按不同设备数判。
-- 设备键是 `core.DeviceKey`（用户 10-09 定）：IPv4 与 IPv4 映射地址按单个地址，IPv6 按 /64 网段（写成 `2001:db8:1:2::/64`）。OnlineIPs 上报的就是设备键；面板 `aliveRows` 取哈希前再按同一口径归一（`nodefabric/alive_device_key.go`），新旧节点混跑也不多算。两边读同一张用例表（pdnd `core/device_key_test.go` 的 `TestDeviceKey`），改口径要两边一起改。mieru 的 `core/counter.OnlineTracker` 也用它。
+- 设备键是 `core.DeviceKey`（用户 10-09 定）：IPv4 与 IPv4 映射地址按单个地址，IPv6 按 /64 网段（写成 `2001:db8:1:2::/64`）。OnlineIPs 上报的就是设备键；面板取哈希前再按同一口径归一（`panel/internal/module/node/service/online.go` 的 `deviceKey`），新旧节点混跑也不多算。两边各有一张用例表（pdnd `core/device_key_test.go` 与面板 `panel/internal/module/node/service/metrics_test.go` 的 `TestDeviceKey`），不互相读，改口径要两边一起改。mieru 的 `core/counter.OnlineTracker` 也用它。
 - 写法固定为 `if !a.online.enter(user, ip) { 拒绝 }` 紧跟 `defer a.online.leave(user, ip)`，异常退出也经 defer 撤销。新增协议要进接线用例：TCP 进 `online_devices_wiring_test.go`（同 IP 两条关一条仍在线、全关才离线、别的设备占满名额时被拒），有 UDP 路径的再进 `online_devices_wiring_udp_test.go`。
 - 例外：mieru 用 `core/counter.OnlineTracker`（最后活跃时间 + 5 分钟 TTL，不按连接计数）；ShadowTLS 委托内层适配器。
 
@@ -81,7 +81,7 @@ QUIC 栈是 sagernet/quic-go（经 sing-quic 与 `internal/nativewire` 的 hy2 /
 - DATAGRAM 分片按连接的实际上限（`nativewire/dgram`）：用必然超长的缓冲调 `SendDatagram` 问上限（只比长度、不发包），缓存 1 秒；实际只用上限减 `AckMargin`（64）。不留余量时贴上限的 DATAGRAM 碰上带 ACK 的包装不下，quic-go 试 10 次就丢（`TestLimitSizedDatagramsSurviveBidirectionalTraffic` 去掉余量即红）。不要改回上游固定的 1197。
 - 上行 UDP 转发（`hysteria2_udp.go` 的 `hy2BatchWriter`）：同一目标、等长的连续包合成一条 UDP_SEGMENT（GSO）消息，经 `WriteBatch` 的 OOB 交给内核；iovec 直接指向各包不复制。私网拦截仍逐消息判定（一条 GSO 消息同一目标），被拒（EIO / EINVAL 等）时本会话关 GSO、从失败那条起逐条重发。只在 Linux，回归测试 `hysteria2_udp_gso_linux_test.go`。
 - Salamander 混淆在 Linux 上走 `batchSalamanderConn`：自己实现 quic-go 认的 `OOBCapablePacketConn` 与 `ReadBatch`，quic-go 才会照常 recvmmsg 批量收、GSO 发；GSO 写时逐段加盐、段长改为原段长 + 8。它不内嵌 `*net.UDPConn`，未混淆的收发方法一个都不透出。
-- hy2 / TUIC 入站起来后检查 UDP 收发缓冲（`quic_socket_linux.go`）：pdnd 无 CAP_NET_ADMIN，受 `net.core.rmem_max / wmem_max` 限制拿不到 quic-go 要的 8MB，不足一半就 Warn 一次并提示 sysctl。上限由面板的节点安装脚本写进 `/etc/sysctl.d/90-pandora-native.conf`（16MB，`pdndSysctlFunction`），手工安装见 `release/README.md`；不要给 unit 加 CAP_NET_ADMIN。
+- hy2 / TUIC 入站起来后检查 UDP 收发缓冲（`quic_socket_linux.go`）：pdnd 无 CAP_NET_ADMIN，受 `net.core.rmem_max / wmem_max` 限制拿不到 quic-go 要的 8MB，不足一半就 Warn 一次并提示 sysctl。上限由面板的节点安装脚本写进 `/etc/sysctl.d/90-pandora-native.conf`（16MB，面板 `panel/internal/module/node/service/pdnd_install.sh.tmpl` 的系统参数段），手工安装见 `release/README.md`；不要给 unit 加 CAP_NET_ADMIN。
 - UDP 转发的出站 socket（`newHy2UDPUpstream`）固定申请 `hy2UDPSocketBuffer`（106496，内核记账与读回 212992，即常见发行版的 rmem_default、官方 hysteria 与 sing-box 不调时的大小）。10-09 vpcnode2 实验 B：rmem_max 8MB 档下申请 4MB 让 hy2 UDP 下行输官方 hysteria 5–6 个百分点，只改这一项即拉平；持续过载时大缓冲只多收注定在 QUIC 发送侧被丢的包。数据与理由写在常量注释里，改值要带同口径的复测数据。上游 socket 每会话一个，固定申请也让每会话的 udp_mem 记账不随机器的 rmem_default 膨胀。默认拦私网时经 `outbound.UDPBatchConn` 调缓冲，不拿裸 socket。
 - 空闲的 hy2 / TUIC UDP 会话不常驻收发缓冲（10-09 vpcnode2 缺陷 1：原先每会话约 2.6MB）。
   - 下行（`hysteria2_udp_downlink.go`）：冷态经 `internal/udprecv` 的收包器等 socket 可读，等待期间不占缓冲：`RawConn.Read` 的第一次回调只用 1 字节 MSG_PEEK 看有没有包、不借组，没有就交给 netpoller 等；叫醒后才借 2 包小组、非阻塞 recvmmsg。每次醒来「窥视落空 + 收到」两次系统调用、借还一次，与持有缓冲阻塞读（sing-box）同形状。
