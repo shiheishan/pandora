@@ -13,6 +13,8 @@
   不能判：样本数不够（p50 至少 100 个、p99 至少 1000 个），或任一边没有数。
 总评：有退化 → 退回；有 --target 且没有改善 → 未达预期；否则 → 可合（列出改善项）。
 阈值沿用 P8 前的闸门规则：延迟 p50 +5%、p95/p99 +10%、内存 +10%、每请求 CPU +5%。
+
+判定与输出的函数（judge、verdict、run）也被 pdnd/tests/perf/gate/compare.py 按路径加载复用，改它们要两边一起看。
 """
 
 from __future__ import annotations
@@ -139,10 +141,17 @@ def rel(a: float, b: float) -> Optional[float]:
     return (b - a) / abs(a)
 
 
-def judge(m: Metric, base: Dict[str, Any], cand: Dict[str, Any], aa: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+def judge(
+    m: Metric,
+    base: Dict[str, Any],
+    cand: Dict[str, Any],
+    aa: Optional[Dict[str, Any]],
+    lookup_fn: Optional[Any] = None,
+) -> Dict[str, Any]:
+    lookup_fn = lookup_fn or lookup
     key, label, unit, higher, thr, min_n, abs_tol = m
-    b, bn = lookup(base, key)
-    c, cn = lookup(cand, key)
+    b, bn = lookup_fn(base, key)
+    c, cn = lookup_fn(cand, key)
     row: Dict[str, Any] = {"key": key, "label": label, "unit": unit, "base": b, "cand": c}
     if b is None or c is None:
         row["verdict"] = "不能判"
@@ -154,7 +163,7 @@ def judge(m: Metric, base: Dict[str, Any], cand: Dict[str, Any], aa: Optional[Di
         return row
     noise = None
     if aa is not None:
-        a2, _ = lookup(aa, key)
+        a2, _ = lookup_fn(aa, key)
         if a2 is not None:
             r = rel(b, a2)
             noise = abs(r) if r is not None and r != float("inf") else None
@@ -196,29 +205,34 @@ def fmt_change(r: Optional[float]) -> str:
     return f"{r * 100:+.1f}%"
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+def verdict(rows: List[Dict[str, Any]], targets: List[str]) -> Tuple[str, List[Dict[str, Any]], List[Dict[str, Any]]]:
+    worse = [r for r in rows if r["verdict"] == "退化"]
+    better = [r for r in rows if r["verdict"] == "改善"]
+    target_hit = [r for r in better if any(r["key"].startswith(t) for t in targets)]
+    if worse:
+        overall = "退回"
+    elif targets and not target_hit:
+        overall = "未达预期"
+    else:
+        overall = "可合"
+    return overall, worse, better
+
+
+def run(argv: Optional[List[str]], metrics_fn: Any, lookup_fn: Any, description: Optional[str]) -> None:
+    ap = argparse.ArgumentParser(description=description, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("base")
     ap.add_argument("cand")
     ap.add_argument("--root", default=".")
     ap.add_argument("--aa")
     ap.add_argument("--target", action="append", default=[])
     ap.add_argument("--json", action="store_true")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
     root = Path(a.root)
     base, cand = load(root, a.base), load(root, a.cand)
     aa = load(root, a.aa) if a.aa else None
-    rows = [judge(m, base, cand, aa) for m in metrics_for(base, cand)]
+    rows = [judge(m, base, cand, aa, lookup_fn) for m in metrics_fn(base, cand)]
 
-    worse = [r for r in rows if r["verdict"] == "退化"]
-    better = [r for r in rows if r["verdict"] == "改善"]
-    target_hit = [r for r in better if any(r["key"].startswith(t) for t in a.target)]
-    if worse:
-        overall = "退回"
-    elif a.target and not target_hit:
-        overall = "未达预期"
-    else:
-        overall = "可合"
+    overall, worse, better = verdict(rows, a.target)
     if a.json:
         print(json.dumps({"overall": overall, "rows": rows}, ensure_ascii=False, indent=1))
         return
@@ -243,6 +257,10 @@ def main() -> None:
     if notes:
         print("运行备注：" + "；".join(notes))
     sys.exit(1 if worse else 0)
+
+
+def main() -> None:
+    run(None, metrics_for, lookup, __doc__)
 
 
 if __name__ == "__main__":

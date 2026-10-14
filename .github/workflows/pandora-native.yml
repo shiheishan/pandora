@@ -160,6 +160,19 @@ jobs:
             echo "github.com/sagernet/sing-box is back in pdnd/go.mod" >&2
             exit 1
           fi
+      - name: Node perf gate tools (vet, tests, dependency boundary)
+        # 节点端性能闸门的工具是独立 module（pdnd/tests/perf/gate/tools），pdnd 的 ./... 不包含它；
+        # 它可以用 xray-core、sing-quic 当客户端，但同样不许链 sing-box。Python 部分（compare、report）的单测也在这里跑。
+        working-directory: pdnd/tests/perf/gate/tools
+        run: |
+          go vet -mod=readonly ./...
+          go test -mod=readonly -count=1 ./...
+          deps="$(go list -mod=readonly -deps -test ./...)"
+          if grep -q 'github.com/sagernet/sing-box' <<<"${deps}"; then
+            echo "github.com/sagernet/sing-box leaked into the node perf gate tools" >&2
+            exit 1
+          fi
+          cd .. && python3 -m unittest -v test_compare.py test_report.py test_collect.py
       - name: External Xray TLS XHTTP H3 interoperability
         # This is intentionally a non-race opt-in gate: the external Xray
         # client currently contains a known WaitReadCloser race of its own.
