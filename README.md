@@ -313,7 +313,7 @@ gh attestation verify pandora-panel_v1.2.3_linux_amd64.tar.gz --repo shiheishan/
 
 须先安装 `gh` 并 `gh auth login`；核过后用同一版本号 `PANDORA_VERSION=v1.2.3` 跑 `get.sh`（下载的是同一附件）；`get.sh`、`SHA256SUMS` 也可同样用 `gh attestation verify` 核对。
 
-发版（维护者）：在 `main` 上打 `v*` 标签并推送，`.github/workflows/release.yml` 构建 amd64 / arm64 包、出来源证明、建 Release；标签提交必须已在 `main` 上，否则 workflow 拒绝；带连字符的标签发成预发布；手动触发（`workflow_dispatch`，输入版本号，缺省 `v0.0.0-dryrun`）只演练构建，产物在该次 run 的 artifact 里，不建 Release。
+发版（维护者）：在 `main` 上打 `v*` 标签并推送，`.github/workflows/release.yml` 构建 amd64 / arm64 包、出来源证明、建 Release；标签提交必须已在 `main` 上，否则 workflow 拒绝；带连字符的标签发成预发布；手动触发（`workflow_dispatch`，输入版本号，缺省 `v0.0.0-dryrun`）只演练构建，产物在该次 run 的 artifact 里，不建 Release；手动触发要等 `release.yml` 进了 `main`（GitHub 的限制），之后可用 `gh workflow run release.yml --ref <分支>` 演练任一分支。
 
 ### 2. 从源码打包
 

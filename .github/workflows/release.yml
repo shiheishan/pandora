@@ -3,6 +3,8 @@ name: Release
 # 发版：在默认分支（main）的提交上打 v* 标签并推送 → 构建 linux amd64 / arm64 两份发布包 → 对附件出来源证明
 # → 建 GitHub Release。部署者在目标机上用 Release 里的 get.sh 一条命令首装或升级（见 README「部署」）。
 # workflow_dispatch 是演练：只构建并上传 workflow artifact，不建 Release、不打标签。
+# 只有「推标签」这一种事件会发布；别的事件（workflow_dispatch，或调试时临时加的分支触发）一律只演练构建。
+# workflow_dispatch 要等本文件进了默认分支才能触发（GitHub 的限制），之后可 --ref 任一分支跑那个分支上的版本。
 on:
   push:
     tags:
@@ -41,10 +43,15 @@ jobs:
         id: version
         env:
           EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
           INPUT_VERSION: ${{ inputs.version }}
         run: |
-          if [ "$EVENT_NAME" = push ]; then version="$REF_NAME"; else version="$INPUT_VERSION"; fi
+          if [ "$EVENT_NAME" = push ] && [ "$REF_TYPE" = tag ]; then
+            version="$REF_NAME"
+          else
+            version="${INPUT_VERSION:-v0.0.0-dryrun}"
+          fi
           # 与 build-release.sh 的版本号检查同一字符集（[A-Za-z0-9._-]+，不能是 . / ..），再限定 v 开头；
           # get.sh 按同一规则校验部署者给的版本号
           if [[ ! "$version" =~ ^v[A-Za-z0-9._-]*$ ]]; then
@@ -53,7 +60,7 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: The tag must point at a commit on the default branch
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
@@ -104,7 +111,7 @@ jobs:
 
   publish:
     name: Attest and publish the GitHub Release
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.ref_type == 'tag'
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 15
