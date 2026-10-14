@@ -2,6 +2,8 @@ package handler
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 
 	"github.com/aegispanel/aegis/internal/module/notify/service"
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
@@ -141,8 +143,9 @@ func (f *p6Fake) HandleTelegramUpdate(_ context.Context, secret string, body []b
 	return f.err
 }
 
-// p6Engine 搭一个同时注册门户与后台路由的引擎；门户 RequireAuth 把 uid 作为登录主体放进请求（uid 为 uuid.Nil 时不放）。
-func p6Engine(fake Notify, uid uuid.UUID) (*gin.Engine, *notifyTestKit) {
+// p6Engine 搭门户与后台两个引擎（生产里也是两个：同一路径如 /v1/me/telegram 两边各注册一次）；
+// 请求先给门户，门户没有这条路由再给后台。门户 RequireAuth 把 uid 作为登录主体放进请求（uid 为 uuid.Nil 时不放）。
+func p6Engine(fake Notify, uid uuid.UUID) (http.Handler, *notifyTestKit) {
 	gin.SetMode(gin.TestMode)
 	k := &notifyTestKit{}
 	kit := k.kit()
@@ -154,9 +157,27 @@ func p6Engine(fake Notify, uid uuid.UUID) (*gin.Engine, *notifyTestKit) {
 		auth(c)
 	}
 	h := New(fake)
-	e := gin.New()
-	e.Use(httpx.Errors())
-	h.RegisterPublic(e.Group("/v1"), kit)
-	h.RegisterAdmin(e.Group("/v1"), kit)
-	return e, k
+	portal, admin := gin.New(), gin.New()
+	portal.Use(httpx.Errors())
+	admin.Use(httpx.Errors())
+	h.RegisterPublic(portal.Group("/v1"), kit)
+	h.RegisterAdmin(admin.Group("/v1"), kit)
+	return p6Mux{portal: portal, admin: admin}, k
+}
+
+// p6Mux 按「门户有没有这条路由」分给两个引擎。没有路由时 gin 不读请求体，交给后台时请求体还在。
+type p6Mux struct{ portal, admin *gin.Engine }
+
+func (m p6Mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	rec := httptest.NewRecorder()
+	m.portal.ServeHTTP(rec, r)
+	if rec.Code == http.StatusNotFound && rec.Body.String() == "404 page not found" {
+		m.admin.ServeHTTP(w, r)
+		return
+	}
+	for key, vals := range rec.Header() {
+		w.Header()[key] = vals
+	}
+	w.WriteHeader(rec.Code)
+	_, _ = w.Write(rec.Body.Bytes())
 }

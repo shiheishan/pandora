@@ -153,7 +153,8 @@ function rowView(t: TicketFixture) {
 /** 最后一条非 system 消息的作者 */
 function lastPublicAuthorKind(messages: MessageFixture[]): MessageFixture['author_kind'] | null {
   for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].author_kind !== 'system') return messages[i].author_kind
+    const m = messages[i]
+    if (m && m.author_kind !== 'system') return m.author_kind
   }
   return null
 }

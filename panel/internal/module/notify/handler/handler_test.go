@@ -10,10 +10,12 @@ import (
 	"time"
 
 	"github.com/aegispanel/aegis/internal/module/notify/service"
+	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
 	"github.com/aegispanel/aegis/internal/pkg/route"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 type fakeNotify struct {
@@ -69,12 +71,17 @@ type notifyTestKit struct {
 	authCalls   int
 	reauthCalls int
 	idemScopes  []string // 经过幂等中间件的作用域，按请求顺序
+	// principal 非 nil 时 RequireAuth 把它作为登录主体放进请求（要取当前用户的路由用）
+	principal *authn.Principal
 }
 
 func (k *notifyTestKit) kit() route.Kit {
 	return route.Kit{
 		RequireAuth: func(c *gin.Context) {
 			k.authCalls++
+			if k.principal != nil {
+				authn.Set(c, *k.principal)
+			}
 			c.Next()
 		},
 		RecentReauth: func(c *gin.Context) {
@@ -366,12 +373,18 @@ func TestAdminRoutesRequireAuth(t *testing.T) {
 		{http.MethodGet, "/v1/settings/telegram", ""},
 		{http.MethodPost, "/v1/settings/telegram", `{"enabled":false,"bot_username":"","bot_token":""}`},
 		{http.MethodPost, "/v1/settings/telegram/test", `{"chat_id":1}`},
+		{http.MethodGet, "/v1/settings/telegram/extras", ""},
+		{http.MethodPost, "/v1/settings/telegram/extras", `{}`},
+		{http.MethodGet, "/v1/me/telegram", ""},
+		{http.MethodPost, "/v1/me/telegram/bind-code", ""},
+		{http.MethodDelete, "/v1/me/telegram", ""},
 		{http.MethodGet, "/v1/announcements", ""},
 		{http.MethodPost, "/v1/announcements", `{"title":"t","body":"b"}`},
 		{http.MethodPost, "/v1/announcements/018f0000-0000-7000-8000-000000000001", `{"title":"t","body":"b","expected_version":1}`},
 		{http.MethodPost, "/v1/announcements/018f0000-0000-7000-8000-000000000001/withdraw", `{"expected_version":1}`},
 		{http.MethodPost, "/v1/users/bulk/mail", `{"subject":"s","body":"b"}`},
 	}
+	k.principal = &authn.Principal{UserID: uuid.MustParse("018f0000-0000-7000-8000-0000000000ad"), Audience: authn.AudienceAdmin}
 	if n := len(e.Routes()); n != len(calls) {
 		t.Fatalf("后台路由 %d 条，用例覆盖 %d 条", n, len(calls))
 	}

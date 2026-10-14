@@ -24,7 +24,7 @@ type RenderVars struct {
 }
 
 // AccessDeniedNotice 是没有有效订阅时区块被换成的提示。
-const AccessDeniedNotice = "（这部分内容需要有效订阅才能查看）"
+const AccessDeniedNotice = "（这部分内容需要有在用的套餐才能查看）"
 
 // NeedsSubscribeURL 报告正文里是否用到了订阅链接类变量（三个 *ubscribeUrl}} 变量任一），用来决定要不要去取链接。
 func NeedsSubscribeURL(body string) bool {

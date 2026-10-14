@@ -3,8 +3,6 @@ package service
 import (
 	"strings"
 	"testing"
-
-	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
 
 func TestValidateTelegramExtras(t *testing.T) {

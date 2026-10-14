@@ -3,7 +3,6 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/aegispanel/aegis/internal/module/notify/service"
@@ -12,10 +11,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 )
-
-func ptrBool(b bool) *bool { return &b }
 
 func TestAdmTelegramExtrasGET(t *testing.T) {
 	chatID := int64(-100123456789)
@@ -133,22 +129,22 @@ func TestAdminMeTelegramRoutesAndReauth(t *testing.T) {
 	}}
 
 	// 建立一个 RequireAuth / RecentReauth 支持检查请求头模拟重认证失败的 engine
-	kit := route.Kit{
-		RequireAuth: func(c *gin.Context) {
-			if c.GetHeader("X-No-Auth") == "1" {
-				httpx.Fail(c, errs.New(errs.Unauthorized))
-				return
-			}
-			authn.Set(c, authn.Principal{UserID: admActor, Audience: authn.AudienceAdmin})
-			c.Next()
-		},
-		RecentReauth: func(c *gin.Context) {
-			if c.GetHeader("X-No-Reauth") == "1" {
-				httpx.Fail(c, errs.New(errs.ReauthRequired))
-				return
-			}
-			c.Next()
-		},
+	// 其余中间件（幂等等）沿用 notifyTestKit 的放行实现
+	kit := (&notifyTestKit{}).kit()
+	kit.RequireAuth = func(c *gin.Context) {
+		if c.GetHeader("X-No-Auth") == "1" {
+			httpx.Fail(c, errs.New(errs.Unauthorized))
+			return
+		}
+		authn.Set(c, authn.Principal{UserID: admActor, Audience: authn.AudienceAdmin})
+		c.Next()
+	}
+	kit.RecentReauth = func(c *gin.Context) {
+		if c.GetHeader("X-No-Reauth") == "1" {
+			httpx.Fail(c, errs.New(errs.ReauthRequired))
+			return
+		}
+		c.Next()
 	}
 	h := New(fake)
 	e := gin.New()

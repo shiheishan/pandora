@@ -59,7 +59,7 @@ export function TelegramCard() {
           <a className={css.linkButton} href={discussHref} target="_blank" rel="noopener noreferrer">
             加入用户讨论群 ↗
           </a>
-          <span className={css.hint}>入群申请可能需要先绑定 Telegram 并有有效订阅</span>
+          <span className={css.hint}>入群申请可能需要先绑定 Telegram 并有在用的套餐</span>
         </div>
       )}
     </Card>
