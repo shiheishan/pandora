@@ -18,6 +18,7 @@ import {
   type BulkFilter,
   type GenerationJob,
 } from './api'
+import { BulkBanForm } from './BulkBanForm'
 import { JOB_STATUS_VIEW, jobFilename, jobFinished, jobPercent } from './jobs'
 import {
   BULK_EXPIRY,
@@ -56,6 +57,7 @@ function FilterPanel({ now }: { now: Date }) {
   const plans = usePlanOptions()
   const groups = useUserGroups()
   const [mailOpen, setMailOpen] = useState(false)
+  const [banOpen, setBanOpen] = useState(false)
   const total = preview.data?.total ?? null
   const set = (next: Partial<BulkForm>) => setForm((f) => ({ ...f, ...next }))
 
@@ -64,7 +66,7 @@ function FilterPanel({ now }: { now: Date }) {
       flush
       title={
         <span className={ops.cardTitle}>
-          按条件筛选用户 <span className={`${css.small} ${ops.titleNote}`}>预览后导出或群发邮件</span>
+          按条件筛选用户 <span className={`${css.small} ${ops.titleNote}`}>预览后导出、群发邮件或批量封禁</span>
         </span>
       }
     >
@@ -93,11 +95,31 @@ function FilterPanel({ now }: { now: Date }) {
         <span className={css.muted}>位用户命中</span>
         <span className={css.spacer} />
         <ExportButton filter={filter} total={total} />
-        <Button size="sm" variant="primary" aria-expanded={mailOpen} onClick={() => setMailOpen((v) => !v)}>
+        <Button
+          size="sm"
+          variant="primary"
+          aria-expanded={mailOpen}
+          onClick={() => {
+            setMailOpen((v) => !v)
+            setBanOpen(false)
+          }}
+        >
           群发邮件
+        </Button>
+        <Button
+          size="sm"
+          variant="danger"
+          aria-expanded={banOpen}
+          onClick={() => {
+            setBanOpen((v) => !v)
+            setMailOpen(false)
+          }}
+        >
+          批量封禁
         </Button>
       </div>
       {mailOpen && <MailForm filter={filter} total={total} onSent={() => setMailOpen(false)} />}
+      {banOpen && <BulkBanForm filter={filter} total={total} onDone={() => setBanOpen(false)} />}
       <QueryView
         query={preview}
         rows={5}

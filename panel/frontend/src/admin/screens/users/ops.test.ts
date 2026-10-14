@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { banSkippedText, hasAnyFilter } from './BulkBanForm'
 import { jobFilename, jobFinished, jobPercent } from './jobs'
 import { grantReasonProblem, parseGrantGB } from './trafficPack'
 import { bulkPreviewSchema, devicesSchema, generationJobSchema, resetDoneSchema, resetLogsSchema, resetStatsSchema, trafficGrantedSchema, userGroupsSchema, type OnlineDevice } from './api'
@@ -68,6 +69,25 @@ describe('批量筛选', () => {
 
   it('导出用同名 query 参数，数字转字符串', () => {
     expect(exportQuery({ status: 'active', expires_within_days: 30 })).toEqual({ status: 'active', expires_within_days: '30' })
+  })
+
+  it('hasAnyFilter 检查筛选条件是否为空', () => {
+    expect(hasAnyFilter({})).toBe(false)
+    expect(hasAnyFilter({ status: 'active' })).toBe(true)
+    expect(hasAnyFilter({ group_id: 'g1' })).toBe(true)
+    expect(hasAnyFilter({ plan_id: 'p1' })).toBe(true)
+    expect(hasAnyFilter({ expires_within_days: 7 })).toBe(true)
+    expect(hasAnyFilter({ sub_state: 'expired' })).toBe(true)
+  })
+
+  it('banSkippedText 格式化跳过文案', () => {
+    expect(banSkippedText({})).toBe('')
+    expect(banSkippedText({ self: 0, admin: 0 })).toBe('')
+    expect(banSkippedText({ admin: 2 })).toBe('跳过：管理员 2')
+    // 顺序：self, admin, already_banned, deleted
+    expect(banSkippedText({ already_banned: 5, admin: 2, self: 1, deleted: 3 })).toBe('跳过：自己 1、管理员 2、已封禁 5、已注销 3')
+    // 未知键原样显示键名，排在已知键后面或按字符顺序
+    expect(banSkippedText({ custom_reason: 4, admin: 1 })).toBe('跳过：管理员 1、custom_reason 4')
   })
 })
 
