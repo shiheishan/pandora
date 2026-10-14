@@ -172,7 +172,6 @@ describe('write forms', () => {
   const price = (over: Partial<PriceRow>): PriceRow => ({ id: 'p', currency: 'CNY', unit_amount: 2500, billing_interval: 'month', interval_count: 1, trial_days: 0, status: 'active', user_group_id: null, valid_from: null, valid_until: null, row_version: 1, ...over })
   const plan = (over: Partial<PlanRow>): PlanRow => ({
     id: 'pl',
-    product_id: 'pr',
     row_version: 1,
     code: 'std',
     name: '标准版',
