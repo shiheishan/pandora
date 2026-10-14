@@ -105,8 +105,8 @@ func (s *Service) ingestTrafficTx(ctx context.Context, in trafficIngest, m Roste
 		if existing == in.digest {
 			return nil // 重放：已入账过，不再扣
 		}
-		plog.From(ctx).Error("同一上报编号内容不同，不入账",
-			zap.String("server_id", in.serverID.String()), zap.String("report_id", in.reportID),
+		// server_id 已由 gRPC 鉴权拦截器挂在流 ctx 的 logger 上
+		plog.From(ctx).Error("同一上报编号内容不同，不入账", zap.String("report_id", in.reportID),
 			zap.String("existing_sha256", existing), zap.String("new_sha256", in.digest))
 		return ErrTrafficReportConflict
 	}
