@@ -17,7 +17,7 @@
 ## 怎么测
 
 - 环境：同机房 VPC 里 1 台面板机和几台压测机，测试流量只走内网地址；造 1 万用户、1000 节点，并带上历史数据（流量明细、订单、审计、过期用户），空表测不出真实速度。
-- 旧成绩单（2026-10-09 那轮：2c4g，1 万用户、1000 节点）只当对照数字用，不再跑旧工具。旧的 `panel/tools/loadtest` 引用旧代码，随 P7 删除；新工具在 P7 期间准备：
+- 旧成绩单（2026-10-09 那轮：2c4g，1 万用户、1000 节点）只当对照数字用，不再跑旧工具。旧的 `panel/tools/loadtest` 已随旧代码在 P7 删除；新工具：
   - 节点：在 `pdnd/release/nodesim` 上扩到能同时开 1000 个会话；
   - 用户：k6 按固定到达率加压，阈值判过不过；
   - 观测：面板加 Prometheus 指标（HTTP、gRPC、连接池、Redis、队列），测试机装 node_exporter、postgres_exporter，打开 pg_stat_statements，需要时开 pprof。
@@ -28,12 +28,12 @@
 | 东西 | 用在哪几项 | 现状 |
 |---|---|---|
 | 测试机：同机房 VPC 里面板机 1 台（2c4g，要看延迟档时加 4c8g）、压测机 2–3 台、真节点 1 台 | 全部 | 开机前报机器清单与预计费用 |
-| 按 P7 安装脚本装出的面板（单二进制 + PG18 + Redis + nginx） | 全部 | P7 做 |
+| 按 P7 安装脚本装出的面板（单二进制 + PG18 + Redis + nginx） | 全部 | `panel/deploy/install.sh` 已改为单二进制直装，见根 README「部署」 |
 | 造数工具：1 万用户、1000 台服务器和节点、套餐与订阅，加历史数据；能把一批订阅的到期时间设到同一个整点 | 全部 | 要新写（旧的随旧代码删） |
 | 节点模拟器：同时开 1000 个 gRPC 会话，按真实节拍发心跳和上报，能统一断开重连，能记下增量多久送到 | 1、3 | 在 `pdnd/release/nodesim` 上扩 |
 | k6 脚本：订阅拉取、门户读写（下单走测试支付回调）、后台列表 | 2 | 要新写 |
-| 每请求 SQL 条数与 Redis 次数的计数（GORM 回调、go-redis 钩子），写进访问日志 | 2 | 要加进面板 |
-| Prometheus 指标（HTTP、gRPC、连接池、Redis、队列），以及 Prometheus、node_exporter、postgres_exporter、pg_stat_statements | 全部 | 指标要加进面板；pprof 已有开关 |
+| 每请求 SQL 条数与 Redis 次数的计数（GORM 回调、go-redis 钩子），写进访问日志 | 2 | 要加进面板（访问日志现在只记路由、状态码、耗时、字节数，见 `panel/internal/pkg/httpx/middleware.go`） |
+| Prometheus 指标（HTTP、gRPC、连接池、Redis、队列），以及 Prometheus、node_exporter、postgres_exporter、pg_stat_statements | 全部 | 指标要加进面板；pprof 已有开关（config 的 `http.public.pprof_addr`、`http.admin.pprof_addr`、`worker.pprof_addr`，只许回环） |
 | 假邮件服务（如 Mailpit），群发不发到真邮箱 | 3 | 压测机上装 |
 | 真节点（pdnd + sing-box）和一个能挂住大量代理连接的客户端，看名单应用时有没有断连 | 4 | 节点已有；客户端要准备 |
 
