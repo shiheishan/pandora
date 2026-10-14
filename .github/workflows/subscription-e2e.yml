@@ -76,7 +76,9 @@ jobs:
             echo "MIHOMO_SHA256=$(sha256sum "${dir}/mihomo" | cut -d' ' -f1)"
           } >> "${GITHUB_ENV}"
       - name: Subscription E2E matrix
-        run: bash .agents/skills/subscription-e2e/scripts/run.sh --online --work "${RUNNER_TEMP}/sube2e"
+        # runner 的 ld 认不得 cronet 预编译库（skipping incompatible libcronet.a），只能不带 naive 出站构建；
+        # naive 行的 sing-box 两列在矩阵里记为 -，naive 仍由本机跑 run.sh 覆盖
+        run: bash .agents/skills/subscription-e2e/scripts/run.sh --online --no-naive --work "${RUNNER_TEMP}/sube2e"
       - name: Matrix to job summary
         if: always()
         run: |
