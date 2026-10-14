@@ -13,9 +13,6 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/db"
 )
 
-// leaseSQL 写入认领/接管时的 locked_until 表达式，须与 service.LeaseDuration（5 分钟）一致。
-const leaseSQL = "now() + interval '5 minutes'"
-
 // Repo 访问 idempotency_keys 表。
 type Repo struct{ d *db.DB }
 
@@ -33,12 +30,12 @@ type Finish struct {
 	ResourceID                                                 *uuid.UUID
 }
 
-// Insert 尝试插入新认领行；返回是否插入成功。
-func (r *Repo) Insert(ctx context.Context, scope string, actorID uuid.UUID, key string, hash []byte) (model.IdempotencyKey, bool, error) {
+// Insert 尝试插入新认领行，租约到 now()+lease；返回是否插入成功。
+func (r *Repo) Insert(ctx context.Context, scope string, actorID uuid.UUID, key string, hash []byte, lease time.Duration) (model.IdempotencyKey, bool, error) {
 	conn := r.d.Conn(ctx)
 	var row model.IdempotencyKey
-	sql := "INSERT INTO idempotency_keys (scope, actor_id, idempotency_key, request_hash, locked_until) VALUES (?, ?, ?, ?, " + leaseSQL + ") ON CONFLICT (scope, actor_id, idempotency_key) DO NOTHING RETURNING *"
-	res := conn.Raw(sql, scope, actorID, key, hash).Scan(&row)
+	sql := "INSERT INTO idempotency_keys (scope, actor_id, idempotency_key, request_hash, locked_until) VALUES (?, ?, ?, ?, now() + make_interval(secs => ?)) ON CONFLICT (scope, actor_id, idempotency_key) DO NOTHING RETURNING *"
+	res := conn.Raw(sql, scope, actorID, key, hash, lease.Seconds()).Scan(&row)
 	if res.Error != nil {
 		return model.IdempotencyKey{}, false, res.Error
 	}
@@ -53,12 +50,12 @@ func (r *Repo) LockForUpdate(ctx context.Context, scope string, actorID uuid.UUI
 	return row, err
 }
 
-// Takeover 在 failed 状态下由同一请求接管执行权。
-func (r *Repo) Takeover(ctx context.Context, id uuid.UUID, generation int64) (model.IdempotencyKey, bool, error) {
+// Takeover 在 failed 状态下由同一请求接管执行权，租约到 now()+lease。
+func (r *Repo) Takeover(ctx context.Context, id uuid.UUID, generation int64, lease time.Duration) (model.IdempotencyKey, bool, error) {
 	conn := r.d.Conn(ctx)
 	var row model.IdempotencyKey
-	sql := "UPDATE idempotency_keys SET status = 'in_flight', generation = generation + 1, locked_until = " + leaseSQL + ", response_code = NULL, completed_at = NULL WHERE id = ? AND generation = ? AND status = 'failed' RETURNING *"
-	res := conn.Raw(sql, id, generation).Scan(&row)
+	sql := "UPDATE idempotency_keys SET status = 'in_flight', generation = generation + 1, locked_until = now() + make_interval(secs => ?), response_code = NULL, completed_at = NULL WHERE id = ? AND generation = ? AND status = 'failed' RETURNING *"
+	res := conn.Raw(sql, lease.Seconds(), id, generation).Scan(&row)
 	if res.Error != nil {
 		return model.IdempotencyKey{}, false, res.Error
 	}
