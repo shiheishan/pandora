@@ -60,7 +60,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 - **opus 子 Agent**（Agent 工具，显式传 `model: opus`）：只在大任务里用，每个负责一块（一个模块或一个主题），在自己的 worktree 里读代码、定细节、把编码派给 composer、核对 composer 的改动并提交。
 - **composer-2.5**：写代码的主力，用 composer-dispatch skill 派（`claude -p` 经本机 magpie，参数都在它的 launch.sh 里），不用 Agent 工具。它只有读写文件的工具，不能跑命令。
   - composer（`claude -p`）改不了 `.claude/` 下的文件（敏感文件策略），规则文件由派它的人自己改。
-  - 经 magpie 调子 Agent 只有一套接口：`ANTHROPIC_BASE_URL=http://127.0.0.1:3425`、`ANTHROPIC_API_KEY=magpie`、模型 `group/gemini`。group/gemini 是顺序分组：先 composer-2.5，调用失败换 FLUX 中转站的 gemini 3.8，再失败换 vef 中转站的 gemini 3.8，所以同一次派活实际可能由三者之一完成。核对改动不因模型降低标准；Gemini 常见小错是排序、测试夹具不合库约束、漏装配。
+  - 经 magpie 调子 Agent 只有一套接口：`ANTHROPIC_BASE_URL=http://127.0.0.1:3425`、`ANTHROPIC_API_KEY=magpie`、模型 `group/gemini`。group/gemini 的成员与分配方式由用户在 magpie 里配（10-14 起为省 Cursor 额度按会话轮流分给 composer-2.5 与 FLUX 中转站的 gemini 3.8，vef 中转站的 gemini 3.8 可开可关），所以同一次派活实际可能由任一成员完成；不要擅自改 magpie 分组。FLUX 走 /v1/messages 直通、不回报缓存数，magpie 卡片上的命中率会因此偏低，以 FLUX 后台为准。核对改动不因模型降低标准；Gemini 常见小错是排序、测试夹具不合库约束、漏装配。
 
 ### 按任务大小选路
 
