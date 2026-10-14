@@ -6,6 +6,8 @@ import (
 
 	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
 	identitysvc "github.com/aegispanel/aegis/internal/module/identity/service"
+	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
+	nodesvc "github.com/aegispanel/aegis/internal/module/node/service"
 	ordersvc "github.com/aegispanel/aegis/internal/module/order/service"
 	promosvc "github.com/aegispanel/aegis/internal/module/promo/service"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
@@ -82,6 +84,107 @@ func (a opsOrderAdapter) UserOrderStats(ctx context.Context, userIDs []uuid.UUID
 			Orders: st.Orders,
 			Paid:   st.Paid,
 		}
+	}
+	return out, nil
+}
+
+// RecentOrders 包 order 的后台订单列表（按用户筛、取前 limit 单），给 identity 用户详情的最近订单。
+func (a opsOrderAdapter) RecentOrders(ctx context.Context, userID uuid.UUID, limit int) ([]identitysvc.AdminOrderRow, error) {
+	list, err := a.s.AdminOrders(ctx, ordersvc.ListFilter{UserID: &userID, Limit: limit})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]identitysvc.AdminOrderRow, 0, len(list.Orders))
+	for _, v := range list.Orders {
+		row := identitysvc.AdminOrderRow{
+			ID:             v.ID,
+			OrderNo:        v.OrderNo,
+			UserEmail:      v.UserEmail,
+			Kind:           v.Kind,
+			Status:         v.Status,
+			Currency:       string(v.Currency),
+			Total:          v.Total,
+			Payable:        v.Payable,
+			Paid:           v.Paid,
+			BalanceApplied: v.BalanceApplied,
+			CreatedAt:      v.CreatedAt,
+			PaidAt:         v.PaidAt,
+			ProviderCode:   v.ProviderCode,
+			ProviderName:   v.ProviderName,
+			ItemCount:      v.ItemCount,
+			Manual:         v.Manual,
+		}
+		if v.PlanName != nil {
+			row.PlanName = *v.PlanName
+		}
+		if v.Interval != nil {
+			row.Interval = *v.Interval
+		}
+		if v.IntervalCount != nil {
+			row.IntervalCount = *v.IntervalCount
+		}
+		out = append(out, row)
+	}
+	return out, nil
+}
+
+// opsWalletAdapter 把 ledger 的站点币种与余额批量查询适配成 identity 后台用户列表/详情用的 OpsWallets。
+type opsWalletAdapter struct{ l *ledgersvc.Service }
+
+var _ identitysvc.OpsWallets = opsWalletAdapter{}
+
+func (a opsWalletAdapter) UserBalances(ctx context.Context, userIDs []uuid.UUID) (string, map[uuid.UUID]decimal.Decimal, error) {
+	cur, err := a.l.DefaultCurrency(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	bal, err := a.l.Balances(ctx, userIDs, cur)
+	if err != nil {
+		return "", nil, err
+	}
+	return string(cur), bal, nil
+}
+
+// groupUsageAdapter 组合 catalog、promo、node 的组引用统计，供 identity 后台用户组列表 OpsGroupUsage。
+type groupUsageAdapter struct {
+	catalog *catalogsvc.Service
+	promo   *promosvc.Service
+	node    *nodesvc.Service
+}
+
+var _ identitysvc.OpsGroupUsage = groupUsageAdapter{}
+
+func (a groupUsageAdapter) GroupUsage(ctx context.Context) (map[uuid.UUID]identitysvc.GroupUsage, error) {
+	refs, err := a.catalog.GroupRefCounts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	coupons, err := a.promo.CouponCountsByGroup(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pools, err := a.node.ExclusivePoolsByGroup(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[uuid.UUID]identitysvc.GroupUsage)
+	for id, rc := range refs {
+		u := out[id]
+		u.Plans = rc.Plans
+		u.Prices = rc.Prices
+		out[id] = u
+	}
+	for id, n := range coupons {
+		u := out[id]
+		u.Coupons = n
+		out[id] = u
+	}
+	for id, ps := range pools {
+		u := out[id]
+		for _, p := range ps {
+			u.ExclusivePools = append(u.ExclusivePools, identitysvc.PoolRef{ID: p.ID, Name: p.Name})
+		}
+		out[id] = u
 	}
 	return out, nil
 }
