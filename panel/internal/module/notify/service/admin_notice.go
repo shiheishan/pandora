@@ -262,8 +262,10 @@ func (s *Service) NotifyAdminsTicket(ctx context.Context, in AdminTicketInput) e
 	})
 }
 
-// paidAmount 是收款提醒里的金额。order 的 PaidNotice 目前不带金额，先显示「—」；PaidNotice 加上金额后只改这里。
+// paidAmount 是收款提醒里的金额：订单总额（两位小数）加币种；没有币种时（旧数据或测试夹具）显示「—」。
 func paidAmount(p ordersvc.PaidNotice) string {
-	// 等 order 的 PaidNotice 带上金额后在这里格式化
-	return "—"
+	if p.Currency == "" {
+		return "—"
+	}
+	return p.Total.StringFixed(2) + " " + p.Currency
 }

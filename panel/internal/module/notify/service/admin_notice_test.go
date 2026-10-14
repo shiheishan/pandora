@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	ordersvc "github.com/aegispanel/aegis/internal/module/order/service"
+	"github.com/shopspring/decimal"
 )
 
 func TestMaskEmail(t *testing.T) {
@@ -29,5 +30,8 @@ func TestPaidAmount(t *testing.T) {
 	got := paidAmount(ordersvc.PaidNotice{})
 	if got != "—" {
 		t.Fatalf("paidAmount = %q, want %q", got, "—")
+	}
+	if got := paidAmount(ordersvc.PaidNotice{Total: decimal.RequireFromString("29.9"), Currency: "CNY"}); got != "29.90 CNY" {
+		t.Fatalf("paidAmount = %q, want 29.90 CNY", got)
 	}
 }
