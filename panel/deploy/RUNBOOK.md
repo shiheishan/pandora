@@ -26,15 +26,10 @@
 | 备份 | `/var/backups/pandora/`（config 的 `backup.dir`，`pandora backup dir` 打印它）；异地 WebDAV 的配置 `/etc/pandora/backup-webdav.json` |
 | 面板 HTTPS | 证书 `/etc/pandora/tls/live/`，续期结论 `/var/lib/pandora/tls/status` |
 
-进库（超级用户，不受行级安全限制）：先 `sudo -i` 进 root shell，定义一个 `pg` 函数，口令从 `deploy.env` 逐键读出、只经环境变量交给 psql：
+进库（超级用户）：`sudo /opt/pandora/deploy/psql.sh`。它从 `/etc/pandora/deploy.env` 逐键读端口、库名与口令，口令只经环境变量交给 psql。为了少打字，先在 root shell 里定义：
 
 ```bash
-pg() {
-  local f=/etc/pandora/deploy.env
-  PGPASSWORD="$(awk -F= '$1=="POSTGRES_SUPER_PASSWORD"{sub(/^[^=]*=/,"");print}' "$f")" PGSSLMODE=disable \
-    psql -h 127.0.0.1 -p "$(awk -F= '$1=="POSTGRES_PORT"{print $2}' "$f")" -U postgres \
-    -d "$(awk -F= '$1=="POSTGRES_DB"{print $2}' "$f")" -X "$@"
-}
+pg() { /opt/pandora/deploy/psql.sh -X "$@"; }
 ```
 
 下文的 `pg -c "…"` 都指它。

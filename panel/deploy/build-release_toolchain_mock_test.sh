@@ -127,7 +127,7 @@ assert_release_tree() {
   local script
   for script in install.sh install-lib.sh public-base-url.sh platform.sh admin-url.sh bootstrap.sh \
     render-nginx.sh backup-postgres.sh verify-backup.sh restore-postgres.sh healthcheck.sh \
-    edge-tls.sh update-cloudflare-realip.sh pg-revive.sh; do
+    edge-tls.sh update-cloudflare-realip.sh pg-revive.sh psql.sh; do
     [ -f "$root/deploy/$script" ] || fail "missing deploy/$script ($arch)"
   done
   for script in configure-app-role.sql nginx-pandora.conf postgresql-pandora.conf logrotate-pandora \

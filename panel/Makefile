@@ -2,10 +2,12 @@ SHELL := /bin/bash
 GO ?= go
 DEPLOY := deploy
 BIN := bin
-# 开发数据基座：变量取自 deploy/.env（从 .env.example 复制后填），与 deploy/ 下的运维脚本同一份
-DEV_COMPOSE := docker compose -f dev/docker-compose.yml --env-file $(DEPLOY)/.env
-# migrate.sh / check-migrations.sh 缺省找 /root/go/bin/goose（发布包与安装器的位置）；开发机取 PATH 上的
-export GOOSE_BIN ?= $(or $(shell command -v goose 2>/dev/null),$(HOME)/go/bin/goose)
+# 本机开发环境：变量取自 dev/.env（从 dev/.env.example 复制后填）。数据基座、pandora、psql.sh 读同一份
+DEV_ENV := dev/.env
+DEV_COMPOSE := docker compose -f dev/docker-compose.yml --env-file $(DEV_ENV)
+# 先把 dev/.env 导进环境再跑 pandora（viper 按 PANDORA_ 前缀读）
+PANDORA := set -a && . ./$(DEV_ENV) && set +a && $(GO) run ./cmd/pandora
+PSQL := PANDORA_DEPLOY_ENV=$(DEV_ENV) $(DEPLOY)/psql.sh
 
 # CGO 关闭：产出静态二进制，发布包分发不必带 glibc
 export CGO_ENABLED := 0
@@ -37,32 +39,25 @@ vet: ## 静态检查
 test: ## 运行 Go 单元测试
 	$(GO) test -race -count=1 ./...
 
-.PHONY: settlement-pg18
-settlement-pg18: ## Run the disposable PostgreSQL 18 schema-40 settlement gate
-	bash $(DEPLOY)/test-settlement-00040-pg18.sh
-
-# 全新的库（没有 goose_db_version）照 install.sh 首装的做法：跳过克隆预检、按「写入者已停」迁移
-# （空库没有写入者）；已有迁移记录的库照常先在临时库演练
 .PHONY: migrate
-migrate: ## 迁移数据库（含临时库预检；全新的开发库照首装跳过预检）
-	@fresh="$$($(DEPLOY)/psql.sh -X -tAc "SELECT pg_catalog.to_regclass('public.goose_db_version') IS NULL" | tr -d '[:space:]')"; \
-	case "$$fresh" in \
-	  t) PANDORA_SKIP_PRECHECK_FRESH_DB=yes-empty-database PANDORA_STOPPED_WRITER_UPGRADE_APPROVED=yes $(DEPLOY)/migrate.sh up ;; \
-	  f) $(DEPLOY)/migrate.sh up ;; \
-	  *) echo "查不到库的迁移状态：make up 起了吗？deploy/.env 填好了吗？" >&2; exit 1 ;; \
-	esac
+migrate: ## 迁移开发库到最新
+	$(PANDORA) migrate up
 
 .PHONY: migrate-status
 migrate-status: ## 查看迁移状态
-	$(DEPLOY)/migrate.sh status
+	$(PANDORA) migrate status
 
-.PHONY: check-migrations
-check-migrations: ## 只在临时库演练迁移，不动主库
-	$(DEPLOY)/check-migrations.sh
+.PHONY: serve
+serve: ## 本机起面板（门户 :9000、后台 :9001、节点 gRPC :9443）
+	$(PANDORA) serve
+
+.PHONY: worker
+worker: ## 本机起队列与定时任务
+	$(PANDORA) worker
 
 .PHONY: invariants
 invariants: ## 运行数据层不变量测试（PRD 验收标准的可执行版本）
-	$(DEPLOY)/psql.sh -v ON_ERROR_STOP=1 < tests/invariants.sql
+	$(PSQL) -X -v ON_ERROR_STOP=1 < tests/invariants.sql
 
 .PHONY: e2e
 e2e: ## 端到端链路测试：注册→下单→支付→账本→订阅→配置
@@ -96,5 +91,5 @@ frontend-embed: ## 面板前端：npm ci + 构建，把 dist/{admin,portal} 同�
 	done
 
 .PHONY: verify
-verify: vet check-migrations invariants ## 提交前的完整校验
+verify: vet test invariants ## 提交前的完整校验（invariants 要先 make up、make migrate）
 	@echo "全部校验通过"

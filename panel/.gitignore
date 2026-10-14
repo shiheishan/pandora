@@ -1,5 +1,5 @@
 # 密钥与本地配置 —— 绝不进版本库
-deploy/.env
+dev/.env
 *.pem
 *.key
 !*.pub

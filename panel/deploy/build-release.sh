@@ -30,7 +30,7 @@ GEOIP_V4_SHA256_DEFAULT='7ae88a996f8b464b68813609fe725f687bf484f5b1480c39f0f3eeb
 release_scripts=(
   install.sh install-lib.sh public-base-url.sh platform.sh admin-url.sh bootstrap.sh
   render-nginx.sh backup-postgres.sh verify-backup.sh restore-postgres.sh healthcheck.sh
-  edge-tls.sh update-cloudflare-realip.sh pg-revive.sh
+  edge-tls.sh update-cloudflare-realip.sh pg-revive.sh psql.sh
 )
 release_data=(
   configure-app-role.sql nginx-pandora.conf postgresql-pandora.conf logrotate-pandora

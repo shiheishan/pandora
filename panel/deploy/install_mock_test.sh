@@ -58,7 +58,7 @@ deploy_real_files() {
     cp "$DEPLOY/$f" "$root/$f"
   done
   for f in backup-postgres.sh verify-backup.sh restore-postgres.sh healthcheck.sh \
-    update-cloudflare-realip.sh pg-revive.sh backup-webdav.example.json RUNBOOK.md; do
+    update-cloudflare-realip.sh pg-revive.sh psql.sh backup-webdav.example.json RUNBOOK.md; do
     printf '# p7-ops placeholder: %s\n' "$f" >"$root/$f"
   done
   printf '# logrotate placeholder\n' >"$root/logrotate-pandora"
@@ -472,7 +472,7 @@ done
 [ -f "$SB/opt/pandora/geoip/ip2region_v4.xdb" ] || fail 'geoip'
 [ -f "$SB/opt/pandora/release.env" ] || fail 'release.env'
 for f in admin-url.sh bootstrap.sh render-nginx.sh backup-postgres.sh verify-backup.sh restore-postgres.sh \
-  healthcheck.sh edge-tls.sh update-cloudflare-realip.sh pg-revive.sh; do
+  healthcheck.sh edge-tls.sh update-cloudflare-realip.sh pg-revive.sh psql.sh; do
   [ -f "$SB/opt/pandora/deploy/$f" ] || fail "host script $f"
 done
 redis_conf="$SB/etc/redis/redis.conf"

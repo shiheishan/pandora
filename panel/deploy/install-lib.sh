@@ -29,7 +29,7 @@ SERVICES=(pandora-serve pandora-worker)
 UNITS=(pandora-serve.service pandora-worker.service pandora-backup.service pandora-backup.timer
   pandora-health.service pandora-health.timer pandora-tls-renew.service pandora-tls-renew.timer)
 HOST_SCRIPTS=(admin-url.sh bootstrap.sh render-nginx.sh backup-postgres.sh verify-backup.sh restore-postgres.sh
-  healthcheck.sh edge-tls.sh update-cloudflare-realip.sh pg-revive.sh)
+  healthcheck.sh edge-tls.sh update-cloudflare-realip.sh pg-revive.sh psql.sh)
 HOST_DATA=(configure-app-role.sql nginx-pandora.conf backup-webdav.example.json RUNBOOK.md)
 DROPIN=pandora.conf
 
