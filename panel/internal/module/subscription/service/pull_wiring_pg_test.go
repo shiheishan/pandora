@@ -70,7 +70,8 @@ func TestPullInfoNodesAndPrefix(t *testing.T) {
 	if !strings.Contains(body, "剩余流量") || !strings.Contains(body, "套餐到期") {
 		t.Fatalf("开了信息节点却没有：%s", body)
 	}
-	if !strings.Contains(body, "[vless] 香港 01") {
+	// 前缀与名字之间不加空格，照 Xboard 的 getPrefixedServerName（$prefix . $name）
+	if !strings.Contains(body, `"[vless]香港 01"`) {
 		t.Fatalf("开了协议前缀却没有：%s", body)
 	}
 }

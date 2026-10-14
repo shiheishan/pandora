@@ -163,6 +163,9 @@ func (s *Service) AdminSaveTemplate(ctx context.Context, format, content string)
 	}
 	opts := s.renderOptions()
 	if err := s.tx.Do(ctx, func(ctx context.Context) error {
+		if err := s.repo.LockTemplateFormat(ctx, string(f)); err != nil {
+			return subErr(err)
+		}
 		oldTpl, hadRow, err := s.repo.Template(ctx, string(f), repo.ForNoKeyUpdate)
 		if err != nil {
 			return subErr(err)
@@ -191,6 +194,8 @@ func (s *Service) AdminSaveTemplate(ctx context.Context, format, content string)
 	}); err != nil {
 		return TemplateDetail{}, err
 	}
+	// 本进程的拉取快照立即作废，下一次拉取就用新模板（不用等 30 秒）
+	s.extras.snap.Store(nil)
 	return s.AdminTemplate(ctx, format)
 }
 
@@ -205,6 +210,9 @@ func (s *Service) AdminResetTemplate(ctx context.Context, format string) (Templa
 	}
 	opts := s.renderOptions()
 	if err := s.tx.Do(ctx, func(ctx context.Context) error {
+		if err := s.repo.LockTemplateFormat(ctx, string(f)); err != nil {
+			return subErr(err)
+		}
 		oldTpl, hadRow, err := s.repo.Template(ctx, string(f), repo.ForNoKeyUpdate)
 		if err != nil {
 			return subErr(err)
@@ -231,6 +239,8 @@ func (s *Service) AdminResetTemplate(ctx context.Context, format string) (Templa
 	}); err != nil {
 		return TemplateDetail{}, err
 	}
+	// 本进程的拉取快照立即作废，下一次拉取就用新模板（不用等 30 秒）
+	s.extras.snap.Store(nil)
 	return s.AdminTemplate(ctx, format)
 }
 

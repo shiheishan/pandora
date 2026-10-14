@@ -149,3 +149,34 @@ func TestSetSubscriptionExtrasValidation(t *testing.T) {
 		t.Fatalf("status %d code %s body %s", rec.Code, errCode(t, rec), rec.Body.String())
 	}
 }
+
+// 只读模式下订阅模板预览照旧放行（只渲染示例节点、不写库），保存与恢复缺省、附加设置仍被挡。
+func TestAdminWritesGateSubscriptionTemplates(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	fake := &fakeExtras{}
+	fake.site = service.Site{Timezone: "UTC"}
+	fake.enabled = map[string]bool{service.SwitchAdminWrites: false}
+	h := New(fake)
+	e := gin.New()
+	e.Use(httpx.Errors(), h.AdminWritesGate())
+	h.RegisterAdmin(e.Group("/admin-x/v1"), testKit(h))
+	ok := func(c *gin.Context) { httpx.OK(c, gin.H{}) }
+	e.POST("/admin-x/v1/subscription-templates/:format/preview", ok)
+	e.PUT("/admin-x/v1/subscription-templates/:format", ok)
+	e.DELETE("/admin-x/v1/subscription-templates/:format", ok)
+	hdrs := map[string]string{"X-Test-Auth": "1", "X-Test-Reauth": "1"}
+
+	if rec := do(e, http.MethodPost, "/admin-x/v1/subscription-templates/clash/preview", `{"content":""}`, hdrs); rec.Code != http.StatusOK {
+		t.Fatalf("只读模式下预览 status %d body %s", rec.Code, rec.Body.String())
+	}
+	for _, c := range []struct{ method, path, body string }{
+		{http.MethodPut, "/admin-x/v1/subscription-templates/clash", `{"content":"x"}`},
+		{http.MethodDelete, "/admin-x/v1/subscription-templates/clash", ""},
+		{http.MethodPost, "/admin-x/v1/settings/subscription", `{"info_nodes":true}`},
+	} {
+		rec := do(e, c.method, c.path, c.body, hdrs)
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("只读模式下 %s %s 该被挡：status %d", c.method, c.path, rec.Code)
+		}
+	}
+}

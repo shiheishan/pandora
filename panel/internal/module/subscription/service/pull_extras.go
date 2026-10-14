@@ -12,9 +12,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.uber.org/zap"
+
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/module/subscription/render"
 	"github.com/aegispanel/aegis/internal/module/subscription/repo"
+	plog "github.com/aegispanel/aegis/internal/pkg/log"
 )
 
 // ExtrasSettings 是订阅附加设置的读取面；*settingssvc.Service 直接满足。
@@ -29,6 +32,9 @@ type templateReader interface {
 
 // extrasTTL 是快照的有效期。
 const extrasTTL = 30 * time.Second
+
+// extrasRetry 是重读失败、沿用旧快照后再试的间隔（期间不再重读，也不重复打日志）。
+const extrasRetry = 5 * time.Second
 
 // extrasSnapshot 是某一刻的模板与附加设置。
 type extrasSnapshot struct {
@@ -52,7 +58,8 @@ type pullExtras struct {
 }
 
 // get 返回未过期的快照，过期或没有时重读（并发的重读经 mu 合成一次：拿到锁后再看一次是否已被别人刷新）。
-// src 为 nil 时附加设置取零值（全部关闭、没有订阅域名）。读失败返回错误、不缓存。
+// src 为 nil 时附加设置取零值（全部关闭、没有订阅域名）。读失败时：有旧快照就沿用它、打一条 Warn，
+// extrasRetry 之后再试；没有旧快照才返回错误（不缓存）。
 // 判断新鲜：snap 非 nil 且 !now.Before(snap.loadedAt) 且 now.Sub(snap.loadedAt) < extrasTTL（时钟回拨也重读）。
 func (p *pullExtras) get(ctx context.Context, src ExtrasSettings, tr templateReader, now time.Time) (*extrasSnapshot, error) {
 	if snap := p.snap.Load(); snap != nil && !now.Before(snap.loadedAt) && now.Sub(snap.loadedAt) < extrasTTL {
@@ -63,20 +70,18 @@ func (p *pullExtras) get(ctx context.Context, src ExtrasSettings, tr templateRea
 	if snap := p.snap.Load(); snap != nil && !now.Before(snap.loadedAt) && now.Sub(snap.loadedAt) < extrasTTL {
 		return snap, nil
 	}
-	var settings settingssvc.SubscriptionExtras
-	var err error
-	if src != nil {
-		settings, err = src.SubscriptionExtras(ctx)
-		if err != nil {
+	settings, raw, err := readExtras(ctx, src, tr)
+	if err != nil {
+		old := p.snap.Load()
+		if old == nil {
 			return nil, err
 		}
-	}
-	var raw map[string]string
-	if tr != nil {
-		raw, err = tr.TemplateContents(ctx)
-		if err != nil {
-			return nil, err
-		}
+		plog.From(ctx).Warn("订阅附加设置或模板重读失败，沿用旧快照", zap.Error(err))
+		// 旧快照的内容发布后只读，浅拷贝共用即可；把加载时刻挪到「extrasRetry 后过期」
+		stale := *old
+		stale.loadedAt = now.Add(extrasRetry - extrasTTL)
+		p.snap.Store(&stale)
+		return &stale, nil
 	}
 	templates := make(map[render.Format]string, len(raw))
 	for k, v := range raw {
@@ -91,6 +96,24 @@ func (p *pullExtras) get(ctx context.Context, src ExtrasSettings, tr templateRea
 	return snap, nil
 }
 
+// readExtras 读附加设置与全部自定义模板；src、tr 为 nil 的那一项取零值。
+func readExtras(ctx context.Context, src ExtrasSettings, tr templateReader) (settingssvc.SubscriptionExtras, map[string]string, error) {
+	var settings settingssvc.SubscriptionExtras
+	var err error
+	if src != nil {
+		if settings, err = src.SubscriptionExtras(ctx); err != nil {
+			return settingssvc.SubscriptionExtras{}, nil, err
+		}
+	}
+	var raw map[string]string
+	if tr != nil {
+		if raw, err = tr.TemplateContents(ctx); err != nil {
+			return settingssvc.SubscriptionExtras{}, nil, err
+		}
+	}
+	return settings, raw, nil
+}
+
 // liveInput 是组一次正常拉取的渲染请求要的材料。
 type liveInput struct {
 	Format       render.Format
@@ -99,9 +122,8 @@ type liveInput struct {
 	UA           string
 	Options      render.Options
 	Extras       *extrasSnapshot
-	Types        string     // 查询参数 types 原文
-	Filter       string     // 查询参数 filter 原文
-	NextReset    *time.Time // 本期流量配额的周期末；只在开了信息节点时查
+	Types        string // 查询参数 types 原文
+	Filter       string // 查询参数 filter 原文
 	Loc          *time.Location
 	SubscribeURL string
 	Now          time.Time
@@ -123,7 +145,8 @@ func liveRequest(in liveInput) render.Request {
 	}
 	var infoLines []string
 	if in.Extras != nil && in.Extras.settings.InfoNodes {
-		infoLines = render.InfoLines(st, in.NextReset, in.Now)
+		// 「距下次重置」用认证查询里顺带取的本期配额行周期末
+		infoLines = render.InfoLines(st, in.Row.TrafficPeriodEnd, in.Now)
 	}
 	prefix := false
 	if in.Extras != nil {

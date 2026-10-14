@@ -92,6 +92,9 @@ const infoMethod = "aes-128-gcm"
 // maxKeywordRunes 是 filter 参数的长度上限，超过就不按名字过滤（照 Xboard）。
 const maxKeywordRunes = 20
 
+// maxTypesRunes 是 types 参数的长度上限，超过就不按协议过滤（Xboard 没有上限；全部协议名连写也远不到 200 字）。
+const maxTypesRunes = 200
+
 // typeAliases 把 types 参数里的写法映射到规范化的协议名（Node.Type）。
 var typeAliases = map[string]string{
 	"shadowsocks": "shadowsocks", "ss": "shadowsocks",
@@ -125,10 +128,10 @@ func splitParam(raw string) []string {
 }
 
 // ParseTypes 解析 types 参数（如 "vless|ss,hysteria"）成规范化的协议名，去重、保持出现顺序。
-// 空、"all" 或一个都认不出时返回 nil（不过滤，与 Xboard 一致）。
+// 空、"all" 或一个都认不出时返回 nil（不过滤，与 Xboard 一致）；超过 maxTypesRunes 也返回 nil。
 func ParseTypes(raw string) []string {
 	raw = strings.TrimSpace(raw)
-	if raw == "" || strings.EqualFold(raw, "all") {
+	if raw == "" || strings.EqualFold(raw, "all") || utf8.RuneCountInString(raw) > maxTypesRunes {
 		return nil
 	}
 	var out []string

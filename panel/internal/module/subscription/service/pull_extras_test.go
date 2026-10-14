@@ -112,6 +112,23 @@ func TestPullExtrasGet(t *testing.T) {
 	if failSettings.calls != 2 {
 		t.Fatalf("失败后下次应重读 settings=%d", failSettings.calls)
 	}
+
+	// 已有快照时重读失败：沿用旧快照、不报错，extrasRetry 内不再重读，之后再试
+	failSettings.val = settingssvc.SubscriptionExtras{InfoNodes: true}
+	failSettings.err = errors.New("读设置失败")
+	t1 := t0.Add(80 * time.Second)
+	stale, err := pe3.get(ctx, failSettings, tr, t1)
+	if err != nil || stale == nil || stale.settings.InfoNodes {
+		t.Fatalf("重读失败应沿用旧快照: snap=%+v err=%v", stale, err)
+	}
+	if _, err := pe3.get(ctx, failSettings, tr, t1.Add(extrasRetry-time.Second)); err != nil || failSettings.calls != 3 {
+		t.Fatalf("extrasRetry 内不应重读 calls=%d err=%v", failSettings.calls, err)
+	}
+	failSettings.err = nil
+	fresh, err := pe3.get(ctx, failSettings, tr, t1.Add(extrasRetry))
+	if err != nil || failSettings.calls != 4 || !fresh.settings.InfoNodes {
+		t.Fatalf("extrasRetry 后应重读并用上新值 calls=%d err=%v", failSettings.calls, err)
+	}
 }
 
 func TestPullExtrasGetConcurrent(t *testing.T) {
@@ -141,29 +158,32 @@ func TestLiveRequest(t *testing.T) {
 	limit := int64(10 << 30)
 	consumed := int64(1 << 30)
 	row := repo.PullRow{
-		ProxyUUID:       uuid.MustParse("00000000-0000-4000-8000-000000000001"),
-		PeriodEnd:       periodEnd,
-		TrafficLimit:    &limit,
-		TrafficConsumed: &consumed,
-		PackRemaining:   1 << 20,
+		ProxyUUID:        uuid.MustParse("00000000-0000-4000-8000-000000000001"),
+		PeriodEnd:        periodEnd,
+		TrafficLimit:     &limit,
+		TrafficConsumed:  &consumed,
+		PackRemaining:    1 << 20,
+		TrafficPeriodEnd: &nextReset,
 	}
 	snapOn := &extrasSnapshot{
 		settings:  settingssvc.SubscriptionExtras{InfoNodes: true, ProtocolPrefix: true},
 		templates: map[render.Format]string{render.FormatClash: "custom"},
 	}
 	req := liveRequest(liveInput{
-		Format:    render.FormatClash,
-		Nodes:     []render.Node{{Name: "n1", Type: "shadowsocks", Host: "h", Port: 1, Config: map[string]any{"method": "aes-128-gcm"}}},
-		Row:       row,
-		Extras:    snapOn,
-		Types:     "vless|ss",
-		Filter:    "香港",
-		NextReset: &nextReset,
-		Loc:       time.UTC,
-		Now:       now,
+		Format: render.FormatClash,
+		Nodes:  []render.Node{{Name: "n1", Type: "shadowsocks", Host: "h", Port: 1, Config: map[string]any{"method": "aes-128-gcm"}}},
+		Row:    row,
+		Extras: snapOn,
+		Types:  "vless|ss",
+		Filter: "香港",
+		Loc:    time.UTC,
+		Now:    now,
 	})
 	if len(req.InfoLines) == 0 || !stringsHasPrefix(req.InfoLines[0], "剩余流量") {
 		t.Fatalf("信息节点应有剩余流量行: %v", req.InfoLines)
+	}
+	if len(req.InfoLines) != 3 || req.InfoLines[1] != "距离下次重置剩余：7 天" {
+		t.Fatalf("距下次重置应取 Row.TrafficPeriodEnd: %v", req.InfoLines)
 	}
 	if req.Template != "custom" {
 		t.Fatalf("Clash 应取快照模板 %q", req.Template)

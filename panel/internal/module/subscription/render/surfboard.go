@@ -88,8 +88,9 @@ func nodeToSurfboard(n Node, uuid string) (string, string) {
 
 	switch n.Type {
 	case "shadowsocks":
+		// 节点端的 Shadowsocks 同一端口 TCP、UDP 都听（与 clash.go 的 udp: true 同一口径）
 		method := ssMethod(n.Config)
-		line := name + " = ss, " + n.Host + ", " + port + ", encrypt-method=" + method + ", password=" + uuid + ", udp-relay=" + strconv.FormatBool(ssNodeUDP(n))
+		line := name + " = ss, " + n.Host + ", " + port + ", encrypt-method=" + method + ", password=" + uuid + ", udp-relay=true"
 		return line, ""
 
 	case "vmess", "trojan":

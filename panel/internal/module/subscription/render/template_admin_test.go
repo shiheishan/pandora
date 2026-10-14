@@ -300,6 +300,11 @@ func TestValidateTemplate(t *testing.T) {
 	// sing-box 缺 "{{outbounds}}"
 	assertErr(t, FormatSingbox, "{}", "缺少占位 \"{{outbounds}}\"")
 
+	// 必需占位只能出现一次（注释里多写一处也算）
+	assertErr(t, FormatClash, defaultClashTemplate+"# {{proxies}}\n", "{{proxies}} 只能出现一次")
+	assertErr(t, FormatLoon, DefaultTemplate(FormatLoon, Options{})+"# {{proxies}}\n", "{{proxies}} 只能出现一次")
+	assertErr(t, FormatSingbox, `{"outbounds": ["{{outbounds}}", "{{outbounds}}"]}`, "\"{{outbounds}}\" 只能出现一次")
+
 	// Surfboard 缺 [Proxy]
 	assertErr(t, FormatSurfboard, "[Proxy Group]\n{{proxies}}\n{{proxy_groups}}\n", "缺少 [Proxy] 段")
 

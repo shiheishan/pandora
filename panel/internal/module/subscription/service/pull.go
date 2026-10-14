@@ -172,17 +172,10 @@ func (s *Service) Pull(ctx context.Context, req PullRequest) (PullResult, error)
 	if err != nil {
 		return fail(err)
 	}
-	// 信息节点要「距下次重置」：只在开了开关时多查一次本期配额行的周期末
-	var nextReset *time.Time
-	if ex.settings.InfoNodes {
-		if nextReset, err = s.repo.TrafficWindowEnd(ctx, subID, now); err != nil {
-			return fail(subErr(err))
-		}
-	}
 	// 按 UA 选客户端内核认得的写法。nodes 可能来自 node 模块的进程内缓存、被别的请求共享：只读不改（前处理只改副本）
 	body, contentType, count := render.RenderRequest(liveRequest(liveInput{
 		Format: format, Nodes: nodes, Row: row, UA: ua, Options: d.Render, Extras: ex,
-		Types: req.Types, Filter: req.Filter, NextReset: nextReset, Loc: siteLocation(site.Timezone),
+		Types: req.Types, Filter: req.Filter, Loc: siteLocation(site.Timezone),
 		SubscribeURL: subscribeURLFor(ex.settings.LinkBaseURLs, d.PublicBaseURL, req.Prefix, token),
 		Now:          now,
 	}))

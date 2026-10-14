@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -139,9 +140,14 @@ func TestAdminSaveResetPreviewTemplatePG(t *testing.T) {
 	if _, ok := m["clash"]; ok {
 		t.Fatalf("恢复缺省后 TemplateContents 仍有 clash")
 	}
+	// 保存后本进程的拉取快照立即作废
+	e.svc.extras.snap.Store(&extrasSnapshot{loadedAt: e.svc.clock()})
 	_, err = e.svc.AdminSaveTemplate(ctx, "clash", custom)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if e.svc.extras.snap.Load() != nil {
+		t.Fatal("保存模板后拉取快照应作废")
 	}
 	m, err = e.svc.repo.TemplateContents(ctx)
 	if err != nil {
@@ -152,14 +158,28 @@ func TestAdminSaveResetPreviewTemplatePG(t *testing.T) {
 	}
 }
 
-func TestTrafficWindowEndPG(t *testing.T) {
+// 认证查询顺带取本期流量配额行的周期末（信息节点的「距下次重置」），与库里那一行一致。
+func TestPullRowTrafficPeriodEndPG(t *testing.T) {
 	e := newEnv(t)
 	ctx := e.txCtx()
 	user := newUser(t, e, ctx)
 	planID, versionID := newPlan(t, e, ctx, quotaSpec{MetricTraffic, PeriodCycle, i64(10 * gib)})
 	sub := provision(t, e, ctx, user, planID, versionID, "")
-	_, err := e.svc.repo.TrafficWindowEnd(ctx, sub.ID, e.svc.clock())
-	if err != nil {
-		t.Fatalf("TrafficWindowEnd: %v", err)
+	var hash []byte
+	if err := e.row(ctx, `SELECT token_hash FROM subscription_credentials WHERE subscription_id = ? AND status = 'active'`,
+		sub.ID).Scan(&hash); err != nil {
+		t.Fatal(err)
+	}
+	var want time.Time
+	if err := e.row(ctx, `SELECT period_end FROM quota_balances WHERE subscription_id = ? AND metric = ? AND period = ?`,
+		sub.ID, MetricTraffic, PeriodCycle).Scan(&want); err != nil {
+		t.Fatal(err)
+	}
+	row, found, err := e.svc.repo.PullByTokenHash(ctx, hash, e.svc.clock())
+	if err != nil || !found {
+		t.Fatalf("按令牌哈希读: found=%v err=%v", found, err)
+	}
+	if row.TrafficPeriodEnd == nil || !row.TrafficPeriodEnd.Equal(want) {
+		t.Fatalf("TrafficPeriodEnd = %v，库里本期配额行周期末 %v", row.TrafficPeriodEnd, want)
 	}
 }

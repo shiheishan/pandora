@@ -12,7 +12,7 @@ func TestRenderLoonShadowsocksLine(t *testing.T) {
 		Nodes:     []Node{n},
 		ProxyUUID: fixtureUUID,
 	})
-	want := "ss-aes128 = Shadowsocks,node.example.com,8388,aes-128-gcm,\"" + fixtureUUID + "\",udp=false"
+	want := "ss-aes128 = Shadowsocks,node.example.com,8388,aes-128-gcm,\"" + fixtureUUID + "\",udp=true"
 	if strings.TrimSpace(string(body)) != want {
 		t.Fatalf("loon ss line\n  want: %s\n  got:  %s", want, strings.TrimSpace(string(body)))
 	}
@@ -174,11 +174,11 @@ func TestCustomTemplateLoonSurfboard(t *testing.T) {
 func TestSsNodeUDPInOutput(t *testing.T) {
 	n := nodeByName(t, "ss-aes128")
 	loon, _, _ := RenderRequest(Request{Format: FormatLoon, Nodes: []Node{n}, ProxyUUID: fixtureUUID})
-	if !strings.Contains(string(loon), "udp=false") {
+	if !strings.Contains(string(loon), "udp=true") {
 		t.Fatalf("loon: %s", string(loon))
 	}
 	sb, _, _ := RenderRequest(Request{Format: FormatSurfboard, Nodes: []Node{n}, ProxyUUID: fixtureUUID})
-	if !strings.Contains(string(sb), "udp-relay=false") {
+	if !strings.Contains(string(sb), "udp-relay=true") {
 		t.Fatalf("surfboard: %s", string(sb))
 	}
 }

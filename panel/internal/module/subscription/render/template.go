@@ -171,35 +171,34 @@ func ValidateTemplate(f Format, content string) error {
 		return false
 	}
 
+	// 必需占位只能出现一次：多出来的一处（哪怕写在注释里）也会被替换，
+	// 块级占位会把节点行挂进别的列表，sing-box 的出站会重复 tag
+	once := func(tok string) *TemplateError {
+		switch n := strings.Count(content, tok); {
+		case n == 0:
+			return &TemplateError{Reason: "缺少占位 " + tok}
+		case n > 1:
+			return &TemplateError{Reason: tok + " 只能出现一次"}
+		}
+		return nil
+	}
+	var block []string
 	switch f {
-	case FormatClash, FormatClashPremium, FormatStash:
-		for _, tok := range []string{phProxies, phProxyGroups} {
-			if !strings.Contains(content, tok) {
-				return &TemplateError{Reason: "缺少占位 " + tok}
-			}
-			if !hasExactLine(tok) {
-				return &TemplateError{Reason: tok + " 要单独占一行、顶格写"}
-			}
-		}
-	case FormatSurfboard:
-		for _, tok := range []string{phProxies, phProxyGroups} {
-			if !strings.Contains(content, tok) {
-				return &TemplateError{Reason: "缺少占位 " + tok}
-			}
-			if !hasExactLine(tok) {
-				return &TemplateError{Reason: tok + " 要单独占一行、顶格写"}
-			}
-		}
+	case FormatClash, FormatClashPremium, FormatStash, FormatSurfboard:
+		block = []string{phProxies, phProxyGroups}
 	case FormatLoon:
-		if !strings.Contains(content, phProxies) {
-			return &TemplateError{Reason: "缺少占位 " + phProxies}
-		}
-		if !hasExactLine(phProxies) {
-			return &TemplateError{Reason: phProxies + " 要单独占一行、顶格写"}
-		}
+		block = []string{phProxies}
 	case FormatSingbox:
-		if !strings.Contains(content, phOutbounds) {
-			return &TemplateError{Reason: "缺少占位 " + phOutbounds}
+		if te := once(phOutbounds); te != nil {
+			return te
+		}
+	}
+	for _, tok := range block {
+		if te := once(tok); te != nil {
+			return te
+		}
+		if !hasExactLine(tok) {
+			return &TemplateError{Reason: tok + " 要单独占一行、顶格写"}
 		}
 	}
 

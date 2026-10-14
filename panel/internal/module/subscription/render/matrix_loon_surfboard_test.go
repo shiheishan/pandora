@@ -10,12 +10,12 @@ func loonSurfboardMatrix() map[string]loonSurfboardRow {
 	pub := fixtureRealityPub
 	return map[string]loonSurfboardRow{
 		"ss-aes128": {
-			loon:      has("= Shadowsocks,node.example.com,", "aes-128-gcm", "udp=false"),
-			surfboard: has("= ss, node.example.com, 8388", "encrypt-method=aes-128-gcm", "udp-relay=false"),
+			loon:      has("= Shadowsocks,node.example.com,", "aes-128-gcm", "udp=true"),
+			surfboard: has("= ss, node.example.com, 8388", "encrypt-method=aes-128-gcm", "udp-relay=true"),
 		},
 		"ss-chacha": {
-			loon:      has("chacha20-ietf-poly1305", "udp=false"),
-			surfboard: has("encrypt-method=chacha20-ietf-poly1305", "udp-relay=false"),
+			loon:      has("chacha20-ietf-poly1305", "udp=true"),
+			surfboard: has("encrypt-method=chacha20-ietf-poly1305", "udp-relay=true"),
 		},
 		"hy2-obfs": {
 			loon:      has("= Hysteria2,", "salamander-password=obfs-pass-1", "sni=sni.example.com", "skip-cert-verify=true", "udp=true"),

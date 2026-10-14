@@ -51,6 +51,16 @@ func (r *Repo) Template(ctx context.Context, format string, lock Lock) (model.Su
 	return tpl, true, nil
 }
 
+// LockTemplateFormat 在当前事务里对一种格式加咨询锁，串行化同一格式的保存与恢复缺省
+// （库里还没有行时 FOR NO KEY UPDATE 锁不到东西，并发的首次保存会把审计里的「改前」都记成内置模板）。
+func (r *Repo) LockTemplateFormat(ctx context.Context, format string) error {
+	err := r.d.Conn(ctx).Exec(
+		"SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+		"subscription_templates:"+format,
+	).Error
+	return mapErr(err)
+}
+
 // UpsertTemplate 写入或覆盖一种格式的自定义模板。
 func (r *Repo) UpsertTemplate(ctx context.Context, format, content string, at time.Time) error {
 	err := r.d.Conn(ctx).Exec(
