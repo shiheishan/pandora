@@ -40,11 +40,15 @@ func (c *vmessGRPCClientConn) Read(p []byte) (int, error) {
 		if length > 16<<20 {
 			return 0, fmt.Errorf("grpc response message exceeds limit")
 		}
-		c.pending = make([]byte, length)
-		if _, err := io.ReadFull(c.reader, c.pending); err != nil {
-			c.pending = nil
+		message := make([]byte, length)
+		if _, err := io.ReadFull(c.reader, message); err != nil {
 			return 0, err
 		}
+		payload, err := decodeGunHunk(message)
+		if err != nil {
+			return 0, err
+		}
+		c.pending = payload
 	}
 	n := copy(p, c.pending)
 	c.pending = c.pending[n:]
@@ -52,9 +56,10 @@ func (c *vmessGRPCClientConn) Read(p []byte) (int, error) {
 }
 
 func (c *vmessGRPCClientConn) Write(p []byte) (int, error) {
-	frame := make([]byte, 5+len(p))
-	binary.BigEndian.PutUint32(frame[1:], uint32(len(p)))
-	copy(frame[5:], p)
+	message := encodeGunHunk(p)
+	frame := make([]byte, 5+len(message))
+	binary.BigEndian.PutUint32(frame[1:], uint32(len(message)))
+	copy(frame[5:], message)
 	if _, err := c.writer.Write(frame); err != nil {
 		return 0, err
 	}

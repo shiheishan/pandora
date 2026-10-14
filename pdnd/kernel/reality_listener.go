@@ -2,6 +2,7 @@ package kernel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -16,7 +17,8 @@ import (
 type RealityDialContext func(context.Context, string, string) (net.Conn, error)
 
 // RealityListener owns the socket, handshake worker and authenticated
-// connection queue. Invalid clients are closed by the handoff worker and
+// connection queue. Clients rejected before authentication are relayed to
+// the configured dest (upstream REALITY fallback) by the handoff worker and
 // never reach a protocol adapter.
 type RealityListener struct {
 	inner   net.Listener
@@ -148,7 +150,8 @@ func ListenReality(network, address string, spec RealityServerConfig, dial Reali
 		return nil, fmt.Errorf("reality 监听 %s/%s: %w", network, address, err)
 	}
 	if dial == nil {
-		dialer := &net.Dialer{}
+		// dest 拨不通时别让握手 worker 挂在系统级 TCP 超时上。
+		dialer := &net.Dialer{Timeout: inboundHandshakeTimeout}
 		dial = dialer.DialContext
 	}
 	config := &reality.Config{
@@ -224,10 +227,23 @@ func (l *RealityListener) startHandshake(raw net.Conn) {
 			// 前者让「客户端连不上」变成无从查起，后者在被扫描时
 			// 每条连接都要占满 15 秒 deadline 才释放。
 			// Close 关掉握手中的连接不算握手失败，不上报。
+			closing := false
 			select {
 			case <-l.done:
+				closing = true
 			default:
 				l.reportHandshakeError(remote, err)
+			}
+			// 认证判定之前被拒（探测、错 SNI、明文 HTTP、错公钥）：与上游
+			// XTLS/REALITY 一样把连接整个转给 dest，探测方看到的就是 dest
+			// 本身。raw 仍登记在 handshaking 里，Close 照样关得到。
+			var rejected *reality.RejectedError
+			if errors.As(err, &rejected) && rejected.Target != nil {
+				if !closing && acquireProbeFallbackSlot() {
+					relayProbeFallback(raw, nil, rejected.Target)
+					releaseProbeFallbackSlot()
+				}
+				_ = rejected.Target.Close()
 			}
 			_ = raw.Close()
 			return

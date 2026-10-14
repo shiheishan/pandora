@@ -4,7 +4,7 @@ import { href } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, Checkbox, Input, QueryView, Segmented, Select, Switch, useToast } from '../../../ui'
 import { REGISTRATION_LABEL, registrationBody, smtpBody, smtpFormFrom, smtpStatus, validateSmtp, type SmtpForm, type Tone } from './logic'
-import { useCan, useFailure, useInvalidateSystem, useMailSettings } from './queries'
+import { useFailure, useInvalidateSystem, useMailSettings } from './queries'
 import { ENCRYPTIONS, mailTested, okResponse, REGISTRATION_MODES, type MailSettings, type RegistrationMode } from './schemas'
 import { ChannelCard } from './ChannelCard'
 import css from './system.module.css'
@@ -29,7 +29,6 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 
 function SmtpCard({ saved }: { saved: MailSettings }) {
   const api = useApi()
-  const can = useCan()
   const toast = useToast()
   const fail = useFailure()
   const invalidate = useInvalidateSystem()
@@ -38,7 +37,6 @@ function SmtpCard({ saved }: { saved: MailSettings }) {
   const [to, setTo] = useState('')
   const form = draft ?? smtpFormFrom(saved)
   const dirty = draft !== null && !same(draft, smtpFormFrom(saved))
-  const writable = can('platform.settings.write')
   const edit = (patch: Partial<SmtpForm>) => setDraft({ ...form, ...patch })
 
   const save = useMutation({
@@ -61,7 +59,7 @@ function SmtpCard({ saved }: { saved: MailSettings }) {
     if (Object.keys(errs).length === 0) save.mutate(form)
   }
 
-  const disabled = !writable || save.isPending
+  const disabled = save.isPending
   return (
     <ChannelCard
       title="邮件 · SMTP"
@@ -69,30 +67,26 @@ function SmtpCard({ saved }: { saved: MailSettings }) {
       foot={
         <>
           <Input size="sm" aria-label="测试收件地址" fieldClassName={css.grow} placeholder="测试收件地址" value={to} error={errors.to} onChange={(e) => setTo(e.target.value)} />
-          {can('ops.notification.write') && (
-            <Button size="sm" disabled={dirty || !to.trim()} busy={test.isPending} title={dirty ? '测试用的是已保存的配置，请先保存' : undefined} onClick={() => test.mutate(to.trim())}>
-              发送测试
-            </Button>
-          )}
-          {writable && (
-            <Button size="sm" variant="primary" disabled={!dirty} busy={save.isPending} onClick={submit}>
-              保存
-            </Button>
-          )}
+          <Button size="sm" disabled={dirty || !to.trim()} busy={test.isPending} title={dirty ? '测试用的是已保存的配置，请先保存' : undefined} onClick={() => test.mutate(to.trim())}>
+            发送测试
+          </Button>
+          <Button size="sm" variant="primary" disabled={!dirty} busy={save.isPending} onClick={submit}>
+            保存
+          </Button>
         </>
       }
     >
-      <Input label="服务器" mono value={form.host} placeholder="smtp.example.com" disabled={disabled} onChange={(e) => edit({ host: e.target.value })} />
+      <Input label="服务器" mono value={form.host} error={errors.smtp_host} placeholder="smtp.example.com" disabled={disabled} onChange={(e) => edit({ host: e.target.value })} />
       <div className={css.pair}>
         <Input label="端口" mono inputMode="numeric" value={form.port} error={errors.smtp_port} disabled={disabled} onChange={(e) => edit({ port: e.target.value })} />
         <Select label="加密" value={form.encryption} disabled={disabled} options={ENCRYPTIONS.map((v) => ({ value: v, label: v === 'ssl' ? 'SSL' : v === 'tls' ? 'STARTTLS' : '不加密' }))} onChange={(e) => edit({ encryption: e.target.value as SmtpForm['encryption'] })} />
       </div>
-      <Input label="用户名" mono value={form.username} disabled={disabled} onChange={(e) => edit({ username: e.target.value })} />
+      <Input label="用户名" mono value={form.username} error={errors.smtp_username} disabled={disabled} onChange={(e) => edit({ username: e.target.value })} />
       <div>
-        <Input label="密码" type="password" autoComplete="new-password" value={form.password} placeholder={saved.has_password ? '已设置，留空不修改' : '未设置'} disabled={disabled || form.clearPassword} onChange={(e) => edit({ password: e.target.value })} />
-        {saved.has_password && writable && <Checkbox className={css.inlineCheck} label="清除已存密码" checked={form.clearPassword} disabled={disabled} onChange={(e) => edit({ clearPassword: e.target.checked, password: '' })} />}
+        <Input label="密码" type="password" autoComplete="new-password" value={form.password} error={errors.smtp_password} placeholder={saved.has_password ? '已设置，留空不修改' : '未设置'} disabled={disabled || form.clearPassword} onChange={(e) => edit({ password: e.target.value })} />
+        {saved.has_password && <Checkbox className={css.inlineCheck} label="清除已存密码" checked={form.clearPassword} disabled={disabled} onChange={(e) => edit({ clearPassword: e.target.checked, password: '' })} />}
       </div>
-      <Input label="发件人" fieldClassName={css.span2} mono value={form.sender} error={errors.from_address} placeholder="Pandora <noreply@example.com>" disabled={disabled} onChange={(e) => edit({ sender: e.target.value })} />
+      <Input label="发件人" fieldClassName={css.span2} mono value={form.sender} error={errors.from_address ?? errors.from_name} placeholder="Pandora <noreply@example.com>" disabled={disabled} onChange={(e) => edit({ sender: e.target.value })} />
       {dirty && <div className={`${css.span2} ${css.faint}`}>有未保存的修改；发送测试用的是已保存的配置，保存后再测。</div>}
     </ChannelCard>
   )
@@ -100,7 +94,6 @@ function SmtpCard({ saved }: { saved: MailSettings }) {
 
 function RegistrationCard({ saved }: { saved: MailSettings }) {
   const api = useApi()
-  const can = useCan()
   const toast = useToast()
   const fail = useFailure()
   const invalidate = useInvalidateSystem()
@@ -108,7 +101,6 @@ function RegistrationCard({ saved }: { saved: MailSettings }) {
   const [error, setError] = useState('')
   const value = draft ?? { mode: saved.registration_mode, verify: saved.email_verification }
   const dirty = draft !== null && (draft.mode !== saved.registration_mode || draft.verify !== saved.email_verification)
-  const writable = can('platform.settings.write')
 
   const save = useMutation({
     mutationFn: (v: { mode: RegistrationMode; verify: boolean }) => api.post('v1/settings/mail', okResponse, { body: registrationBody(saved, v.mode, v.verify) }),
@@ -133,20 +125,18 @@ function RegistrationCard({ saved }: { saved: MailSettings }) {
       foot={
         <>
           <span className={`${css.grow} ${css.faint}`}>与 SMTP 设置同一份配置，保存时带上已保存的 SMTP 字段</span>
-          {writable && (
-            <Button size="sm" variant="primary" disabled={!dirty} busy={save.isPending} onClick={submit}>
-              保存
-            </Button>
-          )}
+          <Button size="sm" variant="primary" disabled={!dirty} busy={save.isPending} onClick={submit}>
+            保存
+          </Button>
         </>
       }
     >
       <div className={css.span2}>
         <div className={css.label}>注册模式</div>
-        <Segmented label="注册模式" value={value.mode} options={REGISTRATION_MODES.map((m) => ({ value: m, label: REGISTRATION_LABEL[m] }))} onChange={(mode) => writable && setDraft({ ...value, mode })} />
+        <Segmented label="注册模式" value={value.mode} options={REGISTRATION_MODES.map((m) => ({ value: m, label: REGISTRATION_LABEL[m] }))} onChange={(mode) => setDraft({ ...value, mode })} />
       </div>
       <div className={css.span2}>
-        <Switch label="注册时验证邮箱（发送验证码）" checked={value.verify} disabled={!writable || save.isPending} onChange={(e) => setDraft({ ...value, verify: e.target.checked })} />
+        <Switch label="注册时验证邮箱（发送验证码）" checked={value.verify} disabled={save.isPending} onChange={(e) => setDraft({ ...value, verify: e.target.checked })} />
         {error && (
           <div className={css.error} role="alert">
             {error}

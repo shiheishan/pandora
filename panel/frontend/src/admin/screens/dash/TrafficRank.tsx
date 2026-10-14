@@ -3,26 +3,22 @@ import type { UseQueryResult } from '@tanstack/react-query'
 import { useState } from 'react'
 import { href } from '../../../core/router'
 import { Empty, Segmented } from '../../../ui'
-import { canRead, modulePath, type Permissions } from '../../modules'
+import { modulePath } from '../../modules'
 import { useUserTraffic, type NodeTraffic, type UserTraffic } from './api'
 import css from './Dash.module.css'
 import { trafficNotes, trafficRows } from './model'
-import { CardError, isForbidden, PanelSkeleton } from './parts'
+import { CardError, PanelSkeleton } from './parts'
 
 type Tab = 'nodes' | 'users'
 
-export function TrafficRank({ perms, nodes, canNodes, canUsers }: { perms: Permissions; nodes: UseQueryResult<NodeTraffic>; canNodes: boolean; canUsers: boolean }) {
-  const nodesVisible = canNodes && !(nodes.isError && isForbidden(nodes.error))
-  const [picked, setPicked] = useState<Tab>(nodesVisible ? 'nodes' : 'users')
-  const tab: Tab = picked === 'nodes' && !nodesVisible ? 'users' : picked === 'users' && !canUsers ? 'nodes' : picked
-  const users = useUserTraffic(canUsers && tab === 'users', nodes.data?.snapshot_at)
-  const usersVisible = canUsers && !(users.isError && isForbidden(users.error))
-  if (!nodesVisible && !usersVisible) return null
+const OPTIONS = [
+  { value: 'nodes' as const, label: '节点' },
+  { value: 'users' as const, label: '用户' },
+]
 
-  const options = [
-    ...(nodesVisible ? [{ value: 'nodes' as const, label: '节点' }] : []),
-    ...(usersVisible ? [{ value: 'users' as const, label: '用户' }] : []),
-  ]
+export function TrafficRank({ nodes }: { nodes: UseQueryResult<NodeTraffic> }) {
+  const [tab, setTab] = useState<Tab>('nodes')
+  const users = useUserTraffic(tab === 'users', nodes.data?.snapshot_at)
   const q = tab === 'nodes' ? nodes : users
   const more = tab === 'nodes' ? { module: 'nodes' as const, tab: 'nodes', label: '查看全部节点' } : { module: 'users' as const, tab: 'list', label: '查看全部用户' }
 
@@ -34,28 +30,25 @@ export function TrafficRank({ perms, nodes, canNodes, canUsers }: { perms: Permi
         </h2>
         <span className={css.hint}>近 24 小时</span>
         <div className={css.spacer} />
-        {options.length > 1 && <Segmented size="sm" label="排行对象" options={options} value={tab} onChange={setPicked} />}
+        <Segmented size="sm" label="排行对象" options={OPTIONS} value={tab} onChange={setTab} />
       </div>
       {q.isError && !q.data ? (
         <CardError what="流量排行" error={q.error} onRetry={() => void q.refetch()} />
       ) : !q.data ? (
         <PanelSkeleton rows={5} height={22} />
       ) : (
-        <RankBody data={q.data} perms={perms} />
+        <RankBody data={q.data} />
       )}
-      {canRead(more.module, more.tab, perms) && (
-        <a className={css.more} href={href(modulePath(more.module, more.tab, perms))}>
-          {more.label}
-        </a>
-      )}
+      <a className={css.more} href={href(modulePath(more.module, more.tab))}>
+        {more.label}
+      </a>
     </section>
   )
 }
 
-function RankBody({ data, perms }: { data: NodeTraffic | UserTraffic; perms: Permissions }) {
+function RankBody({ data }: { data: NodeTraffic | UserTraffic }) {
   const rows = trafficRows(data)
   const { notes, allUnattributed } = trafficNotes(data)
-  const userLinks = canRead('users', 'list', perms)
   return (
     <>
       {rows.length === 0 ? (
@@ -81,7 +74,7 @@ function RankBody({ data, perms }: { data: NodeTraffic | UserTraffic; perms: Per
             )
             return (
               <li key={r.key}>
-                {r.userId && userLinks ? (
+                {r.userId ? (
                   <a className={css.rankRow} href={href(`/users/list/${encodeURIComponent(r.userId)}`)} title={r.tip}>
                     {body}
                   </a>

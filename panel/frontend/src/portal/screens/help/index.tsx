@@ -1,30 +1,37 @@
 import { useEffect, useState } from 'react'
 import { isApiError } from '../../../core/api'
-import { href, navigate } from '../../../core/router'
+import { href, navigate, useHashLocation } from '../../../core/router'
 import { Button, Card, Empty, Input, QueryView, useToast } from '../../../ui'
+import { parseGuideDevice, thisDevice, UPDATE_GUIDE_PARAM } from '../common/app-update'
 import { formatDate } from '../common/traffic'
 import type { PortalScreenProps } from '../index'
 import { useHelpFeedback, useHelpPage, useHelpPages, type ContentPage } from './api'
 import css from './Help.module.css'
 import { articleBlocks, helpGroups, SEARCH_MAX } from './model'
+import { UpdateGuide, UpdateGuideToc } from './UpdateGuide'
 
 const SEARCH_DEBOUNCE_MS = 300
 
 export default function Help({ rest }: PortalScreenProps) {
   const routeSlug = rest[0] ?? null
+  // 内置的「在 App 里点一次更新」：#/help?update=<设备>（走查询参数，不占后台文章 slug 的路径）
+  const { query } = useHashLocation()
+  const guideRaw = routeSlug === null ? query.get(UPDATE_GUIDE_PARAM) : null
+  const guide = guideRaw === null ? null : parseGuideDevice(guideRaw, thisDevice())
   const [input, setInput] = useState('')
   const q = useDebounced(input.trim(), SEARCH_DEBOUNCE_MS)
   const pages = useHelpPages(q)
   const groups = pages.data ? helpGroups(pages.data) : []
   // 宽屏没指定文章时右列显示目录第一篇；搜索时即第一条命中
-  const slug = routeSlug ?? groups[0]?.items[0]?.slug ?? null
+  const slug = guide ? null : (routeSlug ?? groups[0]?.items[0]?.slug ?? null)
   // 每篇每个版本只反馈一次，切文章再回来仍记得
   const [voted, setVoted] = useState<ReadonlySet<string>>(() => new Set())
 
   return (
-    <div className={css.layout} data-view={routeSlug ? 'article' : 'list'}>
+    <div className={css.layout} data-view={routeSlug || guide ? 'article' : 'list'}>
       <div className={css.listPane}>
         <Input type="search" aria-label="搜索帮助文章" placeholder="搜索帮助文章" maxLength={SEARCH_MAX} value={input} onChange={(e) => setInput(e.target.value)} />
+        <UpdateGuideToc current={guide} />
         <Card flush className={css.toc}>
           <QueryView
             query={pages}
@@ -60,7 +67,7 @@ export default function Help({ rest }: PortalScreenProps) {
         </Card>
       </div>
       <div className={css.articlePane}>
-        {slug && <Article slug={slug} voted={voted} onVoted={(k) => setVoted((s) => new Set(s).add(k))} />}
+        {guide ? <UpdateGuide device={guide} /> : slug && <Article slug={slug} voted={voted} onVoted={(k) => setVoted((s) => new Set(s).add(k))} />}
       </div>
     </div>
   )

@@ -1,4 +1,5 @@
 import { appendFileSync, readFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import { ZodError, type ZodType } from 'zod'
 import { beforeAll, describe, it } from 'vitest'
@@ -29,8 +30,6 @@ export interface SeedState {
   pool_id: string
   server_id: string
   node_id: string
-  node_type: string
-  node_runtime_token: string
   plan_id: string
   price_id: string
   order_id: string
@@ -44,6 +43,7 @@ export interface SeedState {
   coupon_order_id: string
   pack_id: string
   hook_code: string
+  provider_code: string
 }
 
 export const state = {
@@ -51,11 +51,10 @@ export const state = {
   dir,
   admin: env.SMOKE_ADMIN_BASE!,
   portal: env.SMOKE_PUBLIC_BASE!,
-  node: env.SMOKE_NODE_BASE!,
   adminEmail: env.SMOKE_ADMIN_EMAIL!,
   adminPassword: env.SMOKE_ADMIN_PASSWORD!,
-  /** 后台令牌的签名密钥：写路径冒烟用它把真实会话的 rat 往回拨，模拟 15 分钟重认证窗口已过 */
-  adminJwtSecret: readEnvFile(join(dir, 'gateway.env')).AEGIS_JWT_ADMIN_SECRET!,
+  redis: { container: env.SMOKE_REDIS_CONTAINER!, password: env.SMOKE_REDIS_PASSWORD! },
+  nodesimStatus: join(dir, 'nodesim', 'status.json'),
   seed: JSON.parse(readFileSync(join(dir, 'seed.json'), 'utf8')) as SeedState,
 }
 
@@ -75,7 +74,7 @@ function memoryTokens(): TokenStore {
   }
 }
 
-// 后台 IP 限流每分钟 240 次写死在代码里：后台请求之间留 300ms（与 seed.ts 同一节奏）
+// 后台请求之间留 300ms，与 seed.ts 同一节奏，免得一口气打满按路由的限流
 let lastAdminCall = 0
 async function paced(base: string): Promise<void> {
   if (base !== state.admin) return
@@ -102,6 +101,23 @@ const tokens: Record<App, string> = {
 }
 export type App = 'admin' | 'portal'
 const baseOf = (app: App): string => (app === 'admin' ? state.admin : state.portal)
+
+/** 另登录一次，返回属于新会话的 access token；写路径要单独改一个会话时用，免得动到读表共用的会话 */
+export async function freshLogin(app: App): Promise<string> {
+  if (app === 'admin') return login(state.admin, state.adminEmail, state.adminPassword)
+  return login(state.portal, state.seed.portal.email, state.seed.portal.password)
+}
+
+/** 口令经环境变量 REDISCLI_AUTH 进 docker exec，不进命令行参数 */
+export function redisCli(args: string[]): string {
+  const r = spawnSync(
+    'docker',
+    ['exec', '-e', 'REDISCLI_AUTH', state.redis.container, 'redis-cli', '--no-auth-warning', ...args],
+    { encoding: 'utf8', env: { ...process.env, REDISCLI_AUTH: state.redis.password } },
+  )
+  if (r.status !== 0) throw new Error(r.stderr?.trim() || `redis-cli 退出 ${r.status}`)
+  return (r.stdout ?? '').trim()
+}
 
 /** 最近一次响应的头，按 URL 记（写路径冒烟要看 Idempotency-Replayed） */
 export const lastHeaders = new Map<string, Headers>()

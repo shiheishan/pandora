@@ -41,10 +41,17 @@ id_ed25519*
 
 # Claude Code 的本地会话与配置目录。里面是每次对话的完整记录，
 # 十几 MB 起，而且带着这台机器的本地路径——既不属于源码，
-# 也不该在别人 clone 下来时出现。只有项目规则 rules/ 与 skills/ 入库。
+# 也不该在别人 clone 下来时出现。只有项目规则 rules/ 与 skills 入口入库。
+# skills 是指向 .agents/skills 的链接（~/ai/skills/bin/skills 的项目布局），
+# 不带结尾斜杠才能匹配到链接本身。
 /.claude/*
 !/.claude/rules/
-!/.claude/skills/
+!/.claude/skills
+
+# 共享 skill 是 skills link 建的链接，指向维护者本机 ~/ai/skills/repos 的原件，
+# 别人 clone 下来是坏链接，不入库。新 link 一个共享 skill 就在这里加一行。
+/.agents/skills/composer-dispatch
+/.agents/skills/skill-creator
 
 # 本地运维目录（按需创建，目前不存在）：一次性运维脚本、安装验证日志、
 # gitleaks 私有规则。会放服务器 IP、源站 IP、后台隐藏前缀、监控域名，

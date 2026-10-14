@@ -10,20 +10,57 @@ import { consumeQuickLogin } from './mock/quick-login.ts'
 import { findRoute, type AnonContext, type Json, type MockApp, type MockContext, type MockRaw, type MockResult, type MockUser } from './mock/types.ts'
 
 // ---------------------------------------------------------------------------
-// 形状以 panel/internal/api 的 Go 处理器为准。这里只放外壳接口与共用设施：
+// 形状以 panel/internal/module/*/handler 的 Go 处理器为准。这里只放外壳接口与共用设施：
 // 会话与 rat、reauth 窗口、幂等表、错误信封；模块接口写在 mock/<入口>/<模块>.ts，
 // 一个模块一个文件、各自维护。先外壳、后模块，未匹配的 v1/ 一律 404 信封。
 // POST /__mock/expire-reauth 让所有会话的 rat 立即过期，不必干等 15 分钟。
 // ---------------------------------------------------------------------------
 export const MOCK_ACCOUNTS = {
   admin: { email: 'admin@pandora.dev', password: 'pandora-dev-pass' },
-  /** 只读管理员：用来实测侧栏、⌘K 与页头标签按权限隐藏 */
-  viewer: { email: 'viewer@pandora.dev', password: 'pandora-dev-pass' },
   portal: { email: 'user@pandora.dev', password: 'pandora-dev-pass' },
 } as const
 
 const REAUTH_WINDOW_MS = 15 * 60 * 1000
+/** access 令牌有效期（秒），与架构 8.3 一致 */
+const ACCESS_EXPIRES_IN = 15 * 60
 const TTL_SECONDS = 2592000
+
+const RT_COOKIE: Record<MockApp, string> = { portal: 'pandora_rt', admin: 'pandora_admin_rt' }
+
+interface RefreshRecord {
+  userId: string
+  app: MockApp
+}
+
+function parseCookieHeader(header: string | undefined): Record<string, string> {
+  const out: Record<string, string> = {}
+  if (!header) return out
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=')
+    if (eq < 0) continue
+    const name = part.slice(0, eq).trim()
+    const value = part.slice(eq + 1).trim()
+    if (name) out[name] = value
+  }
+  return out
+}
+
+function setRefreshCookie(res: ServerResponse, app: MockApp, value: string, maxAge?: number) {
+  const name = RT_COOKIE[app]
+  const attrs = ['HttpOnly', 'SameSite=Strict', 'Path=/v1/auth']
+  if (maxAge === 0) attrs.push('Max-Age=0')
+  else attrs.push(`Max-Age=${maxAge ?? TTL_SECONDS}`)
+  res.setHeader('Set-Cookie', `${name}=${value}; ${attrs.join('; ')}`)
+}
+
+function clearRefreshCookie(res: ServerResponse, app: MockApp) {
+  setRefreshCookie(res, app, '', 0)
+}
+
+// 后台与门户的登录响应同形：后台不分权限，不带权限码
+function tokenPayload(token: string, user: MockUser) {
+  return { access_token: token, token_type: 'Bearer' as const, expires_in: ACCESS_EXPIRES_IN, user_id: user.userId }
+}
 
 interface Session {
   userId: string
@@ -92,19 +129,32 @@ function parseObject(text: string): Json | null {
 const str = (v: unknown) => (typeof v === 'string' ? v : '')
 
 function initialUsers(app: MockApp): MockUser[] {
-  if (app === 'portal') return [{ ...MOCK_ACCOUNTS.portal, userId: randomUUID(), displayName: '张伟', permissions: [], roles: [] }]
-  return [
-    { ...MOCK_ACCOUNTS.admin, userId: randomUUID(), displayName: '林舟', permissions: ADMIN_PERMISSIONS, roles: [{ code: 'ops', name: '运维' }] },
-    { ...MOCK_ACCOUNTS.viewer, userId: randomUUID(), displayName: '只读', permissions: VIEWER_PERMISSIONS, roles: [{ code: 'viewer', name: '只读' }] },
-  ]
+  if (app === 'portal') return [{ ...MOCK_ACCOUNTS.portal, userId: randomUUID(), displayName: '张伟' }]
+  return [{ ...MOCK_ACCOUNTS.admin, userId: randomUUID(), displayName: '林舟' }]
 }
 
 export function mockApi(app: MockApp): Plugin {
   const users = new Map<string, MockUser>(initialUsers(app).map((u) => [u.email, u]))
   const sessions = new Map<string, Session>()
   const registrations = new Map<string, { email: string; code: string }>()
+  const resets = new Map<string, { code: string; attempts: number }>()
   const replays = new Map<string, Replay>()
+  const refreshTokens = new Map<string, RefreshRecord>()
   const modules = app === 'admin' ? ADMIN_MODULES : PORTAL_MODULES
+
+  const mintRefresh = (userId: string) => {
+    const value = randomUUID()
+    refreshTokens.set(value, { userId, app })
+    return value
+  }
+  const revokeRefreshValue = (value: string) => {
+    refreshTokens.delete(value)
+  }
+  const bindRefresh = (res: ServerResponse, userId: string) => {
+    const value = mintRefresh(userId)
+    setRefreshCookie(res, app, value)
+    return value
+  }
   // 后台假后端启动即按内存初值重写共享的生效主题：上次会话激活过的主题不会残留到门户
   if (app === 'admin') shareAppearance()
 
@@ -147,12 +197,26 @@ export function mockApi(app: MockApp): Plugin {
       const user = users.get(str(body.email).trim().toLowerCase())
       if (!user || user.password !== str(body.password)) return fail(res, 401, 'unauthorized', '邮箱或密码不正确')
       const token = issue(user.userId, req)
-      return app === 'admin'
-        ? send(res, 200, { access_token: token, token_type: 'Bearer', expires_in: TTL_SECONDS, user_id: user.userId, permissions: user.permissions })
-        : send(res, 200, { access_token: token, refresh_token: randomUUID(), token_type: 'Bearer', expires_in: TTL_SECONDS, user_id: user.userId })
+      bindRefresh(res, user.userId)
+      return send(res, 200, tokenPayload(token, user))
+    }
+    if (route === 'POST /v1/auth/refresh') {
+      const cookies = parseCookieHeader(req.headers.cookie)
+      const rt = cookies[RT_COOKIE[app]]
+      const rec = rt ? refreshTokens.get(rt) : undefined
+      if (!rt || !rec || rec.app !== app) return fail(res, 401, 'unauthorized', '需要登录')
+      const refreshedUser = userById(rec.userId)
+      if (!refreshedUser) {
+        revokeRefreshValue(rt)
+        return fail(res, 401, 'unauthorized', '需要登录')
+      }
+      revokeRefreshValue(rt)
+      const access = issue(refreshedUser.userId, req)
+      bindRefresh(res, refreshedUser.userId)
+      return send(res, 200, { access_token: access, token_type: 'Bearer', expires_in: ACCESS_EXPIRES_IN })
     }
     if (app === 'portal' && route === 'GET /v1/site-config') {
-      return send(res, 200, { registration_mode: 'invite_only', email_verification: true })
+      return send(res, 200, { registration_mode: 'invite_only', email_verification: true, password_reset: true })
     }
     if (app === 'portal' && route === 'GET /v1/appearance') {
       // 生效主题取后台假后端经 appearance-share 写下的那份（后台激活、门户刷新即生效）；没开过后台时用内置默认
@@ -187,15 +251,54 @@ export function mockApi(app: MockApp): Plugin {
       if (password.length < 8) return fail(res, 422, 'validation_failed', '请求参数校验未通过', { password: '密码至少需要 8 个字符' })
       if (!/[a-z]/i.test(password) || !/\d/.test(password)) return fail(res, 422, 'validation_failed', '请求参数校验未通过', { password: '密码必须同时包含字母和数字' })
       registrations.delete(str(body.registration_token))
-      const user: MockUser = { email: reg.email, password, userId: randomUUID(), displayName: null, permissions: [], roles: [] }
+      const user: MockUser = { email: reg.email, password, userId: randomUUID(), displayName: null }
       users.set(reg.email, user)
       return send(res, 201, { user_id: user.userId, email: user.email })
+    }
+    // 找回密码（identity.StartPasswordReset / CompletePasswordReset）：邮箱存不存在回同一个响应；
+    // 演示验证码固定 123456，只在邮箱存在时出现在 dev_code 里（与 Go 开发模式一致）
+    if (app === 'portal' && route === 'POST /v1/auth/password-reset/start') {
+      const body = await base.body()
+      if (!body) return fail(res, 400, 'bad_request', '请求体不是合法的 JSON')
+      const email = str(body.email).trim().toLowerCase()
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return fail(res, 422, 'validation_failed', '请求参数校验未通过', { email: '邮箱格式不正确' })
+      const known = users.has(email)
+      if (known) resets.set(email, { code: '123456', attempts: 0 })
+      return send(res, 200, {
+        expires_at: new Date(Date.now() + 600_000).toISOString(),
+        message: '若该邮箱已注册，验证码已发送',
+        ...(known ? { dev_code: '123456' } : {}),
+      })
+    }
+    if (app === 'portal' && route === 'POST /v1/auth/password-reset/complete') {
+      const body = await base.body()
+      if (!body) return fail(res, 400, 'bad_request', '请求体不是合法的 JSON')
+      const email = str(body.email).trim().toLowerCase()
+      const invalid = () => fail(res, 422, 'validation_failed', '请求参数校验未通过', { code: '验证码错误或已失效，请重新获取' })
+      if (!/^\d{6}$/.test(str(body.code))) return invalid()
+      const password = str(body.new_password)
+      if (password.length < 8) return fail(res, 422, 'validation_failed', '请求参数校验未通过', { password: '密码至少需要 8 个字符' })
+      if (!/[a-z]/i.test(password) || !/\d/.test(password)) return fail(res, 422, 'validation_failed', '请求参数校验未通过', { password: '密码必须同时包含字母和数字' })
+      const pending = resets.get(email)
+      const user = users.get(email)
+      if (!pending || !user || pending.attempts >= 5) return invalid()
+      if (pending.code !== str(body.code)) {
+        pending.attempts++
+        return invalid()
+      }
+      resets.delete(email)
+      user.password = password
+      // 用户定：重置后吊销该账号的全部登录
+      for (const [token, s] of sessions) if (s.userId === user.userId) sessions.delete(token)
+      return send(res, 200, { ok: true })
     }
     if (app === 'portal' && route === 'POST /v1/auth/quick-login') {
       const body = await base.body()
       const userId = consumeQuickLogin(str(body?.token))
       if (!userId) return fail(res, 401, 'unauthorized', '快捷登录链接无效或已过期')
-      return send(res, 200, { access_token: issue(userId, req), refresh_token: randomUUID(), expires_in: TTL_SECONDS })
+      const token = issue(userId, req)
+      bindRefresh(res, userId)
+      return send(res, 200, { access_token: token, token_type: 'Bearer', expires_in: ACCESS_EXPIRES_IN })
     }
     if (route === 'POST /__mock/expire-reauth') {
       sessions.forEach((s) => (s.rat = 0))
@@ -213,29 +316,28 @@ export function mockApi(app: MockApp): Plugin {
     )
     if (anon) return anon.handler({ ...base, params: anon.params })
 
+    // 登出不要求 access 有效（照 Go：凭 cookie 吊销会话；带着有效 Bearer 也一并作废；两样都没有也回 204）
+    if (route === 'POST /v1/auth/logout') {
+      const current = bearer(req)
+      if (current) sessions.delete(current.token)
+      const cookies = parseCookieHeader(req.headers.cookie)
+      const rt = cookies[RT_COOKIE[app]]
+      if (rt) revokeRefreshValue(rt)
+      clearRefreshCookie(res, app)
+      return send(res, 204)
+    }
+
     // --- 以下需登录 ----------------------------------------------------------
     const auth = bearer(req)
     const user = auth ? userById(auth.session.userId) : undefined
     if (!auth || !user) return fail(res, 401, 'unauthorized', '需要登录')
     const reauthed = Date.now() - auth.session.rat < REAUTH_WINDOW_MS
 
-    if (route === 'POST /v1/auth/logout') {
-      sessions.delete(auth.token)
-      return send(res, 204)
-    }
     if (route === 'GET /v1/events') return stream(req, res)
 
     if (app === 'admin') {
       if (route === 'GET /v1/me') {
-        return send(res, 200, {
-          user_id: user.userId,
-          kind: 'user',
-          permissions: user.permissions,
-          reauthed,
-          email: user.email,
-          display_name: user.displayName,
-          roles: user.roles,
-        })
+        return send(res, 200, { user_id: user.userId, email: user.email, display_name: user.displayName, reauthed })
       }
       if (route === 'POST /v1/auth/reauth') {
         const body = await base.body()
@@ -265,7 +367,6 @@ export function mockApi(app: MockApp): Plugin {
         display_name: user.displayName,
         status: 'active',
         created_at: '2026-05-04T11:40:00Z',
-        permissions: null,
       })
     }
 
@@ -286,11 +387,6 @@ export function mockApi(app: MockApp): Plugin {
           .filter(([token, s]) => s.userId === user.userId && token !== auth.token)
           .map(([token, s]) => ({ token, created: s.created, userAgent: s.userAgent })),
       revokeSession: (token) => sessions.get(token)?.userId === user.userId && sessions.delete(token),
-      requirePermission: (code) => {
-        if (user.permissions.includes(code)) return true
-        fail(res, 404, 'not_found', '资源不存在或无权访问')
-        return false
-      },
       requireReauth: () => {
         if (reauthed) return true
         fail(res, 403, 'reauth_required', '此操作需要重新验证身份')
@@ -357,63 +453,11 @@ export function mockApi(app: MockApp): Plugin {
           if (!res.headersSent) fail(res, 500, 'internal_error', '服务暂时不可用，请稍后重试')
         })
       })
-      const accounts = app === 'admin' ? [MOCK_ACCOUNTS.admin, MOCK_ACCOUNTS.viewer] : [MOCK_ACCOUNTS.portal]
-      server.config.logger.info(`  mock api (${app}): ${accounts.map((a) => a.email).join(' / ')}，口令 ${MOCK_ACCOUNTS.admin.password}`)
+      const account = app === 'admin' ? MOCK_ACCOUNTS.admin : MOCK_ACCOUNTS.portal
+      server.config.logger.info(`  mock api (${app}): ${account.email}，口令 ${account.password}`)
     },
   }
 }
-
-// ---------------------------------------------------------------------------
-// 管理员拿契约第 3 节出现过的全部权限码；只读账号只有几项读权限，
-// 看得到仪表盘、工单、用户（除流量重置）、套餐、订单、节点、邮件模板，
-// 看不到营销、内容与外观、安全与运维，以及各模块里缺权限的标签。
-// ---------------------------------------------------------------------------
-const ADMIN_PERMISSIONS: readonly string[] = [
-  'billing.adjustment.write',
-  'billing.ledger.read',
-  'billing.order.read',
-  'billing.order.write',
-  'billing.payment.read',
-  'billing.provider.write',
-  'catalog.publish',
-  'catalog.read',
-  'catalog.write',
-  'iam.user.read',
-  'iam.user.write',
-  'marketing.commission.read',
-  'marketing.commission.write',
-  'marketing.coupon.read',
-  'marketing.coupon.write',
-  'marketing.giftcard.read',
-  'marketing.giftcard.write',
-  'marketing.withdrawal.approve',
-  'metering.read',
-  'metering.reset.read',
-  'metering.reset.write',
-  'node.config.publish',
-  'node.identity.revoke',
-  'node.lifecycle',
-  'node.provision',
-  'node.read',
-  'node.write',
-  'ops.announcement.write',
-  'ops.content.write',
-  'ops.dashboard.read',
-  'ops.export',
-  'ops.notification.read',
-  'ops.notification.write',
-  'ops.ticket.read',
-  'ops.ticket.write',
-  'platform.appearance.read',
-  'platform.appearance.write',
-  'platform.plugin.read',
-  'platform.plugin.write',
-  'platform.settings.write',
-  'security.audit.read',
-  'security.risk.review',
-]
-
-const VIEWER_PERMISSIONS: readonly string[] = ['ops.ticket.read', 'iam.user.read', 'catalog.read', 'billing.order.read', 'node.read', 'ops.notification.read']
 
 const ADMIN_TOPICS: ReadonlyArray<readonly [string, string]> = [
   ['orders.changed', 'orders'],

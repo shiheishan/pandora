@@ -8,9 +8,6 @@ export interface MockUser {
   password: string
   userId: string
   displayName: string | null
-  /** admin 账号的权限码（GET v1/me 的 permissions）；portal 账号为空数组 */
-  permissions: readonly string[]
-  roles: ReadonlyArray<{ code: string; name: string }>
 }
 
 /** 非 JSON 响应体（CSV 导出等） */
@@ -49,8 +46,8 @@ export interface AnonContext {
 }
 
 /**
- * 需登录接口的上下文。admin 写接口按后端中间件顺序调用三个守卫：
- *   if (!ctx.requirePermission('x.y.write') || !ctx.requireReauth()) return
+ * 需登录接口的上下文。后台不分权限（登录了就是管理员），admin 写接口按后端中间件顺序调用两个守卫：
+ *   if (!ctx.requireReauth()) return
  *   await ctx.idempotent('scope', () => ({ status: 200, body }))
  * 守卫返回 false 时已经写好了响应，处理器直接 return。
  */
@@ -62,8 +59,6 @@ export interface MockContext extends AnonContext {
   otherSessions(): ReadonlyArray<{ token: string; created: number; userAgent: string }>
   /** 吊销本账号的一个外壳会话，令牌立即失效（之后请求 401）；不是本账号的令牌返回 false */
   revokeSession(token: string): boolean
-  /** RequirePermission：缺权限回 404 not_found（与后端 NotFoundOrForbidden 一致）并返回 false */
-  requirePermission(code: string): boolean
   /** RequireRecentReauth：超出窗口回 403 reauth_required 并返回 false；不消耗幂等键 */
   requireReauth(): boolean
   /**

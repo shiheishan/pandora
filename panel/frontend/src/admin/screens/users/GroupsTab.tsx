@@ -4,7 +4,7 @@ import { formatCount } from '../../../core/format'
 import { href } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, Card, ConfirmModal, Empty, Input, QueryView, Table, useToast, type TableColumn } from '../../../ui'
-import { useCan, useFailure } from '../../actions'
+import { useFailure } from '../../actions'
 import { groupSavedSchema, okSchema, useInvalidateUsers, useUserGroups, type UserGroup } from './api'
 import { EXCLUSIVE_NONE_HINT, exclusivePoolsLabel, groupBlocker, groupRefs } from './model'
 import ops from './Ops.module.css'
@@ -18,8 +18,6 @@ interface Draft {
 
 export function GroupsTab() {
   const groups = useUserGroups()
-  const can = useCan()
-  const canWrite = can('iam.user.write')
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
@@ -95,7 +93,7 @@ export function GroupsTab() {
     {
       key: 'ops',
       header: '',
-      width: canWrite ? '190px' : '90px',
+      width: '190px',
       align: 'right',
       render: (g) => {
         if (draft?.id === g.id)
@@ -115,16 +113,14 @@ export function GroupsTab() {
             <a className={css.link} href={href('/users/list', { g: g.id })}>
               查看成员
             </a>
-            {canWrite && (
-              <>
-                <Button size="xs" variant="ghost" onClick={() => edit(g)}>
-                  编辑
-                </Button>
-                <Button size="xs" variant="ghost" className={blocker ? undefined : css.dangerText} disabled={blocker !== null} title={blocker ?? undefined} onClick={() => setDeleting(g)}>
-                  删除
-                </Button>
-              </>
-            )}
+            <>
+              <Button size="xs" variant="ghost" onClick={() => edit(g)}>
+                编辑
+              </Button>
+              <Button size="xs" variant="ghost" className={blocker ? undefined : css.dangerText} disabled={blocker !== null} title={blocker ?? undefined} onClick={() => setDeleting(g)}>
+                删除
+              </Button>
+            </>
           </span>
         )
       },
@@ -132,18 +128,18 @@ export function GroupsTab() {
   ]
 
   return (
-    <div className={canWrite ? ops.split : undefined}>
+    <div className={ops.split}>
       <div className={ops.plainTable}>
         <QueryView
           query={groups}
           rows={4}
           isEmpty={(d) => d.length === 0}
-          empty={<Empty bare title="还没有用户组" description={canWrite ? '新注册用户默认不属于任何组；在右侧建一个，再到用户详情里分配。' : '新注册用户默认不属于任何组。'} />}
+          empty={<Empty bare title="还没有用户组" description="新注册用户默认不属于任何组；在右侧建一个，再到用户详情里分配。" />}
         >
           {(d) => <Table label="用户组" columns={columns} rows={d} rowKey={(g) => g.id} />}
         </QueryView>
       </div>
-      {canWrite && <CreateGroup onDone={() => void invalidate(true)} />}
+      <CreateGroup onDone={() => void invalidate(true)} />
       <ConfirmModal
         open={deleting !== null}
         title={`删除用户组「${deleting?.name ?? ''}」？`}
@@ -158,7 +154,7 @@ export function GroupsTab() {
 }
 
 // ---------------------------------------------------------------------------
-// 新建：POST v1/user-groups（iam.user.write，无幂等）。不填标识时后端由名称生成，纯中文名得 group-<8 位十六进制>
+// 新建：POST v1/user-groups（无幂等）。不填标识时后端由名称生成，纯中文名得 group-<8 位十六进制>
 // ---------------------------------------------------------------------------
 function CreateGroup({ onDone }: { onDone: () => void }) {
   const api = useApi()

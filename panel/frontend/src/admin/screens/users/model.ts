@@ -165,6 +165,14 @@ export function isLiveSub(status: SubStatus): boolean {
   return LIVE.has(status)
 }
 
+/**
+ * 未分配的流量包会怎样生效（billing provision 的口径）：开通后只有一份在用时自动加到那一份；
+ * 已经有在用的订阅时不会自动挂，要用户在门户里选一份加上（后台没有挪流量包的入口）
+ */
+export function unattachedNext(liveCount: number): string {
+  return liveCount === 0 ? '用户开通第一份订阅时会自动加到那一份上。' : '用户在门户里选一份在用的订阅加上去后才生效。'
+}
+
 export function currentSubscription<T extends Pick<SubscriptionRow, 'status' | 'current_period_end'>>(subs: readonly T[]): T | undefined {
   const end = (s: T) => (s.current_period_end ? new Date(s.current_period_end).getTime() : -Infinity)
   return [...subs].sort((a, b) => Number(isLiveSub(b.status)) - Number(isLiveSub(a.status)) || end(b) - end(a))[0]
@@ -284,7 +292,7 @@ export interface GenerateForm {
   reason: string
 }
 
-/** 与 adminops.GenerateUsers 同一套规则（后端先 trim、转小写再校验），返回按字段的问题 */
+/** 与 adminops.normalizeGenerateUsers 同一套规则（后端先 trim、转小写再校验），返回按字段的问题 */
 export function generateProblems(f: GenerateForm): Record<string, string> {
   const out: Record<string, string> = {}
   const n = Number(f.count.trim())
@@ -295,11 +303,6 @@ export function generateProblems(f: GenerateForm): Record<string, string> {
   const r = [...f.reason.trim()].length
   if (r < 5 || r > 500) out.reason = '请写清生成原因，5 到 500 个字'
   return out
-}
-
-/** 生成结果的本地 CSV（契约：「下载」不再请求服务器） */
-export function generatedRows(users: ReadonlyArray<{ email: string; password: string }>): string[][] {
-  return [['邮箱', '初始密码'], ...users.map((u) => [u.email, u.password])]
 }
 
 // ===========================================================================
@@ -349,14 +352,122 @@ export function noteProblem(note: string): string | null {
   return null
 }
 
-/** 手动重置作用的订阅：与 billing.ManualResetTraffic 同口径——只看 status=active，到期最晚的一条（不含试用） */
-export function resettableSub<T extends Pick<SubscriptionRow, 'status' | 'current_period_end'>>(subs: readonly T[]): T | undefined {
-  const end = (s: T) => (s.current_period_end ? new Date(s.current_period_end).getTime() : -Infinity)
-  return subs.filter((s) => s.status === 'active').sort((a, b) => end(b) - end(a))[0]
+/**
+ * 能手动重置本期流量的订阅（按份，购买模型统一）：只看 status=active，不含试用。
+ * 不再替管理员挑「到期最晚的一条」：行上点哪份重置哪份，从邮箱或历史页进来再自己选
+ */
+export function resettableSubs<T extends Pick<SubscriptionRow, 'status'>>(subs: readonly T[]): T[] {
+  return subs.filter((s) => s.status === 'active')
+}
+
+/** 本期用量比例；不限量的那份按 0 算（清零对它没有意义） */
+function usedRatio(s: Pick<SubscriptionRow, 'quotas'>): number {
+  const q = trafficQuota(s.quotas)
+  return q && q.limit !== null && q.limit > 0 ? q.consumed / q.limit : 0
+}
+
+/**
+ * 多份可重置时预选哪份：本期用得最多的（purchase.Options 的流量重置规则，同比例取到期更早的）。
+ * 只有一份时就是它；一份都没有返回 undefined
+ */
+export function defaultResetSub<T extends Pick<SubscriptionRow, 'status' | 'quotas' | 'current_period_end'>>(subs: readonly T[]): T | undefined {
+  const end = (s: T) => (s.current_period_end ? new Date(s.current_period_end).getTime() : Infinity)
+  const candidates = resettableSubs(subs).sort((a, b) => end(a) - end(b))
+  return candidates.reduce<T | undefined>((best, s) => (best === undefined || usedRatio(s) > usedRatio(best) ? s : best), undefined)
+}
+
+/**
+ * 多份可加流量时预选哪份：剩余最少的（套餐本期剩余加这一份的流量包余量，purchase.Options 的加流量规则）；
+ * 不限量的那份最大，排在最后
+ */
+export function defaultTrafficSub<T extends Pick<SubscriptionRow, 'quotas' | 'pack_remaining_bytes'>>(subs: readonly T[]): T | undefined {
+  const left = (s: T) => {
+    const q = trafficQuota(s.quotas)
+    return q && q.limit !== null ? Math.max(0, q.limit - q.consumed) + s.pack_remaining_bytes : Infinity
+  }
+  return subs.reduce<T | undefined>((best, s) => (best === undefined || left(s) < left(best) ? s : best), undefined)
+}
+
+/** 这一份怎么称呼：有备注名写「备注名」套餐名，没有就只写套餐名 */
+export function subName(s: Pick<SubscriptionRow, 'label' | 'plan_name'>): string {
+  return s.label ? `「${s.label}」${s.plan_name}` : s.plan_name
+}
+
+/** 下拉与对话框里一份订阅的完整名字：称呼 · 版本 · 状态 */
+export function subLabel(s: Pick<SubscriptionRow, 'label' | 'plan_name' | 'plan_version' | 'status'>): string {
+  return `${subName(s)} · v${s.plan_version} · ${SUB_STATUS_VIEW[s.status].label}`
+}
+
+/** 「给这份开单」有意义的订阅：还在用的，或过期不满 30 天还能续的（其余落点规则里不出现） */
+export function isOrderTarget<T extends Pick<SubscriptionRow, 'status' | 'current_period_end'>>(s: T, now: Date): boolean {
+  return isLiveSub(s.status) || extendableSubscriptions([s], now).length > 0
+}
+
+/** 能加流量的订阅：只有还在用的（流量包挂在停用的那份上用不上） */
+export function trafficPackTargets<T extends Pick<SubscriptionRow, 'status'>>(subs: readonly T[]): T[] {
+  return subs.filter((s) => isLiveSub(s.status))
 }
 
 /** 按邮箱找人：GET v1/users?q= 是模糊匹配，只认邮箱完全相等（不分大小写）的那一条 */
 export function exactEmail<T extends Pick<UserRow, 'email'>>(users: readonly T[], email: string): T | undefined {
   const want = email.trim().toLowerCase()
   return want ? users.find((u) => u.email.toLowerCase() === want) : undefined
+}
+
+// ===========================================================================
+// 加时长：POST v1/subscriptions/{id}/extend，口径与后端 billing.subscriptionExtendable、
+// validateAdminExtend、extendSubscriptionTx 一致
+// ===========================================================================
+export const EXTEND_DAYS_MAX = 3650
+export const EXTEND_PRESETS = [7, 30, 90] as const
+
+/** 原地续费窗口（后端过期扫描在过期满 30 天时关窗，billing/expire.go） */
+export const RENEWAL_WINDOW_DAYS = 30
+
+/** 已过期整天数（周期末已过才有，否则 null） */
+export function expiredDays(periodEnd: string | null, now: Date): number | null {
+  if (!periodEnd) return null
+  const ms = now.getTime() - new Date(periodEnd).getTime()
+  return ms >= 0 ? Math.floor(ms / DAY) : null
+}
+
+/**
+ * 能加时长的订阅（w5expiry）：生效中、试用中，或已过期不满 30 天（救回：状态回到 active、流量按天数折算、
+ * 旧链接恢复可用）；都要有到期时间。别的状态后端回 409，没有到期时间回 422。后台列表不带关窗时刻，
+ * 按周期末推算（关窗由过期扫描一分钟内写上）。
+ */
+export function extendableSubscriptions<T extends Pick<SubscriptionRow, 'status' | 'current_period_end'>>(subs: readonly T[], now: Date = new Date()): T[] {
+  return subs.filter((s) => {
+    if (s.current_period_end === null) return false
+    if (s.status === 'active' || s.status === 'trialing') return true
+    const d = expiredDays(s.current_period_end, now)
+    return s.status === 'expired' && d !== null && d < RENEWAL_WINDOW_DAYS
+  })
+}
+
+/** 这次加时长是不是「救回」：已过期（状态或周期末）或试用中，要二次确认 */
+export function isRescue<T extends Pick<SubscriptionRow, 'status' | 'current_period_end'>>(s: T, now: Date): boolean {
+  return s.status === 'expired' || s.status === 'trialing' || expiredDays(s.current_period_end, now) !== null
+}
+
+/** 天数：1 到 3650 的整数，否则 null（后端 fields.days） */
+export function parseExtendDays(input: string): number | null {
+  const v = input.trim()
+  if (!/^\d{1,4}$/.test(v)) return null
+  const n = Number(v)
+  return n >= 1 && n <= EXTEND_DAYS_MAX ? n : null
+}
+
+/** 原因 5–500 字（后端 fields.reason） */
+export function extendReasonProblem(reason: string): string | null {
+  const n = [...reason.trim()].length
+  if (n < REASON_MIN) return `请写清加时长的原因，至少 ${REASON_MIN} 个字`
+  if (n > NOTE_MAX) return `原因不超过 ${NOTE_MAX} 个字`
+  return null
+}
+
+/** 预计新到期：从「原到期」与「现在」里更晚的那个起算，加 days 个 24 小时（后端按 UTC 加天） */
+export function extendedEnd(periodEnd: string, days: number, now: Date): Date {
+  const base = Math.max(new Date(periodEnd).getTime(), now.getTime())
+  return new Date(base + days * DAY)
 }

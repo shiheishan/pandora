@@ -1,0 +1,115 @@
+package repo
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"sort"
+	"time"
+
+	"github.com/aegispanel/aegis/internal/module/notify/model"
+	"github.com/google/uuid"
+)
+
+// maxErrorRunes 与表上 error_message 的 CHECK 一致。
+const maxErrorRunes = 500
+
+// InsertDelivery 写一条投递（ID 由调用方生成）。
+func (r *Repo) InsertDelivery(ctx context.Context, d *model.Delivery) error {
+	return r.d.Conn(ctx).Create(d).Error
+}
+
+// ClaimDeliveries 认领到期的 queued 行：next_retry_at 推到 now()+lease、attempts 加 1（认领即算一次尝试，
+// 处理中途崩溃的行也会走向上限），租约内别的实例看不到它们；按 created_at、id 升序返回。
+func (r *Repo) ClaimDeliveries(ctx context.Context, channel string, limit int, lease time.Duration) ([]model.Delivery, error) {
+	out := []model.Delivery{}
+	err := r.d.Conn(ctx).Raw(
+		`UPDATE notification_deliveries d
+		    SET next_retry_at = now() + make_interval(secs => ?), attempts = d.attempts + 1, updated_at = now()
+		   FROM (SELECT id FROM notification_deliveries
+		          WHERE status = 'queued' AND channel = ? AND next_retry_at <= now() AND attempts < max_attempts
+		          ORDER BY created_at, id
+		          LIMIT ?
+		          FOR UPDATE SKIP LOCKED) due
+		  WHERE d.id = due.id
+		RETURNING d.*`, lease.Seconds(), channel, limit).Scan(&out).Error
+	if err != nil {
+		return nil, err
+	}
+	// RETURNING 不保证顺序
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return bytes.Compare(out[i].ID[:], out[j].ID[:]) < 0
+	})
+	return out, nil
+}
+
+// FailExhausted 把尝试次数已用尽、租约已过仍是 queued 的行（最后一次处理中途中断）置为 failed，返回行数。
+func (r *Repo) FailExhausted(ctx context.Context, channel string) (int, error) {
+	res := r.d.Conn(ctx).Exec(
+		`UPDATE notification_deliveries
+		    SET status = 'failed', error_message = '多次处理中断', payload_enc = NULL, updated_at = now()
+		  WHERE status = 'queued' AND channel = ? AND attempts >= max_attempts AND next_retry_at <= now()`, channel)
+	return int(res.RowsAffected), res.Error
+}
+
+// MarkSent 置为 sent 并清空封存内容；行已不是 queued 时返回 false。
+func (r *Repo) MarkSent(ctx context.Context, id uuid.UUID) (bool, error) {
+	res := r.d.Conn(ctx).Exec(
+		`UPDATE notification_deliveries
+		    SET status = 'sent', sent_at = now(),
+		        error_message = NULL, payload_enc = NULL, updated_at = now()
+		  WHERE id = ? AND status = 'queued'`, id)
+	return res.RowsAffected == 1, res.Error
+}
+
+// MarkRetry 记一次失败，delay 之后可再认领；仍为 queued。
+func (r *Repo) MarkRetry(ctx context.Context, id uuid.UUID, delay time.Duration, msg string) (bool, error) {
+	res := r.d.Conn(ctx).Exec(
+		`UPDATE notification_deliveries
+		    SET error_message = ?,
+		        next_retry_at = now() + make_interval(secs => ?), updated_at = now()
+		  WHERE id = ? AND status = 'queued'`, truncateRunes(msg, maxErrorRunes), delay.Seconds(), id)
+	return res.RowsAffected == 1, res.Error
+}
+
+// SuppressQueuedTelegram 把某用户还在排队的 Telegram 投递置为 suppressed 并清空封存内容（解绑后不再发往旧 chat），返回行数。
+func (r *Repo) SuppressQueuedTelegram(ctx context.Context, userID uuid.UUID) (int, error) {
+	res := r.d.Conn(ctx).Exec(
+		`UPDATE notification_deliveries
+		    SET status = 'suppressed', error_message = '用户已解绑 Telegram', payload_enc = NULL, updated_at = now()
+		  WHERE user_id = ? AND channel = 'telegram' AND status = 'queued'`, userID)
+	return int(res.RowsAffected), res.Error
+}
+
+// MarkFinal 置为终态 failed / suppressed 并清空封存内容。
+func (r *Repo) MarkFinal(ctx context.Context, id uuid.UUID, status, msg string) (bool, error) {
+	if status != model.StatusFailed && status != model.StatusSuppressed {
+		return false, fmt.Errorf("notify repo: 终态只能是 failed 或 suppressed，收到 %q", status)
+	}
+	res := r.d.Conn(ctx).Exec(
+		`UPDATE notification_deliveries
+		    SET status = ?, error_message = ?, payload_enc = NULL, updated_at = now()
+		  WHERE id = ? AND status = 'queued'`, status, truncateRunes(msg, maxErrorRunes), id)
+	return res.RowsAffected == 1, res.Error
+}
+
+// PurgeDeliveries 删 created_at < before 的投递，每次至多 batch 行，返回删除行数。
+func (r *Repo) PurgeDeliveries(ctx context.Context, before time.Time, batch int) (int, error) {
+	res := r.d.Conn(ctx).Exec(
+		`DELETE FROM notification_deliveries WHERE id IN (
+		   SELECT id FROM notification_deliveries WHERE created_at < ? ORDER BY created_at LIMIT ?)`,
+		before, batch)
+	return int(res.RowsAffected), res.Error
+}
+
+// truncateRunes 按字符截断到 n。
+func truncateRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n])
+}

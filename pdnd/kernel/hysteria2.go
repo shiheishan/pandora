@@ -12,11 +12,11 @@ import (
 	"time"
 
 	"github.com/aegispanel/nodeagent/core"
+	"github.com/aegispanel/nodeagent/internal/confnum"
 	hy2 "github.com/aegispanel/nodeagent/internal/nativewire/hysteria2"
 	"github.com/aegispanel/nodeagent/route"
 	"github.com/sagernet/sing-quic/hysteria"
 	"github.com/sagernet/sing/common/auth"
-	"github.com/sagernet/sing/common/buf"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	aTLS "github.com/sagernet/sing/common/tls"
@@ -60,11 +60,14 @@ type hysteria2Slot struct {
 type hysteria2Adapter struct {
 	spec InboundSpec
 
-	mu        sync.RWMutex
-	users     map[string]int
-	slots     []hysteria2Slot
-	traffic   map[int64]core.UserTraffic
-	online    map[int64]map[string]struct{}
+	mu    sync.RWMutex
+	users map[string]int
+	slots []hysteria2Slot
+	// sessions 登记 TCP 子流与 UDP 会话（删用户即断），流量也随搬随记在这里。
+	sessions userSessions
+	online   onlineDevices
+	// udpQuota 限每用户在途 UDP 会话数（quic_udp_quota.go）。
+	udpQuota  udpSessionQuota
 	service   *hy2.Service[int]
 	packet    net.PacketConn
 	plane     DataPlane
@@ -90,8 +93,8 @@ var _ N.UDPConnectionHandlerEx = (*hysteria2Adapter)(nil)
 
 func newHysteria2Adapter(spec InboundSpec) (Adapter, error) {
 	return &hysteria2Adapter{
-		spec: spec, users: make(map[string]int), traffic: make(map[int64]core.UserTraffic),
-		online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{}),
+		spec: spec, users: make(map[string]int),
+		active: make(map[net.Conn]struct{}),
 	}, nil
 }
 
@@ -137,7 +140,24 @@ func (a *hysteria2Adapter) Validate(spec InboundSpec) error {
 			return fmt.Errorf("hysteria2 udp_timeout: %w", err)
 		}
 	}
+	if _, err := hysteria2UDPQueueSize(spec.Config.Raw); err != nil {
+		return err
+	}
 	return nil
+}
+
+// hysteria2UDPQueueSize 读可选的 udp_queue_size（每个 UDP 会话的接收队列长度，
+// 16–65536，缺省 hy2.DefaultUDPQueueSize）。面板不下发它，只留给运维按机器调。
+func hysteria2UDPQueueSize(raw map[string]any) (int, error) {
+	value, exists := raw["udp_queue_size"]
+	if !exists || value == nil {
+		return hy2.DefaultUDPQueueSize, nil
+	}
+	n, ok := nonNegativeInt(value)
+	if !ok || n < 16 || n > 65536 {
+		return 0, fmt.Errorf("hysteria2 udp_queue_size must be an integer between 16 and 65536")
+	}
+	return n, nil
 }
 
 func (a *hysteria2Adapter) Start(parent context.Context, spec InboundSpec, hooks AdapterHooks) error {
@@ -173,10 +193,15 @@ func (a *hysteria2Adapter) Start(parent context.Context, spec InboundSpec, hooks
 			return fmt.Errorf("hysteria2 udp_timeout: %w", err)
 		}
 	}
+	udpQueueSize, err := hysteria2UDPQueueSize(spec.Config.Raw)
+	if err != nil {
+		cancel()
+		return err
+	}
 	service, err := hy2.NewService[int](hy2.ServiceOptions{
 		Context: ctx, Logger: newSingConnErrorLogger(connErr, nil), SendBPS: uint64(up) * hysteria.MbpsToBps,
 		ReceiveBPS: uint64(down) * hysteria.MbpsToBps, SalamanderPassword: salamander,
-		TLSConfig: tlsConfig, UDPTimeout: udpTimeout, Handler: a,
+		TLSConfig: tlsConfig, UDPTimeout: udpTimeout, UDPQueueSize: udpQueueSize, Handler: a,
 		MasqueradeHandler: hysteria2RejectHandler(connErr),
 	})
 	if err != nil {
@@ -211,6 +236,7 @@ func (a *hysteria2Adapter) Start(parent context.Context, spec InboundSpec, hooks
 		_ = a.Close()
 		return fmt.Errorf("hysteria2 listen: %w", err)
 	}
+	warnSmallQUICSocketBuffers("hysteria2", spec.Config.Port, packet)
 	return nil
 }
 
@@ -232,19 +258,19 @@ func hysteria2RejectHandler(connErr connErrorReporter) http.Handler {
 	})
 }
 
+// syncUsers 把整张槽位表同步进 nativewire 口令表，只在 Start 时用；之后的增减
+// 走 PatchUsers 增量更新。停用的槽位不进口令表。
 func (a *hysteria2Adapter) syncUsers() error {
 	a.updateMu.Lock()
 	defer a.updateMu.Unlock()
 	a.mu.RLock()
 	service := a.service
-	indices := make([]int, len(a.slots))
-	passwords := make([]string, len(a.slots))
+	indices := make([]int, 0, len(a.users))
+	passwords := make([]string, 0, len(a.users))
 	for i, slot := range a.slots {
-		indices[i] = i
 		if slot.active {
-			passwords[i] = slot.user.UUID
-		} else {
-			passwords[i] = fmt.Sprintf("__pandora_disabled_%d__", i)
+			indices = append(indices, i)
+			passwords = append(passwords, slot.user.UUID)
 		}
 	}
 	a.mu.RUnlock()
@@ -254,109 +280,101 @@ func (a *hysteria2Adapter) syncUsers() error {
 	return nil
 }
 
-func (a *hysteria2Adapter) AddUsers(users []core.User) error {
+func normalizeHysteria2Users(users []core.User) ([]core.User, error) {
 	// Validate the entire batch before taking the state lock. A failed batch
 	// must not partially publish users or leave the adapter locked.
 	validated := make([]core.User, 0, len(users))
 	for _, user := range users {
 		password := strings.TrimSpace(user.UUID)
 		if password == "" {
-			return fmt.Errorf("hysteria2 user password is empty")
+			return nil, fmt.Errorf("hysteria2 user password is empty")
 		}
 		user.UUID = password
 		validated = append(validated, user)
 	}
-	a.mu.Lock()
-	if a.closed {
-		a.mu.Unlock()
-		return fmt.Errorf("hysteria2 adapter is closed")
-	}
-	for _, user := range validated {
-		password := user.UUID
-		if _, exists := a.users[password]; exists {
-			continue
-		}
-		a.users[password] = len(a.slots)
-		a.slots = append(a.slots, hysteria2Slot{user: user, active: true})
-	}
-	a.mu.Unlock()
-	return a.syncUsers()
+	return validated, nil
 }
 
-func (a *hysteria2Adapter) UpsertUsers(users []core.User) error {
-	validated := make([]core.User, 0, len(users))
-	for _, user := range users {
-		password := strings.TrimSpace(user.UUID)
-		if password == "" {
-			return fmt.Errorf("hysteria2 user password is empty")
-		}
-		user.UUID = password
-		validated = append(validated, user)
+// putUsers 是 AddUsers / UpsertUsers 的共同实现。updateMu 在整个过程中持有
+// （锁序 updateMu → mu，与 syncUsers 一致），保证口令表的增量与槽位表的变更
+// 同序生效，并发的增删不会互相覆盖。
+func (a *hysteria2Adapter) putUsers(users []core.User, upsert bool) error {
+	validated, err := normalizeHysteria2Users(users)
+	if err != nil {
+		return err
 	}
+	a.updateMu.Lock()
+	defer a.updateMu.Unlock()
 	a.mu.Lock()
 	if a.closed {
 		a.mu.Unlock()
 		return fmt.Errorf("hysteria2 adapter is closed")
 	}
-	changed := false
+	var indices []int
+	var passwords []string
 	for _, user := range validated {
 		password := user.UUID
 		if index, exists := a.users[password]; exists {
-			a.slots[index].user = user
-			a.slots[index].active = true
-			changed = true
+			if upsert {
+				// 口令不变、槽位不变，口令表无需改动。
+				a.slots[index].user = user
+				a.slots[index].active = true
+			}
 			continue
 		}
 		a.users[password] = len(a.slots)
+		indices = append(indices, len(a.slots))
+		passwords = append(passwords, password)
 		a.slots = append(a.slots, hysteria2Slot{user: user, active: true})
-		changed = true
 	}
+	service := a.service
 	a.mu.Unlock()
-	if !changed {
-		return nil
+	if service != nil && len(indices) > 0 {
+		service.PatchUsers(nil, indices, passwords)
 	}
-	return a.syncUsers()
+	return nil
+}
+
+func (a *hysteria2Adapter) AddUsers(users []core.User) error {
+	return a.putUsers(users, false)
+}
+
+func (a *hysteria2Adapter) UpsertUsers(users []core.User) error {
+	return a.putUsers(users, true)
 }
 
 func (a *hysteria2Adapter) DelUsers(ids []string) error {
+	a.updateMu.Lock()
+	defer a.updateMu.Unlock()
 	a.mu.Lock()
+	removed := make([]string, 0, len(ids))
+	var removedIDs []int64
 	for _, id := range ids {
 		password := strings.TrimSpace(id)
 		if index, ok := a.users[password]; ok {
 			a.slots[index].active = false
 			// 顺手丢掉这个用户的令牌桶，否则用户删了桶还留着。
 			a.limiters.Remove(a.slots[index].user.ID)
+			removedIDs = append(removedIDs, a.slots[index].user.ID)
 			delete(a.users, password)
+			removed = append(removed, password)
 		}
 	}
+	service := a.service
 	a.mu.Unlock()
-	return a.syncUsers()
+	if service != nil && len(removed) > 0 {
+		service.PatchUsers(removed, nil, nil)
+	}
+	// 先删表、再踢线（锁外关）：已有 QUIC 会话里属于他的 TCP 子流随之断开。
+	a.sessions.revoke(removedIDs)
+	return nil
 }
 
 func (a *hysteria2Adapter) SnapshotTraffic() ([]core.UserTraffic, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	out := make([]core.UserTraffic, 0, len(a.traffic))
-	for id, traffic := range a.traffic {
-		if traffic.Upload != 0 || traffic.Download != 0 {
-			out = append(out, traffic)
-		}
-		delete(a.traffic, id)
-	}
-	return out, nil
+	return a.sessions.snapshot(), nil
 }
 
-func (a *hysteria2Adapter) OnlineIPs() map[int64][]string {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	out := make(map[int64][]string, len(a.online))
-	for id, ips := range a.online {
-		for ip := range ips {
-			out[id] = append(out[id], ip)
-		}
-	}
-	return out
-}
+func (a *hysteria2Adapter) OnlineIPs() map[int64][]string { return a.online.snapshot() }
 
 func (a *hysteria2Adapter) NewConnectionEx(ctx context.Context, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
 	a.mu.Lock()
@@ -368,22 +386,29 @@ func (a *hysteria2Adapter) NewConnectionEx(ctx context.Context, conn net.Conn, s
 	a.wg.Add(1)
 	a.active[conn] = struct{}{}
 	a.mu.Unlock()
-	go func() {
+	goGuarded(conn, func() {
 		defer a.wg.Done()
 		defer a.removeActive(conn)
 		defer conn.Close()
 		if onClose != nil {
 			defer onClose(nil)
 		}
+		epoch := a.sessions.epoch()
 		index, user, ok := a.userFromContext(ctx)
-		if admitErr := admissionError("hysteria2", ok, ok && a.enterDevice(user, source.AddrString())); admitErr != nil {
+		if admitErr := admissionError("hysteria2", ok, ok && a.online.enter(user, source.AddrString())); admitErr != nil {
 			a.connErr.addr(StageSession, source.UDPAddr(), admitErr)
 			if hs, ok := conn.(N.HandshakeFailure); ok {
 				_ = hs.HandshakeFailure(fmt.Errorf("hysteria2 user is not authorized"))
 			}
 			return
 		}
-		defer a.leaveDevice(user, source.AddrString())
+		defer a.online.leave(user, source.AddrString())
+		sess := a.sessions.open(user, epoch, conn)
+		if sess == nil {
+			a.connErr.addr(StageSession, source.UDPAddr(), errSessionRevoked)
+			return
+		}
+		defer sess.close()
 		meta := route.Meta{Domain: destination.Fqdn, IP: destination.Addr, Port: destination.Port, Network: "tcp", Protocol: "hysteria2", SourceIP: source.Addr, SourcePort: source.Port}
 		upstream, err := a.plane.DialTCP(ctx, meta, destination)
 		if err != nil {
@@ -399,26 +424,10 @@ func (a *hysteria2Adapter) NewConnectionEx(ctx context.Context, conn net.Conn, s
 				return
 			}
 		}
-		var copyWG sync.WaitGroup
-		copyWG.Add(2)
-		copyDone := make(chan struct{}, 2)
-		go func() {
-			n, _ := core.SpeedLimitedCopy(upstream, conn, a.limiters.For(user))
-			a.addTraffic(index, n, 0)
-			copyDone <- struct{}{}
-			copyWG.Done()
-		}()
-		go func() {
-			n, _ := core.SpeedLimitedCopy(conn, upstream, a.limiters.For(user))
-			a.addTraffic(index, 0, n)
-			copyDone <- struct{}{}
-			copyWG.Done()
-		}()
-		<-copyDone
-		_ = conn.Close()
-		_ = upstream.Close()
-		copyWG.Wait()
-	}()
+		// 子流的 Close 语义与 TCP 半关闭不同：沿用「一侧结束即两端全关」。
+		sess.relay(conn, upstream, core.RelayOptions{Limiter: a.limiters.For(user), NoHalfClose: true})
+		_ = index
+	})
 }
 
 func (a *hysteria2Adapter) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
@@ -436,12 +445,19 @@ func (a *hysteria2Adapter) NewPacketConnectionEx(ctx context.Context, conn N.Pac
 		if onClose != nil {
 			defer onClose(nil)
 		}
-		index, user, ok := a.userFromContext(ctx)
-		if admitErr := admissionError("hysteria2", ok, ok && a.enterDevice(user, source.AddrString())); admitErr != nil {
+		// epoch 要在查用户之前取，见 userSessions 的竞态说明。
+		epoch := a.sessions.epoch()
+		_, user, ok := a.userFromContext(ctx)
+		if admitErr := admissionError("hysteria2", ok, ok && a.online.enter(user, source.AddrString())); admitErr != nil {
 			a.connErr.addr(StageSession, source.UDPAddr(), admitErr)
 			return
 		}
-		defer a.leaveDevice(user, source.AddrString())
+		defer a.online.leave(user, source.AddrString())
+		if !a.udpQuota.acquire(user.ID) {
+			a.connErr.addr(StageSession, source.UDPAddr(), udpSessionLimitError("hysteria2"))
+			return
+		}
+		defer a.udpQuota.release(user.ID)
 		meta := route.Meta{Domain: destination.Fqdn, IP: destination.Addr, Port: destination.Port, Network: "udp", Protocol: "hysteria2", SourceIP: source.Addr, SourcePort: source.Port}
 		upstream, err := a.plane.ListenUDP(ctx, meta, destination)
 		if err != nil {
@@ -449,58 +465,15 @@ func (a *hysteria2Adapter) NewPacketConnectionEx(ctx context.Context, conn N.Pac
 			return
 		}
 		defer upstream.Close()
-		bridgeCtx, cancel := context.WithCancel(ctx)
-		defer cancel()
-		var bridgeWG sync.WaitGroup
-		bridgeWG.Add(2)
-		go func() {
-			defer cancel()
-			defer bridgeWG.Done()
-			for {
-				packet := buf.NewPacket()
-				dst, err := conn.ReadPacket(packet)
-				if err != nil {
-					packet.Release()
-					return
-				}
-				if !dst.IsValid() {
-					dst = destination
-				}
-				addr, err := resolveUDPAddr(bridgeCtx, dst)
-				if err == nil {
-					if n, writeErr := upstream.WriteTo(packet.Bytes(), addr); writeErr == nil {
-						a.addTraffic(index, int64(n), 0)
-					} else {
-						packet.Release()
-						return
-					}
-				}
-				packet.Release()
-			}
-		}()
-		go func() {
-			defer cancel()
-			defer bridgeWG.Done()
-			data := make([]byte, 64<<10)
-			for {
-				n, addr, err := upstream.ReadFrom(data)
-				if err != nil {
-					return
-				}
-				payload := append([]byte(nil), data[:n]...)
-				packet := buf.As(payload)
-				if err := conn.WritePacket(packet, M.SocksaddrFromNet(addr).Unwrap()); err != nil {
-					return
-				}
-				a.addTraffic(index, 0, int64(n))
-			}
-		}()
-		go func() {
-			<-bridgeCtx.Done()
-			_ = conn.SetDeadline(time.Now())
-			_ = upstream.SetDeadline(time.Now())
-		}()
-		bridgeWG.Wait()
+		// UDP 会话同样登记进用户连接表：删用户时关掉会话与上游 socket，两个方向
+		// 的阻塞读立即返回，不必等空闲超时。
+		sess := a.sessions.open(user, epoch, conn, upstream)
+		if sess == nil {
+			a.connErr.addr(StageSession, source.UDPAddr(), errSessionRevoked)
+			return
+		}
+		defer sess.close()
+		relayHy2UDP(ctx, conn, upstream, destination, user.ID, sess.up(), sess.down())
 	}()
 }
 
@@ -515,45 +488,6 @@ func (a *hysteria2Adapter) userFromContext(ctx context.Context) (int, core.User,
 		return 0, core.User{}, false
 	}
 	return index, a.slots[index].user, true
-}
-
-func (a *hysteria2Adapter) enterDevice(user core.User, ip string) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	set := a.online[user.ID]
-	if set == nil {
-		set = make(map[string]struct{})
-		a.online[user.ID] = set
-	}
-	if _, exists := set[ip]; !exists && user.DeviceLimit > 0 && len(set) >= user.DeviceLimit {
-		return false
-	}
-	set[ip] = struct{}{}
-	return true
-}
-
-func (a *hysteria2Adapter) leaveDevice(user core.User, ip string) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if set := a.online[user.ID]; set != nil {
-		delete(set, ip)
-		if len(set) == 0 {
-			delete(a.online, user.ID)
-		}
-	}
-}
-
-func (a *hysteria2Adapter) addTraffic(index int, upload, download int64) {
-	a.mu.Lock()
-	if index >= 0 && index < len(a.slots) {
-		id := a.slots[index].user.ID
-		current := a.traffic[id]
-		current.ID = id
-		current.Upload += upload
-		current.Download += download
-		a.traffic[id] = current
-	}
-	a.mu.Unlock()
 }
 
 func (a *hysteria2Adapter) removeActive(conn net.Conn) {
@@ -589,49 +523,22 @@ func (a *hysteria2Adapter) Close() error {
 	return nil
 }
 
+// nonNegativeInt 读一个非负整数字段；缺省（nil）按 0。数值形态的归一见 confnum。
 func nonNegativeInt(value any) (int, bool) {
-	switch v := value.(type) {
-	case nil:
+	if value == nil {
 		return 0, true
-	case int:
-		return v, v >= 0
-	case int64:
-		return int(v), v >= 0 && int64(int(v)) == v
-	case float64:
-		return int(v), v >= 0 && v == float64(int(v))
-	case string:
-		n, err := strconv.Atoi(strings.TrimSpace(v))
-		return n, err == nil && n >= 0
-	default:
-		return 0, false
 	}
+	n, ok := confnum.Int(value)
+	return n, ok && n >= 0
 }
 
+// parseHysteriaDuration 读一个时长字段：数字按整秒，字符串按 Go 时长语法。
 func parseHysteriaDuration(value any) (time.Duration, error) {
-	switch v := value.(type) {
-	case int:
-		if v < 0 {
-			return 0, fmt.Errorf("must be non-negative")
-		}
-		return time.Duration(v) * time.Second, nil
-	case int64:
-		if v < 0 {
-			return 0, fmt.Errorf("must be non-negative")
-		}
-		return time.Duration(v) * time.Second, nil
-	case float64:
-		if v < 0 || v != float64(int64(v)) {
-			return 0, fmt.Errorf("must be a non-negative integer")
-		}
-		return time.Duration(int64(v)) * time.Second, nil
-	case string:
-		if d, err := time.ParseDuration(strings.TrimSpace(v)); err == nil && d >= 0 {
-			return d, nil
-		}
-		return 0, fmt.Errorf("must be a duration or seconds")
-	default:
+	d, ok := confnum.Duration(value)
+	if !ok {
 		return 0, fmt.Errorf("must be a duration or seconds")
 	}
+	return d, nil
 }
 
 func resolveUDPAddr(ctx context.Context, destination M.Socksaddr) (*net.UDPAddr, error) {

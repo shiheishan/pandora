@@ -88,7 +88,6 @@ function staleCheck(p: Pack, b: Json): MockResult | null {
 export function packRoutes(): Record<string, MockRoute> {
   return {
     'GET /v1/traffic-packs': (ctx) => {
-      if (!ctx.requirePermission('catalog.read')) return
       const status = ctx.query.get('status') ?? ''
       if (status && status !== 'active' && status !== 'archived') return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { status: '只能是 active 或 archived' })
       const rows = packs
@@ -98,7 +97,7 @@ export function packRoutes(): Record<string, MockRoute> {
     },
 
     'POST /v1/traffic-packs': async (ctx) => {
-      if (!ctx.requirePermission('catalog.publish') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('catalog_traffic_pack_create', () => {
@@ -126,7 +125,7 @@ export function packRoutes(): Record<string, MockRoute> {
     },
 
     'PUT /v1/traffic-packs/:id': async (ctx) => {
-      if (!ctx.requirePermission('catalog.publish') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('catalog_traffic_pack_update', () => {
@@ -152,7 +151,7 @@ export function packRoutes(): Record<string, MockRoute> {
     },
 
     'POST /v1/traffic-packs/:id/status': async (ctx) => {
-      if (!ctx.requirePermission('catalog.publish') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('catalog_traffic_pack_status', () => {

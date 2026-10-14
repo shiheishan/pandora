@@ -1,5 +1,5 @@
 import { relativeTime } from '../../../core/format'
-import type { MetricPoint, NodeRow, ProtocolSchema, Route, RoutingSource, ServingStatus } from './schemas'
+import type { MetricPoint, NodeDetail, NodeRow, ProtocolSchema, Route, RoutingSource, ServingStatus } from './schemas'
 
 export type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'neutral'
 
@@ -31,7 +31,11 @@ export function nodeState(n: Pick<NodeRow, 'serving_status' | 'stale'>): NodeSta
   }
 }
 
-/** 前端筛选与搜索（契约：列表无服务端筛选）；「全部」不含已退役；搜名称、展示名、服务器、国家、协议、地址、编号 */
+/**
+ * 前端筛选与搜索：节点总数不超过一页（1000）时在本地做；超过时同一组条件交给服务端
+ * （GET v1/nodes 的 state 与 q，nodefabric.adminNodeFilterSQL 与这里同一映射、同一组字段）。
+ * 「全部」不含已退役；搜名称、展示名、服务器、国家、协议、地址、编号
+ */
 export function filterNodes(rows: readonly NodeRow[], filter: NodeFilter, query: string): NodeRow[] {
   const q = query.trim().toLowerCase()
   return rows.filter((n) => {
@@ -42,6 +46,31 @@ export function filterNodes(rows: readonly NodeRow[], filter: NodeFilter, query:
     return hay.includes(q)
   })
 }
+
+/**
+ * 列表一行显示用到的字段：NodeLine 只拿这些，memo 也只比这些——心跳时刻、版本号等
+ * 不在行上显示的字段变了，不重渲染这一行。行上新显示一个字段就加进这里（类型会逼着加）
+ */
+export const NODE_LINE_FIELDS = [
+  'id',
+  'name',
+  'country_code',
+  'server_host',
+  'server_port',
+  'node_type',
+  'server_name',
+  'online_users',
+  'online_ips',
+  'cpu_percent',
+  'traffic_bytes_24h',
+  'serving_status',
+  'stale',
+  'delivered_to_users',
+  'delivery_note',
+] as const satisfies ReadonlyArray<keyof NodeRow>
+export type NodeLineData = Pick<NodeRow, (typeof NODE_LINE_FIELDS)[number]>
+
+export const sameNodeLine = (a: NodeLineData, b: NodeLineData): boolean => a === b || NODE_LINE_FIELDS.every((k) => Object.is(a[k], b[k]))
 
 // ---------------------------------------------------------------------------
 // 文案
@@ -70,8 +99,6 @@ const PROTOCOL_LABELS: Readonly<Record<string, string>> = {
   mieru: 'Mieru',
   socks: 'SOCKS',
   http: 'HTTP',
-  v2ray: 'V2Ray（旧）',
-  hysteria: 'Hysteria（旧）',
 }
 export const protocolLabel = (t: string | null) => (t ? (PROTOCOL_LABELS[t] ?? t) : '未设置协议')
 
@@ -156,7 +183,7 @@ export function orderItems(ordered: readonly Pick<NodeRow, 'id' | 'row_version' 
 // ---------------------------------------------------------------------------
 // 协议表单：字段来自 GET v1/node-protocol-schemas
 // ---------------------------------------------------------------------------
-export type FieldKind = 'enum' | 'number' | 'boolean' | 'json' | 'text'
+export type FieldKind = 'enum' | 'number' | 'boolean' | 'json' | 'list' | 'text'
 export interface ProtocolField {
   /** 点号路径，如 reality_settings.private_key */
   path: string
@@ -164,6 +191,8 @@ export interface ProtocolField {
   options: string[]
   required: boolean
   sensitive: boolean
+  /** 后端 schema 给的字段说明（hints），没有则 undefined */
+  hint?: string
 }
 
 export const isStable = (s: ProtocolSchema) => s.status === 'stable'
@@ -184,8 +213,9 @@ export function protocolFields(s: ProtocolSchema): ProtocolField[] {
     // 枚举按整条路径找，找不到再按叶子名：后端把 network_settings.mode 的可选值登记在 enums.mode 下
     const leaf = path.split('.').pop()!
     const options = s.enums?.[path] ?? (path.includes('.') ? s.enums?.[leaf] : undefined) ?? (s.methods && (path === 'cipher' || path === 'method') ? s.methods : [])
-    const kind: FieldKind = options.length ? 'enum' : type === 'number' ? 'number' : type === 'boolean' ? 'boolean' : type === 'json' ? 'json' : 'text'
-    return { path, kind, options, required: s.required.includes(path), sensitive: sensitiveOf(s, path) }
+    const kind: FieldKind = options.length ? 'enum' : type === 'number' ? 'number' : type === 'boolean' ? 'boolean' : type === 'json' ? 'json' : type === 'list' ? 'list' : 'text'
+    const hint = s.hints?.[path]
+    return { path, kind, options, required: s.required.includes(path), sensitive: sensitiveOf(s, path), ...(hint ? { hint } : {}) }
   })
   // 必填在前，其余保持后端顺序
   return [...fields.filter((f) => f.required), ...fields.filter((f) => !f.required)]
@@ -203,6 +233,7 @@ export function toFormValues(fields: readonly ProtocolField[], config: unknown):
   for (const f of fields) {
     const v = pick(config, f.path)
     if (v === undefined || v === null || f.sensitive) out[f.path] = ''
+    else if (f.kind === 'list' && Array.isArray(v)) out[f.path] = v.map(String).join(', ')
     else if (f.kind === 'json' || (typeof v === 'object' && v !== null)) out[f.path] = JSON.stringify(v, null, 2)
     else out[f.path] = String(v)
   }
@@ -244,7 +275,11 @@ export function toProtocolConfig(
     if (cleared) {
       // 显式 null：后端以请求为准清空（R106）
     } else if (f.kind === 'boolean') value = raw === 'true'
-    else if (numeric) {
+    else if (f.kind === 'list') {
+      // 逗号或空白分隔；一个值存字符串（与 xboard 同形），多个存数组
+      const items = splitList(raw)
+      value = items.length === 1 ? items[0] : items
+    } else if (numeric) {
       value = Number(raw)
       if (!Number.isFinite(value)) errors[f.path] = '填数字'
     } else if (f.kind === 'json') {
@@ -264,6 +299,9 @@ export function toProtocolConfig(
   return { config, errors }
 }
 
+/** list 字段的录入：逗号、中文逗号或空白分隔，去掉空项 */
+export const splitList = (raw: string): string[] => raw.split(/[\s,，]+/).filter(Boolean)
+
 /** 后端 422 的 fields 键形如 protocol_config.<字段>（内核名可能与表单路径不同），按路径再按叶子名落到表单项 */
 export function mapProtocolErrors(fields: readonly ProtocolField[], errors: Readonly<Record<string, string>>): { byField: Record<string, string>; rest: Record<string, string> } {
   const byField: Record<string, string> = {}
@@ -280,6 +318,37 @@ export function mapProtocolErrors(fields: readonly ProtocolField[], errors: Read
 /** REALITY：只在 vless 且 tls=2 时可用（契约 reality-keypair 条目） */
 export const realityEnabled = (nodeType: string, values: FormValues) => nodeType === 'vless' && values.tls === '2'
 export const REALITY_KEYS = { private_key: 'reality_settings.private_key', public_key: 'reality_settings.public_key', short_id: 'reality_settings.short_id' } as const
+
+/** VLESS 的 Vision 流控：只有 REALITY + tcp 能用（后端 validateVLESSFlow） */
+export const VISION_FLOW = 'xtls-rprx-vision'
+const visionEligible = (nodeType: string, v: FormValues) => nodeType === 'vless' && v.tls === '2' && (v.network || 'tcp') === 'tcp'
+
+/**
+ * 改了一个协议字段之后的联动默认值。只在 tls / network 变化时动 flow，管理员手动清空的 flow 不会被填回去：
+ * - 进入 VLESS + REALITY + tcp 且 flow 为空：默认 xtls-rprx-vision（TLS-in-TLS 特征的缓解，主流客户端都支持）；
+ * - 离开这个组合且 flow 是 Vision 系：清空，否则后端 422（Vision 挂在 grpc / ws 上客户端直接报错）
+ */
+export function withProtocolDefaults(nodeType: string, changedPath: string, next: FormValues): FormValues {
+  if (nodeType !== 'vless' || (changedPath !== 'tls' && changedPath !== 'network')) return next
+  const flow = next.flow ?? ''
+  if (visionEligible(nodeType, next)) return flow ? next : { ...next, flow: VISION_FLOW }
+  return flow.startsWith(VISION_FLOW) ? { ...next, flow: '' } : next
+}
+
+/** 不加密时仍允许的传输：走 HTTP，可以挂 CDN（后端 validatePlaintextStream） */
+const CDN_NETWORKS = new Set(['ws', 'httpupgrade', 'grpc', 'xhttp'])
+
+/** 协议表单顶部的提示（不是错误，错误以后端 422 为准） */
+export function protocolNotices(nodeType: string, v: FormValues): string[] {
+  if (nodeType !== 'vless' && nodeType !== 'vmess') return []
+  const plain = (v.tls ?? '') === '' || v.tls === '0'
+  if (!plain) return []
+  const network = v.network || 'tcp'
+  if (network === 'tcp' && nodeType === 'vmess') return ['VMess 裸 tcp 特征明显、容易被识别封锁：建议改用 VLESS REALITY，或换 ws / grpc 等传输套 CDN']
+  if (network === 'tcp') return ['不加密的裸 tcp 就是明文代理，保存会被拒绝：VLESS 请选 2 · REALITY，或换 ws / httpupgrade / grpc / xhttp 并套 CDN']
+  if (CDN_NETWORKS.has(network)) return ['不加密：需要套 CDN 或 TLS 反代后再给用户用，否则 UUID 和流量在线路上明文可见']
+  return []
+}
 
 /** tls 三态下拉的文字（xboard 口径：0 不加密、1 TLS、2 REALITY） */
 export function optionLabel(path: string, value: string): string {
@@ -303,17 +372,29 @@ export interface BasicForm {
   country: string
 }
 
-/** 内核（nodefabric.validateNewNodeProtocol 接受的值） */
+/**
+ * 内核（nodefabric.validateKernelChoice 接受的值）。节点端只有 NativeCore：sing-box / xray-core
+ * 已不再接受新写入，存量值后端下发时按 auto（EffectiveKernel），表单载入时也显示为自动
+ */
 export const KERNELS = [
   ['auto', '自动'],
   ['pandora-native', 'Pandora Native'],
-  ['sing-box', 'sing-box'],
-  ['xray-core', 'Xray-core'],
 ] as const
+
+const LEGACY_KERNELS = new Set(['sing-box', 'xray-core'])
+const effectiveKernel = (k: string | null | undefined) => (!k || LEGACY_KERNELS.has(k) ? 'auto' : k)
+
+/** 存量节点还留着已停用的内核值时给一句说明，否则 undefined */
+export function legacyKernelNote(row: Pick<NodeDetail, 'kernel'> | null): string | undefined {
+  return row && LEGACY_KERNELS.has(row.kernel) ? `原值 ${row.kernel} 已不再生效（节点端只有 NativeCore），下次保存协议改动时改为自动` : undefined
+}
+
+/** 资源池必填的说明：下拉的提示与校验文案同一句 */
+export const NO_POOL_HINT = '选择资源池：不在任何资源池里的节点不服务任何用户'
 
 export const emptyBasic = (): BasicForm => ({ name: '', displayName: '', serverId: '', poolId: '', nodeType: '', host: '', port: '', kernel: 'auto', rate: '1', country: '' })
 
-export function basicFromRow(n: NodeRow): BasicForm {
+export function basicFromRow(n: NodeDetail): BasicForm {
   return {
     name: n.name,
     displayName: n.display_name ?? '',
@@ -322,7 +403,7 @@ export function basicFromRow(n: NodeRow): BasicForm {
     nodeType: n.node_type ?? '',
     host: n.server_host ?? '',
     port: n.server_port ? String(n.server_port) : '',
-    kernel: n.kernel || 'auto',
+    kernel: effectiveKernel(n.kernel),
     rate: String(n.traffic_rate),
     country: n.country_code ?? '',
   }
@@ -332,6 +413,8 @@ export function validateBasic(b: BasicForm, creating: boolean): Record<string, s
   const e: Record<string, string> = {}
   if (!b.name.trim() || [...b.name.trim()].length > 120) e.name = '名称必填，不超过 120 字'
   if (creating && !b.serverId) e.server_id = '选择承载的服务器'
+  // 没划进节点池的节点不服务任何用户（R104）；后端只拒绝清空在役节点的池，表单一律要求选
+  if (!b.poolId) e.pool_id = NO_POOL_HINT
   if (!b.nodeType) e.node_type = '选择协议'
   if (!b.host.trim()) e.server_host = '填 IP 或主机名'
   const port = Number(b.port)
@@ -362,7 +445,7 @@ export function createBody(b: BasicForm, config: Record<string, unknown>): Recor
  * PATCH 差量：省略 = 不改。protocol_config 只在协议字段真的改了（或换了协议）才带：
  * 它是整体替换，普通键缺席就是删除；敏感键缺席由后端补回（R106），所以没动的敏感字段不带键即可。
  */
-export function patchBody(row: NodeRow, b: BasicForm, protocol: { changed: boolean; config: Record<string, unknown> }): Record<string, unknown> {
+export function patchBody(row: NodeDetail, b: BasicForm, protocol: { changed: boolean; config: Record<string, unknown> }): Record<string, unknown> {
   const before = basicFromRow(row)
   const body: Record<string, unknown> = { row_version: row.row_version }
   if (b.name.trim() !== before.name) body.name = b.name.trim()
@@ -375,6 +458,10 @@ export function patchBody(row: NodeRow, b: BasicForm, protocol: { changed: boole
   if (Number(b.rate) !== row.traffic_rate) body.traffic_rate = Number(b.rate)
   if (b.country.trim().toUpperCase() !== before.country) body.country_code = b.country.trim() ? b.country.trim().toUpperCase() : null
   if (protocol.changed || b.nodeType !== before.nodeType) body.protocol_config = protocol.config
+  // 存量的 sing-box / xray-core：只要这次会重新校验协议（改了协议、地址、端口），就把内核一起换成表单值，
+  // 否则后端拿库里的旧值校验会 422。只改名字之类不碰协议的保存不带它，库里的值原样留着（读时忽略）
+  const touchesProtocol = ['node_type', 'server_host', 'server_port', 'protocol_config'].some((k) => k in body)
+  if (LEGACY_KERNELS.has(row.kernel) && touchesProtocol) body.kernel = b.kernel
   return body
 }
 

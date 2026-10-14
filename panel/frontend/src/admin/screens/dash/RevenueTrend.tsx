@@ -4,7 +4,7 @@ import { Empty, Segmented, Skeleton } from '../../../ui'
 import { useRevenue, type RevenueCurrency, type RevenueDays } from './api'
 import css from './Dash.module.css'
 import { formatPercent, revenueSummary } from './model'
-import { CardError, isForbidden, toneText } from './parts'
+import { CardError, toneText } from './parts'
 
 const CURRENCIES = [
   { value: 'CNY', label: 'CNY' },
@@ -19,8 +19,7 @@ const RANGES = [
 export function RevenueTrend() {
   const [cur, setCur] = useState<RevenueCurrency>('CNY')
   const [days, setDays] = useState<RevenueDays>(30)
-  const q = useRevenue(true, cur, days)
-  if (q.isError && isForbidden(q.error)) return null
+  const q = useRevenue(cur, days)
 
   const data = q.data
   const summary = data ? revenueSummary(data.points, data.currency, data.previous_total) : null

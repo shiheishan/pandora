@@ -2,9 +2,9 @@ package kernel
 
 import (
 	"bufio"
-	"crypto/aes"
 	"crypto/cipher"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
@@ -13,10 +13,13 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/aegispanel/nodeagent/core"
 )
+
+// errVMessUnsupportedRequest 标记「已通过认证、但请求的安全类型或选项不支持」：
+// 对端是持有凭据的真实客户端，读完请求头就拒绝断开；按探测处理读满 10 秒只会
+// 让它干等（审查 VMess 4）。
+var errVMessUnsupportedRequest = errors.New("vmess request option unsupported")
 
 func vmessDestinationUDPAddr(destination vmessDestination) (net.Addr, error) {
 	if destination.IP.IsValid() {
@@ -38,19 +41,10 @@ type vmessUserCandidate struct {
 }
 
 func (a *vmessAdapter) readRequest(r *bufio.Reader) (core.User, vmessDestination, io.Reader, byte, error) {
-	a.mu.RLock()
-	candidates := make([]vmessUserCandidate, 0, len(a.users))
-	for id, u := range a.users {
-		_, err := uuid.Parse(id)
-		if err != nil {
-			continue
-		}
-		block, err := aes.NewCipher(vmessKDF(u.key[:], "AES Auth ID Encryption")[:16])
-		if err == nil {
-			candidates = append(candidates, vmessUserCandidate{user: core.User{ID: u.ID, UUID: id, DeviceLimit: u.DeviceLimit, SpeedLimit: u.SpeedLimit}, key: u.key, keyBlock: block})
-		}
+	var candidates []vmessUserCandidate
+	if snapshot := a.authCandidates.Load(); snapshot != nil {
+		candidates = *snapshot
 	}
-	a.mu.RUnlock()
 	return readVMessRequestWithCandidates(r, candidates)
 }
 
@@ -65,14 +59,14 @@ func readVMessRequestWithCandidates(r *bufio.Reader, candidates []vmessUserCandi
 	var user core.User
 	var key [16]byte
 	found := false
+	now := time.Now().Unix()
+	var plain [16]byte
 	for _, candidate := range candidates {
-		plain := make([]byte, 16)
-		candidate.keyBlock.Decrypt(plain, auth[:])
+		candidate.keyBlock.Decrypt(plain[:], auth[:])
 		if binary.BigEndian.Uint32(plain[12:]) != crc32.ChecksumIEEE(plain[:12]) {
 			continue
 		}
 		ts := int64(binary.BigEndian.Uint64(plain[:8]))
-		now := time.Now().Unix()
 		if ts < now-120 || ts > now+120 {
 			continue
 		}
@@ -114,16 +108,27 @@ func readVMessRequestWithCandidates(r *bufio.Reader, candidates []vmessUserCandi
 	}
 	security := header[35] & 0x0f
 	if security != vmessSecNone && security != vmessSecZero && security != vmessSecAES128 && security != vmessSecChaCha {
-		return core.User{}, out, nil, security, fmt.Errorf("vmess security %d unsupported", security)
+		return core.User{}, out, nil, security, fmt.Errorf("%w: vmess security %d unsupported", errVMessUnsupportedRequest, security)
 	}
-	if (security == vmessSecAES128 || security == vmessSecChaCha) && header[34]&vmessOptChunk == 0 {
-		return core.User{}, out, nil, security, fmt.Errorf("vmess AES-GCM requires chunk framing")
+	option := header[34]
+	if (security == vmessSecAES128 || security == vmessSecChaCha) && option&vmessOptChunk == 0 {
+		return core.User{}, out, nil, security, fmt.Errorf("%w: vmess AES-GCM requires chunk framing", errVMessUnsupportedRequest)
 	}
-	if (security == vmessSecNone || security == vmessSecZero) && header[37] == vmessTCP && header[34] != 0 {
-		return core.User{}, out, nil, security, fmt.Errorf("vmess chunk options require an authenticated body security mode")
+	if option&vmessOptAuthLength != 0 {
+		return core.User{}, out, nil, security, fmt.Errorf("%w: vmess AuthenticatedLength (experimental) is not supported", errVMessUnsupportedRequest)
 	}
-	if (security == vmessSecNone || security == vmessSecZero) && header[37] == vmessUDP && header[34] != vmessOptChunk {
-		return core.User{}, out, nil, security, fmt.Errorf("vmess UDP requires plain chunk framing")
+	if option&vmessOptPadding != 0 && option&vmessOptMask == 0 {
+		// Xray 同样拒绝：填充长度取自掩码流，没有掩码就没有填充长度。
+		return core.User{}, out, nil, security, fmt.Errorf("%w: vmess GlobalPadding requires ChunkMasking", errVMessUnsupportedRequest)
+	}
+	// none / zero：不分块（option 0，zero 与 sing-box 的 none）或 Xray 的 none 分块
+	// （ChunkStream + ChunkMasking，UDP 另带 GlobalPadding 时也收）。掩码、填充离开
+	// 分块没有意义，拒绝。
+	if (security == vmessSecNone || security == vmessSecZero) && option&vmessOptChunk == 0 && option != 0 {
+		return core.User{}, out, nil, security, fmt.Errorf("%w: vmess chunk options require ChunkStream", errVMessUnsupportedRequest)
+	}
+	if (security == vmessSecNone || security == vmessSecZero) && header[37] == vmessUDP && option&vmessOptChunk == 0 {
+		return core.User{}, out, nil, security, fmt.Errorf("%w: vmess UDP requires chunk framing", errVMessUnsupportedRequest)
 	}
 	pos := 38
 	if header[37] == vmessMux {
@@ -174,5 +179,5 @@ func readVMessRequestWithCandidates(r *bufio.Reader, candidates []vmessUserCandi
 	}
 	var authID [16]byte
 	copy(authID[:], auth[:])
-	return user, out, &vmessBodyReader{reader: r, key: append([]byte(nil), header[17:33]...), nonce: append([]byte(nil), header[1:17]...), security: security, option: header[34], command: header[37], authID: authID}, security, nil
+	return user, out, &vmessBodyReader{reader: r, key: append([]byte(nil), header[17:33]...), nonce: append([]byte(nil), header[1:17]...), security: security, option: header[34], command: header[37], respHeader: header[33], authID: authID}, security, nil
 }

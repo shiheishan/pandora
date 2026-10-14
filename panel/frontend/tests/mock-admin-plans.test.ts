@@ -1,6 +1,7 @@
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'
+import { deliverableNodesInPool } from '../dev/mock/admin/nodes'
 import { packResponseSchema, packsSchema, planCreatedSchema, planPoolsSchema, planResponseSchema, plansSchema, planUpdatedSchema, priceCreatedSchema, versionCreatedSchema } from '../src/admin/screens/plans/schemas'
 import { bearer, close, loginAs, mockFetch, serve } from './mock-helpers'
 
@@ -34,7 +35,11 @@ describe('mock api · admin plans', () => {
     expect(list.find((p) => p.code === 'ent-line')).toMatchObject({ status: 'draft', current_version_id: null })
     const d = await detailOf(STD)
     expect(d.versions[0]!.version).toBeGreaterThan(d.versions[1]!.version)
-    expect(planPoolsSchema.parse(await (await get(`/v1/plans/${STD}/pools`)).json()).editable).toBe(false)
+    const stdPools = planPoolsSchema.parse(await (await get(`/v1/plans/${STD}/pools`)).json())
+    expect(stdPools.editable).toBe(false)
+    // 可下发节点数与节点假后端同一口径，且从不多于在线节点数
+    expect(stdPools.pools.every((p) => p.deliverable_nodes === deliverableNodesInPool(p.id) && p.deliverable_nodes <= p.active_nodes)).toBe(true)
+    expect(stdPools.pools.some((p) => p.deliverable_nodes > 0)).toBe(true)
     expect(packsSchema.parse(await (await get('/v1/traffic-packs?status=archived')).json()).packs.every((p) => p.status === 'archived')).toBe(true)
   })
 

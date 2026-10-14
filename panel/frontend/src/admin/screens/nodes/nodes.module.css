@@ -70,6 +70,9 @@
 .line {
   min-height: 50px;
   border-bottom: 1px solid var(--border);
+  /* 1000 行的列表：视口外的行跳过样式、布局与绘制；没渲染过的行先按 50px 占位，渲染过的记住实际高度 */
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto 50px;
 }
 
 .line:last-of-type {
@@ -186,6 +189,20 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+}
+
+/* 抽屉协议页顶部的存量配置提示（如证书路径不在约定目录） */
+.configWarning {
+  margin-bottom: 10px;
+  font-size: var(--fs-caption);
+}
+
+/* 运行状态标签：「生效失败：端口 443/TCP 被节点「东京-01」占用」可能很长，列里截断，全文在 title */
+.runTag {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .state {

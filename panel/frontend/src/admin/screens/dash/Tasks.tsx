@@ -1,25 +1,19 @@
 import { formatCount } from '../../../core/format'
 import { Skeleton } from '../../../ui'
-import type { Permissions } from '../../modules'
 import { useDashboardTasks } from '../../tasks'
 import { useBacklog } from './api'
 import css from './Dash.module.css'
 import { taskCards, type TaskCard } from './model'
-import { CardError, Dot, isForbidden, targetHref } from './parts'
+import { CardError, Dot, targetHref } from './parts'
 
-export function Tasks({ perms, canTasks, canBacklog }: { perms: Permissions; canTasks: boolean; canBacklog: boolean }) {
-  const tasks = useDashboardTasks(canTasks)
-  const backlog = useBacklog(canBacklog)
+export function Tasks() {
+  const tasks = useDashboardTasks()
+  const backlog = useBacklog()
 
-  const tasksHidden = !canTasks || (tasks.isError && isForbidden(tasks.error))
-  const backlogHidden = !canBacklog || (backlog.isError && isForbidden(backlog.error))
-  if (tasksHidden && backlogHidden) return null
-
-  const loading = (!tasksHidden && tasks.isPending) || (!backlogHidden && backlog.isPending)
-  const cards = taskCards(tasks.data?.items, backlog.data, perms)
+  const loading = tasks.isPending || backlog.isPending
+  const cards = taskCards(tasks.data?.items, backlog.data)
   const pending = cards.filter((c) => c.pending).length
-  // 只读账号可能一张卡都点不进去，这时不说「点一下直接去处理」
-  const summary = pending === 0 ? '眼下没有要处理的事' : cards.some((c) => c.pending && c.target) ? `${pending} 项 · 点一下直接去处理` : `${pending} 项`
+  const summary = pending === 0 ? '眼下没有要处理的事' : `${pending} 项 · 点一下直接去处理`
 
   return (
     <section className={css.section} aria-labelledby="dash-tasks">
@@ -29,38 +23,29 @@ export function Tasks({ perms, canTasks, canBacklog }: { perms: Permissions; can
         </h2>
         {!loading && cards.length > 0 && <span className={css.hint}>{summary}</span>}
       </div>
-      {!tasksHidden && tasks.isError && <CardError boxed what="待办计数" error={tasks.error} onRetry={() => void tasks.refetch()} />}
-      {!backlogHidden && backlog.isError && <CardError boxed what="通知积压" error={backlog.error} onRetry={() => void backlog.refetch()} />}
+      {tasks.isError && <CardError boxed what="待办计数" error={tasks.error} onRetry={() => void tasks.refetch()} />}
+      {backlog.isError && <CardError boxed what="通知积压" error={backlog.error} onRetry={() => void backlog.refetch()} />}
       {(loading || cards.length > 0) && (
         <div className={css.taskGrid}>
           {loading
             ? Array.from({ length: 5 }, (_, i) => <Skeleton key={i} height={126} radius="var(--radius-lg)" />)
-            : cards.map((card) => <TaskTile key={card.key} card={card} perms={perms} />)}
+            : cards.map((card) => <TaskTile key={card.key} card={card} />)}
         </div>
       )}
     </section>
   )
 }
 
-function TaskTile({ card, perms }: { card: TaskCard; perms: Permissions }) {
-  const body = (
-    <>
+function TaskTile({ card }: { card: TaskCard }) {
+  return (
+    <a className={css.task} href={targetHref(card.target)} title={card.hint}>
       <span className={css.taskHead}>
         <Dot tone={card.tone} />
         <span>{card.title}</span>
       </span>
       <span className={css.taskCount}>{formatCount(card.count)}</span>
       <span className={css.taskSub}>{card.sub}</span>
-      {card.target && <span className={css.taskAct}>{card.action} →</span>}
-    </>
-  )
-  return card.target ? (
-    <a className={css.task} href={targetHref(card.target, perms)} title={card.hint}>
-      {body}
+      <span className={css.taskAct}>{card.action} →</span>
     </a>
-  ) : (
-    <div className={css.task} title={card.hint}>
-      {body}
-    </div>
   )
 }

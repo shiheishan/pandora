@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { formatCount } from '../../../core/format'
 import { href, navigate } from '../../../core/router'
 import { Button, Empty, QueryView, Tag } from '../../../ui'
-import { useCan } from '../../actions'
 import { usePlans, type PlanDetail, type PlanRow } from './api'
 import { PLAN_STATUS_VIEW, planFacts } from './model'
 import { PlanDetailView } from './PlanDetail'
@@ -13,7 +12,6 @@ const pathOf = (id: string) => `/plans/catalog/${encodeURIComponent(id)}`
 
 export function CatalogTab({ selected }: { selected: string | null }) {
   const plans = usePlans()
-  const can = useCan()
   const [wizard, setWizard] = useState<{ mode: 'new' } | { mode: 'edit'; plan: PlanDetail } | null>(null)
   const first = plans.data?.[0]?.id
 
@@ -27,16 +25,14 @@ export function CatalogTab({ selected }: { selected: string | null }) {
   return (
     <div className={css.catalog}>
       <div className={css.rail}>
-        {can('catalog.publish') && (
-          <Button variant="primary" block onClick={() => setWizard({ mode: 'new' })}>
-            ＋ 新建套餐
-          </Button>
-        )}
+        <Button variant="primary" block onClick={() => setWizard({ mode: 'new' })}>
+          ＋ 新建套餐
+        </Button>
         <QueryView
           query={plans}
           rows={5}
           isEmpty={(d) => d.length === 0}
-          empty={<Empty title="还没有套餐" description={can('catalog.publish') ? '用「新建套餐」建第一个，向导里一次填完价格和线路。' : '有发布权限的管理员建好后会出现在这里。'} />}
+          empty={<Empty title="还没有套餐" description="用「新建套餐」建第一个，向导里一次填完价格和线路。" />}
         >
           {(list) => list.map((p) => <PlanCard key={p.id} plan={p} current={p.id === selected} />)}
         </QueryView>

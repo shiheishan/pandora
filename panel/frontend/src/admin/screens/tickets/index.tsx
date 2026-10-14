@@ -2,7 +2,6 @@ import { useCallback } from 'react'
 import { navigate, useHashLocation } from '../../../core/router'
 import { useAdminMe } from '../../me'
 import type { AdminScreenProps } from '../index'
-import { useCan } from '../../actions'
 import { Detail } from './Detail'
 import { isFilter, queueParams, type QueueFilter } from './model'
 import { Queue } from './Queue'
@@ -11,7 +10,6 @@ import css from './Tickets.module.css'
 export default function Tickets({ rest }: AdminScreenProps) {
   const location = useHashLocation()
   const me = useAdminMe()
-  const can = useCan()
   const rawFilter = location.query.get('f')
   const filter: QueueFilter = isFilter(rawFilter) ? rawFilter : 'active'
   const q = location.query.get('q') ?? ''
@@ -36,7 +34,6 @@ export default function Tickets({ rest }: AdminScreenProps) {
         query={q}
         params={queueParams(filter, me.data?.user_id, q)}
         selected={selected}
-        canWrite={can('ops.ticket.write')}
         onFilter={(f) => setQuery({ f })}
         onQuery={(text) => setQuery({ q: text })}
       />

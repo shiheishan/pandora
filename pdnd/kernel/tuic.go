@@ -15,7 +15,6 @@ import (
 	"github.com/aegispanel/nodeagent/route"
 	"github.com/gofrs/uuid/v5"
 	"github.com/sagernet/sing/common/auth"
-	"github.com/sagernet/sing/common/buf"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 )
@@ -29,11 +28,13 @@ type tuicSlot struct {
 type tuicAdapter struct {
 	spec InboundSpec
 
-	mu        sync.RWMutex
-	users     map[string]int
-	slots     []tuicSlot
-	traffic   map[int64]core.UserTraffic
-	online    map[int64]map[string]struct{}
+	mu       sync.RWMutex
+	users    map[string]int
+	slots    []tuicSlot
+	sessions userSessions
+	online   onlineDevices
+	// udpQuota 限每用户在途 UDP 会话数（quic_udp_quota.go）。
+	udpQuota  udpSessionQuota
 	service   *tuic.Service[int]
 	packet    net.PacketConn
 	plane     DataPlane
@@ -54,8 +55,8 @@ var _ N.UDPConnectionHandlerEx = (*tuicAdapter)(nil)
 
 func newTUICAdapter(spec InboundSpec) (Adapter, error) {
 	return &tuicAdapter{
-		spec: spec, users: make(map[string]int), traffic: make(map[int64]core.UserTraffic),
-		online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{}),
+		spec: spec, users: make(map[string]int),
+		active: make(map[net.Conn]struct{}),
 	}, nil
 }
 
@@ -208,6 +209,7 @@ func (a *tuicAdapter) Start(parent context.Context, spec InboundSpec, hooks Adap
 		_ = a.Close()
 		return fmt.Errorf("tuic listen: %w", err)
 	}
+	warnSmallQUICSocketBuffers("tuic", spec.Config.Port, packet)
 	return nil
 }
 
@@ -313,6 +315,7 @@ func (a *tuicAdapter) UpsertUsers(users []core.User) error {
 
 func (a *tuicAdapter) DelUsers(ids []string) error {
 	a.mu.Lock()
+	var removed []int64
 	for _, id := range ids {
 		parsed, err := uuid.FromString(strings.TrimSpace(id))
 		if err != nil {
@@ -323,37 +326,22 @@ func (a *tuicAdapter) DelUsers(ids []string) error {
 			a.slots[index].active = false
 			// 顺手丢掉这个用户的令牌桶，否则用户删了桶还留着。
 			a.limiters.Remove(a.slots[index].user.ID)
+			removed = append(removed, a.slots[index].user.ID)
 			delete(a.users, canonical)
 		}
 	}
 	a.mu.Unlock()
-	return a.syncUsers()
+	err := a.syncUsers()
+	// 先删表、再踢线（锁外关）：已有的 QUIC / AnyTLS 会话里属于他的流随之断开。
+	a.sessions.revoke(removed)
+	return err
 }
 
 func (a *tuicAdapter) SnapshotTraffic() ([]core.UserTraffic, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	out := make([]core.UserTraffic, 0, len(a.traffic))
-	for id, traffic := range a.traffic {
-		if traffic.Upload != 0 || traffic.Download != 0 {
-			out = append(out, traffic)
-		}
-		delete(a.traffic, id)
-	}
-	return out, nil
+	return a.sessions.snapshot(), nil
 }
 
-func (a *tuicAdapter) OnlineIPs() map[int64][]string {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	out := make(map[int64][]string, len(a.online))
-	for id, ips := range a.online {
-		for ip := range ips {
-			out[id] = append(out[id], ip)
-		}
-	}
-	return out
-}
+func (a *tuicAdapter) OnlineIPs() map[int64][]string { return a.online.snapshot() }
 
 func (a *tuicAdapter) NewConnectionEx(ctx context.Context, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
 	a.mu.Lock()
@@ -365,19 +353,26 @@ func (a *tuicAdapter) NewConnectionEx(ctx context.Context, conn net.Conn, source
 	a.wg.Add(1)
 	a.active[conn] = struct{}{}
 	a.mu.Unlock()
-	go func() {
+	goGuarded(conn, func() {
 		defer a.wg.Done()
 		defer a.removeActive(conn)
 		defer conn.Close()
 		if onClose != nil {
 			defer onClose(nil)
 		}
+		epoch := a.sessions.epoch()
 		index, user, ok := a.userFromContext(ctx)
-		if admitErr := admissionError("tuic", ok, ok && a.enterDevice(user, source.AddrString())); admitErr != nil {
+		if admitErr := admissionError("tuic", ok, ok && a.online.enter(user, source.AddrString())); admitErr != nil {
 			a.connErr.addr(StageSession, source.UDPAddr(), admitErr)
 			return
 		}
-		defer a.leaveDevice(user, source.AddrString())
+		defer a.online.leave(user, source.AddrString())
+		sess := a.sessions.open(user, epoch, conn)
+		if sess == nil {
+			a.connErr.addr(StageSession, source.UDPAddr(), errSessionRevoked)
+			return
+		}
+		defer sess.close()
 		meta := route.Meta{Domain: destination.Fqdn, IP: destination.Addr, Port: destination.Port, Network: "tcp", Protocol: "tuic", SourceIP: source.Addr, SourcePort: source.Port}
 		upstream, err := a.plane.DialTCP(ctx, meta, destination)
 		if err != nil {
@@ -385,26 +380,10 @@ func (a *tuicAdapter) NewConnectionEx(ctx context.Context, conn net.Conn, source
 			return
 		}
 		defer upstream.Close()
-		var copyWG sync.WaitGroup
-		copyWG.Add(2)
-		copyDone := make(chan struct{}, 2)
-		go func() {
-			n, _ := core.SpeedLimitedCopy(upstream, conn, a.limiters.For(user))
-			a.addTraffic(index, n, 0)
-			copyDone <- struct{}{}
-			copyWG.Done()
-		}()
-		go func() {
-			n, _ := core.SpeedLimitedCopy(conn, upstream, a.limiters.For(user))
-			a.addTraffic(index, 0, n)
-			copyDone <- struct{}{}
-			copyWG.Done()
-		}()
-		<-copyDone
-		_ = conn.Close()
-		_ = upstream.Close()
-		copyWG.Wait()
-	}()
+		// 子流的 Close 语义与 TCP 半关闭不同：沿用「一侧结束即两端全关」。
+		sess.relay(conn, upstream, core.RelayOptions{Limiter: a.limiters.For(user), NoHalfClose: true})
+		_ = index
+	})
 }
 
 func (a *tuicAdapter) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
@@ -416,18 +395,25 @@ func (a *tuicAdapter) NewPacketConnectionEx(ctx context.Context, conn N.PacketCo
 	}
 	a.wg.Add(1)
 	a.mu.Unlock()
-	go func() {
+	goGuarded(conn, func() {
 		defer a.wg.Done()
 		defer conn.Close()
 		if onClose != nil {
 			defer onClose(nil)
 		}
-		index, user, ok := a.userFromContext(ctx)
-		if admitErr := admissionError("tuic", ok, ok && a.enterDevice(user, source.AddrString())); admitErr != nil {
+		// epoch 要在查用户之前取，见 userSessions 的竞态说明。
+		epoch := a.sessions.epoch()
+		_, user, ok := a.userFromContext(ctx)
+		if admitErr := admissionError("tuic", ok, ok && a.online.enter(user, source.AddrString())); admitErr != nil {
 			a.connErr.addr(StageSession, source.UDPAddr(), admitErr)
 			return
 		}
-		defer a.leaveDevice(user, source.AddrString())
+		defer a.online.leave(user, source.AddrString())
+		if !a.udpQuota.acquire(user.ID) {
+			a.connErr.addr(StageSession, source.UDPAddr(), udpSessionLimitError("tuic"))
+			return
+		}
+		defer a.udpQuota.release(user.ID)
 		meta := route.Meta{Domain: destination.Fqdn, IP: destination.Addr, Port: destination.Port, Network: "udp", Protocol: "tuic", SourceIP: source.Addr, SourcePort: source.Port}
 		upstream, err := a.plane.ListenUDP(ctx, meta, destination)
 		if err != nil {
@@ -435,60 +421,17 @@ func (a *tuicAdapter) NewPacketConnectionEx(ctx context.Context, conn N.PacketCo
 			return
 		}
 		defer upstream.Close()
-		bridgeCtx, cancel := context.WithCancel(ctx)
-		defer cancel()
-		var bridgeWG sync.WaitGroup
-		bridgeWG.Add(2)
-		go func() {
-			defer cancel()
-			defer bridgeWG.Done()
-			for {
-				packet := buf.NewPacket()
-				dst, err := conn.ReadPacket(packet)
-				if err != nil {
-					packet.Release()
-					return
-				}
-				if !dst.IsValid() {
-					dst = destination
-				}
-				addr, err := resolveUDPAddr(bridgeCtx, dst)
-				if err != nil {
-					packet.Release()
-					continue
-				}
-				if n, err := upstream.WriteTo(packet.Bytes(), addr); err != nil {
-					packet.Release()
-					return
-				} else {
-					a.addTraffic(index, int64(n), 0)
-				}
-				packet.Release()
-			}
-		}()
-		go func() {
-			defer cancel()
-			defer bridgeWG.Done()
-			data := make([]byte, 64<<10)
-			for {
-				n, addr, err := upstream.ReadFrom(data)
-				if err != nil {
-					return
-				}
-				packet := buf.As(append([]byte(nil), data[:n]...))
-				if err := conn.WritePacket(packet, M.SocksaddrFromNet(addr).Unwrap()); err != nil {
-					return
-				}
-				a.addTraffic(index, 0, int64(n))
-			}
-		}()
-		go func() {
-			<-bridgeCtx.Done()
-			_ = conn.SetDeadline(time.Now())
-			_ = upstream.SetDeadline(time.Now())
-		}()
-		bridgeWG.Wait()
-	}()
+		// UDP 会话登记进用户连接表：删用户时关掉会话与上游 socket，不必等空闲超时。
+		sess := a.sessions.open(user, epoch, conn, upstream)
+		if sess == nil {
+			a.connErr.addr(StageSession, source.UDPAddr(), errSessionRevoked)
+			return
+		}
+		defer sess.close()
+		// 与 Hysteria2 共用转发热路径（hysteria2_udp.go）：凑批上行、批量或逐包下行
+		// 不复制负载、目标解析按会话缓存、流量原子累加到用户计数器。
+		relayHy2UDP(ctx, conn, upstream, destination, user.ID, sess.up(), sess.down())
+	})
 }
 
 func (a *tuicAdapter) userFromContext(ctx context.Context) (int, core.User, bool) {
@@ -502,45 +445,6 @@ func (a *tuicAdapter) userFromContext(ctx context.Context) (int, core.User, bool
 		return 0, core.User{}, false
 	}
 	return index, a.slots[index].user, true
-}
-
-func (a *tuicAdapter) enterDevice(user core.User, ip string) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	set := a.online[user.ID]
-	if set == nil {
-		set = make(map[string]struct{})
-		a.online[user.ID] = set
-	}
-	if _, exists := set[ip]; !exists && user.DeviceLimit > 0 && len(set) >= user.DeviceLimit {
-		return false
-	}
-	set[ip] = struct{}{}
-	return true
-}
-
-func (a *tuicAdapter) leaveDevice(user core.User, ip string) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if set := a.online[user.ID]; set != nil {
-		delete(set, ip)
-		if len(set) == 0 {
-			delete(a.online, user.ID)
-		}
-	}
-}
-
-func (a *tuicAdapter) addTraffic(index int, upload, download int64) {
-	a.mu.Lock()
-	if index >= 0 && index < len(a.slots) {
-		id := a.slots[index].user.ID
-		current := a.traffic[id]
-		current.ID = id
-		current.Upload += upload
-		current.Download += download
-		a.traffic[id] = current
-	}
-	a.mu.Unlock()
 }
 
 func (a *tuicAdapter) removeActive(conn net.Conn) {

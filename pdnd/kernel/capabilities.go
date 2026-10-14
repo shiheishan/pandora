@@ -18,6 +18,12 @@ type Capability struct {
 	Boundaries []string `json:"boundaries,omitempty"`
 }
 
+// 抗主动探测相关的 feature：
+//   - reality-dest-fallback：REALITY 认证判定之前被拒的连接整个转给 dest（与
+//     上游 XTLS/REALITY 一致）。
+//   - probe-fallback：入站 raw 认可可选的 `fallback`（"host:port"），认证失败
+//     转给它；没配时回中性 404。面板据此决定能不能下发该字段。
+//
 // NativeCapabilities returns a deterministic copy of the verified NativeCore
 // matrix. Callers may mutate the returned slices without changing the global
 // registry. A boundary is listed explicitly when a similar-looking transport
@@ -25,16 +31,16 @@ type Capability struct {
 // core.
 func NativeCapabilities() []Capability {
 	capabilities := []Capability{
-		{Protocol: "vless", Status: "stable-with-experimental-features", Networks: []string{"tcp", "ws", "httpupgrade", "grpc", "xhttp", "xhttp-h3", "mkcp"}, Security: []string{"none", "tls", "reality"}, Features: []string{"xhttp-stream", "xhttp-packet", "xudp-mux", "http2", "http3", "grpc-gzip", "reality-h3-experimental", "udp-forward", "xtls-rprx-vision", "xtls-rprx-vision-xudp"}, Boundaries: []string{"external-reality-xhttp-h3-unverified", "reality-xhttp-h3-requires-explicit-opt-in"}},
+		{Protocol: "vless", Status: "stable-with-experimental-features", Networks: []string{"tcp", "ws", "httpupgrade", "grpc", "xhttp", "xhttp-h3", "mkcp"}, Security: []string{"none", "tls", "reality"}, Features: []string{"xhttp-stream", "xhttp-packet", "xudp-mux", "http2", "http3", "grpc-gzip", "reality-h3-experimental", "udp-forward", "xtls-rprx-vision", "xtls-rprx-vision-xudp", "reality-dest-fallback"}, Boundaries: []string{"external-reality-xhttp-h3-unverified", "reality-xhttp-h3-requires-explicit-opt-in"}},
 		{Protocol: "vmess", Networks: []string{"tcp", "ws", "httpupgrade", "grpc", "xhttp", "xhttp-h3", "mkcp"}, Security: []string{"none", "zero", "aes-128-gcm", "chacha20-poly1305", "auto"}, Features: []string{"mux", "xhttp-stream", "xhttp-packet", "http2", "http3", "grpc-gzip"}},
-		{Protocol: "trojan", Networks: []string{"tcp", "ws", "httpupgrade", "grpc", "mkcp"}, Security: []string{"tls", "reality"}, Features: []string{"http2", "grpc-gzip", "reality-tcp", "udp-forward"}},
+		{Protocol: "trojan", Networks: []string{"tcp", "ws", "httpupgrade", "grpc", "mkcp"}, Security: []string{"tls", "reality"}, Features: []string{"http2", "grpc-gzip", "reality-tcp", "udp-forward", "reality-dest-fallback", "probe-fallback"}},
 		{Protocol: "shadowsocks", Networks: []string{"tcp", "udp"}, Features: []string{"classic-aead", "2022-aead"}},
 		{Protocol: "hysteria2", Networks: []string{"udp"}, Features: []string{"quic", "obfs", "udp-forward"}},
 		{Protocol: "tuic", Networks: []string{"udp"}, Features: []string{"quic", "congestion-control", "udp-forward"}},
-		{Protocol: "anytls", Networks: []string{"tcp"}, Features: []string{"tls", "multiplex", "udp-over-tcp"}},
+		{Protocol: "anytls", Networks: []string{"tcp"}, Features: []string{"tls", "multiplex", "udp-over-tcp", "probe-fallback"}},
 		{Protocol: "socks", Networks: []string{"tcp", "udp"}, Features: []string{"socks4", "socks4a", "socks5", "udp-associate"}},
 		{Protocol: "http", Networks: []string{"tcp"}, Features: []string{"http-connect", "http-forward"}},
-		{Protocol: "naive", Networks: []string{"tcp"}, Features: []string{"https-connect"}},
+		{Protocol: "naive", Networks: []string{"tcp"}, Features: []string{"https-connect", "probe-fallback"}},
 		{Protocol: "shadowtls", Networks: []string{"tcp"}, Features: []string{"shadowtls-v3"}},
 		{Protocol: "mieru", Networks: []string{"tcp", "udp"}, Features: []string{"native-listener"}},
 		{Protocol: "juicity", Networks: []string{"udp"}, Features: []string{"quic", "tcp-forward", "udp-forward"}},

@@ -4,7 +4,6 @@ import { nodeTrafficSchema, overviewSchema, systemStatusSchema, type Backlog, ty
 import {
   activitySummary,
   backupSummary,
-  dashboardAccess,
   formatDuration,
   formatLatency,
   formatPercent,
@@ -16,20 +15,6 @@ import {
   trafficNotes,
   trafficRows,
 } from './model'
-
-const ALL = new Set([
-  'ops.dashboard.read',
-  'ops.ticket.read',
-  'marketing.commission.read',
-  'node.read',
-  'billing.order.read',
-  'billing.ledger.read',
-  'ops.notification.read',
-  'security.audit.read',
-  'metering.read',
-  'iam.user.read',
-])
-const VIEWER = new Set(['ops.ticket.read', 'iam.user.read', 'catalog.read', 'billing.order.read', 'node.read', 'ops.notification.read'])
 
 describe('格式化', () => {
   it('formatPercent / percentChange', () => {
@@ -48,18 +33,6 @@ describe('格式化', () => {
     expect(formatDuration(50 * 3600)).toBe('2 天')
     expect(formatLatency(0.43)).toBe('0.4 ms')
     expect(formatLatency(3.2)).toBe('3 ms')
-  })
-})
-
-describe('权限', () => {
-  it('只读账号只剩通知积压一块', () => {
-    expect(dashboardAccess(VIEWER)).toEqual({ tasks: false, backlog: true, overview: false, nodeTraffic: false, userTraffic: false, system: false, activity: false })
-  })
-
-  it('流量两张卡都要 metering.read', () => {
-    const can = dashboardAccess(new Set(['node.read', 'iam.user.read']))
-    expect(can.nodeTraffic).toBe(false)
-    expect(can.userTraffic).toBe(false)
   })
 })
 
@@ -86,7 +59,7 @@ const BACKLOG: Backlog = {
 
 describe('需要处理', () => {
   it('按设计稿映射副标题，账本漂移为 0 不出卡', () => {
-    const cards = taskCards(TASKS, undefined, ALL)
+    const cards = taskCards(TASKS, undefined)
     expect(cards.map((c) => c.key)).toEqual(['tickets_open', 'withdrawals_pending', 'nodes_offline', 'orders_pending_stale', 'notifications_backlog'])
     const byKey = Object.fromEntries(cards.map((c) => [c.key, c]))
     expect(byKey.tickets_open!.sub).toBe('最久已等 3 小时 · 2 个高优先级')
@@ -98,26 +71,26 @@ describe('需要处理', () => {
   })
 
   it('账本漂移大于 0 时排在最前、红色', () => {
-    const cards = taskCards([...TASKS.slice(0, 5), { kind: 'ledger_drift', count: 2 }], undefined, ALL)
+    const cards = taskCards([...TASKS.slice(0, 5), { kind: 'ledger_drift', count: 2 }], undefined)
     expect(cards[0]).toMatchObject({ key: 'ledger_drift', tone: 'danger', count: 2, target: { module: 'billing', tab: null } })
   })
 
   it('通知积压优先用 backlog 明细：积压数 = ready + scheduled，不写「worker 正常」', () => {
-    const backlogged = taskCards(TASKS, BACKLOG, ALL).find((c) => c.key === 'notifications_backlog')!
+    const backlogged = taskCards(TASKS, BACKLOG).find((c) => c.key === 'notifications_backlog')!
     expect(backlogged.count).toBe(214)
     expect(backlogged.sub).toBe('最久等待 21 分钟 · 重试中 21 · 9 封失败')
-    const clear = taskCards(undefined, { ...BACKLOG, backlog_state: 'clear', counts: { ...BACKLOG.counts, failed_total: 0 } }, ALL)
+    const clear = taskCards(undefined, { ...BACKLOG, backlog_state: 'clear', counts: { ...BACKLOG.counts, failed_total: 0 } })
     expect(clear).toHaveLength(1)
     expect(clear[0]).toMatchObject({ sub: '无超阈值到期积压', tone: 'ok', pending: false })
     expect(clear[0]!.hint).toContain('不可观测')
   })
 
-  it('目标页不可读时卡片没有链接', () => {
-    const cards = taskCards(TASKS, BACKLOG, VIEWER)
+  it('每张卡都链到去处理的页面', () => {
+    const cards = taskCards(TASKS, BACKLOG)
     const byKey = Object.fromEntries(cards.map((c) => [c.key, c]))
     expect(byKey.tickets_open!.target).toEqual({ module: 'tickets', tab: null })
-    expect(byKey.withdrawals_pending!.target).toBeNull()
-    expect(byKey.notifications_backlog!.target).toBeNull()
+    expect(byKey.withdrawals_pending!.target).toEqual({ module: 'marketing', tab: 'commission' })
+    expect(byKey.notifications_backlog!.target).toEqual({ module: 'system', tab: 'notify' })
   })
 })
 
@@ -173,14 +146,15 @@ describe('注册与活跃', () => {
 
 const STATUS_BASE: SystemStatus = {
   backup: {
-    dir: '/var/backups/aegispanel',
+    dir: '/var/backups/pandora',
     readable: true,
     count: 2,
     total_bytes: 2048,
-    latest: { name: 'a.dump.age', size: 1024, created_at: '2026-09-24T03:15:00Z', has_checksum: true },
+    latest: { name: 'a.dump.age', size: 1024, created_at: '2026-09-24T03:15:00Z', has_checksum: true, has_seal: true },
     latest_age_hours: 5,
     stale: false,
     missing_checksum: 0,
+    missing_seal: 0,
     recent: [],
     identity_configured: true,
     offsite_configured: true,
@@ -202,8 +176,15 @@ describe('系统状态', () => {
     expect(backupSummary({ ...STATUS_BASE.backup, latest_age_hours: 72 }).meta).toBe('最近一份 3 天前')
   })
 
+  it('备份摘要：缺封条的单独说出来；有文件却没有能恢复的一份，不说「还没有」', () => {
+    expect(backupSummary({ ...STATUS_BASE.backup, missing_seal: 1 })).toEqual({ state: 'warn', meta: '1 份缺封条' })
+    expect(backupSummary({ ...STATUS_BASE.backup, missing_checksum: 1, missing_seal: 2 }).meta).toBe('1 份缺校验 · 2 份缺封条')
+    const none = { dir: '/x', readable: true, count: 3, stale: true, missing_seal: 3, recent: [] }
+    expect(backupSummary(none)).toEqual({ state: 'warn', meta: '3 份都恢复不了（缺封条或校验）' })
+  })
+
   it('行来自 components，备份行排最后、文案取 backup 段', () => {
-    const view = systemRows(STATUS_BASE, ALL)
+    const view = systemRows(STATUS_BASE)
     expect(view.rows.map((r) => [r.key, r.state, r.meta])).toEqual([
       ['postgres', 'ok', '3 ms · 3.00 GB · 连接 23/200'],
       ['backup', 'ok', '最近一份 5 小时前'],
@@ -226,7 +207,7 @@ describe('系统状态', () => {
         { key: 'sse', state: 'unknown', metrics: { connections: 38 } },
       ],
     }
-    const view = systemRows(status, ALL)
+    const view = systemRows(status)
     expect(view.rows.map((r) => r.meta)).toEqual([
       '3 ms · 1.00 GB · 连接 23/200',
       '0.4 ms',
@@ -239,10 +220,9 @@ describe('系统状态', () => {
     ])
     expect(view.rows.at(-1)).toMatchObject({ key: 'backup', state: 'warn', hint: '未配异地', action: { kind: 'backup' } })
     expect(view).toMatchObject({ degraded: 3, label: '3 项降级', tone: 'warn' })
-    // 通知与插件的通知渠道要 security.audit.read，节点要 node.read
     expect(view.rows.find((r) => r.key === 'mail')!.action).toEqual({ kind: 'go', target: { module: 'system', tab: 'notify' } })
-    const limited = systemRows(status, new Set(['security.audit.read']))
-    expect(limited.rows.find((r) => r.key === 'node_fabric')!.action).toBeUndefined()
+    expect(view.rows.find((r) => r.key === 'node_fabric')!.action).toEqual({ kind: 'go', target: { module: 'nodes', tab: 'nodes' } })
+    expect(view.rows.find((r) => r.key === 'postgres')!.action).toBeUndefined()
   })
 })
 
@@ -253,8 +233,8 @@ const NODE_TRAFFIC: NodeTraffic = {
   to: '2026-09-24T08:00:00.000000Z',
   basis: 'strict_raw_report_entries',
   items: [
-    { node_id: 'n1', name: 'hk-hkg-01', display_name: 'HK-HKG-01', upload_bytes: '100', download_bytes: '900', total_bytes: '1000', contributing_entry_count: 5, report_count: 3, last_report_at: '2026-09-24T07:59:00.000000Z' },
-    { node_id: 'n2', name: 'sg-sin-02', display_name: null, upload_bytes: '0', download_bytes: '10', total_bytes: '10', contributing_entry_count: 1, report_count: 1, last_report_at: '2026-09-24T07:00:00.000000Z' },
+    { node_id: 'n1', name: 'hk-hkg-01', display_name: 'HK-HKG-01', upload_bytes: '100', download_bytes: '900', total_bytes: '1000', last_report_at: '2026-09-24T07:59:00.000000Z' },
+    { node_id: 'n2', name: 'sg-sin-02', display_name: null, upload_bytes: '0', download_bytes: '10', total_bytes: '10', last_report_at: '2026-09-24T07:00:00.000000Z' },
   ],
   totals: { reported_bytes: '1010', attributed_bytes: '1000', unattributed_bytes: '10' },
   ranking: { returned_bytes: '1010', other_node_bytes: '0' },
@@ -268,14 +248,14 @@ describe('流量排行', () => {
       ['HK-HKG-01', 100, '1000 B'],
       ['sg-sin-02', 2, '10 B'],
     ])
-    expect(rows[0]!.tip).toBe('上行 100 B · 下行 900 B · 3 次上报 · 最近 1 分钟')
+    expect(rows[0]!.tip).toBe('上行 100 B · 下行 900 B · 最近 1 分钟')
     expect(rows[0]!.userId).toBeUndefined()
   })
 
   it('用户行带 user_id、只显示脱敏邮箱', () => {
     const users: UserTraffic = {
       ...NODE_TRAFFIC,
-      items: [{ user_id: 'u1', email_masked: 'a***@example.com', upload_bytes: '1', download_bytes: '1', total_bytes: '2', subscription_count: 2, contributing_entry_count: 1, last_report_at: '2026-09-24T07:59:00.000000Z' }],
+      items: [{ user_id: 'u1', email_masked: 'a***@example.com', upload_bytes: '1', download_bytes: '1', total_bytes: '2', subscription_count: 2, last_report_at: '2026-09-24T07:59:00.000000Z' }],
       ranking: { returned_bytes: '2', other_user_bytes: '0' },
     }
     expect(trafficRows(users)[0]).toMatchObject({ name: 'a***@example.com', userId: 'u1' })
@@ -341,7 +321,7 @@ describe('修订 R52：down / unknown 时 metrics 字段可缺', () => {
     }
     const parsed = systemStatusSchema.safeParse(raw)
     expect(parsed.success).toBe(true)
-    const view = systemRows(parsed.data!, ALL)
+    const view = systemRows(parsed.data!)
     expect(view.rows.map((r) => [r.key, r.meta])).toEqual([
       ['postgres', '—'],
       ['node_fabric', '在线 —/44'],
@@ -354,6 +334,6 @@ describe('修订 R52：down / unknown 时 metrics 字段可缺', () => {
     const raw = { ...STATUS_BASE, database: { error: '读取数据库状态失败' }, components: [{ key: 'postgres', state: 'ok', latency_ms: 1, metrics: { size_bytes: null, connections: null, max_connections: null } }] }
     const parsed = systemStatusSchema.safeParse(raw)
     expect(parsed.success).toBe(true)
-    expect(systemRows(parsed.data!, ALL).rows.find((r) => r.key === 'postgres')?.meta).toBe('1 ms · 连接 —/—')
+    expect(systemRows(parsed.data!).rows.find((r) => r.key === 'postgres')?.meta).toBe('1 ms · 连接 —/—')
   })
 })

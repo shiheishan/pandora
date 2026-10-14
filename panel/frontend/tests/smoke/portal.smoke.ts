@@ -14,12 +14,12 @@ import { runTable, state, type Row } from './harness'
 
 const s = state.seed
 
-// 通知只由 aegis-public 的定时扫描写入（启动约 30 秒后第一次，之后每 5 分钟，写死在 cmd/aegis-public/main.go）。
+// 支付开通的通知在开通事务里写待派发记录，由 worker 的 notify:dispatch 每 30 秒派发。
 // 等到非空或超时：8 分钟覆盖「第一次扫描早于付款」时的下一轮（5 分钟一轮，外加起栈与造数据的时间）
 const notifications = {
   ok: (d: unknown) => ((d as { notifications?: unknown[] }).notifications?.length ?? 0) > 0,
   timeoutMs: 8 * 60_000,
-  why: '8 分钟内通知列表仍为空（只由定时扫描写入），空数组验不出行 schema',
+  why: '8 分钟内通知列表仍为空（开通事务写入、worker 派发），空数组验不出行 schema',
 }
 
 const rows: Row[] = [
@@ -29,10 +29,10 @@ const rows: Row[] = [
   { at: 'portal/queries.ts', path: 'v1/me', schema: meSchema },
   { at: 'portal/queries.ts', path: 'v1/me/balance', schema: balanceSchema },
   { at: 'portal/queries.ts', path: 'v1/me/subscriptions', schema: subscriptionsSchema },
-  { at: 'portal/queries.ts', seed: '被邀请人下单并经演示渠道付清', path: 'v1/me/commission', schema: commissionSchema },
+  { at: 'portal/queries.ts', seed: '被邀请人下单并经易支付渠道付清', path: 'v1/me/commission', schema: commissionSchema },
   // 外框只取角标：它的 schema 只有 unread，解析结果里没有 notifications 数组，等待条件改看 unread
   {
-    at: 'portal/queries.ts', seed: '定时扫描派发的支付通知',
+    at: 'portal/queries.ts', seed: '开通事务写入、worker 派发的支付通知',
     path: 'v1/me/notifications',
     query: { limit: 1 },
     schema: notificationsSchema,
@@ -42,12 +42,12 @@ const rows: Row[] = [
   // ---- 套餐与下单 ----
   { at: 'common/catalog.ts', seed: '后台 POST plans/complete', path: 'v1/plans', schema: plansSchema },
   { at: 'common/catalog.ts', seed: '后台 POST traffic-packs', path: 'v1/traffic-packs', schema: z.object({ packs: z.array(packSchema) }) },
-  { at: 'common/catalog.ts', seed: 'SQL 夹具 demo 渠道', path: 'v1/payment-methods', schema: z.object({ methods: z.array(paymentMethodSchema) }) },
+  { at: 'common/catalog.ts', seed: '后台建的 smokepay 易支付渠道', path: 'v1/payment-methods', schema: z.object({ methods: z.array(paymentMethodSchema) }) },
 
   // ---- 订阅 ----
   { at: 'common/subscriptions.ts', path: 'v1/me/subscription-links', schema: linksSchema },
-  { at: 'common/subscriptions.ts', seed: '接入 + POST activate，池绑在套餐版本上', path: `v1/me/subscriptions/${s.subscription_id}/nodes`, schema: nodesSchema },
-  { at: 'common/subscriptions.ts', seed: 'UniProxy /push 同事务写按日用量', path: `v1/me/subscriptions/${s.subscription_id}/usage`, schema: usageReportSchema },
+  { at: 'common/subscriptions.ts', seed: 'nodesim 接入 + POST activate，池绑在套餐版本上', path: `v1/me/subscriptions/${s.subscription_id}/nodes`, schema: nodesSchema },
+  { at: 'common/subscriptions.ts', seed: 'nodesim 上报流量，入账同事务写按日用量', path: `v1/me/subscriptions/${s.subscription_id}/usage`, schema: usageReportSchema },
   { at: 'common/subscriptions.ts', seed: '门户用余额买流量包（应付 0 同步履约）', path: 'v1/me/traffic-packs', schema: trafficPacksSchema },
 
   // ---- 订单 ----
@@ -65,7 +65,7 @@ const rows: Row[] = [
 
   // ---- 消息、推荐、钱包、账号、帮助 ----
   {
-    at: 'messages/api.ts', seed: '定时扫描派发的支付通知',
+    at: 'messages/api.ts', seed: '开通事务写入、worker 派发的支付通知',
     path: 'v1/me/notifications',
     query: { limit: NOTIFICATION_LIMIT },
     schema: z.object({ notifications: z.array(notificationSchema), unread: z.number().int() }),

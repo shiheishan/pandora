@@ -1,16 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../core/api'
-import { canWith, classifyFailure, createIntentKey, handleFailure } from './actions'
+import { classifyFailure, createIntentKey, handleFailure } from './actions'
 import { passwordStrength } from './ChangePasswordDialog'
 import { describeEvent } from './EventsCapsule'
 import { identityLabels } from './me'
-import { MODULES, canRead, canReadModule, modulePath, paletteItems, resolveRoute, visibleTabs, type Permissions } from './modules'
+import { MODULES, modulePath, paletteItems, resolveRoute } from './modules'
 import { createReauthController } from './reauth'
 import { taskCount, tasksSchema } from './tasks'
-
-const ALL: Permissions = new Set(
-  Object.values(MODULES).flatMap((def) => (def.read === null ? [] : typeof def.read === 'string' ? [def.read] : Object.values(def.read))),
-)
 
 describe('resolveRoute', () => {
   it('keeps valid module/tab paths', () => {
@@ -44,65 +40,32 @@ describe('resolveRoute', () => {
     expect(resolveRoute('/users/nope/abc')).toEqual({ module: 'users', tab: 'list', rest: [], canonical: '/users/list' })
   })
 
-  it('fills a missing or unknown tab with the first readable one when permissions are known', () => {
-    const viewer: Permissions = new Set(['ops.notification.read'])
-    expect(resolveRoute('/system', viewer).canonical).toBe('/system/templates')
-    expect(resolveRoute('/system/nope/x', viewer).canonical).toBe('/system/templates')
-    expect(resolveRoute('/system/notify', viewer).canonical).toBe('/system/notify')
-    expect(resolveRoute('/security', viewer).canonical).toBe('/security/audit')
+  it('treats inherited object keys as unknown tabs', () => {
+    expect(resolveRoute('/marketing/toString').canonical).toBe('/marketing/coupons')
   })
 
-  it('modulePath builds canonical links and prefers the first readable tab', () => {
+  it('modulePath builds canonical links and falls back to the first tab', () => {
     expect(modulePath('billing')).toBe('/billing/orders')
     expect(modulePath('billing', 'arrears')).toBe('/billing/arrears')
+    expect(modulePath('billing', 'nope')).toBe('/billing/orders')
     expect(modulePath('dash', 'x')).toBe('/dash')
-    expect(modulePath('users', null, new Set(['metering.reset.read']))).toBe('/users/resets')
-    expect(modulePath('users', 'groups', new Set(['metering.reset.read']))).toBe('/users/groups')
-  })
-})
-
-describe('read permissions', () => {
-  it('declares a permission for every tab and nothing else', () => {
-    for (const [key, def] of Object.entries(MODULES)) {
-      if (def.tabs && def.read !== null && typeof def.read === 'object') {
-        expect(Object.keys(def.read).sort(), key).toEqual(def.tabs.map(([tab]) => tab).sort())
-      } else {
-        expect(def.tabs, key).toBeUndefined()
-      }
-    }
-  })
-
-  it('checks module and tab permissions against GET v1/me', () => {
-    const viewer: Permissions = new Set(['ops.ticket.read', 'node.read', 'marketing.giftcard.read'])
-    expect(canRead('dash', null, new Set())).toBe(true)
-    expect(canRead('tickets', null, viewer)).toBe(true)
-    expect(canRead('users', 'list', viewer)).toBe(false)
-    expect(canRead('marketing', 'gifts', viewer)).toBe(true)
-    expect(canRead('marketing', 'coupons', viewer)).toBe(false)
-    expect(canRead('marketing', null, viewer)).toBe(false)
-    expect(canRead('marketing', 'toString', ALL)).toBe(false)
-    expect(canReadModule('marketing', viewer)).toBe(true)
-    expect(canReadModule('security', viewer)).toBe(false)
-    expect(visibleTabs('marketing', viewer).map(([tab]) => tab)).toEqual(['gifts'])
-    expect(visibleTabs('dash', ALL)).toEqual([])
   })
 })
 
 describe('paletteItems', () => {
   it('lists 12 entries by default and filters on title + path', () => {
-    expect(paletteItems('', ALL)).toHaveLength(12)
-    const gift = paletteItems('礼品', ALL)
+    expect(paletteItems('')).toHaveLength(12)
+    const gift = paletteItems('礼品')
     expect(gift.map((i) => [i.module, i.tab])).toEqual([['marketing', 'gifts']])
-    expect(paletteItems('reality', ALL).some((i) => i.module === 'nodes')).toBe(true)
-    expect(paletteItems('完全不存在', ALL)).toEqual([])
+    expect(paletteItems('reality').some((i) => i.module === 'nodes')).toBe(true)
+    expect(paletteItems('完全不存在')).toEqual([])
   })
 
-  it('hides modules, tabs and deep links the admin cannot read', () => {
-    const viewer: Permissions = new Set(['node.read'])
-    const items = paletteItems('', viewer)
-    expect(new Set(items.map((i) => i.module))).toEqual(new Set(['dash', 'nodes']))
-    expect(paletteItems('礼品', viewer)).toEqual([])
-    expect(paletteItems('reality', viewer).map((i) => i.tab)).toEqual(['nodes'])
+  it('lists every module and tab (the admin console has no per-page permissions)', () => {
+    for (const [key, def] of Object.entries(MODULES)) {
+      const pages: Array<readonly [string | null, string]> = def.tabs ? [...def.tabs] : [[null, def.title]]
+      for (const [tab, title] of pages) expect(paletteItems(title).some((i) => i.module === key && i.tab === tab), `${key}/${tab}`).toBe(true)
+    }
   })
 })
 
@@ -125,15 +88,14 @@ describe('createReauthController', () => {
 })
 
 describe('identityLabels', () => {
-  it('maps roles / display_name / email per the contract', () => {
-    const me = { user_id: 'abcdef12-3456', permissions: [], reauthed: true, email: 'linzhou@pandora.run', display_name: '林舟', roles: [{ code: 'ops', name: '运维' }] }
-    expect(identityLabels(me)).toEqual({ title: '运维 · 林舟', subtitle: 'linzhou@pandora.run', initial: '运' })
-    expect(identityLabels({ ...me, display_name: null }).title).toBe('运维 · linzhou')
+  it('always says 管理员 and takes the avatar from the name', () => {
+    const me = { user_id: 'abcdef12-3456', reauthed: true, email: 'linzhou@pandora.run', display_name: '林舟' }
+    expect(identityLabels(me)).toEqual({ title: '管理员 · 林舟', subtitle: 'linzhou@pandora.run', initial: '林' })
+    expect(identityLabels({ ...me, display_name: null })).toEqual({ title: '管理员 · linzhou', subtitle: 'linzhou@pandora.run', initial: 'l' })
   })
 
-  it('falls back to 管理员 when the account holds no role, and to empty before v1/me loads', () => {
-    expect(identityLabels({ user_id: 'abcdef12-3456', permissions: [], reauthed: false, email: 'ops@example.test', display_name: null, roles: [] })).toEqual({ title: '管理员 · ops', subtitle: 'ops@example.test', initial: '管' })
-    expect(identityLabels(undefined).subtitle).toBe('')
+  it('falls back to 管理员 before v1/me loads', () => {
+    expect(identityLabels(undefined)).toEqual({ title: '管理员', subtitle: '', initial: '管' })
   })
 })
 
@@ -186,12 +148,6 @@ describe('dashboard/tasks', () => {
 })
 
 describe('actions', () => {
-  it('canWith：只看权限码；me 没回来一律 false', () => {
-    expect(canWith(['ops.ticket.write'], 'ops.ticket.write')).toBe(true)
-    expect(canWith(['ops.ticket.read'], 'ops.ticket.write')).toBe(false)
-    expect(canWith(undefined, 'ops.ticket.read')).toBe(false)
-  })
-
   it('classifyFailure：reauth 取消静默；有 fields 且能标表单才标；其余 Toast 服务端文案', () => {
     const reauth = new ApiError({ status: 403, code: 'reauth_required', message: '需要重新验证' })
     const invalid = new ApiError({ status: 422, code: 'validation_failed', message: '请求参数校验未通过', fields: { body: '内容需在 1–5000 字之间' } })

@@ -21,6 +21,10 @@ import (
 	N "github.com/sagernet/sing/common/network"
 )
 
+// errStreamRefused 是子流打不开时经 cmdSYNACK 发给客户端的文字，与 kernel 适配器
+// 的 errAnyTLSStreamRefused 同一句：中性、不带内部原因。
+var errStreamRefused = errors.New("connection failed")
+
 type Service struct {
 	userAccess      sync.RWMutex
 	users           map[[32]byte]string
@@ -121,6 +125,11 @@ func (s *Service) NewConnection(ctx context.Context, conn net.Conn, source M.Soc
 		destination, err := M.SocksaddrSerializer.ReadAddrPort(stream)
 		if err != nil {
 			s.logger.ErrorContext(ctx, "ReadAddrPort:", err)
+			// 本仓库改动：上游在这里直接 return，既不回 cmdSYNACK 也不关流——流滞留
+			// 在会话里直到会话结束，v2 客户端 3 秒后还会关掉整条会话。改为回中性的
+			// 失败再关流（v1 客户端收不到 SYNACK，靠关流的 FIN）。
+			_ = stream.HandshakeFailure(errStreamRefused)
+			_ = stream.Close()
 			return
 		}
 

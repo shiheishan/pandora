@@ -40,8 +40,8 @@ func TestTrojanAdapterEnforcesSpeedLimit(t *testing.T) {
 
 	port := reserveTCPPort(t)
 	adapter := &trojanAdapter{
-		users: make(map[string]trojanUser), traffic: make(map[int64]core.UserTraffic),
-		online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{}),
+		users:  make(map[string]trojanUser),
+		active: make(map[net.Conn]struct{}),
 	}
 	spec := InboundSpec{Config: core.InboundConfig{Protocol: "trojan", Listen: "127.0.0.1", Port: port}}
 	if err := adapter.Validate(spec); err != nil {

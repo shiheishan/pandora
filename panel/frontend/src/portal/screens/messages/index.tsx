@@ -79,7 +79,7 @@ function NotificationList() {
       query={notifications}
       rows={3}
       isEmpty={(d) => d.notifications.length === 0}
-      empty={<Empty bare title="还没有通知" description="订单支付、工单回复、订阅到期与流量提醒会发到这里。" />}
+      empty={<Empty bare title="还没有通知" description="订单支付、工单回复、套餐到期与流量提醒会发到这里。" />}
     >
       {(d) => (
         <ul className={css.list}>

@@ -5,7 +5,7 @@ import { href } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, Checkbox, Empty, Modal, QueryView, Tag, TextArea, useToast } from '../../../ui'
 import { clusterPlace, disableCandidates, disableSummary, reviewState, reviewText, RISK_LABEL, RISK_TONE, USER_STATUS_LABEL, validateDisable, withDisabled, withReview } from './logic'
-import { SK, useCan, useClusters, useFailure, useIntentKey } from './queries'
+import { SK, useClusters, useFailure, useIntentKey } from './queries'
 import { clusterDisabled, clusterReviewed, type Cluster } from './schemas'
 import css from './security.module.css'
 
@@ -47,17 +47,14 @@ export function RiskTab() {
 
 function ClusterCard({ cluster: c, includeReviewed, onDisable }: { cluster: Cluster; includeReviewed: boolean; onDisable: () => void }) {
   const api = useApi()
-  const can = useCan()
   const toast = useToast()
   const fail = useFailure()
   const client = useQueryClient()
   const state = reviewState(c.review)
   const result = reviewText(state)
   const candidates = disableCandidates(c)
-  const reviewer = can('security.risk.review')
-  const canDisable = reviewer && can('iam.user.write') && candidates.length > 0
-  const canMark = reviewer && state.kind !== 'normal'
-  const linkUsers = can('iam.user.read')
+  const canDisable = candidates.length > 0
+  const canMark = state.kind !== 'normal'
 
   const mark = useMutation({
     mutationFn: () => api.post(`v1/ip-clusters/${encodeURIComponent(c.key)}/review`, clusterReviewed, { body: {} }),
@@ -90,13 +87,9 @@ function ClusterCard({ cluster: c, includeReviewed, onDisable }: { cluster: Clus
         <ul className={css.members}>
           {c.users.map((u) => (
             <li key={u.id} className={css.member}>
-              {linkUsers ? (
-                <a className={css.ellipsis} href={href(`/users/list/${encodeURIComponent(u.id)}`)}>
-                  {u.email}
-                </a>
-              ) : (
-                <span className={css.ellipsis}>{u.email}</span>
-              )}
+              <a className={css.ellipsis} href={href(`/users/list/${encodeURIComponent(u.id)}`)}>
+                {u.email}
+              </a>
               {u.status !== 'active' && <Tag tone={u.status === 'banned' || u.status === 'suspended' ? 'danger' : 'neutral'}>{USER_STATUS_LABEL[u.status] ?? u.status}</Tag>}
               <span className={css.memberPlan}>{u.active_plan ?? '无生效套餐'}</span>
             </li>

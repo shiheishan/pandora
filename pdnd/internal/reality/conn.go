@@ -125,6 +125,13 @@ type Conn struct {
 	// the rest of the bits are the number of goroutines in Conn.Write.
 	activeCall atomic.Int32
 
+	// Pandora 改动（见 handoff.go 文件头）：readCoalesce 打开后，Read 在交出一条
+	// 记录的明文之后，把 rawInput 里已经整条到齐的后续记录也解出来接着填进调用方
+	// 的缓冲；readNoBlock 只在这段机会式多读期间为真，让 readFromUntil 在需要等
+	// 网络时立即返回 errReadWouldBlock 而不是阻塞。两者都受 c.in 保护。
+	readCoalesce bool
+	readNoBlock  bool
+
 	tmp [16]byte
 }
 
@@ -876,6 +883,9 @@ func (c *Conn) readFromUntil(r io.Reader, n int) error {
 	if c.rawInput.Len() >= n {
 		return nil
 	}
+	if c.readNoBlock {
+		return errReadWouldBlock
+	}
 	needs := n - c.rawInput.Len()
 	// There might be extra input waiting on the wire. Make a best effort
 	// attempt to fetch it so that it can be used in (*Conn).Read to
@@ -1014,6 +1024,9 @@ func (c *Conn) flush() (int, error) {
 	return n, err
 }
 
+// writeCoalesceLimit 是 writeRecordLocked 合并写一次最多攒的密文字节（Pandora 改动）。
+const writeCoalesceLimit = 64 << 10
+
 // outBufPool pools the record-sized scratch buffers used by writeRecordLocked.
 var outBufPool = sync.Pool{
 	New: func() any {
@@ -1058,15 +1071,23 @@ func (c *Conn) writeRecordLocked(typ recordType, data []byte) (int, error) {
 		outBufPool.Put(outBufPtr)
 	}()
 
-	var n int
+	// Pandora 改动（见 handoff.go 文件头）：一次 Write 切出的多条记录先在 outBuf 里
+	// 首尾相接攒着，攒满 writeCoalesceLimit 或写完才交给底层连接一次写出。上游每条
+	// 记录一次 write：转发一块 32KB 要 2–3 次系统调用，下行写路径占节点 CPU 近四成。
+	// 线上字节逐字节不变，只少了系统调用与 TCP 上的残段。代价：中途写失败时返回的 n
+	// 只算到上一次成功写出为止（连接此后已不可用）。
+	var n, pending int
+	outBuf = outBuf[:0]
 	for len(data) > 0 {
 		m := len(data)
 		if maxPayload := c.maxPayloadSizeForWrite(typ); m > maxPayload {
 			m = maxPayload
 		}
 
-		_, outBuf = sliceForAppend(outBuf[:0], recordHeaderLen)
-		outBuf[0] = byte(typ)
+		start := len(outBuf)
+		outBuf, _ = sliceForAppend(outBuf, recordHeaderLen)
+		hdr := outBuf[start:]
+		hdr[0] = byte(typ)
 		vers := c.vers
 		if vers == 0 {
 			// Some TLS servers fail if the record version is
@@ -1077,21 +1098,30 @@ func (c *Conn) writeRecordLocked(typ recordType, data []byte) (int, error) {
 			// See RFC 8446, Section 5.1.
 			vers = VersionTLS12
 		}
-		outBuf[1] = byte(vers >> 8)
-		outBuf[2] = byte(vers)
-		outBuf[3] = byte(m >> 8)
-		outBuf[4] = byte(m)
+		hdr[1] = byte(vers >> 8)
+		hdr[2] = byte(vers)
+		hdr[3] = byte(m >> 8)
+		hdr[4] = byte(m)
 
-		var err error
-		outBuf, err = c.out.encrypt(outBuf, data[:m], c.config.rand())
+		record, err := c.out.encrypt(hdr, data[:m], c.config.rand())
 		if err != nil {
 			return n, err
 		}
-		if _, err := c.write(outBuf); err != nil {
-			return n, err
+		if cap(outBuf)-start >= len(record) && &record[0] == &outBuf[start] {
+			outBuf = outBuf[:start+len(record)] // 原地加密，记录已在 outBuf 里
+		} else {
+			outBuf = append(outBuf[:start], record...)
 		}
-		n += m
+		pending += m
 		data = data[m:]
+		if len(data) == 0 || len(outBuf) >= writeCoalesceLimit {
+			if _, err := c.write(outBuf); err != nil {
+				return n, err
+			}
+			n += pending
+			pending = 0
+			outBuf = outBuf[:0]
+		}
 	}
 
 	if typ == recordTypeChangeCipherSpec && c.vers != VersionTLS13 {
@@ -1487,6 +1517,13 @@ func (c *Conn) Read(b []byte) (int, error) {
 	}
 
 	n, _ := c.input.Read(b)
+	if c.readCoalesce && n < len(b) {
+		m, err := c.readBufferedRecords(b[n:])
+		n += m
+		if err != nil {
+			return n, err
+		}
+	}
 
 	// If a close-notify alert is waiting, read it so that we can return (n,
 	// EOF) instead of (n, nil), to signal to the HTTP response reading
@@ -1503,6 +1540,81 @@ func (c *Conn) Read(b []byte) (int, error) {
 	}
 
 	return n, nil
+}
+
+// SetReadCoalescing 打开或关闭机会式多读（Pandora 改动，见 Conn.readCoalesce）。
+//
+// 只有确定此后每个字节都要经本连接解密的调用方才能打开：XTLS Vision 切直通
+// （command=2）之后对端改发裸流量，多读一条就会把裸流量当记录解密、连接即断。
+// Vision 因此只在读侧确定不会再切直通之后才打开它。
+func (c *Conn) SetReadCoalescing(on bool) {
+	c.in.Lock()
+	defer c.in.Unlock()
+	c.readCoalesce = on
+}
+
+// errReadWouldBlock 是机会式多读「再读就要等网络」的信号：Temporary 为真，
+// readRecordOrCCS 不会把它记成连接的永久错误。
+var errReadWouldBlock net.Error = readWouldBlockError{}
+
+type readWouldBlockError struct{}
+
+func (readWouldBlockError) Error() string   { return "reality: buffered read would block" }
+func (readWouldBlockError) Timeout() bool   { return false }
+func (readWouldBlockError) Temporary() bool { return true }
+
+// readBufferedRecords 把 rawInput 里已经整条到齐的记录解出来填进 b，绝不等网络；
+// 调用方持有 c.in，且 c.input 已读空。返回非 nil 错误时 b 里前 n 字节仍然有效，
+// 错误与上游 Read 末尾预读 close_notify 的处理一致（多半是 io.EOF）。
+func (c *Conn) readBufferedRecords(b []byte) (int, error) {
+	c.readNoBlock = true
+	defer func() { c.readNoBlock = false }()
+	n := 0
+	for n < len(b) && c.input.Len() == 0 && c.hand.Len() == 0 && c.rawInputHasRecord() {
+		if err := c.readRecord(); err != nil {
+			if err == errReadWouldBlock {
+				return n, nil
+			}
+			return n, err
+		}
+		for c.hand.Len() > 0 {
+			if err := c.handlePostHandshakeMessage(); err != nil {
+				if err == errReadWouldBlock {
+					return n, nil
+				}
+				return n, err
+			}
+		}
+		m, _ := c.input.Read(b[n:])
+		n += m
+	}
+	return n, nil
+}
+
+// rawInputHasRecord 判断 rawInput 开头是否已有一条完整记录（头 + 负载）。
+func (c *Conn) rawInputHasRecord() bool {
+	raw := c.rawInput.Bytes()
+	if len(raw) < recordHeaderLen {
+		return false
+	}
+	return len(raw) >= recordHeaderLen+(int(raw[3])<<8|int(raw[4]))
+}
+
+// releaseHandshakeBuffers 放掉握手期间撑大的读缓冲（Pandora 改动）：ClientHello 与
+// Finished 把 hand 与 rawInput 撑到几 KB，上游握手完一直留着。10 万条连接上合计
+// 约 170MB（10-08 验收 heap profile 的 bytes.growSlice）。rawInput 里若已有客户端
+// 紧跟 Finished 发来的数据，挪进一块刚好装下它的新缓冲。
+func (c *Conn) releaseHandshakeBuffers() {
+	c.in.Lock()
+	defer c.in.Unlock()
+	if c.hand.Len() == 0 {
+		c.hand = bytes.Buffer{}
+	}
+	if pending := c.rawInput.Len(); pending == 0 {
+		c.rawInput = bytes.Buffer{}
+	} else if c.rawInput.Cap() > 2*pending+bytes.MinRead {
+		c.rawInput = *bytes.NewBuffer(append([]byte(nil), c.rawInput.Bytes()...))
+	}
 }
 
 // Close closes the connection.

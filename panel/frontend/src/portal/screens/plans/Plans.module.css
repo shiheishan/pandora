@@ -1,290 +1,89 @@
-.page {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-20);
-}
-
-.kinds {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.kindTabs {
+/* 商品类型：下划线标签，17px 标题 + 13px 说明 */
+.seg {
   display: flex;
   gap: 28px;
   border-bottom: 1px solid var(--border);
 }
 
-.kind {
+.seg button {
   display: flex;
-  align-items: baseline;
   flex-wrap: wrap;
-  gap: var(--space-8);
+  align-items: baseline;
+  gap: 2px 8px;
   margin-bottom: -1px;
   padding: 0 0 12px;
   border: 0;
   border-bottom: 2px solid transparent;
   background: transparent;
   color: var(--text-2);
-  cursor: pointer;
+  font-size: 17px;
+  font-weight: var(--fw-semibold);
+  line-height: 1.3;
+  text-align: left;
 }
 
-.kind:hover {
+.seg button:hover {
   color: var(--text);
 }
 
-.kind[aria-selected='true'] {
+.seg button small {
+  color: var(--text-3);
+  font-size: 13px;
+  font-weight: var(--fw-regular);
+}
+
+.seg button[aria-selected='true'] {
   border-bottom-color: var(--brand);
   color: var(--text);
 }
 
-.kindTitle {
-  font-size: 17px;
-  font-weight: var(--fw-semibold);
-}
-
-.kindTag {
-  font-size: 13px;
-  color: var(--text-3);
-}
-
-.kindDesc,
-.hint {
-  font-size: 13px;
-  color: var(--text-2);
-}
-
-.periodRow {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-12);
-}
-
-/* ===========================================================================
- * 套餐卡
- * ========================================================================= */
-.planGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr));
-  gap: var(--space-16);
-}
-
-.planCard,
-.planHot {
-  gap: 14px;
-}
-
-/* 推荐套餐（R100）：与「最划算」流量包同一种强调——品牌描边 + tint 底（Card tint） */
-.planHot {
-  border-color: var(--brand);
-}
-
-.planHead {
-  display: flex;
-  align-items: center;
-  gap: var(--space-8);
-}
-
-.planName {
-  font-size: 17px;
-  font-weight: var(--fw-semibold);
-}
-
-.planDesc {
-  font-size: 13px;
-  color: var(--text-2);
-}
-
-.priceBlock {
+.field {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 6px;
 }
 
-.priceRow {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-4);
-}
-
-.price {
-  font-size: 34px;
-  font-weight: var(--fw-semibold);
-  letter-spacing: -0.02em;
-  font-variant-numeric: tabular-nums;
-}
-
-.per {
+.fieldLabel {
   color: var(--text-2);
-  font-size: 13px;
-}
-
-.monthly {
-  font-size: 13px;
-  color: var(--text-2);
-}
-
-.facts {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-8);
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
-}
-
-.traffic {
-  display: flex;
-  flex-direction: column;
-}
-
-.trafficValue {
-  font-size: 20px;
-  font-weight: var(--fw-semibold);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.reset {
   font-size: var(--fs-caption);
-  color: var(--text-3);
 }
 
-.factList {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-8);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.fact {
-  display: flex;
-  gap: var(--space-8);
-  font-size: 13px;
-  color: var(--text-2);
-}
-
-/* 入口：导航用 <a>，外观与 ui/Button 的 secondary / primary 一致 */
-.cta,
-.ctaPrimary,
-.ctaDisabled {
-  display: flex;
+.packRow {
+  flex-direction: row;
   align-items: center;
-  justify-content: center;
-  height: var(--h-control);
+  justify-content: space-between;
+}
+
+.packText {
+  min-width: 0;
+}
+
+.packText b {
+  font-size: var(--fs-h3);
+  font-weight: var(--fw-semibold);
+}
+
+.packText small {
+  display: block;
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.packBuy {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  height: var(--h-control-sm);
+  padding: 0 14px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-control);
   background: var(--surface);
   color: var(--text);
-  font-weight: var(--fw-medium);
+  white-space: nowrap;
 }
 
-.cta:hover {
+.packBuy:hover {
   background: var(--surface-3);
   color: var(--text);
   text-decoration: none;
-}
-
-.ctaPrimary {
-  border-color: transparent;
-  background: var(--accent);
-  color: var(--on-accent);
-}
-
-.ctaPrimary:hover {
-  background: var(--accent-hover);
-  color: var(--on-accent);
-  text-decoration: none;
-}
-
-.ctaDisabled {
-  color: var(--text-3);
-  background: var(--surface-2);
-  cursor: default;
-}
-
-/* ===========================================================================
- * 流量包
- * ========================================================================= */
-.packGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
-  gap: var(--space-16);
-}
-
-.packCard,
-.packHot {
-  gap: 14px;
-}
-
-.packHot {
-  border-color: var(--brand);
-}
-
-.packHead {
-  display: flex;
-  align-items: center;
-  gap: var(--space-8);
-  min-height: 22px;
-}
-
-.packKind {
-  font-size: 13px;
-  color: var(--text-2);
-}
-
-.packSize {
-  font-size: 30px;
-  font-weight: var(--fw-semibold);
-  letter-spacing: -0.02em;
-  font-variant-numeric: tabular-nums;
-}
-
-.packPriceRow {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: var(--space-8);
-}
-
-.packPrice {
-  font-size: 18px;
-  font-weight: var(--fw-semibold);
-  font-variant-numeric: tabular-nums;
-}
-
-.packCard > a,
-.packHot > a {
-  margin-top: auto;
-}
-
-.rules {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
-  gap: 1px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
-  background: var(--border);
-  overflow: hidden;
-}
-
-.rule {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 14px 16px;
-  background: var(--surface);
-}
-
-.ruleTitle {
-  font-weight: var(--fw-medium);
-}
-
-.ruleBody {
-  font-size: 13px;
-  color: var(--text-2);
 }

@@ -290,7 +290,7 @@
     z-index: 25;
     height: var(--tabbar-h);
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     border-top: 1px solid var(--border);
     background: var(--hdr);
     backdrop-filter: blur(10px);
@@ -331,4 +331,20 @@
   .tabOn .tabLine {
     background: var(--brand);
   }
+}
+
+/* 子页标题上方的「‹ 返回」：文字按钮，不占导航 */
+.back {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 0 4px -2px;
+  padding: 4px 2px;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font-size: var(--fs-body);
+}
+
+.back:hover {
+  color: var(--text);
 }

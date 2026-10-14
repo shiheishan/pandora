@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { fetchStats, metaLabel } from '../subs/labels'
-import { importClients, protocolLabel, rateLabel } from './clients'
+import { expiryText, isExpiredNow, leakSources, usageText } from './card-text'
+import { APP_UPDATE, guideApps, guideText, parseGuideDevice } from './app-update'
+import { appLink, CLIENTS, DEVICES, detectDevice, guessDeviceFromName, protocolLabel, rateLabel, shareMessage } from './clients'
 import { throttleNote } from './catalog'
 import { createPlacedOrder, recallPayable } from './intent'
+import { isPaymentLapsed, payHereNote } from './PayFlow'
+import { refusalOf } from './quote'
 import { ApiError } from '../../../core/api'
 import { orderQuerySchema, queryFailure, queryOutcome } from './order-query'
 import { expiryNote, intervalLabel, isPayable, orderRowSchema, orderTitle } from './orders'
@@ -34,6 +37,10 @@ function sub(over: Partial<Subscription> = {}): Subscription {
     renewable: ['active', 'trialing', 'grace', 'past_due'].includes(status),
     renewal_price: null,
     pack_remaining_bytes: 0,
+    label: null,
+    client_name: 'Pandora · 专业版',
+    changeable: ['active', 'trialing', 'grace', 'past_due'].includes(status),
+    renew_until: null,
     ...over,
   })
 }
@@ -68,13 +75,21 @@ describe('traffic', () => {
     expect(usageLevel(0.95)).toBe('danger')
   })
 
-  it('到期：向上取整天数，7 天内为紧急，日期按切日时区', () => {
-    expect(expiryInfo('2026-09-30T00:00:00Z', NOW)).toMatchObject({ days: 6, urgent: true })
+  it('到期：向上取整天数，7 天内为紧急，时刻精确到分钟、按切日时区', () => {
+    expect(expiryInfo('2026-09-30T00:00:00Z', NOW)).toMatchObject({ days: 6, urgent: true, expired: false, label: '6 天后到期' })
     expect(expiryInfo('2026-11-05T10:00:00Z', NOW)).toMatchObject({ days: 42, urgent: false })
     expect(expiryInfo(null, NOW)).toBeNull()
-    // 给了切日时区就按它出日期：上海 09-27 零点
-    expect(expiryInfo('2026-09-26T16:00:00Z', NOW, 'Asia/Shanghai')?.date).toBe('2026-09-27')
-    expect(expiryInfo('2026-09-26T16:00:00Z', NOW, 'UTC')?.date).toBe('2026-09-26')
+    // 给了切日时区就按它出时刻：上海 09-27 零点
+    expect(expiryInfo('2026-09-26T16:00:00Z', NOW, 'Asia/Shanghai')?.date).toBe('2026-09-27 00:00')
+    expect(expiryInfo('2026-09-26T16:00:00Z', NOW, 'UTC')?.date).toBe('2026-09-26 16:00')
+  })
+
+  it('到期：最后 24 小时写「还剩 X 小时」，过了写「已于 … 到期」（w5expiry）', () => {
+    const in5h = new Date(NOW.getTime() + 4.5 * 3_600_000).toISOString()
+    expect(expiryInfo(in5h, NOW, 'UTC')).toMatchObject({ hours: 5, urgent: true, expired: false, label: '还剩 5 小时' })
+    const past = expiryInfo(new Date(NOW.getTime() - 3_600_000).toISOString(), NOW, 'UTC')
+    expect(past).toMatchObject({ hours: 0, urgent: true, expired: true })
+    expect(past?.label).toBe(`已于 ${past?.date} 到期`)
   })
 
   it('重置日：never 不重置；next_reset_at → 额度周期末 → 用量窗口末', () => {
@@ -186,6 +201,17 @@ describe('subscriptions', () => {
     expect(pickPrimary([sub({ status: 'cancelled' })])).toBeNull()
   })
 
+  it('主订阅：没有生效订阅时回落到能原地续费的已过期订阅（w5expiry）', () => {
+    const expired = [
+      sub({ id: 'closed', status: 'expired', renewable: false, current_period_end: '2026-09-01T00:00:00Z' }),
+      sub({ id: 'older', status: 'expired', renewable: true, current_period_end: '2026-09-10T00:00:00Z' }),
+      sub({ id: 'newer', status: 'expired', renewable: true, current_period_end: '2026-09-20T00:00:00Z' }),
+    ]
+    expect(pickPrimary(expired)?.id).toBe('newer')
+    expect(pickPrimary([expired[0]!])).toBeNull()
+    expect(pickPrimary([...expired, sub({ id: 'live' })])?.id).toBe('live')
+  })
+
   it('续费入口：取服务端的 renewable', () => {
     expect(canRenew(sub())).toBe(true)
     expect(canRenew(sub({ renewable: false }))).toBe(false)
@@ -198,28 +224,65 @@ describe('subscriptions', () => {
     expect(usageReportSchema.safeParse({ ...ok, avg_daily_bytes: 1.5 }).success).toBe(false)
   })
 
-  it('头部元信息：设备上限 null 写「不限设备」', () => {
-    expect(metaLabel(sub(), NOW)).toBe('42 天后到期 · 2026-11-05 · 不限设备 · 当前在线 0')
-    expect(metaLabel(sub({ device_limit: 5, online_devices: 3 }), NOW)).toBe('42 天后到期 · 2026-11-05 · 5 台设备 · 当前在线 3')
-    expect(metaLabel(sub({ current_period_end: null, device_limit: null }), NOW)).toBe('长期有效 · 不限设备 · 当前在线 0')
+  it('设计稿 2.9 的新字段必回：备注名、配置名、能否换套餐、续到哪天（可空的为 null）', () => {
+    for (const k of ['label', 'client_name', 'changeable', 'renew_until'] as const) {
+      const missing: Partial<Subscription> = { ...sub() }
+      delete missing[k]
+      expect(subscriptionSchema.safeParse(missing).success, k).toBe(false)
+    }
+    expect(subscriptionSchema.safeParse({ ...sub(), label: '妈妈的 iPad', renew_until: '2026-12-05T10:00:00Z' }).success).toBe(true)
   })
 
-  it('拉取统计：相对时间加「前」，来源数超过设备上限提示泄露', () => {
-    const link = { subscription_id: 's1', url: 'u', expires_at: null, fetch_count: 12, last_fetched_at: '2026-09-24T11:54:00Z', distinct_sources_24h: 7 }
-    expect(fetchStats(link, 5, NOW)).toEqual({ text: '已被拉取 12 次 · 最近 6 分钟前 · 近 24 小时 7 个来源', leak: true })
-    expect(fetchStats({ ...link, last_fetched_at: null }, null, NOW)).toEqual({ text: '已被拉取 12 次 · 还没有被拉取过 · 近 24 小时 7 个来源', leak: false })
-    expect(fetchStats(link, undefined, NOW).leak).toBe(false)
+  it('卡片到期：7 天以上「还剩 N 天」、7 天内警示、最后 24 小时按小时、过期按天', () => {
+    expect(expiryText(sub(), NOW)).toMatchObject({ main: '还剩 42 天', tone: 'ok' })
+    expect(expiryText(sub({ current_period_end: '2026-09-29T12:00:00Z' }), NOW)).toMatchObject({ main: '5 天后到期', tone: 'warn' })
+    expect(expiryText(sub({ current_period_end: '2026-09-24T18:00:00Z' }), NOW)).toMatchObject({ main: '还剩 6 小时', tone: 'warn' })
+    expect(expiryText(sub({ status: 'expired', current_period_end: '2026-09-21T11:00:00Z' }), NOW)).toMatchObject({ main: '已过期 3 天', tone: 'danger' })
+    expect(expiryText(sub({ current_period_end: null }), NOW).main).toBe('长期有效')
+    expect(isExpiredNow(sub({ status: 'expired' }), NOW)).toBe(true)
+    expect(isExpiredNow(sub({ current_period_end: '2026-09-20T08:30:00Z' }), NOW)).toBe(true)
+    expect(isExpiredNow(sub(), NOW)).toBe(false)
+  })
+
+  it('卡片用量：剩余含这一份的流量包，低于 15% 标快用完了', () => {
+    expect(usageText(sub())).toMatchObject({ label: '本期流量', right: '剩 188G / 共 500G', pct: 62, low: false })
+    const low = sub({ quotas: [{ metric: 'traffic.bytes', limit: 100 * GIB, consumed: 92 * GIB, remaining: 8 * GIB, period: 'month', period_start: '2026-09-01T00:00:00Z', period_end: null, granted_addon: 0, adjusted: 0 }] })
+    expect(usageText(low)).toMatchObject({ label: '本月流量 · 快用完了', right: '剩 8G / 共 100G', low: true })
+    expect(usageText({ ...low, pack_remaining_bytes: 30 * GIB }).right).toBe('剩 38G / 共 130G（含流量包 30G）')
+  })
+
+  it('疑似泄露：近 24 小时来源超过设备上限，过期的不提示', () => {
+    const l = { subscription_id: 's1', url: 'u', expires_at: null, fetch_count: 12, last_fetched_at: null, distinct_sources_24h: 7, expired: false }
+    expect(leakSources(sub({ device_limit: 2 }), l)).toBe(7)
+    expect(leakSources(sub({ device_limit: 8 }), l)).toBeNull()
+    expect(leakSources(sub({ device_limit: null }), l)).toBeNull()
+    expect(leakSources(sub({ device_limit: 2, status: 'expired' }), l)).toBeNull()
   })
 })
 
 describe('clients', () => {
-  it('深链带原地址，v2rayN 无 scheme', () => {
+  it('深链带原链接与配置名；没有可靠 scheme 的 App 复制链接', () => {
     const url = 'https://sub.example.com/s/abc?x=1'
-    const apps = Object.fromEntries(importClients(url, 'Pandora').map((c) => [c.name, c.href]))
-    expect(apps['Clash Verge']).toBe(`clash://install-config?url=${encodeURIComponent(url)}&name=Pandora`)
-    expect(apps['Shadowrocket']).toBe(`shadowrocket://add/sub://${btoa(url)}?remark=Pandora`)
-    expect(apps['sing-box']).toBe(`sing-box://import-remote-profile?url=${encodeURIComponent(url)}#Pandora`)
-    expect(apps['v2rayN']).toBeNull()
+    const name = 'Pandora · 妈妈的 iPad'
+    expect(appLink('Clash Verge', url, name)).toBe(`clash://install-config?url=${encodeURIComponent(url)}&name=${encodeURIComponent(name)}`)
+    expect(appLink('Shadowrocket', url, name)).toBe(`shadowrocket://add/sub://${btoa(url)}?remark=${encodeURIComponent(name)}`)
+    expect(appLink('sing-box', url, name)).toBe(`sing-box://import-remote-profile?url=${encodeURIComponent(url)}#${encodeURIComponent(name)}`)
+    expect(appLink('v2rayN', url, name)).toBeNull()
+    expect(appLink('Quantumult X', url, name)).toBeNull()
+  })
+
+  it('按设备推荐：UA 猜这台；给别人添加时按备注名猜对方', () => {
+    expect(detectDevice('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)')).toBe('ios')
+    expect(detectDevice('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 5)).toBe('ios')
+    expect(detectDevice('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 0)).toBe('mac')
+    expect(detectDevice('Mozilla/5.0 (Linux; Android 14; Pixel 8)')).toBe('android')
+    expect(detectDevice('Mozilla/5.0 (Windows NT 10.0; Win64; x64)')).toBe('windows')
+    expect(guessDeviceFromName('妈妈的 iPad')).toBe('ios')
+    expect(guessDeviceFromName('爸爸的华为')).toBe('android')
+    expect(guessDeviceFromName('工作电脑')).toBe('windows')
+    expect(guessDeviceFromName(null)).toBe('ios')
+    expect(shareMessage('ios', 'https://x/s/1')).toBe('在 iPhone 或 iPad 上装 Shadowrocket（App Store 搜索）→ 打开下面这条链接 → 点「添加」。\nhttps://x/s/1')
+    expect(shareMessage('android', 'u')).toContain('Clash Meta for Android')
   })
 
   it('协议展示名与倍率标签', () => {
@@ -294,5 +357,44 @@ describe('order query (我已支付，刷新状态)', () => {
     expect(queryFailure(new ApiError({ status: 409, code: 'conflict', message: '该订单从未发起过支付，无法向渠道查单' }))).toEqual({ kind: 'failed', text: '查询失败：该订单从未发起过支付，无法向渠道查单' })
     expect(queryFailure(new ApiError({ status: 429, code: 'rate_limited', message: 'x' })).text).toContain('太频繁')
     expect(queryFailure(new ApiError({ status: 0, code: 'network_error', message: 'x' })).text).toContain('网络')
+  })
+})
+
+describe('在 App 里点一次更新（按 App 的帮助）', () => {
+  it('clients.ts 推荐的每个 App 都有一段：在哪个页面、点哪个按钮、看到什么算成功', () => {
+    const apps = new Set(DEVICES.flatMap((d) => [...CLIENTS[d].top, ...CLIENTS[d].rest].map((a) => a.name)))
+    for (const app of apps) {
+      const s = APP_UPDATE[app]
+      expect(s, app).toBeDefined()
+      expect([s!.where, s!.tap, s!.ok].every((x) => guideText(x).length > 0), app).toBe(true)
+    }
+    // 先常用的，再「其他 App」
+    expect(guideApps('ios')).toEqual(['Shadowrocket', 'Stash', 'Quantumult X', 'Loon', 'sing-box'])
+  })
+
+  it('地址里的设备：认识的照用，不认识的按这台算', () => {
+    expect(parseGuideDevice('android', 'ios')).toBe('android')
+    expect(parseGuideDevice('nokia', 'mac')).toBe('mac')
+    expect(parseGuideDevice(null, 'windows')).toBe('windows')
+  })
+})
+
+describe('付款与建单被拒', () => {
+  it('电脑上的次按钮写清是干什么的', () => {
+    expect(payHereNote({ method: 'alipay', label: '支付宝' })).toBe('没带手机？在这台电脑上用支付宝网页付')
+    expect(payHereNote({ method: 'wxpay', label: '微信支付' })).toBe('没带手机？在这台电脑上打开微信支付付款页，按页面提示付')
+  })
+
+  it('发起支付超过付款期限按码认（409 order_lapsed），同样文案的普通 409 不算', () => {
+    expect(isPaymentLapsed(new ApiError({ status: 409, code: 'order_lapsed', message: '随便什么话' }))).toBe(true)
+    expect(isPaymentLapsed(new ApiError({ status: 409, code: 'conflict', message: '这张订单已超过付款期限，请取消后重新下单' }))).toBe(false)
+  })
+
+  it('order_pending 按 fields 认：order_id 与 lapsed，不靠文案', () => {
+    const pending = new ApiError({ status: 409, code: 'order_pending', message: '你有一张还没付款的「标准版」订单', fields: { order_id: 'o1' } })
+    expect(refusalOf(pending, 'order_pending')).toEqual({ kind: 'order_pending', text: pending.message, orderId: 'o1', lapsed: false })
+    const lapsed = new ApiError({ status: 409, code: 'order_pending', message: '随便什么话', fields: { order_id: 'o2', lapsed: 'true' } })
+    expect(refusalOf(lapsed, 'order_pending')).toMatchObject({ orderId: 'o2', lapsed: true })
+    expect(refusalOf(new Error(''), null)).toEqual({ kind: 'other', text: '没下成单，请稍后再试', lapsed: false })
   })
 })

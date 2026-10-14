@@ -22,7 +22,8 @@ export interface AppRuntime {
 export function createAppRuntime(app: AppName, options: { requestReauth?: () => Promise<boolean> } = {}): AppRuntime {
   const tokens = createTokenStore(app)
   const queryClient = createQueryClient()
-  const api = createApiClient({ tokens, requestReauth: options.requestReauth })
+  const refreshLockName = app === 'portal' ? 'pandora-portal-refresh' : 'pandora-admin-refresh'
+  const api = createApiClient({ tokens, requestReauth: options.requestReauth, refreshLockName })
   tokens.subscribe(() => {
     if (tokens.get() === null) queryClient.clear()
   })
@@ -55,10 +56,11 @@ export function useSignedIn(): boolean {
   return useSyncExternalStore(tokens.subscribe, () => tokens.get() !== null, () => false)
 }
 
-/** 退出：先请求后端吊销当前会话（失败也不拦），再清本地令牌。 */
+/** 退出：先凭 refresh cookie 请求后端吊销当前会话（失败也不拦），再清本地令牌。
+ *  不带 Bearer：access 过期时也能登出，不会先触发一轮刷新。 */
 export async function signOut(runtime: AppRuntime): Promise<void> {
   try {
-    await runtime.api.post('v1/auth/logout', noContent)
+    await runtime.api.post('v1/auth/logout', noContent, { auth: false, withCookies: true })
   } catch {
     // 会话已失效或网络断开：本地照样退出
   }
@@ -68,7 +70,7 @@ export async function signOut(runtime: AppRuntime): Promise<void> {
 // ---------------------------------------------------------------------------
 // 实时事件：登录后连 GET v1/events，事件交给失效器按 meta.topics 刷新查询，
 // 同时转给调用方（后台顶栏的「实时事件」胶囊要列出来）。
-// unavailable = 4xx 停止（后台没有 ops.notification.read 时是 404），胶囊隐藏。
+// unavailable = 4xx 停止，胶囊隐藏。
 // ---------------------------------------------------------------------------
 export type RealtimeStatus = 'off' | 'connecting' | 'open' | 'reconnecting' | 'unavailable'
 
@@ -84,24 +86,39 @@ export function useRealtime(enabled: boolean, onEvent?: (event: SseEvent) => voi
     if (!enabled) return
     const invalidator = createRealtimeInvalidator(queryClient)
     let opened = false
-    const close = openEventStream({
-      connect: async (signal) => {
-        setStatus(opened ? 'reconnecting' : 'connecting')
-        return api.openStream('v1/events', signal)
-      },
-      onOpen: ({ reconnected }) => {
-        opened = true
-        setStatus('open')
-        if (reconnected) invalidator.onReconnect()
-      },
-      onEvent: (event) => {
-        invalidator.onEvent(event.event)
-        listener.current?.(event)
-      },
-      onStop: (error) => setStatus(isApiError(error) && error.status !== 401 ? 'unavailable' : 'off'),
-    })
+    let close: (() => void) | null = null
+    // 页面隐藏时断开，可见时重连并全部重拉：与查询轮询在后台标签页暂停的口径一致，
+    // 否则后台标签页靠事件流到点重连不断续上会话，后台的「空闲过期」永远不触发。
+    const start = () => {
+      if (close) return
+      close = openEventStream({
+        connect: async (signal) => {
+          setStatus(opened ? 'reconnecting' : 'connecting')
+          return api.openStream('v1/events', signal)
+        },
+        onOpen: ({ reconnected }) => {
+          if (reconnected || opened) invalidator.onReconnect()
+          opened = true
+          setStatus('open')
+        },
+        onEvent: (event) => {
+          invalidator.onEvent(event.event)
+          listener.current?.(event)
+        },
+        onStop: (error) => setStatus(isApiError(error) && error.status !== 401 ? 'unavailable' : 'off'),
+      })
+    }
+    const pause = () => {
+      close?.()
+      close = null
+    }
+    // 4xx 停下的流（onStop）不因切回页面重开：close 仍非空，start 直接返回
+    const onVisibility = () => (document.visibilityState === 'hidden' ? pause() : start())
+    if (document.visibilityState !== 'hidden') start()
+    document.addEventListener('visibilitychange', onVisibility)
     return () => {
-      close()
+      document.removeEventListener('visibilitychange', onVisibility)
+      pause()
       invalidator.dispose()
       setStatus('off')
     }

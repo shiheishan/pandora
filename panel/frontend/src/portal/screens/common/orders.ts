@@ -117,6 +117,8 @@ export const orderDetailSchema = z.object({
     ),
     coupon_code: z.string().optional(),
     subscription_period_end: z.string().optional(),
+    // 履约后落到的那一份（新购是新开的那份，续费、换套餐、流量包是原来那份）；没履约时 null
+    subscription_id: z.string().nullable(),
   }),
 })
 export type OrderDetail = z.output<typeof orderDetailSchema>['order']
@@ -301,16 +303,26 @@ export function groupByMonth<T extends Pick<OrderRow, 'created_at' | 'status' | 
   return groups
 }
 
+const METHOD_NAMES: Readonly<Record<string, string>> = { alipay: '支付宝', wxpay: '微信支付', wechat: '微信支付', qqpay: 'QQ 钱包', offline: '线下' }
+
+/**
+ * 付款方式的用户叫法（支付宝、微信支付）：按 payments.method 认，不用渠道的商户名；
+ * 几笔方式不同或认不出时说「在线」
+ */
+export function payMethodName(payments: ReadonlyArray<Pick<OrderDetail['payments'][number], 'method'>>): string {
+  const names = new Set(payments.map((p) => (p.method && METHOD_NAMES[p.method]) || '在线'))
+  return names.size === 1 ? [...names][0]! : '在线'
+}
+
 /** 展开区「结果」（契约门户-04 订单详情映射） */
 export function orderResult(o: Pick<OrderDetail, 'status' | 'kind' | 'cancel_reason' | 'subscription_period_end' | 'payments' | 'expires_at' | 'refunded_amount' | 'currency'>): string {
-  const via = o.payments.find((p) => p.provider_name || p.method)
-  const method = via ? via.provider_name : ''
+  const method = o.payments.length ? payMethodName(o.payments) : ''
   switch (o.status) {
     case 'fulfilled':
     case 'paid':
       if (o.kind === 'topup') return '余额已到账'
       if (o.kind === 'addon') return '流量包已到账'
-      if (o.kind === 'upgrade') return '已变更套餐，订阅地址不变'
+      if (o.kind === 'upgrade') return '已换好套餐，链接不变'
       return [method, o.subscription_period_end ? `有效期至 ${formatDateTime(o.subscription_period_end).slice(0, 10)}` : '已开通'].filter(Boolean).join(' · ')
     case 'expired':
       return '超时未支付，已自动取消'
@@ -339,12 +351,12 @@ export function orderFacts(o: OrderDetail): Array<{ k: string; v: string }> {
     { k: '原价', v: money(original) },
   ]
   if (o.discount_amount > 0) facts.push({ k: '优惠', v: `−${money(o.discount_amount)}${o.coupon_code ? `（${o.coupon_code}）` : ''}` })
-  if (o.balance_applied > 0) facts.push({ k: '余额抵扣', v: `−${money(o.balance_applied)}` })
+  if (o.balance_applied > 0) facts.push({ k: '用了余额', v: `−${money(o.balance_applied)}` })
   if (PAID_STATUSES.has(o.status) || o.status.endsWith('refunded')) facts.push({ k: '实付', v: money(o.paid_amount) })
   if (o.refunded_amount > 0) facts.push({ k: '退款', v: money(o.refunded_amount) })
   if (OPEN_STATUSES.includes(o.status as (typeof OPEN_STATUSES)[number]) && o.expires_at) facts.push({ k: '过期时间', v: formatDateTime(o.expires_at) })
   for (const p of o.payments) {
-    facts.push({ k: '支付记录', v: [p.provider_name, formatMoney(p.amount, p.currency), PAYMENT_STATUS[p.status] ?? p.status, formatDateTime(p.created_at)].join(' · ') })
+    facts.push({ k: '支付记录', v: [payMethodName([p]), formatMoney(p.amount, p.currency), PAYMENT_STATUS[p.status] ?? p.status, formatDateTime(p.created_at)].join(' · ') })
   }
   return facts
 }

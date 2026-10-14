@@ -24,12 +24,12 @@ paths:
 ## 能力矩阵是唯一事实源
 
 - `kernel/capabilities.go` 的矩阵同时供 `--capabilities` 打印、`selfcheck.go` 对照默认适配器注册表自检、面板做编排前协商。不在矩阵里的组合 fail closed，绝不静默回落到 `core/` 的兼容内核。
-- 增删协议要同时改三处，否则 `release/check_native_panel_parity.py` 报 DRIFT：`kernel/capabilities.go`、面板 `panel/internal/domain/nodefabric/protocol_schema.go` 的 stable schema、`node_admin.go` 的 `stableProtocolTypes`。
+- 增删协议要同时改三处，否则 `release/check_native_panel_parity.py` 报 DRIFT：`kernel/capabilities.go`、面板 `panel/internal/module/node/protocol/schema.go` 的 stable schema（`stableSchemas`）与下发名单 `stableTypes`（同一个文件）。
 - CI capability smoke 按字面量检查 `reality-h3-experimental` 与 `external-reality-xhttp-h3-unverified` 两个串，改名要同步 `pandora-native.yml`。
 - `cmd/pandora-h3-probe` 只证明「我方客户端 ↔ 我方服务端」，不构成 REALITY+XHTTP+H3 的第三方独立验证；在独立客户端跑通之前不得因它解除 `external-reality-xhttp-h3-unverified` 边界（见 `release/README.md`）。
 - 探针只依赖 `internal/reality` 与 `internal/realityquic/http3` 的线协议，刻意不经 NativeCore 运行时，作为日后桌面/移动客户端的验收缝；不要把它改成调 `kernel`。
 
 ## 发布物
 
-- `release/runtime-acceptance.sh` 的模拟面板是 `release/acceptancepanel`（Go 写，因为签名通道要 Ed25519），规则见 pdnd-node-panel 规则文件的签名契约一节。
+- `release/runtime-acceptance.sh` 的模拟面板是 `release/acceptancepanel`（Go 写的假 gRPC 面板：自签 CA、Enroll 与 Session），按 pdnd-node-panel 规则文件的通道契约独立实现，不 import 节点代码。
 - `main_test.go` 钉住缺省配置路径与 `release/pandora-native.service` 一致、身份路径缺省值；改 systemd 单元或安装路径要一起改。

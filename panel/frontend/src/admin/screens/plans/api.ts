@@ -47,7 +47,7 @@ export function usePlanPools(id: string | null) {
   })
 }
 
-/** 只在新建向导的「可用线路」一步、且有 node.read 时才取 */
+/** 只在新建向导的「可用线路」一步才取 */
 export function usePoolOptions(enabled: boolean) {
   const api = useApi()
   return useQuery({

@@ -1,28 +1,82 @@
 #!/usr/bin/env bash
-# 易支付端到端测试。
+# 易支付端到端（新栈 pandora）：自建渠道与套餐 → 注册下单 → 收银台验签 → 防篡改回调 →
+# 幂等入账 → 账本与凭据保护。
 #
-# 覆盖：
-#   1. 下单 → 创建支付意图 → 校验收银台参数与签名
-#   2. 金额换算：990 分必须提交为 "9.90"，回调 "9.90" 必须还原为 990 分
-#   3. PAY-003 幂等：同一回调重复 10 次，账本只有一笔、权益只发一次
-#   4. 防篡改：改金额、改商户号、坏签名一律拒绝
-#   5. PAY-005 复式记账：回调后全账户借贷配平
-#   6. 连点两次「去支付」复用同一个支付意图，不产生两笔待付款
+# 与旧版（aegis / 预置 epay 渠道 / healthz / tenant）步骤对照：
+#   旧 0 查 tenants、库里 epay 渠道 → 新 0：DISPOSABLE + readyz + 后台自建渠道与可服务节点 + plans/complete
+#   旧 2 从门户目录挑 CNY 套餐 → 新 2：只用本脚本建的 plan_id / price_id
+#   旧 3 固定 provider=epay → 新 3：provider=<自建 code>；在途意图仅 requires_action（无 created/processing）
+#   旧 4 回调 /webhooks/payments/epay → 新 4：/webhooks/payments/<code>
+#   旧 5–6 幂等与账本 → 新 5–6：ledger_transactions 带 source_type='order'；库内金额元、JSON 分
+#   旧 7 credentials_encrypted + AEGIS_PUBLIC_LOG → 新 7：credentials_sealed + SERVE_LOG
+#
+# 删掉的旧断言及原因：
+#   - tenants / tenant_id：新栈单租户、无 RLS
+#   - signed_amount、app.verify_ledger_all()：新栈分录无 signed_amount，漂移用 DriftAccounts 口径 SQL
+#   - payments.amount 与 payable_amount（分）直接相等：库里 numeric(20,2) 为元
+#   - 写死 EPAY_KEY / EPAY_PID / BASE：夹具密钥与商户号脚本内生成，门户用 PUB
+#
+# 仍用 SQL 的步骤及原因：
+#   - 在途意图数、payment_events 幂等键、账本配平与漂移、凭据密文不含明文：核对库内事实，无等价只读 API
+#   - 可服务节点：e2e job 无节点端，发布套餐需 DeliverableNodeCond（见 p7e2e-common）
+#
+# 环境：PUB、ADM、PSQL、ADMIN_EMAIL、ADMIN_PASS（必填）；EPAY_E2E_DISPOSABLE=YES_DELETE_FIXTURES（必填）。
+# 可选 SERVE_LOG：CI 指向 serve 日志文件，检查是否泄露渠道密钥。
 set -uo pipefail
 
-BASE=${BASE:-http://127.0.0.1:9000}
-PSQL=/opt/aegispanel/deploy/psql.sh
-EPAY_KEY=${EPAY_KEY:-TESTKEY_e2e_20260725}
-EPAY_PID=${EPAY_PID:-1001}
+PUB=${PUB:-http://127.0.0.1:9000}
+ADM=${ADM:-http://127.0.0.1:9001}
+PSQL=${PSQL:-/opt/pandora/deploy/psql.sh}
+ADMIN_EMAIL=${ADMIN_EMAIL:-}
+ADMIN_PASS=${ADMIN_PASS:-}
+SERVE_LOG=${SERVE_LOG:-}
 
 pass=0; fail=0
 ok()   { echo "  [ OK ] $1"; pass=$((pass+1)); }
 bad()  { echo "  [FAIL] $1"; echo "         $2"; fail=$((fail+1)); }
-head() { echo; echo "=== $1 ==="; }
+sec()  { echo; echo "=== $1 ==="; }
 
+db() { "$PSQL" -X -qAtc "$1" | tr -d '[:space:]'; }
 jqr() { python3 -c "import sys,json;d=json.load(sys.stdin);print(d$1)" 2>/dev/null; }
+code() { curl -sS -o /dev/null -w '%{http_code}' "$@"; }
+json() { curl -sS -H 'Content-Type: application/json' "$@"; }
 
-# 按易支付规则计算签名：非空参数按名升序拼 k=v&，末尾直接追加密钥，MD5 小写
+[ "${EPAY_E2E_DISPOSABLE:-}" = YES_DELETE_FIXTURES ] \
+  || { echo '[FATAL] EPAY_E2E_DISPOSABLE=YES_DELETE_FIXTURES is required' >&2; exit 1; }
+[ -n "$ADMIN_EMAIL" ] && [ -n "$ADMIN_PASS" ] \
+  || { echo '[FATAL] ADMIN_EMAIL / ADMIN_PASS must be explicit' >&2; exit 1; }
+DB_NAME=$(db 'SELECT current_database()')
+[[ "$DB_NAME" =~ (^|[-_])(test|e2e)([-_]|$) ]] \
+  || { echo '[FATAL] database name must contain a standalone test/e2e segment' >&2; exit 1; }
+
+STAMP="$(date +%s)$RANDOM"
+EPAY_CODE="epay-${STAMP}"
+EPAY_KEY="E2E_KEY_$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+EPAY_PID="10$RANDOM"
+
+AH=""
+PLAN_ID=""; PLAN_RV=""
+POOL_ID=""; SERVER_ID=""; NODE_ID=""
+
+is_zero_amount() {
+  case "$1" in 0|0.00|0.0) return 0 ;; *) return 1 ;; esac
+}
+
+admin_login() {
+  local body tok
+  body=$(json -X POST "$ADM/v1/auth/login" -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASS\"}")
+  tok=$(echo "$body" | jqr "['access_token']")
+  [ -n "$tok" ] && AH="Authorization: Bearer ${tok}"
+}
+
+admin_reauth() {
+  local body tok
+  body=$(json -X POST "$ADM/v1/auth/reauth" -H "$AH" -d "{\"password\":\"$ADMIN_PASS\"}")
+  tok=$(echo "$body" | jqr "['access_token']")
+  [ -n "$tok" ] && AH="Authorization: Bearer ${tok}"
+}
+
+# 易支付 MD5：非空参数按名升序 k=v&，末尾直接接密钥，不做 URL 编码
 epay_sign() {
   python3 - "$EPAY_KEY" "$@" <<'PY'
 import sys, hashlib
@@ -37,103 +91,160 @@ print(hashlib.md5(s.encode()).hexdigest())
 PY
 }
 
-#-------------------------------------------------------------------------------
-head "0. 前置：确认服务与渠道"
-
-TENANT=$($PSQL -tAc "SELECT id FROM tenants ORDER BY created_at LIMIT 1" | tr -d '[:space:]')
-[ -n "$TENANT" ] || { echo "找不到租户，先跑 seed"; exit 1; }
-echo "  租户: $TENANT"
-
-curl -sf "$BASE/healthz" >/dev/null && ok "Public 网关存活" || { bad "网关不可达" "$BASE"; exit 1; }
-
-PROV=$($PSQL -tAc "SELECT code||':'||enabled FROM payment_providers WHERE tenant_id='$TENANT' AND code='epay'" | tr -d '[:space:]')
-[ "$PROV" = "epay:true" ] && ok "易支付渠道已启用" || { bad "易支付渠道未配置" "$PROV"; exit 1; }
-
-#-------------------------------------------------------------------------------
-head "1. 注册并登录"
-
-EMAIL="epay_$(date +%s)_$RANDOM@example.com"
-R=$(curl -s -X POST "$BASE/v1/auth/register/start" -H 'Content-Type: application/json' \
-      -d "{\"email\":\"$EMAIL\"}")
-RTOK=$(echo "$R" | jqr "['registration_token']")
-CODE=$(echo "$R" | jqr "['dev_code']")
-[ -n "$RTOK" ] && ok "注册事务已签发" || { bad "注册失败" "$R"; exit 1; }
-
-R=$(curl -s -X POST "$BASE/v1/auth/register/complete" -H 'Content-Type: application/json' \
-      -d "{\"registration_token\":\"$RTOK\",\"code\":\"$CODE\",\"password\":\"Aegis!Test2026\"}")
-USER_ID=$(echo "$R" | jqr "['user_id']")
-[ -n "$USER_ID" ] && ok "用户已创建 $USER_ID" || { bad "注册完成失败" "$R"; exit 1; }
-
-R=$(curl -s -X POST "$BASE/v1/auth/login" -H 'Content-Type: application/json' \
-      -d "{\"email\":\"$EMAIL\",\"password\":\"Aegis!Test2026\"}")
-TOKEN=$(echo "$R" | jqr "['access_token']")
-[ -n "$TOKEN" ] && ok "登录成功" || { bad "登录失败" "$R"; exit 1; }
-AUTH="Authorization: Bearer $TOKEN"
+cleanup() {
+  local status=$?
+  trap - EXIT
+  if [ -n "$PLAN_ID" ] && [ -n "$AH" ]; then
+    admin_login 2>/dev/null || true
+    [ -n "$AH" ] && admin_reauth 2>/dev/null || true
+    if [ -n "$AH" ]; then
+      gp=$(curl -sS "$ADM/v1/plans/$PLAN_ID" -H "$AH")
+      rv=$(echo "$gp" | jqr "['plan']['row_version']" 2>/dev/null || true)
+      if [ -n "$rv" ]; then
+        c=$(code -X POST "$ADM/v1/plans/${PLAN_ID}/archive" -H "$AH" -H 'Content-Type: application/json' \
+          -H "Idempotency-Key: epay-plan-archive-${STAMP}" -d "{\"expected_row_version\":${rv}}")
+        [ "$c" = "200" ] || { echo "  [恢复失败] 套餐归档 HTTP ${c}" >&2; status=1; }
+      fi
+    fi
+  fi
+  if [ -n "$EPAY_CODE" ] && [ -n "$AH" ]; then
+    c=$(code -X POST "$ADM/v1/payment-providers/${EPAY_CODE}/toggle" -H "$AH" -H 'Content-Type: application/json' \
+      -d '{"enabled":false,"accepting_new":false}')
+    [ "$c" = "200" ] || { echo "  [恢复失败] 渠道 toggle HTTP ${c}" >&2; status=1; }
+  fi
+  exit "$status"
+}
+trap cleanup EXIT
 
 #-------------------------------------------------------------------------------
-head "2. 下单"
+sec "0. 前置：环境、渠道与可服务套餐"
+#-------------------------------------------------------------------------------
+ready=$(code --max-time 5 "$PUB/readyz")
+[ "$ready" = "200" ] && ok "门户 readyz 200" || bad "门户 readyz" "HTTP ${ready}"
 
-PLANS=$(curl -s "$BASE/v1/plans")
-PRICE=$(echo "$PLANS" | python3 -c "
+admin_login && ok "后台管理员已登录" || { bad "后台登录失败" ""; exit 1; }
+
+schemas=$(curl -sS "$ADM/v1/node-protocol-schemas" -H "$AH")
+CIPHER=$(echo "$schemas" | python3 -c '
 import sys,json
-d=json.load(sys.stdin)
-# 易支付只结算人民币，优先选 CNY 价格
-for p in d['plans']:
-    for pr in p['prices']:
-        if pr['currency']=='CNY':
-            print(pr['id']); raise SystemExit
-" 2>/dev/null)
-PLAN=$(echo "$PLANS" | python3 -c "
-import sys,json
-d=json.load(sys.stdin)
-for p in d['plans']:
-    for pr in p['prices']:
-        if pr['currency']=='CNY':
-            print(p['id']); raise SystemExit
-" 2>/dev/null)
-[ -n "$PRICE" ] && ok "取到套餐 $PLAN 价格 $PRICE" || { bad "无可售价格" "$PLANS"; exit 1; }
+for s in json.load(sys.stdin).get("schemas",[]):
+    if s.get("node_type")=="shadowsocks":
+        m=s.get("methods") or []
+        print(m[0] if m else "aes-128-gcm"); raise SystemExit
+print("aes-128-gcm")
+' 2>/dev/null)
+ok "shadowsocks cipher=${CIPHER}"
 
-# use_balance 是要抵扣的金额（最小单位整数），不是布尔
-R=$(curl -s -X POST "$BASE/v1/orders" -H "$AUTH" -H 'Content-Type: application/json'       -H "Idempotency-Key: e2e-$(date +%s)-$RANDOM"       -d "{\"plan_id\":\"$PLAN\",\"price_id\":\"$PRICE\",\"use_balance\":0}")
-ORDER_ID=$(echo "$R" | jqr "['order_id']")
-ORDER_NO=$(echo "$R" | jqr "['order_no']")
-PAYABLE=$(echo "$R" | jqr "['payable_amount']")
-CURRENCY=$(echo "$R" | jqr "['currency']")
-[ -n "$ORDER_ID" ] && ok "订单已创建 $ORDER_NO 应付 $PAYABLE $CURRENCY" || { bad "下单失败" "$R"; exit 1; }
+rp=$(json -X POST "$ADM/v1/node-pools" -H "$AH" -d "{\"code\":\"epay-${STAMP}\",\"name\":\"Epay pool ${STAMP}\"}")
+POOL_ID=$(echo "$rp" | jqr "['id']")
+[ -n "$POOL_ID" ] && ok "节点池已创建" || { bad "建池失败" "$rp"; exit 1; }
+
+rs=$(json -X POST "$ADM/v1/servers" -H "$AH" -d "{\"name\":\"epay-${STAMP}-s1\",\"hostname\":\"epay-${STAMP}.example.test\",\"public_ipv4\":\"203.0.113.32\"}")
+SERVER_ID=$(echo "$rs" | jqr "['id']")
+[ -n "$SERVER_ID" ] && ok "服务器已创建" || { bad "建服务器失败" "$rs"; exit 1; }
+
+rn=$(curl -sS -X POST "$ADM/v1/nodes" -H "$AH" -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: epay-node-${STAMP}" \
+  -d "{\"name\":\"epay-${STAMP}-n1\",\"server_id\":\"${SERVER_ID}\",\"pool_id\":\"${POOL_ID}\",\"node_type\":\"shadowsocks\",\"server_host\":\"epay-${STAMP}.example.test\",\"server_port\":22102,\"traffic_rate\":1,\"display_name\":\"Epay Line ${STAMP}\",\"protocol_config\":{\"cipher\":\"${CIPHER}\"}}")
+NODE_ID=$(echo "$rn" | jqr "['id']")
+[ -n "$NODE_ID" ] && ok "节点已创建" || { bad "建节点失败" "$rn"; exit 1; }
+
+db "UPDATE servers SET status = 'ready', last_heartbeat_at = now() WHERE id = '${SERVER_ID}'" >/dev/null
+db "UPDATE nodes SET serving_status = 'active' WHERE id = '${NODE_ID}'" >/dev/null
+ok "夹具节点标为可服务（e2e 无节点端，SQL 满足发布条件）"
+
+admin_reauth || true
+prov_body=$(python3 -c "import json; print(json.dumps({
+  'code':'${EPAY_CODE}','adapter':'epay','display_name':'Epay E2E ${STAMP}',
+  'base_url':'https://pay.example.test','methods':['alipay'],'default_method':'alipay',
+  'merchant_id':'${EPAY_PID}','key':'${EPAY_KEY}'}))")
+cp=$(code -X POST "$ADM/v1/payment-providers" -H "$AH" -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: epay-prov-create-${STAMP}" -d "$prov_body")
+[ "$cp" = "201" ] && ok "易支付渠道已创建 ${EPAY_CODE}" || { bad "建渠道失败" "HTTP ${cp}"; exit 1; }
+
+tg=$(code -X POST "$ADM/v1/payment-providers/${EPAY_CODE}/toggle" -H "$AH" -H 'Content-Type: application/json' \
+  -d '{"enabled":true,"accepting_new":true}')
+[ "$tg" = "200" ] && ok "渠道 accepting_new=true" || { bad "toggle 失败" "HTTP ${tg}"; exit 1; }
+
+admin_reauth || true
+rpc=$(curl -sS -w '\n%{http_code}' -X POST "$ADM/v1/plans/complete" -H "$AH" -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: epay-plan-${STAMP}" \
+  -d "{\"code\":\"epay-plan-${STAMP}\",\"name\":\"Epay Plan ${STAMP}\",\"visibility\":\"public\",\"traffic_gb\":1,\"pool_ids\":[\"${POOL_ID}\"],\"prices\":[{\"billing_interval\":\"month\",\"interval_count\":1,\"unit_amount\":990,\"currency\":\"CNY\",\"trial_days\":0}],\"publish\":true}")
+rpc_body=${rpc%$'\n'*}; rpc_code=${rpc##*$'\n'}
+PLAN_ID=$(echo "$rpc_body" | jqr "['plan']['id']")
+PRICE_ID=$(echo "$rpc_body" | jqr "['price_ids'][0]")
+PLAN_RV=$(echo "$rpc_body" | jqr "['plan']['row_version']")
+[ "$rpc_code" = "201" ] && [ -n "$PLAN_ID" ] && [ -n "$PRICE_ID" ] \
+  && ok "套餐已发布 plan=${PLAN_ID} price=${PRICE_ID}" \
+  || { bad "plans/complete 失败" "HTTP ${rpc_code} ${rpc_body}"; exit 1; }
 
 #-------------------------------------------------------------------------------
-head "3. 创建支付意图并校验收银台"
+sec "1. 注册并登录"
+#-------------------------------------------------------------------------------
+EMAIL="epay_${STAMP}@example.test"
+PASS="Epay!E2e2026x"
 
-R=$(curl -s -X POST "$BASE/v1/orders/$ORDER_ID/pay" -H "$AUTH" -H 'Content-Type: application/json' \
-      -d '{"provider":"epay","method":"alipay"}')
-REDIR=$(echo "$R" | jqr "['redirect_url']")
-INTENT=$(echo "$R" | jqr "['intent_id']")
-[ -n "$REDIR" ] && ok "支付意图已创建 $INTENT" || { bad "创建支付意图失败" "$R"; exit 1; }
+r1=$(json -X POST "$PUB/v1/auth/register/start" -d "{\"email\":\"${EMAIL}\"}")
+RTOK=$(echo "$r1" | jqr "['registration_token']")
+DEV_CODE=$(echo "$r1" | jqr "['dev_code']" 2>/dev/null || true)
+[ -n "$RTOK" ] && ok "注册事务已签发" || { bad "注册 start 失败" "$r1"; exit 1; }
 
-# 校验跳转地址里的关键参数
+r2h=$(curl -sS -w '\n%{http_code}' -X POST "$PUB/v1/auth/register/complete" -H 'Content-Type: application/json' \
+  -d "{\"registration_token\":\"${RTOK}\",\"code\":\"${DEV_CODE:-}\",\"password\":\"${PASS}\"}")
+r2body=${r2h%$'\n'*}; r2code=${r2h##*$'\n'}
+USER_ID=$(echo "$r2body" | jqr "['user_id']")
+[ "$r2code" = "201" ] && [ -n "$USER_ID" ] && ok "用户已创建（201）" || bad "注册 complete 失败" "HTTP ${r2code} ${r2body}"
+
+r3=$(json -X POST "$PUB/v1/auth/login" -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASS}\"}")
+TOKEN=$(echo "$r3" | jqr "['access_token']")
+[ -n "$TOKEN" ] && ok "登录成功" || { bad "登录失败" "$r3"; exit 1; }
+AUTH="Authorization: Bearer ${TOKEN}"
+
+#-------------------------------------------------------------------------------
+sec "2. 下单"
+#-------------------------------------------------------------------------------
+r4h=$(curl -sS -w '\n%{http_code}' -X POST "$PUB/v1/orders" -H "$AUTH" -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: epay-order-${STAMP}" \
+  -d "{\"plan_id\":\"${PLAN_ID}\",\"price_id\":\"${PRICE_ID}\",\"use_balance\":0}")
+r4=${r4h%$'\n'*}; r4c=${r4h##*$'\n'}
+ORDER_ID=$(echo "$r4" | jqr "['order_id']"); ORDER_NO=$(echo "$r4" | jqr "['order_no']")
+PAYABLE=$(echo "$r4" | jqr "['payable_amount']"); CURRENCY=$(echo "$r4" | jqr "['currency']")
+[ "$r4c" = "201" ] && [ -n "$ORDER_ID" ] && [ "$PAYABLE" = "990" ] \
+  && ok "订单已创建 ${ORDER_NO} 应付 ${PAYABLE} ${CURRENCY}（201）" \
+  || bad "下单失败" "HTTP ${r4c} ${r4}"
+
+MONEY=$(python3 -c "print(f'{int(${PAYABLE})//100}.{int(${PAYABLE})%100:02d}')")
+
+#-------------------------------------------------------------------------------
+sec "3. 支付意图与收银台"
+#-------------------------------------------------------------------------------
+pay1=$(curl -sS -w '\n%{http_code}' -X POST "$PUB/v1/orders/${ORDER_ID}/pay" -H "$AUTH" -H 'Content-Type: application/json' \
+  -d "{\"provider\":\"${EPAY_CODE}\",\"method\":\"alipay\"}")
+pay_body=${pay1%$'\n'*}; pay_c=${pay1##*$'\n'}
+REDIR=$(echo "$pay_body" | jqr "['redirect_url']")
+INTENT=$(echo "$pay_body" | jqr "['intent_id']")
+[ "$pay_c" = "201" ] && [ -n "$REDIR" ] && [ -n "$INTENT" ] && ok "支付意图已创建 ${INTENT}（201）" || bad "去支付失败" "HTTP ${pay_c} ${pay_body}"
+
 CHECK=$(python3 - "$REDIR" "$PAYABLE" "$ORDER_NO" "$EPAY_PID" "$EPAY_KEY" <<'PY'
 import sys, hashlib
 from urllib.parse import urlparse, parse_qs
 url, payable, order_no, pid, key = sys.argv[1:6]
 q = {k: v[0] for k, v in parse_qs(urlparse(url).query).items()}
-
 problems = []
-# 金额：分 → 元字符串
 expect_money = f"{int(payable)//100}.{int(payable)%100:02d}"
 if q.get('money') != expect_money:
     problems.append(f"money={q.get('money')} 期望 {expect_money}")
 if q.get('out_trade_no') != order_no:
-    problems.append(f"out_trade_no={q.get('out_trade_no')} 期望 {order_no}")
+    problems.append(f"out_trade_no 不符")
 if q.get('pid') != pid:
     problems.append(f"pid={q.get('pid')} 期望 {pid}")
 if q.get('sign_type') != 'MD5':
-    problems.append(f"sign_type={q.get('sign_type')}")
-# 反向验签
+    problems.append('sign_type 不是 MD5')
 params = {k: v for k, v in q.items() if v and k not in ('sign', 'sign_type')}
 s = '&'.join(f'{k}={params[k]}' for k in sorted(params)) + key
 if hashlib.md5(s.encode()).hexdigest() != q.get('sign', '').lower():
-    problems.append("签名与参数不匹配")
-print('|'.join(problems) if problems else f"OK money={q['money']}")
+    problems.append('签名与参数不匹配')
+print('|'.join(problems) if problems else f"OK money={q.get('money')}")
 PY
 )
 case "$CHECK" in
@@ -141,117 +252,117 @@ case "$CHECK" in
   *)   bad "收银台参数有误" "$CHECK" ;;
 esac
 
-# 连点两次应复用同一意图
-R2=$(curl -s -X POST "$BASE/v1/orders/$ORDER_ID/pay" -H "$AUTH" -H 'Content-Type: application/json' \
-       -d '{"provider":"epay","method":"alipay"}')
-INTENT2=$(echo "$R2" | jqr "['intent_id']")
-REUSED=$(echo "$R2" | jqr "['reused']")
-[ "$INTENT2" = "$INTENT" ] && ok "重复发起复用同一支付意图（reused=$REUSED）" \
-                           || bad "重复发起产生了新意图" "$INTENT -> $INTENT2"
+pay2=$(json -X POST "$PUB/v1/orders/${ORDER_ID}/pay" -H "$AUTH" -H 'Content-Type: application/json' \
+  -d "{\"provider\":\"${EPAY_CODE}\",\"method\":\"alipay\"}")
+INTENT2=$(echo "$pay2" | jqr "['intent_id']")
+REUSED=$(echo "$pay2" | jqr "['reused']")
+case "$REUSED" in True|true) ru=1 ;; *) ru=0 ;; esac
+[ "$INTENT2" = "$INTENT" ] && [ "$ru" = 1 ] && ok "连点两次复用意图（reused=true）" \
+  || bad "重复发起未复用" "intent ${INTENT} -> ${INTENT2} reused=${REUSED}"
 
-N_INTENT=$($PSQL -tAc "SELECT count(*) FROM payment_intents WHERE order_id='$ORDER_ID' AND status IN ('created','requires_action','processing')" | tr -d '[:space:]')
-[ "$N_INTENT" = "1" ] && ok "在途支付意图恒为 1 笔" || bad "在途意图数异常" "count=$N_INTENT"
-
-#-------------------------------------------------------------------------------
-head "4. 防篡改：坏回调必须被拒"
-
-TRADE_NO="E2E$(date +%s)$RANDOM"
-MONEY=$(python3 -c "print(f'{int($PAYABLE)//100}.{int($PAYABLE)%100:02d}')")
-NOTIFY="$BASE/v1/webhooks/payments/epay"
-
-# 4a 坏签名
-R=$(curl -s "$NOTIFY?pid=$EPAY_PID&trade_no=$TRADE_NO&out_trade_no=$ORDER_NO&type=alipay&money=$MONEY&trade_status=TRADE_SUCCESS&sign=00000000000000000000000000000000&sign_type=MD5")
-[ "$R" = "fail" ] && ok "坏签名被拒（回 fail）" || bad "坏签名未被拒" "响应=$R"
-
-# 4b 篡改金额：用 0.01 的签名去冒充
-BADSIG=$(epay_sign "pid=$EPAY_PID" "trade_no=$TRADE_NO" "out_trade_no=$ORDER_NO" "type=alipay" "money=0.01" "trade_status=TRADE_SUCCESS")
-R=$(curl -s "$NOTIFY?pid=$EPAY_PID&trade_no=$TRADE_NO&out_trade_no=$ORDER_NO&type=alipay&money=0.01&trade_status=TRADE_SUCCESS&sign=$BADSIG&sign_type=MD5")
-[ "$R" = "fail" ] && ok "金额不符被拒（签名有效但金额与订单不符）" || bad "金额篡改未被拒" "响应=$R"
-
-# 4c 其他商户号
-FOREIGN=$(epay_sign "pid=9999" "trade_no=$TRADE_NO" "out_trade_no=$ORDER_NO" "type=alipay" "money=$MONEY" "trade_status=TRADE_SUCCESS")
-R=$(curl -s "$NOTIFY?pid=9999&trade_no=$TRADE_NO&out_trade_no=$ORDER_NO&type=alipay&money=$MONEY&trade_status=TRADE_SUCCESS&sign=$FOREIGN&sign_type=MD5")
-[ "$R" = "fail" ] && ok "其他商户号被拒" || bad "其他商户号未被拒" "响应=$R"
-
-# 确认坏回调没有污染订单
-ST=$($PSQL -tAc "SELECT status FROM orders WHERE id='$ORDER_ID'" | tr -d '[:space:]')
-[ "$ST" = "pending_payment" ] && ok "坏回调未改变订单状态（仍为 $ST）" || bad "订单被坏回调污染" "status=$ST"
+N_INTENT=$(db "SELECT count(*) FROM payment_intents WHERE order_id='${ORDER_ID}' AND status='requires_action'")
+[ "$N_INTENT" = "1" ] && ok "在途意图 requires_action = 1" || bad "在途意图数异常" "count=${N_INTENT}"
 
 #-------------------------------------------------------------------------------
-head "5. 正常回调 + PAY-003 幂等（重复 10 次）"
+sec "4. 防篡改：坏回调必须被拒"
+#-------------------------------------------------------------------------------
+TRADE_NO="E2E${STAMP}"
+NOTIFY="$PUB/v1/webhooks/payments/${EPAY_CODE}"
 
-# 注意：name 用中文原文参与签名，URL 里则是百分号编码。
-# 这正是易支付最容易踩的坑：签名串不做 URL 编码，服务端解码后再验。
-GOODSIG=$(epay_sign "pid=$EPAY_PID" "trade_no=$TRADE_NO" "out_trade_no=$ORDER_NO" "type=alipay" "name=套餐" "money=$MONEY" "trade_status=TRADE_SUCCESS")
-URL="$NOTIFY?pid=$EPAY_PID&trade_no=$TRADE_NO&out_trade_no=$ORDER_NO&type=alipay&name=%E5%A5%97%E9%A4%90&money=$MONEY&trade_status=TRADE_SUCCESS&sign=$GOODSIG&sign_type=MD5"
+R=$(curl -sS "$NOTIFY?pid=${EPAY_PID}&trade_no=${TRADE_NO}&out_trade_no=${ORDER_NO}&type=alipay&money=${MONEY}&trade_status=TRADE_SUCCESS&sign=00000000000000000000000000000000&sign_type=MD5")
+[ "$R" = "fail" ] && ok "坏签名回 fail" || bad "坏签名未被拒" "响应=${R}"
+
+BADSIG=$(epay_sign "pid=${EPAY_PID}" "trade_no=${TRADE_NO}" "out_trade_no=${ORDER_NO}" "type=alipay" "money=0.01" "trade_status=TRADE_SUCCESS")
+R=$(curl -sS "$NOTIFY?pid=${EPAY_PID}&trade_no=${TRADE_NO}&out_trade_no=${ORDER_NO}&type=alipay&money=0.01&trade_status=TRADE_SUCCESS&sign=${BADSIG}&sign_type=MD5")
+[ "$R" = "fail" ] && ok "金额不符回 fail（ErrAmountMismatch）" || bad "金额篡改未被拒" "响应=${R}"
+
+FOREIGN=$(epay_sign "pid=9999" "trade_no=${TRADE_NO}" "out_trade_no=${ORDER_NO}" "type=alipay" "money=${MONEY}" "trade_status=TRADE_SUCCESS")
+R=$(curl -sS "$NOTIFY?pid=9999&trade_no=${TRADE_NO}&out_trade_no=${ORDER_NO}&type=alipay&money=${MONEY}&trade_status=TRADE_SUCCESS&sign=${FOREIGN}&sign_type=MD5")
+[ "$R" = "fail" ] && ok "外来商户号回 fail" || bad "其他商户号未被拒" "响应=${R}"
+
+ST=$(db "SELECT status FROM orders WHERE id='${ORDER_ID}'")
+[ "$ST" = "pending_payment" ] && ok "坏回调后订单仍 pending_payment" || bad "订单被污染" "status=${ST}"
+
+#-------------------------------------------------------------------------------
+sec "5. 正常回调 + 幂等（重复 10 次）"
+#-------------------------------------------------------------------------------
+GOODSIG=$(epay_sign "pid=${EPAY_PID}" "trade_no=${TRADE_NO}" "out_trade_no=${ORDER_NO}" "type=alipay" "name=套餐" "money=${MONEY}" "trade_status=TRADE_SUCCESS")
+URL="${NOTIFY}?pid=${EPAY_PID}&trade_no=${TRADE_NO}&out_trade_no=${ORDER_NO}&type=alipay&name=%E5%A5%97%E9%A4%90&money=${MONEY}&trade_status=TRADE_SUCCESS&sign=${GOODSIG}&sign_type=MD5"
 
 RESULTS=""
 for i in $(seq 1 10); do
-  RESULTS="$RESULTS$(curl -s "$URL")"
+  RESULTS="${RESULTS}$(curl -sS "$URL")"
 done
-[ "$RESULTS" = "successsuccesssuccesssuccesssuccesssuccesssuccesssuccesssuccesssuccess" ] \
-  && ok "10 次回调全部回 success（易支付要求的纯文本回执）" \
-  || bad "回执不符" "$RESULTS"
+case "$RESULTS" in
+  successsuccesssuccesssuccesssuccesssuccesssuccesssuccesssuccesssuccess) ok "10 次回调全部 success" ;;
+  *) bad "回执不符" "$RESULTS" ;;
+esac
 
-# --- 幂等断言 ---
-N_EV=$($PSQL -tAc "SELECT count(*) FROM payment_events WHERE provider_event_id='$TRADE_NO:TRADE_SUCCESS'" | tr -d '[:space:]')
-[ "$N_EV" = "1" ] && ok "payment_events 只落 1 行（10 次回调）" || bad "事件重复落库" "count=$N_EV"
+N_EV=$(db "SELECT count(*) FROM payment_events WHERE provider_event_id='${TRADE_NO}:TRADE_SUCCESS'")
+[ "$N_EV" = "1" ] && ok "payment_events 1 行" || bad "事件重复" "count=${N_EV}"
 
-N_PAY=$($PSQL -tAc "SELECT count(*) FROM payments WHERE order_id='$ORDER_ID'" | tr -d '[:space:]')
-[ "$N_PAY" = "1" ] && ok "payments 只有 1 笔" || bad "支付记录重复" "count=$N_PAY"
+N_PAY=$(db "SELECT count(*) FROM payments WHERE order_id='${ORDER_ID}'")
+[ "$N_PAY" = "1" ] && ok "payments 1 笔" || bad "支付重复" "count=${N_PAY}"
 
-N_SUB=$($PSQL -tAc "SELECT count(*) FROM subscriptions WHERE user_id='$USER_ID'" | tr -d '[:space:]')
-[ "$N_SUB" = "1" ] && ok "订阅只激活 1 份（权益未重复发放）" || bad "订阅重复" "count=$N_SUB"
+N_SUB=$(db "SELECT count(*) FROM subscriptions WHERE user_id='${USER_ID}'")
+[ "$N_SUB" = "1" ] && ok "订阅 1 份" || bad "订阅重复" "count=${N_SUB}"
 
-N_TXN=$($PSQL -tAc "SELECT count(*) FROM ledger_transactions WHERE source_id='$ORDER_ID' AND kind='order_paid'" | tr -d '[:space:]')
-[ "$N_TXN" = "1" ] && ok "账本只记 1 笔 order_paid" || bad "账本重复记账" "count=$N_TXN"
-
-#-------------------------------------------------------------------------------
-head "6. 金额与账本正确性"
-
-PAID=$($PSQL -tAc "SELECT amount FROM payments WHERE order_id='$ORDER_ID'" | tr -d '[:space:]')
-[ "$PAID" = "$PAYABLE" ] && ok "入账金额精确等于应付（$PAID = $PAYABLE 分，回调传的是 \"$MONEY\" 元）" \
-                         || bad "金额换算有误" "入账 $PAID 应付 $PAYABLE"
-
-ORDER_ST=$($PSQL -tAc "SELECT status FROM orders WHERE id='$ORDER_ID'" | tr -d '[:space:]')
-[ "$ORDER_ST" = "fulfilled" ] && ok "订单已履约（$ORDER_ST）" || bad "订单状态异常" "$ORDER_ST"
-
-SUB_ST=$($PSQL -tAc "SELECT status FROM subscriptions WHERE user_id='$USER_ID'" | tr -d '[:space:]')
-[ "$SUB_ST" = "active" ] && ok "订阅已激活（$SUB_ST）" || bad "订阅状态异常" "$SUB_ST"
-
-# PAY-005：账本必须配平
-IMBAL=$($PSQL -tAc "
-  SELECT coalesce(sum(signed_amount),0) FROM ledger_entries
-   WHERE transaction_id IN (SELECT id FROM ledger_transactions WHERE source_id='$ORDER_ID')" | tr -d '[:space:]')
-[ "$IMBAL" = "0" ] && ok "本单账本借贷配平（差额 0）" || bad "账本不平" "差额=$IMBAL"
-
-DRIFT=$($PSQL -tAc "SELECT count(*) FROM app.verify_ledger_all()" | tr -d '[:space:]')
-[ "$DRIFT" = "0" ] && ok "全账户缓存余额与分录求和一致（无漂移）" || bad "账户余额漂移" "$DRIFT 个账户"
-
-# 意图应已终结
-INTENT_ST=$($PSQL -tAc "SELECT status FROM payment_intents WHERE id='$INTENT'" | tr -d '[:space:]')
-[ "$INTENT_ST" = "succeeded" ] && ok "支付意图已终结为 succeeded" || bad "支付意图未终结" "status=$INTENT_ST"
-
-# 意图终结后不应再有在途意图，否则换渠道重付会被误判为重复
-N_OPEN=$($PSQL -tAc "SELECT count(*) FROM payment_intents WHERE order_id='$ORDER_ID' AND status IN ('created','requires_action','processing')" | tr -d '[:space:]')
-[ "$N_OPEN" = "0" ] && ok "订单已无在途支付意图" || bad "仍有在途意图" "count=$N_OPEN"
-
-# 支付记录应回指其意图，便于对账时串起完整链路
-LINKED=$($PSQL -tAc "SELECT payment_intent_id FROM payments WHERE order_id='$ORDER_ID'" | tr -d '[:space:]')
-[ "$LINKED" = "$INTENT" ] && ok "支付记录已关联支付意图" || bad "支付未关联意图" "$LINKED vs $INTENT"
+N_TXN=$(db "SELECT count(*) FROM ledger_transactions WHERE source_type='order' AND source_id='${ORDER_ID}' AND kind='order_paid'")
+[ "$N_TXN" = "1" ] && ok "ledger order_paid 1 笔" || bad "账本重复" "count=${N_TXN}"
 
 #-------------------------------------------------------------------------------
-head "7. 凭据保护"
+sec "6. 金额与账本正确性"
+#-------------------------------------------------------------------------------
+PAID=$(db "SELECT amount FROM payments WHERE order_id='${ORDER_ID}'")
+EXPECT_YUAN=$(python3 -c "c=int(${PAYABLE}); print(f'{c//100}.{c%100:02d}')")
+[ "$PAID" = "$EXPECT_YUAN" ] && ok "入账 ${PAID} 元 = JSON ${PAYABLE} 分（回调 ${MONEY}）" \
+  || bad "金额换算" "库 ${PAID} 期望 ${EXPECT_YUAN}"
 
-CREDS=$($PSQL -tAc "SELECT encode(credentials_encrypted,'escape') FROM payment_providers WHERE tenant_id='$TENANT' AND code='epay'")
-echo "$CREDS" | grep -q "$EPAY_KEY" && bad "商户密钥以明文存在于数据库" "" || ok "商户密钥未明文落库（信封加密 SEC-010）"
+ORDER_ST=$(db "SELECT status FROM orders WHERE id='${ORDER_ID}'")
+[ "$ORDER_ST" = "fulfilled" ] && ok "订单 fulfilled" || bad "订单状态" "$ORDER_ST"
 
-# 公开网关的日志：systemd 单元 aegis-public.service 的 StandardOutput=append: 路径
-PUBLIC_LOG="${AEGIS_PUBLIC_LOG:-/var/log/aegis/public.log}"
-if [ -f "$PUBLIC_LOG" ]; then
-  grep -q "$EPAY_KEY" "$PUBLIC_LOG" && bad "商户密钥出现在日志中" "" || ok "商户密钥未出现在日志中（SEC-011）"
+SUB_ST=$(db "SELECT status FROM subscriptions WHERE user_id='${USER_ID}'")
+[ "$SUB_ST" = "active" ] && ok "订阅 active" || bad "订阅状态" "$SUB_ST"
+
+TXN=$(db "SELECT id FROM ledger_transactions WHERE source_type='order' AND source_id='${ORDER_ID}' AND kind='order_paid' LIMIT 1")
+if [ -n "$TXN" ]; then
+  IMBAL=$(db "SELECT coalesce(sum(CASE direction WHEN 'debit' THEN amount ELSE -amount END),0) FROM ledger_entries WHERE transaction_id='${TXN}'")
+  is_zero_amount "$IMBAL" && ok "本单交易借贷配平" || bad "本单不平" "差额=${IMBAL}"
 else
-  echo "  - 跳过日志检查：$PUBLIC_LOG 不存在（不是按 systemd 单元部署的环境）"
+  bad "无 order_paid 交易" ""
+fi
+
+DRIFT=$(db "SELECT count(*) FROM ledger_accounts a
+  LEFT JOIN (SELECT account_id,
+                    coalesce(sum(amount) FILTER (WHERE direction = 'debit'), 0) AS d,
+                    coalesce(sum(amount) FILTER (WHERE direction = 'credit'), 0) AS c
+               FROM ledger_entries GROUP BY account_id) s ON s.account_id = a.id
+ WHERE a.balance <> CASE WHEN a.account_type IN ('channel_cash','platform_fee_expense','platform_promo_expense','suspense')
+                         THEN coalesce(s.d,0) - coalesce(s.c,0) ELSE coalesce(s.c,0) - coalesce(s.d,0) END")
+[ "$DRIFT" = "0" ] && ok "全库账户无漂移" || bad "账户漂移" "${DRIFT} 个"
+
+INTENT_ST=$(db "SELECT status FROM payment_intents WHERE id='${INTENT}'")
+[ "$INTENT_ST" = "succeeded" ] && ok "意图 succeeded" || bad "意图状态" "$INTENT_ST"
+
+N_OPEN=$(db "SELECT count(*) FROM payment_intents WHERE order_id='${ORDER_ID}' AND status='requires_action'")
+[ "$N_OPEN" = "0" ] && ok "无在途意图" || bad "仍有在途" "count=${N_OPEN}"
+
+LINKED=$(db "SELECT payment_intent_id FROM payments WHERE order_id='${ORDER_ID}'")
+[ "$LINKED" = "$INTENT" ] && ok "payments.payment_intent_id 关联意图" || bad "未关联意图" "${LINKED} vs ${INTENT}"
+
+#-------------------------------------------------------------------------------
+sec "7. 凭据保护"
+#-------------------------------------------------------------------------------
+PLAIN=$(db "SELECT count(*) FROM payment_providers WHERE code='${EPAY_CODE}' AND position(convert_to('${EPAY_KEY}','UTF8') in credentials_sealed) > 0")
+[ "$PLAIN" = "0" ] && ok "密钥未明文出现在 credentials_sealed" || bad "密钥明文落库" ""
+
+plist=$(curl -sS "$ADM/v1/payment-providers" -H "$AH")
+echo "$plist" | grep -q "$EPAY_KEY" && bad "后台列表响应含密钥" "" || ok "GET payment-providers 不含密钥"
+
+if [ -n "$SERVE_LOG" ] && [ -f "$SERVE_LOG" ]; then
+  grep -q "$EPAY_KEY" "$SERVE_LOG" && bad "密钥出现在 SERVE_LOG" "" || ok "SERVE_LOG 未含密钥"
+else
+  echo "  - 跳过日志检查：SERVE_LOG 未设置或文件不存在"
 fi
 
 #-------------------------------------------------------------------------------
@@ -259,4 +370,4 @@ echo
 echo "==============================================="
 echo "  通过 $pass 项，失败 $fail 项"
 echo "==============================================="
-[ "$fail" -eq 0 ]
+[ "$fail" -eq 0 ] || exit 1

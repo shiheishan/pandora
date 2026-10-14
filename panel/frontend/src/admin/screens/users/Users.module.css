@@ -341,6 +341,14 @@
   font-size: var(--fs-caption);
 }
 
+.subActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: var(--space-8);
+  border-top: 1px solid var(--surface-3);
+}
+
 .quota {
   display: flex;
   flex-direction: column;

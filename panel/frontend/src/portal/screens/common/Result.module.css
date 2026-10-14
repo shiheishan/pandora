@@ -1,0 +1,65 @@
+.head {
+  padding: 4px 0;
+  text-align: center;
+}
+
+/* PayFlow .check：48 圆、--ok-soft 底 */
+.ok {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 12px;
+  border-radius: 50%;
+  background: var(--ok-soft);
+  color: var(--ok);
+  font-size: 22px;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--fs-h2);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-h2);
+}
+
+.card {
+  gap: 4px;
+}
+
+.label {
+  margin: var(--space-12) 0 2px;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+}
+
+.label:first-child {
+  margin-top: 0;
+}
+
+.list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.list li + li {
+  margin-top: 4px;
+}
+
+.text {
+  margin: 0;
+}
+
+.next {
+  gap: var(--space-8);
+  border-color: var(--brand-soft);
+  background: var(--brand-tint);
+}
+
+.nextTitle {
+  margin: 0;
+  color: var(--brand-ink);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-semibold);
+}

@@ -6,14 +6,14 @@ import { useApi } from '../../../shell/runtime'
 import { Button, Checkbox, ConfirmModal, Input, Modal, Select, useToast } from '../../../ui'
 import { MOVE_BLOCKED_HINT, activationHint, canActivate, canMove, canTransition, moveBlockers } from './logic'
 import css from './nodes.module.css'
-import { endsIntent, useCan, useFailure, useIntentKey, useInvalidateNodes, useServers } from './queries'
+import { copyPortValue } from './runtime'
+import { endsIntent, useFailure, useIntentKey, useInvalidateNodes, useServers } from './queries'
 import { adminNodeSchema, batchStatusResponse, deletedResponse, publishResponse, type NodeRow } from './schemas'
 
 type Pending = 'publish' | 'toggle' | 'retire' | 'delete' | null
 
 export function NodeOps({ node, onGone }: { node: NodeRow; onGone: () => void }) {
   const api = useApi()
-  const can = useCan()
   const toast = useToast()
   const fail = useFailure()
   const invalidate = useInvalidateNodes()
@@ -125,27 +125,23 @@ export function NodeOps({ node, onGone }: { node: NodeRow; onGone: () => void })
   return (
     <div className={css.stackLg}>
       {canActivate(node) && (
-        <Action
-          title="上线"
-          detail={`节点已接入（生命周期 ${node.status}），上线后进入服务，所在服务器一并就绪。之后按正常启停管理。`}
-          blocked={!can('node.lifecycle') ? '需要节点生命周期权限' : null}
-        >
+        <Action title="上线" detail={`节点已接入（生命周期 ${node.status}），上线后进入服务，所在服务器一并就绪。之后按正常启停管理。`}>
           <Button size="sm" variant="primary" busy={activate.isPending} onClick={() => activate.mutate()}>
             上线
           </Button>
         </Action>
       )}
-      <Action title="发布配置" detail="把当前协议参数与路由重新下发到节点，节点热加载，已有连接不中断。" blocked={!can('node.config.publish') ? '需要配置发布权限' : retired ? '已退役的节点不能发布' : null}>
+      <Action title="发布配置" detail="把当前协议参数与路由重新下发到节点，节点热加载，已有连接不中断。" blocked={retired ? '已退役的节点不能发布' : null}>
         <Button size="sm" busy={publish.isPending} onClick={() => setConfirm('publish')}>
           发布
         </Button>
       </Action>
-      <Action title="复制节点" detail="复制协议参数，生成一个新的草稿节点；可以放到另一台服务器上。" blocked={!can('node.provision') ? '需要节点部署权限' : !node.server_id ? '原节点没有绑定服务器，不能复制' : null}>
+      <Action title="复制节点" detail="复制协议参数，生成一个新的草稿节点；可以放到另一台服务器上。" blocked={!node.server_id ? '原节点没有绑定服务器，不能复制' : null}>
         <Button size="sm" onClick={() => setCopying(true)}>
           复制
         </Button>
       </Action>
-      <Action title="迁移到其他服务器" detail={movable ? '换一台承载机器。只有从未部署过的草稿节点可以迁移。' : MOVE_BLOCKED_HINT} blocked={!can('node.provision') ? '需要节点部署权限' : null}>
+      <Action title="迁移到其他服务器" detail={movable ? '换一台承载机器。只有从未部署过的草稿节点可以迁移。' : MOVE_BLOCKED_HINT}>
         {movable && (
           <span className={css.inlineControls}>
             <Select aria-label="目标服务器" size="sm" placeholder="选择服务器" value={moveTo} onChange={(e) => setMoveTo(e.target.value)} options={targets.map((s) => ({ value: s.id, label: s.name, disabled: s.status !== 'ready' }))} />
@@ -158,18 +154,18 @@ export function NodeOps({ node, onGone }: { node: NodeRow; onGone: () => void })
       <Action
         title={enabling ? '启用节点' : '停用节点'}
         detail={enabling ? '启用后心跳正常就开始下发给用户。要求服务器就绪、协议通过校验。' : '停用后不再下发给用户，可随时恢复。'}
-        blocked={!can('node.lifecycle') ? '需要节点生命周期权限' : retired ? '已退役，不能再启用' : canActivate(node) ? '节点还在接入尾段，先用上面的「上线」' : !canTransition(node.serving_status, toggleTo) ? '当前状态不能直接切换' : null}
+        blocked={retired ? '已退役，不能再启用' : canActivate(node) ? '节点还在接入尾段，先用上面的「上线」' : !canTransition(node.serving_status, toggleTo) ? '当前状态不能直接切换' : null}
       >
         <Button size="sm" busy={toggle.isPending} onClick={() => (enabling ? toggle.mutate() : setConfirm('toggle'))}>
           {enabling ? '启用' : '停用'}
         </Button>
       </Action>
-      <Action title="退役节点" detail="永久下线，保留历史流量与审计。退役后不能再启用。" blocked={!can('node.lifecycle') ? '需要节点生命周期权限' : retired ? '已经退役' : null}>
+      <Action title="退役节点" detail="永久下线，保留历史流量与审计。退役后不能再启用。" blocked={retired ? '已经退役' : null}>
         <Button size="sm" className={css.warnButton} busy={retire.isPending} onClick={() => setConfirm('retire')}>
           退役
         </Button>
       </Action>
-      <Action title="删除节点" detail="从列表移除，名字可以复用；历史流量与审计保留。在服务中的节点要先停用或退役。" blocked={!can('node.lifecycle') ? '需要节点生命周期权限' : node.serving_status === 'active' || node.serving_status === 'draining' ? '节点还在服务中，先停用或退役' : null}>
+      <Action title="删除节点" detail="从列表移除，名字可以复用；历史流量与审计保留。在服务中的节点要先停用或退役。" blocked={node.serving_status === 'active' || node.serving_status === 'draining' ? '节点还在服务中，先停用或退役' : null}>
         <Button size="sm" className={css.dangerButton} busy={remove.isPending} onClick={() => setConfirm('delete')}>
           删除
         </Button>
@@ -227,7 +223,7 @@ export function NodeOps({ node, onGone }: { node: NodeRow; onGone: () => void })
   )
 }
 
-function Action({ title, detail, blocked, children }: { title: string; detail: string; blocked: string | null; children: ReactNode }) {
+function Action({ title, detail, blocked, children }: { title: string; detail: string; blocked?: string | null; children: ReactNode }) {
   return (
     <div className={css.action}>
       <div className={css.actionText}>
@@ -249,11 +245,21 @@ function CopyModal({ node, onClose }: { node: NodeRow; onClose: () => void }) {
   const [name, setName] = useState(`${node.name} 副本`)
   const [target, setTarget] = useState(node.server_id ?? '')
   const [copyRouting, setCopyRouting] = useState(true)
+  // 副本端口：留空沿用原节点端口；复制到同一台服务器必须换端口（同机端口门禁）
+  const [port, setPort] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
+  const portValue = copyPortValue(port)
+  const sameServer = !target || target === node.server_id
 
   const copy = useMutation({
     mutationFn: () => {
-      const body = { row_version: node.row_version, name: name.trim(), copy_routing: copyRouting, ...(target && target !== node.server_id ? { target_server_id: target } : {}) }
+      const body = {
+        row_version: node.row_version,
+        name: name.trim(),
+        copy_routing: copyRouting,
+        ...(target && target !== node.server_id ? { target_server_id: target } : {}),
+        ...(typeof portValue === 'number' ? { server_port: portValue } : {}),
+      }
       return api.post(`v1/nodes/${node.id}/copy`, adminNodeSchema, { body, idempotencyKey: intent.keyFor([node.id, body]) })
     },
     onSuccess: (created) => {
@@ -267,6 +273,7 @@ function CopyModal({ node, onClose }: { node: NodeRow; onClose: () => void }) {
     onError: (e) => {
       if (endsIntent(e)) intent.reset()
       if (isApiError(e, 'conflict') && /名称/.test(e.message)) return setErrors({ name: e.message })
+      if (isApiError(e, 'conflict') && e.fields.server_port) return setErrors({ server_port: e.fields.server_port })
       fail(e, setErrors)
     },
   })
@@ -282,7 +289,7 @@ function CopyModal({ node, onClose }: { node: NodeRow; onClose: () => void }) {
           <Button size="dialog" onClick={onClose} disabled={copy.isPending}>
             取消
           </Button>
-          <Button size="dialog" variant="primary" busy={copy.isPending} disabled={!name.trim()} onClick={() => copy.mutate()}>
+          <Button size="dialog" variant="primary" busy={copy.isPending} disabled={!name.trim() || portValue === 'invalid'} onClick={() => copy.mutate()}>
             复制为草稿
           </Button>
         </>
@@ -296,6 +303,16 @@ function CopyModal({ node, onClose }: { node: NodeRow; onClose: () => void }) {
           onChange={(e) => setTarget(e.target.value)}
           error={errors.target_server_id ?? errors.capacity_nodes}
           options={(servers.data ?? []).map((s) => ({ value: s.id, label: `${s.name}${s.id === node.server_id ? '（原服务器）' : ''}`, disabled: s.status !== 'ready' }))}
+        />
+        <Input
+          label="端口"
+          mono
+          inputMode="numeric"
+          value={port}
+          placeholder={node.server_port ? `${node.server_port}（沿用原节点）` : '沿用原节点'}
+          onChange={(e) => setPort(e.target.value)}
+          error={errors.server_port ?? (portValue === 'invalid' ? '端口必须是 1 到 65535 的整数' : undefined)}
+          hint={sameServer ? '复制到同一台服务器要换一个端口：同一台机器上一个端口只能给一个节点' : undefined}
         />
         <Checkbox label="同时复制单节点路由规则" checked={copyRouting} onChange={(e) => setCopyRouting(e.target.checked)} />
         <div className={css.faint}>已部署节点要换机器，就复制到新服务器，再退役原节点。</div>

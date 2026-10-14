@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { formatMoney } from '../core/format'
 import { href, navigate, useHashLocation } from '../core/router'
 import { toggleTheme, useTheme } from '../core/theme'
 import { ScreenFrame } from '../shell/ScreenFrame'
 import { signOut, useRealtime, useRuntime } from '../shell/runtime'
 import { CountBadge, IconChevronDown, Menu, Tag } from '../ui'
-import { MENU_PAGES, NAV_PAGES, PAGES, greeting, navLabel, navOwner, pagePath, resolvePage, type PageKey } from './pages'
+import { PageHeadProvider, type PageHead } from './head'
+import { HOME_PAGE, MENU_PAGES, NAV_PAGES, PAGES, greeting, navLabel, navOwner, pagePath, resolvePage, type PageKey } from './pages'
 import { displayName, useActivePlanName, useBalance, useCommissionAvailable, usePortalMe, useUnreadCount } from './queries'
 import { SCREENS } from './screens'
 import css from './Shell.module.css'
@@ -22,7 +23,14 @@ export function Shell() {
   const commission = useCommissionAvailable()
   const unread = useUnreadCount()
   const [menuOpen, setMenuOpen] = useState(false)
+  const [head, setHead] = useState<PageHead | null>(null)
+  // 应用内走过几步：有上一页时「返回」退回去，直接打开的地址退到页面给的 parent
+  const steps = useRef(-1)
   useRealtime(true)
+
+  useEffect(() => {
+    steps.current += 1
+  }, [location.path, location.query])
 
   useEffect(() => {
     if (location.path === canonical) return
@@ -30,10 +38,10 @@ export function Shell() {
     navigate(canonical, { replace: true, query: location.path.split('/')[1] === page ? Object.fromEntries(location.query) : undefined })
   }, [location, canonical, page])
 
-  // 换页回到顶部；菜单项与标签栏点击时 Menu 自己会关
+  // 换页（含页面内的子页）回到顶部；菜单项与标签栏点击时 Menu 自己会关
   useEffect(() => {
     window.scrollTo(0, 0)
-  }, [page])
+  }, [location.path])
 
   const name = displayName(me.data)
   const owner = navOwner(page)
@@ -41,7 +49,11 @@ export function Shell() {
   const balanceLabel = balance.data ? formatMoney(balance.data.balance, balance.data.currency) : null
   const [title, subtitle] = PAGES[page]
   const Screen = SCREENS[page]
-  const heading = page === 'overview' ? `${greeting()}${name ? `，${name}` : ''}` : title
+  const heading = head?.title ?? (page === 'overview' ? `${greeting()}${name ? `，${name}` : ''}` : title)
+  const back = () => {
+    if (steps.current > 0) window.history.back()
+    else navigate(head?.parent ?? pagePath(HOME_PAGE))
+  }
 
   const hints: Partial<Record<PageKey, string | null>> = {
     wallet: balanceLabel,
@@ -52,7 +64,7 @@ export function Shell() {
     <div className={css.app}>
       <header className={css.header}>
         <div className={css.bar}>
-          <a href={href(pagePath('overview'))} className={css.home} aria-label="概览">
+          <a href={href(pagePath(HOME_PAGE))} className={css.home} aria-label="我的套餐">
             <SiteBrand size={22} className={css.logo} />
           </a>
           <nav className={css.nav} aria-label="主导航">
@@ -111,11 +123,18 @@ export function Shell() {
 
       <main className={css.main}>
         <div>
+          {head?.parent && (
+            <button type="button" className={css.back} onClick={back}>
+              ‹ 返回
+            </button>
+          )}
           <h1 className={css.title}>{heading}</h1>
-          {subtitle && <p className={css.subtitle}>{subtitle}</p>}
+          {!head && subtitle && <p className={css.subtitle}>{subtitle}</p>}
         </div>
         <ScreenFrame resetKey={canonical}>
-          <Screen rest={rest} />
+          <PageHeadProvider set={setHead}>
+            <Screen rest={rest} />
+          </PageHeadProvider>
         </ScreenFrame>
       </main>
 

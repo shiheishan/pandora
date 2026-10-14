@@ -14,6 +14,8 @@ type SubStatus = 'pending' | 'trialing' | 'active' | 'past_due' | 'grace' | 'pau
 
 export interface Sub {
   id: string
+  /** 用户起的备注名（购买模型统一）；后台只读 */
+  label: string | null
   plan_id: string
   plan_name: string
   plan_version: number
@@ -28,6 +30,8 @@ export interface Sub {
   device_limit_override: number | null
   plan_max_devices: number | null
   online_devices: number
+  /** 挂在这一份上的流量包余量（字节）：流量包按订阅挂 */
+  pack_bytes: number
   created_at: string
   /** 只用于 q 反查，永不出现在响应里（保留规则 2） */
   token: string
@@ -46,9 +50,12 @@ export interface User {
   balance: number
   currency: string
   subs: Sub[]
+  /** 还没加到任何一份的流量包余量（字节）：无订阅时兑的送流量卡 */
+  unattached_bytes: number
   referrer: string | null
   telegram: { username: string; bound_at: string } | null
-  roles: string[]
+  /** 后台不分角色：是不是管理员 */
+  is_admin: boolean
 }
 
 export interface Group {
@@ -100,6 +107,7 @@ function makeSub(i: number, j: number, state: 'live' | 'expired'): Sub {
   const used = limit === null ? (i * 7 + 3) * GiB : Math.round(limit * (((i * 37 + j * 11) % 100) / 100))
   return {
     id: randomUUID(),
+    label: null,
     plan_id: planId,
     plan_name: name,
     plan_version: 1 + ((i + j) % 3),
@@ -114,6 +122,7 @@ function makeSub(i: number, j: number, state: 'live' | 'expired'): Sub {
     device_limit_override: i % 11 === 5 ? 10 : null,
     plan_max_devices: devices,
     online_devices: state === 'live' ? (i * 5 + j) % ((devices ?? 3) + 2) : 0,
+    pack_bytes: 0,
     created_at: new Date(start - DAY).toISOString(),
     token: `tk${String(i).padStart(3, '0')}${j}`,
   }
@@ -140,13 +149,52 @@ const users: User[] = Array.from({ length: 48 }, (_, i) => {
     balance: (i * 1375) % 26500,
     currency: 'CNY',
     subs,
+    unattached_bytes: 0,
     referrer: null,
     telegram: i % 3 === 0 ? { username: NAMES[i % NAMES.length]!.replace(/[._]/g, ''), bound_at: iso((i + 1) * DAY) } : null,
-    roles: i === 0 ? ['support'] : [],
+    is_admin: i === 0,
   }
 })
 // 邀请关系：每隔几个人由第 0 号邀请
 for (let i = 2; i < users.length; i += 4) users[i]!.referrer = users[0]!.id
+
+// ---------------------------------------------------------------------------
+// 落点演示数据（购买模型统一）：固定 id 的种子用户里布置「多份订阅」，后台开单的落点、
+// 订阅行上的按份操作才有东西可点。只改备注名、流量包与一条同款订阅，其余沿用上面的确定性生成
+// ---------------------------------------------------------------------------
+// 第 2 位（…02）：专业版 + 体验版，两份都在用、不同款。开别的套餐时没有默认落点
+const duo = users[1]!.subs
+if (duo.length === 2) {
+  duo[0]!.label = '我的手机'
+  duo[0]!.pack_bytes = 30 * GiB
+  duo[1]!.label = '妈妈的 iPad'
+}
+// 两份不同款都在用时兑的送流量卡不会自动挂：第 2 位还有 5 GiB 未分配，要用户在门户里选一份
+users[1]!.unattached_bytes = 5 * GiB
+// 第 7 位（没有订阅）：兑过一张送流量卡，20 GiB 未分配；人工开第一份订阅时自动挂上
+users[6]!.unattached_bytes = 20 * GiB
+// 第 6 位（…06）：再加一份同款（专业版）订阅，两份同款都在用。开专业版时默认续到期更早的那份
+const twin = users[5]!
+const twinFirst = twin.subs[0]
+if (twinFirst) {
+  const second: Sub = {
+    ...twinFirst,
+    id: randomUUID(),
+    label: '备用',
+    status: 'active',
+    current_period_start: new Date(Date.parse(twinFirst.current_period_start ?? '') + 12 * DAY).toISOString(),
+    current_period_end: new Date(Date.parse(twinFirst.current_period_end ?? '') + 12 * DAY).toISOString(),
+    traffic_used: Math.round((twinFirst.traffic_limit ?? 100 * GiB) * 0.82),
+    pack_bytes: 0,
+    online_devices: 0,
+    token: 'tk005b',
+    created_at: new Date(Date.parse(twinFirst.created_at) + 12 * DAY).toISOString(),
+  }
+  twinFirst.label = '常用'
+  twinFirst.status = 'active'
+  twinFirst.pack_bytes = 10 * GiB
+  twin.subs.push(second)
+}
 
 // ---------------------------------------------------------------------------
 // 视图：列表行与详情，字段与 Go 的 json tag 一一对应
@@ -266,6 +314,7 @@ function detail(u: User) {
       .sort((a, b) => b.created_at.localeCompare(a.created_at))
       .map((s) => ({
         id: s.id,
+        label: s.label,
         plan_name: s.plan_name,
         plan_version: s.plan_version,
         status: s.status,
@@ -278,9 +327,10 @@ function detail(u: User) {
         device_limit_override: s.device_limit_override,
         plan_max_devices: s.plan_max_devices,
         online_devices: s.online_devices,
+        pack_remaining_bytes: s.pack_bytes,
       })),
     recent_orders: orders.sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 20),
-    roles: u.roles,
+    is_admin: u.is_admin,
     stats: {
       // R114：paid_total 已弃用但 Go 仍回（跨币种直接相加）；paid_totals 按币种分组、币种升序、只列大于 0 的
       paid_total: orders.filter((o) => o.status === 'paid' || o.status === 'fulfilled').reduce((sum, o) => sum + o.paid_amount, 0),
@@ -290,6 +340,7 @@ function detail(u: User) {
     },
     referrer: referrer ? { id: referrer.id, email: referrer.email } : null,
     telegram: u.telegram,
+    unattached_pack_bytes: u.unattached_bytes,
   }
 }
 
@@ -337,7 +388,6 @@ export const users_: MockModule = {
   routes: {
     // ---- 读 -----------------------------------------------------------------
     'GET /v1/users': (ctx) => {
-      if (!ctx.requirePermission('iam.user.read')) return
       const qs = ctx.query
       const group = (qs.get('group_id') ?? '').trim()
       const subState = qs.get('sub_state') ?? ''
@@ -369,20 +419,17 @@ export const users_: MockModule = {
     },
 
     'GET /v1/user-groups': (ctx) => {
-      if (!ctx.requirePermission('iam.user.read')) return
       ctx.send(200, { groups: GROUPS.map((g) => ({ ...g, users: users.filter((u) => u.group_id === g.id).length, exclusive_pools: exclusivePoolsOf(g.id) })) })
     },
 
     'GET /v1/users/:id': (ctx) => {
-      if (!ctx.requirePermission('iam.user.read')) return
       const u = findUser(ctx)
       if (!u) return ctx.fail(404, 'not_found', '资源不存在或无权访问')
       ctx.send(200, detail(u))
     },
 
-    // 风控画像：security.audit.read；明文 IP 只在这里
+    // 风控画像：明文 IP 只在这里
     'GET /v1/users/:id/profile': (ctx) => {
-      if (!ctx.requirePermission('security.audit.read')) return
       const u = findUser(ctx)
       const n = u ? users.indexOf(u) : 0
       const ip = (k: number) => `112.64.${(n * 7 + k) % 250}.${(k * 31 + 18) % 250}`
@@ -398,9 +445,9 @@ export const users_: MockModule = {
     },
 
     // ---- 写 -----------------------------------------------------------------
-    // 启用 / 停用 / 封禁：iam.user.write + reauth（R9），无幂等；停用封禁要原因（422 无 fields）
+    // 启用 / 停用 / 封禁：reauth（R9），无幂等；停用封禁要原因（422 无 fields）
     'POST /v1/users/:id/status': async (ctx) => {
-      if (!ctx.requirePermission('iam.user.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       const status = typeof body.status === 'string' ? body.status : ''
@@ -413,9 +460,9 @@ export const users_: MockModule = {
       ctx.send(200, { ok: true, status })
     },
 
-    // 设新密码：iam.user.write + reauth，无幂等；不回显新密码
+    // 设新密码：reauth，无幂等；不回显新密码
     'POST /v1/users/:id/reset-password': async (ctx) => {
-      if (!ctx.requirePermission('iam.user.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       // R101：reason 可选，缺省或空串不校验；给了就限 500 字（照旧写进审计）
@@ -427,9 +474,9 @@ export const users_: MockModule = {
       ctx.send(200, { ok: true, sessions_revoked: true })
     },
 
-    // 换发订阅链接：path 是订阅 id；iam.user.write + reauth；R11 不回令牌
+    // 换发订阅链接：path 是订阅 id；reauth；R11 不回令牌
     'POST /v1/subscriptions/:id/rotate': async (ctx) => {
-      if (!ctx.requirePermission('iam.user.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       if (!reasonOk(body.reason)) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { reason: '请写清为什么要换这条订阅链接，至少 5 个字。这条会进审计' })
@@ -440,9 +487,9 @@ export const users_: MockModule = {
       ctx.send(200, { user_email: owner.email, old_revoked: true })
     },
 
-    // 人工调账：billing.provider.write + reauth + 幂等 admin_user_balance_adjust
+    // 人工调账：reauth + 幂等 admin_user_balance_adjust
     'POST /v1/users/:id/balance': async (ctx) => {
-      if (!ctx.requirePermission('billing.provider.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('admin_user_balance_adjust', () => {
@@ -457,9 +504,8 @@ export const users_: MockModule = {
       })
     },
 
-    // 分配用户组：iam.user.write，无幂等；空串移出分组；不存在 422 无 fields
+    // 分配用户组：无 reauth、无幂等；空串移出分组；不存在 422 无 fields
     'POST /v1/users/:id/group': async (ctx) => {
-      if (!ctx.requirePermission('iam.user.write')) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       const groupId = typeof body.group_id === 'string' ? body.group_id : ''
@@ -469,9 +515,8 @@ export const users_: MockModule = {
       ctx.send(200, { ok: true })
     },
 
-    // 单订阅设备上限：iam.user.write，无幂等；limit 0–1000 或 null（R12：不存在 404）
+    // 单订阅设备上限：无 reauth、无幂等；limit 0–1000 或 null（R12：不存在 404）
     'POST /v1/subscriptions/:id/device-limit': async (ctx) => {
-      if (!ctx.requirePermission('iam.user.write')) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       const limit = body.limit

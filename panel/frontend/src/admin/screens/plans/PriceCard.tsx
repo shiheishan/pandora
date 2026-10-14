@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { formatDateTime, formatMoney } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
 import { Button, Card, ConfirmModal, Input, Select, useToast } from '../../../ui'
-import { useCan, useIntentKey } from '../../actions'
+import { useIntentKey } from '../../actions'
 import { useUserGroups } from '../users/api'
 import { priceCreatedSchema, rowVersionSchema, useInvalidatePlans, type PlanDetail, type PriceRow } from './api'
 import { useCatalogFailure } from './failure'
@@ -15,9 +15,8 @@ const CURRENCY_OPTIONS = [
 ]
 
 export function PriceCard({ plan }: { plan: PlanDetail }) {
-  const can = useCan()
-  const writable = can('catalog.publish') && plan.status !== 'archived'
-  const groups = useUserGroups(can('iam.user.read'))
+  const writable = plan.status !== 'archived'
+  const groups = useUserGroups()
   const groupName = (gid: string) => groups.data?.find((g) => g.id === gid)?.name ?? '用户组专属'
   const [archiving, setArchiving] = useState<PriceRow | null>(null)
   const rows = [...plan.prices.filter((p) => p.status === 'active'), ...plan.prices.filter((p) => p.status === 'archived')]
@@ -60,13 +59,13 @@ export function PriceCard({ plan }: { plan: PlanDetail }) {
           </div>
         )
       })}
-      {writable && <AddPrice plan={plan} groups={can('iam.user.read') ? (groups.data ?? []) : null} />}
+      {writable && <AddPrice plan={plan} groups={groups.data ?? []} />}
       <ArchivePrice plan={plan} price={archiving} onClose={() => setArchiving(null)} />
     </Card>
   )
 }
 
-function AddPrice({ plan, groups }: { plan: PlanDetail; groups: ReadonlyArray<{ id: string; name: string }> | null }) {
+function AddPrice({ plan, groups }: { plan: PlanDetail; groups: ReadonlyArray<{ id: string; name: string }> }) {
   const api = useApi()
   const toast = useToast()
   const fail = useCatalogFailure()
@@ -134,19 +133,15 @@ function AddPrice({ plan, groups }: { plan: PlanDetail; groups: ReadonlyArray<{ 
         <summary>高级：试用、用户组专属价、生效时间</summary>
         <div className={css.grid2}>
           <Input size="sm" mono label="试用天数" placeholder="0" inputMode="numeric" value={form.trialDays} onChange={(e) => set('trialDays', e.target.value)} error={errors.trial_days} />
-          {groups ? (
-            <Select
-              size="sm"
-              label="只卖给用户组"
-              emptyOption="所有人（公开价）"
-              options={groups.map((g) => ({ value: g.id, label: g.name }))}
-              value={form.groupId}
-              onChange={(e) => set('groupId', e.target.value)}
-              error={errors.user_group_id}
-            />
-          ) : (
-            <p className={css.small}>没有读取用户组的权限，只能新增公开价。</p>
-          )}
+          <Select
+            size="sm"
+            label="只卖给用户组"
+            emptyOption="所有人（公开价）"
+            options={groups.map((g) => ({ value: g.id, label: g.name }))}
+            value={form.groupId}
+            onChange={(e) => set('groupId', e.target.value)}
+            error={errors.user_group_id}
+          />
           <Input size="sm" type="datetime-local" label="生效时间（选填）" value={form.from} onChange={(e) => set('from', e.target.value)} error={errors.valid_from} />
           <Input size="sm" type="datetime-local" label="失效时间（选填）" value={form.until} onChange={(e) => set('until', e.target.value)} error={errors.valid_until} />
         </div>

@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/aegispanel/nodeagent/core"
+	"github.com/aegispanel/nodeagent/internal/confnum"
 )
 
 // Core 是 sing-box 内核的封装。
@@ -289,11 +290,11 @@ func buildOneInbound(tag string, cfg *core.InboundConfig) (option.Inbound, error
 		if o.TLS == nil {
 			return option.Inbound{}, fmt.Errorf("hysteria2 必须启用 TLS")
 		}
-		if v, ok := cfg.Raw["up_mbps"].(float64); ok {
-			o.UpMbps = int(v)
+		if v, ok := confnum.Int(cfg.Raw["up_mbps"]); ok {
+			o.UpMbps = v
 		}
-		if v, ok := cfg.Raw["down_mbps"].(float64); ok {
-			o.DownMbps = int(v)
+		if v, ok := confnum.Int(cfg.Raw["down_mbps"]); ok {
+			o.DownMbps = v
 		}
 		if s, ok := cfg.Raw["obfs_password"].(string); ok && s != "" {
 			o.Obfs = &option.Hysteria2Obfs{Type: "salamander", Password: s}
@@ -305,11 +306,11 @@ func buildOneInbound(tag string, cfg *core.InboundConfig) (option.Inbound, error
 		if o.TLS == nil {
 			return option.Inbound{}, fmt.Errorf("hysteria 必须启用 TLS")
 		}
-		if v, ok := cfg.Raw["up_mbps"].(float64); ok {
-			o.UpMbps = int(v)
+		if v, ok := confnum.Int(cfg.Raw["up_mbps"]); ok {
+			o.UpMbps = v
 		}
-		if v, ok := cfg.Raw["down_mbps"].(float64); ok {
-			o.DownMbps = int(v)
+		if v, ok := confnum.Int(cfg.Raw["down_mbps"]); ok {
+			o.DownMbps = v
 		}
 		if s, ok := cfg.Raw["obfs"].(string); ok {
 			o.Obfs = s
@@ -354,8 +355,8 @@ func buildOneInbound(tag string, cfg *core.InboundConfig) (option.Inbound, error
 	case "shadowtls":
 		o := option.ShadowTLSInboundOptions{ListenOptions: base}
 		o.Version = 3
-		if v, ok := cfg.Raw["version"].(float64); ok && v > 0 {
-			o.Version = int(v)
+		if v, ok := confnum.Int(cfg.Raw["version"]); ok && v > 0 {
+			o.Version = v
 		}
 		// 外层密码是节点级的，不逐用户区分。
 		//
@@ -382,7 +383,7 @@ func buildOneInbound(tag string, cfg *core.InboundConfig) (option.Inbound, error
 			return option.Inbound{}, fmt.Errorf("shadowtls 需要 handshake_server")
 		}
 		hsPort := uint16(443)
-		if v, ok := cfg.Raw["handshake_port"].(float64); ok && v > 0 {
+		if v, ok := confnum.Int(cfg.Raw["handshake_port"]); ok && v > 0 && v <= 65535 {
 			hsPort = uint16(v)
 		}
 		o.Handshake = option.ShadowTLSHandshakeOptions{
@@ -412,13 +413,7 @@ func buildTLS(raw map[string]any) *option.InboundTLSOptions {
 	if raw == nil {
 		return nil
 	}
-	enabled := false
-	switch v := raw["tls"].(type) {
-	case bool:
-		enabled = v
-	case float64:
-		enabled = v > 0
-	}
+	enabled, _ := confnum.Truthy(raw["tls"])
 	if !enabled {
 		return nil
 	}

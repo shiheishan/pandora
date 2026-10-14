@@ -1,0 +1,9 @@
+# 插件用 go run 按固定版本取，不依赖本机安装，也不走 BSR 远程插件。
+version: v2
+plugins:
+  - local: ["go", "run", "google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11"]
+    out: ../nodeapi
+    opt: paths=source_relative
+  - local: ["go", "run", "google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.1"]
+    out: ../nodeapi
+    opt: paths=source_relative

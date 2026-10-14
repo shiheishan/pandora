@@ -38,10 +38,12 @@ type juicityUser struct {
 type juicityAdapter struct {
 	spec InboundSpec
 
-	mu        sync.RWMutex
-	users     map[string]juicityUser
-	traffic   map[int64]core.UserTraffic
-	online    map[int64]map[string]struct{}
+	mu       sync.RWMutex
+	users    map[string]juicityUser
+	sessions userSessions
+	online   onlineDevices
+	// udpQuota 限每用户在途 UDP 路由数（每个目标一个上游 socket，quic_udp_quota.go）。
+	udpQuota  udpSessionQuota
 	plane     DataPlane
 	connErr   connErrorReporter
 	limiters  core.SpeedLimiters
@@ -59,11 +61,9 @@ var _ Adapter = (*juicityAdapter)(nil)
 
 func newJuicityAdapter(spec InboundSpec) (Adapter, error) {
 	return &juicityAdapter{
-		spec:    spec,
-		users:   make(map[string]juicityUser),
-		traffic: make(map[int64]core.UserTraffic),
-		online:  make(map[int64]map[string]struct{}),
-		active:  make(map[*quic.Conn]struct{}),
+		spec:   spec,
+		users:  make(map[string]juicityUser),
+		active: make(map[*quic.Conn]struct{}),
 	}, nil
 }
 
@@ -135,6 +135,7 @@ func (a *juicityAdapter) Start(parent context.Context, spec InboundSpec, hooks A
 	a.wg.Add(1)
 	a.mu.Unlock()
 	go a.acceptLoop()
+	warnSmallQUICSocketBuffers("juicity", spec.Config.Port, packet)
 	return nil
 }
 
@@ -165,11 +166,11 @@ func (a *juicityAdapter) acceptLoop() {
 		a.active[conn] = struct{}{}
 		a.wg.Add(1)
 		a.mu.Unlock()
-		go func() {
+		goGuarded(nil, func() {
 			defer a.wg.Done()
 			defer a.removeActive(conn)
 			a.handleConn(conn)
-		}()
+		})
 	}
 }
 
@@ -189,6 +190,7 @@ func (a *juicityAdapter) handleConn(conn *quic.Conn) {
 		_ = conn.CloseWithError(0x100, "authentication stream required")
 		return
 	}
+	epoch := a.sessions.epoch()
 	user, err := a.authenticate(conn, uni)
 	if err != nil {
 		a.connErr.addr(StageSession, conn.RemoteAddr(), err)
@@ -200,12 +202,22 @@ func (a *juicityAdapter) handleConn(conn *quic.Conn) {
 	// that extension, but drains it so the peer can close cleanly.
 	go func() { _, _ = io.Copy(io.Discard, uni) }()
 	ip := remoteIP(conn.RemoteAddr())
-	if !a.enterDevice(user, ip) {
+	if !a.online.enter(user, ip) {
 		a.connErr.addr(StageSession, conn.RemoteAddr(), deviceLimitError("juicity"))
 		_ = conn.CloseWithError(0x102, "device limit")
 		return
 	}
-	defer a.leaveDevice(user, ip)
+	defer a.online.leave(user, ip)
+	// 整条 QUIC 连接属于一个用户：登记它，用户被移出名单时连同其上的流一起断。
+	sess := a.sessions.open(user, epoch, closerFunc(func() error {
+		return conn.CloseWithError(0x103, "user removed")
+	}))
+	if sess == nil {
+		a.connErr.addr(StageSession, conn.RemoteAddr(), errSessionRevoked)
+		_ = conn.CloseWithError(0x103, "user removed")
+		return
+	}
+	defer sess.close()
 	for {
 		stream, err := conn.AcceptStream(ctx)
 		if err != nil {
@@ -214,11 +226,11 @@ func (a *juicityAdapter) handleConn(conn *quic.Conn) {
 		a.mu.Lock()
 		a.wg.Add(1)
 		a.mu.Unlock()
-		go func() {
+		goGuarded(stream, func() {
 			defer a.wg.Done()
 			defer stream.Close()
-			a.handleStream(ctx, conn, stream, user, ip)
-		}()
+			a.handleStream(ctx, conn, stream, user, ip, sess)
+		})
 	}
 }
 
@@ -251,7 +263,7 @@ func (a *juicityAdapter) authenticate(conn *quic.Conn, stream *quic.ReceiveStrea
 	return entry.user, nil
 }
 
-func (a *juicityAdapter) handleStream(ctx context.Context, conn *quic.Conn, stream *quic.Stream, user core.User, ip string) {
+func (a *juicityAdapter) handleStream(ctx context.Context, conn *quic.Conn, stream *quic.Stream, user core.User, ip string, sess *userSession) {
 	var network [1]byte
 	if _, err := io.ReadFull(stream, network[:]); err != nil {
 		a.connErr.addr(StageSession, conn.RemoteAddr(), err)
@@ -264,7 +276,7 @@ func (a *juicityAdapter) handleStream(ctx context.Context, conn *quic.Conn, stre
 	}
 	switch network[0] {
 	case juicityNetworkTCP:
-		a.handleTCPStream(ctx, conn, stream, user, ip, destination)
+		a.handleTCPStream(ctx, conn, stream, user, destination, sess)
 	case juicityNetworkUDP:
 		a.handleUDPStream(ctx, conn, stream, user, ip, destination)
 	default:
@@ -272,7 +284,7 @@ func (a *juicityAdapter) handleStream(ctx context.Context, conn *quic.Conn, stre
 	}
 }
 
-func (a *juicityAdapter) handleTCPStream(ctx context.Context, conn *quic.Conn, stream *quic.Stream, user core.User, ip string, destination juicityAddress) {
+func (a *juicityAdapter) handleTCPStream(ctx context.Context, conn *quic.Conn, stream *quic.Stream, user core.User, destination juicityAddress, sess *userSession) {
 	sourceIP, sourcePort := sourceFromAddr(conn.RemoteAddr())
 	meta := route.Meta{Domain: destination.domain(), IP: destination.ip(), Port: destination.Port, Network: "tcp", Protocol: "juicity", SourceIP: sourceIP, SourcePort: sourcePort}
 	upstream, err := a.plane.DialTCP(ctx, meta, M.ParseSocksaddrHostPort(destination.Host, destination.Port))
@@ -281,114 +293,13 @@ func (a *juicityAdapter) handleTCPStream(ctx context.Context, conn *quic.Conn, s
 		return
 	}
 	defer upstream.Close()
-	var wg sync.WaitGroup
-	wg.Add(2)
-	done := make(chan struct{}, 2)
-	go func() {
-		defer wg.Done()
-		n, _ := core.SpeedLimitedCopy(upstream, stream, a.limiters.For(user))
-		a.addTraffic(user, n, 0)
-		done <- struct{}{}
-	}()
-	go func() {
-		defer wg.Done()
-		n, _ := core.SpeedLimitedCopy(stream, upstream, a.limiters.For(user))
-		a.addTraffic(user, 0, n)
-		done <- struct{}{}
-	}()
-	<-done
-	_ = upstream.Close()
-	_ = stream.Close()
-	wg.Wait()
-}
-
-func (a *juicityAdapter) handleUDPStream(ctx context.Context, conn *quic.Conn, stream *quic.Stream, user core.User, ip string, initial juicityAddress) {
-	sourceIP, sourcePort := sourceFromAddr(conn.RemoteAddr())
-	baseMeta := route.Meta{Network: "udp", Protocol: "juicity", SourceIP: sourceIP, SourcePort: sourcePort}
-	type udpRoute struct {
-		pc     net.PacketConn
-		target juicityAddress
-	}
-	var routesMu sync.Mutex
-	routes := make(map[string]udpRoute)
-	var writeMu sync.Mutex
-	streamCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	defer func() {
-		routesMu.Lock()
-		for _, r := range routes {
-			_ = r.pc.Close()
-		}
-		routesMu.Unlock()
-	}()
-	// The first address is the stream's advertised default target. Actual
-	// packets carry their own destination metadata, as required by Juicity.
-	_ = initial
-	for {
-		target, payload, err := readJuicityPacket(stream)
-		if err != nil {
-			return
-		}
-		key := target.key()
-		routesMu.Lock()
-		r, exists := routes[key]
-		if !exists {
-			meta := baseMeta
-			meta.Domain, meta.IP, meta.Port = target.domain(), target.ip(), target.Port
-			pc, openErr := a.plane.ListenUDP(streamCtx, meta, M.ParseSocksaddrHostPort(target.Host, target.Port))
-			if openErr != nil {
-				routesMu.Unlock()
-				a.connErr.addr(StageSession, conn.RemoteAddr(), openErr)
-				return
-			}
-			r = udpRoute{pc: pc, target: target}
-			routes[key] = r
-			go a.juicityUDPReader(streamCtx, stream, &writeMu, r, user)
-		}
-		routesMu.Unlock()
-		addr, err := target.resolveUDPAddr()
-		if err != nil {
-			return
-		}
-		n, err := r.pc.WriteTo(payload, addr)
-		if err != nil {
-			return
-		}
-		a.addTraffic(user, int64(n), 0)
-	}
-}
-
-func (a *juicityAdapter) juicityUDPReader(ctx context.Context, stream *quic.Stream, writeMu *sync.Mutex, r struct {
-	pc     net.PacketConn
-	target juicityAddress
-}, user core.User) {
-	buf := make([]byte, juicityMaxPacket)
-	for {
-		n, addr, err := r.pc.ReadFrom(buf)
-		if err != nil {
-			return
-		}
-		response, ok := juicityAddressFromNetAddr(addr)
-		if !ok {
-			response = r.target
-		}
-		if n > 65535 {
-			n = 65535
-		}
-		frame := marshalJuicityPacket(response, buf[:n])
-		writeMu.Lock()
-		_, writeErr := stream.Write(frame)
-		writeMu.Unlock()
-		if writeErr != nil {
-			return
-		}
-		a.addTraffic(user, 0, int64(n))
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-	}
+	// QUIC 流的 Close 只关写方向，沿用「一侧结束即两端全关」。
+	// 收尾时连读方向一起取消，否则另一方向会一直阻塞在读这条流上。
+	client := &core.SplitStream{R: stream, W: stream, C: closerFunc(func() error {
+		stream.CancelRead(0)
+		return stream.Close()
+	})}
+	sess.relay(client, upstream, core.RelayOptions{Limiter: a.limiters.For(user), NoHalfClose: true})
 }
 
 func (a *juicityAdapter) AddUsers(users []core.User) error {
@@ -440,76 +351,32 @@ func (a *juicityAdapter) UpsertUsers(users []core.User) error {
 
 func (a *juicityAdapter) DelUsers(ids []string) error {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	var removed []int64
 	for _, id := range ids {
 		if parsed, err := uuid.Parse(strings.TrimSpace(id)); err == nil {
 			key := parsed.String()
 			// 顺手丢掉这个用户的令牌桶，否则用户删了桶还留着。
 			if entry, ok := a.users[key]; ok {
 				a.limiters.Remove(entry.user.ID)
+				removed = append(removed, entry.user.ID)
 			}
 			delete(a.users, key)
 		}
 	}
+	a.mu.Unlock()
+	// 先删表、再踢线（锁外关）：已有的长连接、mux / QUIC 会话随之断开。
+	a.sessions.revoke(removed)
 	return nil
 }
 
 func (a *juicityAdapter) SnapshotTraffic() ([]core.UserTraffic, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	out := make([]core.UserTraffic, 0, len(a.traffic))
-	for id, traffic := range a.traffic {
-		if traffic.Upload != 0 || traffic.Download != 0 {
-			out = append(out, traffic)
-		}
-		delete(a.traffic, id)
-	}
-	return out, nil
+	return a.sessions.snapshot(), nil
 }
 
-func (a *juicityAdapter) OnlineIPs() map[int64][]string {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	out := make(map[int64][]string, len(a.online))
-	for id, ips := range a.online {
-		for ip := range ips {
-			out[id] = append(out[id], ip)
-		}
-	}
-	return out
-}
-
-func (a *juicityAdapter) enterDevice(user core.User, ip string) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	set := a.online[user.ID]
-	if set == nil {
-		set = make(map[string]struct{})
-		a.online[user.ID] = set
-	}
-	if _, exists := set[ip]; !exists && user.DeviceLimit > 0 && len(set) >= user.DeviceLimit {
-		return false
-	}
-	set[ip] = struct{}{}
-	return true
-}
-
-func (a *juicityAdapter) leaveDevice(user core.User, ip string) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if set := a.online[user.ID]; set != nil {
-		delete(set, ip)
-		if len(set) == 0 {
-			delete(a.online, user.ID)
-		}
-	}
-}
+func (a *juicityAdapter) OnlineIPs() map[int64][]string { return a.online.snapshot() }
 
 func (a *juicityAdapter) addTraffic(user core.User, upload, download int64) {
-	a.mu.Lock()
-	current := a.traffic[user.ID]
-	a.traffic[user.ID] = core.UserTraffic{ID: user.ID, Upload: current.Upload + upload, Download: current.Download + download}
-	a.mu.Unlock()
+	a.sessions.add(user.ID, upload, download)
 }
 
 func (a *juicityAdapter) removeActive(conn *quic.Conn) {
@@ -557,9 +424,6 @@ type juicityAddress struct {
 	Port uint16
 }
 
-func (a juicityAddress) key() string {
-	return net.JoinHostPort(strings.ToLower(a.Host), strconv.Itoa(int(a.Port)))
-}
 func (a juicityAddress) domain() string {
 	if a.typ == 3 {
 		return a.Host
@@ -570,10 +434,6 @@ func (a juicityAddress) ip() netip.Addr {
 	parsed, _ := netip.ParseAddr(a.Host)
 	return parsed
 }
-func (a juicityAddress) resolveUDPAddr() (*net.UDPAddr, error) {
-	return net.ResolveUDPAddr("udp", net.JoinHostPort(a.Host, strconv.Itoa(int(a.Port))))
-}
-
 func readJuicityAddress(r io.Reader) (juicityAddress, error) {
 	var typ [1]byte
 	if _, err := io.ReadFull(r, typ[:]); err != nil {
@@ -621,35 +481,6 @@ func readJuicityAddress(r io.Reader) (juicityAddress, error) {
 		return out, fmt.Errorf("juicity destination port is zero")
 	}
 	return out, nil
-}
-
-func readJuicityPacket(r io.Reader) (juicityAddress, []byte, error) {
-	target, err := readJuicityAddress(r)
-	if err != nil {
-		return juicityAddress{}, nil, err
-	}
-	var length [2]byte
-	if _, err := io.ReadFull(r, length[:]); err != nil {
-		return juicityAddress{}, nil, err
-	}
-	n := int(binary.BigEndian.Uint16(length[:]))
-	if n == 0 || n > juicityMaxPacket {
-		return juicityAddress{}, nil, fmt.Errorf("juicity packet length is invalid")
-	}
-	payload := make([]byte, n)
-	if _, err := io.ReadFull(r, payload); err != nil {
-		return juicityAddress{}, nil, err
-	}
-	return target, payload, nil
-}
-
-func marshalJuicityPacket(target juicityAddress, payload []byte) []byte {
-	address := marshalJuicityAddress(target)
-	frame := make([]byte, len(address)+2+len(payload))
-	copy(frame, address)
-	binary.BigEndian.PutUint16(frame[len(address):], uint16(len(payload)))
-	copy(frame[len(address)+2:], payload)
-	return frame
 }
 
 func marshalJuicityAddress(target juicityAddress) []byte {

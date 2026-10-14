@@ -89,11 +89,13 @@ func (s *Stream) closeWithError(err error) error {
 		once = true
 	})
 	if once {
+		// 同步上游 v0.0.13：先发 FIN 再跑 dieHook。
+		err := s.sess.streamClosed(s.id)
 		if s.dieHook != nil {
 			s.dieHook()
 			s.dieHook = nil
 		}
-		return s.sess.streamClosed(s.id)
+		return err
 	} else {
 		return s.dieErr
 	}

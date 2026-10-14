@@ -1,50 +1,41 @@
 #!/usr/bin/env bash
-# 评估「内鬼检测能不能正常运行」：这里的内鬼指用户侧的滥用——订阅被分享、批量刷号、
-# 一条订阅多人同时在线。审计哈希链不在本脚本范围。
+# 评估「内鬼检测能不能正常运行」（新栈 pandora + nodesim 节点夹具）：滥用指订阅分享、批量刷号、
+# 一条订阅多人同时在线。审计无哈希链，不在本脚本范围。
 #
-# 两类结论分开记：
-#   - 机制断言（[ OK ] / [FAIL]）：系统输出的计数是否与造数一致（来源数、同 IP 账号数、
-#     在线设备数、超限标志、复核与停用、strict 模式摘掉超限订阅），以及两轮是否一致。
-#     这些错了说明检测链路坏了，脚本以 1 退出。
-#   - 检测效果（[EVAL]）：拿每个用例的标签（应报 / 不应报）和系统按现行阈值给出的结论比对，
-#     算召回率与误报率。误判是评估结论，不让 job 变红。
+# 与旧版步骤对照：
+#   旧 0 库名与确认变量守卫 → 新 0：DISPOSABLE + current_database() 带 test/e2e 段
+#   旧 1 直接往 servers/nodes 插行、签节点令牌 → 新 1：后台 API 建池/服务器/节点 + bootstrap-token + nodesim 真接入 + activate
+#   旧 在线节点上报 → 新：直接写 node_alive_ips（sha256(设备键)，与 HMAC/IPv6 /64 归一由 Go 单测覆盖）
+#   旧 strict 读下发名单 → 新：轮询 nodesim status 里 proxy_uuid 名单；strict 集合由 worker devices:strict 推进
+#   旧健康检查 → 新：$PUB/readyz
 #
-# 来源模拟：冒烟栈没有 nginx，网关直接信 X-Real-IP，用它扮成不同来源。地址只用文档与测试
-# 保留段（198.18.0.0/15、100.64.0.0/10、2001:db8::/32），每轮、每个用例各占一段，互不相撞。
+# 删掉的旧断言：直接操作夹具表；旧节点端回包 ips 列表与上报逐地址一致（改为 SQL 去重设备键行数）。
 #
-# 时间窗口的取舍：
-#   - 订阅拉取的 24 小时 / 7 天窗口按 subscription_fetch_log.fetched_at 现算。要「过去几天」的
-#     拉取，先经真实订阅端点拉（哈希由产品算），再用库超级账号把这批行的 fetched_at 往前挪
-#     整天数。该表 append-only，挪时间要在本会话里 SET session_replication_role = replica——
-#     只在一次性库里这样造历史，产品代码不变。
-#   - 审计表是哈希链，不能改时间，IP 聚类（90 天窗口）只测窗口内的情况。
-#   - 在线设备窗口默认 5 分钟，上报后立即读。
+# 仍直接写库：subscription_fetch_log 的 fetched_at 回拨（append-only + session_replication_role）；
+# node_alive_ips 造在线（脚本拿不到 HMAC 密钥）；strict 前刷新 DEVICE 用例的 last_seen_at（两轮间隔防窗口过期）。
 #
-# 防过拟合：用例分调参组（T）与留出组（H）。阈值扫描只看调参组选参数，留出组只用来验证；
-# 选参规则固定为：调参组上 Youden 指数（召回率 − 误报率）最大 → 离现行值最近（没有现行值取最小）。
+# 两类结论：机制断言 [ OK ]/[FAIL]（错了退出 1）；检测效果 [EVAL]（误判不判红）。
+# 来源用 X-Real-IP（gin TrustedPlatform=X-Real-IP）。地址用文档保留段，每轮每用例互不相撞。
 #
-# 需要的确认变量（库名还必须带 test 或 e2e）：
-#   RISK_E2E_DISPOSABLE=YES_DELETE_FIXTURES
-#   RISK_E2E_DATABASE=<current_database() 的确切值>
-#   RISK_E2E_TENANT_ID=<一次性租户 UUID>
-# 注册、登录、停用会留下不可逆的审计证据，一次性库本身就是清理单位；脚本退出时只恢复租户级
-# 设置（设备判定模式）、归档自建套餐、让自建节点退役。
+# 环境变量：ADM、PUB、PSQL、ADMIN_EMAIL、ADMIN_PASS（必填）；
+#   RISK_E2E_DISPOSABLE=YES_DELETE_FIXTURES（必填）；NODESIM（必填，可执行 nodesim）；
+#   RISK_ADMIN_BUDGET（可选，后台每分钟调用预算，缺省 100）。
+# 注册、登录、停用留审计，只许一次性库；收尾恢复设备策略、归档套餐、停 nodesim、节点 retire。
 set -euo pipefail
 
 export ADM=${ADM:-http://127.0.0.1:9001}
 export PUB=${PUB:-http://127.0.0.1:9000}
-export NODE=${NODE:-http://127.0.0.1:9003}
-export PSQL=${PSQL:-/opt/aegispanel/deploy/psql.sh}
+export PSQL=${PSQL:-/opt/pandora/deploy/psql.sh}
 export ADMIN_EMAIL=${ADMIN_EMAIL:-}
 export ADMIN_PASS=${ADMIN_PASS:-}
 export RISK_E2E_DISPOSABLE=${RISK_E2E_DISPOSABLE:-}
-export RISK_E2E_DATABASE=${RISK_E2E_DATABASE:-}
-export RISK_E2E_TENANT_ID=${RISK_E2E_TENANT_ID:-}
+export NODESIM=${NODESIM:-}
+export RISK_ADMIN_BUDGET=${RISK_ADMIN_BUDGET:-100}
 
 command -v python3 >/dev/null 2>&1 || { echo "  [FATAL] 需要 python3" >&2; exit 1; }
 
 exec python3 - <<'PY'
-import ipaddress, json, os, re, secrets, signal, subprocess, sys, time
+import csv, hashlib, io, ipaddress, json, os, re, secrets, signal, subprocess, sys, time
 import urllib.error, urllib.parse, urllib.request
 from datetime import datetime, timedelta, timezone
 
@@ -90,12 +81,12 @@ signal.signal(signal.SIGTERM, _on_term)
 # ============================================================================
 ADM = os.environ["ADM"].rstrip("/")
 PUB = os.environ["PUB"].rstrip("/")
-NODE = os.environ["NODE"].rstrip("/")
-UNI = NODE + "/api/v1/server/UniProxy"
 PSQL = os.environ["PSQL"]
+NODESIM = os.environ["NODESIM"]
 ADMIN_EMAIL = os.environ["ADMIN_EMAIL"]
 ADMIN_PASS = os.environ["ADMIN_PASS"]
-TENANT = os.environ["RISK_E2E_TENANT_ID"]
+SIM_PROC = None
+SIM_TMP = None
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 STAMP = f"{int(time.time()) % 100000000:08d}"
 UA_BROWSER = "Mozilla/5.0 (risk-e2e)"
@@ -118,7 +109,7 @@ def is_loopback_origin(url):
 # ============================================================================
 _opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 _admin_calls = []
-ADMIN_BUDGET = 180  # 后台网关按 IP 每分钟 240 次写死在代码里，留出余量
+ADMIN_BUDGET = int(os.environ.get("RISK_ADMIN_BUDGET", "100"))  # 新栈后台按 IP 每分钟缺省 120，CI 会放宽并调大预算
 
 def _throttle_admin():
     while True:
@@ -190,6 +181,39 @@ class Admin:
         return code, js
 
 ADMIN = Admin()
+
+# 批量生成是后台任务（w5account）：提交回 202 与任务，aegis-admin 的 worker 逐个生成；
+# 轮询进度到 succeeded（有上限），再下载结果 CSV（邮箱,初始密码；要近期重认证，Admin.call
+# 每 10 分钟重登一次，登录令牌自带 15 分钟重认证窗口）
+GEN_TIMEOUT = 300
+
+def generate_users(count, prefix, idem):
+    _, job = ADMIN.call("POST", "/v1/users/bulk/generate",
+                        {"count": count, "email_prefix": prefix, "email_domain": "example.test",
+                         "reason": "风控评估脚本预制的一次性账号"},
+                        idem=idem, expect=(202,))
+    job_id = need_uuid((job or {}).get("id"), "批量生成任务 id")
+    deadline = time.monotonic() + GEN_TIMEOUT
+    while True:
+        _, job = ADMIN.call("GET", f"/v1/users/bulk/generate/jobs/{job_id}", expect=(200,))
+        status = (job or {}).get("status")
+        if status == "succeeded":
+            break
+        if status == "failed":
+            raise Fatal("批量生成任务失败", str((job or {}).get("error"))[:200])
+        if time.monotonic() > deadline:
+            raise Fatal(f"批量生成任务 {GEN_TIMEOUT} 秒内没完成",
+                        f"status={status} completed={(job or {}).get('completed')}/{count}")
+        time.sleep(1)
+    ADMIN.call("GET", "/v1/me", expect=(200,))  # 过了 10 分钟就先重登，下载要近期重认证
+    code, _, text = http("GET", ADM + f"/v1/users/bulk/generate/jobs/{job_id}/result",
+                         headers={"Accept": "text/csv"}, token=ADMIN.token)
+    if code != 200:
+        raise Fatal(f"下载批量生成结果返回 {code}", text[:300])
+    rows = list(csv.reader(io.StringIO(text.lstrip("\ufeff"))))
+    if not rows or rows[0] != ["邮箱", "初始密码"]:
+        raise Fatal("批量生成结果的表头不对", repr(rows[:1])[:200])
+    return [{"email": r[0], "password": r[1]} for r in rows[1:] if len(r) == 2]
 
 # ============================================================================
 #  用例集。每条写明标签与理由；ip 键按轮次与用例序号展开成互不相撞的地址：
@@ -398,10 +422,99 @@ def backdate(sub_id, days):
     rows = sql(f"""SET session_replication_role = replica;
         WITH u AS (UPDATE subscription_fetch_log
                       SET fetched_at = fetched_at - make_interval(days => {int(days)})
-                    WHERE tenant_id = '{TENANT}' AND subscription_id = '{sub_id}'
+                    WHERE subscription_id = '{sub_id}'
                       AND fetched_at > now() - interval '15 minutes' RETURNING 1)
         SELECT count(*) FROM u""")
     return int(rows[-1])
+
+def device_key_ip_hash(ip):
+    """脚本侧造数：sha256(设备键)；产品存 HMAC(设备键)，后台只按 DISTINCT ip_hash 计数。"""
+    return hashlib.sha256(source_key(ip).encode()).digest()
+
+def ip_hash_sql(ip):
+    return "decode('" + device_key_ip_hash(ip).hex() + "', 'hex')"
+
+def insert_alive_ips(node_id, sub_id, ips):
+    for ip in ips:
+        sql(f"""INSERT INTO node_alive_ips (node_id, subscription_id, ip_hash, last_seen_at)
+            VALUES ('{node_id}', '{sub_id}', {ip_hash_sql(ip)}, now())
+            ON CONFLICT (node_id, subscription_id, ip_hash)
+            DO UPDATE SET last_seen_at = now()""")
+
+def roster_users_for_node(status_path, node_id):
+    with open(status_path, encoding="utf-8") as f:
+        snap = json.load(f)
+    for srv in (snap.get("servers") or {}).values():
+        node = (srv.get("nodes") or {}).get(str(node_id)) or (srv.get("nodes") or {}).get(node_id)
+        if node is not None:
+            return set(node.get("users") or [])
+    return set()
+
+def wait_roster_proxy(status_path, node_id, proxy_uuid, present, timeout=180, explain=""):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if SIM_PROC is not None and SIM_PROC.poll() is not None:
+            raise Fatal("nodesim 已退出", explain)
+        users = roster_users_for_node(status_path, node_id)
+        if present and proxy_uuid in users:
+            ok(explain or f"名单含 {proxy_uuid}")
+            return
+        if not present and proxy_uuid not in users:
+            ok(explain or f"名单不含 {proxy_uuid}")
+            return
+        time.sleep(1)
+    raise Fatal(f"轮询名单超时（{timeout}s）", explain or proxy_uuid)
+
+def wait_nodesim_server_ready(status_path, name, timeout=60):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if SIM_PROC is not None and SIM_PROC.poll() is not None:
+            raise Fatal("nodesim 已退出")
+        try:
+            with open(status_path, encoding="utf-8") as f:
+                d = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            time.sleep(1)
+            continue
+        s = (d.get("servers") or {}).get(name) or {}
+        if s.get("enrolled") and s.get("connected"):
+            ok(f"nodesim {name} enrolled and connected")
+            return
+        time.sleep(1)
+    raise Fatal(f"nodesim {name} 就绪超时（{timeout}s）")
+
+def wait_nodesim_node_config(status_path, name, node_id, timeout=60):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if SIM_PROC is not None and SIM_PROC.poll() is not None:
+            raise Fatal("nodesim 已退出")
+        try:
+            with open(status_path, encoding="utf-8") as f:
+                d = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            time.sleep(1)
+            continue
+        s = (d.get("servers") or {}).get(name) or {}
+        node = (s.get("nodes") or {}).get(str(node_id)) or (s.get("nodes") or {}).get(node_id)
+        if node and (node.get("config_sha256") or ""):
+            ok(f"nodesim {name} 节点 config_sha256 非空")
+            return
+        time.sleep(1)
+    raise Fatal(f"nodesim 节点配置下发超时（{timeout}s）")
+
+def stop_nodesim():
+    global SIM_PROC
+    if SIM_PROC is None:
+        return
+    try:
+        SIM_PROC.terminate()
+        SIM_PROC.wait(timeout=30)
+    except Exception:
+        try:
+            SIM_PROC.kill()
+        except Exception:
+            pass
+    SIM_PROC = None
 
 # ============================================================================
 #  一轮：造账号与订阅 → 按用例造行为 → 读系统输出 → 机制断言 → 处置
@@ -414,15 +527,11 @@ def run_round(rnd, ctx):
     logins = [(c, i) for c in CLUSTER_CASES for i, (how, _) in enumerate(c["members"]) if how == "login"]
     n_gen = len(owners) + len(logins)
     prefix = f"rk{rnd}-{STAMP}"
-    _, js = ADMIN.call("POST", "/v1/users/bulk/generate",
-                       {"count": n_gen, "email_prefix": prefix, "email_domain": "example.test",
-                        "reason": "风控评估脚本预制的一次性账号"},
-                       idem=f"risk-gen-{STAMP}-{rnd}")
-    gen = (js or {}).get("users") or []
+    gen = generate_users(n_gen, prefix, f"risk-gen-{STAMP}-{rnd}")
     if not check(len(gen) == n_gen, f"后台批量生成 {n_gen} 个账号"):
         raise Fatal("批量生成的账号数不对")
     ids = dict(r.split("|") for r in sql(
-        f"SELECT email::text, id::text FROM users WHERE tenant_id = '{TENANT}' AND email LIKE '{prefix}-%'"))
+        f"SELECT email::text, id::text FROM users WHERE email LIKE '{prefix}-%'"))
     pool = [(u["email"], u["password"], need_uuid(ids.get(u["email"]), "预制账号 id")) for u in gen]
     acct = {}
     for c in owners:
@@ -436,11 +545,12 @@ def run_round(rnd, ctx):
                     "reason": "风控评估：赠送一次性订阅", "settlement": "grant"},
                    idem=f"risk-order-{STAMP}-{rnd}-{c['id']}", expect=(201,))
     subs = {}
-    for r in sql(f"""SELECT s.user_id::text, s.id::text, s.node_uid::text FROM subscriptions s
-                      JOIN users u ON u.tenant_id = s.tenant_id AND u.id = s.user_id
-                     WHERE s.tenant_id = '{TENANT}' AND u.email LIKE '{prefix}-%'"""):
-        uid, sid, nuid = r.split("|")
-        subs.setdefault(uid, []).append((sid, int(nuid)))
+    for r in sql(f"""SELECT s.user_id::text, s.id::text, s.node_uid::text, s.proxy_uuid::text
+                      FROM subscriptions s
+                      JOIN users u ON u.id = s.user_id
+                     WHERE u.email LIKE '{prefix}-%'"""):
+        uid, sid, nuid, puuid = r.split("|")
+        subs.setdefault(uid, []).append((sid, int(nuid), puuid))
     good = all(len(subs.get(acct[c["id"]][2], [])) == 1 for c in owners)
     if not check(good, f"{len(owners)} 张赠送单各开出一条订阅"):
         raise Fatal("赠送单没有开出订阅")
@@ -564,21 +674,23 @@ def run_round(rnd, ctx):
 
     # ------------------------------------------------------------------ 在线设备
     sec(f"第 {rnd + 1} 轮（{tag}）· 在线设备与设备上限")
-    alive, expect_ips = {}, 0
+    sql(f"DELETE FROM node_alive_ips WHERE node_id = '{ctx['node_id']}'")
+    expect_keys = 0
     for c in DEVICE_CASES:
         ips = sorted({ip_of(k, rnd, c["idx"]) for k in c["ips"]})
-        alive[str(c["sub"][rnd][1])] = ips
-        expect_ips += len(ips)
-    code, js, text = http("POST", UNI + "/alive?" + ctx["q"], alive, token=ctx["node_token"])
-    check(code == 200 and (js or {}).get("ips") == expect_ips,
-          f"节点在线上报 {expect_ips} 个地址被接收", text[:200])
+        insert_alive_ips(ctx["node_id"], c["sub"][rnd][0], ips)
+        expect_keys += len({source_key(ip) for ip in ips})
+    n_rows = int(sql(
+        f"SELECT count(DISTINCT ip_hash) FROM node_alive_ips WHERE node_id = '{ctx['node_id']}'")[0])
+    check(n_rows == expect_keys,
+          f"写入 node_alive_ips 的去重设备键行数 = {expect_keys}", f"实际 {n_rows}")
     _, js = ADMIN.call("GET", "/v1/devices")
     grace = js["grace"]
     ctx["grace"], ctx["window"] = grace, js["window_minutes"]
     devs = {d["subscription_id"]: d for d in js["devices"]}
     for c in DEVICE_CASES:
         d = devs.get(c["sub"][rnd][0])
-        n = len(set(c["ips"]))
+        n = len({source_key(ip_of(k, rnd, c["idx"])) for k in c["ips"]})
         if not check(d is not None, f"{c['id']} 出现在后台在线设备概览"):
             sig[c["id"]] = dict(online=None, limit=None, exceeded=None, grace=grace)
             continue
@@ -611,7 +723,7 @@ def run_round(rnd, ctx):
                            idem=f"risk-disable-{STAMP}-{rnd}")
         check(js.get("disabled") == len(uids) and not js.get("skipped"),
               f"R01 批量停用 {len(uids)} 个账号、无跳过", json.dumps(js, ensure_ascii=False)[:200])
-        n = int(sql(f"""SELECT count(*) FROM users WHERE tenant_id = '{TENANT}' AND status = 'suspended'
+        n = int(sql(f"""SELECT count(*) FROM users WHERE status = 'suspended'
                         AND id IN ({",".join("'" + u + "'" for u in uids)})""")[0])
         check(n == len(uids), "R01 账号在库里都是 suspended")
         _, email, ip, password = r01["members_r"][rnd][0]
@@ -746,57 +858,94 @@ def main():
         sec("0. 一次性库守卫与可达性")
         if os.environ.get("RISK_E2E_DISPOSABLE") != "YES_DELETE_FIXTURES":
             raise Fatal("缺少一次性库确认：RISK_E2E_DISPOSABLE=YES_DELETE_FIXTURES")
-        dbname = os.environ.get("RISK_E2E_DATABASE", "")
-        if not re.search(r"test|e2e", dbname, re.I):
-            raise Fatal("RISK_E2E_DATABASE 必须带 test 或 e2e")
-        need_uuid(TENANT, "RISK_E2E_TENANT_ID")
-        for name, url in (("ADM", ADM), ("PUB", PUB), ("NODE", NODE)):
+        if not NODESIM or not os.path.isfile(NODESIM) or not os.access(NODESIM, os.X_OK):
+            raise Fatal("NODESIM 必须指向可执行的 nodesim 二进制")
+        for name, url in (("ADM", ADM), ("PUB", PUB)):
             if not is_loopback_origin(url):
                 raise Fatal(f"{name} 必须是带端口的数字回环地址")
         if not ADMIN_EMAIL or not ADMIN_PASS:
             raise Fatal("ADMIN_EMAIL / ADMIN_PASS 必须显式给出")
-        if sql("SELECT current_database()")[0] != dbname:
-            raise Fatal("current_database() 与 RISK_E2E_DATABASE 不一致")
-        if sql(f"SELECT count(*) FROM tenants WHERE id = '{TENANT}'")[0] != "1":
-            raise Fatal("RISK_E2E_TENANT_ID 指的租户不存在")
-        ok("一次性库与租户核对无误")
-        code, _, _ = http("GET", PUB + "/healthz")
-        check(code == 200, "public 网关 healthz 200")
+        dbname = sql("SELECT current_database()")[0]
+        if not re.search(r"(^|[-_])(test|e2e)([-_]|$)", dbname, re.I):
+            raise Fatal("库名必须含独立的 test/e2e 段", dbname)
+        ok(f"一次性库守卫通过（{dbname}）")
+        code, _, _ = http("GET", PUB + "/readyz")
+        check(code == 200, "public 网关 readyz 200")
         ADMIN.login()
         ok("后台管理员已登录")
         _, js = ADMIN.call("GET", "/v1/devices")
         ctx["orig_policy"] = dict(mode=js["mode"], grace=js["grace"])
         ok(f"设备判定原值：{js['mode']}，grace {js['grace']}，窗口 {js['window_minutes']} 分钟")
 
-        sec("1. 自建 serving 节点与带设备上限的套餐")
-        row = sql(f"""WITH s AS (
-              INSERT INTO servers (tenant_id,name,status,hostname,public_ipv4,capacity_nodes)
-              VALUES ('{TENANT}','risk-server-{STAMP}','ready','risk-{STAMP}.example.test','203.0.113.20',4)
-              RETURNING id
-            ), p AS (
-              INSERT INTO node_pools (tenant_id,code,name)
-              VALUES ('{TENANT}','risk-{STAMP}','Risk eval pool {STAMP}') RETURNING id
-            ), n AS (
-              INSERT INTO nodes (tenant_id,name,server_id,pool_id,status,serving_status,node_type,
-                                 server_host,server_port,kernel,traffic_rate,display_name,protocol_config,
-                                 protocol_schema_version,config_validated_at,row_version)
-              SELECT '{TENANT}','risk-node-{STAMP}',s.id,p.id,'draft','active','vless','node.example.com',
-                     443,'auto',1.0,'Risk 01','{{"network":"tcp","tls":false}}'::jsonb,1,now(),1
-                FROM s CROSS JOIN p RETURNING id, pool_id
-            ) SELECT id::text || '|' || pool_id::text FROM n""")[0]
-        node_id, pool_id = (need_uuid(x, "夹具 id") for x in row.split("|"))
-        ctx["node_id"], ctx["node_rv"] = node_id, 1
+        sec("1. 夹具：节点与套餐（后台 API + nodesim）")
+        global SIM_PROC, SIM_TMP
+        SIM_TMP = subprocess.check_output(["mktemp", "-d"], text=True).strip()
+        status_path = os.path.join(SIM_TMP, "status.json")
+        tokens_path = os.path.join(SIM_TMP, "tokens")
+        log_path = os.path.join(SIM_TMP, "nodesim.log")
+        ctx["status_path"] = status_path
+
+        ADMIN.login()
+        _, schemas = ADMIN.call("GET", "/v1/node-protocol-schemas")
+        cipher = "aes-128-gcm"
+        for s in (schemas or {}).get("schemas") or []:
+            if s.get("node_type") == "shadowsocks":
+                methods = s.get("methods") or []
+                cipher = methods[0] if methods else cipher
+                break
+        ok(f"shadowsocks cipher from schema: {cipher}")
+
+        pool_code = f"risk-{STAMP}"
+        _, pool_js = ADMIN.call("POST", "/v1/node-pools",
+                                {"code": pool_code, "name": f"Risk pool {STAMP}"}, expect=(200,))
+        pool_id = need_uuid((pool_js or {}).get("id"), "节点池 id")
+
+        _, srv_js = ADMIN.call("POST", "/v1/servers",
+                               {"name": f"risk-{STAMP}-s1", "hostname": f"risk-{STAMP}.example.test",
+                                "public_ipv4": "203.0.113.34"}, expect=(201,))
+        server_id = need_uuid((srv_js or {}).get("id"), "服务器 id")
+
+        _, node_js = ADMIN.call("POST", "/v1/nodes",
+                                {"name": f"risk-{STAMP}-n1", "server_id": server_id, "pool_id": pool_id,
+                                 "node_type": "shadowsocks", "server_host": f"risk-{STAMP}.example.test",
+                                 "server_port": 22104, "traffic_rate": 1.0, "display_name": f"Risk {STAMP}",
+                                 "protocol_config": {"cipher": cipher}},
+                                idem=f"risk-node-{STAMP}", expect=(201,))
+        node_id = need_uuid((node_js or {}).get("id"), "节点 id")
+        node_rv = int((node_js or {}).get("row_version") or 0)
+        ctx["node_id"], ctx["node_rv"] = node_id, node_rv
         restore.append("node")
-        ADMIN.call("POST", f"/v1/nodes/{node_id}/protocol",
-                   {"row_version": 1, "node_type": "vless", "server_host": "node.example.com",
-                    "server_port": 443, "kernel": "auto", "traffic_rate": 1.0, "display_name": "Risk 01",
-                    "protocol_config": {"network": "tcp", "tls": False}})
-        ctx["node_rv"] = 2
-        _, js = ADMIN.call("POST", f"/v1/nodes/{node_id}/server-token", idem=f"risk-token-{STAMP}",
-                           expect=(201,))
-        ctx["node_token"] = js["token"]
-        ctx["q"] = f"node_id={node_id}&node_type=vless"
-        ok("夹具节点已就绪并签发 UniProxy 令牌")
+
+        ADMIN.login()
+        _, boot = ADMIN.call("POST", f"/v1/servers/{server_id}/bootstrap-token", {},
+                             idem=f"risk-bootstrap-{STAMP}", expect=(201,))
+        token = (boot or {}).get("token")
+        cmd = (boot or {}).get("install_command") or ""
+        m_panel = re.search(r"--panel\s+'([^']+)'", cmd)
+        m_ca = re.search(r"--ca-sha256\s+'([^']+)'", cmd)
+        if not token or not m_panel or not m_ca:
+            raise Fatal("bootstrap-token 响应无法解析")
+        # 一开始就按 0600 建文件，令牌不落在宽权限文件里
+        with os.fdopen(os.open(tokens_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as f:
+            f.write(f"s1 {token}\n")
+        panel_addr, ca_sha = m_panel.group(1), m_ca.group(1)
+        ok("bootstrap token 写入临时文件（不打印）")
+
+        # report-interval 拉长：避免模拟器在脚本期间上报合成在线 IP，污染 node_alive_ips
+        with open(log_path, "ab") as logf:
+            SIM_PROC = subprocess.Popen(
+                [NODESIM, "--panel", panel_addr, "--ca-sha256", ca_sha,
+                 "--tokens-file", tokens_path, "--state-dir", os.path.join(SIM_TMP, "state"),
+                 "--report-interval", "1h", "--status-file", status_path],
+                stdout=logf, stderr=subprocess.STDOUT)
+        wait_nodesim_server_ready(status_path, "s1")
+
+        ADMIN.login()
+        _, act = ADMIN.call("POST", f"/v1/nodes/{node_id}/activate", {"row_version": node_rv},
+                            idem=f"risk-activate-{STAMP}", expect=(200,))
+        ctx["node_rv"] = int((act or {}).get("row_version") or node_rv)
+        wait_nodesim_node_config(status_path, "s1", node_id)
+
         _, js = ADMIN.call("POST", "/v1/plans/complete",
                            {"code": f"risk-{STAMP}", "name": f"风控评估 {STAMP}", "visibility": "public",
                             "traffic_gb": 100, "max_devices": 3, "pool_ids": [pool_id],
@@ -812,22 +961,39 @@ def main():
         sigs = [run_round(0, ctx), run_round(1, ctx)]
 
         sec("strict 模式：超限订阅不再下发到节点")
-        users = lambda: {u["id"] for u in (http("GET", UNI + "/user?" + ctx["q"], token=ctx["node_token"])[1]
-                                           or {}).get("users", [])}
-        v = {c["id"]: c["sub"][1][1] for c in DEVICE_CASES}
-        before = users()
-        check(v["V05"] in before and v["V01"] in before,
-              f"{ctx['orig_policy']['mode']} 模式下超限的 V05 与未超限的 V01 都在下发名单里")
-        ADMIN.call("POST", "/v1/settings/device-limit", {"mode": "strict", "grace": ctx["orig_policy"]["grace"]})
+        v = {c["id"]: c["sub"][1][2] for c in DEVICE_CASES}
+        node_id = ctx["node_id"]
+        status_path = ctx["status_path"]
+
+        def roster():
+            return roster_users_for_node(status_path, node_id)
+
+        # 第 2 轮的订阅刚建不久，名单推送是异步的：先等它们出现在节点名单里，再判断宽松模式不摘人
+        mode0 = ctx['orig_policy']['mode']
+        wait_roster_proxy(status_path, node_id, v["V05"], True, timeout=60,
+                          explain=f"{mode0} 模式下超限的 V05 在下发名单里")
+        wait_roster_proxy(status_path, node_id, v["V01"], True, timeout=60,
+                          explain=f"{mode0} 模式下未超限的 V01 在下发名单里")
+
+        sub_ids_r1 = [c["sub"][1][0] for c in DEVICE_CASES]
+        in_list = ",".join("'" + s + "'" for s in sub_ids_r1)
+        sql(f"UPDATE node_alive_ips SET last_seen_at = now() WHERE subscription_id IN ({in_list})")
+        ok("第 2 轮 DEVICE 用例的在线记录已刷新 last_seen_at")
+
+        ADMIN.call("POST", "/v1/settings/device-limit",
+                   {"mode": "strict", "grace": ctx["orig_policy"]["grace"]})
         restore.append("policy")
-        after = users()
-        check(v["V05"] not in after and v["V04"] not in after, "strict 模式摘掉超限的 V04、V05")
-        check(v["V01"] in after and v["V07"] in after and v["V02"] in after,
+        wait_roster_proxy(status_path, node_id, v["V05"], False, explain="strict 后 V05 不在名单")
+        wait_roster_proxy(status_path, node_id, v["V04"], False, explain="strict 后 V04 不在名单")
+        after = roster()
+        check(v["V01"] in after and v["V02"] in after and v["V07"] in after,
               "strict 模式保留未超限的 V01、V02（在线 = 上限 + grace）、V07")
         check(v["V08"] in after, "V08（同一 NAT 后多人共用）在 strict 下仍被下发——单地址看不出共享")
+
         ADMIN.call("POST", "/v1/settings/device-limit", ctx["orig_policy"])
         restore.remove("policy")
         ok("设备判定模式已恢复原值")
+        wait_roster_proxy(status_path, node_id, v["V05"], True, explain="恢复宽松后 V05 回到名单")
 
         sec("两轮一致性")
         diffs = []
@@ -852,7 +1018,7 @@ def main():
             print(f"          {e.detail}", flush=True)
         bad("脚本因致命错误中止")
     finally:
-        sec("收尾：恢复设置、归档套餐、节点退役")
+        sec("收尾：恢复设置、归档套餐、停 nodesim、节点退役")
         try:
             if "policy" in restore:
                 ADMIN.call("POST", "/v1/settings/device-limit", ctx["orig_policy"])
@@ -862,14 +1028,19 @@ def main():
                 ADMIN.call("POST", f"/v1/plans/{ctx['plan_id']}/archive",
                            {"expected_row_version": js["plan"]["row_version"]}, idem=f"risk-archive-{STAMP}")
                 ok("自建套餐已归档")
+            stop_nodesim()
+            if SIM_TMP and os.path.isdir(SIM_TMP):
+                subprocess.run(["rm", "-rf", SIM_TMP], check=False)
             if "node" in restore:
-                for st in ("draining", "retired"):
-                    ADMIN.call("POST", "/v1/nodes/status:batch",
-                               {"items": [{"id": ctx["node_id"], "row_version": ctx["node_rv"]}],
-                                "serving_status": st, "reason": "risk e2e cleanup"},
-                               idem=f"risk-{st}-{STAMP}")
-                    ctx["node_rv"] += 1
-                ok("夹具节点已退役")
+                try:
+                    # 行版本直接从库里取：节点列表接口没有按 id 过滤，取错行会 409
+                    rv = int(sql(f"SELECT row_version FROM nodes WHERE id = '{ctx['node_id']}'")[0])
+                    ADMIN.call("POST", f"/v1/nodes/{ctx['node_id']}/retire",
+                               {"row_version": rv, "reason": "risk e2e cleanup"},
+                               idem=f"risk-retire-{STAMP}")
+                    ok("夹具节点已 retire")
+                except Fatal as e:
+                    bad(f"节点 retire 失败：{e.msg}", e.detail)
         except Fatal as e:
             bad(f"收尾失败：{e.msg}", e.detail)
     print(f"\n风控评估：OK {PASS}，FAIL {FAIL}", flush=True)

@@ -82,6 +82,19 @@ func TestNativeCapabilityAliasesAndFeatures(t *testing.T) {
 	if !foundTrojanUDP {
 		t.Fatal("trojan native UDP forwarding feature is not published")
 	}
+	for protocol, features := range map[string][]string{
+		"vless":  {"reality-dest-fallback"},
+		"trojan": {"reality-dest-fallback", "probe-fallback"},
+		"anytls": {"probe-fallback"},
+		"naive":  {"probe-fallback"},
+	} {
+		capability, ok := NativeCapabilityFor(protocol)
+		for _, feature := range features {
+			if !ok || !hasCapabilityFeature(capability, feature) {
+				t.Fatalf("%s 没有登记抗探测 feature %q", protocol, feature)
+			}
+		}
+	}
 	socks, ok := NativeCapabilityFor("socks")
 	if !ok || !hasCapabilityFeature(socks, "socks4") || !hasCapabilityFeature(socks, "socks4a") || !hasCapabilityFeature(socks, "socks5") {
 		t.Fatalf("socks capability missing native protocol variants: %#v", socks)

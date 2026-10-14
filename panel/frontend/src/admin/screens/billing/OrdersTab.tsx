@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react'
 import { formatMoney, relativeTime } from '../../../core/format'
 import { href, navigate, useHashLocation, type RouteQuery } from '../../../core/router'
 import { Button, Empty, IconClose, Pager, QueryView, Segmented, Table, Tag, type TableColumn } from '../../../ui'
-import { useCan } from '../../actions'
 import { ORDERS_PAGE, useOrders, type OrderRow } from './api'
 import css from './Billing.module.css'
 import { ManualOrder } from './ManualOrder'
@@ -26,7 +25,6 @@ const path = (id: string | null) => (id ? `/billing/orders/${encodeURIComponent(
 
 export function OrdersTab({ rest, now }: { rest: string[]; now: Date }) {
   const location = useHashLocation()
-  const can = useCan()
   const s = location.query.get('s')
   const userParam = (location.query.get('user_id') ?? '').trim()
   const state: ListState = {
@@ -38,7 +36,10 @@ export function OrdersTab({ rest, now }: { rest: string[]; now: Date }) {
   }
   const newParam = location.query.get('new')
   const manualFor = newParam && UUID.test(newParam) ? newParam : null
-  const manualOpen = newParam !== null && can('billing.order.write')
+  // 从用户抽屉某一份订阅的「给这份开单」进来：#/billing/orders?new=<用户 id>&sub=<订阅 id>，只用来预选落点
+  const subParam = location.query.get('sub')
+  const entrySubscription = manualFor && subParam && UUID.test(subParam) ? subParam : null
+  const manualOpen = newParam !== null
   const selected = rest[0] ?? null
 
   const change = useCallback(
@@ -74,11 +75,9 @@ export function OrdersTab({ rest, now }: { rest: string[]; now: Date }) {
         )}
         <span className={css.spacer} />
         {orders.data && <span className={css.small}>共 {total.toLocaleString('en-US')} 单</span>}
-        {can('billing.order.write') && (
-          <Button size="sm" variant="primary" onClick={() => navigate(path(selected), { query: query(state, { new: state.userId || '1' }) })}>
-            人工开单
-          </Button>
-        )}
+        <Button size="sm" variant="primary" onClick={() => navigate(path(selected), { query: query(state, { new: state.userId || '1' }) })}>
+          人工开单
+        </Button>
       </div>
       <div className={`${css.tableBox} ${css.wide}`}>
         <QueryView
@@ -109,6 +108,7 @@ export function OrdersTab({ rest, now }: { rest: string[]; now: Date }) {
       <ManualOrder
         open={manualOpen}
         userId={manualFor}
+        entrySubscriptionId={entrySubscription}
         onClose={(createdId) => navigate(path(createdId ?? selected), { replace: createdId === undefined, query: query(state) })}
       />
     </div>

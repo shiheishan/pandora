@@ -10,7 +10,7 @@ const list = <T extends z.ZodType>(item: T) =>
 const strs = list(z.string())
 
 // ---------------------------------------------------------------------------
-// 节点：列表行（GET v1/nodes）与写接口回的 AdminNode
+// 节点：列表行（GET v1/nodes）、单取的详情行（GET v1/nodes?id=）与写接口回的 AdminNode
 // ---------------------------------------------------------------------------
 export const SERVING_STATUSES = ['draft', 'active', 'draining', 'disabled', 'retired'] as const
 export type ServingStatus = (typeof SERVING_STATUSES)[number]
@@ -44,13 +44,8 @@ export const nodeRowSchema = z.object({
   node_type: z.string().nullable(),
   server_host: z.string().nullable(),
   server_port: z.number().nullable(),
-  traffic_rate: z.number(),
   display_name: z.string().nullable(),
   country_code: z.string().nullable(),
-  kernel: z.string(),
-  protocol_config: z.record(z.string(), z.unknown()).nullable().transform((v) => v ?? {}),
-  protocol_schema_version: z.number(),
-  config_validated_at: iso.nullable(),
   sort_order: z.number(),
   online_users: z.number(),
   online_ips: z.number(),
@@ -58,11 +53,41 @@ export const nodeRowSchema = z.object({
   cpu_percent: z.number().nullable(),
   mem_percent: z.number().nullable(),
   metrics_at: iso.nullable(),
-  traffic_bytes: z.number().int(),
   granted_plans: strs,
+  // 下发与运行的真实状态（nodefabric.NodeRuntimeView，w4deliver）。后端总是给；开发期假后端
+  // 还没跟上时按「没有这项信息」处理，不让整张列表解析失败
+  desired_effective_generation: z.number().nullish().transform((v) => v ?? null),
+  applied_effective_generation: z.number().nullish().transform((v) => v ?? null),
+  effective_state: z.enum(['', 'applied', 'pending', 'failed']).catch(''),
+  last_apply_failure: z
+    .object({ phase: z.string(), detail: z.string(), at: iso, generation: z.number().nullable() })
+    .nullish()
+    .transform((v) => v ?? null),
+  runtime_status: z.string().nullish().transform((v) => v ?? null),
+  runtime_reason: z.string().nullish().transform((v) => v ?? null),
+  runtime_state_at: iso.nullish().transform((v) => v ?? null),
+  runtime_reason_node: z.string().nullish().transform((v) => v ?? null),
+  delivery_degraded: z.boolean().catch(false),
 })
 export const nodesResponse = z.object({ nodes: list(nodeRowSchema), total: z.number() })
 export type NodeRow = z.output<typeof nodeRowSchema>
+
+/**
+ * 单取（?id=）才带的编辑字段（nodefabric.AdminNodeDetail）：列表不带，1000 个节点每次刷新省掉
+ * 全部 protocol_config。protocol_config 已由后端抹掉敏感键
+ */
+export const nodeDetailSchema = nodeRowSchema.extend({
+  traffic_rate: z.number(),
+  kernel: z.string(),
+  protocol_config: z.record(z.string(), z.unknown()).nullable().transform((v) => v ?? {}),
+  protocol_schema_version: z.number(),
+  config_validated_at: iso.nullable(),
+  traffic_bytes: z.number().int(),
+  // 存量协议配置不满足现行规则的提示（nodefabric.ProtocolConfigWarnings）；Go 是 omitempty
+  warnings: z.array(z.string()).min(1).optional(),
+})
+export const nodeDetailResponse = z.object({ nodes: list(nodeDetailSchema), total: z.number() })
+export type NodeDetail = z.output<typeof nodeDetailSchema>
 
 export const adminNodeSchema = z.object({
   id: uuid,
@@ -85,14 +110,15 @@ export const adminNodeSchema = z.object({
   sort_order: z.number(),
   created_at: iso,
   updated_at: iso,
-  // 只有上线（R108 activate）会带：Go 是 omitempty，没有提示时不出现这个键，出现就至少一条（R113）
+  // 上线（R108 activate）与建、改、复制、迁移（保留端口提示）会带：Go 是 omitempty，没有提示时
+  // 不出现这个键，出现就至少一条（R113）
   warnings: z.array(z.string()).min(1).optional(),
 })
 export type AdminNode = z.output<typeof adminNodeSchema>
 
 // ---------------------------------------------------------------------------
-// 协议 schema（GET v1/node-protocol-schemas）。除 13 个 stable 外还有
-// status=legacy-read-compatible 的 v2ray / hysteria（version 0、数组为 null），只读不可新建
+// 协议 schema（GET v1/node-protocol-schemas）。13 个 stable，表单只渲染这些。
+// 未配置的草稿 protocol_schema_version 仍是 0，那不是一种协议类型。
 // ---------------------------------------------------------------------------
 export const protocolSchemaSchema = z.object({
   node_type: z.string(),
@@ -102,8 +128,11 @@ export const protocolSchemaSchema = z.object({
   allowed_properties: strs,
   methods: z.array(z.string()).optional(),
   enums: z.record(z.string(), z.array(z.string())).optional(),
-  property_types: z.record(z.string(), z.enum(['number', 'boolean', 'json'])).optional(),
+  // list：逗号分隔录入，一个值存字符串、多个存数组（REALITY 的 server_name / short_id）
+  property_types: z.record(z.string(), z.enum(['number', 'boolean', 'json', 'list'])).optional(),
   sensitive_properties: z.array(z.string()).optional(),
+  /** 字段下的一句说明（按字段路径），跟着后端 schema 走 */
+  hints: z.record(z.string(), z.string()).optional(),
 })
 export const protocolSchemasResponse = z.object({ schemas: list(protocolSchemaSchema) })
 export type ProtocolSchema = z.output<typeof protocolSchemaSchema>

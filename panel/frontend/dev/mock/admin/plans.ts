@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { Json, MockContext, MockModule, MockResult, MockRoute } from '../types.ts'
+import { deliverableNodesInPool } from './nodes.ts'
 import { pools } from './nodes-infra.ts'
 import { packRoutes } from './plans-packs.ts'
 import {
@@ -225,13 +226,12 @@ async function withPlan(ctx: MockContext, run: (p: Plan, body: Json) => MockResu
 
 const routes: Record<string, MockRoute> = {
   'GET /v1/plans': (ctx) => {
-    if (!ctx.requirePermission('catalog.read')) return
     const rows = [...plans].sort((a, b) => a.sort_order - b.sort_order || a.created_at.localeCompare(b.created_at)).map(listRow)
     ctx.send(200, { plans: rows })
   },
 
   'POST /v1/plans/complete': async (ctx) => {
-    if (!ctx.requirePermission('catalog.publish') || !ctx.requireReauth()) return
+    if (!ctx.requireReauth()) return
     const body = await ctx.body()
     if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
     await ctx.idempotent('catalog_plan_create_complete', () => createComplete(ctx, body))
@@ -239,7 +239,7 @@ const routes: Record<string, MockRoute> = {
 
   // 只建壳：设计不用，照契约挂上
   'POST /v1/plans': async (ctx) => {
-    if (!ctx.requirePermission('catalog.write') || !ctx.requireReauth()) return
+    if (!ctx.requireReauth()) return
     const body = await ctx.body()
     if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
     await ctx.idempotent('catalog_plan_create', () => {
@@ -276,20 +276,19 @@ const routes: Record<string, MockRoute> = {
   },
 
   'GET /v1/plans/:id': (ctx) => {
-    if (!ctx.requirePermission('catalog.read')) return
     const p = find(ctx.params.id ?? '')
     if (!p) return ctx.fail(404, 'not_found', '资源不存在或无权访问')
     ctx.send(200, { plan: detail(p) })
   },
 
   'PUT /v1/plans/:id/complete': async (ctx) => {
-    if (!ctx.requirePermission('catalog.publish') || !ctx.requireReauth()) return
+    if (!ctx.requireReauth()) return
     await withPlan(ctx, (p, b) => updateComplete(ctx, p, b), 'catalog_plan_update_complete')
   },
 
   // 销售设置：整体覆盖，不动版本与价格
   'PUT /v1/plans/:id': async (ctx) => {
-    if (!ctx.requirePermission('catalog.publish') || !ctx.requireReauth()) return
+    if (!ctx.requireReauth()) return
     await withPlan(
       ctx,
       (p, b) => {
@@ -334,7 +333,7 @@ const routes: Record<string, MockRoute> = {
   },
 
   'POST /v1/plans/:id/archive': async (ctx) => {
-    if (!ctx.requirePermission('catalog.publish') || !ctx.requireReauth()) return
+    if (!ctx.requireReauth()) return
     await withPlan(
       ctx,
       (p, b) => {
@@ -354,7 +353,6 @@ const routes: Record<string, MockRoute> = {
 
   // 新建草稿版本：不解码请求体，语义是库默认值，entitlements / quotas / pool_ids 回 null
   'POST /v1/plans/:id/versions': async (ctx) => {
-    if (!ctx.requirePermission('catalog.write')) return
     await ctx.idempotent('catalog_plan_version_create', () => {
       const p = find(ctx.params.id ?? '')
       if (!p) return NOT_FOUND
@@ -367,7 +365,6 @@ const routes: Record<string, MockRoute> = {
   },
 
   'PUT /v1/plans/:id/versions/:vid': async (ctx) => {
-    if (!ctx.requirePermission('catalog.write')) return
     await withPlan(
       ctx,
       (p, b) => {
@@ -406,7 +403,7 @@ const routes: Record<string, MockRoute> = {
   },
 
   'POST /v1/plans/:id/versions/:vid/publish': async (ctx) => {
-    if (!ctx.requirePermission('catalog.publish') || !ctx.requireReauth()) return
+    if (!ctx.requireReauth()) return
     await withPlan(
       ctx,
       (p, b) => {
@@ -428,7 +425,7 @@ const routes: Record<string, MockRoute> = {
   },
 
   'POST /v1/plans/:id/prices': async (ctx) => {
-    if (!ctx.requirePermission('catalog.publish') || !ctx.requireReauth()) return
+    if (!ctx.requireReauth()) return
     await withPlan(
       ctx,
       (p, b) => {
@@ -454,7 +451,7 @@ const routes: Record<string, MockRoute> = {
   },
 
   'POST /v1/plans/:id/prices/:pid/archive': async (ctx) => {
-    if (!ctx.requirePermission('catalog.publish') || !ctx.requireReauth()) return
+    if (!ctx.requireReauth()) return
     await withPlan(
       ctx,
       (p, b) => {
@@ -475,7 +472,6 @@ const routes: Record<string, MockRoute> = {
 
   // 节点池绑定候选：有草稿看草稿（可改），否则看当前发布版本（只读）；只列未禁用的池
   'GET /v1/plans/:id/pools': (ctx) => {
-    if (!ctx.requirePermission('catalog.read')) return
     const p = find(ctx.params.id ?? '')
     if (!p) return ctx.fail(404, 'not_found', '资源不存在或无权访问')
     const v = draftOf(p) ?? currentOf(p)
@@ -484,12 +480,12 @@ const routes: Record<string, MockRoute> = {
       version_status: v?.status ?? '',
       row_version: v?.row_version ?? 0,
       editable: v?.status === 'draft',
-      pools: pools.filter((x) => x.status !== 'disabled').map((x) => ({ id: x.id, name: x.name, active_nodes: activeNodes(x.id), bound: v?.pool_ids.includes(x.id) ?? false })),
+      pools: pools.filter((x) => x.status !== 'disabled').map((x) => ({ id: x.id, name: x.name, active_nodes: activeNodes(x.id), deliverable_nodes: deliverableNodesInPool(x.id), bound: v?.pool_ids.includes(x.id) ?? false })),
     })
   },
 
   'POST /v1/plans/:id/pools': async (ctx) => {
-    if (!ctx.requirePermission('catalog.publish') || !ctx.requireReauth()) return
+    if (!ctx.requireReauth()) return
     await withPlan(
       ctx,
       (p, b) => {

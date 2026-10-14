@@ -11,7 +11,6 @@ const loginSchema = z.object({
   token_type: z.literal('Bearer'),
   expires_in: z.number(),
   user_id: z.string(),
-  permissions: z.array(z.string()).nullable(),
 })
 
 export function LoginPage() {
@@ -54,7 +53,7 @@ export function LoginPage() {
           </div>
           <div className={css.release}>管理控制台 · {__APP_RELEASE__}</div>
         </div>
-        <div className={css.footnote}>aegis-admin · 敏感操作需二次认证</div>
+        <div className={css.footnote}>Pandora 管理后台 · 敏感操作需二次认证</div>
       </aside>
       <main className={css.formSide}>
         <form className={css.form} onSubmit={submit} noValidate>

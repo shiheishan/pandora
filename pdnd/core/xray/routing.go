@@ -26,7 +26,6 @@ import (
 	"fmt"
 	"net"
 	"sort"
-	"strconv"
 	"strings"
 
 	xcore "github.com/xtls/xray-core/core"
@@ -50,6 +49,7 @@ import (
 	"github.com/xtls/xray-core/transport/internet"
 
 	"github.com/aegispanel/nodeagent/core"
+	"github.com/aegispanel/nodeagent/internal/confnum"
 )
 
 // scopedTag 与 sing-box 侧同样的隔离约定：一个进程服务多个节点，
@@ -264,13 +264,7 @@ func endpointOf(o core.Outbound, mkUser func(core.Outbound) (*protocol.User, err
 	if host == "" {
 		return nil, fmt.Errorf("出站 %s 缺少 server", o.Tag)
 	}
-	port := 0
-	switch v := o.Settings["server_port"].(type) {
-	case float64:
-		port = int(v)
-	case string:
-		port, _ = strconv.Atoi(v)
-	}
+	port, _ := confnum.Int(o.Settings["server_port"])
 	if port <= 0 || port > 65535 {
 		return nil, fmt.Errorf("出站 %s 的 server_port 非法", o.Tag)
 	}
@@ -446,21 +440,20 @@ func strList(v any) []string {
 
 func intList(v any) []int {
 	switch x := v.(type) {
-	case float64:
-		return []int{int(x)}
 	case []any:
 		out := make([]int, 0, len(x))
 		for _, it := range x {
-			switch n := it.(type) {
-			case float64:
-				out = append(out, int(n))
-			case string:
-				if p, err := strconv.Atoi(n); err == nil {
-					out = append(out, p)
-				}
+			if n, ok := confnum.Int(it); ok {
+				out = append(out, n)
 			}
 		}
 		return out
+	case string:
+		// 单值字符串原先就不认，保持不变。
+		return nil
+	}
+	if n, ok := confnum.Int(v); ok {
+		return []int{n}
 	}
 	return nil
 }

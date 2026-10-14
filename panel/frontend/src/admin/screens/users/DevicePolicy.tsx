@@ -3,7 +3,7 @@ import { formatCount, relativeTime } from '../../../core/format'
 import { navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, Card, Empty, Input, QueryView, Select, Table, Tag, useToast, type TableColumn } from '../../../ui'
-import { useCan, useFailure } from '../../actions'
+import { useFailure } from '../../actions'
 import { DEVICE_WINDOWS, okSchema, useDevices, useFindUserByEmail, useInvalidateUsers, type DeviceMode, type DeviceWindow, type OnlineDevice } from './api'
 import { devicePolicyBody, nearLimit, pips } from './model'
 import ops from './Ops.module.css'
@@ -55,11 +55,9 @@ export function DevicePolicy({ now }: { now: Date }) {
 
 function PolicyForm({ mode: saved, grace: savedGrace, window: savedWindow }: { mode: DeviceMode; grace: number; window: DeviceWindow }) {
   const api = useApi()
-  const can = useCan()
   const toast = useToast()
   const fail = useFailure()
   const invalidate = useInvalidateUsers()
-  const canWrite = can('iam.user.write')
   const [mode, setMode] = useState(saved)
   const [grace, setGrace] = useState(String(savedGrace))
   const [win, setWin] = useState<DeviceWindow>(savedWindow)
@@ -84,7 +82,7 @@ function PolicyForm({ mode: saved, grace: savedGrace, window: savedWindow }: { m
 
   return (
     <div className={ops.formStack}>
-      <fieldset className={ops.modeSet} disabled={!canWrite}>
+      <fieldset className={ops.modeSet}>
         <legend className={css.fieldLabel}>超出上限时</legend>
         {MODES.map(([value, title, desc]) => (
           <label key={value} className={mode === value ? `${ops.modeOption} ${ops.modeOn}` : ops.modeOption}>
@@ -102,7 +100,6 @@ function PolicyForm({ mode: saved, grace: savedGrace, window: savedWindow }: { m
           mono
           inputMode="numeric"
           value={grace}
-          disabled={!canWrite}
           error={error ?? undefined}
           hint="在线数超过「上限 + 宽容值」才停止下发，给换网、重连留余量（0–5）"
           onChange={(e) => {
@@ -114,7 +111,6 @@ function PolicyForm({ mode: saved, grace: savedGrace, window: savedWindow }: { m
       <Select
         label="设备识别窗口"
         value={String(win)}
-        disabled={!canWrite}
         options={DEVICE_WINDOWS.map((m) => ({ value: String(m), label: `${m} 分钟` }))}
         onChange={(e) => setWin(Number(e.target.value) as DeviceWindow)}
         hint={
@@ -123,11 +119,9 @@ function PolicyForm({ mode: saved, grace: savedGrace, window: savedWindow }: { m
             : '窗口内出现过的来源 IP 都算在线。窗口越长，换了网络的旧 IP 被多算得越久。'
         }
       />
-      {canWrite && (
-        <Button variant="primary" busy={busy} disabled={!dirty} onClick={() => void save()}>
-          保存策略
-        </Button>
-      )}
+      <Button variant="primary" busy={busy} disabled={!dirty} onClick={() => void save()}>
+        保存策略
+      </Button>
     </div>
   )
 }

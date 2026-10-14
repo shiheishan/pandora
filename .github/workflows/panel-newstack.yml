@@ -1,0 +1,379 @@
+name: Panel new stack
+
+# 面板的门禁：lint（含 depguard 分层）、生成的 lint 配置不漂移、真库与真 Redis 上的 go test，
+# 以及新二进制上的 e2e 脚本、节点通道 e2e。
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      # 面板 Go 代码、迁移、工具、内嵌前端产物与 e2e 脚本；前端源码归 panel-smoke，部署脚本归 panel-deploy
+      - "panel/**"
+      - "!panel/frontend/**"
+      - "!panel/deploy/**"
+      - "!panel/dev/**"
+      - "!panel/**/*.md"
+      - "nodeapi/**"
+      - ".github/workflows/panel-newstack.yml"
+      - "pdnd/panel/**"
+      - "pdnd/release/nodesim/**"
+      # node_kick_e2e 跑真 pdnd：删人断线走 node 的名单 diff 与 NativeCore（kernel）的按用户踢线
+      - "pdnd/core/**"
+      - "pdnd/node/**"
+      - "pdnd/kernel/**"
+  pull_request:
+    paths:
+      # 面板 Go 代码、迁移、工具、内嵌前端产物与 e2e 脚本；前端源码归 panel-smoke，部署脚本归 panel-deploy
+      - "panel/**"
+      - "!panel/frontend/**"
+      - "!panel/deploy/**"
+      - "!panel/dev/**"
+      - "!panel/**/*.md"
+      - "nodeapi/**"
+      - ".github/workflows/panel-newstack.yml"
+      - "pdnd/panel/**"
+      - "pdnd/release/nodesim/**"
+      # node_kick_e2e 跑真 pdnd：删人断线走 node 的名单 diff 与 NativeCore（kernel）的按用户踢线
+      - "pdnd/core/**"
+      - "pdnd/node/**"
+      - "pdnd/kernel/**"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+    working-directory: panel
+
+jobs:
+  lint:
+    name: Lint (golangci-lint + depguard)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: panel/go.mod
+          cache-dependency-path: panel/go.sum
+      - name: depguard rules match module directories
+        run: go run ./tools/depguardgen -check
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.5.0
+          # 官方预编译包用 Go 1.25 构建，读不了 go 1.26 的模块；用 setup-go 装的版本现编
+          install-mode: goinstall
+          working-directory: panel
+          args: ./internal/pkg/... ./internal/app/... ./internal/module/... ./cmd/pandora/... ./db/...
+
+  test:
+    name: Tests on PostgreSQL 18 and Redis
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: pandora
+          POSTGRES_PASSWORD: pandora
+          POSTGRES_DB: pandora_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pandora"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:8
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      PANDORA_TEST_DATABASE_URL: postgres://pandora:pandora@127.0.0.1:5432/pandora_test?sslmode=disable
+      PANDORA_TEST_REDIS_URL: redis://127.0.0.1:6379/0
+      # env 缺省按 production（要求 https 地址、关掉 dev_code）；CI 显式用 development
+      PANDORA_ENV: development
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: panel/go.mod
+          cache-dependency-path: panel/go.sum
+      - name: Build pandora
+        run: go build -mod=readonly -o "$RUNNER_TEMP/pandora" ./cmd/pandora
+      # 测试按包串行（-p 1）：迁移往返与事务测试共用同一个库
+      - name: Tests
+        run: go test -mod=readonly -race -p 1 -count=1 ./...
+      - name: Migration round trip through the binary
+        env:
+          PANDORA_DATABASE_MIGRATION_URL: ${{ env.PANDORA_TEST_DATABASE_URL }}
+          PANDORA_DATABASE_URL: ${{ env.PANDORA_TEST_DATABASE_URL }}
+          PANDORA_REDIS_URL: ${{ env.PANDORA_TEST_REDIS_URL }}
+        run: |
+          # 只为通过配置校验：CI 一次性的假密钥
+          export PANDORA_SECRETS_MASTER_KEY="$(head -c 32 /dev/urandom | base64)"
+          export PANDORA_AUTH_PUBLIC_JWT_SECRET="$(head -c 32 /dev/urandom | base64)"
+          export PANDORA_AUTH_ADMIN_JWT_SECRET="$(head -c 32 /dev/urandom | base64)"
+          bin="$RUNNER_TEMP/pandora"
+          "$bin" migrate up
+          "$bin" migrate status
+          "$bin" migrate down
+          "$bin" migrate up
+      - name: serve answers healthz and readyz
+        env:
+          PANDORA_DATABASE_URL: ${{ env.PANDORA_TEST_DATABASE_URL }}
+          PANDORA_REDIS_URL: ${{ env.PANDORA_TEST_REDIS_URL }}
+        run: |
+          export PANDORA_SECRETS_MASTER_KEY="$(head -c 32 /dev/urandom | base64)"
+          export PANDORA_AUTH_PUBLIC_JWT_SECRET="$(head -c 32 /dev/urandom | base64)"
+          export PANDORA_AUTH_ADMIN_JWT_SECRET="$(head -c 32 /dev/urandom | base64)"
+          "$RUNNER_TEMP/pandora" serve > "$RUNNER_TEMP/serve.log" 2>&1 &
+          pid=$!
+          ok=
+          for _ in $(seq 1 50); do
+            if curl -fsS http://127.0.0.1:9000/readyz && curl -fsS http://127.0.0.1:9001/readyz; then ok=1; break; fi
+            sleep 0.2
+          done
+          curl -fsS -D - http://127.0.0.1:9000/healthz | tee "$RUNNER_TEMP/healthz.txt"
+          grep -qi '^x-request-id:' "$RUNNER_TEMP/healthz.txt"
+          kill -TERM "$pid"
+          rc=0
+          wait "$pid" || rc=$?
+          cat "$RUNNER_TEMP/serve.log"
+          test -n "$ok"
+          # SIGTERM 后应干净退出
+          test "$rc" = 0
+
+  e2e:
+    name: E2E on the new binary (auth, portal, chain, epay, admin, support, risk, invariants)
+    runs-on: ubuntu-latest
+    # risk_e2e 两轮造数加 strict 名单等 worker 周期任务，单它就要十几分钟
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: pandora
+          POSTGRES_PASSWORD: pandora
+          POSTGRES_DB: pandora_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pandora"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:8
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      PANDORA_ENV: development
+      PANDORA_DATABASE_URL: postgres://pandora:pandora@127.0.0.1:5432/pandora_e2e?sslmode=disable
+      PANDORA_DATABASE_MIGRATION_URL: postgres://pandora:pandora@127.0.0.1:5432/pandora_e2e?sslmode=disable
+      PANDORA_REDIS_URL: redis://127.0.0.1:6379/0
+      # risk_e2e 用 nodesim 真接入一台节点看下发名单：节点 gRPC 只在配了对外主机时监听，证书 SAN 是这个 IP
+      PANDORA_GRPC_NODE_PUBLIC_HOST: 127.0.0.1
+      # 几个脚本都从 127.0.0.1 注册、登录、调后台几百次（risk_e2e 还用 X-Real-IP 扮上百个来源）：
+      # 放宽按 IP、按账号、认证三种限流（失败 10 次暂停按账号计，不受影响；每条凭据每小时拉取上限不放宽）
+      PANDORA_RATELIMIT_IP_PER_MIN: "100000"
+      PANDORA_RATELIMIT_ACCOUNT_PER_MIN: "100000"
+      PANDORA_RATELIMIT_AUTH_PER_MIN: "100000"
+      # risk_e2e 自己给后台调用限速的预算（每分钟），限流已放宽，调大免得白等
+      RISK_ADMIN_BUDGET: "1000"
+      AUTH_E2E_DISPOSABLE: YES_DELETE_FIXTURES
+      PASSWORD_RESET_E2E_DISPOSABLE: YES_DELETE_FIXTURES
+      PORTAL_STAFF_E2E_DISPOSABLE: YES_DELETE_FIXTURES
+      E2E_DISPOSABLE: YES_DELETE_FIXTURES
+      EPAY_E2E_DISPOSABLE: YES_DELETE_FIXTURES
+      ADMIN_E2E_DISPOSABLE: YES_DELETE_FIXTURES
+      SUPPORT_E2E_DISPOSABLE: YES_DELETE_FIXTURES
+      RISK_E2E_DISPOSABLE: YES_DELETE_FIXTURES
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: panel/go.mod
+          cache-dependency-path: panel/go.sum
+      - name: Build pandora
+        run: go build -mod=readonly -o "$RUNNER_TEMP/pandora" ./cmd/pandora
+      # risk_e2e 的节点用模拟器接入（与 node-e2e 同法）：按 pdnd 的 go.mod 构建，只编它用到的几个依赖，不开缓存
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: pdnd/go.mod
+          cache: false
+      - name: Build nodesim
+        working-directory: pdnd
+        run: go build -mod=readonly -o "$RUNNER_TEMP/nodesim" ./release/nodesim
+      - name: Run e2e scripts
+        run: |
+          # CI 一次性的假密钥与管理员口令，只经环境变量与标准输入传
+          export PANDORA_SECRETS_MASTER_KEY="$(head -c 32 /dev/urandom | base64)"
+          export PANDORA_AUTH_PUBLIC_JWT_SECRET="$(head -c 32 /dev/urandom | base64)"
+          export PANDORA_AUTH_ADMIN_JWT_SECRET="$(head -c 32 /dev/urandom | base64)"
+          export ADMIN_EMAIL="admin-e2e@example.test"
+          export ADMIN_PASS="E2e!Admin-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+          export NODESIM="$RUNNER_TEMP/nodesim"
+          # epay_e2e 检查渠道密钥没进 serve 日志
+          export SERVE_LOG="$RUNNER_TEMP/serve.log"
+          bin="$RUNNER_TEMP/pandora"
+          "$bin" migrate up
+          printf '%s\n' "$ADMIN_PASS" | "$bin" admin create --email "$ADMIN_EMAIL" --password-stdin
+          "$bin" admin has-admin
+
+          # 脚本用 $PSQL 查库（主机自带的 psql 客户端）
+          export PSQL="$RUNNER_TEMP/psql.sh"
+          printf '#!/usr/bin/env bash\nexec psql "$PANDORA_DATABASE_URL" "$@"\n' > "$PSQL"
+          chmod +x "$PSQL"
+
+          "$bin" serve > "$RUNNER_TEMP/serve.log" 2>&1 &
+          serve_pid=$!
+          "$bin" worker > "$RUNNER_TEMP/worker.log" 2>&1 &
+          worker_pid=$!
+          ok=
+          for _ in $(seq 1 50); do
+            if curl -fsS http://127.0.0.1:9000/readyz >/dev/null && curl -fsS http://127.0.0.1:9001/readyz >/dev/null; then ok=1; break; fi
+            sleep 0.2
+          done
+          test -n "$ok" || { cat "$RUNNER_TEMP/serve.log"; exit 1; }
+
+          failed=0
+          for s in auth_e2e.sh password_reset_e2e.sh portal_staff_e2e.sh \
+                   e2e.sh epay_e2e.sh admin_e2e.sh support_e2e.sh risk_e2e.sh; do
+            echo "::group::$s"
+            if bash "tests/$s"; then echo "$s 通过"; else echo "::error::$s 失败"; failed=$((failed+1)); fi
+            echo "::endgroup::"
+          done
+          # 数据层不变量：单事务、最后 ROLLBACK；放在脚本之后，库里已有各脚本留下的数据
+          echo "::group::invariants.sql"
+          if "$PSQL" -X -v ON_ERROR_STOP=1 -f tests/invariants.sql; then echo "invariants.sql 通过"; else echo "::error::invariants.sql 失败"; failed=$((failed+1)); fi
+          echo "::endgroup::"
+
+          kill -TERM "$serve_pid" "$worker_pid"
+          wait "$serve_pid" || true
+          wait "$worker_pid" || true
+          if [ "$failed" -ne 0 ]; then
+            echo "::group::serve.log"; tail -n 300 "$RUNNER_TEMP/serve.log"; echo "::endgroup::"
+            echo "::group::worker.log"; tail -n 100 "$RUNNER_TEMP/worker.log"; echo "::endgroup::"
+            exit 1
+          fi
+
+  node-e2e:
+    name: Node channel E2E (nodesim smoke, expiry, real pdnd kick)
+    # 单独一个 job：到期扫描要等几分钟，放进 e2e job 会拖慢鉴权那几个脚本
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: pandora
+          POSTGRES_PASSWORD: pandora
+          POSTGRES_DB: pandora_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pandora"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:8
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      PANDORA_ENV: development
+      PANDORA_DATABASE_URL: postgres://pandora:pandora@127.0.0.1:5432/pandora_e2e?sslmode=disable
+      PANDORA_DATABASE_MIGRATION_URL: postgres://pandora:pandora@127.0.0.1:5432/pandora_e2e?sslmode=disable
+      PANDORA_REDIS_URL: redis://127.0.0.1:6379/0
+      # 节点 gRPC 只在配了对外主机时监听；模拟器从本机连，证书 SAN 是这个 IP
+      PANDORA_GRPC_NODE_PUBLIC_HOST: 127.0.0.1
+      # 200 个用户都从 127.0.0.1 注册、登录、拉订阅，管理员一分钟里开 200 张单：放宽按 IP、按账号、认证三种限流
+      # （每条凭据每小时 60 次的拉取上限不放宽，冒烟脚本的拉取次数远低于它）
+      PANDORA_RATELIMIT_IP_PER_MIN: "100000"
+      PANDORA_RATELIMIT_ACCOUNT_PER_MIN: "100000"
+      PANDORA_RATELIMIT_AUTH_PER_MIN: "100000"
+      NODE_SMOKE_E2E_DISPOSABLE: YES_DELETE_FIXTURES
+      EXPIRY_E2E_DISPOSABLE: YES_DELETE_FIXTURES
+      NODE_KICK_E2E_DISPOSABLE: YES_DELETE_FIXTURES
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: panel/go.mod
+          cache-dependency-path: panel/go.sum
+      - name: Build pandora
+        run: go build -mod=readonly -o "$RUNNER_TEMP/pandora" ./cmd/pandora
+      # 模拟器在 pdnd 模块里（用真实的节点客户端 pdnd/panel），按 pdnd 的 go.mod 构建；只编它用到的几个依赖，不开缓存
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: pdnd/go.mod
+          cache: false
+      - name: Build nodesim
+        working-directory: pdnd
+        run: go build -mod=readonly -o "$RUNNER_TEMP/nodesim" ./release/nodesim
+      # 删人断线用真节点端（node_kick_e2e.sh）：与 nodesim 同一个 pdnd 模块与 Go 版本
+      - name: Build pandora-native
+        working-directory: pdnd
+        run: go build -mod=readonly -o "$RUNNER_TEMP/pandora-native" .
+      - name: Run node e2e scripts
+        run: |
+          # CI 一次性的假密钥与管理员口令，只经环境变量与标准输入传
+          export PANDORA_SECRETS_MASTER_KEY="$(head -c 32 /dev/urandom | base64)"
+          export PANDORA_AUTH_PUBLIC_JWT_SECRET="$(head -c 32 /dev/urandom | base64)"
+          export PANDORA_AUTH_ADMIN_JWT_SECRET="$(head -c 32 /dev/urandom | base64)"
+          export ADMIN_EMAIL="admin-node-e2e@example.test"
+          export ADMIN_PASS="E2e!Admin-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+          export NODESIM="$RUNNER_TEMP/nodesim"
+          export PANDORA_NATIVE="$RUNNER_TEMP/pandora-native"
+          # SINGBOX 留空：脚本下载钉住版本的官方 sing-box 并核对 SHA-256
+          export SERVE_LOG="$RUNNER_TEMP/serve.log"
+          bin="$RUNNER_TEMP/pandora"
+          "$bin" migrate up
+          printf '%s\n' "$ADMIN_PASS" | "$bin" admin create --email "$ADMIN_EMAIL" --password-stdin
+          "$bin" admin has-admin
+
+          export PSQL="$RUNNER_TEMP/psql.sh"
+          printf '#!/usr/bin/env bash\nexec psql "$PANDORA_DATABASE_URL" "$@"\n' > "$PSQL"
+          chmod +x "$PSQL"
+
+          "$bin" serve > "$SERVE_LOG" 2>&1 &
+          serve_pid=$!
+          "$bin" worker > "$RUNNER_TEMP/worker.log" 2>&1 &
+          worker_pid=$!
+          ok=
+          for _ in $(seq 1 50); do
+            if curl -fsS http://127.0.0.1:9000/readyz >/dev/null && curl -fsS http://127.0.0.1:9001/readyz >/dev/null; then ok=1; break; fi
+            sleep 0.2
+          done
+          test -n "$ok" || { cat "$SERVE_LOG"; exit 1; }
+
+          failed=0
+          for s in node_smoke_e2e.sh expiry_e2e.sh node_kick_e2e.sh; do
+            echo "::group::$s"
+            if bash "tests/$s"; then echo "$s 通过"; else echo "::error::$s 失败"; failed=$((failed+1)); fi
+            echo "::endgroup::"
+          done
+
+          kill -TERM "$serve_pid" "$worker_pid"
+          wait "$serve_pid" || true
+          wait "$worker_pid" || true
+          if [ "$failed" -ne 0 ]; then
+            echo "::group::serve.log"; tail -n 400 "$SERVE_LOG"; echo "::endgroup::"
+            echo "::group::worker.log"; tail -n 150 "$RUNNER_TEMP/worker.log"; echo "::endgroup::"
+            exit 1
+          fi

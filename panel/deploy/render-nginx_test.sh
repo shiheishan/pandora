@@ -5,7 +5,6 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 TEST_DIR="$(mktemp -d)"
 trap 'rm -rf -- "$TEST_DIR"' EXIT
 
-# 「不应出现」的断言不能写成取反的 grep：set -e 对取反的命令不生效，失败也不会退出。
 refute() {
   if grep "$@"; then
     printf 'unexpected match: %s\n' "$*" >&2
@@ -13,70 +12,171 @@ refute() {
   fi
 }
 
+banned_words() {
+  refute -iE 'aegis|AEGIS_|VALKEY_|valkey|/etc/aegispanel' "$1"
+}
+
+# 每个含 proxy_pass 的 location 块里必须有 Host 与 X-Real-IP
+assert_proxy_headers_per_location() {
+  awk '
+    function flush() {
+      if (!inloc) return
+      if (buf ~ /proxy_pass/) {
+        if (buf !~ /proxy_set_header[[:space:]]+Host[[:space:]]+\$host;/) {
+          printf "location missing Host: %s\n", locline > "/dev/stderr"
+          exit 1
+        }
+        if (buf !~ /proxy_set_header[[:space:]]+X-Real-IP[[:space:]]+\$remote_addr;/) {
+          printf "location missing X-Real-IP: %s\n", locline > "/dev/stderr"
+          exit 1
+        }
+      }
+      inloc = 0
+      buf = ""
+    }
+    /^[[:space:]]*location / {
+      flush()
+      inloc = 1
+      locline = $0
+      buf = $0 "\n"
+      next
+    }
+    inloc { buf = buf $0 "\n" }
+    inloc && /^[[:space:]]*\}[[:space:]]*$/ { flush() }
+    END { flush() }
+  ' "$1"
+}
+
 path='ops_0123456789abcdef0123456789abcdef'
 domain='panel.example.test'
-base="AEGIS_PUBLIC_BASE_URL=https://$domain"
-printf 'AEGIS_ADMIN_PATH=%s\n%s\n' "$path" "$base" >"$TEST_DIR/valid.env"
-"$SCRIPT_DIR/render-nginx.sh" "$TEST_DIR/valid.env" "$TEST_DIR/aegis.conf" "$TEST_DIR/realip.conf" >/dev/null
+printf 'public_base_url: https://%s\n' "$domain" >"$TEST_DIR/config.yaml"
+printf 'PANDORA_ADMIN_PATH=%s\n' "$path" >"$TEST_DIR/deploy.env"
+OUT="$TEST_DIR/pandora.conf"
+REALIP="$TEST_DIR/realip.conf"
 
-grep -Fq "location = /$path" "$TEST_DIR/aegis.conf"
-# 不带尾斜杠只能重定向：入口页的相对路径要以 /$path/ 为基准，直接下发会把请求打到公开网关
-grep -Fq "return 301 /$path/;" "$TEST_DIR/aegis.conf"
-grep -Fq "location ^~ /$path/" "$TEST_DIR/aegis.conf"
-grep -Fq "rewrite ^/$path(/.*)\$ \$1 break;" "$TEST_DIR/aegis.conf"
-refute -Fq '__AEGIS_ADMIN_PATH__' "$TEST_DIR/aegis.conf"
-refute -Fq 'listen 127.0.0.1:9081' "$TEST_DIR/aegis.conf"
-# 公网明文「测试入口」已删除：除 80/443 与回环 9080 外不得再有别的 listen
-grep -Fq 'listen 127.0.0.1:9080;' "$TEST_DIR/aegis.conf"
-refute -Fq '7001' "$TEST_DIR/aegis.conf"
-stray_listen="$(grep -vE '^[[:space:]]*#' "$TEST_DIR/aegis.conf" | grep -oE 'listen[[:space:]]+[^;]*;' \
-  | grep -vxE 'listen[[:space:]]+(127\.0\.0\.1:9080|0\.0\.0\.0:80( default_server)?|\[::\]:80( default_server)?|0\.0\.0\.0:443 ssl|\[::\]:443 ssl);' || true)"
-[[ -z "$stray_listen" ]] || { printf 'unexpected listen: %s\n' "$stray_listen" >&2; exit 1; }
-grep -Fq 'listen 0.0.0.0:80 default_server' "$TEST_DIR/aegis.conf"
-grep -Fq "server_name $domain;" "$TEST_DIR/aegis.conf"
-grep -Fq 'listen 0.0.0.0:443 ssl' "$TEST_DIR/aegis.conf"
-grep -Fq "/etc/letsencrypt/live/$domain/fullchain.pem" "$TEST_DIR/aegis.conf"
-grep -Fq "/etc/letsencrypt/live/$domain/privkey.pem" "$TEST_DIR/aegis.conf"
-refute -Fq '__AEGIS_DOMAIN__' "$TEST_DIR/aegis.conf"
-# 模板属于产品，不能带任何一套具体部署的域名：server_name 只能是兜底的 _ 或 .env 给的域名
-stray="$(grep -vE '^[[:space:]]*#' "$TEST_DIR/aegis.conf" | grep -oE 'server_name[[:space:]]+[^;]*;' \
-  | grep -vxE "server_name[[:space:]]+(_|${domain//./\\.});" || true)"
-[[ -z "$stray" ]] || { printf 'unexpected server_name: %s\n' "$stray" >&2; exit 1; }
-grep -Fq 'include /etc/aegispanel/cloudflare-realip.conf' "$TEST_DIR/aegis.conf"
+export PANDORA_NGINX_VERSION=1.26.3
+export PANDORA_NGINX_MAIN_CONF=none
+render_out="$("$SCRIPT_DIR/render-nginx.sh" "$TEST_DIR/config.yaml" "$TEST_DIR/deploy.env" "$OUT" "$REALIP")"
+[[ -n "$render_out" ]]
+refute -F "$path" <<<"$render_out"
 
-for invalid in short '../escape-path-0123456789' 'slash/path-0123456789abcdef' 'CHANGE_ME_TO_A_RANDOM_48_CHAR_PATH'; do
-  printf 'AEGIS_ADMIN_PATH=%s\n%s\n' "$invalid" "$base" >"$TEST_DIR/invalid.env"
-  if "$SCRIPT_DIR/render-nginx.sh" "$TEST_DIR/invalid.env" "$TEST_DIR/rejected.conf" "$TEST_DIR/realip-rejected.conf" >/dev/null 2>&1; then
-    printf 'expected invalid path to be rejected\n' >&2
-    exit 1
-  fi
-done
+refute -Fq '__PANDORA_' "$OUT"
+grep -Fq "server_name $domain;" "$OUT"
+grep -Fq "location = /$path/v1/auth/login" "$OUT"
+grep -Fq "location = /$path/v1/auth/refresh" "$OUT"
+grep -Fq "location = /$path/v1/events" "$OUT"
+grep -Fq "return 301 /$path/;" "$OUT"
+grep -Fq "location ^~ /$path/" "$OUT"
+grep -Fq "proxy_cookie_path /v1/auth /$path/v1/auth;" "$OUT"
+grep -Eq '^limit_req_zone \$binary_remote_addr zone=pandora_refresh:' "$OUT"
+grep -Fq 'limit_req zone=pandora_refresh burst=20 nodelay;' "$OUT"
+[[ "$(grep -c 'limit_req zone=pandora_refresh burst=20 nodelay;' "$OUT")" -eq 2 ]]
 
-# 域名只接受 https://<DNS 域名>：缺失、重复、示例值、http、带端口或路径、IP 都拒绝
-reject_base() {
-  printf 'AEGIS_ADMIN_PATH=%s\n' "$path" >"$TEST_DIR/invalid.env"
-  printf '%s' "$1" >>"$TEST_DIR/invalid.env"
-  if "$SCRIPT_DIR/render-nginx.sh" "$TEST_DIR/invalid.env" "$TEST_DIR/rejected.conf" "$TEST_DIR/realip-rejected.conf" >/dev/null 2>&1; then
-    printf 'expected base URL case to be rejected: %q\n' "$1" >&2
-    exit 1
-  fi
+events_block() {
+  awk -v want="$1" '
+    index($0, want) { on = 1 }
+    on { print }
+    on && /^    }$/ { exit }
+  ' "$OUT"
 }
-reject_base ''
-reject_base $'AEGIS_PUBLIC_BASE_URL=https://a.example.test\nAEGIS_PUBLIC_BASE_URL=https://b.example.test\n'
-reject_base $'AEGIS_PUBLIC_BASE_URL=https://CHANGE_ME_TO_YOUR_PANEL_DOMAIN\n'
-reject_base $'AEGIS_PUBLIC_BASE_URL=http://panel.example.test\n'
-reject_base $'AEGIS_PUBLIC_BASE_URL=https://panel.example.test:8443\n'
-reject_base $'AEGIS_PUBLIC_BASE_URL=https://panel.example.test/sub\n'
-reject_base $'AEGIS_PUBLIC_BASE_URL=https://203.0.113.9\n'
-reject_base $'AEGIS_PUBLIC_BASE_URL=https://localhost\n'
-reject_base $'AEGIS_PUBLIC_BASE_URL=https://evil.test;include/x\n'
+pub_events="$(events_block 'location = /v1/events')"
+adm_events="$(events_block "location = /$path/v1/events")"
+grep -Fq 'proxy_buffering off;' <<<"$pub_events"
+grep -Fq 'proxy_read_timeout 1h;' <<<"$pub_events"
+grep -Fq 'proxy_buffering off;' <<<"$adm_events"
+grep -Fq 'proxy_read_timeout 1h;' <<<"$adm_events"
 
-# 大写与结尾斜杠按同一个域名处理
-printf 'AEGIS_ADMIN_PATH=%s\nAEGIS_PUBLIC_BASE_URL=https://Panel.Example.TEST/\n' "$path" >"$TEST_DIR/upper.env"
-"$SCRIPT_DIR/render-nginx.sh" "$TEST_DIR/upper.env" "$TEST_DIR/upper.conf" "$TEST_DIR/realip.conf" >/dev/null
-grep -Fq "server_name $domain;" "$TEST_DIR/upper.conf"
+assert_proxy_headers_per_location "$OUT"
 
-# 拒绝渲染时不留下任何东西（信任表也不建）
-[[ ! -e "$TEST_DIR/realip-rejected.conf" ]] || { printf 'rejected render created the real-IP file\n' >&2; exit 1; }
+refute -Fq 'UniProxy' "$OUT"
+refute -Fq '/v1/nodes/' "$OUT"
+refute -Fq '9003' "$OUT"
+banned_words "$OUT"
+
+# HTTP/2：1.24.0 走 listen ... http2，不要 http2 on;
+PANDORA_NGINX_VERSION=1.24.0 "$SCRIPT_DIR/render-nginx.sh" \
+  "$TEST_DIR/config.yaml" "$TEST_DIR/deploy.env" "$TEST_DIR/legacy.conf" "$REALIP" >/dev/null
+refute -Eq '^[[:space:]]*http2 on;' "$TEST_DIR/legacy.conf"
+grep -Fq 'listen 0.0.0.0:443 ssl http2;' "$TEST_DIR/legacy.conf"
+grep -Fq 'listen [::]:443 ssl http2;' "$TEST_DIR/legacy.conf"
+
+reject_render() {
+  local cfg="$1" dep="$2" out="$3" rip="$4"
+  if "$SCRIPT_DIR/render-nginx.sh" "$cfg" "$dep" "$out" "$rip" >/dev/null 2>&1; then
+    printf 'expected render to fail: cfg=%s dep=%s\n' "$cfg" "$dep" >&2
+    exit 1
+  fi
+  [[ ! -e "$out" ]] || { printf 'rejected render left output file %s\n' "$out" >&2; exit 1; }
+}
+
+printf 'public_base_url: https://10.0.0.1\n' >"$TEST_DIR/bad-private.yaml"
+reject_render "$TEST_DIR/bad-private.yaml" "$TEST_DIR/deploy.env" "$TEST_DIR/rej.conf" "$TEST_DIR/rej-realip.conf"
+
+printf 'public_base_url: https://%s:8443\n' "$domain" >"$TEST_DIR/bad-port.yaml"
+reject_render "$TEST_DIR/bad-port.yaml" "$TEST_DIR/deploy.env" "$TEST_DIR/rej.conf" "$TEST_DIR/rej-realip.conf"
+
+printf 'public_base_url: https://%s/extra\n' "$domain" >"$TEST_DIR/bad-path.yaml"
+reject_render "$TEST_DIR/bad-path.yaml" "$TEST_DIR/deploy.env" "$TEST_DIR/rej.conf" "$TEST_DIR/rej-realip.conf"
+
+printf 'public_base_url: http://%s\n' "$domain" >"$TEST_DIR/bad-http.yaml"
+reject_render "$TEST_DIR/bad-http.yaml" "$TEST_DIR/deploy.env" "$TEST_DIR/rej.conf" "$TEST_DIR/rej-realip.conf"
+
+printf 'public_base_url: https://localhost\n' >"$TEST_DIR/bad-localhost.yaml"
+reject_render "$TEST_DIR/bad-localhost.yaml" "$TEST_DIR/deploy.env" "$TEST_DIR/rej.conf" "$TEST_DIR/rej-realip.conf"
+
+printf 'PANDORA_ADMIN_PATH=short\n' >"$TEST_DIR/bad-admin.env"
+reject_render "$TEST_DIR/config.yaml" "$TEST_DIR/bad-admin.env" "$TEST_DIR/rej.conf" "$TEST_DIR/rej-realip.conf"
+
+printf 'PANDORA_ADMIN_PATH=__PANDORA_ADMIN_PATH__\n' >"$TEST_DIR/placeholder-admin.env"
+reject_render "$TEST_DIR/config.yaml" "$TEST_DIR/placeholder-admin.env" "$TEST_DIR/rej.conf" "$TEST_DIR/rej-realip.conf"
+
+printf 'PANDORA_ADMIN_PATH=%s\nPANDORA_ADMIN_PATH=%s\n' "$path" "$path" >"$TEST_DIR/dup-admin.env"
+reject_render "$TEST_DIR/config.yaml" "$TEST_DIR/dup-admin.env" "$TEST_DIR/rej.conf" "$TEST_DIR/rej-realip.conf"
+
+printf '# no public_base_url\nenv: production\n' >"$TEST_DIR/no-base.yaml"
+reject_render "$TEST_DIR/no-base.yaml" "$TEST_DIR/deploy.env" "$TEST_DIR/rej.conf" "$TEST_DIR/rej-realip.conf"
+
+printf 'public_base_url: https://203.0.113.10\n' >"$TEST_DIR/ip.yaml"
+printf 'PANDORA_ADMIN_PATH=%s\n' "$path" >"$TEST_DIR/ip-deploy.env"
+"$SCRIPT_DIR/render-nginx.sh" "$TEST_DIR/ip.yaml" "$TEST_DIR/ip-deploy.env" "$TEST_DIR/ip.conf" "$REALIP" >/dev/null
+[[ "$(grep -c 'server_name 203.0.113.10;' "$TEST_DIR/ip.conf")" -eq 2 ]]
+
+# 真实 IP 信任表：不存在时创建默认内容；已存在则字节不变
+[[ -e "$REALIP" ]] && rm -f "$REALIP"
+NEW_REALIP="$TEST_DIR/fresh-realip.conf"
+PANDORA_NGINX_MAIN_CONF=none "$SCRIPT_DIR/render-nginx.sh" \
+  "$TEST_DIR/config.yaml" "$TEST_DIR/deploy.env" "$OUT" "$NEW_REALIP" >/dev/null
+[[ -f "$NEW_REALIP" ]]
+refute -Fq 'set_real_ip_from' "$NEW_REALIP"
+existing='set_real_ip_from 203.0.113.0/24;'
+printf '%s\n' "$existing" >"$TEST_DIR/keep-realip.conf"
+cp "$TEST_DIR/keep-realip.conf" "$TEST_DIR/keep-realip.before"
+PANDORA_NGINX_MAIN_CONF=none "$SCRIPT_DIR/render-nginx.sh" \
+  "$TEST_DIR/config.yaml" "$TEST_DIR/deploy.env" "$OUT" "$TEST_DIR/keep-realip.conf" >/dev/null
+cmp -s "$TEST_DIR/keep-realip.before" "$TEST_DIR/keep-realip.conf" \
+  || { printf 'existing real-IP file was modified\n' >&2; exit 1; }
+
+# 主配置调参
+NGX="$TEST_DIR/etc-nginx"
+mkdir -p "$NGX/conf.d"
+printf 'user www-data;\nworker_processes auto;\npid /run/nginx.pid;\n\nevents {\n\tworker_connections 768;\n}\n\nhttp {\n\tinclude /etc/nginx/conf.d/*.conf;\n}\n' >"$NGX/nginx.conf"
+export PANDORA_NGINX_MAIN_CONF="$NGX/nginx.conf"
+"$SCRIPT_DIR/render-nginx.sh" "$TEST_DIR/config.yaml" "$TEST_DIR/deploy.env" "$NGX/conf.d/pandora.conf" "$REALIP" >/dev/null
+grep -Eq '^[[:space:]]*worker_connections 16384;' "$NGX/nginx.conf"
+grep -Fq 'worker_processes 1;' "$NGX/nginx.conf"
+[[ "$(grep -c 'worker_rlimit_nofile 65536;' "$NGX/nginx.conf")" -eq 1 ]]
+cp "$NGX/nginx.conf" "$TEST_DIR/nginx.once"
+"$SCRIPT_DIR/render-nginx.sh" "$TEST_DIR/config.yaml" "$TEST_DIR/deploy.env" "$NGX/conf.d/pandora.conf" "$REALIP" >/dev/null
+cmp -s "$TEST_DIR/nginx.once" "$NGX/nginx.conf" \
+  || { printf 'second render changed nginx.conf\n' >&2; exit 1; }
+
+# 模板：仅两种占位符、恰好一行 http2 on;
+[[ "$(grep -cE '__PANDORA_(ADMIN_PATH|DOMAIN)__' "$SCRIPT_DIR/nginx-pandora.conf")" -ge 2 ]]
+if grep -oE '__[A-Z0-9_]+__' "$SCRIPT_DIR/nginx-pandora.conf" | grep -vxE '__PANDORA_ADMIN_PATH__|__PANDORA_DOMAIN__'; then
+  printf 'template has unexpected placeholders\n' >&2
+  exit 1
+fi
+[[ "$(grep -cE '^[[:space:]]*http2 on;' "$SCRIPT_DIR/nginx-pandora.conf")" -eq 1 ]]
+banned_words "$SCRIPT_DIR/nginx-pandora.conf"
 
 printf 'render-nginx tests passed\n'

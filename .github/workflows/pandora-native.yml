@@ -5,25 +5,21 @@ on:
   push:
     paths:
       - "pdnd/**"
-      - "panel/internal/domain/nodefabric/**"
-      - "panel/internal/api/**"
-      - "panel/internal/platform/db/**"
-      - "panel/migrations/**"
+      - "nodeapi/**"
+      - "panel/internal/module/node/protocol/**"
       - "panel/web/**"
       - "panel/frontend/**"
-      - "panel/internal/platform/webapp/**"
+      - "panel/internal/pkg/webapp/**"
       - "panel/Makefile"
       - ".github/workflows/pandora-native.yml"
   pull_request:
     paths:
       - "pdnd/**"
-      - "panel/internal/domain/nodefabric/**"
-      - "panel/internal/api/**"
-      - "panel/internal/platform/db/**"
-      - "panel/migrations/**"
+      - "nodeapi/**"
+      - "panel/internal/module/node/protocol/**"
       - "panel/web/**"
       - "panel/frontend/**"
-      - "panel/internal/platform/webapp/**"
+      - "panel/internal/pkg/webapp/**"
       - "panel/Makefile"
       - ".github/workflows/pandora-native.yml"
 
@@ -46,25 +42,8 @@ jobs:
       - name: Check capability/schema/serving parity
         run: python3 pdnd/release/check_native_panel_parity.py
 
-  panel-contract:
-    name: Panel NativeCore contract tests
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: panel
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: panel/go.mod
-          cache-dependency-path: panel/go.sum
-      - name: Node protocol contract tests
-        run: go test -mod=readonly ./internal/domain/nodefabric
-      - name: Node protocol contract vet
-        run: go vet -mod=readonly ./internal/domain/nodefabric
-
   panel-web-contract:
-    name: Panel embedded UI, schema and permission contracts
+    name: Panel embedded UI contracts
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -76,11 +55,7 @@ jobs:
           go-version-file: panel/go.mod
           cache-dependency-path: panel/go.sum
       - name: Embedded frontend contracts (placeholder entry)
-        run: go test -mod=readonly ./web/ ./internal/platform/webapp/
-      - name: Schema table registry
-        run: go test -mod=readonly -run TestSchemaTablesAreReferencedOrRegistered ./internal/platform/db/
-      - name: Route permission catalog
-        run: go test -mod=readonly -run TestRoutePermissionsExistInCatalog ./internal/api/admin/
+        run: go test -mod=readonly ./web/ ./internal/pkg/webapp/
 
   panel-frontend:
     name: Panel frontend lint, typecheck, tests, build and embed
@@ -123,7 +98,7 @@ jobs:
             echo "placeholder entry still embedded after frontend-embed" >&2
             exit 1
           fi
-          go test -mod=readonly ./web/ ./internal/platform/webapp/ ./internal/api/...
+          go test -mod=readonly ./web/ ./internal/pkg/webapp/
 
   linux-race:
     name: Linux race and vet
@@ -141,6 +116,17 @@ jobs:
         run: go test -mod=readonly -p 1 -race -count=1 ./... | tee amd64-race.log
       - name: Vet
         run: go vet -mod=readonly -p 1 ./... | tee amd64-vet.log
+      - name: Cross-platform build and vet
+        # 发布只出 linux/amd64、linux/arm64；这里钉住别的平台至少编得过、vet 过，防平台专属
+        # 代码回退（w12quic review-r6 J2：udprecv 用了 linux/386 没有的 SYS_RECVFROM）。
+        # 不含 windows：它要 linux 构建用不到的模块（sing-tun 的 winfw 引 go-ole），离线模块
+        # 缓存的检查机上取不到；kernel 测试在 windows 上本来也编不过（Getrusage，已登记不改）。
+        run: |
+          set -e
+          for target in linux/386 linux/arm darwin/arm64 freebsd/amd64; do
+            echo "== vet ${target}"
+            GOOS="${target%/*}" GOARCH="${target#*/}" go vet -mod=readonly -p 1 ./...
+          done
       - name: Native REALITY stdout gate
         run: bash release/check_native_stdout.sh | tee native-stdout-gate.log
       - name: Native capability smoke
@@ -186,7 +172,7 @@ jobs:
       - name: External Xray TLS XHTTP H3 interoperability
         # This is intentionally a non-race opt-in gate: the external Xray
         # client currently contains a known WaitReadCloser race of its own.
-        run: go test -mod=mod -tags interop -run 'TestExternalXray(VLESSXHTTPRealityH2Interop|VLESSXHTTPH3Interop|XHTTPH3Transport)$' -count=1 ./kernel
+        run: go test -mod=mod -tags interop -run 'TestExternalXray(VLESSXHTTPRealityH2Interop|VLESSXHTTPH3Interop|XHTTPH3Transport|VMessInterop|VLESSRealityVisionTLS13Interop)$' -count=1 ./kernel
       - name: External AnyTLS client interoperability
         # Non-race for the same reason: sing-anytls (v0.0.11 and v0.0.13)
         # races between Stream.closeLocally and Stream.Write inside the client.
@@ -286,6 +272,9 @@ jobs:
         with:
           go-version-file: pdnd/go.mod
           cache-dependency-path: pdnd/go.sum
+      - name: Release script toolchain pinning (stub go)
+        # build.sh / verify.sh 固定 GOTOOLCHAIN 为 go.mod 的版本、版本不符即失败：桩 go 实跑
+        run: bash pdnd/release/build_toolchain_mock_test.sh
       - name: Build and verify release directory
         run: |
           bash pdnd/release/build.sh "$RUNNER_TEMP/pandora-release" ci
@@ -295,10 +284,10 @@ jobs:
           bash pdnd/release/staging-acceptance.sh \
             "$RUNNER_TEMP/pandora-release" \
             "$RUNNER_TEMP/pandora-native-staging" ci
-      - name: Runtime acceptance (signed and compat channels)
-        # 验的是上一步 build.sh 产出的 amd64 发布二进制本身：回环模拟面板上
-        # signed（enrollment 后的生产形态）与 compat 两种接入各冷启动两次，
-        # 查 SIGTERM 收尾与端口释放。模拟面板由脚本用本 checkout 的 Go 编出。
+      - name: Runtime acceptance (gRPC enroll and session)
+        # 验的是上一步 build.sh 产出的 amd64 发布二进制本身：回环模拟 gRPC 面板上
+        # 先验指纹不对的 enroll 被拒、再正式 enroll，冷启动两次（第二次 Hello 报出缓存版本），
+        # 停掉面板再用落盘缓存冷启动一次，查 SIGTERM 收尾与端口释放。模拟面板由脚本用本 checkout 的 Go 编出。
         run: |
           test "$(uname -m)" = x86_64
           bash pdnd/release/runtime-acceptance.sh \

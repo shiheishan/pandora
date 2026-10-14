@@ -24,11 +24,9 @@ export function ScopeRoutingEditor({
   references = [],
   ruleHint,
   emptyHint,
-  writable,
   busy,
   formError,
   publishLabel,
-  readOnlyHint,
   onSubmit,
 }: {
   outbounds: readonly Outbound[]
@@ -37,11 +35,9 @@ export function ScopeRoutingEditor({
   references?: ReadonlyArray<readonly [string, string]>
   ruleHint: ReactNode
   emptyHint: string
-  writable: boolean
   busy: boolean
   formError: string | null
   publishLabel: string
-  readOnlyHint: string
   onSubmit: (payload: RoutingPayload) => void
 }) {
   const toast = useToast()
@@ -93,7 +89,7 @@ export function ScopeRoutingEditor({
           <span className={css.faint}>{ruleHint}</span>
         </div>
         <div className={x.panelBody}>
-          <RuleRows rows={rules} errors={ruleErrors} outbounds={tags} disabled={!writable || busy} onChange={setRules} emptyHint={emptyHint} />
+          <RuleRows rows={rules} errors={ruleErrors} outbounds={tags} disabled={busy} onChange={setRules} emptyHint={emptyHint} />
         </div>
       </section>
 
@@ -120,41 +116,29 @@ export function ScopeRoutingEditor({
                     {o.tag}
                   </span>
                   <span className={`${css.mono} ${css.faint}`}>{o.type}</span>
-                  {writable && (
-                    <>
-                      <Button size="xs" variant="ghost" disabled={busy} aria-label={`编辑出站 ${o.tag}`} onClick={() => setEditing({ index: i, row: o, error: null })}>
-                        编辑
-                      </Button>
-                      <Button size="xs" variant="ghost" disabled={busy} aria-label={`移除出站 ${o.tag}`} onClick={() => removeOutbound(i)}>
-                        移除
-                      </Button>
-                    </>
-                  )}
+                  <Button size="xs" variant="ghost" disabled={busy} aria-label={`编辑出站 ${o.tag}`} onClick={() => setEditing({ index: i, row: o, error: null })}>
+                    编辑
+                  </Button>
+                  <Button size="xs" variant="ghost" disabled={busy} aria-label={`移除出站 ${o.tag}`} onClick={() => removeOutbound(i)}>
+                    移除
+                  </Button>
                 </div>
                 {outErrors[i] && <div className={x.outErr}>{outErrors[i]}</div>}
               </div>
             ))}
           </div>
-          {writable && (
-            <div>
-              <Button size="sm" disabled={busy} onClick={() => setEditing({ index: null, row: { tag: '', type: 'trojan', settings: '{}' }, error: null })}>
-                ＋ 添加出站
-              </Button>
-            </div>
-          )}
+          <div>
+            <Button size="sm" disabled={busy} onClick={() => setEditing({ index: null, row: { tag: '', type: 'trojan', settings: '{}' }, error: null })}>
+              ＋ 添加出站
+            </Button>
+          </div>
         </div>
         <div className={x.publish}>
           {formError && <div className={`${css.errorBox} ${x.dirty}`}>{formError}</div>}
-          {writable ? (
-            <>
-              {dirty && <div className={x.dirty}>有未发布的修改，发布后才会下发。</div>}
-              <Button variant="primary" className={x.publishButton} busy={busy} onClick={submit}>
-                {publishLabel}
-              </Button>
-            </>
-          ) : (
-            <div className={css.faint}>{readOnlyHint}</div>
-          )}
+          {dirty && <div className={x.dirty}>有未发布的修改，发布后才会下发。</div>}
+          <Button variant="primary" className={x.publishButton} busy={busy} onClick={submit}>
+            {publishLabel}
+          </Button>
         </div>
       </section>
       {editing && <OutboundModal editing={editing} onChange={setEditing} onSave={saveOutbound} onClose={() => setEditing(null)} />}

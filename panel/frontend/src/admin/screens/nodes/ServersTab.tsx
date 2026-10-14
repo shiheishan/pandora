@@ -7,13 +7,12 @@ import { Button, ConfirmModal, Empty, Modal, QueryView, Tag, useToast } from '..
 import { canDeleteServer, createServerBody, deleteServerNotice, emptyServerForm, nodesByServer, quickToggle, SERVER_STATUS, serverDot, serverMeters, validateServerForm } from './infra'
 import x from './infra.module.css'
 import css from './nodes.module.css'
-import { useCan, useFailure, useInvalidateNodes, useNodes, useServers } from './queries'
+import { useFailure, useInvalidateNodes, useNodes, useServers } from './queries'
 import { serverSchema, type Server } from './schemas'
 import { Meters, SERVER_TABS, ServerDrawer, ServerFields, type ServerTab } from './ServerDrawer'
 import { useDeleteServer, useIssueServerToken, useSetServerStatus, type InstallSecret } from './serverActions'
 
 export function ServersTab({ rest }: { rest: string[] }) {
-  const can = useCan()
   const servers = useServers()
   const nodes = useNodes()
   const [adding, setAdding] = useState(false)
@@ -34,11 +33,9 @@ export function ServersTab({ rest }: { rest: string[] }) {
       <div className={x.bar}>
         <span>{servers.data ? `${servers.data.length} 台服务器 · 每台可承载多个协议节点` : '服务器'}</span>
         <span className={css.spacer} />
-        {can('node.write') && (
-          <Button variant="primary" onClick={() => setAdding(true)}>
-            添加服务器
-          </Button>
-        )}
+        <Button variant="primary" onClick={() => setAdding(true)}>
+          添加服务器
+        </Button>
       </div>
 
       {install && <InstallBar secret={install} onClose={() => setInstall(null)} />}
@@ -47,7 +44,7 @@ export function ServersTab({ rest }: { rest: string[] }) {
         query={servers}
         rows={4}
         isEmpty={(d) => d.length === 0}
-        empty={<Empty title="还没有服务器" description={can('node.write') ? '添加一台服务器，拿到安装命令后在机器上执行即可接入。' : '有节点编辑权限的同事可以在这里添加服务器。'} />}
+        empty={<Empty title="还没有服务器" description="添加一台服务器，拿到安装命令后在机器上执行即可接入。" />}
       >
         {(list) => (
           <div className={x.cards}>
@@ -58,15 +55,9 @@ export function ServersTab({ rest }: { rest: string[] }) {
                 nodes={tags.get(s.id) ?? []}
                 busy={(token.isPending && token.variables?.id === s.id) || (status.isPending && status.variables?.server.id === s.id)}
                 onOpen={() => navigate(`/nodes/servers/${s.id}`)}
-                onToken={can('node.provision') && s.status !== 'retired' ? () => token.mutate(s) : null}
-                onToggle={
-                  can('node.lifecycle')
-                    ? (t) => {
-                        status.mutate({ server: s, to: t.to, done: t.done })
-                      }
-                    : null
-                }
-                onRemove={can('node.lifecycle') ? () => setRemoving(s) : null}
+                onToken={s.status !== 'retired' ? () => token.mutate(s) : null}
+                onToggle={(t) => status.mutate({ server: s, to: t.to, done: t.done })}
+                onRemove={() => setRemoving(s)}
               />
             ))}
           </div>
@@ -112,8 +103,8 @@ function ServerCard({
   busy: boolean
   onOpen: () => void
   onToken: (() => void) | null
-  onToggle: ((t: NonNullable<ReturnType<typeof quickToggle>>) => void) | null
-  onRemove: (() => void) | null
+  onToggle: (t: NonNullable<ReturnType<typeof quickToggle>>) => void
+  onRemove: () => void
 }) {
   const toggle = quickToggle(s.status)
   const status = SERVER_STATUS[s.status]
@@ -146,26 +137,22 @@ function ServerCard({
         </span>
         {s.never_seen_node_count > 0 && <span className={x.neverSeen}>有 {s.never_seen_node_count} 个节点标了在役但从未心跳（多半没装 agent）</span>}
       </div>
-      {(onToken || (onToggle && toggle) || onRemove) && (
-        <div className={x.cardActions}>
-          {onToken && (
-            <Button size="xs" disabled={busy} onClick={onToken}>
-              安装令牌
-            </Button>
-          )}
-          {onToggle && toggle && (
-            <Button size="xs" disabled={busy} onClick={() => onToggle(toggle)}>
-              {toggle.label}
-            </Button>
-          )}
-          <span className={css.spacer} />
-          {onRemove && (
-            <Button size="xs" variant="ghost" className={canDeleteServer(s) ? x.dangerText : undefined} disabled={!canDeleteServer(s) || busy} title={canDeleteServer(s) ? undefined : '只能删除草稿或已退役的服务器，先在详情「操作」里退役'} onClick={onRemove}>
-              删除
-            </Button>
-          )}
-        </div>
-      )}
+      <div className={x.cardActions}>
+        {onToken && (
+          <Button size="xs" disabled={busy} onClick={onToken}>
+            安装令牌
+          </Button>
+        )}
+        {toggle && (
+          <Button size="xs" disabled={busy} onClick={() => onToggle(toggle)}>
+            {toggle.label}
+          </Button>
+        )}
+        <span className={css.spacer} />
+        <Button size="xs" variant="ghost" className={canDeleteServer(s) ? x.dangerText : undefined} disabled={!canDeleteServer(s) || busy} title={canDeleteServer(s) ? undefined : '只能删除草稿或已退役的服务器，先在详情「操作」里退役'} onClick={onRemove}>
+          删除
+        </Button>
+      </div>
     </section>
   )
 }

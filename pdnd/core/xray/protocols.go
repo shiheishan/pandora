@@ -28,6 +28,7 @@ import (
 	xtls "github.com/xtls/xray-core/transport/internet/tls"
 
 	"github.com/aegispanel/nodeagent/core"
+	"github.com/aegispanel/nodeagent/internal/confnum"
 )
 
 // buildInbound 把面板下发的配置翻译成 xray 的入站描述。
@@ -93,13 +94,7 @@ func buildStream(cfg *core.InboundConfig) (*internet.StreamConfig, error) {
 		return buildRealityStream(cfg, stream)
 	}
 
-	enabled := false
-	switch v := cfg.Raw["tls"].(type) {
-	case bool:
-		enabled = v
-	case float64:
-		enabled = v > 0
-	}
+	enabled, _ := confnum.Truthy(cfg.Raw["tls"])
 	if !enabled {
 		return stream, nil
 	}
@@ -182,7 +177,7 @@ func buildRealityStream(cfg *core.InboundConfig, stream *internet.StreamConfig) 
 		// Show 会把握手细节打进日志，含客户端标识。生产恒关。
 		Show: false,
 	}
-	if v, ok := cfg.Raw["max_time_diff"].(float64); ok && v > 0 {
+	if v, ok := confnum.Int64(cfg.Raw["max_time_diff"]); ok && v > 0 {
 		rc.MaxTimeDiff = uint64(v)
 	}
 

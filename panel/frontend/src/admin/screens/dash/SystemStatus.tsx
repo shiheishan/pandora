@@ -1,20 +1,17 @@
 import { useState } from 'react'
 import { Tag } from '../../../ui'
-import type { Permissions } from '../../modules'
 import { useSystemStatus } from './api'
 import { BackupDrawer } from './BackupDrawer'
 import css from './Dash.module.css'
 import { systemRows, type SystemRow, type Tone } from './model'
-import { CardError, Dot, isForbidden, PanelSkeleton, targetHref } from './parts'
+import { CardError, Dot, PanelSkeleton, targetHref } from './parts'
 
 const STATE_TONE: Record<SystemRow['state'], Tone> = { ok: 'ok', warn: 'warn', down: 'danger', unknown: 'neutral' }
 
-export function SystemStatus({ perms }: { perms: Permissions }) {
-  const q = useSystemStatus(true)
+export function SystemStatus() {
+  const q = useSystemStatus()
   const [backupOpen, setBackupOpen] = useState(false)
-  if (q.isError && isForbidden(q.error)) return null
-
-  const view = q.data ? systemRows(q.data, perms) : null
+  const view = q.data ? systemRows(q.data) : null
 
   return (
     <section className={`${css.panel} ${css.narrow}`} aria-labelledby="dash-system">
@@ -34,7 +31,7 @@ export function SystemStatus({ perms }: { perms: Permissions }) {
       ) : (
         <div>
           {view.rows.map((row) => (
-            <Row key={row.key} row={row} perms={perms} onBackup={() => setBackupOpen(true)} />
+            <Row key={row.key} row={row} onBackup={() => setBackupOpen(true)} />
           ))}
         </div>
       )}
@@ -43,7 +40,7 @@ export function SystemStatus({ perms }: { perms: Permissions }) {
   )
 }
 
-function Row({ row, perms, onBackup }: { row: SystemRow; perms: Permissions; onBackup: () => void }) {
+function Row({ row, onBackup }: { row: SystemRow; onBackup: () => void }) {
   const tone = STATE_TONE[row.state]
   const metaClass = row.state === 'warn' ? `${css.sysMeta} ${css.sysMetaWarn}` : row.state === 'down' ? `${css.sysMeta} ${css.sysMetaDanger}` : css.sysMeta
   const body = (
@@ -62,7 +59,7 @@ function Row({ row, perms, onBackup }: { row: SystemRow; perms: Permissions; onB
   }
   if (row.action?.kind === 'go') {
     return (
-      <a className={css.sysRow} href={targetHref(row.action.target, perms)} title={row.hint}>
+      <a className={css.sysRow} href={targetHref(row.action.target)} title={row.hint}>
         {body}
       </a>
     )

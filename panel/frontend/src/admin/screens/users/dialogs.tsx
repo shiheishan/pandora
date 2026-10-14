@@ -4,8 +4,8 @@ import { formatMoney } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
 import { Button, Input, Modal, Segmented, Select, TextArea, useToast } from '../../../ui'
 import { endsIntent, useFailure, useIntentKey } from '../../actions'
-import { balanceSchema, passwordResetSchema, rotatedSchema, statusSetSchema, type SubscriptionRow, type UserDetail } from './api'
-import { liveSubscriptions, parseYuan, passwordProblem, REASON_MIN, SUB_STATUS_VIEW } from './model'
+import { balanceSchema, passwordResetSchema, rotatedSchema, statusSetSchema, type UserDetail } from './api'
+import { liveSubscriptions, parseYuan, passwordProblem, REASON_MIN, subLabel } from './model'
 import css from './Users.module.css'
 
 const reasonShort = (r: string) => [...r.trim()].length < REASON_MIN
@@ -55,7 +55,7 @@ export function ActionModal({
 }
 
 // ---------------------------------------------------------------------------
-// 启用 / 停用 / 封禁：POST v1/users/{id}/status（iam.user.write + reauth，无幂等）
+// 启用 / 停用 / 封禁：POST v1/users/{id}/status（reauth，无幂等）
 // ---------------------------------------------------------------------------
 export function StatusDialog({ user, open, onClose, onDone }: { user: UserDetail; open: boolean; onClose: () => void; onDone: () => void }) {
   const api = useApi()
@@ -134,7 +134,7 @@ export function StatusDialog({ user, open, onClose, onDone }: { user: UserDetail
 }
 
 // ---------------------------------------------------------------------------
-// 设新密码：POST v1/users/{id}/reset-password（iam.user.write + reauth，无幂等）
+// 设新密码：POST v1/users/{id}/reset-password（reauth，无幂等）
 // D-B-2 已决（5.A.2）、R101：管理员直接设新密码，不要原因、不发邮件；新密码不回显
 // ---------------------------------------------------------------------------
 export function ResetPasswordDialog({ user, open, onClose }: { user: UserDetail; open: boolean; onClose: () => void }) {
@@ -191,7 +191,7 @@ export function ResetPasswordDialog({ user, open, onClose }: { user: UserDetail;
 }
 
 // ---------------------------------------------------------------------------
-// 换发订阅链接：POST v1/subscriptions/{id}/rotate（iam.user.write + reauth，无幂等）
+// 换发订阅链接：POST v1/subscriptions/{id}/rotate（reauth，无幂等）
 // 保留规则 2：后台看不到订阅地址；响应只有 user_email / old_revoked（schema 用 strict 守住）
 // ---------------------------------------------------------------------------
 export function RotateDialog({ user, open, onClose, onDone }: { user: UserDetail; open: boolean; onClose: () => void; onDone: () => void }) {
@@ -229,7 +229,7 @@ export function RotateDialog({ user, open, onClose, onDone }: { user: UserDetail
 
   return (
     <ActionModal open={open} title="更换订阅地址？" busy={busy} confirm="更换" tone="danger" disabled={!subId} onCancel={close} onConfirm={() => void submit()}>
-      <p className={css.dialogText}>旧地址立即失效，用户需要到门户重新复制地址、在客户端重新导入。后台看不到新地址。</p>
+      <p className={css.dialogText}>换发后旧链接和用户已导入的节点立即失效（节点密码一起换），用户所有设备都要到门户重新复制地址、在客户端重新更新一次订阅。后台看不到新地址。</p>
       {choices.length > 1 && (
         <Select label="订阅" options={choices.map((s) => ({ value: s.id, label: subLabel(s) }))} value={subId} onChange={(e) => setPicked(e.target.value)} />
       )}
@@ -249,12 +249,8 @@ export function RotateDialog({ user, open, onClose, onDone }: { user: UserDetail
   )
 }
 
-function subLabel(s: SubscriptionRow): string {
-  return `${s.plan_name} · v${s.plan_version} · ${SUB_STATUS_VIEW[s.status].label}`
-}
-
 // ---------------------------------------------------------------------------
-// 人工调账：POST v1/users/{id}/balance（billing.provider.write + reauth + 幂等 admin_user_balance_adjust）
+// 人工调账：POST v1/users/{id}/balance（reauth + 幂等 admin_user_balance_adjust）
 // 抽屉头部下方的行内表单（设计稿），提交前再确认一次金额
 // ---------------------------------------------------------------------------
 export function BalanceForm({ user, onClose, onDone }: { user: UserDetail; onClose: () => void; onDone: () => void }) {

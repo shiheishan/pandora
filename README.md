@@ -2,59 +2,104 @@
 
 Xboard 类代理订阅面板 + 自研节点端（Pandora NativeCore）。目标是提供 XBoard 级运营能力，并把协议、传输、路由与流量统计逐步收回单一自研内核。别名：AegisPanel / pandora-native。
 
-本文件是项目事实的唯一入口：架构、功能、构建、部署、验证状态、进度与路线图都在这里。AI 协作规则不在这里：根目录 [CLAUDE.md](CLAUDE.md) 是给 Claude Code 的全局约定，仓库公开、不写部署专属值的红线在它的「红线：仓库公开」一节；按目录生效的模块约定在 [.claude/rules/](.claude/rules/)，验证流程与 CI 说明在 [.claude/skills/verify/](.claude/skills/verify/SKILL.md)。
+本文件是项目事实的唯一入口：架构、功能、构建、部署、验证状态、进度与路线图都在这里。AI 协作规则不在这里：根目录 [CLAUDE.md](CLAUDE.md) 是给 Claude Code 的全局约定，仓库公开、不写部署专属值的红线在它的「红线：仓库公开」一节；按目录生效的模块约定在 [.claude/rules/](.claude/rules/)，验证流程与 CI 说明在 [.agents/skills/verify/](.agents/skills/verify/SKILL.md)。
 
 ## 架构
 
-技术栈：**Go 1.26 + PostgreSQL 18 + Valkey 8（Redis 兼容）**。Go 让面板与节点端都是无运行时依赖、可交叉编译的单文件，常驻内存小；PostgreSQL 18 内置 `uuidv7()`，租户隔离靠 FORCE RLS 由数据库强制，复式记账靠 DEFERRABLE 约束触发器在提交时配平；Valkey 协议兼容 Redis，许可证仍是 BSD。
+面板是一个 Go 二进制 `pandora`，节点端是另一个 Go 二进制 `pandora-native`（pdnd）。设计全文与每条取舍的理由见 [docs/architecture.md](docs/architecture.md)。
+
+| 方面 | 用什么 |
+|---|---|
+| 语言 | Go 1.26（`go.mod` 的 go 指令），静态编译，无运行时依赖 |
+| Web 框架 | gin；public（门户）与 admin（后台）各一个引擎、各一个监听 |
+| 命令行与配置 | cobra 子命令；viper 读 `/etc/pandora/config.yaml`，再用 `PANDORA_` 前缀的环境变量覆盖；秘密只能来自环境变量（`secrets.env`） |
+| 数据库 | PostgreSQL 18，经 GORM 访问；迁移是 goose 版本化 SQL（`panel/db/migrations/`，嵌入二进制，每个都有 Down），不用 AutoMigrate |
+| 缓存、限流、会话 | Redis（go-redis）：会话、refresh、登录失败计数、限流（GCRA）、实时推送、节点下发纪元 |
+| 队列与定时任务 | asynq，队列在 Redis 里；Scheduler 只在 worker 里跑一份 |
+| 日志 | zap（生产 JSON）+ lumberjack 滚动；每条带 req_id |
+| 鉴权 | 15 分钟 JWT（HS256，门户与后台各一组密钥）+ Redis 里的可吊销会话；refresh 放 HttpOnly cookie，轮换带重放检测 |
+| 节点 ↔ 面板 | gRPC 双向流 + protobuf（`proto/`，生成代码在 `nodeapi/`），面板自带 CA，mTLS 由面板进程自己终结 |
+| 钱 | 库里 `NUMERIC(20,2)`（元），Go 里 shopspring/decimal；`/v1` 的 JSON 仍是整数分；账本只追加、提交时库内配平 |
 
 ```text
-用户浏览器 / 专属客户端
+用户浏览器 / 专属客户端                  节点机：pandora-native（pdnd）
+          |                                         |
+   nginx（80/443，TLS）                    gRPC 双向流 + mTLS（:9443，直连，不经 nginx）
+          |                                         |
+  +-------+--------+                                |
+  |                |                                |
+public HTTP     admin HTTP                          |
+127.0.0.1:9000  127.0.0.1:9001                      |
+  +-------+--------+--------------------------------+
           |
-      反向代理 + TLS
-          |
-  +-------+---------+----------------+
-  |                 |                |
-aegis-public    aegis-admin     aegis-node
-用户门户         管理后台        节点接入/UniProxy 兼容
-  |                 |                |
-  +----------- PostgreSQL 18 -------+
-                  |
-              Valkey/Redis
-                  |
-        pandora-native / pdnd
-   NativeCore：协议、传输、路由、流量统计
+   pandora serve  ——  pandora worker（asynq 任务与定时调度）
+          |                 |
+   PostgreSQL 18 ——————— Redis（会话、限流、队列、实时推送、下发纪元）
 ```
 
-面板按域拆成三个独立的网关进程：
+### 一个二进制、几个子命令
 
-| 进程 | 职责 |
+| 子命令 | 做什么 |
 |---|---|
-| `aegis-public` | 用户门户与订阅分发 |
-| `aegis-admin` | 管理后台 |
-| `aegis-node` | 节点接入（UniProxy 兼容） |
+| `pandora serve` | 门户 HTTP、后台 HTTP、节点 gRPC 三个监听；SSE（`GET /v1/events`）；节点会话与名单下发 |
+| `pandora worker` | asynq Server 与 Scheduler：到期、配额滚动、查单、佣金结算、通知派发、证书签发、保留期清理等 |
+| `pandora migrate up / down / status` | goose 迁移，用属主角色的连接串（`database.migration_url`） |
+| `pandora admin …` | create、reset-password、grant、revoke、list、has-admin；口令只从标准输入读 |
+| `pandora backup …` | 备份脚本用的本地工具：封条、核验、WebDAV 异地上传与签名清单 |
 
-数据层用行级安全（RLS）做租户隔离；审计、账本、流量重置等表是追加写，由数据库触发器强制。应用角色 `aegis_app` 是非超级用户且不绕过 RLS。管理端、门户与节点接入都提供 SSE 事件流，跨进程分发走 Redis/Valkey（验证状态见下文门禁）。
+生产上 `serve` 与 `worker` 是两个 systemd 服务（`pandora-serve`、`pandora-worker`），以专用用户 `pandora` 运行。
+
+### 模块与分层
+
+```text
+panel/internal/
+  pkg/      与业务无关的基础设施：config、log、db、tx、redisx、errs、httpx、reqid、jwtx、authn、crypto、
+            ratelimit、pagination、money、jobs、realtime、route …
+  module/   业务模块，每个模块拆成 model / repo / service / handler / task 子包
+  app/      子命令与装配（wire.go 构造各模块 service 并注入彼此的接口）
+```
+
+- handler 只做参数绑定与校验、调 service、写响应；每个接口有自己的请求与响应 DTO。
+- service 放业务规则和事务边界（`pkg/tx`，提交后的动作用 `tx.AfterCommit` 登记）。
+- repo 是唯一使用 GORM 的地方。每张表只有一个属主模块，别的模块要数据就调属主模块的 service。
+- 这些规则由 golangci-lint 的 depguard 钉住：`panel/.golangci.yml` 由 `go run ./tools/depguardgen` 从模块目录生成，不手改；CI 检查生成结果没有漂移。
+
+模块：identity、auth、settings、audit、idempotency、catalog、order、payment、ledger、promo、commission、giftcard、subscription、node、certs、notify、support、content、appearance、plugin、report、realtime。各模块拥有哪些表见 [docs/architecture.md](docs/architecture.md) 第 4 节。
+
+### 数据约束
+
+约束类的规则放在库里，业务状态机与编排放在 Go service 里：
+
+- NOT NULL、CHECK（状态枚举、金额非负、订单金额恒等式、库存与额度上限等）、UNIQUE、外键能加就加；
+- 账本、审计、订阅事件、签发流水等表只追加：触发器拒绝改删，运行角色也收回 UPDATE / DELETE / TRUNCATE；
+- 账本每笔交易提交时（DEFERRABLE 约束触发器）检查借贷配平、单一币种；
+- 支付回调按 `(provider_id, provider_event_id)` 唯一，重放只记一笔账。
+
+两个数据库角色：`pandora_owner` 是库属主，只用来跑迁移；服务以 `pandora_app` 运行，不是超级用户、不是表属主，权限由 `panel/deploy/configure-app-role.sql` 收窄。
 
 ## 仓库结构
 
 | 路径 | 内容 |
 |---|---|
 | `panel/` | 面板：用户门户、管理后台、订阅分发、计费、节点编排、审计 |
-| `panel/cmd/` | 各域网关与运维工具的可执行入口 |
-| `panel/internal/` | `api/`（public、admin、node 路由与处理器）、`domain/`（业务域）、`middleware/`（认证、限流、幂等、租户注入）、`platform/`（配置、数据库、加密、日志、审计、令牌） |
-| `panel/tests/` | 数据层不变量 SQL 与端到端脚本 |
-| `panel/frontend/` | 面板前端，2026-09-23 起按设计稿从零重写、2026-09-26 完成（React + TypeScript + Vite，管理后台与用户门户双入口），构建后经 `make frontend-embed` 嵌入 `panel/web/` |
-| `panel/web/` | 面板前端的 `go:embed` 嵌入点：两个网关在根 `/` 下发入口、`/assets/*` 下发产物；仓库只存占位入口，由 `make frontend-embed` 覆盖 |
-| `panel/migrations/` | SQL 迁移，按序号递增，当前到 00097，共 94 个 `.sql`（00073、00091、00092 空号）；00067 删除 21 张无依赖孤儿表，未在任何生产库执行（CI 的一次性库会跑全部迁移）；`RESERVED-TABLES.md` 登记其余 21 张 Go 从不引用的表及锁定原因 |
-| `panel/deploy/` | 安装、迁移、备份、WebDAV、Nginx、systemd、PG18 与 UI 验收脚本 |
+| `panel/cmd/pandora/` | 唯一的可执行入口 |
+| `panel/internal/pkg/`、`app/`、`module/` | 基础设施、子命令与装配、业务模块（见上文「模块与分层」） |
+| `panel/db/migrations/` | goose 迁移，按模块一个文件，嵌入 `pandora migrate`；数量与最大号以目录为准 |
+| `panel/tools/` | `depguardgen`（生成 depguard 规则）、`refactorcheck`（800 行守卫与纯挪动比对） |
+| `panel/tests/` | 端到端脚本（`*_e2e.sh`，对着新二进制跑）与数据层不变量 `invariants.sql` |
+| `panel/frontend/` | 面板前端（React + TypeScript + Vite，管理后台与用户门户双入口），构建后经 `make frontend-embed` 嵌入 `panel/web/` |
+| `panel/web/` | 前端的 `go:embed` 嵌入点：public 与 admin 在根 `/` 下发各自的入口；仓库只存占位入口，由 `make frontend-embed` 覆盖 |
+| `panel/dev/` | 本机开发数据基座（`docker-compose.yml`：PostgreSQL 18 + Redis 8）与环境变量样例 `.env.example` |
+| `panel/deploy/` | 发布包构建、安装与升级、nginx 与 HTTPS 边缘、systemd 单元、备份与恢复、巡检脚本，以及它们的桩测试；运维手册 `RUNBOOK.md` |
+| `proto/`、`nodeapi/` | 节点协议的 protobuf 源文件（buf）与生成的 Go 代码（单独的 Go module，panel 与 pdnd 用 replace 引用） |
 | `pdnd/` | Pandora node（pdnd / pandora-native）：NativeCore 协议入站、认证、路由、用户与流量 |
 | `pdnd/kernel/`、`pdnd/internal/` | NativeCore 自研数据面 |
 | `pdnd/core/` | 内核适配层：xray-core / sing-box 兼容与外部进程 |
-| `pdnd/release/` | Linux amd64/arm64 构建、能力矩阵一致性检查、运行时验收 |
-| `.githooks/`、`.gitleaks.toml` | 提交前密钥扫描：clone 后执行 `git config core.hooksPath .githooks` 启用，需先 `brew install gitleaks`；未装 gitleaks 时拒绝提交 |
-| `.github/workflows/` | `pandora-native.yml`（pdnd 门禁、panel-frontend、nodefabric 契约、双架构发布构建）、`panel-pg18.yml`（panel-unit 全量单测 + PG18 集成门禁）、`panel-smoke.yml`（新前端对真实网关的联调冒烟）、`panel-deploy.yml`（deploy 脚本的桩测试，迁移脚本拿真实迁移目录校验；含两个安装脚本共用的首装对外地址闸门） |
-| `CLAUDE.md`、`.claude/rules/`、`.claude/skills/` | 给 Claude Code 的说明：根 CLAUDE.md 是全局约定与红线，rules 是按路径自动加载的模块约定，skills 是验证流程 |
+| `pdnd/release/` | Linux amd64/arm64 构建、能力矩阵一致性检查、运行时验收、节点模拟器 `nodesim` |
+| `docs/` | 设计稿与专题文档（见文末「相关文档」） |
+| `.githooks/`、`.gitleaks.toml` | 提交前密钥扫描：clone 后执行 `git config core.hooksPath .githooks` 启用，需先装 gitleaks；未装时拒绝提交 |
+| `.github/workflows/` | CI，各管什么见下文「验证状态与门禁」 |
+| `CLAUDE.md`、`.claude/rules/`、`.agents/skills/` | 给 Claude Code 的说明：根 CLAUDE.md 是全局约定与红线，rules 是按路径自动加载的模块约定，skills 是验证与常用流程（`.claude/skills` 是指向 `.agents/skills` 的链接） |
 
 本地快照不含 `.env`、密钥、私钥和编译产物（二进制、`node_modules`、`dist`）。
 
@@ -63,10 +108,10 @@ aegis-public    aegis-admin     aegis-node
 这个仓库是产品：任何人下载后，填上自己的域名就能部署。所以仓库里只有三样东西——
 
 - **代码**；
-- **模板**：只含占位符，例如 nginx 模板里的域名写成 `__AEGIS_DOMAIN__`，安装时从 `.env` 填入；
+- **模板**：只含占位符，例如 nginx 模板里的域名写成 `__PANDORA_DOMAIN__`、后台路径写成 `__PANDORA_ADMIN_PATH__`，安装时从 `/etc/pandora/` 下的配置填入；
 - **自动化测试**：检查代码对不对，和被测代码放在一起，只用虚构数据（测试夹具里的密钥都是新生成的假值），不进入发布物。
 
-每一套部署自己的值都在安装时产生，不进仓库：域名由部署者写进 `.env`，主密钥、JWT 密钥、数据库口令和后台路径前缀由 `install.sh` 首装生成。
+每一套部署自己的值都在安装时产生，不进仓库：对外地址由部署者在首装时给出，主密钥、两把 JWT 密钥、数据库与 Redis 口令、后台路径前缀由安装器（`install.sh`）首装生成。
 
 维护者操作自己服务器的东西——一次性运维脚本、安装日志、真实服务器地址——放在被 git 忽略的 `ops-local/`（按需创建，只存在于维护者本机）；脚本要用的密钥从 1Password 读取，不写进任何文件。提交前的 gitleaks 钩子（见上表 `.githooks/`）会拦下密钥、服务器 IP、后台前缀这类内容，误写进源码也提交不上去。
 
@@ -76,77 +121,80 @@ aegis-public    aegis-admin     aegis-node
 
 用户门户（Portal）：
 
-- 注册、登录、密码策略；登录和改密页有密码显示按钮。
-- Access / Refresh Token 默认有效期 30 天。
-- 套餐浏览、订阅购买、订单与支付结果；订阅节点预览与分发。
-- 工单创建已简化为直接提交；支持查看、回复与撤回。
-- 邀请返利；CNY 佣金转余额使用精确最小货币单位和幂等键。
-- 通知偏好 GET/PUT；事务类通知锁定，失败回滚。
+- 注册、登录、找回密码、密码策略；登录和改密页有密码显示按钮。
+- 15 分钟访问令牌 + refresh cookie，门户会话 30 天；改密时保留当前会话、吊销其余会话。
+- 套餐浏览、订阅购买、续费、换套餐（看报价）、流量包、余额抵扣；订单与支付结果；订阅链接、线路预览与换新链接。
+- 工单创建、查看、回复与撤回。
+- 邀请返利；佣金转余额、提现申请。
+- 站内信、通知偏好；事务类通知锁定。
+- 实时推送：`GET /v1/events`（SSE），数据变了页面自己刷新。
 
 管理后台（Admin）：
 
-- 仪表盘：收入、用户、订单、订阅、节点、流量、工单统计；CNY/USD 收入调整；7/30/90 天趋势；节点 / 用户流量排行。
-- 用户、套餐、订单、优惠券、礼品卡、支付渠道管理。
-- 节点、服务器、路由（全局 / 路由组 / 单节点三个范围）、权限组、节点排序（Node Fabric）。
-- 公告、知识库、主题、插件管理。
-- 工单、审计日志、风控与降级开关。管理后台路径是安装时生成的高熵串。
+- 仪表盘：收入、用户、订单、订阅、节点、流量、工单统计；收入调整；趋势；节点 / 用户流量排行。
+- 用户（含批量建用户、风控与 IP 归属地）、套餐、订单、优惠券、礼品卡、支付渠道、待复核佣金与提现。
+- 服务器与节点（gRPC 接入、一键安装命令、会话状态）、节点池、路由、在线设备与设备数限制、节点入站证书（ACME DNS-01）。
+- 公告、知识库、主题、插件、工单、审计日志、降级开关。
+- 后台权限只分有和没有：是管理员就能做全部后台操作；会话绝对寿命 7 天、空闲 2 小时退出；管理后台路径是安装时生成的高熵串。
 
-礼品卡、知识库、主题、插件、套餐、订单操作均已有真实代码；早期文档里“仅占位”的说法已过时。
+前端在 `panel/frontend`，2026-09-23 起按设计稿从零重写、2026-09-26 完成；换栈时不换前端，接口的 JSON 形状保持不变。发布包构建时把前端嵌入二进制，public 与 admin 的 `/` 分别下发用户门户与管理后台；仓库里 `panel/web/` 只存占位入口。
 
-前端：2026-09-23 起，旧的两套前端（`/` 下的手写单页与 `/app/` 下的 React 候选）已整体删除，管理后台与用户门户按新设计稿在 `panel/frontend` 从零重写，同时让设计稿与后端双向对齐——设计有而后端没有的能力补后端，后端有而设计没有的能力补进前端。
-
-重写已完成：发布包构建时把前端嵌入网关，两个网关的 `/` 分别下发管理后台与用户门户；仓库里 `panel/web/` 只存占位入口，未嵌入真实产物时下发的是占位页。
-
-运维：WebDAV 自动备份、签名清单、保留策略、systemd timer/service 与恢复脚本已存在（`panel/deploy/backup-postgres.sh`、`verify-backup.sh`、`restore-postgres.sh`）。真实远端恢复演练状态见“验证状态与门禁”。
-
-### 数据与迁移
-
-迁移在 `panel/migrations/`，按序号递增。安装与升级都用包内固定版本的 goose 执行，升级前自动全量备份。
-
-### 设计不变量
-
-安全与财务不变量下沉到数据库层，不依赖应用层自觉。`panel/tests/invariants.sql` 是这些规则的可执行验收（`make invariants`）。
-
-| 不变量 | 落点 | 需求编号 |
-|---|---|---|
-| 借贷必须配平 | `DEFERRABLE` 约束触发器，事务提交时校验 | PAY-005 |
-| 账本 / 审计不可改删 | 追加写触发器 + 权限回收 | DATA-003、SEC-012 |
-| 跨租户不可读写 | `FORCE ROW LEVEL SECURITY` + 非 superuser 应用角色 | DATA-002、ARC-006 |
-| 订阅 / 节点状态机 | 合法转换表 + `BEFORE UPDATE` 守卫触发器 | SUB-004、NODE-010 |
-| 重复回调只生效一次 | `(provider_id, provider_event_id)` 唯一约束 | PAY-003 |
-| 申请人不能审批自己 | 跨表校验触发器 | SEC-013 |
-| 各域令牌不可交叉 | 每域独立 HMAC 密钥，域名参与签名 | EXT-001 |
-
-`aegis_app` 是应用专用的数据库角色（`NOSUPERUSER NOBYPASSRLS`）。这一点是必需的：Docker 镜像的 `POSTGRES_USER` 是 superuser，隐含 `BYPASSRLS`，若应用直接用它连库，RLS 就形同虚设。
+运维：加密备份（age）、本地封条与 WebDAV 异地签名清单、保留策略、恢复脚本、巡检告警，都在 `panel/deploy/`（`backup-postgres.sh`、`verify-backup.sh`、`restore-postgres.sh`、`healthcheck.sh`），排障见 [panel/deploy/RUNBOOK.md](panel/deploy/RUNBOOK.md)。
 
 ### 本地开发
 
+本机开发只需要 Go、Node 22.12+ 与 Docker（数据基座用）。命令都在 `panel/` 下执行，`make help` 列出全部目标。
+
+第一次用：
+
 ```bash
 cd panel
-make up                # 起 PostgreSQL 18 + Valkey 8（docker compose，只绑 127.0.0.1）
-make migrate           # 迁移，先在临时库演练再动主库
-make check-migrations  # 只在临时库演练迁移，不动主库
-make invariants        # 数据层不变量测试
-make build             # 编译全部网关到 bin/
-make test              # go test -race
-make frontend-check    # 面板前端：npm ci + lint + typecheck + vitest + 双入口构建
-make frontend-embed    # 构建面板前端并同步进 web/{admin,portal}，由网关在根 / 下发；release-linux 会先跑它
-make e2e               # 端到端链路：注册→下单→支付→账本→订阅→配置
-make verify            # vet + check-migrations + invariants，提交前跑
+cp dev/.env.example dev/.env   # 把各处 CHANGE_ME 换成随机串（URL-safe；连接串里的口令要与对应口令项一致）
+make up                        # 起开发数据基座：PostgreSQL 18 + Redis 8（只绑 127.0.0.1:5433 / 6380）
+make migrate                   # pandora migrate up
 ```
 
-`make help` 列出全部目标。`panel/tests/` 下另有 admin、uniproxy、epay、support 的端到端脚本（加上主链路 `e2e.sh` 共五个）。
+`dev/.env` 被 git 忽略；`make migrate / serve / worker` 先把它导进环境再 `go run ./cmd/pandora`，`deploy/psql.sh` 也读它。开发模式（`PANDORA_ENV=development`）直接以库属主 `pandora_owner` 跑，不建 `pandora_app`。
+
+日常：
+
+```bash
+make serve             # 门户 :9000、后台 :9001、节点 gRPC :9443
+make worker            # 队列与定时任务
+make migrate-status    # 迁移状态
+make down              # 停数据基座（保留数据卷）；make logs 看日志
+make test              # Go 单测；要数据库的 *_pg_test.go 读 PANDORA_TEST_DATABASE_URL，没设就跳过
+make vet
+make invariants        # 数据层不变量 tests/invariants.sql（要先 make up、make migrate）
+make frontend-check    # 前端：npm ci + lint + typecheck + vitest + 双入口构建
+make frontend-embed    # 构建前端并同步进 web/{admin,portal}
+```
+
+建管理员（口令从标准输入读）：
+
+```bash
+read -rsp '密码：' p && echo && printf '%s\n' "$p" | (set -a && . ./dev/.env && set +a && go run ./cmd/pandora admin create --email admin@example.test --password-stdin); unset p
+```
+
+分层规则改了模块目录（加模块、加子包）后，重新生成 depguard 配置并跑 lint：
+
+```bash
+go run ./tools/depguardgen
+go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0 run ./...
+```
+
+本机没有 Docker 时，`make up` 与要数据库的测试都跑不了；跳过不等于通过，以 CI 为准。前端只看页面时可以不起后端：`cd frontend && npm run dev:admin`（或 `dev:portal`）用内置的假后端。
 
 ### 端口
 
-全部只绑 `127.0.0.1`，公网访问由反向代理接入。地址可用 `AEGIS_*_ADDR` 环境变量覆盖，见 `panel/deploy/.env.example`。
-
 | 端口 | 用途 |
 |---|---|
-| 9000 | Public API |
-| 9001 | Admin API |
-| 9003 | Node API |
-| 5433 / 6380 | PostgreSQL / Valkey（docker compose 映射） |
+| 127.0.0.1:9000 | 门户 HTTP（`http.public.addr`）；生产必须绑回环，前面是 nginx |
+| 127.0.0.1:9001 | 后台 HTTP（`http.admin.addr`）；同上 |
+| :9443 | 节点 gRPC（`grpc.node.addr`），对公网开放，面板自己终结 mTLS，不经 nginx |
+| 80 / 443 | nginx：80 跳 443（ACME 验证除外），443 反代门户与后台 |
+| 127.0.0.1:9080 | nginx 的本机回环运维入口（安装与巡检的收尾验证走它） |
+| 5433 / 6380 | 开发数据基座的 PostgreSQL / Redis（`panel/dev/docker-compose.yml`）；生产机上它们是系统服务 |
 
 ## pdnd：NativeCore 节点端
 
@@ -197,127 +245,128 @@ python pdnd/release/check_native_panel_parity.py   # 期望输出 NATIVE_PANEL_P
 - `socks` 入站原生支持 SOCKS4、SOCKS4a、SOCKS5 CONNECT 和 SOCKS5 UDP ASSOCIATE；`http` 入站支持 HTTP CONNECT 与正向 GET。代理认证绑定面板下发的用户 UUID，未授权请求失败关闭。
 - REALITY + XHTTP（TCP/H1/H2/H3）具备 NativeCore 端到端回环；外部客户端互操作状态见“验证状态与门禁”。
 
+
 ## 构建
 
 ```bash
-cd panel && go build ./...
+cd panel && go build ./...          # 或 make build，产物在 panel/bin/pandora
 cd pdnd  && go build -o pdnd .
 ```
 
-Linux x64/ARM64 发布包使用 `pdnd/release/build.sh`，会生成带 SHA-256 的 `manifest.json`。Ubuntu runner 的 race/vet 与双架构构建门禁见 `.github/workflows/pandora-native.yml`。Windows / macOS 交叉构建不能替代真实 Linux race。
+Go 版本按各自 `go.mod` 的 go 指令（现在是 1.26.9）。更新的 Go 1.27 下 pdnd 链接失败（sing-box 用 `go:linkname` 取 x/net 的私有符号），本机工具链更新时加 `GOTOOLCHAIN=go1.26.9`。
+
+pdnd 的 Linux x64/ARM64 发布包用 `pdnd/release/build.sh`，生成带 SHA-256 的 `manifest.json`。Ubuntu runner 的 race/vet 与双架构构建门禁见 `.github/workflows/pandora-native.yml`。Windows / macOS 交叉构建不能替代真实 Linux race。
 
 ## 部署
 
-一条命令装完。首装和升级是同一个入口——脚本自己判断该走哪条路。
+一条命令装完。首装和升级是同一个入口，脚本按 `/etc/pandora/secrets.env` 在不在判断走哪条路。生产机不用 Docker。
 
 ### 1. 打包
 
-在有 Go 1.26+ 与 Node 22.12+/npm 的机器上（不需要是目标机器；`build-release.sh` 先跑 `make frontend-embed` 把前端嵌进网关，没有 npm 即失败）：
+在有 Go、Node 22.12+/npm、GNU tar、curl 的机器上（不需要是目标机器）：
 
 ```bash
-cd panel && ./deploy/build-release.sh /tmp/dist
+cd panel && ./deploy/build-release.sh /path/to/dist
 ```
 
-产出 `/tmp/dist/pandora-panel_<版本>_linux_<架构>/`，约 150 MB，内容是自足的：
+`build-release.sh` 先跑 `make frontend-embed` 把前端嵌进二进制（没有 npm 即失败），再按 `go.mod` 固定的 Go 版本交叉编译。默认同时出 amd64 与 arm64 两份；`PANDORA_VERSION=v1.0.0` 指定版本号，不给就取 `v*` 标签或提交号。每个架构产出一个目录和同名 `.tar.gz`（附 `.sha256` 与 `.manifest.sha256`）：
 
-| 目录 | 内容 |
+| 内容 | 说明 |
 |---|---|
-| `bin/` | 三个网关 + 运维工具 + goose（迁移工具版本随包固定，不跟 `@latest` 漂移） |
-| `deploy/` | 安装、迁移、备份、nginx 渲染脚本与 systemd 单元 |
-| `migrations/` | 全部 SQL 迁移 |
-| `pdnd-dist/` | 节点端二进制 |
-| `SHA256SUMS` | 全量校验和 |
-
-默认同时构建 amd64 与 arm64 两种架构；`PANDORA_VERSION` 只指定版本号，例如 `PANDORA_VERSION=v1.0.0 ./deploy/build-release.sh /tmp/dist`。
+| `bin/pandora` | 面板单二进制 |
+| `pdnd-dist/` | 两个架构的节点端，节点一键安装时由面板下发 |
+| `geoip/ip2region_v4.xdb` | IP 归属地离线库（构建时按固定提交下载并核对 SHA-256） |
+| `deploy/` | 安装与运维脚本、`config.example.yaml`、`secrets.env.example`、nginx 与 PostgreSQL 配置、`configure-app-role.sql`、`RUNBOOK.md`、systemd 单元 |
+| `SHA256SUMS` | 全量校验和；安装器先核对它 |
 
 ### 2. 丢过去装
 
-目标机器需要 Linux + root + docker（含 `docker compose` 插件），以及 `openssl sha256sum systemctl install awk sed curl` 和备份加密用的 `age`。
+目标机器：Debian 12–14 / Ubuntu 22.04–26.04、systemd、root，外加 `openssl curl`。安装器用 apt 装好 PostgreSQL 18（PGDG 源）、发行版的 `redis-server`（要求 6.0 以上）、nginx 与 age。
 
 ```bash
-scp -r /tmp/dist/pandora-panel_*_linux_amd64 root@目标机:/opt/pandora-release/rel
-ssh -t root@目标机 'cd /opt/pandora-release/rel/deploy && ./install.sh'
+scp pandora-panel_<版本>_linux_amd64.tar.gz root@目标机:/root/
+ssh -t root@目标机 'mkdir -p /opt/pandora-release && tar -xzf /root/pandora-panel_<版本>_linux_amd64.tar.gz -C /opt/pandora-release \
+  && bash /opt/pandora-release/pandora-panel_<版本>_linux_amd64/deploy/install.sh'
 ```
 
-发布包装出来的就是生产：首装把 `.env` 定为 `AEGIS_ENV=production`。生产模式下网关要求
-`AEGIS_PUBLIC_BASE_URL` 是 `https://公网域名`，否则拒绝启动，所以首装会先问面板的对外地址
-（形如 `https://panel.example.com`，不能是 IP、不带端口与路径），不合规就在动手前停下。
-无人值守加 `PANDORA_ASSUME_YES=1 PANDORA_PUBLIC_BASE_URL=https://你的域名`。
-升级不改现有 `.env` 的运行模式；不是 production 时只打印提示和切换步骤。
+安装器拒绝从不归 root 或别人可写的目录安装（防止有人塞一份假的进来），所以包要放在 root 独占的目录下；归档里的属主与权限已经按这个要求打好。
 
-节点接入的发布物绑定（节点端两个架构的 SHA-256 与版本）随包生成在 `deploy/release-artifact.env`，
-安装到 `/opt/aegispanel/deploy/`，由 `aegis-node` 加载，每次升级随包覆盖。
+首装会先问面板的对外地址（`https://域名` 或 `https://公网IPv4`，不带端口与路径），不合规就在动手前停下；节点连面板的 gRPC 主机缺省取它的主机部分。无人值守：
 
-安装器拒绝从任何人可写的目录安装（防止有人塞一份假的进来），所以包要放在
-root 独占的目录下——直接拿 `/tmp` 里的构建产物去装会被挡住，那是它在正确工作。
+```bash
+sudo PANDORA_ASSUME_YES=1 PANDORA_PUBLIC_BASE_URL=https://panel.example.test bash <发布目录>/deploy/install.sh
+```
 
-脚本按序做完：前置检查 → 生成配置 → 起 PostgreSQL/Valkey → 迁移 →
-收窄数据库角色（`aegis_app` 非超级用户、不绕过 RLS）→ 装二进制与 systemd 单元 →
-启动 → 健康检查。任一步失败即停，并说清停在哪、怎么恢复。
+其余开关（`PANDORA_GRPC_PUBLIC_HOST`、`PANDORA_ADMIN_EMAIL`、`PANDORA_SKIP_NGINX`、`PANDORA_ACME*`、`PANDORA_SYSTEMD_HARDENING`）见 `install.sh` 头注释。
+
+脚本分八步，任一步失败即停，并说清停在哪、怎么恢复：
+
+1. 装系统依赖，核对 Redis 版本；
+2. 建用户 `pandora` 与目录；
+3. 准备 PostgreSQL 18 集群；
+4. 升级时停服并做升级前全量备份（`/var/backups/pandora/`）；
+5. 首装生成 `/etc/pandora/{config.yaml,secrets.env,deploy.env}` 与备份加密密钥，调 PostgreSQL 参数，给 Redis 写口令与 pandora 配置块（`noeviction`、AOF 每秒刷盘、不做 RDB、禁 FLUSHALL / FLUSHDB）；
+6. 建库角色（`pandora_owner`、`pandora_app`）→ 换程序到 `/opt/pandora`（上一版留作 `bin/pandora.prev`）→ 以属主角色 `pandora migrate up` → 用 `configure-app-role.sql` 收窄 `pandora_app`；迁移失败不起服务；
+7. 装 systemd 单元并启动 `pandora-serve`、`pandora-worker`、`pandora-health.timer`，查两个 `/readyz` 与 worker 心跳，在 ufw / firewalld 上放行 80、443、9443；
+8. 建第一个管理员（终端里现场问邮箱与口令，不回显；无人值守只打印该跑的命令），配 HTTPS 边缘（证书 → 渲染 nginx → 续期 timer，`deploy/edge-tls.sh`）。
 
 三条硬约束：
 
-1. **幂等**。已有 `.env` 绝不覆盖——里面是随机生成的密钥，重写一次就再也解不开
-   信封加密的字段了。
-2. **升级前自动全量备份**，落在 `/var/backups/aegispanel/pre-upgrade-*.dump`。
-3. **不替你造管理员**。装完只提示该跑哪条命令——脚本生成并打印密码，等于把它
-   写进终端回滚日志和 CI 输出里。
+1. **幂等**。三个配置文件首装生成、升级不改：里面是随机生成的密钥，重写一次就再也解不开封存的字段了。
+2. **升级前自动全量备份**；迁移失败时上一版程序与备份路径都会打印出来。
+3. **不替你造管理员**。
 
 ### 3. 装完
 
-三个网关只监听 `127.0.0.1`，公网访问要在前面放反向代理并配 TLS。渲染 nginx 配置：`server_name` 和
-Let's Encrypt 证书路径都从 `.env` 的 `AEGIS_PUBLIC_BASE_URL`（首装时填的域名）生成，
-没填、仍是示例值、不是 HTTPS 域名时脚本拒绝渲染。公网只听 80（跳 443）与 443，另有本机回环运维入口 `127.0.0.1:9080`。
+装完会打印后台地址（路径是安装时生成的高熵串，泄露等同暴露入口），之后用 `sudo /opt/pandora/deploy/admin-url.sh` 重看。
+
+| 是什么 | 在哪 |
+|---|---|
+| 程序与脚本 | `/opt/pandora/bin/pandora`、`/opt/pandora/deploy/` |
+| 配置 | `/etc/pandora/config.yaml`（非秘密，`root:pandora` 0640）；`secrets.env`（服务的连接串、主密钥、JWT 密钥）；`deploy.env`（部署脚本用的超级用户口令、迁移连接串、后台路径前缀，root 0600） |
+| 日志 | `/var/log/pandora/serve.log`、`worker.log`（进程自己滚动）；巡检 `/var/log/pandora/health.log` |
+| 备份 | `/var/backups/pandora/`；备份解密私钥 `/etc/pandora/backup-age.key`，要另存到别处 |
+| systemd | `pandora-serve`、`pandora-worker`；timer：`pandora-backup`、`pandora-health`、`pandora-tls-renew` |
 
 ```bash
-/opt/aegispanel/deploy/render-nginx.sh
+systemctl status pandora-serve pandora-worker           # 状态
+journalctl -u pandora-serve -n 100                      # 启动与崩溃
+tail -f /var/log/pandora/serve.log                      # 运行日志
+sudo /opt/pandora/deploy/psql.sh                        # 进库（超级用户）
+sudo /opt/pandora/deploy/backup-postgres.sh             # 立刻做一份加密备份；每日：systemctl enable --now pandora-backup.timer
+sudo /opt/pandora/deploy/edge-tls.sh status             # 面板 HTTPS 证书
 ```
 
-模板 include 的真实来源 IP 信任表 `/etc/aegispanel/cloudflare-realip.conf` 不存在时，渲染器会写一份
-**不信任任何代理**的默认文件：nginx 只认 TCP 对端，客户端自己填的 `CF-Connecting-IP` / `X-Real-IP`
-一律不采信。站点在 Cloudflare 后面（橙色云）时，渲染后再写入 Cloudflare 的官方网段并重载；
-升级重新渲染不会覆盖这个文件，Cloudflare 调整网段时重跑同一条命令即可：
+`pandora admin …` 要用服务的身份和秘密跑：
 
 ```bash
-/opt/aegispanel/deploy/update-cloudflare-realip.sh && nginx -t && systemctl reload nginx
+sudo systemd-run --pipe --quiet --uid=pandora -p EnvironmentFile=/etc/pandora/secrets.env /opt/pandora/bin/pandora admin list
 ```
 
-管理后台路径是安装时生成的高熵串，装完会打印一次（泄露等同暴露入口）。
+nginx 只反代门户与后台的 HTTP；节点 gRPC（9443）由面板直接对外。模板 include 的真实来源 IP 信任表 `/etc/pandora/cloudflare-realip.conf` 不存在时，渲染器写一份**不信任任何代理**的默认文件：nginx 只认 TCP 对端，客户端自己填的 `CF-Connecting-IP` / `X-Real-IP` 一律不采信。站点在 Cloudflare 后面（橙色云）时，渲染后再写入 Cloudflare 的官方网段并重载；升级重新渲染不会覆盖这个文件，Cloudflare 调整网段时重跑同一条命令即可：
 
 ```bash
-systemctl status aegis-public aegis-admin aegis-node   # 状态
-tail -f /var/log/aegis/public.log                      # 日志
-cd /opt/aegispanel/deploy && ./psql.sh                 # 数据库
+/opt/pandora/deploy/update-cloudflare-realip.sh && nginx -t && systemctl reload nginx
 ```
+
+节点接入：后台建服务器后生成一次性安装命令（`curl -fsSL '<面板地址>/pdnd/install.sh' | sudo bash -s -- --panel '<gRPC 主机>:9443' --ca-sha256 'sha256:<指纹>' --token '<令牌>'`），节点按 CA 指纹钉住面板、用令牌经 gRPC 换来客户端证书。没划进节点池的节点不服务任何人。
+
+排障按症状查 [panel/deploy/RUNBOOK.md](panel/deploy/RUNBOOK.md)。
 
 ### 回归测试
 
-安装链有回归测试，覆盖四种形态：全新安装、升级、老式 `.env`（缺
-`AEGIS_MIGRATION_DATABASE_URL`）、备份单元处于 `failed`。后两种都是生产上
-真实踩过的坑——第一版 install.sh 只验了全新安装就上生产，结果死在停服之后。
-
-```bash
-bash panel/deploy/test-install.sh <发布目录>
-```
-
-**破坏性**：会清空本机的 aegis 容器、数据卷与 `/opt/aegispanel`。只在一次性
-验证机上跑，脚本开头有护栏挡着生产。
-
-### 配置
-
-真实的 `.env` 不进仓库。模板见 `deploy/.env.example`，所有敏感项都是
-`CHANGE_ME`，由 `install.sh` 首装时随机生成。
+安装链的回归测试是 `panel/deploy/` 下的 `*_mock_test.sh`、`*_static_test.sh` 等：把 systemctl、apt、psql 等换成桩，不需要目标机器（个别项要 root 或 PostgreSQL，只在 CI 里跑），随 CI 的 `panel-deploy.yml` 跑。真机上的首装与原地升级用一次性测试机验证。
 
 ### 上线前检查
 
 隐藏的后台路径挡不住公网扫描；来源、速率和端口最终要在云防火墙、安全组和反向代理层收住。
 
-1. 只开放 80/443 或明确需要的代理端口；
-2. 节点控制端口不直接暴露到公网；
+1. 只开放 80、443 与节点 gRPC 端口（9443）；
+2. PostgreSQL、Redis 与面板的 HTTP 端口只绑回环，不对外；
 3. 管理路径再加一层 IP 白名单、二次验证或 VPN 入口；
 4. 注册、登录、订阅、工单接口配置限速与挑战策略；
-5. 管理、节点、数据库日志分开存放，并做 secret scan；
-6. 不把密钥、`.env`、私钥和真实备份地址写进仓库。
+5. 把备份解密私钥另存到机器之外；
+6. 不把密钥、`/etc/pandora/` 下的文件、私钥和真实备份地址写进仓库。
 
 ## 验证状态与门禁
 
@@ -325,62 +374,67 @@ bash panel/deploy/test-install.sh <发布目录>
 
 ### 已有证据（FACT）
 
-**CI 门禁（2026-09-26 在 `main` 上全绿：`36230330995` / `36230331009` / `36230331011`）**。
+**CI 门禁**：各 workflow 管什么、改了什么要等哪个结论、PG 用例不许跳过，一律以 `.agents/skills/verify/SKILL.md` 为准，这里只列名字（数字和 job 清单一改就过时）：
 
-三个 workflow 各有路径过滤：只改仓库根的文档不触发；改 `pdnd/**`、`panel/internal/**`、`panel/web/**`、`panel/frontend/**` 等被过滤目录里的任何文件都会触发对应 workflow。
+- `panel-newstack.yml`：golangci-lint 与 depguard 漂移检查；PostgreSQL 18 + Redis 上的 `go test ./...`（含迁移往返）；新二进制上的 e2e（`panel/tests/*.sh`）与节点通道 e2e（gRPC 节点模拟器冒烟、到期、真 pdnd 删人断线）。
+- `panel-smoke.yml`：前端 schema 对新二进制真实响应的冒烟，加 Playwright 浏览器购买路径。
+- `panel-deploy.yml`：部署脚本的桩测试、Redis 加固块的多版本检查、PG18 上的角色与授权。
+- `pandora-native.yml`：pdnd 门禁、面板前端检查与嵌入、NativeCore 与面板协议对齐、双架构发布构建。
+- `nodeapi.yml`：buf lint、格式、生成无差异、`buf breaking`。
+- `go-vulncheck.yml`：Go 依赖漏洞扫描。
 
-- **Panel PostgreSQL 18 gates**（`panel-pg18.yml`）：
-  - `panel-unit` 跑 panel 全量 build / vet / go test，是 CI 上唯一跑 panel 全部单元测试的地方；
-  - `panel-pg18` 在 runner 的 Docker 里起一次性 PG18，用发布包钉死的 goose 从空库套用全部迁移（到 00095），再跑 15 个包的 PG18 集成用例：234 PASS / 0 SKIP / 0 FAIL。有用例跳过、或一个都没跑，同样判失败。
-- **Pandora NativeCore**（`pandora-native.yml`）：
-  - pdnd：amd64 race / vet、原生 `ubuntu-24.04-arm` 的 ARM64 race、`-tags interop` 外部客户端门（外部 Xray、AnyTLS 客户端，非 race）；
-  - 能力矩阵 smoke、H3 探针、默认构建依赖边界（sing-box / xray 不得进默认构建）、compat 编译、amd64 / arm64 双架构发布构建；
-  - `check_native_panel_parity.py`（NativeCore、Panel Schema、serving allowlist 各 13 个协议一致）与 nodefabric 契约；
-  - `panel-frontend`：新前端 lint / typecheck / vitest（对假后端）/ 双入口构建，再 `make frontend-embed` 用真实产物跑 web、webapp、api 的 Go 契约，占位页没被替换即失败。
-- **Panel frontend smoke**（`panel-smoke.yml`）：起一次性 PG18 + 真实网关，经真网关造数据，用前端页面自己的 zod schema 解析真实响应（读表先于写路径），再在同一栈上跑 `tests/` 下五个 e2e 脚本；任一失败即红。
-- **Panel deploy script contracts**（`panel-deploy.yml`，2026-09-26 新增）：改 `panel/deploy/**` 或 `panel/migrations/**` 即触发，逐个跑不需要数据库与 root 的 deploy 桩测试；两个迁移脚本（migrate.sh、check-migrations.sh）拿真实 `panel/migrations` 校验文件名与编号（严格递增、不重复，允许 00073、00091、00092 历史空号），拒绝真实目录即变红。
+只改仓库根的文档不触发 workflow。
 
-  在此之前 deploy 桩测试 CI 一个都不跑，其中两个对真实目录早已是红的。
-- **仓库守卫**（随 `go test ./...`）：panel 与 pdnd 两道 800 行守卫、表登记簿与权限字典契约。第 5 阶段拆分超长文件时，每步都用 `panel/tools/refactorcheck` 证明是纯挪动。
+- **仓库守卫**（随 `go test ./...`）：panel 与 pdnd 两道 800 行守卫（`panel/tools/refactorcheck/linelimit_test.go`、`pdnd/linelimit_test.go`）；panel 已没有行数豁免，pdnd 只豁免 fork 来的 reality 代码。
 - 2026-09-23 起 workflow 默认 `shell: bash`（`-eo pipefail`）。在此之前 `go test … | tee` 的失败会被 `tee` 吞掉，**那之前的 race 绿灯不能当证据**。
 
-**历史证据**（早期快照，不等于当前 `main`）：
+**历史证据**（早期快照，不等于当前代码）：
 
+- 2026-09-26：旧栈 `main` 上三组 workflow 全绿（run `36230330995` / `36230331009` / `36230331011`）。
 - 2026-08-11：pdnd 在 Linux amd64 隔离目录通过外部 Xray 的 REALITY+XHTTP+H3 互操作测试（`TestExternalXrayVLESSXHTTPH3Interop`），Xray 客户端互操作覆盖 REALITY+XHTTP/H1、H2 与普通 TLS+XHTTP/H3。
 - 2026-08-11：在远端旧快照上完成隔离 WebDAV + PostgreSQL 18 备份恢复演练（HTTPS 上传、签名 manifest、SHA-256、Age 加解密、全新实例恢复），RTO 约 2 秒。
 - 更早：Debian x86_64 完整 race 与 13 协议逐项测试曾通过。
 
 ### 未关闭的门禁（UNKNOWN）
 
-- **新前端没在真实浏览器里对真后端跑过**：CI 只有 vitest 对假后端，以及用页面 schema 解析真网关响应（不渲染页面）。后台只支持 ≥960 宽度，门户各视口都没有浏览器矩阵。
-- **当前 `main` 的真实安装式端到端**：`build-release.sh` 全流程、安装脚本、nginx、TLS、systemd、pandora-native 两阶段接入、真客户端连节点，都没在真机上跑过。部署前注意：没划进节点池的节点不服务任何人（契约 R104）。
-- **迁移 Down 段**：CI 只跑 Up，Down 没在 CI 上执行过。
+- **新安装脚本的真机端到端**：`install.sh` 首装与原地升级、nginx、LE IP 证书、systemd、加密备份、节点一键安装与 gRPC 接入已在全新测试机上跑通（P8，10-14）。没覆盖到的：本机缺 GNU tar，`build-release.sh` 的打包归档那一步没跑；没有用真客户端连节点测数据面。
+- 门户各视口没有浏览器矩阵；后台只支持 ≥960 宽度。
 - REALITY+XHTTP/H3 的独立公网第三方客户端端点验证；amd64 外部 Xray 测试不能替代。
 - 13 个协议的全部传输组合与独立客户端协议矩阵。
 - ARM64：CI 原生门已通过，安装式 ARM64 运行仍 UNKNOWN；交叉编译或静态 ELF 检查不能替代。
-- 跨进程 SSE：租户 / 节点隔离、Redis 重连、重复信号、watcher 生命周期、慢消费者不阻塞。
-- 真实支付、退款、通知外发的独立验收。
-- WebDAV 在当前 `main` 上的真实远端恢复演练。
-- 冷启动与回滚；G0 release intent 尚未授权。
+- 实时推送：Redis 断线重连、慢消费者不阻塞，在真实负载下的表现。
+- 真实支付、通知外发的独立验收。
+- WebDAV 在新栈上的真实远端恢复演练。
+- 换栈后的性能与占用：P8 第一轮测（[docs/perf-test-plan.md](docs/perf-test-plan.md)）。
 
 ## 当前进度
 
-截至 2026-09-26：
+截至 2026-10-13：
 
 | 项 | 状态 |
 |---|---|
-| 仓库基线 | 面板重构第 1–5 阶段于 `d04513e` 合入 `main`，其后只有文档合并 |
-| CI | `main` 上三组全绿（`36230330995` / `36230331009` / `36230331011`）：PG18 集成门禁 234 PASS / 0 SKIP，NativeCore（含 race、原生 ARM64、interop），新前端对真实网关的联调冒烟 |
-| Xboard 功能验收 | PARTIAL，未 RELEASED |
-| 前端 | 旧的手写单页与 React 候选已删除，管理后台与用户门户按设计稿在 `panel/frontend` 重写完成并补齐后端缺口 |
-| 部署 | 这一版尚未在任何真实机器上部署或实测；真机测试待换新机器再做 |
-| 客户端登录（CLIENT-AUTH） | 2026-10-05 移出主线，专心做面板：设备码登录与设备签名的实现代码、发布门禁脚本和 8 个 `pandora-*` 命令在 tag `archive/client-auth`；三份冻结设计稿和 `frozen-client-auth/` 下两个从未应用的迁移也一并存档在该 tag，以后做客户端时从那里取 |
-
-历史上还有一项未收口的工作：2026-08-09 起的 H-001（验证并收口当时未提交的 SSE / Redis / Node / Portal / NativeCore 集成），当时状态为 PARTIAL at INTEGRATED，之后没有它完成的证据；相关门禁仍列在上文“未关闭的门禁”里的跨进程 SSE 一项。
+| 方向 | 后端已换成主流技术栈（见「架构」与 [docs/architecture.md](docs/architecture.md)）；还没有任何生产部署，新栈直接替换，不做数据迁移与兼容期 |
+| 换栈 | P0–P7 完成（2026-10-13）：全部模块在单二进制 `pandora` 上；旧栈代码、旧迁移、旧部署脚本与旧 CI 已删；安装脚本改为单二进制直装；e2e、前端冒烟与 Playwright 购买路径都对新二进制跑。真机安装验证随 P8 |
+| 开发分支 | `feat/panel-redesign`（`main` 停在 2026-09-26 的面板重构合入之后） |
+| CI | 以 `feat/panel-redesign` 上的最新结论为准（见上文门禁清单） |
+| 前端 | `panel/frontend` 不换，接口 JSON 形状保持不变；鉴权改为短期 access 令牌 + refresh cookie |
+| 客户端登录（CLIENT-AUTH） | 2026-10-05 移出主线，专心做面板：设备码登录与设备签名的实现代码、发布门禁脚本和 8 个 `pandora-*` 命令在 tag `archive/client-auth`；三份冻结设计稿和两个从未应用的迁移也一并存档在该 tag，以后做客户端时从那里取 |
 
 ## 路线图
 
-待定。
+换栈分步走，每步的内容与完成标准见 [docs/architecture.md](docs/architecture.md) 第 17 节：
+
+| 步 | 内容 | 状态 |
+|---|---|---|
+| P0 | 设计定稿 | 完成 |
+| P1 | 骨架：`pandora` 单二进制、基础设施包、asynq、goose、lint 与 CI | 完成 |
+| P2 | 鉴权与用户：identity、auth、settings、audit、idempotency；refresh；前端令牌改造 | 完成 |
+| P3 | 交易：目录、订单、支付、账本、优惠、佣金、礼品卡（decimal） | 完成 |
+| P4 | 订阅：订阅模块、订阅链接渲染、到期与配额任务 | 完成 |
+| P5 | 节点：gRPC 双向流 + mTLS，pdnd 客户端改造 | 完成：CI 上 gRPC 节点模拟器冒烟（200 用户 5 节点零 5xx）、到期 e2e、真 pdnd + sing-box 删人断线全绿 |
+| P6 | 其余模块：证书、通知、工单、内容、外观、插件、报表；实时推送 | 完成 |
+| P7 | 切换与删旧：安装脚本改单二进制与 Redis，删除旧代码与旧迁移，重写文档 | 完成（10-13）；真机安装验证 10-14 随 P8 完成 |
+| P8 | 换栈后的性能与占用优化 | 第一轮测试完成（10-14，5000 用户、200 台）：空载固定约单核 4.6%、每台服务器约单核 0.05%；到期突发、真节点名单应用正常；面板重启重连 200 台约 30 秒、订阅拉取 2 核约 50 次/秒饱和；优化项待定（[docs/perf-test-plan.md](docs/perf-test-plan.md)） |
 
 ## 许可证
 
@@ -390,7 +444,12 @@ pdnd 本来就必须如此：默认构建链接 GPL-3.0 的 mieru 与 sagernet/s
 
 fork 进来的第三方代码保留各自的许可证：`pdnd/internal/reality/`（MPL-2.0）与 `pdnd/internal/realityquic/`（MIT），见各目录的 LICENSE，两者都与 GPL-3.0 兼容。
 
+
 ## 相关文档
 
-- [docs/backlog.md](docs/backlog.md)：面板待办清单（重构接口契约删除前核对出的未完成项）；前后端接口以代码为准：后端看 `panel/internal/api` 的路由与处理器，前端看 `panel/frontend/src/core/api.ts` 与各页面的 `api.ts`。
+- [docs/architecture.md](docs/architecture.md)：换栈的设计全文（技术选型、模块与表属主、鉴权与会话、钱、节点通道、任务、配置、分步计划与产品结论）。
+- [docs/node-certificates.md](docs/node-certificates.md)：节点入站证书（file 模式与面板集中签发）。
+- [docs/perf-test-plan.md](docs/perf-test-plan.md)：P8 第一轮性能测试范围。
+- [docs/backlog.md](docs/backlog.md)：面板待办清单；前后端接口以代码为准：后端看各模块 `panel/internal/module/*/handler`，前端看 `panel/frontend/src/core/api.ts` 与各页面的 `api.ts`。
 - [pdnd/release/README.md](pdnd/release/README.md)：NativeCore Linux 发布与运行时验收。
+- [panel/deploy/RUNBOOK.md](panel/deploy/RUNBOOK.md)：已装面板的排障手册（按症状分章，巡检告警逐条有对应章节）。

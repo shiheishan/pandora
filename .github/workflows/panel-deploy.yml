@@ -1,23 +1,29 @@
 name: Panel deploy script contracts
 
-# deploy/ 下的桩测试原本 CI 一个都不跑：迁移脚本要求编号连续、真实目录却有历史空号，
-# 按发布包安装会卡在迁移，而 CI 的迁移直接调 goose，一直没人发现。这里只跑不需要
-# 数据库、不需要 root 的桩测试，几秒跑完，所以单独成一个 workflow、只按 deploy 与
-# migrations 的路径触发，不拖 PG18 门禁和前端构建。
-# 两个迁移脚本（migrate.sh、check-migrations.sh）的桩测试会拿仓库里真实的
-# panel/migrations 跑校验：脚本拒绝真实目录即变红。
+# panel/deploy 下安装、升级、打包脚本（新栈：单二进制 pandora + PG18 + Redis + systemd + nginx）的门禁：
+#   1. 不需要数据库、不需要 root 的桩测试，加上新栈文件的 bash -n 与旧名检查；
+#   2. install.sh 写进 Redis 配置的 pandora 块，在支持的 Redis 版本上真起一遍（要 Docker）；
+#   3. 真 PG18 上走一遍 bootstrap.sh roles → pandora migrate up（pandora_owner）→ bootstrap.sh grants，
+#      再以 pandora_app 跑 production 的 pandora admin 与 serve，核运行角色权限；
+#   4. 要 Linux root 的备份链桩测试：真跑备份 → 校验 → 恢复一整圈。
 
 on:
   workflow_dispatch:
   push:
     paths:
       - "panel/deploy/**"
-      - "panel/migrations/**"
+      - "panel/db/migrations/**"
+      # 备份链的桩测试用真的 pandora backup：备份工具的 Go 代码变了也要跑
+      - "panel/internal/pkg/dbbackup/**"
+      - "panel/internal/app/backup.go"
       - ".github/workflows/panel-deploy.yml"
   pull_request:
     paths:
       - "panel/deploy/**"
-      - "panel/migrations/**"
+      - "panel/db/migrations/**"
+      # 备份链的桩测试用真的 pandora backup：备份工具的 Go 代码变了也要跑
+      - "panel/internal/pkg/dbbackup/**"
+      - "panel/internal/app/backup.go"
       - ".github/workflows/panel-deploy.yml"
 
 permissions:
@@ -37,20 +43,57 @@ jobs:
         working-directory: panel/deploy
     steps:
       - uses: actions/checkout@v4
+      - name: New-stack deploy files parse and carry no legacy names
+        run: |
+          scripts=(
+            install.sh install-lib.sh bootstrap.sh platform.sh build-release.sh render-nginx.sh
+            public-base-url.sh admin-url.sh
+            backup-postgres.sh verify-backup.sh restore-postgres.sh healthcheck.sh edge-tls.sh
+            update-cloudflare-realip.sh pg-revive.sh psql.sh
+          )
+          tests=(
+            install_mock_test.sh render-nginx_test.sh build-release_toolchain_mock_test.sh
+            public-base-url_mock_test.sh redis-hardening_versions_docker_test.sh db-roles_pg18_test.sh
+            backup-scripts_mock_test.sh backup-provenance_mock_test.sh edge-tls_mock_test.sh
+            cloudflare-realip_mock_test.sh healthcheck_mock_test.sh healthcheck-install_static_test.sh
+            tls-renew_static_test.sh logrotate-pandora_static_test.sh webdav-backup-hardening_mock_test.sh
+            pg-revive_mock_test.sh
+          )
+          data=(
+            nginx-pandora.conf configure-app-role.sql postgresql-pandora.conf release-artifact.env.example
+            config.example.yaml secrets.env.example
+            systemd/pandora-serve.service systemd/pandora-worker.service
+            systemd/pandora-backup.service systemd/pandora-backup.timer
+            systemd/pandora-health.service systemd/pandora-health.timer
+            systemd/pandora-tls-renew.service systemd/pandora-tls-renew.timer
+            logrotate-pandora backup-webdav.example.json RUNBOOK.md
+          )
+          for s in "${scripts[@]}" "${tests[@]}"; do bash -n "$s"; done
+          # 测试脚本不在旧名检查里：它们要把旧名当被检查的字符串写出来
+          bad="$(grep -nHiE 'aegis|AEGIS_|VALKEY_|valkey' "${scripts[@]}" "${data[@]}" || true)"
+          if [ -n "$bad" ]; then
+            printf '%s\n' "$bad" >&2
+            echo "new-stack deploy files must not mention legacy names" >&2
+            exit 1
+          fi
       # 清单逐个点名：新加一个与本 workflow 触发面相关、无需 root 的桩测试就补进来。
       # 每个都跑完再判，失败的名字集中列出
       - name: Run deploy mock tests
         run: |
           tests=(
-            migrate_fail_closed_mock_test.sh
-            migrate-layout_mock_test.sh
-            check-migrations_mock_test.sh
             render-nginx_test.sh
-            cloudflare-realip_mock_test.sh
-            release-artifact-binding_mock_test.sh
-            logrotate-aegis_static_test.sh
             public-base-url_mock_test.sh
-            migrate-to-new-host_mock_test.sh
+            build-release_toolchain_mock_test.sh
+            install_mock_test.sh
+            healthcheck_mock_test.sh
+            backup-scripts_mock_test.sh
+            edge-tls_mock_test.sh
+            cloudflare-realip_mock_test.sh
+            healthcheck-install_static_test.sh
+            tls-renew_static_test.sh
+            logrotate-pandora_static_test.sh
+            webdav-backup-hardening_mock_test.sh
+            pg-revive_mock_test.sh
           )
           failed=()
           for t in "${tests[@]}"; do
@@ -63,3 +106,91 @@ jobs:
             exit 1
           fi
           echo "deploy mock tests: ${#tests[@]} passed"
+
+  # install.sh 写进 Redis 配置的 pandora 块，在 Redis 6.0（Ubuntu 22.04）、7.0（Debian 12、Ubuntu 24.04）、
+  # 8.0（Debian 13）的官方镜像里真起一遍（要 Docker）。只在 GitHub 上跑：检查机没有 Docker，明说跳过
+  deploy-redis-versions:
+    name: Redis hardening block on supported versions
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: panel/deploy
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start each supported Redis with the pandora block
+        run: |
+          t=redis-hardening_versions_docker_test.sh
+          if [ "${GITHUB_ACTIONS:-}" != true ]; then
+            echo "不在 GitHub Actions 上，跳过 $t（GitHub 上必跑）"
+            exit 0
+          fi
+          bash "$t"
+
+  # 真 PG18（apt.postgresql.org 的 postgresql-18，与 install.sh 装的同源）上走一遍安装器的数据库三步，
+  # 再以运行角色起 production 的 pandora：证明迁移不需要超级用户、configure-app-role.sql 收敛后
+  # 运行角色够用且不多给。要 root（runuser -u postgres 的 peer 认证）与 apt，只在 GitHub 上跑。
+  deploy-db-roles-pg18:
+    name: Roles, migrate as owner, grants, serve as pandora_app (PG18)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: panel/go.mod
+          cache-dependency-path: panel/go.sum
+      - name: Build pandora
+        working-directory: panel
+        run: go build -mod=readonly -o "$RUNNER_TEMP/pandora" ./cmd/pandora
+      - name: Install PostgreSQL 18 from apt.postgresql.org
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postgresql-18 postgresql-client-18
+          # runner 的 postgresql-common 不自动建 main 集群（自带的 16/main 是镜像预建的），这里显式建
+          if ! pg_lsclusters --no-header | awk '$1 == 18 && $2 == "main" { f = 1 } END { exit !f }'; then
+            sudo pg_createcluster 18 main
+          fi
+          sudo pg_ctlcluster 18 main start
+          pg_lsclusters
+      - name: Database bootstrap, migrate, grants, runtime checks
+        run: bash panel/deploy/db-roles_pg18_test.sh
+
+  # 备份链的桩测试要 Linux root（deploy.env 与可执行文件按属主和 /proc/self/fd 绑定）。GitHub runner
+  # 有免密 sudo，在这里必跑；不在 GitHub Actions 上明说跳过，以 GitHub 的结论为准。
+  deploy-root-mock-tests:
+    name: Backup chain mock tests (root)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: panel/deploy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: panel/go.mod
+          cache-dependency-path: panel/go.sum
+      - name: Run the backup round trip and provenance checks (local seal, WebDAV upload, signed manifest) as root
+        # 真跑 backup-postgres.sh → verify-backup.sh → restore-postgres.sh，封条与核验用真的 pandora backup，
+        # WebDAV 上传的参数经包装脚本核对；三个脚本把 deploy.env 与可执行文件按属主和 /proc/self/fd 绑定，要 Linux root
+        run: |
+          t=backup-provenance_mock_test.sh
+          if [ "${GITHUB_ACTIONS:-}" != true ]; then
+            echo "不在 GitHub Actions 上，跳过 $t（GitHub 上必跑）"
+            exit 0
+          fi
+          tool="$RUNNER_TEMP/pandora"
+          (cd .. && CGO_ENABLED=0 go build -trimpath -o "$tool" ./cmd/pandora)
+          if [ "$(id -u)" -eq 0 ]; then
+            out="$(PANDORA_TEST_BACKUP_TOOL="$tool" bash "$t")"
+          elif sudo -n true 2>/dev/null; then
+            out="$(sudo -n env "PATH=$PATH" PANDORA_TEST_BACKUP_TOOL="$tool" bash "$t")"
+          else
+            echo "GitHub runner 上没有免密 sudo，无法跑 $t" >&2
+            exit 1
+          fi
+          printf '%s\n' "$out"
+          # 以 root 跑必须真跑到运行段，不许落回静态检查
+          if grep -q 'runtime=NOT_RUN' <<<"$out"; then echo "$t did not run its runtime part" >&2; exit 1; fi

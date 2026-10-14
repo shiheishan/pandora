@@ -23,7 +23,12 @@ interoperability, and Linux race evidence for each wire package. ShadowTLS is
 validated through Pandora's adapter and a real v3 loopback with a decoy TLS
 server; strict TLS 1.3-only mode remains an explicit compatibility option.
 
-`mkcp/` and `udpmask/` are different from the forks above.
+`mkcp/`, `udpmask/` and `dgram/` are different from the forks above.
+
+`dgram/` is a small Pandora helper shared by the Hysteria2 and TUIC forks: it
+asks quic-go for the connection's real DATAGRAM limit (minus room for an ACK
+frame in the same packet) so UDP messages are fragmented only when they really
+do not fit, instead of at the upstream fixed 1197 bytes.
 
 They carry no upstream LICENSE file and their source does not claim to be copied
 from any upstream file: they are in-repository implementations written against

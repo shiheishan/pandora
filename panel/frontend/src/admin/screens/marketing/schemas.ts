@@ -9,7 +9,7 @@ const ids = z
   .transform((v) => v ?? [])
 
 // ---------------------------------------------------------------------------
-// 套餐目录子集（GET v1/plans，catalog.read）：只收营销页要的名字与价格
+// 套餐目录子集（GET v1/plans）：只收营销页要的名字与价格
 // ---------------------------------------------------------------------------
 export const planSchema = z.object({
   id: uuid,
@@ -241,3 +241,20 @@ export type Withdrawal = z.output<typeof withdrawalSchema>
 
 export const reviewResponse = z.object({ status: z.enum(['approved', 'rejected']) })
 export const paidResponse = z.object({ status: z.literal('paid') })
+
+export const reviewEntrySchema = z.object({
+  id: uuid,
+  order_no: z.string(),
+  referrer_email: z.string(),
+  referee_email: z.string(),
+  amount: z.number().int(),
+  currency: z.string(),
+  review_reason: z.string(),
+  /** 由原因归类：underfunded（解冻时待结科目余额不足）的条目通过后仍会解冻失败 */
+  review_source: z.enum(['same_source', 'source_check', 'underfunded', 'other']),
+  created_at: iso,
+  frozen_until: iso,
+})
+export type ReviewEntry = z.output<typeof reviewEntrySchema>
+export const reviewEntriesResponse = z.object({ entries: z.array(reviewEntrySchema), next_cursor: z.string() })
+export const entryReviewResponse = z.object({ status: z.enum(['pending', 'voided']) })

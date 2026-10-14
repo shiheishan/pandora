@@ -17,6 +17,17 @@ runtime="$(sed -n 's/^[[:space:]]*"runtime"[[:space:]]*:[[:space:]]*"\([^"]*\)".
 [[ "${runtime}" == "pandora-native" ]] || { echo "manifest runtime must be pandora-native" >&2; exit 1; }
 native_only="$(sed -n 's/^[[:space:]]*"native_only"[[:space:]]*:[[:space:]]*\(true\|false\).*/\1/p' "${MANIFEST}")"
 [[ "${native_only}" == "true" ]] || { echo "manifest native_only must be true" >&2; exit 1; }
+# 构建用的 Go 工具链：manifest 里的 go_toolchain 必须与 "go version" 记的一致，
+# 并等于本仓库 pdnd/go.mod 的 go 指令（找得到 go.mod 时）。本脚本没有 go.mod 可对照时只做前一项。
+go_toolchain="$(sed -n 's/^[[:space:]]*"go_toolchain"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${MANIFEST}")"
+go_version="$(sed -n 's/^[[:space:]]*"go"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${MANIFEST}")"
+[[ -n "${go_toolchain}" ]] || { echo "manifest go_toolchain missing" >&2; exit 1; }
+[[ "${go_version}" == "go version ${go_toolchain} "* ]] || { echo "manifest go (${go_version}) does not match go_toolchain (${go_toolchain})" >&2; exit 1; }
+GO_MOD="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/go.mod"
+if [[ -f "${GO_MOD}" ]]; then
+  want="go$(tr -d '\r' < "${GO_MOD}" | awk '/^go[[:space:]]+[0-9]/ { print $2; exit }')"
+  [[ "${go_toolchain}" == "${want}" ]] || { echo "go toolchain mismatch: manifest=${go_toolchain} go.mod=${want}" >&2; exit 1; }
+fi
 if [[ -n "${EXPECTED_VERSION}" && "${version}" != "${EXPECTED_VERSION}" ]]; then
   echo "version mismatch: manifest=${version} expected=${EXPECTED_VERSION}" >&2
   exit 1

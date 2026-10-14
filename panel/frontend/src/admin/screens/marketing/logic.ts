@@ -1,5 +1,5 @@
 import { formatMoney } from '../../../core/format'
-import type { Batch, CommissionOverview, Coupon, GiftTemplate, Plan, Rewards, Usage } from './schemas'
+import type { Batch, CommissionOverview, Coupon, GiftTemplate, Plan, ReviewEntry, Rewards, Usage } from './schemas'
 
 // ---------------------------------------------------------------------------
 // 输入换算：界面填元与百分比，接口收分与万分比。只认最多两位小数，
@@ -84,7 +84,7 @@ export function usage(c: Pick<Coupon, 'redeemed_count' | 'max_redemptions'>): { 
 
 export const validUntilLabel = (iso: string | null) => (iso ? formatDate(iso) : '长期')
 
-/** 适用套餐：空 →「全部套餐」；套餐目录不可读（无 catalog.read 或加载失败）时退回「N 个套餐」 */
+/** 适用套餐：空 →「全部套餐」；套餐目录没取到（加载中或失败）时退回「N 个套餐」 */
 export function planScopeLabel(ids: readonly string[], plans: readonly Plan[] | undefined): string {
   if (ids.length === 0) return '全部套餐'
   if (!plans) return `${ids.length} 个套餐`
@@ -422,6 +422,30 @@ export function buildGenerateRequest(f: GenerateForm): Built<{ count: number; pr
 // ---------------------------------------------------------------------------
 // 佣金与提现
 // ---------------------------------------------------------------------------
+
+/** 作废原因：去掉首尾空白后按字符数 5～500；合格返回 null，否则返回提示 */
+export function voidReasonError(reason: string): string | null {
+  const trimmed = reason.trim()
+  const len = [...trimmed].length
+  if (len < 5) return '作废必须填写原因，至少 5 个字'
+  if (len > 500) return '原因最多 500 个字'
+  return null
+}
+
+/** 通过原因可不填；填了最多 500 字。合格返回 null，否则返回提示 */
+export function approveReasonError(reason: string): string | null {
+  return [...reason.trim()].length > 500 ? '原因最多 500 个字' : null
+}
+
+/**
+ * 冻结期说明：未到期「冻结至 MM-DD HH:mm」；已到期「冻结期已过，通过后下一轮自动解冻」。
+ * 解冻时待结科目余额不足转来的条目（underfunded）通过后解冻仍会失败、作废也冲不回，只能先核对账本，不说「会自动解冻」。
+ */
+export function freezeLabel(entry: Pick<ReviewEntry, 'frozen_until' | 'review_source'>, now: Date): string {
+  if (entry.review_source === 'underfunded') return '待结科目余额不足：通过后解冻仍会失败，作废也冲不回，请先核对账本'
+  if (new Date(entry.frozen_until).getTime() <= now.getTime()) return '冻结期已过，通过后下一轮自动解冻'
+  return `冻结至 ${formatDateTime(entry.frozen_until)}`
+}
 
 /** 状态映射（契约 GET v1/withdrawals）；打款只对 approved 开放（processing 由后端拒绝标记） */
 export function withdrawalState(status: string): { label: string; tone: Tone; canReview: boolean; canPay: boolean } {

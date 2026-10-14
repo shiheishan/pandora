@@ -1,7 +1,6 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback } from 'react'
 import { useApi } from '../../../shell/runtime'
-import { useCan } from '../../actions'
 import {
   batchesResponse,
   codesResponse,
@@ -10,25 +9,23 @@ import {
   overviewSchema,
   plansResponse,
   redemptionsResponse,
+  reviewEntriesResponse,
   templatesResponse,
   usagesResponse,
   withdrawalsResponse,
 } from './schemas'
 
 // 写操作共用的三件在 admin/actions.ts，这里转出，模块内各文件照旧从 ./queries 取
-export { useCan, useFailure, useIntentKey } from '../../actions'
+export { useFailure, useIntentKey } from '../../actions'
 
 export const MK = ['admin', 'marketing'] as const
 
-
-/** 套餐目录：券的适用套餐、套餐卡的套餐与价格；没有 catalog.read 时不请求，页面退回「N 个套餐」 */
+/** 套餐目录：券的适用套餐、套餐卡的套餐与价格 */
 export function usePlanCatalog() {
   const api = useApi()
-  const can = useCan()
   return useQuery({
     queryKey: ['admin', 'plans', 'catalog-for-marketing'],
     queryFn: ({ signal }) => api.get('v1/plans', plansResponse, { signal }).then((r) => r.plans),
-    enabled: can('catalog.read'),
     meta: { topics: ['plans.changed'] },
     staleTime: 60_000,
   })
@@ -108,6 +105,19 @@ export function useWithdrawals() {
   return useQuery({
     queryKey: [...MK, 'withdrawals'],
     queryFn: ({ signal }) => api.get('v1/withdrawals', withdrawalsResponse, { signal }).then((r) => r.withdrawals),
+  })
+}
+
+export const REVIEW_PAGE = 20
+export function useReviewEntries() {
+  const api = useApi()
+  return useInfiniteQuery({
+    queryKey: [...MK, 'review-entries'],
+    queryFn: ({ signal, pageParam }) =>
+      api.get('v1/commission/entries', reviewEntriesResponse, { signal, query: { review: 'required', limit: REVIEW_PAGE, cursor: pageParam || undefined } }),
+    initialPageParam: '',
+    getNextPageParam: (last) => last.next_cursor || undefined,
+    meta: { topics: ['orders.changed'] },
   })
 }
 

@@ -3,8 +3,9 @@ package kernel
 import (
 	"bufio"
 	"context"
-	"crypto/sha256"
+	"crypto/cipher"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -13,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	M "github.com/sagernet/sing/common/metadata"
@@ -34,6 +36,12 @@ const (
 	vmessSecZero   byte = 6
 	vmessOptChunk  byte = 1
 	vmessOptMask   byte = 4
+	// vmessOptPadding 是 Xray 的 RequestOptionGlobalPadding：aes / chacha / auto
+	// 默认开启，每块追加随机填充，必须与 ChunkMasking 同开。
+	vmessOptPadding byte = 8
+	// vmessOptAuthLength 是 Xray 的实验选项 AuthenticatedLength（长度字段也加密），
+	// 默认不开；不支持就明确拒绝，免得按普通长度解出一串乱码。
+	vmessOptAuthLength byte = 0x10
 )
 
 var vmessKDFRoot = []byte("VMess AEAD KDF")
@@ -46,28 +54,34 @@ var vmessAddressSerializer = M.NewSerializer(
 )
 
 type vmessAdapter struct {
-	spec          InboundSpec
-	mu            sync.RWMutex
-	users         map[string]vmessUser
-	traffic       map[int64]core.UserTraffic
-	online        map[int64]map[string]struct{}
-	listener      net.Listener
-	packet        net.PacketConn
-	httpServer    *http.Server
-	h3Server      interface{ Close() error }
-	xhttpConfig   XHTTPConfig
-	tlsConfig     *tls.Config
-	plane         DataPlane
-	connErr       connErrorReporter
-	limiters      core.SpeedLimiters
-	ctx           context.Context
-	cancel        context.CancelFunc
-	closed        bool
-	lastErr       error
-	active        map[net.Conn]struct{}
-	replay        map[string]time.Time
+	spec  InboundSpec
+	mu    sync.RWMutex
+	users map[string]vmessUser
+	// authCandidates 是认证用的只读快照（vmess_auth.go），每次用户变更后重建；
+	// 握手直接读它，不加锁、不复制、不再逐用户重做 KDF 与 aes.NewCipher。
+	authCandidates atomic.Pointer[[]vmessUserCandidate]
+	sessions       userSessions
+	online         onlineDevices
+	listener       net.Listener
+	packet         net.PacketConn
+	httpServer     *http.Server
+	h3Server       interface{ Close() error }
+	xhttpConfig    XHTTPConfig
+	tlsConfig      *tls.Config
+	plane          DataPlane
+	connErr        connErrorReporter
+	limiters       core.SpeedLimiters
+	ctx            context.Context
+	cancel         context.CancelFunc
+	closed         bool
+	lastErr        error
+	active         map[net.Conn]struct{}
+	replay         *replayFilter
+	replayOnce     sync.Once
+	// headerTimeout 只给测试缩短读请求头的截止时间，零值为 10 秒。
+	headerTimeout time.Duration
 	xhttpBroker   *XHTTPPacketBroker
-	xhttpSessions map[string]*vmessXHTTPPacketSession
+	xhttpSessions map[string]*xhttpSession
 	wg            sync.WaitGroup
 }
 
@@ -77,10 +91,12 @@ type vmessUser struct {
 	// SpeedLimit 之前没存，面板下发的限速到这里就丢了。
 	SpeedLimit int
 	key        [16]byte
+	// authBlock 是 AuthID 的 AES 解密块，加用户时算好（KDF + aes.NewCipher）。
+	authBlock cipher.Block
 }
 
 func newVMessAdapter(spec InboundSpec) (Adapter, error) {
-	return &vmessAdapter{spec: spec, users: make(map[string]vmessUser), traffic: make(map[int64]core.UserTraffic), online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{}), xhttpSessions: make(map[string]*vmessXHTTPPacketSession)}, nil
+	return &vmessAdapter{spec: spec, users: make(map[string]vmessUser), active: make(map[net.Conn]struct{}), xhttpSessions: make(map[string]*xhttpSession)}, nil
 }
 
 func (a *vmessAdapter) Protocol() string { return "vmess" }
@@ -140,7 +156,7 @@ func (a *vmessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 		a.active = make(map[net.Conn]struct{})
 	}
 	if a.xhttpSessions == nil {
-		a.xhttpSessions = make(map[string]*vmessXHTTPPacketSession)
+		a.xhttpSessions = make(map[string]*xhttpSession)
 	}
 	var tlsErr error
 	a.tlsConfig, _, tlsErr = loadInboundTLSConfig(spec.Config.Raw)
@@ -197,8 +213,8 @@ func (a *vmessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 		a.mu.Lock()
 		a.packet = packet
 		a.xhttpConfig = xhttpConfig
-		if isXHTTPPacketMode(xhttpConfig.Mode) {
-			a.xhttpBroker, parseErr = NewXHTTPPacketBroker(xhttpConfig.MaxBufferedPosts, 5*time.Minute)
+		if xhttpUsesSessions(xhttpConfig.Mode) {
+			a.xhttpBroker, parseErr = newXHTTPSessionBroker(xhttpConfig)
 			if parseErr != nil {
 				a.mu.Unlock()
 				_ = packet.Close()
@@ -208,7 +224,7 @@ func (a *vmessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 		}
 		a.mu.Unlock()
 		handler := XHTTPServer{Config: xhttpConfig, Handler: func(ctx context.Context, session XHTTPSession) error {
-			if isXHTTPPacketMode(a.xhttpConfig.Mode) {
+			if session.Kind != XHTTPRequestDuplex {
 				return a.xhttpPacketHandler(ctx, session)
 			}
 			conn := newXHTTPDuplexConn(ctx, session.Body, session.Writer)
@@ -241,8 +257,8 @@ func (a *vmessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 		}
 		a.mu.Lock()
 		a.xhttpConfig = xhttpConfig
-		if isXHTTPPacketMode(xhttpConfig.Mode) {
-			a.xhttpBroker, parseErr = NewXHTTPPacketBroker(xhttpConfig.MaxBufferedPosts, 5*time.Minute)
+		if xhttpUsesSessions(xhttpConfig.Mode) {
+			a.xhttpBroker, parseErr = newXHTTPSessionBroker(xhttpConfig)
 			if parseErr != nil {
 				a.mu.Unlock()
 				_ = ln.Close()
@@ -252,7 +268,7 @@ func (a *vmessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 		}
 		a.mu.Unlock()
 		handler := XHTTPServer{Config: xhttpConfig, Handler: func(ctx context.Context, session XHTTPSession) error {
-			if isXHTTPPacketMode(a.xhttpConfig.Mode) {
+			if session.Kind != XHTTPRequestDuplex {
 				return a.xhttpPacketHandler(ctx, session)
 			}
 			conn := newXHTTPDuplexConn(ctx, session.Body, session.Writer)
@@ -295,11 +311,11 @@ func (a *vmessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 			a.active[conn] = struct{}{}
 			a.wg.Add(1)
 			a.mu.Unlock()
-			go func() {
+			goGuarded(conn, func() {
 				defer a.wg.Done()
 				defer a.removeActive(conn)
 				_ = a.handleConn(connCtx, conn)
-			}()
+			})
 		}
 		if strings.EqualFold(network, "ws") {
 			server, serveErr = serveNativeWebSocket(ln, path, host, func() context.Context { return a.ctx }, onConn)
@@ -389,7 +405,7 @@ func (a *vmessAdapter) serveAccepted(conn net.Conn) {
 	a.wg.Add(1)
 	ctx, tlsConfig := a.ctx, a.tlsConfig
 	a.mu.Unlock()
-	go func() {
+	goGuarded(conn, func() {
 		defer a.wg.Done()
 		defer a.removeActive(conn)
 		session := conn
@@ -409,7 +425,7 @@ func (a *vmessAdapter) serveAccepted(conn net.Conn) {
 			}
 			a.mu.Unlock()
 		}
-	}()
+	})
 }
 
 // handleConn 是 TCP / mKCP / WS / HTTP Upgrade / gRPC / XHTTP 共同的会话入口，
@@ -417,33 +433,48 @@ func (a *vmessAdapter) serveAccepted(conn net.Conn) {
 func (a *vmessAdapter) handleConn(ctx context.Context, conn net.Conn) error {
 	err := a.serveConn(ctx, conn)
 	a.connErr.conn(StageSession, conn, err)
+	finishSession(conn, err)
 	return err
 }
 
+// serveConn 不关 conn：由 handleConn 上报之后经 finishSession 收尾。
 func (a *vmessAdapter) serveConn(ctx context.Context, conn net.Conn) error {
-	defer conn.Close()
-	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-	reader := bufio.NewReaderSize(conn, 64*1024)
+	epoch := a.sessions.epoch()
+	_ = conn.SetReadDeadline(time.Now().Add(requestHeaderTimeout(a.headerTimeout)))
+	reader := bufio.NewReaderSize(conn, ssHeaderReadBuffer)
 	user, destination, body, security, err := a.readRequest(reader)
 	if err != nil {
-		return fmt.Errorf("vmess request: %w", err)
+		// authID 对不上、头部解不开、请求头没读全就撞上截止：上报之后一直读到
+		// 对端关再关（读错误本身立即返回，读空不会多等）。已认证客户端请求了
+		// 不支持的选项则立刻断开。
+		err = fmt.Errorf("vmess request: %w", err)
+		if !errors.Is(err, errVMessUnsupportedRequest) {
+			return drainAfterReport{err}
+		}
+		return err
 	}
 	if security != vmessSecNone && security != vmessSecZero && security != vmessSecAES128 && security != vmessSecChaCha {
 		return fmt.Errorf("vmess security %d is not enabled in native slice", security)
 	}
-	_ = conn.SetReadDeadline(time.Time{})
-	ip := remoteIP(conn.RemoteAddr())
-	if !a.enterDevice(user, ip) {
-		return deviceLimitError("vmess")
-	}
-	defer a.leaveDevice(user, ip)
 	bodyState, ok := body.(*vmessBodyReader)
 	if !ok {
 		return fmt.Errorf("vmess internal body state missing")
 	}
+	// 重放检查放在清读截止时间之前：重放的请求头与认证失败一样读到对端关。
 	if !a.acceptAuthID(bodyState.authID) {
-		return fmt.Errorf("vmess replayed request")
+		return drainAfterReport{markConnError(connErrAuth, fmt.Errorf("vmess replayed request"))}
 	}
+	_ = conn.SetReadDeadline(time.Time{})
+	sess := a.sessions.open(user, epoch, conn)
+	if sess == nil {
+		return errSessionRevoked
+	}
+	defer sess.close()
+	ip := remoteIP(conn.RemoteAddr())
+	if !a.online.enter(user, ip) {
+		return deviceLimitError("vmess")
+	}
+	defer a.online.leave(user, ip)
 	if bodyState.command == vmessUDP {
 		return a.handleUDP(ctx, conn, user, destination, bodyState, security)
 	}
@@ -463,31 +494,14 @@ func (a *vmessAdapter) serveConn(ctx context.Context, conn net.Conn) error {
 		return err
 	}
 	defer upstream.Close()
-	if err := vmessWriteResponse(conn, bodyState.key, bodyState.nonce, 0, bodyState.option); err != nil {
+	if err := bodyState.writeResponse(conn); err != nil {
 		return err
 	}
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		n, _ := core.SpeedLimitedCopy(upstream, body, a.limiters.For(user))
-		a.addTraffic(user, n, 0)
-		if cw, ok := upstream.(interface{ CloseWrite() error }); ok {
-			_ = cw.CloseWrite()
-		}
-		wg.Done()
-	}()
-	responseWriter := io.Writer(conn)
-	if security == vmessSecAES128 || security == vmessSecChaCha {
-		responseKeyHash := sha256.Sum256(bodyState.key)
-		responseNonceHash := sha256.Sum256(bodyState.nonce)
-		responseWriter = newVMessAEADWriter(conn, vmessBodyAEAD(security, responseKeyHash[:16]), responseNonceHash[:16], bodyState.option)
-	}
-	go func() {
-		n, _ := core.SpeedLimitedCopy(responseWriter, upstream, a.limiters.For(user))
-		a.addTraffic(user, 0, n)
-		wg.Done()
-	}()
-	wg.Wait()
+	responseWriter := bodyState.responseWriter(conn)
+	// VMess 的读写各自分块加解密，读端是 body、写端是响应流，拼成一端交给转发；
+	// 响应流没有半关闭，上游结束后按单向收尾计时收尾。
+	client := &core.SplitStream{R: body, W: responseWriter, C: conn}
+	sess.relay(client, upstream, core.RelayOptions{Limiter: a.limiters.For(user)})
 	return nil
 }
 
@@ -500,17 +514,10 @@ func (a *vmessAdapter) handleUDP(ctx context.Context, conn net.Conn, user core.U
 		return err
 	}
 	defer upstream.Close()
-	if err := vmessWriteResponse(conn, body.key, body.nonce, 0, body.option); err != nil {
+	if err := body.writeResponse(conn); err != nil {
 		return err
 	}
-	responseKeyHash := sha256.Sum256(body.key)
-	responseNonceHash := sha256.Sum256(body.nonce)
-	var writer io.Writer
-	if security == vmessSecAES128 || security == vmessSecChaCha {
-		writer = newVMessAEADWriter(conn, vmessBodyAEAD(security, responseKeyHash[:16]), responseNonceHash[:16], body.option)
-	} else {
-		writer = &vmessPlainChunkWriter{upstream: conn}
-	}
+	writer := body.responseWriter(conn)
 	destinationAddr, err := vmessDestinationUDPAddr(destination)
 	if err != nil {
 		return err
@@ -570,7 +577,7 @@ func (a *vmessAdapter) Close() error {
 	for c := range a.active {
 		active = append(active, c)
 	}
-	packetSessions := make([]*vmessXHTTPPacketSession, 0, len(a.xhttpSessions))
+	packetSessions := make([]*xhttpSession, 0, len(a.xhttpSessions))
 	for _, session := range a.xhttpSessions {
 		packetSessions = append(packetSessions, session)
 	}
@@ -600,22 +607,20 @@ func (a *vmessAdapter) Close() error {
 }
 func (a *vmessAdapter) removeActive(c net.Conn) { a.mu.Lock(); delete(a.active, c); a.mu.Unlock() }
 
+// VMess authID 防重放：authID 里的时间戳允许 ±120 秒，同一个 authID 最晚在
+// 首次出现 240 秒后仍能通过时间检查，所以至少要记 4 分钟。按 2 分钟分代、
+// 保留 3 代：至少 4 分钟、至多 6 分钟。以前是每个连接在全局锁下扫整张表、
+// 只记 2 分钟。
+const (
+	vmessAuthIDReplayPeriod = 2 * time.Minute
+	vmessAuthIDReplayKeep   = 3
+)
+
 func (a *vmessAdapter) acceptAuthID(id [16]byte) bool {
-	now := time.Now()
-	key := string(id[:])
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.replay == nil {
-		a.replay = make(map[string]time.Time)
-	}
-	for k, seen := range a.replay {
-		if now.Sub(seen) > 2*time.Minute {
-			delete(a.replay, k)
+	a.replayOnce.Do(func() {
+		if a.replay == nil {
+			a.replay = newReplayFilter(vmessAuthIDReplayPeriod, vmessAuthIDReplayKeep, replayFilterMaxPerGen)
 		}
-	}
-	if _, exists := a.replay[key]; exists {
-		return false
-	}
-	a.replay[key] = now
-	return true
+	})
+	return a.replay.check(id[:], time.Now())
 }

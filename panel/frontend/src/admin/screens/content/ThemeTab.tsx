@@ -4,17 +4,15 @@ import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, Empty, QueryView, Select, Skeleton, Switch, Tag, TextArea, useToast } from '../../../ui'
 import css from './content.module.css'
 import { droppedMessage, slotDirty, timezoneOptions } from './logic'
-import { useCan, useFailure, useIntentKey, useInvalidateContent, useSiteSettings, useSlots, useThemes } from './queries'
+import { useFailure, useIntentKey, useInvalidateContent, useSiteSettings, useSlots, useThemes } from './queries'
 import { siteSettingsSchema, slotSaved, themeActivated, themeDeleted, type Slot, type Theme } from './schemas'
 import { activateNotice, siteName, themeSwatches, type ThemeTarget } from './theme'
 import { ThemeEditor } from './ThemeEditor'
 import theme from './theme.module.css'
 
 export function ThemeTab() {
-  const can = useCan()
   const themes = useThemes()
   const slots = useSlots()
-  const writable = can('platform.appearance.write')
   const [editing, setEditing] = useState<ThemeTarget | null>(null)
   const [activating, setActivating] = useState<Theme | null>(null)
   const [deleting, setDeleting] = useState<Theme | null>(null)
@@ -24,21 +22,20 @@ export function ThemeTab() {
   return (
     <div className={css.stack}>
       <div className={css.themeGrid}>
-        <QueryView query={themes} rows={2} isEmpty={(l) => l.length === 0 && !writable} empty={<Empty bare title="还没有主题" description="门户按内置默认样式显示；有外观写权限的同事可以在这里新建主题。" />}>
+        {/* 列表末尾总有「新建主题」卡，所以没有主题时也不显示空状态 */}
+        <QueryView query={themes} rows={2} isEmpty={() => false} empty={null}>
           {(l) => (
             <>
               {l.map((t) => (
-                <ThemeCard key={t.id} theme={t} writable={writable} onEdit={() => setEditing(t.is_builtin ? { kind: 'create', from: t } : { kind: 'edit', theme: t })} onActivate={() => setActivating(t)} onDelete={() => setDeleting(t)} />
+                <ThemeCard key={t.id} theme={t} onEdit={() => setEditing(t.is_builtin ? { kind: 'create', from: t } : { kind: 'edit', theme: t })} onActivate={() => setActivating(t)} onDelete={() => setDeleting(t)} />
               ))}
-              {writable && (
-                <button type="button" className={theme.newCard} onClick={() => setEditing({ kind: 'create', from: active ?? null })}>
-                  ＋ 新建主题{active ? `（复制「${active.name}」）` : ''}
-                </button>
-              )}
+              <button type="button" className={theme.newCard} onClick={() => setEditing({ kind: 'create', from: active ?? null })}>
+                ＋ 新建主题{active ? `（复制「${active.name}」）` : ''}
+              </button>
             </>
           )}
         </QueryView>
-        {can('security.audit.read') && <TimezoneCard writable={can('platform.settings.write')} />}
+        <TimezoneCard />
       </div>
 
       <section className={css.slots} aria-label="前端插槽">
@@ -47,7 +44,7 @@ export function ThemeTab() {
           <span className={css.faint}>在门户固定位置插入文本或 HTML 片段；失焦自动保存，脚本、样式与事件属性会被过滤</span>
         </div>
         <QueryView query={slots} rows={4} empty={<Empty bare title="没有可用的插槽位" description="插槽位由门户代码定义，升级后会出现在这里。" />}>
-          {(list) => list.map((s) => <SlotRow key={s.key} slot={s} writable={writable} />)}
+          {(list) => list.map((s) => <SlotRow key={s.key} slot={s} />)}
         </QueryView>
       </section>
 
@@ -57,7 +54,7 @@ export function ThemeTab() {
   )
 }
 
-function ThemeCard({ theme: t, writable, onEdit, onActivate, onDelete }: { theme: Theme; writable: boolean; onEdit: () => void; onActivate: () => void; onDelete: () => void }) {
+function ThemeCard({ theme: t, onEdit, onActivate, onDelete }: { theme: Theme; onEdit: () => void; onActivate: () => void; onDelete: () => void }) {
   const p = themeSwatches(t)
   const vars = { '--pv-bg': p.bg, '--pv-fg': p.fg, '--pv-accent': p.accent } as CSSProperties
   const name = siteName(t)
@@ -84,29 +81,27 @@ function ThemeCard({ theme: t, writable, onEdit, onActivate, onDelete }: { theme
           {name ? ` · 站点名称「${name}」` : ' · 未设站点名称'}
           {t.is_active ? '。门户所有用户看到的都是这一套，明暗两组随用户切换。' : ''}
         </div>
-        {writable && (
-          <div className={theme.actions}>
-            {t.is_builtin ? (
-              <Button size="xs" onClick={onEdit}>
-                另存为
-              </Button>
-            ) : (
-              <Button size="xs" onClick={onEdit}>
-                编辑
-              </Button>
-            )}
-            {!t.is_active && (
-              <Button size="xs" variant="primary" onClick={onActivate}>
-                激活
-              </Button>
-            )}
-            {!t.is_builtin && !t.is_active && (
-              <Button size="xs" variant="ghost" onClick={onDelete}>
-                删除
-              </Button>
-            )}
-          </div>
-        )}
+        <div className={theme.actions}>
+          {t.is_builtin ? (
+            <Button size="xs" onClick={onEdit}>
+              另存为
+            </Button>
+          ) : (
+            <Button size="xs" onClick={onEdit}>
+              编辑
+            </Button>
+          )}
+          {!t.is_active && (
+            <Button size="xs" variant="primary" onClick={onActivate}>
+              激活
+            </Button>
+          )}
+          {!t.is_builtin && !t.is_active && (
+            <Button size="xs" variant="ghost" onClick={onDelete}>
+              删除
+            </Button>
+          )}
+        </div>
       </div>
     </section>
   )
@@ -152,12 +147,12 @@ function ThemeConfirms({ active, activating, deleting, onDone }: { active: Theme
   )
 }
 
-function TimezoneCard({ writable }: { writable: boolean }) {
+function TimezoneCard() {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
   const invalidate = useInvalidateContent()
-  const site = useSiteSettings(true)
+  const site = useSiteSettings()
   const id = useId()
   const [picked, setPicked] = useState<string | null>(null)
   const current = site.data?.timezone
@@ -185,21 +180,17 @@ function TimezoneCard({ writable }: { writable: boolean }) {
           {() => null}
         </QueryView>
       ) : (
-        <Select id={`${id}-s`} value={value} disabled={!writable || save.isPending} options={timezoneOptions(current)} onChange={(e) => setPicked(e.target.value)} />
+        <Select id={`${id}-s`} value={value} disabled={save.isPending} options={timezoneOptions(current)} onChange={(e) => setPicked(e.target.value)} />
       )}
       <div className={css.faint}>门户用量图按天统计、后台收入趋势都按这个时区切日；修改只影响之后的数据，已记下的按日用量不重算。</div>
-      {writable ? (
-        <Button variant="primary" size="sm" disabled={!picked || picked === current} busy={save.isPending} onClick={() => picked && save.mutate(picked)}>
-          保存
-        </Button>
-      ) : (
-        <div className={css.faint}>修改需要「站点设置」权限。</div>
-      )}
+      <Button variant="primary" size="sm" disabled={!picked || picked === current} busy={save.isPending} onClick={() => picked && save.mutate(picked)}>
+        保存
+      </Button>
     </section>
   )
 }
 
-function SlotRow({ slot, writable }: { slot: Slot; writable: boolean }) {
+function SlotRow({ slot }: { slot: Slot }) {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
@@ -238,16 +229,15 @@ function SlotRow({ slot, writable }: { slot: Slot; writable: boolean }) {
           rows={2}
           className={css.slotArea}
           value={content}
-          readOnly={!writable}
           disabled={save.isPending}
           hint={slot.updated_at ? `更新于 ${slot.updated_at}` : undefined}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={() => {
-            if (writable && slotDirty(draft, slot)) save.mutate({ content, enabled: slot.enabled })
+            if (slotDirty(draft, slot)) save.mutate({ content, enabled: slot.enabled })
           }}
         />
       </div>
-      <Switch className={css.slotSwitch} aria-label={`启用「${slot.label}」`} checked={slot.enabled} disabled={!writable || save.isPending} onChange={(e) => save.mutate({ content, enabled: e.target.checked })} />
+      <Switch className={css.slotSwitch} aria-label={`启用「${slot.label}」`} checked={slot.enabled} disabled={save.isPending} onChange={(e) => save.mutate({ content, enabled: e.target.checked })} />
     </div>
   )
 }

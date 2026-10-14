@@ -108,3 +108,8 @@
   color: var(--text-3);
   font-size: var(--fs-caption);
 }
+
+/* 登录表单下的「忘记密码」：只在找回密码开着时出现 */
+.forgot {
+  align-self: center;
+}

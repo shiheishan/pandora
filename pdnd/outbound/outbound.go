@@ -23,13 +23,16 @@ package outbound
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 
+	"github.com/aegispanel/nodeagent/internal/confnum"
 	M "github.com/sagernet/sing/common/metadata"
 )
 
@@ -312,6 +315,53 @@ func (c *leasedConn) Close() error {
 	return err
 }
 
+// leasedConn 内嵌的是 net.Conn 接口，底层 *net.TCPConn 的 CloseWrite、ReadFrom 等
+// 方法不会被提升出来。少了 CloseWrite，转发对上游的半关闭断言就失败：客户端断开后
+// 上游收不到 FIN、一直不关，下行永远阻塞在读上游（10 万连接实测的会话泄漏）。
+// 所以这里逐个按底层是否支持转发出去。
+
+// CloseWrite 把半关闭传给底层连接；底层不支持时返回错误，调用方据此改走收尾计时。
+func (c *leasedConn) CloseWrite() error {
+	if cw, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return errHalfCloseUnsupported
+}
+
+// CloseRead 同上。
+func (c *leasedConn) CloseRead() error {
+	if cr, ok := c.Conn.(interface{ CloseRead() error }); ok {
+		return cr.CloseRead()
+	}
+	return errHalfCloseUnsupported
+}
+
+// ReadFrom 让 io.Copy 能用到底层的零拷贝（Linux 上 TCP→TCP 走 splice）。
+func (c *leasedConn) ReadFrom(r io.Reader) (int64, error) {
+	if rf, ok := c.Conn.(io.ReaderFrom); ok {
+		return rf.ReadFrom(r)
+	}
+	return io.Copy(writerOnly{c.Conn}, r)
+}
+
+// WriteTo 同上，方向相反。
+func (c *leasedConn) WriteTo(w io.Writer) (int64, error) {
+	if wt, ok := c.Conn.(io.WriterTo); ok {
+		return wt.WriteTo(w)
+	}
+	return io.Copy(w, readerOnly{c.Conn})
+}
+
+// TransparentConn 声明这层包装不缓冲、不改字节（core.TransparentConn），转发可以
+// 直接在底层裸 TCP 上等可读，空闲时不占拷贝缓冲。
+func (c *leasedConn) TransparentConn() net.Conn { return c.Conn }
+
+var errHalfCloseUnsupported = errors.New("底层连接不支持半关闭")
+
+// writerOnly / readerOnly 藏起 ReadFrom / WriteTo，避免 io.Copy 绕回自己。
+type writerOnly struct{ io.Writer }
+type readerOnly struct{ io.Reader }
+
 type leasedPacketConn struct {
 	net.PacketConn
 	once    sync.Once
@@ -322,6 +372,29 @@ func (c *leasedPacketConn) Close() error {
 	err := c.PacketConn.Close()
 	c.once.Do(c.release)
 	return err
+}
+
+// RawUDPConn 交出租约包着的裸 *net.UDPConn，供 hy2 的 sendmmsg/recvmmsg 批量收发与
+// 调 socket 缓冲；底层不是裸 UDP socket 时返回 nil。
+//
+// 租约本身不改写负载，可以透出；但只透出「直接就是 *net.UDPConn」的底层——
+// 加密、封装类出站（shadowsocks 等）返回的是它们自己的包装，绝不能被穿透，
+// 否则批量路径会绕过它们直接把明文发出去。所以这里不做任何递归解包。
+func (c *leasedPacketConn) RawUDPConn() *net.UDPConn {
+	if raw, ok := c.PacketConn.(*net.UDPConn); ok {
+		return raw
+	}
+	return nil
+}
+
+// UDPBatch 转交底层连接自己给出的带检查批量接口（UDPBatchProvider，目前只有直连
+// 的私网拦截包装实现）；底层不提供时返回 nil。与 RawUDPConn 一样不做递归解包：
+// 只认底层明确交出的接口，加密、封装类出站不实现它，批量路径就碰不到它们。
+func (c *leasedPacketConn) UDPBatch() UDPBatchConn {
+	if p, ok := c.PacketConn.(UDPBatchProvider); ok {
+		return p.UDPBatch()
+	}
+	return nil
 }
 
 // Tags 返回当前所有出站标签，供分流引擎校验规则引用。
@@ -420,8 +493,8 @@ func sameOutbound(a, b Outbound) bool {
 //------------------------------------------------------------------------------
 // 配置读取的小工具
 //
-// 面板下发的是 JSON 解出来的 map[string]any，数字一律是 float64。
-// 每个出站都要做同样的取值与类型归一，放在这里一次写好。
+// 面板下发的是 JSON 解出来的 map[string]any：签名通道的数字是 json.Number，
+// 兼容通道是 float64，归一统一交给 confnum。
 //------------------------------------------------------------------------------
 
 func Str(m map[string]any, key string) string {
@@ -430,29 +503,13 @@ func Str(m map[string]any, key string) string {
 }
 
 func Int(m map[string]any, key string) int {
-	switch v := m[key].(type) {
-	case float64:
-		return int(v)
-	case int:
-		return v
-	case string:
-		var n int
-		_, _ = fmt.Sscanf(v, "%d", &n)
-		return n
-	}
-	return 0
+	n, _ := confnum.Int(m[key])
+	return n
 }
 
 func Bool(m map[string]any, key string) bool {
-	switch v := m[key].(type) {
-	case bool:
-		return v
-	case float64:
-		return v > 0
-	case string:
-		return v == "true" || v == "1"
-	}
-	return false
+	v, _ := confnum.Truthy(m[key])
+	return v
 }
 
 func Strings(m map[string]any, key string) []string {

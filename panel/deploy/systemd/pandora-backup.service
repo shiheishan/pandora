@@ -1,0 +1,52 @@
+[Unit]
+Description=Pandora panel encrypted PostgreSQL backup
+Documentation=file:///opt/pandora/deploy/RUNBOOK.md
+# 只排在 PostgreSQL 之后，不拉起它：库没在跑时备份照实失败（单元记为 failed），不替人启动数据库
+After=postgresql.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/opt/pandora/deploy
+ExecStart=/opt/pandora/deploy/backup-postgres.sh
+UMask=0077
+# 备份与恢复共用的维护锁 /run/pandora-maintenance/database-maintenance.lock。单独一个运行目录，不与面板服务共用
+#（服务停下时 systemd 删它们的运行目录，恢复正是先停服务）；备份跑完也别删它，恢复脚本可能正持有它
+RuntimeDirectory=pandora-maintenance
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+# 要连本机 PostgreSQL（回环 TCP）与异地 WebDAV（HTTPS）
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount @reboot @swap @obsolete
+
+# 与 config 的 backup.dir 保持一致（缺省 /var/backups/pandora；改了 backup.dir 要同步改这里）。
+# 可写清单里不用 systemd 说明符与环境变量。/var/lib/pandora/backup-webdav 放异地备份的签名清单检查点
+ReadWritePaths=/var/backups/pandora -/var/lib/pandora/backup-webdav
+ReadOnlyPaths=/opt/pandora /etc/pandora
+TimeoutStartSec=2h
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=multi-user.target

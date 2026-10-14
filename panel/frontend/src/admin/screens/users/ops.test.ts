@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { bulkPreviewSchema, devicesSchema, generatedSchema, resetDoneSchema, resetLogsSchema, resetStatsSchema, userGroupsSchema, type OnlineDevice } from './api'
+import { jobFilename, jobFinished, jobPercent } from './jobs'
+import { grantReasonProblem, parseGrantGB } from './trafficPack'
+import { bulkPreviewSchema, devicesSchema, generationJobSchema, resetDoneSchema, resetLogsSchema, resetStatsSchema, trafficGrantedSchema, userGroupsSchema, type OnlineDevice } from './api'
 import {
   bulkFilter,
   devicePolicyBody,
   exclusivePoolsLabel,
   exactEmail,
   exportQuery,
-  generatedRows,
   generateProblems,
   groupBlocker,
   groupRefs,
@@ -14,7 +15,13 @@ import {
   noteProblem,
   pips,
   resetActor,
-  resettableSub,
+  resettableSubs,
+  defaultResetSub,
+  defaultTrafficSub,
+  subName,
+  subLabel,
+  trafficPackTargets,
+  isOrderTarget,
   type GenerateForm,
 } from './model'
 
@@ -83,11 +90,13 @@ describe('批量生成', () => {
     expect(generateProblems({ ...ok, reason: '原'.repeat(501) }).reason).toBeDefined()
   })
 
-  it('本地 CSV 第一行是表头', () => {
-    expect(generatedRows([{ email: 'a@x.io', password: 'p' }])).toEqual([
-      ['邮箱', '初始密码'],
-      ['a@x.io', 'p'],
-    ])
+  it('任务进度：百分比取整、结束即停轮询、文件名带前缀与日期', () => {
+    expect(jobPercent({ total: 3, completed: 1 })).toBe(33)
+    expect(jobPercent({ total: 3, completed: 3 })).toBe(100)
+    expect(jobPercent({ total: 0, completed: 0 })).toBe(0)
+    expect(jobFinished({ status: 'running' })).toBe(false)
+    expect(jobFinished({ status: 'failed' })).toBe(true)
+    expect(jobFilename({ email_prefix: 'dealer', created_at: '2026-10-07T08:00:00Z' })).toBe('users-dealer-2026-10-07.csv')
   })
 })
 
@@ -119,10 +128,53 @@ describe('流量重置', () => {
     expect(noteProblem('字'.repeat(501))).not.toBeNull()
   })
 
-  it('只挑 status=active 里到期最晚的一条；试用、宽限都不算', () => {
+  it('能重置的只有 status=active 的订阅；试用、宽限都不算，也不再替管理员挑一条', () => {
     const s = (status: 'active' | 'trialing' | 'grace', end: string | null) => ({ status, current_period_end: end, id: `${status}-${end}` })
-    expect(resettableSub([s('trialing', '2026-12-01'), s('grace', '2026-12-02')])).toBeUndefined()
-    expect(resettableSub([s('active', '2026-10-01'), s('active', '2026-11-01'), s('trialing', '2027-01-01')])?.id).toBe('active-2026-11-01')
+    expect(resettableSubs([s('trialing', '2026-12-01'), s('grace', '2026-12-02')])).toEqual([])
+    expect(resettableSubs([s('active', '2026-10-01'), s('active', '2026-11-01'), s('trialing', '2027-01-01')]).map((x) => x.id)).toEqual(['active-2026-10-01', 'active-2026-11-01'])
+  })
+
+  const quota = (limit: number | null, consumed: number) => [{ metric: 'traffic.bytes', limit, consumed, remaining: limit === null ? null : Math.max(0, limit - consumed) }]
+  const row = (id: string, over: Partial<{ status: 'active' | 'trialing'; end: string | null; limit: number | null; used: number; pack: number }>) => ({
+    id,
+    status: over.status ?? ('active' as const),
+    current_period_end: over.end === undefined ? '2026-11-01T00:00:00Z' : over.end,
+    quotas: quota(over.limit === undefined ? 100 : over.limit, over.used ?? 0),
+    pack_remaining_bytes: over.pack ?? 0,
+  })
+
+  it('多份可重置时预选本期用得最多的；同比例取到期更早的；只有一份就是它', () => {
+    expect(defaultResetSub([])).toBeUndefined()
+    expect(defaultResetSub([row('a', { used: 10 })])?.id).toBe('a')
+    expect(defaultResetSub([row('a', { used: 10 }), row('b', { used: 80 }), row('c', { used: 50 })])?.id).toBe('b')
+    expect(defaultResetSub([row('late', { used: 50, end: '2026-12-01T00:00:00Z' }), row('early', { used: 50, end: '2026-11-01T00:00:00Z' })])?.id).toBe('early')
+    // 不限量的那份用量比例按 0 算；试用的不参与
+    expect(defaultResetSub([row('free', { limit: null, used: 999 }), row('a', { used: 1 })])?.id).toBe('a')
+    expect(defaultResetSub([row('t', { status: 'trialing', used: 99 }), row('a', { used: 1 })])?.id).toBe('a')
+  })
+
+  it('多份可加流量时预选剩余最少的：套餐本期剩余加这份的流量包，不限量的最大', () => {
+    expect(defaultTrafficSub([])).toBeUndefined()
+    expect(defaultTrafficSub([row('a', { used: 10 }), row('b', { used: 90 })])?.id).toBe('b')
+    // b 套餐只剩 10，但这份挂了 50 的流量包，合计 60，比 a 的 40 多
+    expect(defaultTrafficSub([row('a', { used: 60 }), row('b', { used: 90, pack: 50 })])?.id).toBe('a')
+    expect(defaultTrafficSub([row('free', { limit: null }), row('a', { used: 1 })])?.id).toBe('a')
+  })
+
+  it('订阅的称呼与下拉标签带备注名', () => {
+    expect(subName({ label: null, plan_name: '标准版' })).toBe('标准版')
+    expect(subName({ label: '妈妈的 iPad', plan_name: '标准版' })).toBe('「妈妈的 iPad」标准版')
+    expect(subLabel({ label: '妈妈的 iPad', plan_name: '标准版', plan_version: 2, status: 'active' })).toBe('「妈妈的 iPad」标准版 · v2 · 生效中')
+  })
+
+  it('加流量只列还在用的订阅；「给这份开单」只对还在用或还能续的订阅有意义', () => {
+    const now = new Date('2026-10-07T00:00:00Z')
+    const s = (status: 'active' | 'expired' | 'cancelled' | 'grace', end: string | null) => ({ status, current_period_end: end })
+    expect(trafficPackTargets([s('active', null), s('grace', null), s('expired', '2026-09-01T00:00:00Z'), s('cancelled', null)]).map((x) => x.status)).toEqual(['active', 'grace'])
+    expect(isOrderTarget(s('active', '2026-11-01T00:00:00Z'), now)).toBe(true)
+    expect(isOrderTarget(s('expired', '2026-09-20T00:00:00Z'), now)).toBe(true)
+    expect(isOrderTarget(s('expired', '2026-08-01T00:00:00Z'), now)).toBe(false)
+    expect(isOrderTarget(s('cancelled', '2026-11-01T00:00:00Z'), now)).toBe(false)
   })
 
   it('按邮箱找人只认完全相等（不分大小写），模糊命中不算', () => {
@@ -154,6 +206,26 @@ describe('schema', () => {
   it('批量预览要 sample_rows；生成结果是邮箱 + 口令数组', () => {
     expect(bulkPreviewSchema.safeParse({ total: 1, samples: ['a@b.c'], sample_rows: [{ email: 'a@b.c', plan_name: null, current_period_end: null }] }).success).toBe(true)
     expect(bulkPreviewSchema.safeParse({ total: 1, samples: ['a@b.c'] }).success).toBe(false)
-    expect(generatedSchema.safeParse({ count: 1, users: [{ email: 'a@b.c', password: 'x' }], warning: '只显示一次' }).success).toBe(true)
+    const job = {
+      id: 'j1', actor_id: 'a1', status: 'running', total: 3, completed: 1, failed: 0, email_prefix: 'dealer', email_domain: 'example.com',
+      group_id: null, reason: '线下渠道预制', error: null, result_available: true, result_expires_at: null,
+      created_at: '2026-10-07T08:00:00Z', started_at: '2026-10-07T08:00:01Z', finished_at: null,
+    }
+    expect(generationJobSchema.safeParse(job).success).toBe(true)
+    // 后端没有 omitempty：缺字段即判不符
+    expect(generationJobSchema.safeParse({ ...job, finished_at: undefined }).success).toBe(false)
+    expect(generationJobSchema.safeParse({ ...job, status: 'done' }).success).toBe(false)
+  })
+
+  it('加流量包：GB 换字节、上限 10240 GB、原因 5 到 500 字', () => {
+    expect(parseGrantGB('10')).toBe(10 * 1024 ** 3)
+    expect(parseGrantGB('10240')).toBe(10240 * 1024 ** 3)
+    for (const bad of ['0', '10241', '1.5', '-1', '', 'abc']) expect(parseGrantGB(bad)).toBeNull()
+    expect(grantReasonProblem('短')).not.toBeNull()
+    expect(grantReasonProblem('补偿线路故障')).toBeNull()
+    expect(grantReasonProblem('原'.repeat(501))).not.toBeNull()
+    expect(
+      trafficGrantedSchema.safeParse({ subscription_id: 's', user_id: 'u', user_email: 'a@b.c', grant_id: 'g', granted_bytes: 1, remaining_bytes_total: 1 }).success,
+    ).toBe(true)
   })
 })

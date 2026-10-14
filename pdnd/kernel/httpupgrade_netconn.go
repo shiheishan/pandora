@@ -13,7 +13,7 @@ func validHTTPUpgradeRequest(reqPath, reqHost string, req *http.Request) bool {
 	if req == nil || req.URL == nil || req.Method != http.MethodGet || req.URL.Path != reqPath {
 		return false
 	}
-	if reqHost != "" && !strings.EqualFold(strings.TrimSpace(req.Host), reqHost) {
+	if !requestHostMatches(req.Host, reqHost) {
 		return false
 	}
 	if !strings.EqualFold(strings.TrimSpace(req.Header.Get("Upgrade")), "websocket") {

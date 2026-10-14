@@ -83,73 +83,30 @@ func (a *vlessAdapter) UpsertUsers(users []core.User) error {
 
 func (a *vlessAdapter) DelUsers(ids []string) error {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	var removed []int64
 	for _, id := range ids {
 		if parsed, err := uuid.Parse(id); err == nil {
 			key := parsed.String()
 			// 顺手丢掉这个用户的令牌桶，否则用户删了桶还留着。
 			if user, ok := a.users[key]; ok {
 				a.limiters.Remove(user.ID)
+				removed = append(removed, user.ID)
 			}
 			delete(a.users, key)
 		}
 	}
+	a.mu.Unlock()
+	// 先删表、再踢线（锁外关连接）：已有的长连接、mux 会话随之断开。
+	a.sessions.revoke(removed)
 	return nil
 }
 
 func (a *vlessAdapter) SnapshotTraffic() ([]core.UserTraffic, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	out := make([]core.UserTraffic, 0, len(a.traffic))
-	for id, traffic := range a.traffic {
-		if traffic.Upload != 0 || traffic.Download != 0 {
-			out = append(out, core.UserTraffic{ID: id, Upload: traffic.Upload, Download: traffic.Download})
-		}
-		delete(a.traffic, id)
-	}
-	return out, nil
+	return a.sessions.snapshot(), nil
 }
 
-func (a *vlessAdapter) OnlineIPs() map[int64][]string {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	out := make(map[int64][]string, len(a.online))
-	for id, ips := range a.online {
-		for ip := range ips {
-			out[id] = append(out[id], ip)
-		}
-	}
-	return out
-}
-
-func (a *vlessAdapter) enterDevice(user core.User, ip string) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	set := a.online[user.ID]
-	if set == nil {
-		set = make(map[string]struct{})
-		a.online[user.ID] = set
-	}
-	if _, exists := set[ip]; !exists && user.DeviceLimit > 0 && len(set) >= user.DeviceLimit {
-		return false
-	}
-	set[ip] = struct{}{}
-	return true
-}
-
-func (a *vlessAdapter) leaveDevice(user core.User, ip string) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if set := a.online[user.ID]; set != nil {
-		delete(set, ip)
-		if len(set) == 0 {
-			delete(a.online, user.ID)
-		}
-	}
-}
+func (a *vlessAdapter) OnlineIPs() map[int64][]string { return a.online.snapshot() }
 
 func (a *vlessAdapter) addTraffic(user core.User, upload, download int64) {
-	a.mu.Lock()
-	a.traffic[user.ID] = core.UserTraffic{ID: user.ID, Upload: a.traffic[user.ID].Upload + upload, Download: a.traffic[user.ID].Download + download}
-	a.mu.Unlock()
+	a.sessions.add(user.ID, upload, download)
 }

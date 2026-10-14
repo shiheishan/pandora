@@ -103,21 +103,25 @@ bash ./release/staging-acceptance.sh ./release/dist /var/tmp/pandora-native-stag
 CI 已覆盖的部分：`linux-race` job 在 x64 上跑全量 `go test -race` 与 vet；`linux-arm64-runtime` job
 在原生 ARM64 runner 上跑全量 race 与 vet，并实际执行编出的二进制做 `--self-check` / `--capabilities`；
 `release-manifest` job 在 staging 验收之后，对同一份 amd64 发布二进制跑下面的 `runtime-acceptance.sh`
-（signed、compat 两种模式），日志里每个模式各有一行 `{"mode_passed":...}` 记录面板侧观测。ARM64 二进制的
+（gRPC 接入与会话），日志里有一行 `{"mode_passed":"grpc",...}` 记录面板侧观测。ARM64 二进制的
 这项验收 CI 未覆盖。
 
 发布前需在真实 Linux 目标机上补跑的：
 
 - 冷启动、SIGTERM 收尾、端口释放和重复启动（CI 只在 amd64 runner 上跑过；ARM64 与目标机环境需补跑）：
-  用 `release/runtime-acceptance.sh`。它在本机回环上起一个
-  模拟面板（Go，`release/acceptancepanel`）和指定的节点二进制，按两种接入各冷启动两次：
-  - `signed`：安装器 enrollment 之后的生产形态——身份文件加 `signed_required: true`。配置来自签名的
-    effective release，要看到带 `metrics` 的签名心跳和 `health_passed` 配置上报，且全程没有碰 UniProxy
-    的配置与 `/status`、没有签名不合法的请求；
-  - `compat`：不带身份、只有 UniProxy 令牌的兼容接入，要看到经 UniProxy 拉配置与 `/status` 上报。
+  用 `release/runtime-acceptance.sh`。它在本机回环上起一个模拟 gRPC 面板（Go，`release/acceptancepanel`，
+  自带 CA）和指定的节点二进制：
+  - 先用一个不对的 CA 指纹跑 `pandora-native enroll`：必须失败，且面板侧一次接入都没看到（令牌没发出去）；
+  - 再用面板的真实指纹正式 `enroll`：身份目录里要有 `ca.pem cert.pem key.pem server_id`，`key.pem` 为 0600，
+    接入日志 `enroll.json` 已删；
+  - 冷启动两次：第一次要看到带 `metrics` 的心跳、`health_passed` 配置回执与 ok 的名单回执，且没有证书不对的会话、
+    没有缺 `x-request-id` 的流；第二次节点先用落盘缓存装好入站，要看到 Hello 报出已应用的版本、面板不再重发。
 
-  每次都等端口就绪、面板侧看到上述上报后发 SIGTERM，确认进程退出且端口已释放；每个模式通过后输出一行
-  `{"mode_passed":...}`，全部通过时输出 `{"status":"ok",...}`；不写系统路径、不碰 systemd，需要 `python3` 和 `go`（用来编模拟面板）。验收机
+  两次冷启动之后停掉模拟面板，再冷启动一次：节点必须用落盘缓存（`cache_dir/nodes/` 下 0600 的 `config.json`
+  与 `users.json`，读回时按摘要核对）把入站起来，同样查 SIGTERM 与端口释放。
+
+  每次都等端口就绪、面板侧看到上述上报后发 SIGTERM，确认进程退出且端口已释放；通过后输出一行
+  `{"mode_passed":"grpc",...}` 与 `{"status":"ok",...}`；不写系统路径、不碰 systemd，需要 `python3` 和 `go`（用来编模拟面板）。验收机
   没有 Go 时，在别处交叉编好再传进去：
 
   ```bash
@@ -132,8 +136,8 @@ CI 已覆盖的部分：`linux-race` job 在 x64 上跑全量 `go test -race` �
   ACCEPTANCE_PANEL=./acceptancepanel bash ./release/runtime-acceptance.sh ./release/dist/pandora-native-linux-amd64 /var/tmp/pandora-native-runtime
   ```
 
-  模拟面板的签名原像按面板实现独立重写；`go test ./release/acceptancepanel` 用节点自己的签名客户端与它
-  对打，协议任一侧改了而另一侧没跟上，全量测试就会变红。
+  模拟面板的 CA 指纹、证书签发与会话规则按面板契约独立实现；`go test ./release/acceptancepanel` 用节点自己的
+  接入与会话客户端与它对打，协议任一侧改了而另一侧没跟上，全量测试就会变红。
 
 - x64/ARM64 目标机上的协议互操作与回滚
 
@@ -141,14 +145,11 @@ Windows 交叉构建只能证明 `CGO_ENABLED=0` 编译产物可生成，不能�
 
 ## systemd 冷启动
 
-Panel releases also generate `deploy/release-artifact.env` from the exact
-`SHA256SUMS` entries for both NativeCore architectures. Load that file into
-the panel service environment before enabling first-time enrollment; the
-control plane rejects production evidence that does not match the selected
-release version and architecture digest.
-
-正式安装走面板生成的节点安装脚本（面板 `pdnd_install.go`）：它建 `pandora` 系统用户、写配置与身份文件、
-内联生成 unit 并完成 enrollment。下面是不经安装器的手工安装，执行前需先自行建好 `pandora` 系统用户与组。
+正式安装走面板生成的节点安装脚本：它建 `pandora` 系统用户、写配置，执行
+`pandora-native enroll --panel <host:port> --ca-sha256 <指纹> --token-file <文件>` 写身份目录（缺省
+`/var/lib/pandora-native/identity/`，须属 `pandora` 用户：会话里续期要原地换证书；unit 的 `StateDirectory` 启动时
+也会把 `/var/lib/pandora-native` 改给它），再生成 unit。节点自报的版本与二进制摘要随 Hello 上报，面板只提示不拒绝。
+下面是不经安装器的手工安装，执行前需先自行建好 `pandora` 系统用户与组，并照上面执行一次 `enroll`。
 
 `pandora-native.service` 假定二进制安装到 `/usr/local/bin/pandora-native`，配置文件为
 `/etc/pandora-native/config.json`，并以无特权 `pandora` 用户运行。安装后应执行：
@@ -158,6 +159,16 @@ release version and architecture digest.
 回落到兼容内核；默认发布物不链接兼容多内核。
 默认构建只链接 NativeCore，节点配置里的 `kernel` 字段被忽略；只有 `-tags compat` 构建在 native-only 模式下才会拒绝显式的
 `kernel: "xray-core"` 与 `kernel: "sing-box"`。
+
+手工安装不经安装器的系统参数段（面板安装模板 `panel/internal/module/node/service/pdnd_install.sh.tmpl` 的 `pandora_tune_sysctl`：conntrack、监听队列、端口范围、收发缓冲），至少要补上
+UDP 收发缓冲上限：Debian 13 缺省 `rmem_max` / `wmem_max` 是 212992，Hysteria2 / TUIC 的 quic-go 要 8MB
+拿不到，单连接大流量丢包，pdnd 启动时每个 QUIC 入站告警一次。pdnd 以无特权用户运行，不要为此给 unit 加
+`CAP_NET_ADMIN`（SO_RCVBUFFORCE），改 sysctl 上限即可，要在启动 pdnd 之前生效：
+
+```bash
+printf 'net.core.rmem_max = 16777216\nnet.core.wmem_max = 16777216\n' > /etc/sysctl.d/90-pandora-native.conf
+sysctl -p /etc/sysctl.d/90-pandora-native.conf
+```
 
 ```bash
 install -d -o pandora -g pandora -m 0750 /etc/pandora-native /var/lib/pandora-native /var/log/pandora-native
@@ -207,26 +218,27 @@ unbounded log stream or disclose client ShortIDs.
 
 ## 排查：节点不上报心跳
 
-面板的 `nodes.last_heartbeat_at` 有两个写入口：签名通道由 `/v1/nodes/heartbeat` 写入，
-兼容通道由 UniProxy 的 `status` 接口写入。订阅
+心跳经控制会话上报：节点与面板之间一条 gRPC 双向流（mTLS，面板节点通道端口缺省 9443）。订阅
 下发会跳过从未上报过心跳的节点。所以「没有心跳」的后果不是告警，是这个节点
-被静默排除在订阅之外——内核照常转发、用户照常同步，两边都不报错。
+被静默排除在订阅之外——内核照常转发，两边都不报错。
+
+没有心跳先看 `journalctl -u pandora-native`：会话断开与重连、证书过期或被吊销（Tombstone）、
+「还没接入面板」之类的日志都在这里。
 
 2026-08-22 在一台 1 核 2G 的共享节点机上排查过一次，根因是两处部署漂移，两个都值得先查：
 
-**一、二进制比源码旧。** 状态上报是 2026-08-08 才加进 `panel/status.go`
-的，早于这个日期编出来的二进制根本没有这个调用。
+**一、二进制比源码旧。** 心跳在 2026-10 换成 gRPC 会话，早于此的二进制走的是已删除的 HTTP 通道，
+连不上新面板。
 
 ```bash
 ls -la /usr/local/bin/pandora-native          # 看编译日期
-journalctl -u pandora-native -n 50 --no-pager # 有 status 相关日志吗
+journalctl -u pandora-native -n 50 --no-pager # 有会话相关日志吗
 ```
 
 **二、装上去的 unit 和仓库里的不是同一份。** 当时机器上是一份手写 unit：
 以 root 运行、没有 `StateDirectory`、也没把 `/var/lib/pandora-native` 放进
 `ReadWritePaths`。配合 `CapabilityBoundingSet=CAP_NET_BIND_SERVICE`（丢掉了
-`CAP_DAC_OVERRIDE`），root 反而读不进属主为 `pandora` 的状态目录，签名通道
-静默降级成兼容通道，只在启动时打一行 WARN。
+`CAP_DAC_OVERRIDE`），root 反而读不进属主为 `pandora` 的状态目录（身份目录就在里面）。
 
 升级前先比一次，漂移了就用仓库这份覆盖：
 
@@ -243,7 +255,6 @@ chown root:pandora /etc/pandora-native/config.json && chmod 0640 /etc/pandora-na
 chown -R pandora:pandora /var/lib/pandora-native  && chmod 0700 /var/lib/pandora-native
 ```
 
-**签名通道**另需身份文件，由 enrollment 流程签发。路径以配置里的 `identity_path` 为准：面板安装器写的是
-`/etc/pandora-native/identity.json`；配置未指定时才用缺省的 `/var/lib/pandora-native/identity.json`。
-没有它时日志报 `no such file or directory` 并降级到兼容通道；若报的是
-`permission denied`，那是上面第二个问题，不是没签发。
+会话要身份目录（配置里的 `panel.identity_dir`，缺省 `/var/lib/pandora-native/identity/`：
+`ca.pem cert.pem key.pem server_id`），由 `pandora-native enroll` 写入。缺了进程直接退出并提示先 enroll；若报的是
+`permission denied`，那是上面第二个问题，不是没接入。

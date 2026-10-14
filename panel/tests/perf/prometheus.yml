@@ -1,0 +1,45 @@
+# Prometheus 抓取模板（性能测试用）。
+# 将 10.0.0.10 / 10.0.0.20 换成实际内网地址。
+# 9464 / 9465 对应面板 config 里 observability.metrics_addr、worker.metrics_addr 配置的端口。
+#
+# 示例启动：
+#   prometheus --config.file=prometheus.yml \
+#     --storage.tsdb.path=/var/lib/prometheus-perf \
+#     --storage.tsdb.retention.time=7d
+
+global:
+  scrape_interval: 5s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: pandora-serve
+    static_configs:
+      - targets:
+          - 10.0.0.10:9464
+
+  - job_name: pandora-worker
+    static_configs:
+      - targets:
+          - 10.0.0.10:9465
+
+  - job_name: node
+    static_configs:
+      - targets:
+          - 10.0.0.10:9100
+        labels:
+          role: panel
+      - targets:
+          - 10.0.0.20:9100
+        labels:
+          role: loadgen
+
+  - job_name: postgres
+    static_configs:
+      - targets:
+          - 10.0.0.10:9187
+
+  # 可选：装了 redis_exporter 才有
+  - job_name: redis
+    static_configs:
+      - targets:
+          - 10.0.0.10:9121

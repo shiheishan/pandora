@@ -293,11 +293,9 @@ async function saveHook(ctx: MockContext): Promise<MockResult> {
 export const system: MockModule = {
   routes: {
     'GET /v1/settings/mail': (ctx) => {
-      if (!ctx.requirePermission('security.audit.read')) return
       ctx.send(200, mailJson())
     },
     'POST /v1/settings/mail/test': async (ctx) => {
-      if (!ctx.requirePermission('ops.notification.write')) return
       const d = await decode(ctx, { to: 'string' })
       if (!d.ok) return reply(ctx, d.result)
       const to = str(d.body.to)
@@ -307,16 +305,13 @@ export const system: MockModule = {
       ctx.send(200, { ok: true, to })
     },
     'POST /v1/settings/mail': async (ctx) => {
-      if (!ctx.requirePermission('platform.settings.write')) return
       reply(ctx, await saveMail(ctx))
     },
 
     'GET /v1/settings/telegram': (ctx) => {
-      if (!ctx.requirePermission('security.audit.read')) return
       ctx.send(200, { enabled: telegram.enabled, bot_username: telegram.bot_username, has_token: telegram.token !== '', admin_chat_id: telegram.admin_chat_id })
     },
     'POST /v1/settings/telegram/test': async (ctx) => {
-      if (!ctx.requirePermission('ops.notification.write')) return
       const d = await decode(ctx, { chat_id: 'number' })
       if (!d.ok) return reply(ctx, d.result)
       const chat = typeof d.body.chat_id === 'number' && d.body.chat_id !== 0 ? d.body.chat_id : telegram.admin_chat_id
@@ -325,19 +320,16 @@ export const system: MockModule = {
       ctx.send(200, { sent: true })
     },
     'POST /v1/settings/telegram': async (ctx) => {
-      if (!ctx.requirePermission('platform.settings.write')) return
       reply(ctx, await saveTelegram(ctx))
     },
 
     'GET /v1/mail/templates': (ctx) => {
-      if (!ctx.requirePermission('ops.notification.read')) return
       const list = [...templates].sort((a, b) => a.code.localeCompare(b.code) || a.channel.localeCompare(b.channel))
       ctx.send(200, {
         templates: list.map((t) => ({ ...rowJson(t), has_default: `${t.code}|${t.channel}` in DEFAULTS, description: DESCRIPTION[t.code] ?? '', preview_subject: render(t.subject), preview_body: render(t.body) })),
       })
     },
     'POST /v1/mail/templates/preview': async (ctx) => {
-      if (!ctx.requirePermission('ops.notification.read')) return
       const d = await decode(ctx, { code: 'string', channel: 'string', subject: 'string', body: 'string' })
       if (!d.ok) return reply(ctx, d.result)
       const b = d.body
@@ -347,7 +339,6 @@ export const system: MockModule = {
       ctx.send(200, { preview_subject: render(str(b.subject)), preview_body: render(str(b.body)), unknown_variables: unknownVars(`${str(b.subject)}\n${str(b.body)}`, t.vars) })
     },
     'POST /v1/mail/templates/reset': async (ctx) => {
-      if (!ctx.requirePermission('platform.settings.write')) return
       const d = await decode(ctx, { code: 'string', channel: 'string' })
       if (!d.ok) return reply(ctx, d.result)
       const def = DEFAULTS[`${str(d.body.code)}|${str(d.body.channel)}`]
@@ -357,7 +348,7 @@ export const system: MockModule = {
       ctx.send(200, { template: rowJson(t) })
     },
     'POST /v1/mail/templates/test': async (ctx) => {
-      if (!ctx.requirePermission('ops.notification.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const d = await decode(ctx, { code: 'string', channel: 'string', to: 'string', subject: 'string', body: 'string' })
       if (!d.ok) return reply(ctx, d.result)
       const b = d.body
@@ -376,7 +367,6 @@ export const system: MockModule = {
       ctx.send(200, { sent: true, subject })
     },
     'POST /v1/mail/templates': async (ctx) => {
-      if (!ctx.requirePermission('platform.settings.write')) return
       const d = await decode(ctx, { code: 'string', channel: 'string', subject: 'string', body: 'string' })
       if (!d.ok) return reply(ctx, d.result)
       const b = d.body
@@ -394,28 +384,26 @@ export const system: MockModule = {
     },
 
     'GET /v1/plugin-hooks': (ctx) => {
-      if (!ctx.requirePermission('platform.plugin.read')) return
       ctx.send(200, { hooks: hooks.map(hookJson), events: EVENTS })
     },
     'POST /v1/plugin-hooks': async (ctx) => {
-      if (!ctx.requirePermission('platform.plugin.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       await ctx.idempotent('plugin_hook_save', () => saveHook(ctx))
     },
     'DELETE /v1/plugin-hooks/:code': (ctx) => {
-      if (!ctx.requirePermission('platform.plugin.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const i = hooks.findIndex((h) => h.code === ctx.params.code)
       if (i < 0) return reply(ctx, err(404, 'not_found', '插件不存在'))
       hooks.splice(i, 1)
       ctx.send(200, { deleted: true })
     },
     'GET /v1/plugin-hooks/:code/deliveries': (ctx) => {
-      if (!ctx.requirePermission('platform.plugin.read')) return
       const rows = hooks.find((h) => h.code === ctx.params.code)?.deliveries ?? []
       const sorted = [...rows].sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 50)
       ctx.send(200, { deliveries: sorted.length ? sorted : null })
     },
     'POST /v1/plugin-hooks/:code/test': (ctx) => {
-      if (!ctx.requirePermission('platform.plugin.write') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const h = hooks.find((x) => x.code === ctx.params.code)
       if (!h) return reply(ctx, failed('发送失败：插件不存在'))
       if (h.endpoint_url.includes('fail') || h.endpoint_url.includes('crm.')) return reply(ctx, failed('对方返回 HTTP 503，不是 2xx'))

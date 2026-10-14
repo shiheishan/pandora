@@ -6,6 +6,7 @@ import { useRuntime } from '../shell/runtime'
 import { Button, Input, Segmented, useToast } from '../ui'
 import css from './AuthPage.module.css'
 import { quickLoginTokenFromInput, readStoredInvite } from './entry-links'
+import { PasswordResetForm } from './PasswordReset'
 import { useAppearance, useSiteConfig } from './queries'
 import { SiteBrand } from './SiteBrand'
 
@@ -38,6 +39,10 @@ export function AuthPage({ initialTab = 'login', invite, notice }: { initialTab?
   const appearance = useAppearance()
   const mode = site.data?.registration_mode
   const [tab, setTab] = useState<AuthTab>(initialTab)
+  // 找回密码不占登录方式的标签：从登录表单的「忘记密码」进去，做完回到登录并带上邮箱
+  const [resetting, setResetting] = useState(false)
+  const [resetEmail, setResetEmail] = useState('')
+  const canReset = site.data?.password_reset === true
   const current: AuthTab = tab === 'reg' && mode === 'closed' ? 'login' : tab
   const loginNotice = appearance.data?.slots['portal.login.notice']
   // 页脚的站点名随生效主题（与 document.title 同源），取不到时是 Pandora
@@ -58,10 +63,23 @@ export function AuthPage({ initialTab = 'login', invite, notice }: { initialTab?
           <div className={css.notice} dangerouslySetInnerHTML={{ __html: loginNotice }} />
         )}
         <div className={css.card}>
-          <Segmented label="登录方式" options={options} value={current} onChange={setTab} className={css.switch} />
-          {current === 'login' && <LoginForm />}
-          {current === 'reg' && <RegisterForm inviteRequired={mode !== 'open'} invite={invite ?? readStoredInvite()} emailVerification={site.data?.email_verification ?? true} />}
-          {current === 'quick' && <QuickLoginForm initialError={notice ?? null} />}
+          {resetting && canReset ? (
+            <PasswordResetForm
+              onCancel={() => setResetting(false)}
+              onDone={(email) => {
+                setResetEmail(email)
+                setResetting(false)
+                setTab('login')
+              }}
+            />
+          ) : (
+            <>
+              <Segmented label="登录方式" options={options} value={current} onChange={setTab} className={css.switch} />
+              {current === 'login' && <LoginForm key={resetEmail} initialEmail={resetEmail} onForgot={canReset ? () => setResetting(true) : undefined} />}
+              {current === 'reg' && <RegisterForm inviteRequired={mode !== 'open'} invite={invite ?? readStoredInvite()} emailVerification={site.data?.email_verification ?? true} />}
+              {current === 'quick' && <QuickLoginForm initialError={notice ?? null} />}
+            </>
+          )}
         </div>
         <div className={css.footer}>
           {mode === 'closed' ? `${siteName} · 注册已关闭` : mode === 'open' ? `${siteName} · 注册已开放` : mode === 'invite_only' ? `${siteName} · 注册已开放 · 需要邀请码` : siteName}
@@ -71,9 +89,9 @@ export function AuthPage({ initialTab = 'login', invite, notice }: { initialTab?
   )
 }
 
-function LoginForm() {
+function LoginForm({ initialEmail = '', onForgot }: { initialEmail?: string; onForgot?: () => void }) {
   const { api, tokens } = useRuntime()
-  const [email, setEmail] = useState('')
+  const [email, setEmail] = useState(initialEmail)
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -108,6 +126,11 @@ function LoginForm() {
       <Button type="submit" variant="primary" block busy={busy}>
         登录
       </Button>
+      {onForgot && (
+        <Button variant="link" size="sm" onClick={onForgot} className={css.forgot}>
+          忘记密码？
+        </Button>
+      )}
     </form>
   )
 }

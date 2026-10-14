@@ -1,31 +1,55 @@
 import { useEffect, useState } from 'react'
-import { formatMoney } from '../../../core/format'
+import { isApiError } from '../../../core/api'
 import { useApi } from '../../../shell/runtime'
 import { Button, Input, Modal, Select, useToast } from '../../../ui'
-import { useCan, useFailure, useIntentKey } from '../../actions'
+import { useFailure, useIntentKey } from '../../actions'
 import { usePlans } from '../plans/api'
 import { useInvalidateUsers, useUser } from '../users/api'
-import { manualCreatedSchema, useInvalidateBilling, useUserPick } from './api'
+import { manualCreatedSchema, useInvalidateBilling, useManualPreview, useUserPick } from './api'
 import css from './Billing.module.css'
-import { emptyManual, manualBody, manualProblems, priceChoices, SETTLEMENTS, type ManualForm, type Settlement } from './model'
+import {
+  belowMinimumText,
+  emptyManual,
+  manualBelowMinimum,
+  manualBody,
+  manualCreatedToast,
+  manualProblems,
+  previewParams,
+  priceChoices,
+  SETTLEMENTS,
+  type ManualForm,
+  type Settlement,
+} from './model'
+import { choiceOf, previewFailure, priceNote, selectedKey, submitGate } from './placement'
+import { PlacementError, PlacementPicker } from './PlacementPicker'
 
-/** onClose(新订单 id)：取消时不带参数 */
-export function ManualOrder({ open, userId, onClose }: { open: boolean; userId: string | null; onClose: (createdId?: string) => void }) {
+/**
+ * onClose(新订单 id)：取消时不带参数。
+ * entrySubscriptionId：从用户抽屉某一份订阅的「给这份开单」进来时，那份订阅的 id，只用来预选落点
+ */
+export function ManualOrder({
+  open,
+  userId,
+  entrySubscriptionId = null,
+  onClose,
+}: {
+  open: boolean
+  userId: string | null
+  entrySubscriptionId?: string | null
+  onClose: (createdId?: string) => void
+}) {
   // 每次打开都是一张新表单（也是一次新的开单意图）
-  return open ? <ManualForm userId={userId} onClose={onClose} /> : null
+  return open ? <ManualForm userId={userId} entrySubscriptionId={entrySubscriptionId} onClose={onClose} /> : null
 }
 
-function ManualForm({ userId, onClose }: { userId: string | null; onClose: (createdId?: string) => void }) {
+function ManualForm({ userId, entrySubscriptionId, onClose }: { userId: string | null; entrySubscriptionId: string | null; onClose: (createdId?: string) => void }) {
   const api = useApi()
   const toast = useToast()
-  const can = useCan()
   const fail = useFailure()
   const intent = useIntentKey()
   const invalidate = useInvalidateBilling()
   const invalidateUsers = useInvalidateUsers()
-  const canUsers = can('iam.user.read')
-  const canPlans = can('catalog.read')
-  const prefill = useUser(canUsers ? userId : null)
+  const prefill = useUser(userId)
   const plans = usePlans()
   const [form, setForm] = useState<ManualForm>(() => emptyManual())
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -38,31 +62,56 @@ function ManualForm({ userId, onClose }: { userId: string | null; onClose: (crea
     setForm((f) => ({ ...f, user: { id: prefill.data.id, email: prefill.data.email } }))
   }
 
-  const choices = canPlans ? priceChoices(plans.data ?? []) : []
+  const choices = priceChoices(plans.data ?? [])
   const chosen = choices.find((c) => c.value === form.choice)
+  // 管理员自己点的落点；换了用户、套餐或价格，选项就变了，点过的作废
+  const [picked, setPicked] = useState('')
   const set = <K extends keyof ManualForm>(key: K, value: ManualForm[K]) => {
     setForm((f) => ({ ...f, [key]: value }))
+    if (key === 'user' || key === 'choice') setPicked('')
     setErrors({})
   }
 
+  // 入口订阅只对入口那位用户有效：中途换了人就不再预选；服务端说它不对（422 entry_subscription_id）时也不再带
+  const [entryRejected, setEntryRejected] = useState<string | null>(null)
+  const entry = entryRejected === null && form.user !== null && form.user.id === userId ? entrySubscriptionId : null
+  const params = previewParams(form, entry)
+  const preview = useManualPreview(params)
+  const failure = previewFailure(preview.error ? (isApiError(preview.error) ? preview.error : { status: 0, fields: {}, message: preview.error.message }) : null)
+  if (failure.entryRejected !== null && entryRejected === null) setEntryRejected(failure.entryRejected)
+  const selected = selectedKey(preview.data, picked)
+  const option = preview.data?.options.find((o) => o.key === selected)
+  const target = option ? choiceOf(option) : null
+  // 低于最低付款额：preview 按落点给出应付与判定，页面不再读渠道列表自己算
+  const below = manualBelowMinimum(form.settlement, option, preview.data?.min_payment, chosen?.currency)
+  const gate = submitGate({
+    hasInputs: params !== null,
+    loading: params !== null && preview.isPending,
+    failed: preview.isError,
+    failedLabel: failure.fields.price_id ? '先换一个价格' : undefined,
+    selected,
+    blocked: below ? '低于最低付款额' : null,
+  })
+
   const submit = async () => {
-    const problems = manualProblems(form)
+    const problems = manualProblems(form, target)
     if (Object.keys(problems).length) return setErrors(problems)
-    const body = manualBody(form)
+    const body = manualBody(form, target)
     setBusy(true)
     try {
       const r = await api.post('v1/orders/manual', manualCreatedSchema, { body, idempotencyKey: intent.keyFor(body) })
       intent.reset()
-      toast(
-        form.settlement === 'pending'
-          ? `订单 ${r.order_no} 已创建，等待用户在 30 分钟内支付`
-          : form.settlement === 'offline'
-            ? `订单 ${r.order_no} 已按线下收款入账，订阅已开通`
-            : `订单 ${r.order_no} 已赠送开通`,
-      )
+      toast(manualCreatedToast(r, form.settlement, target?.kind))
       onClose(r.order_id)
     } catch (e) {
+      // 低于最低付款额的 422 带 fields.settlement：随通用的 fields 落到「结算方式」上（下一步就是换结算方式）
       fail(e, { fields: setErrors, intent })
+      // 订阅状态在预览之后变了（落点已失效）或没选落点：重新取一遍选项，点过的作废
+      if (isApiError(e) && (e.status === 409 || e.fields.target !== undefined)) {
+        setPicked('')
+        void preview.refetch()
+      }
+      // 最低额在 preview 之后变了（渠道刚改过）：finally 里失效 billing 前缀会重取 preview，提示与两个按钮跟着出来
     } finally {
       setBusy(false)
       void invalidate()
@@ -83,8 +132,8 @@ function ManualForm({ userId, onClose }: { userId: string | null; onClose: (crea
           <Button size="dialog" onClick={() => onClose()} disabled={busy}>
             取消
           </Button>
-          <Button size="dialog" variant="primary" busy={busy} onClick={() => void submit()}>
-            {form.settlement === 'offline' ? '入账并开通' : form.settlement === 'grant' ? '赠送开通' : '创建订单'}
+          <Button size="dialog" variant="primary" busy={busy} disabled={!gate.ok} onClick={() => void submit()}>
+            {!gate.ok ? gate.label : form.settlement === 'offline' ? '入账并开通' : form.settlement === 'grant' ? '赠送开通' : '创建订单'}
           </Button>
         </>
       }
@@ -92,20 +141,18 @@ function ManualForm({ userId, onClose }: { userId: string | null; onClose: (crea
       <div className={css.dialogBody}>
         <UserPicker
           value={form.user}
-          enabled={canUsers}
-          loading={canUsers && userId !== null && prefill.isPending}
+          loading={userId !== null && prefill.isPending}
           onChange={(user) => set('user', user)}
           error={errors.user_id}
         />
         <div className={css.grid2}>
           <Select
             label="套餐与周期"
-            placeholder={!canPlans ? '需要套餐读取权限' : plans.isPending ? '读取中…' : choices.length ? '选择在售价格' : '没有在售的价格'}
+            placeholder={plans.isPending ? '读取中…' : choices.length ? '选择在售价格' : '没有在售的价格'}
             options={choices.map(({ value, label }) => ({ value, label }))}
             value={form.choice}
             onChange={(e) => set('choice', e.target.value)}
-            error={errors.price_id || errors.plan_id}
-            disabled={!canPlans}
+            error={errors.price_id || errors.plan_id || failure.fields.price_id}
           />
           <Select
             label="结算方式"
@@ -115,9 +162,44 @@ function ManualForm({ userId, onClose }: { userId: string | null; onClose: (crea
             error={errors.settlement}
           />
         </div>
+        {params !== null && failure.general !== null && <PlacementError message={failure.general} onRetry={() => void preview.refetch()} />}
+        {preview.data && chosen && (
+          <PlacementPicker
+            options={preview.data.options}
+            selected={selected}
+            targetPlan={chosen.planName}
+            settlement={form.settlement}
+            entrySubscriptionId={entry}
+            onPick={(key) => {
+              setPicked(key)
+              setErrors({})
+            }}
+          />
+        )}
+        {entryRejected !== null && entrySubscriptionId !== null && form.user?.id === userId && (
+          <span className={`${css.small} ${css.tone_warn}`}>没能预选「给这份开单」点的那份（{entryRejected}），请自己选这单落到哪一份。</span>
+        )}
+        {errors.target && (
+          <span role="alert" className={`${css.small} ${css.tone_danger}`}>
+            {errors.target}
+          </span>
+        )}
+        {below && (
+          <div className={css.minWarn} role="alert">
+            <span>{belowMinimumText(below)}</span>
+            <span className={css.minWarnActions}>
+              <Button size="xs" onClick={() => set('settlement', 'grant')}>
+                改用赠送
+              </Button>
+              <Button size="xs" onClick={() => set('settlement', 'offline')}>
+                改用线下已收款
+              </Button>
+            </span>
+          </div>
+        )}
         <p className={css.small}>
           {settlement.hint}
-          {chosen && form.settlement !== 'grant' && `；应付 ${formatMoney(chosen.amount, chosen.currency)}`}。「从余额扣除」暂不提供，需要时先到用户详情调账，再用赠送开单。
+          {chosen && form.settlement !== 'grant' && `；${priceNote(chosen.amount, chosen.currency, option)}`}。「从余额扣除」暂不提供，需要时先到用户详情调账，再用赠送开单。
         </p>
         {form.settlement === 'offline' && (
           <Input label="凭证号" mono placeholder="银行流水号、收据编号等" value={form.reference} onChange={(e) => set('reference', e.target.value)} error={errors.reference} />
@@ -133,13 +215,11 @@ function ManualForm({ userId, onClose }: { userId: string | null; onClose: (crea
 // ---------------------------------------------------------------------------
 function UserPicker({
   value,
-  enabled,
   loading,
   onChange,
   error,
 }: {
   value: ManualForm['user']
-  enabled: boolean
   loading: boolean
   onChange: (user: ManualForm['user']) => void
   error?: string
@@ -150,7 +230,7 @@ function UserPicker({
     const timer = setTimeout(() => setTerm(text), 300)
     return () => clearTimeout(timer)
   }, [text])
-  const pick = useUserPick(term, enabled && value === null)
+  const pick = useUserPick(term, value === null)
   const found = pick.data ?? []
 
   if (value)
@@ -170,14 +250,13 @@ function UserPicker({
       <Input
         label="用户"
         type="search"
-        placeholder={enabled ? (loading ? '读取用户中…' : '输入邮箱或用户 ID 搜索') : '需要用户读取权限才能选择用户'}
+        placeholder={loading ? '读取用户中…' : '输入邮箱或用户 ID 搜索'}
         value={text}
         onChange={(e) => setText(e.target.value)}
-        disabled={!enabled}
         error={error}
         data-autofocus=""
       />
-      {enabled && term.trim() !== '' && (
+      {term.trim() !== '' && (
         <ul className={css.pickList} aria-label="匹配的用户">
           {pick.isPending ? (
             <li className={css.pickEmpty}>搜索中…</li>

@@ -28,23 +28,48 @@
   background: var(--ok);
 }
 
+/*
+ * 呼吸灯：扩散的光圈画在伪元素上，只动 transform 与 opacity，由合成层播放、不触发重绘。
+ * 原先动画 box-shadow，每一帧都要重绘，在 1000 节点的列表页上空闲时吃掉约 20% 主线程。
+ */
 .dotLive {
-  animation: pulse 2s infinite;
+  position: relative;
+}
+
+.dotLive::after {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--ok);
+  content: '';
+  opacity: 0;
+  animation: pulse 2s ease-out infinite;
+  will-change: transform, opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dotLive::after {
+    animation: none;
+  }
 }
 
 .dotWait {
   background: var(--warn);
 }
 
+/* 7px 的点扩到约 19px（原来 6px 的光圈）后淡出，后 30% 静止 */
 @keyframes pulse {
   0% {
-    box-shadow: 0 0 0 0 rgba(47, 154, 106, 0.5);
+    opacity: 0.5;
+    transform: scale(1);
   }
   70% {
-    box-shadow: 0 0 0 6px rgba(47, 154, 106, 0);
+    opacity: 0;
+    transform: scale(2.7);
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(47, 154, 106, 0);
+    opacity: 0;
+    transform: scale(2.7);
   }
 }
 

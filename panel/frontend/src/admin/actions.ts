@@ -2,19 +2,6 @@ import { useCallback } from 'react'
 import { isApiError } from '../core/api'
 import { endsIntent, type IntentKey } from '../core/intent'
 import { useToast } from '../ui'
-import { useAdminMe } from './me'
-
-// ---------------------------------------------------------------------------
-// 权限：只看 GET v1/me 的 permissions；me 没回来时一律 false（宁可少显示入口）
-// ---------------------------------------------------------------------------
-export function canWith(permissions: readonly string[] | undefined, code: string): boolean {
-  return permissions?.includes(code) ?? false
-}
-
-export function useCan(): (code: string) => boolean {
-  const perms = useAdminMe().data?.permissions
-  return useCallback((code: string) => canWith(perms, code), [perms])
-}
 
 // ---------------------------------------------------------------------------
 // 幂等键：实现收在 core/intent.ts（两个入口共用一份），这里原样转出，

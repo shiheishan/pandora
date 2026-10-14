@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 )
 
 // visionTrace 由环境变量 VISION_TRACE 打开，默认关闭且零成本。
@@ -171,6 +172,11 @@ func newVisionState(candidates [][]byte) *visionState {
 type VisionConn struct {
 	net.Conn
 	state *visionState
+	// outer 非空表示外层能交出底层连接（见 visionDirectOuter）。
+	outer visionDirectOuter
+	// directUsed 表示至少一个方向已改走底层连接：此后关闭时先关底层连接，
+	// 免得外层再往裸流里写一条加密的 close_notify。
+	directUsed atomic.Bool
 
 	readMu  sync.Mutex
 	readBuf bytes.Buffer // 已剥离 padding、等待被 Read 取走的内容
@@ -182,8 +188,14 @@ type VisionConn struct {
 	// net.Conn 的流式语义就不成立了：TCP 可以把这 21 字节分几次返回，
 	// 照抄的结果是首帧永远认不出来，整条连接退化成裸转发。
 	pending []byte
+	// rawReader 是读侧直通后的来源：外层残留的字节在前，底层连接在后。
+	rawReader io.Reader
+	// watchReleased：读侧已确定不会再切直通（见 releaseDirectWatch）。
+	watchReleased bool
 
 	writeMu sync.Mutex
+	// rawWriter 是写侧直通后的目标（外层的底层连接）。
+	rawWriter net.Conn
 }
 
 // NewVisionConn 包装一条已知用户的连接。
@@ -208,11 +220,18 @@ func NewVisionConnFor(conn net.Conn, candidates [][]byte) (*VisionConn, error) {
 			return nil, errors.New("vision: 候选 UUID 必须是 16 字节")
 		}
 	}
-	return &VisionConn{
-		Conn:    conn,
-		state:   newVisionState(candidates),
-		scratch: make([]byte, visionBufferSize),
-	}, nil
+	// scratch 按需借：Vision 只在前几个包里剥填充、认 TLS，之后读写直通，
+	// 常驻一份 8KB 读缓冲在 10 万连接上就是 800MB。
+	c := &VisionConn{
+		Conn:  conn,
+		state: newVisionState(candidates),
+	}
+	if outer, ok := conn.(visionDirectOuter); ok {
+		c.outer = outer
+	} else if tlsConn, tap := visionTLSTapOf(conn); tap != nil {
+		c.outer = &visionTLSDirect{tls: tlsConn, tap: tap}
+	}
+	return c, nil
 }
 
 // MatchedUUID 返回首帧命中的用户 UUID；未命中或还没探测时返回 nil。
@@ -236,11 +255,33 @@ func (c *VisionConn) Read(p []byte) (int, error) {
 	c.readMu.Lock()
 	defer c.readMu.Unlock()
 
+	if c.readBuf.Len() == 0 && len(c.pending) == 0 && c.readPassthrough() {
+		// 剥填充与 TLS 识别都已结束：下面那套循环对字节不做任何事，只是经
+		// scratch 与 readBuf 绕一圈。直接读进调用方的缓冲，scratch 与 readBuf
+		// 一并放掉，空闲连接不再常驻读缓冲。
+		if c.scratch != nil {
+			putVisionScratch(c.scratch)
+			c.scratch = nil
+			c.readBuf = bytes.Buffer{}
+		}
+		c.releaseDirectWatch()
+		return c.readSource().Read(p)
+	}
+	// 读进调用方的缓冲：剥出来的内容随后拷进 readBuf，再从 readBuf 交回调用方，
+	// 中间不再引用这块内存。只有调用方给的缓冲太小时才借 scratch——阻塞读期间
+	// 一直拿着 8KB scratch，正是每连接常驻内存的来源之一。
+	buf := p
+	if len(buf) < visionMinDirectRead {
+		if c.scratch == nil {
+			c.scratch = getVisionScratch()
+		}
+		buf = c.scratch
+	}
 	for c.readBuf.Len() == 0 {
-		n, err := c.Conn.Read(c.scratch)
+		n, err := c.readSource().Read(buf)
 		visionTracef("read n=%d err=%v", n, err)
 		if n > 0 {
-			chunk := c.scratch[:n]
+			chunk := buf[:n]
 			c.state.mu.Lock()
 			direct := c.state.readerDirect
 			needUnpad := !direct && (c.state.withinPaddingBuffers || c.state.packetsToFilter > 0)
@@ -269,9 +310,14 @@ func (c *VisionConn) Read(p []byte) (int, error) {
 			if c.state.packetsToFilter > 0 && len(chunk) > 0 {
 				c.state.filterTLS(chunk)
 			}
+			readerDirect := c.state.readerDirect
 			c.state.mu.Unlock()
 			if len(chunk) > 0 {
 				c.readBuf.Write(chunk)
+			}
+			if readerDirect {
+				// 对端发完 command=2 那一帧就改写裸 TCP：此后一个字节都不能再经外层读。
+				c.switchReadDirect()
 			}
 		}
 		if err != nil {
@@ -287,8 +333,40 @@ func (c *VisionConn) Read(p []byte) (int, error) {
 			return 0, err
 		}
 	}
-	return c.readBuf.Read(p)
+	n, err := c.readBuf.Read(p)
+	if c.readBuf.Len() == 0 && c.readBuf.Cap() > visionBufferSize {
+		// 读空了就放掉大块底层数组，空闲连接不常驻它。
+		c.readBuf = bytes.Buffer{}
+	}
+	return n, err
 }
+
+// readPassthrough 判断读侧是否已无事可做：不再剥填充、不再识别 TLS。
+// 与 Read 循环里 needUnpad / packetsToFilter 的判断同一口径。
+func (c *VisionConn) readPassthrough() bool {
+	c.state.mu.Lock()
+	defer c.state.mu.Unlock()
+	needUnpad := !c.state.readerDirect && (c.state.withinPaddingBuffers || c.state.packetsToFilter > 0)
+	return !needUnpad && c.state.packetsToFilter == 0
+}
+
+// CloseWrite 把半关闭转给底层（REALITY / TLS 连接发 close_notify）。VisionConn
+// 内嵌的是接口，不转的话转发对它的半关闭断言失败，客户端收不到上游已结束。
+func (c *VisionConn) CloseWrite() error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	// 写侧已直通时半关闭底层 TCP：内层 TLS 自带 close_notify，外层的那条加密
+	// 告警落在裸流里只会被对端当成坏数据。
+	return closeWriteOf(c.writeTarget())
+}
+
+// visionMinDirectRead：调用方缓冲不小于它就直接读进去（转发的小缓冲是 2KB）。
+const visionMinDirectRead = 1 << 10
+
+var visionScratchPool = sync.Pool{New: func() any { return make([]byte, visionBufferSize) }}
+
+func getVisionScratch() []byte  { return visionScratchPool.Get().([]byte) }
+func putVisionScratch(b []byte) { visionScratchPool.Put(b) } //nolint:staticcheck // 切片头分配可接受，频率是每连接一次
 
 // Write 给下行数据加填充。
 //
@@ -306,7 +384,7 @@ func (c *VisionConn) Write(p []byte) (int, error) {
 	c.state.mu.Lock()
 	if c.state.writerDirect {
 		c.state.mu.Unlock()
-		return c.Conn.Write(p)
+		return c.writeTarget().Write(p)
 	}
 	// TLS 识别要看双向流量：能否切直通，取决于从下行 ServerHello 里
 	// 认出内层是不是 TLS 1.3。
@@ -318,6 +396,7 @@ func (c *VisionConn) Write(p []byte) (int, error) {
 		return c.Conn.Write(p)
 	}
 	frames := c.state.buildPaddedFrames(p)
+	writerDirect := c.state.writerDirect
 	c.state.mu.Unlock()
 
 	for i, frame := range frames {
@@ -326,6 +405,11 @@ func (c *VisionConn) Write(p []byte) (int, error) {
 		if err != nil {
 			return 0, err
 		}
+	}
+	if writerDirect && c.outer != nil && c.rawWriter == nil {
+		// command=2 这一帧已经经外层发出：对端读完它就改读裸 TCP，此后直接写底层连接。
+		c.rawWriter = c.outer.NetConn()
+		c.directUsed.Store(true)
 	}
 	// 报告调用方交进来的字节数。填充是我们加的，算进去会让上层的流量
 	// 统计每帧凭空多出几百字节。

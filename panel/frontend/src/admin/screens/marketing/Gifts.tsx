@@ -9,7 +9,7 @@ import { TemplateDrawer } from './TemplateDrawer'
 import local from './Gifts.module.css'
 import { CODE_STATUS, batchLabel, codeFilterQuery, formatDate, formatDateTime, grantedLabel, redeemRate, templateFace, type CodeStatusFilter } from './logic'
 import css from './marketing.module.css'
-import { useCan, useFailure, useGiftBatches, useGiftCodes, useGiftStats, useGiftTemplates, useGiftUsages, useInvalidateMarketing, usePlanCatalog } from './queries'
+import { useFailure, useGiftBatches, useGiftCodes, useGiftStats, useGiftTemplates, useGiftUsages, useInvalidateMarketing, usePlanCatalog } from './queries'
 import { toggleResponse, type Batch, type CodesGenerated, type GiftCode, type GiftStats, type GiftTemplate } from './schemas'
 
 type View = 'templates' | 'batches' | 'usages'
@@ -65,11 +65,9 @@ export function Gifts({ rest }: { rest: string[] }) {
 // 模板
 // ---------------------------------------------------------------------------
 function Templates({ onGenerated }: { onGenerated: (result: CodesGenerated) => void }) {
-  const can = useCan()
   const list = useGiftTemplates()
   const catalog = usePlanCatalog()
   const plans = catalog.isSuccess ? catalog.data : undefined
-  const writable = can('marketing.giftcard.write')
   const [editing, setEditing] = useState<GiftTemplate | null | 'new'>(null)
   const [generating, setGenerating] = useState<GiftTemplate | null>(null)
 
@@ -78,8 +76,9 @@ function Templates({ onGenerated }: { onGenerated: (result: CodesGenerated) => v
       <QueryView
         query={list}
         rows={2}
-        isEmpty={(d) => d.length === 0 && !writable}
-        empty={<Empty title="还没有礼品卡模板" description="有礼品卡写权限的同事可以在这里新建模板并生成卡码。" />}
+        // 列表末尾总有「新建模板」卡，所以没有模板时也不显示空状态
+        isEmpty={() => false}
+        empty={null}
       >
         {(templates) => (
           <div className={local.cards}>
@@ -100,24 +99,20 @@ function Templates({ onGenerated }: { onGenerated: (result: CodesGenerated) => v
                   <div className={css.faint}>
                     兑换后 {face.after} · 已发 {t.code_total.toLocaleString('zh-CN')} 张 · 已兑 {t.code_used.toLocaleString('zh-CN')}
                   </div>
-                  {writable && (
-                    <div className={local.cardActions}>
-                      <Button size="sm" onClick={() => setGenerating(t)}>
-                        生成一批码
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => setEditing(t)}>
-                        编辑
-                      </Button>
-                    </div>
-                  )}
+                  <div className={local.cardActions}>
+                    <Button size="sm" onClick={() => setGenerating(t)}>
+                      生成一批码
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setEditing(t)}>
+                      编辑
+                    </Button>
+                  </div>
                 </section>
               )
             })}
-            {writable && (
-              <button type="button" className={local.newCard} onClick={() => setEditing('new')}>
-                ＋ 新建模板
-              </button>
-            )}
+            <button type="button" className={local.newCard} onClick={() => setEditing('new')}>
+              ＋ 新建模板
+            </button>
           </div>
         )}
       </QueryView>
@@ -181,10 +176,7 @@ function Batches({ selected }: { selected: string | null }) {
 const STATUS_OPTIONS: ReadonlyArray<{ value: CodeStatusFilter; label: string }> = [{ value: '', label: '全部状态' }, ...(['unused', 'used', 'disabled', 'expired'] as const).map((v) => ({ value: v, label: CODE_STATUS[v]!.label }))]
 
 function BatchCodes({ batch }: { batch: Batch }) {
-  const can = useCan()
-  const writable = can('marketing.giftcard.write')
-  // 掩码报表照审计导出：读权限 + 导出权限（ops.export），reauth 由 api 层弹框
-  const reportable = can('marketing.giftcard.read') && can('ops.export')
+  // 掩码报表照审计导出，reauth 由 api 层弹框
   const [offset, setOffset] = useState(0)
   const [status, setStatus] = useState<CodeStatusFilter>('')
   const [confirm, setConfirm] = useState(false)
@@ -212,22 +204,18 @@ function BatchCodes({ batch }: { batch: Batch }) {
           }}
           options={STATUS_OPTIONS}
         />
-        {reportable && (
-          <Button size="xs" disabled={total === 0} onClick={() => setReporting(true)}>
-            导出当前筛选
-          </Button>
-        )}
-        {writable && (
-          <Button size="xs" disabled={batch.exported_at !== null} onClick={() => setConfirm(true)}>
-            {batch.exported_at ? '已导出过' : '一次性导出'}
-          </Button>
-        )}
+        <Button size="xs" disabled={total === 0} onClick={() => setReporting(true)}>
+          导出当前筛选
+        </Button>
+        <Button size="xs" disabled={batch.exported_at !== null} onClick={() => setConfirm(true)}>
+          {batch.exported_at ? '已导出过' : '一次性导出'}
+        </Button>
       </div>
       <QueryView query={codes} isEmpty={(d) => d.codes.length === 0} empty={<Empty bare title={status ? '没有这个状态的码' : '这个批次没有码'} />}>
         {(data) => (
           <>
             {data.codes.map((c) => (
-              <CodeRow key={c.id} code={c} writable={writable} />
+              <CodeRow key={c.id} code={c} />
             ))}
             <Pager total={data.total} limit={CODE_PAGE} offset={offset} onChange={setOffset} />
           </>
@@ -253,7 +241,7 @@ function BatchCodes({ batch }: { batch: Batch }) {
   )
 }
 
-function CodeRow({ code: c, writable }: { code: GiftCode; writable: boolean }) {
+function CodeRow({ code: c }: { code: GiftCode }) {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
@@ -280,7 +268,7 @@ function CodeRow({ code: c, writable }: { code: GiftCode; writable: boolean }) {
       </span>
       <span className={`${css.muted} ${local.ellipsis}`}>{c.used_email ?? '—'}</span>
       <span className={local.right}>
-        {writable && action && (
+        {action && (
           <Button size="xs" variant="link" className={action === '停用' ? local.danger : undefined} busy={toggle.isPending} onClick={() => toggle.mutate(c.status === 'unused')}>
             {action}
           </Button>

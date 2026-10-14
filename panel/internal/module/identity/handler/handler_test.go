@@ -1,0 +1,438 @@
+package handler
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"sort"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/aegispanel/aegis/internal/module/identity/service"
+	"github.com/aegispanel/aegis/internal/pkg/authn"
+	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/httpx"
+	"github.com/aegispanel/aegis/internal/pkg/ratelimit"
+	"github.com/aegispanel/aegis/internal/pkg/route"
+	"github.com/aegispanel/aegis/internal/pkg/testkit"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
+	"go.uber.org/zap"
+)
+
+// fakeSvc 只实现用例用到的方法；其余方法走嵌入的 nil 接口，被调到会 panic（说明路由接错了）。
+type fakeSvc struct {
+	Service
+	start      service.RegistrationStart
+	lastFilter service.UserFilter
+	rows       []service.UserRow
+	changed    bool
+}
+
+func (f *fakeSvc) StartRegistration(context.Context, string, string) (service.RegistrationStart, error) {
+	return f.start, nil
+}
+
+func (f *fakeSvc) Profile(_ context.Context, id uuid.UUID) (service.Profile, error) {
+	return service.Profile{ID: id, Email: "me@example.test", Status: "active",
+		CreatedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.FixedZone("x", 8*3600))}, nil
+}
+
+func (f *fakeSvc) ChangePassword(context.Context, string, string) error {
+	f.changed = true
+	return nil
+}
+
+func (f *fakeSvc) ListUsers(_ context.Context, fl service.UserFilter, _, _ int) ([]service.UserRow, int64, error) {
+	f.lastFilter = fl
+	return f.rows, int64(len(f.rows)), nil
+}
+
+func (f *fakeSvc) AdminListGroups(context.Context) ([]service.Group, error) {
+	return []service.Group{{
+		ID:   uuid.MustParse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+		Code: "default", Name: "默认", Description: "", Users: 1,
+	}}, nil
+}
+
+func (f *fakeSvc) UserDetail(_ context.Context, id uuid.UUID) (service.UserDetail, error) {
+	lim := int64(1_000_000_000)
+	devLim := 3
+	planMax := 5
+	label := "我的订阅"
+	periodStart := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	periodEnd := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	paidAt := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+	subID := uuid.MustParse("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+	orderID := uuid.MustParse("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
+	prov := "offline"
+	provName := "线下"
+	sub := service.AdminSub{
+		ID: subID, Label: &label, PlanName: "基础套餐", PlanVersion: 2, Status: "active",
+		PeriodStart: periodStart, PeriodEnd: periodEnd,
+		Amount: decimal.RequireFromString("12.34"), Currency: "CNY",
+		Quotas: []service.AdminQuota{{
+			Metric: "traffic.bytes", Limit: &lim, Consumed: 42, Remaining: &lim,
+		}},
+		DeviceLimitOverride: &devLim, PlanMaxDevices: &planMax, OnlineDevices: 1,
+		PackRemainingBytes: 99,
+	}
+	current := sub
+	return service.UserDetail{
+		UserRow: service.UserRow{
+			ID: id, Email: "u@example.test", Status: "active", RiskLevel: "normal",
+			GroupName: "默认", Currency: "CNY",
+			Balance: decimal.RequireFromString("1.00"), SubscriptionCount: 1,
+			Current: &current,
+		},
+		EmailVerified: true, IsAdmin: false, ReferralCount: 3, OrderCount: 7,
+		Subscriptions: []service.AdminSub{sub},
+		RecentOrders: []service.AdminOrderRow{{
+			ID: orderID, OrderNo: "ORD-1", UserEmail: "u@example.test", Kind: "new", Status: "paid",
+			Currency: "CNY",
+			Total:    decimal.RequireFromString("12.34"), Payable: decimal.RequireFromString("12.34"),
+			Paid: decimal.RequireFromString("12.34"), BalanceApplied: decimal.Zero,
+			CreatedAt: paidAt, PaidAt: &paidAt,
+			ProviderCode: &prov, ProviderName: &provName,
+			PlanName: "基础套餐", Interval: "month", IntervalCount: 1, ItemCount: 1, Manual: false,
+		}},
+		PaidTotals: []service.CurrencyAmount{{
+			Currency: "CNY", Amount: decimal.RequireFromString("12.34"),
+		}},
+		Telegram:            &service.TelegramRef{Username: "testuser", BoundAt: paidAt},
+		UnattachedPackBytes: 0,
+	}, nil
+}
+
+// newEngine 建一个挂好 identity 路由的引擎；principal 非 nil 时模拟已登录。
+func newEngine(svc Service, admin bool, p *authn.Principal) *gin.Engine {
+	return newEngineWith(New(svc, nil, 0), admin, p)
+}
+
+func newEngineWith(h *Handler, admin bool, p *authn.Principal) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	e := gin.New()
+	e.Use(httpx.RequestID(zap.NewNop()), httpx.Errors())
+	if p != nil {
+		e.Use(func(c *gin.Context) { authn.Set(c, *p); c.Next() })
+	}
+	pass := func(c *gin.Context) { c.Next() }
+	kit := route.Kit{
+		RequireAuth:  pass,
+		RecentReauth: pass,
+		Idempotency:  func(string) gin.HandlerFunc { return pass },
+		Switch:       func(string) gin.HandlerFunc { return pass },
+	}
+	if admin {
+		h.RegisterAdmin(e.Group("/v1"), kit)
+	} else {
+		h.RegisterPublic(e.Group("/v1"), kit)
+	}
+	return e
+}
+
+func do(e *gin.Engine, method, path, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, bytes.NewBufferString(body))
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	w := httptest.NewRecorder()
+	e.ServeHTTP(w, req)
+	return w
+}
+
+func routesOf(e *gin.Engine) []string {
+	var out []string
+	for _, r := range e.Routes() {
+		out = append(out, r.Method+" "+r.Path)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func TestRoutes(t *testing.T) {
+	pub := routesOf(newEngine(&fakeSvc{}, false, nil))
+	wantPub := []string{
+		"GET /v1/me", "GET /v1/me/invite",
+		"POST /v1/auth/password-reset/complete", "POST /v1/auth/password-reset/start",
+		"POST /v1/auth/register/complete", "POST /v1/auth/register/start",
+		"POST /v1/me/password",
+	}
+	if strings.Join(pub, "\n") != strings.Join(wantPub, "\n") {
+		t.Fatalf("门户路由:\n%s", strings.Join(pub, "\n"))
+	}
+	adm := routesOf(newEngine(&fakeSvc{}, true, nil))
+	wantAdm := []string{
+		"DELETE /v1/user-groups/:id",
+		"GET /v1/access-log", "GET /v1/ip-clusters",
+		"GET /v1/user-groups", "GET /v1/users", "GET /v1/users/:id", "GET /v1/users/:id/profile",
+		"GET /v1/users/bulk/export", "GET /v1/users/bulk/generate/jobs",
+		"GET /v1/users/bulk/generate/jobs/:id", "GET /v1/users/bulk/generate/jobs/:id/result",
+		"POST /v1/ip-clusters/:key/disable-accounts", "POST /v1/ip-clusters/:key/review",
+		"POST /v1/me/password", "POST /v1/user-groups", "POST /v1/user-groups/:id",
+		"POST /v1/users/:id/group", "POST /v1/users/:id/reset-password", "POST /v1/users/:id/status",
+		"POST /v1/users/bulk/generate", "POST /v1/users/bulk/preview",
+	}
+	if strings.Join(adm, "\n") != strings.Join(wantAdm, "\n") {
+		t.Fatalf("后台路由:\n%s", strings.Join(adm, "\n"))
+	}
+}
+
+// 后台不分权限，但每条后台路由都必须挂 RequireAuth：未登录（或门户主体，由引擎级 DomainGuard 拦成未登录）一律 401。
+func TestAdminRoutesRequireAuth(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	e := gin.New()
+	e.Use(httpx.RequestID(zap.NewNop()), httpx.Errors())
+	pass := func(c *gin.Context) { c.Next() }
+	deny := func(c *gin.Context) { httpx.Fail(c, errs.New(errs.Unauthorized)) }
+	New(&fakeSvc{}, nil, 0).RegisterAdmin(e.Group("/v1"), route.Kit{
+		RequireAuth:  deny,
+		RecentReauth: pass,
+		Idempotency:  func(string) gin.HandlerFunc { return pass },
+		Switch:       func(string) gin.HandlerFunc { return pass },
+	})
+	for _, r := range e.Routes() {
+		path := strings.ReplaceAll(r.Path, ":id", uuid.NewString())
+		w := do(e, r.Method, path, "")
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s 未登录 status %d", r.Method, r.Path, w.Code)
+		}
+	}
+}
+
+func TestRegisterStartShape(t *testing.T) {
+	exp := time.Date(2026, 5, 6, 7, 8, 9, 0, time.FixedZone("x", 8*3600))
+	f := &fakeSvc{start: service.RegistrationStart{Token: "tok", ExpiresAt: exp, VerificationRequired: true}}
+	w := do(newEngine(f, false, nil), http.MethodPost, "/v1/auth/register/start", `{"email":"a@b.co"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d %s", w.Code, w.Body)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["registration_token"] != "tok" || got["expires_at"] != "2026-05-05T23:08:09Z" || got["verification_required"] != true {
+		t.Fatalf("响应 %v", got)
+	}
+	if _, ok := got["dev_code"]; ok {
+		t.Fatalf("dev_code 为空时不应输出: %v", got)
+	}
+	if got["message"] == "" {
+		t.Fatal("缺 message")
+	}
+}
+
+func TestMeShapeAndAuth(t *testing.T) {
+	if w := do(newEngine(&fakeSvc{}, false, nil), http.MethodGet, "/v1/me", ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("未登录 status %d", w.Code)
+	}
+	p := &authn.Principal{UserID: uuid.New(), SessionID: "s", Audience: authn.AudiencePublic}
+	w := do(newEngine(&fakeSvc{}, false, p), http.MethodGet, "/v1/me", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+	if strings.Contains(body, `"permissions"`) || !strings.Contains(body, `"created_at":"2026-01-01T19:04:05Z"`) ||
+		!strings.Contains(body, `"user_id":"`+p.UserID.String()+`"`) {
+		t.Fatalf("响应 %s", body)
+	}
+}
+
+func TestChangePasswordAdminAsksReauth(t *testing.T) {
+	p := &authn.Principal{UserID: uuid.New(), SessionID: "s", Audience: authn.AudienceAdmin}
+	f := &fakeSvc{}
+	w := do(newEngine(f, true, p), http.MethodPost, "/v1/me/password", `{"old_password":"a","new_password":"b"}`)
+	if w.Code != http.StatusOK || !f.changed || !strings.Contains(w.Body.String(), `"reauthenticate":true`) {
+		t.Fatalf("status %d %s", w.Code, w.Body)
+	}
+	p.Audience = authn.AudiencePublic
+	w = do(newEngine(f, false, p), http.MethodPost, "/v1/me/password", `{"old_password":"a","new_password":"b"}`)
+	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), "reauthenticate") {
+		t.Fatalf("门户 status %d %s", w.Code, w.Body)
+	}
+}
+
+func TestListUsersQuery(t *testing.T) {
+	f := &fakeSvc{}
+	e := newEngine(f, true, nil)
+	w := do(e, http.MethodGet, "/v1/users?status=active,%20banned,,&group_id=none&q=abc", "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"users":[]`) {
+		t.Fatalf("status %d %s", w.Code, w.Body)
+	}
+	if strings.Join(f.lastFilter.Statuses, "|") != "active|banned" || !f.lastFilter.NoGroup || f.lastFilter.Query != "abc" {
+		t.Fatalf("筛选 %+v", f.lastFilter)
+	}
+	if w := do(e, http.MethodGet, "/v1/users?group_id=bogus", ""); w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("坏 group_id status %d", w.Code)
+	}
+	if w := do(e, http.MethodGet, "/v1/users/not-a-uuid", ""); w.Code != http.StatusNotFound {
+		t.Fatalf("坏 id status %d", w.Code)
+	}
+	if w := do(e, http.MethodGet, "/v1/user-groups", ""); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"groups":`) {
+		t.Fatalf("用户组 status %d %s", w.Code, w.Body)
+	}
+}
+
+// 改密接口按账号、按 IP 限流：每分钟 authPerMin 次，超出 429，门户与后台都挂。
+func TestMePasswordRateLimited(t *testing.T) {
+	for _, admin := range []bool{false, true} {
+		_, rdb := testkit.Redis(t)
+		aud := authn.AudiencePublic
+		if admin {
+			aud = authn.AudienceAdmin
+		}
+		p := &authn.Principal{UserID: uuid.New(), SessionID: "s", Audience: aud}
+		e := newEngineWith(New(&fakeSvc{}, ratelimit.New(rdb), 2), admin, p)
+		for i := 0; i < 2; i++ {
+			if w := do(e, http.MethodPost, "/v1/me/password", `{"old_password":"a","new_password":"b"}`); w.Code != http.StatusOK {
+				t.Fatalf("admin=%v 第 %d 次 status %d %s", admin, i+1, w.Code, w.Body)
+			}
+		}
+		if w := do(e, http.MethodPost, "/v1/me/password", `{"old_password":"a","new_password":"b"}`); w.Code != http.StatusTooManyRequests {
+			t.Fatalf("admin=%v 第 3 次应 429，实际 %d", admin, w.Code)
+		}
+	}
+}
+
+func TestUserDetailStats(t *testing.T) {
+	e := newEngine(&fakeSvc{}, true, nil)
+	w := do(e, http.MethodGet, "/v1/users/"+uuid.NewString(), "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d %s", w.Code, w.Body)
+	}
+	got := decodeMap(t, w.Body.Bytes())
+	stats, _ := got["stats"].(map[string]any)
+	assertKeys(t, stats, "order_count", "paid_totals", "referral_count")
+	if stats["referral_count"] != float64(3) || stats["order_count"] != float64(7) {
+		t.Fatalf("stats %v", stats)
+	}
+	paid, _ := stats["paid_totals"].([]any)
+	if len(paid) != 1 {
+		t.Fatalf("paid_totals %v", paid)
+	}
+	pt0, _ := paid[0].(map[string]any)
+	assertKeys(t, pt0, "amount", "currency")
+	if pt0["currency"] != "CNY" || pt0["amount"] != float64(1234) {
+		t.Fatalf("paid total %v", pt0)
+	}
+}
+
+func TestAdminUserJSONKeys(t *testing.T) {
+	lim := int64(100)
+	devLim := 2
+	periodEnd := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	withCurrent := uuid.MustParse("d1111111-1111-4111-8111-111111111111")
+	noCurrent := uuid.MustParse("d2222222-2222-4222-8222-222222222222")
+	curSub := &service.AdminSub{
+		ID: withCurrent, PlanName: "Pro", Status: "active", PeriodEnd: periodEnd,
+		Quotas:              []service.AdminQuota{{Metric: "traffic.bytes", Limit: &lim, Consumed: 10}},
+		DeviceLimitOverride: &devLim, OnlineDevices: 2,
+	}
+	f := &fakeSvc{rows: []service.UserRow{
+		{
+			ID: withCurrent, Email: "with@example.test", Status: "active", RiskLevel: "normal",
+			GroupName: "g", Currency: "CNY", Balance: decimal.RequireFromString("9.99"),
+			SubscriptionCount: 1, Current: curSub,
+		},
+		{
+			ID: noCurrent, Email: "none@example.test", Status: "active", RiskLevel: "normal",
+			GroupName: "g", Currency: "CNY", Balance: decimal.Zero,
+			SubscriptionCount: 0, Current: nil,
+		},
+	}}
+	e := newEngine(f, true, nil)
+
+	w := do(e, http.MethodGet, "/v1/users", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("list status %d %s", w.Code, w.Body)
+	}
+	list := decodeMap(t, w.Body.Bytes())
+	users, _ := list["users"].([]any)
+	if len(users) != 2 {
+		t.Fatalf("users len %d", len(users))
+	}
+	rowKeys := []string{
+		"id", "email", "display_name", "status", "risk_level", "group_name", "group_id",
+		"created_at", "last_login_at", "subscription_count", "active_plan", "balance", "currency", "current_subscription",
+	}
+	for i, u := range users {
+		m, _ := u.(map[string]any)
+		assertKeys(t, m, rowKeys...)
+		if i == 0 {
+			cs, _ := m["current_subscription"].(map[string]any)
+			if cs == nil {
+				t.Fatal("current_subscription 应有对象")
+			}
+			assertKeys(t, cs, "id", "plan_name", "status", "current_period_end", "traffic", "device_limit", "online_devices")
+			tr, _ := cs["traffic"].(map[string]any)
+			assertKeys(t, tr, "limit", "consumed")
+			if m["balance"] != float64(999) {
+				t.Fatalf("balance %v", m["balance"])
+			}
+		} else {
+			if _, ok := m["current_subscription"]; !ok {
+				t.Fatal("缺 current_subscription 键")
+			}
+			if m["current_subscription"] != nil {
+				t.Fatalf("current_subscription 应为 null got %v", m["current_subscription"])
+			}
+		}
+	}
+
+	w = do(e, http.MethodGet, "/v1/users/"+withCurrent.String(), "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("detail status %d %s", w.Code, w.Body)
+	}
+	det := decodeMap(t, w.Body.Bytes())
+	detailExtra := []string{
+		"email_verified", "is_admin", "referrer", "stats", "subscriptions", "recent_orders",
+		"telegram", "unattached_pack_bytes",
+	}
+	assertKeys(t, det, append(rowKeys, detailExtra...)...)
+	stats, _ := det["stats"].(map[string]any)
+	assertKeys(t, stats, "paid_totals", "order_count", "referral_count")
+	tg, _ := det["telegram"].(map[string]any)
+	assertKeys(t, tg, "username", "bound_at")
+	subs, _ := det["subscriptions"].([]any)
+	s0, _ := subs[0].(map[string]any)
+	assertKeys(t, s0,
+		"id", "label", "plan_name", "plan_version", "status", "current_period_start", "current_period_end",
+		"amount", "currency", "auto_renew", "quotas", "device_limit_override", "plan_max_devices",
+		"online_devices", "pack_remaining_bytes",
+	)
+	if s0["amount"] != float64(1234) {
+		t.Fatalf("subscription amount %v", s0["amount"])
+	}
+	q0, _ := s0["quotas"].([]any)[0].(map[string]any)
+	assertKeys(t, q0, "metric", "limit", "consumed", "remaining")
+	ordKeys := []string{
+		"id", "order_no", "user_email", "kind", "status", "currency", "total_amount", "payable_amount",
+		"paid_amount", "refunded_amount", "balance_applied", "created_at", "paid_at", "provider_code",
+		"provider_name", "plan_name", "interval", "interval_count", "item_count", "manual",
+	}
+	ro, _ := det["recent_orders"].([]any)[0].(map[string]any)
+	assertKeys(t, ro, ordKeys...)
+	if ro["total_amount"] != float64(1234) {
+		t.Fatalf("order total %v", ro["total_amount"])
+	}
+
+	w = do(e, http.MethodGet, "/v1/user-groups", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("groups status %d %s", w.Code, w.Body)
+	}
+	gr := decodeMap(t, w.Body.Bytes())
+	groups, _ := gr["groups"].([]any)
+	g0, _ := groups[0].(map[string]any)
+	assertKeys(t, g0, "id", "code", "name", "description", "users", "plans", "prices", "coupons", "exclusive_pools")
+	ep, _ := g0["exclusive_pools"].([]any)
+	if ep == nil {
+		t.Fatal("exclusive_pools 不应为 null")
+	}
+	if len(ep) != 0 {
+		t.Fatalf("exclusive_pools %v", ep)
+	}
+}

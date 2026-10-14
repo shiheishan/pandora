@@ -12,12 +12,14 @@
 package route
 
 import (
+	"encoding/json"
 	"fmt"
-	"math"
 	"net/netip"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/aegispanel/nodeagent/internal/confnum"
 )
 
 // Meta 是一条待分流的连接的特征。
@@ -415,7 +417,8 @@ func containsIP(prefixes []netip.Prefix, ip netip.Addr) bool {
 // toStrings 把面板下发的 JSON 值归一成字符串切片。
 //
 // 同一个字段面板可能给单值也可能给数组（"port": 443 和 "port": [443, 8443]），
-// 数字还会以 float64 到达。都在这里吃掉，规则编译那边只面对 []string。
+// 数字还会以 float64（兼容通道）或 json.Number（签名通道）到达。都在这里吃掉，
+// 规则编译那边只面对 []string。
 func toStrings(v any) ([]string, error) {
 	switch x := v.(type) {
 	case string:
@@ -423,13 +426,12 @@ func toStrings(v any) ([]string, error) {
 			return nil, fmt.Errorf("值不能为空")
 		}
 		return []string{strings.TrimSpace(x)}, nil
-	case float64:
-		if math.IsNaN(x) || math.IsInf(x, 0) || math.Trunc(x) != x {
+	case float64, json.Number, int:
+		n, ok := confnum.Int64(x)
+		if !ok {
 			return nil, fmt.Errorf("数值 %v 必须是整数", x)
 		}
-		return []string{strconv.FormatInt(int64(x), 10)}, nil
-	case int:
-		return []string{strconv.Itoa(x)}, nil
+		return []string{strconv.FormatInt(n, 10)}, nil
 	case []string:
 		out := make([]string, 0, len(x))
 		for _, e := range x {

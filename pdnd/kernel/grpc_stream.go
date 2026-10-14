@@ -18,14 +18,16 @@ import (
 )
 
 type grpcDuplexConn struct {
-	ctx      context.Context
-	body     io.ReadCloser
-	writer   http.ResponseWriter
-	readMu   sync.Mutex
-	writeMu  sync.Mutex
-	pending  []byte
-	maxFrame uint32
-	encoding string
+	ctx     context.Context
+	body    io.ReadCloser
+	writer  http.ResponseWriter
+	readMu  sync.Mutex
+	writeMu sync.Mutex
+	pending []byte
+	// pendingBuf 非空时 pending 指向池里借来的帧缓冲，取完即还（frame_pool.go）。
+	pendingBuf *[]byte
+	maxFrame   uint32
+	encoding   string
 }
 
 func newGRPCDuplexConn(ctx context.Context, body io.ReadCloser, writer http.ResponseWriter, maxFrame uint32) net.Conn {
@@ -53,24 +55,39 @@ func (c *grpcDuplexConn) Read(p []byte) (int, error) {
 		if length > c.maxFrame {
 			return 0, fmt.Errorf("grpc message exceeds %d bytes", c.maxFrame)
 		}
-		frame := make([]byte, length)
+		bp, frame := getFrameBuf(int(length))
 		if _, err := io.ReadFull(c.body, frame); err != nil {
+			putFrameBuf(bp)
 			c.pending = nil
 			return 0, err
 		}
 		if header[0] == 0 {
-			c.pending = frame
+			payload, aliased, err := decodeGunHunkAliased(frame)
+			if err != nil {
+				putFrameBuf(bp)
+				return 0, err
+			}
+			c.pending = payload
+			// 单个 Hunk 时 payload 就是 frame 的切片，留着缓冲到取完；多 Hunk 已拷出。
+			if aliased {
+				c.pendingBuf = bp
+			} else {
+				putFrameBuf(bp)
+			}
 			continue
 		}
 		if header[0] != 1 || c.encoding != "gzip" {
+			putFrameBuf(bp)
 			return 0, fmt.Errorf("grpc compressed message encoding %q is unsupported", c.encoding)
 		}
 		reader, err := gzip.NewReader(bytes.NewReader(frame))
 		if err != nil {
+			putFrameBuf(bp)
 			return 0, fmt.Errorf("grpc gzip message: %w", err)
 		}
 		decoded, readErr := io.ReadAll(io.LimitReader(reader, int64(c.maxFrame)+1))
 		closeErr := reader.Close()
+		putFrameBuf(bp) // 解压结果是新分配的，压缩帧用完即还
 		if readErr != nil {
 			return 0, fmt.Errorf("grpc gzip message: %w", readErr)
 		}
@@ -80,10 +97,18 @@ func (c *grpcDuplexConn) Read(p []byte) (int, error) {
 		if uint64(len(decoded)) > uint64(c.maxFrame) {
 			return 0, fmt.Errorf("grpc decompressed message exceeds %d bytes", c.maxFrame)
 		}
-		c.pending = decoded
+		payload, err := decodeGunHunk(decoded)
+		if err != nil {
+			return 0, err
+		}
+		c.pending = payload
 	}
 	n := copy(p, c.pending)
 	c.pending = c.pending[n:]
+	if len(c.pending) == 0 && c.pendingBuf != nil {
+		putFrameBuf(c.pendingBuf)
+		c.pendingBuf, c.pending = nil, nil
+	}
 	return n, nil
 }
 
@@ -98,17 +123,65 @@ func (c *grpcDuplexConn) Write(p []byte) (int, error) {
 	}
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
-	frame := make([]byte, 5+len(p))
-	binary.BigEndian.PutUint32(frame[1:5], uint32(len(p)))
-	copy(frame[5:], p)
+	// gRPC 消息头（压缩标志 + 长度）之后是 gun 的 Hunk：字段 1、长度定界
+	var hunkHeader [1 + binary.MaxVarintLen64]byte
+	hunkHeader[0] = gunHunkTag
+	hunkLen := 1 + binary.PutUvarint(hunkHeader[1:], uint64(len(p)))
+	overhead := 5 + hunkLen
+	bp, frame := getFrameBuf(overhead + len(p))
+	defer putFrameBuf(bp)
+	frame[0] = 0 // 未压缩
+	binary.BigEndian.PutUint32(frame[1:5], uint32(hunkLen+len(p)))
+	copy(frame[5:], hunkHeader[:hunkLen])
+	copy(frame[overhead:], p)
 	n, err := c.writer.Write(frame)
 	if flusher, ok := c.writer.(http.Flusher); ok {
 		flusher.Flush()
 	}
-	if n < 5 {
+	if n < overhead {
 		return 0, err
 	}
-	return n - 5, err
+	return n - overhead, err
+}
+
+// gunHunkTag 是 protobuf 字段 1、wire type 2（长度定界）的键：Hunk.data 与
+// MultiHunk.data 都是它。
+const gunHunkTag = 0x0a
+
+// decodeGunHunk 从一条 gRPC 消息里取出 gun 传输的数据。
+//
+// Xray / V2Ray 定义的 gun 传输（sing-box、mihomo 的 gRPC 都按它实现）每条 gRPC
+// 消息是 protobuf 的 Hunk{bytes data = 1}，TunMulti 是 MultiHunk{repeated bytes
+// data = 1}——两者的线格式都是若干个「0x0a + varint 长度 + 数据」。以前这里把
+// 消息体当裸数据，任何标准客户端连上来，协议层读到的第一个字节都是 0x0a：
+// VLESS 报版本无效、Trojan 报口令格式错、VMess 认证失败。
+func decodeGunHunk(message []byte) ([]byte, error) {
+	out, _, err := decodeGunHunkAliased(message)
+	return out, err
+}
+
+// decodeGunHunkAliased 同 decodeGunHunk，并报告结果是否就是 message 的切片
+// （单个 Hunk）——是的话调用方在取完之前不能回收 message 的缓冲。
+func decodeGunHunkAliased(message []byte) ([]byte, bool, error) {
+	var out []byte
+	for first := true; len(message) > 0; first = false {
+		if message[0] != gunHunkTag {
+			return nil, false, fmt.Errorf("grpc gun message has unexpected field tag 0x%02x", message[0])
+		}
+		length, n := binary.Uvarint(message[1:])
+		if n <= 0 || length > uint64(len(message)-1-n) {
+			return nil, false, fmt.Errorf("grpc gun hunk length is invalid")
+		}
+		start := 1 + n
+		chunk := message[start : start+int(length)]
+		message = message[start+int(length):]
+		if first && len(message) == 0 {
+			// 常见情形：一条消息一个 Hunk，直接用切片，不复制
+			return chunk, true, nil
+		}
+		out = append(out, chunk...)
+	}
+	return out, false, nil
 }
 
 func (c *grpcDuplexConn) Close() error                     { return c.body.Close() }
@@ -138,12 +211,20 @@ func parseGRPCPath(raw map[string]any) (string, string, error) {
 }
 
 func serveNativeGRPC(listener net.Listener, path, host string, maxFrame uint32, h2cMode bool, onConn func(context.Context, net.Conn)) (*http.Server, error) {
+	return serveNativeGRPCHosts(listener, path, []string{host}, maxFrame, h2cMode, onConn)
+}
+
+// serveNativeGRPCHosts 同 serveNativeGRPC，但 :authority 可以是几个名字之一
+// （hosts 里有空串表示不检查）。VLESS REALITY 用它：标准客户端（sing-box、
+// mihomo、Xray）把 REALITY 的 server name 当 :authority 发，而那个名字已经由
+// REALITY 握手对照 server_names 校验过。
+func serveNativeGRPCHosts(listener net.Listener, path string, hosts []string, maxFrame uint32, h2cMode bool, onConn func(context.Context, net.Conn)) (*http.Server, error) {
 	if listener == nil || onConn == nil {
 		return nil, fmt.Errorf("native grpc server requires listener and handler")
 	}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		contentType := strings.ToLower(req.Header.Get("Content-Type"))
-		if req.Method != http.MethodPost || req.URL == nil || req.URL.Path != path || (host != "" && !strings.EqualFold(strings.TrimSpace(req.Host), host)) || !strings.HasPrefix(contentType, "application/grpc") {
+		if req.Method != http.MethodPost || req.URL == nil || req.URL.Path != path || !requestHostMatchesAny(req.Host, hosts) || !strings.HasPrefix(contentType, "application/grpc") {
 			http.NotFound(w, req)
 			return
 		}

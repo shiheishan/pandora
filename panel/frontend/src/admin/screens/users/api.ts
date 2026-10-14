@@ -5,6 +5,7 @@ import { useApi } from '../../../shell/runtime'
 import { orderRowSchema } from '../billing/schemas'
 import { planOptionsKey } from '../plans/api'
 import { exactEmail } from './model'
+import { generationJobSchema, generationJobsSchema } from './opsSchemas'
 
 // 订单的封闭枚举与列表行归订单与收款模块（后台-05），用户详情「最近订单」同形
 export { ORDER_KINDS, ORDER_STATUSES, type OrderKind, type OrderRow, type OrderStatus } from '../billing/schemas'
@@ -59,12 +60,14 @@ export type UserRow = z.output<typeof userRowSchema>
 export type CurrentSub = z.output<typeof currentSubSchema>
 
 // ---------------------------------------------------------------------------
-// GET v1/users/{id}：列表行 + 资料、全部订阅（含配额与设备）、最近 20 单、角色、统计
+// GET v1/users/{id}：列表行 + 资料、全部订阅（含配额与设备）、最近 20 单、是否管理员、统计
 // （列表行里的 subscription_count / active_plan / current_subscription 在这里是零值，不用）
 // ---------------------------------------------------------------------------
 const quotaSchema = z.object({ metric: z.string(), limit: int.nullable(), consumed: count, remaining: int.nullable() })
 const subscriptionSchema = z.object({
   id: z.string(),
+  // 用户起的备注名（购买模型统一）：没起为 null；后台只读，改名是用户在门户里做的事
+  label: z.string().nullable(),
   plan_name: z.string(),
   plan_version: int,
   status: z.enum(SUB_STATUSES),
@@ -77,17 +80,22 @@ const subscriptionSchema = z.object({
   device_limit_override: count.nullable(),
   plan_max_devices: count.nullable(),
   online_devices: count,
+  // 挂在这一份上的流量包余量（字节）：流量包按订阅挂，不再是用户名下一个总数
+  pack_remaining_bytes: count,
 })
 export const userDetailSchema = z.object({
   ...userRowShape,
   email_verified: z.boolean(),
   subscriptions: z.array(subscriptionSchema),
   recent_orders: z.array(orderRowSchema),
-  roles: z.array(z.string()),
+  is_admin: z.boolean(),
   // R80 / R114：实收按币种（币种升序、只列大于 0 的）；paid_total 已弃用（跨币种直接相加），不收
   stats: z.object({ paid_totals: z.array(z.object({ currency: z.string(), amount: int })), order_count: count, referral_count: count }),
   referrer: z.object({ id: z.string(), email: z.string() }).nullable(),
   telegram: z.object({ username: z.string(), bound_at: time }).nullable(),
+  // 还没加到任何一份的流量包余量（字节，与门户 v1/me/subscriptions 同名同口径）：节点不会用它，
+  // 用户开通第一份订阅时自动挂上，或在门户里自己挑一份挂上
+  unattached_pack_bytes: count,
 })
 export type UserDetail = z.output<typeof userDetailSchema>
 export type PaidTotal = UserDetail['stats']['paid_totals'][number]
@@ -116,7 +124,7 @@ export const userGroupsSchema = z.object({ groups: z.array(userGroupSchema) })
 export type UserGroup = z.output<typeof userGroupSchema>
 
 // ---------------------------------------------------------------------------
-// GET v1/users/{id}/profile（security.audit.read）：风控画像，明文 IP 只在这里
+// GET v1/users/{id}/profile：风控画像，明文 IP 只在这里
 // ---------------------------------------------------------------------------
 export const profileSchema = z.object({
   events: z.array(z.object({ action: z.string(), outcome: z.string(), ip: z.string(), ua: z.string(), domain: z.string(), at: time })),
@@ -137,6 +145,14 @@ export const passwordResetSchema = z.object({ ok: z.literal(true), sessions_revo
 // R11 / 5.A D-B-1：换发后不回令牌，只有用户邮箱与旧链接已吊销
 export const rotatedSchema = z.object({ user_email: z.string(), old_revoked: z.literal(true) }).strict()
 export const balanceSchema = z.object({ balance: int })
+// POST v1/subscriptions/{id}/extend：billing.AdminExtendOutput（无 omitempty）
+export const extendedSchema = z.object({
+  subscription_id: z.string(),
+  user_email: z.string(),
+  days: int.positive(),
+  previous_end: time,
+  period_end: time,
+})
 
 export const groupSavedSchema = z.object({ id: z.string() })
 
@@ -156,9 +172,27 @@ export const bulkPreviewSchema = z.object({
   sample_rows: z.array(z.object({ email: z.string(), plan_name: z.string().nullable(), current_period_end: time.nullable() })),
 })
 export type BulkPreview = z.output<typeof bulkPreviewSchema>
-// 口令明文只回这一次；warning 是后端给的中文提醒
-export const generatedSchema = z.object({ count: count, users: z.array(z.object({ email: z.string(), password: z.string() })), warning: z.string() })
-export type Generated = z.output<typeof generatedSchema>
+// 批量生成任务与加流量包的 schema 在 opsSchemas.ts（不依赖 React，假后端测试也引用）
+export { generationJobSchema, generationJobsSchema, trafficGrantedSchema, type GenerationJob } from './opsSchemas'
+/** 一个批量生成任务的进度：没结束时每 1.5 秒轮询一次，结束即停 */
+export function useGenerationJob(id: string | null) {
+  const api = useApi()
+  return useQuery({
+    queryKey: [...UK, 'generation-job', id],
+    queryFn: ({ signal }) => api.get(`v1/users/bulk/generate/jobs/${encodeURIComponent(id!)}`, generationJobSchema, { signal }),
+    enabled: id !== null,
+    refetchInterval: (q) => (q.state.data && (q.state.data.status === 'succeeded' || q.state.data.status === 'failed') ? false : 1500),
+  })
+}
+
+/** 最近的批量生成任务（最多 20 个，最新在前） */
+export function useGenerationJobs() {
+  const api = useApi()
+  return useQuery({
+    queryKey: [...UK, 'generation-jobs'],
+    queryFn: ({ signal }) => api.get('v1/users/bulk/generate/jobs', generationJobsSchema, { signal }).then((r) => r.jobs),
+  })
+}
 export const bulkMailSchema = z.object({ queued: count, skipped: count })
 
 // ---------------------------------------------------------------------------
@@ -189,7 +223,7 @@ export type OnlineDevice = z.output<typeof onlineDeviceSchema>
 export type DeviceMode = z.output<typeof devicesSchema>['mode']
 
 // ---------------------------------------------------------------------------
-// 流量重置（metering.reset.*）：日志的 plan_name / actor_email / note 是 omitempty，空时整键省略
+// 流量重置：日志的 plan_name / actor_email / note 是 omitempty，空时整键省略
 // ---------------------------------------------------------------------------
 export const RESET_REASONS = ['renewal', 'cycle_roll', 'manual', 'gift_card', 'plan_change'] as const
 export type ResetReason = (typeof RESET_REASONS)[number]
@@ -217,7 +251,7 @@ export type ResetStats = z.output<typeof resetStatsSchema>
 export const resetDoneSchema = z.object({ reset: z.literal(true), freed_bytes: count })
 
 // ---------------------------------------------------------------------------
-// GET v1/plans（catalog.read）：批量筛选的「套餐」下拉只要 id / 名称 / 状态
+// GET v1/plans：批量筛选的「套餐」下拉只要 id / 名称 / 状态
 // ---------------------------------------------------------------------------
 export const planOptionsSchema = z.object({ plans: z.array(z.object({ id: z.string(), name: z.string(), status: z.enum(['draft', 'active', 'archived']) })) })
 export type PlanOption = z.output<typeof planOptionsSchema>['plans'][number]
@@ -256,23 +290,20 @@ export function useUser(id: string | null) {
   })
 }
 
-/** enabled：别的模块借用时（套餐的可见用户组、组专属价）按 iam.user.read 决定取不取 */
-export function useUserGroups(enabled = true) {
+export function useUserGroups() {
   const api = useApi()
   return useQuery({
     queryKey: [...UK, 'groups'],
     queryFn: ({ signal }) => api.get('v1/user-groups', userGroupsSchema, { signal }).then((r) => r.groups),
     staleTime: 5 * 60_000,
-    enabled,
   })
 }
 
-export function useUserProfile(id: string, enabled: boolean) {
+export function useUserProfile(id: string) {
   const api = useApi()
   return useQuery({
     queryKey: [...UK, 'profile', id],
     queryFn: ({ signal }) => api.get(`v1/users/${encodeURIComponent(id)}/profile`, profileSchema, { signal }),
-    enabled,
   })
 }
 
@@ -291,13 +322,12 @@ export function useFindUserByEmail() {
   )
 }
 
-export function usePlanOptions(enabled: boolean) {
+export function usePlanOptions() {
   const api = useApi()
   return useQuery({
     // 挂在套餐的键前缀下：套餐页写后按前缀失效会一并刷新；别的管理员改了套餐靠 plans.changed
     queryKey: planOptionsKey('users'),
     queryFn: ({ signal }) => api.get('v1/plans', planOptionsSchema, { signal }).then((r) => r.plans),
-    enabled,
     staleTime: 5 * 60_000,
     meta: { topics: ['plans.changed'] },
   })

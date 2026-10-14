@@ -15,7 +15,7 @@ export function Composer({ ticket }: { ticket: TicketDetail }) {
   const toast = useToast()
   const fail = useFailure()
   const invalidate = useInvalidateTickets()
-  const macros = useMacros(true)
+  const macros = useMacros()
   const replyKey = useIntentKey()
   const resolveKey = useIntentKey()
   const [body, setBody] = useState('')

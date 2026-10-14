@@ -1,0 +1,54 @@
+# pandora 配置样例（/etc/pandora/config.yaml，root:pandora 0640）。
+#
+# install.sh 首装时按这份的结构生成真实文件，升级不改它；改了之后 systemctl restart pandora-serve pandora-worker。
+# 读取顺序：先读这个文件，再用 PANDORA_ 前缀的环境变量覆盖（键里的点换成下划线，如 log.level → PANDORA_LOG_LEVEL）。
+# 缺省值见 panel/internal/pkg/config/load.go；这里只写生产上要改或要写明的项。
+#
+# 秘密不能写在这里（写了 pandora 拒绝启动）：数据库与 Redis 的连接串、主密钥、两把 JWT 密钥只放
+# /etc/pandora/secrets.env（样例 secrets.env.example），迁移用的属主连接串只放 /etc/pandora/deploy.env。
+# 部署脚本用 awk 读 public_base_url 这一行：顶层键保持单行书写、不加引号。
+
+# 运行模式：production 时 HTTP 必须绑回环、public_base_url 必须是 https、节点 gRPC 必须有对外主机
+env: production
+
+# 面板对外地址：https://域名 或 https://公网IPv4，不带端口与路径。nginx 的 server_name 与证书、
+# 节点安装命令、支付回调、订阅链接都从它生成
+public_base_url: https://panel.example.test
+
+http:
+  # 门户与后台各一个监听，前面是 nginx；生产必须绑回环（引擎只信 nginx 覆写的 X-Real-IP）
+  public:
+    addr: 127.0.0.1:9000
+  admin:
+    addr: 127.0.0.1:9001
+
+grpc:
+  node:
+    # 节点 gRPC（面板自己终结 mTLS，不经 nginx），防火墙要放行这个端口
+    addr: ":9443"
+    # 节点连面板用的主机名或 IP（进服务端证书 SAN 与安装命令）；install.sh 缺省取 public_base_url 的主机
+    public_host: panel.example.test
+
+pdnd:
+  # 节点端一键安装下发的二进制目录（发布包的 pdnd-dist/）
+  dist_dir: /opt/pandora/pdnd-dist
+
+geoip:
+  # ip2region 离线库（发布包带上）；文件不在时归属地留空，面板照常启动
+  ipv4_db: /opt/pandora/geoip/ip2region_v4.xdb
+
+backup:
+  # 加密备份目录，系统状态页读这里探测最近一次备份
+  dir: /var/backups/pandora
+
+log:
+  # debug / info / warn / error。日志文件由 systemd 单元用 PANDORA_LOG_FILE 分别指到
+  # /var/log/pandora/serve.log 与 worker.log（自己滚动）；命令行子命令（migrate、admin）只写 stderr
+  level: info
+
+# Prometheus 指标端点（GET /metrics），缺省不开。只许回环或私网地址（RFC 1918、IPv6 ULA），
+# 压测时 Prometheus 在同一内网的另一台机器上拉；serve 与 worker 是两个进程，端口要不同。
+# observability:
+#   metrics_addr: 10.0.0.2:9100
+# worker:
+#   metrics_addr: 10.0.0.2:9101

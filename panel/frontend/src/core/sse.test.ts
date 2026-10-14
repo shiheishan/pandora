@@ -130,7 +130,7 @@ describe('openEventStream', () => {
     expect(delays).toEqual([5000])
   })
 
-  it('stops on a 4xx through the real client: 404 means no ops.notification.read', async () => {
+  it('stops on a 4xx through the real client: a 404 ends the stream', async () => {
     const tokens = createTokenStore('admin', { storage: null, events: null })
     tokens.set('tok')
     const fetchMock = vi.fn(async () =>

@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // 令牌放 localStorage：刷新保持登录态，且两个网关同源——后台只是 nginx 前缀，
 // 所以键必须按入口区分，门户与后台的令牌互不覆盖（它们本来也互不通用）。
-// 后端没有 refresh 接口，这里只存 access_token；public 登录回的 refresh_token 不存。
+// refresh 在 HttpOnly cookie（Path=/v1/auth），前端只存 access_token；过期由 api.ts 在 401 时调 v1/auth/refresh。
 // 另一个标签页登录、退出或 reauth 换了令牌，storage 事件让本页跟上。
 // ---------------------------------------------------------------------------
 export type AppName = 'admin' | 'portal'

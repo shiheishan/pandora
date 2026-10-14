@@ -19,6 +19,33 @@ if ! command -v go >/dev/null 2>&1; then
   exit 1
 fi
 
+# Go 工具链固定为 go.mod 的 go 指令（x.y.z），不写死版本号、不信构建机上恰好装着哪一版：
+# 本机 Go 比它新时 go 命令会直接用本机版本编，发布物里的标准库就取决于谁来打包。
+# 下面所有 go 调用（含 go list / go run 自检）继承这个 GOTOOLCHAIN，覆盖环境里已有的值（包括 local）。
+GO_DIRECTIVE="$(tr -d '\r' < "${ROOT_DIR}/go.mod" | awk '/^go[[:space:]]+[0-9]/ { print $2; exit }')"
+if [[ ! "${GO_DIRECTIVE}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "go.mod: the go directive must be a full x.y.z version to pin the toolchain, got '${GO_DIRECTIVE:-none}'" >&2
+  exit 1
+fi
+GO_TOOLCHAIN="go${GO_DIRECTIVE}"
+export GOTOOLCHAIN="${GO_TOOLCHAIN}"
+RESOLVED_TOOLCHAIN="$(cd "${ROOT_DIR}" && go env GOVERSION 2>/dev/null)" || RESOLVED_TOOLCHAIN=""
+if [[ "${RESOLVED_TOOLCHAIN}" != "${GO_TOOLCHAIN}" ]]; then
+  echo "Go toolchain mismatch: go.mod requires ${GO_TOOLCHAIN} but the go command resolved '${RESOLVED_TOOLCHAIN:-nothing}'" >&2
+  echo "  (GOTOOLCHAIN=${GO_TOOLCHAIN} must be installed or downloadable on this build host)" >&2
+  exit 1
+fi
+# 产出后读二进制里记的构建版本（GOTOOLCHAIN=local 只读文件，不触发下载），对不上就停
+require_binary_toolchain() {
+  local out built
+  out="$(GOTOOLCHAIN=local go version "$1" 2>/dev/null)" || out=""
+  built="${out##*: }"
+  if [[ "${built}" != "${GO_TOOLCHAIN}" ]]; then
+    echo "binary $(basename "$1") was built with '${built:-unknown}', expected ${GO_TOOLCHAIN}" >&2
+    exit 1
+  fi
+}
+
 # The default release must remain structurally NativeCore-only. This catches
 # an accidental production import of the compatibility dispatcher even when
 # the runtime configuration would usually reject it.
@@ -56,6 +83,7 @@ for arch in amd64 arm64; do
     go build -mod=readonly -trimpath -ldflags "-s -w -X main.buildVersion=${VERSION}" \
     -o "${target}" .)
   chmod 0755 "${target}"
+  require_binary_toolchain "${target}"
 done
 
 for arch in amd64 arm64; do
@@ -65,6 +93,7 @@ for arch in amd64 arm64; do
     go build -mod=readonly -trimpath -ldflags "-s -w" \
     -o "${target}" ./cmd/pandora-h3-probe)
   chmod 0755 "${target}"
+  require_binary_toolchain "${target}"
 done
 
 {
@@ -75,6 +104,7 @@ done
   printf '  "version": "'; json_escape "${VERSION}"; printf '",\n'
   printf '  "commit": "'; json_escape "${COMMIT}"; printf '",\n'
   printf '  "go": "'; json_escape "${GO_VERSION}"; printf '",\n'
+  printf '  "go_toolchain": "'; json_escape "${GO_TOOLCHAIN}"; printf '",\n'
   printf '  "cgo": false,\n'
   printf '  "artifacts": [\n'
   printf '    {"name":"pandora-native-linux-amd64","sha256":"%s"},\n' "$(sha256sum "${OUTPUT_DIR}/pandora-native-linux-amd64" | awk '{print $1}')"

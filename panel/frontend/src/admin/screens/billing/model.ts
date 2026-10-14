@@ -2,7 +2,8 @@ import { formatDateTime, formatMoney, relativeTime } from '../../../core/format'
 import { periodLabel } from '../plans/model'
 import type { PlanRow } from '../plans/schemas'
 import { ORDER_STATUS_VIEW, orderWhat, parseYuan, REASON_MIN, type Tone } from '../users/model'
-import type { Adjustment, Currency, LateCase, LateKind, LateStatus, OrderDetail, OrderQueried, OrderRow, OrderStatus, PaymentHistory, Provider } from './schemas'
+import type { PlacementChoice } from './placement'
+import type { Adjustment, Currency, LateCase, LateKind, LateStatus, ManualCreated, OrderDetail, OrderQueried, OrderRow, OrderStatus, PaymentHistory, Placement, Provider } from './schemas'
 
 export { ORDER_STATUS_VIEW, orderWhat, type Tone }
 
@@ -220,6 +221,8 @@ export interface PriceChoice {
   label: string
   amount: number
   currency: string
+  /** 落点选项的标题要写「换成<套餐名>」 */
+  planName: string
 }
 
 /** 在售套餐（已发布、有当前版本）的在售价格；组专属价与试用在名字里注明，后端下单时再校验资格 */
@@ -238,16 +241,18 @@ export function priceChoices(plans: readonly PlanRow[]): PriceChoice[] {
             label: `${p.name} · ${periodLabel(x.billing_interval, x.interval_count)} ${formatMoney(x.unit_amount, x.currency)}${notes.length ? `（${notes.join('，')}）` : ''}`,
             amount: x.unit_amount,
             currency: x.currency,
+            planName: p.name,
           }
         }),
     )
 }
 
-/** 前端预检，键名与后端 fields 一致（user_id / price_id / reference / reason） */
-export function manualProblems(f: ManualForm): Fields {
+/** 前端预检，键名与后端 fields 一致（user_id / price_id / target / reference / reason） */
+export function manualProblems(f: ManualForm, target: PlacementChoice | null): Fields {
   const out: Fields = {}
   if (!f.user) out.user_id = '先搜索并选中一位用户'
   if (!f.choice) out.price_id = '选择套餐与周期'
+  else if (f.user && !target) out.target = '先选这单落到哪一份'
   if (f.settlement === 'offline') {
     const r = referenceProblem(f.reference)
     if (r) out.reference = r
@@ -258,7 +263,7 @@ export function manualProblems(f: ManualForm): Fields {
 }
 
 /** 只在 offline 时带 reference（别的结算方式后端忽略，但 DisallowUnknownFields 之外也不该多发） */
-export function manualBody(f: ManualForm) {
+export function manualBody(f: ManualForm, target: PlacementChoice | null) {
   const [plan_id = '', price_id = ''] = f.choice.split(':')
   return {
     user_id: f.user?.id ?? '',
@@ -266,8 +271,43 @@ export function manualBody(f: ManualForm) {
     price_id,
     reason: f.reason.trim(),
     settlement: f.settlement,
+    ...(target ? { target } : {}),
     ...(f.settlement === 'offline' ? { reference: f.reference.trim() } : {}),
   }
+}
+
+/** 待支付单低于最低付款额：应付与门槛（分），用来在提交前写明原因 */
+export interface BelowMinimum {
+  due: number
+  min: number
+  currency: string
+}
+
+/**
+ * 后台待支付单的应付低于站点最低付款额时，用户没法在线付，服务端回 422 fields.settlement。preview 已经按建单
+ * 同一个判定给出每个落点的 due（换套餐先抵原套餐没用完的部分）与 below_minimum，顶层给 min_payment，
+ * 页面只把它写成人话、不重算。赠送与线下已收款不走在线支付，不受限
+ */
+export function manualBelowMinimum(
+  settlement: Settlement,
+  option: Pick<Placement, 'due' | 'below_minimum'> | undefined,
+  minPayment: number | undefined,
+  currency: string | undefined,
+): BelowMinimum | null {
+  if (settlement !== 'pending' || !option?.below_minimum || !minPayment || !currency) return null
+  return { due: option.due, min: minPayment, currency }
+}
+
+export function belowMinimumText(b: BelowMinimum): string {
+  return `这单应付 ${formatMoney(b.due, b.currency)}，低于支付渠道的最低付款额 ${formatMoney(b.min, b.currency)}，用户没法在线付。请改用「赠送」或「线下已收款」`
+}
+
+/** preview 的请求体：用户、套餐、价格都选好才发；入口订阅（从订阅行点「给这份开单」）只影响默认值 */
+export function previewParams(f: ManualForm, entrySubscriptionId: string | null) {
+  if (!f.user || !f.choice) return null
+  const [plan_id = '', price_id = ''] = f.choice.split(':')
+  if (!plan_id || !price_id) return null
+  return { user_id: f.user.id, plan_id, price_id, ...(entrySubscriptionId ? { entry_subscription_id: entrySubscriptionId } : {}) }
 }
 
 // ===========================================================================
@@ -352,9 +392,170 @@ export function providerNote(p: Provider, now: Date): { text: string; tone: Tone
   if (mode === 'off') parts.push('已完全停用，回调也不处理')
   if (mode === 'paused') parts.push('已停止新单，进行中的支付仍会回调')
   if (!p.has_credentials) parts.push('未配置凭据')
+  if (p.min_amount > 0) parts.push(`最低付款 ${formatMoney(p.min_amount, 'CNY')}`)
   parts.push(p.last_callback_at ? `最近回调 ${ago(p.last_callback_at, now)}` : '尚无回调')
   const tone: Tone = mode === 'off' ? 'danger' : !p.has_credentials || mode === 'paused' ? 'warn' : 'neutral'
   return { text: parts.join(' · '), tone }
+}
+
+// ===========================================================================
+// 支付渠道的新建与编辑（w2pay）：只有易支付能在后台建 / 改；code 与类型建后不可改；
+// 商户号与密钥只写不读，编辑时留空 = 不改。规则照 billing/provider_admin.go 的
+// normalizeProviderSettings，后端仍是最终裁判（字段错误原样标回表单）。
+// ===========================================================================
+export const EPAY_METHODS = [
+  { value: 'alipay', label: '支付宝' },
+  { value: 'wxpay', label: '微信支付' },
+] as const
+
+/** 与门户 paymentMethodLabels 同一张表；不认识的方式原样显示 */
+export function methodLabel(method: string): string {
+  return EPAY_METHODS.find((m) => m.value === method)?.label ?? method
+}
+
+/** 门户实际会列出的方式：config.methods 非空用它，否则 default_method（与 PaymentMethods 的 SQL 同口径） */
+export function effectiveMethods(p: Pick<Provider, 'methods' | 'default_method'>): string[] {
+  if (p.methods.length > 0) return p.methods
+  return p.default_method ? [p.default_method] : []
+}
+
+export const isEditableProvider = (p: Pick<Provider, 'adapter' | 'code'>) => p.adapter === 'epay' && !isOffline(p)
+
+export interface ProviderForm {
+  code: string
+  display_name: string
+  base_url: string
+  submit_path: string
+  api_path: string
+  methods: string[]
+  default_method: string
+  allow_private_host: boolean
+  /** 最低付款额，元（文本框原样）；提交时换成分 */
+  min_amount: string
+  merchant_id: string
+  key: string
+}
+
+/** 渠道最低付款额的范围（分）：与后端 provider_admin.go 的白名单校验一致，epay 默认 100（¥1.00） */
+export const MIN_AMOUNT_MIN = 1
+export const MIN_AMOUNT_MAX = 100_000
+export const MIN_AMOUNT_DEFAULT = 100
+
+/** 元的文本换成分：最多两位小数，范围 0.01 到 1000；否则 null */
+export function parseMinAmount(input: string): number | null {
+  const text = input.trim().replace(/^¥/, '')
+  if (!/^\d{1,6}(\.\d{1,2})?$/.test(text)) return null
+  const [whole = '0', frac = ''] = text.split('.')
+  const cents = Number(whole) * 100 + Number(frac.padEnd(2, '0'))
+  return cents >= MIN_AMOUNT_MIN && cents <= MIN_AMOUNT_MAX ? cents : null
+}
+
+/** 分换成输入框里的元：100 → 1.00 */
+export const minAmountText = (cents: number) => (cents / 100).toFixed(2)
+
+export const emptyProviderForm = (): ProviderForm => ({
+  code: '',
+  display_name: '易支付',
+  base_url: '',
+  submit_path: '/submit.php',
+  api_path: '/api.php',
+  methods: ['alipay', 'wxpay'],
+  default_method: 'alipay',
+  allow_private_host: false,
+  min_amount: minAmountText(MIN_AMOUNT_DEFAULT),
+  merchant_id: '',
+  key: '',
+})
+
+/** 编辑回填：凭据一律空（只写不读）；旧渠道没有 methods 时用 default_method 起步 */
+export function providerFormFrom(p: Provider): ProviderForm {
+  const methods = effectiveMethods(p).filter((m) => EPAY_METHODS.some((x) => x.value === m))
+  const picked = methods.length ? methods : ['alipay']
+  return {
+    code: p.code,
+    display_name: p.display_name,
+    base_url: p.base_url,
+    submit_path: p.submit_path || '/submit.php',
+    api_path: p.api_path || '/api.php',
+    methods: picked,
+    default_method: picked.includes(p.default_method) ? p.default_method : picked[0]!,
+    allow_private_host: p.allow_private_host,
+    // 旧渠道没配过最低额时后端按默认值算，表单也从默认值起步
+    min_amount: minAmountText(p.min_amount > 0 ? p.min_amount : MIN_AMOUNT_DEFAULT),
+    merchant_id: '',
+    key: '',
+  }
+}
+
+/** 勾选 / 取消一种方式；默认方式被取消时改成剩下的第一个 */
+export function toggleMethod(f: ProviderForm, method: string, on: boolean): ProviderForm {
+  const methods = on ? EPAY_METHODS.map((m) => m.value).filter((m) => m === method || f.methods.includes(m)) : f.methods.filter((m) => m !== method)
+  const default_method = methods.includes(f.default_method) ? f.default_method : (methods[0] ?? '')
+  return { ...f, methods, default_method }
+}
+
+/** 解析失败或空串回 null */
+function parseURL(raw: string): URL | null {
+  if (!raw) return null
+  try {
+    return new URL(raw)
+  } catch {
+    return null
+  }
+}
+
+const PROVIDER_CODE = /^[a-z][a-z0-9_-]{1,31}$/
+const PROVIDER_PATH = /^\/[A-Za-z0-9._~/-]{0,127}$/
+
+export function providerProblems(f: ProviderForm, mode: 'create' | 'edit', hasCredentials = false): Fields {
+  const out: Fields = {}
+  if (mode === 'create') {
+    if (!PROVIDER_CODE.test(f.code.trim())) out.code = '编码需为 2–32 位小写字母、数字、- 或 _，以字母开头'
+    else if (f.code.trim() === 'offline') out.code = 'offline 是系统内置渠道的编码'
+  }
+  const name = chars(f.display_name)
+  if (name < 1 || name > 40) out.display_name = '名称需为 1–40 个字'
+  const base = f.base_url.trim()
+  const url = parseURL(base)
+  if (!url || (url.protocol !== 'https:' && url.protocol !== 'http:') || url.search || url.hash || url.username) out.base_url = '请填写完整的站点地址，如 https://pay.example.com'
+  else if (url.protocol !== 'https:' && !f.allow_private_host) out.base_url = '站点地址必须使用 https'
+  for (const key of ['submit_path', 'api_path'] as const) {
+    const v = f[key].trim()
+    if (v && (!PROVIDER_PATH.test(v) || v.startsWith('//'))) out[key] = '路径需以 / 开头，只含字母、数字与 . _ ~ / -'
+  }
+  if (f.methods.length === 0) out.methods = '至少选一种支付方式'
+  else if (!f.methods.includes(f.default_method)) out.default_method = '默认方式必须是已勾选的方式之一'
+  // 留空 = 不传：编辑时保留原值、新建按默认 ¥1.00（后端口径）；填了就要合法，不会把空值当 0 发出去
+  if (f.min_amount.trim() !== '' && parseMinAmount(f.min_amount) === null) out.min_amount = '写成元，如 1 或 0.50，范围 0.01 到 1000'
+  const needCreds = mode === 'create' || !hasCredentials
+  if (needCreds && !f.merchant_id.trim()) out.merchant_id = mode === 'create' ? '必填' : '该渠道还没有商户号，需填写'
+  if (needCreds && !f.key.trim()) out.key = mode === 'create' ? '必填' : '该渠道还没有密钥，需填写'
+  return out
+}
+
+/** PUT 的请求体没有 code / adapter（后端不收，建后不可改）；凭据留空原样发空串 = 不改 */
+export function providerBody(f: ProviderForm, mode: 'create' | 'edit') {
+  const settings = {
+    display_name: f.display_name.trim(),
+    base_url: f.base_url.trim(),
+    submit_path: f.submit_path.trim(),
+    api_path: f.api_path.trim(),
+    methods: [...f.methods],
+    default_method: f.default_method,
+    allow_private_host: f.allow_private_host,
+    merchant_id: f.merchant_id.trim(),
+    key: f.key.trim(),
+  }
+  // 最低付款额只在填了时带：后端把不传（或 0）当作「编辑保留原值、新建用默认」，所以前端从不发 0
+  const min = parseMinAmount(f.min_amount)
+  const body = min === null ? settings : { ...settings, min_amount: min }
+  return mode === 'create' ? { code: f.code.trim(), adapter: 'epay', ...body } : body
+}
+
+/** 最低付款额输入框下的说明：留空的含义随新建 / 编辑不同 */
+export function minAmountHint(mode: 'create' | 'edit'): string {
+  const blank = mode === 'edit' ? '留空表示不改' : `留空按默认 ¥${minAmountText(MIN_AMOUNT_DEFAULT)}`
+  return `应付低于它时不能在线付：用户只能用余额付，后台待支付单要改用赠送或线下已收款。${blank}`
 }
 
 // ===========================================================================
@@ -407,4 +608,26 @@ export function adjustmentView(a: Adjustment) {
 /** 冲销原因的默认值：「冲销：」+ 原因（原因 ≥ 5 字，拼出来必然够长），截到 500 字 */
 export function reverseReason(a: Pick<Adjustment, 'reason'>): string {
   return [...`冲销：${a.reason}`].slice(0, REASON_MAX).join('')
+}
+
+/** 开单成功的提示：按落点说清续了、换了还是新开了，换套餐时带上原订阅剩余价值的去向 */
+export function manualCreatedToast(r: ManualCreated, settlement: Settlement, kind: PlacementChoice['kind'] = 'new'): string {
+  if (kind === 'change') {
+    const refund = r.balance_refund !== undefined && r.balance_refund > 0 ? `，原套餐剩余价值 ${formatMoney(r.balance_refund, r.currency)} 已退回余额` : ''
+    return settlement === 'pending'
+      ? `订单 ${r.order_no} 已创建（在原订阅上换套餐），等待用户在 30 分钟内支付`
+      : `订单 ${r.order_no} 已在原订阅上换套餐，订阅链接不变${refund}`
+  }
+  if (kind === 'renew') {
+    return settlement === 'pending'
+      ? `订单 ${r.order_no} 已创建（续费），等待用户在 30 分钟内支付`
+      : settlement === 'offline'
+        ? `订单 ${r.order_no} 已按线下收款入账，订阅已续期，链接不变`
+        : `订单 ${r.order_no} 已赠送续期，订阅链接不变`
+  }
+  return settlement === 'pending'
+    ? `订单 ${r.order_no} 已创建，等待用户在 30 分钟内支付`
+    : settlement === 'offline'
+      ? `订单 ${r.order_no} 已按线下收款入账，已另开一份订阅`
+      : `订单 ${r.order_no} 已赠送开通，已另开一份订阅`
 }

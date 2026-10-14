@@ -1,19 +1,26 @@
 import { describe, expect, it } from 'vitest'
-import { rotatedSchema, usersSchema } from './api'
+import { extendedSchema, rotatedSchema, userDetailSchema, usersSchema } from './api'
 import {
   currentSubscription,
   deviceLimitLabel,
   deviceView,
   expiryView,
+  extendableSubscriptions,
+  extendedEnd,
+  expiredDays,
+  isRescue,
+  extendReasonProblem,
   initial,
   listParams,
   liveSubscriptions,
   orderWhat,
   paidTotalsLabel,
+  parseExtendDays,
   parseYuan,
   passwordProblem,
   shortId,
   trafficView,
+  unattachedNext,
 } from './model'
 import { sharingHint } from './RiskTab'
 
@@ -79,6 +86,35 @@ describe('当前订阅（与后端 currentSubscriptionSQL 同口径）', () => {
   })
 })
 
+describe('加时长（与后端 subscriptionExtendable / validateAdminExtend 同口径）', () => {
+  const s = (status: 'active' | 'trialing' | 'expired', end: number | null, id: string) => ({ id, status, current_period_end: end === null ? null : days(end) })
+
+  it('生效中、试用中、过期不满 30 天且有到期时间的订阅能加时长（w5expiry）', () => {
+    expect(extendableSubscriptions([s('active', 5, 'a'), s('trialing', 5, 'b'), s('expired', -1, 'c'), s('active', null, 'd'), s('expired', -31, 'e')], NOW).map((x) => x.id)).toEqual(['a', 'b', 'c'])
+    expect(extendableSubscriptions([s('expired', -31, 'e')], NOW)).toEqual([])
+    expect(expiredDays(days(-3), NOW)).toBe(3)
+    expect(expiredDays(days(2), NOW)).toBeNull()
+    expect(isRescue(s('expired', -3, 'c'), NOW)).toBe(true)
+    expect(isRescue(s('active', -1, 'x'), NOW)).toBe(true)
+    expect(isRescue(s('trialing', 5, 'b'), NOW)).toBe(true)
+    expect(isRescue(s('active', 5, 'a'), NOW)).toBe(false)
+  })
+
+  it('天数 1–3650 的整数，原因 5–500 字', () => {
+    expect(parseExtendDays(' 30 ')).toBe(30)
+    expect(parseExtendDays('3650')).toBe(3650)
+    for (const bad of ['', '0', '3651', '7.5', '-1', '1e2', 'abc']) expect(parseExtendDays(bad)).toBeNull()
+    expect(extendReasonProblem('补偿线路故障')).toBeNull()
+    expect(extendReasonProblem(' 补偿 ')).toContain('至少 5 个字')
+    expect(extendReasonProblem('长'.repeat(501))).toContain('500')
+  })
+
+  it('预计新到期从「原到期」与「现在」里更晚的那个起算', () => {
+    expect(extendedEnd(days(10), 7, NOW).toISOString()).toBe(new Date(Date.parse(days(17))).toISOString())
+    expect(extendedEnd(days(-3), 7, NOW).toISOString()).toBe(new Date(NOW.getTime() + 7 * 86_400_000).toISOString())
+  })
+})
+
 describe('订单与输入', () => {
   it('订单「买了什么」', () => {
     expect(orderWhat({ kind: 'new', plan_name: '标准版', interval: 'month', interval_count: 1, item_count: 1 })).toBe('标准版 · 月付')
@@ -110,6 +146,12 @@ describe('订单与输入', () => {
     expect(passwordProblem('pandora2026')).toBeNull()
   })
 
+  it('未分配的流量包：没有在用的订阅时开通第一份会自动挂上，有在用的要用户自己挑', () => {
+    expect(unattachedNext(0)).toContain('开通第一份订阅时会自动加到那一份上')
+    expect(unattachedNext(1)).toContain('在门户里选一份')
+    expect(unattachedNext(3)).toContain('在门户里选一份')
+  })
+
   it('分享提示阈值', () => {
     expect(sharingHint(1).tone).toBe('ok')
     expect(sharingHint(3).tone).toBe('warn')
@@ -121,6 +163,64 @@ describe('schema', () => {
   it('保留规则 2：换发响应带令牌就判为不符约定', () => {
     expect(rotatedSchema.safeParse({ user_email: 'a@b.c', old_revoked: true }).success).toBe(true)
     expect(rotatedSchema.safeParse({ user_email: 'a@b.c', old_revoked: true, token: 'secret' }).success).toBe(false)
+  })
+
+  it('加时长响应：五个键都必填，天数为正', () => {
+    const ok = { subscription_id: 's', user_email: 'a@b.c', days: 7, previous_end: days(1), period_end: days(8) }
+    expect(extendedSchema.safeParse(ok).success).toBe(true)
+    expect(extendedSchema.safeParse({ ...ok, days: 0 }).success).toBe(false)
+    expect(extendedSchema.safeParse({ ...ok, period_end: undefined }).success).toBe(false)
+  })
+
+  it('用户详情的订阅行（按份）：备注名可为 null，这一份的流量包余量必填', () => {
+    const subscription = {
+      id: 's1',
+      label: '妈妈的 iPad',
+      plan_name: '标准版',
+      plan_version: 1,
+      status: 'active',
+      current_period_start: days(-20),
+      current_period_end: days(10),
+      amount: 2500,
+      currency: 'CNY',
+      auto_renew: true,
+      quotas: [],
+      device_limit_override: null,
+      plan_max_devices: 3,
+      online_devices: 0,
+      pack_remaining_bytes: 10 * 1024 ** 3,
+    }
+    const detail = {
+      id: 'u',
+      email: 'a@b.c',
+      display_name: null,
+      status: 'active',
+      risk_level: 'normal',
+      group_name: '',
+      group_id: null,
+      created_at: days(-30),
+      last_login_at: null,
+      subscription_count: 0,
+      active_plan: null,
+      balance: 0,
+      currency: 'CNY',
+      current_subscription: null,
+      email_verified: true,
+      subscriptions: [subscription],
+      recent_orders: [],
+      is_admin: false,
+      stats: { paid_totals: [], order_count: 0, referral_count: 0 },
+      referrer: null,
+      telegram: null,
+      unattached_pack_bytes: 5 * 1024 ** 3,
+    }
+    expect(userDetailSchema.safeParse(detail).success).toBe(true)
+    // 顶层未分配的流量包余量（B 路 UserDetail.UnattachedPackBytes，非 omitempty）：必填、非负整数
+    expect(userDetailSchema.safeParse({ ...detail, unattached_pack_bytes: undefined }).success).toBe(false)
+    expect(userDetailSchema.safeParse({ ...detail, unattached_pack_bytes: -1 }).success).toBe(false)
+    expect(userDetailSchema.safeParse({ ...detail, subscriptions: [{ ...subscription, label: null }] }).success).toBe(true)
+    expect(userDetailSchema.safeParse({ ...detail, subscriptions: [{ ...subscription, pack_remaining_bytes: undefined }] }).success).toBe(false)
+    expect(userDetailSchema.safeParse({ ...detail, subscriptions: [{ ...subscription, label: undefined }] }).success).toBe(false)
   })
 
   it('列表行：未知账号状态判为不符；current_subscription 可为 null', () => {

@@ -32,16 +32,80 @@ export function portalBranding(appearance: Appearance | undefined): PortalBrandi
   return { siteName: name && (name !== 'Pandora' || logo) ? name : null, tagline: b.tagline?.trim() || null, logo }
 }
 
+// ---------------------------------------------------------------------------
+// 生效主题的本地缓存：theme-boot.js 在首帧前按它把颜色写到 <html>，自定义主题的站点
+// 不再每次打开先画默认色、等 v1/appearance 回来再换色。键名与形状两边要一致
+// （守卫：tests/theme-boot.test.ts）。只存颜色，不存 Logo 等大字段
+// ---------------------------------------------------------------------------
+export const APPEARANCE_CACHE_KEY = 'pandora-portal-appearance'
+
+interface StorageLike {
+  getItem(key: string): string | null
+  setItem(key: string, value: string): void
+  removeItem(key: string): void
+}
+
+function defaultStorage(): StorageLike | null {
+  try {
+    return window.localStorage
+  } catch {
+    return null
+  }
+}
+
+/** 要缓存的值：两套明暗颜色；默认主题（没有可写的颜色）返回 null，表示清掉缓存。 */
+export function themeCacheValue(appearance: Appearance | undefined): string | null {
+  const light = Object.fromEntries(pickThemeTokens(appearance, 'light'))
+  const dark = Object.fromEntries(pickThemeTokens(appearance, 'dark'))
+  if (Object.keys(light).length === 0 && Object.keys(dark).length === 0) return null
+  return JSON.stringify({ v: 1, light, dark })
+}
+
+export function writeThemeCache(appearance: Appearance | undefined, storage: StorageLike | null = defaultStorage()): void {
+  const value = themeCacheValue(appearance)
+  try {
+    if (value === null) storage?.removeItem(APPEARANCE_CACHE_KEY)
+    else storage?.setItem(APPEARANCE_CACHE_KEY, value)
+  } catch {
+    // 存不进去：下次打开照旧先画默认色
+  }
+}
+
+/** 读缓存里某一档的颜色，只留白名单里的键（与首帧前 theme-boot 写上去的一致）。 */
+export function readThemeCache(theme: Theme, storage: StorageLike | null = defaultStorage()): Array<[string, string]> {
+  try {
+    const cached: unknown = JSON.parse(storage?.getItem(APPEARANCE_CACHE_KEY) ?? 'null')
+    if (!cached || typeof cached !== 'object' || (cached as { v?: unknown }).v !== 1) return []
+    const group = (cached as Record<string, unknown>)[theme]
+    if (!group || typeof group !== 'object') return []
+    return Object.entries(group as Record<string, unknown>).filter(
+      (entry): entry is [string, string] => THEMEABLE_TOKENS.has(entry[0]) && typeof entry[1] === 'string' && entry[1].trim() !== '',
+    )
+  } catch {
+    return []
+  }
+}
+
 export function useAppearanceTheme(): void {
   const { data } = useAppearance()
   const theme = useTheme()
 
   useEffect(() => {
     const root = document.documentElement
-    const entries = pickThemeTokens(data, theme)
+    // 接口回来前沿用缓存（随明暗切换跟着换档），回来后以接口为准。theme-boot 按缓存写过的颜色
+    // 不归这里管，先把白名单里这次不写的清掉，免得主题换回默认后残留旧色
+    const entries = data ? pickThemeTokens(data, theme) : readThemeCache(theme)
+    const writing = new Set(entries.map(([name]) => name))
+    THEMEABLE_TOKENS.forEach((name) => {
+      if (!writing.has(name)) root.style.removeProperty(name)
+    })
     entries.forEach(([name, value]) => root.style.setProperty(name, value))
     return () => entries.forEach(([name]) => root.style.removeProperty(name))
   }, [data, theme])
+
+  useEffect(() => {
+    if (data) writeThemeCache(data)
+  }, [data])
 
   const siteName = data?.theme?.branding.site_name
   useEffect(() => {

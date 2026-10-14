@@ -4,7 +4,7 @@ import { formatDateTime, formatMoney } from '../../../core/format'
 import { href, navigate, useHashLocation } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, Empty, Modal, Pager, QueryView, Segmented, Table, Tag, TextArea, useToast, type TableColumn } from '../../../ui'
-import { useCan, useFailure, useIntentKey } from '../../actions'
+import { useFailure, useIntentKey } from '../../actions'
 import { useInvalidateUsers } from '../users/api'
 import { LATE_PAGE, lateAppliedSchema, useInvalidateBilling, useLatePayments, type LateCase } from './api'
 import css from './Billing.module.css'
@@ -12,7 +12,6 @@ import { ageDays, isLateFilter, LATE_FILTERS, LATE_STATUS_VIEW, lateReason, pend
 
 export function ArrearsTab({ now }: { now: Date }) {
   const location = useHashLocation()
-  const can = useCan()
   const s = location.query.get('s')
   const filter: LateFilter = isLateFilter(s) ? s : 'all'
   const offset = Math.max(0, Number.parseInt(location.query.get('o') ?? '', 10) || 0)
@@ -25,7 +24,6 @@ export function ArrearsTab({ now }: { now: Date }) {
     navigate('/billing/arrears', { replace: true, query: { s: f === 'all' ? undefined : f, o: o || undefined } })
   }
   const totals = late.data ? pendingTotals(late.data.pending_amounts) : []
-  const writable = can('billing.adjustment.write')
 
   const columns: TableColumn<LateCase>[] = [
     {
@@ -34,13 +32,9 @@ export function ArrearsTab({ now }: { now: Date }) {
       header: '用户 · 原因',
       render: (c) => (
         <span className={css.stack}>
-          {can('iam.user.read') ? (
-            <a className={`${css.link} ${css.ellipsis}`} href={href(`/users/list/${encodeURIComponent(c.user_id)}`)}>
-              {c.user_email}
-            </a>
-          ) : (
-            <span className={css.ellipsis}>{c.user_email}</span>
-          )}
+          <a className={`${css.link} ${css.ellipsis}`} href={href(`/users/list/${encodeURIComponent(c.user_id)}`)}>
+            {c.user_email}
+          </a>
           <span className={`${css.small} ${css.ellipsis}`}>{lateReason(c)}</span>
         </span>
       ),
@@ -73,9 +67,7 @@ export function ArrearsTab({ now }: { now: Date }) {
         )
       },
     },
-  ]
-  if (writable)
-    columns.push({
+    {
       key: 'act',
       header: '',
       width: '100px',
@@ -86,7 +78,8 @@ export function ArrearsTab({ now }: { now: Date }) {
             转入余额
           </Button>
         ) : null,
-    })
+    },
+  ]
 
   return (
     <div className={css.page}>

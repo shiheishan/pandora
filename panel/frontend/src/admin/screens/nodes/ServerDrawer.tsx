@@ -10,7 +10,7 @@ import css from './nodes.module.css'
 import { heartbeatLabel, protocolLabel } from './logic'
 import { SecretModal } from './NodeIdentity'
 import x from './infra.module.css'
-import { useCan, useFailure, useInvalidateNodes, useServerNodes } from './queries'
+import { useFailure, useInvalidateNodes, useServerNodes } from './queries'
 import { serverSchema, type Server, type ServerStatus } from './schemas'
 import { useDeleteServer, useIssueServerToken, useSetServerStatus, type InstallSecret } from './serverActions'
 
@@ -206,13 +206,11 @@ export function ServerFields({ form, errors, fields, disabled, onChange }: { for
 
 function EditServer({ server }: { server: Server }) {
   const api = useApi()
-  const can = useCan()
   const toast = useToast()
   const fail = useFailure()
   const invalidate = useInvalidateNodes()
   const [form, setForm] = useState(() => serverFormFrom(server))
   const [errors, setErrors] = useState<Record<string, string>>({})
-  const writable = can('node.write')
 
   const save = useMutation({
     mutationFn: (body: Record<string, unknown>) => api.request(`v1/servers/${server.id}`, serverSchema, { method: 'PATCH', body }),
@@ -243,17 +241,13 @@ function EditServer({ server }: { server: Server }) {
 
   return (
     <div className={css.form}>
-      <ServerFields form={form} errors={errors} disabled={!writable || save.isPending} onChange={setForm} fields={['name', 'region', 'publicIpv4', 'publicIpv6', 'privateIpv4', 'hostname', 'architecture', 'osName', 'capacity', 'notes']} />
+      <ServerFields form={form} errors={errors} disabled={save.isPending} onChange={setForm} fields={['name', 'region', 'publicIpv4', 'publicIpv6', 'privateIpv4', 'hostname', 'architecture', 'osName', 'capacity', 'notes']} />
       <div className={css.faint}>留空的字段会被清空（名称除外）；地区、地址、系统等接入后由 agent 回填，一般不用手填。</div>
-      {writable ? (
-        <div className={css.formActions}>
-          <Button variant="primary" busy={save.isPending} onClick={submit}>
-            保存
-          </Button>
-        </div>
-      ) : (
-        <div className={css.faint}>当前账号只能查看，修改需要节点编辑权限。</div>
-      )}
+      <div className={css.formActions}>
+        <Button variant="primary" busy={save.isPending} onClick={submit}>
+          保存
+        </Button>
+      </div>
     </div>
   )
 }
@@ -262,7 +256,6 @@ function EditServer({ server }: { server: Server }) {
 // 操作：状态、安装令牌、删除
 // ---------------------------------------------------------------------------
 function ServerOps({ server: s, onGone }: { server: Server; onGone: () => void }) {
-  const can = useCan()
   const next = nextServerStatuses(s.status)
   const [to, setTo] = useState<ServerStatus | ''>('')
   const [reason, setReason] = useState('')
@@ -274,7 +267,6 @@ function ServerOps({ server: s, onGone }: { server: Server; onGone: () => void }
   })
   const token = useIssueServerToken(setSecret)
   const remove = useDeleteServer(() => onGone())
-  const lifecycle = can('node.lifecycle')
 
   const change = () => {
     if (!to) return
@@ -286,9 +278,7 @@ function ServerOps({ server: s, onGone }: { server: Server; onGone: () => void }
     <div className={css.stackLg}>
       <section className={css.formSection}>
         <div className={css.actionTitle}>改状态</div>
-        {!lifecycle ? (
-          <div className={css.faint}>需要节点生命周期权限。</div>
-        ) : next.length === 0 ? (
+        {next.length === 0 ? (
           <div className={css.faint}>已退役的服务器不能再改状态，只能删除。</div>
         ) : (
           <>
@@ -307,9 +297,9 @@ function ServerOps({ server: s, onGone }: { server: Server; onGone: () => void }
       <div className={css.action}>
         <div className={css.actionText}>
           <div className={css.actionTitle}>安装令牌</div>
-          <div className={css.faint}>{s.status === 'retired' ? '已退役的服务器不能签发' : !can('node.provision') ? '需要节点部署权限' : '生成在这台机器上执行的安装命令，30 分钟内有效，只显示一次。'}</div>
+          <div className={css.faint}>{s.status === 'retired' ? '已退役的服务器不能签发' : '生成在这台机器上执行的安装命令，30 分钟内有效，只显示一次。'}</div>
         </div>
-        {s.status !== 'retired' && can('node.provision') && (
+        {s.status !== 'retired' && (
           <Button size="sm" busy={token.isPending} onClick={() => token.mutate(s)}>
             签发
           </Button>
@@ -319,9 +309,9 @@ function ServerOps({ server: s, onGone }: { server: Server; onGone: () => void }
       <div className={css.action}>
         <div className={css.actionText}>
           <div className={css.actionTitle}>删除服务器</div>
-          <div className={css.faint}>{!lifecycle ? '需要节点生命周期权限' : canDeleteServer(s) ? deleteServerNotice(s) : '只能删除草稿或已退役的服务器，请先把状态改为「已退役」。名下节点会随服务器一起下线。'}</div>
+          <div className={css.faint}>{canDeleteServer(s) ? deleteServerNotice(s) : '只能删除草稿或已退役的服务器，请先把状态改为「已退役」。名下节点会随服务器一起下线。'}</div>
         </div>
-        {lifecycle && canDeleteServer(s) && (
+        {canDeleteServer(s) && (
           <Button size="sm" className={css.dangerButton} busy={remove.isPending} onClick={() => setConfirm('delete')}>
             删除
           </Button>

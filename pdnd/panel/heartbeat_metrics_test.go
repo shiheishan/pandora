@@ -1,83 +1,41 @@
 package panel
 
 import (
-	"encoding/json"
 	"math"
 	"runtime"
-	"sort"
-	"strings"
 	"testing"
+
+	nodev1 "github.com/aegispanel/nodeapi/pandora/node/v1"
+	"google.golang.org/protobuf/proto"
 )
 
-// 字段名必须与面板 nodefabric.Metrics 完全一致。对不上不会报错：面板把
-// 不认识的键丢掉、缺的键记零，曲线上就是一条贴着 0 的线，看着像真的很闲。
-func TestHeartbeatMetricsJSONMatchesPanelContract(t *testing.T) {
-	raw, err := json.Marshal(HeartbeatMetrics{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var got map[string]any
-	if err := json.Unmarshal(raw, &got); err != nil {
-		t.Fatal(err)
-	}
-	keys := make([]string, 0, len(got))
-	for k := range got {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	want := []string{"cpu_bp", "disk_total_gb", "disk_used_gb", "load15_cbp", "load1_cbp", "load5_cbp",
-		"mem_total_mb", "mem_used_mb", "net_rx_bytes", "net_tx_bytes", "tcp_conns", "uptime_sec"}
-	if strings.Join(keys, ",") != strings.Join(want, ",") {
-		t.Fatalf("metrics keys = %v, want %v", keys, want)
-	}
-
-	in := HeartbeatInput{Metrics: &HeartbeatMetrics{}, MetricsPartial: true}
-	raw, _ = json.Marshal(in)
-	if !strings.Contains(string(raw), `"metrics":{`) || !strings.Contains(string(raw), `"metrics_partial":true`) {
-		t.Fatalf("heartbeat input does not carry metrics: %s", raw)
-	}
-	raw, _ = json.Marshal(HeartbeatInput{})
-	if strings.Contains(string(raw), `"metrics"`) {
-		t.Fatalf("empty heartbeat must omit metrics so the panel writes no point: %s", raw)
-	}
-}
-
-// 换算口径与面板一致，越界值钳到面板列能收的范围：cpu_bp 有 0–10000 的
-// CHECK，其余是 int4，一个越界值会让整条心跳事务回滚。
-func TestHeartbeatMetricsUnitsAndClamps(t *testing.T) {
-	m := heartbeatMetricsFrom(RuntimeStatus{
+// 换算口径：CPU 万分比、负载 ×100、内存磁盘按字节；越界值钳到 proto 字段范围，
+// 面板按同一口径入库（cpu_bp 0–10000）。
+func TestHostMetricsUnitsAndClamps(t *testing.T) {
+	m := hostMetricsFrom(RuntimeStatus{
 		CPU:  37.456,
 		Mem:  ResourcePair{Used: 1536 << 20, Total: 4 << 30},
 		Disk: ResourcePair{Used: 10<<30 + 1, Total: 40 << 30},
 	}, hostCounters{load: [3]float64{0.5, 1.25, 2}, uptimeSec: 3600.7, rxBytes: 100, txBytes: 200, tcpConns: 7})
-	want := HeartbeatMetrics{CPUBasisPoints: 3746, MemUsedMB: 1536, MemTotalMB: 4096, DiskUsedGB: 10, DiskTotalGB: 40,
-		Load1CBP: 50, Load5CBP: 125, Load15CBP: 200, NetRxBytes: 100, NetTxBytes: 200, TCPConns: 7, UptimeSec: 3601}
-	if m != want {
-		t.Fatalf("metrics = %+v, want %+v", m, want)
+	want := &nodev1.HostMetrics{CpuBp: 3746, MemUsedBytes: 1536 << 20, MemTotalBytes: 4 << 30, DiskUsedBytes: 10<<30 + 1,
+		DiskTotalBytes: 40 << 30, Load1Cp: 50, Load5Cp: 125, Load15Cp: 200, NetRxBytes: 100, NetTxBytes: 200, TcpConns: 7, UptimeSec: 3601}
+	if !proto.Equal(m, want) {
+		t.Fatalf("metrics = %v, want %v", m, want)
 	}
 
-	m = heartbeatMetricsFrom(RuntimeStatus{
-		CPU:  150,
-		Mem:  ResourcePair{Used: math.MaxUint64, Total: math.MaxUint64},
-		Disk: ResourcePair{Used: math.MaxUint64, Total: math.MaxUint64},
-	}, hostCounters{load: [3]float64{math.NaN(), -1, 1e12}, uptimeSec: math.Inf(1), rxBytes: math.MaxUint64, tcpConns: math.MaxUint64})
-	if m.CPUBasisPoints != 10000 {
-		t.Errorf("cpu_bp = %d, want clamped to 10000", m.CPUBasisPoints)
+	m = hostMetricsFrom(RuntimeStatus{CPU: 150}, hostCounters{
+		load: [3]float64{math.NaN(), -1, 1e12}, uptimeSec: math.Inf(1), rxBytes: math.MaxUint64, tcpConns: math.MaxUint64})
+	if m.CpuBp != 10000 {
+		t.Errorf("cpu_bp = %d, want clamped to 10000", m.CpuBp)
 	}
-	for name, v := range map[string]int{"mem_used_mb": m.MemUsedMB, "mem_total_mb": m.MemTotalMB, "disk_used_gb": m.DiskUsedGB,
-		"disk_total_gb": m.DiskTotalGB, "load15_cbp": m.Load15CBP, "tcp_conns": m.TCPConns} {
-		if v != math.MaxInt32 {
-			t.Errorf("%s = %d, want clamped to int4 max", name, v)
-		}
+	if m.Load1Cp != 0 || m.Load5Cp != 0 || m.Load15Cp != math.MaxUint32 {
+		t.Errorf("load = %d / %d / %d, want 0 / 0 / max", m.Load1Cp, m.Load5Cp, m.Load15Cp)
 	}
-	if m.Load1CBP != 0 || m.Load5CBP != 0 {
-		t.Errorf("NaN / negative load = %d / %d, want 0", m.Load1CBP, m.Load5CBP)
+	if m.TcpConns != math.MaxUint32 || m.NetRxBytes != math.MaxUint64 || m.UptimeSec == 0 {
+		t.Errorf("tcp = %d rx = %d uptime = %d, want clamped values", m.TcpConns, m.NetRxBytes, m.UptimeSec)
 	}
-	if m.NetRxBytes != math.MaxInt64 || m.UptimeSec <= 0 {
-		t.Errorf("rx = %d uptime = %d, want clamped positive values", m.NetRxBytes, m.UptimeSec)
-	}
-	if m := heartbeatMetricsFrom(RuntimeStatus{CPU: math.NaN()}, hostCounters{}); m.CPUBasisPoints != 0 {
-		t.Errorf("NaN CPU = %d, want 0", m.CPUBasisPoints)
+	if m := hostMetricsFrom(RuntimeStatus{CPU: math.NaN()}, hostCounters{}); m.CpuBp != 0 {
+		t.Errorf("NaN CPU = %d, want 0", m.CpuBp)
 	}
 }
 
@@ -116,35 +74,30 @@ func TestProcParsers(t *testing.T) {
 	}
 }
 
-// 真机采样也必须落在面板能收的范围内。
-func TestCollectHeartbeatMetricsOnHost(t *testing.T) {
-	m, partial := CollectHeartbeatMetrics()
-	if m.CPUBasisPoints < 0 || m.CPUBasisPoints > 10000 {
-		t.Errorf("cpu_bp = %d, outside 0–10000", m.CPUBasisPoints)
+// 真机采样也必须落在字段范围内；非 Linux 没有 /proc，必须标 partial。
+func TestCollectHostMetricsOnHost(t *testing.T) {
+	m := CollectHostMetrics()
+	if m.CpuBp > 10000 {
+		t.Errorf("cpu_bp = %d, outside 0–10000", m.CpuBp)
 	}
-	if m.MemUsedMB > m.MemTotalMB || m.DiskUsedGB > m.DiskTotalGB {
-		t.Errorf("used exceeds total: %+v", m)
+	if m.MemUsedBytes > m.MemTotalBytes || m.DiskUsedBytes > m.DiskTotalBytes {
+		t.Errorf("used exceeds total: %v", m)
 	}
 	if runtime.GOOS == "linux" {
-		if partial || m.MemTotalMB == 0 || m.UptimeSec == 0 {
-			t.Errorf("Linux host reported partial metrics: partial=%v %+v", partial, m)
+		if m.Partial || m.MemTotalBytes == 0 || m.UptimeSec == 0 {
+			t.Errorf("Linux host reported partial metrics: %v", m)
 		}
-	} else if !partial {
-		t.Error("non-Linux host has no /proc and must report metrics_partial")
+	} else if !m.Partial {
+		t.Error("non-Linux host has no /proc and must report partial")
 	}
 }
 
-// 容量与心跳 metrics 同一口径：总量取自同一次换算，核数取自运行时。
-func TestHostCapacityMatchesHeartbeatMetrics(t *testing.T) {
-	m := HeartbeatMetrics{MemTotalMB: 4096, DiskTotalGB: 40, MemUsedMB: 1, DiskUsedGB: 1}
-	if c := capacityFrom(&m); c.CPUCores != runtime.NumCPU() || c.MemoryMB != 4096 || c.DiskGB != 40 {
-		t.Fatalf("capacity = %+v", c)
+func TestCollectHostInfo(t *testing.T) {
+	h := CollectHostInfo()
+	if h.Os != runtime.GOOS || h.Arch != runtime.GOARCH || h.CpuCores == 0 {
+		t.Fatalf("host info = %v", h)
 	}
-	c := CollectHostCapacity()
-	if c.CPUCores <= 0 {
-		t.Errorf("cpu cores = %d", c.CPUCores)
-	}
-	if runtime.GOOS == "linux" && (c.MemoryMB == 0 || c.DiskGB == 0) {
-		t.Errorf("Linux host capacity has zero totals: %+v", c)
+	if runtime.GOOS == "linux" && (h.MemoryBytes == 0 || h.DiskBytes == 0) {
+		t.Errorf("Linux host info has zero totals: %v", h)
 	}
 }

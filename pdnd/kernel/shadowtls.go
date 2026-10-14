@@ -139,7 +139,7 @@ func (a *shadowTLSAdapter) acceptLoop() {
 		ctx := a.ctx
 		service := a.service
 		a.mu.Unlock()
-		go func() {
+		goGuarded(conn, func() {
 			defer a.wg.Done()
 			defer a.removeActive(conn)
 			// NewConnection 的错误都出在外层伪装握手（读 ClientHello、与诱饵
@@ -148,7 +148,7 @@ func (a *shadowTLSAdapter) acceptLoop() {
 				a.connErr.conn(StageTLSHandshake, conn, err)
 			}
 			_ = conn.Close()
-		}()
+		})
 	})
 }
 
@@ -199,8 +199,10 @@ func shadowTLSServer(raw map[string]any) M.Socksaddr {
 	if server == "" {
 		return M.Socksaddr{}
 	}
+	// 握手目标没写端口时固定补 443。不读 server_port：配置文档摊平后它是本节点的入站监听端口，
+	// 拿来连握手站点会连错端口（面板在下发前已把表单里的握手端口折进 server）。
 	if !strings.Contains(server, ":") {
-		server += ":" + strconv.Itoa(shadowRawInt(raw, "server_port", 443))
+		server += ":443"
 	}
 	return M.ParseSocksaddr(server)
 }
@@ -266,3 +268,6 @@ func shadowRawBool(raw map[string]any, key string, fallback bool) bool {
 	}
 	return fallback
 }
+
+// innerAdapter 让关停排空与测试看到内层 Shadowsocks 的用户连接表。
+func (a *shadowTLSAdapter) innerAdapter() Adapter { return a.inner }

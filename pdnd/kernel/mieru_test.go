@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -112,6 +113,17 @@ func TestNativeMieruTCPInterop(t *testing.T) {
 	}
 	if string(got) != string(payload) {
 		t.Fatalf("echo=%q", got)
+	}
+	// 删用户即断线：已建立的会话 1 秒内被关掉。mieru 客户端的读超时错误不实现
+	// net.Error，按文字判。
+	if err := adapter.DelUsers([]string{user}); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := conn.Read(got); err == nil {
+		t.Fatal("删用户后会话仍可读")
+	} else if strings.Contains(strings.ToLower(err.Error()), "timeout") {
+		t.Fatalf("删用户 1 秒后会话仍未断开：%v", err)
 	}
 }
 

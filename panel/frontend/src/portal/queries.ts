@@ -5,6 +5,8 @@ import { useApi } from '../shell/runtime'
 export const siteConfigSchema = z.object({
   registration_mode: z.enum(['closed', 'invite_only', 'open']),
   email_verification: z.boolean(),
+  /** 找回密码开没开：没配邮件服务时为 false，门户隐藏「忘记密码」 */
+  password_reset: z.boolean(),
 })
 
 export const appearanceSchema = z.object({
@@ -28,7 +30,6 @@ export const meSchema = z.object({
   display_name: z.string().nullable(),
   status: z.string(),
   created_at: z.string(),
-  permissions: z.array(z.string()).nullable(),
 })
 export type PortalMe = z.output<typeof meSchema>
 // 余额与流水（契约门户-05）：外框只读 balance，钱包页读 history，同键一份全字段
@@ -80,58 +81,13 @@ export function useBalance() {
 }
 
 // ---------------------------------------------------------------------------
-// GET v1/me/subscriptions：外框的套餐徽标与概览、我的订阅、结账页共用一个查询键和一份
-// 完整 schema（契约门户-02，含修订 R53–R62 的扩展字段），各处经 select 取自己要的部分，
-// 所以缓存里始终是全字段、整个门户只发一次请求。字段与 Go 的 mySubscriptionView / myQuotaView
-// 一一对应：都没有 omitempty，指针字段（设备上限、周期末、下次重置、续费价）为 null 而不缺席。
+// GET v1/me/subscriptions：外框的套餐徽标与概览、我的套餐、选购、确认页共用一个查询键和一份
+// 完整 schema（契约门户-02，含修订 R53–R62 的扩展字段与购买模型设计稿 2.9），各处经 select 取自己
+// 要的部分，所以缓存里始终是全字段、整个门户只发一次请求。字段与 Go 的 mySubscriptionView / myQuotaView
+// 一一对应：都没有 omitempty，指针字段（设备上限、周期末、下次重置、续费价、备注名、续到哪天）为 null 而不缺席。
 // ---------------------------------------------------------------------------
-export const SUBSCRIPTION_STATUSES = ['pending', 'trialing', 'active', 'past_due', 'grace', 'paused', 'cancelled', 'expired'] as const
-export type SubscriptionStatus = (typeof SUBSCRIPTION_STATUSES)[number]
-
-const quotaSchema = z.object({
-  metric: z.string(),
-  limit: z.number().int().nullable(),
-  consumed: z.number().int(),
-  remaining: z.number().int().nullable(),
-  period: z.string(),
-  period_start: z.string(),
-  period_end: z.string().nullable(),
-  granted_addon: z.number().int(),
-  adjusted: z.number().int(),
-})
-
-const renewalPriceSchema = z.object({
-  id: z.string(),
-  currency: z.string(),
-  unit_amount: z.number().int(),
-  billing_interval: z.string(),
-  interval_count: z.number().int(),
-  available: z.boolean(),
-})
-
-export const subscriptionSchema = z.object({
-  id: z.string(),
-  plan_id: z.string(),
-  price_id: z.string(),
-  plan_name: z.string(),
-  plan_version: z.number().int(),
-  status: z.enum(SUBSCRIPTION_STATUSES),
-  current_period_start: z.string().nullable(),
-  current_period_end: z.string().nullable(),
-  currency: z.string(),
-  amount: z.number().int(),
-  quotas: z.array(quotaSchema),
-  device_limit: z.number().int().nullable(),
-  online_devices: z.number().int(),
-  quota_reset_strategy: z.enum(['never', 'natural_month', 'billing_cycle', 'fixed_day']),
-  next_reset_at: z.string().nullable(),
-  renewable: z.boolean(),
-  renewal_price: renewalPriceSchema.nullable(),
-  pack_remaining_bytes: z.number().int(),
-})
-export type Subscription = z.output<typeof subscriptionSchema>
-
-export const subscriptionsSchema = z.object({ subscriptions: z.array(subscriptionSchema) })
+export { SUBSCRIPTION_STATUSES, subscriptionSchema, subscriptionsSchema, type Subscription, type SubscriptionStatus } from './subscription-schema'
+import { subscriptionsSchema, type Subscription, type SubscriptionStatus } from './subscription-schema'
 
 export const LIVE_STATUSES: ReadonlySet<SubscriptionStatus> = new Set(['active', 'trialing', 'grace', 'past_due'])
 export const isLive = (s: Pick<Subscription, 'status'>) => LIVE_STATUSES.has(s.status)
@@ -142,8 +98,24 @@ export function liveSubscriptions(subs: readonly Subscription[]): Subscription[]
   return subs.filter(isLive).sort((a, b) => end(b) - end(a))
 }
 
-/** 契约门户-01：多条订阅时展示生效订阅中 current_period_end 最晚的一条；外框徽标、概览、选购页都按它。 */
-export const pickPrimary = (subs: readonly Subscription[]): Subscription | null => liveSubscriptions(subs)[0] ?? null
+/** 已过期、但还能在原订阅上续费的（过期不满 30 天，后端 renewable 为真）：续费后原链接自动恢复（w5expiry）。 */
+export const isRenewableExpired = (s: Pick<Subscription, 'status' | 'renewable'>) => s.status === 'expired' && s.renewable
+
+/** 门户当成「当前订阅」的：生效中的，或能原地续费的已过期订阅。 */
+export const isCurrent = (s: Pick<Subscription, 'status' | 'renewable'>) => isLive(s) || isRenewableExpired(s)
+
+/** 能原地续费的已过期订阅，到期最晚的在前。 */
+export function renewableExpired(subs: readonly Subscription[]): Subscription[] {
+  const end = (s: Subscription) => (s.current_period_end ? new Date(s.current_period_end).getTime() : 0)
+  return subs.filter(isRenewableExpired).sort((a, b) => end(b) - end(a))
+}
+
+/**
+ * 契约门户-01：多条订阅时展示生效订阅中 current_period_end 最晚的一条；外框徽标、概览、选购页都按它。
+ * 没有生效订阅时回落到最近一条能原地续费的已过期订阅：显示「已过期」与续费，买同套餐走续费、
+ * 别的套餐走改套餐，链接不变（w5expiry）。
+ */
+export const pickPrimary = (subs: readonly Subscription[]): Subscription | null => liveSubscriptions(subs)[0] ?? renewableExpired(subs)[0] ?? null
 
 export const SUBSCRIPTIONS_KEY = ['portal', 'subscriptions'] as const
 
@@ -157,9 +129,20 @@ export function useSubscriptions<T = Subscription[]>(select?: (subs: Subscriptio
   })
 }
 
+/** 顶层的未分配流量包余量：与订阅列表同键同一次请求 */
+export function useUnattachedPackBytes() {
+  const api = useApi()
+  return useQuery({
+    queryKey: SUBSCRIPTIONS_KEY,
+    queryFn: ({ signal }) => api.get('v1/me/subscriptions', subscriptionsSchema, { signal }),
+    select: (d) => d.unattached_pack_bytes,
+    meta: { topics: ['subscriptions.changed', 'orders.changed'] },
+  })
+}
+
 const primaryPlanName = (subs: Subscription[]) => pickPrimary(subs)?.plan_name ?? null
 
-/** 头像菜单的套餐徽标：与概览主卡同一条订阅。 */
+/** 头像菜单的套餐徽标：生效中到期最晚的那份（pickPrimary 只留给外框徽标用）。 */
 export function useActivePlanName(): string | null {
   return useSubscriptions(primaryPlanName).data ?? null
 }
@@ -170,9 +153,10 @@ export function useActivePlanName(): string | null {
 // R69 的 paid_invitees / total_earned / transfers 已上线且必回（Go 无 omitempty）。
 // 三个列表 Go 端都以空切片初始化，没有记录时是 []，不是 null。
 // ---------------------------------------------------------------------------
-// CHECK 允许六种；Go 只写 pending / available，冲销由 SQL 写 reversed
+// 新栈库里只有 pending / available / voided（复核作废，门户显示「已作废」）；reversed、frozen、settled、rejected 是旧接口的取值，
+// 新后端不再返回，留在枚举里只为不让解析失败
 export const COMMISSION_SCOPES = ['every_order', 'first_order'] as const
-export const COMMISSION_ENTRY_STATUSES = ['pending', 'available', 'reversed', 'frozen', 'settled', 'rejected'] as const
+export const COMMISSION_ENTRY_STATUSES = ['pending', 'available', 'reversed', 'frozen', 'settled', 'rejected', 'voided'] as const
 export const WITHDRAWAL_STATUSES = ['requested', 'reviewing', 'approved', 'rejected', 'processing', 'paid', 'failed', 'returned'] as const
 
 export const commissionSchema = z.object({

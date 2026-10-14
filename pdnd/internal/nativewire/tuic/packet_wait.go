@@ -17,11 +17,13 @@ func (c *udpPacketConn) InitializeReadWaiter(options N.ReadWaitOptions) (needCop
 func (c *udpPacketConn) WaitReadPacket() (buffer *buf.Buffer, destination M.Socksaddr, err error) {
 	select {
 	case p := <-c.data:
+		c.idle.touch()
 		destination = p.destination
 		if c.readWaitOptions.NeedHeadroom() {
 			buffer = c.readWaitOptions.NewPacketBuffer()
-			p.releaseMessage()
+			// 先复制再归还（上游先 releaseMessage 再读 p.data，读的是已清零的消息）。
 			_, err = buffer.Write(p.data.Bytes())
+			p.releaseMessage()
 			if err != nil {
 				buffer.Release()
 				return

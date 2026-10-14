@@ -3,36 +3,60 @@ package node
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/aegispanel/nodeagent/core"
-	"github.com/aegispanel/nodeagent/panel"
 )
 
-func TestEffectiveHealthRequiresRunningStabilityWindow(t *testing.T) {
-	now := time.Now()
+// health_passed 要入站在服务、切换后稳定够久、内核确认就绪；内核没有就绪契约时不报。
+func TestHealthPassedRequiresStabilityAndReadiness(t *testing.T) {
 	kernel := &rollbackCore{ready: true}
-	n := &Node{started: true, appliedAt: now, kernel: kernel, tag: "node-n1"}
-	if n.effectiveHealthReady(now.Add(effectiveHealthStabilityWindow - time.Millisecond)) {
-		t.Fatal("effective config was declared healthy before the stability window")
-	}
-	if !n.effectiveHealthReady(now.Add(effectiveHealthStabilityWindow)) {
-		t.Fatal("effective config was not declared healthy after the stability window")
+	ts := newTestServer(t, kernel, "")
+	ts.welcome()
+	nc := portConfig(t, "n1", "vless", 18080)
+	ts.config(nc)
+	n := ts.node(t, "n1")
+	now := n.appliedAt
+	hp := "CONFIG_PHASE_HEALTH_PASSED:" + nc.ContentSha256[:8]
+	hasHealth := func() bool { return slices.Contains(ts.link.acks("n1"), hp) }
+
+	ts.reportHealth(n, now.Add(healthStabilityWindow-time.Millisecond))
+	if hasHealth() {
+		t.Fatal("稳定窗口内就报了 health_passed")
 	}
 	n.started = false
-	if n.effectiveHealthReady(now.Add(2 * effectiveHealthStabilityWindow)) {
-		t.Fatal("stopped node was declared healthy")
+	ts.reportHealth(n, now.Add(2*healthStabilityWindow))
+	if hasHealth() {
+		t.Fatal("入站没在服务也报了 health_passed")
 	}
 	n.started = true
 	kernel.ready = false
-	if n.effectiveHealthReady(now.Add(2 * effectiveHealthStabilityWindow)) {
-		t.Fatal("unready inbound was declared healthy")
+	ts.reportHealth(n, now.Add(2*healthStabilityWindow))
+	if hasHealth() {
+		t.Fatal("内核没就绪也报了 health_passed")
 	}
-	n.kernel = &coreWithoutReadiness{Core: kernel}
-	if n.effectiveHealthReady(now.Add(2 * effectiveHealthStabilityWindow)) {
-		t.Fatal("runtime without a readiness contract was declared healthy")
+	kernel.ready = true
+	ts.kernel = &coreWithoutReadiness{Core: kernel}
+	ts.reportHealth(n, now.Add(2*healthStabilityWindow))
+	if hasHealth() {
+		t.Fatal("内核没有就绪契约也报了 health_passed")
 	}
+	ts.kernel = kernel
+	ts.reportHealth(n, now.Add(healthStabilityWindow))
+	if !hasHealth() || n.healthPending {
+		t.Fatal("稳定窗口过后没报 health_passed")
+	}
+}
+
+// rollbackNode 建一个还没有入站的节点 n1。
+func rollbackNode(t *testing.T, kernel core.Core) *Node {
+	t.Helper()
+	ts := newTestServer(t, kernel, "")
+	n := ts.newNode("n1", "vless")
+	ts.nodes["n1"] = n
+	return n
 }
 
 type rollbackCore struct {
@@ -110,28 +134,19 @@ func (c *rollbackCore) SetRouting(_ string, routing *core.Routing) error {
 
 func TestApplyConfigRestoresPreviousInboundAndUsers(t *testing.T) {
 	kernel := &rollbackCore{}
-	client := panel.New(panel.Options{
-		BaseURL: "http://127.0.0.1", NodeID: "n1", NodeType: "vless", Token: "token",
-	})
-	n := New(client, kernel, testLogger())
-	oldConfig := map[string]any{
-		"server_port": float64(18080), "protocol": "vless",
-		"base_config": map[string]any{"pull_interval": float64(30), "push_interval": float64(40)},
-	}
-	if err := n.applyConfig(oldConfig); err != nil {
+	n := rollbackNode(t, kernel)
+	oldConfig := map[string]any{"server_port": float64(18080)}
+	if err := n.applyConfig(oldConfig, "vless"); err != nil {
 		t.Fatal(err)
 	}
 	user := core.User{ID: 1, UUID: "user-1"}
-	n.known[user.UUID] = user
+	n.known[user.ID] = user
 	if err := kernel.AddUsers(n.tag, []core.User{user}); err != nil {
 		t.Fatal(err)
 	}
 
 	kernel.failRoutingCount = 1
-	err := n.applyConfig(map[string]any{
-		"server_port": float64(18081), "protocol": "trojan",
-		"base_config": map[string]any{"pull_interval": float64(5), "push_interval": float64(5)},
-	})
+	err := n.applyConfig(map[string]any{"server_port": float64(18081)}, "trojan")
 	if err == nil {
 		t.Fatal("invalid replacement unexpectedly succeeded")
 	}
@@ -141,9 +156,6 @@ func TestApplyConfigRestoresPreviousInboundAndUsers(t *testing.T) {
 	if len(kernel.users) != 1 || kernel.users[0].UUID != user.UUID {
 		t.Fatalf("previous users were not restored: %+v", kernel.users)
 	}
-	if n.pullInterval.Seconds() != 30 || n.pushInterval.Seconds() != 40 {
-		t.Fatalf("intervals were not restored: pull=%s push=%s", n.pullInterval, n.pushInterval)
-	}
 	if intFrom(n.activeConfig, "server_port") != 18080 || !n.started {
 		t.Fatalf("active config changed after rollback: %+v", n.activeConfig)
 	}
@@ -151,15 +163,12 @@ func TestApplyConfigRestoresPreviousInboundAndUsers(t *testing.T) {
 
 func TestApplyConfigMarksNodeStoppedWhenRollbackFails(t *testing.T) {
 	kernel := &rollbackCore{}
-	client := panel.New(panel.Options{
-		BaseURL: "http://127.0.0.1", NodeID: "n1", NodeType: "vless", Token: "token",
-	})
-	n := New(client, kernel, testLogger())
-	if err := n.applyConfig(map[string]any{"server_port": float64(18080), "protocol": "vless"}); err != nil {
+	n := rollbackNode(t, kernel)
+	if err := n.applyConfig(map[string]any{"server_port": float64(18080)}, "vless"); err != nil {
 		t.Fatal(err)
 	}
 	kernel.failRoutingCount = 2
-	err := n.applyConfig(map[string]any{"server_port": float64(18081), "protocol": "trojan"})
+	err := n.applyConfig(map[string]any{"server_port": float64(18081)}, "trojan")
 	if err == nil || n.started {
 		t.Fatalf("rollback failure did not stop node: started=%v err=%v", n.started, err)
 	}
@@ -167,14 +176,11 @@ func TestApplyConfigMarksNodeStoppedWhenRollbackFails(t *testing.T) {
 
 func TestApplyConfigDoesNotReinstallPreservedGeneration(t *testing.T) {
 	kernel := &preservingCore{}
-	client := panel.New(panel.Options{
-		BaseURL: "http://127.0.0.1", NodeID: "n1", NodeType: "vless", Token: "token",
-	})
-	n := New(client, kernel, testLogger())
-	if err := n.applyConfig(map[string]any{"server_port": float64(18080), "protocol": "vless"}); err != nil {
+	n := rollbackNode(t, kernel)
+	if err := n.applyConfig(map[string]any{"server_port": float64(18080)}, "vless"); err != nil {
 		t.Fatal(err)
 	}
-	err := n.applyConfig(map[string]any{"server_port": float64(18081), "protocol": "trojan"})
+	err := n.applyConfig(map[string]any{"server_port": float64(18081)}, "trojan")
 	if err == nil {
 		t.Fatal("invalid replacement unexpectedly succeeded")
 	}

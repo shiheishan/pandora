@@ -76,6 +76,8 @@ function entryStatus(e: Entry): { status: string; tone: RecordTone } {
       return { status: '已冲销', tone: 'void' }
     case 'rejected':
       return { status: '已驳回', tone: 'void' }
+    case 'voided':
+      return { status: '已作废', tone: 'void' }
   }
 }
 

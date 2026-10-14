@@ -20,7 +20,7 @@ func (c *Client) loopMessages(conn *clientQUICConnection) {
 
 func (c *Client) handleMessage(conn *clientQUICConnection, data []byte) error {
 	message := allocMessage()
-	err := decodeUDPMessage(message, data)
+	err := decodeUDPMessage(message, data, nil)
 	if err != nil {
 		message.release()
 		return E.Cause(err, "decode UDP message")

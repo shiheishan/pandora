@@ -47,7 +47,8 @@ func main() {
 	flag.StringVar(&serverName, "server-name", "", "REALITY server name")
 	flag.StringVar(&publicKey, "public-key", "", "REALITY public key, base64url without padding")
 	flag.StringVar(&shortID, "short-id", "", "REALITY short ID, hex")
-	flag.StringVar(&path, "path", "/xhttp/session-h3/1/", "XHTTP request path")
+	// 缺省走 stream-one 写法（不带会话的基础路径）：节点 mode 为 auto 或 stream-one 都收。
+	flag.StringVar(&path, "path", "/xhttp/", "XHTTP request path")
 	flag.StringVar(&payload, "payload", "pandora-h3-probe", "payload to echo")
 	flag.StringVar(&userUUID, "uuid", "", "optional VLESS UUID; omit for raw XHTTP")
 	flag.StringVar(&destHost, "dest-host", "127.0.0.1", "VLESS destination host")

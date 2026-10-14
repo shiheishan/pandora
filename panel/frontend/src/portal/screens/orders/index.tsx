@@ -192,7 +192,7 @@ function OrderList({ filter, onFilter, selected }: { filter: OrderFilter; onFilt
               <Empty
                 bare
                 title="还没有订单"
-                description="购买订阅套餐、流量包或充值余额后，记录都会出现在这里。"
+                description="买套餐、流量包或充值余额后，记录都会出现在这里。"
                 action={
                   <a className={css.linkButton} href={href('/plans')}>
                     去选购套餐

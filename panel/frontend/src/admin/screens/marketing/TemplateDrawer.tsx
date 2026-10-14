@@ -74,7 +74,7 @@ function TemplateEditor({ template, plans, onClose }: { template: GiftTemplate |
             size="sm"
             value={form.type}
             onChange={(v) => set('type', v)}
-            options={TEMPLATE_TYPES.map(([value, label]) => ({ value, label: value === 'plan' && !plans ? `${label}（需套餐权限）` : label }))}
+            options={TEMPLATE_TYPES.map(([value, label]) => ({ value, label: value === 'plan' && !plans ? `${label}（套餐目录未加载）` : label }))}
           />
         )}
       </div>

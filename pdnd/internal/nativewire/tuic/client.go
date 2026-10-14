@@ -253,7 +253,7 @@ func (c *Client) ListenPacket(ctx context.Context) (net.PacketConn, error) {
 		conn.udpAccess.Lock()
 		delete(conn.udpConnMap, sessionID)
 		conn.udpAccess.Unlock()
-	})
+	}, 0)
 	conn.udpAccess.Lock()
 	sessionID = conn.udpSessionID
 	conn.udpSessionID++

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"strings"
 
 	"github.com/gorilla/websocket"
 )
@@ -19,7 +18,9 @@ import (
 // 就把截止时间清零，WebSocket / HTTP Upgrade 劫持后的会话、gRPC 与 XHTTP
 // 的长流都不受影响；HTTP/2 的流也不用它。Accept 出错的退避由 Serve 自带。
 func newInboundHTTPServer(handler http.Handler, maxHeaderBytes int) *http.Server {
-	return &http.Server{Handler: handler, MaxHeaderBytes: maxHeaderBytes, ReadHeaderTimeout: inboundHandshakeTimeout}
+	// ErrorLog 不能留空：net/http 缺省把握手失败连同完整对端 IP 写进标准库 log（inbound_http_errorlog.go）。
+	return &http.Server{Handler: handler, MaxHeaderBytes: maxHeaderBytes, ReadHeaderTimeout: inboundHandshakeTimeout,
+		ErrorLog: inboundHTTPErrorLog(connErrorReporter{})}
 }
 
 // serveNativeWebSocket and serveNativeHTTPUpgrade are shared HTTP front ends
@@ -32,10 +33,10 @@ func serveNativeWebSocket(listener net.Listener, path, host string, ctx func() c
 		return nil, fmt.Errorf("native websocket server requires listener, context and handler")
 	}
 	upgrader := websocket.Upgrader{ReadBufferSize: 32 * 1024, WriteBufferSize: 32 * 1024, CheckOrigin: func(req *http.Request) bool {
-		return host == "" || strings.EqualFold(strings.TrimSpace(req.Host), host)
+		return requestHostMatches(req.Host, host)
 	}}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if req.URL == nil || req.URL.Path != path || (host != "" && !strings.EqualFold(strings.TrimSpace(req.Host), host)) {
+		if req.URL == nil || req.URL.Path != path || !requestHostMatches(req.Host, host) {
 			http.NotFound(w, req)
 			return
 		}

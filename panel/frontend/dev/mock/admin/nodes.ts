@@ -128,22 +128,49 @@ function activationWarnings(n: Node): string[] {
   return pools.find((p) => p.id === n.pool_id)?.plans.length ? [] : ['所在节点池没有绑定任何套餐，暂时不服务任何用户']
 }
 
+// subscription.DeliveryState / NodeDeliveryFacts.Refine 的文案，与 Go 一字不差
+const DELIVERY_NOTES = {
+  notActive: '服务状态不是 active，不下发',
+  neverSeen: '从未上报过心跳，不下发 —— 多半是建了没装 agent，或是测试留下的记录。发出去就是一条必然连不上的线路',
+  stale: '心跳已超时，但仍在下发 —— 只有当套餐里一个新鲜节点都没有时才会用到它。空订阅会让客户端清空服务器列表，比给一条可能不通的线路更糟',
+  serverNotReady: '所属服务器未就绪或已删除，不下发',
+  nodeNotReady: '协议、端口或可连地址不完整，不下发',
+  poolUnbound: '所在节点池没有绑定任何套餐，暂时不服务任何用户',
+}
+const STABLE_TYPES = new Set(SCHEMAS.filter((s) => s.status === 'stable').map((s) => s.node_type))
+
+/** subscription.DeliverableNodeSQL 的镜像：与用户、套餐都无关的节点自身条件 */
+function deliverable(n: Node): boolean {
+  const srv = servers.find((s) => s.id === n.server_id)
+  // 假后端的服务器没有控制节点（control_node_id 恒为 null），Go 里那一条在这里恒真
+  if (!srv || srv.status !== 'ready') return false
+  const port = n.server_port ?? 0
+  const host = n.server_host || srv.public_ipv4 || ''
+  return n.serving_status === 'active' && !!n.node_type && STABLE_TYPES.has(n.node_type) && n.protocol_schema_version === 1 && port >= 1 && port <= 65535 && !!n.last_heartbeat_at && host !== ''
+}
+
+/** 套餐页 GET v1/plans/{id}/pools 的 deliverable_nodes：池里节点自身可下发的个数 */
+export const deliverableNodesInPool = (poolId: string): number => store.filter((n) => n.pool_id === poolId && deliverable(n)).length
+
+/** 后台节点列表的 delivered_to_users / delivery_note：DeliveryState 之后按 Refine 补齐 */
+function deliveryOf(n: Node): { delivered: boolean; note: string } {
+  if (n.serving_status !== 'active') return { delivered: false, note: DELIVERY_NOTES.notActive }
+  if (n.pool_id === null) return { delivered: false, note: NO_POOL_NOTE }
+  if (!n.last_heartbeat_at) return { delivered: false, note: DELIVERY_NOTES.neverSeen }
+  if (!deliverable(n)) {
+    const srv = servers.find((s) => s.id === n.server_id)
+    return { delivered: false, note: srv?.status === 'ready' ? DELIVERY_NOTES.nodeNotReady : DELIVERY_NOTES.serverNotReady }
+  }
+  if (!pools.find((p) => p.id === n.pool_id)?.plans.length) return { delivered: false, note: DELIVERY_NOTES.poolUnbound }
+  const fresh = Date.now() - new Date(n.last_heartbeat_at).getTime() < 600_000
+  return { delivered: true, note: fresh ? '' : DELIVERY_NOTES.stale }
+}
+
 function listRow(n: Node) {
   const srv = servers.find((s) => s.id === n.server_id)
   const pool = pools.find((p) => p.id === n.pool_id)
   const stale = !n.last_heartbeat_at || Date.now() - new Date(n.last_heartbeat_at).getTime() > 90_000
-  const heartbeatOk = !!n.last_heartbeat_at && Date.now() - new Date(n.last_heartbeat_at).getTime() < 600_000
-  // R105：先看服务状态，再看有没有池，再看心跳；无池节点不服务任何订阅
-  const delivered = n.serving_status === 'active' && n.pool_id !== null && heartbeatOk
-  const note = delivered
-    ? ''
-    : n.serving_status !== 'active'
-      ? '服务状态不是 active，不会下发给用户'
-      : n.pool_id === null
-        ? NO_POOL_NOTE
-        : !n.last_heartbeat_at
-          ? '从未心跳，不会下发给用户'
-          : '超过 10 分钟没有心跳，已停止下发'
+  const { delivered, note } = deliveryOf(n)
   const cpu = srv?.probe ? srv.probe.cpu_bp / 100 : null
   return {
     id: n.id,
@@ -174,13 +201,8 @@ function listRow(n: Node) {
     node_type: n.node_type,
     server_host: n.server_host,
     server_port: n.server_port,
-    traffic_rate: n.traffic_rate,
     display_name: n.display_name,
     country_code: n.country_code,
-    kernel: n.kernel,
-    protocol_config: redact(n.protocol_config),
-    protocol_schema_version: n.protocol_schema_version,
-    config_validated_at: n.node_type ? n.updated_at : null,
     sort_order: n.sort_order,
     online_users: n.online_users,
     online_ips: n.online_ips,
@@ -188,9 +210,48 @@ function listRow(n: Node) {
     cpu_percent: cpu,
     mem_percent: srv?.probe ? Math.round((srv.probe.mem_used_mb / srv.probe.mem_total_mb) * 1000) / 10 : null,
     metrics_at: cpu === null ? null : ago(20),
-    traffic_bytes: n.traffic_bytes_24h * 30,
     granted_plans: pool?.plans.length ? pool.plans : null,
   }
+}
+
+/** GET v1/nodes?id= 的一行：列表行加上编辑表单才用的字段（nodefabric.AdminNodeDetail） */
+function detailRow(n: Node) {
+  return {
+    ...listRow(n),
+    traffic_rate: n.traffic_rate,
+    kernel: n.kernel,
+    protocol_config: redact(n.protocol_config),
+    protocol_schema_version: n.protocol_schema_version,
+    config_validated_at: n.node_type ? n.updated_at : null,
+    traffic_bytes: n.traffic_bytes_24h * 30,
+  }
+}
+
+/** nodefabric.AdminNodeStates 与 adminNodeFilterSQL：后台列表的状态筛选（「离线」= 在役且心跳超过 90 秒） */
+const NODE_STATES = ['all', 'online', 'offline', 'disabled', 'retired']
+function matchesState(n: Node, state: string): boolean {
+  const stale = !n.last_heartbeat_at || Date.now() - new Date(n.last_heartbeat_at).getTime() > 90_000
+  switch (state) {
+    case 'all':
+      return n.serving_status !== 'retired'
+    case 'online':
+      return n.serving_status === 'draining' || (n.serving_status === 'active' && !stale)
+    case 'offline':
+      return n.serving_status === 'active' && stale
+    case 'disabled':
+      return n.serving_status === 'draft' || n.serving_status === 'disabled'
+    case 'retired':
+      return n.serving_status === 'retired'
+    default:
+      return true
+  }
+}
+/** 服务端搜索：名称、展示名、服务器名、国家、协议、地址、编号里按子串找，不分大小写 */
+function matchesSearch(n: Node, q: string): boolean {
+  if (!q) return true
+  const srv = servers.find((s) => s.id === n.server_id)
+  const hay = [n.name, n.display_name, srv?.name, n.country_code, n.node_type, n.server_host, String(n.node_no)].filter(Boolean).join(' ').toLowerCase()
+  return hay.includes(q.toLowerCase())
 }
 
 /** nodefabric.RedactProtocolConfig：按名字在任意深度删掉敏感键 */
@@ -298,20 +359,28 @@ export const nodes: MockModule = {
     ...infraRoutes(store),
     ...routeGroupRoutes(store),
     'GET /v1/node-protocol-schemas': (ctx) => {
-      if (!ctx.requirePermission('node.read')) return
       ctx.send(200, NODE_PROTOCOL_SCHEMAS)
     },
     'GET /v1/nodes': (ctx) => {
-      if (!ctx.requirePermission('node.read')) return
-      const withRetired = ctx.query.get('include_retired') === '1'
+      // nodefabric.validateAdminNodeQuery：不认得的状态、过长的搜索词、不是 UUID 的 id 回 422
+      const state = ctx.query.get('state') ?? ''
+      const q = (ctx.query.get('q') ?? '').trim()
+      const id = (ctx.query.get('id') ?? '').trim()
+      if (state && !NODE_STATES.includes(state)) return reply(ctx, invalid({ state: '只能是 all、online、offline、disabled、retired 之一' }))
+      if ([...q].length > 120) return reply(ctx, invalid({ q: '搜索词太长' }))
+      if (id && !UUID.test(id)) return reply(ctx, invalid({ id: '格式不正确' }))
+      // 给了 state 就由它决定含不含已退役
+      const withRetired = state !== '' || ctx.query.get('include_retired') === '1'
       const limit = Number(ctx.query.get('limit'))
       const offset = Number(ctx.query.get('offset')) || 0
-      const rows = store.filter((n) => n.status !== 'destroyed' && (withRetired || n.serving_status !== 'retired')).sort((a, b) => a.sort_order - b.sort_order || a.node_no - b.node_no)
+      const rows = store
+        .filter((n) => n.status !== 'destroyed' && (withRetired || n.serving_status !== 'retired') && matchesState(n, state) && matchesSearch(n, q) && (!id || n.id === id))
+        .sort((a, b) => a.sort_order - b.sort_order || a.node_no - b.node_no)
       const size = limit >= 1 && limit <= 1000 ? limit : 500
-      ctx.send(200, { nodes: rows.slice(offset, offset + size).map(listRow), total: rows.length })
+      const page = rows.slice(offset, offset + size)
+      ctx.send(200, { nodes: id ? page.map(detailRow) : page.map(listRow), total: rows.length })
     },
     'POST /v1/nodes': async (ctx) => {
-      if (!ctx.requirePermission('node.provision')) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('node_create', () => {
@@ -345,7 +414,6 @@ export const nodes: MockModule = {
       })
     },
     'PATCH /v1/nodes/:id': async (ctx) => {
-      if (!ctx.requirePermission('node.write')) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       const extra = unknownField(body, ['row_version', 'name', 'pool_id', 'node_type', 'server_host', 'server_port', 'kernel', 'traffic_rate', 'display_name', 'protocol_config', 'country_code'])
@@ -359,6 +427,8 @@ export const nodes: MockModule = {
       const config = body.protocol_config === undefined ? n.protocol_config : nodeType === n.node_type ? restoreSecrets(n.protocol_config, body.protocol_config) : body.protocol_config
       const touched = ['node_type', 'server_host', 'server_port', 'kernel', 'protocol_config'].some((k) => body[k] !== undefined)
       const fields = { ...basicErrors(body, false), ...(touched ? validateProtocol(nodeType, config) : {}) }
+      // nodefabric.PatchAdminNode：在役节点不许清空池（无池节点不服务任何用户），草稿等仍可无池
+      if (body.pool_id !== undefined && !text(body.pool_id) && n.serving_status === 'active') fields.pool_id = '在役节点必须属于一个节点池；不选池则不服务任何用户，先停用节点再移出'
       if (Object.keys(fields).length) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', fields)
       if (body.name !== undefined && store.some((x) => x !== n && x.name === text(body.name).trim())) return ctx.fail(409, 'conflict', '节点名称已存在')
       if (body.name !== undefined) n.name = text(body.name).trim()
@@ -375,7 +445,6 @@ export const nodes: MockModule = {
       ctx.send(200, adminNode(n))
     },
     'POST /v1/nodes/:id/copy': async (ctx) => {
-      if (!ctx.requirePermission('node.provision')) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('node_copy', () => {
@@ -400,7 +469,6 @@ export const nodes: MockModule = {
       })
     },
     'POST /v1/nodes/:id/move': async (ctx) => {
-      if (!ctx.requirePermission('node.provision')) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('node_server_move', () => {
@@ -421,7 +489,6 @@ export const nodes: MockModule = {
       })
     },
     'PUT /v1/nodes/order': async (ctx) => {
-      if (!ctx.requirePermission('node.write')) return
       const body = await ctx.body()
       const items = Array.isArray(body?.items) ? (body!.items as Json[]) : []
       if (items.length < 1 || items.length > 200) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { items: '一次 1–200 项' })
@@ -438,7 +505,6 @@ export const nodes: MockModule = {
       ctx.send(200, { ok: true, updated: items.length })
     },
     'POST /v1/nodes/status:batch': async (ctx) => {
-      if (!ctx.requirePermission('node.lifecycle')) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('node_status_batch', () => {
@@ -463,7 +529,7 @@ export const nodes: MockModule = {
       })
     },
     'POST /v1/nodes/bootstrap-token': async (ctx) => {
-      if (!ctx.requirePermission('node.provision') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('node_bootstrap_token_issue', () => {
@@ -480,11 +546,10 @@ export const nodes: MockModule = {
       })
     },
     'POST /v1/nodes/reality-keypair': (ctx) => {
-      if (!ctx.requirePermission('node.read')) return
       ctx.send(200, { private_key: randomBytes(32).toString('base64url'), public_key: randomBytes(32).toString('base64url'), short_id: randomBytes(4).toString('hex'), hint: '私钥只在保存时写入，之后读接口不回显' })
     },
     'DELETE /v1/nodes/:id': async (ctx) => {
-      if (!ctx.requirePermission('node.lifecycle') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body || emptyBody(ctx)) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       const n = findNode(ctx.params.id)
@@ -496,11 +561,10 @@ export const nodes: MockModule = {
       n.name = `${n.name}#destroyed-${Date.now()}`
       ctx.send(200, { deleted: true })
     },
-    // R108 / R113：一步上线，照 nodefabric.ActivateNode：node.lifecycle、幂等 node_activate、无 reauth；
+    // R108 / R113：一步上线，照 nodefabric.ActivateNode：幂等 node_activate、无 reauth；
     // 判断顺序同 Go——版本号非法 400、节点不存在 404、已是 active 回 200 不改动（先于版本号）、版本冲突 409，
     // 再依次是接入尾段、节点身份、协议就绪、服务器；服务器跟着进 ready；warnings 没有提示时不出现
     'POST /v1/nodes/:id/activate': async (ctx) => {
-      if (!ctx.requirePermission('node.lifecycle')) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('node_activate', () => {
@@ -527,7 +591,7 @@ export const nodes: MockModule = {
     },
 
     'POST /v1/nodes/:id/retire': async (ctx) => {
-      if (!ctx.requirePermission('node.lifecycle') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('node_retire', () => {
@@ -543,14 +607,14 @@ export const nodes: MockModule = {
       })
     },
     'POST /v1/nodes/:id/revoke-identity': (ctx) => {
-      if (!ctx.requirePermission('node.identity.revoke') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const n = findNode(ctx.params.id)
       if (!n || !n.identity_serial || n.identityRevoked) return reply(ctx, notFound('该节点没有有效身份'))
       n.identityRevoked = true
       ctx.send(200, { ok: true })
     },
     'POST /v1/nodes/config/publish': async (ctx) => {
-      if (!ctx.requirePermission('node.config.publish') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('node_config_publish', () => {
@@ -561,7 +625,6 @@ export const nodes: MockModule = {
       })
     },
     'GET /v1/nodes/:id/metrics': (ctx) => {
-      if (!ctx.requirePermission('node.read')) return
       const n = findNode(ctx.params.id)
       if (!n || !n.last_heartbeat_at || n.serving_status === 'retired') return ctx.send(200, { points: null, latest: null })
       const now = Date.now()
@@ -574,13 +637,11 @@ export const nodes: MockModule = {
       ctx.send(200, { points, latest: { cpu_percent: points.at(-1)!.cpu_percent, mem_used_mb: 2400, mem_total_mb: 4096, disk_used_gb: 22, disk_total_gb: 80, load1: 0.8, load5: 0.7, load15: 0.6, tcp_conns: points.at(-1)!.tcp_conns, uptime_sec: 86400 * 12, rx_total: 9e12, tx_total: 2e12 } })
     },
     'GET /v1/nodes/:id/routing': (ctx) => {
-      if (!ctx.requirePermission('node.read')) return
       const n = findNode(ctx.params.id)
       if (!n) return reply(ctx, notFound('节点不存在'))
       ctx.send(200, { row_version: n.row_version, groups: groupRefsOfNode(n.id), ...n.routing })
     },
     'PUT /v1/nodes/:id/routing': async (ctx) => {
-      if (!ctx.requirePermission('node.config.publish')) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       const n = findNode(ctx.params.id)
@@ -596,7 +657,7 @@ export const nodes: MockModule = {
       ctx.send(200, { ok: true, row_version: n.row_version })
     },
     'POST /v1/nodes/:id/server-token': async (ctx) => {
-      if (!ctx.requirePermission('node.provision') || !ctx.requireReauth()) return
+      if (!ctx.requireReauth()) return
       await ctx.idempotent('node_server_token_issue', () => {
         const n = findNode(ctx.params.id)
         if (!n) return notFound('节点不存在')
@@ -609,7 +670,6 @@ export const nodes: MockModule = {
       })
     },
     'GET /v1/nodes/:id/identity': (ctx) => {
-      if (!ctx.requirePermission('node.read')) return
       if (!UUID.test(ctx.params.id!)) return reply(ctx, notFound('节点不存在'))
       const n = findNode(ctx.params.id)
       if (!n) return reply(ctx, notFound('节点不存在'))

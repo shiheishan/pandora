@@ -29,8 +29,8 @@ type naiveAdapter struct {
 	spec     InboundSpec
 	mu       sync.RWMutex
 	users    map[string]proxyUser
-	traffic  map[int64]core.UserTraffic
-	online   map[int64]map[string]struct{}
+	sessions userSessions
+	online   onlineDevices
 	listener net.Listener
 	server   *http.Server
 	plane    DataPlane
@@ -39,12 +39,15 @@ type naiveAdapter struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	closed   bool
+	// fallback 接住非 CONNECT 请求与认证失败：配了 raw `fallback` 时反代到
+	// 那里，否则是中性 404。
+	fallback *probeFallback
 	active   map[net.Conn]struct{}
 	wg       sync.WaitGroup
 }
 
 func newNaiveAdapter(spec InboundSpec) (Adapter, error) {
-	return &naiveAdapter{spec: spec, users: make(map[string]proxyUser), traffic: make(map[int64]core.UserTraffic), online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{})}, nil
+	return &naiveAdapter{spec: spec, users: make(map[string]proxyUser), active: make(map[net.Conn]struct{})}, nil
 }
 
 func (a *naiveAdapter) Protocol() string { return "naive" }
@@ -70,6 +73,9 @@ func (a *naiveAdapter) Validate(spec InboundSpec) error {
 	if _, _, err := loadInboundTLSConfig(spec.Config.Raw); err != nil {
 		return err
 	}
+	if _, err := parseProbeFallback(spec.Config.Raw); err != nil {
+		return fmt.Errorf("naive %w", err)
+	}
 	return nil
 }
 
@@ -87,8 +93,15 @@ func (a *naiveAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 		a.mu.Unlock()
 		return err
 	}
+	fallbackAddr, err := parseProbeFallback(spec.Config.Raw)
+	if err != nil {
+		a.mu.Unlock()
+		return fmt.Errorf("naive %w", err)
+	}
 	tlsConfig = tlsConfig.Clone()
-	tlsConfig.NextProtos = []string{http2.NextProtoTLS}
+	// 与真 Web 服务器一样同时宣告 h2 与 http/1.1；只给 h2 时 http/1.1 客户端
+	// 握完 TLS 就被关，是一眼可辨的特征。naive 客户端只用 h2。
+	tlsConfig.NextProtos = []string{http2.NextProtoTLS, "http/1.1"}
 	listen := spec.Config.Listen
 	if listen == "" {
 		listen = "0.0.0.0"
@@ -100,9 +113,12 @@ func (a *naiveAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 	}
 	ln = tls.NewListener(ln, tlsConfig)
 	a.spec, a.plane, a.connErr = spec, hooks.DataPlane, newConnErrorReporter(hooks, spec, "naive")
+	a.fallback = newProbeFallback(fallbackAddr)
 	a.ctx, a.cancel = context.WithCancel(parent)
 	server := newInboundHTTPServer(http.HandlerFunc(a.serveHTTP), 64<<10)
 	server.BaseContext = func(net.Listener) context.Context { return a.ctx }
+	// TLS 在 tls.NewListener 里、由 net/http 握手：失败只出现在 ErrorLog，接到 connErr。
+	server.ErrorLog = inboundHTTPErrorLog(a.connErr)
 	if err := http2.ConfigureServer(server, &http2.Server{}); err != nil {
 		_ = ln.Close()
 		a.cancel()
@@ -117,20 +133,25 @@ func (a *naiveAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 }
 
 func (a *naiveAdapter) serveHTTP(w http.ResponseWriter, req *http.Request) {
-	if req == nil || req.Method != http.MethodConnect || strings.TrimSpace(req.Header.Get("Padding")) == "" || len(req.Header.Get("Padding")) > 1024 {
-		// 不是 naive 客户端的 CONNECT（探测、普通浏览器请求），按协议错误记。
-		if req != nil {
-			a.connErr.request(StageSession, req.RemoteAddr, fmt.Errorf("naive request is not a padded CONNECT"))
-		}
-		naiveReject(w, http.StatusBadRequest)
+	if req == nil {
 		return
 	}
+	if req.Method != http.MethodConnect || strings.TrimSpace(req.Header.Get("Padding")) == "" || len(req.Header.Get("Padding")) > 1024 {
+		// 不是 naive 客户端的 CONNECT（探测、普通浏览器请求），按协议错误记，
+		// 交给回落：对外就是一个普通网站。
+		a.connErr.request(StageSession, req.RemoteAddr, fmt.Errorf("naive request is not a padded CONNECT"))
+		a.fallback.ServeHTTP(w, req)
+		return
+	}
+	epoch := a.sessions.epoch()
 	name, password, ok := parseNaiveBasicAuth(req.Header.Get("Proxy-Authorization"))
 	user, valid := a.lookupCredential(name, password)
 	if !ok || !valid {
+		// 认证失败也交给回落，不回 407：407 加 Proxy-Authenticate 就是在
+		// 告诉探测方「这里是代理」（Caddy forwardproxy 的 probe_resistance
+		// 同样把它当普通请求交给下一个 handler）。
 		a.connErr.request(StageSession, req.RemoteAddr, markConnError(connErrAuth, fmt.Errorf("naive credentials rejected")))
-		w.Header().Set("Proxy-Authenticate", `Basic realm="Pandora"`)
-		naiveReject(w, http.StatusProxyAuthRequired)
+		a.fallback.ServeHTTP(w, req)
 		return
 	}
 	destination, err := parseNaiveDestination(req)
@@ -157,7 +178,7 @@ func (a *naiveAdapter) serveHTTP(w http.ResponseWriter, req *http.Request) {
 	a.mu.Unlock()
 	defer a.wg.Done()
 	defer a.removeActive(conn)
-	if err := a.handleStream(ctx, conn, user, destination); err != nil {
+	if err := a.handleStream(ctx, conn, user, destination, epoch); err != nil {
 		a.connErr.request(StageSession, req.RemoteAddr, err)
 	}
 }
@@ -207,13 +228,18 @@ func parseNaiveDestination(req *http.Request) (vlessDestination, error) {
 	return out, nil
 }
 
-func (a *naiveAdapter) handleStream(ctx context.Context, conn net.Conn, user core.User, destination vlessDestination) error {
+func (a *naiveAdapter) handleStream(ctx context.Context, conn net.Conn, user core.User, destination vlessDestination, epoch uint64) error {
 	defer conn.Close()
+	sess := a.sessions.open(user, epoch, conn)
+	if sess == nil {
+		return errSessionRevoked
+	}
+	defer sess.close()
 	ip := remoteIP(conn.RemoteAddr())
-	if !a.enterDevice(user, ip) {
+	if !a.online.enter(user, ip) {
 		return deviceLimitError("naive")
 	}
-	defer a.leaveDevice(user, ip)
+	defer a.online.leave(user, ip)
 	sourceIP, _ := netip.ParseAddr(ip)
 	meta := route.Meta{Domain: destination.Domain, IP: destination.IP, Port: destination.Port, Network: "tcp", Protocol: "naive", SourceIP: sourceIP}
 	upstream, err := a.plane.DialTCP(ctx, meta, M.ParseSocksaddrHostPort(destination.Host, destination.Port))
@@ -221,27 +247,7 @@ func (a *naiveAdapter) handleStream(ctx context.Context, conn net.Conn, user cor
 		return err
 	}
 	defer upstream.Close()
-	var copyWG sync.WaitGroup
-	copyWG.Add(2)
-	go func() {
-		n, _ := core.SpeedLimitedCopy(upstream, conn, a.limiters.For(user))
-		a.addTraffic(user, n, 0)
-		if cw, ok := upstream.(interface{ CloseWrite() error }); ok {
-			_ = cw.CloseWrite()
-		}
-		copyWG.Done()
-	}()
-	go func() {
-		n, _ := core.SpeedLimitedCopy(conn, upstream, a.limiters.For(user))
-		a.addTraffic(user, 0, n)
-		// 上游关掉写端时，这个关闭要传给客户端，否则它收不到 EOF，
-		// 会一直等到自己超时——连接也就一直不释放。
-		if cw, ok := conn.(interface{ CloseWrite() error }); ok {
-			_ = cw.CloseWrite()
-		}
-		copyWG.Done()
-	}()
-	copyWG.Wait()
+	sess.relay(conn, upstream, core.RelayOptions{Limiter: a.limiters.For(user)})
 	return nil
 }
 
@@ -300,72 +306,27 @@ func (a *naiveAdapter) UpsertUsers(users []core.User) error {
 
 func (a *naiveAdapter) DelUsers(ids []string) error {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	var removed []int64
 	for _, id := range ids {
 		name := strings.TrimSpace(id)
 		// 顺手丢掉这个用户的令牌桶，否则用户删了桶还留着。
 		if entry, ok := a.users[name]; ok {
 			a.limiters.Remove(entry.user.ID)
+			removed = append(removed, entry.user.ID)
 		}
 		delete(a.users, name)
 	}
+	a.mu.Unlock()
+	// 先删表、再踢线（锁外关）：已有的长连接、mux / QUIC 会话随之断开。
+	a.sessions.revoke(removed)
 	return nil
 }
 func (a *naiveAdapter) SnapshotTraffic() ([]core.UserTraffic, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	out := make([]core.UserTraffic, 0, len(a.traffic))
-	for id, traffic := range a.traffic {
-		if traffic.Upload != 0 || traffic.Download != 0 {
-			out = append(out, traffic)
-		}
-		delete(a.traffic, id)
-	}
-	return out, nil
+	return a.sessions.snapshot(), nil
 }
-func (a *naiveAdapter) OnlineIPs() map[int64][]string {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	out := make(map[int64][]string, len(a.online))
-	for id, ips := range a.online {
-		for ip := range ips {
-			out[id] = append(out[id], ip)
-		}
-	}
-	return out
-}
-func (a *naiveAdapter) enterDevice(user core.User, ip string) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	set := a.online[user.ID]
-	if set == nil {
-		set = make(map[string]struct{})
-		a.online[user.ID] = set
-	}
-	if _, exists := set[ip]; !exists && user.DeviceLimit > 0 && len(set) >= user.DeviceLimit {
-		return false
-	}
-	set[ip] = struct{}{}
-	return true
-}
-func (a *naiveAdapter) leaveDevice(user core.User, ip string) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if set := a.online[user.ID]; set != nil {
-		delete(set, ip)
-		if len(set) == 0 {
-			delete(a.online, user.ID)
-		}
-	}
-}
+func (a *naiveAdapter) OnlineIPs() map[int64][]string { return a.online.snapshot() }
 func (a *naiveAdapter) addTraffic(user core.User, upload, download int64) {
-	a.mu.Lock()
-	t := a.traffic[user.ID]
-	t.ID = user.ID
-	t.Upload += upload
-	t.Download += download
-	a.traffic[user.ID] = t
-	a.mu.Unlock()
+	a.sessions.add(user.ID, upload, download)
 }
 func (a *naiveAdapter) removeActive(conn net.Conn) {
 	a.mu.Lock()
@@ -409,7 +370,32 @@ func naiveReject(w http.ResponseWriter, status int) {
 	}
 	w.WriteHeader(status)
 }
-func naivePaddingHeader() string { return "~pandora-native-naive-padding~" }
+
+// naivePaddingHeader 生成响应头 Padding 的值，按 NaiveProxy 服务端
+// （klzgrad/forwardproxy）的做法：长度在 [30, 62) 内随机，前 16 个字符取自
+// 不会被 HPACK Huffman 压缩的 16 个符号（每个 4 比特随机选），其余补 '~'。
+// 以前是固定串，长度与内容在 HPACK 之后都是常量，成了可被动识别的特征。
+func naivePaddingHeader() string {
+	var seed [9]byte
+	_, _ = rand.Read(seed[:])
+	length := naivePaddingMinLen + int(seed[8])%naivePaddingSpan
+	bits := binary.BigEndian.Uint64(seed[:8])
+	out := make([]byte, length)
+	for i := 0; i < 16; i++ {
+		out[i] = naivePaddingSymbols[bits&15]
+		bits >>= 4
+	}
+	for i := 16; i < length; i++ {
+		out[i] = '~'
+	}
+	return string(out)
+}
+
+const (
+	naivePaddingMinLen  = 30
+	naivePaddingSpan    = 32
+	naivePaddingSymbols = "!#$()+<>?@[]^`{}"
+)
 
 type naiveStreamConn struct {
 	reader  io.ReadCloser

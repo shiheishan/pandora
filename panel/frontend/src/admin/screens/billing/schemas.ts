@@ -102,7 +102,7 @@ export type OrderDetail = z.output<typeof orderDetailSchema>
 export type OrderItem = z.output<typeof orderItemSchema>
 
 // ---------------------------------------------------------------------------
-// GET v1/orders/{id}/payments：支付尝试、入账、退款（billing.payment.read，比读订单高一级）
+// GET v1/orders/{id}/payments：支付尝试、入账、退款
 // ---------------------------------------------------------------------------
 const intentSchema = z.object({
   id: z.string(),
@@ -177,8 +177,57 @@ export const manualCreatedSchema = z.object({
   balance_applied: int,
   payable_amount: int,
   status: z.enum(ORDER_STATUSES),
+  // 用户已有别的套餐的订阅时落成原订阅上的变更单（2026-10-07），多这两项：原套餐的剩余价值与退进余额的部分
+  proration_credit: int.optional(),
+  balance_refund: int.optional(),
 })
 export type ManualCreated = z.output<typeof manualCreatedSchema>
+
+// ---------------------------------------------------------------------------
+// POST v1/orders/manual/preview：这单能落到哪几份、默认哪一份（购买模型统一，设计稿 2.3 / 4.2）。
+// 形状取 billing.ManualPlacement 的 json tag：purchase.Placement 内嵌展平（Option 再内嵌，其余全是 omitempty，
+// 所以都是 optional），外加 due / below_minimum 两项；顶层另有 min_payment。
+// 后台开单只会出现 renew / change / new 三种落点；default_key 为空 = 不预选，提交按钮置灰
+// ---------------------------------------------------------------------------
+export const PLACEMENT_KINDS = ['renew', 'change', 'new'] as const
+export const PLACEMENT_BADGES = ['same_plan', 'soonest_expiry', 'most_used', 'least_remaining'] as const
+export type PlacementKind = (typeof PLACEMENT_KINDS)[number]
+const placementSchema = z.object({
+  key: z.string(),
+  kind: z.enum(PLACEMENT_KINDS),
+  subscription_id: z.string().optional(),
+  // 只用在 change 上：目标是过期 30 天内的那份，即「恢复并改成 P」
+  expired: z.boolean().optional(),
+  badge: z.enum(PLACEMENT_BADGES).optional(),
+  // 这一份现在的样子；new 选项这几项为空
+  label: z.string().optional(),
+  plan_id: z.string().optional(),
+  plan_name: z.string().optional(),
+  state: z.enum(['live', 'revivable', 'dead']).optional(),
+  period_end: time.optional(),
+  // 落地之后的到期日（续、换与新开都会给）
+  new_period_end: time.optional(),
+  // 只用在 change 上：原套餐没用完的部分。赠送全额退到余额，别的结算方式先抵新价
+  credit: int.optional(),
+  currency: z.string().optional(),
+  // 只用在 change 上：到期前来自赠送的剩余整天数，换掉时不保留（用户 10-08）
+  gift_days_lost: int.optional(),
+  traffic_used: int.optional(),
+  traffic_cap: int.optional(),
+  pack_remaining: int.optional(),
+  // billing.ManualPlacement（无 omitempty）：按「待用户支付」开这单用户要付多少（分，换套餐已先抵 credit），
+  // 以及它是否低于站点最低付款额（与建单 422 同一个判定）。价格档读不到时为 0 / false
+  due: int,
+  below_minimum: z.boolean(),
+})
+export const manualPreviewSchema = z.object({
+  options: z.array(placementSchema),
+  default_key: z.string().default(''),
+  // 站点最低付款额（分）：启用且收新单的 CNY 渠道里最小的 min_amount，与报价、建单同一口径；不限为 0
+  min_payment: int,
+})
+export type Placement = z.output<typeof placementSchema>
+export type ManualPreview = z.output<typeof manualPreviewSchema>
 /** POST v1/orders/{id}/mark-paid：修订 R2 起是 snake_case，不回 signature_failed */
 export const markedPaidSchema = z.object({
   processed: z.boolean(),
@@ -240,6 +289,14 @@ const providerSchema = z.object({
   has_credentials: z.boolean(),
   base_url: z.string(),
   currencies: z.array(z.string()),
+  // 编辑表单回填用的非机密配置（w2pay）；商户号与密钥只写不读，只有 has_credentials
+  submit_path: z.string(),
+  api_path: z.string(),
+  methods: z.array(z.string()),
+  default_method: z.string(),
+  allow_private_host: z.boolean(),
+  // 最低付款额（分，渠道 config 的 min_amount）：低于它的在线支付不发起；demo / offline 没有这个概念，回 0
+  min_amount: count,
   today: byCurrency,
   success_rate_24h: z.number().min(0).max(1).nullable(),
   last_callback_at: time.nullable(),
@@ -247,6 +304,8 @@ const providerSchema = z.object({
 export const providersSchema = z.object({ providers: z.array(providerSchema) })
 export type Provider = z.output<typeof providerSchema>
 export const toggledSchema = z.object({ ok: z.literal(true) })
+// POST v1/payment-providers（201）与 PUT v1/payment-providers/{code}（200）同形；只回凭据是否变更
+export const providerWrittenSchema = z.object({ id: z.string(), code: z.string(), credentials_changed: z.boolean() })
 
 // ---------------------------------------------------------------------------
 // 收入调整（报表口径，只追加）：列表、登记与冲销同形；reversal_of 是 omitempty，R66 登记人

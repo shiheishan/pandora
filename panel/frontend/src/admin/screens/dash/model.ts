@@ -1,6 +1,6 @@
 import { formatBytes, formatCount, formatMoney, relativeTime } from '../../../core/format'
 import type { RouteQuery } from '../../../core/router'
-import { canRead, canReadModule, type ModuleKey, type Permissions } from '../../modules'
+import type { ModuleKey } from '../../modules'
 import type { TaskItem } from '../../tasks'
 import type { ActivityPoint, Backlog, BackupStatus, ComponentState, NodeTraffic, RevenuePoint, SystemComponent, SystemStatus, UserTraffic } from './api'
 
@@ -37,33 +37,6 @@ export function formatLatency(ms: number): string {
 }
 
 // ===========================================================================
-// 权限：每张卡按它的接口权限决定发不发请求（契约后台-01 各条目的「权限」行）
-// ===========================================================================
-
-export interface DashboardAccess {
-  tasks: boolean
-  backlog: boolean
-  overview: boolean
-  nodeTraffic: boolean
-  userTraffic: boolean
-  system: boolean
-  activity: boolean
-}
-
-export function dashboardAccess(perms: Permissions): DashboardAccess {
-  const metering = perms.has('metering.read')
-  return {
-    tasks: perms.has('ops.dashboard.read'),
-    backlog: perms.has('ops.notification.read'),
-    overview: perms.has('billing.ledger.read'),
-    nodeTraffic: metering && perms.has('node.read'),
-    userTraffic: metering && perms.has('iam.user.read'),
-    system: perms.has('security.audit.read'),
-    activity: perms.has('security.audit.read'),
-  }
-}
-
-// ===========================================================================
 // 「需要处理」卡片（GET v1/dashboard/tasks + 通知积压）
 // ===========================================================================
 
@@ -72,7 +45,7 @@ export type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'neutral'
 export interface Target {
   module: ModuleKey
   tab: string | null
-  /** 目标页的地址筛选（如订单页 s=pending），不影响可达性判断 */
+  /** 目标页的地址筛选（如订单页 s=pending） */
   query?: RouteQuery
 }
 
@@ -83,24 +56,18 @@ export interface TaskCard {
   sub: string
   tone: Tone
   action: string
-  /** 目标页当前管理员不可读时为 null，卡片不可点 */
-  target: Target | null
+  /** 点卡片去处理的页面 */
+  target: Target
   /** 这张卡是否真的需要人处理（页头「N 项」只数这些） */
   pending: boolean
   hint?: string
 }
 
-/** 目标页当前管理员可读才给链接，否则 null（点进去只会看到「无权限或不存在」） */
-export function reachable(target: Target, perms: Permissions): Target | null {
-  const ok = target.tab === null ? canReadModule(target.module, perms) : canRead(target.module, target.tab, perms)
-  return ok ? target : null
-}
-
 const NOTIFY_HINT = '统计含邮件、Telegram、站内信；来自投递记录，未记录 worker 心跳，当前不可观测'
 
 /** 通知积压卡：优先用冻结契约的 backlog 明细，拿不到时退回 tasks 条目里的摘要 */
-function notificationCard(backlog: Backlog | undefined, item: Extract<TaskItem, { kind: 'notifications_backlog' }> | undefined, perms: Permissions): TaskCard | null {
-  const target = reachable({ module: 'system', tab: 'notify' }, perms)
+function notificationCard(backlog: Backlog | undefined, item: Extract<TaskItem, { kind: 'notifications_backlog' }> | undefined): TaskCard | null {
+  const target: Target = { module: 'system', tab: 'notify' }
   const base = { key: 'notifications_backlog', title: '通知投递积压', action: '查看通道', target, hint: NOTIFY_HINT }
   if (backlog) {
     const c = backlog.counts
@@ -120,7 +87,7 @@ function notificationCard(backlog: Backlog | undefined, item: Extract<TaskItem, 
   return null
 }
 
-function taskCard(item: TaskItem, perms: Permissions): TaskCard | null {
+function taskCard(item: TaskItem): TaskCard | null {
   const none = '目前没有'
   switch (item.kind) {
     case 'tickets_open': {
@@ -135,7 +102,7 @@ function taskCard(item: TaskItem, perms: Permissions): TaskCard | null {
         sub: item.count > 0 ? parts.join(' · ') : none,
         tone: item.count > 0 ? 'danger' : 'ok',
         action: '去回复',
-        target: reachable({ module: 'tickets', tab: null }, perms),
+        target: { module: 'tickets', tab: null },
         pending: item.count > 0,
       }
     }
@@ -148,7 +115,7 @@ function taskCard(item: TaskItem, perms: Permissions): TaskCard | null {
         sub: item.count > 0 && sum.length > 0 ? `合计 ${sum.join(' + ')}` : item.count > 0 ? '' : none,
         tone: item.count > 0 ? 'info' : 'ok',
         action: '去审核',
-        target: reachable({ module: 'marketing', tab: 'commission' }, perms),
+        target: { module: 'marketing', tab: 'commission' },
         pending: item.count > 0,
       }
     }
@@ -165,7 +132,7 @@ function taskCard(item: TaskItem, perms: Permissions): TaskCard | null {
         sub: item.count > 0 ? parts.join(' · ') : '全部在线',
         tone: item.count > 0 ? 'warn' : 'ok',
         action: '查看节点',
-        target: reachable({ module: 'nodes', tab: 'nodes' }, perms),
+        target: { module: 'nodes', tab: 'nodes' },
         pending: item.count > 0,
       }
     }
@@ -178,7 +145,7 @@ function taskCard(item: TaskItem, perms: Permissions): TaskCard | null {
         tone: item.count > 0 ? 'warn' : 'ok',
         action: '去核对',
         // 带上「待支付」筛选（订单页 s=pending，含 pending_payment），落地就是要核对的那几单
-        target: reachable({ module: 'billing', tab: 'orders', query: { s: 'pending' } }, perms),
+        target: { module: 'billing', tab: 'orders', query: { s: 'pending' } },
         pending: item.count > 0,
       }
     case 'ledger_drift':
@@ -191,7 +158,7 @@ function taskCard(item: TaskItem, perms: Permissions): TaskCard | null {
         sub: '余额与账本流水对不上的账户',
         tone: 'danger',
         action: '去核对',
-        target: reachable({ module: 'billing', tab: null }, perms),
+        target: { module: 'billing', tab: null },
         pending: true,
       }
     case 'notifications_backlog':
@@ -202,14 +169,14 @@ function taskCard(item: TaskItem, perms: Permissions): TaskCard | null {
 // 设计稿的卡片顺序；账本漂移排最前（最严重）
 const TASK_ORDER = ['ledger_drift', 'tickets_open', 'withdrawals_pending', 'nodes_offline', 'orders_pending_stale', 'notifications_backlog']
 
-export function taskCards(items: readonly TaskItem[] | undefined, backlog: Backlog | undefined, perms: Permissions): TaskCard[] {
+export function taskCards(items: readonly TaskItem[] | undefined, backlog: Backlog | undefined): TaskCard[] {
   const cards: TaskCard[] = []
   for (const item of items ?? []) {
-    const card = taskCard(item, perms)
+    const card = taskCard(item)
     if (card) cards.push(card)
   }
   const notifyItem = items?.find((i): i is Extract<TaskItem, { kind: 'notifications_backlog' }> => i.kind === 'notifications_backlog')
-  const notify = notificationCard(backlog, notifyItem, perms)
+  const notify = notificationCard(backlog, notifyItem)
   if (notify) cards.push(notify)
   return cards.sort((a, b) => TASK_ORDER.indexOf(a.key) - TASK_ORDER.indexOf(b.key))
 }
@@ -329,12 +296,14 @@ function ageText(hours: number): string {
 export function backupSummary(b: BackupStatus): BackupSummary {
   // 读不到不等于没备份（后端注释：权限或 systemd 沙箱都可能挡住），状态记为未知
   if (!b.readable) return { state: 'unknown', meta: '读不到备份目录' }
-  if (!b.latest) return { state: 'warn', meta: '还没有备份' }
+  // latest 只算能恢复的那份（有校验、有封条）：有文件却没有这样的一份时说清楚，不说「还没有」
+  if (!b.latest) return { state: 'warn', meta: (b.count ?? 0) > 0 ? `${b.count} 份都恢复不了（缺封条或校验）` : '还没有备份' }
   const problems = [
     b.stale ? '过期' : '',
     b.identity_configured === false ? '未配解密私钥' : '',
     b.offsite_configured === false ? '未配异地' : '',
     (b.missing_checksum ?? 0) > 0 ? `${b.missing_checksum} 份缺校验` : '',
+    (b.missing_seal ?? 0) > 0 ? `${b.missing_seal} 份缺封条` : '',
   ].filter(Boolean)
   const age = b.latest_age_hours !== undefined ? `最近一份 ${ageText(b.latest_age_hours)}` : '最近一份时间未知'
   return problems.length ? { state: 'warn', meta: problems.join(' · ') } : { state: 'ok', meta: age }
@@ -360,8 +329,8 @@ export interface SystemView {
 
 const COMPONENT_NAMES: Record<SystemComponent['key'], string> = {
   postgres: 'PostgreSQL 主库',
-  // 契约映射：设计的「Redis」即 valkey
-  valkey: 'Valkey 缓存',
+  // 契约里组件键沿用 valkey（JSON 形状不变），实际是 Redis
+  valkey: 'Redis 缓存',
   node_fabric: 'NativeCore 调度',
   payment_callbacks: '支付回调队列',
   mail: '邮件投递 · SMTP',
@@ -412,15 +381,14 @@ const ROW_ACTIONS: Partial<Record<SystemComponent['key'], Target>> = {
   telegram: { module: 'system', tab: 'notify' },
 }
 
-export function systemRows(status: SystemStatus, perms: Permissions): SystemView {
+export function systemRows(status: SystemStatus): SystemView {
   const backup = backupSummary(status.backup)
   const backupRow: SystemRow = { key: 'backup', name: COMPONENT_NAMES.backup, state: backup.state, meta: backup.meta, action: { kind: 'backup' } }
   const rows: SystemRow[] = status.components
     .filter((c) => c.key !== 'backup')
     .map((c) => {
       const target = ROW_ACTIONS[c.key]
-      const go = target ? reachable(target, perms) : null
-      return { key: c.key, name: COMPONENT_NAMES[c.key], state: c.state, meta: componentMeta(c), hint: c.message, action: go ? { kind: 'go' as const, target: go } : undefined }
+      return { key: c.key, name: COMPONENT_NAMES[c.key], state: c.state, meta: componentMeta(c), hint: c.message, action: target ? { kind: 'go' as const, target } : undefined }
     })
   // 备份行的状态以后端组件为准（它还看 missing_checksum 等），文案由完整的 backup 段给出；
   // Go 总会给 backup 组件，find 落空只是类型上的可能，此时退回 backup 段自己的判断
@@ -461,9 +429,9 @@ export function trafficRows(data: NodeTraffic | UserTraffic, now: Date = new Dat
     const tip = [
       `上行 ${formatBytes(item.upload_bytes)}`,
       `下行 ${formatBytes(item.download_bytes)}`,
-      isNode ? `${item.report_count} 次上报` : `${item.subscription_count} 个订阅`,
+      isNode ? '' : `${item.subscription_count} 个订阅`,
       `最近 ${relativeTime(item.last_report_at, now)}`,
-    ].join(' · ')
+    ].filter(Boolean).join(' · ')
     return {
       key: isNode ? item.node_id : item.user_id,
       rank: i + 1,

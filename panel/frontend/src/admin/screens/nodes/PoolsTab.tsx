@@ -7,19 +7,17 @@ import { UK, useUserGroups } from '../users/api'
 import { createPoolBody, emptyPoolForm, patchPoolBody, planNamesLabel, POOL_STATUS, poolDeleteBlock, poolFormFrom, poolGroupsChanged, poolGroupsLabel, type PoolForm } from './infra'
 import x from './infra.module.css'
 import css from './nodes.module.css'
-import { useCan, useFailure, useInvalidateNodes, usePools } from './queries'
+import { useFailure, useInvalidateNodes, usePools } from './queries'
 import { okResponse, poolCreated, POOL_STATUSES, type Pool, type PoolStatus } from './schemas'
 
 export function PoolsTab() {
   const api = useApi()
-  const can = useCan()
   const toast = useToast()
   const fail = useFailure()
   const invalidate = useInvalidateNodes()
   const pools = usePools()
   const [editing, setEditing] = useState<Pool | 'new' | null>(null)
   const [removing, setRemoving] = useState<Pool | null>(null)
-  const writable = can('node.provision')
 
   const remove = useMutation({
     mutationFn: (p: Pool) => api.delete(`v1/node-pools/${p.id}`, okResponse).then(() => p),
@@ -38,14 +36,12 @@ export function PoolsTab() {
       <div className={x.bar}>
         <span>节点池决定「谁能看到哪些节点」：节点归入节点池，套餐绑定节点池。</span>
         <span className={css.spacer} />
-        {writable && (
-          <Button variant="primary" onClick={() => setEditing('new')}>
-            新建节点池
-          </Button>
-        )}
+        <Button variant="primary" onClick={() => setEditing('new')}>
+          新建节点池
+        </Button>
       </div>
 
-      <QueryView query={pools} rows={4} isEmpty={(d) => d.length === 0} empty={<Empty title="还没有节点池" description={writable ? '新建一个节点池，再在节点里选它、在套餐里绑定它。' : '有节点部署权限的同事可以在这里新建节点池。'} />}>
+      <QueryView query={pools} rows={4} isEmpty={(d) => d.length === 0} empty={<Empty title="还没有节点池" description="新建一个节点池，再在节点里选它、在套餐里绑定它。" />}>
         {(list) => (
           <div className={x.pools}>
             {list.map((p) => {
@@ -62,16 +58,14 @@ export function PoolsTab() {
                       <span className={css.mono}>{p.code}</span>
                       {p.region && <span>· {p.region}</span>}
                     </div>
-                    {writable && (
-                      <div className={x.poolActions}>
-                        <Button size="xs" onClick={() => setEditing(p)}>
-                          编辑
-                        </Button>
-                        <Button size="xs" variant="ghost" className={block ? undefined : x.dangerText} disabled={block !== null || remove.isPending} title={block ?? undefined} onClick={() => setRemoving(p)}>
-                          删除
-                        </Button>
-                      </div>
-                    )}
+                    <div className={x.poolActions}>
+                      <Button size="xs" onClick={() => setEditing(p)}>
+                        编辑
+                      </Button>
+                      <Button size="xs" variant="ghost" className={block ? undefined : x.dangerText} disabled={block !== null || remove.isPending} title={block ?? undefined} onClick={() => setRemoving(p)}>
+                        删除
+                      </Button>
+                    </div>
                   </div>
                   <div className={x.chips}>
                     {p.members.length === 0 && <span className={css.faint}>没有节点。在节点的「协议参数」里把资源池选成它。</span>}
@@ -176,7 +170,6 @@ function PoolModal({ pool, onClose }: { pool: Pool | null; onClose: () => void }
         <div className={css.faint}>{pool ? '标识创建后不能改；名称与地区只能改成别的值，不能清空。' : '标识给接口与脚本用，创建后不能改。新建的节点池一律是启用状态。'}</div>
         <PoolGroups
           picked={form.groupIds}
-          current={pool?.allowed_user_groups ?? []}
           disabled={save.isPending}
           error={errors.allowed_user_group_ids}
           onChange={(ids) => setForm({ ...form, groupIds: ids })}
@@ -189,19 +182,14 @@ function PoolModal({ pool, onClose }: { pool: Pool | null; onClose: () => void }
 
 /**
  * R104「仅限用户组」多选：不选 = 所有买了绑定套餐的用户都能用；选了 = 只有这些组的用户能用，默认组（未分组）的用户用不了。
- * 列组名要 iam.user.read；没有就只读显示当前名单
  */
-function PoolGroups({ picked, current, disabled, error, onChange }: { picked: readonly string[]; current: ReadonlyArray<{ id: string; name: string }>; disabled: boolean; error?: string; onChange: (ids: string[]) => void }) {
-  const can = useCan()
-  const readable = can('iam.user.read')
-  const groups = useUserGroups(readable)
+function PoolGroups({ picked, disabled, error, onChange }: { picked: readonly string[]; disabled: boolean; error?: string; onChange: (ids: string[]) => void }) {
+  const groups = useUserGroups()
   const toggle = (id: string) => onChange(picked.includes(id) ? picked.filter((g) => g !== id) : [...picked, id])
   return (
     <fieldset className={`${css.stack} ${x.fieldset}`}>
       <legend className={css.faint}>仅限用户组（不选 = 不限定）</legend>
-      {!readable ? (
-        <span className={css.faint}>没有读取用户组的权限（iam.user.read），不能修改名单。{current.length ? `当前限定：${current.map((g) => g.name).join('、')}。` : '当前不限定。'}</span>
-      ) : groups.isPending ? (
+      {groups.isPending ? (
         <span className={css.faint}>正在读取用户组…</span>
       ) : groups.isError ? (
         <span className={css.faint}>用户组读取失败，稍后再试。</span>

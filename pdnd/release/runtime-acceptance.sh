@@ -4,18 +4,21 @@ set -Eeuo pipefail
 # Exercise the actual release binary without touching system paths or services.
 # Usage: runtime-acceptance.sh <pandora-native-binary> <stage-dir>
 #
-# Runs two panel access modes against a loopback mock panel, two cold starts
-# each, with SIGTERM and port release checked every time:
-#   signed - what the installer writes after enrollment: identity file plus
-#            signed_required=true. Config comes from a signed effective
-#            release; heartbeats (with host metrics) and config reports go
-#            over the signed channel.
-#   compat - no identity, UniProxy token only (installer path without an
-#            enrollment token). Config and /status go over UniProxy.
+# Against a loopback mock gRPC panel (release/acceptancepanel):
+#   1. `enroll` with a wrong CA fingerprint must fail before the token is sent
+#      (the panel sees no enrollment);
+#   2. `enroll` with the panel's real fingerprint must write the identity dir
+#      (ca.pem cert.pem key.pem server_id, key 0600, no leftover enroll.json);
+#   3. two cold starts: the first must show a heartbeat with host metrics, a
+#      health_passed config ack and an ok users ack; the second starts from the
+#      disk cache, so its Hello reports the applied versions and the panel does
+#      not resend them;
+#   4. stop the panel and cold start once more: the node must serve from its
+#      disk cache.
+# SIGTERM and port release are checked every time.
 #
-# The mock panel is Go (release/acceptancepanel) because the signed channel
-# needs Ed25519. It is built from this checkout with `go`; on a host without
-# Go, cross-build it elsewhere and pass it in:
+# The mock panel is built from this checkout with `go`; on a host without Go,
+# cross-build it elsewhere and pass it in:
 #   GOOS=linux GOARCH=amd64 go build -o acceptancepanel ./release/acceptancepanel
 #   ACCEPTANCE_PANEL=./acceptancepanel bash ./release/runtime-acceptance.sh ...
 
@@ -80,8 +83,8 @@ run_once() {
     sleep .05
   done
   [[ "${ready}" == 1 ]] || { echo "${mode}: node port never became ready" >&2; return 1; }
-  # 端口就绪只说明配置到了；还要等面板侧看到这一轮该有的上报。签名模式要等
-  # health_passed，节点在应用后稳定 5 秒才报，所以给 15 秒。
+  # 端口就绪只说明配置到了；还要等面板侧看到这一轮该有的上报。health_passed
+  # 在切换后稳定 5 秒才报，所以给 15 秒。
   local observed=0
   for _ in $(seq 1 150); do
     if state_ok "${dir}/state.json" "${expect}"; then observed=1; break; fi
@@ -108,12 +111,56 @@ s=socket.socket(); s.bind(('127.0.0.1',int(sys.argv[1]))); s.close()
 PY
 }
 
-run_mode() {
-  local mode="$1" dir="${STAGE}/$1"
-  mkdir -p "${dir}"
-  rm -f "${dir}/state.json" "${dir}/identity.json"
-  local panel_port node_port
-  read -r panel_port node_port < <(python3 - <<'PY'
+# run_offline：面板已停，节点冷启动必须用落盘缓存把入站起来，SIGTERM 后让出端口。
+run_offline() {
+  local mode="$1" dir="$2" node_port="$3"
+  local cached
+  for cached in config.json users.json; do
+    local found
+    found="$(find "${dir}/cache" -name "${cached}" -type f | head -n 1)"
+    [[ -n "${found}" ]] || { echo "${mode}: no ${cached} in the disk cache after cold starts" >&2; return 1; }
+    [[ "$(stat -c %a "${found}" 2>/dev/null || stat -f %Lp "${found}")" == 600 ]] || {
+      echo "${mode}: cached ${cached} is not mode 0600" >&2; return 1; }
+  done
+  "${BINARY}" -c "${dir}/config.json" >"${dir}/node-offline.log" 2>&1 &
+  node_pid=$!
+  local ready=0
+  for _ in $(seq 1 100); do
+    if ! kill -0 "${node_pid}" 2>/dev/null; then
+      wait "${node_pid}" || true
+      echo "${mode}: node exited while the panel was down" >&2
+      return 1
+    fi
+    if port_open "${node_port}"; then ready=1; break; fi
+    sleep .05
+  done
+  [[ "${ready}" == 1 ]] || {
+    echo "${mode}: node did not serve from its disk cache with the panel down" >&2
+    cat "${dir}/node-offline.log" >&2
+    return 1
+  }
+  kill -TERM "${node_pid}"
+  for _ in $(seq 1 100); do
+    kill -0 "${node_pid}" 2>/dev/null || break
+    sleep .05
+  done
+  if kill -0 "${node_pid}" 2>/dev/null; then
+    echo "${mode}: node did not stop after SIGTERM (panel down)" >&2
+    return 1
+  fi
+  wait "${node_pid}"
+  node_pid=""
+  python3 - "${node_port}" <<'PY'
+import socket,sys
+s=socket.socket(); s.bind(('127.0.0.1',int(sys.argv[1]))); s.close()
+PY
+}
+
+mode=grpc
+dir="${STAGE}/grpc"
+rm -rf "${dir}"
+mkdir -p "${dir}"
+read -r panel_port node_port < <(python3 - <<'PY'
 import socket
 ports=[]
 for _ in range(2):
@@ -122,40 +169,56 @@ for _ in range(2):
 print(*ports)
 PY
 )
-  local panel_args=(-listen "127.0.0.1:${panel_port}" -node-port "${node_port}" -state "${dir}/state.json")
-  local node_id="runtime-acceptance" signed_required=false expect
-  if [[ "${mode}" == signed ]]; then
-    node_id="$(python3 -c 'import uuid; print(uuid.uuid4())')"
-    signed_required=true
-    panel_args+=(-identity "${dir}/identity.json" -node-id "${node_id}")
-    expect="s['heartbeats_with_metrics'] > b['heartbeats_with_metrics'] and 'health_passed' in s['report_phases'][len(b['report_phases']):]"
-    expect+=" and s['bad_signatures'] == 0 and s['uniproxy_config_hits'] == 0 and s['uniproxy_status_reports'] == 0"
-  else
-    expect="s['uniproxy_config_hits'] > b['uniproxy_config_hits'] and s['uniproxy_status_reports'] > b['uniproxy_status_reports']"
-  fi
+(umask 077 && python3 -c 'import secrets; print(secrets.token_urlsafe(32))' > "${dir}/token")
 
-  "${PANEL_BIN}" "${panel_args[@]}" >"${dir}/panel.log" 2>&1 &
-  panel_pid=$!
-  for _ in $(seq 1 100); do
-    if port_open "${panel_port}" && [[ -f "${dir}/state.json" ]]; then break; fi
-    sleep .05
-  done
+"${PANEL_BIN}" -listen "127.0.0.1:${panel_port}" -node-port "${node_port}" -state "${dir}/state.json" \
+  -token-file "${dir}/token" -ca-fingerprint-out "${dir}/ca.sha256" >"${dir}/panel.log" 2>&1 &
+panel_pid=$!
+for _ in $(seq 1 100); do
+  if port_open "${panel_port}" && [[ -f "${dir}/state.json" && -s "${dir}/ca.sha256" ]]; then break; fi
+  sleep .05
+done
+port_open "${panel_port}" || { echo "${mode}: mock panel did not come up" >&2; cat "${dir}/panel.log" >&2; exit 1; }
 
-  # 兼容模式也显式给一个不存在的身份路径：落到缺省 /var/lib/... 的话，在装过
-  # 节点的机器上会读到真身份，验的就不是兼容通道了。
-  cat > "${dir}/config.json" <<JSON
-{"log_level":"info","panel":{"url":"http://127.0.0.1:${panel_port}","timeout_seconds":2,"identity_path":"${dir}/identity.json","signed_required":${signed_required}},"nodes":[{"node_id":"${node_id}","node_type":"socks","token":"acceptance-only"}]}
+# 指纹不对：握手就该失败，令牌不发出去，面板一次接入都没看到。
+zero_fp="sha256:$(printf '0%.0s' $(seq 1 64))"
+if "${BINARY}" enroll --panel "127.0.0.1:${panel_port}" --ca-sha256 "${zero_fp}" \
+    --token-file "${dir}/token" --identity-dir "${dir}/identity-bad" >"${dir}/enroll-bad.log" 2>&1; then
+  echo "${mode}: enroll with a wrong CA fingerprint succeeded" >&2
+  exit 1
+fi
+baseline='{}'
+state_ok "${dir}/state.json" "s['enrolls'] == 0" || {
+  echo "${mode}: the token reached the panel despite a wrong fingerprint: $(cat "${dir}/state.json")" >&2; exit 1; }
+
+"${BINARY}" enroll --panel "127.0.0.1:${panel_port}" --ca-sha256 "$(cat "${dir}/ca.sha256")" \
+  --token-file "${dir}/token" --identity-dir "${dir}/identity" >"${dir}/enroll.log" 2>&1 || {
+  echo "${mode}: enroll failed" >&2; cat "${dir}/enroll.log" >&2; exit 1; }
+for f in ca.pem cert.pem key.pem server_id; do
+  [[ -f "${dir}/identity/${f}" ]] || { echo "${mode}: identity dir lacks ${f}" >&2; exit 1; }
+done
+[[ "$(stat -c %a "${dir}/identity/key.pem" 2>/dev/null || stat -f %Lp "${dir}/identity/key.pem")" == 600 ]] || {
+  echo "${mode}: key.pem is not mode 0600" >&2; exit 1; }
+[[ ! -e "${dir}/identity/enroll.json" ]] || { echo "${mode}: enroll.json left behind" >&2; exit 1; }
+
+cat > "${dir}/config.json" <<JSON
+{"log_level":"info","cache_dir":"${dir}/cache","panel":{"address":"127.0.0.1:${panel_port}","identity_dir":"${dir}/identity"}}
 JSON
 
-  run_once "${mode}" 1 "${dir}" "${node_port}" "${expect}"
-  run_once "${mode}" 2 "${dir}" "${node_port}" "${expect}"
-  # 每个模式一行面板侧观测，CI 日志里能直接看出两种接入都真跑了。
-  printf '{"mode_passed":"%s","cold_starts":2,"panel_observed":%s}\n' "${mode}" "$(cat "${dir}/state.json")"
-  kill -TERM "${panel_pid}" 2>/dev/null || true
-  wait "${panel_pid}" 2>/dev/null || true
-  panel_pid=""
-}
+first="s['heartbeats_with_metrics'] > b['heartbeats_with_metrics']"
+first+=" and 'CONFIG_PHASE_HEALTH_PASSED' in s['config_phases'][len(b['config_phases']):]"
+first+=" and s['users_acks_ok'] > b['users_acks_ok'] and s['bad_client_certs'] == 0 and s['missing_request_ids'] == 0"
+# 第二次冷启动先用落盘缓存装好入站，Hello 报出已应用的版本，面板不再重发。
+second="s['hellos_with_applied_config'] > b['hellos_with_applied_config']"
+second+=" and s['heartbeats_with_metrics'] > b['heartbeats_with_metrics'] and s['bad_client_certs'] == 0"
+run_once "${mode}" 1 "${dir}" "${node_port}" "${first}"
+run_once "${mode}" 2 "${dir}" "${node_port}" "${second}"
+observed="$(cat "${dir}/state.json")"
+kill -TERM "${panel_pid}" 2>/dev/null || true
+wait "${panel_pid}" 2>/dev/null || true
+panel_pid=""
+# 面板停了再冷启动一次：入站必须靠落盘缓存照常起来。
+run_offline "${mode}" "${dir}" "${node_port}"
 
-run_mode signed
-run_mode compat
-printf '{"status":"ok","modes":["signed","compat"],"cold_starts_per_mode":2,"sigterm":"clean","port_released":true}\n'
+printf '{"mode_passed":"grpc","enroll":"ok","cold_starts":2,"offline_cold_starts":1,"panel_observed":%s}\n' "${observed}"
+printf '{"status":"ok","modes":["grpc"],"cold_starts":2,"offline_cold_starts":1,"sigterm":"clean","port_released":true}\n'

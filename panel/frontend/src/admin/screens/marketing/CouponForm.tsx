@@ -21,7 +21,7 @@ export function CouponForm({
   onCreated,
 }: {
   batch: boolean
-  /** undefined = 没有 catalog.read 或目录读取失败，此时不能限定套餐 */
+  /** undefined = 套餐目录还没取到（加载中或失败），此时不能限定套餐 */
   plans: readonly Plan[] | undefined
   onCancel: () => void
   onCreated: (result: { code: string } | BatchResult) => void
