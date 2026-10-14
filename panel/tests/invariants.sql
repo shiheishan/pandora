@@ -773,8 +773,9 @@ $sql$);
 SELECT _reject('XB-NODE', 'ECHConfigList 过短必须拒绝', $sql$
   INSERT INTO node_ech_keys (node_id, public_name, config_list, private_key_sealed)
   VALUES ('00000000-0000-7000-8000-000000000905', 'ech.example.test', '\x00'::bytea, '\x01'::bytea);
-$sql, 'node_ech_keys_config_list_check');
+$sql$, 'node_ech_keys_config_list_check');
 
+--------------------------------------------------------------------------------
 -- XB-COMM 三级分销、提现方式与 USDT 打款、按用户单独佣金设置（00041_commission_levels.sql）
 --------------------------------------------------------------------------------
 

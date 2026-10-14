@@ -9,7 +9,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
 
-const echPGTrojanTLS = `{"network":"tcp","tls":1,"cert_path":"/etc/x/fullchain.pem","key_path":"/etc/x/privkey.pem","server_name":"node.example.com"}`
+const echPGTrojanTLS = `{"network":"tcp","tls":1,"cert_path":"/etc/pandora-native/certs/fullchain.pem","key_path":"/etc/pandora-native/certs/privkey.pem","server_name":"node.example.com"}`
 
 func TestNodeECHPG(t *testing.T) {
 	env, ctx := newInvEnv(t)
