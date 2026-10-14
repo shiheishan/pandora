@@ -8,7 +8,8 @@
 -- 覆盖的验收项：PAY-005 复式记账、DATA-003 追加写、SUB-004 订阅状态（只剩 active / expired）、
 --   NODE-010（改成 nodes_active_shape：在役节点必须挂服务器、协议配好）、SUB-002 版本与价格冻结、
 --   PAY-001 订单金额恒等式与人工单理由、MKT-003 邀请关系、PAY-003 幂等唯一键、MKT-001 优惠券容量、
---   NFR-008 降级开关、OPS-005 事务类通知、OPS-001 内部备注、USE-002（改成 node_traffic_reports 唯一键）。
+--   NFR-008 降级开关、OPS-005 事务类通知、OPS-001 内部备注、USE-002（改成 node_traffic_reports 唯一键）、
+--   XB-COMM（对齐 Xboard 的提现方式与按用户单独佣金设置）。
 --
 -- 不覆盖的验收项及原因（没有对应的表或机制）：
 --   SEC-013 双人审批 — 没有审批表：后台权限只分有和没有。
@@ -617,6 +618,63 @@ $sql$);
 SELECT _reject('USE-002', '流量上报不可改', $sql$
   UPDATE node_traffic_reports SET upload_bytes = 1
    WHERE server_id = '00000000-0000-7000-8000-000000000811' AND report_id = 'inv-report-1';
+$sql$);
+
+--------------------------------------------------------------------------------
+-- XB-COMM 提现方式与 USDT 打款、按用户单独佣金设置（00041_commission_levels.sql）
+--------------------------------------------------------------------------------
+
+-- withdrawals_method_check：方式是封闭目录
+SELECT _reject('XB-COMM', '提现方式不在目录里必须拒绝', $sql$
+  INSERT INTO withdrawals (user_id, currency, amount, payout_sealed, method)
+  VALUES ('00000000-0000-7000-8000-000000000101', 'CNY', 1.00, '\x01'::bytea, 'bitcoin');
+$sql$);
+
+-- method NOT NULL 且没有缺省：新申请必须由代码给出方式
+SELECT _reject('XB-COMM', '提现不给方式必须拒绝', $sql$
+  INSERT INTO withdrawals (user_id, currency, amount, payout_sealed)
+  VALUES ('00000000-0000-7000-8000-000000000101', 'CNY', 1.00, '\x01'::bytea);
+$sql$);
+
+-- withdrawals_usdt_amount_shape：实付 USDT 数量只在已打款的 USDT 提现上
+SELECT _reject('XB-COMM', '非 USDT 或未打款的提现记实付 USDT 数量必须拒绝', $sql$
+  INSERT INTO withdrawals (user_id, currency, amount, payout_sealed, method, paid_usdt_amount)
+  VALUES ('00000000-0000-7000-8000-000000000101', 'CNY', 1.00, '\x01'::bytea, 'alipay', 1.5);
+$sql$);
+
+SELECT _accept('XB-COMM', '支付宝提现申请可以写入', $sql$
+  INSERT INTO withdrawals (user_id, currency, amount, payout_sealed, method)
+  VALUES ('00000000-0000-7000-8000-000000000101', 'CNY', 1.00, '\x01'::bytea, 'alipay');
+$sql$);
+
+SELECT _accept('XB-COMM', 'USDT（TRC20）提现申请可以写入', $sql$
+  INSERT INTO withdrawals (user_id, currency, amount, payout_sealed, method)
+  VALUES ('00000000-0000-7000-8000-000000000102', 'CNY', 1.00, '\x01'::bytea, 'usdt_trc20');
+$sql$);
+
+-- commission_user_overrides：比例 0–50、范围封闭、两项至少一项
+SELECT _reject('XB-COMM', '单独佣金比例超过 50 必须拒绝', $sql$
+  INSERT INTO commission_user_overrides (user_id, rate_percent)
+  VALUES ('00000000-0000-7000-8000-000000000101', 51);
+$sql$);
+
+SELECT _reject('XB-COMM', '单独佣金设置两项都为空必须拒绝', $sql$
+  INSERT INTO commission_user_overrides (user_id) VALUES ('00000000-0000-7000-8000-000000000101');
+$sql$);
+
+SELECT _reject('XB-COMM', '单独计佣范围不在目录里必须拒绝', $sql$
+  INSERT INTO commission_user_overrides (user_id, scope)
+  VALUES ('00000000-0000-7000-8000-000000000101', 'weekly');
+$sql$);
+
+SELECT _accept('XB-COMM', '只设计佣范围的单独设置可以写入（比例跟全局）', $sql$
+  INSERT INTO commission_user_overrides (user_id, scope)
+  VALUES ('00000000-0000-7000-8000-000000000102', 'first_order');
+$sql$);
+
+SELECT _accept('XB-COMM', '单独比例为 0（不拿佣金）可以写入', $sql$
+  INSERT INTO commission_user_overrides (user_id, rate_percent)
+  VALUES ('00000000-0000-7000-8000-000000000103', 0);
 $sql$);
 
 --------------------------------------------------------------------------------
