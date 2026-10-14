@@ -34,9 +34,9 @@ type NativeCore struct {
 	// connErrors 是全部入站共用的连接失败日志出口，见 connerror_log.go。
 	connErrors *connErrorLogSink
 	// ports 是进程级端口登记表：(端口, L4) → 占着它的入站 tag。tagPorts 是每个
-	// 入站当前名下的那一个键。都由 mu 保护，见 port_claims.go。
+	// 入站当前名下的全部键。都由 mu 保护，见 port_claims.go。
 	ports    map[portKey]string
-	tagPorts map[string]portKey
+	tagPorts map[string][]portKey
 	// owners 记每个入站属于哪个面板的哪个节点，只用于冲突文案（SetInboundOwner）。
 	owners map[string]inboundOwner
 	// retiredTraffic 是已退场入站（换代、删除、关停）还没交出去的流量，按 tag 记，
@@ -65,6 +65,17 @@ func (p *routedDataPlane) swap(next *Runtime) *Runtime {
 	p.current = next
 	p.mu.Unlock()
 	return old
+}
+
+// SelectRoute 报告 meta 按当前路由会走哪个出站；还没有生效的运行时就 ok=false（SS UDP 按目标复查路由用）。
+func (p *routedDataPlane) SelectRoute(meta route.Meta) (string, bool) {
+	p.mu.RLock()
+	r := p.current
+	p.mu.RUnlock()
+	if r == nil {
+		return "", false
+	}
+	return r.Select(meta), true
 }
 
 func (p *routedDataPlane) DialTCP(ctx context.Context, meta route.Meta, destination M.Socksaddr) (net.Conn, error) {
@@ -110,7 +121,7 @@ func NewNativeCoreWithLogger(registry *AdapterRegistry, log *slog.Logger) *Nativ
 		applyTag:   make(map[string]*sync.Mutex),
 		connErrors: newConnErrorLogSink(log, connErrorLogBurst, connErrorLogWindow),
 		ports:      make(map[portKey]string),
-		tagPorts:   make(map[string]portKey),
+		tagPorts:   make(map[string][]portKey),
 		owners:     make(map[string]inboundOwner),
 
 		retiredTraffic: make(map[string][]core.UserTraffic),
@@ -219,15 +230,12 @@ func (c *NativeCore) applyInbound(cfg *core.InboundConfig, routing *core.Routing
 		return fmt.Errorf("原生内核尚未启动或已关闭")
 	}
 
-	// 端口先到先得：别的入站占着这个 (端口, L4) 就不启动，也不碰占着的那个。
+	// 端口先到先得：别的入站占着这些端口键就不启动，也不碰占着的那个。
 	// 放在构造适配器之前，节点按退避重试时每次的代价只是一次查表。
-	key := inboundPortKey(cfg)
+	keys := inboundPortKeys(cfg)
 	c.mu.RLock()
 	_, previousExists := c.inbounds[cfg.Tag]
-	var conflict *PortInUseError
-	if owner := c.portOwnerLocked(key); owner != "" && owner != cfg.Tag {
-		conflict = c.portConflictLocked(key, cfg.Tag, owner)
-	}
+	conflict := c.portConflictLocked(keys, cfg.Tag)
 	c.mu.RUnlock()
 	if conflict != nil {
 		return &core.ConfigApplyError{Err: conflict, PreviousPreserved: previousExists}
@@ -258,16 +266,17 @@ func (c *NativeCore) applyInbound(cfg *core.InboundConfig, routing *core.Routing
 		return fmt.Errorf("native core is not started or is closed")
 	}
 	// 再查一次并登记：上面查表到这里之间，别的入站可能抢先登记了同一个键。
-	if owner := c.portOwnerLocked(key); owner != "" && owner != cfg.Tag {
-		conflict := c.portConflictLocked(key, cfg.Tag, owner)
+	if conflict := c.portConflictLocked(keys, cfg.Tag); conflict != nil {
 		c.mu.Unlock()
 		_ = runtime.Close()
 		_ = adapter.Close()
 		return &core.ConfigApplyError{Err: conflict, PreviousPreserved: previousExists}
 	}
-	// 先登记新端口，起来之后才释放旧端口（换端口时旧端口在新入站就绪前仍归本入站）。
-	oldKey, hadOldKey := c.tagPorts[cfg.Tag]
-	c.ports[key] = cfg.Tag
+	// 先登记新端口键，起来之后才释放旧端口键（换端口时旧键在新入站就绪前仍归本入站）。
+	oldKeys, hadOldKeys := c.tagPorts[cfg.Tag]
+	for _, k := range keys {
+		c.ports[k] = cfg.Tag
+	}
 	c.seq++
 	spec.Generation = c.seq
 	c.desired[cfg.Tag] = spec.Generation
@@ -300,13 +309,13 @@ func (c *NativeCore) applyInbound(cfg *core.InboundConfig, routing *core.Routing
 	if err := adapter.Start(ctx, spec, c.adapterHooks(plane)); err != nil {
 		_ = runtime.Close()
 		_ = adapter.Close()
-		startErr := fmt.Errorf("启动原生协议 %s: %w", cfg.Protocol, asExternalPortInUse(key, err))
+		startErr := fmt.Errorf("启动原生协议 %s: %w", cfg.Protocol, asExternalPortInUse(keys, err))
 		if previous == nil {
 			// 没有旧入站可回退：这个 tag 名下不该再留任何登记。
 			c.mu.Lock()
-			c.releasePortLocked(cfg.Tag, key)
-			if hadOldKey {
-				c.releasePortLocked(cfg.Tag, oldKey)
+			c.releasePortsLocked(cfg.Tag, keys, nil)
+			if hadOldKeys {
+				c.releasePortsLocked(cfg.Tag, oldKeys, nil)
 			}
 			delete(c.tagPorts, cfg.Tag)
 			c.mu.Unlock()
@@ -314,11 +323,11 @@ func (c *NativeCore) applyInbound(cfg *core.InboundConfig, routing *core.Routing
 		}
 		restored, restoreErr := c.restoreInbound(ctx, previous, spec.Generation)
 		if restoreErr != nil {
-			// 新旧都没起来：这个入站已不在服务，名下的端口一并让出。
+			// 新旧都没起来：这个入站已不在服务，名下的端口键一并让出。
 			c.mu.Lock()
-			c.releasePortLocked(cfg.Tag, key)
-			if hadOldKey {
-				c.releasePortLocked(cfg.Tag, oldKey)
+			c.releasePortsLocked(cfg.Tag, keys, nil)
+			if hadOldKeys {
+				c.releasePortsLocked(cfg.Tag, oldKeys, nil)
 			}
 			delete(c.tagPorts, cfg.Tag)
 			c.mu.Unlock()
@@ -327,10 +336,8 @@ func (c *NativeCore) applyInbound(cfg *core.InboundConfig, routing *core.Routing
 		c.mu.Lock()
 		if !c.closed && c.desired[cfg.Tag] == spec.Generation {
 			c.inbounds[cfg.Tag] = restored
-			// 旧入站回来了：保留旧端口，让出刚登记的新端口。
-			if !hadOldKey || key != oldKey {
-				c.releasePortLocked(cfg.Tag, key)
-			}
+			// 旧入站回来了：保留旧端口键，让出刚登记的新端口键。
+			c.releasePortsLocked(cfg.Tag, keys, oldKeys)
 			c.mu.Unlock()
 			return &core.ConfigApplyError{Err: startErr, PreviousPreserved: true}
 		}
@@ -356,10 +363,10 @@ func (c *NativeCore) applyInbound(cfg *core.InboundConfig, routing *core.Routing
 	// 兜住剩下的：真有残留就关掉，不能泄漏一个还在监听的 socket。
 	stale := c.inbounds[cfg.Tag]
 	c.inbounds[cfg.Tag] = newInbound
-	if hadOldKey && oldKey != key {
-		c.releasePortLocked(cfg.Tag, oldKey)
+	if hadOldKeys {
+		c.releasePortsLocked(cfg.Tag, oldKeys, keys)
 	}
-	c.tagPorts[cfg.Tag] = key
+	c.tagPorts[cfg.Tag] = keys
 	c.mu.Unlock()
 	if stale != nil {
 		_ = closeNativeInbound(stale)
@@ -416,8 +423,8 @@ func (c *NativeCore) DelInbound(tag string) error {
 	c.desired[tag] = c.seq
 	in := c.inbounds[tag]
 	delete(c.inbounds, tag)
-	if key, ok := c.tagPorts[tag]; ok {
-		c.releasePortLocked(tag, key)
+	if keys, ok := c.tagPorts[tag]; ok {
+		c.releasePortsLocked(tag, keys, nil)
 		delete(c.tagPorts, tag)
 	}
 	c.mu.Unlock()

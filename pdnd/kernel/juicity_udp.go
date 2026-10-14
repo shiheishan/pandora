@@ -31,7 +31,7 @@ import (
 //   - 下行读进预留了帧头空间的缓冲，来源地址的编码按上一包缓存，帧头直接写在
 //     负载前面，整帧一次 Write。
 //
-// 每用户路由数受 udpQuota 约束（quic_udp_quota.go，与 hy2 / TUIC 的 UDP 会话同一
+// 每用户路由数受 udpQuota 约束（udp_session_quota.go，与 hy2 / TUIC 的 UDP 会话同一
 // 上限）：超出的新目标丢包并上报 limit，已有路由不受影响；路由空闲
 // juicityUDPIdleTimeout（5 分钟）回收，名额随之归还。
 
