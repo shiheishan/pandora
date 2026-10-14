@@ -29,3 +29,7 @@ paths:
 ## Redis
 - 客户端一律经 `redisx.New` / `redisx.Options` 构造：打开 `ContextTimeoutEnabled`，读写、拨号、等池超时收在同一量级，ctx 期限才对命令生效（go-redis 缺省不看 ctx 期限）。
 - 会话、鉴权在 Redis 故障时回 503 `service_unavailable`，不放行。
+- 限流用 `internal/pkg/ratelimit` 的 `Limiter`；试错计数（先占名额再验、通过后 `Reset`、没结论 `Release`，可选「第 N 次把期限改成暂停时长」）用同包的 `Counter`，不在模块里另写 Lua 计数器。
+
+## 列表分页
+- 列表接口的 limit、offset 一律经 `internal/pkg/pagination.Parse(c, 缺省, 上限)` 解析：非法值回 422 `validation_failed`，超上限截到上限。不手写 strconv，不把分页参数当字符串绑定。
