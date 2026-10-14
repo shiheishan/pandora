@@ -730,7 +730,7 @@ SELECT _accept('XB-COMM', '第 2 级 30% 的条目按逐级截断的金额可以
   INSERT INTO commission_entries (referrer_user_id, referee_user_id, order_id, order_no, currency,
                                   base_amount, rate_bp, level, share_percent, commission_amount,
                                   frozen_until, accrual_txn_id)
-  SELECT '00000000-0000-7000-8000-0000000000102', '00000000-0000-7000-8000-000000000101',
+  SELECT '00000000-0000-7000-8000-000000000102', '00000000-0000-7000-8000-000000000101',
          '00000000-0000-7000-8000-000000000c01', 'INV-SEED-001', 'USD',
          10.00, 1000, 2, 30, 0.30, now(), t.id FROM t;
 $sql$);
@@ -748,7 +748,7 @@ SELECT _reject('XB-COMM', '分级金额不符公式必须拒绝', $sql$
   INSERT INTO commission_entries (referrer_user_id, referee_user_id, order_id, order_no, currency,
                                   base_amount, rate_bp, level, share_percent, commission_amount,
                                   frozen_until, accrual_txn_id)
-  SELECT '00000000-0000-7000-8000-0000000000103', '00000000-0000-7000-8000-000000000101',
+  SELECT '00000000-0000-7000-8000-000000000103', '00000000-0000-7000-8000-000000000101',
          '00000000-0000-7000-8000-000000000c01', 'INV-SEED-001', 'USD',
          10.00, 1000, 3, 30, 0.31, now(), t.id FROM t;
 $sql$);
@@ -766,7 +766,7 @@ SELECT _reject('XB-COMM', '级别超过 3 必须拒绝', $sql$
   INSERT INTO commission_entries (referrer_user_id, referee_user_id, order_id, order_no, currency,
                                   base_amount, rate_bp, level, share_percent, commission_amount,
                                   frozen_until, accrual_txn_id)
-  SELECT '00000000-0000-7000-8000-0000000000103', '00000000-0000-7000-8000-000000000101',
+  SELECT '00000000-0000-7000-8000-000000000103', '00000000-0000-7000-8000-000000000101',
          '00000000-0000-7000-8000-000000000c01', 'INV-SEED-001', 'USD',
          10.00, 1000, 4, 30, 0.30, now(), t.id FROM t;
 $sql$);
@@ -784,7 +784,7 @@ SELECT _reject('XB-COMM', '份额为 0 必须拒绝', $sql$
   INSERT INTO commission_entries (referrer_user_id, referee_user_id, order_id, order_no, currency,
                                   base_amount, rate_bp, level, share_percent, commission_amount,
                                   frozen_until, accrual_txn_id)
-  SELECT '00000000-0000-7000-8000-0000000000103', '00000000-0000-7000-8000-000000000101',
+  SELECT '00000000-0000-7000-8000-000000000103', '00000000-0000-7000-8000-000000000101',
          '00000000-0000-7000-8000-000000000c01', 'INV-SEED-001', 'USD',
          10.00, 1000, 3, 0, 0.00, now(), t.id FROM t;
 $sql$);
@@ -804,7 +804,7 @@ SELECT _reject('XB-COMM', '同一单同一级第二条必须拒绝', $sql$
   INSERT INTO commission_entries (referrer_user_id, referee_user_id, order_id, order_no, currency,
                                   base_amount, rate_bp, level, share_percent, commission_amount,
                                   frozen_until, accrual_txn_id)
-  SELECT '00000000-0000-7000-8000-0000000000103', '00000000-0000-7000-8000-000000000101',
+  SELECT '00000000-0000-7000-8000-000000000103', '00000000-0000-7000-8000-000000000101',
          '00000000-0000-7000-8000-000000000c01', 'INV-SEED-001', 'USD',
          10.00, 1000, 2, 30, 0.30, now(), t.id FROM t;
 $sql$);
@@ -824,7 +824,7 @@ SELECT _reject('XB-COMM', '未解冻的条目挂自动转余额标记必须拒�
   INSERT INTO commission_entries (referrer_user_id, referee_user_id, order_id, order_no, currency,
                                   base_amount, rate_bp, level, share_percent, commission_amount,
                                   frozen_until, accrual_txn_id, auto_transfer_due)
-  SELECT '00000000-0000-7000-8000-0000000000103', '00000000-0000-7000-8000-000000000101',
+  SELECT '00000000-0000-7000-8000-000000000103', '00000000-0000-7000-8000-000000000101',
          '00000000-0000-7000-8000-000000000c01', 'INV-SEED-001', 'USD',
          10.00, 1000, 3, 20, 0.20, now(), t.id, true FROM t;
 $sql$);
