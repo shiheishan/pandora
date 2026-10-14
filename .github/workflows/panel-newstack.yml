@@ -51,7 +51,7 @@ jobs:
     name: Lint (golangci-lint + depguard)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
           go-version-file: panel/go.mod
@@ -98,7 +98,7 @@ jobs:
       # env 缺省按 production（要求 https 地址、关掉 dev_code）；CI 显式用 development
       PANDORA_ENV: development
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
           go-version-file: panel/go.mod
@@ -199,7 +199,7 @@ jobs:
       SUPPORT_E2E_DISPOSABLE: YES_DELETE_FIXTURES
       RISK_E2E_DISPOSABLE: YES_DELETE_FIXTURES
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
           go-version-file: panel/go.mod
@@ -311,7 +311,7 @@ jobs:
       EXPIRY_E2E_DISPOSABLE: YES_DELETE_FIXTURES
       NODE_KICK_E2E_DISPOSABLE: YES_DELETE_FIXTURES
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
           go-version-file: panel/go.mod

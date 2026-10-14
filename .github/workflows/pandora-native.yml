@@ -38,7 +38,7 @@ jobs:
     name: NativeCore and panel protocol parity
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Check capability/schema/serving parity
         run: python3 pdnd/release/check_native_panel_parity.py
 
@@ -49,7 +49,7 @@ jobs:
       run:
         working-directory: panel
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
           go-version-file: panel/go.mod
@@ -64,7 +64,7 @@ jobs:
       run:
         working-directory: panel/frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -107,7 +107,7 @@ jobs:
       run:
         working-directory: pdnd
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
           go-version-file: pdnd/go.mod
@@ -199,7 +199,7 @@ jobs:
       run:
         working-directory: pdnd
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
           go-version-file: pdnd/go.mod
@@ -251,7 +251,7 @@ jobs:
       GOOS: linux
       GOARCH: ${{ matrix.arch }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
           go-version-file: pdnd/go.mod
@@ -267,7 +267,7 @@ jobs:
     name: Release manifest and hashes
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
           go-version-file: pdnd/go.mod
