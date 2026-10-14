@@ -19,8 +19,13 @@ paths:
   - 门户 `GET /v1/payment-methods?amount=<分>` 每种方式带这张单的 `fee` 与 `total`；用余额付不收手续费。
 - 回调地址（#43）：`notifyBase` 优先用 settings 的 `payment.notify_base_url`（后台 `GET/PUT /v1/payment-settings`，生产只收 https，`AllowPrivateHosts` 时也收 http），存的值不可用就回退站点地址；回调地址 = 前缀 + `/v1/webhooks/payments/<渠道代码>`。验签候选 `notifyURLCandidates` = [当前前缀拼的, 站点地址拼的]，改前缀前建的发票仍能验过。
 - 发起支付两段式（`intent.go`），渠道调用不在数据库事务里：
-  - `BeginIntent` 在调用方事务里（order.Pay 持订单行锁）：校验、锁在途意图；同渠道同方式同金额、未过期且已建好收银台的直接复用；另一张**占位意图**（`requires_action` 且 `redirect_url = ''`）建单还不到 `intentCreatingWindow`（30 秒）时回 409「支付正在发起」；其余在途意图作废，插一条新的占位意图。不调渠道。
-  - 调用方提交后，`CompleteIntent` 在事务外调渠道 `CreatePayment`（BTCPay、CoinPayments 要联网，最长 10–20 秒），再开短事务按 `WHERE status = requires_action AND redirect_url = ''` 回写收银台信息和 `provider_ref`；0 行 = 占位已被作废（并发再点、订单取消或超时），回 409，渠道那边的发票不用（付了按迟到挂账处理）。渠道失败或返回不合格时作废占位、回 503，再点支付会以 `订单号-序号` 重建。落库用 `context.WithoutCancel`，用户断开也不留半状态。
+  - `BeginIntent` 在调用方事务里（order.Pay 持订单行锁）：校验、锁在途意图；同渠道同方式同金额、未过期且已建好收银台的直接复用；另一张**占位意图**（`requires_action` 且 `redirect_url = ''`）建单还不到 `intentCreatingWindow`（30 秒）时回 409 `payment_in_progress`（「支付正在发起，请稍候」，订单仍可付，前端退避重发）；其余在途意图作废，插一条新的占位意图。不调渠道。
+  - 「建单中」一律按库时钟判断：`payment_intents` 的 `created_at` / `updated_at` 由库 `now()` 写（`InsertIntent` 不传），窗口在 SQL 里比（`repo.IntentCreatedWithin`），不拿应用机时钟和库里的时间比。
+  - 调用方提交后，`CompleteIntent` 在事务外调渠道 `CreatePayment`，再开短事务按 `WHERE status = requires_action AND redirect_url = ''` 回写收银台信息和 `provider_ref`。
+    - 入口断言不在事务里：`pkgtx.InTx(ctx)`（只在 `tx.Manager.Do` 回调里为真；测试的 `testkit.TxCtx` 不算）为真时记 Error、回 `internal_error`，不联网。
+    - 总时长 `completeIntentBudget` 15 秒 = 渠道 12 秒 + 落库 `completeIntentPersistTimeout` 3 秒。必须低于 nginx 的 `proxy_read_timeout`（20 秒，`deploy/nginx-pandora.conf`）和面板请求超时：否则 nginx 先给用户回 504，用户以为失败再点，后端这次其实建好了，白白多出一张作废的发票。`safehttp.Timeout` 单请求 6 秒，CoinPayments 冷缓存（先查币种 ID 再建发票）两次请求也在 12 秒内。
+    - 0 行 = 占位已被作废（并发再点、订单取消或超时），回 409 `conflict`；渠道已返回发票号的，仍另开短事务把 `provider_ref` 记到那条已作废的占位上（`repo.SetIntentProviderRef`，只在为空时写），以后这张发票被付了能按单号找回来源。前端收到 `conflict` 先刷新订单再判断能不能付。
+    - 渠道失败或返回不合格时作废占位、回 503，再点支付会以 `订单号-序号` 重建。落库用 `context.WithoutCancel` 加 3 秒超时，用户断开也不留半状态。
   - 进程在两段之间退出留下的占位意图，30 秒后再点支付时被作废重建；巡检照常会查它。
   - 产品代码里只有 `CompleteIntent` 调 `CreatePayment`；测试用的一步建单 `CreateIntent` 只在 `helpers_pg_test.go` 里。
 - 商户单号（`outTradeNo`）：
@@ -28,11 +33,13 @@ paths:
   - 回调与查单优先按 `out_trade_no` 查找对应的在途支付意图（`IntentRequiresAction`），意图记录对应渠道与方式快照。
 - 回调与查单入账主链：
   - 回调 `HandleWebhook` 与查单 `Query` 均统一收拢至 `recordPayment` / `recordPaymentTx`。
-  - 发票绑定：意图有 `provider_ref`（BTCPay、CoinPayments 建单时存的发票号）时，这次的渠道单号必须等于它，否则 `ErrProviderRefMismatch` 整笔拒收、记 Error 日志（同店别的发票、孤儿发票、几套系统共用账户撞单号）；易支付不存 provider_ref，不受影响。
+  - 发票绑定：意图有 `provider_ref`（BTCPay、CoinPayments 建单时存的发票号）时，这次的渠道单号必须等于它（同店别的发票、孤儿发票、几套系统共用账户撞单号）；易支付不存 provider_ref，不受影响。
+    - 不一致：记 Error 日志，`recordPayment` 在入账事务回滚后另开事务落一条证据事件（`payment_events`，`provider_event_id` = `ref_mismatch:<uuidv7>`、`processing_status = ignored`、`raw_payload` 只放 `reject` / `event_id` / `out_trade_no` / `channel_ref`），再回 `ErrProviderRefMismatch` 整笔拒收。渠道重推一次就多一条证据，不去重。
+    - **临时口径（待沙箱核实）**：CoinPayments 官方文档没写明建单响应 `invoices[].id` 与回调 `invoice.id`（及按 id 查发票的 `id`）是同一个号，在沙箱核实前 CoinPayments 不一致只记 Error 日志、照常入账、不落证据；核实一致后改回与 BTCPay 同样拒收，删掉 `record.go` 里这条分支。
   - 防重与幂等：按 `(ProviderID, PaymentRef)` 加咨询锁（`LockPaymentKey`），已入账记录比对金额与币种，一致标记 `AlreadyHandled`，不一致回 409。
   - 结算保存点：调用 `Settler.SettlePayment` 前开启保存点 `payment_settle`。结算报错回滚至保存点；若返回 `NotPayableError` 则转入挂账（`CaseReleasedOrder`, `CaseExcessCapture`, `CaseIneligibleSubscription`），并在同一事务落 `late_payment_cases` 与 `late_payment_suspense` 账目。
   - 订单结清后自动作废该订单名下其他在途意图（`CloseOrderIntents`）。
 - 安全与查单约定：
   - 渠道凭据经 AAD 加密封存（`sealer.Seal` / `Open`），数据库不存明文密钥。
-  - 外部 HTTP 客户端统一用 `safehttp.Client(allowPrivate)`（包级两个共用客户端，适配器重建时复用连接）：不走环境代理、不跟随跳转、在拨号层执行 `safehttp.CheckDialAddr`，按解析后的真实 IP 拦截内网、环回与元数据地址（防 SSRF 与 DNS 重绑定），响应用 `safehttp.ReadBody` 限 256 KiB；生产环境严禁开启 `AllowPrivateHost`。
+  - 外部 HTTP 客户端统一用 `safehttp.Client(allowPrivate)`（包级两个共用客户端，适配器重建时复用连接）：不走环境代理、不跟随跳转、在拨号层执行 `safehttp.CheckDialAddr`，按解析后的真实 IP 拦截内网、环回与元数据地址（防 SSRF 与 DNS 重绑定），响应用 `safehttp.ReadBody` 限 256 KiB；单请求超时 `safehttp.Timeout` 6 秒（易支付与巡检查单也受它约束）；生产环境严禁开启 `AllowPrivateHost`。
   - 主动查单（`Query`）禁止在外部事务内或持有订单锁时调用，避免与回调入账加锁顺序交叉死锁。后台查单必须落审计记录。

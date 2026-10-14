@@ -40,6 +40,7 @@ paths:
   - 测试用的两个接口（都只在假后端里，不进 Go）：
     - `GET /v1/__mock/proto?s=<proto-场景>&to=<门户地址>`：匿名可调，切到该场景（重建状态）后 302 跳到 `/#<to>`，不带 `to` 跳场景的起始页；`to` 只收 `/` 开头的门户地址。登录态在浏览器里，切场景不登出，测试员每个任务开一次这个地址就从头来
     - `POST /v1/__mock/expire-orders`：要登录，把本人所有待支付单的付款期限拨到一分钟前（不关单），走「超过付款期限」的两条 409：发起支付回 `order_lapsed`，同款再买回 `order_pending` 带 `fields.lapsed`
+  - 发起支付：渠道是 `btcpay` 且这张单还没有它的意图时，第一次 `POST /v1/orders/{id}/pay` 回 409 `payment_in_progress`（模拟真后端 30 秒建单窗口），紧接着再发就建好（`checkout.ts` 模块级 `creating`）
   - 新增响应字段时照 Go 有没有 omitempty，决定 `legacy` 场景里它是否缺席
   - 页面读接口要先过 `gate`，`error` / `slow` 场景才对它生效；外框读的余额、佣金也算在内
   - 按用户挂的模块状态放在 `WeakMap<PortalState, …>` 里，才能随切换场景一起重建
