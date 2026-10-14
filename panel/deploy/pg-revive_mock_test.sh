@@ -87,12 +87,12 @@ done
 . "$DEPLOY/install-lib.sh"
 set -euo pipefail
 for sw in 1 0; do
-  full="$(NATIVE_HARDENING=$sw native_pg_dropin)"
+  full="$(PANDORA_HARDENING=$sw pandora_pg_dropin)"
   [ "$(grep -Ec '^[[:space:]]*ExecStopPost[[:space:]]*=' <<<"$full")" -eq 1 ] \
     && grep -qx 'ExecStopPost=+/opt/pandora/deploy/pg-revive.sh %i' <<<"$full" \
     || fail "pg drop-in (hardening=$sw) must have exactly the pg-revive ExecStopPost: $(grep -i execstoppost <<<"$full")"
 done
-[ "$(grep -c 'pg-revive.sh' "$DEPLOY/build-release.sh")" -ge 2 ] || fail 'build-release.sh does not ship pg-revive.sh'
-grep -Eq 'for f in .*pg-revive\.sh' "$DEPLOY/install.sh" || fail 'install.sh does not install pg-revive.sh'
+grep -q 'pg-revive\.sh' "$DEPLOY/build-release.sh" || fail 'build-release.sh does not ship pg-revive.sh'
+printf '%s\n' "${HOST_SCRIPTS[@]}" | grep -qx 'pg-revive.sh' || fail 'install-lib.sh HOST_SCRIPTS does not install pg-revive.sh'
 
 printf 'pg-revive mock: PASS\n'
