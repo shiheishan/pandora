@@ -292,7 +292,7 @@ type PaymentRow struct {
 type PaymentEventRow struct {
 	ProviderEventID   string // "offline:" + 订单 id + ":" + 线下凭证号
 	ProviderPaymentID string
-	RawPayload        string // JSON 对象
+	RawPayload        string    // JSON 对象
 	ReceivedAt        time.Time // processed_at 同值
 }
 
