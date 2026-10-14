@@ -144,7 +144,7 @@ nodeapi/                         buf 生成的 Go 代码，单独的 Go module�
 | payment | payment_providers、payment_intents、payments、payment_events、late_payment_cases | 渠道适配、回调、查单、挂账。adminops 那套渠道写法删掉 |
 | ledger | ledger_accounts、ledger_transactions、ledger_entries、balance_holds | 记账、余额、冻结、调账 |
 | promo | coupons、coupon_plans、coupon_redemptions | 优惠券 |
-| commission | commission_entries、withdrawals、commission_transfers | 佣金计提（订单结算时经 order 的 PaidHook）、解冻、提现审核与打款、转余额。commission_transfers 记每笔佣金转余额，与账本的 commission_to_balance 交易一一对应；可用佣金按本模块的表算（已解冻 − 未驳回的提现 − 已转余额） |
+| commission | commission_entries、withdrawals、commission_transfers、commission_user_overrides | 佣金计提（订单结算时经 order 的 PaidHook；可开三级分销，每级一条条目）、解冻、提现审核与打款、转余额（提现关闭时解冻后自动转）、按用户单独的比例与计佣范围。commission_transfers 记每笔佣金转余额，与账本的 commission_to_balance 交易一一对应，自动转的带 entry_id；可用佣金按本模块的表算（已解冻 − 未驳回的提现 − 已转余额） |
 | giftcard | gift_card_templates、gift_card_prizes、gift_card_template_plans、gift_card_codes、gift_card_redemptions、gift_card_batches | 发放调 subscription、ledger 的 service |
 | subscription | subscriptions、subscription_events、subscription_credentials、quota_balances、traffic_pack_grants、traffic_pack_transfers、traffic_reset_logs、subscription_usage_daily、subscription_fetch_log | 状态口径（生效、可救回、已停用）只在这里定义；节点上报的扣量调它的批量扣量方法 |
 | node | servers、nodes、node_pools、node_pool_user_groups、node_ca（面板 CA）、server_identities、bootstrap_tokens、node_outbounds、node_routes、route_groups、route_group_members、node_traffic_reports、node_traffic_hourly、node_user_traffic_hourly、node_metrics、node_alive_ips | 后台编排、gRPC 会话、接入、流量入账（入账后调 subscription 扣量）。设计里的 node_configs、node_config_applications、node_user_traffic_daily、node_tasks 没有建：配置文档每次由节点与路由表现算，应用结果按会话回执记在 nodes 上，小时汇总在入账时同事务写 |
@@ -209,7 +209,7 @@ identity, auth ─► settings, audit
 
 | 类 | 内容 |
 |---|---|
-| 行级约束 | NOT NULL、CHECK（状态枚举、金额非负、订单恒等式 `payable = total − balance_applied`、`total = greatest(subtotal − discount − proration_credit, 0)`、`proration_credit` 只许 upgrade、人工单原因 ≥5 字、paid/fulfilled ⇒ paid_amount = total 且 paid_at 非空、cancelled ⇒ cancel_reason 非空、券容量、`stock_sold + stock_reserved ≤ stock_total`、`consumed_bytes ≤ granted_bytes`、佣金 `commission = trunc(base × rate_bp / 10000)`、`rate_bp` 在 (0, 5000]） |
+| 行级约束 | NOT NULL、CHECK（状态枚举、金额非负、订单恒等式 `payable = total − balance_applied`、`total = greatest(subtotal − discount − proration_credit, 0)`、`proration_credit` 只许 upgrade、人工单原因 ≥5 字、paid/fulfilled ⇒ paid_amount = total 且 paid_at 非空、cancelled ⇒ cancel_reason 非空、券容量、`stock_sold + stock_reserved ≤ stock_total`、`consumed_bytes ≤ granted_bytes`、佣金 `commission = trunc(trunc(base × rate_bp / 10000) × share_percent / 100)`（分级份额，未开多级时 100）、`rate_bp` 在 (0, 5000]、提现方式封闭目录、USDT 打款的流水号是交易哈希形状） |
 | 唯一与外键 | 每单一笔 order_paid / balance_hold / balance_release 的部分唯一索引，late_payment、plan_change_refund 的唯一，`UNIQUE(provider, provider_payment_id)`，`UNIQUE(provider, provider_event_id)`，`UNIQUE(order, referrer)`，每人一笔在途提现的部分唯一索引，`nodes` 端口占用唯一索引等；balance_holds 与佣金三张表引用账本交易用 `(txn_id, currency) → ledger_transactions(id, currency)` 复合外键，钉住币种 |
 | 追加写触发器 | 一个通用的 `deny_mutation()`，挂在 ledger_transactions、ledger_entries、subscription_events、order_reservation_events、各类预留流水、traffic_reset_logs、traffic_pack_transfers、gift_card_redemptions、referrals、commission_transfers、audit_events、node_config_applications、node_traffic_reports、node_metrics、revenue_report_adjustments、certificate_issuances、order_items；另有 `deny_delete()`，挂在 payment_events、commission_entries、withdrawals、late_payment_cases。运行角色同时收回这些表的 UPDATE/DELETE/TRUNCATE |
 | 账本配平 | `assert_ledger_balanced` 保留为唯一的提交时（DEFERRABLE）检查：每笔交易借贷和为 0、只有一个币种。这是钱的底线，跨行检查写不成 CHECK |
@@ -228,10 +228,12 @@ identity, auth ─► settings, audit
 - 佣金条目：pending → available（解冻）、pending → voided（复核作废，终态）。没有 reversed。需要人工复核的条目（同源、同源检查失败或未装配、解冻时待结科目余额不足）标 `review_required`，停在 pending、不参与自动解冻；后台在「待复核佣金」里处理（`POST /commission/entries/:id/review`，RequireAuth → RecentReauth，不挂幂等，只对 `status = 'pending' AND review_required` 的条目有效，否则 409）：
   - 通过：清 `review_required`、记 `reviewed_by` / `reviewed_at`，状态仍是 pending，`review_reason` 留作历史；之后由 `commission:settle` 照常解冻（冻结期已过的下一轮就解冻）。审计 `commission.entry_approved`，原因可选。
   - 作废：同一事务里记 `commission_voided`（借 推荐人待结佣金 / 贷 平台收入 main，按来源即这条佣金唯一），条目转 voided，写 `void_txn_id`、`void_reason`（≥5 字）与复核人、复核时间。审计 `commission.entry_voided`。作废的条目不计入任何佣金汇总与概览金额。
-  - 「只计首单」口径下，作废的佣金也算「已有首单」（用户 10-13 定）：被推荐人的首单佣金作废后，他的第二单不再计佣（`RefereeHasOtherEntry` 不过滤 voided）。同一单的重放防重（`EntryExists`）同样把 voided 算在内。
+  - 「只计首单」口径下，作废的佣金也算「已有首单」（用户 10-13 定）：被推荐人的首单佣金作废后，他的第二单不再计佣（`RefereeHasOtherEntry` 不过滤 voided）。同一单的重放防重（`OrderHasEntries`，任何一级记过就整单不再记）同样把 voided 算在内。
   - 列表里的 `review_source` 由原因归类（same_source / source_check / underfunded / other）。underfunded（解冻时待结科目余额不足）的条目通过后仍会解冻失败、回到列表，作废也会因余额不足回 409，只能先人工核对账本。
   - 形状由 00016 的 CHECK 钉住：复核人与复核时间成对；有原因而不再待复核的必须复核过；voided 必须有冲回交易、作废原因与复核时间。
-- 提现：requested → approved / rejected，approved → paid。没有 reviewing、processing、failed、returned；只有打款这一步记账（commission_paid）。
+- 多级分销（后台开关，缺省关）：先按直接邀请人的比例（含单独设置）算这一单的佣金总额，再按三级份额（百分比，合计 ≤ 100）逐级向零截断到分；缺的级不分，上溯防环、最多 3 级。每级一条条目（`UNIQUE (order_id, level)`），各自冻结、同源复核（受益人对购买人）、作废，互不影响。
+- 提现：requested → approved / rejected，approved → paid。没有 reviewing、processing、failed、returned；只有打款这一步记账（commission_paid）。提现方式 `method` 是封闭目录（alipay / wechat / bank / paypal / usdt_trc20 / usdt_erc20 / usdt_bep20；迁移前的旧申请是 other，只显示），后台设白名单（缺省只开 alipay）。USDT 打款时流水号是链上交易哈希，可选记实付 USDT 数量（只记录）；面板不发起任何链上转账。
+- 提现关闭（后台开关，缺省开）：门户不显示提现，`commission:settle` 解冻站点币种的条目后在同一事务里转入余额（同手动转余额的记账路径，`commission_transfers.entry_id` 唯一保证只转一次，审计 `commission.auto_transferred_to_balance`）；非站点币种留在可提现。
 
 ---
 

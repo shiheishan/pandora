@@ -27,3 +27,7 @@ paths:
 - 账本与佣金：
   - 账本科目按 `(Type, UserID, Ref)` 稳定顺序加锁（`sortedRefs`）。`Post` 拒收专用 kind（`KindBalanceHold`, `KindBalanceRelease`, `KindOrderPaid`, `KindBalanceAdjusted` 须调专用方法）。
   - 可用佣金唯一口径：`available = Available - InFlight - Paid - TransferTotal`。提现申请 `RequestWithdrawal` 与转余额都先 `LockUser`。提现申请与审批只改状态，打款 `MarkWithdrawalPaid` 才记账。
+  - 多级分销（后台开关 `commission.distribution_enabled`，缺省关）：先按直接邀请人的比例（含单独设置）算这一单的佣金总额，再按 l1/l2/l3 份额逐级截断到分（`LevelAmount`，库约束 `commission_entries_formula` 同式）；关着时只有第一级、份额 100。上溯 `beneficiaries` 防环、最多 3 级，份额 0 的级跳过但继续往上。每级一条条目（`UNIQUE (order_id, level)`），各自冻结、同源复核（受益人对购买人）、作废。
+  - 单独佣金设置 `commission_user_overrides`（属 commission）：`termsFor` 只按直接邀请人取比例与范围，NULL 跟全局，比例 0 = 不拿佣金；只影响以后的订单。写操作审计 `commission.override_set` / `commission.override_removed`。
+  - 提现开关 `commission.withdraw_enabled`（缺省开）与方式白名单 `commission.withdraw_methods`（缺省 alipay，目录见 `settingssvc.WithdrawMethodCatalog`）。关着时 `RequestWithdrawal` 回 `ErrWithdrawDisabled`；`settleOne` 解冻站点币种条目后同一事务里 `autoTransferEntry` 转余额（锁序 条目行 → `LockUser` → 科目，`commission_transfers.entry_id` 唯一兜底，审计 `commission.auto_transferred_to_balance`），非站点币种留在可提现。
+  - 收款账号按方式校验（`ValidatePayoutAccount`：TRC20 base58check、ERC20/BEP20 EIP-55），仍用 Sealer 密封；USDT 打款的流水号是交易哈希（`ValidatePaidUSDT`），实付 USDT 数量只记录，面板不发起任何链上转账。旧申请的方式是 `other`，只显示、不可选。

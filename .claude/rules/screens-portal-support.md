@@ -25,4 +25,6 @@ paths:
 邀请返利：
 - 邀请链接是 `/?invite=<code>`，不能用 `/r/`（会撞 public 网关根下的订阅通配）。
 - 可用佣金以账本为准（账本余额 − 在途提现），「全部转入余额」与「申请提现」用同一个数；后端同一时间只许一笔在途提现，`summary.withdrawing > 0` 或可用不足最低额时提现表单换成一句说明。
-- 横幅按佣金概况的 `summary.scope` 写（first_order 才说「首单」）；`risk_flag` 不展示给邀请人；提现不做 USDT，不承诺「1–3 个工作日」，写「审核通过后打款」。
+- 横幅按佣金概况的 `summary.direct_rate_bp`（直接邀请实得的万分比，多级分销时已乘第一级份额）与 `summary.scope` 写（first_order 才说「首单」）；`risk_flag` 不展示给邀请人；不承诺「1–3 个工作日」，写「审核通过后打款」。
+- 提现方式只从 `summary.withdraw_methods` 里选（目录与文案在 `src/core/withdraw-methods.ts`），USDT 地址前端只看形状、校验和以后端为准；`summary.withdraw_enabled` 为 false 时整段提现换成「提现已关闭，佣金解冻后会自动转入余额」。
+- 佣金明细的 `level` > 1 是下级好友的单，标题写「第 N 级好友」。
