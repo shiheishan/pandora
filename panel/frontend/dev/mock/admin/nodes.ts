@@ -3,6 +3,20 @@ import type { Json, MockContext, MockModule, MockResult } from '../types.ts'
 import { canonicalTag, emptyBody, infraRoutes, keepAlive, pools, servers, validateRouting } from './nodes-infra.ts'
 import { NODE_PROTOCOL_SCHEMAS } from './node-schemas.ts'
 import { copyMemberships, groupRefsOfNode, routeGroupRoutes, visibleTagsForNode } from './route-groups.ts'
+import {
+  applyXB,
+  GI,
+  TI,
+  type XBHost,
+  type XBState,
+  XB_BODY_KEYS,
+  XB_EXCEEDED_NOTE,
+  xbAdmin,
+  xbDefaults,
+  xbErrors,
+  xbRoutes,
+  xbRow,
+} from './nodes-xb.ts'
 
 // ---------------------------------------------------------------------------
 // 工具
@@ -52,6 +66,7 @@ interface Node {
   routing: { outbounds: Array<{ tag: string; type: string; settings: unknown }>; routes: Array<Json> }
   serverToken: { present: boolean; issued_at?: string; issued_by?: string; issued_by_name?: string }
   identityRevoked: boolean
+  xb: XBState
 }
 
 let nodeNo = 100
@@ -84,15 +99,75 @@ function node(p: Partial<Node> & Pick<Node, 'name' | 'node_type' | 'serving_stat
     routing: { outbounds: [], routes: [] },
     serverToken: { present: true, issued_at: ago(86400 * 20), issued_by: randomUUID(), issued_by_name: '林舟' },
     identityRevoked: false,
+    xb: xbDefaults(),
     ...p,
   }
 }
 const store: Node[] = [
-  node({ name: '香港 01 · 原生', node_type: 'vless', serving_status: 'active', country_code: 'HK', online_users: 412, online_ips: 530, traffic_bytes_24h: Math.round(1.8 * 1024 * GB), protocol_config: { network: 'tcp', tls: 2, flow: 'xtls-rprx-vision', reality_settings: { dest: 'www.microsoft.com:443', server_name: 'www.microsoft.com', public_key: 'Hx3mQe9Z2y5rTq8WkVbN1cXyL0pOaSdFgHjK7uIoP4A', short_id: '6ba85179' } } }, 0),
-  node({ name: '香港 02 · IPLC', node_type: 'hysteria2', serving_status: 'active', country_code: 'HK', server_port: 8443, online_users: 288, online_ips: 301, traffic_bytes_24h: Math.round(1.12 * 1024 * GB), protocol_config: { cert_path: '/etc/pandora/tls.crt', key_path: '/etc/pandora/tls.key', 'bandwidth': { up: 200, down: 1000 } } }, 0),
+  node(
+    {
+      name: '香港 01 · 原生',
+      node_type: 'vless',
+      serving_status: 'active',
+      country_code: 'HK',
+      online_users: 412,
+      online_ips: 530,
+      traffic_bytes_24h: Math.round(1.8 * 1024 * GB),
+      protocol_config: { network: 'tcp', tls: 2, flow: 'xtls-rprx-vision', reality_settings: { dest: 'www.microsoft.com:443', server_name: 'www.microsoft.com', public_key: 'Hx3mQe9Z2y5rTq8WkVbN1cXyL0pOaSdFgHjK7uIoP4A', short_id: '6ba85179' } },
+      xb: { ...xbDefaults(), tags: ['香港', '原生'], limit_bytes: 2 * TI, used_bytes: Math.round(1.2 * TI), reset_day: 1 },
+    },
+    0,
+  ),
+  node(
+    {
+      name: '香港 02 · IPLC',
+      node_type: 'hysteria2',
+      serving_status: 'active',
+      country_code: 'HK',
+      server_port: 8443,
+      online_users: 288,
+      online_ips: 301,
+      traffic_bytes_24h: Math.round(1.12 * 1024 * GB),
+      protocol_config: { cert_path: '/etc/pandora/tls.crt', key_path: '/etc/pandora/tls.key', bandwidth: { up: 200, down: 1000 } },
+      xb: {
+        ...xbDefaults(),
+        tags: ['香港', 'IPLC'],
+        schedule: [{ start: '00:00', end: '08:00', rate: 0.5 }],
+        relays: [
+          {
+            id: 'a1000001-0000-4000-8000-000000000001',
+            name: '香港 02 · 中转 A',
+            server_host: 'relay-hk-a.example.test',
+            server_port: 443,
+            sni: null,
+            host_header: null,
+            enabled: true,
+            sort_order: 0,
+            row_version: 1,
+            created_at: ago(86400 * 14),
+            updated_at: ago(86400 * 14),
+          },
+          {
+            id: 'a1000001-0000-4000-8000-000000000002',
+            name: '香港 02 · 中转 B',
+            server_host: 'relay-hk-b.example.test',
+            server_port: 8443,
+            sni: 'n102.example.test',
+            host_header: null,
+            enabled: false,
+            sort_order: 10,
+            row_version: 1,
+            created_at: ago(86400 * 13),
+            updated_at: ago(86400 * 13),
+          },
+        ],
+      },
+    },
+    0,
+  ),
   node({ name: '东京 03', node_type: 'trojan', serving_status: 'active', country_code: 'JP', online_users: 356, online_ips: 402, traffic_bytes_24h: Math.round(1.49 * 1024 * GB), protocol_config: { network: 'tcp', tls: 2, reality_settings: { dest: 'www.apple.com:443', server_name: 'www.apple.com' } } }, 1),
   node({ name: '新加坡 02', node_type: 'shadowsocks', serving_status: 'active', country_code: 'SG', server_port: 8388, last_heartbeat_at: ago(900), online_users: 0, traffic_bytes_24h: 864 * GB, protocol_config: { cipher: 'aes-256-gcm' } }, 2),
-  node({ name: '洛杉矶 01', node_type: 'vless', serving_status: 'active', country_code: 'US', pool_id: pools[1]!.id, online_users: 96, online_ips: 110, traffic_bytes_24h: 540 * GB, protocol_config: { network: 'ws', tls: 0, ws_path: '/ws' } }, 3),
+  node({ name: '洛杉矶 01', node_type: 'vless', serving_status: 'active', country_code: 'US', pool_id: pools[1]!.id, online_users: 96, online_ips: 110, traffic_bytes_24h: 540 * GB, protocol_config: { network: 'ws', tls: 0, ws_path: '/ws' }, xb: { ...xbDefaults(), tags: ['流媒体'], limit_bytes: 500 * GI, used_bytes: 540 * GI, reset_day: 20, exceeded_at: ago(86400) } }, 3),
   node({ name: '首尔 01 · 灰度', node_type: 'tuic', serving_status: 'disabled', country_code: 'KR', pool_id: pools[2]!.id, protocol_config: { cert_path: '/etc/pandora/tls.crt', key_path: '/etc/pandora/tls.key' } }, 1),
   node({ name: '新加坡 03（草稿）', node_type: 'anytls', serving_status: 'draft', country_code: 'SG', last_heartbeat_at: null, identity_serial: null, serverToken: { present: false }, protocol_config: {} }, 2),
   node({ name: '台北 01', node_type: 'vmess', serving_status: 'retired', country_code: 'TW', last_heartbeat_at: ago(86400 * 9), protocol_config: { network: 'ws', tls: 0 } }, 5),
@@ -102,6 +177,21 @@ const store: Node[] = [
   node({ name: '大阪 01（待上线）', node_type: 'shadowsocks', serving_status: 'draft', country_code: 'JP', server_port: 8388, last_heartbeat_at: ago(20), identity_serial: 1, pool_id: pools[1]!.id, protocol_config: { cipher: 'aes-256-gcm' } }, 7),
   // R113：同一台新服务器上、划进还没绑套餐的新池的节点——首次搭建的常态，上线成功但带 warnings
   node({ name: '大阪 02（新池待上线）', node_type: 'shadowsocks', serving_status: 'draft', country_code: 'JP', server_port: 8389, last_heartbeat_at: ago(20), identity_serial: 1, pool_id: pools[4]!.id, protocol_config: { cipher: 'aes-256-gcm' } }, 7),
+  node(
+    {
+      name: '法兰克福 01 · ECH',
+      node_type: 'trojan',
+      serving_status: 'active',
+      country_code: 'DE',
+      protocol_config: { network: 'tcp', tls: 1, cert_path: '/etc/pandora/tls.crt', key_path: '/etc/pandora/tls.key' },
+      xb: {
+        ...xbDefaults(),
+        tags: ['欧洲'],
+        ech: { public_name: 'ech.example.test', config_list: 'YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXowMTIzNDU2Nzg5QUJDREVGR0g=', created_at: ago(86400 * 3) },
+      },
+    },
+    4,
+  ),
 ]
 keepAlive(store, (n) => n.serving_status !== 'retired' && !n.deleted && !n.identityRevoked)
 store[0]!.routing = { outbounds: [], routes: [{ priority: 10, matcher: { domain_suffix: ['openai.com'] }, outbound_tag: 'US-LAX-01', enabled: true, note: '' }] }
@@ -130,6 +220,7 @@ const STABLE_TYPES = new Set(SCHEMAS.filter((s) => s.status === 'stable').map((s
 
 /** subscription.DeliverableNodeSQL 的镜像：与用户、套餐都无关的节点自身条件 */
 function deliverable(n: Node): boolean {
+  if (n.xb.exceeded_at !== null) return false
   const srv = servers.find((s) => s.id === n.server_id)
   if (!srv || srv.status !== 'ready') return false
   const port = n.server_port ?? 0
@@ -145,6 +236,7 @@ function deliveryOf(n: Node): { delivered: boolean; note: string } {
   if (n.serving_status !== 'active') return { delivered: false, note: DELIVERY_NOTES.notActive }
   if (n.pool_id === null) return { delivered: false, note: NO_POOL_NOTE }
   if (!n.last_heartbeat_at) return { delivered: false, note: DELIVERY_NOTES.neverSeen }
+  if (n.xb.exceeded_at) return { delivered: false, note: XB_EXCEEDED_NOTE }
   if (!deliverable(n)) {
     const srv = servers.find((s) => s.id === n.server_id)
     return { delivered: false, note: srv?.status === 'ready' ? DELIVERY_NOTES.nodeNotReady : DELIVERY_NOTES.serverNotReady }
@@ -195,6 +287,7 @@ function listRow(n: Node) {
     mem_percent: srv?.probe ? Math.round((srv.probe.mem_used_mb / srv.probe.mem_total_mb) * 1000) / 10 : null,
     metrics_at: cpu === null ? null : ago(20),
     granted_plans: pool?.plans.length ? pool.plans : null,
+    ...xbRow(n.xb),
   }
 }
 
@@ -273,6 +366,7 @@ function adminNode(n: Node, warnings?: string[]) {
     protocol_config: redact(n.protocol_config),
     config_validated_at: n.updated_at,
     ...(warnings?.length ? { warnings } : {}),
+    ...xbAdmin(n.xb),
   }
 }
 
@@ -332,6 +426,55 @@ const touch = (n: Node) => {
 }
 const conflict = (n: Node) => err(409, 'conflict', '节点已被其他人修改，请刷新后重试', { row_version: `current=${n.row_version}` })
 
+function validateListTag(raw: string): { ok: true; tag: string } | { ok: false; fields: Record<string, string> } {
+  const tag = raw.trim()
+  if (!tag) return { ok: true, tag: '' }
+  for (const ch of tag) {
+    const c = ch.codePointAt(0)!
+    if (c <= 0x1f || c === 0x7f) return { ok: false, fields: { tag: '标签最多 16 个字、不能含控制字符' } }
+  }
+  if ([...tag].length > 16) return { ok: false, fields: { tag: '标签最多 16 个字、不能含控制字符' } }
+  return { ok: true, tag }
+}
+
+/** 批量/PATCH 共用的可改字段校验（pool_id、traffic_rate、XB 字段） */
+function patchErrors(n: Node, set: Json): Record<string, string> | null {
+  const f: Record<string, string> = {}
+  if ('pool_id' in set) {
+    const pid = text(set.pool_id)
+    if (pid && !pools.some((p) => p.id === pid)) f.pool_id = '资源池不存在'
+    if (!pid && n.serving_status === 'active') f.pool_id = '在役节点必须属于一个节点池；不选池则不服务任何用户，先停用节点再移出'
+  }
+  if ('traffic_rate' in set && !(Number(set.traffic_rate) > 0)) f.traffic_rate = '必须大于 0'
+  const xbBody: Json = {}
+  for (const k of XB_BODY_KEYS) if (k in set) xbBody[k] = set[k]
+  Object.assign(f, xbErrors(xbBody))
+  return Object.keys(f).length ? f : null
+}
+
+function patchApply(n: Node, set: Json): void {
+  if ('pool_id' in set) n.pool_id = set.pool_id === null || set.pool_id === '' ? null : text(set.pool_id)
+  if ('traffic_rate' in set) n.traffic_rate = Number(set.traffic_rate)
+  applyXB(n.xb, set)
+}
+
+/** 与 POST /v1/nodes/status:batch 相同的状态边校验；null = 通过（此时不改状态） */
+function batchStatusCheck(rows: Node[], to: string): MockResult | null {
+  if (!(to in EDGES)) return invalid({ serving_status: '不支持的服务状态' })
+  for (const n of rows) {
+    if (!EDGES[n.serving_status]!.includes(to)) return err(409, 'conflict', '不允许的节点服务状态转换', { serving_status: `${n.serving_status} -> ${to}` })
+    if (to === 'active' && (!n.node_type || servers.find((s) => s.id === n.server_id)?.status !== 'ready')) return err(409, 'conflict', '节点协议或服务器状态未满足启用条件')
+  }
+  return null
+}
+
+function batchApplyStatus(rows: Node[], to: string): void {
+  for (const n of rows) {
+    n.serving_status = to
+    touch(n)
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 路由
 // ---------------------------------------------------------------------------
@@ -339,6 +482,14 @@ export const nodes: MockModule = {
   routes: {
     ...infraRoutes(store),
     ...routeGroupRoutes(store),
+    ...xbRoutes({
+      find: (id) => (id === undefined ? undefined : findNode(id)),
+      list: () => store.filter((n) => !n.deleted) as XBHost[],
+      batchPatch: (n, set) => patchErrors(n as Node, set),
+      batchApply: (n, set) => patchApply(n as Node, set),
+      batchStatus: (rows, to) => batchStatusCheck(rows as Node[], to),
+      batchApplyStatus: (rows, to) => batchApplyStatus(rows as Node[], to),
+    }),
     'GET /v1/node-protocol-schemas': (ctx) => {
       ctx.send(200, NODE_PROTOCOL_SCHEMAS)
     },
@@ -350,12 +501,16 @@ export const nodes: MockModule = {
       if (state && !NODE_STATES.includes(state)) return reply(ctx, invalid({ state: '只能是 all、online、offline、disabled、retired 之一' }))
       if ([...q].length > 120) return reply(ctx, invalid({ q: '搜索词太长' }))
       if (id && !UUID.test(id)) return reply(ctx, invalid({ id: '格式不正确' }))
+      const tagRaw = ctx.query.get('tag') ?? ''
+      const tagParsed = validateListTag(tagRaw)
+      if (!tagParsed.ok) return reply(ctx, invalid(tagParsed.fields))
+      const tagFilter = tagParsed.tag
       // 给了 state 就由它决定含不含已退役
       const withRetired = state !== '' || ctx.query.get('include_retired') === '1'
       const limit = Number(ctx.query.get('limit'))
       const offset = Number(ctx.query.get('offset')) || 0
       const rows = store
-        .filter((n) => !n.deleted && (withRetired || n.serving_status !== 'retired') && matchesState(n, state) && matchesSearch(n, q) && (!id || n.id === id))
+        .filter((n) => !n.deleted && (withRetired || n.serving_status !== 'retired') && matchesState(n, state) && matchesSearch(n, q) && (!id || n.id === id) && (!tagFilter || n.xb.tags.includes(tagFilter)))
         .sort((a, b) => a.sort_order - b.sort_order || a.node_no - b.node_no)
       const size = limit >= 1 && limit <= 1000 ? limit : 500
       const page = rows.slice(offset, offset + size)
@@ -365,9 +520,9 @@ export const nodes: MockModule = {
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('node_create', () => {
-        const extra = unknownField(body, ['name', 'server_id', 'node_type', 'server_host', 'server_port', 'protocol_config', 'pool_id', 'traffic_rate', 'display_name', 'sort_order', 'country_code'])
+        const extra = unknownField(body, ['name', 'server_id', 'node_type', 'server_host', 'server_port', 'protocol_config', 'pool_id', 'traffic_rate', 'display_name', 'sort_order', 'country_code', ...XB_BODY_KEYS])
         if (extra) return err(400, 'bad_request', `请求体包含未知字段 "${extra}"`)
-        const fields = { ...basicErrors(body, true), ...validateProtocol(text(body.node_type), body.protocol_config) }
+        const fields = { ...basicErrors(body, true), ...validateProtocol(text(body.node_type), body.protocol_config), ...xbErrors(body) }
         if (Object.keys(fields).length) return invalid(fields)
         const srv = servers.find((s) => s.id === body.server_id)!
         if (srv.status !== 'ready' && srv.status !== 'draft') return err(409, 'conflict', '目标服务器当前不接受节点')
@@ -389,6 +544,7 @@ export const nodes: MockModule = {
         })
         n.server_id = srv.id
         n.row_version = 1
+        applyXB(n.xb, body)
         store.push(n)
         return { status: 201, body: adminNode(n) }
       })
@@ -396,7 +552,7 @@ export const nodes: MockModule = {
     'PATCH /v1/nodes/:id': async (ctx) => {
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
-      const extra = unknownField(body, ['row_version', 'name', 'pool_id', 'node_type', 'server_host', 'server_port', 'traffic_rate', 'display_name', 'protocol_config', 'country_code'])
+      const extra = unknownField(body, ['row_version', 'name', 'pool_id', 'node_type', 'server_host', 'server_port', 'traffic_rate', 'display_name', 'protocol_config', 'country_code', ...XB_BODY_KEYS])
       if (extra) return ctx.fail(400, 'bad_request', `请求体包含未知字段 "${extra}"`)
       const n = findNode(ctx.params.id)
       if (!n) return reply(ctx, notFound('节点不存在'))
@@ -406,7 +562,7 @@ export const nodes: MockModule = {
       // 换协议类型时不补旧密钥（R106）
       const config = body.protocol_config === undefined ? n.protocol_config : nodeType === n.node_type ? restoreSecrets(n.protocol_config, body.protocol_config) : body.protocol_config
       const touched = ['node_type', 'server_host', 'server_port', 'protocol_config'].some((k) => body[k] !== undefined)
-      const fields = { ...basicErrors(body, false), ...(touched ? validateProtocol(nodeType, config) : {}) }
+      const fields = { ...basicErrors(body, false), ...(touched ? validateProtocol(nodeType, config) : {}), ...xbErrors(body) }
       // node/service 的 PatchNode：在役节点不许清空池（无池节点不服务任何用户），草稿等仍可无池
       if (body.pool_id !== undefined && !text(body.pool_id) && n.serving_status === 'active') fields.pool_id = '在役节点必须属于一个节点池；不选池则不服务任何用户，先停用节点再移出'
       if (Object.keys(fields).length) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', fields)
@@ -420,6 +576,7 @@ export const nodes: MockModule = {
       if (body.display_name !== undefined) n.display_name = text(body.display_name) || null
       if (body.country_code !== undefined) n.country_code = text(body.country_code).toUpperCase() || null
       if (body.protocol_config !== undefined) n.protocol_config = config as Json
+      applyXB(n.xb, body)
       touch(n)
       ctx.send(200, adminNode(n))
     },
@@ -442,6 +599,19 @@ export const nodes: MockModule = {
         copy.server_id = target.id
         copy.sort_order = src.sort_order + 1
         copy.row_version = 1
+        copy.xb = {
+          ...xbDefaults(),
+          tags: [...src.xb.tags],
+          limit_bytes: src.xb.limit_bytes,
+          reset_day: src.xb.reset_day,
+          schedule: src.xb.schedule.map((s) => ({ ...s })),
+          used_bytes: 0,
+          exceeded_at: null,
+          reset_at: new Date().toISOString(),
+          relays: [],
+          ech: null,
+          ech_retired: 0,
+        }
         if (body.copy_routing) copyMemberships(src.id, copy.id)
         store.push(copy)
         return { status: 201, body: adminNode(copy) }
@@ -491,18 +661,16 @@ export const nodes: MockModule = {
         const to = text(body.serving_status)
         if (items.length < 1 || items.length > 100) return invalid({ items: '一次 1–100 项' })
         if (!(to in EDGES)) return invalid({ serving_status: '不支持的服务状态' })
+        const rows: Node[] = []
         for (const it of items) {
           const n = findNode(text(it.id))
           if (!n) return notFound('节点不存在')
           if (it.row_version !== n.row_version) return conflict(n)
-          if (!EDGES[n.serving_status]!.includes(to)) return err(409, 'conflict', '不允许的节点服务状态转换', { serving_status: `${n.serving_status} -> ${to}` })
-          if (to === 'active' && (!n.node_type || servers.find((s) => s.id === n.server_id)?.status !== 'ready')) return err(409, 'conflict', '节点协议或服务器状态未满足启用条件')
+          rows.push(n)
         }
-        for (const it of items) {
-          const n = findNode(text(it.id))!
-          n.serving_status = to
-          touch(n)
-        }
+        const st = batchStatusCheck(rows, to)
+        if (st) return st
+        batchApplyStatus(rows, to)
         return { status: 200, body: { ok: true, updated: items.length, serving_status: to } }
       })
     },
