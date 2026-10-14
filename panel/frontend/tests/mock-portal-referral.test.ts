@@ -1,6 +1,6 @@
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { inviteSchema } from '../src/portal/screens/referral/api'
+import { inviteSchema } from '../src/portal/screens/referral/schemas'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'
 import { bearer, close, loginAs, mockFetch, serve } from './mock-helpers'
 

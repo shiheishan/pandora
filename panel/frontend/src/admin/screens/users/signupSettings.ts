@@ -1,7 +1,6 @@
-import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
-import { useApi } from '../../../shell/runtime'
-import { UK } from './api'
+
+// 注册与登录设置的 schema 与表单换算：只依赖 zod，页面与假后端测试共用（查询 hook 在 api.ts）
 
 const CAPTCHA_PROVIDERS = ['', 'recaptcha_v2', 'recaptcha_v3', 'turnstile'] as const
 
@@ -24,14 +23,6 @@ export const signupSettingsSchema = z.object({
   mail_configured: z.boolean(),
 })
 export type SignupSettings = z.output<typeof signupSettingsSchema>
-
-export function useSignupSettings() {
-  const api = useApi()
-  return useQuery({
-    queryKey: [...UK, 'signup-settings'],
-    queryFn: ({ signal }) => api.get('v1/settings/signup', signupSettingsSchema, { signal }),
-  })
-}
 
 export interface SignupForm {
   captcha_provider: SignupSettings['captcha_provider']

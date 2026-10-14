@@ -5,7 +5,9 @@ import { useApi } from '../../../shell/runtime'
 import { orderRowSchema } from '../billing/schemas'
 import { planOptionsKey } from '../plans/api'
 import { exactEmail } from './model'
-import { generationJobSchema, generationJobsSchema } from './opsSchemas'
+import { signupSettingsSchema } from './signupSettings'
+import { bulkBanSchema, generationJobSchema, generationJobsSchema } from './opsSchemas'
+export { bulkBanSchema }
 
 // 订单的封闭枚举与列表行归订单与收款模块（后台-05），用户详情「最近订单」同形
 export { type OrderRow, type OrderStatus } from '../billing/schemas'
@@ -166,7 +168,6 @@ export const userDeletedSchema = z.object({ ok: z.literal(true), short_id: z.str
 // POST v1/subscriptions/{id}/period-end：直接改到期时刻（只改生效中的）
 export const periodEndSetSchema = z.object({ subscription_id: z.string(), user_id: z.string(), previous_end: time, period_end: time })
 // POST v1/users/bulk/ban：skipped 的键是 self / admin / already_banned / deleted，只列出现过的
-export const bulkBanSchema = z.object({ banned: count, skipped: z.record(z.string(), count) })
 
 // ---------------------------------------------------------------------------
 // 批量运营：预览 / 生成 / 群发（筛选字段直接放在请求体顶层；后端 DisallowUnknownFields，空值不传）
@@ -411,4 +412,13 @@ export function useInvalidateResets() {
   const client = useQueryClient()
   const users = useInvalidateUsers()
   return useCallback(() => Promise.all([client.invalidateQueries({ queryKey: [...UK, 'resets'] }), users()]), [client, users])
+}
+
+// GET v1/settings/signup：后台「用户 → 注册与邀请」
+export function useSignupSettings() {
+  const api = useApi()
+  return useQuery({
+    queryKey: [...UK, 'signup-settings'],
+    queryFn: ({ signal }) => api.get('v1/settings/signup', signupSettingsSchema, { signal }),
+  })
 }

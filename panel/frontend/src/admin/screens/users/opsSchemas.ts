@@ -39,3 +39,6 @@ export const trafficGrantedSchema = z.object({
   granted_bytes: int.positive(),
   remaining_bytes_total: int,
 })
+
+// 按筛选批量封禁（POST v1/users/bulk/ban）：封了几人、跳过的按原因计数
+export const bulkBanSchema = z.object({ banned: count, skipped: z.record(z.string(), count) })

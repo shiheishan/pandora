@@ -3,14 +3,13 @@ import { useMemo, useState } from 'react'
 import { useApi } from '../../../shell/runtime'
 import { Button, Card, Input, QueryView, Select, Switch, TextArea, useToast } from '../../../ui'
 import { useFailure } from '../../actions'
-import { UK, usePlanOptions } from './api'
+import { UK, usePlanOptions, useSignupSettings } from './api'
 import ops from './Ops.module.css'
 import css from './Users.module.css'
 import {
   signupBody,
   signupFormFrom,
   signupSettingsSchema,
-  useSignupSettings,
   type SignupForm,
   type SignupSettings,
 } from './signupSettings'

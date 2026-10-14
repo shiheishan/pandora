@@ -88,9 +88,10 @@ export function editRoutes(store: { users: User[] }): Record<string, MockRoute> 
       if (deletedConflict(u, ctx)) return
       const fields: Record<string, string> = {}
       if (!reasonOk(body.reason)) fields.reason = '请写清原因，5 到 500 个字'
-      const rid = body.referrer_id
-      if (rid !== null && typeof rid !== 'string') fields.referrer_id = '邀请人不存在'
-      if (Object.keys(fields).length) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', fields)
+      const raw = body.referrer_id
+      const rid = raw === null ? null : typeof raw === 'string' ? raw : undefined
+      if (rid === undefined) fields.referrer_id = '邀请人不存在'
+      if (Object.keys(fields).length || rid === undefined) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', fields)
       if (rid === null) {
         u.referrer = null
         return ctx.send(200, { ok: true })

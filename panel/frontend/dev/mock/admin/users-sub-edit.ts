@@ -11,7 +11,8 @@ function reasonProblem(v: unknown): string | null {
   return null
 }
 
-function findSub(users: User[], subId: string): { user: User; sub: Sub } | null {
+function findSub(users: User[], subId: string | undefined): { user: User; sub: Sub } | null {
+  if (!subId) return null
   for (const user of users) {
     const sub = user.subs.find((s) => s.id === subId)
     if (sub) return { user, sub }

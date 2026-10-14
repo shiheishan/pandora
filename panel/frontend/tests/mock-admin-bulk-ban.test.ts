@@ -1,7 +1,7 @@
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'
-import { bulkBanSchema } from '../src/admin/screens/users/api'
+import { bulkBanSchema } from '../src/admin/screens/users/opsSchemas'
 import { bearer, close, loginAs, mockFetch, serve } from './mock-helpers'
 
 describe('mock api · admin bulk ban', () => {
