@@ -293,7 +293,7 @@ func newEngine(r *runtime, sc config.HTTPServer, metricsMW gin.HandlerFunc, extr
 		metricsMW,
 		httpx.Recovery(),
 		httpx.Errors(),
-		httpx.SecurityHeaders(),
+		httpx.SecurityHeaders(r.cfg.IsProduction()),
 		httpx.Concurrency(sc.MaxConcurrency, isStream),
 		httpx.Timeout(sc.RequestTimeout, isStream),
 	)

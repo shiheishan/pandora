@@ -14,6 +14,7 @@ paths:
 
 ## 中间件链
 - 两个引擎（public、admin）都由 `panel/internal/app/serve.go` 的 `newEngine` 建，顺序：`RequestID` → `AccessLog` → `Recovery` → `Errors` → `SecurityHeaders` → `Concurrency` → `Timeout` → 引擎专属（admin 先 `AdminWritesGate`，再 `Authenticate` → `DomainGuard`）。SSE `/v1/events` 不占并发名额、不设请求超时（`isStream`）。
+- 安全响应头只在 `httpx.SecurityHeaders`（nosniff、X-Frame-Options、Referrer-Policy、COOP/CORP same-origin、Permissions-Policy、no-store；生产加 HSTS 一年、不带 includeSubDomains）。入口页的 CSP 在 `internal/pkg/webapp`。HSTS 不放 nginx：location 一旦写了自己的 `add_header` 就不继承 server 级的。
 - 路由级中间件经 `route.Kit` 传给每个模块（`panel/internal/pkg/route/route.go`）：`RequireAuth`、`RecentReauth`、`Idempotency(scope)`、`Switch(code)`。模块之间不互相 import handler。
 - 顺序固定：`RecentReauth` 排在 `Idempotency` 之前，403 `reauth_required` 时幂等键还没被占，前端弹框后用原键重放。降级开关门同样排在幂等之前。
 - 后台不分权限：`RequireAuth` 在 admin 上就是「已登录的管理员」，没有权限码、角色。
