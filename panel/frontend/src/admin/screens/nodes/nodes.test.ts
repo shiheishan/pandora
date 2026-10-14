@@ -122,7 +122,6 @@ describe('state', () => {
   it('maps serving status and staleness onto the design states', () => {
     expect(nodeState({ serving_status: 'active', stale: false })).toMatchObject({ label: '在线', filter: 'online' })
     expect(nodeState({ serving_status: 'active', stale: true })).toMatchObject({ label: '离线', filter: 'offline' })
-    expect(nodeState({ serving_status: 'draining', stale: false })).toMatchObject({ label: '在线', note: '排空中' })
     expect(nodeState({ serving_status: 'draft', stale: true })).toMatchObject({ label: '已停用', note: '草稿' })
     expect(nodeState({ serving_status: 'retired', stale: true })).toMatchObject({ label: '已退役', filter: 'retired' })
   })
@@ -164,7 +163,11 @@ describe('reserved rule 5: move', () => {
 describe('status transitions', () => {
   it('follows the contract edges', () => {
     expect(canTransition('draft', 'active')).toBe(true)
+    expect(canTransition('draft', 'disabled')).toBe(false)
+    expect(canTransition('draft', 'retired')).toBe(true)
+    expect(canTransition('active', 'disabled')).toBe(true)
     expect(canTransition('active', 'draft')).toBe(false)
+    expect(canTransition('disabled', 'draft')).toBe(false)
     expect(canTransition('retired', 'active')).toBe(false)
     expect(canTransition('disabled', 'active')).toBe(true)
   })

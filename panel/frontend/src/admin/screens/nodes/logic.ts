@@ -12,7 +12,7 @@ export interface NodeState {
   filter: Exclude<NodeFilter, 'all'>
   label: string
   tone: Tone
-  /** 状态旁的小字：排空中 / 草稿 */
+  /** 状态旁的小字：草稿 */
   note: string | null
 }
 
@@ -20,8 +20,6 @@ export function nodeState(n: Pick<NodeRow, 'serving_status' | 'stale'>): NodeSta
   switch (n.serving_status) {
     case 'active':
       return n.stale ? { filter: 'offline', label: '离线', tone: 'danger', note: null } : { filter: 'online', label: '在线', tone: 'ok', note: null }
-    case 'draining':
-      return { filter: 'online', label: '在线', tone: 'ok', note: '排空中' }
     case 'draft':
       return { filter: 'disabled', label: '已停用', tone: 'neutral', note: '草稿' }
     case 'disabled':
@@ -149,13 +147,12 @@ export function moveBlockers(fields: Readonly<Record<string, string>>): string[]
 }
 
 // ---------------------------------------------------------------------------
-// 服务状态转换（契约 status:batch 的合法边；retired 只走 retire 接口）
+// 服务状态转换：与后端 node_status.go 的 nodeServingTransitions 一致（retired 只走 retire 接口）
 // ---------------------------------------------------------------------------
 const EDGES: Readonly<Record<ServingStatus, readonly ServingStatus[]>> = {
-  draft: ['active', 'disabled', 'retired'],
-  active: ['draining', 'disabled'],
-  draining: ['active', 'disabled', 'retired'],
-  disabled: ['draft', 'active', 'retired'],
+  draft: ['active', 'retired'],
+  active: ['disabled', 'retired'],
+  disabled: ['active', 'retired'],
   retired: [],
 }
 export const canTransition = (from: ServingStatus, to: ServingStatus) => EDGES[from].includes(to)

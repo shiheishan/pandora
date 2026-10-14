@@ -12,7 +12,7 @@ const strs = list(z.string())
 // ---------------------------------------------------------------------------
 // 节点：列表行（GET v1/nodes）、单取的详情行（GET v1/nodes?id=）与写接口回的 AdminNode
 // ---------------------------------------------------------------------------
-export const SERVING_STATUSES = ['draft', 'active', 'draining', 'disabled', 'retired'] as const
+export const SERVING_STATUSES = ['draft', 'active', 'disabled', 'retired'] as const
 export type ServingStatus = (typeof SERVING_STATUSES)[number]
 
 export const nodeRowSchema = z.object({

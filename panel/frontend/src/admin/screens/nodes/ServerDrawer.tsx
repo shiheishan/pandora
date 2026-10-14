@@ -135,7 +135,7 @@ function Overview({ server: s }: { server: Server }) {
 // ---------------------------------------------------------------------------
 // 下属节点
 // ---------------------------------------------------------------------------
-const SERVING_LABEL: Readonly<Record<string, string>> = { draft: '草稿', active: '在役', draining: '排空中', disabled: '已停用', retired: '已退役' }
+const SERVING_LABEL: Readonly<Record<string, string>> = { draft: '草稿', active: '在役', disabled: '已停用', retired: '已退役' }
 
 function ServerNodes({ serverId }: { serverId: string }) {
   const nodes = useServerNodes(serverId)

@@ -44,7 +44,7 @@ describe('mock api · admin nodes', () => {
     expect((await page('state=retired')).nodes.every((n) => n.serving_status === 'retired')).toBe(true)
     expect((await page('state=retired')).total).toBeGreaterThan(0)
     expect((await page('state=offline')).nodes.every((n) => n.serving_status === 'active' && n.stale)).toBe(true)
-    expect((await page('state=online')).nodes.every((n) => n.serving_status === 'draining' || (n.serving_status === 'active' && !n.stale))).toBe(true)
+    expect((await page('state=online')).nodes.every((n) => n.serving_status === 'active' && !n.stale)).toBe(true)
     expect((await page('state=disabled')).nodes.every((n) => n.serving_status === 'draft' || n.serving_status === 'disabled')).toBe(true)
     // 搜索：名称、国家（不分大小写）、编号
     const hk = await page('q=hk')
