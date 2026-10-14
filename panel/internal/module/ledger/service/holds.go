@@ -35,13 +35,14 @@ type Hold struct {
 
 // OrderPaid 是订单结算记账的入参。余额抵扣额 = Total − Paid，必须等于这张订单冻结的金额（没有冻结时必须为 0）。
 type OrderPaid struct {
-	OrderID  uuid.UUID
-	UserID   uuid.UUID
-	Currency money.Currency
-	Total    decimal.Decimal
-	Paid     decimal.Decimal
-	Fee      decimal.Decimal
-	Provider string
+	OrderID   uuid.UUID
+	UserID    uuid.UUID
+	Currency  money.Currency
+	Total     decimal.Decimal
+	Paid      decimal.Decimal
+	Fee       decimal.Decimal
+	Surcharge decimal.Decimal // 向用户加收的支付手续费，随渠道收款到账、不属于订单总额，单独贷记 platform_revenue 的 RefSurcharge；渠道实收 = Paid + Surcharge，Fee ≤ 渠道实收
+	Provider  string
 }
 
 // HoldForOrder 把用户可用余额的一部分冻结给订单：记 balance_hold，再登记 balance_holds。在调用方事务里执行。
@@ -259,6 +260,7 @@ func validateOrderPaid(p OrderPaid) error {
 		{p.Total, "订单总额"},
 		{p.Paid, "渠道实收"},
 		{p.Fee, "渠道手续费"},
+		{p.Surcharge, "用户手续费"},
 	} {
 		if err := money.CheckNonNegative(check.d); err != nil {
 			return fmt.Errorf("%w: %s: %v", ErrInvalidPosting, check.msg, err)
@@ -267,10 +269,14 @@ func validateOrderPaid(p OrderPaid) error {
 	if p.Paid.Cmp(p.Total) > 0 {
 		return fmt.Errorf("%w: 渠道实收不能超过订单总额", ErrInvalidPosting)
 	}
-	if p.Fee.Cmp(p.Paid) > 0 {
+	channelGross := p.Paid.Add(p.Surcharge)
+	if p.Fee.Cmp(channelGross) > 0 {
 		return fmt.Errorf("%w: 渠道手续费不能超过渠道实收", ErrInvalidPosting)
 	}
-	if p.Paid.IsPositive() {
+	if p.Surcharge.IsPositive() && !p.Paid.IsPositive() {
+		return fmt.Errorf("%w: 只有渠道收款才能带用户手续费", ErrInvalidPosting)
+	}
+	if channelGross.IsPositive() {
 		if p.Provider == "" {
 			return fmt.Errorf("%w: 有渠道实收时必须指定渠道代码", ErrInvalidPosting)
 		}
@@ -341,7 +347,7 @@ func (s *Service) postOrderPaid(ctx context.Context, p OrderPaid) (uuid.UUID, er
 
 func orderPaidLegs(p OrderPaid, applied decimal.Decimal) []Leg {
 	var legs []Leg
-	channelNet := p.Paid.Sub(p.Fee)
+	channelNet := p.Paid.Add(p.Surcharge).Sub(p.Fee)
 	if channelNet.IsPositive() {
 		legs = append(legs, Leg{
 			Account:   PlatformAccount(ChannelCash, p.Provider),
@@ -368,6 +374,13 @@ func orderPaidLegs(p OrderPaid, applied decimal.Decimal) []Leg {
 		Direction: Credit,
 		Amount:    p.Total,
 	})
+	if p.Surcharge.IsPositive() {
+		legs = append(legs, Leg{
+			Account:   PlatformAccount(PlatformRevenue, RefSurcharge),
+			Direction: Credit,
+			Amount:    p.Surcharge,
+		})
+	}
 	return legs
 }
 

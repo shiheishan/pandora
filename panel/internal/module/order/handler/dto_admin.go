@@ -256,18 +256,19 @@ func adminOrderDetailFrom(d service.AdminOrderDetail) (adminOrderDetailResponse,
 
 // intentResponse 是订单的一次支付尝试。
 type intentResponse struct {
-	ID             string     `json:"id"`
-	ProviderCode   string     `json:"provider_code"`
-	ProviderName   string     `json:"provider_name"`
-	Currency       string     `json:"currency"`
-	Amount         int64      `json:"amount"`
-	Status         string     `json:"status"`
-	ProviderRef    *string    `json:"provider_ref"`
-	FailureCode    *string    `json:"failure_code"`
-	FailureMessage *string    `json:"failure_message"`
-	ExpiresAt      *time.Time `json:"expires_at"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	ID              string     `json:"id"`
+	ProviderCode    string     `json:"provider_code"`
+	ProviderName    string     `json:"provider_name"`
+	Currency        string     `json:"currency"`
+	Amount          int64      `json:"amount"`
+	SurchargeAmount int64      `json:"surcharge_amount"`
+	Status          string     `json:"status"`
+	ProviderRef     *string    `json:"provider_ref"`
+	FailureCode     *string    `json:"failure_code"`
+	FailureMessage  *string    `json:"failure_message"`
+	ExpiresAt       *time.Time `json:"expires_at"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
 // paymentResponse 是订单的一笔收款。
@@ -280,6 +281,7 @@ type paymentResponse struct {
 	Currency          string    `json:"currency"`
 	Amount            int64     `json:"amount"`
 	FeeAmount         int64     `json:"fee_amount"`
+	SurchargeAmount   int64     `json:"surcharge_amount"`
 	RefundedAmount    int64     `json:"refunded_amount"`
 	Status            string    `json:"status"`
 	Method            *string   `json:"method"`
@@ -302,16 +304,17 @@ func orderPaymentsFrom(h paymentsvc.OrderHistory) (orderPaymentsResponse, error)
 	}
 	for _, in := range h.Intents {
 		out.PaymentIntents = append(out.PaymentIntents, intentResponse{
-			ID:           in.ID.String(),
-			ProviderCode: in.ProviderCode,
-			ProviderName: in.ProviderName,
-			Currency:     string(in.Currency),
-			Amount:       cc.of(in.Amount),
-			Status:       string(in.Status),
-			ProviderRef:  in.ProviderRef,
-			ExpiresAt:    in.ExpiresAt,
-			CreatedAt:    in.CreatedAt,
-			UpdatedAt:    in.UpdatedAt,
+			ID:              in.ID.String(),
+			ProviderCode:    in.ProviderCode,
+			ProviderName:    in.ProviderName,
+			Currency:        string(in.Currency),
+			Amount:          cc.of(in.Amount),
+			SurchargeAmount: cc.of(in.Surcharge),
+			Status:          string(in.Status),
+			ProviderRef:     in.ProviderRef,
+			ExpiresAt:       in.ExpiresAt,
+			CreatedAt:       in.CreatedAt,
+			UpdatedAt:       in.UpdatedAt,
 		})
 	}
 	for _, p := range h.Payments {
@@ -324,6 +327,7 @@ func orderPaymentsFrom(h paymentsvc.OrderHistory) (orderPaymentsResponse, error)
 			Currency:          string(p.Currency),
 			Amount:            cc.of(p.Amount),
 			FeeAmount:         cc.of(p.Fee),
+			SurchargeAmount:   cc.of(p.Surcharge),
 			RefundedAmount:    0,
 			Status:            p.Status,
 			Method:            p.Method,
