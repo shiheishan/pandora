@@ -134,7 +134,7 @@ describe('流量重置', () => {
     expect(resettableSubs([s('active', '2026-10-01'), s('active', '2026-11-01'), s('expired', '2027-01-01')]).map((x) => x.id)).toEqual(['active-2026-10-01', 'active-2026-11-01'])
   })
 
-  const quota = (limit: number | null, consumed: number) => [{ metric: 'traffic.bytes', limit, consumed, remaining: limit === null ? null : Math.max(0, limit - consumed) }]
+  const quota = (limit: number | null, consumed: number) => [{ metric: 'traffic.bytes', period: 'cycle', limit, consumed, remaining: limit === null ? null : Math.max(0, limit - consumed) }]
   const row = (id: string, over: Partial<{ status: 'active' | 'expired'; end: string | null; limit: number | null; used: number; pack: number }>) => ({
     id,
     status: over.status ?? ('active' as const),
