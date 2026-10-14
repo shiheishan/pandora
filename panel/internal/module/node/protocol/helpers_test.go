@@ -80,8 +80,8 @@ func TestHelperSchemasSortedAndMeta(t *testing.T) {
 }
 
 func TestHelperListenL4Constants(t *testing.T) {
-	if ListenTCP != "tcp" || ListenUDP != "udp" {
-		t.Fatalf("ListenTCP=%q ListenUDP=%q", ListenTCP, ListenUDP)
+	if ListenTCP != "tcp" || ListenUDP != "udp" || ListenTCPUDP != "tcp+udp" {
+		t.Fatalf("ListenTCP=%q ListenUDP=%q ListenTCPUDP=%q", ListenTCP, ListenUDP, ListenTCPUDP)
 	}
 }
 
@@ -506,8 +506,11 @@ func TestHelperListenL4Hy2SSNil(t *testing.T) {
 	if ListenL4("hy2", nil) != ListenUDP {
 		t.Fatal("hy2")
 	}
-	if ListenL4("ss", json.RawMessage(`{"network":"udp"}`)) != ListenUDP {
-		t.Fatal("ss udp")
+	if ListenL4("ss", json.RawMessage(`{"network":"udp"}`)) != ListenTCPUDP {
+		t.Fatal("ss tcp+udp")
+	}
+	if ListenL4("shadowsocks", nil) != ListenTCPUDP {
+		t.Fatal("shadowsocks nil")
 	}
 	if ListenL4("vless", nil) != ListenTCP {
 		t.Fatal("nil raw")
