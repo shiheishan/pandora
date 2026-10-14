@@ -10,9 +10,11 @@ describe('payFailureAction', () => {
   it('payment_in_progress：attempts 0/1/2 自动重试且间隔递增', () => {
     const err = apiError('payment_in_progress')
     expect(payFailureAction(err, 0)).toEqual({ kind: 'retry_later', delayMs: 2000 })
-    expect(payFailureAction(err, 1)).toEqual({ kind: 'retry_later', delayMs: 4000 })
-    expect(payFailureAction(err, 2)).toEqual({ kind: 'retry_later', delayMs: 8000 })
-    expect(PAY_IN_PROGRESS_BACKOFF_MS).toEqual([2000, 4000, 8000])
+    expect(payFailureAction(err, 1)).toEqual({ kind: 'retry_later', delayMs: 5000 })
+    expect(payFailureAction(err, 2)).toEqual({ kind: 'retry_later', delayMs: 10000 })
+    expect(PAY_IN_PROGRESS_BACKOFF_MS).toEqual([2000, 5000, 10000])
+    // 合计要超过后端建单最长 15 秒
+    expect(PAY_IN_PROGRESS_BACKOFF_MS.reduce((a, b) => a + b, 0)).toBeGreaterThan(15000)
     expect(PAY_IN_PROGRESS_MAX_RETRIES).toBe(3)
   })
 

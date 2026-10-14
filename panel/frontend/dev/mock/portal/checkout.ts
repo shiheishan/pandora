@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { MockModule, MockResult } from '../types.ts'
 import { assertNoOpenChange, BillingError, createdView, fulfill, isUuid, placeOrder, readStrict, sweepExpired } from './billing.ts'
 import { findPlan, MIN_PAYMENT, PAY_METHODS, type PayMethod } from './catalog.ts'
-import { gate, isLiveSub, isRevivable, portalState } from './fixtures.ts'
+import { gate, isLiveSub, isRevivable, portalState, type PortalState } from './fixtures.ts'
 import { normalizeLabel, profileName } from './purchase.ts'
 import { assertNoPendingNew, quoteRows, quoteTime, settle } from './quote.ts'
 
@@ -36,8 +36,16 @@ interface MockIntent {
 }
 const intents = new Map<string, MockIntent>()
 
-/** 模拟 BTCPay / CoinPayments 去渠道建发票：同一张单第一次 pay 还在「建单」窗口内 */
-const creating = new Set<string>()
+/** 模拟 BTCPay / CoinPayments 去渠道建发票：已经回过一次「建单中」的订单。挂在 PortalState 上（WeakMap），切场景重建时跟着重建 */
+const creatingByState = new WeakMap<PortalState, Set<string>>()
+function creatingOf(state: PortalState): Set<string> {
+  let set = creatingByState.get(state)
+  if (!set) {
+    set = new Set<string>()
+    creatingByState.set(state, set)
+  }
+  return set
+}
 
 /** 订单最近发起的支付意图（POST v1/orders/{id}/query 的假渠道用），没有发起过支付时为 undefined */
 export function channelIntent(userId: string, orderId: string): MockIntent | undefined {
@@ -248,11 +256,12 @@ export const checkout: MockModule = {
       const returnUrl = typeof body.return_url === 'string' && body.return_url.startsWith(`${origin}/`) ? body.return_url : `${origin}/#orders`
       const existing = [...intents.entries()].find(([, v]) => v.orderId === order.id && v.provider === channel.provider && v.method === channel.method)
       // 模拟 BTCPay / CoinPayments 去渠道建发票时同一张单再点支付，真后端在 30 秒建单窗口内回 payment_in_progress
+      const creating = creatingOf(state)
       if (channel.provider === 'btcpay' && existing === undefined && !creating.has(order.id)) {
         creating.add(order.id)
         return ctx.fail(409, 'payment_in_progress', '支付正在发起，请稍候')
       }
-      if (creating.has(order.id)) creating.delete(order.id)
+      creating.delete(order.id)
       const intentId = existing?.[0] ?? randomUUID()
       order.hasIntent = true
       intents.set(intentId, { userId: ctx.user.userId, orderId: order.id, returnUrl, provider: channel.provider, method: channel.method })

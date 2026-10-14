@@ -2,8 +2,12 @@ import { isApiError } from '../../../core/api'
 
 /** 「正在发起」最多自动重试几次 */
 export const PAY_IN_PROGRESS_MAX_RETRIES = 3
-/** 第 n 次自动重试前等多久（毫秒） */
-export const PAY_IN_PROGRESS_BACKOFF_MS: readonly number[] = [2000, 4000, 8000]
+/**
+ * 第 n 次自动重试前等多久（毫秒）。合计 17 秒，要盖过后端那次建单最长占着的时间：
+ * 另一次发起的 CompleteIntent 最长 15 秒（completeIntentBudget）加 BeginIntent，
+ * 合计短于它时最后一次重试可能仍落在建单窗口里，用户白等一轮又看到「请稍后点重试」。
+ */
+export const PAY_IN_PROGRESS_BACKOFF_MS: readonly number[] = [2000, 5000, 10000]
 
 /** 发起支付失败后怎么办：retry_later = 过一会儿自动再发；check_order = 先刷新订单再定；unpayable = 订单不可付（调 onUnpayable）；show = 只显示错误 */
 export type PayFailureAction = { kind: 'retry_later'; delayMs: number } | { kind: 'check_order' } | { kind: 'unpayable' } | { kind: 'show' }
