@@ -3,7 +3,7 @@ import { card, expect, happened, narrowShot, openPortal, payByCashier, seen, ste
 
 // ============================================================================
 //  过期卡片（w8buyfix 第 5 项）：「续费，恢复使用」与并列的次按钮「换个套餐」，再续费恢复。
-//  文件名排在前面：要等 aegis-admin 的过期扫描（一分钟一轮）把状态翻成 expired，早开始早等完
+//  文件名排在前面：要等 worker 的到期扫描 subscription:expire（一分钟一轮）把状态翻成 expired，早开始早等完
 // ============================================================================
 
 test('过期卡片：续费恢复使用', async ({ browser, world }) => {
@@ -12,10 +12,16 @@ test('过期卡片：续费恢复使用', async ({ browser, world }) => {
   const u = await newUser('exp')
   await grant(u, std)
   const sub = str((await subscriptionsOf(u))[0], 'id')
-  // SQL 夹具（时间流逝）：这一份的周期挪到过去，与 panel/tests/expiry_e2e.sh 同一句；状态由过期扫描自己翻
-  sql('周期挪到过去', `UPDATE subscriptions SET current_period_start = now() - interval '31 days', current_period_end = now() - interval '1 hour' WHERE id = '${uuid(sub)}';`)
+  // SQL 夹具（时间流逝）：这一份的周期与有周期的额度一起挪到过去，与 panel/tests/expiry_e2e.sh 同两句；状态由到期扫描自己翻
+  sql(
+    '周期挪到过去',
+    `BEGIN;
+UPDATE subscriptions SET current_period_start = now() - interval '31 days', current_period_end = now() - interval '1 hour' WHERE id = '${uuid(sub)}';
+UPDATE quota_balances SET period_start = now() - interval '31 days', period_end = now() - interval '1 hour' WHERE subscription_id = '${uuid(sub)}' AND period_end IS NOT NULL;
+COMMIT;`,
+  )
   await expect
-    .poll(async () => (await subscriptionsOf(u)).find((s) => s.id === sub)?.status, { message: '过期扫描把状态翻成 expired', timeout: 180_000, intervals: [5_000] })
+    .poll(async () => (await subscriptionsOf(u)).find((s) => s.id === sub)?.status, { message: '到期扫描把状态翻成 expired', timeout: 180_000, intervals: [5_000] })
     .toBe('expired')
   const page = await openPortal(browser, u)
 

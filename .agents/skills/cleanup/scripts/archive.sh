@@ -3,7 +3,7 @@
 # 调查时留下的 *.sql / *.log 等）复制到 ops-local/reports/<日期>/<名字>/。git worktree remove 会把它们一起删掉。
 # 只复制：不删、不改源文件。目标已有同名文件时，内容一致就跳过，不一致就报错、不覆盖。
 # 用法：archive.sh [--date YYYY-MM-DD] <短名或 worktree 路径>...
-#   短名即目录名去掉 pandora- 前缀，如 w3core；与 list.sh 打印的建议命令一致。
+#   短名即目录名去掉 pandora- 前缀，如 p7-users；与 list.sh 打印的建议命令一致。
 # 退出码：0 全部成功；1 有冲突、校验失败或找不到 worktree（其余照常复制）；2 用法错误。
 set -euo pipefail
 

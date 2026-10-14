@@ -19,24 +19,24 @@ func TestAdjustCredit(t *testing.T) {
 	reason := "补偿线路故障"
 	susp := PlatformAccount(Suspense, RefManualAdjust)
 	// suspense/manual_adjust 是全库共用的平台科目，只核对本用例带来的变化
-	suspBefore := e.accountBalance(t, ctx, susp, money.CNY)
+	suspBefore := e.accountBalance(t, ctx, susp, money.USD)
 
 	res, err := e.svc.AdjustBalance(ctx, Adjustment{
 		UserID:   user,
 		Amount:   dec("12.50"),
-		Currency: "CNY",
+		Currency: "USD",
 		Reason:   reason,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Currency != money.CNY || !res.Balance.Equal(dec("12.50")) || res.TxnID == uuid.Nil {
+	if res.Currency != money.USD || !res.Balance.Equal(dec("12.50")) || res.TxnID == uuid.Nil {
 		t.Fatalf("结果不对: %+v", res)
 	}
-	if !e.balanceOf(t, ctx, user, money.CNY).Equal(dec("12.50")) {
+	if !e.balanceOf(t, ctx, user, money.USD).Equal(dec("12.50")) {
 		t.Fatalf("用户余额应为 12.50")
 	}
-	if got := e.accountBalance(t, ctx, susp, money.CNY).Sub(suspBefore); !got.Equal(dec("12.50")) {
+	if got := e.accountBalance(t, ctx, susp, money.USD).Sub(suspBefore); !got.Equal(dec("12.50")) {
 		t.Fatalf("suspense/manual_adjust 应增加 12.50，得 %s", got)
 	}
 
@@ -66,7 +66,7 @@ func TestAdjustDebit(t *testing.T) {
 	admin := e.mkUser(t, ctx)
 	user := e.mkUser(t, ctx)
 	ctx = asAdmin(ctx, admin)
-	cur := money.CNY
+	cur := money.USD
 
 	if _, err := e.svc.AdjustBalance(ctx, Adjustment{
 		UserID: user, Amount: dec("10.00"), Currency: string(cur), Reason: "先加十个字原因",
@@ -90,7 +90,7 @@ func TestAdjustOverdraft(t *testing.T) {
 	admin := e.mkUser(t, ctx)
 	user := e.mkUser(t, ctx)
 	ctx = asAdmin(ctx, admin)
-	cur := money.CNY
+	cur := money.USD
 
 	if _, err := e.svc.AdjustBalance(ctx, Adjustment{
 		UserID: user, Amount: dec("3.00"), Currency: string(cur), Reason: "初始加三个字",
@@ -139,8 +139,8 @@ func TestAdjustDefaultCurrency(t *testing.T) {
 	if res.Currency != def {
 		t.Fatalf("币种应为站点缺省 %s，得 %s", def, res.Currency)
 	}
-	if def != money.USD {
-		t.Fatalf("测试环境站点缺省应为 USD，得 %s", def)
+	if def != money.CNY {
+		t.Fatalf("测试环境站点缺省应为 CNY，得 %s", def)
 	}
 }
 
@@ -151,14 +151,14 @@ func TestAdjustValidation(t *testing.T) {
 	ctx = asAdmin(ctx, admin)
 
 	_, err := e.svc.AdjustBalance(ctx, Adjustment{
-		UserID: user, Amount: decimal.Zero, Currency: "CNY", Reason: "原因够五个字",
+		UserID: user, Amount: decimal.Zero, Currency: "USD", Reason: "原因够五个字",
 	})
 	if codeOf(err) != errs.ValidationFailed {
 		t.Fatalf("金额 0: code=%s err=%v", codeOf(err), err)
 	}
 
 	_, err = e.svc.AdjustBalance(ctx, Adjustment{
-		UserID: user, Amount: dec("1.00"), Currency: "CNY", Reason: "太短",
+		UserID: user, Amount: dec("1.00"), Currency: "USD", Reason: "太短",
 	})
 	if codeOf(err) != errs.ValidationFailed {
 		t.Fatalf("原因太短: code=%s", codeOf(err))
@@ -183,7 +183,7 @@ func TestAdjustValidation(t *testing.T) {
 func TestAdjustAuth(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	adj := Adjustment{UserID: user, Amount: dec("1.00"), Currency: "CNY", Reason: "权限测试五个字"}
+	adj := Adjustment{UserID: user, Amount: dec("1.00"), Currency: "USD", Reason: "权限测试五个字"}
 
 	_, err := e.svc.AdjustBalance(ctx, adj)
 	if codeOf(err) != errs.Unauthorized {
@@ -203,7 +203,7 @@ func TestAdjustUnknownUser(t *testing.T) {
 	ghost := uuid.New()
 
 	_, err := e.svc.AdjustBalance(ctx, Adjustment{
-		UserID: ghost, Amount: dec("1.00"), Currency: "CNY", Reason: "不存在用户五个",
+		UserID: ghost, Amount: dec("1.00"), Currency: "USD", Reason: "不存在用户五个",
 	})
 	if !errors.Is(err, ErrUserNotFound) && codeOf(err) != errs.NotFound {
 		t.Fatalf("期望 not_found，得 %s %v", codeOf(err), err)

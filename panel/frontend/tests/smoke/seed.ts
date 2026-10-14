@@ -1,17 +1,19 @@
 import { spawn, spawnSync } from 'node:child_process'
-import { createHash, createHmac, generateKeyPairSync, randomBytes, randomUUID, sign } from 'node:crypto'
-import { appendFileSync, readFileSync, writeFileSync } from 'node:fs'
+import { createCipheriv, createHash, hkdfSync, randomBytes, randomUUID } from 'node:crypto'
+import { appendFileSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 // ============================================================================
 //  输入
 // ============================================================================
 
-const stateDir = process.argv[2]
-if (!stateDir) {
+const stateDirArg = process.argv[2]
+if (!stateDirArg) {
   console.error('用法: node seed.ts <状态目录>')
   process.exit(2)
 }
+// 函数里也要用：模块顶层的收窄不会带进函数体
+const stateDir: string = stateDirArg
 
 function readEnvFile(path: string): Record<string, string> {
   const out: Record<string, string> = {}
@@ -29,18 +31,22 @@ function need(env: Record<string, string>, key: string): string {
 }
 
 const smokeEnv = readEnvFile(join(stateDir, 'smoke.env'))
-const gatewayEnv = readEnvFile(join(stateDir, 'gateway.env'))
+const stackEnv = readEnvFile(join(stateDir, 'stack.env'))
 const PUB = need(smokeEnv, 'SMOKE_PUBLIC_BASE')
 const ADM = need(smokeEnv, 'SMOKE_ADMIN_BASE')
-const NODE = need(smokeEnv, 'SMOKE_NODE_BASE')
 const ADMIN_EMAIL = need(smokeEnv, 'SMOKE_ADMIN_EMAIL')
 const ADMIN_PASSWORD = need(smokeEnv, 'SMOKE_ADMIN_PASSWORD')
 const PG_CONTAINER = need(smokeEnv, 'SMOKE_PG_CONTAINER')
 const PG_DB = need(smokeEnv, 'SMOKE_PG_DB')
-const MASTER_KEY = Buffer.from(need(gatewayEnv, 'AEGIS_MASTER_KEY'), 'base64')
-const TENANT = '00000000-0000-7000-8000-000000000001'
+const SMOKE_NODESIM = need(smokeEnv, 'SMOKE_NODESIM')
+const MASTER_KEY = Buffer.from(need(stackEnv, 'PANDORA_SECRETS_MASTER_KEY'), 'base64')
 // 插件投递接收端的端口：只在 runner 上、只听回环
 const HOOK_PORT = 18089
+
+// 易支付渠道：商户号与密钥现场生成，只活在本进程内存，不写进 seed.json
+const PROVIDER = 'smokepay'
+const EPAY_MERCHANT = `smk${randomBytes(3).toString('hex')}`
+const EPAY_KEY = randomBytes(16).toString('hex')
 
 // ============================================================================
 //  HTTP：每个请求都声明期望状态码，不符就带响应片段退出
@@ -60,7 +66,7 @@ interface Call {
   headers?: Record<string, string>
 }
 
-// 后台 IP 限流每分钟 240 次写死在代码里（验收认可在脚本里控节奏）：后台请求之间留 300ms
+// 后台请求之间留 300ms，免得一口气打满按路由的限流
 let lastAdminCall = 0
 async function paceAdmin(base: string): Promise<void> {
   if (base !== ADM) return
@@ -104,25 +110,110 @@ function step(title: string): void {
   console.log(`==> ${title}`)
 }
 
-/** SQL 夹具：以迁移账号（超级用户 postgres，与直装的迁移同一身份）直连冒烟库。只用于产品接口造不出来的数据，每处都写明为什么 */
+/** SQL 夹具：以容器里的超级用户 postgres 直连冒烟库（绕开只追加表的触发器与应用角色的权限）。只用于产品接口造不出来的数据，每处都写明为什么 */
 function sqlFixture(what: string, sql: string): void {
   const r = spawnSync('docker', ['exec', '-i', PG_CONTAINER, 'psql', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres', '-d', PG_DB], { input: sql, encoding: 'utf8' })
   if (r.status !== 0) throw new Error(`SQL 夹具「${what}」失败：${r.stderr}`)
 }
 
-/** 演示渠道的签名回调：HMAC-SHA256(主密钥, event_id|order_id|amount|currency)，与 demo 适配器同一口径 */
-async function demoWebhook(orderId: string, amount: number, currency: string): Promise<Json> {
-  const eventId = `evt-smoke-${randomUUID()}`
-  const signature = createHmac('sha256', MASTER_KEY).update(`${eventId}|${orderId}|${amount}|${currency}`).digest('hex')
-  return call(PUB, '/v1/webhooks/payments/demo', {
-    idem: `wh-${eventId}`,
-    headers: { 'X-Aegis-Signature': signature },
-    body: { event_id: eventId, event_type: 'payment.succeeded', payment_id: `pay-${eventId}`, order_id: orderId, amount, currency, fee: 0 },
-  })
+/** 易支付 MD5 签名：非空参数按名升序拼 k=v&，末尾接密钥（与 panel/tests/epay_e2e.sh 同一口径） */
+function epaySign(params: Record<string, string>, key: string): string {
+  const kv = Object.entries(params).filter(([k, v]) => v && k !== 'sign' && k !== 'sign_type')
+  kv.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+  return createHash('md5')
+    .update(kv.map(([k, v]) => `${k}=${v}`).join('&') + key)
+    .digest('hex')
+}
+
+/** 易支付异步通知：GET 真实回调地址，回执须为 success */
+async function epayNotify(outTradeNo: string, money: string): Promise<void> {
+  const params: Record<string, string> = {
+    pid: EPAY_MERCHANT,
+    trade_no: `SMK${randomUUID().replace(/-/g, '').slice(0, 16)}`,
+    out_trade_no: outTradeNo,
+    type: 'alipay',
+    name: 'smoke',
+    money,
+    trade_status: 'TRADE_SUCCESS',
+  }
+  params.sign = epaySign(params, EPAY_KEY)
+  params.sign_type = 'MD5'
+  const res = await fetch(`${PUB}/v1/webhooks/payments/${PROVIDER}?${new URLSearchParams(params)}`)
+  const text = (await res.text()).trim()
+  if (text !== 'success') throw new Error(`易支付回调回执不是 success：${text.slice(0, 300)}`)
+}
+
+/** 发起支付并从 redirect_url 取商户单号与金额，再送签名回调 */
+async function payOrder(token: string, orderId: string): Promise<{ outTradeNo: string; money: string }> {
+  const pay = await call(PUB, `/v1/orders/${orderId}/pay`, { token, body: { provider: PROVIDER }, expect: [200, 201] })
+  const url = new URL(str(pay, 'redirect_url'))
+  const outTradeNo = url.searchParams.get('out_trade_no')
+  const money = url.searchParams.get('money')
+  if (!outTradeNo || !money) throw new Error(`redirect_url 缺少 out_trade_no 或 money：${str(pay, 'redirect_url')}`)
+  await epayNotify(outTradeNo, money)
+  return { outTradeNo, money }
+}
+
+async function subscriptionOf(token: string, planId: string): Promise<string> {
+  const subs = ((await call(PUB, '/v1/me/subscriptions', { token })).subscriptions as Json[] | undefined) ?? []
+  const row = subs.find((s) => s.plan_id === planId)
+  if (!row) throw new Error(`订阅列表里没有 plan_id=${planId}：${JSON.stringify(subs).slice(0, 300)}`)
+  return str(row, 'id')
+}
+
+interface SimNodeStatus {
+  user_count: number
+}
+
+interface SimServerStatus {
+  enrolled: boolean
+  connected: boolean
+  traffic_reports_acked: number
+  online_reports_sent: number
+  nodes: Record<string, SimNodeStatus | undefined>
+}
+
+interface SimSnapshot {
+  servers: Record<string, SimServerStatus | undefined>
+}
+
+function simStatus(): SimSnapshot | null {
+  try {
+    return JSON.parse(readFileSync(join(stateDir, 'nodesim', 'status.json'), 'utf8')) as SimSnapshot
+  } catch {
+    return null
+  }
+}
+
+function tailLog(path: string, lines: number): string {
+  try {
+    const all = readFileSync(path, 'utf8').split('\n')
+    return all.slice(-lines).join('\n')
+  } catch {
+    return '(日志读不到)'
+  }
+}
+
+async function waitSim(desc: string, ok: (s: SimSnapshot) => boolean, timeoutMs: number): Promise<SimSnapshot> {
+  const deadline = Date.now() + timeoutMs
+  const statusPath = join(stateDir, 'nodesim', 'status.json')
+  const logPath = join(stateDir, 'logs', 'nodesim.log')
+  while (Date.now() < deadline) {
+    const s = simStatus()
+    if (s && ok(s)) return s
+    await new Promise((r) => setTimeout(r, 1000))
+  }
+  let statusText = '(读不到)'
+  try {
+    statusText = readFileSync(statusPath, 'utf8')
+  } catch {
+    /* ignore */
+  }
+  throw new Error(`${desc} 超时（${timeoutMs}ms）。status.json：${statusText.slice(0, 800)}\n\nnodesim.log 末 30 行：\n${tailLog(logPath, 30)}`)
 }
 
 // ============================================================================
-//  后台登录。登录签发的令牌自带 15 分钟 reauth 窗口，整条链几分钟内跑完，用不上重认证
+//  后台登录。口令登录本身算一次重认证（15 分钟窗口记在会话里），整条链几分钟内跑完
 // ============================================================================
 
 step('管理员登录')
@@ -157,9 +248,7 @@ const planId = str(plan, 'plan.id')
 const versionId = str(plan, 'version_id')
 
 // ============================================================================
-//  新服务器 + 新节点一步上线（R108 / R113）：后台建服务器与节点 → 节点抽屉签发接入令牌 →
-//  节点端两段式接入（Ed25519 签名，与 pdnd/panel/enrollment.go 同一套规范串）→ POST activate。
-//  不再逐级调旧 status 接口。运行令牌由「节点」自己生成，面板只存哈希，UniProxy 用它认证
+//  服务器 → 节点 → 接入令牌 → nodesim（真实 pdnd 客户端）→ activate → 发布套餐版本
 // ============================================================================
 
 step('服务器（草稿）')
@@ -173,96 +262,76 @@ const serverId = str(
 )
 
 step('节点（草稿，划进池）')
-const nodeType = 'shadowsocks'
-const nodeName = 'smoke-node-1'
 const nodeId = str(
   await call(ADM, '/v1/nodes', {
     token: admin,
     idem: true,
     body: {
-      name: nodeName,
+      name: 'smoke-node-1',
       server_id: serverId,
       pool_id: poolId,
-      node_type: nodeType,
+      node_type: 'shadowsocks',
       server_host: 'edge.example.test',
       server_port: 8388,
-      kernel: 'auto',
       traffic_rate: 1,
       display_name: 'Smoke 01',
-      protocol_config: { method: 'aes-256-gcm' },
+      protocol_config: { cipher: 'aes-256-gcm' },
     },
     expect: 201,
   }),
   'id',
 )
 
-step('签发接入令牌（节点抽屉「身份」页同一个接口）')
-// 令牌哈希里带节点名，接入时 node_name 必须一字不差；按节点签发而不是按服务器——服务器那条会拿服务器名当节点名
-const bootstrapToken = str(
-  await call(ADM, '/v1/nodes/bootstrap-token', { token: admin, idem: true, body: { node_name: nodeName, ttl_minutes: 30, server_id: serverId }, expect: 201 }),
-  'token',
+step('服务器接入令牌')
+const boot = await call(ADM, `/v1/servers/${serverId}/bootstrap-token`, { token: admin, idem: true, body: {}, expect: 201 })
+const token = str(boot, 'token')
+const installCommand = str(boot, 'install_command')
+const panelMatch = /--panel\s+'([^']+)'/.exec(installCommand)
+const caMatch = /--ca-sha256\s+'([^']+)'/.exec(installCommand)
+if (!panelMatch || !caMatch) throw new Error(`install_command 解析不到 panel 或 ca-sha256：${installCommand.slice(0, 400)}`)
+const panel = panelMatch[1]!
+const ca = caMatch[1]!
+
+step('拉起 nodesim（gRPC 接入，不起内核）')
+const simDir = join(stateDir, 'nodesim')
+mkdirSync(join(simDir, 'state'), { recursive: true })
+mkdirSync(join(stateDir, 'logs'), { recursive: true })
+const tokensFile = join(simDir, 'tokens')
+writeFileSync(tokensFile, `s1 ${token}\n`, { mode: 0o600 })
+const nodesimLog = join(stateDir, 'logs', 'nodesim.log')
+const logFd = openSync(nodesimLog, 'a')
+const sim = spawn(
+  SMOKE_NODESIM,
+  [
+    '--panel',
+    panel,
+    '--ca-sha256',
+    ca,
+    '--tokens-file',
+    tokensFile,
+    '--state-dir',
+    join(simDir, 'state'),
+    '--status-file',
+    join(simDir, 'status.json'),
+    '--report-interval',
+    '5s',
+  ],
+  { detached: true, stdio: ['ignore', logFd, logFd] },
 )
+sim.unref()
+appendFileSync(join(stateDir, 'pids'), `${sim.pid}\n`)
 
-step('节点端两段式接入：begin → commit')
-const { publicKey, privateKey } = generateKeyPairSync('ed25519')
-// 公钥是原始 32 字节的标准 base64（不是 SPKI）
-const publicKeyRaw = publicKey.export({ format: 'der', type: 'spki' }).subarray(-32).toString('base64')
-const sha256b64 = (text: string) => createHash('sha256').update(text, 'utf8').digest('base64')
-const signB64 = (canonical: string) => sign(null, Buffer.from(canonical, 'utf8'), privateKey).toString('base64')
-// 运行令牌：节点生成，32 字节 base64url 无填充（与 pdnd 同形），面板只收 sha256
-const runtimeToken = randomBytes(32).toString('base64url')
-const requestId = randomUUID()
-const beginPath = '/v1/nodes/enrollments'
-const beginBody = JSON.stringify({
-  token: bootstrapToken,
-  node_name: nodeName,
-  request_id: requestId,
-  public_key: publicKeyRaw,
-  runtime_token_sha256: sha256b64(runtimeToken),
-  agent_version: 'smoke',
-  hostname: 'smoke-host',
-})
-const begin = await call(NODE, beginPath, {
-  rawBody: beginBody,
-  headers: { 'X-Enrollment-Signature': signB64(['PANDORA-NODE-ENROLL-BEGIN-V1', 'POST', beginPath, requestId, sha256b64(beginBody)].join('\n')) },
-  expect: 201,
-})
-const enrollmentId = str(begin, 'enrollment_id')
-if (str(begin, 'node_id') !== nodeId) throw new Error(`接入落到了别的节点上：${JSON.stringify(begin)}`)
-const serial = num(begin, 'serial')
-
-const commitPath = `/v1/nodes/enrollments/${enrollmentId}/commit`
-// 四个摘要在非生产且未配置发布物钉值时只校验格式（64 位小写十六进制）
-const commitBody = JSON.stringify({
-  agent_version: 'smoke',
-  architecture: 'amd64',
-  binary_sha256: '1'.repeat(64),
-  config_sha256: '2'.repeat(64),
-  unit_sha256: '3'.repeat(64),
-  preflight_sha256: '4'.repeat(64),
-})
-// 时间戳精确到秒的 RFC3339（toISOString 带毫秒，会被拒）；nonce 16 字节 base64url 无填充，一次一用
-const ts = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')
-const nonce = randomBytes(16).toString('base64url')
-const commit = await call(NODE, commitPath, {
-  rawBody: commitBody,
-  headers: {
-    'X-Node-Id': nodeId,
-    'X-Node-Serial': String(serial),
-    'X-Node-Ts': ts,
-    'X-Node-Nonce': nonce,
-    'X-Node-Sig': signB64(['PANDORA-NODE-ENROLLMENT-V1', 'POST', commitPath, enrollmentId, nodeId, String(serial), ts, nonce, sha256b64(commitBody)].join('\n')),
-  },
-})
-if (commit.state !== 'committed') throw new Error(`接入提交后状态不是 committed：${JSON.stringify(commit)}`)
+step('等 nodesim 接入完成（enrolled + connected）')
+await waitSim('nodesim 接入', (s) => {
+  const srv = s.servers.s1
+  return Boolean(srv?.enrolled && srv?.connected)
+}, 60_000)
 
 step('一步上线：POST activate')
-// 接入推了两次生命周期（draft → bootstrapping → attesting），row_version 要重读
-const listed = ((await call(ADM, '/v1/nodes?limit=1000', { token: admin })).nodes as Json[]).find((n) => n.id === nodeId)
-if (!listed) throw new Error('节点列表里找不到刚接入的节点')
+const listed = ((await call(ADM, `/v1/nodes?id=${nodeId}&include_retired=1`, { token: admin })).nodes as Json[]).find((n) => n.id === nodeId)
+if (!listed) throw new Error('节点列表里找不到刚建的节点')
 const activated = await call(ADM, `/v1/nodes/${nodeId}/activate`, { token: admin, idem: true, body: { row_version: num(listed, 'row_version') } })
 if (activated.status !== 'active' || activated.serving_status !== 'active') throw new Error(`上线后状态不对：${JSON.stringify(activated).slice(0, 300)}`)
-// warnings 缺省表示没有提示（R113）；出现就说明池或套餐绑定没接上，节点不会服务任何人
 if (activated.warnings !== undefined) throw new Error(`上线带了提示：${JSON.stringify(activated.warnings)}`)
 
 step('发布套餐版本（绑定池里现在有可服务节点了）')
@@ -276,33 +345,37 @@ await call(ADM, `/v1/plans/${planId}/versions/${versionId}/publish`, {
   body: { expected_plan_row_version: num(detail, 'row_version'), expected_version_row_version: num(version, 'row_version') },
 })
 
-step('UniProxy 心跳（运行令牌认证）')
-const uni = (path: string) => `/api/v1/server/UniProxy/${path}?node_id=${nodeId}&node_type=${nodeType}`
-await call(NODE, uni('status'), {
-  token: runtimeToken,
-  body: { cpu: 12.5, mem: { total: 1073741824, used: 536870912 }, swap: { total: 0, used: 0 }, disk: { total: 10737418240, used: 2147483648 } },
+// ============================================================================
+//  易支付渠道：后台接口建 epay，收银台指向回环上无人听的端口，只用来拼跳转地址；
+//  allow_private_host 只在 env=development 放行
+// ============================================================================
+
+step('易支付渠道 smokepay')
+await call(ADM, '/v1/payment-providers', {
+  token: admin,
+  idem: true,
+  body: {
+    code: PROVIDER,
+    adapter: 'epay',
+    display_name: '冒烟易支付',
+    base_url: 'http://127.0.0.1:9',
+    submit_path: '/submit.php',
+    api_path: '/api.php',
+    methods: ['alipay'],
+    default_method: 'alipay',
+    allow_private_host: true,
+    min_amount: 100,
+    merchant_id: EPAY_MERCHANT,
+    key: EPAY_KEY,
+  },
+  expect: [200, 201],
 })
-
-// ============================================================================
-//  演示支付渠道（SQL 夹具）：后台没有新建渠道的接口，只能照 deploy/seed-demo.sql 那一句插入
-//  （那份种子还会建一套 USD 目录，这里只取渠道；币种加上 CNY 以便付 CNY 套餐）
-// ============================================================================
-
-step('演示支付渠道（SQL 夹具，照 seed-demo.sql）')
-sqlFixture(
-  '演示支付渠道',
-  `BEGIN;
-SET LOCAL app.tenant_id = '${TENANT}';
-INSERT INTO payment_providers (tenant_id, code, adapter, display_name, supported_currencies, enabled, accepting_new)
-VALUES ('${TENANT}', 'demo', 'demo_hmac', '演示支付渠道', ARRAY['CNY','USD']::app.currency_code[], true, true)
-ON CONFLICT (tenant_id, code) DO UPDATE SET enabled = true, accepting_new = true;
-COMMIT;`,
-)
+await call(ADM, `/v1/payment-providers/${PROVIDER}/toggle`, { token: admin, body: { enabled: true, accepting_new: true } })
 
 // ============================================================================
 //  插件钩子：必须先于事件存在（Emit 与业务写入同一事务入队）。接收端是本机回环上的独立进程，
-//  devMode（AEGIS_ENV 非 production）下面板本来就放行回环地址——不改 Go、不放宽任何校验。
-//  投递由 aegis-public 的扫描器异步发出（启动 20 秒后第一次，之后每 60 秒），这里不等
+//  env=development 下面板放行回环地址——不改 Go、不放宽任何校验。
+//  投递由 worker 的 plugin:dispatch 发出（建工单提交后入队，另每分钟巡检一次），这里不等
 // ============================================================================
 
 step('插件钩子：拉起本机接收端，建钩子订阅 ticket.created')
@@ -367,7 +440,7 @@ const inviteePassword = `Smoke-Invitee-${randomUUID()}`
 const inviteeId = await register(inviteeEmail, inviteePassword, inviteCode)
 
 // ============================================================================
-//  订单：一张经演示渠道付清（开出订阅），一张留在待支付
+//  订单：一张经易支付付清（开出订阅），一张留在待支付
 // ============================================================================
 
 step('门户下单')
@@ -377,12 +450,10 @@ if (!onSale) throw new Error(`门户套餐目录里没有刚发布的套餐：${
 const priceId = str((onSale.prices as Json[])[0] ?? {}, 'id')
 const order = await call(PUB, '/v1/orders', { token: user, idem: true, body: { plan_id: planId, price_id: priceId, use_balance: 0 }, expect: [200, 201] })
 const orderId = str(order, 'order_id')
-const amount = num(order, 'payable_amount')
-const currency = str(order, 'currency')
 
-step('演示渠道支付：发起支付意图，再送签名回调')
-await call(PUB, `/v1/orders/${orderId}/pay`, { token: user, body: { provider: 'demo' }, expect: [200, 201] })
-const subscriptionId = str(await demoWebhook(orderId, amount, currency), 'subscription_id')
+step('易支付付清第一张单')
+const paid = await payOrder(user, orderId)
+const subscriptionId = await subscriptionOf(user, planId)
 
 step('第二张订单留在待支付（同套餐只续不新开：在刚开出的订阅上建一张续费单）')
 const pendingOrderId = str(
@@ -394,28 +465,30 @@ step('被邀请人下单并付清：推荐人的佣金明细不空')
 // 佣金只在被邀请人付款时记一笔；同 IP 会被标待复核、不会解冻，但明细照样有这一行
 const invitee = await portalLogin(inviteeEmail, inviteePassword)
 const inviteeOrder = await call(PUB, '/v1/orders', { token: invitee, idem: true, body: { plan_id: planId, price_id: priceId, use_balance: 0 }, expect: [200, 201] })
-const inviteeSubscriptionId = str(
-  await demoWebhook(str(inviteeOrder, 'order_id'), num(inviteeOrder, 'payable_amount'), str(inviteeOrder, 'currency')),
-  'subscription_id',
+await payOrder(invitee, str(inviteeOrder, 'order_id'))
+const inviteeSubscriptionId = await subscriptionOf(invitee, planId)
+
+step('挂账：对已付清的订单再送一笔新的回调（新 trade_no），落进 excess_capture')
+// 挂账只由支付回调产生（已付或已取消的订单又收到钱），没有后台新建接口
+await epayNotify(paid.outTradeNo, paid.money)
+
+// ============================================================================
+//  节点上报：名单经会话下发，nodesim 每 5 秒为名单里的用户报一批流量与在线 IP，面板入账后回 ack；
+//  流量排行、按日用量、在线设备都在入账时同步写入
+// ============================================================================
+
+step('等 nodesim 名单与流量、在线上报')
+await waitSim(
+  'nodesim 名单与上报',
+  (s) => {
+    const srv = s.servers.s1
+    const node = srv?.nodes?.[nodeId]
+    return Boolean(
+      node && node.user_count >= 2 && (srv?.traffic_reports_acked ?? 0) >= 1 && (srv?.online_reports_sent ?? 0) >= 1,
+    )
+  },
+  120_000,
 )
-
-step('挂账：对已付清的订单再送一笔新的回调（新 event_id / payment_id），落进 excess_capture')
-// 挂账只由支付回调产生（已付或已取消的订单又收到钱），没有后台新建接口；这是最便宜的真实路径
-await demoWebhook(orderId, amount, currency)
-
-// ============================================================================
-//  节点上报：取用户列表 → 流量 → 在线 IP。流量排行、按日用量、在线设备只由节点上报产生，
-//  都是同步写入，不等后台任务。uid 是订阅的 node_uid，只能从节点拿到的用户列表里取
-// ============================================================================
-
-step('节点取用户列表，上报流量与在线 IP')
-const userList = await call(NODE, uni('user'), { token: runtimeToken })
-// 响应可能被包一层 data，也可能不包：两种都认
-const nodeUsers = ((userList.users ?? (userList.data as Json | undefined)?.users) as Json[] | undefined) ?? []
-if (nodeUsers.length === 0) throw new Error(`上线的节点取不到任何用户：${JSON.stringify(userList).slice(0, 300)}`)
-const nodeUid = String(nodeUsers[0]!.id)
-await call(NODE, uni('push'), { token: runtimeToken, body: { [nodeUid]: [1048576, 4194304] } })
-await call(NODE, uni('alive'), { token: runtimeToken, body: { [nodeUid]: ['198.51.100.7'] } })
 
 // ============================================================================
 //  路由：全局与单节点各一条规则（出站用内置的 block / direct），请求体与节点页「发布」同形
@@ -506,7 +579,9 @@ const pack = await call(ADM, '/v1/traffic-packs', {
 })
 const packId = str(pack, (pack.pack as Json | undefined) ? 'pack.id' : 'id')
 // 流量包加到一份在用的套餐上（购买模型统一 Q5：subscription_id 必填）
-await call(PUB, '/v1/me/traffic-pack-orders', { token: user, idem: true, body: { pack_id: packId, subscription_id: subscriptionId, use_balance: 500, coupon_code: '' }, expect: [200, 201] })
+const packOrder = await call(PUB, '/v1/me/traffic-pack-orders', { token: user, idem: true, body: { pack_id: packId, subscription_id: subscriptionId, use_balance: 500, coupon_code: '' }, expect: [200, 201] })
+// 应付为 0 的流量包单当场履约：响应里就该是 fulfilled，否则下面「我的流量包」必然为空
+if (packOrder.status !== 'fulfilled') throw new Error(`流量包单没有当场履约：${JSON.stringify(packOrder).slice(0, 400)}`)
 
 step('收入调整与手动流量重置')
 await call(ADM, '/v1/revenue/adjustments', { token: admin, idem: true, body: { currency: 'CNY', amount: 1000, reason: 'smoke adjustment', effective_on: '' }, expect: [200, 201] })
@@ -514,20 +589,21 @@ await call(ADM, '/v1/revenue/adjustments', { token: admin, idem: true, body: { c
 await call(ADM, `/v1/subscriptions/${subscriptionId}/traffic-reset`, { token: admin, idem: true, body: { note: 'smoke manual reset' }, expect: [200, 201] })
 
 // ============================================================================
-//  提现申请（SQL 夹具）。产品路径走不通冒烟：佣金要被邀请人付款后由 aegis-admin 的
-//  SettleMatured 解冻（启动时一次、之后每小时），且推荐人与买家同 IP 时佣金被标为待复核、
-//  没有接口能解除——冒烟里所有请求都来自 127.0.0.1。按 withdrawals 的守卫触发器只能插 requested
+//  提现申请（SQL 夹具）。产品路径走不通冒烟：佣金只由 worker 每小时的 commission:settle 在冻结期满后解冻，
+//  推荐人与买家同 IP 的佣金被标待复核；冒烟等不了。收款信息须封存：
+//  [版本 1][key id 1][12 字节 nonce][密文 + 16 字节 tag]，HKDF-SHA256 空盐，AAD 为 withdrawal.payout:<用户 id>
 // ============================================================================
 
 step('提现申请（SQL 夹具）')
+const sealKey = Buffer.from(hkdfSync('sha256', MASTER_KEY, Buffer.alloc(0), 'pandora/seal/v1', 32))
+const sealNonce = randomBytes(12)
+const sealCipher = createCipheriv('aes-256-gcm', sealKey, sealNonce)
+sealCipher.setAAD(Buffer.from(`withdrawal.payout:${userId}`, 'utf8'))
+const sealCt = Buffer.concat([sealCipher.update('支付宝 smoke@example.test', 'utf8'), sealCipher.final(), sealCipher.getAuthTag()])
+const sealed = Buffer.concat([Buffer.from([1, 1]), sealNonce, sealCt]).toString('hex')
 sqlFixture(
   '提现申请',
-  `BEGIN;
-SET LOCAL app.tenant_id = '${TENANT}';
-SET LOCAL app.actor_id = '${userId}';
-INSERT INTO withdrawals (tenant_id, user_id, currency, amount, status)
-VALUES ('${TENANT}', '${userId}', 'CNY', 100, 'requested');
-COMMIT;`,
+  `INSERT INTO withdrawals (user_id, currency, amount, payout_sealed, status) VALUES ('${userId}', 'CNY', 1.00, decode('${sealed}', 'hex'), 'requested');`,
 )
 
 // ============================================================================
@@ -598,9 +674,6 @@ writeFileSync(
       pool_id: poolId,
       server_id: serverId,
       node_id: nodeId,
-      node_type: nodeType,
-      // 节点自己生成的运行令牌：冒烟以节点身份取用户列表要用；状态目录 0600，只活在 runner 上
-      node_runtime_token: runtimeToken,
       plan_id: planId,
       price_id: priceId,
       order_id: orderId,
@@ -614,6 +687,7 @@ writeFileSync(
       coupon_id: couponId,
       pack_id: packId,
       hook_code: hookCode,
+      provider_code: PROVIDER,
     },
     null,
     2,

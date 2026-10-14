@@ -13,14 +13,9 @@ import (
 // 与根 CLAUDE.md「单文件 ≤800 行」同一个数，按 wc -l 的口径数换行符。
 const maxGoFileLines = 800
 
-// 逐个登记的豁免。每一项都是「纯挪动拆不开」的文件：整个文件只剩一个超长的
-// 测试函数，子测试共享同一组连接与上下文，要再拆就得改函数体，超出第 5 阶段
-// 「只挪代码」的授权，等协调会话另派。文件拆到 800 行以内或被删掉时，本测试
-// 会要求把它从这里移走——豁免过期即红，不留死条目。
-var lineLimitExemptFiles = map[string]string{
-	"internal/middleware/idempotency_pg18_test.go":       "TestIdempotencyMiddlewarePG18 单个函数 983 行",
-	"internal/domain/billing/order_release_pg18_test.go": "TestOrderReleasePG18 单个函数 832 行",
-}
+// 逐个登记的豁免（当前没有）。文件拆到 800 行以内或被删掉时，本测试会要求把它
+// 从这里移走——豁免过期即红，不留死条目。加豁免要用户授权。
+var lineLimitExemptFiles = map[string]string{}
 
 func TestGoFilesStayWithinLineLimit(t *testing.T) {
 	root := moduleRoot(t)

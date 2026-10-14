@@ -1,4 +1,4 @@
-// 端到端：pdnd NativeCore 按「面板下发给节点的配置」（BuildNodeConfig 的真实输出）起入站，
+// 端到端：pdnd NativeCore 按「面板下发给节点的配置文档」（node/service 的 buildNodeConfigDoc 真实输出）起入站，
 // sing-box 客户端按「面板渲染给用户的 sing-box 订阅」里的出站去连，
 // 经 SOCKS 拉一个本地 HTTP 目标，拿到约定的响应体才算通。
 //
@@ -132,12 +132,12 @@ func main() {
 	must(err)
 	quietServe(destLn, "decoy")
 
-	// 节点端配置取自真实的 BuildNodeConfig 输出（nodefabric 的 overlay 测试生成）
+	// 节点端配置取自真实的 buildNodeConfigDoc 输出（node/service 的 overlay 测试生成）
 	var nodeCfg map[string]map[string]any
 	raw, err := os.ReadFile(filepath.Join(*outDir, "node_config.json"))
 	must(err)
 	must(json.Unmarshal(raw, &nodeCfg))
-	// BuildNodeConfig 拒绝下发的夹具及原因（可能没有这个文件）
+	// buildNodeConfigDoc 拒绝的夹具及原因（可能没有这个文件）
 	nodeCfgErrs := map[string]string{}
 	if raw, err := os.ReadFile(filepath.Join(*outDir, "node_config_errors.json")); err == nil {
 		must(json.Unmarshal(raw, &nodeCfgErrs))

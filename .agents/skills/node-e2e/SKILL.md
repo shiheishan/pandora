@@ -9,7 +9,7 @@ description: pandora 真节点逐协议验证：在两台 1c1g 测试机上（�
 
 1. 真网络与真证书校验：节点证书由测试 CA 签、客户端系统信任该 CA，不靠 insecure 兜底。
 2. 多个独立客户端实现互相对照：sing-box、mihomo、xray、juicity 官方、mieru 官方。pdnd 自己的互操作测试大多对着 sing-box 系库跑，Xray 才是 VMess / Vision / XHTTP 的参考实现，这几个协议的缺陷常常只在 Xray 或「真 TLS1.3 内层流量」下才露。
-3. pdnd 走面板真实下发路径（签名配置 + 用户名单轮询/SSE）起入站，而不是测试里直接 new 适配器。
+3. pdnd 走面板真实下发路径（mTLS 的 gRPC 双向流下发配置文档与用户名单）起入站，而不是测试里直接 new 适配器。
 
 产出：`协议 × 客户端 × TCP/UDP` 矩阵、UDP 多会话结论、删人断线结论、整份订阅加载结论，写在 `ops-local/<轮次>/node-e2e/`（含真实 IP 与令牌，不进仓库）。2026-10-08 那一轮的结果在 `ops-local/vultr-test2/node-e2e/summary.md`。
 
@@ -55,7 +55,7 @@ description: pandora 真节点逐协议验证：在两台 1c1g 测试机上（�
    - 接入走面板下发的一键安装命令（后台签发令牌时给的 `curl … /pdnd/install.sh | sudo bash -s -- --panel <host:port> --ca-sha256 sha256:<指纹> --token <令牌>`）：脚本下载面板 `pdnd-dist` 里的官方包、核对校验和，用它 `pandora-native enroll --token-stdin` 换客户端证书（身份目录 `/var/lib/pandora-native/identity/`），写配置与 unit 并启动。之后服务二进制再换成待测构建，这也是"升级二进制不重新接入"的真实路径。
    - 一台服务器一个进程、一个身份：名下全部节点由面板经 gRPC 会话下发，`config.json` 里只有 `panel.address` 与 `panel.identity_dir`，没有节点列表。
    - 换服务二进制用 `node3-swap.sh`（`official | new | 绝对路径`），它会重启并等入站就绪。
-4. `python3 $S/panel-activate.py`：激活全部节点，**再**发布套餐（顺序同 loadtest seed；节点没激活时 pdnd 拉名单 401）。
+4. `python3 $S/panel-activate.py`：激活全部节点，**再**发布套餐（套餐绑的池里没有可服务的节点时发布不出去）。
 5. `JOB=... python3 $S/user-setup.py <个数> <前缀>`：后台批量生成用户 -> 赠送开单 -> 门户登录取订阅链接，追加写 `$R/users.json`（0600）。脚本中途失败时用 `JOB=<任务id>` 复用已生成的任务，免得多造用户。
    - **订阅每凭据每小时限 60 次**（超了回 429 `too many requests`，且 `fetch-subs.sh` 只在 200 时才覆盖本地快照）。所以至少建三类用户：拉订阅专用（`user3`）、断线对照（`user4`）、断线被处理（`user5`），别拿同一个用户反复拉。
 6. 订阅链接拷到客户端机的 `/root/node-e2e/sub-<用户>.url`（0600），`bash fetch-subs.sh user3` 按 clash.meta / sing-box / v2rayN 三种 UA 各拉一份到 `subs/`。节点配置变了（换 REALITY dest、改节点）要重拉。
@@ -107,8 +107,8 @@ sing-box 订阅带 TUN 入站、DoH 分流、远程规则集（经「节点选�
 
 ## 坑
 
-- **node 接入证据钉官方包摘要**：见步骤 1.3，不要试图让面板接受 dev 构建（那要改面板 `.env`、重启网关）。
-- **后台表单能存、节点不一定能起**：数字字段在签名下发路径上会被解成 json.Number，hy2 / tuic 的校验若不认，节点起不来（`bandwidth`、`heartbeat` 之类）；时间类字段先写成字符串（`"15s"`），遇到就登记缺陷。每个协议都要真起一遍，面板上看 `effective_state` / `delivery_degraded`，门户 `/nodes` 的数量也会少。
+- **node 接入证据钉官方包摘要**：见步骤 1.3，不要试图让面板接受 dev 构建（那要改面板 `/etc/pandora/` 下的配置、重启 `pandora-serve`）。
+- **后台表单能存、节点不一定能起**：数字字段在下发路径上（配置文档 JSON 经 gRPC 到节点，节点端按 json.Number 解码）会是 json.Number，hy2 / tuic 的校验若不认，节点起不来（`bandwidth`、`heartbeat` 之类）；时间类字段先写成字符串（`"15s"`），遇到就登记缺陷。每个协议都要真起一遍，面板上看 `effective_state` / `delivery_degraded`，门户 `/nodes` 的数量也会少。
 - **REALITY dest 别用 www.microsoft.com / www.cloudflare.com / dl.google.com**；apple、mozilla、lovelive 可用。`reality-dest-scan.sh` 逐个换 dest 看客户端通不通（每次要重拉订阅，注意限流）。
 - **Xray 26 删了 allowInsecure**：订阅 URI 里的 `allowInsecure=1` 对 Xray 内核客户端无效，带它的节点（trojan-tls-ws）起不来；harness 里 xray 不传 allowInsecure，靠测试 CA 系统信任。
 - **一个 SOCKS5 UDP ASSOCIATE 就是一个出站会话**：sing-box 的 hy2 / tuic 出站每个 ASSOCIATE 新开一个会话 ID，多会话测试靠这个。

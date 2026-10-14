@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """只读：找出哪些迁移的 Up 段定义或改过某个数据库对象，并打印当前生效那一版的原文。
 
-用途：CREATE OR REPLACE 别人的函数 / 视图时，Up 要在「当前生效那一版」上改，Down 要逐字
-还原成它。按迁移号从小到大扫 Up 段（Down 段不是现行结构），跳过 `--` 注释行。
+用途：CREATE OR REPLACE 已有的函数 / 视图（保留期清理函数、追加写守卫、各类 *_guard 触发器函数）时，
+Up 要在「当前生效那一版」上改，Down 要逐字还原成它；改约束、索引前也用它看最后一次定义在哪个迁移。
+按迁移号从小到大扫 Up 段（Down 段不是现行结构），跳过 `--` 注释行。
 
 用法：
   find-def.py <对象名> [--body] [--before <迁移号>]
-    <对象名>      如 app.seed_tenant_defaults、assert_plan_change_order_trigger、user_generation_jobs
+    <对象名>      如 purge_audit_events、server_identities_guard、ledger_transactions_kind_check、commission_entries
     --body        打印最后一次 CREATE 的完整语句（函数到结束的 $tag$ 与分号，其余到分号）
     --before N    只看号小于 N 的迁移：写 N 号迁移的 Down 时，「上一版」就是这里的最后一次 CREATE
 """
@@ -68,7 +69,7 @@ def main():
     a = ap.parse_args()
 
     root = subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip()
-    files = sorted(glob.glob(os.path.join(root, "panel", "migrations", "*.sql")))
+    files = sorted(glob.glob(os.path.join(root, "panel", "db", "migrations", "*.sql")))
     word = re.compile(r"(?<![\w])" + re.escape(a.name) + r"(?![\w])", re.I)
 
     last = None  # (文件, Up 行列表, 下标)

@@ -1,6 +1,6 @@
 ---
 name: deps-upgrade
-description: pandora 的依赖与工具链升级和漏洞扫描：govulncheck 扫 panel、pdnd、subscription-e2e/tools 三个模块（只看被调用的，另出只含发布物的视图）；升 Go 补丁版或小版本时要同步的全部位置；升级后必须重点跑的测试（防探测回落、REALITY H3、interop、runtime-acceptance、PG18）；go mod tidy 与新依赖审查；npm audit 与前端依赖；pdnd 里 fork 来的代码合上游；interop 与真机客户端的版本和 SHA 在哪改。用户或主 Agent 说「扫漏洞」「govulncheck」「升 Go」「升依赖」「go.mod 不 tidy」「引入新库」「npm audit」「合上游」「升 Xray / sing-box / mihomo 客户端」「dependabot PR」「依赖更新 PR 怎么处理」时使用。改完后的常规本地检查与等 CI 见 verify，CI 红了见 ci-triage。
+description: pandora 的依赖与工具链升级和漏洞扫描：govulncheck 扫 panel、pdnd、subscription-e2e/tools 三个模块（只看被调用的，另出只含发布物的视图）；升 Go 补丁版或小版本时要同步的全部位置；升级后必须重点跑的测试（防探测回落、REALITY H3、interop、runtime-acceptance、面板的 PG 用例）；go mod tidy 与新依赖审查；npm audit 与前端依赖；pdnd 里 fork 来的代码合上游；interop 与真机客户端的版本和 SHA 在哪改。用户或主 Agent 说「扫漏洞」「govulncheck」「升 Go」「升依赖」「go.mod 不 tidy」「引入新库」「npm audit」「合上游」「升 Xray / sing-box / mihomo 客户端」「dependabot PR」「依赖更新 PR 怎么处理」时使用。改完后的常规本地检查与等 CI 见 verify，CI 红了见 ci-triage。
 ---
 
 # 依赖与工具链升级
@@ -12,14 +12,15 @@ description: pandora 的依赖与工具链升级和漏洞扫描：govulncheck �
 ## 1. 扫漏洞
 
 ```bash
-bash .claude/skills/deps-upgrade/scripts/vulncheck.sh [输出目录]   # 会话里输出放 scratchpad
+bash .agents/skills/deps-upgrade/scripts/vulncheck.sh [输出目录]   # 会话里输出放 scratchpad
 ```
 
 - 要联网：拉 govulncheck、漏洞库和缺的工具链。沙箱里跑不通就关掉沙箱。
 - 退出码：0 表示没有被调用的漏洞，3 表示有，1 表示扫描出错。
 - 输出分两段，每条漏洞列出编号、模块版本、修复版本和第一条调用链：
   1. 三个模块各跑一次 `./...`。
-  2. 发布物视图：`GOOS=linux` 下只扫 panel 的 `./cmd/...`，以及 pdnd 的 `.` 与 `./cmd/pandora-h3-probe`。
+  2. 发布物视图：`GOOS=linux` 下只扫 panel 的 `./cmd/...`（就是 `pandora` 一个二进制），以及 pdnd 的 `.` 与 `./cmd/pandora-h3-probe`。
+  - `nodeapi` 经 replace 进了 panel 与 pdnd，跟着它们一起扫，不单独扫。
 - 脚本替你避开了三个坑：
   - **工具链**：本机默认的 Go 比 CI 新（10-09 本机 1.27.1，CI 1.26.9）。不设 `GOTOOLCHAIN=go<go.mod 版本>`，govulncheck 会按本机版本报标准库漏洞，和 CI、发布物对不上。
   - **tools 模块不 tidy**：`subscription-e2e/tools` 经 replace 跟随 pdnd，pdnd 的依赖一变它就不 tidy，`-mod=readonly` 下根本加载不了。脚本用 `-mod=mod` 扫，扫前备份 go.mod 和 go.sum，扫后还原。
@@ -54,16 +55,15 @@ git grep -nE 'go1\.2[0-9]|golang:1\.|GO_SERIES|Go 1\.2[0-9]|go 1\.2[0-9]' -- ':!
 
 | 位置 | 补丁版（1.26.x） | 小版本（→1.27） |
 |---|---|---|
-| `panel/go.mod`、`pdnd/go.mod` 的 `go` 指令 | 改 | 改 |
-| `.claude/skills/subscription-e2e/tools/go.mod` 的 `go` 指令：不能低于 pdnd，在该目录 `go mod tidy` 会自动抬 | 改 | 改 |
+| `panel/go.mod`、`pdnd/go.mod`、`nodeapi/go.mod` 的 `go` 指令 | 改 | 改 |
+| `.agents/skills/subscription-e2e/tools/go.mod` 的 `go` 指令：不能低于 pdnd，在该目录 `go mod tidy` 会自动抬 | 改 | 改 |
 | ops-local 下各轮压测 harness 的 go.mod（如 `nodescale/harness-src`、`vpcnode/harness`）：不入库，replace 到 pdnd，用前在各自目录 `go mod tidy` | 用前 tidy | 用前 tidy |
-| `.claude/skills/test-machine/scripts/install-toolchain.sh` 的 `GO_SERIES` 默认值与第 3 行用法注释；test-machine SKILL.md「装与 CI 同小版本的 Go（go.mod 的 1.26 系列）」 | 不用改：按系列取最新 | 改 |
+| `.agents/skills/test-machine/scripts/install-toolchain.sh` 的 `GO_SERIES` 默认值与第 3 行用法注释；test-machine SKILL.md「装与 CI 同小版本的 Go（go.mod 的 1.26 系列）」 | 不用改：按系列取最新 | 改 |
 | ops-local `memoh-ci/bootstrap.sh` 的 `GO_SERIES` 与第 9 行注释（检查机，不入库） | 不用改 | 改，并在检查机重跑 bootstrap |
-| `panel/deploy/test-*-pg18.sh`：3 个文件的 `GO_IMAGE` 默认 `golang:1.26`，以及 checkout-atomic-00039、order-release-00040（两处）的 `go1.26.*` 判断。这些单跑的 runner CI 不调；CI 的 panel-pg18 走 `run-pg18-gates.sh`，它的 `require_go_version` 按 go.mod 的主次版本动态比，不用改 | 不用改。注意本机 docker 里缓存的 `golang:1.26` 可能是旧补丁，先 `docker pull` | 改，否则手动跑这些 runner 会直接退出 |
-| `panel/deploy/platform.sh` 的 `pandora_go_version_ok`（`-ge 26`）与 `migrate-to-new-host.sh:74` 的「Go 1.26+」提示 | 不用改 | 改，跟 go 指令的最低小版本一致 |
-| `README.md:9`、`README.md:215`、根 `CLAUDE.md:5` 的「Go 1.26」 | 不用改 | 改 |
+| `panel/deploy/platform.sh` 的 `pandora_go_version_ok`（`-ge 26`） | 不用改 | 改，跟 go 指令的最低小版本一致 |
+| `README.md`、`docs/architecture.md` 里写的「Go 1.26」「Go 1.26.9」（用上面的 grep 找行） | 不用改 | 改 |
 | 根 `CLAUDE.md`「环境与工具坑」里写死的本机 `GOTOOLCHAIN=go1.26.9`（verify 已写成 `go<go.mod 版本>`，不用改） | 改（并确认本机模块缓存里有新版本的工具链） | 改 |
-| `rules/pdnd-kernel.md:24`（「认证失败的回落」末条）写死的 `GOTOOLCHAIN=go1.26.9` | 改 | 改 |
+| `.claude/rules/pdnd-kernel.md` 里写死的 `GOTOOLCHAIN=go1.26.9`（用上面的 grep 找行） | 改 | 改 |
 | **sing-box 的 go:linkname 前提**：`pdnd/go.mod` 的 sing-box v1.13.14 在 `transport/v2rayhttp/force_close.go:46` 用 `//go:linkname` 取 `golang.org/x/net/http2.(*Transport).connPool`；Go 1.27 下该符号不存在（本机 1.27.1 已复现：pdnd 与 subscription-e2e/tools 链接失败） | 不涉及 | **先解决再升**：换到不再依赖该符号的 sing-box 版本，或等 x/net 在 1.27 下可用；两个模块的 sing-box 版本要一致（第 4 节） |
 | `.github/workflows/*.yml`：setup-go 全部用 `go-version-file`，装 go 指令那个精确版本（go.mod 没有 `toolchain` 行），没有写死版本 | 不用改 | 不用改 |
 
@@ -90,7 +90,7 @@ GOTOOLCHAIN=go<新版本> go test ...    # 升级后
 | ShadowTLS 诱饵中继 | TLS 记录层与超时 | `internal/nativewire/shadowtls/service_test.go` |
 | REALITY over QUIC / H3 | `internal/reality` 与 `internal/realityquic` 对标准库 crypto 的引用 | `kernel` 的 `TestNativeRealityH3RoundTrip`、`cmd/pandora-h3-probe` 的 `TestProcessProbeRoundTrip` |
 | XHTTP 服务端：`kernel/xhttp_server.go` | net/http 的 HTTP/2 响应写出 | `-tags interop` 的 Xray XHTTP 测试 |
-| 面板网关流式响应：`panel/internal/platform/server/stream.go`；证书签发 HTTP 客户端：`domain/certs` | net/http | panel 全量单测与 PG18 |
+| 面板 SSE 推送：`panel/internal/pkg/realtime/sse.go`；证书签发（lego）：`panel/internal/module/certs/service` | net/http | panel 全量单测与 CI 的 PG 用例（panel-newstack 的 test job） |
 
 **本机命令**（在 `pdnd/` 下；不要和 `npm ci` 并发；`<go.mod 版本>` 取 `pdnd/go.mod` 的 go 指令，如 `go1.26.9`）：
 
@@ -101,8 +101,8 @@ GOTOOLCHAIN=go<go.mod 版本> go test -count=1 -tags compat -p 1 ./...   # compa
 ```
 
 **只在 CI 跑的**：
-- 推送后照 verify skill 等 `wait-status.sh` 和 `wait-github.sh`。
-- runtime-acceptance（发布二进制在 Linux 上冷启动、SIGTERM 收尾）、ARM64 race、PG18 全部域门禁只有 GitHub 跑，升 Go 或升 pdnd、panel 依赖都要等到 `wait-github.sh` 退出 0。
+- 推送后照 verify skill 等 `wait-github.sh`。
+- runtime-acceptance（发布二进制在 Linux 上冷启动、SIGTERM 收尾）、ARM64 race、面板在 PG18 + Redis 上的测试与 e2e 只有 GitHub 跑，升 Go 或升 pdnd、panel 依赖都要等到 `wait-github.sh` 退出 0。
 
 **红了怎么判**：
 - 用 ci-triage 分流。
@@ -113,7 +113,7 @@ GOTOOLCHAIN=go<go.mod 版本> go test -count=1 -tags compat -p 1 ./...   # compa
 
 **升级**：
 - 在模块目录 `go get <模块>@<版本>`，然后 `go mod tidy`。看 `git diff go.mod`：会顺带抬哪些间接依赖（例如 w9cert 引入 lego 时一起抬了 x/crypto、x/net、x/text）。
-- pdnd 的依赖一变，再到 `.claude/skills/subscription-e2e/tools` 跑一次 `go mod tidy`（联网）。它经 replace 跟随 pdnd，sing-box 版本也要和 pdnd 一致（见 subscription-e2e skill）。这一步顺便把新版本拉进本机模块缓存，subscription-e2e 离线跑（`GOPROXY=off`）才找得到。
+- pdnd 的依赖一变，再到 `.agents/skills/subscription-e2e/tools` 跑一次 `go mod tidy`（联网）。它经 replace 跟随 pdnd，sing-box 版本也要和 pdnd 一致（见 subscription-e2e skill）。这一步顺便把新版本拉进本机模块缓存，subscription-e2e 离线跑（`GOPROXY=off`）才找得到。
 - 升完重跑 `vulncheck.sh`，确认目标漏洞消失，也没有新增。
 
 **tidy 检查**：
@@ -122,8 +122,8 @@ GOTOOLCHAIN=go<go.mod 版本> go test -count=1 -tags compat -p 1 ./...   # compa
 
 **新依赖审查**（参照 w9cert 引入 lego）：
 - 只 import 用到的子包。例如 lego 只引 cloudflare、alidns、tencentcloud 三个提供方，不引全量 providers。版本锁死。
-- **它会不会自己读进程环境变量**：panel 里只有 platform/config 能读环境变量，守卫 `envaccess_test.go` 只扫本仓库代码，管不到第三方库。库会读的变量要登记，先例是 `panel/internal/platform/config/acme.go` 的 `legoEnvExact` 及其启动告警；文档写进 `docs/node-certificates.md`。
-- 日志接到 slog：先例是 `domain/certs/issuer.go` 把 lego 的 `[WARN]`、`[INFO]` 前缀分别映射成 Warn、Info。HTTP 客户端能不能注入，决定了超时、代理和测试怎么做。
+- **它会不会自己读进程环境变量**：panel 的配置只经 `internal/pkg/config`（viper，`PANDORA_` 前缀）读环境变量，第三方库自己读的变量管不到。库会读的变量要登记，先例是 `panel/internal/module/certs/service/service.go` 的 `legoEnvExact` 与 `LibraryEnvWarnings`（worker 启动签发任务时告警）；文档写进 `docs/node-certificates.md`。
+- 日志接到 zap：先例是 `panel/internal/module/certs/service/issuer.go` 把 lego 的 `[WARN]`、`[INFO]` 前缀分别映射成 Warn、Info。HTTP 客户端能不能注入，决定了超时、代理和测试怎么做。
 - 许可证：AGPL 不能链进二进制（先例：juicity 只能跑在进程外，见 `rules/pdnd-build-boundary.md`）；GPL 的 fork 要保留 LICENSE。
 - pdnd 的默认构建只许 NativeCore：新依赖不能把 `core/xray`、`core/sing`、sing-box 拉进 `go list -deps .`。CI 的「Default dependency boundary」步骤会拦，本机先自查。
 - 引入后跑一遍 `vulncheck.sh`，结果写进任务报告。

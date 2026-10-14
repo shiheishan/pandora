@@ -61,7 +61,7 @@ func TestSiteDefaultsAndRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantDef := Site{Name: "Pandora", Timezone: "UTC", Currency: "USD"}
+	wantDef := Site{Name: "Pandora", Timezone: "UTC", Currency: "CNY"}
 	if site != wantDef {
 		t.Fatalf("default %+v want %+v", site, wantDef)
 	}

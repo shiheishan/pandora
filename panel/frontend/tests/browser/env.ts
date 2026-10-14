@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 // ============================================================================
-//  输入只从冒烟栈的状态目录读（smoke.env、gateway.env、seed.json），不写任何真实部署的值。
+//  输入只从冒烟栈的状态目录读（smoke.env、seed.json），不写任何真实部署的值。
 //  状态目录由 SMOKE_STATE 给出；产物（截图、trace、结果表）写到 BROWSER_OUT，缺省是状态目录下的 browser/
 // ============================================================================
 
@@ -29,7 +29,7 @@ export const STATE = (() => {
 
 const smoke = readEnvFile(join(STATE, 'smoke.env'))
 
-/** 门户与后台网关；后台在冒烟栈上直接挂在网关根上，生产的 nginx 前缀不在这里出现 */
+/** pandora serve 的门户与后台两个监听；后台在冒烟栈上直接挂在根上，生产的 nginx 前缀不在这里出现 */
 export const PUB = need(smoke, 'SMOKE_PUBLIC_BASE')
 export const ADM = need(smoke, 'SMOKE_ADMIN_BASE')
 export const ADMIN_EMAIL = need(smoke, 'SMOKE_ADMIN_EMAIL')

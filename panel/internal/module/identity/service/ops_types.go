@@ -300,6 +300,9 @@ type OpsSubscriptions interface {
 	Fetches(ctx context.Context, q FetchQuery) ([]FetchRecord, error)
 	// UserFetches 是画像里一个用户最近 50 次拉取，与近 7 天成功拉取的不同来源数。
 	UserFetches(ctx context.Context, userID uuid.UUID) ([]FetchRecord, int, error)
+	// AdminSubs 批量取用户的全部订阅（后台用户列表、详情）；每个入参用户都在结果里（没有订阅的是空列表）。
+	// 查询条数与用户数无关。
+	AdminSubs(ctx context.Context, userIDs []uuid.UUID) (map[uuid.UUID]AdminUserSubs, error)
 }
 
 // OrderStat 是一个用户的订单总数与按币种划分的实付金额汇总。
@@ -311,6 +314,8 @@ type OrderStat struct {
 // OpsOrders 由 order 模块经适配器实现（app/adapters.go），启动装配时经 UseOpsOrders 注入。
 type OpsOrders interface {
 	UserOrderStats(ctx context.Context, userIDs []uuid.UUID) (map[uuid.UUID]OrderStat, error)
+	// RecentOrders 是一个用户最近 limit 单（下单时间倒序），行与后台订单列表同形；ctx 须是后台登录主体。
+	RecentOrders(ctx context.Context, userID uuid.UUID, limit int) ([]AdminOrderRow, error)
 }
 
 // JobQueue 入队一次性任务；*asynq.Client 实现。

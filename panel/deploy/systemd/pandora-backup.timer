@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the Pandora panel encrypted PostgreSQL backup daily
+
+[Timer]
+OnCalendar=*-*-* 03:17:00 UTC
+RandomizedDelaySec=45m
+Persistent=true
+AccuracySec=1m
+Unit=pandora-backup.service
+
+[Install]
+WantedBy=timers.target

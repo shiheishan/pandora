@@ -48,7 +48,7 @@ func TestReviewSource(t *testing.T) {
 		reviewSameSource:         ReviewSourceSameSource,
 		reviewSourceCheckFailed:  ReviewSourceSourceCheck,
 		reviewSourceCheckMissing: ReviewSourceSourceCheck,
-		reviewUnderfundedPrefix + "，无法解冻 10.00 USD": ReviewSourceUnderfunded,
+		reviewUnderfundedPrefix + "，无法解冻 10.00 CNY": ReviewSourceUnderfunded,
 		"手工标记": ReviewSourceOther,
 		"":     ReviewSourceOther,
 	}

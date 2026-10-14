@@ -33,8 +33,8 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// testCurrency 是测试用的币种：站点币种缺省 USD，测试不改站点设置。
-const testCurrency = money.USD
+// testCurrency 是测试用的币种：站点币种缺省 CNY，测试不改站点设置。
+const testCurrency = money.CNY
 
 // fakeRefs 实现 Referrals：推荐关系与邮箱都在内存里（并发用例会从多个 goroutine 读）。
 type fakeRefs struct {

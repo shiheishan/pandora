@@ -7,12 +7,9 @@ on:
       - "pdnd/**"
       - "nodeapi/**"
       - "panel/internal/module/node/protocol/**"
-      - "panel/internal/api/**"
-      - "panel/internal/platform/db/**"
-      - "panel/migrations/**"
       - "panel/web/**"
       - "panel/frontend/**"
-      - "panel/internal/platform/webapp/**"
+      - "panel/internal/pkg/webapp/**"
       - "panel/Makefile"
       - ".github/workflows/pandora-native.yml"
   pull_request:
@@ -20,12 +17,9 @@ on:
       - "pdnd/**"
       - "nodeapi/**"
       - "panel/internal/module/node/protocol/**"
-      - "panel/internal/api/**"
-      - "panel/internal/platform/db/**"
-      - "panel/migrations/**"
       - "panel/web/**"
       - "panel/frontend/**"
-      - "panel/internal/platform/webapp/**"
+      - "panel/internal/pkg/webapp/**"
       - "panel/Makefile"
       - ".github/workflows/pandora-native.yml"
 
@@ -48,25 +42,8 @@ jobs:
       - name: Check capability/schema/serving parity
         run: python3 pdnd/release/check_native_panel_parity.py
 
-  panel-contract:
-    name: Panel NativeCore contract tests
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: panel
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: panel/go.mod
-          cache-dependency-path: panel/go.sum
-      - name: Node protocol contract tests
-        run: go test -mod=readonly ./internal/domain/nodefabric
-      - name: Node protocol contract vet
-        run: go vet -mod=readonly ./internal/domain/nodefabric
-
   panel-web-contract:
-    name: Panel embedded UI, schema and permission contracts
+    name: Panel embedded UI contracts
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -78,11 +55,7 @@ jobs:
           go-version-file: panel/go.mod
           cache-dependency-path: panel/go.sum
       - name: Embedded frontend contracts (placeholder entry)
-        run: go test -mod=readonly ./web/ ./internal/platform/webapp/
-      - name: Schema table registry
-        run: go test -mod=readonly -run TestSchemaTablesAreReferencedOrRegistered ./internal/platform/db/
-      - name: Route permission catalog
-        run: go test -mod=readonly -run TestRoutePermissionsExistInCatalog ./internal/api/admin/
+        run: go test -mod=readonly ./web/ ./internal/pkg/webapp/
 
   panel-frontend:
     name: Panel frontend lint, typecheck, tests, build and embed
@@ -125,7 +98,7 @@ jobs:
             echo "placeholder entry still embedded after frontend-embed" >&2
             exit 1
           fi
-          go test -mod=readonly ./web/ ./internal/platform/webapp/ ./internal/api/...
+          go test -mod=readonly ./web/ ./internal/pkg/webapp/
 
   linux-race:
     name: Linux race and vet

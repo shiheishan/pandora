@@ -141,7 +141,7 @@ def main():
                 problems.append(f"{fid} [夹具] FAIL: 表单夹具没过后台校验 {meta.get('admin_fields')}")
             nodecfg = "拒绝" if fid in ncerr else "OK"
             if fid in ncerr:
-                problems.append(f"{fid} [下发] BuildNodeConfig 拒绝: {ncerr[fid]}")
+                problems.append(f"{fid} [下发] buildNodeConfigDoc 拒绝: {ncerr[fid]}")
         rows.append([fid, meta.get("type", ""), src, cells["clash"], cells["clash-premium"],
                      cells["singbox"], ecell, cells["uri"], nodecfg])
 

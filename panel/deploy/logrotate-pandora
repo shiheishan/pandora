@@ -1,0 +1,15 @@
+# 面板运维脚本日志的轮转，install.sh 装到 /etc/logrotate.d/pandora。
+#
+# 只轮转巡检日志 health.log（healthcheck.sh 每次运行以追加方式重新打开，按常规的改名再新建即可，不用 copytruncate）。
+# 面板两个服务自己的日志 /var/log/pandora/{serve,worker}.log 由进程内的 lumberjack 按 config 的 log.* 滚动，
+# 这里绝不能再匹配它们：两套轮转同时动一个文件，会丢日志或写进被改名的旧文件。
+# 备份、续期、巡检单元的输出在 journal 里（journalctl -u pandora-backup 等），由 journald 管保留。
+/var/log/pandora/health.log {
+    weekly
+    rotate 8
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 root root
+}

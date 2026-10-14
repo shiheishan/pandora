@@ -28,7 +28,7 @@ type Service interface {
 	SetStatus(ctx context.Context, userID uuid.UUID, status, reason string) error
 	AdminResetPassword(ctx context.Context, userID uuid.UUID, newPassword, reason string) error
 	AssignGroup(ctx context.Context, userID uuid.UUID, groupID *uuid.UUID) error
-	ListGroups(ctx context.Context) ([]service.Group, error)
+	AdminListGroups(ctx context.Context) ([]service.Group, error)
 	CreateGroup(ctx context.Context, code, name, description string) (uuid.UUID, error)
 	UpdateGroup(ctx context.Context, id uuid.UUID, name, description string) error
 	DeleteGroup(ctx context.Context, id uuid.UUID) error

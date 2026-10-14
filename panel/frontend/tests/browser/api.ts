@@ -10,7 +10,7 @@ import { ADM, ADMIN_EMAIL, ADMIN_PASSWORD, PG_CONTAINER, PG_DB, PUB } from './en
 export type Json = Record<string, unknown>
 
 // ----------------------------------------------------------------------------
-//  来源地址：冒烟栈没有 nginx，网关直接信 X-Real-IP（.claude/rules/panel-e2e.md）。
+//  来源地址：冒烟栈没有 nginx，pandora serve 直接信 X-Real-IP（引擎的 TrustedPlatform）。
 //  浏览器按机器速度点页面，门户每 IP 每分钟 120 次、后台 240 次的限流会把同一个地址打满，
 //  所以每个用户、每一步各用一个虚构地址（198.18.0.0/15 基准测试网段）。相邻两个地址落在不同的 /24，
 //  按网段的那一维（每 /24 每分钟 960 次）也不会被同一个 worker 打满
@@ -204,8 +204,8 @@ export function uuid(v: string): string {
 }
 
 /**
- * 把一张待支付单的付款期限拨到一分钟前（订单仍是待支付）。orders 的护栏触发器不许改 expires_at，
- * 这里在一次性库上用 session_replication_role = replica 跳过触发器，与 risk_e2e.sh 挪 fetched_at 同一做法；
+ * 把一张待支付单的付款期限拨到一分钟前（订单仍是待支付）。在一次性库上以超级用户设 session_replication_role = replica，
+ * 万一有护栏触发器也一并跳过；
  * 只改这一列、不动预留：释放任务按预留的到期找单，不会在测试中途把它关掉
  */
 export function expireOrderSql(orderId: string): string {

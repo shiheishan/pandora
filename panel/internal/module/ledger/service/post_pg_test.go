@@ -14,7 +14,7 @@ import (
 func TestPostTopupUpdatesBalances(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	cur := money.USD
+	cur := money.CNY
 	e.fund(t, ctx, user, cur, "10.00")
 
 	if !e.balanceOf(t, ctx, user, cur).Equal(dec("10.00")) {
@@ -42,7 +42,7 @@ func TestPostTopupUpdatesBalances(t *testing.T) {
 func TestPostActorFromContext(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	cur := money.USD
+	cur := money.CNY
 	amt := dec("1.00")
 	post := func(c context.Context) uuid.UUID {
 		id, err := e.svc.Post(c, Posting{
@@ -91,7 +91,7 @@ func TestPostActorFromContext(t *testing.T) {
 func TestPostInsufficientBalance(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	cur := money.USD
+	cur := money.CNY
 	e.fund(t, ctx, user, cur, "5.00")
 
 	var before int64
@@ -126,7 +126,7 @@ func TestPostInsufficientBalance(t *testing.T) {
 func TestPostUnknownUser(t *testing.T) {
 	e, ctx := newEnv(t)
 	ghost := uuid.New()
-	cur := money.USD
+	cur := money.CNY
 	_, err := e.svc.Post(ctx, Posting{
 		Kind:     KindBalanceTopup,
 		Currency: cur,
@@ -147,7 +147,7 @@ func TestPostDuplicateBySource(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	orderID := uuid.New()
-	cur := money.USD
+	cur := money.CNY
 	leg := []Leg{
 		{Account: PlatformAccount(ChannelCash, "p"), Direction: Debit, Amount: dec("1.00")},
 		{Account: UserAccount(UserBalance, user), Direction: Credit, Amount: dec("1.00")},
@@ -181,7 +181,7 @@ func TestPostDuplicateBySource(t *testing.T) {
 func TestPostRejectsInvalid(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	cur := money.USD
+	cur := money.CNY
 	_, err := e.svc.Post(ctx, Posting{
 		Kind:     KindBalanceTopup,
 		Currency: cur,
@@ -199,7 +199,7 @@ func TestPostRejectsInvalid(t *testing.T) {
 func TestPostRejectsDedicatedKinds(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	cur := money.USD
+	cur := money.CNY
 
 	var before int64
 	if err := e.row(ctx, `SELECT count(*) FROM ledger_transactions`).Scan(&before); err != nil {
@@ -241,7 +241,7 @@ func TestBalancesBatch(t *testing.T) {
 	u1 := e.mkUser(t, ctx)
 	u2 := e.mkUser(t, ctx)
 	u3 := e.mkUser(t, ctx)
-	cur := money.USD
+	cur := money.CNY
 	e.fund(t, ctx, u1, cur, "1.00")
 	e.fund(t, ctx, u2, cur, "2.00")
 
@@ -269,13 +269,13 @@ func TestMyWallet(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	admin := e.mkUser(t, ctx)
-	cur := money.USD
+	cur := money.CNY
 	e.fund(t, ctx, user, cur, "10.00")
 
 	_, err := e.svc.AdjustBalance(asAdmin(ctx, admin), Adjustment{
 		UserID:   user,
 		Amount:   dec("-3.00"),
-		Currency: "USD",
+		Currency: "CNY",
 		Reason:   "测试扣减原因",
 	})
 	if err != nil {

@@ -329,8 +329,8 @@ export interface SystemView {
 
 const COMPONENT_NAMES: Record<SystemComponent['key'], string> = {
   postgres: 'PostgreSQL 主库',
-  // 契约映射：设计的「Redis」即 valkey
-  valkey: 'Valkey 缓存',
+  // 契约里组件键沿用 valkey（JSON 形状不变），实际是 Redis
+  valkey: 'Redis 缓存',
   node_fabric: 'NativeCore 调度',
   payment_callbacks: '支付回调队列',
   mail: '邮件投递 · SMTP',

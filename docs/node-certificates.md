@@ -9,7 +9,7 @@ pdnd 的 TLS 入站（trojan、anytls、naive、hysteria2、tuic、juicity，以
 
 文中的域名一律用 `example.com` 占位，换成你自己的。
 
-> **哪些是将来时**：本文凡是写「后续版本」「规划」的部分都还没上线。目前已经落地的是：pdnd 进程内的证书仓库（`pdnd/certstore`）、证书包的签名与加密契约（`pdnd/certbundle`、`panel/internal/platform/certbundle`），以及面板集中签发（第 3.5–3.8 节：DNS 凭据、ACME 设置、签发 worker、后台页面）。签出的证书暂时只存在面板里，还没有下发到节点，对运行中的节点没有影响。
+> **哪些是将来时**：本文凡是写「后续版本」「规划」的部分都还没上线。目前已经落地的是：pdnd 进程内的证书仓库（`pdnd/certstore`）和面板集中签发（第 3.5–3.8 节：DNS 凭据、ACME 设置、签发 worker、后台页面）。`pdnd/certbundle` 是旧 HTTP 签名通道时代定的证书包契约的节点侧实现，目前没有任何代码引用，证书下发到节点改走节点 gRPC 会话时再定形状。签出的证书暂时只存在面板里，还没有下发到节点，对运行中的节点没有影响。
 
 ---
 
@@ -230,15 +230,12 @@ openssl x509 -in /etc/pandora-native/certs/example.com/fullchain.pem -noout -sub
 ### 3.4 证书怎么到节点上
 
 - 生效配置里只写证书 ID，续期时这个 ID 不变，所以续期不会重建入站、不会断连接。
-- 证书和私钥走单独的「证书包」通道：
-  - 证书包由面板的配置签名密钥签名，契约名 `pandora-node-certificate-bundle-v1`，有效窗口不超过 10 分钟。
-  - 私钥用 HPKE（DHKEM(X25519) + HKDF-SHA256 + AES-256-GCM）加密给每台服务器上 pdnd 自己生成的 X25519 公钥，并绑定租户、服务器、证书 ID、版本和证书链哈希，挪到别的证书或版本上解不开。
-  - 即使节点到面板是明文 HTTP，中间人也伪造不了、降级不了证书，最多只能延迟更新。
-- 老版本 pdnd 不登记加密公钥，后台不允许给它绑定托管证书，只能继续用 file 模式。
+- 节点到面板是 gRPC 双向流 + mTLS（面板自带 CA，见 `docs/architecture.md` 第 11 节），证书与私钥将来经这条会话下发；消息形状在接线时定，原来为明文 HTTP 通道设计的签名证书包（`pandora-node-certificate-bundle-v1`）届时重新评估是否还需要。
+- 私钥用 HPKE（DHKEM(X25519) + HKDF-SHA256 + AES-256-GCM）加密给每台服务器上 pdnd 自己生成的 X25519 公钥，并绑定服务器、证书 ID、版本和证书链哈希，挪到别的证书或版本上解不开。
 
 ### 3.5 后台入口
 
-后台「网络 › 证书」，三个标签（读要 `node.certificate.read`，写要 `node.certificate.write`；迁移 00147 把它们分别授给已有 `node.read`、`node.provision` 的角色）：
+后台「网络 › 证书」，三个标签（后台权限只分有和没有：管理员都能用）：
 
 - **证书列表**：名称、域名、状态（正常 / 排队中 / 签发中 / 签发失败 / 已暂停 / DNS 凭据失效）、到期等级与剩余时间、下次续期、最近错误。有即将到期、快到期、已过期或签发失败的证书时，页面顶部出现横幅（到期与失败只在后台显示，不发 Telegram、不发邮件）。点一行打开详情：版本历史（不显示私钥）、最近 50 次签发记录与错误详情；操作有「立即续期」「暂停 / 恢复」「编辑」「删除」。
   - 每次签发都生成新私钥，所以「立即续期」就是换私钥重签：服务器退役或怀疑失陷时用它。
@@ -246,17 +243,17 @@ openssl x509 -in /etc/pandora-native/certs/example.com/fullchain.pem -noout -sub
 - **DNS 凭据**：服务商、域名、密钥末四位、校验结论；添加与编辑时按服务商给出最小权限做法。凭据只写不读，编辑时密钥框留空表示不改。还有证书在用的凭据不能删。
 - **ACME 设置**：联系邮箱（可留空）、是否用 Let's Encrypt 测试环境、备用 CA ZeroSSL（默认关，要填 EAB KID 与 HMAC；HMAC 只写不读）。保存即表示同意所用 CA 的服务条款。
 
-录入或替换秘密（DNS 凭据、EAB）和删除证书、凭据要近期重认证。
+新建、修改、删除 DNS 凭据，删除证书，保存 ACME 设置要近期重认证。
 
 ### 3.6 签发与续期怎么跑
 
-aegis-admin 里有一个「证书巡检」循环（每 30 秒一轮）：
+`pandora worker` 每分钟跑一次 asynq 周期任务 `certs:patrol`；签发本身是单独的任务 `certs:issue`，由巡检或后台操作按订单入队（TaskID `cert:<订单 id>`）：
 
 1. **排队**：没签出过的证书、到了续期时间的证书（有 CA 的 ARI 建议窗口时取窗口内随机一点，否则剩余寿命 1/3 时），过了退避时间就排一张订单。同一张证书同时最多一张进行中的订单（数据库部分唯一索引）。
-2. **认领**：worker 用租约认领一张订单（`FOR UPDATE SKIP LOCKED`，租约 5 分钟、每 30 秒续一次）。进程退出或卡死，租约一过别的实例或重启后的自己接手；落库前核对租约还是自己的，同一张订单不会写出两个版本。
+2. **认领**：签发任务用租约认领订单（`FOR UPDATE SKIP LOCKED`，租约 = 签发超时 15 分钟 + 1 分钟，同时最多 2 张在跑）；进程退出或任务丢失时订单留在 running，租约过期后由巡检按「中断」收掉，15 分钟后重排一张新订单（不计连续失败）；落库前核对租约还是自己的，同一张订单不会写出两个版本。
 3. **凭据预检**：先调服务商 API 确认凭据还能用、看得到域名。失败不碰 CA，不消耗 CA 的验证失败次数。
 4. **本地限额对账**：按面板的签发流水（3.7）数 Let's Encrypt 的两条限额——同一注册域名每 7 天 50 张新证书（续期不算，跨 CA 一起数，宁多勿少）、同一个 CA 为完全相同的域名组合每 7 天 5 张（测试环境、ZeroSSL 不占 Let's Encrypt 正式环境的额度）。预计会超就不去请求 CA，退避到最早那张满 7 天；带 ARI `replaces` 的续期 Let's Encrypt 免一切限额，不拦。超限且证书剩不到 7 天（或从没签出过）、又配了 ZeroSSL 时，改走 ZeroSSL。
-5. **签发**：lego 走 DNS-01，续期订单带上一版的 ARI certID（`replaces`）。私钥是 PKCS#8，用面板主密钥信封加密后入库，AAD 绑定租户、证书、版本。
+5. **签发**：lego 走 DNS-01，续期订单带上一版的 ARI certID（`replaces`）。私钥是 PKCS#8，用主密钥派生的封存子密钥（AES-256-GCM）加密后入库，AAD 绑定证书与版本。
 6. **失败退避**（「恢复」暂停的证书时：没签出过的立刻排单，已有版本的只清退避，到续期时间再续）：CA 限流（429）按 Retry-After 退避、不计入失败；凭据被拒停在「DNS 凭据失效」；服务商 API 不可达 15 分钟后再试；其余失败按 1h → 2h → 4h … 最长 24h 退避，连续失败 3 次暂停自动重试（避开 Let's Encrypt「每小时 5 次验证失败」的上限），在后台改好后点「恢复」。
 
 每次签发成功、失败、暂停、到期等级上升，以及凭据、ACME 设置的增删改，都写审计（`certificate.*`、`dns_credential.*`、`acme_settings.updated`、`acme_account.created`）。
@@ -266,26 +263,18 @@ aegis-admin 里有一个「证书巡检」循环（每 30 秒一轮）：
 ### 3.7 数据与保留
 
 - 证书版本表只插不改（运行角色没有 UPDATE 授权，另有触发器拒绝 UPDATE）；删证书时连同全部版本（含私钥密文）与订单一起删。
-- 签发流水（`certificate_issuances`，00152）：CA 每签出一张记一行（证书 id、CA、域名组合、时间），只追加，删证书不删它。本地限额对账按它数，所以删了证书再建同样的域名，也不会多占 Let's Encrypt「同一组域名每周 5 张」的额度；签出后因租约丢失没落库的那张也记着。
+- 签发流水（`certificate_issuances`）：CA 每签出一张记一行（证书 id、CA、域名组合、时间），只追加（语句级触发器连 TRUNCATE 一起挡），删证书不删它。本地限额对账按它数，所以删了证书再建同样的域名，也不会多占 Let's Encrypt「同一组域名每周 5 张」的额度；签出后因租约丢失没落库的那张也记着。
 - ACME 账号：同一目录 + 联系邮箱 + EAB KID 只有一个有效账号；CA 说账号不存在或已失效时标失效，下一单重新注册。
 - 订单表就是签发历史；过期版本、旧订单与签发流水的定期清理在后续版本。
-- 迁移与回滚：
-  - 00147（DNS 凭据、ACME 账号、权限码）：**回滚会删掉已录入的 DNS 凭据和 ACME 账号**（Down 没有数据守卫，迁移已冻结不再改），回滚前把凭据记下来或接受重新录入。
-  - 00148（证书、版本、订单）：若已有签出的版本会拒绝回滚，先在后台删掉证书。
-  - 00152（签发流水、账号唯一键）：同一目录 + 邮箱已有多个账号（失效后重注册过、换过 EAB）时拒绝回滚；签发流水随回滚整表删除，旧版本退回按证书版本计数。
+- 全部表在迁移 `panel/db/migrations/00025_certs.sql` 里建。它的 Down 直接删掉全部证书相关表（DNS 凭据、ACME 账号、证书、版本含私钥密文、订单、签发流水），没有数据守卫；回滚前先确认可以丢掉这些数据，或先做备份。
 
 ### 3.8 开发与测试：ACME 目录覆盖
 
-只在非生产环境（`AEGIS_ENV` 不是 `production`）可用，生产环境设了网关一律拒绝启动：
-
-| 环境变量 | 作用 |
-|---|---|
-| `AEGIS_ACME_DIRECTORY_OVERRIDE` | 所有签发改打到这个 ACME 目录（如本地 pebble 的 `https://127.0.0.1:14000/dir`），版本记为 `custom` |
-| `AEGIS_ACME_TRUSTED_ROOTS` | 信任这个目录 HTTPS 证书用的 PEM 文件 |
+面板配置里没有 ACME 目录覆盖项，生产与开发都按后台的 ACME 设置签。测试经 certs service 的 `Options.DirectoryOverride` 在进程内注入 pebble 目录（版本记为 `custom`）。
 
 #### 第三方库自己读的环境变量
 
-面板只经 `platform/config` 读环境变量，但签发用到的第三方库会自己读几项。它们不该出现在面板的环境文件里：
+面板只经 viper（`PANDORA_` 前缀）读配置，但签发用到的第三方库会自己读几项。它们不该出现在面板的环境文件里：
 
 | 变量 | 谁读 | 风险 |
 |---|---|---|
@@ -294,6 +283,6 @@ aegis-admin 里有一个「证书巡检」循环（每 30 秒一轮）：
 | `LEGO_EXPERIMENTAL_DNS_TCP_ONLY` | lego DNS-01 | 传播检查只走 TCP，部分网络下查不到记录 |
 | `HTTPS_PROXY`、`HTTP_PROXY`、`NO_PROXY` | Go 标准库（找 CA、Cloudflare、腾讯云）与阿里云 SDK | 有意设置时用于走出口代理；设错会让签发与凭据校验连不上，代理本身能看到 SNI 与连接目标 |
 
-上表前三类，aegis-admin 启动证书巡检时检测到就打一条 WARN（只记变量名，不记值），请从环境文件里删掉。面板不调用 lego 读 `LEGO_CA_CERTIFICATES` 等变量的那段代码，设了也不生效。
+上表前三类，`pandora worker` 启动签发任务时检测到就打一条 WARN（`LibraryEnvWarnings`，只记变量名，不记值），请从环境文件里删掉。面板不调用 lego 读 `LEGO_CA_CERTIFICATES` 等变量的那段代码，设了也不生效。
 
-自动化测试不靠这两个变量：`go test ./internal/domain/certs` 在进程内起 pebble、DNS 服务器和三家服务商 API 的模拟，跑通签发、续期（ARI replaces）、CA 限流、凭据失效、本地限额与切换 ZeroSSL；需要数据库的部分在 PG18 门禁（`run-pg18-gates.sh` 的 certs 域）里跑。阿里云 SDK 只认环境里的 HTTPS 代理与系统根证书，它的模拟用例只在 Linux 上跑。
+自动化测试：`go test ./internal/module/certs/...`（在 `panel/` 下）在进程内起 pebble、DNS 服务器和三家服务商 API 的模拟，跑通签发、续期（ARI replaces）、CA 限流、凭据失效、本地限额与切换 ZeroSSL；需要数据库的 `*_pg_test.go` 在 CI 的 `panel-newstack.yml`（PostgreSQL 18 + Redis）里跑，本机没有数据库时跳过，跳过不算通过。阿里云 SDK 只认环境里的 HTTPS 代理与系统根证书，它的模拟用例只在 Linux 上跑。

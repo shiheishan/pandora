@@ -25,7 +25,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 - 每个请求带 req_id（`X-Request-ID`，没有就生成），写进日志、错误响应、gRPC 元数据和队列任务。
 - 每个接口单独定义请求与响应 DTO，不把数据库模型直接序列化出去。
 - 前端不换；接口的 JSON 形状尽量保持不变，前端照常能用。
-- 换栈期间旧代码（chi、pgx 手写 SQL、自研令牌、签名通道与 UniProxy、Valkey）只修阻断性 bug，不加功能、不做性能优化。
+- 旧栈（chi、pgx 手写 SQL、自研令牌、签名通道与 UniProxy、Valkey）已在 P7 删除（2026-10-13），不再恢复。
 
 ## 取舍原则
 
@@ -97,11 +97,10 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 ## 仓库约定
 
 - panel 与 pdnd 是两个独立的 Go module：面板是 `github.com/aegispanel/aegis`，pdnd 沿用旧名 `github.com/aegispanel/nodeagent`。
-- 本地数据基座是 `panel/dev/docker-compose.yml`（PostgreSQL 与 Valkey 只绑 `127.0.0.1:5433` / `6380`；换栈时改成 Redis）。
+- 本地数据基座是 `panel/dev/docker-compose.yml`（PostgreSQL 18 与 Redis 8 只绑 `127.0.0.1:5433` / `6380`），变量在 `panel/dev/.env`（从 `dev/.env.example` 复制，被 git 忽略）。
 - 全仓库用 LF，只有 `*.ps1` 用 CRLF（`.gitattributes`）。
 - 只删注释、不改行为的全仓批量提交，登记在 `.git-blame-ignore-revs`；clone 后执行 `git config blame.ignoreRevsFile .git-blame-ignore-revs` 启用。
-- 单个 .go 文件不超过 800 行（含测试）。豁免只有 fork 来的 `pdnd/internal/reality/**`、`pdnd/internal/realityquic/**`（保持上游的文件划分以便合上游），和两个逐个登记的超长 PG18 测试（`panel/internal/middleware/idempotency_pg18_test.go`、`panel/internal/domain/billing/order_release_pg18_test.go`，随旧代码删除）。守卫是 panel 的 `tools/refactorcheck/linelimit_test.go` 与 pdnd 的 `linelimit_test.go`；超限按主题拆分，不加豁免，改豁免表要我授权。
-- `panel/migrations/RESERVED-TABLES.md` 登记迁移里保留、但 Go 从不引用的表及原因，删表前先读它。
+- 单个 .go 文件不超过 800 行（含测试）。豁免只有 fork 来的 `pdnd/internal/reality/**`、`pdnd/internal/realityquic/**`（保持上游的文件划分以便合上游）。守卫是 panel 的 `tools/refactorcheck/linelimit_test.go` 与 pdnd 的 `linelimit_test.go`；超限按主题拆分，不加豁免，改豁免表要我授权。
 
 ## 红线：仓库公开
 
@@ -127,8 +126,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 
 - go 与 npm：`go build/test/vet` 不与 `npm ci` 并发（node_modules 里的 flatted 带 Go 包，并发时 go 假失败）。
 - 本机 Go：缺省 1.27.1，比 go.mod 的 1.26.9 新，pdnd 在 1.27 下链接失败（sing-box v1.13.14 用 go:linkname 取 x/net http2 的私有符号）。本机所有 go 命令加 `GOTOOLCHAIN=go1.26.9`（模块缓存里已有，`GOPROXY=off` 也能切），报告里注明本机 Go 版本。升 Go 1.27 前先解决这个 linkname，见 deps-upgrade skill。
-- 本机（这台 Mac）没有 docker、psql、redis-cli：PG18 用例、迁移往返、冒烟栈、Playwright 购买路径本机跑不了；本机跳过不等于通过，以 CI 为准（verify skill）。
-- 保留表名（RESERVED-TABLES.md 登记的）不写进 Go 注释和迁移注释：表登记簿测试对 Go 源码整词匹配，注释里的表名也算引用。
+- 本机（这台 Mac）没有 docker、psql、redis-cli：PG18 用例、迁移往返、e2e 脚本、冒烟栈、Playwright 购买路径本机跑不了；本机跳过不等于通过，以 CI 为准（verify skill）。
 - 1Password SSH agent：推送或 ssh 报签名失败，多半是沙箱连不上 agent 或 agent 锁着。Bash 调用设 `dangerouslyDisableSandbox: true` 重试，仍失败就请我解锁；不改走 HTTPS。
 - 测试机上起后台进程一律 `ssh -n host 'cd /root/x; setsid -f ./x > log 2>&1 < /dev/null'`，两台机器分两条命令发；远端 `pkill -f` 的模式要锚定（`pkill -f '^vmstat'`），否则会误杀自己的 ssh 会话；限时的故障注入在远端自带撤销（`setsid -f sh -c 'sleep N; iptables -D …'`）。本机是 macOS，没有 setsid。
 - 等 CI：前台跑主目录 `ops-local/memoh-ci/` 的 `wait-status.sh` / `wait-github.sh`，Bash timeout 设 600000，wait-status 加 `MEMOH_PICKUP=540`；被截断就原样再跑，累计 wait-status 30 分钟、wait-github 60 分钟仍无结论按退出 2 处理。

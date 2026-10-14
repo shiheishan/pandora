@@ -11,17 +11,17 @@ description: pandora 开发侧资源清理：列出已合并且干净的 worktre
 
 ## 永远不在清单里
 
-- `main`、`feat/panel-redesign`、集成分支 `feat/panel-redesign-s`，以及主目录本身和集成分支的 worktree `../pandora-s`（相对主目录）。`list.sh` 的 `is_protected_branch` 跳过这三个分支；`pandora-s` 这个路径同样跳过，不进候选。运行中表只认 `w<数字><名字>`，挡不住 `s`，所以不能靠那张表。
-- 正在跑的任务：以主目录 `.claude/TASKS.md`「正在跑」表为准。状态不以 ✅ 开头的行里出现的 `w<波次><名字>` 一律保留，包括「运行中」「退回修复中」「已交回待合」。
-- 刚派出、还没有提交的 worktree：它的头就是基线，看起来「已合并且干净」，**只有 TASKS 表能保护它**。所以派工时先在 TASKS.md「正在跑」表登记再开工（dispatch-task 第 1 节）。表里漏了的，用 `KEEP="w7xxx …"` 补。
+- `main`、`feat/panel-redesign`、集成分支（现在是 `feat/panel-redesign-p7`），以及主目录本身和集成分支的 worktree（`../pandora-p7`，相对主目录）。`list.sh` 的 `is_protected_branch` 跳过 main、基线和集成分支，集成分支的 worktree 按路径同样跳过。集成分支换了（下一阶段）就设 `INTEGRATION="p8"`，几个并存时空格分隔；它刚合完主线时看起来「已合并且干净」，不能靠运行中表挡。
+- 正在跑的任务：以主目录 `.claude/TASKS.md` 里「正在跑」标题（`##`/`###` 或加粗）下的表为准。状态（最后一列）不以 ✅ 开头的行一律保留，包括「运行中」「退回修复中」「已交回待合」；短名取第一格（如 `p7-users`）和行里出现的 `pandora-<短名>`，旧的 `w<波次><名字>` 也认。文件里有几处「正在跑」（如一处只写「见下方」）时，每处的表都读。
+- 刚派出、还没有提交的 worktree：它的头就是基线，看起来「已合并且干净」，**只有 TASKS 表能保护它**。所以派工时先在 TASKS.md「正在跑」表登记再开工（dispatch-task 第 1 节）。表里漏了的，用 `KEEP="p7-xxx …"` 补。
 
 ## 步骤
 
 ### 1. 列清单（只读）
 
 ```bash
-bash .claude/skills/cleanup/scripts/list.sh          # 约 5 秒
-bash .claude/skills/cleanup/scripts/list.sh --size   # 另统计每个候选 worktree 的占用
+bash .agents/skills/cleanup/scripts/list.sh          # 约 5 秒
+bash .agents/skills/cleanup/scripts/list.sh --size   # 另统计每个候选 worktree 的占用
 ```
 
 在主目录或任一 worktree 里跑都一样。它不 fetch，远端结论以上次 fetch 为准，输出第三行有时间。判定规则（保留、「待确认」、候选的各种情形）见脚本文件头。其中两条容易忽略：
@@ -58,7 +58,7 @@ bash .claude/skills/cleanup/scripts/list.sh --size   # 另统计每个候选 wor
 
 ### 4. 执行（按顺序，任何一步出错就停下报告，不加强制参数重试）
 
-1. **归档**：`bash .claude/skills/cleanup/scripts/archive.sh <短名>...`。它把 worktree `.claude/` 下所有被 git 忽略的文件（`brief.md`、`TASKS.md`、`report.md`、`ownership.txt`，以及调查时留下的 `*.sql`、`*.log`）复制到 `ops-local/reports/<日期>/<短名>/`。
+1. **归档**：`bash .agents/skills/cleanup/scripts/archive.sh <短名>...`。它把 worktree `.claude/` 下所有被 git 忽略的文件（`brief.md`、`TASKS.md`、`report.md`、`ownership.txt`，以及调查时留下的 `*.sql`、`*.log`）复制到 `ops-local/reports/<日期>/<短名>/`。
    - 只复制，复制后逐个 `cmp` 校验。
    - 目标已有内容不同的同名文件时，不覆盖并以 1 退出。
    - 退出码不是 0 不往下走。先例是 `ops-local/reports/2026-10-06/{contract,nogeb,vultrtest}/`。

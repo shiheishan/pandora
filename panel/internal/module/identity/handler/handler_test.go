@@ -20,6 +20,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/testkit"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 )
 
@@ -51,10 +52,60 @@ func (f *fakeSvc) ListUsers(_ context.Context, fl service.UserFilter, _, _ int) 
 	return f.rows, int64(len(f.rows)), nil
 }
 
-func (f *fakeSvc) ListGroups(context.Context) ([]service.Group, error) { return nil, nil }
+func (f *fakeSvc) AdminListGroups(context.Context) ([]service.Group, error) {
+	return []service.Group{{
+		ID:   uuid.MustParse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+		Code: "default", Name: "默认", Description: "", Users: 1,
+	}}, nil
+}
 
 func (f *fakeSvc) UserDetail(_ context.Context, id uuid.UUID) (service.UserDetail, error) {
-	return service.UserDetail{UserRow: service.UserRow{ID: id, Email: "u@example.test"}, ReferralCount: 3}, nil
+	lim := int64(1_000_000_000)
+	devLim := 3
+	planMax := 5
+	label := "我的订阅"
+	periodStart := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	periodEnd := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	paidAt := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+	subID := uuid.MustParse("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+	orderID := uuid.MustParse("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
+	prov := "offline"
+	provName := "线下"
+	sub := service.AdminSub{
+		ID: subID, Label: &label, PlanName: "基础套餐", PlanVersion: 2, Status: "active",
+		PeriodStart: periodStart, PeriodEnd: periodEnd,
+		Amount: decimal.RequireFromString("12.34"), Currency: "CNY",
+		Quotas: []service.AdminQuota{{
+			Metric: "traffic.bytes", Limit: &lim, Consumed: 42, Remaining: &lim,
+		}},
+		DeviceLimitOverride: &devLim, PlanMaxDevices: &planMax, OnlineDevices: 1,
+		PackRemainingBytes: 99,
+	}
+	current := sub
+	return service.UserDetail{
+		UserRow: service.UserRow{
+			ID: id, Email: "u@example.test", Status: "active", RiskLevel: "normal",
+			GroupName: "默认", Currency: "CNY",
+			Balance: decimal.RequireFromString("1.00"), SubscriptionCount: 1,
+			Current: &current,
+		},
+		EmailVerified: true, IsAdmin: false, ReferralCount: 3, OrderCount: 7,
+		Subscriptions: []service.AdminSub{sub},
+		RecentOrders: []service.AdminOrderRow{{
+			ID: orderID, OrderNo: "ORD-1", UserEmail: "u@example.test", Kind: "new", Status: "paid",
+			Currency: "CNY",
+			Total:    decimal.RequireFromString("12.34"), Payable: decimal.RequireFromString("12.34"),
+			Paid: decimal.RequireFromString("12.34"), BalanceApplied: decimal.Zero,
+			CreatedAt: paidAt, PaidAt: &paidAt,
+			ProviderCode: &prov, ProviderName: &provName,
+			PlanName: "基础套餐", Interval: "month", IntervalCount: 1, ItemCount: 1, Manual: false,
+		}},
+		PaidTotals: []service.CurrencyAmount{{
+			Currency: "CNY", Amount: decimal.RequireFromString("12.34"),
+		}},
+		Telegram:            &service.TelegramRef{Username: "testuser", BoundAt: paidAt},
+		UnattachedPackBytes: 0,
+	}, nil
 }
 
 // newEngine 建一个挂好 identity 路由的引擎；principal 非 nil 时模拟已登录。
@@ -221,7 +272,7 @@ func TestListUsersQuery(t *testing.T) {
 	if w := do(e, http.MethodGet, "/v1/users/not-a-uuid", ""); w.Code != http.StatusNotFound {
 		t.Fatalf("坏 id status %d", w.Code)
 	}
-	if w := do(e, http.MethodGet, "/v1/user-groups", ""); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"groups":[]`) {
+	if w := do(e, http.MethodGet, "/v1/user-groups", ""); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"groups":`) {
 		t.Fatalf("用户组 status %d %s", w.Code, w.Body)
 	}
 }
@@ -250,7 +301,138 @@ func TestMePasswordRateLimited(t *testing.T) {
 func TestUserDetailStats(t *testing.T) {
 	e := newEngine(&fakeSvc{}, true, nil)
 	w := do(e, http.MethodGet, "/v1/users/"+uuid.NewString(), "")
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"stats":{"referral_count":3}`) {
+	if w.Code != http.StatusOK {
 		t.Fatalf("status %d %s", w.Code, w.Body)
+	}
+	got := decodeMap(t, w.Body.Bytes())
+	stats, _ := got["stats"].(map[string]any)
+	assertKeys(t, stats, "order_count", "paid_totals", "referral_count")
+	if stats["referral_count"] != float64(3) || stats["order_count"] != float64(7) {
+		t.Fatalf("stats %v", stats)
+	}
+	paid, _ := stats["paid_totals"].([]any)
+	if len(paid) != 1 {
+		t.Fatalf("paid_totals %v", paid)
+	}
+	pt0, _ := paid[0].(map[string]any)
+	assertKeys(t, pt0, "amount", "currency")
+	if pt0["currency"] != "CNY" || pt0["amount"] != float64(1234) {
+		t.Fatalf("paid total %v", pt0)
+	}
+}
+
+func TestAdminUserJSONKeys(t *testing.T) {
+	lim := int64(100)
+	devLim := 2
+	periodEnd := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	withCurrent := uuid.MustParse("d1111111-1111-4111-8111-111111111111")
+	noCurrent := uuid.MustParse("d2222222-2222-4222-8222-222222222222")
+	curSub := &service.AdminSub{
+		ID: withCurrent, PlanName: "Pro", Status: "active", PeriodEnd: periodEnd,
+		Quotas:              []service.AdminQuota{{Metric: "traffic.bytes", Limit: &lim, Consumed: 10}},
+		DeviceLimitOverride: &devLim, OnlineDevices: 2,
+	}
+	f := &fakeSvc{rows: []service.UserRow{
+		{
+			ID: withCurrent, Email: "with@example.test", Status: "active", RiskLevel: "normal",
+			GroupName: "g", Currency: "CNY", Balance: decimal.RequireFromString("9.99"),
+			SubscriptionCount: 1, Current: curSub,
+		},
+		{
+			ID: noCurrent, Email: "none@example.test", Status: "active", RiskLevel: "normal",
+			GroupName: "g", Currency: "CNY", Balance: decimal.Zero,
+			SubscriptionCount: 0, Current: nil,
+		},
+	}}
+	e := newEngine(f, true, nil)
+
+	w := do(e, http.MethodGet, "/v1/users", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("list status %d %s", w.Code, w.Body)
+	}
+	list := decodeMap(t, w.Body.Bytes())
+	users, _ := list["users"].([]any)
+	if len(users) != 2 {
+		t.Fatalf("users len %d", len(users))
+	}
+	rowKeys := []string{
+		"id", "email", "display_name", "status", "risk_level", "group_name", "group_id",
+		"created_at", "last_login_at", "subscription_count", "active_plan", "balance", "currency", "current_subscription",
+	}
+	for i, u := range users {
+		m, _ := u.(map[string]any)
+		assertKeys(t, m, rowKeys...)
+		if i == 0 {
+			cs, _ := m["current_subscription"].(map[string]any)
+			if cs == nil {
+				t.Fatal("current_subscription 应有对象")
+			}
+			assertKeys(t, cs, "id", "plan_name", "status", "current_period_end", "traffic", "device_limit", "online_devices")
+			tr, _ := cs["traffic"].(map[string]any)
+			assertKeys(t, tr, "limit", "consumed")
+			if m["balance"] != float64(999) {
+				t.Fatalf("balance %v", m["balance"])
+			}
+		} else {
+			if _, ok := m["current_subscription"]; !ok {
+				t.Fatal("缺 current_subscription 键")
+			}
+			if m["current_subscription"] != nil {
+				t.Fatalf("current_subscription 应为 null got %v", m["current_subscription"])
+			}
+		}
+	}
+
+	w = do(e, http.MethodGet, "/v1/users/"+withCurrent.String(), "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("detail status %d %s", w.Code, w.Body)
+	}
+	det := decodeMap(t, w.Body.Bytes())
+	detailExtra := []string{
+		"email_verified", "is_admin", "referrer", "stats", "subscriptions", "recent_orders",
+		"telegram", "unattached_pack_bytes",
+	}
+	assertKeys(t, det, append(rowKeys, detailExtra...)...)
+	stats, _ := det["stats"].(map[string]any)
+	assertKeys(t, stats, "paid_totals", "order_count", "referral_count")
+	tg, _ := det["telegram"].(map[string]any)
+	assertKeys(t, tg, "username", "bound_at")
+	subs, _ := det["subscriptions"].([]any)
+	s0, _ := subs[0].(map[string]any)
+	assertKeys(t, s0,
+		"id", "label", "plan_name", "plan_version", "status", "current_period_start", "current_period_end",
+		"amount", "currency", "auto_renew", "quotas", "device_limit_override", "plan_max_devices",
+		"online_devices", "pack_remaining_bytes",
+	)
+	if s0["amount"] != float64(1234) {
+		t.Fatalf("subscription amount %v", s0["amount"])
+	}
+	q0, _ := s0["quotas"].([]any)[0].(map[string]any)
+	assertKeys(t, q0, "metric", "limit", "consumed", "remaining")
+	ordKeys := []string{
+		"id", "order_no", "user_email", "kind", "status", "currency", "total_amount", "payable_amount",
+		"paid_amount", "refunded_amount", "balance_applied", "created_at", "paid_at", "provider_code",
+		"provider_name", "plan_name", "interval", "interval_count", "item_count", "manual",
+	}
+	ro, _ := det["recent_orders"].([]any)[0].(map[string]any)
+	assertKeys(t, ro, ordKeys...)
+	if ro["total_amount"] != float64(1234) {
+		t.Fatalf("order total %v", ro["total_amount"])
+	}
+
+	w = do(e, http.MethodGet, "/v1/user-groups", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("groups status %d %s", w.Code, w.Body)
+	}
+	gr := decodeMap(t, w.Body.Bytes())
+	groups, _ := gr["groups"].([]any)
+	g0, _ := groups[0].(map[string]any)
+	assertKeys(t, g0, "id", "code", "name", "description", "users", "plans", "prices", "coupons", "exclusive_pools")
+	ep, _ := g0["exclusive_pools"].([]any)
+	if ep == nil {
+		t.Fatal("exclusive_pools 不应为 null")
+	}
+	if len(ep) != 0 {
+		t.Fatalf("exclusive_pools %v", ep)
 	}
 }

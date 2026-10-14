@@ -97,8 +97,7 @@ func fail(err error) {
 }
 
 var tmpl = template.Must(template.New("golangci").Parse(`# 由 tools/depguardgen 生成，不要手改；改规则改生成器，加模块后重新运行。
-# 只检查新栈目录（internal/pkg、internal/app、internal/module、cmd/pandora、db），
-# 旧代码在 P7 删除前不进 lint。
+# tools、tests、web 不进 lint。
 version: "2"
 
 run:
@@ -127,7 +126,7 @@ linters:
           deny:
             - pkg: gorm.io
               desc: handler、task 与 grpc 不碰数据库，经 service 访问
-            - pkg: {{.Module}}/internal/pkg/db
+            - pkg: {{.Module}}/internal/pkg/db$
               desc: handler 与 task 不碰数据库，经 service 访问
             - pkg: {{.Module}}/internal/pkg/tx
               desc: 事务边界在 service
@@ -137,7 +136,7 @@ linters:
           deny:
             - pkg: gorm.io
               desc: service 不直接用 GORM，读写经本模块 repo，事务经 internal/pkg/tx
-            - pkg: {{.Module}}/internal/pkg/db
+            - pkg: {{.Module}}/internal/pkg/db$
               desc: service 不直接取连接，事务经 internal/pkg/tx
         model-plain:
           files:
@@ -154,7 +153,7 @@ linters:
               desc: 纯函数包（订阅渲染、节点协议），不依赖任何模块
             - pkg: gorm.io
               desc: 纯函数包不碰数据库
-            - pkg: {{.Module}}/internal/pkg/db
+            - pkg: {{.Module}}/internal/pkg/db$
               desc: 纯函数包不碰数据库
             - pkg: {{.Module}}/internal/pkg/tx
               desc: 纯函数包不碰数据库
@@ -173,9 +172,9 @@ linters:
           deny:
             - pkg: gorm.io
               desc: 中间件不碰数据库
-            - pkg: {{.Module}}/internal/pkg/db
+            - pkg: {{.Module}}/internal/pkg/db$
               desc: 中间件不碰数据库
-        new-stack-no-legacy:
+        stack-conventions:
           files:
             - "**/internal/pkg/**"
             - "**/internal/app/**"
@@ -183,14 +182,6 @@ linters:
             - "**/cmd/pandora/**"
             - "**/db/migrations/**"
           deny:
-            - pkg: {{.Module}}/internal/api
-              desc: 新栈不引用旧代码
-            - pkg: {{.Module}}/internal/domain
-              desc: 新栈不引用旧代码
-            - pkg: {{.Module}}/internal/middleware
-              desc: 新栈不引用旧代码
-            - pkg: {{.Module}}/internal/platform
-              desc: 新栈不引用旧代码
             - pkg: github.com/go-chi/chi
               desc: 新栈用 gin
             - pkg: github.com/jackc/pgx/v5/pgxpool
@@ -237,11 +228,6 @@ linters:
     presets:
       - std-error-handling
     paths:
-      - internal/api
-      - internal/domain
-      - internal/middleware
-      - internal/platform
-      - cmd/aegis-
       - tools
       - tests
       - web

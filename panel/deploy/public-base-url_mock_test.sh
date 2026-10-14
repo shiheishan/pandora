@@ -7,7 +7,7 @@ DEPLOY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 fail() { echo "public-base-url: $*" >&2; exit 1; }
 tmp="$(mktemp)"; tmpbin="$(mktemp -d)"; trap 'rm -rf -- "$tmp" "$tmp.err" "$tmpbin"' EXIT
 
-# 1. 规则矩阵：与 render-nginx.sh、platform/config 的 CanonicalPublicOrigin（生产）共用一张用例表
+# 1. 规则矩阵：与 render-nginx.sh 共用一张用例表（pandora 的 validate.go 在 production 下另要求 https://）
 cases="$DEPLOY/fixtures/public-base-url-cases.txt"
 n=0
 while read -r verdict url; do
@@ -59,34 +59,37 @@ fi
 grep -Fq '面板对外地址不合规：https://10.0.0.1' <<<"$err" || fail "invalid-address message: $err"
 grep -Fq 'bash install.sh' <<<"$err" || fail 'invalid-address message lacks the rerun command'
 
-# 3. .env 单键读取：不 source，最后一次出现为准，值里可以有等号
+# 3. KEY=VALUE 单键读取：不 source，最后一次出现为准，值里可以有等号；config.yaml 顶层键读取
 printf 'A=1\nB=x=y\nA=2\n' >"$tmp"
 [ "$(pandora_env_file_value "$tmp" A)" = 2 ] && [ "$(pandora_env_file_value "$tmp" B)" = x=y ] \
   && [ -z "$(pandora_env_file_value "$tmp" C)" ] || fail 'env_file_value'
+printf '# c\nenv: production\npublic_base_url: "https://panel.example.test"\nhttp:\n  public_base_url: https://nested.example.test\n' >"$tmp"
+[ "$(pandora_config_value "$tmp" public_base_url)" = https://panel.example.test ] || fail 'config_value: quoted top-level key'
+[ "$(pandora_config_value "$tmp" env)" = production ] || fail 'config_value: plain top-level key'
+[ -z "$(pandora_config_value "$tmp" missing)" ] || fail 'config_value: missing key must print nothing'
 
 # 4. 安装器用这一份，不另写校验；发布包带上它
 for script in install.sh; do
   grep -Fq '. "$' "$DEPLOY/$script" && grep -Fq '/public-base-url.sh"' "$DEPLOY/$script" \
     || fail "$script does not source public-base-url.sh"
   grep -Fq 'pandora_resolve_public_base_url' "$DEPLOY/$script" || fail "$script does not resolve the address"
-  if grep -Eq '^[[:space:]]*(valid_public_base_url|env_file_value)\(\)' "$DEPLOY/$script"; then
+  if grep -Eq '^[[:space:]]*(pandora_)?(valid_public_base_url|env_file_value|public_ipv4)\(\)' "$DEPLOY/$script"; then
     fail "$script keeps its own copy of the validator"
   fi
 done
-[ "$(grep -c 'install.sh public-base-url.sh' "$DEPLOY/build-release.sh")" -eq 2 ] \
-  || fail 'build-release.sh does not copy and archive public-base-url.sh'
+grep -Eq '^[[:space:]]*install\.sh install-lib\.sh public-base-url\.sh ' "$DEPLOY/build-release.sh" \
+  || fail 'build-release.sh release_scripts does not ship public-base-url.sh'
 
-# 5. install.sh：不再写示例值；.env 只在首装写
+# 5. install.sh：对外地址只在首装写进 config.yaml（升级不碰三个配置文件）
 inst="$DEPLOY/install.sh"
-if grep -Fq 'AEGIS_PUBLIC_BASE_URL=https://CHANGE_ME' "$inst"; then fail 'install.sh still writes the example address'; fi
-grep -Fq 'AEGIS_PUBLIC_BASE_URL=${PUBLIC_BASE_URL}' "$inst" || fail 'install.sh does not write the resolved address'
-# 写 .env 的 heredoc 必须落在 MODE=install 的分支里
 awk '
-  /^if \[\[ "\$MODE" = install \]\]; then$/ { inside = 1 }
-  inside && /^cat > "\$INSTALL_DIR\/deploy\/\.env" <</ { guarded = 1 }
+  /^if \[ "\$MODE" = install \]; then$/ { inside = 1 }
+  inside && /^[[:space:]]+pandora_write_new_config "\$PUBLIC_BASE_URL"/ { guarded = 1 }
   inside && /^fi$/ { inside = 0 }
-  !inside && /^cat > "\$INSTALL_DIR\/deploy\/\.env" <</ { unguarded = 1 }
+  !inside && /pandora_write_new_config "\$PUBLIC_BASE_URL"/ { unguarded = 1 }
   END { exit !(guarded && !unguarded) }
-' "$inst" || fail 'install.sh writes .env outside the first-install branch'
+' "$inst" || fail 'install.sh writes the config outside the first-install branch'
+grep -Fq '"public_base_url: $public_base_url"' "$DEPLOY/install-lib.sh" \
+  || fail 'install-lib.sh does not write the resolved address into config.yaml'
 
 printf 'public-base-url mock: PASS\n'

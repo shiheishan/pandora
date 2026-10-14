@@ -56,8 +56,8 @@ printf '%s\n' "$runs" | while IFS=$'\t' read -r id name state _; do
   echo "-- 前端 vitest"
   grep -E '^ *FAIL +tests/|Failed Tests|Tests +[0-9]+ failed' "$clean" | sort -u | head -10 | sed 's/^/  /' || true
   grep -E 'Serialized Error|返回 [0-9]{3} ' "$clean" | sort -u | head -5 | sed 's/^/  /' || true
-  echo "-- e2e 脚本"
-  grep -E '失败（退出码|\[FAIL\]' "$clean" | head -12 | sed 's/^/  /' || true
+  echo "-- e2e 脚本与不变量"
+  grep -E '\[FAIL\]|_e2e\.sh 失败|invariants\.sql 失败' "$clean" | head -12 | sed 's/^/  /' || true
   # 浏览器购买路径（panel-smoke 的 Playwright 步骤，见 .claude/rules/frontend-browser-e2e.md）
   if grep -qE $'\tBrowser purchase paths' "$log"; then
     echo "-- 浏览器购买路径（Playwright）"
@@ -93,9 +93,6 @@ if by.get("未执行"):
     echo "  看 shots/<步骤>-fail.png 与 test-results/*/trace.zip（npx playwright show-trace <trace.zip>）"
   fi
   echo "-- 已知偶发"
-  if grep -qE 'TestIdempotencyMiddlewarePG18' "$clean" && grep -qE 'lock timeout|55P03|canceling statement due to lock' "$clean"; then
-    echo "  TestIdempotencyMiddlewarePG18 锁超时：gh run rerun $id -R $repo --failed"
-  fi
   if grep -qE 'recent account payments have failed|spending limit needs to be increased' "$log"; then
     echo "  Actions 没启动（付款问题）：gh run rerun $id -R $repo"
   fi

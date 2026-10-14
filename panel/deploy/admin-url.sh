@@ -1,38 +1,65 @@
 #!/usr/bin/env bash
-# 随时重看管理后台的完整地址。
-#
-#   sudo /opt/pandora/deploy/admin-url.sh           （install.sh 装的）
-#   admin-url.sh <.env 路径>                         （指定别的 .env）
-#
-# 后台前缀是安装时随机生成的高熵路径，只记在 .env 的 AEGIS_ADMIN_PATH 里；有
-# AEGIS_PUBLIC_BASE_URL 就拼成完整 URL。只读 .env 的这两个键，不 source 它（里面是机密），
-# 也不打印别的值。后台地址本身就是入口，别贴到公开的地方。
+# 随时重看管理后台的完整地址：sudo /opt/pandora/deploy/admin-url.sh
+# 只读 deploy.env 的 PANDORA_ADMIN_PATH 与 config.yaml 的 public_base_url，不 source 机密文件。
 set -euo pipefail
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-ENV_FILE="${1:-$HERE/.env}"
+ETC="${PANDORA_ETC_DIR:-/etc/pandora}"
+DEPLOY_ENV="$ETC/deploy.env"
+CONFIG_YAML="$ETC/config.yaml"
 
-[ -e "$ENV_FILE" ] || { echo "找不到 $ENV_FILE（面板装在别处时把 .env 路径作为参数传进来）" >&2; exit 1; }
-[ -r "$ENV_FILE" ] || { echo "读不了 $ENV_FILE：它只给 root 读，用 sudo 再跑一次" >&2; exit 1; }
-
-# 读单个键（最后一次出现为准），与 public-base-url.sh 的 pandora_env_file_value 同一口径
-env_value() {
-  awk -F= -v key="$1" '$1 == key { sub(/^[^=]*=/, ""); sub(/\r$/, ""); v = $0 } END { print v }' "$ENV_FILE"
+env_file_value() {
+  awk -F= -v key="$1" '$1 == key { sub(/^[^=]*=/, ""); sub(/\r$/, ""); v = $0 } END { print v }' "$DEPLOY_ENV"
 }
 
-admin_path="$(env_value AEGIS_ADMIN_PATH)"
-admin_path="${admin_path#/}"; admin_path="${admin_path%/}"
-if [ -z "$admin_path" ] || [[ "$admin_path" == *CHANGE_ME* ]]; then
-  echo "$ENV_FILE 里没有设置 AEGIS_ADMIN_PATH" >&2
+config_top_value() {
+  awk -v key="public_base_url" '
+    /^[[:space:]]/ { next }
+    $0 ~ "^" key ":" {
+      sub(/^[^:]*:[[:space:]]*/, "")
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "")
+      if (length($0) >= 2 && substr($0, 1, 1) == "\"" && substr($0, length($0), 1) == "\"") {
+        print substr($0, 2, length($0) - 2)
+        next
+      }
+      if (length($0) >= 2 && substr($0, 1, 1) == "\047" && substr($0, length($0), 1) == "\047") {
+        print substr($0, 2, length($0) - 2)
+        next
+      }
+      print $0
+    }
+  ' "$CONFIG_YAML"
+}
+
+if [ ! -e "$DEPLOY_ENV" ]; then
+  echo "找不到 $DEPLOY_ENV" >&2
   exit 1
 fi
-[[ "$admin_path" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "AEGIS_ADMIN_PATH 不是一个 URL 安全的路径段，检查 $ENV_FILE" >&2; exit 1; }
+if [ ! -r "$DEPLOY_ENV" ]; then
+  echo "读不了 $DEPLOY_ENV：请用 sudo 再跑一次" >&2
+  exit 1
+fi
 
-base="$(env_value AEGIS_PUBLIC_BASE_URL)"
-base="${base%/}"
-if [ -n "$base" ] && [[ "$base" != *CHANGE_ME* ]]; then
+admin_path="$(env_file_value PANDORA_ADMIN_PATH)"
+admin_path="${admin_path#/}"
+admin_path="${admin_path%/}"
+if [ -z "$admin_path" ]; then
+  echo "$DEPLOY_ENV 里没有设置 PANDORA_ADMIN_PATH" >&2
+  exit 1
+fi
+if [[ ! "$admin_path" =~ ^[A-Za-z0-9_-]+$ ]]; then
+  echo "PANDORA_ADMIN_PATH 不是一个 URL 安全的路径段，检查 $DEPLOY_ENV" >&2
+  exit 1
+fi
+
+base=""
+if [ -r "$CONFIG_YAML" ]; then
+  base="$(config_top_value public_base_url)"
+  base="${base%/}"
+fi
+
+if [ -n "$base" ]; then
   printf '%s/%s/\n' "$base" "$admin_path"
 else
   printf '/%s/\n' "$admin_path"
-  echo "（.env 没有 AEGIS_PUBLIC_BASE_URL，上面只是路径：拼在面板域名后面访问）" >&2
+  echo "（config.yaml 没有可用的 public_base_url，上面只是路径：拼在面板域名后面访问）" >&2
 fi

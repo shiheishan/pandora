@@ -1,0 +1,60 @@
+[Unit]
+Description=Pandora panel background jobs (pandora worker: asynq server and scheduler)
+Documentation=file:///opt/pandora/deploy/RUNBOOK.md
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pandora
+Group=pandora
+WorkingDirectory=/opt/pandora
+EnvironmentFile=/etc/pandora/secrets.env
+Environment=PANDORA_LOG_FILE=/var/log/pandora/worker.log
+# 连接池比 serve 小：任务并发缺省 8（worker.concurrency），留两条余量。
+# 两个进程合计 30 + 10 条，加上迁移、备份、psql，低于 postgresql-pandora.conf 的 max_connections = 60
+Environment=PANDORA_DATABASE_MAX_CONNS=10
+ExecStart=/opt/pandora/bin/pandora worker
+
+# 收到 SIGTERM 后 asynq 等在跑的任务结束（worker.shutdown_timeout 缺省 30 秒），留够余量
+KillSignal=SIGTERM
+TimeoutStopSec=45
+Restart=on-failure
+RestartSec=5
+
+# 沙箱：只需要连库与 Redis、对外发通知（邮件、Telegram、插件钩子）、写自己的日志
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/pandora
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallErrorNumber=EPERM
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount @reboot @swap @obsolete
+UMask=0027
+
+MemoryMax=256M
+Environment=GOMEMLIMIT=204MiB
+MemorySwapMax=0
+# 后台任务让着 serve：争抢时只拿一半份额
+CPUWeight=25
+
+[Install]
+WantedBy=multi-user.target

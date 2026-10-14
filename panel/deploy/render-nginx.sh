@@ -1,25 +1,32 @@
 #!/usr/bin/env bash
-# Render the unified edge config without sourcing the secret environment file.
+# 渲染面板的 nginx 站点（模板 nginx-pandora.conf）。edge-tls.sh 的 apply / setup 调它，运维也可以直接跑。
+#
+#   render-nginx.sh [config.yaml] [deploy.env] [输出文件] [真实IP信任表]
+#   缺省依次 /etc/pandora/config.yaml、/etc/pandora/deploy.env、/etc/nginx/conf.d/pandora.conf、
+#   /etc/pandora/cloudflare-realip.conf（后两个参数只给测试用：模板里 include 的路径写死，生产上永远是缺省值）
+#
+# 域名取 config.yaml 顶层 public_base_url 那一行，后台前缀取 deploy.env 的 PANDORA_ADMIN_PATH；
+# 两个文件都逐键用 awk 读，绝不 source（deploy.env 里有迁移 DSN 与超级用户口令）。输出里不打印后台前缀。
 set -euo pipefail
 umask 077
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="${1:-$SCRIPT_DIR/.env}"
-OUTPUT_FILE="${2:-/etc/nginx/conf.d/aegis.conf}"
-# 第三个参数只给测试用：模板里 include 的路径是写死的，生产上永远是这个默认值
-REALIP_FILE="${3:-/etc/aegispanel/cloudflare-realip.conf}"
-TEMPLATE_FILE="$SCRIPT_DIR/nginx-aegis.conf"
+CONFIG_FILE="${1:-/etc/pandora/config.yaml}"
+DEPLOY_ENV="${2:-/etc/pandora/deploy.env}"
+OUTPUT_FILE="${3:-/etc/nginx/conf.d/pandora.conf}"
+REALIP_FILE="${4:-/etc/pandora/cloudflare-realip.conf}"
+TEMPLATE_FILE="$SCRIPT_DIR/nginx-pandora.conf"
 
 die() { printf 'render-nginx: %s\n' "$*" >&2; exit 1; }
 
-[[ -f "$ENV_FILE" ]] || die "environment file not found"
+[[ -f "$CONFIG_FILE" ]] || die "config file not found"
+[[ -f "$DEPLOY_ENV" ]] || die "deploy.env not found"
 [[ -f "$TEMPLATE_FILE" ]] || die "nginx template not found"
 [[ "$OUTPUT_FILE" = /* ]] || die "output path must be absolute"
 [[ "$REALIP_FILE" = /* ]] || die "real-IP include path must be absolute"
 
-# Read KEY=value lines with awk instead of sourcing: the file holds secrets and
-# must never be executed. Each key must appear exactly once.
-env_value() {
+# deploy.env 用 awk 逐键读，绝不 source。
+deploy_value() {
   local key="$1" values
   mapfile -t values < <(awk -F= -v key="$key" '
     $1 == key {
@@ -27,32 +34,24 @@ env_value() {
       sub(/\r$/, "")
       print
     }
-  ' "$ENV_FILE")
+  ' "$DEPLOY_ENV")
   [[ ${#values[@]} -eq 1 ]] || die "$key must occur exactly once"
   printf '%s' "${values[0]}"
 }
 
-admin_path="$(env_value AEGIS_ADMIN_PATH)"
+admin_path="$(deploy_value PANDORA_ADMIN_PATH)"
 
-# One high-entropy URL segment keeps the management surface out of commodity
-# scans. It is a discovery-control layer, never a replacement for admin auth.
 [[ ${#admin_path} -ge 20 && ${#admin_path} -le 64 ]] || \
-  die "AEGIS_ADMIN_PATH must be 20-64 characters"
+  die "PANDORA_ADMIN_PATH must be 20-64 characters"
 [[ "$admin_path" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || \
-  die "AEGIS_ADMIN_PATH must be one URL-safe path segment"
-[[ "$admin_path" != "__AEGIS_ADMIN_PATH__" ]] || die "placeholder value is forbidden"
+  die "PANDORA_ADMIN_PATH must be one URL-safe path segment"
+[[ "$admin_path" != "__PANDORA_ADMIN_PATH__" ]] || die "placeholder value is forbidden"
 [[ "$admin_path" != CHANGE_ME* ]] || die "example/default value is forbidden"
 
-# The edge serves the same origin the panel builds install commands, payment
-# callbacks and subscription links from, so the host is taken from that URL
-# rather than configured twice. HTTPS on the default port only: the template
-# listens on 443 and the certificate sits behind /etc/aegispanel/tls/live
-# (edge-tls.sh keeps it there: Let's Encrypt for a domain or a public IPv4,
-# self-signed as the fallback).
-#
-# 与 public-base-url.sh 的 pandora_valid_public_base_url、platform/config 的
-# CanonicalPublicOrigin（生产）同一规则，用例表 fixtures/public-base-url-cases.txt：
-# https://<DNS 域名或公网 IPv4>。本脚本装在主机上单独运行，不 source 安装器的库，所以抄一份。
+# 边缘服务的就是面板拼接入命令、支付回调、订阅链接用的那个地址，所以主机从 public_base_url 取，不另配一遍。
+# 只认 https、缺省端口：模板听 443，证书在 /etc/pandora/tls/live（edge-tls.sh 维护：域名或公网 IPv4 的
+# Let's Encrypt 证书，申请不到时自签兜底）。规则与 public-base-url.sh 的 pandora_valid_public_base_url 相同
+# （https://<DNS 域名或公网 IPv4>）；本脚本装在主机上单独运行，不 source 安装器的库，所以抄一份。
 public_ipv4() {
   local o='(0|[1-9][0-9]{0,2})' a b c d
   [[ "$1" =~ ^$o\.$o\.$o\.$o$ ]] || return 1
@@ -66,28 +65,44 @@ public_ipv4() {
   (( !(a == 192 && b == 0 && c == 0) )) || return 1
   (( !(a == 198 && (b == 18 || b == 19)) ))
 }
-base_url="$(env_value AEGIS_PUBLIC_BASE_URL)"
-[[ "$base_url" != *CHANGE_ME* ]] || die "AEGIS_PUBLIC_BASE_URL still holds the example value"
+
+config_public_base_url() {
+  local values
+  mapfile -t values < <(awk '
+    /^[^[:space:]]/ && /^public_base_url:[[:space:]]*/ {
+      line = $0
+      sub(/^public_base_url:[[:space:]]*/, "", line)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+      if (line ~ /^".*"$/) { sub(/^"/, "", line); sub(/"$/, "", line) }
+      else if (line ~ /^\047.*\047$/) { sub(/^\047/, "", line); sub(/\047$/, "", line) }
+      print line
+    }
+  ' "$CONFIG_FILE")
+  [[ ${#values[@]} -eq 1 ]] || die "public_base_url must occur exactly once in config"
+  printf '%s' "${values[0]}"
+}
+
+base_url="$(config_public_base_url)"
+[[ -n "$base_url" ]] || die "public_base_url is empty"
+[[ "$base_url" != *CHANGE_ME* ]] || die "public_base_url still holds the example value"
 [[ "$base_url" =~ ^https://([^/:]+)/?$ ]] || \
-  die "AEGIS_PUBLIC_BASE_URL must be https://<domain or public IPv4> with no port or path"
+  die "public_base_url must be https://<domain or public IPv4> with no port or path"
 domain="${BASH_REMATCH[1],,}"
 if ! public_ipv4 "$domain"; then
   [[ ${#domain} -le 253 ]] || die "domain is too long"
-  [[ "$domain" != *.localhost ]] || die "AEGIS_PUBLIC_BASE_URL must not be a localhost name"
+  [[ "$domain" != *.localhost ]] || die "public_base_url must not be a localhost name"
   [[ "$domain" =~ ^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]([a-z0-9-]*[a-z0-9])?$ ]] || \
-    die "AEGIS_PUBLIC_BASE_URL must name a DNS domain or a public IPv4 address (not a private, reserved or IPv6 address)"
+    die "public_base_url must name a DNS domain or a public IPv4 address (not a private, reserved or IPv6 address)"
 fi
 
-for placeholder in __AEGIS_ADMIN_PATH__ __AEGIS_DOMAIN__; do
+for placeholder in __PANDORA_ADMIN_PATH__ __PANDORA_DOMAIN__; do
   grep -q "$placeholder" "$TEMPLATE_FILE" || die "template placeholder $placeholder is missing"
 done
 
-# ---------------------------------------------------------------------------
 # HTTP/2 的写法随 nginx 版本：1.25.1 起是独立的 http2 on;（listen 的 http2 参数已弃用、只告警），
 # 更老的版本不认识 http2 指令，nginx -t 直接失败。模板按新写法写，这里按本机 nginx 版本取舍：
 # 探不到版本（没装 nginx、在别处渲染）时用旧写法——它在新版本上也能用，只多一条弃用告警。
 # PANDORA_NGINX_VERSION 可显式指定（测试与异机渲染用），形如 1.26.3
-# ---------------------------------------------------------------------------
 nginx_version="${PANDORA_NGINX_VERSION:-}"
 if [[ -z "$nginx_version" ]] && command -v nginx >/dev/null 2>&1; then
   nginx_version="$(nginx -v 2>&1 || true)"
@@ -101,20 +116,17 @@ if [[ "$nginx_version" =~ ([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
 fi
 [[ "$(grep -cE '^[[:space:]]*http2 on;' "$TEMPLATE_FILE")" -eq 1 ]] || die "template must hold exactly one 'http2 on;' line"
 
-# ---------------------------------------------------------------------------
-# 真实来源 IP 的信任表：模板在 server 块里 include 它，文件缺了 nginx -t 就失败
-# ---------------------------------------------------------------------------
-# 两个安装脚本都不生成它，全新安装后第一次渲染就会撞上。这里只在它不存在时写一份
-# 「不信任任何代理」的默认文件：没有 set_real_ip_from，nginx 就只认 TCP 对端，
-# 客户端自己填的 CF-Connecting-IP / X-Real-IP 一律不采信——站点不在 Cloudflare
-# 后面时，信任 Cloudflare 的头等于让任何人伪造来源 IP，绕过按 IP 的限流与风控。
-# 已存在就不碰：在 Cloudflare 后面的站点由 update-cloudflare-realip.sh 写入网段，
-# 升级时重新渲染不能把它冲掉。
+# 真实来源 IP 的信任表：模板在 server 块里 include 它，文件缺了 nginx -t 就失败。
+# 只在它不存在时写一份「不信任任何代理」的默认文件：没有 set_real_ip_from，nginx 只认 TCP 对端，
+# 客户端自己填的 CF-Connecting-IP / X-Real-IP 一律不采信（不在 Cloudflare 后面时信任它的头，
+# 等于让任何人伪造来源 IP，绕过按 IP 的限流与风控）。已存在就不碰：在 Cloudflare 后面的站点由
+# update-cloudflare-realip.sh 写入网段，升级时重新渲染不能把它冲掉。
 ensure_realip_default() {
   [[ -e "$REALIP_FILE" ]] && return 0
   local dir tmp
   dir="$(dirname -- "$REALIP_FILE")"
-  install -d -m 0755 "$dir"
+  # 目录已在（/etc/pandora 是 root:pandora 0750）就不动它的权限
+  [[ -d "$dir" ]] || install -d -m 0755 "$dir"
   tmp="$(mktemp "${REALIP_FILE}.tmp.XXXXXX")"
   cat >"$tmp" <<'REALIP'
 # Pandora edge real-IP trust list, created by render-nginx.sh because none existed.
@@ -134,22 +146,12 @@ REALIP
 }
 ensure_realip_default
 
-# ---------------------------------------------------------------------------
-# 主配置的 worker 与连接上限：worker_processes、worker_connections 与 worker_rlimit_nofile
-# 只能写在 nginx.conf 的 main / events 段，conf.d 里的站点文件管不到。
-# 连接上限：Debian 缺省 768 × worker_processes auto（2 核两个 worker）：每条 SSE、每条节点事件流
-# 各占一个客户端连接加一个上游连接，约一千条就顶满，新连接（含节点请求）一律被拒（5k-r4 复测：
-# 1000 人 SSE 时节点请求报 500）。这里把每个 worker 抬到至少 16384 条，文件描述符上限配套抬到
-# 65536（一条代理连接两个 fd，16384 条最多 32768 个）；已经更高的不动。
-# worker 数：发行版的 auto 在 2 核机器上是 2 个 worker，各自常驻一份 TLS 会话缓存索引、连接池、
-# SSL 缓冲，约多占 8MB；1 万用户 + 1000 节点时 nginx 总共只用约 11 个单核点（0.11 核），一个 worker
-# 绰绰有余（重连风暴时握手会在这一个 worker 里排队，可以接受）。只把 auto 改成 1：运维显式写的数字
-# （2、4…）是有意为之，不动。因为 worker 少了一半，每个 worker 的 worker_connections 从 8192
-# 抬到 16384，整机的并发连接上限不变。
-# 主配置的位置：PANDORA_NGINX_MAIN_CONF 显式指定（none 表示不碰），否则只在输出文件位于
-# <nginx 目录>/conf.d/ 下时取 <nginx 目录>/nginx.conf；文件不存在就跳过。
-# 改动只涉及这三项，结构不认识（events 写在一行里、没有 events 段）时不改、只提示。
-# ---------------------------------------------------------------------------
+# 主配置的 worker 与连接上限只能写在 nginx.conf 的 main / events 段，站点文件管不到。
+# Debian 缺省 768 × worker_processes auto：每条 SSE 占一个客户端连接加一个上游连接，约一千条就顶满（5k-r4）。
+# 这里把 worker_processes auto 改成 1（运维显式写的数字不动；一个 worker 足够，省下每个 worker 常驻的
+# TLS 会话索引与缓冲），每个 worker 的 worker_connections 抬到至少 16384、worker_rlimit_nofile 至少 65536，
+# 已经更高的不动。主配置位置：PANDORA_NGINX_MAIN_CONF 显式指定（none 表示不碰），否则只在输出文件位于
+# <nginx 目录>/conf.d/ 下时取 <nginx 目录>/nginx.conf；不存在就跳过；结构不认识时不改、只提示。
 NGINX_WORKER_CONNECTIONS=16384
 NGINX_RLIMIT_NOFILE=65536
 
@@ -168,7 +170,6 @@ tune_nginx_main() {
   local conf="$1" tmp rc=0
   [[ -f "$conf" ]] || { printf 'render-nginx: %s not found; worker_connections left as is\n' "$conf"; return 0; }
   tmp="$(mktemp "${conf}.tmp.XXXXXX")"
-  # 两遍：第一遍只看主段有没有 worker_rlimit_nofile，第二遍改写
   awk -v wc="$NGINX_WORKER_CONNECTIONS" -v nofile="$NGINX_RLIMIT_NOFILE" '
     function lead(s) { match(s, /^[[:space:]]*/); return substr(s, 1, RLENGTH) }
     function num(s) { sub(/^[^0-9]*/, "", s); sub(/[^0-9].*$/, "", s); return s + 0 }
@@ -234,7 +235,7 @@ http2_edit=()
 if [[ "$http2_directive" -eq 0 ]]; then
   http2_edit=(-e '/^[[:space:]]*http2 on;/d' -e 's/^\([[:space:]]*listen [^;]*:443 ssl\);/\1 http2;/')
 fi
-sed -e "s/__AEGIS_ADMIN_PATH__/${admin_path}/g" -e "s/__AEGIS_DOMAIN__/${domain}/g" \
+sed -e "s/__PANDORA_ADMIN_PATH__/${admin_path}/g" -e "s/__PANDORA_DOMAIN__/${domain}/g" \
   ${http2_edit[@]+"${http2_edit[@]}"} "$TEMPLATE_FILE" >"$tmp_file"
 chmod 0644 "$tmp_file"
 mv -f -- "$tmp_file" "$OUTPUT_FILE"

@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
-# 发布包装出来的面板以 production 运行，网关启动时要求 AEGIS_PUBLIC_BASE_URL 是
-# https + 公网 Host（platform/config 的 CanonicalPublicOrigin），nginx 的 server_name
-# 与证书也从它生成。所以首装在动手之前就要拿到一个合规的地址：域名，或本机公网 IPv4
-# （没有域名时的默认，装完自动申请 Let's Encrypt 的 IP 证书）。
+# 发布包装出来的面板以 production 运行，pandora 启动时要求 config.yaml 的 public_base_url 是
+# https + 公网 Host（panel/internal/pkg/config/validate.go：production 下只接受 https://），
+# nginx 的 server_name 与证书也从它生成。首装前要拿到合规地址：域名，或本机公网 IPv4。
 
-# 公网 IPv4：点分十进制、不带前导零；排除私网、回环、链路本地、运营商级 NAT、本网络、
-# IETF 协议分配、基准测试、组播与保留段。文档段（TEST-NET）视同公网，测试夹具用它们。
+# 公网 IPv4：点分十进制、不带前导零；排除私网、回环、链路本地、运营商级 NAT、本网络、IETF 协议分配、基准测试、组播与保留段。文档段（TEST-NET）视同公网，测试夹具用它们。
 pandora_public_ipv4() {
   local o='(0|[1-9][0-9]{0,2})' a b c d
   [[ "$1" =~ ^$o\.$o\.$o\.$o$ ]] || return 1
@@ -20,9 +18,8 @@ pandora_public_ipv4() {
   (( !(a == 198 && (b == 18 || b == 19)) ))
 }
 
-# 与 render-nginx.sh、platform/config 的 CanonicalPublicOrigin（生产）同一规则，用例表在
-# fixtures/public-base-url-cases.txt：https://<DNS 域名或公网 IPv4>，不带端口与路径，
-# 不是 localhost。IPv6 字面量不收（只有 IPv6 的机器用解析到它的域名）。
+# 与 render-nginx.sh、validate.go 生产校验同一规则，用例表在 fixtures/public-base-url-cases.txt：
+# https://<DNS 域名或公网 IPv4>，不带端口与路径，不是 localhost。IPv6 字面量不收。
 pandora_valid_public_base_url() {
   local url="${1%/}" host
   [[ "$url" != *CHANGE_ME* ]] || return 1
@@ -66,11 +63,11 @@ pandora_resolve_public_base_url() {
   fi
   if [[ -z "$url" && -n "$fallback" ]]; then
     url="$fallback"
-    printf '    没有给对外地址，用本机公网 IPv4：%s（以后有了域名，改 .env 的 AEGIS_PUBLIC_BASE_URL 再重跑安装脚本）\n' "$url" >&2
+    printf '    没有给对外地址，用本机公网 IPv4：%s（以后有了域名，改 /etc/pandora/config.yaml 的 public_base_url 后 systemctl restart pandora-serve pandora-worker，再 sudo /opt/pandora/deploy/edge-tls.sh setup）\n' "$url" >&2
   fi
   if [[ -z "$url" ]]; then
     printf '%s\n' \
-      "首装需要面板的对外地址：面板以 production 模式运行，网关启动时要求 AEGIS_PUBLIC_BASE_URL" \
+      "首装需要面板的对外地址：面板以 production 模式运行，pandora 启动时要求 config.yaml 的 public_base_url" \
       "是 https://域名 或 https://公网IPv4，否则拒绝启动。本机没找到公网 IPv4（在 NAT 后面？），" \
       "请带上它重新运行，例如：" \
       "  sudo PANDORA_PUBLIC_BASE_URL=https://panel.example.com $rerun" \
@@ -83,14 +80,34 @@ pandora_resolve_public_base_url() {
       "面板对外地址不合规：$url" \
       "必须形如 https://panel.example.com 或 https://<公网IPv4>：https、DNS 域名或公网 IPv4" \
       "（不能是 localhost、私网 IP、IPv6 字面量），不带端口与路径。" \
-      "production 模式下网关拿不到这样的地址会拒绝启动；nginx 的 server_name 与证书也从它生成。" \
+      "production 模式下 pandora 拿不到合规的 public_base_url 会拒绝启动；nginx 的 server_name 与证书也从它生成。" \
       "改正后重新运行：sudo PANDORA_PUBLIC_BASE_URL=https://你的域名或公网IP $rerun" >&2
     return 1
   fi
   printf '%s\n' "$url"
 }
 
-# 读 .env 的单个键（最后一次出现为准），不 source：文件里是机密，不执行它。
+# 读 KEY=VALUE 文件（deploy.env、secrets.env）的单个键（最后一次出现为准），不 source。
 pandora_env_file_value() {
   awk -F= -v key="$2" '$1 == key { sub(/^[^=]*=/, ""); sub(/\r$/, ""); v = $0 } END { print v }' "$1"
+}
+
+# 读 config.yaml 顶层键（行首无缩进的 键: 行），去首尾空白与成对的单 / 双引号；没有则打印空。
+pandora_config_value() {
+  awk -v key="$2" '
+    /^[[:space:]]/ { next }
+    $0 ~ "^" key ":" {
+      sub(/^[^:]*:[[:space:]]*/, "")
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "")
+      if (length($0) >= 2 && substr($0, 1, 1) == "\"" && substr($0, length($0), 1) == "\"") {
+        print substr($0, 2, length($0) - 2)
+        next
+      }
+      if (length($0) >= 2 && substr($0, 1, 1) == "\047" && substr($0, length($0), 1) == "\047") {
+        print substr($0, 2, length($0) - 2)
+        next
+      }
+      print $0
+    }
+  ' "$1"
 }

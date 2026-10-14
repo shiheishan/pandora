@@ -44,7 +44,7 @@ const (
 // ChannelPublic 是门户公共频道。
 func ChannelPublic() string { return "rt:public" }
 
-// ChannelAdmin 是管理端频道：租户内每一条变更都会额外抄送一份。
+// ChannelAdmin 是管理端频道：每一条变更都会额外抄送一份。
 func ChannelAdmin() string { return "rt:admin" }
 
 // ChannelUser 是某个用户的私有频道。

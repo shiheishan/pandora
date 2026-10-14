@@ -41,6 +41,38 @@ func (s *Service) ListGroups(ctx context.Context) ([]Group, error) {
 	return out, nil
 }
 
+// AdminListGroups 是后台用户组列表：ListGroups 再补引用计数与把组列入仅限名单的节点池（经 OpsGroupUsage，一次调用）。
+func (s *Service) AdminListGroups(ctx context.Context) ([]Group, error) {
+	out, err := s.ListGroups(ctx)
+	if err != nil {
+		return nil, err
+	}
+	gu, err := s.needGroupUsage()
+	if err != nil {
+		return nil, err
+	}
+	usage, err := gu.GroupUsage(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		u, ok := usage[out[i].ID]
+		if !ok {
+			out[i].ExclusivePools = []PoolRef{}
+			continue
+		}
+		out[i].Plans = u.Plans
+		out[i].Prices = u.Prices
+		out[i].Coupons = u.Coupons
+		if u.ExclusivePools == nil {
+			out[i].ExclusivePools = []PoolRef{}
+		} else {
+			out[i].ExclusivePools = u.ExclusivePools
+		}
+	}
+	return out, nil
+}
+
 // CreateGroup 新建用户组；code 为空时由名称生成；code 重复回 409。
 func (s *Service) CreateGroup(ctx context.Context, code, name, description string) (uuid.UUID, error) {
 	code, name, descPtr, err := validateGroup(code, name, description)
@@ -107,6 +139,10 @@ func (s *Service) DeleteGroup(ctx context.Context, id uuid.UUID) error {
 		}
 		if n > 0 {
 			return errs.Newf(errs.Conflict, "这个分组下还有用户，先把他们移出去")
+		}
+		// 套餐可见名单对组是级联删除，外键兜不住：删了套餐就对谁都不可见，所以先查引用（与旧版同口径）
+		if err := s.ensureGroupUnused(ctx, id); err != nil {
+			return err
 		}
 		ok, err = s.repo.DeleteGroup(ctx, id)
 		if err != nil {
@@ -179,4 +215,32 @@ func groupSlug(name string) string {
 		s = strings.TrimRight(s[:64], "-")
 	}
 	return s
+}
+
+// ensureGroupUnused 在删组前拒绝仍被节点池、套餐可见名单、组专属价格、优惠券引用的组。
+func (s *Service) ensureGroupUnused(ctx context.Context, id uuid.UUID) error {
+	gu, err := s.needGroupUsage()
+	if err != nil {
+		return err
+	}
+	usage, err := gu.GroupUsage(ctx)
+	if err != nil {
+		return err
+	}
+	u := usage[id]
+	switch {
+	case len(u.ExclusivePools) > 0:
+		names := make([]string, 0, len(u.ExclusivePools))
+		for _, p := range u.ExclusivePools {
+			names = append(names, "「"+p.Name+"」")
+		}
+		return errs.Newf(errs.Conflict, "节点池"+strings.Join(names, "、")+"限定了这个分组，先把它从这些池的名单里移除")
+	case u.Plans > 0:
+		return errs.Newf(errs.Conflict, "还有套餐按这个分组控制可见性，先解除")
+	case u.Prices > 0:
+		return errs.Newf(errs.Conflict, "还有分组专属价格挂在这里，先删掉那些价格")
+	case u.Coupons > 0:
+		return errs.Newf(errs.Conflict, "还有优惠券限定了这个分组，先解除")
+	}
+	return nil
 }
