@@ -3,7 +3,7 @@ import { formatMoney, relativeTime } from '../../../core/format'
 import { href } from '../../../core/router'
 import { Empty, Pager, QueryView, Segmented, Select, Table, Tag, type TableColumn } from '../../../ui'
 import { useUserGroups, useUsers, USERS_PAGE, type UserRow } from './api'
-import { deviceView, expiryView, initial, listParams, shortId, STATUS_FILTERS, trafficView, USER_STATUS_VIEW, type StatusFilter } from './model'
+import { deviceView, expiryView, initial, listParams, shortId, STATUS_FILTERS, trafficView, USER_STATUS_VIEW, userLabel, type StatusFilter } from './model'
 import css from './Users.module.css'
 
 export interface ListState {
@@ -88,10 +88,10 @@ function columns(now: Date): TableColumn<UserRow>[] {
       render: (u) => (
         <span className={css.who}>
           <span className={css.avatar} aria-hidden="true">
-            {initial(u.email, u.display_name)}
+            {u.status === 'deleted' ? '#' : initial(u.email, u.display_name)}
           </span>
           <span className={css.whoText}>
-            <span className={css.email}>{u.email}</span>
+            <span className={css.email}>{userLabel(u)}</span>
             <span className={css.mono}>#{shortId(u.id)}</span>
           </span>
         </span>
