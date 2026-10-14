@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
+	"math/rand/v2"
 	"sort"
 	"strconv"
 	"strings"
@@ -48,6 +50,9 @@ type SimOptions struct {
 	Logger          *slog.Logger     // nil 用 slog.Default()
 	Now             func() time.Time // nil 用 time.Now
 	OmitStatusUsers bool             // 为真时 publish 不写 NodeStatus.Users
+	// Spread 为真时按真实节点的形态错开：首轮上报在一个间隔内随机，之后每轮 ±10% 抖动；
+	// 每个节点从按服务器名散列出的位置开始轮报用户，不让所有服务器同时报同一批人。
+	Spread bool
 }
 
 // simNode 是一个节点的本地镜像（只在 Run 的 goroutine 里访问）。
@@ -74,6 +79,7 @@ type Sim struct {
 	trafficUsers   int
 	now            func() time.Time
 	omitUsers      bool
+	spread         bool
 	startedAt      time.Time
 
 	connected      bool
@@ -117,6 +123,7 @@ func NewSim(o SimOptions) *Sim {
 		trafficUsers:   u,
 		now:            now,
 		omitUsers:      o.OmitStatusUsers,
+		spread:         o.Spread,
 		startedAt:      now(),
 		nodes:          make(map[string]*simNode),
 		heartbeatEvery: defaultHeartbeatEvery,
@@ -133,7 +140,11 @@ func (s *Sim) Applied() ([]*nodev1.AppliedConfig, []*nodev1.AppliedUsers) {
 // Run 是主循环，一直跑到 ctx 结束。
 func (s *Sim) Run(ctx context.Context, link Link) {
 	heartbeat := time.NewTimer(s.heartbeatEvery)
-	report := time.NewTimer(s.reportInterval)
+	first := s.reportInterval
+	if s.spread {
+		first = time.Duration(rand.Int64N(int64(s.reportInterval))) + time.Millisecond
+	}
+	report := time.NewTimer(first)
 	defer heartbeat.Stop()
 	defer report.Stop()
 
@@ -148,7 +159,7 @@ func (s *Sim) Run(ctx context.Context, link Link) {
 			heartbeat.Reset(s.heartbeatEvery)
 		case <-report.C:
 			s.tickReport(link)
-			report.Reset(s.reportInterval)
+			report.Reset(s.nextReport())
 		}
 		s.publish()
 	}
@@ -304,7 +315,7 @@ func (s *Sim) onUsersFull(link Link, full *panel.UsersFull) {
 	n.invalidateUserCaches()
 	n.fulls++
 	n.setRoster(full.Version, "full", s.now())
-	n.cursor = 0
+	n.cursor = s.startCursor(full.NodeID, len(n.users))
 	if link.SendUsersAck(&nodev1.UsersAck{NodeId: full.NodeID, Version: full.Version, Ok: true}) {
 		s.board.Update(s.name, func(st *ServerStatus) { st.UsersAcks++ })
 	}
@@ -468,6 +479,24 @@ func (s *Sim) buildTrafficAndOnline() ([]*nodev1.TrafficEntry, []*nodev1.OnlineE
 		n.cursor = (n.cursor + k) % len(uids)
 	}
 	return entries, online
+}
+
+// nextReport 是下一轮上报的等待：Spread 时与真实节点一样 ±10% 抖动。
+func (s *Sim) nextReport() time.Duration {
+	if s.spread {
+		return panel.Jitter(s.reportInterval)
+	}
+	return s.reportInterval
+}
+
+// startCursor 是全量名单后从第几个用户开始轮报：Spread 时按服务器名与节点散列，否则从 0。
+func (s *Sim) startCursor(nodeID string, n int) int {
+	if !s.spread || n <= 0 {
+		return 0
+	}
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(s.name + "/" + nodeID))
+	return int(h.Sum64() % uint64(n))
 }
 
 func sortedUIDs(users map[int64]*nodev1.User) []int64 {

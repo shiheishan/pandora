@@ -34,6 +34,7 @@ type serverParams struct {
 	reportInterval             time.Duration
 	trafficUsers               int
 	omitStatusUsers            bool
+	spread                     bool
 	enrollAttempts             int // 0 = 不限
 	enrollRetryWait            time.Duration
 	enrollSem                  chan struct{} // nil = 不限并发
@@ -63,6 +64,7 @@ func run(args []string) int {
 	statusUsers := fs.Bool("status-users", true, "状态文件里写各节点的用户 uuid 名单；200 台、每台几千人时设 false")
 	enrollAttempts := fs.Int("enroll-attempts", 5, "无身份时接入的最多尝试次数，0 表示一直重试到退出")
 	enrollRetryWait := fs.Duration("enroll-retry-wait", 2*time.Second, "接入失败后的等待")
+	spread := fs.Bool("spread", false, "按真实节点错开：首轮上报随机、每轮 ±10% 抖动、各服务器从不同用户开始轮报")
 	enrollConcurrency := fs.Int("enroll-concurrency", 0, "同时进行接入的服务器数，0 不限（面板按来源 IP 每分钟限 10 次接入）")
 
 	if err := fs.Parse(args); err != nil {
@@ -128,6 +130,7 @@ func run(args []string) int {
 		reportInterval:  *reportInterval,
 		trafficUsers:    *trafficUsers,
 		omitStatusUsers: !*statusUsers,
+		spread:          *spread,
 		enrollAttempts:  *enrollAttempts,
 		enrollRetryWait: *enrollRetryWait,
 		enrollSem:       enrollSem,
@@ -197,6 +200,7 @@ func runServer(ctx context.Context, logger *slog.Logger, board *Board, p serverP
 		ReportInterval:  p.reportInterval,
 		TrafficUsers:    p.trafficUsers,
 		OmitStatusUsers: p.omitStatusUsers,
+		Spread:          p.spread,
 		Logger:          logger.With("sim", name),
 	})
 

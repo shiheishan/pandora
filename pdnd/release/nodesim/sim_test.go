@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sort"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -365,4 +366,29 @@ func TestSimDisconnected(t *testing.T) {
 		st := board.Snapshot().Servers[simName]
 		return st != nil && !st.Connected && st.Errors >= 1
 	}, "等断开状态")
+}
+
+func TestSpreadStartCursorAndJitter(t *testing.T) {
+	plain := NewSim(SimOptions{Name: "s0001", ReportInterval: 10 * time.Second})
+	if c := plain.startCursor("n1", 4500); c != 0 {
+		t.Fatalf("未开 Spread 应从 0 开始，得到 %d", c)
+	}
+	if d := plain.nextReport(); d != 10*time.Second {
+		t.Fatalf("未开 Spread 不抖动，得到 %v", d)
+	}
+	seen := map[int]bool{}
+	for i := 1; i <= 20; i++ {
+		s := NewSim(SimOptions{Name: "s" + strconv.Itoa(1000+i), ReportInterval: 10 * time.Second, Spread: true})
+		c := s.startCursor("n1", 4500)
+		if c < 0 || c >= 4500 {
+			t.Fatalf("游标越界: %d", c)
+		}
+		seen[c] = true
+		if d := s.nextReport(); d < 9*time.Second || d > 11*time.Second {
+			t.Fatalf("抖动应在 ±10%% 内，得到 %v", d)
+		}
+	}
+	if len(seen) < 15 {
+		t.Fatalf("20 台服务器的起点应基本错开，只有 %d 个不同值", len(seen))
+	}
 }
