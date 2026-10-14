@@ -1,7 +1,7 @@
 /**
  * 人机验证：按需加载 Google reCAPTCHA 或 Cloudflare Turnstile 外链脚本。
  * 入口页 CSP 的 script-src、frame-src 须放行对应来源（google.com / gstatic.com 或 challenges.cloudflare.com），
- * 由后端 panel/internal/pkg/webapp 按设置下发，前端不改 CSP。
+ * 由后端按设置下发（来源表在 panel/internal/app/portal_csp.go，经 webapp.WithExtraSources 注入），前端不改 CSP。
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { SignupConfig } from './queries'

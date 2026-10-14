@@ -13,6 +13,7 @@ paths:
   - 不引入运行时要 `eval` / `new Function` 的库；zod 必须保持 `z.config({ jitless: true })`（在 `src/core/api.ts`），守卫是 `src/core/api.test.ts` 的 "turns off zod JIT…"
   - 资源一律不内联成 `data:`（`assetsInlineLimit: 0`）。字体随包自带，样式不引外部来源。守卫：`tests/theme-boot.test.ts` 与 `tests/tokens.test.ts` 的 "stylesheets stay self-contained"
   - 产物里要带新的资源类型（如 wasm）时，`panel/internal/pkg/webapp/webapp.go` 的 `contentTypes` 与 `indexCSP` 要一起改
+  - 唯一的第三方例外是门户的人机验证（`src/portal/Captcha.tsx` 按需加外链脚本）：后台开了人机验证时，门户入口页 CSP 只为所选那一家追加固定来源——reCAPTCHA 是 script-src `https://www.google.com https://www.gstatic.com`、frame-src `https://www.google.com`，Turnstile 是 script-src 与 frame-src 都 `https://challenges.cloudflare.com`；没开时与 `indexCSP` 逐字一致，后台入口页永远不追加。来源表在 `panel/internal/app/portal_csp.go`，前端不改 CSP，也不引别的第三方来源
 - 地址一律相对：后台挂在反向代理的高熵前缀后面，前缀剥掉以后才转发
   - Vite 的 `base` 保持 `'./'`
   - 请求路径只写 `v1/...`，不写 `/v1` 或绝对 URL；`resolveApiUrl` 会拒绝不合规的写法

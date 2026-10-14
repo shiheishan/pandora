@@ -14,6 +14,7 @@ package webapp
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
@@ -37,9 +38,36 @@ import (
 // 每一类放行都与 contentTypes 对应：图片走 img-src，字体走 font-src，json/txt 由脚本 fetch 走 connect-src；
 // 登记了 MIME 却不放行，产物一带上这类文件浏览器就会拒绝加载。wasm 因此不登记：编译它需要
 // script-src 'wasm-unsafe-eval'，真有需要时两处一起加。
-const indexCSP = "default-src 'none'; script-src 'self'; " +
-	"style-src 'self'; img-src 'self' data:; font-src 'self'; " +
+const indexCSP = "default-src 'none'; script-src 'self'; " + indexCSPRest
+
+// indexCSPRest 是 script-src 之后的部分；追加来源时只改 script-src、加 frame-src，其余逐字不变。
+const indexCSPRest = "style-src 'self'; img-src 'self' data:; font-src 'self'; " +
 	"connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+
+// ExtraSources 是入口页 CSP 额外放行的来源（如门户开了人机验证时第三方的脚本与 iframe）。
+// 本包不读设置：由装配处按设置给出，来源只应是装配处写死的固定值，不拼用户输入。
+type ExtraSources struct {
+	Script []string // 追加到 script-src
+	Frame  []string // 生成 frame-src（default-src 'none' 下缺省不许任何 iframe）
+}
+
+func (x ExtraSources) empty() bool { return len(x.Script) == 0 && len(x.Frame) == 0 }
+
+// cspWith 在 indexCSP 上追加来源；x 为空时与 indexCSP 逐字一致。
+func cspWith(x ExtraSources) string {
+	if x.empty() {
+		return indexCSP
+	}
+	csp := "default-src 'none'; script-src 'self'"
+	if len(x.Script) > 0 {
+		csp += " " + strings.Join(x.Script, " ")
+	}
+	csp += "; "
+	if len(x.Frame) > 0 {
+		csp += "frame-src " + strings.Join(x.Frame, " ") + "; "
+	}
+	return csp + indexCSPRest
+}
 
 const (
 	// 入口页引用的资源名随构建变化，必须每次回源校验，否则升级后拿旧入口配新接口
@@ -80,8 +108,8 @@ var contentTypes = map[string]string{
 
 // Mount 把 Handler 注册到 / 与 /assets/*filepath，只接 GET/HEAD：
 // 静态资源没有写语义，其余方法交给引擎的 NoRoute。
-func Mount(r gin.IRoutes, fsys fs.FS) {
-	h := gin.WrapH(Handler(fsys))
+func Mount(r gin.IRoutes, fsys fs.FS, opts ...Option) {
+	h := gin.WrapH(Handler(fsys, opts...))
 	for _, pattern := range []string{"/", "/" + assetDir + "/*filepath"} {
 		r.GET(pattern, h)
 		r.HEAD(pattern, h)
@@ -96,6 +124,16 @@ type handler struct {
 	fsys  fs.FS
 	index []byte
 	etag  string
+	extra func(ctx context.Context) ExtraSources
+}
+
+// Option 调整 Handler。
+type Option func(*handler)
+
+// WithExtraSources 让入口页每次请求时调 f 取额外放行的 CSP 来源（入口页每次回源校验，现取即可，设置一改下次打开就生效）。
+// f 返回空时 CSP 与不带本选项时逐字一致。
+func WithExtraSources(f func(ctx context.Context) ExtraSources) Option {
+	return func(h *handler) { h.extra = f }
 }
 
 // Handler 只读下发 fsys：
@@ -105,8 +143,11 @@ type handler struct {
 //	其余           → 404；目录、点开头的段、非法路径同样 404
 //
 // 调用方只应以 GET/HEAD 注册它，通常经 Mount。
-func Handler(fsys fs.FS) http.Handler {
+func Handler(fsys fs.FS, opts ...Option) http.Handler {
 	h := &handler{fsys: fsys}
+	for _, o := range opts {
+		o(h)
+	}
 	// 入口页随二进制固定，启动时读一次；缺失时入口返回 404，不 panic ——
 	// 这是构建链的问题，不该让整个网关起不来
 	if index, err := fs.ReadFile(fsys, "index.html"); err == nil {
@@ -136,12 +177,21 @@ func (h *handler) serveIndex(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	csp, etag := indexCSP, h.etag
+	if h.extra != nil {
+		if x := h.extra(r.Context()); !x.empty() {
+			csp = cspWith(x)
+			// CSP 变了 ETag 也要变：否则浏览器拿着旧 ETag 命中 304，可能沿用缓存里的旧响应头
+			sum := sha256.Sum256([]byte(csp))
+			etag = strings.TrimSuffix(h.etag, `"`) + "-" + hex.EncodeToString(sum[:4]) + `"`
+		}
+	}
 	hd := w.Header()
 	hd.Set("Content-Type", contentTypes[".html"])
-	hd.Set("Content-Security-Policy", indexCSP)
+	hd.Set("Content-Security-Policy", csp)
 	hd.Set("Cache-Control", indexCache)
 	// ServeContent 按这里的 ETag 处理 If-None-Match，命中即 304
-	hd.Set("ETag", h.etag)
+	hd.Set("ETag", etag)
 	http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(h.index))
 }
 
