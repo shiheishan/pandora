@@ -1,4 +1,4 @@
-// Package model 是 commission 模块的 GORM 结构体：只有字段和标签，表结构见迁移 00014_commission.sql、00016_commission_review.sql、00041_commission_levels.sql 与 00042_commission_forfeitures.sql。
+// Package model 是 commission 模块的 GORM 结构体：只有字段和标签，表结构见迁移 00014_commission.sql、00016_commission_review.sql、00041_commission_levels.sql 与 00040_identity_registration.sql（commission_forfeitures）。
 package model
 
 import (
