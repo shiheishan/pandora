@@ -24,7 +24,6 @@ export interface Sub {
   current_period_end: string | null
   amount: number
   currency: string
-  auto_renew: boolean
   traffic_limit: number | null
   traffic_used: number
   device_limit_override: number | null
@@ -116,7 +115,6 @@ function makeSub(i: number, j: number, state: 'live' | 'expired'): Sub {
     current_period_end: new Date(end).toISOString(),
     amount: price,
     currency: 'CNY',
-    auto_renew: i % 3 !== 0,
     traffic_limit: limit,
     traffic_used: used,
     device_limit_override: i % 11 === 5 ? 10 : null,
@@ -322,7 +320,6 @@ function detail(u: User) {
         current_period_end: s.current_period_end,
         amount: s.amount,
         currency: s.currency,
-        auto_renew: s.auto_renew,
         quotas: [{ metric: 'traffic.bytes', limit: s.traffic_limit, consumed: s.traffic_used, remaining: s.traffic_limit === null ? null : Math.max(0, s.traffic_limit - s.traffic_used) }],
         device_limit_override: s.device_limit_override,
         plan_max_devices: s.plan_max_devices,

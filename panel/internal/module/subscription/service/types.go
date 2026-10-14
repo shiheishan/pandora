@@ -447,7 +447,7 @@ type PullResult struct {
 	Userinfo    Userinfo
 	// UpdateIntervalHours 是 Profile-Update-Interval：正常 12，过期 1（续费后客户端很快拉回真实线路）
 	UpdateIntervalHours int
-	// ContentDisposition 带客户端里的配置名（与门户 client_name 同一个 ProfileName）
+	// ContentDisposition 带客户端里的配置名（与门户 client_name 同一个 render.ProfileName）
 	ContentDisposition string
 	// Expired 为真是过期订阅的提示配置；WebPageURL 是门户续费页（Profile-Web-Page-Url），只在过期时非空
 	Expired    bool

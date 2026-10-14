@@ -367,8 +367,6 @@ export function subscriptionView(sub: SubFixture) {
     period: plan?.quotaPeriod ?? 'cycle',
     period_start: zoneMidnight(sub.days[0]!.date),
     period_end: sub.resetAt,
-    granted_addon: 0,
-    adjusted: 0,
   }
   const price = subPrice(sub)
   const now = Date.now()

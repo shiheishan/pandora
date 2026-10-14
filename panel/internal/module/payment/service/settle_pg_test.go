@@ -17,8 +17,8 @@ import (
 // 验签失败的回调只留白名单字段，每个字段截断，总量不超过 2 KiB。
 func TestWebhookUnverifiedEvidenceWhitelisted(t *testing.T) {
 	e, ctx := newEnv(t)
-	code := "demo-ev-" + uuid.New().String()[:8]
-	_ = e.mkDemoProvider(t, ctx, code)
+	code := "fake-ev-" + uuid.New().String()[:8]
+	_ = e.mkFakeProvider(t, ctx, code)
 
 	huge := strings.Repeat("x", 5000)
 	body, _ := json.Marshal(map[string]any{
@@ -84,8 +84,8 @@ WHERE p.code = ? AND NOT e.signature_verified`, code).Scan(&raw, &size); err != 
 func TestWebhookSettleVsCreateIntentNoDeadlock(t *testing.T) {
 	e, ctx := newCommitEnv(t)
 	user := e.mkUser(t, ctx)
-	code := "demo-dl-" + uuid.New().String()[:8]
-	_ = e.mkDemoProvider(t, ctx, code)
+	code := "fake-dl-" + uuid.New().String()[:8]
+	_ = e.mkFakeProvider(t, ctx, code)
 	orderID, orderNo := e.mkOrder(t, ctx, user)
 	intent := e.createIntent(t, ctx, code, orderID, orderNo, user, "9.90")
 	orderLock := "order:" + orderID.String()
@@ -140,7 +140,7 @@ func TestWebhookSettleVsCreateIntentNoDeadlock(t *testing.T) {
 	var aAck provider.AckOutput
 	go func() {
 		var err error
-		aAck, err = e.svc.HandleWebhook(ctx, code, demoInbound("evt-dl-1", "payment.succeeded", "pay-dl-1", intent.OutTradeNo, 990))
+		aAck, err = e.svc.HandleWebhook(ctx, code, fakeInbound("evt-dl-1", "payment.succeeded", "pay-dl-1", intent.OutTradeNo, 990))
 		aDone <- err
 	}()
 

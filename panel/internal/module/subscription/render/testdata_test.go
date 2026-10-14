@@ -1,24 +1,30 @@
 package render
 
-// testdata 的读取与形状。testdata 由 panel/tools/subgolden 用旧实现生成（P7 随旧代码删除，
-// 生成好的文件留在仓库里继续当回归基线）：
+// testdata 是订阅渲染的回归基线：
 //
-//	testdata/nodes.json              全部夹具节点，协议配置已是内核形状、经过一次 JSON 往返
-//	testdata/golden/manifest.json    每个 golden 文件的生成参数与期望的 Content-Type、节点数
-//	testdata/golden/<名>.<ext>       旧实现的输出
+//	testdata/nodes.json              全部夹具节点（输入夹具，手工维护），协议配置已是内核形状、经过一次 JSON 往返
+//	testdata/golden/manifest.json    每个 golden 文件的输入参数与期望的 Content-Type、节点数等
+//	testdata/golden/<名>.<ext>       期望输出
 //
-// 生成命令（在 panel 目录）：go run ./tools/subgolden -out internal/module/subscription/render/testdata
+// 改了渲染、确认新输出是对的之后，在 panel 目录运行：
+//
+//	go test ./internal/module/subscription/render -run Golden -update
+//
+// 重写 golden 与 manifest 里的期望值，再用 git diff 逐项看变化。
 
 import (
 	"encoding/json"
 	"errors"
+	"flag"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
-// 夹具里的固定值，全部虚构（与生成器一致）。
+var update = flag.Bool("update", false, "用当前实现重写 testdata/golden 下的期望输出与 manifest.json 里的期望值")
+
+// 夹具里的固定值，全部虚构。
 const (
 	fixtureUUID       = "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b"
 	fixtureHost       = "node.example.com"
@@ -32,7 +38,7 @@ const (
 	groupLegacy = "legacy"
 )
 
-const regenerateHint = "先在 panel 目录运行 go run ./tools/subgolden -out internal/module/subscription/render/testdata 生成"
+const regenerateHint = "nodes.json 是手工维护的输入夹具；golden 用 go test ./internal/module/subscription/render -run Golden -update 重写"
 
 // fixtureNode 是 nodes.json 的一项。
 type fixtureNode struct {
@@ -113,6 +119,26 @@ func readTestdata(t *testing.T, rel string) []byte {
 		t.Fatalf("读 testdata/%s：%v", rel, err)
 	}
 	return b
+}
+
+// writeTestdata 写 testdata/<rel>，权限 0o644。
+func writeTestdata(t *testing.T, rel string, b []byte) {
+	t.Helper()
+	target := filepath.Join("testdata", filepath.FromSlash(rel))
+	if err := os.WriteFile(target, b, 0o644); err != nil {
+		t.Fatalf("写 testdata/%s：%v", rel, err)
+	}
+}
+
+// saveManifest 把 m 序列化后写回 golden/manifest.json。
+func saveManifest(t *testing.T, m goldenManifest) {
+	t.Helper()
+	b, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		t.Fatalf("编码 golden/manifest.json：%v", err)
+	}
+	b = append(b, '\n')
+	writeTestdata(t, "golden/manifest.json", b)
 }
 
 // loadFixtures 读 nodes.json 的全部项（含分组）。

@@ -329,8 +329,7 @@ export interface SystemView {
 
 const COMPONENT_NAMES: Record<SystemComponent['key'], string> = {
   postgres: 'PostgreSQL 主库',
-  // 契约里组件键沿用 valkey（JSON 形状不变），实际是 Redis
-  valkey: 'Redis 缓存',
+  redis: 'Redis 缓存',
   node_fabric: 'NativeCore 调度',
   payment_callbacks: '支付回调队列',
   mail: '邮件投递 · SMTP',
@@ -357,7 +356,7 @@ function componentMeta(c: SystemComponent): string {
       const m = c.metrics
       return [latency, m.size_bytes == null ? '' : formatBytes(m.size_bytes), `连接 ${num(m.connections)}/${num(m.max_connections)}`].filter(Boolean).join(' · ')
     }
-    case 'valkey':
+    case 'redis':
       return latency || '—'
     case 'node_fabric': {
       const m = c.metrics

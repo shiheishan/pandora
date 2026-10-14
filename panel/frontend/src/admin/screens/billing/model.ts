@@ -326,9 +326,6 @@ export function isLateFilter(v: string | null): v is LateFilter {
 export const LATE_STATUS_VIEW: Record<LateStatus, { label: string; tone: Tone }> = {
   suspense: { label: '待处理', tone: 'warn' },
   applied: { label: '已转入余额', tone: 'ok' },
-  refunded: { label: '已原路退回', tone: 'neutral' },
-  refund_pending: { label: '退款处理中', tone: 'info' },
-  manual_review: { label: '人工核对中', tone: 'info' },
 }
 
 const LATE_KIND_LABELS: Record<LateKind, string> = { released_order: '订单取消后到账', excess_capture: '超额扣款', ineligible_subscription: '订阅已结束后到账' }

@@ -48,7 +48,7 @@ export function sub(over: Partial<Subscription> & { usedGiB?: number; capGiB?: n
     current_period_end: '2026-10-19T12:00:00Z',
     currency: 'CNY',
     amount: 3000,
-    quotas: [{ metric: 'traffic.bytes', limit: capGiB * GIB, consumed: usedGiB * GIB, remaining: Math.max(0, capGiB - usedGiB) * GIB, period: 'month', period_start: '2026-09-19T12:00:00Z', period_end: null, granted_addon: 0, adjusted: 0 }],
+    quotas: [{ metric: 'traffic.bytes', limit: capGiB * GIB, consumed: usedGiB * GIB, remaining: Math.max(0, capGiB - usedGiB) * GIB, period: 'month', period_start: '2026-09-19T12:00:00Z', period_end: null }],
     device_limit: 3,
     online_devices: 1,
     quota_reset_strategy: 'billing_cycle',

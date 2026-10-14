@@ -73,11 +73,16 @@ func newRepo(t *testing.T) (*Repo, context.Context, *gorm.DB) {
 
 func insertProvider(t *testing.T, r *Repo, ctx context.Context, code string, min string, enabled, accepting bool, methods []string) uuid.UUID {
 	t.Helper()
+	return insertProviderAdapter(t, r, ctx, code, "epay", min, enabled, accepting, methods)
+}
+
+func insertProviderAdapter(t *testing.T, r *Repo, ctx context.Context, code, adapter, min string, enabled, accepting bool, methods []string) uuid.UUID {
+	t.Helper()
 	id := uuid.Must(uuid.NewV7())
 	p := &model.Provider{
 		ID:           id,
 		Code:         code,
-		Adapter:      "demo_hmac",
+		Adapter:      adapter,
 		DisplayName:  "测试渠道",
 		Currencies:   []string{"CNY", "USD"},
 		BaseURL:      "https://checkout.example.test",
@@ -143,7 +148,7 @@ func TestProviderJsonbAndUniqueness(t *testing.T) {
 	bad := &model.Provider{
 		ID:           uuid.Must(uuid.NewV7()),
 		Code:         "pgp_bad_" + uuid.NewString()[:6],
-		Adapter:      "demo_hmac",
+		Adapter:      "epay",
 		DisplayName:  "坏渠道",
 		Currencies:   []string{"CNY"},
 		BaseURL:      "https://checkout.example.test",
@@ -159,7 +164,7 @@ func TestProviderJsonbAndUniqueness(t *testing.T) {
 	dup := &model.Provider{
 		ID:           uuid.Must(uuid.NewV7()),
 		Code:         code,
-		Adapter:      "demo_hmac",
+		Adapter:      "epay",
 		DisplayName:  "重复",
 		Currencies:   []string{"CNY"},
 		BaseURL:      "https://checkout.example.test",
@@ -180,13 +185,8 @@ func TestMinAcceptingAmount(t *testing.T) {
 	loCode := "pgp_lo_" + uuid.NewString()[:6]
 	hiID := insertProvider(t, r, ctx, hiCode, "1.00", true, true, []string{"alipay"})
 	loID := insertProvider(t, r, ctx, loCode, "0.50", true, true, []string{"alipay"})
-	// 只有在线渠道（epay）算数：demo 与 offline 不参与最低额
-	for _, id := range []uuid.UUID{hiID, loID} {
-		if _, err := r.UpdateProviderFields(ctx, id, map[string]any{"adapter": "epay"}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	insertProvider(t, r, ctx, "pgp_demo_"+uuid.NewString()[:6], "0.02", true, true, []string{"alipay"})
+	// 只有在线渠道（epay）算数：线下渠道不参与最低额
+	insertProviderAdapter(t, r, ctx, "pgp_off_"+uuid.NewString()[:6], "offline", "0.02", true, true, nil)
 
 	min, found, err := r.MinAcceptingAmount(ctx, "CNY")
 	if err != nil {
@@ -197,7 +197,7 @@ func TestMinAcceptingAmount(t *testing.T) {
 		t.Fatalf("want min <= 0.50 among accepting (含本事务两渠道), got %s found=%v", min, found)
 	}
 	if min.Equal(decimal.RequireFromString("0.02")) {
-		t.Fatal("demo 渠道不应参与最低额")
+		t.Fatal("线下渠道不应参与最低额")
 	}
 	if !min.Equal(wantLo) {
 		// 共享库上可能有更低 min 的已提交渠道，只断言本事务插入的 0.50 在候选里

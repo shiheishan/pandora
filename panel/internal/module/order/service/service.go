@@ -157,42 +157,6 @@ func (s *Service) UsePaidHook(h PaidHook) { s.hook = h }
 // clock 取当前时间（UTC）。
 func (s *Service) clock() time.Time { return s.now().UTC() }
 
-// orderTransitions 是订单状态的转换表。paid 只在结算事务里短暂停留，随即转 fulfilled。
-var orderTransitions = map[string][]string{
-	StatusPending: {StatusPaid, StatusCancelled, StatusExpired},
-	StatusPaid:    {StatusFulfilled},
-}
-
-// CanTransition 查订单状态转换表。
-func CanTransition(from, to string) bool {
-	for _, t := range orderTransitions[from] {
-		if t == to {
-			return true
-		}
-	}
-	return false
-}
-
-// reservationTransitions 是预留状态的转换表：held 只走一次，到 captured 或 released。
-var reservationTransitions = map[string][]string{
-	ReservationHeld: {ReservationCaptured, ReservationReleased},
-}
-
-// CanTransitionReservation 查预留状态转换表。
-func CanTransitionReservation(from, to string) bool {
-	for _, t := range reservationTransitions[from] {
-		if t == to {
-			return true
-		}
-	}
-	return false
-}
-
-// IsTerminal 表示订单已不会再变。
-func IsTerminal(status string) bool {
-	return status == StatusFulfilled || status == StatusCancelled || status == StatusExpired
-}
-
 // completeCreate 在建单事务里把幂等认领完成并绑定到订单；ctx 里没有认领（测试、内部调用）时什么都不做。
 func (s *Service) completeCreate(ctx context.Context, orderID uuid.UUID, build func() (idemsvc.Response, error)) error {
 	claim, ok := idemsvc.ClaimFrom(ctx)

@@ -110,9 +110,6 @@ func ParseProvider(s string) (decimal.Decimal, error) {
 // FormatProvider 把金额写成渠道要的固定 2 位小数字符串。
 func FormatProvider(d decimal.Decimal) string { return d.StringFixed(Scale) }
 
-// Truncate 把金额向零截断到分。只在领域计算的最后一步调用。
-func Truncate(d decimal.Decimal) decimal.Decimal { return d.Truncate(Scale) }
-
 // MulRatio 计算 d × num / den，结果向零截断到分（百分比券、佣金、折算都用它）；den 必须大于 0。
 // 用有理数精确计算后只截断一次，不经过中间小数。
 func MulRatio(d decimal.Decimal, num, den int64) decimal.Decimal {

@@ -9,7 +9,6 @@ import (
 
 	"github.com/aegispanel/aegis/internal/module/payment/model"
 	"github.com/aegispanel/aegis/internal/module/payment/provider"
-	"github.com/aegispanel/aegis/internal/module/payment/provider/demo"
 	"github.com/aegispanel/aegis/internal/module/payment/provider/epay"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/money"
@@ -111,11 +110,6 @@ func (s *Service) buildAdapter(p providerRecord) (provider.Provider, error) {
 			APIPath:          p.APIPath,
 			DefaultMethod:    p.DefaultMethod,
 			AllowPrivateHost: s.cfg.AllowPrivateHosts && p.AllowPrivateHost,
-		})
-	case AdapterDemo:
-		return demo.New(demo.Config{
-			Secret:      []byte(p.Creds.Key),
-			CheckoutURL: p.BaseURL,
 		})
 	default:
 		return nil, ErrProviderNotFound

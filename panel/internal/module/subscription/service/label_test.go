@@ -56,19 +56,3 @@ func TestLabelWithSuffix(t *testing.T) {
 		t.Fatalf("截断: got %q", got)
 	}
 }
-
-func TestProfileName(t *testing.T) {
-	cases := []struct {
-		site, label, plan, want string
-	}{
-		{"喵站", "妈妈的 iPad", "高级版", "喵站 · 妈妈的 iPad"},
-		{"喵站", "", "高级版", "喵站 · 高级版"},
-		{"喵站", " ", "", "喵站"},
-		{" ", "", "高级版", "Pandora · 高级版"},
-	}
-	for _, tc := range cases {
-		if got := ProfileName(tc.site, tc.label, tc.plan); got != tc.want {
-			t.Fatalf("ProfileName(%q,%q,%q) = %q want %q", tc.site, tc.label, tc.plan, got, tc.want)
-		}
-	}
-}

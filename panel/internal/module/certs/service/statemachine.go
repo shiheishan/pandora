@@ -14,11 +14,3 @@ var certTransitions = map[string][]string{
 // CanTransition 报告证书状态能否从 from 转到 to。
 func CanTransition(from, to string) bool { return slices.Contains(certTransitions[from], to) }
 
-// orderTransitions 是订单状态的转换表。没有重新认领：租约过期的 running 订单由巡检按中断转 failed。
-var orderTransitions = map[string][]string{
-	OrderQueued:  {OrderRunning, OrderCancelled},
-	OrderRunning: {OrderSucceeded, OrderFailed, OrderCancelled},
-}
-
-// CanOrderTransition 报告订单状态能否从 from 转到 to。
-func CanOrderTransition(from, to string) bool { return slices.Contains(orderTransitions[from], to) }

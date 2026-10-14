@@ -199,7 +199,7 @@ describe('系统状态', () => {
       components: [
         { key: 'backup', state: 'warn', metrics: { latest_age_hours: 5, stale: false, identity_configured: true, offsite_configured: false }, message: '未配异地' },
         { key: 'postgres', state: 'ok', latency_ms: 3.2, metrics: { size_bytes: 1024 ** 3, connections: 23, max_connections: 200 } },
-        { key: 'valkey', state: 'ok', latency_ms: 0.4, metrics: {} },
+        { key: 'redis', state: 'ok', latency_ms: 0.4, metrics: {} },
         { key: 'node_fabric', state: 'warn', metrics: { total: 44, online: 41, config_lagging: 2 } },
         { key: 'payment_callbacks', state: 'ok', metrics: { pending: 0 } },
         { key: 'mail', state: 'down', metrics: { queued: 214, retrying: 21, failed_total: 9 } },

@@ -172,7 +172,6 @@ describe('write forms', () => {
   const price = (over: Partial<PriceRow>): PriceRow => ({ id: 'p', currency: 'CNY', unit_amount: 2500, billing_interval: 'month', interval_count: 1, trial_days: 0, status: 'active', user_group_id: null, valid_from: null, valid_until: null, row_version: 1, ...over })
   const plan = (over: Partial<PlanRow>): PlanRow => ({
     id: 'pl',
-    product_id: 'pr',
     row_version: 1,
     code: 'std',
     name: '标准版',
@@ -307,7 +306,6 @@ describe('late payments, providers and adjustments', () => {
     expect(effectiveMethods(provider({ methods: [], default_method: '' }))).toEqual([])
     expect(isEditableProvider(provider({}))).toBe(true)
     expect(isEditableProvider(provider({ code: 'offline', adapter: 'offline' }))).toBe(false)
-    expect(isEditableProvider(provider({ code: 'demo', adapter: 'demo_hmac' }))).toBe(false)
     const legacy = providerFormFrom(provider({ methods: [], default_method: 'wxpay', submit_path: '', base_url: 'https://pay.example.com' }))
     expect(legacy).toMatchObject({ methods: ['wxpay'], default_method: 'wxpay', submit_path: '/submit.php', merchant_id: '', key: '' })
   })

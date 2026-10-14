@@ -102,29 +102,6 @@ type CertificateVersion struct {
 // TableName 固定表名。
 func (CertificateVersion) TableName() string { return "certificate_versions" }
 
-// CertificateOrder 是 certificate_orders 表的一行。
-type CertificateOrder struct {
-	ID            uuid.UUID  `gorm:"column:id;type:uuid;primaryKey;default:uuidv7()"`
-	CertificateID uuid.UUID  `gorm:"column:certificate_id;type:uuid"`
-	Reason        string     `gorm:"column:reason"`
-	State         string     `gorm:"column:state;default:queued"`
-	CA            *string    `gorm:"column:ca"`
-	ReplacesARIID *string    `gorm:"column:replaces_ari_id"`
-	Attempt       int        `gorm:"column:attempt"`
-	LeaseUntil    *time.Time `gorm:"column:lease_until"`
-	ErrorCode     *string    `gorm:"column:error_code"`
-	ErrorDetail   *string    `gorm:"column:error_detail"`
-	VersionID     *uuid.UUID `gorm:"column:version_id;type:uuid"`
-	CreatedBy     *uuid.UUID `gorm:"column:created_by;type:uuid"`
-	CreatedAt     time.Time  `gorm:"column:created_at;autoCreateTime"`
-	StartedAt     *time.Time `gorm:"column:started_at"`
-	FinishedAt    *time.Time `gorm:"column:finished_at"`
-	UpdatedAt     time.Time  `gorm:"column:updated_at;autoUpdateTime"`
-}
-
-// TableName 固定表名。
-func (CertificateOrder) TableName() string { return "certificate_orders" }
-
 // CertificateIssuance 是 certificate_issuances 表的一行（只追加）。
 type CertificateIssuance struct {
 	ID            uuid.UUID `gorm:"column:id;type:uuid;primaryKey;default:uuidv7()"`

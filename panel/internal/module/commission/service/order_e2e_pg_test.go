@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -30,7 +31,7 @@ import (
 	orderrepo "github.com/aegispanel/aegis/internal/module/order/repo"
 	ordersvc "github.com/aegispanel/aegis/internal/module/order/service"
 	"github.com/aegispanel/aegis/internal/module/payment/provider"
-	"github.com/aegispanel/aegis/internal/module/payment/provider/demo"
+	"github.com/aegispanel/aegis/internal/module/payment/provider/epay"
 	paymentrepo "github.com/aegispanel/aegis/internal/module/payment/repo"
 	paymentsvc "github.com/aegispanel/aegis/internal/module/payment/service"
 	promorepo "github.com/aegispanel/aegis/internal/module/promo/repo"
@@ -48,7 +49,11 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 )
 
-const oeDemoSecret = "commission-e2e-secret"
+// oeEpayPID、oeEpayKey 是测试易支付渠道的商户号与商户密钥（虚构）。
+const (
+	oeEpayPID = "1001"
+	oeEpayKey = "commission-e2e-key"
+)
 
 const oeGib = int64(1) << 30
 
@@ -222,7 +227,7 @@ func (e *oeEnv) oeMkPlan(t *testing.T, ctx context.Context, unitCents int64) (pl
 		versionID, catalogsvc.MetricTraffic, "cycle", 100*oeGib)
 	e.oeMustExec(t, ctx, `UPDATE plan_versions SET status = 'published', frozen_at = now() WHERE id = ?`, versionID)
 	e.oeMustExec(t, ctx, `UPDATE plans SET status = 'active', current_version_id = ? WHERE id = ?`, versionID, planID)
-	if err := e.row(ctx, `INSERT INTO prices (plan_id, currency, unit_amount, billing_interval, interval_count) VALUES (?, 'USD', ?, 'month', 1) RETURNING id`,
+	if err := e.row(ctx, `INSERT INTO prices (plan_id, currency, unit_amount, billing_interval, interval_count) VALUES (?, 'CNY', ?, 'month', 1) RETURNING id`,
 		planID, money.FromCents(unitCents)).Scan(&priceID); err != nil {
 		t.Fatal(err)
 	}
@@ -230,14 +235,15 @@ func (e *oeEnv) oeMkPlan(t *testing.T, ctx context.Context, unitCents int64) (pl
 	return planID, priceID
 }
 
-func (e *oeEnv) oeMkDemoProvider(t *testing.T, ctx context.Context, code string) {
+// oeMkPayProvider 插入收款测试用的易支付渠道；回调由 oeEpayInbound 签名直接推给 payment，不访问 base_url。
+func (e *oeEnv) oeMkPayProvider(t *testing.T, ctx context.Context, code string) {
 	t.Helper()
 	sealer, err := crypto.NewSealer(bytes.Repeat([]byte{7}, 32), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	id := uuid.Must(uuid.NewV7())
-	plain, err := json.Marshal(map[string]string{"key": oeDemoSecret})
+	plain, err := json.Marshal(map[string]string{"merchant_id": oeEpayPID, "key": oeEpayKey})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,19 +252,33 @@ func (e *oeEnv) oeMkDemoProvider(t *testing.T, ctx context.Context, code string)
 		t.Fatal(err)
 	}
 	e.oeMustExec(t, ctx, `
-INSERT INTO payment_providers (id, code, adapter, display_name, credentials_sealed, currencies, base_url, min_amount, enabled, accepting_new)
-VALUES (?, ?, 'demo_hmac', 'Demo', ?, '["USD"]'::jsonb, 'https://checkout.example.test', 0.01, true, true)`,
+INSERT INTO payment_providers (id, code, adapter, display_name, credentials_sealed, currencies, base_url, methods, default_method, min_amount, enabled, accepting_new)
+VALUES (?, ?, 'epay', '易支付测试', ?, '["CNY"]'::jsonb, 'https://pay.example.test', '["alipay"]'::jsonb, 'alipay', 0.01, true, true)`,
 		id, code, sealed)
 }
 
-func oeDemoInbound(eventID, eventType, paymentRef, orderNo string, cents int64) provider.Inbound {
-	body, _ := json.Marshal(map[string]any{
-		"event_id": eventID, "event_type": eventType, "payment_id": paymentRef,
-		"order_no": orderNo, "amount": cents, "currency": "USD", "fee": 0, "method": "alipay",
-	})
-	h := http.Header{}
-	h.Set("X-Aegis-Signature", demo.Sign([]byte(oeDemoSecret), eventID, eventType, paymentRef, orderNo, cents, 0, "USD"))
-	return provider.Inbound{Method: http.MethodPost, Header: h, Body: body}
+func oeEpayInbound(paymentRef, outTradeNo string, cents int64) provider.Inbound {
+	params := map[string]string{
+		"pid":          oeEpayPID,
+		"trade_no":     paymentRef,
+		"out_trade_no": outTradeNo,
+		"type":         "alipay",
+		"name":         "测试订单",
+		"money":        money.FormatProvider(money.FromCents(cents)),
+		"trade_status": "TRADE_SUCCESS",
+	}
+	params["sign"] = epay.Sign(params, oeEpayKey)
+	params["sign_type"] = "MD5"
+	q := url.Values{}
+	for k, v := range params {
+		q.Set(k, v)
+	}
+	return provider.Inbound{Method: http.MethodGet, Query: q}
+}
+
+// oeAckOK 判断易支付回调是否被接受：HTTP 恒为 200，接没接受看正文 success。
+func oeAckOK(ack provider.AckOutput) bool {
+	return ack.HTTPStatus == http.StatusOK && string(ack.Body) == "success"
 }
 
 func oeBuy(t *testing.T, e *oeEnv, ctx context.Context, user, planID, priceID uuid.UUID) uuid.UUID {
@@ -294,10 +314,10 @@ func oeCount(t *testing.T, e *oeEnv, ctx context.Context, q string, args ...any)
 	return n
 }
 
-func oeUSDBalance(t *testing.T, e *oeEnv, ctx context.Context, user uuid.UUID, typ ledgersvc.AccountType) decimal.Decimal {
+func oeCNYBalance(t *testing.T, e *oeEnv, ctx context.Context, user uuid.UUID, typ ledgersvc.AccountType) decimal.Decimal {
 	t.Helper()
 	var bal decimal.Decimal
-	if err := e.row(ctx, `SELECT COALESCE((SELECT balance FROM ledger_accounts WHERE account_type = ? AND owner_user_id = ? AND currency = 'USD'), 0)`,
+	if err := e.row(ctx, `SELECT COALESCE((SELECT balance FROM ledger_accounts WHERE account_type = ? AND owner_user_id = ? AND currency = 'CNY'), 0)`,
 		string(typ), user).Scan(&bal); err != nil {
 		t.Fatal(err)
 	}
@@ -359,8 +379,8 @@ func (h *oeFlakyHook) OnOrderPaid(ctx context.Context, o ordersvc.PaidOrder) err
 
 func TestOrderSettlementAccruesCommission(t *testing.T) {
 	e, ctx := newOEEnv(t, false)
-	code := "demo-" + randHex(8)
-	e.oeMkDemoProvider(t, ctx, code)
+	code := "epay-" + randHex(8)
+	e.oeMkPayProvider(t, ctx, code)
 	admin := oeUser(t, e, ctx)
 	referrer := oeUser(t, e, ctx)
 	buyer := oeUser(t, e, ctx)
@@ -369,10 +389,11 @@ func TestOrderSettlementAccruesCommission(t *testing.T) {
 	planID, priceID := e.oeMkPlan(t, ctx, 10000)
 	orderID := oeBuy(t, e, ctx, buyer, planID, priceID)
 	outNo, cents := oePay(t, e, ctx, buyer, orderID, code)
-	in := oeDemoInbound("evt-oe-"+randHex(8), "payment.succeeded", "pay-"+randHex(8), outNo, cents)
+	payRef := "pay-" + randHex(8)
+	in := oeEpayInbound(payRef, outNo, cents)
 	ack, err := e.payments.HandleWebhook(ctx, code, in)
-	if err != nil || ack.HTTPStatus != http.StatusOK {
-		t.Fatalf("回调 %d %v", ack.HTTPStatus, err)
+	if err != nil || !oeAckOK(ack) {
+		t.Fatalf("回调 %s %v", ack.Body, err)
 	}
 	var ostatus string
 	if err := e.row(ctx, `SELECT status FROM orders WHERE id = ?`, orderID).Scan(&ostatus); err != nil {
@@ -394,19 +415,19 @@ func TestOrderSettlementAccruesCommission(t *testing.T) {
 		Scan(&gotReferrer, &commAmt, &currency, &reviewReq); err != nil {
 		t.Fatal(err)
 	}
-	if gotReferrer != referrer || !commAmt.Equal(dec2("10.00")) || currency != "USD" || reviewReq {
+	if gotReferrer != referrer || !commAmt.Equal(dec2("10.00")) || currency != "CNY" || reviewReq {
 		t.Fatalf("条目 referrer=%s amount=%s currency=%s review=%v", gotReferrer, commAmt, currency, reviewReq)
 	}
 	if n := oeCount(t, e, ctx, `SELECT count(*) FROM ledger_transactions WHERE kind = 'commission_accrued' AND source_id = ?`, orderID); n != 1 {
 		t.Fatalf("commission_accrued %d 笔", n)
 	}
-	if bal := oeUSDBalance(t, e, ctx, referrer, ledgersvc.UserCommissionPending); !bal.Equal(dec2("10.00")) {
+	if bal := oeCNYBalance(t, e, ctx, referrer, ledgersvc.UserCommissionPending); !bal.Equal(dec2("10.00")) {
 		t.Fatalf("待结佣金 %s", bal)
 	}
 	// 同一回调原样重推：结算只发生一次，佣金也只计一次
 	ack2, err := e.payments.HandleWebhook(ctx, code, in)
-	if err != nil || ack2.HTTPStatus != http.StatusOK {
-		t.Fatalf("重放回调 %d %v", ack2.HTTPStatus, err)
+	if err != nil || !oeAckOK(ack2) {
+		t.Fatalf("重放回调 %s %v", ack2.Body, err)
 	}
 	if n := oeCount(t, e, ctx, `SELECT count(*) FROM commission_entries WHERE order_id = ?`, orderID); n != 1 {
 		t.Fatalf("重放后条目 %d 行", n)
@@ -431,8 +452,8 @@ func TestOrderSettlementHookFailureRollsBack(t *testing.T) {
 			t.Errorf("还原分销参数: %v", err)
 		}
 	})
-	code := "demo-" + randHex(8)
-	e.oeMkDemoProvider(t, ctx, code)
+	code := "epay-" + randHex(8)
+	e.oeMkPayProvider(t, ctx, code)
 	referrer := oeUser(t, e, ctx)
 	buyer := oeUser(t, e, ctx)
 	oeRefer(t, e, ctx, buyer, referrer)
@@ -443,12 +464,11 @@ func TestOrderSettlementHookFailureRollsBack(t *testing.T) {
 	hook := &oeFlakyHook{inner: e.commission}
 	hook.fail.Store(true)
 	e.order.UsePaidHook(hook)
-	eventID := "evt-hook-" + randHex(6)
 	payRef := "pay-hook-" + randHex(6)
-	in := oeDemoInbound(eventID, "payment.succeeded", payRef, outNo, cents)
+	in := oeEpayInbound(payRef, outNo, cents)
 	ack, err := e.payments.HandleWebhook(ctx, code, in)
-	if err == nil && ack.HTTPStatus == http.StatusOK {
-		t.Fatal("hook 失败时回执不应是 200")
+	if err == nil && oeAckOK(ack) {
+		t.Fatal("hook 失败时回执不应是成功")
 	}
 	var ostatus string
 	if err := e.row(ctx, `SELECT status FROM orders WHERE id = ?`, orderID).Scan(&ostatus); err != nil {
@@ -463,13 +483,13 @@ func TestOrderSettlementHookFailureRollsBack(t *testing.T) {
 	if n := oeCount(t, e, ctx, `SELECT count(*) FROM ledger_transactions WHERE kind = 'commission_accrued' AND source_id = ?`, orderID); n != 0 {
 		t.Fatalf("commission_accrued 应回滚，得到 %d", n)
 	}
-	if bal := oeUSDBalance(t, e, ctx, referrer, ledgersvc.UserCommissionPending); !bal.IsZero() {
+	if bal := oeCNYBalance(t, e, ctx, referrer, ledgersvc.UserCommissionPending); !bal.IsZero() {
 		t.Fatalf("待结佣金应为 0，得到 %s", bal)
 	}
 	hook.fail.Store(false)
 	ack, err = e.payments.HandleWebhook(ctx, code, in)
-	if err != nil || ack.HTTPStatus != http.StatusOK {
-		t.Fatalf("重发回调 %d %v", ack.HTTPStatus, err)
+	if err != nil || !oeAckOK(ack) {
+		t.Fatalf("重发回调 %s %v", ack.Body, err)
 	}
 	if err := e.row(ctx, `SELECT status FROM orders WHERE id = ?`, orderID).Scan(&ostatus); err != nil {
 		t.Fatal(err)
@@ -483,7 +503,7 @@ func TestOrderSettlementHookFailureRollsBack(t *testing.T) {
 	if n := oeCount(t, e, ctx, `SELECT count(*) FROM ledger_transactions WHERE kind = 'commission_accrued' AND source_id = ?`, orderID); n != 1 {
 		t.Fatalf("commission_accrued %d 笔", n)
 	}
-	if bal := oeUSDBalance(t, e, ctx, referrer, ledgersvc.UserCommissionPending); !bal.Equal(dec2("10.00")) {
+	if bal := oeCNYBalance(t, e, ctx, referrer, ledgersvc.UserCommissionPending); !bal.Equal(dec2("10.00")) {
 		t.Fatalf("待结佣金 %s", bal)
 	}
 	oeAssertNoDrift(t, e, ctx)
@@ -491,8 +511,8 @@ func TestOrderSettlementHookFailureRollsBack(t *testing.T) {
 
 func TestOrderSettlementSameSourceNeedsReview(t *testing.T) {
 	e, ctx := newOEEnv(t, false)
-	code := "demo-" + randHex(8)
-	e.oeMkDemoProvider(t, ctx, code)
+	code := "epay-" + randHex(8)
+	e.oeMkPayProvider(t, ctx, code)
 	admin := oeUser(t, e, ctx)
 	referrer := oeUser(t, e, ctx)
 	buyer := oeUser(t, e, ctx)
@@ -507,9 +527,9 @@ func TestOrderSettlementSameSourceNeedsReview(t *testing.T) {
 	planID, priceID := e.oeMkPlan(t, ctx, 10000)
 	orderID := oeBuy(t, e, ctx, buyer, planID, priceID)
 	outNo, cents := oePay(t, e, ctx, buyer, orderID, code)
-	ack, err := e.payments.HandleWebhook(ctx, code, oeDemoInbound("evt-ss-"+randHex(8), "payment.succeeded", "pay-"+randHex(8), outNo, cents))
-	if err != nil || ack.HTTPStatus != http.StatusOK {
-		t.Fatalf("回调 %d %v", ack.HTTPStatus, err)
+	ack, err := e.payments.HandleWebhook(ctx, code, oeEpayInbound("pay-"+randHex(8), outNo, cents))
+	if err != nil || !oeAckOK(ack) {
+		t.Fatalf("回调 %s %v", ack.Body, err)
 	}
 	var review bool
 	var reason sql.NullString

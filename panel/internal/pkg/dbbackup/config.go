@@ -35,17 +35,8 @@ type WebDAVRuntimeConfig struct {
 	CheckpointReplicationHook string
 }
 
-func LoadWebDAVTarget(ctx context.Context, configPath string) (Target, error) {
-	return loadWebDAVTarget(ctx, net.DefaultResolver, configPath)
-}
-
 func LoadWebDAVRuntimeConfig(ctx context.Context, configPath string) (WebDAVRuntimeConfig, error) {
 	return loadWebDAVRuntimeConfig(ctx, net.DefaultResolver, configPath)
-}
-
-func loadWebDAVTarget(ctx context.Context, resolver Resolver, configPath string) (Target, error) {
-	runtimeConfig, err := loadWebDAVRuntimeConfig(ctx, resolver, configPath)
-	return runtimeConfig.Target, err
 }
 
 func loadWebDAVRuntimeConfig(ctx context.Context, resolver Resolver, configPath string) (WebDAVRuntimeConfig, error) {

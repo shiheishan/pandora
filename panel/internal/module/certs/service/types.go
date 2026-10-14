@@ -215,8 +215,6 @@ type ACMESettings struct {
 	ZeroSSLEABKID  string
 	// ZeroSSLEABHMACSet 只说 HMAC 配没配
 	ZeroSSLEABHMACSet bool
-	// DirectoryOverride 为真表示签发被非生产环境的目录覆盖（pebble 等）接管，CA 选择不生效
-	DirectoryOverride bool
 }
 
 // ACMESettingsInput 是整体保存。ZeroSSLEABHMAC：nil 保留原值，"" 清空，其余替换。

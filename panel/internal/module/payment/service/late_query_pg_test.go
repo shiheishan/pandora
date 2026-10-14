@@ -15,7 +15,7 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// queryStubAdapter 包一层 demo：查单可注入结果，其余透传。
+// queryStubAdapter 包一层替身：查单可注入结果，其余透传。
 type queryStubAdapter struct {
 	inner   provider.Provider
 	queryFn func(context.Context, string) (provider.QueryResult, error)
@@ -54,9 +54,7 @@ func (e *env) useQueryStub(t *testing.T, queryFn func(context.Context, string) (
 
 func (e *env) restoreDefaultAdapter(t *testing.T) {
 	t.Helper()
-	e.svc.adapter = func(p providerRecord) (provider.Provider, error) {
-		return e.svc.buildAdapter(p)
-	}
+	e.svc.adapter = e.adapterWithFake
 }
 
 func succeededQuery(payRef string) provider.QueryResult {
@@ -72,14 +70,14 @@ func succeededQuery(payRef string) provider.QueryResult {
 
 func (e *env) quarantineCase(t *testing.T, ctx context.Context, user uuid.UUID) (orderID uuid.UUID, caseID uuid.UUID) {
 	t.Helper()
-	code := "demo-late-" + uuid.New().String()[:8]
-	_ = e.mkDemoProvider(t, ctx, code)
+	code := "fake-late-" + uuid.New().String()[:8]
+	_ = e.mkFakeProvider(t, ctx, code)
 	orderID, orderNo := e.mkOrder(t, ctx, user)
 	e.settler.mu.Lock()
 	e.settler.notPayable[orderID] = NotPayable(CaseReleasedOrder, "cancelled")
 	e.settler.mu.Unlock()
 	intent := e.createIntent(t, ctx, code, orderID, orderNo, user, "9.90")
-	in := demoInbound("evt-late-"+uuid.New().String()[:8], "payment.succeeded",
+	in := fakeInbound("evt-late-"+uuid.New().String()[:8], "payment.succeeded",
 		"pay-late-"+uuid.New().String()[:8], intent.OutTradeNo, 990)
 	ack, err := e.svc.HandleWebhook(ctx, code, in)
 	if err != nil {
@@ -166,8 +164,8 @@ func TestApplyLatePayment(t *testing.T) {
 func TestQueryReconcilesMissedCallback(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	code := "demo-qrec-" + uuid.New().String()[:8]
-	_ = e.mkDemoProvider(t, ctx, code)
+	code := "fake-qrec-" + uuid.New().String()[:8]
+	_ = e.mkFakeProvider(t, ctx, code)
 	orderID, orderNo := e.mkOrder(t, ctx, user)
 	intent := e.createIntent(t, ctx, code, orderID, orderNo, user, "9.90")
 
@@ -199,7 +197,7 @@ func TestQueryReconcilesMissedCallback(t *testing.T) {
 	}
 
 	evt := "evt-after-q-" + uuid.New().String()[:8]
-	in := demoInbound(evt, "payment.succeeded", payRef, intent.OutTradeNo, 990)
+	in := fakeInbound(evt, "payment.succeeded", payRef, intent.OutTradeNo, 990)
 	ack, err := e.svc.HandleWebhook(ctx, code, in)
 	if err != nil {
 		t.Fatal(err)
@@ -219,8 +217,8 @@ func TestQueryReconcilesMissedCallback(t *testing.T) {
 func TestQueryCallbackRace(t *testing.T) {
 	e, ctx := newCommitEnv(t)
 	user := e.mkUser(t, ctx)
-	code := "demo-race-" + uuid.New().String()[:8]
-	_ = e.mkDemoProvider(t, ctx, code)
+	code := "fake-race-" + uuid.New().String()[:8]
+	_ = e.mkFakeProvider(t, ctx, code)
 	orderID, orderNo := e.mkOrder(t, ctx, user)
 	intent := e.createIntent(t, ctx, code, orderID, orderNo, user, "9.90")
 
@@ -229,7 +227,7 @@ func TestQueryCallbackRace(t *testing.T) {
 		return succeededQuery(payRef), nil
 	})
 
-	in := demoInbound("evt-race-1", "payment.succeeded", payRef, intent.OutTradeNo, 990)
+	in := fakeInbound("evt-race-1", "payment.succeeded", payRef, intent.OutTradeNo, 990)
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	var qErr, wErr error
@@ -266,7 +264,7 @@ func TestQueryCallbackRace(t *testing.T) {
 	}
 }
 
-// 从未发起支付不可查单；真 demo 适配器报渠道不支持查单。
+// 从未发起支付不可查单；替身渠道报不支持查单。
 func TestQueryNeverPaidAndUnsupported(t *testing.T) {
 	e, ctx := newEnv(t)
 
@@ -277,24 +275,24 @@ func TestQueryNeverPaidAndUnsupported(t *testing.T) {
 	}
 
 	user := e.mkUser(t, ctx)
-	code := "demo-unsup-" + uuid.New().String()[:8]
-	_ = e.mkDemoProvider(t, ctx, code)
+	code := "fake-unsup-" + uuid.New().String()[:8]
+	_ = e.mkFakeProvider(t, ctx, code)
 	orderID, orderNo := e.mkOrder(t, ctx, user)
 	_ = e.createIntent(t, ctx, code, orderID, orderNo, user, "9.90")
 	e.restoreDefaultAdapter(t)
 
 	_, err = e.svc.Query(ctx, orderID)
 	if err == nil || errs.As(err).Code != errs.Conflict {
-		t.Fatalf("demo 不支持查单应 Conflict: %v", err)
+		t.Fatalf("替身不支持查单应 Conflict: %v", err)
 	}
 }
 
-// ReconcileDue 认领到期意图；demo 查单失败则停查且下轮不再认领。
+// ReconcileDue 认领到期意图；替身查单失败则停查且下轮不再认领。
 func TestReconcileDueClaimsAndStops(t *testing.T) {
 	e, ctx := newCommitEnv(t)
 	user := e.mkUser(t, ctx)
-	code := "demo-patrol-" + uuid.New().String()[:8]
-	_ = e.mkDemoProvider(t, ctx, code)
+	code := "fake-patrol-" + uuid.New().String()[:8]
+	_ = e.mkFakeProvider(t, ctx, code)
 	orderID, orderNo := e.mkOrder(t, ctx, user)
 	intent := e.createIntent(t, ctx, code, orderID, orderNo, user, "9.90")
 	e.restoreDefaultAdapter(t)

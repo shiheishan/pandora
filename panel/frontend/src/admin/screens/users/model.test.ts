@@ -183,7 +183,6 @@ describe('schema', () => {
       current_period_end: days(10),
       amount: 2500,
       currency: 'CNY',
-      auto_renew: true,
       quotas: [],
       device_limit_override: null,
       plan_max_devices: 3,

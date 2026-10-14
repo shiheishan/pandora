@@ -55,7 +55,6 @@ type admSubscriptionResponse struct {
 	CurrentPeriodEnd    *time.Time         `json:"current_period_end"`
 	Amount              int64              `json:"amount"`
 	Currency            string             `json:"currency"`
-	AutoRenew           bool               `json:"auto_renew"` // 新栈不做自动续费，恒 false
 	Quotas              []admQuotaResponse `json:"quotas"`
 	DeviceLimitOverride *int               `json:"device_limit_override"`
 	PlanMaxDevices      *int               `json:"plan_max_devices"`
@@ -165,7 +164,6 @@ func admSubscriptionFrom(cc *admCents, s service.AdminSub) admSubscriptionRespon
 		CurrentPeriodEnd:    &pe,
 		Amount:              cc.of(s.Amount),
 		Currency:            s.Currency,
-		AutoRenew:           false,
 		Quotas:              quotas,
 		DeviceLimitOverride: s.DeviceLimitOverride,
 		PlanMaxDevices:      s.PlanMaxDevices,

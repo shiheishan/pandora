@@ -172,7 +172,7 @@ function SubscriptionCard({ userId, s, now, current, onAction }: { userId: strin
         {isLiveSub(s.status) && <span className={css[`tone_${exp.tone}`]}>{exp.text}</span>}
       </div>
       <div className={css.subMeta}>
-        {formatMoney(s.amount, s.currency)} · {s.auto_renew ? '自动续费' : '不自动续费'}
+        {formatMoney(s.amount, s.currency)}
         {s.current_period_start && ` · 本期 ${formatDateTime(s.current_period_start).slice(0, 10)} 起`}
         {s.current_period_end && ` · 到期 ${formatDateTime(s.current_period_end).slice(0, 10)}`}
       </div>

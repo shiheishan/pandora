@@ -220,8 +220,7 @@ func (s *Service) SaveACMESettings(ctx context.Context, in ACMESettingsInput) (A
 
 func (s *Service) acmeView(a settingssvc.ACME) ACMESettings {
 	return ACMESettings{ContactEmail: a.ContactEmail, UseStaging: a.UseStaging, ZeroSSLEnabled: a.ZeroSSLEnabled,
-		ZeroSSLEABKID: a.ZeroSSLEABKID, ZeroSSLEABHMACSet: a.ZeroSSLEABHMACSet,
-		DirectoryOverride: s.opts.DirectoryOverride != ""}
+		ZeroSSLEABKID: a.ZeroSSLEABKID, ZeroSSLEABHMACSet: a.ZeroSSLEABHMACSet}
 }
 
 // --- 共用的小工具 ---

@@ -21,7 +21,6 @@ import (
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
 	"github.com/aegispanel/aegis/internal/module/payment/model"
 	"github.com/aegispanel/aegis/internal/module/payment/provider"
-	"github.com/aegispanel/aegis/internal/module/payment/provider/demo"
 	paymentrepo "github.com/aegispanel/aegis/internal/module/payment/repo"
 	settingsrepo "github.com/aegispanel/aegis/internal/module/settings/repo"
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
@@ -34,8 +33,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
-
-const demoSecret = "payment-pg-test-secret"
 
 var paymentCommitTables = []string{
 	"late_payment_cases", "payment_events", "payments", "payment_intents",
@@ -237,6 +234,8 @@ func setupEnv(t *testing.T, commit bool) (*env, context.Context) {
 			return d.Conn(ctx).Exec(q, args...).Error
 		},
 	}
+	// 测试渠道走替身，其余照常构造。
+	e.svc.adapter = e.adapterWithFake
 	return e, ctx
 }
 
@@ -250,21 +249,25 @@ func (e *env) mkUser(t *testing.T, ctx context.Context) uuid.UUID {
 	return id
 }
 
-func (e *env) mkDemoProvider(t *testing.T, ctx context.Context, code string) providerRecord {
+func (e *env) mkFakeProvider(t *testing.T, ctx context.Context, code string) providerRecord {
 	t.Helper()
+	if !strings.HasPrefix(code, fakeCodePrefix) {
+		t.Fatalf("mkFakeProvider: 渠道代码须以 %q 开头，得 %q", fakeCodePrefix, code)
+	}
 	id := uuid.Must(uuid.NewV7())
-	sealed, err := e.svc.sealCredentials(id, credentials{Key: demoSecret})
+	sealed, err := e.svc.sealCredentials(id, credentials{Key: fakeSecret})
 	if err != nil {
 		t.Fatal(err)
 	}
 	p := &model.Provider{
 		ID:                id,
 		Code:              code,
-		Adapter:           AdapterDemo,
-		DisplayName:       "Demo",
+		Adapter:           AdapterEpay,
+		DisplayName:       "Fake",
 		CredentialsSealed: sealed,
 		Currencies:        []string{"CNY"},
 		BaseURL:           "https://checkout.example.test",
+		Methods:           []string{"alipay"},
 		Enabled:           true,
 		AcceptingNew:      true,
 		MinAmount:         decimal.Zero,
@@ -319,7 +322,13 @@ func (e *env) createIntent(t *testing.T, ctx context.Context, providerCode strin
 	return res
 }
 
-func demoInbound(eventID, eventType, paymentRef, orderNo string, cents int64) provider.Inbound {
+// fakeInbound 构造带 HMAC 签名的替身渠道 JSON 回调（不报手续费）。
+func fakeInbound(eventID, eventType, paymentRef, orderNo string, cents int64) provider.Inbound {
+	return fakeInboundFee(eventID, eventType, paymentRef, orderNo, cents, 0)
+}
+
+// fakeInboundFee 同 fakeInbound，另带渠道手续费 feeCents（分），手续费一并签进签名。
+func fakeInboundFee(eventID, eventType, paymentRef, orderNo string, cents, feeCents int64) provider.Inbound {
 	body, _ := json.Marshal(map[string]any{
 		"event_id":   eventID,
 		"event_type": eventType,
@@ -327,16 +336,16 @@ func demoInbound(eventID, eventType, paymentRef, orderNo string, cents int64) pr
 		"order_no":   orderNo,
 		"amount":     cents,
 		"currency":   "CNY",
-		"fee":        0,
+		"fee":        feeCents,
 		"method":     "alipay",
 	})
 	h := http.Header{}
-	h.Set("X-Aegis-Signature", demo.Sign([]byte(demoSecret), eventID, eventType, paymentRef, orderNo, cents, 0, "CNY"))
+	h.Set("X-Aegis-Signature", fakeSign([]byte(fakeSecret), eventID, eventType, paymentRef, orderNo, cents, feeCents, "CNY"))
 	return provider.Inbound{Method: http.MethodPost, Header: h, Body: body}
 }
 
 func unsignedInbound(eventID, eventType, paymentRef, orderNo string, cents int64) provider.Inbound {
-	in := demoInbound(eventID, eventType, paymentRef, orderNo, cents)
+	in := fakeInbound(eventID, eventType, paymentRef, orderNo, cents)
 	in.Header.Set("X-Aegis-Signature", strings.Repeat("0", 64))
 	return in
 }

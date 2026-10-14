@@ -78,7 +78,7 @@ func TestCanTransitionLate(t *testing.T) {
 
 func TestNotPayableError(t *testing.T) {
 	err := NotPayable(CaseReleasedOrder, "cancelled")
-	if !errors.Is(err, errOrderNotPayable) || !IsNotPayable(err) {
+	if !errors.Is(err, errOrderNotPayable) {
 		t.Fatalf("NotPayable 构造的错误应被识别")
 	}
 	var npe *NotPayableError

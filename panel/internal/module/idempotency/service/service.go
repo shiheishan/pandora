@@ -94,7 +94,7 @@ func (s *Service) Claim(ctx context.Context, scope, key string, fp Fingerprint) 
 		replay *Response
 	)
 	err := s.tx.Do(ctx, func(ctx context.Context) error {
-		row, inserted, err := s.repo.Insert(ctx, scope, p.UserID, key, fp[:])
+		row, inserted, err := s.repo.Insert(ctx, scope, p.UserID, key, fp[:], LeaseDuration)
 		if err != nil {
 			return err
 		}
@@ -124,7 +124,7 @@ func (s *Service) Claim(ctx context.Context, scope, key string, fp Fingerprint) 
 			replay = r
 			return nil
 		case model.StatusFailed:
-			taken, ok, err := s.repo.Takeover(ctx, row.ID, row.Generation)
+			taken, ok, err := s.repo.Takeover(ctx, row.ID, row.Generation, LeaseDuration)
 			if err != nil {
 				return err
 			}

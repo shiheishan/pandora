@@ -335,7 +335,7 @@ func TestPortalTrafficPacks(t *testing.T) {
 	}
 }
 
-// 4. 后台 GET /v1/plans 端口计数与 product_id
+// 4. 后台 GET /v1/plans 的订阅数与节点数计数
 func TestAdminListPlansCounters(t *testing.T) {
 	planID := mustParseUUID("44444444-4444-4444-8444-444444444444")
 	verID := mustParseUUID("55555555-5555-4555-8555-555555555555")
@@ -357,7 +357,7 @@ func TestAdminListPlansCounters(t *testing.T) {
 	}
 	var body struct {
 		Plans []struct {
-			ProductID           string `json:"product_id"`
+			ID                  string `json:"id"`
 			ActiveSubscriptions int    `json:"active_subscriptions"`
 			NodeCount           int    `json:"node_count"`
 		} `json:"plans"`
@@ -365,7 +365,7 @@ func TestAdminListPlansCounters(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if body.Plans[0].ProductID != planID.String() || body.Plans[0].ActiveSubscriptions != 7 || body.Plans[0].NodeCount != 42 {
+	if body.Plans[0].ID != planID.String() || body.Plans[0].ActiveSubscriptions != 7 || body.Plans[0].NodeCount != 42 {
 		t.Fatalf("%+v", body.Plans[0])
 	}
 

@@ -64,7 +64,7 @@ func (k CaseKind) Valid() bool {
 	}
 }
 
-// NotPayableError 是 Settler 拒收一笔收款的原因；用 NotPayable 构造，用 IsNotPayable 或 errors.As 判断。
+// NotPayableError 是 Settler 拒收一笔收款的原因；用 NotPayable 构造，用 errors.As 判断。
 type NotPayableError struct {
 	Kind CaseKind
 	// OrderStatus 是订单此刻的状态，记进挂账案；必须是前端 ORDER_STATUSES 里的值（后台挂账列表按它校验），由 order 保证。
@@ -81,12 +81,6 @@ func (e *NotPayableError) Is(target error) bool { return target == errOrderNotPa
 // NotPayable 构造 Settler 的拒收错误。
 func NotPayable(kind CaseKind, orderStatus string) error {
 	return &NotPayableError{Kind: kind, OrderStatus: orderStatus}
-}
-
-// IsNotPayable 报告 err 是不是 NotPayable 构造的拒收错误。
-func IsNotPayable(err error) bool {
-	var npe *NotPayableError
-	return errors.As(err, &npe)
 }
 
 // ---------------------------------------------------------------------------
@@ -123,7 +117,6 @@ const (
 // 适配器名。
 const (
 	AdapterEpay    = "epay"
-	AdapterDemo    = "demo_hmac"
 	AdapterOffline = "offline"
 )
 

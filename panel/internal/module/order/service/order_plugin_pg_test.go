@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"testing"
 
 	"github.com/aegispanel/aegis/internal/pkg/money"
@@ -156,13 +155,13 @@ func TestPluginOrderPaidWebhook(t *testing.T) {
 	rec := &pluginRec{}
 	e.svc.UsePluginEvents(rec)
 
-	code := demoCode()
-	e.mkDemoProvider(t, ctx, code)
+	code := payCode()
+	e.mkPayProvider(t, ctx, code)
 	user, _, orderID := e.pendingWithEverything(t, ctx)
 
 	ack := e.payAndNotify(t, ctx, user, orderID, code, "pay-"+randHex(8))
-	if ack.HTTPStatus != http.StatusOK {
-		t.Fatalf("回执 %d", ack.HTTPStatus)
+	if !ackOK(ack) {
+		t.Fatalf("回执: %s", ack.Body)
 	}
 
 	paid := rec.find("order.paid")

@@ -125,15 +125,8 @@ var (
 		PlanDraft:  {PlanActive, PlanArchived},
 		PlanActive: {PlanActive, PlanArchived},
 	}
-	versionTransitions = map[string][]string{
-		VersionDraft: {VersionPublished},
-	}
 	priceTransitions = map[string][]string{
 		PriceActive: {PriceArchived},
-	}
-	packTransitions = map[string][]string{
-		PackActive:   {PackArchived},
-		PackArchived: {PackActive},
 	}
 )
 
@@ -149,14 +142,8 @@ func canTransition(table map[string][]string, from, to string) bool {
 // CanTransitionPlan 报告套餐能否从 from 变到 to（active → active 是发布新版本）。
 func CanTransitionPlan(from, to string) bool { return canTransition(planTransitions, from, to) }
 
-// CanTransitionVersion 报告版本能否从 from 变到 to。
-func CanTransitionVersion(from, to string) bool { return canTransition(versionTransitions, from, to) }
-
 // CanTransitionPrice 报告价格能否从 from 变到 to。
 func CanTransitionPrice(from, to string) bool { return canTransition(priceTransitions, from, to) }
-
-// CanTransitionPack 报告流量包能否从 from 变到 to。
-func CanTransitionPack(from, to string) bool { return canTransition(packTransitions, from, to) }
 
 // rowConflict 是乐观锁冲突：409，fields 带当前值（前端只 Toast 信封原文）。
 func rowConflict(kind string, current int64) error {

@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"net/http"
 	"testing"
 	"time"
 
@@ -14,7 +13,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
-// mkMinPay 插一条在收款的易支付渠道，只为让站点最低付款额变成 cents（MinPayment 不看 offline 与 demo 渠道）。
+// mkMinPay 插一条在收款的易支付渠道，只为让站点最低付款额变成 cents（MinPayment 不看 offline 渠道）。
 func (e *env) mkMinPay(t *testing.T, ctx context.Context, cents int64) {
 	t.Helper()
 	e.mustExec(t, ctx, `
@@ -235,10 +234,10 @@ func TestPlanChangeAfterLateRenewalCallback(t *testing.T) {
 		oldEnd.AddDate(0, -1, 0), oldEnd, sub.ID)
 	e.mustExec(t, ctx, `UPDATE orders SET created_at = ? WHERE id = ?`, oldEnd.Add(-time.Hour), renewal.OrderID)
 
-	code := demoCode()
-	e.mkDemoProvider(t, ctx, code)
-	if ack := e.payAndNotify(t, ctx, user, renewal.OrderID, code, "late-"+randHex(8)); ack.HTTPStatus != http.StatusOK {
-		t.Fatalf("回执 %d", ack.HTTPStatus)
+	code := payCode()
+	e.mkPayProvider(t, ctx, code)
+	if ack := e.payAndNotify(t, ctx, user, renewal.OrderID, code, "late-"+randHex(8)); !ackOK(ack) {
+		t.Fatalf("回执: %s", ack.Body)
 	}
 	after, err := e.subs.Get(ctx, sub.ID, nil)
 	if err != nil {
@@ -272,10 +271,10 @@ func TestPlanChangeSettlementAfterPeriodRestart(t *testing.T) {
 	mustErrMsg(t, "有待付变更单时 RemainingValue", err, ErrOpenChange)
 
 	e.mustExec(t, ctx, `UPDATE subscriptions SET current_period_start = ? WHERE id = ?`, time.Now().UTC().Add(time.Second), sub.ID)
-	code := demoCode()
-	e.mkDemoProvider(t, ctx, code)
-	if ack := e.payAndNotify(t, ctx, user, c.OrderID, code, "rs-"+randHex(8)); ack.HTTPStatus != http.StatusOK {
-		t.Fatalf("回执 %d", ack.HTTPStatus)
+	code := payCode()
+	e.mkPayProvider(t, ctx, code)
+	if ack := e.payAndNotify(t, ctx, user, c.OrderID, code, "rs-"+randHex(8)); !ackOK(ack) {
+		t.Fatalf("回执: %s", ack.Body)
 	}
 	kind, _, amt := e.lateCase(t, ctx, c.OrderID)
 	if kind != "ineligible_subscription" {

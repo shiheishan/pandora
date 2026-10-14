@@ -1,17 +1,16 @@
--- Pandora 新栈（panel/db/migrations）数据层不变量测试。
+-- Pandora 数据层不变量测试（panel/db/migrations）。
 --
 -- 每个用例对应一条验收标准：应当被拒绝的 SQL 断言被拒；应当被接受的 SQL 断言通过。
 -- 全程单事务，末尾 ROLLBACK，不留数据。CI：`"$PSQL" -X -v ON_ERROR_STOP=1 -f tests/invariants.sql`
 -- 库已跑迁移且含其它 e2e 夹具；本脚本种子用固定虚构 uuid（00000000-0000-7000-8000-0000000001xx）
 -- 与 inv- 前缀邮箱/编码，避免与已有行撞唯一约束。
 --
--- 与旧版（旧迁移 panel/migrations、带租户）的对照：
---   保留并按新表改写：PAY-005 复式记账、DATA-003 追加写、SUB-004 订阅状态（只剩 active / expired）、
+-- 覆盖的验收项：PAY-005 复式记账、DATA-003 追加写、SUB-004 订阅状态（只剩 active / expired）、
 --   NODE-010（改成 nodes_active_shape：在役节点必须挂服务器、协议配好）、SUB-002 版本与价格冻结、
 --   PAY-001 订单金额恒等式与人工单理由、MKT-003 邀请关系、PAY-003 幂等唯一键、MKT-001 优惠券容量、
 --   NFR-008 降级开关、OPS-005 事务类通知、OPS-001 内部备注、USE-002（改成 node_traffic_reports 唯一键）。
 --
--- 删掉的不变量及原因（新栈没有对应的表或机制）：
+-- 不覆盖的验收项及原因（没有对应的表或机制）：
 --   SEC-013 双人审批 — 没有审批表：后台权限只分有和没有。
 --   SUB-007 试用防刷 — 没有试用发放表（价格上的 trial_days 只存不用）。
 --   EXT-006 / SEC-014 插件验签 — 插件只有 plugin_hooks Webhook，没有可执行插件与签名。
@@ -21,7 +20,7 @@
 --   DATA-002 / ARC-006 租户隔离与应用角色 — 单租户、没有 RLS，迁移不建应用角色。
 --   PAY-005 余额缓存与分录一致（app.verify_ledger_*）— 没有这组库函数，余额缓存由 Go 维护；
 --     漂移由 e2e.sh / epay_e2e.sh 的漂移 SQL 与后台 /v1/overview 的 ledger_drift_accounts 检查。
---   旧的 pending / grace / past_due 订阅状态与节点 status 流水线用例 — 新栈没有这些状态。
+--   订阅的 pending / grace / past_due 状态与节点 status 流水线 — 订阅只有 active / expired，节点没有 status 流水线。
 
 \set ON_ERROR_STOP on
 \timing off
@@ -154,7 +153,7 @@ INSERT INTO audit_events (id, actor_kind, action, outcome)
 VALUES ('00000000-0000-7000-8000-000000000b01', 'system', 'inv.test.seed', 'success');
 
 INSERT INTO payment_providers (id, code, adapter, display_name, currencies, enabled, accepting_new)
-VALUES ('00000000-0000-7000-8000-000000000b11', 'invtestpay', 'demo_hmac', 'Inv Test Pay',
+VALUES ('00000000-0000-7000-8000-000000000b11', 'invtestpay', 'epay', 'Inv Test Pay',
         '["USD"]'::jsonb, true, false);
 
 INSERT INTO orders (id, order_no, user_id, kind, currency,

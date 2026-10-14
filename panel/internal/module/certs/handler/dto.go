@@ -380,7 +380,6 @@ type acmeSettingsResponse struct {
 	ZeroSSLEnabled    bool   `json:"zerossl_enabled"`
 	ZeroSSLEABKID     string `json:"zerossl_eab_kid"`
 	ZeroSSLEABHMACSet bool   `json:"zerossl_eab_hmac_set"`
-	DirectoryOverride bool   `json:"directory_override"`
 }
 
 func acmeFrom(s service.ACMESettings) acmeSettingsResponse {
@@ -390,6 +389,5 @@ func acmeFrom(s service.ACMESettings) acmeSettingsResponse {
 		ZeroSSLEnabled:    s.ZeroSSLEnabled,
 		ZeroSSLEABKID:     s.ZeroSSLEABKID,
 		ZeroSSLEABHMACSet: s.ZeroSSLEABHMACSet,
-		DirectoryOverride: s.DirectoryOverride,
 	}
 }

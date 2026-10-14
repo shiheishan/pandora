@@ -28,7 +28,6 @@ func RequestID(base *zap.Logger) gin.HandlerFunc {
 		ctx = reqmeta.With(ctx, reqmeta.Meta{IP: c.ClientIP(), UserAgent: c.Request.UserAgent()})
 		ctx = reqstats.With(ctx, reqstats.New())
 		c.Request = c.Request.WithContext(ctx)
-		c.Set("req_id", id)
 		c.Next()
 	}
 }

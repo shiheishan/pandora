@@ -143,6 +143,14 @@ command -v npm >/dev/null 2>&1 || {
   echo "missing npm (Node 22.12+): release binaries embed the panel frontend and must not ship its placeholder" >&2
   exit 1
 }
+# frontend-embed 会覆盖入库的两个占位 index.html；脚本退出时（成功或失败）还原，工作区不留改动。
+# 只在这两个文件确实被 $ROOT 所在的仓库跟踪时还原（解包的源码树、或落在别的仓库里时跳过）。
+restore_web_placeholders() {
+  if git -C "$ROOT" ls-files --error-unmatch web/admin/index.html web/portal/index.html >/dev/null 2>&1; then
+    git -C "$ROOT" checkout -- web/admin/index.html web/portal/index.html || true
+  fi
+}
+trap restore_web_placeholders EXIT
 PANDORA_RELEASE="$VERSION" make -C "$ROOT" frontend-embed
 for app in admin portal; do
   if grep -q 'name="pandora-placeholder"' "$ROOT/web/$app/index.html"; then

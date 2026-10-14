@@ -8,7 +8,7 @@ export const ORDER_KINDS = ['new', 'renewal', 'upgrade', 'downgrade', 'addon', '
 export const INTENT_STATUSES = ['created', 'requires_action', 'processing', 'succeeded', 'failed', 'cancelled', 'expired'] as const
 export const PAYMENT_STATUSES = ['succeeded', 'refunded', 'partially_refunded', 'disputed', 'reversed'] as const
 export const REFUND_STATUSES = ['pending', 'approved', 'processing', 'succeeded', 'failed', 'rejected'] as const
-export const LATE_STATUSES = ['suspense', 'refund_pending', 'refunded', 'manual_review', 'applied'] as const
+export const LATE_STATUSES = ['suspense', 'applied'] as const
 export const LATE_KINDS = ['released_order', 'excess_capture', 'ineligible_subscription'] as const
 export const CURRENCIES = ['CNY', 'USD'] as const
 export type OrderStatus = (typeof ORDER_STATUSES)[number]
@@ -295,7 +295,7 @@ const providerSchema = z.object({
   methods: z.array(z.string()),
   default_method: z.string(),
   allow_private_host: z.boolean(),
-  // 最低付款额（分，渠道 config 的 min_amount）：低于它的在线支付不发起；demo / offline 没有这个概念，回 0
+  // 最低付款额（分，渠道 config 的 min_amount）：低于它的在线支付不发起；线下渠道没有这个概念，回 0
   min_amount: count,
   today: byCurrency,
   success_rate_24h: z.number().min(0).max(1).nullable(),

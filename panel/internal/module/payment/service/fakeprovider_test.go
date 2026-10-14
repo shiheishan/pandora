@@ -1,5 +1,7 @@
-// Package demo 是一个用 HMAC-SHA256 验签的参考适配器，供集成测试与本地联调。
-package demo
+// 本文件是 payment 包测试用的支付渠道替身：HMAC-SHA256 验签的 JSON 回调，支持手续费与任意币种，
+// 事件号由回调给出；经 Service.adapter 注入，产品代码里没有它。
+
+package service
 
 import (
 	"context"
@@ -18,35 +20,37 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
-// Config 是 demo 渠道配置。
-type Config struct {
-	// Secret 是与调用方共享的验签密钥。
-	Secret []byte
-	// CheckoutURL 是模拟收银台地址，可为空。
+// fakeCodePrefix 是测试渠道代码的前缀：注入钩子按它认替身。
+const fakeCodePrefix = "fake-"
+
+// fakeSecret 是替身渠道的验签密钥（虚构）。
+const fakeSecret = "payment-pg-test-secret"
+
+// fakeConfig 是测试替身渠道配置。
+type fakeConfig struct {
+	Secret      []byte
 	CheckoutURL string
 }
 
-// Provider 是 demo 渠道适配器。
-type Provider struct{ cfg Config }
+// fakeProvider 是测试替身渠道适配器。
+type fakeProvider struct{ cfg fakeConfig }
 
-var _ provider.Provider = (*Provider)(nil)
+var _ provider.Provider = (*fakeProvider)(nil)
 
-// New 构造 demo 适配器。
-func New(cfg Config) (*Provider, error) {
+func newFakeProvider(cfg fakeConfig) (*fakeProvider, error) {
 	if len(cfg.Secret) == 0 {
-		return nil, errors.New("demo: 缺少验签密钥")
+		return nil, errors.New("fake: 缺少验签密钥")
 	}
-	return &Provider{cfg: cfg}, nil
+	return &fakeProvider{cfg: cfg}, nil
 }
 
-// CreatePayment 生成模拟收银台跳转。
-func (p *Provider) CreatePayment(ctx context.Context, req provider.CreateRequest) (provider.CreateResponse, error) {
+func (p *fakeProvider) CreatePayment(ctx context.Context, req provider.CreateRequest) (provider.CreateResponse, error) {
 	if !req.Amount.IsPositive() {
-		return provider.CreateResponse{}, errors.New("demo: 金额必须为正")
+		return provider.CreateResponse{}, errors.New("fake: 金额必须为正")
 	}
 	cents, err := money.ToCents(req.Amount)
 	if err != nil {
-		return provider.CreateResponse{}, fmt.Errorf("demo: 金额非法: %w", err)
+		return provider.CreateResponse{}, fmt.Errorf("fake: 金额非法: %w", err)
 	}
 
 	base := p.cfg.CheckoutURL
@@ -70,7 +74,7 @@ func (p *Provider) CreatePayment(ctx context.Context, req provider.CreateRequest
 	}, nil
 }
 
-type notifyBody struct {
+type fakeNotifyBody struct {
 	EventID   string          `json:"event_id"`
 	EventType string          `json:"event_type"`
 	PaymentID string          `json:"payment_id"`
@@ -82,25 +86,24 @@ type notifyBody struct {
 	Raw       json.RawMessage `json:"raw"`
 }
 
-// ParseNotification 解析 JSON 回调并验签。
-func (p *Provider) ParseNotification(ctx context.Context, in provider.Inbound) (provider.Notification, error) {
+func (p *fakeProvider) ParseNotification(ctx context.Context, in provider.Inbound) (provider.Notification, error) {
 	body := in.Body
 	if len(body) > 1<<20 {
-		return provider.Notification{}, errors.New("demo: 报文过大")
+		return provider.Notification{}, errors.New("fake: 报文过大")
 	}
 
-	var b notifyBody
+	var b fakeNotifyBody
 	if err := json.Unmarshal(body, &b); err != nil {
-		return provider.Notification{}, fmt.Errorf("demo: 报文不是合法 JSON: %w", err)
+		return provider.Notification{}, fmt.Errorf("fake: 报文不是合法 JSON: %w", err)
 	}
 	if b.EventID == "" {
-		return provider.Notification{}, errors.New("demo: 缺少 event_id")
+		return provider.Notification{}, errors.New("fake: 缺少 event_id")
 	}
 	if b.OrderNo == "" {
-		return provider.Notification{}, errors.New("demo: 缺少 order_no")
+		return provider.Notification{}, errors.New("fake: 缺少 order_no")
 	}
 
-	canonical := canonicalString(b.EventID, b.EventType, b.PaymentID, b.OrderNo, b.Amount, b.Fee, b.Currency)
+	canonical := fakeCanonical(b.EventID, b.EventType, b.PaymentID, b.OrderNo, b.Amount, b.Fee, b.Currency)
 	sigHex := strings.TrimSpace(in.Header.Get("X-Aegis-Signature"))
 	sig, _ := hex.DecodeString(sigHex)
 	mac := hmac.New(sha256.New, p.cfg.Secret)
@@ -110,7 +113,7 @@ func (p *Provider) ParseNotification(ctx context.Context, in provider.Inbound) (
 
 	cur, err := money.ParseCurrency(b.Currency)
 	if err != nil {
-		return provider.Notification{}, fmt.Errorf("demo: %w", err)
+		return provider.Notification{}, fmt.Errorf("fake: %w", err)
 	}
 
 	status := provider.StatusPending
@@ -147,8 +150,7 @@ func (p *Provider) ParseNotification(ctx context.Context, in provider.Inbound) (
 	}, nil
 }
 
-// NotificationAck 回 JSON 并用 HTTP 状态码表达结果。
-func (p *Provider) NotificationAck(in provider.AckInput) provider.AckOutput {
+func (p *fakeProvider) NotificationAck(in provider.AckInput) provider.AckOutput {
 	const ct = "application/json; charset=utf-8"
 
 	if !in.SignatureValid {
@@ -176,22 +178,27 @@ func (p *Provider) NotificationAck(in provider.AckInput) provider.AckOutput {
 	return provider.AckOutput{HTTPStatus: http.StatusOK, ContentType: ct, Body: body}
 }
 
-// QueryPayment 明确不支持主动查单。
-func (p *Provider) QueryPayment(ctx context.Context, outTradeNo string) (provider.QueryResult, error) {
-	return provider.QueryResult{}, fmt.Errorf("demo: %w", provider.ErrNotSupported)
+func (p *fakeProvider) QueryPayment(ctx context.Context, outTradeNo string) (provider.QueryResult, error) {
+	return provider.QueryResult{}, fmt.Errorf("fake: %w", provider.ErrNotSupported)
 }
 
-// canonicalString 是参与签名的字段（入账要用的都在里面：事件号、类型、流水号、单号、金额、手续费、币种）。
-func canonicalString(eventID, eventType, paymentID, orderNo string, amountCents, feeCents int64, currency string) string {
+func fakeCanonical(eventID, eventType, paymentID, orderNo string, amountCents, feeCents int64, currency string) string {
 	return strings.Join([]string{
 		eventID, eventType, paymentID, orderNo,
 		strconv.FormatInt(amountCents, 10), strconv.FormatInt(feeCents, 10), currency,
 	}, "|")
 }
 
-// Sign 计算回调 HMAC-SHA256 签名（十六进制），供测试与本地联调造回调。
-func Sign(secret []byte, eventID, eventType, paymentID, orderNo string, amountCents, feeCents int64, currency string) string {
+func fakeSign(secret []byte, eventID, eventType, paymentID, orderNo string, amountCents, feeCents int64, currency string) string {
 	mac := hmac.New(sha256.New, secret)
-	mac.Write([]byte(canonicalString(eventID, eventType, paymentID, orderNo, amountCents, feeCents, currency)))
+	mac.Write([]byte(fakeCanonical(eventID, eventType, paymentID, orderNo, amountCents, feeCents, currency)))
 	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// adapterWithFake 是测试用的 adapter 钩子：fake- 前缀的渠道走替身，其余走 buildAdapter。
+func (e *env) adapterWithFake(p providerRecord) (provider.Provider, error) {
+	if strings.HasPrefix(p.Code, fakeCodePrefix) {
+		return newFakeProvider(fakeConfig{Secret: []byte(p.Creds.Key), CheckoutURL: p.BaseURL})
+	}
+	return e.svc.buildAdapter(p)
 }

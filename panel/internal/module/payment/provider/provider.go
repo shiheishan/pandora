@@ -24,7 +24,7 @@ const (
 	StatusRefunded  Status = "refunded"
 )
 
-// ErrNotSupported 表示渠道不支持这个操作（如 demo 不能查单）。
+// ErrNotSupported 表示渠道不支持这个操作（如不能主动查单）。
 var ErrNotSupported = errors.New("payment provider: 不支持的操作")
 
 // CreateRequest 是发起一次支付的请求。
