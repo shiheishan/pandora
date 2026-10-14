@@ -33,8 +33,8 @@ func gormWrap(sentinel error, pg *pgconn.PgError) error {
 func TestAsViolation(t *testing.T) {
 	pg := &pgconn.PgError{Code: CodeUnique, ConstraintName: "demo_items_code_key", TableName: "demo_items"}
 	for name, err := range map[string]error{
-		"原始 PgError":  pg,
-		"GORM 翻译后":    gormWrap(gorm.ErrDuplicatedKey, pg),
+		"原始 PgError":   pg,
+		"GORM 翻译后":     gormWrap(gorm.ErrDuplicatedKey, pg),
 		"再包一层 %w 也取得到": fmt.Errorf("写入失败: %w", gormWrap(gorm.ErrDuplicatedKey, pg)),
 	} {
 		v, ok := AsViolation(err)
@@ -48,10 +48,10 @@ func TestAsViolation(t *testing.T) {
 	}
 
 	for name, err := range map[string]error{
-		"nil":      nil,
-		"普通错误":     errors.New("其它错误"),
+		"nil":           nil,
+		"普通错误":          errors.New("其它错误"),
 		"非约束类 SQLSTATE": &pgconn.PgError{Code: "40P01"},
-		"只有 GORM 哨兵":   gorm.ErrDuplicatedKey,
+		"只有 GORM 哨兵":    gorm.ErrDuplicatedKey,
 	} {
 		if _, ok := AsViolation(err); ok {
 			t.Fatalf("%s: 不应判为约束违例", name)
@@ -108,9 +108,9 @@ func TestIsRetryable(t *testing.T) {
 		}
 	}
 	for name, err := range map[string]error{
-		"nil":   nil,
-		"唯一冲突":  &pgconn.PgError{Code: CodeUnique},
-		"普通错误":  errors.New("其它错误"),
+		"nil":  nil,
+		"唯一冲突": &pgconn.PgError{Code: CodeUnique},
+		"普通错误": errors.New("其它错误"),
 	} {
 		if IsRetryable(err) {
 			t.Fatalf("%s: 不应可重试", name)
@@ -120,13 +120,13 @@ func TestIsRetryable(t *testing.T) {
 
 func TestEscapeLike(t *testing.T) {
 	cases := map[string]string{
-		"":          "",
-		"abc":       "abc",
-		"50%":       `50\%`,
-		"a_b":       `a\_b`,
-		`C:\dir`:    `C:\\dir`,
-		`中文%_\混合`:   `中文\%\_\\混合`,
-		`\%_`:       `\\\%\_`,
+		"":        "",
+		"abc":     "abc",
+		"50%":     `50\%`,
+		"a_b":     `a\_b`,
+		`C:\dir`:  `C:\\dir`,
+		`中文%_\混合`: `中文\%\_\\混合`,
+		`\%_`:     `\\\%\_`,
 	}
 	for in, want := range cases {
 		if got := EscapeLike(in); got != want {

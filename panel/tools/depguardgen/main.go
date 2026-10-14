@@ -186,6 +186,16 @@ linters:
               desc: 新栈用 gin
             - pkg: github.com/jackc/pgx/v5/pgxpool
               desc: 新栈经 GORM 访问数据库
+        # 标准库日志只在生产代码里禁：测试里第三方夹具（如 pebble）的 API 要求传 *log.Logger
+        stack-no-stdlog:
+          files:
+            - "**/internal/pkg/**"
+            - "**/internal/app/**"
+            - "**/internal/module/**"
+            - "**/cmd/pandora/**"
+            - "**/db/migrations/**"
+            - "!$test"
+          deny:
             - pkg: log$
               desc: 日志用 zap（internal/pkg/log）
             - pkg: log/slog
@@ -251,7 +261,7 @@ linters:
             - pkg: {{$.Module}}/internal/module/{{.}}/provider
               desc: 模块之间只调 service
 {{- end}}
-        # 测试可以用别的模块的 repo 装出真的 service（和 app 装配一样），但不碰它的 model、handler、task
+        # 测试可以用别的模块的 repo 装出真的 service（和 app 装配一样），也可以用支付渠道 provider 造验签回调；不碰它的 model、handler、task、grpc
         module-{{$m}}-boundary-test:
           files:
             - "**/internal/module/{{$m}}/**/*_test.go"
@@ -264,8 +274,6 @@ linters:
             - pkg: {{$.Module}}/internal/module/{{.}}/task
               desc: 模块之间只调 service
             - pkg: {{$.Module}}/internal/module/{{.}}/grpc
-              desc: 模块之间只调 service
-            - pkg: {{$.Module}}/internal/module/{{.}}/provider
               desc: 模块之间只调 service
 {{- end}}
 {{- end}}
