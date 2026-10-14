@@ -179,12 +179,11 @@ func TestAssembleServerConfigsSkipsBadNode(t *testing.T) {
 	badProto := "[1]"
 	nodeType := "vless"
 	port := 443
-	kernel := "auto"
 
 	rows := []repo.ConfigNodeRow{
-		{ServerID: sA, NodeID: &n1, NodeType: &nodeType, ServerPort: &port, Kernel: &kernel, ProtocolConfig: &goodProto},
-		{ServerID: sA, NodeID: &n2, NodeType: &nodeType, ServerPort: &port, Kernel: &kernel, ProtocolConfig: &badProto},
-		{ServerID: sB, NodeID: &n3, NodeType: &nodeType, ServerPort: &port, Kernel: &kernel, ProtocolConfig: &goodProto},
+		{ServerID: sA, NodeID: &n1, NodeType: &nodeType, ServerPort: &port, ProtocolConfig: &goodProto},
+		{ServerID: sA, NodeID: &n2, NodeType: &nodeType, ServerPort: &port, ProtocolConfig: &badProto},
+		{ServerID: sB, NodeID: &n3, NodeType: &nodeType, ServerPort: &port, ProtocolConfig: &goodProto},
 		{ServerID: sC, NodeID: nil},
 	}
 
