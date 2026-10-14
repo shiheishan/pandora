@@ -1,6 +1,7 @@
 # 面板后端架构（换栈设计，P0）
 
 状态：已定稿（2026-10-12）。工程取舍按根 CLAUDE.md 的原则定；第 18 节的产品问题由用户定：Q3 佣金按订单总额（含余额抵扣），其余按建议。
+实现：P1–P6 已按本文落地，P7 删除了旧栈（2026-10-13）。下文保留当时的决定与理由；实现与设计不同的地方已改成实现，并就地注明。
 依据：2026-10-12 的六份只读调查（`.claude/p0/` 下的 api、auth、db-money、db-rest、jobs-infra、node，不入库）。
 下文的「现状」只写到能说明取舍的程度；细节和出处以调查报告为准。
 
@@ -10,7 +11,7 @@
 
 | # | 决定 | 理由 |
 |---|---|---|
-| 1 | 只有一个二进制 `pandora`，子命令为 `serve`、`worker`、`migrate`、`admin`、`pay`、`backup` | 根 CLAUDE.md 要求一个进程带子命令。重活放 worker，serve 只管请求 |
+| 1 | 只有一个二进制 `pandora`，子命令为 `serve`、`worker`、`migrate`、`admin`、`backup` | 根 CLAUDE.md 要求一个进程带子命令。重活放 worker，serve 只管请求。原设计的 `pay` 没有做：支付渠道只在后台管理 |
 | 2 | serve 开三个监听：public HTTP、admin HTTP、节点 gRPC（mTLS 由面板进程自己终结） | public 和 admin 都把 SPA 挂在 `/`，也都有 `/v1/auth/*`，合不进一棵路由树；分两个监听，nginx 几乎不用改 |
 | 3 | 每个模块拆成 `model / repo / service / handler / task` 五个子包，用 depguard 钉住分层 | Go 只能按包限制 import。拆到子包，「handler 不碰数据库」才能交给 lint 检查 |
 | 4 | 去掉多租户和 RLS；迁移重写为新基线，每个模块一个文件，都有 Down | 产品不做多租户；还没有生产部署 |
@@ -26,7 +27,7 @@
 | 14 | 幂等键留在 PG，与业务写在同一个事务；认领 SQL 从中间件挪进 idempotency 模块的 repo | Redis 做不到和业务同事务；中间件不碰库 |
 | 15 | 配置用 viper：`/etc/pandora/config.yaml` 加 `PANDORA_` 前缀的环境变量；秘密走环境变量或 `*_FILE` | 栈表要求；秘密不进配置文件 |
 | 16 | 主密钥只做根密钥，按用途用 HKDF 派生子密钥；密文头带 key id | 现在一把密钥同时用作 AES 密钥和 HMAC 盐，是公认的坏做法 |
-| 17 | 新旧并存到 P7：新代码在新目录，旧代码保持能编译、只修阻断问题，P7 一次删掉 | 旧包互相 import，按模块逐个删会让旧二进制编译不过；没有部署，并存期只占仓库 |
+| 17 | 新旧并存到 P7：新代码在新目录，旧代码保持能编译、只修阻断问题，P7 一次删掉（已在 P7 删除） | 旧包互相 import，按模块逐个删会让旧二进制编译不过；没有部署，并存期只占仓库 |
 
 ---
 
@@ -36,12 +37,11 @@
 
 | 子命令 | 内容 |
 |---|---|
-| `serve` | public HTTP（缺省 127.0.0.1:9000）、admin HTTP（127.0.0.1:9001）、节点 gRPC（公网端口，缺省 8444）；SSE hub；节点会话管理；心跳合并；pprof 只监听回环 |
+| `serve` | public HTTP（缺省 127.0.0.1:9000）、admin HTTP（127.0.0.1:9001）、节点 gRPC（公网端口，缺省 `:9443`）；SSE hub；节点会话管理；心跳合并；pprof 只监听回环 |
 | `worker` | asynq Server 和 Scheduler，跑第 12 节的全部任务 |
-| `migrate up / down / status / redo` | goose；使用迁移专用 DSN（表属主角色） |
+| `migrate up / down / status` | goose；使用迁移专用 DSN（表属主角色）；`down` 回退一个版本 |
 | `admin …` | 原 adminctl：create、reset-password、grant、revoke、list、has-admin；口令只从 stdin 读 |
-| `pay …` | 原 payctl：upsert-epay、list；**密钥改从 stdin 读**（现在走 `--key` 会出现在 argv 里） |
-| `backup …` | 原 backup-webdav；使用自己的最小配置加载器，不读完整的 viper 配置 |
+| `backup …` | 原 backup-webdav：dir、seal-local、verify-local-seal、webdav-upload、init-signing-key、verify-manifest，供备份脚本调用；使用自己的最小配置加载器，不读完整的 viper 配置、不连库 |
 
 命令行框架用 cobra（与 viper 同一作者，社区最常见的组合）。
 
@@ -70,8 +70,9 @@ panel/
   internal/
     app/                         各子命令的装配（serve.go、worker.go …），模块注册
     pkg/                         与业务无关的基础设施
-      config/  log/  db/  tx/  redisx/  errs/  httpx/  reqid/
-      jwtx/  crypto/  ratelimit/  idgen/  pagination/  testkit/
+      config/  log/  db/  tx/  redisx/  errs/  httpx/  reqid/  reqmeta/
+      jwtx/  authn/  crypto/  ratelimit/  pagination/  money/  jobs/
+      realtime/  route/  geoip/  dbbackup/  testkit/
     module/
       <模块>/
         model/                   GORM 结构体：只有字段和标签
@@ -82,12 +83,14 @@ panel/
         render/                  （仅 subscription）订阅格式渲染：纯函数，不依赖任何模块、不碰数据库；node 模块用它的 Node 类型交线路
         protocol/                （仅 node）协议 schema、校验、抹敏感值、端口 L4、内核字段翻译：纯函数，规则同 render
         grpc/                    （仅 node）节点通道的 gRPC 服务（接入与会话），地位同 handler：只调本模块 service
+        provider/                （仅 payment）渠道适配（易支付等）
   db/migrations/                 新基线（goose，embed 进二进制）
+  tools/depguardgen/             从 internal/module/ 生成 .golangci.yml 的 depguard 规则
 proto/                           节点协议源文件（buf）
 nodeapi/                         buf 生成的 Go 代码，单独的 Go module，panel 和 pdnd 用 replace 引用
 ```
 
-旧代码（`internal/api`、`internal/domain`、`internal/middleware`、`internal/platform`、`migrations/`、`cmd/aegis-*`）原地保留到 P7，然后整体删除。
+旧代码（`internal/api`、`internal/domain`、`internal/middleware`、`internal/platform`、`migrations/`、`cmd/aegis-*`）原地保留到 P7，已在 P7 整体删除。`module/realtime` 只有 handler（`GET /v1/events`），不拥有表。
 
 ### 3.2 分层规则（depguard 钉住）
 
@@ -98,11 +101,14 @@ nodeapi/                         buf 生成的 Go 代码，单独的 Go module�
 | service 不直接用 GORM | `**/module/*/service/**` 禁止 `gorm.io/gorm`；事务通过 `pkg/tx` 的接口 |
 | 只 import 本模块的 repo | 每个模块一条规则：`module/<m>/**` 禁止 `module/<其他>/repo`、`module/<其他>/model` |
 | 跨模块只调 service | 同上；允许 `module/<其他>/service` |
-| 中间件不碰数据库 | `internal/pkg/httpx/**` 禁止 `gorm.io/gorm`、`internal/pkg/db` |
+| 中间件不碰数据库 | `internal/pkg/httpx/**`、`internal/pkg/ratelimit/**` 禁止 `gorm.io/gorm`、`internal/pkg/db` |
+| model 只放字段 | `**/module/*/model/**` 禁止 `internal/module` |
+| 基础设施不依赖业务 | `internal/pkg/**` 禁止 `internal/module`、`internal/app` |
+| 不回到旧栈 | 新目录禁止 `go-chi/chi`、`pgx/v5/pgxpool` |
 | 纯函数包 | `**/module/*/render/**`、`**/module/*/protocol/**` 禁止 `internal/module`、`gorm.io`、`internal/pkg/db`、`internal/pkg/tx` |
 | 模块之间不循环 | Go 编译器本身会拒绝包循环；另外在 service 之间约定依赖方向（第 4.2 节） |
 
-每个模块的规则由一个小脚本从 `internal/module/` 目录生成到 `.golangci.yml`，CI 检查生成结果没有漂移。不再写自研的源码扫描测试。
+每个模块的规则由 `panel/tools/depguardgen` 从 `internal/module/` 目录生成到 `panel/.golangci.yml`（不手改），CI 用 `go run ./tools/depguardgen -check` 检查生成结果没有漂移。不再写自研的源码扫描测试。
 
 ### 3.3 事务
 
@@ -133,17 +139,17 @@ nodeapi/                         buf 生成的 Go 代码，单独的 Go module�
 | identity | users、user_passwords、user_groups、registration_sessions、verification_codes、invite_codes、referrals、user_generation_jobs | 注册、口令、用户资料、批量建用户。user_groups 从 adminops 收回来；referrals 在注册时写入，佣金模块调 identity 读 |
 | auth | admins（管理员名单）；Redis 里的会话、refresh、快捷登录 | 登录、刷新、登出、重认证、管理员授予与取消、最后一个管理员保护。原 sessions、refresh_tokens、quick_login_tokens 三张表不再建 |
 | settings | settings（键值加类型化访问器）、feature_switches | 原 system_settings 和 tenants.settings 合到这里。各模块通过 settings service 的类型化方法读写自己那组键（如 `settings.Commission()`） |
-| catalog | products、plans（含库存三列）、plan_versions、prices、entitlements、quota_definitions、plan_node_pools、traffic_packs | 库存由 catalog service 暴露 `ReserveStock / ReleaseStock / CaptureStock`，order 模块调用，不再直接写 plans |
+| catalog | plans（含库存三列）、plan_visible_groups、plan_versions、prices、entitlements、quota_definitions、plan_node_pools、traffic_packs | 库存由 catalog service 暴露 `ReserveStock / ReleaseStock / CaptureStock`，order 模块调用，不再直接写 plans |
 | order | orders、order_items、order_reservations、order_reservation_events、order_stock_reservations、order_purchase_limit_reservations、plan_purchase_counters | 下单、报价、结算编排、预留与释放 |
 | payment | payment_providers、payment_intents、payments、payment_events、late_payment_cases | 渠道适配、回调、查单、挂账。adminops 那套渠道写法删掉 |
 | ledger | ledger_accounts、ledger_transactions、ledger_entries、balance_holds | 记账、余额、冻结、调账 |
-| promo | coupons、coupon_redemptions | 优惠券 |
+| promo | coupons、coupon_plans、coupon_redemptions | 优惠券 |
 | commission | commission_entries、withdrawals、commission_transfers | 佣金计提（订单结算时经 order 的 PaidHook）、解冻、提现审核与打款、转余额。commission_transfers 记每笔佣金转余额，与账本的 commission_to_balance 交易一一对应；可用佣金按本模块的表算（已解冻 − 未驳回的提现 − 已转余额） |
 | giftcard | gift_card_templates、gift_card_prizes、gift_card_template_plans、gift_card_codes、gift_card_redemptions、gift_card_batches | 发放调 subscription、ledger 的 service |
 | subscription | subscriptions、subscription_events、subscription_credentials、quota_balances、traffic_pack_grants、traffic_pack_transfers、traffic_reset_logs、subscription_usage_daily、subscription_fetch_log | 状态口径（生效、可救回、已停用）只在这里定义；节点上报的扣量调它的批量扣量方法 |
-| node | servers、nodes、node_pools、node_pool_user_groups、server_identities、bootstrap_tokens、node_configs、node_config_applications、node_outbounds、node_routes、route_groups、route_group_members、node_traffic_hourly、node_user_traffic_hourly、node_user_traffic_daily、node_metrics、node_alive_ips、node_traffic_reports、node_tasks；面板 CA | 后台编排、gRPC 会话、接入、流量入账（入账后调 subscription 扣量） |
+| node | servers、nodes、node_pools、node_pool_user_groups、node_ca（面板 CA）、server_identities、bootstrap_tokens、node_outbounds、node_routes、route_groups、route_group_members、node_traffic_reports、node_traffic_hourly、node_user_traffic_hourly、node_metrics、node_alive_ips | 后台编排、gRPC 会话、接入、流量入账（入账后调 subscription 扣量）。设计里的 node_configs、node_config_applications、node_user_traffic_daily、node_tasks 没有建：配置文档每次由节点与路由表现算，应用结果按会话回执记在 nodes 上，小时汇总在入账时同事务写 |
 | certs | dns_credentials、acme_accounts、certificates、certificate_versions、certificate_orders、certificate_issuances | ACME 签发入站 TLS 证书 |
-| notify | announcements、notification_templates、notification_preferences、notification_deliveries、telegram_bindings、telegram_bind_codes | 站内信、邮件、Telegram |
+| notify | announcements、notification_templates、notification_preferences、notification_deliveries、notification_inbox、notification_events、notify_scan_cursors、telegram_bindings、telegram_bind_codes | 站内信、邮件、Telegram |
 | support | tickets、ticket_messages、ticket_macros | 工单 |
 | content | content_pages、content_page_feedback | 内容页 |
 | appearance | site_themes、site_slots | 主题和槽位 |
@@ -194,10 +200,10 @@ identity, auth ─► settings, audit
 
 ### 5.2 新基线迁移
 
-- 目录 `panel/db/migrations/`，文件形如 `00001_base.sql`（扩展、通用触发器函数）、`00002_identity.sql`、`00003_auth.sql`……每个模块一个文件，每个都有 `-- +goose Down`。
-- 不建的表：RESERVED-TABLES.md 登记的 21 张；从无写入的死表 node_templates、provisioning_runs、runtime_instances、usage_sources、usage_batches、devices；refunds、refund_requests、invoices、payment_webhook_receipts、trial_grants、quota_adjustments；order_transitions、subscription_transitions、node_transitions；audit_chain_heads、audit_chain_gate；node_request_nonces、server_request_nonces、node_enrollments、server_enrollments、node_effective_config_releases、node_identities（并入 server_identities）；sessions、refresh_tokens、quick_login_tokens；tenants。
+- 目录 `panel/db/migrations/`，文件形如 `00001_base.sql`（扩展、通用触发器函数）、`00002_settings.sql`、`00005_identity.sql`……按模块建成的顺序编号，每个模块一个文件（之后的增量另起文件），每个都有 `-- +goose Down`；数量与最大号以目录为准。
+- 不建的表：旧栈 RESERVED-TABLES.md 登记的 21 张（该文件已随旧迁移删除）；从无写入的死表 node_templates、provisioning_runs、runtime_instances、usage_sources、usage_batches、devices；refunds、refund_requests、invoices、payment_webhook_receipts、trial_grants、quota_adjustments；order_transitions、subscription_transitions、node_transitions；audit_chain_heads、audit_chain_gate；node_request_nonces、server_request_nonces、node_enrollments、server_enrollments、node_effective_config_releases、node_identities（并入 server_identities）；sessions、refresh_tokens、quick_login_tokens；tenants。
 - 不再建的库内函数：缓存纪元（00155/00156，没有消费方）、节点下发纪元、`notify_change`、审计链、幂等的 legacy 与 actor 策略、`activity_daily_compute`、`node_traffic_payload_entries`、各类 `guard_*_transition`。
-- CI 对新基线跑 up → down → up。会锁大表的 DDL 在之后的增量迁移里写明预检、`lock_timeout` 和回滚办法（新基线是空库，不涉及）。
+- CI 对新基线跑 up → down → up（`db/migrations` 的 `TestRoundTrip` 全部回退再重做；`panel-newstack.yml` 另用 `pandora migrate` 回退一步再上）。会锁大表的 DDL 在之后的增量迁移里写明预检、`lock_timeout` 和回滚办法（新基线是空库，不涉及）。
 
 ### 5.3 库里保留什么（A 类）
 
@@ -362,9 +368,9 @@ identity, auth ─► settings, audit
 | 幂等 | 中间件只读 `Idempotency-Key` 头，调 idempotency service 认领；需要在业务事务内完成的接口（下单、续费、换套餐、充值、流量包、工单等），service 在同一个事务里完成认领，并绑定到订单。重放规则、409 两种码、租约 5 分钟都不变；新增 `retention:idempotency` 清理任务 |
 | 限流 | go-redis/redis_rate（GCRA）。维度保持现状；普通层 Redis 故障时放行，Strict 层回 503；拒绝回 429 并带 `Retry-After`。门户全局层有 IP 与 /24 两个维度，比现在多 1 次 Redis 往返，接受这个代价，换来不再维护自写的 Lua |
 | 开关 | feature_switches 进程内缓存 3 秒，变更后经 Redis 失效；只读模式（AdminWritesGate）语义不变 |
-| SSE | 端点和帧格式不变（`retry`、25 秒 ping）；频道去掉租户段：`rt:public`、`rt:user:{id}`、`rt:ticket:{id}`、`rt:admin`；会话吊销时关流 |
+| SSE | 门户与后台各一条 `GET /v1/events`（`retry`、25 秒心跳）。P6 实现：事件只说「什么变了」（topic 加定位信息，如 `orders.changed`、`ticket.updated`），前端收到后自己拉；由各属主模块在事务提交后经 Redis 发布。频道去掉租户段：`rt:public`、`rt:user:{id}`、`rt:admin`（工单事件按工单主人发到用户频道，不单设 `rt:ticket:{id}`）；会话吊销经 `rt:sess:{sid}` 关流，连接寿命不超过访问令牌 |
 | 订阅链接 | `GET /{prefix}/{token}` 管线不变（格式判断、诱饵 404、响应头）；渲染逻辑从 handler 挪进 subscription service |
-| 访问日志 | 只记路由模板（`c.FullPath()`）、状态码、耗时、req_id；继续记录每个请求的 DB 和 Redis 往返次数（GORM 回调、go-redis hook） |
+| 访问日志 | 只记路由模板（`c.FullPath()`）、状态码、耗时、req_id。设计里的「每个请求的 DB 和 Redis 往返次数」（GORM 回调、go-redis hook）还没有做，放进 P8 第一轮（[perf-test-plan.md](perf-test-plan.md)） |
 
 handler 里现在的业务逻辑（第 4 节附表：公告状态机、访问日志的 IP 哈希与合并分页、节点安装命令拼装、处理器里生成 Reality 密钥、slugify 两份重复实现、`[]map[string]any` 透传、CSV 里用浮点表示钱等）随模块迁移挪进 service。
 
@@ -443,12 +449,14 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 | `plugin:dispatch` | `@every 1m`，emit 后也入队 | 4m | low |
 | `support:escalate_sla` | `*/5 * * * *` | 30s | default |
 | `notify:publish_announcements` | `@every 1m` | 20s | default |
-| `report:activity_daily`、`node:traffic_rollup` | `*/10 * * * *`（错开 2 分钟） | 2m | low |
+| `report:activity_daily` | `*/10 * * * *` | 2m | low |
+| `devices:strict` | `@every 1m`（strict 设备数限制：周期重判在线设备超限的订阅，从名单里摘掉或放回） | 30s | low |
 | `identity:generate_users` | 建 job 的事务提交后入队，TaskID = `gen_users:<job_id>` | 10m | default |
 | `certs:patrol` / `certs:issue` | `@every 1m` / patrol 入队，TaskID = `cert:<order_id>` | 30s / 15m | default |
-| `retention:<表>` | 每天一次（03:40 起各表错开几分钟），分批删到删完或到批数上限 | 2–5m | low |
+| `retention:<模块>` | 每天一次（03:40 起各模块错开几分钟），分批删到删完或到批数上限 | 5–10m | low |
 | `reconcile:user_generation` | `@every 1m`，把 queued 或租约过期的 job 重新入队 | 30s | low |
 
+- 节点流量的小时汇总在入账时同事务写入（`node_traffic_hourly`、`node_user_traffic_hourly`），不设设计里的 `node:traffic_rollup` 任务。
 - 保留期清理覆盖的表：原有的 node_metrics、node_traffic_reports、各级流量汇总、node_alive_ips、subscription_fetch_log、activity_daily；新补的 idempotency_keys、registration_sessions、verification_codes、plugin_hook_deliveries、user_generation_jobs（结果清除后 N 天删行）、notification_deliveries。各表的保留期按第 18 节 Q5。
 - 「支付开通后发通知」改为在开通的事务里直接写 delivery，不再靠 `ScanPaidOrders` 回看 2 小时（扫描器停机超过 2 小时会漏发）。
 - 留在 serve 里、不进 asynq 的：心跳合并、节点会话、SSE hub。删除的：nonce 清理、epoch LISTEN、节点存活巡检（会话在不在就是在线状态）。
@@ -476,13 +484,13 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 - viper：先读 `/etc/pandora/config.yaml`（root:pandora，0640），再用 `PANDORA_` 前缀的环境变量覆盖（`SetEnvKeyReplacer(".", "_")`）。
 - 秘密只能来自环境变量（systemd `EnvironmentFile=`，0600），或者 `*_FILE` 指向的 0600 文件；放在配置文件里会启动失败。
 - 启动时 Unmarshal 进结构体，再统一 `Validate()`。现有的校验规则（长度、两个 JWT 密钥不同、生产环境禁用某些项、pprof 只能回环）原样搬过去。
-- 段落：`env`、`http.public`、`http.admin`、`grpc.node`、`database`（另有 `migration_url`，只在 migrate 时读）、`redis`、`worker`、`auth`、`ratelimit`、`secrets`、`public_base_url`、`geoip`、`node`、`subscription.singbox`、`acme`、`log`、`backup`。
+- 段落（以 `panel/internal/pkg/config/config.go` 为准）：`env`、`public_base_url`、`http.public`、`http.admin`、`grpc.node`、`database`（另有 `migration_url`，只在 migrate 时读）、`redis`、`worker`、`auth`、`ratelimit`、`secrets`、`log`、`subscription.singbox`、`pdnd`、`backup`、`geoip`。设计里的 `node`、`acme` 段没有做：ACME 设置存在 settings 里由后台改。
 - `env` 缺省为 `production`（失败即关闭）：注册、找回回显 `dev_code`，以及开发格式的日志，只在显式设成 `development` 或 `test` 时打开；CI 与本地开发显式设 `PANDORA_ENV=development`。
-- 只有部署脚本用的变量（POSTGRES_*、后台路径前缀、告警 Telegram、备份钩子）留在 `.env` 给脚本读，不进应用配置。
+- 只有部署脚本用的变量（POSTGRES_*、后台路径前缀、告警 Telegram、备份钩子、迁移连接串）放在 `/etc/pandora/deploy.env`（root 0600）给脚本读，不进应用配置；服务的秘密放 `/etc/pandora/secrets.env`。
 
 ### 14.2 日志
 
-- zap，生产环境输出 JSON，开发环境输出 console。文件经 lumberjack 写到 `/var/log/pandora/{serve,worker}.log`，自己滚动；删掉 logrotate 配置，避免和 copytruncate 冲突。
+- zap，生产环境输出 JSON，开发环境输出 console。文件经 lumberjack 写到 `/var/log/pandora/{serve,worker}.log`（systemd 单元用 `PANDORA_LOG_FILE` 指定），自己滚动；logrotate 不再匹配这两个文件，避免和 copytruncate 冲突（`deploy/logrotate-pandora` 只转巡检的 `health.log`）。
 - 脱敏：包装一个 `zapcore.Core`，按现有的键名表脱敏（password、secret、token、cookie、authorization、credential、private_key、api_key、session_id、verification_code、otp、seed、card、cvv、signature、phc 等）。
 - 固定字段：req_id、route（模板）、uid（有就记）、module。`StripURL`（把 URL 截成 scheme://host 再写日志）保留。
 
@@ -495,23 +503,25 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 | 订阅审计盐、通知收件人盐 | `pandora/hmac/sub-audit/v1`、`pandora/hmac/notify/v1` |
 | 礼品卡卡密的 HMAC（码表只存它与掩码） | `pandora/hmac/giftcard/v1` |
 | 幂等请求指纹（落库的 method、target、请求体摘要） | `pandora/hmac/idempotency/v1` |
+| 节点设备标识的 HMAC | `pandora/hmac/node-device/v1` |
+| 面板 CA 私钥封存 | `pandora/node-ca/key/v1`（node 模块） |
 | 插件钩子签名 | 每个钩子自己的密钥（不变） |
 
 被封存的数据：渠道凭据、DNS 凭据、ACME 账户私钥、证书私钥、面板 CA 私钥、批量建用户的结果、提现收款信息。原来的 `Envelope` 没有 DEK，名不副实，改名为 `Sealer`。
 
 ---
 
-## 15. 部署改动（P7 做）
+## 15. 部署改动（P7 已做）
 
 | 项 | 改法 |
 |---|---|
 | 二进制 | 6 个 `aegis-*` 合成 `/opt/pandora/bin/pandora` |
 | systemd | `pandora-serve.service`、`pandora-worker.service`，各自设 MemoryMax 和 GOMEMLIMIT；以专用用户 `pandora` 运行（服务本身不需要 root；入站证书存库，不写文件）。备份和面板自身的 TLS 续期仍由 root 的 timer 执行 |
-| Redis | 装 redis-server；`maxmemory-policy noeviction`、`appendonly yes`、`appendfsync everysec`；maxmemory 起步 256 MB；FLUSHALL 和 FLUSHDB 继续禁用；VALKEY_* 改名为 REDIS_* |
-| 迁移 | 安装和升级时执行 `pandora migrate up` |
+| Redis | 装发行版的 redis-server（要求 6.0 以上）；`maxmemory-policy noeviction`、`appendonly yes`、`appendfsync everysec`、不做 RDB 快照；maxmemory 起步 256 MB；FLUSHALL 和 FLUSHDB 继续禁用；VALKEY_* 改名为 REDIS_* |
+| 迁移 | 安装和升级时以属主角色 `pandora_owner` 执行 `pandora migrate up`，之后由 `configure-app-role.sql` 收窄运行角色 `pandora_app` 的权限；迁移失败不起服务 |
 | nginx | public 和 admin 部分基本不变；新增 refresh 接口的独立限流 zone；删除节点相关的 HTTP location；admin cookie 的 `proxy_cookie_path` |
-| 端口 | 9003 换成 gRPC 端口（缺省 8444，对外开放） |
-| 健康检查 | 服务名、端口改掉；检查 worker 存活（asynq 心跳） |
+| 端口 | 9003 换成 gRPC 端口（缺省 9443，对外开放；安装器在 ufw / firewalld 上放行 80、443、9443） |
+| 健康检查 | 服务名、端口改掉；检查 worker 存活（asynq 心跳）；`pandora-health.timer` 跑 `deploy/healthcheck.sh` |
 | 备份 | pg_dump 流程不变；Redis 不进备份（会话丢了只需重新登录，任务丢了靠对账补） |
 
 ---
@@ -543,7 +553,7 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 | P4 订阅 | 订阅链接渲染与拉取、链接列表与重置、用量、到期与配额滚动任务（订阅的表与开通等核心已在 P3）。可下发的线路经 subscription 定义的 `NodeSource` 接口取，由 node 模块在 P5 实现并装配；P4 用替身测 | 订阅格式 UA 分支全覆盖；渲染结果与旧实现逐字节对比一致（用固定种子数据做 golden）；拉取（正常、过期、吊销、宽限、限流、伪装 404）、重置、到期、配额滚动的 PG 集成测试通过 |
 | P5 节点 | node 模块后台编排；proto 与 nodeapi；Enroll 与 Session；pdnd 客户端改造；nodesim 与 acceptancepanel；实现并装配 subscription 的 `NodeSource`（可下发资格、内核字段翻译、线路缓存与纪元） | expiry_e2e 在新二进制上全绿（要真实节点夹具，随 P5 做）；冒烟：200 用户、5 节点、60 秒零 5xx；删人后节点秒级断线（node-e2e 真机）；证书续期、吊销断流、supersede 都有集成测试 |
 | P6 其余 | certs、notify、support、content、appearance、plugin、report；看板改为调属主 service | 后台各页面 flow-walk 通过；admin_e2e 全绿 |
-| P7 切换与删旧 | 安装脚本（Redis、单二进制、systemd、nginx）；删除旧代码、旧迁移、旧守卫（行数豁免表、RESERVED-TABLES、routebudget）；更新 README 和 `.claude/rules` | 全新测试机上安装成功；全部 e2e、Playwright、节点验收在新二进制上通过；仓库里不再有 `aegis-*` 命令和 `internal/domain` |
+| P7 切换与删旧（进行中） | 安装脚本（Redis、单二进制、systemd、nginx）；删除旧代码、旧迁移、旧守卫（行数豁免表、RESERVED-TABLES、routebudget）；更新 README 和 `.claude/rules` | 全新测试机上安装成功；全部 e2e、Playwright、节点验收在新二进制上通过；仓库里不再有 `aegis-*` 命令和 `internal/domain` |
 | P8 换栈后 | 用旧成绩单作基线复测，再做性能与占用优化 | 第一轮测试范围见 [perf-test-plan.md](perf-test-plan.md) |
 
 每一步的提交都要求：本机 lint 和单测通过（本机 Go 1.26.9），推送后 CI 全绿。涉及认证、钱、迁移、节点通道的改动，合入前另派一个没参与实现的 opus 子 Agent 做只读审查。
