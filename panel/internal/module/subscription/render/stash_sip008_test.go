@@ -124,7 +124,12 @@ func TestInfoLinesURIAndSIP008(t *testing.T) {
 		if !strings.HasPrefix(parts[i], "ss://") {
 			t.Errorf("line %d not ss://", i)
 		}
-		if u, err := url.Parse(parts[i]); err != nil || u.Fragment != url.PathEscape(want) {
+		// url.Parse 已把 # 后的百分号编码解开：Fragment 是原文，RawFragment / EscapedFragment 才是编码后的
+		u, err := url.Parse(parts[i])
+		if err != nil {
+			t.Fatalf("line %d: %v", i, err)
+		}
+		if u.Fragment != want {
 			t.Errorf("line %d fragment want %q got %q", i, want, u.Fragment)
 		}
 	}

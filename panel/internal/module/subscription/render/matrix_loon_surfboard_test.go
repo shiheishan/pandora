@@ -86,7 +86,8 @@ func loonSurfboardMatrix() map[string]loonSurfboardRow {
 			surfboard: skip("Surfboard 没有 shadowtls"),
 		},
 		"trojan-tls-tcp": {
-			loon:      has("= Trojan,", "transport=tcp", "sni=sni.example.com", "skip-cert-verify=true", "tls-profile=firefox", "udp=true"),
+			// Loon 的 tls-profile 只写认得的 chrome / safari-ios18（loonTLSProfile），firefox 指纹不写，免得编一个 Loon 不认的值
+			loon:      has("= Trojan,", "transport=tcp", "sni=sni.example.com", "skip-cert-verify=true", "udp=true").without("tls-profile"),
 			surfboard: has("= trojan,", "password="+fixtureUUID, "sni=sni.example.com", "skip-cert-verify=true", "udp-relay=true"),
 		},
 		"trojan-tls-ws": {
