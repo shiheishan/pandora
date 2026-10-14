@@ -88,7 +88,7 @@ func validASCIIHostname(host string) bool {
 			return false
 		}
 		for _, r := range label {
-			if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-') {
+			if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
 				return false
 			}
 		}
@@ -111,7 +111,7 @@ func NormalizeBasePath(raw string) (string, error) {
 			continue
 		}
 		if part == "." || part == ".." {
-			return "", errors.New("远端路径不能包含 . 或 ..")
+			return "", errors.New("远端路径不能包含 . 或 .. 段")
 		}
 		for _, r := range part {
 			if unicode.IsControl(r) || r == 0 {

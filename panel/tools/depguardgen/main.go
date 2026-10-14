@@ -127,7 +127,7 @@ linters:
           deny:
             - pkg: gorm.io
               desc: handler、task 与 grpc 不碰数据库，经 service 访问
-            - pkg: {{.Module}}/internal/pkg/db
+            - pkg: {{.Module}}/internal/pkg/db$
               desc: handler 与 task 不碰数据库，经 service 访问
             - pkg: {{.Module}}/internal/pkg/tx
               desc: 事务边界在 service
@@ -137,7 +137,7 @@ linters:
           deny:
             - pkg: gorm.io
               desc: service 不直接用 GORM，读写经本模块 repo，事务经 internal/pkg/tx
-            - pkg: {{.Module}}/internal/pkg/db
+            - pkg: {{.Module}}/internal/pkg/db$
               desc: service 不直接取连接，事务经 internal/pkg/tx
         model-plain:
           files:
@@ -154,7 +154,7 @@ linters:
               desc: 纯函数包（订阅渲染、节点协议），不依赖任何模块
             - pkg: gorm.io
               desc: 纯函数包不碰数据库
-            - pkg: {{.Module}}/internal/pkg/db
+            - pkg: {{.Module}}/internal/pkg/db$
               desc: 纯函数包不碰数据库
             - pkg: {{.Module}}/internal/pkg/tx
               desc: 纯函数包不碰数据库
@@ -173,7 +173,7 @@ linters:
           deny:
             - pkg: gorm.io
               desc: 中间件不碰数据库
-            - pkg: {{.Module}}/internal/pkg/db
+            - pkg: {{.Module}}/internal/pkg/db$
               desc: 中间件不碰数据库
         new-stack-no-legacy:
           files:
