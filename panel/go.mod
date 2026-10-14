@@ -28,7 +28,7 @@ require (
 	github.com/shopspring/decimal v1.5.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
-	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.3.83
+	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.3.192
 	go.uber.org/zap v1.28.0
 	golang.org/x/crypto v0.58.0
 	golang.org/x/net v0.61.0
