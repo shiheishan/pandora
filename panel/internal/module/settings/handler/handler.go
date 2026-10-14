@@ -18,6 +18,8 @@ type Settings interface {
 	Switches(ctx context.Context) ([]service.Switch, error)
 	SetSwitch(ctx context.Context, code string, enabled bool, reason string) error
 	SwitchEnabled(ctx context.Context, code string) (bool, error)
+	SupportRules(ctx context.Context) (service.SupportRules, error)
+	SetSupportRules(ctx context.Context, v service.SupportRules) error
 }
 
 var _ Settings = (*service.Service)(nil)
@@ -42,4 +44,6 @@ func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	v1.POST("/settings/site", k.RequireAuth, k.RecentReauth, h.setSite)
 	v1.GET("/switches", k.RequireAuth, h.listSwitches)
 	v1.POST("/switches/:code", k.RequireAuth, k.RecentReauth, h.setSwitch)
+	v1.GET("/settings/support", k.RequireAuth, h.getSupportRules)
+	v1.POST("/settings/support", k.RequireAuth, k.RecentReauth, h.setSupportRules)
 }
