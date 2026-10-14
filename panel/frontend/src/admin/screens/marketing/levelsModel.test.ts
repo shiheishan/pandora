@@ -83,9 +83,11 @@ describe('buildLevelsConfig', () => {
     if (!r.ok) expect(r.errors.withdraw_methods).toBe('开着提现时至少要选一种提现方式')
   })
 
-  it('关闭提现且无方式合法', () => {
+  it('关闭提现也不能全取消方式（其他币种还要用）', () => {
     const r = buildLevelsConfig({ ...validLevels(), withdrawOn: false, methods: [] })
-    expect(r.ok).toBe(true)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.errors.withdraw_methods).toBe('关着提现时其他币种的佣金仍按这里的方式提现，至少要选一种')
+    expect(buildLevelsConfig({ ...validLevels(), withdrawOn: false, methods: ['alipay'] }).ok).toBe(true)
   })
 })
 

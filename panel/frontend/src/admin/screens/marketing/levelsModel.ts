@@ -60,8 +60,9 @@ export function buildLevelsConfig(f: LevelsForm): Built<Record<string, unknown>>
 
   // 按目录顺序输出，目录外的值直接去掉
   const methods = WITHDRAW_METHODS.filter((m) => f.methods.includes(m))
-  if (f.withdrawOn && methods.length === 0) {
-    errors.withdraw_methods = '开着提现时至少要选一种提现方式'
+  // 关着提现只关站点币种，其他币种仍按这些方式提现：开关两种状态都至少留一种
+  if (methods.length === 0) {
+    errors.withdraw_methods = f.withdrawOn ? '开着提现时至少要选一种提现方式' : '关着提现时其他币种的佣金仍按这里的方式提现，至少要选一种'
   }
   if (Object.keys(errors).length) return { ok: false, errors }
 

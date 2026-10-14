@@ -8,7 +8,18 @@ import { LoadError } from '../common/Blocks'
 import { copyText } from '../common/clients'
 import { endsIntent, useIntentKey } from '../common/intent'
 import { useInvite, useRequestWithdrawal, useTransferCommission } from './api'
-import { commissionRecords, headline, inviteLink, inviteUsage, parseWithdrawAmount, payoutError, withdrawBlock, withdrawClosedHere, withdrawClosedHint } from './model'
+import {
+  commissionRecords,
+  headline,
+  inviteLink,
+  inviteUsage,
+  otherAvailableCurrencies,
+  parseWithdrawAmount,
+  payoutError,
+  withdrawBlock,
+  withdrawClosedHere,
+  withdrawClosedHint,
+} from './model'
 import css from './Referral.module.css'
 
 export default function Referral() {
@@ -35,7 +46,13 @@ export default function Referral() {
         />
       )}
       <div className={css.grid}>
-        <div className={css.useArea}>{summary ? <UseCard summary={summary} /> : !commission.isError && <Skeleton height={260} radius="var(--radius-lg)" />}</div>
+        <div className={css.useArea}>
+          {commission.data ? (
+            <UseCard summary={commission.data.summary} others={otherAvailableCurrencies(commission.data)} />
+          ) : (
+            !commission.isError && <Skeleton height={260} radius="var(--radius-lg)" />
+          )}
+        </div>
         <div className={css.recordsArea}>
           <RecordsCard />
         </div>
@@ -91,7 +108,7 @@ function InviteBanner({ summary }: { summary: Commission['summary'] | undefined 
 // 使用佣金：两个动作用同一个「可用佣金」（账本余额 − 在途提现），失败文案照后端
 // 幂等键：断网与 5xx 保留键（重试要拿回同一结果）；成功或 4xx 业务拒绝即动作结束、丢弃键（common/intent）
 // ---------------------------------------------------------------------------
-function UseCard({ summary }: { summary: Commission['summary'] }) {
+function UseCard({ summary, others }: { summary: Commission['summary']; others: readonly string[] }) {
   const toast = useToast()
   const transfer = useTransferCommission()
   const withdraw = useRequestWithdrawal()
@@ -106,7 +123,7 @@ function UseCard({ summary }: { summary: Commission['summary'] }) {
 
   const money = (v: number) => formatMoney(v, summary.currency)
   const block = withdrawBlock(summary)
-  const closedHint = withdrawClosedHint(summary)
+  const closedHint = withdrawClosedHint(summary, others)
   // 后台改了开放方式后重新拉取，原先选的方式可能已经关了：退回第一种开放的方式
   const activeMethod = summary.withdraw_methods.includes(method) ? method : (summary.withdraw_methods[0] ?? '')
 

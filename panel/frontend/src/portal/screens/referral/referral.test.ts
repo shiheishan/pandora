@@ -1,7 +1,19 @@
 import { describe, expect, it } from 'vitest'
 import { commissionSchema, type Commission } from '../../queries'
 import { inviteSchema } from './api'
-import { commissionRecords, headline, inviteLink, inviteUsage, parseWithdrawAmount, payoutError, ratePercentText, withdrawBlock, withdrawClosedHere, withdrawClosedHint } from './model'
+import {
+  commissionRecords,
+  headline,
+  inviteLink,
+  inviteUsage,
+  otherAvailableCurrencies,
+  parseWithdrawAmount,
+  payoutError,
+  ratePercentText,
+  withdrawBlock,
+  withdrawClosedHere,
+  withdrawClosedHint,
+} from './model'
 
 const SUMMARY = {
   currency: 'CNY',
@@ -107,6 +119,27 @@ describe('申请提现', () => {
     expect(withdrawClosedHere(usd)).toBe(false)
     expect(withdrawBlock(usd)).toBeNull()
     expect(withdrawClosedHint(usd)).toBe('提现已关闭只针对 CNY；USD 佣金转不进余额，仍可申请提现。')
+  })
+
+  it('站点币种与其他币种都有可提时，提示写明其他币种仍可提现与入口', () => {
+    const closed = { ...SUMMARY, withdraw_enabled: false }
+    const hint = withdrawClosedHint(closed, ['USD'])
+    expect(hint).toContain('你的 USD 佣金仍可申请提现')
+    expect(hint).toContain('先点「全部转入余额」')
+    // 本站币种已没有可用额时汇总会切到别的币种，这句不再需要
+    expect(withdrawClosedHint({ ...closed, available: 0 }, ['USD'])).not.toContain('USD')
+
+    const base = { amount: 100, base: 1000, rate_percent: 10, rate_bp: 1000, level: 1, share_percent: 100, frozen_until: null, created_at: '2026-09-01T00:00:00Z', order_no: 'N1', from: '' }
+    const c = commission({
+      summary: closed,
+      entries: [
+        { ...base, currency: 'USD', status: 'available' },
+        { ...base, currency: 'USD', status: 'available' },
+        { ...base, currency: 'CNY', status: 'available' },
+        { ...base, currency: 'USD', status: 'pending' },
+      ],
+    })
+    expect(otherAvailableCurrencies(c)).toEqual(['USD'])
   })
 
   it('payoutError 校验收款账号', () => {

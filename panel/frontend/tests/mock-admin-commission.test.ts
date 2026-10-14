@@ -67,6 +67,12 @@ describe('mock api · admin commission', () => {
       error: { code: 'validation_failed', fields: { withdraw_methods: '开着提现时至少要选一种提现方式' } },
     })
 
+    const closedEmpty = await post('/v1/commission/config', { withdraw_enabled: false, withdraw_methods: [] })
+    expect(closedEmpty.status).toBe(422)
+    expect(await closedEmpty.json()).toMatchObject({
+      error: { code: 'validation_failed', fields: { withdraw_methods: '关着提现时其他币种的佣金仍按这里的方式提现，至少要选一种' } },
+    })
+
     const unknown = await post('/v1/commission/config', { nope: 1 })
     expect(unknown.status).toBe(400)
   })

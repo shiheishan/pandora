@@ -59,14 +59,27 @@ export function withdrawClosedHere(summary: Commission['summary']): boolean {
 }
 
 /**
+ * 明细里还有已解冻佣金的其他币种（不是站点币种），按字母序。汇总只显示一个币种；
+ * 站点币种和别的币种都有可用额时汇总取站点币种，别的币种要等站点币种转完、汇总切过去才看得到提现表单。
+ */
+export function otherAvailableCurrencies(c: Commission): string[] {
+  const site = c.summary.site_currency
+  return [...new Set(c.entries.filter((e) => e.status === 'available' && e.currency !== site).map((e) => e.currency))].sort()
+}
+
+/**
  * 关提现时的提示，按币种分开写；提现开着时为 null。
- * 站点币种：以后解冻的自动转余额，关闭前已可提现的部分要自己点「全部转入余额」（后端只自动转关闭后解冻的条目）。
+ * 站点币种：以后解冻的自动转余额，关闭前已可提现的部分要自己点「全部转入余额」（后端只自动转关闭后解冻的条目）；
+ * 同时还有别的币种的佣金时，写明它们仍可提现、入口在哪（先把站点币种转走，汇总就换成那个币种的提现表单）。
  * 别的币种：转不进余额（钱包只显示站点币种），照常可以提现。
  */
-export function withdrawClosedHint(summary: Commission['summary']): string | null {
+export function withdrawClosedHint(summary: Commission['summary'], others: readonly string[] = []): string | null {
   if (summary.withdraw_enabled) return null
   if (withdrawClosedHere(summary)) {
-    return '提现已关闭，佣金解冻后会自动转入余额，可直接用余额购买与续费。关闭前已可提现的部分不会自动转，请点「全部转入余额」。'
+    const base = '提现已关闭，佣金解冻后会自动转入余额，可直接用余额购买与续费。关闭前已可提现的部分不会自动转，请点「全部转入余额」。'
+    if (others.length === 0 || summary.available <= 0) return base
+    const list = others.join('、')
+    return `${base}你的 ${list} 佣金仍可申请提现：先点「全部转入余额」转走本站币种的佣金，这里会换成 ${list} 的提现表单。`
   }
   return `提现已关闭只针对 ${summary.site_currency}；${summary.currency} 佣金转不进余额，仍可申请提现。`
 }

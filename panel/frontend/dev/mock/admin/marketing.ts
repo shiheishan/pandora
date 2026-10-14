@@ -837,7 +837,10 @@ export const marketing: MockModule = {
         if (nextLevels[0] + nextLevels[1] + nextLevels[2] > 100) fields.distribution_l1 = '三级比例之和不能超过 100'
         else if (nextDistEnabled && nextLevels[0] === 0 && nextLevels[1] === 0 && nextLevels[2] === 0) fields.distribution_l1 = '开启多级分销时至少要给一级设比例'
       }
-      if (!fields.withdraw_methods && nextWithdrawEnabled && nextMethods.length === 0) fields.withdraw_methods = '开着提现时至少要选一种提现方式'
+      // 与后端同口径：关着提现也至少留一种（其他币种还按这些方式提现）
+      if (!fields.withdraw_methods && nextMethods.length === 0) {
+        fields.withdraw_methods = nextWithdrawEnabled ? '开着提现时至少要选一种提现方式' : '关着提现时其他币种的佣金仍按这里的方式提现，至少要选一种'
+      }
 
       if (Object.keys(fields).length) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', fields)
       if (rate != null) commission.rate_percent = rate
