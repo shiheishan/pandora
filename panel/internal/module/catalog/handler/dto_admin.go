@@ -185,7 +185,6 @@ func optionalIntToService(o optionalInt) service.OptionalInt {
 
 type planRowResponse struct {
 	ID               string             `json:"id"`
-	ProductID        string             `json:"product_id"`
 	RowVersion       int64              `json:"row_version"`
 	Code             string             `json:"code"`
 	Name             string             `json:"name"`
@@ -247,7 +246,6 @@ type versionRowResponse struct {
 
 type catalogPlanDetailResponse struct {
 	ID                   string               `json:"id"`
-	ProductID            string               `json:"product_id"`
 	CurrentVersionID     *string              `json:"current_version_id"`
 	RowVersion           int64                `json:"row_version"`
 	Code                 string               `json:"code"`
@@ -664,7 +662,6 @@ func catalogPlanDetailFrom(d service.PlanDetail) catalogPlanDetailResponse {
 	p := d.Plan
 	return catalogPlanDetailResponse{
 		ID:                   uuidToString(p.ID),
-		ProductID:            uuidToString(p.ID),
 		CurrentVersionID:     uuidPtrToString(p.CurrentVersionID),
 		RowVersion:           p.RowVersion,
 		Code:                 p.Code,
@@ -693,7 +690,6 @@ func planRowFromSummary(s service.PlanSummary, activeSubs int64, nodeCount int64
 	p := s.Plan
 	return planRowResponse{
 		ID:               uuidToString(p.ID),
-		ProductID:        uuidToString(p.ID),
 		RowVersion:       p.RowVersion,
 		Code:             p.Code,
 		Name:             p.Name,

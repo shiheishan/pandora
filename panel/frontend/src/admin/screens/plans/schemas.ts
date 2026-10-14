@@ -54,7 +54,6 @@ export type PriceRow = z.output<typeof priceRowSchema>
 // ---------------------------------------------------------------------------
 export const planRowSchema = z.object({
   id: z.string(),
-  product_id: z.string(),
   row_version: int,
   code: z.string(),
   name: z.string(),
@@ -117,7 +116,6 @@ export type VersionRow = z.output<typeof versionRowSchema>
 
 export const planDetailSchema = z.object({
   id: z.string(),
-  product_id: z.string(),
   current_version_id: z.string().nullable(),
   row_version: int,
   code: z.string(),

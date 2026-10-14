@@ -81,7 +81,6 @@ interface Price {
 }
 export interface Plan {
   id: string
-  product_id: string
   row_version: number
   code: string
   name: string
@@ -179,7 +178,6 @@ export function seedPlan(id: string, code: string, name: string, description: st
   const current = versions.find((v) => v.status === 'published' && v.frozen_at && !versions.some((w) => w.status === 'published' && w.version > v.version))
   return {
     id,
-    product_id: randomUUID(),
     row_version: 5,
     code,
     name,
@@ -275,7 +273,6 @@ export function listRow(p: Plan) {
   const draft = draftOf(p)
   return {
     id: p.id,
-    product_id: p.product_id,
     row_version: p.row_version,
     code: p.code,
     name: p.name,

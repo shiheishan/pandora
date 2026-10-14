@@ -82,7 +82,6 @@ const version = (over: Partial<VersionRow> = {}): VersionRow => ({
 
 const plan = (over: Partial<PlanDetail> = {}): PlanDetail => ({
   id: 'plan1',
-  product_id: 'prod1',
   current_version_id: 'v3',
   row_version: 7,
   code: 'std',
@@ -123,7 +122,6 @@ describe('schema', () => {
   it('列表行与向导响应（R65 plan 为完整详情）、流量包行', () => {
     const row = {
       id: 'p',
-      product_id: 'x',
       row_version: 1,
       code: 'c',
       name: 'n',
