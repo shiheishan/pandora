@@ -41,6 +41,38 @@ func (s *Service) ListGroups(ctx context.Context) ([]Group, error) {
 	return out, nil
 }
 
+// AdminListGroups 是后台用户组列表：ListGroups 再补引用计数与把组列入仅限名单的节点池（经 OpsGroupUsage，一次调用）。
+func (s *Service) AdminListGroups(ctx context.Context) ([]Group, error) {
+	out, err := s.ListGroups(ctx)
+	if err != nil {
+		return nil, err
+	}
+	gu, err := s.needGroupUsage()
+	if err != nil {
+		return nil, err
+	}
+	usage, err := gu.GroupUsage(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		u, ok := usage[out[i].ID]
+		if !ok {
+			out[i].ExclusivePools = []PoolRef{}
+			continue
+		}
+		out[i].Plans = u.Plans
+		out[i].Prices = u.Prices
+		out[i].Coupons = u.Coupons
+		if u.ExclusivePools == nil {
+			out[i].ExclusivePools = []PoolRef{}
+		} else {
+			out[i].ExclusivePools = u.ExclusivePools
+		}
+	}
+	return out, nil
+}
+
 // CreateGroup 新建用户组；code 为空时由名称生成；code 重复回 409。
 func (s *Service) CreateGroup(ctx context.Context, code, name, description string) (uuid.UUID, error) {
 	code, name, descPtr, err := validateGroup(code, name, description)
