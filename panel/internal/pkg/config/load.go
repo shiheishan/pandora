@@ -99,7 +99,6 @@ func defaults(v *viper.Viper) {
 	v.SetDefault("database.url", "")
 	v.SetDefault("database.migration_url", "")
 	v.SetDefault("database.max_conns", 30)
-	v.SetDefault("database.min_conns", 2)
 
 	v.SetDefault("redis.url", "")
 	v.SetDefault("redis.pool_size", 32)
