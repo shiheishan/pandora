@@ -17,7 +17,8 @@ import (
 
 // MailLinkSettings 是邮件链接登录要读的设置；*settingssvc.Service 直接满足。
 type MailLinkSettings interface {
-	Signup(ctx context.Context) (settingssvc.Signup, error) // 用 MailLinkLogin 字段
+	// SignupWithoutSecret 只用 MailLinkLogin 字段，不必解封人机验证 secret（真校验令牌由 MailLinkCaptcha 自己读）
+	SignupWithoutSecret(ctx context.Context) (settingssvc.Signup, error)
 	MailConfigured(ctx context.Context) (bool, error)
 }
 
@@ -60,7 +61,7 @@ func (s *Service) StartMailLogin(ctx context.Context, email, captchaToken string
 		return ErrMailLinkUnavailable
 	}
 
-	signup, err := s.mailSettings.Signup(ctx)
+	signup, err := s.mailSettings.SignupWithoutSecret(ctx)
 	if err != nil {
 		return err
 	}

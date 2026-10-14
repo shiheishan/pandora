@@ -20,7 +20,7 @@ type fakeMailSettings struct {
 	configErr  error
 }
 
-func (f *fakeMailSettings) Signup(ctx context.Context) (settingssvc.Signup, error) {
+func (f *fakeMailSettings) SignupWithoutSecret(ctx context.Context) (settingssvc.Signup, error) {
 	if f.signupErr != nil {
 		return settingssvc.Signup{}, f.signupErr
 	}

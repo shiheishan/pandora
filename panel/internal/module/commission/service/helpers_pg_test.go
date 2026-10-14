@@ -42,6 +42,23 @@ type fakeRefs struct {
 	mu       sync.Mutex
 	referrer map[uuid.UUID]uuid.UUID // 被推荐人 → 推荐人
 	emails   map[uuid.UUID]string
+	deleted  map[uuid.UUID]bool // markDeleted 标记的已注销账号
+}
+
+func (f *fakeRefs) AccountDeleted(_ context.Context, userID uuid.UUID) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.deleted[userID], nil
+}
+
+// markDeleted 把账号标成已注销。
+func (f *fakeRefs) markDeleted(id uuid.UUID) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.deleted == nil {
+		f.deleted = map[uuid.UUID]bool{}
+	}
+	f.deleted[id] = true
 }
 
 func (f *fakeRefs) ReferrerOf(_ context.Context, userID uuid.UUID) (*uuid.UUID, error) {

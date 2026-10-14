@@ -10,7 +10,7 @@ paths:
 
 - 锁序（防死锁 40P01）：
   - 结算主链：订单行（`OrderByID` 锁行）→ 订阅（`subs.Lock`，续费/换套餐/流量包）→ 预留确认（`captureReservation` 锁套餐库存/限购/券）→ 记账（`postSettlement`，经 `lockAccounts` 稳定顺序锁科目）→ 订单状态（`markPaid`）→ `PaidHook` → 履约（`fulfil`）。
-  - 建单主链：新购锁套餐行（`catalog.Offer`）；续费/流量包锁订阅；换套餐建单先锁订阅（`subs.Lock`）；再调 `promo.Reserve` / `ledger.HoldForOrder`，最后插订单。取消/超时释放先锁订单行。门户各建单事务与后台开单（`requireUser`）的第一步是 `rejectDeleted`（identity `IsDeleted`，给用户行加共享锁），已注销 409「账号已注销」。
+  - 建单主链：新购锁套餐行（`catalog.Offer`）；续费/流量包锁订阅；换套餐建单先锁订阅（`subs.Lock`）；再调 `promo.Reserve` / `ledger.HoldForOrder`，最后插订单。取消/超时释放先锁订单行。门户各建单事务与后台开单（`requireUser`）的第一步是 `rejectDeleted`（identity `IsDeleted`，给用户行加共享锁），已注销 409「账号已注销」。后台调账 `AdjustBalance` 对已注销账号只拒加钱，扣减照常（仍要原因、重认证、审计），用于线下退款后冲平留在账号上的余额（注销前的余额、注销时释放的冻结、注销后转入的迟到付款）。
   - 注销账号：identity 在注销事务里锁用户行后调 `CancelUserPending`（`service/cancel.go`），按 id 升序锁该用户全部待付单逐张 `releaseOrder`（原因 `ReasonAccountDeleted`，作废在途支付意图），之后到的回调按 `CaseReleasedOrder` 挂账。
   - 余额全额支付走 `CaptureFromBalance`：用户余额、冻结、收入三科目按 ID 升序一次锁完，冻结直出 captured，不要分步锁。
   - 科目怎么加锁：`ledger` 的 `lockAccounts` 先按 `(Type, UserID, Ref)` 排好去重（`sortedRefs`，只决定建科目 `EnsureAccounts` 的顺序），真正加行锁的是 `repo.LockAccounts` 一条 `ORDER BY id FOR UPDATE`，即按科目 id 升序逐行拿；一笔分录的科目在一条语句里锁完，但语句中途可能拿着 id 小的科目去等 id 大的。
@@ -32,8 +32,8 @@ paths:
 - 账本与佣金：
   - 账本科目按 id 升序加锁（见上面「科目怎么加锁」）。`Post` 拒收专用 kind（`KindBalanceHold`, `KindBalanceRelease`, `KindOrderPaid`, `KindBalanceAdjusted` 须调专用方法）。
   - 可用佣金唯一口径：`available = Available - InFlight - Paid - TransferTotal`。提现申请 `RequestWithdrawal` 与转余额都先 `LockUser`。提现申请与审批只改状态，打款 `MarkWithdrawalPaid` 才记账。
-  - 多级分销（后台开关 `commission.distribution_enabled`，缺省关）：先按直接邀请人的比例（含单独设置）算这一单的佣金总额，再按 l1/l2/l3 份额逐级截断到分（`LevelAmount`，库约束 `commission_entries_formula` 同式）；关着时只有第一级、份额 100。上溯 `beneficiaries` 防环、最多 3 级，份额 0 的级、被单独设置排除的人（单独比例 0）都跳过但继续往上，跳过的人仍占他那一级。读设置时三级合计超过 100 按内部错误（`decodeCommissionDistribution`）。每级一条条目（`UNIQUE (order_id, level)`），各自冻结、同源复核（受益人对购买人）、作废。
-  - 单独佣金设置 `commission_user_overrides`（属 commission）：NULL 跟全局；比例 0 = 这个人不拿佣金，不论他在第几级（用户 10-14 定，`excludedByOverride`）。整单佣金总额按直接邀请人的单独设置算（`orderTerms` → `termsFor`）；直接邀请人被排除时他的单独设置整条不作数、按全局算，再跳过他只给上级分。只影响以后的订单。后台按邮箱找人走 identity 的精确查找 `FindByEmail`（`Referrals` 端口），不用包含匹配。写操作审计 `commission.override_set` / `commission.override_removed`。
+  - 多级分销（后台开关 `commission.distribution_enabled`，缺省关）：先按直接邀请人的比例（含单独设置）算这一单的佣金总额，再按 l1/l2/l3 份额逐级截断到分（`LevelAmount`，库约束 `commission_entries_formula` 同式）；关着时只有第一级、份额 100。上溯 `beneficiaries` 防环、最多 3 级，份额 0 的级、不拿佣金的人（`notEarning`：账号已注销，或被单独设置排除即单独比例 0）都跳过但继续往上，跳过的人仍占他那一级。已注销读 identity 的无锁读 `AccountDeleted`（`Referrals` 端口），不用加共享锁的 `IsDeleted`：计提在结算事务里，那时已持有库存、券与平台收入的行锁，再等邀请人的用户行会与注销（锁用户行后释放他的待付单、碰同一批库存与券）互等；竞态只会让注销提交那一刻的一单仍记给他。读设置时三级合计超过 100 按内部错误（`decodeCommissionDistribution`）。每级一条条目（`UNIQUE (order_id, level)`），各自冻结、同源复核（受益人对购买人）、作废。
+  - 单独佣金设置 `commission_user_overrides`（属 commission）：NULL 跟全局；比例 0 = 这个人不拿佣金，不论他在第几级（用户 10-14 定，`excludedByOverride`）。整单佣金总额按直接邀请人的单独设置算（`orderTerms` → `termsFor`）；直接邀请人不拿佣金（已注销或被排除）时他的单独设置整条不作数、按全局算，再跳过他只给上级分。只影响以后的订单。后台按邮箱找人走 identity 的精确查找 `FindByEmail`（`Referrals` 端口），不用包含匹配。写操作审计 `commission.override_set` / `commission.override_removed`。
   - 提现开关 `commission.withdraw_enabled`（缺省开）与方式白名单 `commission.withdraw_methods`（缺省 alipay，目录见 `settingssvc.WithdrawMethodCatalog`）。关提现只关站点币种（用户 10-14 定）：
     - `RequestWithdrawal` 关着时只在站点币种以外的币种里选（`pickCurrency` 的 skip），没有就回 `ErrWithdrawDisabled`；白名单照旧管着，所以开关两种状态都至少要留一种方式（settings 校验回 422 `withdraw_methods`）。读设置时三级合计只在开着多级时查。汇总带 `SiteCurrency`，门户据此决定显不显示提现。
     - 站点币种：`settleOne` 解冻时只挂 `commission_entries.auto_transfer_due`（不拿用户锁、不碰余额）；`SettleDue` 解冻完再由 `autoTransferDue` 逐条在单独的事务里转（`autoTransferOne`，锁序见上），转失败标记留着、下一轮重试；提现已重新打开时只清标记不转（用户自己提现或转余额）。转的金额取这条佣金与当前可用佣金里小的那个，可用为 0（用户自己转走了）只清标记；`commission_transfers.entry_id` 唯一兜底，审计 `commission.auto_transferred_to_balance`。

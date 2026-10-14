@@ -69,6 +69,20 @@ func TestSetSignupPartialUpdate(t *testing.T) {
 	if !got.IPLimitEnabled || got.InviteMaxCodes != 5 {
 		t.Fatalf("unchanged: ip_en=%v invite_max=%d", got.IPLimitEnabled, got.InviteMaxCodes)
 	}
+	// 保存成功后 SignupGeneration 加一（门户入口页 CSP 缓存按它失效）；没有改动、校验失败都不加
+	if g := s.SignupGeneration(); g != 1 {
+		t.Fatalf("generation after save = %d, want 1", g)
+	}
+	if err := s.SetSignup(ctx, SignupUpdate{GmailAliasBlock: &gmail}); err != nil {
+		t.Fatalf("set same: %v", err)
+	}
+	bad := 0
+	if err := s.SetSignup(ctx, SignupUpdate{IPLimitCount: &bad}); err == nil {
+		t.Fatal("ip_limit_count 0 should be rejected")
+	}
+	if g := s.SignupGeneration(); g != 1 {
+		t.Fatalf("generation after no-op / invalid save = %d, want 1", g)
+	}
 }
 
 func TestSetSignupTrialHoursOutOfRange(t *testing.T) {

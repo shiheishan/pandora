@@ -131,6 +131,10 @@ describe('orders', () => {
     expect(portal.get('渠道')).toBe('—')
     expect(portal.has('支付截止')).toBe(true)
     expect(new Map(orderFacts(detail({ created_by_email: null }))).get('来源')).toBe('人工开单 · 已删除的管理员')
+    // 注销账号时系统取消的单显示中文；管理员填的原因原样显示
+    const gone = new Map(orderFacts(detail({ status: 'cancelled', cancelled_at: '2026-09-23T11:00:00Z', cancel_reason: 'account_deleted' })))
+    expect(gone.get('取消原因')).toBe('账号已注销')
+    expect(new Map(orderFacts(detail({ cancel_reason: '用户来信要求取消' }))).get('取消原因')).toBe('用户来信要求取消')
   })
 
   it('merges intents with their payments, offline receipts and refunds into one list', () => {

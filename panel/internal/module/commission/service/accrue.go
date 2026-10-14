@@ -23,7 +23,8 @@ const (
 	reviewUnderfundedPrefix = "待结佣金科目余额不足"
 )
 
-// OnOrderPaid 实现 ordersvc.PaidHook：在订单结算事务里按多级分销与单独设置给各级邀请人计提冻结中的佣金。
+// OnOrderPaid 实现 ordersvc.PaidHook：在订单结算事务里按多级分销与单独设置给各级邀请人计提冻结中的佣金；
+// 已注销的邀请人等同比例 0（跳过、仍占他那一级）。
 // 没有推荐人、费率为 0、「首单」口径下不是首单、佣金截断后为 0、这一单已经计提过，都是正常情况，返回 nil。
 //
 // 锁序：order 调用时已持有平台收入科目；「首单」口径再加被推荐人咨询锁；记账依次锁各级受益人的待结佣金科目
@@ -77,7 +78,7 @@ func (s *Service) OnOrderPaid(ctx context.Context, o ordersvc.PaidOrder) error {
 		if err != nil {
 			return err
 		}
-		list, err := beneficiaries(ctx, o.UserID, *direct, dist, refs.ReferrerOf, s.excludedByOverride)
+		list, err := beneficiaries(ctx, o.UserID, *direct, dist, refs.ReferrerOf, s.notEarning)
 		if err != nil {
 			return err
 		}

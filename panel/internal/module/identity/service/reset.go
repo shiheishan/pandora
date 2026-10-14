@@ -28,11 +28,12 @@ func (s *Service) StartPasswordReset(ctx context.Context, email, captchaToken st
 	if err != nil {
 		return PasswordResetStart{}, err
 	}
-	// 先按邮箱限频（本地），再调第三方人机验证
-	if err := s.limit(ctx, ruleResetStartEmail, email); err != nil {
+	// 先过人机验证、再按邮箱限频：额度按受害者邮箱计，没过人机验证的请求不能占用，
+	// 否则攻击者换 IP 发垃圾令牌就能一直锁住别人的找回（IP 维度在路由层 pwreset_start，本就在这之前）
+	if err := s.captcha.verify(ctx, cfg, captchaToken, captchaActionPasswordReset); err != nil {
 		return PasswordResetStart{}, err
 	}
-	if err := s.captcha.verify(ctx, cfg, captchaToken, captchaActionPasswordReset); err != nil {
+	if err := s.limit(ctx, ruleResetStartEmail, email); err != nil {
 		return PasswordResetStart{}, err
 	}
 	ok, err := s.PasswordResetAvailable(ctx)

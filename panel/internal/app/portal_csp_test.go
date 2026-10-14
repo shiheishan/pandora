@@ -23,6 +23,8 @@ func (f fakeSignup) SignupCaptchaProvider(context.Context) (string, error) {
 	return f.s.CaptchaProvider, f.err
 }
 
+func (fakeSignup) SignupGeneration() uint64 { return 0 }
+
 func portalCSP(t *testing.T, r captchaProviderReader) string {
 	t.Helper()
 	h := webapp.Handler(fstest.MapFS{"index.html": {Data: []byte(`<!doctype html>`)}},
@@ -77,10 +79,11 @@ func TestPortalCaptchaCSP(t *testing.T) {
 	}
 }
 
-// 入口页 CSP 读设置有 30 秒缓存：缓存期内不再读库，过期后重读；读失败不缓存。
+// 入口页 CSP 读设置的缓存：成功缓存 30 秒、读失败缓存 5 秒；本进程保存了注册设置（gen 变了）立刻重读。
 func TestPortalCSPProviderCache(t *testing.T) {
 	now := time.Date(2026, 10, 14, 0, 0, 0, 0, time.UTC)
 	reads, provider, fail := 0, settingssvc.CaptchaTurnstile, false
+	var gen uint64
 	c := &providerCache{
 		read: func(context.Context) (string, error) {
 			reads++
@@ -89,8 +92,10 @@ func TestPortalCSPProviderCache(t *testing.T) {
 			}
 			return provider, nil
 		},
-		now: func() time.Time { return now },
-		ttl: portalCSPCacheTTL,
+		gen:    func() uint64 { return gen },
+		now:    func() time.Time { return now },
+		ttl:    portalCSPCacheTTL,
+		errTTL: portalCSPErrorTTL,
 	}
 	f := portalCaptchaCSPWith(c)
 	ctx := context.Background()
@@ -106,13 +111,27 @@ func TestPortalCSPProviderCache(t *testing.T) {
 	if x := f(ctx); len(x.Script) != 0 || reads != 2 {
 		t.Fatalf("after ttl should re-read: %+v reads=%d", x, reads)
 	}
+
+	// 保存了注册设置：缓存期内也立刻重读
+	provider = settingssvc.CaptchaRecaptchaV3
+	gen++
+	if x := f(ctx); len(x.Script) == 0 || reads != 3 {
+		t.Fatalf("after save should re-read at once: %+v reads=%d", x, reads)
+	}
+
+	// 读失败缓存 5 秒，期间不放行任何来源也不再读库；过期后重读
 	fail = true
-	now = now.Add(31 * time.Second)
-	if x := f(ctx); len(x.Script) != 0 || reads != 3 {
+	gen++
+	if x := f(ctx); len(x.Script) != 0 || reads != 4 {
 		t.Fatalf("error: %+v reads=%d", x, reads)
 	}
-	_ = f(ctx)
-	if reads != 4 {
-		t.Fatalf("errors must not be cached: reads=%d", reads)
+	now = now.Add(4 * time.Second)
+	if x := f(ctx); len(x.Script) != 0 || reads != 4 {
+		t.Fatalf("errors should be cached briefly: %+v reads=%d", x, reads)
+	}
+	fail = false
+	now = now.Add(2 * time.Second)
+	if x := f(ctx); len(x.Script) == 0 || reads != 5 {
+		t.Fatalf("after error ttl should re-read: %+v reads=%d", x, reads)
 	}
 }

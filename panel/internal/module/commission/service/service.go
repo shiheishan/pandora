@@ -70,6 +70,8 @@ type Referrals interface {
 	Emails(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error)
 	// FindByEmail 按邮箱精确找人（先规范化再按唯一键等值查）；没有这个人回 errs.NotFound。后台按邮箱设单独佣金用。
 	FindByEmail(ctx context.Context, email string) (identitysvc.User, error)
+	// AccountDeleted 报告用户是否已注销（无锁读，不存在回 false）。计提时已注销的邀请人等同比例 0：跳过、仍占他那一级。
+	AccountDeleted(ctx context.Context, userID uuid.UUID) (bool, error)
 }
 
 // SourceMatcher 判断两个用户是否来自同一来源地址，由 audit 实现（UseSourceMatcher 注入）；命中时佣金转人工复核、不自动解冻。

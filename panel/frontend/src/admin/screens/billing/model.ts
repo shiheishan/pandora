@@ -81,6 +81,15 @@ export function canCancel(o: Pick<OrderRow, 'status'>): boolean {
 }
 
 /** 抽屉 facts（设计稿：用户 / 内容 / 金额 / 币种 / 渠道 / 来源），按契约补上应付、余额抵扣、过期时间与取消原因 */
+// 系统写的取消原因是代码（后台取消写的是管理员填的原文，原样显示）
+const CANCEL_REASON_LABELS: Readonly<Record<string, string>> = {
+  account_deleted: '账号已注销',
+}
+
+export function cancelReasonLabel(reason: string): string {
+  return CANCEL_REASON_LABELS[reason] ?? reason
+}
+
 export function orderFacts(o: OrderDetail): Array<[string, string]> {
   const money = (n: number) => formatMoney(n, o.currency)
   const facts: Array<[string, string]> = [
@@ -99,7 +108,7 @@ export function orderFacts(o: OrderDetail): Array<[string, string]> {
   if (o.paid_at) facts.push(['支付时间', formatDateTime(o.paid_at)])
   if (o.cancelled_at) facts.push(['取消时间', formatDateTime(o.cancelled_at)])
   if (o.expired_at) facts.push(['过期时间', formatDateTime(o.expired_at)])
-  if (o.cancel_reason) facts.push(['取消原因', o.cancel_reason])
+  if (o.cancel_reason) facts.push(['取消原因', cancelReasonLabel(o.cancel_reason)])
   return facts
 }
 

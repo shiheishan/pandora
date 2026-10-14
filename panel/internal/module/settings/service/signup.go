@@ -12,6 +12,7 @@ import (
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
+	"github.com/aegispanel/aegis/internal/pkg/tx"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
@@ -547,6 +548,7 @@ func (s *Service) SetSignup(ctx context.Context, u SignupUpdate) error {
 		if err := s.writeChanges(ctx, changes); err != nil {
 			return err
 		}
+		tx.AfterCommit(ctx, "settings:signup_saved", func(context.Context) { s.signupGen.Add(1) })
 		return s.writeAudit(ctx, auditSignupChanged, auditResourceSettings, map[string]any{
 			"group":          "signup",
 			"before":         b,

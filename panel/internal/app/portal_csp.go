@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"time"
 
@@ -9,48 +10,85 @@ import (
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
 	"github.com/aegispanel/aegis/internal/pkg/webapp"
 	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
 )
 
 // captchaProviderReader 是门户入口页 CSP 要的设置读取面；*settingssvc.Service 直接满足（只读服务商，不读 secret、不解封）。
+// SignupGeneration 是本进程保存注册设置的次数，保存成功提交后加一：缓存按它失效，后台改完新开的门户页立刻生效。
 type captchaProviderReader interface {
 	SignupCaptchaProvider(ctx context.Context) (string, error)
+	SignupGeneration() uint64
 }
 
-// portalCSPCacheTTL 是入口页 CSP 读设置的进程内缓存时长：入口页是门户最热的地址，不能每次打开都多一次查库；
-// 后台改了人机验证设置，最多 30 秒后新打开的门户就生效。
-const portalCSPCacheTTL = 30 * time.Second
+// 入口页 CSP 读设置的进程内缓存：入口页是门户最热的地址，不能每次打开都多一次查库。
+//   - 成功缓存 30 秒；本进程保存了注册设置就立刻失效（serve 是单进程，后台保存也走它），30 秒只是兜底；
+//   - 读失败也缓存 5 秒（库慢或挂了时不让每个入口页请求都去等一次超时）；
+//   - 同一时刻只有一趟读库（singleflight），读库不持锁、不跟随第一个调用者的取消，上限 2 秒。
+const (
+	portalCSPCacheTTL    = 30 * time.Second
+	portalCSPErrorTTL    = 5 * time.Second
+	portalCSPReadTimeout = 2 * time.Second
+)
 
-// providerCache 缓存人机验证服务商；读失败不缓存（下次再试）。
+// providerCache 缓存人机验证服务商（含读失败），按 gen 失效。
 type providerCache struct {
-	read func(ctx context.Context) (string, error)
-	now  func() time.Time
-	ttl  time.Duration
+	read   func(ctx context.Context) (string, error)
+	gen    func() uint64
+	now    func() time.Time
+	ttl    time.Duration
+	errTTL time.Duration
+	group  singleflight.Group
 
 	mu       sync.Mutex
 	value    string
+	err      error
+	cacheGen uint64
 	expireAt time.Time
 }
 
+type providerResult struct {
+	value string
+	err   error
+}
+
 func (c *providerCache) get(ctx context.Context) (string, error) {
+	g := c.gen()
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	now := c.now()
-	if now.Before(c.expireAt) {
-		return c.value, nil
+	if c.cacheGen == g && c.now().Before(c.expireAt) {
+		v, err := c.value, c.err
+		c.mu.Unlock()
+		return v, err
 	}
-	v, err := c.read(ctx)
-	if err != nil {
-		return "", err
-	}
-	c.value, c.expireAt = v, now.Add(c.ttl)
-	return v, nil
+	c.mu.Unlock()
+
+	// 键带上 gen：保存之后来的调用不会挂到保存前开始的那趟读库上拿旧值
+	r, _, _ := c.group.Do(strconv.FormatUint(g, 10), func() (any, error) {
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), portalCSPReadTimeout)
+		defer cancel()
+		v, err := c.read(rctx)
+		ttl := c.ttl
+		if err != nil {
+			ttl = c.errTTL
+		}
+		c.mu.Lock()
+		if c.gen() == g {
+			c.value, c.err, c.cacheGen, c.expireAt = v, err, g, c.now().Add(ttl)
+		}
+		c.mu.Unlock()
+		return providerResult{value: v, err: err}, nil
+	})
+	res := r.(providerResult)
+	return res.value, res.err
 }
 
 // portalCaptchaCSP 按注册设置给门户入口页追加人机验证的脚本与 iframe 来源：
 // 没开人机验证时什么都不加（CSP 与原来逐字一致）；开了只放行所选那一家的固定来源。
 // 读设置失败时不放行任何第三方来源（人机验证加载不了，注册会停在人机验证这一步，而不是放宽 CSP）。
 func portalCaptchaCSP(settings captchaProviderReader) func(ctx context.Context) webapp.ExtraSources {
-	return portalCaptchaCSPWith(&providerCache{read: settings.SignupCaptchaProvider, now: time.Now, ttl: portalCSPCacheTTL})
+	return portalCaptchaCSPWith(&providerCache{
+		read: settings.SignupCaptchaProvider, gen: settings.SignupGeneration, now: time.Now,
+		ttl: portalCSPCacheTTL, errTTL: portalCSPErrorTTL,
+	})
 }
 
 func portalCaptchaCSPWith(c *providerCache) func(ctx context.Context) webapp.ExtraSources {

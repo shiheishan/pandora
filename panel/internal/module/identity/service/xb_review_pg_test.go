@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -101,28 +102,32 @@ func TestPGReservedEmailRejected(t *testing.T) {
 	}
 }
 
-// 注册、找回第 1 步的人机验证接线：各自带自己的 action（v3 令牌挪到别的入口不能用），空令牌不放行。
-func TestPGCaptchaWiring(t *testing.T) {
-	e, ctx := newEnv(t)
-	actx := adminCtx(t, e, ctx)
-	setRegistration(t, actx, e.settings, settingssvc.RegistrationOpen, false)
-	enableMail(t, actx, e.settings)
+// useFakeCaptchaV3 开 reCAPTCHA v3 并换上假服务商：令牌就是 action（用例里约定），回同站点的 hostname。
+func useFakeCaptchaV3(t *testing.T, e *env, actx context.Context) {
+	t.Helper()
 	provider, siteKey, secret, threshold := settingssvc.CaptchaRecaptchaV3, "test-site-key", "test-secret", 0.5
 	if err := e.settings.SetSignup(actx, settingssvc.SignupUpdate{
 		CaptchaProvider: &provider, CaptchaSiteKey: &siteKey, CaptchaSecret: &secret, RecaptchaV3Threshold: &threshold,
 	}); err != nil {
 		t.Fatal(err)
 	}
-
-	// 假服务商：令牌就是 action（用例里约定），回同站点的 hostname
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"success": true, "score": 0.9, "hostname": testCaptchaHost, "action": r.PostForm.Get("response"),
 		})
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 	e.svc.captcha = &captchaVerifier{client: srv.Client(), recaptchaURL: srv.URL, turnstileURL: srv.URL, expectedHost: testCaptchaHost}
+}
+
+// 注册、找回第 1 步的人机验证接线：各自带自己的 action（v3 令牌挪到别的入口不能用），空令牌不放行。
+func TestPGCaptchaWiring(t *testing.T) {
+	e, ctx := newEnv(t)
+	actx := adminCtx(t, e, ctx)
+	setRegistration(t, actx, e.settings, settingssvc.RegistrationOpen, false)
+	enableMail(t, actx, e.settings)
+	useFakeCaptchaV3(t, e, actx)
 
 	if _, err := e.svc.StartRegistration(ctx, uniqEmail(t, "capreg"), "", ""); codeOf(err) != errs.ValidationFailed || fieldsOf(err)["captcha"] == "" {
 		t.Fatalf("注册空令牌应 422 captcha: %v", err)
@@ -168,5 +173,30 @@ func TestPGIsDeleted(t *testing.T) {
 	}
 	if deleted, err := e.svc.IsDeleted(ctx, u.ID); err != nil || !deleted {
 		t.Fatalf("已注销：%v %v", deleted, err)
+	}
+}
+
+// 找回第 1 步先过人机验证、再按邮箱限频：人机验证失败 3 次不占这个邮箱的额度，带合法令牌的第 4 次仍能发码；
+// 合法请求照常计数，用满 3 次后再来回 429。
+func TestPGPasswordResetCaptchaFailuresDontConsumeLimit(t *testing.T) {
+	e, ctx := newEnv(t)
+	actx := adminCtx(t, e, ctx)
+	enableMail(t, actx, e.settings)
+	useFakeCaptchaV3(t, e, actx)
+	email := uniqEmail(t, "capquota")
+	e.mkUser(t, ctx, email, "Passw0rdLong1")
+
+	for i := 0; i < 3; i++ {
+		if _, err := e.svc.StartPasswordReset(ctx, email, "garbage-token"); fieldsOf(err)["captcha"] == "" {
+			t.Fatalf("第 %d 次垃圾令牌应 422 captcha: %v", i+1, err)
+		}
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := e.svc.StartPasswordReset(ctx, email, captchaActionPasswordReset); err != nil {
+			t.Fatalf("人机验证失败后第 %d 次合法请求应能发码: %v", i+1, err)
+		}
+	}
+	if _, err := e.svc.StartPasswordReset(ctx, email, captchaActionPasswordReset); codeOf(err) != errs.RateLimited {
+		t.Fatalf("合法请求用满额度后应 429: %v", err)
 	}
 }

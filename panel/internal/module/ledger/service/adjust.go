@@ -35,7 +35,7 @@ const (
 	adjustReasonMax = 500
 )
 
-// errAccountDeleted 是给已注销账号调账（与 identity 同码同文案）。
+// errAccountDeleted 是给已注销账号加钱（与 identity 同码同文案）；扣减不拒。
 var errAccountDeleted = errs.Newf(errs.Conflict, "账号已注销")
 
 // normalizeAdjustment 校验调账金额与原因（与币种无关）；返回去掉首尾空白的原因。
@@ -93,13 +93,17 @@ func (s *Service) AdjustBalance(ctx context.Context, a Adjustment) (AdjustResult
 	}
 	var result AdjustResult
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
-		// 先于记账：identity 读时给用户行加共享锁，锁序与注销（用户行 → 订单 → 余额冻结）一致，注销之后不会再调出余额
-		deleted, err := s.accounts.IsDeleted(ctx, a.UserID)
-		if err != nil {
-			return err
-		}
-		if deleted {
-			return errAccountDeleted
+		// 已注销账号只拒加钱：扣减照常放行（仍要原因、重认证、审计），用于线下退款后把剩下的余额冲平——
+		// 注销前的余额、注销时释放的冻结、注销后转入的迟到付款都会留在这个账号上。
+		// 先于记账：identity 读时给用户行加共享锁，锁序与注销（用户行 → 订单 → 余额冻结）一致。
+		if a.Amount.IsPositive() {
+			deleted, err := s.accounts.IsDeleted(ctx, a.UserID)
+			if err != nil {
+				return err
+			}
+			if deleted {
+				return errAccountDeleted
+			}
 		}
 		var adjErr error
 		result, adjErr = s.adjustBalance(ctx, a, cur, reason)

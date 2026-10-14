@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
@@ -74,6 +75,9 @@ type Service struct {
 
 	// rt 实时推送（realtime.go 的 UseRealtime）；nil 时不推
 	rt *realtime.Publisher
+
+	// signupGen 是本进程保存注册设置的次数（提交后加一），门户入口页 CSP 的缓存按它失效，见 signup_provider.go。
+	signupGen atomic.Uint64
 }
 
 // New 构造 settings service。sealer 用于封存 SMTP 口令；rdb 用于开关缓存失效的 pub/sub；
