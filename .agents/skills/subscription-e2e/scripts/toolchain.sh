@@ -1,4 +1,4 @@
-# 被 run.sh、export-schemas.sh source：按仓库 go.mod 固定本机 Go 工具链。
+# 被 run.sh source：按仓库 go.mod 固定本机 Go 工具链。
 # 本机缺省 Go 比 go.mod 新时（如 1.27.1），pdnd 与 tools 链接会失败，所以不用 GOTOOLCHAIN=local，
 # 而是取 panel 与 pdnd 的 go.mod 里较高的版本，用本机模块缓存里的同版本工具链，不联网。
 # 不设 GOSUMDB=off：它与 GOPROXY=off 一起会让缓存里的工具链校验报错。
