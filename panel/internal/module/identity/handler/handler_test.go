@@ -160,6 +160,7 @@ func TestRoutes(t *testing.T) {
 		"GET /v1/me", "GET /v1/me/invite",
 		"POST /v1/auth/password-reset/complete", "POST /v1/auth/password-reset/start",
 		"POST /v1/auth/register/complete", "POST /v1/auth/register/start",
+		"POST /v1/invite/visit", "POST /v1/me/invite/codes",
 		"POST /v1/me/password",
 	}
 	if strings.Join(pub, "\n") != strings.Join(wantPub, "\n") {
@@ -174,8 +175,10 @@ func TestRoutes(t *testing.T) {
 		"GET /v1/users/bulk/generate/jobs/:id", "GET /v1/users/bulk/generate/jobs/:id/result",
 		"POST /v1/ip-clusters/:key/disable-accounts", "POST /v1/ip-clusters/:key/review",
 		"POST /v1/me/password", "POST /v1/user-groups", "POST /v1/user-groups/:id",
-		"POST /v1/users/:id/group", "POST /v1/users/:id/reset-password", "POST /v1/users/:id/status",
-		"POST /v1/users/bulk/generate", "POST /v1/users/bulk/preview",
+		"POST /v1/users/:id/delete", "POST /v1/users/:id/email",
+		"POST /v1/users/:id/group", "POST /v1/users/:id/note", "POST /v1/users/:id/referrer",
+		"POST /v1/users/:id/reset-password", "POST /v1/users/:id/status",
+		"POST /v1/users/bulk/ban", "POST /v1/users/bulk/generate", "POST /v1/users/bulk/preview",
 	}
 	if strings.Join(adm, "\n") != strings.Join(wantAdm, "\n") {
 		t.Fatalf("后台路由:\n%s", strings.Join(adm, "\n"))

@@ -54,6 +54,8 @@ type userDetailResponse struct {
 	RecentOrders        []admOrderRowResponse     `json:"recent_orders"`
 	Telegram            *admTelegramResponse      `json:"telegram"`
 	UnattachedPackBytes int64                     `json:"unattached_pack_bytes"`
+	AdminNote           *string                   `json:"admin_note"` // 后台备注，只在后台详情出现
+	DeletedAt           *time.Time                `json:"deleted_at"` // 注销时间；没注销为 null
 }
 
 // admUserStatsResponse 是详情里的统计（实收按币种、订单数、邀请数）。
@@ -199,6 +201,11 @@ func admUserDetailFrom(d service.UserDetail) (userDetailResponse, error) {
 			Username: d.Telegram.Username,
 			BoundAt:  d.Telegram.BoundAt,
 		}
+	}
+	out.AdminNote = d.AdminNote
+	if d.DeletedAt != nil {
+		t := d.DeletedAt.UTC()
+		out.DeletedAt = &t
 	}
 	return out, cc.err
 }

@@ -121,10 +121,16 @@ func (h *Handler) myInvite(c *gin.Context) {
 		httpx.Fail(c, errs.New(errs.Unauthorized))
 		return
 	}
-	inv, invitees, err := h.svc.MyInvite(c.Request.Context(), p.UserID)
+	ctx := c.Request.Context()
+	inv, invitees, err := h.svc.MyInvite(ctx, p.UserID)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	httpx.OK(c, myInviteFrom(inv, invitees))
+	codes, err := h.svc.MyInviteCodes(ctx, p.UserID)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	httpx.OK(c, myInviteFrom(inv, invitees, codes))
 }

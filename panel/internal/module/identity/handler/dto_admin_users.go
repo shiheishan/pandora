@@ -39,6 +39,7 @@ type admCurrentSubResponse struct {
 
 type admQuotaResponse struct {
 	Metric    string `json:"metric"`
+	Period    string `json:"period"`
 	Limit     *int64 `json:"limit"`
 	Consumed  int64  `json:"consumed"`
 	Remaining *int64 `json:"remaining"`
@@ -142,6 +143,7 @@ func admCurrentSubFrom(s *service.AdminSub) *admCurrentSubResponse {
 func admQuotaFrom(q service.AdminQuota) admQuotaResponse {
 	return admQuotaResponse{
 		Metric:    q.Metric,
+		Period:    q.Period,
 		Limit:     q.Limit,
 		Consumed:  q.Consumed,
 		Remaining: q.Remaining,
