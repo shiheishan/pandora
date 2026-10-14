@@ -13,6 +13,8 @@ const MIN_WITHDRAW = 10_000
 interface EntryFixture {
   amount: number
   base: number
+  level: number
+  share_percent: number
   status: 'pending' | 'available' | 'reversed'
   frozen_until: string | null
   created_at: string
@@ -23,6 +25,7 @@ interface EntryFixture {
 interface WithdrawalFixture {
   id: string
   amount: number
+  method: string
   status: 'requested' | 'reviewing' | 'approved' | 'rejected' | 'processing' | 'paid' | 'failed' | 'returned'
   reject_reason: string
   requested_at: string
@@ -34,6 +37,8 @@ interface CommissionState {
   code: string | null
   codeCreatedAt: string
   maxUses: number | null
+  withdrawEnabled: boolean
+  withdrawMethods: string[]
   invitees: Array<{ email: string; bound_at: string; risk_flag: 'none' | 'suspicious' | 'confirmed_fraud' }>
   entries: EntryFixture[]
   withdrawals: WithdrawalFixture[]
@@ -56,10 +61,24 @@ const ago = (days: number) => new Date(Date.now() - days * DAY_MS).toISOString()
 
 function build(): CommissionState {
   const s = scenario()
-  if (s === 'empty') return { code: null, codeCreatedAt: '', maxUses: null, invitees: [], entries: [], withdrawals: [], transfers: [] }
-  const entry = (daysAgo: number, amount: number, status: EntryFixture['status'], from: string, order: number, frozenInDays = -1): EntryFixture => ({
+  if (s === 'empty') {
+    return {
+      code: null,
+      codeCreatedAt: '',
+      maxUses: null,
+      withdrawEnabled: true,
+      withdrawMethods: ['alipay'],
+      invitees: [],
+      entries: [],
+      withdrawals: [],
+      transfers: [],
+    }
+  }
+  const entry = (daysAgo: number, amount: number, status: EntryFixture['status'], from: string, order: number, frozenInDays = -1, level = 1, share_percent = 100): EntryFixture => ({
     amount,
     base: (amount * 100) / RATE_PERCENT,
+    level,
+    share_percent,
     status,
     frozen_until: ago(-frozenInDays),
     created_at: ago(daysAgo),
@@ -67,16 +86,18 @@ function build(): CommissionState {
     from,
   })
   const withdrawals: WithdrawalFixture[] = [
-    { id: randomUUID(), amount: 12_000, status: 'rejected', reject_reason: '收款账号与实名不一致，请核对后重新申请', requested_at: ago(20), completed_at: ago(19) },
-    { id: randomUUID(), amount: 10_000, status: 'paid', reject_reason: '', requested_at: ago(45), completed_at: ago(43) },
+    { id: randomUUID(), amount: 12_000, method: 'alipay', status: 'rejected', reject_reason: '收款账号与实名不一致，请核对后重新申请', requested_at: ago(20), completed_at: ago(19) },
+    { id: randomUUID(), amount: 10_000, method: 'usdt_trc20', status: 'paid', reject_reason: '', requested_at: ago(45), completed_at: ago(43) },
   ]
   // multi：一笔审核中的提现，申请表应当锁住，再申请回 409
-  if (s === 'multi') withdrawals.unshift({ id: randomUUID(), amount: 3_000, status: 'reviewing', reject_reason: '', requested_at: ago(1), completed_at: null })
+  if (s === 'multi') withdrawals.unshift({ id: randomUUID(), amount: 3_000, method: 'alipay', status: 'reviewing', reject_reason: '', requested_at: ago(1), completed_at: null })
   return {
     code: 'ZW8KQ4TM',
     codeCreatedAt: ago(90),
     // multi：邀请码有使用上限且已用满
     maxUses: s === 'multi' ? 6 : null,
+    withdrawEnabled: s !== 'legacy',
+    withdrawMethods: ['alipay', 'usdt_trc20', 'usdt_erc20'],
     invitees: [
       { email: 'me***@gmail.com', bound_at: ago(3), risk_flag: 'none' },
       { email: 'ha***@icloud.com', bound_at: ago(4), risk_flag: 'none' },
@@ -88,7 +109,7 @@ function build(): CommissionState {
     entries: [
       entry(2, 1_180, 'pending', 'me***@gmail.com', 4101, 5),
       entry(6, 2_780, 'available', 'to***@qq.com', 4087),
-      entry(29, 980, 'available', 'k.***@outlook.com', 3962),
+      entry(29, 980, 'available', 'k.***@outlook.com', 3962, -1, 2, 30),
       entry(40, 1_980, 'reversed', 'ya***@163.com', 3890),
       entry(50, 19_800, 'available', 'to***@qq.com', 3811),
       entry(70, 5_000, 'available', 'li***@proton.me', 3702),
@@ -125,7 +146,10 @@ function summary(c: CommissionState) {
     invitees: c.invitees.length,
     orders: live.length,
     rate_percent: RATE_PERCENT,
+    direct_rate_bp: RATE_PERCENT * 100,
     min_withdraw: MIN_WITHDRAW,
+    withdraw_enabled: c.withdrawEnabled,
+    withdraw_methods: c.withdrawMethods,
     // R81 / R114：计佣范围（真后端已上线，legacy 场景也照回）；multi 场景取「首单」，横幅写「好友首单付费」
     scope: scenario() === 'multi' ? 'first_order' : 'every_order',
     // R69：Go 的 CommissionSummary 无 omitempty，各场景恒在
@@ -137,6 +161,13 @@ function summary(c: CommissionState) {
 // 8 位，字母表 A–Z2–9 去掉 0/O/1/I/L（identity/invite.go）
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
 const newCode = () => Array.from({ length: 8 }, () => CODE_ALPHABET[randomInt(CODE_ALPHABET.length)]).join('')
+
+function isValidUSDTAddress(method: string, address: string): boolean {
+  const a = address.trim()
+  if (method === 'usdt_trc20') return /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(a)
+  if (method === 'usdt_erc20' || method === 'usdt_bep20') return /^0x[0-9a-fA-F]{40}$/.test(a)
+  return true
+}
 
 export const referral: MockModule = {
   routes: {
@@ -158,7 +189,7 @@ export const referral: MockModule = {
       const c = commissionState(ctx.user.userId)
       ctx.send(200, {
         summary: summary(c),
-        entries: c.entries.slice(0, 100).map((e) => ({ ...e, rate_percent: RATE_PERCENT, currency: 'CNY' })),
+        entries: c.entries.slice(0, 100).map((e) => ({ ...e, rate_percent: RATE_PERCENT, rate_bp: RATE_PERCENT * 100, currency: 'CNY' })),
         withdrawals: c.withdrawals.slice(0, 50).map((w) => ({ ...w, currency: 'CNY' })),
         transfers: c.transfers.slice(0, 50).map((t) => ({ ...t, currency: 'CNY' })),
       })
@@ -166,15 +197,36 @@ export const referral: MockModule = {
 
     // 修订 R5：幂等 commission_withdrawal_request；检查顺序照 RequestWithdrawal
     'POST /v1/me/withdrawals': async (ctx) => {
-      const body = await readStrict(ctx, ['amount', 'payout_detail'])
+      const body = await readStrict(ctx, ['amount', 'method', 'payout_detail'])
       if (!body) return
-      if ((body.amount !== undefined && !Number.isInteger(body.amount)) || (body.payout_detail !== undefined && typeof body.payout_detail !== 'string')) {
+      if (
+        (body.amount !== undefined && !Number.isInteger(body.amount)) ||
+        (body.method !== undefined && typeof body.method !== 'string') ||
+        (body.payout_detail !== undefined && typeof body.payout_detail !== 'string')
+      ) {
         return ctx.fail(400, 'bad_request', '请求体字段类型不对')
       }
       await ctx.idempotent('commission_withdrawal_request', () => {
         const c = commissionState(ctx.user.userId)
+        if (!c.withdrawEnabled) {
+          return new BillingError(409, 'conflict', '提现已关闭，佣金解冻后会自动转入余额').result()
+        }
+        const method = typeof body.method === 'string' ? body.method.trim() : ''
+        if (!method) {
+          return new BillingError(422, 'validation_failed', '参数不合法', { method: '请选择提现方式' }).result()
+        }
+        if (!c.withdrawMethods.includes(method)) {
+          return new BillingError(422, 'validation_failed', '参数不合法', { method: '这种提现方式暂未开放，请换一种' }).result()
+        }
+        const payout = typeof body.payout_detail === 'string' ? body.payout_detail.trim() : ''
+        if (!payout) {
+          return new BillingError(422, 'validation_failed', '参数不合法', { payout_detail: '请填写收款账号' }).result()
+        }
+        if (!isValidUSDTAddress(method, payout)) {
+          return new BillingError(422, 'validation_failed', '参数不合法', { payout_detail: '地址格式不对，请核对后重填' }).result()
+        }
+
         const amount = (body.amount as number | undefined) ?? 0
-        if (!body.payout_detail) return new BillingError(422, 'validation_failed', '参数不合法', { payout_detail: '请填写收款方式' }).result()
         if (amount < MIN_WITHDRAW) return new BillingError(422, 'validation_failed', '提现金额低于最低限额').result()
         if (c.entries.length === 0) return new BillingError(422, 'validation_failed', '没有可提现的佣金').result()
         if (c.withdrawals.some((w) => IN_FLIGHT.has(w.status))) return new BillingError(409, 'conflict', '还有正在处理的提现申请').result()
@@ -182,7 +234,7 @@ export const referral: MockModule = {
         if (avail <= 0) return new BillingError(422, 'validation_failed', '没有可提现的佣金').result()
         if (amount > avail) return new BillingError(409, 'conflict', '提现金额超过可提现余额').result()
         const id = randomUUID()
-        c.withdrawals.unshift({ id, amount, status: 'requested', reject_reason: '', requested_at: new Date().toISOString(), completed_at: null })
+        c.withdrawals.unshift({ id, amount, method, status: 'requested', reject_reason: '', requested_at: new Date().toISOString(), completed_at: null })
         return { status: 200, body: { id } }
       })
     },

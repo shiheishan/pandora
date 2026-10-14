@@ -1,4 +1,5 @@
 import { formatMoney } from '../../../core/format'
+import { isUSDTMethod, looksLikeUSDTAddress, payoutAccountHint, withdrawMethodLabel } from '../../../core/withdraw-methods'
 import type { Commission } from '../../queries'
 import { shortDate } from '../common/traffic'
 import type { Invite } from './api'
@@ -6,10 +7,20 @@ import type { Invite } from './api'
 /** 契约门户-06：/r/CODE 会撞 public 网关根下的订阅通配，邀请链接用查询串 */
 export const inviteLink = (code: string, origin: string) => `${origin}/?invite=${encodeURIComponent(code)}`
 
+/** 万分比转百分比文字，去掉多余的 0（如 1000 → '10'，500 → '5'，495 → '4.95'，1250 → '12.5'） */
+export function ratePercentText(bp: number): string {
+  const intPart = Math.floor(bp / 100)
+  const decPart = bp % 100
+  if (decPart === 0) return `${intPart}`
+  if (decPart % 10 === 0) return `${intPart}.${decPart / 10}`
+  return `${intPart}.${decPart.toString().padStart(2, '0')}`
+}
+
 /** 横幅标题：按计佣范围写（R81 / R114），first_order 才说「首单」；费率为 0 时不提佣金 */
-export function headline(ratePercent: number, scope: Commission['summary']['scope']): string {
-  if (ratePercent <= 0) return '邀请好友注册'
-  return scope === 'first_order' ? `好友首单付费，您得 ${ratePercent}% 佣金` : `邀请好友付费，您得 ${ratePercent}% 佣金`
+export function headline(directRateBP: number, scope: Commission['summary']['scope']): string {
+  if (directRateBP <= 0) return '邀请好友注册'
+  const rateText = ratePercentText(directRateBP)
+  return scope === 'first_order' ? `好友首单付费，您得 ${rateText}% 佣金` : `邀请好友付费，您得 ${rateText}% 佣金`
 }
 
 /** 邀请码有使用上限时的一句说明；没有上限返回 null */
@@ -33,8 +44,19 @@ export function parseWithdrawAmount(input: string, limits: { min: number; availa
   return { cents }
 }
 
+/** 校验收款账号：USDT 检查地址特征 */
+export function payoutError(method: string, detail: string): string | undefined {
+  if (!detail.trim()) return '请填写收款账号'
+  if (isUSDTMethod(method) && !looksLikeUSDTAddress(method, detail)) {
+    return `地址格式不对：${payoutAccountHint(method)}`
+  }
+  return undefined
+}
+
 /** 提现表单锁住的理由：后端同一时间只允许一笔在途（含打款中）；可用额不到最低额也提不了 */
 export function withdrawBlock(summary: Commission['summary']): string | null {
+  if (!summary.withdraw_enabled) return '提现已关闭，佣金解冻后会自动转入余额'
+  if (summary.withdraw_methods.length === 0) return '暂未开放提现方式'
   if (summary.withdrawing > 0) return `有一笔 ${formatMoney(summary.withdrawing, summary.currency)} 的提现正在处理，完成后才能再申请`
   if (summary.available < summary.min_withdraw) return `可用佣金满 ${formatMoney(summary.min_withdraw, summary.currency)} 才能申请提现`
   return null
@@ -97,7 +119,7 @@ export function commissionRecords(c: Commission): CommissionRecord[] {
   c.entries.forEach((e, i) => {
     rows.push({
       key: `e${i}`,
-      title: `好友 ${e.from}`,
+      title: e.level <= 1 ? `好友 ${e.from}` : `第 ${e.level} 级好友 ${e.from}`,
       ...(e.order_no ? { ref: e.order_no } : {}),
       meta: shortDate(e.created_at),
       amount: e.amount,
@@ -111,7 +133,7 @@ export function commissionRecords(c: Commission): CommissionRecord[] {
   }
   for (const w of c.withdrawals) {
     const reason = w.status === 'rejected' && w.reject_reason ? ` · ${w.reject_reason}` : ''
-    rows.push({ key: `w${w.id}`, title: '申请提现', meta: shortDate(w.requested_at) + reason, amount: -w.amount, currency: w.currency, at: w.requested_at, ...WITHDRAWAL_STATUS[w.status] })
+    rows.push({ key: `w${w.id}`, title: `申请提现 · ${withdrawMethodLabel(w.method)}`, meta: shortDate(w.requested_at) + reason, amount: -w.amount, currency: w.currency, at: w.requested_at, ...WITHDRAWAL_STATUS[w.status] })
   }
   return rows.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
 }

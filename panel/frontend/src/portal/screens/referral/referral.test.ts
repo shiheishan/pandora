@@ -1,9 +1,25 @@
 import { describe, expect, it } from 'vitest'
 import { commissionSchema, type Commission } from '../../queries'
 import { inviteSchema } from './api'
-import { commissionRecords, headline, inviteLink, inviteUsage, parseWithdrawAmount, withdrawBlock } from './model'
+import { commissionRecords, headline, inviteLink, inviteUsage, parseWithdrawAmount, payoutError, ratePercentText, withdrawBlock } from './model'
 
-const SUMMARY = { currency: 'CNY', pending: 1180, available: 13560, withdrawing: 0, settled: 10000, invitees: 6, orders: 5, paid_invitees: 4, total_earned: 29740, rate_percent: 20, min_withdraw: 10000, scope: 'every_order' as const }
+const SUMMARY = {
+  currency: 'CNY',
+  pending: 1180,
+  available: 13560,
+  withdrawing: 0,
+  settled: 10000,
+  invitees: 6,
+  orders: 5,
+  paid_invitees: 4,
+  total_earned: 29740,
+  rate_percent: 20,
+  direct_rate_bp: 2000,
+  min_withdraw: 10000,
+  withdraw_enabled: true,
+  withdraw_methods: ['alipay'],
+  scope: 'every_order' as const,
+}
 
 function commission(over: Partial<Commission> = {}): Commission {
   return commissionSchema.parse({ summary: SUMMARY, entries: [], withdrawals: [], transfers: [], ...over })
@@ -23,7 +39,7 @@ describe('佣金概况 schema', () => {
   })
 
   it('提现状态是封闭枚举', () => {
-    const w = { id: 'w', amount: 1, currency: 'CNY', status: 'queued', reject_reason: '', requested_at: '2026-09-01T00:00:00Z', completed_at: null }
+    const w = { id: 'w', amount: 1, currency: 'CNY', method: 'alipay', status: 'queued', reject_reason: '', requested_at: '2026-09-01T00:00:00Z', completed_at: null }
     expect(commissionSchema.safeParse({ summary: SUMMARY, entries: [], withdrawals: [w], transfers: [] }).success).toBe(false)
   })
 
@@ -39,10 +55,17 @@ describe('邀请横幅', () => {
     expect(inviteLink('ZW8KQ4TM', 'https://my.example.test')).toBe('https://my.example.test/?invite=ZW8KQ4TM')
   })
 
-  it('横幅不写「首单」（公开接口没有计佣范围）；费率为 0 不提佣金', () => {
-    expect(headline(20, 'every_order')).toBe('邀请好友付费，您得 20% 佣金')
-    expect(headline(20, 'first_order')).toBe('好友首单付费，您得 20% 佣金')
+  it('横幅比例与首单展示；费率为 0 不提佣金', () => {
+    expect(headline(2000, 'every_order')).toBe('邀请好友付费，您得 20% 佣金')
+    expect(headline(495, 'first_order')).toBe('好友首单付费，您得 4.95% 佣金')
     expect(headline(0, 'first_order')).toBe('邀请好友注册')
+  })
+
+  it('ratePercentText 整数与小数去尾 0', () => {
+    expect(ratePercentText(1000)).toBe('10')
+    expect(ratePercentText(500)).toBe('5')
+    expect(ratePercentText(495)).toBe('4.95')
+    expect(ratePercentText(1250)).toBe('12.5')
   })
 
   it('邀请码用量：无上限不说，用满警示', () => {
@@ -65,18 +88,32 @@ describe('申请提现', () => {
     expect(parseWithdrawAmount('135.61', limits)).toEqual({ error: '超过可用佣金 ¥135.60' })
   })
 
-  it('在途提现（含打款中）锁表单，可用不足最低额也锁', () => {
+  it('提现关闭与无开放方式锁表单，在途提现和不足最低额也锁', () => {
     expect(withdrawBlock(SUMMARY)).toBeNull()
+    expect(withdrawBlock({ ...SUMMARY, withdraw_enabled: false })).toBe('提现已关闭，佣金解冻后会自动转入余额')
+    expect(withdrawBlock({ ...SUMMARY, withdraw_methods: [] })).toBe('暂未开放提现方式')
     expect(withdrawBlock({ ...SUMMARY, withdrawing: 3000 })).toBe('有一笔 ¥30.00 的提现正在处理，完成后才能再申请')
     expect(withdrawBlock({ ...SUMMARY, available: 9999 })).toBe('可用佣金满 ¥100.00 才能申请提现')
+  })
+
+  it('payoutError 校验收款账号', () => {
+    expect(payoutError('alipay', '')).toBe('请填写收款账号')
+    expect(payoutError('alipay', '   ')).toBe('请填写收款账号')
+    expect(payoutError('alipay', '13800000000 张三')).toBeUndefined()
+    expect(payoutError('usdt_trc20', 'TBXSw8fM4jpQkGc6zZjsVABFpVN7UvXPdV')).toBeUndefined()
+    expect(payoutError('usdt_trc20', '0x123')).toBe('地址格式不对：T 开头的 TRC20 地址（34 位）')
+    expect(payoutError('usdt_erc20', '0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed')).toBeUndefined()
   })
 })
 
 describe('佣金记录', () => {
-  const entry = (status: Commission['entries'][number]['status'], created_at: string, frozen_until: string | null = null) => ({
+  const entry = (status: Commission['entries'][number]['status'], created_at: string, frozen_until: string | null = null, level = 1) => ({
     amount: 1180,
     base: 5900,
     rate_percent: 20,
+    rate_bp: 2000,
+    level,
+    share_percent: 100,
     currency: 'CNY',
     status,
     frozen_until,
@@ -84,9 +121,18 @@ describe('佣金记录', () => {
     order_no: 'PD-24101',
     from: 'me***@gmail.com',
   })
-  const withdrawal = (status: Commission['withdrawals'][number]['status'], requested_at: string, reject_reason = '') => ({ id: status, amount: 12000, currency: 'CNY', status, reject_reason, requested_at, completed_at: null })
+  const withdrawal = (status: Commission['withdrawals'][number]['status'], requested_at: string, reject_reason = '', method = 'alipay') => ({
+    id: status,
+    amount: 12000,
+    currency: 'CNY',
+    method,
+    status,
+    reject_reason,
+    requested_at,
+    completed_at: null,
+  })
 
-  it('三类记录按时间倒序合并，出账为负', () => {
+  it('三类记录按时间倒序合并，出账为负，带提现方式名', () => {
     const rows = commissionRecords(
       commission({
         entries: [entry('available', '2026-09-20T02:00:00Z')],
@@ -97,14 +143,21 @@ describe('佣金记录', () => {
     expect(rows.map((r) => [r.title, r.ref, r.amount, r.status, r.tone])).toEqual([
       ['转入余额', undefined, -5000, '完成', 'minus'],
       ['好友 me***@gmail.com', 'PD-24101', 1180, '已结算', 'plus'],
-      ['申请提现', undefined, -12000, '已打款', 'minus'],
+      ['申请提现 · 支付宝', undefined, -12000, '已打款', 'minus'],
     ])
   })
 
-  it('佣金状态：冻结至某日、冲销划掉；没有订单号不带 ref', () => {
-    const rows = commissionRecords(commission({ entries: [entry('pending', '2026-09-22T02:00:00Z', '2026-09-29T10:00:00Z'), { ...entry('reversed', '2026-09-01T02:00:00Z'), order_no: '' }] }))
+  it('佣金状态：冻结至某日、冲销划掉；多级分销好友标题', () => {
+    const rows = commissionRecords(
+      commission({
+        entries: [
+          entry('pending', '2026-09-22T02:00:00Z', '2026-09-29T10:00:00Z'),
+          { ...entry('reversed', '2026-09-01T02:00:00Z', null, 2), order_no: '' },
+        ],
+      }),
+    )
     expect(rows[0]!.status).toBe('冻结至 09-29')
-    expect(rows[1]).toMatchObject({ title: '好友 me***@gmail.com', status: '已冲销', tone: 'void' })
+    expect(rows[1]).toMatchObject({ title: '第 2 级好友 me***@gmail.com', status: '已冲销', tone: 'void' })
     expect(rows[1]!.ref).toBeUndefined()
     expect(commissionRecords(commission({ entries: [entry('pending', '2026-09-22T02:00:00Z')] }))[0]!.status).toBe('冻结中')
   })
