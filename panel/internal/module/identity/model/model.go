@@ -17,6 +17,8 @@ type User struct {
 	UserGroupID     *uuid.UUID `gorm:"column:user_group_id;type:uuid"`
 	RiskLevel       string     `gorm:"column:risk_level;default:normal"`
 	LastLoginAt     *time.Time `gorm:"column:last_login_at"`
+	AdminNote       *string    `gorm:"column:admin_note"`
+	DeletedAt       *time.Time `gorm:"column:deleted_at"`
 	CreatedAt       time.Time  `gorm:"column:created_at;autoCreateTime"`
 	UpdatedAt       time.Time  `gorm:"column:updated_at;autoUpdateTime"`
 }

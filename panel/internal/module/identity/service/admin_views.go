@@ -18,7 +18,9 @@ import (
 
 // AdminQuota 是一行配额（与门户「我的套餐」同口径）；Limit 为 nil 表示不限，Remaining 同理。
 type AdminQuota struct {
-	Metric    string
+	Metric string
+	// Period 配额周期 total / cycle / day / month；后台改上限要按指标 + 周期定位一行
+	Period    string
 	Limit     *int64
 	Consumed  int64
 	Remaining *int64
