@@ -159,7 +159,7 @@ func sendLoop(ctx context.Context, stream nodev1.ControlService_SessionServer, s
 		if err != nil {
 			return sessionStatus(err)
 		}
-		for _, msg := range outboundToProto(out) {
+		for msg := range outboundMessages(out) {
 			seq++
 			msg.Seq = seq
 			if err := stream.Send(msg); err != nil {

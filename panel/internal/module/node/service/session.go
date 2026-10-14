@@ -34,8 +34,14 @@ import (
 // FeatureUsersDelta 是「能收名单增量」的能力名（Hello.features / Welcome.features）。
 const FeatureUsersDelta = "users_delta"
 
-// UsersChunkSize 是 UsersFull 每块的人数。
-const UsersChunkSize = 5000
+// UsersChunkSize 是 UsersFull 每块的人数。一人编码后最多约 60 字节，500 人一块不到 32 KB：
+// gRPC 的发送缓冲按档取（256 B、4 KB、16 KB、32 KB、1 MB），32 KB 到 1 MB 之间的消息一律占一块 1 MB 的缓冲，
+// 面板重启后几百条流同时发全量时，块大就是几百 MB 的瞬时内存（同机闸门 10-14 量到）。
+// 守卫是 grpc 包的 TestUsersFullChunkFitsSendBuffer。
+const UsersChunkSize = 500
+
+// UsersDeltaMax 是一份增量最多的变更条数（新增或改了的加移除的）；超过就发全量。增量不分块。
+const UsersDeltaMax = 5000
 
 // panelFeatures 是面板支持的可选能力。
 var panelFeatures = []string{FeatureUsersDelta}

@@ -403,7 +403,7 @@ handler 里现在的业务逻辑（第 4 节附表：公告状态机、访问日
 - `EnrollmentService.Enroll(EnrollRequest) → EnrollResponse`：服务端 TLS，令牌 + CSR（DER）+ request_id + 主机信息，回 server_id、客户端证书链、CA。
 - `ControlService.Session(stream SessionRequest) → stream SessionResponse`：mTLS 双向流。
   - 节点发：Hello（版本、二进制摘要、能力、主机信息、各节点已应用的配置摘要与名单版本）、Heartbeat（整数口径的机器指标 + 各节点运行状态）、TrafficReport（report_id + 按节点、uid 的增量）、OnlineIPs、ConfigAck（按节点、按配置摘要）、UsersAck、RenewRequest。
-  - 面板发：Welcome、ServerConfig（这台服务器全部节点的全量配置，每个节点一份 JSON 配置文档 + 摘要）、UsersFull（按 5000 人分块）、UsersDelta、TrafficAck、Certificate、Command（reconnect / tombstone）。
+  - 面板发：Welcome、ServerConfig（这台服务器全部节点的全量配置，每个节点一份 JSON 配置文档 + 摘要）、UsersFull（按 500 人分块，一块编码后不到 32 KB）、UsersDelta、TrafficAck、Certificate、Command（reconnect / tombstone）。
 - 名单里的用户号 `uid` 是 `subscriptions.node_uid`（bigint），代理身份是 `proxy_uuid`。
 - 节点配置是 JSON 文档而不是逐协议的消息：协议种类多、字段各异，文档形状由面板 node 模块的配置组装与 pdnd `node/config_apply.go` 共同约定。
 

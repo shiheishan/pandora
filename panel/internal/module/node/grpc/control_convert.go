@@ -3,8 +3,10 @@ package grpc
 // ControlService 的 proto 与 service 类型互转。节点发来的 id 解析不了的条目丢掉（流量上报除外，见 trafficFromProto）；摘要一律转小写。
 
 import (
+	"iter"
 	"net/netip"
 	"regexp"
+	"slices"
 	"strings"
 
 	nodev1 "github.com/aegispanel/nodeapi/pandora/node/v1"
@@ -186,8 +188,38 @@ func command(c *nodev1.Command) *nodev1.SessionResponse {
 	return &nodev1.SessionResponse{Body: &nodev1.SessionResponse_Command{Command: c}}
 }
 
-// outboundToProto 把一条逻辑消息转成要发的 proto 消息（UsersFull 按 UsersChunkSize 分块，空名单也发一块）。
-// seq 由发送循环填。
+// outboundMessages 是一条逻辑消息要发的 proto 消息，seq 由发送循环填。全量名单逐块现转（usersFullChunks），
+// 其余消息只有一条。
+func outboundMessages(o service.Outbound) iter.Seq[*nodev1.SessionResponse] {
+	if o.Kind == service.OutUsersFull {
+		return usersFullChunks(o.Roster)
+	}
+	return slices.Values(outboundToProto(o))
+}
+
+// usersFullChunks 把全量名单按 UsersChunkSize 分块（空名单也发一块），发一块才转一块：
+// 一条流同一时刻只有一块的 proto 与发送缓冲在内存里（冷启动时几百条流会同时发全量，见 UsersChunkSize）。
+func usersFullChunks(r *service.NodeRoster) iter.Seq[*nodev1.SessionResponse] {
+	return func(yield func(*nodev1.SessionResponse) bool) {
+		total := (len(r.Users) + service.UsersChunkSize - 1) / service.UsersChunkSize
+		if total == 0 {
+			total = 1
+		}
+		for i := 0; i < total; i++ {
+			lo, hi := i*service.UsersChunkSize, min((i+1)*service.UsersChunkSize, len(r.Users))
+			msg := &nodev1.SessionResponse{Body: &nodev1.SessionResponse_UsersFull{UsersFull: &nodev1.UsersFull{
+				NodeId: r.NodeID.String(), Version: r.Version,
+				ChunkIndex: uint32(i), ChunkTotal: uint32(total), //nolint:gosec // 块数以名单人数 / UsersChunkSize 为界，远小于 uint32
+				Users: usersToProto(r.Users[lo:hi]),
+			}}}
+			if !yield(msg) {
+				return
+			}
+		}
+	}
+}
+
+// outboundToProto 把全量名单以外的一条逻辑消息转成 proto 消息（全量名单见 usersFullChunks）。
 func outboundToProto(o service.Outbound) []*nodev1.SessionResponse {
 	switch o.Kind {
 	case service.OutWelcome:
@@ -209,22 +241,6 @@ func outboundToProto(o service.Outbound) []*nodev1.SessionResponse {
 		return []*nodev1.SessionResponse{{Body: &nodev1.SessionResponse_Config{Config: &nodev1.ServerConfig{
 			ReleaseId: o.Config.ReleaseID, Nodes: nodes,
 		}}}}
-	case service.OutUsersFull:
-		r := o.Roster
-		total := (len(r.Users) + service.UsersChunkSize - 1) / service.UsersChunkSize
-		if total == 0 {
-			total = 1
-		}
-		out := make([]*nodev1.SessionResponse, 0, total)
-		for i := 0; i < total; i++ {
-			lo, hi := i*service.UsersChunkSize, min((i+1)*service.UsersChunkSize, len(r.Users))
-			out = append(out, &nodev1.SessionResponse{Body: &nodev1.SessionResponse_UsersFull{UsersFull: &nodev1.UsersFull{
-				NodeId: r.NodeID.String(), Version: r.Version,
-				ChunkIndex: uint32(i), ChunkTotal: uint32(total), //nolint:gosec // 块数以名单人数 / 5000 为界，远小于 uint32
-				Users: usersToProto(r.Users[lo:hi]),
-			}}})
-		}
-		return out
 	case service.OutUsersDelta:
 		return []*nodev1.SessionResponse{{Body: &nodev1.SessionResponse_UsersDelta{UsersDelta: &nodev1.UsersDelta{
 			NodeId: o.Roster.NodeID.String(), FromVersion: o.DeltaFrom, ToVersion: o.Roster.Version,

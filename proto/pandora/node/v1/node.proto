@@ -257,7 +257,7 @@ message NodeConfig {
   string content_sha256 = 4;
 }
 
-// UsersFull 是一个节点的全量名单，按 5000 人一块分块发送；chunk_index 从 0 起，
+// UsersFull 是一个节点的全量名单，按 500 人一块分块发送；chunk_index 从 0 起，
 // 收齐 chunk_total 块后整体替换。
 message UsersFull {
   string node_id = 1;
