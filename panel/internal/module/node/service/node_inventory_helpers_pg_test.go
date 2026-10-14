@@ -85,6 +85,9 @@ func newInvEnvMode(t *testing.T, committed bool) (*invEnv, context.Context) {
 		e.svc = New(repo.New(d), tx.NewManager(d), auditSvc, nil)
 		ctx = testkit.TxCtx(t, d)
 	}
+	// Xboard 补齐的两个端口：站点时区（流量周期、时段倍率）、ECH 私钥封存（假封存器，密文里带 AAD 便于断言）
+	e.svc.UseSiteSettings(fakeSite{tz: "UTC"})
+	e.svc.UseECHSealer(fakeSealer{})
 	return e, reqid.With(ctx, reqid.New())
 }
 
