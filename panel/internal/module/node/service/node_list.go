@@ -48,6 +48,15 @@ func (s *Service) QueryNodes(ctx context.Context, q NodeQuery) ([]NodeRow, int64
 	if q.State != "" {
 		q.IncludeRetired = true
 	}
+	q.Tag = strings.TrimSpace(q.Tag)
+	var tagFilter string
+	if q.Tag != "" {
+		tag, ok := NormalizeNodeTag(q.Tag)
+		if !ok {
+			return nil, 0, errs.Invalid(map[string]string{"tag": "标签最多 16 个字、不能含控制字符"})
+		}
+		tagFilter = tag
+	}
 	if s.catalog == nil || s.inUse == nil {
 		return nil, 0, errPoolPortMissing
 	}
@@ -56,6 +65,7 @@ func (s *Service) QueryNodes(ctx context.Context, q NodeQuery) ([]NodeRow, int64
 		IncludeRetired: q.IncludeRetired,
 		State:          q.State,
 		Search:         q.Search,
+		Tag:            tagFilter,
 		ID:             q.ID,
 		Limit:          q.Limit,
 		Offset:         q.Offset,
@@ -210,15 +220,16 @@ func nodeRowFromList(row repo.NodeListRow, now time.Time, detail bool, x nodeLis
 	}
 
 	facts := nodeDeliveryFacts{
-		Serving:     row.ServingStatus,
-		Pooled:      row.PoolID != nil,
-		PoolActive:  poolActive,
-		PoolBound:   poolBound,
-		EverSeen:    everSeen,
-		BeatFresh:   beatFresh,
-		Deliverable: row.Deliverable,
-		ServerReady: row.ServerReady,
-		Degraded:    nodeDegraded(row),
+		Serving:         row.ServingStatus,
+		Pooled:          row.PoolID != nil,
+		PoolActive:      poolActive,
+		PoolBound:       poolBound,
+		EverSeen:        everSeen,
+		BeatFresh:       beatFresh,
+		Deliverable:     row.Deliverable,
+		ServerReady:     row.ServerReady,
+		Degraded:        nodeDegraded(row),
+		TrafficExceeded: row.TrafficExceededAt != nil,
 	}
 	delivered, note := nodeDeliveryVerdict(facts)
 	eff, fail := nodeEffectiveState(row, desired)
@@ -261,6 +272,17 @@ func nodeRowFromList(row repo.NodeListRow, now time.Time, detail bool, x nodeLis
 		RuntimeReasonNode: row.RuntimeReasonNode,
 		DeliveryDegraded:  nodeDegraded(row),
 		GrantedPlans:      []string{},
+		Tags:              decodeNodeTags(row.Tags),
+		Traffic: NodeTrafficLimit{
+			LimitBytes: row.TrafficLimitBytes,
+			ResetDay:   row.TrafficResetDay,
+			UsedBytes:  row.TrafficUsedBytes,
+			ResetAt:    row.TrafficResetAt,
+			ExceededAt: row.TrafficExceededAt,
+		},
+		RateSchedule: decodeRateScheduleInputs(row.RateSchedule),
+		RelayCount:   row.RelayCount,
+		ECHEnabled:   row.ECHEnabled,
 	}
 
 	if live, ok := x.live[row.ID]; ok {

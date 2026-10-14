@@ -46,33 +46,6 @@ func (r *Repo) RelaysByParent(ctx context.Context, parentID uuid.UUID) ([]model.
 	return out, nil
 }
 
-type relayCountRow struct {
-	ParentNodeID uuid.UUID `gorm:"column:parent_node_id"`
-	Count        int       `gorm:"column:count"`
-}
-
-// RelayCounts 统计一批父节点各自名下的中转条数（含停用的）；输入为空返回空 map。
-func (r *Repo) RelayCounts(ctx context.Context, parentIDs []uuid.UUID) (map[uuid.UUID]int, error) {
-	out := make(map[uuid.UUID]int, len(parentIDs))
-	if len(parentIDs) == 0 {
-		return out, nil
-	}
-	var rows []relayCountRow
-	err := r.d.Conn(ctx).Raw(
-		`SELECT parent_node_id, count(*)::int AS count
-		 FROM node_relays
-		 WHERE parent_node_id IN ?
-		 GROUP BY parent_node_id`, parentIDs,
-	).Scan(&rows).Error
-	if err != nil {
-		return nil, err
-	}
-	for _, row := range rows {
-		out[row.ParentNodeID] = row.Count
-	}
-	return out, nil
-}
-
 type relaySingleCountRow struct {
 	Count int `gorm:"column:count"`
 }

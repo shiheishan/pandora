@@ -87,6 +87,27 @@ func TestNodeDeliveryVerdict_neverSeen(t *testing.T) {
 	}
 }
 
+func TestNodeDeliveryVerdict_trafficExceeded(t *testing.T) {
+	// 其余事实都满足、Deliverable: false、TrafficExceeded: true → (false, nodeNoteTrafficExceeded)
+	f := nodeAllDeliveryFacts()
+	f.Deliverable = false
+	f.TrafficExceeded = true
+	ok, note := nodeDeliveryVerdict(f)
+	if ok || note != nodeNoteTrafficExceeded {
+		t.Fatalf("流量超限应为 (false, %q)，got (%v, %q)", nodeNoteTrafficExceeded, ok, note)
+	}
+
+	// ServerReady: false 同时超限也回超限文案
+	f2 := nodeAllDeliveryFacts()
+	f2.Deliverable = false
+	f2.ServerReady = false
+	f2.TrafficExceeded = true
+	ok2, note2 := nodeDeliveryVerdict(f2)
+	if ok2 || note2 != nodeNoteTrafficExceeded {
+		t.Fatalf("ServerReady: false 且 TrafficExceeded 应先回超限文案，got (%v, %q)", ok2, note2)
+	}
+}
+
 func TestNodeDeliveryVerdict_deliverableFalse_serverReady_nodeNotReady(t *testing.T) {
 	f := nodeAllDeliveryFacts()
 	f.Deliverable = false

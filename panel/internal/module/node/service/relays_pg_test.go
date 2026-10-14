@@ -180,36 +180,4 @@ func TestNodeRelaysPG(t *testing.T) {
 	if auditCount < 1 {
 		t.Errorf("node.relay_create 审计计数 = %d, want >= 1", auditCount)
 	}
-
-	// 7. RelayCounts 含停用的（订阅只取启用的，见 delivery_xb_pg_test.go）
-	node2 := env.ssNode(t, ctx, srv.ID, "relay-parent-2", 8389)
-	relayA, err := env.svc.CreateNodeRelay(ctx, node2.ID, NodeRelayInput{
-		Name:       "启用中转",
-		ServerHost: "relay-a.example.com",
-		ServerPort: 8001,
-	})
-	if err != nil {
-		t.Fatalf("CreateNodeRelay A: %v", err)
-	}
-
-	disabled := false
-	relayB, err := env.svc.CreateNodeRelay(ctx, node2.ID, NodeRelayInput{
-		Name:       "停用中转",
-		ServerHost: "relay-b.example.com",
-		ServerPort: 8002,
-		Enabled:    &disabled,
-	})
-	if err != nil {
-		t.Fatalf("CreateNodeRelay B: %v", err)
-	}
-
-	// 验证 RelayCounts
-	counts, err := env.svc.repo.RelayCounts(ctx, []uuid.UUID{node2.ID})
-	if err != nil {
-		t.Fatalf("RelayCounts: %v", err)
-	}
-	if counts[node2.ID] != 2 {
-		t.Errorf("RelayCounts = %d, want 2", counts[node2.ID])
-	}
-	_, _ = relayA, relayB
 }
