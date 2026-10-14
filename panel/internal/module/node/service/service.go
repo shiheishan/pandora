@@ -71,9 +71,13 @@ type Service struct {
 
 	// rt 实时推送（realtime.go 的 UseRealtime）；nil 时不推
 	rt *realtime.Publisher
+
+	// lineCache 是订阅线路的微缓存（delivery_cache.go），构造时建好
+	lineCache *deliveryCache
 }
 
 // New 构造 node service。rdb 用于下发纪元（epoch.go），为 nil 时只跳过通知。
 func New(r *repo.Repo, txm *tx.Manager, audit *auditsvc.Service, rdb *redis.Client) *Service {
-	return &Service{repo: r, tx: txm, audit: audit, rdb: rdb, now: time.Now}
+	return &Service{repo: r, tx: txm, audit: audit, rdb: rdb, now: time.Now,
+		lineCache: newDeliveryCache(deliveryCacheSize, deliveryCacheTTL)}
 }

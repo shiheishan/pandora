@@ -44,10 +44,11 @@ func (f *fakeDelivery) setLimit(n int) {
 	f.limit = n
 }
 
-// fakeOwners 实现 Owners：没登记的用户都是 active。
+// fakeOwners 实现 Owners：没登记的用户都是 active、默认组。
 type fakeOwners struct {
 	mu     sync.Mutex
 	status map[uuid.UUID]string
+	groups map[uuid.UUID]*uuid.UUID
 }
 
 func (f *fakeOwners) Get(_ context.Context, id uuid.UUID) (identitysvc.User, error) {
@@ -57,13 +58,20 @@ func (f *fakeOwners) Get(_ context.Context, id uuid.UUID) (identitysvc.User, err
 	if !ok {
 		st = "active"
 	}
-	return identitysvc.User{ID: id, Email: "owner@example.test", Status: st}, nil
+	return identitysvc.User{ID: id, Email: "owner@example.test", Status: st, UserGroupID: f.groups[id]}, nil
 }
 
 func (f *fakeOwners) set(id uuid.UUID, status string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.status[id] = status
+}
+
+// setGroup 把用户放进一个用户组（nil 为默认组）。
+func (f *fakeOwners) setGroup(id uuid.UUID, group *uuid.UUID) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.groups[id] = group
 }
 
 // fakeNodes 实现 NodeSource：返回预设线路，记下每次的查询条件。
@@ -114,7 +122,7 @@ func newDeliveryEnv(t *testing.T, withNodes bool) *deliveryEnv {
 	de := &deliveryEnv{
 		env:      e,
 		settings: &fakeDelivery{prefix: testPrefix, limit: 60},
-		owners:   &fakeOwners{status: map[uuid.UUID]string{}},
+		owners:   &fakeOwners{status: map[uuid.UUID]string{}, groups: map[uuid.UUID]*uuid.UUID{}},
 		nodes: &fakeNodes{nodes: []render.Node{{
 			Name: "香港 01", Type: "vless", Host: "hk.example.test", Port: 443,
 			Config: map[string]any{}, TrafficRate: 1,

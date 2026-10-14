@@ -83,6 +83,27 @@ func TestPullOK(t *testing.T) {
 	}
 }
 
+// TestPullUsesOwnerGroup：线路按订阅主人的用户组取，组来自 Owners 的同一次读取
+// （替身 Users.UserGroupID 恒为 nil，查询条件里带上了组就说明没有另读）。
+func TestPullUsesOwnerGroup(t *testing.T) {
+	de, ctx, user, sub, token := setupPull(t)
+	group := uuid.New()
+	de.owners.setGroup(user, &group)
+	if _, err := pull(de, ctx, token, testPrefix); err != nil {
+		t.Fatalf("拉取: %v", err)
+	}
+	de.nodes.mu.Lock()
+	qs := de.nodes.queries
+	de.nodes.mu.Unlock()
+	if len(qs) == 0 {
+		t.Fatal("没有查线路")
+	}
+	q := qs[len(qs)-1]
+	if q.UserGroupID == nil || *q.UserGroupID != group || q.PlanVersionID != sub.PlanVersionID {
+		t.Fatalf("节点查询条件: %+v，期望组 %s", q, group)
+	}
+}
+
 func TestPullYAMLExtension(t *testing.T) {
 	de, ctx, _, _, token := setupPull(t)
 	_, err := pull(de, ctx, token+".yaml", testPrefix)

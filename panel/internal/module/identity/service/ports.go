@@ -16,6 +16,8 @@ type User struct {
 	Email     string
 	Status    string
 	CreatedAt time.Time
+	// UserGroupID 是所在的用户组；默认组（没有分组）为 nil
+	UserGroupID *uuid.UUID
 }
 
 // SessionRevoker 由 auth 实现。在业务事务里调用：先在 Redis 吊销该用户的会话（exceptSessionID 非空时保留它），
