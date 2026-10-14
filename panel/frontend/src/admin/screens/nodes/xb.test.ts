@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { dedupeTags, limitToGiBText, parseLimitGiB, parseResetDay, scheduleError, splitTags, tagsError, trafficPercent, trafficUsageLabel } from './xb'
+import { dedupeTags, draftsFromRanges, limitToGiBText, parseLimitGiB, parseResetDay, rangesFromDrafts, scheduleError, splitTags, tagsError, trafficPercent, trafficUsageLabel } from './xb'
 
 describe('节点标签', () => {
   it('按中英文逗号、顿号、换行拆分并去掉空项', () => {
@@ -56,5 +56,13 @@ describe('时段倍率', () => {
     expect(scheduleError([{ start: '08:00', end: '12:00', rate: 1.234 }])).toBe('第 1 段：倍率要在 0 到 9999.99 之间，最多两位小数')
     expect(scheduleError([{ start: '10:00', end: '14:00', rate: 2 }, { start: '08:00', end: '12:00', rate: 1 }])).toBe('第 2 段与第 1 段时间重叠')
     expect(scheduleError(Array.from({ length: 13 }, (_, i) => ({ start: `${String(i).padStart(2, '0')}:00`, end: `${String(i).padStart(2, '0')}:30`, rate: 1 })))).toBe('最多 12 段')
+  })
+})
+
+describe('时段倍率编辑稿', () => {
+  it('来回转换，空倍率报错', () => {
+    const ranges = [{ start: '08:00', end: '12:00', rate: 1.5 }]
+    expect(rangesFromDrafts(draftsFromRanges(ranges))).toEqual(ranges)
+    expect(scheduleError(rangesFromDrafts([{ start: ' 08:00 ', end: '12:00', rate: '' }]))).toBe('第 1 段：倍率要在 0 到 9999.99 之间，最多两位小数')
   })
 })

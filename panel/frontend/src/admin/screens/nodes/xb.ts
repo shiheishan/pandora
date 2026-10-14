@@ -116,3 +116,16 @@ export function trafficPercent(t: NodeTraffic): number | null {
   if (t.limit_bytes === null || t.limit_bytes <= 0) return null
   return Math.min(100, Math.round((t.used_bytes / t.limit_bytes) * 100))
 }
+
+/** 时段倍率的编辑稿：倍率按输入框原文存（输到「1.」时不被改写），提交前用 rangesFromDrafts 转回 */
+export interface RateRangeDraft {
+  start: string
+  end: string
+  rate: string
+}
+
+export const draftsFromRanges = (ranges: readonly RateRange[]): RateRangeDraft[] => ranges.map((r) => ({ start: r.start, end: r.end, rate: String(r.rate) }))
+
+/** 编辑稿 → 接口的时段；倍率空或不是数会变成 NaN，由 scheduleError 报「倍率要在 0 到 9999.99 之间」 */
+export const rangesFromDrafts = (drafts: readonly RateRangeDraft[]): RateRange[] =>
+  drafts.map((d) => ({ start: d.start.trim(), end: d.end.trim(), rate: d.rate.trim() === '' ? Number.NaN : Number(d.rate.trim()) }))
