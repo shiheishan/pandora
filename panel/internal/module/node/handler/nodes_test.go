@@ -108,7 +108,7 @@ func inventoryExpectKeys(t *testing.T, got []string, want []string) {
 // 以下键表照抄前端 schemas.ts，前端改了这里同改。
 var (
 	inventoryNodeRowKeys = []string{
-		"id", "node_no", "row_version", "name", "status", "serving_status", "server_id", "server_name",
+		"id", "node_no", "row_version", "name", "serving_status", "server_id", "server_name",
 		"pool_id", "pool_name", "agent_version", "hostname", "public_ipv4", "cpu_cores", "memory_mb", "disk_gb",
 		"last_heartbeat_at", "stale", "delivered_to_users", "delivery_note", "identity_serial", "created_at", "node_type", "server_host",
 		"server_port", "display_name", "country_code", "sort_order", "online_users", "online_ips",
@@ -120,7 +120,7 @@ var (
 		"traffic_rate", "protocol_config", "protocol_schema_version", "config_validated_at",
 	}
 	inventoryAdminNodeKeys = []string{
-		"id", "row_version", "name", "server_id", "pool_id", "status", "serving_status", "node_type",
+		"id", "row_version", "name", "server_id", "pool_id", "serving_status", "node_type",
 		"server_host", "server_port", "traffic_rate", "display_name", "country_code", "protocol_config",
 		"protocol_schema_version", "config_validated_at", "sort_order", "created_at", "updated_at",
 	}
@@ -132,7 +132,7 @@ var (
 		"cpu_bp", "mem_used_mb", "mem_total_mb", "disk_used_gb", "disk_total_gb", "metrics_at",
 	}
 	inventoryServerNodeKeys = []string{
-		"id", "name", "status", "serving_status", "node_type", "display_name", "server_host", "server_port",
+		"id", "name", "serving_status", "node_type", "display_name", "server_host", "server_port",
 		"traffic_rate", "config_validated_at", "last_heartbeat_at", "created_at",
 	}
 )
@@ -360,8 +360,8 @@ func TestNodeRowResponseShape(t *testing.T) {
 			t.Fatalf("%s 应为 null：%v", k, m[k])
 		}
 	}
-	if m["status"] != "active" || m["online_users"] != float64(0) {
-		t.Fatalf("status / online_users 不对：%v", m)
+	if m["serving_status"] != "active" || m["online_users"] != float64(0) {
+		t.Fatalf("serving_status / online_users 不对：%v", m)
 	}
 
 	at := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)

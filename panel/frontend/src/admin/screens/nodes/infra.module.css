@@ -283,10 +283,6 @@ button.nodeItem:hover {
   background: var(--surface-2);
 }
 
-.nodeGone {
-  color: var(--text-3);
-}
-
 .statusForm {
   display: grid;
   grid-template-columns: 180px minmax(0, 1fr) auto;

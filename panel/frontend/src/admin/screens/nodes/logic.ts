@@ -107,11 +107,9 @@ export function canMove(n: Pick<NodeRow, 'serving_status' | 'last_heartbeat_at' 
   return (n.serving_status === 'draft' || n.serving_status === 'disabled') && n.last_heartbeat_at === null && n.identity_serial === null
 }
 /**
- * R108「上线」：生命周期停在接入尾段（attesting 至 canary，00005 的合法边）的节点，
- * 由后端一步推到 active 并把服务器置 ready；接入流程本身只推到 attesting，此外没有别的路径
+ * 「上线」给还没上过线的草稿节点用：后端一步推到 active，并把所在服务器置为就绪（服务器还没就绪时也能用）；停用后再恢复用「启用」。
  */
-const ACTIVATABLE_LIFECYCLES = ['attesting', 'installing', 'validating', 'standby', 'canary'] as const
-export const canActivate = (n: Pick<NodeRow, 'status'>) => (ACTIVATABLE_LIFECYCLES as readonly string[]).includes(n.status)
+export const canActivate = (n: Pick<NodeRow, 'serving_status'>) => n.serving_status === 'draft'
 
 /**
  * R113 上线响应的 warnings → 带下一步的提示（Toast 用普通语气，不是错误）。首次搭建时池还没绑套餐是正常流程：

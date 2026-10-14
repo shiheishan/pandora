@@ -29,7 +29,7 @@ interface Node {
   node_no: number
   row_version: number
   name: string
-  status: string
+  deleted: boolean
   serving_status: string
   server_id: string | null
   pool_id: string | null
@@ -63,7 +63,7 @@ function node(p: Partial<Node> & Pick<Node, 'name' | 'node_type' | 'serving_stat
     id: randomUUID(),
     node_no: nodeNo,
     row_version: 3,
-    status: p.serving_status === 'draft' ? 'draft' : p.serving_status === 'retired' ? 'retired' : 'active',
+    deleted: false,
     server_id: serverAt(server).id,
     pool_id: pools[0]!.id,
     server_host: `n${nodeNo}.example.test`,
@@ -98,27 +98,18 @@ const store: Node[] = [
   node({ name: '台北 01', node_type: 'vmess', serving_status: 'retired', country_code: 'TW', last_heartbeat_at: ago(86400 * 9), protocol_config: { network: 'ws', tls: 0 } }, 5),
   // R105：在役但没划进节点池，不服务任何用户
   node({ name: '香港 03（未入池）', node_type: 'shadowsocks', serving_status: 'active', country_code: 'HK', server_port: 8389, pool_id: null, protocol_config: { cipher: 'aes-256-gcm' } }, 0),
-  // R108：新服务器（大阪，草稿）上刚接入完的节点，生命周期停在 attesting，等「上线」一步推到 active
-  node({ name: '大阪 01（待上线）', node_type: 'shadowsocks', serving_status: 'draft', status: 'attesting', country_code: 'JP', server_port: 8388, last_heartbeat_at: ago(20), identity_serial: 1, pool_id: pools[1]!.id, protocol_config: { cipher: 'aes-256-gcm' } }, 7),
+  // R108：新服务器（大阪，草稿）上刚接入完的草稿节点，等「上线」一步推到 active
+  node({ name: '大阪 01（待上线）', node_type: 'shadowsocks', serving_status: 'draft', country_code: 'JP', server_port: 8388, last_heartbeat_at: ago(20), identity_serial: 1, pool_id: pools[1]!.id, protocol_config: { cipher: 'aes-256-gcm' } }, 7),
   // R113：同一台新服务器上、划进还没绑套餐的新池的节点——首次搭建的常态，上线成功但带 warnings
-  node({ name: '大阪 02（新池待上线）', node_type: 'shadowsocks', serving_status: 'draft', status: 'attesting', country_code: 'JP', server_port: 8389, last_heartbeat_at: ago(20), identity_serial: 1, pool_id: pools[4]!.id, protocol_config: { cipher: 'aes-256-gcm' } }, 7),
+  node({ name: '大阪 02（新池待上线）', node_type: 'shadowsocks', serving_status: 'draft', country_code: 'JP', server_port: 8389, last_heartbeat_at: ago(20), identity_serial: 1, pool_id: pools[4]!.id, protocol_config: { cipher: 'aes-256-gcm' } }, 7),
 ]
-keepAlive(store, (n) => n.serving_status !== 'retired' && n.status !== 'destroyed' && !n.identityRevoked)
+keepAlive(store, (n) => n.serving_status !== 'retired' && !n.deleted && !n.identityRevoked)
 store[0]!.routing = { outbounds: [], routes: [{ priority: 10, matcher: { domain_suffix: ['openai.com'] }, outbound_tag: 'US-LAX-01', enabled: true, note: '' }] }
 
 const NO_POOL_NOTE = '未划入节点池，不服务任何用户'
 
-// R108：接入尾段的生命周期（attesting 之后、active 之前），「上线」按 00005 的合法边逐条推进到 active
-const ACTIVATABLE = ['attesting', 'installing', 'validating', 'standby', 'canary']
 // 服务器状态机里能进 ready 的状态（已 ready 的不动）
 const SERVER_TO_READY = ['draft', 'draining', 'maintenance']
-
-/** nodefabric.activateRefusal：不在接入尾段时为什么不能上线 */
-function activateRefusal(status: string): string {
-  if (['draft', 'provisioning', 'bootstrapping'].includes(status)) return `节点还没完成接入（${status}），等接入提交后再上线`
-  if (['provisioning_failed', 'bootstrap_failed', 'destroy_failed', 'quarantined', 'retired'].includes(status)) return `节点处于 ${status}，不能上线；需要重新接入或先处理这个状态`
-  return `节点处于 ${status}，不在接入尾段，请用启用或状态操作恢复服务`
-}
 
 /** nodefabric.activationWarnings：上线成功但不会服务任何人的提示（与 delivery_note 同口径，R105 / R113） */
 function activationWarnings(n: Node): string[] {
@@ -174,7 +165,6 @@ function listRow(n: Node) {
     node_no: n.node_no,
     row_version: n.row_version,
     name: n.name,
-    status: n.status,
     serving_status: n.serving_status,
     server_id: n.server_id,
     server_name: srv?.name ?? null,
@@ -279,7 +269,7 @@ function redact(value: unknown): unknown {
 function adminNode(n: Node, warnings?: string[]) {
   const pick = <K extends keyof Node>(...keys: K[]) => Object.fromEntries(keys.map((k) => [k, n[k]]))
   return {
-    ...pick('id', 'row_version', 'name', 'server_id', 'pool_id', 'status', 'serving_status', 'node_type', 'server_host', 'server_port', 'traffic_rate', 'display_name', 'country_code', 'protocol_schema_version', 'sort_order', 'created_at', 'updated_at'),
+    ...pick('id', 'row_version', 'name', 'server_id', 'pool_id', 'serving_status', 'node_type', 'server_host', 'server_port', 'traffic_rate', 'display_name', 'country_code', 'protocol_schema_version', 'sort_order', 'created_at', 'updated_at'),
     protocol_config: redact(n.protocol_config),
     config_validated_at: n.updated_at,
     ...(warnings?.length ? { warnings } : {}),
@@ -332,7 +322,7 @@ function basicErrors(body: Json, creating: boolean): Record<string, string> {
   return f
 }
 
-const findNode = (id: string | undefined) => store.find((n) => n.id === id && n.status !== 'destroyed')
+const findNode = (id: string | undefined) => store.find((n) => n.id === id && !n.deleted)
 
 /** 只给 tests/mock-admin-nodes.test.ts 核对 R106 / R107 的补回：接口永远抹掉敏感键，测试只能从库里看 */
 export const storedProtocolConfig = (id: string) => structuredClone(findNode(id)?.protocol_config ?? null)
@@ -365,7 +355,7 @@ export const nodes: MockModule = {
       const limit = Number(ctx.query.get('limit'))
       const offset = Number(ctx.query.get('offset')) || 0
       const rows = store
-        .filter((n) => n.status !== 'destroyed' && (withRetired || n.serving_status !== 'retired') && matchesState(n, state) && matchesSearch(n, q) && (!id || n.id === id))
+        .filter((n) => !n.deleted && (withRetired || n.serving_status !== 'retired') && matchesState(n, state) && matchesSearch(n, q) && (!id || n.id === id))
         .sort((a, b) => a.sort_order - b.sort_order || a.node_no - b.node_no)
       const size = limit >= 1 && limit <= 1000 ? limit : 500
       const page = rows.slice(offset, offset + size)
@@ -381,7 +371,7 @@ export const nodes: MockModule = {
         if (Object.keys(fields).length) return invalid(fields)
         const srv = servers.find((s) => s.id === body.server_id)!
         if (srv.status !== 'ready' && srv.status !== 'draft') return err(409, 'conflict', '目标服务器当前不接受节点')
-        if (store.some((n) => n.name === text(body.name).trim() && n.status !== 'destroyed')) return err(409, 'conflict', '节点名称已存在')
+        if (store.some((n) => n.name === text(body.name).trim() && !n.deleted)) return err(409, 'conflict', '节点名称已存在')
         const n = node({
           name: text(body.name).trim(),
           node_type: text(body.node_type),
@@ -441,11 +431,11 @@ export const nodes: MockModule = {
         if (!src) return notFound('节点不存在')
         if (body.row_version !== src.row_version) return conflict(src)
         const name = text(body.name).trim() || `${src.name}-copy`
-        if (store.some((n) => n.name === name && n.status !== 'destroyed')) return err(409, 'conflict', '节点名称已存在')
+        if (store.some((n) => n.name === name && !n.deleted)) return err(409, 'conflict', '节点名称已存在')
         const target = body.target_server_id ? servers.find((s) => s.id === body.target_server_id) : servers.find((s) => s.id === src.server_id)
         if (!target) return invalid({ target_server_id: '服务器不存在' })
         if (target.status !== 'ready') return err(409, 'conflict', '目标服务器当前不接受节点')
-        const copy = node({ ...structuredClone({ ...src, routing: body.copy_routing ? src.routing : { outbounds: [], routes: [] } }), name, serving_status: 'draft', status: 'draft', last_heartbeat_at: null, identity_serial: null, online_users: 0, online_ips: 0, traffic_bytes_24h: 0, serverToken: { present: false } })
+        const copy = node({ ...structuredClone({ ...src, routing: body.copy_routing ? src.routing : { outbounds: [], routes: [] } }), name, serving_status: 'draft', last_heartbeat_at: null, identity_serial: null, online_users: 0, online_ips: 0, traffic_bytes_24h: 0, serverToken: { present: false } })
         // node() 先给新 id 与编号，再被源节点的字段覆盖：复制出来的必须是新节点
         copy.id = randomUUID()
         copy.node_no = nodeNo
@@ -511,7 +501,6 @@ export const nodes: MockModule = {
         for (const it of items) {
           const n = findNode(text(it.id))!
           n.serving_status = to
-          if (to === 'active' && n.status === 'draft') n.status = 'active'
           touch(n)
         }
         return { status: 200, body: { ok: true, updated: items.length, serving_status: to } }
@@ -525,7 +514,7 @@ export const nodes: MockModule = {
         const name = text(body.node_name).trim()
         if (!name) return invalid({ node_name: '必填' })
         const n = store.find((x) => x.name === name)
-        if (n && (n.serving_status === 'retired' || n.status === 'destroyed')) return err(409, 'conflict', '已退役或销毁节点不能签发引导令牌')
+        if (n && (n.serving_status === 'retired' || n.deleted)) return err(409, 'conflict', '已退役或销毁节点不能签发引导令牌')
         const ttl = int(body.ttl_minutes)
         const minutes = ttl && ttl >= 1 && ttl <= 30 ? ttl : 20
         return {
@@ -545,15 +534,15 @@ export const nodes: MockModule = {
       const n = findNode(ctx.params.id)
       if (!n) return reply(ctx, notFound('节点不存在'))
       if (int(body.row_version) && body.row_version !== n.row_version) return reply(ctx, conflict(n))
-      if (n.serving_status === 'active') return ctx.fail(422, 'validation_failed', '节点还在服务中')
-      if (!['draft', 'provisioning_failed', 'bootstrap_failed', 'retired', 'destroy_failed'].includes(n.status)) return ctx.fail(422, 'validation_failed', '节点当前状态不能直接销毁，请先将其退役')
-      n.status = 'destroyed'
-      n.name = `${n.name}#destroyed-${Date.now()}`
+      if (n.serving_status !== 'draft' && n.serving_status !== 'retired') return ctx.fail(422, 'validation_failed', '节点还在服务或已停用，先退役再删除')
+      n.serving_status = 'retired'
+      n.deleted = true
+      n.name = `${n.name}#deleted-${Date.now()}`
       ctx.send(200, { deleted: true })
     },
     // R108 / R113：一步上线，照 nodefabric.ActivateNode：幂等 node_activate、无 reauth；
-    // 判断顺序同 Go——版本号非法 400、节点不存在 404、已是 active 回 200 不改动（先于版本号）、版本冲突 409，
-    // 再依次是接入尾段、节点身份、协议就绪、服务器；服务器跟着进 ready；warnings 没有提示时不出现
+    // 判断顺序同 Go——版本号非法 422、节点不存在 404、已是 active 回 200 不改动（先于版本号）、版本冲突 409、
+    // retired 409、协议就绪、未绑服务器、服务器不存在、节点身份、服务器状态；服务器跟着进 ready；warnings 没有提示时不出现
     'POST /v1/nodes/:id/activate': async (ctx) => {
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
@@ -563,16 +552,15 @@ export const nodes: MockModule = {
         if (!(typeof body.row_version === 'number' && body.row_version > 0)) return invalid({ row_version: '必须提供正整数版本号' })
         const n = findNode(ctx.params.id)
         if (!n) return notFound('节点不存在')
-        if (n.status === 'active') return { status: 200, body: adminNode(n, activationWarnings(n)) }
+        if (n.serving_status === 'active') return { status: 200, body: adminNode(n, activationWarnings(n)) }
         if (body.row_version !== n.row_version) return conflict(n)
-        if (!ACTIVATABLE.includes(n.status)) return err(409, 'conflict', activateRefusal(n.status))
-        if (!n.identity_serial || n.identityRevoked) return err(409, 'conflict', '节点没有有效的节点身份，请重新接入后再上线')
+        if (n.serving_status === 'retired') return err(409, 'conflict', '节点已退役，不能上线')
         if (!n.node_type || n.server_port === null) return err(409, 'conflict', '节点的协议配置还没就绪（协议类型、端口与稳定协议配置），先保存协议再上线')
         if (!n.server_id) return err(409, 'conflict', '节点没有绑定服务器，不能上线')
         const srv = servers.find((s) => s.id === n.server_id)
         if (!srv) return err(409, 'conflict', '节点所在的服务器已删除，不能上线')
+        if (!n.identity_serial || n.identityRevoked) return err(409, 'conflict', '服务器还没接入（先在服务器页生成安装命令完成接入）')
         if (srv.status !== 'ready' && !SERVER_TO_READY.includes(srv.status)) return err(409, 'conflict', `节点所在的服务器处于 ${srv.status}，不能进入 ready，先处理服务器状态再上线`)
-        n.status = 'active'
         n.serving_status = 'active'
         srv.status = 'ready'
         touch(n)
@@ -590,7 +578,6 @@ export const nodes: MockModule = {
         if (body.row_version !== n.row_version) return conflict(n)
         if (n.serving_status === 'retired') return err(409, 'conflict', '节点已经退役')
         n.serving_status = 'retired'
-        if (n.status !== 'draft') n.status = 'retired'
         n.identityRevoked = true
         touch(n)
         return { status: 200, body: adminNode(n) }

@@ -143,29 +143,17 @@ function ServerNodes({ serverId }: { serverId: string }) {
     <QueryView query={nodes} rows={3} isEmpty={(d) => d.length === 0} empty={<Empty bare title="这台服务器上还没有节点" description="在「节点」标签新建节点时选这台服务器。" />}>
       {(rows) => (
         <div className={x.nodeList}>
-          {rows.map((n) => {
-            const gone = n.status === 'destroyed'
-            const body = (
-              <>
-                <span>
-                  <span>{n.name}</span>
-                  {n.display_name && <span className={css.faint}> · {n.display_name}</span>}
-                  <div className={`${css.mono} ${css.faint}`}>{n.server_host ? `${n.server_host}${n.server_port ? `:${n.server_port}` : ''}` : '未设置地址'}</div>
-                </span>
-                <span className={css.muted}>{protocolLabel(n.node_type)}</span>
-                <span className={css.faint}>{gone ? '已销毁' : (SERVING_LABEL[n.serving_status] ?? n.serving_status)}</span>
-              </>
-            )
-            return gone ? (
-              <div key={n.id} className={`${x.nodeItem} ${x.nodeGone}`}>
-                {body}
-              </div>
-            ) : (
-              <button key={n.id} type="button" className={x.nodeItem} onClick={() => navigate(`/nodes/nodes/${n.id}`)} aria-label={`打开节点 ${n.name}`}>
-                {body}
-              </button>
-            )
-          })}
+          {rows.map((n) => (
+            <button key={n.id} type="button" className={x.nodeItem} onClick={() => navigate(`/nodes/nodes/${n.id}`)} aria-label={`打开节点 ${n.name}`}>
+              <span>
+                <span>{n.name}</span>
+                {n.display_name && <span className={css.faint}> · {n.display_name}</span>}
+                <div className={`${css.mono} ${css.faint}`}>{n.server_host ? `${n.server_host}${n.server_port ? `:${n.server_port}` : ''}` : '未设置地址'}</div>
+              </span>
+              <span className={css.muted}>{protocolLabel(n.node_type)}</span>
+              <span className={css.faint}>{SERVING_LABEL[n.serving_status] ?? n.serving_status}</span>
+            </button>
+          ))}
         </div>
       )}
     </QueryView>

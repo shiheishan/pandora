@@ -52,7 +52,6 @@ const row = (over: Partial<Record<string, unknown>> = {}): NodeDetail =>
     node_no: 101,
     row_version: 5,
     name: '香港 01',
-    status: 'active',
     serving_status: 'active',
     server_id: 's1',
     server_name: 'hk-hkg-edge-1',
@@ -248,9 +247,11 @@ describe('protocol form', () => {
     expect(toProtocolConfig(hy, {}, undefined, { keepSecrets: false }).errors).toMatchObject({ cert_path: '必填' })
   })
 
-  it('R108: offers 上线 only while the lifecycle sits between attesting and canary', () => {
-    for (const status of ['attesting', 'installing', 'validating', 'standby', 'canary']) expect(canActivate({ status })).toBe(true)
-    for (const status of ['draft', 'bootstrapping', 'active', 'retired', 'destroyed', 'bootstrap_failed', 'quarantined']) expect(canActivate({ status })).toBe(false)
+  it('R108: offers 上线 only for draft nodes', () => {
+    expect(canActivate({ serving_status: 'draft' })).toBe(true)
+    for (const serving_status of ['active', 'disabled', 'retired'] as const) {
+      expect(canActivate({ serving_status })).toBe(false)
+    }
   })
 
   it('R113: activation warnings read as next-step hints, unknown ones pass through', () => {

@@ -69,7 +69,6 @@ const node = (over: Partial<Record<string, unknown>>): NodeRow =>
     node_no: 1,
     row_version: 1,
     name: 'n',
-    status: 'active',
     serving_status: 'active',
     server_id: 's1',
     server_name: null,
