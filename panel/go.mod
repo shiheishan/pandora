@@ -35,7 +35,19 @@ require (
 	gorm.io/gorm v1.31.2
 )
 
-require google.golang.org/genproto/googleapis/rpc v0.0.0-20261005182115-fad411399dd8 // indirect
+require (
+	github.com/beorn7/perks v1.0.1 // indirect
+	github.com/grpc-ecosystem/go-grpc-middleware/providers/prometheus v1.1.0 // indirect
+	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.1.0 // indirect
+	github.com/hibiken/asynq/x v0.0.0-20260612090333-d135f1439bee // indirect
+	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
+	github.com/prometheus/client_golang v1.24.1 // indirect
+	github.com/prometheus/client_model v0.6.2 // indirect
+	github.com/prometheus/common v0.70.1 // indirect
+	github.com/prometheus/procfs v0.22.0 // indirect
+	github.com/redis/go-redis/extra/redisprometheus/v9 v9.21.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20261005182115-fad411399dd8 // indirect
+)
 
 require (
 	github.com/aegispanel/nodeapi v0.0.0-00010101000000-000000000000
