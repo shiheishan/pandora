@@ -222,7 +222,7 @@ func (e *oeEnv) oeMkPlan(t *testing.T, ctx context.Context, unitCents int64) (pl
 		versionID, catalogsvc.MetricTraffic, "cycle", 100*oeGib)
 	e.oeMustExec(t, ctx, `UPDATE plan_versions SET status = 'published', frozen_at = now() WHERE id = ?`, versionID)
 	e.oeMustExec(t, ctx, `UPDATE plans SET status = 'active', current_version_id = ? WHERE id = ?`, versionID, planID)
-	if err := e.row(ctx, `INSERT INTO prices (plan_id, currency, unit_amount, billing_interval, interval_count) VALUES (?, 'CNY', ?, 'month', 1) RETURNING id`,
+	if err := e.row(ctx, `INSERT INTO prices (plan_id, currency, unit_amount, billing_interval, interval_count) VALUES (?, 'USD', ?, 'month', 1) RETURNING id`,
 		planID, money.FromCents(unitCents)).Scan(&priceID); err != nil {
 		t.Fatal(err)
 	}
@@ -247,17 +247,17 @@ func (e *oeEnv) oeMkDemoProvider(t *testing.T, ctx context.Context, code string)
 	}
 	e.oeMustExec(t, ctx, `
 INSERT INTO payment_providers (id, code, adapter, display_name, credentials_sealed, currencies, base_url, min_amount, enabled, accepting_new)
-VALUES (?, ?, 'demo_hmac', 'Demo', ?, '["CNY"]'::jsonb, 'https://checkout.example.test', 0.01, true, true)`,
+VALUES (?, ?, 'demo_hmac', 'Demo', ?, '["USD"]'::jsonb, 'https://checkout.example.test', 0.01, true, true)`,
 		id, code, sealed)
 }
 
 func oeDemoInbound(eventID, eventType, paymentRef, orderNo string, cents int64) provider.Inbound {
 	body, _ := json.Marshal(map[string]any{
 		"event_id": eventID, "event_type": eventType, "payment_id": paymentRef,
-		"order_no": orderNo, "amount": cents, "currency": "CNY", "fee": 0, "method": "alipay",
+		"order_no": orderNo, "amount": cents, "currency": "USD", "fee": 0, "method": "alipay",
 	})
 	h := http.Header{}
-	h.Set("X-Aegis-Signature", demo.Sign([]byte(oeDemoSecret), eventID, eventType, paymentRef, orderNo, cents, 0, "CNY"))
+	h.Set("X-Aegis-Signature", demo.Sign([]byte(oeDemoSecret), eventID, eventType, paymentRef, orderNo, cents, 0, "USD"))
 	return provider.Inbound{Method: http.MethodPost, Header: h, Body: body}
 }
 
@@ -294,10 +294,10 @@ func oeCount(t *testing.T, e *oeEnv, ctx context.Context, q string, args ...any)
 	return n
 }
 
-func oeCNYBalance(t *testing.T, e *oeEnv, ctx context.Context, user uuid.UUID, typ ledgersvc.AccountType) decimal.Decimal {
+func oeUSDBalance(t *testing.T, e *oeEnv, ctx context.Context, user uuid.UUID, typ ledgersvc.AccountType) decimal.Decimal {
 	t.Helper()
 	var bal decimal.Decimal
-	if err := e.row(ctx, `SELECT COALESCE((SELECT balance FROM ledger_accounts WHERE account_type = ? AND owner_user_id = ? AND currency = 'CNY'), 0)`,
+	if err := e.row(ctx, `SELECT COALESCE((SELECT balance FROM ledger_accounts WHERE account_type = ? AND owner_user_id = ? AND currency = 'USD'), 0)`,
 		string(typ), user).Scan(&bal); err != nil {
 		t.Fatal(err)
 	}
@@ -394,13 +394,13 @@ func TestOrderSettlementAccruesCommission(t *testing.T) {
 		Scan(&gotReferrer, &commAmt, &currency, &reviewReq); err != nil {
 		t.Fatal(err)
 	}
-	if gotReferrer != referrer || !commAmt.Equal(dec2("10.00")) || currency != "CNY" || reviewReq {
+	if gotReferrer != referrer || !commAmt.Equal(dec2("10.00")) || currency != "USD" || reviewReq {
 		t.Fatalf("条目 referrer=%s amount=%s currency=%s review=%v", gotReferrer, commAmt, currency, reviewReq)
 	}
 	if n := oeCount(t, e, ctx, `SELECT count(*) FROM ledger_transactions WHERE kind = 'commission_accrued' AND source_id = ?`, orderID); n != 1 {
 		t.Fatalf("commission_accrued %d 笔", n)
 	}
-	if bal := oeCNYBalance(t, e, ctx, referrer, ledgersvc.UserCommissionPending); !bal.Equal(dec2("10.00")) {
+	if bal := oeUSDBalance(t, e, ctx, referrer, ledgersvc.UserCommissionPending); !bal.Equal(dec2("10.00")) {
 		t.Fatalf("待结佣金 %s", bal)
 	}
 	// 同一回调原样重推：结算只发生一次，佣金也只计一次
@@ -463,7 +463,7 @@ func TestOrderSettlementHookFailureRollsBack(t *testing.T) {
 	if n := oeCount(t, e, ctx, `SELECT count(*) FROM ledger_transactions WHERE kind = 'commission_accrued' AND source_id = ?`, orderID); n != 0 {
 		t.Fatalf("commission_accrued 应回滚，得到 %d", n)
 	}
-	if bal := oeCNYBalance(t, e, ctx, referrer, ledgersvc.UserCommissionPending); !bal.IsZero() {
+	if bal := oeUSDBalance(t, e, ctx, referrer, ledgersvc.UserCommissionPending); !bal.IsZero() {
 		t.Fatalf("待结佣金应为 0，得到 %s", bal)
 	}
 	hook.fail.Store(false)
@@ -483,7 +483,7 @@ func TestOrderSettlementHookFailureRollsBack(t *testing.T) {
 	if n := oeCount(t, e, ctx, `SELECT count(*) FROM ledger_transactions WHERE kind = 'commission_accrued' AND source_id = ?`, orderID); n != 1 {
 		t.Fatalf("commission_accrued %d 笔", n)
 	}
-	if bal := oeCNYBalance(t, e, ctx, referrer, ledgersvc.UserCommissionPending); !bal.Equal(dec2("10.00")) {
+	if bal := oeUSDBalance(t, e, ctx, referrer, ledgersvc.UserCommissionPending); !bal.Equal(dec2("10.00")) {
 		t.Fatalf("待结佣金 %s", bal)
 	}
 	oeAssertNoDrift(t, e, ctx)

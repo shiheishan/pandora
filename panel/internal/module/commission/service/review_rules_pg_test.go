@@ -58,15 +58,15 @@ func TestVoidedOnlyCurrencyIgnored(t *testing.T) {
 	admin := newUser(t, e, ctx)
 	setConfig(t, e, ctx, admin, 10, 0, "1.00", "every_order")
 	referrer := newUser(t, e, ctx)
-	// 站点币种是 testCurrency（USD）；这条佣金是 CNY
-	id := newReviewEntryIn(t, e, ctx, referrer, newUser(t, e, ctx), "100.00", money.CNY)
+	// 站点币种是 testCurrency（CNY）；这条佣金是 USD
+	id := newReviewEntryIn(t, e, ctx, referrer, newUser(t, e, ctx), "100.00", money.USD)
 
 	mc, err := e.svc.MyCommission(ctx, referrer)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mc.Summary.Currency != money.CNY {
-		t.Fatalf("作废前汇总币种 %s，应为唯一有佣金的 CNY", mc.Summary.Currency)
+	if mc.Summary.Currency != money.USD {
+		t.Fatalf("作废前汇总币种 %s，应为唯一有佣金的 USD", mc.Summary.Currency)
 	}
 	if _, err := e.svc.ReviewEntry(adminCtx(ctx, admin), id, false, "同源刷单确认"); err != nil {
 		t.Fatal(err)

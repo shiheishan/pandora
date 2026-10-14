@@ -8,7 +8,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
-// 「首单」口径下同一被推荐人的 CNY 单与 USD 单并发结算（两单不共用平台收入科目锁）：
+// 「首单」口径下同一被推荐人的 USD 单与 CNY 单并发结算（两单不共用平台收入科目锁）：
 // 被推荐人咨询锁让两边串行，只出一条佣金。去掉 LockReferee 这里会出两条。
 func TestFirstOrderConcurrentCurrencies(t *testing.T) {
 	e, _ := newEnv(t)
@@ -31,7 +31,7 @@ func TestFirstOrderConcurrentCurrencies(t *testing.T) {
 	for round := 0; round < 5; round++ {
 		referrer, referee := newUser(t, e, ctx), newUser(t, e, ctx)
 		refer(e, referee, referrer)
-		orders := []money.Currency{money.CNY, money.USD}
+		orders := []money.Currency{money.USD, money.CNY}
 		var wg sync.WaitGroup
 		errsCh := make(chan error, len(orders))
 		start := make(chan struct{})
