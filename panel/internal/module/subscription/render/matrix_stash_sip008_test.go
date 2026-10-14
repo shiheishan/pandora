@@ -57,19 +57,19 @@ func stashCell(name string, clash cell) cell {
 		if strings.Contains(part, "v2ray-http-upgrade") {
 			continue
 		}
-		c = c.has(part)
+		c = c.with(part)
 	}
 	if strings.HasPrefix(name, "hy2") {
-		c = c.has(`auth: "` + fixtureUUID + `"`).without(`password: "` + fixtureUUID + `"`)
+		c = c.with(`auth: "` + fixtureUUID + `"`).without(`password: "` + fixtureUUID + `"`)
 	}
 	if name == "tuic" {
-		c = c.has(`version: 5`)
+		c = c.with(`version: 5`)
 	}
 	if strings.HasPrefix(name, "vless") || strings.HasPrefix(name, "vmess") {
 		for _, part := range clash.has {
 			if strings.HasPrefix(part, `servername: "`) {
 				sni := strings.Replace(part, "servername", "sni", 1)
-				c = c.has(sni)
+				c = c.with(sni)
 			}
 		}
 	}
@@ -115,3 +115,6 @@ func sip008Text(s *sip008Server) string {
 	}
 	return string(b)
 }
+
+// with 在格上追加必须包含的子串（cell 的字段就叫 has，方法不能同名）。
+func (c cell) with(p ...string) cell { c.has = append(c.has, p...); return c }

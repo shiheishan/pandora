@@ -61,6 +61,8 @@ func (h *Handler) subscribe(c *gin.Context) {
 		Prefix: c.Param("prefix"),
 		Token:  c.Param("token"),
 		Target: subscribeTarget(c),
+		Types:  c.Query("types"),
+		Filter: c.Query("filter"),
 	})
 	if err != nil {
 		if errors.Is(err, service.ErrPullDenied) {

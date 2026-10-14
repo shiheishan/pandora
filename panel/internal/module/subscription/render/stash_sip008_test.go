@@ -41,7 +41,7 @@ func TestSIP008Render(t *testing.T) {
 		t.Error("missing method")
 	}
 
-	withStatus := RenderRequest(Request{
+	withStatus, _, _ := RenderRequest(Request{
 		Format: FormatSIP008, Nodes: ssOnly, ProxyUUID: fixtureUUID,
 		Status: Status{Total: 100, Download: 30},
 	})
@@ -49,7 +49,7 @@ func TestSIP008Render(t *testing.T) {
 		t.Errorf("bytes_remaining: %s", withStatus)
 	}
 
-	noTotal := RenderRequest(Request{
+	noTotal, _, _ := RenderRequest(Request{
 		Format: FormatSIP008, Nodes: ssOnly, ProxyUUID: fixtureUUID,
 		Status: Status{Total: 0, Download: 30},
 	})
@@ -57,8 +57,10 @@ func TestSIP008Render(t *testing.T) {
 		t.Error("Total=0 should omit bytes_*")
 	}
 
-	id1 := string(RenderRequest(Request{Format: FormatSIP008, Nodes: ssOnly, ProxyUUID: fixtureUUID}))
-	id2 := string(RenderRequest(Request{Format: FormatSIP008, Nodes: ssOnly, ProxyUUID: fixtureUUID}))
+	id1b, _, _ := RenderRequest(Request{Format: FormatSIP008, Nodes: ssOnly, ProxyUUID: fixtureUUID})
+	id1 := string(id1b)
+	id2b, _, _ := RenderRequest(Request{Format: FormatSIP008, Nodes: ssOnly, ProxyUUID: fixtureUUID})
+	id2 := string(id2b)
 	if id1 != id2 {
 		t.Error("same node should yield same id")
 	}
@@ -87,7 +89,7 @@ func TestShadowrocketSTATUS(t *testing.T) {
 		t.Fatalf("expire: %s", first)
 	}
 
-	inf := RenderRequest(Request{
+	inf, _, _ := RenderRequest(Request{
 		Format: FormatShadowrocket, Nodes: loadGroup(t, groupForm), ProxyUUID: fixtureUUID,
 		Status: Status{Total: 0},
 	})

@@ -168,13 +168,15 @@ func TestSetSubscriptionExtrasInvalidLinkBaseURLs(t *testing.T) {
 	for i := range many {
 		many[i] = "https://n" + string(rune('0'+i)) + ".example.com"
 	}
-	if err := s.SetSubscriptionExtras(ctx, SubscriptionExtrasUpdate{LinkBaseURLs: &many}); err == nil {
+	err := s.SetSubscriptionExtras(ctx, SubscriptionExtrasUpdate{LinkBaseURLs: &many})
+	if err == nil {
 		t.Fatal("11 urls: expected error")
 	}
 	assertFieldValidation(t, err, "link_base_urls")
 
 	long := []string{"https://" + strings.Repeat("x", 250)}
-	if err := s.SetSubscriptionExtras(ctx, SubscriptionExtrasUpdate{LinkBaseURLs: &long}); err == nil {
+	err = s.SetSubscriptionExtras(ctx, SubscriptionExtrasUpdate{LinkBaseURLs: &long})
+	if err == nil {
 		t.Fatal("long url: expected error")
 	}
 	assertFieldValidation(t, err, "link_base_urls")
@@ -189,7 +191,8 @@ func TestSubscriptionExtrasCorruptLinkBaseURLs(t *testing.T) {
 		keySubscriptionLinkBaseURLs: json.RawMessage(`"oops"`),
 	}}
 	s := newSubscriptionExtrasService(st, &auditLog{})
-	if _, err := s.SubscriptionExtras(context.Background()); err == nil {
+	_, err := s.SubscriptionExtras(context.Background())
+	if err == nil {
 		t.Fatal("expected error")
 	}
 	if errs.As(err).Code != errs.Internal {

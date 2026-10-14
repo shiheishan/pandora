@@ -220,6 +220,8 @@ func buildServices(r *runtime) (*services, error) {
 		Hasher:        keys,
 		Limiter:       limiter,
 		PublicBaseURL: cfg.PublicBaseURL,
+		// 订阅附加设置（信息节点、协议前缀、订阅域名）也在 settings
+		Extras: settingsSvc,
 		Render: render.Options{Singbox: render.SingboxTemplate{
 			GeositeURLPrefix: cfg.Subscription.Singbox.GeositeURLPrefix,
 			GeoIPURLPrefix:   cfg.Subscription.Singbox.GeoIPURLPrefix,

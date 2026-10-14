@@ -31,6 +31,10 @@ func (s *Service) MyLinks(ctx context.Context) ([]Link, error) {
 		return nil, subErr(err)
 	}
 	now := s.clock()
+	base, err := s.linkBase(ctx, d)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]Link, 0, len(rows))
 	for _, row := range rows {
 		plain, err := s.sealer.Open(row.TokenEncrypted, CredentialAAD(row.SubscriptionID))
@@ -40,7 +44,7 @@ func (s *Service) MyLinks(ctx context.Context) ([]Link, error) {
 		}
 		out = append(out, Link{
 			SubscriptionID:     row.SubscriptionID,
-			URL:                linkURL(d.PublicBaseURL, prefix, string(plain)),
+			URL:                linkURL(base, prefix, string(plain)),
 			FetchCount:         row.FetchCount,
 			LastFetchedAt:      row.LastFetchedAt,
 			DistinctSources24h: row.DistinctSources,
