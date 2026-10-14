@@ -6,7 +6,9 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"net"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -14,10 +16,24 @@ import (
 	"github.com/google/uuid"
 
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
+	idemsvc "github.com/aegispanel/aegis/internal/module/idempotency/service"
 	"github.com/aegispanel/aegis/internal/module/node/model"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
+
+// errIdemNotWired 是签安装令牌时带了幂等认领但未装配完成端口。
+var errIdemNotWired = errors.New("node: 幂等完成端口未装配，拒绝签发以免令牌明文落进幂等表")
+
+// IdemCompleter 是幂等 service 在业务事务内以「不可重放」完成认领的方法；*idemsvc.Service 直接满足。
+type IdemCompleter interface {
+	CompleteUnreplayable(ctx context.Context, c *idemsvc.Claim, status int) error
+}
+
+var _ IdemCompleter = (*idemsvc.Service)(nil)
+
+// UseIdempotency 注入幂等完成端口；只在启动装配时调用（不并发安全），签安装令牌要用它。
+func (s *Service) UseIdempotency(c IdemCompleter) { s.idem = c }
 
 const (
 	bootstrapTTLDefault = 20 // 分钟
@@ -33,7 +49,7 @@ type BootstrapTokenIssued struct {
 }
 
 // IssueBootstrapToken 给服务器签一张一次性安装令牌（ttlMinutes 为 0 用缺省 20 分钟，1–60），返回令牌与安装命令。
-// 服务器不存在回 NotFound；已删除或已退役回 409。
+// 服务器不存在回 NotFound；已删除或已退役回 409。带幂等认领（经幂等中间件）时在同一事务里以不可重放完成认领。
 func (s *Service) IssueBootstrapToken(ctx context.Context, serverID uuid.UUID, ttlMinutes int) (BootstrapTokenIssued, error) {
 	ttl := ttlMinutes
 	if ttl == 0 {
@@ -105,6 +121,14 @@ func (s *Service) IssueBootstrapToken(ctx context.Context, serverID uuid.UUID, t
 			Token:          token,
 			ExpiresAt:      exp,
 			InstallCommand: buildInstallCommand(s.enroll.install, s.enroll.ca.Fingerprint(), token),
+		}
+		// 响应里有令牌明文和整条安装命令：幂等认领在业务事务里完成成「不可重放」，响应体不落进幂等表
+		// （否则明文令牌会在库里存到幂等记录过期，而 bootstrap_tokens 刻意只存哈希）。重放回 409，管理员重新签一张即可。
+		if claim, ok := idemsvc.ClaimFrom(ctx); ok {
+			if s.idem == nil {
+				return errs.Wrap(errs.Internal, errIdemNotWired)
+			}
+			return s.idem.CompleteUnreplayable(ctx, claim, http.StatusCreated)
 		}
 		return nil
 	})

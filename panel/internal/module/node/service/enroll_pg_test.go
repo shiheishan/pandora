@@ -3,20 +3,103 @@ package service
 // 安装令牌与接入（Enroll）的 PG 测试；环境与夹具在 identity_pg_test.go。
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
 	"errors"
 	"math/big"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/google/uuid"
 
+	idemsvc "github.com/aegispanel/aegis/internal/module/idempotency/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/reqid"
 )
+
+// nodeFakeIdem 记下以「不可重放」完成的幂等认领。
+type nodeFakeIdem struct {
+	unreplayable []*idemsvc.Claim
+	status       []int
+	err          error
+}
+
+func (f *nodeFakeIdem) CompleteUnreplayable(_ context.Context, c *idemsvc.Claim, status int) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.unreplayable = append(f.unreplayable, c)
+	f.status = append(f.status, status)
+	return nil
+}
+
+func bootstrapTokenCount(t *testing.T, ctx context.Context, e *identEnv, sid uuid.UUID) int64 {
+	var n int64
+	if err := e.row(ctx, `SELECT count(*) FROM bootstrap_tokens WHERE server_id = ?`, sid).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// 带幂等认领时在签发事务里以不可重放完成（状态 201）；未装配或完成失败时整个签发回滚。
+// 用真提交环境：回滚环境里 tx.Do 加入外层测试事务，签发失败不会回滚已插的令牌行，验不出 c、d。
+func TestIssueBootstrapTokenUnreplayablePG(t *testing.T) {
+	e, ctx := newIdentEnv(t, true)
+	sid := seedIdentServer(t, ctx, e, "ready")
+	claim := &idemsvc.Claim{Scope: "server_bootstrap_token", Key: "k1"}
+
+	// a：带 claim 且已装配 fake，事务内完成不可重放认领，状态码 201
+	fake := &nodeFakeIdem{}
+	e.svc.UseIdempotency(fake)
+	ctxClaim := idemsvc.WithClaim(e.admin, claim)
+	if _, err := e.svc.IssueBootstrapToken(ctxClaim, sid, 0); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.unreplayable) != 1 {
+		t.Fatalf("应 CompleteUnreplayable 1 次，得到 %d", len(fake.unreplayable))
+	}
+	if fake.unreplayable[0] != claim {
+		t.Fatal("认领指针应与 WithClaim 传入的一致")
+	}
+	if fake.status[0] != http.StatusCreated {
+		t.Fatalf("状态码应为 201，得到 %d", fake.status[0])
+	}
+
+	// b：不带 claim，fake 次数不再增加
+	before := len(fake.unreplayable)
+	if _, err := e.svc.IssueBootstrapToken(e.admin, sid, 0); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.unreplayable) != before {
+		t.Fatalf("无 claim 时不应再调 CompleteUnreplayable，得到 %d 次", len(fake.unreplayable))
+	}
+
+	// c：带 claim 但未装配（nil），Internal 且令牌行数不增
+	e.svc.UseIdempotency(nil)
+	nBefore := bootstrapTokenCount(t, ctx, e, sid)
+	_, err := e.svc.IssueBootstrapToken(idemsvc.WithClaim(e.admin, &idemsvc.Claim{Scope: "server_bootstrap_token", Key: "k2"}), sid, 0)
+	if poolErrCode(err) != errs.Internal {
+		t.Fatalf("未装配应 Internal，得到 %v", err)
+	}
+	if bootstrapTokenCount(t, ctx, e, sid) != nBefore {
+		t.Fatal("未装配时事务应回滚，bootstrap_tokens 行数不变")
+	}
+
+	// d：fake 返回错误，带 claim 签发失败且行数不增
+	e.svc.UseIdempotency(&nodeFakeIdem{err: errors.New("idem fail")})
+	nBefore = bootstrapTokenCount(t, ctx, e, sid)
+	_, err = e.svc.IssueBootstrapToken(idemsvc.WithClaim(e.admin, &idemsvc.Claim{Scope: "server_bootstrap_token", Key: "k3"}), sid, 0)
+	if err == nil {
+		t.Fatal("fake 报错时应失败")
+	}
+	if bootstrapTokenCount(t, ctx, e, sid) != nBefore {
+		t.Fatal("CompleteUnreplayable 失败时事务应回滚，bootstrap_tokens 行数不变")
+	}
+}
 
 func TestIssueBootstrapTokenPG(t *testing.T) {
 	e, ctx := newIdentEnv(t, false)
