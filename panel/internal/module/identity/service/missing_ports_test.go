@@ -23,6 +23,7 @@ func TestMissingPortsZeroValueListsAllRequired(t *testing.T) {
 		"TrialGranter",
 		"AccountCloser",
 		"OrderCanceller",
+		"CommissionVoider",
 		"TelegramUnbinder",
 	}
 	got := s.MissingPorts()

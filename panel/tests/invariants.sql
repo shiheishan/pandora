@@ -10,7 +10,8 @@
 --   PAY-001 订单金额恒等式与人工单理由、MKT-003 邀请关系、PAY-003 幂等唯一键、MKT-001 优惠券容量、
 --   NFR-008 降级开关、OPS-005 事务类通知、OPS-001 内部备注、USE-002（改成 node_traffic_reports 唯一键）、
 --   SUB-007 试用防刷（subscription_trials 每人终身一次）、
---   XB-COMM（对齐 Xboard 的三级分销与自动转余额标记、提现方式与 USDT 打款、按用户单独佣金设置）。
+--   XB-COMM（对齐 Xboard 的三级分销与自动转余额标记、提现方式与 USDT 打款、按用户单独佣金设置）、
+--   XB-REG 注销作废可提现佣金（commission_forfeitures 每人每币种一行、只追加）。
 --
 -- 不覆盖的验收项及原因（没有对应的表或机制）：
 --   SEC-013 双人审批 — 没有审批表：后台权限只分有和没有。
@@ -925,6 +926,54 @@ SELECT _accept('XB-COMM', '支付宝打款流水号不受哈希形状约束', $s
   SELECT '00000000-0000-7000-8000-000000000103', 'USD', 1.00, '\x01'::bytea, 'alipay', 'paid',
          now(), 'ALIPAY-INV-0001', t.id, now() FROM t;
 $sql$);
+
+--------------------------------------------------------------------------------
+-- XB-REG 注销作废可提现佣金（00042_commission_forfeitures.sql：每人每币种最多一行、只追加）
+--------------------------------------------------------------------------------
+
+SELECT _accept('XB-REG', '注销作废记录带对应的冲回交易可以写入', $sql$
+  WITH t AS (
+    INSERT INTO ledger_transactions (id, kind, currency, actor_kind)
+    VALUES ('00000000-0000-7000-8000-000000000361', 'commission_voided', 'USD', 'system')
+    RETURNING id
+  ), le AS (
+    INSERT INTO ledger_entries (transaction_id, account_id, currency, direction, amount)
+    SELECT t.id, v.account_id, 'USD', v.direction, 1.00
+      FROM t, (VALUES ('00000000-0000-7000-8000-000000000202'::uuid, 'debit'),
+                      ('00000000-0000-7000-8000-000000000203'::uuid, 'credit')) AS v(account_id, direction)
+  )
+  INSERT INTO commission_forfeitures (id, user_id, currency, amount, reason, ledger_txn_id)
+  SELECT '00000000-0000-7000-8000-000000000371', '00000000-0000-7000-8000-000000000102', 'USD', 1.00,
+         'account_deleted', t.id FROM t;
+$sql$);
+SELECT _reject('XB-REG', '同一人同一币种第二次作废必须拒绝', $sql$
+  WITH t AS (
+    INSERT INTO ledger_transactions (id, kind, currency, actor_kind)
+    VALUES ('00000000-0000-7000-8000-000000000362', 'commission_voided', 'USD', 'system')
+    RETURNING id
+  ), le AS (
+    INSERT INTO ledger_entries (transaction_id, account_id, currency, direction, amount)
+    SELECT t.id, v.account_id, 'USD', v.direction, 1.00
+      FROM t, (VALUES ('00000000-0000-7000-8000-000000000202'::uuid, 'debit'),
+                      ('00000000-0000-7000-8000-000000000203'::uuid, 'credit')) AS v(account_id, direction)
+  )
+  INSERT INTO commission_forfeitures (id, user_id, currency, amount, reason, ledger_txn_id)
+  SELECT '00000000-0000-7000-8000-000000000372', '00000000-0000-7000-8000-000000000102', 'USD', 1.00,
+         'account_deleted', t.id FROM t;
+$sql$, 'commission_forfeitures_user_currency_key');
+SELECT _reject('XB-REG', '作废金额为 0 必须拒绝', $sql$
+  INSERT INTO commission_forfeitures (id, user_id, currency, amount, reason, ledger_txn_id)
+  VALUES ('00000000-0000-7000-8000-000000000373', '00000000-0000-7000-8000-000000000103', 'USD', 0.00,
+          'account_deleted', '00000000-0000-7000-8000-000000000361');
+$sql$, 'commission_forfeitures_amount_check');
+SELECT _reject('XB-REG', '作废原因不在清单里必须拒绝', $sql$
+  INSERT INTO commission_forfeitures (id, user_id, currency, amount, reason, ledger_txn_id)
+  VALUES ('00000000-0000-7000-8000-000000000374', '00000000-0000-7000-8000-000000000103', 'USD', 1.00,
+          'manual', '00000000-0000-7000-8000-000000000361');
+$sql$, 'commission_forfeitures_reason_check');
+SELECT _reject('XB-REG', '作废记录不可改', $sql$
+  UPDATE commission_forfeitures SET amount = 2.00 WHERE id = '00000000-0000-7000-8000-000000000371';
+$sql$, '是只追加的表');
 
 --------------------------------------------------------------------------------
 -- 汇总

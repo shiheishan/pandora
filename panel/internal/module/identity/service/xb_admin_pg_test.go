@@ -8,6 +8,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
 // 注销相关假端口。
@@ -31,6 +32,23 @@ func (f *fakeCanceller) CancelUserPending(_ context.Context, userID uuid.UUID) (
 	return f.n, nil
 }
 
+// fakeVoider 记下调用，返回固定的作废结果（commission 的真实作废见 commission 包的 deleted_account_pg_test.go）。
+type fakeVoider struct {
+	res   CommissionVoid
+	locks []uuid.UUID
+	calls []uuid.UUID
+}
+
+func (f *fakeVoider) LockForDeletion(_ context.Context, userID uuid.UUID) error {
+	f.locks = append(f.locks, userID)
+	return nil
+}
+
+func (f *fakeVoider) VoidForDeletedUser(_ context.Context, userID uuid.UUID) (CommissionVoid, error) {
+	f.calls = append(f.calls, userID)
+	return f.res, nil
+}
+
 type fakeUnbinder struct {
 	calls []uuid.UUID
 }
@@ -45,9 +63,17 @@ func TestPGDeleteUser(t *testing.T) {
 	closer := &fakeCloser{n: 3}
 	canceller := &fakeCanceller{n: 2}
 	unbind := &fakeUnbinder{}
+	voider := &fakeVoider{res: CommissionVoid{
+		VoidedEntries:       2,
+		VoidedPending:       map[string]decimal.Decimal{"CNY": decimal.RequireFromString("7.5")},
+		Forfeited:           map[string]decimal.Decimal{"CNY": decimal.RequireFromString("10")},
+		RejectedWithdrawals: 1,
+		RejectedAmount:      map[string]decimal.Decimal{"CNY": decimal.RequireFromString("4")},
+	}}
 	rec := &pluginRec{}
 	e.svc.UseAccountCloser(closer)
 	e.svc.UseOrderCanceller(canceller)
+	e.svc.UseCommissionVoider(voider)
 	e.svc.UseTelegramUnbinder(unbind)
 	e.svc.UsePluginEvents(rec)
 
@@ -91,8 +117,24 @@ func TestPGDeleteUser(t *testing.T) {
 	if len(canceller.calls) != 1 || canceller.calls[0] != target.ID {
 		t.Fatalf("取消待付订单 %v", canceller.calls)
 	}
+	if len(voider.locks) != 1 || voider.locks[0] != target.ID || len(voider.calls) != 1 || voider.calls[0] != target.ID {
+		t.Fatalf("作废佣金 locks=%v calls=%v", voider.locks, voider.calls)
+	}
 	if e.auditCount(ctx, ActionDeleted, target.ID) != 1 {
 		t.Fatal("audit deleted")
+	}
+	// 注销审计带上作废条目数、驳回提现数与按币种的金额合计
+	var auditData string
+	if err := e.row(ctx, `SELECT data::text FROM audit_events WHERE action = ? AND resource_id = ?`, ActionDeleted, target.ID).Scan(&auditData); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`"voided_commission_entries": 2`, `"voided_commission_pending": {"CNY": "7.50"}`, `"forfeited_commission": {"CNY": "10.00"}`,
+		`"rejected_withdrawals": 1`, `"rejected_withdrawal_amount": {"CNY": "4.00"}`,
+	} {
+		if !strings.Contains(auditData, want) {
+			t.Fatalf("注销审计缺 %s：%s", want, auditData)
+		}
 	}
 	// user.deleted 插件事件只带用户 id 与时间，不带任何邮箱
 	if len(rec.events) != 1 || rec.events[0].Event != "user.deleted" || rec.events[0].Key != "user.deleted:"+target.ID.String() {
@@ -244,6 +286,7 @@ func TestPGAdminSetReferrer(t *testing.T) {
 	e, ctx := newEnv(t)
 	e.svc.UseAccountCloser(&fakeCloser{})
 	e.svc.UseOrderCanceller(&fakeCanceller{})
+	e.svc.UseCommissionVoider(&fakeVoider{})
 	e.svc.UseTelegramUnbinder(&fakeUnbinder{})
 	actx := adminCtx(t, e, ctx)
 	reason := "调整邀请关系测试"

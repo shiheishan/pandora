@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
+	commissionsvc "github.com/aegispanel/aegis/internal/module/commission/service"
 	identitysvc "github.com/aegispanel/aegis/internal/module/identity/service"
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
 	nodesvc "github.com/aegispanel/aegis/internal/module/node/service"
@@ -16,6 +17,7 @@ import (
 	supportsvc "github.com/aegispanel/aegis/internal/module/support/service"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/aegispanel/aegis/internal/pkg/redisx"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -248,3 +250,35 @@ type reportRedis struct{ c *redis.Client }
 func (a reportRedis) Ping(ctx context.Context) error { return redisx.Ping(ctx, a.c) }
 
 var _ reportsvc.Pinger = reportRedis{}
+
+// commissionVoidAdapter 把 commission 的注销作废适配成 identity 要的 CommissionVoider（币种换成字符串键）。
+type commissionVoidAdapter struct{ s *commissionsvc.Service }
+
+var _ identitysvc.CommissionVoider = commissionVoidAdapter{}
+
+func (a commissionVoidAdapter) LockForDeletion(ctx context.Context, userID uuid.UUID) error {
+	return a.s.LockForDeletion(ctx, userID)
+}
+
+func (a commissionVoidAdapter) VoidForDeletedUser(ctx context.Context, userID uuid.UUID) (identitysvc.CommissionVoid, error) {
+	r, err := a.s.VoidForDeletedUser(ctx, userID)
+	if err != nil {
+		return identitysvc.CommissionVoid{}, err
+	}
+	return identitysvc.CommissionVoid{
+		VoidedEntries:       r.VoidedEntries,
+		VoidedPending:       byCurrencyCode(r.VoidedPending),
+		Forfeited:           byCurrencyCode(r.Forfeited),
+		RejectedWithdrawals: r.RejectedWithdrawals,
+		RejectedAmount:      byCurrencyCode(r.RejectedAmount),
+	}, nil
+}
+
+// byCurrencyCode 把按 money.Currency 分的金额换成按币种代码字符串分的。
+func byCurrencyCode(m map[money.Currency]decimal.Decimal) map[string]decimal.Decimal {
+	out := make(map[string]decimal.Decimal, len(m))
+	for cur, amt := range m {
+		out[string(cur)] = amt
+	}
+	return out
+}

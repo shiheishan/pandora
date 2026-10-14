@@ -66,6 +66,9 @@ func (s *Service) TransferToBalance(ctx context.Context, userID uuid.UUID, amoun
 		if err := s.repo.LockUser(ctx, userID); err != nil {
 			return err
 		}
+		if err := s.rejectDeleted(ctx, userID); err != nil {
+			return err
+		}
 		cur, avail, err := s.transferCurrency(ctx, userID)
 		if err != nil {
 			return err

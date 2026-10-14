@@ -12,6 +12,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/pluginevents"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
 // DeleteUserResult 是注销的结果。
@@ -172,8 +173,8 @@ func (s *Service) AdminSetNote(ctx context.Context, userID uuid.UUID, displayNam
 	})
 }
 
-// DeleteUser 注销并匿名化用户：取消全部待付订单（经 order，作废在途支付意图）、停掉全部订阅、解绑 Telegram、吊销全部会话，邮箱换成不可登录的占位值、清掉显示名与备注、删口令、停用他的邀请码、作废找回密码验证码。
-// 不可撤销；订单、账本、佣金、审计、邀请关系原样保留。同事务发插件事件 user.deleted（只带用户 id 与时间）。返回停掉的订阅份数。
+// DeleteUser 注销并匿名化用户：取消全部待付订单（经 order，作废在途支付意图）、停掉全部订阅、作废名下未打款的佣金并驳回在途提现（经 commission）、解绑 Telegram、吊销全部会话，邮箱换成不可登录的占位值、清掉显示名与备注、删口令、停用他的邀请码、作废找回密码验证码。
+// 不可撤销；订单、账本、佣金与提现记录、审计、邀请关系原样保留（作废是追加冲回分录、改状态，不删行）。同事务发插件事件 user.deleted（只带用户 id 与时间）。返回停掉的订阅份数。
 func (s *Service) DeleteUser(ctx context.Context, userID uuid.UUID, reason string) (DeleteUserResult, error) {
 	p, err := principal(ctx)
 	if err != nil {
@@ -212,6 +213,16 @@ func (s *Service) DeleteUser(ctx context.Context, userID uuid.UUID, reason strin
 			return errs.Newf(errs.Conflict, "管理员账号不能注销，先在命令行取消管理员")
 		}
 
+		// 先拿佣金咨询锁（与转余额、提现申请同一把）：下面取消待付单会锁他的余额科目，转余额是拿着这把锁再锁余额，
+		// 先拿它才不互等（详见 commission 的 VoidForDeletedUser）
+		voider, err := s.needCommissionVoider()
+		if err != nil {
+			return err
+		}
+		if err := voider.LockForDeletion(ctx, userID); err != nil {
+			return err
+		}
+
 		// 先取消待付订单、再停订阅：付款结算是先锁订单再动订阅，同序才不互等；结算抢先提交的单，
 		// 这里重读后不再是待付，它开出的订阅随后由 CloseUserSubscriptions 一并停掉。
 		canceller, err := s.needOrderCanceller()
@@ -228,6 +239,14 @@ func (s *Service) DeleteUser(ctx context.Context, userID uuid.UUID, reason strin
 			return err
 		}
 		n, err := closer.CloseUserSubscriptions(ctx, userID, r)
+		if err != nil {
+			return err
+		}
+
+		// 作废名下未打款的佣金、驳回在途提现（经 commission）。放在停完订阅之后：作废要锁平台收入科目，
+		// 结算是先锁库存、券、订阅再锁平台收入，同序才不互等；放在改占位邮箱之前：那时用户行还只是 FOR NO KEY UPDATE，
+		// 与结算计提插条目时外键加的 KEY SHARE 相容，拿着平台收入的结算不会反过来等这里的用户行。
+		voided, err := voider.VoidForDeletedUser(ctx, userID)
 		if err != nil {
 			return err
 		}
@@ -274,11 +293,16 @@ func (s *Service) DeleteUser(ctx context.Context, userID uuid.UUID, reason strin
 			ResourceType: ResourceUser,
 			ResourceID:   &userID,
 			Data: map[string]any{
-				"reason":                   r,
-				"short_id":                 DeletedShortID(userID),
-				"terminated_subscriptions": n,
-				"cancelled_orders":         cancelled,
-				"disabled_invites":         invites,
+				"reason":                     r,
+				"short_id":                   DeletedShortID(userID),
+				"terminated_subscriptions":   n,
+				"cancelled_orders":           cancelled,
+				"disabled_invites":           invites,
+				"voided_commission_entries":  voided.VoidedEntries,
+				"voided_commission_pending":  amountsByCurrency(voided.VoidedPending),
+				"forfeited_commission":       amountsByCurrency(voided.Forfeited),
+				"rejected_withdrawals":       voided.RejectedWithdrawals,
+				"rejected_withdrawal_amount": amountsByCurrency(voided.RejectedAmount),
 			},
 		}); err != nil {
 			return err
@@ -300,4 +324,13 @@ func (s *Service) DeleteUser(ctx context.Context, userID uuid.UUID, reason strin
 		return DeleteUserResult{}, err
 	}
 	return result, nil
+}
+
+// amountsByCurrency 把按币种的金额换成审计用的 {币种: "12.30"}；空时给空对象，不给 null。
+func amountsByCurrency(m map[string]decimal.Decimal) map[string]string {
+	out := make(map[string]string, len(m))
+	for cur, amt := range m {
+		out[cur] = amt.StringFixed(2)
+	}
+	return out
 }

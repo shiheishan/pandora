@@ -46,7 +46,8 @@ func (s *Service) autoTransferDue(ctx context.Context, limit int, plan autoTrans
 }
 
 // autoTransferOne 在单独的事务里把一条佣金转入余额，转成时 done 为 true。
-// 锁序：用户咨询锁（LockUser，与手动转余额、提现申请同一把）→ 条目行（SKIP LOCKED，标记已清就跳过）→ 一笔分录同时锁可提现佣金与余额科目。
+// 锁序：用户咨询锁（LockUser，与手动转余额、提现申请、注销作废同一把）→ 条目行（SKIP LOCKED，标记已清就跳过）→ 一笔分录同时锁可提现佣金与余额科目。
+// 受益人已注销回 409 ErrAccountDeleted（注销时标记已清，正常走不到）。
 // 转的金额是这条佣金与当前可用佣金里较小的那个：标记挂着期间用户可能已经手动转走一部分；可用为 0 时只清标记、不记账。
 // 条目不是站点币种（站点币种被改过）或提现已重新打开时只清标记，钱留在可提现。
 // 转余额记录带 entry_id，库里唯一，同一条佣金最多自动转一次；写审计 commission.auto_transferred_to_balance。
@@ -58,6 +59,10 @@ func (s *Service) autoTransferOne(ctx context.Context, e model.Entry, plan autoT
 		}
 		locked, ok, err := s.repo.LockAutoTransferEntry(ctx, e.ID)
 		if err != nil || !ok {
+			return err
+		}
+		// 受益人已注销：注销时已清掉他的标记、作废了可用佣金，走到这里说明数据不对，拒绝并留着标记待人工核对
+		if err := s.rejectDeleted(ctx, locked.ReferrerUserID); err != nil {
 			return err
 		}
 		cur := money.Currency(locked.Currency)

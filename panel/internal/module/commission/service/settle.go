@@ -89,6 +89,7 @@ func (s *Service) SettleDue(ctx context.Context, limit int) (SettleStats, error)
 // settleOne 在自己的事务里解冻一条：锁条目（拿不到或已不满足条件就跳过）→ 记 commission_settled → 改状态；
 // 提现关闭且为站点币种时同时挂上「等自动转余额」标记（转账在 autoTransferDue 的单独事务里做）。
 // 锁序：条目行 → 推荐人的待结、可提现佣金科目（ledger 的 LockAccounts 一条语句按科目 id 升序加锁）；不拿用户咨询锁，不碰余额科目。
+// 受益人已注销（identity 的无锁读）时不解冻、转人工复核。
 func (s *Service) settleOne(ctx context.Context, id uuid.UUID, plan autoTransferPlan) (settleOutcome, error) {
 	out := settleSkipped
 	err := s.tx.Do(ctx, func(ctx context.Context) error {
@@ -98,6 +99,25 @@ func (s *Service) settleOne(ctx context.Context, id uuid.UUID, plan autoTransfer
 			return err
 		}
 		if !CanEntryTransition(e.Status, EntryAvailable) {
+			return nil
+		}
+		// 受益人已注销：注销提交那一刻才计提、没赶上注销作废的条目。不解冻，转人工复核由后台作废
+		// （作废要记复核人，任务里没有；后台对已注销账号的条目只能作废、不能通过）
+		gone, err := s.accountDeleted(ctx, e.ReferrerUserID)
+		if err != nil {
+			return err
+		}
+		if gone {
+			changed, err := s.repo.MarkEntryReview(ctx, e.ID, reviewDeletedReason, now)
+			if err != nil {
+				return err
+			}
+			if !changed {
+				return errSettleLost
+			}
+			plog.From(ctx).Warn("commission: 受益人已注销，条目转人工复核",
+				zap.String("entry_id", e.ID.String()), zap.String("referrer_user_id", e.ReferrerUserID.String()))
+			out = settleQuarantined
 			return nil
 		}
 		transfer := plan.on && money.Currency(e.Currency) == plan.site

@@ -1,4 +1,4 @@
-// Package model 是 commission 模块的 GORM 结构体：只有字段和标签，表结构见迁移 00014_commission.sql、00016_commission_review.sql 与 00041_commission_levels.sql。
+// Package model 是 commission 模块的 GORM 结构体：只有字段和标签，表结构见迁移 00014_commission.sql、00016_commission_review.sql、00041_commission_levels.sql 与 00042_commission_forfeitures.sql。
 package model
 
 import (
@@ -78,6 +78,21 @@ type Transfer struct {
 
 // TableName 固定表名。
 func (Transfer) TableName() string { return "commission_transfers" }
+
+// Forfeiture 是 commission_forfeitures 表的一行（只追加）：账号注销时作废的可提现佣金，每人每币种最多一行。
+// ID 即账本 commission_voided 交易的来源 id。
+type Forfeiture struct {
+	ID          uuid.UUID       `gorm:"column:id;type:uuid;primaryKey"`
+	UserID      uuid.UUID       `gorm:"column:user_id;type:uuid"`
+	Currency    string          `gorm:"column:currency"`
+	Amount      decimal.Decimal `gorm:"column:amount"`
+	Reason      string          `gorm:"column:reason"`
+	LedgerTxnID uuid.UUID       `gorm:"column:ledger_txn_id;type:uuid"`
+	CreatedAt   time.Time       `gorm:"column:created_at;autoCreateTime"`
+}
+
+// TableName 固定表名。
+func (Forfeiture) TableName() string { return "commission_forfeitures" }
 
 // Override 是 commission_user_overrides 表的一行：按用户单独设的佣金比例与计佣范围（nil 跟全局走）。
 type Override struct {

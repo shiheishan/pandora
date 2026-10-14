@@ -11,12 +11,12 @@ paths:
 - 锁序（防死锁 40P01）：
   - 结算主链：订单行（`OrderByID` 锁行）→ 订阅（`subs.Lock`，续费/换套餐/流量包）→ 预留确认（`captureReservation` 锁套餐库存/限购/券）→ 记账（`postSettlement`，经 `lockAccounts` 稳定顺序锁科目）→ 订单状态（`markPaid`）→ `PaidHook` → 履约（`fulfil`）。
   - 建单主链：新购锁套餐行（`catalog.Offer`）；续费/流量包锁订阅；换套餐建单先锁订阅（`subs.Lock`）；再调 `promo.Reserve` / `ledger.HoldForOrder`，最后插订单。取消/超时释放先锁订单行。门户各建单事务与后台开单（`requireUser`）的第一步是 `rejectDeleted`（identity `IsDeleted`，给用户行加共享锁），已注销 409「账号已注销」。后台调账 `AdjustBalance` 对已注销账号只拒加钱，扣减照常（仍要原因、重认证、审计），用于线下退款后冲平留在账号上的余额（注销前的余额、注销时释放的冻结、注销后转入的迟到付款）。
-  - 注销账号：identity 在注销事务里锁用户行后调 `CancelUserPending`（`service/cancel.go`），按 id 升序锁该用户全部待付单逐张 `releaseOrder`（原因 `ReasonAccountDeleted`，作废在途支付意图），之后到的回调按 `CaseReleasedOrder` 挂账。
+  - 注销账号：identity 在注销事务里锁用户行后先调 commission 的 `LockForDeletion`（拿 `LockUser` 咨询锁），再调 `CancelUserPending`（`service/cancel.go`），按 id 升序锁该用户全部待付单逐张 `releaseOrder`（原因 `ReasonAccountDeleted`，作废在途支付意图），之后到的回调按 `CaseReleasedOrder` 挂账；停完订阅后调 commission 的 `VoidForDeletedUser`（见下面「注销作废」）。咨询锁要在释放冻结之前拿：释放会锁他的余额科目，转余额是拿着咨询锁与可提现佣金再等余额，反过来就互等。
   - 余额全额支付走 `CaptureFromBalance`：用户余额、冻结、收入三科目按 ID 升序一次锁完，冻结直出 captured，不要分步锁。
   - 科目怎么加锁：`ledger` 的 `lockAccounts` 先按 `(Type, UserID, Ref)` 排好去重（`sortedRefs`，只决定建科目 `EnsureAccounts` 的顺序），真正加行锁的是 `repo.LockAccounts` 一条 `ORDER BY id FOR UPDATE`，即按科目 id 升序逐行拿；一笔分录的科目在一条语句里锁完，但语句中途可能拿着 id 小的科目去等 id 大的。
   - 通则（防 40P01）：一个事务里每多记一笔分录，就多一批「拿着前一批科目再去等新科目」的锁。凡是要在同一事务里先锁某人的佣金科目（待结、可提现）、再锁他的余额科目的，一律拆成两个事务：前一个事务提交后，后一个先拿 `LockUser`，再用一笔分录同时锁可提现与余额（手动转余额、自动转余额都这样）；不在解冻、计提这类拿着佣金科目的事务里顺手碰余额。以后加类似路径照这条查：不拿着用户的佣金科目去等余额，也不拿着余额去等平台收入以外的科目。
     四方环（转余额拿着可提现等余额 → 余额付款拿着余额等平台收入 → 别人的订单结算拿着平台收入等待结 → 解冻拿着待结等可提现）要求科目 id 满足「待结 < 可提现 < 余额 < 平台收入」，不可达：`ledger_accounts.id` 是 uuidv7、按创建先后递增，而某人在某币种的待结科目只在该币种的订单计提时建，那时平台收入早已建好（或在同一条 `EnsureAccounts` 里按类型排序先插），所以平台收入的 id 总小于待结。自动转余额的加锁范围与主线早有的手动转余额同形（只多一行条目锁），不是这次引入的；不要为它改结算。
-  - 佣金各路径的锁序：计提 `OnOrderPaid`（在订单结算事务里，已持平台收入）→「首单」时 `LockReferee` → 各级受益人的待结佣金；解冻 `settleOne`：条目行（SKIP LOCKED）→ 推荐人的待结、可提现佣金（一笔分录）；自动转余额 `autoTransferOne`：`LockUser` → 条目行（SKIP LOCKED）→ 可提现佣金与余额（一笔分录）；手动转余额、提现申请：`LockUser` 打头；打款 `MarkWithdrawalPaid`：提现行 → 可提现佣金与打款渠道（一笔分录）。
+  - 佣金各路径的锁序：计提 `OnOrderPaid`（在订单结算事务里，已持平台收入）→「首单」时 `LockReferee` → 各级受益人的待结佣金；解冻 `settleOne`：条目行（SKIP LOCKED）→ 推荐人的待结、可提现佣金（一笔分录）；自动转余额 `autoTransferOne`：`LockUser` → 条目行（SKIP LOCKED）→ 可提现佣金与余额（一笔分录）；手动转余额、提现申请：`LockUser` 打头；打款 `MarkWithdrawalPaid`：提现行 → 可提现佣金与打款渠道（一笔分录）；注销作废 `VoidForDeletedUser`（`service/deleted.go`）：`LockUser`（注销开头已由 `LockForDeletion` 拿过，重入）→ 在途提现行（按 id 升序）→ 冻结中条目行（一条语句按 id 升序）→ 逐笔分录锁 待结或可提现佣金 + 平台收入 main；拿科目前不持有佣金科目，与以上各路径都不互等。
 - 结算与挂账边界：
   - 结算由 order 实现 `paymentsvc.Settler`（`SettlePayment`）：金额币种不符回普通错误整笔回滚；订单不可付时（已取消/超时回 `CaseReleasedOrder`，已付回 `CaseExcessCapture`，订阅已停用或换套餐周期已变回 `CaseIneligibleSubscription`）返回 `paymentsvc.NotPayable` 转入挂账。
   - 充值单结算记 `KindBalanceTopup`；其他订单走 `PostOrderPaid` 扣减余额冻结。
@@ -31,11 +31,19 @@ paths:
   - 人工开单（`CreateManualOrder`）：原因必填 5–500 字，审计 `order.manual_created`；结算方式收 `grant`（赠送履约）、`pending`、`offline`（同一事务调 `RecordOffline`），不接受 `balance`。
 - 账本与佣金：
   - 账本科目按 id 升序加锁（见上面「科目怎么加锁」）。`Post` 拒收专用 kind（`KindBalanceHold`, `KindBalanceRelease`, `KindOrderPaid`, `KindBalanceAdjusted` 须调专用方法）。
-  - 可用佣金唯一口径：`available = Available - InFlight - Paid - TransferTotal`。提现申请 `RequestWithdrawal` 与转余额都先 `LockUser`。提现申请与审批只改状态，打款 `MarkWithdrawalPaid` 才记账。
+  - 可用佣金唯一口径：`available = Available - InFlight - Paid - TransferTotal - ForfeitTotal`（`ForfeitTotal` 是注销时作废的可提现佣金，`commission_forfeitures`）。提现申请 `RequestWithdrawal` 与转余额都先 `LockUser`。提现申请与审批只改状态，打款 `MarkWithdrawalPaid` 才记账。
   - 多级分销（后台开关 `commission.distribution_enabled`，缺省关）：先按直接邀请人的比例（含单独设置）算这一单的佣金总额，再按 l1/l2/l3 份额逐级截断到分（`LevelAmount`，库约束 `commission_entries_formula` 同式）；关着时只有第一级、份额 100。上溯 `beneficiaries` 防环、最多 3 级，份额 0 的级、不拿佣金的人（`notEarning`：账号已注销，或被单独设置排除即单独比例 0）都跳过但继续往上，跳过的人仍占他那一级。已注销读 identity 的无锁读 `AccountDeleted`（`Referrals` 端口），不用加共享锁的 `IsDeleted`：计提在结算事务里，那时已持有库存、券与平台收入的行锁，再等邀请人的用户行会与注销（锁用户行后释放他的待付单、碰同一批库存与券）互等；竞态只会让注销提交那一刻的一单仍记给他。读设置时三级合计超过 100 按内部错误（`decodeCommissionDistribution`）。每级一条条目（`UNIQUE (order_id, level)`），各自冻结、同源复核（受益人对购买人）、作废。
   - 单独佣金设置 `commission_user_overrides`（属 commission）：NULL 跟全局；比例 0 = 这个人不拿佣金，不论他在第几级（用户 10-14 定，`excludedByOverride`）。整单佣金总额按直接邀请人的单独设置算（`orderTerms` → `termsFor`）；直接邀请人不拿佣金（已注销或被排除）时他的单独设置整条不作数、按全局算，再跳过他只给上级分。只影响以后的订单。后台按邮箱找人走 identity 的精确查找 `FindByEmail`（`Referrals` 端口），不用包含匹配。写操作审计 `commission.override_set` / `commission.override_removed`。
   - 提现开关 `commission.withdraw_enabled`（缺省开）与方式白名单 `commission.withdraw_methods`（缺省 alipay，目录见 `settingssvc.WithdrawMethodCatalog`）。关提现只关站点币种（用户 10-14 定）：
     - `RequestWithdrawal` 关着时只在站点币种以外的币种里选（`pickCurrency` 的 skip），没有就回 `ErrWithdrawDisabled`；白名单照旧管着，所以开关两种状态都至少要留一种方式（settings 校验回 422 `withdraw_methods`）。读设置时三级合计只在开着多级时查。汇总带 `SiteCurrency`，门户据此决定显不显示提现。
     - 站点币种：`settleOne` 解冻时只挂 `commission_entries.auto_transfer_due`（不拿用户锁、不碰余额）；`SettleDue` 解冻完再由 `autoTransferDue` 逐条在单独的事务里转（`autoTransferOne`，锁序见上），转失败标记留着、下一轮重试；提现已重新打开时只清标记不转（用户自己提现或转余额）。转的金额取这条佣金与当前可用佣金里小的那个，可用为 0（用户自己转走了）只清标记；`commission_transfers.entry_id` 唯一兜底，审计 `commission.auto_transferred_to_balance`。
     - 关闭前已经解冻的站点币种佣金不挂标记、不自动转，由用户自己点「全部转入余额」（门户提示写明）。非站点币种转不进余额，照常提现。
+  - 注销作废（用户 10-14 定：账号注销时名下未打款的佣金与在途提现都作废），identity 的 `DeleteUser` 经 `CommissionVoider` 端口在同一事务里调 `VoidForDeletedUser`（app 的 `commissionVoidAdapter` 适配）：
+    - 在途提现（`requested`、`approved`）一律驳回，`reject_reason = account_deleted`，复核人记执行注销的管理员；提现只改状态不记账，驳回后钱回到可提现。
+    - 他作为受益人的 `pending` 条目（待复核与否）逐条作废：`commission_voided` 冲回计提（借 待结 / 贷 平台收入 main，来源是条目、按来源唯一），`status = voided`、`void_reason = account_deleted`，复核人记执行注销的管理员。
+    - 清掉他条目上的 `auto_transfer_due`。
+    - 逐币种按唯一口径算剩下的可用佣金（已含驳回退回的），为正就记 `commission_voided`（借 可提现 / 贷 平台收入 main，来源 `commission_forfeiture`），写 `commission_forfeitures`（只追加，每人每币种最多一行）。可提现是池、不按条目扣，说不清哪条被提走了多少，所以这部分不改条目状态（已解冻的条目仍是 `available`），口径减去作废合计。
+    - 已打款的提现、已转余额的钱不动；做完后他的待结、可提现佣金科目都为 0；再调一次全 0。科目余额不够冲回时回 409 让管理员先核对账本，不跳过。
+    - 之后不再出钱：转余额、提现申请、自动转余额（`autoTransferOne`）、后台批准提现、标记已打款、通过待复核条目都回 409 `ErrAccountDeleted`「账号已注销」（无锁的 `AccountDeleted`，各自已锁住用户咨询锁、提现行或条目行再读，注销的作废一定排在它们提交之后）；后台驳回提现、作废条目照常。
+    - 注销提交那一刻才由并发结算计提、没赶上作废的条目：`settleOne` 解冻时读到受益人已注销，不解冻、转人工复核（原因「受益人账号已注销，请作废这条佣金」），由后台作废（作废要记复核人，解冻任务里没有）。
   - 收款账号按方式校验（`ValidatePayoutAccount`：TRC20 base58check、ERC20/BEP20 EIP-55），仍用 Sealer 密封；USDT 打款的流水号是交易哈希（`ValidatePaidUSDT`），实付 USDT 数量只记录，面板不发起任何链上转账。旧申请的方式是 `other`，只显示、不可选。

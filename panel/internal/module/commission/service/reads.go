@@ -55,7 +55,8 @@ func (s *Service) MyCommission(ctx context.Context, userID uuid.UUID) (MyCommiss
 	if err != nil {
 		return MyCommission{}, err
 	}
-	tr, err := s.repo.TransferTotalOf(ctx, userID, string(cur))
+	// 与提现、转余额同一口径；展示时不显示负数
+	avail, err := s.availableFrom(ctx, userID, cur, et, wt)
 	if err != nil {
 		return MyCommission{}, err
 	}
@@ -63,8 +64,6 @@ func (s *Service) MyCommission(ctx context.Context, userID uuid.UUID) (MyCommiss
 	if err != nil {
 		return MyCommission{}, err
 	}
-	// 与提现、转余额同一口径；展示时不显示负数
-	avail := et.Available.Sub(wt.InFlight).Sub(wt.Paid).Sub(tr)
 	if avail.IsNegative() {
 		avail = decimal.Zero
 	}

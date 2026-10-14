@@ -127,10 +127,10 @@ func (f *fakeSources) SharesSource(_ context.Context, a, b uuid.UUID) (bool, err
 	return f.same[[2]uuid.UUID{a, b}], nil
 }
 
-// commitTables 是真提交用例前后要清的表（同 order 包的 orderCommitTables，加上本模块的三张表；
+// commitTables 是真提交用例前后要清的表（同 order 包的 orderCommitTables，加上本模块的四张表；
 // CASCADE 带走订单子表、预留、订阅子表等）。不留会被别的包或解冻扫描扫到的数据。
 var commitTables = []string{
-	"commission_transfers", "withdrawals", "commission_entries",
+	"commission_forfeitures", "commission_transfers", "withdrawals", "commission_entries",
 	"orders", "plan_purchase_counters",
 	"late_payment_cases", "payment_events", "payments", "payment_intents",
 	"balance_holds", "coupon_redemptions", "subscriptions",
