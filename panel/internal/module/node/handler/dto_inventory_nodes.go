@@ -1,6 +1,6 @@
 package handler
 
-// 本文件归 p5-inventory：节点后台接口的请求与响应 DTO（JSON 形状对齐前端 screens/nodes/schemas.ts）。
+// 节点后台接口的请求与响应 DTO（JSON 形状对齐前端 screens/nodes/schemas.ts）。
 
 import (
 	"bytes"

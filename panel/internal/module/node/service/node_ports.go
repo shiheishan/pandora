@@ -1,6 +1,6 @@
 package service
 
-// 本文件归 p5-inventory：同机端口门禁与保留端口（同机端口先到先得）。
+// 同机端口门禁与保留端口（同机端口先到先得）。
 
 import (
 	"context"

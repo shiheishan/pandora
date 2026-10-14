@@ -1,6 +1,6 @@
 package service
 
-// 本文件归 p5-inventory：节点的复制、迁移与排序。
+// 节点的复制、迁移与排序。
 
 import (
 	"context"

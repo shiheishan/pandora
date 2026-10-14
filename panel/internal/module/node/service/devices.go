@@ -1,6 +1,6 @@
 package service
 
-// 设备数限制（p5-devices）：判定策略读写、在线设备总览、strict 名单过滤与周期重判、订阅的在线设备数。
+// 设备数限制：判定策略读写、在线设备总览、strict 名单过滤与周期重判、订阅的在线设备数。
 //
 // 两种模式：loose 下设备数随名单下发，每个节点各自限；strict 另把跨节点去重后在线设备超过「上限+宽容」的订阅
 // 从所有池的名单里整条摘掉（poolRosters 调 strictExcluded）。超限只经 deviceExceeded 判，上限只经

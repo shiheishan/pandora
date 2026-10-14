@@ -1,6 +1,6 @@
 package service
 
-// 本文件归 p5-inventory：节点输入校验的纯函数。
+// 节点输入校验的纯函数。
 
 import (
 	"bytes"

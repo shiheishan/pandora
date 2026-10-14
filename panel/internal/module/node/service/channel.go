@@ -88,7 +88,7 @@ type RosterMembership interface {
 	Has(nodeID uuid.UUID, uid int64) bool
 }
 
-// SessionControl 由会话管理（p5-session）实现：身份吊销、服务器删除后调，事务提交之后才调。
+// SessionControl 由会话管理实现：身份吊销、服务器删除后调，事务提交之后才调。
 type SessionControl interface {
 	// Tombstone 先给这台服务器的在途流发 Command.tombstone，再关闭它；没有在途流时什么也不做。
 	Tombstone(serverID uuid.UUID, reason string)

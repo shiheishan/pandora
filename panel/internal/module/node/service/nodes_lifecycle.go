@@ -1,6 +1,6 @@
 package service
 
-// 本文件归 p5-inventory：节点的批量改状态、上线、退役、删除与强制重新下发。
+// 节点的批量改状态、上线、退役、删除与强制重新下发。
 
 import (
 	"context"

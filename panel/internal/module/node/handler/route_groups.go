@@ -1,6 +1,6 @@
 package handler
 
-// 路由组的增删改查、组内路由与组成员（本文件归 p5-routing）。
+// 路由组的增删改查、组内路由与组成员。
 
 import (
 	"github.com/gin-gonic/gin"

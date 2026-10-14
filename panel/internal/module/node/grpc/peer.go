@@ -1,7 +1,7 @@
 // Package grpc 是节点通道的 gRPC 传输层（与 handler 同层）：TLS 与拦截器、proto 与 service 类型互转、
 // 流的收发循环。不碰数据库（depguard 钉住），业务都经 node service。
 //
-// 分工：server.go、enroll.go（p5-enroll）；control.go（p5-session）；本文件（主 Agent）。
+// 分工：server.go、enroll.go；control.go（p5-session）；本文件（主 Agent）。
 package grpc
 
 import (

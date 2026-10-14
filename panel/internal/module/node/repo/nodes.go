@@ -1,6 +1,6 @@
 package repo
 
-// 本文件归 p5-inventory：节点的读写与写库错误的翻译。
+// 节点的读写与写库错误的翻译。
 
 import (
 	"context"

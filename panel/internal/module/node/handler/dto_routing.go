@@ -1,6 +1,6 @@
 package handler
 
-// 出站、分流规则与路由组接口的请求与响应（本文件归 p5-routing）。
+// 出站、分流规则与路由组接口的请求与响应。
 // 形状对照前端 panel/frontend/src/admin/screens/nodes/schemas.ts 的路由与路由组 schema；切片一律输出 []，不输出 null。
 
 import (

@@ -1,6 +1,6 @@
 package grpc
 
-// ControlService 的实现（p5-session）：发送循环在单独 goroutine，接收循环在另一 goroutine。
+// ControlService 的实现：发送循环在单独 goroutine，接收循环在另一 goroutine。
 // 业务都在 service 的会话管理（service/session*.go）；这里只做收发、proto 互转与状态码。
 // handler 在 sess.Done() 后最多再等 sessionEndGrace 让 Tombstone / reconnect 发出去，然后返回；
 // 身份失效（PermissionDenied）时附带 TrailerReenroll。

@@ -1,6 +1,6 @@
 package service
 
-// 在线来源入账与节点列表的在线、流量读数（p5-traffic）。
+// 在线来源入账与节点列表的在线、流量读数。
 
 import (
 	"bytes"

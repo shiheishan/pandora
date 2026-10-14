@@ -1,6 +1,6 @@
 package handler
 
-// 本文件归 p5-inventory：节点的后台接口。
+// 节点的后台接口。
 
 import (
 	"strings"

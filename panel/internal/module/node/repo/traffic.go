@@ -1,6 +1,6 @@
 package repo
 
-// 流量上报入账（p5-traffic）：留档、节点倍率、两张小时汇总。只给 service 的 IngestTraffic 用，都在它的事务里执行。
+// 流量上报入账：留档、节点倍率、两张小时汇总。只给 service 的 IngestTraffic 用，都在它的事务里执行。
 
 import (
 	"context"

@@ -1,6 +1,6 @@
 package service
 
-// 下发资格（p5-delivery）：名单（roster.go）与订阅线路（node_source.go）共用的依赖与规则。
+// 下发资格：名单（roster.go）与订阅线路（node_source.go）共用的依赖与规则。
 //
 // 资格由几块拼成，每块只有一个口径：
 //   - 订阅侧可服务（生效中、流量没耗尽）：subscription 的 ServingSubscriptions；线路由拉取路径先判过；

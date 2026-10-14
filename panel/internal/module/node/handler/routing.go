@@ -1,6 +1,6 @@
 package handler
 
-// 全局与节点私有路由、生效预览、节点所在组（本文件归 p5-routing）。
+// 全局与节点私有路由、生效预览、节点所在组。
 
 import (
 	"github.com/gin-gonic/gin"

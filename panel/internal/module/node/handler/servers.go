@@ -1,6 +1,6 @@
 package handler
 
-// 本文件归 p5-inventory：服务器的后台接口。
+// 服务器的后台接口。
 
 import (
 	"github.com/gin-gonic/gin"
