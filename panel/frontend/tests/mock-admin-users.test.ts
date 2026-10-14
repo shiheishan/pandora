@@ -217,7 +217,7 @@ describe('mock api · admin users ops', () => {
     let ended: string | undefined
     for (const u of users.users) {
       const d = (await (await get(`/v1/users/${u.id}`)).json()) as Detail
-      ended = d.subscriptions.find((s) => s.status === 'expired' || s.status === 'cancelled')?.id
+      ended = d.subscriptions.find((s) => s.status === 'expired')?.id
       if (ended) break
     }
     const refused = await send('POST', `/v1/subscriptions/${ended!}/extend`, body, 'extend-3')

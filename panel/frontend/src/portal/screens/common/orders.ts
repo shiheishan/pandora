@@ -5,7 +5,7 @@ import { useApi } from '../../../shell/runtime'
 import { endsIntent } from './intent'
 
 export const ORDER_KINDS = ['new', 'renewal', 'topup', 'addon', 'upgrade'] as const
-export const ORDER_STATUSES = ['draft', 'pending_payment', 'processing', 'paid', 'fulfilled', 'cancelled', 'expired', 'partially_refunded', 'refunded'] as const
+export const ORDER_STATUSES = ['pending_payment', 'paid', 'fulfilled', 'cancelled', 'expired', 'partially_refunded', 'refunded'] as const
 
 export const orderRowSchema = z.object({
   id: z.string(),
@@ -161,8 +161,8 @@ export type OrderCreated = z.output<typeof orderCreatedSchema>
 
 export const PAID_STATUSES: ReadonlySet<string> = new Set(['paid', 'fulfilled'])
 
-/** 发起支付只收这两种状态，其余回 409「该订单当前状态不可支付」（契约门户-03 支付条目） */
-export const PAYABLE_STATUSES: ReadonlySet<string> = new Set(['draft', 'pending_payment'])
+/** 发起支付只收 pending_payment（契约门户-03 支付条目） */
+export const PAYABLE_STATUSES: ReadonlySet<string> = new Set(['pending_payment'])
 
 /** 还能去付：状态可支付、且没到 expires_at（服务端过期扫描可能还没跑到） */
 export function isPayable(o: Pick<OrderRow, 'status' | 'expires_at'>, now: number = Date.now()): boolean {
@@ -194,7 +194,7 @@ export function useOrderPayable(): (orderId: string) => Promise<boolean> {
 // 订单页（契约门户-04 与修订 R69：status 可逗号多值、counts 四类计数）
 // 设计的「全部」= 除待支付外的所有状态；待支付在顶部单独成卡
 // ---------------------------------------------------------------------------
-export const OPEN_STATUSES = ['draft', 'pending_payment', 'processing'] as const
+export const OPEN_STATUSES = ['pending_payment'] as const
 export const ORDER_FILTERS = {
   all: ['paid', 'fulfilled', 'cancelled', 'expired', 'partially_refunded', 'refunded'],
   paid: ['paid', 'fulfilled'],
@@ -221,7 +221,7 @@ export function useOrderPages(filter: OrderFilter) {
   })
 }
 
-/** 顶部待支付卡片：draft / pending_payment / processing */
+/** 顶部待支付卡片：pending_payment */
 export function useOpenOrders() {
   const api = useApi()
   return useQuery({
@@ -264,9 +264,6 @@ export function statusBadge(status: OrderRow['status']): StatusBadge {
     case 'paid':
     case 'fulfilled':
       return { label: '已支付', tone: 'ok' }
-    case 'processing':
-      return { label: '处理中', tone: 'warn' }
-    case 'draft':
     case 'pending_payment':
       return { label: '待支付', tone: 'warn' }
     case 'partially_refunded':
@@ -331,14 +328,13 @@ export function orderResult(o: Pick<OrderDetail, 'status' | 'kind' | 'cancel_rea
     case 'partially_refunded':
     case 'refunded':
       return `已退款 ${formatMoney(o.refunded_amount, o.currency)}`
-    case 'processing':
-      return '支付处理中，稍后自动到账'
     default:
       return o.expires_at ? `待支付，${formatDateTime(o.expires_at)} 前有效` : '待支付'
   }
 }
 
-const PAYMENT_STATUS: Readonly<Record<string, string>> = { succeeded: '成功', success: '成功', paid: '成功', pending: '处理中', failed: '失败', refunded: '已退款', cancelled: '已取消' }
+// 收款记录库里只有 succeeded（00013_order.sql）；认不出的原样显示
+const PAYMENT_STATUS: Readonly<Record<string, string>> = { succeeded: '成功' }
 
 /** 展开区事实行（契约门户-04 待补·前端）：订单号、时间、结果、金额拆分、支付记录 */
 export function orderFacts(o: OrderDetail): Array<{ k: string; v: string }> {

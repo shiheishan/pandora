@@ -17,7 +17,7 @@ export const MOCK_SITE = 'Pandora'
 // 场景：POST /v1/__mock/portal-scenario {"name": "..."} 切换，切换即重建全部用户状态
 //   default  一条生效订阅、一张待支付单、流量包、公告（含 critical）
 //   empty    无订阅、无订单、无公告、无流量包
-//   multi    两条生效订阅（第二条 past_due，节点 404、近 24 小时来源超设备上限、流量将尽）
+//   multi    两条生效订阅（第二条没有可用节点、近 24 小时来源超设备上限、流量将尽、续费遇改价）
 //   legacy   同 default，但 Go 带 omitempty 的可缺席字段全部缺席（订单周期、支付方式、优惠码、有效期至），Telegram 站点未启用
 //   error    页面读接口一律 500
 //   slow     页面读接口延迟 2.5 秒（看骨架）
@@ -52,7 +52,7 @@ export interface SubFixture {
   price_id: string
   plan_name: string
   plan_version: number
-  status: 'active' | 'past_due' | 'grace' | 'expired' | 'cancelled'
+  status: 'active' | 'expired'
   /** 过期且续费窗口已关（renewal_closed_at 非空）：彻底停用 */
   renewalClosed?: boolean
   /** 用户起的备注名，没起为 null（订阅 label 列） */
@@ -270,7 +270,7 @@ function build(s: Scenario): PortalState {
   // 流量包 30 GB 挂在第一份上
   const subs = [makeSub({ planId: pro.id, priceId: pro.prices[0]!.id, status: 'active', usedGiB: 312, elapsedDays: 28, resetInDays: 3, expiresInDays: 42, online: 3, sources: 3, packBytes: 30 * GIB })]
   if (s === 'multi') {
-    const second = makeSub({ planId: std.id, priceId: ARCHIVED_PRICE_ID, status: 'past_due', usedGiB: 180, elapsedDays: 20, resetInDays: 10, expiresInDays: 5, online: 1, sources: 7 })
+    const second = makeSub({ planId: std.id, priceId: ARCHIVED_PRICE_ID, status: 'active', usedGiB: 180, elapsedDays: 20, resetInDays: 10, expiresInDays: 5, online: 1, sources: 7 })
     second.nodes = []
     subs.push(second)
   }
@@ -335,11 +335,10 @@ export function addInterval(from: number, p: Pick<CatalogPrice, 'billing_interva
   }
 }
 
-const LIVE = new Set(['active', 'trialing', 'grace', 'past_due'])
-export const isLiveSub = (s: Pick<SubFixture, 'status'>) => LIVE.has(s.status)
+export const isLiveSub = (s: Pick<SubFixture, 'status'>) => s.status === 'active'
 /** 过期 30 天内、窗口没关：还能原地续费或换套餐（billing.subscriptionAcceptsPaidChange，w5expiry） */
 export const isRevivable = (s: SubFixture, now = Date.now()) => s.status === 'expired' && !s.renewalClosed && now - new Date(s.current_period_end).getTime() < 30 * DAY_MS
-/** 彻底停用：cancelled，或过期且窗口已关 */
+/** 彻底停用：过期且窗口已关（或过期满 30 天） */
 export const isDead = (s: SubFixture, now = Date.now()) => !isLiveSub(s) && !isRevivable(s, now)
 export const usedBytes = (s: SubFixture) => s.days.reduce((n, d) => n + d.bytes, 0)
 

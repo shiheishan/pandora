@@ -72,10 +72,8 @@ describe('orders', () => {
 
   it('only offers mark-paid and cancel on unpaid orders', () => {
     expect(canMarkPaid({ status: 'pending_payment', payable_amount: 100 })).toBe(true)
-    expect(canMarkPaid({ status: 'processing', payable_amount: 100 })).toBe(true)
-    expect(canMarkPaid({ status: 'draft', payable_amount: 100 })).toBe(false)
     expect(canMarkPaid({ status: 'pending_payment', payable_amount: 0 })).toBe(false)
-    expect(canCancel({ status: 'draft' })).toBe(true)
+    expect(canCancel({ status: 'pending_payment' })).toBe(true)
     expect(canCancel({ status: 'paid' })).toBe(false)
     expect(canCancel({ status: 'expired' })).toBe(false)
   })
@@ -103,11 +101,9 @@ describe('orders', () => {
       item_count: 1,
       manual: true,
       user_id: 'u1',
-      organization_id: null,
       state_version: 3,
       subtotal_amount: 4500,
       discount_amount: 4500,
-      tax_amount: 0,
       coupon_id: null,
       manual_reason: '补偿一个月服务',
       created_by: 'a1',
@@ -140,18 +136,18 @@ describe('orders', () => {
   it('merges intents with their payments, offline receipts and refunds into one list', () => {
     const h: PaymentHistory = {
       payment_intents: [
-        { id: 'i1', provider_code: 'epay', provider_name: '聚合收银台', currency: 'CNY', amount: 2500, status: 'failed', provider_ref: null, failure_code: 'x', failure_message: '用户取消', expires_at: null, created_at: '2026-09-23T10:00:00Z', updated_at: '2026-09-23T10:00:00Z' },
+        { id: 'i1', provider_code: 'epay', provider_name: '聚合收银台', currency: 'CNY', amount: 2500, status: 'cancelled', provider_ref: null, failure_code: 'x', failure_message: '用户取消', expires_at: null, created_at: '2026-09-23T10:00:00Z', updated_at: '2026-09-23T10:00:00Z' },
         { id: 'i2', provider_code: 'epay', provider_name: '聚合收银台', currency: 'CNY', amount: 2500, status: 'succeeded', provider_ref: 'EP1', failure_code: null, failure_message: null, expires_at: null, created_at: '2026-09-23T10:05:00Z', updated_at: '2026-09-23T10:05:00Z' },
       ],
       payments: [
-        { id: 'p1', payment_intent_id: 'i2', provider_code: 'epay', provider_name: '聚合收银台', provider_payment_id: 'TX9', currency: 'CNY', amount: 2500, fee_amount: 15, refunded_amount: 500, status: 'partially_refunded', method: null, paid_at: '2026-09-23T10:06:00Z' },
+        { id: 'p1', payment_intent_id: 'i2', provider_code: 'epay', provider_name: '聚合收银台', provider_payment_id: 'TX9', currency: 'CNY', amount: 2500, fee_amount: 15, refunded_amount: 500, status: 'succeeded', method: null, paid_at: '2026-09-23T10:06:00Z' },
         { id: 'p2', payment_intent_id: null, provider_code: 'offline', provider_name: '线下收款', provider_payment_id: 'offline:ICBC-1', currency: 'CNY', amount: 100, fee_amount: 0, refunded_amount: 0, status: 'succeeded', method: null, paid_at: '2026-09-23T11:00:00Z' },
       ],
       refunds: [{ id: 'r1', payment_id: 'p1', provider_refund_id: null, currency: 'CNY', amount: 500, reason: '补差', status: 'processing', entitlement_revoked: false, commission_reversed: false, failure_message: null, succeeded_at: null, created_at: '2026-09-23T12:00:00Z' }],
     }
     expect(paymentLines(h).map((l) => [l.channel, l.ref, l.amount, l.label])).toEqual([
-      ['聚合收银台', '用户取消', 2500, '失败'],
-      ['聚合收银台', 'TX9', 2500, '部分退款'],
+      ['聚合收银台', '用户取消', 2500, '已关闭'],
+      ['聚合收银台', 'TX9', 2500, '成功'],
       ['线下收款', 'offline:ICBC-1', 100, '人工确认'],
       ['退款', '补差', -500, '退款处理中'],
     ])
@@ -424,11 +420,10 @@ describe('schemas', () => {
 describe('channel query (PAY-009)', () => {
   it('offers the query only on unfinished orders that went to a channel', () => {
     expect(canQueryChannel({ status: 'pending_payment', provider_code: 'epay' })).toBe(true)
-    expect(canQueryChannel({ status: 'processing', provider_code: 'epay' })).toBe(true)
     // 从没发起过支付（人工开的待支付单）、线下渠道、已完结的单都不给
     expect(canQueryChannel({ status: 'pending_payment', provider_code: null })).toBe(false)
     expect(canQueryChannel({ status: 'pending_payment', provider_code: 'offline' })).toBe(false)
-    for (const status of ['draft', 'paid', 'fulfilled', 'cancelled', 'expired'] as const) expect(canQueryChannel({ status, provider_code: 'epay' })).toBe(false)
+    for (const status of ['paid', 'fulfilled', 'cancelled', 'expired'] as const) expect(canQueryChannel({ status, provider_code: 'epay' })).toBe(false)
   })
 
   it('reads the query response and says what happened', () => {

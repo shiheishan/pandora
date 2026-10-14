@@ -11,8 +11,8 @@ import (
 )
 
 // 后台订单接口的 DTO；JSON 形状对照旧 adminops.OrderRow / OrderDetail / OrderPaymentHistory 与前端 admin/screens/billing/schemas.ts。
-// 新库没有的列照前端要求输出固定值：organization_id、product_id 恒 null，tax_amount、refunded_amount 恒 0，
-// failure_code、failure_message 恒 null，refunds 恒为空数组（不做退款）。
+// 退款相关的键等产品确认前照旧输出固定值：refunded_amount 恒 0，failure_code、failure_message 恒 null，
+// refunds 恒为空数组（不做退款）。
 
 // parseDay 解析后台筛选的日期：先按 YYYY-MM-DD（旧接口口径），再按 RFC3339；end 为真且是日期时取次日零点（左闭右开）。
 func parseDay(field, raw string, end bool) (*time.Time, error) {
@@ -119,7 +119,6 @@ type adminOrdersResponse struct {
 // adminOrderItemResponse 是后台详情里的一条订单行快照。
 type adminOrderItemResponse struct {
 	ID                   string          `json:"id"`
-	ProductID            *string         `json:"product_id"`
 	PriceID              *string         `json:"price_id"`
 	PlanID               *string         `json:"plan_id"`
 	PlanVersionID        *string         `json:"plan_version_id"`
@@ -141,11 +140,9 @@ type adminOrderItemResponse struct {
 type adminOrderDetailBody struct {
 	adminOrderRowResponse
 	UserID         string                   `json:"user_id"`
-	OrganizationID *string                  `json:"organization_id"`
 	StateVersion   int64                    `json:"state_version"`
 	SubtotalAmount int64                    `json:"subtotal_amount"`
 	DiscountAmount int64                    `json:"discount_amount"`
-	TaxAmount      int64                    `json:"tax_amount"`
 	CouponID       *string                  `json:"coupon_id"`
 	ManualReason   *string                  `json:"manual_reason"`
 	CreatedBy      *string                  `json:"created_by"`
@@ -217,7 +214,6 @@ func adminOrderDetailFrom(d service.AdminOrderDetail) (adminOrderDetailResponse,
 		StateVersion:          o.StateVersion,
 		SubtotalAmount:        cc.of(o.Subtotal),
 		DiscountAmount:        cc.of(o.Discount.Add(o.Waived)),
-		TaxAmount:             0,
 		CouponID:              idStr(o.CouponID),
 		ManualReason:          o.ManualReason,
 		CreatedBy:             idStr(o.CreatedBy),

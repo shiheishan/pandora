@@ -8,14 +8,14 @@ import { exactEmail } from './model'
 import { generationJobSchema, generationJobsSchema } from './opsSchemas'
 
 // 订单的封闭枚举与列表行归订单与收款模块（后台-05），用户详情「最近订单」同形
-export { ORDER_KINDS, ORDER_STATUSES, type OrderKind, type OrderRow, type OrderStatus } from '../billing/schemas'
+export { type OrderRow, type OrderStatus } from '../billing/schemas'
 
 // ---------------------------------------------------------------------------
 // 封闭枚举（迁移里的 CHECK）：未知值判为不符约定
 // ---------------------------------------------------------------------------
 export const USER_STATUSES = ['pending', 'active', 'suspended', 'banned', 'deletion_scheduled', 'anonymized'] as const
 export const RISK_LEVELS = ['trusted', 'normal', 'elevated', 'high'] as const
-export const SUB_STATUSES = ['pending', 'trialing', 'active', 'past_due', 'grace', 'paused', 'cancelled', 'expired'] as const
+export const SUB_STATUSES = ['active', 'expired'] as const
 export type UserStatus = (typeof USER_STATUSES)[number]
 export type RiskLevel = (typeof RISK_LEVELS)[number]
 export type SubStatus = (typeof SUB_STATUSES)[number]
@@ -195,7 +195,7 @@ export function useGenerationJobs() {
 export const bulkMailSchema = z.object({ queued: count, skipped: count })
 
 // ---------------------------------------------------------------------------
-// GET v1/devices：active / trialing / grace 订阅按在线数倒序，最多 200 条
+// GET v1/devices：生效中的订阅按在线数倒序，最多 200 条
 // ---------------------------------------------------------------------------
 const onlineDeviceSchema = z.object({
   subscription_id: z.string(),

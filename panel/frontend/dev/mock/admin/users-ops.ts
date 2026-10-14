@@ -435,7 +435,7 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
     // ---- 设备策略 -----------------------------------------------------------
     'GET /v1/devices': (ctx) => {
       const rows = users
-        .flatMap((u) => u.subs.filter((s) => s.status === 'active' || s.status === 'trialing' || s.status === 'grace').map((s) => ({ u, s })))
+        .flatMap((u) => u.subs.filter((s) => s.status === 'active').map((s) => ({ u, s })))
         .sort((a, b) => b.s.online_devices - a.s.online_devices || b.s.created_at.localeCompare(a.s.created_at))
         .slice(0, 200)
         .map(({ u, s }, k) => {

@@ -12,12 +12,12 @@ import {
   extendReasonProblem,
   initial,
   listParams,
-  liveSubscriptions,
   orderWhat,
   paidTotalsLabel,
   parseExtendDays,
   parseYuan,
   passwordProblem,
+  rotatableSubscriptions,
   shortId,
   trafficView,
   unattachedNext,
@@ -72,31 +72,30 @@ describe('列表三列', () => {
 })
 
 describe('当前订阅（与后端 currentSubscriptionSQL 同口径）', () => {
-  const s = (status: 'active' | 'expired' | 'grace' | 'cancelled', end: number | null, id: string) => ({ id, status, current_period_end: end === null ? null : days(end) })
+  const s = (status: 'active' | 'expired', end: number | null, id: string) => ({ id, status, current_period_end: end === null ? null : days(end) })
 
   it('还在用的优先，其次到期最晚', () => {
-    expect(currentSubscription([s('expired', 30, 'a'), s('active', 5, 'b'), s('grace', 10, 'c')])?.id).toBe('c')
-    expect(currentSubscription([s('expired', -1, 'a'), s('cancelled', -5, 'b')])?.id).toBe('a')
+    expect(currentSubscription([s('expired', 30, 'a'), s('active', 5, 'b'), s('active', 10, 'c')])?.id).toBe('c')
+    expect(currentSubscription([s('expired', -1, 'a'), s('expired', -5, 'b')])?.id).toBe('a')
     expect(currentSubscription([])).toBeUndefined()
   })
 
   it('换发只列还在用的订阅，一个都没有时退回全部', () => {
-    expect(liveSubscriptions([s('expired', 1, 'a'), s('active', 5, 'b')]).map((x) => x.id)).toEqual(['b'])
-    expect(liveSubscriptions([s('expired', 1, 'a')]).map((x) => x.id)).toEqual(['a'])
+    expect(rotatableSubscriptions([s('expired', 1, 'a'), s('active', 5, 'b')]).map((x) => x.id)).toEqual(['b'])
+    expect(rotatableSubscriptions([s('expired', 1, 'a')]).map((x) => x.id)).toEqual(['a'])
   })
 })
 
 describe('加时长（与后端 subscriptionExtendable / validateAdminExtend 同口径）', () => {
-  const s = (status: 'active' | 'trialing' | 'expired', end: number | null, id: string) => ({ id, status, current_period_end: end === null ? null : days(end) })
+  const s = (status: 'active' | 'expired', end: number | null, id: string) => ({ id, status, current_period_end: end === null ? null : days(end) })
 
-  it('生效中、试用中、过期不满 30 天且有到期时间的订阅能加时长（w5expiry）', () => {
-    expect(extendableSubscriptions([s('active', 5, 'a'), s('trialing', 5, 'b'), s('expired', -1, 'c'), s('active', null, 'd'), s('expired', -31, 'e')], NOW).map((x) => x.id)).toEqual(['a', 'b', 'c'])
+  it('生效中、过期不满 30 天且有到期时间的订阅能加时长（w5expiry）', () => {
+    expect(extendableSubscriptions([s('active', 5, 'a'), s('expired', -1, 'c'), s('active', null, 'd'), s('expired', -31, 'e')], NOW).map((x) => x.id)).toEqual(['a', 'c'])
     expect(extendableSubscriptions([s('expired', -31, 'e')], NOW)).toEqual([])
     expect(expiredDays(days(-3), NOW)).toBe(3)
     expect(expiredDays(days(2), NOW)).toBeNull()
     expect(isRescue(s('expired', -3, 'c'), NOW)).toBe(true)
     expect(isRescue(s('active', -1, 'x'), NOW)).toBe(true)
-    expect(isRescue(s('trialing', 5, 'b'), NOW)).toBe(true)
     expect(isRescue(s('active', 5, 'a'), NOW)).toBe(false)
   })
 

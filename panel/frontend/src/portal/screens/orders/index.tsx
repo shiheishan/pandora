@@ -44,7 +44,7 @@ export default function Orders({ rest }: PortalScreenProps) {
 }
 
 // ---------------------------------------------------------------------------
-// 待支付卡片：订单 30 分钟过期；processing 是支付已发起、等回调，不能取消也不能再付
+// 待支付卡片：订单 30 分钟过期
 // ---------------------------------------------------------------------------
 function OpenOrders({ onPay }: { onPay: (s: PayState) => void }) {
   const open = useOpenOrders()
@@ -70,31 +70,28 @@ function OpenOrders({ onPay }: { onPay: (s: PayState) => void }) {
   return (
     <>
       {open.data.map((o) => {
-        const processing = o.status === 'processing'
         return (
           <section key={o.id} className={css.pending}>
             <div className={css.pendingMain}>
               <div className={css.pendingHead}>
-                <Tag tone="warn">{processing ? '处理中' : '待支付'}</Tag>
+                <Tag tone="warn">待支付</Tag>
                 <span className={css.pendingWhat}>{orderTitle(o)}</span>
               </div>
               <div className={css.pendingMeta}>
-                <span className={css.mono}>{o.order_no}</span> · {formatDateTime(o.created_at)} 下单 · {processing ? '支付结果确认中' : expiryNote(o.expires_at)}
+                <span className={css.mono}>{o.order_no}</span> · {formatDateTime(o.created_at)} 下单 · {expiryNote(o.expires_at)}
               </div>
             </div>
             <div className={css.pendingAmount}>{formatMoney(o.payable_amount, o.currency)}</div>
             <div className={css.pendingActions}>
-              {!processing && o.cancellable && (
+              {o.cancellable && (
                 <button type="button" className={css.quiet} onClick={() => setConfirming(o)}>
                   取消订单
                 </button>
               )}
               {o.has_payment_intent && <PaymentRefresh orderId={o.id} onOutcome={(r) => setOutcomes((m) => ({ ...m, [o.id]: r }))} />}
-              {!processing && (
-                <Button variant="primary" size="sm" onClick={() => onPay({ phase: 'choose', orderId: o.id, orderNo: o.order_no, amount: o.payable_amount, currency: o.currency })}>
-                  去支付
-                </Button>
-              )}
+              <Button variant="primary" size="sm" onClick={() => onPay({ phase: 'choose', orderId: o.id, orderNo: o.order_no, amount: o.payable_amount, currency: o.currency })}>
+                去支付
+              </Button>
             </div>
             <RefreshNote outcome={outcomes[o.id]} />
           </section>
@@ -277,9 +274,9 @@ function Facts({ id }: { id: string }) {
               </div>
             ))}
           </dl>
-          {((detail.data.has_payment_intent && (detail.data.status === 'pending_payment' || detail.data.status === 'processing')) || outcome) && (
+          {((detail.data.has_payment_intent && detail.data.status === 'pending_payment') || outcome) && (
             <div className={css.factActions}>
-              {detail.data.has_payment_intent && (detail.data.status === 'pending_payment' || detail.data.status === 'processing') && <PaymentRefresh orderId={id} onOutcome={setOutcome} />}
+              {detail.data.has_payment_intent && detail.data.status === 'pending_payment' && <PaymentRefresh orderId={id} onOutcome={setOutcome} />}
               <RefreshNote outcome={outcome} />
             </div>
           )}

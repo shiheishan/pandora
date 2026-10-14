@@ -94,7 +94,7 @@ const rows: Row[] = [
   { at: 'nodes/queries.ts', seed: 'nodesim 接入 + POST activate', path: 'v1/nodes', query: { id: s.node_id, include_retired: '1' }, schema: nodeDetailResponse },
   { at: 'nodes/queries.ts', path: 'v1/node-protocol-schemas', schema: protocolSchemasResponse },
   { at: 'nodes/queries.ts', seed: '后台 POST servers', path: 'v1/servers', schema: serversResponse },
-  // useServer 目前没有调用处（死 hook），接口仍验一遍
+  // 单取服务器的接口前端目前没有调用处（死 hook 已删），接口仍验一遍
   { at: 'nodes/queries.ts', path: `v1/servers/${s.server_id}`, schema: serverSchema },
   { at: 'nodes/queries.ts', seed: 'nodesim 接入 + POST activate', path: `v1/servers/${s.server_id}/nodes`, schema: serverNodesResponse },
   { at: 'nodes/queries.ts', seed: '后台 POST node-pools', path: 'v1/node-pools', schema: poolsResponse },

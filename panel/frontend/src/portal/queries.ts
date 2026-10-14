@@ -86,11 +86,10 @@ export function useBalance() {
 // 要的部分，所以缓存里始终是全字段、整个门户只发一次请求。字段与 Go 的 mySubscriptionView / myQuotaView
 // 一一对应：都没有 omitempty，指针字段（设备上限、周期末、下次重置、续费价、备注名、续到哪天）为 null 而不缺席。
 // ---------------------------------------------------------------------------
-export { SUBSCRIPTION_STATUSES, subscriptionSchema, subscriptionsSchema, type Subscription, type SubscriptionStatus } from './subscription-schema'
-import { subscriptionsSchema, type Subscription, type SubscriptionStatus } from './subscription-schema'
+export { subscriptionSchema, subscriptionsSchema, type Subscription, type SubscriptionStatus } from './subscription-schema'
+import { subscriptionsSchema, type Subscription } from './subscription-schema'
 
-export const LIVE_STATUSES: ReadonlySet<SubscriptionStatus> = new Set(['active', 'trialing', 'grace', 'past_due'])
-export const isLive = (s: Pick<Subscription, 'status'>) => LIVE_STATUSES.has(s.status)
+export const isLive = (s: Pick<Subscription, 'status'>) => s.status === 'active'
 
 /** 仍然生效的订阅，按 current_period_end 最晚在前（没有周期末的视为最晚）。 */
 export function liveSubscriptions(subs: readonly Subscription[]): Subscription[] {
@@ -100,9 +99,6 @@ export function liveSubscriptions(subs: readonly Subscription[]): Subscription[]
 
 /** 已过期、但还能在原订阅上续费的（过期不满 30 天，后端 renewable 为真）：续费后原链接自动恢复（w5expiry）。 */
 export const isRenewableExpired = (s: Pick<Subscription, 'status' | 'renewable'>) => s.status === 'expired' && s.renewable
-
-/** 门户当成「当前订阅」的：生效中的，或能原地续费的已过期订阅。 */
-export const isCurrent = (s: Pick<Subscription, 'status' | 'renewable'>) => isLive(s) || isRenewableExpired(s)
 
 /** 能原地续费的已过期订阅，到期最晚的在前。 */
 export function renewableExpired(subs: readonly Subscription[]): Subscription[] {

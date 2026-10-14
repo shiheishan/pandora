@@ -19,7 +19,7 @@ export const REFERENCE_MAX = 128
 /** 状态分段 → 后端多值 status（R63）；退款不单列（契约），在「全部」里看 */
 export const ORDER_FILTERS = [
   ['all', '全部', ''],
-  ['pending', '待支付', 'draft,pending_payment,processing'],
+  ['pending', '待支付', 'pending_payment'],
   ['paid', '已支付', 'paid,fulfilled'],
   ['cancelled', '已取消', 'cancelled,expired'],
 ] as const
@@ -49,11 +49,11 @@ export function sourceLabel(o: Pick<OrderDetail, 'manual_reason' | 'created_by_e
   return `人工开单 · ${o.created_by_email ?? '已删除的管理员'}`
 }
 
-const PENDING: readonly OrderStatus[] = ['draft', 'pending_payment', 'processing']
+const PENDING: readonly OrderStatus[] = ['pending_payment']
 
-/** 标记已支付：后端只收 pending_payment / processing，且应付大于 0 */
+/** 标记已支付：后端只收 pending_payment，且应付大于 0 */
 export function canMarkPaid(o: Pick<OrderRow, 'status' | 'payable_amount'>): boolean {
-  return (o.status === 'pending_payment' || o.status === 'processing') && o.payable_amount > 0
+  return o.status === 'pending_payment' && o.payable_amount > 0
 }
 
 /**
@@ -61,7 +61,7 @@ export function canMarkPaid(o: Pick<OrderRow, 'status' | 'payable_amount'>): boo
  * 列表行的 provider_code 就是最近一次支付尝试的渠道；为空说明从没发起过支付（后端回 409）
  */
 export function canQueryChannel(o: Pick<OrderRow, 'status' | 'provider_code'>): boolean {
-  return (o.status === 'pending_payment' || o.status === 'processing') && !!o.provider_code && !isOffline({ code: o.provider_code })
+  return o.status === 'pending_payment' && !!o.provider_code && !isOffline({ code: o.provider_code })
 }
 
 /** 查单结果的一句话与色调：渠道怎么说、这次有没有补记、补记后订单是什么状态 */
@@ -119,20 +119,13 @@ export interface PayLine {
 }
 
 const INTENT_VIEW: Record<string, { label: string; tone: Tone }> = {
-  created: { label: '等待回调', tone: 'warn' },
   requires_action: { label: '等待回调', tone: 'warn' },
-  processing: { label: '等待回调', tone: 'warn' },
   succeeded: { label: '成功', tone: 'ok' },
-  failed: { label: '失败', tone: 'danger' },
   cancelled: { label: '已关闭', tone: 'neutral' },
   expired: { label: '已关闭', tone: 'neutral' },
 }
 const PAYMENT_VIEW: Record<string, { label: string; tone: Tone }> = {
   succeeded: { label: '成功', tone: 'ok' },
-  refunded: { label: '已退款', tone: 'info' },
-  partially_refunded: { label: '部分退款', tone: 'info' },
-  disputed: { label: '争议中', tone: 'danger' },
-  reversed: { label: '已冲回', tone: 'danger' },
 }
 const REFUND_VIEW: Record<string, { label: string; tone: Tone }> = {
   pending: { label: '退款处理中', tone: 'warn' },

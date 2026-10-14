@@ -47,21 +47,13 @@ export const USER_STATUS_VIEW: Record<UserStatus, { label: string; tone: Tone }>
 }
 
 export const SUB_STATUS_VIEW: Record<SubStatus, { label: string; tone: Tone }> = {
-  pending: { label: '待开通', tone: 'neutral' },
-  trialing: { label: '试用中', tone: 'info' },
   active: { label: '生效中', tone: 'ok' },
-  past_due: { label: '待续费', tone: 'warn' },
-  grace: { label: '宽限期', tone: 'warn' },
-  paused: { label: '已暂停', tone: 'neutral' },
-  cancelled: { label: '已取消', tone: 'neutral' },
   expired: { label: '已过期', tone: 'danger' },
 }
 
-/** 契约后台-05 公共映射：9 个后端状态 → 设计 3 个 + 已过期 + 退款 */
+/** 库里 5 个状态 + 2 个退款状态 → 设计 3 个 + 已过期 + 退款 */
 export const ORDER_STATUS_VIEW: Record<OrderStatus, { label: string; tone: Tone }> = {
-  draft: { label: '待支付', tone: 'warn' },
   pending_payment: { label: '待支付', tone: 'warn' },
-  processing: { label: '待支付', tone: 'warn' },
   paid: { label: '已支付', tone: 'ok' },
   fulfilled: { label: '已支付', tone: 'ok' },
   cancelled: { label: '已取消', tone: 'neutral' },
@@ -90,10 +82,8 @@ const KIND_LABELS: Record<OrderRow['kind'], string> = {
   new: '新购',
   renewal: '续费',
   upgrade: '变更套餐',
-  downgrade: '变更套餐',
   addon: '流量包',
   topup: '余额充值',
-  manual: '人工',
 }
 
 /** 「累计消费」：按币种各写一笔（R80 / R114，币种升序由后端排好），没有实收时按用户币种写 0 */
@@ -159,10 +149,10 @@ export function trafficQuota(quotas: readonly Quota[]): Quota | undefined {
 // 当前订阅：与后端 currentSubscriptionSQL 同一口径——还在用的优先，其次到期最晚、最近创建
 // （详情的 subscriptions 已按 created_at 倒序）
 // ===========================================================================
-const LIVE: ReadonlySet<SubStatus> = new Set(['active', 'trialing', 'grace', 'past_due'])
 
-export function isLiveSub(status: SubStatus): boolean {
-  return LIVE.has(status)
+/** 还在用 = 订阅状态为 active（库里只有 active / expired） */
+export function isLive(status: SubStatus): boolean {
+  return status === 'active'
 }
 
 /**
@@ -175,12 +165,12 @@ export function unattachedNext(liveCount: number): string {
 
 export function currentSubscription<T extends Pick<SubscriptionRow, 'status' | 'current_period_end'>>(subs: readonly T[]): T | undefined {
   const end = (s: T) => (s.current_period_end ? new Date(s.current_period_end).getTime() : -Infinity)
-  return [...subs].sort((a, b) => Number(isLiveSub(b.status)) - Number(isLiveSub(a.status)) || end(b) - end(a))[0]
+  return [...subs].sort((a, b) => Number(isLive(b.status)) - Number(isLive(a.status)) || end(b) - end(a))[0]
 }
 
-/** 换发订阅链接只对还在用的订阅有意义；一个都没有时退回全部 */
-export function liveSubscriptions<T extends Pick<SubscriptionRow, 'status'>>(subs: readonly T[]): T[] {
-  const live = subs.filter((s) => isLiveSub(s.status))
+/** 换发订阅链接的候选：还在用的订阅；一个都没有时退回全部（让管理员仍能换发已过期的那份） */
+export function rotatableSubscriptions<T extends Pick<SubscriptionRow, 'status'>>(subs: readonly T[]): T[] {
+  const live = subs.filter((s) => isLive(s.status))
   return live.length ? live : [...subs]
 }
 
@@ -353,7 +343,7 @@ export function noteProblem(note: string): string | null {
 }
 
 /**
- * 能手动重置本期流量的订阅（按份，购买模型统一）：只看 status=active，不含试用。
+ * 能手动重置本期流量的订阅（按份，购买模型统一）：只看 status=active。
  * 不再替管理员挑「到期最晚的一条」：行上点哪份重置哪份，从邮箱或历史页进来再自己选
  */
 export function resettableSubs<T extends Pick<SubscriptionRow, 'status'>>(subs: readonly T[]): T[] {
@@ -400,12 +390,12 @@ export function subLabel(s: Pick<SubscriptionRow, 'label' | 'plan_name' | 'plan_
 
 /** 「给这份开单」有意义的订阅：还在用的，或过期不满 30 天还能续的（其余落点规则里不出现） */
 export function isOrderTarget<T extends Pick<SubscriptionRow, 'status' | 'current_period_end'>>(s: T, now: Date): boolean {
-  return isLiveSub(s.status) || extendableSubscriptions([s], now).length > 0
+  return isLive(s.status) || extendableSubscriptions([s], now).length > 0
 }
 
 /** 能加流量的订阅：只有还在用的（流量包挂在停用的那份上用不上） */
 export function trafficPackTargets<T extends Pick<SubscriptionRow, 'status'>>(subs: readonly T[]): T[] {
-  return subs.filter((s) => isLiveSub(s.status))
+  return subs.filter((s) => isLive(s.status))
 }
 
 /** 按邮箱找人：GET v1/users?q= 是模糊匹配，只认邮箱完全相等（不分大小写）的那一条 */
@@ -432,22 +422,22 @@ export function expiredDays(periodEnd: string | null, now: Date): number | null 
 }
 
 /**
- * 能加时长的订阅（w5expiry）：生效中、试用中，或已过期不满 30 天（救回：状态回到 active、流量按天数折算、
+ * 能加时长的订阅（w5expiry）：生效中，或已过期不满 30 天（救回：状态回到 active、流量按天数折算、
  * 旧链接恢复可用）；都要有到期时间。别的状态后端回 409，没有到期时间回 422。后台列表不带关窗时刻，
  * 按周期末推算（关窗由过期扫描一分钟内写上）。
  */
 export function extendableSubscriptions<T extends Pick<SubscriptionRow, 'status' | 'current_period_end'>>(subs: readonly T[], now: Date = new Date()): T[] {
   return subs.filter((s) => {
     if (s.current_period_end === null) return false
-    if (s.status === 'active' || s.status === 'trialing') return true
+    if (s.status === 'active') return true
     const d = expiredDays(s.current_period_end, now)
     return s.status === 'expired' && d !== null && d < RENEWAL_WINDOW_DAYS
   })
 }
 
-/** 这次加时长是不是「救回」：已过期（状态或周期末）或试用中，要二次确认 */
+/** 这次加时长是不是「救回」：已过期（状态或周期末），要二次确认 */
 export function isRescue<T extends Pick<SubscriptionRow, 'status' | 'current_period_end'>>(s: T, now: Date): boolean {
-  return s.status === 'expired' || s.status === 'trialing' || expiredDays(s.current_period_end, now) !== null
+  return s.status === 'expired' || expiredDays(s.current_period_end, now) !== null
 }
 
 /** 天数：1 到 3650 的整数，否则 null（后端 fields.days） */

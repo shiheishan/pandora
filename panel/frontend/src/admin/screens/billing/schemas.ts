@@ -3,10 +3,11 @@ import { z } from 'zod'
 // ---------------------------------------------------------------------------
 // 封闭枚举（迁移里的 CHECK）：未知值判为不符约定
 // ---------------------------------------------------------------------------
-export const ORDER_STATUSES = ['draft', 'pending_payment', 'processing', 'paid', 'fulfilled', 'cancelled', 'expired', 'refunded', 'partially_refunded'] as const
-export const ORDER_KINDS = ['new', 'renewal', 'upgrade', 'downgrade', 'addon', 'topup', 'manual'] as const
-export const INTENT_STATUSES = ['created', 'requires_action', 'processing', 'succeeded', 'failed', 'cancelled', 'expired'] as const
-export const PAYMENT_STATUSES = ['succeeded', 'refunded', 'partially_refunded', 'disputed', 'reversed'] as const
+// 库里 5 态（00013_order.sql），退款两态等产品确认后再定
+export const ORDER_STATUSES = ['pending_payment', 'paid', 'fulfilled', 'cancelled', 'expired', 'refunded', 'partially_refunded'] as const
+export const ORDER_KINDS = ['new', 'renewal', 'upgrade', 'addon', 'topup'] as const
+export const INTENT_STATUSES = ['requires_action', 'succeeded', 'cancelled', 'expired'] as const
+export const PAYMENT_STATUSES = ['succeeded'] as const
 export const REFUND_STATUSES = ['pending', 'approved', 'processing', 'succeeded', 'failed', 'rejected'] as const
 export const LATE_STATUSES = ['suspense', 'applied'] as const
 export const LATE_KINDS = ['released_order', 'excess_capture', 'ineligible_subscription'] as const
@@ -60,7 +61,6 @@ export type OrderRow = z.output<typeof orderRowSchema>
 // ---------------------------------------------------------------------------
 const orderItemSchema = z.object({
   id: z.string(),
-  product_id: z.string().nullable(),
   price_id: z.string().nullable(),
   plan_id: z.string().nullable(),
   plan_version_id: z.string().nullable(),
@@ -79,11 +79,9 @@ const orderItemSchema = z.object({
 })
 export const orderDetailSchema = orderRowSchema.extend({
   user_id: z.string(),
-  organization_id: z.string().nullable(),
   state_version: int,
   subtotal_amount: int,
   discount_amount: int,
-  tax_amount: int,
   coupon_id: z.string().nullable(),
   manual_reason: z.string().nullable(),
   created_by: z.string().nullable(),

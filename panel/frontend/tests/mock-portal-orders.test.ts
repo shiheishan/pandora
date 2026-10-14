@@ -69,10 +69,11 @@ describe('mock api · portal order query', () => {
   it('hides other orders and rate-limits per account', async () => {
     expect((await query('not-a-uuid')).status).toBe(404)
     expect((await query('00000000-0000-4000-8000-000000000000')).status).toBe(404)
-    // 每账号每分钟 6 次（404 前置拒绝不计）：连查 7 次一定撞上 429，此前是种子处理中单的 503（发起过支付、假渠道查不到）
-    const { orders } = (await (await mockFetch(base, auth, 'GET', '/v1/orders?status=processing')).json()) as { orders: Array<{ id: string; has_payment_intent: boolean }> }
-    expect(orders[0]!.has_payment_intent).toBe(true)
-    const target = orders[0]!.id
+    // 每账号每分钟 6 次（404 前置拒绝不计）：连查 7 次一定撞上 429，此前是种子里已发起支付的待支付充值单的 503（发起过支付、假渠道查不到）
+    const { orders } = (await (await mockFetch(base, auth, 'GET', '/v1/orders?status=pending_payment')).json()) as { orders: Array<{ id: string; kind: string; has_payment_intent: boolean }> }
+    const hit = orders.find((o) => o.kind === 'topup' && o.has_payment_intent)
+    expect(hit).toBeDefined()
+    const target = hit!.id
     const statuses: number[] = []
     let limited: Response | undefined
     for (let i = 0; i < 7 && !limited; i++) {

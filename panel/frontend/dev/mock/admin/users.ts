@@ -10,7 +10,7 @@ const DAY = 86_400_000
 const GiB = 1024 ** 3
 const iso = (msAgo: number) => new Date(Date.now() - msAgo).toISOString()
 
-type SubStatus = 'pending' | 'trialing' | 'active' | 'past_due' | 'grace' | 'paused' | 'cancelled' | 'expired'
+type SubStatus = 'active' | 'expired'
 
 export interface Sub {
   id: string
@@ -101,7 +101,7 @@ function makeSub(i: number, j: number, state: 'live' | 'expired'): Sub {
   const planId = PLAN_IDS[(i + j) % PLANS.length]!
   const start = Date.now() - ((i * 3 + j * 11) % 28) * DAY - (state === 'expired' ? 40 * DAY : 0)
   const end = start + 30 * DAY
-  const status: SubStatus = state === 'expired' ? (j % 2 ? 'cancelled' : 'expired') : i % 9 === 4 ? 'trialing' : i % 13 === 7 ? 'grace' : 'active'
+  const status: SubStatus = state === 'expired' ? 'expired' : 'active'
   const limit = gib === null ? null : gib * GiB
   const used = limit === null ? (i * 7 + 3) * GiB : Math.round(limit * (((i * 37 + j * 11) % 100) / 100))
   return {
@@ -197,13 +197,14 @@ if (twinFirst) {
 // ---------------------------------------------------------------------------
 // 视图：列表行与详情，字段与 Go 的 json tag 一一对应
 // ---------------------------------------------------------------------------
-const LIVE = new Set<SubStatus>(['active', 'trialing', 'grace', 'past_due'])
+/** 还在用 = 订阅状态 active，库里只有 active / expired */
+const isLiveSub = (s: Pick<Sub, 'status'>) => s.status === 'active'
 
 /** 与后端 currentSubscriptionSQL 同一挑法：还在用的优先，其次到期最晚、最近创建 */
 function current(u: User): Sub | undefined {
   return [...u.subs].sort(
     (a, b) =>
-      Number(LIVE.has(b.status)) - Number(LIVE.has(a.status)) ||
+      Number(isLiveSub(b)) - Number(isLiveSub(a)) ||
       Date.parse(b.current_period_end ?? '') - Date.parse(a.current_period_end ?? '') ||
       b.created_at.localeCompare(a.created_at),
   )[0]
@@ -214,7 +215,7 @@ const effectiveLimit = (s: Sub) => s.device_limit_override ?? s.plan_max_devices
 
 function row(u: User) {
   const cs = current(u)
-  const activePlan = [...u.subs].filter((s) => s.status === 'active' || s.status === 'trialing').sort((a, b) => b.created_at.localeCompare(a.created_at))[0]
+  const activePlan = [...u.subs].filter(isLiveSub).sort((a, b) => b.created_at.localeCompare(a.created_at))[0]
   return {
     id: u.id,
     email: u.email,
@@ -353,7 +354,7 @@ function randomUUIDFor(seed: string): string {
 }
 
 function hasSubState(u: User, state: string): boolean {
-  const live = u.subs.some((s) => LIVE.has(s.status))
+  const live = u.subs.some(isLiveSub)
   if (state === 'active') return live
   if (state === 'expired') return u.subs.length > 0 && !live
   return u.subs.length === 0
@@ -373,9 +374,9 @@ function passwordProblem(p: string): string | null {
   return null
 }
 
-/** 套餐列表的「有效订阅」（plans-store.ts 用）：与 adminops.ListPlans 同口径，status 为 active 或 trialing */
+/** 套餐列表的「有效订阅」（plans-store.ts 用）：与 adminops.ListPlans 同口径，status 为 active */
 export function activeSubscriptions(planId: string): number {
-  return users.reduce((n, u) => n + u.subs.filter((s) => s.plan_id === planId && (s.status === 'active' || s.status === 'trialing')).length, 0)
+  return users.reduce((n, u) => n + u.subs.filter((s) => s.plan_id === planId && isLiveSub(s)).length, 0)
 }
 
 /** 同一份用户数组：billing.ts 开单开订阅、挂账转入余额时直接改这里 */
@@ -406,7 +407,7 @@ export const users_: MockModule = {
             u.email.toLowerCase().includes(q) ||
             (u.display_name ?? '').toLowerCase().includes(q) ||
             u.id === q ||
-            u.subs.some((s) => s.token === token && s.status !== 'cancelled'),
+            u.subs.some((s) => s.token === token),
         )
         .filter((u) => statuses.length === 0 || statuses.includes(u.status))
         .filter((u) => !group || (group === 'none' ? u.group_id === null : u.group_id === group))

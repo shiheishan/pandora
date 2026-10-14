@@ -5,7 +5,7 @@ import { useApi } from '../../../shell/runtime'
 import { Button, Input, Modal, Segmented, Select, TextArea, useToast } from '../../../ui'
 import { endsIntent, useFailure, useIntentKey } from '../../actions'
 import { balanceSchema, passwordResetSchema, rotatedSchema, statusSetSchema, type UserDetail } from './api'
-import { liveSubscriptions, parseYuan, passwordProblem, REASON_MIN, subLabel } from './model'
+import { parseYuan, passwordProblem, REASON_MIN, rotatableSubscriptions, subLabel } from './model'
 import css from './Users.module.css'
 
 const reasonShort = (r: string) => [...r.trim()].length < REASON_MIN
@@ -198,7 +198,7 @@ export function RotateDialog({ user, open, onClose, onDone }: { user: UserDetail
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
-  const choices = liveSubscriptions(user.subscriptions)
+  const choices = rotatableSubscriptions(user.subscriptions)
   const [picked, setPicked] = useState<string>('')
   const [reason, setReason] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})

@@ -36,7 +36,7 @@ export const PACK100: Pack = { id: 'k100', name: '100 GB', traffic_bytes: 100 * 
 export function sub(over: Partial<Subscription> & { usedGiB?: number; capGiB?: number } = {}): Subscription {
   const { usedGiB = 40, capGiB = 100, ...rest } = over
   const status = rest.status ?? 'active'
-  const live = ['active', 'trialing', 'grace', 'past_due'].includes(status)
+  const live = status === 'active'
   return subscriptionSchema.parse({
     id: 'sub1',
     plan_id: 'std',
@@ -67,7 +67,6 @@ export function sub(over: Partial<Subscription> & { usedGiB?: number; capGiB?: n
 export const link = (subscriptionId: string, tail: string, over: Partial<SubscriptionLink> = {}): SubscriptionLink => ({
   subscription_id: subscriptionId,
   url: `https://sub.example.com/s/xxxxxxxx${tail}`,
-  expires_at: null,
   fetch_count: 3,
   last_fetched_at: null,
   distinct_sources_24h: 1,

@@ -94,7 +94,7 @@ describe('mock api · portal subscriptions (purchase model)', () => {
   })
 
   it('流量包转移：只能从未分配或彻底停用的那份转到在用的那份；重复转 moved_bytes=0', async () => {
-    // multi：第一份挂着 30G 流量包、第二份待续费（也算在用）
+    // multi：第一份挂着 30G 流量包、第二份也在用
     await scenario('multi')
     const [first, second] = (await subs()).subscriptions
     expect(first!.pack_remaining_bytes).toBe(30 * 1024 ** 3)

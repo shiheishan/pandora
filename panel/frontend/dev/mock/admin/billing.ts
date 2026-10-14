@@ -33,7 +33,7 @@ import { candidatesOf, manualDue, manualDueBelowMinimum, planOptions, placementV
 import { plans } from './plans-store.ts'
 import { userStore } from './users.ts'
 
-const STATUSES = ['draft', 'pending_payment', 'processing', 'paid', 'fulfilled', 'cancelled', 'expired', 'partially_refunded', 'refunded']
+const STATUSES = ['pending_payment', 'paid', 'fulfilled', 'cancelled', 'expired', 'partially_refunded', 'refunded']
 const LATE = ['', 'suspense', 'applied']
 const chars = (v: unknown) => (typeof v === 'string' ? [...v.trim()].length : 0)
 const str = (v: unknown) => (typeof v === 'string' ? v : '')
@@ -198,12 +198,12 @@ export const billing: MockModule = {
         // R95 / R114：与 billing.releaseOrderReservation 同顺序同文案——终态、已付、其余不可取消，再版本号，最后才看入账
         if (o.status === 'expired') return err(409, 'conflict', '订单已过期')
         if (['paid', 'fulfilled', 'partially_refunded', 'refunded'].includes(o.status)) return err(409, 'conflict', '订单已支付，不能取消')
-        if (!['draft', 'pending_payment', 'processing'].includes(o.status)) return err(409, 'conflict', `订单当前状态（${o.status}）不能取消`)
+        if (o.status !== 'pending_payment') return err(409, 'conflict', `订单当前状态（${o.status}）不能取消`)
         if (o.state_version !== expected) return err(409, 'conflict', '订单状态已变化，请刷新后再操作')
         if (o.payments.some((p) => p.status === 'succeeded')) return err(409, 'conflict', '这张订单已有入账，不能取消')
         const at = new Date().toISOString()
         Object.assign(o, { status: 'cancelled', cancelled_at: at, cancel_reason: reason, state_version: o.state_version + 1, updated_at: at })
-        for (const i of o.intents) if (['created', 'requires_action', 'processing'].includes(i.status)) Object.assign(i, { status: 'cancelled', updated_at: at })
+        for (const i of o.intents) if (i.status === 'requires_action') Object.assign(i, { status: 'cancelled', updated_at: at })
         return { status: 200, body: { order: { ...out(), already_terminal: false }, already_terminal: false } }
       })
     },
@@ -320,7 +320,7 @@ export const billing: MockModule = {
           order_no: nextOrderNo(),
           user_id: user.id,
           user_email: user.email,
-          kind: pick.kind === 'renew' ? 'renewal' : pick.kind === 'change' ? (amount > credit ? 'upgrade' : 'downgrade') : 'new',
+          kind: pick.kind === 'renew' ? 'renewal' : pick.kind === 'change' ? 'upgrade' : 'new',
           status: 'pending_payment',
           currency: price.currency,
           subtotal_amount: amount,
@@ -397,7 +397,7 @@ export const billing: MockModule = {
         const r = referenceProblem(reference)
         if (r) return invalid(r)
         const owner = referenceOwner(reference)
-        if (o.status !== 'pending_payment' && o.status !== 'processing') return err(409, 'conflict', `只有待支付的订单可以标记为已支付，当前状态：${o.status}`)
+        if (o.status !== 'pending_payment') return err(409, 'conflict', `只有待支付的订单可以标记为已支付，当前状态：${o.status}`)
         // 同一凭证在仍待支付的单上入过账：上一次钱进了挂账（R117）
         if (owner === o) return err(409, 'conflict', `凭证号 ${reference} 已经入过账，不能重复标记`)
         if (o.payable_amount <= 0) return err(409, 'conflict', '这张订单不需要支付')
@@ -432,7 +432,7 @@ export const billing: MockModule = {
           status: 200,
           body: { order_id: o.id, order_no: o.order_no, provider_code: last.provider_code, channel_status: channel, reconciled, already_recorded: already, ...(quarantine ? { quarantine_kind: quarantine } : {}), order_status: o.status },
         })
-        const pending = o.status === 'pending_payment' || o.status === 'processing'
+        const pending = o.status === 'pending_payment'
         const ref = `${last.provider_code}:${o.order_no}`
         if (o.payments.some((p) => p.provider_payment_id === ref)) return view('paid', false, true)
         const lostCallback = Date.now() - Date.parse(o.created_at) > 60 * 60_000
@@ -445,7 +445,7 @@ export const billing: MockModule = {
           lateCases.unshift({ id: randomUUID(), case_kind: 'released_order', status: 'suspense', amount: o.payable_amount, currency: o.currency, order: o, received_at: at })
           return view('paid', true, false, 'released_order')
         }
-        const active = o.intents.find((i) => ['created', 'requires_action', 'processing'].includes(i.status))
+        const active = o.intents.find((i) => i.status === 'requires_action')
         const intent = active ?? intentFor(o, last.provider_code, 'succeeded', at)
         if (active) Object.assign(active, { status: 'succeeded', updated_at: at })
         else o.intents.push(intent)
