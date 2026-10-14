@@ -15,10 +15,9 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// lateStatusFilters 是挂账列表接受的状态；后三种是旧接口的状态，新库里没有，查出来就是空。
+// lateStatusFilters 是挂账列表接受的状态筛选；空串表示不筛。
 var lateStatusFilters = map[string]bool{
 	"": true, string(LateSuspense): true, string(LateApplied): true,
-	"refunded": true, "manual_review": true, "refund_pending": true,
 }
 
 // ListLatePayments 后台挂账列表：未处理的排前面；待处理合计按币种分开。

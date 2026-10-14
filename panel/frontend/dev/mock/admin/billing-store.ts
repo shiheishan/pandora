@@ -539,7 +539,7 @@ export function fulfil(o: Order, at: string): void {
 export interface LateCase {
   id: string
   case_kind: 'released_order' | 'excess_capture' | 'ineligible_subscription'
-  status: 'suspense' | 'refund_pending' | 'refunded' | 'manual_review' | 'applied'
+  status: 'suspense' | 'applied'
   amount: number
   currency: string
   order: Order
@@ -564,7 +564,7 @@ export const lateCases: LateCase[] = [
   lateSeed('released_order', cancelledOrder, 2500, 4),
   lateSeed('released_order', expiredOrders[0] ?? cancelledOrder, 4500, 12),
   lateSeed('excess_capture', orders.find((o) => o.currency === 'USD') ?? cancelledOrder, 120, 33, { currency: 'USD' }),
-  lateSeed('released_order', expiredOrders[1] ?? cancelledOrder, 6800, 40, { status: 'manual_review' }),
+  lateSeed('released_order', expiredOrders[1] ?? cancelledOrder, 6800, 40),
   lateSeed('ineligible_subscription', ineligibleRenewal, 4500, 6),
   lateSeed('excess_capture', orders.find((o) => o.kind === 'topup' && o.status === 'paid') ?? cancelledOrder, 1000, 21, {
     status: 'applied',

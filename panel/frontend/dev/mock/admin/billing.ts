@@ -34,7 +34,7 @@ import { plans } from './plans-store.ts'
 import { userStore } from './users.ts'
 
 const STATUSES = ['draft', 'pending_payment', 'processing', 'paid', 'fulfilled', 'cancelled', 'expired', 'partially_refunded', 'refunded']
-const LATE = ['', 'suspense', 'applied', 'refunded', 'manual_review', 'refund_pending']
+const LATE = ['', 'suspense', 'applied']
 const chars = (v: unknown) => (typeof v === 'string' ? [...v.trim()].length : 0)
 const str = (v: unknown) => (typeof v === 'string' ? v : '')
 const BAD_JSON = err(400, 'bad_request', '请求体不是合法的 JSON')
