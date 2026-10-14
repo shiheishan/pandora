@@ -271,7 +271,8 @@ func TestDeliverableNodesTiersPG(t *testing.T) {
 
 	check := func(label string, want ...string) {
 		t.Helper()
-		nodes, err := e.svc.DeliverableNodes(ctx, q)
+		// 同一个键改库后立刻再取：测不经缓存的现算（缓存见 delivery_cache_test.go）
+		nodes, err := e.svc.loadDeliverableNodes(ctx, q.PlanVersionID, q.UserGroupID)
 		if err != nil {
 			t.Fatal(err)
 		}
