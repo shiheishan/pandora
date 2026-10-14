@@ -162,3 +162,25 @@ func TestUncommittedInvisibleOutsideTx(t *testing.T) {
 		t.Fatal("提交后应可见")
 	}
 }
+
+// InTx 只认 Do 的回调：外面已有的事务（如 testkit.TxCtx）不算，Do 回调里（新开或加入）都算，Do 返回后又不算。
+func TestInTxOnlyInsideDo(t *testing.T) {
+	outer := db.WithTxState(context.Background(), db.NewTxState(nil))
+	if InTx(outer) {
+		t.Fatal("Do 之外不应算在事务里")
+	}
+	m := &Manager{}
+	var inside bool
+	if err := m.Do(outer, func(ctx context.Context) error {
+		inside = InTx(ctx)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !inside {
+		t.Fatal("Do 回调里应算在事务里")
+	}
+	if InTx(outer) {
+		t.Fatal("Do 返回后外层 ctx 不应带标记")
+	}
+}

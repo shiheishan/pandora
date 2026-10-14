@@ -2,6 +2,8 @@ package repo
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -69,6 +71,7 @@ func (r *Repo) CountIntents(ctx context.Context, orderID uuid.UUID) (int64, erro
 }
 
 // InsertIntent 插一行；(provider_id, out_trade_no) 或「每单一个在途」冲突返回 ErrDuplicate。写前 money.Check(it.Amount)、money.Check(it.SurchargeAmount)。
+// created_at、updated_at 不由应用写，用库的 now()：「建单中」窗口（IntentCreatedWithin）与巡检排程都按库时钟比，多实例时钟偏差不影响。
 func (r *Repo) InsertIntent(ctx context.Context, it *model.Intent) error {
 	if err := money.Check(it.Amount); err != nil {
 		return err
@@ -76,7 +79,20 @@ func (r *Repo) InsertIntent(ctx context.Context, it *model.Intent) error {
 	if err := money.Check(it.SurchargeAmount); err != nil {
 		return err
 	}
-	return mapErr(r.d.Conn(ctx).Create(it).Error)
+	return mapErr(r.d.Conn(ctx).Omit("CreatedAt", "UpdatedAt").Create(it).Error)
+}
+
+// IntentCreatedWithin 报告意图是否在库时钟的最近 window 内创建（created_at > now() - window）。
+func (r *Repo) IntentCreatedWithin(ctx context.Context, id uuid.UUID, window time.Duration) (bool, error) {
+	var fresh bool
+	err := r.d.Conn(ctx).Raw(
+		`SELECT created_at > now() - make_interval(secs => ?) FROM payment_intents WHERE id = ?`,
+		window.Seconds(), id,
+	).Row().Scan(&fresh)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return fresh, mapErr(err)
 }
 
 // IntentByOutTradeNo 按渠道与商户单号读意图（不加锁）。
@@ -122,6 +138,20 @@ func (r *Repo) FillPlaceholderIntent(ctx context.Context, id uuid.UUID, f Intent
 			FormFields:  f.FormFields,
 			ProviderRef: f.ProviderRef,
 			UpdatedAt:   time.Now(),
+		})
+	if err := mapErr(res.Error); err != nil {
+		return false, err
+	}
+	return res.RowsAffected == 1, nil
+}
+
+// SetIntentProviderRef 给还没有 provider_ref 的意图记上渠道发票号，不看状态（回写输给并发、占位已作废时也记，迟到付款仍能按发票号核对）；返回是否更新到一行。
+func (r *Repo) SetIntentProviderRef(ctx context.Context, id uuid.UUID, ref string) (bool, error) {
+	res := r.d.Conn(ctx).Model(&model.Intent{}).
+		Where("id = ? AND provider_ref IS NULL", id).
+		Updates(map[string]any{
+			"provider_ref": ref,
+			"updated_at":   gorm.Expr("now()"),
 		})
 	if err := mapErr(res.Error); err != nil {
 		return false, err

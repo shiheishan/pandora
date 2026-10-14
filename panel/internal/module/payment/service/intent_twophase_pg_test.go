@@ -145,8 +145,8 @@ func TestBeginIntentConflictsWhileCreating(t *testing.T) {
 	}
 
 	_, err := e.svc.CreateIntent(ctx, in)
-	if err == nil || errs.As(err).Code != errs.Conflict {
-		t.Fatalf("建单窗口内应 Conflict: %v", err)
+	if err == nil || errs.As(err).Code != errs.PaymentInProgress {
+		t.Fatalf("建单窗口内应 payment_in_progress: %v", err)
 	}
 
 	if err := e.exec(ctx, `UPDATE payment_intents SET created_at = now() - interval '1 minute' WHERE id = ?`, firstDraft.intentID); err != nil {

@@ -15,6 +15,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
 	"github.com/aegispanel/aegis/internal/pkg/money"
+	pkgtx "github.com/aegispanel/aegis/internal/pkg/tx"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
@@ -22,9 +23,18 @@ import (
 // intentTTL 是支付意图的有效期上限。
 const intentTTL = 30 * time.Minute
 
-// intentCreatingWindow 是占位意图被视为「正在建单」的时长：超过它仍没补上收银台信息（进程中途退出等），再点支付时作废重建。
-// 取渠道调用的最坏耗时（CoinPayments 冷缓存两次请求，各 10 秒）再留余量。
+// intentCreatingWindow 是占位意图被视为「正在建单」的时长（按库时钟比 created_at）：超过它仍没补上收银台信息（进程中途退出等），再点支付时作废重建。
+// 要大于 completeIntentBudget，留出余量。
 const intentCreatingWindow = 30 * time.Second
+
+// completeIntentBudget 是 CompleteIntent 的总期限（渠道调用 + 落库）。
+// 必须小于反向代理的读超时（deploy/nginx-pandora.conf 的 proxy_read_timeout 20 秒）和服务端请求超时：
+// 超过它之前我们自己先结束、作废占位并回 503，用户看到的是可读的错误，而不是 nginx 的 504 与一张悬着的占位。
+const completeIntentBudget = 15 * time.Second
+
+// completeIntentPersistTimeout 是 CompleteIntent 落库（回写或作废占位）的期限，从总期限里留出；渠道调用得到其余的 12 秒。
+// CoinPayments 冷缓存时要连发两次请求（查币种 + 建发票），safehttp 单次超时 6 秒，两次正好在 12 秒内。
+const completeIntentPersistTimeout = 3 * time.Second
 
 // IntentDraft 是 BeginIntent 的结果：要么是可直接复用的在途意图，要么是刚占好、等 CompleteIntent 去渠道建单的占位意图。
 type IntentDraft struct {
@@ -132,8 +142,14 @@ func (s *Service) BeginIntent(ctx context.Context, in CreateIntentInput) (Intent
 				}
 				return nil
 			}
-			if active.RedirectURL == "" && now.Sub(active.CreatedAt) < intentCreatingWindow {
-				return errs.Newf(errs.Conflict, "支付正在发起，请稍后再试")
+			if active.RedirectURL == "" {
+				creating, err := s.repo.IntentCreatedWithin(ctx, active.ID, intentCreatingWindow)
+				if err != nil {
+					return err
+				}
+				if creating {
+					return errs.New(errs.PaymentInProgress)
+				}
 			}
 			if !CanTransition(IntentRequiresAction, IntentCancelled) {
 				return errors.New("payment: 意图状态机不允许取消在途意图")
@@ -181,7 +197,7 @@ func (s *Service) BeginIntent(ctx context.Context, in CreateIntentInput) (Intent
 		}
 		if err := s.repo.InsertIntent(ctx, it); err != nil {
 			if errors.Is(err, repo.ErrDuplicate) {
-				return errs.Newf(errs.Conflict, "支付正在发起，请稍后再试")
+				return errs.New(errs.PaymentInProgress)
 			}
 			return err
 		}
@@ -210,7 +226,7 @@ func (s *Service) BeginIntent(ctx context.Context, in CreateIntentInput) (Intent
 }
 
 // CompleteIntent 去渠道建单并把收银台信息回写到占位意图。必须在 BeginIntent 所在事务提交之后、不在任何事务里调用：
-// 渠道调用可能联网（最长 10 秒），不能占着库连接与订单锁。复用的草稿原样返回。
+// 渠道调用可能联网，不能占着库连接与订单锁；在事务里调用直接回内部错误。总期限 completeIntentBudget。复用的草稿原样返回。
 // 渠道失败时作废占位意图、回 503；占位已被作废（并发再点、订单取消或超时）时回 409，渠道那边留下的发票不会入账到这张单的新意图上。
 func (s *Service) CompleteIntent(ctx context.Context, d IntentDraft) (IntentResult, error) {
 	if d.reused != nil {
@@ -219,9 +235,21 @@ func (s *Service) CompleteIntent(ctx context.Context, d IntentDraft) (IntentResu
 	if d.ad == nil || d.intentID == uuid.Nil {
 		return IntentResult{}, errs.Wrap(errs.Internal, errors.New("payment: 支付草稿不完整"))
 	}
+	if pkgtx.InTx(ctx) {
+		// 在事务里联网会占着库连接与订单锁（最长 completeIntentBudget），调用方写错了
+		plog.From(ctx).Error("CompleteIntent 不能在事务里调用",
+			zap.String("provider", d.provider),
+			zap.String("order_id", d.orderID.String()),
+		)
+		return IntentResult{}, errs.Wrap(errs.Internal, errors.New("payment: CompleteIntent 在事务里被调用"))
+	}
 
-	resp, err := d.ad.CreatePayment(ctx, d.req)
-	wctx := context.WithoutCancel(ctx)
+	gctx, cancelGateway := context.WithTimeout(ctx, completeIntentBudget-completeIntentPersistTimeout)
+	resp, err := d.ad.CreatePayment(gctx, d.req)
+	cancelGateway()
+	// 落库不跟请求一起取消（用户断开也要把结果写下或把占位作废），但有自己的期限，库卡住时不一直挂着
+	wctx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), completeIntentPersistTimeout)
+	defer cancelPersist()
 
 	badResp := func() bool {
 		if resp.HTTPMethod != http.MethodGet && resp.HTTPMethod != http.MethodPost {
@@ -285,6 +313,19 @@ func (s *Service) CompleteIntent(ctx context.Context, d IntentDraft) (IntentResu
 		return IntentResult{}, txErr
 	}
 	if !filled {
+		// 占位已被作废：仍把发票号记到它上面，万一这张发票被付了，入账时也能按发票号核对
+		if providerRef != nil {
+			if refErr := s.tx.Do(wctx, func(ctx context.Context) error {
+				_, e := s.repo.SetIntentProviderRef(ctx, d.intentID, *providerRef)
+				return e
+			}); refErr != nil {
+				plog.From(ctx).Warn("给已作废的占位意图记发票号失败",
+					zap.String("provider", d.provider),
+					zap.String("order_id", d.orderID.String()),
+					zap.Error(refErr),
+				)
+			}
+		}
 		plog.From(ctx).Warn("占位意图已被作废，渠道建好的发票不再使用",
 			zap.String("provider", d.provider),
 			zap.String("order_id", d.orderID.String()),

@@ -13,8 +13,9 @@ import (
 )
 
 const (
-	// Timeout 是外部 HTTP 请求的最大超时时间。
-	Timeout = 10 * time.Second
+	// Timeout 是单次外部 HTTP 请求的最大超时时间（含拨号、TLS、等响应头与读完）。
+	// 发起支付时 CoinPayments 冷缓存要连发两次，两次加起来要落在 payment 的建单期限（12 秒）里，所以取 6 秒。
+	Timeout = 6 * time.Second
 	// MaxResponseBytes 是响应体允许读取的最大字节数（256 KiB）。
 	MaxResponseBytes = 256 * 1024
 )

@@ -62,7 +62,48 @@ func (s *Service) recordPayment(ctx context.Context, in recordInput, hook record
 		out, recErr = s.recordPaymentTx(ctx, in, hook)
 		return recErr
 	})
+	if errors.Is(err, ErrProviderRefMismatch) {
+		// 拒收的那笔事务连事件行一起回滚了：另开一笔只留证据（不占事件去重键，渠道重投时照样再核对一次）
+		if evErr := s.recordRefMismatchEvidence(ctx, in); evErr != nil {
+			plog.From(ctx).Warn("记录渠道单号不符的证据失败",
+				zap.String("provider", in.Provider.Code),
+				zap.Error(evErr),
+			)
+		}
+	}
 	return out, err
+}
+
+// recordRefMismatchEvidence 落一条已忽略的事件，只存核对用的几个字段。
+func (s *Service) recordRefMismatchEvidence(ctx context.Context, in recordInput) error {
+	pr := strings.TrimSpace(in.PaymentRef)
+	raw := map[string]string{
+		"reject":       "provider_ref_mismatch",
+		"event_id":     clip(strings.TrimSpace(in.EventID), 200),
+		"out_trade_no": clip(strings.TrimSpace(in.OutTradeNo), 64),
+		"channel_ref":  clip(pr, 200),
+	}
+	ev := &model.Event{
+		ID:                uuid.Must(uuid.NewV7()),
+		ProviderID:        in.Provider.ID,
+		ProviderEventID:   "ref_mismatch:" + uuid.Must(uuid.NewV7()).String(),
+		EventType:         in.EventType,
+		SignatureVerified: true,
+		ProcessingStatus:  eventPending,
+		RawPayload:        raw,
+	}
+	if pr != "" && len(pr) <= 200 {
+		ev.ProviderPaymentID = &pr
+	}
+	return s.tx.Do(ctx, func(ctx context.Context) error {
+		inserted, err := s.repo.InsertEvent(ctx, ev)
+		if err != nil || !inserted {
+			return err
+		}
+		msg := "渠道单号与支付意图不一致"
+		_, err = s.repo.FinishEvent(ctx, ev.ID, eventIgnored, &msg)
+		return err
+	})
 }
 
 func (s *Service) recordPaymentTx(ctx context.Context, in recordInput, hook recordHook) (RecordResult, error) {
@@ -175,13 +216,20 @@ func (s *Service) recordPaymentTx(ctx context.Context, in recordInput, hook reco
 			return RecordResult{}, ErrAmountMismatch
 		}
 		if intent.ProviderRef != nil && *intent.ProviderRef != pr {
-			log.Error("渠道单号与支付意图不一致，未入账",
+			fields := []zap.Field{
 				zap.String("provider", in.Provider.Code),
 				zap.String("out_trade_no", strings.TrimSpace(in.OutTradeNo)),
 				zap.String("intent_ref", *intent.ProviderRef),
 				zap.String("channel_ref", pr),
-			)
-			return RecordResult{}, ErrProviderRefMismatch
+			}
+			if in.Provider.Adapter == AdapterCoinPayments {
+				// 临时口径：CoinPayments 建单响应的 invoices[].id 与回调、回查里的 invoice.id 是否同一个标识，
+				// 官方文档没写明（都写作系统分配的发票 id），待沙箱核实；核实前只记日志、照常入账，免得全部付款卡住
+				log.Error("CoinPayments 渠道单号与支付意图存的发票号不一致（待沙箱核实，暂不拒收）", fields...)
+			} else {
+				log.Error("渠道单号与支付意图不一致，未入账", fields...)
+				return RecordResult{}, ErrProviderRefMismatch
+			}
 		}
 	}
 
