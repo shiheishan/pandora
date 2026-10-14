@@ -27,6 +27,10 @@ paths:
 - 令牌按 `token_hash` 查库后再 `hmac.Equal`；短于 16 字符不查库（`service/pull.go`）
 - 成功/过期提示才占凭据每小时限流；未认证失败按来源 IP HMAC 采样落库（`service/pull.go`、`service/fetchlog.go`）
 - `Profile-Update-Interval`：正常 12 小时，过期 1 小时；续费页 `renewalPageURL`（`service/pull.go`）
+- 查询参数：`target`/`flag`/`type` 选格式（`subscribeTarget`）；`types` 按协议过滤、`filter` 按名字关键字过滤（`render.ParseTypes`/`ParseKeywords`，口径照 Xboard）（`handler/subscribe.go`）
+- 后台模板与订阅附加设置（信息节点、协议前缀、订阅域名，settings 的 `subscription.info_nodes` 等）在拉取侧走进程内快照，30 秒过期（`service/pull_extras.go`）；后台改动最多 30 秒后生效。开了信息节点才多查一次 `TrafficWindowEnd`（距下次重置）
+- 订阅域名：`MyLinks`、换链接返回的地址从后台填的一组里随机取（`pickLinkBase`，crypto/rand）；没填用 `public_base_url`。Surfboard 托管配置里的地址固定取第一个（`subscribeURLFor`）。过期提示的续费页仍用 `public_base_url`
+- 后台模板接口：`/subscription-templates[/:format[/preview]]`；保存与恢复缺省要近期重认证、写审计（只记 sha256 与字节数，不记全文）（`handler/templates.go`、`service/templates.go`）
 
 ## 链接、换链、备注
 - 门户链接列表：`MyLinks` 列续费窗口没关的订阅（过期可救回仍列，`Expired` 只读）（`service/links.go`）
