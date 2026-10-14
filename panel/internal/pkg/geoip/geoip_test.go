@@ -2,8 +2,10 @@ package geoip
 
 import (
 	"errors"
+	"net/netip"
 	"testing"
 
+	"github.com/hashicorp/golang-lru/v2/expirable"
 	"go.uber.org/zap"
 )
 
@@ -82,5 +84,35 @@ func TestOpenEmptyPathReturnsErrNoDatabase(t *testing.T) {
 	_, err = Open("   ", "", nil)
 	if !errors.Is(err, ErrNoDatabase) {
 		t.Fatalf("期望 ErrNoDatabase，得到 %v", err)
+	}
+}
+
+func TestResolverCacheLRUEviction(t *testing.T) {
+	r := &Resolver{cache: expirable.NewLRU[netip.Addr, Location](2, nil, 0)}
+
+	addr1 := netip.MustParseAddr("198.51.100.1")
+	addr2 := netip.MustParseAddr("198.51.100.2")
+	addr3 := netip.MustParseAddr("198.51.100.3")
+	loc1 := Location{Country: "测试", Display: "测试 1"}
+	loc2 := Location{Country: "测试", Display: "测试 2"}
+	loc3 := Location{Country: "测试", Display: "测试 3"}
+
+	r.cache.Add(addr1, loc1)
+	r.cache.Add(addr2, loc2)
+	r.cache.Add(addr3, loc3)
+
+	if _, ok := r.cache.Get(addr1); ok {
+		t.Fatal("198.51.100.1 应已被 LRU 淘汰")
+	}
+	if got, ok := r.cache.Get(addr2); !ok || got.Display != loc2.Display {
+		t.Fatalf("198.51.100.2 应在缓存中，得到 ok=%v %+v", ok, got)
+	}
+	if got, ok := r.cache.Get(addr3); !ok || got.Display != loc3.Display {
+		t.Fatalf("198.51.100.3 应在缓存中，得到 ok=%v %+v", ok, got)
+	}
+
+	got := r.Lookup("198.51.100.3")
+	if got.Display != loc3.Display {
+		t.Fatalf("Lookup 应命中缓存，得到 %+v，期望 %+v", got, loc3)
 	}
 }

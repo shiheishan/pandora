@@ -472,7 +472,7 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 | 门户与后台实时推送 | Redis pub/sub `rt:*`，事件带 user_id，由 hub 路由。serve 和 worker 都直接发布，不再经过 PG NOTIFY |
 | 节点下发 | 改了名单相关数据（订阅、配额、流量包、用户状态、节点池、用户组、节点配置、服务器）的属主 service，调 `node.Service.MarkUsersChanged(ctx, scope)` 或 `MarkConfigChanged`；提交后 `INCR node:users_epoch` 再 PUBLISH。会话管理器收到通知就重算；另外每 5 秒读一次纪元值，与上次不同也重算。所以丢一条 pub/sub 最多晚 5 秒，Redis 断开时同样退回 5 秒比对（读不到纪元就每 15 秒全量比对一次） |
 | 名单重算的成本 | 按「服务器 × 名单内容哈希」共享编码，一次变更每个版本只编码一次 |
-| 进程内缓存 | `hashicorp/golang-lru/v2/expirable` 加 `golang.org/x/sync/singleflight`，统一替换四处自写缓存 |
+| 进程内缓存 | 键会随输入增长的多键缓存用 `hashicorp/golang-lru/v2/expirable`（有上限、按最近最少使用淘汰）：IP 归属地（`internal/pkg/geoip`，不过期）、订阅线路微缓存（node `delivery_cache.go`，5 秒，加 `golang.org/x/sync/singleflight` 合并同键未命中）。键固定且很少的缓存保留手写的「值 + 锁 / 原子指针」：settings 降级开关、订阅路径前缀、pdnd 产物摘要 |
 | 手工改库 | 不再有触发器兜底。手工 SQL 改了名单相关的表，要等下一次纪元变化或 15 秒全量比对；运维文档写明这一点 |
 
 ---

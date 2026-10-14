@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/hashicorp/golang-lru/v2/expirable"
 	"github.com/lionsoul2014/ip2region/binding/golang/xdb"
 	"go.uber.org/zap"
 )
@@ -57,8 +58,7 @@ type Resolver struct {
 	ipv6Searcher *xdb.Searcher
 	ipv4SearchMu sync.Mutex
 	ipv6SearchMu sync.Mutex
-	cacheMu      sync.RWMutex
-	cache        map[netip.Addr]Location
+	cache        *expirable.LRU[netip.Addr, Location]
 	ipv6WarnOnce sync.Once
 	logger       *zap.Logger
 }
@@ -83,9 +83,10 @@ func Open(path, ipv6Path string, log *zap.Logger) (*Resolver, error) {
 		log = zap.NewNop()
 	}
 
+	// ttl 为 0：归属地由离线库算出，库文件不变结果就不变，不需要过期；库也不会起清理 goroutine。
 	r := &Resolver{
 		ipv4Searcher: ipv4Searcher,
-		cache:        make(map[netip.Addr]Location),
+		cache:        expirable.NewLRU[netip.Addr, Location](maxCacheEntries, nil, 0),
 		logger:       log,
 	}
 	if ipv6Path = strings.TrimSpace(ipv6Path); ipv6Path != "" {
@@ -133,10 +134,7 @@ func (r *Resolver) Lookup(ip string) Location {
 		return Location{}
 	}
 
-	r.cacheMu.RLock()
-	cached, ok := r.cache[addr]
-	r.cacheMu.RUnlock()
-	if ok {
+	if cached, ok := r.cache.Get(addr); ok {
 		return cached
 	}
 
@@ -154,14 +152,8 @@ func (r *Resolver) Lookup(ip string) Location {
 	}
 	loc := parseRegion(raw)
 
-	r.cacheMu.Lock()
-	// 缓存无上限会被大量随机 IP 撑爆（爬虫扫描时尤其明显）。到顶就整个
-	// 丢掉重来：这里存的是可重算的派生数据，简单清空比维护 LRU 划算。
-	if len(r.cache) >= maxCacheEntries {
-		r.cache = make(map[netip.Addr]Location, maxCacheEntries/2)
-	}
-	r.cache[addr] = loc
-	r.cacheMu.Unlock()
+	// 到上限按最近最少使用淘汰，扫描类的大量随机 IP 撑不爆内存。
+	r.cache.Add(addr, loc)
 	return loc
 }
 
