@@ -181,7 +181,6 @@ func TestDetectFormatCoversCommonClients(t *testing.T) {
 		// Clash Meta（mihomo）系
 		"clash-verge/v1.7.7":              FormatClash,
 		"mihomo/1.19.10":                  FormatClash,
-		"Stash/2.5.0":                     FormatClash,
 		"FlClash/0.8.60":                  FormatClash,
 		"clash-nyanpasu/1.5.1":            FormatClash,
 		"ClashMetaForAndroid/2.11.5.Meta": FormatClash,
@@ -197,15 +196,21 @@ func TestDetectFormatCoversCommonClients(t *testing.T) {
 		"ClashForAndroid/2.5.12":  FormatClashPremium,
 		"clash":                   FormatClashPremium,
 
+		// 有专有格式的
+		"Stash/2.5.0 Clash/1.9.0":   FormatStash,
+		"Shadowrocket/2.2.28":       FormatShadowrocket,
+		"Loon/3.1.3":                FormatLoon,
+		"Surfboard/2.24.0":          FormatSurfboard,
+		"shadowsocks-android/5.3.3": FormatSIP008,
+
 		// 只吃 URI / base64 的
-		"v2rayN/6.23":           FormatURI,
-		"v2rayNG/1.8.19":        FormatURI,
-		"Shadowrocket/2.2.28":   FormatURI,
-		"Quantumult%20X/1.0.30": FormatURI,
-		"Surge/5.8.0":           FormatURI,
-		"Loon/3.1.3":            FormatURI,
-		"NekoBox/1.3.4":         FormatURI,
-		"Streisand/1.6.4":       FormatURI,
+		"ShadowsocksX-NG/1.10.2": FormatURI,
+		"v2rayN/6.23":            FormatURI,
+		"v2rayNG/1.8.19":         FormatURI,
+		"Quantumult%20X/1.0.30":  FormatURI,
+		"Surge/5.8.0":            FormatURI,
+		"NekoBox/1.3.4":          FormatURI,
+		"Streisand/1.6.4":        FormatURI,
 
 		// 完全不认识的一律回落到兼容面最宽的
 		"":                              FormatURI,
@@ -262,7 +267,8 @@ func TestDetectFormatEveryBranch(t *testing.T) {
 		{"", "clash-meta", FormatClash},
 		{"", "mihomo", FormatClash},
 		{"", "verge", FormatClash},
-		{"", "stash", FormatClash},
+		{"", "stash", FormatStash},
+		{"Stash/2.5.0", "clash", FormatStash},
 		{"", "clash-premium", FormatClashPremium},
 		{"", "premium", FormatClashPremium},
 		{"", "singbox", FormatSingbox},
@@ -275,7 +281,11 @@ func TestDetectFormatEveryBranch(t *testing.T) {
 		{"", "v2ray", FormatURI},
 		{"", "v2rayn", FormatURI},
 		{"", "v2rayng", FormatURI},
-		{"", "shadowrocket", FormatURI},
+		{"", "shadowrocket", FormatShadowrocket},
+		{"", "loon", FormatLoon},
+		{"", "surfboard", FormatSurfboard},
+		{"", "sip008", FormatSIP008},
+		{"", "shadowsocks", FormatSIP008},
 		{"", "general", FormatURI},
 		// UA sing-box 子串
 		{"sing-box/2.0.0", "", FormatSingbox},
@@ -285,11 +295,17 @@ func TestDetectFormatEveryBranch(t *testing.T) {
 		{"SFT/1.0", "", FormatSingbox},
 		{"Hiddify/1.0", "", FormatSingbox},
 		{"Karing/1.0", "", FormatSingbox},
+		// UA 专有格式子串
+		{"Shadowrocket/1.0", "", FormatShadowrocket},
+		{"Loon/1.0", "", FormatLoon},
+		{"Surfboard/1.0", "", FormatSurfboard},
+		{"Stash/1.0", "", FormatStash},
+		{"shadowsocks/1.0", "", FormatSIP008},
 		// UA URI 子串（各至少一例）
-		{"Shadowrocket/1.0", "", FormatURI},
+		{"ShadowsocksX-NG/1.0", "", FormatURI},
+		{"ShadowsocksR/1.0", "", FormatURI},
 		{"Quantumult/1.0", "", FormatURI},
 		{"Surge/1.0", "", FormatURI},
-		{"Loon/1.0", "", FormatURI},
 		{"v2rayN/1.0", "", FormatURI},
 		{"v2rayNG/1.0", "", FormatURI},
 		{"v2rayU/1.0", "", FormatURI},
@@ -301,11 +317,9 @@ func TestDetectFormatEveryBranch(t *testing.T) {
 		{"streisand/1.0", "", FormatURI},
 		{"potatso/1.0", "", FormatURI},
 		{"oneclick/1.0", "", FormatURI},
-		{"shadowsocks/1.0", "", FormatURI},
 		// UA clash 子串 → clashFlavor
 		{"clash-meta/1.0", "", FormatClash},
 		{"mihomo/1.0", "", FormatClash},
-		{"stash/1.0", "", FormatClash},
 		{"meta/1.0", "", FormatClash},
 		{"flclash/1.0", "", FormatClash},
 		{"nyanpasu/1.0", "", FormatClash},
@@ -313,8 +327,9 @@ func TestDetectFormatEveryBranch(t *testing.T) {
 		{"Koala Clash/1.0", "", FormatClash},
 		{"ClashMi/1.0", "", FormatClash},
 		{"only-clash-here/1.0", "", FormatClashPremium},
-		// URI 排在 clash 之前
-		{"Clash-Shadowrocket/1.0", "", FormatURI},
+		// 专有格式与 URI 排在 clash 之前
+		{"Clash-Shadowrocket/1.0", "", FormatShadowrocket},
+		{"Clash-Quantumult/1.0", "", FormatURI},
 		// sing-box 排在 clash 之前
 		{"Hiddify clash/1.0", "", FormatSingbox},
 	}

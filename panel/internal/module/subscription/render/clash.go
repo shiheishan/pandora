@@ -19,50 +19,94 @@ import (
 	"strings"
 )
 
-func renderClash(nodes []Node, uuid string, premium bool) ([]byte, string, int) {
-	var proxies []map[string]any
-	var names []string
+const defaultClashTemplate = "mixed-port: 7890\nallow-lan: false\nmode: rule\nlog-level: info\n\n{{proxies}}\n\nproxy-groups:\n{{proxy_groups}}\n\nrules:\n  - GEOIP,CN,DIRECT\n  - MATCH,节点选择\n"
 
-	for _, n := range nodes {
-		p, _ := nodeToClash(n, uuid, premium)
+// renderClash 渲染 Clash 系配置（Clash Meta / Premium / Stash）。
+// 支持后台自定义模板（rc.tmpl 为空时使用内置 defaultClashTemplate），通过占位符替换生成。
+// 信息节点（剩余流量等）排在最前，仅进手动选择组（节点选择），不进自动选择组（自动选择）；
+// 当没有真实节点时，不输出信息节点，节点数只计真实节点。
+func renderClash(rc renderCtx, kind clashKind) ([]byte, string, int) {
+	convert := func(n Node) map[string]any {
+		if kind == clashStash {
+			p, _ := nodeToStash(n, rc.uuid)
+			return p
+		}
+		p, _ := nodeToClash(n, rc.uuid, kind == clashPremium)
+		return p
+	}
+
+	infoNodes, realNodes := rc.splitInfo()
+
+	var realProxies []map[string]any
+	var realNames []string
+	for _, n := range realNodes {
+		p := convert(n)
 		if p == nil {
 			continue
 		}
-		proxies = append(proxies, p)
-		names = append(names, n.Name)
+		realProxies = append(realProxies, p)
+		realNames = append(realNames, n.Name)
 	}
 
-	var b strings.Builder
-	b.WriteString("mixed-port: 7890\nallow-lan: false\nmode: rule\nlog-level: info\n\n")
-	if len(proxies) == 0 {
-		b.WriteString("proxies: []\n")
+	var allProxies []map[string]any
+	var allSelectNames []string
+
+	if len(realProxies) > 0 {
+		var infoProxies []map[string]any
+		var infoNames []string
+		for _, n := range infoNodes {
+			p := convert(n)
+			if p == nil {
+				continue
+			}
+			infoProxies = append(infoProxies, p)
+			infoNames = append(infoNames, n.Name)
+		}
+		allProxies = append(allProxies, infoProxies...)
+		allProxies = append(allProxies, realProxies...)
+		allSelectNames = append(allSelectNames, infoNames...)
+		allSelectNames = append(allSelectNames, realNames...)
+	}
+
+	var proxiesVal string
+	if len(allProxies) == 0 {
+		proxiesVal = "proxies: []"
 	} else {
-		b.WriteString("proxies:\n")
-	}
-	for _, p := range proxies {
-		b.WriteString("  - " + inlineYAML(p) + "\n")
+		var b strings.Builder
+		b.WriteString("proxies:")
+		for _, p := range allProxies {
+			b.WriteString("\n  - " + inlineYAML(p))
+		}
+		proxiesVal = b.String()
 	}
 
-	// 策略组：一个自动选优、一个手动。没有策略组的订阅在 Clash 里
-	// 只是一堆节点，用户没法切换，等于不可用。
-	//
-	// 一个节点都没有时（没有可下发节点，或全被跳过），url-test 组的空 proxies
-	// 会让 mihomo 报 `use` or `proxies` missing、整份配置被拒。这时只留一个
-	// 指向 DIRECT 的手动组：配置仍然合法，规则照常引用「节点选择」。
-	b.WriteString("\nproxy-groups:\n")
-	if len(names) == 0 {
-		b.WriteString("  - {name: 节点选择, type: select, proxies: [DIRECT]}\n")
+	var proxyGroupsVal string
+	var proxyNamesVal string
+
+	if len(realProxies) == 0 {
+		proxyGroupsVal = "  - {name: 节点选择, type: select, proxies: [DIRECT]}"
+		proxyNamesVal = "DIRECT"
 	} else {
-		b.WriteString("  - {name: 自动选择, type: url-test, url: 'http://www.gstatic.com/generate_204', interval: 300, proxies: [")
-		b.WriteString(strings.Join(quoteAll(names), ", "))
-		b.WriteString("]}\n")
-		b.WriteString("  - {name: 节点选择, type: select, proxies: [自动选择, ")
-		b.WriteString(strings.Join(quoteAll(names), ", "))
-		b.WriteString("]}\n")
+		autoGroup := "  - {name: 自动选择, type: url-test, url: 'http://www.gstatic.com/generate_204', interval: 300, proxies: [" +
+			strings.Join(quoteAll(realNames), ", ") + "]}"
+		selectGroup := "  - {name: 节点选择, type: select, proxies: [自动选择, " +
+			strings.Join(quoteAll(allSelectNames), ", ") + "]}"
+		proxyGroupsVal = autoGroup + "\n" + selectGroup
+		proxyNamesVal = strings.Join(quoteAll(realNames), ", ")
 	}
-	b.WriteString("\nrules:\n  - GEOIP,CN,DIRECT\n  - MATCH,节点选择\n")
 
-	return []byte(b.String()), "text/yaml; charset=utf-8", len(proxies)
+	tmpl := rc.tmpl
+	if tmpl == "" {
+		tmpl = defaultClashTemplate
+	}
+
+	body := fillTemplate(tmpl, map[string]string{
+		phProxies:     proxiesVal,
+		phProxyGroups: proxyGroupsVal,
+		phProxyNames:  proxyNamesVal,
+	})
+
+	return []byte(body), "text/yaml; charset=utf-8", len(realProxies)
 }
 
 // nodeToClash 返回一条 proxy；不能渲染时返回 nil 和跳过原因。
