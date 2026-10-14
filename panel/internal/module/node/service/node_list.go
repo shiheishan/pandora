@@ -30,6 +30,8 @@ type nodeListExtras struct {
 	usage     map[uuid.UUID]catalogsvc.PoolUsage  // 池 id →
 	desired   map[uuid.UUID]string                // 节点 id → 期望配置文档 SHA-256
 	livePlans map[uuid.UUID][]string              // 池 id → 在用套餐名（去重升序）
+	// 节点 id → 面板生成配置文档失败的记录：这些节点不在下发的文档里，节点端会停掉其入站，列表显示为失败。
+	configSkips map[uuid.UUID]configSkip
 }
 
 // QueryNodes 返回后台节点列表的一页与筛选后的总数；只读，ListNodePage 一次，
@@ -138,12 +140,13 @@ func (s *Service) nodeListExtrasFor(ctx context.Context, rows []repo.NodeListRow
 	livePlans := livePlanNames(usage, inUse)
 
 	desired := make(map[uuid.UUID]string)
-	// 某个节点的配置拼不出文档（协议配置不是对象等）时不让整个列表 500，否则连去修它的页面都打不开；
+	// 单个节点的文档拼不出来（协议配置不是对象等）由 configSkips 带回，那一行显示为失败；
+	// 这里的 err 是读配置行或路由层的库错误：不让整个列表 500，否则连去修它的页面都打不开；
 	// 记警告，期望摘要留空，生效状态退回只看节点回报。
-	configs, err := s.ServerConfigs(ctx, serverIDs)
+	configs, skips, err := s.serverConfigsWithSkips(ctx, serverIDs)
 	if err != nil {
-		plog.From(ctx).Warn("节点列表算期望配置失败，生效状态只看节点回报", zap.Error(err))
-		configs = nil
+		plog.From(ctx).Warn("节点列表读期望配置失败，生效状态只看节点回报", zap.Error(err))
+		configs, skips = nil, nil
 	}
 	for _, docs := range configs {
 		for _, doc := range docs {
@@ -151,12 +154,13 @@ func (s *Service) nodeListExtrasFor(ctx context.Context, rows []repo.NodeListRow
 		}
 	}
 	return nodeListExtras{
-		live:      live,
-		metrics:   metrics,
-		seqs:      seqs,
-		usage:     usage,
-		desired:   desired,
-		livePlans: livePlans,
+		live:        live,
+		metrics:     metrics,
+		seqs:        seqs,
+		usage:       usage,
+		desired:     desired,
+		livePlans:   livePlans,
+		configSkips: skips,
 	}, nil
 }
 
@@ -218,6 +222,9 @@ func nodeRowFromList(row repo.NodeListRow, now time.Time, detail bool, x nodeLis
 	}
 	delivered, note := nodeDeliveryVerdict(facts)
 	eff, fail := nodeEffectiveState(row, desired)
+	if sk, ok := x.configSkips[row.ID]; ok {
+		eff, fail = configSkipState(sk, now)
+	}
 
 	nr := NodeRow{
 		ID:                row.ID,

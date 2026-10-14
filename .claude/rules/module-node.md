@@ -32,7 +32,7 @@ paths:
 - 合并只有 `mergeRouting`（`service/routing.go`）：层序节点私有 → 各路由组（`sort_order, id`）→ 全局；规则按层拼接，出站从低到高同 tag 覆盖且保留首次位置。读层用 `nodeRoutingLayers`（`service/routing_layers.go`）。下发配置用 `ServerConfigs`（`service/config_docs.go`），不要另写合并。
 - 内置出站 `direct` / `block` 保存时经 `canonicalRouteTag` 规范成小写；自定义 tag 大小写敏感。
 - 写路由用 `refuseNewDangling`：只拒本次新造成的悬空引用（`service/routing_write.go`）。
-- `ServerConfigs` 里单个节点的文档生成失败只跳过该节点并记 ERROR（`assembleServerConfigs`），同批其余服务器与节点照发；不要改回整批失败。
+- 单个节点的文档生成失败只跳过该节点（`assembleServerConfigs` 返回跳过集合），同批其余服务器与节点照发；不要改回整批失败。被跳过的节点不在下发的文档里，节点端会停掉它的入站直到配置修好。ERROR 只在下发路径记（`ServerConfigs`，供配置纪元与建流对齐）；只读路径（节点列表、`ConfigLaggingCount`）调 `serverConfigsWithSkips` 不记日志：列表把这些节点显示为 failed（「面板生成配置失败：…」），落后计数算上它们。
 
 ## 同机端口（先到先得）
 - L4 唯一口径：`protocol.ListenL4` = 写入 `nodes.listen_l4` = pdnd `kernel/port_claims.go`（`protocol/port_l4.go`、`protocol/port_l4_test.go`）。

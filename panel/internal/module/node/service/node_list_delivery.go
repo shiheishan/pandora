@@ -114,3 +114,9 @@ func nodeDegraded(r repo.NodeListRow) bool {
 	st := *r.RuntimeStatus
 	return st == "degraded" || st == "down"
 }
+
+// configSkipState 是面板生成配置文档失败、本次下发不含该节点时的生效状态：一律 failed，
+// 失败详情写明是面板这边的错（节点端没收到这份配置，会停掉其入站），时间取本次读的时刻。
+func configSkipState(sk configSkip, now time.Time) (string, *ApplyFailure) {
+	return "failed", &ApplyFailure{Phase: "failed", Detail: "面板生成配置失败：" + sk.Reason, At: now}
+}

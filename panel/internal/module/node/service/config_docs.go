@@ -27,12 +27,35 @@ var configDocReservedKeys = []string{
 }
 
 // ServerConfigs 一次算出这些服务器上每个该跑的节点（repo.ServedOnServerCond）的生效配置文档：
-// 服务器 id → 文档（按节点 id 升序）。会话层在配置纪元变了、节点新建流时调。不存在或已删除的服务器不在结果里。
-// 单个节点文档出错只跳过该节点（见 assembleServerConfigs）。
+// 服务器 id → 文档（按节点 id 升序）。只给下发路径用（配置纪元轮询、建流对齐）：不存在或已删除的服务器不在结果里；
+// 单个节点文档出错只跳过该节点并在这里记 ERROR——这份结果会下发出去，被跳过的节点端会停掉其入站。
+// 只读路径（节点列表、报表）调 serverConfigsWithSkips，自己处理跳过集合。
 func (s *Service) ServerConfigs(ctx context.Context, serverIDs []uuid.UUID) (map[uuid.UUID][]NodeConfigDoc, error) {
+	out, skips, err := s.serverConfigsWithSkips(ctx, serverIDs)
+	if err != nil {
+		return nil, err
+	}
+	for nodeID, sk := range skips {
+		plog.From(ctx).Error("节点配置文档生成失败，本次下发不含该节点，节点端将停掉其入站直到配置修好",
+			zap.String("server_id", sk.ServerID.String()),
+			zap.String("node_id", nodeID.String()),
+			zap.String("err", sk.Reason))
+	}
+	return out, nil
+}
+
+// configSkip 是一个因文档生成失败被跳过的节点：所在服务器与错误摘要。
+type configSkip struct {
+	ServerID uuid.UUID
+	Reason   string
+}
+
+// serverConfigsWithSkips 同 ServerConfigs，但不记日志，额外返回被跳过的节点（节点 id → 跳过原因）。
+func (s *Service) serverConfigsWithSkips(ctx context.Context, serverIDs []uuid.UUID) (map[uuid.UUID][]NodeConfigDoc, map[uuid.UUID]configSkip, error) {
 	out := make(map[uuid.UUID][]NodeConfigDoc)
+	skips := make(map[uuid.UUID]configSkip)
 	if len(serverIDs) == 0 {
-		return out, nil
+		return out, skips, nil
 	}
 	ids := slices.Clone(serverIDs)
 	slices.SortFunc(ids, compareUUID)
@@ -40,7 +63,7 @@ func (s *Service) ServerConfigs(ctx context.Context, serverIDs []uuid.UUID) (map
 
 	rows, err := s.repo.ConfigNodes(ctx, ids)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	var nodeIDs []uuid.UUID
@@ -54,18 +77,21 @@ func (s *Service) ServerConfigs(ctx context.Context, serverIDs []uuid.UUID) (map
 	if len(nodeIDs) > 0 {
 		layersByNode, _, err = s.nodeRoutingLayers(ctx, nodeIDs)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
-	return assembleServerConfigs(ctx, rows, layersByNode), nil
+	out, skips = assembleServerConfigs(rows, layersByNode)
+	return out, skips, nil
 }
 
-// assembleServerConfigs 按读到的行组装每台服务器的配置文档（按节点 id 升序）。一个节点的文档生成失败只跳过这个节点并记 ERROR，
-// 不让整批失败：建流对齐与配置纪元都是一批服务器一起算，一台节点的坏配置不能让同批其他服务器都拿不到配置。
-// 被跳过的节点不在这次下发的文档里，节点端会按文档集合停掉它的入站，直到配置修好。
-func assembleServerConfigs(ctx context.Context, rows []repo.ConfigNodeRow, layersByNode map[uuid.UUID][]routingLayer) map[uuid.UUID][]NodeConfigDoc {
+// assembleServerConfigs 按读到的行组装每台服务器的配置文档（按节点 id 升序）。一个节点的文档生成失败只跳过这个节点，
+// 记进返回的跳过集合（节点 id → 所在服务器与错误摘要），不让整批失败：建流对齐与配置纪元都是一批服务器一起算，
+// 一台节点的坏配置不能让同批其他服务器都拿不到配置。
+// 被跳过的节点不在这次下发的文档里，节点端会按文档集合停掉它的入站，直到配置修好；后台列表把它显示为失败。
+func assembleServerConfigs(rows []repo.ConfigNodeRow, layersByNode map[uuid.UUID][]routingLayer) (map[uuid.UUID][]NodeConfigDoc, map[uuid.UUID]configSkip) {
 	out := make(map[uuid.UUID][]NodeConfigDoc)
+	skips := make(map[uuid.UUID]configSkip)
 	for _, row := range rows {
 		out[row.ServerID] = []NodeConfigDoc{}
 	}
@@ -93,10 +119,7 @@ func assembleServerConfigs(ctx context.Context, rows []repo.ConfigNodeRow, layer
 		layers := layersByNode[*row.NodeID]
 		doc, err := buildNodeConfigDoc(*row.NodeID, nodeType, port, kernel, protoCfg, layers)
 		if err != nil {
-			plog.From(ctx).Error("节点配置文档生成失败，本次下发跳过该节点",
-				zap.String("server_id", row.ServerID.String()),
-				zap.String("node_id", row.NodeID.String()),
-				zap.Error(err))
+			skips[*row.NodeID] = configSkip{ServerID: row.ServerID, Reason: err.Error()}
 			continue
 		}
 		out[row.ServerID] = append(out[row.ServerID], doc)
@@ -106,7 +129,7 @@ func assembleServerConfigs(ctx context.Context, rows []repo.ConfigNodeRow, layer
 		slices.SortFunc(list, func(a, b NodeConfigDoc) int { return compareUUID(a.NodeID, b.NodeID) })
 		out[sid] = list
 	}
-	return out
+	return out, skips
 }
 
 // buildNodeConfigDoc 组装一个节点的配置文档：协议字段经 protocol.KernelConfig 翻译后摊平在顶层，

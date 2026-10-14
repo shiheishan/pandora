@@ -1,18 +1,13 @@
 package service
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"testing"
 
 	"github.com/aegispanel/aegis/internal/module/node/repo"
-	plog "github.com/aegispanel/aegis/internal/pkg/log"
 	"github.com/google/uuid"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
-	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestBuildNodeConfigDocDeterministic(t *testing.T) {
@@ -196,10 +191,7 @@ func TestAssembleServerConfigsSkipsBadNode(t *testing.T) {
 		{ServerID: sC, NodeID: nil},
 	}
 
-	core, logs := observer.New(zapcore.ErrorLevel)
-	ctx := plog.With(context.Background(), zap.New(core))
-
-	out := assembleServerConfigs(ctx, rows, map[uuid.UUID][]routingLayer{})
+	out, skips := assembleServerConfigs(rows, map[uuid.UUID][]routingLayer{})
 
 	if len(out[sA]) != 1 || out[sA][0].NodeID != n1 {
 		t.Fatalf("sA docs: %+v, want only n1", out[sA])
@@ -214,17 +206,11 @@ func TestAssembleServerConfigsSkipsBadNode(t *testing.T) {
 		t.Fatalf("sC should be empty slice, got %v", out[sC])
 	}
 
-	errEntries := logs.FilterLevelExact(zapcore.ErrorLevel).All()
-	if len(errEntries) != 1 {
-		t.Fatalf("expected 1 error log, got %d", len(errEntries))
+	if len(skips) != 1 {
+		t.Fatalf("跳过集合应只有 n2，got %+v", skips)
 	}
-	var nodeIDField string
-	for _, f := range errEntries[0].Context {
-		if f.Key == "node_id" {
-			nodeIDField = f.String
-		}
-	}
-	if nodeIDField != n2.String() {
-		t.Fatalf("node_id log field %q, want %q", nodeIDField, n2.String())
+	sk, ok := skips[n2]
+	if !ok || sk.ServerID != sA || sk.Reason == "" {
+		t.Fatalf("n2 的跳过记录不符: %+v ok=%v", sk, ok)
 	}
 }
