@@ -9,6 +9,8 @@ import (
 // 会话上限，也是 Juicity 入站上同时存在的 UDP 路由（每个目标一个上游 socket）上限。
 // AnyTLS 的 UoT 按同一口径用它：一条 UoT 流里每个目标占一个上游 socket，算一个会话
 // （uot_bridge.go），该用户在这个入站上的全部 UoT 流共用名额。
+// 经典 Shadowsocks 的 UDP 会话（每个 (客户端地址, 用户) 一个上游 socket，
+// shadowsocks_udp_session.go）也按它计。
 //
 // 每个 UDP 会话占一个上游 socket（fd、内核收发缓冲，见 hy2UDPSocketBuffer）和三个
 // goroutine，会话数又由客户端决定、空闲 5 分钟才回收。不设上限时，一个已认证用户

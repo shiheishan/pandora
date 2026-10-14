@@ -57,6 +57,13 @@ paths:
 
 - UDP 中继的上下行必须解耦，各一个 goroutine 阻塞读，收尾走 `udp_relay.go` 的 `relayUDPDirections`（SOCKS5、Trojan、VMess command=UDP 共用）。下行不能与上行在同一循环轮询，否则回程被限成几包每秒（`*DownlinkBurstWithoutUplink` 系列测试）。
 - Shadowsocks AEAD 分块负载上限 0x3FFF（SIP004），读写两侧共用 `ssChunkLimit`；超长块规范客户端会断连（`shadowsocks_chunk_test.go`）。
+- Shadowsocks（经典 AEAD 与 2022 方法）同一端口同时听 TCP 与 UDP，任一 bind 失败整体失败；配置带 `network` 键按配置错误拒绝（与面板的共用约定，面板 schema 不收 `network`）。端口登记因此占 `tcp+udp` 两个键（`port_claims.go` 的 `inboundPortKeys`：登记时全部检查、全部占上，任一冲突整体不启动，释放时全部释放；冲突文案写 `443/TCP+UDP`）。面板 `protocol/port_l4_test.go` 的 `TestListenL4MatchesPdndPortClaims` 用正则读 `TestInboundPortKeyDerivation` 的用例表，行格式 `{"协议", nil 或 map[string]any{...}, "L4"}` 不要改。
+- 经典 Shadowsocks 的 UDP 按 (客户端地址, 用户) 建会话（`shadowsocks_udp.go`、`shadowsocks_udp_session.go`），不逐包处理：
+  - 入站只有一个读循环，不按包起 goroutine：同地址先用该会话的用户试解（快路径，用户记录 retired 就跳过），解不开再走 `findSSUser`；明文写进读循环独占的缓冲（GCM 失败会清零 dst，不能原地试解）。上行在读循环里同步写上游。
+  - 每会话一个上游 socket（经 DataPlane，出站按首包目标选，与 hy2 / TUIC 同）和一个下行 goroutine；下行直接调用 hy2 的 `hy2DownlinkUDP`（冷态不占收包缓冲、共用存货与名额），交给它的「客户端连接」`ssUDPClientWriter` 在 WritePacket 里按真实来源地址加密、写回入站 socket，编码缓冲从池里借、返回前还。
+  - 会话两个方向都空闲 `ssUDPIdleTimeout`（5 分钟，与 juicity、UoT 同值）由 `udpJanitor` 关；删用户经 `userSessions.revoke` 踢；入站 Close 全关。在线设备在会话建立时 enter、`finishUDPSession` 里 leave；名额按 `udpSessionsPerUser`。
+  - 限速：上行在共享读循环里 `AllowN` 不够即丢包（不能 WaitN 阻塞别的用户），下行在会话 goroutine 里 `WaitN`。域名目标按会话缓存最近一次解析（`hy2UDPResolveTTL`），没命中时另起 goroutine 解析、同一会话同时只解一个，期间的包丢弃。
+  - 守卫：`TestOnlineDevicesWiringSSUDP`、`TestShadowsocksSamePortTCPAndUDPInterop`、`TestShadowsocksUDPDownlinkBurstWithoutUplink`、`TestShadowsocksIdleUDPSessionHeap`（1000 个空闲会话每会话存活堆 ≤16KB）、`shadowsocks_udp_lifecycle_test.go`（上限、空闲回收、删用户、关入站不留 goroutine）。SS2022 的 UDP 仍逐包处理，留给 SS2022 多用户重写。
 - VLESS / VMess 的 mux（XUDP）在 NativeCore 内实现。
 - XHTTP 按请求判定角色（`xhttp.go` 的 `classifyRequest`），适配器只按 `XHTTPSession.Kind` 分派。auto（节点缺省）照 Xray 服务端逐请求收：不带会话的上行请求是 stream-one；带会话的 GET 是下行；带会话与序号的是 packet-up；带会话无序号的是 stream-up。Xray 的 auto 在 REALITY 上选 stream-one（有 downloadSettings 时选 stream-up），其余选 packet-up。
   - 会话型请求共用 `xhttp_session.go`：一个会话只许一种上行，第二条 stream-up 回 409。
@@ -97,7 +104,7 @@ QUIC 栈是 sagernet/quic-go（经 sing-quic 与 `internal/nativewire` 的 hy2 /
   - 共享缓冲的前提：nativewire 的 hy2 / TUIC `WritePacket` 返回前同步编码并复制（`SendDatagram` 自带复制），返回后不再引用负载。改成异步持有负载，借来的缓冲还回后会被别的会话（别的用户）覆盖，等于串数据。守卫 `hysteria2_udp_writecopy_test.go`（经真客户端，WritePacket 返回后涂掉缓冲、客户端仍收到原文）与 `TestHy2DownlinkCrossSessionIsolation`。
   - 其余守卫：`hysteria2_udp_mem_test.go`（空闲、活跃、卡在写回的存活堆）、`hysteria2_udp_recv_test.go`（真 socket 逐字节、IPv4 / IPv6 来源、收尾、不留 goroutine）、`TestHy2DownlinkMediumRateTwoRecvsPerPacket`。`hysteria2_udp_share_test.go`、`hysteria2_udp_warm_test.go` 用上游替身（按 udprecv 的语义实现 `Ready` / `Recv`：先窥视、空就等，`calls` 按系统调用计，窥视也算），一次收包能给多包，批量组、名额与热态在 darwin 上也走得到；真 socket 的用例在 darwin 上一次只收一包（recvfrom），recvmmsg 与批量路径只在 Linux CI 上走到。
   - 下行收包器不分协议族（IPv6 上游同样就绪收、在 Linux 上 recvmmsg 批量收）；默认拦私网时收包器由 `outbound.UDPBatchConn.Receiver()` 给出，只能收，裸 socket 不出 outbound 包；上行批量发送仍只在 IPv4 本地地址时。加密、封装类出站只有 `net.PacketConn`，下行退回阻塞 ReadFrom、常驻 64KB。
-- hy2 / TUIC 每用户在途 UDP 会话上限 `udpSessionsPerUser`（1024，`udp_session_quota.go`），挡 fd 与 udp_mem 被单个用户耗尽；超出拒新不踢旧，走 OnConnError 的 limit 分类。
+- hy2 / TUIC 与经典 Shadowsocks 每用户在途 UDP 会话上限 `udpSessionsPerUser`（1024，`udp_session_quota.go`），挡 fd 与 udp_mem 被单个用户耗尽；超出拒新不踢旧，走 OnConnError 的 limit 分类。
   - Juicity 每个 UDP 目标一条路由（一个上游 socket），按同一上限计；路由没有上行也没有下行 `juicityUDPIdleTimeout`（5 分钟）即回收、归还名额（`juicity_udp.go`，守卫 `TestJuicityUDPRouteIdleReclaim`）。
   - AnyTLS 的 UoT 一个目标算一个会话，该用户在同一入站上的全部 UoT 流共用名额；超额或发往某个目标失败只丢那个包、经 onDrop 记一条，不关流；目标空闲 `uotUpstreamIdleTimeout`（5 分钟）回收（`uot_bridge.go`）。名额与该目标的 socket、读 goroutine、读缓冲同时释放：只有把目标移出表的一方归还名额，读 goroutine 靠 done 退出，客户端不读下行时也不滞留。守卫 `TestUOTTargetsBoundedByUserUDPQuota`、`TestUOTQuotaSharedAcrossStreamsOfOneUser`、`TestUOTReclaimedTargetsReleaseReaderWhenConsumerStalls`、`TestUOTIdleTargetsReclaimed`。
 - Hysteria2 认证前的约束在 `internal/nativewire/hysteria2/service.go`（fork 改动明细见 pdnd-forks 规则文件）：认证前每条请求流读请求头限时 10 秒（`DefaultPreAuthHeaderTimeout`，超时只拒那条流，不关连接）；未认证且没有在途请求的连接空闲 75 秒关（`DefaultPreAuthIdleTimeout`，取 nginx keepalive_timeout，有请求在途不计时）；认证前在途请求至多 32 条（`preAuthMaxInflight`，多出的 H3_REQUEST_REJECTED）；HEADERS 声明长度超过 32KB 拒（`preAuthMaxHeaderBytes`，H3_EXCESSIVE_LOAD）。没有「握手后 10 秒未认证即关」：那样会误杀伪装站点的正常长连接（`TestPreAuthActiveMasqueradeConnSurvives`）。其余守卫 `preauth_test.go`、`preauth_idle_test.go`。
