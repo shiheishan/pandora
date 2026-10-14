@@ -6,6 +6,7 @@ import { Button, Empty, Select, StatStrip, Tag, useToast } from '../../../ui'
 import { useFailure } from '../../actions'
 import { okSchema, useInvalidateUsers, useUserGroups, useUserProfile, type SubscriptionRow, type UserDetail } from './api'
 import { ExtendDialog } from './ExtendDialog'
+import { PeriodEndDialog, QuotaLimitDialog } from './SubEditDialogs'
 import {
   currentSubscription,
   deviceLimitLabel,
@@ -116,7 +117,7 @@ function GroupPicker({ d }: { d: UserDetail }) {
 // 购买模型统一后每份订阅各自一行：显示备注名、这一份的流量包余量，开单、加时长、加流量、
 // 重置流量都落在被点的这一份上，不再由系统替管理员挑
 // ===========================================================================
-type RowAction = { kind: 'extend' | 'traffic' | 'reset'; id: string }
+type RowAction = { kind: 'extend' | 'traffic' | 'reset' | 'period' | 'quota'; id: string }
 
 export function SubscriptionsTab({ d, now }: { d: UserDetail; now: Date }) {
   const invalidate = useInvalidateUsers()
@@ -140,6 +141,19 @@ export function SubscriptionsTab({ d, now }: { d: UserDetail; now: Date }) {
       <ExtendDialog user={d} subscriptionId={action?.kind === 'extend' ? action.id : null} open={action?.kind === 'extend'} onClose={close} onDone={done} now={now} />
       <TrafficPackDialog user={d} subscriptionId={action?.kind === 'traffic' ? action.id : null} open={action?.kind === 'traffic'} onClose={close} onDone={done} />
       <ResetDialog user={action?.kind === 'reset' ? { id: d.id, email: d.email } : null} subscriptionId={action?.kind === 'reset' ? action.id : null} onClose={close} onDone={close} />
+      <PeriodEndDialog
+        subscription={action?.kind === 'period' ? d.subscriptions.find((s) => s.id === action.id) ?? null : null}
+        open={action?.kind === 'period'}
+        onClose={close}
+        onDone={done}
+        now={now}
+      />
+      <QuotaLimitDialog
+        subscription={action?.kind === 'quota' ? d.subscriptions.find((s) => s.id === action.id) ?? null : null}
+        open={action?.kind === 'quota'}
+        onClose={close}
+        onDone={done}
+      />
     </>
   )
 }
@@ -206,6 +220,8 @@ function RowActions({ userId, s, now, onAction }: { userId: string; s: Subscript
   const name = subName(s)
   const extendable = extendableSubscriptions([s], now).length > 0
   const live = isLive(s.status)
+  const quota = trafficQuota(s.quotas)
+  const inactiveTitle = '这一份不在生效中'
   return (
     <div className={css.subActions}>
       <Button
@@ -233,10 +249,28 @@ function RowActions({ userId, s, now, onAction }: { userId: string; s: Subscript
         size="xs"
         aria-label={`重置${name}的本期流量`}
         disabled={s.status !== 'active'}
-        title={s.status === 'active' ? undefined : '这一份不在生效中'}
+        title={s.status === 'active' ? undefined : inactiveTitle}
         onClick={() => onAction('reset')}
       >
         重置流量
+      </Button>
+      <Button
+        size="xs"
+        aria-label={`改${name}的到期时间`}
+        disabled={s.status !== 'active'}
+        title={s.status === 'active' ? undefined : inactiveTitle}
+        onClick={() => onAction('period')}
+      >
+        改到期
+      </Button>
+      <Button
+        size="xs"
+        aria-label={`改${name}的流量上限`}
+        disabled={s.status !== 'active' || !quota}
+        title={s.status !== 'active' ? inactiveTitle : !quota ? '这一份没有流量配额' : undefined}
+        onClick={() => onAction('quota')}
+      >
+        改上限
       </Button>
     </div>
   )
