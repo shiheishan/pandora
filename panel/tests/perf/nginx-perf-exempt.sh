@@ -106,9 +106,17 @@ apply_exempt() {
   grep -q 'limit_req_zone \$pandora_limit_key' "$CONF" || { echo "没找到 limit_req_zone \$binary_remote_addr，配置结构变了" >&2; false; }
 
   nginx -t
-  systemctl reload nginx
+  restart_nginx
   trap - ERR
   echo "已放宽：$*"
+}
+
+# restart_nginx 用 restart 而不是 reload：放宽与还原都改了限流区的 key，nginx 不许 reload 时改已有共享区的 key，
+# nginx -t 照样通过，reload 时 master 记一条 emerg 后沿用旧配置（10-14 测试机实测，豁免没生效）。
+# restart 失败时 systemctl 返回非零，交给调用方的 ERR / set -e 处理。
+restart_nginx() {
+  systemctl restart nginx
+  systemctl is-active --quiet nginx
 }
 
 revert_exempt() {
@@ -121,7 +129,7 @@ revert_exempt() {
     echo "nginx -t 失败，已保留 $BAK" >&2
     exit 1
   fi
-  systemctl reload nginx
+  restart_nginx
   rm -f "$BAK"
   echo "已还原 nginx 配置"
 }
