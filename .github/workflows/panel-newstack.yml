@@ -52,7 +52,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: panel/go.mod
           cache-dependency-path: panel/go.sum
@@ -99,7 +99,7 @@ jobs:
       PANDORA_ENV: development
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: panel/go.mod
           cache-dependency-path: panel/go.sum
@@ -200,14 +200,14 @@ jobs:
       RISK_E2E_DISPOSABLE: YES_DELETE_FIXTURES
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: panel/go.mod
           cache-dependency-path: panel/go.sum
       - name: Build pandora
         run: go build -mod=readonly -o "$RUNNER_TEMP/pandora" ./cmd/pandora
       # risk_e2e 的节点用模拟器接入（与 node-e2e 同法）：按 pdnd 的 go.mod 构建，只编它用到的几个依赖，不开缓存
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: pdnd/go.mod
           cache: false
@@ -312,14 +312,14 @@ jobs:
       NODE_KICK_E2E_DISPOSABLE: YES_DELETE_FIXTURES
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: panel/go.mod
           cache-dependency-path: panel/go.sum
       - name: Build pandora
         run: go build -mod=readonly -o "$RUNNER_TEMP/pandora" ./cmd/pandora
       # 模拟器在 pdnd 模块里（用真实的节点客户端 pdnd/panel），按 pdnd 的 go.mod 构建；只编它用到的几个依赖，不开缓存
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: pdnd/go.mod
           cache: false

@@ -50,7 +50,7 @@ jobs:
         working-directory: panel
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: panel/go.mod
           cache-dependency-path: panel/go.sum
@@ -70,7 +70,7 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: panel/frontend/package-lock.json
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: panel/go.mod
           cache-dependency-path: panel/go.sum
@@ -108,7 +108,7 @@ jobs:
         working-directory: pdnd
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: pdnd/go.mod
           cache-dependency-path: pdnd/go.sum
@@ -200,7 +200,7 @@ jobs:
         working-directory: pdnd
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: pdnd/go.mod
           cache-dependency-path: pdnd/go.sum
@@ -252,7 +252,7 @@ jobs:
       GOARCH: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: pdnd/go.mod
           cache-dependency-path: pdnd/go.sum
@@ -268,7 +268,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: pdnd/go.mod
           cache-dependency-path: pdnd/go.sum
