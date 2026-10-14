@@ -36,7 +36,7 @@ type Service interface {
 var _ Service = (*service.Service)(nil)
 var _ route.Module = (*Handler)(nil)
 
-// 幂等作用域（沿用旧代码的名字）。
+// 幂等作用域。
 const (
 	ScopeRedeem        = "gift_card_redeem"
 	ScopeCodesGenerate = "giftcard_codes_generate"

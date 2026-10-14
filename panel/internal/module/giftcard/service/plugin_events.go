@@ -10,7 +10,7 @@ import (
 // UsePluginEvents 注入插件事件口（plugin 模块实现，见 internal/pkg/pluginevents）。
 func (s *Service) UsePluginEvents(p pluginevents.Emitter) { s.events = p }
 
-// pluginGranted 是 giftcard.redeemed 事件里的 granted：字段名与旧代码的兑换记录一致，没有的项不出现；金额是分。
+// pluginGranted 是 giftcard.redeemed 事件里的 granted：字段名是插件事件口径（产品决定），没有的项不出现；金额是分。
 // 金额换算失败时返回错误，让兑换失败。
 func pluginGranted(g granted) (map[string]any, error) {
 	m := map[string]any{}

@@ -57,7 +57,7 @@ type templateResponse struct {
 	Template templateDTO `json:"template"`
 }
 
-// templateRequest 是保存模板的请求体（旧接口同形）：id 空串为新建，金额是分。
+// templateRequest 是保存模板的请求体：id 空串为新建，金额是分。
 type templateRequest struct {
 	ID          string        `json:"id"`
 	Name        string        `json:"name"`

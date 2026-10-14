@@ -15,7 +15,7 @@ import (
 const (
 	orderLease  = IssueTimeout + time.Minute
 	issueBudget = 13 * time.Minute
-	// maxRunningIssues：同时在跑的签发单上限（旧实现是串行签）
+	// maxRunningIssues：同时在跑的签发单上限
 	maxRunningIssues = 2
 	// interruptedBackoff：订单因进程退出、任务丢失而中断时的重排间隔，不计连续失败
 	interruptedBackoff = 15 * time.Minute

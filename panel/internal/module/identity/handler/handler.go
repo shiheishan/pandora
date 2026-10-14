@@ -123,7 +123,7 @@ func (h *Handler) strict(prefix string, global bool) gin.HandlerFunc {
 	return h.limiter.Middleware(dims...)
 }
 
-// mePasswordLimit 是改密接口的严格限流：按账号、按 IP 两维，每分钟 authPerMin 次（与旧 adm_password、adm_password_ip 同口径）。
+// mePasswordLimit 是改密接口的严格限流：按账号、按 IP 两维，每分钟 authPerMin 次。
 // 挂在 RequireAuth 之后，按账号那一维取登录主体；没有主体时跳过该维（RequireAuth 已经拦下）。
 func (h *Handler) mePasswordLimit() gin.HandlerFunc {
 	if h.limiter == nil {

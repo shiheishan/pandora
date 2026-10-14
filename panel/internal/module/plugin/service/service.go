@@ -36,7 +36,7 @@ const (
 	maxDeliveries      = 200 // 投递记录条数上限
 )
 
-// 审计（动作名沿用旧代码）。
+// 审计动作名。
 const (
 	ActionHookSave   = "plugin.hook.save"
 	ActionHookDelete = "plugin.hook.delete"

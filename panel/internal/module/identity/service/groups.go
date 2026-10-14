@@ -140,7 +140,7 @@ func (s *Service) DeleteGroup(ctx context.Context, id uuid.UUID) error {
 		if n > 0 {
 			return errs.Newf(errs.Conflict, "这个分组下还有用户，先把他们移出去")
 		}
-		// 套餐可见名单对组是级联删除，外键兜不住：删了套餐就对谁都不可见，所以先查引用（与旧版同口径）
+		// 套餐可见名单对组是级联删除，外键兜不住：删了套餐就对谁都不可见，所以先查引用
 		if err := s.ensureGroupUnused(ctx, id); err != nil {
 			return err
 		}

@@ -179,7 +179,7 @@ func (s *Service) clock() time.Time {
 	return s.now().UTC().Truncate(time.Microsecond)
 }
 
-// 审计动作名（沿用旧代码）与资源类型。
+// 审计动作名与资源类型。
 const (
 	ActionTemplateCreated = "gift_card_template.created"
 	ActionTemplateUpdated = "gift_card_template.updated"

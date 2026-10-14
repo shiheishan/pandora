@@ -17,7 +17,7 @@ import (
 )
 
 type fakeNotify struct {
-	p6Fake // P6 的方法与记录，见 p6fake_test.go
+	p6Fake // 站内信、偏好、公告、Telegram 的方法与记录，见 p6fake_test.go
 
 	mail        service.MailSettings
 	mailSave    service.MailSettingsUpdate

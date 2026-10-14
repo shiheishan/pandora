@@ -24,7 +24,7 @@ type Wallet struct {
 	History  []HistoryItem
 }
 
-// WalletHistoryLimit 是余额明细的条数上限（与旧接口一致）。
+// WalletHistoryLimit 是余额明细的条数上限。
 const WalletHistoryLimit = 100
 
 // Balance 返回用户在某币种的可用余额；从没有过余额往来时是 0。

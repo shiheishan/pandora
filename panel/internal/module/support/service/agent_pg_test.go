@@ -293,7 +293,7 @@ func TestQueueFiltersAndShape(t *testing.T) {
 	if rows[0].UserEmail == "" || rows[0].UserActivePlan == nil || *rows[0].UserActivePlan != plan {
 		t.Fatal("UserEmail / UserActivePlan")
 	}
-	// 最后一条非内部消息是改状态的系统消息（与旧实现一致：系统消息也算）
+	// 最后一条非内部消息是改状态的系统消息（系统消息也算）
 	if rows[0].LastMessageAuthorKind != AuthorSystem {
 		t.Fatalf("最后非内部消息应为系统，得到 %q", rows[0].LastMessageAuthorKind)
 	}

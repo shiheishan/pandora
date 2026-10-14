@@ -23,7 +23,7 @@ type Service interface {
 var _ Service = (*service.Service)(nil)
 var _ route.Module = (*Handler)(nil)
 
-// ScopeHookSave 是保存钩子的幂等作用域（沿用旧接口）。
+// ScopeHookSave 是保存钩子的幂等作用域。
 const ScopeHookSave = "plugin_hook_save"
 
 const deliveriesLimit = 50

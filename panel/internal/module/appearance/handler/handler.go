@@ -25,7 +25,7 @@ type Service interface {
 var _ Service = (*service.Service)(nil)
 var _ route.Module = (*Handler)(nil)
 
-// 幂等作用域（沿用旧接口）。
+// 幂等作用域。
 const (
 	ScopeThemeSave = "appearance_theme_save"
 	ScopeSlotSave  = "appearance_slot_save"

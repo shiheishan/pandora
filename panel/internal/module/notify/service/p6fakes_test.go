@@ -15,7 +15,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// P6 各测试共用的跨模块假实现与夹具。
+// 站内信、公告、Telegram、扫描等测试共用的跨模块假实现与夹具。
 
 // fakeDir 是内存里的 identity：邮箱、用户组、用户所在组。
 type fakeDir struct {

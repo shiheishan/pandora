@@ -13,7 +13,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/realtime"
 )
 
-// 队列分页的缺省与上限（与旧接口一致）。
+// 队列分页的缺省与上限。
 const (
 	queueDefaultLimit = 25
 	queueMaxLimit     = 100

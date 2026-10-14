@@ -11,7 +11,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
-// 卡密列表与报表的口径（与旧接口相同）。
+// 卡密列表与报表的口径。
 const (
 	CodeListDefault = 50
 	CodeListMax     = 5000

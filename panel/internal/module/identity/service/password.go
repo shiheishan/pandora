@@ -19,7 +19,7 @@ import (
 	"golang.org/x/sync/semaphore"
 )
 
-// argonParams 是 Argon2id 的代价参数。参数照旧：OWASP 低内存档 19 MiB / 2 次迭代，
+// argonParams 是 Argon2id 的代价参数：OWASP 低内存档 19 MiB / 2 次迭代，
 // 首发机器内存小，64 MiB × 并发登录会把内存打满。参数内嵌在 PHC 串里，调强后随登录逐步重算。
 type argonParams struct {
 	memory      uint32 // KiB

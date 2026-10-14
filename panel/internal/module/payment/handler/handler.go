@@ -33,7 +33,7 @@ type Handler struct {
 	lim *ratelimit.Limiter
 }
 
-// WebhookPerIPPerMin 是渠道回调每个来源 IP 每分钟的上限。旧代码不限；渠道正常重试远低于这个数，
+// WebhookPerIPPerMin 是渠道回调每个来源 IP 每分钟的上限。渠道正常重试远低于这个数，
 // 只为挡住刷验签失败的请求。非严格模式：Redis 故障时放行，不让限流挡掉真回调。
 const WebhookPerIPPerMin = 120
 
