@@ -579,7 +579,9 @@ const pack = await call(ADM, '/v1/traffic-packs', {
 })
 const packId = str(pack, (pack.pack as Json | undefined) ? 'pack.id' : 'id')
 // 流量包加到一份在用的套餐上（购买模型统一 Q5：subscription_id 必填）
-await call(PUB, '/v1/me/traffic-pack-orders', { token: user, idem: true, body: { pack_id: packId, subscription_id: subscriptionId, use_balance: 500, coupon_code: '' }, expect: [200, 201] })
+const packOrder = await call(PUB, '/v1/me/traffic-pack-orders', { token: user, idem: true, body: { pack_id: packId, subscription_id: subscriptionId, use_balance: 500, coupon_code: '' }, expect: [200, 201] })
+// 应付为 0 的流量包单当场履约：响应里就该是 fulfilled，否则下面「我的流量包」必然为空
+if (packOrder.status !== 'fulfilled') throw new Error(`流量包单没有当场履约：${JSON.stringify(packOrder).slice(0, 400)}`)
 
 step('收入调整与手动流量重置')
 await call(ADM, '/v1/revenue/adjustments', { token: admin, idem: true, body: { currency: 'CNY', amount: 1000, reason: 'smoke adjustment', effective_on: '' }, expect: [200, 201] })
