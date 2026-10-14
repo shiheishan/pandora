@@ -84,6 +84,19 @@ func (f *fakeAdmins) IsActiveAdmin(_ context.Context, userID uuid.UUID) (bool, e
 	return f.active[userID], nil
 }
 
+// ActiveUserGroups 让 fakeDir 满足 Directory：除了 inactive 里标了的，都当 active 账号。
+func (f *fakeDir) ActiveUserGroups(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]*uuid.UUID, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := map[uuid.UUID]*uuid.UUID{}
+	for _, id := range ids {
+		if !f.inactive[id] {
+			out[id] = f.userGroup[id]
+		}
+	}
+	return out, nil
+}
+
 // fakeReplier 记下以管理员身份回复工单的调用。
 type fakeReplier struct {
 	mu      sync.Mutex

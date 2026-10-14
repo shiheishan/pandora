@@ -23,10 +23,11 @@ type fakeDir struct {
 	emails    map[uuid.UUID]string
 	groups    []identitysvc.Group
 	userGroup map[uuid.UUID]*uuid.UUID
+	inactive  map[uuid.UUID]bool // 停用的账号（ActiveUserGroups 不返回）
 }
 
 func newFakeDir() *fakeDir {
-	return &fakeDir{emails: map[uuid.UUID]string{}, userGroup: map[uuid.UUID]*uuid.UUID{}}
+	return &fakeDir{emails: map[uuid.UUID]string{}, userGroup: map[uuid.UUID]*uuid.UUID{}, inactive: map[uuid.UUID]bool{}}
 }
 
 func (f *fakeDir) Emails(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error) {

@@ -25,6 +25,7 @@ const (
 	tgTryLater      = "暂时没办法处理，请稍后再试。"
 	tgTicketReplied = "已回复工单。"
 	tgSubHeader     = "你的订阅链接（相当于账号密码，请勿转发给他人）："
+	tgInactive      = "账号已停用，暂时不能使用这个命令。"
 )
 
 // tgAdminReplyEvent 是 TG 回复工单去重键（tg-admin-reply:<chat_id>:<message_id>）在 notification_events 里的标签。
@@ -145,6 +146,19 @@ func (s *Service) handlePrivateMessage(ctx context.Context, ex settingssvc.Teleg
 	}
 }
 
+// accountActive 报告绑定的账号此刻是否 active：停用、封禁的不给用量与订阅链接，也不批准入群（与门户一致）。
+func (s *Service) accountActive(ctx context.Context, userID uuid.UUID) (bool, error) {
+	if s.dir == nil {
+		return false, errs.Wrap(errs.Internal, fmt.Errorf("notify: Directory 未装配"))
+	}
+	m, err := s.dir.ActiveUserGroups(ctx, []uuid.UUID{userID})
+	if err != nil {
+		return false, err
+	}
+	_, ok := m[userID]
+	return ok, nil
+}
+
 // trafficReply：BindingByChatID(chatID) 没有 → tgNotBound；有 → SummariesByUsers 取这个用户，只留 State == subsvc.StateLive 的，
 // 按 scanSiteLocation 的时区 formatTrafficReply。读失败记 Warn 回 tgTryLater。
 func (s *Service) trafficReply(ctx context.Context, chatID int64) string {
@@ -158,6 +172,14 @@ func (s *Service) trafficReply(ctx context.Context, chatID int64) string {
 	}
 	if !ok {
 		return tgNotBound
+	}
+	active, err := s.accountActive(ctx, b.UserID)
+	if err != nil {
+		plog.From(ctx).Warn("notify: 查询账号状态失败", zap.Error(err))
+		return tgTryLater
+	}
+	if !active {
+		return tgInactive
 	}
 
 	summariesMap, err := s.summaries.SummariesByUsers(ctx, []uuid.UUID{b.UserID})
@@ -200,6 +222,14 @@ func (s *Service) subReply(ctx context.Context, ex settingssvc.TelegramExtras, c
 	if !ok {
 		return tgNotBound
 	}
+	active, err := s.accountActive(ctx, b.UserID)
+	if err != nil {
+		plog.From(ctx).Warn("notify: 查询账号状态失败", zap.Error(err))
+		return tgTryLater
+	}
+	if !active {
+		return tgInactive
+	}
 
 	links, err := s.links.ActiveLinks(ctx, b.UserID)
 	if err != nil {
@@ -232,7 +262,7 @@ func (s *Service) unbindReply(ctx context.Context, chatID int64) string {
 }
 
 // handleJoinRequest：!ex.JoinReview、ex.UserGroupChatID 为 nil、req.Chat/From 为 nil、或 req.Chat.ID != *ex.UserGroupChatID → 不处理（留给群管理员人工审）。
-// 否则 BindingByChatID(req.From.ID)：绑定了且 LivePlanIDs 非空 → ApproveChatJoinRequest，否则 DeclineChatJoinRequest。
+// 否则 BindingByChatID(req.From.ID)：绑定了、账号 active 且 LivePlanIDs 非空 → ApproveChatJoinRequest，否则 DeclineChatJoinRequest。
 // 读库出错只记 Warn、不批也不拒；调 Telegram 失败记 Warn。日志不带 chat id、TG 用户 id。
 func (s *Service) handleJoinRequest(ctx context.Context, cfg settingssvc.Telegram, ex settingssvc.TelegramExtras, req *tgChatJoinRequest) {
 	if !ex.JoinReview || ex.UserGroupChatID == nil || req == nil || req.Chat == nil || req.From == nil {
@@ -252,6 +282,14 @@ func (s *Service) handleJoinRequest(ctx context.Context, cfg settingssvc.Telegra
 	}
 
 	approve := false
+	if ok {
+		active, err := s.accountActive(ctx, b.UserID)
+		if err != nil {
+			plog.From(ctx).Warn("notify: 查询账号状态失败", zap.Error(err))
+			return
+		}
+		ok = active
+	}
 	if ok {
 		planIDs, err := s.subs.LivePlanIDs(ctx, b.UserID)
 		if err != nil {

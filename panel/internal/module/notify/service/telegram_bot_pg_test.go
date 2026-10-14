@@ -99,6 +99,23 @@ func TestBotPrivateCommands(t *testing.T) {
 		t.Fatalf("/sub enabled want links, got %q", txt)
 	}
 
+	// 5b. 账号停用：/traffic、/sub 都不给内容
+	dir.mu.Lock()
+	dir.inactive[uid] = true
+	dir.mu.Unlock()
+	for _, b := range [][]byte{body, subBody} {
+		tg.sent = nil
+		if err := e.svc.HandleTelegramUpdate(e.ctx, "whsec", b); err != nil {
+			t.Fatal(err)
+		}
+		if txt := tgbLastSentText(t, tg); txt != tgInactive {
+			t.Fatalf("inactive account want %q, got %q", tgInactive, txt)
+		}
+	}
+	dir.mu.Lock()
+	dir.inactive[uid] = false
+	dir.mu.Unlock()
+
 	// 6. /unbind 解绑
 	unbindBody := tgbWebhookBody("", chatID, "private", "/unbind")
 	tg.sent = nil
@@ -199,6 +216,18 @@ func TestBotJoinReview(t *testing.T) {
 	}
 	if len(tg.joins) != 1 || !tg.joins[0].Approve {
 		t.Fatalf("expected approve for user with live subscription, got %+v", tg.joins)
+	}
+
+	// 5. 有生效订阅但账号停用 → Decline
+	dir.mu.Lock()
+	dir.inactive[uid] = true
+	dir.mu.Unlock()
+	tg.joins = nil
+	if err := e.svc.HandleTelegramUpdate(e.ctx, "whsec", joinReqBody(userGroupChatID, applicantTGID)); err != nil {
+		t.Fatal(err)
+	}
+	if len(tg.joins) != 1 || !tg.joins[0].Decline {
+		t.Fatalf("expected decline for inactive account, got %+v", tg.joins)
 	}
 }
 
@@ -328,5 +357,22 @@ func TestBotAdminReply(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("dedupe events %d", n)
+	}
+
+	// 7. 管理员在私聊里 /unbind：审计记 admin
+	if err := e.svc.HandleTelegramUpdate(e.ctx, "whsec", tgbWebhookBody("", adminTGID, "private", "/unbind")); err != nil {
+		t.Fatal(err)
+	}
+	var adminUnbound bool
+	for _, ev := range e.audit.events {
+		if ev.Action == "telegram.unbound" && ev.ActorID != nil && *ev.ActorID == adminUID {
+			adminUnbound = true
+			if ev.Audience != "admin" {
+				t.Fatalf("admin unbind audit Audience want admin, got %q", ev.Audience)
+			}
+		}
+	}
+	if !adminUnbound {
+		t.Fatal("missing admin telegram.unbound audit event")
 	}
 }

@@ -26,6 +26,8 @@ type Directory interface {
 	ListGroups(ctx context.Context) ([]identitysvc.Group, error)
 	// BulkRecipients 按后台批量筛选条件取收件人（与预览、导出同一套条件）；total 为命中人数，total 为 0 或超过 max 时不返回名单。
 	BulkRecipients(ctx context.Context, f identitysvc.BulkFilter, max int) ([]identitysvc.BulkRecipient, int64, error)
+	// ActiveUserGroups 批量取 active 账号所在的用户组，键只含 active 账号；bot 只用它判断账号是否 active。
+	ActiveUserGroups(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]*uuid.UUID, error)
 }
 
 // Plans 是 notify 要的套餐读取面；*catalogsvc.Service 满足。

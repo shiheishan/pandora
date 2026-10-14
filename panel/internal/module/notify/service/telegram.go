@@ -136,8 +136,18 @@ func (s *Service) unbindTelegram(ctx context.Context, userID uuid.UUID, actor *u
 			Data:         data,
 		}
 		if actor != nil {
+			// 经 bot 解绑没有登录主体：发命令的人此刻是管理员就记 admin，否则记 public
 			evt.ActorID = actor
 			evt.Audience = "public"
+			if s.admins != nil {
+				isAdmin, err := s.admins.IsActiveAdmin(ctx, *actor)
+				if err != nil {
+					return err
+				}
+				if isAdmin {
+					evt.Audience = "admin"
+				}
+			}
 		}
 		return s.audit.Write(ctx, evt)
 	})
