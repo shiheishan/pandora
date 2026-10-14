@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { commissionSchema, type Commission } from '../../queries'
 import { inviteSchema } from './api'
-import { commissionRecords, headline, inviteLink, inviteUsage, parseWithdrawAmount, payoutError, ratePercentText, withdrawBlock } from './model'
+import { commissionRecords, headline, inviteLink, inviteUsage, parseWithdrawAmount, payoutError, ratePercentText, withdrawBlock, withdrawClosedHere, withdrawClosedHint } from './model'
 
 const SUMMARY = {
   currency: 'CNY',
@@ -18,6 +18,7 @@ const SUMMARY = {
   min_withdraw: 10000,
   withdraw_enabled: true,
   withdraw_methods: ['alipay'],
+  site_currency: 'CNY',
   scope: 'every_order' as const,
 }
 
@@ -96,6 +97,18 @@ describe('申请提现', () => {
     expect(withdrawBlock({ ...SUMMARY, available: 9999 })).toBe('可用佣金满 ¥100.00 才能申请提现')
   })
 
+  it('关提现只关站点币种：站点币种锁表单并提示去转余额，别的币种照常能提', () => {
+    const closed = { ...SUMMARY, withdraw_enabled: false }
+    expect(withdrawClosedHere(closed)).toBe(true)
+    expect(withdrawClosedHint(closed)).toContain('请点「全部转入余额」')
+    expect(withdrawClosedHint(SUMMARY)).toBeNull()
+
+    const usd = { ...closed, currency: 'USD' }
+    expect(withdrawClosedHere(usd)).toBe(false)
+    expect(withdrawBlock(usd)).toBeNull()
+    expect(withdrawClosedHint(usd)).toBe('提现已关闭只针对 CNY；USD 佣金转不进余额，仍可申请提现。')
+  })
+
   it('payoutError 校验收款账号', () => {
     expect(payoutError('alipay', '')).toBe('请填写收款账号')
     expect(payoutError('alipay', '   ')).toBe('请填写收款账号')
@@ -157,7 +170,7 @@ describe('佣金记录', () => {
       }),
     )
     expect(rows[0]!.status).toBe('冻结至 09-29')
-    expect(rows[1]).toMatchObject({ title: '第 2 级好友 me***@gmail.com', status: '已冲销', tone: 'void' })
+    expect(rows[1]).toMatchObject({ title: '第 2 级好友', status: '已冲销', tone: 'void' })
     expect(rows[1]!.ref).toBeUndefined()
     expect(commissionRecords(commission({ entries: [entry('pending', '2026-09-22T02:00:00Z')] }))[0]!.status).toBe('冻结中')
   })

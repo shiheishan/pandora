@@ -168,6 +168,8 @@ export const commissionSchema = z.object({
     min_withdraw: z.number().int(),
     withdraw_enabled: z.boolean(),
     withdraw_methods: z.array(z.string()),
+    // 站点币种：关提现只关这个币种（解冻后自动转余额），汇总是别的币种时照常能提
+    site_currency: z.string(),
     // R81 / R114：计佣范围，与计提同一个兜底；first_order 时横幅写「首单」
     scope: z.enum(COMMISSION_SCOPES),
   }),

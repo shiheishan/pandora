@@ -29,10 +29,14 @@ describe('mock api · portal referral', () => {
     const res = await mockFetch(base, auth, 'GET', '/v1/me/commission')
     expect(res.status).toBe(200)
     const json = (await res.json()) as {
-      summary: { withdraw_enabled: boolean; withdraw_methods: string[]; direct_rate_bp: number }
-      entries: Array<{ level: number }>
+      summary: { withdraw_enabled: boolean; withdraw_methods: string[]; direct_rate_bp: number; site_currency: string; paid_invitees: number }
+      entries: Array<{ level: number; from: string }>
     }
     expect(json.summary.withdraw_enabled).toBe(true)
+    expect(json.summary.site_currency).toBe('CNY')
+    // 付费好友只算第 1 级；第 2、3 级条目不带邮箱
+    expect(json.summary.paid_invitees).toBe(new Set(json.entries.filter((e) => e.level === 1).map((e) => e.from)).size)
+    for (const e of json.entries.filter((x) => x.level > 1)) expect(e.from).toBe('')
     expect(json.summary.withdraw_methods).toContain('usdt_trc20')
     expect(json.summary.direct_rate_bp).toBe(2000)
     expect(json.entries.length).toBeGreaterThan(0)

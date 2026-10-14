@@ -101,32 +101,31 @@ export function CommissionLevels({ overview }: { overview: CommissionOverview })
         />
         {!form.withdrawOn && (
           <div className={css.faint} style={{ marginTop: '4px' }}>
-            门户隐藏提现，佣金解冻后自动转入余额
+            只关站点币种：站点币种的佣金解冻后自动转入余额（关闭前已可提现的部分由用户自己转）；其他币种的佣金仍按下面的方式提现
           </div>
         )}
       </div>
 
-      {form.withdrawOn && (
-        <div>
-          <div className={css.groupLabel}>提现方式</div>
-          <div className={css.checks}>
-            {WITHDRAW_METHODS.map((method) => (
-              <Checkbox
-                key={method}
-                label={withdrawMethodLabel(method)}
-                checked={form.methods.includes(method)}
-                onChange={() => toggleMethod(method)}
-              />
-            ))}
-          </div>
-          {errors.withdraw_methods && <div className={css.error} style={{ marginTop: '4px' }}>{errors.withdraw_methods}</div>}
-          {hasUSDT && (
-            <div className={css.faint} style={{ marginTop: '6px' }}>
-              USDT 只记录打款，面板不发起链上转账；请在钱包里转账后回来填交易哈希
-            </div>
-          )}
+      {/* 关着提现时这里仍管其他币种的提现方式 */}
+      <div>
+        <div className={css.groupLabel}>{form.withdrawOn ? '提现方式' : '提现方式（其他币种）'}</div>
+        <div className={css.checks}>
+          {WITHDRAW_METHODS.map((method) => (
+            <Checkbox
+              key={method}
+              label={withdrawMethodLabel(method)}
+              checked={form.methods.includes(method)}
+              onChange={() => toggleMethod(method)}
+            />
+          ))}
         </div>
-      )}
+        {errors.withdraw_methods && <div className={css.error} style={{ marginTop: '4px' }}>{errors.withdraw_methods}</div>}
+        {hasUSDT && (
+          <div className={css.faint} style={{ marginTop: '6px' }}>
+            USDT 只记录打款，面板不发起链上转账；请在钱包里转账后回来填交易哈希
+          </div>
+        )}
+      </div>
 
       <Button type="submit" variant="primary" block busy={save.isPending}>
         保存分销与提现设置

@@ -8,7 +8,7 @@ import { LoadError } from '../common/Blocks'
 import { copyText } from '../common/clients'
 import { endsIntent, useIntentKey } from '../common/intent'
 import { useInvite, useRequestWithdrawal, useTransferCommission } from './api'
-import { commissionRecords, headline, inviteLink, inviteUsage, parseWithdrawAmount, payoutError, withdrawBlock } from './model'
+import { commissionRecords, headline, inviteLink, inviteUsage, parseWithdrawAmount, payoutError, withdrawBlock, withdrawClosedHere, withdrawClosedHint } from './model'
 import css from './Referral.module.css'
 
 export default function Referral() {
@@ -106,6 +106,7 @@ function UseCard({ summary }: { summary: Commission['summary'] }) {
 
   const money = (v: number) => formatMoney(v, summary.currency)
   const block = withdrawBlock(summary)
+  const closedHint = withdrawClosedHint(summary)
   // 后台改了开放方式后重新拉取，原先选的方式可能已经关了：退回第一种开放的方式
   const activeMethod = summary.withdraw_methods.includes(method) ? method : (summary.withdraw_methods[0] ?? '')
 
@@ -172,10 +173,11 @@ function UseCard({ summary }: { summary: Commission['summary'] }) {
         </p>
       )}
       <hr className={css.divider} />
-      {!summary.withdraw_enabled ? (
-        <p className={css.hint}>提现已关闭，佣金解冻后会自动转入余额，可直接用余额购买与续费。</p>
+      {withdrawClosedHere(summary) ? (
+        <p className={css.hint}>{closedHint}</p>
       ) : (
         <>
+          {closedHint && <p className={css.hint}>{closedHint}</p>}
           <p className={css.caption}>申请提现 · 最低 {money(summary.min_withdraw)}，审核通过后打款</p>
           {block ? (
             <p className={css.blocked}>{block}</p>

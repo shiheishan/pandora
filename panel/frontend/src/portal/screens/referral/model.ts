@@ -53,9 +53,27 @@ export function payoutError(method: string, detail: string): string | undefined 
   return undefined
 }
 
+/** 关提现只关站点币种：汇总是站点币种且提现关着时，这个币种不能提现 */
+export function withdrawClosedHere(summary: Commission['summary']): boolean {
+  return !summary.withdraw_enabled && summary.currency === summary.site_currency
+}
+
+/**
+ * 关提现时的提示，按币种分开写；提现开着时为 null。
+ * 站点币种：以后解冻的自动转余额，关闭前已可提现的部分要自己点「全部转入余额」（后端只自动转关闭后解冻的条目）。
+ * 别的币种：转不进余额（钱包只显示站点币种），照常可以提现。
+ */
+export function withdrawClosedHint(summary: Commission['summary']): string | null {
+  if (summary.withdraw_enabled) return null
+  if (withdrawClosedHere(summary)) {
+    return '提现已关闭，佣金解冻后会自动转入余额，可直接用余额购买与续费。关闭前已可提现的部分不会自动转，请点「全部转入余额」。'
+  }
+  return `提现已关闭只针对 ${summary.site_currency}；${summary.currency} 佣金转不进余额，仍可申请提现。`
+}
+
 /** 提现表单锁住的理由：后端同一时间只允许一笔在途（含打款中）；可用额不到最低额也提不了 */
 export function withdrawBlock(summary: Commission['summary']): string | null {
-  if (!summary.withdraw_enabled) return '提现已关闭，佣金解冻后会自动转入余额'
+  if (withdrawClosedHere(summary)) return '提现已关闭，佣金解冻后会自动转入余额'
   if (summary.withdraw_methods.length === 0) return '暂未开放提现方式'
   if (summary.withdrawing > 0) return `有一笔 ${formatMoney(summary.withdrawing, summary.currency)} 的提现正在处理，完成后才能再申请`
   if (summary.available < summary.min_withdraw) return `可用佣金满 ${formatMoney(summary.min_withdraw, summary.currency)} 才能申请提现`
@@ -119,7 +137,8 @@ export function commissionRecords(c: Commission): CommissionRecord[] {
   c.entries.forEach((e, i) => {
     rows.push({
       key: `e${i}`,
-      title: e.level <= 1 ? `好友 ${e.from}` : `第 ${e.level} 级好友 ${e.from}`,
+      // 第 2、3 级不是自己邀请的人，后端不给邮箱，只写第几级
+      title: e.level <= 1 ? `好友 ${e.from}` : `第 ${e.level} 级好友`,
       ...(e.order_no ? { ref: e.order_no } : {}),
       meta: shortDate(e.created_at),
       amount: e.amount,

@@ -109,7 +109,8 @@ function build(): CommissionState {
     entries: [
       entry(2, 1_180, 'pending', 'me***@gmail.com', 4101, 5),
       entry(6, 2_780, 'available', 'to***@qq.com', 4087),
-      entry(29, 980, 'available', 'k.***@outlook.com', 3962, -1, 2, 30),
+      // 第 2 级：后端不给上级看下线邮箱，from 为空
+      entry(29, 980, 'available', '', 3962, -1, 2, 30),
       entry(40, 1_980, 'reversed', 'ya***@163.com', 3890),
       entry(50, 19_800, 'available', 'to***@qq.com', 3811),
       entry(70, 5_000, 'available', 'li***@proton.me', 3702),
@@ -150,10 +151,13 @@ function summary(c: CommissionState) {
     min_withdraw: MIN_WITHDRAW,
     withdraw_enabled: c.withdrawEnabled,
     withdraw_methods: c.withdrawMethods,
+    // mock 只有 CNY 一种币种，也就是站点币种
+    site_currency: 'CNY',
     // R81 / R114：计佣范围（真后端已上线，legacy 场景也照回）；multi 场景取「首单」，横幅写「好友首单付费」
     scope: scenario() === 'multi' ? 'first_order' : 'every_order',
     // R69：Go 的 CommissionSummary 无 omitempty，各场景恒在
-    paid_invitees: new Set(live.map((e) => e.from)).size,
+    // 只算直接邀请（第 1 级）的人，与后端同口径
+    paid_invitees: new Set(live.filter((e) => e.level === 1).map((e) => e.from)).size,
     total_earned: sum(live, (e) => e.amount),
   }
 }
@@ -209,7 +213,8 @@ export const referral: MockModule = {
       await ctx.idempotent('commission_withdrawal_request', () => {
         const c = commissionState(ctx.user.userId)
         if (!c.withdrawEnabled) {
-          return new BillingError(409, 'conflict', '提现已关闭，佣金解冻后会自动转入余额').result()
+          // mock 只有站点币种 CNY，关着时一律拒绝（后端只拒站点币种）
+          return new BillingError(409, 'conflict', '提现已关闭：本站币种的佣金改为解冻后自动转入余额，只有其他币种的佣金还能申请提现').result()
         }
         const method = typeof body.method === 'string' ? body.method.trim() : ''
         if (!method) {
