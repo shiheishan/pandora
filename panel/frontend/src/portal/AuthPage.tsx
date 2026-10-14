@@ -6,11 +6,14 @@ import { useRuntime } from '../shell/runtime'
 import { Button, Input, Segmented, useToast } from '../ui'
 import css from './AuthPage.module.css'
 import { quickLoginTokenFromInput, readStoredInvite } from './entry-links'
+import { type CaptchaConfig, useCaptcha } from './Captcha'
+import captchaCss from './Captcha.module.css'
+import { MailLinkLoginForm } from './MailLinkLogin'
 import { PasswordResetForm } from './PasswordReset'
-import { useAppearance, useSiteConfig } from './queries'
+import { useAppearance, useSignupConfig, useSiteConfig } from './queries'
 import { SiteBrand } from './SiteBrand'
 
-type AuthTab = 'login' | 'reg' | 'quick'
+type AuthTab = 'login' | 'reg' | 'quick' | 'mail'
 
 const tokenSchema = z.object({ access_token: z.string().min(1) })
 const registerStartSchema = z.object({
@@ -36,6 +39,7 @@ function passwordProblem(value: string): string | null {
 
 export function AuthPage({ initialTab = 'login', invite, notice }: { initialTab?: AuthTab; invite?: string | null; notice?: string | null }) {
   const site = useSiteConfig()
+  const signup = useSignupConfig()
   const appearance = useAppearance()
   const mode = site.data?.registration_mode
   const [tab, setTab] = useState<AuthTab>(initialTab)
@@ -51,6 +55,7 @@ export function AuthPage({ initialTab = 'login', invite, notice }: { initialTab?
   const options = [
     { value: 'login' as const, label: '登录' },
     ...(mode === 'closed' ? [] : [{ value: 'reg' as const, label: '注册' }]),
+    ...(signup.data?.mail_link_login === true || initialTab === 'mail' ? [{ value: 'mail' as const, label: '邮件登录' }] : []),
     { value: 'quick' as const, label: '快捷登录' },
   ]
 
@@ -76,8 +81,17 @@ export function AuthPage({ initialTab = 'login', invite, notice }: { initialTab?
             <>
               <Segmented label="登录方式" options={options} value={current} onChange={setTab} className={css.switch} />
               {current === 'login' && <LoginForm key={resetEmail} initialEmail={resetEmail} onForgot={canReset ? () => setResetting(true) : undefined} />}
-              {current === 'reg' && <RegisterForm inviteRequired={mode !== 'open'} invite={invite ?? readStoredInvite()} emailVerification={site.data?.email_verification ?? true} />}
-              {current === 'quick' && <QuickLoginForm initialError={notice ?? null} />}
+              {current === 'reg' && (
+                <RegisterForm
+                  inviteRequired={mode !== 'open'}
+                  invite={invite ?? readStoredInvite()}
+                  emailVerification={site.data?.email_verification ?? true}
+                  captcha={signup.data?.captcha ?? null}
+                  emailSuffixes={signup.data?.email_suffixes ?? []}
+                />
+              )}
+              {current === 'mail' && <MailLinkLoginForm initialError={notice ?? null} />}
+              {current === 'quick' && <QuickLoginForm initialError={initialTab === 'quick' ? (notice ?? null) : null} />}
             </>
           )}
         </div>
@@ -135,18 +149,36 @@ function LoginForm({ initialEmail = '', onForgot }: { initialEmail?: string; onF
   )
 }
 
-function RegisterForm({ inviteRequired, invite, emailVerification }: { inviteRequired: boolean; invite: string | null; emailVerification: boolean }) {
+function RegisterForm({
+  inviteRequired,
+  invite,
+  emailVerification,
+  captcha,
+  emailSuffixes,
+}: {
+  inviteRequired: boolean
+  invite: string | null
+  emailVerification: boolean
+  captcha: CaptchaConfig | null
+  emailSuffixes: string[]
+}) {
   const { api, tokens } = useRuntime()
   const toast = useToast()
+  const cap = useCaptcha(captcha)
   const [email, setEmail] = useState('')
   const [inviteCode, setInviteCode] = useState(invite ?? '')
   const [started, setStarted] = useState<z.output<typeof registerStartSchema> | null>(null)
   const [code, setCode] = useState('')
   const [password, setPassword] = useState('')
-  const [errors, setErrors] = useState<{ email?: string; invite?: string; code?: string; password?: string }>({})
+  const [errors, setErrors] = useState<{ email?: string; invite?: string; code?: string; password?: string; captcha?: string }>({})
   const [busy, setBusy] = useState(false)
   // site-config 说不验证时预先隐藏验证码框，最终以 register/start 的 verification_required 为准
   const needsCode = started ? started.verification_required : emailVerification
+
+  const emailHint =
+    emailSuffixes.length > 0
+      ? `可用邮箱：${emailSuffixes.slice(0, 6).join('、')}${emailSuffixes.length > 6 ? '等' : ''}`
+      : undefined
 
   const start = async (event: FormEvent) => {
     event.preventDefault()
@@ -156,14 +188,28 @@ function RegisterForm({ inviteRequired, invite, emailVerification }: { inviteReq
     if (next.email || next.invite) return setErrors(next)
     setBusy(true)
     setErrors({})
+    let captchaToken = ''
     try {
-      const body = inviteCode.trim() ? { email: email.trim(), invite_code: inviteCode.trim().toUpperCase() } : { email: email.trim() }
+      captchaToken = await cap.getToken('register')
+    } catch (e) {
+      setBusy(false)
+      return setErrors({ captcha: (e as Error).message })
+    }
+    try {
+      const body: { email: string; invite_code?: string; captcha_token?: string } = inviteCode.trim()
+        ? { email: email.trim(), invite_code: inviteCode.trim().toUpperCase() }
+        : { email: email.trim() }
+      if (captchaToken) body.captcha_token = captchaToken
       const out = await api.post('v1/auth/register/start', registerStartSchema, { auth: false, body })
       setStarted(out)
       if (out.verification_required) toast('验证码已发送')
     } catch (err) {
-      if (isApiError(err) && err.fields.email) setErrors({ email: err.fields.email })
-      else setErrors({ invite: message(err, '发送失败，请稍后重试') })
+      cap.reset()
+      const nextErr: typeof errors = {}
+      if (isApiError(err) && err.fields.captcha) nextErr.captcha = err.fields.captcha
+      if (isApiError(err) && err.fields.email) nextErr.email = err.fields.email
+      else if (!nextErr.captcha) nextErr.invite = message(err, '发送失败，请稍后重试')
+      setErrors(nextErr)
     } finally {
       setBusy(false)
     }
@@ -203,7 +249,15 @@ function RegisterForm({ inviteRequired, invite, emailVerification }: { inviteReq
       </div>
       {!started ? (
         <form className={css.form} onSubmit={start} noValidate>
-          <Input label="邮箱" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} error={errors.email} />
+          <Input
+            label="邮箱"
+            type="email"
+            autoComplete="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            error={errors.email}
+            hint={emailHint}
+          />
           <Input
             label={
               <>
@@ -216,6 +270,12 @@ function RegisterForm({ inviteRequired, invite, emailVerification }: { inviteReq
             onChange={(e) => setInviteCode(e.target.value)}
             error={errors.invite}
           />
+          {cap.element}
+          {errors.captcha && (
+            <p className={captchaCss.error} role="alert">
+              {errors.captcha}
+            </p>
+          )}
           <Button type="submit" variant="primary" block busy={busy}>
             {needsCode ? '发送验证码' : '下一步'}
           </Button>
