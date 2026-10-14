@@ -46,6 +46,8 @@ func (s *Service) bump(ctx context.Context, key, kind string) {
 
 // bumpErr 推进纪元并发通知，把 Redis 错误交给调用方（要据此决定是否重试的周期任务用）。
 func (s *Service) bumpErr(ctx context.Context, key, kind string) error {
+	// 本进程缓存的订阅线路可能已经过时（delivery_cache.go），先清掉
+	s.lineCache.purge()
 	if s.rdb == nil {
 		return nil
 	}

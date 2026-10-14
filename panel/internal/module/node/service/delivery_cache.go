@@ -6,8 +6,8 @@ package service
 // （心跳新鲜窗口），与订阅 id、用户 id 无关，同一个池里每个人拿到的列表完全相同。P8 压测里订阅拉取约每秒 50 次就饱和，
 // 节点列表那条 SQL 占 PG 执行时间一半，而它每次都在重算同一份结果。
 //
-// 只靠 TTL 失效，不接下发纪元、不订阅 Redis：线路的变化（上线、停用、改协议、换池、心跳失联）最多晚 deliveryCacheTTL
-// 出现在订阅里，客户端本来就按小时回来拉。它不是安全边界：谁能连哪个节点由节点上的用户名单决定，名单走 gRPC 纪元推送
+// 失效：本进程推进下发纪元时（改节点、改池、改名单相关的数据，epoch.go 的 bumpErr）整份清空，后台改了线路，下一次拉取就是新的；
+// 别的变化（心跳失联、别的进程里的写）最多晚 deliveryCacheTTL 出现在订阅里。不订阅 Redis。它不是安全边界：谁能连哪个节点由节点上的用户名单决定，名单走 gRPC 纪元推送
 // （session*.go），不经过这里；订阅生效、主人账号 active、凭据有效由拉取路径每次现查（subscription 的 pull.go），也不经过这里。
 //
 // 缓存里的切片与 render.Node.Config（protocol.KernelConfig 的结果，嵌套的 map、切片是共享引用）被所有命中者同时读：
@@ -16,6 +16,8 @@ package service
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -45,15 +47,41 @@ func deliveryKey(planVersionID uuid.UUID, userGroupID *uuid.UUID) string {
 
 // deliveryCache 是按键的有界 TTL 缓存，加同键并发未命中的合并。并发安全。
 //
-// expirable.NewLRU 会起一个清理过期项的 goroutine，库（v2.0.7）没有关掉它的方法，随进程退出；每个 node Service 一个。
+// expirable.NewLRU 会起一个清理过期项的 goroutine，库（v2.0.7）没有关掉它的方法，随进程退出；所以第一次用到时才建
+// （worker 与命令行子命令不拉订阅，就不起这个 goroutine）。
 type deliveryCache struct {
-	lru    *expirable.LRU[string, []render.Node]
+	size int
+	ttl  time.Duration
+	mu   sync.Mutex
+	// lru 第一次用到时由 store 建；purge 只读它，没建过就不建
+	lru    atomic.Pointer[expirable.LRU[string, []render.Node]]
 	flight singleflight.Group
 }
 
 // newDeliveryCache 建一个最多 size 个键、每项留 ttl 的缓存。ttl 必须大于 0（库把 0 当作永不过期）。
 func newDeliveryCache(size int, ttl time.Duration) *deliveryCache {
-	return &deliveryCache{lru: expirable.NewLRU[string, []render.Node](size, nil, ttl)}
+	return &deliveryCache{size: size, ttl: ttl}
+}
+
+func (c *deliveryCache) store() *expirable.LRU[string, []render.Node] {
+	if l := c.lru.Load(); l != nil {
+		return l
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if l := c.lru.Load(); l != nil {
+		return l
+	}
+	l := expirable.NewLRU[string, []render.Node](c.size, nil, c.ttl)
+	c.lru.Store(l)
+	return l
+}
+
+// purge 清空全部键；还没建过就什么也不做（不为清空去起清理 goroutine）。
+func (c *deliveryCache) purge() {
+	if l := c.lru.Load(); l != nil {
+		l.Purge()
+	}
 }
 
 // get 取 key 的线路：命中直接返回；没命中时同一个 key 的并发调用只有一个执行 load，其余等它的结果。
@@ -62,12 +90,13 @@ func newDeliveryCache(size int, ttl time.Duration) *deliveryCache {
 // load 拿到的 ctx 不跟随调用者的取消（保留 ctx 里的值，期限是 deliveryLoadTimeout）：否则第一个调用者断开时，
 // 同时在等的请求全部跟着失败（与 settings 开关缓存同一做法）。
 func (c *deliveryCache) get(ctx context.Context, key string, load func(context.Context) ([]render.Node, error)) ([]render.Node, error) {
-	if nodes, ok := c.lru.Get(key); ok {
+	lru := c.store()
+	if nodes, ok := lru.Get(key); ok {
 		return nodes, nil
 	}
 	v, err, _ := c.flight.Do(key, func() (any, error) {
 		// 两次查之间可能刚有一轮现算写进了缓存：再查一次，不重复读库
-		if nodes, ok := c.lru.Get(key); ok {
+		if nodes, ok := lru.Get(key); ok {
 			return nodes, nil
 		}
 		lctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), deliveryLoadTimeout)
@@ -76,7 +105,7 @@ func (c *deliveryCache) get(ctx context.Context, key string, load func(context.C
 		if err != nil {
 			return nil, err
 		}
-		c.lru.Add(key, nodes)
+		lru.Add(key, nodes)
 		return nodes, nil
 	})
 	if err != nil {

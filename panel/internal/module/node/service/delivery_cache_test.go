@@ -183,6 +183,28 @@ func TestDeliverableNodesCacheSkipsErrors(t *testing.T) {
 	}
 }
 
+// TestDeliverableNodesCachePurgedOnEpochBump：推进下发纪元（后台改了节点、池等）后，下一次取线路重算，不等 TTL。
+func TestDeliverableNodesCachePurgedOnEpochBump(t *testing.T) {
+	ctx := context.Background()
+	cat := &countingCatalog{}
+	s := newCacheTestService(cat)
+	q := subsvc.NodeQuery{PlanVersionID: uuid.New()}
+	// 还没建缓存时清空不出错，之后照常建
+	s.SubscriptionsChanged(ctx, nil)
+	for i := 0; i < 2; i++ {
+		if _, err := s.DeliverableNodes(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if cat.count() != 1 {
+		t.Fatalf("纪元没动时应命中缓存: calls=%d", cat.count())
+	}
+	s.SubscriptionsChanged(ctx, nil)
+	if _, err := s.DeliverableNodes(ctx, q); err != nil || cat.count() != 2 {
+		t.Fatalf("推进纪元后应重算: err=%v calls=%d", err, cat.count())
+	}
+}
+
 // TestDeliveryCacheGroupsDoNotMix：有组与默认组的线路各存各的键，先缓存的有组结果不会被默认组拿到，反之亦然。
 func TestDeliveryCacheGroupsDoNotMix(t *testing.T) {
 	ctx := context.Background()

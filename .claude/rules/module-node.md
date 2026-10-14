@@ -23,7 +23,7 @@ paths:
 
 ## 订阅线路缓存
 - `DeliverableNodes` 的结果按（套餐版本, 用户组）在进程内缓存 5 秒（`service/delivery_cache.go`：expirable LRU 1024 个键 + singleflight 合并同键并发未命中，出错不缓存）。订阅 id、用户 id 不进键，现算也不能依赖它们；要加新输入就得同时改键。
-- 只靠 TTL 失效，不接纪元：线路变化最多晚 5 秒进订阅。不是安全边界：能不能连看节点名单（纪元推送），订阅与账号资格由拉取路径每次现查。
+- 失效：本进程推进下发纪元时（`epoch.go` 的 `bumpErr`）整份清空，后台改了线路下一次拉取就是新的；心跳失联等别的变化最多晚 5 秒进订阅。缓存第一次用到时才建（库的清理 goroutine 停不掉）。不是安全边界：能不能连看节点名单（纪元推送），订阅与账号资格由拉取路径每次现查。
 - 返回的切片与 `render.Node.Config` 被所有命中者共享：调用方只读不改；不要在事务里调（事务内的读会经缓存给到别人）。测分层、过滤逻辑用不经缓存的 `loadDeliverableNodes` / `deliverableFromRows`（`service/node_source.go`）。
 
 ## 生效路由与配置文档
