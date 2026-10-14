@@ -16,9 +16,9 @@ import (
 
 // Service 是 handler 用到的 identity service 方法；*service.Service 实现它。
 type Service interface {
-	StartRegistration(ctx context.Context, email, inviteCode string) (service.RegistrationStart, error)
+	StartRegistration(ctx context.Context, email, inviteCode, captchaToken string) (service.RegistrationStart, error)
 	CompleteRegistration(ctx context.Context, token, code, password string) (service.User, error)
-	StartPasswordReset(ctx context.Context, email string) (service.PasswordResetStart, error)
+	StartPasswordReset(ctx context.Context, email, captchaToken string) (service.PasswordResetStart, error)
 	CompletePasswordReset(ctx context.Context, email, code, newPassword string) error
 	Profile(ctx context.Context, id uuid.UUID) (service.Profile, error)
 	ChangePassword(ctx context.Context, oldPassword, newPassword string) error
@@ -66,10 +66,10 @@ func New(svc Service, limiter *ratelimit.Limiter, authPerMin int) *Handler {
 
 // RegisterPublic 注册门户路由。
 func (h *Handler) RegisterPublic(v1 *gin.RouterGroup, k route.Kit) {
-	v1.POST("/auth/register/start", h.strict("reg_start", true), h.registerStart)
-	v1.POST("/auth/register/complete", h.strict("reg_complete", true), h.registerComplete)
-	v1.POST("/auth/password-reset/start", h.strict("pwreset_start", true), h.passwordResetStart)
-	v1.POST("/auth/password-reset/complete", h.strict("pwreset_complete", false), h.passwordResetComplete)
+	v1.POST("/auth/register/start", h.strict("reg_start", true, false), h.registerStart)
+	v1.POST("/auth/register/complete", h.strict("reg_complete", true, true), h.registerComplete)
+	v1.POST("/auth/password-reset/start", h.strict("pwreset_start", true, true), h.passwordResetStart)
+	v1.POST("/auth/password-reset/complete", h.strict("pwreset_complete", false, true), h.passwordResetComplete)
 	v1.GET("/me", k.RequireAuth, h.me)
 	v1.POST("/me/password", k.RequireAuth, h.mePasswordLimit(), h.changePassword)
 	v1.GET("/me/invite", k.RequireAuth, h.myInvite)
@@ -101,14 +101,19 @@ func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	v1.POST("/me/password", k.RequireAuth, h.mePasswordLimit(), h.changePassword)
 }
 
-// strict 是注册与找回密码的严格限流：按路由加 IP、按网段，global 时再加整站一维；Redis 故障回 503。
-func (h *Handler) strict(prefix string, global bool) gin.HandlerFunc {
+// strict 是注册与找回密码的严格限流：perIP 为 true 时加按路由加 IP 一维；按网段，global 时再加整站一维；Redis 故障回 503。
+// 注册的按 IP 限额改由后台设置 signup.ip_limit_* 在 service 里管，reg_start 传 perIP=false。
+func (h *Handler) strict(prefix string, global, perIP bool) gin.HandlerFunc {
 	if h.limiter == nil {
 		return func(c *gin.Context) { c.Next() }
 	}
 	dims := []ratelimit.Dimension{
-		{Rule: ratelimit.PerMinute(prefix+"_ip", h.authPerMin).StrictMode(), Key: ratelimit.ByRoute},
 		{Rule: ratelimit.PerWindow(prefix+"_net", h.authPerMin*6, 10*time.Minute).StrictMode(), Key: ratelimit.ByIPPrefix},
+	}
+	if perIP {
+		dims = append([]ratelimit.Dimension{
+			{Rule: ratelimit.PerMinute(prefix+"_ip", h.authPerMin).StrictMode(), Key: ratelimit.ByRoute},
+		}, dims...)
 	}
 	if global {
 		name := "reg_global"

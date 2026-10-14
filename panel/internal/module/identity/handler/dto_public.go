@@ -8,8 +8,9 @@ import (
 
 // 注册第 1 步。
 type registerStartRequest struct {
-	Email      string `json:"email" binding:"max=320"`
-	InviteCode string `json:"invite_code" binding:"max=64"`
+	Email        string `json:"email" binding:"max=320"`
+	InviteCode   string `json:"invite_code" binding:"max=64"`
+	CaptchaToken string `json:"captcha_token" binding:"max=4096"`
 }
 
 type registerStartResponse struct {
@@ -34,7 +35,8 @@ type registerCompleteResponse struct {
 
 // 找回密码第 1 步。
 type passwordResetStartRequest struct {
-	Email string `json:"email" binding:"max=320"`
+	Email        string `json:"email" binding:"max=320"`
+	CaptchaToken string `json:"captcha_token" binding:"max=4096"`
 }
 
 type passwordResetStartResponse struct {

@@ -13,7 +13,7 @@ func (h *Handler) registerStart(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	out, err := h.svc.StartRegistration(c.Request.Context(), req.Email, req.InviteCode)
+	out, err := h.svc.StartRegistration(c.Request.Context(), req.Email, req.InviteCode, req.CaptchaToken)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
@@ -47,7 +47,7 @@ func (h *Handler) passwordResetStart(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	out, err := h.svc.StartPasswordReset(c.Request.Context(), req.Email)
+	out, err := h.svc.StartPasswordReset(c.Request.Context(), req.Email, req.CaptchaToken)
 	if err != nil {
 		httpx.Fail(c, err)
 		return

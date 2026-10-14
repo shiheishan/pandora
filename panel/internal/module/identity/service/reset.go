@@ -18,11 +18,18 @@ func (s *Service) PasswordResetAvailable(ctx context.Context) (bool, error) {
 }
 
 // StartPasswordReset 是找回密码第 1 步。账号存不存在，调用方拿到的结果一样（DevCode 只在非生产环境出现）。
-func (s *Service) StartPasswordReset(ctx context.Context, email string) (PasswordResetStart, error) {
+func (s *Service) StartPasswordReset(ctx context.Context, email, captchaToken string) (PasswordResetStart, error) {
 	start := time.Now()
 	email = normalizeEmail(email)
 	if !looksLikeEmail(email) {
 		return PasswordResetStart{}, errEmailInvalid()
+	}
+	cfg, err := s.settings.Signup(ctx)
+	if err != nil {
+		return PasswordResetStart{}, err
+	}
+	if err := s.captcha.verify(ctx, cfg, captchaToken); err != nil {
+		return PasswordResetStart{}, err
 	}
 	if err := s.limit(ctx, ruleResetStartEmail, email); err != nil {
 		return PasswordResetStart{}, err

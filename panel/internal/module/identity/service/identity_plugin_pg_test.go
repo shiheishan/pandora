@@ -44,7 +44,7 @@ func TestPluginUserRegistered(t *testing.T) {
 	setRegistration(t, asAdmin(ctx, admin.ID), e.settings, settingssvc.RegistrationOpen, false)
 
 	email := uniqEmail(t, "New")
-	start, err := e.svc.StartRegistration(ctx, " "+strings.ToUpper(email)+" ", "")
+	start, err := e.svc.StartRegistration(ctx, " "+strings.ToUpper(email)+" ", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestPluginUserRegisteredEmitError(t *testing.T) {
 	admin := e.mkUser(t, ctx, uniqEmail(t, "plugfail"), "Passw0rdLong1")
 	setRegistration(t, asAdmin(ctx, admin.ID), e.settings, settingssvc.RegistrationOpen, false)
 
-	start, err := e.svc.StartRegistration(ctx, uniqEmail(t, "Fail"), "")
+	start, err := e.svc.StartRegistration(ctx, uniqEmail(t, "Fail"), "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

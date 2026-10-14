@@ -42,12 +42,12 @@ func (r *Repo) LockUsableInvite(ctx context.Context, id uuid.UUID) (model.Invite
 	return inv, true, nil
 }
 
-// ConsumeInvite 在仍可用时增加使用次数并可能置为 exhausted。
-func (r *Repo) ConsumeInvite(ctx context.Context, id uuid.UUID) (bool, error) {
+// ConsumeInvite 在仍可用时增加使用次数并可能置为 exhausted。singleUse 为 true 时这次用完就置 exhausted（对应设置「邀请码永不失效」关闭时的个人码）。
+func (r *Repo) ConsumeInvite(ctx context.Context, id uuid.UUID, singleUse bool) (bool, error) {
 	sql := `UPDATE invite_codes SET used_count = used_count + 1,
-	  status = CASE WHEN max_uses IS NOT NULL AND used_count + 1 >= max_uses THEN 'exhausted' ELSE status END
+	  status = CASE WHEN ? OR (max_uses IS NOT NULL AND used_count + 1 >= max_uses) THEN 'exhausted' ELSE status END
 	  WHERE id = ? AND ` + inviteUsableSQL
-	res := r.d.Conn(ctx).Exec(sql, id)
+	res := r.d.Conn(ctx).Exec(sql, singleUse, id)
 	if res.Error != nil {
 		return false, mapErr(res.Error)
 	}

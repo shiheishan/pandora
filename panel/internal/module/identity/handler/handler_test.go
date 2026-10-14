@@ -33,7 +33,7 @@ type fakeSvc struct {
 	changed    bool
 }
 
-func (f *fakeSvc) StartRegistration(context.Context, string, string) (service.RegistrationStart, error) {
+func (f *fakeSvc) StartRegistration(context.Context, string, string, string) (service.RegistrationStart, error) {
 	return f.start, nil
 }
 

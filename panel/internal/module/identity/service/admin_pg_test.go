@@ -92,7 +92,7 @@ func TestPGUserDetail(t *testing.T) {
 		t.Fatal(err)
 	}
 	setRegistration(t, actx, e.settings, settingssvc.RegistrationOpen, false)
-	start, err := e.svc.StartRegistration(ctx, uniqEmail(t, "child"), inv.Code)
+	start, err := e.svc.StartRegistration(ctx, uniqEmail(t, "child"), inv.Code, "")
 	if err != nil {
 		t.Fatal(err)
 	}
