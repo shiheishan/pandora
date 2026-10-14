@@ -27,6 +27,7 @@ type fakeService struct {
 	scanErr, publishErr    error
 	inboxCalls, eventCalls []purgeCall
 	codeCalls              []purgeCall
+	ticketMsgCalls         []purgeCall
 }
 
 func (f *fakeService) Scan(context.Context) (int, error) { return f.scanN, f.scanErr }
@@ -47,6 +48,11 @@ func (f *fakeService) PurgeEvents(_ context.Context, before time.Time, batch int
 
 func (f *fakeService) PurgeBindCodes(_ context.Context, before time.Time, batch int) (int, error) {
 	f.codeCalls = append(f.codeCalls, purgeCall{before: before, batch: batch})
+	return 0, nil
+}
+
+func (f *fakeService) PurgeTicketMessages(_ context.Context, before time.Time, batch int) (int, error) {
+	f.ticketMsgCalls = append(f.ticketMsgCalls, purgeCall{before: before, batch: batch})
 	return 0, nil
 }
 

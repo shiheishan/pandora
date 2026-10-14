@@ -288,6 +288,20 @@ func buildServices(r *runtime) (*services, error) {
 	notifySvc.UseSubscriptions(subSvc)
 	notifySvc.UseOrders(orderSvc)
 	notifySvc.UsePublicBaseURL(cfg.PublicBaseURL)
+	// xb-tg：bot 的 /traffic、/sub 与入群审核经 subscription 取订阅摘要与订阅链接；管理员群组的工单提醒附提单人余额（ledger）；
+	// 在管理员群组里回复工单提醒：auth 核对发消息的人仍是可登录的管理员，再以其身份经 support 回复（后台只读时拒绝）
+	notifySvc.UseSubscriptionSummaries(subSvc)
+	notifySvc.UseSubscribeLinks(notifySubscribeLinks{s: subSvc})
+	notifySvc.UseBalances(notifyBalances{l: ledgerSvc})
+	notifySvc.UseAdmins(authSvc)
+	notifySvc.UseTicketReplier(notifyTicketReplier{support: supportSvc, switches: settingsSvc})
+	// 工单规则（须等客服回复、自动关闭）在 settings；建单与用户回复时经 notify 往管理员群组排提醒
+	supportSvc.UseSettings(settingsSvc)
+	supportSvc.UseAdminNotifier(supportAdminNotifier{n: notifySvc})
+	// 知识库占位变量：站点名与地址经 settings 与对外地址，订阅链接经 subscription
+	contentSvc.UseSite(settingsSvc)
+	contentSvc.UseSubscribeLinks(contentSubscribeLinks{s: subSvc})
+	contentSvc.UsePublicBaseURL(cfg.PublicBaseURL)
 
 	// 插件钩子：六个发事件的模块在业务事务里经 plugin 写待投递记录，提交后入队 plugin:dispatch；
 	// 钩子地址允许 http 与内网只在开发环境（防 SSRF）
@@ -312,7 +326,7 @@ func buildServices(r *runtime) (*services, error) {
 		{"settings", settingsSvc}, {"audit", auditSvc}, {"identity", identitySvc}, {"catalog", catalogSvc},
 		{"promo", promoSvc}, {"subscription", subSvc}, {"payment", paymentSvc}, {"order", orderSvc},
 		{"commission", commissionSvc}, {"giftcard", giftcardSvc}, {"node", nodeSvc}, {"support", supportSvc},
-		{"notify", notifySvc}, {"report", reportSvc},
+		{"notify", notifySvc}, {"report", reportSvc}, {"content", contentSvc},
 	}); err != nil {
 		_ = queue.Close()
 		return nil, err
