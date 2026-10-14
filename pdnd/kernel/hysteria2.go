@@ -66,7 +66,7 @@ type hysteria2Adapter struct {
 	// sessions 登记 TCP 子流与 UDP 会话（删用户即断），流量也随搬随记在这里。
 	sessions userSessions
 	online   onlineDevices
-	// udpQuota 限每用户在途 UDP 会话数（quic_udp_quota.go）。
+	// udpQuota 限每用户在途 UDP 会话数（udp_session_quota.go）。
 	udpQuota  udpSessionQuota
 	service   *hy2.Service[int]
 	packet    net.PacketConn
