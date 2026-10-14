@@ -355,7 +355,17 @@ const reviewEntries: ReviewEntryRow[] = [
 ]
 const awaitingReview = () => reviewEntries.filter((x) => x.status === 'pending' && x.review_required)
 
-const commission = { rate_percent: 20, freeze_days: 7, min_withdraw: 10000, scope: 'first_order' as 'first_order' | 'every_order' }
+const WITHDRAW_METHODS = ['alipay', 'wechat', 'bank', 'paypal', 'usdt_trc20', 'usdt_erc20', 'usdt_bep20'] as const
+const commission = {
+  rate_percent: 20,
+  freeze_days: 7,
+  min_withdraw: 10000,
+  scope: 'first_order' as 'first_order' | 'every_order',
+  distribution_enabled: false,
+  distribution_levels: [0, 0, 0] as [number, number, number],
+  withdraw_enabled: true,
+  withdraw_methods: ['alipay'] as string[],
+}
 interface Withdrawal {
   id: string
   email: string
@@ -363,7 +373,10 @@ interface Withdrawal {
   amount: number
   currency: string
   status: string
+  method: string
   payout_detail: string
+  payout_reference: string
+  paid_usdt_amount: string | null
   reject_reason: string
   requested_at: string
   completed_at: string | null
@@ -376,20 +389,46 @@ const withdrawal = (email: string, amount: number, status: string, payout: strin
   amount,
   currency: 'CNY',
   status,
+  method: 'alipay',
   payout_detail: payout,
+  payout_reference: '',
+  paid_usdt_amount: null,
   reject_reason: '',
   requested_at: days(-ageDays),
   completed_at: null,
   earned_total: amount * 3,
   ...extra,
 })
+/** USDT 打款：校验流水号与实付数量；非 USDT 带了 paid_usdt_amount 也在这里拦 */
+function usdtPaidErrors(method: string, ref: string, paidUsdt: unknown): Record<string, string> | null {
+  const fields: Record<string, string> = {}
+  const trimmed = ref.trim()
+  if (method === 'usdt_trc20') {
+    if (!/^[0-9a-fA-F]{64}$/.test(trimmed)) fields.payout_reference = 'TRC20 交易哈希应为 64 位十六进制'
+  } else if (method === 'usdt_erc20' || method === 'usdt_bep20') {
+    if (!/^0x[0-9a-fA-F]{64}$/.test(trimmed)) fields.payout_reference = '交易哈希应为 0x 开头加 64 位十六进制'
+  }
+  if (paidUsdt !== undefined && paidUsdt !== null && paidUsdt !== '') {
+    if (!method.startsWith('usdt_')) fields.paid_usdt_amount = '只有 USDT 提现才记录实付 USDT 数量'
+    else {
+      const s = typeof paidUsdt === 'string' ? paidUsdt : String(paidUsdt)
+      if (!/^\d+(\.\d{1,6})?$/.test(s) || !(Number(s) > 0)) fields.paid_usdt_amount = '实付 USDT 数量需大于 0，最多 6 位小数'
+    }
+  }
+  return Object.keys(fields).length ? fields : null
+}
 const withdrawals: Withdrawal[] = [
   withdrawal('chen.l@gmail.com', 42000, 'requested', '支付宝 · 138****2201', 0.1),
-  withdrawal('dora@proton.me', 128000, 'reviewing', 'USDT · TXk9…a1Qe', 0.5),
+  withdrawal('dora@proton.me', 128000, 'reviewing', 'USDT · TBXSw8fM4jpQkGc6zZjsVABFpVN7UvXPdV', 0.5, { method: 'usdt_trc20' }),
   withdrawal('m.chen@gmail.com', 30000, 'approved', '支付宝 · 186****0932', 1.2),
-  withdrawal('yx_agent@163.com', 260000, 'paid', '银行卡 · 招商 **** 7781', 4, { completed_at: days(-3) }),
+  withdrawal('yx_agent@163.com', 260000, 'paid', '银行卡 · 招商 **** 7781', 4, {
+    completed_at: days(-3),
+    method: 'bank',
+    payout_reference: 'CMB-20261010-0001',
+  }),
   withdrawal('sp4m@mail.ru', 18000, 'rejected', '支付宝 · 150****1188', 5, { reject_reason: '邀请关系异常，多个账号共用同一设备', earned_total: 18000 }),
-  withdrawal('late@example.test', 50000, 'failed', '银行卡 · 建设 **** 1024', 7),
+  withdrawal('late@example.test', 50000, 'failed', '银行卡 · 建设 **** 1024', 7, { method: 'other' }),
+  withdrawal('usdt.payee@example.test', 88000, 'approved', '0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed', 0.8, { method: 'usdt_erc20' }),
 ]
 
 // ---------------------------------------------------------------------------
@@ -650,6 +689,10 @@ export const marketing: MockModule = {
         total_earned: 4821000,
         invited_users: 2318,
         scope: commission.scope,
+        distribution_enabled: commission.distribution_enabled,
+        distribution_levels: commission.distribution_levels,
+        withdraw_enabled: commission.withdraw_enabled,
+        withdraw_methods: commission.withdraw_methods,
       })
     },
     'GET /v1/commission/entries': (ctx) => {
@@ -721,14 +764,21 @@ export const marketing: MockModule = {
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('commission_withdrawal_mark_paid', () => {
-        const extra = unknownField(body, ['payout_reference'])
+        const extra = unknownField(body, ['payout_reference', 'paid_usdt_amount'])
         if (extra) return err(400, 'bad_request', `请求体包含未知字段 "${extra}"`)
-        if (!text(body.payout_reference).trim()) return invalid({ payout_reference: '请填写转账流水号，日后对账要用' })
+        const ref = text(body.payout_reference)
+        if (!ref.trim()) return invalid({ payout_reference: '请填写转账流水号，日后对账要用' })
         const w = withdrawals.find((x) => x.id === ctx.params.id)
         if (!w) return notFound()
         if (w.status !== 'approved') return err(409, 'conflict', '只有已批准的提现才能标记为已打款')
+        const usdtErr = usdtPaidErrors(w.method, ref, body.paid_usdt_amount)
+        if (usdtErr) return invalid(usdtErr)
         w.status = 'paid'
         w.completed_at = new Date().toISOString()
+        w.payout_reference = ref.trim()
+        const rawPaid = body.paid_usdt_amount
+        w.paid_usdt_amount =
+          rawPaid === undefined || rawPaid === null || rawPaid === '' ? null : typeof rawPaid === 'string' ? rawPaid : String(rawPaid)
         return { status: 200, body: { status: 'paid' } }
       })
     },
@@ -736,7 +786,18 @@ export const marketing: MockModule = {
       if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
-      const extra = unknownField(body, ['rate_percent', 'freeze_days', 'min_withdraw', 'scope'])
+      const extra = unknownField(body, [
+        'rate_percent',
+        'freeze_days',
+        'min_withdraw',
+        'scope',
+        'distribution_enabled',
+        'distribution_l1',
+        'distribution_l2',
+        'distribution_l3',
+        'withdraw_enabled',
+        'withdraw_methods',
+      ])
       if (extra) return ctx.fail(400, 'bad_request', `请求体包含未知字段 "${extra}"`)
       const fields: Record<string, string> = {}
       const rate = body.rate_percent === undefined ? undefined : int(body.rate_percent)
@@ -746,11 +807,49 @@ export const marketing: MockModule = {
       if (freeze === null || (freeze !== undefined && (freeze < 0 || freeze > 90))) fields.freeze_days = '冻结天数需在 0 到 90 之间'
       if (min === null || (min !== undefined && min < 0)) fields.min_withdraw = '最低提现金额不能为负'
       if (body.scope !== undefined && body.scope !== 'first_order' && body.scope !== 'every_order') fields.scope = '只能是 first_order 或 every_order'
+
+      const l1In = body.distribution_l1 === undefined ? undefined : int(body.distribution_l1)
+      const l2In = body.distribution_l2 === undefined ? undefined : int(body.distribution_l2)
+      const l3In = body.distribution_l3 === undefined ? undefined : int(body.distribution_l3)
+      if (l1In === null || (l1In !== undefined && (l1In < 0 || l1In > 100))) fields.distribution_l1 = '比例需在 0 到 100 之间'
+      if (l2In === null || (l2In !== undefined && (l2In < 0 || l2In > 100))) fields.distribution_l2 = '比例需在 0 到 100 之间'
+      if (l3In === null || (l3In !== undefined && (l3In < 0 || l3In > 100))) fields.distribution_l3 = '比例需在 0 到 100 之间'
+
+      if (body.withdraw_methods !== undefined) {
+        if (!Array.isArray(body.withdraw_methods) || body.withdraw_methods.some((m) => typeof m !== 'string' || !WITHDRAW_METHODS.includes(m as (typeof WITHDRAW_METHODS)[number]))) {
+          fields.withdraw_methods = '提现方式不在可选范围内'
+        }
+      }
+
+      const nextLevels: [number, number, number] = [
+        l1In ?? commission.distribution_levels[0],
+        l2In ?? commission.distribution_levels[1],
+        l3In ?? commission.distribution_levels[2],
+      ]
+      const nextDistEnabled = body.distribution_enabled === undefined ? commission.distribution_enabled : body.distribution_enabled === true
+      const nextWithdrawEnabled = body.withdraw_enabled === undefined ? commission.withdraw_enabled : body.withdraw_enabled === true
+      let nextMethods: string[]
+      if (body.withdraw_methods === undefined) nextMethods = [...commission.withdraw_methods]
+      else if (!fields.withdraw_methods) nextMethods = WITHDRAW_METHODS.filter((m) => (body.withdraw_methods as string[]).includes(m))
+      else nextMethods = [...commission.withdraw_methods]
+
+      if (!fields.distribution_l1 && !fields.distribution_l2 && !fields.distribution_l3) {
+        if (nextLevels[0] + nextLevels[1] + nextLevels[2] > 100) fields.distribution_l1 = '三级比例之和不能超过 100'
+        else if (nextDistEnabled && nextLevels[0] === 0 && nextLevels[1] === 0 && nextLevels[2] === 0) fields.distribution_l1 = '开启多级分销时至少要给一级设比例'
+      }
+      if (!fields.withdraw_methods && nextWithdrawEnabled && nextMethods.length === 0) fields.withdraw_methods = '开着提现时至少要选一种提现方式'
+
       if (Object.keys(fields).length) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', fields)
       if (rate != null) commission.rate_percent = rate
       if (freeze != null) commission.freeze_days = freeze
       if (min != null) commission.min_withdraw = min
       if (body.scope !== undefined) commission.scope = body.scope as typeof commission.scope
+      if (body.distribution_enabled !== undefined) commission.distribution_enabled = body.distribution_enabled === true
+      if (l1In != null) commission.distribution_levels[0] = l1In
+      if (l2In != null) commission.distribution_levels[1] = l2In
+      if (l3In != null) commission.distribution_levels[2] = l3In
+      if (body.withdraw_enabled !== undefined) commission.withdraw_enabled = body.withdraw_enabled === true
+      if (body.withdraw_methods !== undefined) commission.withdraw_methods = nextMethods
       ctx.send(200, { ok: true })
     },
   },
