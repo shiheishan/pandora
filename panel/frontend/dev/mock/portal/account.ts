@@ -22,6 +22,7 @@ interface AccountState {
 }
 
 const BOT = 'pandora_notify_bot'
+const DISCUSS_LINK_DEFAULT = 'https://t.me/example_discuss'
 const BIND_TTL_MS = 10 * 60_000
 /** 假装用户在 Telegram 里发送 /start CODE 用的时间 */
 const BIND_AFTER_MS = 8_000
@@ -195,7 +196,8 @@ export const account: MockModule = {
       const state = stateOf(ctx.user.userId)
       settleTelegram(state)
       const t = state.telegram
-      ctx.send(200, { bound: t.username !== null, ...(t.username ? { username: t.username } : {}), ...(t.enabled ? { bot_username: BOT } : {}), enabled: t.enabled })
+      const discuss_link = scenario() === 'default' ? DISCUSS_LINK_DEFAULT : null
+      ctx.send(200, { bound: t.username !== null, ...(t.username ? { username: t.username } : {}), ...(t.enabled ? { bot_username: BOT } : {}), enabled: t.enabled, discuss_link })
     },
     'POST /v1/me/telegram/bind-code': (ctx) => {
       const state = stateOf(ctx.user.userId)

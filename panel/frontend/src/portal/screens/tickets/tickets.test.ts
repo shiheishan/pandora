@@ -19,7 +19,14 @@ const ROW = {
 }
 
 function detail(over: Partial<TicketDetail> = {}): TicketDetail {
-  return ticketDetailSchema.parse({ ...ROW, message_count: 0, last_reply_at: '0001-01-01T00:00:00Z', messages: [{ id: 'm1', author_kind: 'user', author_name: null, body: 'x', created_at: ROW.created_at }], ...over })
+  return ticketDetailSchema.parse({
+    ...ROW,
+    message_count: 0,
+    last_reply_at: '0001-01-01T00:00:00Z',
+    reply_blocked: false,
+    messages: [{ id: 'm1', author_kind: 'user', author_name: null, body: 'x', created_at: ROW.created_at }],
+    ...over,
+  })
 }
 
 describe('工单 schema', () => {
@@ -33,9 +40,10 @@ describe('工单 schema', () => {
     expect(ticketRowSchema.safeParse({ ...ROW, status: 'withdrawn' }).success).toBe(false)
   })
 
-  it('详情：related_order 是对象或 null，messages 不收 null', () => {
+  it('详情：related_order 是对象或 null，messages 不收 null，reply_blocked 恒在', () => {
     expect(detail({ related_order: { id: 'o1', order_no: 'PD-1' } }).related_order?.order_no).toBe('PD-1')
     expect(ticketDetailSchema.safeParse({ ...ROW, messages: null }).success).toBe(false)
+    expect(ticketDetailSchema.safeParse({ ...detail(), reply_blocked: undefined }).success).toBe(false)
   })
 })
 
@@ -51,12 +59,13 @@ describe('子路由', () => {
 
 describe('状态与按钮', () => {
   it('状态文案按契约映射，closed 按 closed_reason 分', () => {
-    const label = (status: string, closed_reason: 'withdrawn' | 'user_closed' | null = null) => ticketStatus(ticketRowSchema.parse({ ...ROW, status, closed_reason })).label
+    const label = (status: string, closed_reason: 'withdrawn' | 'user_closed' | 'auto_closed' | null = null) => ticketStatus(ticketRowSchema.parse({ ...ROW, status, closed_reason })).label
     expect(['open', 'pending_agent', 'escalated'].map((s) => label(s))).toEqual(['等待回复', '等待回复', '等待回复'])
     expect(label('pending_user')).toBe('客服已回复')
     expect(label('resolved')).toBe('已解决')
     expect(label('closed', 'withdrawn')).toBe('已撤回')
     expect(label('closed', 'user_closed')).toBe('已关闭')
+    expect(label('closed', 'auto_closed')).toBe('已自动关闭')
     expect(ticketStatus({ status: 'closed', closed_reason: null }).label).toBe('已关闭')
   })
 

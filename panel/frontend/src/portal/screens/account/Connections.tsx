@@ -12,6 +12,11 @@ type BindCode = z.output<typeof bindCodeSchema>
 const POLL_MS = 3000
 const BOUND_TEXT = 'Telegram 绑定成功'
 
+function discussLinkHref(link: string | null | undefined): string | null {
+  if (link && link.startsWith('https://')) return link
+  return null
+}
+
 // ---------------------------------------------------------------------------
 // Telegram
 // ---------------------------------------------------------------------------
@@ -43,11 +48,20 @@ export function TelegramCard() {
   }
 
   const status = !telegram.data ? null : !telegram.data.enabled && !bound ? '未启用' : bound ? '已绑定' : '未绑定'
+  const discussHref = discussLinkHref(telegram.data?.discuss_link)
   return (
     <Card title="Telegram" extra={status && (bound ? <Tag tone="ok">{status}</Tag> : <span className={css.status}>{status}</span>)}>
       <QueryView query={telegram} rows={1} isEmpty={() => false} empty={null}>
         {(t) => (t.bound ? <Bound info={t} /> : !t.enabled ? <p className={css.muted}>站点未启用 Telegram 通知。</p> : <Unbound code={code} left={left} onCode={setCode} onBound={bindDone} />)}
       </QueryView>
+      {discussHref && (
+        <div className={css.actions}>
+          <a className={css.linkButton} href={discussHref} target="_blank" rel="noopener noreferrer">
+            加入用户讨论群 ↗
+          </a>
+          <span className={css.hint}>入群申请可能需要先绑定 Telegram 并有有效订阅</span>
+        </div>
+      )}
     </Card>
   )
 }
