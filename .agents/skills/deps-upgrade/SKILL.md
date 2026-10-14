@@ -166,7 +166,8 @@ pdnd 里共有 6 处 fork。上游基点、导入时的差异和本仓库在基�
 | Xray（作 Go 模块） | `pdnd/go.mod` 的 `xtls/xray-core` | CI interop（`pandora-native.yml` 的 `-run` 正则）、gun 互通测试 `TestNativeGRPCInteropWithXrayGunClient` | 新加的 Xray interop 测试要补进 `-run`（`rules/pdnd-kernel.md`） |
 | sing-anytls 客户端 | `pdnd/go.mod` | CI 的 AnyTLS interop | yaml 注释里写着版本，要一起改 |
 | sing-box（作 Go 模块） | 只在 `subscription-e2e/tools/go.mod`（pdnd 不依赖 sing-box） | subscription-e2e | tools 模块跑 tidy |
-| mihomo、sing-box、Juicity、Naive 外部二进制 | 不入库，跑测试时经 `*_BIN` + `*_SHA256` 环境变量传入（`interop_mihomo`、`interop_external` 标签） | 本机或测试机手动门禁 | SHA 用 GitHub release 页公布的值，不用自己下载后算出来的；`pdnd/release/README.md` 里的 mihomo 实测记录是历史结论，换版本后要重测 |
+| mihomo 外部二进制 | CI `pandora-native.yml` 的「External Mihomo interoperability」一步：`MIHOMO_VERSION` 与下载包的 `MIHOMO_GZ_SHA256` 成对写在 step 的 env 里（`interop_mihomo` 标签，每次 CI 都跑） | CI |
+| sing-box、Juicity、Naive 外部二进制 | 不入库，跑测试时经 `*_BIN` + `*_SHA256` 环境变量传入（`interop_external` 标签） | 本机或测试机手动门禁 | SHA 用 GitHub release 页公布的值，不用自己下载后算出来的；`pdnd/release/README.md` 里的 mihomo 实测记录是历史结论，换版本后要重测 |
 | node-e2e 真客户端（sing-box、mihomo、Xray、Juicity、mieru） | ops-local `vultr-test2/node-e2e/scripts/install-clients.sh` 里的版本变量和逐个写死的 SHA-256 | node-e2e skill | 版本与 SHA 成对改，sing-box 用 `-glibc` 包 |
 | 官方 pdnd 发布包 | 面板 `release-artifact.env` 钉的版本与 SHA | node-e2e 的接入证据 | 见 node-e2e |
 

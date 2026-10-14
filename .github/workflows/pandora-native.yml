@@ -168,6 +168,28 @@ jobs:
         # Non-race for the same reason: sing-anytls (v0.0.11 and v0.0.13)
         # races between Stream.closeLocally and Stream.Write inside the client.
         run: go test -mod=readonly -tags interop -run 'TestAnyTLSNativeClientTCPAndUOTUDP$' -count=3 ./kernel
+      - name: External Mihomo interoperability
+        # mihomo 是用户最多的客户端：每次都用官方二进制逐协议真连 NativeCore。
+        # 下载包的 SHA-256 取自 GitHub release 公布的 digest；升级时版本与哈希成对改（deps-upgrade skill）。
+        # 非 race：外部客户端是独立进程，race 只会拖慢。
+        env:
+          MIHOMO_VERSION: v1.19.32
+          MIHOMO_GZ_SHA256: 8451100836c9eda194331c2babfad490b2faf30cebc1a04b0e76fd8ac2d35d10
+        run: |
+          set -euo pipefail
+          dir="${RUNNER_TEMP}/mihomo"
+          mkdir -p "${dir}"
+          curl -fsSL --retry 3 -o "${dir}/mihomo.gz" \
+            "https://github.com/MetaCubeX/mihomo/releases/download/${MIHOMO_VERSION}/mihomo-linux-amd64-${MIHOMO_VERSION}.gz"
+          echo "${MIHOMO_GZ_SHA256}  ${dir}/mihomo.gz" | sha256sum -c -
+          gunzip -c "${dir}/mihomo.gz" > "${dir}/mihomo"
+          chmod +x "${dir}/mihomo"
+          export MIHOMO_BIN="${dir}/mihomo"
+          # 测试要求可执行文件本身的哈希：信任锚是上面核过的下载包，这里只是把解压结果交给测试核对
+          export MIHOMO_SHA256="$(sha256sum "${MIHOMO_BIN}" | cut -d' ' -f1)"
+          go test -mod=readonly -tags interop_mihomo -run 'TestExternalMihomo' -count=1 -v ./kernel 2>&1 | tee mihomo-interop.log
+          # 没设上二进制时这些测试会跳过而不是失败：逐协议那组必须真的跑过
+          grep -q -- '--- PASS: TestExternalMihomoProtocolsInterop' mihomo-interop.log
       - name: Upload x64 acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4

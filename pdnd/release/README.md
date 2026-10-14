@@ -54,7 +54,7 @@ go test -mod=readonly -tags interop -run 'TestAnyTLSNativeClientTCPAndUOTUDP$' -
 
 上面的 Xray 门与这条 AnyTLS 门都由 CI 的 `linux-race` job 执行。
 
-另有 `interop_mihomo` 黑盒门禁，要求显式提供外部 Mihomo 可执行文件及其 SHA-256（未提供二进制则跳过；提供了二进制却缺哈希或哈希不符即失败）：
+另有 `interop_mihomo` 黑盒门禁，要求显式提供外部 Mihomo 可执行文件及其 SHA-256（未提供二进制则跳过；提供了二进制却缺哈希或哈希不符即失败）。CI 的 `linux-race` job 每次都跑它：下载钉住版本的官方包、按 release 公布的 digest 核对后执行全部 `TestExternalMihomo*`，逐协议那组必须真的通过（不许跳过）。本机手跑：
 
 ```bash
 MIHOMO_BIN=/path/to/mihomo MIHOMO_SHA256=<64位hex> go test -mod=readonly -tags interop_mihomo -run TestExternalMihomoVLESSXHTTPRealityH3Interop -count=1 -v ./kernel
