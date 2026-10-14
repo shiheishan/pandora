@@ -27,7 +27,7 @@ export function ProvidersTab({ now }: { now: Date }) {
           新建渠道
         </Button>
       </div>
-      <QueryView query={providers} isEmpty={(d) => d.length === 0} empty={<Empty title="还没有支付渠道" description="点「新建渠道」接入易支付，或由运维用 aegis-payctl 配置。" />}>
+      <QueryView query={providers} isEmpty={(d) => d.length === 0} empty={<Empty title="还没有支付渠道" description="点「新建渠道」接入易支付。" />}>
         {(rows) => (
           <div className={css.cards}>
             {rows.map((p) => (
