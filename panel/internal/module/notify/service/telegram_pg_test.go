@@ -94,6 +94,9 @@ func TestSaveTelegramSettingsWebhook(t *testing.T) {
 	if len(au) != 1 || au[0] != "message" {
 		t.Fatalf("allowed_updates %v", au)
 	}
+	if !tg.webhooks[0].DropPending {
+		t.Fatal("换 secret 注册 webhook 应丢弃积压更新")
+	}
 	if e.st.setTg == nil || e.st.setTg.WebhookSecret == nil || *e.st.setTg.WebhookSecret != tg.webhooks[0].Secret {
 		t.Fatalf("setTg secret %+v", e.st.setTg)
 	}
@@ -469,4 +472,31 @@ func TestUnbindTelegramSuppressesQueuedDeliveries(t *testing.T) {
 		}
 	}
 	t.Fatal("missing telegram.unbound audit")
+}
+
+// 只切换入群审核：用现有 secret 重设 webhook，不丢 Telegram 那边排队的更新。
+func TestSaveTelegramExtrasJoinReviewKeepsPending(t *testing.T) {
+	e := newPG(t)
+	tg := &fakeTG{}
+	e.svc.tg = tg
+	tgbReady(e)
+	e.svc.UsePublicBaseURL("https://panel.example.com")
+
+	on := true
+	group := int64(-100123)
+	if err := e.svc.SaveTelegramExtras(e.ctx, TelegramExtrasInput{
+		JoinReview: &on, UserGroupChatSet: true, UserGroupChatID: &group,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(tg.webhooks) != 1 {
+		t.Fatalf("webhooks %d", len(tg.webhooks))
+	}
+	w := tg.webhooks[0]
+	if w.Secret != "whsec" || w.DropPending {
+		t.Fatalf("webhook %+v", w)
+	}
+	if len(w.AllowedUpdates) != 2 || w.AllowedUpdates[1] != "chat_join_request" {
+		t.Fatalf("allowed_updates %v", w.AllowedUpdates)
+	}
 }
