@@ -13,4 +13,3 @@ var certTransitions = map[string][]string{
 
 // CanTransition 报告证书状态能否从 from 转到 to。
 func CanTransition(from, to string) bool { return slices.Contains(certTransitions[from], to) }
-
