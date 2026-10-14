@@ -147,8 +147,11 @@ fi
 # ── [5/8] 配置与数据服务 ──────────────────────────────
 say "[5/8] 配置与数据服务"
 pandora_install_host_files "$RELEASE_ROOT"
+pandora_ensure_backup_key
 if [ "$MODE" = install ]; then
   pandora_write_new_config "$PUBLIC_BASE_URL" "$GRPC_HOST" "$PG_PORT"
+else
+  pandora_ensure_backup_env
 fi
 pandora_load_hardening_switch
 HARDEN_FAILED=""

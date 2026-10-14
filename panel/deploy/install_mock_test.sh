@@ -228,6 +228,17 @@ if [[ "$stdin_all" == *configure-app-role* ]] || [[ "$stdin_all" == *'缺少角�
 fi
 exit 0
 S
+  # age-keygen 桩：-o 写一把虚构私钥，-y 打印虚构收件人
+  cat >"$STUB/age-keygen" <<'S'
+#!/usr/bin/env bash
+T='__T__'
+printf '%s\n' "age-keygen $*" >>"$T/argv.log"
+case "$1" in
+  -o) printf '%s\n' 'AGE-SECRET-KEY-1MOCKMOCKMOCKMOCKMOCKMOCKMOCKMOCKMOCKMOCKMOCKMOCKMOCKMOCKMOCK' >"$2" ;;
+  -y) printf '%s\n' 'age1mockrecipientmockrecipientmockrecipientmockrecipientmock' ;;
+  *) exit 2 ;;
+esac
+S
   for name in pg_createcluster pg_restore journalctl sleep useradd; do
     cat >"$STUB/$name" <<'S'
 #!/usr/bin/env bash
@@ -423,6 +434,9 @@ PANDORA_DATABASE_URL
 PANDORA_REDIS_URL
 PANDORA_SECRETS_MASTER_KEY" ] || fail "secrets keys: $keys_sec"
 [ "$keys_dep" = "PANDORA_ADMIN_PATH
+PANDORA_BACKUP_AGE_IDENTITY
+PANDORA_BACKUP_AGE_RECIPIENT
+PANDORA_BACKUP_RETENTION_DAYS
 PANDORA_DATABASE_MIGRATION_URL
 PANDORA_SYSTEMD_HARDENING
 POSTGRES_DB
@@ -437,6 +451,11 @@ python3 -c "import base64,sys; d=base64.b64decode(sys.argv[1]); sys.exit(0 if le
 [ "$(stat -c %a "$SB/etc/pandora/secrets.env")" = 640 ] || fail 'secrets mode'
 [ "$(stat -c %a "$SB/etc/pandora/config.yaml")" = 640 ] || fail 'config mode'
 [ "$(stat -c %a "$SB/etc/pandora/deploy.env")" = 600 ] || fail 'deploy mode'
+[ "$(stat -c %a "$SB/etc/pandora/backup-age.key")" = 600 ] || fail 'backup key mode'
+grep -q "chown root:root $SB/etc/pandora/backup-age.key" "$EV" || fail 'chown backup key'
+grep -q '^PANDORA_BACKUP_AGE_IDENTITY=/etc/pandora/backup-age.key$' "$SB/etc/pandora/deploy.env" || fail 'backup identity path'
+grep -q '^PANDORA_BACKUP_AGE_RECIPIENT=age1' "$SB/etc/pandora/deploy.env" || fail 'backup recipient'
+
 grep -q "chown root:pandora $SB/etc/pandora/secrets.env" "$EV" || fail 'chown secrets'
 grep -q "chown root:pandora $SB/etc/pandora/config.yaml" "$EV" || fail 'chown config'
 grep -q "chown root:root $SB/etc/pandora/deploy.env" "$EV" || fail 'chown deploy'

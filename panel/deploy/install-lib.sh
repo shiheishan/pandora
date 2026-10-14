@@ -9,6 +9,9 @@ ETC_DIR="$SB/etc/pandora"
 CONFIG_FILE="$ETC_DIR/config.yaml"
 SECRETS_FILE="$ETC_DIR/secrets.env"
 DEPLOY_ENV="$ETC_DIR/deploy.env"
+# 备份加密用的 age 私钥：BACKUP_AGE_KEY 是本机读写的路径，BACKUP_AGE_KEY_PATH 是写进 deploy.env 的真实路径
+BACKUP_AGE_KEY="$ETC_DIR/backup-age.key"
+BACKUP_AGE_KEY_PATH=/etc/pandora/backup-age.key
 LOG_DIR="$SB/var/log/pandora"
 BACKUP_DIR="$SB/var/backups/pandora"
 SYSTEMD_DIR="$SB/etc/systemd/system"
@@ -120,6 +123,7 @@ pandora_write_new_config() {
       "PANDORA_DATABASE_MIGRATION_URL=postgres://pandora_owner:${owner_pw}@127.0.0.1:${pg_port}/pandora?sslmode=disable" \
       "PANDORA_ADMIN_PATH=$admin_path" \
       "PANDORA_SYSTEMD_HARDENING=1" >"$deploy_tmp"
+    pandora_backup_env_lines >>"$deploy_tmp"
     chmod 0600 "$deploy_tmp"
     pandora_own root:root "$deploy_tmp"
     mv -f -- "$deploy_tmp" "$DEPLOY_ENV"
@@ -157,6 +161,32 @@ pandora_write_new_config() {
     pandora_own root:pandora "$secrets_tmp"
     mv -f -- "$secrets_tmp" "$SECRETS_FILE"
   )
+}
+
+# 备份加密用的 age 密钥：没有就生成（root 0600），已有的绝不覆盖（旧备份只能用它解开）。
+# 公钥（recipient）记进 BACKUP_AGE_RECIPIENT。私钥与备份在同一台机器，机器整体丢失时要另存（见收尾提示）
+pandora_ensure_backup_key() {
+  if [ ! -f "$BACKUP_AGE_KEY" ]; then
+    (umask 077 && age-keygen -o "$BACKUP_AGE_KEY" 2>/dev/null) || die "生成备份加密密钥失败（age-keygen）"
+  fi
+  chmod 0600 "$BACKUP_AGE_KEY"
+  pandora_own root:root "$BACKUP_AGE_KEY"
+  BACKUP_AGE_RECIPIENT="$(age-keygen -y "$BACKUP_AGE_KEY")" || die "读不出备份加密密钥的公钥：$BACKUP_AGE_KEY"
+  [[ "$BACKUP_AGE_RECIPIENT" == age1* ]] || die "备份加密密钥的公钥不像 age 收件人：$BACKUP_AGE_KEY"
+}
+
+# deploy.env 里备份脚本要的键（backup-postgres.sh 缺了就拒绝备份）。首装写进去，升级缺了才补，已有的值不动
+pandora_backup_env_lines() {
+  printf '%s\n' \
+    "PANDORA_BACKUP_RETENTION_DAYS=14" \
+    "PANDORA_BACKUP_AGE_RECIPIENT=$BACKUP_AGE_RECIPIENT" \
+    "PANDORA_BACKUP_AGE_IDENTITY=$BACKUP_AGE_KEY_PATH"
+}
+
+pandora_ensure_backup_env() {
+  local lines=()
+  mapfile -t lines < <(pandora_backup_env_lines)
+  pandora_env_append_missing "$DEPLOY_ENV" "${lines[@]}"
 }
 
 # 升级前核对三个配置文件是 install.sh 生成的（键齐全），并把属主与权限收回到约定值；内容一个字节不改。
@@ -209,6 +239,7 @@ pandora_install_packages() {
     printf '%s\n' "deb http://apt.postgresql.org/pub/repos/apt ${codename}-pgdg main" >"$list_file"
   fi
   command -v redis-server >/dev/null 2>&1 || need_apt=1
+  command -v age-keygen >/dev/null 2>&1 || need_apt=1
   command -v nginx >/dev/null 2>&1 || need_apt=1
   [ "$need_apt" = 1 ] || return 0
   DEBIAN_FRONTEND=noninteractive apt-get update -qq || die "apt-get update 失败"
@@ -220,6 +251,8 @@ pandora_install_packages() {
     || die "安装 redis-server 失败"
   command -v nginx >/dev/null 2>&1 || DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nginx \
     || die "安装 nginx 失败"
+  command -v age-keygen >/dev/null 2>&1 || DEBIAN_FRONTEND=noninteractive apt-get install -y -qq age \
+    || die "安装 age 失败（备份加密要用）"
 }
 
 pandora_ensure_user() {
@@ -914,6 +947,7 @@ pandora_print_summary() {
   if [ "${BACKUP_TIMER:-}" != enabled ]; then
     todo+=("开每日备份：sudo $d/backup-postgres.sh，再 systemctl enable --now pandora-backup.timer")
   fi
+  todo+=("把备份解密私钥 $BACKUP_AGE_KEY_PATH 另存到别处：机器整体丢失时，没有它解不开任何备份")
 
   say ""
   if [ "${MODE:-install}" = install ]; then
