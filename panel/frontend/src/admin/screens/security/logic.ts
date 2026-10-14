@@ -202,7 +202,7 @@ export function disableCandidates(c: Pick<Cluster, 'users'>) {
   return c.users.filter((u) => !OFF.has(u.status))
 }
 
-export const USER_STATUS_LABEL: Record<string, string> = { pending: '待验证', active: '正常', suspended: '已停用', banned: '已封禁', deletion_scheduled: '待注销', anonymized: '已注销' }
+export const USER_STATUS_LABEL: Record<string, string> = { pending: '待验证', active: '正常', suspended: '已停用', banned: '已封禁', deletion_scheduled: '待注销', anonymized: '已注销', deleted: '已注销' }
 
 const runes = (s: string) => [...s].length
 /** 与 normalizeDisableInput 同键同文案：原因 5–500 字，账号 1–200 个 */

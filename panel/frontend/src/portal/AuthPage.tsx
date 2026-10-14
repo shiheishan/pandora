@@ -188,13 +188,13 @@ function RegisterForm({
     if (next.email || next.invite) return setErrors(next)
     setBusy(true)
     setErrors({})
-    let captchaToken = ''
-    try {
-      captchaToken = await cap.getToken('register')
-    } catch (e) {
+    // 没开人机验证时拿到空串；拿不到（没完成、加载失败）时显示原因并停在这一步。
+    const captchaToken = await cap.getToken('register').catch((e: unknown) => {
       setBusy(false)
-      return setErrors({ captcha: (e as Error).message })
-    }
+      setErrors({ captcha: e instanceof Error ? e.message : String(e) })
+      return null
+    })
+    if (captchaToken === null) return
     try {
       const body: { email: string; invite_code?: string; captcha_token?: string } = inviteCode.trim()
         ? { email: email.trim(), invite_code: inviteCode.trim().toUpperCase() }

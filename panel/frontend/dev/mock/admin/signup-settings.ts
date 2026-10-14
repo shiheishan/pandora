@@ -1,4 +1,4 @@
-import type { Json, MockContext, MockModule, MockResult } from '../types.ts'
+import type { MockContext, MockModule, MockResult } from '../types.ts'
 
 // ---------------------------------------------------------------------------
 // 工具

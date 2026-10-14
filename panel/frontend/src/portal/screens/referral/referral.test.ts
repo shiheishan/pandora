@@ -47,7 +47,7 @@ describe('邀请码列表', () => {
     expect(activeCodeCount(codes)).toBe(1)
     expect(canCreateCode(codes, 5)).toBe(true)
     expect(canCreateCode(codes, 1)).toBe(false)
-    expect(canCreateCode([codes[1], codes[2]], 5)).toBe(true)
+    expect(canCreateCode(codes.filter((c) => c.status !== 'active'), 5)).toBe(true)
   })
 
   it('状态文案', () => {

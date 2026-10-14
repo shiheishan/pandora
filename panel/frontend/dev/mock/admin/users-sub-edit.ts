@@ -4,10 +4,6 @@ import type { Sub, User } from './users.ts'
 const QUOTA_MAX_BYTES = 10 * 1024 ** 4
 const VALID_PERIODS = new Set(['total', 'cycle', 'day', 'month'])
 
-function envelope(code: string, message: string, fields?: Record<string, string>) {
-  return { error: { code, message, ...(fields ? { fields } : {}) } }
-}
-
 function reasonProblem(v: unknown): string | null {
   if (typeof v !== 'string') return '请写清原因，5 到 500 个字'
   const n = [...v.trim()].length

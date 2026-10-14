@@ -76,7 +76,9 @@ export function useCaptcha(config: CaptchaConfig | null): {
   const tokenRef = useRef('')
   const widgetIdRef = useRef<number | string | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
-  const [loadFailed, setLoadFailed] = useState(false)
+  // 记下加载失败的脚本地址，而不是一个布尔值：换了配置（地址不同）自然就不算失败，不用在 effect 里同步重置状态。
+  const [failedSrc, setFailedSrc] = useState<string | null>(null)
+  const loadFailed = config !== null && config.provider !== 'recaptcha_v3' && failedSrc === captchaScriptUrl(config)
 
   const clearToken = useCallback(() => {
     tokenRef.current = ''
@@ -101,7 +103,6 @@ export function useCaptcha(config: CaptchaConfig | null): {
 
     let cancelled = false
     const src = captchaScriptUrl(config)
-    setLoadFailed(false)
     tokenRef.current = ''
     widgetIdRef.current = null
 
@@ -114,7 +115,7 @@ export function useCaptcha(config: CaptchaConfig | null): {
         if (config.provider === 'turnstile') {
           const turnstile = win().turnstile
           if (!turnstile) {
-            setLoadFailed(true)
+            setFailedSrc(src)
             return
           }
           const id = turnstile.render(el, {
@@ -131,7 +132,7 @@ export function useCaptcha(config: CaptchaConfig | null): {
 
         const grecaptcha = win().grecaptcha
         if (!grecaptcha) {
-          setLoadFailed(true)
+          setFailedSrc(src)
           return
         }
         grecaptcha.ready(() => {
@@ -150,7 +151,7 @@ export function useCaptcha(config: CaptchaConfig | null): {
         })
       })
       .catch(() => {
-        if (!cancelled) setLoadFailed(true)
+        if (!cancelled) setFailedSrc(src)
       })
 
     return () => {

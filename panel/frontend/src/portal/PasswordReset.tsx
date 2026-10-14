@@ -51,13 +51,13 @@ export function PasswordResetForm({ onDone, onCancel }: { onDone: (email: string
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) return setErrors({ email: '请输入有效邮箱' })
     setBusy(true)
     setErrors({})
-    let captchaToken = ''
-    try {
-      captchaToken = await cap.getToken('password_reset')
-    } catch (e) {
+    // 没开人机验证时拿到空串；拿不到（没完成、加载失败）时显示原因并停在这一步。
+    const captchaToken = await cap.getToken('password_reset').catch((e: unknown) => {
       setBusy(false)
-      return setErrors({ captcha: (e as Error).message })
-    }
+      setErrors({ captcha: e instanceof Error ? e.message : String(e) })
+      return null
+    })
+    if (captchaToken === null) return
     try {
       const body: { email: string; captcha_token?: string } = { email: email.trim() }
       if (captchaToken) body.captcha_token = captchaToken

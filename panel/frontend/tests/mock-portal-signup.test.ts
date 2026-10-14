@@ -1,7 +1,7 @@
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'
-import { close, loginAs, serve } from './mock-helpers'
+import { close, serve } from './mock-helpers'
 
 describe('mock api · portal signup & mail-link', () => {
   let server: Server

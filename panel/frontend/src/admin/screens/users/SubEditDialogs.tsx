@@ -145,7 +145,7 @@ export function QuotaLimitDialog({
     if ('error' in parsed) local.limit_bytes = parsed.error
     const badReason = reasonProblem(reason)
     if (badReason) local.reason = badReason
-    if (Object.keys(local).length) return setErrors(local)
+    if ('error' in parsed || Object.keys(local).length) return setErrors(local)
 
     const limit_bytes = parsed.bytes
     setBusy(true)
