@@ -259,9 +259,63 @@ pdnd 的 Linux x64/ARM64 发布包用 `pdnd/release/build.sh`，生成带 SHA-25
 
 ## 部署
 
-一条命令装完。首装和升级是同一个入口，脚本按 `/etc/pandora/secrets.env` 在不在判断走哪条路。生产机不用 Docker。
+一条命令装完。首装和升级是同一个入口：安装器 `install.sh` 按 `/etc/pandora/secrets.env` 在不在判断走哪条路。生产机不用 Docker。两条路装出来一样：第 1 节从 GitHub Release 一条命令装，第 2 节自己从源码打包。
 
-### 1. 打包
+目标机器：Debian 12–14 / Ubuntu 22.04–26.04（x86_64 或 aarch64）、systemd、root，外加 `curl` 与 `openssl`；安装器用 apt 装好 PostgreSQL 18（PGDG 源）、发行版的 `redis-server`（要求 6.0 以上）、nginx 与 age。
+
+### 1. 一条命令装（GitHub Release）
+
+```bash
+curl -fsSL https://github.com/shiheishan/pandora/releases/latest/download/get.sh | sudo bash
+```
+
+`get.sh` 依次：
+
+1. 检查平台（Linux x86_64 / aarch64）、root 权限与依赖（`curl`、`tar`、`gzip`、`sha256sum`）；
+2. 解析版本（`PANDORA_VERSION` 或 GitHub `releases/latest` 跳转，不调 API）；
+3. 下载对应架构的 `.tar.gz` 与 `.sha256` 并核对；
+4. 解到 `/opt/pandora-release/<版本>/`（先临时目录再改名；同版本已存在时用发布的 `.manifest.sha256` 与目录内 `SHA256SUMS` 核对，一致则复用，不一致则停下、不覆盖）；
+5. 运行包内 `deploy/install.sh`，环境变量原样传入（安装器八步见第 3 节）。
+
+首装会问：面板对外地址（`https://域名` 或 `https://公网IPv4`，不带端口与路径；直接回车用本机公网 IPv4；不合规在动手前停下；节点连面板的 gRPC 主机缺省取该地址的主机部分）；第一个管理员的邮箱与口令（口令不回显，直接回车跳过，之后用收尾提示里的命令手工建）。`curl … | sudo bash` 时脚本是从管道读进来的，`get.sh` 会把终端接给 `install.sh` 提问；没有终端（ssh 未带 `-t`、cloud-init、CI）且未设 `PANDORA_ASSUME_YES=1` 或 `PANDORA_PUBLIC_BASE_URL` 时会停下并给出两种写法；设了 `PANDORA_ADMIN_EMAIL` 却用 `curl … | bash` 时也会停下，提示先下载 `get.sh` 再运行（`install.sh` 要从标准输入读口令，管道模式下标准输入是脚本本身）。
+
+无人值守时变量要写在 `sudo` 后面（`sudo` 默认不把调用者的环境变量带过去）：
+
+```bash
+curl -fsSL https://github.com/shiheishan/pandora/releases/latest/download/get.sh \
+  | sudo PANDORA_ASSUME_YES=1 PANDORA_PUBLIC_BASE_URL=https://panel.example.test bash
+```
+
+无人值守同时建第一个管理员：`install.sh` 从标准输入读一行口令，而 `curl … | bash` 时标准输入就是脚本本身，所以先下载 `get.sh` 再运行：
+
+```bash
+curl -fsSLo get.sh https://github.com/shiheishan/pandora/releases/latest/download/get.sh
+read -rsp '管理员口令：' pw && echo
+printf '%s\n' "$pw" | sudo PANDORA_ADMIN_EMAIL=admin@example.test PANDORA_ASSUME_YES=1 \
+  PANDORA_PUBLIC_BASE_URL=https://panel.example.test bash get.sh
+unset pw
+```
+
+其余开关（`PANDORA_GRPC_PUBLIC_HOST`、`PANDORA_SKIP_NGINX`、`PANDORA_ACME*`、`PANDORA_SYSTEMD_HARDENING`）见 `install.sh` 头注释。
+
+升级：再跑同一条 `curl … | sudo bash`；取到新版本按升级走（停服 → 升级前全量备份 → 换程序 → 迁移 → 起服务）；同一版本再跑也会走一遍幂等的升级流程。
+
+指定版本、回退、fork：`curl … | sudo PANDORA_VERSION=v1.2.3 bash`；带连字符的预发布标签（如 `v1.3.0-rc.1`）不会出现在 `latest`，只能这样装；`PANDORA_REPO=<owner>/<repo>` 从 fork 装（缺省 `shiheishan/pandora`）。
+
+`get.sh` 不自动删旧版本目录；`/opt/pandora-release` 下 `v*` 目录超过 3 个时会打印删除命令。
+
+核对来源：`.sha256` 与包同源，只防下载损坏；防篡改用 `gh attestation verify` 核对 GitHub Actions 出的来源证明（两个架构包、`get.sh`、`SHA256SUMS` 均有）；`install.sh` 运行时再按包内 `SHA256SUMS` 逐文件核对，并拒绝不归 root 或别人可写的目录。
+
+```bash
+curl -fsSLO https://github.com/shiheishan/pandora/releases/download/v1.2.3/pandora-panel_v1.2.3_linux_amd64.tar.gz
+gh attestation verify pandora-panel_v1.2.3_linux_amd64.tar.gz --repo shiheishan/pandora
+```
+
+须先安装 `gh` 并 `gh auth login`；核过后用同一版本号 `PANDORA_VERSION=v1.2.3` 跑 `get.sh`（下载的是同一附件）；`get.sh`、`SHA256SUMS` 也可同样用 `gh attestation verify` 核对。
+
+发版（维护者）：在 `main` 上打 `v*` 标签并推送，`.github/workflows/release.yml` 构建 amd64 / arm64 包、出来源证明、建 Release；标签提交必须已在 `main` 上，否则 workflow 拒绝；带连字符的标签发成预发布；手动触发（`workflow_dispatch`，输入版本号，缺省 `v0.0.0-dryrun`）只演练构建，产物在该次 run 的 artifact 里，不建 Release。
+
+### 2. 从源码打包
 
 在有 Go、Node 22.12+/npm、GNU tar、curl 的机器上（不需要是目标机器）：
 
@@ -279,25 +333,20 @@ cd panel && ./deploy/build-release.sh /path/to/dist
 | `deploy/` | 安装与运维脚本、`config.example.yaml`、`secrets.env.example`、nginx 与 PostgreSQL 配置、`configure-app-role.sql`、`RUNBOOK.md`、systemd 单元 |
 | `SHA256SUMS` | 全量校验和；安装器先核对它 |
 
-### 2. 丢过去装
-
-目标机器：Debian 12–14 / Ubuntu 22.04–26.04、systemd、root，外加 `openssl curl`。安装器用 apt 装好 PostgreSQL 18（PGDG 源）、发行版的 `redis-server`（要求 6.0 以上）、nginx 与 age。
+丢到目标机，解到与 `get.sh` 相同的布局（`/opt/pandora-release/<版本>/`）再运行安装器：
 
 ```bash
 scp pandora-panel_<版本>_linux_amd64.tar.gz root@目标机:/root/
-ssh -t root@目标机 'mkdir -p /opt/pandora-release && tar -xzf /root/pandora-panel_<版本>_linux_amd64.tar.gz -C /opt/pandora-release \
-  && bash /opt/pandora-release/pandora-panel_<版本>_linux_amd64/deploy/install.sh'
+ssh -t root@目标机 'mkdir -p /opt/pandora-release/<版本> \
+  && tar -xzf /root/pandora-panel_<版本>_linux_amd64.tar.gz -C /opt/pandora-release/<版本> \
+  && bash /opt/pandora-release/<版本>/pandora-panel_<版本>_linux_amd64/deploy/install.sh'
 ```
 
 安装器拒绝从不归 root 或别人可写的目录安装（防止有人塞一份假的进来），所以包要放在 root 独占的目录下；归档里的属主与权限已经按这个要求打好。
 
-首装会先问面板的对外地址（`https://域名` 或 `https://公网IPv4`，不带端口与路径），不合规就在动手前停下；节点连面板的 gRPC 主机缺省取它的主机部分。无人值守：
+无人值守：`sudo PANDORA_ASSUME_YES=1 PANDORA_PUBLIC_BASE_URL=https://panel.example.test bash <发布目录>/deploy/install.sh`。
 
-```bash
-sudo PANDORA_ASSUME_YES=1 PANDORA_PUBLIC_BASE_URL=https://panel.example.test bash <发布目录>/deploy/install.sh
-```
-
-其余开关（`PANDORA_GRPC_PUBLIC_HOST`、`PANDORA_ADMIN_EMAIL`、`PANDORA_SKIP_NGINX`、`PANDORA_ACME*`、`PANDORA_SYSTEMD_HARDENING`）见 `install.sh` 头注释。
+### 3. 安装器做什么
 
 脚本分八步，任一步失败即停，并说清停在哪、怎么恢复：
 
@@ -316,7 +365,7 @@ sudo PANDORA_ASSUME_YES=1 PANDORA_PUBLIC_BASE_URL=https://panel.example.test bas
 2. **升级前自动全量备份**；迁移失败时上一版程序与备份路径都会打印出来。
 3. **不替你造管理员**。
 
-### 3. 装完
+### 4. 装完
 
 装完会打印后台地址（路径是安装时生成的高熵串，泄露等同暴露入口），之后用 `sudo /opt/pandora/deploy/admin-url.sh` 重看。
 
@@ -415,7 +464,7 @@ nginx 只反代门户与后台的 HTTP；节点 gRPC（9443）由面板直接对
 |---|---|
 | 方向 | 后端已换成主流技术栈（见「架构」与 [docs/architecture.md](docs/architecture.md)）；还没有任何生产部署，新栈直接替换，不做数据迁移与兼容期 |
 | 换栈 | P0–P7 完成（2026-10-13）：全部模块在单二进制 `pandora` 上；旧栈代码、旧迁移、旧部署脚本与旧 CI 已删；安装脚本改为单二进制直装；e2e、前端冒烟与 Playwright 购买路径都对新二进制跑。真机安装验证随 P8 |
-| 开发分支 | `feat/panel-redesign`（`main` 停在 2026-09-26 的面板重构合入之后） |
+| 分支 | `main` 是发布分支，发版在 `main` 上打 `v*` 标签（`.github/workflows/release.yml` 构建、出来源证明、建 Release）；日常开发在 `feat/panel-redesign` |
 | CI | 以 `feat/panel-redesign` 上的最新结论为准（见上文门禁清单） |
 | 前端 | `panel/frontend` 不换，接口 JSON 形状保持不变；鉴权改为短期 access 令牌 + refresh cookie |
 | 客户端登录（CLIENT-AUTH） | 2026-10-05 移出主线，专心做面板：设备码登录与设备签名的实现代码、发布门禁脚本和 8 个 `pandora-*` 命令在 tag `archive/client-auth`；三份冻结设计稿和两个从未应用的迁移也一并存档在该 tag，以后做客户端时从那里取 |
