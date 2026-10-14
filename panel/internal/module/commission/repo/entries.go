@@ -10,12 +10,12 @@ import (
 	"github.com/aegispanel/aegis/internal/module/commission/model"
 )
 
-// EntryExists 该订单对同一推荐人是否已有佣金条目。
-func (r *Repo) EntryExists(ctx context.Context, orderID, referrerID uuid.UUID) (bool, error) {
+// OrderHasEntries 这一单是否已经计提过佣金（任何一级）；支付回调重放、人工补结算时防重。走 (order_id, …) 唯一索引。
+func (r *Repo) OrderHasEntries(ctx context.Context, orderID uuid.UUID) (bool, error) {
 	var ok bool
 	err := r.d.Conn(ctx).Raw(
-		`SELECT EXISTS (SELECT 1 FROM commission_entries WHERE order_id = ? AND referrer_user_id = ?)`,
-		orderID, referrerID,
+		`SELECT EXISTS (SELECT 1 FROM commission_entries WHERE order_id = ?)`,
+		orderID,
 	).Scan(&ok).Error
 	return ok, mapErr(err)
 }
