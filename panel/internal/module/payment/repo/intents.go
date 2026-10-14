@@ -2,8 +2,6 @@ package repo
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -84,15 +82,15 @@ func (r *Repo) InsertIntent(ctx context.Context, it *model.Intent) error {
 
 // IntentCreatedWithin 报告意图是否在库时钟的最近 window 内创建（created_at > now() - window）。
 func (r *Repo) IntentCreatedWithin(ctx context.Context, id uuid.UUID, window time.Duration) (bool, error) {
-	var fresh bool
-	err := r.d.Conn(ctx).Raw(
+	// 意图不存在时没有行，按不在窗口内算
+	var fresh []bool
+	if err := r.d.Conn(ctx).Raw(
 		`SELECT created_at > now() - make_interval(secs => ?) FROM payment_intents WHERE id = ?`,
 		window.Seconds(), id,
-	).Row().Scan(&fresh)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+	).Scan(&fresh).Error; err != nil {
+		return false, mapErr(err)
 	}
-	return fresh, mapErr(err)
+	return len(fresh) == 1 && fresh[0], nil
 }
 
 // IntentByOutTradeNo 按渠道与商户单号读意图（不加锁）。
