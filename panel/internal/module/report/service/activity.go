@@ -68,6 +68,7 @@ func (s *Service) liveActivity(ctx context.Context, from, to time.Time) (map[str
 }
 
 // ActivityTimeseries 给最近 days 天（含今天，站点时区）的行为趋势，缺的日子补 0。
+// 读路径用库里的行（今天、昨天也是定时任务算好的，最多晚一个任务周期），只有没有行的日子才现算（刚装好、任务还没跑过、站点时区刚改过）。
 func (s *Service) ActivityTimeseries(ctx context.Context, days int) ([]ActivityPoint, error) {
 	if days == 0 {
 		days = 14
@@ -92,9 +93,7 @@ func (s *Service) ActivityTimeseries(ctx context.Context, days int) ([]ActivityP
 	}
 	byDay := map[string]model.ActivityDaily{}
 	for _, r := range rows {
-		if finalized(r, loc) {
-			byDay[r.Day] = r
-		}
+		byDay[r.Day] = r
 	}
 
 	var missing []time.Time
@@ -133,7 +132,7 @@ func (s *Service) ActivityTimeseries(ctx context.Context, days int) ([]ActivityP
 	return out, nil
 }
 
-// RefreshActivity 补齐漏算的日子并重算前天与昨天写进 activity_daily（已定稿的跳过）；定时任务调。
+// RefreshActivity 补齐漏算的日子，并重算前天、昨天与今天写进 activity_daily（已定稿的跳过）；定时任务调。
 func (s *Service) RefreshActivity(ctx context.Context) error {
 	loc, err := s.location(ctx)
 	if err != nil {
@@ -169,16 +168,14 @@ func (s *Service) RefreshActivity(ctx context.Context) error {
 	for _, d := range missing {
 		daysToCompute[dayString(d)] = d
 	}
-	// 再照旧算前天和昨天（未定稿的）
+	// 再照旧算前天和昨天（未定稿的），以及今天（今天永远未定稿）
 	for d := addDays(today, -2); !d.After(addDays(today, -1)); d = addDays(d, 1) {
 		r, ok := stored[dayString(d)]
 		if !ok || !finalized(r, loc) {
 			daysToCompute[dayString(d)] = d
 		}
 	}
-	if len(daysToCompute) == 0 {
-		return nil
-	}
+	daysToCompute[dayString(today)] = today
 
 	minDay := today
 	for _, d := range daysToCompute {
@@ -187,13 +184,14 @@ func (s *Service) RefreshActivity(ctx context.Context) error {
 		}
 	}
 
-	live, err := s.liveActivity(ctx, minDay, today)
+	end := addDays(today, 1)
+	live, err := s.liveActivity(ctx, minDay, end)
 	if err != nil {
 		return err
 	}
 	computedAt := s.now()
 	var upsert []model.ActivityDaily
-	for d := minDay; d.Before(today); d = addDays(d, 1) {
+	for d := minDay; d.Before(end); d = addDays(d, 1) {
 		key := dayString(d)
 		if _, ok := daysToCompute[key]; !ok {
 			continue
