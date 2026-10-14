@@ -9,6 +9,12 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 )
 
+// ssUDPResolve 与 ssUDPResolveTTL 是域名目标的解析函数与会话内缓存时长（与 hy2 同值）；做成变量只为测试替换。
+var (
+	ssUDPResolve    = resolveUDPAddr
+	ssUDPResolveTTL = hy2UDPResolveTTL
+)
+
 // ssUDPUplinkMaxDebt 是 UDP 上行包最多能预支多长时间的令牌。同一用户的 TCP 与 UDP 下行在
 // 同一个桶上 WaitN（先预支、桶变负数再睡），下行跑满时桶一直在 0 以下：上行若要求桶里先有
 // 现成令牌就几乎全丢。上行在全入站共用的读循环里不能睡，所以预支不超过这个时长
@@ -138,7 +144,7 @@ func (s *ssUDPSession) writeUplink(dest vlessDestination, payload []byte) (int, 
 	}
 	target := M.ParseSocksaddrHostPort(dest.Host, dest.Port)
 	s.mu.Lock()
-	if s.lastAddr != nil && s.lastDest == target && time.Since(s.resolved) < hy2UDPResolveTTL {
+	if s.lastAddr != nil && s.lastDest == target && time.Since(s.resolved) < ssUDPResolveTTL {
 		addr := s.lastAddr
 		s.mu.Unlock()
 		n, err := s.upstream.WriteTo(payload, addr)
@@ -158,7 +164,7 @@ func (s *ssUDPSession) writeUplink(dest vlessDestination, payload []byte) (int, 
 		defer s.adapter.wg.Done()
 		ctx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
 		defer cancel()
-		addr, err := resolveUDPAddr(ctx, target)
+		addr, err := ssUDPResolve(ctx, target)
 		s.mu.Lock()
 		s.resolving = false
 		if err == nil {
