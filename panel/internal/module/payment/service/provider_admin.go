@@ -3,12 +3,9 @@ package service
 import (
 	"context"
 	"errors"
-	"net/url"
-	"regexp"
 	"slices"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/module/payment/model"
@@ -18,133 +15,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
-
-var (
-	defaultMinAmount = decimal.RequireFromString("1.00")
-	maxMinAmount     = decimal.RequireFromString("1000.00")
-)
-
-const (
-	defaultSubmitPath = "/submit.php"
-	defaultAPIPath    = "/api.php"
-)
-
-var (
-	providerCodePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{1,31}$`)
-	providerPathPattern = regexp.MustCompile(`^/[A-Za-z0-9._~/-]{0,127}$`)
-)
-
-// normalized 是校验后的渠道可写字段。
-type normalized struct {
-	displayName, baseURL, submitPath, apiPath string
-	methods                                   []string
-	defaultMethod                             string
-	allowPrivateHost                          bool
-	minAmount                                 decimal.Decimal
-	minAmountSet                              bool
-	merchantID, key                           string
-}
-
-func containsNUL(s string) bool {
-	return strings.ContainsRune(s, 0)
-}
-
-func normalizeSettings(in ProviderSettings, allowPrivate bool) (normalized, map[string]string) {
-	fields := map[string]string{}
-	out := normalized{
-		displayName: strings.TrimSpace(in.DisplayName),
-		merchantID:  strings.TrimSpace(in.MerchantID),
-		key:         strings.TrimSpace(in.Key),
-	}
-	if containsNUL(out.displayName) {
-		fields["display_name"] = "不能包含控制字符"
-	} else if n := utf8.RuneCountInString(out.displayName); n < 1 || n > 40 {
-		fields["display_name"] = "名称需为 1–40 个字"
-	}
-
-	baseURL := strings.TrimRight(strings.TrimSpace(in.BaseURL), "/")
-	if containsNUL(in.BaseURL) {
-		fields["base_url"] = "不能包含控制字符"
-	} else if u, err := url.Parse(baseURL); baseURL == "" || err != nil || u.Host == "" ||
-		(u.Scheme != "https" && u.Scheme != "http") || u.User != nil ||
-		u.RawQuery != "" || u.Fragment != "" || strings.HasSuffix(baseURL, "?") {
-		fields["base_url"] = "请填写完整的站点地址，如 https://pay.example.com"
-	} else if u.Scheme != "https" && !in.AllowPrivateHost {
-		fields["base_url"] = "站点地址必须使用 https"
-	}
-	if in.AllowPrivateHost && !allowPrivate {
-		fields["allow_private_host"] = "生产环境不允许内网或 http 地址"
-	}
-
-	submitPath := strings.TrimSpace(in.SubmitPath)
-	if submitPath == "" {
-		submitPath = defaultSubmitPath
-	} else if containsNUL(in.SubmitPath) {
-		fields["submit_path"] = "不能包含控制字符"
-	} else if !providerPathPattern.MatchString(submitPath) || strings.HasPrefix(submitPath, "//") {
-		fields["submit_path"] = "路径需以 / 开头，只含字母、数字与 . _ ~ / -"
-	}
-	apiPath := strings.TrimSpace(in.APIPath)
-	if apiPath == "" {
-		apiPath = defaultAPIPath
-	} else if containsNUL(in.APIPath) {
-		fields["api_path"] = "不能包含控制字符"
-	} else if !providerPathPattern.MatchString(apiPath) || strings.HasPrefix(apiPath, "//") {
-		fields["api_path"] = "路径需以 / 开头，只含字母、数字与 . _ ~ / -"
-	}
-
-	methods := make([]string, 0, len(in.Methods))
-	for _, m := range in.Methods {
-		m = strings.TrimSpace(m)
-		if !slices.Contains(EpayMethods, m) {
-			fields["methods"] = "支付方式只能从支付宝、微信支付中选"
-			continue
-		}
-		if !slices.Contains(methods, m) {
-			methods = append(methods, m)
-		}
-	}
-	if len(methods) == 0 && fields["methods"] == "" {
-		fields["methods"] = "至少选一种支付方式"
-	}
-	defaultMethod := strings.TrimSpace(in.DefaultMethod)
-	if defaultMethod == "" && len(methods) > 0 {
-		defaultMethod = methods[0]
-	}
-	if fields["methods"] == "" && !slices.Contains(methods, defaultMethod) {
-		fields["default_method"] = "默认方式必须是已勾选的方式之一"
-	}
-
-	if containsNUL(out.merchantID) {
-		fields["merchant_id"] = "不能包含控制字符"
-	} else if utf8.RuneCountInString(out.merchantID) > 64 {
-		fields["merchant_id"] = "商户号最多 64 个字符"
-	}
-	if containsNUL(out.key) {
-		fields["key"] = "不能包含控制字符"
-	} else if utf8.RuneCountInString(out.key) > 256 {
-		fields["key"] = "密钥最多 256 个字符"
-	}
-
-	if in.MinAmount.IsZero() {
-		out.minAmountSet = false
-		out.minAmount = defaultMinAmount
-	} else {
-		out.minAmountSet = true
-		out.minAmount = in.MinAmount
-		if money.Check(out.minAmount) != nil || out.minAmount.LessThan(decimal.RequireFromString("0.01")) || out.minAmount.GreaterThan(maxMinAmount) {
-			fields["min_amount"] = "最低付款额需在 ¥0.01 到 ¥1000.00 之间"
-		}
-	}
-
-	out.baseURL = baseURL
-	out.submitPath = submitPath
-	out.apiPath = apiPath
-	out.methods = methods
-	out.defaultMethod = defaultMethod
-	out.allowPrivateHost = in.AllowPrivateHost
-	return out, fields
-}
 
 func providerAuditSnapshot(p providerRecord, extra map[string]any) map[string]any {
 	d := map[string]any{
@@ -156,6 +26,8 @@ func providerAuditSnapshot(p providerRecord, extra map[string]any) map[string]an
 		"default_method":     p.DefaultMethod,
 		"allow_private_host": p.AllowPrivateHost,
 		"min_amount":         p.MinAmount.StringFixed(2),
+		"fee_fixed":          p.FeeFixed.StringFixed(2),
+		"fee_percent":        p.FeePercent.StringFixed(2),
 		"enabled":            p.Enabled,
 		"accepting_new":      p.AcceptingNew,
 	}
@@ -165,7 +37,7 @@ func providerAuditSnapshot(p providerRecord, extra map[string]any) map[string]an
 	return d
 }
 
-func recordFromNormalized(code, adapter string, norm normalized, creds credentials, enabled, acceptingNew bool, minAmt decimal.Decimal) providerRecord {
+func recordFromNormalized(code, adapter string, norm normalized, creds credentials, enabled, acceptingNew bool, minAmt, feeFixed, feePercent decimal.Decimal) providerRecord {
 	return providerRecord{
 		Code:             code,
 		Adapter:          adapter,
@@ -179,6 +51,8 @@ func recordFromNormalized(code, adapter string, norm normalized, creds credentia
 		DefaultMethod:    norm.defaultMethod,
 		AllowPrivateHost: norm.allowPrivateHost,
 		MinAmount:        minAmt,
+		FeeFixed:         feeFixed,
+		FeePercent:       feePercent,
 		Creds:            creds,
 	}
 }
@@ -189,11 +63,19 @@ func trialBuildAdapter(s *Service, p providerRecord) error {
 		return nil
 	}
 	msg := strings.TrimPrefix(err.Error(), p.Adapter+": ")
-	return errs.Invalid(map[string]string{"base_url": "渠道配置校验未通过：" + msg})
+	field := "base_url"
+	if strings.Contains(msg, "Store ID") || strings.Contains(msg, "Client ID") {
+		field = "merchant_id"
+	}
+	return errs.Invalid(map[string]string{field: "渠道配置校验未通过：" + msg})
 }
 
 // ListProviders 列出全部渠道及统计。
 func (s *Service) ListProviders(ctx context.Context) ([]ProviderView, error) {
+	base, err := s.notifyBase(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.repo.ListProviders(ctx)
 	if err != nil {
 		return nil, err
@@ -220,7 +102,7 @@ func (s *Service) ListProviders(ctx context.Context) ([]ProviderView, error) {
 	}
 	out := make([]ProviderView, 0, len(rows))
 	for _, m := range rows {
-		v, err := buildProviderView(m, todayByProvider[m.ID], rates, lastEvents)
+		v, err := s.buildProviderView(m, base, todayByProvider[m.ID], rates, lastEvents)
 		if err != nil {
 			return nil, err
 		}
@@ -229,8 +111,9 @@ func (s *Service) ListProviders(ctx context.Context) ([]ProviderView, error) {
 	return out, nil
 }
 
-func buildProviderView(
+func (s *Service) buildProviderView(
 	m model.Provider,
+	notifyBase string,
 	today []paymentrepo.ProviderAmount,
 	rates map[uuid.UUID]float64,
 	lastEvents map[uuid.UUID]time.Time,
@@ -259,6 +142,17 @@ func buildProviderView(
 	if t, ok := lastEvents[m.ID]; ok {
 		last = &t
 	}
+	var callbackURL string
+	if m.Adapter != AdapterOffline {
+		callbackURL = notifyURL(notifyBase, m.Code)
+	}
+	var hasWebhookSecret bool
+	if m.Adapter == AdapterBTCPay {
+		creds, err := s.openCredentials(m.ID, m.CredentialsSealed)
+		if err == nil {
+			hasWebhookSecret = creds.WebhookSecret != ""
+		}
+	}
 	return ProviderView{
 		ID:               m.ID,
 		Code:             m.Code,
@@ -275,24 +169,28 @@ func buildProviderView(
 		DefaultMethod:    m.DefaultMethod,
 		AllowPrivateHost: m.AllowPrivateHost,
 		MinAmount:        m.MinAmount,
+		FeeFixed:         m.FeeFixed,
+		FeePercent:       m.FeePercent,
+		HasWebhookSecret: hasWebhookSecret,
+		NotifyURL:        callbackURL,
 		Today:            todayMap,
 		SuccessRate24h:   rate,
 		LastCallbackAt:   last,
 	}, nil
 }
 
-// CreateProvider 新建易支付渠道。
+// CreateProvider 新建在线渠道（易支付、BTCPay、CoinPayments）。
 func (s *Service) CreateProvider(ctx context.Context, in CreateProviderInput) (ProviderWriteResult, error) {
 	code := strings.TrimSpace(in.Code)
 	adapter := strings.TrimSpace(in.Adapter)
-	norm, fields := normalizeSettings(in.ProviderSettings, s.cfg.AllowPrivateHosts)
+	norm, fields := normalizeSettings(in.ProviderSettings, adapter, s.cfg.AllowPrivateHosts)
 	if !providerCodePattern.MatchString(code) {
 		fields["code"] = "编码需为 2–32 位小写字母、数字、- 或 _，以字母开头"
 	} else if code == OfflineProviderCode {
 		fields["code"] = "offline 是系统内置渠道的编码"
 	}
-	if adapter != AdapterEpay {
-		fields["adapter"] = "只支持易支付（epay）"
+	if !slices.Contains(OnlineAdapters, adapter) {
+		fields["adapter"] = "只支持易支付（epay）、BTCPay（btcpay）、CoinPayments（coinpayments）"
 	}
 	if norm.merchantID == "" {
 		fields["merchant_id"] = "必填"
@@ -300,11 +198,14 @@ func (s *Service) CreateProvider(ctx context.Context, in CreateProviderInput) (P
 	if norm.key == "" {
 		fields["key"] = "必填"
 	}
+	if adapter == AdapterBTCPay && norm.webhookSecret == "" {
+		fields["webhook_secret"] = "必填"
+	}
 	if len(fields) > 0 {
 		return ProviderWriteResult{}, errs.Invalid(fields)
 	}
-	creds := credentials{MerchantID: norm.merchantID, Key: norm.key}
-	if err := trialBuildAdapter(s, recordFromNormalized(code, adapter, norm, creds, true, false, norm.minAmount)); err != nil {
+	creds := credentials{MerchantID: norm.merchantID, Key: norm.key, WebhookSecret: norm.webhookSecret}
+	if err := trialBuildAdapter(s, recordFromNormalized(code, adapter, norm, creds, true, false, norm.minAmount, norm.feeFixed, norm.feePercent)); err != nil {
 		return ProviderWriteResult{}, err
 	}
 	var out ProviderWriteResult
@@ -328,6 +229,8 @@ func (s *Service) CreateProvider(ctx context.Context, in CreateProviderInput) (P
 			DefaultMethod:     norm.defaultMethod,
 			AllowPrivateHost:  norm.allowPrivateHost,
 			MinAmount:         norm.minAmount,
+			FeeFixed:          norm.feeFixed,
+			FeePercent:        norm.feePercent,
 			Enabled:           true,
 			AcceptingNew:      false,
 		}
@@ -337,7 +240,7 @@ func (s *Service) CreateProvider(ctx context.Context, in CreateProviderInput) (P
 			}
 			return err
 		}
-		rec := recordFromNormalized(code, adapter, norm, creds, true, false, norm.minAmount)
+		rec := recordFromNormalized(code, adapter, norm, creds, true, false, norm.minAmount, norm.feeFixed, norm.feePercent)
 		rec.ID = id
 		if err := s.audit.Write(ctx, auditsvc.Event{
 			Action:       "payment_provider.create",
@@ -358,13 +261,9 @@ func (s *Service) CreateProvider(ctx context.Context, in CreateProviderInput) (P
 	return out, nil
 }
 
-// UpdateProvider 编辑已有易支付渠道。
+// UpdateProvider 编辑已有在线渠道。
 func (s *Service) UpdateProvider(ctx context.Context, code string, in ProviderSettings) (ProviderWriteResult, error) {
 	code = strings.TrimSpace(code)
-	norm, fields := normalizeSettings(in, s.cfg.AllowPrivateHosts)
-	if len(fields) > 0 {
-		return ProviderWriteResult{}, errs.Invalid(fields)
-	}
 	var out ProviderWriteResult
 	err := s.tx.Do(ctx, func(ctx context.Context) error {
 		m, ok, err := s.repo.LockProviderByCode(ctx, code)
@@ -377,8 +276,12 @@ func (s *Service) UpdateProvider(ctx context.Context, code string, in ProviderSe
 		if m.Code == OfflineProviderCode || m.Adapter == AdapterOffline {
 			return errs.Newf(errs.Conflict, "系统内置渠道不可编辑")
 		}
-		if m.Adapter != AdapterEpay {
+		if !slices.Contains(OnlineAdapters, m.Adapter) {
 			return errs.Newf(errs.Conflict, "这类渠道不支持在后台编辑")
+		}
+		norm, fields := normalizeSettings(in, m.Adapter, s.cfg.AllowPrivateHosts)
+		if len(fields) > 0 {
+			return errs.Invalid(fields)
 		}
 		before, err := s.record(m)
 		if err != nil {
@@ -390,6 +293,9 @@ func (s *Service) UpdateProvider(ctx context.Context, code string, in ProviderSe
 		}
 		if norm.key != "" {
 			creds.Key = norm.key
+		}
+		if norm.webhookSecret != "" {
+			creds.WebhookSecret = norm.webhookSecret
 		}
 		missing := map[string]string{}
 		// 改了站点地址必须重填密钥（同 settings 改 SMTP 服务器须重填口令）：查单时密钥以明文出现在发往该地址的 URL 里，
@@ -403,6 +309,9 @@ func (s *Service) UpdateProvider(ctx context.Context, code string, in ProviderSe
 		if creds.Key == "" {
 			missing["key"] = "该渠道还没有密钥，需填写"
 		}
+		if m.Adapter == AdapterBTCPay && creds.WebhookSecret == "" {
+			missing["webhook_secret"] = "该渠道还没有 Webhook 密钥，需填写"
+		}
 		if len(missing) > 0 {
 			return errs.Invalid(missing)
 		}
@@ -410,12 +319,20 @@ func (s *Service) UpdateProvider(ctx context.Context, code string, in ProviderSe
 		if norm.minAmountSet {
 			minAmt = norm.minAmount
 		}
-		after := recordFromNormalized(m.Code, m.Adapter, norm, creds, m.Enabled, m.AcceptingNew, minAmt)
+		feeFixed := before.FeeFixed
+		if norm.feeFixedSet {
+			feeFixed = norm.feeFixed
+		}
+		feePercent := before.FeePercent
+		if norm.feePercentSet {
+			feePercent = norm.feePercent
+		}
+		after := recordFromNormalized(m.Code, m.Adapter, norm, creds, m.Enabled, m.AcceptingNew, minAmt, feeFixed, feePercent)
 		after.ID = m.ID
 		if err := trialBuildAdapter(s, after); err != nil {
 			return err
 		}
-		credsChanged := creds.MerchantID != before.Creds.MerchantID || creds.Key != before.Creds.Key
+		credsChanged := creds.MerchantID != before.Creds.MerchantID || creds.Key != before.Creds.Key || creds.WebhookSecret != before.Creds.WebhookSecret
 		updates := map[string]any{
 			"display_name":       norm.displayName,
 			"base_url":           norm.baseURL,
@@ -425,6 +342,8 @@ func (s *Service) UpdateProvider(ctx context.Context, code string, in ProviderSe
 			"default_method":     norm.defaultMethod,
 			"allow_private_host": norm.allowPrivateHost,
 			"min_amount":         minAmt,
+			"fee_fixed":          feeFixed,
+			"fee_percent":        feePercent,
 		}
 		if credsChanged {
 			sealed, err := s.sealCredentials(m.ID, creds)
