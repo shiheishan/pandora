@@ -52,7 +52,7 @@ const userAt = (i: number): User => userStore[i % userStore.length]!
 const findUser = (id: string) => userStore.find((u) => u.id === id)
 const activePlan = (u: User) =>
   [...u.subs]
-    .filter((s) => s.status === 'active' || s.status === 'trialing')
+    .filter((s) => s.status === 'active')
     .sort((a, b) => b.created_at.localeCompare(a.created_at))[0]?.plan_name ?? null
 
 // ---------------------------------------------------------------------------
@@ -241,7 +241,7 @@ const CATEGORY_RULES: ReadonlyArray<readonly [string, readonly string[]]> = [
   ['register', ['user.registered']],
   ['reset_password', ['user.password', 'user.reset']],
   ['order', ['order.']],
-  ['admin', ['node.', 'route_group.', 'adminctl.', 'server.', 'plan.', 'payment_provider.']],
+  ['admin', ['node.', 'route_group.', 'admin.', 'server.', 'plan.', 'payment_provider.']],
   ['payment', ['payment']],
   ['ticket', ['ticket.']],
 ]
