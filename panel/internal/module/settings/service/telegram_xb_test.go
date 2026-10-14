@@ -47,6 +47,13 @@ func TestValidateTelegramExtras(t *testing.T) {
 			field: "user_group_chat_id",
 		},
 		{
+			name: "群 id 为正数拒",
+			in: TelegramExtras{
+				UserGroupChatID: ptrInt64(42),
+			},
+			field: "user_group_chat_id",
+		},
+		{
 			name: "超长文案拒",
 			in: TelegramExtras{
 				StartMessage: strings.Repeat("字", TelegramStartMessageMax+1),

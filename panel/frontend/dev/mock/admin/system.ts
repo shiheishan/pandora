@@ -136,8 +136,8 @@ async function saveTelegramExtras(ctx: MockContext): Promise<MockResult> {
   let userChat: number | null | undefined
   if ('user_group_chat_id' in b) {
     if (b.user_group_chat_id === null) userChat = null
-    else if (typeof b.user_group_chat_id === 'number' && Number.isInteger(b.user_group_chat_id) && b.user_group_chat_id !== 0) userChat = b.user_group_chat_id
-    else fields.user_group_chat_id = '用户群 chat id 必须是非 0 整数'
+    else if (typeof b.user_group_chat_id === 'number' && Number.isInteger(b.user_group_chat_id) && b.user_group_chat_id < 0) userChat = b.user_group_chat_id
+    else fields.user_group_chat_id = '用户群 chat id 必须是负数（群组的 chat id 以 - 开头）'
   }
   const join = typeof b.join_review_enabled === 'boolean' ? b.join_review_enabled : telegramExtras.join_review_enabled
   const mergedChat = userChat !== undefined ? userChat : telegramExtras.user_group_chat_id
@@ -162,8 +162,8 @@ async function saveTelegram(ctx: MockContext): Promise<MockResult> {
   let chat: number | null | undefined
   if ('admin_chat_id' in b) {
     if (b.admin_chat_id === null) chat = null
-    else if (typeof b.admin_chat_id === 'number' && Number.isInteger(b.admin_chat_id) && b.admin_chat_id !== 0) chat = b.admin_chat_id
-    else return invalid({ admin_chat_id: '管理员群组 chat id 必须是非 0 整数' })
+    else if (typeof b.admin_chat_id === 'number' && Number.isInteger(b.admin_chat_id) && b.admin_chat_id < 0) chat = b.admin_chat_id
+    else return invalid({ admin_chat_id: '管理员群组 chat id 必须是负数（群组的 chat id 以 - 开头）' })
   }
   telegram.enabled = b.enabled === true
   telegram.bot_username = username

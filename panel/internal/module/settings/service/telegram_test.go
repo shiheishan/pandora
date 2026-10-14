@@ -64,6 +64,15 @@ func TestSetTelegramValidation(t *testing.T) {
 	})
 	assertFieldValidation(t, err, "admin_chat_id")
 
+	// 正数是私聊，不能当管理员群组
+	chatPos := int64(42)
+	err = s.SetTelegram(ctx, TelegramUpdate{
+		BotUsername:  "mybot",
+		AdminChatSet: true,
+		AdminChatID:  &chatPos,
+	})
+	assertFieldValidation(t, err, "admin_chat_id")
+
 	if len(st.kv) != 0 || len(al.entries) != 0 {
 		t.Fatalf("validation should not persist: kv=%d audit=%d", len(st.kv), len(al.entries))
 	}

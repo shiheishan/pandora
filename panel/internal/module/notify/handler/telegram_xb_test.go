@@ -97,17 +97,17 @@ func TestAdmTelegramExtrasPOST(t *testing.T) {
 		}
 	}
 
-	// 3. 0 -> 422
-	{
+	// 3. 0 与正数 -> 422（群组的 chat id 都是负数）
+	for _, body := range []string{`{"user_group_chat_id": 0}`, `{"user_group_chat_id": 42}`} {
 		fake := &fakeNotify{}
 		e, _ := p6Engine(fake, admActor)
-		rec := admDo(e, http.MethodPost, "/v1/settings/telegram/extras", `{"user_group_chat_id": 0}`)
+		rec := admDo(e, http.MethodPost, "/v1/settings/telegram/extras", body)
 		if rec.Code != http.StatusUnprocessableEntity {
-			t.Fatalf("status %d want 422 %s", rec.Code, rec.Body.String())
+			t.Fatalf("%s: status %d want 422 %s", body, rec.Code, rec.Body.String())
 		}
 		fields := admErrFields(t, rec)
 		if fields["user_group_chat_id"] == "" {
-			t.Fatalf("missing user_group_chat_id error field: %v", fields)
+			t.Fatalf("%s: missing user_group_chat_id error field: %v", body, fields)
 		}
 	}
 }

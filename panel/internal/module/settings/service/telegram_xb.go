@@ -80,8 +80,8 @@ func ValidateTelegramExtras(v *TelegramExtras) error {
 			}
 		}
 	}
-	if v.UserGroupChatID != nil && *v.UserGroupChatID == 0 {
-		fields["user_group_chat_id"] = "用户群 chat id 必须是非 0 整数"
+	if v.UserGroupChatID != nil && *v.UserGroupChatID >= 0 {
+		fields["user_group_chat_id"] = "用户群 chat id 必须是负数（群组的 chat id 以 - 开头）"
 	}
 	if v.JoinReview && v.UserGroupChatID == nil {
 		fields["user_group_chat_id"] = "开启入群审核前要填用户群 chat id"

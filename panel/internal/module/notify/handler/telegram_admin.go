@@ -46,10 +46,11 @@ func parseChatIDField(raw json.RawMessage, field, label string) (set bool, id *i
 	if string(raw) == "null" {
 		return true, nil, nil
 	}
+	// 群组与超级群的 chat id 都是负数；填成正数（私聊）时提醒能发出，但在私聊里回复会被当成绑定码，所以直接拒绝
 	var v int64
-	if json.Unmarshal(raw, &v) != nil || v == 0 {
+	if json.Unmarshal(raw, &v) != nil || v >= 0 {
 		return false, nil, errs.Invalid(map[string]string{
-			field: label + "必须是非 0 整数",
+			field: label + "必须是负数（群组的 chat id 以 - 开头）",
 		})
 	}
 	return true, &v, nil
@@ -133,7 +134,7 @@ type setTelegramExtrasRequest struct {
 	AdminPaidNotify   *bool           `json:"admin_paid_notify"`
 	AdminTicketNotify *bool           `json:"admin_ticket_notify"`
 	JoinReview        *bool           `json:"join_review_enabled"`
-	UserGroupChatID   json.RawMessage `json:"user_group_chat_id"` // 不传不改；null 清除；非 0 整数
+	UserGroupChatID   json.RawMessage `json:"user_group_chat_id"` // 不传不改；null 清除；负数（群组）
 	DiscussLink       *string         `json:"discuss_link"`
 }
 

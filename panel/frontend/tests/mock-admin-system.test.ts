@@ -42,6 +42,7 @@ describe('mock api · admin notifications and hooks', () => {
     expect((await call('POST', '/v1/settings/telegram', { enabled: true, bot_username: 'bot', bot_token: '', admin_chat_id: null })).status).toBe(200)
     expect(await json(await call('POST', '/v1/settings/telegram/test', {}))).toMatchObject({ error: { fields: { chat_id: expect.any(String) } } })
     expect(await json(await call('POST', '/v1/settings/telegram', { enabled: false, bot_username: 'bot', bot_token: '', admin_chat_id: 0 }))).toMatchObject({ error: { fields: { admin_chat_id: expect.any(String) } } })
+    expect(await json(await call('POST', '/v1/settings/telegram', { enabled: false, bot_username: 'bot', bot_token: '', admin_chat_id: 42 }))).toMatchObject({ error: { fields: { admin_chat_id: expect.any(String) } } })
   })
 
   it('saves, previews, resets and test-sends templates within the variable whitelist', async () => {

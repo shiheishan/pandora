@@ -120,8 +120,8 @@ func ValidateTelegram(v *TelegramUpdate) error {
 			fields["bot_token"] = "Bot Token 格式不正确"
 		}
 	}
-	if v.AdminChatSet && v.AdminChatID != nil && *v.AdminChatID == 0 {
-		fields["admin_chat_id"] = "管理员群组 chat id 必须是非 0 整数"
+	if v.AdminChatSet && v.AdminChatID != nil && *v.AdminChatID >= 0 {
+		fields["admin_chat_id"] = "管理员群组 chat id 必须是负数（群组的 chat id 以 - 开头）"
 	}
 	if len(fields) > 0 {
 		return errs.Invalid(fields)

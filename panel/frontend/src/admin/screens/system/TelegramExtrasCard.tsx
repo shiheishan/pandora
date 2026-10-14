@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { useApi } from '../../../shell/runtime'
 import { Button, Input, QueryView, Switch, TextArea, useToast } from '../../../ui'
 import { ChannelCard } from './ChannelCard'
-import { parseChatId } from './logic'
+import { parseGroupChatId } from './logic'
 import { SK, useFailure, useInvalidateSystem, useTelegramSettings } from './queries'
 import css from './system.module.css'
 
@@ -48,8 +48,8 @@ function bodyFrom(form: ExtrasDraft): Extras | { error: Record<string, string> }
   let user_group_chat_id: number | null = null
   if (!chatRaw) user_group_chat_id = null
   else {
-    const chat = parseChatId(chatRaw)
-    if (!chat.ok) errors.user_group_chat_id = '用户群 chat id 必须是非 0 整数'
+    const chat = parseGroupChatId(chatRaw)
+    if (!chat.ok) errors.user_group_chat_id = '用户群 chat id 必须是负数（群组的 chat id 以 - 开头）'
     else user_group_chat_id = chat.value
   }
   if (Object.keys(errors).length) return { error: errors }
@@ -153,7 +153,7 @@ function ExtrasEditor({ saved, telegramEnabled }: { saved: Extras; telegramEnabl
           disabled={disabled}
           onChange={(e) => edit({ join_review_enabled: e.target.checked })}
         />
-        <div className={css.faint}>用户申请加入下面的用户群时，已绑定账号且有有效订阅的自动通过，否则拒绝。群要开启「申请加入」，bot 要是群管理员并有邀请成员权限</div>
+        <div className={css.faint}>用户申请加入下面的用户群时，已绑定账号、账号未停用且有有效订阅的自动通过，否则拒绝。群要开启「申请加入」，bot 要是群管理员并有邀请成员权限</div>
       </div>
       <Input
         label="用户群 Chat ID"
