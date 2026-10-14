@@ -171,7 +171,9 @@ func TestPrintSummaryFormat(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	printSummary(&buf, sum, since)
+	if err := printSummary(&buf, sum, since); err != nil {
+		t.Fatal(err)
+	}
 
 	want := strings.Join([]string{
 		"servers=1 enrolled=1 connected=1 tombstoned=0 errors=0 nodes=1",

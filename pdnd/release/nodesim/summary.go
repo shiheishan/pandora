@@ -184,25 +184,29 @@ func updateTimeMax(hi *time.Time, t time.Time) {
 	}
 }
 
-func printSummary(w io.Writer, s Summary, since time.Time) {
-	fmt.Fprintf(w, "servers=%d enrolled=%d connected=%d tombstoned=%d errors=%d nodes=%d\n",
+// printSummary 先在内存里拼好整段输出，再一次写出，写失败返回错误。
+func printSummary(w io.Writer, s Summary, since time.Time) error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "servers=%d enrolled=%d connected=%d tombstoned=%d errors=%d nodes=%d\n",
 		s.Servers, s.Enrolled, s.Connected, s.Tombstoned, s.Errors, s.Nodes)
-	fmt.Fprintf(w, "first_connected min=%s max=%s\n", formatSummaryTime(s.FirstConnectedMin, since), formatSummaryTime(s.FirstConnectedMax, since))
-	fmt.Fprintf(w, "connected min=%s max=%s\n", formatSummaryTime(s.ConnectedMin, since), formatSummaryTime(s.ConnectedMax, since))
-	fmt.Fprintf(w, "disconnected max=%s\n", formatSummaryTime(s.DisconnectedMax, since))
-	fmt.Fprintf(w, "rosters fulls=%d deltas=%d\n", s.Fulls, s.Deltas)
+	fmt.Fprintf(&b, "first_connected min=%s max=%s\n", formatSummaryTime(s.FirstConnectedMin, since), formatSummaryTime(s.FirstConnectedMax, since))
+	fmt.Fprintf(&b, "connected min=%s max=%s\n", formatSummaryTime(s.ConnectedMin, since), formatSummaryTime(s.ConnectedMax, since))
+	fmt.Fprintf(&b, "disconnected max=%s\n", formatSummaryTime(s.DisconnectedMax, since))
+	fmt.Fprintf(&b, "rosters fulls=%d deltas=%d\n", s.Fulls, s.Deltas)
 	for _, vg := range s.Versions {
-		fmt.Fprintf(w, "version %s nodes=%d applied_min=%s applied_max=%s\n",
+		fmt.Fprintf(&b, "version %s nodes=%d applied_min=%s applied_max=%s\n",
 			vg.Version, vg.Nodes, formatSummaryTime(vg.AppliedMin, since), formatSummaryTime(vg.AppliedMax, since))
 	}
 	if s.Target != nil {
-		fmt.Fprintf(w, "target %s reached=%d/%d applied_min=%s applied_max=%s\n",
+		fmt.Fprintf(&b, "target %s reached=%d/%d applied_min=%s applied_max=%s\n",
 			s.Target.Version, s.Target.Reached, s.Target.Total,
 			formatSummaryTime(s.Target.AppliedMin, since), formatSummaryTime(s.Target.AppliedMax, since))
 		if len(s.Target.Missing) > 0 {
-			fmt.Fprintf(w, "missing %s\n", strings.Join(s.Target.Missing, " "))
+			fmt.Fprintf(&b, "missing %s\n", strings.Join(s.Target.Missing, " "))
 		}
 	}
+	_, err := io.WriteString(w, b.String())
+	return err
 }
 
 func formatSummaryTime(t time.Time, since time.Time) string {
@@ -227,7 +231,7 @@ func runSummary(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if *statusFile == "" {
-		fmt.Fprintln(stderr, "缺少必填参数 --status-file")
+		_, _ = fmt.Fprintln(stderr, "缺少必填参数 --status-file")
 		return 2
 	}
 
@@ -235,7 +239,7 @@ func runSummary(args []string, stdout, stderr io.Writer) int {
 	if *sinceStr != "" {
 		t, err := time.Parse(time.RFC3339Nano, *sinceStr)
 		if err != nil {
-			fmt.Fprintf(stderr, "--since 格式错误: %v\n", err)
+			_, _ = fmt.Fprintf(stderr, "--since 格式错误: %v\n", err)
 			return 2
 		}
 		since = t
@@ -243,17 +247,20 @@ func runSummary(args []string, stdout, stderr io.Writer) int {
 
 	raw, err := os.ReadFile(*statusFile)
 	if err != nil {
-		fmt.Fprintf(stderr, "读取状态文件失败: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "读取状态文件失败: %v\n", err)
 		return 2
 	}
 	var snap Snapshot
 	if err := json.Unmarshal(raw, &snap); err != nil {
-		fmt.Fprintf(stderr, "解析状态 JSON 失败: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "解析状态 JSON 失败: %v\n", err)
 		return 2
 	}
 
 	sum := summarize(snap, *version)
-	printSummary(stdout, sum, since)
+	if err := printSummary(stdout, sum, since); err != nil {
+		_, _ = fmt.Fprintf(stderr, "写出汇总失败: %v\n", err)
+		return 2
+	}
 
 	if *version != "" && sum.Target != nil && sum.Target.Reached < sum.Target.Total {
 		return 1
