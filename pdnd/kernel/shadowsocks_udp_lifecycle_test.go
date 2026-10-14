@@ -127,7 +127,8 @@ func ssUDPStackWorkersGone(a *shadowsocksAdapter) (bool, string) {
 }
 
 func TestShadowsocksUDPSessionQuota(t *testing.T) {
-	setSSUDPIdle(t, 400*time.Millisecond)
+	// 空闲时限要明显长于客户端 B 的等待（500ms），否则 race 下 A 的会话可能在核对会话数之前就被回收
+	setSSUDPIdle(t, 2*time.Second)
 	user := core.User{ID: 8811, UUID: "ss-udp-quota-password"}
 	a := startSSUDPAdapter(t, &udpRelayTestPlane{}, user)
 	a.udpQuota.mu.Lock()
@@ -152,7 +153,7 @@ func TestShadowsocksUDPSessionQuota(t *testing.T) {
 		t.Fatalf("客户端 A 再次往返：%v", err)
 	}
 
-	if ok, why := waitFor(3*time.Second, func() (bool, string) {
+	if ok, why := waitFor(8*time.Second, func() (bool, string) {
 		return ssUDPSessionCount(a) == 0 && ssUDPQuotaInUse(a, user.ID) == 0,
 			fmt.Sprintf("会话=%d 名额=%d", ssUDPSessionCount(a), ssUDPQuotaInUse(a, user.ID))
 	}); !ok {
