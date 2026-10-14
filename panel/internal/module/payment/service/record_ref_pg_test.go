@@ -50,73 +50,96 @@ func (e *env) useRefStub(t *testing.T, ref string) {
 	}
 }
 
-// 意图存有 provider_ref 时，回调渠道单号不一致整笔拒收，一致时成功入账。
-func TestWebhookProviderRefMismatchRejected(t *testing.T) {
-	cases := []struct {
-		adapter string
-	}{
-		{"btcpay"},
-		{"coinpayments"},
+func TestWebhookProviderRefMismatchRejectedBTCPay(t *testing.T) {
+	e, ctx := newEnv(t)
+	defer e.restoreDefaultAdapter(t)
+	user := e.mkUser(t, ctx)
+	code := "fake-ref-" + uuid.New().String()[:8]
+	_ = e.mkFakeProvider(t, ctx, code)
+	if err := e.exec(ctx, "UPDATE payment_providers SET adapter = ? WHERE code = ?", "btcpay", code); err != nil {
+		t.Fatal(err)
 	}
-	for _, tc := range cases {
-		t.Run(tc.adapter, func(t *testing.T) {
-			e, ctx := newEnv(t)
-			defer e.restoreDefaultAdapter(t)
-			user := e.mkUser(t, ctx)
-			code := "fake-ref-" + uuid.New().String()[:8]
-			_ = e.mkFakeProvider(t, ctx, code)
-			if err := e.exec(ctx, "UPDATE payment_providers SET adapter = ? WHERE code = ?", tc.adapter, code); err != nil {
-				t.Fatal(err)
-			}
-			e.useRefStub(t, "INV-OURS")
-			orderID, orderNo := e.mkOrder(t, ctx, user)
-			intent := e.createIntent(t, ctx, code, orderID, orderNo, user, "9.90")
+	e.useRefStub(t, "INV-OURS")
+	orderID, orderNo := e.mkOrder(t, ctx, user)
+	intent := e.createIntent(t, ctx, code, orderID, orderNo, user, "9.90")
 
-			var savedRef *string
-			if err := e.row(ctx, `SELECT provider_ref FROM payment_intents WHERE id = ?`, intent.IntentID).Scan(&savedRef); err != nil {
-				t.Fatal(err)
-			}
-			if savedRef == nil || *savedRef != "INV-OURS" {
-				t.Fatalf("库里 provider_ref 应为 INV-OURS，得 %v", savedRef)
-			}
+	var savedRef *string
+	if err := e.row(ctx, `SELECT provider_ref FROM payment_intents WHERE id = ?`, intent.IntentID).Scan(&savedRef); err != nil {
+		t.Fatal(err)
+	}
+	if savedRef == nil || *savedRef != "INV-OURS" {
+		t.Fatalf("库里 provider_ref 应为 INV-OURS，得 %v", savedRef)
+	}
 
-			// 推一条签名正确、金额 990 分、payment_id 为 INV-OTHER 的回调 -> 409，未入账
-			inWrong := fakeInbound("evt-ref-wrong-"+uuid.New().String()[:8], "payment.succeeded",
-				"INV-OTHER", intent.OutTradeNo, 990)
-			ackWrong, err := e.svc.HandleWebhook(ctx, code, inWrong)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if ackWrong.HTTPStatus == http.StatusOK {
-				t.Fatal("渠道单号不符时不应 200")
-			}
-			if ackWrong.HTTPStatus != http.StatusConflict {
-				t.Fatalf("期望 409，得 %d body=%s", ackWrong.HTTPStatus, string(ackWrong.Body))
-			}
-			if e.count(t, ctx, `SELECT count(*) FROM payments WHERE order_id = ?`, orderID) != 0 {
-				t.Fatal("不应有 payments")
-			}
-			if e.ledgerTxnCount(t, ctx, ledgersvc.KindOrderPaid) != 0 {
-				t.Fatal("不应有 order_paid")
-			}
+	inWrong := fakeInbound("evt-ref-wrong-"+uuid.New().String()[:8], "payment.succeeded",
+		"INV-OTHER", intent.OutTradeNo, 990)
+	ackWrong, err := e.svc.HandleWebhook(ctx, code, inWrong)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ackWrong.HTTPStatus == http.StatusOK {
+		t.Fatal("渠道单号不符时不应 200")
+	}
+	if ackWrong.HTTPStatus != http.StatusConflict {
+		t.Fatalf("期望 409，得 %d body=%s", ackWrong.HTTPStatus, string(ackWrong.Body))
+	}
+	if e.count(t, ctx, `SELECT count(*) FROM payments WHERE order_id = ?`, orderID) != 0 {
+		t.Fatal("不应有 payments")
+	}
+	if e.ledgerTxnCount(t, ctx, ledgersvc.KindOrderPaid) != 0 {
+		t.Fatal("不应有 order_paid")
+	}
+	if e.count(t, ctx, `SELECT count(*) FROM payment_events WHERE provider_event_id LIKE 'ref_mismatch:%' AND processing_status = 'ignored' AND raw_payload->>'channel_ref' = 'INV-OTHER' AND raw_payload->>'reject' = 'provider_ref_mismatch' AND provider_id = (SELECT id FROM payment_providers WHERE code = ?)`, code) != 1 {
+		t.Fatal("应有 1 条 ref_mismatch 证据")
+	}
 
-			// 再推 payment_id 为 INV-OURS 的同额成功回调 -> 200，入账 1 行
-			inRight := fakeInbound("evt-ref-right-"+uuid.New().String()[:8], "payment.succeeded",
-				"INV-OURS", intent.OutTradeNo, 990)
-			ackRight, err := e.svc.HandleWebhook(ctx, code, inRight)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if ackRight.HTTPStatus != http.StatusOK {
-				t.Fatalf("渠道单号一致时应 200: %s", string(ackRight.Body))
-			}
-			if e.count(t, ctx, `SELECT count(*) FROM payments WHERE order_id = ?`, orderID) != 1 {
-				t.Fatal("应入账 1 行 payments")
-			}
-			if e.ledgerTxnCount(t, ctx, ledgersvc.KindOrderPaid) != 1 {
-				t.Fatal("应有 1 笔 order_paid")
-			}
-		})
+	inRight := fakeInbound("evt-ref-right-"+uuid.New().String()[:8], "payment.succeeded",
+		"INV-OURS", intent.OutTradeNo, 990)
+	ackRight, err := e.svc.HandleWebhook(ctx, code, inRight)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ackRight.HTTPStatus != http.StatusOK {
+		t.Fatalf("渠道单号一致时应 200: %s", string(ackRight.Body))
+	}
+	if e.count(t, ctx, `SELECT count(*) FROM payments WHERE order_id = ?`, orderID) != 1 {
+		t.Fatal("应入账 1 行 payments")
+	}
+	if e.ledgerTxnCount(t, ctx, ledgersvc.KindOrderPaid) != 1 {
+		t.Fatal("应有 1 笔 order_paid")
+	}
+}
+
+func TestWebhookProviderRefMismatchCoinPaymentsLogsOnly(t *testing.T) {
+	e, ctx := newEnv(t)
+	defer e.restoreDefaultAdapter(t)
+	user := e.mkUser(t, ctx)
+	code := "fake-ref-" + uuid.New().String()[:8]
+	_ = e.mkFakeProvider(t, ctx, code)
+	if err := e.exec(ctx, "UPDATE payment_providers SET adapter = ? WHERE code = ?", "coinpayments", code); err != nil {
+		t.Fatal(err)
+	}
+	e.useRefStub(t, "INV-OURS")
+	orderID, orderNo := e.mkOrder(t, ctx, user)
+	intent := e.createIntent(t, ctx, code, orderID, orderNo, user, "9.90")
+
+	inWrong := fakeInbound("evt-ref-wrong-"+uuid.New().String()[:8], "payment.succeeded",
+		"INV-OTHER", intent.OutTradeNo, 990)
+	ack, err := e.svc.HandleWebhook(ctx, code, inWrong)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ack.HTTPStatus != http.StatusOK {
+		t.Fatalf("CoinPayments 单号不符临时口径应 200: %d %s", ack.HTTPStatus, string(ack.Body))
+	}
+	if e.count(t, ctx, `SELECT count(*) FROM payments WHERE order_id = ?`, orderID) != 1 {
+		t.Fatal("应入账 1 行 payments")
+	}
+	if e.ledgerTxnCount(t, ctx, ledgersvc.KindOrderPaid) != 1 {
+		t.Fatal("应有 1 笔 order_paid")
+	}
+	if e.count(t, ctx, `SELECT count(*) FROM payment_events WHERE provider_event_id LIKE 'ref_mismatch:%' AND provider_id = (SELECT id FROM payment_providers WHERE code = ?)`, code) != 0 {
+		t.Fatal("不应有 ref_mismatch 证据行")
 	}
 }
 
@@ -183,5 +206,8 @@ func TestQueryRejectsProviderRefMismatch(t *testing.T) {
 	}
 	if e.count(t, ctx, `SELECT count(*) FROM payments WHERE order_id = ?`, orderID) != 0 {
 		t.Fatal("不应有 payments")
+	}
+	if e.count(t, ctx, `SELECT count(*) FROM payment_events WHERE provider_event_id LIKE 'ref_mismatch:%' AND raw_payload->>'channel_ref' = 'INV-OTHER' AND provider_id = (SELECT id FROM payment_providers WHERE code = ?)`, code) != 1 {
+		t.Fatal("应有 1 条 ref_mismatch 证据")
 	}
 }
