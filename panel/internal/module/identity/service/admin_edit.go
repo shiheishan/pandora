@@ -175,6 +175,9 @@ func (s *Service) DeleteUser(ctx context.Context, userID uuid.UUID, reason strin
 
 	var result DeleteUserResult
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
+		// 锁序：先用户行（FOR NO KEY UPDATE），再由 CloseUserSubscriptions 按 id 升序锁订阅行，与注册发试用、
+		// subscription 各写路径一致（subscription 从不显式锁 users 行）。改邮箱这一列有唯一索引，UPDATE 会把行锁升到
+		// FOR UPDATE；放在订阅都停完之后再做，用户自己操作订阅（先锁订阅、再插 actor 指向他的事件行）不会与这里互等。
 		u, ok, err := s.repo.LockUser(ctx, userID)
 		if err != nil {
 			return err

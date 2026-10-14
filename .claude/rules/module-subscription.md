@@ -54,3 +54,4 @@ paths:
 
 ## 锁序
 - 给 order/giftcard 的写方法在 `s.tx.Do` 内自己 `lockOwned`（FOR NO KEY UPDATE）；调用方先锁订单再调 subscription（`service/service.go` 包注释）
+- 用户行与订阅行同在一个事务里时，一律先用户行、后订阅行：identity 先 `LockUser`（FOR NO KEY UPDATE）再调 `CloseUserSubscriptions`（注销）、`GrantSignupTrial`（注册）；subscription 自己从不显式锁 users 行，同一用户的多份订阅按 id 升序 `lockOwned`（`close.go`）。

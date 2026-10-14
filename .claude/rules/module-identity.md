@@ -51,6 +51,6 @@ paths:
 
 ## 后台改用户与注销（2026-10-14）
 - 改邮箱（要原因、撞号 409、改后未验证）、改显示名与备注（备注只在后台详情出现，审计只记字段与长度）、改邀请人、注销都在 `admin_edit.go` / `referrer.go`，各写一条审计。
-- 注销 `DeleteUser` 不可撤销：同一事务里锁用户 → `AccountCloser` 停订阅 → 解绑 Telegram → 吊销会话 → 作废找回码 → 匿名化（占位邮箱 `DeletedEmail`、清显示名与备注、`status='deleted'`、`deleted_at`）→ 删口令 → 停用他的邀请码；订单、账本、佣金、审计、邀请关系保留。不能注销自己与管理员。界面显示「已注销 #<id 前 8 位>」（`DeletedShortID`，与前端 `shortId` 同口径）。
+- 注销 `DeleteUser` 不可撤销：同一事务里锁用户 → `AccountCloser` 停订阅 → 解绑 Telegram → 吊销会话 → 作废找回码 → 匿名化（占位邮箱 `DeletedEmail`、清显示名与备注、`status='deleted'`、`deleted_at`）→ 删口令 → 停用他的邀请码；订单、账本、佣金、审计、邀请关系保留。不能注销自己与管理员。锁序与别处一致：先用户行（FOR NO KEY UPDATE），再按 id 升序锁订阅行；改占位邮箱（唯一列）的 UPDATE 放在订阅都停完之后，此时锁才升到 FOR UPDATE，用户自己操作订阅（先锁订阅、再插 actor 指向他的事件行）不会与之互等。界面显示「已注销 #<id 前 8 位>」（`DeletedShortID`，与前端 `shortId` 同口径）。
 - 已注销账号：`SetStatus`、`AdminResetPassword`、`AssignGroup`、改邮箱、改备注、改邀请人一律 409「账号已注销」；批量筛选不带状态时排除已注销，IP 聚类停用跳过已注销。
 - 批量封禁 `BulkBan` 复用 `BulkFilter`：至少一个条件；命中人数必须等于预览时的 `expected_total`；一次最多 `BulkBanMax`（500）人，同步执行；自己、管理员、已封禁、已注销跳过并计数；路由要 reauth 与幂等键 `user_bulk_ban`。
