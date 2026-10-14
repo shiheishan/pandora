@@ -40,9 +40,11 @@ type emailDirectory interface {
 	Emails(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error)
 }
 
-// siteReader 是 settings service 的站点设置（取时区算「今日成交」）。
-type siteReader interface {
+// settingsReader 是 settings service 的站点设置与支付回调设置。
+type settingsReader interface {
 	Site(ctx context.Context) (settingssvc.Site, error)
+	PaymentCallback(ctx context.Context) (settingssvc.PaymentCallback, error)
+	SetPaymentCallback(ctx context.Context, notifyBaseURL string) error
 }
 
 // auditWriter 是 audit service 的写入面。
@@ -62,7 +64,7 @@ type Service struct {
 	tx       txRunner
 	ledger   ledgerPoster
 	identity emailDirectory
-	settings siteReader
+	settings settingsReader
 	audit    auditWriter
 	sealer   sealer
 	cfg      Config

@@ -9,6 +9,8 @@ import (
 
 	"github.com/aegispanel/aegis/internal/module/payment/model"
 	"github.com/aegispanel/aegis/internal/module/payment/provider"
+	btcpay "github.com/aegispanel/aegis/internal/module/payment/provider/btcpay"
+	coinpayments "github.com/aegispanel/aegis/internal/module/payment/provider/coinpayments"
 	"github.com/aegispanel/aegis/internal/module/payment/provider/epay"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/money"
@@ -18,8 +20,9 @@ import (
 
 // credentials 是渠道凭据明文（封存前 JSON 编码）。
 type credentials struct {
-	MerchantID string `json:"merchant_id,omitempty"`
-	Key        string `json:"key,omitempty"`
+	MerchantID    string `json:"merchant_id,omitempty"`
+	Key           string `json:"key,omitempty"`
+	WebhookSecret string `json:"webhook_secret,omitempty"`
 }
 
 // providerRecord 是读出并解封后的一条渠道。
@@ -33,6 +36,8 @@ type providerRecord struct {
 	DefaultMethod                         string
 	AllowPrivateHost                      bool
 	MinAmount                             decimal.Decimal
+	FeeFixed, FeePercent                  decimal.Decimal
+	NotifyURLs                            []string // 验签可接受的回调地址，adapterFor 填
 	Creds                                 credentials
 }
 
@@ -84,6 +89,8 @@ func (s *Service) record(m model.Provider) (providerRecord, error) {
 		DefaultMethod:    m.DefaultMethod,
 		AllowPrivateHost: m.AllowPrivateHost,
 		MinAmount:        m.MinAmount,
+		FeeFixed:         m.FeeFixed,
+		FeePercent:       m.FeePercent,
 		Creds:            creds,
 	}, nil
 }
@@ -111,6 +118,22 @@ func (s *Service) buildAdapter(p providerRecord) (provider.Provider, error) {
 			DefaultMethod:    p.DefaultMethod,
 			AllowPrivateHost: s.cfg.AllowPrivateHosts && p.AllowPrivateHost,
 		})
+	case AdapterBTCPay:
+		return btcpay.New(btcpay.Config{
+			BaseURL:          p.BaseURL,
+			StoreID:          p.Creds.MerchantID,
+			APIKey:           p.Creds.Key,
+			WebhookSecret:    p.Creds.WebhookSecret,
+			AllowPrivateHost: s.cfg.AllowPrivateHosts && p.AllowPrivateHost,
+		})
+	case AdapterCoinPayments:
+		return coinpayments.New(coinpayments.Config{
+			BaseURL:          p.BaseURL,
+			ClientID:         p.Creds.MerchantID,
+			ClientSecret:     p.Creds.Key,
+			NotifyURLs:       p.NotifyURLs,
+			AllowPrivateHost: s.cfg.AllowPrivateHosts && p.AllowPrivateHost,
+		})
 	default:
 		return nil, ErrProviderNotFound
 	}
@@ -126,6 +149,12 @@ func (s *Service) adapterFor(ctx context.Context, code string, forNew bool) (pro
 	}
 	if forNew && !p.AcceptingNew {
 		return providerRecord{}, nil, ErrProviderPaused
+	}
+	// 只有 CoinPayments 的回调签名里带回调地址；别的渠道不多读一次设置
+	if p.Adapter == AdapterCoinPayments {
+		if p.NotifyURLs, err = s.notifyURLCandidates(ctx, p.Code); err != nil {
+			return providerRecord{}, nil, err
+		}
 	}
 	ad, err := s.adapter(p)
 	if errors.Is(err, ErrProviderNotFound) {
@@ -170,7 +199,8 @@ func resolveMethod(p providerRecord, requested string) (string, error) {
 }
 
 // PaymentMethods 列出门户可选的支付方式。
-func (s *Service) PaymentMethods(ctx context.Context) ([]PaymentMethod, error) {
+// amount 是这张单的应付（可为 nil）；给了且为正时每种方式带上这次的手续费与合计。
+func (s *Service) PaymentMethods(ctx context.Context, amount *decimal.Decimal) ([]PaymentMethod, error) {
 	rows, err := s.repo.ListAcceptingProviders(ctx)
 	if err != nil {
 		return nil, err
@@ -193,12 +223,21 @@ func (s *Service) PaymentMethods(ctx context.Context) ([]PaymentMethod, error) {
 			currencies = []string{}
 		}
 		for _, method := range methods {
-			out = append(out, PaymentMethod{
+			pm := PaymentMethod{
 				Provider:    m.Code,
 				DisplayName: m.DisplayName,
 				Method:      method,
 				Currencies:  currencies,
-			})
+				FeeFixed:    m.FeeFixed,
+				FeePercent:  m.FeePercent,
+			}
+			if amount != nil && amount.IsPositive() {
+				fee := Surcharge(*amount, m.FeeFixed, m.FeePercent)
+				total := amount.Add(fee)
+				pm.Fee = &fee
+				pm.Total = &total
+			}
+			out = append(out, pm)
 		}
 	}
 	return out, nil

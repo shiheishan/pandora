@@ -22,6 +22,7 @@ import (
 const intentTTL = 30 * time.Minute
 
 // CreateIntent 为订单发起一次支付并返回收银台跳转信息；在调用方事务里执行（order 已锁订单行）。
+// 手续费按渠道配置加在应付上，最低额按应付判断。
 // 加入调用方事务时不开保存点：返回错误后调用方必须回滚，不能吞掉错误继续提交。
 func (s *Service) CreateIntent(ctx context.Context, in CreateIntentInput) (IntentResult, error) {
 	if in.OrderID == uuid.Nil || in.UserID == uuid.Nil {
@@ -54,6 +55,17 @@ func (s *Service) CreateIntent(ctx context.Context, in CreateIntentInput) (Inten
 		return IntentResult{}, ErrBelowMinimum
 	}
 
+	surcharge := Surcharge(in.Amount, p.FeeFixed, p.FeePercent)
+	gross := in.Amount.Add(surcharge)
+	if err := money.Check(gross); err != nil {
+		return IntentResult{}, errs.Wrap(errs.Internal, err)
+	}
+
+	base, err := s.notifyBase(ctx)
+	if err != nil {
+		return IntentResult{}, err
+	}
+
 	now := s.now()
 	if in.ExpiresAt != nil && !in.ExpiresAt.After(now) {
 		return IntentResult{}, errs.Newf(errs.OrderLapsed, "这张订单已超过付款期限，请取消后重新下单")
@@ -72,7 +84,8 @@ func (s *Service) CreateIntent(ctx context.Context, in CreateIntentInput) (Inten
 		}
 		if ok {
 			if active.ProviderID == p.ID && active.Method == method &&
-				active.Amount.Equal(in.Amount) && active.Currency == string(in.Currency) &&
+				active.Amount.Equal(gross) && active.SurchargeAmount.Equal(surcharge) &&
+				active.Currency == string(in.Currency) &&
 				active.RedirectURL != "" &&
 				(active.ExpiresAt == nil || active.ExpiresAt.After(now)) {
 				out = IntentResult{
@@ -82,6 +95,7 @@ func (s *Service) CreateIntent(ctx context.Context, in CreateIntentInput) (Inten
 					RedirectURL: active.RedirectURL,
 					FormFields:  active.FormFields,
 					Amount:      active.Amount,
+					Surcharge:   active.SurchargeAmount,
 					Currency:    in.Currency,
 					ExpiresAt:   active.ExpiresAt,
 					Reused:      true,
@@ -114,11 +128,11 @@ func (s *Service) CreateIntent(ctx context.Context, in CreateIntentInput) (Inten
 
 		resp, err := ad.CreatePayment(ctx, provider.CreateRequest{
 			OutTradeNo: outTradeNo,
-			Amount:     in.Amount,
+			Amount:     gross,
 			Currency:   in.Currency,
 			Subject:    in.Title,
 			Method:     method,
-			NotifyURL:  s.notifyURL(p.Code),
+			NotifyURL:  notifyURL(base, p.Code),
 			ReturnURL:  s.returnURL(in.ReturnURL),
 			ClientIP:   in.ClientIP,
 		})
@@ -141,21 +155,22 @@ func (s *Service) CreateIntent(ctx context.Context, in CreateIntentInput) (Inten
 			providerRef = &resp.ProviderRef
 		}
 		it := &model.Intent{
-			ID:          intentID,
-			OrderID:     in.OrderID,
-			OrderNo:     orderNo,
-			UserID:      in.UserID,
-			ProviderID:  p.ID,
-			OutTradeNo:  outTradeNo,
-			ProviderRef: providerRef,
-			Method:      method,
-			Currency:    string(in.Currency),
-			Amount:      in.Amount,
-			Status:      string(IntentRequiresAction),
-			HTTPMethod:  resp.HTTPMethod,
-			RedirectURL: resp.RedirectURL,
-			FormFields:  formFields,
-			ExpiresAt:   expPtr,
+			ID:              intentID,
+			OrderID:         in.OrderID,
+			OrderNo:         orderNo,
+			UserID:          in.UserID,
+			ProviderID:      p.ID,
+			OutTradeNo:      outTradeNo,
+			ProviderRef:     providerRef,
+			Method:          method,
+			Currency:        string(in.Currency),
+			Amount:          gross,
+			SurchargeAmount: surcharge,
+			Status:          string(IntentRequiresAction),
+			HTTPMethod:      resp.HTTPMethod,
+			RedirectURL:     resp.RedirectURL,
+			FormFields:      formFields,
+			ExpiresAt:       expPtr,
 		}
 		if err := s.repo.InsertIntent(ctx, it); err != nil {
 			if errors.Is(err, repo.ErrDuplicate) {
@@ -170,7 +185,8 @@ func (s *Service) CreateIntent(ctx context.Context, in CreateIntentInput) (Inten
 			HTTPMethod:  resp.HTTPMethod,
 			RedirectURL: resp.RedirectURL,
 			FormFields:  formFields,
-			Amount:      in.Amount,
+			Amount:      gross,
+			Surcharge:   surcharge,
 			Currency:    in.Currency,
 			ExpiresAt:   expPtr,
 		}
@@ -194,10 +210,6 @@ func (s *Service) CloseOrderIntents(ctx context.Context, orderID uuid.UUID, to I
 		return closeErr
 	})
 	return n, err
-}
-
-func (s *Service) notifyURL(code string) string {
-	return s.cfg.PublicBaseURL + "/v1/webhooks/payments/" + code
 }
 
 func (s *Service) returnURL(supplied string) string {
