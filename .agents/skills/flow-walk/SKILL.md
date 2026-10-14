@@ -27,7 +27,7 @@ description: pandora 的产品验证：像用户一样用内置浏览器把门�
 | 速度 | 秒级起，状态在内存，重启复原 | 数据真实，状态累积 |
 | 能验 | 页面交互、文案、表单校验、错误态；页面按契约走通 | 真实数据流：下单入账、佣金、订阅文件、节点接入、权限 |
 | 不能验 | 后端逻辑、真支付、真节点、邮件 | 破坏性场景（空/错/慢）造不出来 |
-| 账号 | 门户 `user@pandora.dev`，后台 `admin@pandora.dev`（另有只读 `viewer@pandora.dev`），口令见 `panel/frontend/dev/mock-api.ts` 的 `MOCK_ACCOUNTS` | 管理员由 `install.sh` 首装时建，或按 `panel/deploy/RUNBOOK.md`「管理员进不来」一节用 `pandora admin create --email … --password-stdin` 建；凭据在 `ops-local/<目录>/admin-cred.txt`、`admin-path.txt`（0600；一次性测试机不建 1Password 条目，红线见根 CLAUDE.md） |
+| 账号 | 门户 `user@pandora.dev`，后台 `admin@pandora.dev`，口令见 `panel/frontend/dev/mock-api.ts` 的 `MOCK_ACCOUNTS` | 管理员由 `install.sh` 首装时建，或按 `panel/deploy/RUNBOOK.md`「管理员进不来」一节用 `pandora admin create --email … --password-stdin` 建；凭据在 `ops-local/<目录>/admin-cred.txt`、`admin-path.txt`（0600；一次性测试机不建 1Password 条目，红线见根 CLAUDE.md） |
 
 怎么选：
 - 改的是页面布局、文案、表单、前端状态：只跑假后端。
@@ -116,7 +116,7 @@ description: pandora 的产品验证：像用户一样用内置浏览器把门�
 
 | 流程 | 起点 | 步骤 | 要核对的结果 |
 |---|---|---|---|
-| 登录 | `#/`（未登录） | 填后台账号登录 | 落到仪表盘，侧栏按权限显示模块；`viewer` 账号看不到写入口 |
+| 登录 | `#/`（未登录） | 填后台账号登录 | 落到仪表盘，侧栏列出全部模块 |
 | 开单（待用户支付、线下已收款、赠送） | `#/billing/orders` | 见 `paths.ts` 的 C1–C4b | CI 已覆盖页面部分；本 skill 在测试机上补**接口**核对：线下已收款后账本有一笔入账，收入与佣金计入；赠送不计收入 |
 | 换发链接 | `#/users/list`，点用户行开抽屉 | 点更换订阅地址，弹窗确认 | 弹窗里能看到「连节点密码一起换」的说明；成功 toast 提示让用户到门户重新复制；用该用户的门户核对：订阅页地址变了，旧地址不再可用（测试机上用 curl 拉旧地址应失败） |
 | 加时长 | 同上 | 点加时长，选订阅与天数，确认延长 | toast 给出延长天数和新到期；抽屉里到期时间变化，流量配额一起往后推，已用流量不清零；已过期订阅走「确认救回并延长」 |

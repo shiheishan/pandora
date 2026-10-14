@@ -7,7 +7,7 @@ paths:
 
 ## 错误
 - 对外错误只有 `panel/internal/pkg/errs` 一套：封闭的码表、HTTP 状态和中性中文文案。service 返回 `*errs.Error`（`errs.New` / `errs.Newf` / `errs.Wrap` / `errs.Invalid`），handler 交给 `httpx` 写信封；未知错误一律 500 `internal_error`，原因只进日志。
-- 前端 `panel/frontend/src/core/api.ts` 的 `SERVER_ERROR_CODES` 按同一张表解析。`errs.go` 注释说两边由测试对齐，但现在没有这个测试：新增码两处手动同改。
+- 前端 `panel/frontend/src/core/api.ts` 的 `SERVER_ERROR_CODES` 按同一张表解析。两边没有测试对齐（见 `errs.go` 头注释）：新增码两处手动同改。
 - `reauth_required` 与 `forbidden` 同为 403、码不同，前端靠码弹重认证框。
 
 ## 日志

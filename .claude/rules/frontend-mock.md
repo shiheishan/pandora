@@ -28,7 +28,7 @@ paths:
   - 套餐绑池的 `deliverable_nodes` 用 `admin/nodes.ts` 的 `deliverableNodesInPool`，与节点列表「是否下发」共用同一个 `deliverable` 判定（`deliveryOf` 照 Go 的 `DeliveryState` 再 `Refine`）；改其一要两处一起对照 Go 的 `subscription.DeliverableNodeSQL`
 - 种子都是确定性的（固定 id、按日期生成），`tests/mock-*.test.ts` 直接用种子里的 id 与数值，改种子要同步改测试
 - `admin/node-schemas.ts` 是 Go `protocol.Schemas()`（`panel/internal/module/node/protocol/`）的原样导出，没有自动同步也没有守卫
-  - Go 的协议 schema 一变（改了 `panel/internal/module/node/protocol/schema.go` 或字段翻译）就要手动重导。导出脚本 `.claude/skills/subscription-e2e/scripts/export-schemas.sh` 还指着已删的旧包，修好之前只能手工对照 `protocol.Schemas()` 改这个文件，再用 `git diff` 看变化、跑页面单测
+  - Go 的协议 schema 一变（改了 `panel/internal/module/node/protocol/schema.go` 或字段翻译）就要重导。重导用 `bash .agents/skills/subscription-e2e/scripts/export-schemas.sh`，再用 `git diff` 看变化、跑页面单测
   - 页面单测 `src/admin/screens/nodes/nodes.test.ts` 也在用它
 - `dev:admin` 与 `dev:portal` 是两个 vite 进程，生效主题经 `appearance-share.ts` 写到 `node_modules/.cache/pandora-mock/appearance.json` 互通
 - 门户场景（`portal/scenario.ts` 的 `SCENARIOS`，`POST /v1/__mock/portal-scenario` 一切换就重建全部状态）：

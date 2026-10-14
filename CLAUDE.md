@@ -90,7 +90,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 
 ## 在哪里找约定
 
-- 按目录生效的约定在 `.claude/rules/`，改到对应文件时自动加载。它们描述的是旧代码，某块迁到新栈后同步改写或删除。
+- 按目录生效的约定在 `.claude/rules/`，改到对应文件时自动加载。改了对应代码，同步改写这些规则。
 - 验证、推送后等 CI：verify skill。
 - skill 用 `~/ai/skills/bin/skills` 管理：项目自己的 skill 在 `.agents/skills/`（`.claude/skills` 是指向它的链接）；共享的 composer-dispatch、skill-creator 是本机链接，不入库。新做或改 skill 用 skill-creator。
 
