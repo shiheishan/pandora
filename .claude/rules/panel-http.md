@@ -17,6 +17,7 @@ paths:
 - 路由级中间件经 `route.Kit` 传给每个模块（`panel/internal/pkg/route/route.go`）：`RequireAuth`、`RecentReauth`、`Idempotency(scope)`、`Switch(code)`。模块之间不互相 import handler。
 - 顺序固定：`RecentReauth` 排在 `Idempotency` 之前，403 `reauth_required` 时幂等键还没被占，前端弹框后用原键重放。降级开关门同样排在幂等之前。
 - 后台不分权限：`RequireAuth` 在 admin 上就是「已登录的管理员」，没有权限码、角色。
+- 哪些后台写不要求重认证是产品决定，改之前先问用户：后台查单 `POST /v1/orders/:id/query` 只要幂等（只记渠道已确认的那笔，造不出钱）；节点 `activate` 不要重认证，`retire` 要（`panel/internal/module/node/handler/routes_inventory.go`）。
 
 ## 来源地址
 - 引擎只信 nginx 覆写的 `X-Real-IP`（`TrustedPlatform`，不解析 X-Forwarded-For），所以两个 HTTP 监听在生产必须绑回环（`panel/internal/pkg/config/validate.go` 强制）。
