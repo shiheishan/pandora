@@ -386,7 +386,7 @@ echo | openssl s_client -connect <面板地址>:443 -servername <面板域名> 2
 
 支付渠道把回调推到 `https://<面板地址>/v1/webhooks/payments/<渠道编码>`（serve 收）。回调丢了也有兜底：worker 每分钟跑一轮主动查单，向渠道查未付的单，查到已付就和回调走同一条路入账。
 
-回调地址的前缀可以单独设：后台「商业 › 订单与收款 › 支付渠道」的「回调地址」卡片（`payment.notify_base_url`，只收 https）。留空 = 用面板地址。单独设的域名要自己解析到面板、并由前面的反向代理或 CDN 终止 TLS 后转给面板（`render-nginx.sh` 只生成面板地址这一个 server，不会替你加这个域名）。改了前缀，之前建的 CoinPayments 发票仍按旧地址验签，可以照常入账；渠道卡片上显示的回调地址就是现在生效的那个。
+回调地址的前缀可以单独设：后台「商业 › 订单与收款 › 支付渠道」的「回调地址」卡片（`payment.notify_base_url`，只收 https）。留空 = 用面板地址。单独设的域名要自己解析到面板、并由前面的反向代理或 CDN 终止 TLS 后转给面板（`render-nginx.sh` 只生成面板地址这一个 server，不会替你加这个域名）。从面板地址改成单独前缀（或改回面板地址）时，之前建的 CoinPayments 发票仍能按原地址验签入账；在两个单独前缀之间直接切换时，用旧前缀建、还没回调的 CoinPayments 发票会验签失败，靠 worker 的主动查单补记；渠道卡片上显示的回调地址就是现在生效的那个。
 
 加密货币渠道（BTCPay Server、CoinPayments）：
 - BTCPay 的回调不随发票下发，要在 BTCPay 商店「Settings › Webhooks」里新建一个 Webhook：地址填渠道卡片上的回调地址，事件至少勾选 Invoice settled / expired / invalid，密钥与后台渠道里填的 Webhook 密钥一致。只有「已结算」且不是在 BTCPay 里手动标记的发票才自动入账；手动标记、部分付款都不自动入账，按下面「处理」里的线下办法核对。
