@@ -125,7 +125,7 @@ func TestStoreMailLink(t *testing.T) {
 	if err := st.issueMailLink(ctx, uid, hashSecret(token), "1", ttl); err != nil {
 		t.Fatalf("issue after epoch bump: %v", err)
 	}
-	_, gotEpoch, ok, err := st.consumeMailLink(ctx, hashSecret(token))
+	_, gotEpoch, ok, err = st.consumeMailLink(ctx, hashSecret(token))
 	if err != nil || !ok || gotEpoch != "1" {
 		t.Fatalf("消费应带回签发纪元: ok=%v epoch=%q err=%v", ok, gotEpoch, err)
 	}
@@ -222,7 +222,7 @@ func TestStartMailLoginInvalidEmail(t *testing.T) {
 	wireMailLink(h, settings, &fakeMailLinkMailer{})
 
 	err := h.S.StartMailLogin(context.Background(), "bad")
-	if errs.As(err).Code != errs.Invalid {
+	if errs.As(err).Code != errs.ValidationFailed {
 		t.Fatalf("格式错: %v", err)
 	}
 }

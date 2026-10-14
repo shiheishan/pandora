@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -140,7 +141,7 @@ func (s *Service) CreateInviteCode(ctx context.Context, userID uuid.UUID) (Invit
 			return err
 		}
 		if n >= int64(cfg.InviteMaxCodes) {
-			return errs.Newf(errs.Conflict, "最多同时持有 %d 个邀请码", cfg.InviteMaxCodes)
+			return errs.Newf(errs.Conflict, fmt.Sprintf("最多同时持有 %d 个邀请码", cfg.InviteMaxCodes))
 		}
 		for attempt := 0; attempt < 5; attempt++ {
 			code, err := newInviteCode()

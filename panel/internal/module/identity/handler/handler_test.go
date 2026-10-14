@@ -393,7 +393,7 @@ func TestAdminUserJSONKeys(t *testing.T) {
 	det := decodeMap(t, w.Body.Bytes())
 	detailExtra := []string{
 		"email_verified", "is_admin", "referrer", "stats", "subscriptions", "recent_orders",
-		"telegram", "unattached_pack_bytes",
+		"telegram", "unattached_pack_bytes", "admin_note", "deleted_at",
 	}
 	assertKeys(t, det, append(rowKeys, detailExtra...)...)
 	stats, _ := det["stats"].(map[string]any)
@@ -411,7 +411,7 @@ func TestAdminUserJSONKeys(t *testing.T) {
 		t.Fatalf("subscription amount %v", s0["amount"])
 	}
 	q0, _ := s0["quotas"].([]any)[0].(map[string]any)
-	assertKeys(t, q0, "metric", "limit", "consumed", "remaining")
+	assertKeys(t, q0, "metric", "period", "limit", "consumed", "remaining")
 	ordKeys := []string{
 		"id", "order_no", "user_email", "kind", "status", "currency", "total_amount", "payable_amount",
 		"paid_amount", "refunded_amount", "balance_applied", "created_at", "paid_at", "provider_code",

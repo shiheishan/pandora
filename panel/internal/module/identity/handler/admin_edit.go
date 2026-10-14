@@ -116,7 +116,7 @@ func (h *Handler) bulkBan(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	f, err := req.bulkFilterRequest.toFilter()
+	f, err := req.toFilter()
 	if err != nil {
 		httpx.Fail(c, err)
 		return

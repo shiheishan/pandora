@@ -41,7 +41,7 @@ func (s *Service) BulkBan(ctx context.Context, f BulkFilter, expectedTotal int64
 			return err
 		}
 		if total != expectedTotal {
-			return errs.Newf(errs.Conflict, "命中人数变了（预览时 %d 人，现在 %d 人），请重新预览", expectedTotal, total)
+			return errs.Newf(errs.Conflict, fmt.Sprintf("命中人数变了（预览时 %d 人，现在 %d 人），请重新预览", expectedTotal, total))
 		}
 		if total > BulkBanMax {
 			return errs.Invalid(map[string]string{"expected_total": fmt.Sprintf("一次最多封禁 %d 人，请收窄条件", BulkBanMax)})

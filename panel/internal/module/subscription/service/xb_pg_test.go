@@ -1,17 +1,16 @@
 package service
 
 import (
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/aegispanel/aegis/internal/pkg/db"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
 
-// sqlState 取库错误的 SQLSTATE（GORM 翻译后仍包着原 PgError）。
-func sqlState(err error) string {
-	v, _ := db.AsViolation(err)
-	return v.Code
+// hasSQLState 判库错误是否带这个 SQLSTATE（PgError 的文本带「(SQLSTATE xxxxx)」；service 包不许 import db）。
+func hasSQLState(err error, code string) bool {
+	return err != nil && strings.Contains(err.Error(), "SQLSTATE "+code)
 }
 
 func TestPGSignupTrialGrant(t *testing.T) {
@@ -114,7 +113,7 @@ func TestPGSignupTrialUniqueByUser(t *testing.T) {
 	}
 	err := e.rawExec(ctx, `INSERT INTO subscription_trials (user_id, subscription_id, plan_id, hours) VALUES (?, ?, ?, 24)`,
 		user, sub2.ID, planID)
-	if sqlState(err) != "23505" {
+	if !hasSQLState(err, "23505") {
 		t.Fatalf("同一 user_id 第二次插入应唯一约束: %v", err)
 	}
 	if err := e.rawExec(ctx, "ROLLBACK TO SAVEPOINT sp_dup"); err != nil {
@@ -125,7 +124,7 @@ func TestPGSignupTrialUniqueByUser(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = e.rawExec(ctx, `UPDATE subscription_trials SET hours = 1 WHERE user_id = ?`, user)
-	if sqlState(err) != "23001" {
+	if !hasSQLState(err, "23001") {
 		t.Fatalf("试用记录应只追加: %v", err)
 	}
 	if err := e.rawExec(ctx, "ROLLBACK TO SAVEPOINT sp_mut"); err != nil {
