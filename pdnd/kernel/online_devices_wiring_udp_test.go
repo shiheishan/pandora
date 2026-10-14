@@ -63,7 +63,7 @@ func TestOnlineDevicesWiringUDP(t *testing.T) {
 			})},
 		{name: "shadowsocks2022", proto: "shadowsocks", uuid: "device-wiring-udp-ss2022", hold: true,
 			raw: func(*testing.T) map[string]any {
-				return map[string]any{"method": "2022-blake3-aes-128-gcm", "password": base64.StdEncoding.EncodeToString(ss2022PSK), "network": "udp"}
+				return map[string]any{"method": "2022-blake3-aes-128-gcm", "password": base64.StdEncoding.EncodeToString(ss2022PSK)}
 			},
 			openUDP: openDeviceWiringSSUDP(func(raw net.Conn, _ core.User) (net.PacketConn, error) {
 				method, err := ss2022ref.New("2022-blake3-aes-128-gcm", [][]byte{ss2022PSK}, nil)

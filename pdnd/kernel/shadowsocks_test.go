@@ -256,7 +256,7 @@ func runNativeShadowsocks2022UDPReferencePSKsWithClient(t *testing.T, methodName
 		encodedPSKs = append(encodedPSKs, base64.StdEncoding.EncodeToString(psk))
 	}
 	password := strings.Join(encodedPSKs, ":")
-	spec := InboundSpec{Config: core.InboundConfig{Protocol: "shadowsocks", Listen: "127.0.0.1", Port: port, Raw: map[string]any{"method": methodName, "password": password, "network": "udp"}}}
+	spec := InboundSpec{Config: core.InboundConfig{Protocol: "shadowsocks", Listen: "127.0.0.1", Port: port, Raw: map[string]any{"method": methodName, "password": password}}}
 	adapterValue, err := newShadowsocksAdapter(spec)
 	if err != nil {
 		t.Fatal(err)
