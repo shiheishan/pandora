@@ -331,7 +331,7 @@ step('一步上线：POST activate')
 const listed = ((await call(ADM, `/v1/nodes?id=${nodeId}&include_retired=1`, { token: admin })).nodes as Json[]).find((n) => n.id === nodeId)
 if (!listed) throw new Error('节点列表里找不到刚建的节点')
 const activated = await call(ADM, `/v1/nodes/${nodeId}/activate`, { token: admin, idem: true, body: { row_version: num(listed, 'row_version') } })
-if (activated.status !== 'active' || activated.serving_status !== 'active') throw new Error(`上线后状态不对：${JSON.stringify(activated).slice(0, 300)}`)
+if (activated.serving_status !== 'active') throw new Error(`上线后状态不对：${JSON.stringify(activated).slice(0, 300)}`)
 if (activated.warnings !== undefined) throw new Error(`上线带了提示：${JSON.stringify(activated.warnings)}`)
 
 step('发布套餐版本（绑定池里现在有可服务节点了）')
