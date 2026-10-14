@@ -37,11 +37,21 @@ export function useNodes() {
  * 节点超过一页时改由服务端筛选、搜索、分页（state 与前端 nodeState 同一映射，q 与 filterNodes 同一组字段）。
  * enabled=false 时不发请求
  */
-export function useNodePage(p: { state: string; q: string; offset: number }, enabled: boolean) {
+export function useNodePage(p: { state: string; q: string; tag: string; offset: number }, enabled: boolean) {
   const api = useApi()
   return useQuery({
-    queryKey: [...NK, 'page', p.state, p.q, p.offset],
-    queryFn: ({ signal }) => api.get('v1/nodes', nodesResponse, { signal, query: { limit: NODE_PAGE, offset: p.offset, state: p.state, ...(p.q ? { q: p.q } : {}) } }),
+    queryKey: [...NK, 'page', p.state, p.q, p.tag, p.offset],
+    queryFn: ({ signal }) =>
+      api.get('v1/nodes', nodesResponse, {
+        signal,
+        query: {
+          limit: NODE_PAGE,
+          offset: p.offset,
+          state: p.state,
+          ...(p.q ? { q: p.q } : {}),
+          ...(p.tag ? { tag: p.tag } : {}),
+        },
+      }),
     meta: { topics: ['nodes.changed'] },
     placeholderData: (prev) => prev,
     refetchInterval: NODE_METRICS_REFRESH_MS,

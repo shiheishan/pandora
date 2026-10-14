@@ -39,6 +39,8 @@ import {
   NO_POOL_HINT,
   NODE_LINE_FIELDS,
   sameNodeLine,
+  tagOptions,
+  batchEditBody,
 } from './logic'
 import { nodeDetailSchema, nodeRowSchema, protocolSchemasResponse, type NodeDetail } from './schemas'
 
@@ -432,3 +434,76 @@ describe('bandwidth', () => {
     expect(b[0]!.mbps).toBeNull()
   })
 })
+
+describe('filterNodes with tag and tagOptions', () => {
+  it('filters rows by tag exactly and case-sensitively', () => {
+    const n1 = row({ id: '1', tags: ['vip', 'iplc'] })
+    const n2 = row({ id: '2', tags: ['VIP', 'direct'] })
+    const n3 = row({ id: '3', tags: [] })
+
+    expect(filterNodes([n1, n2, n3], 'all', '', 'vip')).toEqual([n1])
+    expect(filterNodes([n1, n2, n3], 'all', '', 'VIP')).toEqual([n2])
+    expect(filterNodes([n1, n2, n3], 'all', '', 'direct')).toEqual([n2])
+    expect(filterNodes([n1, n2, n3], 'all', '', 'other')).toEqual([])
+  })
+
+  it('search query does not match tags', () => {
+    const n1 = row({ id: '1', name: 'HK 01', tags: ['special-route'] })
+    expect(filterNodes([n1], 'all', 'special-route')).toEqual([])
+  })
+
+  it('tagOptions dedupes case-sensitively and sorts zh-Hans-CN', () => {
+    const n1 = row({ tags: ['香港', 'BGP', 'iplc'] })
+    const n2 = row({ tags: ['bgp', '香港', '阿里'] })
+    const n3 = row({ tags: ['BGP'] })
+
+    // 区分大小写去重；顺序按 zh-Hans-CN 的 localeCompare（具体先后由 ICU 定，这里只钉「排过序」）
+    const opts = tagOptions([n1, n2, n3])
+    expect([...opts].sort()).toEqual(['BGP', 'bgp', 'iplc', '阿里', '香港'].sort())
+    expect(opts).toEqual([...opts].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN')))
+  })
+})
+
+describe('batchEditBody', () => {
+  it('builds body with items row_version and trims reason', () => {
+    const n1 = row({ id: '10', row_version: 3 })
+    const n2 = row({ id: '20', row_version: 7 })
+    const set = { traffic_rate: 1.5 }
+    const res = batchEditBody([n1, n2], set, '  调整倍率  ')
+
+    expect(res).toEqual({
+      items: [
+        { id: '10', row_version: 3 },
+        { id: '20', row_version: 7 },
+      ],
+      set: { traffic_rate: 1.5 },
+      reason: '调整倍率',
+    })
+
+    const emptyReason = batchEditBody([n1], set, '   ')
+    expect(emptyReason.reason).toBe('')
+  })
+})
+
+describe('sameNodeLine with new fields', () => {
+  it('returns true when tags and traffic references are unchanged', () => {
+    const tags = ['hk']
+    const traffic = { limit_bytes: 100, reset_day: 1, used_bytes: 50, reset_at: '2026-10-01T00:00:00Z', exceeded_at: null }
+    // row() 经 zod 解析会造新数组与新对象，所以第二行直接浅拷贝第一行，模拟结构共享留下的同一引用
+    const a = row({ tags, traffic, relay_count: 2, ech_enabled: true })
+    const b = { ...a }
+
+    expect(sameNodeLine(a, b)).toBe(true)
+  })
+
+  it('returns false when traffic is replaced by a new object', () => {
+    const tags = ['hk']
+    const traffic1 = { limit_bytes: 100, reset_day: 1, used_bytes: 50, reset_at: '2026-10-01T00:00:00Z', exceeded_at: null }
+    const traffic2 = { limit_bytes: 100, reset_day: 1, used_bytes: 60, reset_at: '2026-10-01T00:00:00Z', exceeded_at: null }
+    const a = row({ tags, traffic: traffic1 })
+    const b = { ...a, traffic: traffic2 }
+
+    expect(sameNodeLine(a, b)).toBe(false)
+  })
+})
+

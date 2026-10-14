@@ -3,14 +3,16 @@ import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { formatBytes, formatCount } from '../../../core/format'
 import { navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
-import { Button, Checkbox, Empty, IconClose, Input, Modal, Pager, QueryView, Segmented, Tag, useToast } from '../../../ui'
-import { addressLabel, batchPlan, filterNodes, moveItem, nodeState, orderItems, protocolLabel, sameNodeLine, type NodeFilter, type NodeLineData } from './logic'
+import { Button, Checkbox, Empty, IconClose, Input, Modal, Pager, QueryView, Segmented, Select, Tag, useToast } from '../../../ui'
+import { addressLabel, batchPlan, filterNodes, moveItem, nodeState, orderItems, protocolLabel, sameNodeLine, tagOptions, type NodeFilter, type NodeLineData } from './logic'
 import { runState, sameRunState, type RunState } from './runtime'
+import { NodeBatchEdit } from './NodeBatchEdit'
 import { DRAWER_TABS, NodeDrawer, type DrawerTab } from './NodeDrawer'
 import { NodeForm } from './NodeForm'
 import css from './nodes.module.css'
 import { NODE_PAGE, useFailure, useIntentKey, useInvalidateNodes, useNodeDetail, useNodePage, useNodes } from './queries'
 import { batchStatusResponse, okUpdated, type NodeRow } from './schemas'
+import { NODE_BATCH_EDIT_MAX, trafficPercent, trafficUsageLabel } from './xb'
 
 const FILTERS: ReadonlyArray<{ value: NodeFilter; label: string }> = [
   { value: 'all', label: '全部' },
@@ -40,26 +42,33 @@ export function NodesTab({ rest }: { rest: string[] }) {
   const batchIntent = useIntentKey()
   const [filter, setFilter] = useState<NodeFilter>('all')
   const [query, setQuery] = useState('')
+  const [tag, setTag] = useState('')
   const [offset, setOffset] = useState(0)
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set())
   const [sorting, setSorting] = useState<NodeRow[] | null>(null)
   const [creating, setCreating] = useState(false)
+  const [batchEditing, setBatchEditing] = useState(false)
   const list = useNodes()
 
   // 节点总数超过一页（1000）：筛选、搜索、翻页交给服务端，第 1001 个以后的节点也找得到
   const serverMode = !!list.data && list.data.total > list.data.nodes.length
   const serverQuery = useDebounced(query.trim(), SEARCH_DEBOUNCE_MS)
-  const page = useNodePage({ state: filter, q: serverQuery, offset }, serverMode)
+  const page = useNodePage({ state: filter, q: serverQuery, tag, offset }, serverMode)
   const source = serverMode ? page : list
   const loaded = source.data?.nodes
 
-  const rows = useMemo(() => sorting ?? (serverMode ? (loaded ?? []) : list.data ? filterNodes(list.data.nodes, filter, query) : []), [sorting, serverMode, loaded, list.data, filter, query])
+  const rows = useMemo(
+    () => sorting ?? (serverMode ? (loaded ?? []) : list.data ? filterNodes(list.data.nodes, filter, query, tag) : []),
+    [sorting, serverMode, loaded, list.data, filter, query, tag]
+  )
   const openId = rest[0] ?? null
   const tab = (DRAWER_TABS.find(([k]) => k === rest[1])?.[0] ?? 'metrics') as DrawerTab
   // 抽屉：先在已加载的行里找；找不到（地址直接指到没加载的节点）用单取的结果。单取同时给协议表单带回编辑字段
   const detail = useNodeDetail(openId)
   const open = loaded?.find((n) => n.id === openId) ?? list.data?.nodes.find((n) => n.id === openId) ?? detail.data ?? null
   const pickedRows = (loaded ?? []).filter((n) => picked.has(n.id))
+
+  const allTags = useMemo(() => tagOptions(list.data?.nodes ?? []), [list.data?.nodes])
 
   const batch = useMutation({
     mutationFn: (to: 'active' | 'disabled') => {
@@ -116,6 +125,8 @@ export function NodesTab({ rest }: { rest: string[] }) {
   const moveNode = useCallback((index: number, d: -1 | 1) => setSorting((s) => (s ? moveItem(s, index, d) : s)), [])
   const allPicked = rows.length > 0 && rows.every((n) => picked.has(n.id))
 
+  const overBatchLimit = pickedRows.length > NODE_BATCH_EDIT_MAX
+
   return (
     <div className={css.stack}>
       <div className={css.toolbar}>
@@ -136,6 +147,21 @@ export function NodesTab({ rest }: { rest: string[] }) {
           options={FILTERS.map((f) => ({ ...f }))}
           className={sorting ? css.dimmed : undefined}
         />
+        {allTags.length > 0 && (
+          <Select
+            size="sm"
+            aria-label="按标签筛选"
+            value={tag}
+            disabled={!!sorting}
+            onChange={(e) => {
+              setTag(e.target.value)
+              setOffset(0)
+              setPicked(new Set())
+            }}
+            options={allTags.map((t) => ({ value: t, label: t }))}
+            emptyOption="全部标签"
+          />
+        )}
         {picked.size > 0 && (
           <span className={css.batchBar}>
             <span>已选 {picked.size}</span>
@@ -144,6 +170,14 @@ export function NodesTab({ rest }: { rest: string[] }) {
             </Button>
             <Button size="xs" busy={batch.isPending && batch.variables === 'disabled'} onClick={() => batch.mutate('disabled')}>
               停用
+            </Button>
+            <Button
+              size="xs"
+              disabled={overBatchLimit}
+              title={overBatchLimit ? '一次最多修改 100 个节点' : undefined}
+              onClick={() => setBatchEditing(true)}
+            >
+              批量修改
             </Button>
             <Button size="xs" variant="ghost" aria-label="取消选择" onClick={() => setPicked(new Set())}>
               <IconClose />
@@ -228,6 +262,12 @@ export function NodesTab({ rest }: { rest: string[] }) {
       </div>
 
       <NodeDrawer node={open} detail={detail} tab={tab} onClose={() => navigate('/nodes/nodes')} />
+      <NodeBatchEdit
+        rows={pickedRows}
+        open={batchEditing}
+        onClose={() => setBatchEditing(false)}
+        onDone={() => setPicked(new Set())}
+      />
       <Modal open={creating} onClose={() => setCreating(false)} size="lg" title="新建节点" eyebrow="建成草稿，签发安装令牌并启用后才会下发">
         {creating && (
           <NodeForm
@@ -266,6 +306,19 @@ interface NodeLineProps {
 const NodeLine = memo(function NodeLine({ node: n, run, index, picked, sorting, onPick, onOpen, onMove, first, last }: NodeLineProps) {
   const state = nodeState(n)
   const cpu = n.cpu_percent
+
+  // 标签最多显示 3 个，其余收成「+n」，悬停看全部
+  const tagList = n.tags
+  const hasMeta = tagList.length > 0 || n.relay_count > 0 || n.ech_enabled
+  const visibleTags = tagList.slice(0, 3)
+  const extraTagCount = tagList.length - 3
+  const allTagsTitle = tagList.join('、')
+
+  const showPeriodTraffic = n.traffic.limit_bytes !== null
+  const percent = trafficPercent(n.traffic)
+  const isTrafficWarn = percent !== null && percent >= 90
+  const isTrafficExceeded = n.traffic.exceeded_at !== null
+
   return (
     <div className={`${css.grid} ${css.line} ${picked ? css.picked : ''} ${n.serving_status === 'retired' ? css.retired : ''}`}>
       <span>{!sorting && <Checkbox small aria-label={`选择 ${n.name}`} checked={picked} onChange={(e) => onPick(n.id, e.target.checked)} />}</span>
@@ -274,6 +327,22 @@ const NodeLine = memo(function NodeLine({ node: n, run, index, picked, sorting, 
         <span className={css.nameText}>
           <span className={css.ellipsis}>{n.name}</span>
           <span className={`${css.mono} ${css.faint} ${css.ellipsis}`}>{addressLabel(n)}</span>
+          {hasMeta && (
+            <span className={css.nodeMetaRow}>
+              {visibleTags.map((t) => (
+                <Tag key={t} tone="neutral">
+                  {t}
+                </Tag>
+              ))}
+              {extraTagCount > 0 && (
+                <Tag tone="neutral" title={allTagsTitle}>
+                  +{extraTagCount}
+                </Tag>
+              )}
+              {n.relay_count > 0 && <span className={css.relayCount}>+{n.relay_count} 中转</span>}
+              {n.ech_enabled && <Tag tone="neutral">ECH</Tag>}
+            </span>
+          )}
         </span>
       </button>
       <span className={css.muted}>{protocolLabel(n.node_type)}</span>
@@ -287,7 +356,14 @@ const NodeLine = memo(function NodeLine({ node: n, run, index, picked, sorting, 
         </span>
         <span className={`${css.mono} ${css.faint}`}>{cpu === null ? '—' : `${Math.round(cpu)}%`}</span>
       </span>
-      <span className={`${css.mono} ${css.right}`}>{formatBytes(n.traffic_bytes_24h)}</span>
+      <span className={`${css.mono} ${css.right}`}>
+        <span className={css.trafficLine}>{formatBytes(n.traffic_bytes_24h)}</span>
+        {showPeriodTraffic && (
+          <span className={`${css.trafficLine} ${css.faint} ${css.trafficFaint} ${isTrafficWarn ? css.trafficWarn : ''}`} title="本周期用量 / 上限">
+            {trafficUsageLabel(n.traffic)}
+          </span>
+        )}
+      </span>
       <span className={css.stateCell}>
         {sorting ? (
           <>
@@ -305,10 +381,17 @@ const NodeLine = memo(function NodeLine({ node: n, run, index, picked, sorting, 
               {state.label}
             </span>
             {state.note && <Tag tone={state.note === '排空中' ? 'warn' : 'neutral'}>{state.note}</Tag>}
-            {state.filter === 'online' && !n.delivered_to_users && (
-              <Tag tone="warn" title={n.delivery_note}>
-                不下发
+            {isTrafficExceeded ? (
+              <Tag tone="danger" title={n.delivery_note}>
+                超限
               </Tag>
+            ) : (
+              state.filter === 'online' &&
+              !n.delivered_to_users && (
+                <Tag tone="warn" title={n.delivery_note}>
+                  不下发
+                </Tag>
+              )
             )}
             {run && run.tone !== 'ok' && (
               <Tag tone={run.tone} title={run.detail || run.label} className={css.runTag}>
