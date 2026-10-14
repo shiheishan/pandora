@@ -88,6 +88,7 @@ paths:
 | `outbounds` | 数组，可选 | 每项 `tag`、`type`（字符串，必填）、`settings`（对象，可选，按出站类型解析）。 |
 | `routes` | 数组，可选 | 每项 `outbound`（必填，引用 outbounds 的 tag）、`matcher`（对象，可选）。 |
 | `final` | 字符串，可选 | 没命中规则时走的出站。outbounds / routes / final 都不给 = 没配分流（直出）；给了空的 = 清空已有规则。 |
+| `ech_keys` | 数组，可选，≤8 项 | ECH 服务端密钥（迁移 00045）：每项 `config`（base64，单个 ECHConfig，版本 0xfe0d）、`private_key`（base64，32 字节 X25519）、`send_as_retry`（布尔，只有当前钥为 true）。面板只给能用 Go 标准库 TLS 的入站下发（vless/vmess/trojan 普通 TLS、AnyTLS、naive 等，不含 REALITY 与 QUIC 类）；节点端在 `loadInboundTLSConfig` 与 AnyTLS 的 TLS 配置上装 `EncryptedClientHelloKeys`，开了即只收 TLS 1.3（`kernel/inbound_tls_ech.go`）。轮换后旧钥在过渡期内仍下发，供拿着旧订阅的客户端解密。 |
 
 共用块（`kernel/`）：
 

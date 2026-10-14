@@ -14,7 +14,8 @@ paths:
 ## 下发纪元（Redis）
 - 会影响名单的写：事务里 `MarkUsersChanged`；会影响节点配置文档的写：`MarkConfigChanged`（`service/epoch.go`）。提交后 `INCR node:users_epoch` / `node:config_epoch` 并 `PUBLISH node:changed`；丢通知时 `EpochPoll`（缺省 5s）与 `FullResync`（缺省 15s）兜底（`service/session.go`）。
 - 订阅侧影响名单的事实经 `SubscriptionsChanged` 直接 bump，不经过 `MarkUsersChanged` 登记（`epoch.go`）。
-- 改协议/端口/路由/退役等具体入口以代码里是否调 `MarkConfigChanged` / `MarkUsersChanged` 为准；`PatchNode` 只在 `protocolChanged` 时推配置纪元、换池推名单纪元（`service/nodes.go`）。
+- 改协议/端口/路由/退役等具体入口以代码里是否调 `MarkConfigChanged` / `MarkUsersChanged` 为准；`PatchNode`（事务内主体是 `patchNodeTx`，批量修改复用它）只在 `protocolChanged` 时推配置纪元、换池推名单纪元、超限标记变了两个都推，每次都 `MarkLinesChanged`（`service/nodes.go`）。
+- 只影响订阅线路、不影响节点端配置与名单的写（中转、标签、倍率）用 `MarkLinesChanged`：提交后只清本进程的线路缓存，不推纪元（`epoch.go`）。
 
 ## 名单与线路资格
 - 名单 `Rosters`、订阅线路 `node_source.go` 共用 `poolAdmits`（`service/delivery.go`）；池限组时空名单 = 不限，默认组用户进不了限组池。
@@ -34,6 +35,15 @@ paths:
 - 写路由用 `refuseNewDangling`：只拒本次新造成的悬空引用（`service/routing_write.go`）。
 - 复制节点勾选复制路由（`CopyNode` 的 `CopyRouting`）时，在同一事务里经 `copyNodeRouting`（`service/nodes_placement.go`）把私有出站、规则和路由组成员一起复制：先拿路由写锁再锁节点行（与其它改路由的写同一锁序），组成员变了推进组版本，照常 `refuseNewDangling`。
 - 单个节点的文档生成失败只跳过该节点（`assembleServerConfigs` 返回跳过集合），同批其余服务器与节点照发；不要改回整批失败。被跳过的节点不在下发的文档里，节点端会停掉它的入站直到配置修好。ERROR 只在下发路径记（`ServerConfigs`，供配置纪元与建流对齐）；只读路径（节点列表、`ConfigLaggingCount`）调 `serverConfigsWithSkips` 不记日志：列表把这些节点显示为 failed（「面板生成配置失败：…」），落后计数算上它们。
+
+## 节点补齐 Xboard（迁移 00045）
+- 标签 `nodes.tags`（jsonb 字符串数组）：规范化只有 `NormalizeNodeTags`（去首尾空白、非空、无控制字符、≤`NodeTagMaxRunes` 字、不分大小写去重留首次、≤`NodeTagsMax` 个，`service/node_xb_fields.go`）；后台列表 `?tag=` 按 `n.tags @> jsonb_build_array(?)` 精确筛；门户线路预览带标签（Xboard 同样展示），订阅文件不写。
+- 每周期流量上限：`traffic_used_bytes` 是实际字节（不乘倍率），在 `IngestTraffic` 同一事务由 `repo.AddNodeUsage` 累加（一条语句，CTE 按 id 升序 `FOR NO KEY UPDATE`，PG18 `RETURNING old/new` 判新超限），新超限推配置与名单纪元。超限只写 `traffic_exceeded_at`，不改 `serving_status`；它已并入 `DeliverableNodeCond` 与 `ServedOnServerCond`，库里 `nodes_traffic_exceeded_shape` 钉住它与「有上限且已用 >= 上限」同真同假：改上限的写（`patchNodeTx`）按锁住的行用 `nodeExceededAt` 重算，不要只改上限不改标记。
+- 清零：任务 `node:traffic_reset`（每 5 分钟，`task/task.go`）按站点时区 `trafficPeriodStart`（短月取月末）清到期节点；后台手动重置 `ResetNodeTraffic` 要重认证、幂等、审计 `node.traffic_reset`。原来超限的清零后推两个纪元恢复下发。给老节点新设重置日时，`traffic_reset_at` 早于本周期起点，下一轮任务就会清零一次（少算，接受）。
+- 时段倍率 `traffic_rate_schedule`：站点时区半开区间 `[start, end)`，不跨零点、不重叠、≤`NodeRateScheduleMax` 段（`ParseRateSchedule`）。扣量按面板收到上报的时刻取 `effectiveRate`（proto 的流量上报没有时间戳，收到时刻即窗口结束时刻），没命中用 `traffic_rate`；规则坏了记 Warn 按基础倍率。订阅与门户显示的倍率是线路装载时刻的生效倍率。
+- 中转节点 `node_relays`（Xboard `parent_id` 的等价物）：独立表，只出现在订阅里，紧跟父节点、继承父节点的协议配置、倍率、标签、ECH、池与资格、分层事实，只换名称/地址/端口，可选 SNI / Host 覆盖（`relayRenderNode`，`service/node_source_relay.go`；父节点的 Config 被缓存共享，只能浅拷贝后改）。中转不占端口、不进配置文档与名单、没有状态机；父节点只能是 nodes 里的节点，天然不能挂中转；每个父节点最多 `relaysPerNodeMax`（20）条。与「自定义出站链式转发」（`node_outbounds`，节点出口再经别的代理）是两回事：那个改节点的出站，这个改用户的入口。订阅线路的中转与 ECH 都在 `repo.DeliveryNodes` 那一条 SQL 里用标量子查询取，不加往返。
+- ECH `node_ech_keys`：密钥由 `protocol.GenerateECHKey` 生成（与 Xboard 同格式），私钥经 Sealer 封存（AAD `node_ech_key:<节点 id>`），审计、日志、错误里不出现私钥。每节点至多一把当前钥；轮换后旧钥再下发 `ECHRetiredKeyGrace`（7 天）供拿着旧订阅的客户端解密，任务 `node:ech_purge` 每小时删过期旧钥并推配置纪元；停用 `DisableNodeECH` 立即删光。配置文档键 `ech_keys`（当前钥在前、`send_as_retry` 只有当前钥为 true），只在 `protocol.ECHCapable`（按翻译后的内核配置判）时写；订阅只用当前钥。不支持 REALITY 与 QUIC 类协议；开了 ECH 的节点只收 TLS 1.3。
+- 批量修改 `BatchEditNodes`（`service/nodes_batch.go`）：白名单字段（池、倍率、标签、服务状态、流量上限与重置日、时段倍率），一个事务，按 id 升序锁全部节点，状态先走 `BatchNodeStatus`，其余逐个走 `patchNodeTx`；任一失败整批回滚，错误带 `node_id`；上限 `NodeBatchEditMax`；接口要重认证与幂等，审计 `node.batch_update`。
 
 ## 同机端口（先到先得）
 - L4 唯一口径：`protocol.ListenL4` = 写入 `nodes.listen_l4` = pdnd `kernel/port_claims.go`（`protocol/port_l4.go`、`protocol/port_l4_test.go`）。

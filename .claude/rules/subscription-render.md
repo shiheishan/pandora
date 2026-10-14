@@ -46,6 +46,10 @@ paths:
 - `requestHostMatches`（`pdnd/kernel/host_match.go`）：Host / `:authority` 不比端口、IPv6 去括号、大小写不敏感；没配 host 不检查
 - 改 gun 或 Host 匹配后跑 subscription-e2e 实连（见 `.claude/rules/pdnd-kernel.md` 互操作一节）
 
+## ECH 与中转（迁移 00045）
+- `Node.ECHConfigList` 非空才写 ECH：Clash Meta `ech-opts {enable: true, config: base64(ECHConfigList)}`，sing-box `tls.ech {enabled: true, config: PEM 行数组}`（与 Xboard `ManageController` 生成的同格式）；只给 vless/vmess/trojan 的普通 TLS（非 REALITY）、AnyTLS、naive（sing-box），Clash Premium 与 Stash 不写（`render/clash.go`、`singbox.go`、`stash.go`，单测 `render/ech_test.go`）。node 侧只在 `protocol.ECHCapable` 时填它，渲染侧再按协议挡一次。
+- 中转线路在 node 侧由父节点派生（`relayRenderNode`），渲染层看到的就是普通 `Node`；`Node.Tags` 只给门户预览用，订阅文件里不写。
+
 ## 与 subscription 模块的边界
 - 配置名：`render.ProfileName` + `render.ContentDisposition`（`render/profile.go`，调用处 `service/pull.go`、`service/portal.go`）；门户 `client_name` 同口径。改名不 `notifyRoster`
 - 主人账号非 active：拉取 `ErrPullDenied`（伪装 404），不给过期提示（`service/pull.go`）
