@@ -93,6 +93,8 @@ type shadowsocksAdapter struct {
 	// salts 是 TCP 请求 salt 的防重放表（认证通过才记），全进程共用一张，
 	// 见 replay_filter_bloom.go。
 	salts *saltBloom
+	// udpSalts 是 UDP 包 salt 的防重放表（认证通过才记），全进程 SS UDP 共用一张，见 shadowsocks_udp_replay.go。
+	udpSalts *saltBloom
 	// headerTimeout 只给测试缩短读请求头的截止时间，零值为 10 秒。
 	headerTimeout time.Duration
 	wg            sync.WaitGroup
@@ -109,10 +111,11 @@ func newShadowsocksAdapter(spec InboundSpec) (Adapter, error) {
 	}
 	return &shadowsocksAdapter{
 		protocol: strings.ToLower(strings.TrimSpace(spec.Config.Protocol)), spec: spec, method: methodSpec,
-		users:  make(map[string]*ssUser),
-		active: make(map[net.Conn]struct{}),
-		udp:    make(map[netip.AddrPort][]*ssUDPSession),
-		salts:  sharedSSSaltBloom(),
+		users:    make(map[string]*ssUser),
+		active:   make(map[net.Conn]struct{}),
+		udp:      make(map[netip.AddrPort][]*ssUDPSession),
+		salts:    sharedSSSaltBloom(),
+		udpSalts: sharedSSUDPSaltBloom(),
 	}, nil
 }
 

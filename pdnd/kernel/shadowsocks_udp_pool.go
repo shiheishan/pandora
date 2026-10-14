@@ -65,6 +65,9 @@ func (a *shadowsocksAdapter) slowPathUDP(wire []byte, from netip.AddrPort) error
 	if err != nil {
 		return errSSUDPAuth
 	}
+	if !a.acceptUDPSalt(salt) {
+		return errSSUDPReplay
+	}
 	sess, err := a.getOrOpenUDPSession(from, user, epoch, dest)
 	if err != nil {
 		return err

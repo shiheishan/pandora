@@ -74,6 +74,9 @@ func (a *shadowsocksAdapter) fastPathUDP(wire, plain []byte, found *[]*ssUDPSess
 		dest, payload, ok := a.openUDPWith(sc, s.user, salt, ciphertext, plain)
 		putSSScratch(sc)
 		if ok {
+			if !a.acceptUDPSalt(salt) {
+				return true, errSSUDPReplay
+			}
 			return true, a.forwardUDP(s, dest, payload)
 		}
 	}
