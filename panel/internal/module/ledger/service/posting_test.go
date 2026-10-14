@@ -331,10 +331,13 @@ func TestSortedRefs(t *testing.T) {
 	}
 }
 
-// 写余额撞库里不透支 CHECK：包装成余额不足（调用方 errors.Is 仍认得），同时保留库错误并注明事务已作废；其它错误原样返回。
+// 写余额撞库里不透支 CHECK：包装成 ErrBalanceConstraint 与 ErrInsufficientBalance（调用方 errors.Is 仍认得），同时保留库错误并注明事务已作废；其它错误原样返回。
 func TestSetBalancesErrWrapsCheck(t *testing.T) {
 	dbErr := fmt.Errorf("%w: 违反 CHECK", repo.ErrCheck)
 	got := setBalancesErr(dbErr)
+	if !errors.Is(got, ErrBalanceConstraint) {
+		t.Fatalf("应能按 ErrBalanceConstraint 识别：%v", got)
+	}
 	if !errors.Is(got, ErrInsufficientBalance) {
 		t.Fatalf("应能按 ErrInsufficientBalance 识别：%v", got)
 	}
@@ -351,5 +354,8 @@ func TestSetBalancesErrWrapsCheck(t *testing.T) {
 	other := errors.New("连接断了")
 	if setBalancesErr(other) != other {
 		t.Fatal("非约束错误应原样返回")
+	}
+	if errors.Is(setBalancesErr(other), ErrBalanceConstraint) {
+		t.Fatal("非约束错误不应包含 ErrBalanceConstraint")
 	}
 }
