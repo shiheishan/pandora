@@ -140,7 +140,7 @@ func TestEncodeDecodeRateSchedule(t *testing.T) {
 	text := encodeRateSchedule(rs)
 	back, err := decodeRateSchedule(text)
 	if err != nil {
-			t.Fatalf("decode: %v", err)
+		t.Fatalf("decode: %v", err)
 	}
 	if len(back) != 1 || back[0].StartMin != rs[0].StartMin || !back[0].Rate.Equal(rs[0].Rate) {
 		t.Fatalf("往返不等: %+v", back)
@@ -216,7 +216,7 @@ func makeManySegments(n int, rate decimal.Decimal) []RateRangeInput {
 	for i := 0; i < n; i++ {
 		h := i % 20
 		out[i] = RateRangeInput{
-			Start: formatHHMM(h*60),
+			Start: formatHHMM(h * 60),
 			End:   formatHHMM(h*60 + 30),
 			Rate:  rate,
 		}
