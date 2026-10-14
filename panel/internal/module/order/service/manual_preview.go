@@ -1,6 +1,6 @@
 package service
 
-// 后台开单预览（对照旧 ManualOrderOptions）：落点规则同 planPlacements，每一项按建单同样的规则先试一遍——
+// 后台开单预览：落点规则同 planPlacements，每一项按建单同样的规则先试一遍——
 // 目录（续一期 UseRenewal、换套餐 UseChange 不看可见性，另开一份 UseNew 按这个用户看可见性）、未完结的续费或变更单、
 // 本期币种——开不了的项在 Unavailable 上写明建单会回的那句话，默认值不落在开不了的项上。
 // 折算基数、未完结单都按批读（候选最多 maxCandidates 份）。
@@ -16,7 +16,7 @@ import (
 )
 
 // previewPrice 是预览用的价格档：给了且属于这个套餐就用它（ok 为真，报应付）；
-// 周期取它，没给取套餐最早建的在售价格，都没有按一个月（对照旧 offerPeriod）。
+// 周期取它，没给取套餐最早建的在售价格，都没有按一个月。
 func previewPrice(plan catalogsvc.PlanDetail, priceID *uuid.UUID) (catalogsvc.Price, string, int, bool) {
 	if priceID != nil {
 		for _, pr := range plan.Prices {

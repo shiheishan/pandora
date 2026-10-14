@@ -25,7 +25,7 @@ const (
 	// 站点币种缺省人民币（用户 10-13 定）；USD 仍可经 site.currency 设
 	defaultSiteCurrency = "CNY"
 
-	// 新装缺省开放注册（与旧迁移 00042 种的 open 一致）；紧急关闭用 auth.registration 开关。
+	// 新装缺省开放注册；紧急关闭用 auth.registration 开关。
 	defaultRegistrationMode = RegistrationOpen
 	// 缺省不验证邮箱：没配 SMTP 就开验证等于把注册入口焊死。
 	defaultEmailVerification = false

@@ -19,7 +19,7 @@ import (
 // channelQueryTimeout 是单次渠道查询的上限。
 const channelQueryTimeout = 10 * time.Second
 
-// patrolConfig 是巡检的节流参数（含义见旧 PaymentQueryPatrol）。
+// patrolConfig 是巡检的节流参数（各字段含义见下面 defaultPatrol 的注释）。
 type patrolConfig struct {
 	FirstDelay   time.Duration
 	MaxAttempts  int
@@ -40,7 +40,7 @@ var defaultPatrol = patrolConfig{
 // queryMinGap 是两次巡检查单的最小间隔。
 const queryMinGap = time.Minute
 
-// nextQueryAt 照旧 nextPaymentQueryAt 逐行搬（指数退避 + 过期前最后一查）。
+// nextQueryAt 算下一次巡检查单的时间：指数退避，过期前留最后一查。
 func nextQueryAt(now time.Time, attempts int, expires *time.Time, p patrolConfig) time.Time {
 	if attempts < 1 {
 		attempts = 1

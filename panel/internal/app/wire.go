@@ -213,7 +213,7 @@ func buildServices(r *runtime) (*services, error) {
 	promoSvc.UseUsers(identitySvc)
 	promoSvc.UseCatalog(promoCatalog{c: catalogSvc})
 	// 订阅分发（拉取、链接列表、换链接）：前缀与拉取上限在 settings、主人状态在 identity、限流在 Redis；
-	// 可下发线路的来源（UseNodeSource）由 P5 的 node 模块装配，没装配前生效订阅的拉取回 503
+	// 可下发线路的来源（UseNodeSource）由 node 模块装配，没装配时生效订阅的拉取回 503
 	subSvc.UseDelivery(subsvc.Delivery{
 		Settings:      settingsSvc,
 		Owners:        identitySvc,

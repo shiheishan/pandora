@@ -112,7 +112,7 @@ func (s *Service) telegramReady(ctx context.Context) (settingssvc.Telegram, bool
 	return t, t.Enabled && t.BotUsername != "" && t.BotToken != "", nil
 }
 
-// ---- P6 的 repo 方法（*repo.Repo 实现，见 repo/inbox.go、preferences.go、announcements.go、telegram.go） ----
+// ---- 通知、偏好、公告、Telegram 的 repo 方法（*repo.Repo 实现，见 repo/inbox.go、preferences.go、announcements.go、telegram.go） ----
 
 type p6Store interface {
 	// ScanCursor 读扫描游标；没有时 ok 为 false。

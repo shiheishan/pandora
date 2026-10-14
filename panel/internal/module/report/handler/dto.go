@@ -540,7 +540,7 @@ func activityTimeseriesFrom(pts []service.ActivityPoint) activityTimeseriesRespo
 	return activityTimeseriesResponse{Points: out}
 }
 
-// backup 段按可读性条件放键，用 RawMessage 拼出与旧 admin 一致的 JSON。
+// backup 段按可读性条件放键，用 RawMessage 拼出前端要的 JSON 形状。
 func marshalBackup(b service.BackupStatus) json.RawMessage {
 	if !b.Readable {
 		m := map[string]any{"dir": b.Dir, "readable": false, "message": b.Message}

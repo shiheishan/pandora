@@ -10,7 +10,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
-// 折算规则的边界（旧 TestProrationCredit 的全部用例，分换成元，期望逐分一致）：
+// 折算规则的边界（期望逐分一致）：
 // 时间比与流量比取小、向下取整、付费天数先用、赠送天数折不成钱、0 元单不折。
 func TestProrationCredit(t *testing.T) {
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
@@ -100,7 +100,7 @@ func TestProrationCreditDetail(t *testing.T) {
 	}
 }
 
-// 换掉一份时不保留的赠送天数（旧 TestGiftedDaysLeft）：付费天数先用、赠送天数最后用。
+// 换掉一份时不保留的赠送天数：付费天数先用、赠送天数最后用。
 func TestGiftedDaysLeft(t *testing.T) {
 	start := time.Date(2026, 10, 1, 8, 0, 0, 0, time.UTC)
 	month := time.Date(2026, 11, 1, 8, 0, 0, 0, time.UTC).Sub(start) // 31 天
@@ -152,7 +152,7 @@ func TestPendingCycleAllowance(t *testing.T) {
 	}
 }
 
-// 退进余额的差额：剩余价值抵完优惠后的新价还有余的部分（旧 balance_refund）。
+// 退进余额的差额：剩余价值抵完优惠后的新价还有余的部分。
 func TestPlanChangeRefund(t *testing.T) {
 	cases := []struct{ credit, subtotal, discount, want string }{
 		{"0.00", "10.00", "0.00", "0.00"},  // 没有剩余价值

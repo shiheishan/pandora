@@ -89,7 +89,7 @@ func basisOf(src basisSource, orderIDs []uuid.UUID, po periodOrders) (prorationB
 		b.Currency = cur
 		// 付费 = max(小计 − 折扣 − 免掉的零头, 0)：0 元单、全额券、人工赠送单为 0
 		b.Value = b.Value.Add(decimal.Max(o.SubtotalAmount.Sub(o.DiscountAmount).Sub(o.WaivedAmount), decimal.Zero))
-		// 0 元单的计费周期也接进付费总时长（旧代码同口径，有意照旧，见 proration.go 开头）
+		// 0 元单的计费周期也接进付费总时长（产品决定，见 proration.go 开头）
 		paidUntil = subsvc.AddInterval(paidUntil, *it.SnapshotInterval, *it.SnapshotIntervalCount)
 	}
 	b.PaidSpan = paidUntil.Sub(sub.PeriodStart)

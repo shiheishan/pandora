@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// --- 请求 DTO（JSON 形状与旧 adminops / api 一致）---
+// --- 请求 DTO ---
 
 type createPlanRequest struct {
 	Code                 string     `json:"code"`
@@ -157,7 +157,7 @@ type updatePlanCompleteRequest struct {
 	PoolIDs *[]string `json:"pool_ids"`
 }
 
-// optionalInt 区分字段缺省与显式 null（与旧 adminops.OptionalInt 一致）。
+// optionalInt 区分字段缺省与显式 null。
 type optionalInt struct {
 	Set   bool
 	Value *int

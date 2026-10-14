@@ -8,7 +8,7 @@
 #
 # 仍用 SQL 的步骤及原因：
 #   - 在途意图数、payment_events 幂等键、账本配平与漂移、凭据密文不含明文：核对库内事实，无等价只读 API
-#   - 可服务节点：e2e job 无节点端，发布套餐需 DeliverableNodeCond（见 p7e2e-common）
+#   - 可服务节点：e2e job 无节点端，发布套餐需 DeliverableNodeCond
 #
 # 环境：PUB、ADM、PSQL、ADMIN_EMAIL、ADMIN_PASS（必填）；EPAY_E2E_DISPOSABLE=YES_DELETE_FIXTURES（必填）。
 # 可选 SERVE_LOG：CI 指向 serve 日志文件，检查是否泄露渠道密钥。

@@ -35,7 +35,7 @@ type chargePlan struct {
 	Exhausted []uuid.UUID     // 因这一批从「有余量」变成「耗尽」的订阅，按出现顺序
 }
 
-// splitTrafficCharge 与旧实现逐字同口径：先吃套餐剩余额度 planRoom（nil = 不限量），超出部分从流量包余额 packRemaining 扣，
+// splitTrafficCharge 的口径：先吃套餐剩余额度 planRoom（nil = 不限量），超出部分从流量包余额 packRemaining 扣，
 // 两者都不够的那部分仍记在套餐上（配额变负、下一轮停止下发）。返回 记到套餐配额上的量、从流量包扣的量。
 func splitTrafficCharge(billed int64, planRoom *int64, packRemaining int64) (int64, int64) {
 	if billed <= 0 {
@@ -94,7 +94,7 @@ func needsPacks(room *int64, bytes int64) bool {
 	return bytes >= max64(*room, 0)
 }
 
-// planTrafficCharges 按 items 的顺序（调用方已按 uid 升序）决定每笔怎么分，口径同旧 applyTrafficCharges。
+// planTrafficCharges 按 items 的顺序（调用方已按 uid 升序）决定每笔怎么分。
 // items 中每份订阅只出现一次（uid 与订阅一一对应）；Exhausted 只是让名单秒级摘人，多发一次无害。
 func planTrafficCharges(items []chargeItem, rows []repo.TrafficQuotaRow, packs []repo.OpenTrafficPack) chargePlan {
 	rooms := quotaRooms(rows)

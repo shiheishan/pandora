@@ -193,7 +193,7 @@ func (e enriched) myView(o model.Order) MyOrderView {
 		v.ItemName = first.SnapshotName
 		v.Interval = first.SnapshotInterval
 		v.IntervalCount = first.SnapshotIntervalCount
-		// 旧接口的 plan_name 是首项快照名（流量包订单即流量包名）
+		// plan_name 取首项快照名（流量包订单即流量包名）
 		name := first.SnapshotName
 		v.PlanName = &name
 	}

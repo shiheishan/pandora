@@ -4,7 +4,7 @@
 // report 只拥有两张表（revenue_report_adjustments、activity_daily）；其余数字一律经属主模块 service 的聚合读（端口见下），
 // 不读别人的表。切日一律按站点时区（settings 的 site.timezone）。
 //
-// 营收口径：实际收入 = 平台收入科目（platform_revenue）全部分录的净额（贷 − 借），与旧口径相同；
+// 营收口径：实际收入 = 平台收入科目（platform_revenue）全部分录的净额（贷 − 借）；
 // 报表调整来自本模块的只追加表，只影响展示值（displayed = actual + adjustment），不回写账本。
 package service
 

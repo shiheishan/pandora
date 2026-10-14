@@ -150,7 +150,7 @@ type planPrep struct {
 }
 
 // preparePlan 按选定的落点备好套餐卡的发放：新开与换掉要求卡上的套餐在售（planFor）；续同款不要求
-// （套餐下架后存量用户照样能用已发出去的同款卡续，与旧代码一致），只核对订阅就是这个套餐。
+// （套餐下架后存量用户照样能用已发出去的同款卡续），只核对订阅就是这个套餐。
 // 换掉：锁订阅之后、动任何东西之前先调 RemainingValue —— order 在这份订阅有没完结的续费或换套餐单时
 // 回 409（ErrOpenChange），原样往上抛，卡不会被用掉；没装折算时不给换掉。
 func (s *Service) preparePlan(ctx context.Context, user uuid.UUID, t Template, opt Option, now time.Time) (planPrep, error) {

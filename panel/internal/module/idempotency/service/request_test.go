@@ -115,5 +115,5 @@ func TestNewFingerprint(t *testing.T) {
 		t.Fatal("body 不同应得到不同指纹")
 	}
 
-	// 口径照旧：method + "\n" + target + "\n" + body，不另加分隔；target 是转义后的路径，不含换行。
+	// 口径：method + "\n" + target + "\n" + body，不另加分隔；target 是转义后的路径，不含换行。
 }

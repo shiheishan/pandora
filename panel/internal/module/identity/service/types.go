@@ -25,7 +25,7 @@ const (
 // RegistrationPending 是注册会话待验证的状态（消费后由 repo 的 SQL 改成 consumed）。
 const RegistrationPending = "pending"
 
-// 审计动作名（沿用旧代码）与资源类型。
+// 审计动作名与资源类型。
 const (
 	ActionRegistered           = "user.registered"
 	ActionCreated              = "user.created"

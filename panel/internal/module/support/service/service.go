@@ -111,7 +111,7 @@ type PlanNames interface {
 }
 
 // ReplyNotifier 由 notify 实现：客服公开回复后，在回复的同一事务里给提单人排一条「工单有新回复」通知
-// （旧模板 ticket.replied，变量 subject；去重键 "ticket-replied:" + MessageID），提交后由 notify 自己催派发。
+// （模板 ticket.replied，变量 subject；去重键 "ticket-replied:" + MessageID），提交后由 notify 自己催派发。
 // 返回错误时回复一起回滚。内部备注用户看不见，不通知。
 type ReplyNotifier interface {
 	TicketReplied(ctx context.Context, n ReplyNotice) error

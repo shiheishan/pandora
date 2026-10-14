@@ -51,7 +51,7 @@ type manualDraft struct {
 	CreatedBy uuid.UUID
 }
 
-// balanceFor 算一单用多少余额、还要付多少（对照旧 balancePlan）：
+// balanceFor 算一单用多少余额、还要付多少：
 //
 //	充值、应付为 0      不用余额
 //	人工单              不用余额；待用户支付的应付低于最低额回 422（用户付不了），赠送与线下已收款不受限
@@ -290,7 +290,7 @@ func (s *Service) place(ctx context.Context, d draft) (Created, model.Order, err
 	return created, o, nil
 }
 
-// changeAuditData 是换套餐单审计多记的几项（对照旧 plan_change_created）：方向（免零头之前的应付为正是升级，否则降级）、
+// changeAuditData 是换套餐单审计多记的几项：方向（免零头之前的应付为正是升级，否则降级）、
 // 履约时退进余额的钱、免掉的零头（放弃的收入）。
 func changeAuditData(o model.Order, total decimal.Decimal) map[string]any {
 	direction := "downgrade"

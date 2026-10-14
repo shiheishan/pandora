@@ -19,7 +19,7 @@ import (
 // maxCollisionRounds 是生码时撞哈希后重抽的最多轮数；码空间 31^12，正常一轮就够。
 const maxCollisionRounds = 5
 
-// 批次列表的分页口径（与旧接口相同）。
+// 批次列表的分页口径。
 const (
 	BatchListDefault = 50
 	BatchListMax     = 200

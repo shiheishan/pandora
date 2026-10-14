@@ -28,7 +28,7 @@ type Handler struct{ svc Service }
 // New 构造 Handler。
 func New(svc Service) *Handler { return &Handler{svc: svc} }
 
-// AdjustIdempotencyScope 是后台人工调账的幂等作用域（与旧接口相同）。
+// AdjustIdempotencyScope 是后台人工调账的幂等作用域。
 const AdjustIdempotencyScope = "admin_user_balance_adjust"
 
 // RegisterPublic 注册门户路由。

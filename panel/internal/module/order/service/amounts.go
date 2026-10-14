@@ -26,7 +26,7 @@ func OrderTotal(subtotal, discount, prorationCredit decimal.Decimal) decimal.Dec
 	return t
 }
 
-// PlanBalance 计算一单用多少余额、还要在线付多少（对照旧 purchase.ApplyBalance）。
+// PlanBalance 计算一单用多少余额、还要在线付多少。
 func PlanBalance(due, available, requested, minPay decimal.Decimal) BalancePlan {
 	if due.IsNegative() {
 		due = decimal.Zero
@@ -75,7 +75,7 @@ func PlanBalance(due, available, requested, minPay decimal.Decimal) BalancePlan 
 	return b
 }
 
-// WaiveSmallDue 按换套餐零头规则免掉小额应付（对照旧 purchase.WaiveSmallDue）。
+// WaiveSmallDue 按换套餐零头规则免掉小额应付。
 func WaiveSmallDue(b BalancePlan, allowed bool) BalancePlan {
 	ceiling := money.FromCents(MaxSmallDueCents)
 	if !allowed || !b.BelowMinimum || !b.Payable.IsPositive() || b.Payable.GreaterThan(ceiling) {

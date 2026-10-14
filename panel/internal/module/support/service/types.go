@@ -41,7 +41,7 @@ const (
 	AuthorSystem = "system"
 )
 
-// 审计动作（沿用旧代码的名字）与资源类型。
+// 审计动作与资源类型。
 const (
 	ActionCreate       = "ticket.create"
 	ActionReply        = "ticket.reply"

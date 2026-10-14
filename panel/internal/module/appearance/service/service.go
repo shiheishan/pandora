@@ -47,7 +47,7 @@ func New(r *repo.Repo, txm *tx.Manager, audit *auditsvc.Service, site SiteSettin
 	return &Service{repo: r, tx: txm, audit: audit, site: site}
 }
 
-// 审计动作名（沿用旧代码）。
+// 审计动作名。
 const (
 	ActionThemeSave     = "appearance.theme.save"
 	ActionThemeActivate = "appearance.theme.activate"

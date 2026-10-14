@@ -7,7 +7,7 @@ import (
 )
 
 // 一个指标可以有多个周期（total + day、cycle + month）：任一限量行用满就不可服务，
-// 拉取展示取余量最小的那行。审查发现旧写法只看 period_end 最晚的一行，总量用满后被 day 行放行。
+// 拉取展示取余量最小的那行。防的是只看 period_end 最晚的一行：那样总量用满后会被 day 行放行。
 func TestServingMultiPeriodQuotaPG(t *testing.T) {
 	e := newEnv(t)
 	ctx := e.txCtx()

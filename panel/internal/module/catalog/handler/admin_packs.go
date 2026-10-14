@@ -13,7 +13,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// packRow 与旧 adminops.TrafficPackRow JSON 一致。
+// packRow 是后台流量包列表的一行。
 type packRow struct {
 	ID           string    `json:"id"`
 	Name         string    `json:"name"`

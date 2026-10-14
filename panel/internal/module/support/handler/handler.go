@@ -41,7 +41,7 @@ type Service interface {
 var _ Service = (*service.Service)(nil)
 var _ route.Module = (*Handler)(nil)
 
-// 幂等作用域（沿用旧名）。
+// 幂等作用域。
 const (
 	ScopeCreate     = "support_ticket_create"
 	ScopeUserReply  = "support_ticket_user_reply"

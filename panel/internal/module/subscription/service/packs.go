@@ -22,7 +22,7 @@ const maxPackBytes int64 = 1 << 50
 // 挂到订阅上（SubscriptionID 非 nil）时，订阅必须属于该用户（否则 ErrNotFound）；是否要求生效中按来源分：
 //
 //	PackSourceOrder      只校验归属，不校验是否生效：钱已经收了、包不过期，付款窗口里订阅刚好到期也照发，
-//	                     续费后照样能用，停用后也能转走（与旧的流量包订单履约一致）。下单前用 CheckPackTarget 拦
+//	                     续费后照样能用，停用后也能转走。下单前用 CheckPackTarget 拦
 //	PackSourceGiftCard、PackSourceAdmin  必须生效中，否则 ErrPackNeedsLive
 //
 // SubscriptionID 为 nil 时留作未分配（无订阅时兑换的送流量卡），下次开通唯一一份生效订阅时自动挂上。

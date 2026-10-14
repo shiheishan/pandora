@@ -1,6 +1,6 @@
 package service
 
-// 换链接（门户、后台）的 PG 集成测试。TestMyRotate 末尾用新令牌拉一次会走渲染，p4-render 合入前会 panic。
+// 换链接（门户、后台）的 PG 集成测试。
 
 import (
 	"bytes"

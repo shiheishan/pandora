@@ -15,10 +15,10 @@ import (
 
 // 订阅分发这一组的键。
 const (
-	// keySubscriptionPathPrefix 是订阅链接的路径前缀（旧库 tenants.sub_path_prefix）：12 位小写十六进制随机值，
+	// keySubscriptionPathPrefix 是订阅链接的路径前缀：12 位小写十六进制随机值，
 	// 首次读取时生成并落库，之后只读、不提供修改入口（改了等于让所有已发出的链接失效）。
 	keySubscriptionPathPrefix = "subscription.path_prefix" // string
-	// keySubscriptionFetchLimit 是每条凭据每小时的拉取上限（旧库凭据上的 rate_limit_per_hour，缺省 60）。
+	// keySubscriptionFetchLimit 是每条凭据每小时的拉取上限（缺省 60）。
 	keySubscriptionFetchLimit = "subscription.fetch_limit_per_hour" // int，1–10000
 )
 

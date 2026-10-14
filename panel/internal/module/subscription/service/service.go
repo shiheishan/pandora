@@ -1,13 +1,13 @@
 // Package service 是 subscription 模块的业务层：订阅、配额、流量包的开通、续期、延期、换套餐、
 // 加流量包与转移、手动重置、改设备数、备注名，以及状态口径与按用户批量读；
-// P4 起还有订阅分发：链接拉取、链接列表与换链接、线路预览、按日用量、拉取日志的保留期清理。
+// 还有订阅分发：链接拉取、链接列表与换链接、线路预览、按日用量、拉取日志的保留期清理。
 //
 // 给别的模块用的写方法（Provision、Renew、Extend、ChangePlan、GrantTrafficPack、TransferPacks、ResetTraffic）
 // 都经 s.tx.Do 执行：ctx 里已有事务就加入调用方的事务，钱与订阅在同一个事务里落库。
 // 这些方法自己锁订阅行（FOR NO KEY UPDATE）；调用方先锁订单、再调这里（锁序：订单 → 订阅 → 配额 → 流量包）。
 //
 // 状态口径（生效、可救回、已停用）只在 state.go 定义；别的模块调 StateAt 或 SummariesByUsers，不再自己写这类 SQL。
-// 名单变化（会影响节点下发的事实）在提交后经可选的 RosterNotifier 通知（P5 由 node 注册）。
+// 名单变化（会影响节点下发的事实）在提交后经可选的 RosterNotifier 通知（由 node 模块注册）。
 package service
 
 import (
@@ -68,14 +68,14 @@ type Sealer interface {
 	Open(sealed, aad []byte) ([]byte, error)
 }
 
-// RosterNotifier 由 node 模块实现（P5）：一份订阅里影响节点下发名单的事实变了
+// RosterNotifier 由 node 模块实现：一份订阅里影响节点下发名单的事实变了
 // （开通、续期、延期、换套餐、加流量包、流量包转移、重置流量、改设备数），在事务提交后调用。
 // 实现必须很快返回（只记下要重算的订阅、排任务），不能回调本模块的写方法。没注册时什么都不做。
 type RosterNotifier interface {
 	SubscriptionsChanged(ctx context.Context, subscriptionIDs []uuid.UUID)
 }
 
-// OnlineDeviceCounter 由 node 模块实现（P5）：订阅在设备识别窗口内跨节点去重的在线设备数。
+// OnlineDeviceCounter 由 node 模块实现：订阅在设备识别窗口内跨节点去重的在线设备数。
 // 没有在线记录的订阅不在结果里。没注册时一律按 0。
 type OnlineDeviceCounter interface {
 	OnlineDeviceCounts(ctx context.Context, subIDs []uuid.UUID) (map[uuid.UUID]int, error)
@@ -96,7 +96,7 @@ type Service struct {
 	now      func() time.Time
 	rt       *realtime.Publisher // 实时推送，装配时注入（realtime.go）；nil 时不推
 
-	// 订阅分发（P4）：nodes 与 delivery 由装配注入（nodes.go）。
+	// 订阅分发：nodes 与 delivery 由装配注入（nodes.go）。
 	nodes    NodeSource
 	delivery *Delivery
 	// prefix 是订阅路径前缀的进程内副本：前缀生成后不再变，读到一次就一直用，前缀不对的请求不碰库。

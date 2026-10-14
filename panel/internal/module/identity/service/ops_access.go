@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// accessCategoryRules 是审计动作到展示分类的唯一映射，顺序与前缀须与旧后台一致。
+// accessCategoryRules 是审计动作到展示分类的唯一映射；按顺序匹配前缀，先命中的分类生效，所以顺序有意义。
 var accessCategoryRules = []struct {
 	category string
 	prefixes []string

@@ -1,6 +1,6 @@
 package handler
 
-// 后台人工开单：预览「这单落到哪一份」与建单（JSON 形状对照旧 api/admin/manual_order.go 与 purchase.Placement）。
+// 后台人工开单：预览「这单落到哪一份」与建单。
 
 import (
 	"strings"
@@ -40,7 +40,7 @@ type manualPreviewRequest struct {
 	EntrySubscriptionID string `json:"entry_subscription_id"`
 }
 
-// placementResponse 是一个落点选项（旧 ManualPlacement：purchase.Placement 加 due、below_minimum）。
+// placementResponse 是一个落点选项（含 due、below_minimum）。
 type placementResponse struct {
 	Key            string     `json:"key"`
 	Kind           string     `json:"kind"`

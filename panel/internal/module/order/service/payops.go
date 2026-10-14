@@ -15,7 +15,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/reqmeta"
 )
 
-// defaultPayTitle 是没有订单行（充值单）时收银台的商品名（旧 payments.go 同一兜底）。
+// defaultPayTitle 是没有订单行（充值单）时收银台的商品名。
 const defaultPayTitle = "订阅服务"
 
 // Pay 门户发起支付：锁住自己的待付订单、核对可付，再由 payment 建（或复用）支付意图。

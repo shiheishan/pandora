@@ -63,7 +63,7 @@ func toQuota(m model.QuotaBalance) Quota {
 	}
 }
 
-// sortQuotas 按 metric 升序、同一指标内 period_start 倒序排（原地），与旧接口一致：
+// sortQuotas 按 metric 升序、同一指标内 period_start 倒序排（原地）：
 // 前端取第一条 traffic.bytes 显示，门户的 next_reset_at 也取同一条（nextResetAt）。起点相同时按 period 升序，保证稳定。
 func sortQuotas(qs []Quota) {
 	sort.SliceStable(qs, func(i, j int) bool {
@@ -222,11 +222,11 @@ func (s *Service) logResets(ctx context.Context, sub model.Subscription, before 
 const tokenBytes = 32
 
 // CredentialAAD 是封存订阅链接令牌用的附加数据：用途前缀加订阅 id。封存器的密钥被多处共用，
-// 前缀把订阅凭据与别的密文隔开；P4 解封时用同一个函数。
+// 前缀把订阅凭据与别的密文隔开；拉取时解封用同一个函数。
 func CredentialAAD(subID uuid.UUID) []byte { return []byte("sub-credential:" + subID.String()) }
 
 // issueCredential 给订阅签发一条订阅链接凭据：库里存令牌的 SHA-256 与封存后的原文（AAD 见 CredentialAAD）。
-// 令牌原文不返回、不进日志；轮换与渲染归 P4。
+// 令牌原文不返回、不进日志；轮换见 rotate.go，渲染在拉取（pull.go）。
 func (s *Service) issueCredential(ctx context.Context, sub model.Subscription) error {
 	if s.sealer == nil {
 		return errs.Wrap(errs.Internal, errors.New("subscription: 没有注入封存器"))

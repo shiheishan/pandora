@@ -14,7 +14,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
-// 金额一律整数分；JSON 形状对照旧接口（internal/domain/giftcard 的 json tag）与前端 zod
+// 金额一律整数分；JSON 形状对照前端 zod
 // （portal/screens/wallet/schemas.ts、admin/screens/marketing/queries.ts）。
 
 // cents 把元换成分，记下第一处换算错误（金额超出 2 位小数是程序错误，对外 500）。

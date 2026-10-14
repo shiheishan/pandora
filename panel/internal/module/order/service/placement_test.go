@@ -33,7 +33,7 @@ func pkey(kind, name string) string {
 	return placementKey(kind, &id)
 }
 
-// 后台开单落点（旧 purchase.TestOptions 里套餐卡 / 后台开单的全部用例）。
+// 后台开单落点（套餐卡 / 后台开单的用例）。
 func TestPlanPlacements(t *testing.T) {
 	mine := cand("mine", "std", subsvc.StateLive, onDay(10, 30))
 	mom := cand("mom", "basic", subsvc.StateLive, onDay(10, 12))

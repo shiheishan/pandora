@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// p6Fake 是 fakeNotify 里 P6 部分的假实现：返回预设值、记下收到的参数；err 非 nil 时所有方法都返回它。
+// p6Fake 是 fakeNotify 里站内信、偏好、公告、Telegram 部分的假实现：返回预设值、记下收到的参数；err 非 nil 时所有方法都返回它。
 type p6Fake struct {
 	err error
 

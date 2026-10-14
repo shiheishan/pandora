@@ -1,6 +1,6 @@
 package service
 
-// 工单的实时推送。旧栈靠 tickets 表的触发器加 handler 里的 publishTicket；新栈由本模块在写成功的事务里显式发，
+// 工单的实时推送。由本模块在写成功的事务里显式发，
 // 提交后才真正发出（realtime.Publisher 内部用 tx.AfterCommit），回滚不发。
 //
 // 推给谁：

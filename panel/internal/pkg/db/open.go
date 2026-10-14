@@ -50,7 +50,7 @@ func Open(ctx context.Context, o Options) (*DB, error) {
 	}
 
 	// 空闲上限与池上限相同，靠 connMaxIdleTime 回收：空闲上限小于并发时，每次归还都会关掉多出来的连接、
-	// 下一次再新建（P8 实测空闲上限 2、池 30 时，空载每分钟约 17 个新连接，压测时每秒 9–15 个）。
+	// 下一次再新建（实测空闲上限 2、池 30 时，空载每分钟约 17 个新连接，压测时每秒 9–15 个）。
 	sqlDB.SetMaxOpenConns(o.MaxConns)
 	sqlDB.SetMaxIdleConns(o.MaxConns)
 	sqlDB.SetConnMaxLifetime(30 * time.Minute)

@@ -1,6 +1,6 @@
 package service
 
-// 后台开单「这单落到哪一份」（对照旧 purchase.Options 的套餐卡 / 后台开单分支与 placement_candidates.go）：
+// 后台开单「这单落到哪一份」：
 //
 //	同款可续（生效中按到期从早到晚，再可救回的按到期从晚到早）→ 不同款可救回的（恢复并改成它）→ 新开一份 →
 //	不同款生效中的（换掉）。
@@ -21,7 +21,7 @@ import (
 // maxCandidates 是一个用户参与落点的订阅上限（生效中的优先、新的优先）。
 const maxCandidates = 50
 
-// 选落点的两种 422（文案沿用旧代码，落在 target 上）。
+// 选落点的两种 422（落在 target 上）。
 var (
 	errChoiceRequired = errs.Invalid(map[string]string{"target": "请选择这单落到哪一份"})
 	errChoiceStale    = errs.Invalid(map[string]string{"target": "这个用法现在不能用了，请刷新后再选"})

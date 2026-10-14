@@ -80,8 +80,8 @@ func TestPaperThemeSeedMatchesFrontend(t *testing.T) {
 	}
 }
 
-// 旧前端 applySiteTheme 里的两道校验，原样复制过来（历史种子按它写）。
-// 新门户的白名单是 DesignTokenKeys，见本文件。
+// 主题 token 键名与取值的两道格式校验（迁移里的种子主题按它写）。
+// 门户的白名单是 DesignTokenKeys，见本文件。
 var (
 	themeTokenKeyRe = regexp.MustCompile(`^[a-z0-9-]{1,40}$`)
 	themeTokenBadRe = regexp.MustCompile(`[;{}<>]`)

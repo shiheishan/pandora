@@ -15,7 +15,7 @@
 #
 # 仍用 SQL 的步骤及原因：
 #   - feature_switches / users.status / audit_events / plan_node_pools：断言库内事实或比 API 更稳；
-#   - 可服务节点夹具末尾 UPDATE servers/nodes：e2e job 无节点端，照 p7e2e-common 造发布用节点。
+#   - 可服务节点夹具末尾 UPDATE servers/nodes：e2e job 无节点端，用 SQL 造发布用节点。
 #
 # 环境：PUB、ADM、PSQL、ADMIN_EMAIL、ADMIN_PASS；ADMIN_E2E_DISPOSABLE=YES_DELETE_FIXTURES。
 set -euo pipefail

@@ -61,7 +61,7 @@ func New(r *repo.Repo, txm *tx.Manager, audit *auditsvc.Service, plans Plans, su
 	return &Service{repo: r, tx: txm, audit: audit, plans: plans, subs: subs, users: users, now: time.Now}
 }
 
-// 审计动作名（沿用旧代码）。
+// 审计动作名。
 const (
 	ActionVersionCreated = "content.version_created"
 	ActionArchived       = "content.archived"

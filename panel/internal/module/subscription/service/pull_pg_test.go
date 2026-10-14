@@ -1,6 +1,6 @@
 package service
 
-// 订阅拉取的 PG 集成测试。走到 live 或过期提示的用例会调渲染（render 包），p4-render 合入前会 panic。
+// 订阅拉取的 PG 集成测试。
 
 import (
 	"bytes"

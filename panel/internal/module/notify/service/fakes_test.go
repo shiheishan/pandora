@@ -36,7 +36,7 @@ type fakeSettings struct {
 	setRegErr  error
 	calls      []string
 
-	// Telegram 设置（P6）
+	// Telegram 设置
 	tg       settingssvc.Telegram
 	setTg    *settingssvc.TelegramUpdate
 	setTgErr error

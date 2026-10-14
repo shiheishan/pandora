@@ -45,7 +45,7 @@ func (r *pluginRec) find(event string) []pluginEvt {
 	return out
 }
 
-// subscription.provisioned 只在 order 的外部支付结算路径发（与旧代码一致），本模块的开通、续期、换套餐都不发。
+// subscription.provisioned 只在 order 的外部支付结算路径发（插件事件口径，产品决定），本模块的开通、续期、换套餐都不发。
 func TestPluginProvisionPathsSilent(t *testing.T) {
 	e := newEnv(t)
 	ctx := e.txCtx()

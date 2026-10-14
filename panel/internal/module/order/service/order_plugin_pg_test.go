@@ -137,7 +137,7 @@ func TestPluginOrderPaidZeroPay(t *testing.T) {
 	if o.SubscriptionID == nil || subID != o.SubscriptionID.String() {
 		t.Fatalf("subscription_id %s vs 订单 %v", subID, o.SubscriptionID)
 	}
-	// 0 元单照旧代码口径：currency 为 ""、amount 为 0
+	// 0 元单：currency 为 ""、amount 为 0
 	if v, ok := paid["currency"]; !ok || v != "" {
 		t.Fatalf("currency %v", paid["currency"])
 	}
@@ -219,7 +219,7 @@ func TestPluginOrderCancelled(t *testing.T) {
 	}
 }
 
-// 超时作废：事件里的 reason 沿用旧值 reservation_expired，预留的 release_reason 仍是 expired。
+// 超时作废：事件里的 reason 固定是 reservation_expired，预留的 release_reason 仍是 expired。
 func TestPluginOrderExpiredReason(t *testing.T) {
 	e, ctx := newEnv(t)
 	rec := &pluginRec{}
@@ -249,7 +249,7 @@ func TestPluginOrderExpiredReason(t *testing.T) {
 	}
 }
 
-// 0 元续费照旧代码不发 order.paid（旧代码只有新购与流量包的 0 元单发）。
+// 0 元续费不发 order.paid（只有新购与流量包的 0 元单发，插件事件口径是产品决定）。
 func TestPluginZeroPayRenewalNoPaid(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
