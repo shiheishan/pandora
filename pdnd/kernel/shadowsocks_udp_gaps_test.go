@@ -360,6 +360,13 @@ func TestShadowsocksUDPDomainResolve(t *testing.T) {
 	if _, err := pc.WriteTo([]byte("d-3"), dst); err != nil {
 		t.Fatalf("发 d-3 失败：%v", err)
 	}
+	// 先等节点处理完 d-2、d-3（计为解析期丢包）再放行解析：否则 -race 下读循环还没轮到它们，
+	// 解析就已完成、缓存命中，它们会被正常转发。
+	if ok, why := waitFor(2*time.Second, func() (bool, string) {
+		return a.udpDrops.resolve.Load() == 2, fmt.Sprintf("resolve_drops=%d", a.udpDrops.resolve.Load())
+	}); !ok {
+		t.Fatalf("解析期间的 d-2、d-3 应被丢：%s", why)
+	}
 	if c := calls.Load(); c != 1 {
 		t.Fatalf("解析中解析调用次数=%d，期望 1", c)
 	}

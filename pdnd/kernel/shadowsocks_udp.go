@@ -18,6 +18,7 @@ type ssUDPDropStats struct {
 	rate     atomic.Uint64 // 上行超出限速
 	route    atomic.Uint64 // 目标的出站与会话的上游不一致
 	replay   atomic.Uint64 // salt 重放
+	resolve  atomic.Uint64 // 会话正在解析域名目标
 	downlink atomic.Uint64 // 下行编码失败、超出桶容量或写回临时出错
 }
 

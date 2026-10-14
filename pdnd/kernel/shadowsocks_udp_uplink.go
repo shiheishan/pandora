@@ -157,6 +157,7 @@ func (s *ssUDPSession) writeUplink(dest vlessDestination, payload []byte) (int, 
 	// 会话同时只解一个，解析期间到的包丢掉（UDP 允许丢包，客户端会重发）。
 	if s.resolving {
 		s.mu.Unlock()
+		s.adapter.udpDrops.resolve.Add(1)
 		return 0, nil
 	}
 	s.resolving = true

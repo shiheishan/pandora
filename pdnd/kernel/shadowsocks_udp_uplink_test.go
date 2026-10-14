@@ -154,6 +154,20 @@ func TestShadowsocksUDPDownlinkOnlyReleasesDevice(t *testing.T) {
 		t.Fatalf("在线应只剩别的设备：%v", ips)
 	}
 
+	// 客户端缓冲里还积着会话关闭前 trickle 推来的下行：读空它，并确认会话关闭后旧上游的
+	// 下行不再到客户端（trickle 每 20ms 仍往旧上游地址发，连续 300ms 读不到才算停了）。
+	drainUntil := time.Now().Add(2 * time.Second)
+	for {
+		_ = client.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+		if _, _, err := client.ReadFrom(buf); err != nil {
+			break
+		}
+		if time.Now().After(drainUntil) {
+			t.Fatal("会话关闭后旧上游的下行仍在到达客户端")
+		}
+	}
+	_ = client.SetReadDeadline(time.Time{})
+
 	a.online.leave(user, deviceWiringOtherIP)
 	if err := lifecycleSSUDPRoundTrip(client, echo, "devidle-back", 2*time.Second); err != nil {
 		t.Fatal(err)
