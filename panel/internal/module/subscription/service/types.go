@@ -470,11 +470,13 @@ type Link struct {
 	Expired bool
 }
 
-// NodePreview 是门户看到的一条线路：只有名称、协议与倍率，地址、端口与协议配置只经订阅链接下发。
+// NodePreview 是门户看到的一条线路：只有名称、协议、倍率与标签，地址、端口与协议配置只经订阅链接下发。
 type NodePreview struct {
 	Name        string
 	Protocol    string
 	TrafficRate float64
+	// Tags 是节点标签，Xboard 同样在门户节点列表展示；中转继承父节点的。
+	Tags []string
 }
 
 // MaxUsageDays 是按日用量一次最多回看的天数（约一个季度）。

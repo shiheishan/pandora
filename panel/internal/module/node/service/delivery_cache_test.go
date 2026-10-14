@@ -216,7 +216,7 @@ func TestDeliveryCacheGroupsDoNotMix(t *testing.T) {
 		t.Helper()
 		nodes, err := c.get(ctx, deliveryKey(v, group), func(context.Context) ([]render.Node, error) {
 			loads++
-			return deliverableFromRows(rows, group)
+			return deliverableFromRows(rows, group, time.Now(), time.UTC)
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -249,7 +249,7 @@ func TestDeliveryCacheConcurrentRender(t *testing.T) {
 		loads.Add(1)
 		// 让其余调用者在这次现算进行中到达，合并到同一次
 		time.Sleep(20 * time.Millisecond)
-		return deliverableFromRows(rows, nil)
+		return deliverableFromRows(rows, nil, time.Now(), time.UTC)
 	}
 	key := deliveryKey(uuid.New(), nil)
 	formats := []render.Format{render.FormatClash, render.FormatClashPremium, render.FormatSingbox, render.FormatURI}
@@ -291,7 +291,7 @@ func TestDeliveryCacheConcurrentRender(t *testing.T) {
 		t.Fatalf("现算 %d 次，期望 1 次（同键并发未命中应合并）", n)
 	}
 	// 渲染没改缓存里的东西：与重新算的一份逐项相同
-	want, err := deliverableFromRows(rows, nil)
+	want, err := deliverableFromRows(rows, nil, time.Now(), time.UTC)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,10 +355,10 @@ func TestDeliveryCacheLoadDetachesFromCaller(t *testing.T) {
 func TestDeliverableFromRowsBadConfig(t *testing.T) {
 	rows := groupFixtureRows(uuid.New())
 	rows[0].ProtocolConfig = `[1,2]`
-	if _, err := deliverableFromRows(rows, nil); err == nil {
+	if _, err := deliverableFromRows(rows, nil, time.Now(), time.UTC); err == nil {
 		t.Fatal("协议配置不是 JSON 对象应报错")
 	}
-	nodes, err := deliverableFromRows(nil, nil)
+	nodes, err := deliverableFromRows(nil, nil, time.Now(), time.UTC)
 	if err != nil || nodes == nil || len(nodes) != 0 {
 		t.Fatalf("空输入应是非 nil 空切片: %#v %v", nodes, err)
 	}

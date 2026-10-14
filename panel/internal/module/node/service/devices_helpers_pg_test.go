@@ -54,6 +54,7 @@ func newDevicesEnv(t *testing.T) (*devicesEnv, context.Context) {
 	subs := subsvc.New(subrepo.New(d), txm, auditSvc, nil, nil, nil, nil)
 	ids := identitysvc.New(identityrepo.New(d), txm, nil, auditSvc, keys, rdb, ratelimit.New(rdb), &config.Config{})
 	st := settingssvc.New(settingsrepo.New(d), txm, nil, rdb, auditSvc)
+	svc.UseSiteSettings(fakeSite{tz: "UTC"})
 	svc.UseCatalog(cat)
 	svc.UseDelivery(subs, ids, cat)
 	svc.UseDevices(st, subs, ids, cat)

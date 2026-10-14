@@ -8,7 +8,7 @@ import (
 	"github.com/aegispanel/aegis/internal/module/subscription/repo"
 )
 
-// MyNodes 是门户线路预览：本人一份生效中、有有效凭据的订阅能拿到的线路，只有名称、协议与倍率；永不为 nil。
+// MyNodes 是门户线路预览：本人一份生效中、有有效凭据的订阅能拿到的线路，只有名称、协议、倍率与标签；永不为 nil。
 // 不是本人的、不生效的、没有有效凭据的一律 ErrNotFound；线路来源没装配回 ErrDeliveryUnavailable。
 func (s *Service) MyNodes(ctx context.Context, subID uuid.UUID) ([]NodePreview, error) {
 	p, err := principal(ctx)
@@ -47,7 +47,12 @@ func (s *Service) MyNodes(ctx context.Context, subID uuid.UUID) ([]NodePreview, 
 	}
 	out := make([]NodePreview, 0, len(nodes))
 	for _, n := range nodes {
-		out = append(out, NodePreview{Name: n.Name, Protocol: n.Type, TrafficRate: n.TrafficRate})
+		out = append(out, NodePreview{
+			Name:        n.Name,
+			Protocol:    n.Type,
+			TrafficRate: n.TrafficRate,
+			Tags:        n.Tags,
+		})
 	}
 	return out, nil
 }
