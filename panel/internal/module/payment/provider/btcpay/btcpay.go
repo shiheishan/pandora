@@ -71,7 +71,7 @@ func New(cfg Config) (*Provider, error) {
 	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return nil, errors.New("btcpay: 服务地址非法")
 	}
-	if u.Scheme != "https" && !(cfg.AllowPrivateHost && u.Scheme == "http") {
+	if u.Scheme != "https" && (!cfg.AllowPrivateHost || u.Scheme != "http") {
 		return nil, errors.New("btcpay: 服务地址必须使用 https")
 	}
 	cfg.BaseURL = base
@@ -221,7 +221,7 @@ func (p *Provider) validateCheckoutLink(link string) error {
 	if err != nil || u.Host == "" {
 		return errors.New("btcpay: 发票付款链接非法")
 	}
-	if u.Scheme != "https" && !(p.cfg.AllowPrivateHost && u.Scheme == "http") {
+	if u.Scheme != "https" && (!p.cfg.AllowPrivateHost || u.Scheme != "http") {
 		return errors.New("btcpay: 发票付款链接非法")
 	}
 	return nil

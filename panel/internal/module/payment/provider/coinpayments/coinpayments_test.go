@@ -85,7 +85,7 @@ func TestSignKnownShape(t *testing.T) {
 }
 
 func TestCreatePayment(t *testing.T) {
-	var currencyHits atomic.Int32
+	var currencyHits, createHits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fullURL := srvURL(r)
 		switch {
@@ -95,7 +95,7 @@ func TestCreatePayment(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v2/merchant/invoices":
 			if !assertSigned(r, fullURL) {
 				t.Error("签名头缺失或不一致")
-				http.Error(w, "bad sig", 401)
+				http.Error(w, "bad sig", http.StatusUnauthorized)
 				return
 			}
 			body, _ := io.ReadAll(r.Body)
@@ -103,8 +103,13 @@ func TestCreatePayment(t *testing.T) {
 			if err := json.Unmarshal(body, &req); err != nil {
 				t.Fatal(err)
 			}
-			if req["currency"] != "1001" || req["invoiceId"] != "ORD-CREATE" {
-				t.Errorf("请求体字段不符: %v", req)
+			// 同一个假服务收两次建单（第二次验币种缓存），invoiceId 依次是 ORD-CREATE、ORD-CREATE-2
+			wantInvoice := "ORD-CREATE"
+			if createHits.Add(1) == 2 {
+				wantInvoice = "ORD-CREATE-2"
+			}
+			if req["currency"] != "1001" || req["invoiceId"] != wantInvoice {
+				t.Errorf("请求体字段不符（要 currency=1001、invoiceId=%s）: %#v", wantInvoice, req)
 			}
 			amt, _ := req["amount"].(map[string]any)
 			if amt["total"] != "10.30" {
@@ -153,6 +158,9 @@ func TestCreatePayment(t *testing.T) {
 	}
 	if currencyHits.Load() != 1 {
 		t.Errorf("第二次建单应走缓存，币种接口仍为 %d 次", currencyHits.Load())
+	}
+	if createHits.Load() != 2 {
+		t.Errorf("建单接口应调 2 次，实际 %d", createHits.Load())
 	}
 }
 

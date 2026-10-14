@@ -39,6 +39,14 @@ func webhookSig(body []byte, secret string) string {
 	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }
 
+// sigHeader 用 Set 写签名头：真实请求里 net/http 会把键规范成 Btcpay-Sig，
+// 字面量 http.Header{"BTCPay-Sig": …} 不规范，Header.Get 读不到。
+func sigHeader(sig string) http.Header {
+	h := http.Header{}
+	h.Set("BTCPay-Sig", sig)
+	return h
+}
+
 func TestNewRejectsBadConfig(t *testing.T) {
 	cases := []struct {
 		name string
@@ -256,7 +264,7 @@ func TestParseNotificationSettled(t *testing.T) {
 	body := webhookBody(testStoreID, "INV1", "InvoiceSettled")
 	n, err := p.ParseNotification(context.Background(), provider.Inbound{
 		Method: http.MethodPost,
-		Header: http.Header{"BTCPay-Sig": {webhookSig(body, testSecret)}},
+		Header: sigHeader(webhookSig(body, testSecret)),
 		Body:   body,
 	})
 	if err != nil {
@@ -301,7 +309,7 @@ func TestParseNotificationBadSignatureNoFetch(t *testing.T) {
 			*fetches = 0
 			n, err := p.ParseNotification(context.Background(), provider.Inbound{
 				Method: http.MethodPost,
-				Header: http.Header{"BTCPay-Sig": {tc.sig}},
+				Header: sigHeader(tc.sig),
 				Body:   body,
 			})
 			if err != nil {
@@ -330,7 +338,7 @@ func TestParseNotificationForeignStoreNoFetch(t *testing.T) {
 	body := webhookBody("OTHER", "INV1", "InvoiceSettled")
 	n, err := p.ParseNotification(context.Background(), provider.Inbound{
 		Method: http.MethodPost,
-		Header: http.Header{"BTCPay-Sig": {webhookSig(body, testSecret)}},
+		Header: sigHeader(webhookSig(body, testSecret)),
 		Body:   body,
 	})
 	if err != nil {
@@ -356,7 +364,7 @@ func TestParseNotificationMarkedIsPending(t *testing.T) {
 	body := webhookBody(testStoreID, "INV1", "InvoiceSettled")
 	n, err := p.ParseNotification(context.Background(), provider.Inbound{
 		Method: http.MethodPost,
-		Header: http.Header{"BTCPay-Sig": {webhookSig(body, testSecret)}},
+		Header: sigHeader(webhookSig(body, testSecret)),
 		Body:   body,
 	})
 	if err != nil {
@@ -382,7 +390,7 @@ func TestParseNotificationPartialExpiredFails(t *testing.T) {
 	body := webhookBody(testStoreID, "INV1", "InvoiceExpired")
 	n, err := p.ParseNotification(context.Background(), provider.Inbound{
 		Method: http.MethodPost,
-		Header: http.Header{"BTCPay-Sig": {webhookSig(body, testSecret)}},
+		Header: sigHeader(webhookSig(body, testSecret)),
 		Body:   body,
 	})
 	if err != nil {
@@ -408,7 +416,7 @@ func TestParseNotificationInvalidFails(t *testing.T) {
 	body := webhookBody(testStoreID, "INV1", "InvoiceInvalid")
 	n, err := p.ParseNotification(context.Background(), provider.Inbound{
 		Method: http.MethodPost,
-		Header: http.Header{"BTCPay-Sig": {webhookSig(body, testSecret)}},
+		Header: sigHeader(webhookSig(body, testSecret)),
 		Body:   body,
 	})
 	if err != nil {
@@ -428,7 +436,7 @@ func TestParseNotificationCurrency(t *testing.T) {
 		body := webhookBody(testStoreID, "INV1", "InvoiceSettled")
 		n, err := p.ParseNotification(context.Background(), provider.Inbound{
 			Method: http.MethodPost,
-			Header: http.Header{"BTCPay-Sig": {webhookSig(body, testSecret)}},
+			Header: sigHeader(webhookSig(body, testSecret)),
 			Body:   body,
 		})
 		if err != nil {
@@ -446,7 +454,7 @@ func TestParseNotificationCurrency(t *testing.T) {
 		body := webhookBody(testStoreID, "INV1", "InvoiceSettled")
 		_, err := p.ParseNotification(context.Background(), provider.Inbound{
 			Method: http.MethodPost,
-			Header: http.Header{"BTCPay-Sig": {webhookSig(body, testSecret)}},
+			Header: sigHeader(webhookSig(body, testSecret)),
 			Body:   body,
 		})
 		if err == nil {
@@ -463,7 +471,7 @@ func TestParseNotificationBadAmount(t *testing.T) {
 	body := webhookBody(testStoreID, "INV1", "InvoiceSettled")
 	_, err := p.ParseNotification(context.Background(), provider.Inbound{
 		Method: http.MethodPost,
-		Header: http.Header{"BTCPay-Sig": {webhookSig(body, testSecret)}},
+		Header: sigHeader(webhookSig(body, testSecret)),
 		Body:   body,
 	})
 	if err == nil {
@@ -479,7 +487,7 @@ func TestParseNotificationReplayStableEventID(t *testing.T) {
 	body := webhookBody(testStoreID, "INV1", "InvoiceSettled")
 	in := provider.Inbound{
 		Method: http.MethodPost,
-		Header: http.Header{"BTCPay-Sig": {webhookSig(body, testSecret)}},
+		Header: sigHeader(webhookSig(body, testSecret)),
 		Body:   body,
 	}
 	n1, err := p.ParseNotification(context.Background(), in)

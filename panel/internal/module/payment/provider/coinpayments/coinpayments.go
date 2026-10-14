@@ -95,7 +95,7 @@ func New(cfg Config) (*Provider, error) {
 	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return nil, fmt.Errorf("coinpayments: BaseURL 不得包含用户、查询串或片段: %q", base)
 	}
-	if u.Scheme != "https" && !(cfg.AllowPrivateHost && u.Scheme == "http") {
+	if u.Scheme != "https" && (!cfg.AllowPrivateHost || u.Scheme != "http") {
 		return nil, errors.New("coinpayments: BaseURL 必须使用 https")
 	}
 	cfg.BaseURL = strings.TrimRight(u.String(), "/")
