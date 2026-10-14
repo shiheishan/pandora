@@ -11,20 +11,18 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 
 	"github.com/aegispanel/aegis/internal/module/payment/model"
+	"github.com/aegispanel/aegis/internal/pkg/db"
 	"github.com/aegispanel/aegis/internal/pkg/testkit"
 )
 
+// pgCode 取约束违例的 SQLSTATE，取不到返回空串。
 func pgCode(err error) string {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
-		return pgErr.Code
-	}
-	return ""
+	v, _ := db.AsViolation(err)
+	return v.Code
 }
 
 func mkUser(t *testing.T, g *gorm.DB) uuid.UUID {

@@ -4,9 +4,6 @@ package repo
 import (
 	"errors"
 
-	"github.com/jackc/pgx/v5/pgconn"
-	"gorm.io/gorm"
-
 	"github.com/aegispanel/aegis/internal/pkg/db"
 )
 
@@ -53,31 +50,13 @@ var (
 	ErrFrozen = errors.New("catalog: 已发布目录快照不可修改")
 )
 
-// mapErr 把 GORM 翻译后的约束错误与冻结触发器的 23001 转成模块哨兵。
-func mapErr(err error) error {
-	if err == nil {
-		return nil
-	}
-	switch {
-	case errors.Is(err, gorm.ErrDuplicatedKey):
-		return ErrDuplicate
-	case errors.Is(err, gorm.ErrForeignKeyViolated):
-		return ErrForeignKey
-	case errors.Is(err, gorm.ErrCheckConstraintViolated):
-		return ErrCheck
-	}
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
-		switch pgErr.Code {
-		case "23001":
-			return ErrFrozen
-		case "23505":
-			return ErrDuplicate
-		case "23503":
-			return ErrForeignKey
-		case "23514":
-			return ErrCheck
-		}
-	}
-	return err
-}
+// constraintErrs 把约束违例翻译成本模块哨兵（统一做法见 internal/pkg/db/constraint.go）。
+var constraintErrs = db.ConstraintErrors{ByCode: map[string]error{
+	db.CodeUnique:     ErrDuplicate,
+	db.CodeForeignKey: ErrForeignKey,
+	db.CodeCheck:      ErrCheck,
+	db.CodeRestrict:   ErrFrozen,
+}}
+
+// mapErr 把约束违例翻译成本模块哨兵，并包住原错误。
+func mapErr(err error) error { return constraintErrs.Map(err) }
