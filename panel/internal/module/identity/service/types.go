@@ -212,5 +212,5 @@ func DeletedEmail(id uuid.UUID) string {
 	return "deleted-" + strings.ReplaceAll(id.String(), "-", "") + "@deleted.invalid"
 }
 
-// DeletedShortID 是界面上「已注销 #<短 id>」用的 id 末 8 位。
-func DeletedShortID(id uuid.UUID) string { s := id.String(); return s[len(s)-8:] }
+// DeletedShortID 是界面上「已注销 #<短 id>」用的 id 前 8 位，与后台各处显示的短 id（前端 shortId）同一口径。
+func DeletedShortID(id uuid.UUID) string { return id.String()[:8] }

@@ -6,6 +6,7 @@ import { DevicePolicy } from './DevicePolicy'
 import { GroupsTab } from './GroupsTab'
 import { isStatusFilter } from './model'
 import { ResetsTab } from './Resets'
+import { SignupTab } from './SignupTab'
 import { isDrawerTab, UserDrawer, type DrawerTab } from './UserDrawer'
 import { UserList, type ListState } from './UserList'
 
@@ -15,6 +16,7 @@ export default function Users({ tab, rest }: AdminScreenProps) {
   if (tab === 'bulk') return <BulkTab now={now} />
   if (tab === 'devices') return <DevicePolicy now={now} />
   if (tab === 'resets') return <ResetsTab />
+  if (tab === 'signup') return <SignupTab />
   return <ListTab rest={rest} now={now} />
 }
 

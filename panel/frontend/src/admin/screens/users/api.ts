@@ -13,7 +13,8 @@ export { type OrderRow, type OrderStatus } from '../billing/schemas'
 // ---------------------------------------------------------------------------
 // 封闭枚举（迁移里的 CHECK）：未知值判为不符约定
 // ---------------------------------------------------------------------------
-const USER_STATUSES = ['pending', 'active', 'suspended', 'banned', 'deletion_scheduled', 'anonymized'] as const
+// deleted：后台注销并匿名化（迁移 00040），邮箱换成占位值，界面显示「已注销 #<短 id>」
+const USER_STATUSES = ['pending', 'active', 'suspended', 'banned', 'deletion_scheduled', 'anonymized', 'deleted'] as const
 const RISK_LEVELS = ['trusted', 'normal', 'elevated', 'high'] as const
 const SUB_STATUSES = ['active', 'expired'] as const
 export type UserStatus = (typeof USER_STATUSES)[number]
@@ -62,7 +63,8 @@ export type UserRow = z.output<typeof userRowSchema>
 // GET v1/users/{id}：列表行 + 资料、全部订阅（含配额与设备）、最近 20 单、是否管理员、统计
 // （列表行里的 subscription_count / active_plan / current_subscription 在这里是零值，不用）
 // ---------------------------------------------------------------------------
-const quotaSchema = z.object({ metric: z.string(), limit: int.nullable(), consumed: count, remaining: int.nullable() })
+// period：配额周期（total / cycle / day / month），后台改流量上限按「指标 + 周期」定位一行
+const quotaSchema = z.object({ metric: z.string(), period: z.string(), limit: int.nullable(), consumed: count, remaining: int.nullable() })
 const subscriptionSchema = z.object({
   id: z.string(),
   // 用户起的备注名（购买模型统一）：没起为 null；后台只读，改名是用户在门户里做的事
@@ -94,6 +96,10 @@ export const userDetailSchema = z.object({
   // 还没加到任何一份的流量包余量（字节，与门户 v1/me/subscriptions 同名同口径）：节点不会用它，
   // 用户开通第一份订阅时自动挂上，或在门户里自己挑一份挂上
   unattached_pack_bytes: count,
+  // 后台备注（只在后台详情出现）；没写为 null
+  admin_note: z.string().nullable(),
+  // 注销时间；没注销为 null
+  deleted_at: time.nullable(),
 })
 export type UserDetail = z.output<typeof userDetailSchema>
 export type PaidTotal = UserDetail['stats']['paid_totals'][number]
@@ -153,6 +159,14 @@ export const extendedSchema = z.object({
 })
 
 export const groupSavedSchema = z.object({ id: z.string() })
+
+// 后台改邮箱 / 备注 / 邀请人 / 注销（xb-reg）
+export const emailSetSchema = z.object({ ok: z.literal(true), email: z.string() })
+export const userDeletedSchema = z.object({ ok: z.literal(true), short_id: z.string(), terminated_subscriptions: count })
+// POST v1/subscriptions/{id}/period-end：直接改到期时刻（只改生效中的）
+export const periodEndSetSchema = z.object({ subscription_id: z.string(), user_id: z.string(), previous_end: time, period_end: time })
+// POST v1/users/bulk/ban：skipped 的键是 self / admin / already_banned / deleted，只列出现过的
+export const bulkBanSchema = z.object({ banned: count, skipped: z.record(z.string(), count) })
 
 // ---------------------------------------------------------------------------
 // 批量运营：预览 / 生成 / 群发（筛选字段直接放在请求体顶层；后端 DisallowUnknownFields，空值不传）

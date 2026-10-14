@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import type { MockContext, MockModule } from '../types.ts'
+import { editRoutes } from './users-edit.ts'
 import { opsRoutes } from './users-ops.ts'
+import { subEditRoutes } from './users-sub-edit.ts'
 
 // ---------------------------------------------------------------------------
 // 数据：确定性生成，vite 重启即复原。前 6 个用户的 id 与仪表盘流量排行里的一致，
@@ -40,7 +42,7 @@ export interface User {
   id: string
   email: string
   display_name: string | null
-  status: 'pending' | 'active' | 'suspended' | 'banned' | 'deletion_scheduled' | 'anonymized'
+  status: 'pending' | 'active' | 'suspended' | 'banned' | 'deletion_scheduled' | 'anonymized' | 'deleted'
   risk_level: 'trusted' | 'normal' | 'elevated' | 'high'
   group_id: string | null
   created_at: string
@@ -55,6 +57,10 @@ export interface User {
   telegram: { username: string; bound_at: string } | null
   /** 后台不分角色：是不是管理员 */
   is_admin: boolean
+  /** 后台备注（只在后台详情出现）；缺省视为 null */
+  admin_note?: string | null
+  /** 注销时间；缺省视为 null（没注销） */
+  deleted_at?: string | null
 }
 
 export interface Group {
@@ -321,7 +327,7 @@ function detail(u: User) {
         current_period_end: s.current_period_end,
         amount: s.amount,
         currency: s.currency,
-        quotas: [{ metric: 'traffic.bytes', limit: s.traffic_limit, consumed: s.traffic_used, remaining: s.traffic_limit === null ? null : Math.max(0, s.traffic_limit - s.traffic_used) }],
+        quotas: [{ metric: 'traffic.bytes', period: 'cycle', limit: s.traffic_limit, consumed: s.traffic_used, remaining: s.traffic_limit === null ? null : Math.max(0, s.traffic_limit - s.traffic_used) }],
         device_limit_override: s.device_limit_override,
         plan_max_devices: s.plan_max_devices,
         online_devices: s.online_devices,
@@ -339,6 +345,8 @@ function detail(u: User) {
     referrer: referrer ? { id: referrer.id, email: referrer.email } : null,
     telegram: u.telegram,
     unattached_pack_bytes: u.unattached_bytes,
+    admin_note: u.admin_note ?? null,
+    deleted_at: u.deleted_at ?? null,
   }
 }
 
@@ -527,6 +535,9 @@ export const users_: MockModule = {
 
     // 运营类：用户组增删改、批量运营、设备策略、流量重置（users-ops.ts）
     ...opsRoutes({ users, groups: GROUPS, current, hasSubState, effectiveLimit, exclusivePools: exclusivePoolsOf }),
+    // 后台改邮箱 / 显示名与备注 / 邀请人、注销（users-edit.ts）；改单份订阅的到期与流量上限（users-sub-edit.ts）
+    ...editRoutes({ users }),
+    ...subEditRoutes({ users }),
   },
 }
 
