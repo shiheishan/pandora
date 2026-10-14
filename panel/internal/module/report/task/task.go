@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	// TypeActivity 每 10 分钟重算前天与昨天的行为汇总（已定稿的跳过）。
+	// TypeActivity 每 10 分钟重算前天、昨天与今天的行为汇总（已定稿的跳过）；读路径直接用这张表。
 	TypeActivity = "report:activity_daily"
 	// TypeRetention 每天清理 400 天以前的行为汇总。
 	TypeRetention = "retention:activity_daily"
