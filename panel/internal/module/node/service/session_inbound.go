@@ -13,8 +13,9 @@ import (
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
 )
 
+// log 是这条会话的 logger：server_id 已由 gRPC 鉴权拦截器挂在 ctx 的 logger 上，这里只加 session_id。
 func (s *Session) log(ctx context.Context) *zap.Logger {
-	return plog.From(ctx).With(zap.String("server_id", s.serverID.String()), zap.String("session_id", s.id))
+	return plog.From(ctx).With(zap.String("session_id", s.id))
 }
 
 // HandleHeartbeat 记一拍心跳：服务器的最后心跳时间（每拍写）、各节点运行状态（只在变化时写）、机器指标。

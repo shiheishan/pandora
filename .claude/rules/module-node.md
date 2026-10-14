@@ -8,6 +8,7 @@ paths:
 ## 通道与装配
 - 节点只走 gRPC：`EnrollmentService.Enroll`（首次接入）与 `ControlService.Session`（mTLS 双向流），实现见 `panel/internal/module/node/grpc/`；业务在 `service/session*.go`、`session_store.go`、`session_inbound.go`。不再有 UniProxy HTTP、Ed25519 签名心跳、节点 SSE。
 - 会话管理器在启动时装配：`NewSessions` → `UseSessions`；`serve` 里 `go m.Run(ctx)`，gRPC `GracefulStop` 前先 `Sessions.Shutdown`（`service/session.go` 文件头注释）。
+- 节点日志的 `server_id` 只由鉴权拦截器挂到流 ctx 的 logger 上（`grpc/interceptors.go` 的 `authorize`）；`control.go` 的 `withStreamLogger` 只管 req_id，会话层只加 `session_id`，不要再 `With` 一次 server_id。
 
 ## 下发纪元（Redis）
 - 会影响名单的写：事务里 `MarkUsersChanged`；会影响节点配置文档的写：`MarkConfigChanged`（`service/epoch.go`）。提交后 `INCR node:users_epoch` / `node:config_epoch` 并 `PUBLISH node:changed`；丢通知时 `EpochPoll`（缺省 5s）与 `FullResync`（缺省 15s）兜底（`service/session.go`）。

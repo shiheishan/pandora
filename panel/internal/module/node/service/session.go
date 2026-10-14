@@ -10,6 +10,7 @@ package service
 //     先取号的读晚到时直接丢掉。保证的是：取号之前已提交的变更，这次读一定看得到；取号之后才提交的变更，
 //     提交后会推进纪元、触发新一轮，新一轮的序号更大，最终以它为准。序号大不代表读到的数据一定更新（两次读可能交错），
 //     由「每次提交后必有一轮序号更大的重算」兜底。
+//   - 日志：server_id 只由 gRPC 鉴权拦截器挂在流 ctx 的 logger 上（grpc/interceptors.go），会话层只加 session_id。
 
 import (
 	"bytes"
@@ -224,7 +225,8 @@ func (m *Sessions) OpenVerified(ctx context.Context, serverID uuid.UUID, h Hello
 		sid = uuid.New()
 	}
 	s := newSession(m, serverID, sid.String(), h)
-	log := plog.From(ctx).With(zap.String("server_id", serverID.String()), zap.String("session_id", s.id))
+	// server_id 已由 gRPC 鉴权拦截器挂在 ctx 的 logger 上
+	log := plog.From(ctx).With(zap.String("session_id", s.id))
 
 	at := m.now()
 	s.enqueue(Outbound{Kind: OutWelcome, Welcome: Welcome{
