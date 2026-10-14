@@ -147,6 +147,8 @@ function validateTemplate(format: SubFormat, content: string): Record<string, st
   if (bytes(content) > MAX_TEMPLATE_BYTES) return { content: '模板不能超过 256 KB' }
   for (const p of PLACEHOLDERS[format]) {
     if (p.required && !content.includes(p.token)) return { content: '缺少占位 ' + p.token }
+    // 与后端 ValidateTemplate 一致：必需占位只能出现一次
+    if (p.required && content.split(p.token).length > 2) return { content: p.token + ' 只能出现一次' }
   }
   return null
 }

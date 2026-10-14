@@ -61,7 +61,16 @@ func loonField(s string) string {
 	return s
 }
 
+// nodeToLoon 在拼好一行后检查换行：Loon 一行一个节点，字段里的 \r/\n 会把配置拆成多行。
 func nodeToLoon(n Node, uuid string) (string, string) {
+	line, reason := loonNodeLine(n, uuid)
+	if line != "" && strings.ContainsAny(line, "\r\n") {
+		return "", "字段里有换行，写不进 Loon 的一行"
+	}
+	return line, reason
+}
+
+func loonNodeLine(n Node, uuid string) (string, string) {
 	port := strconv.Itoa(n.Port)
 	name := n.Name
 

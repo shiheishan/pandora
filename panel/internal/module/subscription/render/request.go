@@ -287,10 +287,27 @@ func infoNode(name string) Node {
 }
 
 // lineSafeName 把 Loon / Surfboard 一行写法里有含义的字符换掉：= 与 , 分隔字段，" 是引号，
-// 行首的 [ 会被当成段名，换行会断行。
+// 行首的 [ 会被当成段名，换行会断行；行首的 #、;、// 会让整行变成注释。
 func lineSafeName(name string) string {
 	r := strings.NewReplacer("=", " ", ",", " ", "\"", "'", "[", "【", "]", "】", "\r", " ", "\n", " ", "\t", " ")
-	return strings.Join(strings.Fields(r.Replace(name)), " ")
+	s := strings.Join(strings.Fields(r.Replace(name)), " ")
+	for {
+		s = strings.TrimLeft(s, " \t")
+		if strings.HasPrefix(s, "//") {
+			s = s[2:]
+			continue
+		}
+		if strings.HasPrefix(s, "#") {
+			s = s[1:]
+			continue
+		}
+		if strings.HasPrefix(s, ";") {
+			s = s[1:]
+			continue
+		}
+		break
+	}
+	return s
 }
 
 // splitInfo 把信息节点与真实节点分开（各自保持顺序）。

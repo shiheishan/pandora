@@ -112,6 +112,35 @@ func TestLinksUseLinkBaseURLs(t *testing.T) {
 	}
 }
 
+// TestPullNewFormatsWriteFetchLog 钉住迁移里 fetch log 的 format CHECK 与 render.Format 常量一致。
+func TestPullNewFormatsWriteFetchLog(t *testing.T) {
+	de, ctx, _, sub, token := setupPull(t)
+	de.nodes.nodes = []render.Node{
+		{Name: "香港 01", Type: "vless", Host: "hk.example.test", Port: 443, Config: map[string]any{}, TrafficRate: 1},
+		{Name: "香港 SS", Type: "shadowsocks", Host: "ss.example.test", Port: 8388, Config: map[string]any{"method": "aes-128-gcm"}, TrafficRate: 1},
+	}
+
+	formats := []render.Format{
+		render.FormatStash,
+		render.FormatShadowrocket,
+		render.FormatLoon,
+		render.FormatSurfboard,
+		render.FormatSIP008,
+	}
+	for _, f := range formats {
+		res, err := de.svc.Pull(ctx, PullRequest{Prefix: testPrefix, Token: token, Target: string(f)})
+		if err != nil {
+			t.Fatalf("拉取格式 %s 失败：%v", f, err)
+		}
+		if len(res.Body) == 0 {
+			t.Fatalf("拉取格式 %s 正文为空", f)
+		}
+		if n := countRows(t, de.env, ctx, "SELECT count(*) FROM subscription_fetch_log WHERE subscription_id = ? AND result = 'ok' AND format = ?", sub.ID, string(f)); n != 1 {
+			t.Fatalf("格式 %s 的成功拉取日志行数应为 1，实际为 %d", f, n)
+		}
+	}
+}
+
 // decodeURIBody 解开 URI 订阅的整体 base64。
 func wiringURIBody(t *testing.T, b []byte) string {
 	t.Helper()

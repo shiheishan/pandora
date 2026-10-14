@@ -1,13 +1,20 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
+
 	"github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/httpx"
+	"github.com/aegispanel/aegis/internal/pkg/route"
 )
 
 // templateSvc 是后台订阅模板接口的替身。
@@ -173,5 +180,93 @@ func TestAdminPreviewTemplate(t *testing.T) {
 	got := decMap(t, w)
 	if got["body"] != "body" || got["content_type"] != "text/plain; charset=utf-8" || got["node_count"] != float64(3) {
 		t.Fatalf("body: %v", got)
+	}
+}
+
+func TestAdminTemplateWritesRequireReauth(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	e := gin.New()
+	e.Use(httpx.RequestID(zap.NewNop()), httpx.Errors())
+	pass := func(c *gin.Context) { c.Next() }
+	reauth := func(c *gin.Context) {
+		if c.GetHeader("X-Test-Reauth") != "1" {
+			httpx.Fail(c, errs.New(errs.ReauthRequired))
+			return
+		}
+		c.Next()
+	}
+	kit := route.Kit{
+		RequireAuth:  pass,
+		RecentReauth: reauth,
+		Idempotency:  func(string) gin.HandlerFunc { return pass },
+		Switch:       func(string) gin.HandlerFunc { return pass },
+	}
+	f := &templateSvc{
+		detail:  service.TemplateDetail{Format: "clash", Content: "x"},
+		preview: service.TemplatePreview{Body: "b", NodeCount: 1},
+	}
+	New(f, nil, 0).RegisterAdmin(e.Group("/v1"), kit)
+
+	// 不带头：PUT 与 DELETE 被近期重认证拦截（403 reauth_required），替身不被调用
+	f.gotFormat = ""
+	w := do(e, http.MethodPut, "/v1/subscription-templates/clash", `{"content":"x"}`)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("PUT 无重认证应为 403: %d body=%s", w.Code, w.Body.String())
+	}
+	if errObj := decMap(t, w)["error"].(map[string]any); errObj["code"] != "reauth_required" {
+		t.Fatalf("PUT 错误码应为 reauth_required: %v", errObj["code"])
+	}
+	if f.gotFormat != "" {
+		t.Fatalf("PUT 替身不应被调用: gotFormat=%q", f.gotFormat)
+	}
+
+	f.gotFormat = ""
+	w = do(e, http.MethodDelete, "/v1/subscription-templates/clash", "")
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("DELETE 无重认证应为 403: %d body=%s", w.Code, w.Body.String())
+	}
+	if errObj := decMap(t, w)["error"].(map[string]any); errObj["code"] != "reauth_required" {
+		t.Fatalf("DELETE 错误码应为 reauth_required: %v", errObj["code"])
+	}
+	if f.gotFormat != "" {
+		t.Fatalf("DELETE 替身不应被调用: gotFormat=%q", f.gotFormat)
+	}
+
+	// 不带头：读与预览接口放行，返回 200
+	w = do(e, http.MethodGet, "/v1/subscription-templates", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET 列表应放行 200: %d body=%s", w.Code, w.Body.String())
+	}
+
+	f.gotFormat = ""
+	w = do(e, http.MethodGet, "/v1/subscription-templates/clash", "")
+	if w.Code != http.StatusOK || f.gotFormat != "clash" {
+		t.Fatalf("GET 详情应放行 200: %d format=%q", w.Code, f.gotFormat)
+	}
+
+	f.gotFormat = ""
+	w = do(e, http.MethodPost, "/v1/subscription-templates/clash/preview", `{"content":""}`)
+	if w.Code != http.StatusOK || f.gotFormat != "clash" {
+		t.Fatalf("POST 预览应放行 200: %d format=%q", w.Code, f.gotFormat)
+	}
+
+	// 带 X-Test-Reauth: 1：PUT 与 DELETE 放行，返回 200
+	f.gotFormat = ""
+	req := httptest.NewRequest(http.MethodPut, "/v1/subscription-templates/clash", bytes.NewBufferString(`{"content":"x"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Test-Reauth", "1")
+	w = httptest.NewRecorder()
+	e.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || f.gotFormat != "clash" {
+		t.Fatalf("带重认证 PUT 应为 200: %d format=%q body=%s", w.Code, f.gotFormat, w.Body.String())
+	}
+
+	f.gotFormat = ""
+	req = httptest.NewRequest(http.MethodDelete, "/v1/subscription-templates/clash", nil)
+	req.Header.Set("X-Test-Reauth", "1")
+	w = httptest.NewRecorder()
+	e.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || f.gotFormat != "clash" {
+		t.Fatalf("带重认证 DELETE 应为 200: %d format=%q body=%s", w.Code, f.gotFormat, w.Body.String())
 	}
 }

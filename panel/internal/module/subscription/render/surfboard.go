@@ -82,7 +82,16 @@ func renderSurfboard(rc renderCtx) ([]byte, string, int) {
 	return []byte(body), "text/plain; charset=utf-8", len(realLines)
 }
 
+// nodeToSurfboard 在拼好一行后检查换行：Surfboard 一行一个节点，字段里的 \r/\n 会把配置拆成多行。
 func nodeToSurfboard(n Node, uuid string) (string, string) {
+	line, reason := surfboardNodeLine(n, uuid)
+	if line != "" && strings.ContainsAny(line, "\r\n") {
+		return "", "字段里有换行，写不进 Surfboard 的一行"
+	}
+	return line, reason
+}
+
+func surfboardNodeLine(n Node, uuid string) (string, string) {
 	port := strconv.Itoa(n.Port)
 	name := n.Name
 
