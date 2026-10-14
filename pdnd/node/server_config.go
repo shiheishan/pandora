@@ -13,7 +13,6 @@ import (
 
 	nodev1 "github.com/aegispanel/nodeapi/pandora/node/v1"
 
-	"github.com/aegispanel/nodeagent/core"
 	"github.com/aegispanel/nodeagent/panel"
 )
 
@@ -222,13 +221,11 @@ func (s *Server) retryFailedConfig(n *Node, now time.Time) {
 }
 
 // reportHealth 是内务节拍：切换后稳定够久、内核确认入站就绪，就报 health_passed。
-// 内核没有就绪探测契约时不报。
 func (s *Server) reportHealth(n *Node, now time.Time) {
 	if !n.healthPending || !n.started || n.failed != nil || now.Sub(n.appliedAt) < healthStabilityWindow {
 		return
 	}
-	readiness, ok := s.kernel.(core.InboundReadiness)
-	if !ok || readiness.InboundReady(n.tag) != nil {
+	if s.kernel.InboundReady(n.tag) != nil {
 		return
 	}
 	if s.sendConfigAck(n, n.appliedSHA, nodev1.ConfigPhase_CONFIG_PHASE_HEALTH_PASSED, "", "") {

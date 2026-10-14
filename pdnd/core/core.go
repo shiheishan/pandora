@@ -64,8 +64,7 @@ type Route struct {
 type Routing struct {
 	Outbounds []Outbound
 	Routes    []Route
-	// Final is the fail-closed route target. Empty means the built-in direct
-	// outbound for backward-compatible panel payloads.
+	// Final 是未命中规则时的出站；空表示走内置 direct 出站（面板没给 final 时）。
 	Final string
 }
 
@@ -79,8 +78,19 @@ type Core interface {
 	Start(ctx context.Context) error
 	Close() error
 
-	// AddInbound 启动一个入站。重复调用同一 Tag 应当先移除旧的。
-	AddInbound(cfg *InboundConfig) error
+	// ApplyInbound 把一个入站和它的出站与分流当一代整体校验并装上，替换同 tag 正在服务的那一代；
+	// routing 为 nil 表示该入站直出。失败时若旧一代还在服务，返回 *ConfigApplyError{PreviousPreserved: true}。
+	//
+	// 按入站而不是按内核设置分流，是因为一个节点端进程会同时服务多个节点，
+	// 而每个节点有自己的分流策略 —— 节点 A 要 Netflix 走中转甲、
+	// 节点 B 要走中转乙是完全正常的需求。内核内部只有一张路由表，
+	// 实现时必须把各节点的规则用「入站限定」隔开，否则会互相污染。
+	ApplyInbound(cfg *InboundConfig, routing *Routing) error
+
+	// ApplyInboundWithUsers 同 ApplyInbound，但先把 users 装进新入站、再开始 accept（先有名单、再开 accept）。
+	// 入站已装好、名单没装上时返回的错误实现 UsersPreloadFailed() bool 且返回 true（调用方按「入站成功、用户待同步」处理）。
+	ApplyInboundWithUsers(cfg *InboundConfig, routing *Routing, users []User) error
+
 	DelInbound(tag string) error
 
 	// AddUsers 增量添加。已存在的 UUID 应当被忽略而不是报错 ——
@@ -103,37 +113,17 @@ type Core interface {
 	// OnlineIPs 返回各用户当前的活跃来源 IP，用于设备数限制。
 	OnlineIPs(tag string) map[int64][]string
 
-	// SetRouting 设置某个入站的出站与分流。传 nil 表示该入站恢复直出。
-	//
-	// 按入站而不是按内核设置，是因为一个节点端进程会同时服务多个节点，
-	// 而每个节点有自己的分流策略 —— 节点 A 要 Netflix 走中转甲、
-	// 节点 B 要走中转乙是完全正常的需求。内核内部只有一张路由表，
-	// 实现时必须把各节点的规则用「入站限定」隔开，否则会互相污染。
-	SetRouting(inboundTag string, r *Routing) error
-}
-
-// ConfigApplier is an optional stronger contract implemented by runtimes that
-// can validate an inbound and its routing as one generation before replacing
-// the currently serving generation.
-type ConfigApplier interface {
-	ApplyInbound(cfg *InboundConfig, routing *Routing) error
-}
-
-// InboundReadiness is an optional runtime health contract. Implementations
-// must only return nil while tag identifies the currently published inbound
-// generation and that generation still owns its live runtime resources.
-//
-// The node deliberately treats a missing readiness implementation as not
-// ready for effective-release health reports. This prevents a successful
-// configuration method call from being mistaken for a serving data plane.
-type InboundReadiness interface {
+	// InboundReady 只有 tag 是当前发布的那一代、且仍持有运行资源时返回 nil。
 	InboundReady(tag string) error
+
+	// SetInboundOwner 登记入站属于哪台服务器（scope 是服务器身份的不透明哈希）的哪个节点；
+	// 只影响端口冲突原因里能不能写出占用者节点 id。
+	SetInboundOwner(tag, scope, nodeID string)
 }
 
-// ConfigApplyError reports whether a failed generation-level update left the
-// previous inbound and routing available. Runtime user state may have been
-// rebuilt, so callers still own rehydrating their authoritative user snapshot.
-// Callers must not reinstall the inbound when PreviousPreserved is true.
+// ConfigApplyError 报告整代更新失败时，上一代入站与分流是否仍可用。
+// 运行时用户状态可能已被重建，调用方仍须按自己的权威用户快照补水。
+// PreviousPreserved 为 true 时调用方不得再重装入站。
 type ConfigApplyError struct {
 	Err               error
 	PreviousPreserved bool

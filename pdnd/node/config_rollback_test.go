@@ -10,7 +10,7 @@ import (
 	"github.com/aegispanel/nodeagent/core"
 )
 
-// health_passed 要入站在服务、切换后稳定够久、内核确认就绪；内核没有就绪契约时不报。
+// health_passed 要入站在服务、切换后稳定够久、内核确认就绪。
 func TestHealthPassedRequiresStabilityAndReadiness(t *testing.T) {
 	kernel := &rollbackCore{ready: true}
 	ts := newTestServer(t, kernel, "")
@@ -38,12 +38,6 @@ func TestHealthPassedRequiresStabilityAndReadiness(t *testing.T) {
 		t.Fatal("内核没就绪也报了 health_passed")
 	}
 	kernel.ready = true
-	ts.kernel = &coreWithoutReadiness{Core: kernel}
-	ts.reportHealth(n, now.Add(2*healthStabilityWindow))
-	if hasHealth() {
-		t.Fatal("内核没有就绪契约也报了 health_passed")
-	}
-	ts.kernel = kernel
 	ts.reportHealth(n, now.Add(healthStabilityWindow))
 	if !hasHealth() || n.healthPending {
 		t.Fatal("稳定窗口过后没报 health_passed")
@@ -67,8 +61,6 @@ type rollbackCore struct {
 	ready            bool
 }
 
-type coreWithoutReadiness struct{ core.Core }
-
 func (c *rollbackCore) InboundReady(string) error {
 	if !c.ready {
 		return errors.New("inbound is not ready")
@@ -86,10 +78,14 @@ func (c *preservingCore) ApplyInbound(cfg *core.InboundConfig, routing *core.Rou
 	if c.applyCalls > 1 {
 		return &core.ConfigApplyError{Err: errors.New("preflight rejected"), PreviousPreserved: true}
 	}
-	if err := c.AddInbound(cfg); err != nil {
+	return c.rollbackCore.ApplyInbound(cfg, routing)
+}
+
+func (c *preservingCore) ApplyInboundWithUsers(cfg *core.InboundConfig, routing *core.Routing, users []core.User) error {
+	if err := c.ApplyInbound(cfg, routing); err != nil {
 		return err
 	}
-	return c.SetRouting(cfg.Tag, routing)
+	return c.AddUsers(cfg.Tag, users)
 }
 
 func (c *rollbackCore) Type() string                                  { return "rollback-test" }
@@ -98,12 +94,33 @@ func (c *rollbackCore) Close() error                                  { return n
 func (c *rollbackCore) DelUsers(string, []string) error               { return nil }
 func (c *rollbackCore) GetTraffic(string) ([]core.UserTraffic, error) { return nil, nil }
 func (c *rollbackCore) OnlineIPs(string) map[int64][]string           { return nil }
+func (c *rollbackCore) SetInboundOwner(string, string, string)        {}
 
 func (c *rollbackCore) AddInbound(cfg *core.InboundConfig) error {
 	copyCfg := *cfg
 	c.current = &copyCfg
 	c.users = nil
 	return nil
+}
+
+// ApplyInbound 整代装入站：建入站、设分流；分流被拒就撤掉新入站（不保留旧一代）。
+func (c *rollbackCore) ApplyInbound(cfg *core.InboundConfig, routing *core.Routing) error {
+	if err := c.AddInbound(cfg); err != nil {
+		return err
+	}
+	if err := c.SetRouting(cfg.Tag, routing); err != nil {
+		_ = c.DelInbound(cfg.Tag)
+		return err
+	}
+	return nil
+}
+
+// ApplyInboundWithUsers 先整代装入站，再装名单。
+func (c *rollbackCore) ApplyInboundWithUsers(cfg *core.InboundConfig, routing *core.Routing, users []core.User) error {
+	if err := c.ApplyInbound(cfg, routing); err != nil {
+		return err
+	}
+	return c.AddUsers(cfg.Tag, users)
 }
 
 func (c *rollbackCore) DelInbound(string) error {

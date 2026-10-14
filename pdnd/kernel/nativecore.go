@@ -124,7 +124,6 @@ func (c *NativeCore) adapterHooks(plane DataPlane) AdapterHooks {
 }
 
 var _ core.Core = (*NativeCore)(nil)
-var _ core.InboundReadiness = (*NativeCore)(nil)
 
 func (c *NativeCore) Type() string { return "pandora-native" }
 
