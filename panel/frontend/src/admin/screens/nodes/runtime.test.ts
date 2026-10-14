@@ -18,6 +18,7 @@ describe('runtimeReasonText', () => {
     expect(runtimeReasonText('port_in_use:443/tcp:7f3c2a10-0000-4000-8000-000000000001', '东京-01')).toBe('端口 443/TCP 被节点「东京-01」占用')
     expect(runtimeReasonText('port_in_use:8443/udp:7f3c2a10-0000-4000-8000-000000000001', null)).toBe('端口 8443/UDP 被本面板的另一个节点占用')
     expect(runtimeReasonText('port_in_use:443/tcp:other')).toBe('端口 443/TCP 被本机其他服务占用')
+    expect(runtimeReasonText('port_in_use:8388/tcp+udp:other')).toBe('端口 8388/TCP+UDP 被本机其他服务占用')
     expect(runtimeReasonText('not_started')).toBe('入站没有起来')
     expect(runtimeReasonText('config_apply_failed')).toBe('新配置装不上，仍在用旧配置服务')
     expect(runtimeReasonText('serving_cached_config')).toBe('面板还没确认，正用本地缓存的配置服务')
