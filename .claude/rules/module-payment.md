@@ -8,6 +8,16 @@ paths:
 - 易支付（EPay）约束：
   - 易支付方式只收支付宝与微信支付（`EpayMethods = alipay, wxpay`），后台配置与下单严格过滤。
   - 协议规范：金额为元单位十进制字符串（`money.FormatProvider`）；MD5 签名参数名 ASCII 升序拼接，末尾直接拼商户密钥（不做 URL 编码）；异步通知为 GET 请求，处理成功必须回纯文本 `success`；无渠道事件 ID，以 `trade_no:TRADE_STATUS` 合成幂等键。
+- 加密货币渠道（#57，适配器在 `provider/btcpay`、`provider/coinpayments`，外部 HTTP 一律走 `provider/safehttp`）：
+  - BTCPay Server（Greenfield）：凭据 = Store ID（商户号位）+ API Key（密钥位）+ Webhook 密钥，都封存。按站点币种建发票、跳 `checkoutLink`；Webhook 在 BTCPay 商店里配（后台渠道卡显示回调地址），`BTCPay-Sig: sha256=hex(HMAC-SHA256)` 常数时间比对，验签通过后按发票号回查，金额币种状态一律以回查为准。只有 `Settled` 且不是手动标记（`additionalStatus = Marked`）才算成功；`Expired` / `Invalid` 算失败；部分付款不算成功，留证据给后台线下处理。事件 ID = `发票号:状态[:MARKED]`。
+  - CoinPayments（新版 v2 REST，`https://a-api.coinpayments.net`）：凭据 = Client ID + Client Secret。请求与回调同一种签名：`base64(HMAC-SHA256(secret, BOM + 方法 + 完整 URL + ClientID + 时间戳 + 请求体))`，回调还核对 `X-CoinPayments-Client` 与时间窗（±5 分钟），URL 用建发票时登记的回调地址（`NotifyURLs` 候选）。只有 `completed` 算成功；`cancelled` / `timedOut` / `deleted` 算失败；任一笔付款实收低于应收按待定（部分付款不算成功）。法币币种 ID 从公开接口查，包级缓存 24 小时。
+  - 两个适配器都：币种与金额以渠道发票的法币金额与意图核对，不符拒绝；不跟随跳转；Raw 与日志里不出现 API Key、密钥。
+- 用户手续费（#15，代码里叫 surcharge，区别于渠道成本 `Fee`）：
+  - 每个在线渠道「固定 + 比例」（`fee_fixed` 元、`fee_percent` 百分比），缺省 0；线下渠道库里 CHECK 不许设。公式 `Surcharge(应付) = 应付 × 比例 / 100 + 固定`，向上取整到分（`service/surcharge.go`）。
+  - 发起支付时意图金额 = 订单应付 + surcharge，`surcharge_amount` 记在意图和收款上；最低付款额按应付判断。入账时 `SettleInput.Amount = 实收 − surcharge`（等于订单应付，订单那边的核对不变），`SettleInput.Surcharge` 交给账本单独贷记 `platform_revenue / payment_surcharge`，不计入佣金基数、不改订单总额。
+  - 迟到进挂账时只有 `实收 − surcharge` 进 `late_payment_suspense` 和挂账案金额（以后转余额只转这部分），surcharge 照记手续费收入。
+  - 门户 `GET /v1/payment-methods?amount=<分>` 每种方式带这张单的 `fee` 与 `total`；用余额付不收手续费。
+- 回调地址（#43）：`notifyBase` 优先用 settings 的 `payment.notify_base_url`（后台 `GET/PUT /v1/payment-settings`，生产只收 https，`AllowPrivateHosts` 时也收 http），存的值不可用就回退站点地址；回调地址 = 前缀 + `/v1/webhooks/payments/<渠道代码>`。验签候选 `notifyURLCandidates` = [当前前缀拼的, 站点地址拼的]，改前缀前建的发票仍能验过。
 - 商户单号（`outTradeNo`）：
   - 订单首次支付使用订单号；后续重新发起支付使用 `订单号-序号`（`CountIntents` + 1，上限 64 字符）。
   - 回调与查单优先按 `out_trade_no` 查找对应的在途支付意图（`IntentRequiresAction`），意图记录对应渠道与方式快照。
@@ -18,5 +28,5 @@ paths:
   - 订单结清后自动作废该订单名下其他在途意图（`CloseOrderIntents`）。
 - 安全与查单约定：
   - 渠道凭据经 AAD 加密封存（`sealer.Seal` / `Open`），数据库不存明文密钥。
-  - 查单 HTTP 客户端在拨号层执行 `checkDialAddr`，按解析后的真实 IP 拦截内网、环回与元数据地址（防 SSRF 与 DNS 重绑定）；生产环境严禁开启 `AllowPrivateHost`。
+  - 外部 HTTP 客户端统一用 `safehttp.NewClient`：不走环境代理、不跟随跳转、在拨号层执行 `safehttp.CheckDialAddr`，按解析后的真实 IP 拦截内网、环回与元数据地址（防 SSRF 与 DNS 重绑定），响应用 `safehttp.ReadBody` 限 256 KiB；生产环境严禁开启 `AllowPrivateHost`。
   - 主动查单（`Query`）禁止在外部事务内或持有订单锁时调用，避免与回调入账加锁顺序交叉死锁。后台查单必须落审计记录。
