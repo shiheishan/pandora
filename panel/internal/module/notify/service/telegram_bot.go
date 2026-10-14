@@ -162,9 +162,6 @@ func (s *Service) accountActive(ctx context.Context, userID uuid.UUID) (bool, er
 // trafficReply：BindingByChatID(chatID) 没有 → tgNotBound；有 → SummariesByUsers 取这个用户，只留 State == subsvc.StateLive 的，
 // 按 scanSiteLocation 的时区 formatTrafficReply。读失败记 Warn 回 tgTryLater。
 func (s *Service) trafficReply(ctx context.Context, chatID int64) string {
-	if s.summaries == nil {
-		return tgTryLater
-	}
 	b, ok, err := s.store.BindingByChatID(ctx, chatID)
 	if err != nil {
 		plog.From(ctx).Warn("notify: 查询 Telegram 绑定失败", zap.Error(err))
@@ -180,6 +177,9 @@ func (s *Service) trafficReply(ctx context.Context, chatID int64) string {
 	}
 	if !active {
 		return tgInactive
+	}
+	if s.summaries == nil {
+		return tgTryLater
 	}
 
 	summariesMap, err := s.summaries.SummariesByUsers(ctx, []uuid.UUID{b.UserID})
