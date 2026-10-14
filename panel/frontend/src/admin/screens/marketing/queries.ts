@@ -12,6 +12,7 @@ import {
   reviewEntriesResponse,
   templatesResponse,
   usagesResponse,
+  overridesResponse,
   withdrawalsResponse,
 } from './schemas'
 
@@ -125,4 +126,12 @@ export function useReviewEntries() {
 export function useInvalidateMarketing() {
   const client = useQueryClient()
   return useCallback(() => client.invalidateQueries({ queryKey: MK }), [client])
+}
+
+export function useCommissionOverrides() {
+  const api = useApi()
+  return useQuery({
+    queryKey: [...MK, 'commission-overrides'],
+    queryFn: ({ signal }) => api.get('v1/commission/overrides', overridesResponse, { signal }).then((r) => r.overrides),
+  })
 }
