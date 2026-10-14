@@ -32,6 +32,12 @@ func (s *Service) MarkConfigChanged(ctx context.Context) {
 	tx.AfterCommit(ctx, "node:config_changed", func(ctx context.Context) { s.bump(ctx, ConfigEpochKey, "config") })
 }
 
+// MarkLinesChanged 登记：本事务提交后清掉本进程的订阅线路缓存（delivery_cache.go）。只影响订阅线路、不影响节点端配置与名单的写用它
+// （中转、标签、倍率）；别的进程的缓存最多 deliveryCacheTTL 后自然过期。
+func (s *Service) MarkLinesChanged(ctx context.Context) {
+	tx.AfterCommit(ctx, "node:lines_changed", func(context.Context) { s.lineCache.purge() })
+}
+
 // SubscriptionsChanged 实现 subscription 的 RosterNotifier：订阅里影响名单的事实变了（已在提交后调用）。
 func (s *Service) SubscriptionsChanged(ctx context.Context, _ []uuid.UUID) {
 	s.bump(ctx, UsersEpochKey, "users")
