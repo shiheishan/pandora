@@ -21,14 +21,14 @@ type ssRoutePlane struct {
 	blocked map[uint16]bool
 }
 
-func (p *ssRoutePlane) Select(meta route.Meta) string {
+func (p *ssRoutePlane) SelectRoute(meta route.Meta) (string, bool) {
 	p.mu.Lock()
 	blocked := p.blocked[meta.Port]
 	p.mu.Unlock()
 	if blocked {
-		return BlockTag
+		return BlockTag, true
 	}
-	return DirectTag
+	return DirectTag, true
 }
 
 // startSSRouteSink 起一个只收不回的 UDP 端点，返回地址与当前收到的包数。

@@ -67,6 +67,17 @@ func (p *routedDataPlane) swap(next *Runtime) *Runtime {
 	return old
 }
 
+// SelectRoute 报告 meta 按当前路由会走哪个出站；还没有生效的运行时就 ok=false（SS UDP 按目标复查路由用）。
+func (p *routedDataPlane) SelectRoute(meta route.Meta) (string, bool) {
+	p.mu.RLock()
+	r := p.current
+	p.mu.RUnlock()
+	if r == nil {
+		return "", false
+	}
+	return r.Select(meta), true
+}
+
 func (p *routedDataPlane) DialTCP(ctx context.Context, meta route.Meta, destination M.Socksaddr) (net.Conn, error) {
 	p.mu.RLock()
 	r := p.current

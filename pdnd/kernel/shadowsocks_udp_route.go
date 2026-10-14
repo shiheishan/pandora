@@ -12,24 +12,16 @@ import (
 	"github.com/aegispanel/nodeagent/route"
 )
 
-// udpRouteSelector 是能报出 route.Meta 会走哪个出站的数据面（测试替身实现它）。
+// udpRouteSelector 是能报出 route.Meta 会走哪个出站的数据面（NativeCore 的 routedDataPlane 与测试替身实现它）；
+// 路由还没就绪时 ok 为 false。
 type udpRouteSelector interface {
-	Select(route.Meta) string
+	SelectRoute(route.Meta) (tag string, ok bool)
 }
 
 // selectUDPRoute 报告 meta 会走哪个出站 tag；数据面不支持查询（或路由还没就绪）时 ok 为 false。
 func selectUDPRoute(plane DataPlane, meta route.Meta) (tag string, ok bool) {
-	switch p := plane.(type) {
-	case *routedDataPlane:
-		p.mu.RLock()
-		r := p.current
-		p.mu.RUnlock()
-		if r == nil {
-			return "", false
-		}
-		return r.Select(meta), true
-	case udpRouteSelector:
-		return p.Select(meta), true
+	if p, isSelector := plane.(udpRouteSelector); isSelector {
+		return p.SelectRoute(meta)
 	}
 	return "", false
 }
