@@ -7,7 +7,7 @@ require (
 	github.com/anytls/sing-anytls v0.0.13
 	github.com/daeuniverse/outbound v0.0.0-20250219135309-c607702d1c85
 	github.com/enfein/mieru/v3 v3.34.1
-	github.com/gofrs/uuid/v5 v5.4.0
+	github.com/gofrs/uuid/v5 v5.5.1
 	github.com/google/uuid v1.6.0
 	github.com/refraction-networking/utls v1.8.3-0.20260301010127-aa6edf4b11af
 	github.com/sagernet/sing v0.8.11
