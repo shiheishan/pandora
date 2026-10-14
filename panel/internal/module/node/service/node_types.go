@@ -181,7 +181,7 @@ type NodePatch struct {
 }
 
 // NodeCopyInput 是复制节点的输入：TargetServerID、PoolID 为 nil 沿用原节点；Name 为空取「原名-copy」；
-// SortOrder 为 nil 取原节点 +1；ServerPort 为 nil 沿用原端口。CopyRouting 目前不复制路由，只记进审计。
+// SortOrder 为 nil 取原节点 +1；ServerPort 为 nil 沿用原端口。CopyRouting 时连节点私有路由与所在路由组一起复制。
 type NodeCopyInput struct {
 	RowVersion     int64
 	Name           string

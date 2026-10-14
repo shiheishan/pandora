@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
@@ -254,5 +255,72 @@ func TestNodeCopyAndReorder(t *testing.T) {
 	_ = e.row(ctx, `SELECT sort_order FROM nodes WHERE id = ?`, b.ID).Scan(&sb)
 	if sa != 5 || sb != 15 {
 		t.Fatalf("版本冲突后排序不应变：%d/%d", sa, sb)
+	}
+}
+
+// 复制节点勾选复制路由：私有出站、规则和路由组成员一起复制，组版本推进；不勾选时副本没有路由。
+func TestNodeCopyRouting(t *testing.T) {
+	e, ctx := newInvEnv(t)
+	srv := rtServer(t, ctx, e, "ready")
+	src := rtNode(t, ctx, e, srv, "active", 21101)
+	g := rtGroup(t, ctx, e, "copy-g", 0)
+	gr, _ := e.svc.GetGroupRouting(ctx, g.ID)
+	if _, err := e.svc.SetGroupRouting(ctx, g.ID, gr.RowVersion, RoutingInput{
+		Outbounds: []RoutingOutbound{ob("gout", "socks")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.SetNodeRouteGroups(ctx, src, rtNodeVersion(t, ctx, e, src), []uuid.UUID{g.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.SetNodeRouting(ctx, src, rtNodeVersion(t, ctx, e, src), RoutingInput{
+		Outbounds: []RoutingOutbound{ob("priv", "socks")},
+		Routes:    []RoutingRule{rule(`{"port":[1]}`, "priv"), rule(`{"port":[2]}`, "gout")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	groupVersion := routeGroupRow(t, ctx, e, g.ID).RowVersion
+
+	port := 21102
+	dup, err := e.svc.CopyNode(ctx, src, NodeCopyInput{RowVersion: rtNodeVersion(t, ctx, e, src), ServerPort: &port, CopyRouting: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := e.svc.GetNodeRouting(ctx, dup.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Outbounds) != 1 || got.Outbounds[0].Tag != "priv" || len(got.Routes) != 2 {
+		t.Fatalf("副本的私有路由：%+v", got)
+	}
+	if len(got.Groups) != 1 || got.Groups[0].ID != g.ID {
+		t.Fatalf("副本的路由组：%+v", got.Groups)
+	}
+	if v := routeGroupRow(t, ctx, e, g.ID).RowVersion; v != groupVersion+1 {
+		t.Fatalf("组加了成员，版本应 +1：%d → %d", groupVersion, v)
+	}
+
+	plainPort := 21103
+	plain, err := e.svc.CopyNode(ctx, src, NodeCopyInput{RowVersion: rtNodeVersion(t, ctx, e, src), Name: e.name("copy-plain"), ServerPort: &plainPort})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err = e.svc.GetNodeRouting(ctx, plain.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Outbounds) != 0 || len(got.Routes) != 0 || len(got.Groups) != 0 {
+		t.Fatalf("不勾选复制路由，副本应没有路由：%+v", got)
+	}
+
+	// 源节点有一条悬空规则（接口写不进去，直接插库）：复制路由会给副本造出新的悬空引用，拒绝
+	if err := e.exec(ctx, `INSERT INTO node_routes (node_id, priority, sort_order, matcher, outbound_tag)
+		VALUES (?, 9, 9, '{"port":[9]}'::jsonb, 'nope')`, src); err != nil {
+		t.Fatal(err)
+	}
+	brokenPort := 21104
+	_, err = e.svc.CopyNode(ctx, src, NodeCopyInput{RowVersion: rtNodeVersion(t, ctx, e, src), Name: e.name("copy-broken"), ServerPort: &brokenPort, CopyRouting: true})
+	if ee := invWantCode(t, err, errs.Conflict); !strings.Contains(ee.Message, "nope") {
+		t.Fatalf("应点名悬空的出站：%s", ee.Message)
 	}
 }
