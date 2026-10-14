@@ -42,7 +42,8 @@ func (s *Service) available(ctx context.Context, userID uuid.UUID, cur money.Cur
 }
 
 // RequestWithdrawal 发起一笔提现申请，返回申请 id。币种取用户唯一有可用佣金的那个（见 pickCurrency）。只改状态不记账，钱在打款那一步才离开可提现佣金。
-// method 是提现方式，必须在后台开放的方式里；提现关闭时回 ErrWithdrawDisabled。
+// method 是提现方式，必须在后台开放的方式里。提现关闭只关站点币种（站点币种的佣金改为解冻后自动转余额）：
+// 关着时只在站点币种以外的币种里选，没有就回 ErrWithdrawDisabled。
 // 一个用户同一时间只能有一笔在途；与转余额用同一把用户锁、同一口径，后到的一方一定看得见前一方。
 func (s *Service) RequestWithdrawal(ctx context.Context, userID uuid.UUID, amount decimal.Decimal, method, payoutDetail string) (uuid.UUID, error) {
 	payout, err := validateWithdrawal(amount, method, payoutDetail)
@@ -58,8 +59,18 @@ func (s *Service) RequestWithdrawal(ctx context.Context, userID uuid.UUID, amoun
 		if err != nil {
 			return err
 		}
+		var skip money.Currency
 		if !wd.Enabled {
-			return ErrWithdrawDisabled
+			if skip, err = s.ledger.DefaultCurrency(ctx); err != nil {
+				return err
+			}
+			_, _, ok, err := s.pickCurrency(ctx, userID, skip)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return ErrWithdrawDisabled
+			}
 		}
 		method = strings.TrimSpace(method)
 		if !sliceContains(wd.Methods, method) {
@@ -79,7 +90,7 @@ func (s *Service) RequestWithdrawal(ctx context.Context, userID uuid.UUID, amoun
 		if inFlight {
 			return ErrWithdrawPending
 		}
-		cur, avail, ok, err := s.pickCurrency(ctx, userID)
+		cur, avail, ok, err := s.pickCurrency(ctx, userID, skip)
 		if err != nil {
 			return err
 		}

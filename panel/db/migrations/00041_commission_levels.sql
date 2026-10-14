@@ -34,6 +34,16 @@ ALTER TABLE commission_entries
   ADD CONSTRAINT commission_entries_order_level_key UNIQUE (order_id, level);
 -- 一单每一级最多一条
 
+ALTER TABLE commission_entries
+  ADD COLUMN auto_transfer_due boolean NOT NULL DEFAULT false,
+  ADD CONSTRAINT commission_entries_auto_transfer_shape CHECK (NOT auto_transfer_due OR status = 'available');
+-- 提现关闭时解冻的站点币种条目记 true，等单独的事务把它转入余额后清掉；转失败留着，下一轮任务重试。
+-- 只有已解冻（available）的条目能挂这个标记；available 是终态，不会再被作废。
+
+CREATE INDEX commission_entries_auto_transfer_due_idx
+  ON commission_entries (settled_at, id) WHERE auto_transfer_due;
+-- 补扫只找挂着标记的少数行
+
 -- (b) 按用户单独设的佣金比例与计佣范围，只对该用户作为直接邀请人的以后订单生效
 CREATE TABLE commission_user_overrides (
   user_id      uuid PRIMARY KEY REFERENCES users(id) ON DELETE RESTRICT,
@@ -100,6 +110,9 @@ BEGIN
   IF EXISTS (SELECT 1 FROM withdrawals WHERE method <> 'other' OR paid_usdt_amount IS NOT NULL) THEN
     RAISE EXCEPTION '已有非 other 的提现方式或 USDT 实付数量记录，不能回退本迁移（先人工处理这些行）';
   END IF;
+  IF EXISTS (SELECT 1 FROM commission_entries WHERE auto_transfer_due) THEN
+    RAISE EXCEPTION '还有等待自动转入余额的佣金条目（auto_transfer_due），不能回退本迁移（先让 commission:settle 转完）';
+  END IF;
   IF EXISTS (SELECT 1 FROM commission_user_overrides) THEN
     RAISE EXCEPTION 'commission_user_overrides 已有按用户的佣金设置，不能回退本迁移（先人工处理）';
   END IF;
@@ -118,6 +131,12 @@ ALTER TABLE withdrawals
   DROP COLUMN method;
 
 DROP TABLE commission_user_overrides;
+
+DROP INDEX commission_entries_auto_transfer_due_idx;
+
+ALTER TABLE commission_entries
+  DROP CONSTRAINT commission_entries_auto_transfer_shape,
+  DROP COLUMN auto_transfer_due;
 
 ALTER TABLE commission_entries DROP CONSTRAINT commission_entries_order_level_key;
 

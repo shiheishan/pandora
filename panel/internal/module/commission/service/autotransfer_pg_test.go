@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -160,6 +161,18 @@ func TestAutoTransferSkipsNonSiteCurrency(t *testing.T) {
 	if err := e.row(ctx, `SELECT count(*) FROM commission_transfers WHERE user_id = ?`, referrer).Scan(&trN); err != nil || trN != 0 {
 		t.Fatalf("不应有 transfers %d err=%v", trN, err)
 	}
+	// 去向：关提现只关站点币种，这笔 USD 佣金照常能申请提现；方式白名单照旧管着
+	if _, err := e.svc.RequestWithdrawal(userCtx(ctx, referrer), referrer, dec2("20.00"), "wechat", "wechat wx@example.test"); !assertValidationFieldErr(err, "method") {
+		t.Fatalf("关着时未开放的方式仍应拦: %v", err)
+	}
+	id, err := e.svc.RequestWithdrawal(userCtx(ctx, referrer), referrer, dec2("20.00"), "alipay", "alipay usd@example.test")
+	if err != nil {
+		t.Fatalf("关提现时 USD 佣金应能提现: %v", err)
+	}
+	var cur string
+	if err := e.row(ctx, `SELECT currency FROM withdrawals WHERE id = ?`, id).Scan(&cur); err != nil || cur != "USD" {
+		t.Fatalf("提现币种 %s err=%v", cur, err)
+	}
 }
 
 func TestNoAutoTransferWhenWithdrawOpen(t *testing.T) {
@@ -208,6 +221,170 @@ func TestManualTransferStillWorksWhenClosed(t *testing.T) {
 		t.Fatal("txn id 为空")
 	}
 	if bal := accountBalance(t, e, ctx, referrer, ledgersvc.UserBalance); !bal.Equal(dec2("20.00")) {
+		t.Fatalf("余额 %s", bal)
+	}
+	if bal := accountBalance(t, e, ctx, referrer, ledgersvc.UserCommissionAvailable); !bal.IsZero() {
+		t.Fatalf("可提现 %s", bal)
+	}
+}
+
+// autoTransferDueOf 读条目的「等自动转余额」标记。
+func autoTransferDueOf(t *testing.T, e *env, ctx context.Context, entryID uuid.UUID) bool {
+	t.Helper()
+	var due bool
+	if err := e.row(ctx, `SELECT auto_transfer_due FROM commission_entries WHERE id = ?`, entryID).Scan(&due); err != nil {
+		t.Fatal(err)
+	}
+	return due
+}
+
+// 解冻事务只挂标记、不碰余额科目；转余额在之后单独的事务里做（应改-2：解冻事务里不同时锁佣金与余额）。
+func TestSettleOnlyFlagsThenTransfersSeparately(t *testing.T) {
+	e, ctx := newEnv(t)
+	admin := newUser(t, e, ctx)
+	setConfig(t, e, ctx, admin, 10, 0, "10.00", "every_order")
+	setWithdraw(t, e, ctx, admin, false, "alipay")
+	referrer, buyer := newUser(t, e, ctx), newUser(t, e, ctx)
+	refer(e, buyer, referrer)
+	o := newPaidOrder(t, e, ctx, buyer, "200.00")
+	if err := e.svc.OnOrderPaid(ctx, o); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.exec(ctx, `UPDATE commission_entries SET frozen_until = now() - interval '1 second' WHERE order_id = ?`, o.OrderID); err != nil {
+		t.Fatal(err)
+	}
+	entryID := entryIDOf(t, e, ctx, o.OrderID, referrer)
+
+	out, err := e.svc.settleOne(ctx, entryID, autoTransferPlan{on: true, site: testCurrency})
+	if err != nil || out != settleDone {
+		t.Fatalf("解冻 out=%v err=%v", out, err)
+	}
+	if !autoTransferDueOf(t, e, ctx, entryID) {
+		t.Fatal("提现关闭时解冻应挂上 auto_transfer_due")
+	}
+	if bal := accountBalance(t, e, ctx, referrer, ledgersvc.UserBalance); !bal.IsZero() {
+		t.Fatalf("解冻事务里不应转余额: %s", bal)
+	}
+	if bal := accountBalance(t, e, ctx, referrer, ledgersvc.UserCommissionAvailable); !bal.Equal(dec2("20.00")) {
+		t.Fatalf("可提现 %s", bal)
+	}
+
+	n, failed, err := e.svc.autoTransferDue(ctx, SettleBatchDefault, testCurrency)
+	if err != nil || n != 1 || failed != 0 {
+		t.Fatalf("补转 n=%d failed=%d err=%v", n, failed, err)
+	}
+	if autoTransferDueOf(t, e, ctx, entryID) {
+		t.Fatal("转完应清掉标记")
+	}
+	if bal := accountBalance(t, e, ctx, referrer, ledgersvc.UserBalance); !bal.Equal(dec2("20.00")) {
+		t.Fatalf("余额 %s", bal)
+	}
+
+	// 开着提现时解冻不挂标记
+	o2 := newPaidOrder(t, e, ctx, buyer, "100.00")
+	if err := e.svc.OnOrderPaid(ctx, o2); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.exec(ctx, `UPDATE commission_entries SET frozen_until = now() - interval '1 second' WHERE order_id = ?`, o2.OrderID); err != nil {
+		t.Fatal(err)
+	}
+	id2 := entryIDOf(t, e, ctx, o2.OrderID, referrer)
+	if out, err := e.svc.settleOne(ctx, id2, autoTransferPlan{on: false, site: testCurrency}); err != nil || out != settleDone {
+		t.Fatalf("解冻 out=%v err=%v", out, err)
+	}
+	if autoTransferDueOf(t, e, ctx, id2) {
+		t.Fatal("开着提现时不应挂标记")
+	}
+}
+
+// 上一轮转失败、标记还挂着的条目，下一轮 SettleDue 补转；只转一次。
+func TestAutoTransferRetriesFlaggedEntry(t *testing.T) {
+	e, ctx := newEnv(t)
+	admin := newUser(t, e, ctx)
+	setConfig(t, e, ctx, admin, 10, 0, "10.00", "every_order")
+	referrer, buyer := newUser(t, e, ctx), newUser(t, e, ctx)
+	accrueAvailable(t, e, ctx, referrer, buyer, "200.00")
+	setWithdraw(t, e, ctx, admin, false, "alipay")
+	var entryID uuid.UUID
+	if err := e.row(ctx, `SELECT id FROM commission_entries WHERE referrer_user_id = ?`, referrer).Scan(&entryID); err != nil {
+		t.Fatal(err)
+	}
+	// 模拟「解冻已提交、转余额那个事务失败」：条目已 available，标记挂着，还没有转余额记录
+	if err := e.exec(ctx, `UPDATE commission_entries SET auto_transfer_due = true WHERE id = ?`, entryID); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := e.svc.SettleDue(ctx, SettleBatchDefault)
+	if err != nil || st.Settled != 0 || st.AutoTransferred != 1 {
+		t.Fatalf("补转 %+v err=%v", st, err)
+	}
+	if autoTransferDueOf(t, e, ctx, entryID) {
+		t.Fatal("补转后应清掉标记")
+	}
+	var trN int
+	if err := e.row(ctx, `SELECT count(*) FROM commission_transfers WHERE entry_id = ?`, entryID).Scan(&trN); err != nil || trN != 1 {
+		t.Fatalf("transfers %d err=%v", trN, err)
+	}
+	st2, err := e.svc.SettleDue(ctx, SettleBatchDefault)
+	if err != nil || st2.AutoTransferred != 0 {
+		t.Fatalf("第二轮 %+v err=%v", st2, err)
+	}
+	if bal := accountBalance(t, e, ctx, referrer, ledgersvc.UserBalance); !bal.Equal(dec2("20.00")) {
+		t.Fatalf("余额 %s", bal)
+	}
+}
+
+// 标记挂着期间用户自己转走了一部分或全部：只转剩下的；一分不剩时只清标记、不记账。
+func TestAutoTransferClampsToAvailable(t *testing.T) {
+	e, ctx := newEnv(t)
+	admin := newUser(t, e, ctx)
+	setConfig(t, e, ctx, admin, 10, 0, "10.00", "every_order")
+	referrer, buyer1, buyer2 := newUser(t, e, ctx), newUser(t, e, ctx), newUser(t, e, ctx)
+	accrueAvailable(t, e, ctx, referrer, buyer1, "200.00") // 20.00
+	uctx := userCtx(ctx, referrer)
+	var first uuid.UUID
+	if err := e.row(ctx, `SELECT id FROM commission_entries WHERE referrer_user_id = ?`, referrer).Scan(&first); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.exec(ctx, `UPDATE commission_entries SET auto_transfer_due = true WHERE id = ?`, first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.TransferToBalance(uctx, referrer, dec2("15.00")); err != nil {
+		t.Fatal(err)
+	}
+	n, failed, err := e.svc.autoTransferDue(ctx, SettleBatchDefault, testCurrency)
+	if err != nil || n != 1 || failed != 0 {
+		t.Fatalf("补转 n=%d failed=%d err=%v", n, failed, err)
+	}
+	var amt decimal.Decimal
+	if err := e.row(ctx, `SELECT amount FROM commission_transfers WHERE entry_id = ?`, first).Scan(&amt); err != nil || !amt.Equal(dec2("5.00")) {
+		t.Fatalf("只应转剩下的 5.00: %s err=%v", amt, err)
+	}
+
+	// 第二条：标记挂着时用户已经全部转走
+	accrueAvailable(t, e, ctx, referrer, buyer2, "100.00") // 10.00
+	second := uuid.Nil
+	if err := e.row(ctx, `SELECT id FROM commission_entries WHERE referrer_user_id = ? AND id <> ?`, referrer, first).Scan(&second); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.exec(ctx, `UPDATE commission_entries SET auto_transfer_due = true WHERE id = ?`, second); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.TransferToBalance(uctx, referrer, dec2("10.00")); err != nil {
+		t.Fatal(err)
+	}
+	n, failed, err = e.svc.autoTransferDue(ctx, SettleBatchDefault, testCurrency)
+	if err != nil || n != 0 || failed != 0 {
+		t.Fatalf("没钱可转 n=%d failed=%d err=%v", n, failed, err)
+	}
+	if autoTransferDueOf(t, e, ctx, second) {
+		t.Fatal("没钱可转也应清掉标记，不每轮空转")
+	}
+	var trN int
+	if err := e.row(ctx, `SELECT count(*) FROM commission_transfers WHERE entry_id = ?`, second).Scan(&trN); err != nil || trN != 0 {
+		t.Fatalf("不应有自动转余额记录 %d err=%v", trN, err)
+	}
+	if bal := accountBalance(t, e, ctx, referrer, ledgersvc.UserBalance); !bal.Equal(dec2("30.00")) {
 		t.Fatalf("余额 %s", bal)
 	}
 	if bal := accountBalance(t, e, ctx, referrer, ledgersvc.UserCommissionAvailable); !bal.IsZero() {

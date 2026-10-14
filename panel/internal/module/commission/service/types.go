@@ -121,8 +121,9 @@ var (
 	// ErrEntryNotReviewable 是条目不在待复核状态（已复核过、已解冻或已作废）：重放与并发的第二次都落在这里。
 	ErrEntryNotReviewable = errs.Newf(errs.Conflict, "这条佣金不在待复核状态，可能已被处理，请刷新")
 	// ErrVoidUnderfunded 是推荐人的待结佣金科目不够冲回这一条（账本与条目对不上，需要人工核对账本）。
-	ErrVoidUnderfunded  = errs.Newf(errs.Conflict, "待结佣金科目余额不足，无法冲回这条佣金，请先核对账本")
-	ErrWithdrawDisabled = errs.Newf(errs.Conflict, "提现已关闭，佣金解冻后会自动转入余额")
+	ErrVoidUnderfunded = errs.Newf(errs.Conflict, "待结佣金科目余额不足，无法冲回这条佣金，请先核对账本")
+	// ErrWithdrawDisabled 是提现已关闭且没有站点币种以外的可用佣金：关提现只关站点币种，别的币种照常能提。
+	ErrWithdrawDisabled = errs.Newf(errs.Conflict, "提现已关闭：本站币种的佣金改为解冻后自动转入余额，只有其他币种的佣金还能申请提现")
 )
 
 // Summary 是门户「我的佣金」的汇总，金额都是 Currency 这一个币种（取法见 summaryCurrency）。
@@ -134,17 +135,18 @@ type Summary struct {
 	Settled         decimal.Decimal // 已打款
 	TotalEarned     decimal.Decimal // 累计佣金（含冻结中）
 	Invitees        int64           // 邀请人数
-	Orders          int64           // 产生佣金的订单数
-	PaidInvitees    int64           // 产生过佣金的被邀请人数
+	Orders          int64           // 佣金条目数（含第 2、3 级）
+	PaidInvitees    int64           // 产生过佣金的直接邀请人数（只算第 1 级）
 	RatePercent     int
 	MinWithdraw     decimal.Decimal
 	Scope           string
-	DirectRateBP    int64    // 直接邀请人实得的万分比，横幅用
-	WithdrawEnabled bool     // 是否开放提现
-	WithdrawMethods []string // 可选的提现方式，按目录顺序
+	DirectRateBP    int64          // 直接邀请人实得的万分比，横幅用
+	WithdrawEnabled bool           // 是否开放提现；关着时只关站点币种，别的币种照常能提
+	WithdrawMethods []string       // 可选的提现方式，按目录顺序
+	SiteCurrency    money.Currency // 站点币种：门户据此判断关提现时这个汇总币种还能不能提
 }
 
-// EntryView 是门户佣金明细的一行；From 是打码后的被邀请人邮箱。
+// EntryView 是门户佣金明细的一行；From 是打码后的被邀请人邮箱，只有第 1 级（直接邀请）有，第 2、3 级为空。
 type EntryView struct {
 	Amount       decimal.Decimal
 	Base         decimal.Decimal
@@ -263,7 +265,7 @@ type SettleStats struct {
 	Skipped         int
 	Quarantined     int // 确定性失败（待结科目余额不足）转人工复核的条数
 	Failed          int
-	AutoTransferred int // 提现关闭时解冻后自动转入余额的条数
+	AutoTransferred int // 提现关闭时解冻、随后在单独事务里自动转入余额的条数（含上一轮转失败、这一轮补转的）
 }
 
 // 待复核的来源（由 review_reason 归类，给后台区分提示）：同源嫌疑、同源检查失败或未装配、解冻时待结科目余额不足、其它。

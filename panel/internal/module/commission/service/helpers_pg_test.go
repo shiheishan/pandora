@@ -8,7 +8,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -17,6 +16,7 @@ import (
 	auditrepo "github.com/aegispanel/aegis/internal/module/audit/repo"
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/module/commission/repo"
+	identitysvc "github.com/aegispanel/aegis/internal/module/identity/service"
 	ledgerrepo "github.com/aegispanel/aegis/internal/module/ledger/repo"
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
 	ordersvc "github.com/aegispanel/aegis/internal/module/order/service"
@@ -84,22 +84,17 @@ func (f *fakeRefs) Emails(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]str
 	return out, nil
 }
 
-// IDsByEmail 返回邮箱包含 q（不分大小写）的用户 id，按 id 排序，最多 limit 个。
-func (f *fakeRefs) IDsByEmail(_ context.Context, q string, limit int) ([]uuid.UUID, error) {
+// FindByEmail 按邮箱精确找人（不分大小写、去首尾空白，同 identity 的规范化）；没有时回 errs.NotFound。
+func (f *fakeRefs) FindByEmail(_ context.Context, email string) (identitysvc.User, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	q = strings.ToLower(q)
-	var out []uuid.UUID
+	email = strings.ToLower(strings.TrimSpace(email))
 	for id, e := range f.emails {
-		if strings.Contains(strings.ToLower(e), q) {
-			out = append(out, id)
+		if strings.ToLower(e) == email {
+			return identitysvc.User{ID: id, Email: e}, nil
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
-	if limit > 0 && len(out) > limit {
-		out = out[:limit]
-	}
-	return out, nil
+	return identitysvc.User{}, errs.New(errs.NotFound)
 }
 
 // fakeSources 实现 SourceMatcher：same 里登记的一对用户算同源；err 非空时查询失败。

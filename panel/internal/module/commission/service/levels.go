@@ -23,11 +23,19 @@ type beneficiary struct {
 // referrerFunc 取某人的邀请人，没有时为 nil。
 type referrerFunc func(ctx context.Context, userID uuid.UUID) (*uuid.UUID, error)
 
-// beneficiaries 列出这一单的受益人。没开多级分销：只有直接邀请人，第 1 级、100%。
-// 开了：从直接邀请人起往上最多 3 级，第 N 级分 dist.Levels[N-1]%；比例为 0 的级别跳过但继续往上找；
-// 遇到已出现过的人（含买家本人）就停，防环。
-func beneficiaries(ctx context.Context, buyer, direct uuid.UUID, dist settingssvc.CommissionDistribution, next referrerFunc) ([]beneficiary, error) {
+// excludedFunc 判断某人是否被单独设置排除在佣金之外（单独比例为 0）。
+type excludedFunc func(ctx context.Context, userID uuid.UUID) (bool, error)
+
+// beneficiaries 列出这一单的受益人。没开多级分销：只有直接邀请人，第 1 级、100%（他被排除时没有受益人）。
+// 开了：从直接邀请人起往上最多 3 级，第 N 级分 dist.Levels[N-1]%；份额为 0 的级别、被排除的人（单独比例 0）都跳过但继续往上找，
+// 跳过的人仍占他那一级；遇到已出现过的人（含买家本人）就停，防环。
+func beneficiaries(ctx context.Context, buyer, direct uuid.UUID, dist settingssvc.CommissionDistribution,
+	next referrerFunc, excluded excludedFunc) ([]beneficiary, error) {
 	if !dist.Enabled {
+		out, err := excluded(ctx, direct)
+		if err != nil || out {
+			return nil, err
+		}
 		return []beneficiary{{UserID: direct, Level: 1, SharePercent: 100}}, nil
 	}
 	seen := map[uuid.UUID]bool{buyer: true}
@@ -39,7 +47,13 @@ func beneficiaries(ctx context.Context, buyer, direct uuid.UUID, dist settingssv
 		}
 		seen[cur] = true
 		if share := dist.Levels[lvl-1]; share > 0 {
-			out = append(out, beneficiary{UserID: cur, Level: lvl, SharePercent: share})
+			skip, err := excluded(ctx, cur)
+			if err != nil {
+				return nil, err
+			}
+			if !skip {
+				out = append(out, beneficiary{UserID: cur, Level: lvl, SharePercent: share})
+			}
 		}
 		if lvl == MaxCommissionLevels {
 			break
@@ -70,7 +84,30 @@ func DirectRateBP(ratePercent int, dist settingssvc.CommissionDistribution) int6
 	return int64(ratePercent) * int64(dist.Levels[0])
 }
 
+// excludedByOverride 判断某人是否被单独设置排除：单独比例设成 0 表示这个人不拿佣金，不论他在第几级（用户 10-14 定）。
+func (s *Service) excludedByOverride(ctx context.Context, userID uuid.UUID) (bool, error) {
+	ov, ok, err := s.repo.OverrideOf(ctx, userID)
+	if err != nil || !ok {
+		return false, err
+	}
+	return ov.RatePercent != nil && *ov.RatePercent == 0, nil
+}
+
+// orderTerms 返回这一单佣金总额用的比例与计佣范围：直接邀请人的单独设置决定整单（见 termsFor）；
+// 直接邀请人被排除（单独比例 0）时他的单独设置整条不作数，按全局算，再由 beneficiaries 跳过他、只给上级分。
+func (s *Service) orderTerms(ctx context.Context, direct uuid.UUID, cfg settingssvc.Commission) (ratePercent int, scope string, err error) {
+	out, err := s.excludedByOverride(ctx, direct)
+	if err != nil {
+		return 0, "", err
+	}
+	if out {
+		return cfg.RatePercent, cfg.Scope, nil
+	}
+	return s.termsFor(ctx, direct, cfg)
+}
+
 // termsFor 返回某人作为直接邀请人适用的比例与计佣范围：单独设置里非 nil 的项用它，其余用全局 cfg。
+// 单独比例 0 时这里照实返回 0（门户横幅显示「不拿佣金」）；计提整单的比例用 orderTerms。
 func (s *Service) termsFor(ctx context.Context, referrer uuid.UUID, cfg settingssvc.Commission) (ratePercent int, scope string, err error) {
 	ratePercent = cfg.RatePercent
 	scope = cfg.Scope

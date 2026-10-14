@@ -9,7 +9,7 @@
 --   NODE-010（改成 nodes_active_shape：在役节点必须挂服务器、协议配好）、SUB-002 版本与价格冻结、
 --   PAY-001 订单金额恒等式与人工单理由、MKT-003 邀请关系、PAY-003 幂等唯一键、MKT-001 优惠券容量、
 --   NFR-008 降级开关、OPS-005 事务类通知、OPS-001 内部备注、USE-002（改成 node_traffic_reports 唯一键）、
---   XB-COMM（对齐 Xboard 的提现方式与按用户单独佣金设置）。
+--   XB-COMM（对齐 Xboard 的三级分销与自动转余额标记、提现方式与 USDT 打款、按用户单独佣金设置）。
 --
 -- 不覆盖的验收项及原因（没有对应的表或机制）：
 --   SEC-013 双人审批 — 没有审批表：后台权限只分有和没有。
@@ -621,7 +621,7 @@ SELECT _reject('USE-002', '流量上报不可改', $sql$
 $sql$);
 
 --------------------------------------------------------------------------------
--- XB-COMM 提现方式与 USDT 打款、按用户单独佣金设置（00041_commission_levels.sql）
+-- XB-COMM 三级分销、提现方式与 USDT 打款、按用户单独佣金设置（00041_commission_levels.sql）
 --------------------------------------------------------------------------------
 
 -- withdrawals_method_check：方式是封闭目录
@@ -675,6 +675,187 @@ $sql$);
 SELECT _accept('XB-COMM', '单独比例为 0（不拿佣金）可以写入', $sql$
   INSERT INTO commission_user_overrides (user_id, rate_percent)
   VALUES ('00000000-0000-7000-8000-000000000103', 0);
+$sql$);
+
+-- commission_entries 分级：level 1–3、share 1–100、金额 = trunc(trunc(基数 × 比例) × 份额)（逐级截断到分）
+-- 种子订单 c01：基数 10.00，比例 1000bp → 这一单佣金总额 1.00；第 2 级 30% → 0.30
+SELECT _accept('XB-COMM', '第 2 级 30% 的条目按逐级截断的金额可以写入', $sql$
+  WITH t AS (
+    INSERT INTO ledger_transactions (id, kind, currency, actor_kind)
+    VALUES ('00000000-0000-7000-8000-000000000341', 'commission_accrued', 'USD', 'system')
+    RETURNING id
+  ), le AS (
+    INSERT INTO ledger_entries (transaction_id, account_id, currency, direction, amount)
+    SELECT t.id, v.account_id, 'USD', v.direction, 1.00
+      FROM t, (VALUES ('00000000-0000-7000-8000-000000000202'::uuid, 'debit'),
+                      ('00000000-0000-7000-8000-000000000203'::uuid, 'credit')) AS v(account_id, direction)
+  )
+  INSERT INTO commission_entries (referrer_user_id, referee_user_id, order_id, order_no, currency,
+                                  base_amount, rate_bp, level, share_percent, commission_amount,
+                                  frozen_until, accrual_txn_id)
+  SELECT '00000000-0000-7000-8000-0000000000102', '00000000-0000-7000-8000-000000000101',
+         '00000000-0000-7000-8000-000000000c01', 'INV-SEED-001', 'USD',
+         10.00, 1000, 2, 30, 0.30, now(), t.id FROM t;
+$sql$);
+SELECT _reject('XB-COMM', '分级金额不符公式必须拒绝', $sql$
+  WITH t AS (
+    INSERT INTO ledger_transactions (id, kind, currency, actor_kind)
+    VALUES ('00000000-0000-7000-8000-000000000342', 'commission_accrued', 'USD', 'system')
+    RETURNING id
+  ), le AS (
+    INSERT INTO ledger_entries (transaction_id, account_id, currency, direction, amount)
+    SELECT t.id, v.account_id, 'USD', v.direction, 1.00
+      FROM t, (VALUES ('00000000-0000-7000-8000-000000000202'::uuid, 'debit'),
+                      ('00000000-0000-7000-8000-000000000203'::uuid, 'credit')) AS v(account_id, direction)
+  )
+  INSERT INTO commission_entries (referrer_user_id, referee_user_id, order_id, order_no, currency,
+                                  base_amount, rate_bp, level, share_percent, commission_amount,
+                                  frozen_until, accrual_txn_id)
+  SELECT '00000000-0000-7000-8000-0000000000103', '00000000-0000-7000-8000-000000000101',
+         '00000000-0000-7000-8000-000000000c01', 'INV-SEED-001', 'USD',
+         10.00, 1000, 3, 30, 0.31, now(), t.id FROM t;
+$sql$);
+SELECT _reject('XB-COMM', '级别超过 3 必须拒绝', $sql$
+  WITH t AS (
+    INSERT INTO ledger_transactions (id, kind, currency, actor_kind)
+    VALUES ('00000000-0000-7000-8000-000000000343', 'commission_accrued', 'USD', 'system')
+    RETURNING id
+  ), le AS (
+    INSERT INTO ledger_entries (transaction_id, account_id, currency, direction, amount)
+    SELECT t.id, v.account_id, 'USD', v.direction, 1.00
+      FROM t, (VALUES ('00000000-0000-7000-8000-000000000202'::uuid, 'debit'),
+                      ('00000000-0000-7000-8000-000000000203'::uuid, 'credit')) AS v(account_id, direction)
+  )
+  INSERT INTO commission_entries (referrer_user_id, referee_user_id, order_id, order_no, currency,
+                                  base_amount, rate_bp, level, share_percent, commission_amount,
+                                  frozen_until, accrual_txn_id)
+  SELECT '00000000-0000-7000-8000-0000000000103', '00000000-0000-7000-8000-000000000101',
+         '00000000-0000-7000-8000-000000000c01', 'INV-SEED-001', 'USD',
+         10.00, 1000, 4, 30, 0.30, now(), t.id FROM t;
+$sql$);
+SELECT _reject('XB-COMM', '份额为 0 必须拒绝', $sql$
+  WITH t AS (
+    INSERT INTO ledger_transactions (id, kind, currency, actor_kind)
+    VALUES ('00000000-0000-7000-8000-000000000344', 'commission_accrued', 'USD', 'system')
+    RETURNING id
+  ), le AS (
+    INSERT INTO ledger_entries (transaction_id, account_id, currency, direction, amount)
+    SELECT t.id, v.account_id, 'USD', v.direction, 1.00
+      FROM t, (VALUES ('00000000-0000-7000-8000-000000000202'::uuid, 'debit'),
+                      ('00000000-0000-7000-8000-000000000203'::uuid, 'credit')) AS v(account_id, direction)
+  )
+  INSERT INTO commission_entries (referrer_user_id, referee_user_id, order_id, order_no, currency,
+                                  base_amount, rate_bp, level, share_percent, commission_amount,
+                                  frozen_until, accrual_txn_id)
+  SELECT '00000000-0000-7000-8000-0000000000103', '00000000-0000-7000-8000-000000000101',
+         '00000000-0000-7000-8000-000000000c01', 'INV-SEED-001', 'USD',
+         10.00, 1000, 3, 0, 0.00, now(), t.id FROM t;
+$sql$);
+
+-- commission_entries_order_level_key：一单每一级最多一条（上面已写入 c01 的第 2 级）
+SELECT _reject('XB-COMM', '同一单同一级第二条必须拒绝', $sql$
+  WITH t AS (
+    INSERT INTO ledger_transactions (id, kind, currency, actor_kind)
+    VALUES ('00000000-0000-7000-8000-000000000345', 'commission_accrued', 'USD', 'system')
+    RETURNING id
+  ), le AS (
+    INSERT INTO ledger_entries (transaction_id, account_id, currency, direction, amount)
+    SELECT t.id, v.account_id, 'USD', v.direction, 1.00
+      FROM t, (VALUES ('00000000-0000-7000-8000-000000000202'::uuid, 'debit'),
+                      ('00000000-0000-7000-8000-000000000203'::uuid, 'credit')) AS v(account_id, direction)
+  )
+  INSERT INTO commission_entries (referrer_user_id, referee_user_id, order_id, order_no, currency,
+                                  base_amount, rate_bp, level, share_percent, commission_amount,
+                                  frozen_until, accrual_txn_id)
+  SELECT '00000000-0000-7000-8000-0000000000103', '00000000-0000-7000-8000-000000000101',
+         '00000000-0000-7000-8000-000000000c01', 'INV-SEED-001', 'USD',
+         10.00, 1000, 2, 30, 0.30, now(), t.id FROM t;
+$sql$);
+
+-- commission_entries_auto_transfer_shape：只有已解冻的条目能挂「等自动转余额」标记
+SELECT _reject('XB-COMM', '未解冻的条目挂自动转余额标记必须拒绝', $sql$
+  WITH t AS (
+    INSERT INTO ledger_transactions (id, kind, currency, actor_kind)
+    VALUES ('00000000-0000-7000-8000-000000000346', 'commission_accrued', 'USD', 'system')
+    RETURNING id
+  ), le AS (
+    INSERT INTO ledger_entries (transaction_id, account_id, currency, direction, amount)
+    SELECT t.id, v.account_id, 'USD', v.direction, 1.00
+      FROM t, (VALUES ('00000000-0000-7000-8000-000000000202'::uuid, 'debit'),
+                      ('00000000-0000-7000-8000-000000000203'::uuid, 'credit')) AS v(account_id, direction)
+  )
+  INSERT INTO commission_entries (referrer_user_id, referee_user_id, order_id, order_no, currency,
+                                  base_amount, rate_bp, level, share_percent, commission_amount,
+                                  frozen_until, accrual_txn_id, auto_transfer_due)
+  SELECT '00000000-0000-7000-8000-0000000000103', '00000000-0000-7000-8000-000000000101',
+         '00000000-0000-7000-8000-000000000c01', 'INV-SEED-001', 'USD',
+         10.00, 1000, 3, 20, 0.20, now(), t.id, true FROM t;
+$sql$);
+
+-- withdrawals_usdt_reference_shape：已打款的 USDT 提现，流水号必须是对应链的交易哈希
+SELECT _reject('XB-COMM', 'TRC20 打款流水号不是 64 位十六进制必须拒绝', $sql$
+  WITH t AS (
+    INSERT INTO ledger_transactions (id, kind, currency, actor_kind)
+    VALUES ('00000000-0000-7000-8000-000000000351', 'commission_paid', 'USD', 'system')
+    RETURNING id
+  ), le AS (
+    INSERT INTO ledger_entries (transaction_id, account_id, currency, direction, amount)
+    SELECT t.id, v.account_id, 'USD', v.direction, 1.00
+      FROM t, (VALUES ('00000000-0000-7000-8000-000000000202'::uuid, 'debit'),
+                      ('00000000-0000-7000-8000-000000000203'::uuid, 'credit')) AS v(account_id, direction)
+  )
+  INSERT INTO withdrawals (user_id, currency, amount, payout_sealed, method, status,
+                           reviewed_at, payout_reference, payout_txn_id, completed_at)
+  SELECT '00000000-0000-7000-8000-000000000103', 'USD', 1.00, '\x01'::bytea, 'usdt_trc20', 'paid',
+         now(), 'not-a-hash', t.id, now() FROM t;
+$sql$);
+SELECT _reject('XB-COMM', 'ERC20 打款流水号缺 0x 必须拒绝', $sql$
+  WITH t AS (
+    INSERT INTO ledger_transactions (id, kind, currency, actor_kind)
+    VALUES ('00000000-0000-7000-8000-000000000352', 'commission_paid', 'USD', 'system')
+    RETURNING id
+  ), le AS (
+    INSERT INTO ledger_entries (transaction_id, account_id, currency, direction, amount)
+    SELECT t.id, v.account_id, 'USD', v.direction, 1.00
+      FROM t, (VALUES ('00000000-0000-7000-8000-000000000202'::uuid, 'debit'),
+                      ('00000000-0000-7000-8000-000000000203'::uuid, 'credit')) AS v(account_id, direction)
+  )
+  INSERT INTO withdrawals (user_id, currency, amount, payout_sealed, method, status,
+                           reviewed_at, payout_reference, payout_txn_id, completed_at)
+  SELECT '00000000-0000-7000-8000-000000000103', 'USD', 1.00, '\x01'::bytea, 'usdt_erc20', 'paid',
+         now(), 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', t.id, now() FROM t;
+$sql$);
+SELECT _accept('XB-COMM', 'TRC20 打款流水号是交易哈希可以写入', $sql$
+  WITH t AS (
+    INSERT INTO ledger_transactions (id, kind, currency, actor_kind)
+    VALUES ('00000000-0000-7000-8000-000000000353', 'commission_paid', 'USD', 'system')
+    RETURNING id
+  ), le AS (
+    INSERT INTO ledger_entries (transaction_id, account_id, currency, direction, amount)
+    SELECT t.id, v.account_id, 'USD', v.direction, 1.00
+      FROM t, (VALUES ('00000000-0000-7000-8000-000000000202'::uuid, 'debit'),
+                      ('00000000-0000-7000-8000-000000000203'::uuid, 'credit')) AS v(account_id, direction)
+  )
+  INSERT INTO withdrawals (user_id, currency, amount, payout_sealed, method, status,
+                           reviewed_at, payout_reference, payout_txn_id, completed_at)
+  SELECT '00000000-0000-7000-8000-000000000103', 'USD', 1.00, '\x01'::bytea, 'usdt_trc20', 'paid',
+         now(), 'abababababababababababababababababababababababababababababababab', t.id, now() FROM t;
+$sql$);
+SELECT _accept('XB-COMM', '支付宝打款流水号不受哈希形状约束', $sql$
+  WITH t AS (
+    INSERT INTO ledger_transactions (id, kind, currency, actor_kind)
+    VALUES ('00000000-0000-7000-8000-000000000354', 'commission_paid', 'USD', 'system')
+    RETURNING id
+  ), le AS (
+    INSERT INTO ledger_entries (transaction_id, account_id, currency, direction, amount)
+    SELECT t.id, v.account_id, 'USD', v.direction, 1.00
+      FROM t, (VALUES ('00000000-0000-7000-8000-000000000202'::uuid, 'debit'),
+                      ('00000000-0000-7000-8000-000000000203'::uuid, 'credit')) AS v(account_id, direction)
+  )
+  INSERT INTO withdrawals (user_id, currency, amount, payout_sealed, method, status,
+                           reviewed_at, payout_reference, payout_txn_id, completed_at)
+  SELECT '00000000-0000-7000-8000-000000000103', 'USD', 1.00, '\x01'::bytea, 'alipay', 'paid',
+         now(), 'ALIPAY-INV-0001', t.id, now() FROM t;
 $sql$);
 
 --------------------------------------------------------------------------------

@@ -29,6 +29,7 @@ type Entry struct {
 	AccrualTxnID     uuid.UUID       `gorm:"column:accrual_txn_id;type:uuid"`
 	SettleTxnID      *uuid.UUID      `gorm:"column:settle_txn_id;type:uuid"`
 	SettledAt        *time.Time      `gorm:"column:settled_at"`
+	AutoTransferDue  bool            `gorm:"column:auto_transfer_due"` // 提现关闭时解冻、等自动转入余额
 	ReviewedBy       *uuid.UUID      `gorm:"column:reviewed_by;type:uuid"`
 	ReviewedAt       *time.Time      `gorm:"column:reviewed_at"`
 	VoidReason       *string         `gorm:"column:void_reason"`

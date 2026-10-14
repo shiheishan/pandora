@@ -58,6 +58,27 @@ func TestCommissionDistributionCorruptL2(t *testing.T) {
 	}
 }
 
+func TestCommissionDistributionCorruptSum(t *testing.T) {
+	st := &kvStore{kv: map[string]json.RawMessage{
+		keyCommissionDistributionEnabled: json.RawMessage(`true`),
+		keyCommissionDistributionL1:      json.RawMessage(`80`),
+		keyCommissionDistributionL2:      json.RawMessage(`80`),
+		keyCommissionDistributionL3:      json.RawMessage(`80`),
+	}}
+	s := newCommissionLevelsService(st, &auditLog{})
+	if _, err := s.CommissionDistribution(context.Background()); err == nil {
+		t.Fatal("80/80/80: expected error")
+	}
+	// 合计恰好 100 照常读出
+	st.kv[keyCommissionDistributionL1] = json.RawMessage(`50`)
+	st.kv[keyCommissionDistributionL2] = json.RawMessage(`30`)
+	st.kv[keyCommissionDistributionL3] = json.RawMessage(`20`)
+	d, err := s.CommissionDistribution(context.Background())
+	if err != nil || d.Levels != [3]int{50, 30, 20} {
+		t.Fatalf("50/30/20: %+v err=%v", d, err)
+	}
+}
+
 func TestSetCommissionDistributionValidation(t *testing.T) {
 	s := newCommissionLevelsService(&kvStore{kv: map[string]json.RawMessage{}}, &auditLog{})
 	ctx := context.Background()

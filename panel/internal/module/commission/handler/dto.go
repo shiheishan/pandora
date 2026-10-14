@@ -101,6 +101,7 @@ type commissionSummaryResponse struct {
 	DirectRateBP    int64    `json:"direct_rate_bp"`
 	WithdrawEnabled bool     `json:"withdraw_enabled"`
 	WithdrawMethods []string `json:"withdraw_methods"`
+	SiteCurrency    string   `json:"site_currency"`
 }
 
 // commissionEntryResponse 是门户佣金明细一行。
@@ -275,6 +276,7 @@ func summaryFrom(s service.Summary) (commissionSummaryResponse, error) {
 		DirectRateBP:    s.DirectRateBP,
 		WithdrawEnabled: s.WithdrawEnabled,
 		WithdrawMethods: withdrawMethods,
+		SiteCurrency:    string(s.SiteCurrency),
 	}, nil
 }
 

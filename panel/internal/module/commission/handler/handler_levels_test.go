@@ -17,7 +17,7 @@ func TestMyCommissionLevelsShape(t *testing.T) {
 	f := &fakeSvc{my: service.MyCommission{
 		Summary: service.Summary{
 			Currency: "CNY", MinWithdraw: decimal.RequireFromString("100"), Scope: "every_order", RatePercent: 10,
-			DirectRateBP: 500, WithdrawEnabled: false, WithdrawMethods: nil,
+			DirectRateBP: 500, WithdrawEnabled: false, WithdrawMethods: nil, SiteCurrency: "CNY",
 		},
 		Entries: []service.EntryView{{
 			Amount: decimal.RequireFromString("1"), Base: decimal.RequireFromString("10"), RateBP: 1000,
@@ -44,6 +44,9 @@ func TestMyCommissionLevelsShape(t *testing.T) {
 	}
 	if resp.Summary["direct_rate_bp"] != float64(500) {
 		t.Fatalf("direct_rate_bp %v", resp.Summary["direct_rate_bp"])
+	}
+	if resp.Summary["site_currency"] != "CNY" {
+		t.Fatalf("site_currency %v", resp.Summary["site_currency"])
 	}
 	if resp.Summary["withdraw_enabled"] != false {
 		t.Fatalf("withdraw_enabled %v", resp.Summary["withdraw_enabled"])

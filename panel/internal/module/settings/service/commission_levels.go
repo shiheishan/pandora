@@ -79,7 +79,8 @@ type CommissionDistributionUpdate struct {
 	L1, L2, L3 *int
 }
 
-// CommissionWithdraw 是提现开关与可用方式（按目录顺序，去重）。关闭提现时门户隐藏提现，佣金解冻后自动转入余额。
+// CommissionWithdraw 是提现开关与可用方式（按目录顺序，去重）。关闭提现只关站点币种：站点币种的佣金解冻后自动转入余额，
+// 其他币种仍按 Methods 提现。
 type CommissionWithdraw struct {
 	Enabled bool
 	Methods []string
@@ -91,7 +92,8 @@ type CommissionWithdrawUpdate struct {
 	Methods *[]string
 }
 
-// decodeCommissionDistribution 解出多级分销参数：缺行取缺省（关、0/0/0）；比例被手改坏按内部错误。
+// decodeCommissionDistribution 解出多级分销参数：缺行取缺省（关、0/0/0）；比例被手改坏（单项越界或三级合计超过 100）按内部错误，
+// 不让合计超过一单佣金总额的份额进到计提。
 func decodeCommissionDistribution(vals map[string]json.RawMessage) (CommissionDistribution, error) {
 	enabled, err := decodeOr(vals, keyCommissionDistributionEnabled, false)
 	if err != nil {
@@ -117,6 +119,9 @@ func decodeCommissionDistribution(vals map[string]json.RawMessage) (CommissionDi
 	}
 	if l3 < 0 || l3 > CommissionMaxSharePercent {
 		return CommissionDistribution{}, fmt.Errorf("设置 %s 的值 %d 超出范围", keyCommissionDistributionL3, l3)
+	}
+	if sum := l1 + l2 + l3; sum > CommissionMaxSharePercent {
+		return CommissionDistribution{}, fmt.Errorf("多级分销三级比例合计 %d 超过 %d", sum, CommissionMaxSharePercent)
 	}
 	return CommissionDistribution{
 		Enabled: enabled,

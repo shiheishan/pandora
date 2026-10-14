@@ -397,3 +397,55 @@ func TestLevelsOverrideRateUsesDirect(t *testing.T) {
 		}
 	}
 }
+
+// 门户「付费好友」只算直接邀请（第 1 级）；第 2、3 级条目不给上级看下线邮箱；汇总带站点币种。
+func TestMyCommissionLevelOneOnly(t *testing.T) {
+	e, ctx := newEnv(t)
+	admin := newUser(t, e, ctx)
+	setConfig(t, e, ctx, admin, 10, 3, "100.00", "every_order")
+	setDistribution(t, e, ctx, admin, true, 50, 30, 20)
+	buyer, a, b := newUser(t, e, ctx), newUser(t, e, ctx), newUser(t, e, ctx)
+	refer(e, buyer, a)
+	refer(e, a, b)
+
+	// buyer 下单：b 只拿到第 2 级
+	o1 := newPaidOrder(t, e, ctx, buyer, "100.00")
+	if err := e.svc.OnOrderPaid(ctx, o1); err != nil {
+		t.Fatal(err)
+	}
+	mc, err := e.svc.MyCommission(ctx, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mc.Summary.PaidInvitees != 0 || mc.Summary.Orders != 1 || mc.Summary.SiteCurrency != testCurrency {
+		t.Fatalf("只有第 2 级条目时 %+v", mc.Summary)
+	}
+	if len(mc.Entries) != 1 || mc.Entries[0].Level != 2 || mc.Entries[0].From != "" {
+		t.Fatalf("第 2 级条目不应带邮箱: %+v", mc.Entries)
+	}
+
+	// a 自己下单：b 拿到第 1 级，付费好友 1，这一条带打码邮箱
+	o2 := newPaidOrder(t, e, ctx, a, "100.00")
+	if err := e.svc.OnOrderPaid(ctx, o2); err != nil {
+		t.Fatal(err)
+	}
+	mc, err = e.svc.MyCommission(ctx, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mc.Summary.PaidInvitees != 1 || mc.Summary.Orders != 2 {
+		t.Fatalf("加一条第 1 级后 %+v", mc.Summary)
+	}
+	for _, en := range mc.Entries {
+		switch en.Level {
+		case 1:
+			if en.From == "" || en.From == "***" {
+				t.Fatalf("第 1 级条目应带打码邮箱: %+v", en)
+			}
+		default:
+			if en.From != "" {
+				t.Fatalf("第 %d 级条目不应带邮箱: %+v", en.Level, en)
+			}
+		}
+	}
+}

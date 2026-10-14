@@ -176,33 +176,60 @@ func TestOverrideScopeFirstOrder(t *testing.T) {
 	}
 }
 
-func TestOverrideOnlyDirect(t *testing.T) {
+// 单独比例 0 = 这个人不拿佣金，不论他在第几级（用户 10-14 定）：跳过他、继续往上找，他占的那一级不由别人补位。
+func TestOverrideRateZeroSkipsAtEveryLevel(t *testing.T) {
 	e, ctx := newEnv(t)
 	admin := newUser(t, e, ctx)
 	setConfig(t, e, ctx, admin, 10, 3, "100.00", "every_order")
 	setDistribution(t, e, ctx, admin, true, 50, 30, 20)
-	buyer, a, b := newUser(t, e, ctx), newUser(t, e, ctx), newUser(t, e, ctx)
+	buyer, a, b, c := newUser(t, e, ctx), newUser(t, e, ctx), newUser(t, e, ctx), newUser(t, e, ctx)
 	refer(e, buyer, a)
 	refer(e, a, b)
+	refer(e, b, c)
 	e.refs.mu.Lock()
-	emailB := e.refs.emails[b]
+	emailA, emailB := e.refs.emails[a], e.refs.emails[b]
 	e.refs.mu.Unlock()
 	zero := 0
+
+	// 第 2 级 b 被排除：a 拿第 1 级、c 拿第 3 级，b 什么都没有
 	if _, err := e.svc.SetOverride(adminCtx(ctx, admin), OverrideInput{Email: emailB, RatePercent: &zero}); err != nil {
 		t.Fatal(err)
 	}
-	o := newPaidOrder(t, e, ctx, buyer, "100.00")
-	if err := e.svc.OnOrderPaid(ctx, o); err != nil {
+	o1 := newPaidOrder(t, e, ctx, buyer, "100.00")
+	if err := e.svc.OnOrderPaid(ctx, o1); err != nil {
 		t.Fatal(err)
 	}
-	rows := entriesOf(t, e, ctx, o.OrderID)
-	if len(rows) != 2 {
-		t.Fatalf("应两条: %+v", rows)
+	rows := entriesOf(t, e, ctx, o1.OrderID)
+	if len(rows) != 2 || rows[0].Referrer != a || rows[0].Level != 1 || !rows[0].Amount.Equal(dec2("5.00")) ||
+		rows[1].Referrer != c || rows[1].Level != 3 || !rows[1].Amount.Equal(dec2("2.00")) {
+		t.Fatalf("b 被排除时条目不对: %+v", rows)
 	}
-	if balA := accountBalance(t, e, ctx, a, ledgersvc.UserCommissionPending); !balA.Equal(dec2("5.00")) {
-		t.Fatalf("A 待结 %s", balA)
+	if bal := accountBalance(t, e, ctx, b, ledgersvc.UserCommissionPending); !bal.IsZero() {
+		t.Fatalf("b 不应有待结佣金: %s", bal)
 	}
-	if balB := accountBalance(t, e, ctx, b, ledgersvc.UserCommissionPending); !balB.Equal(dec2("3.00")) {
-		t.Fatalf("B 待结 %s", balB)
+
+	// 直接邀请人 a 被排除：整单按全局比例算总额，b、c 照拿第 2、3 级
+	if err := e.svc.DeleteOverride(adminCtx(ctx, admin), b); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.SetOverride(adminCtx(ctx, admin), OverrideInput{Email: emailA, RatePercent: &zero}); err != nil {
+		t.Fatal(err)
+	}
+	o2 := newPaidOrder(t, e, ctx, buyer, "100.00")
+	if err := e.svc.OnOrderPaid(ctx, o2); err != nil {
+		t.Fatal(err)
+	}
+	rows = entriesOf(t, e, ctx, o2.OrderID)
+	if len(rows) != 2 || rows[0].Referrer != b || rows[0].Level != 2 || !rows[0].Amount.Equal(dec2("3.00")) ||
+		rows[1].Referrer != c || rows[1].Level != 3 || !rows[1].Amount.Equal(dec2("2.00")) {
+		t.Fatalf("a 被排除时条目不对: %+v", rows)
+	}
+	for _, r := range rows {
+		if r.RateBP != 1000 {
+			t.Fatalf("a 被排除时按全局比例，rate_bp 应为 1000，得 %d", r.RateBP)
+		}
+	}
+	if bal := accountBalance(t, e, ctx, a, ledgersvc.UserCommissionPending); !bal.Equal(dec2("5.00")) {
+		t.Fatalf("a 待结只应有第一单的 5.00: %s", bal)
 	}
 }

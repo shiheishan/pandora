@@ -1,6 +1,6 @@
 // Package service 是 commission 模块的业务层：订单结算时计提佣金、冻结期满解冻、提现申请与审核打款、佣金转余额、
 // 后台概览与参数、门户我的佣金。别的模块只调本包。开了多级分销时一单最多给往上三级邀请人各计一条（每条独立冻结、解冻、复核）；
-// 提现关闭时佣金解冻后在同一事务里自动转入余额（commission_to_balance）。
+// 提现关闭时站点币种的佣金解冻后挂上标记，再在单独的事务里自动转入余额（commission_to_balance）；别的币种照常提现。
 //
 // 三个阶段都在账本上留痕：
 //
@@ -19,6 +19,7 @@ import (
 
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/module/commission/repo"
+	identitysvc "github.com/aegispanel/aegis/internal/module/identity/service"
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
 	ordersvc "github.com/aegispanel/aegis/internal/module/order/service"
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
@@ -67,8 +68,8 @@ type Referrals interface {
 	ReferralCount(ctx context.Context) (int64, error)
 	// Emails 批量取用户邮箱（一条 SQL）；查不到的 ID 不在结果里。
 	Emails(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error)
-	// IDsByEmail 返回邮箱包含 q 的用户 id（最多 limit 个）；后台按邮箱找人设单独佣金用。
-	IDsByEmail(ctx context.Context, q string, limit int) ([]uuid.UUID, error)
+	// FindByEmail 按邮箱精确找人（先规范化再按唯一键等值查）；没有这个人回 errs.NotFound。后台按邮箱设单独佣金用。
+	FindByEmail(ctx context.Context, email string) (identitysvc.User, error)
 }
 
 // SourceMatcher 判断两个用户是否来自同一来源地址，由 audit 实现（UseSourceMatcher 注入）；命中时佣金转人工复核、不自动解冻。

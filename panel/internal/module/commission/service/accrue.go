@@ -45,7 +45,7 @@ func (s *Service) OnOrderPaid(ctx context.Context, o ordersvc.PaidOrder) error {
 		if err != nil {
 			return err
 		}
-		rate, scope, err := s.termsFor(ctx, *direct, cfg)
+		rate, scope, err := s.orderTerms(ctx, *direct, cfg)
 		if err != nil {
 			return err
 		}
@@ -77,7 +77,7 @@ func (s *Service) OnOrderPaid(ctx context.Context, o ordersvc.PaidOrder) error {
 		if err != nil {
 			return err
 		}
-		list, err := beneficiaries(ctx, o.UserID, *direct, dist, refs.ReferrerOf)
+		list, err := beneficiaries(ctx, o.UserID, *direct, dist, refs.ReferrerOf, s.excludedByOverride)
 		if err != nil {
 			return err
 		}

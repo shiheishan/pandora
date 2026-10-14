@@ -20,8 +20,6 @@ const (
 	ResourceUser          = "user"
 	// OverridesLimit 是后台列表最多返回的条数。
 	OverridesLimit = 200
-	// overrideEmailLookup 是按邮箱找人时取的候选数（IDsByEmail 是包含匹配，再在里面找完全相同的邮箱）。
-	overrideEmailLookup = 20
 )
 
 // ErrOverrideNotFound 是这个用户没有单独设置（删除时）。
@@ -70,29 +68,16 @@ func validateOverrideInput(in OverrideInput) (string, map[string]string) {
 	return email, nil
 }
 
-// findUserByEmail 按邮箱精确找人（不区分大小写）：IDsByEmail 是包含匹配，取回候选后比对完整邮箱。
+// findUserByEmail 按邮箱精确找人：走 identity 的 FindByEmail（规范化后按唯一键等值查），NotFound 当作没有这个人。
 func (s *Service) findUserByEmail(ctx context.Context, refs Referrals, email string) (uuid.UUID, string, bool, error) {
-	ids, err := refs.IDsByEmail(ctx, email, overrideEmailLookup)
+	u, err := refs.FindByEmail(ctx, email)
 	if err != nil {
+		if errs.As(err).Code == errs.NotFound {
+			return uuid.Nil, "", false, nil
+		}
 		return uuid.Nil, "", false, err
 	}
-	if len(ids) == 0 {
-		return uuid.Nil, "", false, nil
-	}
-	emails, err := refs.Emails(ctx, ids)
-	if err != nil {
-		return uuid.Nil, "", false, err
-	}
-	for _, id := range ids {
-		stored, ok := emails[id]
-		if !ok {
-			continue
-		}
-		if strings.EqualFold(stored, email) {
-			return id, stored, true, nil
-		}
-	}
-	return uuid.Nil, "", false, nil
+	return u.ID, u.Email, true, nil
 }
 
 // ListOverrides 列出后台单独佣金设置（按更新时间倒序，最多 OverridesLimit 条）。

@@ -16,7 +16,8 @@ import (
 )
 
 // MyCommission 返回门户「我的佣金」：一个币种的汇总（取法见 summaryCurrency）、最近 100 条佣金、50 条提现、50 笔转余额（明细含全部币种）。
-// 横幅比例与计佣范围按该用户的单独设置（无则用全局）；提现关闭时门户应隐藏提现入口。
+// 横幅比例与计佣范围按该用户的单独设置（无则用全局）。提现关闭只关站点币种：汇总币种是站点币种时门户隐藏提现入口，
+// 别的币种照常显示（门户按 SiteCurrency 判断）。第 2、3 级的条目不给上级看下线邮箱（From 为空）。
 func (s *Service) MyCommission(ctx context.Context, userID uuid.UUID) (MyCommission, error) {
 	refs, err := s.needRefs()
 	if err != nil {
@@ -39,6 +40,10 @@ func (s *Service) MyCommission(ctx context.Context, userID uuid.UUID) (MyCommiss
 		return MyCommission{}, err
 	}
 	cur, err := s.summaryCurrency(ctx, userID)
+	if err != nil {
+		return MyCommission{}, err
+	}
+	site, err := s.ledger.DefaultCurrency(ctx)
 	if err != nil {
 		return MyCommission{}, err
 	}
@@ -80,6 +85,7 @@ func (s *Service) MyCommission(ctx context.Context, userID uuid.UUID) (MyCommiss
 			DirectRateBP:    DirectRateBP(rate, dist),
 			WithdrawEnabled: wd.Enabled,
 			WithdrawMethods: nonNilStrings(wd.Methods),
+			SiteCurrency:    site,
 		},
 		Entries:     []EntryView{},
 		Withdrawals: []WithdrawalView{},
@@ -93,7 +99,7 @@ func (s *Service) MyCommission(ctx context.Context, userID uuid.UUID) (MyCommiss
 	referees := make([]uuid.UUID, 0, len(entries))
 	seen := make(map[uuid.UUID]bool, len(entries))
 	for _, e := range entries {
-		if !seen[e.RefereeUserID] {
+		if e.Level == 1 && !seen[e.RefereeUserID] {
 			seen[e.RefereeUserID] = true
 			referees = append(referees, e.RefereeUserID)
 		}
@@ -103,6 +109,10 @@ func (s *Service) MyCommission(ctx context.Context, userID uuid.UUID) (MyCommiss
 		return MyCommission{}, err
 	}
 	for _, e := range entries {
+		from := ""
+		if e.Level == 1 {
+			from = MaskEmail(emails[e.RefereeUserID])
+		}
 		out.Entries = append(out.Entries, EntryView{
 			Amount:       e.CommissionAmount,
 			Base:         e.BaseAmount,
@@ -112,7 +122,7 @@ func (s *Service) MyCommission(ctx context.Context, userID uuid.UUID) (MyCommiss
 			FrozenUntil:  e.FrozenUntil,
 			CreatedAt:    e.CreatedAt,
 			OrderNo:      e.OrderNo,
-			From:         MaskEmail(emails[e.RefereeUserID]),
+			From:         from,
 			Level:        e.Level,
 			SharePercent: e.SharePercent,
 		})
