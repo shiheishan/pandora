@@ -18,7 +18,7 @@ func TestNodeECHPG(t *testing.T) {
 	trojan := env.node(t, ctx, srv.ID, "ech-trojan", "trojan", 8443, echPGTrojanTLS)
 
 	_, err := env.svc.GenerateNodeECH(ctx, ss.ID, "ech.example.com")
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 
 	st, err := env.svc.GetNodeECH(ctx, ss.ID)
 	if err != nil {
@@ -119,7 +119,7 @@ func TestNodeECHPG(t *testing.T) {
 	}
 
 	_, err = env.svc.GetNodeECH(ctx, uuid.New())
-	invWantCode(t, err, errs.NotFound)
+	_ = invWantCode(t, err, errs.NotFound)
 
 	_, err = env.svc.GenerateNodeECH(ctx, trojan.ID, "192.0.2.1")
 	e := invWantCode(t, err, errs.ValidationFailed)

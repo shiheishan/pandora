@@ -69,10 +69,10 @@ func TestNodeRelaysPG(t *testing.T) {
 		ServerHost: "relay-x.example.com",
 		ServerPort: 8443,
 	})
-	invWantCode(t, err, errs.NotFound)
+	_ = invWantCode(t, err, errs.NotFound)
 
 	_, err = env.svc.ListNodeRelays(ctx, uuid.New())
-	invWantCode(t, err, errs.NotFound)
+	_ = invWantCode(t, err, errs.NotFound)
 
 	// SNI 给 IP 192.0.2.1 → 422 且 Fields 有 sni
 	sniIP := "192.0.2.1"
@@ -82,9 +82,8 @@ func TestNodeRelaysPG(t *testing.T) {
 		ServerPort: 8443,
 		SNI:        &sniIP,
 	})
-	invWantCode(t, err, errs.ValidationFailed)
-	var e *errs.Error
-	if errs.As(err, &e) {
+	_ = invWantCode(t, err, errs.ValidationFailed)
+	if e := errs.As(err); e != nil {
 		if _, ok := e.Fields["sni"]; !ok {
 			t.Errorf("Fields 应包含 sni, got: %v", e.Fields)
 		}
@@ -96,7 +95,7 @@ func TestNodeRelaysPG(t *testing.T) {
 		ServerHost: "relay-port.example.com",
 		ServerPort: 0,
 	})
-	invWantCode(t, err, errs.ValidationFailed)
+	_ = invWantCode(t, err, errs.ValidationFailed)
 
 	// 3. 第 21 条 → 409（当前已有 1 条，再循环建 19 条到达 20 条，第 21 条失败）
 	for i := 2; i <= 20; i++ {
@@ -115,7 +114,7 @@ func TestNodeRelaysPG(t *testing.T) {
 		ServerHost: "relay-21.example.com",
 		ServerPort: 8021,
 	})
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 
 	// 4. Patch：改端口、清空 SNI（SNI: OptionalString{Set: true}）成功，RowVersion 加 1
 	// 先将 created 改上一个 SNI
@@ -155,11 +154,11 @@ func TestNodeRelaysPG(t *testing.T) {
 		RowVersion: patch1.RowVersion,
 		ServerPort: &newPort,
 	})
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 
 	// 5. Delete：旧版本 → 409
 	err = env.svc.DeleteNodeRelay(ctx, created.ID, patch1.RowVersion)
-	invWantCode(t, err, errs.Conflict)
+	_ = invWantCode(t, err, errs.Conflict)
 
 	// 正确版本删除
 	err = env.svc.DeleteNodeRelay(ctx, created.ID, patch2.RowVersion)

@@ -77,11 +77,11 @@ func GenerateECHKey(publicName string) (ECHKey, error) {
 
 	echConfig := make([]byte, 4+len(contents))
 	binary.BigEndian.PutUint16(echConfig[0:], echConfigVersion)
-	binary.BigEndian.PutUint16(echConfig[2:], uint16(len(contents)))
+	binary.BigEndian.PutUint16(echConfig[2:], uint16(len(contents))) //nolint:gosec // 公开名是规整过的域名（不超过 253 字节），内容远小于 65535
 	copy(echConfig[4:], contents)
 
 	configList := make([]byte, 2+len(echConfig))
-	binary.BigEndian.PutUint16(configList[0:], uint16(len(echConfig)))
+	binary.BigEndian.PutUint16(configList[0:], uint16(len(echConfig))) //nolint:gosec // 同上
 	copy(configList[2:], echConfig)
 
 	return ECHKey{
@@ -101,6 +101,10 @@ func NormalizeECHPublicName(name string) (string, bool) {
 		return "", false
 	}
 	if net.ParseIP(name) != nil {
+		return "", false
+	}
+	// 客户端（Go crypto/tls 的 validDNSName 等）跳过只有一段的公开名（如 localhost），整份配置就无效了
+	if !strings.Contains(name, ".") {
 		return "", false
 	}
 	if !validServerName(name) {

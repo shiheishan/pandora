@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/shopspring/decimal"
+
+	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
 
 func TestParseRateSchedule(t *testing.T) {
@@ -107,8 +109,14 @@ func TestParseRateSchedule(t *testing.T) {
 				if err == nil {
 					t.Fatalf("期望错误含 %q，得到 nil", tc.wantErr)
 				}
-				if !strings.Contains(err.Error(), tc.wantErr) {
-					t.Fatalf("错误 %q 应含 %q", err.Error(), tc.wantErr)
+				msg := err.Error()
+				if e := errs.As(err); e != nil {
+					for _, v := range e.Fields {
+						msg += " " + v
+					}
+				}
+				if !strings.Contains(msg, tc.wantErr) {
+					t.Fatalf("错误 %q 应含 %q", msg, tc.wantErr)
 				}
 				return
 			}

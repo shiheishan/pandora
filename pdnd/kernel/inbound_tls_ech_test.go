@@ -184,7 +184,8 @@ func TestLoadInboundTLSConfigRegressionWithoutECH(t *testing.T) {
 
 func TestInboundTLSECHEndToEndHandshake(t *testing.T) {
 	certPath, keyPath := testXHTTPServerCertFiles(t)
-	cfgBytes, listBytes, privBytes := testECHKey(t, "localhost")
+	// 公开名要有两段以上：客户端跳过 localhost 这类单段名，整份配置无效
+	cfgBytes, listBytes, privBytes := testECHKey(t, "ech.example.test")
 
 	raw := map[string]any{
 		"tls":       true,

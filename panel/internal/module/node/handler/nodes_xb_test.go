@@ -23,7 +23,7 @@ func TestXBRoutesRegistered(t *testing.T) {
 		"PATCH /v1/node-relays/:id",
 		"DELETE /v1/node-relays/:id",
 		"POST /v1/nodes/:id/traffic/reset",
-		"POST /v1/nodes/edit:batch",
+		`POST /v1/nodes/edit\:batch`, // gin 的路由表里冒号转义成 \:（同 status\:batch）
 		"GET /v1/nodes/:id/ech",
 		"POST /v1/nodes/:id/ech",
 		"DELETE /v1/nodes/:id/ech",

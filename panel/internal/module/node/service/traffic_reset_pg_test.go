@@ -73,7 +73,7 @@ func TestResetNodeTrafficPG(t *testing.T) {
 
 	// 验证不存在的节点返回 404
 	err = env.svc.ResetNodeTraffic(ctx, uuid.New(), "reason")
-	invWantCode(t, err, errs.NotFound)
+	_ = invWantCode(t, err, errs.NotFound)
 }
 
 func TestResetDueNodeTrafficPG(t *testing.T) {

@@ -408,7 +408,7 @@ export function xbRoutes(deps: XBRoutesDeps): Record<string, MockRoute> {
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       const extra = unknownField(body, ['row_version', 'name', 'server_host', 'server_port', 'sni', 'host_header', 'enabled', 'sort_order'])
       if (extra) return ctx.fail(400, 'bad_request', `请求体包含未知字段 "${extra}"`)
-      const found = findRelay(deps.list(), ctx.params.id)
+      const found = findRelay(deps.list(), ctx.params.id ?? '')
       if (!found) return reply(ctx, notFound())
       const { host: n, relay } = found
       if (!(typeof body.row_version === 'number' && body.row_version > 0)) return reply(ctx, invalid({ row_version: '必须提供正整数版本号' }))
@@ -450,7 +450,7 @@ export function xbRoutes(deps: XBRoutesDeps): Record<string, MockRoute> {
     'DELETE /v1/node-relays/:id': async (ctx) => {
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
-      const found = findRelay(deps.list(), ctx.params.id)
+      const found = findRelay(deps.list(), ctx.params.id ?? '')
       if (!found) return reply(ctx, notFound())
       const { host: n, relay } = found
       if (!(typeof body.row_version === 'number' && body.row_version > 0)) return reply(ctx, invalid({ row_version: '必须提供正整数版本号' }))

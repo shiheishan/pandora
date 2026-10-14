@@ -164,7 +164,7 @@ func TestECHConfigFromList_非法输入(t *testing.T) {
 		data []byte
 	}{
 		{"过短", []byte{0x00}},
-		{"总长不符", append([]byte{0xff, 0xff}, list[2:])},
+		{"总长不符", append([]byte{0xff, 0xff}, list[2:]...)},
 		{"版本不对", patchECHConfigVersion(list, 0x1234)},
 		{"内容长不符", patchECHConfigContentLen(list, 1)},
 	}
@@ -188,8 +188,9 @@ func patchECHConfigVersion(list []byte, ver uint16) []byte {
 
 func patchECHConfigContentLen(list []byte, contentLen uint16) []byte {
 	out := append([]byte(nil), list...)
-	if len(out) >= 8 {
-		binary.BigEndian.PutUint16(out[6:8], contentLen)
+	// ECHConfigList：2 字节总长，ECHConfig：2 字节版本、2 字节内容长
+	if len(out) >= 6 {
+		binary.BigEndian.PutUint16(out[4:6], contentLen)
 	}
 	return out
 }

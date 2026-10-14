@@ -3,7 +3,6 @@ package service
 // 批量修改节点的 PG 测试。
 
 import (
-	"context"
 	"testing"
 
 	"github.com/google/uuid"
@@ -142,7 +141,7 @@ func TestBatchEditNodesNotFound(t *testing.T) {
 		},
 		Reason: "测试404",
 	})
-	invWantCode(t, err, errs.NotFound)
+	_ = invWantCode(t, err, errs.NotFound)
 }
 
 func TestBatchEditNodesValidation(t *testing.T) {

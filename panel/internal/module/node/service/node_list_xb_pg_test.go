@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/uuid"
-
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
 
@@ -51,9 +49,8 @@ func TestQueryNodesXBFields(t *testing.T) {
 	// Tag 17 个字 → 422 且 Fields 有 tag
 	longTag := strings.Repeat("字", 17)
 	_, _, err = e.svc.QueryNodes(ctx, NodeQuery{Search: e.tag, Tag: longTag, Limit: 50})
-	invWantCode(t, err, errs.ValidationFailed)
-	var eErr *errs.Error
-	if errs.As(err, &eErr) {
+	_ = invWantCode(t, err, errs.ValidationFailed)
+	if eErr := errs.As(err); eErr != nil {
 		if _, ok := eErr.Fields["tag"]; !ok {
 			t.Errorf("Fields 应包含 tag, got: %v", eErr.Fields)
 		}

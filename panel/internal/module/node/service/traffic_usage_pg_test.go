@@ -4,9 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"testing"
-	"time"
-
-	"github.com/google/uuid"
 )
 
 // TestNodeUsageAccumulatesAndNoLimitPG 验证：

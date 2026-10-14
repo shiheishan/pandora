@@ -5,8 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
-
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 )
 
