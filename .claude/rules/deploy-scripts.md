@@ -45,10 +45,11 @@ paths:
   - `pandora-nginx` 阶段不写 RUN（arm64 不用模拟器）；目录、默认站点、日志软链都在 `nginx-entrypoint.sh` 里做。
 - 安全模型与裸机相同，不为容器放宽：
   - serve 的两个 HTTP 监听照旧绑回环；nginx 用 `network_mode: "service:serve"` 共用网络命名空间，经 127.0.0.1 反代。不改 `validate.go`。
+  - serve 每次启动都换网络命名空间。compose 发起的重建靠 nginx 的 `depends_on.restart: true` 连带重启；serve 被 Docker 就地拉起（崩溃、OOM）compose 不管，靠 `nginx-entrypoint.sh` 的看门狗：宽限 60 秒后连续 6 次（30 秒）连 `127.0.0.1:9000` 被拒绝就让 nginx 退出、由 `restart: unless-stopped` 拉起重新加入。只认「拒绝连接」，面板回 5xx 或超时不算。
   - nginx 只用 `render-nginx.sh` 渲染 `nginx-pandora.conf`；渲染后的容器专用改动只有两处（`listen 127.0.0.1:9080` → `listen 9080`；容器无 IPv6 时删 `listen [::]:`），每处先核数量、不对就停。模板改了这两行要同步改入口脚本。
   - 真实 IP 信任表由 `PANDORA_REALIP_FROM`（`gateway` 或 IP/CIDR，逗号分隔）每次启动重写；空 = 不信任任何代理。`gateway` 只在 80/443 不对公网发布时可用（前面另有反代、转发到宿主回环的 9080；前面的反代必须覆写 X-Real-IP）。
   - PG 与 Redis 只在 `internal: true` 的 backend 网络，不映射宿主端口；Redis 口令经标准输入的配置给（`redis-server -`），不进进程参数。
   - 秘密只在 0600 的 `.env`（compose 插值，按服务挑着给），不进镜像、不进命令行参数；`ops.sh` 把需要的落成容器内 root 0600 文件（`/etc/pandora/{deploy.env,secrets.env,backup-age.key}`），裸机脚本原样复用。
 - migrate 与 ops 在 PostgreSQL 的网络命名空间里（`network_mode: "service:postgres"`），部署脚本照旧经 `127.0.0.1:5432` 连库。migrate 每次 `up` 都跑：`bootstrap.sh roles` → 有待执行迁移且库已有结构时升级前 `pg_dump` → `pandora migrate up`（以 nobody 跑）→ `bootstrap.sh grants`；serve / worker `depends_on: service_completed_successfully`。
 - 容器版不支持：WebDAV 异地上传（PG 网络不出网）；正式库直接覆盖恢复（`restore-postgres.sh` 要 systemctl）——先恢复到新库名，再停服务改名、重跑 migrate（RUNBOOK 的 compose 一章）。
-- 守卫：`.github/workflows/panel-docker.yml` 从源码构建三个镜像，真起 compose 走一遍（迁移、/readyz、门户与后台经 nginx、建管理员并登录、真实来源 IP 两种口径、重建 serve 后 nginx 仍通、备份校验恢复）。改 `panel/deploy/**`、迁移、`.dockerignore` 时触发。
+- 守卫：`.github/workflows/panel-docker.yml` 从源码构建三个镜像，真起 compose 走一遍（迁移、/readyz、门户与后台经 nginx、建管理员并登录、真实来源 IP 两种口径、重建 serve 与就地杀掉 serve 后 nginx 都能恢复、备份校验恢复）。改 `panel/deploy/**`、迁移、`.dockerignore` 时触发。

@@ -1,7 +1,8 @@
 name: Release
 
 # 发版：在默认分支（main）的提交上打 v* 标签并推送 → 构建 linux amd64 / arm64 两份发布包 → 对附件出来源证明
-# → 建 GitHub Release。部署者在目标机上用 Release 里的 get.sh 一条命令首装或升级（见 README「部署」）。
+# → 建 GitHub Release。推标签时在建 Release 之后，再用同一份发布包构建并推送三个多架构镜像到 GHCR，并各出来源证明。
+# 部署者在目标机上用 Release 里的 get.sh 一条命令首装或升级（见 README「部署」）。
 # workflow_dispatch 是演练：只构建并上传 workflow artifact，不建 Release、不打标签。
 # 只有「推标签」这一种事件会发布；别的事件（workflow_dispatch，或调试时临时加的分支触发）一律只演练构建。
 # workflow_dispatch 要等本文件进了默认分支才能触发（GitHub 的限制），之后可 --ref 任一分支跑那个分支上的版本。
@@ -161,8 +162,133 @@ jobs:
             printf '核对：`SHA256SUMS` 覆盖本页全部附件；包旁的 `.sha256` 与包同源，只防下载损坏。防篡改核对 GitHub Actions 出的来源证明：\n\n'
             printf '```bash\ngh attestation verify pandora-panel_%s_linux_amd64.tar.gz --repo %s \\\n  --signer-workflow %s/.github/workflows/release.yml --source-ref refs/tags/%s\n```\n' "$TAG" "$GH_REPO" "$GH_REPO" "$TAG"
             printf '\n核过后直接解开这份包跑 `deploy/install.sh`，不要再经 get.sh 重新下载。\n'
+            owner="${GH_REPO%%/*}"
+            owner="${owner,,}"
+            printf '\nDocker / Compose / 1Panel：镜像 `ghcr.io/%s/pandora`、`pandora-nginx`、`pandora-ops`，标签 `%s`，用法见仓库 `panel/deploy/docker/README.md`。\n' "$owner" "$TAG"
           } > "$notes"
           gh release create "$TAG" \
             pandora-panel_*.tar.gz pandora-panel_*.tar.gz.sha256 pandora-panel_*.tar.gz.manifest.sha256 \
             get.sh SHA256SUMS \
             --verify-tag --title "$TAG" --notes-file "$notes" "${prerelease[@]}"
+
+  images:
+    name: Build and push container images
+    needs: [build, publish]
+    # 推标签：等 Release 建好再推镜像；workflow_dispatch：只演练构建、不推、不出证明
+    if: ${{ !cancelled() && needs.build.result == 'success' && (needs.publish.result == 'success' || (github.event_name == 'workflow_dispatch' && needs.publish.result == 'skipped')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: pandora-panel-${{ needs.build.outputs.version }}
+          path: assets
+      - name: Check the assets against SHA256SUMS
+        working-directory: assets
+        run: sha256sum --strict -c SHA256SUMS
+      - name: Unpack release packages for image build context
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          # 镜像里的二进制、节点端、离线库与部署脚本就是刚出了来源证明的这两个包里的字节，
+          # 不在镜像构建里重新编译（Dockerfile 的 release 阶段被 --build-context release=… 整体替换）。
+          tree="$RUNNER_TEMP/release-tree"
+          mkdir -p "$tree"
+          for arch in amd64 arm64; do
+            tar -xzf "assets/pandora-panel_${VERSION}_linux_${arch}.tar.gz" -C "$tree"
+            (
+              cd "$tree/pandora-panel_${VERSION}_linux_${arch}"
+              sha256sum --strict -c SHA256SUMS
+            )
+          done
+      - name: Resolve container image repository
+        id: image
+        run: echo "repo=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Log in to GitHub Container Registry
+        if: github.event_name == 'push'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # 只打版本号标签、不打 latest（升级是站长在 .env 里改版本号，不会被 pull 意外带走）；
+      # 来源证明用 actions/attest，与发布包同一口径。
+      - name: Build and push pandora image
+        id: build_pandora
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: panel/deploy/docker/Dockerfile
+          target: pandora
+          platforms: linux/amd64,linux/arm64
+          build-contexts: release=${{ runner.temp }}/release-tree
+          build-args: |
+            PANDORA_VERSION=${{ needs.build.outputs.version }}
+            PANDORA_REVISION=${{ github.sha }}
+          tags: ${{ steps.image.outputs.repo }}/pandora:${{ needs.build.outputs.version }}
+          push: ${{ github.event_name == 'push' }}
+          provenance: false
+          sbom: false
+      - name: Attest pandora image
+        if: github.event_name == 'push'
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ steps.image.outputs.repo }}/pandora
+          subject-digest: ${{ steps.build_pandora.outputs.digest }}
+          push-to-registry: true
+      - name: Build and push pandora-nginx image
+        id: build_nginx
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: panel/deploy/docker/Dockerfile
+          target: pandora-nginx
+          platforms: linux/amd64,linux/arm64
+          build-contexts: release=${{ runner.temp }}/release-tree
+          build-args: |
+            PANDORA_VERSION=${{ needs.build.outputs.version }}
+            PANDORA_REVISION=${{ github.sha }}
+          tags: ${{ steps.image.outputs.repo }}/pandora-nginx:${{ needs.build.outputs.version }}
+          push: ${{ github.event_name == 'push' }}
+          provenance: false
+          sbom: false
+      - name: Attest pandora-nginx image
+        if: github.event_name == 'push'
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ steps.image.outputs.repo }}/pandora-nginx
+          subject-digest: ${{ steps.build_nginx.outputs.digest }}
+          push-to-registry: true
+      - name: Build and push pandora-ops image
+        id: build_ops
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: panel/deploy/docker/Dockerfile
+          target: pandora-ops
+          platforms: linux/amd64,linux/arm64
+          build-contexts: release=${{ runner.temp }}/release-tree
+          build-args: |
+            PANDORA_VERSION=${{ needs.build.outputs.version }}
+            PANDORA_REVISION=${{ github.sha }}
+          tags: ${{ steps.image.outputs.repo }}/pandora-ops:${{ needs.build.outputs.version }}
+          push: ${{ github.event_name == 'push' }}
+          provenance: false
+          sbom: false
+      - name: Attest pandora-ops image
+        if: github.event_name == 'push'
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ steps.image.outputs.repo }}/pandora-ops
+          subject-digest: ${{ steps.build_ops.outputs.digest }}
+          push-to-registry: true

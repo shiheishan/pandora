@@ -197,6 +197,33 @@ fi
 # --- 11. 清理临时目录 ---
 rm -rf "$work"
 
-# --- 12. 校验并前台运行 ---
+# --- 12. 网络命名空间看门狗 ---
+# nginx 共用 serve 的网络命名空间。serve 被 Docker 就地拉起（崩溃、OOM 被杀）时换了新的命名空间，
+# compose 的 depends_on.restart 只管 compose 自己发起的重建，管不到这种情况：nginx 留在旧命名空间里，
+# 宿主端口进的是新命名空间、没人在听，站点一直不通。
+# 看门狗在启动宽限 60 秒后每 5 秒连一次 127.0.0.1:9000，连续 6 次「拒绝连接」（curl 退出 7，
+# 不是 5xx 也不是超时）就让 nginx 快速退出，restart: unless-stopped 把容器拉起，重新加入 serve 当前的命名空间。
+# 后台子进程在 exec 之后挂在 nginx 主进程下；$$ 在子进程里仍是本脚本的 PID，exec 后即 nginx 主进程。
+netns_watchdog() {
+  local fails=0 rc
+  sleep 60
+  while sleep 5; do
+    rc=0
+    curl -s -o /dev/null --max-time 3 http://127.0.0.1:9000/readyz || rc=$?
+    if (( rc == 7 )); then
+      fails=$((fails + 1))
+    else
+      fails=0
+    fi
+    if (( fails >= 6 )); then
+      say '连续 30 秒连不上 127.0.0.1:9000（serve 已被重新拉起、换了网络命名空间，或已停止），退出 nginx 让 Docker 重新拉起'
+      kill -TERM "$$" 2>/dev/null || true
+      return 0
+    fi
+  done
+}
+
+# --- 13. 校验并前台运行 ---
 nginx -t -q || die 'nginx -t 失败'
+netns_watchdog &
 exec nginx -g 'daemon off;'
