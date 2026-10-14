@@ -39,8 +39,8 @@ func TestPacedWriteRateLimited(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const minBytes = int64(0.2 * 1024 * 1024)
-	const maxBytes = int64(0.45 * 1024 * 1024)
+	const minBytes = int64(1024 * 1024 / 5)
+	const maxBytes = int64(1024 * 1024 * 45 / 100)
 	if n < minBytes || n > maxBytes {
 		t.Fatalf("写出 %d 字节，期望 [%d, %d]", n, minBytes, maxBytes)
 	}

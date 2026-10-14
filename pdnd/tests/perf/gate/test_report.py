@@ -69,7 +69,8 @@ class TestReportIntegration(unittest.TestCase):
     def _write(self, rel: str, obj: object) -> None:
         p = self.tmp / rel
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(obj), encoding="utf-8")
+        # 字符串原样写（windows.jsonl 这类一行一个 JSON 的文件），其余按 JSON 写
+        p.write_text(obj if isinstance(obj, str) else json.dumps(obj), encoding="utf-8")
 
     def _build_minimal_run(self) -> None:
         """最小运行目录：vless_vision + hy2，单 load1。"""

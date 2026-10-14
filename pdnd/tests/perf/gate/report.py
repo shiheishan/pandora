@@ -366,6 +366,8 @@ class RunReport:
                     w = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+                if not isinstance(w, dict):
+                    continue
                 n = w.get("name", "")
                 if n.startswith("udp-") and n not in seen:
                     seen.add(n)

@@ -28,8 +28,8 @@ func TestPacedSendRate(t *testing.T) {
 	if n != cw.n {
 		t.Fatalf("返回值与写入不一致")
 	}
-	min := int64(0.2 * 1024 * 1024)
-	max := int64(0.45 * 1024 * 1024)
+	min := int64(1024 * 1024 / 5)
+	max := int64(1024 * 1024 * 45 / 100)
 	if n < min || n > max {
 		t.Fatalf("8Mbps×300ms 字节数 %d 不在 [%d,%d]", n, min, max)
 	}

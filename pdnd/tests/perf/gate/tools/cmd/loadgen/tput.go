@@ -51,6 +51,13 @@ func pacedSend(ctx context.Context, w io.Writer, bps uint64, d time.Duration) (i
 		bucketCap = 4 * bytesPerTick
 	}
 	var bucket float64
+	minWrite := bytesPerTick
+	if minWrite < 1 {
+		minWrite = 1
+	}
+	if minWrite > float64(tputWriteChunk) {
+		minWrite = float64(tputWriteChunk)
+	}
 	nextTick := time.Now()
 
 	for time.Now().Before(deadline) {
@@ -66,8 +73,13 @@ func pacedSend(ctx context.Context, w io.Writer, bps uint64, d time.Duration) (i
 			nextTick = nextTick.Add(tputTick)
 			now = time.Now()
 		}
-		if bucket >= float64(tputWriteChunk) {
-			n, err := w.Write(tputFill)
+		// 低速率时一个写块要攒很久：攒够一个节拍的量（至少 1 字节）就写，写多少按桶里有多少，上限一个写块
+		if bucket >= minWrite {
+			chunk := int(bucket)
+			if chunk > tputWriteChunk {
+				chunk = tputWriteChunk
+			}
+			n, err := w.Write(tputFill[:chunk])
 			if n > 0 {
 				total += int64(n)
 				bucket -= float64(n)
