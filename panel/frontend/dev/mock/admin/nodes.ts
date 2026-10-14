@@ -36,7 +36,6 @@ interface Node {
   node_type: string | null
   server_host: string | null
   server_port: number | null
-  kernel: string
   traffic_rate: number
   display_name: string | null
   country_code: string | null
@@ -69,7 +68,6 @@ function node(p: Partial<Node> & Pick<Node, 'name' | 'node_type' | 'serving_stat
     pool_id: pools[0]!.id,
     server_host: `n${nodeNo}.pandora.run`,
     server_port: 443,
-    kernel: 'auto',
     traffic_rate: 1,
     display_name: null,
     country_code: null,
@@ -219,11 +217,9 @@ function detailRow(n: Node) {
   return {
     ...listRow(n),
     traffic_rate: n.traffic_rate,
-    kernel: n.kernel,
     protocol_config: redact(n.protocol_config),
     protocol_schema_version: n.protocol_schema_version,
     config_validated_at: n.node_type ? n.updated_at : null,
-    traffic_bytes: n.traffic_bytes_24h * 30,
   }
 }
 
@@ -287,7 +283,7 @@ function redact(value: unknown): unknown {
 function adminNode(n: Node, warnings?: string[]) {
   const pick = <K extends keyof Node>(...keys: K[]) => Object.fromEntries(keys.map((k) => [k, n[k]]))
   return {
-    ...pick('id', 'row_version', 'name', 'server_id', 'pool_id', 'status', 'serving_status', 'node_type', 'server_host', 'server_port', 'kernel', 'traffic_rate', 'display_name', 'country_code', 'protocol_schema_version', 'sort_order', 'created_at', 'updated_at'),
+    ...pick('id', 'row_version', 'name', 'server_id', 'pool_id', 'status', 'serving_status', 'node_type', 'server_host', 'server_port', 'traffic_rate', 'display_name', 'country_code', 'protocol_schema_version', 'sort_order', 'created_at', 'updated_at'),
     protocol_config: redact(n.protocol_config),
     config_validated_at: n.updated_at,
     ...(warnings?.length ? { warnings } : {}),
@@ -384,7 +380,7 @@ export const nodes: MockModule = {
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('node_create', () => {
-        const extra = unknownField(body, ['name', 'server_id', 'node_type', 'server_host', 'server_port', 'protocol_config', 'pool_id', 'kernel', 'traffic_rate', 'display_name', 'sort_order', 'country_code'])
+        const extra = unknownField(body, ['name', 'server_id', 'node_type', 'server_host', 'server_port', 'protocol_config', 'pool_id', 'traffic_rate', 'display_name', 'sort_order', 'country_code'])
         if (extra) return err(400, 'bad_request', `请求体包含未知字段 "${extra}"`)
         const fields = { ...basicErrors(body, true), ...validateProtocol(text(body.node_type), body.protocol_config) }
         if (Object.keys(fields).length) return invalid(fields)
@@ -398,7 +394,6 @@ export const nodes: MockModule = {
           server_host: text(body.server_host),
           server_port: int(body.server_port),
           pool_id: text(body.pool_id) || null,
-          kernel: text(body.kernel) || 'auto',
           traffic_rate: Number(body.traffic_rate) > 0 ? Number(body.traffic_rate) : 1,
           display_name: text(body.display_name) || null,
           country_code: text(body.country_code).toUpperCase() || null,
@@ -416,7 +411,7 @@ export const nodes: MockModule = {
     'PATCH /v1/nodes/:id': async (ctx) => {
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
-      const extra = unknownField(body, ['row_version', 'name', 'pool_id', 'node_type', 'server_host', 'server_port', 'kernel', 'traffic_rate', 'display_name', 'protocol_config', 'country_code'])
+      const extra = unknownField(body, ['row_version', 'name', 'pool_id', 'node_type', 'server_host', 'server_port', 'traffic_rate', 'display_name', 'protocol_config', 'country_code'])
       if (extra) return ctx.fail(400, 'bad_request', `请求体包含未知字段 "${extra}"`)
       const n = findNode(ctx.params.id)
       if (!n) return reply(ctx, notFound('节点不存在'))
@@ -425,7 +420,7 @@ export const nodes: MockModule = {
       const nodeType = body.node_type === undefined ? n.node_type ?? '' : text(body.node_type)
       // 换协议类型时不补旧密钥（R106）
       const config = body.protocol_config === undefined ? n.protocol_config : nodeType === n.node_type ? restoreSecrets(n.protocol_config, body.protocol_config) : body.protocol_config
-      const touched = ['node_type', 'server_host', 'server_port', 'kernel', 'protocol_config'].some((k) => body[k] !== undefined)
+      const touched = ['node_type', 'server_host', 'server_port', 'protocol_config'].some((k) => body[k] !== undefined)
       const fields = { ...basicErrors(body, false), ...(touched ? validateProtocol(nodeType, config) : {}) }
       // nodefabric.PatchAdminNode：在役节点不许清空池（无池节点不服务任何用户），草稿等仍可无池
       if (body.pool_id !== undefined && !text(body.pool_id) && n.serving_status === 'active') fields.pool_id = '在役节点必须属于一个节点池；不选池则不服务任何用户，先停用节点再移出'
@@ -436,7 +431,6 @@ export const nodes: MockModule = {
       if (body.node_type !== undefined) n.node_type = nodeType
       if (body.server_host !== undefined) n.server_host = text(body.server_host)
       if (body.server_port !== undefined) n.server_port = int(body.server_port)
-      if (body.kernel !== undefined) n.kernel = text(body.kernel) || 'auto'
       if (body.traffic_rate !== undefined) n.traffic_rate = Number(body.traffic_rate)
       if (body.display_name !== undefined) n.display_name = text(body.display_name) || null
       if (body.country_code !== undefined) n.country_code = text(body.country_code).toUpperCase() || null

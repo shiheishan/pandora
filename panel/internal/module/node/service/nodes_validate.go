@@ -101,7 +101,7 @@ func nodeCheckRate(r decimal.Decimal) error {
 }
 
 // nodeValidateProtocol 校验一次完整的协议写入（地址、端口、类型、配置体），返回 schema 版本。raw 为空当作 {}。
-func nodeValidateProtocol(nodeType, kernel, host string, port int, raw json.RawMessage) (int, error) {
+func nodeValidateProtocol(nodeType, host string, port int, raw json.RawMessage) (int, error) {
 	host = strings.TrimSpace(host)
 	switch {
 	case host == "":
@@ -118,7 +118,7 @@ func nodeValidateProtocol(nodeType, kernel, host string, port int, raw json.RawM
 	if len(raw) == 0 {
 		raw = json.RawMessage("{}")
 	}
-	version, fields := protocol.Validate(nodeType, kernel, port, raw)
+	version, fields := protocol.Validate(nodeType, port, raw)
 	if len(fields) > 0 {
 		return 0, errs.Invalid(fields)
 	}

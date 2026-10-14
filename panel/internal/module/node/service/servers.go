@@ -376,7 +376,6 @@ func (s *Service) ListServerNodes(ctx context.Context, id uuid.UUID) ([]ServerNo
 			DisplayName:       n.DisplayName,
 			ServerHost:        n.ServerHost,
 			ServerPort:        n.ServerPort,
-			Kernel:            n.Kernel,
 			TrafficRate:       n.TrafficRate,
 			ConfigValidatedAt: n.ConfigValidatedAt,
 			LastHeartbeatAt:   srv.LastHeartbeatAt,

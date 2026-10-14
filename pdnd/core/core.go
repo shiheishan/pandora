@@ -1,9 +1,7 @@
 // Package core 定义内核抽象。
 //
-// 为什么要这层抽象：sing-box、xray-core、mieru 以及 core/external 托管的
-// 独立进程，用户管理与统计 API 形态完全不同，但上层「同步用户、上报流量」
-// 的逻辑是一样的。把差异关在这层，
-// 换内核或同时跑多个内核时，节点管理逻辑一行都不用改。
+// 节点编排（node/）只认这层抽象，不碰 NativeCore（kernel/）的内部：编排层的
+// 「同步用户、上报流量、装入站」与数据面实现解耦，测试里也能换成假内核。
 package core
 
 import "context"
@@ -38,11 +36,6 @@ type InboundConfig struct {
 	Listen   string
 	Port     int
 
-	// Kernel 是面板指定的承载运行时：auto / pandora-native，或迁移阶段
-	// 显式选择 sing-box / xray-core。空值等同 auto；NativeCore-only
-	// 运行时会拒绝兼容内核选择，而不是静默降级。
-	Kernel string
-
 	Raw map[string]any
 }
 
@@ -50,7 +43,7 @@ type InboundConfig struct {
 //
 // Settings 是协议特有参数（server / port / uuid / password / tls …），
 // 键名沿用稳定的中立 schema（历史上与 sing-box 命名相近），由
-// NativeCore 解析；兼容构建只在明确迁移时做映射。
+// NativeCore 解析。
 type Outbound struct {
 	Tag      string
 	Type     string
@@ -80,7 +73,7 @@ type Routing struct {
 //
 // 所有方法都要求并发安全：用户同步与流量上报跑在不同的 goroutine 里。
 type Core interface {
-	// Type 返回内核标识，用于日志与多内核共存时的区分
+	// Type 返回内核标识，用于日志
 	Type() string
 
 	Start(ctx context.Context) error

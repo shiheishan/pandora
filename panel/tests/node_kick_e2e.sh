@@ -474,7 +474,6 @@ import json, os, sys
 out, addr, state, ident = sys.argv[1:5]
 cfg = {
     "log_level": "info",
-    "native_only": True,
     "cache_dir": state,
     "panel": {"address": addr, "identity_dir": ident},
     "runtime": {"allow_private_destinations": True},

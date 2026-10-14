@@ -118,11 +118,11 @@ var (
 		"runtime_status", "runtime_reason", "runtime_state_at", "runtime_reason_node", "delivery_degraded",
 	}
 	inventoryNodeDetailExtra = []string{
-		"traffic_rate", "kernel", "protocol_config", "protocol_schema_version", "config_validated_at", "traffic_bytes",
+		"traffic_rate", "protocol_config", "protocol_schema_version", "config_validated_at",
 	}
 	inventoryAdminNodeKeys = []string{
 		"id", "row_version", "name", "server_id", "pool_id", "status", "serving_status", "node_type",
-		"server_host", "server_port", "kernel", "traffic_rate", "display_name", "country_code", "protocol_config",
+		"server_host", "server_port", "traffic_rate", "display_name", "country_code", "protocol_config",
 		"protocol_schema_version", "config_validated_at", "sort_order", "created_at", "updated_at",
 	}
 	inventoryServerKeys = []string{
@@ -134,7 +134,7 @@ var (
 	}
 	inventoryServerNodeKeys = []string{
 		"id", "name", "status", "serving_status", "node_type", "display_name", "server_host", "server_port",
-		"kernel", "traffic_rate", "config_validated_at", "last_heartbeat_at", "created_at",
+		"traffic_rate", "config_validated_at", "last_heartbeat_at", "created_at",
 	}
 )
 
@@ -210,12 +210,12 @@ func TestInventoryFrontendBodiesBind(t *testing.T) {
 	id := uuid.NewString()
 	// 建节点：名字为空，绑定通过后在 service 校验处回 422 name
 	w := doInventory(e, http.MethodPost, "/v1/nodes", `{"name":"","server_id":"`+id+`","node_type":"shadowsocks",
-		"server_host":"203.0.113.10","server_port":8388,"protocol_config":{},"kernel":"auto","traffic_rate":1,
+		"server_host":"203.0.113.10","server_port":8388,"protocol_config":{},"traffic_rate":1,
 		"pool_id":"`+id+`","display_name":"x","country_code":"HK"}`)
 	inventoryExpectErr(t, w, errs.ValidationFailed, "name")
 	// 改节点：版本号为 0，在 service 预检处回 422 row_version
 	w = doInventory(e, http.MethodPatch, "/v1/nodes/"+id, `{"row_version":0,"name":"a","display_name":"",
-		"pool_id":null,"node_type":"vless","server_host":"h.example","server_port":443,"kernel":"auto",
+		"pool_id":null,"node_type":"vless","server_host":"h.example","server_port":443,
 		"traffic_rate":1.5,"country_code":null,"protocol_config":{}}`)
 	inventoryExpectErr(t, w, errs.ValidationFailed, "row_version")
 	// 建服务器：容量为负
@@ -376,7 +376,7 @@ func TestNodeRowResponseShape(t *testing.T) {
 
 func TestNodeDetailResponseShape(t *testing.T) {
 	row := service.NodeRow{Detail: &service.NodeDetail{
-		TrafficRate: decimal.RequireFromString("1.50"), Kernel: "auto", ProtocolConfig: json.RawMessage(`{"cipher":"aes-256-gcm"}`),
+		TrafficRate: decimal.RequireFromString("1.50"), ProtocolConfig: json.RawMessage(`{"cipher":"aes-256-gcm"}`),
 	}}
 	keys, m := inventoryKeys(t, nodeDetailFrom(row))
 	inventoryExpectKeys(t, keys, append(append([]string{}, inventoryNodeRowKeys...), inventoryNodeDetailExtra...))

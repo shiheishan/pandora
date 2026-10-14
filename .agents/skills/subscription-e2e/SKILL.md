@@ -49,7 +49,7 @@ description: pandora 订阅渲染的本地端到端矩阵：把后台表单形�
 
 `scripts/run.sh` 一条命令跑完（参数见文件头），`matrix.py` 拼矩阵，`fixtures/extra.json` 是常备额外夹具。
 
-`tools/go.mod` 里的 sing-box 版本要与 pdnd 的 go.mod 一致。两条 `replace` 指向 `../../../../pdnd` 与 `../../../../nodeapi`，即本仓库的 pdnd 与 nodeapi（pdnd 自己对 nodeapi 的 replace 不会传递过来）。run.sh 会把 tools 拷到工作目录，再把两条 replace 改成 `--repo` 下的目录，所以测 worktree 或基点快照时不用改 skill。
+`tools/go.mod` 自己 require sing-box（pdnd 自 2026-10-14 起不依赖 sing-box，版本不必再对齐）。两条 `replace` 指向 `../../../../pdnd` 与 `../../../../nodeapi`，即本仓库的 pdnd 与 nodeapi（pdnd 自己对 nodeapi 的 replace 不会传递过来）。run.sh 会把 tools 拷到工作目录，再把两条 replace 改成 `--repo` 下的目录，所以测 worktree 或基点快照时不用改 skill。
 
 构建 tags 固定为 `with_quic,with_utls,with_gvisor,with_naive_outbound`，写在 run.sh 里。
 

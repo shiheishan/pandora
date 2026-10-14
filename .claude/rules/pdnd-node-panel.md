@@ -17,7 +17,7 @@ paths:
 
 - `panel/` 只管协议与线格式，不做编排：接入（`enroll.go`）、身份目录（`identity.go`）、会话（`session.go`）。
   会话收到的配置、名单、流量回执经 `Events()` 交给编排层；编排层要发的心跳、流量、在线、回执经 `Send*` 交回来。
-- `node/` 是编排，只认 `core.Core` 抽象，不知道背后是 NativeCore 还是 compat 内核。
+- `node/` 是编排，只认 `core.Core` 抽象，发布物里背后只有 NativeCore（`kernel.NativeCore`），测试里换成 fake。
 - `release/acceptancepanel` 按面板契约独立实现 CA 指纹、证书签发与会话规则，刻意不 import `pdnd/panel`：
   夹具借用被测代码，两边一起错时验收照样变绿。只有它的 `main_test.go` 可以用 `pdnd/panel` 对打。
 
@@ -58,7 +58,7 @@ paths:
   时只能经 `resetUserMirror` 一起作废，并回 `UsersAck{ok:false, reason:resync}`。
 - 名单增量只在本地确是 from_version 时打，否则回 `version_mismatch`；装不进内核回 `apply_failed`。面板对任何 ok=false 都应发全量。
 - 先有名单、再开 accept：入站起来之前收到的全量存在 `n.staged`，装入站时经 `ApplyInboundWithUsers` 一起交给内核；
-  兼容内核装完入站再补装，换配置重建入站后把手上的名单补回。
+  内核不实现 `ApplyInboundWithUsers` 时（只剩测试 fake）装完入站再补装，换配置重建入站后把手上的名单补回。
 - 流量不丢：按 (节点, uid) 合并；inflight 收到 TrafficAck 才丢，每个上报节拍与每次 Welcome 原样重发（同一 report_id）；
   缓冲上限 2^17 条，超限先丢最旧的 inflight 并计数。退出时先关内核让在途连接入账，再报最后一轮并等 ack。
 - 落盘缓存（`<cache_dir>/nodes/`）：`server.json` 记身份与节点顺序，每节点 `config.json`（原字节 base64 + 摘要）与 `users.json`，
@@ -83,7 +83,6 @@ paths:
 | 键 | 类型 | 说明 |
 |---|---|---|
 | `server_port` | 整数 1–65535，必填 | 入站端口。监听地址固定为全部地址（不读 listen_ip）。 |
-| `kernel` | 字符串，可选 | 承载运行时：空或 auto / pandora-native；multi 构建可显式选 sing-box / xray-core，native-only 运行时拒绝兼容内核。 |
 | `outbounds` | 数组，可选 | 每项 `tag`、`type`（字符串，必填）、`settings`（对象，可选，按出站类型解析）。 |
 | `routes` | 数组，可选 | 每项 `outbound`（必填，引用 outbounds 的 tag）、`matcher`（对象，可选）。 |
 | `final` | 字符串，可选 | 没命中规则时走的出站。outbounds / routes / final 都不给 = 没配分流（直出）；给了空的 = 清空已有规则。 |

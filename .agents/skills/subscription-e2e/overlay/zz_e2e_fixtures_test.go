@@ -68,7 +68,7 @@ func TestE2EFixtures(t *testing.T) {
 		if err := json.Unmarshal([]byte(e.config), &stored); err != nil || stored == nil {
 			t.Fatalf("%s: config 不是 JSON 对象: %v", e.id, err)
 		}
-		version, fields := Validate(e.typ, "pandora-native", e.port, json.RawMessage(e.config))
+		version, fields := Validate(e.typ, e.port, json.RawMessage(e.config))
 		index[e.id] = map[string]any{
 			"type":         CanonicalType(e.typ),
 			"port":         e.port,

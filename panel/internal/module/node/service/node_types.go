@@ -103,7 +103,6 @@ type ServerNode struct {
 	DisplayName       *string
 	ServerHost        *string
 	ServerPort        *int
-	Kernel            string
 	TrafficRate       decimal.Decimal
 	ConfigValidatedAt *time.Time
 	// LastHeartbeatAt 取所在服务器的心跳（心跳是服务器级的）
@@ -127,7 +126,6 @@ type AdminNode struct {
 	NodeType              *string
 	ServerHost            *string
 	ServerPort            *int
-	Kernel                string
 	TrafficRate           decimal.Decimal
 	DisplayName           *string
 	CountryCode           *string
@@ -149,7 +147,6 @@ type NodeInput struct {
 	NodeType       string
 	ServerHost     string
 	ServerPort     int
-	Kernel         string
 	TrafficRate    *decimal.Decimal
 	DisplayName    string
 	CountryCode    string
@@ -177,7 +174,6 @@ type NodePatch struct {
 	NodeType       *string
 	ServerHost     *string
 	ServerPort     *int
-	Kernel         *string
 	TrafficRate    *decimal.Decimal
 	DisplayName    *string
 	CountryCode    OptionalString
@@ -314,7 +310,6 @@ type NodeRow struct {
 // NodeDetail 是单取时才带的编辑字段；ProtocolConfig 已抹掉敏感值。
 type NodeDetail struct {
 	TrafficRate           decimal.Decimal
-	Kernel                string
 	ProtocolConfig        json.RawMessage
 	ProtocolSchemaVersion int
 	ConfigValidatedAt     *time.Time

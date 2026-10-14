@@ -86,8 +86,5 @@ func (s *Server) newNode(id, nodeType string) *Node {
 	return n
 }
 
-// Tag 是内核里的入站标识（关停时内核按它交出最后一轮流量）。
-func (n *Node) Tag() string { return n.tag }
-
 // resetAcks 在新流建立时调用：回执每条流各报一次，丢在断开的流上的由 Hello 对齐补回。
 func (n *Node) resetAcks() { clear(n.acked) }

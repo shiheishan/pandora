@@ -47,7 +47,6 @@ type nodeCreateRequest struct {
 	NodeType       string          `json:"node_type"`
 	ServerHost     string          `json:"server_host"`
 	ServerPort     int             `json:"server_port"`
-	Kernel         string          `json:"kernel"`
 	TrafficRate    *float64        `json:"traffic_rate"`
 	DisplayName    string          `json:"display_name"`
 	CountryCode    string          `json:"country_code"`
@@ -62,7 +61,6 @@ type nodePatchRequest struct {
 	NodeType       *string         `json:"node_type"`
 	ServerHost     *string         `json:"server_host"`
 	ServerPort     *int            `json:"server_port"`
-	Kernel         *string         `json:"kernel"`
 	TrafficRate    *float64        `json:"traffic_rate"`
 	DisplayName    *string         `json:"display_name"`
 	CountryCode    nodeOptString   `json:"country_code"`
@@ -236,11 +234,9 @@ type nodeRowResponse struct {
 type nodeDetailResponse struct {
 	nodeRowResponse
 	TrafficRate           float64         `json:"traffic_rate"`
-	Kernel                string          `json:"kernel"`
 	ProtocolConfig        json.RawMessage `json:"protocol_config"`
 	ProtocolSchemaVersion int             `json:"protocol_schema_version"`
 	ConfigValidatedAt     *time.Time      `json:"config_validated_at"`
-	TrafficBytes          int64           `json:"traffic_bytes"`
 	Warnings              []string        `json:"warnings,omitempty"`
 }
 
@@ -266,7 +262,6 @@ type adminNodeResponse struct {
 	NodeType              *string         `json:"node_type"`
 	ServerHost            *string         `json:"server_host"`
 	ServerPort            *int            `json:"server_port"`
-	Kernel                string          `json:"kernel"`
 	TrafficRate           float64         `json:"traffic_rate"`
 	DisplayName           *string         `json:"display_name"`
 	CountryCode           *string         `json:"country_code"`
@@ -385,7 +380,6 @@ func nodeDetailFrom(r service.NodeRow) nodeDetailResponse {
 	out := nodeDetailResponse{nodeRowResponse: nodeRowFrom(r), ProtocolConfig: json.RawMessage("{}")}
 	if d := r.Detail; d != nil {
 		out.TrafficRate = d.TrafficRate.InexactFloat64()
-		out.Kernel = d.Kernel
 		if len(d.ProtocolConfig) > 0 {
 			out.ProtocolConfig = d.ProtocolConfig
 		}
@@ -417,7 +411,6 @@ func adminNodeFrom(n service.AdminNode) adminNodeResponse {
 		NodeType:              n.NodeType,
 		ServerHost:            n.ServerHost,
 		ServerPort:            n.ServerPort,
-		Kernel:                n.Kernel,
 		TrafficRate:           n.TrafficRate.InexactFloat64(),
 		DisplayName:           n.DisplayName,
 		CountryCode:           n.CountryCode,

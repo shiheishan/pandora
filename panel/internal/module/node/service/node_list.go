@@ -296,7 +296,6 @@ func nodeRowFromList(row repo.NodeListRow, now time.Time, detail bool, x nodeLis
 		}
 		nr.Detail = &NodeDetail{
 			TrafficRate:           row.TrafficRate,
-			Kernel:                row.Kernel,
 			ProtocolConfig:        redacted,
 			ProtocolSchemaVersion: row.ProtocolSchemaVersion,
 			ConfigValidatedAt:     row.ConfigValidatedAt,

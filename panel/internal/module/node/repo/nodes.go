@@ -52,7 +52,7 @@ func inventoryErr(err error) error {
 
 // nodeColumns 是读 nodes 一行的列清单（别名 n）；jsonb 以文本取出。
 const nodeColumns = `n.id, n.node_no, n.server_id, n.pool_id, n.name, n.display_name, n.country_code,
- n.serving_status, n.node_type, n.server_host, n.server_port, n.listen_l4, n.kernel,
+ n.serving_status, n.node_type, n.server_host, n.server_port, n.listen_l4,
  n.protocol_config::text AS protocol_config, n.protocol_schema_version, n.config_validated_at,
  n.traffic_rate, n.sort_order, n.row_version,
  n.runtime_status, n.runtime_reason, n.runtime_reason_node_id, n.runtime_state_at,
@@ -114,12 +114,12 @@ func (r *Repo) InsertNode(ctx context.Context, n *model.Node) error {
 	var got nodeInserted
 	err := r.d.Conn(ctx).Raw(`INSERT INTO nodes
 		(server_id, pool_id, name, display_name, country_code, serving_status, node_type, server_host,
-		 server_port, listen_l4, kernel, protocol_config, protocol_schema_version, config_validated_at,
+		 server_port, listen_l4, protocol_config, protocol_schema_version, config_validated_at,
 		 traffic_rate, sort_order)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), ?, ?, ?, ?)
 		RETURNING id, node_no, created_at, updated_at`,
 		n.ServerID, n.PoolID, n.Name, n.DisplayName, n.CountryCode, n.ServingStatus, n.NodeType, n.ServerHost,
-		n.ServerPort, n.ListenL4, n.Kernel, n.ProtocolConfig, n.ProtocolSchemaVersion, n.ConfigValidatedAt,
+		n.ServerPort, n.ListenL4, n.ProtocolConfig, n.ProtocolSchemaVersion, n.ConfigValidatedAt,
 		n.TrafficRate, n.SortOrder,
 	).Scan(&got).Error
 	if err != nil {
@@ -134,12 +134,12 @@ func (r *Repo) InsertNode(ctx context.Context, n *model.Node) error {
 func (r *Repo) UpdateNodeSpec(ctx context.Context, id uuid.UUID, expected int64, n *model.Node) (bool, error) {
 	res := r.d.Conn(ctx).Exec(`UPDATE nodes SET
 		name = ?, display_name = ?, country_code = ?, pool_id = ?, node_type = ?, server_host = ?,
-		server_port = ?, listen_l4 = ?, kernel = ?, protocol_config = CAST(? AS jsonb),
+		server_port = ?, listen_l4 = ?, protocol_config = CAST(? AS jsonb),
 		protocol_schema_version = ?, config_validated_at = ?, traffic_rate = ?,
 		row_version = row_version + 1, updated_at = now()
 		WHERE id = ? AND row_version = ? AND deleted_at IS NULL`,
 		n.Name, n.DisplayName, n.CountryCode, n.PoolID, n.NodeType, n.ServerHost,
-		n.ServerPort, n.ListenL4, n.Kernel, n.ProtocolConfig,
+		n.ServerPort, n.ListenL4, n.ProtocolConfig,
 		n.ProtocolSchemaVersion, n.ConfigValidatedAt, n.TrafficRate,
 		id, expected,
 	)

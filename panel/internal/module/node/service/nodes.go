@@ -19,9 +19,6 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/realtime"
 )
 
-// nodeKernelAuto 是内核的缺省值。
-const nodeKernelAuto = "auto"
-
 // adminNodeFromModel 把一行节点转成写接口回的 AdminNode（协议配置抹掉敏感值，不带 Warnings）。
 func adminNodeFromModel(n model.Node) AdminNode {
 	raw := n.ProtocolConfig
@@ -39,7 +36,6 @@ func adminNodeFromModel(n model.Node) AdminNode {
 		NodeType:              n.NodeType,
 		ServerHost:            n.ServerHost,
 		ServerPort:            n.ServerPort,
-		Kernel:                n.Kernel,
 		TrafficRate:           n.TrafficRate,
 		DisplayName:           n.DisplayName,
 		CountryCode:           n.CountryCode,
@@ -87,15 +83,6 @@ func (s *Service) nodeAudit(ctx context.Context, action string, id uuid.UUID, da
 	return s.audit.Write(ctx, auditsvc.Event{Action: action, ResourceType: "node", ResourceID: &id, Data: data})
 }
 
-// nodeKernel 规整内核取值：空取 auto。
-func nodeKernel(raw string) string {
-	k := strings.TrimSpace(raw)
-	if k == "" {
-		return nodeKernelAuto
-	}
-	return k
-}
-
 // CreateNode 新建一个草稿节点：协议必须配齐并通过校验，同机端口先到先得。
 func (s *Service) CreateNode(ctx context.Context, in NodeInput) (AdminNode, error) {
 	name, err := nodeValidateName(in.Name)
@@ -117,14 +104,13 @@ func (s *Service) CreateNode(ctx context.Context, in NodeInput) (AdminNode, erro
 		}
 		rate = *in.TrafficRate
 	}
-	kernel := nodeKernel(in.Kernel)
 	nodeType := protocol.CanonicalType(in.NodeType)
 	host := strings.TrimSpace(in.ServerHost)
 	raw := in.ProtocolConfig
 	if len(raw) == 0 {
 		raw = json.RawMessage("{}")
 	}
-	version, err := nodeValidateProtocol(nodeType, kernel, host, in.ServerPort, raw)
+	version, err := nodeValidateProtocol(nodeType, host, in.ServerPort, raw)
 	if err != nil {
 		return AdminNode{}, err
 	}
@@ -159,7 +145,6 @@ func (s *Service) CreateNode(ctx context.Context, in NodeInput) (AdminNode, erro
 			ServerHost:            &host,
 			ServerPort:            &port,
 			ListenL4:              &l4,
-			Kernel:                kernel,
 			ProtocolConfig:        string(raw),
 			ProtocolSchemaVersion: version,
 			ConfigValidatedAt:     &now,
@@ -299,20 +284,16 @@ func (s *Service) PatchNode(ctx context.Context, id uuid.UUID, in NodePatch) (Ad
 		if in.ServerPort != nil {
 			port = *in.ServerPort
 		}
-		kernel := before.Kernel
-		if in.Kernel != nil {
-			kernel = nodeKernel(*in.Kernel)
-		}
 		version := before.ProtocolSchemaVersion
-		touched := in.NodeType != nil || in.ServerHost != nil || in.ServerPort != nil || in.Kernel != nil || in.ProtocolConfig != nil
+		touched := in.NodeType != nil || in.ServerHost != nil || in.ServerPort != nil || in.ProtocolConfig != nil
 		protocolChanged := false
 		if touched {
-			version, err = nodeValidateProtocol(newType, kernel, host, port, raw)
+			version, err = nodeValidateProtocol(newType, host, port, raw)
 			if err != nil {
 				return err
 			}
 			protocolChanged = newType != oldType || host != nodeStr(before.ServerHost) ||
-				port != nodeInt(before.ServerPort) || kernel != before.Kernel ||
+				port != nodeInt(before.ServerPort) ||
 				version != before.ProtocolSchemaVersion || !nodeSameJSON(raw, stored)
 		}
 
@@ -343,7 +324,6 @@ func (s *Service) PatchNode(ctx context.Context, id uuid.UUID, in NodePatch) (Ad
 			next.ServerHost = nodeOpt(host)
 			next.ServerPort = &port
 			next.ListenL4 = nodeOpt(l4)
-			next.Kernel = kernel
 			next.ProtocolConfig = string(raw)
 			next.ProtocolSchemaVersion = version
 		}

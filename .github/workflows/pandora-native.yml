@@ -134,7 +134,6 @@ jobs:
           report="$(go run . --capabilities)"
           printf '%s\n' "${report}" | tee native-capabilities.json
           grep -q '"kernel": "pandora-native"' <<<"${report}"
-          grep -q '"native_only": true' <<<"${report}"
           grep -q '"reality-h3-experimental"' <<<"${report}"
           grep -q '"external-reality-xhttp-h3-unverified"' <<<"${report}"
       - name: Native adapter self-check
@@ -147,28 +146,20 @@ jobs:
         run: go test -mod=readonly -p 1 -run TestProcessProbeRoundTrip -count=3 ./cmd/pandora-h3-probe
       - name: Default dependency boundary
         run: |
+          # 发布物与全部测试都不许链 sing-box（它在 Go 1.27 下用 go:linkname 取 x/net 的私有符号，链接失败）。
           # 不写成 `! go list | grep`：bash -e 对取反命令不生效，只有末行能让步骤失败。
           # 先取整份依赖再 grep：管道接 grep -q 时，pipefail 下 go list 失败或被 SIGPIPE
           # 都会让 if 判为未命中而静默放行；单独赋值则 go list 出错直接由 -e 终止。
-          deps="$(go list -mod=readonly -deps .)"
-          if grep -q 'github.com/aegispanel/nodeagent/core/multi' <<<"${deps}"; then
-            echo "github.com/aegispanel/nodeagent/core/multi leaked into the default build" >&2
-            exit 1
-          fi
-          if grep -q 'github.com/aegispanel/nodeagent/core/sing' <<<"${deps}"; then
-            echo "github.com/aegispanel/nodeagent/core/sing leaked into the default build" >&2
-            exit 1
-          fi
-          if grep -q 'github.com/aegispanel/nodeagent/core/xray' <<<"${deps}"; then
-            echo "github.com/aegispanel/nodeagent/core/xray leaked into the default build" >&2
-            exit 1
-          fi
+          deps="$(go list -mod=readonly -deps -test ./...)"
           if grep -q 'github.com/sagernet/sing-box' <<<"${deps}"; then
-            echo "github.com/sagernet/sing-box leaked into the default build" >&2
+            echo "github.com/sagernet/sing-box leaked into pdnd" >&2
             exit 1
           fi
-      - name: Compatibility migration compile
-        run: go test -mod=readonly -tags compat -p 1 ./...
+          # 上面按默认构建标签算，带 interop 等标签的测试看不到；go.mod 里出现就说明有地方又引回来了
+          if grep -q 'github.com/sagernet/sing-box ' go.mod; then
+            echo "github.com/sagernet/sing-box is back in pdnd/go.mod" >&2
+            exit 1
+          fi
       - name: External Xray TLS XHTTP H3 interoperability
         # This is intentionally a non-race opt-in gate: the external Xray
         # client currently contains a known WaitReadCloser race of its own.

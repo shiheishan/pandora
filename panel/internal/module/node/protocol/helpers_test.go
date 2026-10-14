@@ -91,25 +91,6 @@ func TestHelperPortClaimLabel(t *testing.T) {
 	}
 }
 
-// --- 2. EffectiveKernel ---
-
-func TestHelperEffectiveKernel(t *testing.T) {
-	cases := map[string]string{
-		"":               "auto",
-		"  ":             "auto",
-		"sing-box":       "auto",
-		"xray-core":      "auto",
-		"auto":           "auto",
-		"pandora-native": "pandora-native",
-		"foo":            "foo",
-	}
-	for in, want := range cases {
-		if got := EffectiveKernel(in); got != want {
-			t.Errorf("EffectiveKernel(%q)=%q want %q", in, got, want)
-		}
-	}
-}
-
 // --- 3. Warnings ---
 
 func TestHelperWarnings(t *testing.T) {
@@ -516,21 +497,6 @@ func TestHelperNumericTLSValue(t *testing.T) {
 func TestHelperNormalizedNetwork(t *testing.T) {
 	if normalizedNetwork("") != "tcp" || normalizedNetwork(" GRPC ") != "grpc" {
 		t.Fatal("normalizedNetwork")
-	}
-}
-
-func TestHelperValidateKernelChoice(t *testing.T) {
-	fields := map[string]string{}
-	validateKernelChoice(fields, "")
-	validateKernelChoice(fields, "auto")
-	validateKernelChoice(fields, "pandora-native")
-	if len(fields) != 0 {
-		t.Fatalf("accepted: %#v", fields)
-	}
-	fields = map[string]string{}
-	validateKernelChoice(fields, "sing-box")
-	if fields["kernel"] != kernelFieldMessage {
-		t.Fatalf("legacy write: %#v", fields)
 	}
 }
 

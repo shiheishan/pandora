@@ -52,20 +52,15 @@ func Schemas() []Schema {
 }
 
 // Validate 校验一次协议写入。nodeType 为空（未配置协议的草稿）返回 version 0、无错误；
-// 已填的必须是当前 schema。fields 的键是表单路径（server_port、node_type、kernel、
+// 已填的必须是当前 schema。fields 的键是表单路径（server_port、node_type、
 // protocol_config.<键>），值是中文说明；为空即通过。
-func Validate(nodeType, kernel string, port int, raw json.RawMessage) (version int, fields map[string]string) {
-	return validateForm(nodeType, kernel, port, raw)
+func Validate(nodeType string, port int, raw json.RawMessage) (version int, fields map[string]string) {
+	return validateForm(nodeType, port, raw)
 }
 
 // Warnings 返回存量协议配置不满足现行收紧规则的提示（只提示，照常下发）。
 func Warnings(nodeType string, raw json.RawMessage) []string {
 	return configWarnings(nodeType, raw)
-}
-
-// EffectiveKernel 把存量内核取值归一成现行可选值（auto / pandora-native）。
-func EffectiveKernel(kernel string) string {
-	return effectiveKernel(kernel)
 }
 
 // Redact 按敏感键名表在任意深度抹掉敏感值（读接口用）。不是 JSON 对象的原样返回。

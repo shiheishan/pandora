@@ -24,9 +24,9 @@ func policyReality(t *testing.T, extra string) string {
 		`"private_key":"` + priv + `","public_key":"` + pub + `","short_id":"0a1b2c3d"` + extra + `}`
 }
 
-func adminFields(t *testing.T, nodeType, kernel, raw string) map[string]string {
+func adminFields(t *testing.T, nodeType, raw string) map[string]string {
 	t.Helper()
-	version, fields := Validate(nodeType, kernel, 443, json.RawMessage(raw))
+	version, fields := Validate(nodeType, 443, json.RawMessage(raw))
 	if len(fields) == 0 && version != schemaVersion {
 		t.Fatalf("%s %s: accepted with version %d", nodeType, raw, version)
 	}
@@ -35,14 +35,14 @@ func adminFields(t *testing.T, nodeType, kernel, raw string) map[string]string {
 
 func expectAccepted(t *testing.T, nodeType, raw string) {
 	t.Helper()
-	if fields := adminFields(t, nodeType, "pandora-native", raw); len(fields) != 0 {
+	if fields := adminFields(t, nodeType, raw); len(fields) != 0 {
 		t.Errorf("%s %s: rejected %v", nodeType, raw, fields)
 	}
 }
 
 func expectRejected(t *testing.T, nodeType, raw, field, contains string) {
 	t.Helper()
-	fields := adminFields(t, nodeType, "pandora-native", raw)
+	fields := adminFields(t, nodeType, raw)
 	msg, ok := fields[field]
 	if !ok {
 		t.Errorf("%s %s: want error on %s, got %v", nodeType, raw, field, fields)
@@ -282,7 +282,7 @@ func TestCertificatePathsLiveInTheCertificateDirectory(t *testing.T) {
 		"http":      `{"tls":true,"cert_path":"/etc/ssl/c.pem","key_path":"k.pem"}`,
 		"vless":     `{"tls":0,"network":"xhttp-h3","cert_path":"/etc/ssl/c.pem","key_path":"k.pem"}`,
 	} {
-		fields := adminFields(t, nodeType, "pandora-native", raw)
+		fields := adminFields(t, nodeType, raw)
 		if !strings.Contains(fields["protocol_config.cert_path"], nodeCertificateDir) || !strings.Contains(fields["protocol_config.key_path"], "绝对路径") {
 			t.Errorf("%s: fields=%v", nodeType, fields)
 		}
@@ -300,25 +300,6 @@ func TestProtocolConfigWarningsIgnoreCertificatePaths(t *testing.T) {
 	}
 	if got := Warnings("shadowsocks", json.RawMessage(`not json`)); got != nil {
 		t.Fatalf("malformed config produced warnings: %v", got)
-	}
-}
-
-func TestKernelOnlyAcceptsNativeChoices(t *testing.T) {
-	for _, kernel := range []string{"", "auto", "pandora-native"} {
-		if fields := adminFields(t, "shadowsocks", kernel, `{"cipher":"aes-256-gcm"}`); len(fields) != 0 {
-			t.Errorf("kernel %q rejected: %v", kernel, fields)
-		}
-	}
-	for _, kernel := range []string{"sing-box", "xray-core", "native", "whatever"} {
-		fields := adminFields(t, "shadowsocks", kernel, `{"cipher":"aes-256-gcm"}`)
-		if !strings.Contains(fields["kernel"], "NativeCore") {
-			t.Errorf("kernel %q: fields=%v", kernel, fields)
-		}
-	}
-	for in, want := range map[string]string{"": "auto", "auto": "auto", "pandora-native": "pandora-native", "sing-box": "auto", "xray-core": "auto"} {
-		if got := EffectiveKernel(in); got != want {
-			t.Errorf("EffectiveKernel(%q) = %q, want %q", in, got, want)
-		}
 	}
 }
 

@@ -87,12 +87,10 @@ func NativeCapabilityFor(protocol string) (Capability, bool) {
 // future panel capability endpoint.
 type NativeCapabilityReport struct {
 	Kernel       string       `json:"kernel"`
-	NativeOnly   bool         `json:"native_only"`
 	Capabilities []Capability `json:"capabilities"`
 }
 
-// NativeCapabilityReportFor creates a report without exposing internal
-// adapter or compatibility-core state.
-func NativeCapabilityReportFor(nativeOnly bool) NativeCapabilityReport {
-	return NativeCapabilityReport{Kernel: "pandora-native", NativeOnly: nativeOnly, Capabilities: NativeCapabilities()}
+// BuildNativeCapabilityReport 生成能力矩阵报告，不暴露适配器实例。
+func BuildNativeCapabilityReport() NativeCapabilityReport {
+	return NativeCapabilityReport{Kernel: "pandora-native", Capabilities: NativeCapabilities()}
 }

@@ -2,7 +2,7 @@ package service
 
 // 节点配置文档（p5-routing 实现）。
 //
-// 文档形状：协议字段经 protocol.KernelConfig 摊平在顶层；必有 server_port、kernel、protocol（只进摘要）；
+// 文档形状：协议字段经 protocol.KernelConfig 摊平在顶层；必有 server_port、protocol（只进摘要）；
 // 有生效路由时才有 outbounds、routes、final。JSON 用 json.Marshal(map) 确定性编码（键排序、无多余空白）。
 
 import (
@@ -19,7 +19,7 @@ import (
 )
 
 var configDocReservedKeys = []string{
-	"server_port", "kernel", "kernel_type", "protocol",
+	"server_port", "protocol",
 	"outbounds", "routes", "final",
 }
 
@@ -70,16 +70,12 @@ func (s *Service) ServerConfigs(ctx context.Context, serverIDs []uuid.UUID) (map
 		if row.ServerPort != nil {
 			port = *row.ServerPort
 		}
-		kernel := ""
-		if row.Kernel != nil {
-			kernel = *row.Kernel
-		}
 		protoCfg := ""
 		if row.ProtocolConfig != nil {
 			protoCfg = *row.ProtocolConfig
 		}
 		layers := layersByNode[*row.NodeID]
-		doc, err := buildNodeConfigDoc(*row.NodeID, nodeType, port, kernel, protoCfg, layers)
+		doc, err := buildNodeConfigDoc(*row.NodeID, nodeType, port, protoCfg, layers)
 		if err != nil {
 			return nil, err
 		}
@@ -94,8 +90,8 @@ func (s *Service) ServerConfigs(ctx context.Context, serverIDs []uuid.UUID) (map
 }
 
 // buildNodeConfigDoc 组装一个节点的配置文档：协议字段经 protocol.KernelConfig 翻译后摊平在顶层，
-// 加 server_port（入站端口）、kernel，有路由时加 outbounds / routes / final。
-func buildNodeConfigDoc(nodeID uuid.UUID, nodeType string, port int, kernel string, protocolConfig string, layers []routingLayer) (NodeConfigDoc, error) {
+// 加 server_port（入站端口），有路由时加 outbounds / routes / final。
+func buildNodeConfigDoc(nodeID uuid.UUID, nodeType string, port int, protocolConfig string, layers []routingLayer) (NodeConfigDoc, error) {
 	storedText := protocolConfig
 	if strings.TrimSpace(protocolConfig) == "" {
 		storedText = "{}"
@@ -115,7 +111,6 @@ func buildNodeConfigDoc(nodeID uuid.UUID, nodeType string, port int, kernel stri
 		delete(doc, k)
 	}
 	doc["server_port"] = port
-	doc["kernel"] = protocol.EffectiveKernel(kernel)
 	// protocol 只为让摘要区分协议：改了协议、配置原样不变时 SHA 也要变，节点端才会重装；
 	// 节点端装入站以 NodeConfig.node_type 为准，不读这个键。
 	doc["protocol"] = protocol.CanonicalType(nodeType)

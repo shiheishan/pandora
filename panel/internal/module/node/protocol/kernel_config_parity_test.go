@@ -251,7 +251,7 @@ func TestFormFixturesPassValidate(t *testing.T) {
 		if f.group != "form" {
 			continue
 		}
-		version, fields := Validate(f.typ, "pandora-native", f.port, json.RawMessage(f.config))
+		version, fields := Validate(f.typ, f.port, json.RawMessage(f.config))
 		if version != schemaVersion || len(fields) != 0 {
 			t.Errorf("%s：表单形状被拒：version=%d fields=%v", f.name, version, fields)
 		}
@@ -264,7 +264,7 @@ func TestLegacyParityFixturesRejectedForNewWrites(t *testing.T) {
 		if f.group != "legacy" {
 			continue
 		}
-		if _, fields := Validate(f.typ, "pandora-native", f.port, json.RawMessage(f.config)); len(fields) == 0 {
+		if _, fields := Validate(f.typ, f.port, json.RawMessage(f.config)); len(fields) == 0 {
 			t.Errorf("%s：存量形状仍能写入，应挪回 form 组", f.name)
 		}
 	}

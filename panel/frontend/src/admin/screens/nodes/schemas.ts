@@ -78,11 +78,9 @@ export type NodeRow = z.output<typeof nodeRowSchema>
  */
 export const nodeDetailSchema = nodeRowSchema.extend({
   traffic_rate: z.number(),
-  kernel: z.string(),
   protocol_config: z.record(z.string(), z.unknown()).nullable().transform((v) => v ?? {}),
   protocol_schema_version: z.number(),
   config_validated_at: iso.nullable(),
-  traffic_bytes: z.number().int(),
   // 存量协议配置不满足现行规则的提示（nodefabric.ProtocolConfigWarnings）；Go 是 omitempty
   warnings: z.array(z.string()).min(1).optional(),
 })
@@ -100,7 +98,6 @@ export const adminNodeSchema = z.object({
   node_type: z.string().nullable(),
   server_host: z.string().nullable(),
   server_port: z.number().nullable(),
-  kernel: z.string(),
   traffic_rate: z.number(),
   display_name: z.string().nullable(),
   country_code: z.string().nullable(),
@@ -192,7 +189,6 @@ export const serverNodeSchema = z.object({
   display_name: z.string().nullable(),
   server_host: z.string().nullable(),
   server_port: z.number().nullable(),
-  kernel: z.string(),
   traffic_rate: z.number(),
   config_validated_at: iso.nullable(),
   last_heartbeat_at: iso.nullable(),

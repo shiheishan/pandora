@@ -91,7 +91,6 @@ func (s *Service) CopyNode(ctx context.Context, id uuid.UUID, in NodeCopyInput) 
 			ServingStatus:         NodeDraft,
 			NodeType:              before.NodeType,
 			ServerHost:            before.ServerHost,
-			Kernel:                before.Kernel,
 			ProtocolConfig:        before.ProtocolConfig,
 			ProtocolSchemaVersion: before.ProtocolSchemaVersion,
 			ConfigValidatedAt:     before.ConfigValidatedAt,

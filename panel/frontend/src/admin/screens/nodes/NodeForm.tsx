@@ -4,7 +4,6 @@ import { isApiError } from '../../../core/api'
 import { useApi } from '../../../shell/runtime'
 import { Button, Checkbox, ConfirmModal, Input, Select, TextArea, useToast } from '../../../ui'
 import {
-  KERNELS,
   REALITY_KEYS,
   basicFromRow,
   clearableSecret,
@@ -12,7 +11,6 @@ import {
   createBody,
   emptyBasic,
   isStable,
-  legacyKernelNote,
   mapProtocolErrors,
   optionLabel,
   patchBody,
@@ -176,15 +174,6 @@ export function NodeForm({ node, onSaved, onCancel }: { node: NodeDetail | null;
               ...stable.map((s) => ({ value: s.node_type, label: protocolLabel(s.node_type) })),
             ]}
           />
-          <Select
-            label="内核"
-            value={basic.kernel}
-            onChange={(e) => set('kernel', e.target.value)}
-            error={errors.kernel}
-            hint={legacyKernelNote(node)}
-            disabled={disabled}
-            options={KERNELS.map(([value, label]) => ({ value, label }))}
-          />
           <Input label="地址（IP 或主机名）" mono value={basic.host} onChange={(e) => set('host', e.target.value)} error={errors.server_host} disabled={disabled} />
           <Input label="端口" mono inputMode="numeric" value={basic.port} onChange={(e) => set('port', e.target.value)} error={errors.server_port} disabled={disabled} />
           <Input label="流量倍率" mono inputMode="decimal" value={basic.rate} onChange={(e) => set('rate', e.target.value)} error={errors.traffic_rate} disabled={disabled} />
@@ -264,7 +253,7 @@ export function NodeForm({ node, onSaved, onCancel }: { node: NodeDetail | null;
   )
 }
 
-const BASIC_KEYS = ['name', 'display_name', 'server_id', 'pool_id', 'node_type', 'server_host', 'server_port', 'kernel', 'traffic_rate', 'country_code', 'capacity_nodes']
+const BASIC_KEYS = ['name', 'display_name', 'server_id', 'pool_id', 'node_type', 'server_host', 'server_port', 'traffic_rate', 'country_code', 'capacity_nodes']
 
 function ProtocolFields({
   schema,

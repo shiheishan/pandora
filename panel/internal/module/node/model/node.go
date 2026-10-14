@@ -23,7 +23,6 @@ type Node struct {
 	ServerHost            *string         `gorm:"column:server_host"`
 	ServerPort            *int            `gorm:"column:server_port"`
 	ListenL4              *string         `gorm:"column:listen_l4"`
-	Kernel                string          `gorm:"column:kernel"`
 	ProtocolConfig        string          `gorm:"column:protocol_config;type:jsonb"`
 	ProtocolSchemaVersion int             `gorm:"column:protocol_schema_version"`
 	ConfigValidatedAt     *time.Time      `gorm:"column:config_validated_at"`

@@ -348,10 +348,6 @@ func (a *ss2022Adapter) serveConn(ctx context.Context, conn net.Conn) error {
 	return nil
 }
 
-func isConnClosedError(err error) bool {
-	return err == net.ErrClosed || strings.Contains(strings.ToLower(err.Error()), "closed") || strings.Contains(strings.ToLower(err.Error()), "reset")
-}
-
 func (a *ss2022Adapter) recordError(err error) {
 	a.mu.Lock()
 	if a.lastErr == nil {

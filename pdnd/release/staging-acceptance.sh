@@ -41,10 +41,6 @@ grep -q '"kernel": "pandora-native"' "${STAGE_DIR}/capabilities.json" || {
   echo "staging capability report is not Pandora NativeCore" >&2
   exit 1
 }
-grep -q '"native_only": true' "${STAGE_DIR}/capabilities.json" || {
-  echo "staging capability report is not native_only=true" >&2
-  exit 1
-}
 
 # Validate the exact unit that would be installed, but point every writable
 # path at the isolated prefix. systemd-analyze is validation only; no unit is

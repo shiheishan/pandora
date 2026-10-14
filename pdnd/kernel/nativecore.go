@@ -94,7 +94,7 @@ func NewNativeCore(registry *AdapterRegistry) *NativeCore {
 	return NewNativeCoreWithLogger(registry, nil)
 }
 
-// NewNativeCoreWithLogger 是生产入口：main 的 installLogger 经 newRuntime 传进来，
+// NewNativeCoreWithLogger 是生产入口：main.go 把 installLogger 装好的 logger 直接传进来，
 // 入站连接失败与进程其余日志同级别、同格式、同一个出口。log 为 nil 时用 slog.Default()。
 func NewNativeCoreWithLogger(registry *AdapterRegistry, log *slog.Logger) *NativeCore {
 	if registry == nil {
@@ -156,10 +156,10 @@ func (c *NativeCore) InboundReady(tag string) error {
 }
 
 // CapabilityReport exposes the immutable protocol contract without exposing
-// adapter instances or compatibility-core state. It is safe to call before
+// adapter instances. It is safe to call before
 // Start and is intended for panel/node negotiation and diagnostics.
 func (c *NativeCore) CapabilityReport() NativeCapabilityReport {
-	return NativeCapabilityReportFor(true)
+	return BuildNativeCapabilityReport()
 }
 
 func (c *NativeCore) Start(ctx context.Context) error {

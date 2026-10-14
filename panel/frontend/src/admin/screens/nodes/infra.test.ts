@@ -97,7 +97,6 @@ const node = (over: Partial<Record<string, unknown>>): NodeRow =>
     traffic_rate: 1,
     display_name: null,
     country_code: null,
-    kernel: 'auto',
     protocol_config: null,
     protocol_schema_version: 1,
     config_validated_at: null,
@@ -108,7 +107,6 @@ const node = (over: Partial<Record<string, unknown>>): NodeRow =>
     cpu_percent: null,
     mem_percent: null,
     metrics_at: null,
-    traffic_bytes: 0,
     granted_plans: null,
     ...over,
   })

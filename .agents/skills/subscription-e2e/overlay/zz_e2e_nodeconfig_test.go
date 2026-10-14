@@ -4,7 +4,7 @@ package service
 //
 // 读 E2E_OUT/fixtures_index.json，对每个夹具调用 buildNodeConfigDoc，写出 node_config.json 与
 // node_config_errors.json。这是面板经 gRPC 下发给节点的配置文档（协议字段经 KernelConfig 摊平，
-// 加 server_port、kernel、protocol）；节点端原样当 InboundConfig.Raw。无路由层（layers 传 nil）。
+// 加 server_port、protocol）；节点端原样当 InboundConfig.Raw。无路由层（layers 传 nil）。
 // 依赖 buildNodeConfigDoc、NodeConfigDoc。
 
 import (
@@ -36,7 +36,7 @@ func TestE2ENodeConfig(t *testing.T) {
 	res := map[string]json.RawMessage{}
 	errs := map[string]string{}
 	for id, f := range fx {
-		doc, err := buildNodeConfigDoc(uuid.New(), f.Type, f.Port, "pandora-native", string(f.Config), nil)
+		doc, err := buildNodeConfigDoc(uuid.New(), f.Type, f.Port, string(f.Config), nil)
 		if err != nil {
 			errs[id] = err.Error()
 			continue

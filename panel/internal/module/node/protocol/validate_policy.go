@@ -16,42 +16,6 @@ import (
 	"strings"
 )
 
-// 内核选择：只剩 NativeCore。
-//
-// 面板曾允许把 kernel 设成 sing-box 或 xray-core，但生产的 pdnd 只链接
-// NativeCore（pdnd/runtime_native.go），根本不读这个字段；只有带 -tags compat
-// 单独构建的迁移版本才按它分派。新写入因此只接受 auto / pandora-native，
-// 存量的 sing-box / xray-core 读时忽略（见 EffectiveKernel），不强制改写。
-var acceptedKernels = []string{"auto", "pandora-native"}
-
-// legacyKernels 是曾经开放、现在只读兼容的内核值。
-var legacyKernels = []string{"sing-box", "xray-core"}
-
-const kernelFieldMessage = "只能是 auto 或 pandora-native：节点端只有 NativeCore，sing-box / xray-core 已不再生效"
-
-// validateKernelChoice 校验一次写入里的 kernel。空串等同 auto。
-func validateKernelChoice(fields map[string]string, kernel string) {
-	kernel = strings.TrimSpace(kernel)
-	if kernel == "" || containsString(acceptedKernels, kernel) {
-		return
-	}
-	fields["kernel"] = kernelFieldMessage
-}
-
-// effectiveKernel 是下发与展示时实际生效的内核值。
-//
-// 存量节点里还留着 sing-box / xray-core：NativeCore 不读它，下发时一律按 auto
-// 给出（也不再带 kernel_type），免得兼容构建按旧值把数据面切到别的内核，
-// 或在 native-only 模式下拒绝起入站。库里的值不改写，管理员下次改协议时
-// 表单会把它换成 auto。
-func effectiveKernel(kernel string) string {
-	kernel = strings.TrimSpace(kernel)
-	if kernel == "" || containsString(legacyKernels, kernel) {
-		return "auto"
-	}
-	return kernel
-}
-
 // utlsFingerprints 是 uTLS 客户端指纹的可选值：mihomo 的 client-fingerprint
 // 与 sing-box 的 utls.fingerprint 都认的那一组（xray 的 fp 是它们的超集）。
 // randomized 只有 sing-box / xray 认，mihomo 不认，不放进来——订阅三种格式

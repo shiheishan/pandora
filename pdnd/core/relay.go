@@ -267,17 +267,11 @@ func (r *relayState) stop() {
 // 只断这一条连接，不带走进程。
 func (r *relayState) recoverPanic() {
 	if v := recover(); v != nil {
-		relayPanics.Add(1)
 		r.finished.Add(1)
 		r.teardown()
 		slog.Error("转发发生 panic，已断开该连接", "panic", v, "stack", string(debug.Stack()))
 	}
 }
-
-var relayPanics atomic.Int64
-
-// RelayPanics 返回进程启动以来被兜住的转发 panic 次数。
-func RelayPanics() int64 { return relayPanics.Load() }
 
 // copy 把 src 搬到 dst，返回字节数与非 EOF 的错误。
 func (r *relayState) copy(dst io.Writer, src io.Reader, counter *atomic.Int64) (int64, error) {
@@ -412,8 +406,3 @@ func getSmallBuf() *[]byte  { return smallBufPool.Get().(*[]byte) }
 func putSmallBuf(b *[]byte) { smallBufPool.Put(b) }
 func getBigBuf() *[]byte    { return bigBufPool.Get().(*[]byte) }
 func putBigBuf(b *[]byte)   { bigBufPool.Put(b) }
-
-// GetCopyBuffer / PutCopyBuffer 把 32KB 缓冲池借给 core 之外的拷贝循环（mux 子流、
-// UDP 中继），用完必须归还，归还后不能再碰。
-func GetCopyBuffer() *[]byte  { return getBigBuf() }
-func PutCopyBuffer(b *[]byte) { putBigBuf(b) }

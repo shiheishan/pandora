@@ -11,13 +11,6 @@ import (
 
 const testConfig = `{"panel":{"address":"panel.example.test:9443"}}`
 
-func TestConfigDefaultsToNativeOnly(t *testing.T) {
-	cfg := loadTestConfig(t, testConfig)
-	if cfg.NativeOnly != nil || !cfg.nativeOnly() {
-		t.Fatalf("omitted native_only must default true: raw=%v effective=%v", cfg.NativeOnly, cfg.nativeOnly())
-	}
-}
-
 func TestDefaultConfigPathMatchesNativeReleaseService(t *testing.T) {
 	if defaultConfigPath != "/etc/pandora-native/config.json" {
 		t.Fatalf("default config path = %q", defaultConfigPath)
@@ -54,12 +47,13 @@ func TestConfigRequiresPanelAddress(t *testing.T) {
 	}
 }
 
-// 旧通道的字段（url、token、signed_required、nodes[]）已删除，留在配置里要报错而不是被静默忽略。
+// 已删除的字段（旧通道的 url、token、signed_required、nodes[]，兼容层的 native_only）留在配置里要报错，而不是被静默忽略。
 func TestConfigRejectsRemovedFields(t *testing.T) {
 	for _, body := range []string{
 		`{"panel":{"address":"p.example.test","url":"https://p.example.test"}}`,
 		`{"panel":{"address":"p.example.test","signed_required":true}}`,
 		`{"panel":{"address":"p.example.test"},"nodes":[{"node_id":"n1","node_type":"vless","token":"t"}]}`,
+		`{"native_only":true,"panel":{"address":"p.example.test"}}`,
 	} {
 		path := filepath.Join(t.TempDir(), "config.json")
 		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
@@ -68,24 +62,6 @@ func TestConfigRejectsRemovedFields(t *testing.T) {
 		if _, err := loadConfig(path); err == nil {
 			t.Fatalf("应拒绝已删除的字段: %s", body)
 		}
-	}
-}
-
-func TestConfigExplicitCompatibilityOverride(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		json string
-		want bool
-	}{
-		{name: "false", json: "false", want: false},
-		{name: "true", json: "true", want: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg := loadTestConfig(t, `{"native_only":`+tc.json+`,"panel":{"address":"panel.example.test"}}`)
-			if cfg.NativeOnly == nil || cfg.nativeOnly() != tc.want {
-				t.Fatalf("native_only=%s: raw=%v effective=%v want=%v", tc.json, cfg.NativeOnly, cfg.nativeOnly(), tc.want)
-			}
-		})
 	}
 }
 

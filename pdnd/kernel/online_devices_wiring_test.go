@@ -26,7 +26,6 @@ import (
 	"golang.org/x/net/http2"
 
 	"github.com/aegispanel/nodeagent/core"
-	singcore "github.com/aegispanel/nodeagent/core/sing"
 )
 
 // deviceWiringCase 描述一个协议的入站怎么配、客户端怎么连。
@@ -352,7 +351,7 @@ func openDeviceWiringNaive(env deviceWiringEnv) (io.Closer, error) {
 		_ = raw.Close()
 		return nil, fmt.Errorf("status=%s", resp.Status)
 	}
-	conn := singcore.NewNaiveClientConn(resp.Body, pipeWriter, naiveTestFlusher{}, raw.RemoteAddr())
+	conn := newNaiveTestClientConn(resp.Body, pipeWriter, naiveTestFlusher{}, raw.RemoteAddr())
 	if err := echoOnce(conn, "device-wiring"); err != nil {
 		_ = conn.Close()
 		_ = raw.Close()
