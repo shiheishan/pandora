@@ -516,6 +516,30 @@ version_at_least() {
 
 lego_version() { lego --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1; }
 
+# deb822 源（*.sources）里有没有启用的 <codename>-backports 段：按段读，带 Enabled: no 的段不算
+# （Vultr 等云镜像自带一段关掉的 backports，只认 Suites 行会误判为已启用，apt 装不上 lego）。
+backports_deb822_enabled() {
+  local f
+  for f in "$APT_SOURCES_DIR"/sources.list.d/*.sources; do
+    [[ -f "$f" ]] || continue
+    awk -v suite="$1-backports" '
+      BEGIN { RS = ""; found = 0 }
+      {
+        hit = 0; off = 0
+        n = split($0, lines, "\n")
+        for (i = 1; i <= n; i++) {
+          if (lines[i] ~ /^[ \t]*#/) continue
+          if (tolower(lines[i]) ~ /^suites:/ && (" " lines[i] " ") ~ ("[ \t]" suite "[ \t]")) hit = 1
+          if (tolower(lines[i]) ~ /^enabled:[ \t]*no[ \t]*$/) off = 1
+        }
+        if (hit && !off) found = 1
+      }
+      END { exit found ? 0 : 1 }
+    ' "$f" && return 0
+  done
+  return 1
+}
+
 # IP 证书要 lego 4.22+（ACME profiles）。没有就在 Debian 上从官方 backports 装：
 # backports 默认优先级 100，只有点名 -t <版本>-backports 才从那里装，不会顺带升级别的包。
 # 续期 timer 不装包（$1=no-install），装不上只记结论
@@ -533,8 +557,10 @@ ensure_lego() {
     REASON="IP 证书要 $LEGO_MIN_VERSION 以上的 lego（现在：${v:-没装}），本机不是 Debian，没法自动装；装好放进 PATH 后执行 $SCRIPT_DIR/edge-tls.sh issue"
     return 1
   fi
-  if ! grep -rqsE "^[^#]*[[:space:]]${codename}-backports([[:space:]]|$)" "$APT_SOURCES_DIR/sources.list" "$APT_SOURCES_DIR/sources.list.d" \
-     && ! grep -rqsE "^Suites:.*[[:space:]]${codename}-backports([[:space:]]|$)" "$APT_SOURCES_DIR/sources.list.d"; then
+  # 单行格式（sources.list 与 *.list 的 deb 行）与 deb822 格式（*.sources）分开认
+  if ! grep -qsE "^[[:space:]]*deb[[:space:]].*[[:space:]]${codename}-backports([[:space:]]|$)" \
+       "$APT_SOURCES_DIR/sources.list" "$APT_SOURCES_DIR"/sources.list.d/*.list \
+     && ! backports_deb822_enabled "$codename"; then
     sources="$APT_SOURCES_DIR/sources.list.d/pandora-${codename}-backports.sources"
     say "IP 证书要 lego $LEGO_MIN_VERSION+，启用 Debian 官方 backports 源：$sources"
     printf 'Types: deb\nURIs: http://deb.debian.org/debian\nSuites: %s-backports\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n' \

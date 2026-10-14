@@ -171,6 +171,22 @@ echo 4.9.1 >"$T/lego.version"
 printf 'deb http://deb.debian.org/debian trixie-backports main\n' >"$T/apt/sources.list"
 [ "$(rc_of setup "$T/ip.env")" = 0 ] || fail 'setup with backports already enabled failed'
 [ ! -e "$T/apt/sources.list.d/pandora-trixie-backports.sources" ] || fail 'backports source written twice'
+# 云镜像自带一段 Enabled: no 的 deb822 backports：不算启用，照样写我们的源
+fresh
+echo 4.9.1 >"$T/lego.version"
+mkdir -p "$T/apt/sources.list.d"
+printf 'Types: deb\nURIs: https://deb.debian.org/debian\nSuites: trixie\nComponents: main\n\nTypes: deb\nURIs: https://deb.debian.org/debian\nSuites: trixie-backports\nComponents: main\nEnabled: no\n' \
+  >"$T/apt/sources.list.d/backports.sources"
+[ "$(rc_of setup "$T/ip.env")" = 0 ] || fail 'setup with a disabled deb822 backports stanza failed'
+[ -f "$T/apt/sources.list.d/pandora-trixie-backports.sources" ] || fail 'disabled deb822 backports stanza was taken as enabled'
+# 启用的 deb822 backports 段：不再写源
+fresh
+echo 4.9.1 >"$T/lego.version"
+mkdir -p "$T/apt/sources.list.d"
+printf 'Types: deb\nURIs: https://deb.debian.org/debian\nSuites: trixie trixie-backports\nComponents: main\n' \
+  >"$T/apt/sources.list.d/debian.sources"
+[ "$(rc_of setup "$T/ip.env")" = 0 ] || fail 'setup with an enabled deb822 backports stanza failed'
+[ ! -e "$T/apt/sources.list.d/pandora-trixie-backports.sources" ] || fail 'enabled deb822 backports stanza was ignored'
 # 不是 Debian：不碰 apt，自签兜底并说明
 fresh
 printf 'ID=ubuntu\nVERSION_CODENAME=noble\n' >"$T/os-release"
