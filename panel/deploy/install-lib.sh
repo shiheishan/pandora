@@ -766,30 +766,29 @@ pandora_cli() {
   )
 }
 
+# 失败码要在命令那一行取：写成 if …; fi; rc=$? 时 $? 是 if 语句自己的 0，失败会被当成成功
 pandora_migrate() {
-  local log rc
+  local log rc=0
   log="$(mktemp)"
-  if pandora_cli yes migrate up >"$log" 2>&1; then
+  pandora_cli yes migrate up >"$log" 2>&1 || rc=$?
+  if [ "$rc" -eq 0 ]; then
     sed 's/^/    /' "$log"
-    rm -f -- "$log"
-    return 0
+  else
+    sed 's/^/    /' "$log" >&2
   fi
-  rc=$?
-  sed 's/^/    /' "$log" >&2
   rm -f -- "$log"
   return "$rc"
 }
 
 pandora_bootstrap_db() {
-  local stage="$1" log rc
+  local stage="$1" log rc=0
   log="$(mktemp)"
-  if PANDORA_ETC_DIR="$ETC_DIR" bash "$INSTALL_DIR/deploy/bootstrap.sh" "$stage" >"$log" 2>&1; then
+  PANDORA_ETC_DIR="$ETC_DIR" bash "$INSTALL_DIR/deploy/bootstrap.sh" "$stage" >"$log" 2>&1 || rc=$?
+  if [ "$rc" -eq 0 ]; then
     sed 's/^/    /' "$log"
-    rm -f -- "$log"
-    return 0
+  else
+    sed 's/^/    /' "$log" >&2
   fi
-  rc=$?
-  sed 's/^/    /' "$log" >&2
   rm -f -- "$log"
   return "$rc"
 }
