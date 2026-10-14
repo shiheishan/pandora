@@ -17,7 +17,6 @@ import (
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
 	"github.com/aegispanel/aegis/internal/pkg/ratelimit"
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
 
@@ -166,39 +165,30 @@ const (
 
 func passwordFailKey(userID uuid.UUID) string { return "pwfail:" + userID.String() }
 
-// claimScript 原子地给试错计数加一，首次（键无过期时间）设窗口；返回 {计数, 剩余秒数}。
-var claimScript = redis.NewScript(`
-local n = redis.call('INCR', KEYS[1])
-if redis.call('TTL', KEYS[1]) < 0 then
-  redis.call('EXPIRE', KEYS[1], ARGV[1])
-end
-return {n, redis.call('TTL', KEYS[1])}
-`)
-
 // claimPasswordAttempt 在校验当前口令之前先占一个名额（先占再验，并发请求也最多 5 个进入校验）：
 // 超出上限回 429 并带 Retry-After（剩余窗口），不进哈希闸。
 func (s *Service) claimPasswordAttempt(ctx context.Context, userID uuid.UUID) error {
 	if s.rdb == nil {
 		return errs.Wrap(errs.Internal, errNotWired)
 	}
-	res, err := claimScript.Run(ctx, s.rdb, []string{passwordFailKey(userID)}, int(passwordFailWindow/time.Second)).Int64Slice()
-	if err != nil || len(res) != 2 {
-		return errs.Wrap(errs.Unavailable, fmt.Errorf("改密试错计数: %v", err))
+	n, ttl, err := ratelimit.NewCounter(s.rdb).Incr(ctx, passwordFailKey(userID), passwordFailWindow, 0, 0)
+	if err != nil {
+		return errs.Wrap(errs.Unavailable, fmt.Errorf("改密试错计数: %w", err))
 	}
-	if res[0] <= passwordFailLimit {
+	if n <= passwordFailLimit {
 		return nil
 	}
 	e := errs.Newf(errs.RateLimited, "当前密码错误次数过多，请 15 分钟后再试")
 	e.RetryAfterSeconds = int(passwordFailWindow / time.Second)
-	if res[1] > 0 {
-		e.RetryAfterSeconds = int(res[1])
+	if ttl > 0 {
+		e.RetryAfterSeconds = int(ttl / time.Second)
 	}
 	return e
 }
 
 // clearPasswordAttempts 在当前口令校验通过后清零计数；失败只记日志（计数留着最多让本人多等一个窗口）。
 func (s *Service) clearPasswordAttempts(ctx context.Context, userID uuid.UUID) {
-	if err := s.rdb.Del(ctx, passwordFailKey(userID)).Err(); err != nil {
+	if err := ratelimit.NewCounter(s.rdb).Reset(ctx, passwordFailKey(userID)); err != nil {
 		plog.From(ctx).Warn("清零改密试错计数失败", zap.Error(err))
 	}
 }
