@@ -29,7 +29,7 @@ type Service interface {
 var _ Service = (*service.Service)(nil)
 var _ route.Module = (*Handler)(nil)
 
-// 幂等作用域（沿用旧代码）。
+// 幂等作用域。
 const (
 	ScopeVersionCreate = "content_page_version_create"
 	ScopeArchive       = "content_page_archive"

@@ -11,7 +11,7 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// 幂等作用域（沿用旧路由）。
+// 幂等作用域。
 const (
 	WithdrawalRequestScope = "commission_withdrawal_request"
 	TransferScope          = "commission_transfer_to_balance"

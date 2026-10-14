@@ -5,7 +5,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
-// portalPlan 与旧 billing.CatalogPlan JSON 一致。
+// portalPlan 是门户套餐目录里的一项。
 type portalPlan struct {
 	ID                 string        `json:"id"`
 	Code               string        `json:"code"`
@@ -40,7 +40,7 @@ type portalPrice struct {
 	TrialDays     int    `json:"trial_days"`
 }
 
-// portalPack 与旧 billing.TrafficPack JSON 一致。
+// portalPack 是门户可买的一个流量包。
 type portalPack struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`

@@ -1,7 +1,7 @@
 // Package service 是 catalog 模块的业务层：套餐、套餐版本、价格、权益与配额定义、流量包，
 // 以及给 order、subscription、giftcard、promo 用的下单快照、批量读与库存预留。
 //
-// 后台写用例照旧拆两段：事务外的 prepare*/validate* 规整与校验，事务里的 *Tx 假定输入已校验，
+// 后台写用例拆两段：事务外的 prepare*/validate* 规整与校验，事务里的 *Tx 假定输入已校验，
 // 向导因此能把多步编排进同一个事务，任一步失败库里不留半成品。
 // 目录冻结（已发布版本及其权益、配额不可改，价格只能归档）在这里拒绝，库里的触发器兜底。
 package service
@@ -38,7 +38,7 @@ type Users interface {
 	UserGroupID(ctx context.Context, userID uuid.UUID) (*uuid.UUID, error)
 }
 
-// PublishGate 由 node 模块实现（P5）：发布版本前检查绑定的线路里有可服务的节点，不满足时返回 422。
+// PublishGate 由 node 模块实现：发布版本前检查绑定的线路里有可服务的节点，不满足时返回 422。
 // 在调用方事务里执行。没注入时跳过这项检查。
 type PublishGate interface {
 	CheckPublishable(ctx context.Context, versionID uuid.UUID) error
@@ -65,7 +65,7 @@ func New(r *repo.Repo, txm *tx.Manager, audit *auditsvc.Service, users Users) *S
 // UsePublishGate 只在启动装配时调用（不并发安全）。
 func (s *Service) UsePublishGate(g PublishGate) { s.gate = g }
 
-// 审计动作名（沿用旧代码）。
+// 审计动作名。
 const (
 	ActionPlanCreate     = "plan.create"
 	ActionPlanUpdate     = "plan.update"

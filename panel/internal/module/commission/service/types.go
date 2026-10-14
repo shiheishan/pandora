@@ -57,7 +57,7 @@ func RateBP(percent int) int64 { return int64(percent) * 100 }
 // Amount 是佣金公式：trunc(基数 × rate_bp / 10000)，向零截断到分（R3）。库里有同样的 CHECK。
 func Amount(base decimal.Decimal, rateBP int64) decimal.Decimal { return money.ApplyBP(base, rateBP) }
 
-// 审计动作与资源类型（沿用旧动作名）。
+// 审计动作与资源类型。
 const (
 	ActionWithdrawalRequested = "withdrawal.requested"
 	ActionWithdrawalApprove   = "withdrawal.approve"
@@ -79,7 +79,7 @@ const (
 	SourceCommissionTransfer = "commission_transfer"
 )
 
-// 列表条数上限（与旧接口一致）。
+// 列表条数上限。
 const (
 	MyEntriesLimit        = 100
 	MyWithdrawalsLimit    = 50
@@ -102,7 +102,7 @@ const (
 	MinVoidReasonRunes = 5
 )
 
-// 对外错误（文案沿用旧代码）。
+// 对外错误。
 var (
 	ErrNoCommission         = errs.Newf(errs.ValidationFailed, "没有可提现的佣金")
 	ErrWithdrawTooSmall     = errs.Newf(errs.ValidationFailed, "提现金额低于最低限额")

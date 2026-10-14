@@ -32,7 +32,7 @@ const (
 	RedemptionReleased = "released"
 )
 
-// 审计动作名（沿用旧代码）与资源类型。
+// 审计动作名与资源类型。
 const (
 	ActionCreated        = "coupon.created"
 	ActionBatchGenerated = "coupon.batch_generated"
@@ -41,7 +41,7 @@ const (
 	ResourceCoupon = "coupon"
 )
 
-// 后台的上限（与旧接口一致）。
+// 后台的上限。
 const (
 	// BatchMax 是一次批量生成的上限。
 	BatchMax = 1000

@@ -41,7 +41,7 @@ type SubscriptionCounter interface {
 	LiveSubscriptionCounts(ctx context.Context, planIDs []uuid.UUID) (map[uuid.UUID]int64, error)
 }
 
-// NodeCounter 由 node 模块实现（P5）：每个版本绑定的线路里可服务的节点数，一条 SQL。
+// NodeCounter 由 node 模块实现：每个版本绑定的线路里可服务的节点数，一条 SQL。
 type NodeCounter interface {
 	ServingNodeCounts(ctx context.Context, versionIDs []uuid.UUID) (map[uuid.UUID]int64, error)
 }
@@ -80,8 +80,8 @@ func (h *Handler) RegisterPublic(v1 *gin.RouterGroup, _ route.Kit) {
 	v1.GET("/traffic-packs", h.portalTrafficPacks)
 }
 
-// RegisterAdmin 注册后台路由。改价、发布、上下架等会影响售卖的写接口要近期重认证；幂等域名沿用旧接口。
-// 节点池绑定（/plans/:id/pools）随 node 模块在 P5 做。
+// RegisterAdmin 注册后台路由。改价、发布、上下架等会影响售卖的写接口要近期重认证。
+// 节点池绑定（/plans/:id/pools）由 node 模块注册（node/handler/routes_pools.go）。
 func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	v1.GET("/plans", k.RequireAuth, h.listPlans)
 	v1.GET("/plans/:id", k.RequireAuth, h.getPlan)

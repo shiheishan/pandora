@@ -15,7 +15,7 @@ import (
 
 // 转人工复核的原因（review_reason，库里限 200 字）。
 const (
-	reviewSameSource         = "推荐人与购买人来自同一来源地址" // 旧文案
+	reviewSameSource         = "推荐人与购买人来自同一来源地址"
 	reviewSourceCheckFailed  = "同源检查失败，需人工确认推荐人与购买人是否同源"
 	reviewSourceCheckMissing = "同源检查未装配，需人工确认推荐人与购买人是否同源"
 	// reviewUnderfundedPrefix 是解冻时待结科目余额不足转复核的原因开头（后面跟金额与币种，见 settleOne）。

@@ -16,7 +16,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// ActionVersionPoolsChanged 是替换草稿版本绑池的审计动作名（沿用旧代码）。
+// ActionVersionPoolsChanged 是替换草稿版本绑池的审计动作名。
 const ActionVersionPoolsChanged = "plan_version.pools_changed"
 
 // PoolGuard 由 node 模块实现：按 id 升序 FOR SHARE 锁住这些池，有不存在或已停用的回 422（fields.pool_ids）。
