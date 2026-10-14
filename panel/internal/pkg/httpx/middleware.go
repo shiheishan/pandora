@@ -101,14 +101,28 @@ func brokenPipe(err error) bool {
 	return errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET)
 }
 
-// SecurityHeaders 写通用安全响应头。
-func SecurityHeaders() gin.HandlerFunc {
+// hstsValue 是生产下的 HSTS：一年；不带 includeSubDomains（站长的其他子域是否全走 https 不归面板管），不带 preload。
+const hstsValue = "max-age=31536000"
+
+// permissionsPolicy 关掉面板用不到的浏览器能力（剪贴板不在内：门户要复制订阅链接）。
+const permissionsPolicy = "camera=(), microphone=(), geolocation=(), usb=(), payment=()"
+
+// SecurityHeaders 写通用安全响应头。hsts 只在生产为 true：生产强制 https（public_base_url 校验），
+// 本机开发走 http，带上 HSTS 会让浏览器把 localhost 记成只许 https。
+// HSTS 放在这里而不是 nginx：nginx 里某个 location 一旦写了自己的 add_header，就不再继承 server 级的。
+func SecurityHeaders(hsts bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		h := c.Writer.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Cross-Origin-Opener-Policy", "same-origin")
+		h.Set("Cross-Origin-Resource-Policy", "same-origin")
+		h.Set("Permissions-Policy", permissionsPolicy)
 		h.Set("Cache-Control", "no-store")
+		if hsts {
+			h.Set("Strict-Transport-Security", hstsValue)
+		}
 		c.Next()
 	}
 }

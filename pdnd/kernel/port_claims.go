@@ -20,6 +20,8 @@ import (
 //
 //   - 键是 (端口, L4 协议)。TCP 与 UDP 分开登记，同一个端口号可以 TCP、UDP
 //     各被一个入站占用（例如 REALITY 走 TCP、hy2 走 UDP），这是合法用法。
+//   - 一个入站可以占多个键（shadowsocks 同端口占 TCP 与 UDP）；登记时全部检查、
+//     全部占上，任一冲突整体不启动；释放时全部释放。
 //   - 已经占着端口的入站一直保留，撞上来的那个不启动，返回 *PortInUseError；
 //     占着的那个不会被先关再起。
 //   - 同一个入站改端口：先登记新端口，起来之后才释放旧端口；新端口被占就保留
@@ -36,39 +38,65 @@ type portKey struct {
 
 func (k portKey) String() string { return strconv.Itoa(k.port) + "/" + strings.ToUpper(k.l4) }
 
-// inboundPortKey 推导一个入站实际 bind 的 (端口, L4)，规则与各适配器的
-// Start 一致（audit-multinode 第 2 节 G3）：
+// inboundPortKeys 推导一个入站实际 bind 的全部 (端口, L4)，按 tcp、udp 的次序。
+// 规则与各适配器的 Start 一致（audit-multinode 第 2 节 G3）：
 //   - hysteria2、tuic、juicity 走 UDP；
 //   - vless / vmess 的 network 为 xhttp-h3 或 mKCP 走 UDP，trojan 的 mKCP 走 UDP；
-//   - shadowsocks（含 2022）只有 network=udp 时走 UDP；
+//   - shadowsocks（含 2022 方法）同端口同时听 TCP 与 UDP，占两个键；
 //   - mieru 看 transport（缺省 TCP）；
 //   - 其余（anytls、socks、http、naive、shadowtls 与上述的 TCP 传输）走 TCP。
 //     SOCKS 的 UDP ASSOCIATE 用的是临时端口，不占入站端口。
-func inboundPortKey(cfg *core.InboundConfig) portKey {
-	key := portKey{port: cfg.Port, l4: "tcp"}
+func inboundPortKeys(cfg *core.InboundConfig) []portKey {
+	port := cfg.Port
 	network, _ := cfg.Raw["network"].(string)
 	network = strings.ToLower(strings.TrimSpace(network))
-	switch strings.ToLower(strings.TrimSpace(cfg.Protocol)) {
+	proto := strings.ToLower(strings.TrimSpace(cfg.Protocol))
+	switch proto {
 	case "hysteria2", "hy2", "tuic", "juicity":
-		key.l4 = "udp"
+		return []portKey{{port: port, l4: "udp"}}
 	case "vless", "vmess":
 		if network == "xhttp-h3" || isMKCPNetwork(network) {
-			key.l4 = "udp"
+			return []portKey{{port: port, l4: "udp"}}
 		}
+		return []portKey{{port: port, l4: "tcp"}}
 	case "trojan":
 		if isMKCPNetwork(network) {
-			key.l4 = "udp"
+			return []portKey{{port: port, l4: "udp"}}
 		}
+		return []portKey{{port: port, l4: "tcp"}}
 	case "shadowsocks", "ss":
-		if network == "udp" {
-			key.l4 = "udp"
-		}
+		return []portKey{{port: port, l4: "tcp"}, {port: port, l4: "udp"}}
 	case "mieru":
 		if strings.EqualFold(rawString(cfg.Raw, "transport"), "udp") {
-			key.l4 = "udp"
+			return []portKey{{port: port, l4: "udp"}}
+		}
+		return []portKey{{port: port, l4: "tcp"}}
+	default:
+		return []portKey{{port: port, l4: "tcp"}}
+	}
+}
+
+// portL4Label 把一组键的 L4 拼成 "tcp"、"udp" 或 "tcp+udp"（tcp 在前）。
+func portL4Label(keys []portKey) string {
+	var tcp, udp bool
+	for _, k := range keys {
+		switch k.l4 {
+		case "tcp":
+			tcp = true
+		case "udp":
+			udp = true
 		}
 	}
-	return key
+	if tcp && udp {
+		return "tcp+udp"
+	}
+	if tcp {
+		return "tcp"
+	}
+	if udp {
+		return "udp"
+	}
+	return ""
 }
 
 // PortInUseError 是「端口已被占用」。
@@ -79,7 +107,7 @@ func inboundPortKey(cfg *core.InboundConfig) portKey {
 // 不明、或是本机其他进程（bind 返回 EADDRINUSE），一律只说「本机其他服务」。
 type PortInUseError struct {
 	Port int
-	L4   string // "tcp" / "udp"
+	L4   string // "tcp" / "udp" / "tcp+udp"
 	// OwnerNodeID 只在同一面板时填。
 	OwnerNodeID string
 	// owner 是占用者的入站 tag，只留给本进程诊断与测试，不进任何文案。
@@ -88,7 +116,7 @@ type PortInUseError struct {
 }
 
 func (e *PortInUseError) Error() string {
-	key := portKey{port: e.Port, l4: e.L4}.String()
+	key := strconv.Itoa(e.Port) + "/" + strings.ToUpper(e.L4)
 	if e.OwnerNodeID == "" {
 		return "端口 " + key + " 已被本机其他服务占用"
 	}
@@ -99,8 +127,8 @@ func (e *PortInUseError) Unwrap() error { return e.Err }
 
 // RuntimeReason 是给面板的机器可读原因（纯 ASCII，可放进请求头）：
 //
-//	port_in_use:<端口>/<tcp|udp>:<节点 ID>   占用者是同一面板的另一个节点
-//	port_in_use:<端口>/<tcp|udp>:other       其余情况（别的面板、其他进程）
+//	port_in_use:<端口>/<tcp|udp|tcp+udp>:<节点 ID>   占用者是同一面板的另一个节点
+//	port_in_use:<端口>/<tcp|udp|tcp+udp>:other       其余情况（别的面板、其他进程）
 //
 // 节点端经 errors.As 取这个方法（不 import kernel），随 degraded 心跳上报。
 func (e *PortInUseError) RuntimeReason() string {
@@ -126,10 +154,34 @@ func (c *NativeCore) SetInboundOwner(tag, scope, nodeID string) {
 	c.owners[tag] = inboundOwner{scope: scope, nodeID: nodeID}
 }
 
-// portConflictLocked 构造「key 被 ownerTag 占着」的错误，按同面板与否决定能
-// 不能写出对方节点 ID；调用方持有 c.mu。
-func (c *NativeCore) portConflictLocked(key portKey, requesterTag, ownerTag string) *PortInUseError {
-	err := &PortInUseError{Port: key.port, L4: key.l4, owner: ownerTag}
+// portConflictLocked 查 keys 里有没有被别的入站占着的键：按 keys 的次序找第一个被
+// 别人（不是 requesterTag）占着的键，记下它的占用者，再把 keys 里同一占用者占着的
+// 键都并进来，L4 写成这些键的 portL4Label；没有冲突返回 nil。调用方持有 c.mu。
+func (c *NativeCore) portConflictLocked(keys []portKey, requesterTag string) *PortInUseError {
+	var conflictKey portKey
+	var ownerTag string
+	for _, k := range keys {
+		owner := c.ports[k]
+		if owner != "" && owner != requesterTag {
+			conflictKey = k
+			ownerTag = owner
+			break
+		}
+	}
+	if ownerTag == "" {
+		return nil
+	}
+	var sameOwnerKeys []portKey
+	for _, k := range keys {
+		if c.ports[k] == ownerTag {
+			sameOwnerKeys = append(sameOwnerKeys, k)
+		}
+	}
+	err := &PortInUseError{
+		Port:  conflictKey.port,
+		L4:    portL4Label(sameOwnerKeys),
+		owner: ownerTag,
+	}
 	requester, owner := c.owners[requesterTag], c.owners[ownerTag]
 	if requester.scope != "" && requester.scope == owner.scope && owner.nodeID != "" {
 		err.OwnerNodeID = owner.nodeID
@@ -138,7 +190,7 @@ func (c *NativeCore) portConflictLocked(key portKey, requesterTag, ownerTag stri
 }
 
 // asExternalPortInUse 把 bind 的 EADDRINUSE 包成 PortInUseError；其它错误原样返回。
-func asExternalPortInUse(key portKey, err error) error {
+func asExternalPortInUse(keys []portKey, err error) error {
 	if err == nil || !errors.Is(err, syscall.EADDRINUSE) {
 		return err
 	}
@@ -146,18 +198,25 @@ func asExternalPortInUse(key portKey, err error) error {
 	if errors.As(err, &already) {
 		return err
 	}
-	return &PortInUseError{Port: key.port, L4: key.l4, Err: err}
+	if len(keys) == 0 {
+		return &PortInUseError{Err: err}
+	}
+	return &PortInUseError{Port: keys[0].port, L4: portL4Label(keys), Err: err}
 }
 
-// portOwnerLocked 返回占着 key 的入站 tag；调用方持有 c.mu。
-func (c *NativeCore) portOwnerLocked(key portKey) string {
-	return c.ports[key]
-}
-
-// releasePortLocked 释放 tag 名下的 key（不是它的就不动）；调用方持有 c.mu。
-func (c *NativeCore) releasePortLocked(tag string, key portKey) {
-	if c.ports[key] == tag {
-		delete(c.ports, key)
+// releasePortsLocked 释放 tag 名下 release 里、且不在 keep 里的键（不是它的就不动）；调用方持有 c.mu。
+func (c *NativeCore) releasePortsLocked(tag string, release, keep []portKey) {
+	keepSet := make(map[portKey]struct{}, len(keep))
+	for _, k := range keep {
+		keepSet[k] = struct{}{}
+	}
+	for _, k := range release {
+		if _, ok := keepSet[k]; ok {
+			continue
+		}
+		if c.ports[k] == tag {
+			delete(c.ports, k)
+		}
 	}
 }
 

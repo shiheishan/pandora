@@ -80,7 +80,7 @@ func withActor(actor uuid.UUID) gin.HandlerFunc {
 func newTestEngine(h *Handler, actor uuid.UUID, biz gin.HandlerFunc) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(httpx.Errors(), httpx.SecurityHeaders())
+	r.Use(httpx.Errors(), httpx.SecurityHeaders(false))
 	r.Use(withActor(actor))
 	r.POST("/v1/things", h.Middleware("thing_create"), biz)
 	return r

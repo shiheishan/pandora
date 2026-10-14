@@ -31,7 +31,7 @@ type pgErrEnvelope struct {
 func pgEngine(h *handler.Handler, actor uuid.UUID, biz gin.HandlerFunc) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(httpx.Errors(), httpx.SecurityHeaders())
+	r.Use(httpx.Errors(), httpx.SecurityHeaders(false))
 	r.Use(func(c *gin.Context) {
 		authn.Set(c, authn.Principal{UserID: actor})
 		c.Next()

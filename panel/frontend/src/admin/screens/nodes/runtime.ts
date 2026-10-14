@@ -25,11 +25,11 @@ export interface RunState {
   detail: string
 }
 
-const PORT_IN_USE = /^port_in_use:(\d{1,5})\/(tcp|udp):(.+)$/
+const PORT_IN_USE = /^port_in_use:(\d{1,5})\/(tcp\+udp|tcp|udp):(.+)$/
 
 /**
  * 原因码翻成中文（pdnd node/status.go 与 kernel/port_claims.go 的 RuntimeReason）：
- * port_in_use:<端口>/<tcp|udp>:<节点 id|other>、not_started、config_apply_failed、serving_cached_config。
+ * port_in_use:<端口>/<tcp|udp|tcp+udp>:<节点 id|other>（tcp+udp 是 Shadowsocks 同端口两种都听）、not_started、config_apply_failed、serving_cached_config。
  * holder 是后端按节点 id 查出的占用者名字（同一面板才有）；认不出的码原样显示
  */
 export function runtimeReasonText(reason: string | null | undefined, holder?: string | null): string {

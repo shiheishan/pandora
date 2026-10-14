@@ -71,20 +71,30 @@ type shadowsocksAdapter struct {
 	reordering atomic.Bool
 	hints      ssSourceHints
 	// sessions 是按用户的在途连接表与原子流量计数（user_sessions.go）。
-	sessions userSessions
-	online   onlineDevices
-	plane    DataPlane
-	connErr  connErrorReporter
-	limiters core.SpeedLimiters
-	listener net.Listener
-	packet   net.PacketConn
-	ctx      context.Context
-	cancel   context.CancelFunc
-	closed   bool
-	active   map[net.Conn]struct{}
+	sessions  userSessions
+	online    onlineDevices
+	plane     DataPlane
+	connErr   connErrorReporter
+	limiters  core.SpeedLimiters
+	listener  net.Listener
+	packet    net.PacketConn
+	udpConn   *net.UDPConn                       // a.packet 的具体类型，读循环与写回用
+	udpMu     sync.Mutex                         // 保护 udp 与 udpClosed
+	udp       map[netip.AddrPort][]*ssUDPSession // 按客户端地址的 UDP 会话（同一地址通常只有一个用户）
+	udpLive   int                                // 会话总数（udpMu 保护）
+	udpClosed bool                               // Close 之后不再建会话
+	udpQuota  udpSessionQuota                    // 每用户在途 UDP 会话上限（udp_session_quota.go）
+	udpDrops  ssUDPDropStats                     // SS UDP 各原因的丢包数（shadowsocks_udp.go）
+	udpJobs   chan ssUDPJob                      // 慢路径（逐用户试解）的有界队列，见 shadowsocks_udp_pool.go
+	ctx       context.Context
+	cancel    context.CancelFunc
+	closed    bool
+	active    map[net.Conn]struct{}
 	// salts 是 TCP 请求 salt 的防重放表（认证通过才记），全进程共用一张，
 	// 见 replay_filter_bloom.go。
 	salts *saltBloom
+	// udpSalts 是 UDP 包 salt 的防重放表（认证通过才记），全进程 SS UDP 共用一张，见 shadowsocks_udp_replay.go。
+	udpSalts *saltBloom
 	// headerTimeout 只给测试缩短读请求头的截止时间，零值为 10 秒。
 	headerTimeout time.Duration
 	wg            sync.WaitGroup
@@ -101,9 +111,11 @@ func newShadowsocksAdapter(spec InboundSpec) (Adapter, error) {
 	}
 	return &shadowsocksAdapter{
 		protocol: strings.ToLower(strings.TrimSpace(spec.Config.Protocol)), spec: spec, method: methodSpec,
-		users:  make(map[string]*ssUser),
-		active: make(map[net.Conn]struct{}),
-		salts:  sharedSSSaltBloom(),
+		users:    make(map[string]*ssUser),
+		active:   make(map[net.Conn]struct{}),
+		udp:      make(map[netip.AddrPort][]*ssUDPSession),
+		salts:    sharedSSSaltBloom(),
+		udpSalts: sharedSSUDPSaltBloom(),
 	}, nil
 }
 
@@ -121,8 +133,8 @@ func (a *shadowsocksAdapter) Validate(spec InboundSpec) error {
 	if spec.Config.Port < 1 || spec.Config.Port > 65535 {
 		return fmt.Errorf("shadowsocks port is invalid")
 	}
-	if network, _ := spec.Config.Raw["network"].(string); network != "" && !strings.EqualFold(network, "tcp") && !strings.EqualFold(network, "udp") {
-		return fmt.Errorf("native shadowsocks currently accepts tcp and udp only")
+	if _, hasNetwork := spec.Config.Raw["network"]; hasNetwork {
+		return fmt.Errorf("shadowsocks 入站不再接受 network 字段：TCP 与 UDP 总是同端口一起开")
 	}
 	if _, err := parseNativeSSMethod(spec.Config.Raw); err != nil {
 		return err
@@ -138,10 +150,7 @@ func parseNativeSSMethod(raw map[string]any) (ssMethodSpec, error) {
 	method = strings.ToLower(strings.TrimSpace(method))
 	spec, ok := nativeSSMethods[method]
 	if !ok {
-		return ssMethodSpec{}, fmt.Errorf("native shadowsocks method %q is unsupported; classic AEAD TCP/UDP is enabled", method)
-	}
-	if password, _ := raw["password"].(string); strings.TrimSpace(password) != "" {
-		return spec, nil
+		return ssMethodSpec{}, fmt.Errorf("不支持的加密方式 %q（shadowsocks 只支持经典 AEAD）", method)
 	}
 	return spec, nil
 }
@@ -151,7 +160,7 @@ func (a *shadowsocksAdapter) Start(parent context.Context, spec InboundSpec, hoo
 		return fmt.Errorf("shadowsocks start requires context and data plane")
 	}
 	a.mu.Lock()
-	if a.listener != nil || a.closed {
+	if a.listener != nil || a.packet != nil || a.closed {
 		a.mu.Unlock()
 		return fmt.Errorf("shadowsocks adapter already started or closed")
 	}
@@ -161,30 +170,41 @@ func (a *shadowsocksAdapter) Start(parent context.Context, spec InboundSpec, hoo
 	if listenAddress == "" {
 		listenAddress = "0.0.0.0"
 	}
-	network, _ := spec.Config.Raw["network"].(string)
-	if strings.EqualFold(network, "udp") {
-		packet, packetErr := net.ListenPacket("udp", net.JoinHostPort(listenAddress, fmt.Sprintf("%d", spec.Config.Port)))
-		if packetErr != nil {
-			a.cancel()
-			a.mu.Unlock()
-			return packetErr
-		}
-		a.packet = packet
-		a.mu.Unlock()
-		a.wg.Add(1)
-		go a.packetLoop()
-		return nil
-	}
-	listener, err := net.Listen("tcp", net.JoinHostPort(listenAddress, fmt.Sprintf("%d", spec.Config.Port)))
+	addr := net.JoinHostPort(listenAddress, fmt.Sprintf("%d", spec.Config.Port))
+	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		a.cancel()
 		a.mu.Unlock()
-		return err
+		return asExternalPortInUse([]portKey{{port: spec.Config.Port, l4: "tcp"}}, err)
 	}
-	a.listener = listener
+	packet, packetErr := net.ListenPacket("udp", addr)
+	if packetErr != nil {
+		_ = listener.Close()
+		a.cancel()
+		a.mu.Unlock()
+		// 单边 bind 撞上本机其他进程时，报的是撞上的那一种（如 443/UDP），不是 TCP+UDP；
+		// NativeCore 那层的 asExternalPortInUse 见到已经是 PortInUseError 就原样透传。
+		return asExternalPortInUse([]portKey{{port: spec.Config.Port, l4: "udp"}}, packetErr)
+	}
+	udpConn, ok := packet.(*net.UDPConn)
+	if !ok {
+		_ = packet.Close()
+		_ = listener.Close()
+		a.cancel()
+		a.mu.Unlock()
+		return fmt.Errorf("shadowsocks UDP listen: unexpected PacketConn type %T", packet)
+	}
+	a.listener, a.packet, a.udpConn = listener, packet, udpConn
+	a.udpJobs = make(chan ssUDPJob, ssUDPSlowQueue)
 	a.mu.Unlock()
-	a.wg.Add(1)
+	workers := ssUDPSlowWorkers()
+	a.wg.Add(3 + workers)
 	go a.acceptLoop()
+	go a.packetLoop()
+	go a.udpJanitor()
+	for i := 0; i < workers; i++ {
+		go a.udpWorker()
+	}
 	return nil
 }
 
@@ -646,6 +666,7 @@ func (a *shadowsocksAdapter) Close() error {
 	for _, conn := range active {
 		_ = conn.Close()
 	}
+	a.closeUDPSessions()
 	a.wg.Wait()
 	return nil
 }
