@@ -9,6 +9,8 @@ paths:
 - 对外错误只有 `panel/internal/pkg/errs` 一套：封闭的码表、HTTP 状态和中性中文文案。service 返回 `*errs.Error`（`errs.New` / `errs.Newf` / `errs.Wrap` / `errs.Invalid`），handler 交给 `httpx` 写信封；未知错误一律 500 `internal_error`，原因只进日志。
 - 前端 `panel/frontend/src/core/api.ts` 的 `SERVER_ERROR_CODES` 按同一张表解析，新增码两处同改；守卫是 `errs` 包的 `TestServerErrorCodesMatchFrontend`。
 - `reauth_required` 与 `forbidden` 同为 403、码不同，前端靠码弹重认证框。
+- 库的约束违例只经 `db.ConstraintErrors`（`panel/internal/pkg/db/constraint.go`）翻译成模块哨兵：各 repo 一张 `constraintErrs` 表（按约束名 ByName、按 SQLSTATE ByCode），不自己 import pgconn 判码、不用 `gorm.ErrDuplicatedKey` 一类逐个判断；要看码用 `db.AsViolation`，死锁与序列化失败用 `db.IsRetryable`。
+- LIKE / ILIKE 的用户输入一律经 `db.EscapeLike` / `db.ContainsPattern` 转义 `\ % _`，不再各写一份。
 
 ## 日志
 - zap，字段带 req_id。请求日志只写路由模板（`c.FullPath()`，未匹配写 `-`），不写原始路径、完整 URL、查询串：订阅令牌是路径段。
