@@ -222,7 +222,7 @@ identity, auth ─► settings, audit
 
 ### 5.4 状态机
 
-每个状态机在 service 里写成一张转换表，加一个纯函数 `CanTransition(from, to)`；repo 的状态更新带上 `WHERE status = 旧状态`，影响 0 行就当并发冲突。库里只保留 `CHECK (status IN (…))`。
+守卫以 SQL 条件更新为准：repo 的状态更新带上 `WHERE status = 旧状态`，影响 0 行就当并发冲突；库里只保留 `CHECK (status IN (…))`。只有代码里确实要按状态分支时（先判断当前状态能不能转、不能转回不同的错误），才在 service 里写一张转换表加纯函数 `CanTransition(from, to)`（现有：catalog 的套餐与价格、node 的节点与服务器、payment 的支付意图与挂账案、subscription、support、giftcard、promo、certs、commission）；没有调用方的转换表不写。
 
 佣金的两个状态机比旧代码简化：
 - 佣金条目：pending → available（解冻）、pending → voided（复核作废，终态）。没有 reversed。需要人工复核的条目（同源、同源检查失败或未装配、解冻时待结科目余额不足）标 `review_required`，停在 pending、不参与自动解冻；后台在「待复核佣金」里处理（`POST /commission/entries/:id/review`，RequireAuth → RecentReauth，不挂幂等，只对 `status = 'pending' AND review_required` 的条目有效，否则 409）：
