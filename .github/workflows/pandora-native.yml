@@ -38,7 +38,7 @@ jobs:
     name: NativeCore and panel protocol parity
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Check capability/schema/serving parity
         run: python3 pdnd/release/check_native_panel_parity.py
 
@@ -49,8 +49,8 @@ jobs:
       run:
         working-directory: panel
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: panel/go.mod
           cache-dependency-path: panel/go.sum
@@ -64,13 +64,13 @@ jobs:
       run:
         working-directory: panel/frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: panel/frontend/package-lock.json
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: panel/go.mod
           cache-dependency-path: panel/go.sum
@@ -107,8 +107,8 @@ jobs:
       run:
         working-directory: pdnd
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: pdnd/go.mod
           cache-dependency-path: pdnd/go.sum
@@ -190,8 +190,8 @@ jobs:
       run:
         working-directory: pdnd
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: pdnd/go.mod
           cache-dependency-path: pdnd/go.sum
@@ -242,8 +242,8 @@ jobs:
       GOOS: linux
       GOARCH: ${{ matrix.arch }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: pdnd/go.mod
           cache-dependency-path: pdnd/go.sum
@@ -258,8 +258,8 @@ jobs:
     name: Release manifest and hashes
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: pdnd/go.mod
           cache-dependency-path: pdnd/go.sum

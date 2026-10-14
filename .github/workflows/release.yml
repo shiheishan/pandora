@@ -36,7 +36,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Resolve and check the version
@@ -77,13 +77,15 @@ jobs:
             *) echo "::error::标签 $GITHUB_REF_NAME 指向的提交不在 $DEFAULT_BRANCH 上（compare: $status）；先合进 $DEFAULT_BRANCH 再打标签"; exit 1 ;;
           esac
       # 发版构建不用缓存（setup-go 关掉 cache、setup-node 不开 npm 缓存）：发布物不吃可能被别的 run 写过的缓存
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: panel/go.mod
           cache: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
+          # v5 起有 packageManager 字段时会自动开缓存；发版构建显式关掉
+          package-manager-cache: false
       - name: Build both architectures
         env:
           PANDORA_VERSION: ${{ steps.version.outputs.version }}
