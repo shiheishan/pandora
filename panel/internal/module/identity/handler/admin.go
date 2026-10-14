@@ -44,9 +44,14 @@ func (h *Handler) listUsers(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
+	var cc admCents
 	users := make([]userRowResponse, len(rows))
 	for i, r := range rows {
-		users[i] = admUserRowFrom(r)
+		users[i] = admUserRowFrom(&cc, r)
+	}
+	if cc.err != nil {
+		httpx.Fail(c, cc.err)
+		return
 	}
 	httpx.OK(c, listUsersResponse{Users: users, Total: total})
 }
@@ -62,7 +67,12 @@ func (h *Handler) getUser(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	httpx.OK(c, admUserDetailFrom(d))
+	out, err := admUserDetailFrom(d)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	httpx.OK(c, out)
 }
 
 func (h *Handler) setUserStatus(c *gin.Context) {
@@ -129,7 +139,7 @@ func (h *Handler) assignUserGroup(c *gin.Context) {
 }
 
 func (h *Handler) listUserGroups(c *gin.Context) {
-	rows, err := h.svc.ListGroups(c.Request.Context())
+	rows, err := h.svc.AdminListGroups(c.Request.Context())
 	if err != nil {
 		httpx.Fail(c, err)
 		return
