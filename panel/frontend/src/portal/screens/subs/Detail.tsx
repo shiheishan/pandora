@@ -58,7 +58,18 @@ function NodesCard({ subscriptionId }: { subscriptionId: string }) {
             const rate = rateLabel(n.traffic_rate)
             return (
               <li key={`${n.name}-${i}`} className={css.nodeRow}>
-                <span className={css.nodeName}>{n.name}</span>
+                <span className={css.nodeName}>
+                  <span className={css.nodeNameText}>{n.name}</span>
+                  {n.tags.length > 0 && (
+                    <span className={css.nodeTags}>
+                      {n.tags.map((t) => (
+                        <Tag key={t} tone="neutral">
+                          {t}
+                        </Tag>
+                      ))}
+                    </span>
+                  )}
+                </span>
                 <span className={css.nodeProto}>{protocolLabel(n.protocol)}</span>
                 <span className={css.nodeRate}>{rate && <Tag tone={n.traffic_rate > 1 ? 'warn' : 'ok'}>{rate}</Tag>}</span>
               </li>
