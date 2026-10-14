@@ -129,7 +129,7 @@ func (s *Service) deliverTelegram(ctx context.Context, ready bool, cfg settingss
 		text = subject + "\n\n" + body
 	}
 
-	sendErr := s.tg.SendMessage(ctx, cfg.BotToken, chatID, text)
+	_, sendErr := s.tg.SendMessage(ctx, cfg.BotToken, chatID, text)
 	if sendErr == nil {
 		if _, err := s.store.MarkSent(wctx, d.ID); err != nil {
 			lg.Error("notify: 标记已发送失败", zap.Error(err))

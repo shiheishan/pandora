@@ -55,6 +55,21 @@ func tgbLastSentText(t *testing.T, tg *fakeTG) string {
 	return tg.sent[len(tg.sent)-1].Text
 }
 
+func tgbCommandNames(t *testing.T, tg *fakeTG) []string {
+	t.Helper()
+	tg.mu.Lock()
+	defer tg.mu.Unlock()
+	if len(tg.commands) == 0 {
+		return nil
+	}
+	last := tg.commands[len(tg.commands)-1]
+	out := make([]string, 0, len(last))
+	for _, c := range last {
+		out = append(out, c.Command)
+	}
+	return out
+}
+
 func TestSaveTelegramSettingsWebhook(t *testing.T) {
 	e := newPG(t)
 	tg := &fakeTG{}
@@ -75,8 +90,62 @@ func TestSaveTelegramSettingsWebhook(t *testing.T) {
 	if len(tg.webhooks[0].Secret) != 43 {
 		t.Fatalf("secret len %d", len(tg.webhooks[0].Secret))
 	}
+	au := tg.webhooks[0].AllowedUpdates
+	if len(au) != 1 || au[0] != "message" {
+		t.Fatalf("allowed_updates %v", au)
+	}
 	if e.st.setTg == nil || e.st.setTg.WebhookSecret == nil || *e.st.setTg.WebhookSecret != tg.webhooks[0].Secret {
 		t.Fatalf("setTg secret %+v", e.st.setTg)
+	}
+	names := tgbCommandNames(t, tg)
+	if names == nil || names[0] != "start" || names[len(names)-1] != "unbind" {
+		t.Fatalf("commands %v", names)
+	}
+	for _, n := range names {
+		if n == "sub" {
+			t.Fatalf("sub should be off by default, got %v", names)
+		}
+	}
+
+	// 入群审核开启时 webhook 多收 chat_join_request
+	eJR := newPG(t)
+	tgJR := &fakeTG{}
+	eJR.svc.tg = tgJR
+	eJR.st.tgx = settingssvc.TelegramExtras{JoinReview: true}
+	eJR.svc.UsePublicBaseURL("https://panel.example.com")
+	if err := tgbSave(eJR, TelegramSettingsInput{
+		Enabled: true, BotUsername: "mybot", BotToken: "new-token",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(tgJR.webhooks) != 1 {
+		t.Fatalf("webhooks %d", len(tgJR.webhooks))
+	}
+	au = tgJR.webhooks[0].AllowedUpdates
+	if len(au) != 2 || au[0] != "message" || au[1] != "chat_join_request" {
+		t.Fatalf("join review allowed_updates %v", au)
+	}
+
+	// SubCommand 开启时命令菜单含 sub
+	eSub := newPG(t)
+	tgSub := &fakeTG{}
+	eSub.svc.tg = tgSub
+	eSub.st.tgx = settingssvc.TelegramExtras{SubCommand: true}
+	eSub.svc.UsePublicBaseURL("https://panel.example.com")
+	if err := tgbSave(eSub, TelegramSettingsInput{
+		Enabled: true, BotUsername: "mybot", BotToken: "new-token",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	names = tgbCommandNames(t, tgSub)
+	hasSub := false
+	for _, n := range names {
+		if n == "sub" {
+			hasSub = true
+		}
+	}
+	if !hasSub {
+		t.Fatalf("commands %v want sub", names)
 	}
 
 	// SetWebhook 失败不落库

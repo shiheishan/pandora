@@ -51,6 +51,8 @@ type Settings interface {
 	SwitchEnabled(ctx context.Context, code string) (bool, error)
 	Telegram(ctx context.Context) (settingssvc.Telegram, error)
 	SetTelegram(ctx context.Context, v settingssvc.TelegramUpdate) error
+	TelegramExtras(ctx context.Context) (settingssvc.TelegramExtras, error)
+	SetTelegramExtras(ctx context.Context, v settingssvc.TelegramExtras) error
 }
 
 var _ Settings = (*settingssvc.Service)(nil)

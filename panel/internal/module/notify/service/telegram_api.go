@@ -18,10 +18,21 @@ const telegramAPIBase = "https://api.telegram.org"
 
 // telegramAPI 是用到的 Bot API 方法；生产用 telegramClient，测试用假实现。
 type telegramAPI interface {
-	// SendMessage 给 chatID 发一条纯文本消息（不用 parse_mode，关掉链接预览）。
-	SendMessage(ctx context.Context, token string, chatID int64, text string) error
-	// SetWebhook 把 bot 的 webhook 设成 url，Telegram 回调时在 X-Telegram-Bot-Api-Secret-Token 头里带 secret；只收 message 更新。
-	SetWebhook(ctx context.Context, token, url, secret string) error
+	// SendMessage 给 chatID 发一条纯文本消息（不用 parse_mode，关掉链接预览），返回 Telegram 给的 message_id。
+	SendMessage(ctx context.Context, token string, chatID int64, text string) (int64, error)
+	// SetWebhook 把 webhook 设成 url，回调头里带 secret；只收 allowedUpdates 列出的更新类型。
+	SetWebhook(ctx context.Context, token, url, secret string, allowedUpdates []string) error
+	// SetMyCommands 设置 bot 在私聊里的命令菜单（scope all_private_chats）。
+	SetMyCommands(ctx context.Context, token string, cmds []botCommand) error
+	// ApproveChatJoinRequest / DeclineChatJoinRequest 批准 / 拒绝 userID 加入 chatID 的申请。
+	ApproveChatJoinRequest(ctx context.Context, token string, chatID, userID int64) error
+	DeclineChatJoinRequest(ctx context.Context, token string, chatID, userID int64) error
+}
+
+// botCommand 是命令菜单的一项。
+type botCommand struct {
+	Command     string `json:"command"`
+	Description string `json:"description"`
 }
 
 // TelegramError 是 Bot API 调用失败。Detail 可以写日志、写库、给管理员看（不含 Token 与请求地址）；
@@ -47,12 +58,13 @@ func newTelegramClient(base string) *telegramClient {
 }
 
 type tgAPIResponse struct {
-	OK          bool   `json:"ok"`
-	ErrorCode   int    `json:"error_code"`
-	Description string `json:"description"`
+	OK          bool            `json:"ok"`
+	ErrorCode   int             `json:"error_code"`
+	Description string          `json:"description"`
+	Result      json.RawMessage `json:"result"`
 }
 
-func (c *telegramClient) SendMessage(ctx context.Context, token string, chatID int64, text string) error {
+func (c *telegramClient) SendMessage(ctx context.Context, token string, chatID int64, text string) (int64, error) {
 	text = truncateRunes(text, 4096)
 	body, err := json.Marshal(map[string]any{
 		"chat_id":                  chatID,
@@ -60,52 +72,102 @@ func (c *telegramClient) SendMessage(ctx context.Context, token string, chatID i
 		"disable_web_page_preview": true,
 	})
 	if err != nil {
-		return err
+		return 0, err
 	}
-	return c.post(ctx, token, "sendMessage", body)
+	raw, err := c.post(ctx, token, "sendMessage", body)
+	if err != nil {
+		return 0, err
+	}
+	var msg struct {
+		MessageID int64 `json:"message_id"`
+	}
+	if len(raw) == 0 || json.Unmarshal(raw, &msg) != nil {
+		return 0, nil
+	}
+	return msg.MessageID, nil
 }
 
-func (c *telegramClient) SetWebhook(ctx context.Context, token, hookURL, secret string) error {
+func (c *telegramClient) SetWebhook(ctx context.Context, token, hookURL, secret string, allowedUpdates []string) error {
+	if allowedUpdates == nil {
+		allowedUpdates = []string{"message"}
+	}
 	body, err := json.Marshal(map[string]any{
 		"url":                  hookURL,
 		"secret_token":         secret,
-		"allowed_updates":      []string{"message"},
+		"allowed_updates":      allowedUpdates,
 		"drop_pending_updates": true,
 	})
 	if err != nil {
 		return err
 	}
-	return c.post(ctx, token, "setWebhook", body)
+	_, err = c.post(ctx, token, "setWebhook", body)
+	return err
 }
 
-func (c *telegramClient) post(ctx context.Context, token, method string, body []byte) error {
-	if err := ctx.Err(); err != nil {
+func (c *telegramClient) SetMyCommands(ctx context.Context, token string, cmds []botCommand) error {
+	body, err := json.Marshal(map[string]any{
+		"commands": cmds,
+		"scope":    map[string]string{"type": "all_private_chats"},
+	})
+	if err != nil {
 		return err
+	}
+	_, err = c.post(ctx, token, "setMyCommands", body)
+	return err
+}
+
+func (c *telegramClient) ApproveChatJoinRequest(ctx context.Context, token string, chatID, userID int64) error {
+	body, err := json.Marshal(map[string]any{
+		"chat_id": chatID,
+		"user_id": userID,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = c.post(ctx, token, "approveChatJoinRequest", body)
+	return err
+}
+
+func (c *telegramClient) DeclineChatJoinRequest(ctx context.Context, token string, chatID, userID int64) error {
+	body, err := json.Marshal(map[string]any{
+		"chat_id": chatID,
+		"user_id": userID,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = c.post(ctx, token, "declineChatJoinRequest", body)
+	return err
+}
+
+func (c *telegramClient) post(ctx context.Context, token, method string, body []byte) (json.RawMessage, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	urlStr := c.base + "/bot" + token + "/" + method
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, urlStr, bytes.NewReader(body))
 	if err != nil {
 		// 错误文本带完整 URL，也就带着 token
-		return c.wrapConnErr(err, token)
+		return nil, c.wrapConnErr(err, token)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.hc.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return nil, ctx.Err()
 		}
-		return c.wrapConnErr(err, token)
+		return nil, c.wrapConnErr(err, token)
 	}
 	defer resp.Body.Close()
 
 	return c.readResponse(resp, token)
 }
 
-func (c *telegramClient) readResponse(resp *http.Response, token string) error {
+func (c *telegramClient) readResponse(resp *http.Response, token string) (json.RawMessage, error) {
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var api tgAPIResponse
 	if len(raw) > 0 {
@@ -114,7 +176,7 @@ func (c *telegramClient) readResponse(resp *http.Response, token string) error {
 
 	status := resp.StatusCode
 	if status >= 200 && status < 300 && api.OK {
-		return nil
+		return api.Result, nil
 	}
 
 	desc := api.Description
@@ -124,7 +186,7 @@ func (c *telegramClient) readResponse(resp *http.Response, token string) error {
 	desc = truncateRunes(desc, 200)
 	detail := fmt.Sprintf("HTTP %d %s", status, desc)
 	perm := status == 400 || status == 401 || status == 403 || status == 404
-	return &TelegramError{Status: status, Detail: detail, Permanent: perm}
+	return nil, &TelegramError{Status: status, Detail: detail, Permanent: perm}
 }
 
 func (c *telegramClient) wrapConnErr(err error, token string) *TelegramError {

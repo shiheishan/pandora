@@ -157,7 +157,7 @@ func (s *Service) HandleTelegramUpdate(ctx context.Context, secret string, body 
 	if reply == "" || cfg.BotToken == "" {
 		return nil
 	}
-	if err := s.tg.SendMessage(ctx, cfg.BotToken, chatID, reply); err != nil {
+	if _, err := s.tg.SendMessage(ctx, cfg.BotToken, chatID, reply); err != nil {
 		plog.From(ctx).Warn("notify: Telegram 回复绑定结果失败", zap.Error(err))
 	}
 	return nil

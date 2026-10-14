@@ -26,13 +26,17 @@ func TestTelegramSendMessageRequest(t *testing.T) {
 			t.Fatal(err)
 		}
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"ok":true}`))
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":77}}`))
 	}))
 	defer srv.Close()
 
 	c := newTelegramClient(srv.URL)
-	if err := c.SendMessage(context.Background(), token, 42, "hello"); err != nil {
+	mid, err := c.SendMessage(context.Background(), token, 42, "hello")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if mid != 77 {
+		t.Fatalf("message_id %d", mid)
 	}
 	if gotPath != "/bot"+token+"/sendMessage" {
 		t.Fatalf("path %q", gotPath)
@@ -55,15 +59,104 @@ func TestTelegramSetWebhookRequest(t *testing.T) {
 	defer srv.Close()
 
 	c := newTelegramClient(srv.URL)
-	if err := c.SetWebhook(context.Background(), token, "https://panel.example/hook", "sec"); err != nil {
+	updates := []string{"message", "chat_join_request"}
+	if err := c.SetWebhook(context.Background(), token, "https://panel.example/hook", "sec", updates); err != nil {
 		t.Fatal(err)
 	}
 	if gotBody["url"] != "https://panel.example/hook" || gotBody["secret_token"] != "sec" {
 		t.Fatalf("body %+v", gotBody)
 	}
 	au, ok := gotBody["allowed_updates"].([]interface{})
-	if !ok || len(au) != 1 || au[0] != "message" {
+	if !ok || len(au) != 2 || au[0] != "message" || au[1] != "chat_join_request" {
 		t.Fatalf("allowed_updates %+v", gotBody["allowed_updates"])
+	}
+
+	// nil 切片默认 message
+	gotBody = nil
+	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatal(err)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv2.Close()
+	c2 := newTelegramClient(srv2.URL)
+	if err := c2.SetWebhook(context.Background(), token, "https://panel.example/hook", "sec", nil); err != nil {
+		t.Fatal(err)
+	}
+	au, ok = gotBody["allowed_updates"].([]interface{})
+	if !ok || len(au) != 1 || au[0] != "message" {
+		t.Fatalf("default allowed_updates %+v", gotBody["allowed_updates"])
+	}
+}
+
+func TestTelegramSetMyCommandsRequest(t *testing.T) {
+	const token = "1:cmd"
+	var gotPath string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatal(err)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	cmds := []botCommand{{Command: "start", Description: "开始使用"}}
+	c := newTelegramClient(srv.URL)
+	if err := c.SetMyCommands(context.Background(), token, cmds); err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/bot"+token+"/setMyCommands" {
+		t.Fatalf("path %q", gotPath)
+	}
+	scope, ok := gotBody["scope"].(map[string]interface{})
+	if !ok || scope["type"] != "all_private_chats" {
+		t.Fatalf("scope %+v", gotBody["scope"])
+	}
+	list, ok := gotBody["commands"].([]interface{})
+	if !ok || len(list) != 1 {
+		t.Fatalf("commands %+v", gotBody["commands"])
+	}
+}
+
+func TestTelegramApproveDeclineJoinRequest(t *testing.T) {
+	const token = "1:join"
+	var paths []string
+	var bodies []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		var b map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+			t.Fatal(err)
+		}
+		bodies = append(bodies, b)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	c := newTelegramClient(srv.URL)
+	if err := c.ApproveChatJoinRequest(context.Background(), token, -100, 55); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.DeclineChatJoinRequest(context.Background(), token, -100, 56); err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 2 {
+		t.Fatalf("paths %v", paths)
+	}
+	if !strings.HasSuffix(paths[0], "approveChatJoinRequest") || !strings.HasSuffix(paths[1], "declineChatJoinRequest") {
+		t.Fatalf("paths %v", paths)
+	}
+	if bodies[0]["chat_id"] != float64(-100) || bodies[0]["user_id"] != float64(55) {
+		t.Fatalf("approve body %+v", bodies[0])
+	}
+	if bodies[1]["user_id"] != float64(56) {
+		t.Fatalf("decline body %+v", bodies[1])
 	}
 }
 
@@ -85,7 +178,7 @@ func TestTelegramAPIErrors(t *testing.T) {
 		}))
 		defer srv.Close()
 		c := newTelegramClient(srv.URL)
-		err := c.SendMessage(context.Background(), token, 1, "x")
+		_, err := c.SendMessage(context.Background(), token, 1, "x")
 		if err == nil {
 			t.Fatalf("status %d: expected error", tc.status)
 		}
@@ -109,7 +202,7 @@ func TestTelegramConnFailureHidesToken(t *testing.T) {
 	srv.Close()
 
 	c := newTelegramClient(url)
-	err := c.SendMessage(context.Background(), token, 1, "hi")
+	_, err := c.SendMessage(context.Background(), token, 1, "hi")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -134,7 +227,7 @@ func TestTelegramTruncateText(t *testing.T) {
 
 	long := strings.Repeat("字", 5000)
 	c := newTelegramClient(srv.URL)
-	if err := c.SendMessage(context.Background(), token, 1, long); err != nil {
+	if _, err := c.SendMessage(context.Background(), token, 1, long); err != nil {
 		t.Fatal(err)
 	}
 	if textLen != 4096 {
