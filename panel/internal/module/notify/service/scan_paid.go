@@ -29,6 +29,35 @@ func (s *Service) scanPaid(ctx context.Context, now time.Time, loc *time.Locatio
 	if err != nil || len(paid) == 0 {
 		return 0, err
 	}
+
+	var adminChatID int64
+	var emails map[uuid.UUID]string
+	ex, err := s.settings.TelegramExtras(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if ex.AdminPaidNotify {
+		cid, ok, err := s.adminChat(ctx)
+		if err != nil {
+			return 0, err
+		}
+		if ok {
+			adminChatID = cid
+			uids := make([]uuid.UUID, 0, len(paid))
+			seenUser := map[uuid.UUID]bool{}
+			for _, p := range paid {
+				if !seenUser[p.UserID] {
+					seenUser[p.UserID] = true
+					uids = append(uids, p.UserID)
+				}
+			}
+			emails, err = s.dir.Emails(ctx, uids)
+			if err != nil {
+				return 0, err
+			}
+		}
+	}
+
 	ids := make([]uuid.UUID, len(paid))
 	for i, p := range paid {
 		ids[i] = p.SubscriptionID
@@ -64,13 +93,26 @@ func (s *Service) scanPaid(ctx context.Context, now time.Time, loc *time.Locatio
 				"traffic":  humanBytes(*p.TrafficBytes),
 			}
 		}
+		if adminChatID != 0 {
+			it.Admin = &adminNotice{
+				Code: TemplateAdminOrderPaid,
+				Vars: map[string]string{
+					"order_no": p.OrderNo,
+					"amount":   paidAmount(p),
+					"plan":     sub.PlanID.String(),
+					"email":    maskEmail(emails[p.UserID]),
+				},
+				Key:     "admin-paid:" + p.OrderID.String(),
+				AboutID: p.UserID,
+			}
+		}
 		items = append(items, it)
 		owner = append(owner, i)
 	}
 	if err := s.resolvePlanNames(ctx, items); err != nil {
 		return 0, err
 	}
-	written, done, werr := s.writeScanItems(ctx, items)
+	written, done, werr := s.writeScanItems(ctx, items, adminChatID)
 	last := len(paid) - 1
 	if done < len(items) {
 		last = owner[done] - 1

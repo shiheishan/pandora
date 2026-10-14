@@ -12,6 +12,7 @@ import (
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/module/notify/model"
 	"github.com/aegispanel/aegis/internal/module/notify/repo"
+	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
@@ -38,6 +39,9 @@ func (s *Service) TelegramBinding(ctx context.Context, userID uuid.UUID) (Telegr
 	}
 	if ready {
 		out.BotUsername = cfg.BotUsername
+		if ex, err := s.settings.TelegramExtras(ctx); err == nil && ex.DiscussLink != "" {
+			out.DiscussLink = ex.DiscussLink
+		}
 	}
 	b, ok, err := s.store.Binding(ctx, userID)
 	if err != nil {
@@ -101,8 +105,14 @@ func (s *Service) IssueBindCode(ctx context.Context, userID uuid.UUID) (BindCode
 	return BindCode{Code: code, BotUsername: cfg.BotUsername, ExpiresAt: expiresAt}, nil
 }
 
-// UnbindTelegram 解除本人的 Telegram 绑定。
+// UnbindTelegram 解除本人的 Telegram 绑定（门户与后台「个人设置」用）。
 func (s *Service) UnbindTelegram(ctx context.Context, userID uuid.UUID) error {
+	return s.unbindTelegram(ctx, userID, nil, "")
+}
+
+// unbindTelegram 是门户、后台与 bot /unbind 共用的解绑：删绑定、压掉还在排队的 Telegram 投递、写审计 telegram.unbound。
+// actor 非 nil 时（bot 里没有登录主体）审计记 ActorID=actor、Audience="public"；via 非空时 data 加 "via"。
+func (s *Service) unbindTelegram(ctx context.Context, userID uuid.UUID, actor *uuid.UUID, via string) error {
 	return s.tx.Do(ctx, func(ctx context.Context) error {
 		ok, err := s.store.DeleteBinding(ctx, userID)
 		if err != nil {
@@ -115,16 +125,25 @@ func (s *Service) UnbindTelegram(ctx context.Context, userID uuid.UUID) error {
 		if err != nil {
 			return err
 		}
-		return s.audit.Write(ctx, auditsvc.Event{
+		data := map[string]any{"suppressed_deliveries": n}
+		if via != "" {
+			data["via"] = via
+		}
+		evt := auditsvc.Event{
 			Action:       "telegram.unbound",
 			ResourceType: "user",
 			ResourceID:   &userID,
-			Data:         map[string]any{"suppressed_deliveries": n},
-		})
+			Data:         data,
+		}
+		if actor != nil {
+			evt.ActorID = actor
+			evt.Audience = "public"
+		}
+		return s.audit.Write(ctx, evt)
 	})
 }
 
-// HandleTelegramUpdate 处理 bot webhook 推来的一条更新：校验 secret，私聊里发来的绑定码核对通过就写绑定，并回一条消息。
+// HandleTelegramUpdate 处理 bot webhook 推来的一条更新：校验 secret，处理群工单回复、入群审核与私聊消息。
 func (s *Service) HandleTelegramUpdate(ctx context.Context, secret string, body []byte) error {
 	cfg, err := s.settings.Telegram(ctx)
 	if err != nil {
@@ -139,27 +158,46 @@ func (s *Service) HandleTelegramUpdate(ctx context.Context, secret string, body 
 	if err := json.Unmarshal(body, &upd); err != nil {
 		return nil
 	}
-	if upd.Message == nil || upd.Message.Chat == nil || upd.Message.Chat.Type != "private" {
-		return nil
+
+	ex, err := s.settings.TelegramExtras(ctx)
+	if err != nil {
+		plog.From(ctx).Warn("notify: 读取 Telegram 扩展设置失败", zap.Error(err))
+		ex = settingssvc.TelegramExtras{}
 	}
-	text := strings.TrimSpace(upd.Message.Text)
-	if text == "" {
+
+	if upd.ChatJoinRequest != nil {
+		s.handleJoinRequest(ctx, cfg, ex, upd.ChatJoinRequest)
 		return nil
 	}
 
-	chatID := upd.Message.Chat.ID
-	username := ""
-	if upd.Message.From != nil {
-		username = truncateRunes(upd.Message.From.Username, 64)
+	if upd.Message != nil && upd.Message.Chat != nil {
+		switch upd.Message.Chat.Type {
+		case "private":
+			text := strings.TrimSpace(upd.Message.Text)
+			if text == "" {
+				return nil
+			}
+			chatID := upd.Message.Chat.ID
+			username := ""
+			if upd.Message.From != nil {
+				username = truncateRunes(upd.Message.From.Username, 64)
+			}
+			reply := s.handlePrivateMessage(ctx, ex, chatID, username, text)
+			if reply != "" && cfg.BotToken != "" {
+				if _, err := s.tg.SendMessage(ctx, cfg.BotToken, chatID, reply); err != nil {
+					plog.From(ctx).Warn("notify: Telegram 回复私聊消息失败", zap.Error(err))
+				}
+			}
+			return nil
+
+		case "group", "supergroup":
+			if upd.Message.ReplyToMessage != nil {
+				s.handleAdminReply(ctx, cfg, upd.Message)
+			}
+			return nil
+		}
 	}
 
-	reply := s.handleBindMessage(ctx, text, chatID, username)
-	if reply == "" || cfg.BotToken == "" {
-		return nil
-	}
-	if _, err := s.tg.SendMessage(ctx, cfg.BotToken, chatID, reply); err != nil {
-		plog.From(ctx).Warn("notify: Telegram 回复绑定结果失败", zap.Error(err))
-	}
 	return nil
 }
 
@@ -238,13 +276,16 @@ func (s *Service) handleBindMessage(ctx context.Context, text string, chatID int
 }
 
 type tgWebhookUpdate struct {
-	Message *tgWebhookMessage `json:"message"`
+	Message         *tgWebhookMessage  `json:"message"`
+	ChatJoinRequest *tgChatJoinRequest `json:"chat_join_request"`
 }
 
 type tgWebhookMessage struct {
-	Chat *tgWebhookChat `json:"chat"`
-	From *tgWebhookUser `json:"from"`
-	Text string         `json:"text"`
+	MessageID      int64             `json:"message_id"`
+	Chat           *tgWebhookChat    `json:"chat"`
+	From           *tgWebhookUser    `json:"from"`
+	Text           string            `json:"text"`
+	ReplyToMessage *tgWebhookReplyTo `json:"reply_to_message"`
 }
 
 type tgWebhookChat struct {
@@ -252,8 +293,19 @@ type tgWebhookChat struct {
 	Type string `json:"type"`
 }
 
+type tgWebhookReplyTo struct {
+	MessageID int64 `json:"message_id"`
+}
+
 type tgWebhookUser struct {
+	ID       int64  `json:"id"`
+	IsBot    bool   `json:"is_bot"`
 	Username string `json:"username"`
+}
+
+type tgChatJoinRequest struct {
+	Chat *tgWebhookChat `json:"chat"`
+	From *tgWebhookUser `json:"from"`
 }
 
 func parseBindCodeInput(text string) (code string, promptOnly bool) {

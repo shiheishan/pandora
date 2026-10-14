@@ -2,7 +2,10 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base32"
 	"sync"
+	"testing"
 
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/google/uuid"
@@ -109,3 +112,19 @@ var (
 	_ Admins                = (*fakeAdmins)(nil)
 	_ TicketReplier         = (*fakeReplier)(nil)
 )
+
+// insertTestTicket 给 userID 插一张最小的工单（telegram_ticket_messages 的外键要它），返回工单 id。
+func (e *pgEnv) insertTestTicket(t *testing.T, userID uuid.UUID) uuid.UUID {
+	t.Helper()
+	b := make([]byte, 5)
+	if _, err := rand.Read(b); err != nil {
+		t.Fatal(err)
+	}
+	no := "TK20260101-" + base32.StdEncoding.EncodeToString(b)[:8]
+	var row struct{ ID uuid.UUID }
+	if err := e.scan(e.ctx, &row, `INSERT INTO tickets (ticket_no, user_id, subject, category, priority, sla_first_response_due, sla_resolution_due)
+VALUES (?, ?, '测试工单主题', 'general', 'normal', now() + interval '12 hours', now() + interval '72 hours') RETURNING id`, no, userID); err != nil {
+		t.Fatal(err)
+	}
+	return row.ID
+}

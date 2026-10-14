@@ -11,6 +11,7 @@ import (
 	"github.com/aegispanel/aegis/internal/module/notify/model"
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -129,8 +130,21 @@ func (s *Service) deliverTelegram(ctx context.Context, ready bool, cfg settingss
 		text = subject + "\n\n" + body
 	}
 
-	_, sendErr := s.tg.SendMessage(ctx, cfg.BotToken, chatID, text)
+	msgID, sendErr := s.tg.SendMessage(ctx, cfg.BotToken, chatID, text)
 	if sendErr == nil {
+		if p.TicketID != "" && msgID > 0 {
+			if tid, err := uuid.Parse(p.TicketID); err == nil {
+				if err := s.store.InsertTicketMessage(wctx, &model.TelegramTicketMessage{
+					ChatID:    chatID,
+					MessageID: msgID,
+					TicketID:  tid,
+				}); err != nil {
+					lg.Warn("notify: 写入工单提醒映射失败", zap.Error(err))
+				}
+			} else {
+				lg.Warn("notify: 投递中的 ticket_id 格式不正确", zap.String("ticket_id", p.TicketID), zap.Error(err))
+			}
+		}
 		if _, err := s.store.MarkSent(wctx, d.ID); err != nil {
 			lg.Error("notify: 标记已发送失败", zap.Error(err))
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/aegispanel/aegis/internal/module/notify/service"
+	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
 	"github.com/gin-gonic/gin"
@@ -35,15 +36,17 @@ type p6Fake struct {
 	setPref     *p6PrefCall
 
 	// Telegram
-	tgSettings  service.TelegramSettingsView
-	tgSaved     *service.TelegramSettingsInput
-	tgTestChat  *int64
-	tgBinding   service.TelegramBindingInfo
-	bindCode    service.BindCode
-	unbound     bool
-	updSecret   string
-	updBody     []byte
-	updateCalls int
+	tgSettings   service.TelegramSettingsView
+	tgSaved      *service.TelegramSettingsInput
+	tgExtras     settingssvc.TelegramExtras
+	tgExtrasSave *service.TelegramExtrasInput
+	tgTestChat   *int64
+	tgBinding    service.TelegramBindingInfo
+	bindCode     service.BindCode
+	unbound      bool
+	updSecret    string
+	updBody      []byte
+	updateCalls  int
 }
 
 // p6PrefCall 是一次 SetPreference 的参数。
@@ -107,6 +110,15 @@ func (f *p6Fake) SaveTelegramSettings(_ context.Context, in service.TelegramSett
 
 func (f *p6Fake) TestTelegram(_ context.Context, chatID int64) error {
 	f.tgTestChat = &chatID
+	return f.err
+}
+
+func (f *p6Fake) TelegramExtras(context.Context) (settingssvc.TelegramExtras, error) {
+	return f.tgExtras, f.err
+}
+
+func (f *p6Fake) SaveTelegramExtras(_ context.Context, in service.TelegramExtrasInput) error {
+	f.tgExtrasSave = &in
 	return f.err
 }
 

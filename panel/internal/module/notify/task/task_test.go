@@ -165,6 +165,9 @@ func TestRetentionAllKinds(t *testing.T) {
 	if len(fs.codeCalls) != 1 || !fs.codeCalls[0].before.Equal(fixed.Add(-bindCodeGrace)) {
 		t.Fatalf("codes %+v", fs.codeCalls)
 	}
+	if len(fs.ticketMsgCalls) != 1 || !fs.ticketMsgCalls[0].before.Equal(fixed.AddDate(0, 0, -service.TicketMessageRetentionDays)) {
+		t.Fatalf("ticket messages %+v", fs.ticketMsgCalls)
+	}
 }
 
 func TestScanAndPublish(t *testing.T) {

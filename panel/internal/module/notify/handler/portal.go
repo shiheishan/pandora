@@ -67,10 +67,11 @@ type setPreferenceRequest struct {
 }
 
 type telegramBindingResponse struct {
-	Bound       bool   `json:"bound"`
-	Username    string `json:"username,omitempty"`
-	BotUsername string `json:"bot_username,omitempty"`
-	Enabled     bool   `json:"enabled"`
+	Bound       bool    `json:"bound"`
+	Username    string  `json:"username,omitempty"`
+	BotUsername string  `json:"bot_username,omitempty"`
+	Enabled     bool    `json:"enabled"`
+	DiscussLink *string `json:"discuss_link"`
 }
 
 type bindCodeResponse struct {
@@ -223,11 +224,16 @@ func (h *Handler) myTelegram(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
+	var discussLink *string
+	if info.DiscussLink != "" {
+		discussLink = &info.DiscussLink
+	}
 	httpx.OK(c, telegramBindingResponse{
 		Bound:       info.Bound,
 		Username:    info.Username,
 		BotUsername: info.BotUsername,
 		Enabled:     info.Enabled,
+		DiscussLink: discussLink,
 	})
 }
 

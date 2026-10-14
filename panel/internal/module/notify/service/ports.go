@@ -306,6 +306,7 @@ type TelegramBindingInfo struct {
 	Username    string
 	BotUsername string
 	Enabled     bool
+	DiscussLink string // 讨论群链接，后台没设或 Telegram 不可用时为空串
 }
 
 // BindCode 是一次性绑定码。
