@@ -231,11 +231,12 @@ func TestBuildNodeConfigDocECH(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	m = nil // 不清空的话 Unmarshal 会把上一份文档的键合并进来
 	if err := json.Unmarshal(doc.JSON, &m); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := m["ech_keys"]; !ok {
-		t.Fatal("expected ech_keys from service layer, not protocol config")
+	if _, ok := m["ech_keys"].([]any); !ok {
+		t.Fatalf("ech_keys 应是服务层写的数组，实际 %v", m["ech_keys"])
 	}
 	// 协议配置里夹带的 ech_keys 字符串键应被删掉，文档里只有数组形态的 ech_keys
 	if len(m) > 0 {
