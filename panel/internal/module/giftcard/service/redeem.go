@@ -13,6 +13,7 @@ import (
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/money"
+	"github.com/aegispanel/aegis/internal/pkg/pluginevents"
 )
 
 // redeemSourceGiftCard 是套餐卡续期写进 renewed 事件的来源。
@@ -120,7 +121,7 @@ func (s *Service) Redeem(ctx context.Context, in RedeemInput) (RedeemResult, err
 		if err != nil {
 			return err
 		}
-		if err := s.emitPlugin(ctx, "giftcard.redeemed", "giftcard.redeemed:"+codeID.String(), map[string]any{
+		if err := pluginevents.Emit(ctx, s.events, "giftcard.redeemed", "giftcard.redeemed:"+codeID.String(), map[string]any{
 			"event": "giftcard.redeemed", "code_id": codeID.String(), "user_id": user.String(),
 			"template": t.Name, "type": t.Type, "granted": gr,
 		}); err != nil {

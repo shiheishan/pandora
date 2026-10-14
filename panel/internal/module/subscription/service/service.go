@@ -24,6 +24,7 @@ import (
 	"github.com/aegispanel/aegis/internal/module/subscription/repo"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/pluginevents"
 	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 	"github.com/google/uuid"
@@ -84,7 +85,7 @@ type OnlineDeviceCounter interface {
 type Service struct {
 	repo     *repo.Repo
 	tx       txRunner
-	events   PluginEvents // 插件钩子出站事件，装配时注入（plugin_events.go）
+	events   pluginevents.Emitter // 插件钩子出站事件，装配时注入（plugin_events.go）
 	audit    auditWriter
 	settings SiteSettings
 	catalog  Catalog

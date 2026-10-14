@@ -318,18 +318,6 @@ func buildServices(r *runtime) (*services, error) {
 	supportSvc.UsePluginEvents(pluginSvc)
 	giftcardSvc.UsePluginEvents(pluginSvc)
 	notifySvc.UsePluginEvents(pluginSvc)
-	for _, m := range []struct {
-		name string
-		svc  interface{ PluginEventsWired() bool }
-	}{
-		{"order", orderSvc}, {"subscription", subSvc}, {"identity", identitySvc},
-		{"support", supportSvc}, {"giftcard", giftcardSvc}, {"notify", notifySvc},
-	} {
-		if !m.svc.PluginEventsWired() {
-			_ = queue.Close()
-			return nil, fmt.Errorf("%s 缺少装配: 插件事件口", m.name)
-		}
-	}
 	// 看板与营收报表：数字一律经各属主模块的聚合读；report 只拥有报表调整与按天行为汇总两张表
 	reportSvc := reportsvc.New(reportrepo.New(r.db), txm, auditSvc, reportsvc.Deps{
 		Settings: settingsSvc, Users: identitySvc, Subscriptions: subSvc, Nodes: nodeSvc, Ledger: ledgerSvc,

@@ -15,6 +15,7 @@ import (
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/pluginevents"
 	"github.com/aegispanel/aegis/internal/pkg/reqmeta"
 	"github.com/google/uuid"
 )
@@ -235,7 +236,7 @@ func (s *Service) CompleteRegistration(ctx context.Context, token, code, passwor
 		if err := s.writeSelfAudit(ctx, u.ID, auditsvc.Event{Action: ActionRegistered}); err != nil {
 			return err
 		}
-		if err := s.emitPlugin(ctx, "user.registered", "user.registered:"+u.ID.String(), map[string]any{"event": "user.registered", "user_id": u.ID.String(), "email": u.Email}); err != nil {
+		if err := pluginevents.Emit(ctx, s.events, "user.registered", "user.registered:"+u.ID.String(), map[string]any{"event": "user.registered", "user_id": u.ID.String(), "email": u.Email}); err != nil {
 			return err
 		}
 		out = User{ID: u.ID, Email: u.Email, Status: u.Status, CreatedAt: u.CreatedAt}
