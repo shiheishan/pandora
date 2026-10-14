@@ -8,7 +8,8 @@
 -- 覆盖的验收项：PAY-005 复式记账、DATA-003 追加写、SUB-004 订阅状态（只剩 active / expired）、
 --   NODE-010（改成 nodes_active_shape：在役节点必须挂服务器、协议配好）、NODE-011 同机端口兜底（tcp / udp / tcp+udp）、SUB-002 版本与价格冻结、
 --   PAY-001 订单金额恒等式与人工单理由、MKT-003 邀请关系、PAY-003 幂等唯一键、MKT-001 优惠券容量、
---   NFR-008 降级开关、OPS-005 事务类通知、OPS-001 内部备注、USE-002（改成 node_traffic_reports 唯一键）。
+--   NFR-008 降级开关、OPS-005 事务类通知、OPS-001 内部备注、USE-002（改成 node_traffic_reports 唯一键）、
+--   XB-NODE 节点标签 / 流量上限与超限标记 / 时段倍率 / 中转 / ECH 密钥（00045）。
 --
 -- 不覆盖的验收项及原因（没有对应的表或机制）：
 --   SEC-013 双人审批 — 没有审批表：后台权限只分有和没有。
@@ -654,6 +655,116 @@ $sql$);
 SELECT _reject('USE-002', '流量上报不可改', $sql$
   UPDATE node_traffic_reports SET upload_bytes = 1
    WHERE server_id = '00000000-0000-7000-8000-000000000811' AND report_id = 'inv-report-1';
+$sql$);
+
+--------------------------------------------------------------------------------
+-- XB-NODE 节点补齐 Xboard（00045_xb_node.sql）：标签、流量上限与超限标记、时段倍率、中转、ECH 密钥。
+-- 用 NODE-011 建的草稿节点 904（不在役，改这些列不碰 nodes_active_shape）。
+--------------------------------------------------------------------------------
+
+-- nodes_tags_shape
+SELECT _reject('XB-NODE', '标签不是数组必须拒绝', $sql$
+  UPDATE nodes SET tags = '"香港"'::jsonb WHERE id = '00000000-0000-7000-8000-000000000904';
+$sql$);
+
+SELECT _reject('XB-NODE', '标签超过 10 个必须拒绝', $sql$
+  UPDATE nodes SET tags = '["a","b","c","d","e","f","g","h","i","j","k"]'::jsonb
+   WHERE id = '00000000-0000-7000-8000-000000000904';
+$sql$);
+
+-- nodes_traffic_limit_check / nodes_traffic_reset_day_check / nodes_traffic_used_check
+SELECT _reject('XB-NODE', '流量上限为 0 必须拒绝（不限请留 NULL）', $sql$
+  UPDATE nodes SET traffic_limit_bytes = 0 WHERE id = '00000000-0000-7000-8000-000000000904';
+$sql$);
+
+SELECT _reject('XB-NODE', '重置日 32 必须拒绝', $sql$
+  UPDATE nodes SET traffic_reset_day = 32 WHERE id = '00000000-0000-7000-8000-000000000904';
+$sql$);
+
+SELECT _reject('XB-NODE', '已用流量为负必须拒绝', $sql$
+  UPDATE nodes SET traffic_used_bytes = -1 WHERE id = '00000000-0000-7000-8000-000000000904';
+$sql$);
+
+-- nodes_traffic_exceeded_shape：超限标记与「有上限且已用 >= 上限」同真同假
+SELECT _reject('XB-NODE', '已用达到上限却没有超限标记必须拒绝', $sql$
+  UPDATE nodes SET traffic_limit_bytes = 100, traffic_used_bytes = 100, traffic_exceeded_at = NULL
+   WHERE id = '00000000-0000-7000-8000-000000000904';
+$sql$);
+
+SELECT _reject('XB-NODE', '没到上限却有超限标记必须拒绝', $sql$
+  UPDATE nodes SET traffic_limit_bytes = 100, traffic_used_bytes = 99, traffic_exceeded_at = now()
+   WHERE id = '00000000-0000-7000-8000-000000000904';
+$sql$);
+
+SELECT _reject('XB-NODE', '不限流量却有超限标记必须拒绝', $sql$
+  UPDATE nodes SET traffic_limit_bytes = NULL, traffic_exceeded_at = now()
+   WHERE id = '00000000-0000-7000-8000-000000000904';
+$sql$);
+
+SELECT _accept('XB-NODE', '有上限、已用达到、带超限标记应当通过', $sql$
+  UPDATE nodes SET traffic_limit_bytes = 100, traffic_used_bytes = 150, traffic_exceeded_at = now(),
+                   traffic_reset_day = 31, tags = '["香港","IPLC"]'::jsonb
+   WHERE id = '00000000-0000-7000-8000-000000000904';
+$sql$);
+
+-- nodes_traffic_rate_schedule_shape
+SELECT _reject('XB-NODE', '时段倍率超过 12 段必须拒绝', $sql$
+  UPDATE nodes SET traffic_rate_schedule = (SELECT jsonb_agg(jsonb_build_object('start', '00:00', 'end', '01:00', 'rate', '1'))
+                                              FROM generate_series(1, 13))
+   WHERE id = '00000000-0000-7000-8000-000000000904';
+$sql$);
+
+-- node_relays 的 CHECK 与外键
+SELECT _reject('XB-NODE', '中转端口 0 必须拒绝', $sql$
+  INSERT INTO node_relays (parent_node_id, name, server_host, server_port)
+  VALUES ('00000000-0000-7000-8000-000000000904', 'inv-relay', 'relay.example.test', 0);
+$sql$);
+
+SELECT _reject('XB-NODE', '中转名称为空白必须拒绝', $sql$
+  INSERT INTO node_relays (parent_node_id, name, server_host, server_port)
+  VALUES ('00000000-0000-7000-8000-000000000904', '  ', 'relay.example.test', 443);
+$sql$);
+
+SELECT _reject('XB-NODE', '中转的父节点必须存在', $sql$
+  INSERT INTO node_relays (parent_node_id, name, server_host, server_port)
+  VALUES ('00000000-0000-7000-8000-0000000009ff', 'inv-relay', 'relay.example.test', 443);
+$sql$);
+
+SELECT _accept('XB-NODE', '合法中转应当通过', $sql$
+  INSERT INTO node_relays (id, parent_node_id, name, server_host, server_port, sni)
+  VALUES ('00000000-0000-7000-8000-000000000e01', '00000000-0000-7000-8000-000000000904',
+          'inv-relay', 'relay.example.test', 443, 'node.example.test');
+$sql$);
+
+-- node_ech_keys：每节点一把当前钥（node_ech_keys_current_key）、轮换时刻不早于建立时刻
+SELECT _accept('XB-NODE', '一把当前 ECH 钥应当通过', $sql$
+  INSERT INTO node_ech_keys (id, node_id, public_name, config_list, private_key_sealed)
+  VALUES ('00000000-0000-7000-8000-000000000e11', '00000000-0000-7000-8000-000000000904',
+          'ech.example.test', '\x0004fe0d0000'::bytea, '\x01'::bytea);
+$sql$);
+
+SELECT _reject('XB-NODE', '同一节点第二把当前 ECH 钥必须拒绝', $sql$
+  INSERT INTO node_ech_keys (node_id, public_name, config_list, private_key_sealed)
+  VALUES ('00000000-0000-7000-8000-000000000904', 'ech.example.test', '\x0004fe0d0000'::bytea, '\x01'::bytea);
+$sql$);
+
+SELECT _reject('XB-NODE', '轮换时刻早于建立时刻必须拒绝', $sql$
+  UPDATE node_ech_keys SET superseded_at = created_at - interval '1 second'
+   WHERE id = '00000000-0000-7000-8000-000000000e11';
+$sql$);
+
+SELECT _accept('XB-NODE', '当前钥可以轮换（写 superseded_at）', $sql$
+  UPDATE node_ech_keys SET superseded_at = now() WHERE id = '00000000-0000-7000-8000-000000000e11';
+$sql$);
+
+SELECT _accept('XB-NODE', '旧钥轮换后可以再有一把当前钥', $sql$
+  INSERT INTO node_ech_keys (node_id, public_name, config_list, private_key_sealed)
+  VALUES ('00000000-0000-7000-8000-000000000904', 'ech.example.test', '\x0004fe0d0000'::bytea, '\x01'::bytea);
+$sql$);
+
+SELECT _reject('XB-NODE', 'ECHConfigList 过短必须拒绝', $sql$
+  INSERT INTO node_ech_keys (node_id, public_name, config_list, private_key_sealed)
+  VALUES ('00000000-0000-7000-8000-000000000905', 'ech.example.test', '\x00'::bytea, '\x01'::bytea);
 $sql$);
 
 --------------------------------------------------------------------------------
