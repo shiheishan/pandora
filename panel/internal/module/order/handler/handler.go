@@ -41,7 +41,7 @@ type Service interface {
 var _ Service = (*service.Service)(nil)
 var _ route.Module = (*Handler)(nil)
 
-// 幂等作用域（沿用旧代码的名字；流量包、新购与后台人工单共用 order_create）。
+// 幂等作用域（流量包、新购与后台人工单共用 order_create）。
 const (
 	ScopeOrderCreate      = "order_create"
 	ScopeRenewalCreate    = "subscription_renewal_create"
@@ -79,7 +79,7 @@ func (h *Handler) RegisterPublic(v1 *gin.RouterGroup, k route.Kit) {
 	checkout := k.Switch(SwitchCheckout)
 	v1.POST("/orders", k.RequireAuth, checkout, k.Idempotency(ScopeOrderCreate), h.createOrder)
 	v1.POST("/me/subscriptions/:id/renew", k.RequireAuth, checkout, k.Idempotency(ScopeRenewalCreate), h.createRenewal)
-	// 换套餐有自己的幂等域（旧代码同名）；金额走统一报价的 action=change
+	// 换套餐有自己的幂等域；金额走统一报价的 action=change
 	v1.POST("/me/subscriptions/:id/change-plan", k.RequireAuth, checkout, k.Idempotency(ScopePlanChangeCreate), h.createPlanChange)
 	v1.POST("/me/traffic-pack-orders", k.RequireAuth, checkout, k.Idempotency(ScopeOrderCreate), h.createPackOrder)
 	v1.POST("/me/topups", k.RequireAuth, checkout, k.Idempotency(ScopeTopupCreate), h.createTopup)
@@ -102,7 +102,7 @@ func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	v1.POST("/orders/manual/preview", k.RequireAuth, h.previewManualOrder)
 	v1.GET("/orders/:id", k.RequireAuth, h.adminOrder)
 	v1.GET("/orders/:id/payments", k.RequireAuth, h.adminOrderPayments)
-	// 取消与查单不要重认证（旧代码同口径：取消只退资源，查单造不出钱）
+	// 取消与查单不要重认证（取消只退资源，查单造不出钱）
 	v1.POST("/orders/:id/cancel", k.RequireAuth, k.Idempotency(ScopeAdminCancel), h.adminCancel)
 	v1.POST("/orders/:id/mark-paid", k.RequireAuth, k.RecentReauth, k.Idempotency(ScopeAdminMarkPaid), h.markPaid)
 	v1.POST("/orders/:id/query", k.RequireAuth, k.Idempotency(ScopeAdminQuery), h.adminQuery)

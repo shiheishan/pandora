@@ -1,6 +1,6 @@
 package service
 
-// 后台人工开单（对照旧 manual_order.go、plan_change_manual.go）：
+// 后台人工开单：
 //
 //	落点   由管理员选（预览给出的选项之一）：renew 在那一份上开续费单，change 在那一份上开换套餐单（剩余价值与门户同口径，
 //	       赠送单新价算 0 元、剩余价值全额退进余额），new 另开一份
@@ -9,8 +9,8 @@ package service
 //	审计   order.manual_created，与订单同一事务：没有审计的人工单等于没人负责
 //
 // 人工单不用券、不用余额；不受门户「同套餐只续不新开」与「同套餐只能有一张待付新购单」限制，限购与库存照常。
-// 另开一份照门户的可见性校验（隐藏、不在上架窗口、别组的组价回 404，旧 loadNewPurchasePlanTx 同口径）；
-// 续一期与换套餐不看可见性（续的是自己的套餐；换套餐只看目标套餐允许变更，旧代码同）。
+// 另开一份照门户的可见性校验（隐藏、不在上架窗口、别组的组价回 404）；
+// 续一期与换套餐不看可见性（续的是自己的套餐；换套餐只看目标套餐允许变更）。
 
 import (
 	"context"
@@ -244,7 +244,7 @@ func (s *Service) settleManualOffline(ctx context.Context, o model.Order, refere
 	return rec, nil
 }
 
-// manualDigest 是 order.manual_created 的审计内容（字段对照旧 manual_order 与 manualPlanChangeAudit）。
+// manualDigest 是 order.manual_created 的审计内容。
 func manualDigest(in ManualOrderInput, op Placement, settlement, reason, reference string,
 	o model.Order, c Created, rec *paymentsvc.RecordResult) map[string]any {
 	d := map[string]any{

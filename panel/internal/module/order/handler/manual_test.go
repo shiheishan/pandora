@@ -184,7 +184,7 @@ func TestCreateManualOrderErrors(t *testing.T) {
 	mustErr(t, do(e, http.MethodPost, "/v1/orders/manual", `{`+ids+`,"bogus":1}`), http.StatusBadRequest, string(errs.BadRequest))
 }
 
-// 开单预览：只读，不要重认证、不挂幂等；选项字段与旧 ManualPlacement 同名，空值省略，due、below_minimum 总在。
+// 开单预览：只读，不要重认证、不挂幂等；空值省略，due、below_minimum 总在。
 func TestManualPreviewShape(t *testing.T) {
 	userID, planID, priceID, subID, entry := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	end := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
@@ -254,7 +254,7 @@ func TestManualPreviewShape(t *testing.T) {
 	}
 }
 
-// 免掉的零头对外并进 discount_amount（审查 S5）：前端「小计 − 折扣 − 剩余价值 = 应付」照旧对得上；建单响应与我的订单列表同口径。
+// 免掉的零头对外并进 discount_amount：前端「小计 − 折扣 − 剩余价值 = 应付」照旧对得上；建单响应与我的订单列表同口径。
 func TestDiscountAmountIncludesWaived(t *testing.T) {
 	c := changeCreated()
 	c.Discount = money.FromCents(300)

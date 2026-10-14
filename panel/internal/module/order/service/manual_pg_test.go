@@ -152,7 +152,7 @@ func TestManualOrderChange(t *testing.T) {
 	}
 	e.assertNoDrift(t, ctx)
 
-	// 另一个用户：新价 10 元低于剩余价值 15 元，线下已收款没东西可收，建单前就拒掉、不落订单（审查 S4）
+	// 另一个用户：新价 10 元低于剩余价值 15 元，线下已收款没东西可收，建单前就拒掉、不落订单
 	other := e.mkUser(t, ctx)
 	otherSub := e.activeSub(t, ctx, other, 3000, 50)
 	_, err = e.svc.CreateManualOrder(actx, ManualOrderInput{

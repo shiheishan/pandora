@@ -66,7 +66,7 @@ const (
 	ReasonExpired       = "expired"
 )
 
-// 审计动作名（沿用旧代码）与资源类型。
+// 审计动作名与资源类型。
 const (
 	ActionOrderCreated      = "order.created"
 	ActionRenewalCreated    = "subscription.renewal_created"
@@ -80,7 +80,7 @@ const (
 	ResourceOrder           = "order"
 )
 
-// 时间与金额口径（与旧代码一致）。
+// 时间与金额口径。
 const (
 	// PaymentWindow 是建单到付款期限的时长。
 	PaymentWindow = 30 * time.Minute
@@ -94,13 +94,13 @@ const (
 	// ExpireBatchDefault、ExpireBatchMax 是超时释放一轮处理的订单数。
 	ExpireBatchDefault = 50
 	ExpireBatchMax     = 500
-	// maxQuoteRows 是换套餐报价最多展开的订阅数与目标套餐数（旧代码同值）。
+	// maxQuoteRows 是换套餐报价最多展开的订阅数与目标套餐数。
 	maxQuoteRows = 20
 	// referenceMaxRunes 是线下凭证号的最大字数。
 	referenceMaxRunes = 128
 )
 
-// 对外的固定错误（文案沿用旧代码）。同一个变量只读共享，调用方可以 errors.Is 比较。
+// 对外的固定错误。同一个变量只读共享，调用方可以 errors.Is 比较。
 var (
 	ErrNotFound           = errs.New(errs.NotFound)
 	ErrSamePlanUseRenewal = errs.Newf(errs.Conflict, "你已有这个套餐的订阅，请在原订阅上续费，订阅链接不变")
@@ -162,7 +162,7 @@ type Created struct {
 	Discount       decimal.Decimal
 	BalanceApplied decimal.Decimal
 	Payable        decimal.Decimal
-	// Waived 是免掉的零头（只有门户换套餐会有）；对外的 discount_amount 照旧含它
+	// Waived 是免掉的零头（只有门户换套餐会有）；对外的 discount_amount 也含它
 	Waived decimal.Decimal
 	Status string
 	Change *ChangeAmounts
@@ -207,7 +207,7 @@ type PackOrderInput struct {
 	Reply CreatedReply
 }
 
-// TopupInput 是门户充值（POST /v1/me/topups）。Currency 为空时取 CNY（旧代码口径）。
+// TopupInput 是门户充值（POST /v1/me/topups）。Currency 为空时取 CNY。
 type TopupInput struct {
 	Amount   decimal.Decimal
 	Currency money.Currency
@@ -225,7 +225,7 @@ type TopupCreated struct {
 // TopupReply 同 CreatedReply，用于充值。
 type TopupReply func(TopupCreated) (idemsvc.Response, error)
 
-// BalancePlan 是一单用多少余额、还要在线付多少（旧 purchase.Balance 的 decimal 版）。
+// BalancePlan 是一单用多少余额、还要在线付多少。
 type BalancePlan struct {
 	// Applied 用掉的余额
 	Applied decimal.Decimal
@@ -235,7 +235,7 @@ type BalancePlan struct {
 	Kept decimal.Decimal
 	// Forced 应付本身低于最低额且余额够付：只能全用余额付
 	Forced bool
-	// BelowMinimum 应付低于最低额、用尽余额仍付不了（旧 Short）；只有换套餐零头能免
+	// BelowMinimum 应付低于最低额、用尽余额仍付不了；只有换套餐零头能免
 	BelowMinimum bool
 	// SmallDue 剩下的零头已免掉（只有换套餐）
 	SmallDue bool
@@ -503,8 +503,8 @@ type PaidOrder struct {
 }
 
 // PaidHook 是结算成功后的可选回调（commission 在第四波实现）。在结算事务里调用：返回错误整笔结算回滚。
-// 调用时机沿用旧代码计佣的口径：只在收款结算（SettlePayment：渠道到账、后台标记已付）把订单转为 paid 时调用，
-// 且 Kind 不是 topup、Total > 0。零应付的单（余额全额付、全额折扣）建单时当场履约，旧代码不计佣，这里也不调用。
+// 调用时机：只在收款结算（SettlePayment：渠道到账、后台标记已付）把订单转为 paid 时调用，
+// 且 Kind 不是 topup、Total > 0。零应付的单（余额全额付、全额折扣）建单时当场履约，不计佣（产品决定），这里也不调用。
 //
 // 锁序约定：调用时本事务已持有订单、目标订阅、套餐 / 券与本单的账务科目（含平台收入科目 platform_revenue）。
 // 实现方（commission）要锁的科目（推荐人余额、佣金科目等）必须排在平台收入科目之后锁，

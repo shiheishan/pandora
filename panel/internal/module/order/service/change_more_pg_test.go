@@ -256,7 +256,7 @@ func TestPlanChangeAfterLateRenewalCallback(t *testing.T) {
 	}
 }
 
-// 审查 S2：待付换套餐单挂着时 RemainingValue 拒（套餐卡不能先把同一份剩余价值退掉）；
+// 待付换套餐单挂着时 RemainingValue 拒（套餐卡不能先把同一份剩余价值退掉）；
 // 订阅周期在建单之后重起（模拟套餐卡换套餐），再付这张单：钱进挂账 ineligible_subscription，不换不退。
 func TestPlanChangeSettlementAfterPeriodRestart(t *testing.T) {
 	e, ctx := newEnv(t)

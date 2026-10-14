@@ -29,7 +29,7 @@ func rejectNUL(field, s string) error {
 	return nil
 }
 
-// snapshotJSON 把套餐版本权益与配额编成订单行快照 JSON（形状对照旧 loadPlanSnapshotTx）。
+// snapshotJSON 把套餐版本权益与配额编成订单行快照 JSON。
 func snapshotJSON(v catalogsvc.Version) (ents, quotas string, err error) {
 	type entSnap struct {
 		Code  string          `json:"code"`
@@ -66,7 +66,7 @@ func snapshotJSON(v catalogsvc.Version) (ents, quotas string, err error) {
 	return string(eb), string(qb), nil
 }
 
-// pendingNewOrderConflict 检查同一套餐的待付新购单，文案与 fields 对照旧 ensureNoPendingNewOrder。
+// pendingNewOrderConflict 检查同一套餐的待付新购单。
 func pendingNewOrderConflict(ctx context.Context, s *Service, userID, planID uuid.UUID, planName string, now time.Time) error {
 	pending, ok, err := s.repo.PendingNewOrderForPlan(ctx, userID, planID)
 	if err != nil {
@@ -88,7 +88,7 @@ func pendingNewOrderConflict(ctx context.Context, s *Service, userID, planID uui
 	return e
 }
 
-// validateNewCopyLabel 新购备注名校验（对照旧 checkout_new_copy.go）：起了名不能与本人另一份重名；
+// validateNewCopyLabel 新购备注名校验：起了名不能与本人另一份重名；
 // 另买一份且不起名时，本人同套餐还有没起名、未停用的一份就要求先起名。
 func validateNewCopyLabel(in NewOrderInput, planName string, us subsvc.UserSubscriptions, now time.Time) error {
 	label, err := subsvc.NormalizeLabel(in.Label)
@@ -359,7 +359,7 @@ func (s *Service) placeRenewal(ctx context.Context, d renewalDraft) (Created, mo
 	uid := d.UserID
 	// 续费不锁套餐行（Lock: false）：价格行由冻结触发器钉死不可改，续费也不动库存与限购，
 	// 锁了只会让同套餐的续费与新购在整段建单事务里排队，还多出一条与结算成环的路径，不值得。
-	// 与旧代码的 FOR SHARE 相比，只差在后台恰好同时关掉「允许续费」或下架价格的那一瞬间：这张单按改之前的状态建成，可接受。
+	// 不锁的代价只在后台恰好同时关掉「允许续费」或下架价格的那一瞬间：这张单按改之前的状态建成，可接受。
 	offer, err := s.catalog.Offer(ctx, *priceID, catalogsvc.OfferRequest{
 		Use:    catalogsvc.UseRenewal,
 		UserID: &uid,

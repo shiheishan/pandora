@@ -454,7 +454,7 @@ func TestQuoteRejects(t *testing.T) {
 	}
 }
 
-// 续费时订阅没有关联价格档、请求也没带 price_id：回 409（旧 renewal_price.go 的文案）。
+// 续费时订阅没有关联价格档、请求也没带 price_id：回 409。
 func TestCreateRenewalWithoutPrice(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)

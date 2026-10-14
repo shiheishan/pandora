@@ -15,7 +15,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
-// 金额一律整数分；JSON 形状对照旧接口与前端 zod（portal/screens/common/orders.ts、quote-schema.ts）。
+// 金额一律整数分；JSON 形状对照前端 zod（portal/screens/common/orders.ts、quote-schema.ts）。
 
 // cents 把元换成分，记下第一处换算错误（金额超出 2 位小数是程序错误，对外 500）。
 type cents struct{ err error }
@@ -107,7 +107,7 @@ type expectReq struct {
 	Payable        int64 `json:"payable"`
 }
 
-// checkoutReq 是三种建单请求共有的部分（旧 quoteConfirmReq 加余额与优惠码）。
+// checkoutReq 是三种建单请求共有的部分（用多少余额、优惠码、报价时刻与期望金额）。
 type checkoutReq struct {
 	UseBalance int64      `json:"use_balance"`
 	CouponCode string     `json:"coupon_code"`
@@ -115,7 +115,7 @@ type checkoutReq struct {
 	Expect     *expectReq `json:"expect,omitempty"`
 }
 
-// checkout 转成 service 的 Checkout；没带 expect 时 as_of 也不用（旧代码同口径）。
+// checkout 转成 service 的 Checkout；没带 expect 时 as_of 也不用。
 func (r checkoutReq) checkout() service.Checkout {
 	out := service.Checkout{
 		UseBalance: money.FromCents(r.UseBalance),
@@ -170,9 +170,9 @@ type createPlanChangeRequest struct {
 	checkoutReq
 }
 
-// orderCreatedResponse 是建单的 201 响应（旧 billing.CreateOrderOutput）。discount_amount 照旧含免掉的零头（旧 waiveIntoDiscount），
+// orderCreatedResponse 是建单的 201 响应。discount_amount 含免掉的零头，
 // 前端按「小计 − 折扣 − 剩余价值 = 总额」核对；库里零头单独记在 waived_amount。换套餐单另有 proration_credit 与
-// balance_refund 两项（旧 PlanChangeOrderOutput），其余种类不出现。
+// balance_refund 两项，其余种类不出现。
 type orderCreatedResponse struct {
 	DiscountAmount  int64  `json:"discount_amount"`
 	OrderID         string `json:"order_id"`
@@ -215,7 +215,7 @@ func createdReply(c service.Created) (idemsvc.Response, error) {
 	return idemsvc.JSON(http.StatusCreated, out)
 }
 
-// topupCreatedResponse 是充值建单的 200 响应（旧 billing.CreateTopupOutput）。
+// topupCreatedResponse 是充值建单的 200 响应。
 type topupCreatedResponse struct {
 	OrderID  string `json:"order_id"`
 	OrderNo  string `json:"order_no"`
@@ -235,7 +235,7 @@ func topupCreatedFrom(t service.TopupCreated) (topupCreatedResponse, error) {
 	return out, cc.err
 }
 
-// topupReply 是充值的幂等重放响应（旧代码 200）。
+// topupReply 是充值的幂等重放响应（200）。
 func topupReply(t service.TopupCreated) (idemsvc.Response, error) {
 	out, err := topupCreatedFrom(t)
 	if err != nil {
@@ -258,7 +258,7 @@ type quoteRequest struct {
 	NewCopy        bool   `json:"new_copy"`
 }
 
-// balanceSplitResponse 是一种付法（旧 purchase.Balance）。
+// balanceSplitResponse 是一种付法。
 type balanceSplitResponse struct {
 	Applied      int64 `json:"applied"`
 	Payable      int64 `json:"payable"`
@@ -307,7 +307,7 @@ type quoteRowResponse struct {
 	PreviousEnd    *time.Time            `json:"previous_end"`
 }
 
-// quoteResponse 是报价响应（旧 billing.QuoteOutput）。
+// quoteResponse 是报价响应。
 type quoteResponse struct {
 	AsOf       time.Time          `json:"as_of"`
 	Currency   string             `json:"currency"`
@@ -415,7 +415,7 @@ func payFrom(r paymentsvc.IntentResult) (payResponse, error) {
 	return out, cc.err
 }
 
-// releasedOrderResponse 是取消的结果（旧 billing.ReleaseOrderOutput；cancelled_at、cancel_reason 带 omitempty）。
+// releasedOrderResponse 是取消的结果（cancelled_at、cancel_reason 带 omitempty）。
 type releasedOrderResponse struct {
 	OrderID         string     `json:"order_id"`
 	Status          string     `json:"status"`
@@ -436,7 +436,7 @@ func releasedFrom(r service.CancelResult) releasedOrderResponse {
 	}
 }
 
-// queryResponse 是主动查单的结果（旧 billing.OrderPaymentQuery；quarantine_kind 带 omitempty）。
+// queryResponse 是主动查单的结果（quarantine_kind 带 omitempty）。
 type queryResponse struct {
 	OrderID         string `json:"order_id"`
 	OrderNo         string `json:"order_no"`
@@ -465,7 +465,7 @@ func queryFrom(q service.QueryResult) queryResponse {
 // 门户：我的订单
 // ---------------------------------------------------------------------------
 
-// myOrderRowResponse 是「我的订单」的一行（旧 billing.MyOrderRow）：前端 zod 里 optional 的字段一律 omitempty。
+// myOrderRowResponse 是「我的订单」的一行：前端 zod 里 optional 的字段一律 omitempty。
 type myOrderRowResponse struct {
 	ID               string     `json:"id"`
 	OrderNo          string     `json:"order_no"`

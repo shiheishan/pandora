@@ -98,7 +98,7 @@ WHERE p.order_id = ? AND pp.code = 'offline'`, c.OrderID); n != 1 {
 	mustErrMsg(t, "凭证号重复", err, paymentsvc.ErrPaymentReused)
 }
 
-// 预览与建单同口径（审查 S7、S3）：目标套餐不允许变更时 change 标不可选、默认值不落在它上面；价格币种与原订阅本期不同标不可选；
+// 预览与建单同口径：目标套餐不允许变更时 change 标不可选、默认值不落在它上面；价格币种与原订阅本期不同标不可选；
 // 隐藏套餐「另开一份」标不可选、建单 404（换套餐不看可见性）；这一份挂着未完结的续费或变更单时标不可选。
 func TestManualPreviewMatchesCreate(t *testing.T) {
 	e, ctx := newEnv(t)

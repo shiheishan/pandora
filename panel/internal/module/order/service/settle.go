@@ -55,7 +55,7 @@ func (s *Service) SettlePayment(ctx context.Context, in paymentsvc.SettleInput) 
 		if err != nil {
 			return err
 		}
-		// 续费与换套餐查订阅是否停用：停用了钱进挂账（流量包不查，旧 subscriptionBoundOrderKind 同口径）
+		// 续费与换套餐查订阅是否停用：停用了钱进挂账（流量包不查）
 		if o.Kind != KindAddon && !sub.StateAt(now).AcceptsChange() {
 			return paymentsvc.NotPayable(paymentsvc.CaseIneligibleSubscription, o.Status)
 		}

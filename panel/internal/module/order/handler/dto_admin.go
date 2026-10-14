@@ -10,11 +10,11 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
 
-// 后台订单接口的 DTO；JSON 形状对照旧 adminops.OrderRow / OrderDetail / OrderPaymentHistory 与前端 admin/screens/billing/schemas.ts。
-// 退款相关的键等产品确认前照旧输出固定值：refunded_amount 恒 0，failure_code、failure_message 恒 null，
-// refunds 恒为空数组（不做退款）。
+// 后台订单接口的 DTO；JSON 形状对照前端 admin/screens/billing/schemas.ts。
+// 不做退款（产品决定），退款相关的键输出固定值：refunded_amount 恒 0，failure_code、failure_message 恒 null，
+// refunds 恒为空数组。
 
-// parseDay 解析后台筛选的日期：先按 YYYY-MM-DD（旧接口口径），再按 RFC3339；end 为真且是日期时取次日零点（左闭右开）。
+// parseDay 解析后台筛选的日期：先按 YYYY-MM-DD，再按 RFC3339；end 为真且是日期时取次日零点（左闭右开）。
 func parseDay(field, raw string, end bool) (*time.Time, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -67,7 +67,7 @@ type markPaidRequest struct {
 	Reference string `json:"reference"`
 }
 
-// markPaidResponse 是标记已支付的结果（旧 PaymentWebhookOutput 的 snake_case 部分；没有的 id 为空串）。
+// markPaidResponse 是标记已支付的结果（没有的 id 为空串）。
 type markPaidResponse struct {
 	Processed      bool   `json:"processed"`
 	AlreadyHandled bool   `json:"already_handled"`

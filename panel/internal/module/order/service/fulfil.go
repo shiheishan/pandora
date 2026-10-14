@@ -41,7 +41,7 @@ func (s *Service) markPaid(ctx context.Context, o model.Order, at time.Time) (mo
 //	addon：给目标订阅发一笔流量包余额
 //	upgrade：把原订阅原地换成新套餐（周期从现在起算一整期），剩余价值抵完新价还有余的退进余额（plan_change_refund）
 //
-// 订阅上的价格快照取订单行（建单时的价格档单价），与旧 provision.go 取 prices.unit_amount 同口径。
+// 订阅上的价格快照取订单行（建单时的价格档单价）。
 func (s *Service) fulfil(ctx context.Context, o model.Order, at time.Time, actor subsvc.Actor) (model.Order, error) {
 	if o.Status != StatusPaid {
 		return model.Order{}, ErrStateChanged
@@ -193,7 +193,7 @@ func (s *Service) fulfilPlanChange(ctx context.Context, o model.Order, actor sub
 
 // settleZeroPay 建单事务里应付为 0 的单当场履约：先确认预留（库存、限购、券），再在有余额抵扣时
 // CaptureFromBalance 一步冻结并扣款（不先 HoldForOrder），转 paid，再履约。锁序与 SettlePayment 一致：
-// 套餐 / 券在前、账务科目（含平台收入）在后。不调 PaidHook（旧代码零应付单不计佣）。
+// 套餐 / 券在前、账务科目（含平台收入）在后。不调 PaidHook（零应付单不计佣，产品决定）。
 func (s *Service) settleZeroPay(ctx context.Context, o model.Order, actor Actor) (model.Order, error) {
 	if err := s.captureReservation(ctx, o, actor); err != nil {
 		return model.Order{}, err

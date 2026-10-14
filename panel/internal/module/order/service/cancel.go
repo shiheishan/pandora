@@ -21,7 +21,7 @@ const (
 	reasonMaxRunes = 500
 )
 
-// errOrderExpired 是取消一张已超时的订单（文案沿用旧 release.go）。
+// errOrderExpired 是取消一张已超时的订单。
 var errOrderExpired = errs.Newf(errs.Conflict, "订单已过期")
 
 // checkReason 去首尾空白后校验 5–500 字。
@@ -36,7 +36,7 @@ func checkReason(reason string) (string, error) {
 
 // Cancel 取消待付订单并释放它占的库存、限购、优惠券、余额冻结与支付意图。
 // 门户只能取消自己的单，原因固定 user_cancelled；后台要带 expected_state_version 与 5–500 字原因。
-// 已取消的单重复取消回 AlreadyTerminal（旧代码同样先看终态、再比版本）。
+// 已取消的单重复取消回 AlreadyTerminal（先看终态、再比版本）。
 func (s *Service) Cancel(ctx context.Context, in CancelInput) (CancelResult, error) {
 	var reason string
 	p, err := principal(ctx)
@@ -143,7 +143,7 @@ func (s *Service) ExpireDue(ctx context.Context, limit int) (ExpireStats, error)
 }
 
 // expireOne 在单独的事务里锁单、复核并释放一张超时订单；不该释放时返回 false。
-// 订单正被结算或取消锁着时不等锁（SKIP LOCKED），这一轮跳过、计入 Skipped（旧 reservation_expiry 同口径）。
+// 订单正被结算或取消锁着时不等锁（SKIP LOCKED），这一轮跳过、计入 Skipped。
 func (s *Service) expireOne(ctx context.Context, id uuid.UUID) (bool, error) {
 	expired := false
 	err := s.tx.Do(ctx, func(ctx context.Context) error {

@@ -183,7 +183,7 @@ func (h *Handler) createPackOrder(c *gin.Context) {
 	writeCreated(c, created)
 }
 
-// createTopup 门户充值（200，旧代码口径）。
+// createTopup 门户充值（200）。
 func (h *Handler) createTopup(c *gin.Context) {
 	var req createTopupRequest
 	if err := httpx.BindJSON(c, &req); err != nil {
