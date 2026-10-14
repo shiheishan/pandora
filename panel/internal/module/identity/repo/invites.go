@@ -75,7 +75,41 @@ func (r *Repo) ActiveInviteOf(ctx context.Context, ownerID uuid.UUID) (model.Inv
 	return inv, true, nil
 }
 
-// InsertOwnerInvite 懒创建用户个人邀请码（冲突则不算插入）。
+// OwnerInvites 列出某人的个人邀请码：active 在前，再按创建时间倒序，最多 limit 个。
+func (r *Repo) OwnerInvites(ctx context.Context, ownerID uuid.UUID, limit int) ([]model.InviteCode, error) {
+	var list []model.InviteCode
+	err := r.d.Conn(ctx).Raw(
+		"SELECT * FROM invite_codes WHERE owner_user_id = ? ORDER BY (status = 'active') DESC, created_at DESC, id DESC LIMIT ?",
+		ownerID, limit,
+	).Scan(&list).Error
+	if err != nil {
+		return nil, err
+	}
+	if list == nil {
+		return []model.InviteCode{}, nil
+	}
+	return list, nil
+}
+
+// CountActiveOwnerInvites 统计某人当前 active 的个人邀请码个数（调用方已锁用户行）。
+func (r *Repo) CountActiveOwnerInvites(ctx context.Context, ownerID uuid.UUID) (int64, error) {
+	var n int64
+	err := r.d.Conn(ctx).Raw(
+		"SELECT count(*) FROM invite_codes WHERE owner_user_id = ? AND status = 'active'",
+		ownerID,
+	).Scan(&n).Error
+	return n, err
+}
+
+// IncInviteVisit 给一个 active 的邀请码访问量加一；码不存在或不是 active 时什么都不做（不算错）。
+func (r *Repo) IncInviteVisit(ctx context.Context, code string) error {
+	return r.d.Conn(ctx).Exec(
+		"UPDATE invite_codes SET visit_count = visit_count + 1 WHERE code = ? AND status = 'active'",
+		code,
+	).Error
+}
+
+// InsertOwnerInvite 新建一个个人邀请码；码撞了（唯一约束）不算插入，调用方换一个码重试。
 func (r *Repo) InsertOwnerInvite(ctx context.Context, ownerID uuid.UUID, code string) (model.InviteCode, bool, error) {
 	var inv model.InviteCode
 	res := r.d.Conn(ctx).Raw(
@@ -99,7 +133,7 @@ type InviteeRow struct {
 func (r *Repo) Invitees(ctx context.Context, referrerID uuid.UUID, limit int) ([]InviteeRow, error) {
 	var rows []InviteeRow
 	err := r.d.Conn(ctx).Raw(
-		`SELECT u.email::text AS email, r.bound_at, r.risk_flag FROM referrals r JOIN users u ON u.id = r.referee_user_id
+		`SELECT u.email::text AS email, r.bound_at, r.risk_flag FROM effective_referrals r JOIN users u ON u.id = r.referee_user_id
 		 WHERE r.referrer_user_id = ? ORDER BY r.bound_at DESC LIMIT ?`,
 		referrerID, limit,
 	).Scan(&rows).Error

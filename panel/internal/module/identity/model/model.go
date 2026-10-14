@@ -81,11 +81,13 @@ type InviteCode struct {
 	OwnerUserID *uuid.UUID `gorm:"column:owner_user_id;type:uuid"`
 	MaxUses     *int       `gorm:"column:max_uses"`
 	UsedCount   int        `gorm:"column:used_count;default:0"`
-	Channel     *string    `gorm:"column:channel"`
-	Campaign    *string    `gorm:"column:campaign"`
-	ExpiresAt   *time.Time `gorm:"column:expires_at"`
-	Status      string     `gorm:"column:status;default:active"`
-	CreatedAt   time.Time  `gorm:"column:created_at;autoCreateTime"`
+	// 访问量：按 IP 去重计数，不存 IP
+	VisitCount int64      `gorm:"column:visit_count;default:0"`
+	Channel    *string    `gorm:"column:channel"`
+	Campaign   *string    `gorm:"column:campaign"`
+	ExpiresAt  *time.Time `gorm:"column:expires_at"`
+	Status     string     `gorm:"column:status;default:active"`
+	CreatedAt  time.Time  `gorm:"column:created_at;autoCreateTime"`
 }
 
 // TableName 固定表名。
