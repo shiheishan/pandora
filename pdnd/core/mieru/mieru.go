@@ -2,9 +2,9 @@
 //
 // mieru 与 sing-box 系的协议差别很大，不能挂在 sing-box 的 inbound 注册表上：
 // 它自带监听器，把已认证的连接连同一个 socks5 请求一起交出来，转发由调用方做。
-// 好处是集成面很窄。转发的去向：默认构建里 kernel/mieru.go 经 SetTransport
+// 好处是集成面很窄。转发的去向：kernel/mieru.go 经 SetTransport
 // 注入 NativeCore 的 DataPlane，TCP 与 UDP 都走 NativeCore 的路由与出站；
-// 没有注入 Transport 时（compat 构建经 core/multi）才直接拨号直出。
+// 没有注入 Transport 时直接拨号直出（发布物里不会出现，NativeCore 总是注入）。
 //
 // 这里绕过了 mieru 的 apis/server 门面，直接持有底层的 protocol.Mux。
 // 原因只有一个：apis/server 没有暴露运行时改用户的能力，用它就只能
@@ -101,7 +101,7 @@ func (h *Inbound) SetTransport(transport Transport) {
 
 // SetConnErrorHandler 注册已认证连接的失败出口：读请求失败、用户已失效、
 // 设备数到上限、命令不支持、拨目标失败。NativeCore 托管时由 kernel/mieru.go
-// 接到 AdapterHooks.OnConnError；compat 构建不注册，只走本包日志。
+// 接到 AdapterHooks.OnConnError；没注册时只走本包日志。
 //
 // 认证本身（首包解密）在 mieru 的 mux 内部，失败是静默丢弃，这是协议抗探测
 // 的设计，这里看不到。

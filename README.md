@@ -210,21 +210,13 @@ python pdnd/release/check_native_panel_parity.py   # 期望输出 NATIVE_PANEL_P
 
 ### 分层
 
-当前兼容层与 NativeCore 并存，自动选择只会把已验证能力交给 NativeCore：
+pdnd 只有一个数据面内核 NativeCore（`pdnd/kernel`、`pdnd/internal`），承载上述 13 个协议，含 mieru(TCP/UDP)、juicity(TCP/UDP)。没有兼容层：xray-core / sing-box 的兼容内核与 `-tags compat` 构建已于 2026-10-14 删除（产品定：不支持第三方节点端），`pdnd/core` 只剩内核抽象与 NativeCore 复用的 mieru 适配。xray-core 等第三方实现只出现在互操作测试里；sing-box 不进 pdnd 的任何二进制（含测试），CI 与 `release/build.sh` 都会检查。
 
-| 层 | 承载 | 协议 |
-|---|---|---|
-| NativeCore | Pandora 自研数据面（`pdnd/kernel`、`pdnd/internal`） | 上述 13 个协议，含 mieru(TCP/UDP)、juicity(TCP/UDP) |
-| 兼容层 | xray-core / sing-box（`pdnd/core`） | 尚未完成 NativeCore 验收的组合与边界 |
-| 独立进程 | 兼容边界 | 仅保留尚未接管的协议或明确不支持的旧配置回落 |
-
-正在重构为单一内核：协议解码、TLS/HTTP/QUIC 传输、路由与流量统计逐步收回 `pdnd/kernel` 与 `pdnd/internal`。兼容层只作为尚未验收协议的过渡；NativeCore 启动时不会初始化兼容内核，只有明确分派到未接管组合时才按需启动 sing-box/xray。
-
-默认发布二进制通过构建标签隔离兼容层，只链接 NativeCore；迁移用的兼容二进制必须显式 `-tags compat` 构建。内核适配层实现了统一的用户热更新契约 `UpsertUsers`。
+内核实现统一的用户热更新契约 `UpsertUsers`。
 
 ### fail closed
 
-正式节点默认按 NativeCore-only 运行：省略根级 `native_only` 即让未经 NativeCore 验收的组合直接失败，不会静默回落到 sing-box/xray。只有迁移阶段使用 `-tags compat` 构建并显式设置 `native_only: false` 才保留兼容回落。NativeCore-only 也会拒绝节点配置中显式指定的 `kernel: "xray-core"` 或 `kernel: "sing-box"`。
+NativeCore 不支持的组合直接失败，没有回落。本地配置文件按严格解码读，写了已删除的 `native_only` 等未知字段会拒绝启动；面板下发的节点配置也不再带 `kernel`。
 
 ### 能力矩阵
 
@@ -234,7 +226,7 @@ python pdnd/release/check_native_panel_parity.py   # 期望输出 NATIVE_PANEL_P
 ./pandora-native --capabilities
 ```
 
-面板应把这份 JSON 作为节点编排前的能力协商结果；未在矩阵中验证的组合必须提示管理员，而不是静默切换到兼容内核。矩阵会发布 `socks4`、`socks4a` 与 `http-forward`。
+面板应把这份 JSON 作为节点编排前的能力协商结果；未在矩阵中验证的组合必须提示管理员。矩阵会发布 `socks4`、`socks4a` 与 `http-forward`。
 
 ### 已覆盖的协议与传输
 
@@ -493,7 +485,7 @@ nginx 只反代门户与后台的 HTTP；节点 gRPC（9443）由面板直接对
 
 整个仓库（panel 与 pdnd）按 GNU General Public License v3.0 发布，全文见根目录 [LICENSE](LICENSE)。
 
-pdnd 本来就必须如此：默认构建链接 GPL-3.0 的 mieru 与 sagernet/sing，compat 构建还链接 sing-box。
+pdnd 本来就必须如此：发布物链接 GPL-3.0 的 mieru 与 sagernet/sing。
 
 fork 进来的第三方代码保留各自的许可证：`pdnd/internal/reality/`（MPL-2.0）与 `pdnd/internal/realityquic/`（MIT），见各目录的 LICENSE，两者都与 GPL-3.0 兼容。
 

@@ -188,8 +188,8 @@ interoperability pass.
 The external interop gate therefore reports TLS + XHTTP/H3 and REALITY +
 XHTTP/H2 separately. Until an independent client completes a REALITY + XHTTP/H3
 round trip, the capability matrix must continue to expose
-`external-reality-xhttp-h3-unverified`; release tooling must not silently
-delegate that combination to Xray or sing-box.
+`external-reality-xhttp-h3-unverified`. There is no fallback kernel: pdnd ships
+NativeCore only, so the combination is served natively and simply marked unverified.
 
 The current pinned Xray dependency (`github.com/xtls/xray-core`) provides an
 auditable reason for this boundary: its XHTTP dialer selects HTTP/2 whenever a
@@ -198,8 +198,8 @@ ordinary TLS with a single `h3` ALPN.
 
 Consequently, the checked-in Xray gates prove REALITY + XHTTP/H2 and TLS +
 XHTTP/H3 as separate combinations; they do not prove REALITY + XHTTP/H3. This is
-an explicit interop limitation, not a NativeCore fallback or a silently
-delegated compatibility path.
+an explicit interop limitation of the reference client, not a NativeCore
+fallback.
 
 The legacy REALITY `Show` field survives only in the forked `internal/reality`
 config struct; the panel-delivered node config does not decode it, so it cannot

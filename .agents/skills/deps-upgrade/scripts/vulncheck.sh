@@ -8,7 +8,7 @@
 # - subscription-e2e/tools 经 replace 跟随 pdnd，pdnd 依赖一变它就不 tidy；这里用 -mod=mod 扫，
 #   扫前备份、扫后还原它的 go.mod / go.sum，不留改动。
 # - 发布物视图：GOOS=linux 下只扫 panel ./cmd/... 与 pdnd 的 . 、./cmd/pandora-h3-probe，
-#   去掉 tools/、测试辅助、-tags compat 才链进来的 core/xray 等路径。
+#   去掉 tools/、测试辅助（xray-core 等互通参照客户端）等路径。
 # - 要联网（拉 govulncheck、漏洞库、缺的工具链）；沙箱里跑不通就关沙箱。
 set -uo pipefail
 

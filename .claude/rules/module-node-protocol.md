@@ -16,7 +16,7 @@ paths:
 - 开关键本身不要进 `sensitiveProtocolKey`（`secrets_test.go` 的 gated 用例）。
 
 ## 校验与内核
-- 收紧规则在 `validate_policy.go`、`validate_kernel.go` 等；新写入 `kernel` 只收 `auto` / `pandora-native`（`validate_policy.go` 的 `acceptedKernels`）；存量 `sing-box`/`xray-core` 读时忽略（`EffectiveKernel`），不强制改写。
+- 收紧规则在 `validate_policy.go`、`validate_kernel.go` 等。节点没有 `kernel` 字段（2026-10-14 迁移 00034 删列）：节点端只有 NativeCore，`Validate` 不再收内核参数。
 - `fallback` 形状与 pdnd `kernel/probe_fallback.go:parseProbeFallback` 一致（`validate_policy.go` 注释）；面板另拒回环/私网；Trojan 回落只在 tcp（`validateTrojanFallbackNetwork`）。回落只进节点配置文档，不进订阅（`policy_test.go` 下发形状断言）。
 - mKCP MTU 576–1460 与 `validate_mkcp.go` 的 `mkcpMinMTU`/`mkcpMaxMTU` 须与 pdnd `kernel/mkcp_transport.go` 一致；`TestMKCPMTUBoundsMatchNodeAgent` 数值写死，改一边要改另一边。
 
