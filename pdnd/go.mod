@@ -21,7 +21,7 @@ require (
 	github.com/xtls/xray-core v1.260327.0
 	go.uber.org/mock v0.5.2
 	golang.org/x/net v0.60.0
-	google.golang.org/protobuf v1.36.11
+	google.golang.org/protobuf v1.36.12
 )
 
 require (
