@@ -152,16 +152,21 @@ func TestShadowsocksUDPDecodeUsesSourceHint(t *testing.T) {
 		aead, _ := adapter.method.NewAEAD(subkey)
 		return append(salt, aead.Seal(nil, makeSSNonce(0), []byte{1, 192, 0, 2, 9, 0, 53, 'q'}, nil)...)
 	}
+	plain := make([]byte, ssUDPMaxPacket)
+	decode := func(wire []byte) (*ssUser, vlessDestination, []byte, error) {
+		salt := wire[:adapter.method.SaltLen]
+		return adapter.decodeUDPPacket(salt, wire[adapter.method.SaltLen:], plain, client.AddrPort())
+	}
 	for _, tc := range []struct {
 		password string
 		id       int64
 	}{{ssBenchPassword(12), 13}, {ssBenchPassword(12), 13}, {ssBenchPassword(2), 3}} {
-		user, destination, payload, err := adapter.decodeUDPPacket(encode(tc.password), client)
+		user, destination, payload, err := decode(encode(tc.password))
 		if err != nil || user.ID != tc.id || destination.Port != 53 || string(payload) != "q" {
-			t.Fatalf("UDP 解包 user=%d dst=%+v payload=%q err=%v", user.ID, destination, payload, err)
+			t.Fatalf("UDP 解包 user=%+v dst=%+v payload=%q err=%v", user, destination, payload, err)
 		}
 	}
-	if _, _, _, err := adapter.decodeUDPPacket(encode("stranger"), client); err == nil {
+	if _, _, _, err := decode(encode("stranger")); err == nil {
 		t.Fatal("未知口令的 UDP 包被放行")
 	}
 }

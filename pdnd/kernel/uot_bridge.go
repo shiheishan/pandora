@@ -20,7 +20,7 @@ import (
 //
 // 每个目标的上游 socket 占一个 fd、一个读 goroutine 和一块读缓冲，目标数由客户端
 // 决定。所以一个目标就是一个 UDP 会话，与 hysteria2 / TUIC 同一口径：
-//   - 占用户的 UDP 会话名额（udpSessionQuota，每用户 quicUDPSessionsPerUser 个，
+//   - 占用户的 UDP 会话名额（udpSessionQuota，每用户 udpSessionsPerUser 个，
 //     同一入站上该用户的全部 UoT 流共用）；到上限时拒新目标、不踢旧，新目标的包
 //     丢掉并经 onDrop 进观测链，整条 UoT 流照常；
 //   - 发往某个目标失败（建不了上游、解析不了、被私网拦截等写错误）同样只丢这一个

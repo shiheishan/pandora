@@ -134,9 +134,8 @@ func (a *ss2022Adapter) Validate(spec InboundSpec) error {
 	if spec.Config.Port < 1 || spec.Config.Port > 65535 {
 		return fmt.Errorf("shadowsocks 2022 port is invalid")
 	}
-	network, _ := spec.Config.Raw["network"].(string)
-	if network != "" && !strings.EqualFold(network, "tcp") && !strings.EqualFold(network, "udp") {
-		return fmt.Errorf("native shadowsocks 2022 accepts tcp or udp")
+	if _, ok := spec.Config.Raw["network"]; ok {
+		return fmt.Errorf("shadowsocks 入站不再接受 network 字段：TCP 与 UDP 总是同端口一起开")
 	}
 	password, ok := spec.Config.Raw["password"].(string)
 	if !ok || strings.TrimSpace(password) == "" {
@@ -150,7 +149,7 @@ func (a *ss2022Adapter) Start(parent context.Context, spec InboundSpec, hooks Ad
 		return fmt.Errorf("shadowsocks 2022 start requires context and data plane")
 	}
 	a.mu.Lock()
-	if a.listener != nil || a.closed {
+	if a.listener != nil || a.packet != nil || a.closed {
 		a.mu.Unlock()
 		return fmt.Errorf("shadowsocks 2022 adapter already started or closed")
 	}
@@ -161,32 +160,27 @@ func (a *ss2022Adapter) Start(parent context.Context, spec InboundSpec, hooks Ad
 	if listen == "" {
 		listen = "0.0.0.0"
 	}
-	network, _ := spec.Config.Raw["network"].(string)
-	if strings.EqualFold(network, "udp") {
-		packet, err := net.ListenPacket("udp", net.JoinHostPort(listen, strconv.Itoa(spec.Config.Port)))
-		if err != nil {
-			a.cancel()
-			a.mu.Unlock()
-			return err
-		}
-		a.packet = packet
-		a.mu.Unlock()
-		a.wg.Add(1)
-		go a.udpLoop()
-		a.wg.Add(1)
-		go a.udpSessionGC()
-		return nil
-	}
-	ln, err := net.Listen("tcp", net.JoinHostPort(listen, strconv.Itoa(spec.Config.Port)))
+	// 与经典 AEAD 一样同端口同时听 TCP 与 UDP；任一失败整体失败，收拾已起的那个。
+	address := net.JoinHostPort(listen, strconv.Itoa(spec.Config.Port))
+	ln, err := net.Listen("tcp", address)
 	if err != nil {
 		a.cancel()
 		a.mu.Unlock()
 		return err
 	}
-	a.listener = ln
+	packet, err := net.ListenPacket("udp", address)
+	if err != nil {
+		_ = ln.Close()
+		a.cancel()
+		a.mu.Unlock()
+		return err
+	}
+	a.listener, a.packet = ln, packet
 	a.mu.Unlock()
-	a.wg.Add(1)
+	a.wg.Add(3)
 	go a.acceptLoop()
+	go a.udpLoop()
+	go a.udpSessionGC()
 	return nil
 }
 

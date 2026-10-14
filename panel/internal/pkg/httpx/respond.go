@@ -59,6 +59,11 @@ func Created(c *gin.Context, v any) {
 	c.JSON(http.StatusCreated, v)
 }
 
+// Accepted 返回 202 JSON：请求已登记、由后台任务完成（如批量建用户、签发证书）。
+func Accepted(c *gin.Context, v any) {
+	c.JSON(http.StatusAccepted, v)
+}
+
 // NoContent 返回 204。
 func NoContent(c *gin.Context) {
 	c.Status(http.StatusNoContent)

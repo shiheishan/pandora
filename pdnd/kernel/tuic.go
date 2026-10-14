@@ -33,7 +33,7 @@ type tuicAdapter struct {
 	slots    []tuicSlot
 	sessions userSessions
 	online   onlineDevices
-	// udpQuota 限每用户在途 UDP 会话数（quic_udp_quota.go）。
+	// udpQuota 限每用户在途 UDP 会话数（udp_session_quota.go）。
 	udpQuota  udpSessionQuota
 	service   *tuic.Service[int]
 	packet    net.PacketConn

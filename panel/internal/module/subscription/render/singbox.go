@@ -110,9 +110,7 @@ func nodeToSingbox(n Node, uuid string) (map[string]any, string) {
 		o["type"] = "shadowsocks"
 		o["method"] = ssMethod(n.Config)
 		o["password"] = uuid
-		// 节点端只监听 TCP（见 clash.go 同一处），声明只走 TCP，
-		// UDP 交给路由的其它出站，而不是发到没人听的端口
-		o["network"] = "tcp"
+		// 节点端同一端口 TCP、UDP 都听：不写 network，sing-box 缺省两种都走
 
 	case "hysteria2":
 		o["type"] = "hysteria2"

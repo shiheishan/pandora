@@ -39,14 +39,14 @@ func renderMatrix() map[string]matrixRow {
 	realitySingbox := `"reality":{"enabled":true,"public_key":"` + fixtureRealityPub + `","short_id":"0a1b2c3d"}`
 	realityURI := []string{"security=reality", "pbk=" + fixtureRealityPub, "sid=0a1b2c3d", "sni=www.example.com"}
 	return map[string]matrixRow{
-		// 节点端 Shadowsocks 只听 TCP：Clash 写 udp:false，sing-box 声明只走 tcp
+		// 节点端 Shadowsocks 同一端口 TCP、UDP 都听：Clash 写 udp:true，sing-box 不限定 network
 		"ss-aes128": {
-			clash: has(`type: "ss"`, `cipher: "aes-128-gcm"`, `udp: false`), premium: has(`cipher: "aes-128-gcm"`, `udp: false`),
-			singbox: has(`"method":"aes-128-gcm"`, `"network":"tcp"`), uri: has(ssB64("aes-128-gcm")),
+			clash: has(`type: "ss"`, `cipher: "aes-128-gcm"`, `udp: true`), premium: has(`cipher: "aes-128-gcm"`, `udp: true`),
+			singbox: has(`"method":"aes-128-gcm"`).without(`"network"`), uri: has(ssB64("aes-128-gcm")),
 		},
 		"ss-chacha": {
-			clash: has(`cipher: "chacha20-ietf-poly1305"`, `udp: false`), premium: has(`cipher: "chacha20-ietf-poly1305"`),
-			singbox: has(`"method":"chacha20-ietf-poly1305"`, `"network":"tcp"`), uri: has(ssB64("chacha20-ietf-poly1305")),
+			clash: has(`cipher: "chacha20-ietf-poly1305"`, `udp: true`), premium: has(`cipher: "chacha20-ietf-poly1305"`, `udp: true`),
+			singbox: has(`"method":"chacha20-ietf-poly1305"`).without(`"network"`), uri: has(ssB64("chacha20-ietf-poly1305")),
 		},
 		"hy2-obfs": {
 			clash:   has(`obfs: "salamander"`, `obfs-password: "obfs-pass-1"`, `sni: "sni.example.com"`, `skip-cert-verify: true`),

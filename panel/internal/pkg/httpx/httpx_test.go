@@ -20,7 +20,7 @@ import (
 func newTestEngine() *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	e := gin.New()
-	e.Use(RequestID(zap.NewNop()), AccessLog(), Recovery(), Errors(), SecurityHeaders())
+	e.Use(RequestID(zap.NewNop()), AccessLog(), Recovery(), Errors(), SecurityHeaders(false))
 	e.NoRoute(NoRoute)
 	return e
 }
@@ -265,5 +265,32 @@ func TestConcurrencyExemptBypassesLimit(t *testing.T) {
 	wg.Wait()
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("exempt request got %d", w.Code)
+	}
+}
+
+func TestSecurityHeadersHSTSOnlyWhenAsked(t *testing.T) {
+	for _, hsts := range []bool{true, false} {
+		e := gin.New()
+		e.Use(SecurityHeaders(hsts))
+		e.GET("/x", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+		w := httptest.NewRecorder()
+		e.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/x", nil))
+		h := w.Header()
+		for k, want := range map[string]string{
+			"X-Content-Type-Options":       "nosniff",
+			"X-Frame-Options":              "DENY",
+			"Referrer-Policy":              "no-referrer",
+			"Cross-Origin-Opener-Policy":   "same-origin",
+			"Cross-Origin-Resource-Policy": "same-origin",
+			"Permissions-Policy":           permissionsPolicy,
+			"Cache-Control":                "no-store",
+		} {
+			if got := h.Get(k); got != want {
+				t.Fatalf("hsts=%v %s = %q，要 %q", hsts, k, got, want)
+			}
+		}
+		if got := h.Get("Strict-Transport-Security"); (got != "") != hsts || (hsts && got != hstsValue) {
+			t.Fatalf("hsts=%v Strict-Transport-Security = %q", hsts, got)
+		}
 	}
 }

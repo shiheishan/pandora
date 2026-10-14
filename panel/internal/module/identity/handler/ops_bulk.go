@@ -93,7 +93,7 @@ func (h *Handler) bulkGenerate(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	c.JSON(http.StatusAccepted, generationJobFrom(job))
+	httpx.Accepted(c, generationJobFrom(job))
 }
 
 func (h *Handler) listGenerationJobs(c *gin.Context) {

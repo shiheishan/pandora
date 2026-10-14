@@ -1,8 +1,6 @@
 package handler
 
 import (
-	"net/http"
-
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
 	"github.com/gin-gonic/gin"
@@ -94,7 +92,7 @@ func (h *Handler) renewCertificate(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	c.JSON(http.StatusAccepted, orderBriefFrom(out))
+	httpx.Accepted(c, orderBriefFrom(out))
 }
 
 func (h *Handler) pauseCertificate(c *gin.Context) {
