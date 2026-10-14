@@ -390,6 +390,8 @@ echo | openssl s_client -connect <面板地址>:443 -servername <面板域名> 2
 
 加密货币渠道（BTCPay Server、CoinPayments）：
 - BTCPay 的回调不随发票下发，要在 BTCPay 商店「Settings › Webhooks」里新建一个 Webhook：地址填渠道卡片上的回调地址，事件至少勾选 Invoice settled / expired / invalid，密钥与后台渠道里填的 Webhook 密钥一致。只有「已结算」且不是在 BTCPay 里手动标记的发票才自动入账；手动标记、部分付款都不自动入账，按下面「处理」里的线下办法核对。
+- BTCPay 商店「Settings › Checkout」里的付款容差（Payment tolerance）必须保持 0：大于 0 时少付但在容差内的发票也会直接变成「已结算」，回查到的发票金额仍是全额，面板没法从金额上看出少付。面板对「已结算」但附加状态是部分付款（PaidPartial）的发票按待定处理、不入账，这只是兜底，容差仍要设 0。
+- 给面板单独建一个 BTCPay 商店，不要在同一个商店里再接 POS、Pay Button 或别的系统：那些发票的回调也会发到面板，面板找不到对应的支付会回 4xx / 5xx，BTCPay 会一直重投并把 Webhook 标成失败。面板入账时还会核对发票号必须是这张支付建单时存下的那张，别的发票即使金额和单号对得上也不会入账。
 - CoinPayments 的回调地址随每张发票下发，不用在商户后台配。商户后台「接受部分付款」与「少付容差」请保持关闭（0）：开了以后少付的发票也会变成 completed，面板发现实收低于应收会按待定处理、不入账。
 
 ### 怎么确认

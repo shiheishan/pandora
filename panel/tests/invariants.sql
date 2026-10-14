@@ -624,6 +624,14 @@ SELECT _reject('PAY-FEE', '意图加收的手续费等于整笔必须拒绝', $s
           10.00, 10.00, 'cancelled', 'GET', 'https://pay.example.test/i/2');
 $sql$);
 
+SELECT _reject('PAY-FEE', '意图加收的手续费为负必须拒绝', $sql$
+  INSERT INTO payment_intents (order_id, order_no, user_id, provider_id, out_trade_no, currency,
+                               amount, surcharge_amount, status, http_method, redirect_url)
+  VALUES ('00000000-0000-7000-8000-000000000c01', 'INV-SEED-001', '00000000-0000-7000-8000-000000000101',
+          '00000000-0000-7000-8000-000000000b11', 'INV-SEED-001-fee3', 'USD',
+          10.00, -0.01, 'cancelled', 'GET', 'https://pay.example.test/i/3');
+$sql$);
+
 -- payments_surcharge
 SELECT _reject('PAY-FEE', '收款里的手续费为负必须拒绝', $sql$
   INSERT INTO payments (order_id, user_id, provider_id, provider_payment_id, currency, amount, surcharge_amount)
