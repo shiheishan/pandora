@@ -184,6 +184,7 @@ func buildServices(r *runtime) (*services, error) {
 	nodeSvc := nodesvc.New(noderepo.New(r.db), txm, auditSvc, r.redis)
 	// 节点端一键安装：二进制从发布包的 pdnd-dist 目录发，安装脚本里写入面板地址
 	nodeSvc.UsePdndDist(cfg.Pdnd.DistDir, cfg.PublicBaseURL)
+	nodeSvc.UseIdempotency(idemSvc)
 	// IP 归属地（ip2region 离线库）：没放数据文件只记一条 Info、归属地留空；文件在却打不开才 Warn。启动都不受影响
 	var geo *geoip.Resolver
 	if _, statErr := os.Stat(cfg.GeoIP.IPv4DB); errors.Is(statErr, fs.ErrNotExist) || strings.TrimSpace(cfg.GeoIP.IPv4DB) == "" {
