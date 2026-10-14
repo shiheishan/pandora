@@ -10,6 +10,9 @@ package service
 //     先取号的读晚到时直接丢掉。保证的是：取号之前已提交的变更，这次读一定看得到；取号之后才提交的变更，
 //     提交后会推进纪元、触发新一轮，新一轮的序号更大，最终以它为准。序号大不代表读到的数据一定更新（两次读可能交错），
 //     由「每次提交后必有一轮序号更大的重算」兜底。
+//   - 建流对齐合批（session_align.go）：同一时段到达的建流共用一次配置与名单读，一批取一对序号（先配置后名单）；
+//     批是串行的，同时只有一批在读库。
+//   - 日志：server_id 只由 gRPC 鉴权拦截器挂在流 ctx 的 logger 上（grpc/interceptors.go），会话层只加 session_id。
 
 import (
 	"bytes"
@@ -84,10 +87,8 @@ type SessionOptions struct {
 	TerminateGrace time.Duration
 	// ShutdownBase、ShutdownSpread：停机时第 i 个会话的 reconnect in_ms = Base + i×Spread/n，缺省 2 秒、10 秒
 	ShutdownBase, ShutdownSpread time.Duration
-	// AlignConcurrency 是同时在做建流对齐（配置与名单首读）的流数上限，缺省 8：面板重启后全部节点一起重连时，
-	// 不让对齐读占满连接池、拖住后台与鉴权
-	AlignConcurrency int
-	// AlignTimeout 是建流对齐（排队加读）的总时限，缺省 10 秒，短于节点端等 Welcome 的 15 秒；超时回 Unavailable，节点退避重连
+	// AlignTimeout 是建流对齐（记 Hello、等这批读完）的总时限，也是一批读库的时限；缺省 10 秒，短于节点端等 Welcome 的 15 秒。
+	// 超时回 Unavailable，节点退避重连
 	AlignTimeout time.Duration
 }
 
@@ -112,9 +113,6 @@ func (o SessionOptions) withDefaults() SessionOptions {
 	def(&o.ShutdownBase, 2*time.Second)
 	def(&o.ShutdownSpread, 10*time.Second)
 	def(&o.AlignTimeout, 10*time.Second)
-	if o.AlignConcurrency <= 0 {
-		o.AlignConcurrency = 8
-	}
 	return o
 }
 
@@ -132,8 +130,8 @@ type Sessions struct {
 	byServer map[uuid.UUID]*Session
 	closing  bool
 
-	// alignSem 限制同时做建流对齐的流数（AlignConcurrency）
-	alignSem chan struct{}
+	// align 是建流对齐合批的排队状态（session_align.go）
+	align alignQueue
 
 	// 纪元轮次的待办（session_epoch.go）
 	dirtyMu                 sync.Mutex
@@ -146,7 +144,6 @@ func NewSessionManager(b SessionBackend, rdb *redis.Client, opt SessionOptions) 
 	opt = opt.withDefaults()
 	return &Sessions{
 		b: b, rdb: rdb, opt: opt, now: time.Now,
-		alignSem: make(chan struct{}, opt.AlignConcurrency),
 		byServer: map[uuid.UUID]*Session{},
 		wake:     make(chan struct{}, 1),
 	}
@@ -206,7 +203,7 @@ func (m *Sessions) Open(ctx context.Context, serverID uuid.UUID, h Hello) (*Sess
 	return m.OpenVerified(ctx, serverID, h, nil)
 }
 
-// ErrAlignBusy 是建流对齐在 AlignTimeout 内没排上或没读完：回 Unavailable，节点退避重连。
+// ErrAlignBusy 是建流对齐在 AlignTimeout 内没等到结果（前面的批还没读完，或这批没读完）：回 Unavailable，节点退避重连。
 var ErrAlignBusy = errors.New("node: 建流对齐超时")
 
 // OpenVerified 同 Open，另在两处调 verify 复核身份（传输层传 AuthorizeSession；nil 表示不复核）：
@@ -224,7 +221,8 @@ func (m *Sessions) OpenVerified(ctx context.Context, serverID uuid.UUID, h Hello
 		sid = uuid.New()
 	}
 	s := newSession(m, serverID, sid.String(), h)
-	log := plog.From(ctx).With(zap.String("server_id", serverID.String()), zap.String("session_id", s.id))
+	// server_id 已由 gRPC 鉴权拦截器挂在 ctx 的 logger 上
+	log := plog.From(ctx).With(zap.String("session_id", s.id))
 
 	at := m.now()
 	s.enqueue(Outbound{Kind: OutWelcome, Welcome: Welcome{
@@ -259,51 +257,24 @@ func (m *Sessions) OpenVerified(ctx context.Context, serverID uuid.UUID, h Hello
 		}
 	}
 
-	// 对齐读限并发、限时：排队与读共用一个期限
+	// 从这里起是建流对齐，记 Hello 与等这批读完共用一个期限 AlignTimeout
 	actx, cancel := context.WithTimeout(ctx, m.opt.AlignTimeout)
 	defer cancel()
-	select {
-	case m.alignSem <- struct{}{}:
-		defer func() { <-m.alignSem }()
-	case <-actx.Done():
-		s.Close(ErrSessionPeerGone)
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		return nil, ErrAlignBusy
-	}
-
 	if err := m.b.RecordHello(actx, serverID, h, at); err != nil {
 		// 主机信息与心跳时间只是展示；对齐照常做
 		log.Warn("记录 Hello 失败", zap.Error(err))
 	}
-
-	ids := []uuid.UUID{serverID}
-	cfgSeq := m.seq.Add(1)
-	cfgs, err := m.b.ServerConfigs(actx, ids)
+	// 配置与名单的首读交给对齐器合批（session_align.go）
+	r, err := m.awaitAlign(ctx, actx, serverID)
 	if err != nil {
 		s.Close(ErrSessionPeerGone)
-		return nil, alignErr(ctx, actx, err)
-	}
-	usersSeq := m.seq.Add(1)
-	rosters, err := m.b.Rosters(actx, ids)
-	if err != nil {
-		s.Close(ErrSessionPeerGone)
-		return nil, alignErr(ctx, actx, err)
+		return nil, err
 	}
 	// 先配置后名单：新节点先有入站再收用户
-	s.applyConfig(cfgSeq, cfgs[serverID])
-	s.applyRosters(usersSeq, rosters[serverID])
+	s.applyConfig(r.cfgSeq, r.cfgs)
+	s.applyRosters(r.usersSeq, r.rosters)
 	log.Info("节点会话已建立", zap.String("agent_version", h.AgentVersion), zap.Strings("features", s.features))
 	return s, nil
-}
-
-// alignErr 把对齐读因 AlignTimeout 到期的失败归成 ErrAlignBusy（流本身没断时）。
-func alignErr(ctx, actx context.Context, err error) error {
-	if ctx.Err() == nil && actx.Err() != nil {
-		return ErrAlignBusy
-	}
-	return err
 }
 
 // unregister 把 s 移出登记（只移除自己，不动取代者）。

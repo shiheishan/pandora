@@ -8,6 +8,7 @@ paths:
 ## 通道与装配
 - 节点只走 gRPC：`EnrollmentService.Enroll`（首次接入）与 `ControlService.Session`（mTLS 双向流），实现见 `panel/internal/module/node/grpc/`；业务在 `service/session*.go`、`session_store.go`、`session_inbound.go`。不再有 UniProxy HTTP、Ed25519 签名心跳、节点 SSE。
 - 会话管理器在启动时装配：`NewSessions` → `UseSessions`；`serve` 里 `go m.Run(ctx)`，gRPC `GracefulStop` 前先 `Sessions.Shutdown`（`service/session.go` 文件头注释）。
+- 节点日志的 `server_id` 只由鉴权拦截器挂到流 ctx 的 logger 上（`grpc/interceptors.go` 的 `authorize`）；`control.go` 的 `withStreamLogger` 只管 req_id，会话层只加 `session_id`，不要再 `With` 一次 server_id。
 
 ## 下发纪元（Redis）
 - 会影响名单的写：事务里 `MarkUsersChanged`；会影响节点配置文档的写：`MarkConfigChanged`（`service/epoch.go`）。提交后 `INCR node:users_epoch` / `node:config_epoch` 并 `PUBLISH node:changed`；丢通知时 `EpochPoll`（缺省 5s）与 `FullResync`（缺省 15s）兜底（`service/session.go`）。
@@ -49,3 +50,4 @@ paths:
 
 ## 并发与单进程假设
 - `Sessions` 的纪元轮次、`MinRoundGap`（缺省 1s）合并推送；发送队列满则 `ErrSessionOverflow` 断流重连。心跳合写、PG LISTEN 纪元、多实例分流尚未做：会话状态在进程内，按单 `serve` 实例设计。
+- 建流对齐合批（`service/session_align.go`）：同一时段到达的建流共用一次 `ServerConfigs` + `Rosters`，批串行（同时只有一批读库）、一批一对序号（先配置后名单）；批的 ctx 用 `context.WithoutCancel` 派生，单条流断开不连累同批。`AlignTimeout`（缺省 10s）既是等待者的总时限（到期 `ErrAlignBusy`）也是一批读库的时限；没有并发数参数，不要再加逐流的对齐读。

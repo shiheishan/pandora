@@ -58,7 +58,7 @@ func (c *controlServer) Session(stream nodev1.ControlService_SessionServer) erro
 	if !ok {
 		return status.Error(codes.Unauthenticated, "未认证的节点")
 	}
-	ctx = withStreamLogger(ctx, serverID.String())
+	ctx = withStreamLogger(ctx)
 	log := plog.From(ctx)
 
 	var m *service.Sessions
@@ -221,12 +221,12 @@ func recvLoop(ctx context.Context, stream nodev1.ControlService_SessionServer, s
 	}
 }
 
-// withStreamLogger 给流的 ctx 挂上带 req_id、server_id 的 logger。req_id 优先取拦截器放进 ctx 的，
-// 没有就读 metadata 的 x-request-id（不合法则新生成）。
-func withStreamLogger(ctx context.Context, serverID string) context.Context {
+// withStreamLogger 保证流的 ctx 带 req_id 与带 req_id 的 logger：拦截器已放好就原样返回，
+// 没有就读 metadata 的 x-request-id（不合法则新生成）。server_id 只由鉴权拦截器挂到 logger 上（interceptors.go 的 authorize），
+// 这里与会话层都不再加。
+func withStreamLogger(ctx context.Context) context.Context {
 	if reqid.From(ctx) != "" {
-		// 拦截器已放好 req_id 与带 req_id 的 logger
-		return plog.With(ctx, plog.From(ctx).With(zap.String("server_id", serverID)))
+		return ctx
 	}
 	var id string
 	if md, ok := metadata.FromIncomingContext(ctx); ok {
@@ -234,8 +234,7 @@ func withStreamLogger(ctx context.Context, serverID string) context.Context {
 			id = v[0]
 		}
 	}
-	ctx = plog.WithReqID(ctx, plog.From(ctx), reqid.Normalize(id))
-	return plog.With(ctx, plog.From(ctx).With(zap.String("server_id", serverID)))
+	return plog.WithReqID(ctx, plog.From(ctx), reqid.Normalize(id))
 }
 
 // sessionStatus 把会话结束的原因译成 gRPC 状态。
