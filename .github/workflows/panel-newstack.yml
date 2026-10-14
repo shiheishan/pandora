@@ -51,18 +51,20 @@ jobs:
     name: Lint (golangci-lint + depguard)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: panel/go.mod
           cache-dependency-path: panel/go.sum
       - name: depguard rules match module directories
         run: go run ./tools/depguardgen -check
-      - uses: golangci/golangci-lint-action@v8
+      - uses: golangci/golangci-lint-action@v9
         with:
           version: v2.5.0
           # 官方预编译包用 Go 1.25 构建，读不了 go 1.26 的模块；用 setup-go 装的版本现编
           install-mode: goinstall
+          # 配置校验要在线拉 JSON schema，偶发超时会把整个 lint 判红；配置写错 golangci-lint run 本身也会报错
+          verify: false
           working-directory: panel
           args: ./internal/pkg/... ./internal/app/... ./internal/module/... ./cmd/pandora/... ./db/...
 
@@ -98,8 +100,8 @@ jobs:
       # env 缺省按 production（要求 https 地址、关掉 dev_code）；CI 显式用 development
       PANDORA_ENV: development
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: panel/go.mod
           cache-dependency-path: panel/go.sum
@@ -199,15 +201,15 @@ jobs:
       SUPPORT_E2E_DISPOSABLE: YES_DELETE_FIXTURES
       RISK_E2E_DISPOSABLE: YES_DELETE_FIXTURES
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: panel/go.mod
           cache-dependency-path: panel/go.sum
       - name: Build pandora
         run: go build -mod=readonly -o "$RUNNER_TEMP/pandora" ./cmd/pandora
       # risk_e2e 的节点用模拟器接入（与 node-e2e 同法）：按 pdnd 的 go.mod 构建，只编它用到的几个依赖，不开缓存
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: pdnd/go.mod
           cache: false
@@ -311,15 +313,15 @@ jobs:
       EXPIRY_E2E_DISPOSABLE: YES_DELETE_FIXTURES
       NODE_KICK_E2E_DISPOSABLE: YES_DELETE_FIXTURES
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: panel/go.mod
           cache-dependency-path: panel/go.sum
       - name: Build pandora
         run: go build -mod=readonly -o "$RUNNER_TEMP/pandora" ./cmd/pandora
       # 模拟器在 pdnd 模块里（用真实的节点客户端 pdnd/panel），按 pdnd 的 go.mod 构建；只编它用到的几个依赖，不开缓存
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: pdnd/go.mod
           cache: false
