@@ -16,9 +16,11 @@ import (
 
 	"github.com/google/uuid"
 
+	idemrepo "github.com/aegispanel/aegis/internal/module/idempotency/repo"
 	idemsvc "github.com/aegispanel/aegis/internal/module/idempotency/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/reqid"
+	"github.com/aegispanel/aegis/internal/pkg/testkit"
 )
 
 // nodeFakeIdem 记下以「不可重放」完成的幂等认领。
@@ -98,6 +100,88 @@ func TestIssueBootstrapTokenUnreplayablePG(t *testing.T) {
 	}
 	if bootstrapTokenCount(t, ctx, e, sid) != nBefore {
 		t.Fatal("CompleteUnreplayable 失败时事务应回滚，bootstrap_tokens 行数不变")
+	}
+}
+
+// 真实 idempotency.Service 下签发安装令牌：钉住「不可重放完成、令牌明文不进 idempotency_keys、重放回 409 且不泄露令牌」。
+func TestIssueBootstrapTokenRealIdempotencyPG(t *testing.T) {
+	e, ctx := newIdentEnv(t, true)
+	sid := seedIdentServer(t, ctx, e, "ready")
+
+	d := testkit.DB(t)
+	idem := idemsvc.New(idemrepo.New(d), e.txm)
+	e.svc.UseIdempotency(idem)
+
+	fp := idemsvc.NewFingerprint([]byte("测试指纹密钥-0123456789abcdef"), "POST", "/v1/servers/"+sid.String()+"/bootstrap-token", []byte(`{"ttl_minutes":20}`))
+	key := "boot-" + uuid.NewString()
+
+	t.Cleanup(func() {
+		d.Conn(context.Background()).Exec("DELETE FROM idempotency_keys WHERE scope = ? AND idempotency_key = ?", "server_bootstrap_token", key)
+	})
+
+	claim, replay, err := idem.Claim(e.admin, "server_bootstrap_token", key, fp)
+	if err != nil {
+		t.Fatalf("Claim 失败：%v", err)
+	}
+	if replay != nil {
+		t.Fatalf("首回认领 replay 应为 nil，得到 %+v", replay)
+	}
+	if claim == nil {
+		t.Fatal("首回认领 claim 不应为 nil")
+	}
+
+	out, err := e.svc.IssueBootstrapToken(idemsvc.WithClaim(e.admin, claim), sid, 20)
+	if err != nil {
+		t.Fatalf("签发安装令牌失败：%v", err)
+	}
+	if out.Token == "" {
+		t.Fatal("签发成功但令牌为空")
+	}
+
+	var (
+		status       string
+		responseCode int
+		replayable   bool
+		bodyIsNull   bool
+	)
+	if err := e.row(ctx, `SELECT status, response_code, replayable, response_body IS NULL FROM idempotency_keys WHERE scope = ? AND idempotency_key = ?`,
+		"server_bootstrap_token", key).Scan(&status, &responseCode, &replayable, &bodyIsNull); err != nil {
+		t.Fatalf("查询 idempotency_keys 记录失败：%v", err)
+	}
+	if status != "succeeded" {
+		t.Fatalf("幂等记录状态应为 succeeded，得到 %s", status)
+	}
+	if responseCode != 201 {
+		t.Fatalf("幂等记录响应码应为 201，得到 %d", responseCode)
+	}
+	if replayable {
+		t.Fatal("幂等记录 replayable 应为 false")
+	}
+	if !bodyIsNull {
+		t.Fatal("幂等记录 response_body 应为 NULL")
+	}
+
+	var count int64
+	if err := e.row(ctx, `SELECT count(*) FROM idempotency_keys WHERE scope = ? AND idempotency_key = ? AND position(convert_to(?, 'UTF8') in coalesce(response_body, ''::bytea)) > 0`,
+		"server_bootstrap_token", key, out.Token).Scan(&count); err != nil {
+		t.Fatalf("校验令牌明文未进库失败：%v", err)
+	}
+	if count != 0 {
+		t.Fatalf("令牌明文不应落进幂等表 response_body，匹配到 %d 行", count)
+	}
+
+	_, replay2, err := idem.Claim(e.admin, "server_bootstrap_token", key, fp)
+	if err == nil {
+		t.Fatal("同键重放不可重放的认领应报错")
+	}
+	if code := errs.As(err).Code; code != errs.Conflict {
+		t.Fatalf("同键重放错误码应为 conflict，得到 %s（err=%v）", code, err)
+	}
+	if replay2 != nil {
+		t.Fatalf("不可重放的记录 replay 应为 nil，得到 %+v", replay2)
+	}
+	if strings.Contains(err.Error(), out.Token) {
+		t.Fatalf("重放 409 报错文案不应包含令牌明文：%v", err)
 	}
 }
 
