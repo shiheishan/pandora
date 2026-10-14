@@ -67,6 +67,12 @@ var mihomoUnsupported = []struct {
 	{"xhttp HTTP/3 does not support REALITY", "mihomo 不支持 REALITY + XHTTP/H3"},
 }
 
+// mihomoFetchAttempts、mihomoRetryGap：mihomo 刚起时连接层失败的重试次数与间隔。
+const (
+	mihomoFetchAttempts = 3
+	mihomoRetryGap      = 500 * time.Millisecond
+)
+
 func runMihomo(id, typ string, port int, kcfg map[string]any, kcfgErr string, env *caseEnv) string {
 	clashRaw, err := os.ReadFile(filepath.Join(*outDir, id+".clash"))
 	if err != nil {
@@ -183,7 +189,18 @@ func runMihomo(id, typ string, port int, kcfg map[string]any, kcfgErr string, en
 		return mihomoFail("CLIENT-START-FAIL", logPath)
 	}
 
-	res := fetchViaSOCKS(socksAddr, env.target)
+	// mixed 端口先于出站初始化就绪：刚起的几百毫秒里请求会被 reset / EOF（CI 偶发）。连接层失败最多再试两次；
+	// 真坏的节点三次都失败，结果不变；拿到回应但内容不对不重试。
+	var res string
+	for attempt := 0; attempt < mihomoFetchAttempts; attempt++ {
+		if attempt > 0 {
+			time.Sleep(mihomoRetryGap)
+		}
+		res = fetchViaSOCKS(socksAddr, env.target)
+		if !strings.HasPrefix(res, "CONNECT-FAIL") {
+			break
+		}
+	}
 	if res == "CONNECT-OK" {
 		return "CONNECT-OK"
 	}
