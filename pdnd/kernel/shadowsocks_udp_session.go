@@ -4,20 +4,19 @@ package kernel
 // socket 与一个下行 goroutine。下行复用 Hysteria2 的 hy2DownlinkUDP（空闲不占收包
 // 缓冲、借共享批量存货），写回经 ssUDPClientWriter 把包按 SS UDP 格式加密后写回
 // 入站共享 UDP socket。空闲 ssUDPIdleTimeout（与 juicity、UoT 同值 5 分钟）无双向
-// 流量则回收会话；每用户会话数受 udpSessionQuota 约束，与 hy2 / TUIC 全进程共用上限。
+// 流量则回收会话；每用户会话数受本入站的 udpSessionQuota 约束（每个入站一份，上限常量
+// udpSessionsPerUser 与 hy2 / TUIC 相同）。建上游（ListenUDP，可能要做中转握手、解析域名）
+// 在会话自己的 goroutine 里做，读循环只登记会话；建立期间到的包进会话的小队列。
 
 import (
 	"context"
 	"net"
 	"net/netip"
-	"os"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/sagernet/sing/common/buf"
 	M "github.com/sagernet/sing/common/metadata"
-	N "github.com/sagernet/sing/common/network"
 	"golang.org/x/time/rate"
 
 	"github.com/aegispanel/nodeagent/core"
@@ -27,14 +26,28 @@ import (
 // ssUDPIdleTimeout 是一个 SS UDP 会话两个方向都没有数据多久就关（与 juicity、UoT 的 5 分钟同值）。测试缩短它。
 var ssUDPIdleTimeout = 5 * time.Minute
 
+// ssUDPPendingMax 是会话建立期间最多暂存的上行包数，多出的丢掉（计 udpDrops.pending）。
+const ssUDPPendingMax = 8
+
+type ssUDPPendingPacket struct {
+	dest    vlessDestination
+	payload []byte
+}
+
 // ssUDPSession 是一个 (客户端地址, 用户) 的 UDP 会话：一个上游 socket（经 DataPlane）、一个下行 goroutine。
 type ssUDPSession struct {
-	adapter    *shadowsocksAdapter
-	client     netip.AddrPort // 已 Unmap 的客户端地址
-	user       *ssUser        // 认证时的用户记录；retired 置位后快路径不再用它
-	coreUser   core.User
-	ip         string // 在线设备的设备 IP（client.Addr().String()）
+	adapter   *shadowsocksAdapter
+	client    netip.AddrPort // 已 Unmap 的客户端地址
+	user      *ssUser        // 认证时的用户记录；retired 置位后快路径不再用它
+	coreUser  core.User
+	ip        string           // 在线设备的设备 IP（client.Addr().String()）
+	firstDest vlessDestination // 首包目标：会话 goroutine 按它选出站、建上游
+	// 建立期：upstream 为 nil 时到达的包进 pending（至多 ssUDPPendingMax 个，负载已复制）。
+	// estMu 保护 upstream 的写入与 pending；ready 置位之后 upstream 不再变，读方不加锁直接用。
+	estMu      sync.Mutex
+	ready      atomic.Bool
 	upstream   net.PacketConn
+	pending    []ssUDPPendingPacket
 	sess       *userSession
 	limiter    *rate.Limiter // 认证时取一次 a.limiters.For(coreUser)，nil 表示不限速
 	ctx        context.Context
@@ -50,19 +63,51 @@ type ssUDPSession struct {
 
 func (s *ssUDPSession) Close() error { s.cancel(); return nil } // 给 userSessions 踢人用
 
-// lookupUDPSessions 把 client 名下的会话追加到 dst 返回（拷贝：表里的切片会被收尾原地
-// 改写）。读循环传自己独占的 dst 复用，每包不分配。
+// enqueuePending 在会话还没建好上游时把包放进小队列并返回 true（队列满就丢、计
+// udpDrops.pending，同样返回 true）；上游已建好返回 false，由调用方直接写。
+func (s *ssUDPSession) enqueuePending(dest vlessDestination, payload []byte) bool {
+	s.estMu.Lock()
+	defer s.estMu.Unlock()
+	if s.upstream != nil {
+		return false
+	}
+	if len(s.pending) >= ssUDPPendingMax {
+		s.adapter.udpDrops.pending.Add(1)
+		return true
+	}
+	s.pending = append(s.pending, ssUDPPendingPacket{
+		dest:    dest,
+		payload: append([]byte(nil), payload...),
+	})
+	return true
+}
+
+// lookupUDPSessions 把 client 名下仍活跃的会话追加到 dst 返回（已取消、还没收尾的
+// 会话跳过；表里的切片会被收尾原地改写）。读循环传自己独占的 dst 复用，每包不分配。
 func (a *shadowsocksAdapter) lookupUDPSessions(client netip.AddrPort, dst []*ssUDPSession) []*ssUDPSession {
 	a.udpMu.Lock()
-	dst = append(dst, a.udp[client]...)
+	for _, s := range a.udp[client] {
+		if s.ctx.Err() == nil {
+			dst = append(dst, s)
+		}
+	}
 	a.udpMu.Unlock()
 	return dst
 }
 
-// openUDPSession 在读循环里同步建会话：名额 → 在线设备 → 上游 socket → 用户会话表，
-// 任一步失败撤销前面已做的。会话的出站按首包目标选（与 hy2 / TUIC 同），之后发往
-// 别的目标的包走同一个上游 socket（私网拦截仍逐包判定）。
-func (a *shadowsocksAdapter) openUDPSession(client netip.AddrPort, user *ssUser, epoch uint64, firstDest vlessDestination) (*ssUDPSession, error) {
+// getOrOpenUDPSession 只登记会话（名额、在线设备、用户会话表、入表），不做任何 I/O；
+// 整个过程持 udpMu，读循环与后续的慢路径 worker 并发处理同一 (地址, 用户) 的包时只会建出一个会话。
+func (a *shadowsocksAdapter) getOrOpenUDPSession(client netip.AddrPort, user *ssUser, epoch uint64, firstDest vlessDestination) (*ssUDPSession, error) {
+	a.udpMu.Lock()
+	defer a.udpMu.Unlock()
+	if a.udpClosed {
+		return nil, net.ErrClosed
+	}
+	for _, s := range a.udp[client] {
+		if s.user == user && s.ctx.Err() == nil {
+			return s, nil
+		}
+	}
 	coreUser := core.User{ID: user.ID, DeviceLimit: user.DeviceLimit, SpeedLimit: user.SpeedLimit}
 	if !a.udpQuota.acquire(user.ID) {
 		return nil, udpSessionLimitError("shadowsocks")
@@ -73,71 +118,78 @@ func (a *shadowsocksAdapter) openUDPSession(client netip.AddrPort, user *ssUser,
 		return nil, deviceLimitError("shadowsocks")
 	}
 	ctx, cancel := context.WithCancel(a.ctx)
-	meta := route.Meta{
-		Domain: firstDest.Domain, IP: firstDest.IP, Port: firstDest.Port,
-		Network: "udp", Protocol: "shadowsocks",
-		SourceIP: client.Addr(), SourcePort: client.Port(),
-	}
-	upstream, err := a.plane.ListenUDP(ctx, meta, M.ParseSocksaddrHostPort(firstDest.Host, firstDest.Port))
-	if err != nil {
-		cancel()
-		a.online.leave(coreUser, ip)
-		a.udpQuota.release(user.ID)
-		return nil, err
-	}
 	s := &ssUDPSession{
 		adapter: a, client: client, user: user, coreUser: coreUser, ip: ip,
-		upstream: upstream, ctx: ctx, cancel: cancel,
+		firstDest: firstDest, ctx: ctx, cancel: cancel,
 	}
 	s.lastActive.Store(time.Now().UnixNano())
 	s.limiter = a.limiters.For(coreUser)
 	s.sess = a.sessions.open(coreUser, epoch, s)
 	if s.sess == nil {
-		_ = upstream.Close()
 		cancel()
 		a.online.leave(coreUser, ip)
 		a.udpQuota.release(user.ID)
 		return nil, errSessionRevoked
 	}
-	var old []*ssUDPSession
-	a.udpMu.Lock()
-	if a.udpClosed {
-		a.udpMu.Unlock()
-		s.sess.close()
-		_ = upstream.Close()
-		cancel()
-		a.online.leave(coreUser, ip)
-		a.udpQuota.release(user.ID)
-		return nil, net.ErrClosed
-	}
-	// 同一地址、同一用户 ID 的旧会话（用户记录被替换后的残留）只取消：它的下行
-	// goroutine 退出时由 finishUDPSession 摘表、计数减一；在那之前快路径见它已
-	// retired 就跳过。
 	for _, prev := range a.udp[client] {
 		if prev.coreUser.ID == coreUser.ID {
-			old = append(old, prev)
+			prev.cancel()
 		}
 	}
 	a.udp[client] = append(a.udp[client], s)
 	a.udpLive++
-	a.udpMu.Unlock()
-	for _, o := range old {
-		o.cancel()
-	}
 	a.wg.Add(1)
 	go a.runUDPSession(s)
 	return s, nil
 }
 
-// runUDPSession 在独立 goroutine 里跑下行：复用 hy2 的收包器（空闲时不占收包缓冲、借共享存货），
+// establishUDPSession 在会话 goroutine 里建上游。ListenUDP 可能要做中转握手、解析域名，
+// 所以不能在读循环里调；ctx 取消（空闲、删人、关入站）会打断它。
+func (a *shadowsocksAdapter) establishUDPSession(s *ssUDPSession) (net.PacketConn, error) {
+	firstDest := s.firstDest
+	meta := route.Meta{
+		Domain: firstDest.Domain, IP: firstDest.IP, Port: firstDest.Port,
+		Network: "udp", Protocol: "shadowsocks",
+		SourceIP: s.client.Addr(), SourcePort: s.client.Port(),
+	}
+	upstream, err := a.plane.ListenUDP(s.ctx, meta, M.ParseSocksaddrHostPort(firstDest.Host, firstDest.Port))
+	if err != nil {
+		return nil, err
+	}
+	s.estMu.Lock()
+	if s.ctx.Err() != nil {
+		s.estMu.Unlock()
+		_ = upstream.Close()
+		return nil, s.ctx.Err()
+	}
+	s.upstream = upstream
+	pending := s.pending
+	s.pending = nil
+	s.ready.Store(true)
+	s.estMu.Unlock()
+	for _, p := range pending {
+		n, _ := s.writeUplink(p.dest, p.payload)
+		if n > 0 {
+			s.sess.up().Add(int64(n))
+		}
+	}
+	return upstream, nil
+}
+
+// runUDPSession 在独立 goroutine 里先建上游，再跑下行：复用 hy2 的收包器（空闲时不占收包缓冲、借共享存货），
 // 名额与份额与 hy2 / TUIC 全进程共用。
 func (a *shadowsocksAdapter) runUDPSession(s *ssUDPSession) {
 	defer a.wg.Done()
 	defer a.finishUDPSession(s)
-	u := newHy2UDPUpstream(s.upstream)
+	upstream, err := a.establishUDPSession(s)
+	if err != nil {
+		a.connErr.addr(StageSession, net.UDPAddrFromAddrPort(s.client), err)
+		return
+	}
+	u := newHy2UDPUpstream(upstream)
 	share := hy2DownlinkBatchShares.join(s.coreUser.ID)
 	defer hy2DownlinkBatchShares.leave(s.coreUser.ID)
-	stop := context.AfterFunc(s.ctx, func() { _ = s.upstream.SetDeadline(time.Now()) })
+	stop := context.AfterFunc(s.ctx, func() { _ = upstream.SetDeadline(time.Now()) })
 	defer stop()
 	hy2DownlinkUDP(s.ctx, ssUDPClientWriter{s: s}, u, share, s.sess.down())
 }
@@ -161,7 +213,13 @@ func (a *shadowsocksAdapter) finishUDPSession(s *ssUDPSession) {
 		a.udp[s.client] = list
 	}
 	a.udpMu.Unlock()
-	_ = s.upstream.Close()
+	s.estMu.Lock()
+	upstream := s.upstream
+	s.pending = nil
+	s.estMu.Unlock()
+	if upstream != nil {
+		_ = upstream.Close()
+	}
 	a.udpQuota.release(s.coreUser.ID)
 	a.online.leave(s.coreUser, s.ip)
 	s.sess.close()
@@ -271,47 +329,3 @@ func (s *ssUDPSession) writeUplink(dest vlessDestination, payload []byte) (int, 
 	}()
 	return 0, nil
 }
-
-// ssUDPClientWriter 是交给 hy2DownlinkUDP 的「客户端连接」：WritePacket 把上游回包按 SS UDP 格式
-// 加密（salt + AEAD(地址 + 负载)），写回入站 UDP socket 上的客户端地址。只用到 WritePacket。
-type ssUDPClientWriter struct{ s *ssUDPSession }
-
-var _ N.PacketConn = ssUDPClientWriter{}
-
-func (w ssUDPClientWriter) WritePacket(buffer *buf.Buffer, source M.Socksaddr) error {
-	defer buffer.Release()
-	payload := buffer.Bytes()
-	s := w.s
-	if s.limiter != nil {
-		if err := s.limiter.WaitN(s.ctx, len(payload)); err != nil {
-			return err
-		}
-	}
-	bp := ssUDPEncodePool.Get().(*[]byte)
-	out, err := s.adapter.encodeUDPPacket(*bp, s.user.MasterKey, source, payload)
-	if err == nil {
-		_, err = s.adapter.udpConn.WriteToUDPAddrPort(out, s.client)
-	}
-	ssUDPEncodePool.Put(bp)
-	if err == nil {
-		s.lastActive.Store(time.Now().UnixNano())
-	}
-	return err
-}
-
-func (w ssUDPClientWriter) ReadPacket(*buf.Buffer) (M.Socksaddr, error) {
-	return M.Socksaddr{}, os.ErrInvalid
-}
-
-func (w ssUDPClientWriter) Close() error {
-	w.s.cancel()
-	return nil
-}
-
-func (w ssUDPClientWriter) LocalAddr() net.Addr {
-	return w.s.adapter.udpConn.LocalAddr()
-}
-
-func (w ssUDPClientWriter) SetDeadline(t time.Time) error      { return nil }
-func (w ssUDPClientWriter) SetReadDeadline(t time.Time) error  { return nil }
-func (w ssUDPClientWriter) SetWriteDeadline(t time.Time) error { return nil }

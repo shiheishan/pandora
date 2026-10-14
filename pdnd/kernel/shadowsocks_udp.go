@@ -2,29 +2,32 @@ package kernel
 
 import (
 	"crypto/cipher"
-	"crypto/rand"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
 	"net/netip"
 	"strconv"
-	"sync"
+	"sync/atomic"
+)
 
-	M "github.com/sagernet/sing/common/metadata"
+// ssUDPDropStats 按原因记 SS UDP 丢掉的包数（诊断与测试用，不上报）。
+type ssUDPDropStats struct {
+	pending  atomic.Uint64 // 会话建立期间小队列已满
+	queue    atomic.Uint64 // 慢路径队列已满（后续任务用）
+	rate     atomic.Uint64 // 上行超出限速（后续任务用）
+	route    atomic.Uint64 // 目标的出站与会话的上游不一致（后续任务用）
+	replay   atomic.Uint64 // salt 重放（后续任务用）
+	downlink atomic.Uint64 // 下行编码失败、超出桶容量或写回临时出错
+}
+
+var (
+	errSSUDPTooShort = markConnError(connErrAuth, errors.New("shadowsocks UDP packet too short"))
+	errSSUDPAuth     = markConnError(connErrAuth, errors.New("shadowsocks UDP user authentication failed"))
 )
 
 // ssUDPMaxPacket 是读循环的收包缓冲（一个 UDP 包的上限）。
 const ssUDPMaxPacket = 65535
-
-// ssUDPEncodeBufSize 是编一个下行包要的最大缓冲：salt（≤32）+ IPv6 地址头 19 + 负载 + 标签 16。
-const ssUDPEncodeBufSize = 32 + 19 + ssUDPMaxPacket + 16
-
-// ssUDPEncodePool 是下行编码缓冲：只在 WritePacket 期间借用，空闲会话不常驻。
-var ssUDPEncodePool = sync.Pool{New: func() any {
-	b := make([]byte, ssUDPEncodeBufSize)
-	return &b
-}}
 
 // packetLoop 是入站唯一的 UDP 读循环：解密、认证、交给会话，上行在这里同步写上游
 // （非阻塞 UDP 写），不按包起 goroutine。wire、plain、found 归本循环独占。
@@ -54,7 +57,7 @@ func (a *shadowsocksAdapter) packetLoop() {
 // 用户就没有密文了），payload 指向 plain，forwardUDP 同步写完上游后不再引用。
 func (a *shadowsocksAdapter) handleUDPPacket(wire, plain []byte, found *[]*ssUDPSession, from netip.AddrPort) error {
 	if len(wire) < a.method.SaltLen+16 {
-		return markConnError(connErrAuth, fmt.Errorf("shadowsocks UDP packet too short"))
+		return errSSUDPTooShort
 	}
 	salt := wire[:a.method.SaltLen]
 	ciphertext := wire[a.method.SaltLen:]
@@ -73,21 +76,11 @@ func (a *shadowsocksAdapter) handleUDPPacket(wire, plain []byte, found *[]*ssUDP
 	epoch := a.sessions.epoch()
 	user, dest, payload, err := a.decodeUDPPacket(salt, ciphertext, plain, from)
 	if err != nil {
-		return markConnError(connErrAuth, fmt.Errorf("shadowsocks UDP user authentication failed"))
+		return errSSUDPAuth
 	}
-	var sess *ssUDPSession
-	*found = a.lookupUDPSessions(from, (*found)[:0])
-	for _, s := range *found {
-		if s.user == user {
-			sess = s
-			break
-		}
-	}
-	if sess == nil {
-		sess, err = a.openUDPSession(from, user, epoch, dest)
-		if err != nil {
-			return err
-		}
+	sess, err := a.getOrOpenUDPSession(from, user, epoch, dest)
+	if err != nil {
+		return err
 	}
 	return a.forwardUDP(sess, dest, payload)
 }
@@ -135,64 +128,27 @@ func (a *shadowsocksAdapter) decodeUDPPacket(salt, ciphertext, plain []byte, fro
 		return true
 	})
 	if selected == nil {
-		return nil, dest, nil, fmt.Errorf("auth failed")
+		return nil, dest, nil, errSSUDPAuth
 	}
 	return selected, dest, payload, nil
 }
 
 func (a *shadowsocksAdapter) forwardUDP(s *ssUDPSession, dest vlessDestination, payload []byte) error {
+	if !s.ready.Load() && s.enqueuePending(dest, payload) {
+		return nil
+	}
 	n, err := s.writeUplink(dest, payload)
 	if n > 0 {
 		s.sess.up().Add(int64(n))
 	}
-	if err != nil && errors.Is(err, net.ErrClosed) {
+	if err != nil && (errors.Is(err, net.ErrClosed) || s.ctx.Err() != nil) {
 		return nil
 	}
 	return err
 }
 
-// encodeUDPPacket 把上游回包编成 SS UDP 包（salt + AEAD(来源地址 + 负载)），写进 dst
-// （容量至少 ssUDPEncodeBufSize，调用方从 ssUDPEncodePool 借），返回 dst 的前缀。
-// 回包的地址写上游的真实来源（总是 IP），客户端据此区分不同目标的回包。
-func (a *shadowsocksAdapter) encodeUDPPacket(dst, master []byte, source M.Socksaddr, payload []byte) ([]byte, error) {
-	if len(payload) > ssUDPMaxPacket {
-		return nil, fmt.Errorf("shadowsocks UDP payload too large")
-	}
-	addr := source.Addr.Unmap()
-	if !addr.IsValid() || source.Port == 0 {
-		return nil, fmt.Errorf("shadowsocks UDP response source invalid")
-	}
-	saltLen := a.method.SaltLen
-	salt := dst[:saltLen]
-	if _, err := rand.Read(salt); err != nil {
-		return nil, err
-	}
-	sc := getSSScratch()
-	sc.setSalt(salt)
-	aead, err := a.method.NewAEAD(sc.subkey(master, a.method.KeyLen))
-	putSSScratch(sc)
-	if err != nil {
-		return nil, err
-	}
-	plain := dst[saltLen:]
-	n := 0
-	if addr.Is4() {
-		plain[0] = 1
-		ip4 := addr.As4()
-		n = 1 + copy(plain[1:], ip4[:])
-	} else {
-		plain[0] = 4
-		ip16 := addr.As16()
-		n = 1 + copy(plain[1:], ip16[:])
-	}
-	binary.BigEndian.PutUint16(plain[n:], source.Port)
-	n += 2
-	n += copy(plain[n:], payload)
-	// 每个 UDP 包的 salt 都是新的、子密钥只用一次，nonce 用全零（SIP004）。
-	var nonce [12]byte
-	sealed := aead.Seal(plain[:0], nonce[:], plain[:n], nil)
-	return dst[:saltLen+len(sealed)], nil
-}
+// 以下三个函数经典 AEAD 已不用，只剩 SS2022（shadowsocks2022_udp.go）在用；SS2022 多用户重写时一起挪走。
+
 func destinationUDPAddr(destination vlessDestination) (net.Addr, error) {
 	if destination.IP.IsValid() {
 		return &net.UDPAddr{IP: net.IP(destination.IP.AsSlice()), Port: int(destination.Port)}, nil

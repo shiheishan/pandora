@@ -84,6 +84,7 @@ type shadowsocksAdapter struct {
 	udpLive   int                                // 会话总数（udpMu 保护）
 	udpClosed bool                               // Close 之后不再建会话
 	udpQuota  udpSessionQuota                    // 每用户在途 UDP 会话上限（udp_session_quota.go）
+	udpDrops  ssUDPDropStats                     // SS UDP 各原因的丢包数（shadowsocks_udp.go）
 	ctx       context.Context
 	cancel    context.CancelFunc
 	closed    bool
@@ -170,14 +171,16 @@ func (a *shadowsocksAdapter) Start(parent context.Context, spec InboundSpec, hoo
 	if err != nil {
 		a.cancel()
 		a.mu.Unlock()
-		return err
+		return asExternalPortInUse([]portKey{{port: spec.Config.Port, l4: "tcp"}}, err)
 	}
 	packet, packetErr := net.ListenPacket("udp", addr)
 	if packetErr != nil {
 		_ = listener.Close()
 		a.cancel()
 		a.mu.Unlock()
-		return packetErr
+		// 单边 bind 撞上本机其他进程时，报的是撞上的那一种（如 443/UDP），不是 TCP+UDP；
+		// NativeCore 那层的 asExternalPortInUse 见到已经是 PortInUseError 就原样透传。
+		return asExternalPortInUse([]portKey{{port: spec.Config.Port, l4: "udp"}}, packetErr)
 	}
 	udpConn, ok := packet.(*net.UDPConn)
 	if !ok {
