@@ -18,3 +18,7 @@ paths:
 - 用户相关的地址被别处引用：仪表盘排行、工单「查看用户」、订单抽屉都跳 `#/users/list/<用户 id>`，订单标签跳 `#/billing/orders?user_id=`；改地址格式要同步这些入口。
 - 批量生成是后台任务：提交回 202 与任务，`useGenerationJob` 轮询到结束为止，进度条按 completed/total；结果 CSV 只能从服务端下（`requestRaw`，只有提交人、要 reauth、24 小时内）。任务与加流量包的 schema 在 `opsSchemas.ts`（不依赖 React，假后端测试也引用）
 - 加流量包（TrafficPackDialog）只列还在用的订阅，余额挂在选中的这一份上（回执 `remaining_bytes_total` 是这一份的余量），按 GB 整数填、提交字节（上限 10240 GB，`trafficPack.ts`）
+- 「注册与邀请」标签（`SignupTab.tsx`、`signupSettings.ts`）：GET / POST `v1/settings/signup`，只发改了的字段（`signupBody`），secret 只写不读（`captcha_secret` 发空串表示清除）；邮件链接登录在没配发信时禁用。
+- 已注销（`status === 'deleted'`）：列表与抽屉标题一律 `userLabel`（「已注销 #<短 id>」，不显示占位邮箱）；抽屉整排操作换成一句说明，没有任何写入口。注销对话框要填原因并输入该用户邮箱才能点，管理员不显示「注销账号」。
+- 抽屉写操作：改邮箱、改邀请人（按邮箱精确找人，留空清除）、注销要 reauth；显示名与备注不要。原因 5–500 字，fields 标到对应输入框。订阅卡的「改到期」「改上限」只对生效中的那一份（`SubEditDialogs.tsx`、`subEdit.ts`，上限按 GiB 填、提交字节、留空为不限，最多 10 TiB）。
+- 批量封禁（`BulkBanForm.tsx`）沿用批量运营的筛选：至少一个条件、带预览人数 `expected_total`、二次确认、幂等键；人数变了后端 409，要重新预览。

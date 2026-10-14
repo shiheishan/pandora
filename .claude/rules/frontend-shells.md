@@ -33,6 +33,8 @@ paths:
 - 外来链接不能用两段式路径（public 网关根下有订阅通配）
   - 邀请链接用 `/?invite=CODE`，渲染前就取走
   - 快捷登录链接用 `#/quick-login/<token>`，加载时即消费并抹掉
+  - 邮件登录链接用 `#/mail-login/<token>`（`entry-links.ts` 的 `mailLoginTokenFromHash`），同样加载即消费并抹掉，失败落到登录页「邮件登录」标签并显示原因；带 `?invite=` 打开门户时上报一次邀请访问（`POST v1/invite/visit`，失败忽略）
+  - 登录页读公开的 `v1/signup-config`：`mail_link_login` 为 true 才有「邮件登录」标签；`captcha` 非空时注册与找回第 1 步渲染人机验证（`Captcha.tsx` 按需加载第三方脚本，不写内联脚本），`email_suffixes` 非空时邮箱框提示可用后缀
   - 生成与识别的格式只写在 `entry-links.ts` 一处
 - 快捷登录只收已登录设备在账号安全页生成的链接或令牌（保留规则 1，与设计稿不同）
 - 外观：生效主题的颜色经 CSSOM 写到 `<html>`，不注入 `<style>`
