@@ -13,7 +13,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
 
-// 指标曲线的窗口（分钟）：缺省 60，最长 1440（与旧接口相同；指标保留 48 小时）。
+// 指标曲线的窗口（分钟）：缺省 60，最长 1440（指标保留 48 小时）。
 const (
 	defaultMetricsMinutes = 60
 	maxMetricsMinutes     = 1440

@@ -9,7 +9,7 @@ package service
 //   - 池的用户组限定：poolAdmits（本文件，名单与线路都只经它判）；
 //   - 节点自身：名单按 repo.ServedOnServerCond，线路按 repo.DeliverableNodeCond，再按 preferFresh 分层。
 //
-// 节点池的状态（active / draining / disabled）不影响名单与线路：与旧实现一致，池状态只管「能不能再被绑进套餐版本」，
+// 节点池的状态（active / draining / disabled）不影响名单与线路，池状态只管「能不能再被绑进套餐版本」，
 // 已有绑定照常服务。要停一个池的服务，停用池里的节点或从套餐解绑。
 
 import (

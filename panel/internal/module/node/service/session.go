@@ -54,7 +54,7 @@ var (
 	ErrSessionPeerGone = errors.New("node: 节点已断开")
 )
 
-// SessionBackend 是会话管理要用的数据面：名单与配置（p5-delivery、p5-routing）、上报入账、
+// SessionBackend 是会话管理要用的数据面：名单与配置、上报入账、
 // 续期、会话自己的落库（session_store.go）。*Service 实现它；测试换成假的。
 type SessionBackend interface {
 	Rosters(ctx context.Context, serverIDs []uuid.UUID) (map[uuid.UUID][]NodeRoster, error)

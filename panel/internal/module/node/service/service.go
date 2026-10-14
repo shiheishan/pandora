@@ -36,32 +36,32 @@ type Service struct {
 	rdb   *redis.Client
 	now   func() time.Time
 
-	// p5-pools 注入（pools 主题文件里定义接口与 Use* 方法）
+	// 目录与用户组的读写面（pools_ports.go 的 UseCatalog、UseUserGroups、UseVersionsInUse）
 	catalog Catalog
 	groups  UserGroups
 	inUse   VersionsInUse
 
-	// 第二波：会话管理（channel.go；p5-session 的 *Sessions 经 UseSessions 注入）
+	// 会话管理（*Sessions 经 channel.go 的 UseSessions 注入）
 	sessions SessionControl
 
-	// 第二波 p5-enroll 注入（identity.go 的 UseEnrollment）：节点 CA 与安装命令的对外地址
+	// 节点 CA 与安装命令的对外地址（identity.go 的 UseEnrollment）
 	enroll enrollState
 
 	// idem 在签安装令牌的事务里以不可重放完成幂等认领（bootstrap.go 的 UseIdempotency）
 	idem IdemCompleter
 
-	// 第二波 p5-traffic 注入（traffic_charger.go 的 UseTrafficCharger）：流量扣量
+	// 流量扣量（traffic_charger.go 的 UseTrafficCharger）
 	charger TrafficCharger
 
 	// keys 给在线设备键做 HMAC（online.go 的 UseKeys）
 	keys DeviceKeyHasher
 
-	// 第二波 p5-delivery 注入（delivery.go）：名单要的订阅、账号、套餐版本读取面
+	// 名单要的订阅、账号、套餐版本读取面（delivery.go 的 UseDelivery）
 	subs     ServingSubscriptions
 	users    ServingUsers
 	versions PlanVersions
 
-	// p5-devices 注入（devices.go 的 UseDevices）：设备限制策略、按 id 读订阅、邮箱、套餐名
+	// 设备限制策略、按 id 读订阅、邮箱、套餐名（devices.go 的 UseDevices）
 	devSettings DeviceSettings
 	devSubs     DeviceSubscriptions
 	devUsers    DeviceUsers

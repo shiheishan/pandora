@@ -2,7 +2,7 @@ package service
 
 // node 要的订阅扣量面与注入方法。
 //
-// 装配（主 Agent）：service.go 的 Service 加字段 `charger TrafficCharger`，app 里 `nodeSvc.UseTrafficCharger(subSvc)`。
+// 装配：app 里 `nodeSvc.UseTrafficCharger(subSvc)`，存进 Service 的 charger 字段。
 
 import (
 	"context"

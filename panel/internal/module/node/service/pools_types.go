@@ -12,7 +12,7 @@ const (
 	PoolDisabled = "disabled"
 )
 
-// 审计动作名与资源类型（沿用旧代码）。
+// 审计动作名与资源类型。
 const (
 	ActionPoolCreated           = "node_pool.created"
 	ActionPoolUpdated           = "node_pool.updated"

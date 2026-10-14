@@ -1,10 +1,9 @@
 package protocol
 
-// KernelConfig 与旧实现逐项对照。
+// KernelConfig 与固定的期望输出逐项对照。
 //
-// panel/internal/module/subscription/render/testdata/nodes.json 是旧 KernelConfig 的输出
-// （panel/tools/subgolden 生成）：输入是下面这组后台表单形状（与 tools/subgolden/fixtures.go
-// 逐字一致），经 json.Unmarshal 后交给旧的翻译。这里用同一组输入调新包，结果必须逐项相同——
+// panel/internal/module/subscription/render/testdata/nodes.json 记着下面这组后台表单形状的输入
+// 经 json.Unmarshal、翻译成内核字段后应得的结果。这里用同一组输入调 KernelConfig，结果必须逐项相同——
 // 下发给节点的配置文档与订阅渲染都经它，翻译差一个字段就是节点或客户端静默连不上。
 //
 // 全部是虚构值：域名用 example.com，REALITY 密钥对是测试专用的一对。

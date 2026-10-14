@@ -127,7 +127,7 @@ func TestFallbackOnlyWhereNodeAgentHonoursIt(t *testing.T) {
 }
 
 func TestFallbackIsDeliveredVerbatim(t *testing.T) {
-	// 回落只下发给节点、不进订阅：翻译成内核字段时原样保留 host:port（节点配置文档由第二波组装）
+	// 回落只下发给节点、不进订阅：翻译成内核字段时原样保留 host:port（节点配置文档由 node/service 的 config_docs.go 组装）
 	cases := []struct{ nodeType, raw, want string }{
 		{"trojan", `{"tls":1,"network":"tcp",` + policyCert + `,"fallback":"www.example.com:80"}`, "www.example.com:80"},
 		// VLESS 同样原样下发给节点（pdnd vless.go 用 parseProbeFallback 读）

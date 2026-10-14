@@ -25,7 +25,7 @@ import (
 // shadowtls 与上述的 TCP 传输）走 TCP。SOCKS 的 UDP ASSOCIATE 用临时端口，不占入站端口。
 //
 // raw 是库里存的 protocol_config（xboard 形状；network、transport 两边同名）。只认字符串
-// 值：数字、布尔落不进任何 UDP 分支。去首尾空白只去空格（沿用旧生成列 btrim 的口径）。
+// 值：数字、布尔落不进任何 UDP 分支。去首尾空白只去空格（同 SQL btrim 的缺省口径）。
 func listenL4(nodeType string, raw json.RawMessage) string {
 	var cfg map[string]any
 	_ = json.Unmarshal(raw, &cfg) // 不是对象就当没有字段

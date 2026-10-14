@@ -322,7 +322,7 @@ func (h *Handler) deleteNode(c *gin.Context) {
 	httpx.OK(c, nodeDeletedResponse{Deleted: true})
 }
 
-// publishNodeConfig 是「强制重新下发」：旧的分层配置已删，只接受 scope=node 与空对象 payload。
+// publishNodeConfig 是「强制重新下发」：只接受 scope=node 与空对象 payload。
 func (h *Handler) publishNodeConfig(c *gin.Context) {
 	var req nodePublishRequest
 	if err := httpx.BindJSON(c, &req); err != nil {

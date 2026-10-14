@@ -1,10 +1,9 @@
 package service
 
-// 节点通道（第二波）各块之间的类型与调用口，由主 Agent 定，签名不改；要改写进交回说明。
-//
-// 分工：p5-enroll（CA、身份、接入令牌、gRPC 服务端）、p5-session（会话管理：对齐、下发、回执、心跳、续期）、
-// p5-delivery（名单与订阅线路）、p5-routing（出站、分流、路由组与节点配置文档）、p5-traffic（流量入账、在线、指标）。
-// 会话层只经下面这些方法拿名单与配置、交上报；各方法在各块自己的文件里实现（骨架先放 panic 占位）。
+// 节点通道各部分之间的类型与调用口：CA、身份与接入令牌（identity*.go、enroll.go）、会话管理（session*.go：对齐、下发、回执、
+// 心跳、续期）、名单与订阅线路（delivery.go、roster.go、node_source.go）、出站分流与节点配置文档（routing*.go、config_docs.go）、
+// 流量入账与在线、指标（traffic_ingest.go、online.go、metrics.go）。
+// 会话层只经下面这些方法拿名单与配置、交上报；各方法在各自主题的文件里实现。
 
 import (
 	"net/netip"

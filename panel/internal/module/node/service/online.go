@@ -34,7 +34,7 @@ func deviceKey(a netip.Addr) string {
 }
 
 // IngestOnline 记一批在线来源：只收这台服务器上的节点、名单内（m）的正 uid、有效地址；其余丢弃。
-// 只存设备键的 SHA-256（与旧库相同），不开事务：在线是遥测，每条语句各自提交，下一分钟就补上。
+// 只存设备键的 HMAC 摘要（DeviceKeyHasher），不开事务：在线是遥测，每条语句各自提交，下一分钟就补上。
 func (s *Service) IngestOnline(ctx context.Context, serverID uuid.UUID, entries []OnlineEntry, m RosterMembership) error {
 	if len(entries) == 0 {
 		return nil

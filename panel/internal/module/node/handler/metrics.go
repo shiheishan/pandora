@@ -8,7 +8,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
 )
 
-// defaultMetricsMinutes 是 minutes 缺省或不是整数时取的窗口（与旧接口相同，不报错）。
+// defaultMetricsMinutes 是 minutes 缺省或不是整数时取的窗口（不报错）。
 const defaultMetricsMinutes = 60
 
 // nodeMetrics 返回节点所在服务器最近 minutes 分钟的指标曲线（GET /v1/nodes/:id/metrics?minutes=）。

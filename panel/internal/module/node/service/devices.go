@@ -63,7 +63,7 @@ func (s *Service) UseDevices(st DeviceSettings, subs DeviceSubscriptions, users 
 	s.devSettings, s.devSubs, s.devUsers, s.devPlans = st, subs, users, plans
 }
 
-// deviceOverviewLimit 是在线设备总览最多列出的订阅数（与旧接口相同）。
+// deviceOverviewLimit 是在线设备总览最多列出的订阅数。
 const deviceOverviewLimit = 200
 
 // StrictSetKey 是 strict 下当前的超限订阅集合（排好序的 uuid 用逗号连起来，空集是空串），只由
@@ -125,7 +125,7 @@ func effectiveDeviceLimit(subLimit *int, v catalogsvc.Version) int {
 }
 
 // devicePolicy 读判定策略；没装配或读失败按缺省（loose、宽容 1、窗口 5 分钟）并记 warn：
-// 配置读不出来不该把所有人当成超限踢下线（与旧实现一致）。
+// 配置读不出来不该把所有人当成超限踢下线。
 func (s *Service) devicePolicy(ctx context.Context) settingssvc.DevicePolicy {
 	if s.devSettings == nil {
 		return settingssvc.DefaultDevicePolicy()
