@@ -30,7 +30,7 @@ Vultr 新加坡，Debian 13 x64（与生产同版），开机时用 Vultr SSH Ke
   - 10-08 节点验收没开内网，5 台公网出流量合计约 4.11TB，流量池只有约 2.64TB，超了约 1.3TB。
 - **估算**：1Gbps 跑 1 小时，每个方向约 450GB。节点过 X Gbps（一半上行、一半下行）跑 H 小时：节点出 ≈ 450·X·H GB，目标机与压测机合计再出 ≈ 450·X·H GB，**全走公网时合计约 900·X·H GB**（10-08 约 4.6 Gbps·小时，实测 4.11TB，与公式吻合）。全走 VPC 时公网只剩 ssh、拉数据、apt、推二进制，几 GB 量级。
 - **跑前报用户**：计划多少 Gbps、多少小时、走不走内网、预计公网出流量多少 GB。
-- **跑中、跑后核对**：各机 `/proc/net/dev` 的 tx，默认路由那块网卡才是公网（`bash .claude/skills/test-machine/scripts/netdev.sh <别名>...`）。开跑前、收尾各记一次，差值写进报告。
+- **跑中、跑后核对**：各机 `/proc/net/dev` 的 tx，默认路由那块网卡才是公网（`bash .agents/skills/test-machine/scripts/netdev.sh <别名>...`）。开跑前、收尾各记一次，差值写进报告。
 
 ## 用 API 开机、挂 VPC、删机（用户 10-08 授权 agent 开机）
 
@@ -57,7 +57,7 @@ Vultr 新加坡，Debian 13 x64（与生产同版），开机时用 Vultr SSH Ke
 ## 开通
 
 ```bash
-bash .claude/skills/test-machine/scripts/register.sh [--vpc <内网IP>] [--rental <到期日> --site "<商家 / 机房>"] <别名> <IP> <套餐> "<用途一句话>"
+bash .agents/skills/test-machine/scripts/register.sh [--vpc <内网IP>] [--rental <到期日> --site "<商家 / 机房>"] <别名> <IP> <套餐> "<用途一句话>"
 ```
 
 - 必须 bash 跑；ssh 经 1Password agent，签名失败见根 CLAUDE.md「环境与工具坑」。出错时读 `register.sh` 手工补救。

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 驱动面板前端（假后端）：起 vite、登录后台和门户、逐页截图、读页面文字。
-// 用法：node .claude/skills/run-pandora/driver.mjs [shots|text <admin|portal> <hash>] [--out DIR]
+// 用法：node .agents/skills/run-pandora/driver.mjs [shots|text <admin|portal> <hash>] [--out DIR]
 //   shots              起两个入口，登录，各截几页（缺省）
 //   text <app> <hash>  登录后打开 #hash，打印页面可见文字
 // 已有 5181/5182 在跑就复用，不会关别人起的进程。
