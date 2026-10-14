@@ -21,7 +21,7 @@ func adminCtx(t *testing.T, e *env, ctx context.Context) context.Context {
 }
 
 func TestPGListUsers(t *testing.T) {
-	e, ctx := newEnv(t)
+	e, ctx, _ := adminEnv(t)
 	actx := adminCtx(t, e, ctx)
 	emails := []string{uniqEmail(t, "a"), uniqEmail(t, "b"), uniqEmail(t, "c")}
 	var suspended uuid.UUID
@@ -80,7 +80,7 @@ func TestPGListUsers(t *testing.T) {
 }
 
 func TestPGUserDetail(t *testing.T) {
-	e, ctx := newEnv(t)
+	e, ctx, _ := adminEnv(t)
 	actx := adminCtx(t, e, ctx)
 	_, err := e.svc.UserDetail(actx, uuid.New())
 	if codeOf(err) != errs.NotFound {
@@ -225,14 +225,14 @@ func TestPGAdminResetPassword(t *testing.T) {
 }
 
 func TestPGGroups(t *testing.T) {
-	e, ctx := newEnv(t)
+	e, ctx, _ := adminEnv(t)
 	actx := adminCtx(t, e, ctx)
 
 	gid, err := e.svc.CreateGroup(actx, "", "VIP Users", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	groups, err := e.svc.ListGroups(actx)
+	groups, err := e.svc.AdminListGroups(actx)
 	if err != nil {
 		t.Fatal(err)
 	}
