@@ -28,28 +28,30 @@ import (
 // fakeSvc 只实现用例用到的方法；其余走嵌入的 nil 接口，被调到会 panic。
 type fakeSvc struct {
 	Service
-	methods     []service.PaymentMethod
-	webhookCode string
-	webhookIn   provider.Inbound
-	webhookAck  provider.AckOutput
-	webhookErr  error
-	providers   []service.ProviderView
-	createIn    service.CreateProviderInput
-	createRes   service.ProviderWriteResult
-	createErr   error
-	updateErr   error
-	lateStatus  string
-	lateLimit   int
-	lateOffset  int
-	lateList    service.LateList
-	lateListErr error
-	applyCaseID uuid.UUID
-	applyReason string
-	applyRes    uuid.UUID
-	applyErr    error
+	methods       []service.PaymentMethod
+	methodsAmount *decimal.Decimal
+	webhookCode   string
+	webhookIn     provider.Inbound
+	webhookAck    provider.AckOutput
+	webhookErr    error
+	providers     []service.ProviderView
+	createIn      service.CreateProviderInput
+	createRes     service.ProviderWriteResult
+	createErr     error
+	updateErr     error
+	lateStatus    string
+	lateLimit     int
+	lateOffset    int
+	lateList      service.LateList
+	lateListErr   error
+	applyCaseID   uuid.UUID
+	applyReason   string
+	applyRes      uuid.UUID
+	applyErr      error
 }
 
-func (f *fakeSvc) PaymentMethods(context.Context) ([]service.PaymentMethod, error) {
+func (f *fakeSvc) PaymentMethods(_ context.Context, amount *decimal.Decimal) ([]service.PaymentMethod, error) {
+	f.methodsAmount = amount
 	return f.methods, nil
 }
 

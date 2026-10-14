@@ -2,24 +2,47 @@ package handler
 
 import (
 	"io"
+	"strconv"
 
 	"github.com/aegispanel/aegis/internal/module/payment/provider"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
+	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/aegispanel/aegis/internal/pkg/ratelimit"
 	"github.com/gin-gonic/gin"
+	"github.com/shopspring/decimal"
 )
 
 // paymentMethods 列出门户可用的支付方式。
 func (h *Handler) paymentMethods(c *gin.Context) {
-	rows, err := h.svc.PaymentMethods(c.Request.Context())
+	var amountPtr *decimal.Decimal
+	q := c.Query("amount")
+	if q != "" {
+		n, err := strconv.ParseInt(q, 10, 64)
+		if err != nil || n < 0 {
+			httpx.Fail(c, errs.Invalid(map[string]string{
+				"amount": "金额需为非负整数（分）",
+			}))
+			return
+		}
+		if n > 0 {
+			d := money.FromCents(n)
+			amountPtr = &d
+		}
+	}
+	rows, err := h.svc.PaymentMethods(c.Request.Context(), amountPtr)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
 	}
 	methods := make([]paymentMethodResponse, 0, len(rows))
 	for _, row := range rows {
-		methods = append(methods, paymentMethodFrom(row))
+		m, err := paymentMethodFrom(row)
+		if err != nil {
+			httpx.Fail(c, err)
+			return
+		}
+		methods = append(methods, m)
 	}
 	httpx.OK(c, paymentMethodsResponse{Methods: methods})
 }
