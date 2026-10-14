@@ -49,18 +49,18 @@ const rows: Row[] = [
   { at: 'admin/tasks.ts', path: 'v1/dashboard/tasks', schema: tasksSchema },
 
   // ---- 仪表盘 ----
-  { at: 'dash/api.ts', seed: '定时扫描派发的支付通知', path: 'v1/dashboard/backlog/notifications', schema: backlogSchema },
+  { at: 'dash/api.ts', seed: '开通事务写入、worker 派发的支付通知', path: 'v1/dashboard/backlog/notifications', schema: backlogSchema },
   { at: 'dash/api.ts', path: 'v1/overview', schema: overviewSchema },
   { at: 'dash/api.ts', path: 'v1/revenue/timeseries', query: { currency: 'CNY', days: 30 }, schema: revenueSchema },
-  { at: 'dash/api.ts', seed: 'UniProxy /push（节点上报流量）', path: 'v1/dashboard/traffic/nodes', query: { range: '24h', limit: 5 }, schema: nodeTrafficSchema },
-  { at: 'dash/api.ts', seed: 'UniProxy /push（节点上报流量）', path: 'v1/dashboard/traffic/users', query: { range: '24h', limit: 5 }, schema: userTrafficSchema },
+  { at: 'dash/api.ts', seed: 'nodesim 经会话上报流量', path: 'v1/dashboard/traffic/nodes', query: { range: '24h', limit: 5 }, schema: nodeTrafficSchema },
+  { at: 'dash/api.ts', seed: 'nodesim 经会话上报流量', path: 'v1/dashboard/traffic/users', query: { range: '24h', limit: 5 }, schema: userTrafficSchema },
   { at: 'dash/api.ts', path: 'v1/system/status', schema: systemStatusSchema },
   { at: 'dash/api.ts', path: 'v1/stats/timeseries', query: { days: 14 }, schema: activitySchema },
 
   // ---- 工单 ----
   { at: 'tickets/api.ts', seed: '门户 POST support/tickets', path: 'v1/tickets', query: { status: 'open,pending_user,pending_agent,escalated', limit: 25, offset: 0 }, schema: queueSchema },
   { at: 'tickets/api.ts', path: `v1/tickets/${s.ticket_id}`, schema: ticketDetailSchema },
-  { at: 'tickets/api.ts', seed: '种子管理员（aegis-adminctl）', path: 'v1/tickets/assignees', schema: assigneesSchema },
+  { at: 'tickets/api.ts', seed: '种子管理员（pandora admin create）', path: 'v1/tickets/assignees', schema: assigneesSchema },
   { at: 'tickets/api.ts', seed: '后台 POST ticket-macros', path: 'v1/ticket-macros', schema: macrosSchema },
 
   // ---- 用户 ----
@@ -70,7 +70,7 @@ const rows: Row[] = [
   { at: 'users/api.ts', path: `v1/users/${s.portal.user_id}/profile`, schema: profileSchema },
   { at: 'users/api.ts', path: 'v1/users', query: { q: s.portal.email, limit: 100, offset: 0 }, schema: usersSchema },
   { at: 'users/api.ts', path: 'v1/plans', schema: planOptionsSchema },
-  { at: 'users/api.ts', seed: '演示渠道付款开出订阅；UniProxy /alive 上报在线 IP', path: 'v1/devices', schema: devicesSchema },
+  { at: 'users/api.ts', seed: '易支付回调开出订阅；nodesim 上报在线 IP', path: 'v1/devices', schema: devicesSchema },
   { at: 'users/api.ts', seed: '后台 POST subscriptions/{id}/traffic-reset', path: 'v1/traffic-resets', query: { limit: 25, offset: 0 }, schema: resetLogsSchema },
   { at: 'users/api.ts', path: 'v1/traffic-resets/stats', schema: resetStatsSchema },
   { at: 'users/api.ts', seed: '后台 POST subscriptions/{id}/traffic-reset', path: `v1/users/${s.portal.user_id}/traffic-resets`, schema: resetLogsSchema },
@@ -85,21 +85,21 @@ const rows: Row[] = [
   { at: 'marketing/queries.ts', seed: '后台 POST gift-cards/{id}/codes', path: 'v1/gift-cards/codes', query: { batch_id: batchId, limit: 50, offset: 0 }, schema: codesResponse },
   { at: 'marketing/queries.ts', seed: '门户 POST gift-cards/redeem', path: 'v1/gift-cards/usages', query: { template_id: s.gift_card_id }, schema: usagesResponse },
   { at: 'marketing/queries.ts', path: 'v1/commission/overview', schema: commissionOverviewSchema },
-  { at: 'marketing/queries.ts', seed: 'SQL 夹具：佣金只由每小时的 SettleMatured 解冻，且同 IP 被标待复核、无接口解除', path: 'v1/withdrawals', schema: withdrawalsResponse },
+  { at: 'marketing/queries.ts', seed: 'SQL 夹具：佣金只由 worker 每小时的 commission:settle 在冻结期满后解冻，冒烟等不了', path: 'v1/withdrawals', schema: withdrawalsResponse },
 
   // ---- 节点 ----
-  { at: 'nodes/queries.ts', seed: '接入 + POST activate', path: 'v1/nodes', query: { limit: 1000, include_retired: '1' }, schema: nodesResponse },
+  { at: 'nodes/queries.ts', seed: 'nodesim 接入 + POST activate', path: 'v1/nodes', query: { limit: 1000, include_retired: '1' }, schema: nodesResponse },
   // 节点超过一页时 NodesTab 走服务端筛选与搜索（useNodePage）；抽屉与协议表单按 id 单取（useNodeDetail）
-  { at: 'nodes/queries.ts', seed: '接入 + POST activate', path: 'v1/nodes', query: { limit: 1000, offset: 0, state: 'all', q: 'smoke' }, schema: nodesResponse },
-  { at: 'nodes/queries.ts', seed: '接入 + POST activate', path: 'v1/nodes', query: { id: s.node_id, include_retired: '1' }, schema: nodeDetailResponse },
+  { at: 'nodes/queries.ts', seed: 'nodesim 接入 + POST activate', path: 'v1/nodes', query: { limit: 1000, offset: 0, state: 'all', q: 'smoke' }, schema: nodesResponse },
+  { at: 'nodes/queries.ts', seed: 'nodesim 接入 + POST activate', path: 'v1/nodes', query: { id: s.node_id, include_retired: '1' }, schema: nodeDetailResponse },
   { at: 'nodes/queries.ts', path: 'v1/node-protocol-schemas', schema: protocolSchemasResponse },
   { at: 'nodes/queries.ts', seed: '后台 POST servers', path: 'v1/servers', schema: serversResponse },
   // useServer 目前没有调用处（死 hook），接口仍验一遍
   { at: 'nodes/queries.ts', path: `v1/servers/${s.server_id}`, schema: serverSchema },
-  { at: 'nodes/queries.ts', seed: '接入 + POST activate', path: `v1/servers/${s.server_id}/nodes`, schema: serverNodesResponse },
+  { at: 'nodes/queries.ts', seed: 'nodesim 接入 + POST activate', path: `v1/servers/${s.server_id}/nodes`, schema: serverNodesResponse },
   { at: 'nodes/queries.ts', seed: '后台 POST node-pools', path: 'v1/node-pools', schema: poolsResponse },
   { at: 'nodes/queries.ts', path: `v1/nodes/${s.node_id}/identity`, schema: identitySchema },
-  { at: 'nodes/queries.ts', seed: 'UniProxy /status', path: `v1/nodes/${s.node_id}/metrics`, query: { minutes: 1440 }, schema: metricsSchema },
+  { at: 'nodes/queries.ts', seed: 'nodesim 心跳', path: `v1/nodes/${s.node_id}/metrics`, query: { minutes: 1440 }, schema: metricsSchema },
   { at: 'nodes/queries.ts', seed: '后台 PUT nodes/{id}/routing', list: 'routes', path: `v1/nodes/${s.node_id}/routing`, schema: nodeRoutingSchema },
   { at: 'nodes/queries.ts', seed: '后台 PUT nodes/routing（reauth + 幂等）', list: 'routes', path: 'v1/nodes/routing', schema: globalRoutingSchema },
 
@@ -128,7 +128,7 @@ const rows: Row[] = [
     at: 'system/queries.ts', seed: '门户建工单触发 ticket.created，扫描器投到本机接收端',
     path: `v1/plugin-hooks/${s.hook_code}/deliveries`,
     schema: deliveriesResponse,
-    // 投递行随工单同事务入队（queued），扫描器 20 秒后第一次、之后每 60 秒发出；等到有一条 sent
+    // 投递行随工单同事务入队（queued），worker 的 plugin:dispatch 提交后入队、另每分钟巡检；等到有一条 sent
     waitFor: {
       ok: (d: unknown) => ((d as { deliveries?: Array<{ status?: string }> | null }).deliveries ?? []).some((x) => x.status === 'sent'),
       timeoutMs: 3 * 60_000,
@@ -145,11 +145,11 @@ const rows: Row[] = [
   // ---- 财务 ----
   { at: 'billing/api.ts', seed: '门户下单三张', path: 'v1/orders', query: { limit: 25, offset: 0 }, schema: ordersSchema },
   { at: 'billing/api.ts', path: `v1/orders/${s.order_id}`, schema: orderResponseSchema },
-  { at: 'billing/api.ts', seed: '演示渠道回调两笔', path: `v1/orders/${s.order_id}/payments`, schema: paymentHistorySchema },
+  { at: 'billing/api.ts', seed: '易支付回调两笔', path: `v1/orders/${s.order_id}/payments`, schema: paymentHistorySchema },
   { at: 'billing/api.ts', path: 'v1/users', query: { q: 'smoke', limit: 8, offset: 0 }, schema: usersSchema },
-  { at: 'billing/api.ts', seed: '对已付订单再送一笔演示回调（excess_capture）', path: 'v1/late-payments', query: { limit: 25, offset: 0 }, schema: latePaymentsSchema },
+  { at: 'billing/api.ts', seed: '对已付订单再送一笔易支付回调（挂账）', path: 'v1/late-payments', query: { limit: 25, offset: 0 }, schema: latePaymentsSchema },
   // 每个渠道带最低付款额 min_amount（分，非负整数；易支付没配时是 100），购买模型统一 2.6；页面 schema 已收这一项
-  { at: 'billing/api.ts', seed: '迁移种子 offline + SQL 夹具 demo', path: 'v1/payment-providers', schema: providersSchema },
+  { at: 'billing/api.ts', seed: '迁移种子 offline + 后台建的 smokepay', path: 'v1/payment-providers', schema: providersSchema },
   { at: 'billing/api.ts', seed: '后台 POST revenue/adjustments', path: 'v1/revenue/adjustments', schema: adjustmentsSchema },
 
   // ---- 非 JSON：两个 CSV 导出与事件流，只验状态与内容类型 ----

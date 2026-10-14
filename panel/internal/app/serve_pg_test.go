@@ -11,7 +11,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// 后台不分权限，登录检查是唯一的门：后台引擎上除登录、续期、登出和探活外，每条路由匿名访问都必须 401。
+// 后台不分权限，登录检查是唯一的门：后台引擎上除登录、续期、登出、探活和前端静态页面外，每条路由匿名访问都必须 401。
 // 新模块漏挂 RequireAuth 时这里会红。要连库（写开关闸门读库），只在 CI 跑。
 func TestAdminRoutesRequireLogin(t *testing.T) {
 	d := testkit.DB(t)
@@ -31,6 +31,11 @@ func TestAdminRoutesRequireLogin(t *testing.T) {
 		"POST /v1/auth/logout":  true,
 		"GET /healthz":          true,
 		"GET /readyz":           true,
+		// 前端静态页面（pkg/webapp）匿名可取，数据经下面带登录检查的 /v1 接口拉
+		"GET /":                  true,
+		"HEAD /":                 true,
+		"GET /assets/*filepath":  true,
+		"HEAD /assets/*filepath": true,
 	}
 	checked := 0
 	for _, ri := range adminEng.Routes() {
