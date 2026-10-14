@@ -43,7 +43,7 @@ export interface AnonContext {
   send(status: number, body?: unknown): void
   /** 非 JSON 响应，带 Cache-Control: no-store */
   sendRaw(status: number, raw: MockRaw): void
-  /** 错误信封 { error: { code, message, fields?, request_id } }，形状与 platform/httpx 一致 */
+  /** 错误信封 { error: { code, message, fields?, request_id } }，形状与 pkg/httpx 一致 */
   fail(status: number, code: string, message: string, fields?: Record<string, string>): void
 }
 

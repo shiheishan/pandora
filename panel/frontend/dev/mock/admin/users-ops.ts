@@ -172,7 +172,7 @@ function seedLogs(users: readonly User[]): ResetLog[] {
 // ---------------------------------------------------------------------------
 // 路由
 // ---------------------------------------------------------------------------
-// 批量生成任务（adminops.UserGenerationJob）：进度按时间往前走，结果 24 小时后清除
+// 批量生成任务（identity/model UserGenerationJob）：进度按时间往前走，结果 24 小时后清除
 interface GenerationJob {
   id: string
   actor_id: string
@@ -327,8 +327,8 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
       ctx.sendRaw(200, { contentType: 'text/csv; charset=utf-8', text, headers: { 'Content-Disposition': 'attachment; filename="users.csv"' } })
     },
 
-    // 批量生成：reauth（R9）+ 幂等 user_bulk_generate。是后台任务（adminops
-    // SubmitGenerateUsers）：回 202 与任务；账号在这里一次建好，进度按时间往前走（每 60ms 一个）
+    // 批量生成：reauth（R9）+ 幂等 user_bulk_generate。是后台任务（identity/service
+    // SubmitGeneration）：回 202 与任务；账号在这里一次建好，进度按时间往前走（每 60ms 一个）
     'POST /v1/users/bulk/generate': async (ctx) => {
       if (!ctx.requireReauth()) return
       const body = await ctx.body()

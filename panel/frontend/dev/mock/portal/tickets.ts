@@ -6,7 +6,7 @@ import { gate, portalState, scenario, type PortalState } from './fixtures.ts'
 const DAY_MS = 86_400_000
 const ZERO_TIME = '0001-01-01T00:00:00Z'
 
-// domain/support.Categories 的固定顺序
+// support/service Categories 的固定顺序
 const CATEGORIES: ReadonlyArray<[string, string]> = [
   ['general', '一般咨询'],
   ['technical', '连接与技术'],

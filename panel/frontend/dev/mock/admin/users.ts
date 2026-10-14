@@ -374,7 +374,7 @@ function passwordProblem(p: string): string | null {
   return null
 }
 
-/** 套餐列表的「有效订阅」（plans-store.ts 用）：与 adminops.ListPlans 同口径，status 为 active */
+/** 套餐列表的「有效订阅」（plans-store.ts 用）：与 catalog/service ListPlans 同口径，status 为 active */
 export function activeSubscriptions(planId: string): number {
   return users.reduce((n, u) => n + u.subs.filter((s) => s.plan_id === planId && isLiveSub(s)).length, 0)
 }
