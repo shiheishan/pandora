@@ -54,3 +54,8 @@ paths:
 ## 并发与单进程假设
 - `Sessions` 的纪元轮次、`MinRoundGap`（缺省 1s）合并推送；发送队列满则 `ErrSessionOverflow` 断流重连。心跳合写、PG LISTEN 纪元、多实例分流尚未做：会话状态在进程内，按单 `serve` 实例设计。
 - 建流对齐合批（`service/session_align.go`）：同一时段到达的建流共用一次 `ServerConfigs` + `Rosters`，批串行（同时只有一批读库）、一批一对序号（先配置后名单）；批的 ctx 用 `context.WithoutCancel` 派生，单条流断开不连累同批。`AlignTimeout`（缺省 10s）既是等待者的总时限（到期 `ErrAlignBusy`）也是一批读库的时限；没有并发数参数，不要再加逐流的对齐读。
+
+## 保留期
+- 任务 `retention:node`（`task/task.go`）按 `service/retention.go` 的 `RetentionTables` 逐表分批清：流量上报、指标、在线设备 31 天，小时汇总 400 天，安装令牌 30 天。
+- 安装令牌（`bootstrap_tokens`）只删没用过、且过期或作废满 30 天的（`repo/bootstrap_retention.go`，也排除被身份引用的）；用过的跟身份走，永远不删（`server_identities.enroll_token_id` 以 RESTRICT 引用）。
+- 库里 `bootstrap_tokens_guard`（迁移 00037）对 DELETE 只放行同一类行，30 天写死在函数体里：改保留期要同时改 `BootstrapTokenRetentionDays` 并另写迁移改函数。
