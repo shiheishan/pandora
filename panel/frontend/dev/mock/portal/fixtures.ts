@@ -336,7 +336,7 @@ export function addInterval(from: number, p: Pick<CatalogPrice, 'billing_interva
 }
 
 export const isLiveSub = (s: Pick<SubFixture, 'status'>) => s.status === 'active'
-/** 过期 30 天内、窗口没关：还能原地续费或换套餐（billing.subscriptionAcceptsPaidChange，w5expiry） */
+/** 过期 30 天内、窗口没关：还能原地续费或换套餐（对应 subscription/service State.AcceptsChange） */
 export const isRevivable = (s: SubFixture, now = Date.now()) => s.status === 'expired' && !s.renewalClosed && now - new Date(s.current_period_end).getTime() < 30 * DAY_MS
 /** 彻底停用：过期且窗口已关（或过期满 30 天） */
 export const isDead = (s: SubFixture, now = Date.now()) => !isLiveSub(s) && !isRevivable(s, now)

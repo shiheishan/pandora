@@ -389,9 +389,9 @@ export function providerNote(p: Provider, now: Date): { text: string; tone: Tone
 }
 
 // ===========================================================================
-// 支付渠道的新建与编辑（w2pay）：只有易支付能在后台建 / 改；code 与类型建后不可改；
-// 商户号与密钥只写不读，编辑时留空 = 不改。规则照 billing/provider_admin.go 的
-// normalizeProviderSettings，后端仍是最终裁判（字段错误原样标回表单）。
+// 支付渠道的新建与编辑：只有易支付能在后台建 / 改；code 与类型建后不可改；
+// 商户号与密钥只写不读，编辑时留空 = 不改。规则照 payment/service provider_admin.go 的
+// normalizeSettings，后端仍是最终裁判（字段错误原样标回表单）。
 // ===========================================================================
 export const EPAY_METHODS = [
   { value: 'alipay', label: '支付宝' },

@@ -6,7 +6,7 @@ import { useApi } from '../../../shell/runtime'
 
 // ---------------------------------------------------------------------------
 // POST v1/me/checkout/quote（购买模型设计稿 2.2）：金额与默认值一律由服务端算，前端只在
-// with_balance / without_balance 两组数之间切换，不做任何金额运算（旧的 buildQuote 退役）。
+// with_balance / without_balance 两组数之间切换，不做任何金额运算。
 // 字段与 Go 的 billing.QuoteOutput / Quote / purchase.Balance 一一对应，都没有 omitempty：
 // 指针字段（各 id、优惠码、明细、周期）为 null 而不缺席。
 // ---------------------------------------------------------------------------
