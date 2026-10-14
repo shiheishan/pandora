@@ -83,6 +83,20 @@ func TestRebuildCarriesKnownUsers(t *testing.T) {
 	assertStrings(t, "回执", ts.link.usersAcksOf("n1"), "u1-a:ok")
 }
 
+// 重建时名单随入站没装上（入站已就绪）：镜像作废、版本清空，回 resync 让面板重发全量。
+func TestRebuildPreloadFailureResyncs(t *testing.T) {
+	k := newFakeKernel()
+	ts := startedNode(t, k)
+	ts.usersFull("n1", "u1-a", "a", "b")
+	k.failAddUsers = 1
+	ts.config(portConfig(t, "n1", "vless", 20002))
+	n := ts.node(t, "n1")
+	if n.userVersion != "" || len(n.known) != 0 {
+		t.Fatalf("预装失败后应作废镜像：version=%q known=%d", n.userVersion, len(n.known))
+	}
+	assertStrings(t, "回执", ts.link.usersAcksOf("n1"), "u1-a:ok", "u1-a:resync")
+}
+
 // 回滚也失败：节点停、镜像作废并回 resync；之后的全量先存着，入站起来时一起装并回 ok。
 func TestRollbackFailureThenStagedUsers(t *testing.T) {
 	k := newFakeKernel()

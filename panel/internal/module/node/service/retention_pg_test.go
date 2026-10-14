@@ -222,6 +222,7 @@ func TestPurgeBootstrapTokensPG(t *testing.T) {
 	oldUnused := seedToken("40 days", false, false)
 	oldVoided := seedToken("40 days", false, true)
 	recentUnused := seedToken("10 days", false, false)
+	almostUnused := seedToken("29 days 12 hours", false, false) // 按库时钟差半天满 30 天
 	oldUsed := seedToken("40 days", true, false)
 	seedIdentity(1, oldUsed)
 	oldReferenced := seedToken("40 days", false, false)
@@ -245,12 +246,21 @@ func TestPurgeBootstrapTokensPG(t *testing.T) {
 		{"过期满 30 天的未用令牌", oldUnused, false},
 		{"作废满 30 天的未用令牌", oldVoided, false},
 		{"没满 30 天的未用令牌", recentUnused, true},
+		{"差半天满 30 天的未用令牌", almostUnused, true},
 		{"用过的令牌", oldUsed, true},
 		{"被身份引用的令牌", oldReferenced, true},
 	} {
 		if got := exists(c.id); got != c.keep {
 			t.Fatalf("%s：还在 = %v，期望 %v", c.what, got, c.keep)
 		}
+	}
+
+	// worker 的时钟比库快两天：截止时刻按库时钟算，不会挑中触发器不放行的行，整批不报错、也不多删。
+	if n, err := e.svc.PurgeRetention(ctx, "bootstrap_tokens", time.Now().Add(48*time.Hour), 1000); err != nil || n != 0 {
+		t.Fatalf("时钟偏快时应不报错、不多删：n=%d err=%v", n, err)
+	}
+	if !exists(almostUnused) {
+		t.Fatal("差半天满 30 天的未用令牌不该因为 worker 时钟偏快被删")
 	}
 
 	// 绕过任务直接删：用过的、没满 30 天的都被触发器拒绝（不是外键）。

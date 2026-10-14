@@ -59,3 +59,5 @@ paths:
 - 任务 `retention:node`（`task/task.go`）按 `service/retention.go` 的 `RetentionTables` 逐表分批清：流量上报、指标、在线设备 31 天，小时汇总 400 天，安装令牌 30 天。
 - 安装令牌（`bootstrap_tokens`）只删没用过、且过期或作废满 30 天的（`repo/bootstrap_retention.go`，也排除被身份引用的）；用过的跟身份走，永远不删（`server_identities.enroll_token_id` 以 RESTRICT 引用）。
 - 库里 `bootstrap_tokens_guard`（迁移 00037）对 DELETE 只放行同一类行，30 天写死在函数体里：改保留期要同时改 `BootstrapTokenRetentionDays` 并另写迁移改函数。
+- 截止时刻在库里按 `now()` 算（`make_interval`），不用进程时钟，免得面板时钟快于库时被 guard 拒掉整批。
+- 删掉之后再拿这枚令牌来登记，拒绝原因从 `token_expired` 变成 `token_unknown`（行已不在）；面板与节点端都不该依赖这两个原因的区别。

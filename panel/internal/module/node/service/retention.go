@@ -27,7 +27,7 @@ func (s *Service) PurgeRetention(ctx context.Context, table string, now time.Tim
 	case "node_traffic_hourly", "node_user_traffic_hourly":
 		before = now.AddDate(0, 0, -RollupRetentionDays)
 	case "bootstrap_tokens":
-		before = now.AddDate(0, 0, -BootstrapTokenRetentionDays)
+		// 截止时刻在库里按 now() 算（与触发器同一个时钟），见 repo.PurgeBootstrapTokens
 	default:
 		return 0, fmt.Errorf("未知的保留期清理表: %s", table)
 	}
@@ -44,7 +44,7 @@ func (s *Service) PurgeRetention(ctx context.Context, table string, now time.Tim
 	case "node_user_traffic_hourly":
 		return s.repo.PurgeUserTrafficHourly(ctx, before, batch)
 	case "bootstrap_tokens":
-		return s.repo.PurgeBootstrapTokens(ctx, before, batch)
+		return s.repo.PurgeBootstrapTokens(ctx, BootstrapTokenRetentionDays, batch)
 	default:
 		return 0, fmt.Errorf("未知的保留期清理表: %s", table)
 	}
