@@ -219,6 +219,10 @@ async function waitSim(desc: string, ok: (s: SimSnapshot) => boolean, timeoutMs:
 step('管理员登录')
 const admin = str(await call(ADM, '/v1/auth/login', { body: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD } }), 'access_token')
 
+// 冒烟按人民币站点走：礼品卡余额按站点币种入账（缺省 USD），不设就抵扣不了下面的 CNY 流量包。
+// 站点币种没有后台入口（旧栈同样只能改库），用 SQL 夹具设
+sqlFixture('站点币种 CNY', `INSERT INTO settings (key, value) VALUES ('site.currency', '"CNY"'::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();`)
+
 // ============================================================================
 //  池与套餐草稿先行。两条规则互相咬合：上线接口发现「所在池没绑任何套餐」会带 warnings，
 //  而发布版本要求绑定池里已有可服务节点——所以先用向导建草稿版本并绑池（草稿绑定就算绑了），
