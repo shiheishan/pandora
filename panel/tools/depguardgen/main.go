@@ -186,9 +186,52 @@ linters:
               desc: 新栈用 gin
             - pkg: github.com/jackc/pgx/v5/pgxpool
               desc: 新栈经 GORM 访问数据库
+            - pkg: log$
+              desc: 日志用 zap（internal/pkg/log）
+            - pkg: log/slog
+              desc: 日志用 zap（internal/pkg/log）
+        # 只有用 database/sql 打开连接的地方（goose 迁移、测试夹具）可以碰 database/sql；测试照旧可用
+        stack-no-database-sql:
+          files:
+            - "**/internal/pkg/**"
+            - "**/internal/app/**"
+            - "**/internal/module/**"
+            - "**/cmd/pandora/**"
+            - "!$test"
+            - "!**/internal/app/migrate.go"
+            - "!**/internal/pkg/testkit/**"
+          deny:
+            - pkg: database/sql
+              desc: 经 GORM 访问数据库（internal/pkg/db），取不到行看 RowsAffected 或 gorm.ErrRecordNotFound
+        # pgx 只在 internal/pkg/db（约束违例翻译）与用 pgx 驱动打开 database/sql 的地方出现；测试同样适用
+        stack-no-pgx:
+          files:
+            - "**/internal/pkg/**"
+            - "**/internal/app/**"
+            - "**/internal/module/**"
+            - "**/cmd/pandora/**"
+            - "**/db/migrations/**"
+            - "!**/internal/pkg/db/**"
+            - "!**/internal/pkg/testkit/**"
+            - "!**/internal/app/migrate.go"
+            - "!**/db/migrations/migrations_test.go"
+          deny:
+            - pkg: github.com/jackc/pgx
+              desc: 约束违例经 db.AsViolation / db.ConstraintErrors 翻译，可重试错误经 db.IsRetryable 判断
 {{- range .Modules}}
 {{- $m := .Name}}
 {{- if .Others}}
+        # handler、task、grpc 经本模块 service 读写，不直接用 repo，也不把 model 直接序列化出去
+        module-{{$m}}-entry:
+          files:
+            - "**/internal/module/{{$m}}/handler/**"
+            - "**/internal/module/{{$m}}/task/**"
+            - "**/internal/module/{{$m}}/grpc/**"
+          deny:
+            - pkg: {{$.Module}}/internal/module/{{$m}}/repo
+              desc: 经本模块 service 读写
+            - pkg: {{$.Module}}/internal/module/{{$m}}/model
+              desc: 对外用 service 的类型与 handler 的 DTO，不直接用 model
         module-{{$m}}-boundary:
           files:
             - "**/internal/module/{{$m}}/**"
@@ -203,6 +246,10 @@ linters:
               desc: 模块之间只调 service
             - pkg: {{$.Module}}/internal/module/{{.}}/task
               desc: 模块之间只调 service
+            - pkg: {{$.Module}}/internal/module/{{.}}/grpc
+              desc: 模块之间只调 service
+            - pkg: {{$.Module}}/internal/module/{{.}}/provider
+              desc: 模块之间只调 service
 {{- end}}
         # 测试可以用别的模块的 repo 装出真的 service（和 app 装配一样），但不碰它的 model、handler、task
         module-{{$m}}-boundary-test:
@@ -215,6 +262,10 @@ linters:
             - pkg: {{$.Module}}/internal/module/{{.}}/handler
               desc: 模块之间只调 service
             - pkg: {{$.Module}}/internal/module/{{.}}/task
+              desc: 模块之间只调 service
+            - pkg: {{$.Module}}/internal/module/{{.}}/grpc
+              desc: 模块之间只调 service
+            - pkg: {{$.Module}}/internal/module/{{.}}/provider
               desc: 模块之间只调 service
 {{- end}}
 {{- end}}
