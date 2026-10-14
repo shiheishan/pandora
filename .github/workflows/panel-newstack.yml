@@ -1,58 +1,39 @@
 name: Panel new stack
 
-# 换栈期间新栈（internal/pkg、internal/app、internal/module、cmd/pandora、db/migrations）
-# 的门禁：lint（含 depguard 分层）、生成的 lint 配置不漂移、真库与真 Redis 上的测试。
-# 旧代码仍由 panel-pg18.yml 管，P7 删旧时两边合并。
+# 面板的门禁：lint（含 depguard 分层）、生成的 lint 配置不漂移、真库与真 Redis 上的 go test，
+# 以及新二进制上的 e2e 脚本、节点通道 e2e。
 
 on:
   workflow_dispatch:
   push:
     paths:
-      - "panel/internal/pkg/**"
-      - "panel/internal/app/**"
-      - "panel/internal/module/**"
-      - "panel/cmd/pandora/**"
-      - "panel/db/**"
-      - "panel/tools/depguardgen/**"
-      - "panel/.golangci.yml"
-      - "panel/go.mod"
-      - "panel/go.sum"
+      # 面板 Go 代码、迁移、工具、内嵌前端产物与 e2e 脚本；前端源码归 panel-smoke，部署脚本归 panel-deploy
+      - "panel/**"
+      - "!panel/frontend/**"
+      - "!panel/deploy/**"
+      - "!panel/dev/**"
+      - "!panel/**/*.md"
       - "nodeapi/**"
       - ".github/workflows/panel-newstack.yml"
-      - "panel/tests/auth_e2e.sh"
-      - "panel/tests/password_reset_e2e.sh"
-      - "panel/tests/portal_staff_e2e.sh"
-      - "panel/tests/node_smoke_e2e.sh"
-      - "panel/tests/expiry_e2e.sh"
       - "pdnd/panel/**"
       - "pdnd/release/nodesim/**"
       # node_kick_e2e 跑真 pdnd：删人断线走 node 的名单 diff 与 NativeCore（kernel）的按用户踢线
-      - "panel/tests/node_kick_e2e.sh"
       - "pdnd/core/**"
       - "pdnd/node/**"
       - "pdnd/kernel/**"
   pull_request:
     paths:
-      - "panel/internal/pkg/**"
-      - "panel/internal/app/**"
-      - "panel/internal/module/**"
-      - "panel/cmd/pandora/**"
-      - "panel/db/**"
-      - "panel/tools/depguardgen/**"
-      - "panel/.golangci.yml"
-      - "panel/go.mod"
-      - "panel/go.sum"
+      # 面板 Go 代码、迁移、工具、内嵌前端产物与 e2e 脚本；前端源码归 panel-smoke，部署脚本归 panel-deploy
+      - "panel/**"
+      - "!panel/frontend/**"
+      - "!panel/deploy/**"
+      - "!panel/dev/**"
+      - "!panel/**/*.md"
       - "nodeapi/**"
       - ".github/workflows/panel-newstack.yml"
-      - "panel/tests/auth_e2e.sh"
-      - "panel/tests/password_reset_e2e.sh"
-      - "panel/tests/portal_staff_e2e.sh"
-      - "panel/tests/node_smoke_e2e.sh"
-      - "panel/tests/expiry_e2e.sh"
       - "pdnd/panel/**"
       - "pdnd/release/nodesim/**"
       # node_kick_e2e 跑真 pdnd：删人断线走 node 的名单 diff 与 NativeCore（kernel）的按用户踢线
-      - "panel/tests/node_kick_e2e.sh"
       - "pdnd/core/**"
       - "pdnd/node/**"
       - "pdnd/kernel/**"
@@ -126,7 +107,7 @@ jobs:
         run: go build -mod=readonly -o "$RUNNER_TEMP/pandora" ./cmd/pandora
       # 测试按包串行（-p 1）：迁移往返与事务测试共用同一个库
       - name: Tests
-        run: go test -mod=readonly -race -p 1 -count=1 ./internal/pkg/... ./internal/app/... ./internal/module/... ./db/...
+        run: go test -mod=readonly -race -p 1 -count=1 ./...
       - name: Migration round trip through the binary
         env:
           PANDORA_DATABASE_MIGRATION_URL: ${{ env.PANDORA_TEST_DATABASE_URL }}
