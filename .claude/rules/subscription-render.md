@@ -34,7 +34,8 @@ paths:
 - 引用必须可解析；无节点时出站退回 `direct`（`template_test.go` 的 `assertSingboxReferencesResolve`）
 
 ## ShadowTLS / 协议写法
-- sing-box：外层 `shadowtls` + 内层 ss `detour`；握手端口在 `kernel_config.go` 的 shadowtls 分支折进 `server`（监听 `server_port` 占住）
+- Shadowsocks 节点同端口 TCP、UDP 都听（用户 2026-10-14 定）：Clash 系 `udp: true`，sing-box 不写 `network`，URI（SIP002）无 UDP 开关（矩阵 `ss-aes128`、`ss-chacha`）
+- sing-box：外层 `shadowtls` + 内层 ss `detour`；握手端口在 `kernel_config.go` 的 shadowtls 分支折进 `server`（监听 `server_port` 占住）；ShadowTLS 只承载 TCP，Clash 仍 `udp: false`、sing-box 内层仍 `network: tcp`
 - httpupgrade 在 Clash 里常写 `ws` + `v2ray-http-upgrade`；URI 里 mKCP 用 `type=kcp`（矩阵 `vless-mkcp`）
 - naive + `allow_insecure`：sing-box / URI 跳过（`naive-insecure`）；TLS+gRPC 且 SNI≠Host：Clash/sing-box 跳过，URI 可用 `authority`（`trojan-tls-grpc-sni`）
 

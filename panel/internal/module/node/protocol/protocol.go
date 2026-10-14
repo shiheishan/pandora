@@ -30,10 +30,11 @@ type Schema struct {
 	Hints map[string]string `json:"hints,omitempty"`
 }
 
-// 节点入站实际 bind 的 L4。
+// 节点入站实际 bind 的 L4。ListenTCPUDP 是同一端口 TCP、UDP 都听（shadowsocks），与同端口的 tcp、udp 都冲突。
 const (
-	ListenTCP = "tcp"
-	ListenUDP = "udp"
+	ListenTCP    = "tcp"
+	ListenUDP    = "udp"
+	ListenTCPUDP = "tcp+udp"
 )
 
 // CanonicalType 是协议名唯一的存储与审计写法（去空白、小写）。
@@ -75,7 +76,7 @@ func PreserveSecrets(stored, incoming json.RawMessage) (json.RawMessage, error) 
 	return preserveSecrets(stored, incoming)
 }
 
-// ListenL4 推导节点入站实际 bind 的 L4（ListenTCP / ListenUDP），与 pdnd
+// ListenL4 推导节点入站实际 bind 的 L4（ListenTCP / ListenUDP / ListenTCPUDP），与 pdnd
 // kernel/port_claims.go 的 inboundPortKey 同口径。raw 不是对象时当作没有字段。
 func ListenL4(nodeType string, raw json.RawMessage) string {
 	return listenL4(nodeType, raw)
@@ -84,6 +85,26 @@ func ListenL4(nodeType string, raw json.RawMessage) string {
 // PortClaimLabel 是端口冲突提示里的「端口/L4」写法。
 func PortClaimLabel(port int, l4 string) string {
 	return strconv.Itoa(port) + "/" + strings.ToUpper(l4)
+}
+
+// L4Conflicts 判断同一台服务器同一端口上的两个 L4 是否冲突：相等，或任一为 tcp+udp 且另一方不为空。
+func L4Conflicts(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	return a == b || a == ListenTCPUDP || b == ListenTCPUDP
+}
+
+// ConflictingL4s 返回与 l4 冲突的全部取值（按 tcp、udp、tcp+udp 的顺序），门禁按它查同端口的占用者。
+// l4 为空时返回 nil。
+func ConflictingL4s(l4 string) []string {
+	var out []string
+	for _, v := range [...]string{ListenTCP, ListenUDP, ListenTCPUDP} {
+		if L4Conflicts(l4, v) {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // GenerateRealityKeypair 生成一对 X25519 密钥（RFC 7748 clamping，base64 raw URL 编码）。

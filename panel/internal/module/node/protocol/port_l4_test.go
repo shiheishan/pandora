@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -30,8 +31,9 @@ var listenL4Cases = []struct {
 	{"hysteria2", `{"network":"tcp"}`, "udp"},
 	{"tuic", `{}`, "udp"},
 	{"juicity", `{"network":"udp"}`, "udp"},
-	{"shadowsocks", `{"method":"aes-128-gcm"}`, "tcp"},
-	{"shadowsocks", `{"network":"udp"}`, "udp"},
+	{"shadowsocks", `{"cipher":"aes-128-gcm"}`, "tcp+udp"},
+	{"shadowsocks", `{"network":"udp"}`, "tcp+udp"},
+	{"ss", `{}`, "tcp+udp"},
 	{"mieru", `{"transport":"UDP"}`, "udp"},
 	{"mieru", `{"transport":"TCP"}`, "tcp"},
 	{"mieru", `{}`, "tcp"},
@@ -73,8 +75,8 @@ func TestListenL4MatchesPdndPortClaims(t *testing.T) {
 	if end := strings.Index(body, "\n}\n"); end > 0 {
 		body = body[:end]
 	}
-	// {"vless", map[string]any{"network": "xhttp-h3"}, "udp"} 或 {"tuic", nil, "udp"}
-	row := regexp.MustCompile(`\{"([a-z0-9]+)",\s*(nil|map\[string\]any\{([^}]*)\}),\s*"(tcp|udp)"\}`)
+	// {"vless", map[string]any{"network": "xhttp-h3"}, "udp"} 或 {"tuic", nil, "udp"} 或 {"shadowsocks", nil, "tcp+udp"}
+	row := regexp.MustCompile(`\{"([a-z0-9]+)",\s*(nil|map\[string\]any\{([^}]*)\}),\s*"(tcp\+udp|tcp|udp)"\}`)
 	field := regexp.MustCompile(`"([a-z_]+)":\s*"([^"]*)"`)
 	rows := row.FindAllStringSubmatch(body, -1)
 	if len(rows) < 10 {
@@ -98,5 +100,57 @@ func TestPortClaimLabel(t *testing.T) {
 	}
 	if got := PortClaimLabel(8443, ListenUDP); got != "8443/UDP" {
 		t.Fatalf("PortClaimLabel(8443, udp) = %q", got)
+	}
+	if got := PortClaimLabel(443, ListenTCPUDP); got != "443/TCP+UDP" {
+		t.Fatalf("PortClaimLabel(443, tcp+udp) = %q", got)
+	}
+}
+
+func TestL4Conflicts(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{ListenTCP, ListenTCP, true},
+		{ListenUDP, ListenUDP, true},
+		{ListenTCP, ListenUDP, false},
+		{ListenUDP, ListenTCP, false},
+		{ListenTCPUDP, ListenTCP, true},
+		{ListenTCP, ListenTCPUDP, true},
+		{ListenTCPUDP, ListenUDP, true},
+		{ListenUDP, ListenTCPUDP, true},
+		{ListenTCPUDP, ListenTCPUDP, true},
+		{"", ListenTCP, false},
+		{ListenTCPUDP, "", false},
+		{"", "", false},
+	}
+	for _, tc := range cases {
+		if got := L4Conflicts(tc.a, tc.b); got != tc.want {
+			t.Errorf("L4Conflicts(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
+		}
+	}
+}
+
+func TestConflictingL4s(t *testing.T) {
+	if got := ConflictingL4s("tcp"); !slices.Equal(got, []string{"tcp", "tcp+udp"}) {
+		t.Fatalf("ConflictingL4s(tcp) = %v, want [tcp tcp+udp]", got)
+	}
+	if got := ConflictingL4s("udp"); !slices.Equal(got, []string{"udp", "tcp+udp"}) {
+		t.Fatalf("ConflictingL4s(udp) = %v, want [udp tcp+udp]", got)
+	}
+	if got := ConflictingL4s("tcp+udp"); !slices.Equal(got, []string{"tcp", "udp", "tcp+udp"}) {
+		t.Fatalf("ConflictingL4s(tcp+udp) = %v, want [tcp udp tcp+udp]", got)
+	}
+	if got := ConflictingL4s(""); len(got) != 0 {
+		t.Fatalf("ConflictingL4s(\"\") = %v, want empty", got)
+	}
+
+	values := []string{ListenTCP, ListenUDP, ListenTCPUDP}
+	for _, a := range values {
+		for _, b := range values {
+			if got := slices.Contains(ConflictingL4s(a), b); got != L4Conflicts(a, b) {
+				t.Errorf("slices.Contains(ConflictingL4s(%q), %q) = %v, L4Conflicts(%q, %q) = %v", a, b, got, a, b, L4Conflicts(a, b))
+			}
+		}
 	}
 }

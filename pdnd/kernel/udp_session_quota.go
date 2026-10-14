@@ -5,10 +5,12 @@ import (
 	"sync"
 )
 
-// quicUDPSessionsPerUser 是单个用户在一个 Hysteria2 / TUIC 入站上同时存在的 UDP
+// udpSessionsPerUser 是单个用户在一个 Hysteria2 / TUIC 入站上同时存在的 UDP
 // 会话上限，也是 Juicity 入站上同时存在的 UDP 路由（每个目标一个上游 socket）上限。
 // AnyTLS 的 UoT 按同一口径用它：一条 UoT 流里每个目标占一个上游 socket，算一个会话
 // （uot_bridge.go），该用户在这个入站上的全部 UoT 流共用名额。
+// 经典 Shadowsocks 的 UDP 会话（每个 (客户端地址, 用户) 一个上游 socket，
+// shadowsocks_udp_session.go）也按它计。
 //
 // 每个 UDP 会话占一个上游 socket（fd、内核收发缓冲，见 hy2UDPSocketBuffer）和三个
 // goroutine，会话数又由客户端决定、空闲 5 分钟才回收。不设上限时，一个已认证用户
@@ -17,7 +19,7 @@ import (
 // 取值按正常用法留足余量：tun 模式下每个应用 UDP 流（含经代理的 DNS 查询）各开
 // 一个会话，按 5 分钟空闲回收，日常几十到几百个；1024 只挡滥用。超出的新会话被拒、
 // 走 OnConnError 的 limit 分类，已有会话不受影响（与设备数上限同语义：拒新不踢旧）。
-const quicUDPSessionsPerUser = 1024
+const udpSessionsPerUser = 1024
 
 // udpSessionQuota 按用户数在途的 UDP 会话。零值可用；limit 为 0 时用缺省上限。
 type udpSessionQuota struct {
@@ -32,7 +34,7 @@ func (q *udpSessionQuota) acquire(userID int64) bool {
 	defer q.mu.Unlock()
 	limit := q.limit
 	if limit <= 0 {
-		limit = quicUDPSessionsPerUser
+		limit = udpSessionsPerUser
 	}
 	if q.byUser[userID] >= limit {
 		return false

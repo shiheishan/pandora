@@ -181,7 +181,6 @@
     },
     {
       "method": "aes-128-gcm",
-      "network": "tcp",
       "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
       "server": "node.example.com",
       "server_port": 8388,
@@ -190,7 +189,6 @@
     },
     {
       "method": "chacha20-ietf-poly1305",
-      "network": "tcp",
       "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
       "server": "node.example.com",
       "server_port": 8389,
@@ -730,7 +728,6 @@
     },
     {
       "method": "aes-128-gcm",
-      "network": "tcp",
       "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
       "server": "node.example.com",
       "server_port": 20004,
@@ -799,7 +796,6 @@
     },
     {
       "method": "aes-128-gcm",
-      "network": "tcp",
       "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
       "server": "node.example.com",
       "server_port": 21000,
@@ -808,7 +804,6 @@
     },
     {
       "method": "aes-128-gcm",
-      "network": "tcp",
       "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
       "server": "node.example.com",
       "server_port": 21001,
@@ -817,7 +812,6 @@
     },
     {
       "method": "aes-128-gcm",
-      "network": "tcp",
       "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
       "server": "node.example.com",
       "server_port": 21002,
@@ -826,7 +820,6 @@
     },
     {
       "method": "aes-128-gcm",
-      "network": "tcp",
       "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
       "server": "node.example.com",
       "server_port": 21003,
@@ -835,7 +828,6 @@
     },
     {
       "method": "aes-128-gcm",
-      "network": "tcp",
       "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
       "server": "node.example.com",
       "server_port": 21004,
@@ -844,7 +836,6 @@
     },
     {
       "method": "aes-128-gcm",
-      "network": "tcp",
       "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
       "server": "node.example.com",
       "server_port": 21005,
@@ -853,7 +844,6 @@
     },
     {
       "method": "aes-128-gcm",
-      "network": "tcp",
       "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
       "server": "node.example.com",
       "server_port": 21006,
@@ -862,7 +852,6 @@
     },
     {
       "method": "aes-128-gcm",
-      "network": "tcp",
       "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
       "server": "node.example.com",
       "server_port": 21007,

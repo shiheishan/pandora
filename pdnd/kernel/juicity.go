@@ -42,7 +42,7 @@ type juicityAdapter struct {
 	users    map[string]juicityUser
 	sessions userSessions
 	online   onlineDevices
-	// udpQuota 限每用户在途 UDP 路由数（每个目标一个上游 socket，quic_udp_quota.go）。
+	// udpQuota 限每用户在途 UDP 路由数（每个目标一个上游 socket，udp_session_quota.go）。
 	udpQuota  udpSessionQuota
 	plane     DataPlane
 	connErr   connErrorReporter

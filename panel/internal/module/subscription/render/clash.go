@@ -143,13 +143,7 @@ func nodeToClash(n Node, uuid string, premium bool) (map[string]any, string) {
 		p["type"] = "ss"
 		p["password"] = uuid
 		p["cipher"] = ssMethod(n.Config)
-		// 节点端的 Shadowsocks 一个入站只听一种传输（pdnd kernel/shadowsocks.go:Start：
-		// network=udp 只开 UDP 口，否则只开 TCP 口），TCP 路径也不认 UDP-over-TCP；
-		// 面板的 schema 不许配 network，所以下发的 ss 节点都只听 TCP。写 udp:true 的话
-		// 客户端会把 DNS、游戏这些 UDP 发到一个没人听的端口，静默失败；写 false 让客户端
-		// 走别的路。node-e2e（2026-10-08）里 mihomo 的 ss「UDP 通」是 mihomo 报
-		// 「UDP is not supported」后改走了 DIRECT，不是经节点通的。
-		p["udp"] = false
+		// 节点端的 Shadowsocks 同一端口 TCP、UDP 都听，udp 沿用上面的缺省 true
 
 	case "hysteria2":
 		p["type"] = "hysteria2"
@@ -191,7 +185,7 @@ func nodeToClash(n Node, uuid string, premium bool) (map[string]any, string) {
 		p["type"] = "ss"
 		p["password"] = uuid
 		p["cipher"] = ssMethod(n.Config)
-		// ShadowTLS 只有 TCP，内层 Shadowsocks 也只听 TCP（同上）
+		// ShadowTLS 只承载 TCP，UDP 不经它走
 		p["udp"] = false
 		// plugin-opts 的字段名按 mihomo 的 shadowTLSOption（obfs: tag）核对：
 		// password / host / version / alpn 等，没有 enable —— 多给一个未知字段
