@@ -58,6 +58,11 @@ jobs:
             echo "::error::版本号不合规：'$version'（须为 v 开头，只含字母、数字、点、下划线、连字符）"
             exit 1
           fi
+          # 推标签发版时只认语义化版本（v1.2.3 或 v1.2.3-rc.1）：误推的 vtest 之类不会发成 latest
+          if [ "$EVENT_NAME" = push ] && [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::发版标签须为语义化版本 vX.Y.Z 或 vX.Y.Z-后缀：'$version'"
+            exit 1
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: The tag must point at a commit on the default branch
         if: github.event_name == 'push' && github.ref_type == 'tag'
@@ -150,9 +155,10 @@ jobs:
           {
             printf '在目标机（Debian 12–14 / Ubuntu 22.04–26.04，x86_64 或 aarch64）上用 root 首装或升级到 %s：\n\n' "$TAG"
             printf '```bash\ncurl -fsSL https://github.com/%s/releases/download/%s/get.sh | sudo PANDORA_VERSION=%s bash\n```\n\n' "$GH_REPO" "$TAG" "$TAG"
-            printf '无人值守、建第一个管理员、升级与回退见仓库 README 的「部署」一节。\n\n'
+            printf '无人值守、建第一个管理员、升级见仓库 README 的「部署」一节。\n\n'
             printf '核对：`SHA256SUMS` 覆盖本页全部附件；包旁的 `.sha256` 与包同源，只防下载损坏。防篡改核对 GitHub Actions 出的来源证明：\n\n'
-            printf '```bash\ngh attestation verify pandora-panel_%s_linux_amd64.tar.gz --repo %s\n```\n' "$TAG" "$GH_REPO"
+            printf '```bash\ngh attestation verify pandora-panel_%s_linux_amd64.tar.gz --repo %s \\\n  --signer-workflow %s/.github/workflows/release.yml --source-ref refs/tags/%s\n```\n' "$TAG" "$GH_REPO" "$GH_REPO" "$TAG"
+            printf '\n核过后直接解开这份包跑 `deploy/install.sh`，不要再经 get.sh 重新下载。\n'
           } > "$notes"
           gh release create "$TAG" \
             pandora-panel_*.tar.gz pandora-panel_*.tar.gz.sha256 pandora-panel_*.tar.gz.manifest.sha256 \

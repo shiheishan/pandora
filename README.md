@@ -300,7 +300,7 @@ unset pw
 
 升级：再跑同一条 `curl … | sudo bash`；取到新版本按升级走（停服 → 升级前全量备份 → 换程序 → 迁移 → 起服务）；同一版本再跑也会走一遍幂等的升级流程。
 
-指定版本、回退、fork：`curl … | sudo PANDORA_VERSION=v1.2.3 bash`；带连字符的预发布标签（如 `v1.3.0-rc.1`）不会出现在 `latest`，只能这样装；`PANDORA_REPO=<owner>/<repo>` 从 fork 装（缺省 `shiheishan/pandora`）。
+指定版本、fork：`curl … | sudo PANDORA_VERSION=v1.2.3 bash`（用来装预发布或某个新版本；**不能用来回退**：装旧版本会走升级流程把旧程序换上去，而迁移不会自动降级，旧程序会跑在新库结构上。回退按 `panel/deploy/RUNBOOK.md` 先恢复升级前备份或回退迁移，再装旧包）；带连字符的预发布标签（如 `v1.3.0-rc.1`）不会出现在 `latest`，只能这样装；`PANDORA_REPO=<owner>/<repo>` 从 fork 装（缺省 `shiheishan/pandora`）。
 
 `get.sh` 不自动删旧版本目录；`/opt/pandora-release` 下 `v*` 目录超过 3 个时会打印删除命令。
 
@@ -308,10 +308,14 @@ unset pw
 
 ```bash
 curl -fsSLO https://github.com/shiheishan/pandora/releases/download/v1.2.3/pandora-panel_v1.2.3_linux_amd64.tar.gz
-gh attestation verify pandora-panel_v1.2.3_linux_amd64.tar.gz --repo shiheishan/pandora
+gh attestation verify pandora-panel_v1.2.3_linux_amd64.tar.gz --repo shiheishan/pandora \
+  --signer-workflow shiheishan/pandora/.github/workflows/release.yml --source-ref refs/tags/v1.2.3
+sudo mkdir -p /opt/pandora-release/v1.2.3
+sudo tar -xzf pandora-panel_v1.2.3_linux_amd64.tar.gz -C /opt/pandora-release/v1.2.3
+sudo bash /opt/pandora-release/v1.2.3/pandora-panel_v1.2.3_linux_amd64/deploy/install.sh
 ```
 
-须先安装 `gh` 并 `gh auth login`；核过后用同一版本号 `PANDORA_VERSION=v1.2.3` 跑 `get.sh`（下载的是同一附件）；`get.sh`、`SHA256SUMS` 也可同样用 `gh attestation verify` 核对。
+须先安装 `gh` 并 `gh auth login`。`--signer-workflow` 与 `--source-ref` 限定证明必须由这个仓库的 `release.yml` 在该版本标签上签出，别的分支、别的 workflow 签的不算。核过后直接用这份已核对的包装（上面最后三行，解到 root 独占的目录，安装器才肯装），不要再经 `get.sh` 重新下载：发布后附件仍可能被替换，重新下载的就不是核过的那份。`get.sh`、`SHA256SUMS` 也可同样核对。
 
 发版（维护者）：在 `main` 上打 `v*` 标签并推送，`.github/workflows/release.yml` 构建 amd64 / arm64 包、出来源证明、建 Release；标签提交必须已在 `main` 上，否则 workflow 拒绝；带连字符的标签发成预发布；手动触发（`workflow_dispatch`，输入版本号，缺省 `v0.0.0-dryrun`）只演练构建，产物在该次 run 的 artifact 里，不建 Release；手动触发要等 `release.yml` 进了 `main`（GitHub 的限制），之后可用 `gh workflow run release.yml --ref <分支>` 演练任一分支。
 
