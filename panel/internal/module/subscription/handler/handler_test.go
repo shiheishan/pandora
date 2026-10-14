@@ -147,7 +147,7 @@ func TestMySubscriptionsShape(t *testing.T) {
 		t.Fatalf("renewal_price: %v", rp)
 	}
 	q := s["quotas"].([]any)[0].(map[string]any)
-	if q["granted_addon"].(float64) != 0 || q["limit"].(float64) != 100 {
+	if _, legacy := q["granted_addon"]; legacy || q["limit"].(float64) != 100 {
 		t.Fatalf("quota: %v", q)
 	}
 }

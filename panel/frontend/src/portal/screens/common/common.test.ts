@@ -29,7 +29,7 @@ function sub(over: Partial<Subscription> = {}): Subscription {
     current_period_end: '2026-11-05T10:00:00Z',
     currency: 'CNY',
     amount: 5900,
-    quotas: [{ metric: 'traffic.bytes', limit: 500 * GIB, consumed: 312 * GIB, remaining: 188 * GIB, period: 'cycle', period_start: '2026-09-01T00:00:00Z', period_end: null, granted_addon: 0, adjusted: 0 }],
+    quotas: [{ metric: 'traffic.bytes', limit: 500 * GIB, consumed: 312 * GIB, remaining: 188 * GIB, period: 'cycle', period_start: '2026-09-01T00:00:00Z', period_end: null }],
     device_limit: null,
     online_devices: 0,
     quota_reset_strategy: 'billing_cycle',
@@ -246,7 +246,7 @@ describe('subscriptions', () => {
 
   it('卡片用量：剩余含这一份的流量包，低于 15% 标快用完了', () => {
     expect(usageText(sub())).toMatchObject({ label: '本期流量', right: '剩 188G / 共 500G', pct: 62, low: false })
-    const low = sub({ quotas: [{ metric: 'traffic.bytes', limit: 100 * GIB, consumed: 92 * GIB, remaining: 8 * GIB, period: 'month', period_start: '2026-09-01T00:00:00Z', period_end: null, granted_addon: 0, adjusted: 0 }] })
+    const low = sub({ quotas: [{ metric: 'traffic.bytes', limit: 100 * GIB, consumed: 92 * GIB, remaining: 8 * GIB, period: 'month', period_start: '2026-09-01T00:00:00Z', period_end: null }] })
     expect(usageText(low)).toMatchObject({ label: '本月流量 · 快用完了', right: '剩 8G / 共 100G', low: true })
     expect(usageText({ ...low, pack_remaining_bytes: 30 * GIB }).right).toBe('剩 38G / 共 130G（含流量包 30G）')
   })

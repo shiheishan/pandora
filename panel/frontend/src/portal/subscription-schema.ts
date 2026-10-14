@@ -12,8 +12,6 @@ const quotaSchema = z.object({
   period: z.string(),
   period_start: z.string(),
   period_end: z.string().nullable(),
-  granted_addon: z.number().int(),
-  adjusted: z.number().int(),
 })
 
 const renewalPriceSchema = z.object({

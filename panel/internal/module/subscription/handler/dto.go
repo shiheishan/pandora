@@ -11,17 +11,15 @@ import (
 
 // ---- 门户 ----
 
-// quotaResponse 是一行配额；granted_addon、adjusted 是旧接口的字段，新栈没有这两项，恒为 0。
+// quotaResponse 是一行配额。
 type quotaResponse struct {
-	Metric       string     `json:"metric"`
-	Limit        *int64     `json:"limit"`
-	Consumed     int64      `json:"consumed"`
-	Remaining    *int64     `json:"remaining"`
-	Period       string     `json:"period"`
-	PeriodStart  time.Time  `json:"period_start"`
-	PeriodEnd    *time.Time `json:"period_end"`
-	GrantedAddon int64      `json:"granted_addon"`
-	Adjusted     int64      `json:"adjusted"`
+	Metric      string     `json:"metric"`
+	Limit       *int64     `json:"limit"`
+	Consumed    int64      `json:"consumed"`
+	Remaining   *int64     `json:"remaining"`
+	Period      string     `json:"period"`
+	PeriodStart time.Time  `json:"period_start"`
+	PeriodEnd   *time.Time `json:"period_end"`
 }
 
 // renewalPriceResponse 是续费界面要的当前价格档（金额为分）。
