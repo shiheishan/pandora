@@ -86,7 +86,7 @@ func signupToResponse(s service.Signup, mailConfigured bool) signupResponse {
 
 func (h *Handler) getSignup(c *gin.Context) {
 	ctx := c.Request.Context()
-	signup, err := h.svc.Signup(ctx)
+	signup, err := h.svc.SignupWithoutSecret(ctx)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
@@ -126,7 +126,7 @@ func (h *Handler) setSignup(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	signup, err := h.svc.Signup(ctx)
+	signup, err := h.svc.SignupWithoutSecret(ctx)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
@@ -141,7 +141,7 @@ func (h *Handler) setSignup(c *gin.Context) {
 
 func (h *Handler) signupConfig(c *gin.Context) {
 	ctx := c.Request.Context()
-	signup, err := h.svc.Signup(ctx)
+	signup, err := h.svc.SignupWithoutSecret(ctx)
 	if err != nil {
 		httpx.Fail(c, err)
 		return

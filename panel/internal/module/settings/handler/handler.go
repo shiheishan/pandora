@@ -18,7 +18,8 @@ type Settings interface {
 	Switches(ctx context.Context) ([]service.Switch, error)
 	SetSwitch(ctx context.Context, code string, enabled bool, reason string) error
 	SwitchEnabled(ctx context.Context, code string) (bool, error)
-	Signup(ctx context.Context) (service.Signup, error)
+	// SignupWithoutSecret 不解封人机验证 secret：本 handler 只回 has_captcha_secret
+	SignupWithoutSecret(ctx context.Context) (service.Signup, error)
 	SetSignup(ctx context.Context, u service.SignupUpdate) error
 }
 

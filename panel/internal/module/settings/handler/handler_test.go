@@ -85,7 +85,7 @@ func (f *fakeSettings) SwitchEnabled(ctx context.Context, code string) (bool, er
 	return v, nil
 }
 
-func (f *fakeSettings) Signup(ctx context.Context) (service.Signup, error) {
+func (f *fakeSettings) SignupWithoutSecret(ctx context.Context) (service.Signup, error) {
 	return service.Signup{EmailSuffixes: []string{}}, nil
 }
 

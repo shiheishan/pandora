@@ -130,7 +130,7 @@ type handler struct {
 // Option 调整 Handler。
 type Option func(*handler)
 
-// WithExtraSources 让入口页每次请求时调 f 取额外放行的 CSP 来源（入口页每次回源校验，现取即可，设置一改下次打开就生效）。
+// WithExtraSources 让入口页每次请求时调 f 取额外放行的 CSP 来源（f 要便宜：入口页每次回源校验，要缓存由 f 自己做）。
 // f 返回空时 CSP 与不带本选项时逐字一致。
 func WithExtraSources(f func(ctx context.Context) ExtraSources) Option {
 	return func(h *handler) { h.extra = f }
