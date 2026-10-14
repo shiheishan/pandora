@@ -150,8 +150,8 @@ func TestSetCommissionWithdrawMethodsStoredNormalized(t *testing.T) {
 
 func TestNormalizeWithdrawMethods(t *testing.T) {
 	cases := []struct {
-		in      []string
-		want    []string
+		in       []string
+		want     []string
 		allValid bool
 	}{
 		{[]string{"usdt_bep20", "alipay", "usdt_bep20"}, []string{"alipay", "usdt_bep20"}, true},
