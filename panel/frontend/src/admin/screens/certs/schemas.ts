@@ -156,6 +156,5 @@ export const acmeSettingsSchema = z.object({
   zerossl_enabled: z.boolean(),
   zerossl_eab_kid: z.string(),
   zerossl_eab_hmac_set: z.boolean(),
-  directory_override: z.boolean(),
 })
 export type AcmeSettings = z.output<typeof acmeSettingsSchema>

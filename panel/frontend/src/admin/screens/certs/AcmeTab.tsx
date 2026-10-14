@@ -45,7 +45,6 @@ function AcmeFormView({ saved }: { saved: AcmeSettings }) {
 
   return (
     <div className={css.stack}>
-      {saved.directory_override && <div className={css.notice}>这台面板的签发被测试环境的 ACME 目录覆盖接管，下面的 CA 选择不生效。</div>}
       <Card title="签发用的 CA">
         <div className={css.form}>
           <Input

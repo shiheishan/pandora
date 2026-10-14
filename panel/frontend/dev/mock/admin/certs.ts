@@ -408,7 +408,7 @@ export const certsModule: MockModule = {
 
     'GET /v1/settings/acme': (ctx) => {
       const { hmac, ...rest } = acme
-      ctx.send(200, { ...rest, zerossl_eab_hmac_set: hmac !== '', directory_override: false })
+      ctx.send(200, { ...rest, zerossl_eab_hmac_set: hmac !== '' })
     },
     'PUT /v1/settings/acme': async (ctx) => {
       if (!ctx.requireReauth()) return
@@ -425,7 +425,7 @@ export const certsModule: MockModule = {
       if (Object.keys(bad).length > 0) return reply(ctx, invalid(bad))
       acme = { contact_email: email, use_staging: body.use_staging === true, zerossl_enabled: body.zerossl_enabled === true, zerossl_eab_kid: kid, hmac }
       const { hmac: h, ...rest } = acme
-      ctx.send(200, { ...rest, zerossl_eab_hmac_set: h !== '', directory_override: false })
+      ctx.send(200, { ...rest, zerossl_eab_hmac_set: h !== '' })
     },
   },
 }

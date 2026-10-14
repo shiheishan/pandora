@@ -164,7 +164,7 @@ var (
 	verifyResultKeys = []string{"credential", "ok", "message", "warnings", "resumed"}
 	acmeSettingsKeys = []string{
 		"contact_email", "use_staging", "zerossl_enabled", "zerossl_eab_kid",
-		"zerossl_eab_hmac_set", "directory_override",
+		"zerossl_eab_hmac_set",
 	}
 )
 

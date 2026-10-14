@@ -141,7 +141,6 @@ describe('ACME settings', () => {
     zerossl_enabled: false,
     zerossl_eab_kid: '',
     zerossl_eab_hmac_set: true,
-    directory_override: false,
   })
 
   it('keeps the saved HMAC unless replaced or explicitly cleared', () => {
