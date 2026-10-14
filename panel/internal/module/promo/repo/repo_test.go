@@ -2,58 +2,37 @@ package repo
 
 import (
 	"errors"
-	"fmt"
 	"testing"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
+
+	"github.com/aegispanel/aegis/internal/pkg/db"
 )
 
-func TestMapErrForeignKeyByConstraint(t *testing.T) {
-	planFK := &pgconn.PgError{Code: "23503", ConstraintName: fkCouponPlansPlan}
-	userGrpFK := &pgconn.PgError{Code: "23503", ConstraintName: "coupons_user_group_id_fkey"}
-
-	got := mapErr(planFK)
-	if !errors.Is(got, ErrPlanGone) {
-		t.Fatalf("原始 PgError plan FK: got %v", got)
+// 约束名、SQLSTATE 到哨兵的翻译在 internal/pkg/db 测；这里钉住本模块的表：
+// coupon_plans 的套餐外键单独报 ErrPlanGone，其余外键报 ErrForeignKey，唯一冲突报 ErrDuplicate。
+func TestConstraintErrsTable(t *testing.T) {
+	if got := constraintErrs.ByName[fkCouponPlansPlan]; got != ErrPlanGone {
+		t.Fatalf("coupon_plans 套餐外键: got %v", got)
 	}
-	if errors.Is(got, ErrForeignKey) {
-		t.Fatal("plan FK 不应判为 ErrForeignKey")
+	if got := constraintErrs.ByCode[db.CodeForeignKey]; got != ErrForeignKey {
+		t.Fatalf("其余外键: got %v", got)
 	}
-
-	wrappedPlan := fmt.Errorf("%w: %w", gorm.ErrForeignKeyViolated, planFK)
-	got = mapErr(wrappedPlan)
-	if !errors.Is(got, ErrPlanGone) {
-		t.Fatalf("GORM 包装的 plan FK: got %v", got)
-	}
-	if errors.Is(got, ErrForeignKey) {
-		t.Fatal("GORM 包装的 plan FK 不应判为 ErrForeignKey")
+	if got := constraintErrs.ByCode[db.CodeUnique]; got != ErrDuplicate {
+		t.Fatalf("唯一冲突: got %v", got)
 	}
 
-	got = mapErr(userGrpFK)
-	if !errors.Is(got, ErrForeignKey) {
-		t.Fatalf("user_group FK: got %v", got)
-	}
-	if errors.Is(got, ErrPlanGone) {
-		t.Fatal("user_group FK 不应判为 ErrPlanGone")
-	}
-
-	got = mapErr(gorm.ErrForeignKeyViolated)
-	if !errors.Is(got, ErrForeignKey) {
+	// 拿不到约束名、只有 GORM 哨兵时按码报
+	got := mapErr(gorm.ErrForeignKeyViolated)
+	if !errors.Is(got, ErrForeignKey) || errors.Is(got, ErrPlanGone) {
 		t.Fatalf("仅 GORM FK: got %v", got)
-	}
-
-	got = mapErr(&pgconn.PgError{Code: "23505"})
-	if !errors.Is(got, ErrDuplicate) {
-		t.Fatalf("23505: got %v", got)
 	}
 
 	if mapErr(nil) != nil {
 		t.Fatal("nil 应返回 nil")
 	}
-
 	other := errors.New("其它错误")
-	if mapErr(other) != other {
-		t.Fatalf("其它错误应原样返回: %v", mapErr(other))
+	if got := mapErr(other); got != other {
+		t.Fatalf("其它错误应原样返回: %v", got)
 	}
 }

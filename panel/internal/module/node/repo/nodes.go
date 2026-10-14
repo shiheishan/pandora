@@ -5,13 +5,12 @@ package repo
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/aegispanel/aegis/internal/module/node/model"
+	"github.com/aegispanel/aegis/internal/pkg/db"
 )
 
 var (
@@ -25,30 +24,17 @@ var (
 	ErrInventoryCheck = errors.New("node: 数据不满足库约束")
 )
 
-// inventoryErr 把写服务器、节点时的约束错误译成本包哨兵。GORM 的错误翻译用 %w 包着原错误，
-// 约束名仍能取到：端口门禁的唯一索引与重名分开报。
-func inventoryErr(err error) error {
-	if err == nil {
-		return nil
-	}
-	var pgErr *pgconn.PgError
-	if !errors.As(err, &pgErr) {
-		return err
-	}
-	switch pgErr.Code {
-	case "23505":
-		switch pgErr.ConstraintName {
-		case "nodes_listen_claim_key":
-			return ErrListenClaimTaken
-		case "servers_name_live_key":
-			return ErrServerNameTaken
-		}
-		return ErrNodeNameTaken
-	case "23514":
-		return fmt.Errorf("%w: %v", ErrInventoryCheck, err)
-	}
-	return err
+// inventoryErrs 把写服务器、节点时的约束错误译成本包哨兵：端口门禁的唯一索引与重名按约束名分开报，其余唯一冲突当节点重名。
+var inventoryErrs = db.ConstraintErrors{
+	ByCode: map[string]error{db.CodeUnique: ErrNodeNameTaken, db.CodeCheck: ErrInventoryCheck},
+	ByName: map[string]error{
+		"nodes_listen_claim_key": ErrListenClaimTaken,
+		"servers_name_live_key":  ErrServerNameTaken,
+	},
 }
+
+// inventoryErr 把写服务器、节点时的约束错误译成本包哨兵。
+func inventoryErr(err error) error { return inventoryErrs.Map(err) }
 
 // nodeColumns 是读 nodes 一行的列清单（别名 n）；jsonb 以文本取出。
 const nodeColumns = `n.id, n.node_no, n.server_id, n.pool_id, n.name, n.display_name, n.country_code,

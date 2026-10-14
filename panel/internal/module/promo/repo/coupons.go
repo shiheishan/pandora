@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/aegispanel/aegis/internal/module/promo/model"
+	"github.com/aegispanel/aegis/internal/pkg/db"
 )
 
 // checkCouponMoney 写入前校验券上所有金额字段。
@@ -247,7 +248,7 @@ type CouponListRow struct {
 func couponListWhere(q CouponListQuery) (clause string, args []any) {
 	var parts []string
 	if query := strings.TrimSpace(q.Query); query != "" {
-		pat := likePattern(query)
+		pat := db.ContainsPattern(query)
 		parts = append(parts, "(c.code ILIKE ? ESCAPE '\\' OR c.name ILIKE ? ESCAPE '\\')")
 		args = append(args, pat, pat)
 	}
