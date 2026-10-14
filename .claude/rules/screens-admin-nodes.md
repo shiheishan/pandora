@@ -21,7 +21,7 @@ paths:
 - 新节点接入完成后停在 attesting 等接入尾段，抽屉「操作 › 上线」（activate）一步推到 active 并让服务器就绪；此时「启用」置灰并指向「上线」。
 - 节点是否下发给用户直接显示后端的 `delivered_to_users` / `delivery_note`（无池节点不服务任何用户），不要按 `pool_id` 另判。
 - 批量启停整批有一条非法后端就整批 409，所以只提交能转的，其余计数告诉管理员（`batchPlan`）。
-- 服务器状态机 ready 不能直达 maintenance：卡片「标记维护」发 `draining`（显示「维护中」），完整状态走详情里的合法边下拉（`infra.ts` 的状态边表与后端一致）。
+- 服务器只有 draft / ready / draining / maintenance / retired 五态；卡片「标记维护」发 `draining`（显示「维护中」），maintenance 是进一步停机；完整状态走详情里的合法边下拉，`infra.ts` 与 mock 的状态边表照后端 `serverStatusTransitions` 原样写，`infra.test.ts` 逐边钉住。
 - 服务器删除只许草稿或已退役；名下节点不拒绝而是级联静默（身份吊销、摘掉 `server_id`），文案按此改写了设计稿的「先迁移或删除」。
 - 安装令牌固定传 `ttl_minutes: 30`（后端缺省 20）。
 

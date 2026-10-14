@@ -132,7 +132,8 @@ export type ProtocolSchema = z.output<typeof protocolSchemaSchema>
 // ---------------------------------------------------------------------------
 // 服务器（GET v1/servers 与 /servers/{id}，nodefabric.Server）：指针字段全是 null 而不是缺键
 // ---------------------------------------------------------------------------
-const SERVER_STATUSES = ['draft', 'ready', 'draining', 'maintenance', 'unhealthy', 'quarantined', 'retired'] as const
+// 库里只有这五态（00018_node.sql）
+const SERVER_STATUSES = ['draft', 'ready', 'draining', 'maintenance', 'retired'] as const
 export type ServerStatus = (typeof SERVER_STATUSES)[number]
 
 export const serverSchema = z.object({

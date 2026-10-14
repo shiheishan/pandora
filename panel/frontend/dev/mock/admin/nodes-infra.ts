@@ -119,12 +119,12 @@ function server(name: string, region: string, ip: string, opts: Partial<MockServ
 
 export const servers: MockServer[] = []
 servers.push(
-  server('hk-hkg-edge-1', '香港', '103.151.12.8', { cpu: 58, mem: 64, disk: 31 }),
-  server('jp-tyo-edge-2', '东京', '45.76.201.33', { cpu: 71, mem: 52, disk: 44 }),
-  server('sg-sin-edge-1', '新加坡', '139.180.140.7', { cpu: 91, mem: 78, disk: 38 }),
-  server('us-lax-edge-1', '洛杉矶', '149.28.72.190', { cpu: 34, mem: 40, disk: 22, agent_version: 'core r52' }),
-  server('de-fra-edge-1', '法兰克福', '78.47.110.2', { status: 'maintenance', status_reason: '更换网卡', cpu: 22, mem: 30, disk: 18, notes: 'Hetzner FSN1，工单 #88213' }),
-  server('tw-tpe-edge-1', '台北', '61.216.4.19', { last_heartbeat_at: ago(3600 * 5), cpu: 0, mem: 12, disk: 40 }),
+  server('hk-hkg-edge-1', '香港', '192.0.2.8', { cpu: 58, mem: 64, disk: 31 }),
+  server('jp-tyo-edge-2', '东京', '192.0.2.33', { cpu: 71, mem: 52, disk: 44 }),
+  server('sg-sin-edge-1', '新加坡', '192.0.2.7', { cpu: 91, mem: 78, disk: 38 }),
+  server('us-lax-edge-1', '洛杉矶', '192.0.2.190', { cpu: 34, mem: 40, disk: 22, agent_version: 'core r52' }),
+  server('de-fra-edge-1', '法兰克福', '192.0.2.2', { status: 'maintenance', status_reason: '更换网卡', cpu: 22, mem: 30, disk: 18, notes: 'Hetzner FSN1，工单 #88213' }),
+  server('tw-tpe-edge-1', '台北', '192.0.2.19', { last_heartbeat_at: ago(3600 * 5), cpu: 0, mem: 12, disk: 40 }),
   server('kr-sel-edge-1', '首尔', '', { status: 'draft', public_ipv4: null, hostname: null, architecture: null, os_name: null, agent_version: null, last_heartbeat_at: null, cpu_cores: null, memory_mb: null, disk_gb: null, capacity_nodes: 32 }),
   // R108：刚装好、还在草稿的新服务器，上面有一个接入完成待上线的节点（nodes.ts 的「大阪 01（待上线）」）
   server('jp-osa-edge-1', '大阪', '203.0.113.30', { status: 'draft', agent_version: 'core r53', capacity_nodes: 16 }),
@@ -155,11 +155,9 @@ function serverOut(s: MockServer, nodes: readonly InfraNode[]) {
 
 const SERVER_EDGES: Readonly<Record<string, readonly string[]>> = {
   draft: ['ready', 'maintenance', 'retired'],
-  ready: ['draining', 'unhealthy', 'quarantined'],
+  ready: ['draining', 'maintenance'],
   draining: ['ready', 'maintenance', 'retired'],
-  maintenance: ['ready', 'retired'],
-  unhealthy: ['draining', 'maintenance', 'quarantined', 'retired'],
-  quarantined: ['draining', 'maintenance', 'retired'],
+  maintenance: ['ready', 'draining', 'retired'],
   retired: [],
 }
 

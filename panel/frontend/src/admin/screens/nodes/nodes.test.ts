@@ -351,7 +351,7 @@ describe('basic info and PATCH', () => {
 
 describe('routing rows', () => {
   it('reads every matcher alias and the empty fallback', () => {
-    expect(routeToRow({ priority: 10, matcher: { domain_suffixes: ['a.com', 'b.com'] }, outbound_tag: 'US', enabled: true, note: '' })).toMatchObject({ kind: 'domain_suffix', value: 'a.com, b.com' })
+    expect(routeToRow({ priority: 10, matcher: { domain_suffixes: ['example.com', 'example.org'] }, outbound_tag: 'US', enabled: true, note: '' })).toMatchObject({ kind: 'domain_suffix', value: 'example.com, example.org' })
     expect(routeToRow({ priority: 20, matcher: { ports: [25, 465] }, outbound_tag: 'block', enabled: true, note: '' })).toMatchObject({ kind: 'port', value: '25, 465' })
     expect(routeToRow({ priority: 30, matcher: {}, outbound_tag: 'direct', enabled: true, note: '' }).kind).toBe('fallback')
   })
@@ -372,7 +372,7 @@ describe('routing rows', () => {
   })
 
   it('inserts new rules before a trailing fallback', () => {
-    const add = { kind: 'domain' as const, value: 'x.com', outbound: 'direct', enabled: true, note: '' }
+    const add = { kind: 'domain' as const, value: 'example.net', outbound: 'direct', enabled: true, note: '' }
     const fb = { kind: 'fallback' as const, value: '', outbound: 'US', enabled: true, note: '' }
     expect(insertRule([fb], add)).toEqual([add, fb])
     expect(insertRule([add], fb)).toEqual([add, fb])

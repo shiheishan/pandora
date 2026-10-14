@@ -332,7 +332,7 @@ export function orderResult(o: Pick<OrderDetail, 'status' | 'kind' | 'cancel_rea
   }
 }
 
-// 收款记录库里只有 succeeded（00013_order.sql）；认不出的原样显示
+// 收款记录库里只有 succeeded（00012_payment.sql）；认不出的原样显示
 const PAYMENT_STATUS: Readonly<Record<string, string>> = { succeeded: '成功' }
 
 /** 展开区事实行（契约门户-04 待补·前端）：订单号、时间、结果、金额拆分、支付记录 */

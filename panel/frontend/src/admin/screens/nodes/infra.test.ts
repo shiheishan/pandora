@@ -35,7 +35,7 @@ const server = (over: Partial<Record<string, unknown>> = {}): Server =>
     row_version: 4,
     region: '香港',
     hostname: null,
-    public_ipv4: '103.151.12.8',
+    public_ipv4: '192.0.2.8',
     public_ipv6: null,
     private_ipv4: null,
     architecture: null,
@@ -130,10 +130,15 @@ describe('server status', () => {
     expect(quickToggle('draining')).toMatchObject({ to: 'ready', label: '恢复服务' })
     expect(quickToggle('maintenance')).toMatchObject({ to: 'ready' })
     expect(quickToggle('draft')).toMatchObject({ to: 'ready', label: '投入服务' })
-    expect(quickToggle('unhealthy')).toBeNull()
     expect(quickToggle('retired')).toBeNull()
     for (const from of ['ready', 'draining', 'maintenance', 'draft'] as const) expect(nextServerStatuses(from)).toContain(quickToggle(from)!.to)
-    expect(nextServerStatuses('ready')).not.toContain('maintenance')
+  })
+
+  it('状态边表与后端 serverStatusTransitions 逐边一致', () => {
+    expect(nextServerStatuses('draft')).toEqual(['ready', 'maintenance', 'retired'])
+    expect(nextServerStatuses('ready')).toEqual(['draining', 'maintenance'])
+    expect(nextServerStatuses('draining')).toEqual(['ready', 'maintenance', 'retired'])
+    expect(nextServerStatuses('maintenance')).toEqual(['ready', 'draining', 'retired'])
     expect(nextServerStatuses('retired')).toEqual([])
   })
 
@@ -168,7 +173,7 @@ describe('meters and node tags', () => {
 describe('server form', () => {
   it('validates like the Go handler', () => {
     expect(validateServerForm({ ...emptyServerForm(), name: 'edge' })).toEqual({})
-    const errors = validateServerForm({ ...emptyServerForm(), name: ' ', publicIpv4: '1.2.3.256', privateIpv4: '10.0.0.1', publicIpv6: '1.2.3.4', capacity: '0', architecture: 'x'.repeat(33) })
+    const errors = validateServerForm({ ...emptyServerForm(), name: ' ', publicIpv4: '192.0.2.256', privateIpv4: '10.0.0.1', publicIpv6: '192.0.2.4', capacity: '0', architecture: 'x'.repeat(33) })
     expect(errors).toEqual({ name: '名称必须为 1 到 120 个字符', public_ipv4: 'IP 地址格式不正确', public_ipv6: 'IP 地址格式不正确', capacity_nodes: '必须大于 0', architecture: '内容过长，最多允许 32 个字符' })
     expect(validateServerForm({ ...emptyServerForm(), name: 'edge', publicIpv6: '2001:db8::1' })).toEqual({})
   })
