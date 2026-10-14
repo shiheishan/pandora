@@ -180,7 +180,7 @@ export function orderItems(ordered: readonly Pick<NodeRow, 'id' | 'row_version' 
 // ---------------------------------------------------------------------------
 // 协议表单：字段来自 GET v1/node-protocol-schemas
 // ---------------------------------------------------------------------------
-export type FieldKind = 'enum' | 'number' | 'boolean' | 'json' | 'list' | 'text'
+type FieldKind = 'enum' | 'number' | 'boolean' | 'json' | 'list' | 'text'
 export interface ProtocolField {
   /** 点号路径，如 reality_settings.private_key */
   path: string

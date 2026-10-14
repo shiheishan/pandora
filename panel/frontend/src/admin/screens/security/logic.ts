@@ -269,7 +269,7 @@ export const SWITCH_META: Readonly<Record<string, SwitchMeta>> = {
   'client.config_sync': { title: '客户端配置同步', desc: '核心能力，数据库约束保证不能关闭。' },
 }
 
-export type SwitchKind = 'toggle' | 'essential' | 'missing'
+type SwitchKind = 'toggle' | 'essential' | 'missing'
 
 export interface SwitchView {
   code: string

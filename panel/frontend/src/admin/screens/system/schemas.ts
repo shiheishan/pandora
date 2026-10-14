@@ -56,7 +56,7 @@ const templateRow = z.object({
   is_default: z.boolean(),
   updated_at: z.string(),
 })
-export const templateSchema = templateRow.extend({
+const templateSchema = templateRow.extend({
   has_default: z.boolean(),
   description: z.string(),
   preview_subject: z.string(),
@@ -74,7 +74,7 @@ export const templateTested = z.object({ sent: z.literal(true), subject: z.strin
 // ---------------------------------------------------------------------------
 // Webhook 钩子（plugin.Hook；R59 事件目录小写键、hooks 恒为数组）
 // ---------------------------------------------------------------------------
-export const hookSchema = z.object({
+const hookSchema = z.object({
   id: z.string().uuid(),
   code: z.string(),
   name: z.string(),
@@ -94,7 +94,7 @@ export const hookSchema = z.object({
 })
 export type Hook = z.output<typeof hookSchema>
 
-export const hookEventSchema = z.object({ name: z.string(), desc: z.string() })
+const hookEventSchema = z.object({ name: z.string(), desc: z.string() })
 export type HookEvent = z.output<typeof hookEventSchema>
 export const hooksResponse = z.object({ hooks: z.array(hookSchema), events: z.array(hookEventSchema) })
 
@@ -102,7 +102,7 @@ export const hookSaved = z.object({ saved: z.literal(true), secret: z.string().o
 export const hookDeleted = z.object({ deleted: z.literal(true) })
 
 const DELIVERY_STATUSES = ['queued', 'sent', 'failed'] as const
-export const deliverySchema = z.object({
+const deliverySchema = z.object({
   event: z.string(),
   status: z.enum(DELIVERY_STATUSES),
   attempts: z.number().int(),

@@ -9,10 +9,10 @@ export type Provider = (typeof PROVIDERS)[number]
 
 const CERT_STATUSES = ['pending', 'active', 'paused', 'blocked_credential'] as const
 
-export const EXPIRY_LEVELS = ['none', 'ok', 'warning', 'critical', 'expired'] as const
+const EXPIRY_LEVELS = ['none', 'ok', 'warning', 'critical', 'expired'] as const
 export type ExpiryLevel = (typeof EXPIRY_LEVELS)[number]
 
-export const KEY_TYPES = ['ecdsa-p256', 'rsa-2048'] as const
+const KEY_TYPES = ['ecdsa-p256', 'rsa-2048'] as const
 export type KeyType = (typeof KEY_TYPES)[number]
 
 const ORDER_STATES = ['queued', 'running', 'succeeded', 'failed', 'cancelled'] as const
@@ -87,7 +87,7 @@ const versionSchema = z.object({
   created_at: z.string(),
 })
 
-export const orderSchema = z.object({
+const orderSchema = z.object({
   id: z.string(),
   reason: z.enum(ORDER_REASONS),
   state: z.enum(ORDER_STATES),
@@ -115,7 +115,7 @@ export type CertificateDetail = z.output<typeof certificateDetailSchema>
 // ---------------------------------------------------------------------------
 const VERIFY_STATUSES = ['unverified', 'ok', 'error'] as const
 
-export const dnsCredentialSchema = z.object({
+const dnsCredentialSchema = z.object({
   id: z.string(),
   name: z.string(),
   provider: z.enum(PROVIDERS),

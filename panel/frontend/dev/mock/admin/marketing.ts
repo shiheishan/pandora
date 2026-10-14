@@ -252,9 +252,9 @@ function mintBatch(t: Template, count: number, prefix: string, expiresAt: string
   [templates[1]!, 24, 'PRO', 12],
   [templates[2]!, 30, '', 5],
 ].forEach(([t, n, prefix, age]) => {
-  const b = mintBatch(t as Template, n as number, prefix as string, null, 'linzhou@pandora.dev', age as number)
+  const b = mintBatch(t as Template, n as number, prefix as string, null, 'linzhou@example.test', age as number)
   b.exported_at = b.created_at
-  b.exported_by_email = 'linzhou@pandora.dev'
+  b.exported_by_email = 'linzhou@example.test'
   codes
     .filter((c) => c.batch_id === b.id)
     .slice(0, 5)

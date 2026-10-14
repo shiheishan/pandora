@@ -44,7 +44,7 @@ describe('mock api · admin security and operations', () => {
     expect(failed.events.every((e) => e.outcome === 'failure' && e.actor_kind === 'anonymous')).toBe(true)
     const byEmail = await audit('?q=zhou.min&limit=200')
     expect(byEmail.events.length).toBeGreaterThan(0)
-    expect(byEmail.events.every((e) => e.actor_email === 'zhou.min@pandora.dev' || e.action.includes('zhou.min'))).toBe(true)
+    expect(byEmail.events.every((e) => e.actor_email === 'zhou.min@example.test' || e.action.includes('zhou.min'))).toBe(true)
     const target = all.events.find((e) => e.resource_id)!
     expect((await audit(`?q=${target.resource_id}`)).events.map((e) => e.id)).toContain(target.id)
   })

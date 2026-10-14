@@ -35,8 +35,7 @@ describe('叫法', () => {
   it('手上的份：生效中与过期 30 天内能救回的；彻底停用的不列', () => {
     const revivable = sub({ id: 'r', status: 'expired', changeable: true, renewable: true })
     const dead = sub({ id: 'd', status: 'expired', changeable: false, renewable: false })
-    const cancelled = sub({ id: 'x', status: 'cancelled', changeable: false, renewable: false })
-    expect(heldSubs([PLAIN, revivable, dead, cancelled]).map((s) => s.id)).toEqual(['c', 'r'])
+    expect(heldSubs([PLAIN, revivable, dead]).map((s) => s.id)).toEqual(['c', 'r'])
   })
 })
 

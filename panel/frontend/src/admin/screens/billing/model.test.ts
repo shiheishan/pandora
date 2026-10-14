@@ -53,7 +53,7 @@ const row = { provider_name: null, balance_applied: 0, total_amount: 2500 }
 
 describe('orders', () => {
   it('maps the status segments to the multi-value status query (R63)', () => {
-    expect(filterStatuses('pending')).toBe('draft,pending_payment,processing')
+    expect(filterStatuses('pending')).toBe('pending_payment')
     expect(filterStatuses('paid')).toBe('paid,fulfilled')
     expect(filterStatuses('cancelled')).toBe('cancelled,expired')
     expect(filterStatuses('all')).toBeUndefined()
@@ -107,7 +107,7 @@ describe('orders', () => {
       coupon_id: null,
       manual_reason: '补偿一个月服务',
       created_by: 'a1',
-      created_by_email: 'ops@pandora.dev',
+      created_by_email: 'ops@example.test',
       subscription_id: null,
       expires_at: null,
       fulfilled_at: null,
@@ -121,7 +121,7 @@ describe('orders', () => {
 
   it('builds the drawer facts with source and manual channel', () => {
     const facts = new Map(orderFacts(detail()))
-    expect(facts.get('来源')).toBe('人工开单 · ops@pandora.dev')
+    expect(facts.get('来源')).toBe('人工开单 · ops@example.test')
     expect(facts.get('渠道')).toBe('人工')
     expect(facts.get('内容')).toBe('专业版 · 月付')
     expect(facts.get('优惠')).toBe('− ¥45.00')

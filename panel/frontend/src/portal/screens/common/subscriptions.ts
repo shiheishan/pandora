@@ -16,7 +16,7 @@ export const canRenew = (s: Subscription) => s.renewable
 // ---------------------------------------------------------------------------
 // GET v1/me/subscription-links：active 凭据，含过期 30 天内订阅的（expired 为真、只读），按 subscription_id 配对
 // ---------------------------------------------------------------------------
-export const subscriptionLinkSchema = z.object({
+const subscriptionLinkSchema = z.object({
   subscription_id: z.string(),
   url: z.string(),
   fetch_count: z.number().int(),

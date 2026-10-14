@@ -16,8 +16,8 @@ import { findRoute, matchPattern, type AnonContext, type Json, type MockApp, typ
 // POST /__mock/expire-reauth 让所有会话的 rat 立即过期，不必干等 15 分钟。
 // ---------------------------------------------------------------------------
 export const MOCK_ACCOUNTS = {
-  admin: { email: 'admin@pandora.dev', password: 'pandora-dev-pass' },
-  portal: { email: 'user@pandora.dev', password: 'pandora-dev-pass' },
+  admin: { email: 'admin@example.test', password: 'pandora-dev-pass' },
+  portal: { email: 'user@example.test', password: 'pandora-dev-pass' },
 } as const
 
 const REAUTH_WINDOW_MS = 15 * 60 * 1000

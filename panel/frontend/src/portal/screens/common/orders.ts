@@ -193,7 +193,7 @@ export function useOrderPayable(): (orderId: string) => Promise<boolean> {
 // 订单页（契约门户-04 与修订 R69：status 可逗号多值、counts 四类计数）
 // 设计的「全部」= 除待支付外的所有状态；待支付在顶部单独成卡
 // ---------------------------------------------------------------------------
-export const OPEN_STATUSES = ['pending_payment'] as const
+const OPEN_STATUSES = ['pending_payment'] as const
 export const ORDER_FILTERS = {
   all: ['paid', 'fulfilled', 'cancelled', 'expired', 'partially_refunded', 'refunded'],
   paid: ['paid', 'fulfilled'],

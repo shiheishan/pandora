@@ -4,14 +4,14 @@ import { z } from 'zod'
 // 封闭枚举（迁移里的 CHECK）：未知值判为不符约定
 // ---------------------------------------------------------------------------
 // 库里 5 态（00013_order.sql），退款两态等产品确认后再定
-export const ORDER_STATUSES = ['pending_payment', 'paid', 'fulfilled', 'cancelled', 'expired', 'refunded', 'partially_refunded'] as const
+const ORDER_STATUSES = ['pending_payment', 'paid', 'fulfilled', 'cancelled', 'expired', 'refunded', 'partially_refunded'] as const
 const ORDER_KINDS = ['new', 'renewal', 'upgrade', 'addon', 'topup'] as const
 const INTENT_STATUSES = ['requires_action', 'succeeded', 'cancelled', 'expired'] as const
 const PAYMENT_STATUSES = ['succeeded'] as const
 const REFUND_STATUSES = ['pending', 'approved', 'processing', 'succeeded', 'failed', 'rejected'] as const
-export const LATE_STATUSES = ['suspense', 'applied'] as const
-export const LATE_KINDS = ['released_order', 'excess_capture', 'ineligible_subscription'] as const
-export const CURRENCIES = ['CNY', 'USD'] as const
+const LATE_STATUSES = ['suspense', 'applied'] as const
+const LATE_KINDS = ['released_order', 'excess_capture', 'ineligible_subscription'] as const
+const CURRENCIES = ['CNY', 'USD'] as const
 export type OrderStatus = (typeof ORDER_STATUSES)[number]
 export type RefundStatus = (typeof REFUND_STATUSES)[number]
 export type LateStatus = (typeof LATE_STATUSES)[number]

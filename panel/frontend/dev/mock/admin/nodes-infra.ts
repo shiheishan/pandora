@@ -127,7 +127,7 @@ servers.push(
   server('tw-tpe-edge-1', '台北', '61.216.4.19', { last_heartbeat_at: ago(3600 * 5), cpu: 0, mem: 12, disk: 40 }),
   server('kr-sel-edge-1', '首尔', '', { status: 'draft', public_ipv4: null, hostname: null, architecture: null, os_name: null, agent_version: null, last_heartbeat_at: null, cpu_cores: null, memory_mb: null, disk_gb: null, capacity_nodes: 32 }),
   // R108：刚装好、还在草稿的新服务器，上面有一个接入完成待上线的节点（nodes.ts 的「大阪 01（待上线）」）
-  server('jp-osa-edge-1', '大阪', '45.77.30.12', { status: 'draft', agent_version: 'core r53', capacity_nodes: 16 }),
+  server('jp-osa-edge-1', '大阪', '203.0.113.30', { status: 'draft', agent_version: 'core r53', capacity_nodes: 16 }),
 )
 // 列表按 created_at 倒序：让第一台最新，顺序与设计稿一致
 servers.forEach((s, i) => (s.created_at = s.updated_at = ago(86400 * (10 + i))))

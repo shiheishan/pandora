@@ -6,7 +6,7 @@ import { z } from 'zod'
 // ---------------------------------------------------------------------------
 const RESET_STRATEGIES = ['never', 'natural_month', 'billing_cycle', 'fixed_day'] as const
 
-export const priceSchema = z.object({
+const priceSchema = z.object({
   id: z.string(),
   currency: z.string(),
   unit_amount: z.number().int(),

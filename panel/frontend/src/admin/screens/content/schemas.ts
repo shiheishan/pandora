@@ -8,13 +8,13 @@ const time = z.string()
 // ---------------------------------------------------------------------------
 export const SEVERITIES = ['info', 'notice', 'warning', 'critical'] as const
 export type Severity = (typeof SEVERITIES)[number]
-export const ANN_STATUSES = ['draft', 'scheduled', 'published', 'withdrawn'] as const
+const ANN_STATUSES = ['draft', 'scheduled', 'published', 'withdrawn'] as const
 export type AnnStatus = (typeof ANN_STATUSES)[number]
 
 const planRef = z.object({ id: uuid, name: z.string(), status: z.string() })
 const groupRef = z.object({ id: uuid, name: z.string() })
 
-export const announcementSchema = z.object({
+const announcementSchema = z.object({
   id: uuid,
   title: z.string(),
   body: z.string(),
@@ -96,7 +96,7 @@ export const pageArchived = z.object({ page: z.object({ id: uuid, version: z.num
 // 组内必须是字符串；多出来的键或非字符串值让这一行解析失败。
 // ---------------------------------------------------------------------------
 const tokenGroup = z.record(z.string(), z.string())
-export const themeSchema = z.object({
+const themeSchema = z.object({
   id: uuid,
   code: z.string(),
   name: z.string(),
@@ -113,7 +113,7 @@ export const themeSaved = z.object({ saved: z.literal(true), dropped: z.array(z.
 export const themeActivated = z.object({ activated: z.literal(true) })
 export const themeDeleted = z.object({ deleted: z.literal(true) })
 
-export const slotSchema = z.object({
+const slotSchema = z.object({
   key: z.string(),
   label: z.string(),
   where: z.string(),

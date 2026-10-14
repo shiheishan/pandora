@@ -5,10 +5,10 @@ import { useToast } from '../ui'
 
 // ---------------------------------------------------------------------------
 // 幂等键：实现收在 core/intent.ts（两个入口共用一份），这里原样转出，
-// 后台各页照旧从 actions 取 useIntentKey / createIntentKey / endsIntent / IntentKey。
+// 后台各页照旧从 actions 取 useIntentKey / createIntentKey / endsIntent。
 // 自己先处理某些 4xx（如 409 标到表单）、不经 useFailure 的分支，在 catch 开头直接用 endsIntent。
 // ---------------------------------------------------------------------------
-export { createIntentKey, endsIntent, useIntentKey, type IntentKey } from '../core/intent'
+export { createIntentKey, endsIntent, useIntentKey } from '../core/intent'
 
 // ---------------------------------------------------------------------------
 // 写失败：reauth 对话框被取消（R34）静默；带 fields 且调用方能标表单的交给表单；

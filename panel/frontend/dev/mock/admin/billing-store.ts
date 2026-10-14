@@ -260,7 +260,7 @@ for (const u of userStore) {
 const U = (i: number) => userStore[i]!
 const std = plans[0]!
 const pro = plans[1] ?? std
-const OPS = { created_by: randomUUID(), created_by_email: 'ops@pandora.dev' }
+const OPS = { created_by: randomUUID(), created_by_email: 'ops@example.test' }
 
 function add(u: User, over: Partial<Order>, then?: (o: Order) => void): Order {
   const o = blank(u, { subtotal_amount: over.total_amount ?? 0, ...over })
@@ -631,8 +631,8 @@ const adjSeed = (currency: Adjustment['currency'], amount: number, reason: strin
   created_at: iso(days * DAY),
 })
 export const adjustments: Adjustment[] = [
-  adjSeed('CNY', 240000, '线下对公转账补录 · 9 月', 12, 'admin@pandora.dev'),
-  adjSeed('USD', -1200, '重复扣款退回，渠道已原路退款', 6, 'ops@pandora.dev'),
+  adjSeed('CNY', 240000, '线下对公转账补录 · 9 月', 12, 'admin@example.test'),
+  adjSeed('USD', -1200, '重复扣款退回，渠道已原路退款', 6, 'ops@example.test'),
   adjSeed('CNY', 31240, '渠道手续费返还 · 8 月', 3, null),
 ]
 

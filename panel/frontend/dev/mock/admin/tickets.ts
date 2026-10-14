@@ -50,9 +50,9 @@ const AGENT_SETTABLE = new Set(['resolved', 'closed', 'escalated', 'pending_agen
 
 /** 固定的另外三位客服；当前登录的管理员也会出现在可指派目录里 */
 const STAFF = [
-  { id: '0b6f1c2a-1111-4a00-8000-000000000001', email: 'zhoumin@pandora.dev', display_name: '周敏' },
-  { id: '0b6f1c2a-1111-4a00-8000-000000000002', email: 'tangyiming@pandora.dev', display_name: '唐一鸣' },
-  { id: '0b6f1c2a-1111-4a00-8000-000000000003', email: 'night-shift@pandora.dev' },
+  { id: '0b6f1c2a-1111-4a00-8000-000000000001', email: 'zhoumin@example.test', display_name: '周敏' },
+  { id: '0b6f1c2a-1111-4a00-8000-000000000002', email: 'tangyiming@example.test', display_name: '唐一鸣' },
+  { id: '0b6f1c2a-1111-4a00-8000-000000000003', email: 'night-shift@example.test' },
 ] as const
 
 function msg(kind: Msg['author_kind'], name: string | null, body: string, minutesAgo: number, internal = false): Msg {

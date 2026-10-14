@@ -184,7 +184,7 @@ export function newIdempotencyKey(
 // ---------------------------------------------------------------------------
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
-export interface RequestOptions {
+interface RequestOptions {
   method?: Method
   query?: QueryParams
   /** JSON 请求体；后端 DisallowUnknownFields，字段须与契约逐字一致。部分 DELETE 必须传 {}。 */

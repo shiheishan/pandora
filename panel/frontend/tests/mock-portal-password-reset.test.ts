@@ -20,7 +20,7 @@ describe('mock api · portal password reset', () => {
     const site = (await (await fetch(`${base}/v1/site-config`)).json()) as { password_reset: boolean }
     expect(site.password_reset).toBe(true)
     const known = (await (await post('/v1/auth/password-reset/start', { email: MOCK_ACCOUNTS.portal.email })).json()) as Record<string, unknown>
-    const unknown = (await (await post('/v1/auth/password-reset/start', { email: 'nobody@pandora.dev' })).json()) as Record<string, unknown>
+    const unknown = (await (await post('/v1/auth/password-reset/start', { email: 'nobody@example.test' })).json()) as Record<string, unknown>
     expect(unknown.message).toBe(known.message)
     expect((await post('/v1/auth/password-reset/start', { email: 'not-an-email' })).status).toBe(422)
   })

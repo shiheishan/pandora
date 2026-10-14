@@ -3,15 +3,15 @@ import { z } from 'zod'
 // ---------------------------------------------------------------------------
 // 封闭枚举（迁移里的 CHECK 与 Go 校验）：未知值判为不符约定
 // ---------------------------------------------------------------------------
-export const PLAN_STATUSES = ['draft', 'active', 'archived'] as const
+const PLAN_STATUSES = ['draft', 'active', 'archived'] as const
 export const VISIBILITIES = ['public', 'authenticated', 'group', 'invite_only', 'hidden'] as const
 const VERSION_STATUSES = ['draft', 'published', 'retired'] as const
-export const RESET_STRATEGIES = ['never', 'natural_month', 'billing_cycle', 'fixed_day'] as const
+const RESET_STRATEGIES = ['never', 'natural_month', 'billing_cycle', 'fixed_day'] as const
 const OVERAGE_POLICIES = ['suspend', 'throttle', 'metered_billing'] as const
 const QUOTA_PERIODS = ['total', 'cycle', 'day', 'month'] as const
-export const BILLING_INTERVALS = ['day', 'week', 'month', 'quarter', 'year', 'one_time'] as const
-export const CURRENCIES = ['CNY', 'USD'] as const
-export const PACK_STATUSES = ['active', 'archived'] as const
+const BILLING_INTERVALS = ['day', 'week', 'month', 'quarter', 'year', 'one_time'] as const
+const CURRENCIES = ['CNY', 'USD'] as const
+const PACK_STATUSES = ['active', 'archived'] as const
 export type PlanStatus = (typeof PLAN_STATUSES)[number]
 export type Visibility = (typeof VISIBILITIES)[number]
 export type ResetStrategy = (typeof RESET_STRATEGIES)[number]
@@ -32,7 +32,7 @@ const list = <T extends z.ZodType>(item: T) =>
 // ---------------------------------------------------------------------------
 // 价格行（列表与详情同形，含已归档）
 // ---------------------------------------------------------------------------
-export const priceRowSchema = z.object({
+const priceRowSchema = z.object({
   id: z.string(),
   currency: z.enum(CURRENCIES),
   unit_amount: count,
@@ -77,7 +77,7 @@ export type PlanRow = z.output<typeof planRowSchema>
 // ---------------------------------------------------------------------------
 // GET v1/plans/{id}：详情（版本 version 降序，价格 created_at 降序）
 // ---------------------------------------------------------------------------
-export const quotaSchema = z.object({ metric: z.string(), limit: int.nullable(), unit: z.string(), period: z.enum(QUOTA_PERIODS) })
+const quotaSchema = z.object({ metric: z.string(), limit: int.nullable(), unit: z.string(), period: z.enum(QUOTA_PERIODS) })
 export type Quota = z.output<typeof quotaSchema>
 const entitlementSchema = z.object({ code: z.string(), value: z.unknown() })
 

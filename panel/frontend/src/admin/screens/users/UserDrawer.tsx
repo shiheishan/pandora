@@ -13,7 +13,7 @@ import { DevicesTab, OrdersTab, ProfileTab, SubscriptionsTab } from './tabs'
 import { TrafficPackDialog } from './TrafficPackDialog'
 import css from './Users.module.css'
 
-export const DRAWER_TABS = [
+const DRAWER_TABS = [
   ['profile', '画像'],
   ['sub', '订阅'],
   ['devices', '设备'],

@@ -87,9 +87,9 @@ function record(row: Omit<AuditRow, 'id' | 'occurred_at'> & { at?: string }): Au
 }
 
 const STAFF: ReadonlyArray<readonly [string, string]> = [
-  ['linzhou@pandora.dev', '10.8.0.12'],
-  ['zhou.min@pandora.dev', '10.8.0.31'],
-  ['tang.yiming@pandora.dev', '10.8.0.44'],
+  ['linzhou@example.test', '10.8.0.12'],
+  ['zhou.min@example.test', '10.8.0.31'],
+  ['tang.yiming@example.test', '10.8.0.44'],
 ]
 const BROWSER = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6) AppleWebKit/605.1.15 Safari/605.1.15'
 const PUBLIC_IPS = ['112.64.28.201', '39.144.8.21', '117.136.2.40', '61.216.4.19', '223.104.6.9']
@@ -117,7 +117,7 @@ const PUBLIC_IPS = ['112.64.28.201', '39.144.8.21', '117.136.2.40', '61.216.4.19
       { ...base, ...user, action: 'user.registered', resource_type: 'user', resource_id: u.id, resource_label: u.email },
       { ...base, ...staff, action: 'plan.version.publish', resource_type: 'plan', resource_id: randomUUID(), resource_label: '专业版', auth_context: auth('reauth') },
       { ...base, actor_kind: 'system', actor_id: null, actor_email: null, api_domain: null, source_ip: null, user_agent: null, action: 'payment.succeeded', resource_type: 'order', resource_id: randomUUID(), resource_label: `PD2609-${3400 + k}` },
-      { ...base, actor_kind: 'agent', actor_id: randomUUID(), actor_email: 'support@pandora.dev', api_domain: 'admin', source_ip: legacy ? null : '10.8.0.52', user_agent: BROWSER, action: 'ticket.reply', resource_type: 'ticket', resource_id: randomUUID(), resource_label: `TK20260922-${(2000 + k).toString(36).toUpperCase()}`, auth_context: auth('session') },
+      { ...base, actor_kind: 'agent', actor_id: randomUUID(), actor_email: 'support@example.test', api_domain: 'admin', source_ip: legacy ? null : '10.8.0.52', user_agent: BROWSER, action: 'ticket.reply', resource_type: 'ticket', resource_id: randomUUID(), resource_label: `TK20260922-${(2000 + k).toString(36).toUpperCase()}`, auth_context: auth('session') },
       { ...base, ...staff, action: 'payment_provider.toggle', resource_type: 'payment_provider', auth_context: auth('reauth'), outcome: k % 4 === 0 ? 'denied' : 'success', reason: '渠道维护' },
       { ...base, ...user, action: 'user.password_changed', resource_type: 'user', resource_id: u.id, resource_label: u.email, auth_context: auth('session') },
       { ...base, actor_kind: 'node', actor_id: null, actor_email: null, api_domain: 'node', source_ip: legacy ? null : '149.28.72.190', user_agent: 'pdnd/1.4.2', action: 'node.enroll', resource_type: 'node', resource_id: randomUUID(), resource_label: `us-lax-edge-${(k % 3) + 1}`, outcome: k % 5 === 0 ? 'failure' : 'success' },

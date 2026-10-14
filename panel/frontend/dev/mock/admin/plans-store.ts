@@ -141,7 +141,7 @@ export function quotasFor(gb: number | null, devices: number | null): Quota[] {
   return q
 }
 
-function seedVersion(n: number, status: Version['status'], gb: number, devices: number, poolCodes: string[], daysAgo: number, email: string | null = 'ops@pandora.dev'): Version {
+function seedVersion(n: number, status: Version['status'], gb: number, devices: number, poolCodes: string[], daysAgo: number, email: string | null = 'ops@example.test'): Version {
   return {
     ...blankVersion(n, email),
     status,
@@ -234,7 +234,7 @@ export const plans: Plan[] = [
     [
       seedVersion(1, 'published', 400, 5, ['global'], 260),
       { ...seedVersion(2, 'published', 500, 5, ['asia', 'global'], 100), throttle_kbps: 300_000 },
-      seedVersion(3, 'draft', 600, 5, ['asia', 'global'], 1, 'zhou.min@pandora.dev'),
+      seedVersion(3, 'draft', 600, 5, ['asia', 'global'], 1, 'zhou.min@example.test'),
     ],
     [
       seedPrice('CNY', 4500, 'month', 1, 120),

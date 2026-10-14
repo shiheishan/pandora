@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 // POST v1/me/checkout/quote 的 schema（纯 zod）：报价钩子 quote.ts 转出，tests/ 的假后端测试也直接用它
-export const balanceSplitSchema = z.object({
+const balanceSplitSchema = z.object({
   /** 用掉的余额 */
   applied: z.number().int(),
   /** 还需在线支付 */
@@ -28,7 +28,7 @@ const creditDetailSchema = z.object({
   ratio_ppm: z.number().int(),
 })
 
-export const quoteRowSchema = z.object({
+const quoteRowSchema = z.object({
   subscription_id: z.string().nullable(),
   plan_id: z.string().nullable(),
   pack_id: z.string().nullable(),

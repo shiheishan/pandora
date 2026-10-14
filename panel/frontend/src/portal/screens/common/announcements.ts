@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
 import { useApi } from '../../../shell/runtime'
 
-export const announcementSchema = z.object({
+const announcementSchema = z.object({
   id: z.string(),
   title: z.string(),
   body: z.string(),

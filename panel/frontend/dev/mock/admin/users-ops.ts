@@ -161,7 +161,7 @@ function seedLogs(users: readonly User[]): ResetLog[] {
       plan_name: sub?.plan_name ?? '',
       reason,
       consumed_before: (((i * 37) % 480) + 12) * GiB + ((i * 7919) % 1000) * 1024 ** 2,
-      actor_email: reason === 'manual' ? (i % 2 ? 'admin@pandora.dev' : 'zhou.min@pandora.dev') : '',
+      actor_email: reason === 'manual' ? (i % 2 ? 'admin@example.test' : 'zhou.min@example.test') : '',
       note: reason === 'manual' ? `工单 #${4700 + i} 用户申诉，补偿断线时长` : '',
       created_at: new Date(Date.now() - i * 0.85 * DAY - ((i * 13) % 24) * 3_600_000).toISOString(),
     })

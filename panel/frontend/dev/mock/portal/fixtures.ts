@@ -177,7 +177,7 @@ export function portalState(userId: string): PortalState {
 }
 
 export const newToken = (tail = '') => randomBytes(18).toString('base64url').slice(0, 24 - tail.length) + tail
-export const linkUrl = (token: string) => `https://sub.pandora.dev/s/${token}`
+export const linkUrl = (token: string) => `https://sub.example.test/s/${token}`
 
 function ymdInZone(t: number): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: MOCK_TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(t))

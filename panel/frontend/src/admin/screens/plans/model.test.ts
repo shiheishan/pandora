@@ -75,7 +75,7 @@ const version = (over: Partial<VersionRow> = {}): VersionRow => ({
     { metric: 'api.calls', limit: 1000, unit: 'count', period: 'day' },
   ],
   pool_ids: ['pool-a'],
-  created_by_email: 'ops@pandora.dev',
+  created_by_email: 'ops@example.test',
   created_at: '2026-07-30T08:00:00Z',
   ...over,
 })

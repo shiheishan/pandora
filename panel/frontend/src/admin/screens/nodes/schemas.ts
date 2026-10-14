@@ -12,7 +12,7 @@ const strs = list(z.string())
 // ---------------------------------------------------------------------------
 // 节点：列表行（GET v1/nodes）、单取的详情行（GET v1/nodes?id=）与写接口回的 AdminNode
 // ---------------------------------------------------------------------------
-export const SERVING_STATUSES = ['draft', 'active', 'disabled', 'retired'] as const
+const SERVING_STATUSES = ['draft', 'active', 'disabled', 'retired'] as const
 export type ServingStatus = (typeof SERVING_STATUSES)[number]
 
 export const nodeRowSchema = z.object({
@@ -112,7 +112,7 @@ export type AdminNode = z.output<typeof adminNodeSchema>
 // 协议 schema（GET v1/node-protocol-schemas）。13 个 stable，表单只渲染这些。
 // 未配置的草稿 protocol_schema_version 仍是 0，那不是一种协议类型。
 // ---------------------------------------------------------------------------
-export const protocolSchemaSchema = z.object({
+const protocolSchemaSchema = z.object({
   node_type: z.string(),
   version: z.number(),
   status: z.string(),
@@ -132,7 +132,7 @@ export type ProtocolSchema = z.output<typeof protocolSchemaSchema>
 // ---------------------------------------------------------------------------
 // 服务器（GET v1/servers 与 /servers/{id}，nodefabric.Server）：指针字段全是 null 而不是缺键
 // ---------------------------------------------------------------------------
-export const SERVER_STATUSES = ['draft', 'ready', 'draining', 'maintenance', 'unhealthy', 'quarantined', 'retired'] as const
+const SERVER_STATUSES = ['draft', 'ready', 'draining', 'maintenance', 'unhealthy', 'quarantined', 'retired'] as const
 export type ServerStatus = (typeof SERVER_STATUSES)[number]
 
 export const serverSchema = z.object({
@@ -197,7 +197,7 @@ export const serverNodesResponse = z.object({ nodes: z.array(serverNodeSchema), 
 export const POOL_STATUSES = ['active', 'draining', 'disabled'] as const
 export type PoolStatus = (typeof POOL_STATUSES)[number]
 
-export const poolSchema = z.object({
+const poolSchema = z.object({
   id: uuid,
   code: z.string(),
   name: z.string(),
@@ -236,7 +236,7 @@ export const identitySchema = z.object({
   bootstrap_tokens_pending: z.number(),
 })
 
-export const metricPointSchema = z.object({
+const metricPointSchema = z.object({
   at: iso,
   cpu_percent: z.number(),
   mem_percent: z.number(),
@@ -266,8 +266,8 @@ export const metricsSchema = z.object({
 })
 export type MetricPoint = z.output<typeof metricPointSchema>
 
-export const outboundSchema = z.object({ tag: z.string(), type: z.string(), settings: z.unknown() })
-export const routeSchema = z.object({
+const outboundSchema = z.object({ tag: z.string(), type: z.string(), settings: z.unknown() })
+const routeSchema = z.object({
   priority: z.number(),
   matcher: z.record(z.string(), z.unknown()),
   outbound_tag: z.string(),
@@ -277,7 +277,7 @@ export const routeSchema = z.object({
 export type Outbound = z.output<typeof outboundSchema>
 export type Route = z.output<typeof routeSchema>
 /** 节点所在的路由组（00096），按生效顺序（sort_order 小的先） */
-export const routeGroupRefSchema = z.object({ id: uuid, name: z.string(), sort_order: z.number() })
+const routeGroupRefSchema = z.object({ id: uuid, name: z.string(), sort_order: z.number() })
 export type RouteGroupRef = z.output<typeof routeGroupRefSchema>
 export const nodeRoutingSchema = z.object({ row_version: z.number(), groups: list(routeGroupRefSchema), outbounds: list(outboundSchema), routes: list(routeSchema) })
 export type NodeRouting = z.output<typeof nodeRoutingSchema>
@@ -304,7 +304,7 @@ export const routeGroupsResponse = z.object({ groups: z.array(routeGroupSchema) 
 export const groupRoutingSchema = z.object({ row_version: z.number(), outbounds: list(outboundSchema), routes: list(routeSchema) })
 export type GroupRouting = z.output<typeof groupRoutingSchema>
 /** 生效出站 / 规则的来源层；group_id / group_name 只在 scope = group 时出现（omitempty） */
-export const routingSourceSchema = z.object({ scope: z.enum(['node', 'group', 'global']), group_id: uuid.optional(), group_name: z.string().optional() })
+const routingSourceSchema = z.object({ scope: z.enum(['node', 'group', 'global']), group_id: uuid.optional(), group_name: z.string().optional() })
 export type RoutingSource = z.output<typeof routingSourceSchema>
 export const effectiveRoutingSchema = z.object({
   groups: z.array(routeGroupRefSchema),
