@@ -18,11 +18,12 @@ func TestPurgeFetchLogs(t *testing.T) {
 			VALUES ('purge-test-new', 'not_found', now() - interval '10 days')`)
 	}
 	const oldQ = `SELECT count(*) FROM subscription_fetch_log WHERE fetched_at < now() - interval '31 days'`
+	const batch = 5000
 	before := countRows(t, de.env, ctx, oldQ)
-	if before < 3 || before > fetchLogPurgeBatch {
+	if before < 3 || before > batch {
 		t.Fatalf("库里超过 31 天的行 %d，不在本用例假设的范围", before)
 	}
-	n, err := de.svc.PurgeFetchLogs(ctx)
+	n, err := de.svc.PurgeFetchLogs(ctx, batch)
 	if err != nil {
 		t.Fatalf("第一次清理: %v", err)
 	}
@@ -35,7 +36,7 @@ func TestPurgeFetchLogs(t *testing.T) {
 	if kept := countRows(t, de.env, ctx, `SELECT count(*) FROM subscription_fetch_log WHERE ua_family = 'purge-test-new'`); kept != 2 {
 		t.Fatalf("10 天前的行剩 %d，想要 2", kept)
 	}
-	if n, err := de.svc.PurgeFetchLogs(ctx); err != nil || n != 0 {
+	if n, err := de.svc.PurgeFetchLogs(ctx, batch); err != nil || n != 0 {
 		t.Fatalf("第二次清理: n=%d err=%v", n, err)
 	}
 }

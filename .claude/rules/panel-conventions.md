@@ -32,4 +32,4 @@ paths:
 - 限流用 `internal/pkg/ratelimit` 的 `Limiter`；试错计数（先占名额再验、通过后 `Reset`、没结论 `Release`，可选「第 N 次把期限改成暂停时长」）用同包的 `Counter`，不在模块里另写 Lua 计数器。
 
 ## 列表分页
-- 列表接口的 limit、offset 一律经 `internal/pkg/pagination.Parse(c, 缺省, 上限)` 解析：非法值回 422 `validation_failed`，超上限截到上限。不手写 strconv，不把分页参数当字符串绑定。
+- offset 分页的列表接口，limit、offset 一律经 `internal/pkg/pagination.Parse(c, 缺省, 上限)` 解析（游标分页、Top-N、导出上限不在此列）：非法值回 422 `validation_failed`，超上限截到上限。不手写 strconv，不把分页参数当字符串绑定。

@@ -86,3 +86,22 @@ func TestCounterRedisDown(t *testing.T) {
 		t.Fatal("Redis 不可用时 Incr 应返回错误")
 	}
 }
+
+// 键丢了期限（比如被人手工 SET）时，下一次计数补上窗口期，不会让人一直被拦。
+func TestCounterRestoresMissingTTL(t *testing.T) {
+	mr, rdb := testRedis(t)
+	c := NewCounter(rdb)
+	ctx := context.Background()
+	window := 15 * time.Minute
+	if err := mr.Set("pwfail:y", "3"); err != nil {
+		t.Fatal(err)
+	}
+	n, ttl, err := c.Incr(ctx, "pwfail:y", window, 0, 0)
+	if err != nil || n != 4 || ttl <= 0 || ttl > window {
+		t.Fatalf("没期限的键：n=%d ttl=%v err=%v", n, ttl, err)
+	}
+	mr.FastForward(window)
+	if mr.Exists("pwfail:y") {
+		t.Fatal("补上的窗口期过后键应过期")
+	}
+}

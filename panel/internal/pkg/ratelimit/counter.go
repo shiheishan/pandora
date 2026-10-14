@@ -17,18 +17,18 @@ type Counter struct{ rdb *redis.Client }
 // NewCounter 用业务 Redis 客户端构造计数器。
 func NewCounter(rdb *redis.Client) *Counter { return &Counter{rdb: rdb} }
 
-// 先占名额再验：INCR；第一次设窗口期；到阈值（ARGV[2] > 0 时）那一次把期限改成暂停时长。
-// 返回 {累计次数（含本次）, 剩余秒数}。
+// 先占名额再验：INCR；键没有期限时（第一次占名额，或键因故丢了期限）设窗口期，免得没期限的键让人一直被拦；
+// 到阈值（ARGV[2] > 0 时）那一次把期限改成暂停时长。返回 {累计次数（含本次）, 剩余秒数}。
 var counterIncrScript = redis.NewScript(`
 local n = redis.call('INCR', KEYS[1])
-if n == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end
+if redis.call('TTL', KEYS[1]) < 0 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end
 local th = tonumber(ARGV[2])
 if th > 0 and n == th then redis.call('EXPIRE', KEYS[1], ARGV[3]) end
 return {n, redis.call('TTL', KEYS[1])}
 `)
 
 // Incr 占一次名额，返回窗口内累计次数（含本次）与键的剩余期限。
-// 第一次占名额时设期限 window；threshold 为 0 时不再改期限，否则第 threshold 次把期限改成 pause。
+// 键没有期限时设期限 window（正常只在第一次）；threshold 为 0 时不再改期限，否则第 threshold 次把期限改成 pause。
 func (c *Counter) Incr(ctx context.Context, key string, window time.Duration,
 	threshold int, pause time.Duration) (int, time.Duration, error) {
 	res, err := counterIncrScript.Run(ctx, c.rdb, []string{key},
