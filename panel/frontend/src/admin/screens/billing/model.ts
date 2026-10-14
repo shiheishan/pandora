@@ -5,12 +5,12 @@ import { ORDER_STATUS_VIEW, orderWhat, parseYuan, REASON_MIN, type Tone } from '
 import type { PlacementChoice } from './placement'
 import type { Adjustment, Currency, LateCase, LateKind, LateStatus, ManualCreated, OrderDetail, OrderQueried, OrderRow, OrderStatus, PaymentHistory, Placement, Provider } from './schemas'
 
-export { ORDER_STATUS_VIEW, orderWhat, type Tone }
+export { ORDER_STATUS_VIEW, orderWhat }
 
 type Fields = Record<string, string>
 const chars = (s: string) => [...s.trim()].length
-export const REASON_MAX = 500
-export const REFERENCE_MAX = 128
+const REASON_MAX = 500
+const REFERENCE_MAX = 128
 
 // ===========================================================================
 // 订单
@@ -44,7 +44,7 @@ export function channelLabel(o: Pick<OrderRow, 'provider_name' | 'balance_applie
 }
 
 /** 来源：人工单按 manual_reason 判断（不是 kind），开单人账号删掉后 email 为 null */
-export function sourceLabel(o: Pick<OrderDetail, 'manual_reason' | 'created_by_email'>): string {
+function sourceLabel(o: Pick<OrderDetail, 'manual_reason' | 'created_by_email'>): string {
   if (o.manual_reason === null) return '门户下单'
   return `人工开单 · ${o.created_by_email ?? '已删除的管理员'}`
 }
@@ -107,7 +107,7 @@ export function orderFacts(o: OrderDetail): Array<[string, string]> {
 // 支付记录：设计每行一个状态——以支付尝试为行，有对应入账的显示入账状态；线下入账没有
 // 支付尝试，单独成行并标「人工确认」；退款（设计缺）按同一行式附在后面
 // ---------------------------------------------------------------------------
-export interface PayLine {
+interface PayLine {
   key: string
   channel: string
   ref: string
@@ -209,7 +209,7 @@ export interface ManualForm {
 
 export const emptyManual = (user: ManualForm['user'] = null): ManualForm => ({ user, choice: '', settlement: 'pending', reference: '', reason: '' })
 
-export interface PriceChoice {
+interface PriceChoice {
   value: string
   label: string
   amount: number
@@ -270,7 +270,7 @@ export function manualBody(f: ManualForm, target: PlacementChoice | null) {
 }
 
 /** 待支付单低于最低付款额：应付与门槛（分），用来在提交前写明原因 */
-export interface BelowMinimum {
+interface BelowMinimum {
   due: number
   min: number
   currency: string
@@ -427,9 +427,9 @@ export interface ProviderForm {
 }
 
 /** 渠道最低付款额的范围（分）：与后端 provider_admin.go 的白名单校验一致，epay 默认 100（¥1.00） */
-export const MIN_AMOUNT_MIN = 1
-export const MIN_AMOUNT_MAX = 100_000
-export const MIN_AMOUNT_DEFAULT = 100
+const MIN_AMOUNT_MIN = 1
+const MIN_AMOUNT_MAX = 100_000
+const MIN_AMOUNT_DEFAULT = 100
 
 /** 元的文本换成分：最多两位小数，范围 0.01 到 1000；否则 null */
 export function parseMinAmount(input: string): number | null {
@@ -551,7 +551,7 @@ export function minAmountHint(mode: 'create' | 'edit'): string {
 // ===========================================================================
 // 收入调整（报表口径，只追加）
 // ===========================================================================
-export const ADJUST_MAX = 1_000_000_000_000
+const ADJUST_MAX = 1_000_000_000_000
 
 export interface AdjustForm {
   currency: Currency

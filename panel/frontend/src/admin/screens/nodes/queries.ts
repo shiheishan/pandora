@@ -1,11 +1,11 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback } from 'react'
 import { useApi } from '../../../shell/runtime'
-import { effectiveRoutingSchema, globalRoutingSchema, groupRoutingSchema, identitySchema, metricsSchema, nodeDetailResponse, nodeRoutingSchema, nodesResponse, poolsResponse, protocolSchemasResponse, routeGroupsResponse, serverNodesResponse, serverSchema, serversResponse } from './schemas'
+import { effectiveRoutingSchema, globalRoutingSchema, groupRoutingSchema, identitySchema, metricsSchema, nodeDetailResponse, nodeRoutingSchema, nodesResponse, poolsResponse, protocolSchemasResponse, routeGroupsResponse, serverNodesResponse, serversResponse } from './schemas'
 
 export { endsIntent, useFailure, useIntentKey } from '../../actions'
 
-export const NK = ['admin', 'nodes'] as const
+const NK = ['admin', 'nodes'] as const
 
 /** 一页的节点数：后端上限。节点总数不超过它时整页在本地筛选与搜索 */
 export const NODE_PAGE = 1000
@@ -15,7 +15,7 @@ export const NODE_PAGE = 1000
  * 指标靠定时重拉；名称、状态、池这类真正的变更仍由 nodes.changed 立刻失效。
  * 页面不可见时 react-query 自动暂停定时重拉
  */
-export const NODE_METRICS_REFRESH_MS = 30_000
+const NODE_METRICS_REFRESH_MS = 30_000
 
 /**
  * 节点列表：一次取到后端上限 1000 条，并且总带 include_retired=1——
@@ -85,11 +85,6 @@ export function useServers() {
     meta: { topics: ['nodes.changed'] },
     staleTime: 30_000,
   })
-}
-
-export function useServer(id: string) {
-  const api = useApi()
-  return useQuery({ queryKey: [...NK, 'server', id], queryFn: ({ signal }) => api.get(`v1/servers/${id}`, serverSchema, { signal }), meta: { topics: ['nodes.changed'] } })
 }
 
 export function useServerNodes(id: string) {

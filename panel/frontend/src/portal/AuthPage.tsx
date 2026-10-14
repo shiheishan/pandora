@@ -10,7 +10,7 @@ import { PasswordResetForm } from './PasswordReset'
 import { useAppearance, useSiteConfig } from './queries'
 import { SiteBrand } from './SiteBrand'
 
-export type AuthTab = 'login' | 'reg' | 'quick'
+type AuthTab = 'login' | 'reg' | 'quick'
 
 const tokenSchema = z.object({ access_token: z.string().min(1) })
 const registerStartSchema = z.object({
@@ -23,7 +23,7 @@ const registerCompleteSchema = z.object({ user_id: z.string(), email: z.string()
 const message = (err: unknown, fallback: string) => (isApiError(err) ? err.message : fallback)
 
 /** 邮箱密码登录并写令牌；注册完成后也走它（complete 不签发令牌）。 */
-export async function loginWithPassword(api: ApiClient, tokens: TokenStore, email: string, password: string): Promise<void> {
+async function loginWithPassword(api: ApiClient, tokens: TokenStore, email: string, password: string): Promise<void> {
   const out = await api.post('v1/auth/login', tokenSchema, { auth: false, body: { email, password } })
   tokens.set(out.access_token)
 }

@@ -31,14 +31,12 @@ export const meSchema = z.object({
   status: z.string(),
   created_at: z.string(),
 })
-export type PortalMe = z.output<typeof meSchema>
 // 余额与流水（契约门户-05）：外框只读 balance，钱包页读 history，同键一份全字段
 export const balanceSchema = z.object({
   balance: z.number().int(),
   currency: z.string(),
   history: z.array(z.object({ kind: z.string(), delta: z.number().int(), memo: z.string(), at: z.string() })),
 })
-export type Balance = z.output<typeof balanceSchema>
 export const notificationsSchema = z.object({ unread: z.number() })
 
 // 匿名接口：登录页也要用
@@ -86,22 +84,22 @@ export function useBalance() {
 // 要的部分，所以缓存里始终是全字段、整个门户只发一次请求。字段与 Go 的 mySubscriptionView / myQuotaView
 // 一一对应：都没有 omitempty，指针字段（设备上限、周期末、下次重置、续费价、备注名、续到哪天）为 null 而不缺席。
 // ---------------------------------------------------------------------------
-export { subscriptionSchema, subscriptionsSchema, type Subscription, type SubscriptionStatus } from './subscription-schema'
+export { subscriptionSchema, subscriptionsSchema, type Subscription } from './subscription-schema'
 import { subscriptionsSchema, type Subscription } from './subscription-schema'
 
 export const isLive = (s: Pick<Subscription, 'status'>) => s.status === 'active'
 
 /** 仍然生效的订阅，按 current_period_end 最晚在前（没有周期末的视为最晚）。 */
-export function liveSubscriptions(subs: readonly Subscription[]): Subscription[] {
+function liveSubscriptions(subs: readonly Subscription[]): Subscription[] {
   const end = (s: Subscription) => (s.current_period_end ? new Date(s.current_period_end).getTime() : Number.POSITIVE_INFINITY)
   return subs.filter(isLive).sort((a, b) => end(b) - end(a))
 }
 
 /** 已过期、但还能在原订阅上续费的（过期不满 30 天，后端 renewable 为真）：续费后原链接自动恢复（w5expiry）。 */
-export const isRenewableExpired = (s: Pick<Subscription, 'status' | 'renewable'>) => s.status === 'expired' && s.renewable
+const isRenewableExpired = (s: Pick<Subscription, 'status' | 'renewable'>) => s.status === 'expired' && s.renewable
 
 /** 能原地续费的已过期订阅，到期最晚的在前。 */
-export function renewableExpired(subs: readonly Subscription[]): Subscription[] {
+function renewableExpired(subs: readonly Subscription[]): Subscription[] {
   const end = (s: Subscription) => (s.current_period_end ? new Date(s.current_period_end).getTime() : 0)
   return subs.filter(isRenewableExpired).sort((a, b) => end(b) - end(a))
 }
@@ -151,9 +149,9 @@ export function useActivePlanName(): string | null {
 // ---------------------------------------------------------------------------
 // 新栈库里只有 pending / available / voided（复核作废，门户显示「已作废」）；reversed、frozen、settled、rejected 是旧接口的取值，
 // 新后端不再返回，留在枚举里只为不让解析失败
-export const COMMISSION_SCOPES = ['every_order', 'first_order'] as const
-export const COMMISSION_ENTRY_STATUSES = ['pending', 'available', 'reversed', 'frozen', 'settled', 'rejected', 'voided'] as const
-export const WITHDRAWAL_STATUSES = ['requested', 'reviewing', 'approved', 'rejected', 'processing', 'paid', 'failed', 'returned'] as const
+const COMMISSION_SCOPES = ['every_order', 'first_order'] as const
+const COMMISSION_ENTRY_STATUSES = ['pending', 'available', 'reversed', 'frozen', 'settled', 'rejected', 'voided'] as const
+const WITHDRAWAL_STATUSES = ['requested', 'reviewing', 'approved', 'rejected', 'processing', 'paid', 'failed', 'returned'] as const
 
 export const commissionSchema = z.object({
   summary: z.object({

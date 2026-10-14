@@ -12,7 +12,7 @@ export function isChunkLoadError(error: unknown): boolean {
 }
 
 /** 页面块加载中的骨架：一行工具栏 + 一块内容，300ms 内不显现（ui/Skeleton 自带延迟）。 */
-export function ScreenFallback() {
+function ScreenFallback() {
   return (
     <div className={css.fallback} role="status" aria-label="加载中">
       <Skeleton width={220} height={28} />

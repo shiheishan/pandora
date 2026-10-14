@@ -21,7 +21,7 @@ export const PAGES: Readonly<Record<PageKey, readonly [string, string]>> = {
 /** 用户 10-07 拍板：导航只有「我的套餐 / 选购 / 钱包」三项，概览、订单、工单等收进菜单 */
 export const NAV_PAGES: readonly PageKey[] = ['subs', 'plans', 'wallet']
 /** 顶部导航与底部标签栏的文字：「订单」比页标题「我的订单」短 */
-export const NAV_LABELS: Readonly<Partial<Record<PageKey, string>>> = { orders: '订单' }
+const NAV_LABELS: Readonly<Partial<Record<PageKey, string>>> = { orders: '订单' }
 export const navLabel = (page: PageKey) => NAV_LABELS[page] ?? PAGES[page][0]
 export const MENU_PAGES: readonly PageKey[] = ['overview', 'orders', 'referral', 'tickets', 'help', 'account']
 /** 空路径、未知页面与登录后落到这里 */
@@ -31,7 +31,7 @@ const isPage = (value: string): value is PageKey => Object.hasOwn(PAGES, value)
 
 export const pagePath = (page: PageKey) => `/${page}`
 
-export interface PortalRoute {
+interface PortalRoute {
   page: PageKey
   /** 页面之后剩下的路径段，已 URI 解码，交给页面自己解释（如 #/orders/<订单号> → [订单号]） */
   rest: string[]

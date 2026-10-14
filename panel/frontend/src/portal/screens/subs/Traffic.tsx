@@ -14,7 +14,7 @@ import { periodWord } from '../common/card-text'
 import css from './Subs.module.css'
 
 /** 推荐的那一档；没有推荐时取中间那档 */
-export const defaultPack = (packs: readonly Pack[]) => packs.find((p) => p.recommended) ?? packs[Math.floor((packs.length - 1) / 2)] ?? null
+const defaultPack = (packs: readonly Pack[]) => packs.find((p) => p.recommended) ?? packs[Math.floor((packs.length - 1) / 2)] ?? null
 
 /**
  * 加流量（原型 traffic）：从卡片进来，已知是哪一份。流量包宫格 + 主按钮「加 100G · ¥18.00」；

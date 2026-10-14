@@ -30,7 +30,6 @@ export const auditEventSchema = z.object({
 })
 export type AuditEvent = z.output<typeof auditEventSchema>
 export const auditResponse = z.object({ events: z.array(auditEventSchema), total: z.number().int() })
-export type AuditPage = z.output<typeof auditResponse>
 
 // ---------------------------------------------------------------------------
 // 访问日志（安全事件：audit_events 与 subscription_fetch_log 两路归并）
@@ -61,13 +60,12 @@ export const accessResponse = z.object({ items: z.array(accessItemSchema) })
 export const RISKS = ['high', 'mid', 'low'] as const
 export type Risk = (typeof RISKS)[number]
 
-export const clusterUserSchema = z.object({
+const clusterUserSchema = z.object({
   id: z.string(),
   email: z.string(),
   status: z.string(),
   active_plan: z.string().nullable(),
 })
-export type ClusterUser = z.output<typeof clusterUserSchema>
 
 export const clusterReviewSchema = z.object({
   decision: z.enum(['normal', 'disabled']),

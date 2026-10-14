@@ -67,8 +67,7 @@ export function useRotateLink() {
 // GET v1/me/subscriptions/{id}/nodes：保留规则 3，只有名称 / 协议 / 倍率；
 // 订阅不在生效中或无有效凭据时回 404
 // ---------------------------------------------------------------------------
-export const nodePreviewSchema = z.object({ name: z.string(), protocol: z.string(), traffic_rate: z.number() })
-export type NodePreview = z.output<typeof nodePreviewSchema>
+const nodePreviewSchema = z.object({ name: z.string(), protocol: z.string(), traffic_rate: z.number() })
 export const nodesSchema = z.object({ count: z.number().int(), nodes: z.array(nodePreviewSchema) })
 
 /**
@@ -76,7 +75,7 @@ export const nodesSchema = z.object({ count: z.number().int(), nodes: z.array(no
  * 推一条，订阅页因此每 2 秒重拉。节点的名称、协议、倍率很少变，改成 60 秒定时重拉（页面不可见时暂停）；
  * 订阅本身变了（续费、换套餐）仍随 subscriptions.changed 立刻刷新
  */
-export const SUBSCRIPTION_NODES_REFRESH_MS = 60_000
+const SUBSCRIPTION_NODES_REFRESH_MS = 60_000
 
 export function useSubscriptionNodes(subscriptionId: string | undefined) {
   const api = useApi()
@@ -100,7 +99,6 @@ export const usageReportSchema = z.object({
   today_bytes: z.number().int(),
   avg_daily_bytes: z.number().int(),
 })
-export type UsageReport = z.output<typeof usageReportSchema>
 
 export function useSubscriptionUsage(subscriptionId: string | undefined) {
   const api = useApi()
@@ -134,7 +132,7 @@ export const trafficPacksSchema = z.object({
 // ---------------------------------------------------------------------------
 // 一份的流量摘要与下次重置：卡片、用量图共用；流量包余量取这一份上的 pack_remaining_bytes（设计稿 2.9）。用量查询与用量图同键，缓存共享、不多发请求。
 // ---------------------------------------------------------------------------
-export interface PlanTraffic {
+interface PlanTraffic {
   summary: TrafficSummary | null
   resetAt: string | null
   /** 按日用量接口回的切日时区；日期显示统一按它，未拉到时为 undefined（退回本地时区） */

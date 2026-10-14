@@ -7,7 +7,7 @@ import { announcementsResponse, pageResponse, pagesResponse, planCatalogResponse
 
 export { useFailure, useIntentKey } from '../../actions'
 
-export const CK = ['admin', 'content'] as const
+const CK = ['admin', 'content'] as const
 
 export function useAnnouncements() {
   const api = useApi()

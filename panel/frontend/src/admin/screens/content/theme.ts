@@ -2,7 +2,7 @@ import { COLOR_TOKENS, type ColorToken, type TokenGroup } from '../../../styles/
 import type { Theme } from './schemas'
 
 export type ThemeMode = 'light' | 'dark'
-export const THEME_MODES: readonly ThemeMode[] = ['light', 'dark']
+const THEME_MODES: readonly ThemeMode[] = ['light', 'dark']
 
 // ---------------------------------------------------------------------------
 // 令牌分组：顺序与名单都来自 design-tokens.ts，后端白名单照抄同一份（Go 测试逐条对照）
@@ -80,7 +80,7 @@ export function themeToForm(target: ThemeTarget): ThemeForm {
 const CODE_PATTERN = /^[a-z][a-z0-9_-]{1,38}$/
 const TOKEN_BAD = /[;{}<>\\]/
 const runes = (v: string) => [...v].length
-export const LOGO_MAX_BYTES = 48 * 1024
+const LOGO_MAX_BYTES = 48 * 1024
 const LOGO_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml']
 
 export function tokenValueError(value: string): string | null {
@@ -119,7 +119,7 @@ export function validateThemeForm(form: ThemeForm, creating: boolean): ThemeErro
   return errors
 }
 
-export interface ThemeRequest {
+interface ThemeRequest {
   code: string
   name: string
   create: boolean

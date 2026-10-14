@@ -33,7 +33,7 @@ const SERVER_EDGES: Readonly<Record<ServerStatus, readonly ServerStatus[]>> = {
 }
 export const nextServerStatuses = (from: ServerStatus): readonly ServerStatus[] => SERVER_EDGES[from]
 
-export interface QuickToggle {
+interface QuickToggle {
   to: ServerStatus
   label: string
   done: string

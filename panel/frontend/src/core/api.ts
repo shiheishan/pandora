@@ -13,6 +13,7 @@ z.config({ jitless: true })
 // 只在前端产生的码：network_error（请求没到服务器）与 invalid_response（回来的
 // 不是约定的形状，含 nginx 错误页与 zod 校验失败）。页面按 code 分支、按 fields 标红。
 // ---------------------------------------------------------------------------
+/** @public 本文件外无人引用也要导出：Go 侧契约测试按源码比对这张表 */
 export const SERVER_ERROR_CODES = [
   'bad_request',
   'unauthorized',
@@ -31,8 +32,8 @@ export const SERVER_ERROR_CODES = [
   'order_pending',
   'order_lapsed',
 ] as const
-export type ServerErrorCode = (typeof SERVER_ERROR_CODES)[number]
-export type ApiErrorCode = ServerErrorCode | 'network_error' | 'invalid_response'
+type ServerErrorCode = (typeof SERVER_ERROR_CODES)[number]
+type ApiErrorCode = ServerErrorCode | 'network_error' | 'invalid_response'
 
 export class ApiError extends Error {
   /** HTTP 状态；请求没到服务器时为 0。 */
@@ -181,7 +182,7 @@ export function newIdempotencyKey(
 // ---------------------------------------------------------------------------
 // 客户端
 // ---------------------------------------------------------------------------
-export type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
 export interface RequestOptions {
   method?: Method

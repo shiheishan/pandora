@@ -18,7 +18,7 @@ import { confirmCopy, payCopy, tierNote, type Note } from './copy'
 import { doneQuery } from './result-copy'
 import { changeCandidates, defaultTier, intentOf, orderRequest, placedOrders, quoteRequest, sortTiers, type Target } from './model'
 
-export function titleOf(t: Target, h: Holdings, plans: readonly Plan[]): string {
+function titleOf(t: Target, h: Holdings, plans: readonly Plan[]): string {
   const sub = 'subId' in t && t.subId ? h.held.find((s) => s.id === t.subId) : undefined
   switch (t.kind) {
     case 'renew':

@@ -8,7 +8,7 @@ export type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'neutral'
 // ---------------------------------------------------------------------------
 export type NodeFilter = 'all' | 'online' | 'offline' | 'disabled' | 'retired'
 
-export interface NodeState {
+interface NodeState {
   filter: Exclude<NodeFilter, 'all'>
   label: string
   tone: Tone
@@ -110,7 +110,7 @@ export function canMove(n: Pick<NodeRow, 'serving_status' | 'last_heartbeat_at' 
  * R108「上线」：生命周期停在接入尾段（attesting 至 canary，00005 的合法边）的节点，
  * 由后端一步推到 active 并把服务器置 ready；接入流程本身只推到 attesting，此外没有别的路径
  */
-export const ACTIVATABLE_LIFECYCLES = ['attesting', 'installing', 'validating', 'standby', 'canary'] as const
+const ACTIVATABLE_LIFECYCLES = ['attesting', 'installing', 'validating', 'standby', 'canary'] as const
 export const canActivate = (n: Pick<NodeRow, 'status'>) => (ACTIVATABLE_LIFECYCLES as readonly string[]).includes(n.status)
 
 /**
@@ -243,7 +243,7 @@ export function toFormValues(fields: readonly ProtocolField[], config: unknown):
  * keepSecrets 只在编辑同一种协议时为真——换协议后端不补旧密钥，必填照常要填。
  * mask_password 跟着开关 mask 走，关掉掩码时它本来就留空不带，无需特别处理
  */
-export interface SecretOptions {
+interface SecretOptions {
   keepSecrets?: boolean
   cleared?: ReadonlySet<string>
 }

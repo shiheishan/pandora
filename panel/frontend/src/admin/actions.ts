@@ -15,7 +15,7 @@ export { createIntentKey, endsIntent, useIntentKey, type IntentKey } from '../co
 // 其它用 Toast 说服务端的话（ApiError.message 是可直接展示的中文）。
 // 带幂等键的写操作把 intent 一并交进来，键的去留在这一处按 endsIntent 定，页面不各写一遍。
 // ---------------------------------------------------------------------------
-export type FailureAction = { kind: 'silent' } | { kind: 'fields'; fields: Record<string, string> } | { kind: 'toast'; message: string }
+type FailureAction = { kind: 'silent' } | { kind: 'fields'; fields: Record<string, string> } | { kind: 'toast'; message: string }
 
 export function classifyFailure(error: unknown, canMarkFields: boolean): FailureAction {
   if (isApiError(error, 'reauth_required')) return { kind: 'silent' }

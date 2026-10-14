@@ -8,6 +8,7 @@ import { isApiError } from './api'
 // 的信号，不带业务内容；查询在 meta.topics 里声明自己关心哪些 topic，
 // 失效器按它精确失效，页面之间互不知道对方。
 // ---------------------------------------------------------------------------
+/** @public 本文件外无人引用也要导出：Go 侧 TestRealtimeTopicsMatchFrontend 按源码比对这张表 */
 export const REALTIME_TOPICS = [
   'orders.changed',
   'subscriptions.changed',
@@ -18,7 +19,7 @@ export const REALTIME_TOPICS = [
   'ticket.updated',
   'switches.changed',
 ] as const
-export type RealtimeTopic = (typeof REALTIME_TOPICS)[number]
+type RealtimeTopic = (typeof REALTIME_TOPICS)[number]
 
 declare module '@tanstack/react-query' {
   interface Register {
@@ -56,7 +57,7 @@ export function createQueryClient(): QueryClient {
 // 首个事件立即失效，窗口内再来的合并成窗口结束时的一次。
 // 重连时事件已丢失、id 不能续传，直接失效全部查询（react-query 只重拉活跃的）。
 // ---------------------------------------------------------------------------
-export interface RealtimeInvalidator {
+interface RealtimeInvalidator {
   onEvent(topic: string): void
   onReconnect(): void
   dispose(): void

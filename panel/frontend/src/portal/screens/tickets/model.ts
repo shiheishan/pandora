@@ -4,7 +4,7 @@ import type { TicketDetail, TicketMessage, TicketRow } from './api'
 // ---------------------------------------------------------------------------
 // 子路由：#/tickets（列表，宽屏右侧显示第一张）、#/tickets/new[?order=<订单 id>]、#/tickets/<id>
 // ---------------------------------------------------------------------------
-export type TicketRoute = { kind: 'list' } | { kind: 'new'; orderId: string | null } | { kind: 'ticket'; id: string }
+type TicketRoute = { kind: 'list' } | { kind: 'new'; orderId: string | null } | { kind: 'ticket'; id: string }
 
 export function ticketRoute(rest: readonly string[], query: URLSearchParams): TicketRoute {
   const [first] = rest
@@ -57,8 +57,8 @@ export function messageTime(at: string, now: Date = new Date()): string {
 // ---------------------------------------------------------------------------
 // 新建表单：与 support.create 同口径（去首尾空白、按字数计），设计稿只要求标题，后端要求正文 ≥ 10 字
 // ---------------------------------------------------------------------------
-export const SUBJECT_RANGE = [4, 120] as const
-export const BODY_RANGE = [10, 5000] as const
+const SUBJECT_RANGE = [4, 120] as const
+const BODY_RANGE = [10, 5000] as const
 export const REPLY_MAX = 5000
 
 export interface TicketErrors {

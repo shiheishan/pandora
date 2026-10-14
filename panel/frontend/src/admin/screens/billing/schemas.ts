@@ -5,17 +5,14 @@ import { z } from 'zod'
 // ---------------------------------------------------------------------------
 // 库里 5 态（00013_order.sql），退款两态等产品确认后再定
 export const ORDER_STATUSES = ['pending_payment', 'paid', 'fulfilled', 'cancelled', 'expired', 'refunded', 'partially_refunded'] as const
-export const ORDER_KINDS = ['new', 'renewal', 'upgrade', 'addon', 'topup'] as const
-export const INTENT_STATUSES = ['requires_action', 'succeeded', 'cancelled', 'expired'] as const
-export const PAYMENT_STATUSES = ['succeeded'] as const
-export const REFUND_STATUSES = ['pending', 'approved', 'processing', 'succeeded', 'failed', 'rejected'] as const
+const ORDER_KINDS = ['new', 'renewal', 'upgrade', 'addon', 'topup'] as const
+const INTENT_STATUSES = ['requires_action', 'succeeded', 'cancelled', 'expired'] as const
+const PAYMENT_STATUSES = ['succeeded'] as const
+const REFUND_STATUSES = ['pending', 'approved', 'processing', 'succeeded', 'failed', 'rejected'] as const
 export const LATE_STATUSES = ['suspense', 'applied'] as const
 export const LATE_KINDS = ['released_order', 'excess_capture', 'ineligible_subscription'] as const
 export const CURRENCIES = ['CNY', 'USD'] as const
 export type OrderStatus = (typeof ORDER_STATUSES)[number]
-export type OrderKind = (typeof ORDER_KINDS)[number]
-export type IntentStatus = (typeof INTENT_STATUSES)[number]
-export type PaymentStatus = (typeof PAYMENT_STATUSES)[number]
 export type RefundStatus = (typeof REFUND_STATUSES)[number]
 export type LateStatus = (typeof LATE_STATUSES)[number]
 export type LateKind = (typeof LATE_KINDS)[number]
@@ -97,7 +94,6 @@ export const orderDetailSchema = orderRowSchema.extend({
 })
 export const orderResponseSchema = z.object({ order: orderDetailSchema })
 export type OrderDetail = z.output<typeof orderDetailSchema>
-export type OrderItem = z.output<typeof orderItemSchema>
 
 // ---------------------------------------------------------------------------
 // GET v1/orders/{id}/payments：支付尝试、入账、退款
@@ -146,8 +142,6 @@ const refundSchema = z.object({
 })
 export const paymentHistorySchema = z.object({ payment_intents: z.array(intentSchema), payments: z.array(paymentSchema), refunds: z.array(refundSchema) })
 export type PaymentHistory = z.output<typeof paymentHistorySchema>
-export type PaymentIntent = z.output<typeof intentSchema>
-export type Payment = z.output<typeof paymentSchema>
 export type Refund = z.output<typeof refundSchema>
 
 // ---------------------------------------------------------------------------
@@ -187,9 +181,8 @@ export type ManualCreated = z.output<typeof manualCreatedSchema>
 // 所以都是 optional），外加 due / below_minimum 两项；顶层另有 min_payment。
 // 后台开单只会出现 renew / change / new 三种落点；default_key 为空 = 不预选，提交按钮置灰
 // ---------------------------------------------------------------------------
-export const PLACEMENT_KINDS = ['renew', 'change', 'new'] as const
-export const PLACEMENT_BADGES = ['same_plan', 'soonest_expiry', 'most_used', 'least_remaining'] as const
-export type PlacementKind = (typeof PLACEMENT_KINDS)[number]
+const PLACEMENT_KINDS = ['renew', 'change', 'new'] as const
+const PLACEMENT_BADGES = ['same_plan', 'soonest_expiry', 'most_used', 'least_remaining'] as const
 const placementSchema = z.object({
   key: z.string(),
   kind: z.enum(PLACEMENT_KINDS),
@@ -271,7 +264,6 @@ export const latePaymentsSchema = z.object({
   pending_amounts: byCurrency,
 })
 export type LateCase = z.output<typeof lateCaseSchema>
-export type LatePayments = z.output<typeof latePaymentsSchema>
 export const lateAppliedSchema = z.object({ ledger_txn_id: z.string() })
 
 // ---------------------------------------------------------------------------

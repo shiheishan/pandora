@@ -12,7 +12,7 @@ export interface SseEvent {
   data: string
 }
 
-export interface SseParser {
+interface SseParser {
   push(chunk: string): void
   /** 流结束：未以空行收尾的半帧按规范丢弃。 */
   end(): void
@@ -80,7 +80,7 @@ export function createSseParser(onEvent: (event: SseEvent) => void, onRetry: (ms
 // 不会自愈，停下交给界面处理。id 只在一条连接内有意义、没有续传，所以每次重连成功
 // 都以 reconnected=true 通知调用方把相关查询全部失效重拉。
 // ---------------------------------------------------------------------------
-export interface EventStreamOptions {
+interface EventStreamOptions {
   /** 建立连接，一般是 (signal) => api.openStream('v1/events', signal)。 */
   connect: (signal: AbortSignal) => Promise<Response>
   onEvent: (event: SseEvent) => void

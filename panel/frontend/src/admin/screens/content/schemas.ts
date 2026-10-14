@@ -32,8 +32,6 @@ export const announcementSchema = z.object({
   created_at: time,
 })
 export type Announcement = z.output<typeof announcementSchema>
-export type PlanRef = z.output<typeof planRef>
-export type GroupRef = z.output<typeof groupRef>
 
 export const announcementsResponse = z.object({
   announcements: z.array(announcementSchema),
@@ -52,8 +50,7 @@ export const KINDS = ['kb_article', 'tutorial', 'page', 'legal'] as const
 export type Kind = (typeof KINDS)[number]
 export const PLATFORMS = ['web', 'windows', 'macos', 'linux', 'android', 'ios'] as const
 export type Platform = (typeof PLATFORMS)[number]
-export const PAGE_STATUSES = ['draft', 'published', 'archived'] as const
-export type PageStatus = (typeof PAGE_STATUSES)[number]
+const PAGE_STATUSES = ['draft', 'published', 'archived'] as const
 export const VISIBILITIES = ['authenticated', 'internal'] as const
 export type Visibility = (typeof VISIBILITIES)[number]
 
@@ -139,4 +136,3 @@ export const siteSettingsSchema = z.object({ timezone: z.string() })
 // 套餐目录子集（GET v1/plans）：知识库「限定套餐」只要名字与状态
 // ---------------------------------------------------------------------------
 export const planCatalogResponse = z.object({ plans: z.array(z.object({ id: uuid, name: z.string(), status: z.enum(['draft', 'active', 'archived']) })) })
-export type CatalogPlan = z.output<typeof planCatalogResponse>['plans'][number]

@@ -18,7 +18,7 @@ import {
 // 写操作共用的三件在 admin/actions.ts，这里转出，模块内各文件照旧从 ./queries 取
 export { useFailure, useIntentKey } from '../../actions'
 
-export const MK = ['admin', 'marketing'] as const
+const MK = ['admin', 'marketing'] as const
 
 /** 套餐目录：券的适用套餐、套餐卡的套餐与价格 */
 export function usePlanCatalog() {
@@ -108,7 +108,7 @@ export function useWithdrawals() {
   })
 }
 
-export const REVIEW_PAGE = 20
+const REVIEW_PAGE = 20
 export function useReviewEntries() {
   const api = useApi()
   return useInfiniteQuery({

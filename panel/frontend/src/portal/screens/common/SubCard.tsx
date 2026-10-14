@@ -7,7 +7,7 @@ import css from './SubCard.module.css'
 import { expiryText, isExpiredNow, leakSources, usageText } from './card-text'
 import type { Subscription, SubscriptionLink } from './subscriptions'
 
-export interface SubCardActions {
+interface SubCardActions {
   onImport: (sub: Subscription) => void
   onRename: (sub: Subscription) => void
   onRotate: (sub: Subscription) => void

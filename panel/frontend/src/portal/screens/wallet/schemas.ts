@@ -32,8 +32,7 @@ export const placementOptionSchema = z.object({
 })
 export type PlacementOption = z.output<typeof placementOptionSchema>
 
-export const placementSchema = z.object({ question: z.string(), options: z.array(placementOptionSchema), default_key: z.string() })
-export type Placement = z.output<typeof placementSchema>
+const placementSchema = z.object({ question: z.string(), options: z.array(placementOptionSchema), default_key: z.string() })
 
 // ---------------------------------------------------------------------------
 // POST v1/gift-cards/preview（修订 R68：不回发行量，套餐卡补套餐名与周期；设计稿 2.5 加 placement）

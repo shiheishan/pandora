@@ -69,7 +69,7 @@ export const RISK_VIEW: Record<RiskLevel, { label: string; tone: Tone }> = {
   high: { label: '高', tone: 'danger' },
 }
 
-export const INTERVAL_LABELS: Record<string, string> = {
+const INTERVAL_LABELS: Record<string, string> = {
   day: '日付',
   week: '周付',
   month: '月付',
@@ -412,7 +412,7 @@ export const EXTEND_DAYS_MAX = 3650
 export const EXTEND_PRESETS = [7, 30, 90] as const
 
 /** 原地续费窗口（后端过期扫描在过期满 30 天时关窗，billing/expire.go） */
-export const RENEWAL_WINDOW_DAYS = 30
+const RENEWAL_WINDOW_DAYS = 30
 
 /** 已过期整天数（周期末已过才有，否则 null） */
 export function expiredDays(periodEnd: string | null, now: Date): number | null {

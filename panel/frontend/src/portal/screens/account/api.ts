@@ -103,7 +103,6 @@ export const preferenceSchema = z.object({
   enabled: z.boolean(),
   locked: z.boolean(),
 })
-export type Preference = z.output<typeof preferenceSchema>
 export const preferencesSchema = z.object({ preferences: z.array(preferenceSchema) })
 type Preferences = z.output<typeof preferencesSchema>
 

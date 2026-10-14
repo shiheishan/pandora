@@ -65,7 +65,6 @@ export const overviewSchema = z.object({
   ledger_drift_accounts: count,
   nodes: z.object({ total: count, online: count }),
 })
-export type RevenueRow = z.output<typeof revenueRowSchema>
 export type Overview = z.output<typeof overviewSchema>
 
 // ---------------------------------------------------------------------------
@@ -87,7 +86,6 @@ export const revenueSchema = z.object({
   previous_total: int,
 })
 export type RevenuePoint = z.output<typeof revenuePointSchema>
-export type Revenue = z.output<typeof revenueSchema>
 
 // ---------------------------------------------------------------------------
 // GET v1/dashboard/traffic/{nodes,users}（DASH-01 冻结）。用户排行只有脱敏邮箱

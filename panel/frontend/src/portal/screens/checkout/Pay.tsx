@@ -10,7 +10,7 @@ import { PayPanel } from '../common/PayFlow'
 import { placedOrders } from './model'
 
 /** 收银台付完回跳到完成页（相对入口页解析，门户在子路径下也成立） */
-export function doneReturnUrl(orderId: string, query: URLSearchParams, base = window.location.href): string {
+function doneReturnUrl(orderId: string, query: URLSearchParams, base = window.location.href): string {
   const q = new URLSearchParams(query)
   q.delete('m')
   const search = q.toString()

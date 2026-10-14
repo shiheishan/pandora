@@ -1,7 +1,7 @@
 import { formatBytes, formatDateTime, formatMoney } from '../../../core/format'
 import type { BillingInterval, Currency, PlanDetail, PlanRow, PlanStatus, PriceRow, Quota, ResetStrategy, TrafficPack, VersionRow, Visibility } from './api'
 
-export type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'neutral'
+type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'neutral'
 type Fields = Record<string, string>
 
 /** 契约：GB = 字节 ÷ 1024³（与 adminops bytesPerGB 一致） */
@@ -65,7 +65,7 @@ export const CUSTOM_UNITS = [
   { value: 'year', label: '年' },
 ] as const
 
-export const periodKey = (interval: BillingInterval, count: number) => `${interval}:${count}`
+const periodKey = (interval: BillingInterval, count: number) => `${interval}:${count}`
 
 export function parsePeriod(key: string): { billing_interval: BillingInterval; interval_count: number } {
   const [interval, n] = key.split(':')
@@ -93,7 +93,7 @@ export function parseAmount(input: string): number | null {
 }
 
 /** 非负整数；空串为 null，不合法为 NaN */
-export function parseCount(input: string): number | null {
+function parseCount(input: string): number | null {
   const text = input.trim()
   if (text === '') return null
   return /^\d+$/.test(text) && Number.isSafeInteger(Number(text)) ? Number(text) : Number.NaN
@@ -181,7 +181,7 @@ export function versionForm(v: VersionRow): VersionForm {
 }
 
 /** Mbps → kbps（正整数）；空为 null（不限速），不合法为 NaN */
-export function parseKbps(input: string): number | null {
+function parseKbps(input: string): number | null {
   const text = input.trim()
   if (text === '') return null
   if (!/^\d+(\.\d{1,3})?$/.test(text)) return Number.NaN
@@ -270,7 +270,7 @@ export function highlightProblems(list: readonly string[]): Fields {
   return out
 }
 
-export const cleanHighlights = (list: readonly string[]) => list.map((h) => h.trim())
+const cleanHighlights = (list: readonly string[]) => list.map((h) => h.trim())
 const sameHighlights = (a: readonly string[], b: readonly string[]) => cleanHighlights(a).join('\n') === cleanHighlights(b).join('\n')
 
 // ===========================================================================
@@ -532,7 +532,7 @@ export interface SalesForm {
 }
 
 /** RFC3339 → <input type="datetime-local"> 的本地时间值 */
-export function toLocalInput(at: string | null): string {
+function toLocalInput(at: string | null): string {
   if (!at) return ''
   const d = new Date(at)
   if (Number.isNaN(d.getTime())) return ''
@@ -540,7 +540,7 @@ export function toLocalInput(at: string | null): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
-export function fromLocalInput(value: string): string | null {
+function fromLocalInput(value: string): string | null {
   if (!value) return null
   const d = new Date(value)
   return Number.isNaN(d.getTime()) ? null : d.toISOString()

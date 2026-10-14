@@ -10,7 +10,7 @@ import { useApi } from '../../../shell/runtime'
 // 字段与 Go 的 billing.QuoteOutput / Quote / purchase.Balance 一一对应，都没有 omitempty：
 // 指针字段（各 id、优惠码、明细、周期）为 null 而不缺席。
 // ---------------------------------------------------------------------------
-export { balanceSplitSchema, creditDetailSchema, quoteRowSchema, quoteSchema, type BalanceSplit, type CreditDetail, type Quote, type QuoteRow } from './quote-schema'
+export { quoteSchema, type BalanceSplit, type Quote, type QuoteRow } from './quote-schema'
 import { quoteSchema, type BalanceSplit, type Quote, type QuoteRow } from './quote-schema'
 
 export interface QuoteRequest {
@@ -23,7 +23,7 @@ export interface QuoteRequest {
 }
 
 /** 报价只读、不幂等；as_of 只在 10 分钟内有效，5 分钟重报一次，订单或订阅变了也重报 */
-export const QUOTE_REFRESH_MS = 5 * 60_000
+const QUOTE_REFRESH_MS = 5 * 60_000
 
 export function useQuote(req: QuoteRequest | null) {
   const api = useApi()
@@ -44,9 +44,6 @@ export const balanceSplit = (row: QuoteRow, useBalance: boolean): BalanceSplit =
 export function expectation(quote: Quote, row: QuoteRow, split: BalanceSplit) {
   return { as_of: quote.as_of, expect: { total: row.total, balance_applied: split.applied, payable: split.payable } }
 }
-
-/** 换套餐「今天付 ¥x」还是「退 ¥y」：按同一行的 total / refund */
-export const changeOutcome = (row: Pick<QuoteRow, 'total' | 'refund'>): { pay: number; refund: number } => ({ pay: row.total, refund: row.refund })
 
 /** 建单被拒的两种购买特有情形（设计稿 2.2 / 2.4，httpx.CodeQuoteChanged / CodeOrderPending，都是 409），按码认 */
 export function purchaseRefusal(error: unknown): 'quote_changed' | 'order_pending' | null {

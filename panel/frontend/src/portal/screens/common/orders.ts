@@ -4,7 +4,7 @@ import { formatDateTime, formatMoney } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
 import { endsIntent } from './intent'
 
-export const ORDER_KINDS = ['new', 'renewal', 'topup', 'addon', 'upgrade'] as const
+const ORDER_KINDS = ['new', 'renewal', 'topup', 'addon', 'upgrade'] as const
 export const ORDER_STATUSES = ['pending_payment', 'paid', 'fulfilled', 'cancelled', 'expired', 'partially_refunded', 'refunded'] as const
 
 export const orderRowSchema = z.object({
@@ -123,10 +123,10 @@ export const orderDetailSchema = z.object({
 })
 export type OrderDetail = z.output<typeof orderDetailSchema>['order']
 
-export const orderKey = (id: string) => ['portal', 'orders', 'detail', id] as const
+const orderKey = (id: string) => ['portal', 'orders', 'detail', id] as const
 
 /** 不会再变成已支付的终态 */
-export const SETTLED_STATUSES: ReadonlySet<string> = new Set(['paid', 'fulfilled', 'cancelled', 'expired', 'partially_refunded', 'refunded'])
+const SETTLED_STATUSES: ReadonlySet<string> = new Set(['paid', 'fulfilled', 'cancelled', 'expired', 'partially_refunded', 'refunded'])
 
 /** poll 给毫秒数时一直轮询到订单进入终态（支付回跳 3 秒一次）；false 不轮询 */
 export function useOrder(id: string | undefined, poll: number | false = false) {
@@ -157,12 +157,11 @@ export const orderCreatedSchema = z.object({
   proration_credit: z.number().int().optional(),
   balance_refund: z.number().int().optional(),
 })
-export type OrderCreated = z.output<typeof orderCreatedSchema>
 
 export const PAID_STATUSES: ReadonlySet<string> = new Set(['paid', 'fulfilled'])
 
 /** 发起支付只收 pending_payment（契约门户-03 支付条目） */
-export const PAYABLE_STATUSES: ReadonlySet<string> = new Set(['pending_payment'])
+const PAYABLE_STATUSES: ReadonlySet<string> = new Set(['pending_payment'])
 
 /** 还能去付：状态可支付、且没到 expires_at（服务端过期扫描可能还没跑到） */
 export function isPayable(o: Pick<OrderRow, 'status' | 'expires_at'>, now: number = Date.now()): boolean {
@@ -203,7 +202,7 @@ export const ORDER_FILTERS = {
 } as const
 export type OrderFilter = keyof typeof ORDER_FILTERS
 
-export const ORDER_PAGE_SIZE = 6
+const ORDER_PAGE_SIZE = 6
 
 /** 已结束订单的分段加载：「显示更早的订单」按 offset 往后取，每页 6 条 */
 export function useOrderPages(filter: OrderFilter) {
@@ -254,7 +253,7 @@ export function useCancelOrder() {
 // ---------------------------------------------------------------------------
 // 纯映射
 // ---------------------------------------------------------------------------
-export interface StatusBadge {
+interface StatusBadge {
   label: string
   tone: 'ok' | 'warn' | 'neutral' | 'info'
 }
@@ -275,7 +274,7 @@ export function statusBadge(status: OrderRow['status']): StatusBadge {
   }
 }
 
-export interface MonthGroup<T> {
+interface MonthGroup<T> {
   key: string
   label: string
   rows: T[]

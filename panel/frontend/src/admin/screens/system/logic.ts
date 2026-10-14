@@ -43,7 +43,7 @@ export function validateSmtp(f: SmtpForm): Record<string, string> {
   return errors
 }
 
-export interface SmtpFields {
+interface SmtpFields {
   smtp_host: string
   smtp_port: number
   encryption: Encryption

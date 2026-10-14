@@ -60,7 +60,6 @@ export const redemptionsResponse = z.object({
     .nullable()
     .transform((v) => v ?? []),
 })
-export type Redemption = z.output<typeof redemptionsResponse>['redemptions'][number]
 
 export const couponCreated = z.object({ id: uuid, code: z.string() })
 export const couponBatchCreated = z.object({ count: z.number(), codes: z.array(z.string()), name: z.string() })

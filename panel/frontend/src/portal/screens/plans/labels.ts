@@ -15,7 +15,7 @@ import { isLive, type Subscription } from '../common/subscriptions'
 // ---------------------------------------------------------------------------
 export type PlansMode = 'mine' | 'new'
 
-export interface PlanCardView {
+interface PlanCardView {
   tag: { text: string; tone: 'brand' | 'ok' | 'neutral' } | null
   label: string
   /** null = 按钮置灰 */

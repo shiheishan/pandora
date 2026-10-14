@@ -12,7 +12,7 @@ export const announcementSchema = z.object({
   published_at: z.string().nullable(),
 })
 export type Announcement = z.output<typeof announcementSchema>
-export type AnnouncementSeverity = Announcement['severity']
+type AnnouncementSeverity = Announcement['severity']
 
 /** 级别色点的无障碍名称（契约门户-08：info 不显示，notice / warning / critical 分别用 --info / --warn / --danger） */
 export const SEVERITY_LABEL: Readonly<Record<AnnouncementSeverity, string>> = { info: '', notice: '提示', warning: '注意', critical: '重要' }

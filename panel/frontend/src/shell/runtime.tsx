@@ -72,7 +72,7 @@ export async function signOut(runtime: AppRuntime): Promise<void> {
 // 同时转给调用方（后台顶栏的「实时事件」胶囊要列出来）。
 // unavailable = 4xx 停止，胶囊隐藏。
 // ---------------------------------------------------------------------------
-export type RealtimeStatus = 'off' | 'connecting' | 'open' | 'reconnecting' | 'unavailable'
+type RealtimeStatus = 'off' | 'connecting' | 'open' | 'reconnecting' | 'unavailable'
 
 export function useRealtime(enabled: boolean, onEvent?: (event: SseEvent) => void): RealtimeStatus {
   const { api, queryClient } = useRuntime()

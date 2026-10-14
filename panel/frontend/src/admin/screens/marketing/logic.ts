@@ -46,7 +46,7 @@ export function formatGB(bytes: number): string {
 }
 
 /** datetime-local 的「YYYY-MM-DDTHH:MM」按浏览器时区转成 RFC3339（带 Z）；空串 → '' */
-export function localInputToIso(value: string): string {
+function localInputToIso(value: string): string {
   if (!value) return ''
   const t = new Date(value)
   return Number.isNaN(t.getTime()) ? '' : t.toISOString()
@@ -64,7 +64,7 @@ export function formatDateTime(iso: string): string {
   return `${pad(t.getMonth() + 1)}-${pad(t.getDate())} ${pad(t.getHours())}:${pad(t.getMinutes())}`
 }
 
-export type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'neutral'
+type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'neutral'
 
 // ---------------------------------------------------------------------------
 // 优惠券
@@ -136,7 +136,7 @@ export const emptyCouponForm = (batch: boolean): CouponForm => ({
 })
 
 export type FieldErrors = Record<string, string>
-export type Built<T> = { ok: true; body: T } | { ok: false; errors: FieldErrors }
+type Built<T> = { ok: true; body: T } | { ok: false; errors: FieldErrors }
 
 /** 批量生成前端上限 500（设计），后端 1000 */
 export const COUPON_BATCH_MAX = 500

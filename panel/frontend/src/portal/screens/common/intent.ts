@@ -1,14 +1,14 @@
 import { useState } from 'react'
 
 // 幂等键本身收在 core/intent（两个入口共用一份），门户各页照旧从这里取
-export { createIntentKey, endsIntent, useIntentKey, type IntentKey } from '../../../core/intent'
+export { endsIntent, useIntentKey } from '../../../core/intent'
 
 const fingerprintOf = (request: unknown) => JSON.stringify(request)
 
 // ---------------------------------------------------------------------------
 // 刚下的待支付单：键已随成功丢弃，同样的请求再点时先看这里
 // ---------------------------------------------------------------------------
-export interface PlacedOrder<T> {
+interface PlacedOrder<T> {
   /** 同样的请求、且还在有效期内，返回当时记下的值 */
   recall(request: unknown): T | null
   remember(request: unknown, value: T): void

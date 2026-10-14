@@ -88,8 +88,8 @@ export const macroSavedSchema = z.object({ id: z.string() })
 // ---------------------------------------------------------------------------
 // 查询
 // ---------------------------------------------------------------------------
-export const TK = ['admin', 'tickets'] as const
-export const QUEUE_PAGE = 25
+const TK = ['admin', 'tickets'] as const
+const QUEUE_PAGE = 25
 
 /** 队列筛选（已映射成后端 query，见 model.queueParams） */
 export interface QueueParams {

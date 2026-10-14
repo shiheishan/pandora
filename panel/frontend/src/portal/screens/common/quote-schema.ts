@@ -19,7 +19,7 @@ export const balanceSplitSchema = z.object({
 })
 export type BalanceSplit = z.output<typeof balanceSplitSchema>
 
-export const creditDetailSchema = z.object({
+const creditDetailSchema = z.object({
   paid: z.number().int(),
   days_left: z.number().int(),
   days_total: z.number().int(),
@@ -27,7 +27,6 @@ export const creditDetailSchema = z.object({
   traffic_total: z.number().int(),
   ratio_ppm: z.number().int(),
 })
-export type CreditDetail = z.output<typeof creditDetailSchema>
 
 export const quoteRowSchema = z.object({
   subscription_id: z.string().nullable(),

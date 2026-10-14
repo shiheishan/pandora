@@ -174,7 +174,7 @@ export const serversResponse = z.object({ servers: z.array(serverSchema), total:
 export type Server = z.output<typeof serverSchema>
 
 /** GET v1/servers/{id}/nodes：含已退役与已销毁，按 sort_order */
-export const serverNodeSchema = z.object({
+const serverNodeSchema = z.object({
   id: uuid,
   name: z.string(),
   status: z.string(),
@@ -189,7 +189,6 @@ export const serverNodeSchema = z.object({
   created_at: iso,
 })
 export const serverNodesResponse = z.object({ nodes: z.array(serverNodeSchema), total: z.number() })
-export type ServerNode = z.output<typeof serverNodeSchema>
 
 // ---------------------------------------------------------------------------
 // 节点池（GET v1/node-pools）：members 不含已销毁节点，plan_names 去重（两者 SQL 里 coalesce 过，恒为数组）；
@@ -236,7 +235,6 @@ export const identitySchema = z.object({
   server_token: z.object({ present: z.boolean(), issued_at: iso.optional(), issued_by: uuid.optional(), issued_by_name: z.string().optional() }),
   bootstrap_tokens_pending: z.number(),
 })
-export type NodeIdentity = z.output<typeof identitySchema>
 
 export const metricPointSchema = z.object({
   at: iso,
@@ -267,7 +265,6 @@ export const metricsSchema = z.object({
     .nullable(),
 })
 export type MetricPoint = z.output<typeof metricPointSchema>
-export type NodeMetrics = z.output<typeof metricsSchema>
 
 export const outboundSchema = z.object({ tag: z.string(), type: z.string(), settings: z.unknown() })
 export const routeSchema = z.object({
@@ -314,7 +311,6 @@ export const effectiveRoutingSchema = z.object({
   outbounds: z.array(z.object({ tag: z.string(), type: z.string(), settings: z.unknown(), source: routingSourceSchema })),
   routes: z.array(z.object({ matcher: z.record(z.string(), z.unknown()), outbound: z.string(), source: routingSourceSchema })),
 })
-export type EffectiveRouting = z.output<typeof effectiveRoutingSchema>
 
 // ---------------------------------------------------------------------------
 // 写操作的响应
@@ -322,9 +318,7 @@ export type EffectiveRouting = z.output<typeof effectiveRoutingSchema>
 export const okUpdated = z.object({ ok: z.literal(true), updated: z.number() })
 export const batchStatusResponse = z.object({ ok: z.literal(true), updated: z.number(), serving_status: z.string() })
 export const bootstrapTokenResponse = z.object({ token: z.string(), expires_at: iso, install_command: z.string() })
-export type BootstrapToken = z.output<typeof bootstrapTokenResponse>
 export const serverTokenResponse = z.object({ token: z.string(), node_type: z.string(), panel_url: z.string(), install_command: z.string(), hint: z.string() })
-export type ServerToken = z.output<typeof serverTokenResponse>
 export const realityKeypairResponse = z.object({ private_key: z.string(), public_key: z.string(), short_id: z.string(), hint: z.string() })
 export const publishResponse = z.object({ config_id: uuid, version: z.number(), scope: z.string(), affected_nodes: z.number() })
 export const routingSaved = z.object({ ok: z.literal(true), row_version: z.number() })

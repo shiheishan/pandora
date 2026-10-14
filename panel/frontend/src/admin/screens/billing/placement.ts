@@ -99,7 +99,7 @@ export function selectedKey(preview: Pick<ManualPreview, 'options' | 'default_ke
  * 提交按钮的状态：能点，或灰着并写明原因（没有默认值时是「先选落点」）。
  * 用户、套餐、价格还没选全时落点无从谈起，按钮照常可点，点了由表单预检指出缺哪一项
  */
-export type SubmitGate = { ok: true } | { ok: false; label: string }
+type SubmitGate = { ok: true } | { ok: false; label: string }
 
 export function submitGate(opts: {
   hasInputs: boolean
@@ -123,7 +123,7 @@ export function submitGate(opts: {
  * preview 的 422 落到哪：price_id 落到「套餐与周期」；entry_subscription_id（「给这份开单」带进来的那份）
  * 不对时不按入口预选，改由管理员自己选，原因写在落点区。其余失败（含网络）整块提示并给重试
  */
-export interface PreviewFailure {
+interface PreviewFailure {
   /** 落到表单项上的错误，键与开单表单一致 */
   fields: Record<string, string>
   /** 入口订阅被拒：去掉入口重取一次 */

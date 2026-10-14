@@ -70,7 +70,7 @@ export const COLOR_TOKENS: readonly ColorToken[] = [
   c('supplement', '--sidebar-brand', '#e46e52', '#e46e52', '侧栏 Logo 点与当前菜单圆点'),
 ]
 
-export interface ScaleToken {
+interface ScaleToken {
   name: string
   value: string
   use: string
@@ -78,7 +78,7 @@ export interface ScaleToken {
 
 const s = (name: string, value: string, use: string): ScaleToken => ({ name, value, use })
 
-export interface TypeToken {
+interface TypeToken {
   name: string
   size: string
   weight: number
@@ -121,7 +121,7 @@ export const RADIUS_SCALE: readonly ScaleToken[] = [
 // ---------------------------------------------------------------------------
 // 角色令牌：规范「门户：朱砂用在哪里」「后台：保持中性」与控件高度表
 // ---------------------------------------------------------------------------
-export interface RoleToken {
+interface RoleToken {
   name: string
   portal: string
   admin: string

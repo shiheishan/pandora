@@ -20,7 +20,7 @@ export interface AppButton {
 /** 一步的文字：纯文字，或文字与 App 按钮名交替 */
 export type GuideText = string | ReadonlyArray<string | AppButton>
 
-export interface AppUpdateSteps {
+interface AppUpdateSteps {
   /** 在哪个页面 */
   where: GuideText
   /** 点哪个按钮 */

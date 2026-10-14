@@ -25,7 +25,7 @@ const OPS: Record<string, string> = { INSERT: '新建', UPDATE: '更新', DELETE
 
 const payloadSchema = z.object({ table: z.string().optional(), op: z.string().optional(), id: z.string().optional(), ticket_id: z.string().optional(), code: z.string().optional(), enabled: z.boolean().optional() })
 
-export interface EventItem {
+interface EventItem {
   key: number
   title: string
   body: string

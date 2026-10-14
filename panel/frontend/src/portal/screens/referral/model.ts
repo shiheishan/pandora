@@ -44,9 +44,9 @@ export function withdrawBlock(summary: Commission['summary']): string | null {
 // 佣金记录：entries（+）、transfers（−，完成）、withdrawals（−）按时间倒序合并
 // ---------------------------------------------------------------------------
 /** plus 入账；minus 出账；void 没有生效（冲销、驳回、失败退回），金额划掉 */
-export type RecordTone = 'plus' | 'minus' | 'void'
+type RecordTone = 'plus' | 'minus' | 'void'
 
-export interface CommissionRecord {
+interface CommissionRecord {
   key: string
   title: string
   /** 佣金对应的订单号；与标题分开，窄屏换行时整段不拆 */

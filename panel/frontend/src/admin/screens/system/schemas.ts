@@ -69,7 +69,6 @@ export const templatesResponse = z.object({ templates: z.array(templateSchema) }
 export const templateSaved = z.object({ template: templateRow, preview_subject: z.string(), preview_body: z.string() })
 export const templateReset = z.object({ template: templateRow })
 export const templatePreview = z.object({ preview_subject: z.string(), preview_body: z.string(), unknown_variables: z.array(z.string()) })
-export type TemplatePreview = z.output<typeof templatePreview>
 export const templateTested = z.object({ sent: z.literal(true), subject: z.string() })
 
 // ---------------------------------------------------------------------------
@@ -102,7 +101,7 @@ export const hooksResponse = z.object({ hooks: z.array(hookSchema), events: z.ar
 export const hookSaved = z.object({ saved: z.literal(true), secret: z.string().optional(), secret_hint: z.string().optional() })
 export const hookDeleted = z.object({ deleted: z.literal(true) })
 
-export const DELIVERY_STATUSES = ['queued', 'sent', 'failed'] as const
+const DELIVERY_STATUSES = ['queued', 'sent', 'failed'] as const
 export const deliverySchema = z.object({
   event: z.string(),
   status: z.enum(DELIVERY_STATUSES),
