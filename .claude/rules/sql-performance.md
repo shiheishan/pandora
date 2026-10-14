@@ -6,7 +6,7 @@ paths:
 
 # 写 SQL 时的性能坑
 
-换栈阶段性能只防明显退化（根 CLAUDE.md「取舍原则」）：N+1、全表扫描、无界并发、每请求多余的往返。下面几条是旧栈在 5k 用户、200 节点规模上实测踩过、换了 GORM 照样会踩的写法。改 SQL 前后用 `EXPLAIN (ANALYZE, BUFFERS)` 对照。
+写 SQL 先防明显退化（根 CLAUDE.md「取舍原则」）：N+1、全表扫描、无界并发、每请求多余的往返。下面几条是旧栈在 5k 用户、200 节点规模上实测踩过、换了 GORM 照样会踩的写法。改 SQL 前后用 `EXPLAIN (ANALYZE, BUFFERS)` 对照。
 
 - **for 循环里查库（N+1）**：每条订阅查一次配额、每个 id 一条插入。改成一条带 `= ANY(?)` 的查询，批量写用 `CreateInBatches`（如 `panel/internal/module/giftcard/repo/codes.go`）。
 - **整表聚合被按单行 JOIN**：先 GROUP BY 全表、外面再 JOIN 的视图或子查询，过滤推不进去，只查一条也扫全表。写成按驱动行的 LATERAL 聚合。

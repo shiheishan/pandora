@@ -23,7 +23,7 @@ description: pandora 门户与后台的体验审查：派零上下文的模拟�
 
 只用本机假后端：要造「两份、余额只差 5 毛、已过期 3 天」这类局面，真后端造不出来。
 
-- **原型阶段**（decision-research 第 6 步）：测 `.claude/purchase-proto/index.html`，地址带 `#s=<场景>&screen=<页>&clean=1`，`clean=1` 把测试栏整条藏起来。场景与 hint 在原型 `SCENARIOS`，流程与叫法在同目录 `flow.md`。
+- **原型阶段**（decision-research 第 6 步）：测原型目录里的 `index.html`（先例：已归档的 `.claude/archive/2026-10-12/purchase-proto/`），地址带 `#s=<场景>&screen=<页>&clean=1`，`clean=1` 把测试栏整条藏起来。场景与 hint 在原型 `SCENARIOS`，流程与叫法在同目录 `flow.md`。
 - **实现阶段**：测门户假后端。
   - 场景与 `proto-*` 的定义、两个切场景的接口见 `.claude/rules/frontend-mock.md`。
   - 给测试员的每个任务都用 `GET /v1/__mock/proto?s=proto-s2[&to=/plans]` 开头，等于「重来」；非原型场景用 `POST /v1/__mock/portal-scenario`，见 flow-walk「假后端」。
@@ -106,7 +106,7 @@ description: pandora 门户与后台的体验审查：派零上下文的模拟�
 - 「一次点对」：点击路径就是最短路径，没有返回、没有点错；而且每次点击前写下的预期都和实际一样。
 - 「犯错」比「卡住」更要紧：卡住的人会去问客服，犯错的人会觉得被坑。测试员交回里「担心扣错钱、担心现在的用不了」的时刻，至少记成「别扭」。
 - 修完用**新的**测试员复测同一场景同一任务。原来那个已经学会了，不能当复测。
-- 规则改动要回写权威：原型阶段改 `flow.md`（新一轮改动表），实现阶段改 `.claude/rules/screens-portal*.md`，禁用词改动同步门户叫法单测 `tests/mock-portal-wording.test.ts`（归门户路，不在本 skill 里改）。
+- 规则改动要回写权威：原型阶段改原型目录的 `flow.md`（新一轮改动表），实现阶段改 `.claude/rules/screens-portal*.md`，禁用词改动同步门户叫法单测 `tests/mock-portal-wording.test.ts`（归门户路，不在本 skill 里改）。
 - 新手反馈和已定的产品规则冲突时（例：用户已定「不同款套餐卡一律不预选」），不要自己改规则：写进报告，交主 Agent 问用户。
 
 ## 五、记录
