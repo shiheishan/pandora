@@ -378,7 +378,14 @@ describe('late payments, providers and adjustments', () => {
     }
     expect(providerBody(btcpay, 'create')).toMatchObject({ adapter: 'btcpay', webhook_secret: 'hook' })
     expect(providerBody(btcpay, 'create')).not.toHaveProperty('submit_path')
-    expect(providerProblems(btcpay, 'create', false, false).webhook_secret).toBeDefined()
+    // 新建 BTCPay 必须填 Webhook 密钥；编辑时已有就可留空
+    expect(providerProblems(btcpay, 'create')).toEqual({})
+    expect(providerProblems({ ...btcpay, webhook_secret: '' }, 'create').webhook_secret).toBe('必填')
+    expect(providerProblems({ ...btcpay, key: '', webhook_secret: '' }, 'edit', true, true).webhook_secret).toBeUndefined()
+    expect(providerProblems({ ...btcpay, webhook_secret: '' }, 'edit', true, false).webhook_secret).toBeDefined()
+    expect(credentialLabels('btcpay')).toEqual({ merchant: 'Store ID', key: 'API Key' })
+    expect(credentialLabels('coinpayments')).toEqual({ merchant: 'Client ID', key: 'Client Secret' })
+    expect(credentialLabels('epay').merchant).toBe('商户号（pid）')
     const cp = { ...emptyProviderForm('coinpayments'), code: 'c1', merchant_id: 'm', key: 'k', base_url: '' }
     expect(providerProblems(cp, 'create').base_url).toBeUndefined()
   })

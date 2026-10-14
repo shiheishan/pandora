@@ -25,7 +25,6 @@ import {
   paymentSettings,
   PUBLIC_BASE_URL,
   effectiveNotifyBase,
-  notifyUrlForProvider,
   siteMinPayment,
   subscriptionEnded,
   todayLocal,
@@ -129,7 +128,7 @@ function providerSettings(body: Json, adapter: string): { ok: ProviderSettings }
   }
   let submit_path = ''
   let api_path = ''
-  let methods: string[] = []
+  const methods: string[] = []
   let default_method = ''
   if (adapter === 'epay') {
     const paths = { submit_path: str(body.submit_path).trim() || '/submit.php', api_path: str(body.api_path).trim() || '/api.php' }

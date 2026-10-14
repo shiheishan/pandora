@@ -458,7 +458,11 @@ describe('mock api · admin billing', () => {
   it('creates and edits an epay provider; secrets are write-only', async () => {
     const settings = { display_name: '易支付 · 新', base_url: 'https://pay3.example.com', submit_path: '', api_path: '', methods: ['wxpay', 'alipay'], default_method: '', allow_private_host: false }
     expect(await json(await post(admin, 'payment-providers', { code: 'offline', adapter: 'paypal', ...settings, methods: ['paypal'], merchant_id: '', key: '' }, 'prov-0'))).toMatchObject({
-      error: { code: 'validation_failed', fields: { code: expect.any(String), adapter: expect.any(String), methods: expect.any(String), merchant_id: '必填', key: '必填' } },
+      error: { code: 'validation_failed', fields: { code: expect.any(String), adapter: expect.any(String), merchant_id: '必填', key: '必填' } },
+    })
+    // 支付方式只有易支付才校验（同 Go 的 normalizeSettings）：类型不认识时不报 methods，易支付勾了不认识的方式才报
+    expect(await json(await post(admin, 'payment-providers', { code: 'epay-bad', adapter: 'epay', ...settings, methods: ['paypal'], merchant_id: '2009', key: 'k' }, 'prov-0m'))).toMatchObject({
+      error: { code: 'validation_failed', fields: { methods: '支付方式只能从支付宝、微信支付中选' } },
     })
     const created = await post(admin, 'payment-providers', { code: 'epay3', adapter: 'epay', ...settings, merchant_id: '2001', key: 'secret-2001' }, 'prov-1')
     expect(created.status).toBe(201)

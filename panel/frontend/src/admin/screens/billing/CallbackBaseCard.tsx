@@ -1,5 +1,5 @@
 import { useMutation } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useApi } from '../../../shell/runtime'
 import { Button, Card, Input, QueryView, useToast } from '../../../ui'
 import { useFailure } from '../../actions'
@@ -9,9 +9,10 @@ import css from './Billing.module.css'
 /** 支付回调地址前缀（payment.notify_base_url）：留空用站点地址，生产只收 https */
 export function CallbackBaseCard() {
   const settings = usePaymentSettings()
+  // 保存后的值变了就按 key 重建表单，输入框回到新值（不在 effect 里 setState）
   return (
     <QueryView query={settings} rows={2} empty={null}>
-      {(saved) => <CallbackBaseForm saved={saved} />}
+      {(saved) => <CallbackBaseForm key={saved.notify_base_url} saved={saved} />}
     </QueryView>
   )
 }
@@ -23,10 +24,6 @@ function CallbackBaseForm({ saved }: { saved: { notify_base_url: string; effecti
   const invalidate = useInvalidateBilling()
   const [value, setValue] = useState(saved.notify_base_url)
   const [errors, setErrors] = useState<Record<string, string>>({})
-
-  useEffect(() => {
-    setValue(saved.notify_base_url)
-  }, [saved.notify_base_url])
 
   const dirty = value.trim() !== saved.notify_base_url
 

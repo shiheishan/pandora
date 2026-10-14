@@ -475,7 +475,7 @@ export function trimPercent(s: string): string {
   const t = s.trim()
   if (!t) return '0'
   if (!t.includes('.')) return t.replace(/^0+(?=\d)/, '') || '0'
-  const [w, f = ''] = t.split('.')
+  const [w = '0', f = ''] = t.split('.')
   const frac = f.replace(/0+$/, '')
   const whole = w.replace(/^0+(?=\d)/, '') || '0'
   return frac ? `${whole}.${frac}` : whole
