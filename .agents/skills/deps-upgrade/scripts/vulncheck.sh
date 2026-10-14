@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # govulncheck 扫 pandora 的三个 Go 模块，只报「被调用」的漏洞，并另出一份只含发布物的视图。
-# 用法（仓库根或 worktree 内任意目录）：bash .claude/skills/deps-upgrade/scripts/vulncheck.sh [输出目录]
+# 用法（仓库根或 worktree 内任意目录）：bash .agents/skills/deps-upgrade/scripts/vulncheck.sh [输出目录]
 # 退出码：0 全部无被调用漏洞；3 有被调用漏洞；1 扫描本身出错。
 #
 # - 每个模块用它 go.mod 的 go 指令对应的工具链（GOTOOLCHAIN=go<版本>），与 CI 的 setup-go 同版本；
@@ -15,12 +15,14 @@ set -uo pipefail
 root="$(git rev-parse --show-toplevel)"
 out="${1:-${TMPDIR:-/tmp}/vulncheck-$(git -C "$root" rev-parse --short HEAD)}"
 mkdir -p "$out/bin"
-tools="$root/.claude/skills/subscription-e2e/tools"
+tools="$root/.agents/skills/subscription-e2e/tools"
 
 gover() { awk '/^go /{print $2; exit}' "$1/go.mod"; }
 
 # govulncheck 本身用本机工具链装一次；GOOS=linux 时 `go run` 会产出跑不了的二进制，所以先装成文件。
-if ! GOTOOLCHAIN=local GOBIN="$out/bin" go install golang.org/x/vuln/cmd/govulncheck@latest > "$out/install.log" 2>&1; then
+# 版本与 .github/workflows/go-vulncheck.yml 的 GOVULNCHECK_VERSION 一致，结论才可对照。
+vuln_version="${GOVULNCHECK_VERSION:-v1.8.0}"
+if ! GOTOOLCHAIN=local GOBIN="$out/bin" go install "golang.org/x/vuln/cmd/govulncheck@${vuln_version}" > "$out/install.log" 2>&1; then
   echo "安装 govulncheck 失败，见 $out/install.log" >&2
   exit 1
 fi
