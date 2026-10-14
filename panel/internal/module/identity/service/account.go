@@ -17,10 +17,11 @@ import (
 // toUser 把 model.User 转成对外的 User。
 func toUser(u model.User) User {
 	return User{
-		ID:        u.ID,
-		Email:     u.Email,
-		Status:    u.Status,
-		CreatedAt: u.CreatedAt,
+		ID:          u.ID,
+		Email:       u.Email,
+		Status:      u.Status,
+		CreatedAt:   u.CreatedAt,
+		UserGroupID: u.UserGroupID,
 	}
 }
 

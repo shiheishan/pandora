@@ -105,7 +105,7 @@ func (s *Service) Pull(ctx context.Context, req PullRequest) (PullResult, error)
 		return PullResult{}, ErrPullDenied
 	}
 	// 主人账号停用、封禁：按「不在服务」处理（与节点名单不收他的订阅同一口径），过期提示也不给；
-	// 凭据不吊销，恢复后原链接照常可用
+	// 凭据不吊销，恢复后原链接照常可用。线路要的用户组也取自这一次读取，不再另读
 	owner, err := d.Owners.Get(ctx, row.UserID)
 	if err != nil {
 		return PullResult{}, err
@@ -161,17 +161,13 @@ func (s *Service) Pull(ctx context.Context, req PullRequest) (PullResult, error)
 		return res, nil
 	}
 
-	groupID, err := s.users.UserGroupID(ctx, row.UserID)
-	if err != nil {
-		return fail(err)
-	}
 	nodes, err := s.nodes.DeliverableNodes(ctx, NodeQuery{
-		SubscriptionID: subID, UserID: row.UserID, PlanVersionID: row.PlanVersionID, UserGroupID: groupID,
+		SubscriptionID: subID, UserID: row.UserID, PlanVersionID: row.PlanVersionID, UserGroupID: owner.UserGroupID,
 	})
 	if err != nil {
 		return fail(err)
 	}
-	// 按 UA 选客户端内核认得的写法
+	// 按 UA 选客户端内核认得的写法。nodes 可能来自 node 模块的进程内缓存、被别的请求共享：只读不改
 	body, contentType, count := render.Render(format, nodes, row.ProxyUUID.String(), ua, d.Render)
 	res.Body, res.ContentType = body, contentType
 	res.UpdateIntervalHours = updateIntervalHours
