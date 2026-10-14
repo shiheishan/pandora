@@ -287,16 +287,6 @@ func (fc *fakeControl) leafSerials() []string {
 	return out
 }
 
-func (fc *fakeControl) recordsMsgs() [][]*nodev1.SessionRequest {
-	fc.mu.Lock()
-	out := make([][]*nodev1.SessionRequest, len(fc.records))
-	for i, r := range fc.records {
-		out[i] = append([]*nodev1.SessionRequest(nil), r.msgs...)
-	}
-	fc.mu.Unlock()
-	return out
-}
-
 // newHandoffControl 把每条新流交给测试 goroutine，脚本阻塞到 st.end。
 func newHandoffControl() *fakeControl {
 	fc := &fakeControl{streamCh: make(chan *fakeStream, 16)}

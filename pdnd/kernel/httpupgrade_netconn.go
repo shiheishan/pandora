@@ -6,7 +6,6 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"time"
 )
 
 func validHTTPUpgradeRequest(reqPath, reqHost string, req *http.Request) bool {
@@ -54,8 +53,4 @@ func writeHTTPUpgradeResponse(rw *bufio.ReadWriter) error {
 		return err
 	}
 	return rw.Flush()
-}
-
-func setUpgradeDeadline(conn net.Conn) {
-	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
 }

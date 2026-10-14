@@ -8,25 +8,6 @@ import (
 	"github.com/aegispanel/nodeagent/core"
 )
 
-// snapshotUUIDs 取当前已授权用户的原始 UUID，供 Vision 认帧用。
-//
-// 每条连接取一次快照而不是持有共享切片：用户增删随时可能发生，
-// 拿着会变的底层数组去做逐字节比对，出问题的时候极难复现。
-func (a *vlessAdapter) snapshotUUIDs() [][]byte {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	out := make([][]byte, 0, len(a.users))
-	for id := range a.users {
-		parsed, err := uuid.Parse(id)
-		if err != nil {
-			continue
-		}
-		buf := parsed
-		out = append(out, append([]byte(nil), buf[:]...))
-	}
-	return out
-}
-
 func (a *vlessAdapter) lookupUser(id string) (core.User, bool) {
 	a.mu.RLock()
 	user, ok := a.users[id]

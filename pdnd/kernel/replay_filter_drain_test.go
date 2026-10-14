@@ -83,19 +83,6 @@ func assertStillOpen(t *testing.T, conn net.Conn) {
 	}
 }
 
-// assertClosedPromptly：客户端不半关，服务端也在 within 内关掉（EOF 或 RST）。
-func assertClosedPromptly(t *testing.T, conn net.Conn, within time.Duration) {
-	t.Helper()
-	_ = conn.SetReadDeadline(time.Now().Add(within))
-	got, err := io.ReadAll(conn)
-	if isTimeoutErr(err) {
-		t.Fatalf("%v 内服务端未关闭", within)
-	}
-	if len(got) != 0 {
-		t.Fatalf("不应回任何字节，收到 %d 字节", len(got))
-	}
-}
-
 func randomBytes(n int) []byte {
 	b := make([]byte, n)
 	_, _ = rand.Read(b)
