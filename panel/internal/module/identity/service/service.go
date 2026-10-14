@@ -69,6 +69,11 @@ type Service struct {
 	orders OpsOrders
 	queue  JobQueue
 
+	// 后台用户列表、详情与用户组（admin_views.go）：余额经 ledger、Telegram 绑定经 notify、组引用经 catalog/promo/node，装配时注入。
+	wallets    OpsWallets
+	telegram   OpsTelegram
+	groupUsage OpsGroupUsage
+
 	geo *geoip.Resolver
 }
 

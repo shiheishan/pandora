@@ -82,8 +82,13 @@ func TestFormatPaid(t *testing.T) {
 }
 
 type fakeExportOpsOrders struct {
-	stats map[uuid.UUID]OrderStat
+	stats       map[uuid.UUID]OrderStat
+	recent      map[uuid.UUID][]AdminOrderRow
+	recentCalls int
+	lastLimit   int
 }
+
+var _ OpsOrders = (*fakeExportOpsOrders)(nil)
 
 func (f *fakeExportOpsOrders) UserOrderStats(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]OrderStat, error) {
 	out := make(map[uuid.UUID]OrderStat)
@@ -93,6 +98,16 @@ func (f *fakeExportOpsOrders) UserOrderStats(_ context.Context, ids []uuid.UUID)
 		}
 	}
 	return out, nil
+}
+
+func (f *fakeExportOpsOrders) RecentOrders(_ context.Context, userID uuid.UUID, limit int) ([]AdminOrderRow, error) {
+	f.recentCalls++
+	f.lastLimit = limit
+	rows := f.recent[userID]
+	if rows == nil {
+		return []AdminOrderRow{}, nil
+	}
+	return rows, nil
 }
 
 func TestExportUsersWithOrders(t *testing.T) {

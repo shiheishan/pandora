@@ -69,6 +69,9 @@ func (s *Service) ListUsers(ctx context.Context, f UserFilter, limit, offset int
 			LastLoginAt: r.LastLoginAt,
 		})
 	}
+	if err := s.enrichRows(ctx, out); err != nil {
+		return nil, 0, err
+	}
 	return out, total, nil
 }
 
@@ -111,6 +114,9 @@ func (s *Service) UserDetail(ctx context.Context, id uuid.UUID) (UserDetail, err
 	}
 	d.ReferralCount, err = s.repo.ReferralCount(ctx, id)
 	if err != nil {
+		return UserDetail{}, err
+	}
+	if err := s.enrichDetail(ctx, &d); err != nil {
 		return UserDetail{}, err
 	}
 	return d, nil
