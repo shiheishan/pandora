@@ -105,3 +105,25 @@ func TestRenderBody(t *testing.T) {
 		})
 	}
 }
+
+func TestSearchHit(t *testing.T) {
+	body := "公开 Alpha<!--access start-->Secret 口令<!--access end-->尾巴<!--access start-->未闭合 Hidden"
+	cases := []struct {
+		q    string
+		want bool
+	}{
+		{"alpha", true},
+		{"尾巴", true},
+		{"标题", true},
+		{"secret", false},
+		{"口令", false},
+		{"hidden", false},
+		{"access", false},
+		{"这部分内容", false},
+	}
+	for _, tc := range cases {
+		if got := SearchHit("标题", "摘要", body, tc.q); got != tc.want {
+			t.Errorf("SearchHit(%q) = %v, want %v", tc.q, got, tc.want)
+		}
+	}
+}

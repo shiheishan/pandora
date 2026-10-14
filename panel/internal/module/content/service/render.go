@@ -13,9 +13,9 @@ var (
 )
 
 // 占位变量（与 Xboard 同名，外加 siteUrl）：
-//   {{siteName}} 站点名；{{siteUrl}} 面板对外地址；{{subscribeUrl}} 订阅链接；
-//   {{urlEncodeSubscribeUrl}} 订阅链接做 URL 编码（url.QueryEscape，同 PHP urlencode）；
-//   {{safeBase64SubscribeUrl}} 订阅链接做 URL 安全的 base64、去掉 =（base64.RawURLEncoding）。
+// {{siteName}} 站点名；{{siteUrl}} 面板对外地址；{{subscribeUrl}} 订阅链接；
+// {{urlEncodeSubscribeUrl}} 订阅链接做 URL 编码（url.QueryEscape，同 PHP urlencode）；
+// {{safeBase64SubscribeUrl}} 订阅链接做 URL 安全的 base64、去掉 =（base64.RawURLEncoding）。
 // 区块：<!--access start--> … <!--access end-->（Xboard 语法，标记内允许多余空白，如 <!-- access start -->）。
 type RenderVars struct {
 	SiteName     string
@@ -33,14 +33,14 @@ func NeedsSubscribeURL(body string) bool {
 		strings.Contains(body, "{{safeBase64SubscribeUrl}}")
 }
 
-// RenderBody 先处理区块、再替换占位变量：
-//   hasAccess 为 true：去掉区块的起止标记，保留区块内容；
-//   hasAccess 为 false：整个区块（含标记与内容）换成 AccessDeniedNotice；
-//   只有起始没有结束标记的：从起始标记到正文末尾都算区块（宁可多藏，不漏）；
-//   落单的结束标记一律删掉。
+// RenderBody 先处理区块、再替换占位变量。
+// hasAccess 为 true：去掉区块的起止标记，保留区块内容；
+// hasAccess 为 false：整个区块（含标记与内容）换成 AccessDeniedNotice；
+// 只有起始没有结束标记的：从起始标记到正文末尾都算区块（宁可多藏，不漏）；
+// 落单的结束标记一律删掉。
 // 占位变量只替换上面五个，其余 {{…}} 原样保留。
 func RenderBody(body string, v RenderVars, hasAccess bool) string {
-	body = processAccessBlocks(body, hasAccess)
+	body = processAccessBlocks(body, hasAccess, AccessDeniedNotice)
 	enc := url.QueryEscape(v.SubscribeURL)
 	b64 := base64.RawURLEncoding.EncodeToString([]byte(v.SubscribeURL))
 	repl := strings.NewReplacer(
@@ -53,7 +53,15 @@ func RenderBody(body string, v RenderVars, hasAccess bool) string {
 	return repl.Replace(body)
 }
 
-func processAccessBlocks(body string, hasAccess bool) string {
+// SearchHit 报告没有在用套餐的用户搜 query 能不能命中这篇：只比标题、摘要和剔掉 access 区块（连内容）之后的正文，
+// 不区分大小写。区块与门户单篇渲染用同一套切分（processAccessBlocks），免得能用搜索词逐段试探出隐藏内容。
+func SearchHit(title, summary, body, query string) bool {
+	text := title + " " + summary + " " + processAccessBlocks(body, false, "")
+	return strings.Contains(strings.ToLower(text), strings.ToLower(query))
+}
+
+// processAccessBlocks 处理区块：hasAccess 为 true 只去掉标记；为 false 时整个区块换成 denied。
+func processAccessBlocks(body string, hasAccess bool, denied string) string {
 	for {
 		start := accessStartRe.FindStringIndex(body)
 		if start == nil {
@@ -66,7 +74,7 @@ func processAccessBlocks(body string, hasAccess bool) string {
 				inner := rest
 				body = body[:start[0]] + inner
 			} else {
-				body = body[:start[0]] + AccessDeniedNotice
+				body = body[:start[0]] + denied
 			}
 			break
 		}
@@ -75,7 +83,7 @@ func processAccessBlocks(body string, hasAccess bool) string {
 		if hasAccess {
 			body = body[:start[0]] + inner + after
 		} else {
-			body = body[:start[0]] + AccessDeniedNotice + after
+			body = body[:start[0]] + denied + after
 		}
 	}
 	body = accessEndRe.ReplaceAllString(body, "")

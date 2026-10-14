@@ -105,6 +105,12 @@ func (s *Service) visible(ctx context.Context, userID uuid.UUID, slug string, fi
 	if slug != "" {
 		q.Query = ""
 	}
+	// 没有在用套餐时，搜索不能命中 access 区块里的文字：SQL 先按原文粗筛，再取正文在这里剔掉区块复核；
+	// 列表照旧不返回正文。
+	recheck := !hasAccess && q.Query != ""
+	if recheck {
+		q.IncludeBody = true
+	}
 
 	rows, err := s.repo.Visible(ctx, q)
 	if err != nil {
@@ -121,6 +127,12 @@ func (s *Service) visible(ctx context.Context, userID uuid.UUID, slug string, fi
 			continue
 		}
 		seen[row.Slug] = true
+		if recheck {
+			row.Matched = row.Matched && SearchHit(row.Title, row.Summary, row.Body, q.Query)
+			if !includeBody {
+				row.Body = ""
+			}
+		}
 		if row.Matched {
 			out = append(out, toPage(row.Page))
 		}
