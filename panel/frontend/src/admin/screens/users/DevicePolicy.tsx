@@ -47,7 +47,7 @@ export function DevicePolicy({ now }: { now: Date }) {
             {(d) => <HotList rows={nearLimit(d.devices)} now={now} />}
           </QueryView>
         </div>
-        <p className={ops.cardFoot}>在线按近 {devices.data?.window_minutes ?? 5} 分钟内的来源 IP 去重；统计生效中、试用与宽限期订阅里在线最多的 200 条。</p>
+        <p className={ops.cardFoot}>在线按近 {devices.data?.window_minutes ?? 5} 分钟内的来源 IP 去重；统计生效中订阅里在线最多的 200 条。</p>
       </Card>
     </div>
   )
