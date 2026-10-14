@@ -220,6 +220,10 @@ func normalizeGenerateInput(in GenerateInput) (GenerateInput, error) {
 		return in, errs.Invalid(map[string]string{
 			"email_domain": "域名格式不正确"})
 	}
+	if reservedEmail("x@" + in.EmailDomain) {
+		return in, errs.Invalid(map[string]string{
+			"email_domain": "这个域名留给已注销账号，不能用"})
+	}
 	if n := utf8.RuneCountInString(in.Reason); n < 5 || n > 500 {
 		return in, errs.Invalid(map[string]string{
 			"reason": "请写清生成原因，5 到 500 个字"})

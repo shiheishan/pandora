@@ -24,20 +24,21 @@ import (
 func (s *Service) StartRegistration(ctx context.Context, email, inviteCode, captchaToken string) (RegistrationStart, error) {
 	start := time.Now()
 	email = normalizeEmail(email)
-	if !ValidEmail(email) {
+	if !ValidEmail(email) || reservedEmail(email) {
 		return RegistrationStart{}, errEmailInvalid()
 	}
 	cfg, err := s.settings.Signup(ctx)
 	if err != nil {
 		return RegistrationStart{}, err
 	}
-	if err := s.captcha.verify(ctx, cfg, captchaToken); err != nil {
+	// 先做本地的 IP 限额，再调第三方人机验证：被限的请求不再往外打一次 HTTP；人机验证失败的请求也计入限额
+	if err := s.limitRegisterIP(ctx, cfg); err != nil {
+		return RegistrationStart{}, err
+	}
+	if err := s.captcha.verify(ctx, cfg, captchaToken, captchaActionRegister); err != nil {
 		return RegistrationStart{}, err
 	}
 	if err := checkEmailPolicy(cfg, email); err != nil {
-		return RegistrationStart{}, err
-	}
-	if err := s.limitRegisterIP(ctx, cfg); err != nil {
 		return RegistrationStart{}, err
 	}
 	inviteCode = strings.ToUpper(strings.TrimSpace(inviteCode))

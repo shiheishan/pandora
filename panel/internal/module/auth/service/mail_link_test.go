@@ -43,15 +43,30 @@ func (f *fakeMailLinkMailer) SendToAddress(ctx context.Context, templateCode, ad
 	return nil
 }
 
-func wireMailLink(h *testHarness, settings *fakeMailSettings, mailer *fakeMailLinkMailer) {
-	h.S.UseMailLink(settings, mailer, ratelimit.New(h.RDB), "https://panel.example.test")
+// fakeMailCaptcha 记下每次校验的令牌与 action；err 非空时一律拒绝。
+type fakeMailCaptcha struct {
+	err     error
+	tokens  []string
+	actions []string
+}
+
+func (f *fakeMailCaptcha) VerifyCaptcha(_ context.Context, token, action string) error {
+	f.tokens = append(f.tokens, token)
+	f.actions = append(f.actions, action)
+	return f.err
+}
+
+func wireMailLink(h *testHarness, settings *fakeMailSettings, mailer *fakeMailLinkMailer) *fakeMailCaptcha {
+	c := &fakeMailCaptcha{}
+	h.S.UseMailLink(settings, mailer, c, ratelimit.New(h.RDB), "https://panel.example.test")
+	return c
 }
 
 func TestStartMailLoginUnavailable(t *testing.T) {
 	h := newTestService(t)
 	ctx := context.Background()
 
-	if err := h.S.StartMailLogin(ctx, "user@example.com"); !errors.Is(err, ErrMailLinkUnavailable) {
+	if err := h.S.StartMailLogin(ctx, "user@example.com", ""); !errors.Is(err, ErrMailLinkUnavailable) {
 		t.Fatalf("未注入端口: %v", err)
 	}
 
@@ -62,7 +77,7 @@ func TestStartMailLoginUnavailable(t *testing.T) {
 	mailer := &fakeMailLinkMailer{}
 	wireMailLink(h, settings, mailer)
 
-	if err := h.S.StartMailLogin(ctx, "user@example.com"); !errors.Is(err, ErrMailLinkUnavailable) {
+	if err := h.S.StartMailLogin(ctx, "user@example.com", ""); !errors.Is(err, ErrMailLinkUnavailable) {
 		t.Fatalf("开关关闭: %v", err)
 	}
 }
@@ -198,14 +213,14 @@ func TestStartMailLoginSendsMail(t *testing.T) {
 	mailer := &fakeMailLinkMailer{}
 	wireMailLink(h, settings, mailer)
 
-	if err := h.S.StartMailLogin(ctx, "send@example.com"); err != nil {
+	if err := h.S.StartMailLogin(ctx, "send@example.com", ""); err != nil {
 		t.Fatalf("start: %v", err)
 	}
 	if mailer.calls != 1 {
 		t.Fatalf("应发一封，得 %d", mailer.calls)
 	}
 
-	if err := h.S.StartMailLogin(ctx, "nobody@example.com"); err != nil {
+	if err := h.S.StartMailLogin(ctx, "nobody@example.com", ""); err != nil {
 		t.Fatalf("不存在邮箱: %v", err)
 	}
 	if mailer.calls != 1 {
@@ -221,8 +236,84 @@ func TestStartMailLoginInvalidEmail(t *testing.T) {
 	}
 	wireMailLink(h, settings, &fakeMailLinkMailer{})
 
-	err := h.S.StartMailLogin(context.Background(), "bad")
+	err := h.S.StartMailLogin(context.Background(), "bad", "")
 	if errs.As(err).Code != errs.ValidationFailed {
 		t.Fatalf("格式错: %v", err)
+	}
+}
+
+// 第 1 步先过人机验证（action 为 mail_login），失败时不发信、也不占按邮箱的限频额度。
+func TestStartMailLoginCaptcha(t *testing.T) {
+	h := newTestService(t)
+	ctx := context.Background()
+	_ = h.Users.addUser("cap@example.com", "pass", UserStatusActive)
+	settings := &fakeMailSettings{signup: settingssvc.Signup{MailLinkLogin: true}, configured: true}
+	mailer := &fakeMailLinkMailer{}
+	c := wireMailLink(h, settings, mailer)
+
+	c.err = errs.Invalid(map[string]string{"captcha": "人机验证未通过，请重试"})
+	for i := 0; i < 5; i++ {
+		err := h.S.StartMailLogin(ctx, "cap@example.com", "bad-token")
+		if e := errs.As(err); e.Code != errs.ValidationFailed || e.Fields["captcha"] == "" {
+			t.Fatalf("人机验证失败应 422 fields.captcha: %v", err)
+		}
+	}
+	if mailer.calls != 0 {
+		t.Fatalf("人机验证失败不应发信，calls=%d", mailer.calls)
+	}
+	if len(c.actions) != 5 || c.actions[0] != mailLinkCaptchaAction || c.tokens[0] != "bad-token" {
+		t.Fatalf("captcha calls: tokens=%v actions=%v", c.tokens, c.actions)
+	}
+
+	// 人机验证在限频之前：前面 5 次失败没占掉同一邮箱 15 分钟 3 次的额度
+	c.err = nil
+	if err := h.S.StartMailLogin(ctx, "cap@example.com", "good-token"); err != nil {
+		t.Fatalf("通过后应发信: %v", err)
+	}
+	if mailer.calls != 1 {
+		t.Fatalf("应发一封，calls=%d", mailer.calls)
+	}
+}
+
+// 防枚举：不存在、停用、已注销、管理员四种邮箱，与正常发信的响应一样（都返回 nil），且都不发信。
+func TestStartMailLoginNoMailForIneligible(t *testing.T) {
+	h := newTestService(t)
+	ctx := context.Background()
+	_ = h.Users.addUser("suspended@example.com", "pass", "suspended")
+	_ = h.Users.addUser("deleted@example.com", "pass", "deleted")
+	adminID := h.Users.addUser("staff@example.com", "pass", UserStatusActive)
+	h.Store.addAdmin(adminID)
+	settings := &fakeMailSettings{signup: settingssvc.Signup{MailLinkLogin: true}, configured: true}
+	mailer := &fakeMailLinkMailer{}
+	wireMailLink(h, settings, mailer)
+
+	for _, email := range []string{"nobody@example.com", "suspended@example.com", "deleted@example.com", "staff@example.com"} {
+		if err := h.S.StartMailLogin(ctx, email, ""); err != nil {
+			t.Fatalf("%s: 应与正常发信同样返回 nil: %v", email, err)
+		}
+	}
+	if mailer.calls != 0 {
+		t.Fatalf("四种邮箱都不应发信，calls=%d", mailer.calls)
+	}
+}
+
+// 吊销全部会话会推进凭据纪元，之前签发的邮件登录链接随之失效（后台改邮箱、注销、改口令都走这条）。
+func TestRevokeUserInvalidatesMailLink(t *testing.T) {
+	h := newTestService(t)
+	ctx := testCtx("203.0.113.3")
+	uid := h.Users.addUser("revoke@example.com", "pass", UserStatusActive)
+	epoch, err := h.S.sessions.epoch(ctx, uid)
+	if err != nil {
+		t.Fatalf("epoch: %v", err)
+	}
+	token := "mail-revoked"
+	if err := h.S.sessions.issueMailLink(ctx, uid, hashSecret(token), epoch, mailLinkTTL); err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	if err := h.S.RevokeUser(ctx, uid, ""); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	if _, err := h.S.ConsumeMailLogin(ctx, token); !errors.Is(err, errMailLinkInvalid) {
+		t.Fatalf("吊销后旧链接应无效: %v", err)
 	}
 }

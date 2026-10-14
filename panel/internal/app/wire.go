@@ -312,7 +312,8 @@ func buildServices(r *runtime) (*services, error) {
 	identitySvc.UseTrialGranter(subSvc)
 	identitySvc.UseAccountCloser(subSvc)
 	identitySvc.UseTelegramUnbinder(notifySvc)
-	authSvc.UseMailLink(settingsSvc, notifySvc, limiter, cfg.PublicBaseURL)
+	// 邮件链接登录第 1 步的人机验证由 identity 校验（与注册、找回同一套）
+	authSvc.UseMailLink(settingsSvc, notifySvc, identitySvc, limiter, cfg.PublicBaseURL)
 
 	// 装配自检：所有带 Use* 注入的 service 在这里统一检查必需端口（各自的 MissingPorts），缺了就拒绝启动
 	if err := checkPorts([]portCheck{

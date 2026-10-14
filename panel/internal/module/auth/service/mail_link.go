@@ -21,6 +21,14 @@ type MailLinkSettings interface {
 	MailConfigured(ctx context.Context) (bool, error)
 }
 
+// MailLinkCaptcha 由 identity 实现（*identitysvc.Service 的 VerifyCaptcha）：与注册、找回同一套人机验证校验与文案；没开人机验证时直接通过。
+type MailLinkCaptcha interface {
+	VerifyCaptcha(ctx context.Context, token, action string) error
+}
+
+// mailLinkCaptchaAction 与 identity 的 CaptchaActionMailLogin、前端 MailLinkLogin.tsx 的 getToken('mail_login') 一致。
+const mailLinkCaptchaAction = "mail_login"
+
 // MailLinkMailer 由 notify 实现：在调用方事务里写一条投递记录，提交后入队发送。
 type MailLinkMailer interface {
 	SendToAddress(ctx context.Context, templateCode, address string, vars map[string]string, userID *uuid.UUID) error
@@ -36,17 +44,19 @@ var (
 )
 
 // UseMailLink 只在启动装配时调用。publicBaseURL 是面板对外地址（config.PublicBaseURL），链接拼成 <publicBaseURL 去掉末尾 />/#/mail-login/<令牌>。
-func (s *Service) UseMailLink(settings MailLinkSettings, mailer MailLinkMailer, limiter *ratelimit.Limiter, publicBaseURL string) {
+func (s *Service) UseMailLink(settings MailLinkSettings, mailer MailLinkMailer, captcha MailLinkCaptcha, limiter *ratelimit.Limiter, publicBaseURL string) {
 	s.mailSettings = settings
+	s.mailCaptcha = captcha
 	s.mailer = mailer
 	s.mailLimiter = limiter
 	s.publicBaseURL = publicBaseURL
 }
 
-// StartMailLogin 发送免密登录邮件链接。
-func (s *Service) StartMailLogin(ctx context.Context, email string) error {
+// StartMailLogin 发送免密登录邮件链接。开了人机验证时与找回密码第 1 步同口径：先过人机验证（在按邮箱限频之前），
+// 否则开了人机验证以后，脚本可以改走这个接口给全站已注册邮箱刷信。
+func (s *Service) StartMailLogin(ctx context.Context, email, captchaToken string) error {
 	start := time.Now()
-	if s.mailSettings == nil || s.mailer == nil || s.mailLimiter == nil {
+	if s.mailSettings == nil || s.mailer == nil || s.mailLimiter == nil || s.mailCaptcha == nil {
 		return ErrMailLinkUnavailable
 	}
 
@@ -68,6 +78,9 @@ func (s *Service) StartMailLogin(ctx context.Context, email string) error {
 	email = normalizeEmail(email)
 	if len(email) < 3 || len(email) > 254 || !strings.Contains(email, "@") {
 		return errs.Invalid(map[string]string{"email": "邮箱格式不正确"})
+	}
+	if err := s.mailCaptcha.VerifyCaptcha(ctx, captchaToken, mailLinkCaptchaAction); err != nil {
+		return err
 	}
 
 	h := s.emailHash(email)

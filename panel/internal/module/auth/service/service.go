@@ -89,6 +89,7 @@ type Service struct {
 	now      func() time.Time
 
 	mailSettings  MailLinkSettings
+	mailCaptcha   MailLinkCaptcha
 	mailer        MailLinkMailer
 	mailLimiter   *ratelimit.Limiter
 	publicBaseURL string

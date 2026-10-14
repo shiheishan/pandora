@@ -60,6 +60,14 @@ describe('mock api · portal signup & mail-link', () => {
     expect(await fourth.json()).toMatchObject({ error: { code: 'rate_limited', message: '请求过于频繁，请稍后再试' } })
   })
 
+  it('mail-link start accepts captcha_token string and rejects non-string', async () => {
+    const ok = await post('/v1/auth/mail-link/start', { email: 'captcha-mail@example.test', captcha_token: 'x' })
+    expect(ok.status).toBe(200)
+    const bad = await post('/v1/auth/mail-link/start', { email: 'captcha-mail2@example.test', captcha_token: 123 })
+    expect(bad.status).toBe(422)
+    expect(await bad.json()).toMatchObject({ error: { fields: { captcha_token: expect.any(String) } } })
+  })
+
   it('POST /v1/invite/visit returns ok', async () => {
     expect(await (await post('/v1/invite/visit', { code: 'INVITE1' })).json()).toEqual({ ok: true })
   })

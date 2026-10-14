@@ -138,7 +138,7 @@ func (f *fakeAuth) Reauth(ctx context.Context, password string) (service.Tokens,
 	return f.reauthOut, nil
 }
 
-func (f *fakeAuth) StartMailLogin(ctx context.Context, email string) error {
+func (f *fakeAuth) StartMailLogin(ctx context.Context, email, captchaToken string) error {
 	return nil
 }
 

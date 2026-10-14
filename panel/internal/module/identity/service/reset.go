@@ -28,10 +28,11 @@ func (s *Service) StartPasswordReset(ctx context.Context, email, captchaToken st
 	if err != nil {
 		return PasswordResetStart{}, err
 	}
-	if err := s.captcha.verify(ctx, cfg, captchaToken); err != nil {
+	// 先按邮箱限频（本地），再调第三方人机验证
+	if err := s.limit(ctx, ruleResetStartEmail, email); err != nil {
 		return PasswordResetStart{}, err
 	}
-	if err := s.limit(ctx, ruleResetStartEmail, email); err != nil {
+	if err := s.captcha.verify(ctx, cfg, captchaToken, captchaActionPasswordReset); err != nil {
 		return PasswordResetStart{}, err
 	}
 	ok, err := s.PasswordResetAvailable(ctx)
@@ -167,7 +168,8 @@ func (s *Service) CompletePasswordReset(ctx context.Context, email, code, newPas
 		if err != nil {
 			return err
 		}
-		if !ok || u.Status != StatusActive {
+		// 码是发给某个邮箱的：用户现在的邮箱换了（后台改邮箱），旧邮箱收到的码就不能再用来改口令
+		if !ok || u.Status != StatusActive || normalizeEmail(u.Email) != email {
 			rejected = true
 			return nil
 		}

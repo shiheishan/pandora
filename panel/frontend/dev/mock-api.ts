@@ -336,6 +336,9 @@ export function mockApi(app: MockApp): Plugin {
     if (app === 'portal' && route === 'POST /v1/auth/mail-link/start') {
       const body = await base.body()
       if (!body) return fail(res, 400, 'bad_request', '请求体不是合法的 JSON')
+      // 与找回第 1 步同口径：开了人机验证时带 captcha_token（演示环境不连第三方，只校验类型）
+      const capErr = captchaFieldError(body)
+      if (capErr) return fail(res, 422, 'validation_failed', '请求参数校验未通过', capErr)
       const email = str(body.email).trim().toLowerCase()
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return fail(res, 422, 'validation_failed', '请求参数校验未通过', { email: '邮箱格式不正确' })
       if (!allowMailLinkSend(email)) return fail(res, 429, 'rate_limited', '请求过于频繁，请稍后再试')

@@ -207,9 +207,19 @@ const BulkBanMax = 500
 // errAccountDeleted 是对已注销账号做后台操作时的错误。
 func errAccountDeleted() error { return errs.Newf(errs.Conflict, "账号已注销") }
 
+// deletedEmailDomain 是占位邮箱的域名（.invalid 是保留顶级域，不可投递）。
+const deletedEmailDomain = "deleted.invalid"
+
 // DeletedEmail 是注销后写进 users.email 的占位值：不可投递（.invalid 保留域名）、不可登录，也挡住原邮箱找回。
 func DeletedEmail(id uuid.UUID) string {
-	return "deleted-" + strings.ReplaceAll(id.String(), "-", "") + "@deleted.invalid"
+	return "deleted-" + strings.ReplaceAll(id.String(), "-", "") + "@" + deletedEmailDomain
+}
+
+// reservedEmail 报告邮箱是不是占位邮箱的域名（任何大小写）。注册、命令行建号、批量生成、后台改邮箱都拒它：
+// 否则有人先占了 DeletedEmail(某人 id)，那个人注销时匿名化会撞邮箱唯一约束，永远注销不了。
+func reservedEmail(email string) bool {
+	at := strings.LastIndexByte(email, '@')
+	return at >= 0 && strings.EqualFold(strings.TrimSpace(email[at+1:]), deletedEmailDomain)
 }
 
 // DeletedShortID 是界面上「已注销 #<短 id>」用的 id 前 8 位，与后台各处显示的短 id（前端 shortId）同一口径。

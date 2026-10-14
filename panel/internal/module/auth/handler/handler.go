@@ -28,7 +28,7 @@ type Auth interface {
 	RevokeSession(ctx context.Context, sid string) error
 	IssueQuickLogin(ctx context.Context) (service.QuickLoginLink, error)
 	Reauth(ctx context.Context, password string) (service.Tokens, error)
-	StartMailLogin(ctx context.Context, email string) error
+	StartMailLogin(ctx context.Context, email, captchaToken string) error
 	ConsumeMailLogin(ctx context.Context, token string) (service.Tokens, error)
 }
 

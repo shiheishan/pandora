@@ -19,6 +19,8 @@ type DeleteUserResult struct {
 }
 
 // AdminSetEmail 后台改用户邮箱：规整成小写并校验；撞号 409；已注销 409；同值直接返回；改后邮箱验证时间清空；写审计。
+// 登录标识换了，旧邮箱上的凭据一并作废（与改口令同口径）：作废发往旧邮箱的找回码，吊销全部会话并推进凭据纪元
+// （邮件登录链接按纪元失效）。否则「旧邮箱被盗、请管理员改邮箱」时，攻击者还能用旧邮箱收到的码或链接接管账号。
 func (s *Service) AdminSetEmail(ctx context.Context, userID uuid.UUID, email, reason string) error {
 	if _, err := principal(ctx); err != nil {
 		return err
@@ -30,11 +32,8 @@ func (s *Service) AdminSetEmail(ctx context.Context, userID uuid.UUID, email, re
 	}
 
 	email = normalizeEmail(email)
-	if !ValidEmail(email) {
-		return errs.Invalid(map[string]string{"email": "邮箱格式不正确"})
-	}
-	if strings.HasSuffix(email, "@deleted.invalid") {
-		return errs.Invalid(map[string]string{"email": "邮箱格式不正确"})
+	if !ValidEmail(email) || reservedEmail(email) {
+		return errEmailInvalid()
 	}
 
 	return s.tx.Do(ctx, func(ctx context.Context) error {
@@ -57,14 +56,28 @@ func (s *Service) AdminSetEmail(ctx context.Context, userID uuid.UUID, email, re
 			}
 			return err
 		}
+		if err := s.repo.ExpireCodes(ctx, PurposePasswordReset, s.targetHash(u.Email)); err != nil {
+			return err
+		}
+		revoker, err := s.needRevoker()
+		if err != nil {
+			return err
+		}
+		if err := revoker.RevokeUser(ctx, userID, ""); err != nil {
+			return err
+		}
+		// 审计只追加、注销后抹不掉：不记明文邮箱，只记打码值；要对照是不是同一个邮箱，比 HMAC
 		return s.writeAudit(ctx, auditsvc.Event{
 			Action:       ActionEmailChanged,
 			ResourceType: ResourceUser,
 			ResourceID:   &userID,
 			Data: map[string]any{
-				"before": u.Email,
-				"after":  email,
-				"reason": r,
+				"before":           maskEmail(u.Email),
+				"after":            maskEmail(email),
+				"before_hmac":      s.auditEmailHMAC(u.Email),
+				"after_hmac":       s.auditEmailHMAC(email),
+				"sessions_revoked": true,
+				"reason":           r,
 			},
 		})
 	})

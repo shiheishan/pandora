@@ -101,7 +101,7 @@ func New(r *repo.Repo, txm *tx.Manager, settings *settingssvc.Service, audit *au
 		hasher:   newPasswordHasher(cfg.Auth.PasswordHash),
 		devMode:  !cfg.IsProduction(),
 		now:      time.Now,
-		captcha:  newCaptchaVerifier(),
+		captcha:  newCaptchaVerifier(cfg.PublicBaseURL),
 	}
 }
 
