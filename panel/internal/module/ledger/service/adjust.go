@@ -35,6 +35,9 @@ const (
 	adjustReasonMax = 500
 )
 
+// errAccountDeleted 是给已注销账号调账（与 identity 同码同文案）。
+var errAccountDeleted = errs.Newf(errs.Conflict, "账号已注销")
+
 // normalizeAdjustment 校验调账金额与原因（与币种无关）；返回去掉首尾空白的原因。
 func normalizeAdjustment(a Adjustment) (reason string, err error) {
 	if a.Amount.IsZero() {
@@ -85,8 +88,19 @@ func (s *Service) AdjustBalance(ctx context.Context, a Adjustment) (AdjustResult
 			return AdjustResult{}, err
 		}
 	}
+	if s.accounts == nil {
+		return AdjustResult{}, errs.Wrap(errs.Internal, errors.New("ledger: AccountStates 未装配"))
+	}
 	var result AdjustResult
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
+		// 先于记账：identity 读时给用户行加共享锁，锁序与注销（用户行 → 订单 → 余额冻结）一致，注销之后不会再调出余额
+		deleted, err := s.accounts.IsDeleted(ctx, a.UserID)
+		if err != nil {
+			return err
+		}
+		if deleted {
+			return errAccountDeleted
+		}
 		var adjErr error
 		result, adjErr = s.adjustBalance(ctx, a, cur, reason)
 		return adjErr

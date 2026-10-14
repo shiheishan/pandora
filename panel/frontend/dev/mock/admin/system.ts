@@ -179,6 +179,7 @@ const isResult = (v: object): v is MockResult => 'status' in v
 // ---------------------------------------------------------------------------
 const EVENTS = [
   { name: 'user.registered', desc: '用户完成注册' },
+  { name: 'user.deleted', desc: '用户账号已注销' },
   { name: 'order.created', desc: '订单创建' },
   { name: 'order.paid', desc: '订单支付成功' },
   { name: 'order.cancelled', desc: '订单取消' },

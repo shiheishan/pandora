@@ -39,6 +39,18 @@ func (r *Repo) OrderByID(ctx context.Context, id uuid.UUID, lock Lock) (model.Or
 	return o, true, nil
 }
 
+// PendingOrdersForUser 按 id 升序锁住一个用户的全部待付订单（FOR NO KEY UPDATE），注销账号时逐张释放。
+func (r *Repo) PendingOrdersForUser(ctx context.Context, userID uuid.UUID) ([]model.Order, error) {
+	var rows []model.Order
+	err := r.d.Conn(ctx).Raw(
+		"SELECT * FROM orders WHERE user_id = ? AND status = 'pending_payment' ORDER BY id FOR NO KEY UPDATE", userID,
+	).Scan(&rows).Error
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	return rows, nil
+}
+
 // OrderForUser 按 id 与用户读订单（可加行锁）；不存在或不属于该用户返回 false。
 func (r *Repo) OrderForUser(ctx context.Context, id, userID uuid.UUID, lock Lock) (model.Order, bool, error) {
 	var o model.Order

@@ -11,7 +11,9 @@ const inviteCodesListMax = 50
 // inviteVisitWindow 是同一 IP 对同一邀请码的访问去重窗口。
 const inviteVisitWindow = 24 * time.Hour
 
-// referrerChainMaxDepth 是改邀请人时往上查环的最大层数。
+// referrerChainMaxDepth 是改邀请人时往上查环的最大层数。假设：生效邀请链不会超过 100 层。
+// 注册时的绑定只能指向更早注册的人，天然无环；后台改动都在全局咨询锁里先查环再写，所以图始终无环，
+// 这里的层数只是给递归查询兜底。链真超过 100 层时，更远处的环会漏查。
 const referrerChainMaxDepth = 100
 
 // InviteCodeView 是门户邀请页里的一个个人邀请码。

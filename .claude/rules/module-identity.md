@@ -9,7 +9,7 @@ paths:
 ## 分工
 - identity 管用户、口令、注册、找回密码、改密、邀请码、用户组与后台用户管理；auth 管登录、refresh、登出、重认证、快捷登录、管理员名单。会话状态全在 Redis（`panel/internal/module/auth/service/store.go`），PG 里 auth 只有管理员名单。
 - 两边互相要的能力走 `panel/internal/module/identity/service/ports.go` 的接口：`SessionRevoker`、`AdminGuard`、`StaffGuard` 由 auth 实现，`VerificationMailer` 由 notify 实现，启动时 `Use*` 注入。改这些接口要同时改实现方。
-- 注册试用、注销与解绑走 `ports_xb.go`：`TrialGranter`、`AccountCloser` 由 subscription 实现，`TelegramUnbinder` 由 notify 实现；没注入时调用处回 Internal，`MissingPorts` 会列出来（wire.go 启动时检查）。
+- 注册试用、注销与解绑走 `ports_xb.go`：`TrialGranter`、`AccountCloser` 由 subscription 实现，`OrderCanceller` 由 order 实现，`TelegramUnbinder` 由 notify 实现；没注入时调用处回 Internal，`MissingPorts` 会列出来（wire.go 启动时检查）。
 - 后台权限只分有和没有：在管理员名单里且账号 active 就能做全部后台操作，没有角色和权限码（用户 2026-10-12 定）。
 
 ## 账号枚举防护（IAM-006）
@@ -52,6 +52,6 @@ paths:
 ## 后台改用户与注销（2026-10-14）
 - 改邮箱（要原因、撞号 409、改后未验证；同一事务里作废发往旧邮箱的找回码、吊销全部会话并推进纪元，邮件登录链接随之失效；找回第 2 步另核码对应的邮箱仍是用户现在的邮箱）、改显示名与备注（备注只在后台详情出现，审计只记字段与长度）、改邀请人、注销都在 `admin_edit.go` / `referrer.go`，各写一条审计。审计不记明文邮箱：改邮箱只记打码值（`maskEmail`）与 `auditEmailHMAC`（`InfoHMACIdentity`，前缀 `audit-email:`）。
 - 占位邮箱的域名 `deleted.invalid`（任何大小写）在注册、命令行建号、批量生成、后台改邮箱一律拒（`reservedEmail`），否则有人抢注 `DeletedEmail(某人)` 会让那个人注销时撞唯一约束。
-- 注销 `DeleteUser` 不可撤销：同一事务里锁用户 → `AccountCloser` 停订阅 → 解绑 Telegram → 吊销会话 → 作废找回码 → 匿名化（占位邮箱 `DeletedEmail`、清显示名与备注、`status='deleted'`、`deleted_at`）→ 删口令 → 停用他的邀请码；订单、账本、佣金、审计、邀请关系保留。不能注销自己与管理员。锁序与别处一致：先用户行（FOR NO KEY UPDATE），再按 id 升序锁订阅行；改占位邮箱（唯一列）的 UPDATE 放在订阅都停完之后，此时锁才升到 FOR UPDATE，用户自己操作订阅（先锁订阅、再插 actor 指向他的事件行）不会与之互等。界面显示「已注销 #<id 前 8 位>」（`DeletedShortID`，与前端 `shortId` 同口径）。
-- 已注销账号：`SetStatus`、`AdminResetPassword`、`AssignGroup`、改邮箱、改备注、改邀请人一律 409「账号已注销」；批量筛选不带状态时排除已注销，IP 聚类停用跳过已注销。
+- 注销 `DeleteUser` 不可撤销：同一事务里锁用户 → `OrderCanceller` 取消全部待付订单（order 释放资源、作废在途支付意图，原因 `account_deleted`；之后到的付款回调走迟到付款挂账，不开订阅、不计佣金）→ `AccountCloser` 停订阅 → 解绑 Telegram → 吊销会话 → 作废找回码 → 匿名化（占位邮箱 `DeletedEmail`、清显示名与备注、`status='deleted'`、`deleted_at`）→ 删口令 → 停用他的邀请码 → 插件事件 `user.deleted`（只带 `user_id` 与 `deleted_at`）；订单、账本、佣金、审计、邀请关系保留。不能注销自己与管理员。锁序与别处一致：先用户行（FOR NO KEY UPDATE），再订单行（与付款结算「先订单、后订阅」同序），再按 id 升序锁订阅行；改占位邮箱（唯一列）的 UPDATE 放在订阅都停完之后，此时锁才升到 FOR UPDATE，用户自己操作订阅（先锁订阅、再插 actor 指向他的事件行）不会与之互等。界面显示「已注销 #<id 前 8 位>」（`DeletedShortID`，与前端 `shortId` 同口径）。
+- 已注销账号：`SetStatus`、`AdminResetPassword`、`AssignGroup`、改邮箱、改备注、改邀请人一律 409「账号已注销」；别的模块对用户的写入口（order 下单与后台开单、ledger 后台调账、giftcard 兑换、subscription 后台改订阅）在各自 service 里经 `IsDeleted` 判断、同码同文案 409。`IsDeleted` 读时给用户行加共享锁（FOR SHARE）并持有到调用方提交，与注销互斥；调用方必须在事务里第一个调（先于锁自己的行），锁序才与注销一致。commission 计佣跳过已注销的邀请人也读它（xb-comm 合入后接线）；批量筛选不带状态时排除已注销，IP 聚类停用跳过已注销。
 - 批量封禁 `BulkBan` 复用 `BulkFilter`：至少一个条件；命中人数必须等于预览时的 `expected_total`；一次最多 `BulkBanMax`（500）人，同步执行；自己、管理员、已封禁、已注销跳过并计数；路由要 reauth 与幂等键 `user_bulk_ban`。

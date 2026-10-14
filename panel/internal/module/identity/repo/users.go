@@ -52,6 +52,20 @@ func (r *Repo) UserByID(ctx context.Context, id uuid.UUID) (model.User, bool, er
 	return u, true, nil
 }
 
+// UserStatusShared 读用户状态并加共享行锁（FOR SHARE）：在调用方事务里持有到提交，与注销的 FOR NO KEY UPDATE 互斥。
+// 用户不存在返回 false。
+func (r *Repo) UserStatusShared(ctx context.Context, id uuid.UUID) (string, bool, error) {
+	var rows []struct{ Status string }
+	err := r.d.Conn(ctx).Raw("SELECT status FROM users WHERE id = ? FOR SHARE", id).Scan(&rows).Error
+	if err != nil {
+		return "", false, err
+	}
+	if len(rows) == 0 {
+		return "", false, nil
+	}
+	return rows[0].Status, true, nil
+}
+
 // UsersByIDs 批量按 id 查用户。
 func (r *Repo) UsersByIDs(ctx context.Context, ids []uuid.UUID) ([]model.User, error) {
 	if len(ids) == 0 {

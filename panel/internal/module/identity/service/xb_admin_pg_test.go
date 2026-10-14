@@ -21,6 +21,16 @@ func (f *fakeCloser) CloseUserSubscriptions(_ context.Context, userID uuid.UUID,
 	return f.n, nil
 }
 
+type fakeCanceller struct {
+	n     int
+	calls []uuid.UUID
+}
+
+func (f *fakeCanceller) CancelUserPending(_ context.Context, userID uuid.UUID) (int, error) {
+	f.calls = append(f.calls, userID)
+	return f.n, nil
+}
+
 type fakeUnbinder struct {
 	calls []uuid.UUID
 }
@@ -33,9 +43,13 @@ func (f *fakeUnbinder) UnbindTelegram(_ context.Context, userID uuid.UUID) error
 func TestPGDeleteUser(t *testing.T) {
 	e, ctx := newEnv(t)
 	closer := &fakeCloser{n: 3}
+	canceller := &fakeCanceller{n: 2}
 	unbind := &fakeUnbinder{}
+	rec := &pluginRec{}
 	e.svc.UseAccountCloser(closer)
+	e.svc.UseOrderCanceller(canceller)
 	e.svc.UseTelegramUnbinder(unbind)
+	e.svc.UsePluginEvents(rec)
 
 	actx := adminCtx(t, e, ctx)
 	target := e.mkUser(t, ctx, uniqEmail(t, "del"), "Passw0rdLong1")
@@ -74,8 +88,22 @@ func TestPGDeleteUser(t *testing.T) {
 	if len(e.revoker.calls) != 1 || len(closer.calls) != 1 || len(unbind.calls) != 1 {
 		t.Fatalf("revoker=%d closer=%d unbind=%d", len(e.revoker.calls), len(closer.calls), len(unbind.calls))
 	}
+	if len(canceller.calls) != 1 || canceller.calls[0] != target.ID {
+		t.Fatalf("取消待付订单 %v", canceller.calls)
+	}
 	if e.auditCount(ctx, ActionDeleted, target.ID) != 1 {
 		t.Fatal("audit deleted")
+	}
+	// user.deleted 插件事件只带用户 id 与时间，不带任何邮箱
+	if len(rec.events) != 1 || rec.events[0].Event != "user.deleted" || rec.events[0].Key != "user.deleted:"+target.ID.String() {
+		t.Fatalf("插件事件 %+v", rec.events)
+	}
+	payload := rec.events[0].Payload
+	if at, _ := payload["deleted_at"].(string); len(payload) != 3 || payload["user_id"] != target.ID.String() || at == "" || payload["event"] != "user.deleted" {
+		t.Fatalf("事件正文 %+v", payload)
+	}
+	if deleted, err := e.svc.IsDeleted(ctx, target.ID); err != nil || !deleted {
+		t.Fatalf("IsDeleted 应为 true：%v %v", deleted, err)
 	}
 
 	if _, err = e.svc.DeleteUser(actx, target.ID, "again reason"); codeOf(err) != errs.Conflict {
@@ -215,6 +243,7 @@ func TestPGAdminSetNote(t *testing.T) {
 func TestPGAdminSetReferrer(t *testing.T) {
 	e, ctx := newEnv(t)
 	e.svc.UseAccountCloser(&fakeCloser{})
+	e.svc.UseOrderCanceller(&fakeCanceller{})
 	e.svc.UseTelegramUnbinder(&fakeUnbinder{})
 	actx := adminCtx(t, e, ctx)
 	reason := "调整邀请关系测试"
@@ -225,7 +254,8 @@ func TestPGAdminSetReferrer(t *testing.T) {
 	if err := e.exec(ctx, `INSERT INTO referrals (referee_user_id, referrer_user_id) VALUES (?, ?)`, b.ID, a.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.exec(ctx, `INSERT INTO referrals (referee_user_id, referrer_user_id) VALUES (?, ?)`, c.ID, b.ID); err != nil {
+	// C 的原绑定标了风险（referrals 只追加，注册时就定），改邀请人后生效视图应沿用这个标记
+	if err := e.exec(ctx, `INSERT INTO referrals (referee_user_id, referrer_user_id, risk_flag) VALUES (?, ?, 'suspicious')`, c.ID, b.ID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -240,8 +270,9 @@ func TestPGAdminSetReferrer(t *testing.T) {
 		t.Fatal(err)
 	}
 	var effRef uuid.UUID
-	if err := e.row(ctx, `SELECT referrer_user_id FROM effective_referrals WHERE referee_user_id = ?`, c.ID).Scan(&effRef); err != nil || effRef != a.ID {
-		t.Fatalf("effective C->A: %v err=%v", effRef, err)
+	var effFlag string
+	if err := e.row(ctx, `SELECT referrer_user_id, risk_flag FROM effective_referrals WHERE referee_user_id = ?`, c.ID).Scan(&effRef, &effFlag); err != nil || effRef != a.ID || effFlag != "suspicious" {
+		t.Fatalf("effective C->A: %v flag=%q err=%v", effRef, effFlag, err)
 	}
 	var prevRef *uuid.UUID
 	if err := e.row(ctx, `SELECT previous_referrer_user_id FROM referral_changes WHERE referee_user_id = ?`, c.ID).Scan(&prevRef); err != nil || prevRef == nil || *prevRef != b.ID {

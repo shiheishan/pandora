@@ -10,7 +10,8 @@ paths:
 
 - 锁序（防死锁 40P01）：
   - 结算主链：订单行（`OrderByID` 锁行）→ 订阅（`subs.Lock`，续费/换套餐/流量包）→ 预留确认（`captureReservation` 锁套餐库存/限购/券）→ 记账（`postSettlement`，经 `lockAccounts` 稳定顺序锁科目）→ 订单状态（`markPaid`）→ `PaidHook` → 履约（`fulfil`）。
-  - 建单主链：新购锁套餐行（`catalog.Offer`）；续费/流量包锁订阅；换套餐建单先锁订阅（`subs.Lock`）；再调 `promo.Reserve` / `ledger.HoldForOrder`，最后插订单。取消/超时释放先锁订单行。
+  - 建单主链：新购锁套餐行（`catalog.Offer`）；续费/流量包锁订阅；换套餐建单先锁订阅（`subs.Lock`）；再调 `promo.Reserve` / `ledger.HoldForOrder`，最后插订单。取消/超时释放先锁订单行。门户各建单事务与后台开单（`requireUser`）的第一步是 `rejectDeleted`（identity `IsDeleted`，给用户行加共享锁），已注销 409「账号已注销」。
+  - 注销账号：identity 在注销事务里锁用户行后调 `CancelUserPending`（`service/cancel.go`），按 id 升序锁该用户全部待付单逐张 `releaseOrder`（原因 `ReasonAccountDeleted`，作废在途支付意图），之后到的回调按 `CaseReleasedOrder` 挂账。
   - 余额全额支付走 `CaptureFromBalance`：用户余额、冻结、收入三科目按 ID 升序一次锁完，冻结直出 captured，不要分步锁。
 - 结算与挂账边界：
   - 结算由 order 实现 `paymentsvc.Settler`（`SettlePayment`）：金额币种不符回普通错误整笔回滚；订单不可付时（已取消/超时回 `CaseReleasedOrder`，已付回 `CaseExcessCapture`，订阅已停用或换套餐周期已变回 `CaseIneligibleSubscription`）返回 `paymentsvc.NotPayable` 转入挂账。

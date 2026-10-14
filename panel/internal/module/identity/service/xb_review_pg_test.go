@@ -9,6 +9,7 @@ import (
 
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/google/uuid"
 )
 
 // 后台改邮箱：旧邮箱上的找回码作废、会话全部吊销（推进纪元，邮件登录链接随之失效）；审计不记明文邮箱。
@@ -149,5 +150,23 @@ func TestPGCaptchaWiring(t *testing.T) {
 	}
 	if err := e.svc.VerifyCaptcha(ctx, captchaActionRegister, CaptchaActionMailLogin); fieldsOf(err)["captcha"] == "" {
 		t.Fatalf("邮件登录用注册的令牌应被拒: %v", err)
+	}
+}
+
+// IsDeleted：不存在回 false、正常账号 false、注销后 true（别的模块写入口靠它拒已注销账号）。
+func TestPGIsDeleted(t *testing.T) {
+	e, ctx := newEnv(t)
+	if deleted, err := e.svc.IsDeleted(ctx, uuid.New()); err != nil || deleted {
+		t.Fatalf("不存在：%v %v", deleted, err)
+	}
+	u := e.mkUser(t, ctx, uniqEmail(t, "isdel"), "Passw0rdLong1")
+	if deleted, err := e.svc.IsDeleted(ctx, u.ID); err != nil || deleted {
+		t.Fatalf("正常账号：%v %v", deleted, err)
+	}
+	if err := e.exec(ctx, `UPDATE users SET status = 'deleted', deleted_at = now() WHERE id = ?`, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	if deleted, err := e.svc.IsDeleted(ctx, u.ID); err != nil || !deleted {
+		t.Fatalf("已注销：%v %v", deleted, err)
 	}
 }

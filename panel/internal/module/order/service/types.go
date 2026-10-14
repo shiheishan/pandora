@@ -62,8 +62,9 @@ const (
 
 // 取消、超时的原因：都写进预留的 release_reason；只有取消写订单的 cancel_reason（超时不写）。
 const (
-	ReasonUserCancelled = "user_cancelled"
-	ReasonExpired       = "expired"
+	ReasonUserCancelled  = "user_cancelled"
+	ReasonExpired        = "expired"
+	ReasonAccountDeleted = "account_deleted" // 后台注销账号时一并取消（CancelUserPending）
 )
 
 // 审计动作名与资源类型。

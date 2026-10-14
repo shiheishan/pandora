@@ -1,9 +1,12 @@
 -- +goose Up
--- 用户 2026-10-14 定的 Xboard 补齐注册与用户条目；属 identity 模块，另有 subscription 的试用表与 notify 的一条模板种子。
+-- 用户 2026-10-14 定的 Xboard 补齐注册与用户条目；属 identity 模块，另有 subscription 的试用表与事件类型、notify 的一条模板种子。
 --
--- 锁与耗时：都是小表上的 ALTER / CREATE，ACCESS EXCLUSIVE 锁持到提交，毫秒级；
---   预检：无；
---   失败回滚：整笔回滚，库保持原样。
+-- 锁与耗时：users 不是小表。重建 users_status_check、新增 users_deleted_shape 两条 CHECK 都在 ACCESS EXCLUSIVE 锁下
+--   各扫一遍 users 全表（加列不扫：admin_note、deleted_at 没有默认值），耗时与行数成正比，期间 users 读写全部排队；
+--   subscription_events 重建 CHECK 同样扫一遍全表。其余是小表上的 ALTER / CREATE，毫秒级。锁都持到提交。
+--   预检：SELECT count(*) FROM users; SELECT count(*) FROM subscription_events;——百万行以上先在同规模的库上量一次，
+--   超过 statement_timeout（2 分钟）就挑低峰、临时调大它再跑；拿不到锁 5 秒即失败（lock_timeout），不会长时间挡住业务。
+--   失败回滚：整笔回滚，库保持原样，可以直接重跑。
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '2min';
 
@@ -46,10 +49,14 @@ SELECT r.referee_user_id, r.referrer_user_id, r.invite_code_id, r.risk_flag, r.b
   FROM referrals r
  WHERE NOT EXISTS (SELECT 1 FROM referral_changes c WHERE c.referee_user_id = r.referee_user_id)
 UNION ALL
-SELECT l.referee_user_id, l.referrer_user_id, NULL::uuid AS invite_code_id, 'none'::text AS risk_flag, l.created_at AS bound_at
+-- 改过邀请人的沿用原绑定的风险标记（原绑定是 suspicious / confirmed_fraud 的，后台改了邀请人也不该把标记洗掉）；
+-- 注册时没有绑定、后台直接设的，记 none。
+SELECT l.referee_user_id, l.referrer_user_id, NULL::uuid AS invite_code_id,
+       COALESCE(o.risk_flag, 'none'::text) AS risk_flag, l.created_at AS bound_at
   FROM (SELECT DISTINCT ON (referee_user_id) referee_user_id, referrer_user_id, created_at
           FROM referral_changes
          ORDER BY referee_user_id, created_at DESC, id DESC) l
+  LEFT JOIN referrals o ON o.referee_user_id = l.referee_user_id
  WHERE l.referrer_user_id IS NOT NULL;
 
 COMMENT ON VIEW effective_referrals IS '每个被邀请人当前生效的邀请人；读当前邀请人（计佣、详情、邀请人数）一律读它。';
@@ -83,9 +90,25 @@ INSERT INTO notification_templates (code, channel, subject, body) VALUES
 
 {{site}}');
 
+-- 7. subscription_events（属主 subscription）：后台改到期、改配额上限也记进订阅时间线
+ALTER TABLE subscription_events DROP CONSTRAINT subscription_events_event_type_check;
+ALTER TABLE subscription_events ADD CONSTRAINT subscription_events_event_type_check
+  CHECK (event_type IN ('activated', 'renewed', 'extended', 'plan_changed', 'expired', 'renewal_closed', 'link_rotated',
+                        'period_end_set', 'quota_limit_set'));
+
 -- +goose Down
+-- 数据有损，回退前想清楚：
+--   referral_changes 整表删掉，所有「后台改过的邀请人」随之消失，每个人的当前邀请人悄悄回到注册时的原始绑定，
+--   以后订单的计佣归属跟着变（已记的佣金不动）；users 的 admin_note、deleted_at 两列删掉，已注销账号改记成 banned；
+--   subscription_trials 删掉后，领过注册试用的人重新升级上来会被当成没领过（试用订阅本身还在）。
+-- 锁与耗时同 Up：users 的 CHECK 重建扫一遍全表，subscription_events 的 CHECK 用 NOT VALID 不扫。
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '2min';
+
+-- 0. 订阅事件：只追加的表里已有的 period_end_set / quota_limit_set 行删不掉，加回旧 CHECK 时用 NOT VALID，只约束之后的写入
+ALTER TABLE subscription_events DROP CONSTRAINT subscription_events_event_type_check;
+ALTER TABLE subscription_events ADD CONSTRAINT subscription_events_event_type_check
+  CHECK (event_type IN ('activated', 'renewed', 'extended', 'plan_changed', 'expired', 'renewal_closed', 'link_rotated')) NOT VALID;
 
 -- 1. notify 模板种子
 DELETE FROM notification_templates WHERE code = 'auth.login_link' AND channel = 'email';

@@ -209,3 +209,28 @@ func TestAdjustUnknownUser(t *testing.T) {
 		t.Fatalf("期望 not_found，得 %s %v", codeOf(err), err)
 	}
 }
+
+// 已注销的账号不能再调余额：409，且不记账。
+func TestAdjustDeletedUser(t *testing.T) {
+	e, ctx := newEnv(t)
+	admin := e.mkUser(t, ctx)
+	ctx = asAdmin(ctx, admin)
+	gone := e.mkUser(t, ctx)
+	e.accounts.deleted[gone] = true
+
+	_, err := e.svc.AdjustBalance(ctx, Adjustment{
+		UserID: gone, Amount: dec("5.00"), Currency: "USD", Reason: "给已注销账号加钱",
+	})
+	if codeOf(err) != errs.Conflict {
+		t.Fatalf("期望 conflict，得 %s %v", codeOf(err), err)
+	}
+	var n int64
+	if err := e.row(ctx, `SELECT count(*) FROM ledger_transactions WHERE source_id = ?`, gone).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("不该记账：n=%d err=%v", n, err)
+	}
+
+	bare := &Service{}
+	if got := bare.MissingPorts(); len(got) != 1 || got[0] != "AccountStates" {
+		t.Fatalf("MissingPorts %v", got)
+	}
+}

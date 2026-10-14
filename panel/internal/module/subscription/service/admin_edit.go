@@ -25,9 +25,10 @@ type AdminSetPeriodEndResult struct {
 	PeriodEnd      time.Time
 }
 
-// AdminSetPeriodEnd 把一份正在生效的订阅的到期时间直接改成 end（可提前也可延后，不折算流量、不改状态）；已过期的请用加时长救回。写审计。
+// AdminSetPeriodEnd 把一份正在生效的订阅的到期时间直接改成 end（可提前也可延后，不折算流量、不改状态）；已过期的请用加时长救回。写订阅事件 period_end_set 与审计。
 func (s *Service) AdminSetPeriodEnd(ctx context.Context, subID uuid.UUID, end time.Time, reason string) (AdminSetPeriodEndResult, error) {
-	if _, err := adminPrincipal(ctx); err != nil {
+	p, err := adminPrincipal(ctx)
+	if err != nil {
 		return AdminSetPeriodEndResult{}, err
 	}
 	cleanReason, err := cleanText(reason, minReasonRunes, maxReasonRunes, "reason", "请写清原因，5 到 500 个字")
@@ -38,7 +39,7 @@ func (s *Service) AdminSetPeriodEnd(ctx context.Context, subID uuid.UUID, end ti
 
 	var out AdminSetPeriodEndResult
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
-		m, err := s.lockOwned(ctx, subID, nil)
+		m, err := s.lockForAdmin(ctx, subID)
 		if err != nil {
 			return err
 		}
@@ -78,6 +79,14 @@ func (s *Service) AdminSetPeriodEnd(ctx context.Context, subID uuid.UUID, end ti
 		s.rtChanged(ctx, tableSubscriptions, realtime.OpUpdate, m.ID, m.UserID)
 		s.notifyRoster(ctx, m.ID)
 
+		from := m.Status
+		if err := s.writeEvent(ctx, m.ID, EventPeriodEndSet, &from, m.Status, actorFrom(p), nil, map[string]any{
+			"previous_end": prev,
+			"period_end":   end,
+			"reason":       cleanReason,
+		}); err != nil {
+			return err
+		}
 		if err := s.writeAudit(ctx, ActionPeriodEndSet, m.ID, map[string]any{
 			"user_id":      m.UserID.String(),
 			"previous_end": prev,
@@ -98,9 +107,11 @@ func (s *Service) AdminSetPeriodEnd(ctx context.Context, subID uuid.UUID, end ti
 	return out, err
 }
 
-// AdminSetQuotaLimit 改一份订阅某个配额行（指标 + 周期）的上限；limit 为 nil 表示不限。写审计。
+// AdminSetQuotaLimit 改一份订阅某个配额行（指标 + 周期）的上限；limit 为 nil 表示不限。写订阅事件 quota_limit_set 与审计。
+// 只管当期：下一个周期滚动（RollQuotas）按套餐版本重设上限。
 func (s *Service) AdminSetQuotaLimit(ctx context.Context, subID uuid.UUID, metric, period string, limit *int64, reason string) error {
-	if _, err := adminPrincipal(ctx); err != nil {
+	p, err := adminPrincipal(ctx)
+	if err != nil {
 		return err
 	}
 	cleanReason, err := cleanText(reason, minReasonRunes, maxReasonRunes, "reason", "请写清原因，5 到 500 个字")
@@ -117,7 +128,7 @@ func (s *Service) AdminSetQuotaLimit(ctx context.Context, subID uuid.UUID, metri
 	}
 
 	return s.tx.Do(ctx, func(ctx context.Context) error {
-		m, err := s.lockOwned(ctx, subID, nil)
+		m, err := s.lockForAdmin(ctx, subID)
 		if err != nil {
 			return err
 		}
@@ -147,8 +158,19 @@ func (s *Service) AdminSetQuotaLimit(ctx context.Context, subID uuid.UUID, metri
 		if err := s.repo.UpdateQuota(ctx, *targetID, map[string]any{"limit_value": limit}); err != nil {
 			return subErr(err)
 		}
+		s.rtChanged(ctx, tableSubscriptions, realtime.OpUpdate, m.ID, m.UserID)
 		s.notifyRoster(ctx, m.ID)
 
+		from := m.Status
+		if err := s.writeEvent(ctx, m.ID, EventQuotaLimitSet, &from, m.Status, actorFrom(p), nil, map[string]any{
+			"metric": metric,
+			"period": period,
+			"before": beforeLimit,
+			"after":  limit,
+			"reason": cleanReason,
+		}); err != nil {
+			return err
+		}
 		return s.writeAudit(ctx, ActionQuotaLimitSet, m.ID, map[string]any{
 			"user_id": m.UserID.String(),
 			"metric":  metric,

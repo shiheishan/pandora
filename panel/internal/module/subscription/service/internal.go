@@ -152,6 +152,34 @@ func (s *Service) lockOwned(ctx context.Context, id uuid.UUID, owner *uuid.UUID)
 	return s.loadSub(ctx, id, owner, repo.ForNoKeyUpdate)
 }
 
+// errAccountDeleted 是后台改已注销账号的订阅（与 identity 同码同文案）。
+var errAccountDeleted = errs.Newf(errs.Conflict, "账号已注销")
+
+// rejectDeletedOwner 后台改订阅前拒绝已注销账号：先不加锁读出属主（属主不会变），再经 identity 的 IsDeleted
+// 给用户行加共享锁并持有到提交。这一步排在锁订阅行之前，锁序与注销（用户行 → 订单 → 订阅）一致，不会互等。
+func (s *Service) rejectDeletedOwner(ctx context.Context, subID uuid.UUID) error {
+	m, err := s.loadSub(ctx, subID, nil, repo.NoLock)
+	if err != nil {
+		return err
+	}
+	deleted, err := s.users.IsDeleted(ctx, m.UserID)
+	if err != nil {
+		return err
+	}
+	if deleted {
+		return errAccountDeleted
+	}
+	return nil
+}
+
+// lockForAdmin 是后台改订阅的锁行入口：先拒已注销账号（rejectDeletedOwner），再锁订阅行。
+func (s *Service) lockForAdmin(ctx context.Context, subID uuid.UUID) (model.Subscription, error) {
+	if err := s.rejectDeletedOwner(ctx, subID); err != nil {
+		return model.Subscription{}, err
+	}
+	return s.lockOwned(ctx, subID, nil)
+}
+
 // versionFor 取开通、换套餐用的版本：必须存在、属于 planID、已发布。
 func (s *Service) versionFor(ctx context.Context, planID, versionID uuid.UUID) (catalogsvc.Version, error) {
 	vs, err := s.catalog.VersionsByIDs(ctx, []uuid.UUID{versionID})

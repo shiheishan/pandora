@@ -37,6 +37,10 @@ const (
 	EventRenewalClosed = "renewal_closed"
 	// EventLinkRotated 是换订阅链接（旧凭据吊销、签新凭据、节点身份一起换）；状态不变
 	EventLinkRotated = "link_rotated"
+	// EventPeriodEndSet 是后台直接改到期时间；状态不变
+	EventPeriodEndSet = "period_end_set"
+	// EventQuotaLimitSet 是后台改一行配额的当期上限；状态不变
+	EventQuotaLimitSet = "quota_limit_set"
 )
 
 // 流量重置原因。

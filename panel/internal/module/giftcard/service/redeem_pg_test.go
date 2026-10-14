@@ -377,3 +377,20 @@ func TestMyRedemptionsMasked(t *testing.T) {
 	}
 	mustEq(t, "记录余额", rows[0].Balance, dec("2"))
 }
+
+// 已注销的账号兑换：409（账号已注销），码仍是 unused，余额不动。
+func TestRedeemRejectsDeletedAccount(t *testing.T) {
+	e, ctx := newEnv(t)
+	user := e.mkUser(t, ctx)
+	tpl := e.mkTemplate(t, ctx, TemplateInput{Type: TypeGeneral, Rewards: Rewards{Balance: dec("5.00")}})
+	code := e.mkCodes(t, ctx, tpl.ID, 1, nil)[0]
+	e.users.markDeleted(user)
+
+	if _, err := e.redeem(ctx, user, code, nil); !errors.Is(err, ErrAccountDeleted) || errs.As(err).Code != errs.Conflict {
+		t.Fatalf("应回 ErrAccountDeleted（409），得到 %v", err)
+	}
+	if st := e.codeStatus(t, ctx, code); st != CodeUnused {
+		t.Fatalf("码状态 %s，期望 unused", st)
+	}
+	mustEq(t, "余额", e.balanceOf(t, ctx, user), decimal.Zero)
+}

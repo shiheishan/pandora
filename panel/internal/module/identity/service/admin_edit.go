@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/module/identity/repo"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/pluginevents"
 	"github.com/google/uuid"
 )
 
@@ -170,8 +172,8 @@ func (s *Service) AdminSetNote(ctx context.Context, userID uuid.UUID, displayNam
 	})
 }
 
-// DeleteUser 注销并匿名化用户：停掉全部订阅、解绑 Telegram、吊销全部会话，邮箱换成不可登录的占位值、清掉显示名与备注、删口令、停用他的邀请码、作废找回密码验证码。
-// 不可撤销；订单、账本、佣金、审计、邀请关系原样保留。返回停掉的订阅份数。
+// DeleteUser 注销并匿名化用户：取消全部待付订单（经 order，作废在途支付意图）、停掉全部订阅、解绑 Telegram、吊销全部会话，邮箱换成不可登录的占位值、清掉显示名与备注、删口令、停用他的邀请码、作废找回密码验证码。
+// 不可撤销；订单、账本、佣金、审计、邀请关系原样保留。同事务发插件事件 user.deleted（只带用户 id 与时间）。返回停掉的订阅份数。
 func (s *Service) DeleteUser(ctx context.Context, userID uuid.UUID, reason string) (DeleteUserResult, error) {
 	p, err := principal(ctx)
 	if err != nil {
@@ -208,6 +210,17 @@ func (s *Service) DeleteUser(ctx context.Context, userID uuid.UUID, reason strin
 		}
 		if staff {
 			return errs.Newf(errs.Conflict, "管理员账号不能注销，先在命令行取消管理员")
+		}
+
+		// 先取消待付订单、再停订阅：付款结算是先锁订单再动订阅，同序才不互等；结算抢先提交的单，
+		// 这里重读后不再是待付，它开出的订阅随后由 CloseUserSubscriptions 一并停掉。
+		canceller, err := s.needOrderCanceller()
+		if err != nil {
+			return err
+		}
+		cancelled, err := canceller.CancelUserPending(ctx, userID)
+		if err != nil {
+			return err
 		}
 
 		closer, err := s.needCloser()
@@ -264,8 +277,15 @@ func (s *Service) DeleteUser(ctx context.Context, userID uuid.UUID, reason strin
 				"reason":                   r,
 				"short_id":                 DeletedShortID(userID),
 				"terminated_subscriptions": n,
+				"cancelled_orders":         cancelled,
 				"disabled_invites":         invites,
 			},
+		}); err != nil {
+			return err
+		}
+		// 插件事件只带用户 id 与注销时间：账号已匿名化，不再外发邮箱等个人信息
+		if err := pluginevents.Emit(ctx, s.events, "user.deleted", "user.deleted:"+userID.String(), map[string]any{
+			"event": "user.deleted", "user_id": userID.String(), "deleted_at": now.UTC().Format(time.RFC3339),
 		}); err != nil {
 			return err
 		}

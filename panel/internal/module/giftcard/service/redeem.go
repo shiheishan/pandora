@@ -37,6 +37,14 @@ func (s *Service) Redeem(ctx context.Context, in RedeemInput) (RedeemResult, err
 	var out RedeemResult
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
 		expired = false
+		// 先于锁卡密：identity 读时给用户行加共享锁，锁序与注销（用户行 → 订单 → 订阅）一致，注销之后不会再兑出订阅或余额
+		deleted, err := s.users.IsDeleted(ctx, user)
+		if err != nil {
+			return err
+		}
+		if deleted {
+			return ErrAccountDeleted
+		}
 		c, found, err := s.repo.CodeByHash(ctx, hash, true)
 		if err != nil {
 			return gcErr(err)

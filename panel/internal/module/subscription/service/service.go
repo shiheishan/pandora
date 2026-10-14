@@ -54,6 +54,8 @@ type Users interface {
 	Emails(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error)
 	// UserGroupID 取用户所在的用户组；没有分组返回 nil。
 	UserGroupID(ctx context.Context, userID uuid.UUID) (*uuid.UUID, error)
+	// IsDeleted 报告用户是否已注销（不存在回 false），读时给用户行加共享锁并持有到事务提交（见 rejectDeletedOwner）。
+	IsDeleted(ctx context.Context, userID uuid.UUID) (bool, error)
 }
 
 // SiteSettings 是站点设置的读取面（配置名里的站点名）；*settingssvc.Service 直接满足。

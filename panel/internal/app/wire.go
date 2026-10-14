@@ -311,6 +311,8 @@ func buildServices(r *runtime) (*services, error) {
 	// 邮件链接免密登录读 settings 的开关与发信配置、经 notify 发信、按邮箱限频，链接拼在对外地址上
 	identitySvc.UseTrialGranter(subSvc)
 	identitySvc.UseAccountCloser(subSvc)
+	identitySvc.UseOrderCanceller(orderSvc)
+	ledgerSvc.UseAccountStates(identitySvc)
 	identitySvc.UseTelegramUnbinder(notifySvc)
 	// 邮件链接登录第 1 步的人机验证由 identity 校验（与注册、找回同一套）
 	authSvc.UseMailLink(settingsSvc, notifySvc, identitySvc, limiter, cfg.PublicBaseURL)
@@ -319,7 +321,7 @@ func buildServices(r *runtime) (*services, error) {
 	if err := checkPorts([]portCheck{
 		{"settings", settingsSvc}, {"audit", auditSvc}, {"identity", identitySvc}, {"catalog", catalogSvc},
 		{"promo", promoSvc}, {"subscription", subSvc}, {"payment", paymentSvc}, {"order", orderSvc},
-		{"commission", commissionSvc}, {"giftcard", giftcardSvc}, {"node", nodeSvc}, {"support", supportSvc},
+		{"commission", commissionSvc}, {"giftcard", giftcardSvc}, {"node", nodeSvc}, {"support", supportSvc}, {"ledger", ledgerSvc},
 		{"notify", notifySvc}, {"report", reportSvc},
 	}); err != nil {
 		_ = queue.Close()

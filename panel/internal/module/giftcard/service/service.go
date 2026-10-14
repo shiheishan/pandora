@@ -77,6 +77,8 @@ type Ledger interface {
 type Users interface {
 	// Emails 批量取用户邮箱（一条 SQL）。
 	Emails(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error)
+	// IsDeleted 报告用户是否已注销（不存在回 false），读时给用户行加共享锁并持有到事务提交（兑换事务第一步调）。
+	IsDeleted(ctx context.Context, userID uuid.UUID) (bool, error)
 }
 
 // Hasher 是卡密的 HMAC；*crypto.Keys 直接满足。
@@ -201,6 +203,8 @@ var (
 	// ErrCodeUnusable 对所有「这个码不能用」的情况回同一句话：不存在、已用、已停用、已过期、模板停用都是它，
 	// 免得爆破的人靠错误文案分辨哪些码真实存在。
 	ErrCodeUnusable = errs.Newf(errs.ValidationFailed, "卡密无效、已被使用或已过期")
+	// ErrAccountDeleted 是已注销的账号兑换礼品卡（与 identity 同码同文案）。
+	ErrAccountDeleted = errs.Newf(errs.Conflict, "账号已注销")
 	// ErrTemplateInactive 是码本身可用、但所属活动已暂停或归档（只在兑换时给出，预览一律回 ErrCodeUnusable）。
 	ErrTemplateInactive = errs.Newf(errs.ValidationFailed, "这个礼品卡活动已经停用了")
 	// ErrNoPlacement 是这张卡要落到一份在用的套餐上，而用户一份都没有。

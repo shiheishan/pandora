@@ -65,11 +65,12 @@ type Service struct {
 	// roster 由 node 实现（roster_notify.go）：账号状态、用户组变了，提交后通知节点名单重算。
 	roster RosterNotifier
 
-	// xb-reg 端口：注册试用、注销停订阅、解绑 Telegram（subscription / notify 实现，启动装配时注入）。
-	trials   TrialGranter
-	closer   AccountCloser
-	tgUnbind TelegramUnbinder
-	captcha  *captchaVerifier
+	// xb-reg 端口：注册试用、注销停订阅、注销取消待付订单、解绑 Telegram（subscription / order / notify 实现，启动装配时注入）。
+	trials       TrialGranter
+	closer       AccountCloser
+	cancelOrders OrderCanceller
+	tgUnbind     TelegramUnbinder
+	captcha      *captchaVerifier
 
 	// 批量运营与风控（ops_types.go）：ops 是 audit 的读与复核写；subs 由 subscription 实现、queue 是 asynq 客户端，装配时注入。
 	ops    auditOps
@@ -230,6 +231,7 @@ func (s *Service) MissingPorts() []string {
 		{"PluginEvents", s.events != nil},
 		{"TrialGranter", s.trials != nil},
 		{"AccountCloser", s.closer != nil},
+		{"OrderCanceller", s.cancelOrders != nil},
 		{"TelegramUnbinder", s.tgUnbind != nil},
 	} {
 		if !p.ok {
