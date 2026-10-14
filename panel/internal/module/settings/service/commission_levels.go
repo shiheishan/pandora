@@ -92,8 +92,8 @@ type CommissionWithdrawUpdate struct {
 	Methods *[]string
 }
 
-// decodeCommissionDistribution 解出多级分销参数：缺行取缺省（关、0/0/0）；比例被手改坏（单项越界或三级合计超过 100）按内部错误，
-// 不让合计超过一单佣金总额的份额进到计提。
+// decodeCommissionDistribution 解出多级分销参数：缺行取缺省（关、0/0/0）；比例被手改坏（单项越界，或开着时三级合计超过 100）按内部错误，
+// 不让合计超过一单佣金总额的份额进到计提。关着时计提不用份额（只有第一级、100%），合计不查，免得手改坏的份额让每笔结算都失败。
 func decodeCommissionDistribution(vals map[string]json.RawMessage) (CommissionDistribution, error) {
 	enabled, err := decodeOr(vals, keyCommissionDistributionEnabled, false)
 	if err != nil {
@@ -120,7 +120,7 @@ func decodeCommissionDistribution(vals map[string]json.RawMessage) (CommissionDi
 	if l3 < 0 || l3 > CommissionMaxSharePercent {
 		return CommissionDistribution{}, fmt.Errorf("设置 %s 的值 %d 超出范围", keyCommissionDistributionL3, l3)
 	}
-	if sum := l1 + l2 + l3; sum > CommissionMaxSharePercent {
+	if sum := l1 + l2 + l3; enabled && sum > CommissionMaxSharePercent {
 		return CommissionDistribution{}, fmt.Errorf("多级分销三级比例合计 %d 超过 %d", sum, CommissionMaxSharePercent)
 	}
 	return CommissionDistribution{
@@ -296,8 +296,13 @@ func (s *Service) SetCommissionWithdraw(ctx context.Context, u CommissionWithdra
 		if u.Methods != nil {
 			v.Methods, _ = normalizeWithdrawMethods(*u.Methods)
 		}
-		if v.Enabled && len(v.Methods) == 0 {
-			return errs.Invalid(map[string]string{"withdraw_methods": "开着提现时至少要选一种提现方式"})
+		// 关着提现只关站点币种，其他币种仍按这些方式提现：开关两种状态都至少要留一种（全取消时其他币种的佣金就领不到了）
+		if len(v.Methods) == 0 {
+			msg := "开着提现时至少要选一种提现方式"
+			if !v.Enabled {
+				msg = "关着提现时其他币种的佣金仍按这里的方式提现，至少要选一种"
+			}
+			return errs.Invalid(map[string]string{"withdraw_methods": msg})
 		}
 		changes, b, a := diff(withdrawMap(old), withdrawMap(v))
 		if len(changes) == 0 {

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"reflect"
 	"testing"
+
+	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
 
 func newCommissionLevelsService(st *kvStore, al *auditLog) *Service {
@@ -69,6 +71,12 @@ func TestCommissionDistributionCorruptSum(t *testing.T) {
 	if _, err := s.CommissionDistribution(context.Background()); err == nil {
 		t.Fatal("80/80/80: expected error")
 	}
+	// 关着时计提不用份额，合计不查
+	st.kv[keyCommissionDistributionEnabled] = json.RawMessage(`false`)
+	if _, err := s.CommissionDistribution(context.Background()); err != nil {
+		t.Fatalf("关着时 80/80/80 应能读出: %v", err)
+	}
+	st.kv[keyCommissionDistributionEnabled] = json.RawMessage(`true`)
 	// 合计恰好 100 照常读出
 	st.kv[keyCommissionDistributionL1] = json.RawMessage(`50`)
 	st.kv[keyCommissionDistributionL2] = json.RawMessage(`30`)
@@ -149,9 +157,16 @@ func TestSetCommissionWithdrawValidation(t *testing.T) {
 	err = s.SetCommissionWithdraw(ctx, CommissionWithdrawUpdate{Enabled: &enabled, Methods: &empty})
 	assertFieldValidation(t, err, "withdraw_methods")
 
+	// 关着提现也不许全取消：其他币种还按这些方式提现
 	disabled := false
-	if err := s.SetCommissionWithdraw(ctx, CommissionWithdrawUpdate{Enabled: &disabled, Methods: &empty}); err != nil {
-		t.Fatalf("disabled empty methods: %v", err)
+	err = s.SetCommissionWithdraw(ctx, CommissionWithdrawUpdate{Enabled: &disabled, Methods: &empty})
+	assertFieldValidation(t, err, "withdraw_methods")
+	if got := errs.As(err).Fields["withdraw_methods"]; got != "关着提现时其他币种的佣金仍按这里的方式提现，至少要选一种" {
+		t.Fatalf("关着提现全取消的提示 %q", got)
+	}
+	alipay := []string{WithdrawMethodAlipay}
+	if err := s.SetCommissionWithdraw(ctx, CommissionWithdrawUpdate{Enabled: &disabled, Methods: &alipay}); err != nil {
+		t.Fatalf("关着提现留一种方式应能保存: %v", err)
 	}
 }
 

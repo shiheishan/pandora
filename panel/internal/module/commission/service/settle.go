@@ -78,7 +78,7 @@ func (s *Service) SettleDue(ctx context.Context, limit int) (SettleStats, error)
 	if err := ctx.Err(); err != nil {
 		return st, err
 	}
-	n, failed, err := s.autoTransferDue(ctx, limit, plan.site)
+	n, failed, err := s.autoTransferDue(ctx, limit, plan)
 	st.AutoTransferred, st.Failed = n, st.Failed+failed
 	if firstErr == nil {
 		firstErr = err

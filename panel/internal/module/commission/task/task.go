@@ -61,7 +61,8 @@ func (m *Module) settle(ctx context.Context, _ *asynq.Task) error {
 	ctx, cancel := context.WithTimeout(ctx, settleTimeout)
 	defer cancel()
 	stats, err := m.svc.SettleDue(ctx, service.SettleBatchDefault)
-	if stats.Scanned > 0 {
+	// 只有补转（或补转失败）、没有新到期条目的那一轮也要留日志，不然查「为什么一直重试」时看不到
+	if stats.Scanned > 0 || stats.AutoTransferred > 0 || stats.Failed > 0 {
 		plog.From(ctx).Info("commission settle done",
 			zap.Int("scanned", stats.Scanned),
 			zap.Int("settled", stats.Settled),
