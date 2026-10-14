@@ -6,7 +6,8 @@
 # 最后打印建议命令，**不执行**。
 # 用法：list.sh [--size]       --size 额外统计每个候选 worktree 的磁盘占用（慢一些）
 # 环境变量：BASE（默认 feat/panel-redesign）、ACTIVE_MIN（默认 120，.claude 下文件这么多分钟内改过就算「近期有改动」）、
-#           KEEP（空格分隔的额外保留名，如 "w7portal w7subb"）
+#           KEEP（空格分隔的额外保留短名，如 "p7-users p7-rules"）、
+#           INTEGRATION（空格分隔的集成分支短名，默认 "p7"：分支 feat/panel-redesign-<短名> 与 worktree pandora-<短名> 永不进清单）
 # 可在主目录或任一 worktree 里跑，结果相同。
 set -euo pipefail
 
@@ -22,21 +23,36 @@ PARENT="$(dirname "$MAIN")"
 TASKS="$MAIN/.claude/TASKS.md"
 G() { git -C "$MAIN" "$@"; }
 
-# 永不进清单的分支：main、基线、集成分支。worktree pandora-s 在 flush_wt 里按路径再挡一次。
-is_protected_branch() { [[ "$1" == main || "$1" == "$BASE" || "$1" == "feat/panel-redesign-s" ]]; }
+INTEGRATION="${INTEGRATION:-p7}"
 
-# ---- 运行中的任务：.claude/TASKS.md「正在跑 / 运行中」表里状态不以 ✅ 开头的行，取行里出现的 w<波次><名字> ----
+# 永不进清单的分支：main、基线、集成分支。集成分支的 worktree 在 flush_wt 里按路径再挡一次。
+is_integration() { [[ " $INTEGRATION " == *" $1 "* ]]; }
+is_protected_branch() {
+  local b="${1#origin/}"
+  [[ "$b" == main || "$b" == "$BASE" ]] && return 0
+  [[ "$b" == "$PREFIX"* ]] && is_integration "${b#"$PREFIX"}"
+}
+
+# ---- 运行中的任务：.claude/TASKS.md 里「正在跑 / 运行中」标题（# 标题或 ** 加粗）下的表格，
+#      状态（最后一列）不以 ✅ 开头的行：取第一格的短名、行里出现的 pandora-<短名>，兼容旧的 w<波次><名字> ----
 RUNNING=""
 TABLE_FOUND=0
 if [[ -f "$TASKS" ]]; then
-  table="$(awk '/^\*\*(正在跑|运行中)/ {f=1; next} f && /^\|/ {print; got=1; next} f && got {exit}' "$TASKS")"
+  # 文件里可能有多处「正在跑」（如一处只写「见下方」），每处取到下一个标题或表格结束为止
+  table="$(awk '/^(#+[ \t]+|\*\*)(正在跑|运行中)/ {f=1; got=0; next}
+    f && /^#/ {f=0; next}
+    f && /^\|/ {print; got=1; next}
+    f && got {f=0}' "$TASKS")"
   if [[ -n "$table" ]]; then
     TABLE_FOUND=1
     while IFS= read -r row; do
       [[ "$row" =~ ^\|[[:space:]]*-+ ]] && continue
-      [[ "$row" =~ ^\|[[:space:]]*任务[[:space:]]*\| ]] && continue
+      [[ "$row" =~ ^\|[[:space:]]*(任务|短名)[[:space:]]*\| ]] && continue
       status="$(awk -F'|' '{s=$(NF-1); gsub(/^[ \t]+|[ \t]+$/, "", s); print s}' <<<"$row")"
       [[ "$status" == ✅* ]] && continue
+      first="$(awk -F'|' '{s=$2; gsub(/^[ \t`]+|[ \t`]+$/, "", s); print s}' <<<"$row")"
+      [[ "$first" =~ ^[a-z0-9][a-z0-9-]*$ ]] && RUNNING+=" $first"
+      RUNNING+=" $( (grep -oE 'pandora-[a-z0-9][a-z0-9-]*' <<<"$row" || true) | sed 's/^pandora-//' | tr '\n' ' ')"
       RUNNING+=" $( (grep -oE 'w[0-9]+[a-z][a-z0-9]*' <<<"$row" || true) | tr '\n' ' ')"
     done <<<"$table"
   fi
@@ -93,8 +109,8 @@ flush_wt() {
     OTHER_ROWS+=("$path | 目录已不在（prunable） | 建议 git worktree prune（只清登记）")
     return
   fi
-  # 集成分支刚合完主线时看起来已合并且干净，运行中表又认不出短名 s
-  if [[ "$path" == "$PARENT/pandora-s" ]] || is_protected_branch "${branch:-}"; then
+  # 集成分支刚合完主线时看起来已合并且干净，运行中表里又不一定登记它
+  if is_integration "$(short_of_path "$path")" || is_protected_branch "${branch:-}"; then
     return
   fi
   if [[ "$path" != "$PARENT"/pandora-* ]]; then
@@ -222,7 +238,7 @@ fi
 echo "== 建议命令（未执行；整份清单先给用户确认）"
 if (( ${#CAND_SHORT[@]} )); then
   echo "# 1 归档（只复制）"
-  echo "bash $MAIN/.claude/skills/cleanup/scripts/archive.sh ${CAND_SHORT[*]}"
+  echo "bash $MAIN/.agents/skills/cleanup/scripts/archive.sh ${CAND_SHORT[*]}"
   echo "# 2 删 worktree（不加 --force；拒绝就停下查原因）"
   for p in "${CAND_WT[@]}"; do echo "git -C $MAIN worktree remove $p"; done
 fi
