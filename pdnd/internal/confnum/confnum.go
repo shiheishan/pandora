@@ -1,13 +1,13 @@
 // Package confnum 把面板下发配置里的数值、时长字段归一成 Go 类型。
 //
 // 同一个字段会以几种形态到达：
-//   - 签名通道（node/signed_config.go）用 json.Decoder.UseNumber 解码，数字是 json.Number；
-//   - 兼容通道与本地缓存按普通 json.Unmarshal 解码，数字是 float64；
+//   - 面板经 gRPC 下发的配置 JSON 由 node/server_config.go 用 json.Decoder.UseNumber 解码，数字是 json.Number；
+//   - 本地落盘缓存按普通 json.Unmarshal 解码，数字是 float64；
 //   - 测试与内部构造直接写 int；
 //   - 后台允许写字符串（"443"、时长 "15s"）。
 //
 // 以前每个协议各写一个 type switch，只认其中几种：hy2 的 up_mbps、tuic 的
-// heartbeat 在签名通道上收到 json.Number 就判非法，入站整个起不来。所有协议的
+// heartbeat 按 UseNumber 解码后收到 json.Number 就判非法，入站整个起不来。所有协议的
 // 数值 / 时长解析一律经这里，不要再各写一份。
 package confnum
 

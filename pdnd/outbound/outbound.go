@@ -493,8 +493,8 @@ func sameOutbound(a, b Outbound) bool {
 //------------------------------------------------------------------------------
 // 配置读取的小工具
 //
-// 面板下发的是 JSON 解出来的 map[string]any：签名通道的数字是 json.Number，
-// 兼容通道是 float64，归一统一交给 confnum。
+// 面板下发的是 JSON 解出来的 map[string]any：gRPC 下发的配置按 UseNumber 解码，数字是 json.Number；
+// 本地缓存读回是 float64；归一统一交给 confnum。
 //------------------------------------------------------------------------------
 
 func Str(m map[string]any, key string) string {

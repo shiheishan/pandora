@@ -4,8 +4,11 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func TestPurgeRetentionRawPG(t *testing.T) {
@@ -172,6 +175,105 @@ func TestPurgeRetentionFloorPG(t *testing.T) {
 	badCtx := ctx
 	if err := e.row(badCtx, `SELECT purge_node_traffic_reports(now(), 0)`).Scan(&n); err == nil {
 		t.Fatal("purge_node_traffic_reports 每批 0 行应报错")
+	}
+}
+
+// 安装令牌保留期：没用过、过期或作废满 30 天的删；没满 30 天的、用过的、被身份引用的都留着；
+// 绕过任务直接 DELETE 用过的或没满期的令牌，仍被 bootstrap_tokens_guard（00037）拒绝。
+func TestPurgeBootstrapTokensPG(t *testing.T) {
+	e, ctx := newTrafficEnv(t)
+	f := newTrafficFixture(t, ctx, e)
+
+	// seedToken 插一张令牌：createdAgo 是签发距今（库时钟），有效期 30 分钟；
+	// used 时 5 分钟后被用掉，voided 时 10 分钟后被作废。
+	seedToken := func(createdAgo string, used, voided bool) uuid.UUID {
+		t.Helper()
+		usedAt, usedReq, voidedAt := "NULL::timestamptz", "NULL::text", "NULL::timestamptz"
+		if used {
+			usedAt, usedReq = "c.at + interval '5 minutes'", "'"+poolRandName(t, "req-")+"'"
+		}
+		if voided {
+			voidedAt = "c.at + interval '10 minutes'"
+		}
+		var id uuid.UUID
+		if err := e.row(ctx, `INSERT INTO bootstrap_tokens
+				(server_id, token_sha256, created_at, expires_at, used_at, used_request_id, voided_at)
+			SELECT CAST(? AS uuid), encode(sha256(convert_to(CAST(? AS text), 'UTF8')), 'hex'), c.at, c.at + interval '30 minutes', `+
+			usedAt+`, `+usedReq+`, `+voidedAt+`
+			  FROM (SELECT now() - interval '`+createdAgo+`' AS at) c
+			RETURNING id`, f.server, poolRandName(t, "tok-")).Scan(&id); err != nil {
+			t.Fatalf("插令牌: %v", err)
+		}
+		return id
+	}
+	// seedIdentity 插一份引用 tokenID 的接入身份（已被取代，不占 active 唯一索引）。
+	seedIdentity := func(seq int, tokenID uuid.UUID) {
+		t.Helper()
+		e.mustExec(t, ctx, `INSERT INTO server_identities
+				(server_id, seq, cert_serial, spki_sha256, cert_pem, source, enroll_token_id, enroll_request_id,
+				 status, activated_at, issued_at, expires_at, superseded_at)
+			VALUES (?, ?, 'a' || substr(encode(sha256(convert_to(?, 'UTF8')), 'hex'), 1, 30),
+			        encode(sha256(convert_to(?, 'UTF8')), 'hex'), '-----BEGIN CERTIFICATE-----虚构',
+			        'enroll', ?, ?, 'superseded', now() - interval '40 days', now() - interval '40 days',
+			        now() + interval '50 days', now() - interval '39 days')`,
+			f.server, seq, poolRandName(t, "serial-"), poolRandName(t, "spki-"), tokenID, poolRandName(t, "req-"))
+	}
+
+	oldUnused := seedToken("40 days", false, false)
+	oldVoided := seedToken("40 days", false, true)
+	recentUnused := seedToken("10 days", false, false)
+	almostUnused := seedToken("29 days 12 hours", false, false) // 按库时钟差半天满 30 天
+	oldUsed := seedToken("40 days", true, false)
+	seedIdentity(1, oldUsed)
+	oldReferenced := seedToken("40 days", false, false)
+	seedIdentity(2, oldReferenced)
+
+	n, err := e.svc.PurgeRetention(ctx, "bootstrap_tokens", time.Now(), 1000)
+	if err != nil {
+		t.Fatalf("PurgeRetention: %v", err)
+	}
+	if n < 2 {
+		t.Fatalf("至少应删 2 行（过期、作废满 30 天的未用令牌），得 %d", n)
+	}
+	exists := func(id uuid.UUID) bool {
+		return e.count(t, ctx, `SELECT count(*) FROM bootstrap_tokens WHERE id = ?`, id) == 1
+	}
+	for _, c := range []struct {
+		what string
+		id   uuid.UUID
+		keep bool
+	}{
+		{"过期满 30 天的未用令牌", oldUnused, false},
+		{"作废满 30 天的未用令牌", oldVoided, false},
+		{"没满 30 天的未用令牌", recentUnused, true},
+		{"差半天满 30 天的未用令牌", almostUnused, true},
+		{"用过的令牌", oldUsed, true},
+		{"被身份引用的令牌", oldReferenced, true},
+	} {
+		if got := exists(c.id); got != c.keep {
+			t.Fatalf("%s：还在 = %v，期望 %v", c.what, got, c.keep)
+		}
+	}
+
+	// worker 的时钟比库快两天：截止时刻按库时钟算，不会挑中触发器不放行的行，整批不报错、也不多删。
+	if n, err := e.svc.PurgeRetention(ctx, "bootstrap_tokens", time.Now().Add(48*time.Hour), 1000); err != nil || n != 0 {
+		t.Fatalf("时钟偏快时应不报错、不多删：n=%d err=%v", n, err)
+	}
+	if !exists(almostUnused) {
+		t.Fatal("差半天满 30 天的未用令牌不该因为 worker 时钟偏快被删")
+	}
+
+	// 绕过任务直接删：用过的、没满 30 天的都被触发器拒绝（不是外键）。
+	for _, c := range []struct {
+		what string
+		id   uuid.UUID
+	}{{"用过的令牌", oldUsed}, {"没满 30 天的未用令牌", recentUnused}} {
+		e.mustExec(t, ctx, `SAVEPOINT bt_sp`)
+		err := e.exec(ctx, `DELETE FROM bootstrap_tokens WHERE id = ?`, c.id)
+		e.mustExec(t, ctx, `ROLLBACK TO SAVEPOINT bt_sp`)
+		if err == nil || !strings.Contains(err.Error(), "只允许删除过期或作废满 30 天的未用令牌") {
+			t.Fatalf("直接删%s应被触发器拒绝，得到 %v", c.what, err)
+		}
 	}
 }
 

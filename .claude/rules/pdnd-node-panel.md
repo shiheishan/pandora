@@ -18,6 +18,7 @@ paths:
 - `panel/` 只管协议与线格式，不做编排：接入（`enroll.go`）、身份目录（`identity.go`）、会话（`session.go`）。
   会话收到的配置、名单、流量回执经 `Events()` 交给编排层；编排层要发的心跳、流量、在线、回执经 `Send*` 交回来。
 - `node/` 是编排，只认 `core.Core` 抽象，发布物里背后只有 NativeCore（`kernel.NativeCore`），测试里换成 fake。
+  NativeCore 要提供的能力（整代装入站 `ApplyInbound` / `ApplyInboundWithUsers`、就绪探测 `InboundReady`、入站归属 `SetInboundOwner`）都是 `core.Core` 接口本身的方法，编排层不做可选接口断言；fake 实现完整接口（`node/fixture_test.go` 的 `fakeKernel`）。
 - `release/acceptancepanel` 按面板契约独立实现 CA 指纹、证书签发与会话规则，刻意不 import `pdnd/panel`：
   夹具借用被测代码，两边一起错时验收照样变绿。只有它的 `main_test.go` 可以用 `pdnd/panel` 对打。
 
@@ -57,8 +58,9 @@ paths:
 - 用户镜像：`n.known` 与 `n.userVersion` 说的是同一件事「内核里已是这一版」，内核用户表被清空（入站重建失败、回滚失败、名单预装失败）
   时只能经 `resetUserMirror` 一起作废，并回 `UsersAck{ok:false, reason:resync}`。
 - 名单增量只在本地确是 from_version 时打，否则回 `version_mismatch`；装不进内核回 `apply_failed`。面板对任何 ok=false 都应发全量。
-- 先有名单、再开 accept：入站起来之前收到的全量存在 `n.staged`，装入站时经 `ApplyInboundWithUsers` 一起交给内核；
-  内核不实现 `ApplyInboundWithUsers` 时（只剩测试 fake）装完入站再补装，换配置重建入站后把手上的名单补回。
+- 先有名单、再开 accept：入站起来之前收到的全量存在 `n.staged`，装入站时经 `ApplyInboundWithUsers` 一起交给内核
+  （名单来源依次是内核里现有的 `n.known`、`n.staged`、冷启动时的落盘缓存，都没有就带空名单）；入站起来了、名单没装上（`UsersPreloadFailed`）
+  按内核用户表已空处理。只有回滚装回旧配置时走 `ApplyInbound`，随后 `AddUsers` 补回旧名单。
 - 流量不丢：按 (节点, uid) 合并；inflight 收到 TrafficAck 才丢，每个上报节拍与每次 Welcome 原样重发（同一 report_id）；
   缓冲上限 2^17 条，超限先丢最旧的 inflight 并计数。退出时先关内核让在途连接入账，再报最后一轮并等 ack。
 - 落盘缓存（`<cache_dir>/nodes/`）：`server.json` 记身份与节点顺序，每节点 `config.json`（原字节 base64 + 摘要）与 `users.json`，

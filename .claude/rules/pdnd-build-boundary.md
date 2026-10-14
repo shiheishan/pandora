@@ -17,7 +17,7 @@ paths:
 - 产品 2026-10-10 定：不支持第三方节点端。节点端只有 `kernel/` 的 NativeCore 一个数据面，`main.go` 直接起它；没有构建标签切换，没有 `native_only` 之类的回落开关（留在配置里按未知字段报错）。兼容层（`core/multi`、`core/sing`、`core/xray`、`core/external`、`runtime_compat.go`）已于 10-14 删除，不再恢复。
 - pdnd 的任何二进制（含测试）都不许链 `github.com/sagernet/sing-box`：它在 Go 1.27 下用 `go:linkname` 取 x/net 的私有符号，链接失败。守卫：CI `pandora-native.yml` 的「Default dependency boundary」对 `go list -deps -test ./...` 查，`release/build.sh` 对发布物 `go list -deps .` 查。要 sing-box 当参照只能放在独立 go.mod 的 `.agents/skills/subscription-e2e/tools`。
 - xray-core、sing-quic、sing-anytls、daeuniverse/outbound 等只在测试里当互通参照客户端，生产代码不 import。
-- `core/` 只剩编排层抽象（`core.go`、转发、计数、限速）与 `core/mieru`：`kernel/mieru.go` 把它包成 NativeCore 适配器，出站经注入的 Transport 走 NativeCore 的 DataPlane，失败经 `SetConnErrorHandler` 交给 OnConnError。
+- `core/` 只剩编排层抽象（`core.go`、转发、计数、限速）与 `core/mieru`：`kernel/mieru.go` 把它包成 NativeCore 适配器，出站经注入的 Transport 走 NativeCore 的 DataPlane（没注入时拒绝转发、报 `mieru.ErrNoTransport`，不直接拨号），失败经 `SetConnErrorHandler` 交给 OnConnError。
 
 ## 能力矩阵是唯一事实源
 

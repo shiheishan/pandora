@@ -417,7 +417,7 @@ func containsIP(prefixes []netip.Prefix, ip netip.Addr) bool {
 // toStrings 把面板下发的 JSON 值归一成字符串切片。
 //
 // 同一个字段面板可能给单值也可能给数组（"port": 443 和 "port": [443, 8443]），
-// 数字还会以 float64（兼容通道）或 json.Number（签名通道）到达。都在这里吃掉，
+// 数字还会以 json.Number（gRPC 下发，UseNumber 解码）或 float64（本地缓存读回）到达。都在这里吃掉，
 // 规则编译那边只面对 []string。
 func toStrings(v any) ([]string, error) {
 	switch x := v.(type) {

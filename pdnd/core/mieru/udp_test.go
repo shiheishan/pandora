@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -13,6 +14,7 @@ import (
 	"github.com/aegispanel/nodeagent/core"
 	"github.com/aegispanel/nodeagent/route"
 	apicommon "github.com/enfein/mieru/v3/apis/common"
+	"github.com/enfein/mieru/v3/apis/model"
 	M "github.com/sagernet/sing/common/metadata"
 )
 
@@ -86,5 +88,37 @@ func TestNativeMieruUDPRoutedPacketLoop(t *testing.T) {
 	case <-finished:
 	case <-time.After(2 * time.Second):
 		t.Fatal("native Mieru UDP loop did not stop")
+	}
+}
+
+// 没注入 Transport：拒绝转发并报 ErrNoTransport，不直接拨号。
+func TestHandleTCPWithoutTransportRejects(t *testing.T) {
+	in := New("test", 0, "tcp", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	var got error
+	in.SetConnErrorHandler(func(_ net.Addr, err error) { got = err })
+	server, client := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+	var req model.Request
+	if err := req.DstAddr.From("203.0.113.10:7"); err != nil { // TEST-NET-3，虚构目标
+		t.Fatal(err)
+	}
+	in.handleTCP(context.Background(), server, &req)
+	if !errors.Is(got, ErrNoTransport) {
+		t.Fatalf("没注入 Transport 时应报 ErrNoTransport，得到 %v", got)
+	}
+}
+
+// 没注入 Transport：UDP associate 同样拒绝并报 ErrNoTransport。
+func TestHandleUDPWithoutTransportRejects(t *testing.T) {
+	in := New("test", 0, "tcp", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	var got error
+	in.SetConnErrorHandler(func(_ net.Addr, err error) { got = err })
+	server, client := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+	in.handleUDP(context.Background(), server)
+	if !errors.Is(got, ErrNoTransport) {
+		t.Fatalf("没注入 Transport 时应报 ErrNoTransport，得到 %v", got)
 	}
 }

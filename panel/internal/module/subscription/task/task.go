@@ -76,7 +76,7 @@ func (m *Module) Periodic() []jobs.Periodic {
 			},
 		},
 		{
-			// 03:40 起各表错开，40/41/47/53 已被别的模块占用。
+			// 每天一次的任务各占一分钟，占用情况见 .claude/rules/panel-app.md 的「每日任务分钟表」。
 			Cronspec: "50 3 * * *",
 			Type:     TypeRetentionFetchLog,
 			Opts: []asynq.Option{

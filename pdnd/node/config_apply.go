@@ -29,17 +29,11 @@ func applyRetryDelay(attempts int) time.Duration {
 	return panel.Jitter(d)
 }
 
-// registerInboundOwner 告诉内核这个入站属于哪台服务器的哪个节点（可选契约）。
+// registerInboundOwner 告诉内核这个入站属于哪台服务器的哪个节点。
 // 只影响端口冲突时能不能写出对方节点 id：同一台服务器（同一 scope）的节点之间才写，
 // 别的一律「本机其他服务」。
 func (n *Node) registerInboundOwner() {
-	registrar, ok := n.kernel.(interface {
-		SetInboundOwner(tag, scope, nodeID string)
-	})
-	if !ok {
-		return
-	}
-	registrar.SetInboundOwner(n.tag, n.scope, n.id)
+	n.kernel.SetInboundOwner(n.tag, n.scope, n.id)
 }
 
 // applyConfig 装一份配置并记下结果：失败原因留给心跳上报，成功即清空。
@@ -97,13 +91,13 @@ func (n *Node) applyConfigOnce(cfg map[string]any, nodeType string) error {
 
 	n.activeConfig = snapshot
 	n.nodeType = strings.TrimSpace(nodeType)
-	// 入站重建会丢掉内核里的用户表：带名单装的，本地镜像对齐到那份名单；兼容内核补回手上的名单
-	// （否则 diff 认为「都已下发」，谁也连不上）。
+	// 入站重建会丢掉内核里的用户表：本地镜像对齐到随入站一起装的那份名单。
 	n.adoptInstalledUsers(prepared)
 	n.started = true
 	return nil
 }
 
+// installConfig 装入站。prepared 为 nil 只出现在回滚装回旧配置时，旧名单由 applyConfigOnce 随后补回。
 func (n *Node) installConfig(cfg map[string]any, nodeType string, prepared *preparedUsers) error {
 	protocol := strings.TrimSpace(nodeType)
 	if protocol == "" {
@@ -125,8 +119,8 @@ func (n *Node) installConfig(cfg map[string]any, nodeType string, prepared *prep
 		return err
 	}
 	n.registerInboundOwner()
-	if applier, ok := n.kernel.(usersApplier); ok && prepared != nil {
-		if err := applier.ApplyInboundWithUsers(inbound, routing, prepared.users); err != nil {
+	if prepared != nil {
+		if err := n.kernel.ApplyInboundWithUsers(inbound, routing, prepared.users); err != nil {
 			if !isUsersPreloadError(err) {
 				return err
 			}
@@ -134,19 +128,8 @@ func (n *Node) installConfig(cfg map[string]any, nodeType string, prepared *prep
 			n.log.Warn("入站已就绪，随入站一起装的用户名单失败，等面板发全量", "err", err)
 			prepared.failed = true
 		}
-	} else if applier, ok := n.kernel.(core.ConfigApplier); ok {
-		if err := applier.ApplyInbound(inbound, routing); err != nil {
-			return err
-		}
-	} else {
-		if err := n.kernel.AddInbound(inbound); err != nil {
-			return err
-		}
-		// 兼容内核没有整代应用的契约。
-		if err := n.kernel.SetRouting(n.tag, routing); err != nil {
-			_ = n.kernel.DelInbound(n.tag)
-			return err
-		}
+	} else if err := n.kernel.ApplyInbound(inbound, routing); err != nil {
+		return err
 	}
 	return nil
 }
