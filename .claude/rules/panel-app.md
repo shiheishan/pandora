@@ -26,4 +26,5 @@ paths:
 
 ## 后台任务（asynq）
 - 约定在 `panel/internal/pkg/jobs`：载荷外层带 `req_id`（`NewTask` 从 ctx 取），处理器经 `Middleware` 把 req_id 放进 ctx 与日志；模块经 `Register` 挂任务与周期。
+- 定时任务的载荷不带 req_id、字节固定（`newPeriodicTask`），由 `Middleware` 每次运行生成新的：一次运行一个 req_id，`asynq.Unique`（键是载荷的 md5）在重启前后也能去重。不要给周期任务载荷加随机或时间字段。
 - 周期任务带 `asynq.Unique`、`MaxRetry(0)`（下一个周期就是重试）；队列 critical / default / low，分配见 `docs/architecture.md` 第 12 节。库里的 `SKIP LOCKED`、租约、状态条件仍是第二道保险，不要因为有 Unique 就删掉。

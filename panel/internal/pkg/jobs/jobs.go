@@ -13,9 +13,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// envelope 是所有任务载荷的外层：{"req_id": "...", "data": <业务载荷>}。
+// envelope 是所有任务载荷的外层：{"req_id": "...", "data": <业务载荷>}；定时任务不带 req_id（见 newPeriodicTask）。
 type envelope struct {
-	ReqID string          `json:"req_id"`
+	ReqID string          `json:"req_id,omitempty"`
 	Data  json.RawMessage `json:"data"`
 }
 
@@ -59,7 +59,7 @@ func Decode(t *asynq.Task, dst any) error {
 func Middleware(base *zap.Logger) asynq.MiddlewareFunc {
 	return func(next asynq.Handler) asynq.Handler {
 		return asynq.HandlerFunc(func(ctx context.Context, t *asynq.Task) error {
-			// 载荷解析失败时 env.ReqID 为空，Normalize 会生成新的。
+			// 载荷没带 req_id（定时任务）或解析失败时为空，Normalize 生成新的。
 			var env envelope
 			_ = json.Unmarshal(t.Payload(), &env)
 			ctx = plog.WithReqID(ctx, base, reqid.Normalize(env.ReqID))
@@ -77,6 +77,14 @@ func Middleware(base *zap.Logger) asynq.MiddlewareFunc {
 			return err
 		})
 	}
+}
+
+// newPeriodicTask 构造定时任务，载荷固定为 {"data":{}}。
+// 定时任务的载荷不带 req_id，由 Middleware 每次运行时生成新的；
+// 载荷固定不变，asynq.Unique（按载荷算键）在不同 Scheduler 实例与重启前后都能去重。
+func newPeriodicTask(typ string) *asynq.Task {
+	payload, _ := json.Marshal(envelope{Data: json.RawMessage("{}")})
+	return asynq.NewTask(typ, payload)
 }
 
 // Periodic 是模块声明的定时任务。
@@ -97,10 +105,7 @@ func Register(mux *asynq.ServeMux, sched *asynq.Scheduler, mods ...Module) error
 	for _, m := range mods {
 		m.Register(mux)
 		for _, p := range m.Periodic() {
-			task, err := NewTask(context.Background(), p.Type, nil)
-			if err != nil {
-				return err
-			}
+			task := newPeriodicTask(p.Type)
 			if _, err := sched.Register(p.Cronspec, task, p.Opts...); err != nil {
 				return fmt.Errorf("jobs: 注册定时任务 %s: %w", p.Type, err)
 			}
