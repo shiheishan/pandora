@@ -44,11 +44,10 @@ const (
 	ReservationReleased = "released"
 )
 
-// 预留流水的事件种类。
+// 预留流水的事件种类。释放只有超时（expire）与取消（cancel）两条路。
 const (
 	EventReserve = "reserve"
 	EventCapture = "capture"
-	EventRelease = "release"
 	EventExpire  = "expire"
 	EventCancel  = "cancel"
 )

@@ -133,12 +133,12 @@ func (r *Repo) UpdateProviderFields(ctx context.Context, id uuid.UUID, fields ma
 }
 
 // MinAcceptingAmount 启用、收新单、币种含 cur 的在线渠道里最小的 min_amount；一个都没有时 found=false。
-// 线下与 demo 渠道不算（它们的 min_amount 是 0，会把门槛拉没）。
+// 线下渠道不算（它的 min_amount 是 0，会把门槛拉没）。
 func (r *Repo) MinAcceptingAmount(ctx context.Context, cur string) (decimal.Decimal, bool, error) {
 	var min sql.NullString
 	err := r.d.Conn(ctx).Raw(
 		`SELECT MIN(min_amount) FROM payment_providers
-		 WHERE enabled AND accepting_new AND adapter NOT IN ('offline', 'demo_hmac')
+		 WHERE enabled AND accepting_new AND adapter <> 'offline'
 		   AND currencies @> jsonb_build_array(?::text)`,
 		cur,
 	).Scan(&min).Error

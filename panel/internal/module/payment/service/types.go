@@ -123,7 +123,6 @@ const (
 // 适配器名。
 const (
 	AdapterEpay    = "epay"
-	AdapterDemo    = "demo_hmac"
 	AdapterOffline = "offline"
 )
 

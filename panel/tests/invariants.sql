@@ -154,7 +154,7 @@ INSERT INTO audit_events (id, actor_kind, action, outcome)
 VALUES ('00000000-0000-7000-8000-000000000b01', 'system', 'inv.test.seed', 'success');
 
 INSERT INTO payment_providers (id, code, adapter, display_name, currencies, enabled, accepting_new)
-VALUES ('00000000-0000-7000-8000-000000000b11', 'invtestpay', 'demo_hmac', 'Inv Test Pay',
+VALUES ('00000000-0000-7000-8000-000000000b11', 'invtestpay', 'epay', 'Inv Test Pay',
         '["USD"]'::jsonb, true, false);
 
 INSERT INTO orders (id, order_no, user_id, kind, currency,

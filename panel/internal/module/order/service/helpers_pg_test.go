@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -30,7 +31,7 @@ import (
 	"github.com/aegispanel/aegis/internal/module/order/model"
 	orderrepo "github.com/aegispanel/aegis/internal/module/order/repo"
 	"github.com/aegispanel/aegis/internal/module/payment/provider"
-	"github.com/aegispanel/aegis/internal/module/payment/provider/demo"
+	"github.com/aegispanel/aegis/internal/module/payment/provider/epay"
 	paymentrepo "github.com/aegispanel/aegis/internal/module/payment/repo"
 	paymentsvc "github.com/aegispanel/aegis/internal/module/payment/service"
 	promorepo "github.com/aegispanel/aegis/internal/module/promo/repo"
@@ -49,8 +50,11 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 )
 
-// demoSecret 是测试 demo 渠道的签名密钥（虚构）。
-const demoSecret = "order-pg-test-secret"
+// testEpayPID 是测试易支付渠道的商户号（虚构）。
+const testEpayPID = "1001"
+
+// testEpayKey 是测试易支付渠道的商户密钥（虚构）。
+const testEpayKey = "epay-test-key"
 
 // gib 是 1 GiB。
 const gib = int64(1) << 30
@@ -367,16 +371,15 @@ func (e *env) balanceOf(t *testing.T, ctx context.Context, user uuid.UUID) decim
 	return b
 }
 
-// mkDemoProvider 用 SQL 插一条在收款的 demo_hmac 渠道（最低额 0.01）。
-// payment 的 CreateProvider 只允许 epay，demo 渠道只能直接写库；凭据用同一把 sealer 按 payment 的 AAD 封存。
-func (e *env) mkDemoProvider(t *testing.T, ctx context.Context, code string) {
+// mkEpayProvider 用 SQL 插一条指向 baseURL 的 epay 渠道（允许内网地址，只在测试里），查单会打到 baseURL。
+func (e *env) mkEpayProvider(t *testing.T, ctx context.Context, code, baseURL string) {
 	t.Helper()
 	sealer, err := crypto.NewSealer(bytes.Repeat([]byte{7}, 32), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	id := uuid.Must(uuid.NewV7())
-	plain, err := json.Marshal(map[string]string{"key": demoSecret})
+	plain, err := json.Marshal(map[string]string{"merchant_id": testEpayPID, "key": testEpayKey})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -385,32 +388,47 @@ func (e *env) mkDemoProvider(t *testing.T, ctx context.Context, code string) {
 		t.Fatal(err)
 	}
 	e.mustExec(t, ctx, `
-INSERT INTO payment_providers (id, code, adapter, display_name, credentials_sealed, currencies, base_url, min_amount, enabled, accepting_new)
-VALUES (?, ?, 'demo_hmac', 'Demo', ?, '["CNY"]'::jsonb, 'https://checkout.example.test', 0.01, true, true)`,
-		id, code, sealed)
+INSERT INTO payment_providers (id, code, adapter, display_name, credentials_sealed, currencies, base_url, methods, default_method,
+                               allow_private_host, min_amount, enabled, accepting_new)
+VALUES (?, ?, 'epay', '易支付测试', ?, '["CNY"]'::jsonb, ?, '["alipay"]'::jsonb, 'alipay', true, 0.01, true, true)`,
+		id, code, sealed, baseURL)
 }
 
-// demoCode 生成一个不撞的渠道代码。
-func demoCode() string { return "demo-" + randHex(8) }
-
-// demoInbound 构造 demo 渠道签好名的回调（同 payment 测试的同名函数）。
-func demoInbound(eventID, eventType, paymentRef, orderNo string, cents int64) provider.Inbound {
-	body, _ := json.Marshal(map[string]any{
-		"event_id":   eventID,
-		"event_type": eventType,
-		"payment_id": paymentRef,
-		"order_no":   orderNo,
-		"amount":     cents,
-		"currency":   "CNY",
-		"fee":        0,
-		"method":     "alipay",
-	})
-	h := http.Header{}
-	h.Set("X-Aegis-Signature", demo.Sign([]byte(demoSecret), eventID, eventType, paymentRef, orderNo, cents, 0, "CNY"))
-	return provider.Inbound{Method: http.MethodPost, Header: h, Body: body}
+// mkPayProvider 插一条在收款的易支付渠道；回调由 epayInbound 签名直接推给 payment，不会访问 baseURL。
+func (e *env) mkPayProvider(t *testing.T, ctx context.Context, code string) {
+	t.Helper()
+	e.mkEpayProvider(t, ctx, code, "https://pay.example.test")
 }
 
-// payAndNotify 以订单主人身份发起支付，再按应付金额推一笔 demo 成功回调；返回回执。
+// payCode 生成一个不撞的渠道代码。
+func payCode() string { return "epay-" + randHex(8) }
+
+// epayInbound 构造易支付成功回调（GET 查询串 + MD5 签名）；同一 paymentRef 重推得到同一个事件号。
+func epayInbound(paymentRef, outTradeNo string, cents int64) provider.Inbound {
+	params := map[string]string{
+		"pid":          testEpayPID,
+		"trade_no":     paymentRef,
+		"out_trade_no": outTradeNo,
+		"type":         "alipay",
+		"name":         "测试订单",
+		"money":        money.FormatProvider(money.FromCents(cents)),
+		"trade_status": "TRADE_SUCCESS",
+	}
+	params["sign"] = epay.Sign(params, testEpayKey)
+	params["sign_type"] = "MD5"
+	q := url.Values{}
+	for k, v := range params {
+		q.Set(k, v)
+	}
+	return provider.Inbound{Method: http.MethodGet, Query: q}
+}
+
+// ackOK 判断易支付回执是否表示已接受：HTTP 恒为 200，看正文 success / fail。
+func ackOK(ack provider.AckOutput) bool {
+	return ack.HTTPStatus == http.StatusOK && string(ack.Body) == "success"
+}
+
+// payAndNotify 以订单主人身份发起支付，再按应付金额推一笔易支付成功回调；返回回执。
 func (e *env) payAndNotify(t *testing.T, ctx context.Context, user, orderID uuid.UUID, code, ref string) provider.AckOutput {
 	t.Helper()
 	intent, err := e.svc.Pay(asUser(ctx, user), PayInput{OrderID: orderID, Provider: code})
@@ -421,7 +439,7 @@ func (e *env) payAndNotify(t *testing.T, ctx context.Context, user, orderID uuid
 	if err != nil {
 		t.Fatal(err)
 	}
-	ack, err := e.payments.HandleWebhook(ctx, code, demoInbound("evt-"+ref, "payment.succeeded", ref, intent.OutTradeNo, cents))
+	ack, err := e.payments.HandleWebhook(ctx, code, epayInbound(ref, intent.OutTradeNo, cents))
 	if err != nil {
 		t.Fatalf("回调: %v", err)
 	}

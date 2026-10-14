@@ -152,8 +152,8 @@ func TestListProvidersStatsInSiteTimezone(t *testing.T) {
 		t.Fatal(err)
 	}
 	user := e.mkUser(t, ctx)
-	code := "demo-stats-" + uuid.New().String()[:8]
-	p := e.mkDemoProvider(t, ctx, code)
+	code := "fake-stats-" + uuid.New().String()[:8]
+	p := e.mkFakeProvider(t, ctx, code)
 
 	var localStart time.Time
 	if err := e.row(ctx, `SELECT date_trunc('day', now() AT TIME ZONE ?) AT TIME ZONE ?`, tz, tz).Scan(&localStart); err != nil {
@@ -218,8 +218,8 @@ VALUES (?, 'unverified:x', 'payment.unknown', false, 'ignored', now(), now())`, 
 func TestOrderHistoryAndSummaries(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	code := "demo-hist-" + uuid.New().String()[:8]
-	_ = e.mkDemoProvider(t, ctx, code)
+	code := "fake-hist-" + uuid.New().String()[:8]
+	_ = e.mkFakeProvider(t, ctx, code)
 
 	// order1：先发起 9.90，改金额轮换成 8.00，付了第二个
 	order1, orderNo1 := e.mkOrder(t, ctx, user)
@@ -228,7 +228,7 @@ func TestOrderHistoryAndSummaries(t *testing.T) {
 	if first.OutTradeNo == second.OutTradeNo {
 		t.Fatal("改金额应轮换商户单号")
 	}
-	if _, err := e.svc.HandleWebhook(ctx, code, demoInbound("evt-hist-1", "payment.succeeded", "pay-hist-1", second.OutTradeNo, 800)); err != nil {
+	if _, err := e.svc.HandleWebhook(ctx, code, fakeInbound("evt-hist-1", "payment.succeeded", "pay-hist-1", second.OutTradeNo, 800)); err != nil {
 		t.Fatal(err)
 	}
 	// order2：只发起过支付
@@ -256,7 +256,7 @@ func TestOrderHistoryAndSummaries(t *testing.T) {
 		h.Intents[1].ID != first.IntentID || h.Intents[1].Status != IntentCancelled {
 		t.Fatalf("意图应新的在前: %+v", h.Intents)
 	}
-	if h.Intents[0].ProviderCode != code || h.Intents[0].ProviderName != "Demo" || !h.Intents[0].Amount.Equal(dec("8.00")) {
+	if h.Intents[0].ProviderCode != code || h.Intents[0].ProviderName != "Fake" || !h.Intents[0].Amount.Equal(dec("8.00")) {
 		t.Fatalf("intent view %+v", h.Intents[0])
 	}
 	pv := h.Payments[0]
@@ -282,7 +282,7 @@ func TestOrderHistoryAndSummaries(t *testing.T) {
 	}
 	for _, id := range []uuid.UUID{order1, order2} {
 		s := sums[id]
-		if !s.HasIntent || s.ProviderCode == nil || *s.ProviderCode != code || s.ProviderName == nil || *s.ProviderName != "Demo" {
+		if !s.HasIntent || s.ProviderCode == nil || *s.ProviderCode != code || s.ProviderName == nil || *s.ProviderName != "Fake" {
 			t.Fatalf("order %s summary %+v", id, s)
 		}
 	}

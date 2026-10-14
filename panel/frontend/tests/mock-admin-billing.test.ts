@@ -440,10 +440,10 @@ describe('mock api · admin billing', () => {
 
   it('lists providers with card stats and toggles accepting_new (R66)', async () => {
     const list = providersSchema.parse(await json(await get(admin, 'payment-providers'))).providers
-    expect(list.map((p) => p.code)).toEqual(['demo', 'epay', 'epay_backup', 'offline'])
+    expect(list.map((p) => p.code)).toEqual(['epay', 'epay_backup', 'offline'])
     expect(list.find((p) => p.code === 'epay')!.today.CNY).toBeGreaterThan(0)
-    // 最低付款额（分）：易支付默认 ¥1.00，演示与线下渠道没有这个概念回 0
-    expect(list.map((p) => [p.code, p.min_amount])).toEqual([['demo', 0], ['epay', 100], ['epay_backup', 100], ['offline', 0]])
+    // 最低付款额（分）：易支付默认 ¥1.00，线下渠道没有这个概念回 0
+    expect(list.map((p) => [p.code, p.min_amount])).toEqual([['epay', 100], ['epay_backup', 100], ['offline', 0]])
     expect((await post(admin, 'payment-providers/nope/toggle', { enabled: true, accepting_new: true })).status).toBe(404)
     expect((await post(admin, 'payment-providers/epay/toggle', { enabled: true })).status).toBe(200)
     const epay = providersSchema.parse(await json(await get(admin, 'payment-providers'))).providers.find((p) => p.code === 'epay')!
@@ -452,7 +452,7 @@ describe('mock api · admin billing', () => {
 
   it('creates and edits an epay provider; secrets are write-only (w2pay)', async () => {
     const settings = { display_name: '易支付 · 新', base_url: 'https://pay3.example.com', submit_path: '', api_path: '', methods: ['wxpay', 'alipay'], default_method: '', allow_private_host: false }
-    expect(await json(await post(admin, 'payment-providers', { code: 'offline', adapter: 'demo', ...settings, methods: ['paypal'], merchant_id: '', key: '' }, 'prov-0'))).toMatchObject({
+    expect(await json(await post(admin, 'payment-providers', { code: 'offline', adapter: 'paypal', ...settings, methods: ['paypal'], merchant_id: '', key: '' }, 'prov-0'))).toMatchObject({
       error: { code: 'validation_failed', fields: { code: expect.any(String), adapter: expect.any(String), methods: expect.any(String), merchant_id: '必填', key: '必填' } },
     })
     const created = await post(admin, 'payment-providers', { code: 'epay3', adapter: 'epay', ...settings, merchant_id: '2001', key: 'secret-2001' }, 'prov-1')
@@ -496,12 +496,11 @@ describe('mock api · admin billing', () => {
     expect(kept.credentials_changed).toBe(false)
     const rotated = providerWrittenSchema.parse(await json(await put(admin, 'payment-providers/epay3', { ...settings, merchant_id: '', key: 'secret-rotated' }, 'prov-5')))
     expect(rotated.credentials_changed).toBe(true)
-    // 没有凭据的旧渠道编辑时必须补齐；offline 与演示渠道只读
+    // 没有凭据的旧渠道编辑时必须补齐；offline 只读
     expect(await json(await put(admin, 'payment-providers/epay_backup', { ...settings, merchant_id: '', key: '' }, 'prov-6'))).toMatchObject({
       error: { fields: { merchant_id: expect.any(String), key: expect.any(String) } },
     })
     expect((await put(admin, 'payment-providers/offline', { ...settings, merchant_id: 'm', key: 'k' }, 'prov-7')).status).toBe(409)
-    expect((await put(admin, 'payment-providers/demo', { ...settings, merchant_id: 'm', key: 'k' }, 'prov-8')).status).toBe(409)
     expect((await put(admin, 'payment-providers/nope', { ...settings, merchant_id: 'm', key: 'k' }, 'prov-9')).status).toBe(404)
   })
 

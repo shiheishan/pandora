@@ -104,8 +104,8 @@ func TestPlanChangeUpgradeTopUp(t *testing.T) {
 		t.Fatal("付款前就换过去了")
 	}
 
-	code := demoCode()
-	e.mkDemoProvider(t, ctx, code)
+	code := payCode()
+	e.mkPayProvider(t, ctx, code)
 	e.payAndNotify(t, ctx, user, c.OrderID, code, "up-"+randHex(8))
 	if o := e.order(t, ctx, c.OrderID); o.Status != StatusFulfilled {
 		t.Fatalf("付款后状态 %s", o.Status)

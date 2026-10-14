@@ -18,14 +18,14 @@ import (
 func TestWebhookReplayRecordsOnce(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	code := "demo-replay-" + uuid.New().String()[:8]
-	_ = e.mkDemoProvider(t, ctx, code)
+	code := "fake-replay-" + uuid.New().String()[:8]
+	_ = e.mkFakeProvider(t, ctx, code)
 	orderID, orderNo := e.mkOrder(t, ctx, user)
 	intent := e.createIntent(t, ctx, code, orderID, orderNo, user, "9.90")
 
 	eventID := "evt-replay-1"
 	payRef := "pay-replay-1"
-	in := demoInbound(eventID, "payment.succeeded", payRef, intent.OutTradeNo, 990)
+	in := fakeInbound(eventID, "payment.succeeded", payRef, intent.OutTradeNo, 990)
 
 	var lastBody []byte
 	for i := 0; i < 10; i++ {
@@ -68,14 +68,14 @@ func TestWebhookReplayRecordsOnce(t *testing.T) {
 func TestWebhookConcurrentDuplicates(t *testing.T) {
 	e, ctx := newCommitEnv(t)
 	user := e.mkUser(t, ctx)
-	code := "demo-conc-" + uuid.New().String()[:8]
-	_ = e.mkDemoProvider(t, ctx, code)
+	code := "fake-conc-" + uuid.New().String()[:8]
+	_ = e.mkFakeProvider(t, ctx, code)
 	orderID, orderNo := e.mkOrder(t, ctx, user)
 	intent := e.createIntent(t, ctx, code, orderID, orderNo, user, "9.90")
 
 	eventID := "evt-conc-same"
 	payRef := "pay-conc-same"
-	in := demoInbound(eventID, "payment.succeeded", payRef, intent.OutTradeNo, 990)
+	in := fakeInbound(eventID, "payment.succeeded", payRef, intent.OutTradeNo, 990)
 
 	start := make(chan struct{})
 	var wg sync.WaitGroup
@@ -108,8 +108,8 @@ func TestWebhookConcurrentDuplicates(t *testing.T) {
 	orderID2, orderNo2 := e.mkOrder(t, ctx, user)
 	intent2 := e.createIntent(t, ctx, code, orderID2, orderNo2, user, "9.90")
 	payRef2 := "pay-conc-dual"
-	inA := demoInbound("evt-conc-a", "payment.succeeded", payRef2, intent2.OutTradeNo, 990)
-	inB := demoInbound("evt-conc-b", "payment.succeeded", payRef2, intent2.OutTradeNo, 990)
+	inA := fakeInbound("evt-conc-a", "payment.succeeded", payRef2, intent2.OutTradeNo, 990)
+	inB := fakeInbound("evt-conc-b", "payment.succeeded", payRef2, intent2.OutTradeNo, 990)
 
 	start2 := make(chan struct{})
 	var wg2 sync.WaitGroup
@@ -142,13 +142,13 @@ WHERE p.code = ? AND e.provider_payment_id = ?`, code, payRef2) != 2 {
 func TestWebhookAmountMismatchRejected(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	code := "demo-amt-" + uuid.New().String()[:8]
-	_ = e.mkDemoProvider(t, ctx, code)
+	code := "fake-amt-" + uuid.New().String()[:8]
+	_ = e.mkFakeProvider(t, ctx, code)
 	orderID, orderNo := e.mkOrder(t, ctx, user)
 	intent := e.createIntent(t, ctx, code, orderID, orderNo, user, "9.90")
 
 	for _, cents := range []int64{991, 989} {
-		in := demoInbound("evt-amt-"+uuid.New().String()[:8], "payment.succeeded",
+		in := fakeInbound("evt-amt-"+uuid.New().String()[:8], "payment.succeeded",
 			"pay-amt-"+uuid.New().String()[:8], intent.OutTradeNo, cents)
 		ack, err := e.svc.HandleWebhook(ctx, code, in)
 		if err != nil {
@@ -174,8 +174,8 @@ func TestWebhookAmountMismatchRejected(t *testing.T) {
 func TestWebhookBadSignatureKeepsEvidence(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	code := "demo-bad-" + uuid.New().String()[:8]
-	_ = e.mkDemoProvider(t, ctx, code)
+	code := "fake-bad-" + uuid.New().String()[:8]
+	_ = e.mkFakeProvider(t, ctx, code)
 	orderID, orderNo := e.mkOrder(t, ctx, user)
 	intent := e.createIntent(t, ctx, code, orderID, orderNo, user, "9.90")
 
@@ -209,7 +209,7 @@ FROM payment_events WHERE signature_verified = false`).
 		t.Fatalf("provider_event_id=%q", evID)
 	}
 
-	good := demoInbound(eventID, "payment.succeeded", payRef, intent.OutTradeNo, 990)
+	good := fakeInbound(eventID, "payment.succeeded", payRef, intent.OutTradeNo, 990)
 	ackGood, err := e.svc.HandleWebhook(ctx, code, good)
 	if err != nil {
 		t.Fatal(err)
@@ -229,8 +229,8 @@ FROM payment_events WHERE signature_verified = false`).
 func TestWebhookNotPayableQuarantines(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	code := "demo-np-" + uuid.New().String()[:8]
-	_ = e.mkDemoProvider(t, ctx, code)
+	code := "fake-np-" + uuid.New().String()[:8]
+	_ = e.mkFakeProvider(t, ctx, code)
 	orderID, orderNo := e.mkOrder(t, ctx, user)
 	e.settler.mu.Lock()
 	e.settler.notPayable[orderID] = NotPayable(CaseReleasedOrder, "cancelled")
@@ -239,7 +239,7 @@ func TestWebhookNotPayableQuarantines(t *testing.T) {
 
 	eventID := "evt-np-1"
 	payRef := "pay-np-1"
-	in := demoInbound(eventID, "payment.succeeded", payRef, intent.OutTradeNo, 990)
+	in := fakeInbound(eventID, "payment.succeeded", payRef, intent.OutTradeNo, 990)
 	ack, err := e.svc.HandleWebhook(ctx, code, in)
 	if err != nil {
 		t.Fatal(err)
@@ -377,8 +377,8 @@ func TestRecordOffline(t *testing.T) {
 func TestCreateIntentReuseAndRotate(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	code := "demo-reuse-" + uuid.New().String()[:8]
-	_ = e.mkDemoProvider(t, ctx, code)
+	code := "fake-reuse-" + uuid.New().String()[:8]
+	_ = e.mkFakeProvider(t, ctx, code)
 	orderID, orderNo := e.mkOrder(t, ctx, user)
 
 	in := CreateIntentInput{
@@ -439,8 +439,8 @@ func TestCreateIntentRejects(t *testing.T) {
 		Title: "测试", ClientIP: "203.0.113.3",
 	}
 
-	paused := "demo-pause-" + uuid.New().String()[:8]
-	pPaused := e.mkDemoProvider(t, ctx, paused)
+	paused := "fake-pause-" + uuid.New().String()[:8]
+	pPaused := e.mkFakeProvider(t, ctx, paused)
 	ok, err := e.svc.repo.UpdateProviderFields(ctx, pPaused.ID, map[string]any{"accepting_new": false})
 	if err != nil || !ok {
 		t.Fatal(err)
@@ -451,8 +451,8 @@ func TestCreateIntentRejects(t *testing.T) {
 		t.Fatalf("暂停收单: %v", err)
 	}
 
-	dis := "demo-dis-" + uuid.New().String()[:8]
-	pDis := e.mkDemoProvider(t, ctx, dis)
+	dis := "fake-dis-" + uuid.New().String()[:8]
+	pDis := e.mkFakeProvider(t, ctx, dis)
 	ok, err = e.svc.repo.UpdateProviderFields(ctx, pDis.ID, map[string]any{"enabled": false})
 	if err != nil || !ok {
 		t.Fatal(err)
@@ -463,8 +463,8 @@ func TestCreateIntentRejects(t *testing.T) {
 		t.Fatalf("停用: %v", err)
 	}
 
-	usdCode := "demo-usd-" + uuid.New().String()[:8]
-	_ = e.mkDemoProvider(t, ctx, usdCode)
+	usdCode := "fake-usd-" + uuid.New().String()[:8]
+	_ = e.mkFakeProvider(t, ctx, usdCode)
 	base.ProviderCode = usdCode
 	base.Currency = money.USD
 	_, err = e.svc.CreateIntent(ctx, base)
@@ -473,8 +473,8 @@ func TestCreateIntentRejects(t *testing.T) {
 	}
 
 	base.Currency = money.CNY
-	lapseCode := "demo-lapse-" + uuid.New().String()[:8]
-	_ = e.mkDemoProvider(t, ctx, lapseCode)
+	lapseCode := "fake-lapse-" + uuid.New().String()[:8]
+	_ = e.mkFakeProvider(t, ctx, lapseCode)
 	base.ProviderCode = lapseCode
 	past := time.Now().Add(-time.Minute)
 	base.ExpiresAt = &past

@@ -111,8 +111,8 @@ func TestResolveMethod(t *testing.T) {
 		}, "", "wxpay", false},
 		{"legacy default only", legacy, "alipay", "alipay", false},
 		{"legacy rejects other", legacy, "wxpay", "", true},
-		{"unconfigured empty", providerRecord{Adapter: AdapterDemo}, "", "", false},
-		{"unconfigured rejects named", providerRecord{Adapter: AdapterDemo}, "alipay", "", true},
+		{"unconfigured empty", providerRecord{Adapter: AdapterOffline}, "", "", false},
+		{"unconfigured rejects named", providerRecord{Adapter: AdapterOffline}, "alipay", "", true},
 		{"epay no methods", providerRecord{Adapter: AdapterEpay}, "", "", true},
 	}
 	for _, tc := range cases {

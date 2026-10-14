@@ -1,7 +1,6 @@
 package service
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,9 +15,6 @@ import (
 	"github.com/shopspring/decimal"
 
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
-	"github.com/aegispanel/aegis/internal/module/payment/provider"
-	"github.com/aegispanel/aegis/internal/module/payment/provider/demo"
-	"github.com/aegispanel/aegis/internal/pkg/crypto"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
 
@@ -40,23 +36,6 @@ func (h *spyHook) snapshot() []PaidOrder {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return append([]PaidOrder(nil), h.calls...)
-}
-
-// demoInboundFee 同 demoInbound，带渠道手续费（分）。
-func demoInboundFee(eventID, paymentRef, orderNo string, cents, feeCents int64) provider.Inbound {
-	body, _ := json.Marshal(map[string]any{
-		"event_id":   eventID,
-		"event_type": "payment.succeeded",
-		"payment_id": paymentRef,
-		"order_no":   orderNo,
-		"amount":     cents,
-		"currency":   "CNY",
-		"fee":        feeCents,
-		"method":     "alipay",
-	})
-	h := http.Header{}
-	h.Set("X-Aegis-Signature", demo.Sign([]byte(demoSecret), eventID, "payment.succeeded", paymentRef, orderNo, cents, feeCents, "CNY"))
-	return provider.Inbound{Method: http.MethodPost, Header: h, Body: body}
 }
 
 // lateCase 读订单的挂账案（没有时 kind 为空）。
@@ -85,13 +64,13 @@ func (e *env) platformBalance(t *testing.T, ctx context.Context, typ ledgersvc.A
 // 新购待付单（券 + 部分余额）→ 发起支付 → 回调：履约、order_paid 1 笔、库存转已售、冻结与券 captured。
 func TestWebhookSettlesNewOrder(t *testing.T) {
 	e, ctx := newEnv(t)
-	code := demoCode()
-	e.mkDemoProvider(t, ctx, code)
+	code := payCode()
+	e.mkPayProvider(t, ctx, code)
 	user, planID, orderID := e.pendingWithEverything(t, ctx)
 
 	ack := e.payAndNotify(t, ctx, user, orderID, code, "pay-"+randHex(8))
-	if ack.HTTPStatus != http.StatusOK {
-		t.Fatalf("回执 %d: %s", ack.HTTPStatus, ack.Body)
+	if !ackOK(ack) {
+		t.Fatalf("回执: %s", ack.Body)
 	}
 	o := e.order(t, ctx, orderID)
 	if o.Status != StatusFulfilled || o.SubscriptionID == nil {
@@ -129,8 +108,8 @@ func TestWebhookSettlesNewOrder(t *testing.T) {
 // 同一回调重放 10 次只记一笔账。
 func TestWebhookReplaySettlesOnce(t *testing.T) {
 	e, ctx := newEnv(t)
-	code := demoCode()
-	e.mkDemoProvider(t, ctx, code)
+	code := payCode()
+	e.mkPayProvider(t, ctx, code)
 	user := e.mkUser(t, ctx)
 	planID, _, priceID := e.mkPlan(t, ctx, 990, "month", nil, nil)
 	c := e.buyNew(t, ctx, user, planID, priceID, Checkout{})
@@ -138,11 +117,11 @@ func TestWebhookReplaySettlesOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	in := demoInbound("evt-replay", "payment.succeeded", "pay-replay", intent.OutTradeNo, 990)
+	in := epayInbound("pay-replay", intent.OutTradeNo, 990)
 	for i := 0; i < 10; i++ {
 		ack, err := e.payments.HandleWebhook(ctx, code, in)
-		if err != nil || ack.HTTPStatus != http.StatusOK {
-			t.Fatalf("第 %d 次回调 %d %v", i+1, ack.HTTPStatus, err)
+		if err != nil || !ackOK(ack) {
+			t.Fatalf("第 %d 次回调 %s %v", i+1, ack.Body, err)
 		}
 	}
 	if n := e.txnCount(t, ctx, ledgersvc.KindOrderPaid, c.OrderID); n != 1 {
@@ -162,8 +141,8 @@ func TestWebhookReplaySettlesOnce(t *testing.T) {
 // 续费单结算：订阅到期时间后移一期；订阅已停用时转挂账 ineligible_subscription，订单仍待付。
 func TestWebhookSettlesRenewal(t *testing.T) {
 	e, ctx := newEnv(t)
-	code := demoCode()
-	e.mkDemoProvider(t, ctx, code)
+	code := payCode()
+	e.mkPayProvider(t, ctx, code)
 	user := e.mkUser(t, ctx)
 	planID, versionID, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
 	sub := e.provision(t, ctx, user, planID, versionID, priceID, 1000)
@@ -172,8 +151,8 @@ func TestWebhookSettlesRenewal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ack := e.payAndNotify(t, ctx, user, c.OrderID, code, "pay-"+randHex(8)); ack.HTTPStatus != http.StatusOK {
-		t.Fatalf("回执 %d", ack.HTTPStatus)
+	if ack := e.payAndNotify(t, ctx, user, c.OrderID, code, "pay-"+randHex(8)); !ackOK(ack) {
+		t.Fatalf("回执: %s", ack.Body)
 	}
 	if st := e.order(t, ctx, c.OrderID).Status; st != StatusFulfilled {
 		t.Fatalf("续费单 %s", st)
@@ -196,9 +175,9 @@ func TestWebhookSettlesRenewal(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.mustExec(t, ctx, `UPDATE subscriptions SET status = 'expired', renewal_closed_at = now() WHERE id = ?`, sub.ID)
-	ack, err := e.payments.HandleWebhook(ctx, code, demoInbound("evt-"+randHex(8), "payment.succeeded", "pay-"+randHex(8), intent.OutTradeNo, 1000))
-	if err != nil || ack.HTTPStatus != http.StatusOK {
-		t.Fatalf("回调 %d %v", ack.HTTPStatus, err)
+	ack, err := e.payments.HandleWebhook(ctx, code, epayInbound("pay-"+randHex(8), intent.OutTradeNo, 1000))
+	if err != nil || !ackOK(ack) {
+		t.Fatalf("回调 %s %v", ack.Body, err)
 	}
 	kind, ostatus, amt := e.lateCase(t, ctx, c2.OrderID)
 	if kind != "ineligible_subscription" || ostatus != StatusPending {
@@ -217,8 +196,8 @@ func TestWebhookSettlesRenewal(t *testing.T) {
 // 订单取消后回调到账：挂账 released_order，订单仍 cancelled，没有开订阅。
 func TestWebhookAfterCancelGoesToSuspense(t *testing.T) {
 	e, ctx := newEnv(t)
-	code := demoCode()
-	e.mkDemoProvider(t, ctx, code)
+	code := payCode()
+	e.mkPayProvider(t, ctx, code)
 	user, _, orderID := e.pendingWithEverything(t, ctx)
 	intent, err := e.svc.Pay(asUser(ctx, user), PayInput{OrderID: orderID, Provider: code})
 	if err != nil {
@@ -227,9 +206,9 @@ func TestWebhookAfterCancelGoesToSuspense(t *testing.T) {
 	if _, err := e.svc.Cancel(asUser(ctx, user), CancelInput{OrderID: orderID}); err != nil {
 		t.Fatal(err)
 	}
-	ack, err := e.payments.HandleWebhook(ctx, code, demoInbound("evt-"+randHex(8), "payment.succeeded", "pay-"+randHex(8), intent.OutTradeNo, 1500))
-	if err != nil || ack.HTTPStatus != http.StatusOK {
-		t.Fatalf("回调 %d %v", ack.HTTPStatus, err)
+	ack, err := e.payments.HandleWebhook(ctx, code, epayInbound("pay-"+randHex(8), intent.OutTradeNo, 1500))
+	if err != nil || !ackOK(ack) {
+		t.Fatalf("回调 %s %v", ack.Body, err)
 	}
 	kind, ostatus, amt := e.lateCase(t, ctx, orderID)
 	if kind != "released_order" || ostatus != StatusCancelled {
@@ -249,8 +228,8 @@ func TestWebhookAfterCancelGoesToSuspense(t *testing.T) {
 // 已履约的单再来一笔不同的渠道收款：挂账 excess_capture。
 func TestWebhookExcessCapture(t *testing.T) {
 	e, ctx := newEnv(t)
-	code := demoCode()
-	e.mkDemoProvider(t, ctx, code)
+	code := payCode()
+	e.mkPayProvider(t, ctx, code)
 	user := e.mkUser(t, ctx)
 	planID, _, priceID := e.mkPlan(t, ctx, 1200, "month", nil, nil)
 	c := e.buyNew(t, ctx, user, planID, priceID, Checkout{})
@@ -259,9 +238,9 @@ func TestWebhookExcessCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i, ref := range []string{"pay-a-" + randHex(6), "pay-b-" + randHex(6)} {
-		ack, err := e.payments.HandleWebhook(ctx, code, demoInbound("evt-"+ref, "payment.succeeded", ref, intent.OutTradeNo, 1200))
-		if err != nil || ack.HTTPStatus != http.StatusOK {
-			t.Fatalf("第 %d 笔回调 %d %v", i+1, ack.HTTPStatus, err)
+		ack, err := e.payments.HandleWebhook(ctx, code, epayInbound(ref, intent.OutTradeNo, 1200))
+		if err != nil || !ackOK(ack) {
+			t.Fatalf("第 %d 笔回调 %s %v", i+1, ack.Body, err)
 		}
 	}
 	kind, ostatus, amt := e.lateCase(t, ctx, c.OrderID)
@@ -275,11 +254,11 @@ func TestWebhookExcessCapture(t *testing.T) {
 	e.assertNoDrift(t, ctx)
 }
 
-// 回调金额与应付不符：payment 回 409，订单仍待付、没有收款行。
+// 回调金额与应付不符：易支付回 fail，订单仍待付、没有收款行。
 func TestWebhookAmountMismatchRejected(t *testing.T) {
 	e, ctx := newEnv(t)
-	code := demoCode()
-	e.mkDemoProvider(t, ctx, code)
+	code := payCode()
+	e.mkPayProvider(t, ctx, code)
 	user := e.mkUser(t, ctx)
 	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
 	c := e.buyNew(t, ctx, user, planID, priceID, Checkout{})
@@ -287,12 +266,12 @@ func TestWebhookAmountMismatchRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ack, err := e.payments.HandleWebhook(ctx, code, demoInbound("evt-"+randHex(8), "payment.succeeded", "pay-"+randHex(8), intent.OutTradeNo, 999))
+	ack, err := e.payments.HandleWebhook(ctx, code, epayInbound("pay-"+randHex(8), intent.OutTradeNo, 999))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ack.HTTPStatus != http.StatusConflict {
-		t.Fatalf("金额不符应 409，得到 %d: %s", ack.HTTPStatus, ack.Body)
+	if ackOK(ack) {
+		t.Fatalf("金额不符应回 fail，得到 %s", ack.Body)
 	}
 	if st := e.order(t, ctx, c.OrderID).Status; st != StatusPending {
 		t.Fatalf("订单 %s", st)
@@ -302,11 +281,11 @@ func TestWebhookAmountMismatchRejected(t *testing.T) {
 	}
 }
 
-// 充值单结算：用户余额 + 金额，渠道净收款与手续费分别入科目，没有 order_paid。
+// 充值单结算：用户余额 + 金额，渠道收款入科目（易支付不报手续费，手续费科目为 0），没有 order_paid。
 func TestWebhookSettlesTopup(t *testing.T) {
 	e, ctx := newEnv(t)
-	code := demoCode()
-	e.mkDemoProvider(t, ctx, code)
+	code := payCode()
+	e.mkPayProvider(t, ctx, code)
 	user := e.mkUser(t, ctx)
 	hook := &spyHook{}
 	e.svc.UsePaidHook(hook)
@@ -319,16 +298,18 @@ func TestWebhookSettlesTopup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ack, err := e.payments.HandleWebhook(ctx, code, demoInboundFee("evt-"+randHex(8), "pay-"+randHex(8), intent.OutTradeNo, 10000, 60))
-	if err != nil || ack.HTTPStatus != http.StatusOK {
-		t.Fatalf("回调 %d %v", ack.HTTPStatus, err)
+	ack, err := e.payments.HandleWebhook(ctx, code, epayInbound("pay-"+randHex(8), intent.OutTradeNo, 10000))
+	if err != nil || !ackOK(ack) {
+		t.Fatalf("回调 %s %v", ack.Body, err)
 	}
 	if st := e.order(t, ctx, c.OrderID).Status; st != StatusFulfilled {
 		t.Fatalf("充值单 %s", st)
 	}
 	mustEq(t, "用户余额", e.balanceOf(t, ctx, user), dec("100"))
-	mustEq(t, "渠道净收款", e.platformBalance(t, ctx, ledgersvc.ChannelCash, code), dec("99.40"))
-	mustEq(t, "手续费", e.platformBalance(t, ctx, ledgersvc.PlatformFeeExpense, code), dec("0.60"))
+	mustEq(t, "渠道净收款", e.platformBalance(t, ctx, ledgersvc.ChannelCash, code), dec("100"))
+	if !e.platformBalance(t, ctx, ledgersvc.PlatformFeeExpense, code).IsZero() {
+		t.Fatalf("手续费应为 0，得到 %s", e.platformBalance(t, ctx, ledgersvc.PlatformFeeExpense, code))
+	}
 	if n := e.txnCount(t, ctx, ledgersvc.KindBalanceTopup, c.OrderID); n != 1 {
 		t.Fatalf("balance_topup %d 笔", n)
 	}
@@ -344,8 +325,8 @@ func TestWebhookSettlesTopup(t *testing.T) {
 // 流量包单结算：traffic_pack_grants 挂在目标订阅上。
 func TestWebhookSettlesPack(t *testing.T) {
 	e, ctx := newEnv(t)
-	code := demoCode()
-	e.mkDemoProvider(t, ctx, code)
+	code := payCode()
+	e.mkPayProvider(t, ctx, code)
 	user := e.mkUser(t, ctx)
 	planID, versionID, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
 	sub := e.provision(t, ctx, user, planID, versionID, priceID, 1000)
@@ -354,8 +335,8 @@ func TestWebhookSettlesPack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ack := e.payAndNotify(t, ctx, user, c.OrderID, code, "pay-"+randHex(8)); ack.HTTPStatus != http.StatusOK {
-		t.Fatalf("回执 %d", ack.HTTPStatus)
+	if ack := e.payAndNotify(t, ctx, user, c.OrderID, code, "pay-"+randHex(8)); !ackOK(ack) {
+		t.Fatalf("回执: %s", ack.Body)
 	}
 	if n := e.count(t, ctx, `SELECT count(*) FROM traffic_pack_grants WHERE source = 'order' AND source_id = ? AND subscription_id = ? AND granted_bytes = ?`,
 		c.OrderID, sub.ID, 20*gib); n != 1 {
@@ -437,14 +418,14 @@ func TestQueryOwnership(t *testing.T) {
 // PaidHook：渠道结算调用 1 次（Total 含余额、Paid 是渠道实收）；零应付单不调用。
 func TestPaidHookCalls(t *testing.T) {
 	e, ctx := newEnv(t)
-	code := demoCode()
-	e.mkDemoProvider(t, ctx, code)
+	code := payCode()
+	e.mkPayProvider(t, ctx, code)
 	hook := &spyHook{}
 	e.svc.UsePaidHook(hook)
 	user, _, orderID := e.pendingWithEverything(t, ctx)
 
-	if ack := e.payAndNotify(t, ctx, user, orderID, code, "pay-"+randHex(8)); ack.HTTPStatus != http.StatusOK {
-		t.Fatalf("回执 %d", ack.HTTPStatus)
+	if ack := e.payAndNotify(t, ctx, user, orderID, code, "pay-"+randHex(8)); !ackOK(ack) {
+		t.Fatalf("回执: %s", ack.Body)
 	}
 	calls := hook.snapshot()
 	if len(calls) != 1 {
@@ -471,8 +452,8 @@ func TestPaidHookCalls(t *testing.T) {
 // PaidHook 返回错误时整笔结算回滚（真提交，看 payment 的事务真的没落库），之后重发回调能正常结算。
 func TestPaidHookErrorRollsBack(t *testing.T) {
 	e, ctx := newCommitEnv(t)
-	code := demoCode()
-	e.mkDemoProvider(t, ctx, code)
+	code := payCode()
+	e.mkPayProvider(t, ctx, code)
 	hook := &spyHook{fail: errors.New("佣金写入失败")}
 	e.svc.UsePaidHook(hook)
 	user := e.mkUser(t, ctx)
@@ -482,10 +463,10 @@ func TestPaidHookErrorRollsBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	in := demoInbound("evt-hook-"+randHex(6), "payment.succeeded", "pay-hook-"+randHex(6), intent.OutTradeNo, 1000)
+	in := epayInbound("pay-hook-"+randHex(6), intent.OutTradeNo, 1000)
 	ack, err := e.payments.HandleWebhook(ctx, code, in)
-	if err == nil && ack.HTTPStatus == http.StatusOK {
-		t.Fatal("hook 失败时回执不应是 200")
+	if err == nil && ackOK(ack) {
+		t.Fatal("hook 失败时回执不应是 success")
 	}
 	if st := e.order(t, ctx, c.OrderID).Status; st != StatusPending {
 		t.Fatalf("订单应仍待付，得到 %s", st)
@@ -501,36 +482,13 @@ func TestPaidHookErrorRollsBack(t *testing.T) {
 	hook.fail = nil
 	hook.mu.Unlock()
 	ack, err = e.payments.HandleWebhook(ctx, code, in)
-	if err != nil || ack.HTTPStatus != http.StatusOK {
-		t.Fatalf("重发回调 %d %v", ack.HTTPStatus, err)
+	if err != nil || !ackOK(ack) {
+		t.Fatalf("重发回调 %s %v", ack.Body, err)
 	}
 	if st := e.order(t, ctx, c.OrderID).Status; st != StatusFulfilled {
 		t.Fatalf("重发后订单 %s", st)
 	}
 	e.assertNoDrift(t, ctx)
-}
-
-// mkEpayProvider 用 SQL 插一条指向本地假易支付的 epay 渠道（允许内网地址，只在测试里），查单会打到 baseURL。
-func (e *env) mkEpayProvider(t *testing.T, ctx context.Context, code, baseURL string) {
-	t.Helper()
-	sealer, err := crypto.NewSealer(bytes.Repeat([]byte{7}, 32), 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	id := uuid.Must(uuid.NewV7())
-	plain, err := json.Marshal(map[string]string{"merchant_id": "1001", "key": "epay-test-key"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	sealed, err := sealer.Seal(plain, []byte("payment_provider:"+id.String()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	e.mustExec(t, ctx, `
-INSERT INTO payment_providers (id, code, adapter, display_name, credentials_sealed, currencies, base_url, methods, default_method,
-                               allow_private_host, min_amount, enabled, accepting_new)
-VALUES (?, ?, 'epay', '易支付测试', ?, '["CNY"]'::jsonb, ?, '["alipay"]'::jsonb, 'alipay', true, 0.01, true, true)`,
-		id, code, sealed, baseURL)
 }
 
 // 门户「我已支付，刷新状态」：渠道（假易支付）查到已付时补记入账，订单履约，Reconciled = true；再查一次是 AlreadyRecorded。

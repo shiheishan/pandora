@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"sync"
 	"testing"
 
@@ -21,8 +20,8 @@ import (
 // 再对这 5 单并发地取消 2 单、回调结算 3 单：库存、券计数、冻结与账务全部守恒。
 func TestConcurrentPurchaseThenCancelOrSettle(t *testing.T) {
 	e, ctx := newCommitEnv(t)
-	code := demoCode()
-	e.mkDemoProvider(t, ctx, code)
+	code := payCode()
+	e.mkPayProvider(t, ctx, code)
 	planID, _, priceID := e.mkPlan(t, ctx, 3000, "month", intp(5), nil)
 	cc := couponCode()
 	couponID := e.mkCoupon(t, ctx, cc, 500)
@@ -100,9 +99,9 @@ func TestConcurrentPurchaseThenCancelOrSettle(t *testing.T) {
 				return
 			}
 			ref := fmt.Sprintf("pay-c-%d-%s", i, randHex(6))
-			ack, err := e.payments.HandleWebhook(ctx, code, demoInbound("evt-"+ref, "payment.succeeded", ref, outTradeNos[i], 2000))
-			if err == nil && ack.HTTPStatus != http.StatusOK {
-				err = fmt.Errorf("回执 %d: %s", ack.HTTPStatus, ack.Body)
+			ack, err := e.payments.HandleWebhook(ctx, code, epayInbound(ref, outTradeNos[i], 2000))
+			if err == nil && !ackOK(ack) {
+				err = fmt.Errorf("回执: %s", ack.Body)
 			}
 			errsOut[i] = err
 		}(i, r)
@@ -150,8 +149,8 @@ func TestConcurrentPurchaseThenCancelOrSettle(t *testing.T) {
 // 要么 fulfilled 且取消全部回 ErrAlreadyPaid；收款只有一行，资源守恒。
 func TestConcurrentCancelVersusWebhook(t *testing.T) {
 	e, ctx := newCommitEnv(t)
-	code := demoCode()
-	e.mkDemoProvider(t, ctx, code)
+	code := payCode()
+	e.mkPayProvider(t, ctx, code)
 	user := e.mkUser(t, ctx)
 	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month", intp(3), intp(1))
 	c := e.buyNew(t, ctx, user, planID, priceID, Checkout{})
@@ -159,7 +158,7 @@ func TestConcurrentCancelVersusWebhook(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	in := demoInbound("evt-race-"+randHex(6), "payment.succeeded", "pay-race-"+randHex(6), intent.OutTradeNo, 1000)
+	in := epayInbound("pay-race-"+randHex(6), intent.OutTradeNo, 1000)
 
 	const n = 10
 	cancelErrs := make([]error, n)
@@ -177,8 +176,8 @@ func TestConcurrentCancelVersusWebhook(t *testing.T) {
 			defer wg.Done()
 			<-start
 			ack, err := e.payments.HandleWebhook(ctx, code, in)
-			if err == nil && ack.HTTPStatus != http.StatusOK {
-				err = fmt.Errorf("回执 %d: %s", ack.HTTPStatus, ack.Body)
+			if err == nil && !ackOK(ack) {
+				err = fmt.Errorf("回执: %s", ack.Body)
 			}
 			hookErrs[i] = err
 		}(i)
@@ -274,8 +273,8 @@ func TestConcurrentRenewalsOneWins(t *testing.T) {
 // 结算若先锁平台收入科目再锁套餐 / 券，就会与零元建单（先套餐 / 券、后平台收入）成环（40P01）。断言每轮两边都成功、库存与券计数守恒。
 func TestConcurrentZeroPayVersusWebhookNoDeadlock(t *testing.T) {
 	e, ctx := newCommitEnv(t)
-	code := demoCode()
-	e.mkDemoProvider(t, ctx, code)
+	code := payCode()
+	e.mkPayProvider(t, ctx, code)
 	planID, _, priceID := e.mkPlan(t, ctx, 2000, "month", intp(100), nil)
 	cc := couponCode()
 	couponID := e.mkCoupon(t, ctx, cc, 500)
@@ -314,9 +313,9 @@ func TestConcurrentZeroPayVersusWebhookNoDeadlock(t *testing.T) {
 			defer wg.Done()
 			<-start
 			ref := fmt.Sprintf("pay-dl-%d-%s", round, randHex(6))
-			ack, err := e.payments.HandleWebhook(ctx, code, demoInbound("evt-"+ref, "payment.succeeded", ref, intent.OutTradeNo, cents))
-			if err == nil && ack.HTTPStatus != http.StatusOK {
-				err = fmt.Errorf("回执 %d: %s", ack.HTTPStatus, ack.Body)
+			ack, err := e.payments.HandleWebhook(ctx, code, epayInbound(ref, intent.OutTradeNo, cents))
+			if err == nil && !ackOK(ack) {
+				err = fmt.Errorf("回执: %s", ack.Body)
 			}
 			errB = err
 		}()

@@ -307,7 +307,6 @@ describe('late payments, providers and adjustments', () => {
     expect(effectiveMethods(provider({ methods: [], default_method: '' }))).toEqual([])
     expect(isEditableProvider(provider({}))).toBe(true)
     expect(isEditableProvider(provider({ code: 'offline', adapter: 'offline' }))).toBe(false)
-    expect(isEditableProvider(provider({ code: 'demo', adapter: 'demo_hmac' }))).toBe(false)
     const legacy = providerFormFrom(provider({ methods: [], default_method: 'wxpay', submit_path: '', base_url: 'https://pay.example.com' }))
     expect(legacy).toMatchObject({ methods: ['wxpay'], default_method: 'wxpay', submit_path: '/submit.php', merchant_id: '', key: '' })
   })

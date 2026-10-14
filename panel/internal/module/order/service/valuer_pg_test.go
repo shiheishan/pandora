@@ -29,8 +29,8 @@ func TestRemainingValueAndPaidHistory(t *testing.T) {
 	if paid, err := e.svc.HasPaidOrder(ctx, user); err != nil || paid {
 		t.Fatalf("待支付不算付过费: %v %v", paid, err)
 	}
-	code := demoCode()
-	e.mkDemoProvider(t, ctx, code)
+	code := payCode()
+	e.mkPayProvider(t, ctx, code)
 	e.payAndNotify(t, ctx, user, c.OrderID, code, "pay-"+randHex(8))
 	if paid, err := e.svc.HasPaidOrder(ctx, user); err != nil || !paid {
 		t.Fatalf("渠道付过款应算付过费: %v %v", paid, err)

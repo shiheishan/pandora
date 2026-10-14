@@ -449,13 +449,12 @@ func (s *Service) markIntentSucceeded(ctx context.Context, intent model.Intent) 
 	return nil
 }
 
-// unverifiedEvidenceKeys 是验签失败时留证的字段（易支付与 demo 的关键字段），其余一律丢弃。
+// unverifiedEvidenceKeys 是验签失败时留证的字段（易支付通知的关键字段），其余一律丢弃。
 var unverifiedEvidenceKeys = []string{
 	"out_trade_no", "trade_no", "money", "trade_status", "pid", "type",
-	"event_id", "event_type", "payment_id", "order_no", "amount", "currency",
 }
 
-// unverifiedEvidenceValueMax 是验签失败时每个留证字段的上限（字节）；12 个字段加上解析出的 3 个，总量在 2 KiB 以内。
+// unverifiedEvidenceValueMax 是验签失败时每个留证字段的上限（字节）；6 个字段加上解析出的 3 个，总量在 2 KiB 以内。
 const unverifiedEvidenceValueMax = 64
 
 // unverifiedEvidence 只留白名单字段、每个截到 64 字节：回调是匿名接口，伪造报文不能把任意大小的内容写进禁删的表。

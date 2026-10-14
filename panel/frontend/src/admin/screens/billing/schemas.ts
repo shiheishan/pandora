@@ -295,7 +295,7 @@ const providerSchema = z.object({
   methods: z.array(z.string()),
   default_method: z.string(),
   allow_private_host: z.boolean(),
-  // 最低付款额（分，渠道 config 的 min_amount）：低于它的在线支付不发起；demo / offline 没有这个概念，回 0
+  // 最低付款额（分，渠道 config 的 min_amount）：低于它的在线支付不发起；线下渠道没有这个概念，回 0
   min_amount: count,
   today: byCurrency,
   success_rate_24h: z.number().min(0).max(1).nullable(),
