@@ -104,6 +104,7 @@ type store interface {
 	PurgeDeliveries(ctx context.Context, before time.Time, batch int) (int, error)
 
 	p6Store
+	xbStore
 }
 
 var _ store = (*repo.Repo)(nil)
@@ -128,6 +129,13 @@ type Service struct {
 	orders        Orders
 	tg            telegramAPI
 	publicBaseURL string
+
+	// xb-tg 的端口（ports_xb.go 的 Use* 方法）
+	summaries SubscriptionSummaries
+	links     SubscribeLinks
+	balances  Balances
+	admins    Admins
+	replier   TicketReplier
 
 	// rt 实时推送（realtime.go 的 UseRealtime）；nil 时不推
 	rt *realtime.Publisher

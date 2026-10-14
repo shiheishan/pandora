@@ -100,7 +100,7 @@ func (s *Service) MissingPorts() []string {
 	if s.rt == nil {
 		out = append(out, "Realtime")
 	}
-	return out
+	return append(out, s.missingXBPorts()...)
 }
 
 // telegramReady 读 Telegram 设置并判断能否发送：已启用、有 Bot 用户名、Token 解得开。

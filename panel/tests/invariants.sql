@@ -8,7 +8,8 @@
 -- 覆盖的验收项：PAY-005 复式记账、DATA-003 追加写、SUB-004 订阅状态（只剩 active / expired）、
 --   NODE-010（改成 nodes_active_shape：在役节点必须挂服务器、协议配好）、NODE-011 同机端口兜底（tcp / udp / tcp+udp）、SUB-002 版本与价格冻结、
 --   PAY-001 订单金额恒等式与人工单理由、MKT-003 邀请关系、PAY-003 幂等唯一键、MKT-001 优惠券容量、
---   NFR-008 降级开关、OPS-005 事务类通知、OPS-001 内部备注、USE-002（改成 node_traffic_reports 唯一键）。
+--   NFR-008 降级开关、OPS-005 事务类通知、OPS-001 内部备注、USE-002（改成 node_traffic_reports 唯一键）、
+--   XB-TG Telegram 工单提醒映射与自动关闭原因。
 --
 -- 不覆盖的验收项及原因（没有对应的表或机制）：
 --   SEC-013 双人审批 — 没有审批表：后台权限只分有和没有。
@@ -654,6 +655,35 @@ $sql$);
 SELECT _reject('USE-002', '流量上报不可改', $sql$
   UPDATE node_traffic_reports SET upload_bytes = 1
    WHERE server_id = '00000000-0000-7000-8000-000000000811' AND report_id = 'inv-report-1';
+$sql$);
+
+--------------------------------------------------------------------------------
+-- XB-TG Telegram 工单提醒映射与自动关闭原因（00044_xb_tg.sql）
+--------------------------------------------------------------------------------
+
+SELECT _accept('XB-TG', '工单提醒映射写入应当通过', $sql$
+  INSERT INTO telegram_ticket_messages (chat_id, message_id, ticket_id)
+  VALUES (-1000000000001, 42, '00000000-0000-7000-8000-000000000d01');
+$sql$);
+
+-- 主键 (chat_id, message_id)：同一条群消息只能对应一张工单
+SELECT _reject('XB-TG', '同一条提醒消息重复映射必须拒绝', $sql$
+  INSERT INTO telegram_ticket_messages (chat_id, message_id, ticket_id)
+  VALUES (-1000000000001, 42, '00000000-0000-7000-8000-000000000d01');
+$sql$);
+
+SELECT _reject('XB-TG', '提醒消息 id 必须为正', $sql$
+  INSERT INTO telegram_ticket_messages (chat_id, message_id, ticket_id)
+  VALUES (-1000000000001, 0, '00000000-0000-7000-8000-000000000d01');
+$sql$);
+
+SELECT _accept('XB-TG', '自动关闭原因应当通过', $sql$
+  UPDATE tickets SET status = 'closed', closed_at = now(), closed_reason = 'auto_closed', closed_note = NULL
+   WHERE id = '00000000-0000-7000-8000-000000000d01';
+$sql$);
+
+SELECT _reject('XB-TG', '未知的关闭原因必须拒绝', $sql$
+  UPDATE tickets SET closed_reason = 'timeout' WHERE id = '00000000-0000-7000-8000-000000000d01';
 $sql$);
 
 --------------------------------------------------------------------------------
