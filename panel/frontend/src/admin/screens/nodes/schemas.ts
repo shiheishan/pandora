@@ -50,7 +50,7 @@ export const nodeRowSchema = z.object({
   mem_percent: z.number().nullable(),
   metrics_at: iso.nullable(),
   granted_plans: strs,
-  // 下发与运行的真实状态（nodefabric.NodeRuntimeView，w4deliver）。后端总是给；开发期假后端
+  // 下发与运行的真实状态（读模型在 node/service 的 node_list_delivery.go）。后端总是给；开发期假后端
   // 还没跟上时按「没有这项信息」处理，不让整张列表解析失败
   effective_state: z.enum(['', 'applied', 'pending', 'failed']).catch(''),
   last_apply_failure: z
@@ -67,7 +67,7 @@ export const nodesResponse = z.object({ nodes: list(nodeRowSchema), total: z.num
 export type NodeRow = z.output<typeof nodeRowSchema>
 
 /**
- * 单取（?id=）才带的编辑字段（nodefabric.AdminNodeDetail）：列表不带，1000 个节点每次刷新省掉
+ * 单取（?id=）才带的编辑字段（node/handler 的 nodeDetailResponse）：列表不带，1000 个节点每次刷新省掉
  * 全部 protocol_config。protocol_config 已由后端抹掉敏感键
  */
 export const nodeDetailSchema = nodeRowSchema.extend({
@@ -75,7 +75,7 @@ export const nodeDetailSchema = nodeRowSchema.extend({
   protocol_config: z.record(z.string(), z.unknown()).nullable().transform((v) => v ?? {}),
   protocol_schema_version: z.number(),
   config_validated_at: iso.nullable(),
-  // 存量协议配置不满足现行规则的提示（nodefabric.ProtocolConfigWarnings）；Go 是 omitempty
+  // 存量协议配置不满足现行规则的提示（node/service 的 AdminNode.Warnings）；Go 是 omitempty
   warnings: z.array(z.string()).min(1).optional(),
 })
 export const nodeDetailResponse = z.object({ nodes: list(nodeDetailSchema), total: z.number() })
@@ -128,7 +128,7 @@ export const protocolSchemasResponse = z.object({ schemas: list(protocolSchemaSc
 export type ProtocolSchema = z.output<typeof protocolSchemaSchema>
 
 // ---------------------------------------------------------------------------
-// 服务器（GET v1/servers 与 /servers/{id}，nodefabric.Server）：指针字段全是 null 而不是缺键
+// 服务器（GET v1/servers 与 /servers/{id}，node/handler 的 serverResponse）：指针字段全是 null 而不是缺键
 // ---------------------------------------------------------------------------
 // 库里只有这五态（00018_node.sql）
 const SERVER_STATUSES = ['draft', 'ready', 'draining', 'maintenance', 'retired'] as const

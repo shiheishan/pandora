@@ -111,7 +111,7 @@ const NO_POOL_NOTE = '未划入节点池，不服务任何用户'
 // 服务器状态机里能进 ready 的状态（已 ready 的不动）
 const SERVER_TO_READY = ['draft', 'draining', 'maintenance']
 
-/** nodefabric.activationWarnings：上线成功但不会服务任何人的提示（与 delivery_note 同口径，R105 / R113） */
+/** 上线成功但不会服务任何人的提示（与 delivery_note 同口径，R105 / R113；见 node/service 的 nodeNoPoolWarning） */
 function activationWarnings(n: Node): string[] {
   if (n.pool_id === null) return [NO_POOL_NOTE]
   return pools.find((p) => p.id === n.pool_id)?.plans.length ? [] : ['所在节点池没有绑定任何套餐，暂时不服务任何用户']
@@ -198,7 +198,7 @@ function listRow(n: Node) {
   }
 }
 
-/** GET v1/nodes?id= 的一行：列表行加上编辑表单才用的字段（nodefabric.AdminNodeDetail） */
+/** GET v1/nodes?id= 的一行：列表行加上编辑表单才用的字段（对应 node/handler 的 nodeDetailResponse） */
 function detailRow(n: Node) {
   return {
     ...listRow(n),
@@ -209,7 +209,7 @@ function detailRow(n: Node) {
   }
 }
 
-/** nodefabric.AdminNodeStates 与 adminNodeFilterSQL：后台列表的状态筛选（「离线」= 在役且心跳超过 90 秒） */
+/** node/repo 的 nodeListFilterSQL：后台列表的状态筛选（「离线」= 在役且心跳超过 90 秒） */
 const NODE_STATES = ['all', 'online', 'offline', 'disabled', 'retired']
 function matchesState(n: Node, state: string): boolean {
   const stale = !n.last_heartbeat_at || Date.now() - new Date(n.last_heartbeat_at).getTime() > 90_000
@@ -236,7 +236,7 @@ function matchesSearch(n: Node, q: string): boolean {
   return hay.includes(q.toLowerCase())
 }
 
-/** nodefabric.RedactProtocolConfig：按名字在任意深度删掉敏感键 */
+/** 按名字在任意深度删掉敏感键（node/protocol 的 Redact 与 sensitiveProtocolKey） */
 // R107：mask_password（mKCP）也在抹敏名单里
 const SENSITIVE = new Set(['password', 'passwd', 'secret', 'token', 'private_key', 'private-key', 'psk', 'obfs_password', 'obfs-password', 'mask_password'])
 // R107：跟着开关走的密钥——请求里带了开关键且值没变时才从库里补回（关掉掩码、去掉开关、切出 mKCP 都不补）
@@ -343,7 +343,7 @@ export const nodes: MockModule = {
       ctx.send(200, NODE_PROTOCOL_SCHEMAS)
     },
     'GET /v1/nodes': (ctx) => {
-      // nodefabric.validateAdminNodeQuery：不认得的状态、过长的搜索词、不是 UUID 的 id 回 422
+      // 节点列表查询校验：不认得的状态、过长的搜索词、不是 UUID 的 id 回 422
       const state = ctx.query.get('state') ?? ''
       const q = (ctx.query.get('q') ?? '').trim()
       const id = (ctx.query.get('id') ?? '').trim()
@@ -407,7 +407,7 @@ export const nodes: MockModule = {
       const config = body.protocol_config === undefined ? n.protocol_config : nodeType === n.node_type ? restoreSecrets(n.protocol_config, body.protocol_config) : body.protocol_config
       const touched = ['node_type', 'server_host', 'server_port', 'protocol_config'].some((k) => body[k] !== undefined)
       const fields = { ...basicErrors(body, false), ...(touched ? validateProtocol(nodeType, config) : {}) }
-      // nodefabric.PatchAdminNode：在役节点不许清空池（无池节点不服务任何用户），草稿等仍可无池
+      // node/service 的 PatchNode：在役节点不许清空池（无池节点不服务任何用户），草稿等仍可无池
       if (body.pool_id !== undefined && !text(body.pool_id) && n.serving_status === 'active') fields.pool_id = '在役节点必须属于一个节点池；不选池则不服务任何用户，先停用节点再移出'
       if (Object.keys(fields).length) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', fields)
       if (body.name !== undefined && store.some((x) => x !== n && x.name === text(body.name).trim())) return ctx.fail(409, 'conflict', '节点名称已存在')
@@ -540,7 +540,7 @@ export const nodes: MockModule = {
       n.name = `${n.name}#deleted-${Date.now()}`
       ctx.send(200, { deleted: true })
     },
-    // R108 / R113：一步上线，照 nodefabric.ActivateNode：幂等 node_activate、无 reauth；
+    // R108 / R113：一步上线，照 node/service 的 ActivateNode：幂等 node_activate、无 reauth；
     // 判断顺序同 Go——版本号非法 422、节点不存在 404、已是 active 回 200 不改动（先于版本号）、版本冲突 409、
     // retired 409、协议就绪、未绑服务器、服务器不存在、节点身份、服务器状态；服务器跟着进 ready；warnings 没有提示时不出现
     'POST /v1/nodes/:id/activate': async (ctx) => {

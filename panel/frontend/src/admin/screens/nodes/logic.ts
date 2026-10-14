@@ -31,7 +31,7 @@ export function nodeState(n: Pick<NodeRow, 'serving_status' | 'stale'>): NodeSta
 
 /**
  * 前端筛选与搜索：节点总数不超过一页（1000）时在本地做；超过时同一组条件交给服务端
- * （GET v1/nodes 的 state 与 q，nodefabric.adminNodeFilterSQL 与这里同一映射、同一组字段）。
+ * （GET v1/nodes 的 state 与 q，node/repo 的 nodeListFilterSQL 与这里同一映射、同一组字段）。
  * 「全部」不含已退役；搜名称、展示名、服务器、国家、协议、地址、编号
  */
 export function filterNodes(rows: readonly NodeRow[], filter: NodeFilter, query: string): NodeRow[] {
@@ -113,7 +113,7 @@ export const canActivate = (n: Pick<NodeRow, 'serving_status'>) => n.serving_sta
 
 /**
  * R113 上线响应的 warnings → 带下一步的提示（Toast 用普通语气，不是错误）。首次搭建时池还没绑套餐是正常流程：
- * 先上线节点，再去套餐页发布绑了这个池的版本。只认 nodefabric.activationWarnings 的两条原文，其余原样接在后面
+ * 先上线节点，再去套餐页发布绑了这个池的版本。只认 node/service 上线（nodeNoPoolWarning）与未绑套餐的两条提示原文，其余原样接在后面
  */
 export function activationHint(warning: string): string {
   if (warning === '所在节点池没有绑定任何套餐，暂时不服务任何用户') return '已上线。所在节点池还没绑定套餐，暂时不服务用户——下一步到「套餐」页，在套餐版本里选上这个节点池并发布。'
@@ -192,7 +192,7 @@ export interface ProtocolField {
 
 export const isStable = (s: ProtocolSchema) => s.status === 'stable'
 
-/** 读接口按名字在任意深度抹掉的键（nodefabric.sensitiveProtocolKey，R107 补了 mask_password）：这些字段永远读不回来，只能写 */
+/** 读接口按名字在任意深度抹掉的键（node/protocol 的 sensitiveProtocolKey，R107 补了 mask_password）：这些字段永远读不回来，只能写 */
 const REDACTED_KEYS = new Set(['password', 'passwd', 'secret', 'token', 'private_key', 'private-key', 'psk', 'obfs_password', 'obfs-password', 'mask_password'])
 
 /** 敏感判断按整条路径或叶子名：schema 给的是 private_key，字段路径是 reality_settings.private_key */
@@ -596,7 +596,7 @@ export interface GroupForm {
 
 export const groupFormFrom = (g?: { name: string; description: string; sort_order: number }): GroupForm => ({ name: g?.name ?? '', description: g?.description ?? '', sortOrder: String(g?.sort_order ?? 0) })
 
-/** 与 nodefabric.normalizeRouteGroupFields 同口径：名称去空白后 1–64 字、说明 ≤ 500 字、排序为 ±1000000 内的整数 */
+/** 与 node/service 的 normalizeRouteGroupFields 同口径：名称去空白后 1–64 字、说明 ≤ 500 字、排序为 ±1000000 内的整数 */
 export function groupFormErrors(f: GroupForm): Record<string, string> {
   const errors: Record<string, string> = {}
   const n = [...f.name.trim()].length
