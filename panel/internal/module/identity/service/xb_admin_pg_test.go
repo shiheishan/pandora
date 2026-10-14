@@ -203,7 +203,7 @@ func TestPGAdminSetNote(t *testing.T) {
 		t.Fatal(err)
 	}
 	var dataText string
-	if err := e.row(ctx, `SELECT data::text FROM audit_events WHERE action = ? AND resource_id = ? ORDER BY created_at DESC LIMIT 1`,
+	if err := e.row(ctx, `SELECT data::text FROM audit_events WHERE action = ? AND resource_id = ? ORDER BY occurred_at DESC, id DESC LIMIT 1`,
 		ActionNoteChanged, u.ID).Scan(&dataText); err != nil {
 		t.Fatal(err)
 	}

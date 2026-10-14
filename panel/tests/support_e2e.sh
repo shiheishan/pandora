@@ -43,6 +43,9 @@ json(){ curl -s -H 'Content-Type: application/json' "$@"; }
 DB_NAME=$("$PSQL" -X -qAtc 'SELECT current_database()' | tr -d '[:space:]')
 [[ "$DB_NAME" =~ (^|[-_])(test|e2e)([-_]|$) ]] \
   || { echo '[FATAL] database name must contain a standalone test/e2e segment' >&2; exit 1; }
+# 注册 IP 限额是后台设置（缺省每 IP 每分钟 10 次），连着注册会撞 429：一次性库上先关掉（见 lib/signup.sh）
+. "$(dirname "$0")/lib/signup.sh"
+relax_signup_ip_limit
 
 STAMP="$(date +%s)$RANDOM"
 SECRET="内部备注禁止外泄标记$STAMP"

@@ -296,6 +296,9 @@ sec "0. 一次性库守卫"
 [ -n "$NODESIM" ] && [ -x "$NODESIM" ] || die "NODESIM must point to an executable nodesim binary"
 DB_NAME=$(db "SELECT current_database()")
 [[ "$DB_NAME" =~ (^|[-_])(test|e2e)([-_]|$) ]] || die "database name is not recognizably disposable" "$DB_NAME"
+# 注册 IP 限额是后台设置（缺省每 IP 每分钟 10 次），连着注册会撞 429：一次性库上先关掉（见 lib/signup.sh）
+. "$(dirname "$0")/lib/signup.sh"
+relax_signup_ip_limit
 
 TMP=$(mktemp -d)
 trap cleanup EXIT
