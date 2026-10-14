@@ -6,7 +6,7 @@
 #      node/service：用真实的 buildNodeConfigDoc 生成下发给节点的配置文档
 #   2. sing-box 离线校验（box.New + Start）
 #   3. Clash YAML、URI 静态检查
-#   4. 起本地 pdnd NativeCore，用订阅里的 sing-box 出站真连一次
+#   4. 起本地 pdnd NativeCore，用订阅里的 sing-box 出站真连一次；设了 MIHOMO_BIN 时再用官方 mihomo 按 Clash 订阅真连一次
 #   5. 拼矩阵（scripts/matrix.py），有 FAIL 退出码为 1
 #
 # 用法：run.sh [选项]
@@ -18,10 +18,15 @@
 #   --ua <User-Agent>        渲染 sing-box 时按这个 UA 挑版本写法（缺省空：兼容写法）
 #   --only <id,id>           E2E 只跑这些夹具（渲染与静态检查照常全跑）
 #   --no-e2e                 跳过第 4 步
-#   --no-naive               构建时不带 with_naive_outbound（naive 行会变 FAIL，仅在 cronet 链接不了时用）
+#   --no-naive               构建时不带 with_naive_outbound（cronet 链接不了时用，如 CI；矩阵把 naive 行的 sing-box 两列记为 -）
+#   --online                 联网取 Go 模块、用当前 PATH 里的 Go（GOTOOLCHAIN=local），只给 CI 用
 #   --log <级别>             E2E 里 sing-box 客户端的日志级别，排查时用 debug
 #
-# 全程只用本机 Go 模块缓存，不联网下载；Go 版本取 go.mod 的（scripts/toolchain.sh）。
+# 环境变量：
+#   MIHOMO_BIN               官方 mihomo 可执行文件，不给就不跑 mihomo E2E
+#   MIHOMO_SHA256            可执行文件本身的 sha256，给了 MIHOMO_BIN 就必须给
+#
+# 默认只用本机 Go 模块缓存，不联网下载（--online 例外）；Go 版本取 go.mod 的（scripts/toolchain.sh）。
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -33,6 +38,8 @@ only=""
 formats="clash,clash-premium,singbox,uri"
 ua=""
 do_e2e=1
+no_naive=0
+online=0
 tags="with_quic,with_utls,with_gvisor,with_naive_outbound"
 loglevel="panic"
 
@@ -46,18 +53,27 @@ while [ $# -gt 0 ]; do
     --formats) formats="$2"; shift 2 ;;
     --ua) ua="$2"; shift 2 ;;
     --no-e2e) do_e2e=0; shift ;;
-    --no-naive) tags="with_quic,with_utls,with_gvisor"; shift ;;
+    --no-naive) no_naive=1; tags="with_quic,with_utls,with_gvisor"; shift ;;
+    --online) online=1; shift ;;
     --log) loglevel="$2"; shift 2 ;;
-    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
     *) echo "未知参数: $1" >&2; exit 2 ;;
   esac
 done
 [ "$extra" = "none" ] && extra=""
 if [ -n "$extra" ]; then extra="$(cd "$(dirname "$extra")" && pwd)/$(basename "$extra")"; fi
+
+# mihomo E2E：给了 MIHOMO_BIN 才跑；必须同时给可执行文件本身的 SHA-256，免得拿来历不明的二进制当证据
+mihomo_bin="${MIHOMO_BIN:-}"
+if [ -n "$mihomo_bin" ]; then
+  [ -x "$mihomo_bin" ] || { echo "MIHOMO_BIN 不是可执行文件: $mihomo_bin" >&2; exit 2; }
+  [ -n "${MIHOMO_SHA256:-}" ] || { echo "设了 MIHOMO_BIN 就必须设 MIHOMO_SHA256（可执行文件本身的 sha256）" >&2; exit 2; }
+fi
+
 [ -d "$repo/panel/internal/module/subscription/render" ] && [ -d "$repo/panel/internal/module/node/protocol" ] && [ -d "$repo/pdnd/kernel" ] || { echo "不是 pandora 仓库: $repo" >&2; exit 2; }
 
 source "$here/scripts/toolchain.sh"
-pin_go_toolchain "$repo"
+pin_go_toolchain "$repo" "$online"
 mkdir -p "$work"
 work="$(cd "$work" && pwd)"
 out="$work/out"; res="$work/results"
@@ -118,7 +134,7 @@ fi
   go mod edit -replace "github.com/aegispanel/nodeagent=$repo/pdnd"
   # pdnd 经 replace 引用仓库里的 nodeapi；replace 不随依赖传递，这里同样指到被测仓库
   [ -d "$repo/nodeapi" ] && go mod edit -replace "github.com/aegispanel/nodeapi=$repo/nodeapi"
-  # -mod=mod：pdnd 依赖变了时从本机缓存离线补齐 go.mod，缓存里没有就直接报错
+  # -mod=mod：pdnd 依赖变了时从本机缓存离线补齐 go.mod，缓存里没有就直接报错（--online 时联网补齐）
   GOFLAGS=-mod=mod go build -tags "$tags" -o "$work/bin/" ./e2e ./sbcheck ./yamlcheck ./uricheck ./kp
 ) > "$res/build.log" 2>&1 || { grep -v 'duplicate libraries' "$res/build.log" | tail -30; echo "编译失败，日志: $res/build.log" >&2; exit 1; }
 if ! diff -q <(grep -v '^replace ' "$here/tools/go.mod") <(grep -v '^replace ' "$work/tools/go.mod") >/dev/null; then
@@ -135,10 +151,15 @@ echo "[3/5] sing-box 校验、Clash / URI 静态检查"
 
 # ---- 4. 端到端 ----
 if [ "$do_e2e" = 1 ]; then
-  echo "[4/5] E2E：本地 pdnd NativeCore × sing-box 客户端"
+  echo "[4/5] E2E：本地 pdnd NativeCore × sing-box 客户端$([ -n "$mihomo_bin" ] && echo ' / mihomo 客户端')"
   e2e_args=(-out "$out" -work "$work" -log "$loglevel")
   [ -n "$only" ] && e2e_args+=(-only "$only")
   "$work/bin/e2e" "${e2e_args[@]}" > "$res/e2e.txt" 2> "$res/e2e.stderr" || true
+  if [ -n "$mihomo_bin" ]; then
+    "$work/bin/e2e" -client mihomo "${e2e_args[@]}" > "$res/e2e-mihomo.txt" 2> "$res/e2e-mihomo.stderr" || true
+  else
+    echo "  没设 MIHOMO_BIN：跳过 mihomo E2E（矩阵里这一列显示 -）"
+  fi
 else
   echo "[4/5] 跳过 E2E"
 fi
@@ -147,9 +168,11 @@ fi
 echo "[5/5] 矩阵（同时写入 $res/matrix.md）"
 echo
 set +e
-python3 "$here/scripts/matrix.py" "$out" "$res" | tee "$res/matrix.md"
+matrix_args=()
+[ "$no_naive" = 1 ] && matrix_args+=(--no-naive)
+python3 "$here/scripts/matrix.py" ${matrix_args[@]+"${matrix_args[@]}"} "$out" "$res" | tee "$res/matrix.md"
 rc=${PIPESTATUS[0]}
 set -e
 echo
-echo "原始结果: $res/{fixtures.log,render.log,nodeconfig.log,singbox.txt,clash.txt,uri.txt,e2e.txt}；每个用例的客户端配置: $work/e2e/<id>.client.json"
+echo "原始结果: $res/{fixtures.log,render.log,nodeconfig.log,singbox.txt,clash.txt,uri.txt,e2e.txt,e2e-mihomo.txt}；每个用例的客户端配置: $work/e2e/<id>.client.json（sing-box）、<id>.mihomo.yaml 与 <id>.mihomo.log（mihomo）"
 exit "$rc"

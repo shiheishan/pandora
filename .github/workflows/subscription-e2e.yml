@@ -1,0 +1,101 @@
+name: Subscription E2E
+
+# 订阅渲染端到端矩阵（.agents/skills/subscription-e2e）：面板真实渲染的订阅交给真客户端，
+# 经本地 pdnd NativeCore 拉到目标才算通。sing-box 用订阅里的出站（编进 e2e 工具），
+# mihomo 用官方二进制按 Clash 订阅连。矩阵有 FAIL 时 run.sh 退出 1，job 变红。
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - "feat/panel-redesign**"
+    paths:
+      - "panel/internal/module/subscription/render/**"
+      - "panel/internal/module/node/protocol/**"
+      - "panel/internal/module/node/service/config_docs*.go"
+      - "pdnd/kernel/**"
+      - "pdnd/internal/**"
+      - "pdnd/go.mod"
+      - ".agents/skills/subscription-e2e/**"
+      - ".github/workflows/subscription-e2e.yml"
+  pull_request:
+    paths:
+      - "panel/internal/module/subscription/render/**"
+      - "panel/internal/module/node/protocol/**"
+      - "panel/internal/module/node/service/config_docs*.go"
+      - "pdnd/kernel/**"
+      - "pdnd/internal/**"
+      - "pdnd/go.mod"
+      - ".agents/skills/subscription-e2e/**"
+      - ".github/workflows/subscription-e2e.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: subscription-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+# 显式 shell: bash，让 run 步骤带 -eo pipefail（同 pandora-native.yml）
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  subscription-e2e:
+    name: Subscription render E2E (sing-box + mihomo)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: pdnd/go.mod
+          cache-dependency-path: |
+            panel/go.sum
+            pdnd/go.sum
+            .agents/skills/subscription-e2e/tools/go.sum
+      - name: Download official mihomo
+        # 版本与下载包 SHA-256 和 pandora-native.yml 的「External Mihomo interoperability」一步相同，
+        # 升级时两处成对改（deps-upgrade skill）。SHA-256 取自 GitHub release 公布的 digest。
+        env:
+          MIHOMO_VERSION: v1.19.32
+          MIHOMO_GZ_SHA256: 8451100836c9eda194331c2babfad490b2faf30cebc1a04b0e76fd8ac2d35d10
+        run: |
+          set -euo pipefail
+          dir="${RUNNER_TEMP}/mihomo"
+          mkdir -p "${dir}"
+          curl -fsSL --retry 3 -o "${dir}/mihomo.gz" \
+            "https://github.com/MetaCubeX/mihomo/releases/download/${MIHOMO_VERSION}/mihomo-linux-amd64-${MIHOMO_VERSION}.gz"
+          echo "${MIHOMO_GZ_SHA256}  ${dir}/mihomo.gz" | sha256sum -c -
+          gunzip -c "${dir}/mihomo.gz" > "${dir}/mihomo"
+          chmod +x "${dir}/mihomo"
+          # e2e 要求可执行文件本身的哈希：信任锚是上面核过的下载包，这里只是把解压结果交给它核对
+          {
+            echo "MIHOMO_BIN=${dir}/mihomo"
+            echo "MIHOMO_SHA256=$(sha256sum "${dir}/mihomo" | cut -d' ' -f1)"
+          } >> "${GITHUB_ENV}"
+      - name: Subscription E2E matrix
+        # runner 的 ld 认不得 cronet 预编译库（skipping incompatible libcronet.a），只能不带 naive 出站构建；
+        # naive 行的 sing-box 两列在矩阵里记为 -，naive 仍由本机跑 run.sh 覆盖
+        run: bash .agents/skills/subscription-e2e/scripts/run.sh --online --no-naive --work "${RUNNER_TEMP}/sube2e"
+      - name: Matrix to job summary
+        if: always()
+        run: |
+          if [ -f "${RUNNER_TEMP}/sube2e/results/matrix.md" ]; then
+            cat "${RUNNER_TEMP}/sube2e/results/matrix.md" >> "${GITHUB_STEP_SUMMARY}"
+          else
+            echo "没有生成矩阵（run.sh 在前几步失败，看上一步日志）" >> "${GITHUB_STEP_SUMMARY}"
+          fi
+      - name: Upload results and client configs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: subscription-e2e
+          path: |
+            ${{ runner.temp }}/sube2e/results/
+            ${{ runner.temp }}/sube2e/out/
+            ${{ runner.temp }}/sube2e/e2e/*.client.json
+            ${{ runner.temp }}/sube2e/e2e/*.mihomo.yaml
+            ${{ runner.temp }}/sube2e/e2e/*.mihomo.log
+          if-no-files-found: warn
