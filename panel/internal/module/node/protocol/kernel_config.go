@@ -1,7 +1,9 @@
 package protocol
 
 import (
+	"maps"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -167,11 +169,14 @@ func toKernelConfig(nodeType string, cfg map[string]any) map[string]any {
 
 	rename := xboardRename[nodeType]
 	out := make(map[string]any, len(flat))
-	for k, v := range flat {
+	for _, k := range slices.Sorted(maps.Keys(flat)) {
+		v := flat[k]
 		if to, ok := rename[k]; ok {
-			// 已经有值就不覆盖：network_settings.host 和
-			// network_settings.headers.Host 都映射到 host，
-			// 两个都填时以先到的为准而不是随机覆盖。
+			// 已经有值就不覆盖：按 xboard 展平键的字典序遍历，多个 xboard 字段
+			// 映射到同一内核字段时，字典序最小的胜出（与 validate.go 里
+			// kernelToXboardField 逆表同一规则）。host 上即
+			// network_settings.headers.Host（后台表单字段）优先于
+			// network_settings.host（只可能经 API 写入）。
 			if _, taken := out[to]; !taken {
 				out[to] = v
 			}
