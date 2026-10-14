@@ -10,6 +10,7 @@ package render
 // dependency not found，整份配置起不来、所有节点一起失效。
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -190,6 +191,9 @@ func nodeToSingbox(n Node, uuid string) (map[string]any, string) {
 			o["password"] = uuid
 		}
 		if t := singboxStreamTLS(s); t != nil {
+			if len(n.ECHConfigList) > 0 && !s.Reality && s.TLS {
+				t["ech"] = singboxECH(n.ECHConfigList)
+			}
 			o["tls"] = t
 		}
 		if t := singboxTransport(s); t != nil {
@@ -227,6 +231,9 @@ func nodeToSingbox(n Node, uuid string) (map[string]any, string) {
 		o["password"] = uuid
 		t := singboxTLS(parseTLSHints(n.Config))
 		t["utls"] = map[string]any{"enabled": true, "fingerprint": anyTLSFingerprint(n.Config)}
+		if len(n.ECHConfigList) > 0 {
+			t["ech"] = singboxECH(n.ECHConfigList)
+		}
 		o["tls"] = t
 
 	case "naive":
@@ -237,7 +244,11 @@ func nodeToSingbox(n Node, uuid string) (map[string]any, string) {
 		o["type"] = "naive"
 		o["username"] = uuid
 		o["password"] = uuid
-		o["tls"] = singboxTLS(h)
+		t := singboxTLS(h)
+		if len(n.ECHConfigList) > 0 {
+			t["ech"] = singboxECH(n.ECHConfigList)
+		}
+		o["tls"] = t
 
 	case "shadowtls":
 		// 内层 Shadowsocks；server / server_port 保留（sing-box 要求有），实际
@@ -365,4 +376,27 @@ func singboxTransport(s streamOpts) map[string]any {
 		return map[string]any{"type": "grpc", "service_name": s.ServiceName}
 	}
 	return nil
+}
+
+// singboxECH 是 sing-box tls.ech：enabled 与 PEM 行数组。
+func singboxECH(list []byte) map[string]any {
+	return map[string]any{
+		"enabled": true,
+		"config":  echPEMLines(list),
+	}
+}
+
+// echPEMLines 把 ECHConfigList 编成 sing-box 要求的 PEM 行数组。
+func echPEMLines(list []byte) []string {
+	enc := base64.StdEncoding.EncodeToString(list)
+	lines := []string{"-----BEGIN ECH CONFIGS-----"}
+	for i := 0; i < len(enc); i += 64 {
+		end := i + 64
+		if end > len(enc) {
+			end = len(enc)
+		}
+		lines = append(lines, enc[i:end])
+	}
+	lines = append(lines, "-----END ECH CONFIGS-----")
+	return lines
 }

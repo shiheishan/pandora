@@ -34,6 +34,7 @@ func nodeToStash(n Node, uuid string) (map[string]any, string) {
 	if p == nil {
 		return nil, strings.ReplaceAll(reason, "mihomo", "Stash")
 	}
+	delete(p, "ech-opts")
 
 	switch n.Type {
 	case "hysteria2":

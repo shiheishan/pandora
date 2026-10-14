@@ -13,6 +13,7 @@ package render
 // trojan、socks5、http 与 ws / grpc 两种传输，见 nodeToClash 的 premium 分支。
 
 import (
+	"encoding/base64"
 	"fmt"
 	"sort"
 	"strconv"
@@ -224,6 +225,17 @@ func nodeToClash(n Node, uuid string, premium bool) (map[string]any, string) {
 	default:
 		return nil, n.Type + " 在 Clash 里没有对应类型"
 	}
+	if !premium && len(n.ECHConfigList) > 0 {
+		switch n.Type {
+		case "vless", "vmess", "trojan":
+			o := parseStream(n, uuid)
+			if o.TLS && !o.Reality {
+				p["ech-opts"] = clashECHOpts(n.ECHConfigList)
+			}
+		case "anytls":
+			p["ech-opts"] = clashECHOpts(n.ECHConfigList)
+		}
+	}
 	return p, ""
 }
 
@@ -332,6 +344,14 @@ func setClashSNI(p map[string]any, nodeType, sni string) {
 		return
 	}
 	p["servername"] = sni
+}
+
+// clashECHOpts 是 mihomo 的 ech-opts：enable 与 ECHConfigList 的 base64。
+func clashECHOpts(list []byte) map[string]any {
+	return map[string]any{
+		"enable": true,
+		"config": base64.StdEncoding.EncodeToString(list),
+	}
 }
 
 // setClashTLSHints：hysteria2 / tuic / anytls 的 SNI 叫 sni。
