@@ -81,22 +81,31 @@ func (m *Module) Periodic() []jobs.Periodic {
 
 func (m *Module) retention(ctx context.Context, _ *asynq.Task) error {
 	before := m.now().AddDate(0, 0, -RetentionDays)
-	regs, err := purgeAll(ctx, before, m.svc.PurgeRegistrations)
+	regs, err := jobs.PurgeInBatches(ctx, purgeBatch, maxBatches, func(ctx context.Context, limit int) (int64, error) {
+		n, err := m.svc.PurgeRegistrations(ctx, before, limit)
+		return int64(n), err
+	})
 	if err != nil {
 		return fmt.Errorf("注册会话保留期清理: %w", err)
 	}
-	codes, err := purgeAll(ctx, before, m.svc.PurgeCodes)
+	codes, err := jobs.PurgeInBatches(ctx, purgeBatch, maxBatches, func(ctx context.Context, limit int) (int64, error) {
+		n, err := m.svc.PurgeCodes(ctx, before, limit)
+		return int64(n), err
+	})
 	if err != nil {
 		return fmt.Errorf("验证码保留期清理: %w", err)
 	}
 	jobsBefore := m.now().AddDate(0, 0, -service.GenerationRetentionDays)
-	genJobs, err := purgeAll(ctx, jobsBefore, m.svc.PurgeGenerationJobs)
+	genJobs, err := jobs.PurgeInBatches(ctx, purgeBatch, maxBatches, func(ctx context.Context, limit int) (int64, error) {
+		n, err := m.svc.PurgeGenerationJobs(ctx, jobsBefore, limit)
+		return int64(n), err
+	})
 	if err != nil {
 		return fmt.Errorf("批量生成任务保留期清理: %w", err)
 	}
 	plog.From(ctx).Info("identity retention done",
-		zap.Int("registration_sessions", regs), zap.Int("verification_codes", codes),
-		zap.Int("generation_jobs", genJobs))
+		zap.Int64("registration_sessions", regs), zap.Int64("verification_codes", codes),
+		zap.Int64("generation_jobs", genJobs))
 	return nil
 }
 
@@ -123,25 +132,6 @@ func (m *Module) reconcile(ctx context.Context, _ *asynq.Task) error {
 		plog.From(ctx).Info("批量生成补排", zap.Int("requeued", requeued), zap.Int64("purged_results", purged))
 	}
 	return nil
-}
-
-// purgeAll 分批调用 purge，直到一批不满或到批数上限。
-func purgeAll(ctx context.Context, before time.Time, purge func(context.Context, time.Time, int) (int, error)) (int, error) {
-	total := 0
-	for i := 0; i < maxBatches; i++ {
-		if err := ctx.Err(); err != nil {
-			return total, err
-		}
-		n, err := purge(ctx, before, purgeBatch)
-		if err != nil {
-			return total, err
-		}
-		total += n
-		if n < purgeBatch {
-			break
-		}
-	}
-	return total, nil
 }
 
 var _ jobs.Module = (*Module)(nil)

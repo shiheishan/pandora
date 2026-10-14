@@ -87,30 +87,15 @@ func (m *Module) dispatch(ctx context.Context, _ *asynq.Task) error {
 
 func (m *Module) retention(ctx context.Context, _ *asynq.Task) error {
 	before := m.now().AddDate(0, 0, -service.RetentionDays)
-	total, batches, err := purgeLoop(ctx, before, m.svc.PurgeDeliveries)
+	total, err := jobs.PurgeInBatches(ctx, purgeBatch, maxBatches, func(ctx context.Context, limit int) (int64, error) {
+		n, err := m.svc.PurgeDeliveries(ctx, before, limit)
+		return int64(n), err
+	})
 	if err != nil {
 		return fmt.Errorf("插件投递保留期清理: %w", err)
 	}
-	plog.From(ctx).Info("plugin retention done", zap.Int("deleted", total), zap.Int("batches", batches))
+	plog.From(ctx).Info("plugin retention done", zap.Int64("deleted", total))
 	return nil
-}
-
-// purgeLoop 分批调用 purge 直到某批不满或到批数上限。
-func purgeLoop(ctx context.Context, before time.Time, purge func(ctx context.Context, before time.Time, batch int) (int, error)) (total, batches int, err error) {
-	for batches = 0; batches < maxBatches; batches++ {
-		if err := ctx.Err(); err != nil {
-			return total, batches, err
-		}
-		n, err := purge(ctx, before, purgeBatch)
-		if err != nil {
-			return total, batches, err
-		}
-		total += n
-		if n < purgeBatch {
-			return total, batches + 1, nil
-		}
-	}
-	return total, batches, nil
 }
 
 var _ jobs.Module = (*Module)(nil)

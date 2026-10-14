@@ -58,19 +58,14 @@ func (m *Module) Periodic() []jobs.Periodic {
 
 func (m *Module) retention(ctx context.Context, _ *asynq.Task) error {
 	before := m.now().Add(-service.Retention)
-	var total int64
-	for i := 0; i < maxBatches; i++ {
-		if err := ctx.Err(); err != nil {
+	total, err := jobs.PurgeInBatches(ctx, purgeBatch, maxBatches, func(ctx context.Context, limit int) (int64, error) {
+		return m.svc.Purge(ctx, before, limit)
+	})
+	if err != nil {
+		if ctx.Err() != nil {
 			return err
 		}
-		n, err := m.svc.Purge(ctx, before, purgeBatch)
-		if err != nil {
-			return fmt.Errorf("清理幂等键: %w", err)
-		}
-		total += n
-		if n < int64(purgeBatch) {
-			break
-		}
+		return fmt.Errorf("清理幂等键: %w", err)
 	}
 	plog.From(ctx).Info("idempotency retention", zap.Int64("deleted", total))
 	return nil

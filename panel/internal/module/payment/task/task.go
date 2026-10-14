@@ -98,21 +98,16 @@ func (m *Module) queryPatrol(ctx context.Context, _ *asynq.Task) error {
 
 func (m *Module) retention(ctx context.Context, _ *asynq.Task) error {
 	before := m.now().AddDate(0, 0, -RetentionDays)
-	var total, batches int
-	for batches = 0; batches < maxBatches; batches++ {
-		if err := ctx.Err(); err != nil {
+	total, err := jobs.PurgeInBatches(ctx, purgeBatch, maxBatches, func(ctx context.Context, limit int) (int64, error) {
+		n, err := m.svc.PurgeUnverifiedEvents(ctx, before, limit)
+		return int64(n), err
+	})
+	if err != nil {
+		if ctx.Err() != nil {
 			return err
 		}
-		n, err := m.svc.PurgeUnverifiedEvents(ctx, before, purgeBatch)
-		if err != nil {
-			return fmt.Errorf("验签失败事件保留期清理: %w", err)
-		}
-		total += n
-		if n < purgeBatch {
-			batches++
-			break
-		}
+		return fmt.Errorf("验签失败事件保留期清理: %w", err)
 	}
-	plog.From(ctx).Info("payment unverified events retention done", zap.Int("deleted", total), zap.Int("batches", batches))
+	plog.From(ctx).Info("payment unverified events retention done", zap.Int64("deleted", total))
 	return nil
 }

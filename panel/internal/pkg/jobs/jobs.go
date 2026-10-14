@@ -119,6 +119,27 @@ func Register(mux *asynq.ServeMux, sched *asynq.Scheduler, mods ...Module) error
 	return nil
 }
 
+// PurgeInBatches 是保留期清理的分批循环：反复调 purge（每次最多删 batch 行），直到某次删的行数 < batch
+// 或已调满 maxBatches 次（删不完留给下一个周期），返回合计删除行数。ctx 取消即停并返回已删的合计与 ctx 的错误；
+// purge 出错同样返回已删的合计与该错误。
+func PurgeInBatches(ctx context.Context, batch, maxBatches int, purge func(ctx context.Context, limit int) (int64, error)) (int64, error) {
+	var total int64
+	for i := 0; i < maxBatches; i++ {
+		if err := ctx.Err(); err != nil {
+			return total, err
+		}
+		n, err := purge(ctx, batch)
+		if err != nil {
+			return total, err
+		}
+		total += n
+		if n < int64(batch) {
+			break
+		}
+	}
+	return total, nil
+}
+
 // ZapLogger 让 asynq 的 Server 与 Scheduler 用 zap 写日志。
 type ZapLogger struct{ *zap.SugaredLogger }
 
