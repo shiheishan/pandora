@@ -111,7 +111,8 @@ func byteap(b []byte) *string {
 
 func optp(p *string) *string { return p }
 
-func zeroNum() *string { return strp("0") }
+// zeroNum 是取值恒为 0 的列，按行类型实例化。
+func zeroNum[T any](T) *string { return strp("0") }
 
 // writeSeed 按固定顺序把 Seed 写入当前事务。
 func writeSeed(ctx context.Context, tx pgx.Tx, s *Seed, offlineProviderID string) error {
@@ -209,10 +210,10 @@ func writeSeed(ctx context.Context, tx pgx.Tx, s *Seed, offlineProviderID string
 		{name: "total_amount", typ: "numeric", val: func(r OrderRow) *string { return strp(r.Amount) }},
 		{name: "payable_amount", typ: "numeric", val: func(r OrderRow) *string { return strp(r.Amount) }},
 		{name: "paid_amount", typ: "numeric", val: func(r OrderRow) *string { return strp(r.Amount) }},
-		{name: "discount_amount", typ: "numeric", val: zeroNum},
-		{name: "proration_credit_amount", typ: "numeric", val: zeroNum},
-		{name: "waived_amount", typ: "numeric", val: zeroNum},
-		{name: "balance_applied", typ: "numeric", val: zeroNum},
+		{name: "discount_amount", typ: "numeric", val: zeroNum[OrderRow]},
+		{name: "proration_credit_amount", typ: "numeric", val: zeroNum[OrderRow]},
+		{name: "waived_amount", typ: "numeric", val: zeroNum[OrderRow]},
+		{name: "balance_applied", typ: "numeric", val: zeroNum[OrderRow]},
 		{name: "subscription_id", typ: "uuid", val: func(r OrderRow) *string { return strp(r.SubscriptionID) }},
 		{name: "state_version", typ: "bigint", val: func(r OrderRow) *string { return strp("3") }},
 		{name: "expires_at", typ: "timestamptz", val: func(r OrderRow) *string { return tsp(r.ExpiresAt) }},
@@ -319,7 +320,7 @@ func writeSeed(ctx context.Context, tx pgx.Tx, s *Seed, offlineProviderID string
 		{name: "provider_payment_id", typ: "text", val: func(r PaymentRow) *string { return strp(r.ProviderPaymentID) }},
 		{name: "currency", typ: "text", val: func(r PaymentRow) *string { return strp(r.Currency) }},
 		{name: "amount", typ: "numeric", val: func(r PaymentRow) *string { return strp(r.Amount) }},
-		{name: "fee_amount", typ: "numeric", val: zeroNum},
+		{name: "fee_amount", typ: "numeric", val: zeroNum[PaymentRow]},
 		{name: "status", typ: "text", val: func(r PaymentRow) *string { return strp("succeeded") }},
 		{name: "method", typ: "text", val: func(r PaymentRow) *string { return strp("offline") }},
 		{name: "paid_at", typ: "timestamptz", val: func(r PaymentRow) *string { return tsp(r.PaidAt) }},

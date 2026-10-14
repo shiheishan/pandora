@@ -115,7 +115,6 @@ func runInfra(ctx context.Context, o infraOpts) error {
 	var entries []TokenEntry
 	var panel, ca string
 	for i := 0; i < o.Servers; i++ {
-		idx := i + 1
 		sv := state.Servers[i]
 		idem := fmt.Sprintf("perfseed-boot-%s-%s", sv.ServerID, runUUID)
 		var out struct {
