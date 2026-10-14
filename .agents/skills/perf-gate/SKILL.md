@@ -1,6 +1,6 @@
 ---
 name: perf-gate
-description: pandora 的同机性能闸门：在固定测试机上先量基线提交、再量候选提交，按相对变化判定改动变快、持平还是变慢，产出「改前改后」数字。只要涉及性能或占用就用它——做性能优化、改订阅拉取、节点建流与名单、后台统计、连接池、缓存、SQL、队列任务等热路径，有人问「这样会不会变慢」「快了多少」，要给优化配数字，或合入前想确认没有性能退化，都先用这个 skill，即使没提「闸门」二字。里程碑级的绝对容量测试（多台 Vultr、真节点）见 panel/tests/perf/README.md。
+description: pandora 的同机性能闸门：在固定测试机上先量基线提交、再量候选提交，按相对变化判定改动变快、持平还是变慢，产出「改前改后」数字。只要涉及性能或占用就用它——做性能优化、改订阅拉取、节点建流与名单、后台统计、连接池、缓存、SQL、队列任务等热路径，有人问「这样会不会变慢」「快了多少」，要给优化配数字，或合入前想确认没有性能退化，都先用这个 skill，即使没提「闸门」二字。里程碑级的绝对容量测试（多台 Vultr、真节点）见 panel/tests/perf/README.md。节点端（pdnd）的同机闸门也在这里（pdnd/tests/perf/gate）。
 ---
 
 # 性能闸门
@@ -76,6 +76,30 @@ description: pandora 的同机性能闸门：在固定测试机上先量基线�
 - 模板放了太久，到期、统计这类随日期变的数据已明显偏离（同一天的 A/B 不受影响，跨很多天的对比才有关系）。
 
 重做模板之后，旧的运行结果都不能再和新的比。
+
+## 节点端闸门（pdnd）
+
+改 **pdnd** 热路径时必须考虑节点端闸门：kernel 适配器、转发与计量、用户表与名单应用、会话与缓存、hy2/TUIC 的 UDP 收发等。**性能优化**必须带 `--target` 前缀；只防退化可以不带。
+
+脚本在 `pdnd/tests/perf/gate/`（入口 `gate.sh`，机制见同目录 `README.md` 与设计契约 `.claude/briefs/nodegate-design.md`）。
+
+步骤与面板闸门相同：**当天基线跑两遍 A/A** → **跑候选** → `gate.sh compare <基线-a> <候选> --aa <基线-b> [--target …]`。
+
+| 改动落在 | `--target` 前缀示例 | 主要指标键（`result.json`） |
+|---|---|---|
+| 接入 / 名单全量 | `roster.` | `roster.enroll_s`、`roster.connect_s`、`roster.full_ack_s`、`roster.health_s` |
+| 名单增量 | `roster.` | `roster.delta_ack_s`、`roster.delta_conn_drops` |
+| 空闲长连接占用 | `idle.` | `idle.rss_kb_per_conn`、`idle.cpu_pct`、`idle.connect_p50` |
+| 握手 | `handshake.<协议>` | `handshake.<P>.rate`、`handshake.<P>.p50` |
+| 吞吐 | `tput.` | `tput.<P>.mbps`、`tput.<P>.cores_per_gbps` |
+| UDP | `udp.` | `udp.<P>.<R>.mbps`、`udp.<P>.<R>.loss_pct` |
+| 面板故障 | `failover.` | `failover.session_recover_s`、`failover.conn_drops` |
+
+- **单机**：`ops-local/nodegate/gate.env` 里 `NODEGATE_HOST=<别名>`；结果在 `ops-local/nodegate/<label>/`。
+- **发版前绝对数**：多机三台 Vultr 内网机，`NODEGATE_NODE` / `LOAD1` / `LOAD2` 与 `NODE_IP`、`LOAD1_IP`、`CIDR`。
+- `gate.sh run` 前台很久：Claude Code 里 Bash **`run_in_background: true`**；ssh 要 **`dangerouslyDisableSandbox: true`**。
+- 读结果格式同面板：指标 | 基线 | 候选 | 变化 | 判定 + 总评；注明 label、提交 sha、`tools_id`、日期。
+- 换了 `tools/`（`tools_id` 变）须重跑基线 A/A。
 
 ## 红线
 
