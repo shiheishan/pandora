@@ -28,11 +28,14 @@ type PullRow struct {
 	Label            *string    `gorm:"column:label"`
 	TrafficLimit     *int64     `gorm:"column:traffic_limit"`
 	TrafficConsumed  *int64     `gorm:"column:traffic_consumed"`
+	// TrafficPeriodEnd 是同一行配额的周期末（下次重置时刻）；没有配额行或 total 类为 nil。信息节点的「距下次重置」用它
+	TrafficPeriodEnd *time.Time `gorm:"column:traffic_period_end"`
 	PackRemaining    int64      `gorm:"column:pack_remaining"`
 }
 
 // PullByTokenHash 按令牌哈希读拉取所需的一行；没有返回 false。
 // 流量配额取本期窗口里最紧的限量行（余量最小）；窗口里全是不限量行时取到 NULL 上限，按不限显示。
+// 同一行的周期末顺带取出（信息节点的「距下次重置」），不另查一次。
 func (r *Repo) PullByTokenHash(ctx context.Context, hash []byte, now time.Time) (PullRow, bool, error) {
 	var row PullRow
 	wNow, wGrace := trafficQuotaWindow(now)
@@ -52,13 +55,14 @@ func (r *Repo) PullByTokenHash(ctx context.Context, hash []byte, now time.Time) 
 		       s.label,
 		       q.limit_value AS traffic_limit,
 		       q.consumed AS traffic_consumed,
+		       q.period_end AS traffic_period_end,
 		       (SELECT coalesce(sum(g.granted_bytes - g.consumed_bytes), 0)::bigint
 		          FROM traffic_pack_grants g
 		         WHERE g.subscription_id = s.id AND g.consumed_bytes < g.granted_bytes) AS pack_remaining
 		  FROM subscription_credentials sc
 		  JOIN subscriptions s ON s.id = sc.subscription_id
 		  LEFT JOIN LATERAL (
-			SELECT qb.limit_value, qb.consumed
+			SELECT qb.limit_value, qb.consumed, qb.period_end
 			  FROM quota_balances qb
 			 WHERE qb.subscription_id = s.id AND `+trafficQuotaWindowCond+`
 			 ORDER BY (qb.limit_value IS NULL), (qb.limit_value - qb.consumed), qb.period_end DESC NULLS LAST

@@ -167,8 +167,18 @@ func (s *Service) Pull(ctx context.Context, req PullRequest) (PullResult, error)
 	if err != nil {
 		return fail(err)
 	}
-	// 按 UA 选客户端内核认得的写法。nodes 可能来自 node 模块的进程内缓存、被别的请求共享：只读不改
-	body, contentType, count := render.Render(format, nodes, row.ProxyUUID.String(), ua, d.Render)
+	// 后台模板与订阅附加设置走进程内快照（30 秒过期），不每次拉取都查库
+	ex, err := s.extras.get(ctx, d.Extras, s.repo, now)
+	if err != nil {
+		return fail(err)
+	}
+	// 按 UA 选客户端内核认得的写法。nodes 可能来自 node 模块的进程内缓存、被别的请求共享：只读不改（前处理只改副本）
+	body, contentType, count := render.RenderRequest(liveRequest(liveInput{
+		Format: format, Nodes: nodes, Row: row, UA: ua, Options: d.Render, Extras: ex,
+		Types: req.Types, Filter: req.Filter, Loc: siteLocation(site.Timezone),
+		SubscribeURL: subscribeURLFor(ex.settings.LinkBaseURLs, d.PublicBaseURL, req.Prefix, token),
+		Now:          now,
+	}))
 	res.Body, res.ContentType = body, contentType
 	res.UpdateIntervalHours = updateIntervalHours
 	// 读取与渲染都完成后才占限流额度：失败的请求不占

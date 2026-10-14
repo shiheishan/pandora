@@ -3,6 +3,7 @@ import { NodesTab } from './NodesTab'
 import { PoolsTab } from './PoolsTab'
 import { RoutingTab } from './RoutingTab'
 import { ServersTab } from './ServersTab'
+import { SubscriptionTab } from './SubscriptionTab'
 
 export default function Nodes({ tab, rest }: AdminScreenProps) {
   switch (tab) {
@@ -12,6 +13,8 @@ export default function Nodes({ tab, rest }: AdminScreenProps) {
       return <PoolsTab />
     case 'routing':
       return <RoutingTab rest={rest} />
+    case 'subscription':
+      return <SubscriptionTab />
     default:
       return <NodesTab rest={rest} />
   }

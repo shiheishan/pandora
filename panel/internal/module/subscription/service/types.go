@@ -430,6 +430,10 @@ type PullRequest struct {
 	Token string
 	// Target 是显式指定的格式（查询参数 target / flag / type 里第一个非空的）；空串按 UA 判断
 	Target string
+	// Types 是查询参数 types 原文（按协议过滤，如 vless|hysteria2）；空不过滤
+	Types string
+	// Filter 是查询参数 filter 原文（按节点名关键字过滤，| 或逗号分隔）；空不过滤
+	Filter string
 }
 
 // Userinfo 是 Subscription-Userinfo 头的四个数：字节与 Unix 秒。Expire 为 0 时不写 expire。

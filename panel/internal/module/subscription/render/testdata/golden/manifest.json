@@ -401,7 +401,7 @@
     {
       "ua": "",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "none"
     },
     {
@@ -479,7 +479,7 @@
     {
       "ua": "",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "none"
     },
     {
@@ -545,7 +545,7 @@
     {
       "ua": "curl/8.14.1",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "other"
     },
     {
@@ -623,7 +623,7 @@
     {
       "ua": "curl/8.14.1",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "other"
     },
     {
@@ -689,7 +689,7 @@
     {
       "ua": "Mozilla/5.0 (Windows NT 10.0)",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "other"
     },
     {
@@ -767,7 +767,7 @@
     {
       "ua": "Mozilla/5.0 (Windows NT 10.0)",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "other"
     },
     {
@@ -833,7 +833,7 @@
     {
       "ua": "某个还没出现的客户端/1.0",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "other"
     },
     {
@@ -911,7 +911,7 @@
     {
       "ua": "某个还没出现的客户端/1.0",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "other"
     },
     {
@@ -977,7 +977,7 @@
     {
       "ua": "sing-box 1.10.0",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "sing-box"
     },
     {
@@ -1055,7 +1055,7 @@
     {
       "ua": "sing-box 1.10.0",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "sing-box"
     },
     {
@@ -1121,7 +1121,7 @@
     {
       "ua": "SFI/1.9.0 (iOS)",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "sing-box"
     },
     {
@@ -1199,7 +1199,7 @@
     {
       "ua": "SFI/1.9.0 (iOS)",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "sing-box"
     },
     {
@@ -1265,7 +1265,7 @@
     {
       "ua": "SFA/1.9.0 (Android)",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "sing-box"
     },
     {
@@ -1343,7 +1343,7 @@
     {
       "ua": "SFA/1.9.0 (Android)",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "sing-box"
     },
     {
@@ -1409,7 +1409,7 @@
     {
       "ua": "SFM/1.9.0",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "other"
     },
     {
@@ -1487,7 +1487,7 @@
     {
       "ua": "SFM/1.9.0",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "other"
     },
     {
@@ -1553,7 +1553,7 @@
     {
       "ua": "SFT/1.10.0",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "other"
     },
     {
@@ -1631,7 +1631,7 @@
     {
       "ua": "SFT/1.10.0",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "other"
     },
     {
@@ -1697,7 +1697,7 @@
     {
       "ua": "HiddifyNext/2.0.5",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "other"
     },
     {
@@ -1775,7 +1775,7 @@
     {
       "ua": "HiddifyNext/2.0.5",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "other"
     },
     {
@@ -1841,7 +1841,7 @@
     {
       "ua": "Karing/1.0.0",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "other"
     },
     {
@@ -1919,7 +1919,7 @@
     {
       "ua": "Karing/1.0.0",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "other"
     },
     {
@@ -1985,7 +1985,7 @@
     {
       "ua": "Hiddify/2.5 (sing-box)",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "sing-box"
     },
     {
@@ -2063,7 +2063,7 @@
     {
       "ua": "Hiddify/2.5 (sing-box)",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "sing-box"
     },
     {
@@ -2087,7 +2087,7 @@
     {
       "ua": "Shadowrocket/2.2.28",
       "explicit": "",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "shadowrocket"
     },
     {
@@ -2129,7 +2129,7 @@
     {
       "ua": "Shadowrocket/2.2.28",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "shadowrocket"
     },
     {
@@ -2207,7 +2207,7 @@
     {
       "ua": "Shadowrocket/2.2.28",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "shadowrocket"
     },
     {
@@ -2225,7 +2225,7 @@
     {
       "ua": "Shadowrocket/2.2.28",
       "explicit": "什么格式",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "shadowrocket"
     },
     {
@@ -2273,7 +2273,7 @@
     {
       "ua": "Quantumult%20X/1.0.30",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "quantumult"
     },
     {
@@ -2351,7 +2351,7 @@
     {
       "ua": "Quantumult%20X/1.0.30",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "quantumult"
     },
     {
@@ -2417,7 +2417,7 @@
     {
       "ua": "Surge/5.8.0",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "surge"
     },
     {
@@ -2495,7 +2495,7 @@
     {
       "ua": "Surge/5.8.0",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "surge"
     },
     {
@@ -2519,146 +2519,146 @@
     {
       "ua": "Loon/3.1.3",
       "explicit": "",
-      "format": "uri",
-      "family": "other"
+      "format": "loon",
+      "family": "loon"
     },
     {
       "ua": "Loon/3.1.3",
       "explicit": "clash",
       "format": "clash",
-      "family": "other"
+      "family": "loon"
     },
     {
       "ua": "Loon/3.1.3",
       "explicit": "meta",
       "format": "clash",
-      "family": "other"
+      "family": "loon"
     },
     {
       "ua": "Loon/3.1.3",
       "explicit": "clashmeta",
       "format": "clash",
-      "family": "other"
+      "family": "loon"
     },
     {
       "ua": "Loon/3.1.3",
       "explicit": "clash-meta",
       "format": "clash",
-      "family": "other"
+      "family": "loon"
     },
     {
       "ua": "Loon/3.1.3",
       "explicit": "mihomo",
       "format": "clash",
-      "family": "other"
+      "family": "loon"
     },
     {
       "ua": "Loon/3.1.3",
       "explicit": "verge",
       "format": "clash",
-      "family": "other"
+      "family": "loon"
     },
     {
       "ua": "Loon/3.1.3",
       "explicit": "stash",
-      "format": "clash",
-      "family": "other"
+      "format": "stash",
+      "family": "loon"
     },
     {
       "ua": "Loon/3.1.3",
       "explicit": "clash-premium",
       "format": "clash-premium",
-      "family": "other"
+      "family": "loon"
     },
     {
       "ua": "Loon/3.1.3",
       "explicit": "premium",
       "format": "clash-premium",
-      "family": "other"
+      "family": "loon"
     },
     {
       "ua": "Loon/3.1.3",
       "explicit": "singbox",
       "format": "singbox",
-      "family": "other"
+      "family": "loon"
     },
     {
       "ua": "Loon/3.1.3",
       "explicit": "sing-box",
       "format": "singbox",
-      "family": "other"
+      "family": "loon"
     },
     {
       "ua": "Loon/3.1.3",
       "explicit": "singbox-json",
       "format": "singbox",
-      "family": "other"
+      "family": "loon"
     },
     {
       "ua": "Loon/3.1.3",
       "explicit": "hiddify",
       "format": "singbox",
-      "family": "other"
+      "family": "loon"
     },
     {
       "ua": "Loon/3.1.3",
       "explicit": "karing",
       "format": "singbox",
-      "family": "other"
+      "family": "loon"
     },
     {
       "ua": "Loon/3.1.3",
       "explicit": "uri",
       "format": "uri",
-      "family": "other"
+      "family": "loon"
     },
     {
       "ua": "Loon/3.1.3",
       "explicit": "base64",
       "format": "uri",
-      "family": "other"
+      "family": "loon"
     },
     {
       "ua": "Loon/3.1.3",
       "explicit": "v2ray",
       "format": "uri",
-      "family": "other"
+      "family": "loon"
     },
     {
       "ua": "Loon/3.1.3",
       "explicit": "v2rayn",
       "format": "uri",
-      "family": "other"
+      "family": "loon"
     },
     {
       "ua": "Loon/3.1.3",
       "explicit": "v2rayng",
       "format": "uri",
-      "family": "other"
+      "family": "loon"
     },
     {
       "ua": "Loon/3.1.3",
       "explicit": "shadowrocket",
-      "format": "uri",
-      "family": "other"
+      "format": "shadowrocket",
+      "family": "loon"
     },
     {
       "ua": "Loon/3.1.3",
       "explicit": "general",
       "format": "uri",
-      "family": "other"
+      "family": "loon"
     },
     {
       "ua": "Loon/3.1.3",
       "explicit": "  Clash  ",
       "format": "clash",
-      "family": "other"
+      "family": "loon"
     },
     {
       "ua": "Loon/3.1.3",
       "explicit": "什么格式",
-      "format": "uri",
-      "family": "other"
+      "format": "loon",
+      "family": "loon"
     },
     {
       "ua": "v2rayN/6.23",
@@ -2705,7 +2705,7 @@
     {
       "ua": "v2rayN/6.23",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "v2ray"
     },
     {
@@ -2783,7 +2783,7 @@
     {
       "ua": "v2rayN/6.23",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "v2ray"
     },
     {
@@ -2849,7 +2849,7 @@
     {
       "ua": "v2rayNG/1.8.19",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "v2ray"
     },
     {
@@ -2927,7 +2927,7 @@
     {
       "ua": "v2rayNG/1.8.19",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "v2ray"
     },
     {
@@ -2993,7 +2993,7 @@
     {
       "ua": "V2rayU/4.0",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "v2ray"
     },
     {
@@ -3071,7 +3071,7 @@
     {
       "ua": "V2rayU/4.0",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "v2ray"
     },
     {
@@ -3137,7 +3137,7 @@
     {
       "ua": "Qv2ray/2.7",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "v2ray"
     },
     {
@@ -3215,7 +3215,7 @@
     {
       "ua": "Qv2ray/2.7",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "v2ray"
     },
     {
@@ -3281,7 +3281,7 @@
     {
       "ua": "NekoBox/1.3.4",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "other"
     },
     {
@@ -3359,7 +3359,7 @@
     {
       "ua": "NekoBox/1.3.4",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "other"
     },
     {
@@ -3425,7 +3425,7 @@
     {
       "ua": "Nekoray/3.26",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "other"
     },
     {
@@ -3503,7 +3503,7 @@
     {
       "ua": "Nekoray/3.26",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "other"
     },
     {
@@ -3569,7 +3569,7 @@
     {
       "ua": "Matsuri/0.9",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "other"
     },
     {
@@ -3647,7 +3647,7 @@
     {
       "ua": "Matsuri/0.9",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "other"
     },
     {
@@ -3713,7 +3713,7 @@
     {
       "ua": "SagerNet/0.8",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "other"
     },
     {
@@ -3791,7 +3791,7 @@
     {
       "ua": "SagerNet/0.8",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "other"
     },
     {
@@ -3857,7 +3857,7 @@
     {
       "ua": "Streisand/1.6.4",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "other"
     },
     {
@@ -3935,7 +3935,7 @@
     {
       "ua": "Streisand/1.6.4",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "other"
     },
     {
@@ -4001,7 +4001,7 @@
     {
       "ua": "Potatso/2.0",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "other"
     },
     {
@@ -4079,7 +4079,7 @@
     {
       "ua": "Potatso/2.0",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "other"
     },
     {
@@ -4145,7 +4145,7 @@
     {
       "ua": "OneClick/1.0",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "other"
     },
     {
@@ -4223,7 +4223,7 @@
     {
       "ua": "OneClick/1.0",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "other"
     },
     {
@@ -4247,146 +4247,146 @@
     {
       "ua": "Shadowsocks/1.0",
       "explicit": "",
-      "format": "uri",
-      "family": "other"
+      "format": "sip008",
+      "family": "shadowsocks"
     },
     {
       "ua": "Shadowsocks/1.0",
       "explicit": "clash",
       "format": "clash",
-      "family": "other"
+      "family": "shadowsocks"
     },
     {
       "ua": "Shadowsocks/1.0",
       "explicit": "meta",
       "format": "clash",
-      "family": "other"
+      "family": "shadowsocks"
     },
     {
       "ua": "Shadowsocks/1.0",
       "explicit": "clashmeta",
       "format": "clash",
-      "family": "other"
+      "family": "shadowsocks"
     },
     {
       "ua": "Shadowsocks/1.0",
       "explicit": "clash-meta",
       "format": "clash",
-      "family": "other"
+      "family": "shadowsocks"
     },
     {
       "ua": "Shadowsocks/1.0",
       "explicit": "mihomo",
       "format": "clash",
-      "family": "other"
+      "family": "shadowsocks"
     },
     {
       "ua": "Shadowsocks/1.0",
       "explicit": "verge",
       "format": "clash",
-      "family": "other"
+      "family": "shadowsocks"
     },
     {
       "ua": "Shadowsocks/1.0",
       "explicit": "stash",
-      "format": "clash",
-      "family": "other"
+      "format": "stash",
+      "family": "shadowsocks"
     },
     {
       "ua": "Shadowsocks/1.0",
       "explicit": "clash-premium",
       "format": "clash-premium",
-      "family": "other"
+      "family": "shadowsocks"
     },
     {
       "ua": "Shadowsocks/1.0",
       "explicit": "premium",
       "format": "clash-premium",
-      "family": "other"
+      "family": "shadowsocks"
     },
     {
       "ua": "Shadowsocks/1.0",
       "explicit": "singbox",
       "format": "singbox",
-      "family": "other"
+      "family": "shadowsocks"
     },
     {
       "ua": "Shadowsocks/1.0",
       "explicit": "sing-box",
       "format": "singbox",
-      "family": "other"
+      "family": "shadowsocks"
     },
     {
       "ua": "Shadowsocks/1.0",
       "explicit": "singbox-json",
       "format": "singbox",
-      "family": "other"
+      "family": "shadowsocks"
     },
     {
       "ua": "Shadowsocks/1.0",
       "explicit": "hiddify",
       "format": "singbox",
-      "family": "other"
+      "family": "shadowsocks"
     },
     {
       "ua": "Shadowsocks/1.0",
       "explicit": "karing",
       "format": "singbox",
-      "family": "other"
+      "family": "shadowsocks"
     },
     {
       "ua": "Shadowsocks/1.0",
       "explicit": "uri",
       "format": "uri",
-      "family": "other"
+      "family": "shadowsocks"
     },
     {
       "ua": "Shadowsocks/1.0",
       "explicit": "base64",
       "format": "uri",
-      "family": "other"
+      "family": "shadowsocks"
     },
     {
       "ua": "Shadowsocks/1.0",
       "explicit": "v2ray",
       "format": "uri",
-      "family": "other"
+      "family": "shadowsocks"
     },
     {
       "ua": "Shadowsocks/1.0",
       "explicit": "v2rayn",
       "format": "uri",
-      "family": "other"
+      "family": "shadowsocks"
     },
     {
       "ua": "Shadowsocks/1.0",
       "explicit": "v2rayng",
       "format": "uri",
-      "family": "other"
+      "family": "shadowsocks"
     },
     {
       "ua": "Shadowsocks/1.0",
       "explicit": "shadowrocket",
-      "format": "uri",
-      "family": "other"
+      "format": "shadowrocket",
+      "family": "shadowsocks"
     },
     {
       "ua": "Shadowsocks/1.0",
       "explicit": "general",
       "format": "uri",
-      "family": "other"
+      "family": "shadowsocks"
     },
     {
       "ua": "Shadowsocks/1.0",
       "explicit": "  Clash  ",
       "format": "clash",
-      "family": "other"
+      "family": "shadowsocks"
     },
     {
       "ua": "Shadowsocks/1.0",
       "explicit": "什么格式",
-      "format": "uri",
-      "family": "other"
+      "format": "sip008",
+      "family": "shadowsocks"
     },
     {
       "ua": "v2ray-core/5.0",
@@ -4433,7 +4433,7 @@
     {
       "ua": "v2ray-core/5.0",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "v2ray"
     },
     {
@@ -4511,7 +4511,7 @@
     {
       "ua": "v2ray-core/5.0",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "v2ray"
     },
     {
@@ -4535,7 +4535,7 @@
     {
       "ua": "Clash-Shadowrocket/1.0",
       "explicit": "",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "shadowrocket"
     },
     {
@@ -4577,7 +4577,7 @@
     {
       "ua": "Clash-Shadowrocket/1.0",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "shadowrocket"
     },
     {
@@ -4655,7 +4655,7 @@
     {
       "ua": "Clash-Shadowrocket/1.0",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "shadowrocket"
     },
     {
@@ -4673,7 +4673,7 @@
     {
       "ua": "Clash-Shadowrocket/1.0",
       "explicit": "什么格式",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "shadowrocket"
     },
     {
@@ -4721,7 +4721,7 @@
     {
       "ua": "clash-verge/v1.7.7",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "clash"
     },
     {
@@ -4799,7 +4799,7 @@
     {
       "ua": "clash-verge/v1.7.7",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "clash"
     },
     {
@@ -4865,7 +4865,7 @@
     {
       "ua": "mihomo/1.19.10",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "clash"
     },
     {
@@ -4943,7 +4943,7 @@
     {
       "ua": "mihomo/1.19.10",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "clash"
     },
     {
@@ -4967,146 +4967,146 @@
     {
       "ua": "Stash/2.5.0",
       "explicit": "",
-      "format": "clash",
-      "family": "clash"
+      "format": "stash",
+      "family": "stash"
     },
     {
       "ua": "Stash/2.5.0",
       "explicit": "clash",
-      "format": "clash",
-      "family": "clash"
+      "format": "stash",
+      "family": "stash"
     },
     {
       "ua": "Stash/2.5.0",
       "explicit": "meta",
       "format": "clash",
-      "family": "clash"
+      "family": "stash"
     },
     {
       "ua": "Stash/2.5.0",
       "explicit": "clashmeta",
       "format": "clash",
-      "family": "clash"
+      "family": "stash"
     },
     {
       "ua": "Stash/2.5.0",
       "explicit": "clash-meta",
       "format": "clash",
-      "family": "clash"
+      "family": "stash"
     },
     {
       "ua": "Stash/2.5.0",
       "explicit": "mihomo",
       "format": "clash",
-      "family": "clash"
+      "family": "stash"
     },
     {
       "ua": "Stash/2.5.0",
       "explicit": "verge",
       "format": "clash",
-      "family": "clash"
+      "family": "stash"
     },
     {
       "ua": "Stash/2.5.0",
       "explicit": "stash",
-      "format": "clash",
-      "family": "clash"
+      "format": "stash",
+      "family": "stash"
     },
     {
       "ua": "Stash/2.5.0",
       "explicit": "clash-premium",
       "format": "clash-premium",
-      "family": "clash"
+      "family": "stash"
     },
     {
       "ua": "Stash/2.5.0",
       "explicit": "premium",
       "format": "clash-premium",
-      "family": "clash"
+      "family": "stash"
     },
     {
       "ua": "Stash/2.5.0",
       "explicit": "singbox",
       "format": "singbox",
-      "family": "clash"
+      "family": "stash"
     },
     {
       "ua": "Stash/2.5.0",
       "explicit": "sing-box",
       "format": "singbox",
-      "family": "clash"
+      "family": "stash"
     },
     {
       "ua": "Stash/2.5.0",
       "explicit": "singbox-json",
       "format": "singbox",
-      "family": "clash"
+      "family": "stash"
     },
     {
       "ua": "Stash/2.5.0",
       "explicit": "hiddify",
       "format": "singbox",
-      "family": "clash"
+      "family": "stash"
     },
     {
       "ua": "Stash/2.5.0",
       "explicit": "karing",
       "format": "singbox",
-      "family": "clash"
+      "family": "stash"
     },
     {
       "ua": "Stash/2.5.0",
       "explicit": "uri",
       "format": "uri",
-      "family": "clash"
+      "family": "stash"
     },
     {
       "ua": "Stash/2.5.0",
       "explicit": "base64",
       "format": "uri",
-      "family": "clash"
+      "family": "stash"
     },
     {
       "ua": "Stash/2.5.0",
       "explicit": "v2ray",
       "format": "uri",
-      "family": "clash"
+      "family": "stash"
     },
     {
       "ua": "Stash/2.5.0",
       "explicit": "v2rayn",
       "format": "uri",
-      "family": "clash"
+      "family": "stash"
     },
     {
       "ua": "Stash/2.5.0",
       "explicit": "v2rayng",
       "format": "uri",
-      "family": "clash"
+      "family": "stash"
     },
     {
       "ua": "Stash/2.5.0",
       "explicit": "shadowrocket",
-      "format": "uri",
-      "family": "clash"
+      "format": "shadowrocket",
+      "family": "stash"
     },
     {
       "ua": "Stash/2.5.0",
       "explicit": "general",
       "format": "uri",
-      "family": "clash"
+      "family": "stash"
     },
     {
       "ua": "Stash/2.5.0",
       "explicit": "  Clash  ",
-      "format": "clash",
-      "family": "clash"
+      "format": "stash",
+      "family": "stash"
     },
     {
       "ua": "Stash/2.5.0",
       "explicit": "什么格式",
-      "format": "clash",
-      "family": "clash"
+      "format": "stash",
+      "family": "stash"
     },
     {
       "ua": "FlClash/0.8.60",
@@ -5153,7 +5153,7 @@
     {
       "ua": "FlClash/0.8.60",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "clash"
     },
     {
@@ -5231,7 +5231,7 @@
     {
       "ua": "FlClash/0.8.60",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "clash"
     },
     {
@@ -5297,7 +5297,7 @@
     {
       "ua": "clash-nyanpasu/1.5.1",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "clash"
     },
     {
@@ -5375,7 +5375,7 @@
     {
       "ua": "clash-nyanpasu/1.5.1",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "clash"
     },
     {
@@ -5441,7 +5441,7 @@
     {
       "ua": "ClashMetaForAndroid/2.11.5.Meta",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "clash"
     },
     {
@@ -5519,7 +5519,7 @@
     {
       "ua": "ClashMetaForAndroid/2.11.5.Meta",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "clash"
     },
     {
@@ -5585,7 +5585,7 @@
     {
       "ua": "ClashX Meta/1.4.0",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "clash"
     },
     {
@@ -5663,7 +5663,7 @@
     {
       "ua": "ClashX Meta/1.4.0",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "clash"
     },
     {
@@ -5729,7 +5729,7 @@
     {
       "ua": "Clash.Meta",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "clash"
     },
     {
@@ -5807,7 +5807,7 @@
     {
       "ua": "Clash.Meta",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "clash"
     },
     {
@@ -5873,7 +5873,7 @@
     {
       "ua": "mihomo.party/v1.5.0",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "clash"
     },
     {
@@ -5951,7 +5951,7 @@
     {
       "ua": "mihomo.party/v1.5.0",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "clash"
     },
     {
@@ -6017,7 +6017,7 @@
     {
       "ua": "OpenClash",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "clash"
     },
     {
@@ -6095,7 +6095,7 @@
     {
       "ua": "OpenClash",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "clash"
     },
     {
@@ -6161,7 +6161,7 @@
     {
       "ua": "Koala Clash/1.0",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "clash"
     },
     {
@@ -6239,7 +6239,7 @@
     {
       "ua": "Koala Clash/1.0",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "clash"
     },
     {
@@ -6305,7 +6305,7 @@
     {
       "ua": "ClashMi/1.0",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "clash"
     },
     {
@@ -6383,7 +6383,7 @@
     {
       "ua": "ClashMi/1.0",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "clash"
     },
     {
@@ -6449,7 +6449,7 @@
     {
       "ua": "meta-client/1.0",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "other"
     },
     {
@@ -6527,7 +6527,7 @@
     {
       "ua": "meta-client/1.0",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "other"
     },
     {
@@ -6593,7 +6593,7 @@
     {
       "ua": "nyanpasu/1.0",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "other"
     },
     {
@@ -6671,7 +6671,7 @@
     {
       "ua": "nyanpasu/1.0",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "other"
     },
     {
@@ -6737,7 +6737,7 @@
     {
       "ua": "ClashforWindows/0.20.39",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "clash"
     },
     {
@@ -6815,7 +6815,7 @@
     {
       "ua": "ClashforWindows/0.20.39",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "clash"
     },
     {
@@ -6881,7 +6881,7 @@
     {
       "ua": "ClashX/1.118.0",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "clash"
     },
     {
@@ -6959,7 +6959,7 @@
     {
       "ua": "ClashX/1.118.0",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "clash"
     },
     {
@@ -7025,7 +7025,7 @@
     {
       "ua": "ClashX Pro/1.118.0",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "clash"
     },
     {
@@ -7103,7 +7103,7 @@
     {
       "ua": "ClashX Pro/1.118.0",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "clash"
     },
     {
@@ -7169,7 +7169,7 @@
     {
       "ua": "ClashForAndroid/2.5.12",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "clash"
     },
     {
@@ -7247,7 +7247,7 @@
     {
       "ua": "ClashForAndroid/2.5.12",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "clash"
     },
     {
@@ -7313,7 +7313,7 @@
     {
       "ua": "clash",
       "explicit": "stash",
-      "format": "clash",
+      "format": "stash",
       "family": "clash"
     },
     {
@@ -7391,7 +7391,7 @@
     {
       "ua": "clash",
       "explicit": "shadowrocket",
-      "format": "uri",
+      "format": "shadowrocket",
       "family": "clash"
     },
     {

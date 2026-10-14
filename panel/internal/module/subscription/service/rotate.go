@@ -63,7 +63,11 @@ func (s *Service) MyRotate(ctx context.Context, subID uuid.UUID) (string, error)
 	if err != nil {
 		return "", err
 	}
-	return linkURL(d.PublicBaseURL, prefix, token), nil
+	base, err := s.linkBase(ctx, d)
+	if err != nil {
+		return "", err
+	}
+	return linkURL(base, prefix, token), nil
 }
 
 // AdminRotate 是后台替用户换链接（不看状态）；reason 去首尾空白后 5–200 字，不含 NUL。返回里没有令牌与链接。

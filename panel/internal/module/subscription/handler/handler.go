@@ -44,6 +44,7 @@ type Service interface {
 	MyNodes(ctx context.Context, subID uuid.UUID) ([]service.NodePreview, error)
 	MyUsage(ctx context.Context, subID uuid.UUID, days int) (service.DailyUsage, error)
 	AdminRotate(ctx context.Context, subID uuid.UUID, reason string) (service.AdminRotateResult, error)
+	TemplateService
 }
 
 var _ Service = (*service.Service)(nil)
@@ -110,6 +111,12 @@ func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	v1.GET("/users/:id/traffic-resets", k.RequireAuth, h.userTrafficResets)
 	// 换掉别人的链接会让他所有设备断开：要近期重认证；不是「多一份」的操作，不挂幂等
 	v1.POST("/subscriptions/:id/rotate", k.RequireAuth, k.RecentReauth, h.adminRotateLink)
+	// 改模板影响所有用户的订阅，保存与恢复缺省要近期重认证；预览只渲染示例节点、不写库
+	v1.GET("/subscription-templates", k.RequireAuth, h.adminTemplates)
+	v1.GET("/subscription-templates/:format", k.RequireAuth, h.adminTemplate)
+	v1.PUT("/subscription-templates/:format", k.RequireAuth, k.RecentReauth, h.adminSaveTemplate)
+	v1.DELETE("/subscription-templates/:format", k.RequireAuth, k.RecentReauth, h.adminResetTemplate)
+	v1.POST("/subscription-templates/:format/preview", k.RequireAuth, h.adminPreviewTemplate)
 }
 
 // RegisterRoot 注册订阅链接拉取 GET /:prefix/:token：公开、不在 /v1 下（链接里出现 /v1/subscribe 这样的字样等于自带指纹）。
