@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"slices"
 	"testing"
 	"time"
@@ -51,6 +52,21 @@ func (e *invEnv) token(t *testing.T, ctx context.Context, serverID uuid.UUID) uu
 	if err := e.row(ctx, `INSERT INTO bootstrap_tokens (server_id, token_sha256, expires_at)
 		SELECT ?, ?, now() + interval '30 minutes' RETURNING id`, serverID, invRandHex(t, 32)).Scan(&id); err != nil {
 		t.Fatalf("插令牌: %v", err)
+	}
+	if e.mr != nil {
+		e.cleanupIdentityRows(t, serverID)
+	}
+	return id
+}
+
+// expiredToken 插一张已过期（created_at 为 2 小时前、expires_at 为 90 分钟前）的未用接入令牌，返回 id。
+func (e *invEnv) expiredToken(t *testing.T, ctx context.Context, serverID uuid.UUID) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	if err := e.row(ctx, `INSERT INTO bootstrap_tokens (server_id, token_sha256, created_at, expires_at)
+		SELECT ?, ?, now() - interval '2 hours', now() - interval '90 minutes' RETURNING id`,
+		serverID, invRandHex(t, 32)).Scan(&id); err != nil {
+		t.Fatalf("插过期令牌: %v", err)
 	}
 	if e.mr != nil {
 		e.cleanupIdentityRows(t, serverID)
@@ -252,6 +268,68 @@ func TestRetireServerFailedKeepsIdentityPG(t *testing.T) {
 	n := invScalar[int64](t, e, ctx, `SELECT count(*) FROM server_identities WHERE server_id = ? AND status = 'active'`, srv.ID)
 	if n != 1 {
 		t.Fatalf("退役失败不应吊销身份：active %d 行", n)
+	}
+}
+
+// TestRetireServerRollbackNoTombstonePG 证明外层事务回滚时丢弃 Tombstone、保留 active 身份且不作废令牌。
+func TestRetireServerRollbackNoTombstonePG(t *testing.T) {
+	e, ctx := newInvEnvCommitted(t)
+	tombs := &fakeTombstones{}
+	e.svc.UseSessions(tombs)
+	srv := e.server(t, ctx, "enr-rb")
+	e.enroll(t, ctx, srv.ID)
+	tok := e.token(t, ctx, srv.ID)
+
+	boom := errors.New("外层回滚")
+	err := e.svc.tx.Do(ctx, func(ctx context.Context) error {
+		if _, err := e.svc.SetServerStatus(ctx, srv.ID, srv.RowVersion, ServerRetired, "r"); err != nil {
+			return err
+		}
+		return boom
+	})
+	if !errors.Is(err, boom) {
+		t.Fatalf("应返回外层错误：%v", err)
+	}
+
+	if got := tombs.list(); len(got) != 0 {
+		t.Fatalf("事务回滚不应发 Tombstone：%v", got)
+	}
+	n := invScalar[int64](t, e, ctx, `SELECT count(*) FROM server_identities WHERE server_id = ? AND status = 'active'`, srv.ID)
+	if n != 1 {
+		t.Fatalf("事务回滚身份应保持 active：有 %d 行", n)
+	}
+	if !invScalar[bool](t, e, ctx, `SELECT voided_at IS NULL FROM bootstrap_tokens WHERE id = ?`, tok) {
+		t.Fatal("事务回滚令牌不应作废")
+	}
+	if st := invScalar[string](t, e, ctx, `SELECT status FROM servers WHERE id = ?`, srv.ID); st == ServerRetired {
+		t.Fatalf("服务器状态不应转为 retired：%s", st)
+	}
+}
+
+// TestRevokeSkipsExpiredTokenPG 证明吊销身份时已过期的安装令牌不被作废，且审计只计未过期的作废数。
+func TestRevokeSkipsExpiredTokenPG(t *testing.T) {
+	e, ctx := newInvEnvCommitted(t)
+	tombs := &fakeTombstones{}
+	e.svc.UseSessions(tombs)
+	srv := e.server(t, ctx, "enr-exp")
+	e.enroll(t, ctx, srv.ID)
+	live := e.token(t, ctx, srv.ID)
+	dead := e.expiredToken(t, ctx, srv.ID)
+
+	if _, err := e.svc.SetServerStatus(ctx, srv.ID, srv.RowVersion, ServerRetired, "r"); err != nil {
+		t.Fatal(err)
+	}
+
+	if !invScalar[bool](t, e, ctx, `SELECT voided_at IS NOT NULL FROM bootstrap_tokens WHERE id = ?`, live) {
+		t.Fatal("未过期未用令牌应作废")
+	}
+	if !invScalar[bool](t, e, ctx, `SELECT voided_at IS NULL FROM bootstrap_tokens WHERE id = ?`, dead) {
+		t.Fatal("已过期令牌不应作废（voided_at 仍应为 NULL）")
+	}
+	voided := invScalar[string](t, e, ctx, `SELECT data->>'voided_tokens' FROM audit_events
+		WHERE action = 'server.status_change' AND resource_id = ? ORDER BY occurred_at DESC LIMIT 1`, srv.ID)
+	if voided != "1" {
+		t.Fatalf("审计作废令牌数应为 1（跳过过期令牌）：%s", voided)
 	}
 }
 
