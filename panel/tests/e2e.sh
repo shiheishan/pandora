@@ -5,7 +5,7 @@
 # PAY-003 同一易支付回调连发 10 次只产生一次权益与一笔账。
 #
 # 不测的东西及原因：
-#   - 审计哈希链：审计没有哈希链（见 p7e2e-common 产品决定），只数条数并核对 audit_events_append_only 触发器
+#   - 审计哈希链：审计没有哈希链（产品决定），只数条数并核对 audit_events_append_only 触发器
 #   - 租户隔离：单租户，没有租户列与 RLS
 #
 # 仍用 SQL 的步骤及原因：
@@ -280,7 +280,7 @@ meid=$(echo "$me" | jqr "['user_id']")
 #-------------------------------------------------------------------------------
 sec "3. 套餐目录（自建可服务节点 + authoring）"
 #-------------------------------------------------------------------------------
-# e2e job 无节点端：API 建池/服务器/节点后 SQL 标 ready 与 serving active（见 p7e2e-common）。
+# e2e job 无节点端：API 建池/服务器/节点后 SQL 标 ready 与 serving active。
 PLAN_TAG="e2e-${STAMP}"
 admin_reauth || true
 

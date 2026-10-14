@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 新栈鉴权端到端（P2 完成标准，docs/architecture.md 第 8、17 节）：
+# 鉴权端到端（docs/architecture.md 第 8、17 节）：
 #   1. 注册、登录：响应体只有 access，refresh 在 HttpOnly + SameSite=Strict 的 cookie 里；
 #   2. refresh 轮换；随便拼的值只回 401 不吊销；上一枚超出 30 秒宽限再用 = 重放，整条会话吊销；
 #   3. 跨域令牌：门户令牌进不了后台，后台令牌进不了门户；
