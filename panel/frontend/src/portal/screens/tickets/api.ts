@@ -4,7 +4,7 @@ import { useApi } from '../../../shell/runtime'
 import { ordersPageSchema } from '../common/orders'
 
 // ---------------------------------------------------------------------------
-// 读形状（domain/support.Ticket）。三个列表 Go 端都以空切片初始化，不收 null。
+// 读形状（module/support 的 service.Ticket）。三个列表 Go 端都以空切片初始化，不收 null。
 // 修订 R60 的 closed_reason / related_order 在 Go 里是无 omitempty 的指针：恒在，未关闭 / 无关联为 null
 // ---------------------------------------------------------------------------
 const TICKET_STATUSES = ['open', 'pending_user', 'pending_agent', 'escalated', 'resolved', 'closed'] as const

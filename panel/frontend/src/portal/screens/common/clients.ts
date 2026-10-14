@@ -95,7 +95,7 @@ export function shareMessage(device: Device, url: string): string {
   return `在${OTHER_SAY[device]}上装 ${app}（${STORE[device]}）→ 打开下面这条链接 → 点「添加」。\n${url}`
 }
 
-// 节点 type（nodefabric 的 13 个稳定协议）→ 展示名；未知的原样显示
+// 节点 type（module/node 的 protocol/schema.go 的 13 个稳定协议）→ 展示名；未知的原样显示
 const PROTOCOLS: Readonly<Record<string, string>> = {
   anytls: 'AnyTLS',
   http: 'HTTP',

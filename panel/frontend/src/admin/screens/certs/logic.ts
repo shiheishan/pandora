@@ -2,7 +2,7 @@ import type { TagTone } from '../../../ui'
 import type { AcmeSettings, Certificate, DnsCredential, ExpiryLevel, Order, Provider } from './schemas'
 
 // ---------------------------------------------------------------------------
-// DNS 提供方：凭据字段与最小权限指引（与 Go 的 domain/certs providerFields 同键）
+// DNS 提供方：凭据字段与最小权限指引（与 Go 的 certs/service/providers.go providerFields 同键）
 // ---------------------------------------------------------------------------
 interface ProviderField {
   key: string

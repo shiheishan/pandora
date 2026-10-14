@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 // ---------------------------------------------------------------------------
-// 节点证书（Go：domain/certs 的读形状，经 api/admin/certificates.go 原样输出）。
+// 节点证书（Go：module/certs 的读形状，经 certs/handler/dto.go 原样输出）。
 // 指针字段 nullable，切片后端恒回数组；读形状里没有任何密文或令牌字段。
 // ---------------------------------------------------------------------------
 export const PROVIDERS = ['cloudflare', 'alidns', 'tencentcloud'] as const

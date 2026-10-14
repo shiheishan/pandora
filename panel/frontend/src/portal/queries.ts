@@ -95,7 +95,7 @@ function liveSubscriptions(subs: readonly Subscription[]): Subscription[] {
   return subs.filter(isLive).sort((a, b) => end(b) - end(a))
 }
 
-/** 已过期、但还能在原订阅上续费的（过期不满 30 天，后端 renewable 为真）：续费后原链接自动恢复（w5expiry）。 */
+/** 已过期、但还能在原订阅上续费的（过期不满 30 天，后端 renewable 为真）：续费后原链接自动恢复。 */
 const isRenewableExpired = (s: Pick<Subscription, 'status' | 'renewable'>) => s.status === 'expired' && s.renewable
 
 /** 能原地续费的已过期订阅，到期最晚的在前。 */
@@ -107,7 +107,7 @@ function renewableExpired(subs: readonly Subscription[]): Subscription[] {
 /**
  * 契约门户-01：多条订阅时展示生效订阅中 current_period_end 最晚的一条；外框徽标、概览、选购页都按它。
  * 没有生效订阅时回落到最近一条能原地续费的已过期订阅：显示「已过期」与续费，买同套餐走续费、
- * 别的套餐走改套餐，链接不变（w5expiry）。
+ * 别的套餐走改套餐，链接不变。
  */
 export const pickPrimary = (subs: readonly Subscription[]): Subscription | null => liveSubscriptions(subs)[0] ?? renewableExpired(subs)[0] ?? null
 
@@ -147,8 +147,7 @@ export function useActivePlanName(): string | null {
 // R69 的 paid_invitees / total_earned / transfers 已上线且必回（Go 无 omitempty）。
 // 三个列表 Go 端都以空切片初始化，没有记录时是 []，不是 null。
 // ---------------------------------------------------------------------------
-// 新栈库里只有 pending / available / voided（复核作废，门户显示「已作废」）；reversed、frozen、settled、rejected 是旧接口的取值，
-// 新后端不再返回，留在枚举里只为不让解析失败
+// 佣金条目状态：pending / available / voided（复核作废，门户显示「已作废」）；其余状态留在枚举里防解析失败
 const COMMISSION_SCOPES = ['every_order', 'first_order'] as const
 const COMMISSION_ENTRY_STATUSES = ['pending', 'available', 'reversed', 'frozen', 'settled', 'rejected', 'voided'] as const
 const WITHDRAWAL_STATUSES = ['requested', 'reviewing', 'approved', 'rejected', 'processing', 'paid', 'failed', 'returned'] as const

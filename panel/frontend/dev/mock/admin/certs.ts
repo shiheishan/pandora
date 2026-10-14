@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { Json, MockContext, MockModule, MockResult } from '../types.ts'
 
 // ---------------------------------------------------------------------------
-// 节点证书（Go：api/admin/certificates.go + domain/certs）。形状、错误码、fields 键名、中文文案照 Go 写；
+// 节点证书（Go：module/certs 的 handler 与 service）。形状、错误码、fields 键名、中文文案照 Go 写；
 // 签发由 Go 的 worker 异步完成，这里在下一次读列表时把排队的订单直接判成功（演示用）。
 // 凭据「校验」：令牌 / 密钥里带 bad 的判为服务商拒绝，其余通过。
 // ---------------------------------------------------------------------------
@@ -195,7 +195,7 @@ function verify(c: Cred): Json {
 }
 
 // ---------------------------------------------------------------------------
-// 校验（照 domain/certs 的 normalizeIdentifiers / mergeSecret）
+// 校验（照 module/certs 的 service/identifiers.go normalizeIdentifiers 等规则）
 // ---------------------------------------------------------------------------
 const LABEL = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
 function normalizeIds(raw: unknown): string[] | string {
