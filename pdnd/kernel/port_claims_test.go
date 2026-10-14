@@ -280,7 +280,7 @@ func TestPortL4Label(t *testing.T) {
 // Shadowsocks 同端口占 TCP+UDP：与只占 UDP 的入站（此处用 mKCP vless 代替 hy2，同样只占 UDP）冲突。
 func TestPortClaimShadowsocksConflictsWithUDPInbound(t *testing.T) {
 	c := newTestNativeCore(t)
-	port := reserveTCPPort(t)
+	port := reserveTCPAndUDPPort(t)
 	p := strconv.Itoa(port)
 	if err := c.ApplyInbound(vlessInbound("vless-kcp", port, "mkcp"), nil); err != nil {
 		t.Fatal(err)
@@ -302,7 +302,7 @@ func TestPortClaimShadowsocksConflictsWithUDPInbound(t *testing.T) {
 
 func TestPortClaimShadowsocksConflictsWithTCPInbound(t *testing.T) {
 	c := newTestNativeCore(t)
-	port := reserveTCPPort(t)
+	port := reserveTCPAndUDPPort(t)
 	if err := c.ApplyInbound(vlessInbound("vless-tcp", port, "tcp"), nil); err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +315,7 @@ func TestPortClaimShadowsocksConflictsWithTCPInbound(t *testing.T) {
 
 func TestPortClaimShadowsocksTwiceReportsTCPUDP(t *testing.T) {
 	c := newTestNativeCore(t)
-	port := reserveTCPPort(t)
+	port := reserveTCPAndUDPPort(t)
 	p := strconv.Itoa(port)
 	if err := c.ApplyInbound(ssInbound("ss-a", port, nil), nil); err != nil {
 		t.Fatal(err)
