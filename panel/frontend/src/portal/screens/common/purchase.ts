@@ -58,7 +58,7 @@ export function siteNameOf(subs: readonly Subscription[], fallback: string): str
   return fromServer || fallback
 }
 
-/** 预览配置名：render.ProfileName（订阅模块） 的同一规则，只用于还没生效的名字（起名时预览） */
+/** 预览配置名：与订阅模块 render.ProfileName 同一规则，只用于还没生效的名字（起名时预览） */
 export const profileName = (site: string, label: string, planName: string) => `${site} · ${label.trim() || planName}`
 
 // ---------------------------------------------------------------------------

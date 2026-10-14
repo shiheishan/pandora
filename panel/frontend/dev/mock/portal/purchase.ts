@@ -201,5 +201,5 @@ export function normalizeLabel(raw: string): { ok: string } | { error: string } 
   return { ok: s }
 }
 
-/** render.ProfileName（订阅模块）：「站点名 · 备注名」，没有备注名时用套餐名 */
+/** 订阅模块 render.ProfileName：「站点名 · 备注名」，没有备注名时用套餐名 */
 export const profileName = (site: string, label: string | null, planName: string) => `${site} · ${label || planName}`
