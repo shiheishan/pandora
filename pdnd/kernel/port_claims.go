@@ -111,16 +111,15 @@ func (e *PortInUseError) RuntimeReason() string {
 	return fmt.Sprintf("port_in_use:%d/%s:%s", e.Port, e.L4, owner)
 }
 
-// inboundOwner 是一个入站属于哪个面板、哪个节点。scope 是面板标识（节点端
-// 给的不透明串：panel URL 与租户的哈希），为空表示不明。
+// inboundOwner 是一个入站属于哪台服务器、哪个节点。scope 是服务器身份（server id）的哈希，为空表示不明。
 type inboundOwner struct {
 	scope  string
 	nodeID string
 }
 
-// SetInboundOwner 登记 tag 属于哪个面板（scope）的哪个节点。节点端在每次应用
+// SetInboundOwner 登记 tag 属于哪台服务器（scope）的哪个节点。节点端在每次应用
 // 配置前调用；登记只影响端口冲突时的文案，不影响谁占端口。scope 为空表示
-// 不明（例如兼容通道拿不到租户），这样的入站之间互不透露节点 ID。
+// 不明（例如没登记归属的入站），这样的入站之间互不透露节点 ID。
 func (c *NativeCore) SetInboundOwner(tag, scope, nodeID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
