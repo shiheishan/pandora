@@ -9,7 +9,7 @@ import (
 // 当作私密路径的可信属主（生产只信 root，见 trustCurrentUserAsSecureOwner）。
 //
 // 收成 0700 只是让用例与最严的布局一致；父目录校验（validateSecureParent）只拒绝
-// 组或其他人可写，t.TempDir() 的 0755 本身也能过。这条校验是 //go:build linux 门控的，
+// 组或其他人可写（umask 022 下 t.TempDir() 的 0755 也能过，umask 002 下的 0775 会被拒）。这条校验是 //go:build linux 门控的，
 // 非 Linux 平台上是空实现，只在别的平台跑测试看不出它的效果。
 func secureTempDir(t *testing.T) string {
 	t.Helper()

@@ -41,7 +41,7 @@ func TestLocalSealRoundTripAndRejections(t *testing.T) {
 		t.Fatal(err)
 	}
 	keys := t.TempDir()
-	// t.TempDir 的子目录按 0777 减 umask 建（多半是 0755），私密文件的父目录要 0700
+	// 私密文件的父目录不能组或其他人可写；t.TempDir 按 0777 减 umask 建，收成 0700 免得受 umask 影响
 	if err := os.Chmod(keys, 0o700); err != nil {
 		t.Fatal(err)
 	}

@@ -98,3 +98,25 @@ func TestSecureParentModeAllowsGroupReadRejectsWrite(t *testing.T) {
 		}
 	}
 }
+
+// 安装布局端到端：备份目录与私钥目录都是 0750（组可读不可写），封条与核验要能走通。
+// 全新测试机上 backup-postgres.sh 的 seal-local 一律失败，就是卡在父目录校验上。
+func TestLocalSealUnderInstallLayout(t *testing.T) {
+	trustCurrentUserAsSecureOwner(t)
+	dir := t.TempDir()
+	keys := t.TempDir()
+	for _, d := range []string{dir, keys} {
+		if err := os.Chmod(d, 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	identity := writeIdentity(t, keys, "backup-age.key", sealFixtureKey+"\n")
+	archive, checksum := writeSealFixture(t, dir, "20261014T014836Z", []byte("encrypted-archive-bytes"))
+	seal, err := SealLocalBackup(archive, checksum, identity, sealFixtureRecipient)
+	if err != nil {
+		t.Fatalf("0750 布局下封条失败: %v", err)
+	}
+	if err := VerifyLocalSeal(archive, checksum, seal, identity); err != nil {
+		t.Fatalf("0750 布局下核验失败: %v", err)
+	}
+}

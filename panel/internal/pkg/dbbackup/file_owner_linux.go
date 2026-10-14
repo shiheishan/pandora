@@ -26,7 +26,7 @@ func requireSecureFileOwner(info fs.FileInfo) error {
 	return nil
 }
 
-// requireSecureParentMode 只拒绝组或其他人可写的父目录（与 OpenSSH StrictModes 同口径）：
+// requireSecureParentMode 只拒绝组或其他人可写的父目录（权限位口径同 OpenSSH StrictModes，但只查直接父目录）：
 // 能写目录就能删、换、改名里面的文件；只读不行。安装布局里 /etc/pandora 与备份目录是
 // 0750 root:pandora（服务组要读配置、状态页要列备份），私密文件本身仍须 root 所有、0600、单链接。
 func requireSecureParentMode(info fs.FileInfo) error {
