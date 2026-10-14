@@ -127,12 +127,12 @@ SELECT code FROM ins`
 	for rows.Next() {
 		var code string
 		if err := rows.Scan(&code); err != nil {
-			return nil, err
+			return nil, mapErr(err)
 		}
 		inserted = append(inserted, code)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, mapErr(err)
 	}
 	return inserted, nil
 }

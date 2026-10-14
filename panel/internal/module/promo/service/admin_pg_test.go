@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aegispanel/aegis/internal/module/promo/repo"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
@@ -345,6 +346,19 @@ func TestGenerateCouponsBatchWithPlansPG(t *testing.T) {
 	}
 	if len(inserted) != 1 || inserted[0] != "NEWX0000001" {
 		t.Fatalf("撞码后插入 %v，期望仅 [NEWX0000001]", inserted)
+	}
+}
+
+// 限定套餐在插入 coupon_plans 时不存在时，repo 应返回 ErrPlanGone（事务已作废，勿在同一 ctx 再查库）。
+func TestInsertCouponsPlanGonePG(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.txCtx()
+
+	tmpl := couponFromSpec("", fixedSpec("1.00"))
+	tmpl.Name = "套餐已删"
+	_, err := e.svc.repo.InsertCouponsIfAbsent(ctx, &tmpl, []string{"PGONE000001"}, []uuid.UUID{uuid.New()})
+	if !errors.Is(err, repo.ErrPlanGone) {
+		t.Fatalf("期望 ErrPlanGone，得 %v", err)
 	}
 }
 

@@ -40,6 +40,10 @@ func (s *Service) CreateCoupon(ctx context.Context, code string, spec Spec) (uui
 		// ON CONFLICT DO NOTHING 判重：撞码不让调用方的事务进入出错状态
 		inserted, err := s.repo.InsertCouponIfAbsent(ctx, &c, spec.PlanIDs)
 		if err != nil {
+			if errors.Is(err, repo.ErrPlanGone) {
+				return errs.Newf(errs.Conflict, "套餐已变更，请刷新后重试")
+			}
+			// coupons 表外键仅剩 user_group_id、created_by；created_by 来自当前会话
 			if errors.Is(err, repo.ErrForeignKey) {
 				return errs.Invalid(map[string]string{"user_group_id": "用户组不存在"})
 			}
@@ -110,6 +114,10 @@ func (s *Service) GenerateCoupons(ctx context.Context, prefix string, count int,
 			}
 			inserted, err := s.repo.InsertCouponsIfAbsent(ctx, &tmpl, batch, spec.PlanIDs)
 			if err != nil {
+				if errors.Is(err, repo.ErrPlanGone) {
+					return errs.Newf(errs.Conflict, "套餐已变更，请刷新后重试")
+				}
+				// coupons 表外键仅剩 user_group_id、created_by；创建人来自当前会话
 				if errors.Is(err, repo.ErrForeignKey) {
 					return errs.Invalid(map[string]string{"user_group_id": "用户组不存在"})
 				}
