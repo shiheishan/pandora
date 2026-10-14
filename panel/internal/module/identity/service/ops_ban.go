@@ -13,7 +13,7 @@ import (
 )
 
 // BulkBan 按批量运营的筛选封禁一批账号：命中人数必须与预览时一致（防止条件下数据变了）；一次最多 BulkBanMax 人；
-// 自己、管理员、已封禁、已注销的跳过并计数；其余改成 banned、吊销会话、逐人写审计，末尾写一条汇总审计。
+// 至少要有一个筛选条件；自己、管理员、已封禁、已注销的跳过并计数；其余改成 banned、吊销会话、逐人写审计，末尾写一条汇总审计。
 func (s *Service) BulkBan(ctx context.Context, f BulkFilter, expectedTotal int64, reason string) (BulkBanResult, error) {
 	p, err := principal(ctx)
 	if err != nil {
@@ -23,6 +23,10 @@ func (s *Service) BulkBan(ctx context.Context, f BulkFilter, expectedTotal int64
 	r, ok := cleanText(reason)
 	if !ok || utf8.RuneCountInString(r) < 5 || utf8.RuneCountInString(r) > 500 {
 		return BulkBanResult{}, errs.Invalid(map[string]string{"reason": "请写清原因，5 到 500 个字"})
+	}
+	// 不带任何条件就是全站：批量封禁必须至少选一个筛选条件，防止误点封掉所有人
+	if len(bulkFilterDigest(f)) == 0 {
+		return BulkBanResult{}, errs.Invalid(map[string]string{"filter": "批量封禁至少要选一个筛选条件"})
 	}
 
 	f, q, err := s.bulkQuery(ctx, f)
