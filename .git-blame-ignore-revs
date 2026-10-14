@@ -6,3 +6,12 @@
 
 # 删掉全部 GEB L3 头注释（INPUT / OUTPUT / POS 三个字段）
 733f840847def60e3b5f1ca0fef46d18bc74e2cb
+
+# 第三波清理：注释去掉对已删旧代码的引用与开发阶段号（tests、order、subscription、catalog 等、其余模块、app/pkg/tools、packs.go）
+a341ad6f2426542d46497f69b3945f70c8bcdae2
+8dcb2ec38d959b4cdb656c314644f241bfc08add
+26cd224d663a78f59904c8b99649fa522e142f49
+201feba911c42910346ac66f78f2efad34e47b34
+2b5fa2bb3ebe47abefdc4270ca5a5a19426df576
+f35f3b0ab26eee799c1b86051f1b3f4963eb0393
+013e5c1fa623166957a1e00965d4c47e7159180b
