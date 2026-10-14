@@ -76,9 +76,15 @@ func (r *Repo) ListAcceptingProviders(ctx context.Context) ([]model.Provider, er
 	return out, nil
 }
 
-// InsertProvider 插一行；p.ID 由调用方先填好（uuid.NewV7）。code 重复返回 ErrDuplicate。写前 money.Check(p.MinAmount)。
+// InsertProvider 插一行；p.ID 由调用方先填好（uuid.NewV7）。code 重复返回 ErrDuplicate。写前 money.Check(p.MinAmount)、money.Check(p.FeeFixed)、money.Check(p.FeePercent)。
 func (r *Repo) InsertProvider(ctx context.Context, p *model.Provider) error {
 	if err := money.Check(p.MinAmount); err != nil {
+		return err
+	}
+	if err := money.Check(p.FeeFixed); err != nil {
+		return err
+	}
+	if err := money.Check(p.FeePercent); err != nil {
 		return err
 	}
 	// json 序列化器把 nil 切片写成 SQL NULL，两列都是 NOT NULL 的 jsonb 数组
@@ -102,6 +108,17 @@ func (r *Repo) UpdateProviderFields(ctx context.Context, id uuid.UUID, fields ma
 			amt, ok := v.(decimal.Decimal)
 			if !ok {
 				return false, fmt.Errorf("payment: min_amount 类型错误")
+			}
+			if err := money.Check(amt); err != nil {
+				return false, err
+			}
+			updates[k] = amt
+			continue
+		}
+		if k == "fee_fixed" || k == "fee_percent" {
+			amt, ok := v.(decimal.Decimal)
+			if !ok {
+				return false, fmt.Errorf("payment: %s 类型错误", k)
 			}
 			if err := money.Check(amt); err != nil {
 				return false, err

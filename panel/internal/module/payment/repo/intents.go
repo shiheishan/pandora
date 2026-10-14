@@ -68,9 +68,12 @@ func (r *Repo) CountIntents(ctx context.Context, orderID uuid.UUID) (int64, erro
 	return n, err
 }
 
-// InsertIntent 插一行；(provider_id, out_trade_no) 或「每单一个在途」冲突返回 ErrDuplicate。写前 money.Check(it.Amount)。
+// InsertIntent 插一行；(provider_id, out_trade_no) 或「每单一个在途」冲突返回 ErrDuplicate。写前 money.Check(it.Amount)、money.Check(it.SurchargeAmount)。
 func (r *Repo) InsertIntent(ctx context.Context, it *model.Intent) error {
 	if err := money.Check(it.Amount); err != nil {
+		return err
+	}
+	if err := money.Check(it.SurchargeAmount); err != nil {
 		return err
 	}
 	return mapErr(r.d.Conn(ctx).Create(it).Error)

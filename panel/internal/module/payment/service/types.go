@@ -29,14 +29,16 @@ type Settler interface {
 	SettlePayment(ctx context.Context, in SettleInput) error
 }
 
-// SettleInput 是一笔已确认、已落库的收款。有支付意图时 Amount 与 Currency 已核对等于意图快照，
-// 但 Settler 仍要核对等于订单应付（钱的最后一道兜底；线下收款没有意图，只有这一道）。
-// Fee 与 ProviderCode 给 ledger.PostOrderPaid 用（渠道实收 = Amount，手续费 = Fee，渠道科目按 ProviderCode）。
+// SettleInput 是一笔已确认、已落库的收款。
+// 这笔收款里属于订单的部分是 Amount（= 渠道实收 − Surcharge，有意图时等于意图快照里的订单应付，Settler 仍要核对它等于订单应付）；
+// Surcharge 是向用户加收的支付手续费，不属于订单，由 Settler 原样交给账本单独记收入（ledger.OrderPaid.Surcharge、充值单的分录），
+// 不计佣金、不改订单总额；渠道实收 = Amount + Surcharge，Fee 是渠道从实收里扣的成本。线下收款 Surcharge 恒为 0。
 type SettleInput struct {
 	OrderID      uuid.UUID
 	PaymentID    uuid.UUID
 	Amount       decimal.Decimal
 	Fee          decimal.Decimal
+	Surcharge    decimal.Decimal
 	Currency     money.Currency
 	ProviderCode string
 	Method       string
@@ -116,9 +118,14 @@ const (
 
 // 适配器名。
 const (
-	AdapterEpay    = "epay"
-	AdapterOffline = "offline"
+	AdapterEpay         = "epay"
+	AdapterBTCPay       = "btcpay"
+	AdapterCoinPayments = "coinpayments"
+	AdapterOffline      = "offline"
 )
+
+// OnlineAdapters 是后台能新建、编辑的在线渠道类型。
+var OnlineAdapters = []string{AdapterEpay, AdapterBTCPay, AdapterCoinPayments}
 
 // OfflineProviderCode 是迁移里种下的线下收款渠道。
 const OfflineProviderCode = "offline"
@@ -150,6 +157,10 @@ type ProviderView struct {
 	DefaultMethod    string
 	AllowPrivateHost bool
 	MinAmount        decimal.Decimal
+	FeeFixed         decimal.Decimal
+	FeePercent       decimal.Decimal
+	HasWebhookSecret bool
+	NotifyURL        string // 渠道回调地址，按回调前缀设置拼好；线下渠道为空
 	// Today 是站点时区今天成功入账的金额，按币种分开。
 	Today map[money.Currency]decimal.Decimal
 	// SuccessRate24h 是近 24 小时进入终态的意图里成功的比例；没有样本为 nil。
@@ -169,9 +180,15 @@ type ProviderSettings struct {
 	AllowPrivateHost bool
 	// MinAmount 是最低付款额（元，0.01–1000.00）；零值表示新建用默认 1.00、编辑保留原值。
 	MinAmount decimal.Decimal
-	// MerchantID 与 Key 只写不读：新建必填，编辑留空表示不改。
+	// FeeFixed 固定手续费（元，0–1000）；nil 表示新建取 0、编辑不改。
+	FeeFixed *decimal.Decimal
+	// FeePercent 比例手续费（%，0–100，最多两位小数）；nil 同上。
+	FeePercent *decimal.Decimal
+	// MerchantID 与 Key 只写不读：易支付是 pid 与商户密钥，BTCPay 是 Store ID 与 API Key，CoinPayments 是 Client ID 与 Client Secret；新建必填、编辑留空表示不改。
 	MerchantID string
 	Key        string
+	// WebhookSecret 只写不读：BTCPay 的 Webhook 密钥；编辑留空表示不改。
+	WebhookSecret string
 }
 
 // CreateProviderInput 是新建渠道的入参。新建的渠道「已启用、暂停收新单」。
@@ -194,6 +211,10 @@ type PaymentMethod struct {
 	DisplayName string
 	Method      string
 	Currencies  []string
+	FeeFixed    decimal.Decimal
+	FeePercent  decimal.Decimal
+	Fee         *decimal.Decimal // 调用方给了应付金额时才有：这次的手续费
+	Total       *decimal.Decimal // 调用方给了应付金额时才有：合计
 }
 
 // ---------------------------------------------------------------------------
@@ -205,7 +226,7 @@ type CreateIntentInput struct {
 	OrderID      uuid.UUID
 	OrderNo      string
 	UserID       uuid.UUID
-	Amount       decimal.Decimal // 应付金额（外部支付部分），> 0
+	Amount       decimal.Decimal // 订单应付（外部支付部分），> 0；手续费由 payment 按渠道配置加在上面
 	Currency     money.Currency
 	ProviderCode string
 	Method       string // 渠道内方式；空串取渠道默认
@@ -222,7 +243,8 @@ type IntentResult struct {
 	HTTPMethod  string
 	RedirectURL string
 	FormFields  map[string]string
-	Amount      decimal.Decimal
+	Amount      decimal.Decimal // 这次要付的总额 = 订单应付 + Surcharge
+	Surcharge   decimal.Decimal
 	Currency    money.Currency
 	ExpiresAt   *time.Time
 	// Reused 为 true 表示复用了同渠道、同方式的在途意图。
@@ -313,6 +335,7 @@ type IntentView struct {
 	Method       string
 	Currency     money.Currency
 	Amount       decimal.Decimal
+	Surcharge    decimal.Decimal // Amount 里包含的用户手续费
 	Status       IntentStatus
 	ExpiresAt    *time.Time
 	CreatedAt    time.Time
@@ -328,6 +351,7 @@ type PaymentView struct {
 	ProviderPaymentID string
 	Currency          money.Currency
 	Amount            decimal.Decimal
+	Surcharge         decimal.Decimal // Amount 里包含的用户手续费
 	Fee               decimal.Decimal
 	Status            string
 	Method            *string
