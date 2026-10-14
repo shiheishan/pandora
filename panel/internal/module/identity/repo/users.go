@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/aegispanel/aegis/internal/module/identity/model"
+	"github.com/aegispanel/aegis/internal/pkg/db"
 )
 
 // UserListQuery 是后台用户列表的筛选；零值不筛。
@@ -36,7 +37,7 @@ type UserRef struct {
 }
 
 // LikePattern 导出给 service：生成 ILIKE 包含模式。
-func LikePattern(q string) string { return likePattern(q) }
+func LikePattern(q string) string { return db.ContainsPattern(q) }
 
 // UserByID 按主键查用户。
 func (r *Repo) UserByID(ctx context.Context, id uuid.UUID) (model.User, bool, error) {
@@ -162,7 +163,7 @@ func (r *Repo) IDsByEmailLike(ctx context.Context, q string, limit int) ([]uuid.
 	var rows []UserRef
 	err := r.d.Conn(ctx).Raw(
 		"SELECT id FROM users WHERE email::text ILIKE ? ESCAPE '\\' ORDER BY id LIMIT ?",
-		likePattern(q), limit,
+		db.ContainsPattern(q), limit,
 	).Scan(&rows).Error
 	if err != nil {
 		return nil, err

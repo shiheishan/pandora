@@ -3,9 +3,6 @@ package repo
 
 import (
 	"errors"
-	"strings"
-
-	"gorm.io/gorm"
 
 	"github.com/aegispanel/aegis/internal/pkg/db"
 )
@@ -19,33 +16,10 @@ func New(d *db.DB) *Repo { return &Repo{d: d} }
 // ErrDuplicate 表示唯一约束冲突。
 var ErrDuplicate = errors.New("content: 唯一约束冲突")
 
-// mapErr 把 GORM 翻译后的约束错误转成模块哨兵。
-func mapErr(err error) error {
-	if err == nil {
-		return nil
-	}
-	if errors.Is(err, gorm.ErrDuplicatedKey) {
-		return ErrDuplicate
-	}
-	return err
-}
+// constraintErrs 把约束违例翻译成本模块哨兵（统一做法见 internal/pkg/db/constraint.go）。
+var constraintErrs = db.ConstraintErrors{ByCode: map[string]error{
+	db.CodeUnique: ErrDuplicate,
+}}
 
-// likePattern 把用户输入转成 ILIKE 的包含模式：先转义 \ % _，再两头加 %。
-func likePattern(q string) string {
-	return "%" + escapeLike(q) + "%"
-}
-
-// escapeLike 为 ILIKE/LIKE 转义 \、%、_。
-func escapeLike(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		switch r {
-		case '\\', '%', '_':
-			b.WriteByte('\\')
-			b.WriteRune(r)
-		default:
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
-}
+// mapErr 把约束违例翻译成本模块哨兵，并包住原错误。
+func mapErr(err error) error { return constraintErrs.Map(err) }

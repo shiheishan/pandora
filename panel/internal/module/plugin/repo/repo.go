@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 
 	"github.com/aegispanel/aegis/internal/pkg/db"
 )
@@ -20,16 +19,13 @@ func New(d *db.DB) *Repo { return &Repo{d: d} }
 // ErrDuplicate 表示唯一约束冲突。
 var ErrDuplicate = errors.New("plugin: 唯一约束冲突")
 
-// mapErr 把 GORM 翻译后的约束错误转成模块哨兵。
-func mapErr(err error) error {
-	if err == nil {
-		return nil
-	}
-	if errors.Is(err, gorm.ErrDuplicatedKey) {
-		return ErrDuplicate
-	}
-	return err
-}
+// constraintErrs 把约束违例翻译成本模块哨兵（统一做法见 internal/pkg/db/constraint.go）。
+var constraintErrs = db.ConstraintErrors{ByCode: map[string]error{
+	db.CodeUnique: ErrDuplicate,
+}}
+
+// mapErr 把约束违例翻译成本模块哨兵，并包住原错误。
+func mapErr(err error) error { return constraintErrs.Map(err) }
 
 const maxErrorRunes = 500
 
