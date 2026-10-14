@@ -20,9 +20,6 @@ import (
 	nodev1 "github.com/aegispanel/nodeapi/pandora/node/v1"
 )
 
-const enrollAttempts = 5
-const enrollRetryWait = 2 * time.Second
-
 type serverOutcome int
 
 const (
@@ -31,12 +28,27 @@ const (
 	serverOutcomeTombstone  serverOutcome = 2
 )
 
+// serverParams 是各台模拟服务器共用的参数。
+type serverParams struct {
+	panelAddr, caSHA, stateDir string
+	reportInterval             time.Duration
+	trafficUsers               int
+	omitStatusUsers            bool
+	enrollAttempts             int // 0 = 不限
+	enrollRetryWait            time.Duration
+	enrollSem                  chan struct{} // nil = 不限并发
+}
+
 func main() {
 	os.Exit(run(os.Args[1:]))
 }
 
 // run 解析参数并跑全部模拟服务器，返回进程退出码。
 func run(args []string) int {
+	if len(args) > 0 && args[0] == "summary" {
+		return runSummary(args[1:], os.Stdout, os.Stderr)
+	}
+
 	fs := flag.NewFlagSet("nodesim", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	panelAddr := fs.String("panel", "", "面板节点通道 host:port（必填）")
@@ -48,12 +60,28 @@ func run(args []string) int {
 	statusFile := fs.String("status-file", "", "状态 JSON 路径（可空）")
 	duration := fs.Duration("duration", 0, "运行时长，0 表示直到 SIGINT/SIGTERM")
 	logLevel := fs.String("log-level", "info", "日志级别 debug|info|warn|error")
+	statusUsers := fs.Bool("status-users", true, "状态文件里写各节点的用户 uuid 名单；200 台、每台几千人时设 false")
+	enrollAttempts := fs.Int("enroll-attempts", 5, "无身份时接入的最多尝试次数，0 表示一直重试到退出")
+	enrollRetryWait := fs.Duration("enroll-retry-wait", 2*time.Second, "接入失败后的等待")
+	enrollConcurrency := fs.Int("enroll-concurrency", 0, "同时进行接入的服务器数，0 不限（面板按来源 IP 每分钟限 10 次接入）")
 
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	if *enrollAttempts < 0 {
+		fmt.Fprintln(os.Stderr, "--enroll-attempts 不能为负数")
+		return 2
+	}
+	if *enrollRetryWait <= 0 {
+		fmt.Fprintln(os.Stderr, "--enroll-retry-wait 必须大于 0")
+		return 2
+	}
+	if *enrollConcurrency < 0 {
+		fmt.Fprintln(os.Stderr, "--enroll-concurrency 不能为负数")
+		return 2
+	}
 	if *panelAddr == "" || *tokensFile == "" || *stateDir == "" {
-		fmt.Fprintln(os.Stderr, "用法: nodesim --panel host:port --tokens-file F --state-dir D [--ca-sha256 sha256:…] …")
+		fmt.Fprintln(os.Stderr, "用法: nodesim --panel host:port --tokens-file F --state-dir D [--ca-sha256 sha256:…] …；汇总: nodesim summary --status-file F [--version V] [--since RFC3339]")
 		return 2
 	}
 
@@ -89,6 +117,22 @@ func run(args []string) int {
 		}
 	}()
 
+	var enrollSem chan struct{}
+	if *enrollConcurrency > 0 {
+		enrollSem = make(chan struct{}, *enrollConcurrency)
+	}
+	params := serverParams{
+		panelAddr:       *panelAddr,
+		caSHA:           *caSHA,
+		stateDir:        *stateDir,
+		reportInterval:  *reportInterval,
+		trafficUsers:    *trafficUsers,
+		omitStatusUsers: !*statusUsers,
+		enrollAttempts:  *enrollAttempts,
+		enrollRetryWait: *enrollRetryWait,
+		enrollSem:       enrollSem,
+	}
+
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var enrollFail, tombstone int
@@ -96,7 +140,7 @@ func run(args []string) int {
 		wg.Add(1)
 		go func(name, token string) {
 			defer wg.Done()
-			r := runServer(ctx, logger, board, *panelAddr, *caSHA, *stateDir, name, token, *reportInterval, *trafficUsers)
+			r := runServer(ctx, logger, board, params, name, token)
 			mu.Lock()
 			switch r {
 			case serverOutcomeEnrollFail:
@@ -124,52 +168,17 @@ func run(args []string) int {
 }
 
 // runServer 跑一台模拟服务器并返回结束原因。
-func runServer(
-	ctx context.Context,
-	logger *slog.Logger,
-	board *Board,
-	panelAddr, caSHA, stateDir, name, token string,
-	reportInterval time.Duration,
-	trafficUsers int,
-) serverOutcome {
-	dir := filepath.Join(stateDir, name)
+func runServer(ctx context.Context, logger *slog.Logger, board *Board, p serverParams, name, token string) serverOutcome {
+	dir := filepath.Join(p.stateDir, name)
 	id, err := panel.LoadIdentity(dir)
 	if errors.Is(err, os.ErrNotExist) {
-		if caSHA == "" {
+		if p.caSHA == "" {
 			board.RecordError(name, errors.New("身份不存在且未提供 --ca-sha256"))
 			return serverOutcomeEnrollFail
 		}
-		var lastErr error
-		for attempt := 0; attempt < enrollAttempts; attempt++ {
-			if ctx.Err() != nil {
-				board.RecordError(name, ctx.Err())
-				return serverOutcomeEnrollFail
-			}
-			id, lastErr = panel.Enroll(ctx, panel.EnrollOptions{
-				Panel:         panelAddr,
-				CAFingerprint: caSHA,
-				Token:         token,
-				Dir:           dir,
-				AgentVersion:  "nodesim",
-				Host:          hostInfo(name),
-			})
-			if lastErr == nil {
-				break
-			}
-			logger.Warn("接入失败，稍后重试", "sim", name, "attempt", attempt+1, "err", lastErr)
-			if attempt+1 < enrollAttempts {
-				t := time.NewTimer(enrollRetryWait)
-				select {
-				case <-ctx.Done():
-					t.Stop()
-					board.RecordError(name, ctx.Err())
-					return serverOutcomeEnrollFail
-				case <-t.C:
-				}
-			}
-		}
-		if lastErr != nil {
-			board.RecordError(name, lastErr)
+		id, err = enrollWithRetry(ctx, logger, p, name, token, dir)
+		if err != nil {
+			board.RecordError(name, err)
 			return serverOutcomeEnrollFail
 		}
 	} else if err != nil {
@@ -183,15 +192,16 @@ func runServer(
 	})
 
 	sim := NewSim(SimOptions{
-		Name:           name,
-		Board:          board,
-		ReportInterval: reportInterval,
-		TrafficUsers:   trafficUsers,
-		Logger:         logger.With("sim", name),
+		Name:            name,
+		Board:           board,
+		ReportInterval:  p.reportInterval,
+		TrafficUsers:    p.trafficUsers,
+		OmitStatusUsers: p.omitStatusUsers,
+		Logger:          logger.With("sim", name),
 	})
 
 	sess, err := panel.NewSession(panel.SessionOptions{
-		Address:      panelAddr,
+		Address:      p.panelAddr,
 		Identity:     id,
 		AgentVersion: "nodesim",
 		Host:         func() *nodev1.HostInfo { return hostInfo(name) },
@@ -219,6 +229,47 @@ func runServer(
 		return serverOutcomeTombstone
 	}
 	return serverOutcomeOK
+}
+
+// enrollWithRetry 用一次性令牌接入，失败按 --enroll-retry-wait 重试；有并发上限时只在接入期间占位，接入完就释放。
+func enrollWithRetry(ctx context.Context, logger *slog.Logger, p serverParams, name, token, dir string) (*panel.Identity, error) {
+	if p.enrollSem != nil {
+		select {
+		case p.enrollSem <- struct{}{}:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		defer func() { <-p.enrollSem }()
+	}
+	var lastErr error
+	for attempt := 0; p.enrollAttempts == 0 || attempt < p.enrollAttempts; attempt++ {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		id, err := panel.Enroll(ctx, panel.EnrollOptions{
+			Panel:         p.panelAddr,
+			CAFingerprint: p.caSHA,
+			Token:         token,
+			Dir:           dir,
+			AgentVersion:  "nodesim",
+			Host:          hostInfo(name),
+		})
+		if err == nil {
+			return id, nil
+		}
+		lastErr = err
+		logger.Warn("接入失败，稍后重试", "sim", name, "attempt", attempt+1, "err", err)
+		if p.enrollAttempts == 0 || attempt+1 < p.enrollAttempts {
+			t := time.NewTimer(p.enrollRetryWait)
+			select {
+			case <-ctx.Done():
+				t.Stop()
+				return nil, ctx.Err()
+			case <-t.C:
+			}
+		}
+	}
+	return nil, lastErr
 }
 
 func hostInfo(name string) *nodev1.HostInfo {
