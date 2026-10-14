@@ -55,7 +55,7 @@ type serverDeleteRequest struct {
 // 响应
 // ---------------------------------------------------------------------------
 
-// serverResponse 是一台服务器（serverSchema）。control_node_id 恒为 null：新设计一台服务器一条会话，没有「控制节点」。
+// serverResponse 是一台服务器（serverSchema）。
 // 资源指标取最新一个指标点，没有点时为 null。
 type serverResponse struct {
 	ID                 uuid.UUID  `json:"id"`
@@ -78,7 +78,6 @@ type serverResponse struct {
 	DiskGB             *int       `json:"disk_gb"`
 	CapacityNodes      int        `json:"capacity_nodes"`
 	Notes              *string    `json:"notes"`
-	ControlNodeID      *uuid.UUID `json:"control_node_id"`
 	NodeCount          int        `json:"node_count"`
 	ActiveNodeCount    int        `json:"active_node_count"`
 	ServingNodeCount   int        `json:"serving_node_count"`

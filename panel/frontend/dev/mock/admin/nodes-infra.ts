@@ -140,7 +140,6 @@ function serverOut(s: MockServer, nodes: readonly InfraNode[]) {
   return {
     ...rest,
     heartbeat_online: s.status === 'ready' && !!s.last_heartbeat_at && Date.now() - new Date(s.last_heartbeat_at).getTime() <= 90_000,
-    control_node_id: null,
     node_count: mine.length,
     active_node_count: active.length,
     serving_node_count: active.filter((n) => n.last_heartbeat_at).length,
@@ -253,8 +252,8 @@ function slugify(name: string): string {
 // ---------------------------------------------------------------------------
 export const globalRouting: { outbounds: Array<{ tag: string; type: string; settings: unknown }>; routes: Json[] } = {
   outbounds: [
-    { tag: 'US-LAX-01', type: 'trojan', settings: { server: 'us1.pandora.run', port: 443 } },
-    { tag: 'HK-RELAY', type: 'shadowsocks', settings: { server: 'hk-relay.pandora.run', port: 8388 } },
+    { tag: 'US-LAX-01', type: 'trojan', settings: { server: 'us1.example.test', port: 443 } },
+    { tag: 'HK-RELAY', type: 'shadowsocks', settings: { server: 'hk-relay.example.test', port: 8388 } },
   ],
   routes: [
     { priority: 10, matcher: { domain_suffix: ['doubleclick.net', 'googlesyndication.com'] }, outbound_tag: 'block', enabled: true, note: '广告' },
@@ -484,7 +483,7 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
         return {
           status: 201,
           unreplayable: true,
-          body: { token: `pbt_${randomBytes(24).toString('base64url')}`, expires_at: new Date(Date.now() + minutes * 60_000).toISOString(), install_command: 'curl -fsSL https://panel.pandora.run/pdnd/install.sh | sudo bash -s -- --enroll' },
+          body: { token: `pbt_${randomBytes(24).toString('base64url')}`, expires_at: new Date(Date.now() + minutes * 60_000).toISOString(), install_command: 'curl -fsSL https://panel.example.test/pdnd/install.sh | sudo bash -s -- --enroll' },
         }
       })
     },

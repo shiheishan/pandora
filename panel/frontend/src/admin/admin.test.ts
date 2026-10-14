@@ -89,9 +89,9 @@ describe('createReauthController', () => {
 
 describe('identityLabels', () => {
   it('always says 管理员 and takes the avatar from the name', () => {
-    const me = { user_id: 'abcdef12-3456', reauthed: true, email: 'linzhou@pandora.run', display_name: '林舟' }
-    expect(identityLabels(me)).toEqual({ title: '管理员 · 林舟', subtitle: 'linzhou@pandora.run', initial: '林' })
-    expect(identityLabels({ ...me, display_name: null })).toEqual({ title: '管理员 · linzhou', subtitle: 'linzhou@pandora.run', initial: 'l' })
+    const me = { user_id: 'abcdef12-3456', reauthed: true, email: 'linzhou@example.test', display_name: '林舟' }
+    expect(identityLabels(me)).toEqual({ title: '管理员 · 林舟', subtitle: 'linzhou@example.test', initial: '林' })
+    expect(identityLabels({ ...me, display_name: null })).toEqual({ title: '管理员 · linzhou', subtitle: 'linzhou@example.test', initial: 'l' })
   })
 
   it('falls back to 管理员 before v1/me loads', () => {

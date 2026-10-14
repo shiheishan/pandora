@@ -32,9 +32,6 @@ export const nodeRowSchema = z.object({
   cpu_cores: z.number().nullable(),
   memory_mb: z.number().nullable(),
   disk_gb: z.number().nullable(),
-  health_score: z.number().nullable(),
-  applied_config_version: z.number().nullable(),
-  desired_config_version: z.number().nullable(),
   last_heartbeat_at: iso.nullable(),
   stale: z.boolean(),
   delivered_to_users: z.boolean(),
@@ -56,11 +53,9 @@ export const nodeRowSchema = z.object({
   granted_plans: strs,
   // 下发与运行的真实状态（nodefabric.NodeRuntimeView，w4deliver）。后端总是给；开发期假后端
   // 还没跟上时按「没有这项信息」处理，不让整张列表解析失败
-  desired_effective_generation: z.number().nullish().transform((v) => v ?? null),
-  applied_effective_generation: z.number().nullish().transform((v) => v ?? null),
   effective_state: z.enum(['', 'applied', 'pending', 'failed']).catch(''),
   last_apply_failure: z
-    .object({ phase: z.string(), detail: z.string(), at: iso, generation: z.number().nullable() })
+    .object({ phase: z.string(), detail: z.string(), at: iso })
     .nullish()
     .transform((v) => v ?? null),
   runtime_status: z.string().nullish().transform((v) => v ?? null),
@@ -161,7 +156,6 @@ export const serverSchema = z.object({
   disk_gb: z.number().nullable(),
   capacity_nodes: z.number(),
   notes: z.string().nullable(),
-  control_node_id: uuid.nullable(),
   node_count: z.number(),
   active_node_count: z.number(),
   serving_node_count: z.number(),

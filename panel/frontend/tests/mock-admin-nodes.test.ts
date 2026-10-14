@@ -132,7 +132,7 @@ describe('mock api · admin nodes infra', () => {
 
   it('refuses to shrink capacity below the nodes in use and cascades on delete', async () => {
     const kr = (await servers()).find((x) => x.name === 'kr-sel-edge-1')!
-    const made = await call('POST', '/v1/nodes', { name: '首尔 02', server_id: kr.id, node_type: 'shadowsocks', server_host: 'kr2.pandora.run', server_port: 8388, protocol_config: { cipher: 'aes-256-gcm' } }, 'kr-node-1')
+    const made = await call('POST', '/v1/nodes', { name: '首尔 02', server_id: kr.id, node_type: 'shadowsocks', server_host: 'kr2.example.test', server_port: 8388, protocol_config: { cipher: 'aes-256-gcm' } }, 'kr-node-1')
     expect(made.status).toBe(201)
     const low = await call('PATCH', `/v1/servers/${kr.id}`, { row_version: kr.row_version, capacity_nodes: 0 })
     expect(low.status).toBe(422)

@@ -67,8 +67,6 @@ export function NodeMonitor({ node }: { node: NodeRow }) {
         <dl className={css.facts}>
           <dt>心跳</dt>
           <dd>{node.last_heartbeat_at ? `${heartbeatLabel(node.last_heartbeat_at)} · ${formatDateTime(node.last_heartbeat_at)}` : '从未心跳'}</dd>
-          <dt>健康分</dt>
-          <dd>{node.health_score ?? '—'}</dd>
           <dt>运行状态</dt>
           <dd>
             {run ? (
@@ -81,42 +79,11 @@ export function NodeMonitor({ node }: { node: NodeRow }) {
             {reason && run?.detail !== reason && <span className={css.faint}> {reason}</span>}
             {node.runtime_state_at && <span className={css.faint}> · {formatDateTime(node.runtime_state_at)} 起</span>}
           </dd>
-          {node.desired_effective_generation !== null ? (
-            <>
-              <dt>生效版本</dt>
-              <dd>
-                已应用 {node.applied_effective_generation ?? '—'} / 期望 {node.desired_effective_generation}
-                {node.effective_state === 'pending' && (
-                  <Tag tone="info" className={css.inlineTag}>
-                    待生效
-                  </Tag>
-                )}
-                {node.effective_state === 'failed' && (
-                  <Tag tone="danger" className={css.inlineTag}>
-                    生效失败
-                  </Tag>
-                )}
-              </dd>
-            </>
-          ) : (
-            <>
-              <dt>配置版本</dt>
-              <dd>
-                已应用 {node.applied_config_version ?? '—'} / 期望 {node.desired_config_version ?? '—'}
-                {node.applied_config_version !== node.desired_config_version && node.desired_config_version !== null && (
-                  <Tag tone="warn" className={css.inlineTag}>
-                    未同步
-                  </Tag>
-                )}
-              </dd>
-            </>
-          )}
           {node.last_apply_failure && (
             <>
               <dt>最近失败</dt>
               <dd>
-                {applyPhaseLabel(node.last_apply_failure.phase)}
-                {node.last_apply_failure.generation !== null && `（版本 ${node.last_apply_failure.generation}）`}：{node.last_apply_failure.detail || '节点没给原因'}
+                {applyPhaseLabel(node.last_apply_failure.phase)}：{node.last_apply_failure.detail || '节点没给原因'}
                 <span className={css.faint}> · {formatDateTime(node.last_apply_failure.at)}</span>
               </dd>
             </>
