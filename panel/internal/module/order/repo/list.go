@@ -8,6 +8,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/aegispanel/aegis/internal/module/order/model"
+	"github.com/aegispanel/aegis/internal/pkg/db"
 )
 
 // ListParams 是订单列表的查询条件；零值字段不参与过滤。
@@ -52,7 +53,7 @@ func applyListFilters(q *gorm.DB, p ListParams) *gorm.DB {
 		q = q.Where("created_at < ?", *p.To)
 	}
 	if p.OrderNoLike != "" {
-		pat := likePattern(p.OrderNoLike)
+		pat := db.ContainsPattern(p.OrderNoLike)
 		if len(p.UserIDs) > 0 {
 			q = q.Where("(order_no ILIKE ? ESCAPE '\\' OR user_id IN ?)", pat, p.UserIDs)
 		} else {

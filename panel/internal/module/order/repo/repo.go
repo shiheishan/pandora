@@ -3,13 +3,9 @@ package repo
 
 import (
 	"errors"
-	"fmt"
-	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/shopspring/decimal"
-	"gorm.io/gorm"
 
 	"github.com/aegispanel/aegis/internal/pkg/db"
 	"github.com/aegispanel/aegis/internal/pkg/money"
@@ -58,60 +54,22 @@ var (
 	ErrAppendOnly = errors.New("order: 只追加或禁删的表被改写")
 )
 
-// mapErr 把 GORM 翻译后的约束错误与触发器的 23001 转成模块哨兵，并包住原错误。
-func mapErr(err error) error {
-	if err == nil {
-		return nil
-	}
-	switch {
-	case errors.Is(err, gorm.ErrDuplicatedKey):
-		return fmt.Errorf("%w: %v", ErrDuplicate, err)
-	case errors.Is(err, gorm.ErrForeignKeyViolated):
-		return fmt.Errorf("%w: %v", ErrForeignKey, err)
-	case errors.Is(err, gorm.ErrCheckConstraintViolated):
-		return fmt.Errorf("%w: %v", ErrCheck, err)
-	}
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
-		switch pgErr.Code {
-		case "23001":
-			return fmt.Errorf("%w: %v", ErrAppendOnly, err)
-		case "23505":
-			return fmt.Errorf("%w: %v", ErrDuplicate, err)
-		case "23503":
-			return fmt.Errorf("%w: %v", ErrForeignKey, err)
-		case "23514":
-			return fmt.Errorf("%w: %v", ErrCheck, err)
-		}
-	}
-	return err
-}
+// constraintErrs 把约束违例翻译成本模块哨兵（统一做法见 internal/pkg/db/constraint.go）。
+var constraintErrs = db.ConstraintErrors{ByCode: map[string]error{
+	db.CodeUnique:     ErrDuplicate,
+	db.CodeForeignKey: ErrForeignKey,
+	db.CodeCheck:      ErrCheck,
+	db.CodeRestrict:   ErrAppendOnly,
+}}
+
+// mapErr 把约束违例翻译成本模块哨兵，并包住原错误。
+func mapErr(err error) error { return constraintErrs.Map(err) }
 
 // IsDuplicate 判断错误是否为唯一约束冲突。
 func IsDuplicate(err error) bool { return errors.Is(err, ErrDuplicate) }
 
 // now 返回写库用的当前时刻（UTC、截到微秒）。
 func now() time.Time { return time.Now().UTC().Truncate(time.Microsecond) }
-
-// escapeLike 为 ILIKE/LIKE 转义 \、%、_。
-func escapeLike(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		switch r {
-		case '\\', '%', '_':
-			b.WriteByte('\\')
-			b.WriteRune(r)
-		default:
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
-}
-
-// likePattern 把用户输入转成 ILIKE 的包含模式：先转义 \ % _，再两头加 %。
-func likePattern(q string) string {
-	return "%" + escapeLike(q) + "%"
-}
 
 // checkMoney 在写入前校验金额最多 2 位小数。
 func checkMoney(vals ...decimal.Decimal) error {

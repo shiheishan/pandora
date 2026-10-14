@@ -3,6 +3,8 @@ package repo
 import (
 	"context"
 	"strings"
+
+	"github.com/aegispanel/aegis/internal/pkg/db"
 )
 
 // buildQueueWhere 拼后台队列 WHERE 子句与参数（用户输入只走占位符）。
@@ -27,7 +29,7 @@ func buildQueueWhere(f QueueFilter) (string, []any) {
 		args = append(args, *f.AssignedTo)
 	}
 	if f.Query != "" {
-		pat := likePattern(f.Query)
+		pat := db.ContainsPattern(f.Query)
 		q := "(t.ticket_no ILIKE ? ESCAPE '\\' OR t.subject ILIKE ? ESCAPE '\\'"
 		args = append(args, pat, pat)
 		if len(f.UserIDs) > 0 {
