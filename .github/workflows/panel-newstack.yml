@@ -168,8 +168,10 @@ jobs:
           test "$rc" = 0
 
   e2e:
-    name: E2E on the new binary (auth, password reset, portal staff)
+    name: E2E on the new binary (auth, portal, chain, epay, admin, support, risk, invariants)
     runs-on: ubuntu-latest
+    # risk_e2e 两轮造数加 strict 名单等 worker 周期任务，单它就要十几分钟
+    timeout-minutes: 45
     services:
       postgres:
         image: postgres:18
@@ -198,11 +200,23 @@ jobs:
       PANDORA_DATABASE_URL: postgres://pandora:pandora@127.0.0.1:5432/pandora_e2e?sslmode=disable
       PANDORA_DATABASE_MIGRATION_URL: postgres://pandora:pandora@127.0.0.1:5432/pandora_e2e?sslmode=disable
       PANDORA_REDIS_URL: redis://127.0.0.1:6379/0
-      # 脚本在几分钟里登录、注册几十次：放宽认证限流（失败 10 次暂停是按账号，不受影响）
-      PANDORA_RATELIMIT_AUTH_PER_MIN: "1000"
+      # risk_e2e 用 nodesim 真接入一台节点看下发名单：节点 gRPC 只在配了对外主机时监听，证书 SAN 是这个 IP
+      PANDORA_GRPC_NODE_PUBLIC_HOST: 127.0.0.1
+      # 几个脚本都从 127.0.0.1 注册、登录、调后台几百次（risk_e2e 还用 X-Real-IP 扮上百个来源）：
+      # 放宽按 IP、按账号、认证三种限流（失败 10 次暂停按账号计，不受影响；每条凭据每小时拉取上限不放宽）
+      PANDORA_RATELIMIT_IP_PER_MIN: "100000"
+      PANDORA_RATELIMIT_ACCOUNT_PER_MIN: "100000"
+      PANDORA_RATELIMIT_AUTH_PER_MIN: "100000"
+      # risk_e2e 自己给后台调用限速的预算（每分钟），限流已放宽，调大免得白等
+      RISK_ADMIN_BUDGET: "1000"
       AUTH_E2E_DISPOSABLE: YES_DELETE_FIXTURES
       PASSWORD_RESET_E2E_DISPOSABLE: YES_DELETE_FIXTURES
       PORTAL_STAFF_E2E_DISPOSABLE: YES_DELETE_FIXTURES
+      E2E_DISPOSABLE: YES_DELETE_FIXTURES
+      EPAY_E2E_DISPOSABLE: YES_DELETE_FIXTURES
+      ADMIN_E2E_DISPOSABLE: YES_DELETE_FIXTURES
+      SUPPORT_E2E_DISPOSABLE: YES_DELETE_FIXTURES
+      RISK_E2E_DISPOSABLE: YES_DELETE_FIXTURES
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -211,6 +225,14 @@ jobs:
           cache-dependency-path: panel/go.sum
       - name: Build pandora
         run: go build -mod=readonly -o "$RUNNER_TEMP/pandora" ./cmd/pandora
+      # risk_e2e 的节点用模拟器接入（与 node-e2e 同法）：按 pdnd 的 go.mod 构建，只编它用到的几个依赖，不开缓存
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: pdnd/go.mod
+          cache: false
+      - name: Build nodesim
+        working-directory: pdnd
+        run: go build -mod=readonly -o "$RUNNER_TEMP/nodesim" ./release/nodesim
       - name: Run e2e scripts
         run: |
           # CI 一次性的假密钥与管理员口令，只经环境变量与标准输入传
@@ -219,6 +241,9 @@ jobs:
           export PANDORA_AUTH_ADMIN_JWT_SECRET="$(head -c 32 /dev/urandom | base64)"
           export ADMIN_EMAIL="admin-e2e@example.test"
           export ADMIN_PASS="E2e!Admin-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+          export NODESIM="$RUNNER_TEMP/nodesim"
+          # epay_e2e 检查渠道密钥没进 serve 日志
+          export SERVE_LOG="$RUNNER_TEMP/serve.log"
           bin="$RUNNER_TEMP/pandora"
           "$bin" migrate up
           printf '%s\n' "$ADMIN_PASS" | "$bin" admin create --email "$ADMIN_EMAIL" --password-stdin
@@ -241,11 +266,16 @@ jobs:
           test -n "$ok" || { cat "$RUNNER_TEMP/serve.log"; exit 1; }
 
           failed=0
-          for s in auth_e2e.sh password_reset_e2e.sh portal_staff_e2e.sh; do
+          for s in auth_e2e.sh password_reset_e2e.sh portal_staff_e2e.sh \
+                   e2e.sh epay_e2e.sh admin_e2e.sh support_e2e.sh risk_e2e.sh; do
             echo "::group::$s"
             if bash "tests/$s"; then echo "$s 通过"; else echo "::error::$s 失败"; failed=$((failed+1)); fi
             echo "::endgroup::"
           done
+          # 数据层不变量：单事务、最后 ROLLBACK；放在脚本之后，库里已有各脚本留下的数据
+          echo "::group::invariants.sql"
+          if "$PSQL" -X -v ON_ERROR_STOP=1 -f tests/invariants.sql; then echo "invariants.sql 通过"; else echo "::error::invariants.sql 失败"; failed=$((failed+1)); fi
+          echo "::endgroup::"
 
           kill -TERM "$serve_pid" "$worker_pid"
           wait "$serve_pid" || true
