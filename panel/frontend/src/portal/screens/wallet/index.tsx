@@ -41,7 +41,6 @@ export default function Wallet({ rest }: PortalScreenProps) {
 // ---------------------------------------------------------------------------
 function BalanceCard() {
   const balance = useBalance()
-  const methods = usePaymentMethods()
   const topup = useTopup()
   const intentKey = useIntentKey()
   const placed = usePlacedOrder<{ orderId: string; orderNo: string; amount: number; currency: string }>()
@@ -51,6 +50,9 @@ function BalanceCard() {
   const [methodChoice, setMethodChoice] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [pay, setPay] = useState<PayState | null>(null)
+
+  const parsedAmount = parseTopupAmount(amount)
+  const methods = usePaymentMethods(!('error' in parsedAmount) ? parsedAmount.cents : undefined)
 
   const list = methods.data ?? []
   const method = list.find((m) => methodKey(m) === methodChoice) ?? list[0] ?? null
@@ -117,7 +119,10 @@ function BalanceCard() {
             fieldClassName={css.grow}
             value={method ? methodKey(method) : ''}
             placeholder={list.length ? undefined : '暂无可用的支付方式'}
-            options={list.map((m) => ({ value: methodKey(m), label: m.label }))}
+            options={list.map((m) => {
+              const label = m.fee && m.fee > 0 ? `${m.label}（手续费 ${formatMoney(m.fee, 'CNY')}）` : m.label
+              return { value: methodKey(m), label }
+            })}
             onChange={(e) => setMethodChoice(e.target.value)}
           />
         )}

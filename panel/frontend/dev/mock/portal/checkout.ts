@@ -1,10 +1,18 @@
 import { randomUUID } from 'node:crypto'
 import type { MockModule, MockResult } from '../types.ts'
 import { assertNoOpenChange, BillingError, createdView, fulfill, isUuid, placeOrder, readStrict, sweepExpired } from './billing.ts'
-import { findPlan, MIN_PAYMENT, PAY_METHODS } from './catalog.ts'
+import { findPlan, MIN_PAYMENT, PAY_METHODS, type PayMethod } from './catalog.ts'
 import { gate, isLiveSub, isRevivable, portalState } from './fixtures.ts'
 import { normalizeLabel, profileName } from './purchase.ts'
 import { assertNoPendingNew, quoteRows, quoteTime, settle } from './quote.ts'
+
+/** 向用户加收的手续费（分），与 Go 的 payment/service.Surcharge 同口径：应付 × 比例 / 100 + 固定，按分向上取整 */
+export function surchargeOf(amount: number, m: PayMethod): number {
+  if (amount <= 0) return 0
+  const pctInt = Math.round(Number(m.fee_percent) * 100)
+  const pctFee = Math.ceil((amount * pctInt) / 10000)
+  return pctFee + m.fee_fixed
+}
 
 /** 业务拒绝写成可重放的结果（幂等表原样重放 4xx） */
 function guard(run: () => MockResult): MockResult {
@@ -74,7 +82,36 @@ export const checkout: MockModule = {
     // 修订 R61：payment_providers 里 enabled 且 accepting_new 的渠道展开
     'GET /v1/payment-methods': async (ctx) => {
       if (!(await gate(ctx))) return
-      ctx.send(200, { methods: PAY_METHODS.map(({ provider, method, label, currencies }) => ({ provider, method, label, currencies })) })
+      const q = ctx.query.get('amount')
+      let amount: number | null = null
+      if (q !== null && q !== '') {
+        // Go 用 strconv.ParseInt：只收十进制整数（不收 1e3、1.0）
+        const n = /^\+?\d+$/.test(q) ? Number(q) : NaN
+        if (!Number.isSafeInteger(n) || n < 0) {
+          return ctx.fail(422, 'validation_failed', '请求参数校验未通过', {
+            amount: '金额需为非负整数（分）',
+          })
+        }
+        if (n > 0) amount = n
+      }
+      ctx.send(200, {
+        methods: PAY_METHODS.map((m) => {
+          const res: Record<string, unknown> = {
+            provider: m.provider,
+            method: m.method,
+            label: m.label,
+            currencies: m.currencies,
+            fee_fixed: m.fee_fixed,
+            fee_percent: m.fee_percent,
+          }
+          if (amount !== null) {
+            const fee = surchargeOf(amount, m)
+            res.fee = fee
+            res.total = amount + fee
+          }
+          return res
+        }),
+      })
     },
 
     // 新购（门户「另买一份」带 new_copy 与 label）；带 as_of + expect 时按报价比对（设计稿 2.2）
@@ -210,12 +247,14 @@ export const checkout: MockModule = {
       const intentId = existing?.[0] ?? randomUUID()
       order.hasIntent = true
       intents.set(intentId, { userId: ctx.user.userId, orderId: order.id, returnUrl, provider: channel.provider, method: channel.method })
+      const surcharge = surchargeOf(order.payable_amount, channel)
       ctx.send(201, {
         intent_id: intentId,
         http_method: channel.httpMethod,
         redirect_url: `${origin}/v1/__mock/cashier?intent=${intentId}`,
         form_fields: channel.httpMethod === 'POST' ? { out_trade_no: order.order_no } : {},
-        amount: order.payable_amount,
+        amount: order.payable_amount + surcharge,
+        surcharge,
         currency: 'CNY',
         reused: existing !== undefined,
       })

@@ -25,7 +25,7 @@ export function Pay({ orderId }: { orderId: string }) {
   usePageHead('付款', '/orders')
   const { query } = useHashLocation()
   const order = useOrder(orderId)
-  const methods = usePaymentMethods()
+  const methods = usePaymentMethods(order.data?.payable_amount)
   const cancel = useCancelOrder()
   const doneTo = () => navigate(`/checkout/done/${orderId}`, { query: Object.fromEntries([...query].filter(([k]) => k !== 'm')), replace: true })
   const paid = order.data !== undefined && PAID_STATUSES.has(order.data.status)

@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
 import { formatMoney } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
@@ -49,17 +49,32 @@ export function usePackCatalog() {
 // ---------------------------------------------------------------------------
 // GET v1/payment-methods（修订 R61）：只列能收 CNY 的方式
 // ---------------------------------------------------------------------------
-export const paymentMethodSchema = z.object({ provider: z.string(), method: z.string(), label: z.string(), currencies: z.array(z.string()) })
+export const paymentMethodSchema = z.object({
+  provider: z.string(),
+  method: z.string(),
+  label: z.string(),
+  currencies: z.array(z.string()),
+  fee_fixed: z.number().int().nonnegative(),
+  fee_percent: z.string(),
+  fee: z.number().int().nonnegative().optional(),
+  total: z.number().int().nonnegative().optional(),
+})
 export type PaymentMethod = z.output<typeof paymentMethodSchema>
 
 export const methodKey = (m: Pick<PaymentMethod, 'provider' | 'method'>) => `${m.provider}:${m.method}`
 
-export function usePaymentMethods() {
+export function usePaymentMethods(amount?: number) {
   const api = useApi()
+  const validAmount = amount && amount > 0 ? amount : undefined
   return useQuery({
-    queryKey: ['portal', 'payment-methods'],
-    queryFn: ({ signal }) => api.get('v1/payment-methods', z.object({ methods: z.array(paymentMethodSchema) }), { signal }),
+    queryKey: ['portal', 'payment-methods', validAmount ?? null],
+    queryFn: ({ signal }) =>
+      api.get('v1/payment-methods', z.object({ methods: z.array(paymentMethodSchema) }), {
+        query: validAmount ? { amount: validAmount } : undefined,
+        signal,
+      }),
     select: (d) => d.methods.filter((m) => m.currencies.includes('CNY')),
+    placeholderData: keepPreviousData,
     staleTime: 5 * 60_000,
   })
 }

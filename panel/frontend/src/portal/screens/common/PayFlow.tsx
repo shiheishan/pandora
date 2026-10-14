@@ -8,6 +8,7 @@ import { useApi } from '../../../shell/runtime'
 import { Button, Modal, Skeleton } from '../../../ui'
 import { methodKey, usePaymentMethods, type PaymentMethod } from './catalog'
 import { detectDevice } from './clients'
+import { feeLine, surchargeNote } from './fee'
 import { queryFailure, queryOutcome, useQueryOrderPayment, type QueryOutcome } from './order-query'
 import css from './PayFlow.module.css'
 import { PAID_STATUSES, useCancelOrder, useOrder, type OrderDetail } from './orders'
@@ -49,6 +50,7 @@ const intentSchema = z.object({
   redirect_url: z.string(),
   form_fields: z.record(z.string(), z.string()),
   amount: z.number().int(),
+  surcharge: z.number().int().nonnegative().default(0),
   currency: z.string(),
   reused: z.boolean(),
 })
@@ -114,7 +116,7 @@ const stateOrder = (s: PayState) => s.orderId
 // 选支付方式：只列能收该币种的方式（GET v1/payment-methods，修订 R61）
 // ---------------------------------------------------------------------------
 function Choose({ state, onPick, onLater }: { state: Extract<PayState, { phase: 'choose' }>; onPick: (m: PaymentMethod) => void; onLater: () => void }) {
-  const methods = usePaymentMethods()
+  const methods = usePaymentMethods(state.amount)
   return (
     <div className={css.body}>
       <div className={css.amount}>{formatMoney(state.amount, state.currency)}</div>
@@ -132,11 +134,20 @@ function Choose({ state, onPick, onLater }: { state: Extract<PayState, { phase: 
         <div className={css.hint}>暂无可用的支付方式，请稍后再试。</div>
       ) : (
         <div className={css.methods}>
-          {methods.data.map((m) => (
-            <Button key={methodKey(m)} block onClick={() => onPick(m)}>
-              {m.label}
-            </Button>
-          ))}
+          {methods.data.map((m) => {
+            const line = feeLine(m)
+            return (
+              <Button key={methodKey(m)} block onClick={() => onPick(m)}>
+                {m.label}
+                {line && (
+                  <>
+                    <br />
+                    <small className={css.note}>{line}</small>
+                  </>
+                )}
+              </Button>
+            )
+          })}
         </div>
       )}
       <button type="button" className={css.later} onClick={onLater}>
@@ -219,10 +230,14 @@ export function PayPanel({ orderId, amount, currency, method, returnUrl, onPaid,
     query.mutate(orderId, { onSuccess: (r) => setOutcome(queryOutcome(r)), onError: (e) => setOutcome(queryFailure(e)) })
   }
 
+  const finalAmount = pay.data?.amount ?? method.total ?? amount
+  const note = pay.data ? surchargeNote(pay.data.surcharge, pay.data.amount) : method.fee && method.fee > 0 ? feeLine(method) : ''
+
   return (
     <div className={css.body} data-screen="pay">
       <p className={css.note}>用{method.label}付</p>
-      <div className={css.amount}>{formatMoney(amount, currency)}</div>
+      <div className={css.amount}>{formatMoney(finalAmount, currency)}</div>
+      {note && <div className={css.hint}>{note}</div>}
       {error ? (
         <>
           <div className={css.error} role="alert">

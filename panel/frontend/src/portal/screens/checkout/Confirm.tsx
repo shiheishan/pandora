@@ -6,6 +6,7 @@ import { Button, Empty, Input, Skeleton, Switch, useToast } from '../../../ui'
 import { usePageHead } from '../../head'
 import { LoadError } from '../common/Blocks'
 import { methodKey, usePaymentMethods, type Pack, type Plan } from '../common/catalog'
+import { feeLine } from '../common/fee'
 import { Alt, Callout, Chips, ChoiceList, flowCss, Notes, Rows } from '../common/Flow'
 import type { Holdings } from '../common/holdings'
 import { endsIntent, recallPayable, useIntentKey } from '../common/intent'
@@ -245,7 +246,6 @@ function Priced({
 }) {
   const api = useApi()
   const client = useQueryClient()
-  const methods = usePaymentMethods()
   const payable = useOrderPayable()
   const intentKey = useIntentKey()
   const [priceId, setPriceId] = useState<string | null>(() => defaultTier(quote.quotes, sub, requested)?.price_id ?? null)
@@ -260,6 +260,7 @@ function Priced({
   const tiers = sortTiers(quote.quotes)
   const row = tiers.find((r) => r.price_id === priceId) ?? defaultTier(tiers, sub, requested) ?? tiers[0]!
   const split = balanceSplit(row, useBalance)
+  const methods = usePaymentMethods(split.payable > 0 ? split.payable : undefined)
   const copy = confirmCopy({ target, sub, plan, oldPlan, pack, row, naming: h.naming, held: h.held, now: new Date() })
   const methodList = methods.data ?? []
   const method = methodList.find((m) => methodKey(m) === methodChoice) ?? methodList[0] ?? null
@@ -395,13 +396,27 @@ function Priced({
             <p className={css.bad}>暂时没有能用的付款方式，可以打开余额付，或稍后再试。</p>
           ) : (
             <div className={css.methods} role="radiogroup" aria-label="付款方式">
-              {methodList.map((m) => (
-                <button key={methodKey(m)} type="button" role="radio" aria-checked={method !== null && methodKey(m) === methodKey(method)} className={css.method} onClick={() => setMethodChoice(methodKey(m))}>
-                  {m.label}
-                </button>
-              ))}
+              {methodList.map((m) => {
+                const line = feeLine(m)
+                return (
+                  <button key={methodKey(m)} type="button" role="radio" aria-checked={method !== null && methodKey(m) === methodKey(method)} className={css.method} onClick={() => setMethodChoice(methodKey(m))}>
+                    {m.label}
+                    {line && (
+                      <>
+                        <br />
+                        <small className={css.sumNote}>{line}</small>
+                      </>
+                    )}
+                  </button>
+                )
+              })}
             </div>
           ))}
+        {pay.needsMethod && method && method.fee !== undefined && method.fee > 0 && method.total !== undefined && (
+          <p className={css.sumNote}>
+            选{method.label}另付手续费 {money(method.fee)}，合计 {money(method.total)}；用余额付不收手续费。
+          </p>
+        )}
         {refusal && <Refusal refusal={refusal} onCleared={() => setRefusal(null)} />}
         <Button variant="primary" block busy={busy} disabled={blocked !== null} onClick={() => void submit()} id="btn-submit">
           {blocked ?? pay.button}
