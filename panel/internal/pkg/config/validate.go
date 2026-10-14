@@ -127,6 +127,12 @@ func (c *Config) Validate() error {
 	if err := validatePprofAddr("worker.pprof_addr", c.Worker.PprofAddr); err != nil {
 		errs = append(errs, err)
 	}
+	if err := validateMetricsAddr("worker.metrics_addr", c.Worker.MetricsAddr); err != nil {
+		errs = append(errs, err)
+	}
+	if err := validateMetricsAddr("observability.metrics_addr", c.Observability.MetricsAddr); err != nil {
+		errs = append(errs, err)
+	}
 
 	ph := c.Auth.PasswordHash
 	if ph.PublicConcurrency < 1 || ph.PublicConcurrency > 16 {
@@ -238,6 +244,31 @@ func validatePprofAddr(field, addr string) error {
 		return fmt.Errorf("%s 的 host 必须是回环地址 (127.0.0.1、::1 或 localhost)", field)
 	}
 	return nil
+}
+
+// validateMetricsAddr 校验指标端点地址：空表示不开；否则必须是 host:port，端口 1–65535，
+// host 是回环（127.0.0.1、::1、localhost）或私网 IP 字面量（RFC 1918、IPv6 ULA fc00::/7）。
+// 不收空主机、0.0.0.0、公网 IP 与其他主机名：指标里有路由与负载信息，不对公网开放。
+func validateMetricsAddr(field, addr string) error {
+	if addr == "" {
+		return nil
+	}
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("%s 无法解析: %w", field, err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port < 1 || port > 65535 {
+		return fmt.Errorf("%s 的端口须在 1–65535", field)
+	}
+	if isLoopbackHost(host) {
+		return nil
+	}
+	ip := net.ParseIP(host)
+	if ip != nil && (ip.IsLoopback() || ip.IsPrivate()) {
+		return nil
+	}
+	return fmt.Errorf("%s 的 host 必须是回环或私网地址（127.0.0.1、::1、10.x、172.16–31.x、192.168.x、fc00::/7）", field)
 }
 
 func isLoopbackHost(host string) bool {
