@@ -14,7 +14,7 @@ require (
 	github.com/sagernet/sing-box v1.13.14
 	github.com/sagernet/sing-quic v0.6.1
 	github.com/sagernet/sing-shadowsocks v0.2.8
-	github.com/sagernet/sing-shadowsocks2 v0.2.1
+	github.com/sagernet/sing-shadowsocks2 v0.2.2
 	github.com/sagernet/sing-shadowtls v0.2.1-0.20250503051639-fcd445d33c11
 	github.com/sagernet/sing-vmess v0.2.8-0.20250909125414-3aed155119a1
 	github.com/xtls/reality v0.0.0-20260322125925-9234c772ba8f
