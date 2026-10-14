@@ -24,6 +24,10 @@ type fakeSvc struct {
 
 	rechecks   int
 	recheckErr error
+
+	resets   int
+	resetRet int
+	resetErr error
 }
 
 func (f *fakeSvc) PurgeRetention(_ context.Context, table string, now time.Time, batch int) (int64, error) {
@@ -41,6 +45,14 @@ func (f *fakeSvc) PurgeRetention(_ context.Context, table string, now time.Time,
 func (f *fakeSvc) RecheckStrictDevices(_ context.Context) error {
 	f.rechecks++
 	return f.recheckErr
+}
+
+func (f *fakeSvc) ResetDueNodeTraffic(_ context.Context) (int, error) {
+	f.resets++
+	if f.resetErr != nil {
+		return 0, f.resetErr
+	}
+	return f.resetRet, nil
 }
 
 func optsOf(p []asynq.Option) (queue string, retry int, unique, timeout time.Duration) {
@@ -62,8 +74,8 @@ func optsOf(p []asynq.Option) (queue string, retry int, unique, timeout time.Dur
 
 func TestPeriodicSchedule(t *testing.T) {
 	ps := New(&fakeSvc{}).Periodic()
-	if len(ps) != 2 {
-		t.Fatalf("periodic: got %d", len(ps))
+	if len(ps) != 3 {
+		t.Fatalf("periodic: got %d want 3", len(ps))
 	}
 	e := ps[0]
 	if e.Type != TypeRetention || e.Cronspec != "44 3 * * *" {
@@ -84,6 +96,18 @@ func TestPeriodicSchedule(t *testing.T) {
 	}
 	if unique >= time.Minute {
 		t.Fatalf("unique %v should be < 1m", unique)
+	}
+
+	e = ps[2]
+	if e.Type != TypeTrafficReset || e.Cronspec != "@every 5m" {
+		t.Fatalf("traffic reset periodic = %+v", e)
+	}
+	queue, retry, unique, timeout = optsOf(e.Opts)
+	if queue != "low" || retry != 0 || unique != 4*time.Minute || timeout != 1*time.Minute {
+		t.Fatalf("traffic reset opts: queue=%q retry=%d unique=%v timeout=%v", queue, retry, unique, timeout)
+	}
+	if unique >= 5*time.Minute {
+		t.Fatalf("unique %v should be < 5m", unique)
 	}
 }
 
@@ -168,6 +192,30 @@ func TestDevicesStrictErrorWrapped(t *testing.T) {
 	fp := &fakeSvc{recheckErr: sentinel}
 	mod := New(fp)
 	err := mod.devicesStrict(context.Background(), asynq.NewTask(TypeDevicesStrict, nil))
+	if err == nil {
+		t.Fatal("want error")
+	}
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("errors.Is: %v", err)
+	}
+}
+
+func TestTrafficResetCallsService(t *testing.T) {
+	fp := &fakeSvc{resetRet: 5}
+	mod := New(fp)
+	if err := mod.trafficReset(context.Background(), asynq.NewTask(TypeTrafficReset, nil)); err != nil {
+		t.Fatalf("trafficReset: %v", err)
+	}
+	if fp.resets != 1 {
+		t.Fatalf("resets=%d want 1", fp.resets)
+	}
+}
+
+func TestTrafficResetErrorWrapped(t *testing.T) {
+	sentinel := errors.New("reset failed")
+	fp := &fakeSvc{resetErr: sentinel}
+	mod := New(fp)
+	err := mod.trafficReset(context.Background(), asynq.NewTask(TypeTrafficReset, nil))
 	if err == nil {
 		t.Fatal("want error")
 	}
