@@ -25,6 +25,7 @@ USERS=${GATE_USERS:-5000}
 # 订阅拉取的阶梯（每秒请求数）与每级时长；某一级饱和（见 pull_saturated）就不再往上加
 PULL_RATES=${GATE_PULL_RATES:-"20 50 100 200 400"}
 PULL_SECS=${GATE_PULL_SECS:-60}
+GATE_SUB_PREFIX=0123456789ab   # 虚构的订阅路径前缀（12 位十六进制）
 IDLE_SECS=${GATE_IDLE_SECS:-300}
 SETTLE_SECS=${GATE_SETTLE_SECS:-60}
 RECONNECTS=${GATE_RECONNECTS:-3}
@@ -286,6 +287,8 @@ SQL
   bash /opt/pandora/deploy/bootstrap.sh roles >"$run/reset-roles.log" 2>&1 || die "bootstrap roles 失败，见 $run/reset-roles.log"
   migrate_up >"$run/reset-migrate.log" 2>&1 || die "迁移失败，见 $run/reset-migrate.log"
   bash /opt/pandora/deploy/bootstrap.sh grants >"$run/reset-grants.log" 2>&1 || die "bootstrap grants 失败，见 $run/reset-grants.log"
+  # 订阅路径前缀是第一次用到时才生成落库的；起服务前钉一个虚构的固定值，每次运行一样，拉取阶梯直接用
+  pg pandora <<<"INSERT INTO settings (key, value) VALUES ('subscription.path_prefix', to_jsonb('$GATE_SUB_PREFIX'::text)) ON CONFLICT (key) DO NOTHING;"
   redis_clear
   rm -rf "$G/nodesim-state"
   tar -C "$G" -xf "$BASE/nodesim-state.tar"
