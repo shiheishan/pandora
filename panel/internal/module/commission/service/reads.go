@@ -16,6 +16,8 @@ import (
 )
 
 // MyCommission 返回门户「我的佣金」：一个币种的汇总（取法见 summaryCurrency）、最近 100 条佣金、50 条提现、50 笔转余额（明细含全部币种）。
+// 横幅比例与计佣范围按该用户的单独设置（无则用全局）。提现关闭只关站点币种：汇总币种是站点币种时门户隐藏提现入口，
+// 别的币种照常显示（门户按 SiteCurrency 判断）。第 2、3 级的条目不给上级看下线邮箱（From 为空）。
 func (s *Service) MyCommission(ctx context.Context, userID uuid.UUID) (MyCommission, error) {
 	refs, err := s.needRefs()
 	if err != nil {
@@ -25,7 +27,23 @@ func (s *Service) MyCommission(ctx context.Context, userID uuid.UUID) (MyCommiss
 	if err != nil {
 		return MyCommission{}, err
 	}
+	rate, scope, err := s.termsFor(ctx, userID, cfg)
+	if err != nil {
+		return MyCommission{}, err
+	}
+	dist, err := s.settings.CommissionDistribution(ctx)
+	if err != nil {
+		return MyCommission{}, err
+	}
+	wd, err := s.settings.CommissionWithdraw(ctx)
+	if err != nil {
+		return MyCommission{}, err
+	}
 	cur, err := s.summaryCurrency(ctx, userID)
+	if err != nil {
+		return MyCommission{}, err
+	}
+	site, err := s.ledger.DefaultCurrency(ctx)
 	if err != nil {
 		return MyCommission{}, err
 	}
@@ -52,18 +70,22 @@ func (s *Service) MyCommission(ctx context.Context, userID uuid.UUID) (MyCommiss
 	}
 	out := MyCommission{
 		Summary: Summary{
-			Currency:     cur,
-			Pending:      et.Pending,
-			Available:    avail,
-			Withdrawing:  wt.InFlight,
-			Settled:      wt.Paid,
-			TotalEarned:  et.Total,
-			Invitees:     invitees,
-			Orders:       et.Orders,
-			PaidInvitees: et.PaidInvitees,
-			RatePercent:  cfg.RatePercent,
-			MinWithdraw:  cfg.MinWithdraw,
-			Scope:        cfg.Scope,
+			Currency:        cur,
+			Pending:         et.Pending,
+			Available:       avail,
+			Withdrawing:     wt.InFlight,
+			Settled:         wt.Paid,
+			TotalEarned:     et.Total,
+			Invitees:        invitees,
+			Orders:          et.Orders,
+			PaidInvitees:    et.PaidInvitees,
+			RatePercent:     rate,
+			MinWithdraw:     cfg.MinWithdraw,
+			Scope:           scope,
+			DirectRateBP:    DirectRateBP(rate, dist),
+			WithdrawEnabled: wd.Enabled,
+			WithdrawMethods: nonNilStrings(wd.Methods),
+			SiteCurrency:    site,
 		},
 		Entries:     []EntryView{},
 		Withdrawals: []WithdrawalView{},
@@ -77,7 +99,7 @@ func (s *Service) MyCommission(ctx context.Context, userID uuid.UUID) (MyCommiss
 	referees := make([]uuid.UUID, 0, len(entries))
 	seen := make(map[uuid.UUID]bool, len(entries))
 	for _, e := range entries {
-		if !seen[e.RefereeUserID] {
+		if e.Level == 1 && !seen[e.RefereeUserID] {
 			seen[e.RefereeUserID] = true
 			referees = append(referees, e.RefereeUserID)
 		}
@@ -87,16 +109,22 @@ func (s *Service) MyCommission(ctx context.Context, userID uuid.UUID) (MyCommiss
 		return MyCommission{}, err
 	}
 	for _, e := range entries {
+		from := ""
+		if e.Level == 1 {
+			from = MaskEmail(emails[e.RefereeUserID])
+		}
 		out.Entries = append(out.Entries, EntryView{
-			Amount:      e.CommissionAmount,
-			Base:        e.BaseAmount,
-			RateBP:      e.RateBP,
-			Currency:    e.Currency,
-			Status:      e.Status,
-			FrozenUntil: e.FrozenUntil,
-			CreatedAt:   e.CreatedAt,
-			OrderNo:     e.OrderNo,
-			From:        MaskEmail(emails[e.RefereeUserID]),
+			Amount:       e.CommissionAmount,
+			Base:         e.BaseAmount,
+			RateBP:       e.RateBP,
+			Currency:     e.Currency,
+			Status:       e.Status,
+			FrozenUntil:  e.FrozenUntil,
+			CreatedAt:    e.CreatedAt,
+			OrderNo:      e.OrderNo,
+			From:         from,
+			Level:        e.Level,
+			SharePercent: e.SharePercent,
 		})
 	}
 
@@ -117,6 +145,7 @@ func (s *Service) MyCommission(ctx context.Context, userID uuid.UUID) (MyCommiss
 			RejectReason: reason,
 			RequestedAt:  w.RequestedAt,
 			CompletedAt:  w.CompletedAt,
+			Method:       w.Method,
 		})
 	}
 
@@ -159,6 +188,14 @@ func (s *Service) AdminOverview(ctx context.Context) (Overview, error) {
 	if err != nil {
 		return Overview{}, err
 	}
+	dist, err := s.settings.CommissionDistribution(ctx)
+	if err != nil {
+		return Overview{}, err
+	}
+	wd, err := s.settings.CommissionWithdraw(ctx)
+	if err != nil {
+		return Overview{}, err
+	}
 	site, err := s.settings.Site(ctx)
 	if err != nil {
 		return Overview{}, err
@@ -180,13 +217,17 @@ func (s *Service) AdminOverview(ctx context.Context) (Overview, error) {
 		return Overview{}, err
 	}
 	out := Overview{
-		Currency:     siteCur,
-		InvitedUsers: invited,
-		RatePercent:  cfg.RatePercent,
-		FreezeDays:   cfg.FreezeDays,
-		MinWithdraw:  cfg.MinWithdraw,
-		Scope:        cfg.Scope,
-		ByCurrency:   mergeOverview(siteCur, eos, wos),
+		Currency:            siteCur,
+		InvitedUsers:        invited,
+		RatePercent:         cfg.RatePercent,
+		FreezeDays:          cfg.FreezeDays,
+		MinWithdraw:         cfg.MinWithdraw,
+		Scope:               cfg.Scope,
+		DistributionEnabled: dist.Enabled,
+		DistributionLevels:  dist.Levels,
+		WithdrawEnabled:     wd.Enabled,
+		WithdrawMethods:     nonNilStrings(wd.Methods),
+		ByCurrency:          mergeOverview(siteCur, eos, wos),
 	}
 	for _, c := range out.ByCurrency {
 		out.Entries += c.Entries
@@ -283,28 +324,65 @@ func (s *Service) AdminWithdrawals(ctx context.Context, status string) ([]AdminW
 			reason = *w.RejectReason
 		}
 		out = append(out, AdminWithdrawal{
-			ID:           w.ID,
-			UserID:       w.UserID,
-			Email:        emails[w.UserID],
-			Amount:       w.Amount,
-			Currency:     w.Currency,
-			Status:       w.Status,
-			PayoutDetail: string(payout),
-			RejectReason: reason,
-			RequestedAt:  w.RequestedAt,
-			CompletedAt:  w.CompletedAt,
-			EarnedTotal:  earned[repo.UserCurrency{UserID: w.UserID, Currency: w.Currency}],
+			ID:              w.ID,
+			UserID:          w.UserID,
+			Email:           emails[w.UserID],
+			Amount:          w.Amount,
+			Currency:        w.Currency,
+			Status:          w.Status,
+			Method:          w.Method,
+			PayoutDetail:    string(payout),
+			PayoutReference: deref(w.PayoutReference),
+			PaidUSDTAmount:  w.PaidUSDTAmount,
+			RejectReason:    reason,
+			RequestedAt:     w.RequestedAt,
+			CompletedAt:     w.CompletedAt,
+			EarnedTotal:     earned[repo.UserCurrency{UserID: w.UserID, Currency: w.Currency}],
 		})
 	}
 	return out, nil
 }
 
-// SetConfig 改分销参数（后台）；校验与审计（commission.config_changed）在 settings 里做。
+// SetConfig 改分销参数（后台）：比例、冻结天数、最低提现额、计佣范围一组，多级分销一组，提现开关与方式一组；
+// 只写给出字段所在的组，三组在同一事务里，任一组校验失败整笔不写。校验与审计（commission.config_changed）在 settings 里做。
 func (s *Service) SetConfig(ctx context.Context, u ConfigUpdate) error {
-	return s.settings.SetCommission(ctx, settingssvc.CommissionUpdate{
-		RatePercent: u.RatePercent,
-		FreezeDays:  u.FreezeDays,
-		MinWithdraw: u.MinWithdraw,
-		Scope:       u.Scope,
+	return s.tx.Do(ctx, func(ctx context.Context) error {
+		if u.RatePercent != nil || u.FreezeDays != nil || u.MinWithdraw != nil || u.Scope != nil {
+			if err := s.settings.SetCommission(ctx, settingssvc.CommissionUpdate{
+				RatePercent: u.RatePercent,
+				FreezeDays:  u.FreezeDays,
+				MinWithdraw: u.MinWithdraw,
+				Scope:       u.Scope,
+			}); err != nil {
+				return err
+			}
+		}
+		if u.DistributionEnabled != nil || u.DistributionL1 != nil || u.DistributionL2 != nil || u.DistributionL3 != nil {
+			if err := s.settings.SetCommissionDistribution(ctx, settingssvc.CommissionDistributionUpdate{
+				Enabled: u.DistributionEnabled,
+				L1:      u.DistributionL1,
+				L2:      u.DistributionL2,
+				L3:      u.DistributionL3,
+			}); err != nil {
+				return err
+			}
+		}
+		if u.WithdrawEnabled != nil || u.WithdrawMethods != nil {
+			if err := s.settings.SetCommissionWithdraw(ctx, settingssvc.CommissionWithdrawUpdate{
+				Enabled: u.WithdrawEnabled,
+				Methods: u.WithdrawMethods,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
+}
+
+// nonNilStrings 把 nil 切片换成空切片（JSON 输出 [] 而不是 null）。
+func nonNilStrings(in []string) []string {
+	if in == nil {
+		return []string{}
+	}
+	return in
 }

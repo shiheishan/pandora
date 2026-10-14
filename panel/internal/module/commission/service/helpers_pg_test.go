@@ -16,6 +16,7 @@ import (
 	auditrepo "github.com/aegispanel/aegis/internal/module/audit/repo"
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/module/commission/repo"
+	identitysvc "github.com/aegispanel/aegis/internal/module/identity/service"
 	ledgerrepo "github.com/aegispanel/aegis/internal/module/ledger/repo"
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
 	ordersvc "github.com/aegispanel/aegis/internal/module/order/service"
@@ -81,6 +82,19 @@ func (f *fakeRefs) Emails(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]str
 		}
 	}
 	return out, nil
+}
+
+// FindByEmail 按邮箱精确找人（不分大小写、去首尾空白，同 identity 的规范化）；没有时回 errs.NotFound。
+func (f *fakeRefs) FindByEmail(_ context.Context, email string) (identitysvc.User, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	email = strings.ToLower(strings.TrimSpace(email))
+	for id, e := range f.emails {
+		if strings.ToLower(e) == email {
+			return identitysvc.User{ID: id, Email: e}, nil
+		}
+	}
+	return identitysvc.User{}, errs.New(errs.NotFound)
 }
 
 // fakeSources 实现 SourceMatcher：same 里登记的一对用户算同源；err 非空时查询失败。

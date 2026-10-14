@@ -603,7 +603,7 @@ const sealCt = Buffer.concat([sealCipher.update('支付宝 smoke@example.test', 
 const sealed = Buffer.concat([Buffer.from([1, 1]), sealNonce, sealCt]).toString('hex')
 sqlFixture(
   '提现申请',
-  `INSERT INTO withdrawals (user_id, currency, amount, payout_sealed, status) VALUES ('${userId}', 'CNY', 1.00, decode('${sealed}', 'hex'), 'requested');`,
+  `INSERT INTO withdrawals (user_id, currency, amount, payout_sealed, method, status) VALUES ('${userId}', 'CNY', 1.00, decode('${sealed}', 'hex'), 'alipay', 'requested');`,
 )
 
 // ============================================================================

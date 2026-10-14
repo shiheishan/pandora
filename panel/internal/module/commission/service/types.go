@@ -64,6 +64,7 @@ const (
 	ActionWithdrawalReject    = "withdrawal.reject"
 	ActionWithdrawalPaid      = "withdrawal.paid"
 	ActionTransferredToBal    = "commission.transferred_to_balance"
+	ActionAutoTransferred     = "commission.auto_transferred_to_balance"
 	ActionEntryApproved       = "commission.entry_approved"
 	ActionEntryVoided         = "commission.entry_voided"
 
@@ -121,35 +122,43 @@ var (
 	ErrEntryNotReviewable = errs.Newf(errs.Conflict, "这条佣金不在待复核状态，可能已被处理，请刷新")
 	// ErrVoidUnderfunded 是推荐人的待结佣金科目不够冲回这一条（账本与条目对不上，需要人工核对账本）。
 	ErrVoidUnderfunded = errs.Newf(errs.Conflict, "待结佣金科目余额不足，无法冲回这条佣金，请先核对账本")
+	// ErrWithdrawDisabled 是提现已关闭且没有站点币种以外的可用佣金：关提现只关站点币种，别的币种照常能提。
+	ErrWithdrawDisabled = errs.Newf(errs.Conflict, "提现已关闭：本站币种的佣金改为解冻后自动转入余额，只有其他币种的佣金还能申请提现")
 )
 
 // Summary 是门户「我的佣金」的汇总，金额都是 Currency 这一个币种（取法见 summaryCurrency）。
 type Summary struct {
-	Currency     money.Currency
-	Pending      decimal.Decimal // 冻结中
-	Available    decimal.Decimal // 可提现（已解冻 − 未驳回的提现 − 已转余额，不小于 0）
-	Withdrawing  decimal.Decimal // 提现处理中（申请中、已批准）
-	Settled      decimal.Decimal // 已打款
-	TotalEarned  decimal.Decimal // 累计佣金（含冻结中）
-	Invitees     int64           // 邀请人数
-	Orders       int64           // 产生佣金的订单数
-	PaidInvitees int64           // 产生过佣金的被邀请人数
-	RatePercent  int
-	MinWithdraw  decimal.Decimal
-	Scope        string
+	Currency        money.Currency
+	Pending         decimal.Decimal // 冻结中
+	Available       decimal.Decimal // 可提现（已解冻 − 未驳回的提现 − 已转余额，不小于 0）
+	Withdrawing     decimal.Decimal // 提现处理中（申请中、已批准）
+	Settled         decimal.Decimal // 已打款
+	TotalEarned     decimal.Decimal // 累计佣金（含冻结中）
+	Invitees        int64           // 邀请人数
+	Orders          int64           // 佣金条目数（含第 2、3 级）
+	PaidInvitees    int64           // 产生过佣金的直接邀请人数（只算第 1 级）
+	RatePercent     int
+	MinWithdraw     decimal.Decimal
+	Scope           string
+	DirectRateBP    int64          // 直接邀请人实得的万分比，横幅用
+	WithdrawEnabled bool           // 是否开放提现；关着时只关站点币种，别的币种照常能提
+	WithdrawMethods []string       // 可选的提现方式，按目录顺序
+	SiteCurrency    money.Currency // 站点币种：门户据此判断关提现时这个汇总币种还能不能提
 }
 
-// EntryView 是门户佣金明细的一行；From 是打码后的被邀请人邮箱。
+// EntryView 是门户佣金明细的一行；From 是打码后的被邀请人邮箱，只有第 1 级（直接邀请）有，第 2、3 级为空。
 type EntryView struct {
-	Amount      decimal.Decimal
-	Base        decimal.Decimal
-	RateBP      int64
-	Currency    string
-	Status      string
-	FrozenUntil time.Time
-	CreatedAt   time.Time
-	OrderNo     string
-	From        string
+	Amount       decimal.Decimal
+	Base         decimal.Decimal
+	RateBP       int64
+	Currency     string
+	Status       string
+	FrozenUntil  time.Time
+	CreatedAt    time.Time
+	OrderNo      string
+	From         string
+	Level        int
+	SharePercent int
 }
 
 // WithdrawalView 是门户提现记录的一行。
@@ -161,6 +170,7 @@ type WithdrawalView struct {
 	RejectReason string
 	RequestedAt  time.Time
 	CompletedAt  *time.Time
+	Method       string
 }
 
 // TransferView 是门户「佣金转入余额」的一行。
@@ -195,53 +205,67 @@ type CurrencyOverview struct {
 // Overview 是后台分销概览：金额字段是站点币种（Currency）那一组，笔数字段是全部币种合计；
 // ByCurrency 按币种列出每一组（只列有数据的币种，站点币种总在里面）。
 type Overview struct {
-	Currency           money.Currency
-	Pending            decimal.Decimal
-	Available          decimal.Decimal
-	PaidOut            decimal.Decimal
-	ThisMonth          decimal.Decimal
-	TotalEarned        decimal.Decimal
-	Entries            int64
-	NeedReview         int64
-	WaitingWithdrawals int64
-	InvitedUsers       int64
-	ByCurrency         []CurrencyOverview
-	RatePercent        int
-	FreezeDays         int
-	MinWithdraw        decimal.Decimal
-	Scope              string
+	Currency            money.Currency
+	Pending             decimal.Decimal
+	Available           decimal.Decimal
+	PaidOut             decimal.Decimal
+	ThisMonth           decimal.Decimal
+	TotalEarned         decimal.Decimal
+	Entries             int64
+	NeedReview          int64
+	WaitingWithdrawals  int64
+	InvitedUsers        int64
+	ByCurrency          []CurrencyOverview
+	RatePercent         int
+	FreezeDays          int
+	MinWithdraw         decimal.Decimal
+	Scope               string
+	DistributionEnabled bool
+	DistributionLevels  [3]int
+	WithdrawEnabled     bool
+	WithdrawMethods     []string
 }
 
 // AdminWithdrawal 是后台提现列表的一行；PayoutDetail 是解封后的收款信息，EarnedTotal 是该用户同币种的累计佣金。
 type AdminWithdrawal struct {
-	ID           uuid.UUID
-	UserID       uuid.UUID
-	Email        string
-	Amount       decimal.Decimal
-	Currency     string
-	Status       string
-	PayoutDetail string
-	RejectReason string
-	RequestedAt  time.Time
-	CompletedAt  *time.Time
-	EarnedTotal  decimal.Decimal
+	ID              uuid.UUID
+	UserID          uuid.UUID
+	Email           string
+	Amount          decimal.Decimal
+	Currency        string
+	Status          string
+	Method          string
+	PayoutDetail    string
+	PayoutReference string // 没有为空串
+	PaidUSDTAmount  *decimal.Decimal
+	RejectReason    string
+	RequestedAt     time.Time
+	CompletedAt     *time.Time
+	EarnedTotal     decimal.Decimal
 }
 
-// ConfigUpdate 是后台改分销参数的部分更新：nil 字段保持原值。MinWithdraw 是元。
+// ConfigUpdate 是后台改分销参数的部分更新：nil 字段保持原值；分销与提现两组写进 settings 的各自一组键。MinWithdraw 是元。
 type ConfigUpdate struct {
-	RatePercent *int
-	FreezeDays  *int
-	MinWithdraw *decimal.Decimal
-	Scope       *string
+	RatePercent         *int
+	FreezeDays          *int
+	MinWithdraw         *decimal.Decimal
+	Scope               *string
+	DistributionEnabled *bool
+	DistributionL1      *int
+	DistributionL2      *int
+	DistributionL3      *int
+	WithdrawEnabled     *bool
+	WithdrawMethods     *[]string
 }
 
 // SettleStats 是一轮解冻的统计。
 type SettleStats struct {
-	Scanned     int
-	Settled     int
-	Skipped     int
-	Quarantined int // 确定性失败（待结科目余额不足）转人工复核的条数
-	Failed      int
+	Scanned         int
+	Settled         int
+	Skipped         int
+	Quarantined     int // 确定性失败（待结科目余额不足）转人工复核的条数
+	Failed          int
+	AutoTransferred int // 提现关闭时解冻、随后在单独事务里自动转入余额的条数（含上一轮转失败、这一轮补转的）
 }
 
 // 待复核的来源（由 review_reason 归类，给后台区分提示）：同源嫌疑、同源检查失败或未装配、解冻时待结科目余额不足、其它。

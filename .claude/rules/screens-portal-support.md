@@ -25,4 +25,6 @@ paths:
 邀请返利：
 - 邀请链接是 `/?invite=<code>`，不能用 `/r/`（会撞 public 网关根下的订阅通配）。
 - 可用佣金以账本为准（账本余额 − 在途提现），「全部转入余额」与「申请提现」用同一个数；后端同一时间只许一笔在途提现，`summary.withdrawing > 0` 或可用不足最低额时提现表单换成一句说明。
-- 横幅按佣金概况的 `summary.scope` 写（first_order 才说「首单」）；`risk_flag` 不展示给邀请人；提现不做 USDT，不承诺「1–3 个工作日」，写「审核通过后打款」。
+- 横幅按佣金概况的 `summary.direct_rate_bp`（直接邀请实得的万分比，多级分销时已乘第一级份额）与 `summary.scope` 写（first_order 才说「首单」）；`risk_flag` 不展示给邀请人；不承诺「1–3 个工作日」，写「审核通过后打款」。
+- 提现方式只从 `summary.withdraw_methods` 里选（目录与文案在 `src/core/withdraw-methods.ts`），USDT 地址前端只看形状、校验和以后端为准；关提现只关站点币种：`withdraw_enabled` 为 false 且 `summary.currency === summary.site_currency` 时整段提现换成 `withdrawClosedHint` 的说明（解冻后自动转余额；关闭前已可提现的部分要自己点「全部转入余额」；明细里还有别的币种的已解冻佣金时，`otherAvailableCurrencies` 列出来，提示写明它们仍可提现、先转走本站币种汇总就换成它们的提现表单）；汇总是别的币种时照常显示提现表单，上面加一句「提现已关闭只针对站点币种」。
+- 佣金明细的 `level` > 1 是下级好友的单，标题只写「第 N 级好友」：后端不给上级看下线邮箱（`from` 为空）。「付费好友」`paid_invitees` 只算第 1 级，和「邀请注册」同口径；`orders` 是条目数，含第 2、3 级。

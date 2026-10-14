@@ -70,17 +70,21 @@ func (r *Repo) ReviewWithdrawal(ctx context.Context, id uuid.UUID, to string, re
 }
 
 // MarkWithdrawalPaid 将已批准的提现标为已打款。
-func (r *Repo) MarkWithdrawalPaid(ctx context.Context, id uuid.UUID, reference string, payoutTxnID, by uuid.UUID, at time.Time) (bool, error) {
+func (r *Repo) MarkWithdrawalPaid(ctx context.Context, id uuid.UUID, reference string, paidUSDT *decimal.Decimal, payoutTxnID, by uuid.UUID, at time.Time) (bool, error) {
+	cols := map[string]any{
+		"status":           "paid",
+		"payout_reference": reference,
+		"payout_txn_id":    payoutTxnID,
+		"paid_by":          by,
+		"completed_at":     at,
+		"updated_at":       at,
+	}
+	if paidUSDT != nil {
+		cols["paid_usdt_amount"] = *paidUSDT
+	}
 	res := r.d.Conn(ctx).Model(&model.Withdrawal{}).
 		Where("id = ? AND status = ?", id, "approved").
-		Updates(map[string]any{
-			"status":           "paid",
-			"payout_reference": reference,
-			"payout_txn_id":    payoutTxnID,
-			"paid_by":          by,
-			"completed_at":     at,
-			"updated_at":       at,
-		})
+		Updates(cols)
 	if res.Error != nil {
 		return false, mapErr(res.Error)
 	}
