@@ -6,7 +6,7 @@
 -- 与 inv- 前缀邮箱/编码，避免与已有行撞唯一约束。
 --
 -- 覆盖的验收项：PAY-005 复式记账、DATA-003 追加写、SUB-004 订阅状态（只剩 active / expired）、
---   NODE-010（改成 nodes_active_shape：在役节点必须挂服务器、协议配好）、SUB-002 版本与价格冻结、
+--   NODE-010（改成 nodes_active_shape：在役节点必须挂服务器、协议配好）、NODE-011 同机端口兜底（tcp / udp / tcp+udp）、SUB-002 版本与价格冻结、
 --   PAY-001 订单金额恒等式与人工单理由、MKT-003 邀请关系、PAY-003 幂等唯一键、MKT-001 优惠券容量、
 --   NFR-008 降级开关、OPS-005 事务类通知、OPS-001 内部备注、USE-002（改成 node_traffic_reports 唯一键）、
 --   PAY-FEE 渠道类型与用户手续费（00042）。
@@ -340,10 +340,47 @@ SELECT _accept('NODE-010', '字段齐全的 active 应当通过', $sql$
     node_type = 'shadowsocks',
     server_host = 'inv-node.example.test',
     server_port = 18443,
-    listen_l4 = 'tcp',
+    listen_l4 = 'tcp+udp',
     protocol_schema_version = 1,
     serving_status = 'active'
    WHERE id = '00000000-0000-7000-8000-000000000901';
+$sql$);
+
+--------------------------------------------------------------------------------
+-- NODE-011 同机端口兜底（00038_node_listen_tcp_udp.sql 的 nodes_listen_tcp_claim_key /
+-- nodes_listen_udp_claim_key）。上面 NODE-010 已让 901 以 tcp+udp 占住 811:18443。
+-- 未退役、挂了服务器的节点都占端口（含 draft），所以这里用 draft 节点省掉 active 的形状字段。
+--------------------------------------------------------------------------------
+
+SELECT _reject('NODE-011', '同端口已有 tcp+udp 时再占 udp 必须拒绝', $sql$
+  INSERT INTO nodes (id, name, pool_id, serving_status, server_id, server_port, listen_l4)
+  VALUES ('00000000-0000-7000-8000-000000000902', 'inv-test-node-b',
+          '00000000-0000-7000-8000-000000000801', 'draft',
+          '00000000-0000-7000-8000-000000000811', 18443, 'udp');
+$sql$);
+
+SELECT _reject('NODE-011', '同端口已有 tcp+udp 时再占 tcp 必须拒绝', $sql$
+  INSERT INTO nodes (id, name, pool_id, serving_status, server_id, server_port, listen_l4)
+  VALUES ('00000000-0000-7000-8000-000000000903', 'inv-test-node-c',
+          '00000000-0000-7000-8000-000000000801', 'draft',
+          '00000000-0000-7000-8000-000000000811', 18443, 'tcp');
+$sql$);
+
+SELECT _accept('NODE-011', '另一个端口上 tcp 与 udp 可以共存', $sql$
+  INSERT INTO nodes (id, name, pool_id, serving_status, server_id, server_port, listen_l4)
+  VALUES ('00000000-0000-7000-8000-000000000904', 'inv-test-node-d',
+          '00000000-0000-7000-8000-000000000801', 'draft',
+          '00000000-0000-7000-8000-000000000811', 18444, 'tcp'),
+         ('00000000-0000-7000-8000-000000000905', 'inv-test-node-e',
+          '00000000-0000-7000-8000-000000000801', 'draft',
+          '00000000-0000-7000-8000-000000000811', 18444, 'udp');
+$sql$);
+
+SELECT _accept('NODE-011', '退役的节点不占端口', $sql$
+  INSERT INTO nodes (id, name, pool_id, serving_status, retired_at, server_id, server_port, listen_l4)
+  VALUES ('00000000-0000-7000-8000-000000000906', 'inv-test-node-f',
+          '00000000-0000-7000-8000-000000000801', 'retired', now(),
+          '00000000-0000-7000-8000-000000000811', 18443, 'tcp+udp');
 $sql$);
 
 --------------------------------------------------------------------------------

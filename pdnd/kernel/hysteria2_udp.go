@@ -58,7 +58,7 @@ const (
 	// 直接丢，最便宜。上行只测了 4MB（丢包不超过 0.03%），208KB 的上行留给复测确认。
 	//
 	// 明确申请而不是不调：上游 socket 每会话一个、数量由用户决定（每用户上限见
-	// quic_udp_quota.go），每会话的内核记账固定在收发各约 208KB，不随调大了
+	// udp_session_quota.go），每会话的内核记账固定在收发各约 208KB，不随调大了
 	// rmem_default 的机器膨胀，也不会靠会话数顶满全局 net.ipv4.udp_mem。
 	hy2UDPSocketBuffer = 106496
 	// hy2UDPResolveTTL 是域名目标解析结果在会话内的复用时长。

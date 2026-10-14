@@ -201,8 +201,13 @@ func newHTTPServer(sc config.HTTPServer, h http.Handler) *http.Server {
 		ReadTimeout:       sc.ReadTimeout,
 		WriteTimeout:      sc.WriteTimeout,
 		IdleTimeout:       sc.IdleTimeout,
+		MaxHeaderBytes:    maxHeaderBytes,
 	}
 }
+
+// maxHeaderBytes 是请求头总量上限（Go 缺省 1 MiB）。前面的 nginx 单行头最多 8 KiB、共 4 块，
+// 正常请求（含 refresh cookie 与 Authorization）远小于它；这里收紧是防绕过 nginx 直连回环端口时的大头。
+const maxHeaderBytes = 64 << 10
 
 // newEngines 建门户与后台两个引擎并挂上各模块路由。
 // 引擎级顺序：基础中间件（请求号、日志、指标、恢复、错误、安全头、并发、超时）→（后台）只读门 → 鉴权 → 域守卫；
@@ -293,7 +298,7 @@ func newEngine(r *runtime, sc config.HTTPServer, metricsMW gin.HandlerFunc, extr
 		metricsMW,
 		httpx.Recovery(),
 		httpx.Errors(),
-		httpx.SecurityHeaders(),
+		httpx.SecurityHeaders(r.cfg.IsProduction()),
 		httpx.Concurrency(sc.MaxConcurrency, isStream),
 		httpx.Timeout(sc.RequestTimeout, isStream),
 	)

@@ -145,7 +145,7 @@ type nodePortClaim struct {
 	CheckReserved bool
 }
 
-// claimNodePort 在调用方已持服务器行锁时检查端口：先保留表，再同一服务器上未退役节点的 (端口, L4)。
+// claimNodePort 在调用方已持服务器行锁时检查端口：先保留表，再查同一服务器同一端口上 L4 冲突（protocol.L4Conflicts：相等，或一方是 tcp+udp）的未退役节点。
 // 端口未配置（<=0）直接通过。返回只提示、不拒绝的说明（可能为 nil）。
 func (s *Service) claimNodePort(ctx context.Context, srv model.Server, c nodePortClaim) ([]string, error) {
 	if c.Port <= 0 {
@@ -168,7 +168,7 @@ func (s *Service) claimNodePort(ctx context.Context, srv model.Server, c nodePor
 			warnings = append(warnings, warning)
 		}
 	}
-	holder, taken, err := s.repo.NodePortHolder(ctx, c.ServerID, c.Port, c.L4, c.Exclude)
+	holder, taken, err := s.repo.NodePortHolder(ctx, c.ServerID, c.Port, protocol.ConflictingL4s(c.L4), c.Exclude)
 	if err != nil {
 		return nil, err
 	}

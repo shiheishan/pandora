@@ -35,7 +35,7 @@ type anyTLSAdapter struct {
 	slots     []anyTLSSlot
 	sessions  userSessions
 	online    onlineDevices
-	udpQuota  udpSessionQuota // 每用户在途 UDP 会话数（quic_udp_quota.go），UoT 每个目标占一个
+	udpQuota  udpSessionQuota // 每用户在途 UDP 会话数（udp_session_quota.go），UoT 每个目标占一个
 	service   *anytls.Service
 	listener  net.Listener
 	tlsConfig *hysteria2TLSConfig

@@ -70,6 +70,9 @@ func NewServer(o Options) (*Server, error) {
 	return newServer(o, o.Service, o.Service, NewControlServer(o.Service))
 }
 
+// maxConcurrentStreams 是每条连接上同时存在的流数上限（gRPC 缺省不限）。
+const maxConcurrentStreams = 16
+
 func newServer(o Options, enr enroller, auth sessionAuthorizer, ctrl nodev1.ControlServiceServer) (*Server, error) {
 	certs := &certSource{ca: o.CA, host: o.PublicHost, now: time.Now, log: o.Logger}
 	if _, err := certs.get(nil); err != nil {
@@ -98,6 +101,8 @@ func newServer(o Options, enr enroller, auth sessionAuthorizer, ctrl nodev1.Cont
 			Timeout: 20 * time.Second,
 		}),
 		grpc.ConnectionTimeout(20*time.Second),
+		// 一台节点一条连接上只有一条会话流，加偶发的一元调用；上限防未认证的连接（登记不要求客户端证书）开大量流占内存
+		grpc.MaxConcurrentStreams(maxConcurrentStreams),
 		grpc.ChainUnaryInterceptor(slices.Concat(o.UnaryInterceptors,
 			[]grpc.UnaryServerInterceptor{ic.unaryReqID, ic.unaryRecover, ic.unaryAuth})...),
 		grpc.ChainStreamInterceptor(slices.Concat(o.StreamInterceptors,

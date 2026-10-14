@@ -21,7 +21,7 @@ func TestNodeCreateDefaultsAndRedact(t *testing.T) {
 	if err := e.row(ctx, `SELECT listen_l4 FROM nodes WHERE id = ?`, tcp.ID).Scan(&l4); err != nil {
 		t.Fatal(err)
 	}
-	if l4 != "tcp" {
+	if l4 != "tcp+udp" {
 		t.Fatalf("shadowsocks listen_l4=%q", l4)
 	}
 	if !tcp.TrafficRate.Equal(decimal.NewFromInt(1)) {

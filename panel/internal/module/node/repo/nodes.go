@@ -16,7 +16,7 @@ import (
 var (
 	// ErrNodeNameTaken 表示节点名称已被未删除的节点占用（nodes_name_live_key）。
 	ErrNodeNameTaken = errors.New("node: 节点名称已存在")
-	// ErrListenClaimTaken 表示同一服务器上未退役的节点已占用这个 (端口, L4)（nodes_listen_claim_key）。
+	// ErrListenClaimTaken 表示同一服务器上未退役的节点已占用这个端口上冲突的 L4（nodes_listen_tcp_claim_key / nodes_listen_udp_claim_key）。
 	ErrListenClaimTaken = errors.New("node: 同机端口已被占用")
 	// ErrServerNameTaken 表示服务器名称已被未删除的服务器占用（servers_name_live_key）。
 	ErrServerNameTaken = errors.New("node: 服务器名称已存在")
@@ -28,8 +28,9 @@ var (
 var inventoryErrs = db.ConstraintErrors{
 	ByCode: map[string]error{db.CodeUnique: ErrNodeNameTaken, db.CodeCheck: ErrInventoryCheck},
 	ByName: map[string]error{
-		"nodes_listen_claim_key": ErrListenClaimTaken,
-		"servers_name_live_key":  ErrServerNameTaken,
+		"nodes_listen_tcp_claim_key": ErrListenClaimTaken,
+		"nodes_listen_udp_claim_key": ErrListenClaimTaken,
+		"servers_name_live_key":      ErrServerNameTaken,
 	},
 }
 
@@ -204,12 +205,15 @@ type nodeNameRow struct {
 	Name string `gorm:"column:name"`
 }
 
-// NodePortHolder 返回同服务器上占着 (port, l4) 的未退役节点的名字；exclude 非 nil 时排除它自己。
-func (r *Repo) NodePortHolder(ctx context.Context, serverID uuid.UUID, port int, l4 string, exclude *uuid.UUID) (string, bool, error) {
+// NodePortHolder 返回同服务器同端口上 L4 落在 l4s 里（调用方传与新节点冲突的全部取值）的未退役节点的名字；exclude 非 nil 时排除它自己。
+func (r *Repo) NodePortHolder(ctx context.Context, serverID uuid.UUID, port int, l4s []string, exclude *uuid.UUID) (string, bool, error) {
+	if len(l4s) == 0 {
+		return "", false, nil
+	}
 	q := `SELECT n.name FROM nodes n
-		WHERE n.server_id = ? AND n.server_port = ? AND n.listen_l4 = ?
+		WHERE n.server_id = ? AND n.server_port = ? AND n.listen_l4 IN ?
 		  AND n.serving_status <> 'retired' AND n.deleted_at IS NULL`
-	args := []any{serverID, port, l4}
+	args := []any{serverID, port, l4s}
 	if exclude != nil {
 		q += " AND n.id <> ?"
 		args = append(args, *exclude)
