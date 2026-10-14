@@ -5,12 +5,12 @@ package repo
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/shopspring/decimal"
+
+	"github.com/aegispanel/aegis/internal/pkg/db"
 )
 
 // TrafficReportRow 是一份要留档的流量上报。
@@ -154,7 +154,4 @@ func jsonArray[T any](rows []T) (string, error) {
 }
 
 // IsRetryable 判断是不是死锁（40P01）或序列化失败（40001）：整个事务已回滚，整笔重来是安全的。
-func IsRetryable(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && (pgErr.Code == "40P01" || pgErr.Code == "40001")
-}
+func IsRetryable(err error) bool { return db.IsRetryable(err) }

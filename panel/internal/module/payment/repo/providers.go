@@ -2,7 +2,6 @@ package repo
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -135,24 +134,21 @@ func (r *Repo) UpdateProviderFields(ctx context.Context, id uuid.UUID, fields ma
 // MinAcceptingAmount 启用、收新单、币种含 cur 的在线渠道里最小的 min_amount；一个都没有时 found=false。
 // 线下渠道不算（它的 min_amount 是 0，会把门槛拉没）。
 func (r *Repo) MinAcceptingAmount(ctx context.Context, cur string) (decimal.Decimal, bool, error) {
-	var min sql.NullString
+	var min decimal.NullDecimal
+	// 聚合总有一行，单列可空的 numeric 用 Row().Scan 扫进 NullDecimal（GORM 的 Scan 会把结构体当模型按列名填）
 	err := r.d.Conn(ctx).Raw(
 		`SELECT MIN(min_amount) FROM payment_providers
 		 WHERE enabled AND accepting_new AND adapter <> 'offline'
 		   AND currencies @> jsonb_build_array(?::text)`,
 		cur,
-	).Scan(&min).Error
+	).Row().Scan(&min)
 	if err != nil {
 		return decimal.Zero, false, err
 	}
 	if !min.Valid {
 		return decimal.Zero, false, nil
 	}
-	amt, err := decimal.NewFromString(min.String)
-	if err != nil {
-		return decimal.Zero, false, err
-	}
-	return amt, true, nil
+	return min.Decimal, true, nil
 }
 
 // ProviderTodayTotals 各渠道「站点时区今天」成功收款的合计。

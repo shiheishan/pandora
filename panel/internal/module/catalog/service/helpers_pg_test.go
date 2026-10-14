@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"testing"
 
@@ -20,7 +19,6 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/testkit"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/shopspring/decimal"
 )
 
@@ -374,12 +372,8 @@ func assertRestrictViolation(t *testing.T, err error) {
 	if err == nil {
 		t.Fatal("期望错误，得到 nil")
 	}
-	var pg *pgconn.PgError
-	if !errors.As(err, &pg) {
-		t.Fatalf("期望 *pgconn.PgError，得到 %T: %v", err, err)
-	}
-	if pg.Code != "23001" {
-		t.Fatalf("期望 SQLSTATE 23001，得到 %s: %s", pg.Code, pg.Message)
+	if code := testkit.SQLState(err); code != "23001" {
+		t.Fatalf("期望 SQLSTATE 23001，得到 %q: %v", code, err)
 	}
 }
 

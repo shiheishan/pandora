@@ -6,8 +6,6 @@ import (
 	"errors"
 	"time"
 
-	"gorm.io/gorm"
-
 	"github.com/aegispanel/aegis/internal/pkg/db"
 )
 
@@ -23,19 +21,14 @@ var ErrDuplicate = errors.New("certs: 唯一约束冲突")
 // ErrForeignKey 表示外键约束冲突。
 var ErrForeignKey = errors.New("certs: 外键约束冲突")
 
-// mapErr 把 GORM 翻译后的约束错误转成模块哨兵。
-func mapErr(err error) error {
-	if err == nil {
-		return nil
-	}
-	if errors.Is(err, gorm.ErrDuplicatedKey) {
-		return ErrDuplicate
-	}
-	if errors.Is(err, gorm.ErrForeignKeyViolated) {
-		return ErrForeignKey
-	}
-	return err
-}
+// constraintErrs 把约束违例翻译成本模块哨兵（统一做法见 internal/pkg/db/constraint.go）。
+var constraintErrs = db.ConstraintErrors{ByCode: map[string]error{
+	db.CodeUnique:     ErrDuplicate,
+	db.CodeForeignKey: ErrForeignKey,
+}}
+
+// mapErr 把约束违例翻译成本模块哨兵，并包住原错误。
+func mapErr(err error) error { return constraintErrs.Map(err) }
 
 // DBNow 是数据库时钟。
 func (r *Repo) DBNow(ctx context.Context) (time.Time, error) {

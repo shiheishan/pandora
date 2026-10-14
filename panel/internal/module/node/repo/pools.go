@@ -6,10 +6,9 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
-	"gorm.io/gorm"
 
 	"github.com/aegispanel/aegis/internal/module/node/model"
+	"github.com/aegispanel/aegis/internal/pkg/db"
 )
 
 var (
@@ -21,32 +20,12 @@ var (
 	ErrPoolGroupMissing = errors.New("node: 用户组不存在")
 )
 
-// mapPoolErr：唯一冲突（gorm.ErrDuplicatedKey 或 pgconn.PgError.Code == "23505"）→ onUnique；
-// 外键冲突（gorm.ErrForeignKeyViolated、"23503"，以及 ON DELETE RESTRICT 报的 "23001"）→ onFK；
-// onUnique / onFK 为 nil 时原样返回；其余原样返回。
-func mapPoolErr(err, onUnique, onFK error) error {
-	if err == nil {
-		return nil
-	}
-	isUnique := errors.Is(err, gorm.ErrDuplicatedKey)
-	isFK := errors.Is(err, gorm.ErrForeignKeyViolated)
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
-		switch pgErr.Code {
-		case "23505":
-			isUnique = true
-		case "23503", "23001":
-			isFK = true
-		}
-	}
-	if isUnique && onUnique != nil {
-		return onUnique
-	}
-	if isFK && onFK != nil {
-		return onFK
-	}
-	return err
-}
+// 节点池写库的约束违例按调用处译成不同哨兵；外键 RESTRICT（删被引用的行）回 23001，与 23503 同样处理。
+var (
+	poolCodeErrs  = db.ConstraintErrors{ByCode: map[string]error{db.CodeUnique: ErrPoolCodeTaken}}
+	poolGroupErrs = db.ConstraintErrors{ByCode: map[string]error{db.CodeForeignKey: ErrPoolGroupMissing, db.CodeRestrict: ErrPoolGroupMissing}}
+	poolRefErrs   = db.ConstraintErrors{ByCode: map[string]error{db.CodeForeignKey: ErrPoolReferenced, db.CodeRestrict: ErrPoolReferenced}}
+)
 
 // PoolNodeCount 是一个池的节点数：Nodes 未删除的，Active 其中在役的。
 type PoolNodeCount struct {
@@ -199,7 +178,7 @@ func (r *Repo) PoolUserGroupIDs(ctx context.Context, poolIDs []uuid.UUID) (map[u
 // InsertPool 插入节点池（回填 ID 与时间）。
 func (r *Repo) InsertPool(ctx context.Context, p *model.NodePool) error {
 	err := r.d.Conn(ctx).Create(p).Error
-	return mapPoolErr(err, ErrPoolCodeTaken, nil)
+	return poolCodeErrs.Map(err)
 }
 
 // PoolByIDForUpdate 按 id 加行锁读取节点池。
@@ -227,7 +206,7 @@ func (r *Repo) UpdatePool(ctx context.Context, id uuid.UUID, name, region, statu
 func (r *Repo) ReplacePoolUserGroups(ctx context.Context, poolID uuid.UUID, groupIDs []uuid.UUID) error {
 	tx := r.d.Conn(ctx)
 	if err := tx.Exec("DELETE FROM node_pool_user_groups WHERE pool_id = ?", poolID).Error; err != nil {
-		return mapPoolErr(err, nil, ErrPoolGroupMissing)
+		return poolGroupErrs.Map(err)
 	}
 	if len(groupIDs) == 0 {
 		return nil
@@ -237,7 +216,7 @@ func (r *Repo) ReplacePoolUserGroups(ctx context.Context, poolID uuid.UUID, grou
 		rows[i] = model.NodePoolUserGroup{PoolID: poolID, UserGroupID: gid}
 	}
 	err := tx.Create(&rows).Error
-	return mapPoolErr(err, nil, ErrPoolGroupMissing)
+	return poolGroupErrs.Map(err)
 }
 
 // LivePoolNodeCount 统计池内未删节点数。
@@ -262,7 +241,7 @@ func (r *Repo) DetachDeletedPoolNodes(ctx context.Context, poolID uuid.UUID) err
 func (r *Repo) DeletePool(ctx context.Context, id uuid.UUID) (bool, error) {
 	res := r.d.Conn(ctx).Exec("DELETE FROM node_pools WHERE id = ?", id)
 	if res.Error != nil {
-		return false, mapPoolErr(res.Error, nil, ErrPoolReferenced)
+		return false, poolRefErrs.Map(res.Error)
 	}
 	return res.RowsAffected == 1, nil
 }

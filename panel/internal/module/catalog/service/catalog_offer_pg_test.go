@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/testkit"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/shopspring/decimal"
 )
 
@@ -233,9 +233,8 @@ func TestDeleteUserGroupReferencedByPriceRestricted(t *testing.T) {
 	g := seedGroup(t, ctx, e, "")
 	_ = groupOnlyPublishedPlan(t, ctx, e, g)
 	err := execSavepoint(t, ctx, e, "sp_delgrp", `DELETE FROM user_groups WHERE id = ?`, g)
-	var pg *pgconn.PgError
 	// ON DELETE RESTRICT 回 restrict_violation（23001），不是 23503；identity 的 repo 把两者都当外键冲突
-	if !errors.As(err, &pg) || pg.Code != "23001" {
+	if testkit.SQLState(err) != "23001" {
 		t.Fatalf("期望 23001，得到 %v", err)
 	}
 }

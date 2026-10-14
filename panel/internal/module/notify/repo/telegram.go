@@ -3,32 +3,19 @@ package repo
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/aegispanel/aegis/internal/module/notify/model"
+	"github.com/aegispanel/aegis/internal/pkg/db"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
-	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
 // ErrDuplicate 表示唯一约束冲突（Telegram 绑定、绑定码）。
 var ErrDuplicate = errors.New("notify: 唯一约束冲突")
 
-func mapDuplicateErr(err error) error {
-	if err == nil {
-		return nil
-	}
-	if errors.Is(err, gorm.ErrDuplicatedKey) {
-		return fmt.Errorf("%w: %v", ErrDuplicate, err)
-	}
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-		return fmt.Errorf("%w: %v", ErrDuplicate, err)
-	}
-	return err
-}
+// constraintErrs 把约束违例翻译成本模块哨兵（统一做法见 internal/pkg/db/constraint.go）。
+var constraintErrs = db.ConstraintErrors{ByCode: map[string]error{db.CodeUnique: ErrDuplicate}}
 
 // Binding 读本人的 Telegram 绑定；没有 ok 为 false。
 func (r *Repo) Binding(ctx context.Context, userID uuid.UUID) (model.TelegramBinding, bool, error) {
@@ -60,7 +47,7 @@ func (r *Repo) BindingsForUsers(ctx context.Context, userIDs []uuid.UUID) ([]mod
 func (r *Repo) InsertBinding(ctx context.Context, b *model.TelegramBinding) error {
 	res := r.d.Conn(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(b)
 	if res.Error != nil {
-		return mapDuplicateErr(res.Error)
+		return constraintErrs.Map(res.Error)
 	}
 	if res.RowsAffected == 0 {
 		return ErrDuplicate
@@ -83,7 +70,7 @@ func (r *Repo) DeleteUnusedBindCodes(ctx context.Context, userID uuid.UUID) erro
 
 // InsertBindCode 写一个绑定码；哈希撞了返回 repo.ErrDuplicate。
 func (r *Repo) InsertBindCode(ctx context.Context, c *model.TelegramBindCode) error {
-	return mapDuplicateErr(r.d.Conn(ctx).Create(c).Error)
+	return constraintErrs.Map(r.d.Conn(ctx).Create(c).Error)
 }
 
 // LockBindCode 按哈希取未用、未过期（expires_at > now）的绑定码并加 FOR UPDATE；没有 ok 为 false。

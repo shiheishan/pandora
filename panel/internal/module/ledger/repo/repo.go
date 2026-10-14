@@ -3,10 +3,8 @@ package repo
 
 import (
 	"errors"
-	"fmt"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 
 	"github.com/aegispanel/aegis/internal/pkg/db"
 )
@@ -26,22 +24,15 @@ var ErrForeignKey = errors.New("ledger: 外键约束冲突")
 // ErrCheck 表示检查约束冲突。
 var ErrCheck = errors.New("ledger: 检查约束冲突")
 
-// mapErr 把 GORM 翻译后的约束错误转成模块哨兵。
-func mapErr(err error) error {
-	if err == nil {
-		return nil
-	}
-	if errors.Is(err, gorm.ErrDuplicatedKey) {
-		return fmt.Errorf("%w: %v", ErrDuplicate, err)
-	}
-	if errors.Is(err, gorm.ErrForeignKeyViolated) {
-		return fmt.Errorf("%w: %v", ErrForeignKey, err)
-	}
-	if errors.Is(err, gorm.ErrCheckConstraintViolated) {
-		return fmt.Errorf("%w: %v", ErrCheck, err)
-	}
-	return err
-}
+// constraintErrs 把约束违例翻译成本模块哨兵（统一做法见 internal/pkg/db/constraint.go）。
+var constraintErrs = db.ConstraintErrors{ByCode: map[string]error{
+	db.CodeUnique:     ErrDuplicate,
+	db.CodeForeignKey: ErrForeignKey,
+	db.CodeCheck:      ErrCheck,
+}}
+
+// mapErr 把约束违例翻译成本模块哨兵，并包住原错误。
+func mapErr(err error) error { return constraintErrs.Map(err) }
 
 // AccountKey 是科目的业务键：用户类科目 OwnerUserID 非空、OwnerRef 为空；平台类反之。
 type AccountKey struct {

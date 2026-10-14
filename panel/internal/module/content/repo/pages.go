@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/aegispanel/aegis/internal/module/content/model"
+	"github.com/aegispanel/aegis/internal/pkg/db"
 )
 
 // AdminRow 是后台读到的一个版本，带同 slug 的最大版本号与「同受众里是否最新」。
@@ -50,7 +51,7 @@ func (r *Repo) ListAdmin(ctx context.Context, f AdminFilter) ([]AdminRow, error)
 	}
 	q := strings.TrimSpace(f.Query)
 	if q != "" {
-		pat := likePattern(q)
+		pat := db.ContainsPattern(q)
 		where = append(where, "(cp.slug ILIKE ? OR cp.title ILIKE ?)")
 		args = append(args, pat, pat)
 	}

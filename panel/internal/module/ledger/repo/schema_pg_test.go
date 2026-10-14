@@ -4,13 +4,11 @@ package repo
 // 科目归属形状、按来源唯一的交易、每单一笔 hold、提交后不能追加分录。直接写 SQL，绕开 Go 层的检查。
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 
 	"github.com/aegispanel/aegis/internal/pkg/db"
@@ -28,13 +26,10 @@ func cleanLedger(t *testing.T, d *db.DB) {
 	t.Cleanup(func() { testkit.Truncate(t, d, ledgerTables...) })
 }
 
-// pgCode 取 PostgreSQL 错误码，取不到返回空串。
+// pgCode 取约束违例的 SQLSTATE，取不到返回空串。
 func pgCode(err error) string {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
-		return pgErr.Code
-	}
-	return ""
+	v, _ := db.AsViolation(err)
+	return v.Code
 }
 
 // mkUser 插一个用户，返回 ID。
