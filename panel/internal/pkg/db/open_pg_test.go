@@ -11,7 +11,7 @@ import (
 )
 
 // TestPoolKeepsIdleUpToMaxConns 钉住连接池的空闲上限：并发用满池之后，归还的连接都留在池里复用，
-// 不会因为空闲上限小于池上限被关掉、下次再新建（P8 发现的反复建连）。
+// 不会因为空闲上限小于池上限被关掉、下次再新建（压测发现的反复建连）。
 func TestPoolKeepsIdleUpToMaxConns(t *testing.T) {
 	d := testkit.DB(t)
 	ctx := context.Background()

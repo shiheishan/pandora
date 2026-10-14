@@ -136,7 +136,7 @@ func newBackupCmd(configPath *string) *cobra.Command {
 	return cmd
 }
 
-// backupArgs 要求恰好 n 个参数；不对时以退出码 2 结束并打印用法（与旧工具同口径）。
+// backupArgs 要求恰好 n 个参数；不对时以退出码 2 结束并打印用法。
 func backupArgs(n int, usage string) cobra.PositionalArgs {
 	return func(_ *cobra.Command, args []string) error {
 		if len(args) != n {
@@ -148,7 +148,7 @@ func backupArgs(n int, usage string) cobra.PositionalArgs {
 
 // runWebDAVUpload 是 webdav-upload 的完整流程：核本地归档与校验文件 → 读 WebDAV 配置 → 准备清单事务 →
 // 探测 → 传归档、校验文件、清单（各自核摘要）→ 提交检查点 → 交独立 hook 复制检查点。
-// 失败只报阶段名（不带远端地址、凭据与底层错误），与移植前的独立上传工具报错一致。
+// 失败只报阶段名（不带远端地址、凭据与底层错误）。
 func runWebDAVUpload(ctx context.Context, configPath, archive, checksum string) (string, error) {
 	fail := func(stage string) error { return errors.New("webdav backup upload failed: " + stage) }
 	pair, err := dbbackup.VerifyLocalPair(archive, checksum)
