@@ -69,7 +69,8 @@ func (r *Repo) CountIntents(ctx context.Context, orderID uuid.UUID) (int64, erro
 }
 
 // InsertIntent 插一行；(provider_id, out_trade_no) 或「每单一个在途」冲突返回 ErrDuplicate。写前 money.Check(it.Amount)、money.Check(it.SurchargeAmount)。
-// created_at、updated_at 不由应用写，用库的 now()：「建单中」窗口（IntentCreatedWithin）与巡检排程都按库时钟比，多实例时钟偏差不影响。
+// created_at、updated_at 不由应用写，用库默认值 now()：PG 的 now() 是所在事务开始的时刻（BeginIntent 那笔事务，比插入早，差的是等订单锁的时间，
+// 一般毫秒级），不是插入的时刻。「建单中」窗口（IntentCreatedWithin）与巡检排程都按库时钟比，多实例时钟偏差不影响。
 func (r *Repo) InsertIntent(ctx context.Context, it *model.Intent) error {
 	if err := money.Check(it.Amount); err != nil {
 		return err

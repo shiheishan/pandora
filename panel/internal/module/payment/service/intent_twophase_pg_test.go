@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aegispanel/aegis/internal/module/payment/provider"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
@@ -360,11 +361,23 @@ func TestCompleteIntentFailsAfterOrderExpired(t *testing.T) {
 
 func TestCompleteIntentRejectsInsideTx(t *testing.T) {
 	e, ctx := newEnv(t)
+	defer e.restoreDefaultAdapter(t)
 	user := e.mkUser(t, ctx)
 	code := "fake-2p-" + uuid.New().String()[:8]
 	_ = e.mkFakeProvider(t, ctx, code)
 	orderID, orderNo := e.mkOrder(t, ctx, user)
 	in := e.intentInput(code, orderID, orderNo, user)
+
+	// 数渠道建单次数：事务里那次必须在联网之前就被拦下
+	var gatewayCalls int
+	e.useCreateStub(t, func(ctx context.Context, req provider.CreateRequest) (provider.CreateResponse, error) {
+		gatewayCalls++
+		fp, err := newFakeProvider(fakeConfig{Secret: []byte(fakeSecret), CheckoutURL: "https://checkout.example.test"})
+		if err != nil {
+			return provider.CreateResponse{}, err
+		}
+		return fp.CreatePayment(ctx, req)
+	})
 
 	var draft IntentDraft
 	if err := e.txm.Do(ctx, func(ctx context.Context) error {
@@ -386,6 +399,9 @@ func TestCompleteIntentRejectsInsideTx(t *testing.T) {
 		t.Fatalf("事务内 CompleteIntent 应 Internal: %v", innerErr)
 	}
 
+	if gatewayCalls != 0 {
+		t.Fatalf("事务里不应调渠道建单，调了 %d 次", gatewayCalls)
+	}
 	if e.count(t, ctx, `SELECT count(*) FROM payment_intents WHERE id = ? AND redirect_url = ''`, draft.intentID) != 1 {
 		t.Fatal("占位 redirect_url 仍应为空")
 	}
@@ -397,8 +413,55 @@ func TestCompleteIntentRejectsInsideTx(t *testing.T) {
 	if res.RedirectURL == "" {
 		t.Fatal("事务外 CompleteIntent 应补上收银台")
 	}
+	if gatewayCalls != 1 {
+		t.Fatalf("事务外应调渠道建单 1 次，得 %d", gatewayCalls)
+	}
 }
 
+// 渠道调用拿到的 ctx 带期限，且不超过 completeIntentBudget - completeIntentPersistTimeout（12 秒）：请求本身没期限时也一样。
+func TestCompleteIntentGatewayDeadline(t *testing.T) {
+	e, ctx := newEnv(t)
+	defer e.restoreDefaultAdapter(t)
+	user := e.mkUser(t, ctx)
+	code := "fake-2p-" + uuid.New().String()[:8]
+	_ = e.mkFakeProvider(t, ctx, code)
+	orderID, orderNo := e.mkOrder(t, ctx, user)
+	in := e.intentInput(code, orderID, orderNo, user)
+
+	var (
+		hasDeadline bool
+		remaining   time.Duration
+	)
+	e.useCreateStub(t, func(ctx context.Context, req provider.CreateRequest) (provider.CreateResponse, error) {
+		var dl time.Time
+		dl, hasDeadline = ctx.Deadline()
+		remaining = time.Until(dl)
+		fp, err := newFakeProvider(fakeConfig{Secret: []byte(fakeSecret), CheckoutURL: "https://checkout.example.test"})
+		if err != nil {
+			return provider.CreateResponse{}, err
+		}
+		return fp.CreatePayment(ctx, req)
+	})
+
+	if _, err := e.svc.CreateIntent(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+	if !hasDeadline {
+		t.Fatal("渠道调用的 ctx 应带期限")
+	}
+	if limit := completeIntentBudget - completeIntentPersistTimeout; remaining > limit || limit > 12*time.Second {
+		t.Fatalf("渠道期限应不超过 12 秒：剩余 %s，上限 %s", remaining, limit)
+	}
+	if remaining <= 0 {
+		t.Fatalf("渠道期限不应已到：剩余 %s", remaining)
+	}
+}
+
+// 「建单中」窗口按库时钟比、时间戳由库默认值写：
+//   - 整例跑在一个事务里（testkit.TxCtx），库默认值 now() 是事务开始时刻，和之后查询里的 now() 严格相等；
+//     应用写的时间（GORM 的 time.Now()）一定比它晚，所以 created_at = now() 钉住 InsertIntent 的 Omit。
+//   - 应用时钟拨慢 5 分钟（往前拨会撞上 ExpiresAt 的已过期检查，所以只往后拨）：要是改回按应用时钟比，
+//     31 秒那次会算成仍在窗口内、回 payment_in_progress，用例变红。
 func TestBeginIntentWindowUsesDBClock(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
@@ -406,6 +469,8 @@ func TestBeginIntentWindowUsesDBClock(t *testing.T) {
 	_ = e.mkFakeProvider(t, ctx, code)
 	orderID, orderNo := e.mkOrder(t, ctx, user)
 	in := e.intentInput(code, orderID, orderNo, user)
+	appSkew := time.Now().Add(-5 * time.Minute)
+	e.svc.now = func() time.Time { return appSkew }
 
 	var firstDraft IntentDraft
 	if err := e.txm.Do(ctx, func(ctx context.Context) error {
@@ -414,6 +479,15 @@ func TestBeginIntentWindowUsesDBClock(t *testing.T) {
 		return beginErr
 	}); err != nil {
 		t.Fatal(err)
+	}
+
+	var createdIsDB, updatedIsDB bool
+	if err := e.row(ctx, `SELECT created_at = now(), updated_at = now() FROM payment_intents WHERE id = ?`, firstDraft.intentID).
+		Scan(&createdIsDB, &updatedIsDB); err != nil {
+		t.Fatal(err)
+	}
+	if !createdIsDB || !updatedIsDB {
+		t.Fatalf("created_at、updated_at 应由库默认值写（= now()）：created=%v updated=%v", createdIsDB, updatedIsDB)
 	}
 
 	if err := e.exec(ctx, `UPDATE payment_intents SET created_at = now() - interval '29 seconds' WHERE id = ?`, firstDraft.intentID); err != nil {

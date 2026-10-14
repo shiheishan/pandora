@@ -50,8 +50,9 @@ func (e *env) useRefStub(t *testing.T, ref string) {
 	}
 }
 
+// 证据用例真提交（newCommitEnv）：要证明入账事务真的回滚了（原事件不占去重键）、证据是另开事务落下的。
 func TestWebhookProviderRefMismatchRejectedBTCPay(t *testing.T) {
-	e, ctx := newEnv(t)
+	e, ctx := newCommitEnv(t)
 	defer e.restoreDefaultAdapter(t)
 	user := e.mkUser(t, ctx)
 	code := "fake-ref-" + uuid.New().String()[:8]
@@ -71,26 +72,29 @@ func TestWebhookProviderRefMismatchRejectedBTCPay(t *testing.T) {
 		t.Fatalf("库里 provider_ref 应为 INV-OURS，得 %v", savedRef)
 	}
 
-	inWrong := fakeInbound("evt-ref-wrong-"+uuid.New().String()[:8], "payment.succeeded",
-		"INV-OTHER", intent.OutTradeNo, 990)
-	ackWrong, err := e.svc.HandleWebhook(ctx, code, inWrong)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ackWrong.HTTPStatus == http.StatusOK {
-		t.Fatal("渠道单号不符时不应 200")
-	}
-	if ackWrong.HTTPStatus != http.StatusConflict {
-		t.Fatalf("期望 409，得 %d body=%s", ackWrong.HTTPStatus, string(ackWrong.Body))
-	}
-	if e.count(t, ctx, `SELECT count(*) FROM payments WHERE order_id = ?`, orderID) != 0 {
-		t.Fatal("不应有 payments")
-	}
-	if e.ledgerTxnCount(t, ctx, ledgersvc.KindOrderPaid) != 0 {
-		t.Fatal("不应有 order_paid")
-	}
-	if e.count(t, ctx, `SELECT count(*) FROM payment_events WHERE provider_event_id LIKE 'ref_mismatch:%' AND processing_status = 'ignored' AND raw_payload->>'channel_ref' = 'INV-OTHER' AND raw_payload->>'reject' = 'provider_ref_mismatch' AND provider_id = (SELECT id FROM payment_providers WHERE code = ?)`, code) != 1 {
-		t.Fatal("应有 1 条 ref_mismatch 证据")
+	wrongEvent := "evt-ref-wrong-" + uuid.New().String()[:8]
+	inWrong := fakeInbound(wrongEvent, "payment.succeeded", "INV-OTHER", intent.OutTradeNo, 990)
+	// 同一回调推两次（渠道重投）：每次都重新核对、都 409；原事件行随入账事务回滚，证据按原事件号去重只留 1 条
+	for i := 1; i <= 2; i++ {
+		ackWrong, err := e.svc.HandleWebhook(ctx, code, inWrong)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ackWrong.HTTPStatus != http.StatusConflict {
+			t.Fatalf("第 %d 次：期望 409，得 %d body=%s", i, ackWrong.HTTPStatus, string(ackWrong.Body))
+		}
+		if e.count(t, ctx, `SELECT count(*) FROM payments WHERE order_id = ?`, orderID) != 0 {
+			t.Fatal("不应有 payments")
+		}
+		if e.ledgerTxnCount(t, ctx, ledgersvc.KindOrderPaid) != 0 {
+			t.Fatal("不应有 order_paid")
+		}
+		if n := e.count(t, ctx, `SELECT count(*) FROM payment_events WHERE provider_event_id = ? AND provider_id = (SELECT id FROM payment_providers WHERE code = ?)`, wrongEvent, code); n != 0 {
+			t.Fatalf("第 %d 次：原事件行应随入账事务回滚，得 %d 行", i, n)
+		}
+		if n := e.count(t, ctx, `SELECT count(*) FROM payment_events WHERE provider_event_id = ? AND processing_status = 'ignored' AND raw_payload->>'channel_ref' = 'INV-OTHER' AND raw_payload->>'reject' = 'provider_ref_mismatch' AND provider_id = (SELECT id FROM payment_providers WHERE code = ?)`, "ref_mismatch:"+wrongEvent, code); n != 1 {
+			t.Fatalf("第 %d 次：应恰有 1 条 ref_mismatch 证据，得 %d", i, n)
+		}
 	}
 
 	inRight := fakeInbound("evt-ref-right-"+uuid.New().String()[:8], "payment.succeeded",
@@ -175,8 +179,9 @@ func TestRecordAllowsNilProviderRef(t *testing.T) {
 }
 
 // 查单结果流水号与意图 provider_ref 不一致时拒绝入账并返回 ErrProviderRefMismatch。
+// 真提交：查单路径同样是入账事务回滚、另开事务落证据。
 func TestQueryRejectsProviderRefMismatch(t *testing.T) {
-	e, ctx := newEnv(t)
+	e, ctx := newCommitEnv(t)
 	defer e.restoreDefaultAdapter(t)
 	user := e.mkUser(t, ctx)
 	code := "fake-query-ref-" + uuid.New().String()[:8]
@@ -200,14 +205,21 @@ func TestQueryRejectsProviderRefMismatch(t *testing.T) {
 		return succeededQuery("INV-OTHER"), nil
 	})
 
-	_, err := e.svc.Query(ctx, orderID)
-	if !errors.Is(err, ErrProviderRefMismatch) {
-		t.Fatalf("期望 ErrProviderRefMismatch，得 %v", err)
-	}
-	if e.count(t, ctx, `SELECT count(*) FROM payments WHERE order_id = ?`, orderID) != 0 {
-		t.Fatal("不应有 payments")
-	}
-	if e.count(t, ctx, `SELECT count(*) FROM payment_events WHERE provider_event_id LIKE 'ref_mismatch:%' AND raw_payload->>'channel_ref' = 'INV-OTHER' AND provider_id = (SELECT id FROM payment_providers WHERE code = ?)`, code) != 1 {
-		t.Fatal("应有 1 条 ref_mismatch 证据")
+	// 查单的事件号是「渠道单号:RECONCILED」；查两次都拒收，证据只留 1 条
+	const queryEvent = "INV-OTHER:RECONCILED"
+	for i := 1; i <= 2; i++ {
+		_, err := e.svc.Query(ctx, orderID)
+		if !errors.Is(err, ErrProviderRefMismatch) {
+			t.Fatalf("第 %d 次：期望 ErrProviderRefMismatch，得 %v", i, err)
+		}
+		if e.count(t, ctx, `SELECT count(*) FROM payments WHERE order_id = ?`, orderID) != 0 {
+			t.Fatal("不应有 payments")
+		}
+		if n := e.count(t, ctx, `SELECT count(*) FROM payment_events WHERE provider_event_id = ? AND provider_id = (SELECT id FROM payment_providers WHERE code = ?)`, queryEvent, code); n != 0 {
+			t.Fatalf("第 %d 次：原事件行应随入账事务回滚，得 %d 行", i, n)
+		}
+		if n := e.count(t, ctx, `SELECT count(*) FROM payment_events WHERE provider_event_id = ? AND processing_status = 'ignored' AND raw_payload->>'channel_ref' = 'INV-OTHER' AND provider_id = (SELECT id FROM payment_providers WHERE code = ?)`, "ref_mismatch:"+queryEvent, code); n != 1 {
+			t.Fatalf("第 %d 次：应恰有 1 条 ref_mismatch 证据，得 %d", i, n)
+		}
 	}
 }

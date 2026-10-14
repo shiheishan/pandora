@@ -63,7 +63,7 @@ func (s *Service) recordPayment(ctx context.Context, in recordInput, hook record
 		return recErr
 	})
 	if errors.Is(err, ErrProviderRefMismatch) {
-		// 拒收的那笔事务连事件行一起回滚了：另开一笔只留证据（不占事件去重键，渠道重投时照样再核对一次）
+		// 拒收的那笔事务连事件行一起回滚了：另开一笔只留证据（原事件不占去重键，渠道重投时照样再核对一次；证据按原事件号去重）
 		if evErr := s.recordRefMismatchEvidence(ctx, in); evErr != nil {
 			plog.From(ctx).Warn("记录渠道单号不符的证据失败",
 				zap.String("provider", in.Provider.Code),
@@ -74,7 +74,13 @@ func (s *Service) recordPayment(ctx context.Context, in recordInput, hook record
 	return out, err
 }
 
-// recordRefMismatchEvidence 落一条已忽略的事件，只存核对用的几个字段。
+// 证据事件号 = 前缀 + 原事件号（截到 180 字节，整体不超过 provider_event_id 的 200 上限）。
+const (
+	refMismatchEventPrefix = "ref_mismatch:"
+	refMismatchEventIDMax  = 180
+)
+
+// recordRefMismatchEvidence 落一条已忽略的事件，只存核对用的几个字段；同一原事件只落一条。
 func (s *Service) recordRefMismatchEvidence(ctx context.Context, in recordInput) error {
 	pr := strings.TrimSpace(in.PaymentRef)
 	raw := map[string]string{
@@ -84,9 +90,10 @@ func (s *Service) recordRefMismatchEvidence(ctx context.Context, in recordInput)
 		"channel_ref":  clip(pr, 200),
 	}
 	ev := &model.Event{
-		ID:                uuid.Must(uuid.NewV7()),
-		ProviderID:        in.Provider.ID,
-		ProviderEventID:   "ref_mismatch:" + uuid.Must(uuid.NewV7()).String(),
+		ID:         uuid.Must(uuid.NewV7()),
+		ProviderID: in.Provider.ID,
+		// 键由原事件号确定：同一事件重投只留一条证据（InsertEvent 撞键不插），原事件行已随入账事务回滚、不占去重键，每次照样重新核对
+		ProviderEventID:   refMismatchEventPrefix + clip(strings.TrimSpace(in.EventID), refMismatchEventIDMax),
 		EventType:         in.EventType,
 		SignatureVerified: true,
 		ProcessingStatus:  eventPending,
