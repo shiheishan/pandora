@@ -37,6 +37,10 @@ func Open(ctx context.Context, o Options) (*DB, error) {
 		return nil, err
 	}
 
+	if err := registerStatsCallbacks(g); err != nil {
+		return nil, fmt.Errorf("注册 SQL 计数回调: %w", err)
+	}
+
 	sqlDB, err := g.DB()
 	if err != nil {
 		return nil, err
