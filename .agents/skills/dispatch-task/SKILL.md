@@ -36,7 +36,7 @@ opus 交回后：
 1. 看提交与越界：`git log --oneline feat/panel-redesign..feat/panel-redesign-<短名>`，`git diff --stat feat/panel-redesign...feat/panel-redesign-<短名>`，对照任务说明里只许改的文件。
 2. 读 diff，不只信交回说明。
 3. 在 worktree 里跑 build / test（命令见 verify skill）。小问题自己改；大的写清楚再交给这一块的 opus（SendMessage 续用原来的 agent，它保留上下文）。
-4. 认证、权限、钱、迁移、节点通道的改动，合入前另派一个没参与实现的 opus 只读审查。
+4. 认证、权限、钱、迁移、节点通道的改动，合入前另派一个没参与实现的 opus 只读审查（pre-merge-review skill）；改了热路径的过性能闸门（perf-gate skill）。
 5. 合进主线：`git merge --no-ff feat/panel-redesign-<短名>`，推送并等 CI（verify skill）。
 6. 合入后立刻清理：`git worktree remove ../pandora-<短名>`、`git branch -d feat/panel-redesign-<短名>`；TASKS.md 那一行打勾、写一句结论。
 

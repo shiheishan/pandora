@@ -5,9 +5,9 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 - 项目全貌、部署与进度看 README.md；当前任务看 `.claude/TASKS.md`。
 - 面板前端在 `panel/frontend`（React + TypeScript + Vite），构建产物嵌入 `panel/web`，由面板在根 `/` 下发。
 
-## 当前阶段：换栈后的性能与占用优化（P8）
+## 当前阶段：清理与发版准备（P8 之后）
 
-后端已换成主流、有社区和第三方维护的技术栈（P0–P7，2026-10-13 完成），下表与下面的架构规矩继续有效。现在按 P8 第一轮测试找出的瓶颈做性能与占用优化，做哪几项由我定。
+后端已换成主流、有社区和第三方维护的技术栈（P0–P7，2026-10-13 完成），下表与下面的架构规矩继续有效。P8 测出的四个瓶颈已优化合入（10-14），性能改动从此一律过同机性能闸门。现在按 10-14 的审计删旧代码、死代码，统一重复的机制，然后发第一个 Release。
 
 | 方面 | 用什么 |
 |---|---|
@@ -30,7 +30,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 ## 取舍原则
 
 - 先看需求，再找现成方案：成熟的第三方库或标准做法能解决的，不自己写。不为理论上的性能优势引入自研协议、自研格式或额外的复杂度。
-- 方案看四件事：可维护性、安全、用户体验、性能。可维护性和安全不为性能让步。新代码照样防明显退化（N+1、全表扫描、无界并发、每请求多余的往返）；优化按 P8 测出的瓶颈逐项做，每项带改前改后的数字。
+- 方案看四件事：可维护性、安全、用户体验、性能。可维护性和安全不为性能让步。新代码照样防明显退化（N+1、全表扫描、无界并发、每请求多余的往返）；性能优化要有测出来的瓶颈，过性能闸门（`panel/tests/perf/gate/`，perf-gate skill）：同机 A/B、先量噪声，带改前改后的数字，有退化不合。
 - 安全不让步：认证、权限、钱、密钥相关的做法不能比现在弱。
 - 改动量不是取舍理由；也不为「以后可能用到」提前做抽象或通用化。
 - 换掉一种做法就删掉旧的，不留长期双轨。
@@ -59,6 +59,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 - **主 Agent**（当前会话）：先调查，再拆解任务、分配子 Agent；负责任务管理、冲突解决、build / test、集成、提交、推送和等 CI。
 - **opus 子 Agent**（Agent 工具，显式传 `model: opus`）：只在大任务里用，每个负责一块（一个模块或一个主题），在自己的 worktree 里读代码、定细节、把编码派给 composer、核对 composer 的改动并提交。
 - **composer-2.5**：写代码的主力，用 composer-dispatch skill 派（`claude -p` 经本机 magpie，参数都在它的 launch.sh 里），不用 Agent 工具。它只有读写文件的工具，不能跑命令。
+  - composer（`claude -p`）改不了 `.claude/` 下的文件（敏感文件策略），规则文件由派它的人自己改。
   - 经 magpie 调子 Agent 只有一套接口：`ANTHROPIC_BASE_URL=http://127.0.0.1:3425`、`ANTHROPIC_API_KEY=magpie`、模型 `group/gemini`。group/gemini 是顺序分组：先 composer-2.5，调用失败换 FLUX 中转站的 gemini 3.8，再失败换 vef 中转站的 gemini 3.8，所以同一次派活实际可能由三者之一完成。核对改动不因模型降低标准；Gemini 常见小错是排序、测试夹具不合库约束、漏装配。
 
 ### 按任务大小选路
@@ -83,7 +84,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 ### 收回、集成与清理
 
 - 主 Agent 自己读 diff、跑 build / test，不只信转述。问题小的自己改；大的写新任务说明再派，返工次数记进 TASKS.md。
-- 认证、权限、钱、迁移、节点通道的改动，合入前另派一个没参与实现的 opus 子 Agent 只读审查（或用内置 security-review）。
+- 认证、权限、钱、迁移、节点通道的改动，合入前另派一个没参与实现的 opus 子 Agent 只读审查（pre-merge-review skill）。
 - 子 Agent 的分支合入后，立刻删掉它的 worktree、本地分支和中间产物（`.claude/runs/` 的运行记录、构建产物、临时目录）；没合入的先问我。
 - 要用浏览器的验证（flow-walk、ux-review）与上服务器的操作由主 Agent 做。
 - 收尾附一张表：子任务 | 执行者 | 结论 | 证据。
@@ -92,6 +93,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 
 - 按目录生效的约定在 `.claude/rules/`，改到对应文件时自动加载。改了对应代码，同步改写这些规则。
 - 验证、推送后等 CI：verify skill。
+- 性能改动：perf-gate skill；合入前独立审查：pre-merge-review skill；发版：release skill。
 - skill 用 `~/ai/skills/bin/skills` 管理：项目自己的 skill 在 `.agents/skills/`（`.claude/skills` 是指向它的链接）；共享的 composer-dispatch、skill-creator 是本机链接，不入库。新做或改 skill 用 skill-creator。
 
 ## 仓库约定
@@ -99,6 +101,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 - panel 与 pdnd 是两个独立的 Go module：面板是 `github.com/aegispanel/aegis`，pdnd 沿用旧名 `github.com/aegispanel/nodeagent`。
 - 本地数据基座是 `panel/dev/docker-compose.yml`（PostgreSQL 18 与 Redis 8 只绑 `127.0.0.1:5433` / `6380`），变量在 `panel/dev/.env`（从 `dev/.env.example` 复制，被 git 忽略）。
 - 全仓库用 LF，只有 `*.ps1` 用 CRLF（`.gitattributes`）。
+- 发版：在 `main` 上打 `v*` 标签并推送，`.github/workflows/release.yml` 构建、出来源证明、建 Release。推 `main`、打标签、发 Release 都先问我。
 - 只删注释、不改行为的全仓批量提交，登记在 `.git-blame-ignore-revs`；clone 后执行 `git config blame.ignoreRevsFile .git-blame-ignore-revs` 启用。
 - 单个 .go 文件不超过 800 行（含测试）。豁免只有 fork 来的 `pdnd/internal/reality/**`、`pdnd/internal/realityquic/**`（保持上游的文件划分以便合上游）。守卫是 panel 的 `tools/refactorcheck/linelimit_test.go` 与 pdnd 的 `linelimit_test.go`；超限按主题拆分，不加豁免，改豁免表要我授权。
 
@@ -129,6 +132,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 - 本机（这台 Mac）没有 docker、psql、redis-cli：PG18 用例、迁移往返、e2e 脚本、冒烟栈、Playwright 购买路径本机跑不了；本机跳过不等于通过，以 CI 为准（verify skill）。
 - 1Password SSH agent：推送或 ssh 报签名失败，多半是沙箱连不上 agent 或 agent 锁着。Bash 调用设 `dangerouslyDisableSandbox: true` 重试，仍失败就请我解锁；不改走 HTTPS。
 - 测试机上起后台进程一律 `ssh -n host 'cd /root/x; setsid -f ./x > log 2>&1 < /dev/null'`，两台机器分两条命令发；远端 `pkill -f` 的模式要锚定（`pkill -f '^vmstat'`），否则会误杀自己的 ssh 会话；限时的故障注入在远端自带撤销（`setsid -f sh -c 'sleep N; iptables -D …'`）。本机是 macOS，没有 setsid。
+- 性能闸门的测试机用 ssh 别名指定（主目录 `ops-local/netcup-perf/gate.env`），机器规矩先读 `~/ai/servers/` 下它的 `AGENTS.md`：只放虚构数据、测试端口只听回环、不改系统设置；机上日志可能带后台路径前缀，引用前先打码（`gate.sh` 的输出已打码）。一次运行约 30 分钟，放后台跑，同一时间只跑一个。
 - 等 CI：前台跑主目录 `ops-local/memoh-ci/` 的 `wait-status.sh` / `wait-github.sh`，Bash timeout 设 600000，wait-status 加 `MEMOH_PICKUP=540`；被截断就原样再跑，累计 wait-status 30 分钟、wait-github 60 分钟仍无结论按退出 2 处理。
 - 子 Agent 再派的子 Agent：完成通知落到主 Agent，派出方按 output 文件自己取结果。
 

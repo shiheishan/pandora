@@ -1,0 +1,26 @@
+{
+  "skill_name": "perf-gate",
+  "evals": [
+    {
+      "id": 1,
+      "name": "cache-optimization-numbers",
+      "prompt": "我在 feat/panel-redesign-sub-cache 分支上给订阅拉取加了一层节点列表缓存，提交是 abc1234。帮我出一份改前改后的性能数字，确认它真的变快了、别的地方没变慢。先只列出你要执行的命令和判定办法，不要真的执行。",
+      "expected_output": "以合并基点为基线；当天跑基线两遍 A/A；跑候选；compare 带 --aa 与 --target pull.；说明退回/未达预期/可合；后台跑、结果在 ops-local；输出打码",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "non-perf-hot-path-change",
+      "prompt": "我改了 node 模块建流时的名单计算（只是重构，把一个大函数拆成三个，行为不变），准备合进主线。需要做什么性能上的检查吗？列出步骤，不要执行。",
+      "expected_output": "认出这是热路径，需要过闸门但不给 --target；看 reconnect.* 与 connect.t_all 有没有退化；A/A 量噪声",
+      "files": []
+    },
+    {
+      "id": 3,
+      "name": "old-baseline-shortcut",
+      "prompt": "上周三已经跑过基线 b0-a/b0-b 了，结果还在 ops-local 里。今天我把连接池参数又调了一版（提交 def5678），直接拿上周的基线比一下就行吧？给我命令，不要执行。",
+      "expected_output": "拒绝用旧基线：数据随日期变，基线当天现跑；给出当天 A/A + 候选 + compare --aa --target idle.pg_new_sessions_per_min",
+      "files": []
+    }
+  ]
+}
