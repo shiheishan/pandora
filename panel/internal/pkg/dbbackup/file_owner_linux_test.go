@@ -72,3 +72,29 @@ func TestSecurePathOwnedByNonRootIsRejected(t *testing.T) {
 		t.Fatalf("可信属主下读取失败: raw=%q err=%v", raw, err)
 	}
 }
+
+// 安装布局：/etc/pandora 与备份目录是 0750 root:pandora，组可读不可写，必须放行；
+// 组或其他人可写的父目录照旧拒绝。
+func TestSecureParentModeAllowsGroupReadRejectsWrite(t *testing.T) {
+	trustCurrentUserAsSecureOwner(t)
+	for _, tc := range []struct {
+		mode os.FileMode
+		ok   bool
+	}{
+		{0o700, true},
+		{0o750, true},
+		{0o755, true},
+		{0o770, false},
+		{0o702, false},
+		{0o777, false},
+	} {
+		dir := t.TempDir()
+		if err := os.Chmod(dir, tc.mode); err != nil {
+			t.Fatal(err)
+		}
+		_, err := validateSecureParent(filepath.Join(dir, "secret"))
+		if (err == nil) != tc.ok {
+			t.Fatalf("父目录 %o：err=%v，期望放行=%v", tc.mode, err, tc.ok)
+		}
+	}
+}

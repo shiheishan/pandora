@@ -16,7 +16,7 @@ paths:
 ## 私密文件：openSecureRegular
 
 - WebDAV 口令、清单签名种子、检查点、本地归档与 `.sha256` 等，一律经 `openSecureRegular` / `readPrivateFile`（`config.go`）；**不要**对同类输入另写 `os.Open`。
-- 打开前 `validateSecureParent`：父目录属主、权限、不经符号链接；打开后核对普通文件、属主、权限、单硬链接、打开期间路径未变（`openSecureRegular`）。
+- 打开前 `validateSecureParent`：父目录属主 root、组与其他人不可写（可读，安装布局是 0750 root:pandora）、不经符号链接；打开后核对普通文件、属主、权限、单硬链接、打开期间路径未变（`openSecureRegular`）。
 - **Linux**：`file_owner_linux.go`——可信属主 `secureFileOwnerUID`（生产为 root）；`file_open_linux.go` 用 `O_NOFOLLOW` 只读打开。
 - **非 Linux**：`file_owner_other.go` / `file_open_other.go` 对属主/硬链接/父目录等为空实现；`RequireRootRuntime` 直接报「只支持 Linux」。**macOS 上测过不能代表 Linux 权限行为**；Linux 专测见 `file_owner_linux_test.go`（`secureTempDir`、改写 `secureFileOwnerUID`）。
 - `secureFileOwnerUID`、`checkpointHookRoot` 仅为同包测试改写，不经配置、环境变量或导出接口暴露（`file_owner_linux.go`、`checkpoint_hook.go` 注释）。
