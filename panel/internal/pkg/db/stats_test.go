@@ -18,8 +18,9 @@ func TestStatsCallbacksCountStatements(t *testing.T) {
 	g, err := gorm.Open(postgres.New(postgres.Config{
 		DSN: "host=127.0.0.1 port=1 user=u dbname=d sslmode=disable",
 	}), &gorm.Config{
-		DryRun:               true,
-		DisableAutomaticPing: true,
+		DryRun:                 true,
+		DisableAutomaticPing:   true,
+		SkipDefaultTransaction: true,
 	})
 	if err != nil {
 		t.Fatalf("gorm.Open: %v", err)
@@ -57,8 +58,9 @@ func TestStatsCallbacksWithoutStats(t *testing.T) {
 	g, err := gorm.Open(postgres.New(postgres.Config{
 		DSN: "host=127.0.0.1 port=1 user=u dbname=d sslmode=disable",
 	}), &gorm.Config{
-		DryRun:               true,
-		DisableAutomaticPing: true,
+		DryRun:                 true,
+		DisableAutomaticPing:   true,
+		SkipDefaultTransaction: true,
 	})
 	if err != nil {
 		t.Fatalf("gorm.Open: %v", err)
