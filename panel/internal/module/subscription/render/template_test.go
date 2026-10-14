@@ -295,7 +295,7 @@ func TestSingboxTemplateIPv4OnlyAnswersKeepTunIPv6(t *testing.T) {
 	}
 }
 
-// 前缀前后的空白去掉；空串或全空白用缺省前缀（与旧的 ConfigureSingboxTemplate 一致）。
+// 前缀前后的空白去掉；空串或全空白用缺省前缀。
 func TestSingboxTemplateTrimsAndDefaultsPrefixes(t *testing.T) {
 	urlsOf := func(opt Options) map[string]string {
 		doc, _ := renderSingboxDoc(t, loadGroup(t, groupForm), opt)

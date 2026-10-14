@@ -16,7 +16,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/route"
 )
 
-// 后台写操作的幂等作用域（沿用旧名）。
+// 后台写操作的幂等作用域。
 const (
 	ExtendIdempotencyScope       = "subscription_admin_extend"
 	TrafficGrantIdempotencyScope = "subscription_admin_traffic_grant"
@@ -113,7 +113,7 @@ func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 }
 
 // RegisterRoot 注册订阅链接拉取 GET /:prefix/:token：公开、不在 /v1 下（链接里出现 /v1/subscribe 这样的字样等于自带指纹）。
-// 前缀写在每条链接里、不是秘密，所以按来源 IP 与网段限流（照旧 pub_ip、pub_net），挡住拿前缀乱试令牌对库的放大。
+// 前缀写在每条链接里、不是秘密，所以按来源 IP 与网段限流（限流键 pub_ip、pub_net），挡住拿前缀乱试令牌对库的放大。
 func (h *Handler) RegisterRoot(r gin.IRoutes) {
 	r.GET("/:prefix/:token", h.limit(
 		ratelimit.Dimension{Rule: ratelimit.PerMinute("sub_pull_ip", h.pullPerMinPerIP), Key: ratelimit.ByIP},

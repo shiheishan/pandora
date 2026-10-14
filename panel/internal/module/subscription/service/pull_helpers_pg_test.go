@@ -101,7 +101,7 @@ type deliveryEnv struct {
 	sealer   *crypto.Sealer
 }
 
-// newDeliveryEnv 构造分发测试环境；withNodes 为假时不装配线路来源（P5 之前的真实状态）。
+// newDeliveryEnv 构造分发测试环境；withNodes 为假时不装配线路来源（node 模块没装配时的状态）。
 func newDeliveryEnv(t *testing.T, withNodes bool) *deliveryEnv {
 	t.Helper()
 	e := newEnv(t)

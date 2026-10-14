@@ -15,7 +15,7 @@ const (
 	StatusExpired = "expired"
 )
 
-// RenewalWindow 是过期后还能原地续费、延期救回的窗口：过期满 30 天由过期扫描（P4）写 renewal_closed_at 关窗。
+// RenewalWindow 是过期后还能原地续费、延期救回的窗口：过期满 30 天由过期扫描写 renewal_closed_at 关窗。
 const RenewalWindow = 30 * 24 * time.Hour
 
 // 事件与流水上的操作者种类。
@@ -70,7 +70,7 @@ const (
 	MetricTraffic = "traffic.bytes"
 )
 
-// 审计动作名（沿用旧代码）与资源类型。
+// 审计动作名与资源类型。
 const (
 	ActionExtended           = "subscription.extended"
 	ActionTrafficGranted     = "subscription.traffic_granted"
@@ -174,7 +174,7 @@ type Summary struct {
 	PlanVersion        int
 	PlanMaxDevices     *int
 	QuotaResetStrategy string
-	// Quotas 按 metric 升序、同一指标内周期起点倒序（与旧接口一致）；永不为 nil
+	// Quotas 按 metric 升序、同一指标内周期起点倒序；永不为 nil
 	Quotas []Quota
 	// PackRemainingBytes 是挂在这一份上的流量包余量
 	PackRemainingBytes int64
@@ -345,7 +345,7 @@ type RenewalPrice struct {
 // MySubscription 是门户「我的订阅」里的一份。
 type MySubscription struct {
 	Summary
-	// EffectiveDeviceLimit = 订阅覆盖 → 套餐版本上限；nil 表示不限（覆盖为 0 时是 0，与旧接口同）
+	// EffectiveDeviceLimit = 订阅覆盖 → 套餐版本上限；nil 表示不限（覆盖为 0 时是 0）
 	EffectiveDeviceLimit *int
 	// OnlineDevices 是设备识别窗口内跨节点去重的在线设备数（node 经 OnlineDeviceCounter 提供，读不到按 0）
 	OnlineDevices int

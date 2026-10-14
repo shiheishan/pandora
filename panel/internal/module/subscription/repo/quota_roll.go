@@ -47,7 +47,7 @@ type RolledQuota struct {
 //   - day / month：周期末已过；或周期末被错写得过长（日多出 1 小时以上、月多出 4 天以上）且起点之后已满一个自然周期。
 //   - cycle：周期末已过、订阅已续到更晚（提前续费留下的本期行）。
 //
-// 订阅已过期或走过到期日的不滚。OR 分支让这条筛选不走 period_end 索引，与旧实现相同（配额行数随订阅线性，10 分钟一次）。
+// 订阅已过期或走过到期日的不滚。OR 分支让这条筛选不走 period_end 索引（配额行数随订阅线性，10 分钟一次）。
 const quotaRollDueWhere = `
  WHERE qb.period_end IS NOT NULL
    AND s.status = 'active'

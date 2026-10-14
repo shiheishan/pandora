@@ -8,7 +8,7 @@ package service
 //     写 renewal_closed 事件与审计。
 //
 // 两步都分批、每批一个短事务、按到期时间 SKIP LOCKED：正被续费、延期锁着的这一轮跳过，下一轮再看。
-// 连跑两轮，第二轮零改动。旧代码里的 subscription.expired 插件钩子与到期通知归别的模块，这里不做。
+// 连跑两轮，第二轮零改动。到期的插件事件与到期通知归别的模块，这里不做。
 
 import (
 	"context"
@@ -26,13 +26,13 @@ const (
 	expireMaxBatches = 50
 )
 
-// 到期扫描写的审计动作（旧代码到期不写审计，名字与事件类型、旧插件钩子同口径）。
+// 到期扫描写的审计动作（名字与插件事件类型同口径）。
 const (
 	ActionExpired       = "subscription.expired"
 	ActionRenewalClosed = "subscription.renewal_closed"
 )
 
-// RevokedRenewalClosed 是关窗时吊销凭据的原因（沿用旧值）。
+// RevokedRenewalClosed 是关窗时吊销凭据的原因。
 const RevokedRenewalClosed = "renewal_window_closed"
 
 // ExpireStats 是一轮到期扫描的结果。

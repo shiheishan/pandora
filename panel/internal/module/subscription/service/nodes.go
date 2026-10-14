@@ -18,7 +18,7 @@ type NodeQuery struct {
 	UserGroupID *uuid.UUID
 }
 
-// NodeSource 由 node 模块实现（P5 装配）：返回可下发的线路，协议配置已是内核字段名，已按新鲜度分层排好序。
+// NodeSource 由 node 模块实现：返回可下发的线路，协议配置已是内核字段名，已按新鲜度分层排好序。
 // 实现只读，不回调本模块的写方法。
 type NodeSource interface {
 	DeliverableNodes(ctx context.Context, q NodeQuery) ([]render.Node, error)

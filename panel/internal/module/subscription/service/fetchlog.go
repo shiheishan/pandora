@@ -26,7 +26,7 @@ const (
 )
 
 const (
-	// FetchLogRetention 是拉取日志的保留期（与旧库相同；库函数 purge_subscription_fetch_log 也守着这个下限）。
+	// FetchLogRetention 是拉取日志的保留期（库函数 purge_subscription_fetch_log 也守着这个下限）。
 	FetchLogRetention = 31 * 24 * time.Hour
 
 	// failureSampleWindow 与 failureSamplesPerWindow：未认证失败每分钟最多落 60 行，同一来源每分钟最多 1 行。

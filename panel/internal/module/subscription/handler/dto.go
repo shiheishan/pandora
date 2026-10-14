@@ -32,7 +32,7 @@ type renewalPriceResponse struct {
 	Available       bool   `json:"available"`
 }
 
-// mySubscriptionResponse 是门户「我的套餐」里的一份（形状沿用旧接口）。
+// mySubscriptionResponse 是门户「我的套餐」里的一份。
 type mySubscriptionResponse struct {
 	ID                 string                `json:"id"`
 	PlanID             string                `json:"plan_id"`

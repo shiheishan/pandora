@@ -94,8 +94,8 @@ func TestSingboxShadowTLSEmitsBothOutbounds(t *testing.T) {
 	}
 }
 
-// 旧代码的 TestShadowsocksCipherMethodConflictIsSkipped 不移植：cipher 与 method 打架的节点
-// 由 node 模块在翻译时排除，渲染拿到的已是内核形状，不再处理冲突（有意的差异）。
+// 不测 cipher 与 method 打架的 Shadowsocks 节点：这类节点
+// 由 node 模块在翻译时排除，渲染拿到的已是内核形状，不再处理冲突。
 
 // 存量的明文 AnyTLS（后台现在要求证书）在任何格式里都跳过。
 func TestAnyTLSWithoutCertificateIsSkipped(t *testing.T) {
