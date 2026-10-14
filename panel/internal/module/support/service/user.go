@@ -98,6 +98,20 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Ticket, error) {
 			return err
 		}
 
+		if s.adminNotifier != nil {
+			if err := s.adminNotifier.TicketActivity(ctx, AdminTicketNotice{
+				Kind:      AdminNoticeOpened,
+				UserID:    uid,
+				TicketID:  t.ID,
+				MessageID: msgs[0].ID,
+				TicketNo:  t.TicketNo,
+				Subject:   t.Subject,
+				Body:      in.Body,
+			}); err != nil {
+				return err
+			}
+		}
+
 		view = ticketFrom(*t, now)
 		view.MessageCount = 1
 		view.LastReplyAt = view.CreatedAt
@@ -158,7 +172,24 @@ func (s *Service) MyTicket(ctx context.Context, id uuid.UUID) (TicketDetail, err
 	}
 	view := ticketFrom(t, now)
 	view.RelatedOrder = orderRefOf(t)
-	return withMessages(view, messagesFrom(ms, contacts, true)), nil
+	detail := withMessages(view, messagesFrom(ms, contacts, true))
+
+	rules, err := s.rules(ctx)
+	if err != nil {
+		return TicketDetail{}, err
+	}
+	if rules.WaitForReply && t.Status != StatusClosed {
+		for i := len(ms) - 1; i >= 0; i-- {
+			if ms[i].AuthorKind != AuthorSystem {
+				if ms[i].AuthorKind == AuthorUser {
+					detail.ReplyBlocked = true
+				}
+				break
+			}
+		}
+	}
+
+	return detail, nil
 }
 
 // UserReply 门户追加回复。
@@ -168,6 +199,10 @@ func (s *Service) UserReply(ctx context.Context, id uuid.UUID, body string, repl
 		return err
 	}
 	uid, err := portalUser(ctx)
+	if err != nil {
+		return err
+	}
+	rules, err := s.rules(ctx)
 	if err != nil {
 		return err
 	}
@@ -181,6 +216,15 @@ func (s *Service) UserReply(ctx context.Context, id uuid.UUID, body string, repl
 		}
 		if t.Status == StatusClosed {
 			return ErrReplyClosed
+		}
+		if rules.WaitForReply {
+			kind, ok, err := s.repo.LastPublicAuthorKind(ctx, t.ID)
+			if err != nil {
+				return err
+			}
+			if ok && kind == AuthorUser {
+				return ErrWaitForAgent
+			}
 		}
 		if !CanTransition(t.Status, StatusPendingAgent) {
 			return ErrStatusConflict
@@ -214,6 +258,19 @@ func (s *Service) UserReply(ctx context.Context, id uuid.UUID, body string, repl
 			"message_id": msg.ID.String(),
 		}); err != nil {
 			return err
+		}
+		if s.adminNotifier != nil {
+			if err := s.adminNotifier.TicketActivity(ctx, AdminTicketNotice{
+				Kind:      AdminNoticeUserReplied,
+				UserID:    uid,
+				TicketID:  t.ID,
+				MessageID: msg.ID,
+				TicketNo:  t.TicketNo,
+				Subject:   t.Subject,
+				Body:      body,
+			}); err != nil {
+				return err
+			}
 		}
 		return s.completeIdem(ctx, reply)
 	})
