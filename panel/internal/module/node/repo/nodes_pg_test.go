@@ -46,7 +46,7 @@ func inventoryTestNode(serverID uuid.UUID, name string, port int, l4 string) *mo
 	typ, host := "shadowsocks", "203.0.113.10"
 	return &model.Node{
 		ServerID: &serverID, Name: name, ServingStatus: "draft", NodeType: &typ, ServerHost: &host,
-		ServerPort: &port, ListenL4: &l4, Kernel: "auto", ProtocolConfig: `{"cipher":"aes-256-gcm"}`,
+		ServerPort: &port, ListenL4: &l4, ProtocolConfig: `{"cipher":"aes-256-gcm"}`,
 		ProtocolSchemaVersion: 1, TrafficRate: decimal.NewFromInt(1),
 	}
 }

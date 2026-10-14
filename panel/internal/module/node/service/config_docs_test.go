@@ -13,11 +13,11 @@ func TestBuildNodeConfigDocDeterministic(t *testing.T) {
 	id := uuid.MustParse("018f0000-0000-7000-8000-000000000099")
 	proto := `{"dest":"www.apple.com:443","network":"tcp","security":"reality"}`
 	layers := []routingLayer{{source: RoutingSource{Scope: routingScopeGlobal}}}
-	d1, err := buildNodeConfigDoc(id, "vless", 443, "auto", proto, layers)
+	d1, err := buildNodeConfigDoc(id, "vless", 443, proto, layers)
 	if err != nil {
 		t.Fatal(err)
 	}
-	d2, err := buildNodeConfigDoc(id, "vless", 443, "auto", proto, layers)
+	d2, err := buildNodeConfigDoc(id, "vless", 443, proto, layers)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,11 +35,11 @@ func TestBuildNodeConfigDocKeyOrderInvariantDigest(t *testing.T) {
 	layers := []routingLayer{{source: RoutingSource{Scope: routingScopeGlobal}}}
 	a := `{"dest":"www.apple.com:443","network":"tcp","security":"reality","short_ids":["0a1b2c3d"]}`
 	b := `{"security":"reality","network":"tcp","dest":"www.apple.com:443","short_ids":["0a1b2c3d"]}`
-	d1, err := buildNodeConfigDoc(id, "vless", 443, "", a, layers)
+	d1, err := buildNodeConfigDoc(id, "vless", 443, a, layers)
 	if err != nil {
 		t.Fatal(err)
 	}
-	d2, err := buildNodeConfigDoc(id, "vless", 443, "", b, layers)
+	d2, err := buildNodeConfigDoc(id, "vless", 443, b, layers)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestBuildNodeConfigDocNoRoutingKeys(t *testing.T) {
 		source: RoutingSource{Scope: routingScopeGlobal},
 		routes: []RoutingRule{{Matcher: json.RawMessage(`{"domain":["x"]}`), OutboundTag: "direct", Enabled: false}},
 	}}
-	doc, err := buildNodeConfigDoc(id, "vless", 443, "auto", `{}`, layers)
+	doc, err := buildNodeConfigDoc(id, "vless", 443, `{}`, layers)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestBuildNodeConfigDocWithRoutingKeys(t *testing.T) {
 		source: RoutingSource{Scope: routingScopeGlobal},
 		routes: []RoutingRule{{Matcher: json.RawMessage(`{"domain":["x.com"]}`), OutboundTag: "direct", Enabled: true}},
 	}}
-	doc, err := buildNodeConfigDoc(id, "vless", 443, "auto", `{}`, layers)
+	doc, err := buildNodeConfigDoc(id, "vless", 443, `{}`, layers)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,9 +96,9 @@ func TestBuildNodeConfigDocWithRoutingKeys(t *testing.T) {
 func TestBuildNodeConfigDocShadowtlsServerPort(t *testing.T) {
 	id := uuid.New()
 	inbound := 2080
-	// 协议配置里夹带的保留键（outbounds、kernel_type、kernel）不能进文档
-	proto := `{"server":"example.com","server_port":8443,"password":"x","version":3,"outbounds":[{"tag":"x","type":"block"}],"kernel_type":"xray","kernel":"sing-box"}`
-	doc, err := buildNodeConfigDoc(id, "shadowtls", inbound, "auto", proto, nil)
+	// 协议配置里夹带的保留键（outbounds）不能进文档
+	proto := `{"server":"example.com","server_port":8443,"password":"x","version":3,"outbounds":[{"tag":"x","type":"block"}]}`
+	doc, err := buildNodeConfigDoc(id, "shadowtls", inbound, proto, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,19 +112,16 @@ func TestBuildNodeConfigDocShadowtlsServerPort(t *testing.T) {
 	if m["server"] != "example.com:8443" {
 		t.Fatalf("server %v", m["server"])
 	}
-	for _, k := range []string{"outbounds", "kernel_type"} {
+	for _, k := range []string{"outbounds", "kernel"} {
 		if _, ok := m[k]; ok {
 			t.Fatalf("unexpected %s", k)
 		}
-	}
-	if m["kernel"] != "auto" {
-		t.Fatalf("kernel %v", m["kernel"])
 	}
 }
 
 func TestBuildNodeConfigDocNoAdminFields(t *testing.T) {
 	id := uuid.New()
-	doc, err := buildNodeConfigDoc(id, "vless", 443, "auto", `{"network":"tcp"}`, nil)
+	doc, err := buildNodeConfigDoc(id, "vless", 443, `{"network":"tcp"}`, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +137,7 @@ func TestBuildNodeConfigDocNoAdminFields(t *testing.T) {
 }
 
 func TestBuildNodeConfigDocProtocolNotObject(t *testing.T) {
-	_, err := buildNodeConfigDoc(uuid.New(), "vless", 443, "auto", `[]`, nil)
+	_, err := buildNodeConfigDoc(uuid.New(), "vless", 443, `[]`, nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -149,11 +146,11 @@ func TestBuildNodeConfigDocProtocolNotObject(t *testing.T) {
 func TestBuildNodeConfigDocProtocolInDigest(t *testing.T) {
 	id := uuid.New()
 	// 同一份配置换协议，摘要必须不同；协议配置里夹带的 protocol 不能顶替
-	a, err := buildNodeConfigDoc(id, "vless", 443, "auto", `{"protocol":"trojan"}`, nil)
+	a, err := buildNodeConfigDoc(id, "vless", 443, `{"protocol":"trojan"}`, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := buildNodeConfigDoc(id, "trojan", 443, "auto", `{"protocol":"trojan"}`, nil)
+	b, err := buildNodeConfigDoc(id, "trojan", 443, `{"protocol":"trojan"}`, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -23,7 +23,7 @@ import (
 //	返回给表单（xboard 名）
 
 // validateForm 校验管理端提交的 xboard 形状协议配置（Validate 的实现）。
-func validateForm(nodeType, kernel string, port int, raw json.RawMessage) (int, map[string]string) {
+func validateForm(nodeType string, port int, raw json.RawMessage) (int, map[string]string) {
 	canonical := CanonicalType(nodeType)
 	// 未配置协议的草稿：不校验配置体（与 validateKernelShape 对空类型的口径一致）。
 	if canonical == "" {
@@ -57,7 +57,7 @@ func validateForm(nodeType, kernel string, port int, raw json.RawMessage) (int, 
 		return 0, map[string]string{"protocol_config": "协议配置无法序列化"}
 	}
 
-	version, fields := validateKernelShape(nodeType, kernel, port, kernelRaw)
+	version, fields := validateKernelShape(nodeType, port, kernelRaw)
 	fields = renameErrorFieldsToXboard(canonical, fields)
 	if len(hintFields) > 0 || canonical == "anytls" {
 		if fields == nil {

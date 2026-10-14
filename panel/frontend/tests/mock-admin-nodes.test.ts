@@ -27,7 +27,7 @@ describe('mock api · admin nodes', () => {
     expect(all.some((n) => n.serving_status === 'retired')).toBe(true)
     // 列表不带编辑字段；按 id 单取才带，且读接口抹掉敏感键
     const raw = (await (await call('GET', '/v1/nodes')).json()) as { nodes: Array<Record<string, unknown>> }
-    expect(raw.nodes.some((n) => 'protocol_config' in n || 'kernel' in n || 'traffic_rate' in n)).toBe(false)
+    expect(raw.nodes.some((n) => 'protocol_config' in n || 'traffic_rate' in n)).toBe(false)
     const one = nodeDetailResponse.parse(await (await call('GET', `/v1/nodes?id=${rows[0]!.id}`)).json())
     expect(one.nodes).toHaveLength(1)
     expect(one.nodes[0]!.id).toBe(rows[0]!.id)

@@ -47,7 +47,6 @@ export interface InfraNode {
   node_type: string | null
   server_host: string | null
   server_port: number | null
-  kernel: string
   traffic_rate: number
   sort_order: number
   last_heartbeat_at: string | null
@@ -404,7 +403,7 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
       const rows = nodes
         .filter((n) => n.server_id === s.id)
         .sort((a, b) => a.sort_order - b.sort_order)
-        .map((n) => ({ id: n.id, name: n.name, status: n.status, serving_status: n.serving_status, node_type: n.node_type, display_name: n.display_name, server_host: n.server_host, server_port: n.server_port, kernel: n.kernel, traffic_rate: n.traffic_rate, config_validated_at: n.node_type ? n.updated_at : null, last_heartbeat_at: n.last_heartbeat_at, created_at: n.created_at }))
+        .map((n) => ({ id: n.id, name: n.name, status: n.status, serving_status: n.serving_status, node_type: n.node_type, display_name: n.display_name, server_host: n.server_host, server_port: n.server_port, traffic_rate: n.traffic_rate, config_validated_at: n.node_type ? n.updated_at : null, last_heartbeat_at: n.last_heartbeat_at, created_at: n.created_at }))
       ctx.send(200, { nodes: rows, total: rows.length })
     },
     'PATCH /v1/servers/:id': async (ctx) => {

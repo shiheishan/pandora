@@ -18,7 +18,6 @@ type ConfigNodeRow struct {
 	NodeID         *uuid.UUID `gorm:"column:node_id"`
 	NodeType       *string    `gorm:"column:node_type"`
 	ServerPort     *int       `gorm:"column:server_port"`
-	Kernel         *string    `gorm:"column:kernel"`
 	ProtocolConfig *string    `gorm:"column:protocol_config"`
 }
 
@@ -29,7 +28,7 @@ func (r *Repo) ConfigNodes(ctx context.Context, serverIDs []uuid.UUID) ([]Config
 	}
 	var rows []ConfigNodeRow
 	err := r.d.Conn(ctx).Raw(`
-		SELECT s.id AS server_id, n.id AS node_id, n.node_type, n.server_port, n.kernel,
+		SELECT s.id AS server_id, n.id AS node_id, n.node_type, n.server_port,
 		       n.protocol_config::text AS protocol_config
 		  FROM servers s
 		  LEFT JOIN nodes n ON n.server_id = s.id AND (`+ServedOnServerCond+`)

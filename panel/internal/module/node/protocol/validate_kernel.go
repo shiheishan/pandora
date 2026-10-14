@@ -13,7 +13,7 @@ var errDuplicateJSONKey = errors.New("duplicate JSON object key")
 
 // validateKernelShape 校验一次协议写入。未填协议类型的草稿返回 version 0；
 // 已填的必须是当前服务端 schema。
-func validateKernelShape(nodeType, kernel string, port int, raw json.RawMessage) (int, map[string]string) {
+func validateKernelShape(nodeType string, port int, raw json.RawMessage) (int, map[string]string) {
 	fields := map[string]string{}
 	nodeType = CanonicalType(nodeType)
 	if nodeType == "" {
@@ -22,8 +22,6 @@ func validateKernelShape(nodeType, kernel string, port int, raw json.RawMessage)
 	if port < 1 || port > 65535 {
 		fields["server_port"] = "端口必须在 1–65535 之间"
 	}
-	// sing-box / xray-core 已不再接受新写入，见 validate_policy.go。
-	validateKernelChoice(fields, kernel)
 	if !containsString(stableTypes[:], nodeType) {
 		fields["node_type"] = "不支持的协议类型"
 		return 0, fields

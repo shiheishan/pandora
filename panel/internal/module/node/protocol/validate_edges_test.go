@@ -51,7 +51,7 @@ func TestEdgeValidateEmptyNodeType(t *testing.T) {
 		{"  ", json.RawMessage(`{"cipher":"aes-128-gcm"}`)},
 	}
 	for _, c := range cases {
-		ver, fields := Validate(c.nodeType, "auto", 443, c.raw)
+		ver, fields := Validate(c.nodeType, 443, c.raw)
 		if ver != 0 || len(fields) != 0 {
 			t.Fatalf("nodeType=%q ver=%d fields=%#v, want 0 and empty", c.nodeType, ver, fields)
 		}
@@ -59,20 +59,20 @@ func TestEdgeValidateEmptyNodeType(t *testing.T) {
 }
 
 func TestEdgeValidateRawShapeAndSize(t *testing.T) {
-	_, f := Validate("shadowsocks", "auto", 443, nil)
+	_, f := Validate("shadowsocks", 443, nil)
 	edgeMustField(t, f, "protocol_config")
 
-	_, f = Validate("shadowsocks", "auto", 443, json.RawMessage(``))
+	_, f = Validate("shadowsocks", 443, json.RawMessage(``))
 	edgeMustField(t, f, "protocol_config")
 
 	big := json.RawMessage(`{"cipher":"` + strings.Repeat("a", 16*1024) + `"}`)
 	if len(big) <= 16*1024 {
 		t.Fatal("oversize fixture too small")
 	}
-	_, f = Validate("shadowsocks", "auto", 443, big)
+	_, f = Validate("shadowsocks", 443, big)
 	edgeMustField(t, f, "protocol_config")
 
-	_, f = Validate("shadowsocks", "auto", 443, json.RawMessage(`{"cipher":"a","cipher":"b"}`))
+	_, f = Validate("shadowsocks", 443, json.RawMessage(`{"cipher":"a","cipher":"b"}`))
 	edgeMustField(t, f, "protocol_config")
 
 	for _, raw := range []json.RawMessage{
@@ -80,24 +80,21 @@ func TestEdgeValidateRawShapeAndSize(t *testing.T) {
 		json.RawMessage(`"x"`),
 		json.RawMessage(`null`),
 	} {
-		_, f = Validate("shadowsocks", "auto", 443, raw)
+		_, f = Validate("shadowsocks", 443, raw)
 		edgeMustField(t, f, "protocol_config")
 	}
 }
 
-func TestEdgeValidateUnknownTypeKernelPort(t *testing.T) {
-	ver, f := Validate("v2ray", "auto", 443, json.RawMessage(`{}`))
+func TestEdgeValidateUnknownTypePort(t *testing.T) {
+	ver, f := Validate("v2ray", 443, json.RawMessage(`{}`))
 	if ver != 0 {
 		t.Fatalf("ver=%d, want 0", ver)
 	}
 	edgeMustField(t, f, "node_type")
 
-	_, f = Validate("vless", "sing-box", 443, json.RawMessage(`{"network":"ws","tls":0}`))
-	edgeMustField(t, f, "kernel")
-
-	_, f = Validate("vless", "auto", 0, json.RawMessage(`{"network":"ws","tls":0}`))
+	_, f = Validate("vless", 0, json.RawMessage(`{"network":"ws","tls":0}`))
 	edgeMustField(t, f, "server_port")
-	_, f = Validate("vless", "auto", 70000, json.RawMessage(`{"network":"ws","tls":0}`))
+	_, f = Validate("vless", 70000, json.RawMessage(`{"network":"ws","tls":0}`))
 	edgeMustField(t, f, "server_port")
 }
 
@@ -111,21 +108,21 @@ func TestEdgeValidateClientTLSHints(t *testing.T) {
 		edgeTuicXboard(`"tls_settings":{"server_name":"` + strings.Repeat("a", 254) + `.com"}`),
 	}
 	for _, raw := range badSNI {
-		_, f := Validate("tuic", "auto", 443, raw)
+		_, f := Validate("tuic", 443, raw)
 		edgeMustField(t, f, "protocol_config.tls_settings.server_name")
 	}
 
-	_, f := Validate("tuic", "auto", 443, edgeTuicXboard(`"tls_settings":{"server_name":""}`))
+	_, f := Validate("tuic", 443, edgeTuicXboard(`"tls_settings":{"server_name":""}`))
 	edgeMustNoField(t, f, "protocol_config.tls_settings.server_name")
 
-	_, f = Validate("tuic", "auto", 443, edgeTuicXboard(`"tls_settings":{"allow_insecure":"yes"}`))
+	_, f = Validate("tuic", 443, edgeTuicXboard(`"tls_settings":{"allow_insecure":"yes"}`))
 	edgeMustField(t, f, "protocol_config.tls_settings.allow_insecure")
 }
 
 // --- 3. AnyTLS ---
 
 func TestEdgeValidateAnyTLSCertsAndPadding(t *testing.T) {
-	_, f := Validate("anytls", "auto", 443, json.RawMessage(`{"network":"tcp"}`))
+	_, f := Validate("anytls", 443, json.RawMessage(`{"network":"tcp"}`))
 	edgeMustField(t, f, "protocol_config.cert_path")
 	edgeMustField(t, f, "protocol_config.key_path")
 
@@ -139,17 +136,17 @@ func TestEdgeValidateAnyTLSCertsAndPadding(t *testing.T) {
 	}
 	for _, p := range badPad {
 		raw := json.RawMessage(`{"network":"tcp","cert_path":"` + edgeCert + `","key_path":"` + edgeKey + `",` + p + `}`)
-		_, f = Validate("anytls", "auto", 443, raw)
+		_, f = Validate("anytls", 443, raw)
 		edgeMustField(t, f, "protocol_config.padding_scheme")
 	}
 
 	ok := json.RawMessage(`{"network":"tcp","cert_path":"` + edgeCert + `","key_path":"` + edgeKey + `","padding_scheme":"64-128"}`)
-	ver, f := Validate("anytls", "auto", 443, ok)
+	ver, f := Validate("anytls", 443, ok)
 	if ver != schemaVersion || edgeHas(f, "protocol_config.padding_scheme") {
 		t.Fatalf("ver=%d fields=%#v, want valid padding string", ver, f)
 	}
 	ok2 := json.RawMessage(`{"network":"tcp","cert_path":"` + edgeCert + `","key_path":"` + edgeKey + `","padding_scheme":["a","b"]}`)
-	ver, f = Validate("anytls", "auto", 443, ok2)
+	ver, f = Validate("anytls", 443, ok2)
 	if ver != schemaVersion || len(f) != 0 {
 		t.Fatalf("ver=%d fields=%#v, want valid padding array", ver, f)
 	}
@@ -159,13 +156,13 @@ func TestEdgeValidateAnyTLSCertsAndPadding(t *testing.T) {
 
 func TestEdgeValidateShadowTLS(t *testing.T) {
 	base := `{"password":"p","server":"www.example.com:443","version":3}`
-	ver, f := validateKernelShape("shadowtls", "auto", 443, json.RawMessage(base))
+	ver, f := validateKernelShape("shadowtls", 443, json.RawMessage(base))
 	if ver != schemaVersion || len(f) != 0 {
 		t.Fatalf("valid base: ver=%d fields=%#v", ver, f)
 	}
 
 	withHS := `{"password":"p","handshake_server":"www.example.com","server_port":443,"version":3}`
-	ver, f = validateKernelShape("shadowtls", "auto", 443, json.RawMessage(withHS))
+	ver, f = validateKernelShape("shadowtls", 443, json.RawMessage(withHS))
 	if ver != schemaVersion || len(f) != 0 {
 		t.Fatalf("handshake_server shape: ver=%d fields=%#v", ver, f)
 	}
@@ -190,7 +187,7 @@ func TestEdgeValidateShadowTLS(t *testing.T) {
 		{`{"password":"p","server":"www.example.com:443","version":3,"method":"rc4"}`, "protocol_config.method"},
 	}
 	for _, c := range cases {
-		_, f := validateKernelShape("shadowtls", "auto", 443, json.RawMessage(c.raw))
+		_, f := validateKernelShape("shadowtls", 443, json.RawMessage(c.raw))
 		edgeMustField(t, f, c.field)
 	}
 }
@@ -219,7 +216,7 @@ func TestEdgeValidateHysteria2(t *testing.T) {
 		{`{"network":"udp"` + cert + `,"obfs":{"type":"salamander"}}`, "protocol_config.obfs"},
 	}
 	for _, c := range cases {
-		_, f := validateKernelShape("hysteria2", "auto", 443, json.RawMessage(c.raw))
+		_, f := validateKernelShape("hysteria2", 443, json.RawMessage(c.raw))
 		edgeMustField(t, f, c.field)
 	}
 
@@ -227,7 +224,7 @@ func TestEdgeValidateHysteria2(t *testing.T) {
 		`"udp_timeout":30`, `"udp_timeout":"30"`, `"udp_timeout":"30s"`, `"udp_timeout":null`,
 	} {
 		raw := json.RawMessage(`{"network":"udp"` + cert + `,` + extra + `}`)
-		ver, f := validateKernelShape("hysteria2", "auto", 443, raw)
+		ver, f := validateKernelShape("hysteria2", 443, raw)
 		if edgeHas(f, "protocol_config.udp_timeout") {
 			t.Fatalf("udp_timeout should pass for %s: fields=%#v", extra, f)
 		}
@@ -235,7 +232,7 @@ func TestEdgeValidateHysteria2(t *testing.T) {
 	}
 
 	// xboard 带宽键经 Validate 映射为 up_mbps / down_mbps
-	_, f := Validate("hysteria2", "auto", 443, json.RawMessage(
+	_, f := Validate("hysteria2", 443, json.RawMessage(
 		`{"network":"udp","cert_path":"`+edgeCert+`","key_path":"`+edgeKey+`","bandwidth":{"up":-1,"down":0}}`,
 	))
 	edgeMustField(t, f, "protocol_config.bandwidth.up")
@@ -245,50 +242,50 @@ func TestEdgeValidateHysteria2(t *testing.T) {
 
 func TestEdgeValidateJuicityTUIC(t *testing.T) {
 	cert := `,"cert_path":"` + edgeCert + `","key_path":"` + edgeKey + `"`
-	_, f := validateKernelShape("juicity", "auto", 443, json.RawMessage(`{"network":"tcp"`+cert+`}`))
+	_, f := validateKernelShape("juicity", 443, json.RawMessage(`{"network":"tcp"`+cert+`}`))
 	edgeMustField(t, f, "protocol_config.network")
-	_, f = validateKernelShape("juicity", "auto", 443, json.RawMessage(`{"network":"udp"`+cert+`,"congestion_control":"reno"}`))
+	_, f = validateKernelShape("juicity", 443, json.RawMessage(`{"network":"udp"`+cert+`,"congestion_control":"reno"}`))
 	edgeMustField(t, f, "protocol_config.congestion_control")
 
-	_, f = validateKernelShape("tuic", "auto", 443, json.RawMessage(`{"network":"tcp"`+cert+`}`))
+	_, f = validateKernelShape("tuic", 443, json.RawMessage(`{"network":"tcp"`+cert+`}`))
 	edgeMustField(t, f, "protocol_config.network")
-	_, f = validateKernelShape("tuic", "auto", 443, json.RawMessage(`{"network":"udp"`+cert+`,"congestion_control":"reno"}`))
+	_, f = validateKernelShape("tuic", 443, json.RawMessage(`{"network":"udp"`+cert+`,"congestion_control":"reno"}`))
 	edgeMustField(t, f, "protocol_config.congestion_control")
-	_, f = validateKernelShape("tuic", "auto", 443, json.RawMessage(`{"network":"udp"`+cert+`,"auth_timeout":-1}`))
+	_, f = validateKernelShape("tuic", 443, json.RawMessage(`{"network":"udp"`+cert+`,"auth_timeout":-1}`))
 	edgeMustField(t, f, "protocol_config.auth_timeout")
-	_, f = validateKernelShape("tuic", "auto", 443, json.RawMessage(`{"network":"udp"`+cert+`,"heartbeat":"nope"}`))
+	_, f = validateKernelShape("tuic", 443, json.RawMessage(`{"network":"udp"`+cert+`,"heartbeat":"nope"}`))
 	edgeMustField(t, f, "protocol_config.heartbeat")
 }
 
 // --- 7. socks / http / naive ---
 
 func TestEdgeValidateNativeProxies(t *testing.T) {
-	_, f := validateKernelShape("http", "auto", 443, json.RawMessage(`{"network":"udp","security":"none"}`))
+	_, f := validateKernelShape("http", 443, json.RawMessage(`{"network":"udp","security":"none"}`))
 	edgeMustField(t, f, "protocol_config.network")
-	_, f = validateKernelShape("socks", "auto", 443, json.RawMessage(`{"network":"quic","security":"none"}`))
+	_, f = validateKernelShape("socks", 443, json.RawMessage(`{"network":"quic","security":"none"}`))
 	edgeMustField(t, f, "protocol_config.network")
-	_, f = validateKernelShape("naive", "auto", 443, json.RawMessage(`{"network":"udp","tls":true,"cert_path":"`+edgeCert+`","key_path":"`+edgeKey+`","security":"none"}`))
+	_, f = validateKernelShape("naive", 443, json.RawMessage(`{"network":"udp","tls":true,"cert_path":"`+edgeCert+`","key_path":"`+edgeKey+`","security":"none"}`))
 	edgeMustField(t, f, "protocol_config.network")
 
-	_, f = validateKernelShape("socks", "auto", 443, json.RawMessage(`{"network":"tcp","security":"tls"}`))
+	_, f = validateKernelShape("socks", 443, json.RawMessage(`{"network":"tcp","security":"tls"}`))
 	edgeMustField(t, f, "protocol_config.security")
 
-	_, f = validateKernelShape("naive", "auto", 443, json.RawMessage(`{"network":"tcp","tls":false,"cert_path":"`+edgeCert+`","key_path":"`+edgeKey+`","security":"none"}`))
+	_, f = validateKernelShape("naive", 443, json.RawMessage(`{"network":"tcp","tls":false,"cert_path":"`+edgeCert+`","key_path":"`+edgeKey+`","security":"none"}`))
 	edgeMustField(t, f, "protocol_config.tls")
 
-	_, f = validateKernelShape("socks", "auto", 443, json.RawMessage(`{"network":"tcp","tls":true,"cert_path":"`+edgeCert+`","security":"none"}`))
+	_, f = validateKernelShape("socks", 443, json.RawMessage(`{"network":"tcp","tls":true,"cert_path":"`+edgeCert+`","security":"none"}`))
 	edgeMustField(t, f, "protocol_config.cert_path")
 
-	_, f = validateKernelShape("socks", "auto", 443, json.RawMessage(`{"network":"tcp","tls":true,"security":"none"}`))
+	_, f = validateKernelShape("socks", 443, json.RawMessage(`{"network":"tcp","tls":true,"security":"none"}`))
 	edgeMustField(t, f, "protocol_config.tls")
 
-	_, f = validateKernelShape("socks", "auto", 443, json.RawMessage(`{"network":"tcp","security":"none","fallback":"www.example.com:80"}`))
+	_, f = validateKernelShape("socks", 443, json.RawMessage(`{"network":"tcp","security":"none","fallback":"www.example.com:80"}`))
 	edgeMustField(t, f, "protocol_config.fallback")
 
-	_, f = validateKernelShape("naive", "auto", 443, json.RawMessage(`{"network":"tcp","tls":true,"cert_path":"`+edgeCert+`","key_path":"`+edgeKey+`","security":"none","fallback":"bad"}`))
+	_, f = validateKernelShape("naive", 443, json.RawMessage(`{"network":"tcp","tls":true,"cert_path":"`+edgeCert+`","key_path":"`+edgeKey+`","security":"none","fallback":"bad"}`))
 	edgeMustField(t, f, "protocol_config.fallback")
 
-	ver, f := validateKernelShape("naive", "auto", 443, json.RawMessage(`{"network":"tcp","tls":true,"cert_path":"`+edgeCert+`","key_path":"`+edgeKey+`","security":"none","fallback":"www.example.com:80"}`))
+	ver, f := validateKernelShape("naive", 443, json.RawMessage(`{"network":"tcp","tls":true,"cert_path":"`+edgeCert+`","key_path":"`+edgeKey+`","security":"none","fallback":"www.example.com:80"}`))
 	if ver != schemaVersion || edgeHas(f, "protocol_config.fallback") {
 		t.Fatalf("naive valid fallback: ver=%d fields=%#v", ver, f)
 	}
@@ -297,10 +294,10 @@ func TestEdgeValidateNativeProxies(t *testing.T) {
 // --- 8. Mieru ---
 
 func TestEdgeValidateMieruTransport(t *testing.T) {
-	_, f := validateKernelShape("mieru", "auto", 443, json.RawMessage(`{"transport":"QUIC"}`))
+	_, f := validateKernelShape("mieru", 443, json.RawMessage(`{"transport":"QUIC"}`))
 	edgeMustField(t, f, "protocol_config.transport")
 	for _, raw := range []string{`{"transport":"TCP"}`, `{"transport":"UDP"}`, `{}`} {
-		ver, f := validateKernelShape("mieru", "auto", 443, json.RawMessage(raw))
+		ver, f := validateKernelShape("mieru", 443, json.RawMessage(raw))
 		if edgeHas(f, "protocol_config.transport") {
 			t.Fatalf("transport should pass for %s: fields=%#v", raw, f)
 		}
@@ -311,13 +308,13 @@ func TestEdgeValidateMieruTransport(t *testing.T) {
 // --- 9. Shadowsocks ---
 
 func TestEdgeValidateShadowsocksCipher(t *testing.T) {
-	_, f := Validate("shadowsocks", "auto", 443, json.RawMessage(`{}`))
+	_, f := Validate("shadowsocks", 443, json.RawMessage(`{}`))
 	edgeMustField(t, f, "protocol_config.cipher")
 
-	_, f = Validate("shadowsocks", "auto", 443, json.RawMessage(`{"cipher":"rc4-md5"}`))
+	_, f = Validate("shadowsocks", 443, json.RawMessage(`{"cipher":"rc4-md5"}`))
 	edgeMustField(t, f, "protocol_config.cipher")
 
-	_, f = Validate("shadowsocks", "auto", 443, json.RawMessage(`{"cipher":"aes-128-gcm","unknown":1}`))
+	_, f = Validate("shadowsocks", 443, json.RawMessage(`{"cipher":"aes-128-gcm","unknown":1}`))
 	edgeMustField(t, f, "protocol_config")
 }
 
@@ -329,58 +326,58 @@ func TestEdgeValidateTrojan(t *testing.T) {
 		t.Fatal(err)
 	}
 	reality := `{"network":"grpc","tls":false,"security":"reality","dest":"www.example.com:443","server_names":["www.example.com"],"private_key":"` + priv + `","public_key":"` + pub + `","short_ids":["ab"]}`
-	_, f := validateKernelShape("trojan", "auto", 443, json.RawMessage(reality))
+	_, f := validateKernelShape("trojan", 443, json.RawMessage(reality))
 	edgeMustField(t, f, "protocol_config.security")
 
-	_, f = validateKernelShape("trojan", "auto", 443, json.RawMessage(`{"network":"xhttp","tls":true,"cert_path":"`+edgeCert+`","key_path":"`+edgeKey+`"}`))
+	_, f = validateKernelShape("trojan", 443, json.RawMessage(`{"network":"xhttp","tls":true,"cert_path":"`+edgeCert+`","key_path":"`+edgeKey+`"}`))
 	edgeMustField(t, f, "protocol_config.network")
 
-	_, f = Validate("trojan", "auto", 443, json.RawMessage(`{"network":"ws","tls":true,"cert_path":"`+edgeCert+`","key_path":"`+edgeKey+`","network_settings":{"path":"no-slash"}}`))
+	_, f = Validate("trojan", 443, json.RawMessage(`{"network":"ws","tls":true,"cert_path":"`+edgeCert+`","key_path":"`+edgeKey+`","network_settings":{"path":"no-slash"}}`))
 	edgeMustField(t, f, "protocol_config.network_settings.path")
 
-	_, f = validateKernelShape("trojan", "auto", 443, json.RawMessage(`{"network":"grpc","tls":true,"grpc_path":"nope","cert_path":"`+edgeCert+`","key_path":"`+edgeKey+`"}`))
+	_, f = validateKernelShape("trojan", 443, json.RawMessage(`{"network":"grpc","tls":true,"grpc_path":"nope","cert_path":"`+edgeCert+`","key_path":"`+edgeKey+`"}`))
 	edgeMustField(t, f, "protocol_config.grpc_path")
 
 	long := "/" + strings.Repeat("a", 512)
-	_, f = validateKernelShape("trojan", "auto", 443, json.RawMessage(`{"network":"grpc","tls":true,"grpc_path":"`+long+`","cert_path":"`+edgeCert+`","key_path":"`+edgeKey+`"}`))
+	_, f = validateKernelShape("trojan", 443, json.RawMessage(`{"network":"grpc","tls":true,"grpc_path":"`+long+`","cert_path":"`+edgeCert+`","key_path":"`+edgeKey+`"}`))
 	edgeMustField(t, f, "protocol_config.grpc_path")
 
-	_, f = validateKernelShape("trojan", "auto", 443, json.RawMessage(`{"network":"grpc","tls":true,"grpc_service_name":"a\nb","cert_path":"`+edgeCert+`","key_path":"`+edgeKey+`"}`))
+	_, f = validateKernelShape("trojan", 443, json.RawMessage(`{"network":"grpc","tls":true,"grpc_service_name":"a\nb","cert_path":"`+edgeCert+`","key_path":"`+edgeKey+`"}`))
 	edgeMustField(t, f, "protocol_config.grpc_service_name")
 
-	_, f = validateKernelShape("trojan", "auto", 443, json.RawMessage(`{"network":"tcp","security":"none"}`))
+	_, f = validateKernelShape("trojan", 443, json.RawMessage(`{"network":"tcp","security":"none"}`))
 	edgeMustField(t, f, "protocol_config.tls")
 
-	_, f = Validate("trojan", "auto", 443, json.RawMessage(`{"network":"tcp","tls":0,"cert_path":"`+edgeCert+`","key_path":"`+edgeKey+`"}`))
+	_, f = Validate("trojan", 443, json.RawMessage(`{"network":"tcp","tls":0,"cert_path":"`+edgeCert+`","key_path":"`+edgeKey+`"}`))
 	edgeMustField(t, f, "protocol_config.tls")
 
-	_, f = validateKernelShape("trojan", "auto", 443, json.RawMessage(`{"network":"tcp","tls":true,"security":"none"}`))
+	_, f = validateKernelShape("trojan", 443, json.RawMessage(`{"network":"tcp","tls":true,"security":"none"}`))
 	edgeMustField(t, f, "protocol_config.cert_path")
 
-	_, f = validateKernelShape("vless", "auto", 443, json.RawMessage(`{"network":"ws","tls":false,"security":"xtls"}`))
+	_, f = validateKernelShape("vless", 443, json.RawMessage(`{"network":"ws","tls":false,"security":"xtls"}`))
 	edgeMustField(t, f, "protocol_config.security")
 }
 
 // --- 11. VLESS / VMess（节选：未在 schema_test 覆盖的边） ---
 
 func TestEdgeValidateVLESSVMessStream(t *testing.T) {
-	_, f := validateKernelShape("vless", "auto", 443, json.RawMessage(`{"network":"quic","tls":false}`))
+	_, f := validateKernelShape("vless", 443, json.RawMessage(`{"network":"quic","tls":false}`))
 	edgeMustField(t, f, "protocol_config.network")
 
-	_, f = validateKernelShape("vless", "auto", 443, json.RawMessage(`{"network":"ws","tls":false,"host":"a\nb"}`))
+	_, f = validateKernelShape("vless", 443, json.RawMessage(`{"network":"ws","tls":false,"host":"a\nb"}`))
 	edgeMustField(t, f, "protocol_config.host")
 
-	_, f = validateKernelShape("vless", "auto", 443, json.RawMessage(`{"network":"ws","tls":false,"path":"no"}`))
+	_, f = validateKernelShape("vless", 443, json.RawMessage(`{"network":"ws","tls":false,"path":"no"}`))
 	edgeMustField(t, f, "protocol_config.path")
 
-	_, f = validateKernelShape("vless", "auto", 443, json.RawMessage(`{"network":"grpc","tls":false,"grpc_path":"x"}`))
+	_, f = validateKernelShape("vless", 443, json.RawMessage(`{"network":"grpc","tls":false,"grpc_path":"x"}`))
 	edgeMustField(t, f, "protocol_config.grpc_path")
 
-	_, f = validateKernelShape("vless", "auto", 443, json.RawMessage(`{"network":"grpc","tls":false,"grpc_service_name":"x\ny"}`))
+	_, f = validateKernelShape("vless", 443, json.RawMessage(`{"network":"grpc","tls":false,"grpc_service_name":"x\ny"}`))
 	edgeMustField(t, f, "protocol_config.grpc_service_name")
 
 	xhttp := `{"network":"xhttp","tls":false,"path":"/ok","headers":{" ":"v"},"mode":"bogus","sc_max_each_post_bytes":1,"sc_max_buffered_posts":true,"server_max_header_bytes":1,"uplink_http_method":"PUT","session_placement":"bad","seq_placement":"bad","uplink_data_placement":"bad"}`
-	_, f = validateKernelShape("vless", "auto", 443, json.RawMessage(xhttp))
+	_, f = validateKernelShape("vless", 443, json.RawMessage(xhttp))
 	for _, key := range []string{
 		"protocol_config.headers", "protocol_config.mode", "protocol_config.sc_max_each_post_bytes",
 		"protocol_config.sc_max_buffered_posts", "protocol_config.server_max_header_bytes",
@@ -390,67 +387,67 @@ func TestEdgeValidateVLESSVMessStream(t *testing.T) {
 		edgeMustField(t, f, key)
 	}
 
-	_, f = validateKernelShape("vmess", "auto", 443, json.RawMessage(`{"network":"xhttp-h3","security":"auto"}`))
+	_, f = validateKernelShape("vmess", 443, json.RawMessage(`{"network":"xhttp-h3","security":"auto"}`))
 	edgeMustField(t, f, "protocol_config.cert_path")
 
-	_, f = validateKernelShape("vmess", "auto", 443, json.RawMessage(`{"network":"tcp","tls":true,"security":"auto"}`))
+	_, f = validateKernelShape("vmess", 443, json.RawMessage(`{"network":"tcp","tls":true,"security":"auto"}`))
 	if f["protocol_config.tls"] != plainTLSNotYetMessage {
 		t.Fatalf("vmess tls=true: fields=%#v", f)
 	}
 
-	_, f = validateKernelShape("vmess", "auto", 443, json.RawMessage(`{"network":"tcp","tls":false,"security":"reality"}`))
+	_, f = validateKernelShape("vmess", 443, json.RawMessage(`{"network":"tcp","tls":false,"security":"reality"}`))
 	edgeMustField(t, f, "protocol_config.security")
 
-	_, f = validateKernelShape("vmess", "auto", 443, json.RawMessage(`{"network":"tcp","tls":false,"security":"bogus"}`))
+	_, f = validateKernelShape("vmess", 443, json.RawMessage(`{"network":"tcp","tls":false,"security":"bogus"}`))
 	edgeMustField(t, f, "protocol_config.security")
 
-	_, f = validateKernelShape("vmess", "auto", 443, json.RawMessage(`{"network":"tcp","tls":false,"security":"auto","flow":"x"}`))
+	_, f = validateKernelShape("vmess", 443, json.RawMessage(`{"network":"tcp","tls":false,"security":"auto","flow":"x"}`))
 	edgeMustField(t, f, "protocol_config.flow")
 
-	_, f = validateKernelShape("vmess", "auto", 443, json.RawMessage(`{"network":"tcp","tls":false,"security":"auto","fallback":"www.example.com:80"}`))
+	_, f = validateKernelShape("vmess", 443, json.RawMessage(`{"network":"tcp","tls":false,"security":"auto","fallback":"www.example.com:80"}`))
 	edgeMustField(t, f, "protocol_config.fallback")
 
-	_, f = Validate("vless", "auto", 443, json.RawMessage(`{"network":"ws","tls":1}`))
+	_, f = Validate("vless", 443, json.RawMessage(`{"network":"ws","tls":1}`))
 	if f["protocol_config.tls"] != plainTLSNotYetMessage {
 		t.Fatalf("vless tls=1: fields=%#v", f)
 	}
 
-	_, f = Validate("vless", "auto", 443, json.RawMessage(`{"network":"ws","tls":3}`))
+	_, f = Validate("vless", 443, json.RawMessage(`{"network":"ws","tls":3}`))
 	edgeMustField(t, f, "protocol_config.tls")
 
-	_, f = validateKernelShape("vless", "auto", 443, json.RawMessage(`{"network":"ws","tls":false,"security":"nope"}`))
+	_, f = validateKernelShape("vless", 443, json.RawMessage(`{"network":"ws","tls":false,"security":"nope"}`))
 	edgeMustField(t, f, "protocol_config.security")
 
 	badRange := `{"network":"xhttp","tls":false,"path":"/p","sc_max_each_post_bytes":{"from":10,"to":5}}`
-	_, f = validateKernelShape("vless", "auto", 443, json.RawMessage(badRange))
+	_, f = validateKernelShape("vless", 443, json.RawMessage(badRange))
 	edgeMustField(t, f, "protocol_config.sc_max_each_post_bytes")
 }
 
 // --- 12. mKCP ---
 
 func TestEdgeValidateMKCP(t *testing.T) {
-	_, f := validateKernelShape("vless", "auto", 443, json.RawMessage(`{"network":"ws","tls":false,"mtu":1400}`))
+	_, f := validateKernelShape("vless", 443, json.RawMessage(`{"network":"ws","tls":false,"mtu":1400}`))
 	edgeMustField(t, f, "protocol_config.mtu")
 
-	_, f = validateKernelShape("vless", "auto", 443, json.RawMessage(`{"network":"mkcp","tls":false,"mtu":"x"}`))
+	_, f = validateKernelShape("vless", 443, json.RawMessage(`{"network":"mkcp","tls":false,"mtu":"x"}`))
 	edgeMustField(t, f, "protocol_config.mtu")
 
-	_, f = validateKernelShape("vless", "auto", 443, json.RawMessage(`{"network":"mkcp","tls":false,"mtu":1.5}`))
+	_, f = validateKernelShape("vless", 443, json.RawMessage(`{"network":"mkcp","tls":false,"mtu":1.5}`))
 	edgeMustField(t, f, "protocol_config.mtu")
 
-	_, f = validateKernelShape("vless", "auto", 443, json.RawMessage(`{"network":"ws","tls":false,"mask":"none"}`))
+	_, f = validateKernelShape("vless", 443, json.RawMessage(`{"network":"ws","tls":false,"mask":"none"}`))
 	edgeMustField(t, f, "protocol_config.mask")
 
-	_, f = validateKernelShape("vless", "auto", 443, json.RawMessage(`{"network":"mkcp","tls":false,"mask":"weird"}`))
+	_, f = validateKernelShape("vless", 443, json.RawMessage(`{"network":"mkcp","tls":false,"mask":"weird"}`))
 	edgeMustField(t, f, "protocol_config.mask")
 
-	_, f = validateKernelShape("vless", "auto", 443, json.RawMessage(`{"network":"mkcp","tls":false,"mask":"mkcp-aes128gcm"}`))
+	_, f = validateKernelShape("vless", 443, json.RawMessage(`{"network":"mkcp","tls":false,"mask":"mkcp-aes128gcm"}`))
 	edgeMustField(t, f, "protocol_config.mask_password")
 
-	_, f = validateKernelShape("vless", "auto", 443, json.RawMessage(`{"network":"mkcp","tls":false,"mask":"none","mask_password":"x"}`))
+	_, f = validateKernelShape("vless", 443, json.RawMessage(`{"network":"mkcp","tls":false,"mask":"none","mask_password":"x"}`))
 	edgeMustField(t, f, "protocol_config.mask_password")
 
-	_, f = validateKernelShape("vless", "auto", 443, json.RawMessage(`{"network":"mkcp","tls":false,"mask":"mkcp-aes128gcm","mask_password":"p","mtu":1450}`))
+	_, f = validateKernelShape("vless", 443, json.RawMessage(`{"network":"mkcp","tls":false,"mask":"mkcp-aes128gcm","mask_password":"p","mtu":1450}`))
 	edgeMustField(t, f, "protocol_config.mtu")
 }
 

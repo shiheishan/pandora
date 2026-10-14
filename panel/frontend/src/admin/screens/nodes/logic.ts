@@ -367,32 +367,14 @@ export interface BasicForm {
   nodeType: string
   host: string
   port: string
-  kernel: string
   rate: string
   country: string
-}
-
-/**
- * 内核（nodefabric.validateKernelChoice 接受的值）。节点端只有 NativeCore：sing-box / xray-core
- * 已不再接受新写入，存量值后端下发时按 auto（EffectiveKernel），表单载入时也显示为自动
- */
-export const KERNELS = [
-  ['auto', '自动'],
-  ['pandora-native', 'Pandora Native'],
-] as const
-
-const LEGACY_KERNELS = new Set(['sing-box', 'xray-core'])
-const effectiveKernel = (k: string | null | undefined) => (!k || LEGACY_KERNELS.has(k) ? 'auto' : k)
-
-/** 存量节点还留着已停用的内核值时给一句说明，否则 undefined */
-export function legacyKernelNote(row: Pick<NodeDetail, 'kernel'> | null): string | undefined {
-  return row && LEGACY_KERNELS.has(row.kernel) ? `原值 ${row.kernel} 已不再生效（节点端只有 NativeCore），下次保存协议改动时改为自动` : undefined
 }
 
 /** 资源池必填的说明：下拉的提示与校验文案同一句 */
 export const NO_POOL_HINT = '选择资源池：不在任何资源池里的节点不服务任何用户'
 
-export const emptyBasic = (): BasicForm => ({ name: '', displayName: '', serverId: '', poolId: '', nodeType: '', host: '', port: '', kernel: 'auto', rate: '1', country: '' })
+export const emptyBasic = (): BasicForm => ({ name: '', displayName: '', serverId: '', poolId: '', nodeType: '', host: '', port: '', rate: '1', country: '' })
 
 export function basicFromRow(n: NodeDetail): BasicForm {
   return {
@@ -403,7 +385,6 @@ export function basicFromRow(n: NodeDetail): BasicForm {
     nodeType: n.node_type ?? '',
     host: n.server_host ?? '',
     port: n.server_port ? String(n.server_port) : '',
-    kernel: effectiveKernel(n.kernel),
     rate: String(n.traffic_rate),
     country: n.country_code ?? '',
   }
@@ -433,7 +414,6 @@ export function createBody(b: BasicForm, config: Record<string, unknown>): Recor
     server_host: b.host.trim(),
     server_port: Number(b.port),
     protocol_config: config,
-    kernel: b.kernel || 'auto',
     traffic_rate: Number(b.rate),
     ...(b.poolId ? { pool_id: b.poolId } : {}),
     ...(b.displayName.trim() ? { display_name: b.displayName.trim() } : {}),
@@ -454,14 +434,9 @@ export function patchBody(row: NodeDetail, b: BasicForm, protocol: { changed: bo
   if (b.nodeType !== before.nodeType) body.node_type = b.nodeType
   if (b.host.trim() !== before.host) body.server_host = b.host.trim()
   if (b.port !== before.port) body.server_port = Number(b.port)
-  if (b.kernel !== before.kernel) body.kernel = b.kernel
   if (Number(b.rate) !== row.traffic_rate) body.traffic_rate = Number(b.rate)
   if (b.country.trim().toUpperCase() !== before.country) body.country_code = b.country.trim() ? b.country.trim().toUpperCase() : null
   if (protocol.changed || b.nodeType !== before.nodeType) body.protocol_config = protocol.config
-  // 存量的 sing-box / xray-core：只要这次会重新校验协议（改了协议、地址、端口），就把内核一起换成表单值，
-  // 否则后端拿库里的旧值校验会 422。只改名字之类不碰协议的保存不带它，库里的值原样留着（读时忽略）
-  const touchesProtocol = ['node_type', 'server_host', 'server_port', 'protocol_config'].some((k) => k in body)
-  if (LEGACY_KERNELS.has(row.kernel) && touchesProtocol) body.kernel = b.kernel
   return body
 }
 

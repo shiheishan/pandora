@@ -120,8 +120,8 @@ func TestServerConfigsNodeFieldsPG(t *testing.T) {
 	if body["server_port"] != float64(20001) {
 		t.Fatalf("server_port %v", body["server_port"])
 	}
-	if body["kernel"] != "auto" {
-		t.Fatalf("kernel %v", body["kernel"])
+	if _, ok := body["kernel"]; ok {
+		t.Fatal("文档不应有 kernel")
 	}
 	if body["flow"] == nil {
 		t.Fatal("应有 flow")
@@ -255,24 +255,5 @@ func TestServerConfigsDeterministicDigestPG(t *testing.T) {
 	}
 	if d2c.SHA256 == cdFindDoc(m1[s1], n2).SHA256 {
 		t.Fatal("改 N2 后 N2 摘要应变化")
-	}
-}
-
-func TestServerConfigsKernelOverridePG(t *testing.T) {
-	e, ctx := newInvEnv(t)
-	s1, _, _, _, _, _, n2, _, _, _, _ := cdFixtureServers(t, ctx, e)
-	if err := e.exec(ctx, `UPDATE nodes SET kernel = 'pandora-native' WHERE id = ?`, n2); err != nil {
-		t.Fatal(err)
-	}
-	m, err := e.svc.ServerConfigs(ctx, []uuid.UUID{s1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var body map[string]any
-	if err := json.Unmarshal(cdFindDoc(m[s1], n2).JSON, &body); err != nil {
-		t.Fatal(err)
-	}
-	if body["kernel"] != "pandora-native" {
-		t.Fatalf("kernel %v", body["kernel"])
 	}
 }

@@ -14,8 +14,6 @@ import {
   filterNodes,
   heartbeatLabel,
   isStable,
-  KERNELS,
-  legacyKernelNote,
   mapProtocolErrors,
   moveBlockers,
   moveItem,
@@ -81,7 +79,6 @@ const row = (over: Partial<Record<string, unknown>> = {}): NodeDetail =>
     traffic_rate: 1,
     display_name: null,
     country_code: 'HK',
-    kernel: 'auto',
     protocol_config: { network: 'tcp', tls: 2, reality_settings: { dest: 'www.microsoft.com:443', public_key: 'PUB' } },
     protocol_schema_version: 1,
     config_validated_at: null,
@@ -92,7 +89,6 @@ const row = (over: Partial<Record<string, unknown>> = {}): NodeDetail =>
     cpu_percent: null,
     mem_percent: null,
     metrics_at: null,
-    traffic_bytes: 0,
     granted_plans: null,
     ...over,
   })
@@ -108,7 +104,7 @@ describe('schemas', () => {
 
   it('keeps the edit-form fields out of the list row shape', () => {
     const listed = nodeRowSchema.parse(row())
-    for (const k of ['protocol_config', 'kernel', 'traffic_rate', 'protocol_schema_version', 'config_validated_at', 'traffic_bytes']) expect(listed).not.toHaveProperty(k)
+    for (const k of ['protocol_config', 'traffic_rate', 'protocol_schema_version', 'config_validated_at']) expect(listed).not.toHaveProperty(k)
     expect(row().protocol_config).toMatchObject({ network: 'tcp' })
   })
 })
@@ -328,20 +324,20 @@ describe('protocol form', () => {
 
 describe('basic info and PATCH', () => {
   it('validates basic fields', () => {
-    const e = validateBasic({ name: '', displayName: '', serverId: '', poolId: '', nodeType: '', host: '', port: '70000', kernel: 'auto', rate: '0', country: 'CHN' }, true)
+    const e = validateBasic({ name: '', displayName: '', serverId: '', poolId: '', nodeType: '', host: '', port: '70000', rate: '0', country: 'CHN' }, true)
     expect(Object.keys(e).sort()).toEqual(['country_code', 'name', 'node_type', 'pool_id', 'server_host', 'server_id', 'server_port', 'traffic_rate'])
   })
 
   it('requires a pool on create and edit, since a pool-less node serves nobody', () => {
-    const filled = { name: 'A', displayName: '', serverId: 's', poolId: '', nodeType: 'shadowsocks', host: 'h', port: '8388', kernel: 'auto', rate: '1', country: '' }
+    const filled = { name: 'A', displayName: '', serverId: 's', poolId: '', nodeType: 'shadowsocks', host: 'h', port: '8388', rate: '1', country: '' }
     expect(validateBasic(filled, true)).toEqual({ pool_id: NO_POOL_HINT })
     expect(validateBasic(filled, false)).toEqual({ pool_id: NO_POOL_HINT })
     expect(validateBasic({ ...filled, poolId: 'p1' }, true)).toEqual({})
   })
 
   it('creates with only filled optionals, uppercasing the country', () => {
-    const body = createBody({ name: 'A', displayName: '', serverId: 's', poolId: '', nodeType: 'shadowsocks', host: 'h', port: '8388', kernel: 'auto', rate: '1.5', country: 'hk' }, { cipher: 'aes-256-gcm' })
-    expect(body).toEqual({ name: 'A', server_id: 's', node_type: 'shadowsocks', server_host: 'h', server_port: 8388, protocol_config: { cipher: 'aes-256-gcm' }, kernel: 'auto', traffic_rate: 1.5, country_code: 'HK' })
+    const body = createBody({ name: 'A', displayName: '', serverId: 's', poolId: '', nodeType: 'shadowsocks', host: 'h', port: '8388', rate: '1.5', country: 'hk' }, { cipher: 'aes-256-gcm' })
+    expect(body).toEqual({ name: 'A', server_id: 's', node_type: 'shadowsocks', server_host: 'h', server_port: 8388, protocol_config: { cipher: 'aes-256-gcm' }, traffic_rate: 1.5, country_code: 'HK' })
   })
 
   it('sends only changed fields and leaves protocol_config out unless the protocol changed', () => {
@@ -350,19 +346,6 @@ describe('basic info and PATCH', () => {
     expect(patchBody(n, b, { changed: false, config: { x: 1 } })).toEqual({ row_version: 5, name: '香港 01 · 新', pool_id: 'p1', country_code: null })
     expect(patchBody(n, basicFromRow(n), { changed: true, config: { network: 'ws' } })).toEqual({ row_version: 5, protocol_config: { network: 'ws' } })
     expect(patchBody(n, { ...basicFromRow(n), poolId: '' }, { changed: false, config: {} })).toEqual({ row_version: 5 })
-  })
-
-  it('w4proto: only native kernels are offered; a stored sing-box / xray-core reads as auto and is replaced when the protocol is revalidated', () => {
-    expect(KERNELS.map(([v]) => v)).toEqual(['auto', 'pandora-native'])
-    const legacy = row({ kernel: 'sing-box' })
-    expect(basicFromRow(legacy).kernel).toBe('auto')
-    expect(legacyKernelNote(legacy)).toContain('sing-box')
-    expect(legacyKernelNote(row())).toBeUndefined()
-    // 只改名字：不碰协议，库里的旧值原样留着
-    expect(patchBody(legacy, { ...basicFromRow(legacy), name: 'x' }, { changed: false, config: {} })).toEqual({ row_version: 5, name: 'x' })
-    // 改端口或协议：后端会重新校验，内核一起换成表单值
-    expect(patchBody(legacy, { ...basicFromRow(legacy), port: '8443' }, { changed: false, config: {} })).toEqual({ row_version: 5, server_port: 8443, kernel: 'auto' })
-    expect(patchBody(legacy, basicFromRow(legacy), { changed: true, config: { network: 'ws' } })).toEqual({ row_version: 5, protocol_config: { network: 'ws' }, kernel: 'auto' })
   })
 })
 

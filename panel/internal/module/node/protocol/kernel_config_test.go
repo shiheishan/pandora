@@ -202,7 +202,7 @@ func TestTrojanXboardRealityConfigPassesAdminValidation(t *testing.T) {
 	// 全零私钥（clamp 后）对应的公钥：校验器要求两把钥匙成对
 	pub := "L-V9o0fNYkMVKNqsX7spBzD_9oSvxM_C7ZCZX1jLO3Q"
 	raw := json.RawMessage(`{"network":"tcp","tls":2,"reality_settings":{"dest":"www.example.com:443","server_name":"www.example.com","private_key":"` + key + `","public_key":"` + pub + `","short_id":"01234567"}}`)
-	version, fields := Validate("trojan", "pandora-native", 443, raw)
+	version, fields := Validate("trojan", 443, raw)
 	if version != 1 || len(fields) != 0 {
 		t.Fatalf("xboard-shaped Trojan REALITY config rejected: version=%d fields=%v", version, fields)
 	}
@@ -210,7 +210,7 @@ func TestTrojanXboardRealityConfigPassesAdminValidation(t *testing.T) {
 
 func TestTrojanXboardTLSConfigPassesAdminValidation(t *testing.T) {
 	raw := json.RawMessage(`{"network":"tcp","tls":1,"cert_path":"/etc/pandora-native/certs/example.com/trojan.crt","key_path":"/etc/pandora-native/certs/example.com/trojan.key"}`)
-	version, fields := Validate("trojan", "pandora-native", 443, raw)
+	version, fields := Validate("trojan", 443, raw)
 	if version != 1 || len(fields) != 0 {
 		t.Fatalf("xboard-shaped Trojan TLS config rejected: version=%d fields=%v", version, fields)
 	}

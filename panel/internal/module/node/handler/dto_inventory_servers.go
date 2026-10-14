@@ -108,7 +108,6 @@ type serverNodeResponse struct {
 	DisplayName       *string    `json:"display_name"`
 	ServerHost        *string    `json:"server_host"`
 	ServerPort        *int       `json:"server_port"`
-	Kernel            string     `json:"kernel"`
 	TrafficRate       float64    `json:"traffic_rate"`
 	ConfigValidatedAt *time.Time `json:"config_validated_at"`
 	LastHeartbeatAt   *time.Time `json:"last_heartbeat_at"`
@@ -183,7 +182,6 @@ func serverNodeFrom(n service.ServerNode) serverNodeResponse {
 		DisplayName:       n.DisplayName,
 		ServerHost:        n.ServerHost,
 		ServerPort:        n.ServerPort,
-		Kernel:            n.Kernel,
 		TrafficRate:       n.TrafficRate.InexactFloat64(),
 		ConfigValidatedAt: n.ConfigValidatedAt,
 		LastHeartbeatAt:   n.LastHeartbeatAt,

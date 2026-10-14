@@ -152,7 +152,7 @@ func TestPreserveRedactedProtocolSecretsGatedMaskPassword(t *testing.T) {
 			if got := strings.Contains(string(merged), "kcp-pass"); got != tc.wantPassword {
 				t.Fatalf("password restored=%v want %v: %s", got, tc.wantPassword, merged)
 			}
-			if _, fields := Validate("vless", "auto", 443, merged); len(fields) != 0 {
+			if _, fields := Validate("vless", 443, merged); len(fields) != 0 {
 				t.Fatalf("merged config rejected: %v (%s)", fields, merged)
 			}
 		})
