@@ -62,6 +62,7 @@ export const MODULES: Readonly<Record<ModuleKey, ModuleDef>> = {
       ['servers', '服务器'],
       ['pools', '节点池'],
       ['routing', '路由'],
+      ['subscription', '订阅下发'],
     ],
   },
   // 节点证书（面板集中签发 DNS-01）
@@ -126,6 +127,7 @@ const PALETTE_EXTRAS: ReadonlyArray<readonly [ModuleKey, string | null, string]>
   ['users', 'signup', '人机验证 / 邮箱后缀 / 注册试用 / 邀请码上限'],
   ['system', 'templates', '实发测试信'],
   ['billing', 'adjust', '收入调整登记与冲销'],
+  ['nodes', 'subscription', '订阅模板 / 信息节点 / 订阅域名'],
 ]
 
 const isModule = (value: string): value is ModuleKey => Object.hasOwn(MODULES, value)

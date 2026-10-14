@@ -183,12 +183,12 @@ func (s *Session) offerRosterLocked(st *rosterState, r *NodeRoster) {
 }
 
 // rosterMessageLocked 选增量还是全量：双方支持增量、节点确认在用的正是上次发出的版本，
-// 且变更条数不超过 UsersChunkSize、又小于全量人数，才发增量（增量不分块，全量按块发）。
+// 且变更条数不超过 UsersDeltaMax、又小于全量人数，才发增量（增量不分块，全量按块发）。
 func (s *Session) rosterMessageLocked(st *rosterState, r *NodeRoster) Outbound {
 	if s.delta && st.sent != nil && st.confirmed != "" && st.confirmed == st.sent.Version && st.sent.Version != r.Version {
 		upserted, removed := diffRoster(st.sent.Users, r.Users)
 		n := len(upserted) + len(removed)
-		if n <= UsersChunkSize && n < len(r.Users) {
+		if n <= UsersDeltaMax && n < len(r.Users) {
 			return Outbound{Kind: OutUsersDelta, Roster: r, DeltaFrom: st.sent.Version, Upserted: upserted, Removed: removed}
 		}
 	}

@@ -1,14 +1,26 @@
 import { useState } from 'react'
 import { ApiError } from '../../../core/api'
 import { formatDateTime, formatMoney } from '../../../core/format'
-import { Button, Card, ConfirmModal, Empty, Input, QueryView, Skeleton, StatStrip, useToast } from '../../../ui'
+import { isUSDTMethod, payoutAccountHint, withdrawMethodLabel } from '../../../core/withdraw-methods'
+import { Button, Card, ConfirmModal, Empty, Input, QueryView, Select, Skeleton, StatStrip, useToast } from '../../../ui'
 import { useCommission, useSiteConfig, type Commission } from '../../queries'
 import { LoadError } from '../common/Blocks'
 import { copyText } from '../common/clients'
 import { endsIntent, useIntentKey } from '../common/intent'
 import { InviteCodesCard } from './InviteCodes'
 import { useInvite, useRequestWithdrawal, useTransferCommission } from './api'
-import { commissionRecords, headline, inviteLink, inviteUsage, parseWithdrawAmount, withdrawBlock } from './model'
+import {
+  commissionRecords,
+  headline,
+  inviteLink,
+  inviteUsage,
+  otherAvailableCurrencies,
+  parseWithdrawAmount,
+  payoutError,
+  withdrawBlock,
+  withdrawClosedHere,
+  withdrawClosedHint,
+} from './model'
 import css from './Referral.module.css'
 
 export default function Referral() {
@@ -36,7 +48,13 @@ export default function Referral() {
         />
       )}
       <div className={css.grid}>
-        <div className={css.useArea}>{summary ? <UseCard summary={summary} /> : !commission.isError && <Skeleton height={260} radius="var(--radius-lg)" />}</div>
+        <div className={css.useArea}>
+          {commission.data ? (
+            <UseCard summary={commission.data.summary} others={otherAvailableCurrencies(commission.data)} />
+          ) : (
+            !commission.isError && <Skeleton height={260} radius="var(--radius-lg)" />
+          )}
+        </div>
         <div className={css.recordsArea}>
           <RecordsCard />
         </div>
@@ -67,7 +85,7 @@ function InviteBanner({ summary }: { summary: Commission['summary'] | undefined 
 
   return (
     <section className={css.banner} aria-label="我的邀请链接">
-      <h2 className={css.headline}>{summary === undefined ? <Skeleton width={220} height={22} /> : headline(summary.rate_percent, summary.scope)}</h2>
+      <h2 className={css.headline}>{summary === undefined ? <Skeleton width={220} height={22} /> : headline(summary.direct_rate_bp, summary.scope)}</h2>
       {invite.isError ? (
         <LoadError error={invite.error} what="邀请链接" onRetry={() => void invite.refetch()} />
       ) : (
@@ -92,7 +110,7 @@ function InviteBanner({ summary }: { summary: Commission['summary'] | undefined 
 // 使用佣金：两个动作用同一个「可用佣金」（账本余额 − 在途提现），失败文案照后端
 // 幂等键：断网与 5xx 保留键（重试要拿回同一结果）；成功或 4xx 业务拒绝即动作结束、丢弃键（common/intent）
 // ---------------------------------------------------------------------------
-function UseCard({ summary }: { summary: Commission['summary'] }) {
+function UseCard({ summary, others }: { summary: Commission['summary']; others: readonly string[] }) {
   const toast = useToast()
   const transfer = useTransferCommission()
   const withdraw = useRequestWithdrawal()
@@ -100,12 +118,16 @@ function UseCard({ summary }: { summary: Commission['summary'] }) {
   const withdrawKey = useIntentKey()
   const [confirming, setConfirming] = useState(false)
   const [transferError, setTransferError] = useState<string | null>(null)
+  const [method, setMethod] = useState(summary.withdraw_methods[0] ?? '')
   const [amount, setAmount] = useState('')
   const [payout, setPayout] = useState('')
-  const [errors, setErrors] = useState<{ amount?: string; payout?: string; form?: string }>({})
+  const [errors, setErrors] = useState<{ amount?: string; method?: string; payout?: string; form?: string }>({})
 
   const money = (v: number) => formatMoney(v, summary.currency)
   const block = withdrawBlock(summary)
+  const closedHint = withdrawClosedHint(summary, others)
+  // 后台改了开放方式后重新拉取，原先选的方式可能已经关了：退回第一种开放的方式
+  const activeMethod = summary.withdraw_methods.includes(method) ? method : (summary.withdraw_methods[0] ?? '')
 
   async function doTransfer() {
     const request = { amount: summary.available }
@@ -125,10 +147,14 @@ function UseCard({ summary }: { summary: Commission['summary'] }) {
   function submitWithdraw() {
     const parsed = parseWithdrawAmount(amount, { min: summary.min_withdraw, available: summary.available, currency: summary.currency })
     const detail = payout.trim()
-    const next = { amount: 'error' in parsed ? parsed.error : undefined, payout: detail ? undefined : '请填写收款账号' }
+    const payoutErr = payoutError(activeMethod, payout)
+    const next = {
+      amount: 'error' in parsed ? parsed.error : undefined,
+      payout: payoutErr,
+    }
     setErrors(next)
-    if ('error' in parsed || !detail) return
-    const body = { amount: parsed.cents, payout_detail: detail }
+    if ('error' in parsed || payoutErr) return
+    const body = { amount: parsed.cents, method: activeMethod, payout_detail: detail }
     withdraw.mutate(
       { body, key: withdrawKey.keyFor(body) },
       {
@@ -140,8 +166,14 @@ function UseCard({ summary }: { summary: Commission['summary'] }) {
         },
         onError: (e) => {
           if (endsIntent(e)) withdrawKey.reset()
-          const fieldMsg = e instanceof ApiError ? e.fields.payout_detail : undefined
-          setErrors(fieldMsg ? { payout: fieldMsg } : { form: e.message || '提交失败，请稍后重试' })
+          const apiErr = e instanceof ApiError ? e : undefined
+          const methodErr = apiErr?.fields?.method
+          const payoutFieldMsg = apiErr?.fields?.payout_detail
+          if (methodErr || payoutFieldMsg) {
+            setErrors({ method: methodErr, payout: payoutFieldMsg })
+          } else {
+            setErrors({ form: e.message || '提交失败，请稍后重试' })
+          }
         },
       },
     )
@@ -160,31 +192,56 @@ function UseCard({ summary }: { summary: Commission['summary'] }) {
         </p>
       )}
       <hr className={css.divider} />
-      <p className={css.caption}>申请提现 · 最低 {money(summary.min_withdraw)}，审核通过后打款</p>
-      {block ? (
-        <p className={css.blocked}>{block}</p>
+      {withdrawClosedHere(summary) ? (
+        <p className={css.hint}>{closedHint}</p>
       ) : (
         <>
-          <div className={css.withdrawRow}>
-            <Input
-              mono
-              inputMode="decimal"
-              aria-label="提现金额（元）"
-              placeholder="金额"
-              value={amount}
-              error={errors.amount}
-              onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ''))}
-            />
-            <Input aria-label="收款账号" placeholder="支付宝账号 / 银行卡号" maxLength={200} autoComplete="off" value={payout} error={errors.payout} onChange={(e) => setPayout(e.target.value)} />
-          </div>
-          {errors.form && (
-            <p className={css.error} role="alert">
-              {errors.form}
-            </p>
+          {closedHint && <p className={css.hint}>{closedHint}</p>}
+          <p className={css.caption}>申请提现 · 最低 {money(summary.min_withdraw)}，审核通过后打款</p>
+          {block ? (
+            <p className={css.blocked}>{block}</p>
+          ) : (
+            <>
+              <div className={css.withdrawRow}>
+                <Input
+                  mono
+                  inputMode="decimal"
+                  aria-label="提现金额（元）"
+                  placeholder="金额"
+                  value={amount}
+                  error={errors.amount}
+                  onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ''))}
+                />
+                <Select
+                  aria-label="提现方式"
+                  options={summary.withdraw_methods.map((m) => ({ value: m, label: withdrawMethodLabel(m) }))}
+                  value={activeMethod}
+                  error={errors.method}
+                  size="sm"
+                  onChange={(e) => setMethod(e.target.value)}
+                />
+              </div>
+              <Input
+                mono={isUSDTMethod(activeMethod)}
+                aria-label="收款账号"
+                placeholder={payoutAccountHint(activeMethod)}
+                maxLength={200}
+                autoComplete="off"
+                value={payout}
+                error={errors.payout}
+                onChange={(e) => setPayout(e.target.value)}
+              />
+              {isUSDTMethod(activeMethod) && <p className={css.hint}>USDT 按地址所在链打款，请确认链与地址一致，填错无法追回</p>}
+              {errors.form && (
+                <p className={css.error} role="alert">
+                  {errors.form}
+                </p>
+              )}
+              <Button variant="outline" className={css.withdraw} busy={withdraw.isPending} onClick={submitWithdraw}>
+                申请提现
+              </Button>
+            </>
           )}
-          <Button variant="outline" className={css.withdraw} busy={withdraw.isPending} onClick={submitWithdraw}>
-            申请提现
-          </Button>
         </>
       )}
       <ConfirmModal

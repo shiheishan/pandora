@@ -46,6 +46,7 @@ type Service interface {
 	AdminRotate(ctx context.Context, subID uuid.UUID, reason string) (service.AdminRotateResult, error)
 	AdminSetPeriodEnd(ctx context.Context, subID uuid.UUID, end time.Time, reason string) (service.AdminSetPeriodEndResult, error)
 	AdminSetQuotaLimit(ctx context.Context, subID uuid.UUID, metric, period string, limit *int64, reason string) error
+	TemplateService
 }
 
 var _ Service = (*service.Service)(nil)
@@ -114,6 +115,12 @@ func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	v1.POST("/subscriptions/:id/rotate", k.RequireAuth, k.RecentReauth, h.adminRotateLink)
 	v1.POST("/subscriptions/:id/period-end", k.RequireAuth, k.RecentReauth, h.adminSetPeriodEnd)
 	v1.POST("/subscriptions/:id/quota", k.RequireAuth, k.RecentReauth, h.adminSetQuotaLimit)
+	// 改模板影响所有用户的订阅，保存与恢复缺省要近期重认证；预览只渲染示例节点、不写库
+	v1.GET("/subscription-templates", k.RequireAuth, h.adminTemplates)
+	v1.GET("/subscription-templates/:format", k.RequireAuth, h.adminTemplate)
+	v1.PUT("/subscription-templates/:format", k.RequireAuth, k.RecentReauth, h.adminSaveTemplate)
+	v1.DELETE("/subscription-templates/:format", k.RequireAuth, k.RecentReauth, h.adminResetTemplate)
+	v1.POST("/subscription-templates/:format/preview", k.RequireAuth, h.adminPreviewTemplate)
 }
 
 // RegisterRoot 注册订阅链接拉取 GET /:prefix/:token：公开、不在 /v1 下（链接里出现 /v1/subscribe 这样的字样等于自带指纹）。

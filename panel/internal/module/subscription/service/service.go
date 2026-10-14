@@ -105,6 +105,8 @@ type Service struct {
 	prefix atomic.Pointer[string]
 	// failures 给未认证失败的拉取日志采样（fetchlog.go）。
 	failures *failureSampler
+	// extras 是拉取用的后台模板与订阅附加设置的进程内快照（pull_extras.go），30 秒过期。
+	extras pullExtras
 }
 
 // New 构造 subscription service。catalog 一般是 catalog service，users 是 identity service，sealer 是 crypto.Keys.Sealer()。

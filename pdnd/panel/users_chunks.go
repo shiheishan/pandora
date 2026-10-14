@@ -7,7 +7,7 @@ import (
 	nodev1 "github.com/aegispanel/nodeapi/pandora/node/v1"
 )
 
-// maxUsersChunks 是一版全量名单的块数上限（每块 5000 人，约 3 亿人），挡住异常的 chunk_total。
+// maxUsersChunks 是一版全量名单的块数上限（面板每块 500 人，约 3 千万人），挡住异常的 chunk_total。
 const maxUsersChunks = 1 << 16
 
 // usersAssembler 把 UsersFull 的分块按节点收齐：chunk_index 从 0 起逐块递增，

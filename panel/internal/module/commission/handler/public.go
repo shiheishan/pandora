@@ -55,14 +55,17 @@ func (h *Handler) requestWithdrawal(c *gin.Context) {
 	if req.Amount <= 0 {
 		fields["amount"] = "提现金额必须大于 0"
 	}
+	if strings.TrimSpace(req.Method) == "" {
+		fields["method"] = "请选择提现方式"
+	}
 	if strings.TrimSpace(req.PayoutDetail) == "" {
-		fields["payout_detail"] = "请填写收款方式"
+		fields["payout_detail"] = "请填写收款账号"
 	}
 	if len(fields) > 0 {
 		httpx.Fail(c, errs.Invalid(fields))
 		return
 	}
-	id, err := h.svc.RequestWithdrawal(c.Request.Context(), uid, money.FromCents(req.Amount), req.PayoutDetail)
+	id, err := h.svc.RequestWithdrawal(c.Request.Context(), uid, money.FromCents(req.Amount), strings.TrimSpace(req.Method), req.PayoutDetail)
 	if err != nil {
 		httpx.Fail(c, err)
 		return

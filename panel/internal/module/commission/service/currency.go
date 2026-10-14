@@ -38,14 +38,15 @@ func (s *Service) availableByCurrency(ctx context.Context, userID uuid.UUID) ([]
 }
 
 // pickCurrency 选提现用的币种：恰一个币种可用额为正就是它；多于一个回 ErrWithdrawCurrencyAmbiguous；
-// 一个都没有时 ok 为 false（调用方按各自的「没有可用佣金」报错）。调用方必须已在本事务里 LockUser。
-func (s *Service) pickCurrency(ctx context.Context, userID uuid.UUID) (cur money.Currency, avail decimal.Decimal, ok bool, err error) {
+// 一个都没有时 ok 为 false（调用方按各自的「没有可用佣金」报错）。skip 非空时不考虑这个币种（提现关闭时跳过站点币种）。
+// 调用方必须已在本事务里 LockUser。
+func (s *Service) pickCurrency(ctx context.Context, userID uuid.UUID, skip money.Currency) (cur money.Currency, avail decimal.Decimal, ok bool, err error) {
 	list, err := s.availableByCurrency(ctx, userID)
 	if err != nil {
 		return "", decimal.Zero, false, err
 	}
 	for _, ca := range list {
-		if !ca.avail.IsPositive() {
+		if !ca.avail.IsPositive() || (skip != "" && ca.cur == skip) {
 			continue
 		}
 		if ok {

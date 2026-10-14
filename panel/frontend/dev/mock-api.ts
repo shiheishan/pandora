@@ -97,6 +97,7 @@ const ADMIN_WRITE_ALLOWLIST = [
   'POST /me/password',
   'POST /switches/:code',
   'POST /mail/templates/preview',
+  'POST /subscription-templates/:format/preview',
 ] as const
 
 function adminWriteExempt(method: string, path: string): boolean {

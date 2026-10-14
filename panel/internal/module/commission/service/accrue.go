@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/aegispanel/aegis/internal/module/commission/model"
@@ -22,11 +23,11 @@ const (
 	reviewUnderfundedPrefix = "待结佣金科目余额不足"
 )
 
-// OnOrderPaid 实现 ordersvc.PaidHook：在订单结算事务里给推荐人计提一条冻结中的佣金。
+// OnOrderPaid 实现 ordersvc.PaidHook：在订单结算事务里按多级分销与单独设置给各级邀请人计提冻结中的佣金。
 // 没有推荐人、费率为 0、「首单」口径下不是首单、佣金截断后为 0、这一单已经计提过，都是正常情况，返回 nil。
 //
-// 锁序：order 调用时已持有平台收入科目；这里「首单」口径再加被推荐人咨询锁，记账只再锁推荐人的待结佣金科目
-// （都排在平台收入之后），不碰套餐、券、订阅。
+// 锁序：order 调用时已持有平台收入科目；「首单」口径再加被推荐人咨询锁；记账依次锁各级受益人的待结佣金科目
+// （都排在平台收入之后），同币种的计提都被平台收入科目串行化，不会互相死锁；不碰套餐、券、订阅。
 func (s *Service) OnOrderPaid(ctx context.Context, o ordersvc.PaidOrder) error {
 	if !o.Total.IsPositive() || o.Kind == ordersvc.KindTopup {
 		return nil
@@ -36,23 +37,27 @@ func (s *Service) OnOrderPaid(ctx context.Context, o ordersvc.PaidOrder) error {
 		return err
 	}
 	return s.tx.Do(ctx, func(ctx context.Context) error {
-		referrer, err := refs.ReferrerOf(ctx, o.UserID)
-		if err != nil || referrer == nil || *referrer == o.UserID {
+		direct, err := refs.ReferrerOf(ctx, o.UserID)
+		if err != nil || direct == nil || *direct == o.UserID {
 			return err
 		}
 		cfg, err := s.settings.Commission(ctx)
 		if err != nil {
 			return err
 		}
-		if cfg.RatePercent <= 0 {
+		rate, scope, err := s.orderTerms(ctx, *direct, cfg)
+		if err != nil {
+			return err
+		}
+		if rate <= 0 {
 			return nil
 		}
-		// 支付回调重放、人工补结算时同一单可能再进来：先查，已有就不再记账
-		exists, err := s.repo.EntryExists(ctx, o.OrderID, *referrer)
+		// 支付回调重放、人工补结算时同一单可能再进来：任何一级记过就整单不再记（已作废的也算）。
+		exists, err := s.repo.OrderHasEntries(ctx, o.OrderID)
 		if err != nil || exists {
 			return err
 		}
-		if cfg.Scope == settingssvc.CommissionScopeFirstOrder {
+		if scope == settingssvc.CommissionScopeFirstOrder {
 			// 「首单」按佣金记录判：被推荐人已有别的订单计过佣，这一单就不再计。
 			// 已作废（voided）的条目也算「已有首单」（用户 10-13 定）：首单佣金被复核作废后，第二单不再计佣。
 			// 先锁被推荐人：不同币种的两张单不共用平台收入科目锁，不加这把锁会并发各计一条
@@ -64,28 +69,15 @@ func (s *Service) OnOrderPaid(ctx context.Context, o ordersvc.PaidOrder) error {
 				return err
 			}
 		}
-		rateBP := RateBP(cfg.RatePercent)
-		amount := Amount(o.Total, rateBP)
-		if !amount.IsPositive() {
+		rateBP := RateBP(rate)
+		if !Amount(o.Total, rateBP).IsPositive() {
 			return nil
 		}
-
-		reviewReason, err := s.sourceReview(ctx, *referrer, o)
+		dist, err := s.settings.CommissionDistribution(ctx)
 		if err != nil {
 			return err
 		}
-
-		txnID, err := s.ledger.Post(ctx, ledgersvc.Posting{
-			Kind:       ledgersvc.KindCommissionAccrued,
-			Currency:   o.Currency,
-			SourceType: ledgersvc.SourceOrder,
-			SourceID:   o.OrderID,
-			Memo:       "分销佣金计提",
-			Legs: []ledgersvc.Leg{
-				{Account: ledgersvc.PlatformAccount(ledgersvc.PlatformRevenue, ledgersvc.RefMain), Direction: ledgersvc.Debit, Amount: amount},
-				{Account: ledgersvc.UserAccount(ledgersvc.UserCommissionPending, *referrer), Direction: ledgersvc.Credit, Amount: amount},
-			},
-		})
+		list, err := beneficiaries(ctx, o.UserID, *direct, dist, refs.ReferrerOf, s.excludedByOverride)
 		if err != nil {
 			return err
 		}
@@ -94,28 +86,63 @@ func (s *Service) OnOrderPaid(ctx context.Context, o ordersvc.PaidOrder) error {
 		if paidAt.IsZero() {
 			paidAt = s.clock()
 		}
+		frozenUntil := paidAt.Add(time.Duration(cfg.FreezeDays) * 24 * time.Hour)
 		var paymentID *uuid.UUID
 		if o.PaymentID != uuid.Nil {
 			pid := o.PaymentID
 			paymentID = &pid
 		}
-		// UNIQUE (order_id, referrer_user_id) 兜底：并发重放时第二笔撞索引，整笔结算回滚
-		return s.repo.InsertEntry(ctx, &model.Entry{
-			ReferrerUserID:   *referrer,
-			RefereeUserID:    o.UserID,
-			OrderID:          o.OrderID,
-			OrderNo:          o.OrderNo,
-			PaymentID:        paymentID,
-			Currency:         string(o.Currency),
-			BaseAmount:       o.Total,
-			RateBP:           rateBP,
-			CommissionAmount: amount,
-			Status:           EntryPending,
-			FrozenUntil:      paidAt.Add(time.Duration(cfg.FreezeDays) * 24 * time.Hour),
-			ReviewRequired:   reviewReason != nil,
-			ReviewReason:     reviewReason,
-			AccrualTxnID:     txnID,
-		})
+
+		for _, b := range list {
+			amount := LevelAmount(o.Total, rateBP, b.SharePercent)
+			if !amount.IsPositive() {
+				continue
+			}
+			reviewReason, err := s.sourceReview(ctx, b.UserID, o)
+			if err != nil {
+				return err
+			}
+			memo := "分销佣金计提"
+			if b.Level != 1 {
+				memo = fmt.Sprintf("分销佣金计提（第 %d 级）", b.Level)
+			}
+			txnID, err := s.ledger.Post(ctx, ledgersvc.Posting{
+				Kind:       ledgersvc.KindCommissionAccrued,
+				Currency:   o.Currency,
+				SourceType: ledgersvc.SourceOrder,
+				SourceID:   o.OrderID,
+				Memo:       memo,
+				Legs: []ledgersvc.Leg{
+					{Account: ledgersvc.PlatformAccount(ledgersvc.PlatformRevenue, ledgersvc.RefMain), Direction: ledgersvc.Debit, Amount: amount},
+					{Account: ledgersvc.UserAccount(ledgersvc.UserCommissionPending, b.UserID), Direction: ledgersvc.Credit, Amount: amount},
+				},
+			})
+			if err != nil {
+				return err
+			}
+			// UNIQUE (order_id, level) 与 (order_id, referrer_user_id) 兜底：并发重放时第二笔撞索引，整笔结算回滚
+			if err := s.repo.InsertEntry(ctx, &model.Entry{
+				ReferrerUserID:   b.UserID,
+				RefereeUserID:    o.UserID,
+				OrderID:          o.OrderID,
+				OrderNo:          o.OrderNo,
+				PaymentID:        paymentID,
+				Currency:         string(o.Currency),
+				BaseAmount:       o.Total,
+				RateBP:           rateBP,
+				Level:            b.Level,
+				SharePercent:     b.SharePercent,
+				CommissionAmount: amount,
+				Status:           EntryPending,
+				FrozenUntil:      frozenUntil,
+				ReviewRequired:   reviewReason != nil,
+				ReviewReason:     reviewReason,
+				AccrualTxnID:     txnID,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 

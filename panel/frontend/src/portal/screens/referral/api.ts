@@ -45,7 +45,7 @@ export function useRequestWithdrawal() {
   const api = useApi()
   const client = useQueryClient()
   return useMutation({
-    mutationFn: ({ body, key }: { body: { amount: number; payout_detail: string }; key: string }) =>
+    mutationFn: ({ body, key }: { body: { amount: number; method: string; payout_detail: string }; key: string }) =>
       api.post('v1/me/withdrawals', z.object({ id: z.string() }), { body, idempotencyKey: key }),
     onSettled: () => void client.invalidateQueries({ queryKey: COMMISSION_KEY }),
   })

@@ -21,6 +21,7 @@ type Settings interface {
 	// SignupWithoutSecret 不解封人机验证 secret：本 handler 只回 has_captcha_secret
 	SignupWithoutSecret(ctx context.Context) (service.Signup, error)
 	SetSignup(ctx context.Context, u service.SignupUpdate) error
+	SubscriptionExtrasSettings
 }
 
 var _ Settings = (*service.Service)(nil)
@@ -48,4 +49,6 @@ func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	v1.POST("/switches/:code", k.RequireAuth, k.RecentReauth, h.setSwitch)
 	v1.GET("/settings/signup", k.RequireAuth, h.getSignup)
 	v1.POST("/settings/signup", k.RequireAuth, k.RecentReauth, h.setSignup)
+	v1.GET("/settings/subscription", k.RequireAuth, h.getSubscriptionExtras)
+	v1.POST("/settings/subscription", k.RequireAuth, k.RecentReauth, h.setSubscriptionExtras)
 }

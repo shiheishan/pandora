@@ -77,6 +77,8 @@ var adminWriteAllowlist = map[string]bool{
 	"POST /me/password":            true,
 	"POST /switches/:code":         true,
 	"POST /mail/templates/preview": true,
+	// 订阅模板预览只用示例节点渲染、不写库；保存与恢复缺省照旧受只读约束
+	"POST /subscription-templates/:format/preview": true,
 }
 
 func adminWriteExempt(method, path string) bool {

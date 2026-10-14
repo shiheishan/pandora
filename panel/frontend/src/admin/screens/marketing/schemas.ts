@@ -214,6 +214,10 @@ export const overviewSchema = z.object({
   total_earned: z.number(),
   invited_users: z.number(),
   scope: z.enum(['first_order', 'every_order']),
+  distribution_enabled: z.boolean(),
+  distribution_levels: z.tuple([z.number(), z.number(), z.number()]),
+  withdraw_enabled: z.boolean(),
+  withdraw_methods: z.array(z.string()),
 })
 export type CommissionOverview = z.output<typeof overviewSchema>
 
@@ -229,6 +233,9 @@ const withdrawalSchema = z.object({
   requested_at: iso,
   completed_at: iso.nullable(),
   earned_total: z.number(),
+  method: z.string(),
+  payout_reference: z.string(),
+  paid_usdt_amount: z.string().nullable(),
 })
 export const withdrawalsResponse = z.object({
   withdrawals: z
@@ -257,3 +264,14 @@ const reviewEntrySchema = z.object({
 export type ReviewEntry = z.output<typeof reviewEntrySchema>
 export const reviewEntriesResponse = z.object({ entries: z.array(reviewEntrySchema), next_cursor: z.string() })
 export const entryReviewResponse = z.object({ status: z.enum(['pending', 'voided']) })
+
+const overrideSchema = z.object({
+  user_id: uuid,
+  email: z.string(),
+  rate_percent: z.number().int().nullable(),
+  scope: z.enum(['first_order', 'every_order']).nullable(),
+  updated_at: iso,
+})
+export type CommissionOverride = z.output<typeof overrideSchema>
+export const overridesResponse = z.object({ overrides: z.array(overrideSchema) })
+export const overrideSetResponse = z.object({ override: overrideSchema })

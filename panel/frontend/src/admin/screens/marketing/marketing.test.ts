@@ -299,6 +299,10 @@ describe('commission', () => {
     total_earned: 4821000,
     invited_users: 2318,
     scope: 'every_order',
+    distribution_enabled: false,
+    distribution_levels: [0, 0, 0],
+    withdraw_enabled: true,
+    withdraw_methods: ['alipay'],
   })
 
   it('maps withdrawal statuses; only approved can be paid', () => {

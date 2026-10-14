@@ -10,12 +10,12 @@ import (
 	"github.com/aegispanel/aegis/internal/module/commission/model"
 )
 
-// EntryExists 该订单对同一推荐人是否已有佣金条目。
-func (r *Repo) EntryExists(ctx context.Context, orderID, referrerID uuid.UUID) (bool, error) {
+// OrderHasEntries 这一单是否已经计提过佣金（任何一级）；支付回调重放、人工补结算时防重。走 (order_id, …) 唯一索引。
+func (r *Repo) OrderHasEntries(ctx context.Context, orderID uuid.UUID) (bool, error) {
 	var ok bool
 	err := r.d.Conn(ctx).Raw(
-		`SELECT EXISTS (SELECT 1 FROM commission_entries WHERE order_id = ? AND referrer_user_id = ?)`,
-		orderID, referrerID,
+		`SELECT EXISTS (SELECT 1 FROM commission_entries WHERE order_id = ?)`,
+		orderID,
 	).Scan(&ok).Error
 	return ok, mapErr(err)
 }
@@ -75,16 +75,55 @@ SELECT * FROM commission_entries
 	return e, true, nil
 }
 
-// MarkEntryAvailable 将 pending 条目标为 available 并写入解冻交易。
-func (r *Repo) MarkEntryAvailable(ctx context.Context, id, settleTxnID uuid.UUID, at time.Time) (bool, error) {
+// MarkEntryAvailable 将 pending 条目标为 available 并写入解冻交易；autoTransfer 为 true 时同时挂上「等自动转余额」标记。
+func (r *Repo) MarkEntryAvailable(ctx context.Context, id, settleTxnID uuid.UUID, at time.Time, autoTransfer bool) (bool, error) {
 	res := r.d.Conn(ctx).Model(&model.Entry{}).
 		Where("id = ? AND status = ?", id, "pending").
 		Updates(map[string]any{
-			"status":        "available",
-			"settle_txn_id": settleTxnID,
-			"settled_at":    at,
-			"updated_at":    at,
+			"status":            "available",
+			"settle_txn_id":     settleTxnID,
+			"settled_at":        at,
+			"auto_transfer_due": autoTransfer,
+			"updated_at":        at,
 		})
+	if res.Error != nil {
+		return false, mapErr(res.Error)
+	}
+	return res.RowsAffected == 1, nil
+}
+
+// AutoTransferDueEntries 不加锁地列出挂着「等自动转余额」标记的条目（先解冻的先转），最多 limit 条。
+func (r *Repo) AutoTransferDueEntries(ctx context.Context, limit int) ([]model.Entry, error) {
+	var out []model.Entry
+	err := r.d.Conn(ctx).
+		Where("auto_transfer_due").
+		Order("settled_at, id").
+		Limit(limit).
+		Find(&out).Error
+	return out, mapErr(err)
+}
+
+// LockAutoTransferEntry 锁定一条仍挂着「等自动转余额」标记的条目（SKIP LOCKED）；标记已清或被别人锁着时 ok 为 false。
+func (r *Repo) LockAutoTransferEntry(ctx context.Context, id uuid.UUID) (model.Entry, bool, error) {
+	var e model.Entry
+	err := r.d.Conn(ctx).Raw(`
+SELECT * FROM commission_entries
+ WHERE id = ? AND auto_transfer_due
+ FOR UPDATE SKIP LOCKED`, id).Scan(&e).Error
+	if err != nil {
+		return model.Entry{}, false, mapErr(err)
+	}
+	if e.ID == uuid.Nil {
+		return model.Entry{}, false, nil
+	}
+	return e, true, nil
+}
+
+// ClearAutoTransferDue 清掉条目的「等自动转余额」标记；没改到行（标记已清）时返回 false。
+func (r *Repo) ClearAutoTransferDue(ctx context.Context, id uuid.UUID, at time.Time) (bool, error) {
+	res := r.d.Conn(ctx).Model(&model.Entry{}).
+		Where("id = ? AND auto_transfer_due", id).
+		Updates(map[string]any{"auto_transfer_due": false, "updated_at": at})
 	if res.Error != nil {
 		return false, mapErr(res.Error)
 	}
@@ -111,7 +150,8 @@ type EntryTotals struct {
 	PaidInvitees int64           `gorm:"column:paid_invitees"`
 }
 
-// EntryTotalsOf 按推荐人与币种汇总佣金；已作废的条目不计入任何一项。
+// EntryTotalsOf 按推荐人与币种汇总佣金；已作废的条目不计入任何一项。orders 是条目数（含第 2、3 级），
+// paid_invitees 只算直接邀请（第 1 级）的人，和「邀请注册」同口径。
 func (r *Repo) EntryTotalsOf(ctx context.Context, referrerID uuid.UUID, currency string) (EntryTotals, error) {
 	var t EntryTotals
 	err := r.d.Conn(ctx).Raw(`
@@ -120,7 +160,7 @@ SELECT
   COALESCE(sum(commission_amount) FILTER (WHERE status = 'available'), 0) AS available,
   COALESCE(sum(commission_amount) FILTER (WHERE status <> 'voided'), 0) AS total,
   count(*) FILTER (WHERE status <> 'voided') AS orders,
-  count(DISTINCT referee_user_id) FILTER (WHERE status <> 'voided') AS paid_invitees
+  count(DISTINCT referee_user_id) FILTER (WHERE status <> 'voided' AND level = 1) AS paid_invitees
 FROM commission_entries
 WHERE referrer_user_id = ? AND currency = ?`, referrerID, currency).Scan(&t).Error
 	return t, mapErr(err)

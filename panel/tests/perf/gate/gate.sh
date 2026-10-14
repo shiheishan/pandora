@@ -5,7 +5,8 @@
 #   gate.sh check | seed | snapshot     机上一次性准备（见 README）
 #   gate.sh build <提交>                 在测试机上构建这个提交的 pandora（git archive 的 panel/ 与 nodeapi/，不传别的）
 #   gate.sh run <label> <提交>           构建 → 测试机后台跑一次（约 30 分钟）→ 等完 → 取回到结果目录
-#                                        GATE_PULL_RATES / GATE_PULL_SECS / GATE_IDLE_SECS / GATE_SETTLE_SECS / GATE_RECONNECTS 可覆盖场景参数
+#                                        GATE_PULL_RATES / GATE_PULL_SECS / GATE_IDLE_SECS / GATE_SETTLE_SECS / GATE_RECONNECTS 可覆盖场景参数；
+#                                        GATE_PPROF=1 是诊断运行：serve 开 pprof，每个窗口结束取堆剖析到 <结果>/pprof/，不拿来比
 #   gate.sh wait <label> | fetch <label>
 #   gate.sh compare <基线> <候选> [--aa <基线第二遍>] [--target <指标前缀>]
 #
@@ -84,7 +85,7 @@ run() {
   # 跑一次约 30 分钟，放到测试机后台，ssh 断了也不影响
   # 场景参数可用本机环境变量覆盖（只收数字与空格），原样带到机上；冒烟时缩短各段用
   local envs="" v
-  for v in GATE_PULL_RATES GATE_PULL_SECS GATE_IDLE_SECS GATE_SETTLE_SECS GATE_RECONNECTS; do
+  for v in GATE_PULL_RATES GATE_PULL_SECS GATE_IDLE_SECS GATE_SETTLE_SECS GATE_RECONNECTS GATE_PPROF; do
     [ -n "${!v:-}" ] || continue
     [[ ${!v} =~ ^[0-9\ ]+$ ]] || die "$v 只能是数字与空格"
     envs+="$v='${!v}' "
