@@ -1,12 +1,11 @@
 package handler
 
 import (
-	"strconv"
-
 	"github.com/gin-gonic/gin"
 
 	"github.com/aegispanel/aegis/internal/module/content/service"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
+	"github.com/aegispanel/aegis/internal/pkg/pagination"
 )
 
 type listAdminPagesResponse struct {
@@ -41,7 +40,11 @@ type archivePageResult struct {
 
 // listAdminPages 后台内容页列表。
 func (h *Handler) listAdminPages(c *gin.Context) {
-	limit, _ := strconv.Atoi(c.Query("limit"))
+	limit, _, err := pagination.Parse(c, 200, 500)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
 	rows, err := h.svc.ListAdmin(c.Request.Context(), service.ListFilter{
 		Kind:   c.Query("kind"),
 		Status: c.Query("status"),

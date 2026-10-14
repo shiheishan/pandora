@@ -193,6 +193,18 @@ func TestAdminListPagesShape(t *testing.T) {
 	}
 }
 
+func TestAdminListPagesInvalidLimit(t *testing.T) {
+	f := &fakeSvc{}
+	e := newEngine(f, true, &authn.Principal{UserID: uuid.New(), SessionID: "s", Audience: authn.AudienceAdmin}, route.Kit{})
+	w := do(e, http.MethodGet, "/v1/content-pages?limit=abc", "")
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status %d want 422 body=%s", w.Code, w.Body.String())
+	}
+	if f.called {
+		t.Fatal("service should not be called")
+	}
+}
+
 func TestAdminGetPublishArchive(t *testing.T) {
 	pageID := uuid.New()
 	review := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
