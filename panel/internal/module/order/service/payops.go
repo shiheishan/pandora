@@ -18,7 +18,7 @@ import (
 // defaultPayTitle 是没有订单行（充值单）时收银台的商品名。
 const defaultPayTitle = "订阅服务"
 
-// Pay 门户发起支付：锁住自己的待付订单、核对可付，再由 payment 建（或复用）支付意图。
+// Pay 门户发起支付：在事务里锁住自己的待付订单、核对可付，由 payment 占住支付意图（或复用在途的）；提交后再在事务外去渠道建单（渠道可能联网，不能占着库连接和订单锁）。
 func (s *Service) Pay(ctx context.Context, in PayInput) (paymentsvc.IntentResult, error) {
 	userID, err := portalUser(ctx)
 	if err != nil {
@@ -29,7 +29,7 @@ func (s *Service) Pay(ctx context.Context, in PayInput) (paymentsvc.IntentResult
 			return paymentsvc.IntentResult{}, err
 		}
 	}
-	var out paymentsvc.IntentResult
+	var draft paymentsvc.IntentDraft
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
 		o, ok, err := s.repo.OrderForUser(ctx, in.OrderID, userID, repo.ForNoKeyUpdate)
 		if err != nil {
@@ -52,7 +52,7 @@ func (s *Service) Pay(ctx context.Context, in PayInput) (paymentsvc.IntentResult
 			return err
 		}
 		expires := o.ExpiresAt
-		out, err = s.payments.CreateIntent(ctx, paymentsvc.CreateIntentInput{
+		draft, err = s.payments.BeginIntent(ctx, paymentsvc.CreateIntentInput{
 			OrderID:      o.ID,
 			OrderNo:      o.OrderNo,
 			UserID:       o.UserID,
@@ -70,7 +70,7 @@ func (s *Service) Pay(ctx context.Context, in PayInput) (paymentsvc.IntentResult
 	if err != nil {
 		return paymentsvc.IntentResult{}, err
 	}
-	return out, nil
+	return s.payments.CompleteIntent(ctx, draft)
 }
 
 // payTitle 取收银台商品名：首条订单行的快照名，没有订单行时用兜底名。

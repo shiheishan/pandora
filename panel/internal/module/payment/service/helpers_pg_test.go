@@ -306,6 +306,19 @@ func (e *env) mkOrder(t *testing.T, ctx context.Context, user uuid.UUID) (uuid.U
 	return orderID, orderNo
 }
 
+// CreateIntent 是测试用的一步建单：BeginIntent（自己的事务）+ CompleteIntent。产品代码走 order.Pay 的两段式。
+func (s *Service) CreateIntent(ctx context.Context, in CreateIntentInput) (IntentResult, error) {
+	var d IntentDraft
+	if err := s.tx.Do(ctx, func(ctx context.Context) error {
+		var err error
+		d, err = s.BeginIntent(ctx, in)
+		return err
+	}); err != nil {
+		return IntentResult{}, err
+	}
+	return s.CompleteIntent(ctx, d)
+}
+
 func (e *env) createIntent(t *testing.T, ctx context.Context, providerCode string, orderID uuid.UUID, orderNo string, user uuid.UUID, amount string) IntentResult {
 	t.Helper()
 	amt := decimal.RequireFromString(amount)

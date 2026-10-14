@@ -103,6 +103,46 @@ func (r *Repo) SetIntentStatus(ctx context.Context, id uuid.UUID, from, to strin
 	return res.RowsAffected == 1, nil
 }
 
+// IntentFill 是渠道建单成功后回写到占位意图的收银台信息。
+type IntentFill struct {
+	HTTPMethod  string
+	RedirectURL string
+	FormFields  map[string]string
+	ProviderRef *string
+}
+
+// FillPlaceholderIntent 把占位意图（requires_action 且 redirect_url 为空）补上收银台信息；返回是否更新到一行（0 行 = 占位已被作废）。
+func (r *Repo) FillPlaceholderIntent(ctx context.Context, id uuid.UUID, f IntentFill) (bool, error) {
+	res := r.d.Conn(ctx).Model(&model.Intent{}).
+		Where("id = ? AND status = 'requires_action' AND redirect_url = ''", id).
+		Select("http_method", "redirect_url", "form_fields", "provider_ref", "updated_at").
+		Updates(&model.Intent{
+			HTTPMethod:  f.HTTPMethod,
+			RedirectURL: f.RedirectURL,
+			FormFields:  f.FormFields,
+			ProviderRef: f.ProviderRef,
+			UpdatedAt:   time.Now(),
+		})
+	if err := mapErr(res.Error); err != nil {
+		return false, err
+	}
+	return res.RowsAffected == 1, nil
+}
+
+// CancelPlaceholderIntent 作废还没补上收银台信息的占位意图（渠道建单失败时）；返回是否更新到一行。
+func (r *Repo) CancelPlaceholderIntent(ctx context.Context, id uuid.UUID) (bool, error) {
+	res := r.d.Conn(ctx).Model(&model.Intent{}).
+		Where("id = ? AND status = 'requires_action' AND redirect_url = ''", id).
+		Updates(map[string]any{
+			"status":     "cancelled",
+			"updated_at": gorm.Expr("now()"),
+		})
+	if err := mapErr(res.Error); err != nil {
+		return false, err
+	}
+	return res.RowsAffected == 1, nil
+}
+
 // CloseOrderIntents 订单名下所有 status = from 的意图改成 to；except 非 nil 时跳过那一个。返回改了几行。
 func (r *Repo) CloseOrderIntents(ctx context.Context, orderID uuid.UUID, except *uuid.UUID, from, to string) (int64, error) {
 	q := r.d.Conn(ctx).Model(&model.Intent{}).Where("order_id = ? AND status = ?", orderID, from)
