@@ -143,7 +143,7 @@ func (s *Service) Pull(ctx context.Context, req PullRequest) (PullResult, error)
 	}
 	res := PullResult{
 		Userinfo:           userinfoOf(row),
-		ContentDisposition: render.ContentDisposition(ProfileName(site.Name, label, plans[row.PlanID].Name)),
+		ContentDisposition: render.ContentDisposition(render.ProfileName(site.Name, label, plans[row.PlanID].Name)),
 	}
 
 	if verdict == pullExpired {

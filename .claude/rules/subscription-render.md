@@ -34,5 +34,5 @@ paths:
 - 改 gun 或 Host 匹配后跑 subscription-e2e 实连（见 `.claude/rules/pdnd-kernel.md` 互操作一节）
 
 ## 与 subscription 模块的边界
-- 配置名：`service.ProfileName` + `render.ContentDisposition`（`service/label.go`、`service/pull.go`）；门户 `client_name` 同口径。改名不 `notifyRoster`
+- 配置名：`render.ProfileName` + `render.ContentDisposition`（`render/profile.go`，调用处 `service/pull.go`、`service/portal.go`）；门户 `client_name` 同口径。改名不 `notifyRoster`
 - 主人账号非 active：拉取 `ErrPullDenied`（伪装 404），不给过期提示（`service/pull.go`）

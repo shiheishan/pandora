@@ -8,6 +8,7 @@ import (
 	"go.uber.org/zap"
 
 	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
+	"github.com/aegispanel/aegis/internal/module/subscription/render"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
 	"github.com/aegispanel/aegis/internal/pkg/realtime"
@@ -106,7 +107,7 @@ func mySubscription(sm Summary, plan catalogsvc.Plan, prices map[uuid.UUID]catal
 	if sm.Label != nil {
 		label = *sm.Label
 	}
-	v.ClientName = ProfileName(site, label, sm.PlanName)
+	v.ClientName = render.ProfileName(site, label, sm.PlanName)
 	return v
 }
 
@@ -174,7 +175,7 @@ func (s *Service) SetMyLabel(ctx context.Context, subID uuid.UUID, label *string
 		if err != nil {
 			return err
 		}
-		out = LabelResult{Label: newLabel, ClientName: ProfileName(site.Name, norm, plans[m.PlanID].Name)}
+		out = LabelResult{Label: newLabel, ClientName: render.ProfileName(site.Name, norm, plans[m.PlanID].Name)}
 		return s.writeAudit(ctx, ActionLabelChanged, m.ID, map[string]any{"label": newLabel})
 	})
 	return out, err
@@ -186,7 +187,7 @@ func (s *Service) labelTaken(ctx context.Context, userID, subID uuid.UUID, label
 	other, ok, err := s.repo.SubscriptionByLabel(ctx, userID, label, subID)
 	if err == nil && ok && other.Label != nil {
 		if plans, perr := s.catalog.PlansByIDs(ctx, []uuid.UUID{other.PlanID}); perr == nil {
-			msg = "这个名字已经用在「" + *other.Label + profileNameSeparator + plans[other.PlanID].Name + "」上了，换一个吧"
+			msg = "这个名字已经用在「" + *other.Label + render.ProfileNameSeparator + plans[other.PlanID].Name + "」上了，换一个吧"
 		}
 	}
 	e := errs.Newf(errs.Conflict, msg)

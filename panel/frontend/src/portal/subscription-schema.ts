@@ -47,7 +47,7 @@ export const subscriptionSchema = z.object({
   pack_remaining_bytes: z.number().int(),
   /** 用户起的备注名（subscriptions.label），没起为 null */
   label: z.string().nullable(),
-  /** App 里的配置名：「站点名 · 备注名」，没有备注名用套餐名（subscription.ProfileName，与下载头同源） */
+  /** App 里的配置名：「站点名 · 备注名」，没有备注名用套餐名（render.ProfileName（订阅模块），与下载头同源） */
   client_name: z.string(),
   /** 能付费换套餐（billing.subscriptionAcceptsPaidChange）：与 renewable 同口径，但不看 allow_renewal */
   changeable: z.boolean(),
