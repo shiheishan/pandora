@@ -75,7 +75,7 @@ jobs:
           cache-dependency-path: |
             panel/go.sum
             pdnd/go.sum
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
