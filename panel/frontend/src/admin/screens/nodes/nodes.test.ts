@@ -86,6 +86,11 @@ const row = (over: Partial<Record<string, unknown>> = {}): NodeDetail =>
     mem_percent: null,
     metrics_at: null,
     granted_plans: null,
+    tags: null,
+    traffic: { limit_bytes: null, reset_day: null, used_bytes: 0, reset_at: '2026-10-01T00:00:00Z', exceeded_at: null },
+    traffic_rate_schedule: null,
+    relay_count: 0,
+    ech_enabled: false,
     ...over,
   })
 
@@ -96,6 +101,9 @@ describe('schemas', () => {
     expect(SCHEMAS.some((s) => s.status === 'legacy-read-compatible' || s.node_type === 'v2ray' || s.node_type === 'hysteria')).toBe(false)
     expect(schemaOf('socks').required).toEqual([])
     expect(row().granted_plans).toEqual([])
+    // 标签与时段倍率：Go 的 nil 切片按 null 来也归一成 []
+    expect(row().tags).toEqual([])
+    expect(row().traffic_rate_schedule).toEqual([])
   })
 
   it('keeps the edit-form fields out of the list row shape', () => {
