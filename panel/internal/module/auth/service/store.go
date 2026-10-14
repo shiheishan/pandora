@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aegispanel/aegis/internal/pkg/ratelimit"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
@@ -94,11 +95,12 @@ const (
 
 // sessionStore 封装会话相关的 Redis 读写；每个方法一次往返（list 除外）。
 type sessionStore struct {
-	rdb *redis.Client
+	rdb      *redis.Client
+	attempts *ratelimit.Counter // 试错计数，见 ratelimit.Counter
 }
 
 func newSessionStore(rdb *redis.Client) *sessionStore {
-	return &sessionStore{rdb: rdb}
+	return &sessionStore{rdb: rdb, attempts: ratelimit.NewCounter(rdb)}
 }
 
 // 建会话：纪元与登录前读到的值不同（期间改过密、被停用）就不建，返回 0。
@@ -460,47 +462,6 @@ func (st *sessionStore) consumeQuickLogin(ctx context.Context, hash, aud string,
 		return "", uuid.Nil, false, nil
 	}
 	return toString(res[1]), uid, true, nil
-}
-
-// 先占名额再验：INCR；第一次设窗口期；到阈值（ARGV[2] > 0 时）那一次把期限改成暂停时长。
-// 返回 {累计次数（含本次）, 剩余秒数}。并发请求各占一个名额，绕不过上限。
-var claimScript = redis.NewScript(`
-local n = redis.call('INCR', KEYS[1])
-if n == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end
-local th = tonumber(ARGV[2])
-if th > 0 and n == th then redis.call('EXPIRE', KEYS[1], ARGV[3]) end
-return {n, redis.call('TTL', KEYS[1])}
-`)
-
-// claimAttempt 占一次试错名额，返回窗口内累计次数（含本次）与剩余期限。
-// threshold 为 0 时不改期限；否则第 threshold 次把期限改成 pause。
-func (st *sessionStore) claimAttempt(ctx context.Context, key string, window time.Duration,
-	threshold int, pause time.Duration) (int, time.Duration, error) {
-	res, err := claimScript.Run(ctx, st.rdb, []string{key},
-		int64(window/time.Second), threshold, int64(pause/time.Second)).Int64Slice()
-	if err != nil {
-		return 0, 0, err
-	}
-	if len(res) != 2 {
-		return 0, 0, fmt.Errorf("试错计数脚本返回 %d 项", len(res))
-	}
-	return int(res[0]), time.Duration(res[1]) * time.Second, nil
-}
-
-// clearAttempts 成功后清掉试错计数。
-func (st *sessionStore) clearAttempts(ctx context.Context, key string) error {
-	return st.rdb.Del(ctx, key).Err()
-}
-
-// 退名额：键还在才 DECR（过期后不留下负数的新键）。
-var releaseScript = redis.NewScript(`
-if redis.call('EXISTS', KEYS[1]) == 1 then return redis.call('DECR', KEYS[1]) end
-return 0
-`)
-
-// releaseAttempt 退回一次名额（校验没有结论，或口令其实是对的）。
-func (st *sessionStore) releaseAttempt(ctx context.Context, key string) error {
-	return releaseScript.Run(ctx, st.rdb, []string{key}).Err()
 }
 
 // 全部键都不存在时才一起 SET EX 并返回 1；否则返回 0、什么都不写。

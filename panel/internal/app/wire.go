@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -60,9 +59,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/aegispanel/aegis/internal/pkg/redisx"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
-	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
-	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
 
@@ -269,14 +266,6 @@ func buildServices(r *runtime) (*services, error) {
 	giftcardSvc.UsePlanChangeValuer(orderSvc)
 	giftcardSvc.UsePaidHistory(orderSvc)
 	giftcardSvc.UseReferrals(identitySvc)
-	if missing := giftcardSvc.MissingPorts(); len(missing) > 0 {
-		_ = queue.Close()
-		return nil, fmt.Errorf("giftcard 缺少装配: %v", missing)
-	}
-	if missing := commissionSvc.MissingPorts(); len(missing) > 0 {
-		_ = queue.Close()
-		return nil, fmt.Errorf("commission 缺少装配: %v", missing)
-	}
 	// 工单：提单人与客服的邮箱、显示名经 identity，可指派客服是 auth 的管理员名单；
 	// 关联订单经 order 校验归属（建单时存下订单号），队列与详情的在用套餐经 subscription 批量读；审计页显示工单号
 	supportSvc := supportsvc.New(supportrepo.New(r.db), txm, auditSvc, idemSvc, identitySvc, authSvc)
@@ -292,10 +281,6 @@ func buildServices(r *runtime) (*services, error) {
 	// 客服公开回复后，在回复的同一事务里经 notify 给提单人写「工单有新回复」
 	supportSvc.UseReplyNotifier(supportReplyNotifier{n: notifySvc})
 	auditSvc.UseResourceLabeler(supportsvc.ResourceTicket, supportSvc.TicketLabels)
-	if missing := supportSvc.MissingPorts(); len(missing) > 0 {
-		_ = queue.Close()
-		return nil, fmt.Errorf("support 缺少装配: %v", missing)
-	}
 
 	// 通知：扫描与公告定向要读用户、套餐、订阅，支付成功通知读最近履约的订单；Telegram webhook 地址由对外地址拼出
 	notifySvc.UseDirectory(identitySvc)
@@ -303,10 +288,6 @@ func buildServices(r *runtime) (*services, error) {
 	notifySvc.UseSubscriptions(subSvc)
 	notifySvc.UseOrders(orderSvc)
 	notifySvc.UsePublicBaseURL(cfg.PublicBaseURL)
-	if missing := notifySvc.MissingPorts(); len(missing) > 0 {
-		_ = queue.Close()
-		return nil, fmt.Errorf("notify 缺少装配: %v", missing)
-	}
 
 	// 插件钩子：六个发事件的模块在业务事务里经 plugin 写待投递记录，提交后入队 plugin:dispatch；
 	// 钩子地址允许 http 与内网只在开发环境（防 SSRF）
@@ -318,18 +299,6 @@ func buildServices(r *runtime) (*services, error) {
 	supportSvc.UsePluginEvents(pluginSvc)
 	giftcardSvc.UsePluginEvents(pluginSvc)
 	notifySvc.UsePluginEvents(pluginSvc)
-	for _, m := range []struct {
-		name string
-		svc  interface{ PluginEventsWired() bool }
-	}{
-		{"order", orderSvc}, {"subscription", subSvc}, {"identity", identitySvc},
-		{"support", supportSvc}, {"giftcard", giftcardSvc}, {"notify", notifySvc},
-	} {
-		if !m.svc.PluginEventsWired() {
-			_ = queue.Close()
-			return nil, fmt.Errorf("%s 缺少装配: 插件事件口", m.name)
-		}
-	}
 	// 看板与营收报表：数字一律经各属主模块的聚合读；report 只拥有报表调整与按天行为汇总两张表
 	reportSvc := reportsvc.New(reportrepo.New(r.db), txm, auditSvc, reportsvc.Deps{
 		Settings: settingsSvc, Users: identitySvc, Subscriptions: subSvc, Nodes: nodeSvc, Ledger: ledgerSvc,
@@ -337,9 +306,16 @@ func buildServices(r *runtime) (*services, error) {
 		Activity: auditSvc, Redis: reportRedis{c: r.redis},
 	}, reportsvc.Options{BackupDir: cfg.Backup.Dir})
 	reportSvc.UseCache(r.redis)
-	if missing := reportSvc.MissingPorts(); len(missing) > 0 {
+
+	// 装配自检：所有带 Use* 注入的 service 在这里统一检查必需端口（各自的 MissingPorts），缺了就拒绝启动
+	if err := checkPorts([]portCheck{
+		{"settings", settingsSvc}, {"audit", auditSvc}, {"identity", identitySvc}, {"catalog", catalogSvc},
+		{"promo", promoSvc}, {"subscription", subSvc}, {"payment", paymentSvc}, {"order", orderSvc},
+		{"commission", commissionSvc}, {"giftcard", giftcardSvc}, {"node", nodeSvc}, {"support", supportSvc},
+		{"notify", notifySvc}, {"report", reportSvc},
+	}); err != nil {
 		_ = queue.Close()
-		return nil, fmt.Errorf("report 缺少装配: %v", missing)
+		return nil, err
 	}
 
 	return &services{
@@ -391,56 +367,22 @@ func newIssuer(domain jwtx.Domain, current, previous config.Secret, ttl time.Dur
 	return jwtx.NewIssuer(domain, []byte(current.Reveal()), prev, ttl)
 }
 
-// supportOrders 让 support 经 order 校验门户用户关联的订单：MyOrder 按 ctx 里的门户主体限定本人，
-// 不存在或不是本人的回 errs.NotFound。
-type supportOrders struct{ o *ordersvc.Service }
-
-// OwnedOrderNo 返回门户主体名下这张订单的订单号。
-func (a supportOrders) OwnedOrderNo(ctx context.Context, orderID uuid.UUID) (string, error) {
-	d, err := a.o.MyOrder(ctx, orderID)
-	if err != nil {
-		return "", err
-	}
-	return d.Order.OrderNo, nil
+// portCheck 是装配自检的一项：带 Use* 注入的 service 实现 MissingPorts，返回还没注入的必需端口名。
+type portCheck struct {
+	name string
+	svc  interface{ MissingPorts() []string }
 }
 
-// supportPlans 让 support 经 subscription 批量取提单人当前生效订阅的套餐名（与订阅的「当前订阅」同一口径）。
-type supportPlans struct{ s *subsvc.Service }
-
-// ActivePlanNames 返回当前订阅生效的用户的套餐名；没有生效订阅的用户不在结果里。
-func (a supportPlans) ActivePlanNames(ctx context.Context, userIDs []uuid.UUID) (map[uuid.UUID]string, error) {
-	sums, err := a.s.SummariesByUsers(ctx, userIDs)
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[uuid.UUID]string, len(sums))
-	for id, us := range sums {
-		if us.Current != nil && us.Current.State == subsvc.StateLive {
-			out[id] = us.Current.PlanName
+// checkPorts 汇总各 service 缺的必需端口；有缺的返回一条列出全部缺口的错误。
+func checkPorts(checks []portCheck) error {
+	var problems []string
+	for _, c := range checks {
+		if missing := c.svc.MissingPorts(); len(missing) > 0 {
+			problems = append(problems, fmt.Sprintf("%s %v", c.name, missing))
 		}
 	}
-	return out, nil
+	if len(problems) > 0 {
+		return fmt.Errorf("缺少装配: %s", strings.Join(problems, "; "))
+	}
+	return nil
 }
-
-// supportReplyNotifier 让 support 经 notify 给提单人写「工单有新回复」；去重键按回复 id，同一条回复只通知一次。
-type supportReplyNotifier struct{ n *notifysvc.Service }
-
-// TicketReplied 在调用方事务里写通知。
-func (a supportReplyNotifier) TicketReplied(ctx context.Context, n supportsvc.ReplyNotice) error {
-	return a.n.NotifyUser(ctx, n.UserID, notifysvc.TemplateTicketReplied,
-		map[string]string{"subject": n.Subject}, "ticket-replied:"+n.MessageID.String())
-}
-
-var (
-	_ supportsvc.Orders        = supportOrders{}
-	_ supportsvc.PlanNames     = supportPlans{}
-	_ supportsvc.ReplyNotifier = supportReplyNotifier{}
-)
-
-// reportRedis 让 report 的系统状态页探测 Redis 是否可达。
-type reportRedis struct{ c *redis.Client }
-
-// Ping 做一次 PING 往返。
-func (a reportRedis) Ping(ctx context.Context) error { return redisx.Ping(ctx, a.c) }
-
-var _ reportsvc.Pinger = reportRedis{}

@@ -174,7 +174,7 @@ func faceOf(c model.Coupon) Face {
 }
 
 func checkBasics(c model.Coupon, t Target, now time.Time) error {
-	if c.Status != model.CouponActive {
+	if c.Status != StatusActive {
 		return ErrCouponNotFound
 	}
 	if c.ValidFrom != nil && now.Before(*c.ValidFrom) {

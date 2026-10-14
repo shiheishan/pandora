@@ -23,6 +23,7 @@ import (
 	"github.com/aegispanel/aegis/internal/module/support/model"
 	"github.com/aegispanel/aegis/internal/module/support/repo"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/pluginevents"
 	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 )
@@ -129,7 +130,7 @@ type ReplyNotice struct {
 type Service struct {
 	repo     store
 	tx       txRunner
-	events   PluginEvents // 插件钩子出站事件，装配时注入（plugin_events.go）
+	events   pluginevents.Emitter // 插件钩子出站事件，装配时注入（plugin_events.go）
 	audit    auditWriter
 	idem     idempotency
 	users    Users
@@ -168,7 +169,7 @@ func (s *Service) UsePlanNames(p PlanNames) { s.plans = p }
 // UseReplyNotifier 接上客服回复通知（启动装配时调用）。
 func (s *Service) UseReplyNotifier(n ReplyNotifier) { s.notifier = n }
 
-// MissingPorts 返回没装配的必需端口名（app 启动时检查）。
+// MissingPorts 返回没装配的必需端口名（装配完成后由 internal/app 统一检查）。
 func (s *Service) MissingPorts() []string {
 	var out []string
 	if s.orders == nil {
@@ -179,6 +180,12 @@ func (s *Service) MissingPorts() []string {
 	}
 	if s.notifier == nil {
 		out = append(out, "ReplyNotifier")
+	}
+	if s.events == nil {
+		out = append(out, "PluginEvents")
+	}
+	if s.rt == nil {
+		out = append(out, "Realtime")
 	}
 	return out
 }

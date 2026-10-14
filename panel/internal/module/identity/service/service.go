@@ -17,6 +17,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/geoip"
+	"github.com/aegispanel/aegis/internal/pkg/pluginevents"
 	"github.com/aegispanel/aegis/internal/pkg/ratelimit"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 	"github.com/google/uuid"
@@ -43,7 +44,7 @@ type txRunner interface {
 type Service struct {
 	repo     *repo.Repo
 	tx       txRunner
-	events   PluginEvents // 插件钩子出站事件，装配时注入（plugin_events.go）
+	events   pluginevents.Emitter // 插件钩子出站事件，装配时注入（plugin_events.go）
 	settings settingsReader
 	audit    auditWriter
 	keys     *crypto.Keys
@@ -197,4 +198,32 @@ var (
 // errCodeInvalid 是找回密码第 2 步一切「对不上」的统一回应：没有验证码、过期、次数用完、账号不可用。
 func errCodeInvalid() error {
 	return errs.Invalid(map[string]string{"code": "验证码错误或已失效，请重新获取"})
+}
+
+// MissingPorts 返回还没注入的必需端口名（装配完成后由 internal/app 统一检查）。
+// 不算必需：geo（没放 IP 归属地数据文件时就是 nil，归属地留空）。
+func (s *Service) MissingPorts() []string {
+	var out []string
+	for _, p := range []struct {
+		name string
+		ok   bool
+	}{
+		{"SessionRevoker", s.revoker != nil},
+		{"AdminGuard", s.adminGuard != nil},
+		{"StaffGuard", s.staff != nil},
+		{"VerificationMailer", s.mailer != nil},
+		{"RosterNotifier", s.roster != nil},
+		{"OpsSubscriptions", s.subs != nil},
+		{"OpsOrders", s.orders != nil},
+		{"OpsWallets", s.wallets != nil},
+		{"OpsTelegram", s.telegram != nil},
+		{"OpsGroupUsage", s.groupUsage != nil},
+		{"JobQueue", s.queue != nil},
+		{"PluginEvents", s.events != nil},
+	} {
+		if !p.ok {
+			out = append(out, p.name)
+		}
+	}
+	return out
 }

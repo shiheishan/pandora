@@ -202,3 +202,21 @@ func (s *Service) viewerGroup(ctx context.Context, userID *uuid.UUID) (*uuid.UUI
 	}
 	return s.users.UserGroupID(ctx, *userID)
 }
+
+// MissingPorts 返回还没注入的必需端口名（装配完成后由 internal/app 统一检查）。
+func (s *Service) MissingPorts() []string {
+	var out []string
+	for _, p := range []struct {
+		name string
+		ok   bool
+	}{
+		{"PublishGate", s.gate != nil},
+		{"PoolGuard", s.pools != nil},
+		{"Realtime", s.rt != nil},
+	} {
+		if !p.ok {
+			out = append(out, p.name)
+		}
+	}
+	return out
+}

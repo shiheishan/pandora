@@ -21,6 +21,7 @@ import (
 	"github.com/aegispanel/aegis/internal/module/notify/repo"
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
+	"github.com/aegispanel/aegis/internal/pkg/pluginevents"
 	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 	"github.com/google/uuid"
@@ -111,7 +112,7 @@ var _ store = (*repo.Repo)(nil)
 type Service struct {
 	store    store
 	tx       txRunner
-	events   PluginEvents // 插件钩子出站事件，装配时注入（plugin_events.go）
+	events   pluginevents.Emitter // 插件钩子出站事件，装配时注入（plugin_events.go）
 	settings Settings
 	audit    auditWriter
 	queue    Queue

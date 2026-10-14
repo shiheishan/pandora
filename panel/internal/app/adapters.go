@@ -8,11 +8,17 @@ import (
 	identitysvc "github.com/aegispanel/aegis/internal/module/identity/service"
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
 	nodesvc "github.com/aegispanel/aegis/internal/module/node/service"
+	notifysvc "github.com/aegispanel/aegis/internal/module/notify/service"
 	ordersvc "github.com/aegispanel/aegis/internal/module/order/service"
 	promosvc "github.com/aegispanel/aegis/internal/module/promo/service"
+	reportsvc "github.com/aegispanel/aegis/internal/module/report/service"
+	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
+	supportsvc "github.com/aegispanel/aegis/internal/module/support/service"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/redisx"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"github.com/shopspring/decimal"
 )
 
@@ -188,3 +194,57 @@ func (a groupUsageAdapter) GroupUsage(ctx context.Context) (map[uuid.UUID]identi
 	}
 	return out, nil
 }
+
+// supportOrders 让 support 经 order 校验门户用户关联的订单：MyOrder 按 ctx 里的门户主体限定本人，
+// 不存在或不是本人的回 errs.NotFound。
+type supportOrders struct{ o *ordersvc.Service }
+
+// OwnedOrderNo 返回门户主体名下这张订单的订单号。
+func (a supportOrders) OwnedOrderNo(ctx context.Context, orderID uuid.UUID) (string, error) {
+	d, err := a.o.MyOrder(ctx, orderID)
+	if err != nil {
+		return "", err
+	}
+	return d.Order.OrderNo, nil
+}
+
+// supportPlans 让 support 经 subscription 批量取提单人当前生效订阅的套餐名（与订阅的「当前订阅」同一口径）。
+type supportPlans struct{ s *subsvc.Service }
+
+// ActivePlanNames 返回当前订阅生效的用户的套餐名；没有生效订阅的用户不在结果里。
+func (a supportPlans) ActivePlanNames(ctx context.Context, userIDs []uuid.UUID) (map[uuid.UUID]string, error) {
+	sums, err := a.s.SummariesByUsers(ctx, userIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[uuid.UUID]string, len(sums))
+	for id, us := range sums {
+		if us.Current != nil && us.Current.State == subsvc.StateLive {
+			out[id] = us.Current.PlanName
+		}
+	}
+	return out, nil
+}
+
+// supportReplyNotifier 让 support 经 notify 给提单人写「工单有新回复」；去重键按回复 id，同一条回复只通知一次。
+type supportReplyNotifier struct{ n *notifysvc.Service }
+
+// TicketReplied 在调用方事务里写通知。
+func (a supportReplyNotifier) TicketReplied(ctx context.Context, n supportsvc.ReplyNotice) error {
+	return a.n.NotifyUser(ctx, n.UserID, notifysvc.TemplateTicketReplied,
+		map[string]string{"subject": n.Subject}, "ticket-replied:"+n.MessageID.String())
+}
+
+var (
+	_ supportsvc.Orders        = supportOrders{}
+	_ supportsvc.PlanNames     = supportPlans{}
+	_ supportsvc.ReplyNotifier = supportReplyNotifier{}
+)
+
+// reportRedis 让 report 的系统状态页探测 Redis 是否可达。
+type reportRedis struct{ c *redis.Client }
+
+// Ping 做一次 PING 往返。
+func (a reportRedis) Ping(ctx context.Context) error { return redisx.Ping(ctx, a.c) }
+
+var _ reportsvc.Pinger = reportRedis{}

@@ -202,7 +202,8 @@ func newService(r store, txm txRunner, audit auditWriter, deps Deps, opt Options
 	}
 }
 
-// MissingPorts 返回没装配的端口名（app 启动时检查）。
+// MissingPorts 返回没装配的必需端口名（装配完成后由 internal/app 统一检查）。
+// 不算必需：streams（UseStreams 只在 serve 里注入 SSE hub，worker 与 admin 子命令没有）。
 func (s *Service) MissingPorts() []string {
 	d := s.deps
 	var out []string
@@ -222,6 +223,7 @@ func (s *Service) MissingPorts() []string {
 		{"Notices", d.Notices != nil},
 		{"Activity", d.Activity != nil},
 		{"Redis", d.Redis != nil},
+		{"Cache", s.rdb != nil},
 	} {
 		if !p.ok {
 			out = append(out, p.name)

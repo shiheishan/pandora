@@ -26,6 +26,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/money"
+	"github.com/aegispanel/aegis/internal/pkg/pluginevents"
 	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 )
@@ -116,7 +117,7 @@ type auditWriter interface {
 type Service struct {
 	repo     *repo.Repo
 	tx       txRunner
-	events   PluginEvents // 插件钩子出站事件，装配时注入（plugin_events.go）
+	events   pluginevents.Emitter // 插件钩子出站事件，装配时注入（plugin_events.go）
 	catalog  Catalog
 	ledger   Ledger
 	promo    Promo
@@ -207,4 +208,22 @@ func actorFrom(p authn.Principal) Actor {
 		return Actor{Kind: ActorAdmin, ID: &id}
 	}
 	return Actor{Kind: ActorUser, ID: &id}
+}
+
+// MissingPorts 返回还没注入的必需端口名（装配完成后由 internal/app 统一检查）。
+func (s *Service) MissingPorts() []string {
+	var out []string
+	for _, p := range []struct {
+		name string
+		ok   bool
+	}{
+		{"PaidHook", s.hook != nil},
+		{"PluginEvents", s.events != nil},
+		{"Realtime", s.rt != nil},
+	} {
+		if !p.ok {
+			out = append(out, p.name)
+		}
+	}
+	return out
 }

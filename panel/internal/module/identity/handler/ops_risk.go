@@ -3,6 +3,7 @@ package handler
 import (
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
+	"github.com/aegispanel/aegis/internal/pkg/pagination"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
@@ -22,12 +23,17 @@ func (h *Handler) userProfile(c *gin.Context) {
 }
 
 func (h *Handler) accessLog(c *gin.Context) {
+	limit, offset, err := pagination.Parse(c, 50, 200)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
 	var q accessLogQuery
 	if err := httpx.BindQuery(c, &q); err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	items, err := h.svc.AccessLog(c.Request.Context(), q.toQuery())
+	items, err := h.svc.AccessLog(c.Request.Context(), q.toQuery(limit, offset))
 	if err != nil {
 		httpx.Fail(c, err)
 		return

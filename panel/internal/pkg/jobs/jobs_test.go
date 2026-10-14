@@ -149,3 +149,63 @@ func TestPeriodicTaskFreshReqIDPerRun(t *testing.T) {
 		t.Fatalf("expected different req_ids, got %q == %q", id1, id2)
 	}
 }
+
+func TestPurgeInBatchesStopsOnShortBatch(t *testing.T) {
+	counts := []int64{10, 10, 3, 10}
+	var limits []int
+	total, err := PurgeInBatches(context.Background(), 10, 100, func(_ context.Context, limit int) (int64, error) {
+		limits = append(limits, limit)
+		n := counts[len(limits)-1]
+		return n, nil
+	})
+	if err != nil || total != 23 {
+		t.Fatalf("total=%d err=%v，want 23", total, err)
+	}
+	if len(limits) != 3 {
+		t.Fatalf("调用 %d 次，want 3（第三批不满就停）", len(limits))
+	}
+	for i, l := range limits {
+		if l != 10 {
+			t.Fatalf("第 %d 次 limit=%d want 10", i+1, l)
+		}
+	}
+}
+
+func TestPurgeInBatchesCapsAtMaxBatches(t *testing.T) {
+	calls := 0
+	total, err := PurgeInBatches(context.Background(), 5, 4, func(_ context.Context, limit int) (int64, error) {
+		calls++
+		return int64(limit), nil
+	})
+	if err != nil || calls != 4 || total != 20 {
+		t.Fatalf("calls=%d total=%d err=%v，want 4 次合计 20", calls, total, err)
+	}
+}
+
+func TestPurgeInBatchesReturnsPartialOnError(t *testing.T) {
+	boom := errors.New("删失败")
+	calls := 0
+	total, err := PurgeInBatches(context.Background(), 5, 10, func(_ context.Context, limit int) (int64, error) {
+		calls++
+		if calls == 2 {
+			return 0, boom
+		}
+		return int64(limit), nil
+	})
+	if !errors.Is(err, boom) || total != 5 || calls != 2 {
+		t.Fatalf("calls=%d total=%d err=%v，want 第 2 次出错、合计 5", calls, total, err)
+	}
+}
+
+func TestPurgeInBatchesStopsOnCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	calls := 0
+	total, err := PurgeInBatches(ctx, 5, 10, func(_ context.Context, limit int) (int64, error) {
+		calls++
+		cancel()
+		return int64(limit), nil
+	})
+	if !errors.Is(err, context.Canceled) || calls != 1 || total != 5 {
+		t.Fatalf("calls=%d total=%d err=%v，want 取消后不再调", calls, total, err)
+	}
+}

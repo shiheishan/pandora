@@ -8,6 +8,7 @@ import (
 	idemsvc "github.com/aegispanel/aegis/internal/module/idempotency/service"
 	"github.com/aegispanel/aegis/internal/module/support/model"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/pluginevents"
 	"github.com/aegispanel/aegis/internal/pkg/realtime"
 )
 
@@ -93,7 +94,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Ticket, error) {
 		}); err != nil {
 			return err
 		}
-		if err := s.emitPlugin(ctx, "ticket.created", "ticket.created:"+t.ID.String(), map[string]any{"event": "ticket.created", "ticket_id": t.ID.String(), "ticket_no": t.TicketNo, "user_id": uid.String(), "category": t.Category, "priority": t.Priority, "subject": t.Subject}); err != nil {
+		if err := pluginevents.Emit(ctx, s.events, "ticket.created", "ticket.created:"+t.ID.String(), map[string]any{"event": "ticket.created", "ticket_id": t.ID.String(), "ticket_no": t.TicketNo, "user_id": uid.String(), "category": t.Category, "priority": t.Priority, "subject": t.Subject}); err != nil {
 			return err
 		}
 

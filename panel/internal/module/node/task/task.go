@@ -80,19 +80,14 @@ func (m *Module) retention(ctx context.Context, _ *asynq.Task) error {
 	var total int64
 
 	for _, table := range service.RetentionTables {
-		var tableDeleted int64
-		for batch := 0; batch < maxBatches; batch++ {
-			if err := ctx.Err(); err != nil {
+		tableDeleted, err := jobs.PurgeInBatches(ctx, purgeBatch, maxBatches, func(ctx context.Context, limit int) (int64, error) {
+			return m.svc.PurgeRetention(ctx, table, now, limit)
+		})
+		if err != nil {
+			if ctx.Err() != nil {
 				return err
 			}
-			n, err := m.svc.PurgeRetention(ctx, table, now, purgeBatch)
-			if err != nil {
-				return fmt.Errorf("节点数据保留期清理 %s: %w", table, err)
-			}
-			tableDeleted += n
-			if n < int64(purgeBatch) {
-				break
-			}
+			return fmt.Errorf("节点数据保留期清理 %s: %w", table, err)
 		}
 		perTable[table] = tableDeleted
 		total += tableDeleted

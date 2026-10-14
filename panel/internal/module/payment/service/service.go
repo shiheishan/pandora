@@ -93,3 +93,12 @@ func New(r *repo.Repo, txm *tx.Manager, ledger *ledgersvc.Service, identity *ide
 
 // UseSettler 注册订单结算回调；order 构造时调用。没注册时收款入账一律报错回滚。
 func (s *Service) UseSettler(st Settler) { s.settler = st }
+
+// MissingPorts 返回还没注入的必需端口名（装配完成后由 internal/app 统一检查）。
+func (s *Service) MissingPorts() []string {
+	var out []string
+	if s.settler == nil {
+		out = append(out, "Settler")
+	}
+	return out
+}

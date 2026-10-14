@@ -28,8 +28,6 @@ const (
 const (
 	// FetchLogRetention 是拉取日志的保留期（与旧库相同；库函数 purge_subscription_fetch_log 也守着这个下限）。
 	FetchLogRetention = 31 * 24 * time.Hour
-	// fetchLogPurgeBatch 是保留期清理每批删除的行数。
-	fetchLogPurgeBatch = 5000
 
 	// failureSampleWindow 与 failureSamplesPerWindow：未认证失败每分钟最多落 60 行，同一来源每分钟最多 1 行。
 	// 后台仍能看到「有人在扫、从哪些来源扫」，写入量与扫描速度脱钩。
@@ -141,10 +139,10 @@ func (s *Service) recordUnauthenticated(ctx context.Context, d *Delivery, family
 	}
 }
 
-// PurgeFetchLogs 删一批超过保留期（31 天）的拉取日志（每批最多 5000 行），返回删除行数；删完返回 0。
-// 由保留期任务循环调用，直到返回值小于一批或到批数上限。拉取日志只追加，删除只经库函数。
-func (s *Service) PurgeFetchLogs(ctx context.Context) (int64, error) {
-	n, err := s.repo.PurgeFetchLogs(ctx, s.clock().Add(-FetchLogRetention), fetchLogPurgeBatch)
+// PurgeFetchLogs 删一批超过保留期（31 天）的拉取日志（最多 limit 行），返回删除行数。
+// 由保留期任务经 jobs.PurgeInBatches 分批调用。拉取日志只追加，删除只经库函数。
+func (s *Service) PurgeFetchLogs(ctx context.Context, limit int) (int64, error) {
+	n, err := s.repo.PurgeFetchLogs(ctx, s.clock().Add(-FetchLogRetention), limit)
 	if err != nil {
 		return 0, subErr(err)
 	}

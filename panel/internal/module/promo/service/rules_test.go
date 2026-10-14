@@ -56,7 +56,7 @@ func TestCheckBasicsOrder(t *testing.T) {
 
 	baseCoupon := func() model.Coupon {
 		return model.Coupon{
-			Status:         model.CouponActive,
+			Status:         StatusActive,
 			Currency:       "CNY",
 			MinOrderAmount: decimal.Zero,
 			MaxRedemptions: nil,
@@ -72,7 +72,7 @@ func TestCheckBasicsOrder(t *testing.T) {
 		want error
 	}{
 		{"正常", func(c *model.Coupon) {}, nil},
-		{"paused", func(c *model.Coupon) { c.Status = model.CouponPaused }, ErrCouponNotFound},
+		{"paused", func(c *model.Coupon) { c.Status = StatusPaused }, ErrCouponNotFound},
 		{"未开始", func(c *model.Coupon) { c.ValidFrom = ptrTime(future) }, ErrCouponNotFound},
 		{"已过期", func(c *model.Coupon) { c.ValidUntil = ptrTime(past) }, ErrCouponExpired},
 		{"容量用尽", func(c *model.Coupon) {
@@ -83,7 +83,7 @@ func TestCheckBasicsOrder(t *testing.T) {
 		{"币种不符", func(c *model.Coupon) { c.Currency = "USD" }, ErrCouponNotFound},
 		{"未达门槛", func(c *model.Coupon) { c.MinOrderAmount = dec("60.00") }, ErrCouponMinAmount},
 		{"暂停优先于过期", func(c *model.Coupon) {
-			c.Status = model.CouponPaused
+			c.Status = StatusPaused
 			c.ValidUntil = ptrTime(past)
 		}, ErrCouponNotFound},
 	}

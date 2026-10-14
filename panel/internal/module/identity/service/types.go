@@ -16,6 +16,15 @@ const (
 	StatusBanned    = "banned"
 )
 
+// 验证码用途（与迁移的 CHECK 一致）。
+const (
+	PurposeEmailVerify   = "email_verify"
+	PurposePasswordReset = "password_reset"
+)
+
+// RegistrationPending 是注册会话待验证的状态（消费后由 repo 的 SQL 改成 consumed）。
+const RegistrationPending = "pending"
+
 // 审计动作名（沿用旧代码）与资源类型。
 const (
 	ActionRegistered           = "user.registered"

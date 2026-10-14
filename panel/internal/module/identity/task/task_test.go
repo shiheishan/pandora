@@ -36,59 +36,6 @@ func (s *seqPurger) purge(ctx context.Context, before time.Time, batch int) (int
 	return n, nil
 }
 
-func TestPurgeAllSequence(t *testing.T) {
-	before := time.Now().Add(-1)
-	p := &seqPurger{counts: []int{5000, 5000, 10}}
-	total, err := purgeAll(context.Background(), before, p.purge)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if total != 10010 || len(p.calls) != 3 {
-		t.Fatalf("total=%d calls=%d", total, len(p.calls))
-	}
-}
-
-func TestPurgeAllStopsEarly(t *testing.T) {
-	p := &seqPurger{counts: []int{100}}
-	total, err := purgeAll(context.Background(), time.Now(), p.purge)
-	if err != nil || total != 100 || len(p.calls) != 1 {
-		t.Fatalf("total=%d calls=%d err=%v", total, len(p.calls), err)
-	}
-}
-
-func TestPurgeAllErrorReturnsPartial(t *testing.T) {
-	p := &seqPurger{counts: []int{5000, -1}}
-	total, err := purgeAll(context.Background(), time.Now(), p.purge)
-	if err == nil || total != 5000 || len(p.calls) != 2 {
-		t.Fatalf("total=%d calls=%d err=%v", total, len(p.calls), err)
-	}
-}
-
-func TestPurgeAllMaxBatches(t *testing.T) {
-	counts := make([]int, maxBatches+5)
-	for i := range counts {
-		counts[i] = purgeBatch
-	}
-	p := &seqPurger{counts: counts}
-	_, err := purgeAll(context.Background(), time.Now(), p.purge)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(p.calls) != maxBatches {
-		t.Fatalf("calls=%d want %d", len(p.calls), maxBatches)
-	}
-}
-
-func TestPurgeAllCanceledContext(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	p := &seqPurger{counts: []int{5000}}
-	total, err := purgeAll(ctx, time.Now(), p.purge)
-	if !errors.Is(err, context.Canceled) || total != 0 || len(p.calls) != 0 {
-		t.Fatalf("total=%d calls=%d err=%v", total, len(p.calls), err)
-	}
-}
-
 type retentionFake struct {
 	reg       seqPurger
 	codes     seqPurger

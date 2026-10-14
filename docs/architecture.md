@@ -222,7 +222,7 @@ identity, auth ─► settings, audit
 
 ### 5.4 状态机
 
-每个状态机在 service 里写成一张转换表，加一个纯函数 `CanTransition(from, to)`；repo 的状态更新带上 `WHERE status = 旧状态`，影响 0 行就当并发冲突。库里只保留 `CHECK (status IN (…))`。
+守卫以 SQL 条件更新为准：repo 的状态更新带上 `WHERE status = 旧状态`，影响 0 行就当并发冲突；库里只保留 `CHECK (status IN (…))`。只有代码里确实要按状态分支时（先判断当前状态能不能转、不能转回不同的错误），才在 service 里写一张转换表加纯函数 `CanTransition(from, to)`（现有：catalog 的套餐与价格、node 的节点与服务器、payment 的支付意图与挂账案、subscription、support、giftcard、promo、certs、commission）；没有调用方的转换表不写。
 
 佣金的两个状态机比旧代码简化：
 - 佣金条目：pending → available（解冻）、pending → voided（复核作废，终态）。没有 reversed。需要人工复核的条目（同源、同源检查失败或未装配、解冻时待结科目余额不足）标 `review_required`，停在 pending、不参与自动解冻；后台在「待复核佣金」里处理（`POST /commission/entries/:id/review`，RequireAuth → RecentReauth，不挂幂等，只对 `status = 'pending' AND review_required` 的条目有效，否则 409）：
@@ -472,7 +472,7 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 | 门户与后台实时推送 | Redis pub/sub `rt:*`，事件带 user_id，由 hub 路由。serve 和 worker 都直接发布，不再经过 PG NOTIFY |
 | 节点下发 | 改了名单相关数据（订阅、配额、流量包、用户状态、节点池、用户组、节点配置、服务器）的属主 service，调 `node.Service.MarkUsersChanged(ctx, scope)` 或 `MarkConfigChanged`；提交后 `INCR node:users_epoch` 再 PUBLISH。会话管理器收到通知就重算；另外每 5 秒读一次纪元值，与上次不同也重算。所以丢一条 pub/sub 最多晚 5 秒，Redis 断开时同样退回 5 秒比对（读不到纪元就每 15 秒全量比对一次） |
 | 名单重算的成本 | 按「服务器 × 名单内容哈希」共享编码，一次变更每个版本只编码一次 |
-| 进程内缓存 | `hashicorp/golang-lru/v2/expirable` 加 `golang.org/x/sync/singleflight`，统一替换四处自写缓存 |
+| 进程内缓存 | 键会随输入增长的多键缓存用 `hashicorp/golang-lru/v2/expirable`（有上限、按最近最少使用淘汰）：IP 归属地（`internal/pkg/geoip`，不过期）、订阅线路微缓存（node `delivery_cache.go`，5 秒，加 `golang.org/x/sync/singleflight` 合并同键未命中）。键固定且很少的缓存保留手写的「值 + 锁 / 原子指针」：settings 降级开关、订阅路径前缀、pdnd 产物摘要 |
 | 手工改库 | 不再有触发器兜底。手工 SQL 改了名单相关的表，要等下一次纪元变化或 15 秒全量比对；运维文档写明这一点 |
 
 ---

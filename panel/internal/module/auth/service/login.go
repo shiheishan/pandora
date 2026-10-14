@@ -58,7 +58,7 @@ func (s *Service) Login(ctx context.Context, audience, email, password string) (
 	}
 	key := failureKey(u0.ID, eh)
 
-	n, ttl, err := s.sessions.claimAttempt(ctx, key, failureWindow, failureThreshold, failurePause)
+	n, ttl, err := s.sessions.attempts.Incr(ctx, key, failureWindow, failureThreshold, failurePause)
 	if err != nil {
 		return Tokens{}, errs.Wrap(errs.Unavailable, err)
 	}
@@ -75,11 +75,11 @@ func (s *Service) Login(ctx context.Context, audience, email, password string) (
 	t, counted, err := s.login(ctx, audience, email, password, eh, u0.ID)
 	switch {
 	case err == nil:
-		if cerr := s.sessions.clearAttempts(ctx, key); cerr != nil {
+		if cerr := s.sessions.attempts.Reset(ctx, key); cerr != nil {
 			plog.From(ctx).Warn("清除登录失败计数失败", zap.Error(cerr))
 		}
 	case !counted:
-		if rerr := s.sessions.releaseAttempt(ctx, key); rerr != nil {
+		if rerr := s.sessions.attempts.Release(ctx, key); rerr != nil {
 			plog.From(ctx).Warn("退回登录失败名额失败", zap.Error(rerr))
 		}
 	}
@@ -203,7 +203,7 @@ func (s *Service) login(ctx context.Context, audience, email, password, eh strin
 
 // ClearLoginFailures 清掉该账号的登录失败计数与暂停（pandora admin reset-password 成功后调用：运维重置口令就是要恢复登录）。
 func (s *Service) ClearLoginFailures(ctx context.Context, userID uuid.UUID) error {
-	if err := s.sessions.clearAttempts(ctx, failureKey(userID, "")); err != nil {
+	if err := s.sessions.attempts.Reset(ctx, failureKey(userID, "")); err != nil {
 		return errs.Wrap(errs.Unavailable, err)
 	}
 	return nil

@@ -84,3 +84,34 @@ func New(r *repo.Repo, txm *tx.Manager, audit *auditsvc.Service, rdb *redis.Clie
 	return &Service{repo: r, tx: txm, audit: audit, rdb: rdb, now: time.Now,
 		lineCache: newDeliveryCache(deliveryCacheSize, deliveryCacheTTL)}
 }
+
+// MissingPorts 返回还没注入的必需端口名（装配完成后由 internal/app 统一检查）。
+// 不算必需：sessions 与 enroll（节点通道只在 serve 里装配，见 app/node_channel.go，worker 与 admin 子命令没有）；
+// geo（没放 IP 归属地数据文件时就是 nil，归属地留空）；pdnd（UsePdndDist 是配置值，不是端口）。
+func (s *Service) MissingPorts() []string {
+	var out []string
+	for _, p := range []struct {
+		name string
+		ok   bool
+	}{
+		{"Catalog", s.catalog != nil},
+		{"UserGroups", s.groups != nil},
+		{"VersionsInUse", s.inUse != nil},
+		{"IdemCompleter", s.idem != nil},
+		{"TrafficCharger", s.charger != nil},
+		{"DeviceKeyHasher", s.keys != nil},
+		{"ServingSubscriptions", s.subs != nil},
+		{"ServingUsers", s.users != nil},
+		{"PlanVersions", s.versions != nil},
+		{"DeviceSettings", s.devSettings != nil},
+		{"DeviceSubscriptions", s.devSubs != nil},
+		{"DeviceUsers", s.devUsers != nil},
+		{"DevicePlans", s.devPlans != nil},
+		{"Realtime", s.rt != nil},
+	} {
+		if !p.ok {
+			out = append(out, p.name)
+		}
+	}
+	return out
+}

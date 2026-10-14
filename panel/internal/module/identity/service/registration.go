@@ -15,6 +15,7 @@ import (
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/pluginevents"
 	"github.com/aegispanel/aegis/internal/pkg/reqmeta"
 	"github.com/google/uuid"
 )
@@ -68,18 +69,18 @@ func (s *Service) StartRegistration(ctx context.Context, email, inviteCode strin
 		sess := model.RegistrationSession{
 			TokenHash: hashToken(token), Email: email, InviteCodeID: inviteCodeID,
 			IPHash: s.ipHash(meta.IP), UserAgent: truncateToPtr(meta.UserAgent, 512),
-			Status: model.RegistrationPending, ExpiresAt: expiresAt,
+			Status: RegistrationPending, ExpiresAt: expiresAt,
 		}
 		if err := s.repo.InsertRegistration(ctx, &sess); err != nil {
 			return err
 		}
 		if !taken && policy.EmailVerification {
 			// 同一邮箱此前没用掉的注册验证码一律作废，只认最新一条（与找回密码一致）。
-			if err := s.repo.ExpireCodes(ctx, model.PurposeEmailVerify, s.targetHash(email)); err != nil {
+			if err := s.repo.ExpireCodes(ctx, PurposeEmailVerify, s.targetHash(email)); err != nil {
 				return err
 			}
 			if err := s.repo.InsertCode(ctx, &model.VerificationCode{
-				Purpose: model.PurposeEmailVerify, TargetHash: s.targetHash(email),
+				Purpose: PurposeEmailVerify, TargetHash: s.targetHash(email),
 				CodeHash: s.codeHash(code), MaxAttempts: registrationMaxAttempts, ExpiresAt: expiresAt,
 			}); err != nil {
 				return err
@@ -121,7 +122,7 @@ func (s *Service) CompleteRegistration(ctx context.Context, token, code, passwor
 	if err != nil {
 		return User{}, err
 	}
-	if !ok || pre.Status != model.RegistrationPending || pre.Attempts >= registrationMaxAttempts {
+	if !ok || pre.Status != RegistrationPending || pre.Attempts >= registrationMaxAttempts {
 		return User{}, ErrRegistrationUnavailable
 	}
 	release, err := s.hasher.acquire(ctx, authn.AudiencePublic)
@@ -148,7 +149,7 @@ func (s *Service) CompleteRegistration(ctx context.Context, token, code, passwor
 		if err != nil {
 			return err
 		}
-		if !ok || sess.Status != model.RegistrationPending || sess.Attempts >= registrationMaxAttempts {
+		if !ok || sess.Status != RegistrationPending || sess.Attempts >= registrationMaxAttempts {
 			return ErrRegistrationUnavailable
 		}
 		if policy.Mode == settingssvc.RegistrationInviteOnly && sess.InviteCodeID == nil {
@@ -169,7 +170,7 @@ func (s *Service) CompleteRegistration(ctx context.Context, token, code, passwor
 				return incRegReject(ctx, s, sess.ID, &rejected)
 			}
 			target := s.targetHash(sess.Email)
-			vc, hit, err := s.repo.LockLatestCode(ctx, model.PurposeEmailVerify, target)
+			vc, hit, err := s.repo.LockLatestCode(ctx, PurposeEmailVerify, target)
 			if err != nil {
 				return err
 			}
@@ -182,7 +183,7 @@ func (s *Service) CompleteRegistration(ctx context.Context, token, code, passwor
 					return err
 				}
 				if vc.Attempts+1 >= vc.MaxAttempts {
-					if err := s.repo.ExpireCodes(ctx, model.PurposeEmailVerify, target); err != nil {
+					if err := s.repo.ExpireCodes(ctx, PurposeEmailVerify, target); err != nil {
 						return err
 					}
 				}
@@ -191,7 +192,7 @@ func (s *Service) CompleteRegistration(ctx context.Context, token, code, passwor
 			codeRow = &vc
 		}
 		now := s.now()
-		u := model.User{Email: sess.Email, Status: model.UserActive}
+		u := model.User{Email: sess.Email, Status: StatusActive}
 		if policy.EmailVerification {
 			u.EmailVerifiedAt = &now
 		}
@@ -235,7 +236,7 @@ func (s *Service) CompleteRegistration(ctx context.Context, token, code, passwor
 		if err := s.writeSelfAudit(ctx, u.ID, auditsvc.Event{Action: ActionRegistered}); err != nil {
 			return err
 		}
-		if err := s.emitPlugin(ctx, "user.registered", "user.registered:"+u.ID.String(), map[string]any{"event": "user.registered", "user_id": u.ID.String(), "email": u.Email}); err != nil {
+		if err := pluginevents.Emit(ctx, s.events, "user.registered", "user.registered:"+u.ID.String(), map[string]any{"event": "user.registered", "user_id": u.ID.String(), "email": u.Email}); err != nil {
 			return err
 		}
 		out = User{ID: u.ID, Email: u.Email, Status: u.Status, CreatedAt: u.CreatedAt}

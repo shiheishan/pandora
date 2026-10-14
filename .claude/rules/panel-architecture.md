@@ -20,7 +20,9 @@ paths:
 ## 模块与表属主
 - 每张表只有一个属主模块（表见 `docs/architecture.md` 4.1）。要别的模块的数据，调属主 service 的批量读方法，一条 SQL，不逐行查。
 - 依赖方向见 4.2。反向通知用构造时注入的接口或回调（如 order 的 `PaidHook` 回调 commission，subscription 的 `RosterNotifier` 由 node 实现），不反向 import、不造事件总线。
+- 插件事件口只有 `internal/pkg/pluginevents` 一套：发事件的模块持有 `pluginevents.Emitter` 字段（`UsePluginEvents` 注入），经 `pluginevents.Emit(ctx, s.events, …)` 发，不在模块里再定义事件接口或 nil 判断的包装。
 - 跨模块的适配（把一个模块的 service 包成另一个模块要的接口）集中在 `panel/internal/app/adapters.go`，装配在 `wire.go`。
+- 带 `Use*` 注入的 service 都实现 `MissingPorts() []string`：返回还没注入的必需端口名（端口名用接口类型名），可选端口（如只在 serve 里装的、可以是 nil 的、配置值）在方法注释里写明为什么不算。`wire.go` 的 `buildServices` 末尾经 `checkPorts` 统一检查，缺了就拒绝启动；新加带 `Use*` 的 service 要加进那张表，不在各处各写一份检查。
 
 ## 事务
 - 事务只经 `tx.Manager.Do`：ctx 里已有事务就加入，只有最外层提交。事务边界在 service 的公开方法；被别的 service 调的方法加入调用方事务。

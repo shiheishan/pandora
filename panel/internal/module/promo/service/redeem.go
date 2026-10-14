@@ -115,7 +115,7 @@ func (s *Service) Reserve(ctx context.Context, code string, t Target, o OrderRef
 			OrderNo:        strings.TrimSpace(o.No),
 			DiscountAmount: a.Discount,
 			Currency:       c.Currency,
-			Status:         model.RedemptionHeld,
+			Status:         RedemptionHeld,
 		})
 		if err != nil {
 			return err
@@ -161,7 +161,7 @@ func (s *Service) Release(ctx context.Context, orderID uuid.UUID, reason string)
 		if !CanTransition(RedemptionHeld, RedemptionReleased) {
 			return errs.Wrap(errs.Internal, errors.New("promo: 非法占用状态转换"))
 		}
-		couponID, ok, err := s.repo.FinishHeld(ctx, orderID, model.RedemptionReleased, reasonPtr)
+		couponID, ok, err := s.repo.FinishHeld(ctx, orderID, RedemptionReleased, reasonPtr)
 		if err != nil {
 			return err
 		}
@@ -185,7 +185,7 @@ func (s *Service) Capture(ctx context.Context, orderID uuid.UUID) error {
 		if !CanTransition(RedemptionHeld, RedemptionCaptured) {
 			return errs.Wrap(errs.Internal, errors.New("promo: 非法占用状态转换"))
 		}
-		couponID, ok, err := s.repo.FinishHeld(ctx, orderID, model.RedemptionCaptured, nil)
+		couponID, ok, err := s.repo.FinishHeld(ctx, orderID, RedemptionCaptured, nil)
 		if err != nil {
 			return err
 		}

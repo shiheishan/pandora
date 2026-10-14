@@ -464,6 +464,14 @@ func TestOpsAccessLogShape(t *testing.T) {
 	f := &opsFake{}
 	e, _ := opsEngine(f)
 	w := do(e, http.MethodGet, "/v1/access-log?category=login&limit=abc&offset=-3&user=u@example.test", "")
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid limit/offset status %d want 422", w.Code)
+	}
+	if f.lastAccess.Category != "" {
+		t.Fatalf("service should not be called on 422, query %+v", f.lastAccess)
+	}
+
+	w = do(e, http.MethodGet, "/v1/access-log?category=login&user=u@example.test", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d", w.Code)
 	}

@@ -39,7 +39,7 @@ func (f *fakeSvc) RollQuotas(ctx context.Context) (service.RollStats, error) {
 	return f.rollStats, f.rollErr
 }
 
-func (f *fakeSvc) PurgeFetchLogs(_ context.Context) (int64, error) {
+func (f *fakeSvc) PurgeFetchLogs(_ context.Context, _ int) (int64, error) {
 	f.purgeCalls++
 	if f.purgeErr != nil {
 		return 0, f.purgeErr
@@ -182,20 +182,21 @@ func TestRollQuotaWrapsError(t *testing.T) {
 	}
 }
 
-func TestRetentionLoopsUntilZero(t *testing.T) {
-	fp := &fakeSvc{purgeReturns: []int64{5000, 5000, 3, 0}}
+// 不满一批就停：5000、5000、3 共三次，不再多查一次空批。
+func TestRetentionStopsOnShortBatch(t *testing.T) {
+	fp := &fakeSvc{purgeReturns: []int64{purgeBatch, purgeBatch, 3, 0}}
 	if err := New(fp).retention(context.Background(), asynq.NewTask(TypeRetentionFetchLog, nil)); err != nil {
 		t.Fatalf("retention: %v", err)
 	}
-	if fp.purgeCalls != 4 {
-		t.Fatalf("calls=%d, want 4", fp.purgeCalls)
+	if fp.purgeCalls != 3 {
+		t.Fatalf("calls=%d, want 3", fp.purgeCalls)
 	}
 }
 
 func TestRetentionStopsAtMaxBatches(t *testing.T) {
 	full := make([]int64, maxPurgeBatches+5)
 	for i := range full {
-		full[i] = 1
+		full[i] = purgeBatch
 	}
 	fp := &fakeSvc{purgeReturns: full}
 	if err := New(fp).retention(context.Background(), asynq.NewTask(TypeRetentionFetchLog, nil)); err != nil {

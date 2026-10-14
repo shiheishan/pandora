@@ -12,8 +12,12 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/jobs"
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
+	"github.com/aegispanel/aegis/internal/pkg/pluginevents"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 )
+
+// Service 实现发事件模块注入的插件事件口。
+var _ pluginevents.Emitter = (*Service)(nil)
 
 // Emit 把一个事件排进所有启用且订阅了它的钩子的队列：只写一条 INSERT，不在业务事务里发网络请求。
 // ctx 带事务时就在调用方事务里写（事件与业务变更同生共死：订单回滚了却通知了插件，插件那边就多出一笔不存在的订单）；

@@ -27,6 +27,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/money"
+	"github.com/aegispanel/aegis/internal/pkg/pluginevents"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 )
 
@@ -112,7 +113,7 @@ type Referrals interface {
 type Service struct {
 	repo    *repo.Repo
 	tx      txRunner
-	events  PluginEvents // 插件钩子出站事件，装配时注入（plugin_events.go）
+	events  pluginevents.Emitter // 插件钩子出站事件，装配时注入（plugin_events.go）
 	audit   auditWriter
 	idem    idempotency
 	catalog Catalog
@@ -155,7 +156,7 @@ func (s *Service) UsePaidHistory(p PaidHistory) { s.paid = p }
 // UseReferrals 注册邀请关系查询（identity）；只在启动装配时调用。
 func (s *Service) UseReferrals(r Referrals) { s.refs = r }
 
-// MissingPorts 列出还没注册的可选依赖；app 装配完调用，非空就拒绝启动（缺了它们对应的卡会一直回 503 或少了「换掉」）。
+// MissingPorts 列出还没注册的必需端口（装配完成后由 internal/app 统一检查，非空就拒绝启动；缺了对应的卡会一直回 503、少了「换掉」或不发插件事件）。
 func (s *Service) MissingPorts() []string {
 	var out []string
 	if s.valuer == nil {
@@ -166,6 +167,9 @@ func (s *Service) MissingPorts() []string {
 	}
 	if s.refs == nil {
 		out = append(out, "Referrals")
+	}
+	if s.events == nil {
+		out = append(out, "PluginEvents")
 	}
 	return out
 }

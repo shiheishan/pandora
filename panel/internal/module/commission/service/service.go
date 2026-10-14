@@ -105,7 +105,7 @@ func (s *Service) UseReferrals(r Referrals) { s.refs = r }
 // UseSourceMatcher 注入同源判断；只在启动装配时调用（不并发安全）。
 func (s *Service) UseSourceMatcher(m SourceMatcher) { s.sources = m }
 
-// MissingPorts 列出还没注册的必需依赖；app 装配完调用，非空就拒绝启动
+// MissingPorts 列出还没注册的必需依赖；装配完成后由 internal/app 统一检查，非空就拒绝启动
 // （缺 Referrals 时结算全部报错，缺 SourceMatcher 时每条佣金都转人工复核）。
 func (s *Service) MissingPorts() []string {
 	var out []string
