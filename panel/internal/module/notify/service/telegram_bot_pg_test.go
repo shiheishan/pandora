@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -233,9 +234,12 @@ func TestBotAdminReply(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// 每次调用用新的 message_id（同一条消息重推的去重见第 6 步）
+	nextMsgID := int64(9000)
 	adminReplyBody := func(chatID, fromID, replyToMsgID int64, text string, isBot bool) []byte {
+		nextMsgID++
 		msg := map[string]any{
-			"message_id": 9999,
+			"message_id": nextMsgID,
 			"chat":       map[string]any{"id": chatID, "type": "supergroup"},
 			"from":       map[string]any{"id": fromID, "is_bot": isBot, "username": "sender"},
 			"text":       text,
@@ -297,5 +301,32 @@ func TestBotAdminReply(t *testing.T) {
 	}
 	if txt := tgbLastSentText(t, tg); txt != "回复没有成功：工单已关闭" {
 		t.Fatalf("expected error message with reason, got %q", txt)
+	}
+
+	// 6. Telegram 重推同一条消息（同 chat_id、message_id）：只回复一次，第二次不再调 replier、不再回确认
+	fakeR.err = nil
+	fakeR.replies = nil
+	tg.sent = nil
+	dupBody := adminReplyBody(adminChatID, adminTGID, targetMsgID, "重推的回复", false)
+	for i := 0; i < 2; i++ {
+		if err := e.svc.HandleTelegramUpdate(e.ctx, "whsec", dupBody); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(fakeR.replies) != 1 {
+		t.Fatalf("duplicate push should reply once, got %d", len(fakeR.replies))
+	}
+	if len(tg.sent) != 1 || tg.sent[0].Text != tgTicketReplied {
+		t.Fatalf("duplicate push should confirm once, got %+v", tg.sent)
+	}
+	var n int64
+	if err := e.scan(e.ctx, &n,
+		`SELECT count(*) FROM notification_events WHERE dedupe_key = ?`,
+		fmt.Sprintf("tg-admin-reply:%d:%d", adminChatID, nextMsgID),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("dedupe events %d", n)
 	}
 }

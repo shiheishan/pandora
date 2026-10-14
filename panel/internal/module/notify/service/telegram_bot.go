@@ -2,9 +2,11 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
+	"github.com/aegispanel/aegis/internal/module/notify/model"
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
@@ -24,6 +26,9 @@ const (
 	tgTicketReplied = "已回复工单。"
 	tgSubHeader     = "你的订阅链接（相当于账号密码，请勿转发给他人）："
 )
+
+// tgAdminReplyEvent 是 TG 回复工单去重键（tg-admin-reply:<chat_id>:<message_id>）在 notification_events 里的标签。
+const tgAdminReplyEvent = "admin.tg_reply"
 
 // parseBotCommand 拆出命令与参数：以 / 开头时 cmd 是第一个词去掉 / 与 @bot 后缀、转小写，arg 是其余部分去空白；不是命令时 cmd 为空串、arg 为原文去空白。
 func parseBotCommand(text string) (cmd, arg string) {
@@ -275,7 +280,8 @@ func (s *Service) handleJoinRequest(ctx context.Context, cfg settingssvc.Telegra
 //	BindingByChatID(msg.From.ID) 有绑定；s.admins.IsActiveAdmin(绑定的 user_id) 为真；
 //	TicketForMessage(msg.Chat.ID, msg.ReplyToMessage.MessageID) 找得到工单。
 //
-// 然后 s.replier.ReplyAsAdmin(ctx, adminID, ticketID, 正文)：成功往群里回 tgTicketReplied；
+// 然后在一个事务里先插去重键 tg-admin-reply:<chat_id>:<message_id>（撞键 = Telegram 重推，直接返回），
+// 再 s.replier.ReplyAsAdmin(ctx, adminID, ticketID, 正文)：成功往群里回 tgTicketReplied；
 // 失败时 errs.As(err) 不为 nil 且 Code 不是 errs.Internal → 回「回复没有成功：」+ e.Message；否则记 Warn 回「回复没有成功，请到后台重试。」。
 // 读库出错只记 Warn、不回消息。
 func (s *Service) handleAdminReply(ctx context.Context, cfg settingssvc.Telegram, msg *tgWebhookMessage) {
@@ -289,7 +295,7 @@ func (s *Service) handleAdminReply(ctx context.Context, cfg settingssvc.Telegram
 	if body == "" {
 		return
 	}
-	if msg.ReplyToMessage == nil {
+	if msg.ReplyToMessage == nil || msg.MessageID <= 0 {
 		return
 	}
 	if s.admins == nil || s.replier == nil {
@@ -323,7 +329,27 @@ func (s *Service) handleAdminReply(ctx context.Context, cfg settingssvc.Telegram
 		return
 	}
 
-	err = s.replier.ReplyAsAdmin(ctx, b.UserID, ticketID, body)
+	// Telegram 没拿到 2xx 会用同一条消息重推：先在同一事务里插去重键，撞键说明这条已经回过，直接当成功、不再回确认；
+	// 回复失败时去重键随事务回滚，下次重推还能重试。support 的 tx.Do 在已有事务里直接加入。
+	dup := false
+	err = s.tx.Do(ctx, func(ctx context.Context) error {
+		ins, err := s.store.InsertEvent(ctx, &model.Event{
+			DedupeKey:    fmt.Sprintf("tg-admin-reply:%d:%d", msg.Chat.ID, msg.MessageID),
+			UserID:       b.UserID,
+			TemplateCode: tgAdminReplyEvent,
+		})
+		if err != nil {
+			return err
+		}
+		if !ins {
+			dup = true
+			return nil
+		}
+		return s.replier.ReplyAsAdmin(ctx, b.UserID, ticketID, body)
+	})
+	if err == nil && dup {
+		return
+	}
 	if err == nil {
 		if cfg.BotToken != "" {
 			if _, sendErr := s.tg.SendMessage(ctx, cfg.BotToken, msg.Chat.ID, tgTicketReplied); sendErr != nil {
