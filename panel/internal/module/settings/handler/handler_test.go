@@ -85,6 +85,14 @@ func (f *fakeSettings) SwitchEnabled(ctx context.Context, code string) (bool, er
 	return v, nil
 }
 
+func (f *fakeSettings) Signup(ctx context.Context) (service.Signup, error) {
+	return service.Signup{EmailSuffixes: []string{}}, nil
+}
+
+func (f *fakeSettings) SetSignup(ctx context.Context, u service.SignupUpdate) error {
+	return nil
+}
+
 func testKit(h *Handler) route.Kit {
 	return route.Kit{
 		// 后台不分权限：带 X-Test-Auth: 1 就当已登录的后台主体
