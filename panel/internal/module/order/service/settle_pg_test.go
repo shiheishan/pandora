@@ -15,7 +15,10 @@ import (
 	"github.com/shopspring/decimal"
 
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
+	"github.com/aegispanel/aegis/internal/module/payment/provider/epay"
+	paymentsvc "github.com/aegispanel/aegis/internal/module/payment/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
 // spyHook 记下 PaidHook 的调用；fail 非空时返回它（模拟佣金写入失败）。
@@ -255,6 +258,7 @@ func TestWebhookExcessCapture(t *testing.T) {
 }
 
 // 回调金额与应付不符：易支付回 fail，订单仍待付、没有收款行。
+// 易支付的 fail 不区分原因，所以另证这笔回调验签是通过的：拒收的原因是金额，不是签名。
 func TestWebhookAmountMismatchRejected(t *testing.T) {
 	e, ctx := newEnv(t)
 	code := payCode()
@@ -266,12 +270,28 @@ func TestWebhookAmountMismatchRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ack, err := e.payments.HandleWebhook(ctx, code, epayInbound("pay-"+randHex(8), intent.OutTradeNo, 999))
+	in := epayInbound("pay-"+randHex(8), intent.OutTradeNo, 999)
+	ad, err := epay.New(epay.Config{BaseURL: "https://pay.example.test", MerchantID: testEpayPID, Key: testEpayKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	note, err := ad.ParseNotification(ctx, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !note.SignatureVerified || !note.Amount.Equal(dec("9.99")) {
+		t.Fatalf("回调应验签通过、金额 9.99：verified=%v amount=%s", note.SignatureVerified, note.Amount)
+	}
+	ack, err := e.payments.HandleWebhook(ctx, code, in)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ackOK(ack) {
 		t.Fatalf("金额不符应回 fail，得到 %s", ack.Body)
+	}
+	// 验签失败会留一条 unverified 的事件证据并照常提交；金额不符是处理错误，整笔回滚，一条事件都不留
+	if n := e.count(t, ctx, `SELECT count(*) FROM payment_events pe JOIN payment_providers pp ON pp.id = pe.provider_id WHERE pp.code = ?`, code); n != 0 {
+		t.Fatalf("金额不符不应留事件行（有行说明走的是验签失败），得到 %d", n)
 	}
 	if st := e.order(t, ctx, c.OrderID).Status; st != StatusPending {
 		t.Fatalf("订单 %s", st)
@@ -318,6 +338,40 @@ func TestWebhookSettlesTopup(t *testing.T) {
 	}
 	if len(hook.snapshot()) != 0 {
 		t.Fatal("充值单不该调 PaidHook")
+	}
+	e.assertNoDrift(t, ctx)
+}
+
+// 充值单带渠道手续费（易支付不报手续费，直接调 SettlePayment）：渠道净收款 99.40、手续费 0.60，用户余额照收全额 100。
+func TestSettleTopupWithFee(t *testing.T) {
+	e, ctx := newEnv(t)
+	code := payCode()
+	e.mkPayProvider(t, ctx, code)
+	user := e.mkUser(t, ctx)
+
+	c, err := e.svc.CreateTopup(asUser(ctx, user), TopupInput{Amount: dec("100.00")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.SettlePayment(ctx, paymentsvc.SettleInput{
+		OrderID:      c.OrderID,
+		PaymentID:    uuid.New(),
+		Amount:       dec("100.00"),
+		Fee:          dec("0.60"),
+		Currency:     money.CNY,
+		ProviderCode: code,
+		Method:       "alipay",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if st := e.order(t, ctx, c.OrderID).Status; st != StatusFulfilled {
+		t.Fatalf("充值单 %s", st)
+	}
+	mustEq(t, "用户余额", e.balanceOf(t, ctx, user), dec("100"))
+	mustEq(t, "渠道净收款", e.platformBalance(t, ctx, ledgersvc.ChannelCash, code), dec("99.40"))
+	mustEq(t, "手续费", e.platformBalance(t, ctx, ledgersvc.PlatformFeeExpense, code), dec("0.60"))
+	if n := e.txnCount(t, ctx, ledgersvc.KindBalanceTopup, c.OrderID); n != 1 {
+		t.Fatalf("balance_topup %d 笔", n)
 	}
 	e.assertNoDrift(t, ctx)
 }
