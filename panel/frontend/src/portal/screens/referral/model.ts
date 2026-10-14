@@ -1,7 +1,7 @@
 import { formatMoney } from '../../../core/format'
 import type { Commission } from '../../queries'
 import { shortDate } from '../common/traffic'
-import type { Invite } from './api'
+import type { Invite, InviteCode } from './api'
 
 /** 契约门户-06：/r/CODE 会撞 public 网关根下的订阅通配，邀请链接用查询串 */
 export const inviteLink = (code: string, origin: string) => `${origin}/?invite=${encodeURIComponent(code)}`
@@ -10,6 +10,28 @@ export const inviteLink = (code: string, origin: string) => `${origin}/?invite=$
 export function headline(ratePercent: number, scope: Commission['summary']['scope']): string {
   if (ratePercent <= 0) return '邀请好友注册'
   return scope === 'first_order' ? `好友首单付费，您得 ${ratePercent}% 佣金` : `邀请好友付费，您得 ${ratePercent}% 佣金`
+}
+
+/** 当前仍为有效的邀请码个数（可同时持有上限由 max_codes 约束） */
+export function activeCodeCount(codes: readonly InviteCode[]): number {
+  return codes.filter((c) => c.status === 'active').length
+}
+
+/** 是否还能再生成一个有效邀请码 */
+export function canCreateCode(codes: readonly InviteCode[], maxCodes: number): boolean {
+  return activeCodeCount(codes) < maxCodes
+}
+
+/** 列表里展示的状态文案 */
+export function codeStatusLabel(status: InviteCode['status']): string {
+  switch (status) {
+    case 'active':
+      return '有效'
+    case 'exhausted':
+      return '已用完'
+    case 'disabled':
+      return '已停用'
+  }
 }
 
 /** 邀请码有使用上限时的一句说明；没有上限返回 null */

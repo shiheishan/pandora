@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { commissionSchema, type Commission } from '../../queries'
 import { inviteSchema } from './api'
-import { commissionRecords, headline, inviteLink, inviteUsage, parseWithdrawAmount, withdrawBlock } from './model'
+import { commissionRecords, activeCodeCount, canCreateCode, codeStatusLabel, headline, inviteLink, inviteUsage, parseWithdrawAmount, withdrawBlock } from './model'
 
 const SUMMARY = { currency: 'CNY', pending: 1180, available: 13560, withdrawing: 0, settled: 10000, invitees: 6, orders: 5, paid_invitees: 4, total_earned: 29740, rate_percent: 20, min_withdraw: 10000, scope: 'every_order' as const }
 
@@ -27,10 +27,33 @@ describe('佣金概况 schema', () => {
     expect(commissionSchema.safeParse({ summary: SUMMARY, entries: [], withdrawals: [w], transfers: [] }).success).toBe(false)
   })
 
-  it('邀请：max_uses 可为 null，invitees 不收 null', () => {
+  it('邀请：max_uses 可为 null，invitees 不收 null；codes 与 max_codes 必填', () => {
     const invite = { code: 'ZW8KQ4TM', invited: 0, max_uses: null, created_at: '2026-09-01T00:00:00Z' }
-    expect(inviteSchema.parse({ invite, invitees: [] }).invite.max_uses).toBeNull()
+    const code = { code: 'ZW8KQ4TM', status: 'active' as const, invited: 0, visits: 12, max_uses: null, created_at: '2026-09-01T00:00:00Z' }
+    expect(inviteSchema.parse({ invite, invitees: [], codes: [code], max_codes: 5 }).invite.max_uses).toBeNull()
     expect(inviteSchema.safeParse({ invite, invitees: null }).success).toBe(false)
+    expect(inviteSchema.safeParse({ invite, invitees: [], codes: [], max_codes: 5 }).success).toBe(true)
+  })
+})
+
+describe('邀请码列表', () => {
+  const codes = [
+    { code: 'A', status: 'active' as const, invited: 1, visits: 2, max_uses: null, created_at: '' },
+    { code: 'B', status: 'exhausted' as const, invited: 0, visits: 0, max_uses: 1, created_at: '' },
+    { code: 'C', status: 'disabled' as const, invited: 0, visits: 0, max_uses: null, created_at: '' },
+  ]
+
+  it('有效码个数与是否可再生成', () => {
+    expect(activeCodeCount(codes)).toBe(1)
+    expect(canCreateCode(codes, 5)).toBe(true)
+    expect(canCreateCode(codes, 1)).toBe(false)
+    expect(canCreateCode([codes[1], codes[2]], 5)).toBe(true)
+  })
+
+  it('状态文案', () => {
+    expect(codeStatusLabel('active')).toBe('有效')
+    expect(codeStatusLabel('exhausted')).toBe('已用完')
+    expect(codeStatusLabel('disabled')).toBe('已停用')
   })
 })
 
