@@ -12,6 +12,10 @@ paths:
   - 结算主链：订单行（`OrderByID` 锁行）→ 订阅（`subs.Lock`，续费/换套餐/流量包）→ 预留确认（`captureReservation` 锁套餐库存/限购/券）→ 记账（`postSettlement`，经 `lockAccounts` 稳定顺序锁科目）→ 订单状态（`markPaid`）→ `PaidHook` → 履约（`fulfil`）。
   - 建单主链：新购锁套餐行（`catalog.Offer`）；续费/流量包锁订阅；换套餐建单先锁订阅（`subs.Lock`）；再调 `promo.Reserve` / `ledger.HoldForOrder`，最后插订单。取消/超时释放先锁订单行。
   - 余额全额支付走 `CaptureFromBalance`：用户余额、冻结、收入三科目按 ID 升序一次锁完，冻结直出 captured，不要分步锁。
+  - 科目怎么加锁：`ledger` 的 `lockAccounts` 先按 `(Type, UserID, Ref)` 排好去重（`sortedRefs`，只决定建科目 `EnsureAccounts` 的顺序），真正加行锁的是 `repo.LockAccounts` 一条 `ORDER BY id FOR UPDATE`，即按科目 id 升序逐行拿；一笔分录的科目在一条语句里锁完，但语句中途可能拿着 id 小的科目去等 id 大的。
+  - 通则（防 40P01）：一个事务里每多记一笔分录，就多一批「拿着前一批科目再去等新科目」的锁。凡是要在同一事务里先锁某人的佣金科目（待结、可提现）、再锁他的余额科目的，一律拆成两个事务：前一个事务提交后，后一个先拿 `LockUser`，再用一笔分录同时锁可提现与余额（手动转余额、自动转余额都这样）；不在解冻、计提这类拿着佣金科目的事务里顺手碰余额。以后加类似路径照这条查：不拿着用户的佣金科目去等余额，也不拿着余额去等平台收入以外的科目。
+    已知余量：一条 `ORDER BY id FOR UPDATE` 也是逐行拿，四方环理论上仍可能出现（转余额拿着可提现等余额 → 余额付款拿着余额等平台收入 → 别人的订单结算拿着平台收入等待结 → 解冻拿着待结等可提现，取决于各科目 id 的大小）。PG 会中止其中一个，各方都能重做（解冻与自动转余额下一轮，结算靠支付回调重试）；要根除得让订单结算不拿着平台收入去锁用户科目，归 order/ledger。
+  - 佣金各路径的锁序：计提 `OnOrderPaid`（在订单结算事务里，已持平台收入）→「首单」时 `LockReferee` → 各级受益人的待结佣金；解冻 `settleOne`：条目行（SKIP LOCKED）→ 推荐人的待结、可提现佣金（一笔分录）；自动转余额 `autoTransferOne`：`LockUser` → 条目行（SKIP LOCKED）→ 可提现佣金与余额（一笔分录）；手动转余额、提现申请：`LockUser` 打头；打款 `MarkWithdrawalPaid`：提现行 → 可提现佣金与打款渠道（一笔分录）。
 - 结算与挂账边界：
   - 结算由 order 实现 `paymentsvc.Settler`（`SettlePayment`）：金额币种不符回普通错误整笔回滚；订单不可付时（已取消/超时回 `CaseReleasedOrder`，已付回 `CaseExcessCapture`，订阅已停用或换套餐周期已变回 `CaseIneligibleSubscription`）返回 `paymentsvc.NotPayable` 转入挂账。
   - 充值单结算记 `KindBalanceTopup`；其他订单走 `PostOrderPaid` 扣减余额冻结。
@@ -25,9 +29,12 @@ paths:
   - 落点由人选（`planPlacements` / `candidatesFrom` 最多 50 份，生效中优先、新的优先），换掉生效中的永不自动默认。
   - 人工开单（`CreateManualOrder`）：原因必填 5–500 字，审计 `order.manual_created`；结算方式收 `grant`（赠送履约）、`pending`、`offline`（同一事务调 `RecordOffline`），不接受 `balance`。
 - 账本与佣金：
-  - 账本科目按 `(Type, UserID, Ref)` 稳定顺序加锁（`sortedRefs`）。`Post` 拒收专用 kind（`KindBalanceHold`, `KindBalanceRelease`, `KindOrderPaid`, `KindBalanceAdjusted` 须调专用方法）。
+  - 账本科目按 id 升序加锁（见上面「科目怎么加锁」）。`Post` 拒收专用 kind（`KindBalanceHold`, `KindBalanceRelease`, `KindOrderPaid`, `KindBalanceAdjusted` 须调专用方法）。
   - 可用佣金唯一口径：`available = Available - InFlight - Paid - TransferTotal`。提现申请 `RequestWithdrawal` 与转余额都先 `LockUser`。提现申请与审批只改状态，打款 `MarkWithdrawalPaid` 才记账。
-  - 多级分销（后台开关 `commission.distribution_enabled`，缺省关）：先按直接邀请人的比例（含单独设置）算这一单的佣金总额，再按 l1/l2/l3 份额逐级截断到分（`LevelAmount`，库约束 `commission_entries_formula` 同式）；关着时只有第一级、份额 100。上溯 `beneficiaries` 防环、最多 3 级，份额 0 的级跳过但继续往上。每级一条条目（`UNIQUE (order_id, level)`），各自冻结、同源复核（受益人对购买人）、作废。
-  - 单独佣金设置 `commission_user_overrides`（属 commission）：`termsFor` 只按直接邀请人取比例与范围，NULL 跟全局，比例 0 = 不拿佣金；只影响以后的订单。写操作审计 `commission.override_set` / `commission.override_removed`。
-  - 提现开关 `commission.withdraw_enabled`（缺省开）与方式白名单 `commission.withdraw_methods`（缺省 alipay，目录见 `settingssvc.WithdrawMethodCatalog`）。关着时 `RequestWithdrawal` 回 `ErrWithdrawDisabled`；`settleOne` 解冻站点币种条目后同一事务里 `autoTransferEntry` 转余额（锁序 条目行 → `LockUser` → 科目，`commission_transfers.entry_id` 唯一兜底，审计 `commission.auto_transferred_to_balance`），非站点币种留在可提现。
+  - 多级分销（后台开关 `commission.distribution_enabled`，缺省关）：先按直接邀请人的比例（含单独设置）算这一单的佣金总额，再按 l1/l2/l3 份额逐级截断到分（`LevelAmount`，库约束 `commission_entries_formula` 同式）；关着时只有第一级、份额 100。上溯 `beneficiaries` 防环、最多 3 级，份额 0 的级、被单独设置排除的人（单独比例 0）都跳过但继续往上，跳过的人仍占他那一级。读设置时三级合计超过 100 按内部错误（`decodeCommissionDistribution`）。每级一条条目（`UNIQUE (order_id, level)`），各自冻结、同源复核（受益人对购买人）、作废。
+  - 单独佣金设置 `commission_user_overrides`（属 commission）：NULL 跟全局；比例 0 = 这个人不拿佣金，不论他在第几级（用户 10-14 定，`excludedByOverride`）。整单佣金总额按直接邀请人的单独设置算（`orderTerms` → `termsFor`）；直接邀请人被排除时他的单独设置整条不作数、按全局算，再跳过他只给上级分。只影响以后的订单。后台按邮箱找人走 identity 的精确查找 `FindByEmail`（`Referrals` 端口），不用包含匹配。写操作审计 `commission.override_set` / `commission.override_removed`。
+  - 提现开关 `commission.withdraw_enabled`（缺省开）与方式白名单 `commission.withdraw_methods`（缺省 alipay，目录见 `settingssvc.WithdrawMethodCatalog`）。关提现只关站点币种（用户 10-14 定）：
+    - `RequestWithdrawal` 关着时只在站点币种以外的币种里选（`pickCurrency` 的 skip），没有就回 `ErrWithdrawDisabled`；白名单照旧管着。汇总带 `SiteCurrency`，门户据此决定显不显示提现。
+    - 站点币种：`settleOne` 解冻时只挂 `commission_entries.auto_transfer_due`（不拿用户锁、不碰余额）；`SettleDue` 解冻完再由 `autoTransferDue` 逐条在单独的事务里转（`autoTransferOne`，锁序见上），转失败标记留着、下一轮重试。转的金额取这条佣金与当前可用佣金里小的那个，可用为 0（用户自己转走了）只清标记；`commission_transfers.entry_id` 唯一兜底，审计 `commission.auto_transferred_to_balance`。
+    - 关闭前已经解冻的站点币种佣金不挂标记、不自动转，由用户自己点「全部转入余额」（门户提示写明）。非站点币种转不进余额，照常提现。
   - 收款账号按方式校验（`ValidatePayoutAccount`：TRC20 base58check、ERC20/BEP20 EIP-55），仍用 Sealer 密封；USDT 打款的流水号是交易哈希（`ValidatePaidUSDT`），实付 USDT 数量只记录，面板不发起任何链上转账。旧申请的方式是 `other`，只显示、不可选。

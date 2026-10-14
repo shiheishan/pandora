@@ -231,9 +231,11 @@ identity, auth ─► settings, audit
   - 「只计首单」口径下，作废的佣金也算「已有首单」（用户 10-13 定）：被推荐人的首单佣金作废后，他的第二单不再计佣（`RefereeHasOtherEntry` 不过滤 voided）。同一单的重放防重（`OrderHasEntries`，任何一级记过就整单不再记）同样把 voided 算在内。
   - 列表里的 `review_source` 由原因归类（same_source / source_check / underfunded / other）。underfunded（解冻时待结科目余额不足）的条目通过后仍会解冻失败、回到列表，作废也会因余额不足回 409，只能先人工核对账本。
   - 形状由 00016 的 CHECK 钉住：复核人与复核时间成对；有原因而不再待复核的必须复核过；voided 必须有冲回交易、作废原因与复核时间。
-- 多级分销（后台开关，缺省关）：先按直接邀请人的比例（含单独设置）算这一单的佣金总额，再按三级份额（百分比，合计 ≤ 100）逐级向零截断到分；缺的级不分，上溯防环、最多 3 级。每级一条条目（`UNIQUE (order_id, level)`），各自冻结、同源复核（受益人对购买人）、作废，互不影响。
+- 多级分销（后台开关，缺省关）：先按直接邀请人的比例（含单独设置）算这一单的佣金总额，再按三级份额（百分比，合计 ≤ 100，剩余不发、站点留下）逐级向零截断到分；缺的级不分，上溯防环、最多 3 级。单独比例设成 0 的人在哪一级都不拿，跳过他继续往上。每级一条条目（`UNIQUE (order_id, level)`），各自冻结、同源复核（受益人对购买人）、作废，互不影响。
 - 提现：requested → approved / rejected，approved → paid。没有 reviewing、processing、failed、returned；只有打款这一步记账（commission_paid）。提现方式 `method` 是封闭目录（alipay / wechat / bank / paypal / usdt_trc20 / usdt_erc20 / usdt_bep20；迁移前的旧申请是 other，只显示），后台设白名单（缺省只开 alipay）。USDT 打款时流水号是链上交易哈希，可选记实付 USDT 数量（只记录）；面板不发起任何链上转账。
-- 提现关闭（后台开关，缺省开）：门户不显示提现，`commission:settle` 解冻站点币种的条目后在同一事务里转入余额（同手动转余额的记账路径，`commission_transfers.entry_id` 唯一保证只转一次，审计 `commission.auto_transferred_to_balance`）；非站点币种留在可提现。
+- 提现关闭（后台开关，缺省开）只关站点币种：
+  - 站点币种：门户不显示提现。`commission:settle` 解冻时给条目挂 `auto_transfer_due`，解冻提交后再逐条在单独的事务里转入余额（先拿用户咨询锁，一笔分录同时锁可提现与余额；同手动转余额的记账路径），转失败的下一轮重试；`commission_transfers.entry_id` 唯一保证只转一次，审计 `commission.auto_transferred_to_balance`。关闭前已解冻的部分不自动转，由用户自己转。
+  - 别的币种：转不进余额，照常按白名单里的方式提现。
 
 ---
 
