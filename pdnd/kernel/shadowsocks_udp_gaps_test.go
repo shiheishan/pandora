@@ -333,7 +333,8 @@ func TestShadowsocksUDPDomainResolve(t *testing.T) {
 		}
 		return echo, nil
 	}
-	ssUDPResolveTTL = 300 * time.Millisecond
+	// TTL 要明显长于中间「300ms 内没有多余回显」的等待，否则 -race 下 d-4 发出时缓存已过期
+	ssUDPResolveTTL = 1500 * time.Millisecond
 
 	t.Cleanup(func() {
 		closeGate()
@@ -411,7 +412,7 @@ func TestShadowsocksUDPDomainResolve(t *testing.T) {
 		t.Fatalf("命中缓存时 calls=%d，期望 1", c)
 	}
 
-	time.Sleep(400 * time.Millisecond)
+	time.Sleep(1600 * time.Millisecond)
 
 	// 过 TTL 发 d-5，触发重新解析
 	if _, err := pc.WriteTo([]byte("d-5"), dst); err != nil {
