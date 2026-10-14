@@ -182,7 +182,7 @@ func TestOverviewCountsMapping(t *testing.T) {
 	if ov.Users.Total != 1 || ov.Users.Active != 2 || ov.Users.Today != 3 || ov.Users.Last7Days != 4 {
 		t.Fatalf("users: %+v", ov.Users)
 	}
-	if ov.Subscriptions.Active != 10 || ov.Subscriptions.Trialing != 0 ||
+	if ov.Subscriptions.Active != 10 ||
 		ov.Subscriptions.Expiring7Days != 11 || ov.Subscriptions.Expired != 12 || ov.Subscriptions.New7Days != 13 {
 		t.Fatalf("subs: %+v", ov.Subscriptions)
 	}

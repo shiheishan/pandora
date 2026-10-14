@@ -238,7 +238,7 @@ const NODE_TRAFFIC: NodeTraffic = {
   ],
   totals: { reported_bytes: '1010', attributed_bytes: '1000', unattributed_bytes: '10' },
   ranking: { returned_bytes: '1010', other_node_bytes: '0' },
-  quality: { duplicate_report_count: 2, invalid_report_count: 0, invalid_entry_count: 1 },
+  quality: { invalid_report_count: 0, invalid_entry_count: 1 },
 }
 
 describe('流量排行', () => {
@@ -262,13 +262,13 @@ describe('流量排行', () => {
   })
 
   it('底部小字与全部未归属告警', () => {
-    expect(trafficNotes(NODE_TRAFFIC)).toEqual({ notes: ['未归属 10 B', '重复上报 2', '无效条目 1'], allUnattributed: false })
+    expect(trafficNotes(NODE_TRAFFIC)).toEqual({ notes: ['未归属 10 B', '无效条目 1'], allUnattributed: false })
     const orphan: UserTraffic = {
       ...NODE_TRAFFIC,
       items: [],
       totals: { reported_bytes: '500', attributed_bytes: '0', unattributed_bytes: '500' },
       ranking: { returned_bytes: '0', other_user_bytes: '0' },
-      quality: { duplicate_report_count: 0, invalid_report_count: 0, invalid_entry_count: 0 },
+      quality: { invalid_report_count: 0, invalid_entry_count: 0 },
     }
     expect(trafficNotes(orphan)).toEqual({ notes: ['未归属 500 B'], allUnattributed: true })
   })
@@ -279,7 +279,7 @@ describe('schema 守住契约形状', () => {
     const row = { currency: 'CNY', today: 1, yesterday: 1, actual_yesterday: 1, last_7_days: 1, last_30_days: 1, total: 1, actual_today: 1, actual_7_days: 1, actual_30_days: 1, actual_total: 1, adjustment_today: 0, adjustment_7_days: 0, adjustment_30_days: 0, adjustment_total: 0 }
     const full = {
       users: { total: 1, active: 1, today: 0, last_7_days: 0 },
-      subscriptions: { active: 1, trialing: 0, expiring_7_days: 0, expired: 0, new_7_days: 0 },
+      subscriptions: { active: 1, expiring_7_days: 0, expired: 0, new_7_days: 0 },
       nodes: { total: 2, online: 1 },
       revenue: [row, { ...row, currency: 'USD' }],
       orders: { paid_today: 0, pending: 0, failed_today: 0 },
@@ -288,7 +288,7 @@ describe('schema 守住契约形状', () => {
     expect(overviewSchema.safeParse(full).success).toBe(true)
     const without = <T extends object>(o: T, key: keyof T) => Object.fromEntries(Object.entries(o).filter(([k]) => k !== key))
     expect(overviewSchema.safeParse({ ...full, revenue: [without(row, 'yesterday')] }).success).toBe(false)
-    expect(overviewSchema.safeParse({ ...full, subscriptions: { active: 1, trialing: 0, expiring_7_days: 0, expired: 0 } }).success).toBe(false)
+    expect(overviewSchema.safeParse({ ...full, subscriptions: { active: 1, expiring_7_days: 0, expired: 0 } }).success).toBe(false)
     expect(overviewSchema.safeParse(without(full, 'nodes')).success).toBe(false)
   })
 

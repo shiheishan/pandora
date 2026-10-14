@@ -59,7 +59,7 @@ const revenueRowSchema = z.object({
 })
 export const overviewSchema = z.object({
   users: z.object({ total: count, active: count, today: count, last_7_days: count }),
-  subscriptions: z.object({ active: count, trialing: count, expiring_7_days: count, expired: count, new_7_days: count }),
+  subscriptions: z.object({ active: count, expiring_7_days: count, expired: count, new_7_days: count }),
   revenue: z.array(revenueRowSchema),
   orders: z.object({ paid_today: count, pending: count, failed_today: count }),
   ledger_drift_accounts: count,
@@ -100,7 +100,7 @@ const trafficBase = {
   to: z.string(),
   basis: z.literal('strict_raw_report_entries'),
   totals: z.object({ reported_bytes: decimalBytes, attributed_bytes: decimalBytes, unattributed_bytes: decimalBytes }),
-  quality: z.object({ duplicate_report_count: count, invalid_report_count: count, invalid_entry_count: count }),
+  quality: z.object({ invalid_report_count: count, invalid_entry_count: count }),
 }
 const trafficItemBase = {
   upload_bytes: decimalBytes,

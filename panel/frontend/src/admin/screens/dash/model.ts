@@ -449,7 +449,6 @@ export function trafficNotes(data: NodeTraffic | UserTraffic): { notes: string[]
   const t = data.totals
   if (t.unattributed_bytes !== '0') notes.push(`未归属 ${formatBytes(t.unattributed_bytes)}`)
   const q = data.quality
-  if (q.duplicate_report_count > 0) notes.push(`重复上报 ${q.duplicate_report_count}`)
   if (q.invalid_report_count > 0) notes.push(`无效上报 ${q.invalid_report_count}`)
   if (q.invalid_entry_count > 0) notes.push(`无效条目 ${q.invalid_entry_count}`)
   const allUnattributed = data.items.length === 0 && t.reported_bytes !== '0' && t.attributed_bytes === '0'

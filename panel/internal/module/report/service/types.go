@@ -35,9 +35,9 @@ type UserCounts struct {
 	Total, Active, Today, Last7Days int64
 }
 
-// SubscriptionCounts 是订阅计数；Active 即「生效」（subscription 的 StateLive 口径），Trialing 恒为 0（试用已取消，键保留给前端）。
+// SubscriptionCounts 是订阅计数；Active 即「生效」（subscription 的 StateLive 口径）。
 type SubscriptionCounts struct {
-	Active, Trialing, Expiring7Days, Expired, New7Days int64
+	Active, Expiring7Days, Expired, New7Days int64
 }
 
 // NodeCounts 是节点计数。
@@ -135,9 +135,9 @@ type TrafficTotals struct {
 	Reported, Attributed, Unattributed int64
 }
 
-// TrafficQuality 是窗口内的上报质量计数；Duplicate 恒为 0（新通道同一编号的重复上报不入账、不留行）。
+// TrafficQuality 是窗口内的上报质量计数（新通道同一编号的重复上报不入账、不留行，所以没有重复计数）。
 type TrafficQuality struct {
-	DuplicateReports, InvalidReports, InvalidEntries int64
+	InvalidReports, InvalidEntries int64
 }
 
 // NodeTrafficItem 是节点排行的一行。
