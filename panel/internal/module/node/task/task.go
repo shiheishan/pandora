@@ -1,4 +1,4 @@
-// Package task 是 node 模块的 asynq 任务：节点数据的保留期清理、strict 设备模式的重新判定、节点流量按重置日清零。
+// Package task 是 node 模块的 asynq 任务：节点数据的保留期清理、strict 设备模式的重新判定、节点流量按重置日清零、过期 ECH 密钥清理。
 package task
 
 import (
@@ -22,6 +22,9 @@ const TypeDevicesStrict = "devices:strict"
 // TypeTrafficReset 是节点流量按重置日清零的任务类型。
 const TypeTrafficReset = "node:traffic_reset"
 
+// TypeECHPurge 是过期 ECH 密钥清理任务类型。
+const TypeECHPurge = "node:ech_purge"
+
 const (
 	purgeBatch = 5000
 	maxBatches = 200
@@ -34,6 +37,8 @@ type Service interface {
 	RecheckStrictDevices(ctx context.Context) error
 	// ResetDueNodeTraffic：对设了重置日的节点按周期起点清零用量。
 	ResetDueNodeTraffic(ctx context.Context) (int, error)
+	// PurgeRetiredECHKeys：删除过渡期已过的旧 ECH 密钥。
+	PurgeRetiredECHKeys(ctx context.Context) (int64, error)
 }
 
 // Module 注册 node 相关的 asynq 任务与定时调度。
@@ -52,9 +57,10 @@ func (m *Module) Register(mux *asynq.ServeMux) {
 	mux.HandleFunc(TypeRetention, m.retention)
 	mux.HandleFunc(TypeDevicesStrict, m.devicesStrict)
 	mux.HandleFunc(TypeTrafficReset, m.trafficReset)
+	mux.HandleFunc(TypeECHPurge, m.echPurge)
 }
 
-// Periodic 声明节点数据保留期清理（每天凌晨）、strict 设备判定（每分钟）与节点流量重置（每 5 分钟）。
+// Periodic 声明节点数据保留期清理（每天凌晨）、strict 设备判定（每分钟）、节点流量重置（每 5 分钟）与过期 ECH 密钥清理（每小时）。
 func (m *Module) Periodic() []jobs.Periodic {
 	return []jobs.Periodic{
 		{
@@ -85,6 +91,16 @@ func (m *Module) Periodic() []jobs.Periodic {
 				asynq.MaxRetry(0),
 				asynq.Timeout(1 * time.Minute),
 				asynq.Unique(4 * time.Minute),
+			},
+		},
+		{
+			Cronspec: "@every 1h",
+			Type:     TypeECHPurge,
+			Opts: []asynq.Option{
+				asynq.Queue("low"),
+				asynq.MaxRetry(0),
+				asynq.Timeout(1 * time.Minute),
+				asynq.Unique(50 * time.Minute),
 			},
 		},
 	}
@@ -130,6 +146,14 @@ func (m *Module) devicesStrict(ctx context.Context, _ *asynq.Task) error {
 func (m *Module) trafficReset(ctx context.Context, _ *asynq.Task) error {
 	if _, err := m.svc.ResetDueNodeTraffic(ctx); err != nil {
 		return fmt.Errorf("节点流量按重置日清零: %w", err)
+	}
+	return nil
+}
+
+// echPurge 调 service 清理过期 ECH 密钥。
+func (m *Module) echPurge(ctx context.Context, _ *asynq.Task) error {
+	if _, err := m.svc.PurgeRetiredECHKeys(ctx); err != nil {
+		return fmt.Errorf("清理过期 ECH 密钥: %w", err)
 	}
 	return nil
 }

@@ -28,6 +28,10 @@ type fakeSvc struct {
 	resets   int
 	resetRet int
 	resetErr error
+
+	echPurges   int
+	echPurgeRet int64
+	echPurgeErr error
 }
 
 func (f *fakeSvc) PurgeRetention(_ context.Context, table string, now time.Time, batch int) (int64, error) {
@@ -55,6 +59,14 @@ func (f *fakeSvc) ResetDueNodeTraffic(_ context.Context) (int, error) {
 	return f.resetRet, nil
 }
 
+func (f *fakeSvc) PurgeRetiredECHKeys(_ context.Context) (int64, error) {
+	f.echPurges++
+	if f.echPurgeErr != nil {
+		return 0, f.echPurgeErr
+	}
+	return f.echPurgeRet, nil
+}
+
 func optsOf(p []asynq.Option) (queue string, retry int, unique, timeout time.Duration) {
 	retry = -1
 	for _, o := range p {
@@ -74,8 +86,8 @@ func optsOf(p []asynq.Option) (queue string, retry int, unique, timeout time.Dur
 
 func TestPeriodicSchedule(t *testing.T) {
 	ps := New(&fakeSvc{}).Periodic()
-	if len(ps) != 3 {
-		t.Fatalf("periodic: got %d want 3", len(ps))
+	if len(ps) != 4 {
+		t.Fatalf("periodic: got %d want 4", len(ps))
 	}
 	e := ps[0]
 	if e.Type != TypeRetention || e.Cronspec != "44 3 * * *" {
@@ -108,6 +120,15 @@ func TestPeriodicSchedule(t *testing.T) {
 	}
 	if unique >= 5*time.Minute {
 		t.Fatalf("unique %v should be < 5m", unique)
+	}
+
+	e = ps[3]
+	if e.Type != TypeECHPurge || e.Cronspec != "@every 1h" {
+		t.Fatalf("ech purge periodic = %+v", e)
+	}
+	queue, retry, unique, timeout = optsOf(e.Opts)
+	if queue != "low" || retry != 0 || unique != 50*time.Minute || timeout != 1*time.Minute {
+		t.Fatalf("ech purge opts: queue=%q retry=%d unique=%v timeout=%v", queue, retry, unique, timeout)
 	}
 }
 
@@ -216,6 +237,30 @@ func TestTrafficResetErrorWrapped(t *testing.T) {
 	fp := &fakeSvc{resetErr: sentinel}
 	mod := New(fp)
 	err := mod.trafficReset(context.Background(), asynq.NewTask(TypeTrafficReset, nil))
+	if err == nil {
+		t.Fatal("want error")
+	}
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("errors.Is: %v", err)
+	}
+}
+
+func TestECHPurgeCallsService(t *testing.T) {
+	fp := &fakeSvc{echPurgeRet: 2}
+	mod := New(fp)
+	if err := mod.echPurge(context.Background(), asynq.NewTask(TypeECHPurge, nil)); err != nil {
+		t.Fatalf("echPurge: %v", err)
+	}
+	if fp.echPurges != 1 {
+		t.Fatalf("echPurges=%d want 1", fp.echPurges)
+	}
+}
+
+func TestECHPurgeErrorWrapped(t *testing.T) {
+	sentinel := errors.New("purge failed")
+	fp := &fakeSvc{echPurgeErr: sentinel}
+	mod := New(fp)
+	err := mod.echPurge(context.Background(), asynq.NewTask(TypeECHPurge, nil))
 	if err == nil {
 		t.Fatal("want error")
 	}

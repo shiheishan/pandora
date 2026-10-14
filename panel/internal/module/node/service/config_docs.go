@@ -8,6 +8,7 @@ package service
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -24,6 +25,7 @@ import (
 var configDocReservedKeys = []string{
 	"server_port", "protocol",
 	"outbounds", "routes", "final",
+	"ech_keys",
 }
 
 // ServerConfigs 一次算出这些服务器上每个该跑的节点（repo.ServedOnServerCond）的生效配置文档：
@@ -81,7 +83,19 @@ func (s *Service) serverConfigsWithSkips(ctx context.Context, serverIDs []uuid.U
 		}
 	}
 
-	out, skips = assembleServerConfigs(rows, layersByNode)
+	var echByNode map[uuid.UUID][]echDocKey
+	var echBad map[uuid.UUID]string
+	if len(nodeIDs) > 0 {
+		echByNode, echBad, err = s.echDocKeys(ctx, nodeIDs)
+		if err != nil {
+			return nil, nil, err
+		}
+	} else {
+		echByNode = map[uuid.UUID][]echDocKey{}
+		echBad = map[uuid.UUID]string{}
+	}
+
+	out, skips = assembleServerConfigs(rows, layersByNode, echByNode, echBad)
 	return out, skips, nil
 }
 
@@ -89,7 +103,7 @@ func (s *Service) serverConfigsWithSkips(ctx context.Context, serverIDs []uuid.U
 // 记进返回的跳过集合（节点 id → 所在服务器与错误摘要），不让整批失败：建流对齐与配置纪元都是一批服务器一起算，
 // 一台节点的坏配置不能让同批其他服务器都拿不到配置。
 // 被跳过的节点不在这次下发的文档里，节点端会按文档集合停掉它的入站，直到配置修好；后台列表把它显示为失败。
-func assembleServerConfigs(rows []repo.ConfigNodeRow, layersByNode map[uuid.UUID][]routingLayer) (map[uuid.UUID][]NodeConfigDoc, map[uuid.UUID]configSkip) {
+func assembleServerConfigs(rows []repo.ConfigNodeRow, layersByNode map[uuid.UUID][]routingLayer, echByNode map[uuid.UUID][]echDocKey, echBad map[uuid.UUID]string) (map[uuid.UUID][]NodeConfigDoc, map[uuid.UUID]configSkip) {
 	out := make(map[uuid.UUID][]NodeConfigDoc)
 	skips := make(map[uuid.UUID]configSkip)
 	for _, row := range rows {
@@ -112,8 +126,13 @@ func assembleServerConfigs(rows []repo.ConfigNodeRow, layersByNode map[uuid.UUID
 		if row.ProtocolConfig != nil {
 			protoCfg = *row.ProtocolConfig
 		}
+		if reason, skip := echBad[*row.NodeID]; skip {
+			skips[*row.NodeID] = configSkip{ServerID: row.ServerID, Reason: reason}
+			continue
+		}
 		layers := layersByNode[*row.NodeID]
-		doc, err := buildNodeConfigDoc(*row.NodeID, nodeType, port, protoCfg, layers)
+		ech := echByNode[*row.NodeID]
+		doc, err := buildNodeConfigDoc(*row.NodeID, nodeType, port, protoCfg, layers, ech)
 		if err != nil {
 			skips[*row.NodeID] = configSkip{ServerID: row.ServerID, Reason: err.Error()}
 			continue
@@ -129,8 +148,8 @@ func assembleServerConfigs(rows []repo.ConfigNodeRow, layersByNode map[uuid.UUID
 }
 
 // buildNodeConfigDoc 组装一个节点的配置文档：协议字段经 protocol.KernelConfig 翻译后摊平在顶层，
-// 加 server_port（入站端口），有路由时加 outbounds / routes / final。
-func buildNodeConfigDoc(nodeID uuid.UUID, nodeType string, port int, protocolConfig string, layers []routingLayer) (NodeConfigDoc, error) {
+// 加 server_port（入站端口），有路由时加 outbounds / routes / final；协议支持且提供了密钥时加 ech_keys。
+func buildNodeConfigDoc(nodeID uuid.UUID, nodeType string, port int, protocolConfig string, layers []routingLayer, ech []echDocKey) (NodeConfigDoc, error) {
 	storedText := protocolConfig
 	if strings.TrimSpace(protocolConfig) == "" {
 		storedText = "{}"
@@ -153,6 +172,18 @@ func buildNodeConfigDoc(nodeID uuid.UUID, nodeType string, port int, protocolCon
 	// protocol 只为让摘要区分协议：改了协议、配置原样不变时 SHA 也要变，节点端才会重装；
 	// 节点端装入站以 NodeConfig.node_type 为准，不读这个键。
 	doc["protocol"] = protocol.CanonicalType(nodeType)
+
+	if len(ech) > 0 && protocol.ECHCapable(nodeType, doc) {
+		echAny := make([]any, 0, len(ech))
+		for _, k := range ech {
+			echAny = append(echAny, map[string]any{
+				"config":        base64.StdEncoding.EncodeToString(k.Config),
+				"private_key":   base64.StdEncoding.EncodeToString(k.PrivateKey),
+				"send_as_retry": k.SendAsRetry,
+			})
+		}
+		doc["ech_keys"] = echAny
+	}
 
 	outs, routes := mergeRouting(layers)
 	if len(outs) > 0 || len(routes) > 0 {
