@@ -14,10 +14,12 @@ import (
 type Options struct {
 	URL string
 	// MaxConns 是连接池上限（至少 1）；空闲连接也最多留这么多条，闲置超过 connMaxIdleTime 才关
-	MaxConns      int
-	Logger        *zap.Logger
-	SlowThreshold time.Duration
+	MaxConns int
+	Logger   *zap.Logger
 }
+
+// slowSQLThreshold 是慢 SQL 的阈值：超过它的语句按 WARN 记进日志。
+const slowSQLThreshold = 200 * time.Millisecond
 
 // connMaxIdleTime 是空闲连接留在池里的最长时间：突发过后多开的连接闲置这么久才关。
 const connMaxIdleTime = 5 * time.Minute
@@ -27,17 +29,12 @@ func Open(ctx context.Context, o Options) (*DB, error) {
 	if o.MaxConns < 1 {
 		return nil, fmt.Errorf("db: MaxConns 至少为 1，当前 %d", o.MaxConns)
 	}
-	threshold := o.SlowThreshold
-	if threshold == 0 {
-		threshold = 200 * time.Millisecond
-	}
-
 	g, err := gorm.Open(postgres.New(postgres.Config{DSN: o.URL}), &gorm.Config{
 		TranslateError:         true,
 		SkipDefaultTransaction: true,
 		PrepareStmt:            false,
 		NowFunc:                func() time.Time { return time.Now().UTC() },
-		Logger:                 newGormLogger(o.Logger, threshold),
+		Logger:                 newGormLogger(o.Logger, slowSQLThreshold),
 	})
 	if err != nil {
 		return nil, err

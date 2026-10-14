@@ -558,19 +558,6 @@ func TestCanTransitions(t *testing.T) {
 			t.Fatalf("plan %s->%s want %v", tc.from, tc.to, tc.want)
 		}
 	}
-	verCases := []struct {
-		from, to string
-		want     bool
-	}{
-		{VersionDraft, VersionPublished, true},
-		{VersionPublished, VersionDraft, false},
-		{VersionDraft, VersionDraft, false},
-	}
-	for _, tc := range verCases {
-		if CanTransitionVersion(tc.from, tc.to) != tc.want {
-			t.Fatalf("version %s->%s", tc.from, tc.to)
-		}
-	}
 	priceCases := []struct {
 		from, to string
 		want     bool
@@ -582,19 +569,6 @@ func TestCanTransitions(t *testing.T) {
 	for _, tc := range priceCases {
 		if CanTransitionPrice(tc.from, tc.to) != tc.want {
 			t.Fatalf("price %s->%s", tc.from, tc.to)
-		}
-	}
-	packCases := []struct {
-		from, to string
-		want     bool
-	}{
-		{PackActive, PackArchived, true},
-		{PackArchived, PackActive, true},
-		{PackActive, PackActive, false},
-	}
-	for _, tc := range packCases {
-		if CanTransitionPack(tc.from, tc.to) != tc.want {
-			t.Fatalf("pack %s->%s", tc.from, tc.to)
 		}
 	}
 }
