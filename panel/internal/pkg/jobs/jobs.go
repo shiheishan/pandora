@@ -55,7 +55,7 @@ func Decode(t *asynq.Task, dst any) error {
 	return nil
 }
 
-// Middleware 把载荷里的 req_id 放进 ctx 和日志，任务结束记一行结果。
+// Middleware 把载荷里的 req_id 与 asynq 任务 id 放进 ctx 和日志，任务结束记一行结果。
 func Middleware(base *zap.Logger) asynq.MiddlewareFunc {
 	return func(next asynq.Handler) asynq.Handler {
 		return asynq.HandlerFunc(func(ctx context.Context, t *asynq.Task) error {
@@ -63,7 +63,12 @@ func Middleware(base *zap.Logger) asynq.MiddlewareFunc {
 			var env envelope
 			_ = json.Unmarshal(t.Payload(), &env)
 			ctx = plog.WithReqID(ctx, base, reqid.Normalize(env.ReqID))
-			lg := plog.From(ctx).With(zap.String("task", t.Type()))
+			fields := []zap.Field{zap.String("task", t.Type())}
+			// asynq 处理任务时 ctx 里带任务 id，日志据此对上 asynq 里的那条任务（重试、归档）。
+			if id, ok := asynq.GetTaskID(ctx); ok {
+				fields = append(fields, zap.String("task_id", id))
+			}
+			lg := plog.From(ctx).With(fields...)
 			ctx = plog.With(ctx, lg)
 
 			start := time.Now()
