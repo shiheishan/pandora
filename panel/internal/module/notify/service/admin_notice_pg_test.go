@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -277,6 +278,36 @@ func TestNotifyAdminsTicket_EnabledAndDisabled(t *testing.T) {
 		t.Fatalf("工单提醒投递应去重，count=%d", count)
 	}
 
+	// 订阅摘要、余额读失败：只记 Warn，变量写「—」，照样写提醒、不返回错误（不拖垮建单 / 回复）
+	fakeSum.err = errors.New("subscription down")
+	fakeBal.err = errors.New("ledger down")
+	inSoft := in
+	inSoft.MessageID = uuid.New()
+	if err := e.svc.NotifyAdminsTicket(e.ctx, inSoft); err != nil {
+		t.Fatalf("读失败时提醒不应返回错误: %v", err)
+	}
+	fakeSum.err, fakeBal.err = nil, nil
+	var rows []struct {
+		ID         uuid.UUID
+		PayloadEnc []byte
+	}
+	if err := e.scan(e.ctx, &rows, `SELECT id, payload_enc FROM notification_deliveries WHERE template_code = ?`, TemplateAdminTicketOpened); err != nil || len(rows) != 2 {
+		t.Fatalf("读失败时也应写提醒，rows=%d err=%v", len(rows), err)
+	}
+	softFound := false
+	for _, r := range rows {
+		sp := noticeOpenPayload(t, e, model.Delivery{ID: r.ID, PayloadEnc: r.PayloadEnc})
+		if sp.Vars["plan"] == "—" {
+			softFound = true
+			if sp.Vars["traffic"] != "—" || sp.Vars["expires_at"] != "—" || sp.Vars["balance"] != "—" || sp.Vars["ticket_no"] != "TK2026101401" {
+				t.Fatalf("读失败时的变量 %+v", sp.Vars)
+			}
+		}
+	}
+	if !softFound {
+		t.Fatal("没找到读失败时写的提醒")
+	}
+
 	// 关着时什么都不写
 	e.st.tgx.AdminTicketNotify = false
 	in2 := in
@@ -284,7 +315,7 @@ func TestNotifyAdminsTicket_EnabledAndDisabled(t *testing.T) {
 	if err := e.svc.NotifyAdminsTicket(e.ctx, in2); err != nil {
 		t.Fatalf("disabled NotifyAdminsTicket failed: %v", err)
 	}
-	if err := e.scan(e.ctx, &count, `SELECT count(*) FROM notification_deliveries WHERE template_code = ?`, TemplateAdminTicketOpened); err != nil || count != 1 {
+	if err := e.scan(e.ctx, &count, `SELECT count(*) FROM notification_deliveries WHERE template_code = ?`, TemplateAdminTicketOpened); err != nil || count != 2 {
 		t.Fatalf("关着时不应写投递，count=%d", count)
 	}
 }

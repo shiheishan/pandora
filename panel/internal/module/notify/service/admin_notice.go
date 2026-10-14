@@ -13,7 +13,9 @@ import (
 	ordersvc "github.com/aegispanel/aegis/internal/module/order/service"
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	plog "github.com/aegispanel/aegis/internal/pkg/log"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
+	"go.uber.org/zap"
 )
 
 // adminNotice 是一条发到管理员群组的提醒（随业务写入，派发时才发）。
@@ -144,6 +146,7 @@ func truncateTicketBody(s string, max int) string {
 // NotifyAdminsTicket 是 support 建单 / 用户回复时调的（在调用方事务里，s.tx.Do 加入）：
 // 后台没开工单提醒（TelegramExtras.AdminTicketNotify）或 adminChat 不可发时什么都不写、返回 nil；
 // 否则批量读这个用户的邮箱（s.dir.Emails）、订阅摘要（s.summaries）、余额（s.balances），拼变量，writeAdminNotice。
+// 这几项读失败只记 Warn、对应变量写「—」；读设置与写去重键、投递失败才返回错误。
 // 变量：ticket_no、subject、body（截到 adminTicketBodyMax 字，超出加「…」）、email（maskEmail）、
 //
 //	plan / traffic / expires_at：取 UserSubscriptions.Current 且 State == StateLive 的那份——plan 为 PlanName，
@@ -178,60 +181,41 @@ func (s *Service) NotifyAdminsTicket(ctx context.Context, in AdminTicketInput) e
 		return errs.Wrap(errs.Internal, fmt.Errorf("notify: Balances 未装配"))
 	}
 
-	emails, err := s.dir.Emails(ctx, []uuid.UUID{in.UserID})
-	if err != nil {
-		return err
+	// 下面这些只是给客服看的上下文，读不到就记 Warn 写「—」，不让旁路提醒拖垮建单 / 回复；
+	// 只有写去重键与投递失败才返回错误（随调用方事务回滚）。
+	lg := plog.From(ctx)
+	emailStr := "—"
+	if emails, err := s.dir.Emails(ctx, []uuid.UUID{in.UserID}); err != nil {
+		lg.Warn("notify: 工单提醒读邮箱失败", zap.Error(err))
+	} else {
+		emailStr = maskEmail(emails[in.UserID])
 	}
+
+	planStr, trafficStr, expiresAtStr := "—", "—", "—"
 	userSubs, err := s.summaries.SummariesByUsers(ctx, []uuid.UUID{in.UserID})
 	if err != nil {
-		return err
-	}
-	balances, currency, err := s.balances.UserBalances(ctx, []uuid.UUID{in.UserID})
-	if err != nil {
-		return err
-	}
-
-	loc, err := scanSiteLocation(ctx, s)
-	if err != nil {
-		return err
-	}
-
-	planStr := "无生效订阅"
-	trafficStr := "—"
-	expiresAtStr := "—"
-
-	us := userSubs[in.UserID]
-	if us.Current != nil && us.Current.State == subsvc.StateLive {
-		cur := us.Current
-		planStr = cur.PlanName
-		expiresAtStr = noticeTime(cur.PeriodEnd, loc)
-
-		foundTraffic := false
-		for _, q := range cur.Quotas {
-			if q.Metric == subsvc.MetricTraffic {
-				foundTraffic = true
-				if q.Limit == nil {
-					trafficStr = "不限量"
-				} else {
-					var rem int64
-					if q.Remaining != nil {
-						rem = *q.Remaining
-					} else {
-						rem = *q.Limit - q.Consumed
-					}
-					rem += cur.PackRemainingBytes
-					trafficStr = humanBytes(rem)
-				}
-				break
+		lg.Warn("notify: 工单提醒读订阅摘要失败", zap.Error(err))
+	} else {
+		planStr = "无生效订阅"
+		if us := userSubs[in.UserID]; us.Current != nil && us.Current.State == subsvc.StateLive {
+			cur := us.Current
+			planStr = cur.PlanName
+			trafficStr = ticketTraffic(cur)
+			if loc, err := scanSiteLocation(ctx, s); err != nil {
+				lg.Warn("notify: 工单提醒读站点时区失败", zap.Error(err))
+			} else {
+				expiresAtStr = noticeTime(cur.PeriodEnd, loc)
 			}
 		}
-		if !foundTraffic {
-			trafficStr = "—"
-		}
 	}
 
-	bal := balances[in.UserID]
-	balanceStr := bal.StringFixed(2) + " " + currency
+	balanceStr := "—"
+	if balances, currency, err := s.balances.UserBalances(ctx, []uuid.UUID{in.UserID}); err != nil {
+		lg.Warn("notify: 工单提醒读余额失败", zap.Error(err))
+	} else {
+		bal := balances[in.UserID]
+		balanceStr = bal.StringFixed(2) + " " + currency
+	}
 
 	code := TemplateAdminTicketReplied
 	if in.Kind == "opened" {
@@ -245,7 +229,7 @@ func (s *Service) NotifyAdminsTicket(ctx context.Context, in AdminTicketInput) e
 			"ticket_no":  in.TicketNo,
 			"subject":    in.Subject,
 			"body":       truncateTicketBody(in.Body, adminTicketBodyMax),
-			"email":      maskEmail(emails[in.UserID]),
+			"email":      emailStr,
 			"plan":       planStr,
 			"traffic":    trafficStr,
 			"expires_at": expiresAtStr,
@@ -260,6 +244,26 @@ func (s *Service) NotifyAdminsTicket(ctx context.Context, in AdminTicketInput) e
 		_, err := s.writeAdminNotice(ctx, chatID, notice)
 		return err
 	})
+}
+
+// ticketTraffic 是工单提醒里的剩余流量：第一条流量配额的剩余加流量包余量；Limit 为 nil 写「不限量」，没有流量配额写「—」。
+func ticketTraffic(cur *subsvc.Summary) string {
+	for _, q := range cur.Quotas {
+		if q.Metric != subsvc.MetricTraffic {
+			continue
+		}
+		if q.Limit == nil {
+			return "不限量"
+		}
+		var rem int64
+		if q.Remaining != nil {
+			rem = *q.Remaining
+		} else {
+			rem = *q.Limit - q.Consumed
+		}
+		return humanBytes(rem + cur.PackRemainingBytes)
+	}
+	return "—"
 }
 
 // paidAmount 是收款提醒里的金额：订单总额（两位小数）加币种；没有币种时（旧数据或测试夹具）显示「—」。

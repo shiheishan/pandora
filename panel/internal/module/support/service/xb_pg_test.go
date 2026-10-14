@@ -123,7 +123,7 @@ func TestAdminTicketNotifier(t *testing.T) {
 		t.Fatal("两条提醒的消息 id 应不同")
 	}
 
-	// 提醒写失败：建单一起回滚
+	// 提醒写去重键或投递失败（notify 读上下文失败不算，只写「—」）：建单一起回滚
 	n.err = errors.New("notify down")
 	if _, err := e.svc.Create(uctx, CreateInput{Body: createBody("rollback")}); err == nil {
 		t.Fatal("提醒失败时建单应返回错误")
