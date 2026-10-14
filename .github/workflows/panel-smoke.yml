@@ -105,8 +105,7 @@ jobs:
           SMOKE_STATE: ${{ runner.temp }}/smoke
         run: npx vitest run -c tests/smoke/vitest.config.ts
       # panel/tests/*.sh 的 e2e 在 panel-newstack.yml 跑；
-      # 「200 用户、5 节点、60 秒零 5xx」的判据由 panel-newstack.yml node-e2e job 的 node_smoke_e2e.sh 覆盖
-      # （旧的 tools/loadtest 走旧节点通道）。
+      # 「200 用户、5 节点、60 秒零 5xx」的判据由 panel-newstack.yml node-e2e job 的 node_smoke_e2e.sh 覆盖。
       - name: Playwright version for the browser cache
         id: playwright
         if: always() && steps.stack.outcome == 'success'

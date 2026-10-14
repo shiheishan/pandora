@@ -13,7 +13,7 @@
 #                                     printf '%s\n' "$pw" | sudo PANDORA_ADMIN_EMAIL=a@example.test \
 #                                       PANDORA_ASSUME_YES=1 PANDORA_PUBLIC_BASE_URL=https://panel.example.test bash install.sh
 #   PANDORA_SKIP_NGINX=1              不碰 nginx 与证书
-#   PANDORA_ACME / PANDORA_ACME_EMAIL / PANDORA_ACME_SERVER  交给 edge-tls.sh（与旧版同义）
+#   PANDORA_ACME / PANDORA_ACME_EMAIL / PANDORA_ACME_SERVER  交给 edge-tls.sh
 #   PANDORA_SYSTEMD_HARDENING=0|1     PostgreSQL / Redis 的 systemd 隔离（缺省 1，记在 deploy.env）
 #
 # 设计要点：幂等（已有 secrets.env 按升级，三个配置文件首装生成、升级不改）；密钥现生成只写文件；

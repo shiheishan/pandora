@@ -1,25 +1,12 @@
 #!/usr/bin/env bash
-# 端到端链路（新栈 pandora）：注册 → 登录 → 套餐 → 下单 → 易支付回调幂等 → 账本 → 订阅与配额 → 审计 → 限流与错误处理。
+# 端到端链路：注册 → 登录 → 套餐 → 下单 → 易支付回调幂等 → 账本 → 订阅与配额 → 审计 → 限流与错误处理。
 #
 # 与 invariants / 其它 e2e 的分工：本脚本证明整条 HTTP 业务链路在真实网关与一次性库上跑得通；
 # PAY-003 同一易支付回调连发 10 次只产生一次权益与一笔账。
 #
-# 与旧版步骤对照：
-#   旧 0 读旧配置与旧网关/主密钥变量 → 新 0：PUB/ADM/PSQL、E2E_DISPOSABLE、库名 test/e2e 段、readyz
-#   旧 1–2 注册登录（旧令牌域标记）→ 新 1–2：JWT aud=public；跨域改 aud 为 admin
-#   旧 3 挑「有活跃节点」的池 → 新 3：自建 e2e 可服务节点夹具（无节点端，SQL 标 ready/active）
-#   旧 4 下单 use_balance 整数 → 新 4：同；幂等冲突改 label 字段
-#   旧 5 旧 demo 渠道回调与签名头 → 新 5：易支付 GET 回调，纯文本 success/fail
-#   旧 6 旧账本校验函数与有符号金额列 → 新 6：分录 CASE 配平 + DriftAccounts 口径 SQL
-#   旧 7 pending→active 事件 → 新 7：activated，from_status IS NULL；配额行数随版本定义
-#   旧 8 审计哈希链 → 新 8：只数条数 + audit_events_append_only 触发器
-#   旧 9 限流 → 新 9：独立邮箱 rl-<STAMP>@…；404 带 request_id
-#
-# 删掉的旧断言及原因：
-#   - processed / already_handled JSON：易支付回执无此字段（纯文本 success）
-#   - 旧哈希链字段（当前链与前驱哈希）及连续性：新栈审计无哈希链（见 p7e2e-common 产品决定）
-#   - 旧版令牌形状：改为 JWT HS256
-#   - 租户列与多租户环境：单租户新栈无 RLS
+# 不测的东西及原因：
+#   - 审计哈希链：审计没有哈希链（见 p7e2e-common 产品决定），只数条数并核对 audit_events_append_only 触发器
+#   - 租户隔离：单租户，没有租户列与 RLS
 #
 # 仍用 SQL 的步骤及原因：
 #   - 口令 PHC、验证码哈希、订单快照、支付/账本/订阅/凭据/事件：无更稳的只读 HTTP，或要核对库内唯一约束

@@ -1,23 +1,11 @@
 #!/usr/bin/env bash
-# 到期与续费的端到端（新栈 pandora + nodesim 节点夹具）：
+# 到期与续费的端到端（nodesim 节点夹具）：
 #
 #   开通 → 到期（worker 的 subscription:expire 每分钟扫描）→ 订阅链接只剩提示节点、门户仍列出且不许换链 →
 #   续费（同套餐人工单落在原订阅）→ 真实节点回来、链接不变；门户同套餐新购 409。
-#   后台开别的套餐 → 原订阅换套餐（链接不变）；重置链接换 proxy_uuid（旧 404），10 分钟内再重置 429。
-#
-# 与旧版（w5expiry / aegis-admin）步骤对照：
-#   旧 0 一次性库守卫     → 新 0：去掉租户与 EXPIRY_E2E_DATABASE，保留 DISPOSABLE + 库名 test/e2e 段
-#   旧 1 SQL 插服务器/池/节点/套餐 → 新 1：后台 API 建池/服务器/节点 + bootstrap-token + nodesim 心跳 + activate
-#   旧 2 开通与拉取         → 新 2：同流程 + 等出站含 display_name + 断言用户在 nodesim 名单（proxy_uuid）
-#   旧 3 到期               → 新 3：SQL 只改 subscriptions/quota_balances 周期（删凭据 expires_at）；
-#                             等扫描改 expired + 名单 absent + 过期 sing-box 形态
-#   旧 4 续费               → 新 4：同 + 名单 present
-#   旧 5 换套餐             → 新 5：套餐走 /plans/complete，同 + roster_has
-#   旧 6 重置链接           → 新 6：按份限频 + 名单换 uuid
-#   （新 7）收尾：模拟器 errors=0，优雅停 nodesim
-#
-# 新规则下删掉的旧断言：租户存在检查；subscription_credentials.expires_at 的 SQL 修改；
-# 用 SQL 直接建夹具（改为接口）；「aegis-admin expiry scan」文案改为 worker 扫描。
+#   后台开别的套餐 → 原订阅换套餐（链接不变）；重置链接换 proxy_uuid（旧链接 404），10 分钟内再重置 429。
+#   每一步都核对 nodesim 收到的名单（proxy_uuid 在或不在）；收尾断言模拟器 errors=0，优雅停 nodesim。
+#   夹具（池、服务器、节点、套餐）都经后台 API 建，节点由 nodesim 接入后 activate。
 #
 # 仍用 SQL 的步骤及原因：
 #   - 第 3 节把订阅/配额周期挪到过去：真等一个月不现实；且 SQL 改周期本身不会触发名单下发，

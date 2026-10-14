@@ -1,20 +1,10 @@
 #!/usr/bin/env bash
-# 易支付端到端（新栈 pandora）：自建渠道与套餐 → 注册下单 → 收银台验签 → 防篡改回调 →
+# 易支付端到端：自建渠道与套餐 → 注册下单 → 收银台验签 → 防篡改回调 →
 # 幂等入账 → 账本与凭据保护。
 #
-# 与旧版（aegis / 预置 epay 渠道 / healthz / tenant）步骤对照：
-#   旧 0 查 tenants、库里 epay 渠道 → 新 0：DISPOSABLE + readyz + 后台自建渠道与可服务节点 + plans/complete
-#   旧 2 从门户目录挑 CNY 套餐 → 新 2：只用本脚本建的 plan_id / price_id
-#   旧 3 固定 provider=epay → 新 3：provider=<自建 code>；在途意图仅 requires_action（无 created/processing）
-#   旧 4 回调 /webhooks/payments/epay → 新 4：/webhooks/payments/<code>
-#   旧 5–6 幂等与账本 → 新 5–6：ledger_transactions 带 source_type='order'；库内金额元、JSON 分
-#   旧 7 credentials_encrypted + AEGIS_PUBLIC_LOG → 新 7：credentials_sealed + SERVE_LOG
-#
-# 删掉的旧断言及原因：
-#   - tenants / tenant_id：新栈单租户、无 RLS
-#   - signed_amount、app.verify_ledger_all()：新栈分录无 signed_amount，漂移用 DriftAccounts 口径 SQL
-#   - payments.amount 与 payable_amount（分）直接相等：库里 numeric(20,2) 为元
-#   - 写死 EPAY_KEY / EPAY_PID / BASE：夹具密钥与商户号脚本内生成，门户用 PUB
+# 口径：渠道（code 由脚本生成，回调走 /webhooks/payments/<code>）、套餐、可服务节点都由本脚本经后台自建，
+# 商户号与密钥现生成；在途意图只有 requires_action；库内金额是元（numeric(20,2)）、JSON 是分；
+# 账本漂移用 DriftAccounts 口径 SQL。
 #
 # 仍用 SQL 的步骤及原因：
 #   - 在途意图数、payment_events 幂等键、账本配平与漂移、凭据密文不含明文：核对库内事实，无等价只读 API

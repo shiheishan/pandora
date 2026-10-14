@@ -1,15 +1,10 @@
 #!/usr/bin/env bash
-# 评估「内鬼检测能不能正常运行」（新栈 pandora + nodesim 节点夹具）：滥用指订阅分享、批量刷号、
+# 评估「内鬼检测能不能正常运行」（nodesim 节点夹具）：滥用指订阅分享、批量刷号、
 # 一条订阅多人同时在线。审计无哈希链，不在本脚本范围。
 #
-# 与旧版步骤对照：
-#   旧 0 库名与确认变量守卫 → 新 0：DISPOSABLE + current_database() 带 test/e2e 段
-#   旧 1 直接往 servers/nodes 插行、签节点令牌 → 新 1：后台 API 建池/服务器/节点 + bootstrap-token + nodesim 真接入 + activate
-#   旧 在线节点上报 → 新：直接写 node_alive_ips（sha256(设备键)，与 HMAC/IPv6 /64 归一由 Go 单测覆盖）
-#   旧 strict 读下发名单 → 新：轮询 nodesim status 里 proxy_uuid 名单；strict 集合由 worker devices:strict 推进
-#   旧健康检查 → 新：$PUB/readyz
-#
-# 删掉的旧断言：直接操作夹具表；旧节点端回包 ips 列表与上报逐地址一致（改为 SQL 去重设备键行数）。
+# 做法：后台 API 建池、服务器、节点，签 bootstrap-token 后 nodesim 真接入再 activate；strict 集合由 worker
+# devices:strict 推进，脚本轮询 nodesim status 里的 proxy_uuid 名单；在线设备按 SQL 去重后的设备键行数核对
+# （HMAC 与 IPv6 /64 归一由 Go 单测覆盖）。
 #
 # 仍直接写库：subscription_fetch_log 的 fetched_at 回拨（append-only + session_replication_role）；
 # node_alive_ips 造在线（脚本拿不到 HMAC 密钥）；strict 前刷新 DEVICE 用例的 last_seen_at（两轮间隔防窗口过期）。
@@ -109,7 +104,7 @@ def is_loopback_origin(url):
 # ============================================================================
 _opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 _admin_calls = []
-ADMIN_BUDGET = int(os.environ.get("RISK_ADMIN_BUDGET", "100"))  # 新栈后台按 IP 每分钟缺省 120，CI 会放宽并调大预算
+ADMIN_BUDGET = int(os.environ.get("RISK_ADMIN_BUDGET", "100"))  # 后台按 IP 每分钟缺省 120，CI 会放宽并调大预算
 
 def _throttle_admin():
     while True:
