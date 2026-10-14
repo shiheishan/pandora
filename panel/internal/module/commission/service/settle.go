@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/aegispanel/aegis/internal/module/commission/model"
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
 	"github.com/aegispanel/aegis/internal/pkg/money"
