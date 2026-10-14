@@ -248,3 +248,30 @@ func subErr(err error) error {
 	}
 	return err
 }
+
+// deliveryReady 与 needDelivery 一致：分发依赖齐全才算已注入。
+func (s *Service) deliveryReady() bool {
+	return s.delivery != nil && s.delivery.Settings != nil && s.delivery.Owners != nil &&
+		s.delivery.Hasher != nil && s.delivery.Limiter != nil
+}
+
+// MissingPorts 返回还没注入的必需端口名（装配完成后由 internal/app 统一检查）。
+func (s *Service) MissingPorts() []string {
+	var out []string
+	for _, p := range []struct {
+		name string
+		ok   bool
+	}{
+		{"Delivery", s.deliveryReady()},
+		{"NodeSource", s.nodes != nil},
+		{"OnlineDeviceCounter", s.online != nil},
+		{"RosterNotifier", s.roster != nil},
+		{"PluginEvents", s.events != nil},
+		{"Realtime", s.rt != nil},
+	} {
+		if !p.ok {
+			out = append(out, p.name)
+		}
+	}
+	return out
+}

@@ -273,3 +273,13 @@ func truncateUTF8(s string, maxBytes int) string {
 	}
 	return b
 }
+
+// MissingPorts 返回还没注入的必需端口名（装配完成后由 internal/app 统一检查）。
+// 不算必需：labels（UseResourceLabeler 按资源类型可注册多个，没注册的资源类型显示原始 id）。
+func (s *Service) MissingPorts() []string {
+	var out []string
+	if s.actors == nil {
+		out = append(out, "ActorDirectory")
+	}
+	return out
+}

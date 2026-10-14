@@ -143,3 +143,12 @@ func (s *Service) writeChanges(ctx context.Context, changes []change) error {
 func (s *Service) writeAudit(ctx context.Context, action, resourceType string, data map[string]any) error {
 	return s.audit.Write(ctx, auditsvc.Event{Action: action, ResourceType: resourceType, Data: data})
 }
+
+// MissingPorts 返回还没注入的必需端口名（装配完成后由 internal/app 统一检查）。
+func (s *Service) MissingPorts() []string {
+	var out []string
+	if s.rt == nil {
+		out = append(out, "Realtime")
+	}
+	return out
+}

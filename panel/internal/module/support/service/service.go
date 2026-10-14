@@ -169,7 +169,7 @@ func (s *Service) UsePlanNames(p PlanNames) { s.plans = p }
 // UseReplyNotifier 接上客服回复通知（启动装配时调用）。
 func (s *Service) UseReplyNotifier(n ReplyNotifier) { s.notifier = n }
 
-// MissingPorts 返回没装配的必需端口名（app 启动时检查）。
+// MissingPorts 返回没装配的必需端口名（装配完成后由 internal/app 统一检查）。
 func (s *Service) MissingPorts() []string {
 	var out []string
 	if s.orders == nil {
@@ -180,6 +180,12 @@ func (s *Service) MissingPorts() []string {
 	}
 	if s.notifier == nil {
 		out = append(out, "ReplyNotifier")
+	}
+	if s.events == nil {
+		out = append(out, "PluginEvents")
+	}
+	if s.rt == nil {
+		out = append(out, "Realtime")
 	}
 	return out
 }

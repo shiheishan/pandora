@@ -199,3 +199,31 @@ var (
 func errCodeInvalid() error {
 	return errs.Invalid(map[string]string{"code": "验证码错误或已失效，请重新获取"})
 }
+
+// MissingPorts 返回还没注入的必需端口名（装配完成后由 internal/app 统一检查）。
+// 不算必需：geo（没放 IP 归属地数据文件时就是 nil，归属地留空）。
+func (s *Service) MissingPorts() []string {
+	var out []string
+	for _, p := range []struct {
+		name string
+		ok   bool
+	}{
+		{"SessionRevoker", s.revoker != nil},
+		{"AdminGuard", s.adminGuard != nil},
+		{"StaffGuard", s.staff != nil},
+		{"VerificationMailer", s.mailer != nil},
+		{"RosterNotifier", s.roster != nil},
+		{"OpsSubscriptions", s.subs != nil},
+		{"OpsOrders", s.orders != nil},
+		{"OpsWallets", s.wallets != nil},
+		{"OpsTelegram", s.telegram != nil},
+		{"OpsGroupUsage", s.groupUsage != nil},
+		{"JobQueue", s.queue != nil},
+		{"PluginEvents", s.events != nil},
+	} {
+		if !p.ok {
+			out = append(out, p.name)
+		}
+	}
+	return out
+}
