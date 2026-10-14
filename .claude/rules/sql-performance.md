@@ -1,27 +1,20 @@
 ---
 paths:
-  - "panel/internal/domain/**"
-  - "panel/internal/platform/db/**"
-  - "panel/internal/middleware/**"
-  - "panel/migrations/**"
+  - "panel/internal/module/*/repo/**"
+  - "panel/db/migrations/**"
 ---
 
-# 写 SQL 时的性能坑（2026-10-06 生产规模实测踩过的）
+# 写 SQL 时的性能坑
 
-5k 用户、200 节点在 2c4g 上实测，慢的全是下面这些写法，不是框架。改 SQL 前后在 5k 库副本上用 `EXPLAIN (ANALYZE, BUFFERS)` 对照。
+换栈阶段性能只防明显退化（根 CLAUDE.md「取舍原则」）：N+1、全表扫描、无界并发、每请求多余的往返。下面几条是旧栈在 5k 用户、200 节点规模上实测踩过、换了 GORM 照样会踩的写法。改 SQL 前后用 `EXPLAIN (ANALYZE, BUFFERS)` 对照。
 
-- **整表聚合的视图被按单行 JOIN**：视图里先 GROUP BY 全表、外面再 JOIN，过滤条件推不进去，只查一条也扫全表（在线设备视图曾单条 82ms、后台用户列表因此 470 秒）。视图写成按驱动行 LATERAL 聚合，或调用方自己按单行 LATERAL
-- **LATERAL / 相关子查询在 LIMIT 之前**：对全部行算完读模型再取一页。先在主表上按排序键取一页 id（配 `(tenant_id, created_at DESC, id DESC)` 这类索引），再只对这一页拼读模型
-- **每行调用读设置的 SQL 函数**：函数体里有子查询就不能内联，每行读一次 system_settings。不相关的值写成标量子查询（成为 InitPlan，整条语句只算一次）
-- **内联后的表达式被抄写**：可内联的 SQL 函数被拉平后，每引用一次上一步的列，就把那一步的整棵表达式（含正则）再算一遍。逐步计算的管线每步一层子查询加 `OFFSET 0` 隔开（00099 的 `node_traffic_payload_entries`）
-- **JIT**：PG18 缺省 jit=on，估价过 10 万就编译，编译远慢于执行；是否触发取决于统计信息新旧。部署已关（`deploy/postgresql-pandora.conf` 的 `jit = off`，开发数据基座同值 + 按库给 aegis_app 设 jit=off），不要在会话里再打开
-- **请求时解析原文**：看板每次对 24 小时上报 jsonb_each + 正则。入库时就按口径写汇总表，读路径只读汇总
-- **for 循环里查库（N+1）**：每条订阅查一次配额、每个 uid 4 条语句、每个 IP 一条插入。改成 `= ANY($n::uuid[])`、`unnest` 批量写、一条 CTE
-- **读路径上的写**：每次拉配置无条件 UPDATE、每个请求同步删旧 nonce。没变就不写（`IS DISTINCT FROM`），清理挪到后台定时任务
-- **只增不删的表**：在线记录、探针点、汇总表要有保留期任务（分批删、每批有上限）；追加写表（`app.make_append_only`）不能为清理削弱保护，走带边界的 SECURITY DEFINER 函数（00100 `app.purge_node_metrics`）
-- **按列查却没索引**：新增按某列查找的路径先对照迁移里的 CREATE INDEX（曾经按 token_prefix 查订阅凭据而索引建在 token_hash 上）
-- **一个请求开多个事务**：每个事务至少 BEGIN、设租户、COMMIT 三次往返（`InTx` 已把 BEGIN 与设租户合成一次）。热路径能一条语句取齐就用 `QueryRowScoped`
-- **只读也开事务**：InTx 的闭包里只有 SELECT（不带 FOR UPDATE/SHARE、没有写）白付 BEGIN 与 COMMIT。读已提交下每条语句本来就各取快照，事务不带来一致性；改用 `QueryRowScoped` / `QueryScoped` / `BatchScoped`（一次往返，互不依赖的几条排进一个批次）。守卫 `panel/tools/archguard/readonly_tx_test.go` 的 `TestNoReadOnlyInTx`，现有违例按「包:声明 → 个数」登记在 `readOnlyTxExemptions`，改好一个就把数减一
-- **往返预算**：门户与节点热路由的稳态往返数钉在 `panel/tools/routebudget/routes.txt`，PG18 走真实路由逐条量（见 `rules/tools-routebudget.md`）。改了热路由的 SQL 或事务结构，预算会变：少了照测试给出的行改小，多了要么优化回来、要么说明理由再改表
-- **长事务里算 Argon2**：19 MiB、几十毫秒一次，持着连接和行锁去算会拖垮连接池。先经全局名额算好再开事务
-- **语句超时**：aegis_app 按库设了 statement_timeout=15s。合理需要更长的后台任务在自己的事务里 `SET LOCAL statement_timeout`，不要放宽全局值
+- **for 循环里查库（N+1）**：每条订阅查一次配额、每个 id 一条插入。改成一条带 `= ANY(?)` 的查询，批量写用 `CreateInBatches`（如 `panel/internal/module/giftcard/repo/codes.go`）。
+- **整表聚合被按单行 JOIN**：先 GROUP BY 全表、外面再 JOIN 的视图或子查询，过滤推不进去，只查一条也扫全表。写成按驱动行的 LATERAL 聚合。
+- **LATERAL / 相关子查询在 LIMIT 之前**：对全部行算完读模型再取一页。先在主表上按排序键取一页 id（配好对应索引），再只对这一页拼读模型。
+- **请求时解析原始上报**：看板每次扫原始上报做聚合。入库时就按口径写汇总表，读路径只读汇总（节点流量读 `node_traffic_hourly`，见 `panel/internal/module/node/repo/report_reads.go`）。
+- **读路径上的写**：心跳、拉配置这类高频路径不要无条件 UPDATE；没变就不写（`IS DISTINCT FROM`，照 `panel/internal/module/node/repo/session.go`），清理挪到 asynq 定时任务。
+- **只增不删的表**：在线记录、指标、审计、流水要有保留期任务，分批删、每批有上限（照 `panel/internal/module/audit/task/task.go` 的 `TypeRetention`）；追加写表走 SECURITY DEFINER 清理函数，不为清理削弱触发器保护（见 `.claude/rules/panel-migrations.md`）。
+- **按列查却没索引**：新增按某列查找的路径，先对照迁移里的 CREATE INDEX 确认索引建在这一列上（旧栈曾按 token_prefix 查凭据而索引建在 token_hash 上）。
+- **长事务里算 Argon2id**：每次十几 MiB、几十毫秒，持着连接和行锁去算会拖垮连接池。`panel/internal/module/identity/service/password.go` 的 `passwordHasher` 在事务外经并发闸算好，再开事务。
+- **JIT**：PG18 缺省 jit=on，代价估计一过阈值就编译，编译常比执行慢。部署和开发库都已关（`panel/deploy/postgresql-pandora.conf`、`configure-app-role.sql` 按库给 `pandora_app` 设 `jit = off`），不要在会话里打开。
+- **语句超时**：`pandora_app` 按库设了 `statement_timeout = '15s'`。确实要更长的后台任务在自己的事务里 `SET LOCAL statement_timeout`，不要放宽全局值；能分批的先分批。
