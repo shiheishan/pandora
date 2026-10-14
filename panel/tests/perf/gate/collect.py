@@ -352,6 +352,9 @@ def window_delta(s0: Dict[str, Any], s1: Dict[str, Any]) -> Dict[str, Any]:
     for n in list(UNITS) + ["system"]:
         c0, c1 = s0["cgroup"].get(n, {}), s1["cgroup"].get(n, {})
         d = (c1.get("usage_usec", 0) - c0.get("usage_usec", 0)) / 1e6
+        if d < 0:
+            # 服务在窗口里重启过（重启重连场景）：systemd 重建了它的 cgroup，计数从 0 起，窗口内用量就是新计数
+            d = c1.get("usage_usec", 0) / 1e6
         cpu_s[n] = round(d, 3)
         cpu_pct[n] = round(d / secs * 100, 2) if secs > 0 else None
         mem_mb[n] = round(c1.get("mem_anon", 0) / 2**20, 1)
