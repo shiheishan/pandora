@@ -36,7 +36,7 @@ describe('mock api · admin nodes', () => {
     expect(nodeDetailResponse.parse(await (await call('GET', '/v1/nodes?id=00000000-0000-4000-8000-000000000000')).json())).toEqual({ nodes: [], total: 0 })
   })
 
-  it('searches, filters and pages on the server like nodefabric.QueryAdminNodes', async () => {
+  it('searches, filters and pages on the server like GET /v1/nodes', async () => {
     const page = async (query: string) => nodesResponse.parse(await (await call('GET', `/v1/nodes?${query}`)).json())
     const all = await page('state=all')
     expect(all.nodes.every((n) => n.serving_status !== 'retired')).toBe(true)

@@ -84,7 +84,7 @@ describe('traffic', () => {
     expect(expiryInfo('2026-09-26T16:00:00Z', NOW, 'UTC')?.date).toBe('2026-09-26 16:00')
   })
 
-  it('到期：最后 24 小时写「还剩 X 小时」，过了写「已于 … 到期」（w5expiry）', () => {
+  it('到期：最后 24 小时写「还剩 X 小时」，过了写「已于 … 到期」', () => {
     const in5h = new Date(NOW.getTime() + 4.5 * 3_600_000).toISOString()
     expect(expiryInfo(in5h, NOW, 'UTC')).toMatchObject({ hours: 5, urgent: true, expired: false, label: '还剩 5 小时' })
     const past = expiryInfo(new Date(NOW.getTime() - 3_600_000).toISOString(), NOW, 'UTC')
@@ -201,7 +201,7 @@ describe('subscriptions', () => {
     expect(pickPrimary([sub({ status: 'expired', renewable: false })])).toBeNull()
   })
 
-  it('主订阅：没有生效订阅时回落到能原地续费的已过期订阅（w5expiry）', () => {
+  it('主订阅：没有生效订阅时回落到能原地续费的已过期订阅', () => {
     const expired = [
       sub({ id: 'closed', status: 'expired', renewable: false, current_period_end: '2026-09-01T00:00:00Z' }),
       sub({ id: 'older', status: 'expired', renewable: true, current_period_end: '2026-09-10T00:00:00Z' }),

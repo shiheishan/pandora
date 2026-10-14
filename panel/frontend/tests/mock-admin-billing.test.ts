@@ -451,7 +451,7 @@ describe('mock api · admin billing', () => {
     expect(epay).toMatchObject({ enabled: true, accepting_new: false })
   })
 
-  it('creates and edits an epay provider; secrets are write-only (w2pay)', async () => {
+  it('creates and edits an epay provider; secrets are write-only', async () => {
     const settings = { display_name: '易支付 · 新', base_url: 'https://pay3.example.com', submit_path: '', api_path: '', methods: ['wxpay', 'alipay'], default_method: '', allow_private_host: false }
     expect(await json(await post(admin, 'payment-providers', { code: 'offline', adapter: 'paypal', ...settings, methods: ['paypal'], merchant_id: '', key: '' }, 'prov-0'))).toMatchObject({
       error: { code: 'validation_failed', fields: { code: expect.any(String), adapter: expect.any(String), methods: expect.any(String), merchant_id: '必填', key: '必填' } },

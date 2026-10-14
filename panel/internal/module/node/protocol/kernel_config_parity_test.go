@@ -226,7 +226,7 @@ func TestKernelConfigMatchesLegacyOutput(t *testing.T) {
 			got, gotJSON := parityNormalize(t, KernelConfig(f.typ, parityConfig(t, f)))
 			exp, expJSON := parityNormalize(t, want.Config)
 			if !reflect.DeepEqual(got, exp) {
-				t.Errorf("%s 翻译结果与旧实现不同：\n  新 %s\n  旧 %s", f.name, gotJSON, expJSON)
+				t.Errorf("%s 翻译结果与 nodes.json 不一致：\n  实际 %s\n  期望 %s", f.name, gotJSON, expJSON)
 			}
 		})
 	}

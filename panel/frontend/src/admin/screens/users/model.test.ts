@@ -89,7 +89,7 @@ describe('当前订阅（与后端 currentSubscriptionSQL 同口径）', () => {
 describe('加时长（与后端 subscriptionExtendable / validateAdminExtend 同口径）', () => {
   const s = (status: 'active' | 'expired', end: number | null, id: string) => ({ id, status, current_period_end: end === null ? null : days(end) })
 
-  it('生效中、过期不满 30 天且有到期时间的订阅能加时长（w5expiry）', () => {
+  it('生效中、过期不满 30 天且有到期时间的订阅能加时长', () => {
     expect(extendableSubscriptions([s('active', 5, 'a'), s('expired', -1, 'c'), s('active', null, 'd'), s('expired', -31, 'e')], NOW).map((x) => x.id)).toEqual(['a', 'c'])
     expect(extendableSubscriptions([s('expired', -31, 'e')], NOW)).toEqual([])
     expect(expiredDays(days(-3), NOW)).toBe(3)
@@ -137,7 +137,7 @@ describe('订单与输入', () => {
     expect(parseYuan('abc')).toBeNull()
   })
 
-  it('密码策略与 platform/crypto 一致：8 位、字母 + 数字、≤ 256 字节', () => {
+  it('密码策略与后端一致：8 位、字母 + 数字、≤ 256 字节', () => {
     expect(passwordProblem('abc123')).toBe('密码至少需要 8 个字符')
     expect(passwordProblem('abcdefgh')).toBe('密码必须同时包含字母和数字')
     expect(passwordProblem('密码密码密码1234')).toBeNull()

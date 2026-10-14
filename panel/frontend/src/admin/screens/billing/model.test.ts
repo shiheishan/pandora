@@ -297,7 +297,7 @@ describe('late payments, providers and adjustments', () => {
     expect(providerNote(provider({ code: 'offline' }), now).text).toContain('系统内置')
   })
 
-  it('prefills the provider form without secrets and falls back to default_method (w2pay)', () => {
+  it('prefills the provider form without secrets and falls back to default_method', () => {
     expect(effectiveMethods(provider({ methods: [], default_method: 'alipay' }))).toEqual(['alipay'])
     expect(effectiveMethods(provider({ methods: [], default_method: '' }))).toEqual([])
     expect(isEditableProvider(provider({}))).toBe(true)
