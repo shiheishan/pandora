@@ -49,6 +49,7 @@ func IsRetryable(err error) bool {
 
 // ConstraintErrors 把约束违例翻译成模块哨兵：先按约束名（ByName），再按 SQLSTATE（ByCode）；都没命中原样返回 err。
 // 命中时返回 fmt.Errorf("%w: %w", 哨兵, err)，errors.Is 同时认得哨兵与原错误。
+// 约束名在全库唯一（迁移里起名时保证），所以按名命中就用，不再看码；加约束时别起和别处重名的名字。
 type ConstraintErrors struct {
 	ByCode map[string]error
 	ByName map[string]error

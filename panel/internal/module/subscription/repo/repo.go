@@ -58,8 +58,5 @@ var constraintErrs = db.ConstraintErrors{ByCode: map[string]error{
 // mapErr 把约束违例翻译成本模块哨兵，并包住原错误。
 func mapErr(err error) error { return constraintErrs.Map(err) }
 
-// isDuplicate 判断是不是唯一约束冲突（只按类别判断，不看约束名）。
-func isDuplicate(err error) bool {
-	v, ok := db.AsViolation(err)
-	return ok && v.Code == db.CodeUnique
-}
+// isDuplicate 判断是不是唯一约束冲突（只按类别判断，不看约束名；与 mapErr 同一套口径）。
+func isDuplicate(err error) bool { return errors.Is(constraintErrs.Map(err), ErrDuplicate) }

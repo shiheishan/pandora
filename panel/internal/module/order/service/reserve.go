@@ -18,7 +18,7 @@ import (
 // placeOrder 插订单行、预留行（state held，expires_at = o.ExpiresAt，held_at = 现在）与一条 reserve 流水（from nil → held）。
 // o.ID 为 uuid.Nil 时由库生成并回填。
 //
-// 唯一冲突怎么区分：db 打开了 GORM TranslateError，错误里拿不到约束名，所以按订单种类判断。orders 上只有两个唯一约束：
+// 唯一冲突怎么区分：repo 只把唯一冲突翻成一个哨兵（约束名其实取得到，见 db.ConstraintErrors 的 ByName，这里还没按名分），所以按订单种类判断。orders 上只有两个唯一约束：
 // 订单号（随机段碰撞，概率极低）与 orders_one_open_subscription_change（只约束 renewal、upgrade）。
 // 续费、换套餐撞了按「已有未完成的续费或变更单」回 ErrOpenChange（订单号碰撞也会落到这里，概率可以忽略）；
 // 其余种类只可能是订单号碰撞，回内部错误，用户重试即可（事务已作废，不能在同一事务里换号重插）。
