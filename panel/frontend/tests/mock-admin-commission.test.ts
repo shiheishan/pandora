@@ -113,7 +113,7 @@ describe('mock api · admin commission', () => {
     const body = (await created.json()) as { override: { email: string; scope: string } }
     expect(body.override.email).toBe(target)
     expect(body.override.scope).toBe('first_order')
-    const userId = (body.override as { user_id: string }).user_id
+    const userId = (body.override as unknown as { user_id: string }).user_id
 
     const noUser = await post('/v1/commission/overrides', { email: 'nobody@example.test', rate_percent: 10 })
     expect(noUser.status).toBe(422)

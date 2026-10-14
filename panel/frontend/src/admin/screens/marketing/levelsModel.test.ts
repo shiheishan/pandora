@@ -6,7 +6,7 @@ import {
   levelsToForm,
   overrideSummary,
   type LevelsForm,
-} from './commissionLevels'
+} from './levelsModel'
 import type { CommissionOverview } from './schemas'
 
 const baseOverview = (): CommissionOverview => ({

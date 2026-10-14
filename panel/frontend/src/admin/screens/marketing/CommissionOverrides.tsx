@@ -6,7 +6,7 @@ import {
   buildOverrideBody,
   overrideSummary,
   type OverrideForm,
-} from './commissionLevels'
+} from './levelsModel'
 import local from './Commission.module.css'
 import { formatDateTime, type FieldErrors } from './logic'
 import css from './marketing.module.css'
