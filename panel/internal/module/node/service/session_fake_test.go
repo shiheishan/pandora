@@ -5,11 +5,14 @@ package service
 import (
 	"context"
 	"math/big"
+	"slices"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/aegispanel/aegis/internal/pkg/reqid"
 )
 
 // fakeBackend 实现 SessionBackend：名单与配置取自可改的表，入账与落库只记录调用。
@@ -29,6 +32,7 @@ type fakeBackend struct {
 
 	// 调用记录
 	rosterCalls, configCalls [][]uuid.UUID
+	configReqIDs             []string // 每次 ServerConfigs 时 ctx 里的 req_id（reqid.From），核对批的 ctx 取自这批第一条请求
 	traffic                  []TrafficReport
 	online                   [][]OnlineEntry
 	metrics                  []HostMetrics
@@ -54,10 +58,14 @@ func (f *fakeBackend) setConfigs(serverID uuid.UUID, c []NodeConfigDoc) {
 	f.configs[serverID] = c
 }
 
-func (f *fakeBackend) Rosters(_ context.Context, ids []uuid.UUID) (map[uuid.UUID][]NodeRoster, error) {
+func (f *fakeBackend) Rosters(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID][]NodeRoster, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.rosterCalls = append(f.rosterCalls, append([]uuid.UUID(nil), ids...))
+	// 像真库一样遵守 ctx：已取消或到期就直接回错（用来验证批的 ctx 不随单条流取消）
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if f.rosterErr != nil {
 		return nil, f.rosterErr
 	}
@@ -70,13 +78,18 @@ func (f *fakeBackend) Rosters(_ context.Context, ids []uuid.UUID) (map[uuid.UUID
 	return out, nil
 }
 
-func (f *fakeBackend) ServerConfigs(_ context.Context, ids []uuid.UUID) (map[uuid.UUID][]NodeConfigDoc, error) {
+func (f *fakeBackend) ServerConfigs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID][]NodeConfigDoc, error) {
 	if f.configsHook != nil {
 		f.configsHook()
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.configCalls = append(f.configCalls, append([]uuid.UUID(nil), ids...))
+	f.configReqIDs = append(f.configReqIDs, reqid.From(ctx))
+	// 像真库一样遵守 ctx：已取消或到期就直接回错（用来验证批的 ctx 不随单条流取消）
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if f.configErr != nil {
 		return nil, f.configErr
 	}
@@ -146,6 +159,19 @@ func (f *fakeBackend) counts() (rosters, configs int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.rosterCalls), len(f.configCalls)
+}
+
+// callLog 返回 Rosters、ServerConfigs 每次调用的服务器 id（深拷贝）。
+func (f *fakeBackend) callLog() (rosters, configs [][]uuid.UUID) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, ids := range f.rosterCalls {
+		rosters = append(rosters, slices.Clone(ids))
+	}
+	for _, ids := range f.configCalls {
+		configs = append(configs, slices.Clone(ids))
+	}
+	return rosters, configs
 }
 
 // fakeClock 是可手动拨动的时钟（并发安全）。
