@@ -61,7 +61,7 @@ func TestFallbackAcceptsPublicHostPort(t *testing.T) {
 	}
 	// REALITY 的 Trojan 也能配：REALITY 层认证过了、Trojan 口令不对时回落
 	expectAccepted(t, "trojan", `{"tls":2,"network":"tcp",`+policyReality(t, "")+`,"fallback":"www.example.com:80"}`)
-	// VLESS REALITY + tcp（w4kernel 起 pdnd 读 fallback）：UUID 不对时回落
+	// VLESS REALITY + tcp（pdnd 读 fallback）：UUID 不对时回落
 	for _, fallback := range []string{"www.example.com:80", "203.0.113.10:8080", "127.0.0.1:80"} {
 		expectAccepted(t, "vless", `{"tls":2,"network":"tcp","flow":"xtls-rprx-vision",`+policyReality(t, "")+`,"fallback":"`+fallback+`"}`)
 	}
