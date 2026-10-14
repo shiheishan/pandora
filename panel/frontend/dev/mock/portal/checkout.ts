@@ -36,6 +36,9 @@ interface MockIntent {
 }
 const intents = new Map<string, MockIntent>()
 
+/** 模拟 BTCPay / CoinPayments 去渠道建发票：同一张单第一次 pay 还在「建单」窗口内 */
+const creating = new Set<string>()
+
 /** 订单最近发起的支付意图（POST v1/orders/{id}/query 的假渠道用），没有发起过支付时为 undefined */
 export function channelIntent(userId: string, orderId: string): MockIntent | undefined {
   let last: MockIntent | undefined
@@ -244,6 +247,12 @@ export const checkout: MockModule = {
       const origin = `http://${ctx.req.headers.host}`
       const returnUrl = typeof body.return_url === 'string' && body.return_url.startsWith(`${origin}/`) ? body.return_url : `${origin}/#orders`
       const existing = [...intents.entries()].find(([, v]) => v.orderId === order.id && v.provider === channel.provider && v.method === channel.method)
+      // 模拟 BTCPay / CoinPayments 去渠道建发票时同一张单再点支付，真后端在 30 秒建单窗口内回 payment_in_progress
+      if (channel.provider === 'btcpay' && existing === undefined && !creating.has(order.id)) {
+        creating.add(order.id)
+        return ctx.fail(409, 'payment_in_progress', '支付正在发起，请稍候')
+      }
+      if (creating.has(order.id)) creating.delete(order.id)
       const intentId = existing?.[0] ?? randomUUID()
       order.hasIntent = true
       intents.set(intentId, { userId: ctx.user.userId, orderId: order.id, returnUrl, provider: channel.provider, method: channel.method })

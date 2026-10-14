@@ -12,6 +12,7 @@ import { feeLine, surchargeNote } from './fee'
 import { queryFailure, queryOutcome, useQueryOrderPayment, type QueryOutcome } from './order-query'
 import css from './PayFlow.module.css'
 import { PAID_STATUSES, useCancelOrder, useOrder, type OrderDetail } from './orders'
+import { afterOrderCheck, payFailureAction, PAY_IN_PROGRESS_MAX_RETRIES } from './payRetry'
 import { QrCode } from './qr'
 import { formatDate } from './traffic'
 
@@ -64,8 +65,9 @@ function useRefreshAccount() {
 const TITLES: Record<PayState['phase'], string> = { redirect: '付款', done: '支付成功', confirm: '正在确认支付结果', choose: '选择支付方式' }
 
 /**
- * onUnpayable：支付接口回 409（订单已不可支付——别处取消、已超时或已付掉）时调用，
- * 结账与充值借它 forget() 记下的待支付单，下次同样的请求重新下单
+ * onUnpayable：支付接口确认订单已不可支付（别处取消、已超时或已付掉等）时调用，
+ * 结账与充值借它 forget() 记下的待支付单，下次同样的请求重新下单。
+ * 409 conflict 会先刷新订单，只有确认不是待付才调；payment_in_progress 从不调。
  */
 export function PaymentModal({ state: given, onClose, onUnpayable }: { state: PayState | null; onClose: () => void; onUnpayable?: () => void }) {
   // choose 态选定后在弹窗内部转成 redirect；换了订单或关掉就作废
@@ -193,6 +195,11 @@ export function PayPanel({ orderId, amount, currency, method, returnUrl, onPaid,
   const started = useRef(false)
   const [opened, setOpened] = useState(false)
   const [outcome, setOutcome] = useState<QueryOutcome | null>(null)
+  const [attempts, setAttempts] = useState(0)
+  const attemptsRef = useRef(0)
+  const [superseded, setSuperseded] = useState(false)
+  const [conflictRefreshFailed, setConflictRefreshFailed] = useState(false)
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const order = useOrder(orderId, POLL_PAY_MS)
   const query = useQueryOrderPayment()
   const paid = order.data !== undefined && PAID_STATUSES.has(order.data.status)
@@ -204,9 +211,36 @@ export function PayPanel({ orderId, amount, currency, method, returnUrl, onPaid,
   const pay = useMutation({
     mutationFn: () => api.post(`v1/orders/${encodeURIComponent(orderId)}/pay`, intentSchema, { body: { provider: method.provider, method: method.method, return_url: returnUrl } }),
     onError: (e) => {
-      if (isApiError(e, 'conflict') || isPaymentLapsed(e)) onUnpayable?.()
+      const action = payFailureAction(e, attemptsRef.current)
+      if (action.kind === 'retry_later') {
+        if (retryTimer.current) clearTimeout(retryTimer.current)
+        retryTimer.current = setTimeout(() => {
+          attemptsRef.current += 1
+          setAttempts(attemptsRef.current)
+          pay.mutate()
+        }, action.delayMs)
+        return
+      }
+      if (action.kind === 'check_order') {
+        void order.refetch().then((r) => {
+          const a = afterOrderCheck(r.data?.status, r.isError)
+          if (a === 'unpayable') onUnpayable?.()
+          else if (a === 'still_payable') {
+            setSuperseded(true)
+            setConflictRefreshFailed(false)
+          } else setConflictRefreshFailed(true)
+        })
+        return
+      }
+      if (action.kind === 'unpayable') onUnpayable?.()
     },
   })
+
+  useEffect(() => {
+    return () => {
+      if (retryTimer.current) clearTimeout(retryTimer.current)
+    }
+  }, [])
 
   useEffect(() => {
     if (started.current) return
@@ -220,8 +254,31 @@ export function PayPanel({ orderId, amount, currency, method, returnUrl, onPaid,
 
   const redirect = pay.data?.http_method === 'GET' ? pay.data.redirect_url : null
   const unsupported = pay.data?.http_method === 'POST'
-  const final = isApiError(pay.error) && pay.error.status >= 400 && pay.error.status < 500
-  const error = closed ? (order.data?.status === 'expired' ? '这单超过 30 分钟没付，已经自动取消了，没有扣钱。' : '这单已经取消了，没有扣钱。') : unsupported ? '这个付款方式暂时用不了，换一个付款方式。' : pay.isError ? payErrorText(pay.error) : null
+  const inProgressWaiting = pay.isError && isApiError(pay.error, 'payment_in_progress') && attempts < PAY_IN_PROGRESS_MAX_RETRIES
+  const final =
+    isApiError(pay.error) &&
+    pay.error.status >= 400 &&
+    pay.error.status < 500 &&
+    !isApiError(pay.error, 'payment_in_progress') &&
+    !(isApiError(pay.error, 'conflict') && (superseded || conflictRefreshFailed))
+  const retryPay = () => {
+    attemptsRef.current = 0
+    setAttempts(0)
+    setSuperseded(false)
+    setConflictRefreshFailed(false)
+    pay.mutate()
+  }
+  const error = closed
+    ? order.data?.status === 'expired'
+      ? '这单超过 30 分钟没付，已经自动取消了，没有扣钱。'
+      : '这单已经取消了，没有扣钱。'
+    : unsupported
+      ? '这个付款方式暂时用不了，换一个付款方式。'
+      : superseded
+        ? '这次付款已被新的发起取代，请重试。'
+        : pay.isError
+          ? payErrorText(pay.error)
+          : null
   const after = <p className={css.hint}>{opened ? '正在等付款结果……' : ''}付完回到这里会自动更新；没更新再点下面的「我已付款」。</p>
   const qr = redirect ? <QrCode value={redirect} label={`用${method.label}扫码付款`} className={css.qr} /> : null
 
@@ -238,13 +295,15 @@ export function PayPanel({ orderId, amount, currency, method, returnUrl, onPaid,
       <p className={css.note}>用{method.label}付</p>
       <div className={css.amount}>{formatMoney(finalAmount, currency)}</div>
       {note && <div className={css.hint}>{note}</div>}
-      {error ? (
+      {inProgressWaiting ? (
+        <div className={css.hint}>正在发起支付，请稍候…</div>
+      ) : error ? (
         <>
           <div className={css.error} role="alert">
             {error}
           </div>
           {!closed && !unsupported && !final && (
-            <Button variant="primary" block onClick={() => pay.mutate()} busy={pay.isPending}>
+            <Button variant="primary" block onClick={retryPay} busy={pay.isPending}>
               重试
             </Button>
           )}
@@ -321,6 +380,7 @@ export function payHereNote(method: Pick<PaymentMethod, 'method' | 'label'>): st
 function payErrorText(error: unknown): string {
   if (isApiError(error, 'network_error')) return '网络连接失败，检查网络后重试。'
   if (isApiError(error, 'internal_error')) return '支付渠道暂时不可用，稍后重试或换一种支付方式。'
+  if (isApiError(error, 'payment_in_progress')) return '支付还在发起，请稍后点重试。'
   return error instanceof Error && error.message ? error.message : '发起支付失败，请稍后重试。'
 }
 
