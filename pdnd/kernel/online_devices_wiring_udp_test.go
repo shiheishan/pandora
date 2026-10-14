@@ -1,12 +1,13 @@
 package kernel
 
 // 在线设备接线的 UDP 路径：UDP 会话同样经 onlineDevices 登记、收尾时撤销。
-// 每个协议：同 IP 上一个 UDP 会话加另一条连接（能共用入站的配一条 TCP，SS / SS2022
-// 的 UDP 入站只收 UDP，配第二个 UDP 会话），设备上限 1 时都放行；关掉 UDP 会话后
-// 仍在线；全部关掉才离线。漏掉 UDP 路径的 leave 会让最后一步永远等不到离线。
+// 每个协议：同 IP 上一个 UDP 会话加另一条连接（配一条 TCP；SS2022 配第二个 UDP 会话），
+// 设备上限 1 时都放行；关掉 UDP 会话后仍在线；全部关掉才离线。漏掉 UDP 路径的 leave
+// 会让最后一步永远等不到离线。
 //
-// SS / SS2022 的 UDP 按包处理（收一包、转发、等回包、回给客户端），「会话」就是一包
-// 在途的时长：回显上游先扣住包，关会话时才回。用户与口令全是虚构的。
+// 经典 SS 的 UDP 按会话转发、空闲才回收，单独见 TestOnlineDevicesWiringSSUDP；SS2022
+// 仍逐包处理，「会话」就是一包在途的时长：回显上游先扣住包，关会话时才回
+// （openDeviceWiringSSUDP）。用户与口令全是虚构的。
 
 import (
 	"context"
@@ -52,15 +53,6 @@ func TestOnlineDevicesWiringUDP(t *testing.T) {
 	cases := []deviceUDPCase{
 		{name: "hysteria2", proto: "hysteria2", uuid: "device-wiring-udp-hy2", raw: quicRaw, openUDP: openDeviceWiringHy2UDP, openTCP: openDeviceWiringHy2},
 		{name: "tuic", proto: "tuic", uuid: "6b1f6f2e-2a43-4c38-9f36-6f7f3c0a7301", raw: quicRaw, openUDP: openDeviceWiringTUICUDP, openTCP: openDeviceWiringTUIC},
-		{name: "shadowsocks", proto: "shadowsocks", uuid: "device-wiring-udp-ss", hold: true,
-			raw: func(*testing.T) map[string]any { return map[string]any{"method": "aes-128-gcm", "network": "udp"} },
-			openUDP: openDeviceWiringSSUDP(func(raw net.Conn, user core.User) (net.PacketConn, error) {
-				method, err := SS.CreateMethod(context.Background(), "aes-128-gcm", SS.MethodOptions{Password: user.UUID})
-				if err != nil {
-					return nil, err
-				}
-				return method.DialPacketConn(raw), nil
-			})},
 		{name: "shadowsocks2022", proto: "shadowsocks", uuid: "device-wiring-udp-ss2022", hold: true,
 			raw: func(*testing.T) map[string]any {
 				return map[string]any{"method": "2022-blake3-aes-128-gcm", "password": base64.StdEncoding.EncodeToString(ss2022PSK)}
@@ -138,6 +130,13 @@ func deviceWiringAdapter(t *testing.T, c *NativeCore, tag string) Adapter {
 	in.mu.RLock()
 	defer in.mu.RUnlock()
 	return in.adapter
+}
+
+// ssUDPSessionCount 是 SS 入站当前的 UDP 会话数。
+func ssUDPSessionCount(a *shadowsocksAdapter) int {
+	a.udpMu.Lock()
+	defer a.udpMu.Unlock()
+	return a.udpLive
 }
 
 // udpWiringEcho 是 UDP 回显上游。hold 为真时收到的包先扣住，release 时才回。
@@ -447,5 +446,161 @@ func TestQUICUDPSessionQuotaWiring(t *testing.T) {
 			}
 			_ = again.Close()
 		})
+	}
+}
+
+func TestOnlineDevicesWiringSSUDP(t *testing.T) {
+	prev := ssUDPIdleTimeout
+	ssUDPIdleTimeout = 400 * time.Millisecond
+	t.Cleanup(func() { ssUDPIdleTimeout = prev })
+
+	echo := startUDPWiringEcho(t, false)
+	user := core.User{ID: 7250, UUID: "device-wiring-udp-ss", DeviceLimit: 1}
+	c, port, tag := startLifecycleCore(t, lifecycleProto{name: "shadowsocks", raw: map[string]any{"method": "aes-128-gcm"}}, []core.User{user})
+	adapter := deviceWiringAdapter(t, c, tag)
+	ss := adapter.(*shadowsocksAdapter)
+	devices := devicesOf(t, adapter)
+	online := func() []string { return adapter.OnlineIPs()[user.ID] }
+
+	newClient := func() (net.PacketConn, func()) {
+		raw, err := net.DialUDP("udp4", nil, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port})
+		if err != nil {
+			t.Fatalf("newClient DialUDP: %v", err)
+		}
+		method, err := SS.CreateMethod(context.Background(), "aes-128-gcm", SS.MethodOptions{Password: user.UUID})
+		if err != nil {
+			_ = raw.Close()
+			t.Fatalf("newClient CreateMethod: %v", err)
+		}
+		pc := method.DialPacketConn(raw)
+		return pc, func() { _ = raw.Close() }
+	}
+
+	roundTrip := func(pc net.PacketConn, payload string) error {
+		if _, err := pc.WriteTo([]byte(payload), echo.addr()); err != nil {
+			return fmt.Errorf("roundTrip WriteTo: %w", err)
+		}
+		if err := pc.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+			return fmt.Errorf("roundTrip SetReadDeadline: %w", err)
+		}
+		buf := make([]byte, 2048)
+		n, _, err := pc.ReadFrom(buf)
+		if err != nil {
+			return fmt.Errorf("roundTrip ReadFrom: %w", err)
+		}
+		if string(buf[:n]) != payload {
+			return fmt.Errorf("roundTrip payload mismatch: got %q want %q", buf[:n], payload)
+		}
+		return nil
+	}
+
+	// 第 1 步：别的设备占满名额时被拒、不留记录。
+	if !devices.enter(user, deviceWiringOtherIP) {
+		t.Fatalf("第 1 步：devices.enter(%s) 失败", deviceWiringOtherIP)
+	}
+	client0, closeClient0 := newClient()
+	defer closeClient0()
+	if _, err := client0.WriteTo([]byte("step1-probe"), echo.addr()); err != nil {
+		t.Fatalf("第 1 步：client0 WriteTo: %v", err)
+	}
+	if err := client0.SetReadDeadline(time.Now().Add(500 * time.Millisecond)); err != nil {
+		t.Fatalf("第 1 步：client0 SetReadDeadline: %v", err)
+	}
+	buf1 := make([]byte, 2048)
+	if _, _, err := client0.ReadFrom(buf1); err == nil {
+		t.Fatalf("第 1 步：500ms 内 ReadFrom 应当超时，但收到了回包")
+	}
+	if cnt := ssUDPSessionCount(ss); cnt != 0 {
+		t.Fatalf("第 1 步：ssUDPSessionCount(ss)=%d，期望 0", cnt)
+	}
+	if live := liveSessionsOf(adapter); live != 0 {
+		t.Fatalf("第 1 步：liveSessionsOf(adapter)=%d，期望 0", live)
+	}
+	devices.leave(user, deviceWiringOtherIP)
+	closeClient0()
+
+	// 第 2 步：同地址多包只算一个设备、一个会话。
+	clientA, closeClientA := newClient()
+	defer closeClientA()
+	for i := 1; i <= 5; i++ {
+		payload := fmt.Sprintf("step2-payload-%d", i)
+		if err := roundTrip(clientA, payload); err != nil {
+			t.Fatalf("第 2 步：roundTrip %d 失败: %v", i, err)
+		}
+	}
+	if got := online(); !reflect.DeepEqual(got, []string{"127.0.0.1"}) {
+		t.Fatalf("第 2 步：online()=%v，期望 [127.0.0.1]", got)
+	}
+	if cnt := ssUDPSessionCount(ss); cnt != 1 {
+		t.Fatalf("第 2 步：ssUDPSessionCount(ss)=%d，期望 1", cnt)
+	}
+	if live := liveSessionsOf(adapter); live != 1 {
+		t.Fatalf("第 2 步：liveSessionsOf(adapter)=%d，期望 1", live)
+	}
+
+	// 第 3 步：同 IP 第二个地址：另一个会话，仍是一个设备。
+	clientB, closeClientB := newClient()
+	defer closeClientB()
+	if err := roundTrip(clientB, "step3-payload-b"); err != nil {
+		t.Fatalf("第 3 步：clientB roundTrip 失败: %v", err)
+	}
+	if cnt := ssUDPSessionCount(ss); cnt != 2 {
+		t.Fatalf("第 3 步：ssUDPSessionCount(ss)=%d，期望 2", cnt)
+	}
+	if got := online(); !reflect.DeepEqual(got, []string{"127.0.0.1"}) {
+		t.Fatalf("第 3 步：online()=%v，期望 [127.0.0.1]", got)
+	}
+	if devices.enter(user, deviceWiringOtherIP) {
+		t.Fatalf("第 3 步：名额已被本机占着，devices.enter(%s) 应当为假", deviceWiringOtherIP)
+	}
+
+	// 第 4 步：会话关掉才离线；B 空闲被回收后 A 还在用，仍在线。
+	stopA, doneA := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(doneA)
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		seq := 0
+		for {
+			select {
+			case <-stopA:
+				return
+			case <-ticker.C:
+				seq++
+				_ = roundTrip(clientA, fmt.Sprintf("step4-keepalive-%d", seq))
+			}
+		}
+	}()
+
+	if ok, why := waitFor(3*time.Second, func() (bool, string) {
+		cnt := ssUDPSessionCount(ss)
+		return cnt == 1, fmt.Sprintf("会话数=%d", cnt)
+	}); !ok {
+		close(stopA)
+		t.Fatalf("第 4 步：等待 B 空闲回收超时：%s", why)
+	}
+	if got := online(); !reflect.DeepEqual(got, []string{"127.0.0.1"}) {
+		close(stopA)
+		t.Fatalf("第 4 步：B 回收后 A 活跃，online()=%v，期望 [127.0.0.1]", got)
+	}
+
+	// 第 5 步：停掉 A 的 goroutine；等全部回收离线。
+	close(stopA)
+	<-doneA
+	if ok, why := waitFor(3*time.Second, func() (bool, string) {
+		cnt := ssUDPSessionCount(ss)
+		ips := online()
+		live := liveSessionsOf(adapter)
+		return cnt == 0 && len(ips) == 0 && live == 0, fmt.Sprintf("ssUDPCount=%d onlineLen=%d liveSessions=%d (online=%v)", cnt, len(ips), live, ips)
+	}); !ok {
+		t.Fatalf("第 5 步：等待 A 回收并离线超时：%s", why)
+	}
+
+	// 第 6 步：回收后能重建。
+	if err := roundTrip(clientA, "step6-payload-reconnect"); err != nil {
+		t.Fatalf("第 6 步：A 重连 roundTrip 失败: %v", err)
+	}
+	if cnt := ssUDPSessionCount(ss); cnt != 1 {
+		t.Fatalf("第 6 步：A 重建后 ssUDPSessionCount(ss)=%d，期望 1", cnt)
 	}
 }

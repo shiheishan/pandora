@@ -19,21 +19,59 @@ import (
 
 func TestNativeShadowsocksRejectsUnsupportedModes(t *testing.T) {
 	base := core.InboundConfig{Protocol: "shadowsocks", Port: 443, Raw: map[string]any{"method": "aes-128-gcm"}}
-	for name, mutate := range map[string]func(map[string]any){
-		"2022":   func(raw map[string]any) { raw["method"] = "2022-blake3-aes-256-gcm" },
-		"plugin": func(raw map[string]any) { raw["plugin"] = "obfs-local" },
-		"quic":   func(raw map[string]any) { raw["network"] = "quic" },
+	for _, tc := range []struct {
+		name       string
+		mutate     func(map[string]any)
+		wantSubstr string
+	}{
+		{name: "2022", mutate: func(raw map[string]any) { raw["method"] = "2022-blake3-aes-256-gcm" }},
+		{name: "plugin", mutate: func(raw map[string]any) { raw["plugin"] = "obfs-local" }},
+		{name: "quic", mutate: func(raw map[string]any) { raw["network"] = "quic" }, wantSubstr: "不再接受 network 字段"},
+		{name: "network-udp", mutate: func(raw map[string]any) { raw["network"] = "udp" }, wantSubstr: "不再接受 network 字段"},
+		{name: "network-tcp", mutate: func(raw map[string]any) { raw["network"] = "tcp" }, wantSubstr: "不再接受 network 字段"},
 	} {
-		t.Run(name, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			raw := make(map[string]any, len(base.Raw))
 			for key, value := range base.Raw {
 				raw[key] = value
 			}
-			mutate(raw)
-			if err := (&shadowsocksAdapter{}).Validate(InboundSpec{Config: core.InboundConfig{Protocol: base.Protocol, Port: base.Port, Raw: raw}}); err == nil {
+			tc.mutate(raw)
+			err := (&shadowsocksAdapter{}).Validate(InboundSpec{Config: core.InboundConfig{Protocol: base.Protocol, Port: base.Port, Raw: raw}})
+			if err == nil {
 				t.Fatal("unsupported shadowsocks mode accepted")
 			}
+			if tc.wantSubstr != "" && !strings.Contains(err.Error(), tc.wantSubstr) {
+				t.Fatalf("err=%q，期望包含 %q", err.Error(), tc.wantSubstr)
+			}
 		})
+	}
+}
+
+func TestShadowsocks2022RejectsNetworkField(t *testing.T) {
+	psk := make([]byte, 16)
+	for i := range psk {
+		psk[i] = byte(i + 1)
+	}
+	spec := InboundSpec{Config: core.InboundConfig{
+		Protocol: "shadowsocks",
+		Port:     443,
+		Raw: map[string]any{
+			"method":   "2022-blake3-aes-128-gcm",
+			"password": base64.StdEncoding.EncodeToString(psk),
+			"network":  "udp",
+		},
+	}}
+	adapter, err := newShadowsocksAdapter(spec)
+	if err != nil {
+		if !strings.Contains(err.Error(), "不再接受 network 字段") {
+			t.Fatalf("newShadowsocksAdapter err=%q，期望包含 %q", err.Error(), "不再接受 network 字段")
+		}
+		return
+	}
+	if err := adapter.Validate(spec); err == nil {
+		t.Fatal("shadowsocks 2022 validate accepted network field")
+	} else if !strings.Contains(err.Error(), "不再接受 network 字段") {
+		t.Fatalf("Validate err=%q，期望包含 %q", err.Error(), "不再接受 network 字段")
 	}
 }
 
@@ -402,13 +440,8 @@ func TestShadowsocksAdapterLoopbackUDPAndTraffic(t *testing.T) {
 			_, _ = upstream.WriteToUDP(buffer[:n], addr)
 		}
 	}()
-	reserved, err := net.ListenPacket("udp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := reserved.LocalAddr().(*net.UDPAddr).Port
-	_ = reserved.Close()
-	spec := InboundSpec{Config: core.InboundConfig{Protocol: "shadowsocks", Listen: "127.0.0.1", Port: port, Raw: map[string]any{"method": "aes-128-gcm", "network": "udp"}}}
+	port := reserveTCPAndUDPPort(t)
+	spec := InboundSpec{Config: core.InboundConfig{Protocol: "shadowsocks", Listen: "127.0.0.1", Port: port, Raw: map[string]any{"method": "aes-128-gcm"}}}
 	adapterValue, err := newShadowsocksAdapter(spec)
 	if err != nil {
 		t.Fatal(err)
