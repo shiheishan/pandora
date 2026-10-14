@@ -158,7 +158,7 @@ export function NodeTraffic({ node, baseRate }: { node: NodeRow; baseRate: numbe
       {/* 标签 */}
       <section className={css.section}>
         <div className={css.sectionTitle}>标签</div>
-        <div className={css.sectionDesc}>逗号或顿号分隔，最多 10 个、每个最多 16 个字；门户的节点列表与订阅里会显示</div>
+        <div className={css.sectionDesc}>逗号或顿号分隔，最多 10 个、每个最多 16 个字；只在后台用（筛选、批量修改），用户看不到</div>
         <Input
           label="节点标签"
           value={tagText}
@@ -193,7 +193,7 @@ export function NodeTraffic({ node, baseRate }: { node: NodeRow; baseRate: numbe
           <div className={css.limitField}>
             <Input
               label="每月重置日"
-              hint="1–31，按站点时区零点；短月取月末"
+              hint="1–31，按站点时区零点；短月取月末。设或改重置日不清零已用，到下一个重置日才清零"
               value={resetDayText}
               placeholder="不自动重置"
               disabled={retired}

@@ -28,10 +28,9 @@ type rotateLinkResponse struct {
 
 // nodePreviewResponse 是门户线路预览里的一条。
 type nodePreviewResponse struct {
-	Name        string   `json:"name"`
-	Protocol    string   `json:"protocol"`
-	TrafficRate float64  `json:"traffic_rate"`
-	Tags        []string `json:"tags"`
+	Name        string  `json:"name"`
+	Protocol    string  `json:"protocol"`
+	TrafficRate float64 `json:"traffic_rate"`
 }
 
 // nodesResponse 是门户线路预览。
@@ -87,16 +86,7 @@ func toLinksResponse(in []service.Link) subscriptionLinksResponse {
 func toNodesResponse(in []service.NodePreview) nodesResponse {
 	out := nodesResponse{Count: len(in), Nodes: make([]nodePreviewResponse, 0, len(in))}
 	for _, n := range in {
-		tags := n.Tags
-		if tags == nil {
-			tags = []string{}
-		}
-		out.Nodes = append(out.Nodes, nodePreviewResponse{
-			Name:        n.Name,
-			Protocol:    n.Protocol,
-			TrafficRate: n.TrafficRate,
-			Tags:        tags,
-		})
+		out.Nodes = append(out.Nodes, nodePreviewResponse{Name: n.Name, Protocol: n.Protocol, TrafficRate: n.TrafficRate})
 	}
 	return out
 }

@@ -42,5 +42,6 @@ paths:
 - 中转（「中转与 ECH」页）只有名称、地址、端口、SNI、Host、启用、排序；其余继承父节点，不占端口、不下发配置。列表接口返回 `{ relays, sni_hint }`，`sni_hint` 非空时显示在说明下方和 SNI 输入框的提示里（REALITY 父节点只能填 server_names 之一，IP 地址父节点要填 SNI）。与「路由」页的链式出站是两回事，界面上的说明不要混写。
 - ECH 能不能开以后端 `GET v1/nodes/{id}/ech` 的 `supported` / `unsupported_reason` 为准，前端不按协议另判；轮换后旧钥再下发 7 天（`retired_keys`）。停用的确认框写明会删光全部密钥、拿旧订阅的客户端在重新拉取前连不上。
 - 列表行的标签、本周期用量、中转条数、ECH 在 `NODE_LINE_FIELDS` 里，靠 react-query 的结构共享保持引用；超限（`traffic.exceeded_at`）标「超限」代替「不下发」，原因文案仍取后端 `delivery_note`。
+- 标签只在后台用（列表筛选、批量修改），门户与订阅都不显示（用户 2026-10-14 定）；中转没有自己的标签，界面上不说「继承标签」。
 - 标签筛选精确、区分大小写（与后端 `tags @> [tag]` 一致），搜索词不搜标签（与服务端 `q` 同一组字段）；超过一页时 `tag` 交给服务端。
 - 批量修改（`NodeBatchEdit.tsx`）每项勾选才进 `set`；后端整批一个事务，出错文案已带节点名，原样 toast。

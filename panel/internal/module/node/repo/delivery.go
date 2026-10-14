@@ -37,8 +37,6 @@ type DeliveryNodeRow struct {
 	// ProtocolConfig 是库里的存储形状（JSON 对象文本）
 	ProtocolConfig string
 	TrafficRate    decimal.Decimal
-	// Tags 是节点标签（jsonb 数组文本）
-	Tags string
 	// RateSchedule 是时段倍率（jsonb 数组文本）
 	RateSchedule string
 	// ECHConfigList 是当前有效 ECH 钥的公开配置列表字节（nil 表示未开）
@@ -62,7 +60,6 @@ type deliveryNodeScan struct {
 	Port           int             `gorm:"column:port"`
 	ProtocolConfig string          `gorm:"column:protocol_config"`
 	TrafficRate    decimal.Decimal `gorm:"column:traffic_rate"`
-	Tags           string          `gorm:"column:tags"`
 	RateSchedule   string          `gorm:"column:rate_schedule"`
 	ECHConfigList  []byte          `gorm:"column:ech_config_list"`
 	Relays         string          `gorm:"column:relays"`
@@ -74,10 +71,9 @@ type deliveryNodeScan struct {
 // DeliveryNodes 一条 SQL 取这些池里能发给用户的节点（DeliverableNodeCond），带分层事实与池的用户组名单，
 // 按 sort_order、node_no 排序。节点按 nodes_pool_idx 取，池的名单按 node_pool_user_groups 主键前缀取。
 // SQL 中附带：
-// 1. tags：节点标签（jsonb 文本）
-// 2. rate_schedule：时段倍率（jsonb 文本）
-// 3. ech_config_list：走 node_ech_keys_current_key 索引取得的当前有效公开 ECH 配置列表字节
-// 4. relays：走 node_relays_parent_idx 索引聚合的已启用中转线路 JSON 数组
+// 1. rate_schedule：时段倍率（jsonb 文本）
+// 2. ech_config_list：走 node_ech_keys_current_key 索引取得的当前有效公开 ECH 配置列表字节
+// 3. relays：走 node_relays_parent_idx 索引聚合的已启用中转线路 JSON 数组
 func (r *Repo) DeliveryNodes(ctx context.Context, poolIDs []uuid.UUID, freshSince time.Time) ([]DeliveryNodeRow, error) {
 	if len(poolIDs) == 0 {
 		return []DeliveryNodeRow{}, nil
@@ -88,7 +84,6 @@ func (r *Repo) DeliveryNodes(ctx context.Context, poolIDs []uuid.UUID, freshSinc
 		       coalesce(nullif(n.display_name, ''), n.name) AS name,
 		       n.node_type, n.server_host AS host, n.server_port AS port,
 		       n.protocol_config, n.traffic_rate,
-		       n.tags::text AS tags,
 		       n.traffic_rate_schedule::text AS rate_schedule,
 		       (SELECT k.config_list FROM node_ech_keys k WHERE k.node_id = n.id AND k.superseded_at IS NULL) AS ech_config_list,
 		       coalesce((SELECT jsonb_agg(jsonb_build_object('name', r.name, 'host', r.server_host, 'port', r.server_port,
@@ -121,7 +116,7 @@ func (r *Repo) DeliveryNodes(ctx context.Context, poolIDs []uuid.UUID, freshSinc
 		out[i] = DeliveryNodeRow{
 			ID: row.ID, PoolID: row.PoolID, Name: row.Name, NodeType: row.NodeType,
 			Host: row.Host, Port: row.Port, ProtocolConfig: row.ProtocolConfig, TrafficRate: row.TrafficRate,
-			Tags: row.Tags, RateSchedule: row.RateSchedule, ECHConfigList: row.ECHConfigList, Relays: relays,
+			RateSchedule: row.RateSchedule, ECHConfigList: row.ECHConfigList, Relays: relays,
 			HeartbeatFresh: row.HeartbeatFresh, Degraded: row.Degraded, PoolGroupIDs: groups,
 		}
 	}

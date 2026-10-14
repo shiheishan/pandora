@@ -64,10 +64,10 @@ export function useRotateLink() {
 }
 
 // ---------------------------------------------------------------------------
-// GET v1/me/subscriptions/{id}/nodes：保留规则 3，只有名称 / 协议 / 倍率 / 标签（标签照 Xboard 在门户展示，中转继承父节点的）；
+// GET v1/me/subscriptions/{id}/nodes：保留规则 3，只有名称 / 协议 / 倍率；
 // 订阅不在生效中或无有效凭据时回 404
 // ---------------------------------------------------------------------------
-const nodePreviewSchema = z.object({ name: z.string(), protocol: z.string(), traffic_rate: z.number(), tags: z.array(z.string()) })
+const nodePreviewSchema = z.object({ name: z.string(), protocol: z.string(), traffic_rate: z.number() })
 export const nodesSchema = z.object({ count: z.number().int(), nodes: z.array(nodePreviewSchema) })
 
 /**

@@ -248,11 +248,7 @@ func TestSubscriptionNodes(t *testing.T) {
 	if got["count"] != float64(2) {
 		t.Fatalf("count %v", got["count"])
 	}
-	first := got["nodes"].([]any)[0].(map[string]any)
-	sameKeys(t, first, "name", "protocol", "traffic_rate", "tags")
-	if tags, ok := first["tags"].([]any); !ok || len(tags) != 0 {
-		t.Fatalf("没有标签时 tags 应为空数组：%v", first["tags"])
-	}
+	sameKeys(t, got["nodes"].([]any)[0].(map[string]any), "name", "protocol", "traffic_rate")
 	f.nodes = nil
 	if w := do(e, http.MethodGet, path, ""); !strings.Contains(w.Body.String(), `"nodes":[]`) {
 		t.Fatalf("空列表: %s", w.Body.String())

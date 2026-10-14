@@ -246,7 +246,7 @@ function NodeRelaysSection({ node }: { node: NodeRow }) {
       </div>
 
       <div className={css.cardDesc}>
-        中转是这条线路的另一个入口（中转机、IPLC 入口等）：只有自己的名称、地址、端口，可选 SNI 与 Host；协议、密钥、倍率、标签都继承本节点，订阅里紧跟在本节点后面。节点端不用改配置。它与「路由」里的链式出站不同：链式出站是节点出去时再经一跳，中转是用户进来时换个地址。
+        中转是这条线路的另一个入口（中转机、IPLC 入口等）：只有自己的名称、地址、端口，可选 SNI 与 Host；协议、密钥、倍率都继承本节点，订阅里紧跟在本节点后面。节点端不用改配置。它与「路由」里的链式出站不同：链式出站是节点出去时再经一跳，中转是用户进来时换个地址。
       </div>
       {sniHint && <div className={css.cardDesc}>{sniHint}</div>}
 

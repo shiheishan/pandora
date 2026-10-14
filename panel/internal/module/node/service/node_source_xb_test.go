@@ -27,7 +27,6 @@ func TestRelayRenderNode(t *testing.T) {
 				"tls":      true,
 			},
 			TrafficRate:   1.5,
-			Tags:          []string{"香港", "BGP"},
 			ECHConfigList: []byte{0x01, 0x02},
 		}
 		rel := repo.DeliveryRelay{
@@ -47,7 +46,7 @@ func TestRelayRenderNode(t *testing.T) {
 		if child.Config["host"] != "node.example.com" {
 			t.Fatalf("host 应自动补父节点 Host，实际: %v", child.Config["host"])
 		}
-		if child.TrafficRate != parent.TrafficRate || !slices.Equal(child.Tags, parent.Tags) || !slices.Equal(child.ECHConfigList, parent.ECHConfigList) {
+		if child.TrafficRate != parent.TrafficRate || !slices.Equal(child.ECHConfigList, parent.ECHConfigList) {
 			t.Fatalf("中转应继承父节点展示字段")
 		}
 
@@ -144,7 +143,6 @@ func TestDeliverableFromRowsXB(t *testing.T) {
 			Port:           443,
 			ProtocolConfig: `{"tls":true}`,
 			TrafficRate:    decimal.NewFromInt(1),
-			Tags:           `["香港","IPLC"]`,
 			RateSchedule:   `[{"start":"00:00","end":"24:00","rate":"2"}]`,
 			ECHConfigList:  []byte{0x00, 0x04, 0xfe, 0x0d},
 			HeartbeatFresh: true,
@@ -161,7 +159,6 @@ func TestDeliverableFromRowsXB(t *testing.T) {
 			Port:           8388,
 			ProtocolConfig: `{"cipher":"aes-128-gcm"}`,
 			TrafficRate:    decimal.NewFromInt(1),
-			Tags:           `["日本"]`,
 			ECHConfigList:  []byte{0x00, 0x04, 0xfe, 0x0d},
 			HeartbeatFresh: true,
 		},
@@ -180,12 +177,6 @@ func TestDeliverableFromRowsXB(t *testing.T) {
 	}
 	if !slices.Equal(gotNames, wantNames) {
 		t.Fatalf("节点排序错误: 得到 %v，期望 %v", gotNames, wantNames)
-	}
-
-	// 中转的 Tags 与父节点相同
-	wantTags := []string{"香港", "IPLC"}
-	if !slices.Equal(nodes[0].Tags, wantTags) || !slices.Equal(nodes[1].Tags, wantTags) || !slices.Equal(nodes[2].Tags, wantTags) {
-		t.Fatalf("Tags 未正确继承: 父1=%v 中转1a=%v 中转1b=%v", nodes[0].Tags, nodes[1].Tags, nodes[2].Tags)
 	}
 
 	// 时段倍率生效（父1 TrafficRate 应为 2）

@@ -95,7 +95,6 @@ func deliverableFromRows(rows []repo.DeliveryNodeRow, userGroupID *uuid.UUID, no
 			Config: kernel,
 			// 倍率只作展示（客户端里的节点名后缀、门户预览），取装载时刻的生效倍率，缓存几秒内不变，转 float64 不参与任何计费
 			TrafficRate:   effectiveRate(row.TrafficRate, sched, now, loc).InexactFloat64(),
-			Tags:          decodeNodeTags(row.Tags),
 			ECHConfigList: echConfigList,
 		}
 

@@ -290,6 +290,17 @@ func (s *Service) patchNodeTx(ctx context.Context, id uuid.UUID, in NodePatch) (
 	}
 	if in.TrafficResetDay.Set {
 		next.TrafficResetDay = in.TrafficResetDay.Value
+		// 设或改重置日不清零已用（用户 2026-10-14 定）：本周期起点按新重置日算，traffic_reset_at 推到 max(原值, 起点)，
+		// 定时任务就只在下一个重置日清零。没改（同一天）不动，免得把已到期、待任务清零的周期顶掉。
+		if v := in.TrafficResetDay.Value; v != nil && (before.TrafficResetDay == nil || *before.TrafficResetDay != *v) {
+			loc, err := s.siteLoc(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if start := trafficPeriodStart(*v, s.now(), loc); start.After(next.TrafficResetAt) {
+				next.TrafficResetAt = start
+			}
+		}
 	}
 	if in.TrafficRateSchedule != nil {
 		sched, err := ParseRateSchedule(*in.TrafficRateSchedule)

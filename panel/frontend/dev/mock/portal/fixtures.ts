@@ -44,7 +44,6 @@ export interface NodeFixture {
   name: string
   protocol: string
   traffic_rate: number
-  tags: string[]
 }
 
 export interface SubFixture {
@@ -204,13 +203,13 @@ export function usageDays(count: number, total: number, now = Date.now()): Array
 const zoneMidnight = (ymd: string) => new Date(`${ymd}T00:00:00+08:00`).toISOString()
 
 const DESIGN_NODES: NodeFixture[] = [
-  { name: '香港 01 · 原生', protocol: 'vless', traffic_rate: 1, tags: [] },
-  { name: '香港 02 · IPLC', protocol: 'hysteria2', traffic_rate: 1.5, tags: ['香港', 'IPLC'] },
-  { name: '东京 03', protocol: 'hysteria2', traffic_rate: 1, tags: [] },
-  { name: '新加坡 02', protocol: 'vless', traffic_rate: 1, tags: [] },
-  { name: '洛杉矶 01 · 流媒体', protocol: 'trojan', traffic_rate: 2, tags: ['流媒体'] },
-  { name: '台北 01', protocol: 'vmess', traffic_rate: 0.5, tags: [] },
-  { name: '法兰克福 01', protocol: 'shadowsocks', traffic_rate: 1, tags: [] },
+  { name: '香港 01 · 原生', protocol: 'vless', traffic_rate: 1 },
+  { name: '香港 02 · IPLC', protocol: 'hysteria2', traffic_rate: 1.5 },
+  { name: '东京 03', protocol: 'hysteria2', traffic_rate: 1 },
+  { name: '新加坡 02', protocol: 'vless', traffic_rate: 1 },
+  { name: '洛杉矶 01 · 流媒体', protocol: 'trojan', traffic_rate: 2 },
+  { name: '台北 01', protocol: 'vmess', traffic_rate: 0.5 },
+  { name: '法兰克福 01', protocol: 'shadowsocks', traffic_rate: 1 },
 ]
 
 export function makeSub(init: {

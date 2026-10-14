@@ -132,21 +132,22 @@ func (r *Repo) InsertNode(ctx context.Context, n *model.Node) error {
 
 // UpdateNodeSpec 整体改写节点的可编辑列并把 row_version 加一；只改 row_version = expected 的未删除行。
 // traffic_exceeded_at 由调用方按已锁住的行算好（有上限且已用 >= 上限时非空，否则为空，库里 nodes_traffic_exceeded_shape 兜底）；
-// traffic_used_bytes、traffic_reset_at 不在这里改（流量入账与重置各有专门的写）。
+// traffic_used_bytes 不在这里改（流量入账与重置各有专门的写）；traffic_reset_at 只会被推后：写 GREATEST(原值, n.TrafficResetAt)，
+// 设或改重置日时调用方传本周期起点，其余情况传读出的原值（或零值），都不会把它往前拨。
 func (r *Repo) UpdateNodeSpec(ctx context.Context, id uuid.UUID, expected int64, n *model.Node) (bool, error) {
 	res := r.d.Conn(ctx).Exec(`UPDATE nodes SET
 		name = ?, display_name = ?, country_code = ?, pool_id = ?, node_type = ?, server_host = ?,
 		server_port = ?, listen_l4 = ?, protocol_config = CAST(? AS jsonb),
 		protocol_schema_version = ?, config_validated_at = ?, traffic_rate = ?,
 		tags = CAST(? AS jsonb), traffic_limit_bytes = ?, traffic_reset_day = ?, traffic_exceeded_at = ?,
-		traffic_rate_schedule = CAST(? AS jsonb),
+		traffic_rate_schedule = CAST(? AS jsonb), traffic_reset_at = GREATEST(traffic_reset_at, ?),
 		row_version = row_version + 1, updated_at = now()
 		WHERE id = ? AND row_version = ? AND deleted_at IS NULL`,
 		n.Name, n.DisplayName, n.CountryCode, n.PoolID, n.NodeType, n.ServerHost,
 		n.ServerPort, n.ListenL4, n.ProtocolConfig,
 		n.ProtocolSchemaVersion, n.ConfigValidatedAt, n.TrafficRate,
 		jsonArrayText(n.Tags), n.TrafficLimitBytes, n.TrafficResetDay, n.TrafficExceededAt,
-		jsonArrayText(n.TrafficRateSchedule),
+		jsonArrayText(n.TrafficRateSchedule), n.TrafficResetAt,
 		id, expected,
 	)
 	if res.Error != nil {

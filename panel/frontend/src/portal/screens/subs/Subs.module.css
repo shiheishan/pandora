@@ -253,26 +253,10 @@
 }
 
 .nodeName {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px var(--space-8);
   min-width: 0;
-}
-
-.nodeNameText {
-  min-width: 0;
-  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* 节点标签（Xboard 同样在门户节点列表展示）：窄屏时换到名称下面一行 */
-.nodeTags {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 4px;
 }
 
 .nodeProto {

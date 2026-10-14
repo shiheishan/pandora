@@ -1,7 +1,6 @@
 package service
 
 import (
-	"slices"
 	"testing"
 	"time"
 
@@ -20,8 +19,7 @@ func TestDeliverableNodesXBPG(t *testing.T) {
 	user := e.dUser(t, ctx, "active", &g)
 	sub := e.dSub(t, ctx, user, v, subOpts{})
 
-	// 用 SQL 给该节点插两条中转（一条 enabled = false），设 tags = '["香港","IPLC"]'
-	e.mustExec(t, ctx, `UPDATE nodes SET tags = '["香港","IPLC"]'::jsonb WHERE id = ?`, nodeID)
+	// 用 SQL 给该节点插两条中转（一条 enabled = false）
 	e.mustExec(t, ctx, `INSERT INTO node_relays (parent_node_id, name, server_host, server_port, enabled, sort_order)
 		VALUES (?, '香港中转-启用', 'relay-on.example.test', 25001, true, 1)`, nodeID)
 	e.mustExec(t, ctx, `INSERT INTO node_relays (parent_node_id, name, server_host, server_port, enabled, sort_order)
@@ -34,7 +32,7 @@ func TestDeliverableNodesXBPG(t *testing.T) {
 		UserGroupID:    &g,
 	}
 
-	// 验证：DeliverableNodes 结果 = 父节点 + 1 条启用中转，中转 Name/Host/Port 对，Tags 两者都是 [香港 IPLC]
+	// 验证：DeliverableNodes 结果 = 父节点 + 1 条启用中转，中转 Name/Host/Port 对
 	nodes, err := e.svc.loadDeliverableNodes(ctx, q.PlanVersionID, q.UserGroupID)
 	if err != nil {
 		t.Fatalf("loadDeliverableNodes 失败: %v", err)
@@ -46,15 +44,9 @@ func TestDeliverableNodesXBPG(t *testing.T) {
 	if nodes[0].Name != "香港主节点" || nodes[0].Host != "node.example.test" || nodes[0].Port != 25000 {
 		t.Fatalf("父节点字段不符: %+v", nodes[0])
 	}
-	if !slices.Equal(nodes[0].Tags, []string{"香港", "IPLC"}) {
-		t.Fatalf("父节点 Tags 不符: %v", nodes[0].Tags)
-	}
 
 	if nodes[1].Name != "香港中转-启用" || nodes[1].Host != "relay-on.example.test" || nodes[1].Port != 25001 {
 		t.Fatalf("中转节点字段不符: %+v", nodes[1])
-	}
-	if !slices.Equal(nodes[1].Tags, []string{"香港", "IPLC"}) {
-		t.Fatalf("中转节点 Tags 未继承: %v", nodes[1].Tags)
 	}
 
 	// 2. 用 SQL 设流量超限：父节点与中转都不在结果里

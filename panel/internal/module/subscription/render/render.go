@@ -56,8 +56,6 @@ type Node struct {
 	Port        int
 	Config      map[string]any
 	TrafficRate float64
-	// Tags 是节点标签（后台填写，门户线路预览展示；订阅文件里不输出）。nil 表示没有。共享，只读。
-	Tags []string
 	// ECHConfigList 是节点当前 ECH 密钥的公开 ECHConfigList（原始字节）；nil 表示没开 ECH 或协议不适用。共享，只读。
 	ECHConfigList []byte
 	// info 为真是渲染时插入的订阅信息节点（剩余流量、到期等，见 request.go），不进自动选择类的组
