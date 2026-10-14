@@ -14,11 +14,10 @@ const pick = (src: string, re: RegExp, what: string): string => {
   if (!m?.[1]) throw new Error(`Go 源码里找不到 ${what}`)
   return m[1]
 }
-const transferGo = goSource('domain/billing/traffic_pack_transfer.go')
 const goTransfer = {
-  source: pick(transferGo, /errTransferSource\s*=\s*httpx\.New\(httpx\.CodeConflict,\s*"([^"]+)"\)/, 'errTransferSource'),
-  sameTarget: pick(transferGo, /"to_subscription_id":\s*"([^"]+)"/, '同一份的 422 文案'),
-  invalid: pick(goSource('platform/httpx/httpx.go'), /func Invalid\(fields map\[string\]string\) \*Error \{\s*return &Error\{Code: CodeValidationFailed, Message: "([^"]+)"/, 'httpx.Invalid 的 message'),
+  source: pick(goSource('module/subscription/service/types.go'), /ErrTransferSource\s*=\s*errs\.Newf\(errs\.Conflict,\s*"([^"]+)"\)/, 'ErrTransferSource'),
+  sameTarget: pick(goSource('module/subscription/service/packs.go'), /"to_subscription_id":\s*"([^"]+)"/, '同一份的 422 文案'),
+  invalid: pick(goSource('pkg/errs/errs.go'), /ValidationFailed:\s*\{http\.StatusUnprocessableEntity,\s*"([^"]+)"\}/, 'ValidationFailed 的 message'),
 }
 
 // 设计稿 2.5 / 2.7 / 2.8 / 2.9：订阅列表新字段、改名、按份换新链接、礼品卡落点、流量包转移、原型场景

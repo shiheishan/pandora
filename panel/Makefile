@@ -37,7 +37,7 @@ vet: ## 静态检查
 
 .PHONY: test
 test: ## 运行 Go 单元测试
-	$(GO) test -race -count=1 ./...
+	CGO_ENABLED=1 $(GO) test -race -count=1 ./...
 
 .PHONY: migrate
 migrate: ## 迁移开发库到最新

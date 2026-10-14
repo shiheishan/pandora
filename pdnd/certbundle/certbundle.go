@@ -1,8 +1,8 @@
 // Package certbundle 是证书包契约 pandora-node-certificate-bundle-v1 的节点侧实现：
 // 签名原像与验签、HPKE 解密托管证书私钥。
 //
-// 面板侧另有一份独立实现（panel/internal/platform/certbundle），两边用同一份金样本
-// testdata/certbundle-v1-golden.json 互相钉住，改一边必须同步另一边并重新生成金样本。
+// 面板侧实现已随旧栈删除，本包目前没有调用方；金样本 testdata/certbundle-v1-golden.json 留作
+// 证书下发改走节点 gRPC 会话时的对照（见 docs/node-certificates.md）。
 // 写法沿用已删除的生效发布契约 aegis-node-effective-config-release-v1（节点通道换成 gRPC 之前的签名发布）。
 package certbundle
 

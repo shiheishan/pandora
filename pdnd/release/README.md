@@ -160,7 +160,7 @@ Windows 交叉构建只能证明 `CGO_ENABLED=0` 编译产物可生成，不能�
 默认构建只链接 NativeCore，节点配置里的 `kernel` 字段被忽略；只有 `-tags compat` 构建在 native-only 模式下才会拒绝显式的
 `kernel: "xray-core"` 与 `kernel: "sing-box"`。
 
-手工安装不经安装器的系统参数段（`pdndSysctlFunction`：conntrack、监听队列、端口范围、收发缓冲），至少要补上
+手工安装不经安装器的系统参数段（面板安装模板 `panel/internal/module/node/service/pdnd_install.sh.tmpl` 的 `pandora_tune_sysctl`：conntrack、监听队列、端口范围、收发缓冲），至少要补上
 UDP 收发缓冲上限：Debian 13 缺省 `rmem_max` / `wmem_max` 是 212992，Hysteria2 / TUIC 的 quic-go 要 8MB
 拿不到，单连接大流量丢包，pdnd 启动时每个 QUIC 入站告警一次。pdnd 以无特权用户运行，不要为此给 unit 加
 `CAP_NET_ADMIN`（SO_RCVBUFFORCE），改 sysctl 上限即可，要在启动 pdnd 之前生效：
