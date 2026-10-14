@@ -90,6 +90,9 @@ func (s *ssUDPSession) releaseDevice() {
 func (a *shadowsocksAdapter) forwardUDP(s *ssUDPSession, dest vlessDestination, payload []byte) error {
 	s.lastUplink.Store(time.Now().UnixNano())
 	if !s.holdDevice() {
+		if s.ctx.Err() != nil {
+			return nil // 会话已在收尾（devDone），不是设备超限
+		}
 		s.cancel()
 		return deviceLimitError("shadowsocks")
 	}

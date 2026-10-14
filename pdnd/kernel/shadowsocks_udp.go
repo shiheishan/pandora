@@ -14,10 +14,10 @@ import (
 // ssUDPDropStats 按原因记 SS UDP 丢掉的包数（诊断与测试用，不上报）。
 type ssUDPDropStats struct {
 	pending  atomic.Uint64 // 会话建立期间小队列已满
-	queue    atomic.Uint64 // 慢路径队列已满（后续任务用）
-	rate     atomic.Uint64 // 上行超出限速（后续任务用）
-	route    atomic.Uint64 // 目标的出站与会话的上游不一致（后续任务用）
-	replay   atomic.Uint64 // salt 重放（后续任务用）
+	queue    atomic.Uint64 // 慢路径队列已满
+	rate     atomic.Uint64 // 上行超出限速
+	route    atomic.Uint64 // 目标的出站与会话的上游不一致
+	replay   atomic.Uint64 // salt 重放
 	downlink atomic.Uint64 // 下行编码失败、超出桶容量或写回临时出错
 }
 
@@ -133,12 +133,15 @@ func (a *shadowsocksAdapter) decodeUDPPacket(salt, ciphertext, plain []byte, fro
 
 // 以下三个函数经典 AEAD 已不用，只剩 SS2022（shadowsocks2022_udp.go）在用；SS2022 多用户重写时一起挪走。
 
+// destinationUDPAddr 把目标转成 net.Addr（域名同步解析）；只剩 SS2022 在用。
 func destinationUDPAddr(destination vlessDestination) (net.Addr, error) {
 	if destination.IP.IsValid() {
 		return &net.UDPAddr{IP: net.IP(destination.IP.AsSlice()), Port: int(destination.Port)}, nil
 	}
 	return net.ResolveUDPAddr("udp", net.JoinHostPort(destination.Domain, strconv.Itoa(int(destination.Port))))
 }
+
+// destinationFromNetAddr 把上游回包的来源地址转成目标结构；只剩 SS2022 在用。
 func destinationFromNetAddr(addr net.Addr) vlessDestination {
 	if udp, ok := addr.(*net.UDPAddr); ok {
 		ip, ok := netip.AddrFromSlice(udp.IP)
@@ -156,6 +159,8 @@ func destinationFromNetAddr(addr net.Addr) vlessDestination {
 	}
 	return vlessDestination{Host: host, Domain: host, Port: uint16(parsed)}
 }
+
+// serializeSSDestination 按 SOCKS 地址格式编码目标；只剩 SS2022 在用。
 func serializeSSDestination(destination vlessDestination) ([]byte, error) {
 	var out []byte
 	if destination.IP.IsValid() {

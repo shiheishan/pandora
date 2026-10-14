@@ -34,6 +34,7 @@ paths:
 
 - VMess 的 authID 用按时间分代的精确表 `replayFilter`（`replay_filter.go`）：整代丢弃，每代满 `replayFilterMaxPerGen` 提前换代。
 - 旧版 Shadowsocks AEAD 的 TCP salt 用全进程共用的 `saltBloom`（`replay_filter_bloom.go`，误报 1e-6）：每 `ssSaltGenPeriod`（15 分钟）换一代、整代过期，一个 salt 至少记一代、至多两代；代内当前块写满就串一块翻倍的新块（不提前换代，爬坡时不丢已记的 salt），总容量超过两块最大块（约 7.2MB）才从最老的块起丢；整整两代没有写入全部丢掉。只记认证通过的 salt。SS2022 另有时间戳与精确表，不用 Bloom（SIP022）。守卫 `TestSaltBloom*`。
+- 旧版 Shadowsocks AEAD 的 UDP 每个认证通过的包都查 salt，用单独一张同类型的表（`shadowsocks_udp_replay.go` 的 `sharedSSUDPSaltBloom`，块 1<<12 起、上限 1<<21，总量约 15MB）：UDP 每包一条，与 TCP 共用会把 TCP 的保留期挤短。1 万包/秒时保留约 7 分钟，估算写在常量注释里。
 
 ## 转发的空闲回收
 
@@ -57,13 +58,18 @@ paths:
 
 - UDP 中继的上下行必须解耦，各一个 goroutine 阻塞读，收尾走 `udp_relay.go` 的 `relayUDPDirections`（SOCKS5、Trojan、VMess command=UDP 共用）。下行不能与上行在同一循环轮询，否则回程被限成几包每秒（`*DownlinkBurstWithoutUplink` 系列测试）。
 - Shadowsocks AEAD 分块负载上限 0x3FFF（SIP004），读写两侧共用 `ssChunkLimit`；超长块规范客户端会断连（`shadowsocks_chunk_test.go`）。
-- Shadowsocks（经典 AEAD 与 2022 方法）同一端口同时听 TCP 与 UDP，任一 bind 失败整体失败；配置带 `network` 键按配置错误拒绝（与面板的共用约定，面板 schema 不收 `network`）。端口登记因此占 `tcp+udp` 两个键（`port_claims.go` 的 `inboundPortKeys`：登记时全部检查、全部占上，任一冲突整体不启动，释放时全部释放；冲突文案写 `443/TCP+UDP`）。面板 `protocol/port_l4_test.go` 的 `TestListenL4MatchesPdndPortClaims` 用正则读 `TestInboundPortKeyDerivation` 的用例表，行格式 `{"协议", nil 或 map[string]any{...}, "L4"}` 不要改。
-- 经典 Shadowsocks 的 UDP 按 (客户端地址, 用户) 建会话（`shadowsocks_udp.go`、`shadowsocks_udp_session.go`），不逐包处理：
-  - 入站只有一个读循环，不按包起 goroutine：同地址先用该会话的用户试解（快路径，用户记录 retired 就跳过），解不开再走 `findSSUser`；明文写进读循环独占的缓冲（GCM 失败会清零 dst，不能原地试解）。上行在读循环里同步写上游。
-  - 每会话一个上游 socket（经 DataPlane，出站按首包目标选，与 hy2 / TUIC 同）和一个下行 goroutine；下行直接调用 hy2 的 `hy2DownlinkUDP`（冷态不占收包缓冲、共用存货与名额），交给它的「客户端连接」`ssUDPClientWriter` 在 WritePacket 里按真实来源地址加密、写回入站 socket，编码缓冲从池里借、返回前还。
-  - 会话两个方向都空闲 `ssUDPIdleTimeout`（5 分钟，与 juicity、UoT 同值）由 `udpJanitor` 关；删用户经 `userSessions.revoke` 踢；入站 Close 全关。在线设备在会话建立时 enter、`finishUDPSession` 里 leave；名额按 `udpSessionsPerUser`。
-  - 限速：上行在共享读循环里 `AllowN` 不够即丢包（不能 WaitN 阻塞别的用户），下行在会话 goroutine 里 `WaitN`。域名目标按会话缓存最近一次解析（`hy2UDPResolveTTL`），没命中时另起 goroutine 解析、同一会话同时只解一个，期间的包丢弃。
-  - 守卫：`TestOnlineDevicesWiringSSUDP`、`TestShadowsocksSamePortTCPAndUDPInterop`、`TestShadowsocksUDPDownlinkBurstWithoutUplink`、`TestShadowsocksIdleUDPSessionHeap`（1000 个空闲会话每会话存活堆 ≤16KB）、`shadowsocks_udp_lifecycle_test.go`（上限、空闲回收、删用户、关入站不留 goroutine）。SS2022 的 UDP 仍逐包处理，留给 SS2022 多用户重写。
+- Shadowsocks（经典 AEAD 与 2022 方法）同一端口同时听 TCP 与 UDP，任一 bind 失败整体失败；配置带 `network` 键按配置错误拒绝（与面板的共用约定，面板 schema 不收 `network`）。端口登记因此占 `tcp+udp` 两个键（`port_claims.go` 的 `inboundPortKeys`：登记时全部检查、全部占上，任一冲突整体不启动，释放时全部释放；冲突文案写 `443/TCP+UDP`；单边 bind 撞上本机其他进程时报撞上的那一种，如 `443/UDP`）。面板 `protocol/port_l4_test.go` 的 `TestListenL4MatchesPdndPortClaims` 用正则读 `TestInboundPortKeyDerivation` 的用例表，行格式 `{"协议", nil 或 map[string]any{...}, "L4"}` 不要改。
+- 经典 Shadowsocks 的 UDP 按 (客户端地址, 用户) 建会话（`shadowsocks_udp*.go`），不逐包处理：
+  - 入站只有一个读循环，不按包起 goroutine，里面只做快路径：同地址先用该会话的用户试解（用户记录 retired、会话 ctx 已取消就跳过），明文写进读循环独占的缓冲（GCM 失败会清零 dst，不能原地试解），上行同步写上游（非阻塞 UDP 写）。解不开或该地址没有会话的包复制进 sing 的池化缓冲，交给本入站的慢路径 worker 池（`shadowsocks_udp_pool.go`：GOMAXPROCS 个 worker、队列 `ssUDPSlowQueue` 256，满了丢）按 `findSSUser` 逐用户试解。灌垃圾包只占满这个池，已建会话不受影响（`TestShadowsocksUDPGarbageFloodKeepsEstablishedSessions`）；代价是被灌时新会话的首包可能被丢、靠客户端重发。
+  - 认证通过的包每个都查 salt（`shadowsocks_udp_replay.go`，UDP 单独一张 `saltBloom`，块上限 1<<21、总量约 15MB，容量估算写在常量注释里），重放的包不转发、不建会话（`TestShadowsocksUDPReplayedPacketDropped`）。
+  - 建会话只登记、不做 I/O：`getOrOpenUDPSession` 全程持 udpMu（查已有 → 名额 → 在线设备 → 用户会话表 → 入表），读循环与 worker 并发处理同一 (地址, 用户) 也只建一个。上游（`ListenUDP`，中转出站要握手、域名要解析）在会话自己的 goroutine 里建（`establishUDPSession`），建立期间到的包进会话的小队列（`ssUDPPendingMax` 8 个，满了丢），建好后按序发出；失败只走 `finishUDPSession` 一处收尾，名额、设备、用户会话表全部归还。守卫 `shadowsocks_udp_establish_test.go`（一个用户的 ListenUDP 卡住时别的用户照常往返、队列上限、失败归还）。
+  - 每会话一个上游 socket 和一个下行 goroutine；下行直接调用 hy2 的 `hy2DownlinkUDP`（冷态不占收包缓冲、共用存货与名额），交给它的「客户端连接」`ssUDPClientWriter`（`shadowsocks_udp_downlink.go`）在 WritePacket 里按真实来源地址加密（IP 按 ATYP 1/4，中转给的域名来源按 ATYP 3）、写回入站 socket，编码缓冲从池里借、返回前还。WritePacket 的错误会让 hy2DownlinkUDP 结束整个会话，所以只有 ctx 取消或 `net.ErrClosed` 才返回错误；编码失败、超出桶容量、ENOBUFS 之类只丢这个包（计 `udpDrops.downlink`）。
+  - 路由：出站按首包目标选（建上游时记下 tag）；之后目标变化时按新目标再 `Select` 一次（`shadowsocks_udp_route.go` 的 `selectUDPRoute`：DataPlane 接口没有查询，对 `*routedDataPlane` 读 current 的 Runtime，对实现了 `Select` 的测试替身直接调），结果与会话的 tag 不一致（含 block）就丢这个包，不换上游；同一目标连续发包只查第一次。私网拦截仍由直连上游逐包判定。守卫 `TestShadowsocksUDPRouteCheckedPerDestination`、`TestShadowsocksUDPPrivateTargetDroppedAfterPublicFirst`。
+  - 空闲只按客户端上行判断（下行不续期，上游一直推包也照样回收）：上行空闲 `ssUDPIdleTimeout`（5 分钟，与 juicity、UoT 同值）由 `udpJanitor` 关会话；在线设备在会话建立时 enter，上行空闲 `ssUDPDeviceIdleTimeout`（60 秒）先 leave（会话保留、下行照常），再有上行时重新 enter，被拒就关会话（设备数受限的用户切网络后，旧地址至多再占一分钟）；收尾在 `finishUDPSession` 里撤。删用户经 `userSessions.revoke` 踢；入站 Close 全关；名额按 `udpSessionsPerUser`。守卫 `TestShadowsocksUDPDownlinkOnlyReleasesDevice`、`TestShadowsocksUDPDownlinkOnlySessionReclaimed`。
+  - 限速：同一用户的 TCP、UDP 下行在同一个桶上 `WaitN`（先预支、桶变负数再睡）；UDP 上行不能睡（读循环与 worker 全入站共用），用 `ReserveN`，要等不超过 `ssUDPUplinkMaxDebt`（50ms）就记债立即放行，超过才 `CancelAt` 并丢包。不要改回 `AllowN`：下行跑满时桶一直在 0 以下，上行（DNS、QUIC 的 ACK）几乎全丢（`TestShadowsocksUDPUplinkPassesWhileDownlinkSaturated`）。
+  - 域名目标按会话缓存最近一次解析（`ssUDPResolveTTL`，与 hy2 同值），没命中时另起 goroutine 解析、同一会话同时只解一个，期间的包丢弃，触发解析的那个包解析完补发（`TestShadowsocksUDPDomainResolve`）。
+  - 丢包按原因计在 `a.udpDrops`（pending、queue、rate、route、replay、downlink），只作诊断与测试，不上报。
+  - 其余守卫：`TestOnlineDevicesWiringSSUDP`、`TestShadowsocksSamePortTCPAndUDPInterop`、`TestShadowsocksUDPDownlinkBurstWithoutUplink`、`TestShadowsocksIdleUDPSessionHeap`（1000 个空闲会话每会话存活堆 ≤16KB）、`shadowsocks_udp_lifecycle_test.go`（上限、空闲回收、删用户、关入站不留 goroutine）、`shadowsocks_udp_gaps_test.go`（NAT 后两个用户不串、换用户记录换会话与限速）。SS2022 的 UDP 仍逐包处理，留给 SS2022 多用户重写（`shadowsocks_udp.go` 末尾三个函数只剩它在用，重写时一起挪走）。
 - VLESS / VMess 的 mux（XUDP）在 NativeCore 内实现。
 - XHTTP 按请求判定角色（`xhttp.go` 的 `classifyRequest`），适配器只按 `XHTTPSession.Kind` 分派。auto（节点缺省）照 Xray 服务端逐请求收：不带会话的上行请求是 stream-one；带会话的 GET 是下行；带会话与序号的是 packet-up；带会话无序号的是 stream-up。Xray 的 auto 在 REALITY 上选 stream-one（有 downloadSettings 时选 stream-up），其余选 packet-up。
   - 会话型请求共用 `xhttp_session.go`：一个会话只许一种上行，第二条 stream-up 回 409。
