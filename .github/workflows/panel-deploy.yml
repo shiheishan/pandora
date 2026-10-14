@@ -157,7 +157,11 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postgresql-common
           sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postgresql-18 postgresql-client-18
-          sudo pg_ctlcluster 18 main start 2>/dev/null || true
+          # runner 的 postgresql-common 不自动建 main 集群（自带的 16/main 是镜像预建的），这里显式建
+          if ! pg_lsclusters --no-header | awk '$1 == 18 && $2 == "main" { f = 1 } END { exit !f }'; then
+            sudo pg_createcluster 18 main
+          fi
+          sudo pg_ctlcluster 18 main start
           pg_lsclusters
       - name: Database bootstrap, migrate, grants, runtime checks
         run: bash panel/deploy/db-roles_pg18_test.sh

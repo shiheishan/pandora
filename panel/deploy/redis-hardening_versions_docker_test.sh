@@ -35,7 +35,8 @@ run_case() {
   local image="$1" v6="$2" force_bind="${3:-}" ver bind conf cid i pong sysctl
   sysctl=(--sysctl net.ipv6.conf.all.disable_ipv6=1)
   [ "$v6" = off ] || sysctl=(--sysctl net.ipv6.conf.all.disable_ipv6=0 --sysctl net.ipv6.conf.lo.disable_ipv6=0)
-  ver="$(docker run --rm "$image" redis-server --version)"
+  # 绕过镜像的入口脚本：Redis 8 镜像的入口会先往标准输出打一行 Starting Redis Server
+  ver="$(docker run --rm --entrypoint redis-server "$image" --version)"
   docker run --rm --network none "${sysctl[@]}" "$image" cat /proc/net/if_inet6 >"$IF_INET6" 2>/dev/null || : >"$IF_INET6"
   if [ "$v6" = on ]; then
     grep -q '^00000000000000000000000000000001 .* lo$' "$IF_INET6" || fail "no IPv6 loopback in the $image container although IPv6 was enabled"

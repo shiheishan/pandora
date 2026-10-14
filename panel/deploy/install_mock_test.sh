@@ -15,7 +15,7 @@ STUB="$T/stub"
 
 fail() {
   if [ -f "$OUT" ]; then
-    printf '--- last 40 lines of out.log ---\n' >&2
+    printf '%s\n' '--- last 40 lines of out.log ---' >&2
     tail -n 40 "$OUT" >&2 || true
   fi
   printf 'install-mock: %s\n' "$*" >&2
@@ -406,7 +406,7 @@ assert_no_secret_leaks() {
     fi
   done < <(secret_values)
   local ap
-  ap="$(awk -F= '/^PANDORA_ADMIN_PATH=/{print $2}' "$SB/etc/pandora/deploy.env" | tail -1)"
+  ap="$(sed -n 's/^PANDORA_ADMIN_PATH=//p' "$SB/etc/pandora/deploy.env" | tail -1)"
   if [ -n "$ap" ] && grep -Fq "$ap" "$ARGV" "$EV"; then fail 'admin path in argv/events'; fi
   return 0
 }
@@ -443,10 +443,10 @@ POSTGRES_DB
 POSTGRES_PORT
 POSTGRES_SUPER_PASSWORD" ] || fail "deploy keys: $keys_dep"
 grep -q '^PANDORA_SECRETS_MASTER_KEY=' "$SB/etc/pandora/secrets.env" || fail 'no master key'
-jwt_pub="$(awk -F= '/^PANDORA_AUTH_PUBLIC_JWT_SECRET=/{print $2}' "$SB/etc/pandora/secrets.env")"
-jwt_adm="$(awk -F= '/^PANDORA_AUTH_ADMIN_JWT_SECRET=/{print $2}' "$SB/etc/pandora/secrets.env")"
+jwt_pub="$(sed -n 's/^PANDORA_AUTH_PUBLIC_JWT_SECRET=//p' "$SB/etc/pandora/secrets.env")"
+jwt_adm="$(sed -n 's/^PANDORA_AUTH_ADMIN_JWT_SECRET=//p' "$SB/etc/pandora/secrets.env")"
 [ "$jwt_pub" != "$jwt_adm" ] || fail 'JWT secrets must differ'
-master="$(awk -F= '/^PANDORA_SECRETS_MASTER_KEY=/{print $2}' "$SB/etc/pandora/secrets.env")"
+master="$(sed -n 's/^PANDORA_SECRETS_MASTER_KEY=//p' "$SB/etc/pandora/secrets.env")"
 python3 -c "import base64,sys; d=base64.b64decode(sys.argv[1]); sys.exit(0 if len(d)==32 else 1)" "$master" || fail 'master key not 32 bytes b64'
 [ "$(stat -c %a "$SB/etc/pandora/secrets.env")" = 640 ] || fail 'secrets mode'
 [ "$(stat -c %a "$SB/etc/pandora/config.yaml")" = 640 ] || fail 'config mode'
@@ -483,7 +483,7 @@ grep -q 'rename-command FLUSHALL ""' "$redis_conf" || fail 'redis flushall'
 grep -q 'rename-command FLUSHDB ""' "$redis_conf" || fail 'redis flushdb'
 [ "$(grep -c '^requirepass ' "$redis_conf")" = 1 ] || fail 'requirepass count'
 rpw="$(awk '/^requirepass /{print $2}' "$redis_conf")"
-url_pw="$(awk -F= '/^PANDORA_REDIS_URL=/{print $2}' "$SB/etc/pandora/secrets.env" | sed -n 's|^redis://:\([^@]*\)@.*|\1|p')"
+url_pw="$(sed -n 's/^PANDORA_REDIS_URL=//p' "$SB/etc/pandora/secrets.env" | sed -n 's|^redis://:\([^@]*\)@.*|\1|p')"
 [ "$rpw" = "$url_pw" ] || fail 'redis pass mismatch'
 roles_ln="$(lineno 'bootstrap-roles')"
 mig_ln="$(lineno 'pandora migrate up')"
