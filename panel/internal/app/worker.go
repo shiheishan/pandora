@@ -21,7 +21,9 @@ import (
 	subtask "github.com/aegispanel/aegis/internal/module/subscription/task"
 	supporttask "github.com/aegispanel/aegis/internal/module/support/task"
 	"github.com/aegispanel/aegis/internal/pkg/jobs"
+	"github.com/aegispanel/aegis/internal/pkg/metrics"
 	"github.com/hibiken/asynq"
+	asynqmetrics "github.com/hibiken/asynq/x/metrics"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
@@ -80,11 +82,30 @@ func runWorker(ctx context.Context, configPath string) error {
 		pprofSrv = startPprofServer(addr)
 	}
 
+	var metricsSrv *http.Server
+	var inspector *asynq.Inspector
+	if addr := cfg.MetricsAddr; addr != "" {
+		reg, err := newMetricsRegistry(r)
+		if err != nil {
+			return err
+		}
+		// 队列指标（asynq_*：各队列积压、延迟、处理与失败数），每次拉取时查 Redis
+		inspector = asynq.NewInspector(redisOpt)
+		reg.MustRegister(asynqmetrics.NewQueueMetricsCollector(inspector))
+		metricsSrv = metrics.NewServer(addr, reg)
+	}
+
 	if err := srv.Start(mux); err != nil {
+		if inspector != nil {
+			_ = inspector.Close()
+		}
 		return fmt.Errorf("启动 asynq worker: %w", err)
 	}
 	if err := sched.Start(); err != nil {
 		srv.Shutdown()
+		if inspector != nil {
+			_ = inspector.Close()
+		}
 		return fmt.Errorf("启动 asynq 调度器: %w", err)
 	}
 
@@ -95,6 +116,13 @@ func runWorker(ctx context.Context, configPath string) error {
 			}
 		}()
 	}
+	if metricsSrv != nil {
+		go func() {
+			if err := metricsSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				r.log.Warn("指标监听", zap.Error(err))
+			}
+		}()
+	}
 
 	r.log.Info("worker started", zap.Int("concurrency", cfg.Concurrency))
 
@@ -102,12 +130,20 @@ func runWorker(ctx context.Context, configPath string) error {
 
 	sched.Shutdown()
 	srv.Shutdown()
+	shutCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
 	if pprofSrv != nil {
-		shutCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
 		if err := pprofSrv.Shutdown(shutCtx); err != nil {
 			r.log.Warn("关闭 pprof", zap.Error(err))
 		}
+	}
+	if metricsSrv != nil {
+		if err := metricsSrv.Shutdown(shutCtx); err != nil {
+			r.log.Warn("关闭指标服务", zap.Error(err))
+		}
+	}
+	if inspector != nil {
+		_ = inspector.Close()
 	}
 	return nil
 }

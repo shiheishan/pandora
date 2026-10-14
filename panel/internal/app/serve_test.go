@@ -6,9 +6,11 @@ import (
 	"testing"
 
 	"github.com/aegispanel/aegis/internal/pkg/config"
+	"github.com/aegispanel/aegis/internal/pkg/metrics"
 	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/gin-gonic/gin"
 	"github.com/hibiken/asynq"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
@@ -26,7 +28,7 @@ func TestEnginesRegisterModuleRoutes(t *testing.T) {
 	}
 	t.Cleanup(svc.close)
 	hub := realtime.NewHub(nil, nil, 100)
-	publicEng, adminEng := newEngines(r, svc, hub)
+	publicEng, adminEng := newEngines(r, svc, hub, metrics.NewHTTP(prometheus.NewRegistry()))
 
 	want := map[*gin.Engine][]string{
 		publicEng: {

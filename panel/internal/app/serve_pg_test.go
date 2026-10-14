@@ -6,8 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aegispanel/aegis/internal/pkg/metrics"
 	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/aegispanel/aegis/internal/pkg/testkit"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -23,7 +25,7 @@ func TestAdminRoutesRequireLogin(t *testing.T) {
 	}
 	t.Cleanup(svc.close)
 	hub := realtime.NewHub(nil, nil, 100)
-	_, adminEng := newEngines(r, svc, hub)
+	_, adminEng := newEngines(r, svc, hub, metrics.NewHTTP(prometheus.NewRegistry()))
 
 	open := map[string]bool{
 		"POST /v1/auth/login":   true,

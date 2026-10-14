@@ -35,6 +35,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/config"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
+	"github.com/aegispanel/aegis/internal/pkg/metrics"
 	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/aegispanel/aegis/internal/pkg/redisx"
 	"github.com/aegispanel/aegis/internal/pkg/route"
@@ -71,7 +72,13 @@ func runServe(ctx context.Context, configPath string) error {
 	}
 	defer svc.close()
 
-	nodeCh, err := setupNodeChannel(ctx, r, svc)
+	reg, err := newMetricsRegistry(r)
+	if err != nil {
+		return err
+	}
+	httpm := metrics.NewHTTP(reg)
+
+	nodeCh, err := setupNodeChannel(ctx, r, svc, reg)
 	if err != nil {
 		return err
 	}
@@ -81,7 +88,7 @@ func runServe(ctx context.Context, configPath string) error {
 	hub := realtime.NewHub(r.redis, r.log, maxSSEStreams)
 	svc.report.UseStreams(hub)
 
-	publicEng, adminEng := newEngines(r, svc, hub)
+	publicEng, adminEng := newEngines(r, svc, hub, httpm)
 
 	publicSrv := newHTTPServer(r.cfg.HTTP.Public, publicEng)
 	adminSrv := newHTTPServer(r.cfg.HTTP.Admin, adminEng)
@@ -94,10 +101,16 @@ func runServe(ctx context.Context, configPath string) error {
 		pprofSrvs = append(pprofSrvs, startPprofServer(addr))
 	}
 
+	var metricsSrv *http.Server
+	if addr := r.cfg.Observability.MetricsAddr; addr != "" {
+		metricsSrv = metrics.NewServer(addr, reg)
+	}
+
 	r.log.Info("serve started",
 		zap.String("public", r.cfg.HTTP.Public.Addr),
 		zap.String("admin", r.cfg.HTTP.Admin.Addr),
 		zap.String("node_grpc", r.cfg.GRPC.Node.Addr),
+		zap.String("metrics", r.cfg.Observability.MetricsAddr),
 	)
 
 	g, gctx := errgroup.WithContext(ctx)
@@ -130,6 +143,14 @@ func runServe(ctx context.Context, configPath string) error {
 			return nil
 		})
 	}
+	if metricsSrv != nil {
+		g.Go(func() error {
+			if err := metricsSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return fmt.Errorf("指标监听 (%s): %w", metricsSrv.Addr, err)
+			}
+			return nil
+		})
+	}
 
 	g.Go(func() error {
 		<-gctx.Done()
@@ -158,6 +179,11 @@ func runServe(ctx context.Context, configPath string) error {
 				r.log.Warn("关闭 pprof", zap.String("addr", ps.Addr), zap.Error(err))
 			}
 		}
+		if metricsSrv != nil {
+			if err := metricsSrv.Shutdown(shutCtx); err != nil {
+				r.log.Warn("关闭指标服务", zap.Error(err))
+			}
+		}
 		return nil
 	})
 
@@ -179,9 +205,9 @@ func newHTTPServer(sc config.HTTPServer, h http.Handler) *http.Server {
 }
 
 // newEngines 建门户与后台两个引擎并挂上各模块路由。
-// 引擎级顺序：基础中间件（请求号、日志、恢复、错误、安全头、并发、超时）→（后台）只读门 → 鉴权 → 域守卫；
+// 引擎级顺序：基础中间件（请求号、日志、指标、恢复、错误、安全头、并发、超时）→（后台）只读门 → 鉴权 → 域守卫；
 // 限流、登录要求、重认证、幂等、开关是路由级，由各模块从 Kit 取；后台不分权限，登录了就是管理员。
-func newEngines(r *runtime, svc *services, hub *realtime.Hub) (*gin.Engine, *gin.Engine) {
+func newEngines(r *runtime, svc *services, hub *realtime.Hub, httpm *metrics.HTTP) (*gin.Engine, *gin.Engine) {
 	settingsH := settingsh.New(svc.settings)
 	authH := authh.New(svc.auth, svc.limiter, authOptions(r.cfg))
 	idemH := idemh.New(svc.idem, svc.idemFPKey)
@@ -220,11 +246,11 @@ func newEngines(r *runtime, svc *services, hub *realtime.Hub) (*gin.Engine, *gin
 		realtimeh.New(hub, r.cfg.Auth.AccessTTL),
 	}
 
-	publicEng := newEngine(r, r.cfg.HTTP.Public,
+	publicEng := newEngine(r, r.cfg.HTTP.Public, httpm.Middleware("public"),
 		authH.Authenticate(authn.AudiencePublic),
 		authH.DomainGuard(authn.AudiencePublic),
 	)
-	adminEng := newEngine(r, r.cfg.HTTP.Admin,
+	adminEng := newEngine(r, r.cfg.HTTP.Admin, httpm.Middleware("admin"),
 		settingsH.AdminWritesGate(),
 		authH.Authenticate(authn.AudienceAdmin),
 		authH.DomainGuard(authn.AudienceAdmin),
@@ -249,7 +275,7 @@ func authOptions(cfg *config.Config) authh.Options {
 	return authh.Options{AuthPerMin: cfg.RateLimit.AuthPerMin, SecureCookie: cfg.IsProduction()}
 }
 
-func newEngine(r *runtime, sc config.HTTPServer, extra ...gin.HandlerFunc) *gin.Engine {
+func newEngine(r *runtime, sc config.HTTPServer, metricsMW gin.HandlerFunc, extra ...gin.HandlerFunc) *gin.Engine {
 	if r.cfg.Env != config.EnvDevelopment {
 		ginReleaseOnce.Do(func() { gin.SetMode(gin.ReleaseMode) })
 	}
@@ -264,6 +290,7 @@ func newEngine(r *runtime, sc config.HTTPServer, extra ...gin.HandlerFunc) *gin.
 	e.Use(
 		httpx.RequestID(r.log),
 		httpx.AccessLog(),
+		metricsMW,
 		httpx.Recovery(),
 		httpx.Errors(),
 		httpx.SecurityHeaders(),
