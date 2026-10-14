@@ -15,7 +15,10 @@ import (
 	"strings"
 
 	"github.com/aegispanel/aegis/internal/module/node/protocol"
+	"github.com/aegispanel/aegis/internal/module/node/repo"
+	plog "github.com/aegispanel/aegis/internal/pkg/log"
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 var configDocReservedKeys = []string{
@@ -25,6 +28,7 @@ var configDocReservedKeys = []string{
 
 // ServerConfigs 一次算出这些服务器上每个该跑的节点（repo.ServedOnServerCond）的生效配置文档：
 // 服务器 id → 文档（按节点 id 升序）。会话层在配置纪元变了、节点新建流时调。不存在或已删除的服务器不在结果里。
+// 单个节点文档出错只跳过该节点（见 assembleServerConfigs）。
 func (s *Service) ServerConfigs(ctx context.Context, serverIDs []uuid.UUID) (map[uuid.UUID][]NodeConfigDoc, error) {
 	out := make(map[uuid.UUID][]NodeConfigDoc)
 	if len(serverIDs) == 0 {
@@ -54,6 +58,14 @@ func (s *Service) ServerConfigs(ctx context.Context, serverIDs []uuid.UUID) (map
 		}
 	}
 
+	return assembleServerConfigs(ctx, rows, layersByNode), nil
+}
+
+// assembleServerConfigs 按读到的行组装每台服务器的配置文档（按节点 id 升序）。一个节点的文档生成失败只跳过这个节点并记 ERROR，
+// 不让整批失败：建流对齐与配置纪元都是一批服务器一起算，一台节点的坏配置不能让同批其他服务器都拿不到配置。
+// 被跳过的节点不在这次下发的文档里，节点端会按文档集合停掉它的入站，直到配置修好。
+func assembleServerConfigs(ctx context.Context, rows []repo.ConfigNodeRow, layersByNode map[uuid.UUID][]routingLayer) map[uuid.UUID][]NodeConfigDoc {
+	out := make(map[uuid.UUID][]NodeConfigDoc)
 	for _, row := range rows {
 		out[row.ServerID] = []NodeConfigDoc{}
 	}
@@ -81,7 +93,11 @@ func (s *Service) ServerConfigs(ctx context.Context, serverIDs []uuid.UUID) (map
 		layers := layersByNode[*row.NodeID]
 		doc, err := buildNodeConfigDoc(*row.NodeID, nodeType, port, kernel, protoCfg, layers)
 		if err != nil {
-			return nil, err
+			plog.From(ctx).Error("节点配置文档生成失败，本次下发跳过该节点",
+				zap.String("server_id", row.ServerID.String()),
+				zap.String("node_id", row.NodeID.String()),
+				zap.Error(err))
+			continue
 		}
 		out[row.ServerID] = append(out[row.ServerID], doc)
 	}
@@ -90,7 +106,7 @@ func (s *Service) ServerConfigs(ctx context.Context, serverIDs []uuid.UUID) (map
 		slices.SortFunc(list, func(a, b NodeConfigDoc) int { return compareUUID(a.NodeID, b.NodeID) })
 		out[sid] = list
 	}
-	return out, nil
+	return out
 }
 
 // buildNodeConfigDoc 组装一个节点的配置文档：协议字段经 protocol.KernelConfig 翻译后摊平在顶层，

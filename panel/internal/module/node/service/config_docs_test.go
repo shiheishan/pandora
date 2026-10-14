@@ -1,12 +1,18 @@
 package service
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"testing"
 
+	"github.com/aegispanel/aegis/internal/module/node/repo"
+	plog "github.com/aegispanel/aegis/internal/pkg/log"
 	"github.com/google/uuid"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestBuildNodeConfigDocDeterministic(t *testing.T) {
@@ -166,5 +172,59 @@ func TestBuildNodeConfigDocProtocolInDigest(t *testing.T) {
 	}
 	if m["protocol"] != "vless" {
 		t.Fatalf("protocol %v", m["protocol"])
+	}
+}
+
+func TestAssembleServerConfigsSkipsBadNode(t *testing.T) {
+	sA := uuid.New()
+	sB := uuid.New()
+	sC := uuid.New()
+	n1 := uuid.New()
+	n2 := uuid.New()
+	n3 := uuid.New()
+
+	goodProto := "{}"
+	badProto := "[1]"
+	nodeType := "vless"
+	port := 443
+	kernel := "auto"
+
+	rows := []repo.ConfigNodeRow{
+		{ServerID: sA, NodeID: &n1, NodeType: &nodeType, ServerPort: &port, Kernel: &kernel, ProtocolConfig: &goodProto},
+		{ServerID: sA, NodeID: &n2, NodeType: &nodeType, ServerPort: &port, Kernel: &kernel, ProtocolConfig: &badProto},
+		{ServerID: sB, NodeID: &n3, NodeType: &nodeType, ServerPort: &port, Kernel: &kernel, ProtocolConfig: &goodProto},
+		{ServerID: sC, NodeID: nil},
+	}
+
+	core, logs := observer.New(zapcore.ErrorLevel)
+	ctx := plog.With(context.Background(), zap.New(core))
+
+	out := assembleServerConfigs(ctx, rows, map[uuid.UUID][]routingLayer{})
+
+	if len(out[sA]) != 1 || out[sA][0].NodeID != n1 {
+		t.Fatalf("sA docs: %+v, want only n1", out[sA])
+	}
+	if len(out[sB]) != 1 || out[sB][0].NodeID != n3 {
+		t.Fatalf("sB docs: %+v, want only n3", out[sB])
+	}
+	if out[sC] == nil {
+		t.Fatal("sC key missing")
+	}
+	if len(out[sC]) != 0 {
+		t.Fatalf("sC should be empty slice, got %v", out[sC])
+	}
+
+	errEntries := logs.FilterLevelExact(zapcore.ErrorLevel).All()
+	if len(errEntries) != 1 {
+		t.Fatalf("expected 1 error log, got %d", len(errEntries))
+	}
+	var nodeIDField string
+	for _, f := range errEntries[0].Context {
+		if f.Key == "node_id" {
+			nodeIDField = f.String
+		}
+	}
+	if nodeIDField != n2.String() {
+		t.Fatalf("node_id log field %q, want %q", nodeIDField, n2.String())
 	}
 }
