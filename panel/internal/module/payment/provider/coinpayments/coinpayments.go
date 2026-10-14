@@ -80,7 +80,7 @@ func New(cfg Config) (*Provider, error) {
 		return nil, errors.New("coinpayments: 缺少 Client ID 或 Client Secret")
 	}
 	if !clientIDRe.MatchString(cfg.ClientID) {
-		return nil, fmt.Errorf("coinpayments: Client ID 格式非法: %q", cfg.ClientID)
+		return nil, errors.New("coinpayments: Client ID 格式非法")
 	}
 
 	base := strings.TrimSpace(cfg.BaseURL)
@@ -90,10 +90,10 @@ func New(cfg Config) (*Provider, error) {
 	base = strings.TrimRight(base, "/")
 	u, err := url.Parse(base)
 	if err != nil || u.Host == "" {
-		return nil, fmt.Errorf("coinpayments: BaseURL 非法: %q", base)
+		return nil, errors.New("coinpayments: BaseURL 非法")
 	}
 	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return nil, fmt.Errorf("coinpayments: BaseURL 不得包含用户、查询串或片段: %q", base)
+		return nil, errors.New("coinpayments: BaseURL 不得包含用户、查询串或片段")
 	}
 	if u.Scheme != "https" && (!cfg.AllowPrivateHost || u.Scheme != "http") {
 		return nil, errors.New("coinpayments: BaseURL 必须使用 https")
@@ -103,7 +103,7 @@ func New(cfg Config) (*Provider, error) {
 	return &Provider{
 		cfg:    cfg,
 		base:   cfg.BaseURL,
-		client: safehttp.NewClient(cfg.AllowPrivateHost),
+		client: safehttp.Client(cfg.AllowPrivateHost),
 		now:    time.Now,
 	}, nil
 }

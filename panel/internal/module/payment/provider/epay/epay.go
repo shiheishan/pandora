@@ -87,7 +87,7 @@ func New(cfg Config) (*Provider, error) {
 	}
 	cfg.BaseURL = u.String()
 
-	return &Provider{cfg: cfg, client: safehttp.NewClient(cfg.AllowPrivateHost)}, nil
+	return &Provider{cfg: cfg, client: safehttp.Client(cfg.AllowPrivateHost)}, nil
 }
 
 // CreatePayment 生成收银台跳转信息。

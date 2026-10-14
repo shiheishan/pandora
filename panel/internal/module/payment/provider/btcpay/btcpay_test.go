@@ -378,6 +378,33 @@ func TestParseNotificationMarkedIsPending(t *testing.T) {
 	}
 }
 
+// 开了付款容差的商店，少付在容差内也会是 Settled，附加状态 PaidPartial：不自动入账。
+func TestParseNotificationSettledPartialIsPending(t *testing.T) {
+	inv := invoiceJSON("INV1", "Settled", "PaidPartial", "10.30", "CNY", "ORD1")
+	srv, _ := newWebhookTestServer(t, inv)
+	defer srv.Close()
+
+	p, err := New(testConfig(srv.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := webhookBody(testStoreID, "INV1", "InvoiceSettled")
+	n, err := p.ParseNotification(context.Background(), provider.Inbound{
+		Method: http.MethodPost,
+		Header: sigHeader(webhookSig(body, testSecret)),
+		Body:   body,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.Status != provider.StatusPending {
+		t.Fatalf("status=%s", n.Status)
+	}
+	if n.EventID != "INV1:SETTLED:PARTIAL" {
+		t.Fatalf("EventID=%s", n.EventID)
+	}
+}
+
 func TestParseNotificationPartialExpiredFails(t *testing.T) {
 	inv := invoiceJSON("INV1", "Expired", "PaidPartial", "10.30", "CNY", "ORD1")
 	srv, _ := newWebhookTestServer(t, inv)

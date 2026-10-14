@@ -78,7 +78,7 @@ func New(cfg Config) (*Provider, error) {
 
 	return &Provider{
 		cfg:    cfg,
-		client: safehttp.NewClient(cfg.AllowPrivateHost),
+		client: safehttp.Client(cfg.AllowPrivateHost),
 		base:   base,
 	}, nil
 }
@@ -194,6 +194,10 @@ func mapStatus(status, additional string) (st provider.Status, marked bool) {
 	if strings.EqualFold(status, "Settled") {
 		if strings.EqualFold(additional, "Marked") {
 			return provider.StatusPending, true
+		}
+		// 商店开了付款容差时，少付但在容差内的发票也会进 Settled；带着 PaidPartial 的一律不自动入账（RUNBOOK 要求容差为 0）
+		if strings.EqualFold(additional, "PaidPartial") {
+			return provider.StatusPending, false
 		}
 		return provider.StatusSucceeded, false
 	}
@@ -371,6 +375,8 @@ func (p *Provider) ParseNotification(ctx context.Context, in provider.Inbound) (
 	eventID := inv.ID + ":" + strings.ToUpper(strings.TrimSpace(inv.Status))
 	if marked {
 		eventID += ":MARKED"
+	} else if strings.EqualFold(strings.TrimSpace(inv.AdditionalStatus), "PaidPartial") {
+		eventID += ":PARTIAL"
 	}
 
 	raw := map[string]string{

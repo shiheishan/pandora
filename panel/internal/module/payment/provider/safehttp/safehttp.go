@@ -19,9 +19,23 @@ const (
 	MaxResponseBytes = 256 * 1024
 )
 
-// NewClient 构造防 SSRF 的 HTTP 客户端：不走环境代理、不跟随跳转；
+// 两个共用客户端（按是否允许内网分）：适配器每次回调、建单、查单都会重建，共用才能复用连接，
+// 也不会每次丢下一个带空闲连接的 Transport 等 90 秒才关。http.Client 可以并发使用。
+var (
+	publicClient  = newClient(false)
+	privateClient = newClient(true)
+)
+
+// Client 返回防 SSRF 的共用 HTTP 客户端：不走环境代理、不跟随跳转；
 // 不允许内网时在拨号那一刻按真正要连的 IP 拦截（防 DNS 重绑定：解析结果在检查与连接之间被换掉）。
-func NewClient(allowPrivate bool) *http.Client {
+func Client(allowPrivate bool) *http.Client {
+	if allowPrivate {
+		return privateClient
+	}
+	return publicClient
+}
+
+func newClient(allowPrivate bool) *http.Client {
 	dialer := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
 	if !allowPrivate {
 		dialer.Control = func(_, address string, _ syscall.RawConn) error {
@@ -49,12 +63,15 @@ func NewClient(allowPrivate bool) *http.Client {
 
 // blockedPrefixes 是 netip 判断函数之外还要拦的网段。
 var blockedPrefixes = []netip.Prefix{
-	netip.MustParsePrefix("0.0.0.0/8"),     // 「本网络」
-	netip.MustParsePrefix("100.64.0.0/10"), // 运营商级 NAT，部分云的元数据地址在这里
-	netip.MustParsePrefix("192.0.0.0/24"),  // IETF 协议分配
-	netip.MustParsePrefix("198.18.0.0/15"), // 基准测试网段
-	netip.MustParsePrefix("240.0.0.0/4"),   // 保留与广播
-	netip.MustParsePrefix("64:ff9b::/96"),  // NAT64，可映射到任意 IPv4（含内网）
+	netip.MustParsePrefix("0.0.0.0/8"),      // 「本网络」
+	netip.MustParsePrefix("100.64.0.0/10"),  // 运营商级 NAT，部分云的元数据地址在这里
+	netip.MustParsePrefix("192.0.0.0/24"),   // IETF 协议分配
+	netip.MustParsePrefix("198.18.0.0/15"),  // 基准测试网段
+	netip.MustParsePrefix("240.0.0.0/4"),    // 保留与广播
+	netip.MustParsePrefix("64:ff9b::/96"),   // NAT64，可映射到任意 IPv4（含内网）
+	netip.MustParsePrefix("64:ff9b:1::/48"), // 本地 NAT64（RFC 8215）
+	netip.MustParsePrefix("2002::/16"),      // 6to4，地址里嵌着 IPv4
+	netip.MustParsePrefix("2001::/32"),      // Teredo，地址里嵌着 IPv4
 }
 
 // CheckDialAddr 拒绝连向非公网地址：环回、私网（含 IPv6 ULA fc00::/7）、链路本地（含 169.254.169.254 元数据、fe80::/10）、

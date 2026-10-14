@@ -13,15 +13,18 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+// maxQuoteAmountCents 是支付方式报价接受的最大金额（1 亿元，单位分）：再大算合计会溢出分的 int64 换算，回 422 而不是 500。
+const maxQuoteAmountCents = 10_000_000_000
+
 // paymentMethods 列出门户可用的支付方式。
 func (h *Handler) paymentMethods(c *gin.Context) {
 	var amountPtr *decimal.Decimal
 	q := c.Query("amount")
 	if q != "" {
 		n, err := strconv.ParseInt(q, 10, 64)
-		if err != nil || n < 0 {
+		if err != nil || n < 0 || n > maxQuoteAmountCents {
 			httpx.Fail(c, errs.Invalid(map[string]string{
-				"amount": "金额需为非负整数（分）",
+				"amount": "金额需为 0 到 1 亿元之间的整数（分）",
 			}))
 			return
 		}

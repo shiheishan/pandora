@@ -14,7 +14,7 @@ func TestCheckDialAddr(t *testing.T) {
 		"169.254.169.254:80", "100.100.100.200:80", "100.64.0.1:443", "0.0.0.0:443",
 		"0.1.2.3:443", "224.0.0.1:443", "255.255.255.255:443", "198.18.0.1:443",
 		"[::1]:443", "[fc00::1]:443", "[fd00:ec2::254]:80", "[fe80::1]:443", "[::]:443",
-		"[::ffff:127.0.0.1]:443", "[64:ff9b::a00:1]:443", "[ff02::1]:443",
+		"[::ffff:127.0.0.1]:443", "[64:ff9b::a00:1]:443", "[64:ff9b:1::a00:1]:443", "[2002:a00:1::1]:443", "[2001:0:a00:1::1]:443", "[ff02::1]:443",
 	}
 	for _, a := range blocked {
 		if err := CheckDialAddr(a); err == nil {
@@ -28,7 +28,7 @@ func TestCheckDialAddr(t *testing.T) {
 	}
 }
 
-func TestNewClientDoesNotFollowRedirect(t *testing.T) {
+func TestClientDoesNotFollowRedirect(t *testing.T) {
 	targetHit := false
 	mux := http.NewServeMux()
 	mux.HandleFunc("/redirect", func(w http.ResponseWriter, r *http.Request) {
@@ -42,7 +42,7 @@ func TestNewClientDoesNotFollowRedirect(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	client := NewClient(true)
+	client := Client(true)
 	resp, err := client.Get(srv.URL + "/redirect")
 	if err != nil {
 		t.Fatalf("请求失败: %v", err)
@@ -57,7 +57,7 @@ func TestNewClientDoesNotFollowRedirect(t *testing.T) {
 	}
 }
 
-func TestNewClientRefusesLoopbackWhenNotAllowed(t *testing.T) {
+func TestClientRefusesLoopbackWhenNotAllowed(t *testing.T) {
 	hit := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hit = true
@@ -65,7 +65,7 @@ func TestNewClientRefusesLoopbackWhenNotAllowed(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewClient(false)
+	client := Client(false)
 	resp, err := client.Get(srv.URL)
 	if err == nil {
 		resp.Body.Close()

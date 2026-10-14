@@ -62,7 +62,7 @@ func TestPaymentMethodsAmountQuery(t *testing.T) {
 		t.Fatalf("amount=0 want nil, got %v", f3.methodsAmount)
 	}
 
-	for _, path := range []string{"/v1/payment-methods?amount=-1", "/v1/payment-methods?amount=abc"} {
+	for _, path := range []string{"/v1/payment-methods?amount=-1", "/v1/payment-methods?amount=abc", "/v1/payment-methods?amount=10000000001"} {
 		w := doJSON(newPublicEngine(&fakeSvc{}, p), http.MethodGet, path, "")
 		if w.Code != http.StatusUnprocessableEntity {
 			t.Fatalf("%s status %d", path, w.Code)
