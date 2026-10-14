@@ -62,7 +62,7 @@ func (s *Service) CreateCoupon(ctx context.Context, code string, spec Spec) (uui
 	return id, code, nil
 }
 
-// GenerateCoupons 后台按前缀批量生成券。
+// GenerateCoupons 后台按前缀批量生成券。每轮一条语句插入差额，撞码由 ON CONFLICT 跳过，不够数再补一轮，最多 10 轮。
 func (s *Service) GenerateCoupons(ctx context.Context, prefix string, count int, spec Spec) ([]string, error) {
 	if count < 1 || count > BatchMax {
 		return nil, errs.Invalid(map[string]string{"count": "一次生成 1 到 1000 张，要更多就分批"})
@@ -87,31 +87,38 @@ func (s *Service) GenerateCoupons(ctx context.Context, prefix string, count int,
 	}
 
 	codes := make([]string, 0, count)
-	attempts := 0
-	maxAttempts := count*10 + 100
+	const maxRounds = 10
 
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
-		for len(codes) < count {
-			attempts++
-			if attempts > maxAttempts {
-				return errs.Wrap(errs.Internal, errors.New("promo: 生成券码反复撞码"))
+		tmpl := couponFromSpec("", spec)
+		tmpl.CreatedBy = actorID(ctx)
+		used := make(map[string]struct{}, count)
+
+		for round := 0; round < maxRounds && len(codes) < count; round++ {
+			need := count - len(codes)
+			batch := make([]string, 0, need)
+			for len(batch) < need {
+				gen, err := newCode(prefix)
+				if err != nil {
+					return err
+				}
+				if _, ok := used[gen]; ok {
+					continue
+				}
+				used[gen] = struct{}{}
+				batch = append(batch, gen)
 			}
-			gen, err := newCode(prefix)
-			if err != nil {
-				return err
-			}
-			c := couponFromSpec(gen, spec)
-			c.CreatedBy = actorID(ctx)
-			inserted, err := s.repo.InsertCouponIfAbsent(ctx, &c, spec.PlanIDs)
+			inserted, err := s.repo.InsertCouponsIfAbsent(ctx, &tmpl, batch, spec.PlanIDs)
 			if err != nil {
 				if errors.Is(err, repo.ErrForeignKey) {
 					return errs.Invalid(map[string]string{"user_group_id": "用户组不存在"})
 				}
 				return err
 			}
-			if inserted {
-				codes = append(codes, gen)
-			}
+			codes = append(codes, inserted...)
+		}
+		if len(codes) < count {
+			return errs.Wrap(errs.Internal, errors.New("promo: 生成券码反复撞码"))
 		}
 
 		data := auditFace("", spec)

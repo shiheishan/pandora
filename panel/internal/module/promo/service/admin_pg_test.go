@@ -279,6 +279,75 @@ func TestGenerateCoupons(t *testing.T) {
 	}
 }
 
+// 批量生成 300 张带两个限定套餐的券：张数、去重与 coupon_plans 行数都对；已存在的券码由 ON CONFLICT 跳过。
+func TestGenerateCouponsBatchWithPlansPG(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.txCtx()
+	admin := newUser(t, e, ctx)
+	actx := adminCtx(ctx, admin)
+
+	p1 := newPlan(t, e, ctx)
+	p2 := newPlan(t, e, ctx)
+	spec := fixedSpec("1.00")
+	spec.Name = "批量带套餐"
+	spec.PlanIDs = []uuid.UUID{p1, p2}
+
+	codes, err := e.svc.GenerateCoupons(actx, "BP", 300, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(codes) != 300 {
+		t.Fatalf("生成数量 %d，期望 300", len(codes))
+	}
+	seen := make(map[string]struct{}, 300)
+	for _, c := range codes {
+		if !strings.HasPrefix(c, "BP") {
+			t.Fatalf("码 %q 前缀不对", c)
+		}
+		if _, ok := seen[c]; ok {
+			t.Fatalf("重复码 %s", c)
+		}
+		seen[c] = struct{}{}
+	}
+
+	var dbN int64
+	if err := e.row(ctx, `SELECT count(*) FROM coupons WHERE code IN ?`, codes).Scan(&dbN); err != nil {
+		t.Fatal(err)
+	}
+	if dbN != 300 {
+		t.Fatalf("库里张数 %d，期望 300", dbN)
+	}
+
+	var planRows int64
+	if err := e.row(ctx, `
+		SELECT count(*) FROM coupon_plans cp
+		JOIN coupons c ON c.id = cp.coupon_id
+		WHERE c.code IN ?`, codes).Scan(&planRows); err != nil {
+		t.Fatal(err)
+	}
+	wantPlanRows := int64(300 * len(spec.PlanIDs))
+	if planRows != wantPlanRows {
+		t.Fatalf("coupon_plans 行数 %d，期望 %d", planRows, wantPlanRows)
+	}
+
+	// 撞码：已存在的码跳过，只插入新码
+	dupSpec := fixedSpec("1.00")
+	dupSpec.Name = "撞码测试"
+	_, _, err = e.svc.CreateCoupon(actx, "DUPX0000000", dupSpec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := couponFromSpec("", dupSpec)
+	tmpl.CreatedBy = &admin
+	inserted, err := e.svc.repo.InsertCouponsIfAbsent(ctx, &tmpl, []string{"DUPX0000000", "NEWX0000001"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inserted) != 1 || inserted[0] != "NEWX0000001" {
+		t.Fatalf("撞码后插入 %v，期望仅 [NEWX0000001]", inserted)
+	}
+}
+
 func TestSetStatus(t *testing.T) {
 	e := newEnv(t)
 	ctx := e.txCtx()
