@@ -156,10 +156,10 @@ func (c *NativeCore) InboundReady(tag string) error {
 }
 
 // CapabilityReport exposes the immutable protocol contract without exposing
-// adapter instances or compatibility-core state. It is safe to call before
+// adapter instances. It is safe to call before
 // Start and is intended for panel/node negotiation and diagnostics.
 func (c *NativeCore) CapabilityReport() NativeCapabilityReport {
-	return NativeCapabilityReportFor(true)
+	return BuildNativeCapabilityReport()
 }
 
 func (c *NativeCore) Start(ctx context.Context) error {

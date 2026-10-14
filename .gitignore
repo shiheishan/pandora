@@ -17,7 +17,6 @@
 # 交叉编译出来的内核二进制，一个 40MB。留在工作树里方便本地测，
 # 但进了 git 就是每次改动都多一份 80MB 的历史。
 /pdnd/pandora-native-linux-*
-/pdnd/pandora-compat-linux-*
 /pdnd/cmd/*/pandora-*-linux-*
 .tmp*/
 *.tar.gz

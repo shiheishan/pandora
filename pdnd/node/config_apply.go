@@ -114,12 +114,10 @@ func (n *Node) installConfig(cfg map[string]any, nodeType string, prepared *prep
 		return errInvalidPort(port)
 	}
 
-	kernel, _ := cfg["kernel"].(string)
 	inbound := &core.InboundConfig{
 		Tag:      n.tag,
 		Protocol: protocol,
 		Port:     port,
-		Kernel:   kernel,
 		Raw:      cfg,
 	}
 	routing, err := parseRouting(cfg)

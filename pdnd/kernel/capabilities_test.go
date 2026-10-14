@@ -124,7 +124,7 @@ func hasCapabilityBoundary(capability Capability, want string) bool {
 }
 
 func TestNativeCapabilityReportJSON(t *testing.T) {
-	report := NativeCapabilityReportFor(true)
+	report := BuildNativeCapabilityReport()
 	encoded, err := json.Marshal(report)
 	if err != nil {
 		t.Fatal(err)
@@ -133,7 +133,7 @@ func TestNativeCapabilityReportJSON(t *testing.T) {
 	if err := json.Unmarshal(encoded, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded.Kernel != "pandora-native" || !decoded.NativeOnly || len(decoded.Capabilities) == 0 {
+	if decoded.Kernel != "pandora-native" || len(decoded.Capabilities) == 0 {
 		t.Fatalf("unexpected capability report: %#v", decoded)
 	}
 	for _, capability := range decoded.Capabilities {
@@ -146,7 +146,7 @@ func TestNativeCapabilityReportJSON(t *testing.T) {
 func TestNativeCoreCapabilityReportIsAvailableBeforeStart(t *testing.T) {
 	core := NewNativeCore(nil)
 	report := core.CapabilityReport()
-	if report.Kernel != core.Type() || !report.NativeOnly || len(report.Capabilities) != 13 {
+	if report.Kernel != core.Type() || len(report.Capabilities) != 13 {
 		t.Fatalf("unexpected native core report: %#v", report)
 	}
 }
