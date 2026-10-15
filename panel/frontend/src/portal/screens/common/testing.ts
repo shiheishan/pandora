@@ -86,6 +86,8 @@ export function row(over: Partial<QuoteRow> = {}): QuoteRow {
     interval_count: 1,
     subtotal: 3000,
     discount: 0,
+    member_discount: 0,
+    member_percent: 0,
     coupon: null,
     coupon_error: null,
     credit: 0,

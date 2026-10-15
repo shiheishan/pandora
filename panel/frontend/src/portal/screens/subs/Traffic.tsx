@@ -11,6 +11,7 @@ import { tierOf, useQuote } from '../common/quote'
 import { isLive, type Subscription } from '../common/subscriptions'
 import { pickTrafficQuota } from '../common/traffic'
 import { periodWord } from '../common/card-text'
+import { ResetOffer } from './ResetOffer'
 import css from './Subs.module.css'
 
 /** 推荐的那一档；没有推荐时取中间那档 */
@@ -31,13 +32,12 @@ export function Traffic({ id }: { id: string }) {
   if (!sub || !isLive(sub)) {
     return <Empty title="这一份现在不能加流量" description="流量包要加到一份在用的套餐上。已过期的先续费，就能接着用。" action={<a href={href('/subs')}>回到我的套餐</a>} />
   }
-  if (!packs.data?.length) return <Empty title="暂时没有流量包可买" description="流量包上架后会出现在这里。" action={<a href={href('/subs')}>回到我的套餐</a>} />
-  return <TrafficForm sub={sub} packs={packs.data} naming={h.naming} />
+  return <TrafficForm sub={sub} packs={packs.data ?? []} naming={h.naming} />
 }
 
 function TrafficForm({ sub, packs, naming }: { sub: Subscription; packs: readonly Pack[]; naming: ReturnType<typeof useHoldings>['naming'] }) {
   const [chosen, setChosen] = useState<string | null>(null)
-  const pack = packs.find((p) => p.id === chosen) ?? defaultPack(packs)!
+  const pack = packs.length ? (packs.find((p) => p.id === chosen) ?? defaultPack(packs)!) : null
   const { left } = leftOf(sub)
   const limit = pickTrafficQuota(sub.quotas)?.limit ?? null
   return (
@@ -51,23 +51,30 @@ function TrafficForm({ sub, packs, naming }: { sub: Subscription; packs: readonl
         {periodWord(sub)}还剩 <b>{left === null ? '不限' : gb(left)}</b>。
         {sub.current_period_end && limit !== null && `${day(sub.current_period_end)} 续上后，新的一期又有 ${gb(limit)}。`}
       </p>
-      <h3 className={css.sec}>
-        买流量包<small>马上到账，用完为止</small>
-      </h3>
-      <div className={css.packGrid} role="radiogroup" aria-label="流量包">
-        {packs.map((p) => (
-          <button key={p.id} type="button" role="radio" aria-checked={p.id === pack.id} className={css.pack} onClick={() => setChosen(p.id)} id={`pack-${p.id}`}>
-            <span className={css.packSize}>{gb(p.traffic_bytes)}</span>
-            <span className={css.packPrice}>{moneyShort(p.unit_amount)}</span>
-            {left !== null && <span className={css.packAfter}>加完能用 {gb(left + p.traffic_bytes)}</span>}
-            {p.recommended && <em className={css.best}>最划算</em>}
-          </button>
-        ))}
-      </div>
-      <a className={flowCss.twoLinePrimary} href={href('/checkout', { pack: pack.id, sub: sub.id })} id="btn-pack-go">
-        加 {gb(pack.traffic_bytes)} · {money(pack.unit_amount)}
-        <small>链接不变，不用重新添加</small>
-      </a>
+      {packs.length > 0 && pack ? (
+        <>
+          <h3 className={css.sec}>
+            买流量包<small>马上到账，用完为止</small>
+          </h3>
+          <div className={css.packGrid} role="radiogroup" aria-label="流量包">
+            {packs.map((p) => (
+              <button key={p.id} type="button" role="radio" aria-checked={p.id === pack.id} className={css.pack} onClick={() => setChosen(p.id)} id={`pack-${p.id}`}>
+                <span className={css.packSize}>{gb(p.traffic_bytes)}</span>
+                <span className={css.packPrice}>{moneyShort(p.unit_amount)}</span>
+                {left !== null && <span className={css.packAfter}>加完能用 {gb(left + p.traffic_bytes)}</span>}
+                {p.recommended && <em className={css.best}>最划算</em>}
+              </button>
+            ))}
+          </div>
+          <a className={flowCss.twoLinePrimary} href={href('/checkout', { pack: pack.id, sub: sub.id })} id="btn-pack-go">
+            加 {gb(pack.traffic_bytes)} · {money(pack.unit_amount)}
+            <small>链接不变，不用重新添加</small>
+          </a>
+        </>
+      ) : (
+        <Empty title="暂时没有流量包可买" description="流量包上架后会出现在这里。" />
+      )}
+      <ResetOffer sub={sub} />
       <BiggerPlan sub={sub} />
     </div>
   )

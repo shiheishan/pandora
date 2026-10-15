@@ -77,6 +77,7 @@ export function placeOrder(
     applied: number
     /** SmallDue 免掉的差价 */
     waived?: number
+    memberDiscount?: number
     couponCode?: string
     planName?: string
     itemName?: string
@@ -101,6 +102,7 @@ export function placeOrder(
     subtotal: init.subtotal,
     total_amount: total,
     discount_amount: init.discount + waived,
+    member_discount_amount: init.memberDiscount ?? 0,
     balance_applied: init.applied,
     payable_amount: total - init.applied,
     paid_amount: 0,
@@ -124,6 +126,7 @@ export function createdView(o: OrderFixture) {
     currency: 'CNY',
     total_amount: o.total_amount,
     discount_amount: o.discount_amount,
+    member_discount_amount: o.member_discount_amount ?? 0,
     balance_applied: o.balance_applied,
     payable_amount: o.payable_amount,
     status: o.status === 'fulfilled' ? 'fulfilled' : 'pending_payment',
@@ -166,6 +169,12 @@ export function fulfill(state: PortalState, order: OrderFixture, via?: { provide
     const sub = state.subs.find((s) => s.id === e.subId)
     if (sub) sub.packBytes += e.bytes
     else state.unattachedBytes += e.bytes
+  }
+  if (e.type === 'reset') {
+    const sub = state.subs.find((s) => s.id === e.subId)
+    if (sub) {
+      sub.days = sub.days.map((d) => ({ ...d, bytes: 0 }))
+    }
   }
   if (e.type === 'topup') moveBalance(state, 'balance_topup', e.amount, `充值 ${order.order_no}`)
   if (e.type === 'new') {
@@ -265,6 +274,7 @@ export function orderRow(o: OrderFixture) {
     currency: 'CNY',
     total_amount: o.total_amount,
     discount_amount: o.discount_amount,
+    member_discount_amount: o.member_discount_amount ?? 0,
     balance_applied: o.balance_applied,
     payable_amount: o.payable_amount,
     paid_amount: o.paid_amount,

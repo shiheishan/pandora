@@ -28,6 +28,8 @@ function titleOf(t: Target, h: Holdings, plans: readonly Plan[]): string {
       return `换成${plans.find((p) => p.id === t.planId)?.name ?? '别的套餐'}`
     case 'new':
       return h.held.length ? '再买一份' : `买${plans.find((p) => p.id === t.planId)?.name ?? '套餐'}`
+    case 'reset':
+      return '重置流量'
     default:
       return '加流量'
   }
@@ -266,7 +268,7 @@ function Priced({
   const method = methodList.find((m) => methodKey(m) === methodChoice) ?? methodList[0] ?? null
   const pay = payCopy(quote, row, split, useBalance, copy.verb, methodList.map((m) => m.label).join('、'))
   const blocked = pay.tooSmall ? pay.button : required && !name.trim() ? '先给它起个名字' : pay.needsMethod && !method ? '暂时没有能用的付款方式' : null
-  const periods = target.kind !== 'pack' && tiers.length > 0
+  const periods = target.kind !== 'pack' && target.kind !== 'reset' && tiers.length > 0
 
   const create = useMutation({
     mutationFn: ({ path, body, key }: { path: string; body: Record<string, unknown>; key: string }) => api.post(path, orderCreatedSchema, { body, idempotencyKey: key }),

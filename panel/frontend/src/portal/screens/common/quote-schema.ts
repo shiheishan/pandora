@@ -37,6 +37,8 @@ const quoteRowSchema = z.object({
   interval_count: z.number().int(),
   subtotal: z.number().int(),
   discount: z.number().int(),
+  member_discount: z.number().int(),
+  member_percent: z.number().int(),
   coupon: z.object({ code: z.string() }).nullable(),
   coupon_error: z.string().nullable(),
   /** 原套餐没用完的部分（只有换套餐非零） */

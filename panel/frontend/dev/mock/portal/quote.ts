@@ -3,6 +3,7 @@ import { BillingError, couponCheck, couponFace, isUuid, readStrict } from './bil
 import { findPack, findPlan, MIN_PAYMENT, plansNow, type CatalogPack, type CatalogPlan, type CatalogPrice } from './catalog.ts'
 import { addInterval, gate, isLiveSub, isRevivable, portalState, usedBytes, type PortalState, type SubFixture } from './fixtures.ts'
 import { applyBalance, waiveSmallDue, type Balance } from './purchase.ts'
+import { assertNoPendingReset, memberPercentOf, RESET_PRICES } from './reset.ts'
 
 // ---------------------------------------------------------------------------
 // 统一报价（设计稿 2.2）：POST /v1/me/checkout/quote 与四个建单接口共用这里的算法。
@@ -14,7 +15,7 @@ const DAY_MS = 86_400_000
 const AS_OF_WINDOW_MS = 10 * 60_000
 const MAX_ROWS = 20
 
-export type QuoteAction = 'renew' | 'change' | 'new' | 'pack'
+export type QuoteAction = 'renew' | 'change' | 'new' | 'pack' | 'reset'
 
 export interface CreditDetail {
   paid: number
@@ -34,6 +35,8 @@ export interface QuoteRow {
   interval_count: number
   subtotal: number
   discount: number
+  member_discount: number
+  member_percent: number
   coupon: { code: string } | null
   coupon_error: string | null
   credit: number
@@ -80,8 +83,8 @@ interface RowSpec {
 }
 
 /** strictCoupon：建单时优惠码不能用就整单拒绝；报价时写进 coupon_error、不让报价失败 */
-function row(state: PortalState, spec: RowSpec, coupon: unknown, strictCoupon: boolean): QuoteRow {
-  const subtotal = spec.pack ? spec.pack.unit_amount : spec.price!.unit_amount
+function row(state: PortalState, spec: RowSpec, coupon: unknown, strictCoupon: boolean, subtotalOverride?: number): QuoteRow {
+  const subtotal = subtotalOverride !== undefined ? subtotalOverride : spec.pack ? spec.pack.unit_amount : spec.price!.unit_amount
   let discount = 0
   let couponError: string | null = null
   try {
@@ -90,9 +93,12 @@ function row(state: PortalState, spec: RowSpec, coupon: unknown, strictCoupon: b
     if (strictCoupon || !(e instanceof BillingError)) throw e
     couponError = e.message
   }
+  const pct = memberPercentOf(state)
+  const member = Math.min(Math.floor((subtotal * pct) / 100), Math.max(subtotal - discount, 0))
+  const member_percent = member > 0 ? pct : 0
   const credit = spec.credit?.credit ?? 0
-  const total = Math.max(0, subtotal - discount - credit)
-  const refund = Math.max(0, credit - (subtotal - discount))
+  const total = Math.max(0, subtotal - discount - member - credit)
+  const refund = Math.max(0, credit - (subtotal - discount - member))
   return {
     subscription_id: spec.sub?.id ?? null,
     plan_id: spec.plan?.id ?? null,
@@ -102,6 +108,8 @@ function row(state: PortalState, spec: RowSpec, coupon: unknown, strictCoupon: b
     interval_count: spec.price?.interval_count ?? 0,
     subtotal,
     discount,
+    member_discount: member,
+    member_percent,
     coupon: discount > 0 ? { code: couponFace(coupon)!.code } : null,
     coupon_error: couponError,
     credit,
@@ -190,8 +198,18 @@ export function quoteRows(state: PortalState, req: QuoteInput, at: number, stric
       const sub = req.subscription_id === undefined ? null : ownedSub(state, req.subscription_id)
       return [row(state, { sub, plan: null, price: null, pack, start: null, credit: null }, coupon, strictCoupon)]
     }
+    case 'reset': {
+      const sub = ownedSub(state, req.subscription_id)
+      if (!isLiveSub(sub) || !(sub.plan_id in RESET_PRICES) || !sub.limitBytes || sub.limitBytes <= 0) {
+        return []
+      }
+      assertNoPendingReset(state, sub.id)
+      const subtotal = RESET_PRICES[sub.plan_id]!
+      const plan = findPlan(sub.plan_id)
+      return [row(state, { sub, plan, price: null, pack: null, start: null, credit: null }, coupon, strictCoupon, subtotal)]
+    }
     default:
-      throw new BillingError(422, 'validation_failed', '参数不合法', { action: '只能是 renew / change / new / pack' })
+      throw new BillingError(422, 'validation_failed', '参数不合法', { action: '只能是 renew / change / new / pack / reset' })
   }
 }
 

@@ -38,6 +38,8 @@ export function paySuccessText(o: Pick<OrderDetail, 'kind' | 'paid_amount' | 'to
       return `余额 +${formatMoney(o.paid_amount || o.total_amount, o.currency)}`
     case 'addon':
       return '流量包已到账'
+    case 'traffic_reset':
+      return '本期流量已清零'
     case 'upgrade':
       return '已换好，链接不变'
     default:

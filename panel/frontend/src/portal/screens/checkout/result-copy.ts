@@ -10,7 +10,7 @@ import type { Subscription } from '../common/subscriptions'
 //   gb=<流量包字节>  waived=<免掉的差价>  revive=1（过期后恢复：续费或换套餐）
 // ---------------------------------------------------------------------------
 interface DoneContext {
-  kind: 'renew' | 'change' | 'new' | 'pack'
+  kind: 'renew' | 'change' | 'new' | 'pack' | 'reset'
   subId: string | null
   was: string | null
   oldPlan: string | null
@@ -36,7 +36,7 @@ export function readDone(query: URLSearchParams): DoneContext {
   const k = query.get('k')
   const n = (key: string) => Math.max(0, Number(query.get(key)) || 0)
   return {
-    kind: k === 'change' || k === 'new' || k === 'pack' ? k : 'renew',
+    kind: k === 'change' || k === 'new' || k === 'pack' || k === 'reset' ? k : 'renew',
     subId: query.get('sub'),
     was: query.get('was'),
     oldPlan: query.get('old'),
@@ -120,6 +120,15 @@ export function doneLines(c: DoneContext, order: OrderDetail, sub: Subscription 
         changeable: sub?.label ? '名字随时能改。' : '可以在「我的套餐」里给它起个名字，好分清。',
         showNewLink: true,
       }
+    case 'reset': {
+      const limit = sub ? pickTrafficQuota(sub.quotas)?.limit : null
+      return {
+        title: '本期流量已清零',
+        happened: [`${sub ? naming.who(sub) : '这一份'}${limit !== null && limit !== undefined ? `现在能用 ${gb(limit)}` : '已清零'}`, paid],
+        kept: ['链接没变，不用重新添加', ...(end ? [`到期日不变（${end}）`] : [])],
+        showNewLink: false,
+      }
+    }
     default: {
       const left = sub ? leftOf(sub).left : null
       return {
