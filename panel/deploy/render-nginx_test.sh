@@ -186,7 +186,9 @@ grep -Fq 'no certificate for subscription domain sub-b.example.test' "$sub_err"
 grep -Fq "ssl_certificate $TEST_DIR/subtls/sub-a.example.test/fullchain.pem;" "$TEST_DIR/sub.conf"
 refute -Fq 'sub-b.example.test/fullchain.pem' "$TEST_DIR/sub.conf"
 refute -Fq 'sub-b.example.test/privkey.pem' "$TEST_DIR/sub.conf"
-refute -Fq 'sub-probe' "$TEST_DIR/sub.conf"
+[[ "$(grep -c 'location = /v1/sub-probe' "$TEST_DIR/sub.conf")" -eq 1 ]]
+# 探测页、票据、上报只走门户主域名，订阅域名上不放行
+refute -Fq 'sub-probe/' "$TEST_DIR/sub.conf"
 [[ "$(grep -cE 'location ~ \^/\[0-9a-f\]\{12\}/' "$TEST_DIR/sub.conf")" -eq 1 ]]
 
 [[ "$(grep -c "$path" "$TEST_DIR/sub.conf")" -eq "$(grep -c "$path" "$OUT")" ]]
