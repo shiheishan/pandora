@@ -248,7 +248,7 @@ function view(t: Row, assignees: ReadonlyArray<{ id: string; email: string }>, d
     if (t.user_active_plan) out.user_active_plan = t.user_active_plan
     out.messages = t.messages.map((m) => ({ id: m.id, author_kind: m.author_kind, author_name: m.author_name, body: m.body, ...(m.internal_note ? { internal_note: true } : {}), created_at: m.created_at }))
   } else {
-    const last = [...t.messages].reverse().find((m) => !m.internal_note)
+    const last = [...t.messages].reverse().find((m) => !m.internal_note && m.author_kind !== 'system')
     if (last) out.last_message_author_kind = last.author_kind
   }
   return out

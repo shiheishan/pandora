@@ -213,7 +213,7 @@ func TestCheckPublishable(t *testing.T) {
 	if poolErrCode(err) != errs.ValidationFailed {
 		t.Fatalf("v2 空绑池期望 422，得到 %v", err)
 	}
-	if poolErrFields(err)["pool_ids"] != "发布前至少绑定一个可用节点池" {
+	if poolErrFields(err)["pool_ids"] != poolNoteUnbound {
 		t.Fatalf("v2 fields: %v", poolErrFields(err))
 	}
 
@@ -221,7 +221,7 @@ func TestCheckPublishable(t *testing.T) {
 	if poolErrCode(err) != errs.ValidationFailed {
 		t.Fatalf("v3→[C] 期望 422，得到 %v", err)
 	}
-	if poolErrFields(err)["pool_ids"] != "发布前至少绑定一个可用节点池" {
+	if poolErrFields(err)["pool_ids"] != poolNoteAllDisabled {
 		t.Fatalf("v3 fields: %v", poolErrFields(err))
 	}
 

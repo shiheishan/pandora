@@ -135,6 +135,12 @@ func poolDedupeSortIDs(ids []uuid.UUID) []uuid.UUID {
 	return out
 }
 
+// 发布检查的两种「没有可用池」提示。
+const (
+	poolNoteUnbound     = "发布前至少绑定一个节点池"
+	poolNoteAllDisabled = "绑定的节点池都已停用：先在「线路 · 节点池」里启用，或换绑一个启用中的池"
+)
+
 // CheckPublishable 在发布版本前检查绑池是否至少有一个可服务节点（catalog 的 PublishGate）。
 // 「可服务」= repo.DeliverableNodeCond，与套餐页的 deliverable_nodes、套餐列表的可服务节点数同一口径。
 func (s *Service) CheckPublishable(ctx context.Context, versionID uuid.UUID) error {
@@ -147,15 +153,16 @@ func (s *Service) CheckPublishable(ctx context.Context, versionID uuid.UUID) err
 			return err
 		}
 		ids := vp[versionID]
+		// 「没绑池」与「绑的池都停用了」分开提示，方便管理员排查（用户 2026-10-14 定；门户侧不受影响）
 		if len(ids) == 0 {
-			return errs.Invalid(map[string]string{"pool_ids": "发布前至少绑定一个可用节点池"})
+			return errs.Invalid(map[string]string{"pool_ids": poolNoteUnbound})
 		}
 		locked, err := s.repo.LockAssignablePools(ctx, ids)
 		if err != nil {
 			return err
 		}
 		if len(locked) == 0 {
-			return errs.Invalid(map[string]string{"pool_ids": "发布前至少绑定一个可用节点池"})
+			return errs.Invalid(map[string]string{"pool_ids": poolNoteAllDisabled})
 		}
 		ok, err := s.repo.HasDeliverableNode(ctx, ids)
 		if err != nil {

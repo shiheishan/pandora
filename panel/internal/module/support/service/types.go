@@ -124,7 +124,7 @@ type Ticket struct {
 	EscalatedAt         *time.Time
 	// SLABreached 首次响应已超时、还没响应、未解决未关闭
 	SLABreached bool
-	// LastMessageAuthorKind 是最后一条非内部备注消息的作者类型，没有时为空串（只队列填）
+	// LastMessageAuthorKind 是最后一条非内部备注、非系统消息的作者类型，没有时为空串（只队列填）
 	LastMessageAuthorKind string
 	// UserActivePlan 是提单人当前生效订阅的套餐名，没有为 nil
 	UserActivePlan *string
