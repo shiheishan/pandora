@@ -93,7 +93,7 @@ function normalizeBaseURL(raw: string): Normalized {
   const v = raw.trim().replace(/\/+$/, '')
   if (v.length > BASE_URL_MAX) return failURL('长度不能超过 255')
   // Go 的 url.Parse 拒绝控制字符
-  if (/[\x00-\x1f\x7f]/.test(v)) return failURL('格式不正确')
+  if ([...v].some((c) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f)) return failURL('格式不正确')
   // scheme：有冒号时冒号前须是合法 scheme 形式，否则 url.Parse 失败；没有 scheme 时报 https
   const colon = v.indexOf(':')
   if (colon !== -1 && !/^[a-zA-Z][a-zA-Z0-9+.-]*$/.test(v.slice(0, colon))) return failURL('格式不正确')

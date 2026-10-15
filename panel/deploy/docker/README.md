@@ -137,6 +137,10 @@ grep '^PANDORA_ADMIN_PATH=' .env
 - 首次放置后重启 Nginx：`docker compose restart nginx`
 - 证书后续换新后，热重载生效：`docker compose exec nginx nginx -s reload`
 
+### 订阅域名（可选）
+
+后台「节点 → 订阅 → 订阅域名」里填了额外的订阅域名时，在 `.env` 的 `PANDORA_SUB_DOMAINS` 里逐个登记（逗号分隔，两边要一致），证书按域名放进 `PANDORA_SUB_TLS_DIR`（缺省 `./tls-sub`）下的 `<域名>/fullchain.pem` 与 `privkey.pem`，然后 `docker compose up -d nginx`。这些域名上只放行订阅拉取与 `/v1/sub-probe`，其余路径 404；缺证书的域名只开 80（ACME 校验 + 跳 https）。订阅域名的证书不自动签发，自备或用宿主机 Certbot 签好放进去。
+
 ### 情况 B：使用宿主机 Certbot（HTTP-01 验证）
 
 内置 Nginx 容器已将 80 端口上的 `/.well-known/acme-challenge/` 映射到了容器内的 `/var/www/pandora-acme`（对应宿主目录 `PANDORA_ACME_DIR`，缺省为 `./acme`）。

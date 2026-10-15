@@ -79,9 +79,7 @@ func (d domainSet) groupFor(userGroupID *uuid.UUID) *DomainGroup {
 func (d domainSet) hostBaseURL(host string) (string, bool) {
 	h := strings.TrimSpace(host)
 	h = strings.ToLower(h)
-	if strings.HasSuffix(h, ":443") {
-		h = strings.TrimSuffix(h, ":443")
-	}
+	h = strings.TrimSuffix(h, ":443")
 	h = strings.TrimSuffix(h, ".")
 	if h == "" {
 		return "", false

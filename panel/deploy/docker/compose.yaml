@@ -250,8 +250,10 @@ services:
       PANDORA_ADMIN_PATH: ${PANDORA_ADMIN_PATH:?在 .env 里填 PANDORA_ADMIN_PATH}
       PANDORA_REALIP_FROM: ${PANDORA_REALIP_FROM:-}
       PANDORA_REALIP_HEADER: ${PANDORA_REALIP_HEADER:-X-Real-IP}
+      PANDORA_SUB_DOMAINS: ${PANDORA_SUB_DOMAINS:-}
     volumes:
       - ${PANDORA_TLS_DIR:-./tls}:/etc/pandora/tls/user:ro
+      - ${PANDORA_SUB_TLS_DIR:-./tls-sub}:/etc/pandora/tls/sub:ro
       - ${PANDORA_ACME_DIR:-./acme}:/var/www/pandora-acme:ro
     ulimits:
       nofile:

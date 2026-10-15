@@ -51,7 +51,7 @@ export function extrasFormFrom(s: SubscriptionExtras): ExtrasForm {
   return { infoNodes: s.info_nodes, protocolPrefix: s.protocol_prefix }
 }
 
-export function extrasBody(form: ExtrasForm, saved: SubscriptionExtras): { body: Partial<SubscriptionExtras> } | { errors: Record<string, string> } {
+export function extrasBody(form: ExtrasForm, saved: SubscriptionExtras): { body: Partial<SubscriptionExtras> } {
   const body: Partial<SubscriptionExtras> = {}
   if (form.infoNodes !== saved.info_nodes) body.info_nodes = form.infoNodes
   if (form.protocolPrefix !== saved.protocol_prefix) body.protocol_prefix = form.protocolPrefix

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { bodyFrom, effectiveText, formFrom, newGroup, type DomainConfig, type GroupForm } from './subscriptionDomains'
+import { bodyFrom, effectiveText, formFrom, newGroup, type DomainConfig, type GroupForm } from './domainGroups'
 
 const limits = { groups: 2, domains_per_group: 3, weight_max: 100 }
 
@@ -67,7 +67,7 @@ describe('newGroup', () => {
 })
 
 describe('bodyFrom', () => {
-  const group = (patch: Partial<GroupForm>): GroupForm => ({
+  const group = (patch: Partial<GroupForm> = {}): GroupForm => ({
     key: 'g-1',
     name: '缺省',
     isDefault: true,

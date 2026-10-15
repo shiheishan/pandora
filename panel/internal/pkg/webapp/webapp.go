@@ -42,18 +42,22 @@ import (
 // script-src 'wasm-unsafe-eval'，真有需要时两处一起加。
 const indexCSP = "default-src 'none'; script-src 'self'; " + indexCSPRest
 
-// indexCSPRest 是 script-src 之后的部分；追加来源时只改 script-src、加 frame-src，其余逐字不变。
+// indexCSPRest 是 script-src 之后的部分；追加来源时只改 script-src、connect-src、加 frame-src，其余逐字不变。
 const indexCSPRest = "style-src 'self'; img-src 'self' data:; font-src 'self'; " +
 	"connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
 
 // ExtraSources 是入口页 CSP 额外放行的来源（如门户开了人机验证时第三方的脚本与 iframe）。
-// 本包不读设置：由装配处按设置给出，来源只应是装配处写死的固定值，不拼用户输入。
+// 本包不读设置：由装配处按设置给出。Script、Frame 只应是装配处写死的固定值；Connect 可以来自后台登记的
+// 订阅域名，但装配处必须先按严格形状（https://主机[:端口]）过滤，不能把任意输入拼进响应头。
 type ExtraSources struct {
-	Script []string // 追加到 script-src
-	Frame  []string // 生成 frame-src（default-src 'none' 下缺省不许任何 iframe）
+	Script  []string // 追加到 script-src
+	Frame   []string // 生成 frame-src（default-src 'none' 下缺省不许任何 iframe）
+	Connect []string // 追加到 connect-src（门户跨源探测订阅域名）
 }
 
-func (x ExtraSources) empty() bool { return len(x.Script) == 0 && len(x.Frame) == 0 }
+func (x ExtraSources) empty() bool {
+	return len(x.Script) == 0 && len(x.Frame) == 0 && len(x.Connect) == 0
+}
 
 // cspWith 在 indexCSP 上追加来源；x 为空时与 indexCSP 逐字一致。
 func cspWith(x ExtraSources) string {
@@ -68,7 +72,11 @@ func cspWith(x ExtraSources) string {
 	if len(x.Frame) > 0 {
 		csp += "frame-src " + strings.Join(x.Frame, " ") + "; "
 	}
-	return csp + indexCSPRest
+	rest := indexCSPRest
+	if len(x.Connect) > 0 {
+		rest = strings.Replace(rest, "connect-src 'self'", "connect-src 'self' "+strings.Join(x.Connect, " "), 1)
+	}
+	return csp + rest
 }
 
 const (

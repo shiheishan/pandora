@@ -122,6 +122,9 @@ func TestNormalizeDomainGroups(t *testing.T) {
 	assertInvalidGroups(t, err, "同一个用户组只能分到一个域名组")
 
 	ug1, ug2 := uuid.New(), uuid.New()
+	if ug1.String() > ug2.String() { // 结果按字符串升序，固定 ug1 在前
+		ug1, ug2 = ug2, ug1
+	}
 	out, err := normalizeDomainGroups([]DomainGroupInput{{
 		Name:         "  名  ",
 		IsDefault:    true,

@@ -33,7 +33,6 @@ function ExtrasFormView({ saved }: { saved: SubscriptionExtras }) {
   const fail = useFailure()
   const invalidate = useInvalidateSubscription()
   const [draft, setDraft] = useState<ExtrasForm | null>(null)
-  const [errors, setErrors] = useState<Record<string, string>>({})
   const form = draft ?? extrasFormFrom(saved)
   const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(extrasFormFrom(saved))
   const edit = (patch: Partial<ExtrasForm>) => setDraft({ ...form, ...patch })
@@ -44,15 +43,14 @@ function ExtrasFormView({ saved }: { saved: SubscriptionExtras }) {
       toast('订阅附加设置已保存，最多 30 秒后在订阅里生效')
       void invalidate().then(() => setDraft(null))
     },
-    onError: (e) => fail(e, setErrors),
+    // 只剩两个开关，没有可标红的字段：服务端校验失败一律弹提示
+    onError: (e) => fail(e),
   })
 
   const submit = () => {
-    const out = extrasBody(form, saved)
-    if ('errors' in out) return setErrors(out.errors)
-    setErrors({})
-    if (Object.keys(out.body).length === 0) return
-    save.mutate(out.body)
+    const { body } = extrasBody(form, saved)
+    if (Object.keys(body).length === 0) return
+    save.mutate(body)
   }
 
   const disabled = save.isPending

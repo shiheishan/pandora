@@ -13,7 +13,7 @@ import {
   type DomainGroupBody,
   type DomainRowForm,
   type GroupForm,
-} from './subscriptionDomains'
+} from './domainGroups'
 import { SUB_KEY, useFailure, useInvalidateSubscription } from './subscriptionQueries'
 import nodesCss from './nodes.module.css'
 import css from './SubscriptionDomains.module.css'

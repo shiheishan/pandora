@@ -102,7 +102,7 @@ export function useSubDomainProbe(): void {
     let cancelled = false
 
     const run = async () => {
-      let storage: Storage | null = null
+      let storage: Storage | null
       try {
         storage = window.localStorage
       } catch {
@@ -112,7 +112,7 @@ export function useSubDomainProbe(): void {
       const now = Date.now()
       if (!shouldProbe(now, storage)) return
 
-      let domains: string[] = []
+      let domains: string[]
       try {
         const data = await api.get('v1/me/subscription-domains', domainsResponseSchema)
         domains = data.domains

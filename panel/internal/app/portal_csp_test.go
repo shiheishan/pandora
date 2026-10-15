@@ -25,7 +25,7 @@ func (f fakeSignup) SignupCaptchaProvider(context.Context) (string, error) {
 
 func (fakeSignup) SignupGeneration() uint64 { return 0 }
 
-func portalCSP(t *testing.T, r captchaProviderReader) string {
+func portalCSPHeader(t *testing.T, r captchaProviderReader) string {
 	t.Helper()
 	h := webapp.Handler(fstest.MapFS{"index.html": {Data: []byte(`<!doctype html>`)}},
 		webapp.WithExtraSources(portalCaptchaCSP(r)))
@@ -39,20 +39,20 @@ func portalCSP(t *testing.T, r captchaProviderReader) string {
 
 // 关人机验证（或读设置失败）时门户入口页 CSP 与不挂选项时逐字一致；开了只多出所选那家的来源。
 func TestPortalCaptchaCSP(t *testing.T) {
-	base := portalCSP(t, fakeSignup{})
+	base := portalCSPHeader(t, fakeSignup{})
 	plainRec := httptest.NewRecorder()
 	webapp.Handler(fstest.MapFS{"index.html": {Data: []byte(`<!doctype html>`)}}).
 		ServeHTTP(plainRec, httptest.NewRequest(http.MethodGet, "/", nil))
 	if plain := plainRec.Header().Get("Content-Security-Policy"); base != plain {
 		t.Fatalf("captcha off changed CSP:\n got %q\nwant %q", base, plain)
 	}
-	if got := portalCSP(t, fakeSignup{err: errors.New("db down")}); got != base {
+	if got := portalCSPHeader(t, fakeSignup{err: errors.New("db down")}); got != base {
 		t.Fatalf("settings error must not widen CSP: %q", got)
 	}
 
 	cloudflare := "https://challenges.cloudflare.com"
 	for _, p := range []string{settingssvc.CaptchaRecaptchaV2, settingssvc.CaptchaRecaptchaV3} {
-		got := portalCSP(t, fakeSignup{s: settingssvc.Signup{CaptchaProvider: p}})
+		got := portalCSPHeader(t, fakeSignup{s: settingssvc.Signup{CaptchaProvider: p}})
 		if !strings.Contains(got, "script-src 'self' https://www.google.com/recaptcha/ https://www.gstatic.com/recaptcha/;") {
 			t.Fatalf("%s script-src: %q", p, got)
 		}
@@ -70,7 +70,7 @@ func TestPortalCaptchaCSP(t *testing.T) {
 		}
 	}
 
-	got := portalCSP(t, fakeSignup{s: settingssvc.Signup{CaptchaProvider: settingssvc.CaptchaTurnstile}})
+	got := portalCSPHeader(t, fakeSignup{s: settingssvc.Signup{CaptchaProvider: settingssvc.CaptchaTurnstile}})
 	if !strings.Contains(got, "script-src 'self' "+cloudflare+";") || !strings.Contains(got, "frame-src "+cloudflare+";") {
 		t.Fatalf("turnstile CSP: %q", got)
 	}
@@ -133,5 +133,40 @@ func TestPortalCSPProviderCache(t *testing.T) {
 	now = now.Add(2 * time.Second)
 	if x := f(ctx); len(x.Script) == 0 || reads != 5 {
 		t.Fatalf("after error ttl should re-read: %+v reads=%d", x, reads)
+	}
+}
+
+type fakeProbes []string
+
+func (f fakeProbes) ProbeOrigins(context.Context) []string { return f }
+
+// 订阅域名进门户入口页的 connect-src：没有时与原来逐字一致；不合形状的（带空格、分号、http）滤掉。
+func TestPortalCSPProbeOrigins(t *testing.T) {
+	render := func(p probeOriginReader) string {
+		t.Helper()
+		h := webapp.Handler(fstest.MapFS{"index.html": {Data: []byte(`<!doctype html>`)}},
+			webapp.WithExtraSources(portalCSP(fakeSignup{}, p)))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+		return rec.Header().Get("Content-Security-Policy")
+	}
+	base := portalCSPHeader(t, fakeSignup{})
+	if got := render(fakeProbes(nil)); got != base {
+		t.Fatalf("no sub domains changed CSP:\n got %q\nwant %q", got, base)
+	}
+	if got := render(nil); got != base {
+		t.Fatalf("nil reader changed CSP: %q", got)
+	}
+	got := render(fakeProbes{"https://sub-a.example.test", "https://sub-b.example.test:8443", "http://plain.example.test", "https://x.example.test; script-src *", "https://Upper.example.test"})
+	if !strings.Contains(got, "connect-src 'self' https://sub-a.example.test https://sub-b.example.test:8443;") {
+		t.Fatalf("connect-src: %q", got)
+	}
+	for _, bad := range []string{"plain.example.test", "script-src *", "Upper"} {
+		if strings.Contains(got, bad) {
+			t.Fatalf("CSP must not contain %q: %q", bad, got)
+		}
+	}
+	if !strings.Contains(got, "script-src 'self';") {
+		t.Fatalf("script-src must stay self-only: %q", got)
 	}
 }
