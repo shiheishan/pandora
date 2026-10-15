@@ -426,11 +426,10 @@ interface MockTheme {
   is_active: boolean
   tokens: { light: Record<string, string>; dark: Record<string, string> }
   branding: Record<string, string>
-  custom_css: string
 }
 // 种子：内置「默认 · 纸白」生效，另有一套自定义「夜海」演示切换（标语不同）
 const themes: MockTheme[] = [
-  { id: randomUUID(), code: 'paper', name: '默认 · 纸白', is_builtin: true, is_active: true, tokens: { light: tokenGroup('light'), dark: tokenGroup('dark') }, branding: {}, custom_css: '' },
+  { id: randomUUID(), code: 'paper', name: '默认 · 纸白', is_builtin: true, is_active: true, tokens: { light: tokenGroup('light'), dark: tokenGroup('dark') }, branding: {} },
   {
     id: randomUUID(),
     code: 'night-sea',
@@ -442,7 +441,6 @@ const themes: MockTheme[] = [
       dark: { ...tokenGroup('dark'), '--brand': '#5b9be4', '--brand-hover': '#79afea', '--brand-ink': '#a6c8f1', '--brand-soft': '#1b2a3d', '--brand-tint': '#141b24', '--bg': '#0f1216' },
     },
     branding: { tagline: '一路畅通' },
-    custom_css: '',
   },
 ]
 
@@ -499,15 +497,15 @@ function checkTheme(body: Json, fields: Record<string, string>): { tokens: MockT
   return { tokens, branding }
 }
 
-/** 门户读路径（Service.Public）：令牌与品牌已经过保存校验，custom_css 不下发；站点名取系统设置，一并写给门户 */
+/** 门户读路径（Service.Public）：令牌与品牌已经过保存校验；站点名取系统设置，一并写给门户 */
 export function shareAppearance(): void {
   const active = themes.find((t) => t.is_active)
-  shareActiveTheme(active ? { ...active, custom_css: '' } : null)
+  shareActiveTheme(active ?? null)
   shareSiteName(siteName)
 }
 
 async function saveTheme(ctx: MockContext): Promise<MockResult> {
-  const decoded = await decode(ctx, { code: 'string', name: 'string', create: 'boolean', tokens: 'object', branding: 'object', custom_css: 'string' })
+  const decoded = await decode(ctx, { code: 'string', name: 'string', create: 'boolean', tokens: 'object', branding: 'object' })
   if (!decoded.ok) return decoded.result
   const body = decoded.body
   const code = str(body.code).trim().toLowerCase()
@@ -516,17 +514,16 @@ async function saveTheme(ctx: MockContext): Promise<MockResult> {
   if (!code) fields.code = '主题标识必填'
   else if (!/^[a-z][a-z0-9_-]{1,38}$/.test(code)) fields.code = '主题标识须以小写字母开头，只含小写字母、数字、- 与 _，共 2–39 个字符'
   if (!name || runes(name) > 60) fields.name = '主题名称必填，最多 60 个字'
-  if (str(body.custom_css).trim()) fields.custom_css = '自定义 CSS 本期停用，请留空'
   const { tokens, branding } = checkTheme(body, fields)
   if (Object.keys(fields).length > 0) return invalid(fields)
   const existing = themes.find((t) => t.code === code)
   if (existing?.is_builtin) return err(422, 'validation_failed', '内置主题不能直接改，请用另一个标识另存为自定义主题')
   if (existing && body.create === true) return err(409, 'conflict', '主题标识已被占用', { code: `主题标识「${code}」已被占用，换一个` })
   if (existing) Object.assign(existing, { name, tokens, branding })
-  else themes.push({ id: randomUUID(), code, name, is_builtin: false, is_active: false, tokens, branding, custom_css: '' })
+  else themes.push({ id: randomUUID(), code, name, is_builtin: false, is_active: false, tokens, branding })
   themes.sort((a, b) => Number(b.is_builtin) - Number(a.is_builtin) || a.code.localeCompare(b.code))
   if (existing?.is_active) shareAppearance()
-  return { status: 200, body: { saved: true, dropped: [] } }
+  return { status: 200, body: { saved: true } }
 }
 
 const SLOT_CATALOG: ReadonlyArray<readonly [string, string, string]> = [

@@ -46,8 +46,8 @@ func (s *Service) ListThemes(ctx context.Context) ([]Theme, error) {
 	return out, nil
 }
 
-// SaveTheme 新建或更新主题；成功时返回净化丢弃项（本期恒为空切片）。
-func (s *Service) SaveTheme(ctx context.Context, in SaveThemeInput) ([]string, error) {
+// SaveTheme 新建或更新主题。
+func (s *Service) SaveTheme(ctx context.Context, in SaveThemeInput) error {
 	code := strings.ToLower(strings.TrimSpace(in.Code))
 	name := strings.TrimSpace(in.Name)
 	fields := map[string]string{}
@@ -63,22 +63,18 @@ func (s *Service) SaveTheme(ctx context.Context, in SaveThemeInput) ([]string, e
 	if strings.Contains(name, "\x00") {
 		fields["name"] = "主题名称不能包含空字符"
 	}
-	if strings.TrimSpace(in.CustomCSS) != "" {
-		fields["custom_css"] = "自定义 CSS 本期停用，请留空"
-	}
 	tokens, tokErr := normalizeTokens(in.Tokens)
 	if err := mergeFields(fields, tokErr); err != nil {
-		return nil, err
+		return err
 	}
 	branding, brandErr := normalizeBranding(in.Branding)
 	if err := mergeFields(fields, brandErr); err != nil {
-		return nil, err
+		return err
 	}
 	if len(fields) > 0 {
-		return nil, errs.Invalid(fields)
+		return errs.Invalid(fields)
 	}
 
-	notes := []string{}
 	err := s.tx.Do(ctx, func(ctx context.Context) error {
 		existing, ok, err := s.repo.ThemeByCode(ctx, code)
 		if err != nil {
@@ -133,11 +129,11 @@ func (s *Service) SaveTheme(ctx context.Context, in SaveThemeInput) ([]string, e
 		})
 	})
 	if err != nil {
-		return nil, err
+		return err
 	}
 	// 主题改了 branding，入口页快照立刻失效
 	s.invalidatePageMeta()
-	return notes, nil
+	return nil
 }
 
 // ActivateTheme 切换生效主题。

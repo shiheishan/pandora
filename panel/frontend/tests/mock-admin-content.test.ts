@@ -77,7 +77,8 @@ describe('mock api · admin content', () => {
       ['paper', true, true],
       ['night-sea', false, false],
     ])
-    expect(themes[0]).toMatchObject({ code: 'paper', is_active: true, custom_css: '' })
+    expect(themes[0]).toMatchObject({ code: 'paper', is_active: true })
+    expect(themes[0]).not.toHaveProperty('custom_css')
     expect(Object.keys(themes[0]!.tokens.light)).toHaveLength(43)
     expect(slotsResponse.parse(await (await call('GET', '/v1/slots')).json()).slots).toHaveLength(7)
     const dirty = slotSaved.parse(await (await call('POST', '/v1/slots/portal.home.banner', { content: '<b onclick="x()">欢迎</b><script>alert(1)</script>', enabled: true }, 's-1')).json())
@@ -102,10 +103,10 @@ describe('mock api · admin content', () => {
     // 字段级 422：令牌逐键、品牌逐键，一次回齐
     const bad = await (await call('POST', '/v1/themes', { ...body, name: '', tokens: { light: { '--bg': 'a{b' } }, branding: { site_name: '秋叶加速', logo: 'https://x.test/a.png' } }, 't-1')).json()
     expect(bad).toMatchObject({ error: { code: 'validation_failed', fields: { name: expect.any(String), 'tokens.light.--bg': expect.any(String), 'branding.site_name': expect.any(String), 'branding.logo': expect.any(String) } } })
-    expect((await call('POST', '/v1/themes', { ...body, custom_css: 'body{}' }, 't-2')).status).toBe(422)
+    expect((await call('POST', '/v1/themes', { ...body, custom_css: 'body{}' }, 't-2')).status).toBe(400)
     expect((await call('POST', '/v1/themes', { ...body, extra: 1 }, 't-3')).status).toBe(400)
     expect((await call('POST', '/v1/themes', body)).status).toBe(400) // 没带幂等键
-    expect(await (await call('POST', '/v1/themes', body, 't-4')).json()).toEqual({ saved: true, dropped: [] })
+    expect(await (await call('POST', '/v1/themes', body, 't-4')).json()).toEqual({ saved: true })
     // 另存为撞已有 code：409 标在 code 上，不覆盖
     expect(await (await call('POST', '/v1/themes', { ...body, name: '冒名' }, 't-5')).json()).toMatchObject({ error: { code: 'conflict', fields: { code: expect.stringContaining('已被占用') } } })
     // 内置主题不可原地改

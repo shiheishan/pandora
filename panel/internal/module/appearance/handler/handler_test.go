@@ -37,12 +37,9 @@ func (f *fakeSvc) ListThemes(context.Context) ([]service.Theme, error) {
 	return f.themes, nil
 }
 
-func (f *fakeSvc) SaveTheme(_ context.Context, in service.SaveThemeInput) ([]string, error) {
+func (f *fakeSvc) SaveTheme(_ context.Context, in service.SaveThemeInput) error {
 	f.lastSave = in
-	if f.saveErr != nil {
-		return nil, f.saveErr
-	}
-	return []string{"note1"}, nil
+	return f.saveErr
 }
 
 func (f *fakeSvc) ActivateTheme(_ context.Context, code string) error {
@@ -143,7 +140,7 @@ func TestListThemesShape(t *testing.T) {
 		t.Fatalf("themes len %d", len(themes))
 	}
 	row, _ := themes[0].(map[string]any)
-	wantKeys := []string{"id", "code", "name", "is_builtin", "is_active", "tokens", "branding", "custom_css"}
+	wantKeys := []string{"id", "code", "name", "is_builtin", "is_active", "tokens", "branding"}
 	for _, k := range wantKeys {
 		if _, ok := row[k]; !ok {
 			t.Fatalf("缺键 %s: %v", k, row)
@@ -151,9 +148,6 @@ func TestListThemesShape(t *testing.T) {
 	}
 	if len(row) != len(wantKeys) {
 		t.Fatalf("键数量 %d 应为 %d: %v", len(row), len(wantKeys), row)
-	}
-	if row["custom_css"] != "" {
-		t.Fatalf("custom_css %v", row["custom_css"])
 	}
 	tokens, _ := row["tokens"].(map[string]any)
 	if tokens == nil {
@@ -164,7 +158,7 @@ func TestListThemesShape(t *testing.T) {
 func TestSaveThemeMapping(t *testing.T) {
 	f := &fakeSvc{}
 	e := newEngine(f, true, &authn.Principal{UserID: uuid.New(), SessionID: "s", Audience: authn.AudienceAdmin}, route.Kit{})
-	body := `{"code":"mine","name":"我的","create":true,"tokens":{"light":{}},"branding":{"tagline":"A"},"custom_css":"x"}`
+	body := `{"code":"mine","name":"我的","create":true,"tokens":{"light":{}},"branding":{"tagline":"A"}}`
 	w := do(e, http.MethodPost, "/v1/themes", body)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d %s", w.Code, w.Body)
@@ -173,11 +167,10 @@ func TestSaveThemeMapping(t *testing.T) {
 	if got["saved"] != true {
 		t.Fatalf("saved %v", got["saved"])
 	}
-	dropped, _ := got["dropped"].([]any)
-	if len(dropped) != 1 {
-		t.Fatalf("dropped %v", got["dropped"])
+	if _, ok := got["dropped"]; ok {
+		t.Fatalf("不应有 dropped：%v", got)
 	}
-	if f.lastSave.Code != "mine" || f.lastSave.Name != "我的" || !f.lastSave.Create || f.lastSave.CustomCSS != "x" {
+	if f.lastSave.Code != "mine" || f.lastSave.Name != "我的" || !f.lastSave.Create {
 		t.Fatalf("SaveThemeInput %+v", f.lastSave)
 	}
 
@@ -193,6 +186,11 @@ func TestSaveThemeMapping(t *testing.T) {
 	w = do(e, http.MethodPost, "/v1/themes", `{"code":"a","name":"b","create":false,"extra":1}`)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("unknown field status %d", w.Code)
+	}
+
+	w = do(e, http.MethodPost, "/v1/themes", `{"code":"mine","name":"我的","create":true,"custom_css":"x"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("unknown custom_css status %d", w.Code)
 	}
 }
 
