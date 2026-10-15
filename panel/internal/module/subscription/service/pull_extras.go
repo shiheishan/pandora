@@ -1,17 +1,15 @@
 package service
 
-// 拉取时用到的后台模板与订阅附加设置（信息节点、协议前缀、订阅域名）。
-// 两者很少变，进程内留一份快照、30 秒过期（serve 是单实例），
-// 拉取路径因此不每次多查库；后台改动最多 30 秒后生效。
+// 拉取时用到的后台模板、订阅附加设置（信息节点、协议前缀，在 settings）与订阅域名分组（本模块的表），
+// 进程内快照 30 秒过期（serve 是单实例），拉取路径因此不每次多查库；后台改动最多 30 秒后生效。
 
 import (
 	"context"
-	"crypto/rand"
-	"math/big"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
@@ -25,9 +23,10 @@ type ExtrasSettings interface {
 	SubscriptionExtras(ctx context.Context) (settingssvc.SubscriptionExtras, error)
 }
 
-// templateReader 读全部自定义模板；*repo.Repo 直接满足。
-type templateReader interface {
+// extrasRepo 读全部自定义模板与订阅域名分组；*repo.Repo 直接满足。
+type extrasRepo interface {
 	TemplateContents(ctx context.Context) (map[string]string, error)
+	DomainConfig(ctx context.Context) (repo.DomainConfigRows, error)
 }
 
 // extrasTTL 是快照的有效期。
@@ -40,6 +39,7 @@ const extrasRetry = 5 * time.Second
 type extrasSnapshot struct {
 	settings  settingssvc.SubscriptionExtras
 	templates map[render.Format]string
+	domains   domainSet // 订阅域名分组（只读）
 	loadedAt  time.Time
 }
 
@@ -58,10 +58,10 @@ type pullExtras struct {
 }
 
 // get 返回未过期的快照，过期或没有时重读（并发的重读经 mu 合成一次：拿到锁后再看一次是否已被别人刷新）。
-// src 为 nil 时附加设置取零值（全部关闭、没有订阅域名）。读失败时：有旧快照就沿用它、打一条 Warn，
+// src 为 nil 时附加设置取零值（全部关闭），tr 为 nil 时分组为空。读失败时：有旧快照就沿用它、打一条 Warn，
 // extrasRetry 之后再试；没有旧快照才返回错误（不缓存）。
 // 判断新鲜：snap 非 nil 且 !now.Before(snap.loadedAt) 且 now.Sub(snap.loadedAt) < extrasTTL（时钟回拨也重读）。
-func (p *pullExtras) get(ctx context.Context, src ExtrasSettings, tr templateReader, now time.Time) (*extrasSnapshot, error) {
+func (p *pullExtras) get(ctx context.Context, src ExtrasSettings, tr extrasRepo, now time.Time) (*extrasSnapshot, error) {
 	if snap := p.snap.Load(); snap != nil && !now.Before(snap.loadedAt) && now.Sub(snap.loadedAt) < extrasTTL {
 		return snap, nil
 	}
@@ -70,7 +70,7 @@ func (p *pullExtras) get(ctx context.Context, src ExtrasSettings, tr templateRea
 	if snap := p.snap.Load(); snap != nil && !now.Before(snap.loadedAt) && now.Sub(snap.loadedAt) < extrasTTL {
 		return snap, nil
 	}
-	settings, raw, err := readExtras(ctx, src, tr)
+	settings, raw, groups, err := readExtras(ctx, src, tr)
 	if err != nil {
 		old := p.snap.Load()
 		if old == nil {
@@ -90,28 +90,35 @@ func (p *pullExtras) get(ctx context.Context, src ExtrasSettings, tr templateRea
 	snap := &extrasSnapshot{
 		settings:  settings,
 		templates: templates,
+		domains:   newDomainSet(groups),
 		loadedAt:  now,
 	}
 	p.snap.Store(snap)
 	return snap, nil
 }
 
-// readExtras 读附加设置与全部自定义模板；src、tr 为 nil 的那一项取零值。
-func readExtras(ctx context.Context, src ExtrasSettings, tr templateReader) (settingssvc.SubscriptionExtras, map[string]string, error) {
+// readExtras 读附加设置、全部自定义模板与订阅域名分组；src、tr 为 nil 的那一项取零值。
+func readExtras(ctx context.Context, src ExtrasSettings, tr extrasRepo) (settingssvc.SubscriptionExtras, map[string]string, []DomainGroup, error) {
 	var settings settingssvc.SubscriptionExtras
 	var err error
 	if src != nil {
 		if settings, err = src.SubscriptionExtras(ctx); err != nil {
-			return settingssvc.SubscriptionExtras{}, nil, err
+			return settingssvc.SubscriptionExtras{}, nil, nil, err
 		}
 	}
 	var raw map[string]string
+	var groups []DomainGroup
 	if tr != nil {
 		if raw, err = tr.TemplateContents(ctx); err != nil {
-			return settingssvc.SubscriptionExtras{}, nil, err
+			return settingssvc.SubscriptionExtras{}, nil, nil, err
 		}
+		rows, err := tr.DomainConfig(ctx)
+		if err != nil {
+			return settingssvc.SubscriptionExtras{}, nil, nil, err
+		}
+		groups = domainGroupsFromRows(rows)
 	}
-	return settings, raw, nil
+	return settings, raw, groups, nil
 }
 
 // liveInput 是组一次正常拉取的渲染请求要的材料。
@@ -168,27 +175,14 @@ func liveRequest(in liveInput) render.Request {
 	}
 }
 
-// pickLinkBase 从后台填的订阅域名里随机取一个（crypto/rand 取下标）；没填返回 fallback（面板对外地址）。
-func pickLinkBase(bases []string, fallback string) string {
-	if len(bases) == 0 {
-		return fallback
-	}
-	if len(bases) == 1 {
-		return bases[0]
-	}
-	n, err := rand.Int(rand.Reader, big.NewInt(int64(len(bases))))
-	if err != nil {
-		return bases[0]
-	}
-	return bases[n.Int64()]
-}
-
-// subscribeURLFor 是 Surfboard 托管配置里写的订阅链接：用面板对外地址（或后台填的第一个订阅域名）拼前缀与令牌。
-// bases 非空时用 bases[0]（托管配置要固定地址，不随机）；否则 fallback。
-func subscribeURLFor(bases []string, fallback, prefix, token string) string {
+// subscribeURLFor 是 Surfboard 托管配置里写的订阅链接：用户所在组里基础权重最高的订阅域名（托管配置要固定地址，不随机），
+// 没有组用面板对外地址 fallback。
+func subscribeURLFor(ex *extrasSnapshot, userGroupID *uuid.UUID, fallback, prefix, token string) string {
 	base := fallback
-	if len(bases) > 0 {
-		base = bases[0]
+	if ex != nil {
+		if g := ex.domains.groupFor(userGroupID); g != nil {
+			base = stableBaseURL(g)
+		}
 	}
 	return linkURL(base, prefix, token)
 }

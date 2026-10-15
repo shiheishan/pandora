@@ -31,7 +31,7 @@ func (s *Service) MyLinks(ctx context.Context) ([]Link, error) {
 		return nil, subErr(err)
 	}
 	now := s.clock()
-	base, err := s.linkBase(ctx, d)
+	base, err := s.linkBase(ctx, d, p.UserID)
 	if err != nil {
 		return nil, err
 	}

@@ -176,7 +176,7 @@ func (s *Service) Pull(ctx context.Context, req PullRequest) (PullResult, error)
 	body, contentType, count := render.RenderRequest(liveRequest(liveInput{
 		Format: format, Nodes: nodes, Row: row, UA: ua, Options: d.Render, Extras: ex,
 		Types: req.Types, Filter: req.Filter, Loc: siteLocation(site.Timezone),
-		SubscribeURL: subscribeURLFor(ex.settings.LinkBaseURLs, d.PublicBaseURL, req.Prefix, token),
+		SubscribeURL: subscribeURLFor(ex, owner.UserGroupID, d.PublicBaseURL, req.Prefix, token),
 		Now:          now,
 	}))
 	res.Body, res.ContentType = body, contentType
@@ -187,6 +187,10 @@ func (s *Service) Pull(ctx context.Context, req PullRequest) (PullResult, error)
 	}
 	if err := s.recordFetch(ctx, d, entry.with(FetchOK, count, len(body))); err != nil {
 		return PullResult{}, err
+	}
+	// 经已登记的订阅域名到达的成功拉取是这个域名「能连上」的信号（进程内攒批写 Redis，不多一次往返）
+	if base, ok := ex.domains.hostBaseURL(req.Host); ok {
+		s.scores.NoteSuccess(ctx, base, now)
 	}
 	return res, nil
 }

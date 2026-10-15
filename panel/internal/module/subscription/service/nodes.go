@@ -57,7 +57,7 @@ type Delivery struct {
 	PublicBaseURL string
 	// Render 是渲染的可配项（配置 subscription.singbox），启动时定一次
 	Render render.Options
-	// Extras 是订阅附加设置（信息节点、协议前缀、订阅域名）的读取面；nil 时全部按缺省（关、没有订阅域名）
+	// Extras 是订阅附加设置（信息节点、协议前缀）的读取面；nil 时全部按缺省（关）
 	Extras ExtrasSettings
 }
 
