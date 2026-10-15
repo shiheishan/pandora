@@ -62,6 +62,14 @@ func (f *fakeSvc) AdminSetDeviceLimit(_ context.Context, _ uuid.UUID, limit *int
 	return nil
 }
 
+func (f *fakeSvc) AdminSetPeriodEnd(_ context.Context, _ uuid.UUID, _ time.Time, _ string) (service.AdminSetPeriodEndResult, error) {
+	return service.AdminSetPeriodEndResult{}, nil
+}
+
+func (f *fakeSvc) AdminSetQuotaLimit(_ context.Context, _ uuid.UUID, _, _ string, _ *int64, _ string) error {
+	return nil
+}
+
 func (f *fakeSvc) ListTrafficResets(_ context.Context, fl service.ResetLogFilter) ([]service.ResetLogView, int64, error) {
 	f.logFilter = fl
 	return f.logs, int64(len(f.logs)), nil

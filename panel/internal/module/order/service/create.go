@@ -198,6 +198,9 @@ func (s *Service) CreateNewOrder(ctx context.Context, in NewOrderInput) (Created
 
 	var created Created
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
+		if err := s.rejectDeleted(ctx, userID); err != nil {
+			return err
+		}
 		now := s.clock()
 		label, err := subsvc.NormalizeLabel(in.Label)
 		if err != nil {
@@ -294,6 +297,9 @@ func (s *Service) CreateRenewalOrder(ctx context.Context, in RenewalOrderInput) 
 
 	var created Created
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
+		if err := s.rejectDeleted(ctx, userID); err != nil {
+			return err
+		}
 		sub, err := s.subs.Lock(ctx, in.SubscriptionID, &userID)
 		if err != nil {
 			return err
@@ -420,6 +426,9 @@ func (s *Service) CreatePackOrder(ctx context.Context, in PackOrderInput) (Creat
 
 	var created Created
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
+		if err := s.rejectDeleted(ctx, userID); err != nil {
+			return err
+		}
 		pack, err := s.catalog.PackOffer(ctx, in.PackID, true)
 		if err != nil {
 			return err
@@ -518,6 +527,9 @@ func (s *Service) CreateTopup(ctx context.Context, in TopupInput) (TopupCreated,
 
 	var topup TopupCreated
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
+		if err := s.rejectDeleted(ctx, userID); err != nil {
+			return err
+		}
 		created, _, err := s.place(ctx, draft{
 			Kind:        KindTopup,
 			UserID:      userID,

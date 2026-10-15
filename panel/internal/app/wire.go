@@ -309,11 +309,23 @@ func buildServices(r *runtime) (*services, error) {
 	}, reportsvc.Options{BackupDir: cfg.Backup.Dir})
 	reportSvc.UseCache(r.redis)
 
+	// 注册与登录（xb-reg）：注册试用、注销停订阅由 subscription 实现，注销取消待付单由 order 实现，
+	// 注销作废佣金与在途提现由 commission 实现，注销解绑 Telegram 由 notify 实现；
+	// 邮件链接免密登录读 settings 的开关与发信配置、经 notify 发信、按邮箱限频，链接拼在对外地址上
+	identitySvc.UseTrialGranter(subSvc)
+	identitySvc.UseAccountCloser(subSvc)
+	identitySvc.UseOrderCanceller(orderSvc)
+	identitySvc.UseCommissionVoider(commissionVoidAdapter{s: commissionSvc})
+	ledgerSvc.UseAccountStates(identitySvc)
+	identitySvc.UseTelegramUnbinder(notifySvc)
+	// 邮件链接登录第 1 步的人机验证由 identity 校验（与注册、找回同一套）
+	authSvc.UseMailLink(settingsSvc, notifySvc, identitySvc, limiter, cfg.PublicBaseURL)
+
 	// 装配自检：所有带 Use* 注入的 service 在这里统一检查必需端口（各自的 MissingPorts），缺了就拒绝启动
 	if err := checkPorts([]portCheck{
 		{"settings", settingsSvc}, {"audit", auditSvc}, {"identity", identitySvc}, {"catalog", catalogSvc},
 		{"promo", promoSvc}, {"subscription", subSvc}, {"payment", paymentSvc}, {"order", orderSvc},
-		{"commission", commissionSvc}, {"giftcard", giftcardSvc}, {"node", nodeSvc}, {"support", supportSvc},
+		{"commission", commissionSvc}, {"giftcard", giftcardSvc}, {"node", nodeSvc}, {"support", supportSvc}, {"ledger", ledgerSvc},
 		{"notify", notifySvc}, {"report", reportSvc},
 	}); err != nil {
 		_ = queue.Close()

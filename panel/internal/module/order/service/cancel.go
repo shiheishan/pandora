@@ -101,6 +101,35 @@ func (s *Service) Cancel(ctx context.Context, in CancelInput) (CancelResult, err
 	return out, nil
 }
 
+// CancelUserPending 注销账号时取消该用户全部待付订单：逐张释放库存、限购、优惠券、余额冻结并作废在途支付意图，
+// 原因记 account_deleted。只给 identity 的注销调用（实现 identitysvc.OrderCanceller），在它的事务里、锁住用户行之后进来；
+// 之后到的付款回调按「迟到付款」处理（挂起后入余额），不开订阅、不计佣金。ctx 须是后台登录主体。返回取消的张数。
+func (s *Service) CancelUserPending(ctx context.Context, userID uuid.UUID) (int, error) {
+	p, err := adminPrincipal(ctx)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	err = s.tx.Do(ctx, func(ctx context.Context) error {
+		n = 0
+		orders, err := s.repo.PendingOrdersForUser(ctx, userID)
+		if err != nil {
+			return err
+		}
+		for _, o := range orders {
+			if _, err := s.releaseOrder(ctx, o, StatusCancelled, ReasonAccountDeleted, EventCancel, actorFrom(p)); err != nil {
+				return err
+			}
+			n++
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 // ExpireDue 释放已过付款期限的待付订单：先取一批候选，再每单一个事务（锁单、复核、释放）。
 // 单的错误只计数并记日志，不中断这一轮；只有取候选失败才返回 error。
 func (s *Service) ExpireDue(ctx context.Context, limit int) (ExpireStats, error) {

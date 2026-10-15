@@ -90,7 +90,7 @@ function matcher(store: UsersStore, f: Filter) {
   const now = Date.now()
   const q = f.query.trim().toLowerCase()
   return (u: User) => {
-    if (u.status === 'anonymized') return false
+    if (u.status === 'anonymized' || u.status === 'deleted') return false
     if (f.status && u.status !== f.status) return false
     if (f.group_id && u.group_id !== f.group_id) return false
     if (q && !u.email.toLowerCase().includes(q)) return false
@@ -429,6 +429,64 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
         // 关掉营销邮件偏好的人被跳过：种子里每 9 个有一个
         const skipped = hits.filter((u) => users.indexOf(u) % 9 === 4).length
         return { status: 200, body: { queued: hits.length - skipped, skipped } }
+      })
+    },
+
+    // 批量封禁：reauth + 幂等 user_bulk_ban
+    'POST /v1/users/bulk/ban': async (ctx) => {
+      if (!ctx.requireReauth()) return
+      const body = await ctx.body()
+      await ctx.idempotent('user_bulk_ban', () => {
+        if (!body) return err(400, 'bad_request', '请求体不是合法的 JSON')
+        const extra = unknownField(body, [...FILTER_KEYS, 'expected_total', 'reason'])
+        if (extra) return err(400, 'bad_request', `请求体包含未知字段 "${extra}"`)
+        const f = filterFromBody(body)
+        const bad = filterProblem(f)
+        if (bad) return bad
+
+        // 没有任何筛选条件 422 fields.filter
+        const hasCondition = Boolean(f.status || f.group_id || f.query || f.has_active_sub !== null || f.plan_id || f.expires_within_days > 0 || f.sub_state)
+        if (!hasCondition) {
+          return err(422, 'validation_failed', '请求参数校验未通过', { filter: '批量封禁至少要选一个筛选条件' })
+        }
+
+        const reason = typeof body.reason === 'string' ? body.reason.trim() : ''
+        if (runes(reason) < 5 || runes(reason) > 500) {
+          return err(422, 'validation_failed', '请求参数校验未通过', { reason: '请写清原因，5 到 500 个字' })
+        }
+
+        const expectedTotal = typeof body.expected_total === 'number' ? body.expected_total : null
+        const hits = users.filter(matcher(store, f))
+
+        if (expectedTotal === null || hits.length !== expectedTotal) {
+          return err(409, 'conflict', `命中人数变了（预览时 ${expectedTotal ?? 0} 人，现在 ${hits.length} 人），请重新预览`)
+        }
+        if (expectedTotal > 500) {
+          return err(422, 'validation_failed', '请求参数校验未通过', { expected_total: '一次最多封禁 500 人，请收窄条件' })
+        }
+
+        let banned = 0
+        const skipped: Record<string, number> = {}
+        const inc = (key: string) => {
+          skipped[key] = (skipped[key] ?? 0) + 1
+        }
+
+        for (const u of hits) {
+          if (u.id === ctx.user.userId) {
+            inc('self')
+          } else if (u.is_admin) {
+            inc('admin')
+          } else if (u.status === 'banned') {
+            inc('already_banned')
+          } else if (u.status === 'deleted') {
+            inc('deleted')
+          } else {
+            u.status = 'banned'
+            banned++
+          }
+        }
+
+        return { status: 200, body: { banned, skipped } }
       })
     },
 

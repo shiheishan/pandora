@@ -5,8 +5,9 @@ import { navigate } from '../../../core/router'
 import { Button, Drawer, Empty, Skeleton, Tabs, Tag } from '../../../ui'
 import { useInvalidateUsers, useUser, type UserDetail } from './api'
 import { BalanceForm, ResetPasswordDialog, RotateDialog, StatusDialog } from './dialogs'
+import { DeleteDialog, EmailDialog, NoteDialog, ReferrerDialog } from './UserEditDialogs'
 import { ExtendDialog } from './ExtendDialog'
-import { extendableSubscriptions, initial, shortId, trafficPackTargets, USER_STATUS_VIEW } from './model'
+import { extendableSubscriptions, initial, shortId, trafficPackTargets, USER_STATUS_VIEW, userLabel } from './model'
 import { ResetHistory } from './Resets'
 import { RiskTab } from './RiskTab'
 import { DevicesTab, OrdersTab, ProfileTab, SubscriptionsTab } from './tabs'
@@ -68,66 +69,95 @@ export function UserDrawer({ id, tab, onTab, onClose, now }: { id: string | null
 
 function DrawerTitle({ d }: { d: UserDetail }) {
   const st = USER_STATUS_VIEW[d.status]
+  const deleted = d.status === 'deleted'
   return (
     <span className={css.drawerTitle}>
       <span className={css.avatarLg} aria-hidden="true">
-        {initial(d.email, d.display_name)}
+        {deleted ? '#' : initial(d.email, d.display_name)}
       </span>
-      <span className={css.drawerEmail}>{d.email}</span>
+      <span className={css.drawerEmail}>{userLabel(d)}</span>
       <Tag tone={st.tone}>{st.label}</Tag>
       {d.status === 'banned' && <Tag tone="danger">封禁</Tag>}
     </span>
   )
 }
 
-type Dialog = 'status' | 'password' | 'rotate' | 'extend' | 'traffic' | null
+type Dialog = 'status' | 'password' | 'rotate' | 'extend' | 'traffic' | 'email' | 'note' | 'referrer' | 'delete' | null
 
 function Body({ d, tab, onTab, now }: { d: UserDetail; tab: DrawerTab; onTab: (t: DrawerTab) => void; now: Date }) {
   const invalidate = useInvalidateUsers()
   const [dialog, setDialog] = useState<Dialog>(null)
   const [balanceOpen, setBalanceOpen] = useState(false)
   const current: DrawerTab = DRAWER_TABS.some(([k]) => k === tab) ? tab : 'profile'
+  const deleted = d.status === 'deleted'
   const disabled = d.status === 'suspended' || d.status === 'banned'
   // 待验证、注销中、已匿名的账号不给启停：后端只收 active / suspended / banned 之间的切换语义
-  const toggleable = d.status === 'active' || disabled
+  const toggleable = !deleted && (d.status === 'active' || disabled)
   const canExtend = extendableSubscriptions(d.subscriptions).length > 0
   // 加流量包：流量包挂在某一份订阅上，只有还在用的订阅用得上
   const canGrantTraffic = trafficPackTargets(d.subscriptions).length > 0
 
   return (
     <div className={css.drawerBody}>
-      <div className={css.actionBar}>
-        {toggleable && (
-          <Button size="sm" className={disabled ? undefined : css.dangerText} onClick={() => setDialog('status')}>
-            {disabled ? '启用账号' : '禁用账号'}
+      {deleted ? (
+        <p className={css.notice}>
+          {d.deleted_at
+            ? `该账号已于 ${formatDateTime(d.deleted_at).slice(0, 10)} 注销，资料已匿名化；订单与账本保留。`
+            : '该账号已注销，资料已匿名化；订单与账本保留。'}
+        </p>
+      ) : (
+        <div className={css.actionBar}>
+          {toggleable && (
+            <Button size="sm" className={disabled ? undefined : css.dangerText} onClick={() => setDialog('status')}>
+              {disabled ? '启用账号' : '禁用账号'}
+            </Button>
+          )}
+          <Button size="sm" onClick={() => setDialog('password')}>
+            重置密码
           </Button>
-        )}
-        <Button size="sm" onClick={() => setDialog('password')}>
-          重置密码
-        </Button>
-        <Button size="sm" aria-expanded={balanceOpen} onClick={() => setBalanceOpen((v) => !v)}>
-          调整余额
-        </Button>
-        {d.subscriptions.length > 0 && (
-          <Button size="sm" onClick={() => setDialog('rotate')}>
-            更换订阅地址
+          <Button size="sm" onClick={() => setDialog('email')}>
+            改邮箱
           </Button>
-        )}
-        {canExtend && (
-          <Button size="sm" onClick={() => setDialog('extend')}>
-            加时长
+          <Button size="sm" onClick={() => setDialog('note')}>
+            显示名与备注
           </Button>
-        )}
-        {canGrantTraffic && (
-          <Button size="sm" onClick={() => setDialog('traffic')}>
-            加流量包
+          <Button size="sm" onClick={() => setDialog('referrer')}>
+            改邀请人
           </Button>
-        )}
-        <Button size="sm" onClick={() => navigate('/billing/orders', { query: { new: d.id } })}>
-          为其开单
-        </Button>
-      </div>
-      {balanceOpen && <BalanceForm user={d} onClose={() => setBalanceOpen(false)} onDone={() => void invalidate()} />}
+          <Button size="sm" aria-expanded={balanceOpen} onClick={() => setBalanceOpen((v) => !v)}>
+            调整余额
+          </Button>
+          {d.subscriptions.length > 0 && (
+            <Button size="sm" onClick={() => setDialog('rotate')}>
+              更换订阅地址
+            </Button>
+          )}
+          {canExtend && (
+            <Button size="sm" onClick={() => setDialog('extend')}>
+              加时长
+            </Button>
+          )}
+          {canGrantTraffic && (
+            <Button size="sm" onClick={() => setDialog('traffic')}>
+              加流量包
+            </Button>
+          )}
+          <Button size="sm" onClick={() => navigate('/billing/orders', { query: { new: d.id } })}>
+            为其开单
+          </Button>
+          {!d.is_admin && (
+            <Button size="sm" className={css.dangerText} onClick={() => setDialog('delete')}>
+              注销账号
+            </Button>
+          )}
+        </div>
+      )}
+      {!deleted && balanceOpen && <BalanceForm user={d} onClose={() => setBalanceOpen(false)} onDone={() => void invalidate()} />}
+      {d.admin_note && (
+        <p className={css.notice} aria-label="后台备注">
+          备注：{d.admin_note}
+        </p>
+      )}
       <Tabs label="用户详情" items={DRAWER_TABS.map(([value, label]) => ({ value, label }))} value={current} onChange={(v) => onTab(v as DrawerTab)} />
       <div className={css.tabPanel} role="tabpanel">
         {current === 'profile' && <ProfileTab d={d} now={now} />}
@@ -142,6 +172,10 @@ function Body({ d, tab, onTab, now }: { d: UserDetail; tab: DrawerTab; onTab: (t
       <RotateDialog user={d} open={dialog === 'rotate'} onClose={() => setDialog(null)} onDone={() => void invalidate()} />
       <ExtendDialog user={d} open={dialog === 'extend'} onClose={() => setDialog(null)} onDone={() => void invalidate()} now={now} />
       <TrafficPackDialog user={d} open={dialog === 'traffic'} onClose={() => setDialog(null)} onDone={() => void invalidate()} />
+      <EmailDialog user={d} open={dialog === 'email'} onClose={() => setDialog(null)} onDone={() => void invalidate()} />
+      <NoteDialog user={d} open={dialog === 'note'} onClose={() => setDialog(null)} onDone={() => void invalidate()} />
+      <ReferrerDialog user={d} open={dialog === 'referrer'} onClose={() => setDialog(null)} onDone={() => void invalidate()} />
+      <DeleteDialog user={d} open={dialog === 'delete'} onClose={() => setDialog(null)} onDone={() => void invalidate()} />
     </div>
   )
 }

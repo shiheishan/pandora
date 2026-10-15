@@ -9,6 +9,18 @@ export const siteConfigSchema = z.object({
   password_reset: z.boolean(),
 })
 
+export const signupConfigSchema = z.object({
+  captcha: z
+    .object({
+      provider: z.enum(['recaptcha_v2', 'recaptcha_v3', 'turnstile']),
+      site_key: z.string().min(1),
+    })
+    .nullable(),
+  email_suffixes: z.array(z.string()),
+  mail_link_login: z.boolean(),
+})
+export type SignupConfig = z.output<typeof signupConfigSchema>
+
 export const appearanceSchema = z.object({
   theme: z
     .object({
@@ -45,6 +57,15 @@ export function useSiteConfig() {
   return useQuery({
     queryKey: ['portal', 'site-config'],
     queryFn: ({ signal }) => api.get('v1/site-config', siteConfigSchema, { auth: false, signal }),
+    staleTime: 5 * 60_000,
+  })
+}
+
+export function useSignupConfig() {
+  const api = useApi()
+  return useQuery({
+    queryKey: ['portal', 'signup-config'],
+    queryFn: ({ signal }) => api.get('v1/signup-config', signupConfigSchema, { auth: false, signal }),
     staleTime: 5 * 60_000,
   })
 }

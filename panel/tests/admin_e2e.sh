@@ -192,6 +192,9 @@ require_loopback_url "$PUB" PUB
 DB_NAME=$(db_scalar identifier 'SELECT current_database()')
 [[ "$DB_NAME" =~ (^|[-_])(test|e2e)([-_]|$) ]] \
   || { echo '[FATAL] database name must contain a standalone test/e2e segment' >&2; exit 1; }
+# 注册 IP 限额是后台设置（缺省每 IP 每分钟 10 次），连着注册会撞 429：一次性库上先关掉（见 lib/signup.sh）
+. "$(dirname "$0")/lib/signup.sh"
+relax_signup_ip_limit
 registration_parser_selftest \
   || { echo '[FATAL] registration response parser self-test failed' >&2; exit 1; }
 REGISTRATION_ORIGINAL=$(db_scalar bool "SELECT enabled FROM feature_switches WHERE code='auth.registration'")

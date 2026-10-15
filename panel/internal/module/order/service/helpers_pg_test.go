@@ -69,8 +69,26 @@ var orderCommitTables = []string{
 
 // fakeUsers 代替 identity：邮箱、用户组（恒无组）与按邮箱搜用户。
 type fakeUsers struct {
-	mu     sync.Mutex
-	emails map[uuid.UUID]string
+	mu      sync.Mutex
+	emails  map[uuid.UUID]string
+	deleted map[uuid.UUID]bool // markDeleted 标记的已注销账号
+}
+
+// IsDeleted 报告 markDeleted 标过的账号。
+func (f *fakeUsers) IsDeleted(_ context.Context, id uuid.UUID) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.deleted[id], nil
+}
+
+// markDeleted 把账号标成已注销。
+func (f *fakeUsers) markDeleted(id uuid.UUID) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.deleted == nil {
+		f.deleted = map[uuid.UUID]bool{}
+	}
+	f.deleted[id] = true
 }
 
 func (f *fakeUsers) Emails(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error) {

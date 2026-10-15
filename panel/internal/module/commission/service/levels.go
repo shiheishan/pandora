@@ -23,11 +23,11 @@ type beneficiary struct {
 // referrerFunc 取某人的邀请人，没有时为 nil。
 type referrerFunc func(ctx context.Context, userID uuid.UUID) (*uuid.UUID, error)
 
-// excludedFunc 判断某人是否被单独设置排除在佣金之外（单独比例为 0）。
+// excludedFunc 判断某人是否不拿佣金（计提时是 notEarning：已注销或单独比例为 0）。
 type excludedFunc func(ctx context.Context, userID uuid.UUID) (bool, error)
 
 // beneficiaries 列出这一单的受益人。没开多级分销：只有直接邀请人，第 1 级、100%（他被排除时没有受益人）。
-// 开了：从直接邀请人起往上最多 3 级，第 N 级分 dist.Levels[N-1]%；份额为 0 的级别、被排除的人（单独比例 0）都跳过但继续往上找，
+// 开了：从直接邀请人起往上最多 3 级，第 N 级分 dist.Levels[N-1]%；份额为 0 的级别、被排除的人（已注销或单独比例 0）都跳过但继续往上找，
 // 跳过的人仍占他那一级；遇到已出现过的人（含买家本人）就停，防环。
 func beneficiaries(ctx context.Context, buyer, direct uuid.UUID, dist settingssvc.CommissionDistribution,
 	next referrerFunc, excluded excludedFunc) ([]beneficiary, error) {
@@ -93,10 +93,20 @@ func (s *Service) excludedByOverride(ctx context.Context, userID uuid.UUID) (boo
 	return ov.RatePercent != nil && *ov.RatePercent == 0, nil
 }
 
+// notEarning 是计提时「这个人不拿佣金」的判断：账号已注销（identity 的无锁读 AccountDeleted），或被单独设置排除（单独比例 0）。
+// 两种都等同比例 0：跳过、仍占他那一级，下一级不往上挪。只在 OnOrderPaid 里 needRefs 之后用。
+func (s *Service) notEarning(ctx context.Context, userID uuid.UUID) (bool, error) {
+	gone, err := s.refs.AccountDeleted(ctx, userID)
+	if err != nil || gone {
+		return gone, err
+	}
+	return s.excludedByOverride(ctx, userID)
+}
+
 // orderTerms 返回这一单佣金总额用的比例与计佣范围：直接邀请人的单独设置决定整单（见 termsFor）；
-// 直接邀请人被排除（单独比例 0）时他的单独设置整条不作数，按全局算，再由 beneficiaries 跳过他、只给上级分。
+// 直接邀请人不拿佣金（已注销或单独比例 0，见 notEarning）时他的单独设置整条不作数，按全局算，再由 beneficiaries 跳过他、只给上级分。
 func (s *Service) orderTerms(ctx context.Context, direct uuid.UUID, cfg settingssvc.Commission) (ratePercent int, scope string, err error) {
-	out, err := s.excludedByOverride(ctx, direct)
+	out, err := s.notEarning(ctx, direct)
 	if err != nil {
 		return 0, "", err
 	}

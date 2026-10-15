@@ -42,6 +42,12 @@ func (s *Service) ReviewEntry(ctx context.Context, id uuid.UUID, approve bool, r
 		if !ok {
 			return ErrEntryNotFound
 		}
+		// 受益人已注销不许通过（通过之后会解冻、出钱）；作废照常
+		if approve {
+			if err := s.rejectDeleted(ctx, e.ReferrerUserID); err != nil {
+				return err
+			}
+		}
 		if e.Status != EntryPending || !e.ReviewRequired {
 			return ErrEntryNotReviewable
 		}

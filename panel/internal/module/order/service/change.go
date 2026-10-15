@@ -271,6 +271,9 @@ func (s *Service) CreatePlanChangeOrder(ctx context.Context, in PlanChangeOrderI
 	}
 	var created Created
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
+		if err := s.rejectDeleted(ctx, userID); err != nil {
+			return err
+		}
 		asOf, err := quoteTime(in.Expect, s.clock())
 		if err != nil {
 			return err

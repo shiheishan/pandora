@@ -101,6 +101,9 @@ type Payments interface {
 type Users interface {
 	Emails(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error)
 	IDsByEmail(ctx context.Context, q string, limit int) ([]uuid.UUID, error)
+	// IsDeleted 报告用户是否已注销（不存在回 false），读时给用户行加共享锁并持有到事务提交：
+	// 下单、开单的事务一开头先调它，与注销互斥（见 rejectDeleted）。
+	IsDeleted(ctx context.Context, userID uuid.UUID) (bool, error)
 }
 
 // idempotency 是 idempotency service 的业务事务内完成。

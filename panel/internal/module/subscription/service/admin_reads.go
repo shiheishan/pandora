@@ -74,6 +74,7 @@ func adminSubFrom(sm Summary, online int) identitysvc.AdminSub {
 	for _, q := range sm.Quotas {
 		quotas = append(quotas, identitysvc.AdminQuota{
 			Metric:    q.Metric,
+			Period:    q.Period,
 			Limit:     q.Limit,
 			Consumed:  q.Consumed,
 			Remaining: q.Remaining,

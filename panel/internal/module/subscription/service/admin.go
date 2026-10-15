@@ -30,6 +30,9 @@ func (s *Service) AdminExtend(ctx context.Context, subID uuid.UUID, days int, re
 	}
 	var out AdminExtendResult
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
+		if err := s.rejectDeletedOwner(ctx, subID); err != nil {
+			return err
+		}
 		res, err := s.Extend(ctx, Extension{
 			SubscriptionID: subID,
 			Days:           days,
@@ -81,7 +84,7 @@ func (s *Service) AdminGrantTraffic(ctx context.Context, subID uuid.UUID, bytes 
 	}
 	var out AdminTrafficGrantResult
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
-		m, err := s.lockOwned(ctx, subID, nil)
+		m, err := s.lockForAdmin(ctx, subID)
 		if err != nil {
 			return err
 		}
@@ -134,7 +137,7 @@ func (s *Service) AdminResetTraffic(ctx context.Context, subID uuid.UUID, note s
 	actorID := p.UserID
 	var freed int64
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
-		m, err := s.lockOwned(ctx, subID, nil)
+		m, err := s.lockForAdmin(ctx, subID)
 		if err != nil {
 			return err
 		}
@@ -166,7 +169,7 @@ func (s *Service) AdminSetDeviceLimit(ctx context.Context, subID uuid.UUID, limi
 		return errs.Invalid(map[string]string{"limit": "设备数须在 0 到 1000 之间，留空沿用套餐"})
 	}
 	return s.tx.Do(ctx, func(ctx context.Context) error {
-		m, err := s.lockOwned(ctx, subID, nil)
+		m, err := s.lockForAdmin(ctx, subID)
 		if err != nil {
 			return err
 		}

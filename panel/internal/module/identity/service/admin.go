@@ -25,8 +25,8 @@ func (s *Service) ListUsers(ctx context.Context, f UserFilter, limit, offset int
 	}
 	if len(f.Statuses) > 0 {
 		for _, st := range f.Statuses {
-			if st != StatusActive && st != StatusSuspended && st != StatusBanned {
-				return nil, 0, errs.Invalid(map[string]string{"status": "状态只能是 active、suspended、banned"})
+			if st != StatusActive && st != StatusSuspended && st != StatusBanned && st != StatusDeleted {
+				return nil, 0, errs.Invalid(map[string]string{"status": "状态只能是 active、suspended、banned、deleted"})
 			}
 		}
 		q.Statuses = f.Statuses
@@ -116,6 +116,8 @@ func (s *Service) UserDetail(ctx context.Context, id uuid.UUID) (UserDetail, err
 	if err != nil {
 		return UserDetail{}, err
 	}
+	d.AdminNote = r.AdminNote
+	d.DeletedAt = r.DeletedAt
 	if err := s.enrichDetail(ctx, &d); err != nil {
 		return UserDetail{}, err
 	}
@@ -148,6 +150,9 @@ func (s *Service) SetStatus(ctx context.Context, userID uuid.UUID, status, reaso
 		}
 		if !ok {
 			return errs.New(errs.NotFound)
+		}
+		if u.Status == StatusDeleted {
+			return errAccountDeleted()
 		}
 		if u.Status == status {
 			return nil
@@ -228,6 +233,9 @@ func (s *Service) AdminResetPassword(ctx context.Context, userID uuid.UUID, newP
 		if !ok {
 			return errs.New(errs.NotFound)
 		}
+		if u.Status == StatusDeleted {
+			return errAccountDeleted()
+		}
 		// 事务里再查一次：算口令前后对方可能刚被设为管理员
 		staff2, err := s.isStaff(ctx, userID)
 		if err != nil {
@@ -265,7 +273,17 @@ func (s *Service) AdminResetPassword(ctx context.Context, userID uuid.UUID, newP
 // AssignGroup 把用户放进某个分组（groupID 为 nil 则移出）；用户或分组不存在回 422。
 func (s *Service) AssignGroup(ctx context.Context, userID uuid.UUID, groupID *uuid.UUID) error {
 	return s.tx.Do(ctx, func(ctx context.Context) error {
-		ok, err := s.repo.SetUserGroup(ctx, userID, groupID)
+		u, ok, err := s.repo.LockUser(ctx, userID)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return errs.Newf(errs.ValidationFailed, "用户或分组不存在")
+		}
+		if u.Status == StatusDeleted {
+			return errAccountDeleted()
+		}
+		ok, err = s.repo.SetUserGroup(ctx, userID, groupID)
 		if err != nil {
 			if errors.Is(err, repo.ErrForeignKey) {
 				return errs.Newf(errs.ValidationFailed, "用户或分组不存在")

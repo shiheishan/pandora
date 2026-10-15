@@ -26,10 +26,18 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+// fakeAccounts 代替 identity 的账号状态：deleted 里的账号算已注销。
+type fakeAccounts struct{ deleted map[uuid.UUID]bool }
+
+func (f *fakeAccounts) IsDeleted(_ context.Context, id uuid.UUID) (bool, error) {
+	return f.deleted[id], nil
+}
+
 type env struct {
-	svc  *Service
-	row  func(ctx context.Context, q string, args ...any) *sql.Row
-	exec func(ctx context.Context, q string, args ...any) error
+	svc      *Service
+	accounts *fakeAccounts
+	row      func(ctx context.Context, q string, args ...any) *sql.Row
+	exec     func(ctx context.Context, q string, args ...any) error
 	// replica 只在真提交的环境里有：在一个 session_replication_role = replica 的事务里执行 q，
 	// 用来删掉本用例建的订单（orders 有禁删触发器）。回滚事务的环境为 nil。
 	replica func(q string, args ...any) error
@@ -59,13 +67,16 @@ func newEnv(t *testing.T) (*env, context.Context) {
 	}
 	settings := settingssvc.New(settingsrepo.New(d), tx.NewManager(d), sealer, rdb, auditSvc)
 	svc := New(repo.New(d), tx.NewManager(d), settings, auditSvc)
+	accounts := &fakeAccounts{deleted: map[uuid.UUID]bool{}}
+	svc.UseAccountStates(accounts)
 
 	ctx := testkit.TxCtx(t, d)
 	ctx = reqid.With(ctx, reqid.New())
 	ctx = reqmeta.With(ctx, reqmeta.Meta{IP: "203.0.113.7", UserAgent: "ledger-test/1.0"})
 
 	e := &env{
-		svc: svc,
+		svc:      svc,
+		accounts: accounts,
 		row: func(ctx context.Context, q string, args ...any) *sql.Row {
 			return d.Conn(ctx).Raw(q, args...).Row()
 		},
@@ -103,9 +114,12 @@ func newCommitEnv(t *testing.T) (*env, context.Context) {
 	}
 	settings := settingssvc.New(settingsrepo.New(d), tx.NewManager(d), sealer, rdb, auditSvc)
 	svc := New(repo.New(d), tx.NewManager(d), settings, auditSvc)
+	accounts := &fakeAccounts{deleted: map[uuid.UUID]bool{}}
+	svc.UseAccountStates(accounts)
 
 	e := &env{
-		svc: svc,
+		svc:      svc,
+		accounts: accounts,
 		row: func(ctx context.Context, q string, args ...any) *sql.Row {
 			return d.Conn(ctx).Raw(q, args...).Row()
 		},

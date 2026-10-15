@@ -21,11 +21,25 @@ import (
 )
 
 // StartRegistration 是注册第 1 步：校验注册策略与邀请码，签发注册令牌；需要验证邮箱时发验证码。
-func (s *Service) StartRegistration(ctx context.Context, email, inviteCode string) (RegistrationStart, error) {
+func (s *Service) StartRegistration(ctx context.Context, email, inviteCode, captchaToken string) (RegistrationStart, error) {
 	start := time.Now()
 	email = normalizeEmail(email)
-	if !ValidEmail(email) {
+	if !ValidEmail(email) || reservedEmail(email) {
 		return RegistrationStart{}, errEmailInvalid()
+	}
+	cfg, err := s.settings.Signup(ctx)
+	if err != nil {
+		return RegistrationStart{}, err
+	}
+	// 先做本地的 IP 限额，再调第三方人机验证：被限的请求不再往外打一次 HTTP；人机验证失败的请求也计入限额
+	if err := s.limitRegisterIP(ctx, cfg); err != nil {
+		return RegistrationStart{}, err
+	}
+	if err := s.captcha.verify(ctx, cfg, captchaToken, captchaActionRegister); err != nil {
+		return RegistrationStart{}, err
+	}
+	if err := checkEmailPolicy(cfg, email); err != nil {
+		return RegistrationStart{}, err
 	}
 	inviteCode = strings.ToUpper(strings.TrimSpace(inviteCode))
 	if len(inviteCode) > 32 {
@@ -106,6 +120,7 @@ func (s *Service) StartRegistration(ctx context.Context, email, inviteCode strin
 }
 
 // CompleteRegistration 是注册第 2 步：凭注册令牌与验证码建号。返回新用户。
+// 开了邮箱验证时，试用在验证码核对通过、账号建成的同一事务里发放；试用不建订单，不计佣、不进收入。
 func (s *Service) CompleteRegistration(ctx context.Context, token, code, password string) (User, error) {
 	if err := validatePassword(password, false); err != nil {
 		return User{}, err
@@ -145,12 +160,19 @@ func (s *Service) CompleteRegistration(ctx context.Context, token, code, passwor
 		if policy.Mode == settingssvc.RegistrationClosed {
 			return ErrRegistrationUnavailable
 		}
+		cfg, err := s.settings.Signup(ctx)
+		if err != nil {
+			return err
+		}
 		sess, ok, err := s.repo.LockRegistrationByToken(ctx, hashToken(token))
 		if err != nil {
 			return err
 		}
 		if !ok || sess.Status != RegistrationPending || sess.Attempts >= registrationMaxAttempts {
 			return ErrRegistrationUnavailable
+		}
+		if err := checkEmailPolicy(cfg, sess.Email); err != nil {
+			return err
 		}
 		if policy.Mode == settingssvc.RegistrationInviteOnly && sess.InviteCodeID == nil {
 			return ErrRegistrationUnavailable
@@ -225,12 +247,22 @@ func (s *Service) CompleteRegistration(ctx context.Context, token, code, passwor
 					return err
 				}
 			}
-			ok, err := s.repo.ConsumeInvite(ctx, inv.ID)
+			singleUse := !cfg.InviteNeverExpire && inv.OwnerUserID != nil
+			ok, err := s.repo.ConsumeInvite(ctx, inv.ID, singleUse)
 			if err != nil {
 				return err
 			}
 			if !ok {
 				return ErrRegistrationUnavailable
+			}
+		}
+		if cfg.TrialHours > 0 && cfg.TrialPlanID != nil {
+			g, err := s.needTrials()
+			if err != nil {
+				return err
+			}
+			if err := g.GrantSignupTrial(ctx, u.ID, *cfg.TrialPlanID, cfg.TrialHours); err != nil {
+				return err
 			}
 		}
 		if err := s.writeSelfAudit(ctx, u.ID, auditsvc.Event{Action: ActionRegistered}); err != nil {

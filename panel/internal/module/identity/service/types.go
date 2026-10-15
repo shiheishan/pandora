@@ -1,8 +1,10 @@
 package service
 
 import (
+	"strings"
 	"time"
 
+	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -14,6 +16,8 @@ const (
 	StatusActive    = "active"
 	StatusSuspended = "suspended"
 	StatusBanned    = "banned"
+	// StatusDeleted 已注销并匿名化：不能登录、不能找回；订单、账本、佣金、审计保留
+	StatusDeleted = "deleted"
 )
 
 // 验证码用途（与迁移的 CHECK 一致）。
@@ -37,6 +41,10 @@ const (
 	ActionGroupChanged         = "user.group_changed"
 	ActionUserGroupSaved       = "user_group.saved"
 	ActionUserGroupDeleted     = "user_group.deleted"
+	ActionEmailChanged         = "user.email_changed"
+	ActionNoteChanged          = "user.note_changed"
+	ActionDeleted              = "user.deleted"
+	ActionBulkBanned           = "user.bulk_banned"
 
 	ResourceUser      = "user"
 	ResourceUserGroup = "user_group"
@@ -149,6 +157,8 @@ type UserDetail struct {
 	IsAdmin       bool
 	Referrer      *UserRef
 	ReferralCount int64
+	AdminNote     *string
+	DeletedAt     *time.Time
 
 	// 下面经端口由别的模块补（admin_views.go）
 	// Subscriptions 按创建时间倒序；永不为 nil
@@ -176,3 +186,41 @@ type Group struct {
 	Coupons        int64
 	ExclusivePools []PoolRef
 }
+
+// BulkBanResult 是按筛选批量封禁的结果；Skipped 的键是跳过原因：self、admin、already_banned、deleted。
+type BulkBanResult struct {
+	Banned  int
+	Skipped map[string]int
+}
+
+// 批量封禁的跳过原因。
+const (
+	BanSkipSelf          = "self"
+	BanSkipAdmin         = "admin"
+	BanSkipAlreadyBanned = "already_banned"
+	BanSkipDeleted       = "deleted"
+)
+
+// BulkBanMax 是一次批量封禁的人数上限。
+const BulkBanMax = 500
+
+// errAccountDeleted 是对已注销账号做后台操作时的错误。
+func errAccountDeleted() error { return errs.Newf(errs.Conflict, "账号已注销") }
+
+// deletedEmailDomain 是占位邮箱的域名（.invalid 是保留顶级域，不可投递）。
+const deletedEmailDomain = "deleted.invalid"
+
+// DeletedEmail 是注销后写进 users.email 的占位值：不可投递（.invalid 保留域名）、不可登录，也挡住原邮箱找回。
+func DeletedEmail(id uuid.UUID) string {
+	return "deleted-" + strings.ReplaceAll(id.String(), "-", "") + "@" + deletedEmailDomain
+}
+
+// reservedEmail 报告邮箱是不是占位邮箱的域名（任何大小写）。注册、命令行建号、批量生成、后台改邮箱都拒它：
+// 否则有人先占了 DeletedEmail(某人 id)，那个人注销时匿名化会撞邮箱唯一约束，永远注销不了。
+func reservedEmail(email string) bool {
+	at := strings.LastIndexByte(email, '@')
+	return at >= 0 && strings.EqualFold(strings.TrimSpace(email[at+1:]), deletedEmailDomain)
+}
+
+// DeletedShortID 是界面上「已注销 #<短 id>」用的 id 前 8 位，与后台各处显示的短 id（前端 shortId）同一口径。
+func DeletedShortID(id uuid.UUID) string { return id.String()[:8] }

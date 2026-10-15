@@ -304,7 +304,8 @@ func (s *Service) DisableIPClusterAccounts(ctx context.Context, key string, user
 				skip(id, SkipAdministrator)
 				continue
 			}
-			if u.Status == StatusSuspended || u.Status == StatusBanned {
+			// 已注销的同样跳过
+			if u.Status == StatusSuspended || u.Status == StatusBanned || u.Status == StatusDeleted {
 				skip(id, SkipAlreadyDisabled)
 				continue
 			}

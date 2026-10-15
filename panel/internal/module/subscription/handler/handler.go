@@ -44,6 +44,8 @@ type Service interface {
 	MyNodes(ctx context.Context, subID uuid.UUID) ([]service.NodePreview, error)
 	MyUsage(ctx context.Context, subID uuid.UUID, days int) (service.DailyUsage, error)
 	AdminRotate(ctx context.Context, subID uuid.UUID, reason string) (service.AdminRotateResult, error)
+	AdminSetPeriodEnd(ctx context.Context, subID uuid.UUID, end time.Time, reason string) (service.AdminSetPeriodEndResult, error)
+	AdminSetQuotaLimit(ctx context.Context, subID uuid.UUID, metric, period string, limit *int64, reason string) error
 	TemplateService
 }
 
@@ -111,6 +113,8 @@ func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	v1.GET("/users/:id/traffic-resets", k.RequireAuth, h.userTrafficResets)
 	// 换掉别人的链接会让他所有设备断开：要近期重认证；不是「多一份」的操作，不挂幂等
 	v1.POST("/subscriptions/:id/rotate", k.RequireAuth, k.RecentReauth, h.adminRotateLink)
+	v1.POST("/subscriptions/:id/period-end", k.RequireAuth, k.RecentReauth, h.adminSetPeriodEnd)
+	v1.POST("/subscriptions/:id/quota", k.RequireAuth, k.RecentReauth, h.adminSetQuotaLimit)
 	// 改模板影响所有用户的订阅，保存与恢复缺省要近期重认证；预览只渲染示例节点、不写库
 	v1.GET("/subscription-templates", k.RequireAuth, h.adminTemplates)
 	v1.GET("/subscription-templates/:format", k.RequireAuth, h.adminTemplate)

@@ -20,6 +20,11 @@ func TestMissingPortsZeroValueListsAllRequired(t *testing.T) {
 		"OpsGroupUsage",
 		"JobQueue",
 		"PluginEvents",
+		"TrialGranter",
+		"AccountCloser",
+		"OrderCanceller",
+		"CommissionVoider",
+		"TelegramUnbinder",
 	}
 	got := s.MissingPorts()
 	if !reflect.DeepEqual(got, want) {

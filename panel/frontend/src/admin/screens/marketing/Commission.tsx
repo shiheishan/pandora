@@ -104,7 +104,7 @@ function WithdrawalRow({ withdrawal: w, onDialog }: { withdrawal: Withdrawal; on
             {w.paid_usdt_amount ? ` · 实付 ${w.paid_usdt_amount} USDT` : ''}
           </span>
         )}
-        {w.status === 'rejected' && w.reject_reason && <span className={`${css.faint} ${local.ellipsis}`}>拒绝理由：{w.reject_reason}</span>}
+        {w.status === 'rejected' && w.reject_reason && <span className={`${css.faint} ${local.ellipsis}`}>拒绝理由：{w.reject_reason === 'account_deleted' ? '账号已注销' : w.reject_reason}</span>}
       </span>
       <span className={local.amount}>
         <span className={local.money}>{formatMoney(w.amount, w.currency)}</span>

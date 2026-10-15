@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { APPEARANCE_CACHE_KEY, pickThemeTokens, portalBranding, readThemeCache, themeCacheValue, writeThemeCache } from './appearance'
-import { quickLoginLink, quickLoginTokenFromHash, quickLoginTokenFromInput, readStoredInvite, takeInviteFromUrl, INVITE_STORAGE_KEY } from './entry-links'
+import { mailLoginTokenFromHash, quickLoginLink, quickLoginTokenFromHash, quickLoginTokenFromInput, readStoredInvite, takeInviteFromUrl, INVITE_STORAGE_KEY } from './entry-links'
 import { greeting, MENU_PAGES, NAV_PAGES, navLabel, navOwner, resolvePage } from './pages'
 import { displayName } from './queries'
 
@@ -85,6 +85,15 @@ describe('quick-login tokens', () => {
     expect(link).toBe(`https://portal.example/#/quick-login/${token}`)
     expect(quickLoginTokenFromInput(link)).toBe(token)
     expect(quickLoginLink(token, 'https://example.com/portal/index.html#/account')).toBe(`https://example.com/portal/#/quick-login/${token}`)
+  })
+})
+
+describe('mail-login tokens', () => {
+  it('reads the token from the hash link', () => {
+    expect(mailLoginTokenFromHash('#/mail-login/abc_DEF-1')).toBe('abc_DEF-1')
+    expect(mailLoginTokenFromHash('#/quick-login/x')).toBeNull()
+    expect(mailLoginTokenFromHash('#/subs')).toBeNull()
+    expect(mailLoginTokenFromHash('')).toBeNull()
   })
 })
 

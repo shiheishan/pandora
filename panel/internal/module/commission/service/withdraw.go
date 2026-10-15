@@ -23,8 +23,8 @@ var errPayoutStateLost = errs.Newf(errs.Conflict, "提现状态已变化，请�
 // errPayoutUnderfunded 是可提现佣金科目余额不够这笔打款（账本与提现记录对不上，需要人工核对）。
 var errPayoutUnderfunded = errs.Newf(errs.Conflict, "可提现佣金账户余额不足，无法打款")
 
-// available 按唯一口径算用户某一币种的可用佣金：已解冻 − 未驳回的提现（在途与已打款）− 已转余额。可能为负（只在账本被手工改过时）。
-// 要据此放行动账的调用方必须先在本事务里 LockUser。
+// available 按唯一口径算用户某一币种的可用佣金：已解冻 − 未驳回的提现（在途与已打款）− 已转余额 − 注销时作废的。
+// 可能为负（只在账本被手工改过时）。要据此放行动账的调用方必须先在本事务里 LockUser。
 func (s *Service) available(ctx context.Context, userID uuid.UUID, cur money.Currency) (decimal.Decimal, error) {
 	et, err := s.repo.EntryTotalsOf(ctx, userID, string(cur))
 	if err != nil {
@@ -34,11 +34,20 @@ func (s *Service) available(ctx context.Context, userID uuid.UUID, cur money.Cur
 	if err != nil {
 		return decimal.Zero, err
 	}
+	return s.availableFrom(ctx, userID, cur, et, wt)
+}
+
+// availableFrom 同 available，条目与提现汇总由调用方先查好（门户汇总要展示它们）。
+func (s *Service) availableFrom(ctx context.Context, userID uuid.UUID, cur money.Currency, et repo.EntryTotals, wt repo.WithdrawalTotals) (decimal.Decimal, error) {
 	tr, err := s.repo.TransferTotalOf(ctx, userID, string(cur))
 	if err != nil {
 		return decimal.Zero, err
 	}
-	return et.Available.Sub(wt.InFlight).Sub(wt.Paid).Sub(tr), nil
+	fo, err := s.repo.ForfeitTotalOf(ctx, userID, string(cur))
+	if err != nil {
+		return decimal.Zero, err
+	}
+	return et.Available.Sub(wt.InFlight).Sub(wt.Paid).Sub(tr).Sub(fo), nil
 }
 
 // RequestWithdrawal 发起一笔提现申请，返回申请 id。币种取用户唯一有可用佣金的那个（见 pickCurrency）。只改状态不记账，钱在打款那一步才离开可提现佣金。
@@ -53,6 +62,9 @@ func (s *Service) RequestWithdrawal(ctx context.Context, userID uuid.UUID, amoun
 	var id uuid.UUID
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
 		if err := s.repo.LockUser(ctx, userID); err != nil {
+			return err
+		}
+		if err := s.rejectDeleted(ctx, userID); err != nil {
 			return err
 		}
 		wd, err := s.settings.CommissionWithdraw(ctx)
@@ -202,6 +214,12 @@ func (s *Service) ReviewWithdrawal(ctx context.Context, id uuid.UUID, approve bo
 		if !ok {
 			return ErrWithdrawalNotFound
 		}
+		// 申请人已注销不许批准（注销时在途提现已一并驳回）；驳回不出钱，照常走下面的状态检查
+		if approve {
+			if err := s.rejectDeleted(ctx, w.UserID); err != nil {
+				return err
+			}
+		}
 		// 只有申请中的可以审批：已打款的再被「拒绝」会让钱既出去了又记成拒绝
 		if !CanWithdrawalTransition(w.Status, to) {
 			return ErrWithdrawalHandled
@@ -249,6 +267,10 @@ func (s *Service) MarkWithdrawalPaid(ctx context.Context, id uuid.UUID, referenc
 		}
 		if !ok {
 			return ErrWithdrawalNotFound
+		}
+		// 申请人已注销不许打款：持有提现行锁时读到未注销，注销的作废就排在本事务之后、看得见这笔已打款
+		if err := s.rejectDeleted(ctx, w.UserID); err != nil {
+			return err
 		}
 		if !CanWithdrawalTransition(w.Status, WithdrawalPaid) {
 			return ErrWithdrawalNotPayable

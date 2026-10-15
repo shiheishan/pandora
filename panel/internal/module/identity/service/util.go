@@ -107,6 +107,12 @@ func (s *Service) targetHash(email string) []byte {
 	return s.keys.HMAC(crypto.InfoHMACIdentity, []byte("vc-target:"+normalizeEmail(email)))
 }
 
+// auditEmailHMAC 是审计里对照邮箱用的 HMAC（规整后，前 16 字节 hex）：审计不记明文邮箱，要判断两条记录是不是同一个邮箱就比它。
+func (s *Service) auditEmailHMAC(email string) string {
+	sum := s.keys.HMAC(crypto.InfoHMACIdentity, []byte("audit-email:"+normalizeEmail(email)))
+	return hex.EncodeToString(sum[:16])
+}
+
 // codeHash 是验证码的 HMAC：6 位数字只有一百万种，不能只做 sha256。
 func (s *Service) codeHash(code string) []byte {
 	return s.keys.HMAC(crypto.InfoHMACIdentity, []byte("vc-code:"+code))

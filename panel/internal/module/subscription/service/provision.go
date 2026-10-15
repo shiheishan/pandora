@@ -36,10 +36,20 @@ func (s *Service) Provision(ctx context.Context, in Provision) (Subscription, er
 	if err != nil {
 		return Subscription{}, err
 	}
-	var out Subscription
-	err = s.tx.Do(ctx, func(ctx context.Context) error {
-		start := s.clock()
-		end := AddInterval(start, in.Price.Interval, in.Price.IntervalCount).Truncate(time.Microsecond)
+	start := s.clock()
+	end := AddInterval(start, in.Price.Interval, in.Price.IntervalCount).Truncate(time.Microsecond)
+	m, err := s.provisionAt(ctx, in, v, label, start, end, nil)
+	if err != nil {
+		return Subscription{}, err
+	}
+	return toSubscription(m), nil
+}
+
+// provisionAt 在 ctx 的事务里建一份 active 订阅：周期 [start, end)，按版本 v 建配额，起备注名、签凭据、写 activated 事件（payload 合并 extra）、
+// 挂未分配流量包、通知名单。调用方已校验 in 的价格、操作者与备注名。
+func (s *Service) provisionAt(ctx context.Context, in Provision, v catalogsvc.Version, label string, start, end time.Time, extra map[string]any) (model.Subscription, error) {
+	var out model.Subscription
+	err := s.tx.Do(ctx, func(ctx context.Context) error {
 		m := model.Subscription{
 			UserID:                in.UserID,
 			PlanID:                in.PlanID,
@@ -69,18 +79,22 @@ func (s *Service) Provision(ctx context.Context, in Provision) (Subscription, er
 		if err := s.issueCredential(ctx, m); err != nil {
 			return err
 		}
-		if err := s.writeEvent(ctx, m.ID, EventActivated, nil, StatusActive, in.Actor, in.SourceOrderID, map[string]any{
+		payload := map[string]any{
 			"plan_version_id": in.PlanVersionID,
 			"period_start":    start,
 			"period_end":      end,
-		}); err != nil {
+		}
+		for k, val := range extra {
+			payload[k] = val
+		}
+		if err := s.writeEvent(ctx, m.ID, EventActivated, nil, StatusActive, in.Actor, in.SourceOrderID, payload); err != nil {
 			return err
 		}
 		if err := s.attachUnassignedPacks(ctx, m); err != nil {
 			return err
 		}
 		s.notifyRoster(ctx, m.ID)
-		out = toSubscription(m)
+		out = m
 		return nil
 	})
 	return out, err

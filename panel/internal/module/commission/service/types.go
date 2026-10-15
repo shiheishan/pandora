@@ -78,7 +78,17 @@ const (
 	SourceCommissionEntry    = "commission_entry"
 	SourceWithdrawal         = "withdrawal"
 	SourceCommissionTransfer = "commission_transfer"
+	// SourceCommissionForfeiture 是注销时作废可提现佣金的冲回交易来源（commission_forfeitures 的一行）。
+	SourceCommissionForfeiture = "commission_forfeiture"
 )
+
+// ReasonAccountDeleted 是账号注销时作废佣金、驳回提现记的原因（条目 void_reason、提现 reject_reason、
+// commission_forfeitures.reason 同一个值；与 order 取消待付单的原因同名）。
+const ReasonAccountDeleted = "account_deleted"
+
+// reviewDeletedReason 是解冻时发现受益人已注销、转人工复核的原因（注销提交前一刻才计提、没赶上注销作废的条目），
+// 后台只能作废、不能通过。
+const reviewDeletedReason = "受益人账号已注销，请作废这条佣金"
 
 // 列表条数上限。
 const (
@@ -118,6 +128,11 @@ var (
 	// ErrTransferNotSiteCurrency 是可用佣金只有非站点币种：钱包只显示站点币种，这部分请走提现。
 	ErrTransferNotSiteCurrency = errs.Newf(errs.Conflict, "这部分佣金不是站点币种，不能转入余额，请走提现")
 	ErrEntryNotFound           = errs.Newf(errs.NotFound, "佣金条目不存在")
+	// ErrAccountDeleted 是佣金的受益人或提现的申请人已注销：注销时名下未打款的佣金与在途提现都已作废，不再出钱。
+	ErrAccountDeleted = errs.Newf(errs.Conflict, "账号已注销")
+	// ErrApprovedWithdrawalPending 是注销时他还有已批准、没标记打款的提现（用户 10-14 定：这种情况不许注销，
+	// 免得线下已打款的钱被驳回成平台收入、之后标记打款又对不上账）。
+	ErrApprovedWithdrawalPending = errs.Newf(errs.Conflict, "该用户有已批准、还没标记打款的提现，先在佣金页把它标记为已打款，再注销")
 	// ErrEntryNotReviewable 是条目不在待复核状态（已复核过、已解冻或已作废）：重放与并发的第二次都落在这里。
 	ErrEntryNotReviewable = errs.Newf(errs.Conflict, "这条佣金不在待复核状态，可能已被处理，请刷新")
 	// ErrVoidUnderfunded 是推荐人的待结佣金科目不够冲回这一条（账本与条目对不上，需要人工核对账本）。
@@ -130,7 +145,7 @@ var (
 type Summary struct {
 	Currency        money.Currency
 	Pending         decimal.Decimal // 冻结中
-	Available       decimal.Decimal // 可提现（已解冻 − 未驳回的提现 − 已转余额，不小于 0）
+	Available       decimal.Decimal // 可提现（已解冻 − 未驳回的提现 − 已转余额 − 注销作废，不小于 0）
 	Withdrawing     decimal.Decimal // 提现处理中（申请中、已批准）
 	Settled         decimal.Decimal // 已打款
 	TotalEarned     decimal.Decimal // 累计佣金（含冻结中）

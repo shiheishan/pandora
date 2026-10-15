@@ -21,6 +21,7 @@ import {
   shortId,
   trafficView,
   unattachedNext,
+  userLabel,
 } from './model'
 import { sharingHint } from './RiskTab'
 
@@ -34,6 +35,7 @@ describe('状态分段 → 后端 query', () => {
     expect(listParams('active', '', ' a@b ', 25)).toEqual({ offset: 25, q: 'a@b', status: 'active' })
     expect(listParams('disabled', 'none', '', 0)).toEqual({ offset: 0, group_id: 'none', status: 'suspended,banned' })
     expect(listParams('expired', 'g1', '', 0)).toEqual({ offset: 0, group_id: 'g1', sub_state: 'expired' })
+    expect(listParams('deleted', '', '', 0)).toEqual({ offset: 0, status: 'deleted' })
   })
 })
 
@@ -68,6 +70,12 @@ describe('列表三列', () => {
     expect(initial('zhang@qq.com', null)).toBe('Z')
     expect(initial('zhang@qq.com', ' 张伟 ')).toBe('张')
     expect(shortId('1a2b3c4d-0000-4000-8000-000000000001')).toBe('1a2b3c4d')
+  })
+
+  it('userLabel：已注销显示短 id，否则显示邮箱', () => {
+    const id = '1a2b3c4d-0000-4000-8000-000000000001'
+    expect(userLabel({ id, email: 'a@example.test', status: 'active' })).toBe('a@example.test')
+    expect(userLabel({ id, email: 'deleted-xxx@deleted.invalid', status: 'deleted' })).toBe('已注销 #1a2b3c4d')
   })
 })
 
@@ -211,8 +219,13 @@ describe('schema', () => {
       referrer: null,
       telegram: null,
       unattached_pack_bytes: 5 * 1024 ** 3,
+      admin_note: null,
+      deleted_at: null,
     }
     expect(userDetailSchema.safeParse(detail).success).toBe(true)
+    // 已注销（xb-reg）：状态 deleted、注销时间与后台备注可有值
+    expect(userDetailSchema.safeParse({ ...detail, status: 'deleted', deleted_at: days(-1), admin_note: '退款纠纷' }).success).toBe(true)
+    expect(userDetailSchema.safeParse({ ...detail, admin_note: undefined }).success).toBe(false)
     // 顶层未分配的流量包余量（B 路 UserDetail.UnattachedPackBytes，非 omitempty）：必填、非负整数
     expect(userDetailSchema.safeParse({ ...detail, unattached_pack_bytes: undefined }).success).toBe(false)
     expect(userDetailSchema.safeParse({ ...detail, unattached_pack_bytes: -1 }).success).toBe(false)

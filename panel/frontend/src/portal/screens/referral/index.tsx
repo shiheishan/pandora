@@ -7,6 +7,7 @@ import { useCommission, useSiteConfig, type Commission } from '../../queries'
 import { LoadError } from '../common/Blocks'
 import { copyText } from '../common/clients'
 import { endsIntent, useIntentKey } from '../common/intent'
+import { InviteCodesCard } from './InviteCodes'
 import { useInvite, useRequestWithdrawal, useTransferCommission } from './api'
 import {
   commissionRecords,
@@ -28,6 +29,7 @@ export default function Referral() {
   return (
     <div className={css.page}>
       <InviteBanner summary={summary} />
+      <InviteCodesCard />
       {commission.isError ? (
         <Card>
           <LoadError error={commission.error} what="佣金概况" onRetry={() => void commission.refetch()} />

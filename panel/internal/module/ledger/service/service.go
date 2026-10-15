@@ -28,12 +28,18 @@ type siteReader interface {
 	Site(ctx context.Context) (settingssvc.Site, error)
 }
 
+// AccountStates 是 identity 的账号状态读取面（*identitysvc.Service 直接满足）：IsDeleted 读时给用户行加共享锁并持有到提交。
+type AccountStates interface {
+	IsDeleted(ctx context.Context, userID uuid.UUID) (bool, error)
+}
+
 // Service 是 ledger 模块对外的唯一入口。
 type Service struct {
 	repo     *repo.Repo
 	tx       txRunner
 	settings siteReader
 	audit    auditWriter
+	accounts AccountStates // 后台调账前拒已注销账号，装配时注入（UseAccountStates）
 }
 
 // New 构造 ledger service。
@@ -44,6 +50,17 @@ func New(r *repo.Repo, txm *tx.Manager, settings *settingssvc.Service, audit *au
 		settings: settings,
 		audit:    audit,
 	}
+}
+
+// UseAccountStates 注入 identity 的账号状态读取面；只在启动装配时调用（不并发安全）。
+func (s *Service) UseAccountStates(a AccountStates) { s.accounts = a }
+
+// MissingPorts 返回还没注入的必需端口名（装配自检用）。
+func (s *Service) MissingPorts() []string {
+	if s.accounts == nil {
+		return []string{"AccountStates"}
+	}
+	return nil
 }
 
 // DefaultCurrency 返回站点币种（settings 的 site.currency），解析失败报错。

@@ -43,3 +43,6 @@ func AfterCommit(ctx context.Context, key string, fn func(ctx context.Context)) 
 		fn(context.WithoutCancel(ctx))
 	}
 }
+
+// InTx 报告 ctx 里是否已有事务：只在调用方必须加入外层事务（如持有到提交的咨询锁）时用来拒绝误用。
+func InTx(ctx context.Context) bool { return db.InTx(ctx) }

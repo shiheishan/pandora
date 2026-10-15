@@ -209,3 +209,46 @@ func TestAdjustUnknownUser(t *testing.T) {
 		t.Fatalf("期望 not_found，得 %s %v", codeOf(err), err)
 	}
 }
+
+// 已注销的账号：加钱 409、不记账；扣减照常成功并记账（线下退款后冲平余额）。
+func TestAdjustDeletedUser(t *testing.T) {
+	e, ctx := newEnv(t)
+	admin := e.mkUser(t, ctx)
+	ctx = asAdmin(ctx, admin)
+	gone := e.mkUser(t, ctx)
+	if _, err := e.svc.AdjustBalance(ctx, Adjustment{
+		UserID: gone, Amount: dec("8.00"), Currency: "USD", Reason: "注销前留下的余额",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.accounts.deleted[gone] = true
+
+	_, err := e.svc.AdjustBalance(ctx, Adjustment{
+		UserID: gone, Amount: dec("5.00"), Currency: "USD", Reason: "给已注销账号加钱",
+	})
+	if codeOf(err) != errs.Conflict {
+		t.Fatalf("加钱期望 conflict，得 %s %v", codeOf(err), err)
+	}
+	var n int64
+	if err := e.row(ctx, `SELECT count(*) FROM ledger_transactions WHERE source_id = ?`, gone).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("加钱不该记账：n=%d err=%v", n, err)
+	}
+
+	res, err := e.svc.AdjustBalance(ctx, Adjustment{
+		UserID: gone, Amount: dec("-8.00"), Currency: "USD", Reason: "线下已退款，冲平余额",
+	})
+	if err != nil {
+		t.Fatalf("扣减应成功：%v", err)
+	}
+	if !res.Balance.IsZero() {
+		t.Fatalf("冲平后余额 %s，期望 0", res.Balance)
+	}
+	if err := e.row(ctx, `SELECT count(*) FROM ledger_transactions WHERE source_id = ?`, gone).Scan(&n); err != nil || n != 2 {
+		t.Fatalf("扣减应记账：n=%d err=%v", n, err)
+	}
+
+	bare := &Service{}
+	if got := bare.MissingPorts(); len(got) != 1 || got[0] != "AccountStates" {
+		t.Fatalf("MissingPorts %v", got)
+	}
+}

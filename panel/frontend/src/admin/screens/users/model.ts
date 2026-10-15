@@ -14,6 +14,7 @@ export const STATUS_FILTERS = [
   ['active', '正常'],
   ['disabled', '已禁用'],
   ['expired', '已过期'],
+  ['deleted', '已注销'],
 ] as const
 export type StatusFilter = (typeof STATUS_FILTERS)[number][0]
 
@@ -30,6 +31,7 @@ export function listParams(filter: StatusFilter, group: string, q: string, offse
   if (filter === 'active') params.status = 'active'
   if (filter === 'disabled') params.status = 'suspended,banned'
   if (filter === 'expired') params.sub_state = 'expired'
+  if (filter === 'deleted') params.status = 'deleted'
   return params
 }
 
@@ -44,6 +46,7 @@ export const USER_STATUS_VIEW: Record<UserStatus, { label: string; tone: Tone }>
   pending: { label: '待验证', tone: 'neutral' },
   deletion_scheduled: { label: '注销中', tone: 'neutral' },
   anonymized: { label: '已匿名', tone: 'neutral' },
+  deleted: { label: '已注销', tone: 'neutral' },
 }
 
 export const SUB_STATUS_VIEW: Record<SubStatus, { label: string; tone: Tone }> = {
@@ -108,6 +111,14 @@ export function initial(email: string, displayName: string | null): string {
 export function shortId(id: string): string {
   return id.slice(0, 8)
 }
+
+/** 已注销的账号邮箱是占位值，界面一律显示「已注销 #<短 id>」（与后端 DeletedShortID 同口径） */
+export function userLabel(u: { id: string; email: string; status: UserStatus }): string {
+  return u.status === 'deleted' ? `已注销 #${shortId(u.id)}` : u.email
+}
+
+/** 后台改邮箱、注销、改邀请人、批量封禁、改订阅的原因上限（后端 5–500 字） */
+export const REASON_MAX = 500
 
 // ===========================================================================
 // 列表三列

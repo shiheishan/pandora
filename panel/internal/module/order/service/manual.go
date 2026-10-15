@@ -61,8 +61,27 @@ func checkSettlement(settlement, reference string) (string, string, error) {
 	}
 }
 
-// requireUser 确认用户存在；不存在回 404。
+// errAccountDeleted 是给已注销的账号下单、开单（与 identity 同码同文案）。
+var errAccountDeleted = errs.Newf(errs.Conflict, "账号已注销")
+
+// rejectDeleted 拒绝给已注销账号写订单。在事务里第一个调（先于锁订单、订阅等行）：identity 读时给用户行加共享锁，
+// 锁序与注销（用户行 → 订单 → 订阅）一致；注销提交前进来的要等，提交后读到 deleted 回 409，不会在注销之后又冒出待付单。
+func (s *Service) rejectDeleted(ctx context.Context, userID uuid.UUID) error {
+	deleted, err := s.users.IsDeleted(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if deleted {
+		return errAccountDeleted
+	}
+	return nil
+}
+
+// requireUser 确认用户存在且没注销；不存在回 404，已注销回 409。
 func (s *Service) requireUser(ctx context.Context, userID uuid.UUID) error {
+	if err := s.rejectDeleted(ctx, userID); err != nil {
+		return err
+	}
 	emails, err := s.users.Emails(ctx, []uuid.UUID{userID})
 	if err != nil {
 		return err

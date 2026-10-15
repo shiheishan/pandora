@@ -1,0 +1,25 @@
+.box {
+  min-height: 65px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.note {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+.error {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--fs-caption);
+}
+
+.loadFail {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  text-align: center;
+}

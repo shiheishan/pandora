@@ -83,7 +83,7 @@ func (s *Service) AdminRotate(ctx context.Context, subID uuid.UUID, reason strin
 	// 邮箱在同一事务里读：提交后再读，读失败时链接已经换了、后台却报失败，管理员重试就会再换一次
 	var email string
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
-		sub, err := s.lockOwned(ctx, subID, nil)
+		sub, err := s.lockForAdmin(ctx, subID)
 		if err != nil {
 			return err
 		}

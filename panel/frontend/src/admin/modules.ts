@@ -23,6 +23,7 @@ export const MODULES: Readonly<Record<ModuleKey, ModuleDef>> = {
       ['bulk', '批量运营'],
       ['devices', '设备策略'],
       ['resets', '流量重置'],
+      ['signup', '注册与邀请'],
     ],
   },
   plans: {
@@ -123,6 +124,7 @@ const PALETTE_EXTRAS: ReadonlyArray<readonly [ModuleKey, string | null, string]>
   ['security', 'risk', '共享 IP 聚类'],
   ['marketing', 'commission', '提现审核 / 打款'],
   ['users', 'resets', '流量重置统计'],
+  ['users', 'signup', '人机验证 / 邮箱后缀 / 注册试用 / 邀请码上限'],
   ['system', 'templates', '实发测试信'],
   ['billing', 'adjust', '收入调整登记与冲销'],
   ['nodes', 'subscription', '订阅模板 / 信息节点 / 订阅域名'],

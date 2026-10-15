@@ -3,7 +3,10 @@ import { z } from 'zod'
 import { isApiError } from '../core/api'
 import { useRuntime } from '../shell/runtime'
 import { Button, Input, useToast } from '../ui'
+import { useCaptcha } from './Captcha'
+import captchaCss from './Captcha.module.css'
 import css from './AuthPage.module.css'
+import { useSignupConfig } from './queries'
 
 // ---------------------------------------------------------------------------
 // 找回密码（契约 POST v1/auth/password-reset/start、/complete；用户 2026-10-07 定：邮件验证码，
@@ -29,6 +32,8 @@ function resetPasswordProblem(value: string): string | null {
 export function PasswordResetForm({ onDone, onCancel }: { onDone: (email: string) => void; onCancel: () => void }) {
   const { api } = useRuntime()
   const toast = useToast()
+  const signup = useSignupConfig()
+  const cap = useCaptcha(signup.data?.captcha ?? null)
   const [email, setEmail] = useState('')
   const [started, setStarted] = useState<z.output<typeof startSchema> | null>(null)
   const [code, setCode] = useState('')
@@ -37,6 +42,7 @@ export function PasswordResetForm({ onDone, onCancel }: { onDone: (email: string
     email?: string
     code?: string
     password?: string
+    captcha?: string
   }>({})
   const [busy, setBusy] = useState(false)
 
@@ -45,17 +51,29 @@ export function PasswordResetForm({ onDone, onCancel }: { onDone: (email: string
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) return setErrors({ email: '请输入有效邮箱' })
     setBusy(true)
     setErrors({})
+    // 没开人机验证时拿到空串；拿不到（没完成、加载失败）时显示原因并停在这一步。
+    const captchaToken = await cap.getToken('password_reset').catch((e: unknown) => {
+      setBusy(false)
+      setErrors({ captcha: e instanceof Error ? e.message : String(e) })
+      return null
+    })
+    if (captchaToken === null) return
     try {
+      const body: { email: string; captcha_token?: string } = { email: email.trim() }
+      if (captchaToken) body.captcha_token = captchaToken
       const out = await api.post('v1/auth/password-reset/start', startSchema, {
         auth: false,
-        body: { email: email.trim() },
+        body,
       })
       setStarted(out)
       toast(out.message)
     } catch (err) {
-      setErrors({
-        email: isApiError(err) && err.fields.email ? err.fields.email : message(err, '发送失败，请稍后重试'),
-      })
+      cap.reset()
+      const nextErr: typeof errors = {}
+      if (isApiError(err) && err.fields.captcha) nextErr.captcha = err.fields.captcha
+      if (isApiError(err) && err.fields.email) nextErr.email = err.fields.email
+      else if (!nextErr.captcha) nextErr.email = message(err, '发送失败，请稍后重试')
+      setErrors(nextErr)
     } finally {
       setBusy(false)
     }
@@ -97,6 +115,12 @@ export function PasswordResetForm({ onDone, onCancel }: { onDone: (email: string
         <form className={css.form} onSubmit={start} noValidate>
           <p className={css.muted}>填写注册时用的邮箱，我们会往这个邮箱发一个 6 位验证码。</p>
           <Input label="邮箱" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} error={errors.email} />
+          {cap.element}
+          {errors.captcha && (
+            <p className={captchaCss.error} role="alert">
+              {errors.captcha}
+            </p>
+          )}
           <div className={css.row}>
             <Button onClick={onCancel} disabled={busy}>
               返回登录

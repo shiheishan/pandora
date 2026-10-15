@@ -42,6 +42,23 @@ type fakeRefs struct {
 	mu       sync.Mutex
 	referrer map[uuid.UUID]uuid.UUID // 被推荐人 → 推荐人
 	emails   map[uuid.UUID]string
+	deleted  map[uuid.UUID]bool // markDeleted 标记的已注销账号
+}
+
+func (f *fakeRefs) AccountDeleted(_ context.Context, userID uuid.UUID) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.deleted[userID], nil
+}
+
+// markDeleted 把账号标成已注销。
+func (f *fakeRefs) markDeleted(id uuid.UUID) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.deleted == nil {
+		f.deleted = map[uuid.UUID]bool{}
+	}
+	f.deleted[id] = true
 }
 
 func (f *fakeRefs) ReferrerOf(_ context.Context, userID uuid.UUID) (*uuid.UUID, error) {
@@ -110,10 +127,10 @@ func (f *fakeSources) SharesSource(_ context.Context, a, b uuid.UUID) (bool, err
 	return f.same[[2]uuid.UUID{a, b}], nil
 }
 
-// commitTables 是真提交用例前后要清的表（同 order 包的 orderCommitTables，加上本模块的三张表；
+// commitTables 是真提交用例前后要清的表（同 order 包的 orderCommitTables，加上本模块的四张表；
 // CASCADE 带走订单子表、预留、订阅子表等）。不留会被别的包或解冻扫描扫到的数据。
 var commitTables = []string{
-	"commission_transfers", "withdrawals", "commission_entries",
+	"commission_forfeitures", "commission_transfers", "withdrawals", "commission_entries",
 	"orders", "plan_purchase_counters",
 	"late_payment_cases", "payment_events", "payments", "payment_intents",
 	"balance_holds", "coupon_redemptions", "subscriptions",

@@ -260,8 +260,9 @@ func newEngines(r *runtime, svc *services, hub *realtime.Hub, httpm *metrics.HTT
 		authH.Authenticate(authn.AudienceAdmin),
 		authH.DomainGuard(authn.AudienceAdmin),
 	)
-	// 前端页面：门户与后台各自的构建产物挂在各自引擎的 / 与 /assets/*
-	webapp.Mount(publicEng, web.PortalApp)
+	// 前端页面：门户与后台各自的构建产物挂在各自引擎的 / 与 /assets/*；
+	// 门户开了人机验证时入口页 CSP 按设置追加那一家的来源（后台不用人机验证，CSP 不变）
+	webapp.Mount(publicEng, web.PortalApp, webapp.WithExtraSources(portalCaptchaCSP(svc.settings)))
 	webapp.Mount(adminEng, web.AdminApp)
 	publicV1 := publicEng.Group("/v1")
 	adminV1 := adminEng.Group("/v1")

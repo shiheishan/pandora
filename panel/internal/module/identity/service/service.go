@@ -33,6 +33,7 @@ type auditWriter interface {
 type settingsReader interface {
 	RegistrationPolicy(ctx context.Context) (settingssvc.Registration, error)
 	MailConfigured(ctx context.Context) (bool, error)
+	Signup(ctx context.Context) (settingssvc.Signup, error)
 }
 
 // txRunner 是 *tx.Manager 的事务入口。
@@ -64,6 +65,15 @@ type Service struct {
 	// roster 由 node 实现（roster_notify.go）：账号状态、用户组变了，提交后通知节点名单重算。
 	roster RosterNotifier
 
+	// xb-reg 端口：注册试用、注销停订阅、注销取消待付订单、注销作废佣金、解绑 Telegram
+	// （subscription / order / commission / notify 实现，启动装配时注入）。
+	trials         TrialGranter
+	closer         AccountCloser
+	cancelOrders   OrderCanceller
+	voidCommission CommissionVoider
+	tgUnbind       TelegramUnbinder
+	captcha        *captchaVerifier
+
 	// 批量运营与风控（ops_types.go）：ops 是 audit 的读与复核写；subs 由 subscription 实现、queue 是 asynq 客户端，装配时注入。
 	ops    auditOps
 	subs   OpsSubscriptions
@@ -94,6 +104,7 @@ func New(r *repo.Repo, txm *tx.Manager, settings *settingssvc.Service, audit *au
 		hasher:   newPasswordHasher(cfg.Auth.PasswordHash),
 		devMode:  !cfg.IsProduction(),
 		now:      time.Now,
+		captcha:  newCaptchaVerifier(cfg.PublicBaseURL),
 	}
 }
 
@@ -220,6 +231,11 @@ func (s *Service) MissingPorts() []string {
 		{"OpsGroupUsage", s.groupUsage != nil},
 		{"JobQueue", s.queue != nil},
 		{"PluginEvents", s.events != nil},
+		{"TrialGranter", s.trials != nil},
+		{"AccountCloser", s.closer != nil},
+		{"OrderCanceller", s.cancelOrders != nil},
+		{"CommissionVoider", s.voidCommission != nil},
+		{"TelegramUnbinder", s.tgUnbind != nil},
 	} {
 		if !p.ok {
 			out = append(out, p.name)

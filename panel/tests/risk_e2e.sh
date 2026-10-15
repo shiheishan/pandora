@@ -868,6 +868,10 @@ def main():
         check(code == 200, "public 网关 readyz 200")
         ADMIN.login()
         ok("后台管理员已登录")
+        # 注册 IP 限额是后台设置（缺省每 IP 每分钟 10 次），不受 PANDORA_RATELIMIT_* 影响：一次性库上先关掉
+        # （与 lib/signup.sh 的 relax_signup_ip_limit 同一个接口；本脚本是 Python，直接调）
+        ADMIN.call("POST", "/v1/settings/signup", {"ip_limit_enabled": False})
+        ok("注册 IP 限额已关闭（一次性库）")
         _, js = ADMIN.call("GET", "/v1/devices")
         ctx["orig_policy"] = dict(mode=js["mode"], grace=js["grace"])
         ok(f"设备判定原值：{js['mode']}，grace {js['grace']}，窗口 {js['window_minutes']} 分钟")

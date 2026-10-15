@@ -33,7 +33,7 @@ type fakeSvc struct {
 	changed    bool
 }
 
-func (f *fakeSvc) StartRegistration(context.Context, string, string) (service.RegistrationStart, error) {
+func (f *fakeSvc) StartRegistration(context.Context, string, string, string) (service.RegistrationStart, error) {
 	return f.start, nil
 }
 
@@ -160,6 +160,7 @@ func TestRoutes(t *testing.T) {
 		"GET /v1/me", "GET /v1/me/invite",
 		"POST /v1/auth/password-reset/complete", "POST /v1/auth/password-reset/start",
 		"POST /v1/auth/register/complete", "POST /v1/auth/register/start",
+		"POST /v1/invite/visit", "POST /v1/me/invite/codes",
 		"POST /v1/me/password",
 	}
 	if strings.Join(pub, "\n") != strings.Join(wantPub, "\n") {
@@ -174,8 +175,10 @@ func TestRoutes(t *testing.T) {
 		"GET /v1/users/bulk/generate/jobs/:id", "GET /v1/users/bulk/generate/jobs/:id/result",
 		"POST /v1/ip-clusters/:key/disable-accounts", "POST /v1/ip-clusters/:key/review",
 		"POST /v1/me/password", "POST /v1/user-groups", "POST /v1/user-groups/:id",
-		"POST /v1/users/:id/group", "POST /v1/users/:id/reset-password", "POST /v1/users/:id/status",
-		"POST /v1/users/bulk/generate", "POST /v1/users/bulk/preview",
+		"POST /v1/users/:id/delete", "POST /v1/users/:id/email",
+		"POST /v1/users/:id/group", "POST /v1/users/:id/note", "POST /v1/users/:id/referrer",
+		"POST /v1/users/:id/reset-password", "POST /v1/users/:id/status",
+		"POST /v1/users/bulk/ban", "POST /v1/users/bulk/generate", "POST /v1/users/bulk/preview",
 	}
 	if strings.Join(adm, "\n") != strings.Join(wantAdm, "\n") {
 		t.Fatalf("后台路由:\n%s", strings.Join(adm, "\n"))
@@ -390,7 +393,7 @@ func TestAdminUserJSONKeys(t *testing.T) {
 	det := decodeMap(t, w.Body.Bytes())
 	detailExtra := []string{
 		"email_verified", "is_admin", "referrer", "stats", "subscriptions", "recent_orders",
-		"telegram", "unattached_pack_bytes",
+		"telegram", "unattached_pack_bytes", "admin_note", "deleted_at",
 	}
 	assertKeys(t, det, append(rowKeys, detailExtra...)...)
 	stats, _ := det["stats"].(map[string]any)
@@ -408,7 +411,7 @@ func TestAdminUserJSONKeys(t *testing.T) {
 		t.Fatalf("subscription amount %v", s0["amount"])
 	}
 	q0, _ := s0["quotas"].([]any)[0].(map[string]any)
-	assertKeys(t, q0, "metric", "limit", "consumed", "remaining")
+	assertKeys(t, q0, "metric", "period", "limit", "consumed", "remaining")
 	ordKeys := []string{
 		"id", "order_no", "user_email", "kind", "status", "currency", "total_amount", "payable_amount",
 		"paid_amount", "refunded_amount", "balance_applied", "created_at", "paid_at", "provider_code",

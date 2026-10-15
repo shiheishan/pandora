@@ -138,6 +138,14 @@ func (f *fakeAuth) Reauth(ctx context.Context, password string) (service.Tokens,
 	return f.reauthOut, nil
 }
 
+func (f *fakeAuth) StartMailLogin(ctx context.Context, email, captchaToken string) error {
+	return nil
+}
+
+func (f *fakeAuth) ConsumeMailLogin(ctx context.Context, token string) (service.Tokens, error) {
+	return service.Tokens{}, nil
+}
+
 func newEngine(f *fakeAuth, aud string) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	e := gin.New()

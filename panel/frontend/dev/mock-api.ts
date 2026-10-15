@@ -7,6 +7,7 @@ import { readSharedTheme } from './mock/appearance-share.ts'
 import { adminWritesEnabled, onSwitchChanged } from './mock/admin/security.ts'
 import { PORTAL_MODULES } from './mock/portal/index.ts'
 import { consumeQuickLogin } from './mock/quick-login.ts'
+import { allowMailLinkSend, consumeMailLink, issueMailLink, lastMailLink } from './mock/mail-link.ts'
 import { findRoute, matchPattern, type AnonContext, type Json, type MockApp, type MockContext, type MockRaw, type MockResult, type MockUser } from './mock/types.ts'
 
 // ---------------------------------------------------------------------------
@@ -145,6 +146,14 @@ function parseObject(text: string): Json | null {
 
 const str = (v: unknown) => (typeof v === 'string' ? v : '')
 
+/** 可选 captcha_token：有则必须是字符串且不超过 4096 字符 */
+function captchaFieldError(body: Json): Record<string, string> | null {
+  if (!('captcha_token' in body)) return null
+  const v = body.captcha_token
+  if (typeof v === 'string' && v.length <= 4096) return null
+  return { captcha_token: '人机验证参数无效' }
+}
+
 function initialUsers(app: MockApp): MockUser[] {
   if (app === 'portal') return [{ ...MOCK_ACCOUNTS.portal, userId: randomUUID(), displayName: '张伟' }]
   return [{ ...MOCK_ACCOUNTS.admin, userId: randomUUID(), displayName: '林舟' }]
@@ -235,6 +244,10 @@ export function mockApi(app: MockApp): Plugin {
     if (app === 'portal' && route === 'GET /v1/site-config') {
       return send(res, 200, { registration_mode: 'invite_only', email_verification: true, password_reset: true })
     }
+    // 演示环境不连第三方人机验证；真实环境由后台设置决定 mail_link_login / captcha / email_suffixes
+    if (app === 'portal' && route === 'GET /v1/signup-config') {
+      return send(res, 200, { captcha: null, email_suffixes: [], mail_link_login: true })
+    }
     if (app === 'portal' && route === 'GET /v1/appearance') {
       // 生效主题取后台假后端经 appearance-share 写下的那份（后台激活、门户刷新即生效）；没开过后台时用内置默认
       const shared = readSharedTheme()
@@ -246,6 +259,8 @@ export function mockApi(app: MockApp): Plugin {
     if (app === 'portal' && route === 'POST /v1/auth/register/start') {
       const body = await base.body()
       if (!body) return fail(res, 400, 'bad_request', '请求体不是合法的 JSON')
+      const capErr = captchaFieldError(body)
+      if (capErr) return fail(res, 422, 'validation_failed', '请求参数校验未通过', capErr)
       const email = str(body.email).trim().toLowerCase()
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return fail(res, 422, 'validation_failed', '请求参数校验未通过', { email: '邮箱格式不正确' })
       if (str(body.invite_code).toUpperCase() !== 'PANDORA') return fail(res, 403, 'forbidden', '注册当前不可用或邀请码无效')
@@ -277,6 +292,8 @@ export function mockApi(app: MockApp): Plugin {
     if (app === 'portal' && route === 'POST /v1/auth/password-reset/start') {
       const body = await base.body()
       if (!body) return fail(res, 400, 'bad_request', '请求体不是合法的 JSON')
+      const capErr = captchaFieldError(body)
+      if (capErr) return fail(res, 422, 'validation_failed', '请求参数校验未通过', capErr)
       const email = str(body.email).trim().toLowerCase()
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return fail(res, 422, 'validation_failed', '请求参数校验未通过', { email: '邮箱格式不正确' })
       const known = users.has(email)
@@ -317,9 +334,40 @@ export function mockApi(app: MockApp): Plugin {
       bindRefresh(res, userId)
       return send(res, 200, { access_token: token, token_type: 'Bearer', expires_in: ACCESS_EXPIRES_IN })
     }
+    if (app === 'portal' && route === 'POST /v1/auth/mail-link/start') {
+      const body = await base.body()
+      if (!body) return fail(res, 400, 'bad_request', '请求体不是合法的 JSON')
+      // 与找回第 1 步同口径：开了人机验证时带 captcha_token（演示环境不连第三方，只校验类型）
+      const capErr = captchaFieldError(body)
+      if (capErr) return fail(res, 422, 'validation_failed', '请求参数校验未通过', capErr)
+      const email = str(body.email).trim().toLowerCase()
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return fail(res, 422, 'validation_failed', '请求参数校验未通过', { email: '邮箱格式不正确' })
+      if (!allowMailLinkSend(email)) return fail(res, 429, 'rate_limited', '请求过于频繁，请稍后再试')
+      const user = users.get(email)
+      if (user) {
+        const token = issueMailLink(user.userId)
+        console.info('[mock] 邮件登录链接：#/mail-login/' + token)
+      }
+      return send(res, 200, { ok: true, message: '如果这个邮箱已注册，登录链接已发出，15 分钟内有效' })
+    }
+    if (app === 'portal' && route === 'POST /v1/auth/mail-link/login') {
+      const body = await base.body()
+      const userId = consumeMailLink(str(body?.token))
+      if (!userId) return fail(res, 401, 'unauthorized', '登录链接无效或已过期，请重新获取')
+      const token = issue(userId, req)
+      bindRefresh(res, userId)
+      return send(res, 200, { access_token: token, token_type: 'Bearer', expires_in: ACCESS_EXPIRES_IN })
+    }
+    if (app === 'portal' && route === 'POST /v1/invite/visit') {
+      return send(res, 200, { ok: true })
+    }
     if (route === 'POST /__mock/expire-reauth') {
       sessions.forEach((s) => (s.rat = 0))
       return send(res, 204)
+    }
+    // 只有假后端有：让测试与演示拿到刚发的登录链接
+    if (app === 'portal' && route === 'GET /__mock/mail-link') {
+      return send(res, 200, { token: lastMailLink() })
     }
 
     // --- admin.writes 只读门：Go 挂在整棵 /v1 上、先于认证 ----------------------
