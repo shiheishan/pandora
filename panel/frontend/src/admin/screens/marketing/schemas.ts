@@ -45,6 +45,10 @@ export const couponSchema = z.object({
   max_redemptions_per_user: z.number(),
   redeemed_count: z.number(),
   applicable_plan_ids: ids,
+  applicable_intervals: z
+    .array(z.string())
+    .nullable()
+    .transform((v) => v ?? []),
   valid_from: iso.nullable(),
   valid_until: iso.nullable(),
   status: z.string(),

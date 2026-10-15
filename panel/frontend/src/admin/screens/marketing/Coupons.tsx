@@ -6,7 +6,7 @@ import { useApi } from '../../../shell/runtime'
 import { Button, Empty, IconChevronDown, Modal, Pager, QueryView, Segmented, Switch, Tag, useToast } from '../../../ui'
 import { CouponForm, type BatchResult } from './CouponForm'
 import local from './Coupons.module.css'
-import { couponBatchLabel, couponState, discountLabel, formatDateTime, planScopeLabel, usage, validUntilLabel } from './logic'
+import { couponBatchLabel, couponState, discountLabel, formatDateTime, intervalScopeLabel, planScopeLabel, usage, validUntilLabel } from './logic'
 import css from './marketing.module.css'
 import { useCoupons, useFailure, useInvalidateMarketing, usePlanCatalog, useRedemptions } from './queries'
 import { okResponse, type Coupon, type Plan } from './schemas'
@@ -145,7 +145,9 @@ function CouponRow({
           {codeCell}
         </button>
         <span>{discountLabel(c)}</span>
-        <span className={css.muted}>{planScopeLabel(c.applicable_plan_ids, plans)}</span>
+        <span className={css.muted}>
+          {planScopeLabel(c.applicable_plan_ids, plans)} · {intervalScopeLabel(c.applicable_intervals)}
+        </span>
         <span className={local.usage}>
           <span className={`${css.mono} ${css.faint}`}>{use.label}</span>
           <span className={css.bar}>

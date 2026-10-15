@@ -87,6 +87,7 @@ const KIND_LABELS: Record<OrderRow['kind'], string> = {
   upgrade: '变更套餐',
   addon: '流量包',
   topup: '余额充值',
+  traffic_reset: '流量重置',
 }
 
 /** 「累计消费」：按币种各写一笔（R80 / R114，币种升序由后端排好），没有实收时按用户币种写 0 */
@@ -320,6 +321,28 @@ export function pips(online: number, limit: number): Array<'on' | 'over' | 'off'
 }
 
 // ===========================================================================
+// 会员折扣
+// ===========================================================================
+const CHINESE_DIGITS = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九']
+
+/**
+ * 会员折扣中文展示：10 ->「九折」，25 ->「七五折」，100 ->「免费」，其余写「减免 x%」
+ */
+export function memberDiscountLabel(percent: number | null | undefined): string {
+  if (percent === null || percent === undefined) return '无'
+  if (percent === 100) return '免费'
+  const pay = 100 - percent
+  if (pay % 10 === 0 && pay >= 10 && pay <= 90) {
+    return `${CHINESE_DIGITS[pay / 10]}折`
+  }
+  if (pay % 5 === 0 && pay >= 5 && pay <= 95) {
+    const tens = Math.floor(pay / 10)
+    return `${tens > 0 ? CHINESE_DIGITS[tens] : ''}五折`
+  }
+  return `减免 ${percent}%`
+}
+
+// ===========================================================================
 // 流量重置
 // ===========================================================================
 export const RESET_REASON_VIEW: Record<ResetReason, { label: string; tone: Tone; filter: string }> = {
@@ -328,6 +351,7 @@ export const RESET_REASON_VIEW: Record<ResetReason, { label: string; tone: Tone;
   manual: { label: '手动', tone: 'info', filter: '手动' },
   gift_card: { label: '礼品卡', tone: 'ok', filter: '礼品卡' },
   plan_change: { label: '变更套餐', tone: 'warn', filter: '变更套餐' },
+  order: { label: '用户购买', tone: 'ok', filter: '用户购买' },
 }
 
 /** 操作人：有 actor_email 用它（有 note 追加「 · note」）；没有时按原因写成「系统 · …」 */
@@ -339,6 +363,7 @@ export function resetActor(log: Pick<ResetLog, 'reason' | 'actor_email' | 'note'
     manual: '系统',
     gift_card: '用户 · 兑换礼品卡',
     plan_change: '系统 · 变更套餐',
+    order: '用户 · 购买重置',
   }
   return log.note ? `${system[log.reason]} · ${log.note}` : system[log.reason]
 }

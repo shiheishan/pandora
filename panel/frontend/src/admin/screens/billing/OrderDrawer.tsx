@@ -235,7 +235,7 @@ function MarkPaid({ o }: { o: OrderDetail }) {
       intent.reset()
       setConfirming(false)
       // 重复凭证与「订阅已结束、款项进了挂账」都回 409，文案经 fail 原样 Toast（R117）
-      toast(o.kind === 'topup' ? '已标记为已支付，余额已入账' : '已标记为已支付，订阅已开通')
+      toast(o.kind === 'topup' ? '已标记为已支付，余额已入账' : o.kind === 'traffic_reset' ? '已标记为已支付，本期流量已清零' : '已标记为已支付，订阅已开通')
     } catch (e) {
       setConfirming(false)
       fail(e, { fields: setErrors, intent })
@@ -278,7 +278,7 @@ function MarkPaid({ o }: { o: OrderDetail }) {
       <ConfirmModal
         open={confirming}
         title="标记为已支付？"
-        body={`${o.order_no} · ${formatMoney(o.payable_amount, o.currency)}，凭证 ${reference.trim()}。${o.kind === 'topup' ? '余额立即入账。' : '订阅将立即开通。'}同一张凭证不能用于别的订单。`}
+        body={`${o.order_no} · ${formatMoney(o.payable_amount, o.currency)}，凭证 ${reference.trim()}。${o.kind === 'topup' ? '余额立即入账。' : o.kind === 'traffic_reset' ? '这一份的本期流量将立即清零。' : '订阅将立即开通。'}同一张凭证不能用于别的订单。`}
         confirmLabel="标记已支付"
         onCancel={() => setConfirming(false)}
         onConfirm={submit}

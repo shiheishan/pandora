@@ -98,6 +98,7 @@ export function orderFacts(o: OrderDetail): Array<[string, string]> {
     ['金额', money(o.total_amount)],
   ]
   if (o.discount_amount > 0) facts.push(['优惠', `− ${money(o.discount_amount)}`])
+  if (o.member_discount_amount > 0) facts.push(['其中会员折扣', `− ${money(o.member_discount_amount)}`])
   if (o.balance_applied > 0) facts.push(['余额抵扣', money(o.balance_applied)])
   facts.push(['应付', money(o.payable_amount)])
   if (o.paid_amount > 0) facts.push(['实收', money(o.paid_amount)])
