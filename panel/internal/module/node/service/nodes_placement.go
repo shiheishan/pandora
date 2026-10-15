@@ -190,8 +190,13 @@ func (s *Service) copyNodeRouting(ctx context.Context, srcID, dstID uuid.UUID) (
 
 // nodeMovable 报告节点能不能迁移：只有从没服务过的草稿（没有配置回执、没有运行状态）。
 func nodeMovable(n model.Node) bool {
-	return n.ServingStatus == NodeDraft && n.AppliedConfigSHA256 == nil &&
-		n.ApplyFailedSHA256 == nil && n.RuntimeStatus == nil
+	return nodeMovableState(n.ServingStatus, n.AppliedConfigSHA256, n.ApplyFailedSHA256, n.RuntimeStatus)
+}
+
+// nodeMovableState 是迁移资格的唯一判断，只看节点自己的字段（不看服务器心跳与身份）；
+// MoveNode 与后台列表的 movable 都用它，前端只读 movable、不自己算。
+func nodeMovableState(servingStatus string, appliedSHA, applyFailedSHA, runtimeStatus *string) bool {
+	return servingStatus == NodeDraft && appliedSHA == nil && applyFailedSHA == nil && runtimeStatus == nil
 }
 
 // MoveNode 把从没服务过的草稿节点迁到另一台服务器；目标就是当前服务器时不改。

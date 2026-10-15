@@ -44,6 +44,8 @@ export const nodeRowSchema = z.object({
   delivered_to_users: z.boolean(),
   delivery_note: z.string(),
   identity_serial: z.number().nullable(),
+  /** 能不能迁移到别的服务器：后端 service.nodeMovableState 算好，前端不自己判断 */
+  movable: z.boolean(),
   created_at: iso,
   node_type: z.string().nullable(),
   server_host: z.string().nullable(),
@@ -242,7 +244,6 @@ export const identitySchema = z.object({
       revoked_reason: z.string().optional(),
     })
     .nullable(),
-  server_token: z.object({ present: z.boolean(), issued_at: iso.optional(), issued_by: uuid.optional(), issued_by_name: z.string().optional() }),
   bootstrap_tokens_pending: z.number(),
 })
 
@@ -328,7 +329,6 @@ export const effectiveRoutingSchema = z.object({
 export const okUpdated = z.object({ ok: z.literal(true), updated: z.number() })
 export const batchStatusResponse = z.object({ ok: z.literal(true), updated: z.number(), serving_status: z.string() })
 export const bootstrapTokenResponse = z.object({ token: z.string(), expires_at: iso, install_command: z.string() })
-export const serverTokenResponse = z.object({ token: z.string(), node_type: z.string(), panel_url: z.string(), install_command: z.string(), hint: z.string() })
 export const realityKeypairResponse = z.object({ private_key: z.string(), public_key: z.string(), short_id: z.string(), hint: z.string() })
 export const publishResponse = z.object({ config_id: uuid, version: z.number(), scope: z.string(), affected_nodes: z.number() })
 export const routingSaved = z.object({ ok: z.literal(true), row_version: z.number() })

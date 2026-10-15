@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback } from 'react'
 import { useApi } from '../../../shell/runtime'
-import { packsSchema, planPoolsSchema, planResponseSchema, plansSchema, poolOptionsSchema, type PackStatus } from './schemas'
+import { packsSchema, planPoolsSchema, planResetPricesSchema, planResponseSchema, plansSchema, poolOptionsSchema, type PackStatus } from './schemas'
 
 export * from './schemas'
 
@@ -42,6 +42,16 @@ export function usePlanPools(id: string | null) {
   return useQuery({
     queryKey: [...PK, 'pools', id],
     queryFn: ({ signal }) => api.get(`v1/plans/${encodeURIComponent(id!)}/pools`, planPoolsSchema, { signal }),
+    enabled: id !== null,
+    meta: { topics },
+  })
+}
+
+export function usePlanResetPrices(id: string | null) {
+  const api = useApi()
+  return useQuery({
+    queryKey: [...PK, 'reset-prices', id],
+    queryFn: ({ signal }) => api.get(`v1/plans/${encodeURIComponent(id!)}/reset-prices`, planResetPricesSchema, { signal }),
     enabled: id !== null,
     meta: { topics },
   })

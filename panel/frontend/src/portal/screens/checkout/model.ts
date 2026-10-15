@@ -12,6 +12,7 @@ import { renewOrder } from '../plans/labels'
 //   ?change-plan=<套餐>[&sub=<一份>]        先选换掉哪一份（不预选；能换的只有一份时直接定）
 //   ?new=<套餐>                             另买一份
 //   ?pack=<流量包>&sub=<一份>               加流量（没带 sub 且多份时先选加到哪一份，选过带 pick=1）
+//   ?reset=<一份>  买流量重置（把这一份当期已用流量清零）
 //   ?plan=<套餐>                            老地址：没有套餐 → 新买；有同款 → 续费；否则 → 选换掉哪一份
 //   以上都可带 &price=<价格> 预选「买多久」
 // ---------------------------------------------------------------------------
@@ -20,6 +21,7 @@ export type Target =
   | { kind: 'change'; subId: string | null; planId: string; chooser: boolean }
   | { kind: 'new'; planId: string }
   | { kind: 'pack'; packId: string; subId: string | null; chooser: boolean }
+  | { kind: 'reset'; subId: string }
 
 export type Problem = 'missing' | 'plan_gone' | 'pack_gone' | 'sub_gone'
 type Parsed = { target: Target } | { problem: Problem }
@@ -51,6 +53,11 @@ export function parseTarget(query: URLSearchParams, held: readonly Subscription[
     const sub = named ?? least.id
     // 从卡片或选购页来的已经带了是哪一份，不再问；老地址没带、多份时才在确认页选（选过的带 pick=1 继续显示）
     return { target: { kind: 'pack', packId, subId: sub, chooser: live.length > 1 && (!query.get('sub') || query.get('pick') === '1') } }
+  }
+  const reset = query.get('reset')
+  if (reset) {
+    const sub = held.find((s) => s.id === reset)
+    return sub && isLive(sub) ? { target: { kind: 'reset', subId: sub.id } } : { problem: 'sub_gone' }
   }
   const renew = query.get('renew')
   if (renew) {
@@ -91,6 +98,8 @@ export function quoteRequest(t: Target, held: readonly Subscription[], coupon: s
       return t.subId ? { action: 'change', subscription_id: t.subId, plan_id: t.planId, ...c } : { action: 'change', plan_id: t.planId, ...c }
     case 'new':
       return { action: 'new', plan_id: t.planId, new_copy: held.some(isHeld), ...c }
+    case 'reset':
+      return { action: 'reset', subscription_id: t.subId, ...c }
     default:
       return { action: 'pack', pack_id: t.packId, ...(t.subId ? { subscription_id: t.subId } : {}), ...c }
   }
@@ -121,6 +130,8 @@ export function orderRequest(i: OrderInput): { path: string; body: Record<string
   switch (t.kind) {
     case 'pack':
       return { path: 'v1/me/traffic-pack-orders', body: { pack_id: t.packId, subscription_id: t.subId, ...extra } }
+    case 'reset':
+      return { path: `v1/me/subscriptions/${encodeURIComponent(t.subId)}/traffic-reset`, body: extra }
     case 'renew':
       return { path: `v1/me/subscriptions/${encodeURIComponent(t.subId)}/renew`, body: { price_id: i.row.price_id, ...extra } }
     case 'change':

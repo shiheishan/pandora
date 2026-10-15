@@ -1,14 +1,16 @@
 import { useMutation } from '@tanstack/react-query'
 import { useId, useState, type CSSProperties } from 'react'
 import { useApi } from '../../../shell/runtime'
-import { Button, ConfirmModal, Empty, QueryView, Select, Skeleton, Switch, Tag, TextArea, useToast } from '../../../ui'
+import { Button, ConfirmModal, Empty, Input, QueryView, Select, Skeleton, Switch, Tag, TextArea, useToast } from '../../../ui'
 import css from './content.module.css'
 import { droppedMessage, slotDirty, timezoneOptions } from './logic'
 import { useFailure, useIntentKey, useInvalidateContent, useSiteSettings, useSlots, useThemes } from './queries'
 import { siteSettingsSchema, slotSaved, themeActivated, themeDeleted, type Slot, type Theme } from './schemas'
-import { activateNotice, siteName, themeSwatches, type ThemeTarget } from './theme'
+import { activateNotice, themeSwatches, themeTagline, type ThemeTarget } from './theme'
 import { ThemeEditor } from './ThemeEditor'
 import theme from './theme.module.css'
+
+const SITE_NAME_INPUT_ID = 'site-settings-name'
 
 export function ThemeTab() {
   const themes = useThemes()
@@ -18,6 +20,16 @@ export function ThemeTab() {
   const [deleting, setDeleting] = useState<Theme | null>(null)
   const list = themes.data ?? []
   const active = list.find((t) => t.is_active)
+
+  // 主题编辑器里的「去改站点名」：关掉抽屉，把焦点交给站点设置卡的站点名输入框
+  const editSiteName = () => {
+    setEditing(null)
+    requestAnimationFrame(() => {
+      const el = document.getElementById(SITE_NAME_INPUT_ID)
+      el?.scrollIntoView({ block: 'center' })
+      el?.focus()
+    })
+  }
 
   return (
     <div className={css.stack}>
@@ -35,7 +47,7 @@ export function ThemeTab() {
             </>
           )}
         </QueryView>
-        <TimezoneCard />
+        <SiteCard />
       </div>
 
       <section className={css.slots} aria-label="前端插槽">
@@ -48,8 +60,8 @@ export function ThemeTab() {
         </QueryView>
       </section>
 
-      <ThemeEditor target={editing} onClose={() => setEditing(null)} />
-      <ThemeConfirms active={active} activating={activating} deleting={deleting} onDone={() => (setActivating(null), setDeleting(null))} />
+      <ThemeEditor target={editing} onClose={() => setEditing(null)} onEditSiteName={editSiteName} />
+      <ThemeConfirms activating={activating} deleting={deleting} onDone={() => (setActivating(null), setDeleting(null))} />
     </div>
   )
 }
@@ -57,7 +69,7 @@ export function ThemeTab() {
 function ThemeCard({ theme: t, onEdit, onActivate, onDelete }: { theme: Theme; onEdit: () => void; onActivate: () => void; onDelete: () => void }) {
   const p = themeSwatches(t)
   const vars = { '--pv-bg': p.bg, '--pv-fg': p.fg, '--pv-accent': p.accent } as CSSProperties
-  const name = siteName(t)
+  const tagline = themeTagline(t)
   return (
     <section className={css.themeCard} style={vars} aria-label={`主题 ${t.name}`}>
       <div className={css.preview} aria-hidden="true">
@@ -78,7 +90,7 @@ function ThemeCard({ theme: t, onEdit, onActivate, onDelete }: { theme: Theme; o
         </div>
         <div className={css.faint}>
           <span className={css.mono}>{t.code}</span>
-          {name ? ` · 站点名称「${name}」` : ' · 未设站点名称'}
+          {tagline ? ` · 标语「${tagline}」` : ''}
           {t.is_active ? '。门户所有用户看到的都是这一套，明暗两组随用户切换。' : ''}
         </div>
         <div className={theme.actions}>
@@ -108,7 +120,7 @@ function ThemeCard({ theme: t, onEdit, onActivate, onDelete }: { theme: Theme; o
 }
 
 /** 激活与删除：都要 reauth（api 层弹框），不带幂等键（契约：路由上没有幂等中间件） */
-function ThemeConfirms({ active, activating, deleting, onDone }: { active: Theme | undefined; activating: Theme | null; deleting: Theme | null; onDone: () => void }) {
+function ThemeConfirms({ activating, deleting, onDone }: { activating: Theme | null; deleting: Theme | null; onDone: () => void }) {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
@@ -129,7 +141,7 @@ function ThemeConfirms({ active, activating, deleting, onDone }: { active: Theme
       <ConfirmModal
         open={activating !== null}
         title={activating ? `激活「${activating.name}」？` : ''}
-        body={activating ? activateNotice(active, activating) : ''}
+        body={activating ? activateNotice(activating) : ''}
         confirmLabel="激活主题"
         onConfirm={() => run(() => api.post(`v1/themes/${encodeURIComponent(activating!.code)}/activate`, themeActivated), `已激活「${activating!.name}」，门户刷新后生效`)}
         onCancel={onDone}
@@ -147,32 +159,67 @@ function ThemeConfirms({ active, activating, deleting, onDone }: { active: Theme
   )
 }
 
-function TimezoneCard() {
+function SiteCard() {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
   const invalidate = useInvalidateContent()
   const site = useSiteSettings()
   const id = useId()
+  const [name, setName] = useState<string | null>(null)
   const [picked, setPicked] = useState<string | null>(null)
-  const current = site.data?.timezone
-  const value = picked ?? current ?? ''
+  const [errors, setErrors] = useState<Record<string, string>>({})
+  const current = site.data
+  const nameValue = name ?? current?.name ?? ''
+  const tzValue = picked ?? current?.timezone ?? ''
+
+  const dirty = (name !== null && name.trim() !== current?.name) || (picked !== null && picked !== current?.timezone)
 
   const save = useMutation({
-    mutationFn: (timezone: string) => api.post('v1/settings/site', siteSettingsSchema, { body: { timezone } }),
-    onSuccess: (r) => {
-      toast(`站点时区已改为 ${r.timezone}`)
+    mutationFn: (body: { name?: string; timezone?: string }) => api.post('v1/settings/site', siteSettingsSchema, { body }),
+    onSuccess: (r, vars) => {
+      if (vars.name !== undefined && vars.timezone !== undefined) {
+        toast('站点设置已保存')
+      } else if (vars.name !== undefined) {
+        toast(`站点名已改为「${r.name}」`)
+      } else if (vars.timezone !== undefined) {
+        toast(`站点时区已改为 ${r.timezone}`)
+      }
+      setName(null)
       setPicked(null)
+      setErrors({})
       void invalidate('site')
     },
-    onError: (error) => fail(error),
+    onError: (error) => fail(error, { fields: setErrors }),
   })
 
+  const submit = () => {
+    const nameTrimmed = nameValue.trim()
+    const nameChanged = name !== null && name.trim() !== current?.name
+    const tzChanged = picked !== null && picked !== current?.timezone
+
+    const errs: Record<string, string> = {}
+    if (nameChanged) {
+      if (!nameTrimmed) {
+        errs.name = '站点名必填'
+      } else if ([...nameTrimmed].length > 40) {
+        errs.name = '站点名最多 40 个字'
+      }
+    }
+    if (Object.keys(errs).length > 0) {
+      setErrors((prev) => ({ ...prev, ...errs }))
+      return
+    }
+
+    const body: { name?: string; timezone?: string } = {}
+    if (nameChanged) body.name = nameTrimmed
+    if (tzChanged) body.timezone = picked!
+    save.mutate(body)
+  }
+
   return (
-    <section className={css.tzCard} aria-label="站点时区">
-      <label htmlFor={`${id}-s`} className={css.cardTitle}>
-        站点时区
-      </label>
+    <section className={css.tzCard} aria-label="站点设置">
+      <span className={css.cardTitle}>站点设置</span>
       {site.isPending ? (
         <Skeleton height={32} />
       ) : site.isError ? (
@@ -180,10 +227,38 @@ function TimezoneCard() {
           {() => null}
         </QueryView>
       ) : (
-        <Select id={`${id}-s`} value={value} disabled={save.isPending} options={timezoneOptions(current)} onChange={(e) => setPicked(e.target.value)} />
+        <>
+          <Input
+            id={SITE_NAME_INPUT_ID}
+            label="站点名"
+            value={nameValue}
+            maxLength={40}
+            error={errors.name}
+            hint="门户标题、浏览器标签、邮件里的站点名与发件人名、订阅配置名都用它；主题只管标语与 Logo。"
+            disabled={save.isPending}
+            onChange={(e) => {
+              setName(e.target.value)
+              if (errors.name) setErrors((prev) => ({ ...prev, name: '' }))
+            }}
+          />
+          <label htmlFor={`${id}-s`} className={css.cardTitle}>
+            站点时区
+          </label>
+          <Select
+            id={`${id}-s`}
+            value={tzValue}
+            error={errors.timezone}
+            disabled={save.isPending}
+            options={timezoneOptions(current?.timezone)}
+            onChange={(e) => {
+              setPicked(e.target.value)
+              if (errors.timezone) setErrors((prev) => ({ ...prev, timezone: '' }))
+            }}
+          />
+        </>
       )}
       <div className={css.faint}>门户用量图按天统计、后台收入趋势都按这个时区切日；修改只影响之后的数据，已记下的按日用量不重算。</div>
-      <Button variant="primary" size="sm" disabled={!picked || picked === current} busy={save.isPending} onClick={() => picked && save.mutate(picked)}>
+      <Button variant="primary" size="sm" disabled={!dirty} busy={save.isPending} onClick={submit}>
         保存
       </Button>
     </section>

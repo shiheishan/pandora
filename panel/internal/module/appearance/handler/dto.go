@@ -15,7 +15,6 @@ type themeView struct {
 	IsActive  bool            `json:"is_active"`
 	Tokens    json.RawMessage `json:"tokens"`
 	Branding  json.RawMessage `json:"branding"`
-	CustomCSS string          `json:"custom_css"`
 }
 
 // slotView 是后台插槽列表的一项。
@@ -30,8 +29,10 @@ type slotView struct {
 
 // publicAppearanceView 是门户一次取齐的外观数据。
 type publicAppearanceView struct {
-	Theme *themeView        `json:"theme"`
-	Slots map[string]string `json:"slots"`
+	// 站点名：系统设置 site.name（主题里不再有站点名）
+	SiteName string            `json:"site_name"`
+	Theme    *themeView        `json:"theme"`
+	Slots    map[string]string `json:"slots"`
 }
 
 // listThemesResponse 是后台主题列表。
@@ -46,18 +47,16 @@ type listSlotsResponse struct {
 
 // saveThemeRequest 是新建或保存主题的请求体。
 type saveThemeRequest struct {
-	Code      string          `json:"code"`
-	Name      string          `json:"name"`
-	Create    bool            `json:"create"`
-	Tokens    json.RawMessage `json:"tokens"`
-	Branding  json.RawMessage `json:"branding"`
-	CustomCSS string          `json:"custom_css"`
+	Code     string          `json:"code"`
+	Name     string          `json:"name"`
+	Create   bool            `json:"create"`
+	Tokens   json.RawMessage `json:"tokens"`
+	Branding json.RawMessage `json:"branding"`
 }
 
 // saveThemeResponse 是保存主题成功响应。
 type saveThemeResponse struct {
-	Dropped []string `json:"dropped"`
-	Saved   bool     `json:"saved"`
+	Saved bool `json:"saved"`
 }
 
 // activateThemeResponse 是激活主题成功响应。
@@ -91,7 +90,6 @@ func themeFrom(t service.Theme) themeView {
 		IsActive:  t.IsActive,
 		Tokens:    jsonObjectOrEmpty(t.Tokens),
 		Branding:  jsonObjectOrEmpty(t.Branding),
-		CustomCSS: "",
 	}
 }
 
@@ -107,6 +105,10 @@ func slotFrom(s service.Slot) slotView {
 }
 
 func publicFrom(p service.PublicAppearance) publicAppearanceView {
+	siteName := p.SiteName
+	if siteName == "" {
+		siteName = service.DefaultSiteName
+	}
 	slots := p.Slots
 	if slots == nil {
 		slots = map[string]string{}
@@ -116,7 +118,11 @@ func publicFrom(p service.PublicAppearance) publicAppearanceView {
 		tv := themeFrom(*p.Theme)
 		theme = &tv
 	}
-	return publicAppearanceView{Theme: theme, Slots: slots}
+	return publicAppearanceView{
+		SiteName: siteName,
+		Theme:    theme,
+		Slots:    slots,
+	}
 }
 
 func jsonObjectOrEmpty(raw json.RawMessage) json.RawMessage {

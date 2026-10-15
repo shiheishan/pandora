@@ -151,7 +151,8 @@ export const checkout: MockModule = {
           const order = placeOrder(state, {
             kind: 'new',
             subtotal: row.subtotal,
-            discount: row.discount,
+            discount: row.discount + row.member_discount,
+            memberDiscount: row.member_discount,
             total: row.total,
             applied: balance.applied,
             waived: balance.waived,
@@ -183,7 +184,8 @@ export const checkout: MockModule = {
           const order = placeOrder(state, {
             kind: 'renewal',
             subtotal: row.subtotal,
-            discount: row.discount,
+            discount: row.discount + row.member_discount,
+            memberDiscount: row.member_discount,
             total: row.total,
             applied: balance.applied,
             waived: balance.waived,
@@ -218,7 +220,8 @@ export const checkout: MockModule = {
           const order = placeOrder(state, {
             kind: 'upgrade',
             subtotal: row.subtotal,
-            discount: row.discount,
+            discount: row.discount + row.member_discount,
+            memberDiscount: row.member_discount,
             credit: row.credit,
             total: row.total,
             applied: balance.applied,

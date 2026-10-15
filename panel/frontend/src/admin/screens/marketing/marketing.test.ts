@@ -20,6 +20,7 @@ import {
   formatGB,
   freezeLabel,
   grantedLabel,
+  intervalScopeLabel,
   minorToYuan,
   parseCount,
   percentToBasisPoints,
@@ -98,6 +99,12 @@ describe('coupons', () => {
     expect(planScopeLabel(['p1', 'p2'], undefined)).toBe('2 个套餐')
   })
 
+  it('maps interval scope to labels, empty to unlimited', () => {
+    expect(intervalScopeLabel([])).toBe('不限时长')
+    expect(intervalScopeLabel(['month', 'year'])).toBe('月付、年付')
+    expect(intervalScopeLabel(['day', 'week', 'quarter', 'one_time'])).toBe('按天、按周、季付、一次性')
+  })
+
   it('only active and paused coupons get a switch; expired and exhausted become tags', () => {
     expect(couponState('active')).toMatchObject({ switchable: true, on: true })
     expect(couponState('paused')).toMatchObject({ switchable: true, on: false })
@@ -113,8 +120,8 @@ describe('coupons', () => {
       ok: true,
       body: { code: 'AUTUMN26', discount_type: 'percent', discount_value: 1500, max_redemptions: 1000, max_redemptions_per_user: 1, max_discount: 3000 },
     })
-    const fixed = buildCouponRequest({ ...emptyCouponForm(false), code: 'X', kind: 'fixed', value: '10', currency: 'USD', minOrder: '50', planIds: ['p1'] }, false)
-    expect(fixed.ok && fixed.body).toMatchObject({ discount_type: 'fixed', discount_value: 1000, currency: 'USD', max_redemptions: null, min_order_amount: 5000, applicable_plan_ids: ['p1'] })
+    const fixed = buildCouponRequest({ ...emptyCouponForm(false), code: 'X', kind: 'fixed', value: '10', currency: 'USD', minOrder: '50', planIds: ['p1'], intervals: ['month', 'year'] }, false)
+    expect(fixed.ok && fixed.body).toMatchObject({ discount_type: 'fixed', discount_value: 1000, currency: 'USD', max_redemptions: null, min_order_amount: 5000, applicable_plan_ids: ['p1'], applicable_intervals: ['month', 'year'] })
     // fixed 不带封顶优惠，percent 不带币种
     expect(fixed.ok && 'max_discount' in fixed.body).toBe(false)
   })
@@ -158,6 +165,7 @@ describe('coupons', () => {
       max_redemptions_per_user: 1,
       redeemed_count: 0,
       applicable_plan_ids: null,
+      applicable_intervals: null,
       valid_from: null,
       valid_until: null,
       status: 'active',
@@ -165,6 +173,7 @@ describe('coupons', () => {
       discounted_total: 0,
     })
     expect(row.applicable_plan_ids).toEqual([])
+    expect(row.applicable_intervals).toEqual([])
   })
 })
 
@@ -393,6 +402,8 @@ describe('commission', () => {
         expect(label).toContain('余额不足')
         expect(label).not.toContain('自动解冻')
       }
+      // 受益人已注销：只能作废
+      expect(freezeLabel({ frozen_until: '2025-06-01T00:00:00Z', review_source: 'account_deleted' }, after)).toContain('只能作废')
     })
   })
 })

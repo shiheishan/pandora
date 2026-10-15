@@ -369,9 +369,9 @@ func validateKernelShape(nodeType string, port int, raw json.RawMessage) (int, m
 			CertPath             string            `json:"cert_path"`
 			KeyPath              string            `json:"key_path"`
 
-			// REALITY。它是 TLS 之外的另一条路，也是目前唯一能落地的一条：
-			// 普通 TLS 要证书，而证书生命周期还没做完；REALITY 借用真实站点
-			// 的握手，服务端只要一对 x25519 密钥，不碰证书。
+			// REALITY。它是 TLS 之外的另一条路，也是 vless 目前唯一开放的加密方式：
+			// vless / vmess 的普通 TLS 还没开放（要先支持 file 模式证书路径）；REALITY 借用
+			// 真实站点的握手，服务端只要一对 x25519 密钥，不碰证书。
 			Security    string   `json:"security"`
 			Dest        string   `json:"dest"`
 			ServerNames []string `json:"server_names"`

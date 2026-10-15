@@ -412,6 +412,8 @@ export const billing: MockModule = {
           currency: price.currency,
           subtotal_amount: amount,
           discount_amount: grant ? amount : 0,
+          // 后台人工单不打会员折扣
+          member_discount_amount: 0,
           total_amount: payable,
           balance_applied: 0,
           payable_amount: payable,

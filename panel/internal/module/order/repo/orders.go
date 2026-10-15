@@ -12,10 +12,10 @@ import (
 	"github.com/aegispanel/aegis/internal/module/order/model"
 )
 
-// CreateOrder 插入订单（八个金额字段先过 checkMoney），并回填 id、时间戳。
+// CreateOrder 插入订单（九个金额字段先过 checkMoney），并回填 id、时间戳。
 func (r *Repo) CreateOrder(ctx context.Context, o *model.Order) error {
 	if err := checkMoney(
-		o.SubtotalAmount, o.DiscountAmount, o.ProrationCreditAmount, o.WaivedAmount,
+		o.SubtotalAmount, o.DiscountAmount, o.MemberDiscountAmount, o.ProrationCreditAmount, o.WaivedAmount,
 		o.TotalAmount, o.BalanceApplied, o.PayableAmount, o.PaidAmount,
 	); err != nil {
 		return err

@@ -138,3 +138,14 @@ type TrafficPack struct {
 
 // TableName 固定表名。
 func (TrafficPack) TableName() string { return "traffic_packs" }
+
+// PlanResetPrice 是 plan_reset_prices 表的一行（00046）：套餐按币种的流量重置价格；UnitAmount 单位元、2 位小数。
+type PlanResetPrice struct {
+	PlanID     uuid.UUID       `gorm:"column:plan_id;type:uuid;primaryKey"`
+	Currency   string          `gorm:"column:currency;primaryKey"`
+	UnitAmount decimal.Decimal `gorm:"column:unit_amount;type:numeric(20,2)"`
+	CreatedAt  time.Time       `gorm:"column:created_at;autoCreateTime"`
+}
+
+// TableName 固定表名。
+func (PlanResetPrice) TableName() string { return "plan_reset_prices" }

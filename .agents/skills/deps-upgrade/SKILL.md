@@ -90,7 +90,7 @@ GOTOOLCHAIN=go<新版本> go test ...    # 升级后
 | ShadowTLS 诱饵中继 | TLS 记录层与超时 | `internal/nativewire/shadowtls/service_test.go` |
 | REALITY over QUIC / H3 | `internal/reality` 与 `internal/realityquic` 对标准库 crypto 的引用 | `kernel` 的 `TestNativeRealityH3RoundTrip`、`cmd/pandora-h3-probe` 的 `TestProcessProbeRoundTrip` |
 | XHTTP 服务端：`kernel/xhttp_server.go` | net/http 的 HTTP/2 响应写出 | `-tags interop` 的 Xray XHTTP 测试 |
-| 面板 SSE 推送：`panel/internal/pkg/realtime/sse.go`；证书签发（lego）：`panel/internal/module/certs/service` | net/http | panel 全量单测与 CI 的 PG 用例（panel-newstack 的 test job） |
+| 面板 SSE 推送：`panel/internal/pkg/realtime/sse.go` | net/http | panel 全量单测与 CI 的 PG 用例（panel-newstack 的 test job） |
 
 **本机命令**（在 `pdnd/` 下；不要和 `npm ci` 并发；`<go.mod 版本>` 取 `pdnd/go.mod` 的 go 指令，如 `go1.26.9`）：
 
@@ -111,7 +111,7 @@ GOTOOLCHAIN=go<go.mod 版本> go test -count=1 -tags interop -run 'TestExternalX
 ## 4. Go 依赖：升级、tidy、新依赖审查
 
 **升级**：
-- 在模块目录 `go get <模块>@<版本>`，然后 `go mod tidy`。看 `git diff go.mod`：会顺带抬哪些间接依赖（例如 w9cert 引入 lego 时一起抬了 x/crypto、x/net、x/text）。
+- 在模块目录 `go get <模块>@<版本>`，然后 `go mod tidy`。看 `git diff go.mod`：会顺带抬哪些间接依赖（例如引入一个 DNS 服务商 SDK 时一起抬了 x/crypto、x/net、x/text）。
 - pdnd 的依赖一变，再到 `.agents/skills/subscription-e2e/tools` 跑一次 `go mod tidy`（联网）。它经 replace 跟随 pdnd；sing-box 只在它自己的 go.mod 里（pdnd 不依赖 sing-box）。这一步顺便把新版本拉进本机模块缓存，subscription-e2e 离线跑（`GOPROXY=off`）才找得到。
 - 升完重跑 `vulncheck.sh`，确认目标漏洞消失，也没有新增。
 
@@ -119,10 +119,10 @@ GOTOOLCHAIN=go<go.mod 版本> go test -count=1 -tags interop -run 'TestExternalX
 - CI 不查 tidy，三个模块各跑一次 `go mod tidy -diff`，没有输出才算 tidy。
 - 10-09 前的教训：pdnd 一度把 xtls/reality、x/time 标成 indirect（实际是直接 import），go.sum 里还留着换版前的 sing-anytls v0.0.11。
 
-**新依赖审查**（参照 w9cert 引入 lego）：
-- 只 import 用到的子包。例如 lego 只引 cloudflare、alidns、tencentcloud 三个提供方，不引全量 providers。版本锁死。
-- **它会不会自己读进程环境变量**：panel 的配置只经 `internal/pkg/config`（viper，`PANDORA_` 前缀）读环境变量，第三方库自己读的变量管不到。库会读的变量要登记，先例是 `panel/internal/module/certs/service/service.go` 的 `legoEnvExact` 与 `LibraryEnvWarnings`（worker 启动签发任务时告警）；文档写进 `docs/node-certificates.md`。
-- 日志接到 zap：先例是 `panel/internal/module/certs/service/issuer.go` 把 lego 的 `[WARN]`、`[INFO]` 前缀分别映射成 Warn、Info。HTTP 客户端能不能注入，决定了超时、代理和测试怎么做。
+**新依赖审查**：
+- 只 import 用到的子包（例如一个库按服务商分子包时只引用到的几个，不引全量）。版本锁死。
+- **它会不会自己读进程环境变量**：panel 的配置只经 `internal/pkg/config`（viper，`PANDORA_` 前缀）读环境变量，第三方库自己读的变量管不到。库会读的变量要登记在用它的模块里（启动时对已设置的变量打告警），并写进对应文档。
+- 日志接到 zap：库自带的 `[WARN]`、`[INFO]` 一类前缀分别映射成 Warn、Info。HTTP 客户端能不能注入，决定了超时、代理和测试怎么做。
 - 许可证：AGPL 不能链进发布物（juicity 的上游实现是 AGPL，NativeCore 的 juicity 是自研的）；GPL 的 fork 要保留 LICENSE。
 - pdnd 只有 NativeCore：新依赖不能把 sing-box 拉进 `go list -deps -test ./...`（含测试）。CI 的「Default dependency boundary」步骤与 `release/build.sh` 会拦，本机先自查。
 - 引入后跑一遍 `vulncheck.sh`，结果写进任务报告。

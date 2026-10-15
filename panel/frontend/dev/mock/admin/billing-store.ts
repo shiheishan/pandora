@@ -153,6 +153,7 @@ export interface Order {
   currency: string
   subtotal_amount: number
   discount_amount: number
+  member_discount_amount: number
   total_amount: number
   balance_applied: number
   payable_amount: number
@@ -192,6 +193,7 @@ function blank(u: User, over: Partial<Order>): Order {
     currency: 'CNY',
     subtotal_amount: 0,
     discount_amount: 0,
+    member_discount_amount: 0,
     total_amount: 0,
     balance_applied: 0,
     payable_amount: 0,
@@ -322,6 +324,33 @@ add(U(5), { status: 'fulfilled', total_amount: 6900, balance_applied: 6900, ...d
 add(U(4), { status: 'fulfilled', currency: 'USD', total_amount: 890, payable_amount: 890, paid_amount: 890, ...done(iso(5 * 60 * MIN)), items: [planItem(pro.id, pro.name, 890, 'USD')] }, paidVia('epay_backup'))
 add(U(1), { kind: 'addon', status: 'fulfilled', total_amount: 2500, payable_amount: 2500, paid_amount: 2500, ...done(todayIso(7 * 60 * MIN)) }, paidVia('epay'))
 add(
+  U(1),
+  {
+    kind: 'traffic_reset',
+    status: 'fulfilled',
+    total_amount: 1800,
+    payable_amount: 1800,
+    paid_amount: 1800,
+    ...done(todayIso(6 * 60 * MIN)),
+    items: [
+      {
+        id: randomUUID(),
+        plan_id: std.id,
+        price_id: null,
+        product_name: `流量重置 · ${std.name}`,
+        plan_name: std.name,
+        plan_version: null,
+        interval: null,
+        interval_count: null,
+        quantity: 1,
+        unit_amount: 1800,
+        currency: 'CNY',
+      },
+    ],
+  },
+  paidVia('epay'),
+)
+add(
   U(13),
   { status: 'fulfilled', total_amount: 7000, payable_amount: 7000, paid_amount: 7000, ...done(iso(20 * 60 * MIN)), items: [planItem(std.id, std.name, 4500, 'CNY'), planItem(null, '100 GB 加油包', 2500, 'CNY')] },
   paidVia('epay'),
@@ -410,6 +439,7 @@ export function orderDetail(o: Order) {
     state_version: o.state_version,
     subtotal_amount: o.subtotal_amount,
     discount_amount: o.discount_amount,
+    member_discount_amount: o.member_discount_amount ?? 0,
     coupon_id: null,
     manual_reason: o.manual_reason,
     created_by: o.created_by,

@@ -184,6 +184,7 @@ func TestListCouponsShape(t *testing.T) {
 				MinOrder:        decimal.Zero,
 				MaxPerUser:      1,
 				PlanIDs:         []uuid.UUID{planA},
+				Intervals:       []string{"year"},
 				CreatedAt:       now,
 				DiscountedTotal: decimal.Zero,
 			},
@@ -213,11 +214,19 @@ func TestListCouponsShape(t *testing.T) {
 	if plans0 == nil || len(plans0) != 0 {
 		t.Fatalf("applicable_plan_ids 应为 [] 非 null: %v", c0["applicable_plan_ids"])
 	}
+	ivs0, ok0 := c0["applicable_intervals"].([]any)
+	if !ok0 || ivs0 == nil || len(ivs0) != 0 {
+		t.Fatalf("c0 applicable_intervals 应为 [] 非 null: %v", c0["applicable_intervals"])
+	}
 	if c0["max_discount"] != nil {
 		t.Fatalf("max_discount 应为 null: %v", c0["max_discount"])
 	}
 	if c1["discount_value"] != float64(2000) || c1["max_discount"] != float64(500) {
 		t.Fatalf("第二张 %v %v", c1["discount_value"], c1["max_discount"])
+	}
+	ivs1, ok1 := c1["applicable_intervals"].([]any)
+	if !ok1 || len(ivs1) != 1 || ivs1[0] != "year" {
+		t.Fatalf("c1 applicable_intervals 期望 [year]: %v", c1["applicable_intervals"])
 	}
 	if f.lastList.Query != "vip" || f.lastList.Status != "active" || f.lastLimit != 50 {
 		t.Fatalf("ListFilter/limit %+v limit=%d", f.lastList, f.lastLimit)
@@ -253,6 +262,19 @@ func TestCreateCouponMapping(t *testing.T) {
 	}
 	if f.createSpec.Name != "SUMMER" {
 		t.Fatalf("Name %q", f.createSpec.Name)
+	}
+	if len(f.createSpec.Intervals) != 0 {
+		t.Fatalf("不带 applicable_intervals 应为 nil 或空: %v", f.createSpec.Intervals)
+	}
+
+	f3 := &fakeSvc{}
+	e3 := newEngine(f3, true, &authn.Principal{UserID: uuid.New(), SessionID: "s", Audience: authn.AudienceAdmin})
+	w = do(e3, http.MethodPost, "/v1/coupons", `{"code":"MONTHONLY","discount_type":"fixed","discount_value":1000,"applicable_intervals":["month"]}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("applicable_intervals create status %d %s", w.Code, w.Body)
+	}
+	if len(f3.createSpec.Intervals) != 1 || f3.createSpec.Intervals[0] != "month" {
+		t.Fatalf("createSpec Intervals 期望 [month], got %v", f3.createSpec.Intervals)
 	}
 
 	f2 := &fakeSvc{}

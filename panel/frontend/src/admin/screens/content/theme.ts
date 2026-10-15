@@ -28,7 +28,6 @@ const TOKEN_NAMES: ReadonlySet<string> = new Set(COLOR_TOKENS.map((t) => t.name)
 export interface ThemeForm {
   code: string
   name: string
-  siteName: string
   tagline: string
   /** data:image/…;base64,… 或空串 */
   logo: string
@@ -43,8 +42,9 @@ export type ThemeErrors = Record<string, string>
 
 const str = (v: unknown) => (typeof v === 'string' ? v : '')
 
-export function siteName(t: Pick<Theme, 'branding'>): string | null {
-  const v = str(t.branding.site_name).trim()
+/** 生效主题的标语：去空白后为空就是没设 */
+export function themeTagline(t: Pick<Theme, 'branding'>): string | null {
+  const v = str(t.branding.tagline).trim()
   return v || null
 }
 
@@ -67,7 +67,6 @@ export function themeToForm(target: ThemeTarget): ThemeForm {
   return {
     code: target.kind === 'edit' ? target.theme.code : '',
     name,
-    siteName: str(branding.site_name).trim() || (source ? '' : 'Pandora'),
     tagline: str(branding.tagline),
     logo: str(branding.logo).startsWith('data:image/') ? str(branding.logo) : '',
     tokens: fullTokens(source),
@@ -106,9 +105,6 @@ export function validateThemeForm(form: ThemeForm, creating: boolean): ThemeErro
   }
   const name = form.name.trim()
   if (!name || runes(name) > 60) errors.name = '主题名称必填，最多 60 个字'
-  const site = form.siteName.trim()
-  if (!site) errors['branding.site_name'] = '站点名称必填：门户标题、邮件里的站点名与发件人名都取自生效主题'
-  else if (runes(site) > 40) errors['branding.site_name'] = '站点名称最多 40 个字'
   if (runes(form.tagline.trim()) > 80) errors['branding.tagline'] = '标语最多 80 个字'
   for (const mode of THEME_MODES) {
     for (const t of COLOR_TOKENS) {
@@ -124,7 +120,7 @@ interface ThemeRequest {
   name: string
   create: boolean
   tokens: Record<ThemeMode, Record<string, string>>
-  branding: { site_name: string; tagline?: string; logo?: string }
+  branding: { tagline?: string; logo?: string }
 }
 
 export function buildThemeRequest(form: ThemeForm, creating: boolean): { ok: true; body: ThemeRequest } | { ok: false; errors: ThemeErrors } {
@@ -134,7 +130,7 @@ export function buildThemeRequest(form: ThemeForm, creating: boolean): { ok: tru
   for (const mode of THEME_MODES) {
     for (const t of COLOR_TOKENS) tokens[mode][t.name] = form.tokens[mode][t.name]!.trim()
   }
-  const branding: ThemeRequest['branding'] = { site_name: form.siteName.trim() }
+  const branding: ThemeRequest['branding'] = {}
   if (form.tagline.trim()) branding.tagline = form.tagline.trim()
   if (form.logo) branding.logo = form.logo
   return { ok: true, body: { code: form.code.trim().toLowerCase(), name: form.name.trim(), create: creating, tokens, branding } }
@@ -174,13 +170,7 @@ export function themeSwatches(t: Pick<Theme, 'tokens'>): { bg: string; fg: strin
   return { bg: light['--bg'] ?? 'var(--bg)', fg: light['--text'] ?? 'var(--text)', accent: light['--brand'] ?? 'var(--brand)' }
 }
 
-/** 激活确认框：先说后果。站点名跟着生效主题走，切换会改门户标题与邮件里的站点名、发件人名 */
-export function activateNotice(active: Theme | undefined, target: Theme): string {
-  const from = active ? (siteName(active) ?? 'Pandora') : 'Pandora'
-  const to = siteName(target) ?? 'Pandora'
-  const site =
-    from === to
-      ? `站点名称保持「${to}」。`
-      : `站点名称会从「${from}」变成「${to}」：门户标题、邮件里的站点名与发件人名都随之改变（发件人名单独设置过的除外）。`
-  return `门户所有用户刷新页面后看到「${target.name}」的配色。${site}`
+/** 激活确认框：先说后果。站点名只认系统设置（site.name），不随生效主题变化，在「站点设置」里改 */
+export function activateNotice(target: Theme): string {
+  return `门户所有用户刷新页面后看到「${target.name}」的配色、标语与 Logo。站点名不随主题变化，在本页的「站点设置」里改。`
 }

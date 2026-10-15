@@ -5,7 +5,7 @@ import { z } from 'zod'
 // ---------------------------------------------------------------------------
 // 库里 5 态（00013_order.sql），退款两态等产品确认后再定
 const ORDER_STATUSES = ['pending_payment', 'paid', 'fulfilled', 'cancelled', 'expired', 'refunded', 'partially_refunded'] as const
-const ORDER_KINDS = ['new', 'renewal', 'upgrade', 'addon', 'topup'] as const
+const ORDER_KINDS = ['new', 'renewal', 'upgrade', 'addon', 'topup', 'traffic_reset'] as const
 const INTENT_STATUSES = ['requires_action', 'succeeded', 'cancelled', 'expired'] as const
 const PAYMENT_STATUSES = ['succeeded'] as const
 const REFUND_STATUSES = ['pending', 'approved', 'processing', 'succeeded', 'failed', 'rejected'] as const
@@ -79,6 +79,7 @@ export const orderDetailSchema = orderRowSchema.extend({
   state_version: int,
   subtotal_amount: int,
   discount_amount: int,
+  member_discount_amount: int,
   coupon_id: z.string().nullable(),
   manual_reason: z.string().nullable(),
   created_by: z.string().nullable(),

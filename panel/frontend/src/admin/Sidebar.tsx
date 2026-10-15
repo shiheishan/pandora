@@ -7,6 +7,7 @@ import { identityLabels, type AdminMe } from './me'
 import { MODULES, NAV_GROUPS, modulePath, type ModuleKey } from './modules'
 import { taskCount, useDashboardTasks } from './tasks'
 import css from './Sidebar.module.css'
+import { DEFAULT_SITE_NAME, useAdminSiteName } from './site'
 
 // 侧栏徽标：GET v1/dashboard/tasks，与仪表盘「需要处理」共用同一个查询（./tasks）
 function useNavBadges(): Partial<Record<ModuleKey, number>> {
@@ -29,13 +30,21 @@ export function Sidebar({
 }) {
   const runtime = useRuntime()
   const theme = useTheme()
+  const site = useAdminSiteName()
   const badges = useNavBadges()
   const who = identityLabels(me)
 
   return (
     <aside className={css.sidebar}>
       <div className={css.brand}>
-        <Logo size={21} className={css.logo} />
+        {site === DEFAULT_SITE_NAME ? (
+          <Logo size={21} className={css.logo} />
+        ) : (
+          <>
+            <Logo size={21} wordmark={false} className={css.logo} />
+            <span className={css.siteName} title={site}>{site}</span>
+          </>
+        )}
         <span className={css.release}>{__APP_RELEASE__}</span>
       </div>
       <button type="button" className={css.search} onClick={onOpenPalette}>

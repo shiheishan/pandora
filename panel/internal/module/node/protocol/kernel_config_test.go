@@ -121,8 +121,8 @@ func TestXboardShapeTranslatesToKernelFields(t *testing.T) {
 			},
 			// tls 键整个删掉，不留 tls:false。
 			//
-			// 校验器明确禁止 tls=true（"证书生命周期完成前仅允许 tls=false，
-			// 请改用 security=reality"），而现网 4 个在役 vless 存的就是
+			// vless 的普通 TLS 还没开放（校验器拒绝 tls=1，见 plainTLSNotYetMessage），
+			// 而现网 4 个在役 vless 存的就是
 			// 「只有 security、没有 tls」。补一个 false 会改变下发内容，
 			// 也就没法再断言这次改名对数据面完全无影响。
 			want: map[string]any{

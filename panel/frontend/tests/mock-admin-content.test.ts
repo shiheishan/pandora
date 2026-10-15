@@ -77,7 +77,8 @@ describe('mock api · admin content', () => {
       ['paper', true, true],
       ['night-sea', false, false],
     ])
-    expect(themes[0]).toMatchObject({ code: 'paper', is_active: true, custom_css: '' })
+    expect(themes[0]).toMatchObject({ code: 'paper', is_active: true })
+    expect(themes[0]).not.toHaveProperty('custom_css')
     expect(Object.keys(themes[0]!.tokens.light)).toHaveLength(43)
     expect(slotsResponse.parse(await (await call('GET', '/v1/slots')).json()).slots).toHaveLength(7)
     const dirty = slotSaved.parse(await (await call('POST', '/v1/slots/portal.home.banner', { content: '<b onclick="x()">欢迎</b><script>alert(1)</script>', enabled: true }, 's-1')).json())
@@ -85,28 +86,33 @@ describe('mock api · admin content', () => {
     expect(slotsResponse.parse(await (await call('GET', '/v1/slots')).json()).slots.find((s) => s.key === 'portal.home.banner')).toMatchObject({ content: '<b>欢迎</b>', enabled: true })
     expect(slotSaved.parse(await (await call('POST', '/v1/slots/portal.home.banner', { content: '', enabled: false }, 's-2')).json()).dropped).toBeNull()
     expect(await (await call('POST', '/v1/slots/portal.nope', { content: '', enabled: false }, 's-3')).json()).toMatchObject({ error: { fields: { key: '未知的插槽位' } } })
-    expect(siteSettingsSchema.parse(await (await call('GET', '/v1/settings/site')).json()).timezone).toBe('Asia/Shanghai')
+    expect(siteSettingsSchema.parse(await (await call('GET', '/v1/settings/site')).json())).toEqual({ name: 'Pandora', timezone: 'Asia/Shanghai' })
     for (const timezone of ['', 'Local', 'Mars/Base']) expect(await (await call('POST', '/v1/settings/site', { timezone })).json()).toMatchObject({ error: { fields: { timezone: '不是有效的时区' } } })
-    expect(await (await call('POST', '/v1/settings/site', { timezone: 'Asia/Tokyo' })).json()).toEqual({ timezone: 'Asia/Tokyo' })
+    expect(await (await call('POST', '/v1/settings/site', { timezone: 'Asia/Tokyo' })).json()).toEqual({ name: 'Pandora', timezone: 'Asia/Tokyo' })
+    expect(await (await call('POST', '/v1/settings/site', { name: '  ' })).json()).toMatchObject({ error: { fields: { name: '站点名必填' } } })
+    expect(await (await call('POST', '/v1/settings/site', { name: '字'.repeat(41) })).json()).toMatchObject({ error: { fields: { name: '站点名最多 40 个字' } } })
+    expect(await (await call('POST', '/v1/settings/site', { name: ' 夜海加速 ' })).json()).toEqual({ name: '夜海加速', timezone: 'Asia/Tokyo' })
+    expect((await call('POST', '/v1/settings/site', { name: 'x', extra: 1 })).status).toBe(400)
+    await call('POST', '/v1/settings/site', { name: 'Pandora', timezone: 'Asia/Shanghai' })
   })
 
   it('creates, edits, switches and deletes themes with the Go rules', async () => {
     const list = async () => themesResponse.parse(await (await call('GET', '/v1/themes')).json()).themes!
     const paper = (await list())[0]!
-    const body = { code: 'autumn', name: '秋', create: true, tokens: paper.tokens, branding: { site_name: '秋叶加速', tagline: '稳' } }
+    const body = { code: 'autumn', name: '秋', create: true, tokens: paper.tokens, branding: { tagline: '稳' } }
     // 字段级 422：令牌逐键、品牌逐键，一次回齐
-    const bad = await (await call('POST', '/v1/themes', { ...body, name: '', tokens: { light: { '--bg': 'a{b' } }, branding: { site_name: '', logo: 'https://x.test/a.png' } }, 't-1')).json()
+    const bad = await (await call('POST', '/v1/themes', { ...body, name: '', tokens: { light: { '--bg': 'a{b' } }, branding: { site_name: '秋叶加速', logo: 'https://x.test/a.png' } }, 't-1')).json()
     expect(bad).toMatchObject({ error: { code: 'validation_failed', fields: { name: expect.any(String), 'tokens.light.--bg': expect.any(String), 'branding.site_name': expect.any(String), 'branding.logo': expect.any(String) } } })
-    expect((await call('POST', '/v1/themes', { ...body, custom_css: 'body{}' }, 't-2')).status).toBe(422)
+    expect((await call('POST', '/v1/themes', { ...body, custom_css: 'body{}' }, 't-2')).status).toBe(400)
     expect((await call('POST', '/v1/themes', { ...body, extra: 1 }, 't-3')).status).toBe(400)
     expect((await call('POST', '/v1/themes', body)).status).toBe(400) // 没带幂等键
-    expect(await (await call('POST', '/v1/themes', body, 't-4')).json()).toEqual({ saved: true, dropped: [] })
+    expect(await (await call('POST', '/v1/themes', body, 't-4')).json()).toEqual({ saved: true })
     // 另存为撞已有 code：409 标在 code 上，不覆盖
     expect(await (await call('POST', '/v1/themes', { ...body, name: '冒名' }, 't-5')).json()).toMatchObject({ error: { code: 'conflict', fields: { code: expect.stringContaining('已被占用') } } })
     // 内置主题不可原地改
     expect(await (await call('POST', '/v1/themes', { ...body, code: 'paper', create: false }, 't-6')).json()).toMatchObject({ error: { message: '内置主题不能直接改，请用另一个标识另存为自定义主题' } })
     expect((await call('POST', '/v1/themes', { ...body, create: false, name: '秋 · 改' }, 't-7')).status).toBe(200)
-    expect((await list()).find((t) => t.code === 'autumn')).toMatchObject({ name: '秋 · 改', is_active: false, branding: { site_name: '秋叶加速', tagline: '稳' } })
+    expect((await list()).find((t) => t.code === 'autumn')).toMatchObject({ name: '秋 · 改', is_active: false, branding: { tagline: '稳' } })
 
     expect((await call('POST', '/v1/themes/nope/activate')).status).toBe(404)
     expect(await (await call('POST', '/v1/themes/autumn/activate')).json()).toEqual({ activated: true })

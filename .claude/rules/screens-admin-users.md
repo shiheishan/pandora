@@ -22,3 +22,5 @@ paths:
 - 已注销（`status === 'deleted'`）：列表与抽屉标题一律 `userLabel`（「已注销 #<短 id>」，不显示占位邮箱）；抽屉整排操作换成一句说明，没有任何写入口。注销对话框要填原因并输入该用户邮箱才能点，管理员不显示「注销账号」。
 - 抽屉写操作：改邮箱、改邀请人（按邮箱精确找人，留空清除）、注销要 reauth；显示名与备注不要。原因 5–500 字，fields 标到对应输入框。订阅卡的「改到期」「改上限」只对生效中的那一份（`SubEditDialogs.tsx`、`subEdit.ts`，上限按 GiB 填、提交字节、留空为不限，最多 10 TiB）。
 - 批量封禁（`BulkBanForm.tsx`）沿用批量运营的筛选：至少一个条件、带预览人数 `expected_total`、二次确认、幂等键；人数变了后端 409，要重新预览。
+- 画像「会员折扣」（`MemberDiscount.tsx`）：GET / PUT / DELETE `v1/member-discounts/{user_id}`，写要 reauth、不带幂等键；percent 1–100 的整数是减免百分比（10 = 九折，100 = 免费，`memberDiscountLabel`），null 为没有。只影响以后的门户订单，后台人工单与充值不打。
+- 流量重置日志的原因多一种 `order`（用户在门户买的重置，note 是订单号），schema 的 `RESET_REASONS` 与 `RESET_REASON_VIEW` / `resetActor` 一起改

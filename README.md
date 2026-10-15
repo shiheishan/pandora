@@ -42,7 +42,7 @@ public HTTP     admin HTTP                          |
 | 子命令 | 做什么 |
 |---|---|
 | `pandora serve` | 门户 HTTP、后台 HTTP、节点 gRPC 三个监听；SSE（`GET /v1/events`）；节点会话与名单下发 |
-| `pandora worker` | asynq Server 与 Scheduler：到期、配额滚动、查单、佣金结算、通知派发、证书签发、保留期清理等 |
+| `pandora worker` | asynq Server 与 Scheduler：到期、配额滚动、查单、佣金结算、通知派发、保留期清理等 |
 | `pandora migrate up / down / status` | goose 迁移，用属主角色的连接串（`database.migration_url`） |
 | `pandora admin …` | create、reset-password、grant、revoke、list、has-admin；口令只从标准输入读 |
 | `pandora backup …` | 备份脚本用的本地工具：封条、核验、WebDAV 异地上传与签名清单 |
@@ -64,7 +64,7 @@ panel/internal/
 - repo 是唯一使用 GORM 的地方。每张表只有一个属主模块，别的模块要数据就调属主模块的 service。
 - 这些规则由 golangci-lint 的 depguard 钉住：`panel/.golangci.yml` 由 `go run ./tools/depguardgen` 从模块目录生成，不手改；CI 检查生成结果没有漂移。
 
-模块：identity、auth、settings、audit、idempotency、catalog、order、payment、ledger、promo、commission、giftcard、subscription、node、certs、notify、support、content、appearance、plugin、report、realtime。各模块拥有哪些表见 [docs/architecture.md](docs/architecture.md) 第 4 节。
+模块：identity、auth、settings、audit、idempotency、catalog、order、payment、ledger、promo、commission、giftcard、subscription、node、notify、support、content、appearance、plugin、report、realtime。各模块拥有哪些表见 [docs/architecture.md](docs/architecture.md) 第 4 节。
 
 ### 数据约束
 
@@ -133,7 +133,7 @@ panel/internal/
 
 - 仪表盘：收入、用户、订单、订阅、节点、流量、工单统计；收入调整；趋势；节点 / 用户流量排行。
 - 用户（含批量建用户、风控与 IP 归属地）、套餐、订单、优惠券、礼品卡、支付渠道、待复核佣金与提现。
-- 服务器与节点（gRPC 接入、一键安装命令、会话状态）、节点池、路由、在线设备与设备数限制、节点入站证书（ACME DNS-01）。
+- 服务器与节点（gRPC 接入、一键安装命令、会话状态）、节点池、路由、在线设备与设备数限制。节点入站证书由节点机自己的 certbot / acme.sh 签发，面板只填路径（见 docs/node-certificates.md）。
 - 公告、知识库、主题、插件、工单、审计日志、降级开关。
 - 后台权限只分有和没有：是管理员就能做全部后台操作；会话绝对寿命 7 天、空闲 2 小时退出；管理后台路径是安装时生成的高熵串。
 
@@ -508,7 +508,7 @@ fork 进来的第三方代码保留各自的许可证：`pdnd/internal/reality/`
 ## 相关文档
 
 - [docs/architecture.md](docs/architecture.md)：换栈的设计全文（技术选型、模块与表属主、鉴权与会话、钱、节点通道、任务、配置、分步计划与产品结论）。
-- [docs/node-certificates.md](docs/node-certificates.md)：节点入站证书（file 模式与面板集中签发）。
+- [docs/node-certificates.md](docs/node-certificates.md)：节点入站证书（放在节点机上的 file 模式）。
 - [docs/perf-test-plan.md](docs/perf-test-plan.md)：P8 第一轮性能测试范围。
 - [docs/backlog.md](docs/backlog.md)：面板待办清单；前后端接口以代码为准：后端看各模块 `panel/internal/module/*/handler`，前端看 `panel/frontend/src/core/api.ts` 与各页面的 `api.ts`。
 - [pdnd/release/README.md](pdnd/release/README.md)：NativeCore Linux 发布与运行时验收。

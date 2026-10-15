@@ -129,6 +129,28 @@ func TestCheckPlan(t *testing.T) {
 	}
 }
 
+func TestCheckInterval(t *testing.T) {
+	year := "year"
+	month := "month"
+
+	if err := checkInterval(nil, &year); err != nil {
+		t.Fatalf("空列表任意 interval: %v", err)
+	}
+	if err := checkInterval(nil, nil); err != nil {
+		t.Fatalf("空列表 nil interval: %v", err)
+	}
+
+	if err := checkInterval([]string{"month"}, &month); err != nil {
+		t.Fatalf("month 应通过: %v", err)
+	}
+	if !errors.Is(checkInterval([]string{"month"}, &year), ErrCouponNotForPeriod) {
+		t.Fatal("year 应拒绝")
+	}
+	if !errors.Is(checkInterval([]string{"month"}, nil), ErrCouponNotForPeriod) {
+		t.Fatal("nil interval 应拒绝")
+	}
+}
+
 func TestCanTransition(t *testing.T) {
 	trueCases := [][]string{
 		{RedemptionHeld, RedemptionCaptured},
@@ -225,6 +247,47 @@ func TestValidateSpec(t *testing.T) {
 		if err == nil || errs.As(err).Fields["name"] == "" {
 			t.Fatalf("name %q: %v", name, err)
 		}
+	}
+}
+
+func TestValidateSpecIntervals(t *testing.T) {
+	base := Spec{
+		Name:       "优惠券",
+		Face:       Face{Kind: KindPercent, PercentBP: 1000},
+		Currency:   "CNY",
+		MinOrder:   decimal.Zero,
+		MaxPerUser: 1,
+	}
+
+	s1 := base
+	s1.Intervals = []string{" year", "month", "year", ""}
+	out1, err := validateSpec(s1)
+	if err != nil {
+		t.Fatalf("规范化应成功: %v", err)
+	}
+	if len(out1.Intervals) != 2 || out1.Intervals[0] != "month" || out1.Intervals[1] != "year" {
+		t.Fatalf("规范化顺序与去重失败，got %v", out1.Intervals)
+	}
+
+	s2 := base
+	s2.Intervals = []string{"decade"}
+	_, err = validateSpec(s2)
+	if err == nil {
+		t.Fatal("非法周期 decade 应报错")
+	}
+	fe := errs.As(err)
+	if fe.Fields == nil || fe.Fields["applicable_intervals"] == "" {
+		t.Fatalf("Fields 缺 applicable_intervals: %v", fe.Fields)
+	}
+
+	s3 := base
+	s3.Intervals = nil
+	out3, err := validateSpec(s3)
+	if err != nil {
+		t.Fatalf("nil Intervals 应成功: %v", err)
+	}
+	if out3.Intervals == nil || len(out3.Intervals) != 0 {
+		t.Fatalf("nil Intervals 应得到空切片且非 nil: %v", out3.Intervals)
 	}
 }
 
@@ -337,7 +400,7 @@ func TestNewCode(t *testing.T) {
 func TestIsRejection(t *testing.T) {
 	for _, err := range []error{
 		ErrCouponNotFound, ErrCouponExpired, ErrCouponUsedUp, ErrCouponUserLimit,
-		ErrCouponMinAmount, ErrCouponNotForPlan, ErrCouponNotForUser,
+		ErrCouponMinAmount, ErrCouponNotForPlan, ErrCouponNotForPeriod, ErrCouponNotForUser,
 	} {
 		if !IsRejection(err) {
 			t.Fatalf("应为 rejection: %v", err)

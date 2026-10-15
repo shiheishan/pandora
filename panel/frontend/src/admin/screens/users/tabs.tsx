@@ -6,6 +6,7 @@ import { Button, Empty, Select, StatStrip, Tag, useToast } from '../../../ui'
 import { useFailure } from '../../actions'
 import { okSchema, useInvalidateUsers, useUserGroups, useUserProfile, type SubscriptionRow, type UserDetail } from './api'
 import { ExtendDialog } from './ExtendDialog'
+import { MemberDiscount } from './MemberDiscount'
 import { PeriodEndDialog, QuotaLimitDialog } from './SubEditDialogs'
 import {
   currentSubscription,
@@ -70,6 +71,10 @@ export function ProfileTab({ d, now }: { d: UserDetail; now: Date }) {
         <dt>用户组</dt>
         <dd>
           <GroupPicker d={d} />
+        </dd>
+        <dt>会员折扣</dt>
+        <dd>
+          <MemberDiscount userId={d.id} />
         </dd>
         {facts.map(([k, v]) => (
           <FactRow key={k} label={k} value={v} />

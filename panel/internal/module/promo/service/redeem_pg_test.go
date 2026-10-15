@@ -415,3 +415,54 @@ func TestPreview(t *testing.T) {
 		t.Fatalf("价格不属于套餐: code=%s err=%v", errCode(err), err)
 	}
 }
+
+func TestCouponIntervalsPG(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.txCtx()
+	admin := newUser(t, e, ctx)
+	u := newUser(t, e, ctx)
+
+	month := "month"
+	year := "year"
+
+	codeMonth := randCode("INTM")
+	specMonth := percentSpec(1000)
+	specMonth.Intervals = []string{"month"}
+	createCoupon(t, e, ctx, admin, codeMonth, specMonth)
+
+	tgMonth := target(u, "10.00")
+	tgMonth.Interval = &month
+	res, err := e.svc.Evaluate(ctx, codeMonth, tgMonth)
+	if err != nil {
+		t.Fatalf("Evaluate month 应该成功: %v", err)
+	}
+	if res == nil || !res.Discount.Equal(decimal.RequireFromString("1.00")) {
+		t.Fatalf("Evaluate month 折扣不正确: %v", res)
+	}
+
+	tgYear := target(u, "10.00")
+	tgYear.Interval = &year
+	_, err = e.svc.Evaluate(ctx, codeMonth, tgYear)
+	if !errors.Is(err, ErrCouponNotForPeriod) {
+		t.Fatalf("Evaluate year 应该拒绝 ErrCouponNotForPeriod, got %v", err)
+	}
+
+	tgNil := target(u, "10.00")
+	tgNil.Interval = nil
+	_, err = e.svc.Evaluate(ctx, codeMonth, tgNil)
+	if !errors.Is(err, ErrCouponNotForPeriod) {
+		t.Fatalf("Evaluate nil 应该拒绝 ErrCouponNotForPeriod, got %v", err)
+	}
+
+	codeAny := randCode("INTANY")
+	specAny := percentSpec(1000)
+	createCoupon(t, e, ctx, admin, codeAny, specAny)
+
+	resAny, err := e.svc.Evaluate(ctx, codeAny, tgNil)
+	if err != nil {
+		t.Fatalf("Evaluate any coupon with nil interval 应该成功: %v", err)
+	}
+	if resAny == nil || !resAny.Discount.Equal(decimal.RequireFromString("1.00")) {
+		t.Fatalf("Evaluate any coupon 折扣不正确: %v", resAny)
+	}
+}

@@ -40,6 +40,7 @@ func (s *Service) markPaid(ctx context.Context, o model.Order, at time.Time) (mo
 //	renewal：在原订阅上续一期（版本沿用订阅自己的）
 //	addon：给目标订阅发一笔流量包余额
 //	upgrade：把原订阅原地换成新套餐（周期从现在起算一整期），剩余价值抵完新价还有余的退进余额（plan_change_refund）
+//	traffic_reset：把目标订阅当期已用流量清零（subscription.ResetTraffic，原因 order，备注订单号；写重置日志并通知节点）
 //
 // 订阅上的价格快照取订单行（建单时的价格档单价）。
 func (s *Service) fulfil(ctx context.Context, o model.Order, at time.Time, actor subsvc.Actor) (model.Order, error) {
@@ -126,6 +127,20 @@ func (s *Service) fulfil(ctx context.Context, o model.Order, at time.Time, actor
 			Source:         subsvc.PackSourceOrder,
 			SourceID:       o.ID,
 			Bytes:          *it.SnapshotTrafficBytes,
+		}); err != nil {
+			return model.Order{}, err
+		}
+	case KindTrafficReset:
+		if o.SubscriptionID == nil {
+			return model.Order{}, fmt.Errorf("order: 流量重置订单缺订阅 %s", o.ID)
+		}
+		uid := o.UserID
+		if _, err := s.subs.ResetTraffic(ctx, subsvc.TrafficReset{
+			SubscriptionID: *o.SubscriptionID,
+			UserID:         &uid,
+			Reason:         subsvc.ResetOrder,
+			Note:           o.OrderNo,
+			At:             at,
 		}); err != nil {
 			return model.Order{}, err
 		}

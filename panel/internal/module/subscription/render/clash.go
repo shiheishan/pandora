@@ -13,9 +13,10 @@ package render
 // trojan、socks5、http 与 ws / grpc 两种传输，见 nodeToClash 的 premium 分支。
 
 import (
+	"cmp"
 	"encoding/base64"
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -38,8 +39,8 @@ func renderClash(rc renderCtx, kind clashKind) ([]byte, string, int) {
 
 	infoNodes, realNodes := rc.splitInfo()
 
-	var realProxies []map[string]any
-	var realNames []string
+	realProxies := make([]map[string]any, 0, len(realNodes))
+	realNames := make([]string, 0, len(realNodes))
 	for _, n := range realNodes {
 		p := convert(n)
 		if p == nil {
@@ -49,12 +50,10 @@ func renderClash(rc renderCtx, kind clashKind) ([]byte, string, int) {
 		realNames = append(realNames, n.Name)
 	}
 
-	var allProxies []map[string]any
-	var allSelectNames []string
-
+	// 一个真实节点都写不出时信息节点也不写
+	var infoProxies []map[string]any
+	var infoNames []string
 	if len(realProxies) > 0 {
-		var infoProxies []map[string]any
-		var infoNames []string
 		for _, n := range infoNodes {
 			p := convert(n)
 			if p == nil {
@@ -63,23 +62,22 @@ func renderClash(rc renderCtx, kind clashKind) ([]byte, string, int) {
 			infoProxies = append(infoProxies, p)
 			infoNames = append(infoNames, n.Name)
 		}
-		allProxies = append(allProxies, infoProxies...)
-		allProxies = append(allProxies, realProxies...)
-		allSelectNames = append(allSelectNames, infoNames...)
-		allSelectNames = append(allSelectNames, realNames...)
 	}
 
-	var proxiesVal string
-	if len(allProxies) == 0 {
-		proxiesVal = "proxies: []"
+	// 直接写进一个缓冲：每条节点单独拼成字符串再连接，200 个节点的订阅每次拉取要多分配几百 KB
+	var w yamlWriter
+	if len(realProxies) == 0 {
+		w.b.WriteString("proxies: []")
 	} else {
-		var b strings.Builder
-		b.WriteString("proxies:")
-		for _, p := range allProxies {
-			b.WriteString("\n  - " + inlineYAML(p))
+		w.b.WriteString("proxies:")
+		for _, list := range [][]map[string]any{infoProxies, realProxies} {
+			for _, p := range list {
+				w.b.WriteString("\n  - ")
+				w.inline(p)
+			}
 		}
-		proxiesVal = b.String()
 	}
+	proxiesVal := w.b.String()
 
 	var proxyGroupsVal string
 	var proxyNamesVal string
@@ -88,12 +86,14 @@ func renderClash(rc renderCtx, kind clashKind) ([]byte, string, int) {
 		proxyGroupsVal = "  - {name: 节点选择, type: select, proxies: [DIRECT]}"
 		proxyNamesVal = "DIRECT"
 	} else {
-		autoGroup := "  - {name: 自动选择, type: url-test, url: 'http://www.gstatic.com/generate_204', interval: 300, proxies: [" +
-			strings.Join(quoteAll(realNames), ", ") + "]}"
-		selectGroup := "  - {name: 节点选择, type: select, proxies: [自动选择, " +
-			strings.Join(quoteAll(allSelectNames), ", ") + "]}"
-		proxyGroupsVal = autoGroup + "\n" + selectGroup
-		proxyNamesVal = strings.Join(quoteAll(realNames), ", ")
+		proxyNamesVal = joinQuoted(realNames)
+		selectNames := proxyNamesVal
+		if len(infoNames) > 0 {
+			selectNames = joinQuoted(infoNames) + ", " + proxyNamesVal
+		}
+		proxyGroupsVal = "  - {name: 自动选择, type: url-test, url: 'http://www.gstatic.com/generate_204', interval: 300, proxies: [" +
+			proxyNamesVal + "]}\n" +
+			"  - {name: 节点选择, type: select, proxies: [自动选择, " + selectNames + "]}"
 	}
 
 	tmpl := rc.tmpl
@@ -107,7 +107,7 @@ func renderClash(rc renderCtx, kind clashKind) ([]byte, string, int) {
 		phProxyNames:  proxyNamesVal,
 	})
 
-	return []byte(body), "text/yaml; charset=utf-8", len(realProxies)
+	return body, "text/yaml; charset=utf-8", len(realProxies)
 }
 
 // nodeToClash 返回一条 proxy；不能渲染时返回 nil 和跳过原因。
@@ -379,32 +379,60 @@ func setClashTLSHints(p map[string]any, h tlsHints) {
 // 行内写法足以覆盖，省掉一个依赖。键排序是为了输出稳定 ——
 // map 遍历随机的话，同一份订阅每次拉取内容都不同，客户端会以为配置变了。
 func inlineYAML(m map[string]any) string {
+	var w yamlWriter
+	w.inline(m)
+	return w.b.String()
+}
+
+// yamlWriter 把行内 YAML 直接写进一个缓冲；q 是加引号用的暂存，免得每个字符串单独分配。
+type yamlWriter struct {
+	b strings.Builder
+	q []byte
+}
+
+func (w *yamlWriter) quote(s string) {
+	w.q = strconv.AppendQuote(w.q[:0], s)
+	w.b.Write(w.q)
+}
+
+func (w *yamlWriter) inline(m map[string]any) {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
-	// name / type / server / port 放前面，读起来更像人写的配置
-	sort.SliceStable(keys, func(i, j int) bool {
-		return yamlKeyRank(keys[i]) < yamlKeyRank(keys[j])
+	// name / type / server / port 放前面，读起来更像人写的配置；其余按键名排
+	slices.SortFunc(keys, func(a, b string) int {
+		if c := cmp.Compare(yamlKeyRank(a), yamlKeyRank(b)); c != 0 {
+			return c
+		}
+		return strings.Compare(a, b)
 	})
 
-	parts := make([]string, 0, len(m))
-	for _, k := range keys {
-		parts = append(parts, yamlKey(k)+": "+yamlValue(m[k]))
+	w.b.WriteByte('{')
+	for i, k := range keys {
+		if i > 0 {
+			w.b.WriteString(", ")
+		}
+		if yamlPlainKey(k) {
+			w.b.WriteString(k)
+		} else {
+			w.quote(k)
+		}
+		w.b.WriteString(": ")
+		w.value(m[k])
 	}
-	return "{" + strings.Join(parts, ", ") + "}"
+	w.b.WriteByte('}')
 }
 
-// yamlKey 只给需要的键加引号（headers 里的 Host 等都是普通标识符）。
-func yamlKey(k string) string {
+// yamlPlainKey 报告键能否不加引号（headers 里的 Host 等都是普通标识符）。
+func yamlPlainKey(k string) bool {
 	for _, r := range k {
 		plain := r == '-' || r == '_' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z'
 		if !plain {
-			return strconv.Quote(k)
+			return false
 		}
 	}
-	return k
+	return true
 }
 
 func yamlKeyRank(k string) int {
@@ -422,27 +450,39 @@ func yamlKeyRank(k string) int {
 	}
 }
 
-func yamlValue(v any) string {
+func (w *yamlWriter) value(v any) {
 	switch t := v.(type) {
 	case string:
-		return strconv.Quote(t)
+		w.quote(t)
 	case bool:
-		return strconv.FormatBool(t)
+		w.b.WriteString(strconv.FormatBool(t))
 	case int:
-		return strconv.Itoa(t)
+		w.q = strconv.AppendInt(w.q[:0], int64(t), 10)
+		w.b.Write(w.q)
 	case []string:
-		return "[" + strings.Join(quoteAll(t), ", ") + "]"
+		w.b.WriteByte('[')
+		for i, s := range t {
+			if i > 0 {
+				w.b.WriteString(", ")
+			}
+			w.quote(s)
+		}
+		w.b.WriteByte(']')
 	case map[string]any:
-		return inlineYAML(t)
+		w.inline(t)
 	default:
-		return fmt.Sprintf("%q", fmt.Sprint(t))
+		w.b.WriteString(fmt.Sprintf("%q", fmt.Sprint(t)))
 	}
 }
 
-func quoteAll(items []string) []string {
-	out := make([]string, len(items))
+// joinQuoted 把名字逐个加引号、用 ", " 连起来（策略组的 proxies 列表）。
+func joinQuoted(items []string) string {
+	var w yamlWriter
 	for i, s := range items {
-		out[i] = strconv.Quote(s)
+		if i > 0 {
+			w.b.WriteString(", ")
+		}
+		w.quote(s)
 	}
-	return out
+	return w.b.String()
 }

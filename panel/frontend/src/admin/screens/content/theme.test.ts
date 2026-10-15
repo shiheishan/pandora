@@ -10,8 +10,8 @@ import {
   logoProblem,
   modeErrorCount,
   previewVars,
-  siteName,
   themeSwatches,
+  themeTagline,
   themeToForm,
   tokenValueError,
   validateThemeForm,
@@ -25,8 +25,7 @@ const theme = (patch: Partial<Theme> = {}): Theme => ({
   is_builtin: true,
   is_active: true,
   tokens: { light: { '--bg': '#f5f4f0', '--text': '#1c1c1f', '--brand': '#b9442b' }, dark: { '--brand': '#e46e52' } },
-  branding: { site_name: 'Pandora' },
-  custom_css: '',
+  branding: { tagline: '一路畅通' },
   ...patch,
 })
 
@@ -61,14 +60,15 @@ describe('theme form', () => {
     const form = themeToForm({ kind: 'create', from: src })
     expect(form.code).toBe('')
     expect(form.name).toBe('默认 · 纸白 副本')
-    expect([form.siteName, form.tagline, form.logo]).toEqual(['星河', '一路畅通', ''])
+    expect([form.tagline, form.logo]).toEqual(['一路畅通', ''])
+    expect('siteName' in form).toBe(false)
     expect(Object.keys(form.tokens.light)).toHaveLength(43)
     expect(form.tokens.light['--brand']).toBe('#b9442b')
     expect(form.tokens.dark['--brand']).toBe('#e46e52')
     expect(form.tokens.dark['--bg']).toBe('#111113')
-    // 没有任何主题时：设计稿默认值，站点名 Pandora
+    // 没有任何主题时：设计稿默认值
     const blank = themeToForm({ kind: 'create', from: null })
-    expect([blank.name, blank.siteName]).toEqual(['', 'Pandora'])
+    expect(blank.name).toBe('')
     // 编辑：code 原样，白名单外的键不进表单
     const edit = themeToForm({ kind: 'edit', theme: theme({ code: 'night', is_builtin: false, tokens: { light: { '--nope': '#fff' }, dark: {} } }) })
     expect(edit.code).toBe('night')
@@ -82,10 +82,9 @@ describe('theme form', () => {
 
     const form = themeToForm({ kind: 'create', from: theme() })
     form.tokens.dark['--text'] = 'a{b'
-    form.siteName = ' '
     form.tagline = '字'.repeat(81)
     const errors = validateThemeForm(form, true)
-    expect(Object.keys(errors).sort()).toEqual(['branding.site_name', 'branding.tagline', 'code', 'tokens.dark.--text'])
+    expect(Object.keys(errors).sort()).toEqual(['branding.tagline', 'code', 'tokens.dark.--text'])
     expect(validateThemeForm({ ...form, code: '9abc' }, true).code).toMatch(/小写字母开头/)
     // 编辑时 code 只读，不再校验
     expect(validateThemeForm({ ...form, code: '' }, false).code).toBeUndefined()
@@ -99,19 +98,21 @@ describe('theme form', () => {
     const form = themeToForm({ kind: 'create', from: theme() })
     form.code = ' Night-Sea '
     form.name = ' 夜海 '
-    form.siteName = '夜海加速'
     form.tokens.light['--brand'] = ' #2b6cb9 '
     const built = buildThemeRequest(form, true)
     if (!built.ok) throw new Error(JSON.stringify(built.errors))
     expect(built.body.code).toBe('night-sea')
     expect(built.body.name).toBe('夜海')
     expect(built.body.create).toBe(true)
-    expect(built.body.branding).toEqual({ site_name: '夜海加速' })
+    expect(built.body.branding).toEqual({ tagline: '一路畅通' })
     expect(built.body.tokens.light['--brand']).toBe('#2b6cb9')
     expect(Object.keys(built.body.tokens.dark)).toHaveLength(43)
     const withLogo = buildThemeRequest({ ...form, tagline: '口号', logo: 'data:image/png;base64,AAAA' }, false)
-    expect(withLogo.ok && withLogo.body.branding).toEqual({ site_name: '夜海加速', tagline: '口号', logo: 'data:image/png;base64,AAAA' })
+    expect(withLogo.ok && withLogo.body.branding).toEqual({ tagline: '口号', logo: 'data:image/png;base64,AAAA' })
     expect(withLogo.ok && withLogo.body.create).toBe(false)
+    // 标语清空时 branding 里不带 tagline
+    const noTagline = buildThemeRequest({ ...form, tagline: ' ' }, false)
+    expect(noTagline.ok && noTagline.body.branding).toEqual({})
   })
 
   it('checks logo files before reading them', () => {
@@ -131,10 +132,10 @@ describe('theme preview and cards', () => {
     expect(themeSwatches({ tokens: { light: {}, dark: {} } })).toEqual({ bg: 'var(--bg)', fg: 'var(--text)', accent: 'var(--brand)' })
   })
 
-  it('tells the admin the site name changes with the active theme', () => {
-    const night = theme({ code: 'night', name: '夜海', is_builtin: false, is_active: false, branding: { site_name: '夜海加速' } })
-    expect(activateNotice(theme(), night)).toBe('门户所有用户刷新页面后看到「夜海」的配色。站点名称会从「Pandora」变成「夜海加速」：门户标题、邮件里的站点名与发件人名都随之改变（发件人名单独设置过的除外）。')
-    expect(activateNotice(theme(), theme({ name: '同名' }))).toContain('站点名称保持「Pandora」')
-    expect(siteName(theme({ branding: { site_name: '  ' } }))).toBeNull()
+  it('tells the admin the site name does not follow the theme', () => {
+    const night = theme({ code: 'night', name: '夜海', is_builtin: false, is_active: false })
+    expect(activateNotice(night)).toBe('门户所有用户刷新页面后看到「夜海」的配色、标语与 Logo。站点名不随主题变化，在本页的「站点设置」里改。')
+    expect(themeTagline(theme({ branding: { tagline: '  ' } }))).toBeNull()
+    expect(themeTagline(theme())).toBe('一路畅通')
   })
 })

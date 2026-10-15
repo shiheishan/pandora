@@ -3,7 +3,7 @@ import { useState, type FormEvent } from 'react'
 import { isApiError } from '../../../core/api'
 import { useApi } from '../../../shell/runtime'
 import { Button, Card, Checkbox, Input, Select } from '../../../ui'
-import { COUPON_BATCH_MAX, buildCouponRequest, emptyCouponForm, type CouponForm as Form, type FieldErrors } from './logic'
+import { COUPON_BATCH_MAX, COUPON_INTERVAL_OPTIONS, buildCouponRequest, emptyCouponForm, type CouponForm as Form, type FieldErrors } from './logic'
 import css from './marketing.module.css'
 import { useFailure, useIntentKey, useInvalidateMarketing } from './queries'
 import { couponBatchCreated, couponCreated, type Plan } from './schemas'
@@ -61,6 +61,7 @@ export function CouponForm({
 
   const activePlans = plans?.filter((p) => p.status !== 'archived') ?? []
   const togglePlan = (id: string, on: boolean) => set('planIds', on ? [...form.planIds, id] : form.planIds.filter((x) => x !== id))
+  const toggleInterval = (val: string, on: boolean) => set('intervals', on ? [...form.intervals, val] : form.intervals.filter((x) => x !== val))
 
   return (
     <Card title={batch ? '批量生成优惠券' : '新建优惠券'}>
@@ -126,6 +127,14 @@ export function CouponForm({
               {activePlans.length === 0 && <span className={css.faint}>还没有在售套餐。</span>}
             </div>
           )}
+        </div>
+        <div>
+          <div className={css.groupLabel}>限定时长（不选即不限）</div>
+          <div className={css.checks}>
+            {COUPON_INTERVAL_OPTIONS.map((opt) => (
+              <Checkbox key={opt.value} label={opt.label} checked={form.intervals.includes(opt.value)} onChange={(e) => toggleInterval(opt.value, e.target.checked)} />
+            ))}
+          </div>
         </div>
         <div className={css.formActions}>
           <Button onClick={onCancel} disabled={submit.isPending}>

@@ -9,6 +9,7 @@ import { PLAN_STATUS_VIEW, trafficOf, VISIBILITY_LABELS } from './model'
 import css from './Plans.module.css'
 import { PoolCard } from './PoolCard'
 import { PriceCard } from './PriceCard'
+import { ResetPriceCard } from './ResetPriceCard'
 import { SalesDrawer } from './SalesDrawer'
 import { Versions } from './Versions'
 
@@ -88,6 +89,7 @@ function Loaded({ plan, row, onEdit }: { plan: PlanDetail; row: PlanRow | undefi
       <div className={css.cards}>
         <PriceCard plan={plan} />
         <PoolCard plan={plan} />
+        <ResetPriceCard plan={plan} />
       </div>
       <Versions plan={plan} />
 

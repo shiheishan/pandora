@@ -134,7 +134,7 @@ func (a promoCatalog) MissingPlans(ctx context.Context, ids []uuid.UUID) ([]uuid
 	return missing, nil
 }
 
-func (a promoCatalog) PriceSubtotal(ctx context.Context, planID, priceID uuid.UUID) (string, decimal.Decimal, error) {
+func (a promoCatalog) PriceSubtotal(ctx context.Context, planID, priceID uuid.UUID) (string, decimal.Decimal, string, error) {
 	req := catalogsvc.OfferRequest{Use: catalogsvc.UseNew, PlanID: &planID}
 	if p, ok := authn.From(ctx); ok {
 		uid := p.UserID
@@ -142,9 +142,9 @@ func (a promoCatalog) PriceSubtotal(ctx context.Context, planID, priceID uuid.UU
 	}
 	o, err := a.c.Offer(ctx, priceID, req)
 	if err != nil {
-		return "", decimal.Zero, errs.New(errs.NotFound)
+		return "", decimal.Zero, "", errs.New(errs.NotFound)
 	}
-	return string(o.Price.Currency), o.Price.UnitAmount, nil
+	return string(o.Price.Currency), o.Price.UnitAmount, o.Price.BillingInterval, nil
 }
 
 func (a promoCatalog) PackSubtotal(ctx context.Context, packID uuid.UUID) (string, decimal.Decimal, error) {

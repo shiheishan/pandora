@@ -131,3 +131,28 @@ func TestValidServerStatus(t *testing.T) {
 		}
 	}
 }
+
+// 迁移资格只看节点自己：新草稿（不论所在服务器有没有接入、有没有心跳）能迁；停用、有配置回执或运行状态的不能。
+func TestNodeMovableState(t *testing.T) {
+	sha := "abc"
+	running := "running"
+	cases := []struct {
+		name                     string
+		status                   string
+		applied, failed, runtime *string
+		want                     bool
+	}{
+		{"已接入服务器上的新草稿", NodeDraft, nil, nil, nil, true},
+		{"草稿但有配置回执", NodeDraft, &sha, nil, nil, false},
+		{"草稿但应用失败过", NodeDraft, nil, &sha, nil, false},
+		{"草稿但有运行状态", NodeDraft, nil, nil, &running, false},
+		{"停用节点", NodeDisabled, nil, nil, nil, false},
+		{"在用节点", NodeActive, nil, nil, nil, false},
+		{"已退役节点", NodeRetired, nil, nil, nil, false},
+	}
+	for _, tc := range cases {
+		if got := nodeMovableState(tc.status, tc.applied, tc.failed, tc.runtime); got != tc.want {
+			t.Errorf("%s：得到 %v，want %v", tc.name, got, tc.want)
+		}
+	}
+}

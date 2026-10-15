@@ -79,7 +79,7 @@ func renderSurfboard(rc renderCtx) ([]byte, string, int) {
 		phProxyNames:   proxyNames,
 		phSubscribeURL: rc.subscribeURL,
 	})
-	return []byte(body), "text/plain; charset=utf-8", len(realLines)
+	return body, "text/plain; charset=utf-8", len(realLines)
 }
 
 // nodeToSurfboard 在拼好一行后检查换行：Surfboard 一行一个节点，字段里的 \r/\n 会把配置拆成多行。

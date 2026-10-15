@@ -10,7 +10,7 @@ export { GIB, scenario, SCENARIOS, type Scenario }
 const DAY_MS = 86_400_000
 /** 假后端的「站点时区」（修订 R50 默认值），按日用量按它切日 */
 export const MOCK_TIMEZONE = 'Asia/Shanghai'
-/** 配置名里的站点名（假后端外观默认的 site_name） */
+/** 配置名里的站点名（假后端系统设置的缺省站点名，门户外观的 site_name 缺省也是它） */
 export const MOCK_SITE = 'Pandora'
 
 // ---------------------------------------------------------------------------
@@ -85,13 +85,14 @@ export type OrderEffect =
   | { type: 'upgrade'; subId: string; planId: string; priceId: string; credit: number; refund: number }
   /** 差价不到支付最低额而免掉（SmallDue，设计稿 2.6 推荐 A） */
   | { type: 'addon'; bytes: number; subId: string }
+  | { type: 'reset'; subId: string }
   | { type: 'topup'; amount: number }
   | { type: 'none' }
 
 export interface OrderFixture {
   id: string
   order_no: string
-  kind: 'new' | 'renewal' | 'topup' | 'addon' | 'upgrade'
+  kind: 'new' | 'renewal' | 'topup' | 'addon' | 'upgrade' | 'traffic_reset'
   status: string
   plan_name?: string
   item_name?: string
@@ -102,6 +103,7 @@ export interface OrderFixture {
   /** 优惠后（变更套餐另减折算） */
   total_amount: number
   discount_amount: number
+  member_discount_amount?: number
   balance_applied: number
   payable_amount: number
   paid_amount: number

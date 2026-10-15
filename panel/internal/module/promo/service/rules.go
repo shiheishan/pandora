@@ -144,6 +144,44 @@ func validateSpec(spec Spec) (Spec, error) {
 	}
 	out.PlanIDs = deduped
 
+	intervals := spec.Intervals
+	if intervals == nil {
+		intervals = []string{}
+	}
+	seenInt := make(map[string]struct{}, len(intervals))
+	invalidInt := false
+	for _, iv := range intervals {
+		iv = strings.TrimSpace(iv)
+		if iv == "" {
+			continue
+		}
+		if _, ok := seenInt[iv]; ok {
+			continue
+		}
+		allowed := false
+		for _, bi := range BillingIntervals {
+			if iv == bi {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			invalidInt = true
+			continue
+		}
+		seenInt[iv] = struct{}{}
+	}
+	if invalidInt {
+		fields["applicable_intervals"] = "计费周期只能是 day、week、month、quarter、year、one_time"
+	}
+	normIntervals := make([]string, 0, len(seenInt))
+	for _, bi := range BillingIntervals {
+		if _, ok := seenInt[bi]; ok {
+			normIntervals = append(normIntervals, bi)
+		}
+	}
+	out.Intervals = normIntervals
+
 	if len(fields) > 0 {
 		return Spec{}, errs.Invalid(fields)
 	}
@@ -209,6 +247,22 @@ func checkPlan(planIDs []uuid.UUID, planID *uuid.UUID) error {
 		}
 	}
 	return ErrCouponNotForPlan
+}
+
+// checkInterval 判断券限定的计费周期（intervals 为空即不限）是否包含这一单的周期；没有周期的单（流量包、流量重置）interval 为 nil。
+func checkInterval(intervals []string, interval *string) error {
+	if len(intervals) == 0 {
+		return nil
+	}
+	if interval == nil {
+		return ErrCouponNotForPeriod
+	}
+	for _, iv := range intervals {
+		if iv == *interval {
+			return nil
+		}
+	}
+	return ErrCouponNotForPeriod
 }
 
 func discountFor(f Face, maxDiscount *decimal.Decimal, subtotal decimal.Decimal) decimal.Decimal {

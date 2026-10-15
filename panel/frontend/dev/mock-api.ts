@@ -3,8 +3,9 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Plugin } from 'vite'
 import { shareAppearance } from './mock/admin/content.ts'
 import { ADMIN_MODULES } from './mock/admin/index.ts'
-import { readSharedTheme } from './mock/appearance-share.ts'
+import { readSharedSiteName, readSharedTheme } from './mock/appearance-share.ts'
 import { adminWritesEnabled, onSwitchChanged } from './mock/admin/security.ts'
+import { MOCK_SITE } from './mock/portal/fixtures.ts'
 import { PORTAL_MODULES } from './mock/portal/index.ts'
 import { consumeQuickLogin } from './mock/quick-login.ts'
 import { allowMailLinkSend, consumeMailLink, issueMailLink, lastMailLink } from './mock/mail-link.ts'
@@ -181,7 +182,7 @@ export function mockApi(app: MockApp): Plugin {
     setRefreshCookie(res, app, value)
     return value
   }
-  // 后台假后端启动即按内存初值重写共享的生效主题：上次会话激活过的主题不会残留到门户
+  // 后台假后端启动即按内存初值重写共享的生效主题与站点名：上次会话激活过的主题、改过的站点名不会残留到门户
   if (app === 'admin') shareAppearance()
 
   const issue = (userId: string, req: IncomingMessage, rat = Date.now()) => {
@@ -252,7 +253,8 @@ export function mockApi(app: MockApp): Plugin {
       // 生效主题取后台假后端经 appearance-share 写下的那份（后台激活、门户刷新即生效）；没开过后台时用内置默认
       const shared = readSharedTheme()
       return send(res, 200, {
-        theme: shared ? shared.theme : { id: randomUUID(), code: 'paper', name: '默认 · 纸白', is_builtin: true, is_active: true, tokens: { light: {}, dark: {} }, branding: { site_name: 'Pandora' }, custom_css: '' },
+        site_name: readSharedSiteName() ?? MOCK_SITE,
+        theme: shared ? shared.theme : { id: randomUUID(), code: 'paper', name: '默认 · 纸白', is_builtin: true, is_active: true, tokens: { light: {}, dark: {} }, branding: {} },
         slots: { 'portal.login.notice': '<p>国庆活动：全场 8 折，优惠码 AUTUMN26</p>' },
       })
     }

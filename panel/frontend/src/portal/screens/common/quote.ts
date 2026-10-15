@@ -14,7 +14,7 @@ export { quoteSchema, type BalanceSplit, type Quote, type QuoteRow } from './quo
 import { quoteSchema, type BalanceSplit, type Quote, type QuoteRow } from './quote-schema'
 
 export interface QuoteRequest {
-  action: 'renew' | 'change' | 'new' | 'pack'
+  action: 'renew' | 'change' | 'new' | 'pack' | 'reset'
   subscription_id?: string
   plan_id?: string
   pack_id?: string

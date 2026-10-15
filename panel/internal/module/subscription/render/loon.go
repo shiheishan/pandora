@@ -36,7 +36,7 @@ func renderLoon(rc renderCtx) ([]byte, string, int) {
 	body := fillTemplate(tmpl, map[string]string{
 		phProxies: strings.Join(lines, "\n"),
 	})
-	return []byte(body), "text/plain; charset=utf-8", len(realLines)
+	return body, "text/plain; charset=utf-8", len(realLines)
 }
 
 func loonTLSProfile(fp string) string {

@@ -1,11 +1,12 @@
 import { useMutation } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
 import { formatDateTime } from '../../../core/format'
+import { navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, Modal, QueryView, Tag, useToast } from '../../../ui'
 import css from './nodes.module.css'
-import { useFailure, useIntentKey, useInvalidateNodes, useNodeIdentity } from './queries'
-import { bootstrapTokenResponse, okResponse, serverTokenResponse, type NodeRow } from './schemas'
+import { useFailure, useInvalidateNodes, useNodeIdentity } from './queries'
+import { okResponse, type NodeRow } from './schemas'
 
 interface Secret {
   title: string
@@ -27,34 +28,7 @@ export function NodeIdentity({ node }: { node: NodeRow }) {
   const fail = useFailure()
   const invalidate = useInvalidateNodes()
   const identity = useNodeIdentity(node.id)
-  const bootstrapIntent = useIntentKey()
-  const serverIntent = useIntentKey()
-  const [secret, setSecret] = useState<Secret | null>(null)
-  const [confirm, setConfirm] = useState<'server' | 'revoke' | null>(null)
-  const retired = node.serving_status === 'retired'
-
-  const bootstrap = useMutation({
-    mutationFn: () => {
-      const body = { node_name: node.name, ttl_minutes: 30, ...(node.server_id ? { server_id: node.server_id } : {}) }
-      return api.post('v1/nodes/bootstrap-token', bootstrapTokenResponse, { body, idempotencyKey: bootstrapIntent.keyFor([node.id, 'bootstrap']) })
-    },
-    onSuccess: (r) => {
-      bootstrapIntent.reset()
-      void invalidate()
-      setSecret({ title: '一键安装令牌', token: r.token, command: r.install_command, hint: `在新机器上执行命令，按提示粘贴上面的令牌。${formatDateTime(r.expires_at)} 前有效，只显示这一次。` })
-    },
-    onError: (error) => fail(error, { intent: bootstrapIntent }),
-  })
-
-  const serverToken = useMutation({
-    mutationFn: () => api.post(`v1/nodes/${node.id}/server-token`, serverTokenResponse, { idempotencyKey: serverIntent.keyFor([node.id, 'server-token']) }),
-    onSuccess: (r) => {
-      serverIntent.reset()
-      void invalidate()
-      setSecret({ title: '服务端令牌（UniProxy）', token: r.token, command: r.install_command, hint: `${r.hint}（面板地址 ${r.panel_url}，协议 ${r.node_type}）` })
-    },
-    onError: (error) => fail(error, { intent: serverIntent }),
-  })
+  const [confirm, setConfirm] = useState<'revoke' | null>(null)
 
   const revoke = useMutation({
     mutationFn: () => api.post(`v1/nodes/${node.id}/revoke-identity`, okResponse),
@@ -84,43 +58,32 @@ export function NodeIdentity({ node }: { node: NodeRow }) {
                 '还没有身份（节点从未接入）'
               )}
             </dd>
-            <dt>服务端令牌</dt>
-            <dd>{d.server_token.present ? '已签发（仅签发时可见）' : '未签发'}</dd>
-            <dt>签发时间</dt>
-            <dd>{d.server_token.issued_at ? `${formatDateTime(d.server_token.issued_at)} · ${d.server_token.issued_by_name ?? '经安装流程取得'}` : '—'}</dd>
-            <dt>待用安装令牌</dt>
+            <dt>服务器待用安装令牌</dt>
             <dd>{d.bootstrap_tokens_pending} 个未用未过期</dd>
           </dl>
         )}
       </QueryView>
 
-      <Action title="签发一键安装令牌" detail="生成一条在新机器上执行的安装命令，30 分钟内有效。" disabledReason={retired ? '已退役的节点不能签发' : null}>
-        <Button size="sm" busy={bootstrap.isPending} onClick={() => bootstrap.mutate()}>
-          签发
-        </Button>
-      </Action>
-      <Action title="重签服务端令牌" detail="旧令牌立即失效，节点要换上新令牌才能继续上报。" disabledReason={retired ? '已退役的节点不能签发' : null}>
-        <Button size="sm" busy={serverToken.isPending} onClick={() => setConfirm('server')}>
-          重签
-        </Button>
-      </Action>
+      {node.server_id ? (
+        <Action title="安装令牌" detail="安装令牌按服务器签发：到「服务器」页打开这台节点所在的服务器签发，一台服务器接入一次，上面的节点都跟着服务。">
+          <Button size="sm" onClick={() => navigate(`/nodes/servers/${node.server_id}`)}>
+            去服务器
+          </Button>
+        </Action>
+      ) : (
+        // 没有服务器（如所在服务器被删、节点被摘下）：编辑表单里服务器只读，要到「操作」里迁移（草稿）或复制到一台服务器
+        <Action title="安装令牌" detail="节点还没放到服务器上：到「操作」里迁移（仅草稿）或复制到一台服务器，再到那台服务器签发安装令牌。">
+          <Button size="sm" onClick={() => navigate(`/nodes/nodes/${node.id}/ops`)}>
+            去操作
+          </Button>
+        </Action>
+      )}
       <Action title="吊销节点身份" detail="节点会被拒绝接入，需要重新注册。用于机器被入侵或转让。">
         <Button size="sm" className={css.dangerButton} busy={revoke.isPending} onClick={() => setConfirm('revoke')}>
           吊销
         </Button>
       </Action>
 
-      <ConfirmModal
-        open={confirm === 'server'}
-        title="重签服务端令牌？"
-        body="旧令牌立即失效，节点在换上新令牌之前无法上报，会短暂离线。新令牌只显示一次。"
-        confirmLabel="重签"
-        onConfirm={() => {
-          setConfirm(null)
-          serverToken.mutate()
-        }}
-        onCancel={() => setConfirm(null)}
-      />
       <ConfirmModal
         open={confirm === 'revoke'}
         title={`吊销「${node.name}」的身份？`}
@@ -133,7 +96,6 @@ export function NodeIdentity({ node }: { node: NodeRow }) {
         }}
         onCancel={() => setConfirm(null)}
       />
-      <SecretModal secret={secret} onClose={() => setSecret(null)} />
     </div>
   )
 }

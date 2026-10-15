@@ -64,7 +64,6 @@ interface Node {
   created_at: string
   updated_at: string
   routing: { outbounds: Array<{ tag: string; type: string; settings: unknown }>; routes: Array<Json> }
-  serverToken: { present: boolean; issued_at?: string; issued_by?: string; issued_by_name?: string }
   identityRevoked: boolean
   xb: XBState
 }
@@ -97,7 +96,6 @@ function node(p: Partial<Node> & Pick<Node, 'name' | 'node_type' | 'serving_stat
     created_at: created,
     updated_at: created,
     routing: { outbounds: [], routes: [] },
-    serverToken: { present: true, issued_at: ago(86400 * 20), issued_by: randomUUID(), issued_by_name: '林舟' },
     identityRevoked: false,
     xb: xbDefaults(),
     ...p,
@@ -169,7 +167,7 @@ const store: Node[] = [
   node({ name: '新加坡 02', node_type: 'shadowsocks', serving_status: 'active', country_code: 'SG', server_port: 8388, last_heartbeat_at: ago(900), online_users: 0, traffic_bytes_24h: 864 * GB, protocol_config: { cipher: 'aes-256-gcm' } }, 2),
   node({ name: '洛杉矶 01', node_type: 'vless', serving_status: 'active', country_code: 'US', pool_id: pools[1]!.id, online_users: 96, online_ips: 110, traffic_bytes_24h: 540 * GB, protocol_config: { network: 'ws', tls: 0, ws_path: '/ws' }, xb: { ...xbDefaults(), tags: ['流媒体'], limit_bytes: 500 * GI, used_bytes: 540 * GI, reset_day: 20, exceeded_at: ago(86400) } }, 3),
   node({ name: '首尔 01 · 灰度', node_type: 'tuic', serving_status: 'disabled', country_code: 'KR', pool_id: pools[2]!.id, protocol_config: { cert_path: '/etc/pandora/tls.crt', key_path: '/etc/pandora/tls.key' } }, 1),
-  node({ name: '新加坡 03（草稿）', node_type: 'anytls', serving_status: 'draft', country_code: 'SG', last_heartbeat_at: null, identity_serial: null, serverToken: { present: false }, protocol_config: {} }, 2),
+  node({ name: '新加坡 03（草稿）', node_type: 'anytls', serving_status: 'draft', country_code: 'SG', last_heartbeat_at: null, identity_serial: null, protocol_config: {} }, 2),
   node({ name: '台北 01', node_type: 'vmess', serving_status: 'retired', country_code: 'TW', last_heartbeat_at: ago(86400 * 9), protocol_config: { network: 'ws', tls: 0 } }, 5),
   // R105：在役但没划进节点池，不服务任何用户
   node({ name: '香港 03（未入池）', node_type: 'shadowsocks', serving_status: 'active', country_code: 'HK', server_port: 8389, pool_id: null, protocol_config: { cipher: 'aes-256-gcm' } }, 0),
@@ -273,6 +271,8 @@ function listRow(n: Node) {
     delivered_to_users: delivered,
     delivery_note: note,
     identity_serial: n.identity_serial,
+    // 与 service.nodeMovableState 同口径：假后端里草稿不会回到草稿，草稿就等于从没服务过（不看服务器心跳与身份）
+    movable: n.serving_status === 'draft',
     created_at: n.created_at,
     node_type: n.node_type,
     server_host: n.server_host,
@@ -540,7 +540,6 @@ export const nodes: MockModule = {
           protocol_config: body.protocol_config as Json,
           last_heartbeat_at: null,
           identity_serial: null,
-          serverToken: { present: false },
         })
         n.server_id = srv.id
         n.row_version = 1
@@ -592,7 +591,7 @@ export const nodes: MockModule = {
         const target = body.target_server_id ? servers.find((s) => s.id === body.target_server_id) : servers.find((s) => s.id === src.server_id)
         if (!target) return invalid({ target_server_id: '服务器不存在' })
         if (target.status !== 'ready') return err(409, 'conflict', '目标服务器当前不接受节点')
-        const copy = node({ ...structuredClone({ ...src, routing: body.copy_routing ? src.routing : { outbounds: [], routes: [] } }), name, serving_status: 'draft', last_heartbeat_at: null, identity_serial: null, online_users: 0, online_ips: 0, traffic_bytes_24h: 0, serverToken: { present: false } })
+        const copy = node({ ...structuredClone({ ...src, routing: body.copy_routing ? src.routing : { outbounds: [], routes: [] } }), name, serving_status: 'draft', last_heartbeat_at: null, identity_serial: null, online_users: 0, online_ips: 0, traffic_bytes_24h: 0 })
         // node() 先给新 id 与编号，再被源节点的字段覆盖：复制出来的必须是新节点
         copy.id = randomUUID()
         copy.node_no = nodeNo
@@ -627,10 +626,8 @@ export const nodes: MockModule = {
         const target = servers.find((s) => s.id === body.server_id)
         if (!target) return invalid({ server_id: '服务器不存在' })
         if (target.id === n.server_id) return { status: 200, body: adminNode(n) }
-        if (n.serving_status === 'active') return err(409, 'conflict', '活动中的节点不能移动')
-        if (n.last_heartbeat_at || n.identity_serial) {
-          return err(409, 'conflict', '节点仍绑定控制面或 Agent 资产', { control_node: '0', active_identities: n.identityRevoked ? '0' : '1', runtime_instances: '1', metrics: '288', pending_tasks: '0', provisioning: '1', bootstrap_tokens: '0', config_applications: '12', usage_sources: '1', usage_batches: '30', traffic_reports: '1440', active_server_token: n.serverToken.present ? '1' : '0' })
-        }
+        // 与 service.nodeMovableState 一致：只有从没服务过的草稿（不看服务器心跳与身份）；409 只带文案，不带 fields
+        if (n.serving_status !== 'draft') return err(409, 'conflict', '只有从没服务过的草稿节点能迁移；其余请复制到新服务器后再退役原节点')
         if (target.status !== 'ready') return err(409, 'conflict', '目标服务器当前不接受节点')
         n.server_id = target.id
         touch(n)
@@ -672,24 +669,6 @@ export const nodes: MockModule = {
         if (st) return st
         batchApplyStatus(rows, to)
         return { status: 200, body: { ok: true, updated: items.length, serving_status: to } }
-      })
-    },
-    'POST /v1/nodes/bootstrap-token': async (ctx) => {
-      if (!ctx.requireReauth()) return
-      const body = await ctx.body()
-      if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
-      await ctx.idempotent('node_bootstrap_token_issue', () => {
-        const name = text(body.node_name).trim()
-        if (!name) return invalid({ node_name: '必填' })
-        const n = store.find((x) => x.name === name)
-        if (n && (n.serving_status === 'retired' || n.deleted)) return err(409, 'conflict', '已退役或销毁节点不能签发引导令牌')
-        const ttl = int(body.ttl_minutes)
-        const minutes = ttl && ttl >= 1 && ttl <= 30 ? ttl : 20
-        return {
-          status: 201,
-          unreplayable: true,
-          body: { token: `pbt_${randomBytes(24).toString('base64url')}`, expires_at: new Date(Date.now() + minutes * 60_000).toISOString(), install_command: 'curl -fsSL https://panel.example.test/install.sh | sudo bash -s -- --enroll' },
-        }
       })
     },
     'POST /v1/nodes/reality-keypair': (ctx) => {
@@ -801,19 +780,6 @@ export const nodes: MockModule = {
       touch(n)
       ctx.send(200, { ok: true, row_version: n.row_version })
     },
-    'POST /v1/nodes/:id/server-token': async (ctx) => {
-      if (!ctx.requireReauth()) return
-      await ctx.idempotent('node_server_token_issue', () => {
-        const n = findNode(ctx.params.id)
-        if (!n) return notFound('节点不存在')
-        if (n.serving_status === 'retired') return err(409, 'conflict', '已退役或销毁的节点不能签发服务端令牌')
-        n.serverToken = { present: true, issued_at: new Date().toISOString(), issued_by: ctx.user.userId, issued_by_name: ctx.user.displayName ?? ctx.user.email }
-        return {
-          status: 201,
-          body: { token: `srv_${randomBytes(24).toString('hex')}`, node_type: n.node_type ?? '', panel_url: 'https://panel.example.test', install_command: 'curl -fsSL https://panel.example.test/uniproxy.sh | sudo bash -s --', hint: '旧令牌立即失效；在节点上执行命令后粘贴令牌' },
-        }
-      })
-    },
     'GET /v1/nodes/:id/identity': (ctx) => {
       if (!UUID.test(ctx.params.id!)) return reply(ctx, notFound('节点不存在'))
       const n = findNode(ctx.params.id)
@@ -829,7 +795,7 @@ export const nodes: MockModule = {
             ...(n.identityRevoked ? { revoked_at: ago(60), revoked_reason: 'admin_revoked' } : {}),
           }
         : null
-      ctx.send(200, { identity, server_token: n.serverToken, bootstrap_tokens_pending: n.last_heartbeat_at ? 0 : 1 })
+      ctx.send(200, { identity, bootstrap_tokens_pending: n.last_heartbeat_at ? 0 : 1 })
     },
   },
 }

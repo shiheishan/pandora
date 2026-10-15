@@ -19,6 +19,8 @@ const (
 	KindAddon   = "addon"
 	KindTopup   = "topup"
 	KindUpgrade = "upgrade"
+	// KindTrafficReset 是用户自己买的「流量重置」：付款后把目标订阅当期已用流量清零（xb-order #32）
+	KindTrafficReset = "traffic_reset"
 )
 
 // 订单状态：库里只写这五种。StatusPaid 只在结算事务内短暂出现（随后同一事务转 fulfilled）。
@@ -118,6 +120,11 @@ var (
 	ErrUnknownStatus      = errs.Newf(errs.BadRequest, "不支持的订单状态")
 	ErrPlanChangeSamePlan = errs.Newf(errs.Conflict, "与当前套餐相同，请使用续费")
 	ErrPlanChangeCurrency = errs.Newf(errs.Conflict, "变更套餐不能更换币种")
+	// ErrResetNotSold 是这份订阅的套餐没有按订阅币种设流量重置价格（不卖重置）
+	ErrResetNotSold = errs.Newf(errs.Conflict, "这个套餐不提供流量重置")
+	// ErrResetPeriodSwitching 是作依据的限额流量配额这一期已结束、滚动任务还没把它推到下一期（至多约 10 分钟）：
+	// 这时清的是已结束那一期的用量，不卖。报价也回它（不是空数组），门户据此提示稍后再来。文案避开门户禁用词「周期」
+	ErrResetPeriodSwitching = errs.Newf(errs.Conflict, "本期流量刚结束，正在换到下一期，请几分钟后再来重置")
 	// errProrationMixedCurrency：不同币种的钱加不到一起，也就没有「剩余价值」可言
 	errProrationMixedCurrency = errs.Newf(errs.Conflict, "这条订阅本周期的付费订单币种不一致，无法折算")
 	// errManualBelowMinimum 是后台待支付单应付低于最低额：用户付不了。带 fields.settlement，后台据它落到「结算方式」上
@@ -156,11 +163,13 @@ type Checkout struct {
 // Created 是建单的结果（门户 201 响应的内容）。Status 为 pending_payment，或零元单、线下已收款当场履约后的 fulfilled。
 // Total 是免掉零头之后的订单总额（与库里 total_amount 一致）。Change 只在换套餐单上非 nil。
 type Created struct {
-	OrderID        uuid.UUID
-	OrderNo        string
-	Currency       money.Currency
-	Total          decimal.Decimal
+	OrderID  uuid.UUID
+	OrderNo  string
+	Currency money.Currency
+	Total    decimal.Decimal
+	// Discount 是全部减免（券 + 会员折扣，与库里 discount_amount 一致）；MemberDiscount 是其中会员折扣的部分
 	Discount       decimal.Decimal
+	MemberDiscount decimal.Decimal
 	BalanceApplied decimal.Decimal
 	Payable        decimal.Decimal
 	// Waived 是免掉的零头（只有门户换套餐会有）；对外的 discount_amount 也含它
@@ -208,6 +217,13 @@ type PackOrderInput struct {
 	Reply CreatedReply
 }
 
+// ResetOrderInput 是门户买流量重置（POST /v1/me/subscriptions/{id}/traffic-reset）。
+type ResetOrderInput struct {
+	SubscriptionID uuid.UUID
+	Checkout
+	Reply CreatedReply
+}
+
 // TopupInput 是门户充值（POST /v1/me/topups）。Currency 为空时取 CNY。
 type TopupInput struct {
 	Amount   decimal.Decimal
@@ -244,7 +260,7 @@ type BalancePlan struct {
 	Waived decimal.Decimal
 }
 
-// QuoteInput 是门户统一报价（POST /v1/me/checkout/quote）。Action 取 new、renew、pack；change 第二期才支持。
+// QuoteInput 是门户统一报价（POST /v1/me/checkout/quote）。Action 取 new、renew、pack、change、reset（reset 要 SubscriptionID）。
 type QuoteInput struct {
 	Action         string
 	SubscriptionID *uuid.UUID
@@ -260,6 +276,8 @@ const (
 	QuoteRenew  = "renew"
 	QuotePack   = "pack"
 	QuoteChange = "change"
+	// QuoteReset 是买流量重置：这份订阅不卖重置时 Quotes 为空
+	QuoteReset = "reset"
 )
 
 // QuoteResult 是报价响应：Balance 是报价时的可用余额，MinPayment 是能在线付的最低额。
@@ -281,7 +299,11 @@ type Quote struct {
 	Interval       string
 	IntervalCount  int
 	Subtotal       decimal.Decimal
-	Discount       decimal.Decimal
+	// Discount 是券折扣（只有券）；会员折扣另记在 MemberDiscount，Total 两者都已减掉
+	Discount decimal.Decimal
+	// MemberDiscount 是会员折扣（小计 × MemberPercent / 100 向零截断，与券折扣合计不超过小计）；MemberPercent 为 0 表示没有
+	MemberDiscount decimal.Decimal
+	MemberPercent  int
 	// CouponCode 是生效的优惠码；CouponError 是优惠码不能用的中文原因（不让整个报价失败）
 	CouponCode  *string
 	CouponError *string
@@ -366,6 +388,7 @@ type OrderRow struct {
 	Currency          money.Currency
 	Subtotal          decimal.Decimal
 	Discount          decimal.Decimal
+	MemberDiscount    decimal.Decimal
 	ProrationCredit   decimal.Decimal
 	Waived            decimal.Decimal
 	Total             decimal.Decimal

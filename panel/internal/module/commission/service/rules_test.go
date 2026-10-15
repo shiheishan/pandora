@@ -49,8 +49,9 @@ func TestReviewSource(t *testing.T) {
 		reviewSourceCheckFailed:  ReviewSourceSourceCheck,
 		reviewSourceCheckMissing: ReviewSourceSourceCheck,
 		reviewUnderfundedPrefix + "，无法解冻 10.00 CNY": ReviewSourceUnderfunded,
-		"手工标记": ReviewSourceOther,
-		"":     ReviewSourceOther,
+		reviewDeletedReason: ReviewSourceAccountDeleted,
+		"手工标记":              ReviewSourceOther,
+		"":                  ReviewSourceOther,
 	}
 	for reason, want := range cases {
 		if got := reviewSource(reason); got != want {
