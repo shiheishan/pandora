@@ -16,6 +16,7 @@ paths:
   - 流量包（`TrafficPack`）流量上限为 1 PiB（`maxPackBytes` = 1<<50），乐观锁通过触发器维护的 `updated_at` / `row_version` 控制。
 - 版本语义与价格冻结：
   - 套餐已发布版本（`published`）及其关联权益、配额、绑池与价格行（`prices`）均冻结不可变，保障订单与订阅的快照一致性。
+  - 价格没有试用天数，版本没有宽限期（只存不用，00049 删列；订阅只有 active / expired）。注册试用是 identity → subscription 的 `TrialGranter`，与价格无关。
 - 流量重置价格（xb-order #32，`plan_reset_prices`，00046）：
   - 每个套餐每个币种至多一档，`unit_amount > 0`；没有行 = 门户不卖流量重置。订单行快照了金额，所以价格直接可改、不随版本冻结。
   - 后台 `GET/PUT /v1/plans/:id/reset-prices`（PUT 近期重认证 + 幂等 `catalog_plan_reset_prices`，整组替换，审计 `plan.reset_prices_set` 记前后）；order 经 `ResetPrice(planID, cur)` 按订阅价格快照的币种取一档。
