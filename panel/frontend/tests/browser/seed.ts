@@ -76,7 +76,7 @@ async function build(): Promise<World> {
         allow_renewal: true,
         allow_upgrade: true,
         pool_ids: [pool],
-        prices: prices.map(([count, amount]) => ({ billing_interval: 'month', interval_count: count, unit_amount: amount, currency: 'CNY', trial_days: 0 })),
+        prices: prices.map(([count, amount]) => ({ billing_interval: 'month', interval_count: count, unit_amount: amount, currency: 'CNY' })),
         publish: true,
       },
       expect: [200, 201],

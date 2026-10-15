@@ -166,7 +166,7 @@ function updateComplete(ctx: MockContext, p: Plan, b: Json): MockResult {
     for (const x of p.prices) {
       if (x.status !== 'active' || x.user_group_id !== null || !currencies.has(x.currency)) continue
       const w = want.get(priceKey(x))
-      if (w && w.unit_amount === x.unit_amount && (w.trial_days ?? 0) === x.trial_days) {
+      if (w && w.unit_amount === x.unit_amount) {
         want.delete(priceKey(x))
         continue
       }
@@ -375,8 +375,6 @@ const routes: Record<string, MockRoute> = {
           'expected_row_version',
           'quota_reset_strategy',
           'quota_reset_day',
-          'grace_period_hours',
-          'grace_keeps_service',
           'renewal_extends_period',
           'renewal_resets_quota',
           'renewal_keeps_addons',
@@ -429,7 +427,7 @@ const routes: Record<string, MockRoute> = {
     await withPlan(
       ctx,
       (p, b) => {
-        const bad = unknownField(b, ['currency', 'unit_amount', 'billing_interval', 'interval_count', 'trial_days', 'user_group_id', 'valid_from', 'valid_until'])
+        const bad = unknownField(b, ['currency', 'unit_amount', 'billing_interval', 'interval_count', 'user_group_id', 'valid_from', 'valid_until'])
         if (bad) return bad
         const f = priceProblems(b)
         if (Object.keys(f).length) return invalid(f)
@@ -437,7 +435,6 @@ const routes: Record<string, MockRoute> = {
         const group = (b.user_group_id as string | null) ?? null
         if (p.prices.some((x) => x.status === 'active' && priceKey(x) === priceKey(b) && x.user_group_id === group)) return DUP
         const row = seedPrice(str(b.currency), b.unit_amount as number, str(b.billing_interval), b.interval_count as number, 0, {
-          trial_days: isInt(b.trial_days) ? b.trial_days : 0,
           user_group_id: group,
           valid_from: (b.valid_from as string | null) ?? null,
           valid_until: (b.valid_until as string | null) ?? null,

@@ -48,8 +48,6 @@ interface Version {
   row_version: number
   quota_reset_strategy: string
   quota_reset_day: number | null
-  grace_period_hours: number
-  grace_keeps_service: boolean
   renewal_extends_period: boolean
   renewal_resets_quota: boolean
   renewal_keeps_addons: boolean
@@ -71,7 +69,6 @@ interface Price {
   unit_amount: number
   billing_interval: string
   interval_count: number
-  trial_days: number
   status: 'active' | 'archived'
   user_group_id: string | null
   valid_from: string | null
@@ -115,8 +112,6 @@ export function blankVersion(n: number, email: string | null): Version {
     row_version: 1,
     quota_reset_strategy: 'billing_cycle',
     quota_reset_day: null,
-    grace_period_hours: 0,
-    grace_keeps_service: true,
     renewal_extends_period: true,
     renewal_resets_quota: true,
     renewal_keeps_addons: true,
@@ -147,7 +142,6 @@ function seedVersion(n: number, status: Version['status'], gb: number, devices: 
     status,
     frozen_at: status === 'draft' ? null : iso(daysAgo * DAY),
     row_version: status === 'draft' ? 2 : 3,
-    grace_period_hours: 24,
     max_devices: devices,
     quotas: quotasFor(gb, devices),
     pool_ids: poolCodes.map(poolId),
@@ -163,7 +157,6 @@ export function seedPrice(currency: string, amount: number, interval: string, co
     unit_amount: amount,
     billing_interval: interval,
     interval_count: count,
-    trial_days: 0,
     status: 'active',
     user_group_id: null,
     valid_from: null,
@@ -238,7 +231,7 @@ export const plans: Plan[] = [
     ],
     [
       seedPrice('CNY', 4500, 'month', 1, 120),
-      seedPrice('CNY', 45000, 'year', 1, 120, { trial_days: 3 }),
+      seedPrice('CNY', 45000, 'year', 1, 120),
       seedPrice('USD', 690, 'month', 1, 90),
       seedPrice('CNY', 3900, 'month', 1, 30, { user_group_id: VIP }),
     ],
@@ -344,7 +337,6 @@ export function semanticsProblems(b: Json): Record<string, string> {
   if (!['never', 'natural_month', 'billing_cycle', 'fixed_day'].includes(strategy)) f.quota_reset_strategy = '不支持的重置策略'
   if (strategy === 'fixed_day' && !(isInt(b.quota_reset_day) && b.quota_reset_day >= 1 && b.quota_reset_day <= 28)) f.quota_reset_day = '固定日必须为 1-28'
   if (strategy !== 'fixed_day' && b.quota_reset_day != null) f.quota_reset_day = '非固定日策略不能设置该字段'
-  if (!(isInt(b.grace_period_hours) && b.grace_period_hours >= 0)) f.grace_period_hours = '不能为负数'
   if (b.max_devices != null && !(isInt(b.max_devices) && b.max_devices > 0)) f.max_devices = '必须为正整数'
   if (b.max_concurrent != null && !(isInt(b.max_concurrent) && b.max_concurrent > 0)) f.max_concurrent = '必须为正整数'
   if (!(isInt(b.device_release_hours) && b.device_release_hours >= 0)) f.device_release_hours = '不能为负数'
@@ -393,7 +385,6 @@ export function priceProblems(b: Json): Record<string, string> {
   if (!(isInt(b.unit_amount) && b.unit_amount >= 0)) f.unit_amount = '不能为负数'
   if (!INTERVALS.includes(str(b.billing_interval))) f.billing_interval = '不支持的计费周期'
   if (!(isInt(b.interval_count) && b.interval_count > 0)) f.interval_count = '必须为正整数'
-  if (b.trial_days !== undefined && !(isInt(b.trial_days) && b.trial_days >= 0)) f.trial_days = '不能为负数'
   if (b.user_group_id != null && !(typeof b.user_group_id === 'string' && UUID.test(b.user_group_id))) f.user_group_id = '必须是 UUID'
   else if (b.user_group_id != null && !GROUPS.some((g) => g.id === b.user_group_id)) f.user_group_id = '用户组不存在'
   const from = b.valid_from ? Date.parse(str(b.valid_from)) : null
@@ -431,8 +422,6 @@ export function publish(p: Plan, v: Version): void {
 export function applySemantics(v: Version, b: Json): void {
   v.quota_reset_strategy = str(b.quota_reset_strategy)
   v.quota_reset_day = (b.quota_reset_day as number | null) ?? null
-  v.grace_period_hours = b.grace_period_hours as number
-  v.grace_keeps_service = b.grace_keeps_service === true
   v.renewal_extends_period = b.renewal_extends_period === true
   v.renewal_resets_quota = b.renewal_resets_quota === true
   v.renewal_keeps_addons = b.renewal_keeps_addons === true
@@ -478,6 +467,5 @@ export function wizardPriceProblems(list: Json[]): Record<string, string> {
 
 export const newPrice = (x: Json): Price =>
   seedPrice(str(x.currency), x.unit_amount as number, str(x.billing_interval), x.interval_count as number, 0, {
-    trial_days: isInt(x.trial_days) ? x.trial_days : 0,
     created_at: new Date().toISOString(),
   })

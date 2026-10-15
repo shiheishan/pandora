@@ -234,7 +234,7 @@ interface PriceChoice {
   planName: string
 }
 
-/** 在售套餐（已发布、有当前版本）的在售价格；组专属价与试用在名字里注明，后端下单时再校验资格 */
+/** 在售套餐（已发布、有当前版本）的在售价格；组专属价在名字里注明，后端下单时再校验资格 */
 export function priceChoices(plans: readonly PlanRow[]): PriceChoice[] {
   return plans
     .filter((p) => p.status === 'active' && p.current_version_id !== null)
@@ -243,16 +243,13 @@ export function priceChoices(plans: readonly PlanRow[]): PriceChoice[] {
         .filter((x) => x.status === 'active')
         // CNY 在前，同币种按价格升序（后端按创建时间倒序给）
         .sort((a, b) => Number(b.currency === 'CNY') - Number(a.currency === 'CNY') || a.currency.localeCompare(b.currency) || a.unit_amount - b.unit_amount)
-        .map((x) => {
-          const notes = [x.user_group_id ? '组专属' : '', x.trial_days > 0 ? `试用 ${x.trial_days} 天` : ''].filter(Boolean)
-          return {
-            value: `${p.id}:${x.id}`,
-            label: `${p.name} · ${periodLabel(x.billing_interval, x.interval_count)} ${formatMoney(x.unit_amount, x.currency)}${notes.length ? `（${notes.join('，')}）` : ''}`,
-            amount: x.unit_amount,
-            currency: x.currency,
-            planName: p.name,
-          }
-        }),
+        .map((x) => ({
+          value: `${p.id}:${x.id}`,
+          label: `${p.name} · ${periodLabel(x.billing_interval, x.interval_count)} ${formatMoney(x.unit_amount, x.currency)}${x.user_group_id ? '（组专属）' : ''}`,
+          amount: x.unit_amount,
+          currency: x.currency,
+          planName: p.name,
+        })),
     )
 }
 

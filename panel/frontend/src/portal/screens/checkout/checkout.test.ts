@@ -8,7 +8,7 @@ import { changeFormula, confirmCopy, memberWord, payCopy, tierNote } from './cop
 import { defaultTier, intentOf, orderRequest, parseTarget, quoteRequest, sortTiers } from './model'
 import { doneLines, doneQuery, doneSub, paidText, readDone } from './result-copy'
 
-const price = (id: string, unit_amount: number, billing_interval: Price['billing_interval'], interval_count = 1, currency = 'CNY'): Price => ({ id, currency, unit_amount, billing_interval, interval_count, trial_days: 0 })
+const price = (id: string, unit_amount: number, billing_interval: Price['billing_interval'], interval_count = 1, currency = 'CNY'): Price => ({ id, currency, unit_amount, billing_interval, interval_count })
 const OLD_STD: Plan = { ...STD, prices: [price('s1', 2900, 'month'), price('s3', 7900, 'quarter'), price('s12', 29900, 'year'), price('su', 499, 'month', 1, 'USD')], quota_reset_strategy: 'natural_month', quotas: [{ metric: 'traffic.bytes', limit: 200 * GIB, unit: 'bytes', period: 'cycle' }] }
 const OLD_PRO: Plan = { ...OLD_STD, id: 'pro', name: '专业版', prices: [price('p1', 5900, 'month'), price('p3', 15900, 'month', 3), price('p12', 59900, 'month', 12)] }
 const PACK: Pack = { id: 'k', name: '500 GB', traffic_bytes: 500 * GIB, currency: 'CNY', unit_amount: 9900, recommended: true }

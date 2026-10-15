@@ -8,7 +8,6 @@ export interface CatalogPrice {
   unit_amount: number
   billing_interval: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'one_time'
   interval_count: number
-  trial_days: number
 }
 
 export interface CatalogPlan {
@@ -36,7 +35,6 @@ const price = (id: string, unit_amount: number, billing_interval: CatalogPrice['
   unit_amount,
   billing_interval,
   interval_count,
-  trial_days: 0,
 })
 
 export const PLANS: readonly CatalogPlan[] = [

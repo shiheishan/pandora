@@ -12,7 +12,6 @@ const priceSchema = z.object({
   unit_amount: z.number().int(),
   billing_interval: z.enum(['day', 'week', 'month', 'quarter', 'year', 'one_time']),
   interval_count: z.number().int(),
-  trial_days: z.number().int(),
 })
 export type Price = z.output<typeof priceSchema>
 

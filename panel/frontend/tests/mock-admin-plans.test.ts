@@ -60,7 +60,7 @@ describe('mock api · admin plans', () => {
       traffic_gb: 100,
       max_devices: 2,
       pool_ids: [empty],
-      prices: [{ billing_interval: 'month', interval_count: 1, unit_amount: 1900, currency: 'CNY', trial_days: 0 }],
+      prices: [{ billing_interval: 'month', interval_count: 1, unit_amount: 1900, currency: 'CNY' }],
       publish: true,
     }
     const noNodes = await send('POST', '/v1/plans/complete', body, 'wiz-1')
@@ -104,9 +104,9 @@ describe('mock api · admin plans', () => {
     expect(r.changed).toHaveLength(2)
     const cur = r.plan.versions.find((v) => v.id === r.plan.current_version_id)!
     expect(cur.quotas.find((q) => q.metric === 'traffic.bytes')!.limit).toBe(300 * 1024 ** 3)
-    // R107：新版本继承当前版本的权益与宽限期，上架时间窗不被清空
+    // R107：新版本继承当前版本的权益，上架时间窗不被清空
     const was = d.versions.find((v) => v.id === d.current_version_id)!
-    expect(cur).toMatchObject({ entitlements: was.entitlements, grace_period_hours: was.grace_period_hours, overage_policy: 'suspend' })
+    expect(cur).toMatchObject({ entitlements: was.entitlements, overage_policy: 'suspend' })
     expect(r.plan).toMatchObject({ visible_from: d.visible_from, visible_until: d.visible_until })
     expect(r.plan.prices).toEqual(d.prices)
     // 本来不限流量时再交 0 不滚版本（这里先前的版本有流量，交同样的 300 也不滚）

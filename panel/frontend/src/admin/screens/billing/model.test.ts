@@ -174,7 +174,7 @@ describe('write forms', () => {
     expect(referenceProblem(' ICBC-1 ')).toBeNull()
   })
 
-  const price = (over: Partial<PriceRow>): PriceRow => ({ id: 'p', currency: 'CNY', unit_amount: 2500, billing_interval: 'month', interval_count: 1, trial_days: 0, status: 'active', user_group_id: null, valid_from: null, valid_until: null, row_version: 1, ...over })
+  const price = (over: Partial<PriceRow>): PriceRow => ({ id: 'p', currency: 'CNY', unit_amount: 2500, billing_interval: 'month', interval_count: 1, status: 'active', user_group_id: null, valid_from: null, valid_until: null, row_version: 1, ...over })
   const plan = (over: Partial<PlanRow>): PlanRow => ({
     id: 'pl',
     row_version: 1,
@@ -199,14 +199,14 @@ describe('write forms', () => {
 
   it('offers only active prices of published plans', () => {
     const choices = priceChoices([
-      plan({ prices: [price({ id: 'a' }), price({ id: 'b', status: 'archived' }), price({ id: 'c', billing_interval: 'year', unit_amount: 19900, user_group_id: 'g', trial_days: 3 })] }),
+      plan({ prices: [price({ id: 'a' }), price({ id: 'b', status: 'archived' }), price({ id: 'c', billing_interval: 'year', unit_amount: 19900, user_group_id: 'g' })] }),
       plan({ id: 'draft', status: 'draft', prices: [price({ id: 'd' })] }),
       plan({ id: 'nover', current_version_id: null, prices: [price({ id: 'e' })] }),
     ])
     expect(choices.map((c) => c.value)).toEqual(['pl:a', 'pl:c'])
     expect(choices[0]!.planName).toBe('标准版')
     expect(choices[0]!.label).toBe('标准版 · 每月 ¥25.00')
-    expect(choices[1]!.label).toContain('（组专属，试用 3 天）')
+    expect(choices[1]!.label).toContain('（组专属）')
   })
 
   it('validates the manual order and only sends reference for offline', () => {
