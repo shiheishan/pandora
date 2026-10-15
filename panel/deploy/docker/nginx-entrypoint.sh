@@ -69,12 +69,11 @@ validate_ipv6_or_cidr() {
 compose_default_gateway() {
   # compose 网络的默认网关：宿主反代经发布到回环的端口连进来时，nginx 看到的 TCP 对端常是它。
   # 仅当 80/443 不对公网发布时才可信任 gateway；否则经 docker-proxy 进来的公网客户端也会显示为网关，可伪造 X-Real-IP。
-  local line dest gw
-  while IFS= read -r line; do
-    [[ "$line" =~ ^[[:space:]]*Iface ]] && continue
-    dest="${line%%[[:space:]]*}"
+  # /proc/net/route 的列：Iface Destination Gateway Flags …（十六进制、小端）；第一行是表头
+  local iface dest gw _rest
+  while read -r iface dest gw _rest; do
+    [[ "$iface" == Iface ]] && continue
     [[ "$dest" != '00000000' ]] && continue
-    gw="$(awk '{print $3}' <<<"$line")"
     [[ -n "$gw" && "$gw" != '00000000' ]] || die 'PANDORA_REALIP_FROM 含 gateway，但 /proc/net/route 中找不到默认网关'
     printf '%d.%d.%d.%d' "0x${gw:6:2}" "0x${gw:4:2}" "0x${gw:2:2}" "0x${gw:0:2}"
     return 0
