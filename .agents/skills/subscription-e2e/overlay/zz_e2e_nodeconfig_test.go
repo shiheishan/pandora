@@ -36,7 +36,7 @@ func TestE2ENodeConfig(t *testing.T) {
 	res := map[string]json.RawMessage{}
 	errs := map[string]string{}
 	for id, f := range fx {
-		doc, err := buildNodeConfigDoc(uuid.New(), f.Type, f.Port, string(f.Config), nil, nil)
+		doc, err := buildNodeConfigDoc(uuid.New(), f.Type, f.Port, string(f.Config), nil, nil, e2ePSK{})
 		if err != nil {
 			errs[id] = err.Error()
 			continue
@@ -61,4 +61,16 @@ func e2eWriteNodeConfig(t *testing.T, path string, body []byte) {
 	if err := os.WriteFile(path, body, 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// e2ePSK 是 E2E 用的固定 SS2022 服务端密钥：第 i 字节 = i+1，与渲染 overlay 的 e2eSS2022Password 同值，
+// 这样订阅里的 iPSK 与下发给节点的对得上（真实环境由主密钥按节点 HKDF 派生）。
+type e2ePSK struct{}
+
+func (e2ePSK) Derive(_ string, n int) []byte {
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = byte(i + 1)
+	}
+	return b
 }

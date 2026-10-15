@@ -81,6 +81,14 @@ func checkLink(l string) string {
 	q := u.Query()
 	switch u.Scheme {
 	case "ss":
+		if method := u.User.Username(); strings.HasPrefix(method, "2022-") {
+			// SIP022：2022 方法的 userinfo 是百分号编码的 method:password，不做 base64；
+			// 多用户（SIP023）的 password = base64(iPSK):base64(uPSK)，两段都要是该方法的密钥长度
+			if msg := checkSS2022Password(method, u.User); msg != "" {
+				return name + ": " + msg
+			}
+			break
+		}
 		// SIP002：userinfo 是 base64url(method:password)
 		raw, err := base64.RawURLEncoding.DecodeString(u.User.Username())
 		if err != nil || !strings.Contains(string(raw), ":") {
@@ -155,6 +163,29 @@ func checkVMess(payload string) string {
 		// v2rayN 的 vmess 链接把 gRPC 服务名放在 path
 		if path == "" {
 			return fmt.Sprintf("vmess %s: net=grpc 缺服务名（放在 path）", name)
+		}
+	}
+	return ""
+}
+
+// checkSS2022Password 核对 SIP022/SIP023 的 2022 密码：iPSK:uPSK，各是标准 base64 且解出该方法的密钥长度。
+func checkSS2022Password(method string, user *url.Userinfo) string {
+	keyLen := map[string]int{"2022-blake3-aes-128-gcm": 16, "2022-blake3-aes-256-gcm": 32}[method]
+	if keyLen == 0 {
+		return "ss 的 2022 方法不认识: " + method
+	}
+	password, ok := user.Password()
+	if !ok {
+		return "ss 2022 的 userinfo 缺 password（应为百分号编码的 method:password）"
+	}
+	parts := strings.Split(password, ":")
+	if len(parts) != 2 {
+		return "ss 2022 的 password 不是 iPSK:uPSK 两段"
+	}
+	for _, p := range parts {
+		b, err := base64.StdEncoding.DecodeString(p)
+		if err != nil || len(b) != keyLen {
+			return fmt.Sprintf("ss 2022 的密钥段不是 %d 字节的标准 base64", keyLen)
 		}
 	}
 	return ""
