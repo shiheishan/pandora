@@ -8,6 +8,7 @@
 //
 // 只认两类路径：入口 / 与 Vite 产物目录 /assets/*。前端用 hash 路由，业务路径永远不会打到服务端；
 // 不做 SPA 回退，缺失的资源就该是 404，而不是一张 200 的入口页掩盖构建错配。
+// 入口页可按 WithIndexMeta 改写 <head>（title、description、application-name、icon），只改文字、不加脚本与样式，CSP 不变。
 // 根下其余路径（/v1、/healthz、订阅通配 /:prefix/:token、/pdnd/...）继续归各自的路由，互不抢占：
 // gin 的路由树里静态段 assets 优先于参数段，订阅前缀恰好叫 assets 的链接会被遮住（前缀是随机串，碰不上）。
 package webapp
@@ -22,6 +23,7 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -125,6 +127,13 @@ type handler struct {
 	index []byte
 	etag  string
 	extra func(ctx context.Context) ExtraSources
+	meta  func(ctx context.Context) IndexMeta
+
+	mu       sync.Mutex
+	lastMeta IndexMeta
+	lastBody []byte
+	lastETag string
+	hasLast  bool
 }
 
 // Option 调整 Handler。
@@ -138,7 +147,7 @@ func WithExtraSources(f func(ctx context.Context) ExtraSources) Option {
 
 // Handler 只读下发 fsys：
 //
-//	/              → index.html，no-cache + ETag + CSP
+//	/              → index.html，no-cache + ETag + CSP；可选 WithIndexMeta 改写 <head>
 //	/assets/<文件> → 按扩展名给类型，一年 immutable
 //	其余           → 404；目录、点开头的段、非法路径同样 404
 //
@@ -177,13 +186,20 @@ func (h *handler) serveIndex(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	csp, etag := indexCSP, h.etag
+	body, etag := h.index, h.etag
+	if h.meta != nil {
+		m := sanitizeMeta(h.meta(r.Context()))
+		if !m.zero() {
+			body, etag = h.rendered(m)
+		}
+	}
+	csp := indexCSP
 	if h.extra != nil {
 		if x := h.extra(r.Context()); !x.empty() {
 			csp = cspWith(x)
 			// CSP 变了 ETag 也要变：否则浏览器拿着旧 ETag 命中 304，可能沿用缓存里的旧响应头
 			sum := sha256.Sum256([]byte(csp))
-			etag = strings.TrimSuffix(h.etag, `"`) + "-" + hex.EncodeToString(sum[:4]) + `"`
+			etag = strings.TrimSuffix(etag, `"`) + "-" + hex.EncodeToString(sum[:4]) + `"`
 		}
 	}
 	hd := w.Header()
@@ -192,7 +208,7 @@ func (h *handler) serveIndex(w http.ResponseWriter, r *http.Request) {
 	hd.Set("Cache-Control", indexCache)
 	// ServeContent 按这里的 ETag 处理 If-None-Match，命中即 304
 	hd.Set("ETag", etag)
-	http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(h.index))
+	http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(body))
 }
 
 func (h *handler) serveAsset(w http.ResponseWriter, r *http.Request, rel string) {
