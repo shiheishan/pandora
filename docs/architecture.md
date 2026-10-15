@@ -139,11 +139,11 @@ nodeapi/                         buf 生成的 Go 代码，单独的 Go module�
 | identity | users、user_passwords、user_groups、registration_sessions、verification_codes、invite_codes、referrals、referral_changes（视图 effective_referrals）、user_generation_jobs | 注册、口令、用户资料、批量建用户、注销。user_groups 从 adminops 收回来；referrals 在注册时写入、只追加，后台改邀请人追加到 referral_changes，「当前邀请人」一律读 effective_referrals（每人取最新一条改动，没有改动取注册时的），佣金模块调 identity 读 |
 | auth | admins（管理员名单）；Redis 里的会话、refresh、快捷登录 | 登录、刷新、登出、重认证、管理员授予与取消、最后一个管理员保护。原 sessions、refresh_tokens、quick_login_tokens 三张表不再建 |
 | settings | settings（键值加类型化访问器）、feature_switches | 原 system_settings 和 tenants.settings 合到这里。各模块通过 settings service 的类型化方法读写自己那组键（如 `settings.Commission()`） |
-| catalog | plans（含库存三列）、plan_visible_groups、plan_versions、prices、entitlements、quota_definitions、plan_node_pools、traffic_packs | 库存由 catalog service 暴露 `ReserveStock / ReleaseStock / CaptureStock`，order 模块调用，不再直接写 plans |
+| catalog | plans（含库存三列）、plan_visible_groups、plan_versions、prices、entitlements、quota_definitions、plan_node_pools、traffic_packs、plan_reset_prices（流量重置价格） | 库存由 catalog service 暴露 `ReserveStock / ReleaseStock / CaptureStock`，order 模块调用，不再直接写 plans |
 | order | orders、order_items、order_reservations、order_reservation_events、order_stock_reservations、order_purchase_limit_reservations、plan_purchase_counters | 下单、报价、结算编排、预留与释放 |
 | payment | payment_providers、payment_intents、payments、payment_events、late_payment_cases | 渠道适配、回调、查单、挂账。adminops 那套渠道写法删掉 |
 | ledger | ledger_accounts、ledger_transactions、ledger_entries、balance_holds | 记账、余额、冻结、调账 |
-| promo | coupons、coupon_plans、coupon_redemptions | 优惠券 |
+| promo | coupons、coupon_plans、coupon_intervals（券限定的计费周期）、coupon_redemptions、member_discounts（单个用户的会员折扣） | 优惠券与会员折扣；订单定价经 promo service 取会员折扣率 |
 | commission | commission_entries、withdrawals、commission_transfers、commission_user_overrides、commission_forfeitures | 佣金计提（订单结算时经 order 的 PaidHook；可开三级分销，每级一条条目）、解冻、提现审核与打款、转余额（提现关闭时解冻后自动转）、按用户单独的比例与计佣范围。commission_transfers 记每笔佣金转余额，与账本的 commission_to_balance 交易一一对应，自动转的带 entry_id；账号注销时（identity 经端口在同一事务里调）作废名下冻结、待复核的条目，驳回在途提现，剩下的可提现佣金按币种作废并记进 commission_forfeitures；可用佣金按本模块的表算（已解冻 − 未驳回的提现 − 已转余额 − 注销作废） |
 | giftcard | gift_card_templates、gift_card_prizes、gift_card_template_plans、gift_card_codes、gift_card_redemptions、gift_card_batches | 发放调 subscription、ledger 的 service |
 | subscription | subscriptions、subscription_events、subscription_credentials、quota_balances、traffic_pack_grants、traffic_pack_transfers、traffic_reset_logs、subscription_usage_daily、subscription_fetch_log、subscription_trials、subscription_templates | 状态口径（生效、可救回、已停用）只在这里定义；节点上报的扣量调它的批量扣量方法 |
@@ -245,7 +245,7 @@ identity, auth ─► settings, audit
 |---|---|
 | R1 | 库里的金额列一律 `NUMERIC(20,2)`，单位是元；币种列加 `CHECK (currency IN ('CNY','USD'))`，两种都是 2 位小数 |
 | R2 | repo 写入前断言 `d.Equal(d.Truncate(2))`（`money.Check`），不满足就报错。PostgreSQL 遇到多余小数会静默四舍五入，必须在写入前拦住；库里拦不住：`NUMERIC(20,2)` 列先舍入再查 CHECK，`CHECK (amount = round(amount, 2))` 永远成立，不要加这种假兜底 |
-| R3 | 所有按比例得出的金额（百分比券、换套餐折算、待开始周期额度、佣金）一律**向零截断**，与现状逐分一致。唯一的例外是向用户加收的支付手续费（`payment/service/surcharge.go`，2026-10-14 定）：向上取整到分，平台不少收 |
+| R3 | 所有按比例得出的金额（百分比券、会员折扣、换套餐折算、待开始周期额度、佣金）一律**向零截断**，与现状逐分一致。唯一的例外是向用户加收的支付手续费（`payment/service/surcharge.go`，2026-10-14 定）：向上取整到分，平台不少收 |
 | R4 | 只在 service 的领域计算函数里舍入，每个公式只在最后一步舍入一次；handler 只做单位换算，repo 只存不算，SQL 里不做金额算术 |
 | R5 | 比值与取最小（换套餐的 min(时间比, 流量比)）用 `big.Rat` 或交叉相乘比较，不先 `Div` 出小数再比 |
 | R6 | /v1 的 JSON 仍是整数分（int64）。DTO 输出 `d.Shift(2).IntPart()`，换算前断言它是整数；输入读 int64 分后用 `decimal.New(n, -2)` |
@@ -255,6 +255,8 @@ identity, auth ─► settings, audit
 | R10 | 券面值拆成 `amount_off NUMERIC(20,2)` 和 `percent_off_bp INT` 两列，加 CHECK 恰好一个非空 |
 | R11 | 账本：分录金额 > 0，配平与单币种在库里检查（5.3）；余额缓存在 Go 里同事务更新；交易 kind 加 CHECK 枚举；礼品卡赠送改记新科目 `platform_promo_expense`，不再和渠道手续费混用一个科目 |
 | R12 | 币种小数位只在 `pkg/money` 一处定义；去掉写死的 `/100` |
+
+订单减免的先后（xb-order，照 Xboard）：小计是 catalog 按用户组取到的价格档单价（用户组专属价已在这里体现）；优惠券与会员折扣都按小计算、相加，合计不超过小计（超出时压会员部分）；再减换套餐剩余价值，得到总额；最后余额抵扣与零头免除。`discount_amount` 记券 + 会员，其中会员部分另记 `member_discount_amount`。
 
 计费周期加月用 Go 的 `AddDate`（1 月 31 日加一个月得到 3 月 3 日）。周期计算只在 Go 里做，不挪进 SQL，以免两边口径不一致。
 
