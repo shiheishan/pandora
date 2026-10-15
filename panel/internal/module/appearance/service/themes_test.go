@@ -44,7 +44,7 @@ func TestSaveThemeValidatesBeforeTouchingTheDatabase(t *testing.T) {
 		"custom_css 停用": {SaveThemeInput{Code: "my-theme", Name: "x", CustomCSS: "body{}"}, "custom_css"},
 		"tokens 非法":     {SaveThemeInput{Code: "my-theme", Name: "x", Tokens: json.RawMessage(`{"brand":"#fff"}`)}, "tokens"},
 		"branding 非对象":  {SaveThemeInput{Code: "my-theme", Name: "x", Branding: json.RawMessage(`"Pandora"`)}, "branding"},
-		"站点名缺失":         {SaveThemeInput{Code: "my-theme", Name: "x", Branding: json.RawMessage(`{"tagline":"t"}`)}, "branding.site_name"},
+		"带站点名":          {SaveThemeInput{Code: "my-theme", Name: "x", Branding: json.RawMessage(`{"site_name":"x"}`)}, "branding.site_name"},
 	} {
 		if _, err := s.SaveTheme(context.Background(), tc.in); !thIsValidationOn(err, tc.field) && !thIsValidationUnder(err, tc.field) {
 			t.Errorf("%s：得到 %v，want 422 fields.%s", name, err, tc.field)
@@ -56,13 +56,13 @@ func TestSaveThemeReportsAllFieldsAtOnce(t *testing.T) {
 	_, err := (&Service{}).SaveTheme(context.Background(), SaveThemeInput{
 		Code: "ok-code", Name: "", Create: true,
 		Tokens:   json.RawMessage(`{"light":{"--bg":"a{b"}}`),
-		Branding: json.RawMessage(`{"site_name":""}`),
+		Branding: json.RawMessage(`{"tagline":"` + strings.Repeat("字", 81) + `"}`),
 	})
 	var he *errs.Error
 	if !errors.As(err, &he) || he.Code != errs.ValidationFailed {
 		t.Fatalf("want 422, got %v", err)
 	}
-	for _, f := range []string{"name", "tokens.light.--bg", "branding.site_name"} {
+	for _, f := range []string{"name", "tokens.light.--bg", "branding.tagline"} {
 		if he.Fields[f] == "" {
 			t.Errorf("fields 缺 %s：%v", f, he.Fields)
 		}
@@ -73,7 +73,7 @@ func TestSaveThemeRejectsNameNUL(t *testing.T) {
 	_, err := (&Service{}).SaveTheme(context.Background(), SaveThemeInput{
 		Code: "my-theme", Name: "a\x00b",
 		Tokens:   json.RawMessage(`{"light":{"--bg":"#fff"},"dark":{"--bg":"#000"}}`),
-		Branding: json.RawMessage(`{"site_name":"x"}`),
+		Branding: json.RawMessage(`{}`),
 	})
 	if !thIsValidationOn(err, "name") {
 		t.Fatalf("name NUL: %v", err)

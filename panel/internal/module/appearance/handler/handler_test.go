@@ -129,7 +129,7 @@ func TestListThemesShape(t *testing.T) {
 		themes: []service.Theme{{
 			ID: id, Code: "paper", Name: "纸", IsBuiltin: true, IsActive: true,
 			Tokens:   json.RawMessage(`{"light":{"--bg":"#fff"},"dark":{}}`),
-			Branding: json.RawMessage(`{"site_name":"站"}`),
+			Branding: json.RawMessage(`{"tagline":"稳"}`),
 		}},
 	}
 	e := newEngine(f, true, &authn.Principal{UserID: uuid.New(), SessionID: "s", Audience: authn.AudienceAdmin}, route.Kit{})
@@ -164,7 +164,7 @@ func TestListThemesShape(t *testing.T) {
 func TestSaveThemeMapping(t *testing.T) {
 	f := &fakeSvc{}
 	e := newEngine(f, true, &authn.Principal{UserID: uuid.New(), SessionID: "s", Audience: authn.AudienceAdmin}, route.Kit{})
-	body := `{"code":"mine","name":"我的","create":true,"tokens":{"light":{}},"branding":{"site_name":"A"},"custom_css":"x"}`
+	body := `{"code":"mine","name":"我的","create":true,"tokens":{"light":{}},"branding":{"tagline":"A"},"custom_css":"x"}`
 	w := do(e, http.MethodPost, "/v1/themes", body)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d %s", w.Code, w.Body)
@@ -279,6 +279,9 @@ func TestPublicAppearance(t *testing.T) {
 		t.Fatalf("status %d", w.Code)
 	}
 	got := decMap(t, w)
+	if got["site_name"] != "Pandora" {
+		t.Fatalf("site_name %v", got["site_name"])
+	}
 	if got["theme"] != nil {
 		t.Fatalf("theme %v", got["theme"])
 	}
@@ -289,15 +292,19 @@ func TestPublicAppearance(t *testing.T) {
 
 	id := uuid.New()
 	f.public = service.PublicAppearance{
+		SiteName: "站",
 		Theme: &service.Theme{
 			ID: id, Code: "paper", Name: "纸", IsActive: true,
 			Tokens:   json.RawMessage(`{"light":{"--x":"1"},"dark":{}}`),
-			Branding: json.RawMessage(`{"site_name":"站"}`),
+			Branding: json.RawMessage(`{"tagline":"稳"}`),
 		},
 		Slots: map[string]string{"portal.footer": "<p>f</p>"},
 	}
 	w = do(e, http.MethodGet, "/v1/appearance", "")
 	got = decMap(t, w)
+	if got["site_name"] != "站" {
+		t.Fatalf("site_name %v", got["site_name"])
+	}
 	theme, _ := got["theme"].(map[string]any)
 	if theme == nil {
 		t.Fatal("theme nil")
