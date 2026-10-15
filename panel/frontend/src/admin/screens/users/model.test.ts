@@ -12,11 +12,13 @@ import {
   extendReasonProblem,
   initial,
   listParams,
+  memberDiscountLabel,
   orderWhat,
   paidTotalsLabel,
   parseExtendDays,
   parseYuan,
   passwordProblem,
+  resetActor,
   rotatableSubscriptions,
   shortId,
   trafficView,
@@ -254,4 +256,21 @@ describe('schema', () => {
     expect(usersSchema.safeParse({ users: [row], total: 1 }).success).toBe(true)
     expect(usersSchema.safeParse({ users: [{ ...row, status: 'disabled' }], total: 1 }).success).toBe(false)
   })
+
+  it('resetActor：order 显示「用户 · 购买重置」，带 note 追加「 · note」', () => {
+    expect(resetActor({ reason: 'order' })).toBe('用户 · 购买重置')
+    expect(resetActor({ reason: 'order', note: 'ord_123456' })).toBe('用户 · 购买重置 · ord_123456')
+    expect(resetActor({ reason: 'order', actor_email: 'buyer@example.test', note: 'ord_123456' })).toBe('buyer@example.test · ord_123456')
+  })
+
+  it('memberDiscountLabel：10 九折、25 七五折、100 免费、其余减免百分比', () => {
+    expect(memberDiscountLabel(null)).toBe('无')
+    expect(memberDiscountLabel(undefined)).toBe('无')
+    expect(memberDiscountLabel(10)).toBe('九折')
+    expect(memberDiscountLabel(20)).toBe('八折')
+    expect(memberDiscountLabel(25)).toBe('七五折')
+    expect(memberDiscountLabel(100)).toBe('免费')
+    expect(memberDiscountLabel(12)).toBe('减免 12%')
+  })
 })
+

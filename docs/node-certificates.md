@@ -1,15 +1,14 @@
 # 节点入站证书
 
-pdnd 的 TLS 入站（trojan、anytls、naive、hysteria2、tuic、juicity，以及开了 TLS 的 vless / vmess）都需要一张服务端证书。证书有两种来源：
+pdnd 的 TLS 入站（trojan、anytls、naive、hysteria2、tuic、juicity，以及开了 TLS 的 vless / vmess）都需要一张服务端证书。证书放在节点机上，由你自己用 certbot / acme.sh 等工具签发和续期（file 模式），后台节点表单里填证书与私钥的路径。
 
-| 来源 | 适合谁 | 现状 |
-|---|---|---|
-| **本机证书文件（file 模式）** | 已经在节点上用 certbot / acme.sh 签证书的人 | 现在就能用；换证书后要重启 pdnd，热更新在后续版本接上 |
-| **面板托管证书** | 想让面板统一签发、续期、下发的人 | 面板侧签发与续期已上线（后台「网络 › 证书」）；下发到节点在后续版本，见第 3 节 |
+面板不签发、不下发节点证书：曾经上线过的「面板集中签发」（DNS-01）因为没有把证书送到节点的路径，已于 2026-10-14 下线（迁移 00048 删表）。以后要做，按节点 gRPC 会话下发重新设计。
 
 文中的域名一律用 `example.com` 占位，换成你自己的。
 
-> **哪些是将来时**：本文凡是写「后续版本」「规划」的部分都还没上线。目前已经落地的是：pdnd 进程内的证书仓库（`pdnd/certstore`）和面板集中签发（第 3.5–3.8 节：DNS 凭据、ACME 设置、签发 worker、后台页面）。`pdnd/certbundle` 是旧 HTTP 签名通道时代定的证书包契约的节点侧实现，目前没有任何代码引用，证书下发到节点改走节点 gRPC 会话时再定形状。签出的证书暂时只存在面板里，还没有下发到节点，对运行中的节点没有影响。
+> **哪些是将来时**：本文凡是写「后续版本」的部分都是规划，还没有实现、也没有排期。
+>
+> 以后做 file 模式的路径检查与热更新（1.2、1.3 的「后续版本」）时，可以参考已删的 pdnd 证书仓库：`git show bd01b3b2^:pdnd/certstore/file.go`（按 mtime 与大小轮询、坏证书保留旧的、`read_failed` / `bad_pem` / `key_mismatch` / `expired` / `path_escape` 错误码都在里面，连同同目录的 `atomicfile.go` 与测试）。
 
 ---
 
@@ -60,7 +59,7 @@ sudo install -d -o root -g pandora -m 0750 /etc/pandora-native/certs
 
   单元没有定义 `ExecReload`，`systemctl reload` 不可用，请用 `restart`。重启会断开当前连接。
 
-- **后续版本（第 1a 阶段，将来时）**：入站改用证书仓库的 `GetCertificate`。
+- **后续版本（将来时）**：入站改为每次握手现取证书（`GetCertificate`）。
   - pdnd 每 60 秒检查一次两个文件的 mtime 和大小，变了就重读，新握手立即用新证书，已建立的连接不断，不用重启。
   - 新文件读不出来、PEM 坏了、私钥和证书不配对，或者新证书已过期，都保留旧证书继续服务，并把错误码（`read_failed`、`bad_pem`、`key_mismatch`、`expired`、`path_escape`）随心跳报给面板。
   - 心跳同时上报证书的到期时间（NotAfter），后台据此标颜色、挂横幅。
@@ -129,160 +128,3 @@ acme.sh --install-cert -d example.com --ecc \
 sudo -u pandora head -c 64 /etc/pandora-native/certs/example.com/privkey.pem >/dev/null && echo 私钥可读
 openssl x509 -in /etc/pandora-native/certs/example.com/fullchain.pem -noout -subject -enddate
 ```
-
----
-
-## 2. 证书仓库的行为（已落地，尚未接线）
-
-这一节说明 `pdnd/certstore` 的约定，供后续接线和排障参考。
-
-- 每张证书按「命名空间 + ID」登记：
-  - 托管证书：命名空间是证书包里签过名的 `server_id`，ID 是证书 ID。不同面板的 `server_id` 各不相同，面板 A 的配置引用不到面板 B 的证书。
-  - file 模式：命名空间是 `file`，ID 是 `sha256(cert_path|key_path)`。
-- 每次 TLS 握手都现读一次原子指针。客户端不发 SNI（用 IP 直连）时，也返回这一张证书。
-- 托管证书落盘在 systemd 的 `StateDirectory` 里，`ProtectSystem=strict` 下可写，不用改单元：
-
-  ```
-  /var/lib/pandora-native/panels/<server_id>/certs/<cert_id>/
-  ├── current.json           # 指向当前版本，原子 rename 更新
-  ├── v3/
-  │   ├── fullchain.pem      # 0600
-  │   ├── privkey.pem        # 0600，本地明文，和 certbot 一样
-  │   └── meta.json          # 0600，只有指纹、到期时间等公开信息
-  └── retired_at             # 证书不在最新证书包里时才有，满 7 天整目录删除
-  ```
-
-  - 目录一律 `0700`。新版本先写进临时目录，逐个文件 fsync，再 rename 成 `v<版本>`，fsync 父目录，最后原子替换 `current.json`。
-  - pdnd 启动时按 `current.json` 加载全部托管证书，面板不可达也能起来。
-  - 版本号只能前进；同一版本号内容不同会被拒收。
-  - 写盘失败（例如磁盘满）时，内存里照样换上新证书，状态记 `persist_failed`；重启后会回到盘上的旧版本。
-
----
-
-## 3. 面板托管证书
-
-面板侧的签发、续期、到期提示已经上线（3.5–3.8）；证书怎么到节点上（3.4）还在后续版本。
-
-### 3.1 签发方式
-
-- **面板集中签发，DNS-01**：支持 Cloudflare、阿里云 DNS、腾讯云 DNSPod 三家。面板用 ACME 客户端（lego）走服务商的 DNS API 写 `_acme-challenge` TXT 记录来证明域名控制权，验证完就删。
-  - 不需要节点开放 80 端口，橙云、灰云、UDP 协议（hysteria2、tuic、juicity）都能用。
-  - DNS 凭据只保存在面板上，加密存储，读接口只回末四位，永不下发到节点。
-  - 不签 IP 证书，不做 HTTP-01 / TLS-ALPN-01（用户 2026-10-08 定）。
-- **默认一张通配符证书，多台服务器共用**（例如 `*.example.com` 加 `example.com`）。
-  - 好处：签发次数少，不容易撞 Let's Encrypt 的频率限制；新加节点不用再签。
-  - 代价：同一把私钥分发到多台机器。服务器退役时后台会提示「换私钥重签」（rekey）。
-  - 也可以选「每台服务器一张主机名证书」，隔离更好，证书更多。
-- 多个面板为同一个注册域名签证书时，共用 Let's Encrypt 的频率额度（同一注册域名每 7 天 50 张，完全相同的域名组合每 7 天 5 张），而面板之间互不知情。
-- 到期和失败只在后台显示横幅，不发 Telegram、不发邮件。
-
-### 3.2 DNS 凭据：最小权限
-
-#### Cloudflare API 令牌
-
-在 Cloudflare 控制台「我的个人资料 → API 令牌 → 创建令牌 → 创建自定义令牌」：
-
-| 项 | 取值 |
-|---|---|
-| 权限 | `Zone · DNS · Edit`、`Zone · Zone · Read`，只要这两项 |
-| 区域资源 | `Include · Specific zone · example.com`，只选签证书要用的那一个 zone |
-| 客户端 IP 地址筛选（可选） | 只允许面板服务器的出口 IP |
-| TTL（可选） | 设一个到期时间，到期前在面板里换新令牌 |
-
-不要用 Global API Key，也不要选「All zones」。
-
-#### 阿里云 DNS（AccessKey）
-
-- 在 RAM 控制台建一个只用于签证书的子用户，只开 OpenAPI 调用访问；不要用主账号的 AccessKey。
-- 授权自定义策略，只给 `alidns:DescribeDomains`、`alidns:DescribeDomainRecords`、`alidns:AddDomainRecord`、`alidns:DeleteDomainRecord`，资源限定为 `acs:alidns:*:*:domain/example.com`。图省事可以给系统策略 `AliyunDNSFullAccess`，但范围是整个账号的云解析。
-
-#### 腾讯云 DNSPod（SecretId / SecretKey）
-
-- 在访问管理（CAM）建一个只用于签证书的子用户，只开编程访问；不要用主账号的 API 密钥。
-- 授权自定义策略，只给 `dnspod:DescribeDomainList`、`dnspod:DescribeRecordList`、`dnspod:CreateRecord`、`dnspod:DeleteRecord`，资源限定为这个域名。图省事可以给 `QcloudDNSPodFullAccess`，但范围是整个账号的 DNSPod。
-
-#### 面板怎么校验
-
-保存凭据时面板当场校验一次（之后可以在后台随时「重新校验」）：
-
-1. 调服务商的「列出域名」接口：凭据被拒（鉴权失败）或看不到填写的域名，判为失败；
-2. 在这个域名下建一条 `_pandora-check` TXT 记录再立刻删掉，证明能写；
-3. 数凭据一共看得到几个域名，多于一个时提示「不是最小权限」。
-
-三家的 API 都查不到凭据的完整权限，面板只能做到这一步。校验被服务商明确拒绝时，用这个凭据的证书停止自动签发（状态「DNS 凭据失效」）；改好凭据、校验通过后自动恢复。
-
-### 3.3 用 CNAME 把 `_acme-challenge` 委派出去（推荐）
-
-如果不想让令牌能改主域名的 DNS，可以把验证记录委派到一个专门用来验证的 zone：
-
-1. 在 Cloudflare 上准备一个只用来做验证的 zone，例如 `example.net`。
-2. 在主域名 `example.com` 的 DNS 里加一条 CNAME（这条只需手工加一次）：
-
-   ```
-   _acme-challenge.example.com.  CNAME  _acme-challenge.example.com.example.net.
-   ```
-
-   通配符证书 `*.example.com` 用的也是 `_acme-challenge.example.com`，同一条 CNAME 即可。
-3. 凭据只授权 `example.net` 这个 zone（权限同 3.2），后台凭据的「域名」填 `example.net`。新建证书时域名不在凭据的 zone 下，表单会提示要先配好这条 CNAME。
-
-签发时 ACME 客户端会跟随 CNAME，把 TXT 记录写到 `example.net` 里。这样即使令牌泄露，也改不了 `example.com` 的任何记录。
-
-### 3.4 证书怎么到节点上
-
-- 生效配置里只写证书 ID，续期时这个 ID 不变，所以续期不会重建入站、不会断连接。
-- 节点到面板是 gRPC 双向流 + mTLS（面板自带 CA，见 `docs/architecture.md` 第 11 节），证书与私钥将来经这条会话下发；消息形状在接线时定，原来为明文 HTTP 通道设计的签名证书包（`pandora-node-certificate-bundle-v1`）届时重新评估是否还需要。
-- 私钥用 HPKE（DHKEM(X25519) + HKDF-SHA256 + AES-256-GCM）加密给每台服务器上 pdnd 自己生成的 X25519 公钥，并绑定服务器、证书 ID、版本和证书链哈希，挪到别的证书或版本上解不开。
-
-### 3.5 后台入口
-
-后台「网络 › 证书」，三个标签（后台权限只分有和没有：管理员都能用）：
-
-- **证书列表**：名称、域名、状态（正常 / 排队中 / 签发中 / 签发失败 / 已暂停 / DNS 凭据失效）、到期等级与剩余时间、下次续期、最近错误。有即将到期、快到期、已过期或签发失败的证书时，页面顶部出现横幅（到期与失败只在后台显示，不发 Telegram、不发邮件）。点一行打开详情：版本历史（不显示私钥）、最近 50 次签发记录与错误详情；操作有「立即续期」「暂停 / 恢复」「编辑」「删除」。
-  - 每次签发都生成新私钥，所以「立即续期」就是换私钥重签：服务器退役或怀疑失陷时用它。
-  - 通配符证书在新建表单和详情里都提示私钥共享的风险。
-- **DNS 凭据**：服务商、域名、密钥末四位、校验结论；添加与编辑时按服务商给出最小权限做法。凭据只写不读，编辑时密钥框留空表示不改。还有证书在用的凭据不能删。
-- **ACME 设置**：联系邮箱（可留空）、是否用 Let's Encrypt 测试环境、备用 CA ZeroSSL（默认关，要填 EAB KID 与 HMAC；HMAC 只写不读）。保存即表示同意所用 CA 的服务条款。
-
-新建、修改、删除 DNS 凭据，删除证书，保存 ACME 设置要近期重认证。
-
-### 3.6 签发与续期怎么跑
-
-`pandora worker` 每分钟跑一次 asynq 周期任务 `certs:patrol`；签发本身是单独的任务 `certs:issue`，由巡检或后台操作按订单入队（TaskID `cert:<订单 id>`）：
-
-1. **排队**：没签出过的证书、到了续期时间的证书（有 CA 的 ARI 建议窗口时取窗口内随机一点，否则剩余寿命 1/3 时），过了退避时间就排一张订单。同一张证书同时最多一张进行中的订单（数据库部分唯一索引）。
-2. **认领**：签发任务用租约认领订单（`FOR UPDATE SKIP LOCKED`，租约 = 签发超时 15 分钟 + 1 分钟，同时最多 2 张在跑）；进程退出或任务丢失时订单留在 running，租约过期后由巡检按「中断」收掉，15 分钟后重排一张新订单（不计连续失败）；落库前核对租约还是自己的，同一张订单不会写出两个版本。
-3. **凭据预检**：先调服务商 API 确认凭据还能用、看得到域名。失败不碰 CA，不消耗 CA 的验证失败次数。
-4. **本地限额对账**：按面板的签发流水（3.7）数 Let's Encrypt 的两条限额——同一注册域名每 7 天 50 张新证书（续期不算，跨 CA 一起数，宁多勿少）、同一个 CA 为完全相同的域名组合每 7 天 5 张（测试环境、ZeroSSL 不占 Let's Encrypt 正式环境的额度）。预计会超就不去请求 CA，退避到最早那张满 7 天；带 ARI `replaces` 的续期 Let's Encrypt 免一切限额，不拦。超限且证书剩不到 7 天（或从没签出过）、又配了 ZeroSSL 时，改走 ZeroSSL。
-5. **签发**：lego 走 DNS-01，续期订单带上一版的 ARI certID（`replaces`）。私钥是 PKCS#8，用主密钥派生的封存子密钥（AES-256-GCM）加密后入库，AAD 绑定证书与版本。
-6. **失败退避**（「恢复」暂停的证书时：没签出过的立刻排单，已有版本的只清退避，到续期时间再续）：CA 限流（429）按 Retry-After 退避、不计入失败；凭据被拒停在「DNS 凭据失效」；服务商 API 不可达 15 分钟后再试；其余失败按 1h → 2h → 4h … 最长 24h 退避，连续失败 3 次暂停自动重试（避开 Let's Encrypt「每小时 5 次验证失败」的上限），在后台改好后点「恢复」。
-
-每次签发成功、失败、暂停、到期等级上升，以及凭据、ACME 设置的增删改，都写审计（`certificate.*`、`dns_credential.*`、`acme_settings.updated`、`acme_account.created`）。
-
-到期等级按证书寿命缩放：剩余少于 min(14 天, 寿命 × 25%) 为「即将到期」，少于 min(3 天, 寿命 × 10%) 为「快到期」，一律按面板时钟算。
-
-### 3.7 数据与保留
-
-- 证书版本表只插不改（运行角色没有 UPDATE 授权，另有触发器拒绝 UPDATE）；删证书时连同全部版本（含私钥密文）与订单一起删。
-- 签发流水（`certificate_issuances`）：CA 每签出一张记一行（证书 id、CA、域名组合、时间），只追加（语句级触发器连 TRUNCATE 一起挡），删证书不删它。本地限额对账按它数，所以删了证书再建同样的域名，也不会多占 Let's Encrypt「同一组域名每周 5 张」的额度；签出后因租约丢失没落库的那张也记着。
-- ACME 账号：同一目录 + 联系邮箱 + EAB KID 只有一个有效账号；CA 说账号不存在或已失效时标失效，下一单重新注册。
-- 订单表就是签发历史；过期版本、旧订单与签发流水的定期清理在后续版本。
-- 全部表在迁移 `panel/db/migrations/00025_certs.sql` 里建。它的 Down 直接删掉全部证书相关表（DNS 凭据、ACME 账号、证书、版本含私钥密文、订单、签发流水），没有数据守卫；回滚前先确认可以丢掉这些数据，或先做备份。
-
-### 3.8 开发与测试：ACME 目录覆盖
-
-面板配置里没有 ACME 目录覆盖项，生产与开发都按后台的 ACME 设置签。测试经 certs service 的 `Options.DirectoryOverride` 在进程内注入 pebble 目录（版本记为 `custom`）。
-
-#### 第三方库自己读的环境变量
-
-面板只经 viper（`PANDORA_` 前缀）读配置，但签发用到的第三方库会自己读几项。它们不该出现在面板的环境文件里：
-
-| 变量 | 谁读 | 风险 |
-|---|---|---|
-| `LEGO_DEBUG_DNS_API_HTTP_CLIENT`、`LEGO_DEBUG_CLIENT_VERBOSE_ERROR` 等 `LEGO_DEBUG_*` | lego 的 DNS 服务商客户端 | 把 DNS 服务商 API 的请求与回包打进日志，可能带上令牌 |
-| `LEGO_DISABLE_CNAME_SUPPORT` | lego DNS-01 | 不再跟随 `_acme-challenge` 的 CNAME，委派验证（3.3）的证书会签不出来 |
-| `LEGO_EXPERIMENTAL_DNS_TCP_ONLY` | lego DNS-01 | 传播检查只走 TCP，部分网络下查不到记录 |
-| `HTTPS_PROXY`、`HTTP_PROXY`、`NO_PROXY` | Go 标准库（找 CA、Cloudflare、腾讯云）与阿里云 SDK | 有意设置时用于走出口代理；设错会让签发与凭据校验连不上，代理本身能看到 SNI 与连接目标 |
-
-上表前三类，`pandora worker` 启动签发任务时检测到就打一条 WARN（`LibraryEnvWarnings`，只记变量名，不记值），请从环境文件里删掉。面板不调用 lego 读 `LEGO_CA_CERTIFICATES` 等变量的那段代码，设了也不生效。
-
-自动化测试：`go test ./internal/module/certs/...`（在 `panel/` 下）在进程内起 pebble、DNS 服务器和三家服务商 API 的模拟，跑通签发、续期（ARI replaces）、CA 限流、凭据失效、本地限额与切换 ZeroSSL；需要数据库的 `*_pg_test.go` 在 CI 的 `panel-newstack.yml`（PostgreSQL 18 + Redis）里跑，本机没有数据库时跳过，跳过不算通过。阿里云 SDK 只认环境里的 HTTPS 代理与系统根证书，它的模拟用例只在 Linux 上跑。

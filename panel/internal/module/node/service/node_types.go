@@ -366,6 +366,8 @@ type NodeRow struct {
 	MetricsAt  *time.Time
 	// IdentitySerial 是所在服务器当前 active 身份的 seq；没有为 nil
 	IdentitySerial *int64
+	// Movable：能不能迁移到别的服务器（nodeMovableState，只看节点自己）
+	Movable bool
 	// GrantedPlans 是绑定了节点所在池的套餐名（去重、升序），永不为 nil
 	GrantedPlans []string
 	// Tags 是节点标签，永不为 nil

@@ -12,6 +12,7 @@ import { subdomains } from './subdomains.ts'
 import { subs } from './subs.ts'
 import { tickets } from './tickets.ts'
 import { wallet } from './wallet.ts'
+import { reset } from './reset.ts'
 
 export const PORTAL_MODULES: readonly MockModule[] = [
   overview,
@@ -26,5 +27,6 @@ export const PORTAL_MODULES: readonly MockModule[] = [
   messages,
   help,
   account,
+  reset,
   subdomains,
 ]

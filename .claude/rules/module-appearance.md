@@ -14,5 +14,5 @@ paths:
 - `PageMeta`（`service/pagemeta.go`）是入口页与门户外观用的进程内快照：站点名取 settings、标语与 Logo 取生效主题；成功缓存 30 秒、读失败 5 秒（沿用上次成功的值），本进程保存或激活主题后立即失效，改站点名最多 30 秒生效。`GET v1/appearance` 的顶层 `site_name` 取它，不为站点名多查一次库。
 - 入口页改写：`handler/index_meta.go` 的 `IndexMeta` 把快照转成 `webapp.IndexMeta`（门户 `<title>` = 站点名，后台 = 「站点名 控制台」；描述用标语，没有就用站点名；图标用 Logo，没有用内置 `DefaultIcon`），`serve.go` 经 `webapp.WithIndexMeta` 挂到两个入口页。
 - 同一时刻只有一套主题生效（部分唯一索引 `site_themes_one_active` 兜底）。内置主题不能原地改，只能另存为（`Create` 为 true，撞已有 code 回 409，不覆盖别人的主题）；内置主题与生效中的主题都删不掉（`DeleteTheme`）。
-- 自定义 CSS 已停用（门户 CSP 不允许注入 `<style>`），`Theme` 里没有这一项。
+- 主题没有自定义 CSS（10-14 删掉，门户 CSP 也不允许注入 `<style>`）：请求带 `custom_css` 按未知字段回 400，保存主题成功只回 `{saved:true}`；要做得先有 CSS 净化方案并过安全评审。
 - 插槽 HTML 经 `SanitizeHTML` 净化后才落库，被丢掉的内容回给管理员；全局只放行 `class` 和 `title`，不放 `style`（能做透明层盖住支付按钮）。插槽位 `SlotCatalog` 写在代码里，与前端挂载点、迁移里 `slot_key` 的 CHECK 三处同步改。

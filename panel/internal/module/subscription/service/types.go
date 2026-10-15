@@ -50,6 +50,8 @@ const (
 	ResetManual     = "manual"
 	ResetGiftCard   = "gift_card"
 	ResetPlanChange = "plan_change"
+	// ResetOrder 是用户自己买的流量重置（order 模块结算履约时调 ResetTraffic）
+	ResetOrder = "order"
 )
 
 // 流量包余额来源。
@@ -327,12 +329,14 @@ type Transfer struct {
 // TrafficReset 是把一份订阅本期的流量已用量清零（后台手动、礼品卡）。只给生效中的订阅做。
 type TrafficReset struct {
 	SubscriptionID uuid.UUID
-	// UserID 非 nil 时校验订阅属于他（礼品卡）；后台传 nil
+	// UserID 非 nil 时校验订阅属于他（礼品卡、用户购买）；后台传 nil
 	UserID *uuid.UUID
-	// Reason 是 ResetManual（ActorID 必填）或 ResetGiftCard
+	// Reason 是 ResetManual（ActorID 必填）、ResetGiftCard 或 ResetOrder（UserID 必填，Note 写订单号）
 	Reason  string
 	ActorID *uuid.UUID
 	Note    string
+	// At 是判断订阅是否生效用的时刻；零值用 subscription 自己的时钟。订单结算履约时传结算的 now，与订单模块的复核用同一个时刻（不然卡在到期边界时两边结论可能不同，整笔结算报错回滚）
+	At time.Time
 }
 
 // RenewalPrice 是门户续费界面要的当前价格档。

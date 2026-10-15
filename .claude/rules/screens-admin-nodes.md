@@ -16,7 +16,7 @@ paths:
 
 生命周期与服务器：
 
-- 保留规则 5：只有从未部署过的草稿（draft / disabled、无心跳、无身份）能迁移，其余引导「复制到新服务器再退役」。
+- 保留规则 5：能不能迁移只看列表行的 `movable`（后端 `service.nodeMovableState`：draft、无配置回执、无应用失败、无运行状态，只看节点自己，不看所在服务器的心跳与身份），前端不自己判断；不能迁的引导「复制到新服务器再退役」。迁移 409 只带文案（或 `row_version` / `server_port` / `capacity_nodes`），没有计数清单。
 - 节点列表一次取 1000 条并总带 `include_retired=1`：「全部」里藏掉已退役是前端筛选的事，刚退役的节点抽屉还要能继续删除。
 - 节点只有 `serving_status` 一个状态（接口里没有 `status`）。草稿节点用抽屉「操作 › 上线」（activate）一步推到 active 并让服务器就绪（服务器没就绪也能用）；草稿时「启用」置灰并指向「上线」。停用后再恢复用「启用」（要求服务器已就绪）。
 - 删除只许 draft 或 retired；在役、停用的按钮置灰，提示先退役（后端 422 同口径）。
@@ -25,6 +25,7 @@ paths:
 - 服务器只有 draft / ready / draining / maintenance / retired 五态；卡片「标记维护」发 `draining`（显示「维护中」），maintenance 是进一步停机；完整状态走详情里的合法边下拉，`infra.ts` 与 mock 的状态边表照后端 `serverStatusTransitions` 原样写，`infra.test.ts` 逐边钉住。
 - 服务器删除只许草稿或已退役；名下节点不拒绝而是级联静默（身份吊销、摘掉 `server_id`），文案按此改写了设计稿的「先迁移或删除」。
 - 安装令牌固定传 `ttl_minutes: 30`（后端缺省 20）。
+- 签安装令牌只有服务器页一个入口（`serverActions.ts` 的 `useIssueServerToken`，`v1/servers/:id/bootstrap-token`）；节点抽屉「身份与令牌」不再签发令牌（吊销身份仍在这里），只显示身份与服务器待用令牌数，有服务器时给「去服务器」，没有服务器时给「去操作」（编辑表单里服务器只读，换服务器靠迁移或复制）（10-14 删了 `v1/nodes/bootstrap-token` 与 UniProxy 服务端令牌）。
 
 运行状态与端口（w4deliver）：
 

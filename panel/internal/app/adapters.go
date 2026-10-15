@@ -47,8 +47,8 @@ func (a promoCatalog) MissingPlans(ctx context.Context, ids []uuid.UUID) ([]uuid
 	return missing, nil
 }
 
-// PriceSubtotal 按「新购」取在售价格：价格须属于 planID，按当前登录用户判断可见性与用户组；买不到一律回 NotFound。
-func (a promoCatalog) PriceSubtotal(ctx context.Context, planID, priceID uuid.UUID) (string, decimal.Decimal, error) {
+// PriceSubtotal 按「新购」取在售价格的币种、金额与计费周期（billing_interval），一次 catalog 查询；价格须属于 planID，按当前登录用户判断可见性与用户组；买不到一律回 NotFound（xb-order #34：券限定计费周期的试算用）。
+func (a promoCatalog) PriceSubtotal(ctx context.Context, planID, priceID uuid.UUID) (string, decimal.Decimal, string, error) {
 	req := catalogsvc.OfferRequest{Use: catalogsvc.UseNew, PlanID: &planID}
 	if p, ok := authn.From(ctx); ok {
 		uid := p.UserID
@@ -56,9 +56,9 @@ func (a promoCatalog) PriceSubtotal(ctx context.Context, planID, priceID uuid.UU
 	}
 	o, err := a.c.Offer(ctx, priceID, req)
 	if err != nil {
-		return "", decimal.Zero, asNotFound(err)
+		return "", decimal.Zero, "", asNotFound(err)
 	}
-	return string(o.Price.Currency), o.Price.UnitAmount, nil
+	return string(o.Price.Currency), o.Price.UnitAmount, o.Price.BillingInterval, nil
 }
 
 // PackSubtotal 取在售流量包的币种与金额；下架或不存在回 NotFound。

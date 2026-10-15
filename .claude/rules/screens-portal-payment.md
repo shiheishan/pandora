@@ -26,3 +26,5 @@ paths:
 - 充值 `POST v1/me/topups` 响应是 200 不是 201；礼品卡兑换（`#/wallet/redeem`，幂等 `gift_card_redeem`）的选项与默认值来自 preview 的 `placement`，没有默认值时按钮置灰「先选一种用法」，兑换带 `choice`；成功后失效整个 `['portal']` 前缀。完成页按选定的用法自己写，不显示服务端 summary（话术里有「订阅」等词）。
 - 钱包「余额明细」里挂账类流水按保留规则 6 称「挂账转入」。
 - 支付手续费（00042）：渠道可向用户加收「固定 + 比例」手续费，用余额付不收。三处选付款方式（确认页、订单页弹窗 `Choose`、钱包充值）都用 `usePaymentMethods(应付分)` 取带 `fee` / `total` 的方式列表，文字统一走 `common/fee.ts`（`feeLine`、`feeRule`）；付款面板显示发起支付回来的 `amount`（含手续费）并在下面写「含手续费 ¥x，订单 ¥y」（`surchargeNote`）。订单的应付、总额与完成页的「付了多少」不含手续费。
+- 确认页 `?reset=<一份>`（`model.ts` 的 `reset` 目标）：报价 `action: 'reset'`，建单 `POST v1/me/subscriptions/{id}/traffic-reset`（幂等 `order_create`，体只有余额 / 优惠码 / as_of / expect），没有「买多久」；完成页 `k=reset`。
+- 会员折扣：报价行 `discount` 只含券，`member_discount` / `member_percent` 是会员折扣（`subtotal − discount − member_discount − credit = total`）；确认页在优惠码后写「会员折扣（几折）」（`copy.ts` 的 `memberWord`），换套餐算式同样减掉。订单行的 `discount_amount` 含会员折扣，`member_discount_amount` 必填。流量重置（`target.kind === 'reset'`）永远按原价：确认页不显示优惠码输入，报价与建单都不带券码，会员折扣恒为 0（用户 10-14 定）

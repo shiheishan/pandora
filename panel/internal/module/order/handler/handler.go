@@ -22,6 +22,7 @@ type Service interface {
 	CreateNewOrder(ctx context.Context, in service.NewOrderInput) (service.Created, error)
 	CreateRenewalOrder(ctx context.Context, in service.RenewalOrderInput) (service.Created, error)
 	CreatePackOrder(ctx context.Context, in service.PackOrderInput) (service.Created, error)
+	CreateResetOrder(ctx context.Context, in service.ResetOrderInput) (service.Created, error)
 	CreatePlanChangeOrder(ctx context.Context, in service.PlanChangeOrderInput) (service.Created, error)
 	ManualPreview(ctx context.Context, in service.ManualPreviewInput) (service.ManualPreview, error)
 	CreateManualOrder(ctx context.Context, in service.ManualOrderInput) (service.Created, error)
@@ -85,6 +86,8 @@ func (h *Handler) RegisterPublic(v1 *gin.RouterGroup, k route.Kit) {
 	// 换套餐有自己的幂等域；金额走统一报价的 action=change
 	v1.POST("/me/subscriptions/:id/change-plan", k.RequireAuth, checkout, k.Idempotency(ScopePlanChangeCreate), h.createPlanChange)
 	v1.POST("/me/traffic-pack-orders", k.RequireAuth, checkout, k.Idempotency(ScopeOrderCreate), h.createPackOrder)
+	// 买流量重置（xb-order #32）：重置哪一份由路径给出，金额走统一报价的 action=reset
+	v1.POST("/me/subscriptions/:id/traffic-reset", k.RequireAuth, checkout, k.Idempotency(ScopeOrderCreate), h.createResetOrder)
 	v1.POST("/me/topups", k.RequireAuth, checkout, k.Idempotency(ScopeTopupCreate), h.createTopup)
 	v1.POST("/me/checkout/quote", k.RequireAuth, checkout, h.quote)
 	// 发起支付不加幂等键：在途意图由 payment 复用，连点两次拿回同一个收银台；按账号每分钟 10 次

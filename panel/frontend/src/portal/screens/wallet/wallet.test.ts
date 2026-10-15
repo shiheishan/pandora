@@ -72,6 +72,7 @@ function detail(over: Partial<OrderDetail> = {}): OrderDetail {
       currency: 'CNY',
       total_amount: 4720,
       discount_amount: 1180,
+      member_discount_amount: 0,
       balance_applied: 0,
       payable_amount: 4720,
       paid_amount: 4720,

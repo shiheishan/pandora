@@ -237,7 +237,7 @@ export type DeviceMode = z.output<typeof devicesSchema>['mode']
 // ---------------------------------------------------------------------------
 // 流量重置：日志的 plan_name / actor_email / note 是 omitempty，空时整键省略
 // ---------------------------------------------------------------------------
-export const RESET_REASONS = ['renewal', 'cycle_roll', 'manual', 'gift_card', 'plan_change'] as const
+export const RESET_REASONS = ['renewal', 'cycle_roll', 'manual', 'gift_card', 'plan_change', 'order'] as const
 export type ResetReason = (typeof RESET_REASONS)[number]
 const resetLogSchema = z.object({
   id: z.string(),
@@ -255,11 +255,17 @@ export type ResetLog = z.output<typeof resetLogSchema>
 export const resetStatsSchema = z.object({
   last_30_days: count,
   // 只有近 30 天出现过的原因才有键
-  by_reason: z.object({ renewal: count.optional(), cycle_roll: count.optional(), manual: count.optional(), gift_card: count.optional(), plan_change: count.optional() }),
+  by_reason: z.object({ renewal: count.optional(), cycle_roll: count.optional(), manual: count.optional(), gift_card: count.optional(), plan_change: count.optional(), order: count.optional() }),
   freed_bytes: count,
   manual_count: count,
 })
 export const resetDoneSchema = z.object({ reset: z.literal(true), freed_bytes: count })
+
+// ---------------------------------------------------------------------------
+// 会员折扣：单个用户的会员减免百分比（10 表示九折）
+// ---------------------------------------------------------------------------
+import { memberDiscountSchema } from './opsSchemas'
+export { memberDiscountSchema, type MemberDiscountData } from './opsSchemas'
 
 // ---------------------------------------------------------------------------
 // GET v1/plans：批量筛选的「套餐」下拉只要 id / 名称 / 状态
@@ -389,6 +395,20 @@ export function useUserResets(id: string) {
     queryKey: [...UK, 'resets', 'user', id],
     queryFn: ({ signal }) => api.get(`v1/users/${encodeURIComponent(id)}/traffic-resets`, resetLogsSchema, { signal }),
   })
+}
+
+export function useMemberDiscount(userId: string | null) {
+  const api = useApi()
+  return useQuery({
+    queryKey: [...UK, 'member-discount', userId],
+    queryFn: ({ signal }) => api.get(`v1/member-discounts/${encodeURIComponent(userId!)}`, memberDiscountSchema, { signal }),
+    enabled: userId !== null,
+  })
+}
+
+export function useInvalidateMemberDiscount() {
+  const client = useQueryClient()
+  return useCallback((userId: string) => client.invalidateQueries({ queryKey: [...UK, 'member-discount', userId] }), [client])
 }
 
 /** 写成功后：列表、详情与设备策略重拉（分组人数变了时连带用户组） */

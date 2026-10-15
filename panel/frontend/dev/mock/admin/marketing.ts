@@ -55,6 +55,7 @@ interface Coupon {
   max_redemptions_per_user: number
   redeemed_count: number
   applicable_plan_ids: string[]
+  applicable_intervals: string[]
   valid_from: string | null
   valid_until: string | null
   status: string
@@ -72,6 +73,7 @@ const COUPON_FIELDS = [
   'max_redemptions',
   'max_redemptions_per_user',
   'applicable_plan_ids',
+  'applicable_intervals',
   'valid_from',
   'valid_until',
 ] as const
@@ -86,6 +88,7 @@ const coupon = (c: Partial<Coupon> & Pick<Coupon, 'code' | 'discount_type' | 'di
   max_redemptions_per_user: 1,
   redeemed_count: 0,
   applicable_plan_ids: [],
+  applicable_intervals: [],
   valid_from: null,
   valid_until: null,
   status: 'active',
@@ -146,6 +149,28 @@ function normalizeCoupon(body: Json, needCode: boolean): MockResult | Omit<Coupo
   if (from === 'bad' || until === 'bad') return err(422, 'validation_failed', '时间格式不正确')
   if (from && until && until <= from) return err(422, 'validation_failed', '结束时间必须晚于开始时间')
   const perUser = int(body.max_redemptions_per_user)
+
+  const VALID_INTERVALS = ['day', 'week', 'month', 'quarter', 'year', 'one_time']
+  let intervals: string[] = []
+  if (body.applicable_intervals !== undefined && body.applicable_intervals !== null) {
+    if (!Array.isArray(body.applicable_intervals)) {
+      fields.applicable_intervals = '计费周期只能是 day、week、month、quarter、year、one_time'
+    } else {
+      const arr = body.applicable_intervals.map(String)
+      for (const item of arr) {
+        if (!VALID_INTERVALS.includes(item)) {
+          fields.applicable_intervals = '计费周期只能是 day、week、month、quarter、year、one_time'
+          break
+        }
+      }
+      if (!fields.applicable_intervals) {
+        intervals = VALID_INTERVALS.filter((v) => arr.includes(v))
+      }
+    }
+  }
+
+  if (Object.keys(fields).length) return invalid(fields)
+
   return {
     code,
     name: text(body.name) || code,
@@ -157,6 +182,7 @@ function normalizeCoupon(body: Json, needCode: boolean): MockResult | Omit<Coupo
     max_redemptions: int(body.max_redemptions),
     max_redemptions_per_user: perUser && perUser > 0 ? perUser : 1,
     applicable_plan_ids: Array.isArray(body.applicable_plan_ids) ? body.applicable_plan_ids.map(String) : [],
+    applicable_intervals: intervals,
     valid_from: from,
     valid_until: until,
   }

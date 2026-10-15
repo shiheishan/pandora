@@ -3,8 +3,8 @@
 面向自己部署 Pandora Panel 的运维。按症状分章，每章四段：怎么确认 → 常见原因 → 处理 → 什么时候升级处理。
 
 - 面板是一个二进制 `/opt/pandora/bin/pandora`，跑成两个服务：`pandora-serve`（门户 127.0.0.1:9000、后台 127.0.0.1:9001、节点 gRPC :9443）与 `pandora-worker`（后台任务与定时任务，asynq 队列在 Redis 里）。
-- 用 Docker Compose 部署的，运维命令对照与 compose 特有的问题及恢复步骤见第 14 章。
-- 节点证书的设计与 DNS 凭据怎么配，见 [docs/node-certificates.md](../../docs/node-certificates.md)；节点端的部署，见 [pdnd/release/README.md](../../pdnd/release/README.md)；节点机自身的症状（端口被占、入站起不来、UDP 缓冲告警、接入装到一半）见第 12 章。
+- 用 Docker Compose 部署的，运维命令对照与 compose 特有的问题及恢复步骤见第 13 章。
+- 节点入站证书怎么放、怎么续期，见 [docs/node-certificates.md](../../docs/node-certificates.md)；节点端的部署，见 [pdnd/release/README.md](../../pdnd/release/README.md)；节点机自身的症状（端口被占、入站起不来、UDP 缓冲告警、接入装到一半）见第 11 章。
 - 文中的 `<面板地址>`、`<后台前缀>`、`<订单号>`、`example.test` 都是占位符，换成你自己的。
 
 ## 约定
@@ -85,15 +85,15 @@ sudo grep -h '<req_id>' /var/log/pandora/serve.log /var/log/pandora/worker.log
 |---|---|
 | `服务 pandora-serve 状态为 …`、`服务 pandora-worker 状态为 …` | [1. 面板 5xx / 服务起不来](#1-面板-5xx--服务起不来) |
 | `public 端口 9000 探活返回 …`、`admin 端口 9001 探活返回 …`（/readyz） | [1](#1-面板-5xx--服务起不来) |
-| `读不出 Redis 连接串`、`Redis 连不上` | [8. 数据库或 Redis 连不上、连接满、慢](#8-数据库或-redis-连不上连接满慢) |
+| `读不出 Redis 连接串`、`Redis 连不上` | [7. 数据库或 Redis 连不上、连接满、慢](#7-数据库或-redis-连不上连接满慢) |
 | `读不出 worker 心跳`、`worker 没有心跳`、`读不出定时任务调度器心跳`、`定时任务调度器没有心跳` | [1](#1-面板-5xx--服务起不来)（worker 一节） |
-| `数据库连不上` | [8](#8-数据库或-redis-连不上连接满慢)（库进程本身挂了也在这章） |
-| `/ 已用 N%`、`/tmp 已用 N%` | [9. 磁盘满](#9-磁盘满) |
-| `读不出备份目录`、`备份目录 … 里没有任何备份`、`最新备份已经是 N 小时前的`、`最新备份只有 N 字节，疑似空文件` | [10. 备份、校验与恢复](#10-备份校验与恢复) |
+| `数据库连不上` | [7](#7-数据库或-redis-连不上连接满慢)（库进程本身挂了也在这章） |
+| `/ 已用 N%`、`/tmp 已用 N%` | [8. 磁盘满](#8-磁盘满) |
+| `读不出备份目录`、`备份目录 … 里没有任何备份`、`最新备份已经是 N 小时前的`、`最新备份只有 N 字节，疑似空文件` | [9. 备份、校验与恢复](#9-备份校验与恢复) |
 | `取不到 https://… 在用的证书`、`读不出 https://… 证书的有效期`、`https://… 的证书已过期`、`https://… 的证书还剩 N 小时到期`、`HTTPS 证书续期出错：…`、`证书续期 timer 超过 36 小时没跑` | [4. 面板 HTTPS 证书续期失败](#4-面板-https-证书续期失败) |
-| `有 N 条通知排队超过 30 分钟没发出去`、`最近六小时有 N 条通知发送失败` | [7. 通知积压](#7-通知积压) |
+| `有 N 条通知排队超过 30 分钟没发出去`、`最近六小时有 N 条通知发送失败` | [6. 通知积压](#6-通知积压) |
 | `过去 30 分钟没有任何节点上报心跳（7 天内曾有 N 个在报）` | [3. 节点离线或不上报心跳](#3-节点离线或不上报心跳) |
-| `通知积压查询失败或超时（每条查询限 10 秒）`、`通知发送失败查询失败或超时（每条查询限 10 秒）`、`节点心跳（最近 30 分钟）查询失败或超时（每条查询限 10 秒）`、`节点心跳（7 天内）查询失败或超时（每条查询限 10 秒）` | [8](#8-数据库或-redis-连不上连接满慢)（锁等待、DDL 或 VACUUM FULL 卡住某张表时会出现） |
+| `通知积压查询失败或超时（每条查询限 10 秒）`、`通知发送失败查询失败或超时（每条查询限 10 秒）`、`节点心跳（最近 30 分钟）查询失败或超时（每条查询限 10 秒）`、`节点心跳（7 天内）查询失败或超时（每条查询限 10 秒）` | [7](#7-数据库或-redis-连不上连接满慢)（锁等待、DDL 或 VACUUM FULL 卡住某张表时会出现） |
 
 另外两个告警源也指到第 4 章：续期单元 `pandora-tls-renew.service` 记为 failed，以及 Telegram 上的 `潘多拉面板 HTTPS 证书（…）：…`。
 
@@ -103,7 +103,7 @@ sudo grep -h '<req_id>' /var/log/pandora/serve.log /var/log/pandora/worker.log
 - 以 root 跑、只读；唯一写的是 `/var/log/pandora/health.log`。没问题只追一行 `OK`；有问题单元记为 failed（`systemctl --failed` 看得见），`deploy.env` 设了 `PANDORA_ALERT_TG_TOKEN` 与 `PANDORA_ALERT_TG_CHAT` 时再推一条 Telegram（令牌经 curl 的标准输入传，不进命令行）。
 - 查库直接以 `postgres` 经 `127.0.0.1:POSTGRES_PORT` 连（口令取 `deploy.env`），连库 5 秒放弃、每条查询限 10 秒；第一条 `SELECT 1` 失败后其余查库项跳过，只记一条「数据库连不上」。
 - Redis 连接串取 `secrets.env` 的 `PANDORA_REDIS_URL`；worker 心跳看 asynq 写在 Redis 里的服务器与调度器心跳（每 5 秒一次，10 秒过期）。
-- 首装后到配好备份之前，会有一条「备份目录里没有任何备份」的告警，这是真告警：去第 10 章把备份配好。
+- 首装后到配好备份之前，会有一条「备份目录里没有任何备份」的告警，这是真告警：去第 9 章把备份配好。
 
 ---
 
@@ -114,7 +114,7 @@ sudo grep -h '<req_id>' /var/log/pandora/serve.log /var/log/pandora/worker.log
 - 先看状态码是谁回的：
   - **502**：nginx 连不上 `pandora-serve`，进程没起来或卡死了。
   - **503**：两种可能。一是 nginx 限速；二是面板自己说依赖不可用（就绪检查失败、并发名额满）。
-  - **504**：面板没在时限内回，多半是库慢，转第 8 章。
+  - **504**：面板没在时限内回，多半是库慢，转第 7 章。
   - **500**：面板内部错误，响应体里有 `req_id`。
 - 看进程和日志：
 
@@ -129,7 +129,7 @@ sudo grep -h '<req_id>' /var/log/pandora/serve.log /var/log/pandora/worker.log
 | 现象 | 原因 |
 |---|---|
 | `journalctl -u pandora-serve` 里是配置错误 | `config.yaml` 或 `secrets.env` 不合法，原因写在报错里。生产（`env: production`）要求 `public_base_url` 是 `https://域名` 或 `https://公网IPv4`、不带端口和路径，HTTP 只绑回环，节点 gRPC 配了 `grpc.node.public_host`；秘密写进 `config.yaml` 也会拒绝启动 |
-| 报错是连库或连 Redis | 依赖没起来或连接串不对，转第 8 章 |
+| 报错是连库或连 Redis | 依赖没起来或连接串不对，转第 7 章 |
 | `systemctl status` 里有 `oom-kill` | 撞了单元的内存上限（`MemoryMax`），systemd 隔 5 秒重启 |
 | 进程 active，`/readyz` 却超时 | 卡死。先看 `serve.log` 最后的错误，再重启 |
 | nginx 本身不在跑 | `nginx -t` 看配置；证书文件缺失见第 4 章 |
@@ -138,12 +138,12 @@ sudo grep -h '<req_id>' /var/log/pandora/serve.log /var/log/pandora/worker.log
 
 - `worker 没有心跳`：worker 进程不在、卡住，或连不上 Redis。先 `systemctl status pandora-worker`，再看 `journalctl -u pandora-worker -n 50` 与 `worker.log`。
 - `定时任务调度器没有心跳`：worker 在处理队列，但定时任务的调度器没起来，到期、续费、清理都不会排进队列。看 `worker.log` 里调度器的报错。
-- `读不出 worker 心跳` / `读不出定时任务调度器心跳`：Redis 能 PING 通，但读那两个键报错（多半是有人手工改过同名键），转第 8 章的 Redis 一节。
+- `读不出 worker 心跳` / `读不出定时任务调度器心跳`：Redis 能 PING 通，但读那两个键报错（多半是有人手工改过同名键），转第 7 章的 Redis 一节。
 
 ### 处理
 
 1. 依赖先行：`systemctl status postgresql@18-main redis-server --no-pager`，两个单元应为 `active (running)`。
-   - **【写】** 没起来：`systemctl start postgresql@18-main redis-server`，起不来看第 8 章。
+   - **【写】** 没起来：`systemctl start postgresql@18-main redis-server`，起不来看第 7 章。
 2. 按报错改 `config.yaml` 或 `secrets.env`。改之前先复制一份：`cp -p /etc/pandora/config.yaml /etc/pandora/config.yaml.bak.$(date +%s)`。
 3. **【写】** `systemctl restart pandora-serve`（或 `pandora-worker`），再用第 0 节的探针确认。重启 serve 会断开全部节点的 gRPC 会话，节点几秒内自己重连并重新对齐配置与名单。
 4. 卡死的进程，重启前先抓现场：config 里配了只绑回环的 pprof 地址时，从那个端口取 goroutine 转储。
@@ -248,7 +248,7 @@ pg -c "SELECT occurred_at, data->>'reason' AS reason FROM audit_events WHERE act
 |---|---|
 | `pandora-serve` 没在跑或刚重启 | 第 0 节；重启后节点几秒内应自己重连 |
 | 9443 被防火墙或安全组挡了，或 `grpc.node.public_host` 改过、与节点配置里的面板地址对不上 | 节点机上连 9443 超时；节点日志里连接失败 |
-| 库不可用 | 会话建不起来（建流对齐要读库），转第 8 章 |
+| 库不可用 | 会话建不起来（建流对齐要读库），转第 7 章 |
 | 面板 CA 或服务端证书出问题 | `serve.log` 里有 `续签节点 gRPC 服务端证书失败` |
 
 **个别节点掉线**，查节点：
@@ -256,7 +256,7 @@ pg -c "SELECT occurred_at, data->>'reason' AS reason FROM audit_events WHERE act
 | 原因 | 怎么认 |
 |---|---|
 | `pandora-native` 停了或反复崩溃 | `systemctl status` 与 `journalctl` |
-| 节点在报心跳，只是入站有问题（后台显示「生效失败」「降级」） | 见第 12 章 |
+| 节点在报心跳，只是入站有问题（后台显示「生效失败」「降级」） | 见第 11 章 |
 | 接入身份被吊销、过期，或服务器被删、退役 | 面板日志 `建流复核发现身份已失效` / `未认证的节点`；节点收到 Tombstone 后停止重连，日志说面板明确拒绝了这个节点 |
 | 同一台服务器又接入了一次（重装） | 面板日志 `被同一服务器的新流取代`：旧身份被新身份取代，旧进程该停 |
 | 节点机时钟偏差太大 | TLS 握手失败（证书「尚未生效」或「已过期」）；节点机上 `timedatectl` 看 `System clock synchronized` |
@@ -266,7 +266,7 @@ pg -c "SELECT occurred_at, data->>'reason' AS reason FROM audit_events WHERE act
 1. 面板侧原因按对应章节修。
 2. **【写】** 节点进程：`systemctl restart pandora-native`。会断开这个节点上的用户连接。
 3. **【写】** 时钟：启用时间同步，例如 `timedatectl set-ntp true`，或者装 chrony。
-4. **【写】** 身份失效：在后台这台服务器的详情里签发一键安装令牌，在节点机上执行生成的安装命令，重新接入（见第 12.4 节）。
+4. **【写】** 身份失效：在后台这台服务器的详情里签发一键安装令牌，在节点机上执行生成的安装命令，重新接入（见第 11.4 节）。
 5. 手工改库（不经后台）改了名单或配置相关的表（订阅、配额、流量包、用户状态、节点池、用户组、节点配置、服务器）：面板不会马上下发。会话管理器靠「纪元」发现变化，手工 SQL 不动纪元，要等下一次纪元变化（后台任何一次相关的改动都会触发），Redis 读不到纪元时每 15 秒全量比对一次。急的话 **【写】** `systemctl restart pandora-serve`，节点重连时全量重新对齐。能在后台改的，一律在后台改。
 
 ### 什么时候升级处理
@@ -277,7 +277,7 @@ pg -c "SELECT occurred_at, data->>'reason' AS reason FROM audit_events WHERE act
 
 ## 4. 面板 HTTPS 证书续期失败
 
-证书由 `deploy/edge-tls.sh` 管理，nginx 只读 `/etc/pandora/tls/live/`。`pandora-tls-renew.timer` 每天 03 点和 15 点各跑一次 `edge-tls.sh renew`（随机延后最多 1 小时），结论写进 `/var/lib/pandora/tls/status`。这里只管面板自己的 HTTPS；节点入站证书见第 5 章，节点与面板之间的 gRPC 证书由面板自己的 CA 签，不归这里。
+证书由 `deploy/edge-tls.sh` 管理，nginx 只读 `/etc/pandora/tls/live/`。`pandora-tls-renew.timer` 每天 03 点和 15 点各跑一次 `edge-tls.sh renew`（随机延后最多 1 小时），结论写进 `/var/lib/pandora/tls/status`。这里只管面板自己的 HTTPS；节点入站证书放在节点机上（见 `docs/node-certificates.md`），节点与面板之间的 gRPC 证书由面板自己的 CA 签，不归这里。
 
 ### 怎么确认
 
@@ -316,7 +316,7 @@ echo | openssl s_client -connect <面板地址>:443 -servername <面板域名> 2
 
 ### 影响
 
-证书过期或退回自签时：浏览器提示不安全；校验证书的支付渠道可能推不进回调（第 6 章）。节点的 gRPC 会话不受影响（它用面板自己的 CA）。
+证书过期或退回自签时：浏览器提示不安全；校验证书的支付渠道可能推不进回调（第 5 章）。节点的 gRPC 会话不受影响（它用面板自己的 CA）。
 
 ### 处理
 
@@ -340,50 +340,7 @@ echo | openssl s_client -connect <面板地址>:443 -servername <面板域名> 2
 
 ---
 
-## 5. 节点证书签发失败（面板集中签发）
-
-后台「网络 › 证书」签发的节点入站证书，由 worker 里的证书巡检每分钟推进一轮，走 DNS-01。设计与 DNS 凭据的最小权限配法见 `docs/node-certificates.md`。
-
-### 怎么确认
-
-- 「网络 › 证书 › 证书列表」：状态、最近错误、下次续期；点开一行能看到签发记录与错误详情。「DNS 凭据」页看每个凭据的校验结论。
-- 库里：
-
-  ```bash
-  pg -c "SELECT name, status, paused_reason, consecutive_failures, next_attempt_at, last_error_code, left(last_error, 160) AS last_error, not_after FROM certificates ORDER BY updated_at DESC;"
-  pg -c "SELECT name, provider, zone, verify_status, verified_at, left(verify_error, 160) AS verify_error FROM dns_credentials ORDER BY name;"
-  ```
-
-- 日志：`sudo grep -E '证书巡检|证书签发出错|证书已签发|lego' /var/log/pandora/worker.log | tail -n 30`。
-
-### 常见原因（按错误码 `last_error_code`）
-
-| 错误码 | 含义 | 面板怎么处理 |
-|---|---|---|
-| `credential_rejected` | 服务商明确拒绝了凭据：令牌被吊销、过期，或者看不到这个域名 | 证书停在「DNS 凭据失效」，不碰 CA。凭据改好、重新校验通过后自动恢复 |
-| `dns_api_unavailable` | 服务商 API 连不上 | 稍后再试。检查出口网络，以及 `HTTPS_PROXY` 一类环境变量 |
-| `dns_provider_error` | 写 TXT 记录时服务商报错，多半是权限不够 | 按退避重试 |
-| `dns_propagation_timeout` | TXT 记录写了，但查不到 | 用了 CNAME 委派时，检查 `_acme-challenge` 那条 CNAME |
-| `rate_limited` / `rate_limited_local` | CA 回了 429，或面板按自己的签发流水算出会超限额 | 按退避等，不要手动「立即续期」 |
-| `acme_account_error` | ACME 账号出错 | 检查「ACME 设置」里的邮箱、EAB |
-| `acme_error` | 其他 ACME 错误 | 看签发记录里的详情 |
-| `interrupted` | 签发中途 worker 重启 | 租约过期后自动接着做 |
-
-连续失败多次会暂停自动重试（状态「已暂停」），避开 Let's Encrypt 的验证失败上限。
-
-### 处理（都在后台做，录入秘密和删除要近期重认证）
-
-1. 凭据问题：「DNS 凭据」里编辑并「重新校验」。
-2. **【写】** 修好原因之后，对「已暂停」的证书点「恢复」。
-3. **【写】** 「立即续期」就是换私钥重签，每点一次都占一次 CA 额度。限流期间不要点。
-
-### 什么时候升级处理
-
-凭据校验通过、DNS 记录也查得到，`acme_error` 还反复出现：带上签发记录里的错误详情（不含秘密），提给开发。
-
----
-
-## 6. 支付回调没到账 / 订单卡住
+## 5. 支付回调没到账 / 订单卡住
 
 支付渠道把回调推到 `https://<面板地址>/v1/webhooks/payments/<渠道编码>`（serve 收）。回调丢了也有兜底：worker 每分钟跑一轮主动查单，向渠道查未付的单，查到已付就和回调走同一条路入账。
 
@@ -447,7 +404,7 @@ echo | openssl s_client -connect <面板地址>:443 -servername <面板域名> 2
 
 ---
 
-## 7. 通知积压
+## 6. 通知积压
 
 业务里「决定要通知」只是往投递表里插一行，worker 每 30 秒派发一轮。每条投递最多试 5 次，用完转成 `failed`，之后不再自动重发。
 
@@ -470,7 +427,7 @@ echo | openssl s_client -connect <面板地址>:443 -servername <面板域名> 2
 | SMTP 不通、口令改了、发信被服务商限流 | `error_message` |
 | 降级开关 `notify.email` 关着 | 邮件只排队不发，这是开关的设计。打开后按原顺序继续发 |
 | worker 没在跑 | 转第 1 章 worker 一节 |
-| 库慢 | 转第 8 章 |
+| 库慢 | 转第 7 章 |
 
 收件人不能发、渠道没配置的会记成 `suppressed`，不是失败，也不算积压。
 
@@ -486,7 +443,7 @@ echo | openssl s_client -connect <面板地址>:443 -servername <面板域名> 2
 
 ---
 
-## 8. 数据库或 Redis 连不上、连接满、慢
+## 7. 数据库或 Redis 连不上、连接满、慢
 
 ### 怎么确认
 
@@ -523,7 +480,7 @@ echo | openssl s_client -connect <面板地址>:443 -servername <面板域名> 2
 
 | 原因 | 怎么认 |
 |---|---|
-| PostgreSQL 单元挂了或反复重启 | `systemctl status postgresql@18-main`；日志里有 OOM 或磁盘满（转第 9 章） |
+| PostgreSQL 单元挂了或反复重启 | `systemctl status postgresql@18-main`；日志里有 OOM 或磁盘满（转第 8 章） |
 | 某个会话 `idle in transaction`，或者手工跑的语句占着锁 | 第三、四条查询 |
 | 改大了连接池，或多开了实例，总数超出 `max_connections` | 第一条查询各用户的连接数 |
 | 保留期清理积压，表越来越大、查询越来越慢 | `worker.log` 里有清理失败 |
@@ -541,7 +498,7 @@ echo | openssl s_client -connect <面板地址>:443 -servername <面板域名> 2
    pg -c "SELECT pg_terminate_backend(<pid>);"   # 取消不管用时
    ```
 
-   只动确认过的那个 pid。不要终止迁移会话，处理迁移见第 11 章。
+   只动确认过的那个 pid。不要终止迁移会话，处理迁移见第 10 章。
 2. **【写】** 重启库：`systemctl restart postgresql@18-main`；重启 Redis：`systemctl restart redis-server`（AOF 落盘，会话与队列不丢）。期间整个面板不可用，serve 与 worker 会自动重连。
 3. **【写】** 调连接预算：数据库参数改发布包里的 `deploy/postgresql-pandora.conf` 再重跑安装器（它整份覆盖机器上那份）；只改机器上那份，下次安装会被覆盖。
 
@@ -551,7 +508,7 @@ echo | openssl s_client -connect <面板地址>:443 -servername <面板域名> 2
 
 ---
 
-## 9. 磁盘满
+## 8. 磁盘满
 
 ### 怎么确认
 
@@ -574,7 +531,7 @@ pg -c "SELECT relname, pg_size_pretty(pg_total_relation_size(relid)) AS size FRO
 
 ### 处理
 
-1. **【写】** 删旧的升级前备份：先确认有一份更新的 `pandora-postgres-*.dump.age` 通过了校验（第 10 章），异地也有副本，再删 `pre-upgrade-*.dump`。
+1. **【写】** 删旧的升级前备份：先确认有一份更新的 `pandora-postgres-*.dump.age` 通过了校验（第 9 章），异地也有副本，再删 `pre-upgrade-*.dump`。
 2. **【写】** `journalctl --vacuum-size=200M`。
 3. 不要手动删 PostgreSQL 数据目录里的任何文件，包括 `pg_wal`；也不要删 Redis 的 AOF 文件。
 4. 库本身太大：确认 worker 在跑、`worker.log` 里没有清理失败；积压会在之后几轮里分批清掉。
@@ -585,7 +542,7 @@ pg -c "SELECT relname, pg_size_pretty(pg_total_relation_size(relid)) AS size FRO
 
 ---
 
-## 10. 备份、校验与恢复
+## 9. 备份、校验与恢复
 
 `pandora-backup.timer` 每天 03:17 UTC 附近（随机延后最多 45 分钟）以 root 跑 `deploy/backup-postgres.sh`：
 
@@ -614,7 +571,7 @@ ls -lt "$(sudo /opt/pandora/bin/pandora backup dir)" | head
 - `deploy.env` 的 `PANDORA_BACKUP_AGE_RECIPIENT` 还是占位符，或 `PANDORA_BACKUP_AGE_IDENTITY` 指的私钥不在、权限不是 root 0600、与收件人对不上：脚本拒绝生成明文备份或写不出封条，直接失败。
 - `postgresql@18-main` 没在跑，或 `deploy.env` 的 `POSTGRES_SUPER_PASSWORD` 与库里 `postgres` 的口令对不上（报 `password authentication failed`）。
 - 巡检报 `读不出备份目录`：`pandora backup dir` 失败，多半是 `config.yaml` 的 `backup.dir` 不是规范的绝对路径。改了 `backup.dir` 还要同步改 `pandora-backup.service` 的 `ReadWritePaths`。
-- 磁盘满（第 9 章）。
+- 磁盘满（第 8 章）。
 - `offsite WebDAV upload failed; the sealed local backup … is kept`：异地上传失败，原因只报阶段名（`probe_failed`、`archive_failed`、`manifest_failed`、`checkpoint_replication_failed` 等），看 `journalctl -u pandora-backup`。
 
 ### 处理
@@ -674,7 +631,7 @@ sudo env PANDORA_RESTORE_CONFIRM=RESTORE:pandora \
 
 ---
 
-## 11. 迁移失败
+## 10. 迁移失败
 
 安装器首装与升级都跑 `pandora migrate up`（goose 版本化迁移，以 `deploy.env` 的 `PANDORA_DATABASE_MIGRATION_URL`，即属主角色 `pandora_owner` 连），失败即停，不起服务。
 
@@ -691,7 +648,7 @@ sudo systemd-run --pipe --quiet --uid=pandora -p EnvironmentFile=/etc/pandora/se
 
 - 先按报错修好原因（约束不满足、锁等待超时、磁盘满），再重跑安装器。
 - 每个迁移都有 Down：**【写】** 确需回退一步时用 `pandora migrate down`（同上的包法），一次只退一个版本；回退之前先备份，回退之后用旧版本的发布包。
-- 迁移半途失败、库的状态说不清时，从升级前的备份恢复（第 10 章），不要手工改 goose 的版本表。
+- 迁移半途失败、库的状态说不清时，从升级前的备份恢复（第 9 章），不要手工改 goose 的版本表。
 
 ### 什么时候升级处理
 
@@ -699,7 +656,7 @@ sudo systemd-run --pipe --quiet --uid=pandora -p EnvironmentFile=/etc/pandora/se
 
 ---
 
-## 12. 节点机侧（pdnd）
+## 11. 节点机侧（pdnd）
 
 面板这头看到的症状是「节点显示 降级 / 生效失败」，原因在节点机上：端口被占、入站起不来、UDP 缓冲偏小、接入装到一半。节点失联、心跳进不来看第 3 章。本章命令在节点机上以 root 跑，日志用 `journalctl -u pandora-native` 看。
 
@@ -728,7 +685,7 @@ journalctl -u pandora-native -n 200 --no-pager | grep -E '节点降级运行|新
 ss -lntup | grep -E ':<端口>\b'     # 谁占着这个端口
 ```
 
-### 12.1 端口被占
+### 11.1 端口被占
 
 - **原因**：同一台机器上另一个入站、别的服务（nginx、旧的代理进程）已经 bind 了这个端口和协议（TCP 和 UDP 分开算）。后台有同机端口门禁：同一台服务器上两个节点配同一端口，保存时就会被拒；这条故障多半是机器上有后台管不到的进程。
 - **处理**：
@@ -737,13 +694,13 @@ ss -lntup | grep -E ':<端口>\b'     # 谁占着这个端口
   3. 不用重启 pdnd：配置装不上时节点会自己按退避重试，端口释放后下一轮就会装上，原因随之清空。
   4. 想马上生效：**【写】** `systemctl restart pandora-native`，会断开这台节点上的用户连接。
 
-### 12.2 入站起不来（`not_started` 或 `config_apply_failed`）
+### 11.2 入站起不来（`not_started` 或 `config_apply_failed`）
 
-- **看日志里的 `err`**：`address already in use` 转 12.1；证书读不进来，证书由面板集中签发的转第 5 章；其它报错带着整段日志提给开发。
+- **看日志里的 `err`**：`address already in use` 转 11.1；证书读不进来，核对节点配置的 `cert_path` / `key_path` 与文件权限（`docs/node-certificates.md` 第 1 节）；其它报错带着整段日志提给开发。
 - **`新配置应用失败，已恢复上一版本`**：新版装不上，上一版在服务，用户不受影响。原因修好后自动重试，不用手动回滚。
 - **面板明确拒绝这个节点（身份吊销、服务器被删）时**，节点不会用落盘缓存起服务：转第 3 章「身份失效」。
 
-### 12.3 UDP 缓冲告警
+### 11.3 UDP 缓冲告警
 
 日志里每个 hy2 / TUIC 入站启动时出一条「QUIC 入站的 UDP 缓冲偏小 …」。
 
@@ -751,7 +708,7 @@ ss -lntup | grep -E ':<端口>\b'     # 谁占着这个端口
 - 面板的节点安装脚本已经写了 `/etc/sysctl.d/90-pandora-native.conf`（只调大不调小）。看到告警说明这台是手工安装、装在容器里（`/proc/sys` 只读），或者 sysctl 在 pdnd 启动之后才生效。
 - **处理**：`sysctl net.core.rmem_max net.core.wmem_max` 看当前值；**【写】** 照 `pdnd/release/README.md` 写 sysctl 并 `sysctl -p`，再 `systemctl restart pandora-native`；容器里在宿主机改。
 
-### 12.4 接入装到一半卡住
+### 11.4 接入装到一半卡住
 
 后台服务器详情签发的一键安装令牌给出的命令是 `curl -fsSL '<面板地址>/pdnd/install.sh' | sudo bash -s -- --panel '<gRPC 主机>:9443' --ca-sha256 'sha256:<指纹>' --token '<令牌>'`。脚本的顺序是：校验参数 → 下载二进制并核对校验和 → 用新二进制 `pandora-native enroll`（按 CA 指纹钉住面板，令牌经 stdin 交给它，经 gRPC 换来客户端证书）→ 写配置与 unit → 校验 → 换上并重启服务。
 
@@ -768,7 +725,7 @@ ss -lntup | grep -E ':<端口>\b'     # 谁占着这个端口
 
 ---
 
-## 13. 系统服务的约束
+## 12. 系统服务的约束
 
 - `pandora-serve`、`pandora-worker` 以专用用户 `pandora` 跑，单元带 `MemoryMax` 与相应的 `GOMEMLIMIT`、常规沙箱加固；被 OOM 杀掉后 systemd 自己拉起。
 - `pandora-backup`、`pandora-health`、`pandora-tls-renew` 以 root 跑，但都在沙箱里：备份只写备份目录与 WebDAV 检查点目录，巡检只写 `/var/log/pandora`，续期只写证书相关的目录。备份单元的系统调用过滤不许改文件属主，备份目录由安装器建成 `root:pandora` 0750（面板的系统状态页要列目录），文件本身都是 0600。
@@ -776,7 +733,7 @@ ss -lntup | grep -E ':<端口>\b'     # 谁占着这个端口
 
 ---
 
-## 14. Docker / Compose 部署
+## 13. Docker / Compose 部署
 
 适用于通过 `panel/deploy/docker/compose.yaml`（含 1Panel 编排导入）部署的环境。
 组件分为 8 个容器：`postgres`、`redis`、`migrate`（初始化与迁移）、`serve`、`worker`、`nginx`、只持有网络命名空间与发布端口的 `netns`（serve 与 nginx 都挂在它上面）以及轻量级运维容器 `ops`（`profiles: ["ops"]`）。
@@ -796,7 +753,7 @@ ss -lntup | grep -E ':<端口>\b'     # 谁占着这个端口
 
 ---
 
-### 14.1 migrate 容器退出码非 0
+### 13.1 migrate 容器退出码非 0
 
 启动或升级时 `docker compose ps` 显示 `migrate` 服务状态为 `Exited (1)` 或其他非 0 状态，`serve` 与 `worker` 未启动。
 
@@ -821,14 +778,14 @@ docker compose logs migrate
      unset np
      ```
      成功后在 `.env` 中把 `POSTGRES_SUPER_PASSWORD` 改成新口令，重新 `docker compose up -d`。
-3. 若为迁移 SQL 报错，按第 11 章排查原因。
+3. 若为迁移 SQL 报错，按第 10 章排查原因。
 
 #### 什么时候升级处理
 修复环境与口令后，Goose 迁移仍旧报约束冲突、表锁死或内部脚本报错，带上 `docker compose logs migrate` 提给开发。
 
 ---
 
-### 14.2 nginx 容器起不来或处于 unhealthy 状态
+### 13.2 nginx 容器起不来或处于 unhealthy 状态
 
 `docker compose ps` 中 `nginx` 处于 `Restarting`，或持续 `unhealthy`。
 
@@ -854,7 +811,7 @@ docker compose logs nginx
 
 ---
 
-### 14.3 重建 serve 后门户打不开
+### 13.3 重建 serve 后门户打不开
 
 对 `serve` 执行了 `docker compose up -d --force-recreate serve` 或升级镜像后，外部访问 80/443 或 9080 端口报连接被重置或 502/拒绝连接。
 
@@ -878,7 +835,7 @@ docker compose up -d --force-recreate serve nginx
 
 ---
 
-### 14.4 来源真实 IP 异常
+### 13.4 来源真实 IP 异常
 
 面板管理后台中记录的管理员登录 IP、客户端订阅请求或接口限流全被识别为同一个 `172.x.x.x` 地址（Docker 内部容器网关 IP）。
 
@@ -905,7 +862,7 @@ docker compose up -d --force-recreate serve nginx
 
 ---
 
-### 14.5 数据库灾难恢复（正式库恢复流程）
+### 13.5 数据库灾难恢复（正式库恢复流程）
 
 在容器环境下，`pandora-ops` 镜像内部封锁了直接原地覆盖正在运行中的生产数据库 `pandora` 的功能（裸机脚本的直接覆盖需要宿主 systemctl 停服联锁）。**数据恢复必须通过「恢复至临时库 → 停服务重命名库 → 重跑 migrate 授权」三步完成**。
 
@@ -975,7 +932,7 @@ docker compose up -d --force-recreate serve nginx
 
 ---
 
-### 14.6 磁盘空间管理与清理
+### 13.6 磁盘空间管理与清理
 
 - **容器日志**：`compose.yaml` 中所有服务均统一配置了 `json-file` 日志驱动，单容器日志上限为 `10m`，最多保留 `5` 个历史文件（最大占用约 50MB/服务），无需配置宿主 logrotate。
 - **备份归档清理**：日常生成的加密备份（`/var/backups/pandora/*.dump.age`）会在每日执行 `ops backup` 时，根据 `.env` 中的 `PANDORA_BACKUP_RETENTION_DAYS` 自动清理超期文件。
@@ -986,7 +943,7 @@ docker compose up -d --force-recreate serve nginx
 
 ---
 
-## 15. 订阅域名打不开
+## 14. 订阅域名打不开
 
 后台「节点 → 订阅」页的「订阅域名」管哪些用户拿到哪个域名的链接；nginx 只认 `/etc/pandora/deploy.env` 里 `PANDORA_SUB_DOMAINS` 登记过的订阅域名，且这些域名上只放行订阅拉取（`GET /<12位前缀>/<令牌>`）与门户探测接口 `/v1/sub-probe`（回 204），其余路径一律 404。两边要一致：后台填了、部署没登记 → 链接打不开。
 

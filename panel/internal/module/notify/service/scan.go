@@ -52,6 +52,7 @@ var expiredNotices = []struct {
 // 流量预警档位（%）。
 var quotaThresholds = []int{80, 95}
 
+// scanItem 是扫描要写的一件通知。Code 为空表示不给用户写通知、只写 Admin 那条管理员提醒（此时 Key 用管理员提醒的去重键，Admin 必须非 nil）。
 type scanItem struct {
 	UserID uuid.UUID
 	Code   string
@@ -402,6 +403,19 @@ func (s *Service) writeScanItems(ctx context.Context, items []scanItem, adminCha
 		}
 		c := contacts[it.UserID]
 		err := s.tx.Do(ctx, func(ctx context.Context) error {
+			// Code 为空：只写管理员提醒的条目（如流量重置单的收款提醒），不给用户写通知
+			if it.Code == "" {
+				if adminChatID != 0 && it.Admin != nil {
+					ok, err := s.writeAdminNotice(ctx, adminChatID, *it.Admin)
+					if err != nil {
+						return err
+					}
+					if ok {
+						written++
+					}
+				}
+				return s.emitScanPlugin(ctx, it)
+			}
 			ok, err := s.writeNotice(ctx, env, it.UserID, c, it.Code, it.Vars, it.Key)
 			if err != nil {
 				return err

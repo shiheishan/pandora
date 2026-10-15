@@ -28,6 +28,7 @@ type fakePrice struct {
 	plan     uuid.UUID
 	currency string
 	amount   decimal.Decimal
+	interval string // 空按 month
 }
 
 // fakeCatalog 实现 CatalogReader，供试算与建券时校验套餐。
@@ -47,12 +48,16 @@ func (f *fakeCatalog) MissingPlans(_ context.Context, ids []uuid.UUID) ([]uuid.U
 	return missing, nil
 }
 
-func (f *fakeCatalog) PriceSubtotal(_ context.Context, planID, priceID uuid.UUID) (string, decimal.Decimal, error) {
+func (f *fakeCatalog) PriceSubtotal(_ context.Context, planID, priceID uuid.UUID) (string, decimal.Decimal, string, error) {
 	p, ok := f.prices[priceID]
 	if !ok || p.plan != planID {
-		return "", decimal.Zero, errs.New(errs.NotFound)
+		return "", decimal.Zero, "", errs.New(errs.NotFound)
 	}
-	return p.currency, p.amount, nil
+	iv := p.interval
+	if iv == "" {
+		iv = "month"
+	}
+	return p.currency, p.amount, iv, nil
 }
 
 func (f *fakeCatalog) PackSubtotal(_ context.Context, packID uuid.UUID) (string, decimal.Decimal, error) {

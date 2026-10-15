@@ -1,6 +1,5 @@
 import type { MockModule } from '../types.ts'
 import { billing } from './billing.ts'
-import { certsModule } from './certs.ts'
 import { content } from './content.ts'
 import { dash } from './dash.ts'
 import { commissionOverrides } from './commission-overrides.ts'
@@ -14,5 +13,24 @@ import { subscriptionDomainsModule } from './subscription-domains.ts'
 import { system } from './system.ts'
 import { tickets } from './tickets.ts'
 import { users } from './users.ts'
+import { planResets } from './plans-reset.ts'
+import { memberDiscounts } from './users-member.ts'
 
-export const ADMIN_MODULES: readonly MockModule[] = [dash, tickets, users, plans, billing, marketing, nodes, certsModule, content, system, security, signupSettings, subscriptionModule, commissionOverrides, subscriptionDomainsModule]
+export const ADMIN_MODULES: readonly MockModule[] = [
+  dash,
+  tickets,
+  users,
+  plans,
+  billing,
+  marketing,
+  nodes,
+  content,
+  system,
+  security,
+  signupSettings,
+  subscriptionModule,
+  commissionOverrides,
+  planResets,
+  memberDiscounts,
+  subscriptionDomainsModule,
+]

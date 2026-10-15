@@ -254,7 +254,7 @@ export function mockApi(app: MockApp): Plugin {
       const shared = readSharedTheme()
       return send(res, 200, {
         site_name: readSharedSiteName() ?? MOCK_SITE,
-        theme: shared ? shared.theme : { id: randomUUID(), code: 'paper', name: '默认 · 纸白', is_builtin: true, is_active: true, tokens: { light: {}, dark: {} }, branding: {}, custom_css: '' },
+        theme: shared ? shared.theme : { id: randomUUID(), code: 'paper', name: '默认 · 纸白', is_builtin: true, is_active: true, tokens: { light: {}, dark: {} }, branding: {} },
         slots: { 'portal.login.notice': '<p>国庆活动：全场 8 折，优惠码 AUTUMN26</p>' },
       })
     }

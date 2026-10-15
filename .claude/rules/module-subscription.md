@@ -67,6 +67,9 @@ paths:
 - `TransferPacks`：来源须 `StateEnded`，目标须未停用；不能从仍在用的那份转出（`service/packs.go`）
 - `(Source, SourceID)` 防重：`ErrPackDuplicate`
 
+## 流量重置
+- 后台手动、礼品卡、用户购买（xb-order #32）共用 `ResetTraffic`（`service/reset.go`）：只清生效中订阅全部流量配额行的已用量，每行一条 `traffic_reset_logs`，提交后通知名单；原因 `manual`（ActorID 必填）、`gift_card`、`order`（`ResetOrder`，UserID 必填校验归属，备注写订单号，由 order 履约流量重置单时调）。`TrafficReset.At` 非零时按它判生效（order 结算传结算时刻），零值用自己的时钟
+
 ## 配额滚动
 - `RollQuotas`：第一遍后 `QuotaRollsRemain`，有则隔 `rollQuotaRetryDelay` 再滚一遍（`service/quota_roll.go`）
 - 周期起止只在 `period.go` 算，repo 只筛到期行

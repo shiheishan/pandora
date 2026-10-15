@@ -91,6 +91,30 @@ export function planScopeLabel(ids: readonly string[], plans: readonly Plan[] | 
   return ids.map((id) => plans.find((p) => p.id === id)?.name ?? '已删除的套餐').join('、')
 }
 
+export const COUPON_INTERVAL_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: 'day', label: '按天' },
+  { value: 'week', label: '按周' },
+  { value: 'month', label: '月付' },
+  { value: 'quarter', label: '季付' },
+  { value: 'year', label: '年付' },
+  { value: 'one_time', label: '一次性' },
+]
+
+export const COUPON_INTERVAL_LABELS: Record<string, string> = {
+  day: '按天',
+  week: '按周',
+  month: '月付',
+  quarter: '季付',
+  year: '年付',
+  one_time: '一次性',
+}
+
+/** 适用计费周期：空 →「不限时长」；有值时用顿号连接 */
+export function intervalScopeLabel(intervals: readonly string[]): string {
+  if (!intervals || intervals.length === 0) return '不限时长'
+  return intervals.map((i) => COUPON_INTERVAL_LABELS[i] ?? i).join('、')
+}
+
 /** 只有 active / paused 能切换；expired、exhausted 在「全部」里显示成标签（契约：设计缺，待补·前端） */
 export function couponState(status: string): { switchable: boolean; on: boolean; tag: { label: string; tone: Tone } | null } {
   if (status === 'active') return { switchable: true, on: true, tag: null }
@@ -117,6 +141,7 @@ export interface CouponForm {
   maxDiscount: string
   validUntil: string
   planIds: string[]
+  intervals: string[]
 }
 
 export const emptyCouponForm = (batch: boolean): CouponForm => ({
@@ -133,6 +158,7 @@ export const emptyCouponForm = (batch: boolean): CouponForm => ({
   maxDiscount: '',
   validUntil: '',
   planIds: [],
+  intervals: [],
 })
 
 export type FieldErrors = Record<string, string>
@@ -191,6 +217,7 @@ export function buildCouponRequest(f: CouponForm, batch: boolean): Built<Record<
     else body.valid_until = iso
   }
   if (f.planIds.length) body.applicable_plan_ids = f.planIds
+  if (f.intervals.length) body.applicable_intervals = f.intervals
   return Object.keys(errors).length ? { ok: false, errors } : { ok: true, body }
 }
 

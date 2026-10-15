@@ -247,18 +247,20 @@ func (s *Service) CreateNewOrder(ctx context.Context, in NewOrderInput) (Created
 			labelPtr = &label
 		}
 		limited := limit != nil
+		interval := offer.Price.BillingInterval
 		created, _, err = s.place(ctx, draft{
-			Kind:         KindNew,
-			UserID:       userID,
-			Currency:     offer.Price.Currency,
-			Subtotal:     offer.Price.UnitAmount,
-			CouponPlanID: &in.PlanID,
-			Label:        labelPtr,
-			Item:         item,
-			NewPurchase:  &newPurchase{PlanID: in.PlanID, Limited: limited},
-			Checkout:     in.Checkout,
-			Actor:        actor,
-			AuditAction:  ActionOrderCreated,
+			Kind:           KindNew,
+			UserID:         userID,
+			Currency:       offer.Price.Currency,
+			Subtotal:       offer.Price.UnitAmount,
+			CouponPlanID:   &in.PlanID,
+			CouponInterval: &interval,
+			Label:          labelPtr,
+			Item:           item,
+			NewPurchase:    &newPurchase{PlanID: in.PlanID, Limited: limited},
+			Checkout:       in.Checkout,
+			Actor:          actor,
+			AuditAction:    ActionOrderCreated,
 			AuditData: map[string]any{
 				"plan_version": offer.Version.Version,
 				"new_copy":     in.NewCopy,
@@ -390,12 +392,14 @@ func (s *Service) placeRenewal(ctx context.Context, d renewalDraft) (Created, mo
 		return Created{}, model.Order{}, err
 	}
 	subID := sub.ID
+	interval := offer.Price.BillingInterval
 	return s.place(ctx, draft{
 		Kind:           KindRenewal,
 		UserID:         d.UserID,
 		Currency:       offer.Price.Currency,
 		Subtotal:       offer.Price.UnitAmount,
 		CouponPlanID:   &sub.PlanID,
+		CouponInterval: &interval,
 		SubscriptionID: &subID,
 		Item:           item,
 		Checkout:       d.Checkout,

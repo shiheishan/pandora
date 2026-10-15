@@ -104,12 +104,10 @@ const themeSchema = z.object({
   is_active: z.boolean(),
   tokens: z.object({ light: tokenGroup.default({}), dark: tokenGroup.default({}) }).strict(),
   branding: z.record(z.string(), z.unknown()).catch({}),
-  custom_css: z.string(),
 })
 export type Theme = z.output<typeof themeSchema>
 export const themesResponse = z.object({ themes: z.array(themeSchema).nullable() })
-/** custom_css 停用后 dropped 恒为 []（R19） */
-export const themeSaved = z.object({ saved: z.literal(true), dropped: z.array(z.string()).nullable() })
+export const themeSaved = z.object({ saved: z.literal(true) })
 export const themeActivated = z.object({ activated: z.literal(true) })
 export const themeDeleted = z.object({ deleted: z.literal(true) })
 

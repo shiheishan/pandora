@@ -107,7 +107,8 @@ export const plans: MockModule = {
           const order = placeOrder(state, {
             kind: 'addon',
             subtotal: row.subtotal,
-            discount: row.discount,
+            discount: row.discount + row.member_discount,
+            memberDiscount: row.member_discount,
             total: row.total,
             applied: balance.applied,
             waived: balance.waived,

@@ -38,6 +38,13 @@ func (s *Service) apply(ctx context.Context, c model.Coupon, t Target) (*Applied
 	if err := checkPlan(plans[c.ID], t.PlanID); err != nil {
 		return nil, err
 	}
+	ivs, err := s.repo.IntervalsByCoupons(ctx, []uuid.UUID{c.ID})
+	if err != nil {
+		return nil, err
+	}
+	if err := checkInterval(ivs[c.ID], t.Interval); err != nil {
+		return nil, err
+	}
 	n, err := s.repo.CountActiveByUser(ctx, c.ID, t.UserID)
 	if err != nil {
 		return nil, err
@@ -219,26 +226,34 @@ func (s *Service) Preview(ctx context.Context, userID uuid.UUID, code string, it
 	}
 
 	var planID *uuid.UUID
+	var interval *string
 	var cur string
 	var amt decimal.Decimal
 
 	if item.PackID != nil {
 		cur, amt, err = cat.PackSubtotal(ctx, *item.PackID)
+		if err != nil {
+			return Preview{}, err
+		}
 		planID = nil
+		interval = nil
 	} else {
 		if item.PlanID == nil || item.PriceID == nil {
 			return Preview{}, errs.New(errs.NotFound)
 		}
-		cur, amt, err = cat.PriceSubtotal(ctx, *item.PlanID, *item.PriceID)
+		var iv string
+		cur, amt, iv, err = cat.PriceSubtotal(ctx, *item.PlanID, *item.PriceID)
+		if err != nil {
+			return Preview{}, err
+		}
 		planID = item.PlanID
-	}
-	if err != nil {
-		return Preview{}, err
+		interval = &iv
 	}
 
 	applied, err := s.Evaluate(ctx, code, Target{
 		UserID:   userID,
 		PlanID:   planID,
+		Interval: interval,
 		Currency: cur,
 		Subtotal: amt,
 	})

@@ -91,7 +91,8 @@ func quoteNewLines(ctx context.Context, s *Service, userID uuid.UUID, in QuoteIn
 			PeriodStart:   &ps,
 			PeriodEnd:     &pe,
 		}
-		disc, cc, ce, err := quoteCouponEval(ctx, s, userID, in.CouponCode, &planID, p.Currency, p.UnitAmount)
+		iv := p.BillingInterval
+		disc, cc, ce, err := quoteCouponEval(ctx, s, userID, in.CouponCode, &planID, &iv, p.Currency, p.UnitAmount)
 		if err != nil {
 			return nil, err
 		}
@@ -105,7 +106,7 @@ func quoteNewLines(ctx context.Context, s *Service, userID uuid.UUID, in QuoteIn
 }
 
 // quoteCouponEval 试算优惠码：码不能用时只把中文原因放进 CouponError，不让整个报价失败。
-func quoteCouponEval(ctx context.Context, s *Service, userID uuid.UUID, rawCode string, planID *uuid.UUID, currency money.Currency, subtotal decimal.Decimal) (decimal.Decimal, *string, *string, error) {
+func quoteCouponEval(ctx context.Context, s *Service, userID uuid.UUID, rawCode string, planID *uuid.UUID, interval *string, currency money.Currency, subtotal decimal.Decimal) (decimal.Decimal, *string, *string, error) {
 	code := promosvc.NormalizeCode(rawCode)
 	if code == "" {
 		return decimal.Zero, nil, nil, nil
@@ -113,6 +114,7 @@ func quoteCouponEval(ctx context.Context, s *Service, userID uuid.UUID, rawCode 
 	applied, err := s.promo.Evaluate(ctx, code, promosvc.Target{
 		UserID:   userID,
 		PlanID:   planID,
+		Interval: interval,
 		Currency: string(currency),
 		Subtotal: subtotal,
 	})
@@ -178,7 +180,8 @@ func quoteRenewLines(ctx context.Context, s *Service, userID uuid.UUID, in Quote
 			PeriodEnd:      &pe,
 			PreviousEnd:    &prev,
 		}
-		disc, cc, ce, err := quoteCouponEval(ctx, s, userID, in.CouponCode, &planID, p.Currency, p.UnitAmount)
+		iv := p.BillingInterval
+		disc, cc, ce, err := quoteCouponEval(ctx, s, userID, in.CouponCode, &planID, &iv, p.Currency, p.UnitAmount)
 		if err != nil {
 			return nil, err
 		}
@@ -217,7 +220,7 @@ func quotePackLines(ctx context.Context, s *Service, userID uuid.UUID, in QuoteI
 		sid := *in.SubscriptionID
 		q.SubscriptionID = &sid
 	}
-	disc, cc, ce, err := quoteCouponEval(ctx, s, userID, in.CouponCode, nil, pack.Currency, pack.UnitAmount)
+	disc, cc, ce, err := quoteCouponEval(ctx, s, userID, in.CouponCode, nil, nil, pack.Currency, pack.UnitAmount)
 	if err != nil {
 		return nil, err
 	}
@@ -250,11 +253,24 @@ func (s *Service) Quote(ctx context.Context, in QuoteInput) (QuoteResult, error)
 		lines, err = quotePackLines(ctx, s, userID, in)
 	case QuoteChange:
 		lines, err = quoteChangeLines(ctx, s, userID, in, now)
+	case QuoteReset:
+		lines, err = quoteResetLines(ctx, s, userID, in, now)
 	default:
-		return QuoteResult{}, errs.Invalid(map[string]string{"action": "只能是 renew、change、new 或 pack"})
+		return QuoteResult{}, errs.Invalid(map[string]string{"action": "只能是 renew、change、new、pack 或 reset"})
 	}
 	if err != nil {
 		return QuoteResult{}, err
+	}
+	// 会员折扣：一次报价只读一次，每条报价按「券 + 会员」重算总额（与建单 place 同口径）。
+	// 流量重置报价不打会员折扣（永远按原价，用户 10-14 定）。
+	if len(lines) > 0 && in.Action != QuoteReset {
+		pct, err := s.promo.MemberPercent(ctx, userID)
+		if err != nil {
+			return QuoteResult{}, err
+		}
+		for i := range lines {
+			withMember(&lines[i], pct)
+		}
 	}
 	out.Quotes = lines
 	// 只有换套餐的零头能免；其余入口付不了的标 below_minimum，前端提示先充值或用余额

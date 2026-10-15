@@ -29,9 +29,11 @@ type couponRequest struct {
 	MaxRedemptions *int     `json:"max_redemptions"`
 	MaxPerUser     *int     `json:"max_redemptions_per_user"`
 	PlanIDs        []string `json:"applicable_plan_ids" binding:"max=200,dive,uuid"`
-	UserGroupID    *string  `json:"user_group_id" binding:"omitempty,uuid"`
-	ValidFrom      string   `json:"valid_from" binding:"max=64"`
-	ValidUntil     string   `json:"valid_until" binding:"max=64"`
+	// Intervals 是限定的计费周期（空为不限）；取值与 catalog 价格档的 billing_interval 一致，由 service 校验
+	Intervals   []string `json:"applicable_intervals" binding:"max=6,dive,max=16"`
+	UserGroupID *string  `json:"user_group_id" binding:"omitempty,uuid"`
+	ValidFrom   string   `json:"valid_from" binding:"max=64"`
+	ValidUntil  string   `json:"valid_until" binding:"max=64"`
 }
 
 // generateCouponsRequest 是批量生成请求（字段与 couponRequest 平铺）。
@@ -106,6 +108,7 @@ func (r couponRequest) spec() (service.Spec, error) {
 		MaxRedemptions: r.MaxRedemptions,
 		MaxPerUser:     perUser,
 		PlanIDs:        planIDs,
+		Intervals:      r.Intervals,
 		UserGroupID:    groupID,
 		ValidFrom:      from,
 		ValidUntil:     until,
@@ -138,6 +141,7 @@ type couponResponse struct {
 	MaxRedemptionsPerUser int        `json:"max_redemptions_per_user"`
 	RedeemedCount         int        `json:"redeemed_count"`
 	ApplicablePlanIDs     []string   `json:"applicable_plan_ids"`
+	ApplicableIntervals   []string   `json:"applicable_intervals"` // 永不为 null，空为不限
 	UserGroupID           *string    `json:"user_group_id"`
 	ValidFrom             *time.Time `json:"valid_from"`
 	ValidUntil            *time.Time `json:"valid_until"`
@@ -170,6 +174,11 @@ func couponFrom(c service.Coupon) couponResponse {
 		planIDs[i] = id.String()
 	}
 
+	intervals := c.Intervals
+	if intervals == nil {
+		intervals = []string{}
+	}
+
 	var gid *string
 	if c.UserGroupID != nil {
 		s := c.UserGroupID.String()
@@ -189,6 +198,7 @@ func couponFrom(c service.Coupon) couponResponse {
 		MaxRedemptionsPerUser: c.MaxPerUser,
 		RedeemedCount:         c.Redeemed,
 		ApplicablePlanIDs:     planIDs,
+		ApplicableIntervals:   intervals,
 		UserGroupID:           gid,
 		ValidFrom:             c.ValidFrom,
 		ValidUntil:            c.ValidUntil,

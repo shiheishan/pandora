@@ -258,6 +258,7 @@ func nodeRowFromList(row repo.NodeListRow, now time.Time, detail bool, x nodeLis
 		Delivered:         delivered,
 		DeliveryNote:      note,
 		CreatedAt:         row.CreatedAt,
+		Movable:           nodeMovableState(row.ServingStatus, row.AppliedConfigSHA256, row.ApplyFailedSHA256, row.RuntimeStatus),
 		NodeType:          row.NodeType,
 		ServerHost:        row.ServerHost,
 		ServerPort:        row.ServerPort,

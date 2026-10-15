@@ -340,7 +340,7 @@ func TestGenerateCouponsBatchWithPlansPG(t *testing.T) {
 	}
 	tmpl := couponFromSpec("", dupSpec)
 	tmpl.CreatedBy = &admin
-	inserted, err := e.svc.repo.InsertCouponsIfAbsent(ctx, &tmpl, []string{"DUPX0000000", "NEWX0000001"}, nil)
+	inserted, err := e.svc.repo.InsertCouponsIfAbsent(ctx, &tmpl, []string{"DUPX0000000", "NEWX0000001"}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,7 +356,7 @@ func TestInsertCouponsPlanGonePG(t *testing.T) {
 
 	tmpl := couponFromSpec("", fixedSpec("1.00"))
 	tmpl.Name = "套餐已删"
-	_, err := e.svc.repo.InsertCouponsIfAbsent(ctx, &tmpl, []string{"PGONE000001"}, []uuid.UUID{uuid.New()})
+	_, err := e.svc.repo.InsertCouponsIfAbsent(ctx, &tmpl, []string{"PGONE000001"}, []uuid.UUID{uuid.New()}, nil)
 	if !errors.Is(err, repo.ErrPlanGone) {
 		t.Fatalf("期望 ErrPlanGone，得 %v", err)
 	}
@@ -544,4 +544,102 @@ func assertSQLFails(t *testing.T, e *env, ctx context.Context, sql string, args 
 		t.Fatalf("期望失败: %s", sql)
 	}
 	execSQL(t, e, ctx, "ROLLBACK TO SAVEPOINT sp")
+}
+
+func TestCouponIntervalsListedPG(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.txCtx()
+	admin := newUser(t, e, ctx)
+	actx := adminCtx(ctx, admin)
+
+	spec1 := fixedSpec("1.00")
+	spec1.Intervals = []string{"year", "month"}
+	code1 := randCode("LIST1")
+	id1, _, err := e.svc.CreateCoupon(actx, code1, spec1)
+	if err != nil {
+		t.Fatalf("CreateCoupon 1 失败: %v", err)
+	}
+
+	spec2 := fixedSpec("2.00")
+	code2 := randCode("LIST2")
+	id2, _, err := e.svc.CreateCoupon(actx, code2, spec2)
+	if err != nil {
+		t.Fatalf("CreateCoupon 2 失败: %v", err)
+	}
+
+	specBatch := fixedSpec("3.00")
+	specBatch.Intervals = []string{"quarter"}
+	batchPrefix := "BQ"
+	batchCodes, err := e.svc.GenerateCoupons(actx, batchPrefix, 2, specBatch)
+	if err != nil {
+		t.Fatalf("GenerateCoupons 失败: %v", err)
+	}
+	if len(batchCodes) != 2 {
+		t.Fatalf("期望批量生成 2 张券，实际 %d", len(batchCodes))
+	}
+
+	var count1 int64
+	if err := e.row(ctx, "SELECT count(*) FROM coupon_intervals WHERE coupon_id = ?", id1).Scan(&count1); err != nil {
+		t.Fatalf("查 coupon_intervals 1 失败: %v", err)
+	}
+	if count1 != 2 {
+		t.Fatalf("coupon_intervals 1 期望 2 行，实际 %d", count1)
+	}
+
+	var count2 int64
+	if err := e.row(ctx, "SELECT count(*) FROM coupon_intervals WHERE coupon_id = ?", id2).Scan(&count2); err != nil {
+		t.Fatalf("查 coupon_intervals 2 失败: %v", err)
+	}
+	if count2 != 0 {
+		t.Fatalf("coupon_intervals 2 期望 0 行，实际 %d", count2)
+	}
+
+	for _, bcode := range batchCodes {
+		var bid uuid.UUID
+		if err := e.row(ctx, "SELECT id FROM coupons WHERE code = ?", bcode).Scan(&bid); err != nil {
+			t.Fatalf("查批量券 id 失败: %v", err)
+		}
+		var bcount int64
+		if err := e.row(ctx, "SELECT count(*) FROM coupon_intervals WHERE coupon_id = ?", bid).Scan(&bcount); err != nil {
+			t.Fatalf("查批量券 coupon_intervals 失败: %v", err)
+		}
+		if bcount != 1 {
+			t.Fatalf("批量券 coupon_intervals 期望 1 行，实际 %d", bcount)
+		}
+	}
+
+	rows, _, err := e.svc.ListCoupons(ctx, ListFilter{}, 50, 0)
+	if err != nil {
+		t.Fatalf("ListCoupons 失败: %v", err)
+	}
+	byCode := make(map[string]Coupon, len(rows))
+	for _, r := range rows {
+		byCode[r.Code] = r
+	}
+
+	c1, ok := byCode[code1]
+	if !ok {
+		t.Fatalf("ListCoupons 未找到 code1 %s", code1)
+	}
+	if len(c1.Intervals) != 2 || c1.Intervals[0] != "month" || c1.Intervals[1] != "year" {
+		t.Fatalf("code1 Intervals 期望 [month year], 实际 %v", c1.Intervals)
+	}
+
+	c2, ok := byCode[code2]
+	if !ok {
+		t.Fatalf("ListCoupons 未找到 code2 %s", code2)
+	}
+	if c2.Intervals == nil || len(c2.Intervals) != 0 {
+		t.Fatalf("code2 Intervals 期望空切片且非 nil, 实际 %v", c2.Intervals)
+	}
+
+	for _, bcode := range batchCodes {
+		bc, ok := byCode[bcode]
+		if !ok {
+			t.Fatalf("ListCoupons 未找到批量券 %s", bcode)
+		}
+		if len(bc.Intervals) != 1 || bc.Intervals[0] != "quarter" {
+			t.Fatalf("批量券 Intervals 期望 [quarter], 实际 %v", bc.Intervals)
+		}
+	}
 }

@@ -4,7 +4,7 @@ import { payReturnUrl, paySuccessText } from '../common/PayFlow'
 import { makeNaming } from '../common/purchase'
 import { balanceSplit } from '../common/quote'
 import { BASIC, GIB, PACK100, PLANS, quote, row, split, STD, sub } from '../common/testing'
-import { changeFormula, confirmCopy, payCopy, tierNote } from './copy'
+import { changeFormula, confirmCopy, memberWord, payCopy, tierNote } from './copy'
 import { defaultTier, intentOf, orderRequest, parseTarget, quoteRequest, sortTiers } from './model'
 import { doneLines, doneQuery, doneSub, paidText, readDone } from './result-copy'
 
@@ -28,6 +28,7 @@ describe('确认页地址（约定地址）', () => {
     expect(parse('renew=sub1')).toEqual({ target: { kind: 'renew', subId: 'sub1', fromPlans: false } })
     expect(parse('renew=sub1&from=plans')).toEqual({ target: { kind: 'renew', subId: 'sub1', fromPlans: true } })
     expect(parse('change=sub1&plan=pro')).toEqual({ target: { kind: 'change', subId: 'sub1', planId: 'pro', chooser: false } })
+    expect(parse('reset=sub1')).toEqual({ target: { kind: 'reset', subId: 'sub1' } })
     expect(parse('new=pro')).toEqual({ target: { kind: 'new', planId: 'pro' } })
     expect(parse('pack=k100&sub=sub1')).toEqual({ target: { kind: 'pack', packId: 'k100', subId: 'sub1', chooser: false } })
   })
@@ -70,6 +71,7 @@ describe('报价与建单', () => {
     expect(quoteRequest({ kind: 'change', subId: null, planId: 'pro', chooser: true }, [MINE], null)).toEqual({ action: 'change', plan_id: 'pro' })
     expect(quoteRequest({ kind: 'new', planId: 'std' }, [MINE], null)).toEqual({ action: 'new', plan_id: 'std', new_copy: true })
     expect(quoteRequest({ kind: 'new', planId: 'std' }, [], null)).toEqual({ action: 'new', plan_id: 'std', new_copy: false })
+    expect(quoteRequest({ kind: 'reset', subId: 'a' }, [MINE], null)).toEqual({ action: 'reset', subscription_id: 'a' })
     expect(quoteRequest({ kind: 'pack', packId: 'k', subId: 'a', chooser: false }, [MINE], null)).toEqual({ action: 'pack', pack_id: 'k', subscription_id: 'a' })
   })
 
@@ -91,6 +93,8 @@ describe('报价与建单', () => {
     expect(off.body).toEqual({ price_id: 'std1', as_of: qt.as_of, expect: { total: 3000, balance_applied: 0, payable: 3000 }, coupon_code: 'X' })
     const pack = orderRequest({ target: { kind: 'pack', packId: 'k', subId: 'a', chooser: false }, quote: qt, row: r, split: r.without_balance, coupon: null })
     expect(pack.body).toMatchObject({ pack_id: 'k', subscription_id: 'a' })
+    const reset = orderRequest({ target: { kind: 'reset', subId: 'a' }, quote: qt, row: r, split: r.without_balance, coupon: null })
+    expect(reset).toEqual({ path: 'v1/me/subscriptions/a/traffic-reset', body: { as_of: qt.as_of, expect: { total: 3000, balance_applied: 0, payable: 3000 } } })
     const fresh = orderRequest({ target: { kind: 'new', planId: 'std' }, quote: qt, row: r, split: r.without_balance, coupon: null, label: ' 妈妈的 iPad ', newCopy: true })
     expect(fresh.body).toMatchObject({ plan_id: 'std', price_id: 'std1', new_copy: true, label: '妈妈的 iPad' })
     expect(orderRequest({ target: { kind: 'new', planId: 'std' }, quote: qt, row: r, split: r.without_balance, coupon: null, label: '  ' }).body).not.toHaveProperty('label')
@@ -199,6 +203,16 @@ describe('确认页的文字（原型 S4 / S8）', () => {
     expect(c.callout[0]).toBe('100G 马上加到「我的 · 标准版」，只给这份用，用完为止。链接不变，不用重新添加。')
     expect(c.rows.find((x) => x.k === '加完能用')?.v).toBe('7G → 107G')
     expect(c.change).toBe('加错了也不怕：这份以后彻底停用时，没用完的流量包可以转到另一份。')
+  })
+
+  it('会员折扣文案与展示', () => {
+    expect(memberWord(10)).toBe('九折')
+    expect(memberWord(25)).toBe('七五折')
+    expect(memberWord(100)).toBe('免费')
+    expect(memberWord(15)).toBe('减 15%')
+    const r = row({ subtotal: 3000, member_discount: 300, member_percent: 10, total: 2700 })
+    const c = confirmCopy({ target: { kind: 'renew', subId: MINE.id, fromPlans: false }, sub: MINE, plan: STD, row: r, naming: makeNaming([MINE], undefined), held: [MINE], now: NOW })
+    expect(c.rows.find((x) => x.k.startsWith('会员折扣'))).toEqual({ k: '会员折扣（九折）', v: '−¥3.00', ok: true })
   })
 })
 
