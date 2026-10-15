@@ -19,7 +19,7 @@ paths:
     四方环（转余额拿着可提现等余额 → 余额付款拿着余额等平台收入 → 别人的订单结算拿着平台收入等待结 → 解冻拿着待结等可提现）要求科目 id 满足「待结 < 可提现 < 余额 < 平台收入」，不可达：`ledger_accounts.id` 是 uuidv7、按创建先后递增，而某人在某币种的待结科目只在该币种的订单计提时建，那时平台收入早已建好（或在同一条 `EnsureAccounts` 里按类型排序先插），所以平台收入的 id 总小于待结。自动转余额的加锁范围与主线早有的手动转余额同形（只多一行条目锁），不是这次引入的；不要为它改结算。
   - 佣金各路径的锁序：计提 `OnOrderPaid`（在订单结算事务里，已持平台收入）→「首单」时 `LockReferee` → 各级受益人的待结佣金；解冻 `settleOne`：条目行（SKIP LOCKED）→ 推荐人的待结、可提现佣金（一笔分录）；自动转余额 `autoTransferOne`：`LockUser` → 条目行（SKIP LOCKED）→ 可提现佣金与余额（一笔分录）；手动转余额、提现申请：`LockUser` 打头；打款 `MarkWithdrawalPaid`：提现行 → 可提现佣金与打款渠道（一笔分录）；注销作废 `VoidForDeletedUser`（`service/deleted.go`）：`LockUser`（注销开头已由 `LockForDeletion` 拿过，重入）→ 在途提现行（按 id 升序）→ 冻结中条目行（一条语句按 id 升序）→ 逐笔分录锁 待结或可提现佣金 + 平台收入 main；拿科目前不持有佣金科目，与以上各路径都不互等。
 - 结算与挂账边界：
-  - 结算由 order 实现 `paymentsvc.Settler`（`SettlePayment`）：金额币种不符回普通错误整笔回滚；订单不可付时（已取消/超时回 `CaseReleasedOrder`，已付回 `CaseExcessCapture`，订阅已停用、换套餐周期已变、或流量重置单的订阅已不在生效中、没有限额流量配额、套餐版本与订单行不同、流量配额的 `period_start` 晚于建单时刻（建单后跨了周期，已自动清零过；与换套餐单同思路）（`resetPayable`）回 `CaseIneligibleSubscription`）返回 `paymentsvc.NotPayable` 转入挂账。
+  - 结算由 order 实现 `paymentsvc.Settler`（`SettlePayment`）：金额币种不符回普通错误整笔回滚；订单不可付时（已取消/超时回 `CaseReleasedOrder`，已付回 `CaseExcessCapture`，订阅已停用、换套餐周期已变、或流量重置单的订阅已不在生效中、套餐版本与订单行不同、没有限额流量配额、或作依据的流量配额行（`resetBasis`）这一期已结束还没滚（`periodEnded`）或 `period_start` 晚于建单时刻（`resetPayable`，见下面「流量重置单」）回 `CaseIneligibleSubscription`）返回 `paymentsvc.NotPayable` 转入挂账。
   - 充值单结算记 `KindBalanceTopup`；其他订单走 `PostOrderPaid` 扣减余额冻结。
   - 用户手续费（surcharge，00042）：payment 交来的 `SettleInput.Amount` 已扣掉 surcharge、等于订单应付，订单核对与佣金基数都不含它；`SettleInput.Surcharge` 由 `postSettlement` 原样传给账本（`OrderPaid.Surcharge`、充值同理），在同一笔交易里单独贷记 `platform_revenue / payment_surcharge`（`ledgersvc.RefSurcharge`），不新增交易类型。订单总额与应付不变。用例在 `settle_surcharge_pg_test.go`（充值单余额只加应付、新购单佣金钩子拿到的金额不含手续费、只付应付被拒）。
 - 订单模型与金额约束（钱 R1–R6）：
@@ -35,7 +35,9 @@ paths:
   - 余额抵扣 `PlanBalance`；换套餐零头免除 `WaiveSmallDue`（仅 upgrade 单，上限 99 分，单独记 `waived_amount`，不并入券折扣）。
 - 换套餐与购买落点：
   - 同一订阅同时只许一张未完结的续费或变更单（库约束 `orders_one_open_subscription_change` 兜底，建单先拦截回 409 `ErrOpenChange`）。
-  - 流量重置单（xb-order #32，`service/reset_order.go`）：只在生效中、有限额流量配额（`hasLimitedTraffic`）、套餐配了这一份价格快照币种的重置价（catalog `ResetPrice`）的订阅上卖；报价 `action=reset` 不卖时回空数组。
+  - 流量重置单（xb-order #32，`service/reset_order.go`）：只在生效中、有限额流量配额、套餐配了这一份价格快照币种的重置价（catalog `ResetPrice`）的订阅上卖；报价 `action=reset` 不卖时回空数组。
+    跨周期判断的依据行 `resetBasis`：限额流量配额里周期最长的一行（没有周期末最长，其余按 `period_end − period_start`），卖（`loadResetOffer`）与收（`resetPayable`）共用；同时有日限额与周期限额时日行滚动不影响（10-14 增量审查定）。履约照旧清全部流量配额行。
+    配额滚动任务约 10 分钟一次，新一期起点写边界值而不是滚动时刻，所以设边界为 T：依据行这一期已结束还没滚（`periodEnded`：`period_end <= now`）时不卖，报价与建单都回 409 `ErrResetPeriodSwitching`（报价不回空数组，门户重置入口照原话提示稍后再来）；付款落在这段间隙的进挂账；建单在 T 前、付款在滚动后的，由依据行 `period_start` 晚于建单时刻挡住进挂账。
     订单行是第三种形状：套餐与订阅当时的版本，没有价格档与周期，名字「流量重置 · <套餐名>」。同一订阅同时只许一张未完结的重置单（`orders_one_open_traffic_reset`；建单与报价先查回 `order_pending`，撞索引回 `errOpenReset`）。
     永远按原价收（用户 10-14 定）：不打会员折扣、不收券。`place` 对重置单带券码直接回 rejection `promosvc.ErrCouponNotForReset`（不调 Evaluate），报价带券码落 `coupon_error`、`discount` 为 0；库约束 `orders_traffic_reset_no_discount`（重置单 `discount_amount = 0` 且 `coupon_id` 为空）兜底。可用余额：余额全额抵扣时应付为 0，照样走 `settleZeroPay` 当场履约（这条路不是只为折扣存在，保留）。
     履约调 `subs.ResetTraffic`（原因 `subsvc.ResetOrder`，备注订单号，`At` 传结算时刻，与 `resetPayable` 判生效用同一个 now；写重置日志、通知节点名单）。佣金照现有口径（非充值、总额 > 0 的收款单计佣），基数即原价。
