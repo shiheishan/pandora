@@ -109,7 +109,7 @@ function DomainsFormView({ saved, userGroups }: { saved: DomainConfig; userGroup
         <div className={css.cardBody}>
           <p className={nodesCss.faint}>
             用户拿到的订阅链接用哪个域名：按用户组分到各组，没分到的用缺省组；组内按有效权重随机取（有效权重 =
-            基础权重 × 分数，分数随经该域名的成功拉取升高、随时间回落到 1，在 0.1–3 之间）。一个组都不建就用面板对外地址。只写到域名，不带端口（只走 443），不能用 IP。域名要先解析到本机、在部署配置
+            基础权重 × 分数，分数随经该域名的成功拉取和用户浏览器探测升降、随时间回落到 1，在 0.1–3 之间）。一个组都不建就用面板对外地址。只写到域名，不带端口（只走 443），不能用 IP。域名要先解析到本机、在部署配置
             PANDORA_SUB_DOMAINS 里登记并放好证书（见 RUNBOOK 第 15 章），否则链接打不开。
           </p>
           {!saved.scores_available && (
