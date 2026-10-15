@@ -2,11 +2,14 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 
+	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
+	promosvc "github.com/aegispanel/aegis/internal/module/promo/service"
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/money"
@@ -213,18 +216,17 @@ func TestResetOrderLateAfterExpiry(t *testing.T) {
 }
 
 // TestResetOrderCancelReleases 取消后预留释放、余额退回，可再建单。
+// 重置单永远按原价收（用户 10-14 定），不收券，这里只验余额部分抵扣。
 func TestResetOrderCancelReleases(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	sub, planID, _, _ := e.liveSub(t, ctx, user, 3000)
 	e.setResetPrice(t, ctx, planID, 800)
-	cpn := couponCode()
-	e.mkCoupon(t, ctx, cpn, 200)
 	e.giveBalance(t, ctx, user, 300)
 
 	c, err := e.svc.CreateResetOrder(asUser(ctx, user), ResetOrderInput{
 		SubscriptionID: sub.ID,
-		Checkout:       Checkout{CouponCode: cpn, UseBalance: dec("3")},
+		Checkout:       Checkout{UseBalance: dec("3")},
 	})
 	if err != nil || c.Status != StatusPending {
 		t.Fatalf("建单 %+v %v", c, err)
@@ -246,34 +248,194 @@ func TestResetOrderCancelReleases(t *testing.T) {
 	}
 }
 
-// TestResetOrderCouponPeriodLimited 限 month 的券对重置单不适用。
-func TestResetOrderCouponPeriodLimited(t *testing.T) {
+// TestResetOrderRejectsCoupon 重置单不收任何券（用户 10-14 定）：限定周期的与不限的都拒。
+func TestResetOrderRejectsCoupon(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	sub, planID, _, _ := e.liveSub(t, ctx, user, 3000)
 	e.setResetPrice(t, ctx, planID, 800)
+
+	// 限 month 的券
 	cid := e.mkCoupon(t, ctx, couponCode(), 200)
 	e.mustExec(t, ctx, `INSERT INTO coupon_intervals (coupon_id, billing_interval) VALUES (?, 'month')`, cid)
-	code := e.strCol(t, ctx, `SELECT code FROM coupons WHERE id = ?`, cid)
+	limited := e.strCol(t, ctx, `SELECT code FROM coupons WHERE id = ?`, cid)
+	// 不限周期的券
+	open := couponCode()
+	e.mkCoupon(t, ctx, open, 200)
 
-	res, err := e.svc.Quote(asUser(ctx, user), QuoteInput{Action: QuoteReset, SubscriptionID: &sub.ID, CouponCode: code})
-	if err != nil || len(res.Quotes) != 1 {
-		t.Fatalf("报价 %+v %v", res, err)
-	}
-	q := res.Quotes[0]
-	if q.CouponError == nil || !q.Discount.IsZero() {
-		t.Fatalf("限周期券报价 CouponError=%v Discount=%s", q.CouponError, q.Discount)
-	}
-	_, err = e.svc.CreateResetOrder(asUser(ctx, user), ResetOrderInput{SubscriptionID: sub.ID, Checkout: Checkout{CouponCode: code}})
-	if codeOf(err) != errs.ValidationFailed {
-		t.Fatalf("建单应 validation_failed，得到 %v", err)
-	}
+	for _, code := range []string{limited, open} {
+		res, err := e.svc.Quote(asUser(ctx, user), QuoteInput{Action: QuoteReset, SubscriptionID: &sub.ID, CouponCode: code})
+		if err != nil || len(res.Quotes) != 1 {
+			t.Fatalf("报价（%s）%+v %v", code, res, err)
+		}
+		q := res.Quotes[0]
+		if q.CouponError == nil || *q.CouponError != "流量重置不能使用优惠码" {
+			t.Fatalf("券码 %s 报价 CouponError=%v", code, q.CouponError)
+		}
+		if !q.Discount.IsZero() {
+			t.Fatalf("券码 %s 报价 Discount=%s，应为 0", code, q.Discount)
+		}
+		mustEq(t, "报价 Total", q.Total, dec("8"))
 
-	okCode := couponCode()
-	e.mkCoupon(t, ctx, okCode, 200)
-	res, err = e.svc.Quote(asUser(ctx, user), QuoteInput{Action: QuoteReset, SubscriptionID: &sub.ID, CouponCode: okCode})
-	if err != nil || len(res.Quotes) != 1 {
-		t.Fatalf("不限周期报价 %+v %v", res, err)
+		_, err = e.svc.CreateResetOrder(asUser(ctx, user), ResetOrderInput{SubscriptionID: sub.ID, Checkout: Checkout{CouponCode: code}})
+		if !errors.Is(err, promosvc.ErrCouponNotForReset) {
+			t.Fatalf("券码 %s 建单应 ErrCouponNotForReset，得到 %v", code, err)
+		}
+		if codeOf(err) != errs.ValidationFailed {
+			t.Fatalf("券码 %s 建单应 validation_failed，得到 %v", code, err)
+		}
 	}
-	mustEq(t, "Discount", res.Quotes[0].Discount, dec("2"))
+}
+
+// bumpVersion 给套餐建第 2 版（照 mkPlan 的形状：一条 cycle 流量配额 + 发布），把订阅挪过去。
+func (e *env) bumpVersion(t *testing.T, ctx context.Context, subID, planID uuid.UUID) {
+	t.Helper()
+	var v2 uuid.UUID
+	if err := e.row(ctx, `INSERT INTO plan_versions (plan_id, version, max_devices) VALUES (?, 2, 3) RETURNING id`,
+		planID).Scan(&v2); err != nil {
+		t.Fatal(err)
+	}
+	e.mustExec(t, ctx, `INSERT INTO quota_definitions (plan_version_id, metric, period, limit_value) VALUES (?, ?, 'cycle', ?)`,
+		v2, catalogsvc.MetricTraffic, 100*gib)
+	e.mustExec(t, ctx, `UPDATE plan_versions SET status = 'published', frozen_at = now() WHERE id = ?`, v2)
+	e.mustExec(t, ctx, `UPDATE subscriptions SET plan_version_id = ? WHERE id = ?`, v2, subID)
+}
+
+// TestResetOrderLateAfterVersionChange 建单后套餐换了版本，回调进挂账 ineligible_subscription，已用量不变。
+func TestResetOrderLateAfterVersionChange(t *testing.T) {
+	e, ctx := newEnv(t)
+	code := payCode()
+	e.mkPayProvider(t, ctx, code)
+	user := e.mkUser(t, ctx)
+	sub, planID, _, _ := e.liveSub(t, ctx, user, 3000)
+	e.setResetPrice(t, ctx, planID, 800)
+	e.mustExec(t, ctx, `UPDATE quota_balances SET consumed = ? WHERE subscription_id = ? AND metric = 'traffic.bytes' AND period = 'cycle'`,
+		10*gib, sub.ID)
+
+	c, err := e.svc.CreateResetOrder(asUser(ctx, user), ResetOrderInput{SubscriptionID: sub.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, err := e.svc.Pay(asUser(ctx, user), PayInput{OrderID: c.OrderID, Provider: code})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.bumpVersion(t, ctx, sub.ID, planID)
+
+	ack, err := e.payments.HandleWebhook(ctx, code, epayInbound("pay-"+randHex(8), intent.OutTradeNo, 800))
+	if err != nil || !ackOK(ack) {
+		t.Fatalf("回调 %s %v", ack.Body, err)
+	}
+	kind, ostatus, _ := e.lateCase(t, ctx, c.OrderID)
+	if kind != "ineligible_subscription" || ostatus != StatusPending {
+		t.Fatalf("挂账 kind=%q order_status=%q", kind, ostatus)
+	}
+	if e.consumedTraffic(t, ctx, sub.ID) != 10*gib {
+		t.Fatal("consumed 不应变")
+	}
+	e.assertNoDrift(t, ctx)
+}
+
+// TestResetOrderLateAfterUnlimited 建单后流量配额改成不限额，回调进挂账，已用量不变。
+func TestResetOrderLateAfterUnlimited(t *testing.T) {
+	e, ctx := newEnv(t)
+	code := payCode()
+	e.mkPayProvider(t, ctx, code)
+	user := e.mkUser(t, ctx)
+	sub, planID, _, _ := e.liveSub(t, ctx, user, 3000)
+	e.setResetPrice(t, ctx, planID, 800)
+	e.mustExec(t, ctx, `UPDATE quota_balances SET consumed = ? WHERE subscription_id = ? AND metric = 'traffic.bytes' AND period = 'cycle'`,
+		10*gib, sub.ID)
+
+	c, err := e.svc.CreateResetOrder(asUser(ctx, user), ResetOrderInput{SubscriptionID: sub.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, err := e.svc.Pay(asUser(ctx, user), PayInput{OrderID: c.OrderID, Provider: code})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 版本不变，专门打到「没有限额流量配额」这一支
+	e.mustExec(t, ctx, `UPDATE quota_balances SET limit_value = NULL WHERE subscription_id = ? AND metric = 'traffic.bytes'`, sub.ID)
+
+	ack, err := e.payments.HandleWebhook(ctx, code, epayInbound("pay-"+randHex(8), intent.OutTradeNo, 800))
+	if err != nil || !ackOK(ack) {
+		t.Fatalf("回调 %s %v", ack.Body, err)
+	}
+	kind, ostatus, _ := e.lateCase(t, ctx, c.OrderID)
+	if kind != "ineligible_subscription" || ostatus != StatusPending {
+		t.Fatalf("挂账 kind=%q order_status=%q", kind, ostatus)
+	}
+	if e.consumedTraffic(t, ctx, sub.ID) != 10*gib {
+		t.Fatal("consumed 不应变")
+	}
+	e.assertNoDrift(t, ctx)
+}
+
+// TestResetOrderLateAfterPeriodRoll 建单后流量配额跨了周期（period_start 晚于建单时刻），回调进挂账，已用量不变。
+func TestResetOrderLateAfterPeriodRoll(t *testing.T) {
+	e, ctx := newEnv(t)
+	code := payCode()
+	e.mkPayProvider(t, ctx, code)
+	user := e.mkUser(t, ctx)
+	sub, planID, _, _ := e.liveSub(t, ctx, user, 3000)
+	e.setResetPrice(t, ctx, planID, 800)
+	e.mustExec(t, ctx, `UPDATE quota_balances SET consumed = ? WHERE subscription_id = ? AND metric = 'traffic.bytes' AND period = 'cycle'`,
+		10*gib, sub.ID)
+
+	c, err := e.svc.CreateResetOrder(asUser(ctx, user), ResetOrderInput{SubscriptionID: sub.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, err := e.svc.Pay(asUser(ctx, user), PayInput{OrderID: c.OrderID, Provider: code})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 把周期起点挪到建单之后（建单后跨了周期，已自动清零过）
+	e.mustExec(t, ctx, `UPDATE quota_balances SET period_start = (SELECT created_at FROM orders WHERE id = ?) + interval '1 millisecond'
+WHERE subscription_id = ? AND metric = 'traffic.bytes'`, c.OrderID, sub.ID)
+
+	ack, err := e.payments.HandleWebhook(ctx, code, epayInbound("pay-"+randHex(8), intent.OutTradeNo, 800))
+	if err != nil || !ackOK(ack) {
+		t.Fatalf("回调 %s %v", ack.Body, err)
+	}
+	kind, ostatus, _ := e.lateCase(t, ctx, c.OrderID)
+	if kind != "ineligible_subscription" || ostatus != StatusPending {
+		t.Fatalf("挂账 kind=%q order_status=%q", kind, ostatus)
+	}
+	if e.consumedTraffic(t, ctx, sub.ID) != 10*gib {
+		t.Fatal("consumed 不应变")
+	}
+	e.assertNoDrift(t, ctx)
+}
+
+// TestResetOrderOpenIndexConflict 躲过建单的待付检查、插入时撞 orders_one_open_traffic_reset 回 errOpenReset。
+// 注意：撞唯一索引是 PG 报错，会让整例回滚的外层事务进入 aborted 状态，之后任何查询都会失败，
+// 所以 CreateResetOrder 必须是这个用例里最后一次碰库，之后只做 Go 侧断言，不调 assertNoDrift、不再查库。
+func TestResetOrderOpenIndexConflict(t *testing.T) {
+	e, ctx := newEnv(t)
+	user := e.mkUser(t, ctx)
+	sub, planID, _, _ := e.liveSub(t, ctx, user, 3000)
+	e.setResetPrice(t, ctx, planID, 800)
+
+	// PendingResetOrderForSubscription 只查 status = 'pending_payment'，而索引条件是 status IN ('pending_payment', 'paid')，
+	// 所以预插一张 status = 'paid' 的重置单能躲过待付检查、撞上索引
+	e.mustExec(t, ctx, `
+INSERT INTO orders (order_no, user_id, kind, status, currency, subscription_id,
+                    subtotal_amount, discount_amount, proration_credit_amount, waived_amount,
+                    total_amount, balance_applied, payable_amount, paid_amount,
+                    expires_at, paid_at)
+VALUES ('RST-' || upper(?), ?, 'traffic_reset', 'paid', 'CNY', ?,
+        8, 0, 0, 0,
+        8, 0, 8, 8,
+        now() + interval '30 minutes', now())`,
+		randHex(8), user, sub.ID)
+
+	_, err := e.svc.CreateResetOrder(asUser(ctx, user), ResetOrderInput{SubscriptionID: sub.ID})
+	if codeOf(err) != errs.Conflict {
+		t.Fatalf("撞索引应 conflict，得到 %v", err)
+	}
+	if !errors.Is(err, errOpenReset) {
+		t.Fatalf("撞索引应 errOpenReset，得到 %v", err)
+	}
 }
