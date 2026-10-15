@@ -88,8 +88,8 @@ function Row({ t, on, now, link }: { t: Ticket; on: boolean; now: Date; link: { 
   const st = statusView(t.status)
   const pri = PRIORITY_VIEW[t.priority]
   const wait = waitLabel(t, now)
-  // R60：最后一条非内部备注是用户发的 = 等客服看，加粗（代替已读表）
-  const unread = t.last_message_author_kind === 'user'
+  // R60：最后一条人发的公开消息（不算内部备注与系统消息）是用户发的 = 等客服看，加粗（代替已读表）；已解决、已关闭的不算
+  const unread = t.last_message_author_kind === 'user' && t.status !== 'resolved' && t.status !== 'closed'
   return (
     <a className={on ? `${css.row} ${css.rowOn}` : css.row} href={href(`/tickets/${encodeURIComponent(t.id)}`, link)} aria-current={on ? 'true' : undefined}>
       <span className={css.rowTop}>

@@ -49,7 +49,7 @@ type TicketRow struct {
 	MessageCount int `gorm:"column:message_count"`
 	// LastReplyAt 是最后一条（同上口径）消息的时间，没有消息时为建单时间
 	LastReplyAt time.Time `gorm:"column:last_reply_at"`
-	// LastAuthorKind 是最后一条非内部备注消息的作者类型，没有时为空串（只后台队列填）
+	// LastAuthorKind 是最后一条非内部备注、非系统消息的作者类型，没有时为空串（只后台队列填）
 	LastAuthorKind string `gorm:"column:last_author_kind"`
 }
 

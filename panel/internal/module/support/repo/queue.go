@@ -82,7 +82,7 @@ SELECT t.*, coalesce(m.cnt, 0) AS message_count, coalesce(m.last_at, t.created_a
   ) m ON true
   LEFT JOIN LATERAL (
     SELECT author_kind FROM ticket_messages
-     WHERE ticket_id = t.id AND internal_note = false
+     WHERE ticket_id = t.id AND internal_note = false AND author_kind <> 'system'
      ORDER BY created_at DESC, id DESC LIMIT 1
   ) lk ON true
  ORDER BY ` + queueOrder

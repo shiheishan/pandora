@@ -80,3 +80,6 @@ paths:
 - 库里 `bootstrap_tokens_guard`（迁移 00037）对 DELETE 只放行同一类行，30 天写死在函数体里：改保留期要同时改 `BootstrapTokenRetentionDays` 并另写迁移改函数。
 - 截止时刻在库里按 `now()` 算（`make_interval`），不用进程时钟，免得面板时钟快于库时被 guard 拒掉整批。
 - 删掉之后再拿这枚令牌来登记，拒绝原因从 `token_expired` 变成 `token_unknown`（行已不在）；面板与节点端都不该依赖这两个原因的区别。
+
+## 发布检查的提示
+- `CheckPublishable`（`service/plan_pools.go`）三种拒绝分开写：没绑池 `poolNoteUnbound`、绑的池都停用 `poolNoteAllDisabled`、池里没有可服务节点；后台据此排查（用户 2026-10-14 定）。门户侧不暴露原因。池状态只管能不能再绑，不影响已有绑定的下发。
