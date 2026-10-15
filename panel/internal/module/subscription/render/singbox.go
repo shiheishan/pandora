@@ -139,7 +139,7 @@ func renderSingbox(rc renderCtx) ([]byte, string, int) {
 		phProxyTags: proxyTagsVal,
 	})
 
-	return []byte(body), "application/json; charset=utf-8", len(outs)
+	return body, "application/json; charset=utf-8", len(outs)
 }
 
 // singboxDefaultTemplate 返回 sing-box 的内置模板原文。
