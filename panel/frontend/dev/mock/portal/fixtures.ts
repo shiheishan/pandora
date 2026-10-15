@@ -10,7 +10,7 @@ export { GIB, scenario, SCENARIOS, type Scenario }
 const DAY_MS = 86_400_000
 /** 假后端的「站点时区」（修订 R50 默认值），按日用量按它切日 */
 export const MOCK_TIMEZONE = 'Asia/Shanghai'
-/** 配置名里的站点名（假后端外观默认的 site_name） */
+/** 配置名里的站点名（假后端系统设置的缺省站点名，门户外观的 site_name 缺省也是它） */
 export const MOCK_SITE = 'Pandora'
 
 // ---------------------------------------------------------------------------
