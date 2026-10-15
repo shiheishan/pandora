@@ -1,0 +1,8 @@
+# 站长在本目录直接 docker compose 时生成的本地环境，含秘密
+.env
+
+# 本地挂载的 TLS 证书目录
+tls/
+
+# ACME HTTP-01 校验用 webroot 挂载目录
+acme/

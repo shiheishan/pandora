@@ -256,8 +256,8 @@ const reviewEntrySchema = z.object({
   amount: z.number().int(),
   currency: z.string(),
   review_reason: z.string(),
-  /** 由原因归类：underfunded（解冻时待结科目余额不足）的条目通过后仍会解冻失败 */
-  review_source: z.enum(['same_source', 'source_check', 'underfunded', 'other']),
+  /** 由原因归类：underfunded（解冻时待结科目余额不足）的条目通过后仍会解冻失败；account_deleted（受益人已注销）只能作废 */
+  review_source: z.enum(['same_source', 'source_check', 'underfunded', 'account_deleted', 'other']),
   created_at: iso,
   frozen_until: iso,
 })

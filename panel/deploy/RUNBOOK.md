@@ -3,6 +3,7 @@
 面向自己部署 Pandora Panel 的运维。按症状分章，每章四段：怎么确认 → 常见原因 → 处理 → 什么时候升级处理。
 
 - 面板是一个二进制 `/opt/pandora/bin/pandora`，跑成两个服务：`pandora-serve`（门户 127.0.0.1:9000、后台 127.0.0.1:9001、节点 gRPC :9443）与 `pandora-worker`（后台任务与定时任务，asynq 队列在 Redis 里）。
+- 用 Docker Compose 部署的，运维命令对照与 compose 特有的问题及恢复步骤见第 14 章。
 - 节点证书的设计与 DNS 凭据怎么配，见 [docs/node-certificates.md](../../docs/node-certificates.md)；节点端的部署，见 [pdnd/release/README.md](../../pdnd/release/README.md)；节点机自身的症状（端口被占、入站起不来、UDP 缓冲告警、接入装到一半）见第 12 章。
 - 文中的 `<面板地址>`、`<后台前缀>`、`<订单号>`、`example.test` 都是占位符，换成你自己的。
 
@@ -775,7 +776,217 @@ ss -lntup | grep -E ':<端口>\b'     # 谁占着这个端口
 
 ---
 
-## 14. 订阅域名打不开
+## 14. Docker / Compose 部署
+
+适用于通过 `panel/deploy/docker/compose.yaml`（含 1Panel 编排导入）部署的环境。
+组件分为 8 个容器：`postgres`、`redis`、`migrate`（初始化与迁移）、`serve`、`worker`、`nginx`、只持有网络命名空间与发布端口的 `netns`（serve 与 nginx 都挂在它上面）以及轻量级运维容器 `ops`（`profiles: ["ops"]`）。
+
+### 命令对照表
+
+| 运维场景 | 裸机命令（systemd） | Docker Compose 对应命令 |
+|---|---|---|
+| 查看核心状态 | `systemctl status pandora-serve pandora-worker` | `docker compose ps` |
+| 查看运行日志 | `journalctl -u pandora-serve` / `tail -f serve.log` | `docker compose logs --tail 200 serve` |
+| 重启核心服务 | `systemctl restart pandora-serve` | `docker compose restart serve`（nginx 随之重启） |
+| 超管进库排查 | `/opt/pandora/deploy/psql.sh` | `docker compose run --rm ops psql`（单条加 `-T`：`docker compose run --rm -T ops psql -tAc '…'`） |
+| 管理员命令行 | `pandora-as-service admin …` | `docker compose exec serve /opt/pandora/bin/pandora admin …` |
+| 立即加密备份 | `systemctl start pandora-backup.service` | `docker compose run --rm -T ops backup` |
+| 校验归档文件 | `/opt/pandora/deploy/verify-backup.sh <文件>` | `docker compose run --rm -T ops verify <文件>` |
+| 重载边缘 Nginx | `nginx -t && systemctl reload nginx` | `docker compose exec nginx nginx -s reload` |
+
+---
+
+### 14.1 migrate 容器退出码非 0
+
+启动或升级时 `docker compose ps` 显示 `migrate` 服务状态为 `Exited (1)` 或其他非 0 状态，`serve` 与 `worker` 未启动。
+
+#### 怎么确认
+```bash
+docker compose logs migrate
+```
+
+#### 常见原因
+- **密码不满足安全复杂度**：`.env` 中的密码（`POSTGRES_SUPER_PASSWORD`、`PANDORA_OWNER_DB_PASSWORD`、`PANDORA_APP_DB_PASSWORD`、`PANDORA_REDIS_PASSWORD`）须至少包含 32 个 URL 安全字符（`[A-Za-z0-9_-]`）。
+- **修改了 `.env` 中的超级用户口令但数据库已初始化**：PostgreSQL 官方镜像的 `POSTGRES_PASSWORD` 环境变量**仅在首次初始化数据卷时生效**。若数据库已存在而后修改了 `.env` 中的 `POSTGRES_SUPER_PASSWORD`，容器启动时会报 `password authentication failed`。
+- **迁移本身报错**：Goose 迁移执行阶段数据库报错或前置依赖检查失败。
+
+#### 处理
+1. 若为口令不合规，在 `.env` 中修正后重新执行 `docker compose up -d`。
+2. 若改动了超级用户口令导致验证失败：
+   - 方式 A：临时在 `.env` 中改回原本初始化时使用的旧口令。
+   - 方式 B：真要换成新口令：先在 `.env` 里把 `POSTGRES_SUPER_PASSWORD` 改回旧口令，再把新口令经标准输入交给 psql 改库里的口令（口令不进命令行参数、不进 shell 历史；新口令同样只用 32 位以上 `[A-Za-z0-9_-]`，不会破坏引号）：
+     ```bash
+     read -rsp '新超级用户口令：' np && echo
+     printf "ALTER ROLE postgres PASSWORD '%s';\n" "$np" | docker compose run --rm -T ops psql -X -v ON_ERROR_STOP=1
+     unset np
+     ```
+     成功后在 `.env` 中把 `POSTGRES_SUPER_PASSWORD` 改成新口令，重新 `docker compose up -d`。
+3. 若为迁移 SQL 报错，按第 11 章排查原因。
+
+#### 什么时候升级处理
+修复环境与口令后，Goose 迁移仍旧报约束冲突、表锁死或内部脚本报错，带上 `docker compose logs migrate` 提给开发。
+
+---
+
+### 14.2 nginx 容器起不来或处于 unhealthy 状态
+
+`docker compose ps` 中 `nginx` 处于 `Restarting`，或持续 `unhealthy`。
+
+#### 怎么确认
+```bash
+docker compose logs nginx
+```
+
+#### 常见原因
+- `PANDORA_PUBLIC_BASE_URL` 格式不合规（必须形如 `https://<域名或公网IPv4>`，不能包含端口与路径，且末尾不带斜杠）。
+- `PANDORA_ADMIN_PATH` 未配置或仍保持占位符 `CHANGE_ME`（必须为 20~64 位 URL 安全字符）。
+- `PANDORA_REALIP_FROM` 填入了无效的 IP/CIDR 网段，或在未识别网关环境下解析失败。
+- 证书文件不匹配：挂载的 `fullchain.pem` 与 `privkey.pem` 密钥对不匹配或损坏。
+- 健康检查探测失败：nginx 的健康检查要求探测 `http://127.0.0.1:9000/readyz`（门户）与 `http://127.0.0.1:9001/readyz`（后台）；若两个接口任一返回非 200，说明背后的 `serve` 进程未就绪、或者其连接 PostgreSQL / Redis 异常。
+
+#### 处理
+1. 检查并修正 `.env` 中的相关环境变量配置。
+2. 若证书损坏，临时清空 `./tls` 目录中的文件，重启 nginx 让其生成自签证书恢复启动。
+3. 查看核心服务日志排查后端就绪状况：`docker compose logs serve`。
+
+#### 什么时候升级处理
+环境变量与证书确认完全无误，但 Nginx 启动前检查仍报渲染崩溃，带着 `docker compose logs nginx` 反馈。
+
+---
+
+### 14.3 重建 serve 后门户打不开
+
+对 `serve` 执行了 `docker compose up -d --force-recreate serve` 或升级镜像后，外部访问 80/443 或 9080 端口报连接被重置或 502/拒绝连接。
+
+#### 怎么确认
+```bash
+docker compose ps
+docker compose logs nginx
+```
+
+#### 常见原因
+`serve` 与 `nginx` 都通过 `network_mode: "service:netns"` 加入 `netns` 容器的网络命名空间，宿主端口也发布在 `netns` 上。重建或就地拉起 `serve`、`nginx` 都不换命名空间；只有 `netns` 被重建（改了它的配置或镜像版本）时，另外两个要跟着重建才能接上——`docker compose up -d` 会按依赖一起处理，手工只重建了 `netns` 时就会出现这种情况。
+
+#### 处理
+**【写】** 重建挂在 netns 上的两个容器，让它们接入当前的命名空间：
+```bash
+docker compose up -d --force-recreate serve nginx
+```
+
+#### 什么时候升级处理
+重建 nginx 后依然无法连接，排查 Docker Engine 的 bridge 网络驱动状态。
+
+---
+
+### 14.4 来源真实 IP 异常
+
+面板管理后台中记录的管理员登录 IP、客户端订阅请求或接口限流全被识别为同一个 `172.x.x.x` 地址（Docker 内部容器网关 IP）。
+
+#### 怎么确认
+在后台「审计日志」或「登录记录」中观察记录的 IP 是否为容器网段内网 IP。
+
+#### 常见原因
+- 前面已有前置反代（如 1Panel OpenResty / Caddy），但 `.env` 中遗漏配置了 `PANDORA_REALIP_FROM=gateway`。
+- 前置反代未按要求覆写 `X-Real-IP` 请求头，或直接透传了客户端原样请求头。
+- **严重误配**：在 80/443 直面公网开放的情况下，错误地配置了 `PANDORA_REALIP_FROM=gateway`。这会导致外部公网 IPv4/IPv6 流量经由宿主 `docker-proxy` 转发时全部显示为网关 IP，使恶意客户端可通过伪造头部绕过安全限制。
+
+#### 处理
+1. 确认前置反代拓扑：
+   - 方式一（无前置反代，面板自身直出 80/443）：`.env` 中的 `PANDORA_REALIP_FROM` **必须留空**（或仅填 Cloudflare 官方回源网段）。
+   - 方式二（前置反代接入，面板 80/443 不对外）：`.env` 中配置 `PANDORA_REALIP_FROM=gateway`，且 `PANDORA_HTTP_PUBLISH=127.0.0.1:`、`PANDORA_HTTPS_PUBLISH=127.0.0.1:`。
+2. 核对前置反代配置，务必包含：
+   ```nginx
+   proxy_set_header X-Real-IP $remote_addr;
+   ```
+3. 修改配置后重启边缘代理：`docker compose restart nginx`。
+
+#### 什么时候升级处理
+拓扑与头部配置核对无误但来源 IP 仍识别错误，提给开发排查 Nginx 提取逻辑。
+
+---
+
+### 14.5 数据库灾难恢复（正式库恢复流程）
+
+在容器环境下，`pandora-ops` 镜像内部封锁了直接原地覆盖正在运行中的生产数据库 `pandora` 的功能（裸机脚本的直接覆盖需要宿主 systemctl 停服联锁）。**数据恢复必须通过「恢复至临时库 → 停服务重命名库 → 重跑 migrate 授权」三步完成**。
+
+#### 场景 A：从日常加密归档恢复（`.dump.age`）
+
+**【写】数据恢复完整流程：**
+
+1. 将备份文件先完整恢复到新建的临时库 `pandora_restore`（ops 脚本内部会核验本地封条、校验完整性并在沙箱临时库校验后再恢复）：
+   ```bash
+   docker compose run --rm -T \
+     -e PANDORA_RESTORE_CONFIRM=RESTORE:pandora_restore \
+     ops restore --archive /var/backups/pandora/pandora-postgres-<时间戳>.dump.age --target-db pandora_restore
+   ```
+2. 停止可能写入数据库的业务服务容器：
+   ```bash
+   docker compose stop nginx serve worker
+   ```
+3. 以超级用户连入数据库，将损坏的生产库重命名归档，并将新恢复的库重命名为正式库：
+   ```bash
+   D=$(date +%Y%m%d%H%M%S)
+   docker compose run --rm -T ops psql -d postgres -c "ALTER DATABASE pandora RENAME TO pandora_replaced_$D;"
+   docker compose run --rm -T ops psql -d postgres -c "ALTER DATABASE pandora_restore RENAME TO pandora;"
+   ```
+4. 重新启动服务：
+   ```bash
+   docker compose up -d
+   ```
+   *说明：启动时 `migrate` 会首先执行，核验新库的 `pandora_owner` / `pandora_app` 角色及权限收敛，随后拉起 `serve` 与 `worker`。*
+5. 验证面板后台与业务数据无误后，手工清理旧库：
+   ```bash
+   docker compose run --rm -T ops psql -d postgres -c "DROP DATABASE pandora_replaced_$D;"
+   ```
+
+---
+
+#### 场景 B：从升级前自动转储恢复（`pre-upgrade-*.dump`）
+
+在面板升级过程中，若迁移中断或升级后发现重大业务问题需要回退，备份卷中已自动保存了一份未加密的 custom 格式逻辑转储（`/var/backups/pandora/pre-upgrade-<时间戳>.dump`）。
+
+**【写】升级转储恢复流程：**
+
+1. 停止运行容器并由 ops 建立临时恢复库并倒入数据：
+   ```bash
+   docker compose stop nginx serve worker
+
+   # 通过 ops 容器内的 pg 工具链执行恢复（连接回环 PostgreSQL）
+   docker compose run --rm -T --entrypoint sh ops -c '
+     export PGHOST=127.0.0.1 PGUSER=postgres PGPASSWORD="$POSTGRES_SUPER_PASSWORD"
+     createdb -O pandora_owner pandora_restore
+     pg_restore -d pandora_restore /var/backups/pandora/pre-upgrade-<时间戳>.dump
+   '
+   ```
+2. 切换数据库名：
+   ```bash
+   D=$(date +%Y%m%d%H%M%S)
+   docker compose run --rm -T ops psql -d postgres -c "ALTER DATABASE pandora RENAME TO pandora_replaced_$D;"
+   docker compose run --rm -T ops psql -d postgres -c "ALTER DATABASE pandora_restore RENAME TO pandora;"
+   ```
+3. 在 `.env` 中将 `PANDORA_VERSION` 换回原本的旧版本号，并拉起对应版本的容器：
+   ```bash
+   docker compose up -d
+   ```
+4. 验证一切正常后，手工清理被替换的损坏库：
+   ```bash
+   docker compose run --rm -T ops psql -d postgres -c "DROP DATABASE pandora_replaced_$D;"
+   ```
+
+---
+
+### 14.6 磁盘空间管理与清理
+
+- **容器日志**：`compose.yaml` 中所有服务均统一配置了 `json-file` 日志驱动，单容器日志上限为 `10m`，最多保留 `5` 个历史文件（最大占用约 50MB/服务），无需配置宿主 logrotate。
+- **备份归档清理**：日常生成的加密备份（`/var/backups/pandora/*.dump.age`）会在每日执行 `ops backup` 时，根据 `.env` 中的 `PANDORA_BACKUP_RETENTION_DAYS` 自动清理超期文件。
+- **升级转储文件保留**：升级前自动生成的 `pre-upgrade-*.dump` 转储属于关键历史快照，**系统不会自动清理**。若长期运行积累了较多升级转储，可通过 ops 容器确认后按需删除已过期的升级文件：
+  ```bash
+  docker compose run --rm -T --entrypoint sh ops -c 'rm -f /var/backups/pandora/pre-upgrade-2026*.dump'
+  ```
+
+---
+
+## 15. 订阅域名打不开
 
 后台「节点 → 订阅」页的「订阅域名」管哪些用户拿到哪个域名的链接；nginx 只认 `/etc/pandora/deploy.env` 里 `PANDORA_SUB_DOMAINS` 登记过的订阅域名，且这些域名上只放行订阅拉取（`GET /<12位前缀>/<令牌>`）与 `/v1/sub-probe`。两边要一致：后台填了、部署没登记 → 链接打不开。
 

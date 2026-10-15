@@ -191,7 +191,7 @@ identity, auth ─► settings, audit
 | 项 | 做法 |
 |---|---|
 | tenant_id 列、复合外键、`UNIQUE(tenant_id, id)` | 全部去掉，外键改为单列；唯一约束去掉 tenant 前缀（例如 `UNIQUE(email)`） |
-| tenants 表 | 删除。时区、币种、站点名进 settings；`settings jsonb` 拆成普通键 |
+| tenants 表 | 删除。时区、币种、站点名进 settings；`settings jsonb` 拆成普通键。站点名只认 settings 的 `site.name`（10-14 起主题 branding 不再有站点名，入口页 `<title>` 由服务端按它写） |
 | RLS、`current_tenant_id`、`set_config`、`db.Scope` | 全部删除 |
 | 每租户种子触发器 | 改成基线迁移里的普通 INSERT：降级开关、通知模板、线下收款渠道 |
 | 最后一个管理员的锁锚 | 改为 `pg_advisory_xact_lock(常量)` |

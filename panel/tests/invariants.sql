@@ -1170,6 +1170,30 @@ $sql$, 'commission_forfeitures_reason_check');
 SELECT _reject('XB-REG', '作废记录不可改', $sql$
   UPDATE commission_forfeitures SET amount = 2.00 WHERE id = '00000000-0000-7000-8000-000000000371';
 $sql$, '是只追加的表');
+SELECT _reject('XB-REG', '作废记录不可删', $sql$
+  DELETE FROM commission_forfeitures WHERE id = '00000000-0000-7000-8000-000000000371';
+$sql$, '是只追加的表');
+-- 冲回交易的币种必须与作废记录一致（复合外键 (ledger_txn_id, currency)）
+SELECT _reject('XB-REG', '冲回交易币种与作废记录不一致必须拒绝', $sql$
+  WITH t AS (
+    INSERT INTO ledger_transactions (id, kind, currency, actor_kind)
+    VALUES ('00000000-0000-7000-8000-000000000363', 'commission_voided', 'USD', 'system')
+    RETURNING id
+  ), le AS (
+    INSERT INTO ledger_entries (transaction_id, account_id, currency, direction, amount)
+    SELECT t.id, v.account_id, 'USD', v.direction, 1.00
+      FROM t, (VALUES ('00000000-0000-7000-8000-000000000202'::uuid, 'debit'),
+                      ('00000000-0000-7000-8000-000000000203'::uuid, 'credit')) AS v(account_id, direction)
+  )
+  INSERT INTO commission_forfeitures (id, user_id, currency, amount, reason, ledger_txn_id)
+  SELECT '00000000-0000-7000-8000-000000000375', '00000000-0000-7000-8000-000000000103', 'CNY', 1.00,
+         'account_deleted', t.id FROM t;
+$sql$, 'commission_forfeitures_ledger_txn_fk');
+SELECT _reject('XB-REG', '两条作废记录共用一笔冲回交易必须拒绝', $sql$
+  INSERT INTO commission_forfeitures (id, user_id, currency, amount, reason, ledger_txn_id)
+  VALUES ('00000000-0000-7000-8000-000000000376', '00000000-0000-7000-8000-000000000103', 'USD', 1.00,
+          'account_deleted', '00000000-0000-7000-8000-000000000361');
+$sql$, 'commission_forfeitures_ledger_txn_key');
 
 --------------------------------------------------------------------------------
 -- XB-TG Telegram 工单提醒映射与自动关闭原因（00044_xb_tg.sql）

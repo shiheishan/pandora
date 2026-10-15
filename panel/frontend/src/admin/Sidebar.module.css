@@ -37,6 +37,16 @@
   --logo-dot: var(--sidebar-brand);
 }
 
+/* 站点名不是默认的 Pandora 时，替代 pandora 字标显示在环形标记旁 */
+.siteName {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--sidebar-text);
+  font-weight: var(--fw-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .release {
   margin-left: auto;
   padding: 1px 5px;

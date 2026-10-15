@@ -13,10 +13,12 @@ import { MODULES, modulePath, resolveRoute, type ModuleKey } from './modules'
 import { SCREENS } from './screens'
 import css from './Shell.module.css'
 import { Sidebar } from './Sidebar'
+import { useAdminSiteName } from './site'
 
 export function Shell() {
   const location = useHashLocation()
   const me = useAdminMe()
+  const site = useAdminSiteName()
   const route = resolveRoute(location.path)
   const def = MODULES[route.module]
   const Screen = SCREENS[route.module]
@@ -38,8 +40,8 @@ export function Shell() {
 
   useEffect(() => {
     const tab = def.tabs?.find(([k]) => k === route.tab)?.[1]
-    document.title = `${tab ? `${tab} · ` : ''}${def.title} · Pandora 控制台`
-  }, [def, route.tab])
+    document.title = `${tab ? `${tab} · ` : ''}${def.title} · ${site} 控制台`
+  }, [def, route.tab, site])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {

@@ -100,26 +100,29 @@ describe('mail-login tokens', () => {
 describe('pickThemeTokens', () => {
   it('takes the group for the current theme and drops keys outside the design whitelist', () => {
     const appearance = {
+      site_name: 'Pandora',
       theme: { tokens: { light: { '--brand': '#b9442b', '--evil': 'red', '--bg': ' ' }, dark: { '--brand': '#e46e52' } }, branding: {} },
       slots: {},
     }
     expect(pickThemeTokens(appearance, 'light')).toEqual([['--brand', '#b9442b']])
     expect(pickThemeTokens(appearance, 'dark')).toEqual([['--brand', '#e46e52']])
-    expect(pickThemeTokens({ theme: null, slots: {} }, 'light')).toEqual([])
+    expect(pickThemeTokens({ site_name: 'Pandora', theme: null, slots: {} }, 'light')).toEqual([])
     expect(pickThemeTokens(undefined, 'dark')).toEqual([])
   })
 })
 
 describe('portalBranding', () => {
-  const with_ = (branding: Record<string, string>) => ({ theme: { tokens: {}, branding }, slots: {} })
+  const with_ = (site_name: string, branding: Record<string, string> = {}) => ({ site_name, theme: { tokens: {}, branding }, slots: {} })
   it('keeps the design wordmark for the default site name and follows a switched theme otherwise', () => {
-    expect(portalBranding(with_({ site_name: 'Pandora' }))).toEqual({ siteName: null, tagline: null, logo: null })
+    expect(portalBranding(with_('Pandora'))).toEqual({ siteName: null, tagline: null, logo: null })
     expect(portalBranding(undefined)).toEqual({ siteName: null, tagline: null, logo: null })
-    expect(portalBranding(with_({ site_name: ' 夜海加速 ', tagline: '一路畅通' }))).toEqual({ siteName: '夜海加速', tagline: '一路畅通', logo: null })
+    expect(portalBranding(with_(' 夜海加速 ', { tagline: '一路畅通' }))).toEqual({ siteName: '夜海加速', tagline: '一路畅通', logo: null })
     // 默认站点名但带了 Logo：照样画 Logo + 站点名
-    expect(portalBranding(with_({ site_name: 'Pandora', logo: 'data:image/png;base64,AAAA' })).siteName).toBe('Pandora')
+    expect(portalBranding(with_('Pandora', { logo: 'data:image/png;base64,AAAA' })).siteName).toBe('Pandora')
     // 外链 Logo 不认（CSP 只放 data: 图片）
-    expect(portalBranding(with_({ site_name: 'X', logo: 'https://evil.test/a.png' })).logo).toBeNull()
+    expect(portalBranding(with_('X', { logo: 'https://evil.test/a.png' })).logo).toBeNull()
+    // 主题 branding 里残留的 site_name 不起作用
+    expect(portalBranding({ site_name: 'Pandora', theme: { tokens: {}, branding: { site_name: '旧名' } as Record<string, string> }, slots: {} } as never).siteName).toBeNull()
   })
 })
 
@@ -142,6 +145,7 @@ describe('theme cache', () => {
     }
   }
   const custom = {
+    site_name: 'Pandora',
     theme: { tokens: { light: { '--brand': '#b9442b', 'not-a-token': 'red' }, dark: { '--brand': '#e46e52' } }, branding: { logo: 'data:image/png;base64,AAAA' } },
     slots: {},
   }
@@ -158,9 +162,9 @@ describe('theme cache', () => {
   it('clears the cache when the default theme is back in effect', () => {
     const storage = memoryStorage()
     writeThemeCache(custom, storage)
-    writeThemeCache({ theme: null, slots: {} }, storage)
+    writeThemeCache({ site_name: 'Pandora', theme: null, slots: {} }, storage)
     expect(storage.data.has(APPEARANCE_CACHE_KEY)).toBe(false)
-    expect(themeCacheValue({ theme: null, slots: {} })).toBeNull()
+    expect(themeCacheValue({ site_name: 'Pandora', theme: null, slots: {} })).toBeNull()
   })
 
   it('reads nothing from a missing, broken or tampered cache', () => {

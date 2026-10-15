@@ -342,7 +342,7 @@ interface ReviewEntryRow {
   amount: number
   currency: string
   review_reason: string
-  review_source: 'same_source' | 'source_check' | 'underfunded' | 'other'
+  review_source: 'same_source' | 'source_check' | 'underfunded' | 'account_deleted' | 'other'
   created_at: string
   frozen_until: string
   status: 'pending' | 'voided'

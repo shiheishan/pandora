@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { COLOR_TOKENS } from '../../../src/styles/design-tokens.ts'
-import { shareActiveTheme } from '../appearance-share.ts'
+import { shareActiveTheme, shareSiteName } from '../appearance-share.ts'
 import type { Json, MockContext, MockModule, MockResult } from '../types.ts'
 
 // ---------------------------------------------------------------------------
@@ -428,9 +428,9 @@ interface MockTheme {
   branding: Record<string, string>
   custom_css: string
 }
-// 种子：内置「默认 · 纸白」生效，另有一套自定义「夜海」演示切换（站点名不同）
+// 种子：内置「默认 · 纸白」生效，另有一套自定义「夜海」演示切换（标语不同）
 const themes: MockTheme[] = [
-  { id: randomUUID(), code: 'paper', name: '默认 · 纸白', is_builtin: true, is_active: true, tokens: { light: tokenGroup('light'), dark: tokenGroup('dark') }, branding: { site_name: 'Pandora' }, custom_css: '' },
+  { id: randomUUID(), code: 'paper', name: '默认 · 纸白', is_builtin: true, is_active: true, tokens: { light: tokenGroup('light'), dark: tokenGroup('dark') }, branding: {}, custom_css: '' },
   {
     id: randomUUID(),
     code: 'night-sea',
@@ -441,7 +441,7 @@ const themes: MockTheme[] = [
       light: { ...tokenGroup('light'), '--brand': '#2b6cb9', '--brand-hover': '#235a9c', '--brand-ink': '#1d4a80', '--brand-soft': '#dfeaf7', '--brand-tint': '#f1f6fc', '--bg': '#f2f5f8' },
       dark: { ...tokenGroup('dark'), '--brand': '#5b9be4', '--brand-hover': '#79afea', '--brand-ink': '#a6c8f1', '--brand-soft': '#1b2a3d', '--brand-tint': '#141b24', '--bg': '#0f1216' },
     },
-    branding: { site_name: '夜海加速', tagline: '一路畅通' },
+    branding: { tagline: '一路畅通' },
     custom_css: '',
   },
 ]
@@ -478,11 +478,13 @@ function checkTheme(body: Json, fields: Record<string, string>): { tokens: MockT
     fields.branding = '必须是 JSON 对象'
     return { tokens, branding }
   }
-  for (const k of Object.keys(rawBranding)) if (!['site_name', 'tagline', 'logo'].includes(k)) fields.branding = `不认识的品牌字段：${k}（只允许站点名称、标语与 Logo）`
-  const site = str(rawBranding.site_name).trim()
-  if (!site) fields['branding.site_name'] = '站点名称必填：门户标题、邮件里的站点名与发件人名都取自生效主题'
-  else if (runes(site) > 40) fields['branding.site_name'] = '站点名称最多 40 个字'
-  else branding.site_name = site
+  for (const k of Object.keys(rawBranding)) {
+    if (k === 'site_name') {
+      fields['branding.site_name'] = '站点名不在主题里设置：到「内容与外观 → 主题与插槽」的站点设置里改'
+    } else if (!['tagline', 'logo'].includes(k)) {
+      fields.branding = `不认识的品牌字段：${k}（只允许标语与 Logo）`
+    }
+  }
   const tagline = str(rawBranding.tagline).trim()
   if (runes(tagline) > 80) fields['branding.tagline'] = '标语最多 80 个字'
   else if (tagline) branding.tagline = tagline
@@ -497,10 +499,11 @@ function checkTheme(body: Json, fields: Record<string, string>): { tokens: MockT
   return { tokens, branding }
 }
 
-/** 门户读路径（Service.Public）：令牌与品牌已经过保存校验，custom_css 不下发 */
+/** 门户读路径（Service.Public）：令牌与品牌已经过保存校验，custom_css 不下发；站点名取系统设置，一并写给门户 */
 export function shareAppearance(): void {
   const active = themes.find((t) => t.is_active)
   shareActiveTheme(active ? { ...active, custom_css: '' } : null)
+  shareSiteName(siteName)
 }
 
 async function saveTheme(ctx: MockContext): Promise<MockResult> {
@@ -555,6 +558,8 @@ function sanitize(input: string): { clean: string; dropped: string[] | null } {
 }
 
 let siteTimezone = 'Asia/Shanghai'
+// 系统设置的站点名（真后端 site.name）：后台假后端启动时经 shareAppearance 写给门户，改了立刻再写
+let siteName = 'Pandora'
 const validTimezone = (name: string) => {
   if (!name || name === 'Local' || name.length > 64) return false
   try {
@@ -659,16 +664,39 @@ export const content: MockModule = {
     },
 
     'GET /v1/settings/site': (ctx) => {
-      ctx.send(200, { timezone: siteTimezone })
+      ctx.send(200, { name: siteName, timezone: siteTimezone })
     },
     'POST /v1/settings/site': async (ctx) => {
       if (!ctx.requireReauth()) return
-      const decoded = await decode(ctx, { timezone: 'string' })
+      const decoded = await decode(ctx, { name: 'string', timezone: 'string' })
       if (!decoded.ok) return reply(ctx, decoded.result)
-      const tz = str(decoded.body.timezone)
-      if (!validTimezone(tz)) return reply(ctx, invalid({ timezone: '不是有效的时区' }))
-      siteTimezone = tz
-      ctx.send(200, { timezone: tz })
+      const body = decoded.body
+      const fields: Record<string, string> = {}
+      let nextName = siteName
+      let nextTimezone = siteTimezone
+
+      if ('name' in body && body.name !== null) {
+        const name = str(body.name).trim()
+        if (!name) fields.name = '站点名必填'
+        else if (runes(name) > 40) fields.name = '站点名最多 40 个字'
+        else nextName = name
+      }
+
+      if ('timezone' in body && body.timezone !== null) {
+        const tz = str(body.timezone)
+        if (!validTimezone(tz)) fields.timezone = '不是有效的时区'
+        else nextTimezone = tz
+      }
+
+      if (Object.keys(fields).length > 0) return reply(ctx, invalid(fields))
+
+      if (nextName !== siteName) {
+        siteName = nextName
+        shareSiteName(siteName)
+      }
+      siteTimezone = nextTimezone
+
+      ctx.send(200, { name: siteName, timezone: siteTimezone })
     },
   },
 }

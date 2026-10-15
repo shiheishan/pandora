@@ -22,13 +22,14 @@ export const signupConfigSchema = z.object({
 export type SignupConfig = z.output<typeof signupConfigSchema>
 
 export const appearanceSchema = z.object({
+  site_name: z.string().catch('Pandora'),
   theme: z
     .object({
       tokens: z
         .object({ light: z.record(z.string(), z.string()).optional(), dark: z.record(z.string(), z.string()).optional() })
         .partial()
         .catch({}),
-      branding: z.object({ site_name: z.string().optional(), tagline: z.string().optional(), logo: z.string().optional() }).catch({}),
+      branding: z.object({ tagline: z.string().optional(), logo: z.string().optional() }).catch({}),
     })
     .nullable(),
   slots: z.record(z.string(), z.string()).catch({}),

@@ -6,7 +6,17 @@ import { describeEvent } from './EventsCapsule'
 import { identityLabels } from './me'
 import { MODULES, modulePath, paletteItems, resolveRoute } from './modules'
 import { createReauthController } from './reauth'
+import { documentSiteName } from './site'
 import { taskCount, tasksSchema } from './tasks'
+
+describe('documentSiteName', () => {
+  it('reads the server-written application-name meta and falls back to Pandora', () => {
+    const doc = (content: string | null) => ({ querySelector: () => (content === null ? null : { getAttribute: () => content }) }) as unknown as Pick<Document, 'querySelector'>
+    expect(documentSiteName(doc(' 夜海加速 '))).toBe('夜海加速')
+    expect(documentSiteName(doc('   '))).toBe('Pandora')
+    expect(documentSiteName(doc(null))).toBe('Pandora')
+  })
+})
 
 describe('resolveRoute', () => {
   it('keeps valid module/tab paths', () => {
