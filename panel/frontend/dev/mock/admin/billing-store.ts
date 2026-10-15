@@ -46,14 +46,31 @@ export interface Provider {
   allow_private_host: boolean
   // 最低付款额（分，渠道 config 的 min_amount）：epay 默认 100；offline 没有这个概念，回 0
   min_amount: number
+  fee_fixed: number
+  fee_percent: string
+}
+export const paymentSettings = { notify_base_url: '' }
+export const PUBLIC_BASE_URL = 'http://panel.example.test'
+
+function effectiveNotifyBase(): string {
+  const v = paymentSettings.notify_base_url.trim().replace(/\/+$/, '')
+  return v || PUBLIC_BASE_URL
+}
+
+export { effectiveNotifyBase }
+
+export function notifyUrlForProvider(code: string): string {
+  if (code === 'offline') return ''
+  return `${effectiveNotifyBase()}/v1/webhooks/payments/${code}`
 }
 const epayPaths = { submit_path: '/submit.php', api_path: '/api.php', allow_private_host: false, min_amount: 100 }
 const noConfig = { submit_path: '', api_path: '', methods: [], default_method: '', allow_private_host: false, min_amount: 0 }
 export const providers: Provider[] = [
-  { id: randomUUID(), code: 'epay', adapter: 'epay', display_name: '聚合收银台', enabled: true, accepting_new: true, has_credentials: true, base_url: 'https://pay.example.com', currencies: ['CNY'], ...epayPaths, methods: ['alipay', 'wxpay'], default_method: 'alipay' },
+  { id: randomUUID(), code: 'epay', adapter: 'epay', display_name: '聚合收银台', enabled: true, accepting_new: true, has_credentials: true, base_url: 'https://pay.example.com', currencies: ['CNY'], ...epayPaths, methods: ['alipay', 'wxpay'], default_method: 'alipay', fee_fixed: 0, fee_percent: '0.00' },
   // payctl 早期建的渠道：只有 default_method、没有 methods
-  { id: randomUUID(), code: 'epay_backup', adapter: 'epay', display_name: '易支付 · 备用', enabled: true, accepting_new: false, has_credentials: false, base_url: 'https://pay2.example.com', currencies: ['CNY', 'USD'], ...epayPaths, methods: [], default_method: 'alipay' },
-  { id: randomUUID(), code: 'offline', adapter: 'offline', display_name: '线下收款', enabled: true, accepting_new: false, has_credentials: true, base_url: '', currencies: ['CNY', 'USD'], ...noConfig },
+  { id: randomUUID(), code: 'epay_backup', adapter: 'epay', display_name: '易支付 · 备用', enabled: true, accepting_new: false, has_credentials: false, base_url: 'https://pay2.example.com', currencies: ['CNY', 'USD'], ...epayPaths, methods: [], default_method: 'alipay', fee_fixed: 0, fee_percent: '0.00' },
+  { id: randomUUID(), code: 'btcpay', adapter: 'btcpay', display_name: 'BTCPay', enabled: true, accepting_new: false, has_credentials: true, base_url: 'https://btcpay.example.com', currencies: ['CNY'], submit_path: '', api_path: '', methods: [], default_method: '', allow_private_host: false, min_amount: 100, fee_fixed: 0, fee_percent: '1.00' },
+  { id: randomUUID(), code: 'offline', adapter: 'offline', display_name: '线下收款', enabled: true, accepting_new: false, has_credentials: true, base_url: '', currencies: ['CNY', 'USD'], ...noConfig, fee_fixed: 0, fee_percent: '0.00' },
 ]
 /** 站点最低付款额（分，billing.minPaymentSQL）：启用且收新单、支持 CNY 的渠道里最小的 min_amount；一个都没有为 0 */
 export function siteMinPayment(): number {
@@ -61,8 +78,9 @@ export function siteMinPayment(): number {
   return mins.length ? Math.min(...mins) : 0
 }
 /** 凭据只写不读：单独存，providerView 展开 Provider 时带不出去（与 Go 的列表只给 has_credentials 一致） */
-export const providerSecrets = new Map<string, { merchant_id: string; key: string }>([
+export const providerSecrets = new Map<string, { merchant_id: string; key: string; webhook_secret?: string }>([
   [providers[0]!.id, { merchant_id: '1001', key: 'mock-key-epay' }],
+  [providers[2]!.id, { merchant_id: 'STORE1', key: 'mock-api-key', webhook_secret: 'mock-hook' }],
 ])
 const providerName = (code: string) => providers.find((p) => p.code === code)?.display_name ?? code
 
@@ -74,6 +92,7 @@ interface Intent {
   provider_code: string
   currency: string
   amount: number
+  surcharge_amount: number
   status: string
   provider_ref: string | null
   failure_code: string | null
@@ -89,6 +108,7 @@ interface Payment {
   provider_payment_id: string
   currency: string
   amount: number
+  surcharge_amount: number
   fee_amount: number
   refunded_amount: number
   status: string
@@ -199,11 +219,13 @@ function blank(u: User, over: Partial<Order>): Order {
 }
 
 export function intentFor(o: Order, code: string, status: string, at: string, over: Partial<Intent> = {}): Intent {
-  return { id: randomUUID(), provider_code: code, currency: o.currency, amount: o.payable_amount, status, provider_ref: `${code.toUpperCase()}${o.order_no.slice(2)}`, failure_code: null, failure_message: null, expires_at: new Date(Date.parse(at) + 30 * MIN).toISOString(), created_at: at, updated_at: at, ...over }
+  return { id: randomUUID(), provider_code: code, currency: o.currency, amount: o.payable_amount, surcharge_amount: 0, status, provider_ref: `${code.toUpperCase()}${o.order_no.slice(2)}`, failure_code: null, failure_message: null, expires_at: new Date(Date.parse(at) + 30 * MIN).toISOString(), created_at: at, updated_at: at, ...over }
 }
 
 export function paymentFor(o: Order, code: string, intent: Intent | null, at: string, ref?: string): Payment {
-  return { id: randomUUID(), payment_intent_id: intent?.id ?? null, provider_code: code, provider_payment_id: ref ?? `${code}:${o.order_no}`, currency: o.currency, amount: o.payable_amount, fee_amount: code === 'offline' ? 0 : Math.round(o.payable_amount * 0.006), refunded_amount: 0, status: 'succeeded', method: code === 'offline' ? null : 'alipay', paid_at: at }
+  const surcharge = intent?.surcharge_amount ?? 0
+  const amount = intent?.amount ?? o.payable_amount
+  return { id: randomUUID(), payment_intent_id: intent?.id ?? null, provider_code: code, provider_payment_id: ref ?? `${code}:${o.order_no}`, currency: o.currency, amount, surcharge_amount: surcharge, fee_amount: code === 'offline' ? 0 : Math.round(amount * 0.006), refunded_amount: 0, status: 'succeeded', method: code === 'offline' ? null : 'alipay', paid_at: at }
 }
 
 const planItem = (planId: string | null, name: string, amount: number, currency: string, interval = 'month', count = 1): Item => ({
@@ -598,8 +620,14 @@ export function providerView(p: Provider) {
     .flatMap((o) => o.intents)
     .filter((i) => i.provider_code === p.code && Date.parse(i.created_at) >= since && ['succeeded', 'cancelled', 'expired'].includes(i.status))
   const last = pays.map((x) => x.paid_at).sort().at(-1) ?? null
+  const sec = providerSecrets.get(p.id)
+  const has_webhook_secret = p.adapter === 'btcpay' && !!sec?.webhook_secret
+  const fee_percent = /^\d+(\.\d{1,2})?$/.test(p.fee_percent) ? Number(p.fee_percent).toFixed(2) : p.fee_percent
   return {
     ...p,
+    fee_percent,
+    has_webhook_secret,
+    notify_url: notifyUrlForProvider(p.code),
     today: sums,
     success_rate_24h: terminal.length ? terminal.filter((i) => i.status === 'succeeded').length / terminal.length : null,
     last_callback_at: p.code === 'offline' ? null : last,

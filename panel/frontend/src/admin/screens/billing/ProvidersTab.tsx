@@ -4,7 +4,8 @@ import { Button, ConfirmModal, Empty, Menu, QueryView, Switch, Tag, useToast, ty
 import { useFailure } from '../../actions'
 import { toggledSchema, useInvalidateBilling, useProviders, type Provider } from './api'
 import css from './Billing.module.css'
-import { effectiveMethods, isEditableProvider, isOffline, methodLabel, providerMode, providerNote, rateLabel, todayLabel, toggleBody, type ProviderMode } from './model'
+import { effectiveMethods, isEditableProvider, isOffline, methodLabel, providerMode, providerNote, rateLabel, todayLabel, toggleBody, adapterLabel, type ProviderMode } from './model'
+import { CallbackBaseCard } from './CallbackBaseCard'
 import { ProviderDialog } from './ProviderDialog'
 
 interface Pending {
@@ -27,7 +28,8 @@ export function ProvidersTab({ now }: { now: Date }) {
           新建渠道
         </Button>
       </div>
-      <QueryView query={providers} isEmpty={(d) => d.length === 0} empty={<Empty title="还没有支付渠道" description="点「新建渠道」接入易支付。" />}>
+      <CallbackBaseCard />
+      <QueryView query={providers} isEmpty={(d) => d.length === 0} empty={<Empty title="还没有支付渠道" description="点「新建渠道」接入易支付、BTCPay Server 或 CoinPayments。" />}>
         {(rows) => (
           <div className={css.cards}>
             {rows.map((p) => (
@@ -59,7 +61,15 @@ function ProviderCard({ p, now, onToggle, onEdit }: { p: Provider; now: Date; on
         </span>
         <div className={`${css.stack} ${css.spacer}`}>
           <span className={css.cardName}>{p.display_name}</span>
-          <span className={`${css.mono} ${css.small}`}>{p.code}</span>
+          <span className={`${css.mono} ${css.small}`}>
+            {p.code}
+            {!offline && p.adapter !== 'epay' && (
+              <>
+                {' '}
+                <Tag tone="neutral">{adapterLabel(p.adapter)}</Tag>
+              </>
+            )}
+          </span>
         </div>
         {offline && <Tag tone="neutral">内置</Tag>}
         {toggleable && (
@@ -88,6 +98,11 @@ function ProviderCard({ p, now, onToggle, onEdit }: { p: Provider; now: Date; on
         </div>
       </dl>
       {methods.length > 0 && <div className={css.small}>支付方式：{methods.map(methodLabel).join(' / ')}</div>}
+      {!offline && p.notify_url && (
+        <div className={css.small}>
+          回调地址：<span className={css.mono}>{p.notify_url}</span>
+        </div>
+      )}
       <div className={`${css.note} ${css[`tone_${note.tone}`]}`}>{note.text}</div>
     </section>
   )

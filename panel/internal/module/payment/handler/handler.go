@@ -10,11 +10,14 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/route"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
 // Service 是 handler 用到的 payment service 方法；*service.Service 实现它。
 type Service interface {
-	PaymentMethods(ctx context.Context) ([]service.PaymentMethod, error)
+	PaymentMethods(ctx context.Context, amount *decimal.Decimal) ([]service.PaymentMethod, error)
+	PaymentSettings(ctx context.Context) (service.PaymentSettings, error)
+	SetPaymentSettings(ctx context.Context, notifyBaseURL string) error
 	HandleWebhook(ctx context.Context, code string, in provider.Inbound) (provider.AckOutput, error)
 	ListProviders(ctx context.Context) ([]service.ProviderView, error)
 	CreateProvider(ctx context.Context, in service.CreateProviderInput) (service.ProviderWriteResult, error)
@@ -64,4 +67,6 @@ func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	v1.PUT("/payment-providers/:code", k.RequireAuth, k.RecentReauth, k.Idempotency(UpdateProviderScope), h.updateProvider)
 	v1.GET("/late-payments", k.RequireAuth, h.listLatePayments)
 	v1.POST("/late-payments/:id/apply-to-balance", k.RequireAuth, k.RecentReauth, k.Idempotency(ApplyLateScope), h.applyLatePayment)
+	v1.GET("/payment-settings", k.RequireAuth, h.getPaymentSettings)
+	v1.PUT("/payment-settings", k.RequireAuth, k.RecentReauth, h.putPaymentSettings)
 }

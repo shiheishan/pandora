@@ -59,6 +59,7 @@ type stubSettler struct {
 	notPayable map[uuid.UUID]error
 	calls      atomic.Int64
 	ledger     *ledgersvc.Service
+	last       SettleInput // 最近一次 SettlePayment 入参（测试断言用）
 	// before 非空时在结算最前面调用（并发用例在这里拿订单锁）；返回错误即结算失败。
 	before func(ctx context.Context, in SettleInput) error
 }
@@ -66,6 +67,7 @@ type stubSettler struct {
 func (s *stubSettler) SettlePayment(ctx context.Context, in SettleInput) error {
 	s.calls.Add(1)
 	s.mu.Lock()
+	s.last = in
 	before := s.before
 	npErr, notPayable := s.notPayable[in.OrderID]
 	userID := s.users[in.OrderID]
@@ -79,13 +81,14 @@ func (s *stubSettler) SettlePayment(ctx context.Context, in SettleInput) error {
 		return fmt.Errorf("payment test: 未登记订单 %s", in.OrderID)
 	}
 	_, err := s.ledger.PostOrderPaid(ctx, ledgersvc.OrderPaid{
-		OrderID:  in.OrderID,
-		UserID:   userID,
-		Currency: in.Currency,
-		Total:    in.Amount,
-		Paid:     in.Amount,
-		Fee:      in.Fee,
-		Provider: in.ProviderCode,
+		OrderID:   in.OrderID,
+		UserID:    userID,
+		Currency:  in.Currency,
+		Total:     in.Amount,
+		Paid:      in.Amount,
+		Fee:       in.Fee,
+		Surcharge: in.Surcharge,
+		Provider:  in.ProviderCode,
 	})
 	if err != nil {
 		return err
@@ -301,6 +304,19 @@ func (e *env) mkOrder(t *testing.T, ctx context.Context, user uuid.UUID) (uuid.U
 	e.settler.users[orderID] = user
 	e.settler.mu.Unlock()
 	return orderID, orderNo
+}
+
+// CreateIntent 是测试用的一步建单：BeginIntent（自己的事务）+ CompleteIntent。产品代码走 order.Pay 的两段式。
+func (s *Service) CreateIntent(ctx context.Context, in CreateIntentInput) (IntentResult, error) {
+	var d IntentDraft
+	if err := s.tx.Do(ctx, func(ctx context.Context) error {
+		var err error
+		d, err = s.BeginIntent(ctx, in)
+		return err
+	}); err != nil {
+		return IntentResult{}, err
+	}
+	return s.CompleteIntent(ctx, d)
 }
 
 func (e *env) createIntent(t *testing.T, ctx context.Context, providerCode string, orderID uuid.UUID, orderNo string, user uuid.UUID, amount string) IntentResult {

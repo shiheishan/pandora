@@ -27,10 +27,11 @@ export const SERVER_ERROR_CODES = [
   'internal_error',
   'reauth_required',
   // 购买模型（设计稿 2.2 / 2.4）：都是 409。确认下单时金额与报价不符 / 同一套餐已有一张未付款的新购单 /
-  // 发起支付时这张单已超过付款期限
+  // 发起支付时这张单已超过付款期限 / 发起支付时同一张单上一次还在去渠道建单
   'quote_changed',
   'order_pending',
   'order_lapsed',
+  'payment_in_progress',
 ] as const
 type ServerErrorCode = (typeof SERVER_ERROR_CODES)[number]
 type ApiErrorCode = ServerErrorCode | 'network_error' | 'invalid_response'

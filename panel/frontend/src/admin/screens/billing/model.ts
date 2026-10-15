@@ -1,4 +1,4 @@
-import { formatDateTime, formatMoney, relativeTime } from '../../../core/format'
+import { formatDateTime, formatMoney, relativeTime, trimPercent } from '../../../core/format'
 import { periodLabel } from '../plans/model'
 import type { PlanRow } from '../plans/schemas'
 import { ORDER_STATUS_VIEW, orderWhat, parseYuan, REASON_MIN, type Tone } from '../users/model'
@@ -125,6 +125,7 @@ interface PayLine {
   label: string
   tone: Tone
   at: string
+  surcharge?: number
 }
 
 const INTENT_VIEW: Record<string, { label: string; tone: Tone }> = {
@@ -159,6 +160,10 @@ export function paymentLines(h: PaymentHistory): PayLine[] {
       currency: i.currency,
       ...view,
       at: p?.paid_at ?? i.created_at,
+      surcharge: (() => {
+        const s = p?.surcharge_amount ?? i.surcharge_amount
+        return s > 0 ? s : undefined
+      })(),
     }
   })
   for (const p of h.payments) {
@@ -172,6 +177,7 @@ export function paymentLines(h: PaymentHistory): PayLine[] {
       currency: p.currency,
       ...(offline ? { label: '人工确认', tone: 'info' as Tone } : PAYMENT_VIEW[p.status]!),
       at: p.paid_at,
+      surcharge: p.surcharge_amount > 0 ? p.surcharge_amount : undefined,
     })
   }
   for (const r of h.refunds) {
@@ -391,17 +397,31 @@ export function providerNote(p: Provider, now: Date): { text: string; tone: Tone
   if (mode === 'off') parts.push('已完全停用，回调也不处理')
   if (mode === 'paused') parts.push('已停止新单，进行中的支付仍会回调')
   if (!p.has_credentials) parts.push('未配置凭据')
+  if (p.adapter === 'btcpay' && !p.has_webhook_secret) parts.push('未配置 Webhook 密钥')
   if (p.min_amount > 0) parts.push(`最低付款 ${formatMoney(p.min_amount, 'CNY')}`)
+  const fee = feeLabel(p)
+  if (fee) parts.push(fee)
   parts.push(p.last_callback_at ? `最近回调 ${ago(p.last_callback_at, now)}` : '尚无回调')
-  const tone: Tone = mode === 'off' ? 'danger' : !p.has_credentials || mode === 'paused' ? 'warn' : 'neutral'
+  const tone: Tone = mode === 'off' ? 'danger' : !p.has_credentials || mode === 'paused' || (p.adapter === 'btcpay' && !p.has_webhook_secret) ? 'warn' : 'neutral'
   return { text: parts.join(' · '), tone }
 }
 
 // ===========================================================================
-// 支付渠道的新建与编辑：只有易支付能在后台建 / 改；code 与类型建后不可改；
-// 商户号与密钥只写不读，编辑时留空 = 不改。规则照 payment/service provider_admin.go 的
+// 支付渠道的新建与编辑：易支付、BTCPay、CoinPayments 可在后台建 / 改；code 与类型建后不可改；
+// 凭据只写不读，编辑时留空 = 不改。规则照 payment/service provider_admin.go 的
 // normalizeSettings，后端仍是最终裁判（字段错误原样标回表单）。
 // ===========================================================================
+export const PROVIDER_ADAPTERS = [
+  { value: 'epay', label: '易支付' },
+  { value: 'btcpay', label: 'BTCPay Server' },
+  { value: 'coinpayments', label: 'CoinPayments' },
+] as const
+export type ProviderAdapter = (typeof PROVIDER_ADAPTERS)[number]['value']
+
+export function adapterLabel(a: string): string {
+  return PROVIDER_ADAPTERS.find((x) => x.value === a)?.label ?? a
+}
+
 export const EPAY_METHODS = [
   { value: 'alipay', label: '支付宝' },
   { value: 'wxpay', label: '微信支付' },
@@ -418,9 +438,11 @@ export function effectiveMethods(p: Pick<Provider, 'methods' | 'default_method'>
   return p.default_method ? [p.default_method] : []
 }
 
-export const isEditableProvider = (p: Pick<Provider, 'adapter' | 'code'>) => p.adapter === 'epay' && !isOffline(p)
+export const isEditableProvider = (p: Pick<Provider, 'adapter' | 'code'>) =>
+  PROVIDER_ADAPTERS.some((a) => a.value === p.adapter) && !isOffline(p)
 
 export interface ProviderForm {
+  adapter: ProviderAdapter
   code: string
   display_name: string
   base_url: string
@@ -431,8 +453,13 @@ export interface ProviderForm {
   allow_private_host: boolean
   /** 最低付款额，元（文本框原样）；提交时换成分 */
   min_amount: string
+  /** 固定手续费，元 */
+  fee_fixed: string
+  /** 比例手续费，百分数文本 */
+  fee_percent: string
   merchant_id: string
   key: string
+  webhook_secret: string
 }
 
 /** 渠道最低付款额的范围（分）：与后端 provider_admin.go 的白名单校验一致，epay 默认 100（¥1.00） */
@@ -452,37 +479,123 @@ export function parseMinAmount(input: string): number | null {
 /** 分换成输入框里的元：100 → 1.00 */
 export const minAmountText = (cents: number) => (cents / 100).toFixed(2)
 
-export const emptyProviderForm = (): ProviderForm => ({
-  code: '',
-  display_name: '易支付',
-  base_url: '',
-  submit_path: '/submit.php',
-  api_path: '/api.php',
-  methods: ['alipay', 'wxpay'],
-  default_method: 'alipay',
-  allow_private_host: false,
-  min_amount: minAmountText(MIN_AMOUNT_DEFAULT),
-  merchant_id: '',
-  key: '',
-})
+/** 固定手续费（元）→ 分；空串当 0 */
+export function parseFeeFixed(input: string): number | null {
+  const text = input.trim().replace(/^¥/, '')
+  if (text === '') return 0
+  if (!/^\d{1,4}(\.\d{1,2})?$/.test(text)) return null
+  const [whole = '0', frac = ''] = text.split('.')
+  const cents = Number(whole) * 100 + Number(frac.padEnd(2, '0'))
+  return cents >= 0 && cents <= 100_000 ? cents : null
+}
+
+/** 比例手续费（%）→ 规范化字符串；空串当 '0' */
+export function parseFeePercent(input: string): string | null {
+  const text = input.trim().replace(/%$/, '')
+  if (text === '') return '0'
+  if (!/^\d{1,3}(\.\d{1,2})?$/.test(text)) return null
+  const n = Number(text)
+  if (!Number.isFinite(n) || n < 0 || n > 100) return null
+  return trimPercent(text.includes('.') ? text : String(n))
+}
+
+export function feeLabel(p: Pick<Provider, 'fee_fixed' | 'fee_percent'>): string {
+  const fixed = p.fee_fixed
+  const pct = trimPercent(p.fee_percent)
+  const pctNum = Number(pct)
+  if (fixed === 0 && (pct === '0' || pctNum === 0)) return ''
+  const parts: string[] = []
+  if (pctNum > 0) parts.push(`${pct}%`)
+  if (fixed > 0) parts.push(formatMoney(fixed, 'CNY'))
+  return parts.length ? `向用户加收 ${parts.join(' + ')}` : ''
+}
+
+export function credentialLabels(adapter: ProviderAdapter): { merchant: string; key: string } {
+  if (adapter === 'btcpay') return { merchant: 'Store ID', key: 'API Key' }
+  if (adapter === 'coinpayments') return { merchant: 'Client ID', key: 'Client Secret' }
+  return { merchant: '商户号（pid）', key: '商户密钥' }
+}
+
+export const emptyProviderForm = (adapter: ProviderAdapter = 'epay'): ProviderForm => {
+  const base = {
+    adapter,
+    code: '',
+    allow_private_host: false,
+    min_amount: minAmountText(MIN_AMOUNT_DEFAULT),
+    fee_fixed: '0',
+    fee_percent: '0',
+    merchant_id: '',
+    key: '',
+    webhook_secret: '',
+  }
+  if (adapter === 'btcpay') {
+    return {
+      ...base,
+      display_name: 'BTCPay',
+      base_url: '',
+      submit_path: '',
+      api_path: '',
+      methods: [],
+      default_method: '',
+    }
+  }
+  if (adapter === 'coinpayments') {
+    return {
+      ...base,
+      display_name: 'CoinPayments',
+      base_url: 'https://a-api.coinpayments.net',
+      submit_path: '',
+      api_path: '',
+      methods: [],
+      default_method: '',
+    }
+  }
+  return {
+    ...base,
+    display_name: '易支付',
+    base_url: '',
+    submit_path: '/submit.php',
+    api_path: '/api.php',
+    methods: ['alipay', 'wxpay'],
+    default_method: 'alipay',
+  }
+}
+
+/** 新建时切换渠道类型：保留编码、最低额、手续费与 allow_private_host */
+export function switchAdapter(f: ProviderForm, adapter: ProviderAdapter): ProviderForm {
+  const next = emptyProviderForm(adapter)
+  return {
+    ...next,
+    code: f.code,
+    min_amount: f.min_amount,
+    fee_fixed: f.fee_fixed,
+    fee_percent: f.fee_percent,
+    allow_private_host: f.allow_private_host,
+  }
+}
 
 /** 编辑回填：凭据一律空（只写不读）；旧渠道没有 methods 时用 default_method 起步 */
 export function providerFormFrom(p: Provider): ProviderForm {
-  const methods = effectiveMethods(p).filter((m) => EPAY_METHODS.some((x) => x.value === m))
-  const picked = methods.length ? methods : ['alipay']
+  const adapter: ProviderAdapter = PROVIDER_ADAPTERS.some((a) => a.value === p.adapter) ? (p.adapter as ProviderAdapter) : 'epay'
+  const methods = adapter === 'epay' ? effectiveMethods(p).filter((m) => EPAY_METHODS.some((x) => x.value === m)) : []
+  const picked = methods.length ? methods : adapter === 'epay' ? ['alipay'] : []
   return {
+    adapter,
     code: p.code,
     display_name: p.display_name,
     base_url: p.base_url,
-    submit_path: p.submit_path || '/submit.php',
-    api_path: p.api_path || '/api.php',
+    submit_path: adapter === 'epay' ? p.submit_path || '/submit.php' : '',
+    api_path: adapter === 'epay' ? p.api_path || '/api.php' : '',
     methods: picked,
-    default_method: picked.includes(p.default_method) ? p.default_method : picked[0]!,
+    default_method: adapter === 'epay' ? (picked.includes(p.default_method) ? p.default_method : picked[0]!) : '',
     allow_private_host: p.allow_private_host,
     // 旧渠道没配过最低额时后端按默认值算，表单也从默认值起步
     min_amount: minAmountText(p.min_amount > 0 ? p.min_amount : MIN_AMOUNT_DEFAULT),
+    fee_fixed: (p.fee_fixed / 100).toFixed(2),
+    fee_percent: trimPercent(p.fee_percent),
     merchant_id: '',
     key: '',
+    webhook_secret: '',
   }
 }
 
@@ -506,7 +619,7 @@ function parseURL(raw: string): URL | null {
 const PROVIDER_CODE = /^[a-z][a-z0-9_-]{1,31}$/
 const PROVIDER_PATH = /^\/[A-Za-z0-9._~/-]{0,127}$/
 
-export function providerProblems(f: ProviderForm, mode: 'create' | 'edit', hasCredentials = false): Fields {
+export function providerProblems(f: ProviderForm, mode: 'create' | 'edit', hasCredentials = false, hasWebhookSecret = false): Fields {
   const out: Fields = {}
   if (mode === 'create') {
     if (!PROVIDER_CODE.test(f.code.trim())) out.code = '编码需为 2–32 位小写字母、数字、- 或 _，以字母开头'
@@ -514,41 +627,70 @@ export function providerProblems(f: ProviderForm, mode: 'create' | 'edit', hasCr
   }
   const name = chars(f.display_name)
   if (name < 1 || name > 40) out.display_name = '名称需为 1–40 个字'
+  const feeFixed = parseFeeFixed(f.fee_fixed)
+  if (feeFixed === null) out.fee_fixed = '写成元，如 0.30，范围 0 到 1000'
+  const feePct = parseFeePercent(f.fee_percent)
+  if (feePct === null) out.fee_percent = '写成百分数，如 2.5，范围 0 到 100，最多两位小数'
   const base = f.base_url.trim()
-  const url = parseURL(base)
-  if (!url || (url.protocol !== 'https:' && url.protocol !== 'http:') || url.search || url.hash || url.username) out.base_url = '请填写完整的站点地址，如 https://pay.example.com'
-  else if (url.protocol !== 'https:' && !f.allow_private_host) out.base_url = '站点地址必须使用 https'
-  for (const key of ['submit_path', 'api_path'] as const) {
-    const v = f[key].trim()
-    if (v && (!PROVIDER_PATH.test(v) || v.startsWith('//'))) out[key] = '路径需以 / 开头，只含字母、数字与 . _ ~ / -'
+  const url = base ? parseURL(base) : null
+  // CoinPayments 的地址可留空（后端用官方地址），其余必填；填了就按同一规则校验
+  if (base || f.adapter !== 'coinpayments') {
+    if (!url || (url.protocol !== 'https:' && url.protocol !== 'http:') || url.search || url.hash || url.username)
+      out.base_url = '请填写完整的站点地址，如 https://pay.example.com'
+    else if (url.protocol !== 'https:' && !f.allow_private_host) out.base_url = '站点地址必须使用 https'
   }
-  if (f.methods.length === 0) out.methods = '至少选一种支付方式'
-  else if (!f.methods.includes(f.default_method)) out.default_method = '默认方式必须是已勾选的方式之一'
+  if (f.adapter === 'epay') {
+    for (const key of ['submit_path', 'api_path'] as const) {
+      const v = f[key].trim()
+      if (v && (!PROVIDER_PATH.test(v) || v.startsWith('//'))) out[key] = '路径需以 / 开头，只含字母、数字与 . _ ~ / -'
+    }
+    if (f.methods.length === 0) out.methods = '至少选一种支付方式'
+    else if (!f.methods.includes(f.default_method)) out.default_method = '默认方式必须是已勾选的方式之一'
+  }
   // 留空 = 不传：编辑时保留原值、新建按默认 ¥1.00（后端口径）；填了就要合法，不会把空值当 0 发出去
   if (f.min_amount.trim() !== '' && parseMinAmount(f.min_amount) === null) out.min_amount = '写成元，如 1 或 0.50，范围 0.01 到 1000'
   const needCreds = mode === 'create' || !hasCredentials
   if (needCreds && !f.merchant_id.trim()) out.merchant_id = mode === 'create' ? '必填' : '该渠道还没有商户号，需填写'
   if (needCreds && !f.key.trim()) out.key = mode === 'create' ? '必填' : '该渠道还没有密钥，需填写'
+  if (f.adapter === 'btcpay') {
+    const needHook = mode === 'create' || !hasWebhookSecret
+    if (needHook && !f.webhook_secret.trim())
+      out.webhook_secret = mode === 'create' ? '必填' : '该渠道还没有 Webhook 密钥，需填写'
+  }
   return out
 }
 
 /** PUT 的请求体没有 code / adapter（后端不收，建后不可改）；凭据留空原样发空串 = 不改 */
 export function providerBody(f: ProviderForm, mode: 'create' | 'edit') {
-  const settings = {
+  const fee_fixed = parseFeeFixed(f.fee_fixed) ?? 0
+  const fee_percent = parseFeePercent(f.fee_percent) ?? '0'
+  const min = parseMinAmount(f.min_amount)
+  const common = {
     display_name: f.display_name.trim(),
     base_url: f.base_url.trim(),
-    submit_path: f.submit_path.trim(),
-    api_path: f.api_path.trim(),
-    methods: [...f.methods],
-    default_method: f.default_method,
     allow_private_host: f.allow_private_host,
     merchant_id: f.merchant_id.trim(),
     key: f.key.trim(),
+    fee_fixed,
+    fee_percent,
+    // 最低付款额只在填了时带：后端把不传（或 0）当作「编辑保留原值、新建用默认」，所以前端从不发 0
+    ...(min === null ? {} : { min_amount: min }),
   }
-  // 最低付款额只在填了时带：后端把不传（或 0）当作「编辑保留原值、新建用默认」，所以前端从不发 0
-  const min = parseMinAmount(f.min_amount)
-  const body = min === null ? settings : { ...settings, min_amount: min }
-  return mode === 'create' ? { code: f.code.trim(), adapter: 'epay', ...body } : body
+  if (f.adapter === 'epay') {
+    const settings = {
+      ...common,
+      submit_path: f.submit_path.trim(),
+      api_path: f.api_path.trim(),
+      methods: [...f.methods],
+      default_method: f.default_method,
+    }
+    return mode === 'create' ? { code: f.code.trim(), adapter: f.adapter, ...settings } : settings
+  }
+  const crypto = {
+    ...common,
+    ...(f.adapter === 'btcpay' ? { webhook_secret: f.webhook_secret.trim() } : {}),
+  }
+  return mode === 'create' ? { code: f.code.trim(), adapter: f.adapter, ...crypto } : crypto
 }
 
 /** 最低付款额输入框下的说明：留空的含义随新建 / 编辑不同 */

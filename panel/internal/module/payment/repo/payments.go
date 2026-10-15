@@ -63,12 +63,15 @@ func (r *Repo) PaymentByProviderRef(ctx context.Context, providerID uuid.UUID, p
 	return rows[0], true, nil
 }
 
-// InsertPayment 插一行；撞唯一键返回 ErrDuplicate。写前 money.Check(Amount)、money.Check(FeeAmount)。
+// InsertPayment 插一行；撞唯一键返回 ErrDuplicate。写前 money.Check(Amount)、money.Check(FeeAmount)、money.Check(SurchargeAmount)。
 func (r *Repo) InsertPayment(ctx context.Context, p *model.Payment) error {
 	if err := money.Check(p.Amount); err != nil {
 		return err
 	}
 	if err := money.Check(p.FeeAmount); err != nil {
+		return err
+	}
+	if err := money.Check(p.SurchargeAmount); err != nil {
 		return err
 	}
 	return mapErr(r.d.Conn(ctx).Create(p).Error)

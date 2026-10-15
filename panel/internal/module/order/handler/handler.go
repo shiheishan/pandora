@@ -55,6 +55,9 @@ const (
 // SwitchCheckout 是下单与支付的功能开关；取消、查单、我的订单不受它管。
 const SwitchCheckout = "billing.checkout"
 
+// PayPerMinute 是门户发起支付每个账号每分钟的上限（加密货币渠道每次都要去渠道建发票）。
+const PayPerMinute = 10
+
 // QueryPerMinute 是门户查单每个账号每分钟的上限（每查一次都要打渠道接口）。
 const QueryPerMinute = 6
 
@@ -84,7 +87,7 @@ func (h *Handler) RegisterPublic(v1 *gin.RouterGroup, k route.Kit) {
 	v1.POST("/me/traffic-pack-orders", k.RequireAuth, checkout, k.Idempotency(ScopeOrderCreate), h.createPackOrder)
 	v1.POST("/me/topups", k.RequireAuth, checkout, k.Idempotency(ScopeTopupCreate), h.createTopup)
 	v1.POST("/me/checkout/quote", k.RequireAuth, checkout, h.quote)
-	// 发起支付不加幂等键：在途意图由 payment 复用，连点两次拿回同一个收银台
+	// 发起支付不加幂等键：在途意图由 payment 复用，连点两次拿回同一个收银台；按账号每分钟 10 次
 	v1.POST("/orders/:id/pay", k.RequireAuth, checkout, h.pay)
 	v1.POST("/orders/:id/cancel", k.RequireAuth, h.cancel)
 	// 查单不挂 checkout 开关（开关只停新支付）；按账号每分钟 6 次

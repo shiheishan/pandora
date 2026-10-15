@@ -61,10 +61,11 @@ func (t AccountType) DebitNormal() bool {
 
 // 平台科目的常用归属。
 const (
-	RefMain         = "main"          // platform_revenue、late_payment_suspense
-	RefManualAdjust = "manual_adjust" // suspense：后台人工调账
-	RefGift         = "gift"          // platform_promo_expense：礼品卡赠送
-	RefPayout       = "payout"        // channel_cash：佣金提现打款
+	RefMain         = "main"              // platform_revenue、late_payment_suspense
+	RefManualAdjust = "manual_adjust"     // suspense：后台人工调账
+	RefGift         = "gift"              // platform_promo_expense：礼品卡赠送
+	RefPayout       = "payout"            // channel_cash：佣金提现打款
+	RefSurcharge    = "payment_surcharge" // platform_revenue：向用户加收的支付手续费
 )
 
 // Kind 是交易类型，与库里 CHECK 一致。

@@ -386,6 +386,14 @@ echo | openssl s_client -connect <面板地址>:443 -servername <面板域名> 2
 
 支付渠道把回调推到 `https://<面板地址>/v1/webhooks/payments/<渠道编码>`（serve 收）。回调丢了也有兜底：worker 每分钟跑一轮主动查单，向渠道查未付的单，查到已付就和回调走同一条路入账。
 
+回调地址的前缀可以单独设：后台「商业 › 订单与收款 › 支付渠道」的「回调地址」卡片（`payment.notify_base_url`，只收 https）。留空 = 用面板地址。单独设的域名要自己解析到面板、并由前面的反向代理或 CDN 终止 TLS 后转给面板（`render-nginx.sh` 只生成面板地址这一个 server，不会替你加这个域名）。从面板地址改成单独前缀（或改回面板地址）时，之前建的 CoinPayments 发票仍能按原地址验签入账；在两个单独前缀之间直接切换时，用旧前缀建、还没回调的 CoinPayments 发票会验签失败，靠 worker 的主动查单补记；渠道卡片上显示的回调地址就是现在生效的那个。
+
+加密货币渠道（BTCPay Server、CoinPayments）：
+- BTCPay 的回调不随发票下发，要在 BTCPay 商店「Settings › Webhooks」里新建一个 Webhook：地址填渠道卡片上的回调地址，事件至少勾选 Invoice settled / expired / invalid，密钥与后台渠道里填的 Webhook 密钥一致。只有「已结算」且不是在 BTCPay 里手动标记的发票才自动入账；手动标记、部分付款都不自动入账，按下面「处理」里的线下办法核对。
+- BTCPay 商店「Settings › Checkout」里的付款容差（Payment tolerance）必须保持 0：大于 0 时少付但在容差内的发票也会直接变成「已结算」，回查到的发票金额仍是全额，面板没法从金额上看出少付。面板对「已结算」但附加状态是部分付款（PaidPartial）的发票按待定处理、不入账，这只是兜底，容差仍要设 0。
+- 给面板单独建一个 BTCPay 商店，不要在同一个商店里再接 POS、Pay Button 或别的系统：那些发票的回调也会发到面板，面板找不到对应的支付会回 4xx / 5xx，BTCPay 会一直重投并把 Webhook 标成失败。面板入账时还会核对发票号必须是这张支付建单时存下的那张，别的发票即使金额和单号对得上也不会入账。
+- CoinPayments 的回调地址随每张发票下发，不用在商户后台配。商户后台「接受部分付款」与「少付容差」请保持关闭（0）：开了以后少付的发票也会变成 completed，面板发现实收低于应收会按待定处理、不入账。
+
 ### 怎么确认
 
 - 后台「商业 › 订单与收款 › 订单」，找到这张单，看状态和支付尝试。
@@ -418,6 +426,8 @@ echo | openssl s_client -connect <面板地址>:443 -servername <面板域名> 2
 |---|---|
 | 渠道连不上回调地址：证书自签或过期、防火墙或 WAF 拦截、对外地址改过 | 一条回调都没有。从外网 `curl -sS -o /dev/null -w '%{http_code}\n' https://<面板地址>/v1/webhooks/payments/<渠道编码>` 应回 4xx（报文不全），超时或 TLS 报错就是这一类 |
 | 商户密钥不对 | 回调验签失败，不入账 |
+| BTCPay Webhook 密钥不一致、Webhook 没建或没勾事件 | BTCPay 商店的 Webhook 投递记录里是 401，或者根本没有投递；面板这边验签失败不入账 |
+| CoinPayments 回调时间戳偏差超过 5 分钟、回调地址被代理改写 | 回调验签失败；面板机器的时间要用 NTP 校准，回调前缀改过的话核对发票建出时的地址 |
 | 付款时订单已经取消或过期；一张单付了两笔 | 订单状态是 cancelled / expired，这笔钱进了「挂账」 |
 | 金额或币种对不上 | `查单结果与支付意图金额不符，未入账`，或回调的 `processing_error` 写明 |
 | worker 没在跑 | 主动查单不跑，转第 1 章 worker 一节 |

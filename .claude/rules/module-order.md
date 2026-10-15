@@ -12,6 +12,7 @@ paths:
   - 结算主链：订单行（`OrderByID` 锁行）→ 订阅（`subs.Lock`，续费/换套餐/流量包）→ 预留确认（`captureReservation` 锁套餐库存/限购/券）→ 记账（`postSettlement`，经 `lockAccounts` 稳定顺序锁科目）→ 订单状态（`markPaid`）→ `PaidHook` → 履约（`fulfil`）。
   - 建单主链：新购锁套餐行（`catalog.Offer`）；续费/流量包锁订阅；换套餐建单先锁订阅（`subs.Lock`）；再调 `promo.Reserve` / `ledger.HoldForOrder`，最后插订单。取消/超时释放先锁订单行。门户各建单事务与后台开单（`requireUser`）的第一步是 `rejectDeleted`（identity `IsDeleted`，给用户行加共享锁），已注销 409「账号已注销」。后台调账 `AdjustBalance` 对已注销账号只拒加钱，扣减照常（仍要原因、重认证、审计），用于线下退款后冲平留在账号上的余额（注销前的余额、注销时释放的冻结、注销后转入的迟到付款）。
   - 注销账号：identity 在注销事务里锁用户行后先调 commission 的 `LockForDeletion`（拿 `LockUser` 咨询锁），再调 `CancelUserPending`（`service/cancel.go`），按 id 升序锁该用户全部待付单逐张 `releaseOrder`（原因 `ReasonAccountDeleted`，作废在途支付意图），之后到的回调按 `CaseReleasedOrder` 挂账；停完订阅后调 commission 的 `VoidForDeletedUser`（见下面「注销作废」）。咨询锁要在释放冻结之前拿：释放会锁他的余额科目，转余额是拿着咨询锁与可提现佣金再等余额，反过来就互等。
+  - 发起支付（`Pay`）：事务里锁订单行、核对可付，调 `payments.BeginIntent` 占住意图后提交；`payments.CompleteIntent` 在事务外调（渠道可能联网，不占库连接和订单锁）。`/orders/:id/pay` 按账号每分钟 10 次（`PayPerMinute`，键 `order_pay`）。
   - 余额全额支付走 `CaptureFromBalance`：用户余额、冻结、收入三科目按 ID 升序一次锁完，冻结直出 captured，不要分步锁。
   - 科目怎么加锁：`ledger` 的 `lockAccounts` 先按 `(Type, UserID, Ref)` 排好去重（`sortedRefs`，只决定建科目 `EnsureAccounts` 的顺序），真正加行锁的是 `repo.LockAccounts` 一条 `ORDER BY id FOR UPDATE`，即按科目 id 升序逐行拿；一笔分录的科目在一条语句里锁完，但语句中途可能拿着 id 小的科目去等 id 大的。
   - 通则（防 40P01）：一个事务里每多记一笔分录，就多一批「拿着前一批科目再去等新科目」的锁。凡是要在同一事务里先锁某人的佣金科目（待结、可提现）、再锁他的余额科目的，一律拆成两个事务：前一个事务提交后，后一个先拿 `LockUser`，再用一笔分录同时锁可提现与余额（手动转余额、自动转余额都这样）；不在解冻、计提这类拿着佣金科目的事务里顺手碰余额。以后加类似路径照这条查：不拿着用户的佣金科目去等余额，也不拿着余额去等平台收入以外的科目。
@@ -20,6 +21,7 @@ paths:
 - 结算与挂账边界：
   - 结算由 order 实现 `paymentsvc.Settler`（`SettlePayment`）：金额币种不符回普通错误整笔回滚；订单不可付时（已取消/超时回 `CaseReleasedOrder`，已付回 `CaseExcessCapture`，订阅已停用或换套餐周期已变回 `CaseIneligibleSubscription`）返回 `paymentsvc.NotPayable` 转入挂账。
   - 充值单结算记 `KindBalanceTopup`；其他订单走 `PostOrderPaid` 扣减余额冻结。
+  - 用户手续费（surcharge，00042）：payment 交来的 `SettleInput.Amount` 已扣掉 surcharge、等于订单应付，订单核对与佣金基数都不含它；`SettleInput.Surcharge` 由 `postSettlement` 原样传给账本（`OrderPaid.Surcharge`、充值同理），在同一笔交易里单独贷记 `platform_revenue / payment_surcharge`（`ledgersvc.RefSurcharge`），不新增交易类型。订单总额与应付不变。用例在 `settle_surcharge_pg_test.go`（充值单余额只加应付、新购单佣金钩子拿到的金额不含手续费、只付应付被拒）。
 - 订单模型与金额约束（钱 R1–R6）：
   - 种类五种（`KindNew`、`KindRenewal`、`KindUpgrade`、`KindAddon`、`KindTopup`）；状态五种（`StatusPending`、`StatusPaid`、`StatusFulfilled`、`StatusCancelled`、`StatusExpired`）。`KindUpgrade` 覆盖升级与降级。
   - 库里恒等式 `total = greatest(subtotal − discount − proration_credit, 0) − waived`；`OrderTotal` 只算前半段，`waived` 由调用方另减。`proration_credit` 仅 upgrade 单非零。

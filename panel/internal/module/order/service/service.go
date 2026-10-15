@@ -88,7 +88,8 @@ type Subscriptions interface {
 
 // Payments 是 payment service 用到的面。
 type Payments interface {
-	CreateIntent(ctx context.Context, in paymentsvc.CreateIntentInput) (paymentsvc.IntentResult, error)
+	BeginIntent(ctx context.Context, in paymentsvc.CreateIntentInput) (paymentsvc.IntentDraft, error)
+	CompleteIntent(ctx context.Context, d paymentsvc.IntentDraft) (paymentsvc.IntentResult, error)
 	CloseOrderIntents(ctx context.Context, orderID uuid.UUID, to paymentsvc.IntentStatus) (int64, error)
 	RecordOffline(ctx context.Context, in paymentsvc.OfflineInput) (paymentsvc.RecordResult, error)
 	Query(ctx context.Context, orderID uuid.UUID) (paymentsvc.QueryResult, error)

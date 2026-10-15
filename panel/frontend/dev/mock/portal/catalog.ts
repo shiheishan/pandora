@@ -219,13 +219,16 @@ export interface PayMethod {
   label: string
   currencies: string[]
   httpMethod: 'GET' | 'POST'
+  fee_fixed: number
+  fee_percent: string
 }
 
 export const PAY_METHODS: readonly PayMethod[] = [
-  { provider: 'epay', method: 'alipay', label: '支付宝', currencies: ['CNY'], httpMethod: 'GET' },
-  { provider: 'epay', method: 'wxpay', label: '微信支付', currencies: ['CNY'], httpMethod: 'GET' },
-  { provider: 'legacy', method: 'qqpay', label: 'QQ 钱包', currencies: ['CNY'], httpMethod: 'POST' },
-  { provider: 'stripe', method: 'card', label: '银行卡（美元）', currencies: ['USD'], httpMethod: 'GET' },
+  { provider: 'epay', method: 'alipay', label: '支付宝', currencies: ['CNY'], httpMethod: 'GET', fee_fixed: 0, fee_percent: '0.00' },
+  { provider: 'epay', method: 'wxpay', label: '微信支付', currencies: ['CNY'], httpMethod: 'GET', fee_fixed: 0, fee_percent: '0.00' },
+  { provider: 'legacy', method: 'qqpay', label: 'QQ 钱包', currencies: ['CNY'], httpMethod: 'POST', fee_fixed: 0, fee_percent: '0.00' },
+  { provider: 'stripe', method: 'card', label: '银行卡（美元）', currencies: ['USD'], httpMethod: 'GET', fee_fixed: 0, fee_percent: '0.00' },
+  { provider: 'btcpay', method: '', label: 'BTCPay', currencies: ['CNY'], httpMethod: 'GET', fee_fixed: 0, fee_percent: '1.00' },
 ]
 
 // ---------------------------------------------------------------------------

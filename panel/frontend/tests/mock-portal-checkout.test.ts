@@ -100,6 +100,20 @@ describe('mock api · portal checkout (purchase model)', () => {
     expect(applyBalance(100, 100, 100, 100)).toMatchObject({ applied: 100, payable: 0, forced: false })
   })
 
+  it('BTCPay 首次 pay 模拟渠道建发票中：409 payment_in_progress，紧接着再 pay 成功', async () => {
+    await scenario('proto-s3')
+    const q = await quote({ action: 'new', plan_id: STD, new_copy: true })
+    const r = q.quotes[0]!
+    const created = await call('POST', '/v1/orders', { plan_id: STD, price_id: r.price_id, new_copy: true, label: '测试 BTCPay', as_of: q.as_of, expect: { total: r.total, balance_applied: 0, payable: r.total } }, true)
+    const order = (await created.json()) as { order_id: string }
+    const payBody = { provider: 'btcpay', method: '', return_url: `${base}/#/x` }
+    const first = await call('POST', `/v1/orders/${order.order_id}/pay`, payBody)
+    expect(first.status).toBe(409)
+    expect(((await first.json()) as { error: { code: string } }).error.code).toBe('payment_in_progress')
+    const second = await call('POST', `/v1/orders/${order.order_id}/pay`, payBody)
+    expect(second.status).toBe(201)
+  })
+
   it('过了付款期限的单：发起支付 409 order_lapsed，同款再买 order_pending 换成「已超过付款期限」并带 order_id 与 lapsed', async () => {
     await scenario('proto-s3')
     const q = await quote({ action: 'new', plan_id: STD, new_copy: true })

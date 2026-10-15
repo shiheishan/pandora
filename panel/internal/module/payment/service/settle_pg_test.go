@@ -78,7 +78,7 @@ WHERE p.code = ? AND NOT e.signature_verified`, code).Scan(&raw, &size); err != 
 	}
 }
 
-// 回调卡在 Settler 等订单锁时，另一个事务先锁住订单再调 CreateIntent：不能死锁。
+// 回调卡在 Settler 等订单锁时，另一个事务先锁住订单再调 BeginIntent：不能死锁。
 // 回调事务插 payments 时外键检查对意图行加了 KEY SHARE；LockActiveIntent 用 NO KEY UPDATE 与它兼容。
 // 订单锁用 advisory 锁模拟。
 func TestWebhookSettleVsCreateIntentNoDeadlock(t *testing.T) {
@@ -108,6 +108,7 @@ func TestWebhookSettleVsCreateIntentNoDeadlock(t *testing.T) {
 	bGo := make(chan struct{})
 	bDone := make(chan error, 1)
 	var bRes IntentResult
+	var bDraft IntentDraft
 	go func() {
 		bDone <- e.txm.Do(ctx, func(ctx context.Context) error {
 			if err := e.exec(ctx, `SELECT pg_advisory_xact_lock(hashtext(?))`, orderLock); err != nil {
@@ -121,7 +122,7 @@ func TestWebhookSettleVsCreateIntentNoDeadlock(t *testing.T) {
 				return ctx.Err()
 			}
 			var err error
-			bRes, err = e.svc.CreateIntent(ctx, CreateIntentInput{
+			bDraft, err = e.svc.BeginIntent(ctx, CreateIntentInput{
 				OrderID:      orderID,
 				OrderNo:      orderNo,
 				UserID:       user,
@@ -154,7 +155,11 @@ func TestWebhookSettleVsCreateIntentNoDeadlock(t *testing.T) {
 	close(bGo)
 
 	if err := <-bDone; err != nil {
-		t.Fatalf("锁订单后 CreateIntent 失败（死锁？）: %v", err)
+		t.Fatalf("锁订单后 BeginIntent 失败（死锁？）: %v", err)
+	}
+	bRes, completeErr := e.svc.CompleteIntent(ctx, bDraft)
+	if completeErr != nil {
+		t.Fatalf("CompleteIntent: %v", completeErr)
 	}
 	if err := <-aDone; err != nil {
 		t.Fatalf("回调失败（死锁？）: %v", err)
@@ -163,7 +168,7 @@ func TestWebhookSettleVsCreateIntentNoDeadlock(t *testing.T) {
 		t.Fatalf("回调应 200: %d %s", aAck.HTTPStatus, string(aAck.Body))
 	}
 	if bRes.OutTradeNo == "" {
-		t.Fatal("CreateIntent 应返回意图")
+		t.Fatal("BeginIntent/CompleteIntent 应返回意图")
 	}
 	if e.count(t, ctx, `SELECT count(*) FROM payments WHERE order_id = ?`, orderID) != 1 {
 		t.Fatal("应入账 1 笔")

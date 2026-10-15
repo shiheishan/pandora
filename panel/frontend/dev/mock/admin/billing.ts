@@ -22,6 +22,9 @@ import {
   providers,
   providerSecrets,
   providerView,
+  paymentSettings,
+  PUBLIC_BASE_URL,
+  effectiveNotifyBase,
   siteMinPayment,
   subscriptionEnded,
   todayLocal,
@@ -39,10 +42,26 @@ const chars = (v: unknown) => (typeof v === 'string' ? [...v.trim()].length : 0)
 const str = (v: unknown) => (typeof v === 'string' ? v : '')
 const BAD_JSON = err(400, 'bad_request', '请求体不是合法的 JSON')
 
-// ---- 支付渠道写入：照 billing/provider_admin.go 的 normalizeProviderSettings ----
+// ---- 支付渠道写入：照 billing/provider_admin.go / dto.go ----
 // 用户 2026-10-07 定：易支付只出支付宝和微信
 const EPAY_METHODS = ['alipay', 'wxpay']
-const PROVIDER_SETTINGS = ['display_name', 'base_url', 'submit_path', 'api_path', 'methods', 'default_method', 'allow_private_host', 'min_amount', 'merchant_id', 'key'] as const
+const ONLINE_ADAPTERS = ['epay', 'btcpay', 'coinpayments'] as const
+const COINPAYMENTS_DEFAULT = 'https://a-api.coinpayments.net'
+const PROVIDER_SETTINGS = [
+  'display_name',
+  'base_url',
+  'submit_path',
+  'api_path',
+  'methods',
+  'default_method',
+  'allow_private_host',
+  'min_amount',
+  'fee_fixed',
+  'fee_percent',
+  'merchant_id',
+  'key',
+  'webhook_secret',
+] as const
 const PROVIDER_PATH = /^\/[A-Za-z0-9._~/-]{0,127}$/
 const PRIVATE_HOST = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/
 
@@ -57,49 +76,117 @@ function parseURL(raw: string): URL | null {
 }
 
 interface ProviderSettings {
-  config: Pick<Provider, 'display_name' | 'base_url' | 'submit_path' | 'api_path' | 'methods' | 'default_method' | 'allow_private_host'>
-  /** 最低付款额（分）；null = 没传或传 0：新建用默认 100，编辑保留原值（provider_admin.go） */
+  config: Pick<
+    Provider,
+    'display_name' | 'base_url' | 'submit_path' | 'api_path' | 'methods' | 'default_method' | 'allow_private_host' | 'fee_fixed' | 'fee_percent'
+  >
   min_amount: number | null
+  fee_fixed: number
+  fee_percent: string
   merchant_id: string
   key: string
+  webhook_secret: string
 }
 
-function providerSettings(body: Json): { ok: ProviderSettings } | { fields: Record<string, string> } | { bad: MockResult } {
-  // min_amount 是 Go 的 int64：不是整数（1.5、"100"）在解码时就 400
+/** fee_percent 是 Go 的 *string：不是字符串在解码时就 400；不是十进制数 422（handler），超范围或超过两位小数 422（service） */
+function normalizeFeePercent(body: Json, f: Record<string, string>): string | null {
+  if (body.fee_percent === undefined || body.fee_percent === null) return null
+  const s = str(body.fee_percent).trim()
+  if (/[eE]/.test(s) || !/^-?\d+(\.\d+)?$/.test(s)) {
+    f.fee_percent = '比例手续费需是数字，如 2.5'
+    return null
+  }
+  const n = Number(s)
+  if (n < 0 || n > 100 || (s.split('.')[1]?.length ?? 0) > 2) {
+    f.fee_percent = '比例手续费需在 0 到 100 之间，最多两位小数'
+    return null
+  }
+  return n.toFixed(2)
+}
+
+function providerSettings(body: Json, adapter: string): { ok: ProviderSettings } | { fields: Record<string, string> } | { bad: MockResult } {
   const rawMin = body.min_amount
   if (rawMin !== undefined && rawMin !== null && (typeof rawMin !== 'number' || !Number.isInteger(rawMin))) return { bad: err(400, 'bad_request', '请求体不是合法的 JSON') }
+  const rawFeeFixed = body.fee_fixed
+  if (rawFeeFixed !== undefined && rawFeeFixed !== null && (typeof rawFeeFixed !== 'number' || !Number.isInteger(rawFeeFixed))) return { bad: err(400, 'bad_request', '请求体不是合法的 JSON') }
+  if (body.fee_percent !== undefined && body.fee_percent !== null && typeof body.fee_percent !== 'string') return { bad: err(400, 'bad_request', '请求体不是合法的 JSON') }
   const f: Record<string, string> = {}
   const display_name = str(body.display_name).trim()
   if (chars(display_name) < 1 || chars(display_name) > 40) f.display_name = '名称需为 1–40 个字'
   const allow = body.allow_private_host === true
-  const base_url = str(body.base_url).trim().replace(/\/+$/, '')
-  const url = parseURL(base_url)
-  if (!url || (url.protocol !== 'https:' && url.protocol !== 'http:') || url.search || url.hash || url.username) f.base_url = '请填写完整的站点地址，如 https://pay.example.com'
-  else if (url.protocol !== 'https:' && !allow) f.base_url = '站点地址必须使用 https'
-  else if (!allow && PRIVATE_HOST.test(url.hostname)) f.base_url = `渠道配置校验未通过：主机 "${url.hostname}" 解析到非公网地址`
-  const paths = { submit_path: str(body.submit_path).trim() || '/submit.php', api_path: str(body.api_path).trim() || '/api.php' }
-  for (const k of ['submit_path', 'api_path'] as const) if (!PROVIDER_PATH.test(paths[k]) || paths[k].startsWith('//')) f[k] = '路径需以 / 开头，只含字母、数字与 . _ ~ / -'
-  const raw = Array.isArray(body.methods) ? body.methods.map((m) => str(m).trim()) : []
-  const methods: string[] = []
-  for (const m of raw) {
-    if (!EPAY_METHODS.includes(m)) f.methods = '支付方式只能从支付宝、微信支付中选'
-    else if (!methods.includes(m)) methods.push(m)
+  let base_url = str(body.base_url).trim().replace(/\/+$/, '')
+  if (adapter === 'coinpayments' && !base_url) base_url = COINPAYMENTS_DEFAULT.replace(/\/+$/, '')
+  const needBase = adapter === 'epay' || adapter === 'btcpay'
+  const url = base_url ? parseURL(base_url) : null
+  if (needBase) {
+    if (!url || (url.protocol !== 'https:' && url.protocol !== 'http:') || url.search || url.hash || url.username) f.base_url = '请填写完整的站点地址，如 https://pay.example.com'
+    else if (url.protocol !== 'https:' && !allow) f.base_url = '站点地址必须使用 https'
+    else if (!allow && PRIVATE_HOST.test(url.hostname)) f.base_url = `渠道配置校验未通过：主机 "${url.hostname}" 解析到非公网地址`
+  } else if (base_url) {
+    if (!url || (url.protocol !== 'https:' && url.protocol !== 'http:') || url.search || url.hash || url.username) f.base_url = '请填写完整的站点地址，如 https://pay.example.com'
+    else if (url.protocol !== 'https:' && !allow) f.base_url = '站点地址必须使用 https'
   }
-  if (methods.length === 0 && !f.methods) f.methods = '至少选一种支付方式'
-  const default_method = str(body.default_method).trim() || (methods[0] ?? '')
-  if (!f.methods && !methods.includes(default_method)) f.default_method = '默认方式必须是已勾选的方式之一'
-  // 最低付款额（分）：1–100000；不传或 0 = 新建按 epay 默认 100（¥1.00）、编辑保留原值
+  let submit_path = ''
+  let api_path = ''
+  const methods: string[] = []
+  let default_method = ''
+  if (adapter === 'epay') {
+    const paths = { submit_path: str(body.submit_path).trim() || '/submit.php', api_path: str(body.api_path).trim() || '/api.php' }
+    for (const k of ['submit_path', 'api_path'] as const) if (!PROVIDER_PATH.test(paths[k]) || paths[k].startsWith('//')) f[k] = '路径需以 / 开头，只含字母、数字与 . _ ~ / -'
+    submit_path = paths.submit_path
+    api_path = paths.api_path
+    const raw = Array.isArray(body.methods) ? body.methods.map((m) => str(m).trim()) : []
+    for (const m of raw) {
+      if (!EPAY_METHODS.includes(m)) f.methods = '支付方式只能从支付宝、微信支付中选'
+      else if (!methods.includes(m)) methods.push(m)
+    }
+    if (methods.length === 0 && !f.methods) f.methods = '至少选一种支付方式'
+    default_method = str(body.default_method).trim() || (methods[0] ?? '')
+    if (!f.methods && !methods.includes(default_method)) f.default_method = '默认方式必须是已勾选的方式之一'
+  }
   const min_amount = typeof rawMin === 'number' && rawMin !== 0 ? rawMin : null
   if (min_amount !== null && (min_amount < 1 || min_amount > 100_000)) f.min_amount = '最低付款额需在 ¥0.01 到 ¥1000.00 之间'
+  let fee_fixed = 0
+  if (rawFeeFixed !== undefined && rawFeeFixed !== null) {
+    if (rawFeeFixed < 0) f.fee_fixed = '固定手续费不能为负'
+    else if (rawFeeFixed > 100_000) f.fee_fixed = '固定手续费需在 ¥0 到 ¥1000.00 之间，最多两位小数'
+    else fee_fixed = rawFeeFixed
+  }
+  const feePercentNorm = normalizeFeePercent(body, f)
+  const webhook_secret = str(body.webhook_secret).trim()
+  if (webhook_secret && [...webhook_secret].length > 256) f.webhook_secret = 'Webhook 密钥最多 256 个字符'
   if (Object.keys(f).length) return { fields: f }
+  const fee_percent = feePercentNorm ?? '0.00'
   return {
     ok: {
-      config: { display_name, base_url, ...paths, methods, default_method, allow_private_host: allow },
+      config: {
+        display_name,
+        base_url,
+        submit_path,
+        api_path,
+        methods,
+        default_method,
+        allow_private_host: allow,
+        fee_fixed,
+        fee_percent,
+      },
       min_amount,
+      fee_fixed,
+      fee_percent,
       merchant_id: str(body.merchant_id).trim(),
       key: str(body.key).trim(),
+      webhook_secret,
     },
   }
+}
+
+function normalizeNotifyBase(raw: string): { ok: string } | { field: string } {
+  const v = raw.trim().replace(/\/+$/, '')
+  if (v === '') return { ok: '' }
+  const u = parseURL(v)
+  if (!u || u.protocol !== 'https:' || u.search || u.hash || u.username) return { field: '请填写完整的地址，如 https://pay-cb.example.com，不带查询串' }
+  if (v.length > 200) return { field: '请填写完整的地址，如 https://pay-cb.example.com，不带查询串' }
+  return { ok: v }
 }
 
 function unknownField(body: Json, allowed: readonly string[]): MockResult | null {
@@ -500,6 +587,24 @@ export const billing: MockModule = {
       ctx.send(200, { providers: [...providers].sort((a, b) => a.code.localeCompare(b.code)).map(providerView) })
     },
 
+    'GET /v1/payment-settings': (ctx) => {
+      const effective = effectiveNotifyBase()
+      ctx.send(200, { notify_base_url: paymentSettings.notify_base_url, effective_base: effective, public_base_url: PUBLIC_BASE_URL })
+    },
+
+    'PUT /v1/payment-settings': async (ctx) => {
+      if (!ctx.requireReauth()) return
+      const body = await ctx.body()
+      if (!body) return ctx.send(BAD_JSON.status, BAD_JSON.body)
+      const bad = unknownField(body, ['notify_base_url'])
+      if (bad) return ctx.send(bad.status, bad.body)
+      const norm = normalizeNotifyBase(str(body.notify_base_url))
+      if ('field' in norm) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { notify_base_url: norm.field })
+      paymentSettings.notify_base_url = norm.ok
+      const effective = effectiveNotifyBase()
+      ctx.send(200, { notify_base_url: paymentSettings.notify_base_url, effective_base: effective, public_base_url: PUBLIC_BASE_URL })
+    },
+
     // 启停：reauth，没有幂等；两个布尔漏传按 false
     'POST /v1/payment-providers/:code/toggle': async (ctx) => {
       if (!ctx.requireReauth()) return
@@ -522,20 +627,38 @@ export const billing: MockModule = {
       await ctx.idempotent('payment_provider_create', () => {
         const bad = unknownField(body, ['code', 'adapter', ...PROVIDER_SETTINGS])
         if (bad) return bad
-        const parsed = providerSettings(body)
+        const adapter = str(body.adapter).trim()
+        const parsed = providerSettings(body, adapter || 'epay')
         if ('bad' in parsed) return parsed.bad
         const f = 'fields' in parsed ? { ...parsed.fields } : {}
         const code = str(body.code).trim()
         if (!/^[a-z][a-z0-9_-]{1,31}$/.test(code)) f.code = '编码需为 2–32 位小写字母、数字、- 或 _，以字母开头'
         else if (code === 'offline') f.code = 'offline 是系统内置渠道的编码'
-        if (str(body.adapter).trim() !== 'epay') f.adapter = '只支持易支付（epay）'
+        if (!ONLINE_ADAPTERS.includes(adapter as (typeof ONLINE_ADAPTERS)[number])) f.adapter = '只支持易支付（epay）、BTCPay（btcpay）、CoinPayments（coinpayments）'
         if (!str(body.merchant_id).trim()) f.merchant_id = '必填'
         if (!str(body.key).trim()) f.key = '必填'
+        if (adapter === 'btcpay' && !str(body.webhook_secret).trim()) f.webhook_secret = '必填'
         if (Object.keys(f).length || !('ok' in parsed)) return invalid(f)
         if (providers.some((p) => p.code === code)) return err(409, 'conflict', '渠道编码已存在，请换一个')
-        const p: Provider = { id: randomUUID(), code, adapter: 'epay', enabled: true, accepting_new: false, has_credentials: true, currencies: ['CNY'], ...parsed.ok.config, min_amount: parsed.ok.min_amount ?? 100 }
+        const p: Provider = {
+          id: randomUUID(),
+          code,
+          adapter,
+          enabled: true,
+          accepting_new: false,
+          has_credentials: true,
+          currencies: ['CNY'],
+          ...parsed.ok.config,
+          min_amount: parsed.ok.min_amount ?? 100,
+          fee_fixed: parsed.ok.fee_fixed,
+          fee_percent: parsed.ok.fee_percent,
+        }
         providers.push(p)
-        providerSecrets.set(p.id, { merchant_id: parsed.ok.merchant_id, key: parsed.ok.key })
+        providerSecrets.set(p.id, {
+          merchant_id: parsed.ok.merchant_id,
+          key: parsed.ok.key,
+          ...(adapter === 'btcpay' && parsed.ok.webhook_secret ? { webhook_secret: parsed.ok.webhook_secret } : {}),
+        })
         return { status: 201, body: { id: p.id, code, credentials_changed: true } }
       })
     },
@@ -548,21 +671,33 @@ export const billing: MockModule = {
       await ctx.idempotent('payment_provider_update', () => {
         const bad = unknownField(body, PROVIDER_SETTINGS)
         if (bad) return bad
-        const parsed = providerSettings(body)
-        if ('bad' in parsed) return parsed.bad
-        if ('fields' in parsed) return invalid(parsed.fields)
         const p = providers.find((x) => x.code === ctx.params.code)
         if (!p) return NOT_FOUND
         if (p.code === 'offline' || p.adapter === 'offline') return err(409, 'conflict', '系统内置渠道不可编辑')
-        if (p.adapter !== 'epay') return err(409, 'conflict', '这类渠道不支持在后台编辑')
+        if (!ONLINE_ADAPTERS.includes(p.adapter as (typeof ONLINE_ADAPTERS)[number])) return err(409, 'conflict', '这类渠道不支持在后台编辑')
+        const parsed = providerSettings(body, p.adapter)
+        if ('bad' in parsed) return parsed.bad
+        if ('fields' in parsed) return invalid(parsed.fields)
         const current = providerSecrets.get(p.id) ?? { merchant_id: '', key: '' }
-        const next = { merchant_id: parsed.ok.merchant_id || current.merchant_id, key: parsed.ok.key || current.key }
+        const next = {
+          merchant_id: parsed.ok.merchant_id || current.merchant_id,
+          key: parsed.ok.key || current.key,
+          webhook_secret: parsed.ok.webhook_secret || current.webhook_secret,
+        }
         const missing: Record<string, string> = {}
         if (!next.merchant_id) missing.merchant_id = '该渠道还没有商户号，需填写'
         if (!next.key) missing.key = '该渠道还没有密钥，需填写'
+        if (p.adapter === 'btcpay' && !next.webhook_secret) missing.webhook_secret = '该渠道还没有 Webhook 密钥，需填写'
         if (Object.keys(missing).length) return invalid(missing)
-        const changed = next.merchant_id !== current.merchant_id || next.key !== current.key
-        Object.assign(p, parsed.ok.config, { has_credentials: true, min_amount: parsed.ok.min_amount ?? p.min_amount })
+        const changed = next.merchant_id !== current.merchant_id || next.key !== current.key || next.webhook_secret !== current.webhook_secret
+        const fee_fixed = body.fee_fixed !== undefined ? parsed.ok.fee_fixed : p.fee_fixed
+        const fee_percent = body.fee_percent !== undefined ? parsed.ok.fee_percent : p.fee_percent
+        Object.assign(p, parsed.ok.config, {
+          has_credentials: true,
+          min_amount: parsed.ok.min_amount ?? p.min_amount,
+          fee_fixed,
+          fee_percent,
+        })
         providerSecrets.set(p.id, next)
         return { status: 200, body: { id: p.id, code: p.code, credentials_changed: changed } }
       })

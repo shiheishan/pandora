@@ -255,6 +255,18 @@ func (h *Handler) pay(c *gin.Context) {
 	if !ok {
 		return
 	}
+	ctx := c.Request.Context()
+	if h.lim != nil {
+		p, ok := authn.From(ctx)
+		if !ok {
+			httpx.Fail(c, errs.New(errs.Unauthorized))
+			return
+		}
+		if err := h.lim.Allow(ctx, ratelimit.PerMinute("order_pay", PayPerMinute), p.UserID.String()); err != nil {
+			httpx.Fail(c, err)
+			return
+		}
+	}
 	var req payRequest
 	if err := httpx.BindJSON(c, &req); err != nil {
 		httpx.Fail(c, err)
@@ -264,7 +276,7 @@ func (h *Handler) pay(c *gin.Context) {
 		httpx.Fail(c, errs.Invalid(map[string]string{"provider": "必填"}))
 		return
 	}
-	res, err := h.svc.Pay(c.Request.Context(), service.PayInput{
+	res, err := h.svc.Pay(ctx, service.PayInput{
 		OrderID:   id,
 		Provider:  strings.TrimSpace(req.Provider),
 		Method:    strings.TrimSpace(req.Method),

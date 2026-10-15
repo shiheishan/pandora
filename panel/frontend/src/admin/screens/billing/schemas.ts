@@ -104,6 +104,7 @@ const intentSchema = z.object({
   provider_name: z.string(),
   currency: z.string(),
   amount: int,
+  surcharge_amount: int,
   status: z.enum(INTENT_STATUSES),
   provider_ref: z.string().nullable(),
   failure_code: z.string().nullable(),
@@ -120,6 +121,7 @@ const paymentSchema = z.object({
   provider_payment_id: z.string(),
   currency: z.string(),
   amount: int,
+  surcharge_amount: int,
   fee_amount: int,
   refunded_amount: int,
   status: z.enum(PAYMENT_STATUSES),
@@ -287,6 +289,10 @@ const providerSchema = z.object({
   allow_private_host: z.boolean(),
   // 最低付款额（分，渠道 config 的 min_amount）：低于它的在线支付不发起；线下渠道没有这个概念，回 0
   min_amount: count,
+  fee_fixed: count,
+  fee_percent: z.string(),
+  has_webhook_secret: z.boolean(),
+  notify_url: z.string(),
   today: byCurrency,
   success_rate_24h: z.number().min(0).max(1).nullable(),
   last_callback_at: time.nullable(),
@@ -296,6 +302,13 @@ export type Provider = z.output<typeof providerSchema>
 export const toggledSchema = z.object({ ok: z.literal(true) })
 // POST v1/payment-providers（201）与 PUT v1/payment-providers/{code}（200）同形；只回凭据是否变更
 export const providerWrittenSchema = z.object({ id: z.string(), code: z.string(), credentials_changed: z.boolean() })
+
+export const paymentSettingsSchema = z.object({
+  notify_base_url: z.string(),
+  effective_base: z.string(),
+  public_base_url: z.string(),
+})
+export type PaymentSettings = z.output<typeof paymentSettingsSchema>
 
 // ---------------------------------------------------------------------------
 // 收入调整（报表口径，只追加）：列表、登记与冲销同形；reversal_of 是 omitempty，R66 登记人

@@ -78,6 +78,7 @@ func (s *Service) SettlePayment(ctx context.Context, in paymentsvc.SettleInput) 
 		return err
 	}
 	if s.hook != nil && o.Kind != KindTopup && o.TotalAmount.IsPositive() {
+		// Paid 仍是 in.Amount（不含手续费，佣金基数不变）
 		if err := s.hook.OnOrderPaid(ctx, PaidOrder{
 			OrderID:   o.ID,
 			OrderNo:   o.OrderNo,
@@ -111,6 +112,7 @@ func (s *Service) SettlePayment(ctx context.Context, in paymentsvc.SettleInput) 
 			"kind":       o.Kind,
 			"amount":     in.Amount.StringFixed(2),
 			"fee":        in.Fee.StringFixed(2),
+			"surcharge":  in.Surcharge.StringFixed(2),
 			"currency":   o.Currency,
 			"provider":   in.ProviderCode,
 			"method":     in.Method,
@@ -124,8 +126,9 @@ func (s *Service) SettlePayment(ctx context.Context, in paymentsvc.SettleInput) 
 func (s *Service) postSettlement(ctx context.Context, o model.Order, in paymentsvc.SettleInput) error {
 	cur := money.Currency(o.Currency)
 	if o.Kind == KindTopup {
+		// 充值只把应付记进余额，加收的手续费记手续费收入
 		var legs []ledgersvc.Leg
-		if net := in.Amount.Sub(in.Fee); net.IsPositive() {
+		if net := in.Amount.Add(in.Surcharge).Sub(in.Fee); net.IsPositive() {
 			legs = append(legs, ledgersvc.Leg{
 				Account:   ledgersvc.PlatformAccount(ledgersvc.ChannelCash, in.ProviderCode),
 				Direction: ledgersvc.Debit,
@@ -144,6 +147,13 @@ func (s *Service) postSettlement(ctx context.Context, o model.Order, in payments
 			Direction: ledgersvc.Credit,
 			Amount:    in.Amount,
 		})
+		if in.Surcharge.IsPositive() {
+			legs = append(legs, ledgersvc.Leg{
+				Account:   ledgersvc.PlatformAccount(ledgersvc.PlatformRevenue, ledgersvc.RefSurcharge),
+				Direction: ledgersvc.Credit,
+				Amount:    in.Surcharge,
+			})
+		}
 		_, err := s.ledger.Post(ctx, ledgersvc.Posting{
 			Kind:       ledgersvc.KindBalanceTopup,
 			Currency:   cur,
@@ -155,13 +165,14 @@ func (s *Service) postSettlement(ctx context.Context, o model.Order, in payments
 		return err
 	}
 	_, err := s.ledger.PostOrderPaid(ctx, ledgersvc.OrderPaid{
-		OrderID:  o.ID,
-		UserID:   o.UserID,
-		Currency: cur,
-		Total:    o.TotalAmount,
-		Paid:     in.Amount,
-		Fee:      in.Fee,
-		Provider: in.ProviderCode,
+		OrderID:   o.ID,
+		UserID:    o.UserID,
+		Currency:  cur,
+		Total:     o.TotalAmount,
+		Paid:      in.Amount,
+		Fee:       in.Fee,
+		Surcharge: in.Surcharge,
+		Provider:  in.ProviderCode,
 	})
 	if errors.Is(err, ledgersvc.ErrHoldReleased) {
 		return paymentsvc.NotPayable(paymentsvc.CaseReleasedOrder, o.Status)

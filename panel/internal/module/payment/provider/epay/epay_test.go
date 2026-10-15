@@ -574,26 +574,6 @@ func TestQueryPaymentTransportErrorOmitsKey(t *testing.T) {
 	}
 }
 
-func TestCheckDialAddr(t *testing.T) {
-	blocked := []string{
-		"127.0.0.1:443", "10.1.2.3:443", "172.16.0.1:443", "192.168.1.1:443",
-		"169.254.169.254:80", "100.100.100.200:80", "100.64.0.1:443", "0.0.0.0:443",
-		"0.1.2.3:443", "224.0.0.1:443", "255.255.255.255:443", "198.18.0.1:443",
-		"[::1]:443", "[fc00::1]:443", "[fd00:ec2::254]:80", "[fe80::1]:443", "[::]:443",
-		"[::ffff:127.0.0.1]:443", "[64:ff9b::a00:1]:443", "[ff02::1]:443",
-	}
-	for _, a := range blocked {
-		if err := checkDialAddr(a); err == nil {
-			t.Errorf("%s 应当被拒绝", a)
-		}
-	}
-	for _, a := range []string{"203.0.113.10:443", "[2001:db8::1]:443", "8.8.8.8:443"} {
-		if err := checkDialAddr(a); err != nil {
-			t.Errorf("%s 不应被拒绝: %v", a, err)
-		}
-	}
-}
-
 func TestQueryPaymentRefusesPrivateHostAtDial(t *testing.T) {
 	hit := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

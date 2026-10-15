@@ -169,8 +169,8 @@
 }
 
 .method {
-  height: var(--h-control);
-  padding: 0 12px;
+  min-height: var(--h-control);
+  padding: 8px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface);

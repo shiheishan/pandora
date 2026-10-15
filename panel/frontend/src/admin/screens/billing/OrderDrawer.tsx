@@ -138,7 +138,10 @@ function Payments({ id }: { id: string }) {
                   {l.ref}
                 </span>
               </span>
-              <span className={css.lineAmount}>{formatMoney(l.amount, l.currency)}</span>
+              <span className={css.lineAmount} title={l.surcharge ? `含向用户加收的手续费 ${formatMoney(l.surcharge, l.currency)}，订单部分 ${formatMoney(l.amount - l.surcharge, l.currency)}` : undefined}>
+                {formatMoney(l.amount, l.currency)}
+                {l.surcharge ? <span className={css.small}>（含手续费 {formatMoney(l.surcharge, l.currency)}）</span> : null}
+              </span>
               <span className={`${css.lineState} ${css[`tone_${l.tone}`]}`}>{l.label}</span>
             </li>
           ))}

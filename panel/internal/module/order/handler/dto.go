@@ -392,7 +392,8 @@ type payResponse struct {
 	HTTPMethod  string            `json:"http_method"`
 	RedirectURL string            `json:"redirect_url"`
 	FormFields  map[string]string `json:"form_fields"`
-	Amount      int64             `json:"amount"`
+	Amount      int64             `json:"amount"`    // 这次要付的总额（含手续费），分
+	Surcharge   int64             `json:"surcharge"` // amount 里包含的支付手续费，分
 	Currency    string            `json:"currency"`
 	Reused      bool              `json:"reused"`
 }
@@ -409,6 +410,7 @@ func payFrom(r paymentsvc.IntentResult) (payResponse, error) {
 		RedirectURL: r.RedirectURL,
 		FormFields:  fields,
 		Amount:      cc.of(r.Amount),
+		Surcharge:   cc.of(r.Surcharge),
 		Currency:    string(r.Currency),
 		Reused:      r.Reused,
 	}

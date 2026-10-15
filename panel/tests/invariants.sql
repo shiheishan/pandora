@@ -11,7 +11,8 @@
 --   NFR-008 降级开关、OPS-005 事务类通知、OPS-001 内部备注、USE-002（改成 node_traffic_reports 唯一键）、
 --   SUB-007 试用防刷（subscription_trials 每人终身一次）、
 --   XB-COMM（对齐 Xboard 的三级分销与自动转余额标记、提现方式与 USDT 打款、按用户单独佣金设置）、
---   XB-REG 注销作废可提现佣金（commission_forfeitures 每人每币种一行、只追加）。
+--   XB-REG 注销作废可提现佣金（commission_forfeitures 每人每币种一行、只追加）、
+--   PAY-FEE 渠道类型与用户手续费（00042）。
 --
 -- 不覆盖的验收项及原因（没有对应的表或机制）：
 --   SEC-013 双人审批 — 没有审批表：后台权限只分有和没有。
@@ -597,6 +598,84 @@ SELECT _reject('PAY-003', '重复渠道支付流水号必须拒绝', $sql$
   INSERT INTO payments (order_id, user_id, provider_id, provider_payment_id, currency, amount)
   VALUES ('00000000-0000-7000-8000-000000000c01', '00000000-0000-7000-8000-000000000101',
           '00000000-0000-7000-8000-000000000b11', 'inv-pay-seed-1', 'USD', 10.00);
+$sql$);
+
+--------------------------------------------------------------------------------
+-- PAY-FEE 渠道类型与用户手续费（00042_payment_fee_crypto.sql）
+-- 手续费在 Go 里算（payment/service/surcharge.go），库里只钉范围：固定 0–1000 元、比例 0–100%、
+-- 线下收款不收；意图与收款里加收的手续费必须小于整笔金额（订单应付 > 0）。
+--------------------------------------------------------------------------------
+
+-- payment_providers_adapter_check：加密货币渠道只收 btcpay、coinpayments
+SELECT _accept('PAY-FEE', 'btcpay 渠道带手续费应当通过', $sql$
+  INSERT INTO payment_providers (code, adapter, display_name, currencies, fee_fixed, fee_percent)
+  VALUES ('inv-btc', 'btcpay', 'Inv BTC', '["CNY"]'::jsonb, 0.30, 1.50);
+$sql$);
+
+SELECT _accept('PAY-FEE', 'coinpayments 渠道应当通过', $sql$
+  INSERT INTO payment_providers (code, adapter, display_name, currencies)
+  VALUES ('inv-cps', 'coinpayments', 'Inv CPS', '["CNY"]'::jsonb);
+$sql$);
+
+SELECT _reject('PAY-FEE', '未知渠道类型必须拒绝', $sql$
+  INSERT INTO payment_providers (code, adapter, display_name)
+  VALUES ('inv-unk', 'stripe', 'Inv Unknown');
+$sql$);
+
+-- fee_fixed / fee_percent 的范围 CHECK
+SELECT _reject('PAY-FEE', '固定手续费超过 1000 元必须拒绝', $sql$
+  UPDATE payment_providers SET fee_fixed = 1000.01 WHERE id = '00000000-0000-7000-8000-000000000b11';
+$sql$);
+
+SELECT _reject('PAY-FEE', '比例手续费超过 100% 必须拒绝', $sql$
+  UPDATE payment_providers SET fee_percent = 100.01 WHERE id = '00000000-0000-7000-8000-000000000b11';
+$sql$);
+
+SELECT _reject('PAY-FEE', '负的手续费必须拒绝', $sql$
+  UPDATE payment_providers SET fee_fixed = -0.01 WHERE id = '00000000-0000-7000-8000-000000000b11';
+$sql$);
+
+-- payment_providers_offline_no_fee
+SELECT _reject('PAY-FEE', '线下收款渠道不能设手续费', $sql$
+  UPDATE payment_providers SET fee_percent = 1 WHERE code = 'offline';
+$sql$);
+
+-- payment_intents_surcharge：意图 10.00 里加收的手续费不能 ≥ 10.00
+SELECT _accept('PAY-FEE', '意图加收的手续费小于整笔应当通过', $sql$
+  INSERT INTO payment_intents (order_id, order_no, user_id, provider_id, out_trade_no, currency,
+                               amount, surcharge_amount, status, http_method, redirect_url)
+  VALUES ('00000000-0000-7000-8000-000000000c01', 'INV-SEED-001', '00000000-0000-7000-8000-000000000101',
+          '00000000-0000-7000-8000-000000000b11', 'INV-SEED-001-fee1', 'USD',
+          10.30, 0.30, 'cancelled', 'GET', 'https://pay.example.test/i/1');
+$sql$);
+
+SELECT _reject('PAY-FEE', '意图加收的手续费等于整笔必须拒绝', $sql$
+  INSERT INTO payment_intents (order_id, order_no, user_id, provider_id, out_trade_no, currency,
+                               amount, surcharge_amount, status, http_method, redirect_url)
+  VALUES ('00000000-0000-7000-8000-000000000c01', 'INV-SEED-001', '00000000-0000-7000-8000-000000000101',
+          '00000000-0000-7000-8000-000000000b11', 'INV-SEED-001-fee2', 'USD',
+          10.00, 10.00, 'cancelled', 'GET', 'https://pay.example.test/i/2');
+$sql$);
+
+SELECT _reject('PAY-FEE', '意图加收的手续费为负必须拒绝', $sql$
+  INSERT INTO payment_intents (order_id, order_no, user_id, provider_id, out_trade_no, currency,
+                               amount, surcharge_amount, status, http_method, redirect_url)
+  VALUES ('00000000-0000-7000-8000-000000000c01', 'INV-SEED-001', '00000000-0000-7000-8000-000000000101',
+          '00000000-0000-7000-8000-000000000b11', 'INV-SEED-001-fee3', 'USD',
+          10.00, -0.01, 'cancelled', 'GET', 'https://pay.example.test/i/3');
+$sql$);
+
+-- payments_surcharge
+SELECT _reject('PAY-FEE', '收款里的手续费为负必须拒绝', $sql$
+  INSERT INTO payments (order_id, user_id, provider_id, provider_payment_id, currency, amount, surcharge_amount)
+  VALUES ('00000000-0000-7000-8000-000000000c01', '00000000-0000-7000-8000-000000000101',
+          '00000000-0000-7000-8000-000000000b11', 'inv-pay-fee-1', 'USD', 10.30, -0.01);
+$sql$);
+
+SELECT _reject('PAY-FEE', '收款里的手续费超过整笔必须拒绝', $sql$
+  INSERT INTO payments (order_id, user_id, provider_id, provider_payment_id, currency, amount, surcharge_amount)
+  VALUES ('00000000-0000-7000-8000-000000000c01', '00000000-0000-7000-8000-000000000101',
+          '00000000-0000-7000-8000-000000000b11', 'inv-pay-fee-2', 'USD', 10.30, 10.31);
 $sql$);
 
 --------------------------------------------------------------------------------

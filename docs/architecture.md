@@ -83,7 +83,7 @@ panel/
         render/                  （仅 subscription）订阅格式渲染：纯函数，不依赖任何模块、不碰数据库；node 模块用它的 Node 类型交线路
         protocol/                （仅 node）协议 schema、校验、抹敏感值、端口 L4、内核字段翻译：纯函数，规则同 render
         grpc/                    （仅 node）节点通道的 gRPC 服务（接入与会话），地位同 handler：只调本模块 service
-        provider/                （仅 payment）渠道适配（易支付等）
+        provider/                （仅 payment）渠道适配（易支付、BTCPay Server、CoinPayments；safehttp 是共用的外部 HTTP 客户端）
   db/migrations/                 新基线（goose，embed 进二进制）
   tools/depguardgen/             从 internal/module/ 生成 .golangci.yml 的 depguard 规则
 proto/                           节点协议源文件（buf）
@@ -245,12 +245,12 @@ identity, auth ─► settings, audit
 |---|---|
 | R1 | 库里的金额列一律 `NUMERIC(20,2)`，单位是元；币种列加 `CHECK (currency IN ('CNY','USD'))`，两种都是 2 位小数 |
 | R2 | repo 写入前断言 `d.Equal(d.Truncate(2))`（`money.Check`），不满足就报错。PostgreSQL 遇到多余小数会静默四舍五入，必须在写入前拦住；库里拦不住：`NUMERIC(20,2)` 列先舍入再查 CHECK，`CHECK (amount = round(amount, 2))` 永远成立，不要加这种假兜底 |
-| R3 | 所有按比例得出的金额（百分比券、换套餐折算、待开始周期额度、佣金）一律**向零截断**，与现状逐分一致 |
+| R3 | 所有按比例得出的金额（百分比券、换套餐折算、待开始周期额度、佣金）一律**向零截断**，与现状逐分一致。唯一的例外是向用户加收的支付手续费（`payment/service/surcharge.go`，2026-10-14 定）：向上取整到分，平台不少收 |
 | R4 | 只在 service 的领域计算函数里舍入，每个公式只在最后一步舍入一次；handler 只做单位换算，repo 只存不算，SQL 里不做金额算术 |
 | R5 | 比值与取最小（换套餐的 min(时间比, 流量比)）用 `big.Rat` 或交叉相乘比较，不先 `Div` 出小数再比 |
 | R6 | /v1 的 JSON 仍是整数分（int64）。DTO 输出 `d.Shift(2).IntPart()`，换算前断言它是整数；输入读 int64 分后用 `decimal.New(n, -2)` |
 | R7 | 渠道边界：易支付的金额字符串用 `decimal.NewFromString` 解析，超过 2 位小数直接拒绝；输出用 `StringFixed(2)` |
-| R8 | 非钱的数量（流量字节、配额、bp、百分比）仍用 int64 和 BIGINT。流量计费倍率从 float64 改为整数千分比 `rate_milli`，计费字节 = bytes × rate_milli / 1000，向零截断 |
+| R8 | 非钱的数量（流量字节、配额、bp、百分比）仍用 int64 和 BIGINT。流量计费倍率从 float64 改为整数千分比 `rate_milli`，计费字节 = bytes × rate_milli / 1000，向零截断。例外：渠道手续费比例 `payment_providers.fee_percent` 是 `NUMERIC(5,2)` 的百分比（后台照 Xboard 填「2.5%」这种两位小数），Go 里是 decimal，与金额一起算，不经浮点 |
 | R9 | jsonb 里不放钱：礼品卡余额奖励、奖池、兑换记录、渠道 `min_amount`、`commission.min_withdraw` 改为带类型的列或类型化设置 |
 | R10 | 券面值拆成 `amount_off NUMERIC(20,2)` 和 `percent_off_bp INT` 两列，加 CHECK 恰好一个非空 |
 | R11 | 账本：分录金额 > 0，配平与单币种在库里检查（5.3）；余额缓存在 Go 里同事务更新；交易 kind 加 CHECK 枚举；礼品卡赠送改记新科目 `platform_promo_expense`，不再和渠道手续费混用一个科目 |

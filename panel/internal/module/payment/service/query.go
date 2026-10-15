@@ -198,12 +198,13 @@ func (s *Service) queryRef(ctx context.Context, orderID uuid.UUID, ref repo.Quer
 			SignatureVerified: true,
 			FeeUnknown:        true,
 		}, payHook)
-		if errors.Is(rerr, ErrAmountMismatch) {
-			// 渠道说已付、金额却和意图对不上：比普通失败严重，要人看
-			plog.From(ctx).Error("查单结果与支付意图金额不符，未入账",
+		if errors.Is(rerr, ErrAmountMismatch) || errors.Is(rerr, ErrProviderRefMismatch) {
+			// 渠道说已付、金额或渠道单号却和意图对不上：比普通失败严重，要人看
+			plog.From(ctx).Error("查单结果与支付意图不符（金额、币种或渠道单号），未入账",
 				zap.String("order_id", orderID.String()),
 				zap.String("provider", ref.ProviderCode),
 				zap.String("out_trade_no", ref.OutTradeNo),
+				zap.String("channel_ref", chRes.PaymentRef),
 				zap.String("channel_amount", chRes.Amount.StringFixed(2)),
 				zap.String("currency", string(chRes.Currency)))
 		}
