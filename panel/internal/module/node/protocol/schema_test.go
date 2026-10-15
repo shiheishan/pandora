@@ -353,7 +353,7 @@ func TestValidateProtocolConfigStableRenderSubset(t *testing.T) {
 
 func TestValidateProtocolConfigStableSubsetFailsClosed(t *testing.T) {
 	tests := []struct{ nodeType, raw, field string }{
-		{"shadowsocks", `{"method":"2022-blake3-aes-128-gcm"}`, "protocol_config.method"},
+		{"shadowsocks", `{"method":"2022-blake3-chacha20-poly1305"}`, "protocol_config.method"},
 		{"vless", `{"network":"quic","tls":false}`, "protocol_config.network"},
 		{"vmess", `{"network":"tcp","tls":"true"}`, "protocol_config"},
 		{"vless", `{"network":"tcp","tls":true}`, "protocol_config.tls"},

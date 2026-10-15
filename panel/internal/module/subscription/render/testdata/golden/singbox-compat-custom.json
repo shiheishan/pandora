@@ -57,6 +57,8 @@
         "自动选择",
         "ss-aes128",
         "ss-chacha",
+        "ss2022-aes128",
+        "ss2022-aes256",
         "hy2-obfs",
         "hy2-plain",
         "tuic",
@@ -117,6 +119,8 @@
       "outbounds": [
         "ss-aes128",
         "ss-chacha",
+        "ss2022-aes128",
+        "ss2022-aes256",
         "hy2-obfs",
         "hy2-plain",
         "tuic",
@@ -187,6 +191,22 @@
       "server": "node.example.com",
       "server_port": 8389,
       "tag": "ss-chacha",
+      "type": "shadowsocks"
+    },
+    {
+      "method": "2022-blake3-aes-128-gcm",
+      "password": "EREREREREREREREREREREQ==:X6QuNEiY8IfbAEh6xR2EmA==",
+      "server": "node.example.com",
+      "server_port": 8390,
+      "tag": "ss2022-aes128",
+      "type": "shadowsocks"
+    },
+    {
+      "method": "2022-blake3-aes-256-gcm",
+      "password": "IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI=:X6QuNEiY8IfbAEh6xR2EmP4U5BGnPA1oxvBsUcs7DSc=",
+      "server": "node.example.com",
+      "server_port": 8391,
+      "tag": "ss2022-aes256",
       "type": "shadowsocks"
     },
     {

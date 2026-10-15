@@ -38,6 +38,10 @@ paths:
 ## ShadowTLS / 协议写法
 - Shadowsocks 节点同端口 TCP、UDP 都听（用户 2026-10-14 定）：Clash 系 `udp: true`，sing-box 不写 `network`，URI（SIP002）无 UDP 开关（矩阵 `ss-aes128`、`ss-chacha`）
 - sing-box：外层 `shadowtls` + 内层 ss `detour`；握手端口在 `kernel_config.go` 的 shadowtls 分支折进 `server`（监听 `server_port` 占住）；ShadowTLS 只承载 TCP，Clash 仍 `udp: false`、sing-box 内层仍 `network: tcp`
+- Shadowsocks 2022（SIP022 + SIP023 多用户，共用约定 2026-10-14）：node 在 `DeliverableNodes` 里给 2022 节点的 `Node.Config` 注入 `password` = base64(服务端身份密钥 iPSK)（与节点配置文档同键同值，`node/service/ss2022.go`；中转浅拷贝父节点 Config，用父节点那把）。render 的 `ssPassword`（`render/opts.go`）拼客户端密码 `base64(iPSK):base64(uPSK)`，uPSK = SHA-256("pandora/ss2022/user-psk/v1" || 0x00 || 小写代理 UUID) 取前 keyLen 字节，与 pdnd 各自实现，向量钉在 `render/ss2022_test.go`；iPSK 缺失或长度不符跳过节点
+  - 格式：Clash Meta、sing-box、Shadowrocket/URI、SIP008 写冒号密码；Clash Premium 跳过（不认 2022）；Surfboard 跳过（文档要求 2022 密码是单个定长 base64）；Loon、Stash 暂时跳过（官方文档的 2022 只有单个 password，没提 SIP023 冒号多密钥写法；真机确认能连后再放开，放开时记下客户端版本与证据，同步改 `ss2022CipherHint`）；`2022-blake3-chacha20-poly1305` 一律跳过（SIP023 身份头用 AES，chacha20 版做不了多用户，面板 schema 也不开放）。
+  - URI（SIP002）：2022 的 userinfo 不做 base64，`url.QueryEscape(method) + ":" + url.QueryEscape(password)`；经典 AEAD 仍是 base64url
+  - 夹具：nodes.json 的 form 组 `ss2022-aes128`/`ss2022-aes256` 的 config 带 `password`（低熵虚构值，免得 gitleaks 误报；KernelConfig 不产出，`kernel_config_parity_test.go` 对照时剥掉），legacy 组 `ss2022-chacha` 钉住跳过
 - httpupgrade 在 Clash 里常写 `ws` + `v2ray-http-upgrade`；URI 里 mKCP 用 `type=kcp`（矩阵 `vless-mkcp`）
 - naive + `allow_insecure`：sing-box / URI 跳过（`naive-insecure`）；TLS+gRPC 且 SNI≠Host：Clash/sing-box 跳过，URI 可用 `authority`（`trojan-tls-grpc-sni`）
 

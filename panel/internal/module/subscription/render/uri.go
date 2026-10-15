@@ -126,8 +126,17 @@ func nodeToURI(n Node, uuid string) (string, string) {
 		return "trojan://" + url.QueryEscape(uuid) + "@" + addr + "?" + q.Encode() + frag, ""
 
 	case "shadowsocks":
-		// SIP002：base64url(method:password) 放在 userinfo 位
-		userinfo := base64.RawURLEncoding.EncodeToString([]byte(ssMethod(n.Config) + ":" + uuid))
+		method := ssMethod(n.Config)
+		pw, reason := ssPassword(n.Config, uuid)
+		if reason != "" {
+			return "", reason
+		}
+		if isSS2022(method) {
+			// SIP002：AEAD-2022 的 userinfo 不做 base64，method 与 password 各自百分号编码（SIP022 密码里有 + / = :）
+			return "ss://" + url.QueryEscape(method) + ":" + url.QueryEscape(pw) + "@" + addr + frag, ""
+		}
+		// SIP002：经典 AEAD 是 base64url(method:password) 放在 userinfo 位
+		userinfo := base64.RawURLEncoding.EncodeToString([]byte(method + ":" + pw))
 		return "ss://" + userinfo + "@" + addr + frag, ""
 
 	case "hysteria2":

@@ -31,6 +31,12 @@ type matrixRow struct {
 
 const uu = fixtureUUID + ":" + fixtureUUID
 
+// ss2022PW128 / ss2022PW256 是 nodes.json 里 2022 夹具的客户端密码：夹具 iPSK（16 个 0x11 / 32 个 0x22，虚构；低熵免得 gitleaks 当成密钥）加 fixtureUUID 算出的 uPSK。
+const (
+	ss2022PW128 = "EREREREREREREREREREREQ==:X6QuNEiY8IfbAEh6xR2EmA=="
+	ss2022PW256 = "IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI=:X6QuNEiY8IfbAEh6xR2EmP4U5BGnPA1oxvBsUcs7DSc="
+)
+
 func renderMatrix() map[string]matrixRow {
 	ssB64 := func(method string) string {
 		return "ss://" + base64.RawURLEncoding.EncodeToString([]byte(method+":"+fixtureUUID)) + "@node.example.com:"
@@ -47,6 +53,25 @@ func renderMatrix() map[string]matrixRow {
 		"ss-chacha": {
 			clash: has(`cipher: "chacha20-ietf-poly1305"`, `udp: true`), premium: has(`cipher: "chacha20-ietf-poly1305"`, `udp: true`),
 			singbox: has(`"method":"chacha20-ietf-poly1305"`).without(`"network"`), uri: has(ssB64("chacha20-ietf-poly1305")),
+		},
+		// Shadowsocks 2022（SIP022 + SIP023 多用户）：密码是 base64(iPSK):base64(uPSK)，iPSK 是 node 模块注入的 password，
+		// uPSK 从代理 UUID 算；Clash Premium 不认 2022；URI 的 userinfo 按 SIP002 不做 base64、各自百分号编码
+		"ss2022-aes128": {
+			clash:   has(`type: "ss"`, `cipher: "2022-blake3-aes-128-gcm"`, `password: "`+ss2022PW128+`"`, `udp: true`),
+			premium: skip("Clash Premium 不支持 Shadowsocks 2022"),
+			singbox: has(`"method":"2022-blake3-aes-128-gcm"`, `"password":"`+ss2022PW128+`"`).without(`"network"`),
+			uri:     has("ss://2022-blake3-aes-128-gcm:EREREREREREREREREREREQ%3D%3D%3AX6QuNEiY8IfbAEh6xR2EmA%3D%3D@node.example.com:8390#ss2022-aes128"),
+		},
+		"ss2022-aes256": {
+			clash:   has(`cipher: "2022-blake3-aes-256-gcm"`, `password: "`+ss2022PW256+`"`, `udp: true`),
+			premium: skip("Clash Premium 不支持 Shadowsocks 2022"),
+			singbox: has(`"method":"2022-blake3-aes-256-gcm"`, `"password":"`+ss2022PW256+`"`).without(`"network"`),
+			uri:     has("ss://2022-blake3-aes-256-gcm:IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI%3D%3AX6QuNEiY8IfbAEh6xR2EmP4U5BGnPA1oxvBsUcs7DSc%3D@node.example.com:8391#ss2022-aes256"),
+		},
+		// chacha20 版做不了 SIP023 多用户（身份头用 AES 块加密），面板不开放，存量也一律跳过
+		"ss2022-chacha": {
+			clash: skip("多用户不支持"), premium: skip("Clash Premium 不支持 Shadowsocks 2022"),
+			singbox: skip("多用户不支持"), uri: skip("多用户不支持"),
 		},
 		"hy2-obfs": {
 			clash:   has(`obfs: "salamander"`, `obfs-password: "obfs-pass-1"`, `sni: "sni.example.com"`, `skip-cert-verify: true`),

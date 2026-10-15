@@ -4,10 +4,11 @@ package render
 //
 // 读 E2E_OUT/fixtures_index.json，逐个、再整份（ALL / EMPTY）渲染成 clash / clash-premium / singbox / uri，
 // 写到 E2E_OUT：<id>.<格式>、ALL.<格式>、EMPTY.<格式>、summary.json。
-// 依赖 Render、Node、Options、fixtureUUID、fixtureHost。格式名用字符串转 Format，不用包内常量（修前基点可能还没有某格式）。
+// 依赖 Render、Node、Options、fixtureUUID、fixtureHost。2022 方法的 password 由 e2eSS2022Password 照面板补上。格式名用字符串转 Format，不用包内常量（修前基点可能还没有某格式）。
 // E2E_UA 只影响 sing-box 的版本写法，空即兼容写法。
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -57,6 +58,7 @@ func TestE2EDump(t *testing.T) {
 	var all []Node
 	for _, id := range ids {
 		f := fx[id]
+		e2eSS2022Password(f.Kernel)
 		n := Node{Name: id, Type: f.Type, Host: fixtureHost, Port: f.Port, Config: f.Kernel, TrafficRate: 1}
 		summary[id] = map[string]int{}
 		for _, format := range formats {
@@ -90,4 +92,24 @@ func e2eWrite(t *testing.T, path string, body []byte) {
 	if err := os.WriteFile(path, body, 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// e2eSS2022Password 照面板 applySS2022ServerPSK 给 2022 方法填 password = base64(iPSK)，
+// iPSK 用与 nodeconfig overlay 的 e2ePSK 相同的固定值（第 i 字节 = i+1）。
+func e2eSS2022Password(kernel map[string]any) {
+	method, _ := kernel["method"].(string)
+	var n int
+	switch method {
+	case "2022-blake3-aes-128-gcm":
+		n = 16
+	case "2022-blake3-aes-256-gcm":
+		n = 32
+	default:
+		return
+	}
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = byte(i + 1)
+	}
+	kernel["password"] = base64.StdEncoding.EncodeToString(b)
 }

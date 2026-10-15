@@ -6,11 +6,16 @@ package protocol
 // 只重写 testdata/golden，不碰它），记着下面这组后台表单形状的输入经 json.Unmarshal、翻译成内核字段后应得的结果。这里用同一组输入调 KernelConfig，结果必须逐项相同——
 // 下发给节点的配置文档与订阅渲染都经它，翻译差一个字段就是节点或客户端静默连不上。
 //
+// 例外：2022 方法（ss2022-aes128 / ss2022-aes256）在 nodes.json 的期望值里带一个
+// "password"（node 模块在 KernelConfig 之后注入的服务端身份密钥 base64，渲染层看到的就是它），
+// KernelConfig 本身不产出它，对照前按 SS2022KeyLen 剥掉。
+//
 // 全部是虚构值：域名用 example.com，REALITY 密钥对是测试专用的一对。
 
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -55,6 +60,8 @@ func parityFixtures() []parityFixture {
 	}{
 		{"ss-aes128", "shadowsocks", 8388, `{"cipher":"aes-128-gcm"}`},
 		{"ss-chacha", "shadowsocks", 8389, `{"cipher":"chacha20-ietf-poly1305"}`},
+		{"ss2022-aes128", "shadowsocks", 8390, `{"cipher":"2022-blake3-aes-128-gcm"}`},
+		{"ss2022-aes256", "shadowsocks", 8391, `{"cipher":"2022-blake3-aes-256-gcm"}`},
 		{"hy2-obfs", "hysteria2", 8443, `{` + parityCertPaths + `,"obfs":{"type":"salamander","password":"obfs-pass-1"},"bandwidth":{"up":100,"down":200},"tls_settings":{"server_name":"sni.example.com","allow_insecure":true}}`},
 		{"hy2-plain", "hysteria2", 8444, `{` + parityCertPaths + `}`},
 		{"tuic", "tuic", 5443, `{` + parityCertPaths + `,"congestion_control":"cubic","tls_settings":{"server_name":"sni.example.com"}}`},
@@ -110,6 +117,7 @@ func parityFixtures() []parityFixture {
 		{"vless-tcp-plain", "vless", 10087, `{"tls":0,"network":"tcp"}`},
 		{"vless-reality-xhttp-h3", "vless", 448, `{"tls":2,"network":"xhttp-h3","network_settings":{"path":"/h3"},` + parityRealitySettings() + `}`},
 		{"trojan-legacy-cert", "trojan", 7451, `{"tls":1,"network":"tcp","cert_path":"/etc/pdnd/c.pem","key_path":"/etc/pdnd/k.pem"}`},
+		{"ss2022-chacha", "shadowsocks", 8392, `{"cipher":"2022-blake3-chacha20-poly1305"}`},
 	} {
 		out = append(out, parityFixture{group: "legacy", name: f.id, typ: f.typ, port: f.port, config: f.config})
 	}
@@ -224,7 +232,18 @@ func TestKernelConfigMatchesLegacyOutput(t *testing.T) {
 					f.port, want.Group, want.Name, want.Type, f.group, f.name, f.typ)
 			}
 			got, gotJSON := parityNormalize(t, KernelConfig(f.typ, parityConfig(t, f)))
-			exp, expJSON := parityNormalize(t, want.Config)
+			wantConfig := want.Config
+			// 2022 方法在 nodes.json 里的 password 是 node 模块注入的服务端身份密钥，
+			// 不是 KernelConfig 的输出，对照前剥掉（只动浅拷贝，别改共享的 map）。
+			if want.Type == "shadowsocks" {
+				if method, ok := want.Config["method"].(string); ok {
+					if _, is2022 := SS2022KeyLen(method); is2022 {
+						wantConfig = maps.Clone(want.Config)
+						delete(wantConfig, "password")
+					}
+				}
+			}
+			exp, expJSON := parityNormalize(t, wantConfig)
 			if !reflect.DeepEqual(got, exp) {
 				t.Errorf("%s 翻译结果与 nodes.json 不一致：\n  实际 %s\n  期望 %s", f.name, gotJSON, expJSON)
 			}

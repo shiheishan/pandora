@@ -196,7 +196,7 @@ describe('protocol form', () => {
     expect(vless.find((f) => f.path === 'headers')!.kind).toBe('json')
     expect(vless.find((f) => f.path === 'network_settings.mode')).toMatchObject({ kind: 'enum', options: ['auto', 'packet-up', 'stream-up', 'stream-one', 'stream-down'] })
     const ss = protocolFields(schemaOf('shadowsocks'))
-    expect(ss).toEqual([{ path: 'cipher', kind: 'enum', options: ['aes-128-gcm', 'aes-256-gcm', 'chacha20-ietf-poly1305'], required: true, sensitive: false }])
+    expect(ss).toEqual([{ path: 'cipher', kind: 'enum', options: ['aes-128-gcm', 'aes-256-gcm', 'chacha20-ietf-poly1305', '2022-blake3-aes-128-gcm', '2022-blake3-aes-256-gcm'], required: true, sensitive: false, hint: expect.stringContaining('Shadowsocks 2022') }])
     // hysteria2 的 obfs.password 按叶子名是敏感的；必填排在前面
     const hy = protocolFields(schemaOf('hysteria2'))
     expect(hy.find((f) => f.path === 'obfs.password')!.sensitive).toBe(true)

@@ -10,6 +10,10 @@ func nodeToStash(n Node, uuid string) (map[string]any, string) {
 	if n.Type == "naive" {
 		return nil, "Stash 没有 naive 出站"
 	}
+	// Stash 文档的 2022 只写单个 password，没提 SIP023 多用户（iPSK:uPSK）；真机确认能连后再放开。
+	if n.Type == "shadowsocks" && isSS2022(ssMethod(n.Config)) {
+		return nil, "Stash 暂不支持 Shadowsocks 2022 多用户密钥（未经真机确认）"
+	}
 	if n.Type == "juicity" {
 		p := map[string]any{
 			"name":     n.Name,

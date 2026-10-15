@@ -131,7 +131,7 @@ func validateKernelShape(nodeType string, port int, raw json.RawMessage) (int, m
 		} else {
 			validateShadowTLSServer(fields, server, cfg.ServerPort)
 		}
-		if method := strings.ToLower(strings.TrimSpace(cfg.Method)); method != "" && !containsString(shadowsocksMethods, method) {
+		if method := strings.ToLower(strings.TrimSpace(cfg.Method)); method != "" && !containsString(shadowsocksAEADMethods, method) {
 			fields["protocol_config.method"] = "ShadowTLS 仅支持当前 NativeCore 的 Shadowsocks 方法"
 		}
 	case "hysteria2":

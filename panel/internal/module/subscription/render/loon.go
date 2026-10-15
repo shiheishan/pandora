@@ -78,7 +78,15 @@ func loonNodeLine(n Node, uuid string) (string, string) {
 	case "shadowsocks":
 		// 节点端的 Shadowsocks 同一端口 TCP、UDP 都听（与 clash.go 的 udp: true 同一口径）
 		method := ssMethod(n.Config)
-		line := name + " = Shadowsocks," + n.Host + "," + port + "," + method + "," + loonQuote(uuid) + ",udp=true"
+		// Loon 文档只给了单个 base64 密码的 2022 示例，SIP023 的 iPSK:uPSK 写法没有依据；真机确认能连后再放开。
+		if isSS2022(method) {
+			return "", "Loon 暂不支持 Shadowsocks 2022 多用户密钥（未经真机确认）"
+		}
+		pw, reason := ssPassword(n.Config, uuid)
+		if reason != "" {
+			return "", reason
+		}
+		line := name + " = Shadowsocks," + n.Host + "," + port + "," + method + "," + loonQuote(pw) + ",udp=true"
 		return line, ""
 
 	case "shadowtls":

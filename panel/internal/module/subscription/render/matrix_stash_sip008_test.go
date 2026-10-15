@@ -28,6 +28,14 @@ func sip008Cell(name string) cell {
 	if name == "shadowtls" {
 		return skip("ShadowTLS")
 	}
+	switch name {
+	case "ss2022-aes128":
+		return has(`"password":"`+ss2022PW128+`"`, `"method":"2022-blake3-aes-128-gcm"`)
+	case "ss2022-aes256":
+		return has(`"password":"`+ss2022PW256+`"`, `"method":"2022-blake3-aes-256-gcm"`)
+	case "ss2022-chacha":
+		return skip("多用户不支持")
+	}
 	if strings.HasPrefix(name, "ss-") {
 		method := "aes-128-gcm"
 		if name == "ss-chacha" {
@@ -44,6 +52,10 @@ func stashCell(name string, clash cell) cell {
 	}
 	if name == "juicity" {
 		return has(`type: "juicity"`)
+	}
+	// Stash 的 2022 多用户写法未经真机确认，三种 2022 夹具一律跳过（stash.go）。
+	if strings.HasPrefix(name, "ss2022-") {
+		return skip("Stash 暂不支持 Shadowsocks 2022")
 	}
 	if strings.Contains(name, "httpupgrade") || name == "trojan-tls-httpupgrade" {
 		return skip("HTTP Upgrade")

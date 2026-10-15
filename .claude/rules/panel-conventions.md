@@ -19,7 +19,7 @@ paths:
 - 服务日志由进程内 lumberjack 滚动，不要再给它们配 logrotate。
 
 ## 加密
-- 主密钥只做根：子密钥经 HKDF 派生，用途串是 `panel/internal/pkg/crypto/keys.go` 的 `Info*` 常量（`InfoSeal`、`InfoHMACIP`、`InfoHMACNodeDevice` 等）。新用途新加一个 info 串，不复用已有的；已落了存量哈希或密文的 info 串不能改。
+- 主密钥只做根：子密钥经 HKDF 派生，用途串是 `panel/internal/pkg/crypto/keys.go` 的 `Info*` 常量（`InfoSeal`、`InfoHMACIP`、`InfoHMACNodeDevice`、`InfoSS2022ServerPSK` 等）。新用途新加一个 info 串，不复用已有的；已落了存量哈希或密文的 info 串不能改。
 
 ## 钱
 - 规则见 `docs/architecture.md` 第 6 节。改钱的代码必须知道：库里 numeric(20,2) 元，repo 写入前 `money.Check` / `money.CheckNonNegative`（PG 会静默四舍五入，库里拦不住）；/v1 JSON 是整数分，经 `money.FromCents` / `money.ToCents` 换算；按比例的金额向零截断、只截一次，只在 service 的领域计算里算，SQL 里不做金额算术。

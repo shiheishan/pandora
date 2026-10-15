@@ -201,9 +201,13 @@ func nodeToSingbox(n Node, uuid string) (map[string]any, string) {
 		}
 
 	case "shadowsocks":
+		pw, reason := ssPassword(n.Config, uuid)
+		if reason != "" {
+			return nil, reason
+		}
 		o["type"] = "shadowsocks"
 		o["method"] = ssMethod(n.Config)
-		o["password"] = uuid
+		o["password"] = pw
 		// 节点端同一端口 TCP、UDP 都听：不写 network，sing-box 缺省两种都走
 
 	case "hysteria2":

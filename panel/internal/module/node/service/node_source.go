@@ -56,13 +56,14 @@ func (s *Service) loadDeliverableNodes(ctx context.Context, planVersionID uuid.U
 			break
 		}
 	}
-	return deliverableFromRows(rows, userGroupID, s.now(), loc)
+	return deliverableFromRows(rows, userGroupID, s.now(), loc, s.psk)
 }
 
 // deliverableFromRows 把候选节点按池的用户组限定过滤（poolAdmits），协议配置翻成内核字段名，再按 preferFresh 分层。
+// shadowsocks 2022 节点的 Config 带 password（服务端身份密钥），中转经 relayRenderNode 浅拷贝沿用父节点那把。
 // 每次调用都重新解析协议配置，结果与 rows 不共享引用。永不为 nil。
 // 中转紧跟父节点、继承父节点的一切，只换名称地址端口与 SNI/Host。
-func deliverableFromRows(rows []repo.DeliveryNodeRow, userGroupID *uuid.UUID, now time.Time, loc *time.Location) ([]render.Node, error) {
+func deliverableFromRows(rows []repo.DeliveryNodeRow, userGroupID *uuid.UUID, now time.Time, loc *time.Location, psk PSKDeriver) ([]render.Node, error) {
 	cands := make([]deliveryCandidate, 0, len(rows))
 	for _, row := range rows {
 		if !poolAdmits(row.PoolGroupIDs, userGroupID) {
@@ -81,6 +82,9 @@ func deliverableFromRows(rows []repo.DeliveryNodeRow, userGroupID *uuid.UUID, no
 		}
 
 		kernel := protocol.KernelConfig(row.NodeType, stored)
+		if err := applySS2022ServerPSK(psk, row.ID, row.NodeType, kernel); err != nil {
+			return nil, fmt.Errorf("node: 节点 %s: %w", row.ID, err)
+		}
 		var echConfigList []byte
 		if len(row.ECHConfigList) > 0 && protocol.ECHCapable(row.NodeType, kernel) {
 			echConfigList = row.ECHConfigList

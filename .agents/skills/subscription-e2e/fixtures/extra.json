@@ -24,7 +24,7 @@
  {
   "id": "ss-cipher-method-conflict",
   "type": "shadowsocks",
-  "port": 8390,
+  "port": 8393,
   "config": {
    "cipher": "aes-128-gcm",
    "method": "chacha20-ietf-poly1305"

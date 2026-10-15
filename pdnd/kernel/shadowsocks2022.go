@@ -1,93 +1,122 @@
 package kernel
 
+// Shadowsocks 2022（SIP022 + SIP023）多用户入站：
+//   - 配置 password = base64(iPSK)，长度等于方法密钥长度；
+//   - 每用户 uPSK 由代理 UUID 按共用约定派生，用户表键为 blake3(uPSK) 前 16 字节；
+//   - TCP 请求 salt | EIH | AEAD 固定头 | AEAD 变长头，EIH 解出用户 hash 后查表，会话密钥用 uPSK；
+//   - 认证失败（含查不到用户、重放、超窗、请求头未读全）与经典 SS 同口径，经 drainAfterReport 排空。
+// UDP 见 shadowsocks2022_udp.go，共用 ssUDPHub。
+
 import (
-	"bufio"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
-	"encoding/binary"
 	"fmt"
-	"io"
 	"net"
-	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	M "github.com/sagernet/sing/common/metadata"
-	"golang.org/x/crypto/chacha20poly1305"
+	"lukechampine.com/blake3"
 
 	"github.com/aegispanel/nodeagent/core"
-	"github.com/aegispanel/nodeagent/route"
 )
 
 const (
-	ss2022ClientHeader   byte = 0
-	ss2022ServerHeader   byte = 1
-	ss2022MaxChunk            = 16*1024 - 1
-	ss2022Overhead            = 16
-	ss2022UDPIdleTimeout      = 5 * time.Minute
+	ss2022ClientHeader byte = 0
+	ss2022ServerHeader byte = 1
+	ss2022WriteChunk        = 16*1024 - 1 // 写方向每块负载上限（与经典 ssChunkLimit 同值）
+	ss2022MaxReadChunk      = 0xFFFF      // 读方向每块负载上限：SIP022 允许到 0xFFFF
+	ss2022Overhead          = 16          // AEAD 标签
+	ss2022EIHLen            = 16          // 一个身份头（aes.BlockSize）
+	ss2022MaxTimeDiff       = 30          // 时间戳窗口（秒），超出按重放
+	ss2022UserPSKInfo       = "pandora/ss2022/user-psk/v1"
 )
 
 type ss2022Spec struct {
-	name    string
-	keyLen  int
-	newAEAD func([]byte) (cipher.AEAD, error)
+	name   string
+	keyLen int // 16 或 32；AEAD 一律 newAESGCM
 }
 
+// parseSS2022Spec 只认两种 AES 方法；chacha20-poly1305 给出专门的拒绝原因。
 func parseSS2022Spec(method string) (ss2022Spec, error) {
 	method = strings.ToLower(strings.TrimSpace(method))
 	switch method {
 	case "2022-blake3-aes-128-gcm":
-		return ss2022Spec{name: method, keyLen: 16, newAEAD: newAESGCM}, nil
+		return ss2022Spec{name: method, keyLen: 16}, nil
 	case "2022-blake3-aes-256-gcm":
-		return ss2022Spec{name: method, keyLen: 32, newAEAD: newAESGCM}, nil
+		return ss2022Spec{name: method, keyLen: 32}, nil
 	case "2022-blake3-chacha20-poly1305":
-		return ss2022Spec{name: method, keyLen: 32, newAEAD: chacha20poly1305.New}, nil
+		return ss2022Spec{}, fmt.Errorf("不支持的加密方式 %s：shadowsocks 2022 的 chacha20-poly1305 没有多用户身份头（SIP023 只定义了 AES 方法）；请改用 2022-blake3-aes-128-gcm 或 2022-blake3-aes-256-gcm", method)
 	default:
 		return ss2022Spec{}, fmt.Errorf("native shadowsocks 2022 method %q is unsupported", method)
 	}
 }
 
+// parseSS2022ServerPSK 读配置的 password：标准 base64（带填充）的 iPSK，解出的长度必须等于方法的密钥长度。
+func parseSS2022ServerPSK(raw map[string]any, spec ss2022Spec) ([]byte, error) {
+	password, ok := raw["password"].(string)
+	if !ok || strings.TrimSpace(password) == "" {
+		return nil, fmt.Errorf("shadowsocks 2022 需要 password（base64 的服务端身份密钥）")
+	}
+	ipsk, err := base64.StdEncoding.DecodeString(strings.TrimSpace(password))
+	if err != nil {
+		return nil, fmt.Errorf("shadowsocks 2022 password 不是标准 base64: %w", err)
+	}
+	if len(ipsk) != spec.keyLen {
+		return nil, fmt.Errorf("shadowsocks 2022 password 解出 %d 字节，%s 要 %d 字节", len(ipsk), spec.name, spec.keyLen)
+	}
+	return ipsk, nil
+}
+
+// ss2022UserPSK 按共用约定从用户的代理 UUID 算 uPSK：SHA-256(ss2022UserPSKInfo || 0x00 || 小写 UUID) 取前 keyLen 字节。
+func ss2022UserPSK(uuid string, keyLen int) []byte {
+	h := sha256.New()
+	_, _ = h.Write([]byte(ss2022UserPSKInfo))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(strings.ToLower(uuid)))
+	sum := h.Sum(nil)
+	return sum[:keyLen]
+}
+
+// ss2022UserHash 是 SIP023 用户表的键：blake3(uPSK) 的前 16 字节。（UDP 用）
+func ss2022UserHash(upsk []byte) [16]byte {
+	sum := blake3.Sum256(upsk)
+	var hash [16]byte
+	copy(hash[:], sum[:16])
+	return hash
+}
+
 type ss2022Adapter struct {
-	spec     InboundSpec
-	method   ss2022Spec
-	psk      []byte
-	psks     [][]byte
-	mu       sync.RWMutex
-	user     core.User
-	hasUser  bool
+	spec      InboundSpec
+	method    ss2022Spec
+	ipsk      []byte       // 服务端身份密钥（配置 password），TCP 派生身份子密钥用
+	ipskBlock cipher.Block // aes(iPSK)：UDP 的分离头与身份头直接用它加解（SIP023）（UDP 用）
+	mu        sync.RWMutex
+	// users 是用户集合的事实源（a.mu 保护），键是 ss2022UserHash(uPSK)；每次变更后重建 snapshot，收包与握手只读 snapshot。
+	users    map[[16]byte]*ssUser
+	snapshot atomic.Pointer[map[[16]byte]*ssUser]
 	sessions userSessions
 	limiters core.SpeedLimiters
 	online   onlineDevices
 	listener net.Listener
+	packet   net.PacketConn
 	plane    DataPlane
 	connErr  connErrorReporter
 	ctx      context.Context
 	cancel   context.CancelFunc
 	closed   bool
-	lastErr  error
 	active   map[net.Conn]struct{}
-	packet   net.PacketConn
-	udpMu    sync.Mutex
-	udp      map[string]*ss2022UDPSession
-	wg       sync.WaitGroup
-}
-
-type ss2022UDPSession struct {
-	psk          []byte
-	clientID     uint64
-	serverID     uint64
-	remote       cipher.AEAD
-	local        cipher.AEAD
-	user         core.User
-	lastClientID uint64
-	nextServerID uint64
-	clientSeen   bool
-	lastSeen     time.Time
+	// salts 是 TCP 请求 salt 的精确防重放表（认证通过才记），全进程共用，见 shadowsocks2022_tcp.go。
+	salts *replayFilter
+	// headerTimeout 只给测试缩短读请求头的截止时间，零值为 10 秒。
+	headerTimeout time.Duration
+	ssUDPHub      // UDP 会话表与生命周期，见 shadowsocks_udp_hub.go 与 shadowsocks2022_udp.go
+	wg            sync.WaitGroup
 }
 
 func newSS2022Adapter(spec InboundSpec) (Adapter, error) {
@@ -96,29 +125,23 @@ func newSS2022Adapter(spec InboundSpec) (Adapter, error) {
 	if err != nil {
 		return nil, err
 	}
-	password, _ := spec.Config.Raw["password"].(string)
-	if strings.TrimSpace(password) == "" {
-		return nil, fmt.Errorf("shadowsocks 2022 requires base64 password PSK")
+	if _, ok := spec.Config.Raw["network"]; ok {
+		return nil, fmt.Errorf("shadowsocks 入站不再接受 network 字段：TCP 与 UDP 总是同端口一起开")
 	}
-	parts := strings.Split(password, ":")
-	psks := make([][]byte, 0, len(parts))
-	for _, part := range parts {
-		psk, decodeErr := base64.StdEncoding.DecodeString(strings.TrimSpace(part))
-		if decodeErr != nil {
-			return nil, fmt.Errorf("shadowsocks 2022 password base64: %w", decodeErr)
-		}
-		if len(psk) < parsed.keyLen {
-			return nil, fmt.Errorf("shadowsocks 2022 PSK is shorter than %d bytes", parsed.keyLen)
-		}
-		if len(psk) > parsed.keyLen {
-			psk = ss2022Key(psk, parsed.keyLen)
-		}
-		psks = append(psks, psk)
+	ipsk, err := parseSS2022ServerPSK(spec.Config.Raw, parsed)
+	if err != nil {
+		return nil, err
 	}
-	if len(psks) == 0 {
-		return nil, fmt.Errorf("shadowsocks 2022 requires at least one PSK")
+	ipskBlock, err := aes.NewCipher(ipsk)
+	if err != nil {
+		return nil, err
 	}
-	return &ss2022Adapter{spec: spec, method: parsed, psk: psks[len(psks)-1], psks: psks, active: make(map[net.Conn]struct{}), udp: make(map[string]*ss2022UDPSession)}, nil
+	return &ss2022Adapter{
+		spec: spec, method: parsed, ipsk: ipsk, ipskBlock: ipskBlock,
+		users: make(map[[16]byte]*ssUser), active: make(map[net.Conn]struct{}),
+		salts:    sharedSS2022SaltFilter(),
+		ssUDPHub: ssUDPHub{udp: make(map[ssUDPKey][]*ssUDPSession)},
+	}, nil
 }
 
 func (a *ss2022Adapter) Protocol() string {
@@ -127,7 +150,7 @@ func (a *ss2022Adapter) Protocol() string {
 
 func (a *ss2022Adapter) Validate(spec InboundSpec) error {
 	method, _ := spec.Config.Raw["method"].(string)
-	_, err := parseSS2022Spec(method)
+	parsed, err := parseSS2022Spec(method)
 	if err != nil {
 		return err
 	}
@@ -137,9 +160,11 @@ func (a *ss2022Adapter) Validate(spec InboundSpec) error {
 	if _, ok := spec.Config.Raw["network"]; ok {
 		return fmt.Errorf("shadowsocks 入站不再接受 network 字段：TCP 与 UDP 总是同端口一起开")
 	}
-	password, ok := spec.Config.Raw["password"].(string)
-	if !ok || strings.TrimSpace(password) == "" {
-		return fmt.Errorf("shadowsocks 2022 password is required")
+	if plugin, _ := spec.Config.Raw["plugin"].(string); strings.TrimSpace(plugin) != "" {
+		return fmt.Errorf("native shadowsocks rejects plugin transport")
+	}
+	if _, err := parseSS2022ServerPSK(spec.Config.Raw, parsed); err != nil {
+		return err
 	}
 	return nil
 }
@@ -156,31 +181,46 @@ func (a *ss2022Adapter) Start(parent context.Context, spec InboundSpec, hooks Ad
 	a.spec, a.plane = spec, hooks.DataPlane
 	a.connErr = newConnErrorReporter(hooks, spec, a.Protocol())
 	a.ctx, a.cancel = context.WithCancel(parent)
-	listen := spec.Config.Listen
-	if listen == "" {
-		listen = "0.0.0.0"
+	listenAddress := spec.Config.Listen
+	if listenAddress == "" {
+		listenAddress = "0.0.0.0"
 	}
-	// 与经典 AEAD 一样同端口同时听 TCP 与 UDP；任一失败整体失败，收拾已起的那个。
-	address := net.JoinHostPort(listen, strconv.Itoa(spec.Config.Port))
-	ln, err := net.Listen("tcp", address)
+	addr := net.JoinHostPort(listenAddress, strconv.Itoa(spec.Config.Port))
+	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		a.cancel()
 		a.mu.Unlock()
-		return err
+		return asExternalPortInUse([]portKey{{port: spec.Config.Port, l4: "tcp"}}, err)
 	}
-	packet, err := net.ListenPacket("udp", address)
-	if err != nil {
-		_ = ln.Close()
+	packet, packetErr := net.ListenPacket("udp", addr)
+	if packetErr != nil {
+		_ = listener.Close()
 		a.cancel()
 		a.mu.Unlock()
-		return err
+		return asExternalPortInUse([]portKey{{port: spec.Config.Port, l4: "udp"}}, packetErr)
 	}
-	a.listener, a.packet = ln, packet
+	udpConn, ok := packet.(*net.UDPConn)
+	if !ok {
+		_ = packet.Close()
+		_ = listener.Close()
+		a.cancel()
+		a.mu.Unlock()
+		return fmt.Errorf("shadowsocks 2022 UDP listen: unexpected PacketConn type %T", packet)
+	}
+	a.listener, a.packet = listener, packet
+	a.bindUDP(udpConn, ssUDPHubBinding{
+		proto: "shadowsocks-2022", ctx: a.ctx, wg: &a.wg, plane: a.plane, connErr: &a.connErr,
+		online: &a.online, limiters: &a.limiters, sessions: &a.sessions, encode: a.encodeUDPSession,
+	})
 	a.mu.Unlock()
-	a.wg.Add(3)
+	workers := ssUDPSlowWorkers()
+	a.wg.Add(3 + workers)
 	go a.acceptLoop()
-	go a.udpLoop()
-	go a.udpSessionGC()
+	go a.packetLoop()
+	go a.udpJanitor()
+	for i := 0; i < workers; i++ {
+		go a.udpWorker(a.slowPathUDP)
+	}
 	return nil
 }
 
@@ -200,213 +240,114 @@ func (a *ss2022Adapter) acceptLoop() {
 		goGuarded(conn, func() {
 			defer a.wg.Done()
 			defer a.removeActive(conn)
-			if err := a.handleConn(ctx, conn); err != nil {
-				a.recordError(err)
-			}
+			_ = a.handleConn(ctx, conn)
 		})
 	})
 }
 
-// handleConn 是 TCP 会话入口，会话层失败在这里上报。协议名与注册表一致：
-// 2022 方法与经典 AEAD 在面板里是同一个协议，只是 method 不同。
-func (a *ss2022Adapter) handleConn(ctx context.Context, conn net.Conn) error {
-	err := a.serveConn(ctx, conn)
-	a.connErr.conn(StageSession, conn, err)
-	return err
+// ss2022UserEntry 是校验过、待发布的一条用户记录。
+type ss2022UserEntry struct {
+	key  [16]byte
+	user *ssUser
 }
 
-func (a *ss2022Adapter) serveConn(ctx context.Context, conn net.Conn) error {
-	defer conn.Close()
-	epoch := a.sessions.epoch()
-	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-	// 读缓冲只给请求头用：之后转发每次读 2KB 小块走它、32KB 大块直接读底层
-	// （bufio 对不小于缓冲的读直通）。原先 64KB 常驻，是每连接内存的大头之一。
-	r := bufio.NewReaderSize(conn, ssHeaderReadBuffer)
-	keyLen := a.method.keyLen
-	salt := make([]byte, keyLen)
-	if _, err := io.ReadFull(r, salt); err != nil {
-		return err
-	}
-	if len(a.psks) > 1 {
-		identity := make([]byte, (len(a.psks)-1)*aes.BlockSize)
-		if _, err := io.ReadFull(r, identity); err != nil {
-			return err
+// userRecords 校验整批并算出每个用户的 uPSK 与用户表键；有一个不合格整批不发布。
+func (a *ss2022Adapter) userRecords(users []core.User) ([]ss2022UserEntry, error) {
+	out := make([]ss2022UserEntry, 0, len(users))
+	for _, user := range users {
+		if strings.TrimSpace(user.UUID) == "" || len(user.UUID) > 256 {
+			return nil, fmt.Errorf("shadowsocks 2022 user %d uuid invalid", user.ID)
 		}
-		if err := ss2022ValidateIdentityHeaders(identity, salt, a.psks); err != nil {
-			return err
-		}
+		upsk := ss2022UserPSK(user.UUID, a.method.keyLen)
+		out = append(out, ss2022UserEntry{
+			key:  ss2022UserHash(upsk),
+			user: &ssUser{ID: user.ID, DeviceLimit: user.DeviceLimit, SpeedLimit: user.SpeedLimit, MasterKey: upsk},
+		})
 	}
-	readAEAD, err := a.method.newAEAD(ss2022SessionKey(a.psk, salt, keyLen))
-	if err != nil {
-		return err
-	}
-	fixed := make([]byte, 11)
-	readNonce := make([]byte, readAEAD.NonceSize())
-	if err := ss2022ReadRawChunk(r, readAEAD, readNonce, fixed); err != nil {
-		return err
-	}
-	ss2022IncNonce(readNonce)
-	stream := &ss2022Stream{reader: r, readAEAD: readAEAD, readNonce: readNonce}
-	if fixed[0] != ss2022ClientHeader {
-		return fmt.Errorf("shadowsocks 2022 header type %d is not client", fixed[0])
-	}
-	stamp := int64(binary.BigEndian.Uint64(fixed[1:9]))
-	if delta := time.Now().Unix() - stamp; delta > 30 || delta < -30 {
-		return fmt.Errorf("shadowsocks 2022 timestamp outside 30 seconds")
-	}
-	variableLen := int(binary.BigEndian.Uint16(fixed[9:11]))
-	if variableLen < 4 || variableLen > 65535 {
-		return fmt.Errorf("shadowsocks 2022 variable header length invalid")
-	}
-	variable := make([]byte, variableLen)
-	if err := ss2022ReadRawChunk(r, readAEAD, stream.readNonce, variable); err != nil {
-		return err
-	}
-	ss2022IncNonce(stream.readNonce)
-	var destination vlessDestination
-	consumed, err := parseSSDestination(variable, &destination)
-	if err != nil {
-		return err
-	}
-	if consumed+2 > len(variable) {
-		return io.ErrUnexpectedEOF
-	}
-	paddingLen := int(binary.BigEndian.Uint16(variable[consumed : consumed+2]))
-	if paddingLen < 1 || consumed+2+paddingLen > len(variable) {
-		return fmt.Errorf("shadowsocks 2022 padding invalid")
-	}
-	stream.pending = append(stream.pending, variable[consumed+2+paddingLen:]...)
-	_ = conn.SetReadDeadline(time.Time{})
-	a.mu.RLock()
-	user, hasUser := a.user, a.hasUser
-	a.mu.RUnlock()
-	if !hasUser {
-		return fmt.Errorf("shadowsocks 2022 has no configured user")
-	}
-	sess := a.sessions.open(user, epoch, conn)
-	if sess == nil {
-		return errSessionRevoked
-	}
-	defer sess.close()
-	ip := remoteIP(conn.RemoteAddr())
-	if !a.online.enter(user, ip) {
-		return deviceLimitError("shadowsocks 2022")
-	}
-	defer a.online.leave(user, ip)
-	sourceIP, _ := netip.ParseAddr(ip)
-	var sourcePort uint16
-	if _, p, e := net.SplitHostPort(conn.RemoteAddr().String()); e == nil {
-		if n, e := strconv.ParseUint(p, 10, 16); e == nil {
-			sourcePort = uint16(n)
-		}
-	}
-	meta := route.Meta{Domain: destination.Domain, IP: destination.IP, Port: destination.Port, Network: "tcp", Protocol: "shadowsocks-2022", SourceIP: sourceIP, SourcePort: sourcePort}
-	upstream, err := a.plane.DialTCP(ctx, meta, M.ParseSocksaddrHostPort(destination.Host, destination.Port))
-	if err != nil {
-		return err
-	}
-	defer upstream.Close()
-	responseSalt := make([]byte, keyLen)
-	if _, err := io.ReadFull(rand.Reader, responseSalt); err != nil {
-		return err
-	}
-	writeAEAD, err := a.method.newAEAD(ss2022SessionKey(a.psk, responseSalt, keyLen))
-	if err != nil {
-		return err
-	}
-	responseFixed := make([]byte, 1+8+keyLen+2)
-	responseFixed[0] = ss2022ServerHeader
-	binary.BigEndian.PutUint64(responseFixed[1:9], uint64(time.Now().Unix()))
-	copy(responseFixed[9:9+keyLen], salt)
-	binary.BigEndian.PutUint16(responseFixed[9+keyLen:], 0)
-	if _, err := conn.Write(responseSalt); err != nil {
-		return err
-	}
-	writeNonce := make([]byte, writeAEAD.NonceSize())
-	responseWire := writeAEAD.Seal(nil, writeNonce, responseFixed, nil)
-	if _, err := conn.Write(responseWire); err != nil {
-		return err
-	}
-	ss2022IncNonce(writeNonce)
-	// The reference client always consumes the response payload chunk, even
-	// when its declared length is zero. Emit an authenticated empty raw chunk
-	// so the following stream frames start at the expected nonce.
-	emptyWire := writeAEAD.Seal(nil, writeNonce, nil, nil)
-	if _, err := conn.Write(emptyWire); err != nil {
-		return err
-	}
-	ss2022IncNonce(writeNonce)
-	responseStream := &ss2022Stream{writer: conn, writeAEAD: writeAEAD, writeNonce: writeNonce}
-	client := &core.SplitStream{R: stream, W: responseStream, C: conn}
-	sess.relay(client, upstream, core.RelayOptions{Limiter: a.limiters.For(user)})
-	return nil
-}
-
-func (a *ss2022Adapter) recordError(err error) {
-	a.mu.Lock()
-	if a.lastErr == nil {
-		a.lastErr = err
-	}
-	a.mu.Unlock()
+	return out, nil
 }
 
 func (a *ss2022Adapter) AddUsers(users []core.User) error {
-	if len(users) > 1 {
-		return fmt.Errorf("native shadowsocks 2022 single-PSK slice accepts one user; relay identities are not silently collapsed")
+	validated, err := a.userRecords(users)
+	if err != nil {
+		return err
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.closed {
 		return fmt.Errorf("shadowsocks 2022 adapter closed")
 	}
-	if len(users) == 0 {
-		a.hasUser = false
-		return nil
+	for _, entry := range validated {
+		if _, exists := a.users[entry.key]; !exists {
+			a.users[entry.key] = entry.user
+		}
 	}
-	a.user, a.hasUser = users[0], true
+	a.publishUsersLocked()
 	return nil
 }
+
 func (a *ss2022Adapter) UpsertUsers(users []core.User) error {
-	if len(users) > 1 {
-		return fmt.Errorf("native shadowsocks 2022 single-PSK slice accepts one user; relay identities are not silently collapsed")
+	validated, err := a.userRecords(users)
+	if err != nil {
+		return err
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.closed {
 		return fmt.Errorf("shadowsocks 2022 adapter closed")
 	}
-	if len(users) == 0 {
-		a.hasUser = false
-		return nil
+	for _, entry := range validated {
+		if prev, exists := a.users[entry.key]; exists {
+			a.limiters.Remove(prev.ID)
+			prev.retired.Store(true)
+		}
+		a.users[entry.key] = entry.user
 	}
-	a.user, a.hasUser = users[0], true
+	a.publishUsersLocked()
 	return nil
 }
 
 func (a *ss2022Adapter) DelUsers(ids []string) error {
 	a.mu.Lock()
 	var removed []int64
-	if a.hasUser {
-		for _, id := range ids {
-			if id == a.user.UUID {
-				a.hasUser = false
-				removed = append(removed, a.user.ID)
-				break
-			}
+	for _, id := range ids {
+		key := ss2022UserHash(ss2022UserPSK(id, a.method.keyLen))
+		if entry, ok := a.users[key]; ok {
+			a.limiters.Remove(entry.ID)
+			entry.retired.Store(true)
+			removed = append(removed, entry.ID)
 		}
+		delete(a.users, key)
 	}
+	a.publishUsersLocked()
 	a.mu.Unlock()
-	// 先删表、再踢线（锁外关）：已有的长连接、mux / QUIC 会话随之断开。
 	a.sessions.revoke(removed)
 	return nil
 }
+
+func (a *ss2022Adapter) publishUsersLocked() {
+	snap := make(map[[16]byte]*ssUser, len(a.users))
+	for k, v := range a.users {
+		snap[k] = v
+	}
+	a.snapshot.Store(&snap)
+}
+
+// lookupUser 按 SIP023 的用户 hash 查当前快照，查不到返回 nil；不加锁、不分配。（UDP 用）
+func (a *ss2022Adapter) lookupUser(hash [16]byte) *ssUser {
+	snap := a.snapshot.Load()
+	if snap == nil {
+		return nil
+	}
+	return (*snap)[hash]
+}
+
 func (a *ss2022Adapter) SnapshotTraffic() ([]core.UserTraffic, error) {
 	return a.sessions.snapshot(), nil
 }
+
 func (a *ss2022Adapter) OnlineIPs() map[int64][]string { return a.online.snapshot() }
-func (a *ss2022Adapter) addTraffic(user core.User, upload, download int64) {
-	a.sessions.add(user.ID, upload, download)
-}
+
 func (a *ss2022Adapter) Close() error {
 	a.mu.Lock()
 	if a.closed {
@@ -417,15 +358,15 @@ func (a *ss2022Adapter) Close() error {
 	if a.cancel != nil {
 		a.cancel()
 	}
-	ln := a.listener
+	listener := a.listener
 	packet := a.packet
 	active := make([]net.Conn, 0, len(a.active))
 	for conn := range a.active {
 		active = append(active, conn)
 	}
 	a.mu.Unlock()
-	if ln != nil {
-		_ = ln.Close()
+	if listener != nil {
+		_ = listener.Close()
 	}
 	if packet != nil {
 		_ = packet.Close()
@@ -433,9 +374,11 @@ func (a *ss2022Adapter) Close() error {
 	for _, conn := range active {
 		_ = conn.Close()
 	}
+	a.closeUDPSessions()
 	a.wg.Wait()
 	return nil
 }
+
 func (a *ss2022Adapter) removeActive(conn net.Conn) {
 	a.mu.Lock()
 	delete(a.active, conn)

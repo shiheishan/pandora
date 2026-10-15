@@ -82,6 +82,9 @@ type Service struct {
 	site SiteSettings
 	// echSealer 封存 ECH 私钥（xb_ports.go 的 UseECHSealer）
 	echSealer ECHSealer
+
+	// psk 派生 SS2022 服务端身份密钥（ss2022.go 的 UsePSKDeriver）
+	psk PSKDeriver
 }
 
 // New 构造 node service。rdb 用于下发纪元（epoch.go），为 nil 时只跳过通知。
@@ -115,6 +118,7 @@ func (s *Service) MissingPorts() []string {
 		{"Realtime", s.rt != nil},
 		{"SiteSettings", s.site != nil},
 		{"ECHSealer", s.echSealer != nil},
+		{"PSKDeriver", s.psk != nil},
 	} {
 		if !p.ok {
 			out = append(out, p.name)
