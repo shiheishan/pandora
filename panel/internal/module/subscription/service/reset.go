@@ -23,6 +23,10 @@ func (s *Service) ResetTraffic(ctx context.Context, in TrafficReset) (int64, err
 			return 0, errs.Wrap(errs.Internal, errMissing("ActorID"))
 		}
 	case ResetGiftCard:
+	case ResetOrder:
+		if in.UserID == nil || *in.UserID == uuid.Nil {
+			return 0, errs.Wrap(errs.Internal, errMissing("UserID"))
+		}
 	default:
 		return 0, errs.Wrap(errs.Internal, errMissing("Reason"))
 	}

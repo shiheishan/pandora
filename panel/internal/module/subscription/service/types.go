@@ -50,6 +50,8 @@ const (
 	ResetManual     = "manual"
 	ResetGiftCard   = "gift_card"
 	ResetPlanChange = "plan_change"
+	// ResetOrder 是用户自己买的流量重置（order 模块结算履约时调 ResetTraffic）
+	ResetOrder = "order"
 )
 
 // 流量包余额来源。
@@ -327,9 +329,9 @@ type Transfer struct {
 // TrafficReset 是把一份订阅本期的流量已用量清零（后台手动、礼品卡）。只给生效中的订阅做。
 type TrafficReset struct {
 	SubscriptionID uuid.UUID
-	// UserID 非 nil 时校验订阅属于他（礼品卡）；后台传 nil
+	// UserID 非 nil 时校验订阅属于他（礼品卡、用户购买）；后台传 nil
 	UserID *uuid.UUID
-	// Reason 是 ResetManual（ActorID 必填）或 ResetGiftCard
+	// Reason 是 ResetManual（ActorID 必填）、ResetGiftCard 或 ResetOrder（UserID 必填，Note 写订单号）
 	Reason  string
 	ActorID *uuid.UUID
 	Note    string

@@ -14,7 +14,8 @@
 --   XB-REG 注销作废可提现佣金（commission_forfeitures 每人每币种一行、只追加）、
 --   PAY-FEE 渠道类型与用户手续费（00042）、
 --   XB-TG Telegram 工单提醒映射与自动关闭原因、
---   XB-NODE 节点标签 / 流量上限与超限标记 / 时段倍率 / 中转 / ECH 密钥（00045）。
+--   XB-NODE 节点标签 / 流量上限与超限标记 / 时段倍率 / 中转 / ECH 密钥（00045）、
+--   XB-ORDER 流量重置价格与重置单 / 会员折扣 / 券限定周期（00043）。
 --
 -- 不覆盖的验收项及原因（没有对应的表或机制）：
 --   SEC-013 双人审批 — 没有审批表：后台权限只分有和没有。
@@ -1198,6 +1199,148 @@ $sql$);
 SELECT _reject('XB-TG', '未知的关闭原因必须拒绝', $sql$
   UPDATE tickets SET closed_reason = 'timeout' WHERE id = '00000000-0000-7000-8000-000000000d01';
 $sql$);
+
+--------------------------------------------------------------------------------
+-- XB-ORDER 流量重置单、会员折扣、券限定周期（00043_xb_order.sql）
+-- 夹具 id 用 00e2x 段
+--------------------------------------------------------------------------------
+
+-- plan_reset_prices：每套餐每币种一档、金额必须为正
+SELECT _accept('XB-ORDER', '合法的流量重置价格应当通过', $sql$
+  INSERT INTO plan_reset_prices (plan_id, currency, unit_amount)
+  VALUES ('00000000-0000-7000-8000-000000000501', 'USD', 2.00);
+$sql$);
+
+SELECT _reject('XB-ORDER', '0 元的流量重置价格必须拒绝', $sql$
+  INSERT INTO plan_reset_prices (plan_id, currency, unit_amount)
+  VALUES ('00000000-0000-7000-8000-000000000501', 'CNY', 0);
+$sql$, 'plan_reset_prices_unit_amount_check');
+
+SELECT _reject('XB-ORDER', '同一套餐同一币种第二档重置价格必须拒绝', $sql$
+  INSERT INTO plan_reset_prices (plan_id, currency, unit_amount)
+  VALUES ('00000000-0000-7000-8000-000000000501', 'USD', 3.00);
+$sql$, 'plan_reset_prices_pkey');
+
+-- orders：traffic_reset 必须指向订阅、同一订阅只许一张未完结
+SELECT _accept('XB-ORDER', '指向订阅的流量重置单应当通过', $sql$
+  INSERT INTO orders (id, order_no, user_id, kind, currency, subscription_id,
+                      subtotal_amount, discount_amount, proration_credit_amount, waived_amount,
+                      total_amount, balance_applied, payable_amount, expires_at)
+  VALUES ('00000000-0000-7000-8000-000000000e21', 'INV-RESET-001', '00000000-0000-7000-8000-000000000101',
+          'traffic_reset', 'USD', '00000000-0000-7000-8000-000000000701',
+          2.00, 0, 0, 0, 2.00, 0, 2.00, now() + interval '30 minutes');
+$sql$);
+
+SELECT _reject('XB-ORDER', '没有订阅的流量重置单必须拒绝', $sql$
+  INSERT INTO orders (order_no, user_id, kind, currency,
+                      subtotal_amount, discount_amount, proration_credit_amount, waived_amount,
+                      total_amount, balance_applied, payable_amount, expires_at)
+  VALUES ('INV-RESET-002', '00000000-0000-7000-8000-000000000101', 'traffic_reset', 'USD',
+          2.00, 0, 0, 0, 2.00, 0, 2.00, now() + interval '30 minutes');
+$sql$, 'orders_target_subscription');
+
+SELECT _reject('XB-ORDER', '同一订阅第二张未完结的流量重置单必须拒绝', $sql$
+  INSERT INTO orders (order_no, user_id, kind, currency, subscription_id,
+                      subtotal_amount, discount_amount, proration_credit_amount, waived_amount,
+                      total_amount, balance_applied, payable_amount, expires_at)
+  VALUES ('INV-RESET-003', '00000000-0000-7000-8000-000000000101', 'traffic_reset', 'USD',
+          '00000000-0000-7000-8000-000000000701',
+          2.00, 0, 0, 0, 2.00, 0, 2.00, now() + interval '30 minutes');
+$sql$, 'orders_one_open_traffic_reset');
+
+SELECT _reject('XB-ORDER', '未知的订单种类必须拒绝', $sql$
+  INSERT INTO orders (order_no, user_id, kind, currency, subscription_id,
+                      subtotal_amount, discount_amount, proration_credit_amount, waived_amount,
+                      total_amount, balance_applied, payable_amount, expires_at)
+  VALUES ('INV-RESET-004', '00000000-0000-7000-8000-000000000101', 'reset', 'USD',
+          '00000000-0000-7000-8000-000000000701',
+          2.00, 0, 0, 0, 2.00, 0, 2.00, now() + interval '30 minutes');
+$sql$, 'orders_kind_check');
+
+-- order_items：重置单的订单行有套餐与版本、没有价格档与周期
+SELECT _accept('XB-ORDER', '流量重置订单行应当通过', $sql$
+  INSERT INTO order_items (id, order_id, plan_id, plan_version_id, snapshot_name, snapshot_plan_version,
+                           quantity, unit_amount, line_amount, currency)
+  VALUES ('00000000-0000-7000-8000-000000000e22', '00000000-0000-7000-8000-000000000e21',
+          '00000000-0000-7000-8000-000000000501', '00000000-0000-7000-8000-000000000601',
+          '流量重置 · Inv 测试套餐', 1, 1, 2.00, 2.00, 'USD');
+$sql$);
+
+SELECT _reject('XB-ORDER', '没有价格档却带周期的套餐订单行必须拒绝', $sql$
+  INSERT INTO order_items (order_id, plan_id, plan_version_id, snapshot_name, snapshot_plan_version,
+                           snapshot_interval, snapshot_interval_count, quantity, unit_amount, line_amount, currency)
+  VALUES ('00000000-0000-7000-8000-000000000e21',
+          '00000000-0000-7000-8000-000000000501', '00000000-0000-7000-8000-000000000601',
+          '流量重置 · Inv 测试套餐', 1, 'month', 1, 1, 2.00, 2.00, 'USD');
+$sql$, 'order_items_target');
+
+-- orders.member_discount_amount：不超过全部减免，人工单恒为 0
+SELECT _accept('XB-ORDER', '记了会员折扣的订单应当通过', $sql$
+  INSERT INTO orders (id, order_no, user_id, kind, currency,
+                      subtotal_amount, discount_amount, member_discount_amount, proration_credit_amount, waived_amount,
+                      total_amount, balance_applied, payable_amount, expires_at)
+  VALUES ('00000000-0000-7000-8000-000000000e23', 'INV-MEMBER-001', '00000000-0000-7000-8000-000000000101',
+          'new', 'USD', 10.00, 1.50, 1.00, 0, 0, 8.50, 0, 8.50, now() + interval '30 minutes');
+$sql$);
+
+SELECT _reject('XB-ORDER', '会员折扣超过全部减免必须拒绝', $sql$
+  INSERT INTO orders (order_no, user_id, kind, currency,
+                      subtotal_amount, discount_amount, member_discount_amount, proration_credit_amount, waived_amount,
+                      total_amount, balance_applied, payable_amount, expires_at)
+  VALUES ('INV-MEMBER-002', '00000000-0000-7000-8000-000000000101',
+          'new', 'USD', 10.00, 1.00, 1.50, 0, 0, 9.00, 0, 9.00, now() + interval '30 minutes');
+$sql$, 'orders_member_discount_le_discount');
+
+SELECT _reject('XB-ORDER', '人工单不能带会员折扣', $sql$
+  INSERT INTO orders (order_no, user_id, kind, currency, created_by, manual_reason,
+                      subtotal_amount, discount_amount, member_discount_amount, proration_credit_amount, waived_amount,
+                      total_amount, balance_applied, payable_amount, expires_at)
+  VALUES ('INV-MEMBER-003', '00000000-0000-7000-8000-000000000101', 'new', 'USD',
+          '00000000-0000-7000-8000-000000000102', 'inv 人工开单原因',
+          10.00, 1.00, 1.00, 0, 0, 9.00, 0, 9.00, now() + interval '30 minutes');
+$sql$, 'orders_member_discount_portal_only');
+
+-- member_discounts：一人一行、减免百分比 1–100
+SELECT _accept('XB-ORDER', '合法的会员折扣应当通过', $sql$
+  INSERT INTO member_discounts (user_id, percent, updated_by)
+  VALUES ('00000000-0000-7000-8000-000000000101', 10, '00000000-0000-7000-8000-000000000102');
+$sql$);
+
+SELECT _reject('XB-ORDER', '会员折扣 0% 必须拒绝', $sql$
+  INSERT INTO member_discounts (user_id, percent) VALUES ('00000000-0000-7000-8000-000000000103', 0);
+$sql$, 'member_discounts_percent_check');
+
+SELECT _reject('XB-ORDER', '会员折扣超过 100% 必须拒绝', $sql$
+  INSERT INTO member_discounts (user_id, percent) VALUES ('00000000-0000-7000-8000-000000000103', 101);
+$sql$, 'member_discounts_percent_check');
+
+SELECT _reject('XB-ORDER', '同一用户第二行会员折扣必须拒绝', $sql$
+  INSERT INTO member_discounts (user_id, percent) VALUES ('00000000-0000-7000-8000-000000000101', 20);
+$sql$, 'member_discounts_pkey');
+
+-- coupon_intervals：取值是价格档的计费周期枚举
+SELECT _accept('XB-ORDER', '券限定月付应当通过', $sql$
+  INSERT INTO coupon_intervals (coupon_id, billing_interval)
+  VALUES ('00000000-0000-7000-8000-000000000c31', 'month');
+$sql$);
+
+SELECT _reject('XB-ORDER', '不认识的计费周期必须拒绝', $sql$
+  INSERT INTO coupon_intervals (coupon_id, billing_interval)
+  VALUES ('00000000-0000-7000-8000-000000000c31', 'decade');
+$sql$, 'coupon_intervals_billing_interval_check');
+
+-- traffic_reset_logs：原因加 order（用户购买）
+SELECT _accept('XB-ORDER', '用户购买的流量重置日志应当通过', $sql$
+  INSERT INTO traffic_reset_logs (subscription_id, user_id, metric, reason, consumed_before, note)
+  VALUES ('00000000-0000-7000-8000-000000000701', '00000000-0000-7000-8000-000000000101',
+          'traffic.bytes', 'order', 1024, 'INV-RESET-001');
+$sql$);
+
+SELECT _reject('XB-ORDER', '未知的重置原因必须拒绝', $sql$
+  INSERT INTO traffic_reset_logs (subscription_id, user_id, metric, reason, consumed_before)
+  VALUES ('00000000-0000-7000-8000-000000000701', '00000000-0000-7000-8000-000000000101',
+          'traffic.bytes', 'purchase', 1024);
+$sql$, 'traffic_reset_logs_reason_check');
 
 --------------------------------------------------------------------------------
 -- 汇总

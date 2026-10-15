@@ -36,6 +36,7 @@ func toRow(o model.Order) OrderRow {
 		Currency:          money.Currency(o.Currency),
 		Subtotal:          o.SubtotalAmount,
 		Discount:          o.DiscountAmount,
+		MemberDiscount:    o.MemberDiscountAmount,
 		ProrationCredit:   o.ProrationCreditAmount,
 		Waived:            o.WaivedAmount,
 		Total:             o.TotalAmount,
