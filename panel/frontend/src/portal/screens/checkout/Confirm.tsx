@@ -51,7 +51,9 @@ export function ConfirmForm({ target, h, plans, packs, requested }: { target: Ta
     setCouponState(code)
     navigate('/checkout', { query: { ...Object.fromEntries(query), coupon: code }, replace: true })
   }
-  const quote = useQuote(target.kind === 'change' && !target.subId ? null : target.kind === 'pack' && !target.subId ? null : quoteRequest(target, h.held, coupon))
+  // 流量重置永远按原价，不收券、不打会员折扣，用户 10-14 定
+  const couponAllowed = target.kind !== 'reset'
+  const quote = useQuote(target.kind === 'change' && !target.subId ? null : target.kind === 'pack' && !target.subId ? null : quoteRequest(target, h.held, couponAllowed ? coupon : null))
   // 换套餐还没选是哪一份：按套餐展开报价，给每个选项写今天付多少
   const chooser = useQuote(target.kind === 'change' && target.chooser ? { action: 'change', plan_id: target.planId } : null)
   usePageHead(titleOf(target, h, plans), target.kind === 'new' ? '/plans' : '/subs')
@@ -89,17 +91,19 @@ export function ConfirmForm({ target, h, plans, packs, requested }: { target: Ta
           requested={requested}
           refetch={() => quote.refetch()}
           coupon={
-            <CouponBox
-              open={couponOpen}
-              onOpen={() => setCouponOpen(true)}
-              input={couponInput}
-              onInput={setCouponInput}
-              applied={coupon}
-              onApply={(code) => setCoupon(code || null)}
-              rows={quote.data.quotes}
-            />
+            couponAllowed ? (
+              <CouponBox
+                open={couponOpen}
+                onOpen={() => setCouponOpen(true)}
+                input={couponInput}
+                onInput={setCouponInput}
+                applied={coupon}
+                onApply={(code) => setCoupon(code || null)}
+                rows={quote.data.quotes}
+              />
+            ) : null
           }
-          couponCode={coupon}
+          couponCode={couponAllowed ? coupon : null}
         />
       )}
     </div>

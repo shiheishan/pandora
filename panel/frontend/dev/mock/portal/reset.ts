@@ -49,15 +49,15 @@ export const reset: MockModule = {
           const planName = plan?.name ?? sub.plan_name
           const rows = quoteRows(state, { action: 'reset', subscription_id: sub.id, coupon_code: body.coupon_code }, quoteTime(body), true)
           const { row, balance } = settle(state, rows, null, body)
+          // 重置单永远按原价：不收券、不打会员折扣
           const order = placeOrder(state, {
             kind: 'traffic_reset',
             subtotal: row.subtotal,
-            discount: row.discount + row.member_discount,
-            memberDiscount: row.member_discount,
+            discount: 0,
+            memberDiscount: 0,
             total: row.total,
             applied: balance.applied,
             waived: balance.waived,
-            couponCode: row.coupon?.code,
             planName,
             itemName: `流量重置 · ${planName}`,
             subscriptionId: sub.id,

@@ -115,7 +115,7 @@ describe('mock api · portal traffic reset & member discount', () => {
     expect(usedAfter).toBe(0)
   })
 
-  it('会员折扣：setMemberPercent(state, 10) 后报价符合恒等式与会员率', async () => {
+  it('会员折扣：重置报价不打折，新购照打', async () => {
     const state = portalState(userId)
     setMemberPercent(state, 10)
 
@@ -123,10 +123,9 @@ describe('mock api · portal traffic reset & member discount', () => {
     const q = await quote({ action: 'reset', subscription_id: sub!.id })
     const r = q.quotes[0]!
     expect(r.subtotal).toBe(2500)
-    expect(r.member_percent).toBe(10)
-    expect(r.member_discount).toBe(250) // 2500 * 10% = 250
-    expect(r.total).toBe(2250) // 2500 - 250 = 2250
-    expect(r.total).toBe(Math.max(r.subtotal - r.discount - r.member_discount - r.credit, 0))
+    expect(r.member_percent).toBe(0)
+    expect(r.member_discount).toBe(0)
+    expect(r.total).toBe(2500)
 
     // 新购报价也同样计算会员折扣
     const qNew = await quote({ action: 'new', plan_id: STD_PLAN, new_copy: true })
@@ -134,5 +133,21 @@ describe('mock api · portal traffic reset & member discount', () => {
     expect(rNew.member_percent).toBe(10)
     expect(rNew.member_discount).toBe(Math.floor((rNew.subtotal * 10) / 100))
     expect(rNew.total).toBe(Math.max(rNew.subtotal - rNew.discount - rNew.member_discount - rNew.credit, 0))
+  })
+
+  it('重置不收券：报价落 coupon_error，建单 422', async () => {
+    const [sub] = (await subs()).subscriptions
+    const res = await call('POST', '/v1/me/checkout/quote', { action: 'reset', subscription_id: sub!.id, coupon_code: 'SAVE5' })
+    expect(res.status).toBe(200)
+    const q = quoteSchema.parse(await res.json())
+    expect(q.quotes[0]!.coupon_error).toBe('流量重置不能使用优惠码')
+    expect(q.quotes[0]!.discount).toBe(0)
+    expect(q.quotes[0]!.total).toBe(2500)
+
+    const createRes = await call('POST', `/v1/me/subscriptions/${sub!.id}/traffic-reset`, { coupon_code: 'SAVE5' }, true)
+    expect(createRes.status).toBe(422)
+    const err = ((await createRes.json()) as { error: { code: string; message: string } }).error
+    expect(err.code).toBe('validation_failed')
+    expect(err.message).toBe('流量重置不能使用优惠码')
   })
 })

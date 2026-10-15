@@ -34,7 +34,7 @@ export function ResetOffer({ sub }: { sub: Subscription }) {
 
   const limit = pickTrafficQuota(sub.quotas)?.limit
   const limitText = limit ? gb(limit) : '限额'
-  const btnText = row.total === 0 ? '免费重置' : `重置 · ${money(row.total)}`
+  const btnText = `重置 · ${money(row.total)}`
 
   return (
     <div className={css.optRow}>

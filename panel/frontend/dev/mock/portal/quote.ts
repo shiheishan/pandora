@@ -80,6 +80,8 @@ interface RowSpec {
   /** 新周期起点；null = 没有周期（流量包） */
   start: number | null
   credit: { credit: number; detail: CreditDetail } | null
+  /** 流量重置等业务：不算券、不算会员折扣 */
+  noDiscount?: boolean
 }
 
 /** strictCoupon：建单时优惠码不能用就整单拒绝；报价时写进 coupon_error、不让报价失败 */
@@ -87,13 +89,22 @@ function row(state: PortalState, spec: RowSpec, coupon: unknown, strictCoupon: b
   const subtotal = subtotalOverride !== undefined ? subtotalOverride : spec.pack ? spec.pack.unit_amount : spec.price!.unit_amount
   let discount = 0
   let couponError: string | null = null
-  try {
-    discount = couponCheck(coupon, subtotal, spec.price?.id ?? null)
-  } catch (e) {
-    if (strictCoupon || !(e instanceof BillingError)) throw e
-    couponError = e.message
+  if (spec.noDiscount) {
+    if (coupon !== undefined && coupon !== null && coupon !== '') {
+      if (strictCoupon) {
+        throw new BillingError(422, 'validation_failed', '流量重置不能使用优惠码')
+      }
+      couponError = '流量重置不能使用优惠码'
+    }
+  } else {
+    try {
+      discount = couponCheck(coupon, subtotal, spec.price?.id ?? null)
+    } catch (e) {
+      if (strictCoupon || !(e instanceof BillingError)) throw e
+      couponError = e.message
+    }
   }
-  const pct = memberPercentOf(state)
+  const pct = spec.noDiscount ? 0 : memberPercentOf(state)
   const member = Math.min(Math.floor((subtotal * pct) / 100), Math.max(subtotal - discount, 0))
   const member_percent = member > 0 ? pct : 0
   const credit = spec.credit?.credit ?? 0
@@ -206,7 +217,7 @@ export function quoteRows(state: PortalState, req: QuoteInput, at: number, stric
       assertNoPendingReset(state, sub.id)
       const subtotal = RESET_PRICES[sub.plan_id]!
       const plan = findPlan(sub.plan_id) ?? null
-      return [row(state, { sub, plan, price: null, pack: null, start: null, credit: null }, coupon, strictCoupon, subtotal)]
+      return [row(state, { sub, plan, price: null, pack: null, start: null, credit: null, noDiscount: true }, coupon, strictCoupon, subtotal)]
     }
     default:
       throw new BillingError(422, 'validation_failed', '参数不合法', { action: '只能是 renew / change / new / pack / reset' })
