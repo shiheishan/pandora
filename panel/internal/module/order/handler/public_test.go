@@ -186,7 +186,7 @@ func TestQuoteShape(t *testing.T) {
 					WithoutBalance: service.BalancePlan{Payable: money.FromCents(3000)},
 					PeriodStart:    &start, PeriodEnd: &end},
 				{PlanID: &planID, PriceID: &priceID, Currency: money.CNY, Interval: "year", IntervalCount: 1,
-					Subtotal: money.FromCents(30000), Discount: money.FromCents(500), Total: money.FromCents(29500), CouponCode: &code},
+					Subtotal: money.FromCents(30000), Discount: money.FromCents(500), MemberDiscount: money.FromCents(3000), MemberPercent: 10, Total: money.FromCents(26500), CouponCode: &code},
 			},
 		}, nil
 	}}
@@ -206,12 +206,18 @@ func TestQuoteShape(t *testing.T) {
 	if num(t, q0, "subtotal") != 3000 || num(t, sub(t, q0, "with_balance"), "applied") != 800 || num(t, sub(t, q0, "with_balance"), "payable") != 2200 {
 		t.Fatalf("第一条报价 %v", q0)
 	}
+	if num(t, q0, "member_discount") != 0 || num(t, q0, "member_percent") != 0 {
+		t.Fatalf("第一条报价会员折扣字段 %v", q0)
+	}
 	if q0["period_start"] == nil || q0["period_end"] == nil {
 		t.Fatalf("周期应有值 %v", q0)
 	}
 	q1 := quotes[1].(map[string]any)
 	if sub(t, q1, "coupon")["code"] != code || num(t, q1, "discount") != 500 {
 		t.Fatalf("第二条报价 %v", q1)
+	}
+	if num(t, q1, "member_discount") != 3000 || num(t, q1, "member_percent") != 10 {
+		t.Fatalf("第二条报价会员折扣字段 %v", q1)
 	}
 	mustContain(t, rec.switches, SwitchCheckout)
 	if len(rec.scopes) != 0 {
