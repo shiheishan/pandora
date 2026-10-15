@@ -11,24 +11,34 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// 注销相关假端口。
+// 注销相关假端口。seq 非空时各端口把调用名按先后记进同一个切片，用来断言调用顺序。
 type fakeCloser struct {
 	n     int
 	calls []uuid.UUID
+	seq   *[]string
+}
+
+func record(seq *[]string, name string) {
+	if seq != nil {
+		*seq = append(*seq, name)
+	}
 }
 
 func (f *fakeCloser) CloseUserSubscriptions(_ context.Context, userID uuid.UUID, _ string) (int, error) {
 	f.calls = append(f.calls, userID)
+	record(f.seq, "close")
 	return f.n, nil
 }
 
 type fakeCanceller struct {
 	n     int
 	calls []uuid.UUID
+	seq   *[]string
 }
 
 func (f *fakeCanceller) CancelUserPending(_ context.Context, userID uuid.UUID) (int, error) {
 	f.calls = append(f.calls, userID)
+	record(f.seq, "cancel")
 	return f.n, nil
 }
 
@@ -37,33 +47,39 @@ type fakeVoider struct {
 	res   CommissionVoid
 	locks []uuid.UUID
 	calls []uuid.UUID
+	seq   *[]string
 }
 
 func (f *fakeVoider) LockForDeletion(_ context.Context, userID uuid.UUID) error {
 	f.locks = append(f.locks, userID)
+	record(f.seq, "lock")
 	return nil
 }
 
 func (f *fakeVoider) VoidForDeletedUser(_ context.Context, userID uuid.UUID) (CommissionVoid, error) {
 	f.calls = append(f.calls, userID)
+	record(f.seq, "void")
 	return f.res, nil
 }
 
 type fakeUnbinder struct {
 	calls []uuid.UUID
+	seq   *[]string
 }
 
 func (f *fakeUnbinder) UnbindTelegram(_ context.Context, userID uuid.UUID) error {
 	f.calls = append(f.calls, userID)
+	record(f.seq, "unbind")
 	return errs.New(errs.NotFound)
 }
 
 func TestPGDeleteUser(t *testing.T) {
 	e, ctx := newEnv(t)
-	closer := &fakeCloser{n: 3}
-	canceller := &fakeCanceller{n: 2}
-	unbind := &fakeUnbinder{}
-	voider := &fakeVoider{res: CommissionVoid{
+	var seq []string
+	closer := &fakeCloser{n: 3, seq: &seq}
+	canceller := &fakeCanceller{n: 2, seq: &seq}
+	unbind := &fakeUnbinder{seq: &seq}
+	voider := &fakeVoider{seq: &seq, res: CommissionVoid{
 		VoidedEntries:       2,
 		VoidedPending:       map[string]decimal.Decimal{"CNY": decimal.RequireFromString("7.5")},
 		Forfeited:           map[string]decimal.Decimal{"CNY": decimal.RequireFromString("10")},
@@ -119,6 +135,10 @@ func TestPGDeleteUser(t *testing.T) {
 	}
 	if len(voider.locks) != 1 || voider.locks[0] != target.ID || len(voider.calls) != 1 || voider.calls[0] != target.ID {
 		t.Fatalf("作废佣金 locks=%v calls=%v", voider.locks, voider.calls)
+	}
+	// 锁序：先拿佣金咨询锁，再取消待付单、关订阅，作废佣金要在取消待付单（退回余额冻结）之后，最后解绑 Telegram
+	if got := strings.Join(seq, ","); got != "lock,cancel,close,void,unbind" {
+		t.Fatalf("注销调用顺序 %s，应为 lock,cancel,close,void,unbind", got)
 	}
 	if e.auditCount(ctx, ActionDeleted, target.ID) != 1 {
 		t.Fatal("audit deleted")
