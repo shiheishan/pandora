@@ -78,6 +78,7 @@ func newTrafficEnv(t *testing.T) (*trafficEnv, context.Context) {
 	ch := &fakeCharger{subs: map[int64]uuid.UUID{}}
 	svc.UseTrafficCharger(ch)
 	svc.UseKeys(testDeviceKeys{})
+	svc.UseSiteSettings(fakeSite{tz: "UTC"})
 	fixed := time.Now().UTC().Truncate(time.Hour).Add(30 * time.Minute)
 	svc.now = func() time.Time { return fixed }
 	e := &trafficEnv{

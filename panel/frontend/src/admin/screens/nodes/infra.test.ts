@@ -103,6 +103,11 @@ const node = (over: Partial<Record<string, unknown>>): NodeRow =>
     mem_percent: null,
     metrics_at: null,
     granted_plans: null,
+    tags: [],
+    traffic: { limit_bytes: null, reset_day: null, used_bytes: 0, reset_at: '2026-10-01T00:00:00Z', exceeded_at: null },
+    traffic_rate_schedule: [],
+    relay_count: 0,
+    ech_enabled: false,
     ...over,
   })
 

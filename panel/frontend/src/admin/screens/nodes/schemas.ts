@@ -15,6 +15,14 @@ const strs = list(z.string())
 const SERVING_STATUSES = ['draft', 'active', 'disabled', 'retired'] as const
 export type ServingStatus = (typeof SERVING_STATUSES)[number]
 
+// 节点补齐 Xboard（迁移 00045，node/handler 的 dto_xb_nodes.go）：时段倍率一段、本周期流量
+const rateRangeSchema = z.object({ start: z.string(), end: z.string(), rate: z.number() })
+export type RateRange = z.output<typeof rateRangeSchema>
+/** limit_bytes / reset_day 为 null 是不限、不自动重置；exceeded_at 非空 = 本周期已超限、已停止下发 */
+const nodeTrafficSchema = z.object({ limit_bytes: z.number().nullable(), reset_day: z.number().nullable(), used_bytes: z.number(), reset_at: iso, exceeded_at: iso.nullable() })
+export type NodeTraffic = z.output<typeof nodeTrafficSchema>
+const xbNodeFields = { tags: strs, traffic: nodeTrafficSchema, traffic_rate_schedule: list(rateRangeSchema) }
+
 export const nodeRowSchema = z.object({
   id: uuid,
   node_no: z.number(),
@@ -62,6 +70,9 @@ export const nodeRowSchema = z.object({
   runtime_state_at: iso.nullish().transform((v) => v ?? null),
   runtime_reason_node: z.string().nullish().transform((v) => v ?? null),
   delivery_degraded: z.boolean().catch(false),
+  ...xbNodeFields,
+  relay_count: z.number(),
+  ech_enabled: z.boolean(),
 })
 export const nodesResponse = z.object({ nodes: list(nodeRowSchema), total: z.number() })
 export type NodeRow = z.output<typeof nodeRowSchema>
@@ -100,6 +111,7 @@ export const adminNodeSchema = z.object({
   sort_order: z.number(),
   created_at: iso,
   updated_at: iso,
+  ...xbNodeFields,
   // 上线（R108 activate）与建、改、复制、迁移（保留端口提示）会带：Go 是 omitempty，没有提示时
   // 不出现这个键，出现就至少一条（R113）
   warnings: z.array(z.string()).min(1).optional(),
@@ -329,3 +341,38 @@ export const routeGroupUpdated = z.object({ group: routeGroupSchema, affected_no
 export const groupRoutingSaved = z.object({ ok: z.literal(true), row_version: z.number(), affected_nodes: z.number() })
 export const routeGroupDeleted = z.object({ deleted: z.literal(true), affected_nodes: z.number() })
 export const deletedResponse = z.object({ deleted: z.literal(true) })
+
+// ---------------------------------------------------------------------------
+// 中转、ECH（迁移 00045，node/handler 的 dto_xb_nodes.go）
+// ---------------------------------------------------------------------------
+/** 中转（Xboard parent_id）：只有自己的名称、地址、端口与可选 SNI / Host，其余全继承父节点；不占端口、不下发配置 */
+export const relaySchema = z.object({
+  id: uuid,
+  parent_node_id: uuid,
+  name: z.string(),
+  server_host: z.string(),
+  server_port: z.number(),
+  sni: z.string().nullable(),
+  host_header: z.string().nullable(),
+  enabled: z.boolean(),
+  sort_order: z.number(),
+  row_version: z.number(),
+  created_at: iso,
+  updated_at: iso,
+})
+export type Relay = z.output<typeof relaySchema>
+/** 中转列表；sni_hint 是父节点 TLS 配置给中转 SNI 的提示（REALITY 只能填 server_names 之一、IP 地址父节点要填 SNI），空串表示没有 */
+export const relaysResponse = z.object({ relays: z.array(relaySchema), sni_hint: z.string() })
+
+/** 节点 ECH 状态：config_list 是当前钥的 ECHConfigList（标准 base64，没开为 null）；retired_keys 是过渡期内还在下发的旧钥数 */
+export const echSchema = z.object({
+  supported: z.boolean(),
+  unsupported_reason: z.string(),
+  enabled: z.boolean(),
+  public_name: z.string(),
+  config_list: z.string().nullable(),
+  config_pem: z.string(),
+  created_at: iso.nullable(),
+  retired_keys: z.number(),
+})
+export type NodeECH = z.output<typeof echSchema>

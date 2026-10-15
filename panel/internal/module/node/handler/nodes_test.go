@@ -115,6 +115,7 @@ var (
 		"traffic_bytes_24h", "cpu_percent", "mem_percent", "metrics_at", "granted_plans",
 		"effective_state", "last_apply_failure",
 		"runtime_status", "runtime_reason", "runtime_state_at", "runtime_reason_node", "delivery_degraded",
+		"tags", "traffic", "traffic_rate_schedule", "relay_count", "ech_enabled",
 	}
 	inventoryNodeDetailExtra = []string{
 		"traffic_rate", "protocol_config", "protocol_schema_version", "config_validated_at",
@@ -123,6 +124,7 @@ var (
 		"id", "row_version", "name", "server_id", "pool_id", "serving_status", "node_type",
 		"server_host", "server_port", "traffic_rate", "display_name", "country_code", "protocol_config",
 		"protocol_schema_version", "config_validated_at", "sort_order", "created_at", "updated_at",
+		"tags", "traffic", "traffic_rate_schedule",
 	}
 	inventoryServerKeys = []string{
 		"id", "name", "status", "status_reason", "row_version", "region", "hostname", "public_ipv4", "public_ipv6",

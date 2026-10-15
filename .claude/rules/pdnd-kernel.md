@@ -20,6 +20,7 @@ paths:
 
 ## 认证失败的回落
 
+- ECH 只经 `applyInboundECH`（`inbound_tls_ech.go`）装进 base `tls.Config`，在 `loadInboundTLSConfig` 返回前与 AnyTLS 构造 base 时各调一次；之后 Web ALPN 派生配置 `Clone` 会带上它。不要在握手路径上改 `EncryptedClientHelloKeys`。REALITY（`internal/reality/**`）与 QUIC 类入站不接 ECH。
 - Trojan / AnyTLS / Naive 认证不过、或不是本协议客户端，一律交给 `probe_fallback*.go`：配了 `fallback` 由回落站点应答，没配是中性 404；不回 407、不带 realm。
 - HTTP 承载的回落里，CONNECT 不走 `httputil.ReverseProxy`：Go 1.26.9 起它对 CONNECT 一律走 ErrorHandler（CVE-2026-56866），回成节点合成的 502 就是指纹。改由 `probeFallbackConnect` 发 `CONNECT /`：只转请求头、不带请求体（探测方在 CONNECT 后面带的字节一个也不进回落站点），专用 Transport 关 keep-alive，回落站点回 2xx 也只转这一个响应、不建隧道。守卫 `probe_resistance_connect_test.go`（h2 与 http/1.1 都带走私字节）。
 - 本机 Go 1.27.1 早于这批修复（h1 服务端 CONNECT 后不关连接，会接着服务流水线请求）：跑这组测试用 `GOTOOLCHAIN=go1.26.9`，与 CI 同版本。

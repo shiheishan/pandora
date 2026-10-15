@@ -2,6 +2,7 @@ package repo
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -15,6 +16,15 @@ import (
 // （apply_failed_*，成功应用更新的版本后清空）。降级节点不排除、只在线路分层里排到后面（service.preferFresh）。
 const NodeDegradedCond = `(coalesce(n.runtime_status IN ('degraded', 'down'), false) OR n.apply_failed_sha256 IS NOT NULL)`
 
+// DeliveryRelay 是一条已启用的中转线路定义。
+type DeliveryRelay struct {
+	Name       string  `json:"name"`
+	Host       string  `json:"host"`
+	Port       int     `json:"port"`
+	SNI        *string `json:"sni"`
+	HostHeader *string `json:"host_header"`
+}
+
 // DeliveryNodeRow 是一条候选线路：池里满足 DeliverableNodeCond 的节点。
 type DeliveryNodeRow struct {
 	ID     uuid.UUID
@@ -27,6 +37,12 @@ type DeliveryNodeRow struct {
 	// ProtocolConfig 是库里的存储形状（JSON 对象文本）
 	ProtocolConfig string
 	TrafficRate    decimal.Decimal
+	// RateSchedule 是时段倍率（jsonb 数组文本）
+	RateSchedule string
+	// ECHConfigList 是当前有效 ECH 钥的公开配置列表字节（nil 表示未开）
+	ECHConfigList []byte
+	// Relays 是已启用的中转列表
+	Relays []DeliveryRelay
 	// HeartbeatFresh 是服务器心跳不早于 freshSince
 	HeartbeatFresh bool
 	// Degraded 按 NodeDegradedCond
@@ -44,6 +60,9 @@ type deliveryNodeScan struct {
 	Port           int             `gorm:"column:port"`
 	ProtocolConfig string          `gorm:"column:protocol_config"`
 	TrafficRate    decimal.Decimal `gorm:"column:traffic_rate"`
+	RateSchedule   string          `gorm:"column:rate_schedule"`
+	ECHConfigList  []byte          `gorm:"column:ech_config_list"`
+	Relays         string          `gorm:"column:relays"`
 	HeartbeatFresh bool            `gorm:"column:heartbeat_fresh"`
 	Degraded       bool            `gorm:"column:degraded"`
 	PoolGroupIDs   string          `gorm:"column:pool_group_ids"`
@@ -51,6 +70,10 @@ type deliveryNodeScan struct {
 
 // DeliveryNodes 一条 SQL 取这些池里能发给用户的节点（DeliverableNodeCond），带分层事实与池的用户组名单，
 // 按 sort_order、node_no 排序。节点按 nodes_pool_idx 取，池的名单按 node_pool_user_groups 主键前缀取。
+// SQL 中附带：
+// 1. rate_schedule：时段倍率（jsonb 文本）
+// 2. ech_config_list：走 node_ech_keys_current_key 索引取得的当前有效公开 ECH 配置列表字节
+// 3. relays：走 node_relays_parent_idx 索引聚合的已启用中转线路 JSON 数组
 func (r *Repo) DeliveryNodes(ctx context.Context, poolIDs []uuid.UUID, freshSince time.Time) ([]DeliveryNodeRow, error) {
 	if len(poolIDs) == 0 {
 		return []DeliveryNodeRow{}, nil
@@ -61,6 +84,12 @@ func (r *Repo) DeliveryNodes(ctx context.Context, poolIDs []uuid.UUID, freshSinc
 		       coalesce(nullif(n.display_name, ''), n.name) AS name,
 		       n.node_type, n.server_host AS host, n.server_port AS port,
 		       n.protocol_config, n.traffic_rate,
+		       n.traffic_rate_schedule::text AS rate_schedule,
+		       (SELECT k.config_list FROM node_ech_keys k WHERE k.node_id = n.id AND k.superseded_at IS NULL) AS ech_config_list,
+		       coalesce((SELECT jsonb_agg(jsonb_build_object('name', r.name, 'host', r.server_host, 'port', r.server_port,
+		                                                     'sni', r.sni, 'host_header', r.host_header)
+		                                 ORDER BY r.sort_order, r.id)
+		                  FROM node_relays r WHERE r.parent_node_id = n.id AND r.enabled), '[]'::jsonb)::text AS relays,
 		       coalesce(s.last_heartbeat_at >= ?, false) AS heartbeat_fresh,
 		       `+NodeDegradedCond+` AS degraded,
 		       array_to_string(ARRAY(SELECT g.user_group_id::text FROM node_pool_user_groups g
@@ -78,9 +107,16 @@ func (r *Repo) DeliveryNodes(ctx context.Context, poolIDs []uuid.UUID, freshSinc
 		if err != nil {
 			return nil, err
 		}
+		var relays []DeliveryRelay
+		if row.Relays != "" {
+			if err := json.Unmarshal([]byte(row.Relays), &relays); err != nil {
+				return nil, fmt.Errorf("node: 中转列表解析失败: %w", err)
+			}
+		}
 		out[i] = DeliveryNodeRow{
 			ID: row.ID, PoolID: row.PoolID, Name: row.Name, NodeType: row.NodeType,
 			Host: row.Host, Port: row.Port, ProtocolConfig: row.ProtocolConfig, TrafficRate: row.TrafficRate,
+			RateSchedule: row.RateSchedule, ECHConfigList: row.ECHConfigList, Relays: relays,
 			HeartbeatFresh: row.HeartbeatFresh, Degraded: row.Degraded, PoolGroupIDs: groups,
 		}
 	}

@@ -31,14 +31,15 @@ export function nodeState(n: Pick<NodeRow, 'serving_status' | 'stale'>): NodeSta
 
 /**
  * 前端筛选与搜索：节点总数不超过一页（1000）时在本地做；超过时同一组条件交给服务端
- * （GET v1/nodes 的 state 与 q，node/repo 的 nodeListFilterSQL 与这里同一映射、同一组字段）。
+ * （GET v1/nodes 的 state 与 q、tag，node/repo 的 nodeListFilterSQL 与这里同一映射、同一组字段）。
  * 「全部」不含已退役；搜名称、展示名、服务器、国家、协议、地址、编号
  */
-export function filterNodes(rows: readonly NodeRow[], filter: NodeFilter, query: string): NodeRow[] {
+export function filterNodes(rows: readonly NodeRow[], filter: NodeFilter, query: string, tag = ''): NodeRow[] {
   const q = query.trim().toLowerCase()
   return rows.filter((n) => {
     const state = nodeState(n).filter
     if (filter === 'all' ? state === 'retired' : state !== filter) return false
+    if (tag && !n.tags.includes(tag)) return false
     if (!q) return true
     const hay = [n.name, n.display_name, n.server_name, n.country_code, n.node_type, n.server_host, String(n.node_no)].filter(Boolean).join(' ').toLowerCase()
     return hay.includes(q)
@@ -46,8 +47,33 @@ export function filterNodes(rows: readonly NodeRow[], filter: NodeFilter, query:
 }
 
 /**
+ * 列表所有行的标签去重（区分大小写，与筛选口径一致）后按中文习惯排序
+ */
+export function tagOptions(rows: readonly NodeRow[]): string[] {
+  const set = new Set<string>()
+  for (const r of rows) {
+    for (const t of r.tags) {
+      set.add(t)
+    }
+  }
+  return Array.from(set).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
+}
+
+/**
+ * 构造批量修改节点的请求体：items 带 row_version，reason 去首尾空白
+ */
+export function batchEditBody(rows: readonly NodeRow[], set: Record<string, unknown>, reason: string) {
+  return {
+    items: rows.map((n) => ({ id: n.id, row_version: n.row_version })),
+    set,
+    reason: reason.trim(),
+  }
+}
+
+/**
  * 列表一行显示用到的字段：NodeLine 只拿这些，memo 也只比这些——心跳时刻、版本号等
- * 不在行上显示的字段变了，不重渲染这一行。行上新显示一个字段就加进这里（类型会逼着加）
+ * 不在行上显示的字段变了，不重渲染这一行。行上新显示一个字段就加进这里（类型会逼着加）。
+ * tags 数组和 traffic 对象靠 react-query 的结构共享，没变时引用不变，sameNodeLine 的 Object.is 照样成立
  */
 export const NODE_LINE_FIELDS = [
   'id',
@@ -65,6 +91,10 @@ export const NODE_LINE_FIELDS = [
   'stale',
   'delivered_to_users',
   'delivery_note',
+  'tags',
+  'traffic',
+  'relay_count',
+  'ech_enabled',
 ] as const satisfies ReadonlyArray<keyof NodeRow>
 export type NodeLineData = Pick<NodeRow, (typeof NODE_LINE_FIELDS)[number]>
 

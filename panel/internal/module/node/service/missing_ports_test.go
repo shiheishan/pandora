@@ -22,6 +22,8 @@ func TestMissingPortsZeroValueListsAllRequired(t *testing.T) {
 		"DeviceUsers",
 		"DevicePlans",
 		"Realtime",
+		"SiteSettings",
+		"ECHSealer",
 	}
 	got := s.MissingPorts()
 	if !reflect.DeepEqual(got, want) {

@@ -23,4 +23,5 @@ paths:
 ## 其它
 - 前端假后端的 `panel/frontend/dev/mock/admin/node-schemas.ts` 是 schema 响应的原样导出：改了 schema 或 handler 的 DTO，`TestMockNodeSchemasMatchGo`（node/handler）会红，按它的提示加 `-update` 重导。
 - 表单说明在 schema `Hints`（`schema_hints.go`）；`policy_test.go` 的 `TestSchemaEnumsMatchPolicyLists` 要求 hint 指向真实字段。
+- ECH（`protocol/ech.go`）：`GenerateECHKey` 出的 ECHConfigList 与 Xboard 同格式（版本 0xfe0d、X25519、套件 (1,1)(1,3)、max_name_len 0、扩展为空，只放一个 ECHConfig）；`ECHCapable` / `ECHUnsupportedReason` 按**翻译后的内核配置**判（vless/vmess/trojan 要 `tls == true` 且非 REALITY、network 非 xhttp-h3/mkcp；anytls 要有证书；naive 要 TLS），节点端 `kernel/inbound_tls_ech.go` 的取值范围与它一致。
 - `country_code` 只在管理端节点 DTO 输出（`panel/internal/module/node/handler/dto_inventory_nodes.go`）；门户与订阅（`panel/internal/module/subscription/`）的任何接口都不得输出（产品「保留规则 3」）。

@@ -58,6 +58,7 @@ func newDeliveryEnv(t *testing.T) (*deliveryEnv, context.Context) {
 	cat := catalogsvc.New(catalogrepo.New(d), txm, auditSvc, nil)
 	subs := subsvc.New(subrepo.New(d), txm, auditSvc, nil, nil, nil, nil)
 	ids := identitysvc.New(identityrepo.New(d), txm, nil, auditSvc, keys, rdb, ratelimit.New(rdb), &config.Config{})
+	svc.UseSiteSettings(fakeSite{tz: "UTC"})
 	svc.UseCatalog(cat)
 	svc.UseDelivery(subs, ids, cat)
 	e := &deliveryEnv{

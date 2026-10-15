@@ -104,6 +104,10 @@ func (s *Service) CopyNode(ctx context.Context, id uuid.UUID, in NodeCopyInput) 
 			ConfigValidatedAt:     before.ConfigValidatedAt,
 			TrafficRate:           before.TrafficRate,
 			SortOrder:             sortOrder,
+			Tags:                  before.Tags,
+			TrafficLimitBytes:     before.TrafficLimitBytes,
+			TrafficResetDay:       before.TrafficResetDay,
+			TrafficRateSchedule:   before.TrafficRateSchedule,
 		}
 		if n.ProtocolConfig == "" {
 			n.ProtocolConfig = "{}"

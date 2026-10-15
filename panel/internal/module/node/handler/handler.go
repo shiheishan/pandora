@@ -39,4 +39,5 @@ func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	h.registerMetrics(v1, k)
 	h.registerRouting(v1, k)
 	h.registerDevices(v1, k)
+	h.registerXB(v1, k)
 }

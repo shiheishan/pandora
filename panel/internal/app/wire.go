@@ -258,6 +258,9 @@ func buildServices(r *runtime) (*services, error) {
 	// 门户「我的套餐」的在线设备数经 node 取
 	nodeSvc.UseDevices(settingsSvc, subSvc, identitySvc, catalogSvc)
 	subSvc.UseOnlineDeviceCounter(nodeSvc)
+	// 节点流量周期与时段倍率按站点时区算；ECH 私钥经封存密钥封存
+	nodeSvc.UseSiteSettings(settingsSvc)
+	nodeSvc.UseECHSealer(sealer)
 	// 渠道到账与线下收款经 order 结算（没注册时入账一律失败）
 	paymentSvc.UseSettler(orderSvc)
 	// 订单结算时按推荐关系计提佣金（同一结算事务）；同源（审计里共用来源 IP）的佣金转人工复核

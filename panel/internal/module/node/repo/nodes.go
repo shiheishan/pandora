@@ -42,6 +42,8 @@ const nodeColumns = `n.id, n.node_no, n.server_id, n.pool_id, n.name, n.display_
  n.serving_status, n.node_type, n.server_host, n.server_port, n.listen_l4,
  n.protocol_config::text AS protocol_config, n.protocol_schema_version, n.config_validated_at,
  n.traffic_rate, n.sort_order, n.row_version,
+ n.tags::text AS tags, n.traffic_limit_bytes, n.traffic_reset_day, n.traffic_used_bytes, n.traffic_reset_at,
+ n.traffic_exceeded_at, n.traffic_rate_schedule::text AS traffic_rate_schedule,
  n.runtime_status, n.runtime_reason, n.runtime_reason_node_id, n.runtime_state_at,
  n.applied_config_sha256, n.applied_config_at,
  n.apply_failed_sha256, n.apply_failed_reason, n.apply_failed_detail, n.apply_failed_at,
@@ -94,6 +96,16 @@ type nodeInserted struct {
 	NodeNo    int64     `gorm:"column:node_no"`
 	CreatedAt time.Time `gorm:"column:created_at"`
 	UpdatedAt time.Time `gorm:"column:updated_at"`
+	// TrafficResetAt 是库里 now() 写的用量起算时刻
+	TrafficResetAt time.Time `gorm:"column:traffic_reset_at"`
+}
+
+// jsonArrayText 把 jsonb 数组列的文本缺省成 "[]"（model 里空串表示没填）。
+func jsonArrayText(s string) string {
+	if s == "" {
+		return "[]"
+	}
+	return s
 }
 
 // InsertNode 插入一个节点，回填 ID、NodeNo、CreatedAt、UpdatedAt。
@@ -102,32 +114,40 @@ func (r *Repo) InsertNode(ctx context.Context, n *model.Node) error {
 	err := r.d.Conn(ctx).Raw(`INSERT INTO nodes
 		(server_id, pool_id, name, display_name, country_code, serving_status, node_type, server_host,
 		 server_port, listen_l4, protocol_config, protocol_schema_version, config_validated_at,
-		 traffic_rate, sort_order)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), ?, ?, ?, ?)
-		RETURNING id, node_no, created_at, updated_at`,
+		 traffic_rate, sort_order, tags, traffic_limit_bytes, traffic_reset_day, traffic_rate_schedule)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), ?, ?, ?, ?, CAST(? AS jsonb), ?, ?, CAST(? AS jsonb))
+		RETURNING id, node_no, created_at, updated_at, traffic_reset_at`,
 		n.ServerID, n.PoolID, n.Name, n.DisplayName, n.CountryCode, n.ServingStatus, n.NodeType, n.ServerHost,
 		n.ServerPort, n.ListenL4, n.ProtocolConfig, n.ProtocolSchemaVersion, n.ConfigValidatedAt,
-		n.TrafficRate, n.SortOrder,
+		n.TrafficRate, n.SortOrder, jsonArrayText(n.Tags), n.TrafficLimitBytes, n.TrafficResetDay, jsonArrayText(n.TrafficRateSchedule),
 	).Scan(&got).Error
 	if err != nil {
 		return inventoryErr(err)
 	}
 	n.ID, n.NodeNo, n.CreatedAt, n.UpdatedAt = got.ID, got.NodeNo, got.CreatedAt, got.UpdatedAt
+	n.TrafficResetAt = got.TrafficResetAt
 	n.RowVersion = 1
 	return nil
 }
 
 // UpdateNodeSpec 整体改写节点的可编辑列并把 row_version 加一；只改 row_version = expected 的未删除行。
+// traffic_exceeded_at 由调用方按已锁住的行算好（有上限且已用 >= 上限时非空，否则为空，库里 nodes_traffic_exceeded_shape 兜底）；
+// traffic_used_bytes 不在这里改（流量入账与重置各有专门的写）；traffic_reset_at 只会被推后：写 GREATEST(原值, n.TrafficResetAt)，
+// 设或改重置日时调用方传本周期起点，其余情况传读出的原值（或零值），都不会把它往前拨。
 func (r *Repo) UpdateNodeSpec(ctx context.Context, id uuid.UUID, expected int64, n *model.Node) (bool, error) {
 	res := r.d.Conn(ctx).Exec(`UPDATE nodes SET
 		name = ?, display_name = ?, country_code = ?, pool_id = ?, node_type = ?, server_host = ?,
 		server_port = ?, listen_l4 = ?, protocol_config = CAST(? AS jsonb),
 		protocol_schema_version = ?, config_validated_at = ?, traffic_rate = ?,
+		tags = CAST(? AS jsonb), traffic_limit_bytes = ?, traffic_reset_day = ?, traffic_exceeded_at = ?,
+		traffic_rate_schedule = CAST(? AS jsonb), traffic_reset_at = GREATEST(traffic_reset_at, ?),
 		row_version = row_version + 1, updated_at = now()
 		WHERE id = ? AND row_version = ? AND deleted_at IS NULL`,
 		n.Name, n.DisplayName, n.CountryCode, n.PoolID, n.NodeType, n.ServerHost,
 		n.ServerPort, n.ListenL4, n.ProtocolConfig,
 		n.ProtocolSchemaVersion, n.ConfigValidatedAt, n.TrafficRate,
+		jsonArrayText(n.Tags), n.TrafficLimitBytes, n.TrafficResetDay, n.TrafficExceededAt,
+		jsonArrayText(n.TrafficRateSchedule), n.TrafficResetAt,
 		id, expected,
 	)
 	if res.Error != nil {

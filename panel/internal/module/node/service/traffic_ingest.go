@@ -3,12 +3,15 @@ package service
 // 流量上报入账。在线 IP 在 online.go，机器指标在 metrics.go。
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 
 	"github.com/aegispanel/aegis/internal/module/node/repo"
@@ -28,10 +31,10 @@ const trafficRetryAttempts = 3
 
 // IngestTraffic 入账一份流量上报：留档、按节点倍率折算后经 subscription 扣量、写小时汇总，同一事务。
 //
-// 顺序：读节点倍率 → 留档（UNIQUE(server_id, report_id) 下 ON CONFLICT DO NOTHING）→ 扣量（subscription：
-// 配额行 → 流量包 → 按日用量）→ 两张小时汇总（一条语句）。回滚则都不留，提交则都在。
+// 顺序：读节点倍率（按入账时刻在站点时区取时段倍率，没命中用 traffic_rate）→ 留档（UNIQUE(server_id, report_id) 下 ON CONFLICT DO NOTHING）→
+// 扣量（subscription：配额行 → 流量包 → 按日用量）→ 两张小时汇总（一条语句）→ 累加节点本周期实际用量（新超限推配置与名单纪元）。回滚则都不留，提交则都在。
 // 同一 (服务器, report_id) 重复到达且内容摘要相同：什么都不做，返回 nil（会话层照样回 TrafficAck）；内容不同返回 ErrTrafficReportConflict。
-// 倍率是节点当前的 traffic_rate，decimal 向零截断（每个节点上每个用户一次）。名单外（m）与不合规的条目照样留档、计入留档的计数，不扣费。
+// 倍率是节点当前的生效倍率，decimal 向零截断（每个节点上每个用户一次）。名单外（m）与不合规的条目照样留档、计入留档的计数，不扣费。
 // 遇 40P01 / 40001 整笔重试，最多 trafficRetryAttempts 次；所以不要在已有事务里调（已中止的事务里重试只会报 25P02）。
 func (s *Service) IngestTraffic(ctx context.Context, serverID uuid.UUID, r TrafficReport, m RosterMembership) error {
 	if !validReportID(r.ReportID) || len(r.Entries) > maxTrafficReportEntries {
@@ -80,9 +83,31 @@ func (s *Service) ingestTrafficTx(ctx context.Context, in trafficIngest, m Roste
 			nodeIDs = append(nodeIDs, e.NodeID)
 		}
 	}
-	rates, err := s.repo.ServerNodeRates(ctx, in.serverID, nodeIDs)
+	rules, err := s.repo.ServerNodeRateRules(ctx, in.serverID, nodeIDs)
 	if err != nil {
 		return err
+	}
+	scheds := make(map[uuid.UUID][]RateRange, len(rules))
+	for id, rule := range rules {
+		sched, err := decodeRateSchedule(rule.Schedule)
+		if err != nil {
+			plog.From(ctx).Warn("节点时段倍率解析失败，按基础倍率计", zap.String("node_id", id.String()), zap.Error(err))
+			sched = nil
+		}
+		if len(sched) > 0 {
+			scheds[id] = sched
+		}
+	}
+	// 只有本份上报涉及的节点里有人配了时段倍率，才读站点时区（绝大多数上报省掉这次读库）
+	var loc *time.Location
+	if len(scheds) > 0 {
+		if loc, err = s.siteLoc(ctx); err != nil {
+			return err
+		}
+	}
+	rates := make(map[uuid.UUID]decimal.Decimal, len(rules))
+	for id, rule := range rules {
+		rates[id] = effectiveRate(rule.Rate, scheds[id], now, loc)
 	}
 	t := tallyTraffic(in.entries, rates, m)
 
@@ -116,5 +141,33 @@ func (s *Service) ingestTrafficTx(ctx context.Context, in trafficIngest, m Roste
 		return err
 	}
 	nodes, users := t.hourlyRows(subs)
-	return s.repo.AddTrafficHourly(ctx, now.Truncate(time.Hour), nodes, users)
+	if err := s.repo.AddTrafficHourly(ctx, now.Truncate(time.Hour), nodes, users); err != nil {
+		return err
+	}
+
+	adds := make([]repo.NodeUsageAdd, 0, len(t.Nodes))
+	for nodeID, usage := range t.Nodes {
+		bytesVal := satAdd(usage.Upload, usage.Download)
+		if bytesVal > 0 {
+			adds = append(adds, repo.NodeUsageAdd{NodeID: nodeID, Bytes: bytesVal})
+		}
+	}
+	sort.Slice(adds, func(i, j int) bool {
+		return bytes.Compare(adds[i].NodeID[:], adds[j].NodeID[:]) < 0
+	})
+
+	newlyExceeded, err := s.repo.AddNodeUsage(ctx, adds)
+	if err != nil {
+		return err
+	}
+	if len(newlyExceeded) > 0 {
+		s.MarkConfigChanged(ctx)
+		s.MarkUsersChanged(ctx)
+		nodeIDStrs := make([]string, 0, len(newlyExceeded))
+		for _, id := range newlyExceeded {
+			nodeIDStrs = append(nodeIDStrs, id.String())
+		}
+		plog.From(ctx).Info("节点本周期流量已达上限，停止下发", zap.Strings("node_ids", nodeIDStrs))
+	}
+	return nil
 }

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -45,12 +46,23 @@ func (s *Service) loadDeliverableNodes(ctx context.Context, planVersionID uuid.U
 	if err != nil {
 		return nil, err
 	}
-	return deliverableFromRows(rows, userGroupID)
+	// 只有候选节点里有人配了时段倍率才读站点时区；没配的节点不看时区（effectiveRate 直接回基础倍率）
+	var loc *time.Location
+	for _, row := range rows {
+		if rateScheduleSet(row.RateSchedule) {
+			if loc, err = s.siteLoc(ctx); err != nil {
+				return nil, err
+			}
+			break
+		}
+	}
+	return deliverableFromRows(rows, userGroupID, s.now(), loc)
 }
 
 // deliverableFromRows 把候选节点按池的用户组限定过滤（poolAdmits），协议配置翻成内核字段名，再按 preferFresh 分层。
 // 每次调用都重新解析协议配置，结果与 rows 不共享引用。永不为 nil。
-func deliverableFromRows(rows []repo.DeliveryNodeRow, userGroupID *uuid.UUID) ([]render.Node, error) {
+// 中转紧跟父节点、继承父节点的一切，只换名称地址端口与 SNI/Host。
+func deliverableFromRows(rows []repo.DeliveryNodeRow, userGroupID *uuid.UUID, now time.Time, loc *time.Location) ([]render.Node, error) {
 	cands := make([]deliveryCandidate, 0, len(rows))
 	for _, row := range rows {
 		if !poolAdmits(row.PoolGroupIDs, userGroupID) {
@@ -62,19 +74,43 @@ func deliverableFromRows(rows []repo.DeliveryNodeRow, userGroupID *uuid.UUID) ([
 				return nil, fmt.Errorf("node: 节点 %s 的协议配置不是 JSON 对象: %w", row.ID, err)
 			}
 		}
+
+		sched, err := decodeRateSchedule(row.RateSchedule)
+		if err != nil {
+			sched = nil
+		}
+
+		kernel := protocol.KernelConfig(row.NodeType, stored)
+		var echConfigList []byte
+		if len(row.ECHConfigList) > 0 && protocol.ECHCapable(row.NodeType, kernel) {
+			echConfigList = row.ECHConfigList
+		}
+
+		parentNode := render.Node{
+			Name: row.Name,
+			Type: protocol.CanonicalType(row.NodeType),
+			Host: row.Host,
+			Port: row.Port,
+			// Config 浅拷贝内核配置
+			Config: kernel,
+			// 倍率只作展示（客户端里的节点名后缀、门户预览），取装载时刻的生效倍率，缓存几秒内不变，转 float64 不参与任何计费
+			TrafficRate:   effectiveRate(row.TrafficRate, sched, now, loc).InexactFloat64(),
+			ECHConfigList: echConfigList,
+		}
+
 		cands = append(cands, deliveryCandidate{
-			node: render.Node{
-				Name:   row.Name,
-				Type:   protocol.CanonicalType(row.NodeType),
-				Host:   row.Host,
-				Port:   row.Port,
-				Config: protocol.KernelConfig(row.NodeType, stored),
-				// 倍率只作展示（客户端里的节点名后缀、门户预览），转 float64 不参与任何计费
-				TrafficRate: row.TrafficRate.InexactFloat64(),
-			},
+			node:     parentNode,
 			fresh:    row.HeartbeatFresh,
 			degraded: row.Degraded,
 		})
+
+		for _, rel := range row.Relays {
+			cands = append(cands, deliveryCandidate{
+				node:     relayRenderNode(parentNode, rel),
+				fresh:    row.HeartbeatFresh,
+				degraded: row.Degraded,
+			})
+		}
 	}
 	return preferFresh(cands), nil
 }
