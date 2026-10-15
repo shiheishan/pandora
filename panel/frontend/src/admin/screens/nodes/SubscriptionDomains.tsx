@@ -47,6 +47,7 @@ function DomainsFormView({ saved, userGroups }: { saved: DomainConfig; userGroup
   const [errors, setErrors] = useState<Record<string, string>>({})
   const limits = saved.limits
   const base = formFrom(saved)
+  const savedUserGroupIds = saved.groups.flatMap((g) => g.user_group_ids)
   const form = draft ?? base
   const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(base)
 
@@ -145,8 +146,8 @@ function DomainsFormView({ saved, userGroups }: { saved: DomainConfig; userGroup
                 <div className={css.userGroups}>
                   <span className={css.subLabel}>分给用户组</span>
                   {(() => {
-                    // 停用的组隐藏；已勾选的照样显示并标「（已停用）」
-                    const candidates = assignableGroups(userGroups, g.userGroupIds)
+                    // 停用的组隐藏；已保存的分配与当前勾选的照样显示并标「（已停用）」（误点取消后还能勾回来）
+                    const candidates = assignableGroups(userGroups, [...savedUserGroupIds, ...g.userGroupIds])
                     return candidates.length === 0 ? (
                       <span className={nodesCss.faint}>还没有可选的用户组</span>
                     ) : (

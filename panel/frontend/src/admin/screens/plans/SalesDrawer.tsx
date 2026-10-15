@@ -121,8 +121,9 @@ function SalesBody({ plan, open, onClose }: { plan: PlanDetail; open: boolean; o
 export function GroupPicker({ picked, onChange, error }: { picked: readonly string[]; onChange: (ids: string[]) => void; error?: string }) {
   const groups = useUserGroups()
   const toggle = (id: string) => onChange(picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id])
-  // 停用的组隐藏；已勾选的照样显示并标「（已停用）」
-  const shown = assignableGroups(groups.data ?? [], picked)
+  // 停用的组隐藏；打开时已勾选的与当前勾选的照样显示并标「（已停用）」（误点取消后还能勾回来）
+  const [initial] = useState(() => [...picked])
+  const shown = assignableGroups(groups.data ?? [], [...initial, ...picked])
   return (
     <fieldset className={`${css.stack} ${css.fieldset}`}>
       <legend className={css.small}>可见的用户组</legend>

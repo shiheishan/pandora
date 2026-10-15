@@ -9,7 +9,7 @@
 --      也就是删组的级联；组还在时直接删价格照旧拒绝。UPDATE 分支与 00008 一字不差。
 --
 -- 锁与耗时：
---   ADD COLUMN 带常量默认值只改目录、不重写表，要 user_groups 的 ACCESS EXCLUSIVE，拿到即完成。
+--   ADD COLUMN 带常量默认值不重写表，但带 CHECK 要扫一遍现有行校验（耗时与组数成正比，组很少）；要 user_groups 的 ACCESS EXCLUSIVE。
 --   换外键（同一条 ALTER TABLE 里先 DROP 再 ADD）：要 prices 与 user_groups 的 ACCESS EXCLUSIVE，ADD 时扫一遍 prices
 --   校验现有行，耗时与价格行数成正比。价格表只有几十到几百行、没有生产部署，直接加，不拆成 NOT VALID + VALIDATE
 --   （那是为了大表少持锁，这里没有意义，还要多一步）。

@@ -243,6 +243,19 @@ func TestDeleteUserGroupCascadesUnsoldPrices(t *testing.T) {
 	}
 }
 
+// 删组的级联只能删掉没卖过的组价，靠的是「所有引用 prices(id) 的外键都是 RESTRICT」：
+// 哪天有人把订单项、订阅或礼品卡的 price_id 改成 CASCADE / SET NULL，删组就会悄悄删掉卖过的价格，这里先红。
+func TestPriceReferencesAreRestrict(t *testing.T) {
+	e, ctx := newEnv(t)
+	total := scanInt64(t, ctx, e, `SELECT count(*) FROM pg_constraint WHERE contype = 'f' AND confrelid = 'prices'::regclass`)
+	if total < 3 {
+		t.Fatalf("引用 prices 的外键应至少有订单项、订阅、礼品卡 3 条，得到 %d", total)
+	}
+	if n := scanInt64(t, ctx, e, `SELECT count(*) FROM pg_constraint WHERE contype = 'f' AND confrelid = 'prices'::regclass AND confdeltype <> 'r'`); n != 0 {
+		t.Fatalf("引用 prices 的外键必须全是 ON DELETE RESTRICT，有 %d 条不是", n)
+	}
+}
+
 // groupOnlyPublishedPlan 发布仅组价、无公开价的 group 可见套餐（价格触发器禁止 DELETE，不能靠删公开价）。
 func groupOnlyPublishedPlan(t *testing.T, ctx context.Context, e *env, g uuid.UUID) PlanDetail {
 	t.Helper()
