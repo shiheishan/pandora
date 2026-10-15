@@ -41,8 +41,10 @@ type ssUDPPendingPacket struct {
 // ssUDPSession 是经典 SS 按 (客户端地址, 用户)，SS2022 按 (客户端 session id, 用户) 的 UDP 会话：
 // 一个上游 socket（经 DataPlane）、一个下行 goroutine。
 type ssUDPSession struct {
-	hub       *ssUDPHub
-	key       ssUDPKey                       // 会话表的键（建会话时写，之后只读，摘表用）
+	hub *ssUDPHub
+	key ssUDPKey // 会话表的键（建会话时写，之后只读，摘表用）
+	// ss2022 是 SS2022 会话的协议状态（经典 SS 为 nil），建会话时经 getOrOpenUDPSession 的 init 写入，之后指针不变。
+	ss2022    *ss2022UDPState
 	client    atomic.Pointer[netip.AddrPort] // 已 Unmap 的客户端地址
 	user      *ssUser                        // 认证时的用户记录；retired 置位后快路径不再用它
 	coreUser  core.User

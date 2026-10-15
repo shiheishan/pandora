@@ -2,12 +2,9 @@ package kernel
 
 import (
 	"crypto/cipher"
-	"encoding/binary"
 	"errors"
-	"fmt"
 	"net"
 	"net/netip"
-	"strconv"
 	"sync/atomic"
 
 	"github.com/sagernet/sing/common/buf"
@@ -155,65 +152,4 @@ func (a *shadowsocksAdapter) slowPathUDP(wire []byte, from netip.AddrPort) error
 		return err
 	}
 	return a.forwardUDP(sess, dest, payload)
-}
-
-// 以下三个函数经典 AEAD 已不用，只剩 SS2022（shadowsocks2022_udp.go）在用；SS2022 多用户重写时一起挪走。
-
-// destinationUDPAddr 把目标转成 net.Addr（域名同步解析）；只剩 SS2022 在用。
-func destinationUDPAddr(destination vlessDestination) (net.Addr, error) {
-	if destination.IP.IsValid() {
-		return &net.UDPAddr{IP: net.IP(destination.IP.AsSlice()), Port: int(destination.Port)}, nil
-	}
-	return net.ResolveUDPAddr("udp", net.JoinHostPort(destination.Domain, strconv.Itoa(int(destination.Port))))
-}
-
-// destinationFromNetAddr 把上游回包的来源地址转成目标结构；只剩 SS2022 在用。
-func destinationFromNetAddr(addr net.Addr) vlessDestination {
-	if udp, ok := addr.(*net.UDPAddr); ok {
-		ip, ok := netip.AddrFromSlice(udp.IP)
-		if ok {
-			return vlessDestination{Host: ip.String(), IP: ip, Port: uint16(udp.Port)}
-		}
-	}
-	host, port, err := net.SplitHostPort(addr.String())
-	if err != nil {
-		return vlessDestination{Host: addr.String()}
-	}
-	parsed, _ := strconv.ParseUint(port, 10, 16)
-	if ip, parseErr := netip.ParseAddr(host); parseErr == nil {
-		return vlessDestination{Host: host, IP: ip, Port: uint16(parsed)}
-	}
-	return vlessDestination{Host: host, Domain: host, Port: uint16(parsed)}
-}
-
-// serializeSSDestination 按 SOCKS 地址格式编码目标；只剩 SS2022 在用。
-func serializeSSDestination(destination vlessDestination) ([]byte, error) {
-	var out []byte
-	if destination.IP.IsValid() {
-		if destination.IP.Is4() {
-			out = append(out, 1)
-			ip := destination.IP.As4()
-			out = append(out, ip[:]...)
-		} else {
-			out = append(out, 4)
-			ip := destination.IP.As16()
-			out = append(out, ip[:]...)
-		}
-	} else {
-		host := destination.Domain
-		if host == "" {
-			host = destination.Host
-		}
-		if len(host) == 0 || len(host) > 253 {
-			return nil, fmt.Errorf("shadowsocks destination domain invalid")
-		}
-		out = append(out, 3, byte(len(host)))
-		out = append(out, host...)
-	}
-	if destination.Port == 0 {
-		return nil, fmt.Errorf("shadowsocks destination port invalid")
-	}
-	var port [2]byte
-	binary.BigEndian.PutUint16(port[:], destination.Port)
-	return append(out, port[:]...), nil
 }
