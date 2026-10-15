@@ -57,8 +57,9 @@ func TestValidateAcceptsSS2022(t *testing.T) {
 // TestValidateRejectsSS2022Chacha chacha20 版不开放：表单写入必须被拒。
 func TestValidateRejectsSS2022Chacha(t *testing.T) {
 	_, fields := Validate("shadowsocks", 8388, json.RawMessage(`{"cipher":"2022-blake3-chacha20-poly1305"}`))
-	if _, ok := fields["protocol_config.method"]; !ok {
-		t.Fatalf("fields=%v, want protocol_config.method 错误", fields)
+	// 表单字段叫 cipher（跟 xboard），错误标在表单字段上
+	if _, ok := fields["protocol_config.cipher"]; !ok {
+		t.Fatalf("fields=%v, want protocol_config.cipher 错误", fields)
 	}
 }
 
