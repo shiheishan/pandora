@@ -1,284 +1,275 @@
 package kernel
 
+// Shadowsocks 2022（SIP022 + SIP023）多用户 UDP：入站只有一个读循环，复用经典 SS 的 ssUDPHub
+// 会话表与慢路径 worker 池，不按包起 goroutine。
+//
+// 客户端 → 服务端：分离头 16（iPSK AES-ECB）| EIH 16（与分离头明文异或得用户 hash）| AEAD 密文。
+// AEAD 密钥 = ss2022SessionKey(uPSK, 客户端 session id 8 字节)，nonce = 分离头明文 [4:16]。
+// 明文：类型 0 | 时间戳 8 | 填充长度 2 | 填充 | SOCKS 目标 | 负载。
+//
+// 服务端 → 客户端：分离头 16（uPSK AES-ECB，无 EIH）| AEAD 密文；密钥 = ss2022SessionKey(uPSK, 服务端 session id)，
+// 包号从 0 递增；明文：类型 1 | 时间戳 8 | 客户端 session id 8 | 填充 0 | 来源地址 | 负载。
+//
+// 每包查时间戳（±30 秒）；每会话对客户端 packet id 做滑动窗口（SIP022），重复或落在窗口之后丢弃。
+// 路由按客户端 session id，不按来源地址；验证通过的包来自新地址时 roam 换回包地址（换网络会话不断）。
+// 认不出用户的包在读循环快路径丢弃（不进慢路径），灌垃圾只占两次 AES 与一次 map 查找。
+//
+// 已知取舍：UpsertUsers 换掉用户记录时旧会话取消、新会话窗口从空开始，30 秒内重放旧会话的包可能被新会话收一次；
+// 只在后台改用户时发生，不值得跨会话搬窗口。
+
 import (
-	"bytes"
-	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/binary"
-	"fmt"
-	"io"
+	"errors"
 	"net"
 	"net/netip"
-	"strconv"
-	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
+	ss2022sw "github.com/sagernet/sing-shadowsocks2/shadowaead_2022"
+	"github.com/sagernet/sing/common/buf"
 	M "github.com/sagernet/sing/common/metadata"
-	"golang.org/x/crypto/chacha20poly1305"
-
-	"github.com/aegispanel/nodeagent/route"
 )
 
-func (a *ss2022Adapter) udpSessionGC() {
-	defer a.wg.Done()
-	ticker := time.NewTicker(time.Minute)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			a.cleanupUDPSessions(time.Now())
-		case <-a.ctx.Done():
-			return
-		}
-	}
+const (
+	ss2022UDPSepHeader = 16 // 分离头
+	// ss2022UDPMinPacket 是客户端包的最短长度：分离头 16 + 身份头 16 + 类型 1 + 时间戳 8 + 填充长度 2 + 最短地址（IPv4）7 + 标签 16。
+	ss2022UDPMinPacket = 16 + 16 + 1 + 8 + 2 + 7 + 16
+)
+
+var (
+	errSS2022UDPTooShort = markConnError(connErrAuth, errors.New("shadowsocks 2022 UDP packet too short"))
+	errSS2022UDPAuth     = markConnError(connErrAuth, errors.New("shadowsocks 2022 UDP user authentication failed"))
+	errSS2022UDPHeader   = markConnError(connErrAuth, errors.New("shadowsocks 2022 UDP header invalid"))
+	errSS2022UDPStale    = markConnError(connErrAuth, errors.New("shadowsocks 2022 UDP timestamp outside 30 seconds"))
+	errSS2022UDPReplay   = markConnError(connErrAuth, errors.New("shadowsocks 2022 UDP packet id replayed or outside window"))
+)
+
+// ss2022UDPState 是一个 SS2022 UDP 会话的协议状态：慢路径建会话前算好，之后除 serverPID 与 window 外只读。
+type ss2022UDPState struct {
+	clientSID uint64
+	serverSID uint64
+	remote    cipher.AEAD   // 解客户端包：ss2022SessionKey(uPSK, clientSID 大端 8 字节)
+	local     cipher.AEAD   // 封下行包：ss2022SessionKey(uPSK, serverSID 大端 8 字节)
+	block     cipher.Block  // aes(uPSK)：加密下行分离头
+	serverPID atomic.Uint64 // 下一个下行包号（从 0 起）
+	winMu     sync.Mutex    // 读循环与慢路径 worker 可能同时处理同一会话的包
+	window    ss2022sw.SlidingWindow
 }
 
-func (a *ss2022Adapter) cleanupUDPSessions(now time.Time) {
-	a.udpMu.Lock()
-	for key, session := range a.udp {
-		if !session.lastSeen.IsZero() && now.Sub(session.lastSeen) > ss2022UDPIdleTimeout {
-			delete(a.udp, key)
-		}
-	}
-	a.udpMu.Unlock()
+// ss2022UDPScratch 是解包用的小缓冲。分组密码经接口调用，栈上数组传进去会逃逸到堆上，
+// 读循环持有一个复用，快路径每包不分配；慢路径每包 new 一个。
+type ss2022UDPScratch struct {
+	hdr [16]byte // 分离头明文：session id + packet id
+	eih [16]byte
 }
 
-func (a *ss2022Adapter) udpLoop() {
+// openUDPHeader 解分离头与身份头，认出用户；认不出返回 errSS2022UDPAuth。
+func (a *ss2022Adapter) openUDPHeader(sc *ss2022UDPScratch, wire []byte) (*ssUser, error) {
+	if len(wire) < ss2022UDPMinPacket {
+		return nil, errSS2022UDPTooShort
+	}
+	a.ipskBlock.Decrypt(sc.hdr[:], wire[:16])
+	a.ipskBlock.Decrypt(sc.eih[:], wire[16:32])
+	subtle.XORBytes(sc.eih[:], sc.eih[:], sc.hdr[:])
+	u := a.lookupUser(sc.eih)
+	if u == nil {
+		return nil, errSS2022UDPAuth
+	}
+	return u, nil
+}
+
+// openUDPBody 用 remote 解包体到 plain（读循环独占或池化的缓冲；GCM 失败会清零 dst，不能原地解 wire），
+// 查类型与时间戳，跳过填充，解出目标与负载（负载是 plain 的切片）。
+func openSS2022UDPBody(remote cipher.AEAD, hdr []byte, wire, plain []byte) (vlessDestination, []byte, error) {
+	ct := wire[32:]
+	if cap(plain) < len(ct) {
+		return vlessDestination{}, nil, errSS2022UDPHeader
+	}
+	body, err := remote.Open(plain[:0], hdr[4:16], ct, nil)
+	if err != nil {
+		return vlessDestination{}, nil, errSS2022UDPAuth
+	}
+	if len(body) < 11 || body[0] != ss2022ClientHeader {
+		return vlessDestination{}, nil, errSS2022UDPHeader
+	}
+	stamp := int64(binary.BigEndian.Uint64(body[1:9]))
+	now := time.Now().Unix()
+	if d := now - stamp; d > ss2022MaxTimeDiff || d < -ss2022MaxTimeDiff {
+		return vlessDestination{}, nil, errSS2022UDPStale
+	}
+	pad := int(binary.BigEndian.Uint16(body[9:11]))
+	if 11+pad > len(body) {
+		return vlessDestination{}, nil, errSS2022UDPHeader
+	}
+	var dest vlessDestination
+	consumed, err := parseSSAddr(body[11+pad:], &dest)
+	if err != nil {
+		return vlessDestination{}, nil, errSS2022UDPHeader
+	}
+	off := 11 + pad + consumed
+	if off > len(body) {
+		return vlessDestination{}, nil, errSS2022UDPHeader
+	}
+	return dest, body[off:], nil
+}
+
+// acceptUDPPacket 对已解开、属于会话 s 的包做窗口检查、换地址，再转发。
+func (a *ss2022Adapter) acceptUDPPacket(s *ssUDPSession, pid uint64, from netip.AddrPort, dest vlessDestination, payload []byte) error {
+	st := s.ss2022
+	st.winMu.Lock()
+	if !st.window.Check(pid) {
+		st.winMu.Unlock()
+		a.udpDrops.replay.Add(1)
+		return errSS2022UDPReplay
+	}
+	st.window.Add(pid)
+	st.winMu.Unlock()
+	if from != s.clientAddr() {
+		if s.ctx.Err() != nil {
+			return nil
+		}
+		if !s.roam(from) {
+			return deviceLimitError(a.udpProto)
+		}
+	}
+	return a.forwardUDP(s, dest, payload)
+}
+
+// packetLoop 是入站唯一的 UDP 读循环（照经典 shadowsocksAdapter.packetLoop）。
+func (a *ss2022Adapter) packetLoop() {
 	defer a.wg.Done()
-	buffer := make([]byte, 64<<10)
+	wire := make([]byte, ssUDPMaxPacket)
+	plain := make([]byte, ssUDPMaxPacket)
+	sc := new(ss2022UDPScratch)
 	for {
-		n, addr, err := a.packet.ReadFrom(buffer)
+		n, from, err := a.udpConn.ReadFromUDPAddrPort(wire)
 		if err != nil {
-			a.mu.RLock()
-			closed := a.closed
-			a.mu.RUnlock()
-			if closed || a.ctx.Err() != nil {
+			if a.ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
 				return
 			}
 			continue
 		}
-		wire := append([]byte(nil), buffer[:n]...)
-		a.wg.Add(1)
-		go func() {
-			defer a.wg.Done()
-			_ = a.handleUDPPacket(a.ctx, wire, addr)
-		}()
+		from = netip.AddrPortFrom(from.Addr().Unmap(), from.Port())
+		handled, err := a.fastPathUDP(sc, wire[:n], plain, from)
+		if err != nil {
+			a.connErr.addr(StageSession, net.UDPAddrFromAddrPort(from), err)
+		}
+		if !handled {
+			a.dispatchSlowUDP(wire[:n], from)
+		}
 	}
 }
 
-func (a *ss2022Adapter) handleUDPPacket(ctx context.Context, wire []byte, clientAddr net.Addr) error {
-	chachaUDP := strings.Contains(a.method.name, "chacha20")
-	if len(wire) < aes.BlockSize+ss2022Overhead && !chachaUDP || chachaUDP && len(wire) < chacha20poly1305.NonceSizeX+16+ss2022Overhead {
-		return fmt.Errorf("shadowsocks 2022 UDP packet too short")
+// fastPathUDP 是读循环里的快路径：认不出用户的包直接判失败（handled=true，不进慢路径）；
+// 已有 (session id, 用户) 会话的包用会话预建的 AEAD 解开并转发；没有会话返回 handled=false。
+func (a *ss2022Adapter) fastPathUDP(sc *ss2022UDPScratch, wire, plain []byte, from netip.AddrPort) (bool, error) {
+	user, err := a.openUDPHeader(sc, wire)
+	if err != nil {
+		return true, err
 	}
-	var clientID, packetID uint64
-	var remote cipher.AEAD
-	var plain []byte
-	var packetPSK []byte
-	var authErr error
-	for _, candidate := range a.psks {
-		if chachaUDP {
-			udpCipher, err := chacha20poly1305.NewX(candidate)
-			if err != nil {
-				authErr = err
-				continue
-			}
-			candidatePlain, err := udpCipher.Open(nil, wire[:chacha20poly1305.NonceSizeX], wire[chacha20poly1305.NonceSizeX:], nil)
-			if err != nil {
-				authErr = err
-				continue
-			}
-			if len(candidatePlain) < 16 {
-				authErr = fmt.Errorf("shadowsocks 2022 UDP packet session header missing")
-				continue
-			}
-			clientID = binary.BigEndian.Uint64(candidatePlain[:8])
-			packetID = binary.BigEndian.Uint64(candidatePlain[8:16])
-			plain = candidatePlain[16:]
-			packetPSK = candidate
-			break
-		}
-		block, err := aes.NewCipher(candidate)
-		if err != nil {
-			authErr = err
-			continue
-		}
-		packetHeader := append([]byte(nil), wire[:aes.BlockSize]...)
-		block.Decrypt(packetHeader, packetHeader)
-		candidateRemote, err := a.method.newAEAD(ss2022SessionKey(candidate, packetHeader[:8], a.method.keyLen))
-		if err != nil {
-			authErr = err
-			continue
-		}
-		candidatePlain, err := candidateRemote.Open(nil, packetHeader[4:16], wire[aes.BlockSize:], nil)
-		if err != nil {
-			authErr = err
-			continue
-		}
-		clientID = binary.BigEndian.Uint64(packetHeader[:8])
-		packetID = binary.BigEndian.Uint64(packetHeader[8:16])
-		plain = candidatePlain
-		remote = candidateRemote
-		packetPSK = candidate
-		break
+	sid := binary.BigEndian.Uint64(sc.hdr[:8])
+	s := a.findUDPSession(ssUDPKey{sid: sid}, user)
+	if s == nil {
+		return false, nil
 	}
-	if packetPSK == nil {
-		if authErr == nil {
-			authErr = fmt.Errorf("no configured PSK")
-		}
-		return fmt.Errorf("shadowsocks 2022 UDP packet authentication failed: %w", authErr)
+	dest, payload, err := openSS2022UDPBody(s.ss2022.remote, sc.hdr[:], wire, plain)
+	if err != nil {
+		return true, err
 	}
-	if len(plain) < 11 || plain[0] != ss2022ClientHeader {
-		return fmt.Errorf("shadowsocks 2022 UDP header invalid")
-	}
-	stamp := int64(binary.BigEndian.Uint64(plain[1:9]))
-	if delta := time.Now().Unix() - stamp; delta > 30 || delta < -30 {
-		return fmt.Errorf("shadowsocks 2022 UDP timestamp outside 30 seconds")
-	}
-	paddingLen := int(binary.BigEndian.Uint16(plain[9:11]))
-	if paddingLen < 0 || 11+paddingLen >= len(plain) {
-		return fmt.Errorf("shadowsocks 2022 UDP padding invalid")
-	}
-	var destination vlessDestination
-	consumed, err := parseSSDestination(plain[11+paddingLen:], &destination)
+	pid := binary.BigEndian.Uint64(sc.hdr[8:16])
+	return true, a.acceptUDPPacket(s, pid, from, dest, payload)
+}
+
+// slowPathUDP 是慢路径 worker 的处理函数（a.udpWorker(a.slowPathUDP)）。
+func (a *ss2022Adapter) slowPathUDP(wire []byte, from netip.AddrPort) error {
+	epoch := a.sessions.epoch()
+	sc := new(ss2022UDPScratch)
+	user, err := a.openUDPHeader(sc, wire)
 	if err != nil {
 		return err
 	}
-	payloadOffset := 11 + paddingLen + consumed
-	if payloadOffset > len(plain) {
-		return io.ErrUnexpectedEOF
-	}
-	payload := plain[payloadOffset:]
-	ip := remoteIP(clientAddr)
-	a.mu.RLock()
-	user, hasUser := a.user, a.hasUser
-	a.mu.RUnlock()
-	if !hasUser {
-		return fmt.Errorf("shadowsocks 2022 has no configured user")
-	}
-	if !a.online.enter(user, ip) {
-		return fmt.Errorf("shadowsocks 2022 device limit")
-	}
-	defer a.online.leave(user, ip)
-	sessionKey := clientAddr.String() + "#" + strconv.FormatUint(clientID, 10)
-	a.udpMu.Lock()
-	session := a.udp[sessionKey]
-	if session == nil {
-		var idBytes [8]byte
-		if _, err := io.ReadFull(rand.Reader, idBytes[:]); err != nil {
-			a.udpMu.Unlock()
+	sid := binary.BigEndian.Uint64(sc.hdr[:8])
+	pid := binary.BigEndian.Uint64(sc.hdr[8:16])
+	key := ssUDPKey{sid: sid}
+	plain := buf.Get(len(wire))
+	defer func() { _ = buf.Put(plain) }()
+	if s := a.findUDPSession(key, user); s != nil {
+		dest, payload, err := openSS2022UDPBody(s.ss2022.remote, sc.hdr[:], wire, plain)
+		if err != nil {
 			return err
 		}
-		serverID := binary.BigEndian.Uint64(idBytes[:])
-		var local cipher.AEAD
-		if !chachaUDP {
-			localKey := make([]byte, a.method.keyLen)
-			binary.BigEndian.PutUint64(localKey[:8], serverID)
-			local, err = a.method.newAEAD(ss2022SessionKey(a.psk, localKey[:8], a.method.keyLen))
-			if err != nil {
-				a.udpMu.Unlock()
-				return err
-			}
-		}
-		session = &ss2022UDPSession{psk: append([]byte(nil), packetPSK...), clientID: clientID, serverID: serverID, remote: remote, local: local, user: user, lastSeen: time.Now()}
-		a.udp[sessionKey] = session
-	} else if !bytes.Equal(session.psk, packetPSK) {
-		a.udpMu.Unlock()
-		return fmt.Errorf("shadowsocks 2022 UDP PSK changed for session")
+		return a.acceptUDPPacket(s, pid, from, dest, payload)
 	}
-	if session.clientSeen && packetID <= session.lastClientID {
-		a.udpMu.Unlock()
-		return fmt.Errorf("shadowsocks 2022 UDP packet replay")
-	}
-	session.lastClientID = packetID
-	session.clientSeen = true
-	session.lastSeen = time.Now()
-	a.udpMu.Unlock()
-	sourceIP, _ := netip.ParseAddr(ip)
-	meta := route.Meta{Domain: destination.Domain, IP: destination.IP, Port: destination.Port, Network: "udp", Protocol: "shadowsocks-2022", SourceIP: sourceIP}
-	upstream, err := a.plane.ListenUDP(ctx, meta, M.ParseSocksaddrHostPort(destination.Host, destination.Port))
+	remote, err := newAESGCM(ss2022SessionKey(user.MasterKey, sc.hdr[:8], a.method.keyLen))
 	if err != nil {
 		return err
 	}
-	defer upstream.Close()
-	destinationAddr, err := destinationUDPAddr(destination)
+	dest, payload, err := openSS2022UDPBody(remote, sc.hdr[:], wire, plain)
 	if err != nil {
 		return err
 	}
-	if _, err := upstream.WriteTo(payload, destinationAddr); err != nil {
-		return err
-	}
-	_ = upstream.SetReadDeadline(time.Now().Add(2 * time.Second))
-	response := make([]byte, 64<<10)
-	n, sourceAddr, err := upstream.ReadFrom(response)
+	st, err := a.newUDPState(user, sid, remote)
 	if err != nil {
 		return err
 	}
-	responseDestination := destination
-	if sourceAddr != nil {
-		responseDestination = destinationFromNetAddr(sourceAddr)
-	}
-	encoded, err := a.encodeSS2022UDPPacket(session, responseDestination, response[:n])
+	s, err := a.getOrOpenUDPSession(key, from, user, epoch, dest, func(s *ssUDPSession) { s.ss2022 = st })
 	if err != nil {
 		return err
 	}
-	if _, err := a.packet.WriteTo(encoded, clientAddr); err != nil {
-		return err
-	}
-	a.addTraffic(user, int64(len(payload)), int64(n))
-	return nil
+	return a.acceptUDPPacket(s, pid, from, dest, payload)
 }
 
-func (a *ss2022Adapter) encodeSS2022UDPPacket(session *ss2022UDPSession, destination vlessDestination, payload []byte) ([]byte, error) {
-	address, err := serializeSSDestination(destination)
+// newUDPState 算一个新会话的协议状态：随机服务端 session id，派生下行 AEAD，建 uPSK 的分组密码。
+func (a *ss2022Adapter) newUDPState(user *ssUser, clientSID uint64, remote cipher.AEAD) (*ss2022UDPState, error) {
+	var idBytes [8]byte
+	if _, err := rand.Read(idBytes[:]); err != nil {
+		return nil, err
+	}
+	serverSID := binary.BigEndian.Uint64(idBytes[:])
+	local, err := newAESGCM(ss2022SessionKey(user.MasterKey, idBytes[:], a.method.keyLen))
 	if err != nil {
 		return nil, err
 	}
-	plain := make([]byte, 0, 19+len(address)+len(payload))
-	plain = append(plain, ss2022ServerHeader)
-	var stamp [8]byte
-	binary.BigEndian.PutUint64(stamp[:], uint64(time.Now().Unix()))
-	plain = append(plain, stamp[:]...)
-	var remoteID [8]byte
-	binary.BigEndian.PutUint64(remoteID[:], session.clientID)
-	plain = append(plain, remoteID[:]...)
-	plain = append(plain, make([]byte, 2)...)
-	plain = append(plain, address...)
-	plain = append(plain, payload...)
-	if strings.Contains(a.method.name, "chacha20") {
-		udpCipher, err := chacha20poly1305.NewX(session.psk)
-		if err != nil {
-			return nil, err
-		}
-		var sessionHeader [16]byte
-		binary.BigEndian.PutUint64(sessionHeader[:8], session.clientID)
-		a.udpMu.Lock()
-		responseID := session.nextServerID
-		session.nextServerID++
-		a.udpMu.Unlock()
-		binary.BigEndian.PutUint64(sessionHeader[8:], responseID)
-		body := append(sessionHeader[:0:0], sessionHeader[:]...)
-		body = append(body, plain...)
-		nonce := make([]byte, chacha20poly1305.NonceSizeX)
-		if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-			return nil, err
-		}
-		return append(nonce, udpCipher.Seal(nil, nonce, body, nil)...), nil
-	}
-	var header [16]byte
-	binary.BigEndian.PutUint64(header[:8], session.serverID)
-	a.udpMu.Lock()
-	responseID := session.nextServerID
-	session.nextServerID++
-	a.udpMu.Unlock()
-	binary.BigEndian.PutUint64(header[8:], responseID)
-	ciphertext := session.local.Seal(nil, header[4:16], plain, nil)
-	block, err := aes.NewCipher(session.psk)
+	block, err := aes.NewCipher(user.MasterKey)
 	if err != nil {
 		return nil, err
 	}
-	block.Encrypt(header[:], header[:])
-	return append(header[:], ciphertext...), nil
+	return &ss2022UDPState{
+		clientSID: clientSID,
+		serverSID: serverSID,
+		remote:    remote,
+		local:     local,
+		block:     block,
+	}, nil
+}
+
+// encodeUDPSession 是 SS2022 的 hub 下行编码函数：把上游回包编成服务端 → 客户端包写进 dst（容量至少 ssUDPEncodeBufSize），返回 dst 的前缀。每包不分配。
+func (a *ss2022Adapter) encodeUDPSession(s *ssUDPSession, dst []byte, source M.Socksaddr, payload []byte) ([]byte, error) {
+	if len(payload) > ssUDPMaxPacket {
+		return nil, errSSUDPPayloadTooLarge
+	}
+	st := s.ss2022
+	hdr := dst[:16]
+	binary.BigEndian.PutUint64(hdr[:8], st.serverSID)
+	binary.BigEndian.PutUint64(hdr[8:16], st.serverPID.Add(1)-1)
+	body := dst[16:]
+	body[0] = ss2022ServerHeader
+	binary.BigEndian.PutUint64(body[1:9], uint64(time.Now().Unix()))
+	binary.BigEndian.PutUint64(body[9:17], st.clientSID)
+	body[17], body[18] = 0, 0
+	n := 19
+	an, err := putSSUDPSource(body[n:], source)
+	if err != nil {
+		return nil, err
+	}
+	n += an
+	n += copy(body[n:], payload)
+	sealed := st.local.Seal(body[:0], hdr[4:16], body[:n], nil)
+	st.block.Encrypt(hdr, hdr)
+	return dst[:16+len(sealed)], nil
 }

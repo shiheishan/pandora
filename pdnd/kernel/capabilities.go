@@ -34,7 +34,7 @@ func NativeCapabilities() []Capability {
 		{Protocol: "vless", Status: "stable-with-experimental-features", Networks: []string{"tcp", "ws", "httpupgrade", "grpc", "xhttp", "xhttp-h3", "mkcp"}, Security: []string{"none", "tls", "reality"}, Features: []string{"xhttp-stream", "xhttp-packet", "xudp-mux", "http2", "http3", "grpc-gzip", "reality-h3-experimental", "udp-forward", "xtls-rprx-vision", "xtls-rprx-vision-xudp", "reality-dest-fallback"}, Boundaries: []string{"external-reality-xhttp-h3-unverified", "reality-xhttp-h3-requires-explicit-opt-in"}},
 		{Protocol: "vmess", Networks: []string{"tcp", "ws", "httpupgrade", "grpc", "xhttp", "xhttp-h3", "mkcp"}, Security: []string{"none", "zero", "aes-128-gcm", "chacha20-poly1305", "auto"}, Features: []string{"mux", "xhttp-stream", "xhttp-packet", "http2", "http3", "grpc-gzip"}},
 		{Protocol: "trojan", Networks: []string{"tcp", "ws", "httpupgrade", "grpc", "mkcp"}, Security: []string{"tls", "reality"}, Features: []string{"http2", "grpc-gzip", "reality-tcp", "udp-forward", "reality-dest-fallback", "probe-fallback"}},
-		{Protocol: "shadowsocks", Networks: []string{"tcp", "udp"}, Features: []string{"classic-aead", "2022-aead"}},
+		{Protocol: "shadowsocks", Networks: []string{"tcp", "udp"}, Features: []string{"classic-aead", "2022-aead", "2022-multi-user"}, Boundaries: []string{"2022-chacha20-poly1305-rejected"}},
 		{Protocol: "hysteria2", Networks: []string{"udp"}, Features: []string{"quic", "obfs", "udp-forward"}},
 		{Protocol: "tuic", Networks: []string{"udp"}, Features: []string{"quic", "congestion-control", "udp-forward"}},
 		{Protocol: "anytls", Networks: []string{"tcp"}, Features: []string{"tls", "multiplex", "udp-over-tcp", "probe-fallback"}},

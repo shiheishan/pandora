@@ -26,7 +26,7 @@ import (
 	"github.com/aegispanel/nodeagent/route"
 )
 
-// ssChunkLimit 是 AEAD 分块负载上限 0x3FFF（SIP004，与 ss2022MaxChunk 同值），读写两侧共用。
+// ssChunkLimit 是 AEAD 分块负载上限 0x3FFF（SIP004，与 ss2022WriteChunk 同值），读写两侧共用。
 // 曾写成 16*1024：上游一次读满 16384 字节（TLS 记录常见）就发出超长块，规范客户端判非法断开，
 // Vultr 实测表现为 HTTPS 大响应在 16KB 整数倍处截断。
 const ssChunkLimit = 16*1024 - 1
@@ -71,25 +71,19 @@ type shadowsocksAdapter struct {
 	reordering atomic.Bool
 	hints      ssSourceHints
 	// sessions 是按用户的在途连接表与原子流量计数（user_sessions.go）。
-	sessions  userSessions
-	online    onlineDevices
-	plane     DataPlane
-	connErr   connErrorReporter
-	limiters  core.SpeedLimiters
-	listener  net.Listener
-	packet    net.PacketConn
-	udpConn   *net.UDPConn                       // a.packet 的具体类型，读循环与写回用
-	udpMu     sync.Mutex                         // 保护 udp 与 udpClosed
-	udp       map[netip.AddrPort][]*ssUDPSession // 按客户端地址的 UDP 会话（同一地址通常只有一个用户）
-	udpLive   int                                // 会话总数（udpMu 保护）
-	udpClosed bool                               // Close 之后不再建会话
-	udpQuota  udpSessionQuota                    // 每用户在途 UDP 会话上限（udp_session_quota.go）
-	udpDrops  ssUDPDropStats                     // SS UDP 各原因的丢包数（shadowsocks_udp.go）
-	udpJobs   chan ssUDPJob                      // 慢路径（逐用户试解）的有界队列，见 shadowsocks_udp_pool.go
-	ctx       context.Context
-	cancel    context.CancelFunc
-	closed    bool
-	active    map[net.Conn]struct{}
+	sessions userSessions
+	online   onlineDevices
+	plane    DataPlane
+	connErr  connErrorReporter
+	limiters core.SpeedLimiters
+	listener net.Listener
+	packet   net.PacketConn
+	// UDP 会话表与生命周期，见 shadowsocks_udp_hub.go
+	ssUDPHub
+	ctx    context.Context
+	cancel context.CancelFunc
+	closed bool
+	active map[net.Conn]struct{}
 	// salts 是 TCP 请求 salt 的防重放表（认证通过才记），全进程共用一张，
 	// 见 replay_filter_bloom.go。
 	salts *saltBloom
@@ -113,7 +107,7 @@ func newShadowsocksAdapter(spec InboundSpec) (Adapter, error) {
 		protocol: strings.ToLower(strings.TrimSpace(spec.Config.Protocol)), spec: spec, method: methodSpec,
 		users:    make(map[string]*ssUser),
 		active:   make(map[net.Conn]struct{}),
-		udp:      make(map[netip.AddrPort][]*ssUDPSession),
+		ssUDPHub: ssUDPHub{udp: make(map[ssUDPKey][]*ssUDPSession)},
 		salts:    sharedSSSaltBloom(),
 		udpSalts: sharedSSUDPSaltBloom(),
 	}, nil
@@ -194,8 +188,11 @@ func (a *shadowsocksAdapter) Start(parent context.Context, spec InboundSpec, hoo
 		a.mu.Unlock()
 		return fmt.Errorf("shadowsocks UDP listen: unexpected PacketConn type %T", packet)
 	}
-	a.listener, a.packet, a.udpConn = listener, packet, udpConn
-	a.udpJobs = make(chan ssUDPJob, ssUDPSlowQueue)
+	a.listener, a.packet = listener, packet
+	a.bindUDP(udpConn, ssUDPHubBinding{
+		proto: "shadowsocks", ctx: a.ctx, wg: &a.wg, plane: a.plane, connErr: &a.connErr,
+		online: &a.online, limiters: &a.limiters, sessions: &a.sessions, encode: a.encodeUDPSession,
+	})
 	a.mu.Unlock()
 	workers := ssUDPSlowWorkers()
 	a.wg.Add(3 + workers)
@@ -203,7 +200,7 @@ func (a *shadowsocksAdapter) Start(parent context.Context, spec InboundSpec, hoo
 	go a.packetLoop()
 	go a.udpJanitor()
 	for i := 0; i < workers; i++ {
-		go a.udpWorker()
+		go a.udpWorker(a.slowPathUDP)
 	}
 	return nil
 }
@@ -331,7 +328,17 @@ func (a *shadowsocksAdapter) readRequest(conn net.Conn) (core.User, *ssStream, v
 	return core.User{ID: selected.ID, DeviceLimit: selected.DeviceLimit, SpeedLimit: selected.SpeedLimit}, stream, destination, nil
 }
 
+// parseSSDestination 解 SOCKS 地址并填好 Host（TCP 按 Host 拨号用）。
 func parseSSDestination(buf []byte, destination *vlessDestination) (int, error) {
+	n, err := parseSSAddr(buf, destination)
+	if err == nil && destination.IP.IsValid() {
+		destination.Host = destination.IP.String()
+	}
+	return n, err
+}
+
+// parseSSAddr 解 SOCKS 地址；IP 目标不填 Host（UDP 每包省一次 IP.String() 分配，UDP 路径经 ssUDPTarget 取目标）。
+func parseSSAddr(buf []byte, destination *vlessDestination) (int, error) {
 	if len(buf) < 1 {
 		return 0, io.ErrUnexpectedEOF
 	}
@@ -344,7 +351,6 @@ func parseSSDestination(buf []byte, destination *vlessDestination) (int, error) 
 		var ip [4]byte
 		copy(ip[:], buf[offset:offset+4])
 		destination.IP = netip.AddrFrom4(ip)
-		destination.Host = destination.IP.String()
 		offset += 4
 	case 3:
 		if len(buf) < offset+1 {
@@ -364,7 +370,6 @@ func parseSSDestination(buf []byte, destination *vlessDestination) (int, error) 
 		var ip [16]byte
 		copy(ip[:], buf[offset:offset+16])
 		destination.IP = netip.AddrFrom16(ip)
-		destination.Host = destination.IP.String()
 		offset += 16
 	default:
 		return 0, fmt.Errorf("shadowsocks address type unsupported")

@@ -144,7 +144,7 @@ func TestShadowsocksUDPTwoUsersBehindOneAddress(t *testing.T) {
 	localAP := netip.MustParseAddrPort(raw.LocalAddr().String())
 	localAP = netip.AddrPortFrom(localAP.Addr().Unmap(), localAP.Port())
 	a.udpMu.Lock()
-	sessions := a.udp[localAP]
+	sessions := a.udp[ssUDPKey{addr: localAP}]
 	var ids []int64
 	for _, s := range sessions {
 		ids = append(ids, s.coreUser.ID)

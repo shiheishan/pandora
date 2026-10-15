@@ -113,7 +113,7 @@ paths:
 | vless | network、security、tls / cert_path / key_path、REALITY 块、传输块 |
 | vmess | network、security（加密方式）、tls / cert_path / key_path、`alterId`（只接受 0）、传输块 |
 | trojan | network（tcp / ws / httpupgrade / grpc / mkcp）、security、tls / cert_path / key_path、REALITY 块、fallback、传输块 |
-| shadowsocks | `method`、`password`（2022 系列的服务端密钥）、network（tcp / udp）；`plugin` 非空即拒绝 |
+| shadowsocks | `method`（经典 AEAD 五种；2022 只认 `2022-blake3-aes-128-gcm` / `2022-blake3-aes-256-gcm`，`2022-blake3-chacha20-poly1305` 没有 SIP023 身份头，按「不支持的加密方式」拒绝启动入站）、`password`（只 2022 方法有：标准 base64 的服务端身份密钥 iPSK，解出长度必须等于方法的密钥长度，否则入站不启动；用户的 uPSK 由 UUID 算，见 pdnd-kernel 规则文件）；同端口总是 TCP+UDP，带 `network` 键即拒绝；`plugin` 非空即拒绝 |
 | hysteria2 | network（只 udp）、cert_path、key_path（必填）、`obfs`（对象：`type: salamander`、`password`）、`up_mbps`、`down_mbps`、`udp_timeout`、`udp_queue_size` |
 | tuic | network（只 udp）、cert_path、key_path（必填）、`congestion_control`（cubic / new_reno / bbr）、`alpn`、`zero_rtt`、`auth_timeout`、`heartbeat`、`udp_timeout`；出现 `udp_over_stream` 即拒绝 |
 | anytls | network（只 tcp）、cert_path、key_path、`tls`、`padding_scheme`、fallback |

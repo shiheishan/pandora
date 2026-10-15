@@ -2,13 +2,12 @@ package kernel
 
 import (
 	"crypto/cipher"
-	"encoding/binary"
 	"errors"
-	"fmt"
 	"net"
 	"net/netip"
-	"strconv"
 	"sync/atomic"
+
+	"github.com/sagernet/sing/common/buf"
 )
 
 // ssUDPDropStats 按原因记 SS UDP 丢掉的包数（诊断与测试用，不上报）。
@@ -66,7 +65,7 @@ func (a *shadowsocksAdapter) fastPathUDP(wire, plain []byte, found *[]*ssUDPSess
 	}
 	salt := wire[:a.method.SaltLen]
 	ciphertext := wire[a.method.SaltLen:]
-	*found = a.lookupUDPSessions(from, (*found)[:0])
+	*found = a.lookupUDPSessions(ssUDPKey{addr: from}, (*found)[:0])
 	for _, s := range *found {
 		if s.user.retired.Load() {
 			continue
@@ -98,7 +97,7 @@ func (a *shadowsocksAdapter) openUDPWith(sc *ssScratch, user *ssUser, salt, ciph
 		return vlessDestination{}, nil, false
 	}
 	var dest vlessDestination
-	consumed, err := parseSSDestination(opened, &dest)
+	consumed, err := parseSSAddr(opened, &dest)
 	if err != nil {
 		return vlessDestination{}, nil, false
 	}
@@ -119,7 +118,7 @@ func (a *shadowsocksAdapter) decodeUDPPacket(salt, ciphertext, plain []byte, fro
 			return false
 		}
 		var candidate vlessDestination
-		consumed, err := parseSSDestination(opened, &candidate)
+		consumed, err := parseSSAddr(opened, &candidate)
 		if err != nil {
 			return false
 		}
@@ -132,63 +131,25 @@ func (a *shadowsocksAdapter) decodeUDPPacket(salt, ciphertext, plain []byte, fro
 	return selected, dest, payload, nil
 }
 
-// 以下三个函数经典 AEAD 已不用，只剩 SS2022（shadowsocks2022_udp.go）在用；SS2022 多用户重写时一起挪走。
-
-// destinationUDPAddr 把目标转成 net.Addr（域名同步解析）；只剩 SS2022 在用。
-func destinationUDPAddr(destination vlessDestination) (net.Addr, error) {
-	if destination.IP.IsValid() {
-		return &net.UDPAddr{IP: net.IP(destination.IP.AsSlice()), Port: int(destination.Port)}, nil
-	}
-	return net.ResolveUDPAddr("udp", net.JoinHostPort(destination.Domain, strconv.Itoa(int(destination.Port))))
-}
-
-// destinationFromNetAddr 把上游回包的来源地址转成目标结构；只剩 SS2022 在用。
-func destinationFromNetAddr(addr net.Addr) vlessDestination {
-	if udp, ok := addr.(*net.UDPAddr); ok {
-		ip, ok := netip.AddrFromSlice(udp.IP)
-		if ok {
-			return vlessDestination{Host: ip.String(), IP: ip, Port: uint16(udp.Port)}
-		}
-	}
-	host, port, err := net.SplitHostPort(addr.String())
+// slowPathUDP 对全部用户试解一个包；认证通过后找到或新建 (地址, 用户) 会话并转发。
+// 明文借池化缓冲（不能原地解：GCM 失败会清零 dst），forwardUDP 同步写完或复制进
+// 建立期小队列后不再引用，返回前归还。
+func (a *shadowsocksAdapter) slowPathUDP(wire []byte, from netip.AddrPort) error {
+	salt := wire[:a.method.SaltLen]
+	ciphertext := wire[a.method.SaltLen:]
+	plain := buf.Get(len(ciphertext))
+	defer func() { _ = buf.Put(plain) }()
+	epoch := a.sessions.epoch()
+	user, dest, payload, err := a.decodeUDPPacket(salt, ciphertext, plain, from)
 	if err != nil {
-		return vlessDestination{Host: addr.String()}
+		return errSSUDPAuth
 	}
-	parsed, _ := strconv.ParseUint(port, 10, 16)
-	if ip, parseErr := netip.ParseAddr(host); parseErr == nil {
-		return vlessDestination{Host: host, IP: ip, Port: uint16(parsed)}
+	if !a.acceptUDPSalt(salt) {
+		return errSSUDPReplay
 	}
-	return vlessDestination{Host: host, Domain: host, Port: uint16(parsed)}
-}
-
-// serializeSSDestination 按 SOCKS 地址格式编码目标；只剩 SS2022 在用。
-func serializeSSDestination(destination vlessDestination) ([]byte, error) {
-	var out []byte
-	if destination.IP.IsValid() {
-		if destination.IP.Is4() {
-			out = append(out, 1)
-			ip := destination.IP.As4()
-			out = append(out, ip[:]...)
-		} else {
-			out = append(out, 4)
-			ip := destination.IP.As16()
-			out = append(out, ip[:]...)
-		}
-	} else {
-		host := destination.Domain
-		if host == "" {
-			host = destination.Host
-		}
-		if len(host) == 0 || len(host) > 253 {
-			return nil, fmt.Errorf("shadowsocks destination domain invalid")
-		}
-		out = append(out, 3, byte(len(host)))
-		out = append(out, host...)
+	sess, err := a.getOrOpenUDPSession(ssUDPKey{addr: from}, from, user, epoch, dest, nil)
+	if err != nil {
+		return err
 	}
-	if destination.Port == 0 {
-		return nil, fmt.Errorf("shadowsocks destination port invalid")
-	}
-	var port [2]byte
-	binary.BigEndian.PutUint16(port[:], destination.Port)
-	return append(out, port[:]...), nil
+	return a.forwardUDP(sess, dest, payload)
 }

@@ -55,6 +55,7 @@ type mihomoProtoCase struct {
 }
 
 func mihomoProtoCases() []mihomoProtoCase {
+	var ss2022IPSK []byte
 	return []mihomoProtoCase{
 		{
 			name:     "vmess-tcp",
@@ -240,23 +241,24 @@ func mihomoProtoCases() []mihomoProtoCase {
 			protocol: "shadowsocks",
 			factory:  newShadowsocksAdapter,
 			raw:      map[string]any{"method": "2022-blake3-aes-128-gcm"},
-			prepare: func(t *testing.T, raw map[string]any, _ string) string {
-				key := make([]byte, 16)
-				if _, err := rand.Read(key); err != nil {
+			prepare: func(t *testing.T, raw map[string]any, defaultSecret string) string {
+				ss2022IPSK = make([]byte, 16)
+				if _, err := rand.Read(ss2022IPSK); err != nil {
 					t.Fatal(err)
 				}
-				psk := base64.StdEncoding.EncodeToString(key)
-				raw["password"] = psk
-				return psk
+				raw["password"] = base64.StdEncoding.EncodeToString(ss2022IPSK)
+				return defaultSecret
 			},
 			proxy: func(port int, secret string) string {
+				upsk := base64.StdEncoding.EncodeToString(ss2022UserPSK(secret, 16))
+				ipsk := base64.StdEncoding.EncodeToString(ss2022IPSK)
 				return fmt.Sprintf(`  - name: pandora
     type: ss
     server: 127.0.0.1
     port: %d
     cipher: 2022-blake3-aes-128-gcm
-    password: "%s"
-    udp: false`, port, secret)
+    password: "%s:%s"
+    udp: false`, port, ipsk, upsk)
 			},
 		},
 		{
