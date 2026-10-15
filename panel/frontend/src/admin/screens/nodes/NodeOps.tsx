@@ -4,7 +4,7 @@ import { isApiError } from '../../../core/api'
 import { navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, Checkbox, ConfirmModal, Input, Modal, Select, useToast } from '../../../ui'
-import { MOVE_BLOCKED_HINT, activationHint, canActivate, canMove, canTransition } from './logic'
+import { MOVE_BLOCKED_HINT, activationHint, canActivate, canTransition } from './logic'
 import css from './nodes.module.css'
 import { copyPortValue } from './runtime'
 import { endsIntent, useFailure, useIntentKey, useInvalidateNodes, useServers } from './queries'
@@ -117,7 +117,8 @@ export function NodeOps({ node, onGone }: { node: NodeRow; onGone: () => void })
     },
   })
 
-  const movable = canMove(node)
+  // 迁移资格以后端为准（列表行的 movable，只看节点自己，不看服务器心跳与身份）
+  const movable = node.movable
   const targets = (servers.data ?? []).filter((s) => s.id !== node.server_id)
 
   return (

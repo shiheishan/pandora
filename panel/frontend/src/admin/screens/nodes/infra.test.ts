@@ -85,6 +85,7 @@ const node = (over: Partial<Record<string, unknown>>): NodeRow =>
     delivered_to_users: false,
     delivery_note: '',
     identity_serial: null,
+    movable: true,
     created_at: '2026-09-01T00:00:00Z',
     node_type: 'vless',
     server_host: null,

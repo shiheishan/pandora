@@ -6,7 +6,6 @@ import {
   batchPlan,
   activationHint,
   canActivate,
-  canMove,
   clearableSecret,
   clearedSecrets,
   canTransition,
@@ -69,6 +68,7 @@ const row = (over: Partial<Record<string, unknown>> = {}): NodeDetail =>
     delivered_to_users: true,
     delivery_note: '',
     identity_serial: 3,
+    movable: false,
     created_at: '2026-09-01T00:00:00Z',
     node_type: 'vless',
     server_host: 'hk1.example.test',
@@ -151,16 +151,6 @@ describe('state', () => {
     expect(heartbeatLabel(null)).toBe('从未')
     expect(heartbeatLabel('2026-09-24T10:04:30Z', now)).toBe('刚刚')
     expect(heartbeatLabel('2026-09-24T10:00:00Z', now)).toBe('5 分钟前')
-  })
-})
-
-describe('reserved rule 5: move', () => {
-  it('only allows never-deployed drafts', () => {
-    expect(canMove({ serving_status: 'draft', last_heartbeat_at: null, identity_serial: null })).toBe(true)
-    expect(canMove({ serving_status: 'disabled', last_heartbeat_at: null, identity_serial: null })).toBe(false)
-    expect(canMove({ serving_status: 'draft', last_heartbeat_at: '2026-09-24T10:00:00Z', identity_serial: null })).toBe(false)
-    expect(canMove({ serving_status: 'draft', last_heartbeat_at: null, identity_serial: 1 })).toBe(false)
-    expect(canMove({ serving_status: 'active', last_heartbeat_at: null, identity_serial: null })).toBe(false)
   })
 })
 

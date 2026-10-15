@@ -64,17 +64,20 @@ export function NodeIdentity({ node }: { node: NodeRow }) {
         )}
       </QueryView>
 
-      <Action
-        title="安装令牌"
-        detail="安装令牌按服务器签发：到「服务器」页打开这台节点所在的服务器签发，一台服务器接入一次，上面的节点都跟着服务。"
-        disabledReason={!node.server_id ? '节点还没放到服务器上，先在「协议参数」里选服务器' : null}
-      >
-        {node.server_id ? (
+      {node.server_id ? (
+        <Action title="安装令牌" detail="安装令牌按服务器签发：到「服务器」页打开这台节点所在的服务器签发，一台服务器接入一次，上面的节点都跟着服务。">
           <Button size="sm" onClick={() => navigate(`/nodes/servers/${node.server_id}`)}>
             去服务器
           </Button>
-        ) : null}
-      </Action>
+        </Action>
+      ) : (
+        // 没有服务器（如所在服务器被删、节点被摘下）：编辑表单里服务器只读，要到「操作」里迁移（草稿）或复制到一台服务器
+        <Action title="安装令牌" detail="节点还没放到服务器上：到「操作」里迁移（仅草稿）或复制到一台服务器，再到那台服务器签发安装令牌。">
+          <Button size="sm" onClick={() => navigate(`/nodes/nodes/${node.id}/ops`)}>
+            去操作
+          </Button>
+        </Action>
+      )}
       <Action title="吊销节点身份" detail="节点会被拒绝接入，需要重新注册。用于机器被入侵或转让。">
         <Button size="sm" className={css.dangerButton} busy={revoke.isPending} onClick={() => setConfirm('revoke')}>
           吊销

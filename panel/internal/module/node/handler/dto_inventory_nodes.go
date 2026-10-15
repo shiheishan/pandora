@@ -207,6 +207,7 @@ type nodeRowResponse struct {
 	DeliveredToUsers    bool                      `json:"delivered_to_users"`
 	DeliveryNote        string                    `json:"delivery_note"`
 	IdentitySerial      *int64                    `json:"identity_serial"`
+	Movable             bool                      `json:"movable"`
 	CreatedAt           time.Time                 `json:"created_at"`
 	NodeType            *string                   `json:"node_type"`
 	ServerHost          *string                   `json:"server_host"`
@@ -358,6 +359,7 @@ func nodeRowFrom(r service.NodeRow) nodeRowResponse {
 		CountryCode:         r.CountryCode,
 		SortOrder:           r.SortOrder,
 		IdentitySerial:      r.IdentitySerial,
+		Movable:             r.Movable,
 		OnlineUsers:         r.OnlineUsers,
 		OnlineIPs:           r.OnlineIPs,
 		TrafficBytes24h:     r.TrafficBytes24h,

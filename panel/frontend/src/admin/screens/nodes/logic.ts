@@ -130,12 +130,6 @@ const PROTOCOL_LABELS: Readonly<Record<string, string>> = {
 }
 export const protocolLabel = (t: string | null) => (t ? (PROTOCOL_LABELS[t] ?? t) : '未设置协议')
 
-// ---------------------------------------------------------------------------
-// 迁移（保留规则 5）：只能迁移从未部署过的草稿节点
-// ---------------------------------------------------------------------------
-export function canMove(n: Pick<NodeRow, 'serving_status' | 'last_heartbeat_at' | 'identity_serial'>): boolean {
-  return n.serving_status === 'draft' && n.last_heartbeat_at === null && n.identity_serial === null
-}
 /**
  * 「上线」给还没上过线的草稿节点用：后端一步推到 active，并把所在服务器置为就绪（服务器还没就绪时也能用）；停用后再恢复用「启用」。
  */

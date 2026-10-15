@@ -44,6 +44,8 @@ export const nodeRowSchema = z.object({
   delivered_to_users: z.boolean(),
   delivery_note: z.string(),
   identity_serial: z.number().nullable(),
+  /** 能不能迁移到别的服务器：后端 service.nodeMovableState 算好，前端不自己判断 */
+  movable: z.boolean(),
   created_at: iso,
   node_type: z.string().nullable(),
   server_host: z.string().nullable(),

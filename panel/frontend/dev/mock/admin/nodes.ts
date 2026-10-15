@@ -271,6 +271,8 @@ function listRow(n: Node) {
     delivered_to_users: delivered,
     delivery_note: note,
     identity_serial: n.identity_serial,
+    // 与 service.nodeMovableState 同口径：假后端里草稿不会回到草稿，草稿就等于从没服务过（不看服务器心跳与身份）
+    movable: n.serving_status === 'draft',
     created_at: n.created_at,
     node_type: n.node_type,
     server_host: n.server_host,
@@ -624,8 +626,8 @@ export const nodes: MockModule = {
         const target = servers.find((s) => s.id === body.server_id)
         if (!target) return invalid({ server_id: '服务器不存在' })
         if (target.id === n.server_id) return { status: 200, body: adminNode(n) }
-        // 与 service.nodeMovable 一致：只有从没服务过的草稿；409 只带文案，不带 fields
-        if (n.serving_status !== 'draft' || n.last_heartbeat_at || n.identity_serial) return err(409, 'conflict', '只有从没服务过的草稿节点能迁移；其余请复制到新服务器后再退役原节点')
+        // 与 service.nodeMovableState 一致：只有从没服务过的草稿（不看服务器心跳与身份）；409 只带文案，不带 fields
+        if (n.serving_status !== 'draft') return err(409, 'conflict', '只有从没服务过的草稿节点能迁移；其余请复制到新服务器后再退役原节点')
         if (target.status !== 'ready') return err(409, 'conflict', '目标服务器当前不接受节点')
         n.server_id = target.id
         touch(n)

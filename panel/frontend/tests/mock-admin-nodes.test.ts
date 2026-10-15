@@ -74,10 +74,19 @@ describe('mock api · admin nodes', () => {
     const draft = await call('POST', '/v1/nodes/status:batch', { items: [{ id: src!.id, row_version: src!.row_version }], serving_status: 'draft' }, 'batch-1')
     expect(draft.status).toBe(409)
     expect(await draft.json()).toMatchObject({ error: { fields: { serving_status: 'active -> draft' } } })
+    // 停用节点不可迁移：列表 movable=false，强行迁移 409
     const disabled = (await list()).find((n) => n.serving_status === 'disabled')!
+    expect(disabled.movable).toBe(false)
     const move = await call('POST', `/v1/nodes/${disabled.id}/move`, { server_id: src!.server_id, row_version: disabled.row_version }, 'move-1')
     expect(move.status).toBe(409)
     expect(await move.json()).toMatchObject({ error: { code: 'conflict', message: '只有从没服务过的草稿节点能迁移；其余请复制到新服务器后再退役原节点' } })
+    // 已接入服务器上的新草稿可迁移：副本建在在役节点（服务器有心跳、有身份）的那台服务器上，movable=true，能迁到另一台就绪的服务器
+    const fresh = (await list()).find((n) => n.id === created.id)!
+    expect(fresh).toMatchObject({ serving_status: 'draft', server_id: src!.server_id, movable: true })
+    const target = serversResponse.parse(await (await call('GET', '/v1/servers')).json()).servers.find((s) => s.id !== src!.server_id && s.status === 'ready')!
+    const moved = await call('POST', `/v1/nodes/${fresh.id}/move`, { server_id: target.id, row_version: fresh.row_version }, 'move-2')
+    expect(moved.status).toBe(200)
+    expect(((await moved.json()) as { server_id: string }).server_id).toBe(target.id)
   })
 
   it('validates protocol config against the schema and rejects unknown fields', async () => {
