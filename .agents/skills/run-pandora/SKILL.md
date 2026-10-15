@@ -33,7 +33,7 @@ node .agents/skills/run-pandora/driver.mjs text portal '#/plans'
 - `shots`：起后台（5182）与门户（5181）两个 vite，登录假账号，后台截首页、`#/users`、`#/nodes`，门户截首页、`#/plans`，PNG 写到 `--out`。
 - `text <admin|portal> <hash>`：登录后打开该地址，打印页面可见文字。
 - 5181/5182 已有进程就复用，不会关；驱动自己起的在结束时关掉。
-- 假账号：后台 `admin@pandora.dev`，门户 `user@pandora.dev`，口令都是 `pandora-dev-pass`。
+- 假账号：后台 `admin@example.test`，门户 `user@example.test`，口令都是 `pandora-dev-pass`（以 `panel/frontend/dev/mock-api.ts` 的 `MOCK_ACCOUNTS` 为准）。
 - 门户另有 empty / multi / error / slow 等假场景，用法见 `.claude/rules/frontend-mock.md`（本 skill 未验证）。
 - 手动看：`preview_start` 用 `.claude/launch.json` 里的 `admin-mock` / `portal-mock`。
 
