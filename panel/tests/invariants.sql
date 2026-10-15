@@ -14,7 +14,8 @@
 --   XB-REG 注销作废可提现佣金（commission_forfeitures 每人每币种一行、只追加）、
 --   PAY-FEE 渠道类型与用户手续费（00042）、
 --   XB-TG Telegram 工单提醒映射与自动关闭原因、
---   XB-NODE 节点标签 / 流量上限与超限标记 / 时段倍率 / 中转 / ECH 密钥（00045）。
+--   XB-NODE 节点标签 / 流量上限与超限标记 / 时段倍率 / 中转 / ECH 密钥（00045）、
+--   XB-SUBDOMAIN 订阅域名分组：名称 / 权重 / 地址形状、唯一缺省组、一个用户组只进一个域名组、删用户组级联（00047）。
 --
 -- 不覆盖的验收项及原因（没有对应的表或机制）：
 --   SEC-013 双人审批 — 没有审批表：后台权限只分有和没有。
@@ -1197,6 +1198,128 @@ $sql$);
 
 SELECT _reject('XB-TG', '未知的关闭原因必须拒绝', $sql$
   UPDATE tickets SET closed_reason = 'timeout' WHERE id = '00000000-0000-7000-8000-000000000d01';
+$sql$);
+
+--------------------------------------------------------------------------------
+-- XB-SUBDOMAIN 订阅域名分组（00047_xb_subdomain.sql）
+--------------------------------------------------------------------------------
+
+SELECT _accept('XB-SUBDOMAIN', '种子：两个用户组', $sql$
+  INSERT INTO user_groups (id, code, name) VALUES
+    ('00000000-0000-7000-8000-000000000e01', 'inv-subdomain', 'inv 订阅域名'),
+    ('00000000-0000-7000-8000-000000000e02', 'inv-subdomain-2', 'inv 订阅域名 2');
+$sql$);
+
+SELECT _accept('XB-SUBDOMAIN', '种子：两个订阅域名组', $sql$
+  INSERT INTO subscription_domain_groups (id, name, is_default, position) VALUES
+    ('00000000-0000-7000-8000-000000000e11', 'inv-缺省', true, 0),
+    ('00000000-0000-7000-8000-000000000e12', 'inv-备用', false, 1);
+$sql$);
+
+SELECT _accept('XB-SUBDOMAIN', '种子：缺省组内两个域名', $sql$
+  INSERT INTO subscription_domains (group_id, base_url, weight, position) VALUES
+    ('00000000-0000-7000-8000-000000000e11', 'https://sub-a.example.test', 2, 0),
+    ('00000000-0000-7000-8000-000000000e11', 'https://sub-b.example.test:8443', 1, 1);
+$sql$);
+
+SELECT _accept('XB-SUBDOMAIN', '种子：用户组分到缺省组', $sql$
+  INSERT INTO subscription_domain_group_user_groups (user_group_id, group_id) VALUES
+    ('00000000-0000-7000-8000-000000000e01', '00000000-0000-7000-8000-000000000e11');
+$sql$);
+
+SELECT _reject('XB-SUBDOMAIN', '只能有一个缺省组', $sql$
+  UPDATE subscription_domain_groups SET is_default = true WHERE id = '00000000-0000-7000-8000-000000000e12';
+$sql$, 'subscription_domain_groups_one_default');
+
+SELECT _reject('XB-SUBDOMAIN', '组名首尾不能带空格', $sql$
+  INSERT INTO subscription_domain_groups (id, name, is_default, position) VALUES
+    ('00000000-0000-7000-8000-000000000e13', ' inv-bad ', false, 2);
+$sql$, 'subscription_domain_groups_name_check');
+
+SELECT _reject('XB-SUBDOMAIN', '组名最多 40 个字', $sql$
+  INSERT INTO subscription_domain_groups (id, name, is_default, position) VALUES
+    ('00000000-0000-7000-8000-000000000e14', 'inv-abcdefghijklmnopqrstuvwxyz0123456789ab', false, 3);
+$sql$, 'subscription_domain_groups_name_check');
+
+SELECT _reject('XB-SUBDOMAIN', '组名不能重复', $sql$
+  INSERT INTO subscription_domain_groups (id, name, is_default, position) VALUES
+    ('00000000-0000-7000-8000-000000000e15', 'inv-缺省', false, 4);
+$sql$, 'subscription_domain_groups_name_key');
+
+SELECT _reject('XB-SUBDOMAIN', '组 position 不能超过 19', $sql$
+  INSERT INTO subscription_domain_groups (id, name, is_default, position) VALUES
+    ('00000000-0000-7000-8000-000000000e16', 'inv-pos20', false, 20);
+$sql$, 'subscription_domain_groups_position_check');
+
+SELECT _reject('XB-SUBDOMAIN', '域名权重不能为 0', $sql$
+  INSERT INTO subscription_domains (group_id, base_url, weight, position) VALUES
+    ('00000000-0000-7000-8000-000000000e11', 'https://sub-w0.example.test', 0, 2);
+$sql$, 'subscription_domains_weight_check');
+
+SELECT _reject('XB-SUBDOMAIN', '域名权重不能超过 100', $sql$
+  INSERT INTO subscription_domains (group_id, base_url, weight, position) VALUES
+    ('00000000-0000-7000-8000-000000000e11', 'https://sub-w101.example.test', 101, 3);
+$sql$, 'subscription_domains_weight_check');
+
+SELECT _reject('XB-SUBDOMAIN', '订阅地址必须是 https', $sql$
+  INSERT INTO subscription_domains (group_id, base_url, weight, position) VALUES
+    ('00000000-0000-7000-8000-000000000e11', 'http://sub-c.example.test', 1, 4);
+$sql$, 'subscription_domains_base_url_check');
+
+SELECT _reject('XB-SUBDOMAIN', '订阅地址不能带路径', $sql$
+  INSERT INTO subscription_domains (group_id, base_url, weight, position) VALUES
+    ('00000000-0000-7000-8000-000000000e11', 'https://sub-c.example.test/path', 1, 5);
+$sql$, 'subscription_domains_base_url_check');
+
+SELECT _reject('XB-SUBDOMAIN', '订阅地址主机名必须小写', $sql$
+  INSERT INTO subscription_domains (group_id, base_url, weight, position) VALUES
+    ('00000000-0000-7000-8000-000000000e11', 'https://Sub-C.example.test', 1, 6);
+$sql$, 'subscription_domains_base_url_check');
+
+SELECT _reject('XB-SUBDOMAIN', '同组不能重复登记同一地址', $sql$
+  INSERT INTO subscription_domains (group_id, base_url, weight, position) VALUES
+    ('00000000-0000-7000-8000-000000000e11', 'https://sub-a.example.test', 1, 7);
+$sql$, 'subscription_domains_pkey');
+
+SELECT _reject('XB-SUBDOMAIN', '同组 position 不能重复', $sql$
+  INSERT INTO subscription_domains (group_id, base_url, weight, position) VALUES
+    ('00000000-0000-7000-8000-000000000e11', 'https://sub-duppos.example.test', 1, 0);
+$sql$, 'subscription_domains_group_position_key');
+
+SELECT _reject('XB-SUBDOMAIN', '同一用户组只能分到一个域名组', $sql$
+  INSERT INTO subscription_domain_group_user_groups (user_group_id, group_id) VALUES
+    ('00000000-0000-7000-8000-000000000e01', '00000000-0000-7000-8000-000000000e12');
+$sql$, 'subscription_domain_group_user_groups_pkey');
+
+SELECT _reject('XB-SUBDOMAIN', '分配不存在的用户组必须拒绝', $sql$
+  INSERT INTO subscription_domain_group_user_groups (user_group_id, group_id) VALUES
+    ('00000000-0000-7000-8000-000000000e99', '00000000-0000-7000-8000-000000000e12');
+$sql$, 'subscription_domain_group_user_groups_user_group_id_fkey');
+
+SELECT _accept('XB-SUBDOMAIN', '删用户组后分配随之消失', $sql$
+  DELETE FROM user_groups WHERE id = '00000000-0000-7000-8000-000000000e01';
+$sql$);
+
+SELECT _accept('XB-SUBDOMAIN', '确认用户组分配已级联删除', $sql$
+  DO $do$
+  BEGIN
+    IF EXISTS (SELECT 1 FROM subscription_domain_group_user_groups WHERE user_group_id = '00000000-0000-7000-8000-000000000e01') THEN
+      RAISE EXCEPTION '分配没有随用户组删除';
+    END IF;
+  END $do$;
+$sql$);
+
+SELECT _accept('XB-SUBDOMAIN', '删域名组后组内域名随之消失', $sql$
+  DELETE FROM subscription_domain_groups WHERE id = '00000000-0000-7000-8000-000000000e11';
+$sql$);
+
+SELECT _accept('XB-SUBDOMAIN', '确认组内域名已级联删除', $sql$
+  DO $do$
+  BEGIN
+    IF EXISTS (SELECT 1 FROM subscription_domains WHERE group_id = '00000000-0000-7000-8000-000000000e11') THEN
+      RAISE EXCEPTION '域名没有随组删除';
+    END IF;
+  END $do$;
 $sql$);
 
 --------------------------------------------------------------------------------
