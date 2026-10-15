@@ -988,20 +988,22 @@ docker compose up -d --force-recreate serve nginx
 
 ## 15. 订阅域名打不开
 
-后台「节点 → 订阅」页的「订阅域名」管哪些用户拿到哪个域名的链接；nginx 只认 `/etc/pandora/deploy.env` 里 `PANDORA_SUB_DOMAINS` 登记过的订阅域名，且这些域名上只放行订阅拉取（`GET /<12位前缀>/<令牌>`）与 `/v1/sub-probe`。两边要一致：后台填了、部署没登记 → 链接打不开。
+后台「节点 → 订阅」页的「订阅域名」管哪些用户拿到哪个域名的链接；nginx 只认 `/etc/pandora/deploy.env` 里 `PANDORA_SUB_DOMAINS` 登记过的订阅域名，且这些域名上只放行订阅拉取（`GET /<12位前缀>/<令牌>`），其余路径一律 404。两边要一致：后台填了、部署没登记 → 链接打不开。
 
 ### 怎么确认
 
 ```bash
-# 探测接口应回 204
-curl -sI https://<订阅域名>/v1/sub-probe
-# 根路径与其余未放行路径应回 404
-curl -sI https://<订阅域名>/
+# 根路径应回 404（说明 443 块已生效、证书可用）
+curl -s -o /dev/null -w '%{http_code}\n' https://<订阅域名>/
+# 用自己的一条订阅链接（换成订阅域名）应回 200
+curl -s -o /dev/null -w '%{http_code}\n' 'https://<订阅域名>/<前缀>/<令牌>'
 # 检查 nginx 生成的站点配置中该域名的 server 块个数：2 = 80 与 443 都有（证书已就绪），1 = 只有 80（缺证书）
 grep -c 'server_name <订阅域名>;' /etc/nginx/conf.d/pandora.conf
 # 重新应用查看是否有缺证书的告警
 sudo /opt/pandora/deploy/edge-tls.sh apply
 ```
+
+不要用 `curl -I`：它发 HEAD，后端不处理 HEAD。
 
 ### 常见原因
 
@@ -1009,8 +1011,8 @@ sudo /opt/pandora/deploy/edge-tls.sh apply
 - **证书没放或文件名不对**：证书目录必须在 `/etc/pandora/tls/sub/<订阅域名>/`，文件必须叫 `fullchain.pem` 与 `privkey.pem`（缺证书时脚本只渲染 80，443 连不上）。
 - **证书续期后没 reload**：certbot 或其它工具续期后未重载 nginx（certbot 申请时须带 `--deploy-hook 'systemctl reload nginx'`）。
 - **DNS 没解析过来**：订阅域名的 A / AAAA 记录未解析到面板所在服务器的公网 IP。
-- **后台地址带了端口**：后台填写的地址带了非 443 端口，但 nginx 仅监听 443。
 - **注意**：订阅域名的证书目前不自动申请与续期（`edge-tls.sh` 只管面板主域名），需要运维自己管理。
+- **后台显示的「有效权重」= 基础权重 × 分数**：分数只随经该域名的成功拉取升高，随时间（6 小时半衰期）回落到 1。某个域名分数一直是 1，说明没人经它拉取成功：多半是 DNS、证书或被墙。
 
 ### 处理
 
@@ -1049,4 +1051,4 @@ sudo /opt/pandora/deploy/edge-tls.sh apply
 ### 什么时候升级处理
 
 - `deploy.env` 已正确配置、证书文件存在且 `nginx -t` 报错无法定位。
-- 探测接口 `curl -sI https://<订阅域名>/v1/sub-probe` 持续返回 502/503（面板上游服务 `pandora-serve` 异常）。带上 `pandora.conf`、`journalctl -u pandora-serve -n 50` 和 `curl -v` 输出提给开发。
+- 订阅链接持续返回 502/503（面板上游服务 `pandora-serve` 异常）。带上 `pandora.conf`、`journalctl -u pandora-serve -n 50` 和 `curl -v` 输出提给开发。

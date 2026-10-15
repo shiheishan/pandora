@@ -173,7 +173,7 @@ EOF
   if [[ "$has_cert" -eq 1 ]]; then
     cat <<EOF
 
-# 订阅域名 $d 的 443：只放行订阅拉取（GET /<12 位十六进制前缀>/<令牌>）与门户探测接口 /v1/sub-probe，
+# 订阅域名 $d 的 443：只放行订阅拉取（GET /<12 位十六进制前缀>/<令牌>），
 # 门户、后台、其余 API 一律 404（订阅域名不暴露后台前缀与登录入口）
 server {
     listen 0.0.0.0:443 ssl;
@@ -204,21 +204,6 @@ server {
     gzip_comp_level 5;
     gzip_min_length 1024;
     gzip_vary on;
-
-    location = /v1/sub-probe {
-        # limit_except GET 会同时放行 HEAD 请求（nginx 缺省语义）
-        limit_except GET { deny all; }
-        limit_req zone=pandora_api burst=60 nodelay;
-        proxy_pass http://pandora_public;
-        proxy_http_version 1.1;
-        proxy_set_header Connection "";
-        proxy_set_header Host              \$host;
-        proxy_set_header X-Real-IP         \$remote_addr;
-        proxy_set_header X-Forwarded-For   \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_connect_timeout 5s;
-        proxy_read_timeout 10s;
-    }
 
     location ~ ^/[0-9a-f]{12}/[A-Za-z0-9_-]{16,}(\.[a-z]{2,4})?$ {
         # limit_except GET 会同时放行 HEAD 请求（nginx 缺省语义）

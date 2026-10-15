@@ -186,7 +186,7 @@ grep -Fq 'no certificate for subscription domain sub-b.example.test' "$sub_err"
 grep -Fq "ssl_certificate $TEST_DIR/subtls/sub-a.example.test/fullchain.pem;" "$TEST_DIR/sub.conf"
 refute -Fq 'sub-b.example.test/fullchain.pem' "$TEST_DIR/sub.conf"
 refute -Fq 'sub-b.example.test/privkey.pem' "$TEST_DIR/sub.conf"
-[[ "$(grep -c 'location = /v1/sub-probe' "$TEST_DIR/sub.conf")" -eq 1 ]]
+refute -Fq 'sub-probe' "$TEST_DIR/sub.conf"
 [[ "$(grep -cE 'location ~ \^/\[0-9a-f\]\{12\}/' "$TEST_DIR/sub.conf")" -eq 1 ]]
 
 [[ "$(grep -c "$path" "$TEST_DIR/sub.conf")" -eq "$(grep -c "$path" "$OUT")" ]]
@@ -221,6 +221,49 @@ PANDORA_SUB_TLS_DIR="$TEST_DIR/subtls" reject_render "$TEST_DIR/config.yaml" "$T
 
 printf 'PANDORA_ADMIN_PATH=%s\nPANDORA_SUB_DOMAINS=a.example.test\nPANDORA_SUB_DOMAINS=b.example.test\n' "$path" >"$TEST_DIR/sub-rej-multi.env"
 PANDORA_SUB_TLS_DIR="$TEST_DIR/subtls" reject_render "$TEST_DIR/config.yaml" "$TEST_DIR/sub-rej-multi.env" "$TEST_DIR/rej.conf" "$TEST_DIR/rej-realip.conf"
+
+# 说明：deploy.env 按行读（awk + mapfile），真换行进不了同一个值；
+# 第二行另起一个键会被忽略（上面 sub-rej-multi 已覆盖同名键出现两次会 die 的情况）。
+# 下面是 PANDORA_SUB_DOMAINS 的非法值反例，全部必须被拒绝。
+sub_rej() {
+  local value_file="$1"
+  printf 'PANDORA_ADMIN_PATH=%s\n' "$path" >"$TEST_DIR/sub-rej-common.env"
+  cat "$value_file" "$TEST_DIR/sub-rej-common.env" >"$TEST_DIR/sub-rej-case.env"
+  PANDORA_SUB_TLS_DIR="$TEST_DIR/subtls" reject_render "$TEST_DIR/config.yaml" "$TEST_DIR/sub-rej-case.env" "$TEST_DIR/rej.conf" "$TEST_DIR/rej-realip.conf"
+}
+
+printf 'PANDORA_SUB_DOMAINS=a.example.test;\n' >"$TEST_DIR/sub-rej-semicolon.value"
+sub_rej "$TEST_DIR/sub-rej-semicolon.value"
+
+printf 'PANDORA_SUB_DOMAINS=a{b}.example.test\n' >"$TEST_DIR/sub-rej-brace.value"
+sub_rej "$TEST_DIR/sub-rej-brace.value"
+
+printf 'PANDORA_SUB_DOMAINS=a}.example.test\n' >"$TEST_DIR/sub-rej-rbrace.value"
+sub_rej "$TEST_DIR/sub-rej-rbrace.value"
+
+# 单引号里不展开，文件里是字面的 $host
+printf 'PANDORA_SUB_DOMAINS=$host.example.test\n' >"$TEST_DIR/sub-rej-dollar.value"
+sub_rej "$TEST_DIR/sub-rej-dollar.value"
+
+printf 'PANDORA_SUB_DOMAINS=a b.example.test\n' >"$TEST_DIR/sub-rej-space.value"
+sub_rej "$TEST_DIR/sub-rej-space.value"
+
+# 反斜杠加 n 两个字符（不是真换行）
+printf 'PANDORA_SUB_DOMAINS=a.example.test\\nserver\n' >"$TEST_DIR/sub-rej-literal-n.value"
+sub_rej "$TEST_DIR/sub-rej-literal-n.value"
+
+{
+  printf 'PANDORA_SUB_DOMAINS='
+  for i in $(seq 1 51); do
+    [[ "$i" -eq 1 ]] || printf ','
+    printf 's%d.example.test' "$i"
+  done
+  printf '\n'
+} >"$TEST_DIR/sub-rej-51.value"
+sub_rej "$TEST_DIR/sub-rej-51.value"
+
+printf 'PANDORA_SUB_DOMAINS=localhost\n' >"$TEST_DIR/sub-rej-bare-localhost.value"
+sub_rej "$TEST_DIR/sub-rej-bare-localhost.value"
 
 # 模板：仅两种占位符、恰好一行 http2 on;
 [[ "$(grep -cE '__PANDORA_(ADMIN_PATH|DOMAIN)__' "$SCRIPT_DIR/nginx-pandora.conf")" -ge 2 ]]
