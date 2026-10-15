@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	plog "github.com/aegispanel/aegis/internal/pkg/log"

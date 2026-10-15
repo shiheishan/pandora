@@ -88,14 +88,12 @@ func TestRenderIndexNoTitleTag(t *testing.T) {
 	}
 }
 
+// 没有 <title> 也没有 </head>（不是构建产物的形状）：不知道往哪插，原样返回
 func TestRenderIndexNoHeadClose(t *testing.T) {
 	index := `<!doctype html><html><body></body></html>`
 	out := string(renderIndex([]byte(index), IndexMeta{Title: "仅标题", Description: "d"}))
-	if !strings.Contains(out, "<title>仅标题</title>") {
-		t.Fatalf("must still set title: %s", out)
-	}
-	if strings.Contains(out, `name="description"`) {
-		t.Fatal("without </head> meta tags must not be added")
+	if out != index {
+		t.Fatalf("没有 </head> 时应原样返回：%s", out)
 	}
 }
 

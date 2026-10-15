@@ -119,13 +119,11 @@ func TestPageMetaCache_get_singleflight(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 	var loads atomic.Int32
-	var mu sync.Mutex
-	mu.Lock() // 让 load 卡住直到我们放行
+	release := make(chan struct{}) // 让 load 卡住直到我们放行
 
 	load := func(context.Context) (PageMeta, error) {
 		loads.Add(1)
-		mu.Lock()
-		mu.Unlock()
+		<-release
 		return PageMeta{SiteName: "并发"}, nil
 	}
 
@@ -138,7 +136,7 @@ func TestPageMetaCache_get_singleflight(t *testing.T) {
 			_ = c.get(ctx, 0, now, load, func(error) {})
 		}()
 	}
-	mu.Unlock()
+	close(release)
 	wg.Wait()
 	if loads.Load() != 1 {
 		t.Fatalf("并发应只 load 一次，got %d", loads.Load())

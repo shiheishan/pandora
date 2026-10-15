@@ -1,13 +1,14 @@
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
 import { useApi } from '../shell/runtime'
+import { siteSettingsSchema } from './screens/content/schemas'
 
 // ---------------------------------------------------------------------------
 // 站点设置（GET/POST v1/settings/site）：站点名只有这一个来源（系统设置 site.name），
 // 门户标题、入口页 <title>、邮件里的站点名与发件人名、订阅配置名都取它；主题只管标语与 Logo。
 // 外框（Shell、侧栏）与「内容与外观」页共用这一份查询和缓存键：那边保存后失效，这边标题跟着变。
 // ---------------------------------------------------------------------------
-export const siteSettingsSchema = z.object({ name: z.string(), timezone: z.string() })
+export { siteSettingsSchema }
 export type SiteSettings = z.output<typeof siteSettingsSchema>
 
 /** 与 screens/content/queries.ts 的 [...CK, 'site'] 相同，内容页 invalidate('site') 会一并刷新外框 */
