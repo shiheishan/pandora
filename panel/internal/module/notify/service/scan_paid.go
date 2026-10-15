@@ -70,6 +70,10 @@ func (s *Service) scanPaid(ctx context.Context, now time.Time, loc *time.Locatio
 	// owner[i] 是 items[i] 对应的 paid 下标；订阅已不存在的单没有条目，直接算处理完
 	owner := make([]int, 0, len(paid))
 	for i, p := range paid {
+		// 流量重置单不是「套餐已开通」，也没有专门的模板：不发（门户下单页当场显示结果），算处理完
+		if p.Kind == ordersvc.KindTrafficReset {
+			continue
+		}
 		sub, ok := subs[p.SubscriptionID]
 		if !ok {
 			continue

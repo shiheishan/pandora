@@ -1,8 +1,8 @@
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'
-import { planResetPricesSchema } from '../src/admin/screens/plans/api'
-import { memberDiscountSchema } from '../src/admin/screens/users/api'
+import { planResetPricesSchema } from '../src/admin/screens/plans/schemas'
+import { memberDiscountSchema } from '../src/admin/screens/users/opsSchemas'
 import { bearer, close, loginAs, mockFetch, serve } from './mock-helpers'
 
 // users 假后端的固定用户 id（标准版订阅用户）

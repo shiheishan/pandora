@@ -2,6 +2,7 @@ import { payMethodName, type OrderDetail } from '../common/orders'
 import { day, gb, leftOf, money, planTraffic, type Naming } from '../common/purchase'
 import type { Plan } from '../common/catalog'
 import type { Subscription } from '../common/subscriptions'
+import { pickTrafficQuota } from '../common/traffic'
 
 // ---------------------------------------------------------------------------
 // 完成页的文字（原型 order().commit 与 scrResult）：付完（含收银台回跳）后按订单与地址里带回的

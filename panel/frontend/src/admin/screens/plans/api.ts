@@ -1,20 +1,9 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback } from 'react'
-import { z } from 'zod'
 import { useApi } from '../../../shell/runtime'
-import { packsSchema, planPoolsSchema, planResponseSchema, plansSchema, poolOptionsSchema, type PackStatus } from './schemas'
+import { packsSchema, planPoolsSchema, planResetPricesSchema, planResponseSchema, plansSchema, poolOptionsSchema, type PackStatus } from './schemas'
 
 export * from './schemas'
-
-export const resetPriceItemSchema = z.object({
-  currency: z.enum(['CNY', 'USD']),
-  unit_amount: z.number().int().positive(),
-})
-export const planResetPricesSchema = z.object({
-  reset_prices: z.array(resetPriceItemSchema),
-})
-export type ResetPriceItem = z.output<typeof resetPriceItemSchema>
-export type PlanResetPrices = z.output<typeof planResetPricesSchema>
 
 // ---------------------------------------------------------------------------
 // 查询：目录变化推 plans.changed（plans / plan_versions / prices，R33 起含流量包）

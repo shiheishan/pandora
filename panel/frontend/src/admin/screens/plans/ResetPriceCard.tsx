@@ -19,7 +19,8 @@ export function ResetPriceCard({ plan }: { plan: PlanDetail }) {
         </>
       }
     >
-      <QueryView query={query} rows={1}>
+      {/* 返回的是对象，不会判空；没配价时编辑器里就是空表 */}
+      <QueryView query={query} rows={1} empty={null}>
         {(data) => <ResetPriceEditor key={data.reset_prices.map((p) => `${p.currency}:${p.unit_amount}`).join(',')} plan={plan} data={data} />}
       </QueryView>
     </Card>

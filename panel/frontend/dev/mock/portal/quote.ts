@@ -205,7 +205,7 @@ export function quoteRows(state: PortalState, req: QuoteInput, at: number, stric
       }
       assertNoPendingReset(state, sub.id)
       const subtotal = RESET_PRICES[sub.plan_id]!
-      const plan = findPlan(sub.plan_id)
+      const plan = findPlan(sub.plan_id) ?? null
       return [row(state, { sub, plan, price: null, pack: null, start: null, credit: null }, coupon, strictCoupon, subtotal)]
     }
     default:

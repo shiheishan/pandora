@@ -264,12 +264,8 @@ export const resetDoneSchema = z.object({ reset: z.literal(true), freed_bytes: c
 // ---------------------------------------------------------------------------
 // 会员折扣：单个用户的会员减免百分比（10 表示九折）
 // ---------------------------------------------------------------------------
-export const memberDiscountSchema = z.object({
-  user_id: z.string(),
-  percent: z.number().int().min(1).max(100).nullable(),
-  updated_at: time.nullable(),
-})
-export type MemberDiscountData = z.output<typeof memberDiscountSchema>
+import { memberDiscountSchema } from './opsSchemas'
+export { memberDiscountSchema, type MemberDiscountData } from './opsSchemas'
 
 // ---------------------------------------------------------------------------
 // GET v1/plans：批量筛选的「套餐」下拉只要 id / 名称 / 状态
