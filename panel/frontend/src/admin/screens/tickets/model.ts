@@ -101,6 +101,7 @@ export const CLOSED_REASON_LABELS = {
   user_closed: '用户关闭',
   withdrawn: '用户撤回',
   agent_closed: '客服关闭',
+  auto_closed: '自动关闭',
 } as const
 
 // ===========================================================================

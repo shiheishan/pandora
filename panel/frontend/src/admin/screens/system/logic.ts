@@ -102,6 +102,12 @@ export function parseChatId(raw: string): { ok: true; value: number | null } | {
   return Number.isSafeInteger(n) && n !== 0 ? { ok: true, value: n } : { ok: false }
 }
 
+/** 群组 chat id：空串 = 没填（null），否则必须是负数（群组与超级群的 chat id 都以 - 开头） */
+export function parseGroupChatId(raw: string): { ok: true; value: number | null } | { ok: false } {
+  const chat = parseChatId(raw)
+  return chat.ok && (chat.value === null || chat.value < 0) ? chat : { ok: false }
+}
+
 export interface TelegramForm {
   enabled: boolean
   username: string
@@ -116,8 +122,8 @@ export function telegramFormFrom(t: TelegramSettings): TelegramForm {
 
 /** admin_chat_id：没变就不带（后端缺省 = 不改），清空发 null，填了发数字 */
 export function telegramBody(f: TelegramForm, saved: TelegramSettings): { enabled: boolean; bot_username: string; bot_token: string; admin_chat_id?: number | null } | { error: string } {
-  const chat = parseChatId(f.chatId)
-  if (!chat.ok) return { error: '管理员群组 chat id 必须是非 0 整数' }
+  const chat = parseGroupChatId(f.chatId)
+  if (!chat.ok) return { error: '管理员群组 chat id 必须是负数（群组的 chat id 以 - 开头）' }
   const body = { enabled: f.enabled, bot_username: f.username.trim().replace(/^@/, ''), bot_token: f.token.trim() }
   return chat.value === saved.admin_chat_id ? body : { ...body, admin_chat_id: chat.value }
 }

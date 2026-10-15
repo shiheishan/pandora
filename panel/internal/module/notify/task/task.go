@@ -13,7 +13,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// TypeRetention 是保留期清理任务类型：投递记录、站内信、去重键、过期绑定码。
+// TypeRetention 是保留期清理任务类型：投递记录、站内信、去重键、过期绑定码、工单提醒消息映射。
 const TypeRetention = "retention:notify"
 
 // TypePublishAnnouncements 是定时公告到点发布任务类型。
@@ -38,6 +38,7 @@ type Service interface {
 	PurgeInbox(ctx context.Context, before time.Time, batch int) (int, error)
 	PurgeEvents(ctx context.Context, before time.Time, batch int) (int, error)
 	PurgeBindCodes(ctx context.Context, before time.Time, batch int) (int, error)
+	PurgeTicketMessages(ctx context.Context, before time.Time, batch int) (int, error)
 }
 
 // Module 注册 notify 相关的 asynq 任务与定时调度。
@@ -150,6 +151,7 @@ func (m *Module) retention(ctx context.Context, _ *asynq.Task) error {
 		{"inbox", now.AddDate(0, 0, -service.InboxRetentionDays), m.svc.PurgeInbox},
 		{"events", now.AddDate(0, 0, -service.EventRetentionDays), m.svc.PurgeEvents},
 		{"bind_codes", now.Add(-bindCodeGrace), m.svc.PurgeBindCodes},
+		{"ticket_messages", now.AddDate(0, 0, -service.TicketMessageRetentionDays), m.svc.PurgeTicketMessages},
 	}
 	var errList []error
 	for _, j := range jobsList {

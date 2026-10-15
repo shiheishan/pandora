@@ -5,6 +5,8 @@ import { gate, portalState, scenario, type PortalState } from './fixtures.ts'
 
 const DAY_MS = 86_400_000
 const ZERO_TIME = '0001-01-01T00:00:00Z'
+/** 改成 true 可在页面上看「须等客服回复」 */
+const WAIT_FOR_REPLY = false
 
 // support/service Categories 的固定顺序
 const CATEGORIES: ReadonlyArray<[string, string]> = [
@@ -18,7 +20,7 @@ const CATEGORIES: ReadonlyArray<[string, string]> = [
 const CATEGORY_CODES = new Set(CATEGORIES.map(([c]) => c))
 
 type Status = 'open' | 'pending_user' | 'pending_agent' | 'escalated' | 'resolved' | 'closed'
-type ClosedReason = 'user_closed' | 'withdrawn' | 'agent_closed'
+type ClosedReason = 'user_closed' | 'withdrawn' | 'agent_closed' | 'auto_closed'
 
 interface MessageFixture {
   id: string
@@ -116,6 +118,20 @@ function build(portal: PortalState): TicketFixture[] {
       order: null,
       messages: [msg('user', '续费成功了，但是本期已用流量还是上个周期的数字。', ago(34 * DAY_MS)), msg('system', '用户已撤回此工单', ago(34 * DAY_MS - 30 * 60_000))],
     }),
+    seed({
+      subject: '账号登录异常需要核实',
+      category: 'account',
+      status: 'closed',
+      created_at: ago(40 * DAY_MS),
+      resolved_at: ago(39 * DAY_MS),
+      closed_reason: 'auto_closed',
+      order: null,
+      messages: [
+        msg('user', '昨天突然提示密码错误，我确定没有改密码，麻烦帮忙看一下账号状态。', ago(40 * DAY_MS)),
+        msg('agent', '已核实你的账号正常，建议先退出后重新登录；若仍失败请回复具体报错截图。', ago(39 * DAY_MS)),
+        msg('system', '客服回复后 24 小时内没有新的回复，工单已自动关闭；如还有问题请新建工单', ago(38 * DAY_MS)),
+      ],
+    }),
   ]
   // multi：未结工单凑满 5 个，新建回 409
   if (s === 'multi') {
@@ -134,12 +150,26 @@ function rowView(t: TicketFixture) {
   return { id: t.id, ticket_no: t.ticket_no, subject: t.subject, category: t.category, priority: t.priority, status: t.status, created_at: t.created_at, updated_at: t.updated_at, resolved_at: t.resolved_at, message_count: t.messages.length, last_reply_at: last, closed_reason: t.closed_reason, related_order: null }
 }
 
+/** 最后一条非 system 消息的作者 */
+function lastPublicAuthorKind(messages: MessageFixture[]): MessageFixture['author_kind'] | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m && m.author_kind !== 'system') return m.author_kind
+  }
+  return null
+}
+
+function replyBlocked(t: TicketFixture): boolean {
+  return WAIT_FOR_REPLY && t.status !== 'closed' && lastPublicAuthorKind(t.messages) === 'user'
+}
+
 function detailView(t: TicketFixture, displayName: string | null) {
   return {
     ...rowView(t),
     message_count: 0,
     last_reply_at: ZERO_TIME,
     related_order: t.order,
+    reply_blocked: replyBlocked(t),
     messages: t.messages.map((m) => ({ ...m, author_name: m.author_kind === 'user' ? displayName : null })),
   }
 }
@@ -210,6 +240,7 @@ export const tickets: MockModule = {
         const t = find(ctx)
         if (!t) return notFound()
         if (t.status === 'closed') return new BillingError(409, 'conflict', '工单已关闭，如需继续请新建工单').result()
+        if (replyBlocked(t)) return new BillingError(409, 'conflict', '请等客服回复后再继续发送').result()
         t.messages.push(msg('user', text, new Date().toISOString()))
         // 球回到客服；已解决的被追问即重开（修订 R25：重开清空关闭原因）
         t.status = 'pending_agent'

@@ -1,10 +1,11 @@
-// Package handler 是 notify 模块的 HTTP 层：后台邮件 / Telegram 设置、邮件模板、公告、群发邮件；门户站内信、通知偏好、公告、Telegram 绑定；bot webhook。
+// Package handler 是 notify 模块的 HTTP 层：后台邮件 / Telegram 设置、后台 Telegram 扩展设置、邮件模板、公告、群发邮件、管理员自己的 Telegram 绑定；门户站内信、通知偏好、公告、Telegram 绑定；bot webhook。
 package handler
 
 import (
 	"context"
 
 	"github.com/aegispanel/aegis/internal/module/notify/service"
+	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/pkg/ratelimit"
 	"github.com/aegispanel/aegis/internal/pkg/route"
 	"github.com/gin-gonic/gin"
@@ -42,6 +43,8 @@ type Notify interface {
 	TelegramSettings(ctx context.Context) (service.TelegramSettingsView, error)
 	SaveTelegramSettings(ctx context.Context, in service.TelegramSettingsInput) error
 	TestTelegram(ctx context.Context, chatID int64) error
+	TelegramExtras(ctx context.Context) (settingssvc.TelegramExtras, error)
+	SaveTelegramExtras(ctx context.Context, in service.TelegramExtrasInput) error
 	TelegramBinding(ctx context.Context, userID uuid.UUID) (service.TelegramBindingInfo, error)
 	IssueBindCode(ctx context.Context, userID uuid.UUID) (service.BindCode, error)
 	UnbindTelegram(ctx context.Context, userID uuid.UUID) error
@@ -103,6 +106,12 @@ func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	v1.GET("/settings/telegram", k.RequireAuth, h.getTelegramSettings)
 	v1.POST("/settings/telegram", k.RequireAuth, k.RecentReauth, h.setTelegramSettings)
 	v1.POST("/settings/telegram/test", k.RequireAuth, h.testTelegram)
+	v1.GET("/settings/telegram/extras", k.RequireAuth, h.getTelegramExtras)
+	v1.POST("/settings/telegram/extras", k.RequireAuth, k.RecentReauth, h.setTelegramExtras)
+	// 管理员自己的 Telegram 绑定（在管理员群组里回复工单提醒要用）：与门户同一组处理函数，从登录主体取 user id
+	v1.GET("/me/telegram", k.RequireAuth, h.myTelegram)
+	v1.POST("/me/telegram/bind-code", k.RequireAuth, k.RecentReauth, h.telegramBindCode)
+	v1.DELETE("/me/telegram", k.RequireAuth, h.telegramUnbind)
 
 	v1.GET("/announcements", k.RequireAuth, h.listAnnouncements)
 	v1.POST("/announcements", k.RequireAuth, k.RecentReauth, k.Idempotency("announcement_save"), h.saveAnnouncement)

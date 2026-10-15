@@ -20,6 +20,7 @@ import (
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	idemsvc "github.com/aegispanel/aegis/internal/module/idempotency/service"
 	identitysvc "github.com/aegispanel/aegis/internal/module/identity/service"
+	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/module/support/model"
 	"github.com/aegispanel/aegis/internal/module/support/repo"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
@@ -78,6 +79,10 @@ type store interface {
 	UpdateMacro(ctx context.Context, id uuid.UUID, title, body string, sortOrder int) (bool, error)
 	// DeleteMacro 删除并返回原标题；不存在回 false。
 	DeleteMacro(ctx context.Context, id uuid.UUID) (string, bool, error)
+	// LastPublicAuthorKind 一张工单最后一条非内部备注、非系统消息的作者类型；没有这样的消息 ok 为 false。
+	LastPublicAuthorKind(ctx context.Context, ticketID uuid.UUID) (kind string, ok bool, err error)
+	// LockAutoCloseCandidates 取 status = pending_user 且 updated_at <= before 的工单（最多 limit 张，按 updated_at、id，FOR UPDATE SKIP LOCKED）。
+	LockAutoCloseCandidates(ctx context.Context, before time.Time, limit int) ([]repo.AutoCloseRow, error)
 }
 
 var _ store = (*repo.Repo)(nil)
@@ -126,20 +131,50 @@ type ReplyNotice struct {
 	Subject   string
 }
 
+// Settings 是 support 要的工单规则（属 settings）；*settingssvc.Service 直接满足。
+type Settings interface {
+	SupportRules(ctx context.Context) (settingssvc.SupportRules, error)
+}
+
+// AdminTicketNotifier 由 notify 实现（app 适配）：用户建单、用户回复后，在同一事务里往管理员 Telegram 群组排一条提醒；
+// 后台开关没开、群组没配时 notify 什么都不写、返回 nil。返回错误时建单 / 回复一起回滚（与 ReplyNotifier 一致）。
+type AdminTicketNotifier interface {
+	TicketActivity(ctx context.Context, n AdminTicketNotice) error
+}
+
+// 管理员工单提醒的种类。
+const (
+	AdminNoticeOpened      = "opened"
+	AdminNoticeUserReplied = "user_replied"
+)
+
+// AdminTicketNotice 是一条管理员工单提醒的内容。Body 是这次用户写的正文。
+type AdminTicketNotice struct {
+	Kind      string
+	UserID    uuid.UUID
+	TicketID  uuid.UUID
+	MessageID uuid.UUID
+	TicketNo  string
+	Subject   string
+	Body      string
+}
+
 // Service 是 support 模块对外的唯一入口。
 type Service struct {
-	repo     store
-	tx       txRunner
-	events   pluginevents.Emitter // 插件钩子出站事件，装配时注入（plugin_events.go）
-	audit    auditWriter
-	idem     idempotency
-	users    Users
-	admins   Admins
-	orders   Orders
-	plans    PlanNames
-	notifier ReplyNotifier
-	now      func() time.Time
-	rt       *realtime.Publisher // 实时推送（realtime.go 的 UseRealtime）；nil 时不推
+	repo          store
+	tx            txRunner
+	events        pluginevents.Emitter // 插件钩子出站事件，装配时注入（plugin_events.go）
+	audit         auditWriter
+	idem          idempotency
+	users         Users
+	admins        Admins
+	orders        Orders
+	plans         PlanNames
+	notifier      ReplyNotifier
+	settings      Settings
+	adminNotifier AdminTicketNotifier
+	now           func() time.Time
+	rt            *realtime.Publisher // 实时推送（realtime.go 的 UseRealtime）；nil 时不推
 }
 
 // New 构造 support service。users 是 identity service，admins 是 auth service。
@@ -169,6 +204,12 @@ func (s *Service) UsePlanNames(p PlanNames) { s.plans = p }
 // UseReplyNotifier 接上客服回复通知（启动装配时调用）。
 func (s *Service) UseReplyNotifier(n ReplyNotifier) { s.notifier = n }
 
+// UseSettings 接上工单规则设置（启动装配时调用）。
+func (s *Service) UseSettings(x Settings) { s.settings = x }
+
+// UseAdminNotifier 接上管理员工单提醒通知（启动装配时调用）。
+func (s *Service) UseAdminNotifier(n AdminTicketNotifier) { s.adminNotifier = n }
+
 // MissingPorts 返回没装配的必需端口名（装配完成后由 internal/app 统一检查）。
 func (s *Service) MissingPorts() []string {
 	var out []string
@@ -187,7 +228,20 @@ func (s *Service) MissingPorts() []string {
 	if s.rt == nil {
 		out = append(out, "Realtime")
 	}
+	if s.settings == nil {
+		out = append(out, "Settings")
+	}
+	if s.adminNotifier == nil {
+		out = append(out, "AdminTicketNotifier")
+	}
 	return out
+}
+
+func (s *Service) rules(ctx context.Context) (settingssvc.SupportRules, error) {
+	if s.settings == nil {
+		return settingssvc.SupportRules{}, nil
+	}
+	return s.settings.SupportRules(ctx)
 }
 
 // completeIdem 在当前事务里完成幂等认领；ctx 里没有认领或 reply 为 nil 时什么都不做。

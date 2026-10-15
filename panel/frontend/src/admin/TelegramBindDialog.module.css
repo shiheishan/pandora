@@ -1,0 +1,55 @@
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.muted {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--fs-body);
+  line-height: 1.6;
+}
+
+.codeBox {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+}
+
+.bindCode {
+  font-family: var(--font-mono);
+  font-size: var(--fs-body);
+  user-select: all;
+}
+
+.hint {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.linkButton {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  color: var(--text);
+  font-size: var(--fs-caption);
+  text-decoration: none;
+}
+
+.linkButton:hover {
+  background: var(--surface-2);
+}

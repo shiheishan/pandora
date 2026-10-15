@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 
+	authsvc "github.com/aegispanel/aegis/internal/module/auth/service"
 	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
 	commissionsvc "github.com/aegispanel/aegis/internal/module/commission/service"
+	contentsvc "github.com/aegispanel/aegis/internal/module/content/service"
 	identitysvc "github.com/aegispanel/aegis/internal/module/identity/service"
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
 	nodesvc "github.com/aegispanel/aegis/internal/module/node/service"
@@ -13,6 +15,7 @@ import (
 	ordersvc "github.com/aegispanel/aegis/internal/module/order/service"
 	promosvc "github.com/aegispanel/aegis/internal/module/promo/service"
 	reportsvc "github.com/aegispanel/aegis/internal/module/report/service"
+	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	supportsvc "github.com/aegispanel/aegis/internal/module/support/service"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
@@ -282,3 +285,106 @@ func byCurrencyCode(m map[money.Currency]decimal.Decimal) map[string]decimal.Dec
 	}
 	return out
 }
+
+// ---- xb-tg：Telegram 用户命令、管理员群组提醒与在 TG 里回复工单、知识库占位变量 ----
+
+// notifySubscribeLinks 让 notify 的 /sub 经 subscription 取用户的订阅链接：与门户「订阅链接」同一口径（MyLinks），
+// 只要生效中的。MyLinks 按 ctx 里的门户主体取，这里以该用户的门户主体调用（webhook 没有登录会话）。
+type notifySubscribeLinks struct{ s *subsvc.Service }
+
+// ActiveLinks 返回该用户每份生效订阅当前的订阅链接（按凭据创建时间倒序），没有返回空切片。
+func (a notifySubscribeLinks) ActiveLinks(ctx context.Context, userID uuid.UUID) ([]string, error) {
+	ctx = authn.With(ctx, authn.Principal{UserID: userID, SessionID: "telegram", Audience: authn.AudiencePublic})
+	links, err := a.s.MyLinks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(links))
+	for _, l := range links {
+		if !l.Expired {
+			out = append(out, l.URL)
+		}
+	}
+	return out, nil
+}
+
+// notifyBalances 让 notify 的工单提醒经 ledger 批量取用户在站点币种下的余额。
+type notifyBalances struct{ l *ledgersvc.Service }
+
+// UserBalances 返回余额与站点币种；没有账户的用户为 0。
+func (a notifyBalances) UserBalances(ctx context.Context, userIDs []uuid.UUID) (map[uuid.UUID]decimal.Decimal, string, error) {
+	cur, err := a.l.DefaultCurrency(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	bal, err := a.l.Balances(ctx, userIDs, cur)
+	if err != nil {
+		return nil, "", err
+	}
+	return bal, string(cur), nil
+}
+
+// notifyTicketReplier 让 notify 在 Telegram 管理员群组里收到的回复以该管理员身份回复工单：与后台回复走同一个
+// support.AgentReply（同样的状态流转、通知提单人、审计，审计 data 带 via=telegram）。
+// 后台只读模式（admin.writes 关闭）时与后台接口一样拒绝。
+type notifyTicketReplier struct {
+	support  *supportsvc.Service
+	switches interface {
+		SwitchEnabled(ctx context.Context, code string) (bool, error)
+	}
+}
+
+// ReplyAsAdmin 以 adminID 的后台主体公开回复工单。
+func (a notifyTicketReplier) ReplyAsAdmin(ctx context.Context, adminID, ticketID uuid.UUID, body string) error {
+	on, err := a.switches.SwitchEnabled(ctx, settingssvc.SwitchAdminWrites)
+	if err != nil {
+		return err
+	}
+	if !on {
+		return errs.Newf(errs.Unavailable, "管理端只读模式")
+	}
+	ctx = authn.With(ctx, authn.Principal{UserID: adminID, SessionID: "telegram", Audience: authn.AudienceAdmin})
+	return a.support.AgentReply(ctx, supportsvc.AgentReplyInput{TicketID: ticketID, Body: body, Source: supportsvc.SourceTelegram})
+}
+
+// supportAdminNotifier 让 support 在建单、用户回复的同一事务里经 notify 往管理员群组排一条工单提醒
+// （后台开关没开、群组没配时 notify 什么都不写）。
+type supportAdminNotifier struct{ n *notifysvc.Service }
+
+// TicketActivity 在调用方事务里写提醒。
+func (a supportAdminNotifier) TicketActivity(ctx context.Context, n supportsvc.AdminTicketNotice) error {
+	return a.n.NotifyAdminsTicket(ctx, notifysvc.AdminTicketInput{
+		Kind: n.Kind, UserID: n.UserID, TicketID: n.TicketID, MessageID: n.MessageID,
+		TicketNo: n.TicketNo, Subject: n.Subject, Body: n.Body,
+	})
+}
+
+// contentSubscribeLinks 让 content 的知识库占位变量 {{subscribeUrl}} 经 subscription 取门户主体的订阅链接：
+// 多份生效订阅时取凭据最新的那份（MyLinks 已按凭据创建时间倒序）。
+type contentSubscribeLinks struct{ s *subsvc.Service }
+
+// CurrentLink 返回 ctx 里门户主体最新一份生效订阅的订阅链接；没有生效订阅返回空串。
+func (a contentSubscribeLinks) CurrentLink(ctx context.Context) (string, error) {
+	links, err := a.s.MyLinks(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, l := range links {
+		if !l.Expired {
+			return l.URL, nil
+		}
+	}
+	return "", nil
+}
+
+var (
+	_ notifysvc.SubscribeLinks        = notifySubscribeLinks{}
+	_ notifysvc.Balances              = notifyBalances{}
+	_ notifysvc.TicketReplier         = notifyTicketReplier{}
+	_ notifysvc.SubscriptionSummaries = (*subsvc.Service)(nil)
+	_ notifysvc.Admins                = (*authsvc.Service)(nil)
+	_ supportsvc.Settings             = (*settingssvc.Service)(nil)
+	_ supportsvc.AdminTicketNotifier  = supportAdminNotifier{}
+	_ contentsvc.Site                 = (*settingssvc.Service)(nil)
+	_ contentsvc.SubscribeLinks       = contentSubscribeLinks{}
+)

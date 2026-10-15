@@ -35,7 +35,7 @@ interface Row {
   sla_resolution_due: string
   first_responded_at: string | null
   escalated_at: string | null
-  closed_reason: 'user_closed' | 'withdrawn' | 'agent_closed' | null
+  closed_reason: 'user_closed' | 'withdrawn' | 'agent_closed' | 'auto_closed' | null
   /** 用户建单时关联的订单（related_order_id）；详情联表出 { id, order_no } */
   related_order_id: string | null
   messages: Msg[]
@@ -155,6 +155,23 @@ const rows: Row[] = [
   seed(4801, '误提交，已自己解决', 'mira@gmail.com', '标准版', 'general', 'low', 'closed', 50 * 60, [msg('user', null, '不好意思，已经可以用了。', 50 * 60), msg('system', null, '用户撤回了工单', 49 * 60)], {
     closed_reason: 'withdrawn',
   }),
+  // support:auto_close：客服回复后用户 24 小时没动静，系统自动关闭
+  seed(
+    4800,
+    '换设备后如何迁移订阅',
+    'kai@example.com',
+    '标准版',
+    'subscription',
+    'low',
+    'closed',
+    55 * 60,
+    [
+      msg('user', null, '新手机上要重新导入订阅吗？旧手机还能继续用吗？', 55 * 60),
+      msg('agent', '林舟', '在新设备上复制订阅链接导入即可，旧设备不受影响。', 54 * 60),
+      msg('system', null, '客服回复后 24 小时内没有新的回复，工单已自动关闭；如还有问题请新建工单', 30 * 60),
+    ],
+    { closed_reason: 'auto_closed' },
+  ),
 ]
 
 // R114：4818（付款后仍待支付）关联一张待支付订单，详情头能看到「关联订单」
@@ -255,8 +272,38 @@ const touch = (t: Row) => {
   t.updated_at = new Date().toISOString()
 }
 
+const supportSettings = { wait_for_reply: false, auto_close_enabled: false, auto_close_hours: 24 }
+
+async function saveSupportSettings(ctx: MockContext): Promise<MockResult> {
+  const body = await ctx.body()
+  if (!body) return { status: 400, body: envelope('bad_request', '请求体不是合法的 JSON') }
+  const unknown = Object.keys(body).filter((k) => !['wait_for_reply', 'auto_close_enabled', 'auto_close_hours'].includes(k))
+  if (unknown.length) return { status: 400, body: envelope('bad_request', `未知字段：${unknown.join(', ')}`) }
+  const fields: Record<string, string> = {}
+  if (typeof body.wait_for_reply !== 'boolean') fields.wait_for_reply = '必填'
+  if (typeof body.auto_close_enabled !== 'boolean') fields.auto_close_enabled = '必填'
+  if (typeof body.auto_close_hours !== 'number' || !Number.isInteger(body.auto_close_hours)) fields.auto_close_hours = '必填'
+  else if (body.auto_close_hours < 1 || body.auto_close_hours > 720) fields.auto_close_hours = '自动关闭时长要在 1 到 720 小时之间'
+  if (Object.keys(fields).length) return { status: 422, body: envelope('validation_failed', '请求参数校验未通过', fields) }
+  Object.assign(supportSettings, {
+    wait_for_reply: body.wait_for_reply === true,
+    auto_close_enabled: body.auto_close_enabled === true,
+    auto_close_hours: body.auto_close_hours as number,
+  })
+  return { status: 200, body: { ...supportSettings } }
+}
+
 export const tickets: MockModule = {
   routes: {
+    'GET /v1/settings/support': (ctx) => {
+      ctx.send(200, { ...supportSettings })
+    },
+    'POST /v1/settings/support': async (ctx) => {
+      if (!ctx.requireReauth()) return
+      const r = await saveSupportSettings(ctx)
+      ctx.send(r.status, r.body)
+    },
+
     'GET /v1/tickets/assignees': (ctx) => {
       ctx.send(200, { assignees: assigneesFor(ctx) })
     },

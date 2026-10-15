@@ -9,6 +9,7 @@ import { ENCRYPTIONS, mailTested, okResponse, REGISTRATION_MODES, type MailSetti
 import { ChannelCard } from './ChannelCard'
 import css from './system.module.css'
 import { TelegramCard } from './TelegramCard'
+import { TelegramExtrasCard } from './TelegramExtrasCard'
 
 export function ChannelsTab() {
   const mail = useMailSettings()
@@ -18,6 +19,7 @@ export function ChannelsTab() {
         {(saved) => <SmtpCard saved={saved} />}
       </QueryView>
       <TelegramCard />
+      <TelegramExtrasCard />
       <QueryView query={mail} rows={3} empty={null}>
         {(saved) => <RegistrationCard saved={saved} />}
       </QueryView>

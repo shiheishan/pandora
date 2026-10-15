@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { queueSchema } from './api'
-import { assigneeOptions, isFilter, messageTime, messageView, queueParams, slaLines, STATUS_OPTIONS, statusView, systemText, waitLabel } from './model'
+import { assigneeOptions, CLOSED_REASON_LABELS, isFilter, messageTime, messageView, queueParams, slaLines, STATUS_OPTIONS, statusView, systemText, waitLabel } from './model'
 
 const NOW = new Date('2026-09-24T12:00:00')
 const ago = (minutes: number) => new Date(NOW.getTime() - minutes * 60_000).toISOString()
@@ -127,6 +127,11 @@ describe('schema', () => {
 
   it('omitempty 字段可缺（后端空值时整个键不出现）', () => {
     expect(queueSchema.safeParse({ tickets: [row], total: 1 }).success).toBe(true)
+  })
+
+  it('closed_reason 支持 auto_closed 且标签是「自动关闭」', () => {
+    expect(queueSchema.safeParse({ tickets: [{ ...row, status: 'closed', closed_reason: 'auto_closed' }], total: 1 }).success).toBe(true)
+    expect(CLOSED_REASON_LABELS.auto_closed).toBe('自动关闭')
   })
 
   it('封闭枚举之外的状态、缺 closed_reason 都判为不符约定', () => {

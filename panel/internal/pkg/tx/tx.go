@@ -41,7 +41,8 @@ type inDoKey struct{}
 
 // InTx 报告 ctx 是否在某个 Manager.Do 的回调里（事务还没提交）。
 // 只认 Do 打的标记：测试用的整例回滚事务（testkit.TxCtx）本身不算，在它里面直接调的代码视为不在事务里。
-// 给「不能在事务里调用」的方法（要联网的渠道调用等）做入口断言用。
+// 给「不能在事务里调用」的方法（要联网的渠道调用等）与「必须在事务里调用」的方法（持有到提交的咨询锁，如
+// commission 的 LockForDeletion）做入口断言用。
 func InTx(ctx context.Context) bool {
 	v, _ := ctx.Value(inDoKey{}).(bool)
 	return v
@@ -54,6 +55,3 @@ func AfterCommit(ctx context.Context, key string, fn func(ctx context.Context)) 
 		fn(context.WithoutCancel(ctx))
 	}
 }
-
-// InTx 报告 ctx 里是否已有事务：只在调用方必须加入外层事务（如持有到提交的咨询锁）时用来拒绝误用。
-func InTx(ctx context.Context) bool { return db.InTx(ctx) }

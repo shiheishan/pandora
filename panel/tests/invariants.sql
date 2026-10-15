@@ -12,7 +12,8 @@
 --   SUB-007 试用防刷（subscription_trials 每人终身一次）、
 --   XB-COMM（对齐 Xboard 的三级分销与自动转余额标记、提现方式与 USDT 打款、按用户单独佣金设置）、
 --   XB-REG 注销作废可提现佣金（commission_forfeitures 每人每币种一行、只追加）、
---   PAY-FEE 渠道类型与用户手续费（00042）。
+--   PAY-FEE 渠道类型与用户手续费（00042）、
+--   XB-TG Telegram 工单提醒映射与自动关闭原因。
 --
 -- 不覆盖的验收项及原因（没有对应的表或机制）：
 --   SEC-013 双人审批 — 没有审批表：后台权限只分有和没有。
@@ -1053,6 +1054,35 @@ $sql$, 'commission_forfeitures_reason_check');
 SELECT _reject('XB-REG', '作废记录不可改', $sql$
   UPDATE commission_forfeitures SET amount = 2.00 WHERE id = '00000000-0000-7000-8000-000000000371';
 $sql$, '是只追加的表');
+
+--------------------------------------------------------------------------------
+-- XB-TG Telegram 工单提醒映射与自动关闭原因（00044_xb_tg.sql）
+--------------------------------------------------------------------------------
+
+SELECT _accept('XB-TG', '工单提醒映射写入应当通过', $sql$
+  INSERT INTO telegram_ticket_messages (chat_id, message_id, ticket_id)
+  VALUES (-1000000000001, 42, '00000000-0000-7000-8000-000000000d01');
+$sql$);
+
+-- 主键 (chat_id, message_id)：同一条群消息只能对应一张工单
+SELECT _reject('XB-TG', '同一条提醒消息重复映射必须拒绝', $sql$
+  INSERT INTO telegram_ticket_messages (chat_id, message_id, ticket_id)
+  VALUES (-1000000000001, 42, '00000000-0000-7000-8000-000000000d01');
+$sql$);
+
+SELECT _reject('XB-TG', '提醒消息 id 必须为正', $sql$
+  INSERT INTO telegram_ticket_messages (chat_id, message_id, ticket_id)
+  VALUES (-1000000000001, 0, '00000000-0000-7000-8000-000000000d01');
+$sql$);
+
+SELECT _accept('XB-TG', '自动关闭原因应当通过', $sql$
+  UPDATE tickets SET status = 'closed', closed_at = now(), closed_reason = 'auto_closed', closed_note = NULL
+   WHERE id = '00000000-0000-7000-8000-000000000d01';
+$sql$);
+
+SELECT _reject('XB-TG', '未知的关闭原因必须拒绝', $sql$
+  UPDATE tickets SET closed_reason = 'timeout' WHERE id = '00000000-0000-7000-8000-000000000d01';
+$sql$);
 
 --------------------------------------------------------------------------------
 -- 汇总

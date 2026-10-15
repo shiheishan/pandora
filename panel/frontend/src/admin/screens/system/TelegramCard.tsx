@@ -80,7 +80,7 @@ function TelegramForm({ saved }: { saved: TelegramSettings }) {
         <Switch label="启用 Telegram 通知" checked={form.enabled} disabled={disabled} onChange={(e) => edit({ enabled: e.target.checked })} />
       </div>
       <Input label="Bot Token" fieldClassName={css.span2} type="password" autoComplete="off" mono value={form.token} placeholder={saved.has_token ? '已设置，留空不修改' : '未设置'} disabled={disabled} onChange={(e) => edit({ token: e.target.value })} />
-      <Input label="管理员群组 Chat ID" mono inputMode="numeric" value={form.chatId} placeholder="如 -1002231180042" error={errors.admin_chat_id} hint="目前只作测试消息的默认目标" disabled={disabled} onChange={(e) => edit({ chatId: e.target.value })} />
+      <Input label="管理员群组 Chat ID" mono inputMode="numeric" value={form.chatId} placeholder="如 -1002231180042" error={errors.admin_chat_id} hint="测试消息的默认目标；收款、工单提醒也发到这个群" disabled={disabled} onChange={(e) => edit({ chatId: e.target.value })} />
       <Input label="Bot 用户名" mono value={form.username} placeholder="@pandora_notify_bot" error={errors.bot_username} disabled={disabled} onChange={(e) => edit({ username: e.target.value })} />
       {dirty && <div className={`${css.span2} ${css.faint}`}>有未保存的修改；发送测试用的是已保存的配置，保存后再测。</div>}
     </ChannelCard>

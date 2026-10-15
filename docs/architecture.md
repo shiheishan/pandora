@@ -149,7 +149,7 @@ nodeapi/                         buf 生成的 Go 代码，单独的 Go module�
 | subscription | subscriptions、subscription_events、subscription_credentials、quota_balances、traffic_pack_grants、traffic_pack_transfers、traffic_reset_logs、subscription_usage_daily、subscription_fetch_log、subscription_trials、subscription_templates | 状态口径（生效、可救回、已停用）只在这里定义；节点上报的扣量调它的批量扣量方法 |
 | node | servers、nodes、node_pools、node_pool_user_groups、node_ca（面板 CA）、server_identities、bootstrap_tokens、node_outbounds、node_routes、route_groups、route_group_members、node_traffic_reports、node_traffic_hourly、node_user_traffic_hourly、node_metrics、node_alive_ips | 后台编排、gRPC 会话、接入、流量入账（入账后调 subscription 扣量）。设计里的 node_configs、node_config_applications、node_user_traffic_daily、node_tasks 没有建：配置文档每次由节点与路由表现算，应用结果按会话回执记在 nodes 上，小时汇总在入账时同事务写 |
 | certs | dns_credentials、acme_accounts、certificates、certificate_versions、certificate_orders、certificate_issuances | ACME 签发入站 TLS 证书 |
-| notify | announcements、notification_templates、notification_preferences、notification_deliveries、notification_inbox、notification_events、notify_scan_cursors、telegram_bindings、telegram_bind_codes | 站内信、邮件、Telegram |
+| notify | announcements、notification_templates、notification_preferences、notification_deliveries、notification_inbox、notification_events、notify_scan_cursors、telegram_bindings、telegram_bind_codes、telegram_ticket_messages | 站内信、邮件、Telegram（含管理员群组提醒与工单提醒消息映射） |
 | support | tickets、ticket_messages、ticket_macros | 工单 |
 | content | content_pages、content_page_feedback | 内容页 |
 | appearance | site_themes、site_slots | 主题和槽位 |
@@ -452,6 +452,7 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 | `notify:dispatch` | `@every 30s`，业务提交后也入队（TaskID 按秒分桶去重） | 4m | default |
 | `plugin:dispatch` | `@every 1m`，emit 后也入队 | 4m | low |
 | `support:escalate_sla` | `*/5 * * * *` | 30s | default |
+| `support:auto_close` | `2-59/10 * * * *`（后台开了自动关闭才做事） | 30s | default |
 | `notify:publish_announcements` | `@every 1m` | 20s | default |
 | `report:activity_daily` | `*/10 * * * *` | 2m | low |
 | `devices:strict` | `@every 1m`（strict 设备数限制：周期重判在线设备超限的订阅，从名单里摘掉或放回） | 30s | low |
@@ -461,7 +462,7 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 | `reconcile:user_generation` | `@every 1m`，把 queued 或租约过期的 job 重新入队 | 30s | low |
 
 - 节点流量的小时汇总在入账时同事务写入（`node_traffic_hourly`、`node_user_traffic_hourly`），不设设计里的 `node:traffic_rollup` 任务。
-- 保留期清理覆盖的表：原有的 node_metrics、node_traffic_reports、各级流量汇总、node_alive_ips、subscription_fetch_log、activity_daily；新补的 idempotency_keys、registration_sessions、verification_codes、plugin_hook_deliveries、user_generation_jobs（结果清除后 N 天删行）、notification_deliveries。各表的保留期按第 18 节 Q5。
+- 保留期清理覆盖的表：原有的 node_metrics、node_traffic_reports、各级流量汇总、node_alive_ips、subscription_fetch_log、activity_daily；新补的 idempotency_keys、registration_sessions、verification_codes、plugin_hook_deliveries、user_generation_jobs（结果清除后 N 天删行）、notification_deliveries、telegram_ticket_messages（与投递记录同保留期）。各表的保留期按第 18 节 Q5。
 - 「支付开通后发通知」改为在开通的事务里直接写 delivery，不再靠 `ScanPaidOrders` 回看 2 小时（扫描器停机超过 2 小时会漏发）。
 - 留在 serve 里、不进 asynq 的：心跳合并、节点会话、SSE hub。删除的：nonce 清理、epoch LISTEN、节点存活巡检（会话在不在就是在线状态）。
 

@@ -22,6 +22,8 @@ type Settings interface {
 	SignupWithoutSecret(ctx context.Context) (service.Signup, error)
 	SetSignup(ctx context.Context, u service.SignupUpdate) error
 	SubscriptionExtrasSettings
+	SupportRules(ctx context.Context) (service.SupportRules, error)
+	SetSupportRules(ctx context.Context, v service.SupportRules) error
 }
 
 var _ Settings = (*service.Service)(nil)
@@ -51,4 +53,6 @@ func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	v1.POST("/settings/signup", k.RequireAuth, k.RecentReauth, h.setSignup)
 	v1.GET("/settings/subscription", k.RequireAuth, h.getSubscriptionExtras)
 	v1.POST("/settings/subscription", k.RequireAuth, k.RecentReauth, h.setSubscriptionExtras)
+	v1.GET("/settings/support", k.RequireAuth, h.getSupportRules)
+	v1.POST("/settings/support", k.RequireAuth, k.RecentReauth, h.setSupportRules)
 }

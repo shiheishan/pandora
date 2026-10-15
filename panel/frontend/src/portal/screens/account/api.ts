@@ -70,6 +70,7 @@ export const telegramSchema = z.object({
   username: z.string().optional(),
   bot_username: z.string().optional(),
   enabled: z.boolean(),
+  discuss_link: z.string().nullable(),
 })
 export type Telegram = z.output<typeof telegramSchema>
 

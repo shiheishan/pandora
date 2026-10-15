@@ -112,6 +112,20 @@ func (s *rtStore) DeleteMacro(context.Context, uuid.UUID) (string, bool, error) 
 	return "", false, nil
 }
 
+func (s *rtStore) LastPublicAuthorKind(_ context.Context, ticketID uuid.UUID) (string, bool, error) {
+	for i := len(s.msgs) - 1; i >= 0; i-- {
+		m := s.msgs[i]
+		if m.TicketID == ticketID && !m.InternalNote && m.AuthorKind != AuthorSystem {
+			return m.AuthorKind, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+func (s *rtStore) LockAutoCloseCandidates(context.Context, time.Time, int) ([]repo.AutoCloseRow, error) {
+	return []repo.AutoCloseRow{}, nil
+}
+
 type rtTx struct{}
 
 func (rtTx) Do(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) }

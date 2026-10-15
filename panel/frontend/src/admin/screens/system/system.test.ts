@@ -11,6 +11,7 @@ import {
   insertVariable,
   newHookCode,
   parseChatId,
+  parseGroupChatId,
   parseSender,
   registrationBody,
   smtpBody,
@@ -77,7 +78,12 @@ describe('telegram', () => {
     const f = telegramFormFrom(saved)
     expect(telegramBody({ ...f, username: '@bot' }, saved)).toEqual({ enabled: true, bot_username: 'bot', bot_token: '' })
     expect(telegramBody({ ...f, chatId: '' }, saved)).toMatchObject({ admin_chat_id: null })
-    expect(telegramBody({ ...f, chatId: '42' }, saved)).toMatchObject({ admin_chat_id: 42 })
+    expect(parseChatId('42')).toEqual({ ok: true, value: 42 })
+    expect(parseGroupChatId('42').ok).toBe(false)
+    expect(parseGroupChatId('-42')).toEqual({ ok: true, value: -42 })
+    expect(parseGroupChatId('')).toEqual({ ok: true, value: null })
+    expect(telegramBody({ ...f, chatId: '-42' }, saved)).toMatchObject({ admin_chat_id: -42 })
+    expect(telegramBody({ ...f, chatId: '42' }, saved)).toEqual({ error: expect.any(String) })
     expect(telegramBody({ ...f, chatId: 'x' }, saved)).toEqual({ error: expect.any(String) })
     expect(telegramSettingsSchema.parse({ ...saved, admin_chat_id: null }).admin_chat_id).toBeNull()
   })

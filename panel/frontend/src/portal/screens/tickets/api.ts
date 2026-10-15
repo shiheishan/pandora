@@ -21,7 +21,7 @@ const ticketBase = {
   resolved_at: z.string().nullable(),
   message_count: z.number().int(),
   last_reply_at: z.string(),
-  closed_reason: z.enum(['user_closed', 'withdrawn', 'agent_closed']).nullable(),
+  closed_reason: z.enum(['user_closed', 'withdrawn', 'agent_closed', 'auto_closed']).nullable(),
 }
 
 /** 列表行：related_order 只在详情里填，列表恒为 null */
@@ -43,6 +43,7 @@ export const ticketDetailSchema = z.object({
   ...ticketBase,
   related_order: z.object({ id: z.string(), order_no: z.string() }).nullable(),
   messages: z.array(ticketMessageSchema),
+  reply_blocked: z.boolean(),
 })
 export type TicketDetail = z.output<typeof ticketDetailSchema>
 

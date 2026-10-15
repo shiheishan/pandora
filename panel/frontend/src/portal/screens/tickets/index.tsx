@@ -166,7 +166,15 @@ function Thread({ ticket, category }: { ticket: TicketDetail; category: string }
           ),
         )}
       </ol>
-      {canReply(ticket) ? <ReplyBox id={ticket.id} onError={setError} /> : <p className={css.closedNote}>工单已关闭，如需继续请新建工单。</p>}
+      {canReply(ticket) ? (
+        ticket.reply_blocked ? (
+          <p className={css.closedNote}>已收到你的消息，请等客服回复后再继续发送。</p>
+        ) : (
+          <ReplyBox id={ticket.id} onError={setError} />
+        )
+      ) : (
+        <p className={css.closedNote}>工单已关闭，如需继续请新建工单。</p>
+      )}
       <ConfirmModal
         open={confirm === 'withdraw'}
         title="撤回工单？"

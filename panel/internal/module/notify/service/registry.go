@@ -23,6 +23,11 @@ const (
 	TemplatePackPaid             = "order.pack_paid"
 	TemplateTicketReplied        = "ticket.replied"
 	TemplateBroadcast            = "admin.broadcast"
+
+	// 发到后台「管理员群组 chat id」的 Telegram 提醒（admin_notice.go）；各有后台开关，缺省关
+	TemplateAdminOrderPaid     = "admin.order_paid"
+	TemplateAdminTicketOpened  = "admin.ticket_opened"
+	TemplateAdminTicketReplied = "admin.ticket_replied"
 )
 
 // 模板类别：transactional 不可退订；service 是服务提醒，用户可在通知偏好里按渠道关闭；marketing 是营销/群发。
@@ -287,7 +292,51 @@ var templateDefs = []templateDef{
 		Subject:     "{{subject}}",
 		Body:        "{{body}}",
 	},
+	// ---- 管理员群组提醒：发到后台「管理员群组 chat id」，不进用户偏好，只看后台开关（admin_notice.go）；
+	// 默认内容与迁移 00044_xb_tg.sql 的种子逐字一致 ----
+	{
+		Code:        TemplateAdminOrderPaid,
+		Channel:     ChannelTelegram,
+		Category:    categoryTransactional,
+		Description: "订单支付成功后发一条到管理员群组（后台「Telegram · 机器人与群组」的收款提醒开着时；随支付成功通知的扫描写入）",
+		Allowed:     []string{"order_no", "amount", "plan", "email"},
+		Subject:     "收款通知",
+		Body: `订单号：{{order_no}}
+金额：{{amount}}
+套餐：{{plan}}
+用户：{{email}}`,
+	},
+	{
+		Code:        TemplateAdminTicketOpened,
+		Channel:     ChannelTelegram,
+		Category:    categoryTransactional,
+		Description: "用户新建工单后发一条到管理员群组（后台「Telegram · 机器人与群组」的工单提醒开着时）；绑定了 Telegram 的管理员回复这条消息即回复工单",
+		Allowed:     []string{"ticket_no", "subject", "body", "email", "plan", "traffic", "expires_at", "balance"},
+		Subject:     "新工单 {{ticket_no}}",
+		Body:        adminTicketBody,
+	},
+	{
+		Code:        TemplateAdminTicketReplied,
+		Channel:     ChannelTelegram,
+		Category:    categoryTransactional,
+		Description: "用户回复工单后发一条到管理员群组（后台「Telegram · 机器人与群组」的工单提醒开着时）；绑定了 Telegram 的管理员回复这条消息即回复工单",
+		Allowed:     []string{"ticket_no", "subject", "body", "email", "plan", "traffic", "expires_at", "balance"},
+		Subject:     "工单 {{ticket_no}} 有新回复",
+		Body:        adminTicketBody,
+	},
 }
+
+// adminTicketBody 是两种工单提醒共用的默认正文（迁移 00044 的种子逐字相同）。
+const adminTicketBody = `用户：{{email}}
+套餐：{{plan}}
+剩余流量：{{traffic}}
+到期：{{expires_at}}
+余额：{{balance}}
+
+主题：{{subject}}
+{{body}}
+
+直接回复这条消息即可回复工单。`
 
 // lookupDef 按 code 与渠道找内置模板定义。
 func lookupDef(code, channel string) (templateDef, bool) {

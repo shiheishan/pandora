@@ -22,9 +22,15 @@ describe('账号安全', () => {
     expect(() => sessionSchema.parse({ id: 'x', current: true, user_agent: '', created_at: '2026-09-24T00:00:00Z' })).toThrow()
   })
 
-  it('Telegram schema：username 与 bot_username 是 omitempty，bound / enabled 必填', () => {
-    expect(telegramSchema.parse({ bound: false, enabled: false })).toEqual({ bound: false, enabled: false })
+  it('Telegram schema：username 与 bot_username 是 omitempty，bound / enabled / discuss_link 必填', () => {
+    expect(telegramSchema.parse({ bound: false, enabled: false, discuss_link: null })).toEqual({ bound: false, enabled: false, discuss_link: null })
+    expect(telegramSchema.parse({ bound: true, enabled: true, discuss_link: 'https://t.me/example_discuss' })).toEqual({
+      bound: true,
+      enabled: true,
+      discuss_link: 'https://t.me/example_discuss',
+    })
     expect(() => telegramSchema.parse({ bound: false })).toThrow()
+    expect(() => telegramSchema.parse({ bound: false, enabled: false })).toThrow()
   })
 
   it('偏好 schema 只收 3 类 × 2 渠道；快捷登录 expires_in 必须为正', () => {

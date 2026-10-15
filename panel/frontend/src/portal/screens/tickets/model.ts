@@ -27,7 +27,9 @@ export function ticketStatus(t: Pick<TicketRow, 'status' | 'closed_reason'>): { 
     case 'resolved':
       return { label: '已解决', tone: 'neutral' }
     case 'closed':
-      return t.closed_reason === 'withdrawn' ? { label: '已撤回', tone: 'neutral' } : { label: '已关闭', tone: 'neutral' }
+      if (t.closed_reason === 'withdrawn') return { label: '已撤回', tone: 'neutral' }
+      if (t.closed_reason === 'auto_closed') return { label: '已自动关闭', tone: 'neutral' }
+      return { label: '已关闭', tone: 'neutral' }
   }
 }
 

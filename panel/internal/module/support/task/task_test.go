@@ -10,16 +10,24 @@ import (
 )
 
 type fakeService struct {
-	n       int
-	err     error
-	calls   int
-	gotNilR bool
+	n              int
+	err            error
+	calls          int
+	gotNilR        bool
+	autoCloseN     int
+	autoCloseErr   error
+	autoCloseCalls int
 }
 
 func (f *fakeService) EscalateOverdueScheduled(_ context.Context) (int, error) {
 	f.calls++
 	f.gotNilR = true
 	return f.n, f.err
+}
+
+func (f *fakeService) AutoCloseScheduled(_ context.Context) (int, error) {
+	f.autoCloseCalls++
+	return f.autoCloseN, f.autoCloseErr
 }
 
 func TestEscalateCallsServiceWithoutReply(t *testing.T) {
@@ -41,14 +49,38 @@ func TestEscalateError(t *testing.T) {
 
 func TestPeriodic(t *testing.T) {
 	ps := New(&fakeService{}).Periodic()
-	if len(ps) != 1 {
+	if len(ps) != 2 {
 		t.Fatalf("periodic %d", len(ps))
 	}
-	p := ps[0]
-	if p.Cronspec != "*/5 * * * *" || p.Type != TypeEscalateSLA {
-		t.Fatalf("periodic %+v", p)
+	p0 := ps[0]
+	if p0.Cronspec != "*/5 * * * *" || p0.Type != TypeEscalateSLA {
+		t.Fatalf("periodic[0] %+v", p0)
+	}
+	p1 := ps[1]
+	if p1.Cronspec != "2-59/10 * * * *" || p1.Type != TypeAutoClose {
+		t.Fatalf("periodic[1] %+v", p1)
 	}
 	if escalateTimeout != 30*time.Second {
 		t.Fatalf("timeout %v", escalateTimeout)
+	}
+	if autoCloseTimeout != 30*time.Second {
+		t.Fatalf("autoCloseTimeout %v", autoCloseTimeout)
+	}
+}
+
+func TestAutoCloseCallsService(t *testing.T) {
+	fs := &fakeService{autoCloseN: 2}
+	if err := New(fs).autoClose(context.Background(), asynq.NewTask(TypeAutoClose, nil)); err != nil {
+		t.Fatalf("autoClose: %v", err)
+	}
+	if fs.autoCloseCalls != 1 {
+		t.Fatalf("autoCloseCalls=%d", fs.autoCloseCalls)
+	}
+}
+
+func TestAutoCloseError(t *testing.T) {
+	fs := &fakeService{autoCloseErr: errors.New("db down")}
+	if err := New(fs).autoClose(context.Background(), asynq.NewTask(TypeAutoClose, nil)); err == nil {
+		t.Fatal("期望返回错误")
 	}
 }
