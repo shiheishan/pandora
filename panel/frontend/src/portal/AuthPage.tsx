@@ -49,8 +49,8 @@ export function AuthPage({ initialTab = 'login', invite, notice }: { initialTab?
   const canReset = site.data?.password_reset === true
   const current: AuthTab = tab === 'reg' && mode === 'closed' ? 'login' : tab
   const loginNotice = appearance.data?.slots['portal.login.notice']
-  // 页脚的站点名随生效主题（与 document.title 同源），取不到时是 Pandora
-  const siteName = appearance.data?.theme?.branding.site_name?.trim() || 'Pandora'
+  // 页脚的站点名取系统设置（与 document.title、入口页 <title> 同源），取不到时是 Pandora
+  const siteName = appearance.data?.site_name?.trim() || 'Pandora'
 
   const options = [
     { value: 'login' as const, label: '登录' },

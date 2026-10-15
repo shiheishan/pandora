@@ -16,8 +16,8 @@ export function pickThemeTokens(appearance: Appearance | undefined, theme: Theme
 }
 
 // ---------------------------------------------------------------------------
-// 站点品牌：生效主题的 branding（站点名、标语、Logo）。站点名是默认的 Pandora 且没有 Logo 时
-// 返回 siteName = null，外框照旧画设计稿的 pandora 字标；Logo 只认 data:image/（CSP img-src 'self' data:）
+// 站点品牌：站点名取系统设置（GET v1/appearance 顶层 site_name），标语与 Logo 取生效主题的 branding。
+// 站点名是默认的 Pandora 且没有 Logo 时返回 siteName = null，外框照旧画设计稿的 pandora 字标；Logo 只认 data:image/（CSP img-src 'self' data:）
 // ---------------------------------------------------------------------------
 export interface PortalBranding {
   siteName: string | null
@@ -27,7 +27,7 @@ export interface PortalBranding {
 
 export function portalBranding(appearance: Appearance | undefined): PortalBranding {
   const b = appearance?.theme?.branding ?? {}
-  const name = b.site_name?.trim() || null
+  const name = appearance?.site_name?.trim() || null
   const logo = b.logo?.startsWith('data:image/') ? b.logo : null
   return { siteName: name && (name !== 'Pandora' || logo) ? name : null, tagline: b.tagline?.trim() || null, logo }
 }
@@ -107,7 +107,7 @@ export function useAppearanceTheme(): void {
     if (data) writeThemeCache(data)
   }, [data])
 
-  const siteName = data?.theme?.branding.site_name
+  const siteName = data?.site_name?.trim()
   useEffect(() => {
     if (siteName) document.title = siteName
   }, [siteName])
