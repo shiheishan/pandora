@@ -162,7 +162,7 @@ tg=$(code -X POST "$ADM/v1/payment-providers/${EPAY_CODE}/toggle" -H "$AH" -H 'C
 admin_reauth || true
 rpc=$(curl -sS -w '\n%{http_code}' -X POST "$ADM/v1/plans/complete" -H "$AH" -H 'Content-Type: application/json' \
   -H "Idempotency-Key: epay-plan-${STAMP}" \
-  -d "{\"code\":\"epay-plan-${STAMP}\",\"name\":\"Epay Plan ${STAMP}\",\"visibility\":\"public\",\"traffic_gb\":1,\"pool_ids\":[\"${POOL_ID}\"],\"prices\":[{\"billing_interval\":\"month\",\"interval_count\":1,\"unit_amount\":990,\"currency\":\"CNY\",\"trial_days\":0}],\"publish\":true}")
+  -d "{\"code\":\"epay-plan-${STAMP}\",\"name\":\"Epay Plan ${STAMP}\",\"visibility\":\"public\",\"traffic_gb\":1,\"pool_ids\":[\"${POOL_ID}\"],\"prices\":[{\"billing_interval\":\"month\",\"interval_count\":1,\"unit_amount\":990,\"currency\":\"CNY\"}],\"publish\":true}")
 rpc_body=${rpc%$'\n'*}; rpc_code=${rpc##*$'\n'}
 PLAN_ID=$(echo "$rpc_body" | jqr "['plan']['id']")
 PRICE_ID=$(echo "$rpc_body" | jqr "['price_ids'][0]")

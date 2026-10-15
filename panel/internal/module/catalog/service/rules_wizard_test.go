@@ -144,8 +144,6 @@ func TestInheritVersionInput(t *testing.T) {
 	cur := &Version{
 		QuotaResetStrategy:   ResetNaturalMonth,
 		QuotaResetDay:        intPtr(10),
-		GracePeriodHours:     3,
-		GraceKeepsService:    false,
 		RenewalExtendsPeriod: false,
 		RenewalResetsQuota:   false,
 		RenewalKeepsAddons:   false,
@@ -158,11 +156,10 @@ func TestInheritVersionInput(t *testing.T) {
 			{Metric: MetricDevices, Limit: &devLim, Unit: "count", Period: PeriodCycle},
 		},
 	}
-	t.Run("继承宽限续费备注权益与非流量配额", func(t *testing.T) {
+	t.Run("继承续费备注权益与非流量配额", func(t *testing.T) {
 		out := inheritVersionInput(cur, WizardUpdate{})
-		if out.GracePeriodHours != 3 || out.GraceKeepsService || out.RenewalExtendsPeriod ||
-			out.RenewalResetsQuota || out.RenewalKeepsAddons {
-			t.Fatalf("renewal/grace: %+v", out)
+		if out.RenewalExtendsPeriod || out.RenewalResetsQuota || out.RenewalKeepsAddons {
+			t.Fatalf("renewal: %+v", out)
 		}
 		if out.Notes == nil || *out.Notes != "备注" || len(out.Entitlements) != 1 {
 			t.Fatalf("notes/ent: %+v", out)
@@ -203,7 +200,7 @@ func TestInheritVersionInput(t *testing.T) {
 	})
 	t.Run("cur nil 缺省", func(t *testing.T) {
 		out := inheritVersionInput(nil, WizardUpdate{})
-		if out.QuotaResetStrategy != ResetBillingCycle || !out.GraceKeepsService || !out.RenewalExtendsPeriod {
+		if out.QuotaResetStrategy != ResetBillingCycle || !out.RenewalExtendsPeriod {
 			t.Fatalf("%+v", out)
 		}
 		if out.Entitlements == nil || out.Quotas == nil {

@@ -49,7 +49,6 @@ func TestVersionIntUpperBounds(t *testing.T) {
 		field string
 		set   func(*VersionInput)
 	}{
-		{"grace_period_hours", func(in *VersionInput) { in.GracePeriodHours = big }},
 		{"max_devices", func(in *VersionInput) { in.MaxDevices = intPtr(big) }},
 		{"max_concurrent", func(in *VersionInput) { in.MaxConcurrent = intPtr(big) }},
 		{"device_release_hours", func(in *VersionInput) { in.DeviceReleaseHours = big }},

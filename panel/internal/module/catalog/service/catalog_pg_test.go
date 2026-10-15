@@ -47,8 +47,6 @@ func TestCatalogDraftPublishFlow(t *testing.T) {
 	lim := traffic * BytesPerGB
 	verRV, err := e.svc.UpdateVersion(ctx, created.ID, ver.ID, ver.RowVersion, VersionInput{
 		QuotaResetStrategy:   ResetBillingCycle,
-		GracePeriodHours:     0,
-		GraceKeepsService:    true,
 		RenewalExtendsPeriod: true,
 		RenewalResetsQuota:   true,
 		RenewalKeepsAddons:   true,
@@ -153,7 +151,7 @@ func TestPublishRequiresPrice(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = e.svc.UpdateVersion(ctx, plan.ID, ver.ID, ver.RowVersion, VersionInput{
-		QuotaResetStrategy: ResetBillingCycle, GraceKeepsService: true,
+		QuotaResetStrategy: ResetBillingCycle,
 		RenewalExtendsPeriod: true, RenewalResetsQuota: true, RenewalKeepsAddons: true,
 		DeviceReleaseHours: 24, OveragePolicy: OveragePolicySuspend,
 		Quotas: []Quota{{Metric: MetricTraffic, Limit: int64Ptr(1 << 30), Unit: "bytes", Period: PeriodCycle}},
@@ -227,7 +225,7 @@ func TestPublishGroupPriceCoverage(t *testing.T) {
 		t.Fatal(err)
 	}
 	verRV, err := e.svc.UpdateVersion(ctx, plan.ID, ver.ID, ver.RowVersion, VersionInput{
-		QuotaResetStrategy: ResetBillingCycle, GraceKeepsService: true,
+		QuotaResetStrategy: ResetBillingCycle,
 		RenewalExtendsPeriod: true, RenewalResetsQuota: true, RenewalKeepsAddons: true,
 		DeviceReleaseHours: 24, OveragePolicy: OveragePolicySuspend,
 		Quotas: []Quota{{Metric: MetricTraffic, Limit: int64Ptr(1 << 30), Unit: "bytes", Period: PeriodCycle}},
@@ -280,7 +278,7 @@ func TestOptimisticLockConflicts(t *testing.T) {
 	assertRowVersionConflict(t, err)
 
 	_, err = e.svc.UpdateVersion(ctx, base.ID, draft.ID, draft.RowVersion+1, VersionInput{
-		QuotaResetStrategy: ResetBillingCycle, GraceKeepsService: true,
+		QuotaResetStrategy: ResetBillingCycle,
 		RenewalExtendsPeriod: true, RenewalResetsQuota: true, RenewalKeepsAddons: true,
 		DeviceReleaseHours: 24, OveragePolicy: OveragePolicySuspend,
 	})
@@ -321,9 +319,9 @@ func TestUpdatePublishedVersionRejectedInGo(t *testing.T) {
 		}
 	}
 	_, err = e.svc.UpdateVersion(ctx, plan.ID, pub.ID, pub.RowVersion, VersionInput{
-		QuotaResetStrategy: ResetBillingCycle, GracePeriodHours: 99,
-		GraceKeepsService: true, RenewalExtendsPeriod: true, RenewalResetsQuota: true,
-		RenewalKeepsAddons: true, DeviceReleaseHours: 24, OveragePolicy: OveragePolicySuspend,
+		QuotaResetStrategy: ResetBillingCycle,
+		RenewalExtendsPeriod: true, RenewalResetsQuota: true,
+		RenewalKeepsAddons: true, DeviceReleaseHours: 99, OveragePolicy: OveragePolicySuspend,
 	})
 	if !errors.Is(err, ErrSnapshotFrozen) && errCode(err) != errs.Conflict {
 		t.Fatalf("期望冻结/冲突，得到 %v", err)

@@ -49,7 +49,6 @@ func (s *Service) createPriceTx(ctx context.Context, planID uuid.UUID, in PriceI
 		UnitAmount:      in.UnitAmount,
 		BillingInterval: in.BillingInterval,
 		IntervalCount:   in.IntervalCount,
-		TrialDays:       in.TrialDays,
 		Status:          PriceActive,
 		UserGroupID:     in.UserGroupID,
 		ValidFrom:       in.ValidFrom,
@@ -201,7 +200,6 @@ func (s *Service) syncPublicPricesTx(ctx context.Context, planID uuid.UUID, want
 			UnitAmount:      pin.UnitAmount,
 			BillingInterval: pin.BillingInterval,
 			IntervalCount:   pin.IntervalCount,
-			TrialDays:       pin.TrialDays,
 			Status:          PriceActive,
 		}
 		if err := s.repo.InsertPrice(ctx, m); err != nil {
@@ -239,5 +237,5 @@ func priceSyncCurrencies(wanted map[string]WizardPrice) []string {
 }
 
 func priceRowMatchesWizard(old model.Price, w WizardPrice) bool {
-	return old.UnitAmount.Equal(w.UnitAmount) && old.TrialDays == w.TrialDays
+	return old.UnitAmount.Equal(w.UnitAmount)
 }

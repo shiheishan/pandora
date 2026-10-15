@@ -155,9 +155,6 @@ func validateVersionInput(in *VersionInput) error {
 	} else if in.QuotaResetDay != nil {
 		fields["quota_reset_day"] = "非固定日策略不能设置该字段"
 	}
-	if in.GracePeriodHours < 0 || in.GracePeriodHours > maxInt4 {
-		fields["grace_period_hours"] = "不能为负数，且不超过 2147483647"
-	}
 	if in.MaxDevices != nil && (*in.MaxDevices <= 0 || *in.MaxDevices > maxInt4) {
 		fields["max_devices"] = "必须为正整数，且不超过 2147483647"
 	}
@@ -249,9 +246,6 @@ func validatePriceInput(in *PriceInput) error {
 	}
 	if in.IntervalCount > 32767 {
 		fields["interval_count"] = "不能超过 32767"
-	}
-	if in.TrialDays < 0 || in.TrialDays > 32767 {
-		fields["trial_days"] = "不能为负数，且不超过 32767"
 	}
 	if in.ValidFrom != nil && in.ValidUntil != nil && !in.ValidUntil.After(*in.ValidFrom) {
 		fields["valid_until"] = "必须晚于 valid_from"
@@ -374,7 +368,6 @@ func wizardVersionInput(in WizardCreate) VersionInput {
 	return VersionInput{
 		QuotaResetStrategy:   strategy,
 		QuotaResetDay:        in.QuotaResetDay,
-		GraceKeepsService:    true,
 		RenewalExtendsPeriod: true,
 		RenewalResetsQuota:   true,
 		RenewalKeepsAddons:   true,
@@ -392,7 +385,6 @@ func wizardPriceInput(p WizardPrice) PriceInput {
 		UnitAmount:      p.UnitAmount,
 		BillingInterval: p.BillingInterval,
 		IntervalCount:   p.IntervalCount,
-		TrialDays:       p.TrialDays,
 	}
 }
 
@@ -465,7 +457,6 @@ func sameIntPtr(a, b *int) bool {
 func inheritVersionInput(cur *Version, in WizardUpdate) VersionInput {
 	out := VersionInput{
 		QuotaResetStrategy:   ResetBillingCycle,
-		GraceKeepsService:    true,
 		RenewalExtendsPeriod: true,
 		RenewalResetsQuota:   true,
 		RenewalKeepsAddons:   true,
@@ -479,8 +470,6 @@ func inheritVersionInput(cur *Version, in WizardUpdate) VersionInput {
 			out.QuotaResetStrategy = cur.QuotaResetStrategy
 			out.QuotaResetDay = cur.QuotaResetDay
 		}
-		out.GracePeriodHours = cur.GracePeriodHours
-		out.GraceKeepsService = cur.GraceKeepsService
 		out.RenewalExtendsPeriod = cur.RenewalExtendsPeriod
 		out.RenewalResetsQuota = cur.RenewalResetsQuota
 		out.RenewalKeepsAddons = cur.RenewalKeepsAddons

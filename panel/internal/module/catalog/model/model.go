@@ -58,8 +58,6 @@ type PlanVersion struct {
 	FrozenAt             *time.Time `gorm:"column:frozen_at"`
 	QuotaResetStrategy   string     `gorm:"column:quota_reset_strategy"`
 	QuotaResetDay        *int       `gorm:"column:quota_reset_day"`
-	GracePeriodHours     int        `gorm:"column:grace_period_hours"`
-	GraceKeepsService    bool       `gorm:"column:grace_keeps_service"`
 	RenewalExtendsPeriod bool       `gorm:"column:renewal_extends_period"`
 	RenewalResetsQuota   bool       `gorm:"column:renewal_resets_quota"`
 	RenewalKeepsAddons   bool       `gorm:"column:renewal_keeps_addons"`
@@ -110,7 +108,6 @@ type Price struct {
 	UnitAmount      decimal.Decimal `gorm:"column:unit_amount;type:numeric(20,2)"`
 	BillingInterval string          `gorm:"column:billing_interval"`
 	IntervalCount   int             `gorm:"column:interval_count"`
-	TrialDays       int             `gorm:"column:trial_days"`
 	Status          string          `gorm:"column:status"`
 	UserGroupID     *uuid.UUID      `gorm:"column:user_group_id;type:uuid"`
 	ValidFrom       *time.Time      `gorm:"column:valid_from"`

@@ -347,19 +347,6 @@ func TestValidatePriceInput(t *testing.T) {
 			t.Fatal(f)
 		}
 	})
-	t.Run("trial_days -1 与超 32767", func(t *testing.T) {
-		in := valid
-		in.TrialDays = -1
-		f := expectValidation(t, validatePriceInput(&in))
-		if f["trial_days"] == "" {
-			t.Fatal(f)
-		}
-		in.TrialDays = 40000
-		f = expectValidation(t, validatePriceInput(&in))
-		if f["trial_days"] == "" {
-			t.Fatal(f)
-		}
-	})
 	t.Run("valid_until 不晚于 from", func(t *testing.T) {
 		in := valid
 		from := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)

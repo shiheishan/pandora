@@ -65,8 +65,6 @@ type updateVersionRequest struct {
 	ExpectedRowVersion   int64                `json:"expected_row_version"`
 	QuotaResetStrategy   string               `json:"quota_reset_strategy"`
 	QuotaResetDay        *int                 `json:"quota_reset_day"`
-	GracePeriodHours     int                  `json:"grace_period_hours"`
-	GraceKeepsService    bool                 `json:"grace_keeps_service"`
 	RenewalExtendsPeriod bool                 `json:"renewal_extends_period"`
 	RenewalResetsQuota   bool                 `json:"renewal_resets_quota"`
 	RenewalKeepsAddons   bool                 `json:"renewal_keeps_addons"`
@@ -86,7 +84,6 @@ type createPriceRequest struct {
 	UnitAmount      int64      `json:"unit_amount"`
 	BillingInterval string     `json:"billing_interval"`
 	IntervalCount   int16      `json:"interval_count"`
-	TrialDays       int16      `json:"trial_days"`
 	UserGroupID     *string    `json:"user_group_id"`
 	ValidFrom       *time.Time `json:"valid_from"`
 	ValidUntil      *time.Time `json:"valid_until"`
@@ -106,7 +103,6 @@ type wizardPriceRequest struct {
 	IntervalCount   int16  `json:"interval_count"`
 	UnitAmount      int64  `json:"unit_amount"`
 	Currency        string `json:"currency"`
-	TrialDays       int16  `json:"trial_days"`
 }
 
 type createPlanCompleteRequest struct {
@@ -210,7 +206,6 @@ type priceRowResponse struct {
 	UnitAmount  int64      `json:"unit_amount"`
 	Interval    string     `json:"billing_interval"`
 	Count       int        `json:"interval_count"`
-	TrialDays   int        `json:"trial_days"`
 	Status      string     `json:"status"`
 	UserGroupID *string    `json:"user_group_id"`
 	ValidFrom   *time.Time `json:"valid_from"`
@@ -226,8 +221,6 @@ type versionRowResponse struct {
 	RowVersion           int64                `json:"row_version"`
 	QuotaResetStrategy   string               `json:"quota_reset_strategy"`
 	QuotaResetDay        *int                 `json:"quota_reset_day"`
-	GracePeriodHours     int                  `json:"grace_period_hours"`
-	GraceKeepsService    bool                 `json:"grace_keeps_service"`
 	RenewalExtendsPeriod bool                 `json:"renewal_extends_period"`
 	RenewalResetsQuota   bool                 `json:"renewal_resets_quota"`
 	RenewalKeepsAddons   bool                 `json:"renewal_keeps_addons"`
@@ -435,8 +428,6 @@ func versionInputFromRequest(req updateVersionRequest) service.VersionInput {
 	return service.VersionInput{
 		QuotaResetStrategy:   req.QuotaResetStrategy,
 		QuotaResetDay:        req.QuotaResetDay,
-		GracePeriodHours:     req.GracePeriodHours,
-		GraceKeepsService:    req.GraceKeepsService,
 		RenewalExtendsPeriod: req.RenewalExtendsPeriod,
 		RenewalResetsQuota:   req.RenewalResetsQuota,
 		RenewalKeepsAddons:   req.RenewalKeepsAddons,
@@ -461,7 +452,6 @@ func priceInputFromRequest(req createPriceRequest) (service.PriceInput, error) {
 		UnitAmount:      money.FromCents(req.UnitAmount),
 		BillingInterval: req.BillingInterval,
 		IntervalCount:   int(req.IntervalCount),
-		TrialDays:       int(req.TrialDays),
 		UserGroupID:     gid,
 		ValidFrom:       req.ValidFrom,
 		ValidUntil:      req.ValidUntil,
@@ -476,7 +466,6 @@ func wizardPricesFromRequest(in []wizardPriceRequest) []service.WizardPrice {
 			IntervalCount:   int(p.IntervalCount),
 			UnitAmount:      money.FromCents(p.UnitAmount),
 			Currency:        p.Currency,
-			TrialDays:       int(p.TrialDays),
 		}
 	}
 	return out
@@ -597,7 +586,6 @@ func priceRowFrom(p service.Price) priceRowResponse {
 		UnitAmount:  money.MustCents(p.UnitAmount),
 		Interval:    p.BillingInterval,
 		Count:       p.IntervalCount,
-		TrialDays:   p.TrialDays,
 		Status:      p.Status,
 		UserGroupID: uuidPtrToString(p.UserGroupID),
 		ValidFrom:   p.ValidFrom,
@@ -631,8 +619,6 @@ func versionRowFrom(v service.Version) versionRowResponse {
 		RowVersion:           v.RowVersion,
 		QuotaResetStrategy:   v.QuotaResetStrategy,
 		QuotaResetDay:        v.QuotaResetDay,
-		GracePeriodHours:     v.GracePeriodHours,
-		GraceKeepsService:    v.GraceKeepsService,
 		RenewalExtendsPeriod: v.RenewalExtendsPeriod,
 		RenewalResetsQuota:   v.RenewalResetsQuota,
 		RenewalKeepsAddons:   v.RenewalKeepsAddons,

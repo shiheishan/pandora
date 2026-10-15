@@ -37,7 +37,6 @@ type portalPrice struct {
 	UnitAmount    int64  `json:"unit_amount"`
 	Interval      string `json:"billing_interval"`
 	IntervalCount int    `json:"interval_count"`
-	TrialDays     int    `json:"trial_days"`
 }
 
 // portalPack 是门户可买的一个流量包。
@@ -78,7 +77,6 @@ func portalPlanFrom(op service.OfferPlan) portalPlan {
 			UnitAmount:    money.MustCents(pr.UnitAmount),
 			Interval:      pr.BillingInterval,
 			IntervalCount: pr.IntervalCount,
-			TrialDays:     pr.TrialDays,
 		}
 	}
 	return portalPlan{

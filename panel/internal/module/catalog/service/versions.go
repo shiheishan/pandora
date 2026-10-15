@@ -112,8 +112,6 @@ func (s *Service) updateVersionTx(ctx context.Context, planID, versionID uuid.UU
 	mv := &model.PlanVersion{
 		QuotaResetStrategy:   in.QuotaResetStrategy,
 		QuotaResetDay:        in.QuotaResetDay,
-		GracePeriodHours:     in.GracePeriodHours,
-		GraceKeepsService:    in.GraceKeepsService,
 		RenewalExtendsPeriod: in.RenewalExtendsPeriod,
 		RenewalResetsQuota:   in.RenewalResetsQuota,
 		RenewalKeepsAddons:   in.RenewalKeepsAddons,
