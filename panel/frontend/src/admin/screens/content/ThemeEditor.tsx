@@ -2,6 +2,7 @@ import { useMutation } from '@tanstack/react-query'
 import { useId, useState, type ChangeEvent, type CSSProperties, type FormEvent } from 'react'
 import { useApi } from '../../../shell/runtime'
 import { Button, Drawer, Input, Segmented, useToast } from '../../../ui'
+import { useAdminSiteName } from '../../site'
 import { useFailure, useIntentKey, useInvalidateContent } from './queries'
 import { themeSaved } from './schemas'
 import { TOKEN_SECTIONS, buildThemeRequest, firstErrorMode, isShadowToken, logoProblem, modeErrorCount, previewVars, themeToForm, type ThemeErrors, type ThemeForm, type ThemeMode, type ThemeTarget } from './theme'
@@ -9,7 +10,7 @@ import css from './theme.module.css'
 
 const MODE_LABEL: Readonly<Record<ThemeMode, string>> = { light: '浅色', dark: '深色' }
 
-export function ThemeEditor({ target, onClose }: { target: ThemeTarget | null; onClose: () => void }) {
+export function ThemeEditor({ target, onClose, onEditSiteName }: { target: ThemeTarget | null; onClose: () => void; onEditSiteName: () => void }) {
   const [busy, setBusy] = useState(false)
   const formId = useId()
   const title = !target ? '' : target.kind === 'edit' ? `编辑「${target.theme.name}」` : target.from?.is_builtin ? `另存为新主题（基于「${target.from.name}」）` : '新建主题'
@@ -32,17 +33,18 @@ export function ThemeEditor({ target, onClose }: { target: ThemeTarget | null; o
         </>
       }
     >
-      {target && <EditorBody key={target.kind === 'edit' ? target.theme.code : `new-${target.from?.code ?? ''}`} formId={formId} target={target} onBusy={setBusy} onClose={onClose} />}
+      {target && <EditorBody key={target.kind === 'edit' ? target.theme.code : `new-${target.from?.code ?? ''}`} formId={formId} target={target} onBusy={setBusy} onClose={onClose} onEditSiteName={onEditSiteName} />}
     </Drawer>
   )
 }
 
-function EditorBody({ formId, target, onBusy, onClose }: { formId: string; target: ThemeTarget; onBusy: (busy: boolean) => void; onClose: () => void }) {
+function EditorBody({ formId, target, onBusy, onClose, onEditSiteName }: { formId: string; target: ThemeTarget; onBusy: (busy: boolean) => void; onClose: () => void; onEditSiteName: () => void }) {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
   const intent = useIntentKey()
   const invalidate = useInvalidateContent()
+  const site = useAdminSiteName()
   const creating = target.kind === 'create'
   const [form, setForm] = useState<ThemeForm>(() => themeToForm(target))
   const [errors, setErrors] = useState<ThemeErrors>({})
@@ -99,11 +101,13 @@ function EditorBody({ formId, target, onBusy, onClose }: { formId: string; targe
 
         <section className={css.block} aria-label="站点品牌">
           <div className={css.blockTitle}>站点品牌</div>
-          <p className={css.note}>站点名称只有一个来源：生效主题的站点名。门户标题、邮件里的 {'{{site}}'} 与发件人名都取它，切换主题就会一起改变。</p>
-          <div className={css.pair}>
-            <Input label="站点名称" value={form.siteName} maxLength={40} error={errors['branding.site_name']} onChange={(e) => set('siteName', e.target.value)} />
-            <Input label="标语（可选）" value={form.tagline} maxLength={80} error={errors['branding.tagline']} onChange={(e) => set('tagline', e.target.value)} />
-          </div>
+          <p className={css.note}>
+            站点名不在主题里设置：门户标题、浏览器标签、邮件里的 {'{{site}}'} 与发件人名、订阅配置名都取「站点设置」里的站点名（当前「{site}」）。主题只管标语与 Logo。{' '}
+            <Button size="xs" type="button" onClick={onEditSiteName}>
+              去改站点名
+            </Button>
+          </p>
+          <Input label="标语（可选）" value={form.tagline} maxLength={80} error={errors['branding.tagline']} onChange={(e) => set('tagline', e.target.value)} />
           <LogoField value={form.logo} error={errors['branding.logo'] ?? errors.branding} onChange={(logo) => set('logo', logo)} />
         </section>
 
@@ -139,7 +143,7 @@ function EditorBody({ formId, target, onBusy, onClose }: { formId: string; targe
           <span className={css.blockTitle}>实时预览</span>
           <span className={css.note}>{MODE_LABEL[mode]} · 只作用于此处</span>
         </div>
-        <ThemePreview tokens={form.tokens[mode]} siteName={form.siteName.trim() || 'Pandora'} tagline={form.tagline.trim()} logo={form.logo} />
+        <ThemePreview tokens={form.tokens[mode]} siteName={site} tagline={form.tagline.trim()} logo={form.logo} />
       </div>
     </form>
   )
