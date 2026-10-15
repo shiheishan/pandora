@@ -38,7 +38,6 @@ func TestIdentityRoutesBadPathID(t *testing.T) {
 		{http.MethodPost, "/v1/servers/not-a-uuid/bootstrap-token", ""},
 		{http.MethodGet, "/v1/nodes/xyz/identity", ""},
 		{http.MethodPost, "/v1/nodes/xyz/revoke-identity", ""},
-		{http.MethodPost, "/v1/nodes/xyz/server-token", ""},
 	}
 	for _, tc := range cases {
 		w := doPool(e, tc.method, tc.path, tc.body)
@@ -64,26 +63,6 @@ func TestServerBootstrapTokenTTLValidation(t *testing.T) {
 	poolExpectErr(t, w, errs.Unavailable, "")
 }
 
-func TestNodeBootstrapTokenNeedsServer(t *testing.T) {
-	e := newIdentityEngine(&poolReauthStub{})
-	path := "/v1/nodes/bootstrap-token"
-
-	w := doPool(e, http.MethodPost, path, `{"node_name":"n1","ttl_minutes":30}`)
-	poolExpectErr(t, w, errs.Conflict, "")
-
-	w = doPool(e, http.MethodPost, path, `{"node_name":"n1","server_id":"bad","ttl_minutes":30}`)
-	poolExpectErr(t, w, errs.ValidationFailed, "server_id")
-
-	w = doPool(e, http.MethodPost, path, `{"node_name":"n1","server_id":"`+uuid.NewString()+`","ttl_minutes":30}`)
-	poolExpectErr(t, w, errs.Unavailable, "")
-}
-
-func TestNodeServerTokenGone(t *testing.T) {
-	e := newIdentityEngine(&poolReauthStub{})
-	w := doPool(e, http.MethodPost, "/v1/nodes/"+uuid.NewString()+"/server-token", "")
-	poolExpectErr(t, w, errs.Conflict, "")
-}
-
 func TestIdentityRoutesReauth(t *testing.T) {
 	stub := &poolReauthStub{deny: true}
 	e := newIdentityEngine(stub)
@@ -97,42 +76,24 @@ func TestIdentityRoutesReauth(t *testing.T) {
 	}
 	poolExpectErr(t, w, errs.NotFound, "")
 
-	before = stub.calls
-	w = doPool(e, http.MethodPost, "/v1/nodes/"+id+"/server-token", "")
-	if stub.calls != before {
-		t.Fatalf("POST server-token 不应要求重认证，calls %d -> %d", before, stub.calls)
-	}
-	if w.Code == errs.New(errs.ReauthRequired).Status() {
-		t.Fatal("POST server-token 不应 reauth_required")
-	}
-
 	for _, path := range []string{
 		"/v1/servers/" + id + "/bootstrap-token",
-		"/v1/nodes/bootstrap-token",
 		"/v1/nodes/" + id + "/revoke-identity",
 	} {
-		body := ""
-		if path == "/v1/nodes/bootstrap-token" {
-			body = `{"node_name":"n","server_id":"` + id + `","ttl_minutes":30}`
-		}
-		w := doPool(e, http.MethodPost, path, body)
+		w := doPool(e, http.MethodPost, path, "")
 		poolExpectErr(t, w, errs.ReauthRequired, "")
 	}
-	if stub.calls != 3 {
-		t.Fatalf("重认证应调用 3 次，实际 %d", stub.calls)
+	if stub.calls != 2 {
+		t.Fatalf("重认证应调用 2 次，实际 %d", stub.calls)
 	}
 }
 
 func TestNodeIdentityResponseShape(t *testing.T) {
 	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
 	keys, m := poolJSONKeys(t, nodeIdentityResponseFrom(service.NodeIdentityView{}))
-	poolExpectKeys(t, keys, "bootstrap_tokens_pending", "identity", "server_token")
+	poolExpectKeys(t, keys, "bootstrap_tokens_pending", "identity")
 	if m["identity"] != nil {
 		t.Fatalf("空视图 identity 应为 null，得到 %#v", m["identity"])
-	}
-	st, _ := m["server_token"].(map[string]any)
-	if st == nil || st["present"] != false {
-		t.Fatalf("server_token.present 应为 false：%#v", m["server_token"])
 	}
 	if m["bootstrap_tokens_pending"] != float64(0) {
 		t.Fatalf("pending 应为 0：%#v", m["bootstrap_tokens_pending"])
@@ -149,7 +110,7 @@ func TestNodeIdentityResponseShape(t *testing.T) {
 			ExpiresAt:         now.Add(24 * time.Hour),
 		},
 	}))
-	poolExpectKeys(t, keys, "bootstrap_tokens_pending", "identity", "server_token")
+	poolExpectKeys(t, keys, "bootstrap_tokens_pending", "identity")
 	idObj, _ := m["identity"].(map[string]any)
 	poolExpectKeys(t, poolSortedKeys(idObj), "expires_at", "fingerprint_sha256", "issued_at", "serial", "spiffe_id", "status")
 	if _, ok := idObj["revoked_at"]; ok {

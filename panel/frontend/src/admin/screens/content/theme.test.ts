@@ -26,7 +26,6 @@ const theme = (patch: Partial<Theme> = {}): Theme => ({
   is_active: true,
   tokens: { light: { '--bg': '#f5f4f0', '--text': '#1c1c1f', '--brand': '#b9442b' }, dark: { '--brand': '#e46e52' } },
   branding: { tagline: '一路畅通' },
-  custom_css: '',
   ...patch,
 })
 

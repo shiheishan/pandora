@@ -140,13 +140,13 @@ func TestAppearanceThemeSaveAndConflict(t *testing.T) {
 	actx := apAdminCtx(ctx, apNewUser(t, e, ctx))
 
 	// 输入本身合法，被拒只因为 paper 是内置主题
-	_, err := e.svc.SaveTheme(actx, SaveThemeInput{Code: "paper", Name: "改", Create: false,
+	err := e.svc.SaveTheme(actx, SaveThemeInput{Code: "paper", Name: "改", Create: false,
 		Branding: json.RawMessage(`{}`)})
 	if ae := errs.As(err); ae.Code != errs.ValidationFailed || len(ae.Fields) != 0 {
 		t.Fatalf("改内置: %v", err)
 	}
 
-	_, err = e.svc.SaveTheme(actx, SaveThemeInput{
+	err = e.svc.SaveTheme(actx, SaveThemeInput{
 		Code: "my-theme", Name: "我的", Create: true,
 		Branding: json.RawMessage(`{"tagline":"一路畅通"}`),
 	})
@@ -154,7 +154,7 @@ func TestAppearanceThemeSaveAndConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = e.svc.SaveTheme(actx, SaveThemeInput{
+	err = e.svc.SaveTheme(actx, SaveThemeInput{
 		Code: "my-theme", Name: "别的", Create: true,
 		Branding: json.RawMessage(`{"tagline":"一路畅通"}`),
 	})
@@ -162,7 +162,7 @@ func TestAppearanceThemeSaveAndConflict(t *testing.T) {
 		t.Fatalf("重复 Create: %v", err)
 	}
 
-	_, err = e.svc.SaveTheme(actx, SaveThemeInput{
+	err = e.svc.SaveTheme(actx, SaveThemeInput{
 		Code: "my-theme", Name: "覆盖名", Create: false,
 		Branding: json.RawMessage(`{"tagline":"一路畅通"}`),
 	})
@@ -185,7 +185,7 @@ func TestAppearanceActivateTheme(t *testing.T) {
 	ctx := e.txCtx()
 	actx := apAdminCtx(ctx, apNewUser(t, e, ctx))
 
-	_, err := e.svc.SaveTheme(actx, SaveThemeInput{
+	err := e.svc.SaveTheme(actx, SaveThemeInput{
 		Code: "my-theme", Name: "我的", Create: true,
 		Branding: json.RawMessage(`{"tagline":"一路畅通"}`),
 	})
@@ -221,7 +221,7 @@ func TestAppearanceDeleteTheme(t *testing.T) {
 	ctx := e.txCtx()
 	actx := apAdminCtx(ctx, apNewUser(t, e, ctx))
 
-	_, err := e.svc.SaveTheme(actx, SaveThemeInput{
+	err := e.svc.SaveTheme(actx, SaveThemeInput{
 		Code: "my-theme", Name: "我的", Create: true,
 		Branding: json.RawMessage(`{"tagline":"一路畅通"}`),
 	})
@@ -330,7 +330,7 @@ func TestAppearancePageMetaReadsSiteSettings(t *testing.T) {
 	}
 
 	logo := "data:image/png;base64,iVBORw0KGgo="
-	_, err := e.svc.SaveTheme(actx, SaveThemeInput{
+	err := e.svc.SaveTheme(actx, SaveThemeInput{
 		Code: "fast-ocean", Name: "夜海", Create: true,
 		Branding: json.RawMessage(`{"tagline":"一路畅通","logo":"` + logo + `"}`),
 	})

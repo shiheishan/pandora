@@ -130,12 +130,6 @@ const PROTOCOL_LABELS: Readonly<Record<string, string>> = {
 }
 export const protocolLabel = (t: string | null) => (t ? (PROTOCOL_LABELS[t] ?? t) : '未设置协议')
 
-// ---------------------------------------------------------------------------
-// 迁移（保留规则 5）：只能迁移从未部署过的草稿节点
-// ---------------------------------------------------------------------------
-export function canMove(n: Pick<NodeRow, 'serving_status' | 'last_heartbeat_at' | 'identity_serial'>): boolean {
-  return (n.serving_status === 'draft' || n.serving_status === 'disabled') && n.last_heartbeat_at === null && n.identity_serial === null
-}
 /**
  * 「上线」给还没上过线的草稿节点用：后端一步推到 active，并把所在服务器置为就绪（服务器还没就绪时也能用）；停用后再恢复用「启用」。
  */
@@ -152,27 +146,6 @@ export function activationHint(warning: string): string {
 }
 
 export const MOVE_BLOCKED_HINT = '只能迁移从未部署过的草稿节点。已部署节点请用「复制节点」选目标服务器，再退役原节点。'
-
-/** 后端 409 的 fields 逐项计数，只列非 0 的（契约 move 条目） */
-const MOVE_BLOCKERS: Readonly<Record<string, string>> = {
-  control_node: '控制节点',
-  active_identities: '有效身份',
-  runtime_instances: '运行实例',
-  metrics: '探针数据',
-  pending_tasks: '在途任务',
-  provisioning: '部署记录',
-  bootstrap_tokens: '安装令牌',
-  config_applications: '配置下发记录',
-  usage_sources: '用量来源',
-  usage_batches: '用量批次',
-  traffic_reports: '流量上报',
-  active_server_token: '服务端令牌',
-}
-export function moveBlockers(fields: Readonly<Record<string, string>>): string[] {
-  return Object.entries(fields)
-    .filter(([k, v]) => k in MOVE_BLOCKERS && v !== '0' && v !== '')
-    .map(([k, v]) => `${MOVE_BLOCKERS[k]} ${v}`)
-}
 
 // ---------------------------------------------------------------------------
 // 服务状态转换：与后端 node_status.go 的 nodeServingTransitions 一致（retired 只走 retire 接口）

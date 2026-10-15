@@ -1,6 +1,5 @@
 import type { MockModule } from '../types.ts'
 import { billing } from './billing.ts'
-import { certsModule } from './certs.ts'
 import { content } from './content.ts'
 import { dash } from './dash.ts'
 import { commissionOverrides } from './commission-overrides.ts'
@@ -24,7 +23,6 @@ export const ADMIN_MODULES: readonly MockModule[] = [
   billing,
   marketing,
   nodes,
-  certsModule,
   content,
   system,
   security,

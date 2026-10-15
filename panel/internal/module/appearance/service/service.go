@@ -78,10 +78,9 @@ type SaveThemeInput struct {
 	Code string
 	Name string
 	// Create 为 true 表示「新建 / 另存为」：code 已被占用回 409；为 false 时按 code 新建或覆盖（编辑已有主题）。
-	Create    bool
-	Tokens    json.RawMessage
-	Branding  json.RawMessage
-	CustomCSS string
+	Create   bool
+	Tokens   json.RawMessage
+	Branding json.RawMessage
 }
 
 // Slot 是后台插槽列表的一项：位置说明取自 SlotCatalog，内容与开关取自库里（从没保存过的为零值）。

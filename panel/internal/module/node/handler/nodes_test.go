@@ -110,7 +110,7 @@ var (
 	inventoryNodeRowKeys = []string{
 		"id", "node_no", "row_version", "name", "serving_status", "server_id", "server_name",
 		"pool_id", "pool_name", "agent_version", "hostname", "public_ipv4", "cpu_cores", "memory_mb", "disk_gb",
-		"last_heartbeat_at", "stale", "delivered_to_users", "delivery_note", "identity_serial", "created_at", "node_type", "server_host",
+		"last_heartbeat_at", "stale", "delivered_to_users", "delivery_note", "identity_serial", "movable", "created_at", "node_type", "server_host",
 		"server_port", "display_name", "country_code", "sort_order", "online_users", "online_ips",
 		"traffic_bytes_24h", "cpu_percent", "mem_percent", "metrics_at", "granted_plans",
 		"effective_state", "last_apply_failure",

@@ -187,9 +187,10 @@ func stableSchemas() []Schema {
 				"fallback"),
 			Enums: map[string][]string{
 				"network": append([]string(nil), streamNetworks...),
-				// xboard 的三态。1（普通 TLS）暂时不给选：校验器那边写死了
-				// "证书生命周期完成前仅允许 tls=false"，放出来只会让人填完
-				// 保存失败。等证书那套做完再开。
+				// xboard 的三态。1（普通 TLS）暂时不给选：vless / vmess 的普通 TLS 还没开放
+				// （校验器回 plainTLSNotYetMessage），放出来只会让人填完保存失败。
+				// 面板不签发节点证书，要开得先让这两个协议像 trojan 一样收 file 模式的
+				// cert_path / key_path（docs/node-certificates.md），校验、翻译、渲染一起放开。
 				"tls":                   {"0", "2"},
 				"flow":                  append([]string(nil), vlessFlows...),
 				"utls":                  append([]string(nil), utlsFingerprints...),
