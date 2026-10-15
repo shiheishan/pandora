@@ -343,7 +343,7 @@ func TestProbeTicket(t *testing.T) {
 }
 
 func TestProbeFrameCSP(t *testing.T) {
-	f := &fakeDomainSvc{frameDomains: []string{
+	f := &fakeDomainSvc{origin: "https://portal.example.test", frameDomains: []string{
 		"https://a.example.test",
 		"https://b.example.test",
 		`https://bad.example.test/x"`,
@@ -380,6 +380,12 @@ func TestProbeFrameCSP(t *testing.T) {
 	if !strings.Contains(body, `"domains":["https://a.example.test","https://b.example.test"]`) {
 		t.Fatalf("body domains: %s", body)
 	}
+	if !strings.Contains(body, `"portal_origin":"https://portal.example.test"`) {
+		t.Fatalf("body 应带门户源: %s", body)
+	}
+	if !strings.Contains(probeFrameScript, "location.origin !== data.portal_origin") {
+		t.Fatalf("脚本应自检门户源")
+	}
 	if !strings.Contains(body, probeFrameScript) {
 		t.Fatalf("body 应含脚本原文")
 	}
@@ -409,6 +415,29 @@ func TestProbeFrameRejects(t *testing.T) {
 	w3 := doProbe(e, http.MethodGet, "/v1/sub-probe/frame?t=tk", "", nil)
 	if w3.Code != http.StatusUnauthorized {
 		t.Fatalf("service 拒票据应 401: %d", w3.Code)
+	}
+	// 出错的响应不是探测页，全局的 X-Frame-Options 必须还在（只有成功写出探测页时才去掉）。
+	for i, rw := range []*httptest.ResponseRecorder{w, w2, w3} {
+		if got := rw.Header().Get("X-Frame-Options"); got != "DENY" {
+			t.Fatalf("第 %d 个错误响应的 X-Frame-Options=%q，应为 DENY", i+1, got)
+		}
+	}
+}
+
+// 门户源为空（public_base_url 没配或解析不了）时探测页不列任何域名，CSP 也不放行订阅域名。
+func TestProbeFrameNoPortalOrigin(t *testing.T) {
+	f := &fakeDomainSvc{frameDomains: []string{"https://a.example.test"}}
+	e := probeEngine(f, nil, passAuth)
+	w := doProbe(e, http.MethodGet, "/v1/sub-probe/frame?t=tk", "", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d body=%s", w.Code, w.Body.String())
+	}
+	if csp := w.Header().Get("Content-Security-Policy"); strings.Contains(csp, "a.example.test") {
+		t.Fatalf("门户源为空时 CSP 不应放行订阅域名: %q", csp)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `"domains":[]`) || !strings.Contains(body, `"portal_origin":""`) {
+		t.Fatalf("body: %s", body)
 	}
 }
 

@@ -103,6 +103,33 @@ func TestProbeTicketNoLiveSubscriptionPG(t *testing.T) {
 	assertUnauthorized(t, err)
 }
 
+// 只有注册试用订阅的账号不发票据：试用人人一注册就有，不设门槛等于免费开号就能刷分（应改 1）。
+// 试用之外再有一份付费订阅就照常发。
+func TestProbeTicketTrialOnlyPG(t *testing.T) {
+	de, ctx, user, _ := setupProbe(t)
+	de.exec(t, ctx, `INSERT INTO subscription_trials (user_id, subscription_id, plan_id, hours)
+		SELECT user_id, id, plan_id, 24 FROM subscriptions WHERE user_id = ?`, user)
+
+	uctx := userCtx(ctx, user)
+	ticket, err := de.svc.IssueProbeTicket(uctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ticket != "" {
+		t.Fatalf("只有试用订阅应回空串，得 %q", ticket)
+	}
+
+	planID, versionID := newPlan(t, de.env, ctx, quotaSpec{MetricTraffic, PeriodCycle, i64(10 * gib)})
+	provision(t, de.env, ctx, user, planID, versionID, "付费")
+	paid, err := de.svc.IssueProbeTicket(uctx)
+	if err != nil || paid == "" {
+		t.Fatalf("另有付费订阅应签发: %v %q", err, paid)
+	}
+	if _, err := de.svc.ProbeFrameDomains(uctx, paid); err != nil {
+		t.Fatalf("另有付费订阅的票据应可用: %v", err)
+	}
+}
+
 func TestProbeTicketNoDomainsPG(t *testing.T) {
 	de, ctx, user, _, _ := setupPull(t)
 	ticket, err := de.svc.IssueProbeTicket(userCtx(ctx, user))

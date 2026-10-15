@@ -61,71 +61,92 @@ export function isProbeDone(
   )
 }
 
-/** 门户打开「我的套餐」时，30 分钟一次：领票据，开 hidden iframe 跑探测页，完成或超时后移除。 */
+/** 一轮探测要用到的外部依赖（抽出来便于单测）。 */
+export interface ProbeDeps {
+  storage: Pick<Storage, 'getItem' | 'setItem'> | null
+  now: () => number
+  fetchTicket: () => Promise<string>
+  /** 开探测页；探测页结束（完成消息或超时）时调用 onClosed。 */
+  openFrame: (ticket: string, onClosed: () => void) => void
+}
+
+// 同一页面里同时只跑一轮：「我的套餐」快速切走又切回、开发态 StrictMode 重复挂载时不重复领票据。
+let probeInFlight = false
+
+/**
+ * 跑一轮探测：到间隔才领票据；领到票据（含空串，表示没资格）后才记探测时间——领票失败（断网、限流、5xx）不记，
+ * 下次打开照常再试，不会因为一次失败白等 30 分钟。票据非空才开探测页。
+ */
+export async function runSubDomainProbe(deps: ProbeDeps): Promise<void> {
+  if (probeInFlight || !shouldProbe(deps.now(), deps.storage)) return
+  probeInFlight = true
+  let ticket: string
+  try {
+    ticket = await deps.fetchTicket()
+  } catch {
+    probeInFlight = false
+    return
+  }
+  markProbed(deps.now(), deps.storage)
+  if (!ticket) {
+    probeInFlight = false
+    return
+  }
+  deps.openFrame(ticket, () => {
+    probeInFlight = false
+  })
+}
+
+/** 开 hidden iframe 跑探测页；收到完成消息或超时后自己移除（与组件生命周期无关）。 */
+function openProbeFrame(ticket: string, onClosed: () => void): void {
+  const frame = document.createElement('iframe')
+  frame.hidden = true
+  frame.setAttribute('aria-hidden', 'true')
+  frame.tabIndex = -1
+  frame.title = ''
+  frame.referrerPolicy = 'no-referrer'
+  frame.src = probeFrameURL(ticket, document.baseURI)
+
+  let timer: number | undefined
+
+  // 两个函数互相引用，用函数声明（提升），不靠 const 的先后顺序
+  function onMessage(e: MessageEvent) {
+    if (isProbeDone(e, window.location.origin, frame.contentWindow)) close()
+  }
+  function close() {
+    if (timer !== undefined) {
+      window.clearTimeout(timer)
+      timer = undefined
+    }
+    window.removeEventListener('message', onMessage)
+    frame.remove()
+    onClosed()
+  }
+
+  window.addEventListener('message', onMessage)
+  timer = window.setTimeout(close, PROBE_FRAME_TIMEOUT_MS)
+  document.body.appendChild(frame)
+}
+
+/**
+ * 门户打开「我的套餐」时，30 分钟一次：领票据，开 hidden iframe 跑探测页。
+ * 离开页面不打断已经开始的一轮：票据已领、探测时间已记，中途移除只会白白浪费这一轮；探测页最多 30 秒后自己移除。
+ */
 export function useSubDomainProbe(): void {
   const api = useApi()
 
   useEffect(() => {
-    let cancelled = false
-    let teardown: () => void = () => {}
-
-    const run = async () => {
-      let storage: Storage | null
-      try {
-        storage = window.localStorage
-      } catch {
-        storage = null
-      }
-
-      const now = Date.now()
-      if (!shouldProbe(now, storage)) return
-
-      markProbed(now, storage)
-
-      let ticket: string
-      try {
-        const data = await api.post('v1/sub-probe/ticket', ticketResponseSchema)
-        ticket = data.ticket
-      } catch {
-        return
-      }
-
-      if (cancelled || !ticket) return
-
-      const frame = document.createElement('iframe')
-      frame.hidden = true
-      frame.setAttribute('aria-hidden', 'true')
-      frame.tabIndex = -1
-      frame.title = ''
-      frame.referrerPolicy = 'no-referrer'
-      frame.src = probeFrameURL(ticket, document.baseURI)
-
-      let timer: number | undefined
-
-      // 两个函数互相引用，用函数声明（提升），不靠 const 的先后顺序
-      function onMessage(e: MessageEvent) {
-        if (isProbeDone(e, window.location.origin, frame.contentWindow)) doTeardown()
-      }
-      function doTeardown() {
-        if (timer !== undefined) {
-          window.clearTimeout(timer)
-          timer = undefined
-        }
-        window.removeEventListener('message', onMessage)
-        frame.remove()
-      }
-      teardown = doTeardown
-
-      window.addEventListener('message', onMessage)
-      timer = window.setTimeout(doTeardown, PROBE_FRAME_TIMEOUT_MS)
-      document.body.appendChild(frame)
+    let storage: Storage | null
+    try {
+      storage = window.localStorage
+    } catch {
+      storage = null
     }
-
-    void run()
-
-    return () => {
-      cancelled = true
-      teardown()
-    }
+    void runSubDomainProbe({
+      storage,
+      now: Date.now,
+      fetchTicket: async () => (await api.post('v1/sub-probe/ticket', ticketResponseSchema)).ticket,
+      openFrame: openProbeFrame,
+    })
   }, [api])
 }

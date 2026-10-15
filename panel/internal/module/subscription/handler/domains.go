@@ -202,7 +202,7 @@ func (h *Handler) probeFrame(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	writeProbeFrame(c, domains)
+	writeProbeFrame(c, h.svc.PortalOrigin(), domains)
 }
 
 // probeReport 是探测页上报结果 POST /v1/sub-probe/report。

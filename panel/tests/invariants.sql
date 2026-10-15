@@ -1414,7 +1414,7 @@ $sql$);
 SELECT _accept('XB-SUBDOMAIN', '种子：缺省组内两个域名', $sql$
   INSERT INTO subscription_domains (group_id, base_url, weight, position) VALUES
     ('00000000-0000-7000-8000-000000000e11', 'https://sub-a.example.test', 2, 0),
-    ('00000000-0000-7000-8000-000000000e11', 'https://sub-b.example.test:8443', 1, 1);
+    ('00000000-0000-7000-8000-000000000e11', 'https://sub-b.example.test', 1, 1);
 $sql$);
 
 SELECT _accept('XB-SUBDOMAIN', '种子：用户组分到缺省组', $sql$
@@ -1469,6 +1469,21 @@ $sql$, 'subscription_domains_base_url_check');
 SELECT _reject('XB-SUBDOMAIN', '订阅地址主机名必须小写', $sql$
   INSERT INTO subscription_domains (group_id, base_url, weight, position) VALUES
     ('00000000-0000-7000-8000-000000000e11', 'https://Sub-C.example.test', 1, 6);
+$sql$, 'subscription_domains_base_url_check');
+
+SELECT _reject('XB-SUBDOMAIN', '订阅地址不能带端口', $sql$
+  INSERT INTO subscription_domains (group_id, base_url, weight, position) VALUES
+    ('00000000-0000-7000-8000-000000000e11', 'https://sub-c.example.test:8443', 1, 7);
+$sql$, 'subscription_domains_base_url_check');
+
+SELECT _reject('XB-SUBDOMAIN', '订阅地址不能是 IP', $sql$
+  INSERT INTO subscription_domains (group_id, base_url, weight, position) VALUES
+    ('00000000-0000-7000-8000-000000000e11', 'https://192.0.2.10', 1, 7);
+$sql$, 'subscription_domains_base_url_check');
+
+SELECT _reject('XB-SUBDOMAIN', '订阅地址不能是单段主机名', $sql$
+  INSERT INTO subscription_domains (group_id, base_url, weight, position) VALUES
+    ('00000000-0000-7000-8000-000000000e11', 'https://intranet', 1, 7);
 $sql$, 'subscription_domains_base_url_check');
 
 SELECT _reject('XB-SUBDOMAIN', '同组不能重复登记同一地址', $sql$

@@ -88,7 +88,9 @@ const failURL = (message: string): Normalized => ({ ok: false, message })
  * DNS 名正则与 nginx 一致；:443 去掉；其余端口报「不能带端口（订阅域名只走 443）」。
  */
 const DNS_NAME_RE = /^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]([a-z0-9-]*[a-z0-9])?$/
-const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/
+// 与 Go 的 net.ParseIP 对齐：四段十进制，每段 0–255、不带前导零；1.2.3.999 之类不算 IP，落到「域名格式不正确」。
+const IPV4_OCTET = '(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)'
+const IPV4_RE = new RegExp(`^(${IPV4_OCTET}\\.){3}${IPV4_OCTET}$`)
 
 function normalizeBaseURL(raw: string): Normalized {
   const v = raw.trim().replace(/\/+$/, '')

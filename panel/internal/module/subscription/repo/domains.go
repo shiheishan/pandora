@@ -39,30 +39,22 @@ type DomainConfigRows struct {
 	Assigns []DomainAssignRow
 }
 
-// DomainConfig 读整份配置。三条 SELECT 要在同一个快照里读：不在事务里时开一个只读、可重复读的短事务，
-// 否则读的中途碰上后台保存提交，会读到旧组 id 配新域名行，各组变空、链接回落到面板地址 30 秒。
-// 已在事务里（后台保存先加锁再读）就直接用当前事务。
+// DomainConfig 读整份配置（三条 SELECT）。repo 不开事务：要同一个快照时由 service 包进事务，
+// 并在事务的第一条语句调 SetSnapshotReadOnly（service.domainConfigRows）。
 func (r *Repo) DomainConfig(ctx context.Context) (DomainConfigRows, error) {
-	if db.InTx(ctx) {
-		return readDomainConfig(r.d.Conn(ctx))
-	}
-	var rows DomainConfigRows
-	err := r.d.Base().WithContext(ctx).Transaction(func(g *gorm.DB) error {
-		// 必须是事务里的第一条语句（PG 要求）；不用 sql.TxOptions，database/sql 由 depguard 挡在模块外
-		if err := g.Exec("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY").Error; err != nil {
-			return err
-		}
-		got, err := readDomainConfig(g)
-		if err != nil {
-			return err
-		}
-		rows = got
-		return nil
-	})
-	if err != nil {
-		return DomainConfigRows{}, mapErr(err)
-	}
-	return rows, nil
+	return readDomainConfig(r.d.Conn(ctx))
+}
+
+// InTransaction 报告 ctx 里是否已有事务（含测试的整例事务）。service 据此决定是直接读，
+// 还是自己开一个只读、可重复读的短事务（已有事务时不能再改隔离级别）。
+func (r *Repo) InTransaction(ctx context.Context) bool {
+	return db.InTx(ctx)
+}
+
+// SetSnapshotReadOnly 把当前事务设成可重复读、只读。必须是事务里的第一条语句（PG 要求）；
+// 不用 sql.TxOptions：database/sql 由 depguard 挡在模块外，pkg/tx 也不收选项。
+func (r *Repo) SetSnapshotReadOnly(ctx context.Context) error {
+	return mapErr(r.d.Conn(ctx).Exec("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY").Error)
 }
 
 func readDomainConfig(g *gorm.DB) (DomainConfigRows, error) {

@@ -141,7 +141,7 @@ func TestApplyProbeSuccessNeedsThreeAccountsAndTicketOnce(t *testing.T) {
 
 	// 前两个账号报成功：不到 3 人，不加分（防单个账号把某域名顶高）
 	for _, acct := range []string{"u1", "u2"} {
-		n, err := d.ApplyProbe(ctx, acct, "n-"+acct, 5*time.Minute, []probeSignal{{BaseURL: a, OK: true}}, now)
+		n, err := d.ApplyProbe(ctx, acct, "n-"+acct, []probeSignal{{BaseURL: a, OK: true}}, now)
 		if err != nil || n != 0 {
 			t.Fatalf("%s 报成功 = (%d, %v)，要 (0, nil)", acct, n, err)
 		}
@@ -150,7 +150,7 @@ func TestApplyProbeSuccessNeedsThreeAccountsAndTicketOnce(t *testing.T) {
 		t.Fatal("a 不该有分数记录")
 	}
 	// 第三个不同账号：成功开始加分
-	n, err := d.ApplyProbe(ctx, "u3", "n-u3", 5*time.Minute, []probeSignal{{BaseURL: a, OK: true}}, now)
+	n, err := d.ApplyProbe(ctx, "u3", "n-u3", []probeSignal{{BaseURL: a, OK: true}}, now)
 	if err != nil || n != 1 {
 		t.Fatalf("u3 报成功 = (%d, %v)，要 (1, nil)", n, err)
 	}
@@ -160,7 +160,7 @@ func TestApplyProbeSuccessNeedsThreeAccountsAndTicketOnce(t *testing.T) {
 	}
 
 	// 同一 nonce 再报（换账号、换域名）：票据一次性，整次上报不生效，连上报人集合都不进
-	n, err = d.ApplyProbe(ctx, "u4", "n-u3", 5*time.Minute, []probeSignal{{BaseURL: b, OK: true}}, now)
+	n, err = d.ApplyProbe(ctx, "u4", "n-u3", []probeSignal{{BaseURL: b, OK: true}}, now)
 	if err != nil || n != 0 {
 		t.Fatalf("同票据第二次 = (%d, %v)，要 (0, nil)", n, err)
 	}
@@ -181,21 +181,21 @@ func TestApplyProbeDedupePerAccount(t *testing.T) {
 
 	// 先凑够两个别的账号，让 u3 的成功能生效
 	for _, acct := range []string{"u1", "u2"} {
-		if n, err := d.ApplyProbe(ctx, acct, "n-"+acct, time.Minute, []probeSignal{{BaseURL: a, OK: true}}, now); err != nil || n != 0 {
+		if n, err := d.ApplyProbe(ctx, acct, "n-"+acct, []probeSignal{{BaseURL: a, OK: true}}, now); err != nil || n != 0 {
 			t.Fatalf("%s = (%d, %v)，要 0", acct, n, err)
 		}
 	}
-	if n, err := d.ApplyProbe(ctx, "u3", "n3", time.Minute, []probeSignal{{BaseURL: a, OK: true}}, now); err != nil || n != 1 {
+	if n, err := d.ApplyProbe(ctx, "u3", "n3", []probeSignal{{BaseURL: a, OK: true}}, now); err != nil || n != 1 {
 		t.Fatalf("u3 第一次 = (%d, %v)，要 1", n, err)
 	}
 	// 同一账号同一域名 30 分钟内换票据再报：去重不生效
-	if n, err := d.ApplyProbe(ctx, "u3", "n4", time.Minute, []probeSignal{{BaseURL: a, OK: true}}, now); err != nil || n != 0 {
+	if n, err := d.ApplyProbe(ctx, "u3", "n4", []probeSignal{{BaseURL: a, OK: true}}, now); err != nil || n != 0 {
 		t.Fatalf("u3 第二次 = (%d, %v)，要 0", n, err)
 	}
 	// 过了去重窗口再报（仍在同一小时桶，集合里已有 3 人）：生效
 	mr.FastForward(31 * time.Minute)
 	now = now.Add(31 * time.Minute)
-	if n, err := d.ApplyProbe(ctx, "u3", "n5", time.Minute, []probeSignal{{BaseURL: a, OK: true}}, now); err != nil || n != 1 {
+	if n, err := d.ApplyProbe(ctx, "u3", "n5", []probeSignal{{BaseURL: a, OK: true}}, now); err != nil || n != 1 {
 		t.Fatalf("31 分钟后 = (%d, %v)，要 1", n, err)
 	}
 }
@@ -209,7 +209,7 @@ func TestApplyProbeFailureNeedsThreeAccounts(t *testing.T) {
 
 	// 前两个账号报失败：不到 3 人，不扣分
 	for _, acct := range []string{"u1", "u2"} {
-		n, err := d.ApplyProbe(ctx, acct, "n-"+acct, time.Minute, []probeSignal{{BaseURL: a, OK: false}}, now)
+		n, err := d.ApplyProbe(ctx, acct, "n-"+acct, []probeSignal{{BaseURL: a, OK: false}}, now)
 		if err != nil || n != 0 {
 			t.Fatalf("%s 报失败 = (%d, %v)，要 (0, nil)", acct, n, err)
 		}
@@ -219,7 +219,7 @@ func TestApplyProbeFailureNeedsThreeAccounts(t *testing.T) {
 	}
 
 	// 第三个不同账号：失败开始扣分
-	n, err := d.ApplyProbe(ctx, "u3", "n-u3", time.Minute, []probeSignal{{BaseURL: a, OK: false}}, now)
+	n, err := d.ApplyProbe(ctx, "u3", "n-u3", []probeSignal{{BaseURL: a, OK: false}}, now)
 	if err != nil || n != 1 {
 		t.Fatalf("u3 报失败 = (%d, %v)，要 (1, nil)", n, err)
 	}
@@ -240,7 +240,7 @@ func TestApplyProbeNetCap(t *testing.T) {
 	// 失败：u1..u5 依次报 b，净变动封顶 −0.5
 	wantN := []int{0, 0, 1, 1, 0}
 	for i, acct := range []string{"u1", "u2", "u3", "u4", "u5"} {
-		n, err := d.ApplyProbe(ctx, acct, "nf-"+acct, time.Minute, []probeSignal{{BaseURL: b, OK: false}}, now)
+		n, err := d.ApplyProbe(ctx, acct, "nf-"+acct, []probeSignal{{BaseURL: b, OK: false}}, now)
 		if err != nil || n != wantN[i] {
 			t.Fatalf("%s 报 b 失败 = (%d, %v)，要 %d", acct, n, err, wantN[i])
 		}
@@ -253,7 +253,7 @@ func TestApplyProbeNetCap(t *testing.T) {
 	// 成功：u1..u8 依次报 c：前两个不到 3 人不计，u3..u7 各 +0.1，u8 被封顶挡下
 	wantS := []int{0, 0, 1, 1, 1, 1, 1, 0}
 	for i, acct := range []string{"u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8"} {
-		n, err := d.ApplyProbe(ctx, acct, "ns-"+acct, time.Minute, []probeSignal{{BaseURL: c, OK: true}}, now)
+		n, err := d.ApplyProbe(ctx, acct, "ns-"+acct, []probeSignal{{BaseURL: c, OK: true}}, now)
 		if err != nil || n != wantS[i] {
 			t.Fatalf("%s 报 c 成功 = (%d, %v)，要 %d", acct, n, err, wantS[i])
 		}
@@ -268,7 +268,7 @@ func TestApplyProbeNetCap(t *testing.T) {
 	now = now.Add(time.Hour)
 	wantNew := []int{0, 0, 1}
 	for i, acct := range []string{"u9", "u10", "u11"} {
-		n, err := d.ApplyProbe(ctx, acct, "ns-"+acct, time.Minute, []probeSignal{{BaseURL: c, OK: true}}, now)
+		n, err := d.ApplyProbe(ctx, acct, "ns-"+acct, []probeSignal{{BaseURL: c, OK: true}}, now)
 		if err != nil || n != wantNew[i] {
 			t.Fatalf("新桶 %s 报 c = (%d, %v)，要 %d", acct, n, err, wantNew[i])
 		}
@@ -279,13 +279,34 @@ func TestApplyProbeNilSafe(t *testing.T) {
 	ctx := context.Background()
 	now := probeTestNow
 	sig := []probeSignal{{BaseURL: "https://a.example.test", OK: true}}
-	if n, err := (*domainScores)(nil).ApplyProbe(ctx, "u1", "n1", time.Minute, sig, now); n != 0 || err != nil {
+	if n, err := (*domainScores)(nil).ApplyProbe(ctx, "u1", "n1", sig, now); n != 0 || err != nil {
 		t.Fatalf("nil 接收者 = (%d, %v)，要 (0, nil)", n, err)
 	}
-	if n, err := newDomainScores(nil).ApplyProbe(ctx, "u1", "n1", time.Minute, sig, now); n != 0 || err != nil {
+	if n, err := newDomainScores(nil).ApplyProbe(ctx, "u1", "n1", sig, now); n != 0 || err != nil {
 		t.Fatalf("rdb nil = (%d, %v)，要 (0, nil)", n, err)
 	}
-	if n, err := newDomainScores(nil).ApplyProbe(ctx, "u1", "n1", time.Minute, nil, now); n != 0 || err != nil {
+	if n, err := newDomainScores(nil).ApplyProbe(ctx, "u1", "n1", nil, now); n != 0 || err != nil {
 		t.Fatalf("signals 空 = (%d, %v)，要 (0, nil)", n, err)
+	}
+}
+
+func TestPortalOrigin(t *testing.T) {
+	cases := map[string]string{
+		"https://Portal.Example.test/":        "https://portal.example.test",
+		"https://portal.example.test:443/app": "https://portal.example.test",
+		"http://portal.example.test:80":       "http://portal.example.test",
+		"https://portal.example.test:8443":    "https://portal.example.test:8443",
+		"http://portal.example.test:443":      "http://portal.example.test:443",
+		" https://portal.example.test ":       "https://portal.example.test",
+		"https://[::1]:443":                   "https://[::1]",
+		"ftp://portal.example.test":           "",
+		"portal.example.test":                 "",
+		"https://u:p@portal.example.test":     "",
+		"":                                    "",
+	}
+	for in, want := range cases {
+		if got := portalOrigin(in); got != want {
+			t.Errorf("portalOrigin(%q)=%q want %q", in, got, want)
+		}
 	}
 }

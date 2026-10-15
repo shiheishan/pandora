@@ -1,6 +1,6 @@
 // 门户探测订阅域名的票据、探测页数据与上报。为什么用独立探测页与票据：门户入口页对匿名访客一样，
 // 不能把任何订阅域名放进它的 CSP（会公开只给某些组的域名、能从门户反查订阅域名）；探测页只对持票据的本人下发、
-// CSP 只列本人所在组的域名。上报可伪造，防操纵见 domain_probe_scores.go；只收有生效订阅的账号。
+// CSP 只列本人所在组的域名。上报可伪造，防操纵见 domain_probe_scores.go；只收有生效中、且不是注册试用发的订阅的账号（试用订阅注册即有，不排除等于没有门槛）。
 
 package service
 
@@ -34,7 +34,7 @@ const (
 	probeTicketMaxLen = 512
 )
 
-// errProbeTicket 是票据无效、过期、账号已没有生效订阅或所在组已变时的统一错误（不区分原因，不给试探的人线索）。
+// errProbeTicket 是票据无效、过期、账号已没有生效的非试用订阅或所在组已变时的统一错误（不区分原因，不给试探的人线索）。
 var errProbeTicket = errs.Newf(errs.Unauthorized, "探测票据无效或已过期")
 
 // ProbeResult 是探测页对一个订阅域名的探测结果。
@@ -130,7 +130,7 @@ func (s *Service) parseProbeTicket(d *Delivery, raw string, now time.Time) (prob
 	}, nil
 }
 
-// probeTicketGroup 验票并复核：先验签（不碰 IO），再查账号仍有生效订阅、当前所在组与签发时同一版本。
+// probeTicketGroup 验票并复核：先验签（不碰 IO），再查账号仍有生效的非试用订阅、当前所在组与签发时同一版本。
 func (s *Service) probeTicketGroup(ctx context.Context, raw string) (probeTicket, *DomainGroup, error) {
 	d, err := s.needDelivery()
 	if err != nil {
@@ -141,14 +141,14 @@ func (s *Service) probeTicketGroup(ctx context.Context, raw string) (probeTicket
 	if err != nil {
 		return probeTicket{}, nil, err
 	}
-	live, err := s.repo.HasLiveSubscription(ctx, t.UserID, now)
+	live, err := s.repo.HasLiveNonTrialSubscription(ctx, t.UserID, now)
 	if err != nil {
 		return probeTicket{}, nil, err
 	}
 	if !live {
 		return probeTicket{}, nil, errProbeTicket
 	}
-	ex, err := s.extras.get(ctx, d.Extras, s.repo, now)
+	ex, err := s.extras.get(ctx, d.Extras, extrasSource{s}, now)
 	if err != nil {
 		return probeTicket{}, nil, err
 	}
@@ -162,7 +162,7 @@ func (s *Service) probeTicketGroup(ctx context.Context, raw string) (probeTicket
 	return t, g, nil
 }
 
-// IssueProbeTicket 给当前门户用户签一张探测票据；没有生效订阅、所在组没有订阅域名时返回空串（不报错，门户就不探测）。
+// IssueProbeTicket 给当前门户用户签一张探测票据；没有生效的非试用订阅、所在组没有订阅域名时返回空串（不报错，门户就不探测）。
 func (s *Service) IssueProbeTicket(ctx context.Context) (string, error) {
 	p, err := principal(ctx)
 	if err != nil {
@@ -173,14 +173,14 @@ func (s *Service) IssueProbeTicket(ctx context.Context) (string, error) {
 		return "", err
 	}
 	now := s.clock()
-	live, err := s.repo.HasLiveSubscription(ctx, p.UserID, now)
+	live, err := s.repo.HasLiveNonTrialSubscription(ctx, p.UserID, now)
 	if err != nil {
 		return "", err
 	}
 	if !live {
 		return "", nil
 	}
-	ex, err := s.extras.get(ctx, d.Extras, s.repo, now)
+	ex, err := s.extras.get(ctx, d.Extras, extrasSource{s}, now)
 	if err != nil {
 		return "", err
 	}
@@ -245,24 +245,40 @@ func (s *Service) ReportProbeResults(ctx context.Context, ticket string, results
 		return nil
 	}
 	sort.Slice(signals, func(i, j int) bool { return signals[i].BaseURL < signals[j].BaseURL })
-	now := s.clock()
-	left := t.Exp.Sub(now)
-	if _, err := s.scores.ApplyProbe(ctx, t.UserID.String(), t.Nonce, left, signals, now); err != nil {
+	if _, err := s.scores.ApplyProbe(ctx, t.UserID.String(), t.Nonce, signals, s.clock()); err != nil {
 		plog.From(ctx).Warn("订阅域名探测分数写入失败", zap.Error(err))
 	}
 	return nil
 }
 
-// PortalOrigin 是门户的源（public_base_url 的 scheme://host[:port]，与浏览器发的 Origin 头同形），
-// 给 /v1/sub-probe 的 CORS 判断用；分发没装配或地址解析不了时为空串（不回 ACAO）。
+// PortalOrigin 是门户的源（public_base_url 的 scheme://host[:port]，与浏览器发的 Origin 头、location.origin 同形：
+// 小写、去掉 https 的 :443 与 http 的 :80），给 /v1/sub-probe 的 CORS 判断与探测页的自检用；
+// 分发没装配、地址解析不了或不是 http(s) 时为空串（不回 ACAO，探测页不探也不报）。
 func (s *Service) PortalOrigin() string {
 	d, err := s.needDelivery()
 	if err != nil {
 		return ""
 	}
-	u, err := url.Parse(strings.TrimSpace(d.PublicBaseURL))
-	if err != nil || u.Scheme == "" || u.Host == "" {
+	return portalOrigin(d.PublicBaseURL)
+}
+
+// portalOrigin 把 public_base_url 规整成浏览器的源形状；不合的回空串。
+func portalOrigin(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" || u.User != nil {
 		return ""
 	}
-	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host)
+	scheme := strings.ToLower(u.Scheme)
+	host := strings.ToLower(u.Hostname())
+	port := u.Port()
+	if host == "" || (scheme != "https" && scheme != "http") {
+		return ""
+	}
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	if port == "" || (scheme == "https" && port == "443") || (scheme == "http" && port == "80") {
+		return scheme + "://" + host
+	}
+	return scheme + "://" + host + ":" + port
 }

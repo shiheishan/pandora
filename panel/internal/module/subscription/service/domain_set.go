@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+
+	"github.com/aegispanel/aegis/internal/module/subscription/repo"
 )
 
 // domainSet 是 extras 快照里的一份只读域名分组索引。
@@ -180,4 +182,38 @@ func (s *Service) domainGroupFor(ctx context.Context, ex *extrasSnapshot, userID
 		ug = id
 	}
 	return ex.domains.groupFor(ug), nil
+}
+
+// domainConfigRows 读整份订阅域名配置。三条 SELECT 要在同一个快照里，否则读的中途碰上后台保存提交，
+// 会读到旧组 id 配新域名行，各组变空、链接回落到面板地址 30 秒：
+//   - 已在事务里（后台保存先加锁再读；测试的整例事务）就直接读当前事务；
+//   - 否则经 s.tx.Do 开一个短事务，第一条语句设成可重复读、只读，再读三张表。
+func (s *Service) domainConfigRows(ctx context.Context) (repo.DomainConfigRows, error) {
+	if s.repo.InTransaction(ctx) {
+		return s.repo.DomainConfig(ctx)
+	}
+	var rows repo.DomainConfigRows
+	err := s.tx.Do(ctx, func(ctx context.Context) error {
+		if err := s.repo.SetSnapshotReadOnly(ctx); err != nil {
+			return err
+		}
+		got, err := s.repo.DomainConfig(ctx)
+		if err != nil {
+			return err
+		}
+		rows = got
+		return nil
+	})
+	return rows, err
+}
+
+// extrasSource 是拉取快照的读取面：模板直读 repo，订阅域名配置走 domainConfigRows（同一快照）。
+type extrasSource struct{ s *Service }
+
+func (e extrasSource) TemplateContents(ctx context.Context) (map[string]string, error) {
+	return e.s.repo.TemplateContents(ctx)
+}
+
+func (e extrasSource) DomainConfig(ctx context.Context) (repo.DomainConfigRows, error) {
+	return e.s.domainConfigRows(ctx)
 }

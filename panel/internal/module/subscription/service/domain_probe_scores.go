@@ -20,6 +20,8 @@ const (
 	probeOKKeyPrefix     = "subdom:probe:ok:"
 	probeFailKeyPrefix   = "subdom:probe:fail:"
 	probeNetKeyPrefix    = "subdom:probe:net:"
+	// probeTicketKeyTTL 是票据一次性键的 TTL：票据有效期加验签容许的 60 秒偏差（parseProbeTicket）。
+	probeTicketKeyTTL = probeTicketTTL + time.Minute
 	// probeDedupeWindow 内同一账号对同一域名只记一次（成败都算一次）。
 	probeDedupeWindow = 30 * time.Minute
 	// probeMinReporters 是同一小时里至少要有这么多不同账号报同一域名成功（或失败），成功才加分（失败才扣分）。
@@ -84,15 +86,12 @@ return applied
 `)
 
 // ApplyProbe 原子地记一次探测上报，返回这次真正改动了分数的域名个数（测试用）。
-// acct 是账号 id 串，nonce 是票据随机串，ticketLeft 是票据剩余有效期（小于 1 秒按 1 秒）。
-// Redis 不可用（d 或 d.rdb 为 nil）或 signals 为空时回 (0, nil).
-func (d *domainScores) ApplyProbe(ctx context.Context, acct, nonce string, ticketLeft time.Duration, signals []probeSignal, now time.Time) (int, error) {
+// acct 是账号 id 串，nonce 是票据随机串。票据键的 TTL 固定为 probeTicketKeyTTL（票据有效期加验签容许的偏差），
+// 不按本进程时钟算剩余时长：多进程时钟有偏差时也不会在键过期后还留出重放窗口。
+// Redis 不可用（d 或 d.rdb 为 nil）或 signals 为空时回 (0, nil)。
+func (d *domainScores) ApplyProbe(ctx context.Context, acct, nonce string, signals []probeSignal, now time.Time) (int, error) {
 	if d == nil || d.rdb == nil || len(signals) == 0 {
 		return 0, nil
-	}
-	left := ticketLeft
-	if left < time.Second {
-		left = time.Second
 	}
 	bucket := probeHourBucket(now)
 	names := make([]string, 0, 2+4*len(signals))
@@ -103,7 +102,7 @@ func (d *domainScores) ApplyProbe(ctx context.Context, acct, nonce string, ticke
 		domainScoreMin,
 		domainScoreMax,
 		domainScoreTTL.Milliseconds(),
-		left.Milliseconds(),
+		probeTicketKeyTTL.Milliseconds(),
 		probeDedupeWindow.Milliseconds(),
 		probeMinReporters,
 		probeWindow.Milliseconds(),

@@ -6,7 +6,9 @@ import {
   PROBE_DONE_TYPE,
   PROBE_INTERVAL_MS,
   PROBE_STORAGE_KEY,
+  runSubDomainProbe,
   shouldProbe,
+  type ProbeDeps,
 } from './probe'
 
 describe('shouldProbe & markProbed', () => {
@@ -142,5 +144,97 @@ describe('isProbeDone', () => {
     expect(
       isProbeDone({ origin, source: frameWindow, data: { type: 'other' } }, origin, frameWindow),
     ).toBe(false)
+  })
+})
+
+describe('runSubDomainProbe', () => {
+  function memStorage(): Pick<Storage, 'getItem' | 'setItem'> & { map: Map<string, string> } {
+    const map = new Map<string, string>()
+    return {
+      map,
+      getItem: (k) => map.get(k) ?? null,
+      setItem: (k, v) => {
+        map.set(k, v)
+      },
+    }
+  }
+  function deps(over: Partial<ProbeDeps>): ProbeDeps {
+    return {
+      storage: memStorage(),
+      now: () => 1_000_000_000_000,
+      fetchTicket: async () => 'tk',
+      openFrame: (_t, onClosed) => onClosed(),
+      ...over,
+    }
+  }
+
+  it('领票失败不记探测时间，下次照常再试', async () => {
+    const storage = memStorage()
+    let calls = 0
+    await runSubDomainProbe(
+      deps({
+        storage,
+        fetchTicket: async () => {
+          calls++
+          throw new Error('429')
+        },
+      }),
+    )
+    expect(storage.map.has(PROBE_STORAGE_KEY)).toBe(false)
+    await runSubDomainProbe(
+      deps({
+        storage,
+        fetchTicket: async () => {
+          calls++
+          return 'tk'
+        },
+      }),
+    )
+    expect(calls).toBe(2)
+    expect(storage.map.has(PROBE_STORAGE_KEY)).toBe(true)
+  })
+
+  it('领到票据后才记时间；空票据记时间但不开探测页', async () => {
+    const storage = memStorage()
+    const order: string[] = []
+    const opened: string[] = []
+    await runSubDomainProbe(
+      deps({
+        storage,
+        fetchTicket: async () => {
+          order.push(`fetch:${storage.map.has(PROBE_STORAGE_KEY)}`)
+          return ''
+        },
+        openFrame: (t, onClosed) => {
+          opened.push(t)
+          onClosed()
+        },
+      }),
+    )
+    expect(order).toEqual(['fetch:false'])
+    expect(storage.map.has(PROBE_STORAGE_KEY)).toBe(true)
+    expect(opened).toEqual([])
+  })
+
+  it('同一轮没结束时不重复领票据', async () => {
+    let calls = 0
+    let close: () => void = () => {}
+    const d = deps({
+      storage: null,
+      fetchTicket: async () => {
+        calls++
+        return 'tk'
+      },
+      openFrame: (_t, onClosed) => {
+        close = onClosed
+      },
+    })
+    await runSubDomainProbe(d)
+    await runSubDomainProbe(d)
+    expect(calls).toBe(1)
+    close()
+    await runSubDomainProbe(d)
+    expect(calls).toBe(2)
+    close()
   })
 })

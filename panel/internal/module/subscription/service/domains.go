@@ -388,7 +388,7 @@ func (s *Service) AdminDomainConfig(ctx context.Context) (DomainConfigView, erro
 	if _, err := adminPrincipal(ctx); err != nil {
 		return DomainConfigView{}, err
 	}
-	rows, err := s.repo.DomainConfig(ctx)
+	rows, err := s.domainConfigRows(ctx)
 	if err != nil {
 		return DomainConfigView{}, subErr(err)
 	}
@@ -436,7 +436,7 @@ func (s *Service) AdminSaveDomainConfig(ctx context.Context, in []DomainGroupInp
 		if err := s.repo.LockDomainConfig(ctx); err != nil {
 			return subErr(err)
 		}
-		rows, err := s.repo.DomainConfig(ctx)
+		rows, err := s.domainConfigRows(ctx)
 		if err != nil {
 			return subErr(err)
 		}

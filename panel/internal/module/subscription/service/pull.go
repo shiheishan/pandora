@@ -168,7 +168,7 @@ func (s *Service) Pull(ctx context.Context, req PullRequest) (PullResult, error)
 		return fail(err)
 	}
 	// 后台模板与订阅附加设置走进程内快照（30 秒过期），不每次拉取都查库
-	ex, err := s.extras.get(ctx, d.Extras, s.repo, now)
+	ex, err := s.extras.get(ctx, d.Extras, extrasSource{s}, now)
 	if err != nil {
 		return fail(err)
 	}

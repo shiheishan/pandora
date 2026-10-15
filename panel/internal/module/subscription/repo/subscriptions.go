@@ -178,12 +178,17 @@ func (r *Repo) PeriodOrderIDsBySubscriptions(ctx context.Context, subIDs []uuid.
 	return out, mapErr(rows.Err())
 }
 
-// HasLiveSubscription 报告用户在 now 时刻是否有生效中的订阅（status='active'、current_period_end > now、没关续费窗口），
-// 口径与 service.StateAt 的 StateLive 一致。
-func (r *Repo) HasLiveSubscription(ctx context.Context, userID uuid.UUID, now time.Time) (bool, error) {
+// HasLiveNonTrialSubscription 报告用户在 now 时刻是否有一份生效中、且不是注册试用发的订阅
+// （status='active'、current_period_end > now、没关续费窗口，口径同 service.StateAt 的 StateLive；
+// 注册试用发的那份记在 subscription_trials.subscription_id，续过费 id 也不变，同样不算）。
+// 给订阅域名探测当门槛：开了注册试用时每个新账号都有一份生效订阅，不排除试用等于没有门槛。
+func (r *Repo) HasLiveNonTrialSubscription(ctx context.Context, userID uuid.UUID, now time.Time) (bool, error) {
 	var ok bool
 	err := r.d.Conn(ctx).Raw(
-		"SELECT EXISTS (SELECT 1 FROM subscriptions WHERE user_id = ? AND status = 'active' AND current_period_end > ? AND renewal_closed_at IS NULL)",
+		`SELECT EXISTS (
+		   SELECT 1 FROM subscriptions s
+		    WHERE s.user_id = ? AND s.status = 'active' AND s.current_period_end > ? AND s.renewal_closed_at IS NULL
+		      AND NOT EXISTS (SELECT 1 FROM subscription_trials t WHERE t.subscription_id = s.id))`,
 		userID, now,
 	).Scan(&ok).Error
 	return ok, mapErr(err)

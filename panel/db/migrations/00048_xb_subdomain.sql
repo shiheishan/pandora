@@ -19,10 +19,12 @@ CREATE TABLE subscription_domain_groups (
 CREATE UNIQUE INDEX subscription_domain_groups_one_default ON subscription_domain_groups ((true)) WHERE is_default;
 
 -- 组内域名：规范化后的 https 地址、基础权重（1–100）与组内排序（最多 10 个）。
+-- base_url 的 CHECK 与 service.NormalizeBaseURL 的输出同形：https://小写多段域名，末段以字母开头，不带端口（只走 443）、不带路径，
+-- 不能是 IP、不能是单段主机名；长度上限与 NormalizeBaseURL 的 255 一致。
 CREATE TABLE subscription_domains (
   group_id uuid NOT NULL REFERENCES subscription_domain_groups(id) ON DELETE CASCADE,
-  base_url text NOT NULL CHECK (char_length(base_url) <= 263
-             AND base_url ~ '^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$'),
+  base_url text NOT NULL CHECK (char_length(base_url) <= 255
+             AND base_url ~ '^https://([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]([a-z0-9-]*[a-z0-9])?$'),
   weight   smallint NOT NULL DEFAULT 1 CHECK (weight BETWEEN 1 AND 100),
   position smallint NOT NULL CHECK (position BETWEEN 0 AND 9),
   CONSTRAINT subscription_domains_pkey PRIMARY KEY (group_id, base_url),

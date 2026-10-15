@@ -11,7 +11,7 @@ import (
 // 没有组或组内没有域名用面板对外地址 fallback。
 func (s *Service) linkBase(ctx context.Context, d *Delivery, userID uuid.UUID) (string, error) {
 	now := s.clock()
-	ex, err := s.extras.get(ctx, d.Extras, s.repo, now)
+	ex, err := s.extras.get(ctx, d.Extras, extrasSource{s}, now)
 	if err != nil {
 		return "", err
 	}
