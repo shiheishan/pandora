@@ -166,7 +166,6 @@ const MOVE_BLOCKERS: Readonly<Record<string, string>> = {
   usage_sources: '用量来源',
   usage_batches: '用量批次',
   traffic_reports: '流量上报',
-  active_server_token: '服务端令牌',
 }
 export function moveBlockers(fields: Readonly<Record<string, string>>): string[] {
   return Object.entries(fields)

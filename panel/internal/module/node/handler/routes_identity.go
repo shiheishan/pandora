@@ -10,7 +10,6 @@ import (
 func (h *Handler) registerIdentity(v1 *gin.RouterGroup, k route.Kit) {
 	v1.POST("/servers/:id/bootstrap-token", k.RequireAuth, k.RecentReauth, k.Idempotency("server_bootstrap_token"), h.issueServerBootstrapToken)
 	v1.POST("/nodes/bootstrap-token", k.RequireAuth, k.RecentReauth, k.Idempotency("node_bootstrap_token"), h.issueNodeBootstrapToken)
-	v1.POST("/nodes/:id/server-token", k.RequireAuth, h.issueNodeServerToken)
 	v1.GET("/nodes/:id/identity", k.RequireAuth, h.nodeIdentity)
 	v1.POST("/nodes/:id/revoke-identity", k.RequireAuth, k.RecentReauth, h.revokeNodeIdentity)
 }

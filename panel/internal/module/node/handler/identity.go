@@ -56,15 +56,6 @@ func (h *Handler) issueNodeBootstrapToken(c *gin.Context) {
 	httpx.Created(c, bootstrapTokenResponseFrom(out))
 }
 
-func (h *Handler) issueNodeServerToken(c *gin.Context) {
-	_, err := poolPathID(c, "id")
-	if err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	httpx.Fail(c, errs.Newf(errs.Conflict, "不再支持第三方节点端，请到服务器页用安装命令接入"))
-}
-
 func (h *Handler) nodeIdentity(c *gin.Context) {
 	nodeID, err := poolPathID(c, "id")
 	if err != nil {
