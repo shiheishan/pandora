@@ -10,6 +10,7 @@ import (
 	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
 	idemsvc "github.com/aegispanel/aegis/internal/module/idempotency/service"
 	"github.com/aegispanel/aegis/internal/module/order/model"
+	promosvc "github.com/aegispanel/aegis/internal/module/promo/service"
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/money"
@@ -151,18 +152,16 @@ func quoteResetLines(ctx context.Context, s *Service, userID uuid.UUID, in Quote
 		Credit:         decimal.Zero,
 		Refund:         decimal.Zero,
 	}
-	disc, cc, ce, err := quoteCouponEval(ctx, s, userID, in.CouponCode, &planID, nil, off.Currency, off.Amount)
-	if err != nil {
-		return nil, err
+	q.Discount = decimal.Zero
+	if promosvc.NormalizeCode(in.CouponCode) != "" {
+		msg := errs.As(promosvc.ErrCouponNotForReset).Message
+		q.CouponError = &msg
 	}
-	q.Discount = disc
-	q.CouponCode = cc
-	q.CouponError = ce
-	q.Total = OrderTotal(q.Subtotal, q.Discount, decimal.Zero)
+	q.Total = OrderTotal(q.Subtotal, decimal.Zero, decimal.Zero)
 	return []Quote{q}, nil
 }
 
-// CreateResetOrder 门户买流量重置：锁订阅、复核能买、没有待付的重置单，走 place（可用券与余额；应付为 0 时当场履约清零）。
+// CreateResetOrder 门户买流量重置：锁订阅、复核能买、没有待付的重置单，走 place（可用余额，不用券、不打会员折扣；应付为 0 时当场履约清零）。
 func (s *Service) CreateResetOrder(ctx context.Context, in ResetOrderInput) (Created, error) {
 	userID, err := portalUser(ctx)
 	if err != nil {
@@ -204,7 +203,6 @@ func (s *Service) CreateResetOrder(ctx context.Context, in ResetOrderInput) (Cre
 			UserID:         userID,
 			Currency:       off.Currency,
 			Subtotal:       off.Amount,
-			CouponPlanID:   &planID,
 			SubscriptionID: &subID,
 			Item:           resetOrderItem(off),
 			Checkout:       in.Checkout,
@@ -233,7 +231,7 @@ func (s *Service) CreateResetOrder(ctx context.Context, in ResetOrderInput) (Cre
 }
 
 // resetPayable 判断一张待付的流量重置单此刻还收不收钱（结算时调，调用方已锁订阅）：订阅仍在生效中、仍有限额的流量配额、
-// 套餐版本仍是建单时订单行上的那一版。不收时钱进挂账（CaseIneligibleSubscription）。
+// 配额周期起点没在建单后变过、套餐版本仍是建单时订单行上的那一版。不收时钱进挂账（CaseIneligibleSubscription）。
 func (s *Service) resetPayable(ctx context.Context, o model.Order, sub subsvc.Subscription, now time.Time) (bool, error) {
 	if sub.StateAt(now) != subsvc.StateLive {
 		return false, nil
@@ -248,6 +246,14 @@ func (s *Service) resetPayable(ctx context.Context, o model.Order, sub subsvc.Su
 	quotas, err := s.subs.Quotas(ctx, sub.ID)
 	if err != nil {
 		return false, err
+	}
+	// 建单之后流量配额已滚到新周期（自动清零过），这笔再清就是让用户花钱清新周期刚用的一点；与换套餐单
+	// sub.PeriodStart.After(o.CreatedAt) 同一思路，两个时刻都由应用时钟写入（订单 created_at 由 GORM 插入时取，
+	// 配额 period_start 由 subscription 取 now）。不收时钱进挂账。
+	for _, q := range quotas {
+		if q.Metric == subsvc.MetricTraffic && q.PeriodStart.After(o.CreatedAt) {
+			return false, nil
+		}
 	}
 	return hasLimitedTraffic(quotas), nil
 }

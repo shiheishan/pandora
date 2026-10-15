@@ -25,8 +25,8 @@ type draft struct {
 	UserID         uuid.UUID
 	Currency       money.Currency
 	Subtotal       decimal.Decimal
-	CouponPlanID   *uuid.UUID // 券适用范围：套餐类订单给套餐 id，流量包为 nil；充值不用券
-	CouponInterval *string    // 券限定周期用：新购、续费、换套餐给价格档的 billing_interval；流量包、流量重置为 nil；充值与人工单不用券
+	CouponPlanID   *uuid.UUID // 券适用范围：套餐类订单给套餐 id，流量包为 nil；充值与流量重置不用券
+	CouponInterval *string    // 券限定周期用：新购、续费、换套餐给价格档的 billing_interval；流量包为 nil；充值、流量重置与人工单不用券
 	SubscriptionID *uuid.UUID
 	Label          *string
 	Item           *model.Item // 充值为 nil；OrderID、Currency 由 place 填
@@ -102,7 +102,11 @@ func (s *Service) place(ctx context.Context, d draft) (Created, model.Order, err
 	var couponCode string
 	if d.Kind != KindTopup && d.Manual == nil {
 		couponCode = promosvc.NormalizeCode(d.Checkout.CouponCode)
-		if couponCode != "" {
+		if d.Kind == KindTrafficReset {
+			if couponCode != "" {
+				return Created{}, model.Order{}, promosvc.ErrCouponNotForReset
+			}
+		} else if couponCode != "" {
 			applied, err := s.promo.Evaluate(ctx, couponCode, promosvc.Target{
 				UserID:   d.UserID,
 				PlanID:   d.CouponPlanID,
@@ -125,10 +129,10 @@ func (s *Service) place(ctx context.Context, d draft) (Created, model.Order, err
 		discount = d.Subtotal
 	}
 
-	// 会员折扣（照 Xboard：与券都按小计算、相加，合计不超过小计）：门户的非充值单才打，后台人工单不打
+	// 会员折扣（照 Xboard：与券都按小计算、相加，合计不超过小计）：门户的非充值、非流量重置单才打（重置单永远按原价，用户 10-14 定），后台人工单不打
 	member := decimal.Zero
 	memberPct := 0
-	if d.Kind != KindTopup && d.Manual == nil {
+	if d.Kind != KindTopup && d.Kind != KindTrafficReset && d.Manual == nil {
 		pct, err := s.promo.MemberPercent(ctx, d.UserID)
 		if err != nil {
 			return Created{}, model.Order{}, err

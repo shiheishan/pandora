@@ -15,6 +15,7 @@ const maxNoteRunes = 500
 // ResetTraffic 把一份生效中订阅的流量已用量清零（全部 traffic.bytes 配额行），只清 consumed、不动上限，
 // 挂在这一份上的流量包不碰；每行写一条重置日志。返回清掉的已用量合计。
 // 不生效回 ErrNotLive；没有流量配额行回 ErrNoTrafficQuota。不写审计（后台入口 AdminResetTraffic 自己写）。
+// in.At 非零时按它判生效。
 // 在 ctx 的事务里执行，自己锁订阅行；提交后通知名单变化。
 func (s *Service) ResetTraffic(ctx context.Context, in TrafficReset) (int64, error) {
 	switch in.Reason {
@@ -44,7 +45,11 @@ func (s *Service) ResetTraffic(ctx context.Context, in TrafficReset) (int64, err
 		if err != nil {
 			return err
 		}
-		if StateAt(m.Status, m.CurrentPeriodEnd, m.RenewalClosedAt, s.clock()) != StateLive {
+		at := in.At
+		if at.IsZero() {
+			at = s.clock()
+		}
+		if StateAt(m.Status, m.CurrentPeriodEnd, m.RenewalClosedAt, at) != StateLive {
 			return ErrNotLive
 		}
 		rows, err := s.repo.QuotasBySubscriptions(ctx, []uuid.UUID{m.ID}, true)

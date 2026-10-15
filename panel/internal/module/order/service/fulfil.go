@@ -140,6 +140,7 @@ func (s *Service) fulfil(ctx context.Context, o model.Order, at time.Time, actor
 			UserID:         &uid,
 			Reason:         subsvc.ResetOrder,
 			Note:           o.OrderNo,
+			At:             at,
 		}); err != nil {
 			return model.Order{}, err
 		}

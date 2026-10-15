@@ -261,8 +261,9 @@ func (s *Service) Quote(ctx context.Context, in QuoteInput) (QuoteResult, error)
 	if err != nil {
 		return QuoteResult{}, err
 	}
-	// 会员折扣：一次报价只读一次，每条报价按「券 + 会员」重算总额（与建单 place 同口径）
-	if len(lines) > 0 {
+	// 会员折扣：一次报价只读一次，每条报价按「券 + 会员」重算总额（与建单 place 同口径）。
+	// 流量重置报价不打会员折扣（永远按原价，用户 10-14 定）。
+	if len(lines) > 0 && in.Action != QuoteReset {
 		pct, err := s.promo.MemberPercent(ctx, userID)
 		if err != nil {
 			return QuoteResult{}, err

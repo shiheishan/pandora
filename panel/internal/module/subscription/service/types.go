@@ -335,6 +335,8 @@ type TrafficReset struct {
 	Reason  string
 	ActorID *uuid.UUID
 	Note    string
+	// At 是判断订阅是否生效用的时刻；零值用 subscription 自己的时钟。订单结算履约时传结算的 now，与订单模块的复核用同一个时刻（不然卡在到期边界时两边结论可能不同，整笔结算报错回滚）
+	At time.Time
 }
 
 // RenewalPrice 是门户续费界面要的当前价格档。
