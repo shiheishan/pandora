@@ -19,7 +19,7 @@ type Order struct {
 	Currency       string          `gorm:"column:currency"`
 	SubtotalAmount decimal.Decimal `gorm:"column:subtotal_amount"`
 	DiscountAmount decimal.Decimal `gorm:"column:discount_amount"`
-	// MemberDiscountAmount 是 DiscountAmount 里属于会员折扣的部分（00043；券的部分 = DiscountAmount − 它）
+	// MemberDiscountAmount 是 DiscountAmount 里属于会员折扣的部分（00046；券的部分 = DiscountAmount − 它）
 	MemberDiscountAmount  decimal.Decimal `gorm:"column:member_discount_amount"`
 	ProrationCreditAmount decimal.Decimal `gorm:"column:proration_credit_amount"`
 	WaivedAmount          decimal.Decimal `gorm:"column:waived_amount"`

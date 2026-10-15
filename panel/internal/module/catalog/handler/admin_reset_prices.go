@@ -11,7 +11,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
-// 后台套餐的流量重置价格（00043 plan_reset_prices）：GET 读、PUT 整组替换；金额走分。
+// 后台套餐的流量重置价格（00046 plan_reset_prices）：GET 读、PUT 整组替换；金额走分。
 
 type resetPriceDTO struct {
 	Currency   string `json:"currency"`

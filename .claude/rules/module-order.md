@@ -25,7 +25,7 @@ paths:
 - 订单模型与金额约束（钱 R1–R6）：
   - 种类六种（`KindNew`、`KindRenewal`、`KindUpgrade`、`KindAddon`、`KindTopup`、`KindTrafficReset`）；状态五种（`StatusPending`、`StatusPaid`、`StatusFulfilled`、`StatusCancelled`、`StatusExpired`）。`KindUpgrade` 覆盖升级与降级。
   - 库里恒等式 `total = greatest(subtotal − discount − proration_credit, 0) − waived`；`OrderTotal` 只算前半段，`waived` 由调用方另减。`proration_credit` 仅 upgrade 单非零。
-  - 会员折扣（xb-order #33，00043）：`discount_amount` = 券 + 会员折扣（人工赠送是全额），恒等式不变；`member_discount_amount` 记其中会员的部分（库约束 ≤ discount_amount、人工单必须为 0）。
+  - 会员折扣（xb-order #33，00046）：`discount_amount` = 券 + 会员折扣（人工赠送是全额），恒等式不变；`member_discount_amount` 记其中会员的部分（库约束 ≤ discount_amount、人工单必须为 0）。
     口径照 Xboard：券与会员折扣都按小计算、相加，合计不超过小计（会员部分被压，`promosvc.MemberDiscount`：小计 × 百分比 / 100 向零截断到分，只截一次）。
     只在门户的非充值单上打（新购、续费、换套餐、流量包、流量重置）；充值、后台人工单不打。`place` 里先 Evaluate 券、再读 `promo.MemberPercent` 算会员折扣；Reserve 后只比对券的部分。
     报价 `Quote()` 一次只读一次会员率，每条报价经 `withMember` 按「券 + 会员」重算 `Total` 与 `Refund`（报价行的 `discount` 只含券，另出 `member_discount`、`member_percent`）。
@@ -61,5 +61,5 @@ paths:
     - 注销提交那一刻才由并发结算计提、没赶上作废的条目：`settleOne` 解冻时读到受益人已注销，不解冻、转人工复核（原因「受益人账号已注销，请作废这条佣金」），由后台作废（作废要记复核人，解冻任务里没有）。
   - 收款账号按方式校验（`ValidatePayoutAccount`：TRC20 base58check、ERC20/BEP20 EIP-55），仍用 Sealer 密封；USDT 打款的流水号是交易哈希（`ValidatePaidUSDT`），实付 USDT 数量只记录，面板不发起任何链上转账。旧申请的方式是 `other`，只显示、不可选。
 - 优惠券与会员折扣（promo）：
-  - 券限定计费周期 `coupon_intervals`（00043，取值 catalog 的 billing_interval 枚举，空 = 不限）：只在建券时随券插入（单张与批量的数据修改 CTE 同一条语句）；`apply` 在 `checkPlan` 之后 `checkInterval`，`Target.Interval` 为 nil（流量包、流量重置）或不在里面回 `ErrCouponNotForPeriod`（rejection，报价里落到 `coupon_error`）。
-  - 会员折扣 `member_discounts`（00043，减免百分比 1–100，与 Xboard `v2_user.discount` 同语义，一人一行，没有行 = 没有）：后台 `GET/PUT/DELETE /v1/member-discounts/:user_id`（PUT、DELETE 近期重认证；审计 `member_discount.set` / `member_discount.cleared`，资源 user）；order 经 `MemberPercent` 读（不加锁：报价与建单各读一次，变了由 expect 比对拦下）。金额函数 `MemberDiscount`（`service/member_calc.go`）。
+  - 券限定计费周期 `coupon_intervals`（00046，取值 catalog 的 billing_interval 枚举，空 = 不限）：只在建券时随券插入（单张与批量的数据修改 CTE 同一条语句）；`apply` 在 `checkPlan` 之后 `checkInterval`，`Target.Interval` 为 nil（流量包、流量重置）或不在里面回 `ErrCouponNotForPeriod`（rejection，报价里落到 `coupon_error`）。
+  - 会员折扣 `member_discounts`（00046，减免百分比 1–100，与 Xboard `v2_user.discount` 同语义，一人一行，没有行 = 没有）：后台 `GET/PUT/DELETE /v1/member-discounts/:user_id`（PUT、DELETE 近期重认证；审计 `member_discount.set` / `member_discount.cleared`，资源 user）；order 经 `MemberPercent` 读（不加锁：报价与建单各读一次，变了由 expect 比对拦下）。金额函数 `MemberDiscount`（`service/member_calc.go`）。

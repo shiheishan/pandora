@@ -49,7 +49,7 @@ const (
 	RedemptionsLimit = 200
 )
 
-// BillingIntervals 是券可限定的计费周期（与 catalog 价格档 billing_interval 的枚举、00043 coupon_intervals 的 CHECK 一致）。
+// BillingIntervals 是券可限定的计费周期（与 catalog 价格档 billing_interval 的枚举、00046 coupon_intervals 的 CHECK 一致）。
 var BillingIntervals = []string{"day", "week", "month", "quarter", "year", "one_time"}
 
 // Face 是券面：Kind 为 percent 时 PercentBP 有效（万分比，1–10000），为 fixed 时 AmountOff 有效（元）。

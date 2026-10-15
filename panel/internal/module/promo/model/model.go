@@ -1,4 +1,4 @@
-// Package model 是 promo 模块的 GORM 结构体：只有字段和标签，表结构见迁移 00010_promo.sql 与 00043_xb_order.sql。
+// Package model 是 promo 模块的 GORM 结构体：只有字段和标签，表结构见迁移 00010_promo.sql 与 00046_xb_order.sql。
 package model
 
 import (
@@ -50,7 +50,7 @@ type CouponPlan struct {
 // TableName 固定表名。
 func (CouponPlan) TableName() string { return "coupon_plans" }
 
-// CouponInterval 是 coupon_intervals 表的一行（00043）：券限定的一个计费周期（价格档的 billing_interval）。
+// CouponInterval 是 coupon_intervals 表的一行（00046）：券限定的一个计费周期（价格档的 billing_interval）。
 type CouponInterval struct {
 	CouponID        uuid.UUID `gorm:"column:coupon_id;type:uuid;primaryKey"`
 	BillingInterval string    `gorm:"column:billing_interval;primaryKey"`
@@ -59,7 +59,7 @@ type CouponInterval struct {
 // TableName 固定表名。
 func (CouponInterval) TableName() string { return "coupon_intervals" }
 
-// MemberDiscount 是 member_discounts 表的一行（00043）：单个用户的会员折扣，Percent 是减免百分比 1–100。
+// MemberDiscount 是 member_discounts 表的一行（00046）：单个用户的会员折扣，Percent 是减免百分比 1–100。
 type MemberDiscount struct {
 	UserID    uuid.UUID  `gorm:"column:user_id;type:uuid;primaryKey"`
 	Percent   int        `gorm:"column:percent"`

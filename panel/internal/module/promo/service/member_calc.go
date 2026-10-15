@@ -6,7 +6,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
-// MemberPercentMax 是会员折扣（减免百分比）的上限，与 00043 member_discounts.percent 的 CHECK 一致。
+// MemberPercentMax 是会员折扣（减免百分比）的上限，与 00046 member_discounts.percent 的 CHECK 一致。
 const MemberPercentMax = 100
 
 // MemberDiscount 算一单的会员折扣（照 Xboard OrderService::setVipDiscount：按小计算、与券折扣相加）：

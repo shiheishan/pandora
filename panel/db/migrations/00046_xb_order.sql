@@ -18,7 +18,7 @@
 --   预检：SELECT count(*) FROM orders; SELECT count(*) FROM order_items; SELECT count(*) FROM traffic_reset_logs;
 --   到百万行级时改成 NO TRANSACTION 迁移：ADD CONSTRAINT … NOT VALID 后另起语句 VALIDATE、索引 CONCURRENTLY。
 --   还没有生产部署（用户 10-09 确认），按一个事务做。
---   失败回滚：任一步失败（含 lock_timeout 超时）整笔回滚，库停在 00042，换低峰重试即可。
+--   失败回滚：任一步失败（含 lock_timeout 超时）整笔回滚，库停在 00045，换低峰重试即可。
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '5min';
 
@@ -106,7 +106,7 @@ BEGIN
   IF EXISTS (SELECT 1 FROM orders WHERE kind = 'traffic_reset' OR member_discount_amount <> 0)
      OR EXISTS (SELECT 1 FROM order_items WHERE plan_id IS NOT NULL AND price_id IS NULL)
      OR EXISTS (SELECT 1 FROM traffic_reset_logs WHERE reason = 'order') THEN
-    RAISE EXCEPTION '库里已有流量重置单、会员折扣订单或按购买写的重置日志，不能退回 00042；订单与日志不可删，先人工处理';
+    RAISE EXCEPTION '库里已有流量重置单、会员折扣订单或按购买写的重置日志，不能退回 00045；订单与日志不可删，先人工处理';
   END IF;
 END
 $$;
