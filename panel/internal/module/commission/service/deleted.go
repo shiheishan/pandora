@@ -10,6 +10,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
 	"github.com/aegispanel/aegis/internal/pkg/money"
+	"github.com/aegispanel/aegis/internal/pkg/tx"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
@@ -127,9 +128,11 @@ func (s *Service) VoidForDeletedUser(ctx context.Context, userID uuid.UUID) (Voi
 // LockForDeletion 在注销事务里拿这个人的佣金咨询锁（LockUser），持有到注销提交：注销锁用户行之后、取消待付单之前调用，
 // 理由见 VoidForDeletedUser 的锁序。必须在事务里调用（咨询锁随事务释放）。
 func (s *Service) LockForDeletion(ctx context.Context, userID uuid.UUID) error {
-	return s.tx.Do(ctx, func(ctx context.Context) error {
-		return s.repo.LockUser(ctx, userID)
-	})
+	// 事务外调用时锁会随这次单独的事务立刻释放，等于没锁：直接拒绝，免得静默失效
+	if !tx.InTx(ctx) {
+		return errors.New("commission: LockForDeletion 必须在注销事务里调用")
+	}
+	return s.repo.LockUser(ctx, userID)
 }
 
 // voidPendingForDeleted 作废一条冻结中的条目（调用方已锁条目行）：冲回计提，条目转 voided。

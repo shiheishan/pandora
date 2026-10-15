@@ -168,7 +168,7 @@ func TestVoidForDeletedUser(t *testing.T) {
 	if _, err := e.svc.RequestWithdrawal(userCtx(ctx, a), a, dec2("1.00"), "alipay", "alipay a@example.test"); !errors.Is(err, ErrAccountDeleted) {
 		t.Fatalf("注销后提现应 409：%v", err)
 	}
-	// 自动转余额：标记被人为挂回去也不转
+	// 自动转余额：标记被人为挂回去也不转，只清标记、不回错误（回错误会让每一轮任务都卡在这条上）
 	var e3 uuid.UUID
 	if err := e.row(ctx, `SELECT id FROM commission_entries WHERE referrer_user_id = ? AND order_id IN (SELECT id FROM orders WHERE user_id = ?)`, a, b3).Scan(&e3); err != nil {
 		t.Fatal(err)
@@ -180,14 +180,14 @@ func TestVoidForDeletedUser(t *testing.T) {
 	if err := e.exec(ctx, `UPDATE commission_entries SET auto_transfer_due = true WHERE id = ?`, e3); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.svc.autoTransferOne(ctx, model.Entry{ID: e3, ReferrerUserID: a}, autoTransferPlan{on: true, site: testCurrency}); !errors.Is(err, ErrAccountDeleted) {
-		t.Fatalf("注销后自动转余额应 409：%v", err)
+	if done, err := e.svc.autoTransferOne(ctx, model.Entry{ID: e3, ReferrerUserID: a}, autoTransferPlan{on: true, site: testCurrency}); err != nil || done {
+		t.Fatalf("注销后自动转余额应只清标记：done=%v err=%v", done, err)
 	}
 	if bal := accountBalance(t, e, ctx, a, ledgersvc.UserBalance); !bal.Equal(dec2("20.00")) {
 		t.Fatalf("自动转余额不应动余额：%s", bal)
 	}
-	if err := e.exec(ctx, `UPDATE commission_entries SET auto_transfer_due = false WHERE id = ?`, e3); err != nil {
-		t.Fatal(err)
+	if err := e.row(ctx, `SELECT count(*) FROM commission_entries WHERE id = ? AND auto_transfer_due`, e3).Scan(&flagged); err != nil || flagged != 0 {
+		t.Fatalf("注销后自动转余额应清掉标记：%d %v", flagged, err)
 	}
 	// 后台批准与标记已打款：直接插一笔申请中的提现（门户已进不来）
 	var wid uuid.UUID

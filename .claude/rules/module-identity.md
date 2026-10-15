@@ -9,7 +9,7 @@ paths:
 ## 分工
 - identity 管用户、口令、注册、找回密码、改密、邀请码、用户组与后台用户管理；auth 管登录、refresh、登出、重认证、快捷登录、管理员名单。会话状态全在 Redis（`panel/internal/module/auth/service/store.go`），PG 里 auth 只有管理员名单。
 - 两边互相要的能力走 `panel/internal/module/identity/service/ports.go` 的接口：`SessionRevoker`、`AdminGuard`、`StaffGuard` 由 auth 实现，`VerificationMailer` 由 notify 实现，启动时 `Use*` 注入。改这些接口要同时改实现方。
-- 注册试用、注销与解绑走 `ports_xb.go`：`TrialGranter`、`AccountCloser` 由 subscription 实现，`OrderCanceller` 由 order 实现，`TelegramUnbinder` 由 notify 实现；没注入时调用处回 Internal，`MissingPorts` 会列出来（wire.go 启动时检查）。
+- 注册试用、注销与解绑走 `ports_xb.go`：`TrialGranter`、`AccountCloser` 由 subscription 实现，`OrderCanceller` 由 order 实现，`CommissionVoider`（注销时锁佣金并作废未打款的佣金与在途提现）由 commission 实现，`TelegramUnbinder` 由 notify 实现；没注入时调用处回 Internal，`MissingPorts` 会列出来（wire.go 启动时检查）。
 - 后台权限只分有和没有：在管理员名单里且账号 active 就能做全部后台操作，没有角色和权限码（用户 2026-10-12 定）。
 
 ## 账号枚举防护（IAM-006）

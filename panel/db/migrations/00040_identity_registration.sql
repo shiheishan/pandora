@@ -1,6 +1,6 @@
 -- +goose Up
 -- 用户 2026-10-14 定的 Xboard 补齐注册与用户条目；属 identity 模块，另有 subscription 的试用表与事件类型、notify 的一条模板种子、
--- commission 的注销作废记录表（第 9 段）。
+-- commission 的注销作废记录表（第 8 段）。
 --
 -- 锁与耗时：users 不是小表。重建 users_status_check、新增 users_deleted_shape 两条 CHECK 都在 ACCESS EXCLUSIVE 锁下
 --   各扫一遍 users 全表（加列不扫：admin_note、deleted_at 没有默认值），耗时与行数成正比，期间 users 读写全部排队；
@@ -97,7 +97,7 @@ ALTER TABLE subscription_events ADD CONSTRAINT subscription_events_event_type_ch
   CHECK (event_type IN ('activated', 'renewed', 'extended', 'plan_changed', 'expired', 'renewal_closed', 'link_rotated',
                         'period_end_set', 'quota_limit_set'));
 
--- 9. commission_forfeitures（属 commission 模块，随注销功能放在本迁移里）：账号注销时作废可提现佣金的记录表
+-- 8. commission_forfeitures（属 commission 模块，随注销功能放在本迁移里）：账号注销时作废可提现佣金的记录表
 --    （用户 2026-10-14 定：注销时名下未打款的佣金与在途提现都作废）。
 --
 -- 为什么另起一张表：可提现佣金是个「池」，不按条目扣——提现、转余额都按 `已解冻 − 提现 − 转余额` 的口径从池里出，

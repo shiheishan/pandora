@@ -142,7 +142,7 @@ var (
 type Summary struct {
 	Currency        money.Currency
 	Pending         decimal.Decimal // 冻结中
-	Available       decimal.Decimal // 可提现（已解冻 − 未驳回的提现 − 已转余额，不小于 0）
+	Available       decimal.Decimal // 可提现（已解冻 − 未驳回的提现 − 已转余额 − 注销作废，不小于 0）
 	Withdrawing     decimal.Decimal // 提现处理中（申请中、已批准）
 	Settled         decimal.Decimal // 已打款
 	TotalEarned     decimal.Decimal // 累计佣金（含冻结中）
