@@ -108,6 +108,7 @@ describe('orders', () => {
       state_version: 3,
       subtotal_amount: 4500,
       discount_amount: 4500,
+      member_discount_amount: 0,
       coupon_id: null,
       manual_reason: '补偿一个月服务',
       created_by: 'a1',

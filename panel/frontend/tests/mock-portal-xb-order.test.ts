@@ -102,10 +102,13 @@ describe('mock api · portal traffic reset & member discount', () => {
     // 付款
     const pay = await call('POST', `/v1/orders/${order.order_id}/pay`, { provider: 'epay', method: 'alipay', return_url: `${base}/#/x` })
     expect(pay.status).toBe(201)
+    const intent = new URL(((await pay.json()) as { redirect_url: string }).redirect_url).searchParams.get('intent')!
 
-    // 查单确认履约
-    const query = await call('POST', `/v1/orders/${order.order_id}/query`)
-    expect(query.status).toBe(200)
+    // 假收银台「模拟支付成功」：回调到账、履约
+    const done = await fetch(`${base}/v1/__mock/cashier/complete?intent=${intent}`, { redirect: 'manual' })
+    expect(done.status).toBe(302)
+    const detail = (await (await call('GET', `/v1/orders/${order.order_id}`)).json()) as { order: { status: string; kind: string } }
+    expect(detail.order).toMatchObject({ status: 'fulfilled', kind: 'traffic_reset' })
 
     // 已用流量清零
     const usedAfter = subFixture.days.reduce((acc, d) => acc + d.bytes, 0)
