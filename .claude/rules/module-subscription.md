@@ -33,10 +33,13 @@ paths:
 - 订阅域名分组（迁移 00047，三张表 `subscription_domain_groups`、`subscription_domains`、`subscription_domain_group_user_groups`，属本模块；用户 10-14 定，取代 settings 的 `subscription.link_base_urls`）：
   - 选组：用户组分到的组 → 缺省组 → 都没有用 `public_base_url`（`service/domain_set.go` 的 `groupFor`、`domainGroupFor`）；只有缺省组时不查用户组
   - `MyLinks`、换链接组内按有效权重随机（`pickWeighted`，crypto/rand），有效权重 = 基础权重（1–100）× 分数；Surfboard 托管配置取组里基础权重最高的、同权重取前面的（`stableBaseURL`、`subscribeURLFor`）；过期提示的续费页仍用 `public_base_url`
-  - 分数在 Redis `subdom:score`（`service/domain_scores.go`）：6 小时半衰期向 1 衰减、夹在 [0.1, 3]（下限大于 0：浏览器上报可伪造，任何域名都不会被压成 0）；Redis 不可用按基础权重，不让生成链接失败
-  - 加减分信号：经已登记域名 Host 到达的成功拉取 +0.05（进程内攒 10 秒一批写，不给拉取加往返）；门户探测成功 +0.1、失败 −0.3（`service/domain_probe.go`，只收本人所在组的域名，按账号每小时 6 次）
+  - 分数在 Redis `subdom:score`（`service/domain_scores.go`）：6 小时半衰期向 1 衰减、夹在 [0.1, 3]（下限大于 0：任何域名都不会被压成 0；上限防独占）；Redis 不可用按基础权重，不让生成链接失败
+  - 唯一的信号：经**令牌主人所在组**的已登记域名（`hostBaseURL` + `groupHas`，Host 可伪造，别组的不算）到达的成功拉取 +0.05；同一凭据对同一域名每小时只记一次（进程内去重表，上限 5 万条）；进程内攒 10 秒一批写，不给拉取加往返。冲刷在下一次拉取或下一次读分数（生成链接、后台查看）时顺带触发，没有定时任务，低流量时会滞后到那时；丢一批只影响增速。连不上的域名拿不到加分，相对权重随衰减自然变低
+  - 门户浏览器探测已去掉（审查 10-14）：门户入口页对匿名访客与所有用户组一样，CSP 放行订阅域名会公开只给某些组的域名；任何账号都能伪造失败上报操纵比例；首页也不该依赖数据库。不要再加回来
+  - 地址口径与 nginx 一致（`NormalizeBaseURL`）：只收 https + DNS 域名（至少两段、末段字母开头、≤253），不收 IP、localhost 与端口（`:443` 自动去掉）
+  - 拉取快照读整份配置时三条 SELECT 在同一个只读可重复读事务里（`repo.DomainConfig`），已在事务里（后台保存）直接用当前事务
   - 后台 `GET/PUT /subscription-domains`：整份替换，PUT 要近期重认证、写审计 `subscription.domains_changed`（域名不是秘密，前后整份记），先咨询锁 `LockDomainConfig` 再读旧值、没变化不写不审计（`service/domains.go`、`handler/domains.go`）；校验文案与假后端 `frontend/dev/mock/admin/subscription-domains.ts` 逐字一致
-  - 公开 `GET /v1/sub-probe`：只回 204 + `Access-Control-Allow-Origin: <门户源>`，不读写任何数据，按 IP 每分钟 60 次；nginx 订阅域名上只放行它与拉取路径（`deploy/render-nginx.sh`）
+  - nginx 订阅域名上只放行拉取路径，其余 404（`deploy/render-nginx.sh`）
 - 后台模板接口：`/subscription-templates[/:format[/preview]]`；保存与恢复缺省要近期重认证、写审计（只记 sha256 与字节数，不记全文），事务里先按格式加咨询锁（`LockTemplateFormat`）再读旧值（`handler/templates.go`、`service/templates.go`）；预览只渲染示例节点，在后台只读模式的豁免表里（`settings/handler/middleware.go` 与假后端 `frontend/dev/mock-api.ts` 同步）
 
 ## 链接、换链、备注
