@@ -186,7 +186,7 @@ linters:
               desc: 新栈用 gin
             - pkg: github.com/jackc/pgx/v5/pgxpool
               desc: 新栈经 GORM 访问数据库
-        # 标准库日志只在生产代码里禁：测试里第三方夹具（如 pebble）的 API 要求传 *log.Logger
+        # 标准库日志只在生产代码里禁：测试里第三方夹具的 API 可能要求传 *log.Logger
         stack-no-stdlog:
           files:
             - "**/internal/pkg/**"

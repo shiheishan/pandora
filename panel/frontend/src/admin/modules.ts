@@ -1,4 +1,4 @@
-export type ModuleKey = 'dash' | 'tickets' | 'users' | 'plans' | 'billing' | 'marketing' | 'nodes' | 'certs' | 'content' | 'system' | 'security'
+export type ModuleKey = 'dash' | 'tickets' | 'users' | 'plans' | 'billing' | 'marketing' | 'nodes' | 'content' | 'system' | 'security'
 
 interface ModuleDef {
   title: string
@@ -65,16 +65,6 @@ export const MODULES: Readonly<Record<ModuleKey, ModuleDef>> = {
       ['subscription', '订阅下发'],
     ],
   },
-  // 节点证书（面板集中签发 DNS-01）
-  certs: {
-    title: '证书',
-    group: '网络',
-    tabs: [
-      ['list', '证书列表'],
-      ['dns', 'DNS 凭据'],
-      ['acme', 'ACME 设置'],
-    ],
-  },
   content: {
     title: '内容与外观',
     group: '运营',
@@ -109,7 +99,7 @@ export const NAV_GROUPS: ReadonlyArray<readonly [string, readonly ModuleKey[]]> 
   ['工作台', ['dash', 'tickets']],
   ['用户运营', ['users']],
   ['商业', ['plans', 'billing', 'marketing']],
-  ['网络', ['nodes', 'certs']],
+  ['网络', ['nodes']],
   ['运营', ['content', 'system']],
   ['系统', ['security']],
 ]

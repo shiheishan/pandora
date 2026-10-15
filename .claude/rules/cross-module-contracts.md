@@ -2,8 +2,6 @@
 paths:
   - "proto/**"
   - "nodeapi/**"
-  - "pdnd/certbundle/**"
-  - "pdnd/certstore/**"
   - "pdnd/kernel/port_claims*.go"
   - "pdnd/core/device_key*.go"
   - "panel/internal/module/node/protocol/port_l4*.go"
@@ -28,8 +26,8 @@ panel 与 pdnd 是两个独立的 Go module。两端之间的契约分两类：�
 - 稳定协议名单：pdnd `kernel/capabilities.go` 与面板 `panel/internal/module/node/protocol/schema.go` 的 `stableTypes` / `stableSchemas`，由 `pdnd/release/check_native_panel_parity.py` 比对（CI pandora-native）。
 - 节点安装器写的 systemd 单元：面板 `TestInstallScriptUnitMatchesPackaged`（`panel/internal/module/node/service/pdnd_install_script_test.go`）读 `pdnd/release/pandora-native.service` 逐行比对。
 
-## 证书包（certbundle）
+## 节点入站证书
 
-- 面板侧实现已随旧栈删除。`pdnd/certbundle` 现在只剩节点侧实现与金样本 `pdnd/certbundle/testdata/certbundle-v1-golden.json`，没有面板侧对照，也没有调用方；托管入站证书下发到节点还没做（`docs/node-certificates.md` 第 3 节）。
-- 要恢复面板托管证书下发时，先定新栈的下发方式（走 gRPC 通道还是保留这份 HPKE 契约），再决定这个包留不留；不要只改 pdnd 一侧的格式。
+- 面板不签发、不下发节点入站证书（「面板集中签发」与 pdnd 的 certbundle、certstore 已于 10-14 删除，迁移 00048 删表）；入站证书由节点机上的 certbot / acme.sh 放进约定目录，见 `docs/node-certificates.md`。约定目录两端各有一份：面板 `node/protocol/validate_policy.go` 的 `nodeCertificateDir`，与文档第 1 节。
+- 以后要做面板下发，按节点 gRPC 会话设计新的消息，两端一起改，不恢复旧的 HPKE 证书包。
 - proto 里的 `Certificate` 消息是节点 mTLS 客户端证书的续期结果，不是入站证书，别混用。
