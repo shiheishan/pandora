@@ -98,7 +98,7 @@ ALTER TABLE subscription_events ADD CONSTRAINT subscription_events_event_type_ch
                         'period_end_set', 'quota_limit_set'));
 
 -- 8. commission_forfeitures（属 commission 模块，随注销功能放在本迁移里）：账号注销时作废可提现佣金的记录表
---    （用户 2026-10-14 定：注销时名下未打款的佣金与在途提现都作废）。
+--    （用户 2026-10-14 定：注销时名下未打款的佣金作废、申请中的提现驳回；有已批准未打款的提现时不许注销）。
 --
 -- 为什么另起一张表：可提现佣金是个「池」，不按条目扣——提现、转余额都按 `已解冻 − 提现 − 转余额` 的口径从池里出，
 -- 说不清哪条已解冻的条目被提走了多少，所以没法把「剩下的那部分」落到某几条条目上作废。注销时按唯一口径算出每个币种还剩的

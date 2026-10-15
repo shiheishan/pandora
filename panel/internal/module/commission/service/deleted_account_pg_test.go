@@ -10,7 +10,7 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// 账号注销时作废佣金（用户 10-14 定）：冻结、待复核的条目作废，在途提现驳回，剩下的可提现佣金作废；已打款、已转余额不动；
+// 账号注销时作废佣金（用户 10-14 定）：冻结、待复核的条目作废，申请中的提现驳回，剩下的可提现佣金作废；已打款、已转余额不动；
 // 两个佣金科目归零；再调一次全 0；之后转余额、提现、自动转余额、后台批准与打款都回 409「账号已注销」。
 func TestVoidForDeletedUser(t *testing.T) {
 	e, ctx := newEnv(t)
@@ -258,5 +258,48 @@ func TestSettleDeletedBeneficiaryGoesToReview(t *testing.T) {
 	}
 	if bal := accountBalance(t, e, ctx, a, ledgersvc.UserCommissionPending); !bal.IsZero() {
 		t.Fatalf("作废后待结 %s", bal)
+	}
+}
+
+// 有已批准、没标记打款的提现时拒绝注销（用户 10-14 定），提现与可提现都不动；标记打款之后才能注销。
+func TestVoidForDeletedUserRefusesApprovedWithdrawal(t *testing.T) {
+	e, ctx := newEnv(t)
+	admin := newUser(t, e, ctx)
+	actx := adminCtx(ctx, admin)
+	a, b := newUser(t, e, ctx), newUser(t, e, ctx)
+	setConfig(t, e, ctx, admin, 10, 0, "1.00", "every_order")
+	if amt := accrueAvailable(t, e, ctx, a, b, "100.00"); !amt.Equal(dec2("10.00")) {
+		t.Fatalf("b 佣金 %s", amt)
+	}
+	wid, err := e.svc.RequestWithdrawal(userCtx(ctx, a), a, dec2("6.00"), "alipay", "alipay a@example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.ReviewWithdrawal(actx, wid, true, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := e.svc.VoidForDeletedUser(actx, a); !errors.Is(err, ErrApprovedWithdrawalPending) {
+		t.Fatalf("有已批准的提现应拒绝注销：%v", err)
+	}
+	var status string
+	if err := e.row(ctx, `SELECT status FROM withdrawals WHERE id = ?`, wid).Scan(&status); err != nil || status != WithdrawalApproved {
+		t.Fatalf("拒绝注销后提现应仍是已批准：%s %v", status, err)
+	}
+	if bal := accountBalance(t, e, ctx, a, ledgersvc.UserCommissionAvailable); !bal.Equal(dec2("10.00")) {
+		t.Fatalf("拒绝注销后可提现不应变：%s", bal)
+	}
+
+	// 标记打款后可以注销：剩下的 4.00 作废，没有要驳回的提现
+	if err := e.svc.MarkWithdrawalPaid(actx, wid, "PAY-DEL-0002", nil); err != nil {
+		t.Fatal(err)
+	}
+	e.refs.markDeleted(a)
+	res, err := e.svc.VoidForDeletedUser(actx, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.RejectedWithdrawals != 0 || !res.Forfeited[testCurrency].Equal(dec2("4.00")) {
+		t.Fatalf("打款后注销的作废结果 %+v", res)
 	}
 }

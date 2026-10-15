@@ -24,8 +24,8 @@ type OrderCanceller interface {
 	CancelUserPending(ctx context.Context, userID uuid.UUID) (int, error)
 }
 
-// CommissionVoider 由 commission 实现（app 里适配）：注销时在同一事务里作废这个人名下未打款的佣金、驳回在途提现（用户 2026-10-14 定）。
-// 冻结中、待复核的条目逐条作废，在途提现驳回后剩下的可提现佣金按币种作废；已打款、已转余额的不动。再调一次返回全 0。
+// CommissionVoider 由 commission 实现（app 里适配）：注销时在同一事务里作废这个人名下未打款的佣金、驳回申请中的提现（用户 2026-10-14 定；有已批准未打款的提现时回 409，不许注销）。
+// 冻结中、待复核的条目逐条作废，申请中的提现驳回后剩下的可提现佣金按币种作废；已打款、已转余额的不动。再调一次返回全 0。
 // 锁序见 commission 的 VoidForDeletedUser：锁用户行之后、取消待付单之前调 LockForDeletion（拿佣金咨询锁）；
 // 停完订阅之后、改占位邮箱（用户行锁升到 FOR UPDATE）之前调 VoidForDeletedUser。
 type CommissionVoider interface {
@@ -38,7 +38,7 @@ type CommissionVoid struct {
 	VoidedEntries       int                        // 作废的冻结中、待复核条目数
 	VoidedPending       map[string]decimal.Decimal // 这些条目的金额合计
 	Forfeited           map[string]decimal.Decimal // 作废的可提现佣金（含驳回提现退回的部分）
-	RejectedWithdrawals int                        // 驳回的在途提现笔数
+	RejectedWithdrawals int                        // 驳回的申请中提现笔数
 	RejectedAmount      map[string]decimal.Decimal // 驳回的提现金额合计
 }
 

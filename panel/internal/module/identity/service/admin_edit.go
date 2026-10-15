@@ -173,7 +173,7 @@ func (s *Service) AdminSetNote(ctx context.Context, userID uuid.UUID, displayNam
 	})
 }
 
-// DeleteUser 注销并匿名化用户：取消全部待付订单（经 order，作废在途支付意图）、停掉全部订阅、作废名下未打款的佣金并驳回在途提现（经 commission）、解绑 Telegram、吊销全部会话，邮箱换成不可登录的占位值、清掉显示名与备注、删口令、停用他的邀请码、作废找回密码验证码。
+// DeleteUser 注销并匿名化用户：取消全部待付订单（经 order，作废在途支付意图）、停掉全部订阅、作废名下未打款的佣金并驳回申请中的提现（经 commission；有已批准未打款的提现时 409 拒绝、整笔回滚）、解绑 Telegram、吊销全部会话，邮箱换成不可登录的占位值、清掉显示名与备注、删口令、停用他的邀请码、作废找回密码验证码。
 // 不可撤销；订单、账本、佣金与提现记录、审计、邀请关系原样保留（作废是追加冲回分录、改状态，不删行）。同事务发插件事件 user.deleted（只带用户 id 与时间）。返回停掉的订阅份数。
 func (s *Service) DeleteUser(ctx context.Context, userID uuid.UUID, reason string) (DeleteUserResult, error) {
 	p, err := principal(ctx)
@@ -243,7 +243,7 @@ func (s *Service) DeleteUser(ctx context.Context, userID uuid.UUID, reason strin
 			return err
 		}
 
-		// 作废名下未打款的佣金、驳回在途提现（经 commission）。放在停完订阅之后：作废要锁平台收入科目，
+		// 作废名下未打款的佣金、驳回申请中的提现（经 commission；有已批准未打款的提现回 409，整笔回滚）。放在停完订阅之后：作废要锁平台收入科目，
 		// 结算是先锁库存、券、订阅再锁平台收入，同序才不互等；放在改占位邮箱之前：那时用户行还只是 FOR NO KEY UPDATE，
 		// 与结算计提插条目时外键加的 KEY SHARE 相容，拿着平台收入的结算不会反过来等这里的用户行。
 		voided, err := voider.VoidForDeletedUser(ctx, userID)

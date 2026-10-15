@@ -13,6 +13,7 @@ import (
 // 账号注销时作废佣金用到的读写（调用方 service.VoidForDeletedUser，锁序见那里）。
 
 // LockInFlightWithdrawals 按 id 升序锁定用户全部在途提现（申请中、已批准待打款），FOR UPDATE 等锁不跳过。
+// 已批准的也锁上：调用方据此拒绝注销。
 // 等锁期间被打款或驳回的行，PG 按新版本重查 WHERE，不再返回。
 func (r *Repo) LockInFlightWithdrawals(ctx context.Context, userID uuid.UUID) ([]model.Withdrawal, error) {
 	var out []model.Withdrawal
@@ -24,11 +25,11 @@ SELECT * FROM withdrawals
 	return out, mapErr(err)
 }
 
-// RejectWithdrawalForDeletedUser 账号注销时驳回一笔在途提现（申请中或已批准待打款都驳回，后台审批只驳回申请中的）。
+// RejectWithdrawalForDeletedUser 账号注销时驳回一笔申请中的提现（已批准的不驳回：有已批准的就不许注销）。
 // 记驳回原因、操作的管理员与时间；没改到行（已不在途）返回 false。
 func (r *Repo) RejectWithdrawalForDeletedUser(ctx context.Context, id uuid.UUID, reason string, by uuid.UUID, at time.Time) (bool, error) {
 	res := r.d.Conn(ctx).Model(&model.Withdrawal{}).
-		Where("id = ? AND status IN ?", id, []string{"requested", "approved"}).
+		Where("id = ? AND status = ?", id, "requested").
 		Updates(map[string]any{
 			"status":        "rejected",
 			"reject_reason": reason,

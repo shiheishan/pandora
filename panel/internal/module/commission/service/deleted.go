@@ -21,12 +21,13 @@ type VoidResult struct {
 	VoidedEntries       int                                // 作废的冻结中、待复核条目数
 	VoidedPending       map[money.Currency]decimal.Decimal // 上面这些条目的金额合计（冲回待结佣金）
 	Forfeited           map[money.Currency]decimal.Decimal // 作废的可提现佣金（冲回可提现佣金）
-	RejectedWithdrawals int                                // 驳回的在途提现笔数
+	RejectedWithdrawals int                                // 驳回的申请中提现笔数
 	RejectedAmount      map[money.Currency]decimal.Decimal // 驳回的提现金额合计（驳回后退回可提现、随即一并作废，已含在 Forfeited 里）
 }
 
 // VoidForDeletedUser 在账号注销的事务里作废这个人名下全部未出账的佣金（用户 2026-10-14 定），由 identity 的 DeleteUser 经端口调用：
-//  1. 在途提现（申请中、已批准待打款）一律驳回，原因 account_deleted。提现只改状态不记账，驳回后这笔钱回到可提现。
+//  1. 有已批准待打款的提现就整笔拒绝注销（ErrApprovedWithdrawalPending，用户 10-14 定：管理员可能已线下打款）；
+//     申请中的提现驳回，原因 account_deleted。提现只改状态不记账，驳回后这笔钱回到可提现。
 //  2. 他作为受益人的冻结中条目（待复核与否）逐条作废：记 commission_voided 冲回计提（借 待结佣金 / 贷 平台收入 main，按条目唯一），
 //     条目转 voided，原因 account_deleted，复核人记执行注销的管理员。
 //  3. 清掉他条目上「等自动转余额」的标记。
@@ -68,6 +69,12 @@ func (s *Service) VoidForDeletedUser(ctx context.Context, userID uuid.UUID) (Voi
 		wds, err := s.repo.LockInFlightWithdrawals(ctx, userID)
 		if err != nil {
 			return err
+		}
+		// 先查完再驳回：行都已锁住，并发的批准要么已提交（这里看到 approved），要么排在注销之后（届时看到已注销回 409）
+		for _, w := range wds {
+			if w.Status == WithdrawalApproved {
+				return ErrApprovedWithdrawalPending
+			}
 		}
 		for _, w := range wds {
 			changed, err := s.repo.RejectWithdrawalForDeletedUser(ctx, w.ID, ReasonAccountDeleted, adminID, now)

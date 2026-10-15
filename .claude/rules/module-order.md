@@ -38,8 +38,8 @@ paths:
     - `RequestWithdrawal` 关着时只在站点币种以外的币种里选（`pickCurrency` 的 skip），没有就回 `ErrWithdrawDisabled`；白名单照旧管着，所以开关两种状态都至少要留一种方式（settings 校验回 422 `withdraw_methods`）。读设置时三级合计只在开着多级时查。汇总带 `SiteCurrency`，门户据此决定显不显示提现。
     - 站点币种：`settleOne` 解冻时只挂 `commission_entries.auto_transfer_due`（不拿用户锁、不碰余额）；`SettleDue` 解冻完再由 `autoTransferDue` 逐条在单独的事务里转（`autoTransferOne`，锁序见上），转失败标记留着、下一轮重试；提现已重新打开时只清标记不转（用户自己提现或转余额）。转的金额取这条佣金与当前可用佣金里小的那个，可用为 0（用户自己转走了）只清标记；`commission_transfers.entry_id` 唯一兜底，审计 `commission.auto_transferred_to_balance`。
     - 关闭前已经解冻的站点币种佣金不挂标记、不自动转，由用户自己点「全部转入余额」（门户提示写明）。非站点币种转不进余额，照常提现。
-  - 注销作废（用户 10-14 定：账号注销时名下未打款的佣金与在途提现都作废），identity 的 `DeleteUser` 经 `CommissionVoider` 端口在同一事务里调 `VoidForDeletedUser`（app 的 `commissionVoidAdapter` 适配）：
-    - 在途提现（`requested`、`approved`）一律驳回，`reject_reason = account_deleted`，复核人记执行注销的管理员；提现只改状态不记账，驳回后钱回到可提现。
+  - 注销作废（用户 10-14 定：账号注销时名下未打款的佣金作废、申请中的提现驳回；有已批准未打款的提现时不许注销），identity 的 `DeleteUser` 经 `CommissionVoider` 端口在同一事务里调 `VoidForDeletedUser`（app 的 `commissionVoidAdapter` 适配）：
+    - 有已批准待打款（`approved`）的提现就整笔拒绝注销（`ErrApprovedWithdrawalPending`，用户 10-14 定：管理员可能已线下打款）；申请中（`requested`）的驳回，`reject_reason = account_deleted`，复核人记执行注销的管理员；提现只改状态不记账，驳回后钱回到可提现。
     - 他作为受益人的 `pending` 条目（待复核与否）逐条作废：`commission_voided` 冲回计提（借 待结 / 贷 平台收入 main，来源是条目、按来源唯一），`status = voided`、`void_reason = account_deleted`，复核人记执行注销的管理员。
     - 清掉他条目上的 `auto_transfer_due`。
     - 逐币种按唯一口径算剩下的可用佣金（已含驳回退回的），为正就记 `commission_voided`（借 可提现 / 贷 平台收入 main，来源 `commission_forfeiture`），写 `commission_forfeitures`（只追加，每人每币种最多一行）。可提现是池、不按条目扣，说不清哪条被提走了多少，所以这部分不改条目状态（已解冻的条目仍是 `available`），口径减去作废合计。

@@ -130,6 +130,9 @@ var (
 	ErrEntryNotFound           = errs.Newf(errs.NotFound, "佣金条目不存在")
 	// ErrAccountDeleted 是佣金的受益人或提现的申请人已注销：注销时名下未打款的佣金与在途提现都已作废，不再出钱。
 	ErrAccountDeleted = errs.Newf(errs.Conflict, "账号已注销")
+	// ErrApprovedWithdrawalPending 是注销时他还有已批准、没标记打款的提现（用户 10-14 定：这种情况不许注销，
+	// 免得线下已打款的钱被驳回成平台收入、之后标记打款又对不上账）。
+	ErrApprovedWithdrawalPending = errs.Newf(errs.Conflict, "该用户有已批准、还没标记打款的提现，先在佣金页把它标记为已打款，再注销")
 	// ErrEntryNotReviewable 是条目不在待复核状态（已复核过、已解冻或已作废）：重放与并发的第二次都落在这里。
 	ErrEntryNotReviewable = errs.Newf(errs.Conflict, "这条佣金不在待复核状态，可能已被处理，请刷新")
 	// ErrVoidUnderfunded 是推荐人的待结佣金科目不够冲回这一条（账本与条目对不上，需要人工核对账本）。

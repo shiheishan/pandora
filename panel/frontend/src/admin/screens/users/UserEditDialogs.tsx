@@ -301,7 +301,7 @@ export function DeleteDialog({ user, open, onClose, onDone }: { user: UserDetail
   return (
     <ActionModal open={open} title="注销该账号？" busy={busy} confirm="注销" tone="danger" disabled={!canDelete} onCancel={close} onConfirm={() => void submit()}>
       <p className={css.dialogText}>
-        将停掉全部订阅、解绑 Telegram、全部登录失效、邮箱换成占位、清掉显示名与备注、停用邀请码；订单、账本、佣金与审计保留。<strong>不可撤销。</strong>
+        将停掉全部订阅、解绑 Telegram、全部登录失效、邮箱换成占位、清掉显示名与备注、停用邀请码；冻结中与可提现的佣金作废，申请中的提现驳回（已打款、已转余额的不动）；订单、账本与审计保留。有已批准还没标记打款的提现时不能注销。<strong>不可撤销。</strong>
       </p>
       <TextArea
         label="原因"
