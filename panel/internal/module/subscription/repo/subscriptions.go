@@ -177,3 +177,14 @@ func (r *Repo) PeriodOrderIDsBySubscriptions(ctx context.Context, subIDs []uuid.
 	}
 	return out, mapErr(rows.Err())
 }
+
+// HasLiveSubscription 报告用户在 now 时刻是否有生效中的订阅（status='active'、current_period_end > now、没关续费窗口），
+// 口径与 service.StateAt 的 StateLive 一致。
+func (r *Repo) HasLiveSubscription(ctx context.Context, userID uuid.UUID, now time.Time) (bool, error) {
+	var ok bool
+	err := r.d.Conn(ctx).Raw(
+		"SELECT EXISTS (SELECT 1 FROM subscriptions WHERE user_id = ? AND status = 'active' AND current_period_end > ? AND renewal_closed_at IS NULL)",
+		userID, now,
+	).Scan(&ok).Error
+	return ok, mapErr(err)
+}

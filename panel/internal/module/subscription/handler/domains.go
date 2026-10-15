@@ -12,10 +12,26 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
 )
 
-// DomainService 是后台订阅域名分组用到的 service 方法。
+const (
+	// probeTicketsPerHour 是每个账号每小时能领的探测票据数。
+	probeTicketsPerHour = 6
+	// probeFramePerMinute、probeReportPerMinute 是探测页与上报按来源 IP 每分钟的上限。
+	probeFramePerMinute  = 30
+	probeReportPerMinute = 30
+	// subProbePerMinute 是公开探测接口按来源 IP 每分钟的上限。
+	subProbePerMinute = 60
+	// probeTicketMaxLen 是票据串的长度上限（超过直接拒，不进 service）。
+	probeTicketMaxLen = 512
+)
+
+// DomainService 是订阅域名分组与探测用到的 service 方法。
 type DomainService interface {
 	AdminDomainConfig(ctx context.Context) (service.DomainConfigView, error)
 	AdminSaveDomainConfig(ctx context.Context, in []service.DomainGroupInput) (service.DomainConfigView, error)
+	IssueProbeTicket(ctx context.Context) (string, error)
+	ProbeFrameDomains(ctx context.Context, ticket string) ([]string, error)
+	ReportProbeResults(ctx context.Context, ticket string, results []service.ProbeResult) error
+	PortalOrigin() string
 }
 
 type domainItem struct {
@@ -148,4 +164,84 @@ func (h *Handler) adminSaveDomains(c *gin.Context) {
 		return
 	}
 	httpx.OK(c, toDomainConfigResponse(cfg))
+}
+
+type probeTicketResponse struct {
+	Ticket string `json:"ticket"`
+}
+
+type probeResultItem struct {
+	BaseURL string `json:"base_url"`
+	OK      bool   `json:"ok"`
+}
+
+type probeReportRequest struct {
+	Ticket  string            `json:"ticket"`
+	Results []probeResultItem `json:"results"`
+}
+
+// probeTicket 是门户领取探测票据 POST /v1/sub-probe/ticket。
+func (h *Handler) probeTicket(c *gin.Context) {
+	t, err := h.svc.IssueProbeTicket(c.Request.Context())
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	httpx.OK(c, probeTicketResponse{Ticket: t})
+}
+
+// probeFrame 是探测页 GET /v1/sub-probe/frame。
+func (h *Handler) probeFrame(c *gin.Context) {
+	t := c.Query("t")
+	if t == "" || len(t) > probeTicketMaxLen {
+		httpx.Fail(c, errs.Newf(errs.Unauthorized, "探测票据无效或已过期"))
+		return
+	}
+	domains, err := h.svc.ProbeFrameDomains(c.Request.Context(), t)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	writeProbeFrame(c, domains)
+}
+
+// probeReport 是探测页上报结果 POST /v1/sub-probe/report。
+func (h *Handler) probeReport(c *gin.Context) {
+	var req probeReportRequest
+	if err := httpx.BindJSON(c, &req); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	if req.Ticket == "" || len(req.Ticket) > probeTicketMaxLen {
+		httpx.Fail(c, errs.Newf(errs.Unauthorized, "探测票据无效或已过期"))
+		return
+	}
+	if len(req.Results) > service.DomainsPerGroupMax {
+		httpx.Fail(c, errs.Invalid(map[string]string{"results": "一次最多报告 10 个域名"}))
+		return
+	}
+	results := make([]service.ProbeResult, 0, len(req.Results))
+	for _, r := range req.Results {
+		results = append(results, service.ProbeResult{BaseURL: r.BaseURL, OK: r.OK})
+	}
+	if err := h.svc.ReportProbeResults(c.Request.Context(), req.Ticket, results); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	httpx.NoContent(c)
+}
+
+// probeCORS 给公开探测接口写 CORS 头：只在请求的 Origin 恰好是门户源时回 ACAO（别的来源拿不到「这个订阅域名属于哪个门户」）；
+// 挂在限流之前，429 也带上，探测页才能把「被限流」和「连不上」分开。
+func (h *Handler) probeCORS(c *gin.Context) {
+	c.Header("Vary", "Origin")
+	if o := h.svc.PortalOrigin(); o != "" && c.GetHeader("Origin") == o {
+		c.Header("Access-Control-Allow-Origin", o)
+	}
+	c.Next()
+}
+
+// subProbe 是公开探测接口 GET/HEAD /v1/sub-probe：只回 204、不读不写任何数据、不带凭据头。
+func (h *Handler) subProbe(c *gin.Context) {
+	httpx.NoContent(c)
 }

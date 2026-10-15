@@ -23,6 +23,8 @@ const (
 	InfoHMACIdempotency = "pandora/hmac/idempotency/v1"
 	// InfoHMACNodeDevice 是节点在线设备键（IPv4 地址 / IPv6 /64）：IPv4 只有 2^32 个，不加密钥的摘要可穷举还原
 	InfoHMACNodeDevice = "pandora/hmac/node-device/v1"
+	// InfoHMACSubProbe 是订阅域名探测票据的签名（绑账号与所在域名组版本，5 分钟有效）
+	InfoHMACSubProbe = "pandora/hmac/sub-probe/v1"
 )
 
 const minMasterLen = 32

@@ -1,5 +1,6 @@
 // 订阅域名的分数（Redis，多进程共享）：有效权重 = 基础权重 × 分数，按分数放大或缩小一个域名的被选中概率。
-// 分数只由「经令牌主人所在组的已登记域名到达的成功拉取」加分（每次 +0.05），随时间按 6 小时半衰期向 1 衰减；
+// 分数有两个来源——(1) 经令牌主人所在组的已登记域名到达的成功拉取（每次 +0.05，同一凭据对同一域名每小时一次，进程内攒批）；
+// (2) 门户探测页的上报（成功 +0.1、失败 −0.3，防操纵规则见 domain_probe_scores.go）。随时间按 6 小时半衰期向 1 衰减；
 // 连不上的域名拿不到加分，相对权重随衰减自然变低。夹在 [domainScoreMin, domainScoreMax]：
 // 下限 0.1 不让任何域名被压成 0；上限 3 防止单个域名独占流量。
 // 分数值带写入时刻存成 hash（field = base_url，value = "<score 四位小数>|<unix 毫秒>"），读时现算衰减。
@@ -36,6 +37,10 @@ const (
 	domainScoreMax = 3.0
 	// scorePullSuccess 是一次经该域名的正常订阅拉取加的分。
 	scorePullSuccess = 0.05
+	// scoreProbeSuccess 是探测页报告一次「连得上」加的分。
+	scoreProbeSuccess = 0.1
+	// scoreProbeFailure 是探测页报告一次「连不上」扣的分（要满足多人规则才生效，见 domain_probe_scores.go）。
+	scoreProbeFailure = -0.3
 	// domainScoreCredWindow 内同一凭据对同一域名只记一次成功，一个人高频拉取刷不动分数。
 	domainScoreCredWindow = time.Hour
 	// domainScoreCredMax 是去重表的条目上限，超了就丢弃新信号，防内存无界。
@@ -49,6 +54,28 @@ const (
 	// domainScoreNeutral 是中性分数（没有记录、不可用时的缺省值）。
 	domainScoreNeutral = 1.0
 )
+
+// luaApplyDelta 定义 Lua 函数 apply_delta(key, field, delta, now, hl, lo, hi)：读旧值 "<score>|<毫秒>"，
+// 能解析就先按半衰期衰减到 now，再加 delta，夹到 [lo, hi] 后写回；解析不了按中性分 1 起步。
+const luaApplyDelta = `
+local function apply_delta(key, field, delta, now, hl, lo, hi)
+  local s = 1
+  local old = redis.call('HGET', key, field)
+  if old then
+    local sep = string.find(old, '|', 1, true)
+    if sep then
+      local sc = tonumber(string.sub(old, 1, sep - 1))
+      local ts = tonumber(string.sub(old, sep + 1))
+      if sc and ts then
+        local age = math.max(now - ts, 0)
+        s = 1 + (sc - 1) * math.pow(0.5, age / hl)
+      end
+    end
+  end
+  s = math.min(math.max(s + delta, lo), hi)
+  redis.call('HSET', key, field, string.format('%.4f|%d', s, now))
+end
+`
 
 // domainScores 是订阅域名分数的 Redis 存取；零值不可用，经 newDomainScores 构造。
 // rdb 为 nil（或接收者为 nil）时所有方法按「Redis 不可用」处理：Read 回 (nil, false)、Apply 回 nil、NoteSuccess 丢弃。
@@ -167,7 +194,7 @@ func (d *domainScores) Read(ctx context.Context, baseURLs []string, now time.Tim
 // ARGV[5] = hash 的 TTL 毫秒；ARGV[6] 起（field, delta）两两一组。
 // 每组：读旧值 "<score>|<毫秒>"，能解析就先把旧分数按半衰期衰减到 now，再加减量，夹到 [下限, 上限] 后写回；
 // 解析不了旧值（没记录、格式变了）按中性分 1 起步。全部写完重设 hash 的 TTL，返回 1。
-var applyScoresScript = redis.NewScript(`
+var applyScoresScript = redis.NewScript(luaApplyDelta + `
 local now = tonumber(ARGV[1])
 local hl = tonumber(ARGV[2])
 local lo = tonumber(ARGV[3])
@@ -175,21 +202,7 @@ local hi = tonumber(ARGV[4])
 for i = 6, #ARGV, 2 do
   local field = ARGV[i]
   local delta = tonumber(ARGV[i + 1])
-  local s = 1
-  local old = redis.call('HGET', KEYS[1], field)
-  if old then
-    local sep = string.find(old, '|', 1, true)
-    if sep then
-      local sc = tonumber(string.sub(old, 1, sep - 1))
-      local ts = tonumber(string.sub(old, sep + 1))
-      if sc and ts then
-        local age = math.max(now - ts, 0)
-        s = 1 + (sc - 1) * math.pow(0.5, age / hl)
-      end
-    end
-  end
-  s = math.min(math.max(s + delta, lo), hi)
-  redis.call('HSET', KEYS[1], field, string.format('%.4f|%d', s, now))
+  apply_delta(KEYS[1], field, delta, now, hl, lo, hi)
 end
 redis.call('PEXPIRE', KEYS[1], ARGV[5])
 return 1
