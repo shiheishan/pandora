@@ -949,7 +949,7 @@ def main():
                            {"code": f"risk-{STAMP}", "name": f"风控评估 {STAMP}", "visibility": "public",
                             "traffic_gb": 100, "max_devices": 3, "pool_ids": [pool_id],
                             "prices": [{"billing_interval": "month", "interval_count": 1,
-                                        "unit_amount": 990, "currency": "CNY", "trial_days": 0}],
+                                        "unit_amount": 990, "currency": "CNY"}],
                             "publish": True},
                            idem=f"risk-plan-{STAMP}", expect=(201,))
         ctx["plan_id"] = need_uuid(js["plan"]["id"], "套餐 id")

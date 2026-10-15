@@ -122,8 +122,6 @@ type Version struct {
 	FrozenAt             *time.Time
 	QuotaResetStrategy   string
 	QuotaResetDay        *int
-	GracePeriodHours     int
-	GraceKeepsService    bool
 	RenewalExtendsPeriod bool
 	RenewalResetsQuota   bool
 	RenewalKeepsAddons   bool
@@ -163,7 +161,6 @@ type Price struct {
 	UnitAmount      decimal.Decimal
 	BillingInterval string
 	IntervalCount   int
-	TrialDays       int
 	Status          string
 	UserGroupID     *uuid.UUID
 	ValidFrom       *time.Time
@@ -229,8 +226,6 @@ type PlanInput struct {
 type VersionInput struct {
 	QuotaResetStrategy   string
 	QuotaResetDay        *int
-	GracePeriodHours     int
-	GraceKeepsService    bool
 	RenewalExtendsPeriod bool
 	RenewalResetsQuota   bool
 	RenewalKeepsAddons   bool
@@ -251,7 +246,6 @@ type PriceInput struct {
 	UnitAmount      decimal.Decimal
 	BillingInterval string
 	IntervalCount   int
-	TrialDays       int
 	UserGroupID     *uuid.UUID
 	ValidFrom       *time.Time
 	ValidUntil      *time.Time
@@ -273,7 +267,6 @@ type WizardPrice struct {
 	IntervalCount   int
 	UnitAmount      decimal.Decimal
 	Currency        string
-	TrialDays       int
 }
 
 // WizardCreate 是「一次建成」向导的输入。Plan 里三个 Allow* 已由调用方把缺省落成 true。

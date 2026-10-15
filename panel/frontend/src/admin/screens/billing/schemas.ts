@@ -3,17 +3,15 @@ import { z } from 'zod'
 // ---------------------------------------------------------------------------
 // 封闭枚举（迁移里的 CHECK）：未知值判为不符约定
 // ---------------------------------------------------------------------------
-// 库里 5 态（00013_order.sql），退款两态等产品确认后再定
-const ORDER_STATUSES = ['pending_payment', 'paid', 'fulfilled', 'cancelled', 'expired', 'refunded', 'partially_refunded'] as const
+// 库里 5 态（00013_order.sql）
+const ORDER_STATUSES = ['pending_payment', 'paid', 'fulfilled', 'cancelled', 'expired'] as const
 const ORDER_KINDS = ['new', 'renewal', 'upgrade', 'addon', 'topup', 'traffic_reset'] as const
 const INTENT_STATUSES = ['requires_action', 'succeeded', 'cancelled', 'expired'] as const
 const PAYMENT_STATUSES = ['succeeded'] as const
-const REFUND_STATUSES = ['pending', 'approved', 'processing', 'succeeded', 'failed', 'rejected'] as const
 const LATE_STATUSES = ['suspense', 'applied'] as const
 const LATE_KINDS = ['released_order', 'excess_capture', 'ineligible_subscription'] as const
 const CURRENCIES = ['CNY', 'USD'] as const
 export type OrderStatus = (typeof ORDER_STATUSES)[number]
-export type RefundStatus = (typeof REFUND_STATUSES)[number]
 export type LateStatus = (typeof LATE_STATUSES)[number]
 export type LateKind = (typeof LATE_KINDS)[number]
 export type Currency = (typeof CURRENCIES)[number]
@@ -37,7 +35,6 @@ export const orderRowSchema = z.object({
   total_amount: int,
   payable_amount: int,
   paid_amount: int,
-  refunded_amount: int,
   balance_applied: int,
   created_at: time,
   paid_at: time.nullable(),
@@ -97,7 +94,7 @@ export const orderResponseSchema = z.object({ order: orderDetailSchema })
 export type OrderDetail = z.output<typeof orderDetailSchema>
 
 // ---------------------------------------------------------------------------
-// GET v1/orders/{id}/payments：支付尝试、入账、退款
+// GET v1/orders/{id}/payments：支付尝试与入账
 // ---------------------------------------------------------------------------
 const intentSchema = z.object({
   id: z.string(),
@@ -108,8 +105,6 @@ const intentSchema = z.object({
   surcharge_amount: int,
   status: z.enum(INTENT_STATUSES),
   provider_ref: z.string().nullable(),
-  failure_code: z.string().nullable(),
-  failure_message: z.string().nullable(),
   expires_at: time.nullable(),
   created_at: time,
   updated_at: time,
@@ -124,28 +119,12 @@ const paymentSchema = z.object({
   amount: int,
   surcharge_amount: int,
   fee_amount: int,
-  refunded_amount: int,
   status: z.enum(PAYMENT_STATUSES),
   method: z.string().nullable(),
   paid_at: time,
 })
-const refundSchema = z.object({
-  id: z.string(),
-  payment_id: z.string().nullable(),
-  provider_refund_id: z.string().nullable(),
-  currency: z.string(),
-  amount: int,
-  reason: z.string(),
-  status: z.enum(REFUND_STATUSES),
-  entitlement_revoked: z.boolean(),
-  commission_reversed: z.boolean(),
-  failure_message: z.string().nullable(),
-  succeeded_at: time.nullable(),
-  created_at: time,
-})
-export const paymentHistorySchema = z.object({ payment_intents: z.array(intentSchema), payments: z.array(paymentSchema), refunds: z.array(refundSchema) })
+export const paymentHistorySchema = z.object({ payment_intents: z.array(intentSchema), payments: z.array(paymentSchema) })
 export type PaymentHistory = z.output<typeof paymentHistorySchema>
-export type Refund = z.output<typeof refundSchema>
 
 // ---------------------------------------------------------------------------
 // 订单写接口的响应

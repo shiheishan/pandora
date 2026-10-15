@@ -48,7 +48,7 @@ func publishedWithEntitlementFixture(t *testing.T, e *env, ctx context.Context) 
 	}
 	lim := int64(1 << 30)
 	verRV, err := e.svc.UpdateVersion(ctx, plan.ID, ver.ID, ver.RowVersion, VersionInput{
-		QuotaResetStrategy: ResetBillingCycle, GraceKeepsService: true,
+		QuotaResetStrategy:   ResetBillingCycle,
 		RenewalExtendsPeriod: true, RenewalResetsQuota: true, RenewalKeepsAddons: true,
 		DeviceReleaseHours: 24, OveragePolicy: OveragePolicySuspend,
 		Entitlements: []Entitlement{{Code: "feat.a", Value: json.RawMessage(`true`)}},
@@ -93,11 +93,11 @@ func draftFixture(t *testing.T, e *env, ctx context.Context) (planID, versionID 
 	return plan.ID, ver.ID
 }
 
-func TestFreezeTriggerPlanVersionUpdateGrace(t *testing.T) {
+func TestFreezeTriggerPlanVersionUpdate(t *testing.T) {
 	e, ctx := newEnv(t)
 	_, verID, _, _ := publishedFixture(t, e, ctx)
 	err := execSavepoint(t, ctx, e, "sp1",
-		`UPDATE plan_versions SET grace_period_hours = grace_period_hours + 1 WHERE id = ?`, verID)
+		`UPDATE plan_versions SET device_release_hours = device_release_hours + 1 WHERE id = ?`, verID)
 	assertRestrictViolation(t, err)
 }
 
@@ -179,8 +179,8 @@ func TestFreezeTriggerInsertPublishedVersionRow(t *testing.T) {
 	e, ctx := newEnv(t)
 	planID, _, _, _ := publishedFixture(t, e, ctx)
 	err := execSavepoint(t, ctx, e, "sp1",
-		`INSERT INTO plan_versions (plan_id, version, status, frozen_at, quota_reset_strategy, grace_period_hours, grace_keeps_service, renewal_extends_period, renewal_resets_quota, renewal_keeps_addons, device_release_hours, row_version)
-		 VALUES (?, 99, 'published', now(), 'billing_cycle', 0, true, true, true, true, 24, 1)`, planID)
+		`INSERT INTO plan_versions (plan_id, version, status, frozen_at, quota_reset_strategy, renewal_extends_period, renewal_resets_quota, renewal_keeps_addons, device_release_hours, row_version)
+		 VALUES (?, 99, 'published', now(), 'billing_cycle', true, true, true, 24, 1)`, planID)
 	assertRestrictViolation(t, err)
 }
 
@@ -188,7 +188,7 @@ func TestFreezeTriggerDraftVersionUpdateOK(t *testing.T) {
 	e, ctx := newEnv(t)
 	_, verID := draftFixture(t, e, ctx)
 	err := execSavepoint(t, ctx, e, "sp1",
-		`UPDATE plan_versions SET grace_period_hours = 1 WHERE id = ?`, verID)
+		`UPDATE plan_versions SET device_release_hours = 1 WHERE id = ?`, verID)
 	if err != nil {
 		t.Fatalf("草稿版本应可改: %v", err)
 	}

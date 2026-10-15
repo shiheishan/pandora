@@ -95,8 +95,6 @@ interface Intent {
   surcharge_amount: number
   status: string
   provider_ref: string | null
-  failure_code: string | null
-  failure_message: string | null
   expires_at: string | null
   created_at: string
   updated_at: string
@@ -110,24 +108,9 @@ interface Payment {
   amount: number
   surcharge_amount: number
   fee_amount: number
-  refunded_amount: number
   status: string
   method: string | null
   paid_at: string
-}
-interface Refund {
-  id: string
-  payment_id: string | null
-  provider_refund_id: string | null
-  currency: string
-  amount: number
-  reason: string
-  status: string
-  entitlement_revoked: boolean
-  commission_reversed: boolean
-  failure_message: string | null
-  succeeded_at: string | null
-  created_at: string
 }
 interface Item {
   id: string
@@ -158,7 +141,6 @@ export interface Order {
   balance_applied: number
   payable_amount: number
   paid_amount: number
-  refunded_amount: number
   state_version: number
   manual_reason: string | null
   created_by: string | null
@@ -175,7 +157,6 @@ export interface Order {
   items: Item[]
   intents: Intent[]
   payments: Payment[]
-  refunds: Refund[]
 }
 
 let seq = 3300
@@ -198,7 +179,6 @@ function blank(u: User, over: Partial<Order>): Order {
     balance_applied: 0,
     payable_amount: 0,
     paid_amount: 0,
-    refunded_amount: 0,
     state_version: 1,
     manual_reason: null,
     created_by: null,
@@ -215,19 +195,18 @@ function blank(u: User, over: Partial<Order>): Order {
     items: [],
     intents: [],
     payments: [],
-    refunds: [],
     ...over,
   }
 }
 
 export function intentFor(o: Order, code: string, status: string, at: string, over: Partial<Intent> = {}): Intent {
-  return { id: randomUUID(), provider_code: code, currency: o.currency, amount: o.payable_amount, surcharge_amount: 0, status, provider_ref: `${code.toUpperCase()}${o.order_no.slice(2)}`, failure_code: null, failure_message: null, expires_at: new Date(Date.parse(at) + 30 * MIN).toISOString(), created_at: at, updated_at: at, ...over }
+  return { id: randomUUID(), provider_code: code, currency: o.currency, amount: o.payable_amount, surcharge_amount: 0, status, provider_ref: `${code.toUpperCase()}${o.order_no.slice(2)}`, expires_at: new Date(Date.parse(at) + 30 * MIN).toISOString(), created_at: at, updated_at: at, ...over }
 }
 
 export function paymentFor(o: Order, code: string, intent: Intent | null, at: string, ref?: string): Payment {
   const surcharge = intent?.surcharge_amount ?? 0
   const amount = intent?.amount ?? o.payable_amount
-  return { id: randomUUID(), payment_intent_id: intent?.id ?? null, provider_code: code, provider_payment_id: ref ?? `${code}:${o.order_no}`, currency: o.currency, amount, surcharge_amount: surcharge, fee_amount: code === 'offline' ? 0 : Math.round(amount * 0.006), refunded_amount: 0, status: 'succeeded', method: code === 'offline' ? null : 'alipay', paid_at: at }
+  return { id: randomUUID(), payment_intent_id: intent?.id ?? null, provider_code: code, provider_payment_id: ref ?? `${code}:${o.order_no}`, currency: o.currency, amount, surcharge_amount: surcharge, fee_amount: code === 'offline' ? 0 : Math.round(amount * 0.006), status: 'succeeded', method: code === 'offline' ? null : 'alipay', paid_at: at }
 }
 
 const planItem = (planId: string | null, name: string, amount: number, currency: string, interval = 'month', count = 1): Item => ({
@@ -306,7 +285,7 @@ add(U(7), { total_amount: 2500, payable_amount: 2500, created_at: iso(4 * MIN), 
   o.intents.push(intentFor(o, 'epay', 'requires_action', iso(3 * MIN))),
 )
 add(U(7), { kind: 'topup', total_amount: 10000, payable_amount: 10000, created_at: iso(9 * MIN), expires_at: iso(-21 * MIN) }, (o) =>
-  o.intents.push(intentFor(o, 'epay', 'cancelled', iso(8 * MIN), { failure_code: 'user_cancelled', failure_message: '渠道返回：用户取消支付' })),
+  o.intents.push(intentFor(o, 'epay', 'cancelled', iso(8 * MIN))),
 )
 add(U(3), { total_amount: 4500, payable_amount: 4500, created_at: iso(15 * MIN), expires_at: iso(-15 * MIN), manual_reason: '对公转账客户，先开单再付款', ...OPS })
 // 超时未支付（仪表盘「超时未支付订单」数的就是这两张）：创建超过 30 分钟、过期作业还没处理，像是回调丢了
@@ -356,7 +335,7 @@ add(
   paidVia('epay'),
 )
 add(U(9), { kind: 'topup', status: 'paid', total_amount: 20000, payable_amount: 20000, paid_amount: 20000, ...done(iso(DAY)), fulfilled_at: null, state_version: 2 }, (o) => {
-  o.intents.push(intentFor(o, 'epay', 'cancelled', iso(DAY + 2 * MIN), { failure_code: 'timeout', failure_message: '渠道超时' }))
+  o.intents.push(intentFor(o, 'epay', 'cancelled', iso(DAY + 2 * MIN)))
   paidVia('epay')(o)
 })
 // 人工：赠送（全额减免）、线下已收款（offline 入账没有支付尝试）
@@ -366,7 +345,7 @@ add(
   { status: 'fulfilled', total_amount: 69000, payable_amount: 69000, paid_amount: 69000, ...done(iso(3 * DAY)), manual_reason: '企业客户对公转账，年付', ...OPS, items: [planItem(pro.id, pro.name, 69000, 'CNY', 'year')] },
   (o) => o.payments.push(paymentFor(o, 'offline', null, o.created_at, 'offline:ICBC-20260921-0088')),
 )
-// 已取消、全额退款、部分退款
+// 已取消
 add(U(8), { status: 'cancelled', total_amount: 2500, payable_amount: 2500, created_at: iso(4 * DAY), cancelled_at: iso(4 * DAY - 10 * MIN), cancel_reason: '用户重复下单，保留另一张', state_version: 2 }, (o) =>
   o.intents.push(intentFor(o, 'epay', 'cancelled', o.created_at)),
 )
@@ -383,17 +362,6 @@ const ineligibleRenewal = add(U(16), { kind: 'renewal', status: 'expired', total
 const endedRenewal = add(U(17), { kind: 'renewal', total_amount: 4500, payable_amount: 4500, created_at: iso(12 * MIN), expires_at: iso(-18 * MIN) })
 /** 订阅已结束的待支付续费 / 变更单（假后端没有订阅状态机，用这张名单代替） */
 export const subscriptionEnded = new Set<string>([endedRenewal.id])
-function refunded(amount: number, reason: string, revoke: boolean) {
-  return (o: Order) => {
-    paidVia('epay')(o)
-    const p = o.payments[0]!
-    p.refunded_amount = amount
-    const at = new Date(Date.parse(o.created_at) + DAY).toISOString()
-    o.refunds.push({ id: randomUUID(), payment_id: p.id, provider_refund_id: `RF${o.order_no.slice(2)}`, currency: o.currency, amount, reason, status: 'succeeded', entitlement_revoked: revoke, commission_reversed: true, failure_message: null, succeeded_at: at, created_at: at })
-  }
-}
-add(U(10), { status: 'refunded', total_amount: 4500, payable_amount: 4500, paid_amount: 4500, refunded_amount: 4500, ...done(iso(6 * DAY)), state_version: 5 }, refunded(4500, '线路不可用，全额退款', true))
-add(U(12), { status: 'partially_refunded', total_amount: 69000, payable_amount: 69000, paid_amount: 69000, refunded_amount: 20000, ...done(iso(9 * DAY)), state_version: 5 }, refunded(20000, '降级补差', false))
 
 /** 仪表盘 orders_pending_stale 的口径（契约后台-01）：pending_payment 且创建超过 thresholdMs 仍未被过期作业处理 */
 export const stalePendingCount = (thresholdMs: number, now = Date.now()) => orders.filter((o) => o.status === 'pending_payment' && now - Date.parse(o.created_at) > thresholdMs).length
@@ -417,7 +385,6 @@ export function orderRow(o: Order) {
     total_amount: o.total_amount,
     payable_amount: o.payable_amount,
     paid_amount: o.paid_amount,
-    refunded_amount: o.refunded_amount,
     balance_applied: o.balance_applied,
     created_at: o.created_at,
     paid_at: o.paid_at,
@@ -466,7 +433,6 @@ export function orderHistory(o: Order) {
   return {
     payment_intents: o.intents.map((i) => ({ ...i, provider_name: providerName(i.provider_code) })),
     payments: o.payments.map((p) => ({ ...p, provider_name: providerName(p.provider_code) })),
-    refunds: o.refunds,
   }
 }
 

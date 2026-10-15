@@ -568,7 +568,7 @@
 
 .wizardPrice {
   display: grid;
-  grid-template-columns: 110px 84px minmax(0, 1fr) 84px auto;
+  grid-template-columns: 110px 84px minmax(0, 1fr) auto;
   align-items: start;
   gap: var(--space-8);
 }

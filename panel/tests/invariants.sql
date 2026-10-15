@@ -426,7 +426,7 @@ $sql$);
 --------------------------------------------------------------------------------
 
 SELECT _reject('SUB-002', '已发布版本不可改', $sql$
-  UPDATE plan_versions SET grace_period_hours = 48
+  UPDATE plan_versions SET device_release_hours = 48
    WHERE id = '00000000-0000-7000-8000-000000000601';
 $sql$);
 
@@ -450,7 +450,7 @@ SELECT _reject('SUB-002', '新建版本不能直接是已发布', $sql$
 $sql$);
 
 SELECT _accept('SUB-002', '草稿版本可改', $sql$
-  UPDATE plan_versions SET grace_period_hours = 12
+  UPDATE plan_versions SET device_release_hours = 12
    WHERE id = '00000000-0000-7000-8000-000000000602';
 $sql$);
 

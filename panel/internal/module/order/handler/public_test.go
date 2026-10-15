@@ -311,7 +311,7 @@ func TestPortalQuery(t *testing.T) {
 	}
 }
 
-// 我的订单：金额是分；可选字段为空时省略；expires_at 恒有；refunded_amount 恒 0；status 逗号分隔。
+// 我的订单：金额是分；可选字段为空时省略；expires_at 恒有；status 逗号分隔。
 func TestMyOrdersShape(t *testing.T) {
 	created := time.Date(2026, 10, 12, 8, 0, 0, 0, time.UTC)
 	var got service.ListFilter
@@ -334,11 +334,11 @@ func TestMyOrdersShape(t *testing.T) {
 	}
 	m := obj(t, w)
 	counts := sub(t, m, "counts")
-	if num(t, counts, "open") != 1 || num(t, counts, "refunded") != 0 || num(t, m, "total") != 1 {
+	if num(t, counts, "open") != 1 || num(t, m, "total") != 1 {
 		t.Fatalf("计数 %v", m)
 	}
 	row := m["orders"].([]any)[0].(map[string]any)
-	if num(t, row, "total_amount") != 10000 || num(t, row, "refunded_amount") != 0 || row["item_name"] != "余额充值" || row["cancellable"] != true {
+	if num(t, row, "total_amount") != 10000 || row["item_name"] != "余额充值" || row["cancellable"] != true {
 		t.Fatalf("行 %v", row)
 	}
 	mustAbsent(t, row, "plan_name", "interval", "interval_count", "paid_at", "cancelled_at", "cancel_reason")
@@ -368,7 +368,7 @@ func TestMyOrderDetailShape(t *testing.T) {
 	mustStatus(t, w, http.StatusOK)
 	o := sub(t, obj(t, w), "order")
 	mustNull(t, o, "subscription_id")
-	mustAbsent(t, o, "coupon_code", "subscription_period_end")
+	mustAbsent(t, o, "coupon_code", "subscription_period_end", "refunded_amount")
 	if o["plan_name"] != "月付套餐" || o["interval"] != "month" || num(t, o, "interval_count") != 1 {
 		t.Fatalf("套餐字段 %v", o)
 	}

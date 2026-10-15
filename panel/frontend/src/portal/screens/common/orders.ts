@@ -5,7 +5,7 @@ import { useApi } from '../../../shell/runtime'
 import { endsIntent } from './intent'
 
 const ORDER_KINDS = ['new', 'renewal', 'topup', 'addon', 'upgrade', 'traffic_reset'] as const
-export const ORDER_STATUSES = ['pending_payment', 'paid', 'fulfilled', 'cancelled', 'expired', 'partially_refunded', 'refunded'] as const
+export const ORDER_STATUSES = ['pending_payment', 'paid', 'fulfilled', 'cancelled', 'expired'] as const
 
 export const orderRowSchema = z.object({
   id: z.string(),
@@ -19,7 +19,6 @@ export const orderRowSchema = z.object({
   balance_applied: z.number().int(),
   payable_amount: z.number().int(),
   paid_amount: z.number().int(),
-  refunded_amount: z.number().int(),
   plan_name: z.string().optional(),
   cancellable: z.boolean(),
   // 发起过支付（有过任何一条支付意图）；Go 无 omitempty，恒在。决定显示「我已支付，刷新状态」
@@ -41,7 +40,7 @@ export const ordersPageSchema = z.object({
   orders: z.array(orderRowSchema),
   total: z.number().int(),
   // 修订 R69：本人全部订单按筛选段的计数，不受当前筛选影响
-  counts: z.object({ open: z.number().int(), paid: z.number().int(), closed: z.number().int(), refunded: z.number().int() }),
+  counts: z.object({ open: z.number().int(), paid: z.number().int(), closed: z.number().int() }),
 })
 
 /** 价格周期 → 「月付 / 季付 / 年付」；billing_interval 取值见 00003 的 CHECK。 */
@@ -129,7 +128,7 @@ export type OrderDetail = z.output<typeof orderDetailSchema>['order']
 const orderKey = (id: string) => ['portal', 'orders', 'detail', id] as const
 
 /** 不会再变成已支付的终态 */
-const SETTLED_STATUSES: ReadonlySet<string> = new Set(['paid', 'fulfilled', 'cancelled', 'expired', 'partially_refunded', 'refunded'])
+const SETTLED_STATUSES: ReadonlySet<string> = new Set(['paid', 'fulfilled', 'cancelled', 'expired'])
 
 /** poll 给毫秒数时一直轮询到订单进入终态（支付回跳 3 秒一次）；false 不轮询 */
 export function useOrder(id: string | undefined, poll: number | false = false) {
@@ -193,15 +192,14 @@ export function useOrderPayable(): (orderId: string) => Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
-// 订单页（契约门户-04 与修订 R69：status 可逗号多值、counts 四类计数）
+// 订单页（契约门户-04 与修订 R69：status 可逗号多值、counts 三类计数）
 // 设计的「全部」= 除待支付外的所有状态；待支付在顶部单独成卡
 // ---------------------------------------------------------------------------
 const OPEN_STATUSES = ['pending_payment'] as const
 export const ORDER_FILTERS = {
-  all: ['paid', 'fulfilled', 'cancelled', 'expired', 'partially_refunded', 'refunded'],
+  all: ['paid', 'fulfilled', 'cancelled', 'expired'],
   paid: ['paid', 'fulfilled'],
   cancelled: ['cancelled', 'expired'],
-  refunded: ['partially_refunded', 'refunded'],
 } as const
 export type OrderFilter = keyof typeof ORDER_FILTERS
 
@@ -268,10 +266,6 @@ export function statusBadge(status: OrderRow['status']): StatusBadge {
       return { label: '已支付', tone: 'ok' }
     case 'pending_payment':
       return { label: '待支付', tone: 'warn' }
-    case 'partially_refunded':
-      return { label: '部分退款', tone: 'info' }
-    case 'refunded':
-      return { label: '已退款', tone: 'info' }
     default:
       return { label: '已取消', tone: 'neutral' }
   }
@@ -314,7 +308,7 @@ export function payMethodName(payments: ReadonlyArray<Pick<OrderDetail['payments
 }
 
 /** 展开区「结果」（契约门户-04 订单详情映射） */
-export function orderResult(o: Pick<OrderDetail, 'status' | 'kind' | 'cancel_reason' | 'subscription_period_end' | 'payments' | 'expires_at' | 'refunded_amount' | 'currency'>): string {
+export function orderResult(o: Pick<OrderDetail, 'status' | 'kind' | 'cancel_reason' | 'subscription_period_end' | 'payments' | 'expires_at'>): string {
   const method = o.payments.length ? payMethodName(o.payments) : ''
   switch (o.status) {
     case 'fulfilled':
@@ -328,9 +322,6 @@ export function orderResult(o: Pick<OrderDetail, 'status' | 'kind' | 'cancel_rea
       return '超时未支付，已自动取消'
     case 'cancelled':
       return !o.cancel_reason || o.cancel_reason === 'user_cancelled' ? '已由您取消' : o.cancel_reason
-    case 'partially_refunded':
-    case 'refunded':
-      return `已退款 ${formatMoney(o.refunded_amount, o.currency)}`
     default:
       return o.expires_at ? `待支付，${formatDateTime(o.expires_at)} 前有效` : '待支付'
   }
@@ -351,8 +342,7 @@ export function orderFacts(o: OrderDetail): Array<{ k: string; v: string }> {
   ]
   if (o.discount_amount > 0) facts.push({ k: '优惠', v: `−${money(o.discount_amount)}${o.coupon_code ? `（${o.coupon_code}）` : ''}` })
   if (o.balance_applied > 0) facts.push({ k: '用了余额', v: `−${money(o.balance_applied)}` })
-  if (PAID_STATUSES.has(o.status) || o.status.endsWith('refunded')) facts.push({ k: '实付', v: money(o.paid_amount) })
-  if (o.refunded_amount > 0) facts.push({ k: '退款', v: money(o.refunded_amount) })
+  if (PAID_STATUSES.has(o.status)) facts.push({ k: '实付', v: money(o.paid_amount) })
   if (OPEN_STATUSES.includes(o.status as (typeof OPEN_STATUSES)[number]) && o.expires_at) facts.push({ k: '过期时间', v: formatDateTime(o.expires_at) })
   for (const p of o.payments) {
     facts.push({ k: '支付记录', v: [payMethodName([p]), formatMoney(p.amount, p.currency), PAYMENT_STATUS[p.status] ?? p.status, formatDateTime(p.created_at)].join(' · ') })

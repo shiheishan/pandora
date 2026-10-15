@@ -40,7 +40,6 @@ const price = (over: Partial<PriceRow> = {}): PriceRow => ({
   unit_amount: 2900,
   billing_interval: 'month',
   interval_count: 1,
-  trial_days: 0,
   status: 'active',
   user_group_id: null,
   valid_from: null,
@@ -57,8 +56,6 @@ const version = (over: Partial<VersionRow> = {}): VersionRow => ({
   row_version: 4,
   quota_reset_strategy: 'billing_cycle',
   quota_reset_day: null,
-  grace_period_hours: 24,
-  grace_keeps_service: true,
   renewal_extends_period: true,
   renewal_resets_quota: true,
   renewal_keeps_addons: false,
@@ -255,14 +252,14 @@ describe('向导', () => {
   })
 
   it('新建提交体：留空 = 不限发 null（设备 0 会被版本校验拒绝）；固定日才带 quota_reset_day', () => {
-    const f = { ...emptyWizard(), name: '专业版', code: 'pro', poolIds: ['a'], prices: [{ ...emptyWizard().prices[0]!, amount: '59.9', period: 'month:3', trialDays: '3' }] }
+    const f = { ...emptyWizard(), name: '专业版', code: 'pro', poolIds: ['a'], prices: [{ ...emptyWizard().prices[0]!, amount: '59.9', period: 'month:3' }] }
     const body = createBody(f)
     expect(body).toMatchObject({ traffic_gb: null, max_devices: null, throttle_kbps: null, visible_group_ids: [], publish: true, description: null })
     // R100 可选字段：没填就不带（缺省为空与 false）
     expect(body).not.toHaveProperty('highlights')
     expect(body).not.toHaveProperty('recommended')
     expect(createBody({ ...f, mbps: '100', highlights: [' 流媒体解锁 ', '亚太精选'], recommended: true })).toMatchObject({ throttle_kbps: 100000, highlights: ['流媒体解锁', '亚太精选'], recommended: true })
-    expect(body.prices).toEqual([{ billing_interval: 'month', interval_count: 3, unit_amount: 5990, currency: 'CNY', trial_days: 3 }])
+    expect(body.prices).toEqual([{ billing_interval: 'month', interval_count: 3, unit_amount: 5990, currency: 'CNY' }])
     expect(body).not.toHaveProperty('quota_reset_day')
     expect(createBody({ ...f, strategy: 'fixed_day', resetDay: '15', gb: '200', devices: '3' })).toMatchObject({ quota_reset_day: 15, traffic_gb: 200, max_devices: 3 })
   })
@@ -346,8 +343,8 @@ describe('销售设置与新增价格', () => {
   it('新增价格：预设周期、自定义周期与用户组价', () => {
     const f = { ...emptyPriceForm(), amount: '8.9', currency: 'USD' as const }
     expect(priceBody(f)).toMatchObject({ currency: 'USD', unit_amount: 890, billing_interval: 'month', interval_count: 1, user_group_id: null })
-    const custom = { ...f, period: 'custom', customCount: '7', customUnit: 'day' as const, groupId: 'g1', trialDays: '3' }
-    expect(priceBody(custom)).toMatchObject({ billing_interval: 'day', interval_count: 7, user_group_id: 'g1', trial_days: 3 })
+    const custom = { ...f, period: 'custom', customCount: '7', customUnit: 'day' as const, groupId: 'g1' }
+    expect(priceBody(custom)).toMatchObject({ billing_interval: 'day', interval_count: 7, user_group_id: 'g1' })
     expect(priceProblems({ ...custom, customCount: '0', amount: '' })).toMatchObject({ interval_count: expect.any(String), unit_amount: expect.any(String) })
   })
 })

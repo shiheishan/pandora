@@ -469,7 +469,7 @@ func TestCreateRenewalWithoutPrice(t *testing.T) {
 	}
 	_, err = e.svc.CreateRenewalOrder(asUser(ctx, user), RenewalOrderInput{SubscriptionID: sub.ID})
 	ee := errs.As(err)
-	if ee.Code != errs.Conflict || ee.Message != "这条订阅没有关联价格，无法自动续费" {
+	if ee.Code != errs.Conflict || ee.Message != "这条订阅没有关联价格，无法续费" {
 		t.Fatalf("期望 409「没有关联价格」，得到 %v", err)
 	}
 }

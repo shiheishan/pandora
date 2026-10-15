@@ -7,7 +7,7 @@ import type { BalanceSplit, Quote, QuoteRow } from './quote'
 import type { SubscriptionLink } from './subscriptions'
 
 export const GIB = 1024 ** 3
-const price = (id: string, unit_amount: number, billing_interval: Price['billing_interval'], interval_count = 1, currency = 'CNY'): Price => ({ id, currency, unit_amount, billing_interval, interval_count, trial_days: 0 })
+const price = (id: string, unit_amount: number, billing_interval: Price['billing_interval'], interval_count = 1, currency = 'CNY'): Price => ({ id, currency, unit_amount, billing_interval, interval_count })
 
 const plan = (id: string, name: string, gb: number, devices: number, p: [number, number, number], recommended = false): Plan => ({
   id,

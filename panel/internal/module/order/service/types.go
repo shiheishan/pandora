@@ -32,11 +32,9 @@ const (
 	StatusExpired   = "expired"
 )
 
-// FilterStatuses 是列表筛选接受的状态（前端 ORDER_STATUSES 全集）：库里的 5 态，外加等产品确认的
-// partially_refunded、refunded（库里不会有，筛它们得到空列表）；不在这里的回 400。
+// FilterStatuses 是列表筛选接受的状态（前端 ORDER_STATUSES 全集，即库里的 5 态）；不在这里的回 400。
 var FilterStatuses = []string{
 	StatusPending, StatusPaid, StatusFulfilled, StatusCancelled, StatusExpired,
-	"partially_refunded", "refunded",
 }
 
 // 预留状态。
@@ -456,9 +454,9 @@ type MyOrderView struct {
 }
 
 // MyOrderCounts 是「我的订单」顶部的分组计数（按全部订单，不受状态筛选影响）：
-// Open 待支付，Paid 已支付或已履约，Closed 已取消或已过期，Refunded 恒为 0（Q2 不做退款）。
+// Open 待支付，Paid 已支付或已履约，Closed 已取消或已过期。
 type MyOrderCounts struct {
-	Open, Paid, Closed, Refunded int64
+	Open, Paid, Closed int64
 }
 
 // MyOrderList 是「我的订单」的一页。

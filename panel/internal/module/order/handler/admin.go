@@ -78,7 +78,7 @@ func (h *Handler) adminOrder(c *gin.Context) {
 	httpx.OK(c, out)
 }
 
-// adminOrderPayments 后台订单的支付尝试、收款（退款恒为空）。
+// adminOrderPayments 后台订单的支付尝试与收款。
 func (h *Handler) adminOrderPayments(c *gin.Context) {
 	id, ok := pathID(c)
 	if !ok {

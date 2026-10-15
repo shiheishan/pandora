@@ -225,7 +225,7 @@ function StepQuota({ form, set, errors, mode }: StepProps & { mode: 'new' | 'edi
         </div>
       ) : (
         <p className={css.note}>
-          额度变了会开一个新版本并立即发布：新购按新额度，已买的用户仍按原额度；新版本沿用当前版本的宽限期、权益等全部设置。清空设备或限速就是改回不限。流量重置方式在版本的「高级」里改。
+          额度变了会开一个新版本并立即发布：新购按新额度，已买的用户仍按原额度；新版本沿用当前版本的权益等全部设置。清空设备或限速就是改回不限。流量重置方式在版本的「高级」里改。
         </p>
       )}
     </>
@@ -268,15 +268,6 @@ function StepPrices({ form, set, errors, original }: StepProps & { original: Wiz
               value={p.period}
               onChange={(e) => update(i, { period: e.target.value })}
               error={errors[`prices.${i}.billing_interval`] ?? errors[`prices.${i}.interval_count`]}
-            />
-            <Input
-              mono
-              aria-label={`第 ${i + 1} 档试用天数`}
-              placeholder="试用天数"
-              inputMode="numeric"
-              value={p.trialDays}
-              onChange={(e) => update(i, { trialDays: e.target.value })}
-              error={errors[`prices.${i}.trial_days`]}
             />
             <Button
               variant="ghost"

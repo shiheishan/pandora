@@ -147,8 +147,6 @@ export interface VersionForm {
   mbps: string
   strategy: ResetStrategy
   resetDay: string
-  graceHours: string
-  graceKeeps: boolean
   renewalExtends: boolean
   renewalResets: boolean
   renewalKeepsAddons: boolean
@@ -169,8 +167,6 @@ export function versionForm(v: VersionRow): VersionForm {
     mbps: mbpsOf(v.throttle_kbps),
     strategy: v.quota_reset_strategy,
     resetDay: str(v.quota_reset_day),
-    graceHours: String(v.grace_period_hours),
-    graceKeeps: v.grace_keeps_service,
     renewalExtends: v.renewal_extends_period,
     renewalResets: v.renewal_resets_quota,
     renewalKeepsAddons: v.renewal_keeps_addons,
@@ -197,7 +193,6 @@ export function versionProblems(f: VersionForm): Fields {
   if (isBad(devices) || devices === 0) out.max_devices = '必须为正整数；不限请留空'
   const concurrent = parseCount(f.maxConcurrent)
   if (isBad(concurrent) || concurrent === 0) out.max_concurrent = '必须为正整数；不限请留空'
-  if (parseCount(f.graceHours) === null || isBad(parseCount(f.graceHours))) out.grace_period_hours = '填 0 或正整数小时'
   if (parseCount(f.releaseHours) === null || isBad(parseCount(f.releaseHours))) out.device_release_hours = '填 0 或正整数小时'
   if (f.strategy === 'fixed_day') {
     const d = parseCount(f.resetDay)
@@ -232,8 +227,6 @@ export function versionBody(f: VersionForm, base: Pick<VersionRow, 'quotas' | 'e
     expected_row_version: rowVersion,
     quota_reset_strategy: f.strategy,
     quota_reset_day: f.strategy === 'fixed_day' ? parseCount(f.resetDay) : null,
-    grace_period_hours: parseCount(f.graceHours) ?? 0,
-    grace_keeps_service: f.graceKeeps,
     renewal_extends_period: f.renewalExtends,
     renewal_resets_quota: f.renewalResets,
     renewal_keeps_addons: f.renewalKeepsAddons,
@@ -283,7 +276,6 @@ export interface WizardPrice {
   amount: string
   currency: Currency
   period: string
-  trialDays: string
 }
 
 export interface WizardForm {
@@ -311,7 +303,7 @@ export interface WizardForm {
 }
 
 let seq = 0
-export const newPriceRow = (period = 'month:1'): WizardPrice => ({ key: `p${++seq}`, amount: '', currency: 'CNY', period, trialDays: '' })
+export const newPriceRow = (period = 'month:1'): WizardPrice => ({ key: `p${++seq}`, amount: '', currency: 'CNY', period })
 
 export function emptyWizard(): WizardForm {
   return {
@@ -364,7 +356,6 @@ export function wizardFromPlan(plan: PlanDetail): WizardForm {
       amount: yuan(p.unit_amount),
       currency: p.currency,
       period: periodKey(p.billing_interval, p.interval_count),
-      trialDays: p.trial_days ? String(p.trial_days) : '',
     })),
     poolIds: [...(cur?.pool_ids ?? [])],
     allowNew: plan.allow_new_purchase,
@@ -405,7 +396,6 @@ export function wizardProblems(f: WizardForm, mode: 'new' | 'edit'): Fields {
   f.prices.forEach((p, i) => {
     const amount = parseAmount(p.amount)
     if (amount === null || amount <= 0) out[`prices.${i}.unit_amount`] = `第 ${i + 1} 档价格要大于 0`
-    if (isBad(parseCount(p.trialDays))) out[`prices.${i}.trial_days`] = '试用天数填 0 或正整数'
     const key = `${p.period}/${p.currency}`
     const prev = seen.get(key)
     if (prev !== undefined) out[`prices.${i}.billing_interval`] = `第 ${i + 1} 档和第 ${prev} 档的周期与币种完全相同`
@@ -436,7 +426,7 @@ export function stepOfField(key: string): number | null {
 }
 
 const pricesBody = (prices: readonly WizardPrice[]) =>
-  prices.map((p) => ({ ...parsePeriod(p.period), unit_amount: parseAmount(p.amount) ?? 0, currency: p.currency, trial_days: parseCount(p.trialDays) ?? 0 }))
+  prices.map((p) => ({ ...parsePeriod(p.period), unit_amount: parseAmount(p.amount) ?? 0, currency: p.currency }))
 
 const planBasics = (f: WizardForm) => ({
   code: f.code.trim(),
@@ -476,7 +466,7 @@ export function createBody(f: WizardForm) {
 const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.length && [...a].sort().join() === [...b].sort().join()
 const priceSig = (prices: readonly WizardPrice[]) =>
   pricesBody(prices)
-    .map((p) => `${p.billing_interval}:${p.interval_count}:${p.currency}:${p.unit_amount}:${p.trial_days}`)
+    .map((p) => `${p.billing_interval}:${p.interval_count}:${p.currency}:${p.unit_amount}`)
     .sort()
     .join('|')
 
@@ -600,7 +590,7 @@ export function salesBody(f: SalesForm, p: PlanDetail) {
 }
 
 // ===========================================================================
-// 新增价格：POST v1/plans/{id}/prices（周期可自定义；「高级」里是试用、用户组、时间窗）
+// 新增价格：POST v1/plans/{id}/prices（周期可自定义；「高级」里是用户组、时间窗）
 // ===========================================================================
 export interface PriceForm {
   currency: Currency
@@ -608,13 +598,12 @@ export interface PriceForm {
   period: string
   customCount: string
   customUnit: BillingInterval
-  trialDays: string
   groupId: string
   from: string
   until: string
 }
 
-export const emptyPriceForm = (): PriceForm => ({ currency: 'CNY', amount: '', period: 'month:1', customCount: '', customUnit: 'day', trialDays: '', groupId: '', from: '', until: '' })
+export const emptyPriceForm = (): PriceForm => ({ currency: 'CNY', amount: '', period: 'month:1', customCount: '', customUnit: 'day', groupId: '', from: '', until: '' })
 
 export function priceProblems(f: PriceForm): Fields {
   const out: Fields = {}
@@ -623,7 +612,6 @@ export function priceProblems(f: PriceForm): Fields {
     const n = parseCount(f.customCount)
     if (n === null || Number.isNaN(n) || n < 1 || n > 32767) out.interval_count = '填正整数'
   }
-  if (isBad(parseCount(f.trialDays))) out.trial_days = '填 0 或正整数'
   const from = fromLocalInput(f.from)
   const until = fromLocalInput(f.until)
   if (from && until && until <= from) out.valid_until = '必须晚于生效时间'
@@ -636,7 +624,6 @@ export function priceBody(f: PriceForm) {
     currency: f.currency,
     unit_amount: parseAmount(f.amount) ?? 0,
     ...period,
-    trial_days: parseCount(f.trialDays) ?? 0,
     user_group_id: f.groupId || null,
     valid_from: fromLocalInput(f.from),
     valid_until: fromLocalInput(f.until),

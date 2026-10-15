@@ -107,7 +107,6 @@ export interface OrderFixture {
   balance_applied: number
   payable_amount: number
   paid_amount: number
-  refunded_amount?: number
   coupon_code?: string
   subscription_id?: string
   created_at: string
@@ -348,7 +347,7 @@ export const usedBytes = (s: SubFixture) => s.days.reduce((n, d) => n + d.bytes,
 export function subPrice(sub: SubFixture): CatalogPrice & { available: boolean } {
   const plan = findPlan(sub.plan_id)
   const listed = plan ? findPrice(plan, sub.price_id) : undefined
-  return listed ? { ...listed, available: true } : { id: sub.price_id, currency: 'CNY', unit_amount: sub.amount, billing_interval: 'month', interval_count: 1, trial_days: 0, available: false }
+  return listed ? { ...listed, available: true } : { id: sub.price_id, currency: 'CNY', unit_amount: sub.amount, billing_interval: 'month', interval_count: 1, available: false }
 }
 
 export const clientName = (sub: Pick<SubFixture, 'label' | 'plan_name'>) => profileName(MOCK_SITE, sub.label, sub.plan_name)

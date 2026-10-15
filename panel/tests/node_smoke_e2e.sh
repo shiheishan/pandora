@@ -351,7 +351,7 @@ sec "7. 套餐（池里有可服务节点后才能发布）"
 admin_auth
 api POST "$ADM/v1/plans/complete" -H "$AH" -H 'Content-Type: application/json' \
   -H "Idempotency-Key: smoke-plan-$RUN" \
-  -d "{\"code\":\"smoke-$RUN\",\"name\":\"Smoke $RUN\",\"visibility\":\"public\",\"traffic_gb\":100,\"pool_ids\":[\"$POOL_ID\"],\"prices\":[{\"billing_interval\":\"month\",\"interval_count\":1,\"unit_amount\":1000,\"currency\":\"CNY\",\"trial_days\":0}],\"publish\":true}"
+  -d "{\"code\":\"smoke-$RUN\",\"name\":\"Smoke $RUN\",\"visibility\":\"public\",\"traffic_gb\":100,\"pool_ids\":[\"$POOL_ID\"],\"prices\":[{\"billing_interval\":\"month\",\"interval_count\":1,\"unit_amount\":1000,\"currency\":\"CNY\"}],\"publish\":true}"
 [ "$HTTP_CODE" = 201 ] || fatal "plans/complete" "HTTP $HTTP_CODE"
 PLAN=$(jget_body plan.id) || fatal "plan id"
 PRICE=$(jget_body price_ids.0) || fatal "price id"

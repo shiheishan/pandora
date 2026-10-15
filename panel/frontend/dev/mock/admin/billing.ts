@@ -36,7 +36,7 @@ import { candidatesOf, manualDue, manualDueBelowMinimum, planOptions, placementV
 import { plans } from './plans-store.ts'
 import { userStore } from './users.ts'
 
-const STATUSES = ['pending_payment', 'paid', 'fulfilled', 'cancelled', 'expired', 'partially_refunded', 'refunded']
+const STATUSES = ['pending_payment', 'paid', 'fulfilled', 'cancelled', 'expired']
 const LATE = ['', 'suspense', 'applied']
 const chars = (v: unknown) => (typeof v === 'string' ? [...v.trim()].length : 0)
 const str = (v: unknown) => (typeof v === 'string' ? v : '')
@@ -284,7 +284,7 @@ export const billing: MockModule = {
         if (o.status === 'cancelled') return { status: 200, body: { order: { ...out(), already_terminal: true }, already_terminal: true } }
         // R95 / R114：与 billing.releaseOrderReservation 同顺序同文案——终态、已付、其余不可取消，再版本号，最后才看入账
         if (o.status === 'expired') return err(409, 'conflict', '订单已过期')
-        if (['paid', 'fulfilled', 'partially_refunded', 'refunded'].includes(o.status)) return err(409, 'conflict', '订单已支付，不能取消')
+        if (['paid', 'fulfilled'].includes(o.status)) return err(409, 'conflict', '订单已支付，不能取消')
         if (o.status !== 'pending_payment') return err(409, 'conflict', `订单当前状态（${o.status}）不能取消`)
         if (o.state_version !== expected) return err(409, 'conflict', '订单状态已变化，请刷新后再操作')
         if (o.payments.some((p) => p.status === 'succeeded')) return err(409, 'conflict', '这张订单已有入账，不能取消')
@@ -418,7 +418,6 @@ export const billing: MockModule = {
           balance_applied: 0,
           payable_amount: payable,
           paid_amount: 0,
-          refunded_amount: 0,
           state_version: 1,
           manual_reason: reason,
           created_by: ctx.user.userId,
@@ -449,7 +448,6 @@ export const billing: MockModule = {
           ],
           intents: [],
           payments: [],
-          refunds: [],
         }
         if (pick.kind !== 'new' && targetSub) pendingEffects.set(o.id, { kind: pick.kind as 'renew' | 'change', subscriptionId: targetSub.id, credit, refund })
         if (paysNow) {

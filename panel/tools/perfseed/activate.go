@@ -12,7 +12,6 @@ type perfPrice struct {
 	IntervalCount   int    `json:"interval_count"`
 	UnitAmount      int64  `json:"unit_amount"`
 	Currency        string `json:"currency"`
-	TrialDays       int    `json:"trial_days"`
 }
 
 // perfPlan 是 activate 建的一个套餐；TrafficGB 为空 = 不限量。

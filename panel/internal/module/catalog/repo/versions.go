@@ -97,12 +97,12 @@ func (r *Repo) DraftVersionIDs(ctx context.Context, planIDs []uuid.UUID) (map[uu
 // UpdateVersionSemantics 全量覆盖草稿版本的语义列并把 row_version 加一；条件 id = ? AND row_version = expected AND status = 'draft'。
 func (r *Repo) UpdateVersionSemantics(ctx context.Context, versionID uuid.UUID, expected int64, v *model.PlanVersion) (bool, error) {
 	res := r.d.Conn(ctx).Exec(`UPDATE plan_versions SET
-		quota_reset_strategy = ?, quota_reset_day = ?, grace_period_hours = ?, grace_keeps_service = ?,
+		quota_reset_strategy = ?, quota_reset_day = ?,
 		renewal_extends_period = ?, renewal_resets_quota = ?, renewal_keeps_addons = ?,
 		max_devices = ?, max_concurrent = ?, device_release_hours = ?, throttle_kbps = ?, notes = ?,
 		row_version = row_version + 1
 		WHERE id = ? AND row_version = ? AND status = 'draft'`,
-		v.QuotaResetStrategy, v.QuotaResetDay, v.GracePeriodHours, v.GraceKeepsService,
+		v.QuotaResetStrategy, v.QuotaResetDay,
 		v.RenewalExtendsPeriod, v.RenewalResetsQuota, v.RenewalKeepsAddons,
 		v.MaxDevices, v.MaxConcurrent, v.DeviceReleaseHours, v.ThrottleKbps, v.Notes,
 		versionID, expected,

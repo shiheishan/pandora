@@ -239,7 +239,7 @@ const plan = await call(ADM, '/v1/plans/complete', {
     traffic_gb: 100,
     max_devices: 3,
     pool_ids: [poolId],
-    prices: [{ billing_interval: 'month', interval_count: 1, unit_amount: 990, currency: 'CNY', trial_days: 0 }],
+    prices: [{ billing_interval: 'month', interval_count: 1, unit_amount: 990, currency: 'CNY' }],
     publish: false,
   },
   expect: 201,

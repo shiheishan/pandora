@@ -213,7 +213,7 @@ function VersionEditor({
       {!writable && version.status !== 'draft' && draft && <p className={css.small}>已发布的版本不能改；已有草稿 v{draft.version}，在草稿上改。</p>}
       {saveAs && <p className={css.small}>已发布的版本不能改，保存会另建一个草稿版本，发布后才生效。</p>}
       <details className={css.advanced}>
-        <summary>高级：重置、宽限与续费</summary>
+        <summary>高级：重置与续费</summary>
         <div className={css.stack}>
           <div className={css.grid3}>
             <Select
@@ -240,16 +240,6 @@ function VersionEditor({
             <Input
               size="sm"
               mono
-              label="宽限期（小时）"
-              inputMode="numeric"
-              disabled={!writable}
-              value={form.graceHours}
-              onChange={(e) => set('graceHours', e.target.value)}
-              error={errors.grace_period_hours}
-            />
-            <Input
-              size="sm"
-              mono
               label="最大并发连接"
               placeholder="不限"
               inputMode="numeric"
@@ -270,7 +260,6 @@ function VersionEditor({
             />
           </div>
           <div className={css.toggles}>
-            <Checkbox label="宽限期内保持服务" disabled={!writable} checked={form.graceKeeps} onChange={(e) => set('graceKeeps', e.target.checked)} />
             <Checkbox label="续费顺延周期" disabled={!writable} checked={form.renewalExtends} onChange={(e) => set('renewalExtends', e.target.checked)} />
             <Checkbox label="续费重置流量" disabled={!writable} checked={form.renewalResets} onChange={(e) => set('renewalResets', e.target.checked)} />
             <Checkbox label="续费保留加购" disabled={!writable} checked={form.renewalKeepsAddons} onChange={(e) => set('renewalKeepsAddons', e.target.checked)} />

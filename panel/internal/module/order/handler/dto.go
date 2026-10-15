@@ -488,7 +488,6 @@ type myOrderRowResponse struct {
 	BalanceApplied       int64      `json:"balance_applied"`
 	PayableAmount        int64      `json:"payable_amount"`
 	PaidAmount           int64      `json:"paid_amount"`
-	RefundedAmount       int64      `json:"refunded_amount"`
 	PlanName             string     `json:"plan_name,omitempty"`
 	Interval             string     `json:"interval,omitempty"`
 	IntervalCount        int        `json:"interval_count,omitempty"`
@@ -504,10 +503,9 @@ type myOrderRowResponse struct {
 
 // myOrderCountsResponse 是分组计数。
 type myOrderCountsResponse struct {
-	Open     int64 `json:"open"`
-	Paid     int64 `json:"paid"`
-	Closed   int64 `json:"closed"`
-	Refunded int64 `json:"refunded"`
+	Open   int64 `json:"open"`
+	Paid   int64 `json:"paid"`
+	Closed int64 `json:"closed"`
 }
 
 // myOrdersResponse 是 GET /orders。
@@ -564,7 +562,6 @@ func myOrderRowFrom(cc *cents, v service.MyOrderView) myOrderRowResponse {
 		BalanceApplied:       cc.of(v.BalanceApplied),
 		PayableAmount:        cc.of(v.Payable),
 		PaidAmount:           cc.of(v.Paid),
-		RefundedAmount:       0,
 		PlanName:             strOrEmpty(v.PlanName),
 		Interval:             strOrEmpty(v.Interval),
 		IntervalCount:        intOrZero(v.IntervalCount),
@@ -585,10 +582,9 @@ func myOrdersFrom(l service.MyOrderList) (myOrdersResponse, error) {
 		Orders: make([]myOrderRowResponse, 0, len(l.Orders)),
 		Total:  l.Total,
 		Counts: myOrderCountsResponse{
-			Open:     l.Counts.Open,
-			Paid:     l.Counts.Paid,
-			Closed:   l.Counts.Closed,
-			Refunded: l.Counts.Refunded,
+			Open:   l.Counts.Open,
+			Paid:   l.Counts.Paid,
+			Closed: l.Counts.Closed,
 		},
 	}
 	for _, v := range l.Orders {

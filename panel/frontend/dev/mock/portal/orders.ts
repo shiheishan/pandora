@@ -3,12 +3,11 @@ import { cancelOrder, fulfill, isUuid, orderDetail, orderRow, sweepExpired } fro
 import { channelIntent } from './checkout.ts'
 import { gate, portalState } from './fixtures.ts'
 
-const STATUSES = new Set(['pending_payment', 'paid', 'fulfilled', 'cancelled', 'expired', 'partially_refunded', 'refunded'])
+const STATUSES = new Set(['pending_payment', 'paid', 'fulfilled', 'cancelled', 'expired'])
 const COUNT_GROUPS = {
   open: ['pending_payment'],
   paid: ['paid', 'fulfilled'],
   closed: ['cancelled', 'expired'],
-  refunded: ['partially_refunded', 'refunded'],
 } as const
 
 // 查单的按账号限流（后端 ByAccount("order_query", time.Minute, 6)）
@@ -32,7 +31,7 @@ export const orders: MockModule = {
       ctx.send(200, {
         orders: all.slice(offset, offset + limit).map(orderRow),
         total: all.length,
-        counts: { open: count(COUNT_GROUPS.open), paid: count(COUNT_GROUPS.paid), closed: count(COUNT_GROUPS.closed), refunded: count(COUNT_GROUPS.refunded) },
+        counts: { open: count(COUNT_GROUPS.open), paid: count(COUNT_GROUPS.paid), closed: count(COUNT_GROUPS.closed) },
       })
     },
 

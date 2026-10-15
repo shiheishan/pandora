@@ -33,7 +33,6 @@ export function PriceCard({ plan }: { plan: PlanDetail }) {
       {rows.length === 0 && <p className={`${css.small} ${css.cardPad}`}>还没有价格。{writable ? '在下面新增一档，或用向导一次填好。' : ''}</p>}
       {rows.map((p) => {
         const extra = [
-          p.trial_days ? `试用 ${p.trial_days} 天` : '',
           p.user_group_id ? groupName(p.user_group_id) : '',
           p.valid_from || p.valid_until ? `${p.valid_from ? formatDateTime(p.valid_from) : '即日'} 至 ${p.valid_until ? formatDateTime(p.valid_until) : '不限'}` : '',
         ].filter(Boolean)
@@ -130,9 +129,8 @@ function AddPrice({ plan, groups }: { plan: PlanDetail; groups: ReadonlyArray<{ 
         </div>
       )}
       <details className={css.advanced}>
-        <summary>高级：试用、用户组专属价、生效时间</summary>
+        <summary>高级：用户组专属价、生效时间</summary>
         <div className={css.grid2}>
-          <Input size="sm" mono label="试用天数" placeholder="0" inputMode="numeric" value={form.trialDays} onChange={(e) => set('trialDays', e.target.value)} error={errors.trial_days} />
           <Select
             size="sm"
             label="只卖给用户组"
