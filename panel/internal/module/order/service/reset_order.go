@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,14 +19,36 @@ import (
 
 var errOpenReset = errs.Newf(errs.Conflict, "这份订阅还有一张未完成的流量重置订单，请先支付或取消")
 
-// hasLimitedTraffic 判断配额行里有没有限额的流量配额（不限流量的订阅不卖重置）。
-func hasLimitedTraffic(quotas []subsvc.Quota) bool {
+// resetBasis 取流量重置的判断依据：限额流量配额行里周期最长的那一行（没有周期末的 total 行最长，其余按
+// period_end − period_start 比，一样长取排在前面的）。没有限额流量配额回 false（不限流量的订阅不卖重置）。
+// 卖不卖（loadResetOffer）与付款到账时还收不收（resetPayable）的跨周期判断都只看这一行：同一份同时有日限额与
+// 周期限额时，日行每天滚动不该让买「清空本期流量」的单进挂账。履约 ResetTraffic 照旧清全部流量配额行。
+func resetBasis(quotas []subsvc.Quota) (subsvc.Quota, bool) {
+	var best subsvc.Quota
+	found := false
 	for _, q := range quotas {
-		if q.Metric == subsvc.MetricTraffic && q.Limit != nil {
-			return true
+		if q.Metric != subsvc.MetricTraffic || q.Limit == nil {
+			continue
+		}
+		if !found || longerPeriod(q, best) {
+			best, found = q, true
 		}
 	}
-	return false
+	return best, found
+}
+
+// longerPeriod 判断配额行 a 的周期是否比 b 长（没有周期末算无限长）。
+func longerPeriod(a, b subsvc.Quota) bool {
+	if a.PeriodEnd == nil || b.PeriodEnd == nil {
+		return a.PeriodEnd == nil && b.PeriodEnd != nil
+	}
+	return a.PeriodEnd.Sub(a.PeriodStart) > b.PeriodEnd.Sub(b.PeriodStart)
+}
+
+// periodEnded 判断配额行这一期已经结束、还在等滚动任务（10 分钟一次）把它推到下一期：这段间隙里清的是已结束那一期
+// 的用量（滚动本来就会清零），新一期的起点又会写成边界值而不是滚动时刻，靠比对起点挡不住，所以按周期末判断。
+func periodEnded(q subsvc.Quota, now time.Time) bool {
+	return q.PeriodEnd != nil && !q.PeriodEnd.After(now)
 }
 
 // resetOffer 是一份订阅此刻买流量重置的报价快照。
@@ -38,7 +61,8 @@ type resetOffer struct {
 }
 
 // loadResetOffer 判断这份订阅此刻能不能买流量重置。能买回快照；不能买时 refusal 是给用户看的原因
-// （不生效 subsvc.ErrNotLive；没有限额流量配额或套餐没配这个币种的重置价 ErrResetNotSold），系统错误走 err。
+// （不生效 subsvc.ErrNotLive；没有限额流量配额或套餐没配这个币种的重置价 ErrResetNotSold；作依据的配额行这一期已结束、
+// 还没滚到下一期 ErrResetPeriodSwitching），系统错误走 err。
 func (s *Service) loadResetOffer(ctx context.Context, sub subsvc.Subscription, now time.Time) (off resetOffer, refusal error, err error) {
 	if sub.StateAt(now) != subsvc.StateLive {
 		return resetOffer{}, subsvc.ErrNotLive, nil
@@ -47,7 +71,8 @@ func (s *Service) loadResetOffer(ctx context.Context, sub subsvc.Subscription, n
 	if err != nil {
 		return resetOffer{}, nil, err
 	}
-	if !hasLimitedTraffic(quotas) {
+	basis, ok := resetBasis(quotas)
+	if !ok {
 		return resetOffer{}, ErrResetNotSold, nil
 	}
 	cur := sub.Price.Currency
@@ -57,6 +82,9 @@ func (s *Service) loadResetOffer(ctx context.Context, sub subsvc.Subscription, n
 	}
 	if !ok {
 		return resetOffer{}, ErrResetNotSold, nil
+	}
+	if periodEnded(basis, now) {
+		return resetOffer{}, ErrResetPeriodSwitching, nil
 	}
 	plans, err := s.catalog.PlansByIDs(ctx, []uuid.UUID{sub.PlanID})
 	if err != nil {
@@ -135,6 +163,10 @@ func quoteResetLines(ctx context.Context, s *Service, userID uuid.UUID, in Quote
 	off, refusal, err := s.loadResetOffer(ctx, sub, now)
 	if err != nil {
 		return nil, err
+	}
+	if errors.Is(refusal, ErrResetPeriodSwitching) {
+		// 这份卖重置，只是此刻在两期之间：回原因让门户提示稍后再来，而不是当作不卖
+		return nil, refusal
 	}
 	if refusal != nil {
 		return []Quote{}, nil
@@ -230,8 +262,9 @@ func (s *Service) CreateResetOrder(ctx context.Context, in ResetOrderInput) (Cre
 	return created, nil
 }
 
-// resetPayable 判断一张待付的流量重置单此刻还收不收钱（结算时调，调用方已锁订阅）：订阅仍在生效中、仍有限额的流量配额、
-// 配额周期起点没在建单后变过、套餐版本仍是建单时订单行上的那一版。不收时钱进挂账（CaseIneligibleSubscription）。
+// resetPayable 判断一张待付的流量重置单此刻还收不收钱（结算时调，调用方已锁订阅）：订阅仍在生效中、套餐版本仍是建单时
+// 订单行上的那一版、仍有限额的流量配额，且作依据的那一行（resetBasis）这一期没结束、起点没在建单后变过。
+// 不收时钱进挂账（CaseIneligibleSubscription）。
 func (s *Service) resetPayable(ctx context.Context, o model.Order, sub subsvc.Subscription, now time.Time) (bool, error) {
 	if sub.StateAt(now) != subsvc.StateLive {
 		return false, nil
@@ -247,13 +280,17 @@ func (s *Service) resetPayable(ctx context.Context, o model.Order, sub subsvc.Su
 	if err != nil {
 		return false, err
 	}
-	// 建单之后流量配额已滚到新周期（自动清零过），这笔再清就是让用户花钱清新周期刚用的一点；与换套餐单
-	// sub.PeriodStart.After(o.CreatedAt) 同一思路，两个时刻都由应用时钟写入（订单 created_at 由 GORM 插入时取，
-	// 配额 period_start 由 subscription 取 now）。不收时钱进挂账。
-	for _, q := range quotas {
-		if q.Metric == subsvc.MetricTraffic && q.PeriodStart.After(o.CreatedAt) {
-			return false, nil
-		}
+	basis, ok := resetBasis(quotas)
+	if !ok {
+		return false, nil
 	}
-	return hasLimitedTraffic(quotas), nil
+	// 跨周期两种情形都不收（设边界为 T，滚动任务在 T 之后至多约 10 分钟才把行推到下一期，新一期起点写 T）：
+	//   - 这一期已结束、还没滚（付款落在 T 到滚动之间）：清的是已结束那一期的用量，滚动本来就会清零；
+	//   - 起点晚于建单时刻（建单在 T 之前、付款在滚动之后）：已自动清零过，再清就是让用户花钱清新一期刚用的一点。
+	// 建单落在 T 到滚动之间的，loadResetOffer 已按「这一期已结束」拒卖。两个时刻都是应用时钟（订单 created_at 由 GORM
+	// 插入时取，配额起止由 subscription 按应用时钟算出的边界写入），与换套餐单 sub.PeriodStart.After(o.CreatedAt) 同一思路。
+	if periodEnded(basis, now) || basis.PeriodStart.After(o.CreatedAt) {
+		return false, nil
+	}
+	return true, nil
 }

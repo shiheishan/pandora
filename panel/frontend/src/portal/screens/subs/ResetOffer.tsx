@@ -26,6 +26,17 @@ export function ResetOffer({ sub }: { sub: Subscription }) {
         </div>
       )
     }
+    // 409 conflict：这份卖重置，只是本期刚结束、还没换到下一期（几分钟），照后端原话提示稍后再来，不给按钮
+    if (isApiError(quote.error, 'conflict')) {
+      return (
+        <div className={css.optRow}>
+          <div className={css.optText}>
+            <b>重置本期流量</b>
+            <small>{quote.error.message}</small>
+          </div>
+        </div>
+      )
+    }
     return null
   }
 

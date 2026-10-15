@@ -122,6 +122,9 @@ var (
 	ErrPlanChangeCurrency = errs.Newf(errs.Conflict, "变更套餐不能更换币种")
 	// ErrResetNotSold 是这份订阅的套餐没有按订阅币种设流量重置价格（不卖重置）
 	ErrResetNotSold = errs.Newf(errs.Conflict, "这个套餐不提供流量重置")
+	// ErrResetPeriodSwitching 是作依据的限额流量配额这一期已结束、滚动任务还没把它推到下一期（至多约 10 分钟）：
+	// 这时清的是已结束那一期的用量，不卖。报价也回它（不是空数组），门户据此提示稍后再来。文案避开门户禁用词「周期」
+	ErrResetPeriodSwitching = errs.Newf(errs.Conflict, "本期流量刚结束，正在换到下一期，请几分钟后再来重置")
 	// errProrationMixedCurrency：不同币种的钱加不到一起，也就没有「剩余价值」可言
 	errProrationMixedCurrency = errs.Newf(errs.Conflict, "这条订阅本周期的付费订单币种不一致，无法折算")
 	// errManualBelowMinimum 是后台待支付单应付低于最低额：用户付不了。带 fields.settlement，后台据它落到「结算方式」上
