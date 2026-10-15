@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"math"
-	"reflect"
 	"testing"
 	"time"
 
@@ -188,102 +187,5 @@ func TestAdminDomainConfigScoresPG(t *testing.T) {
 	d := view.Groups[0].Domains[0]
 	if math.Abs(d.Score-1.5) > 0.01 || math.Abs(d.EffectiveWeight-3) > 0.01 {
 		t.Fatalf("score/weight %+v", d)
-	}
-}
-
-func TestMyProbeDomainsAndReportPG(t *testing.T) {
-	de := newDeliveryEnv(t, true)
-	ctx := de.txCtx()
-	admin := adminCtx(ctx, uuid.New())
-	user := newUser(t, de.env, ctx)
-	G1 := seedUserGroup(t, de.env, ctx, "probe")
-	_, rdb := testkit.Redis(t)
-	de.svc.UseDomainScores(rdb)
-
-	_, err := de.svc.AdminSaveDomainConfig(admin, []DomainGroupInput{
-		{Name: "缺省", IsDefault: true, Domains: []Domain{
-			{BaseURL: "https://a.example.test", Weight: 1},
-			{BaseURL: "https://b.example.test", Weight: 1},
-		}},
-		{Name: "专线", Domains: []Domain{{BaseURL: "https://c.example.test", Weight: 1}}, UserGroupIDs: []uuid.UUID{G1}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	de.svc.extras.snap.Store(nil)
-
-	uc := userCtx(ctx, user)
-	doms, err := de.svc.MyProbeDomains(uc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(doms, []string{"https://a.example.test", "https://b.example.test"}) {
-		t.Fatalf("没分组: %v", doms)
-	}
-
-	de.users.setGroup(user, &G1)
-	doms, err = de.svc.MyProbeDomains(uc)
-	if err != nil || !reflect.DeepEqual(doms, []string{"https://c.example.test"}) {
-		t.Fatalf("G1: %v err %v", doms, err)
-	}
-
-	de.users.setGroup(user, nil)
-	if err := de.svc.ReportDomainProbes(uc, []ProbeResult{
-		{BaseURL: "https://a.example.test", OK: true},
-		{BaseURL: "https://b.example.test", OK: false},
-		{BaseURL: "https://c.example.test", OK: true},
-		{BaseURL: "not a url", OK: true},
-		{BaseURL: "https://a.example.test", OK: true},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	now := de.svc.clock()
-	scores, ok := de.svc.scores.Read(ctx, []string{"https://a.example.test", "https://b.example.test", "https://c.example.test"}, now)
-	if !ok {
-		t.Fatal("Read scores")
-	}
-	if math.Abs(scores["https://a.example.test"]-(1+scoreProbeSuccess)) > 0.01 {
-		t.Fatalf("a score %v", scores["https://a.example.test"])
-	}
-	if math.Abs(scores["https://b.example.test"]-(1+scoreProbeFailure)) > 0.01 {
-		t.Fatalf("b score %v", scores["https://b.example.test"])
-	}
-	if scores["https://c.example.test"] != 1 {
-		t.Fatalf("c 未计入 %v", scores["https://c.example.test"])
-	}
-
-	_, err = de.svc.AdminSaveDomainConfig(admin, []DomainGroupInput{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	de.svc.extras.snap.Store(nil)
-	doms, err = de.svc.MyProbeDomains(uc)
-	if err != nil || doms == nil || len(doms) != 0 {
-		t.Fatalf("无组: %v err %v", doms, err)
-	}
-}
-
-func TestProbeOriginsPG(t *testing.T) {
-	de := newDeliveryEnv(t, false)
-	ctx := adminCtx(de.txCtx(), uuid.New())
-	_, err := de.svc.AdminSaveDomainConfig(ctx, []DomainGroupInput{
-		{Name: "缺省", IsDefault: true, Domains: []Domain{{BaseURL: "https://z.example.test", Weight: 1}}},
-		{Name: "专线", Domains: []Domain{
-			{BaseURL: "https://a.example.test", Weight: 1},
-			{BaseURL: "https://z.example.test", Weight: 1},
-		}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	de.svc.extras.snap.Store(nil)
-	// 同一个事务上下文：txCtx() 每调一次开一个新事务，看不到上面写的数据
-	origins := de.svc.ProbeOrigins(ctx)
-	want := []string{"https://a.example.test", "https://z.example.test"}
-	if !reflect.DeepEqual(origins, want) {
-		t.Fatalf("ProbeOrigins %v want %v", origins, want)
-	}
-	if de.svc.PortalOrigin() != "https://panel.example.test" {
-		t.Fatalf("PortalOrigin %q", de.svc.PortalOrigin())
 	}
 }

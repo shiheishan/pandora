@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"regexp"
 	"strconv"
 	"sync"
 	"time"
@@ -19,33 +18,6 @@ import (
 type captchaProviderReader interface {
 	SignupCaptchaProvider(ctx context.Context) (string, error)
 	SignupGeneration() uint64
-}
-
-// probeOriginReader 是门户入口页 CSP 要的订阅域名读取面；*subscription service 直接满足（走拉取快照，30 秒）。
-type probeOriginReader interface {
-	ProbeOrigins(ctx context.Context) []string
-}
-
-// cspOriginRE 是能放进 connect-src 的来源形状：https、小写主机名、可选端口。subscription 保存时已按同样规则规范化，
-// 这里再滤一遍，响应头里绝不出现空格、分号、引号之类能改写 CSP 的字符。
-var cspOriginRE = regexp.MustCompile(`^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$`)
-
-// portalCSP 合成门户入口页的额外来源：人机验证（portalCaptchaCSP）加订阅域名探测的 connect-src。
-// 没开人机验证、也没有订阅域名时与 indexCSP 逐字一致。
-func portalCSP(settings captchaProviderReader, probes probeOriginReader) func(ctx context.Context) webapp.ExtraSources {
-	captcha := portalCaptchaCSP(settings)
-	return func(ctx context.Context) webapp.ExtraSources {
-		x := captcha(ctx)
-		if probes == nil {
-			return x
-		}
-		for _, o := range probes.ProbeOrigins(ctx) {
-			if cspOriginRE.MatchString(o) {
-				x.Connect = append(x.Connect, o)
-			}
-		}
-		return x
-	}
 }
 
 // 入口页 CSP 读设置的进程内缓存：入口页是门户最热的地址，不能每次打开都多一次查库。

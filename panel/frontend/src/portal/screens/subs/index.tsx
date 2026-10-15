@@ -16,7 +16,6 @@ import { NewPick } from './NewPick'
 import { useSheets } from './sheets'
 import { SubCard } from '../common/SubCard'
 import css from './Subs.module.css'
-import { useSubDomainProbe } from './probe'
 import { Traffic } from './Traffic'
 import { TransferBars } from './Transfer'
 
@@ -40,7 +39,6 @@ export default function Subs({ rest }: PortalScreenProps) {
 }
 
 function MySubs() {
-  useSubDomainProbe()
   const h = useHoldings()
   const packs = usePackCatalog()
   const unattached = useUnattachedPackBytes()

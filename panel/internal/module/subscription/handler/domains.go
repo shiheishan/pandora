@@ -12,20 +12,10 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
 )
 
-// 限流与校验常量
-const (
-	probeReportsPerHour = 6
-	subProbePerMinute   = 60
-	probeReportMax      = 10
-)
-
-// DomainService 是订阅域名分组与门户探测用到的 service 方法。
+// DomainService 是后台订阅域名分组用到的 service 方法。
 type DomainService interface {
 	AdminDomainConfig(ctx context.Context) (service.DomainConfigView, error)
 	AdminSaveDomainConfig(ctx context.Context, in []service.DomainGroupInput) (service.DomainConfigView, error)
-	MyProbeDomains(ctx context.Context) ([]string, error)
-	ReportDomainProbes(ctx context.Context, results []service.ProbeResult) error
-	PortalOrigin() string
 }
 
 type domainItem struct {
@@ -69,19 +59,6 @@ type saveDomainGroup struct {
 
 type saveDomainsRequest struct {
 	Groups []saveDomainGroup `json:"groups"`
-}
-
-type probeDomainsResponse struct {
-	Domains []string `json:"domains"`
-}
-
-type probeResultItem struct {
-	BaseURL string `json:"base_url"`
-	OK      bool   `json:"ok"`
-}
-
-type probeReportRequest struct {
-	Results []probeResultItem `json:"results"`
 }
 
 func roundTwoDecimals(x float64) float64 {
@@ -171,53 +148,4 @@ func (h *Handler) adminSaveDomains(c *gin.Context) {
 		return
 	}
 	httpx.OK(c, toDomainConfigResponse(cfg))
-}
-
-// myProbeDomains 是门户获取本人所在组的探测域名 GET /v1/me/subscription-domains。
-func (h *Handler) myProbeDomains(c *gin.Context) {
-	domains, err := h.svc.MyProbeDomains(c.Request.Context())
-	if err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	if domains == nil {
-		domains = []string{}
-	}
-	httpx.OK(c, probeDomainsResponse{Domains: domains})
-}
-
-// reportDomainProbes 是门户上报探测结果 POST /v1/me/subscription-domains/probe。
-func (h *Handler) reportDomainProbes(c *gin.Context) {
-	var req probeReportRequest
-	if err := httpx.BindJSON(c, &req); err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	if len(req.Results) > probeReportMax {
-		httpx.Fail(c, errs.Invalid(map[string]string{"results": "一次最多报告 10 个域名"}))
-		return
-	}
-	results := make([]service.ProbeResult, 0, len(req.Results))
-	for _, r := range req.Results {
-		results = append(results, service.ProbeResult{
-			BaseURL: r.BaseURL,
-			OK:      r.OK,
-		})
-	}
-	if err := h.svc.ReportDomainProbes(c.Request.Context(), results); err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	httpx.NoContent(c)
-}
-
-// subProbe 是公开探测接口：浏览器跨源 GET，只回 204；按 IP 每分钟 60 次。
-// 只回 204、不读不写任何用户数据、不带凭据头；给门户在浏览器里探测订阅域名能不能连上。
-func (h *Handler) subProbe(c *gin.Context) {
-	origin := h.svc.PortalOrigin()
-	if origin != "" {
-		c.Header("Access-Control-Allow-Origin", origin)
-	}
-	c.Header("Vary", "Origin")
-	httpx.NoContent(c)
 }

@@ -1,6 +1,6 @@
 // Package handler 是 subscription 模块的 HTTP 层：订阅链接拉取、链接列表与换链接、线路预览、按日用量、后台换链接，
 // 门户「我的套餐」、改名、流量包与转移，后台加时长、加流量、手动重置流量、改设备数与重置日志，
-// 以及订阅域名分组与门户探测。只做参数绑定与校验、调 service、写响应。
+// 以及后台订阅域名分组。只做参数绑定与校验、调 service、写响应。
 package handler
 
 import (
@@ -101,13 +101,6 @@ func (h *Handler) RegisterPublic(v1 *gin.RouterGroup, k route.Kit) {
 	v1.POST("/me/subscriptions/:id/rotate", k.RequireAuth, h.rotateLimit(), h.rotateSubscriptionLink)
 	v1.GET("/me/subscriptions/:id/nodes", k.RequireAuth, h.mySubscriptionNodes)
 	v1.GET("/me/subscriptions/:id/usage", k.RequireAuth, h.mySubscriptionUsage)
-	// 门户探测订阅域名：取本人所在组的域名；上报按账号每小时 6 次（上报可伪造，只收本组域名，分数有下限）
-	v1.GET("/me/subscription-domains", k.RequireAuth, h.myProbeDomains)
-	v1.POST("/me/subscription-domains/probe", k.RequireAuth,
-		h.limit(ratelimit.Dimension{Rule: ratelimit.PerWindow("sub_domain_probe", probeReportsPerHour, time.Hour), Key: byAccount}),
-		h.reportDomainProbes)
-	// 公开探测接口：浏览器跨源 GET，只回 204；按 IP 每分钟 60 次
-	v1.GET("/sub-probe", h.limit(ratelimit.Dimension{Rule: ratelimit.PerMinute("sub_probe_ip", subProbePerMinute), Key: ratelimit.ByIP}), h.subProbe)
 }
 
 // RegisterAdmin 注册后台路由。加时长、加流量每执行一次多一份，要近期重认证与独立的幂等作用域。

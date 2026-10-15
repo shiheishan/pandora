@@ -261,9 +261,9 @@ func newEngines(r *runtime, svc *services, hub *realtime.Hub, httpm *metrics.HTT
 		authH.DomainGuard(authn.AudienceAdmin),
 	)
 	// 前端页面：门户与后台各自的构建产物挂在各自引擎的 / 与 /assets/*；
-	// 门户开了人机验证时入口页 CSP 按设置追加那一家的来源，登记了订阅域名时 connect-src 追加它们（门户要跨源探测）；后台 CSP 不变；
+	// 门户开了人机验证时入口页 CSP 按设置追加那一家的来源（后台不用人机验证，CSP 不变）；
 	// 两个入口页的 <title>、描述与图标按站点名（系统设置）和生效主题的标语、Logo 改写（appearance 的进程内快照，不每次查库）
-	webapp.Mount(publicEng, web.PortalApp, webapp.WithExtraSources(portalCSP(svc.settings, svc.sub)),
+	webapp.Mount(publicEng, web.PortalApp, webapp.WithExtraSources(portalCaptchaCSP(svc.settings)),
 		webapp.WithIndexMeta(appearanceh.IndexMeta(svc.appearance, appearanceh.PagePortal)))
 	webapp.Mount(adminEng, web.AdminApp, webapp.WithIndexMeta(appearanceh.IndexMeta(svc.appearance, appearanceh.PageAdmin)))
 	publicV1 := publicEng.Group("/v1")

@@ -15,15 +15,12 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/route"
 )
 
-// fakeDomainSvc 是订阅域名分组与门户探测接口的替身；其余方法走嵌入的 nil 接口，被调到会 panic。
+// fakeDomainSvc 是后台订阅域名分组接口的替身；其余方法走嵌入的 nil 接口，被调到会 panic。
 type fakeDomainSvc struct {
 	Service
-	cfg          service.DomainConfigView
-	saved        []service.DomainGroupInput
-	saveErr      error
-	probeDomains []string
-	reported     []service.ProbeResult
-	origin       string
+	cfg     service.DomainConfigView
+	saved   []service.DomainGroupInput
+	saveErr error
 }
 
 func (f *fakeDomainSvc) AdminDomainConfig(context.Context) (service.DomainConfigView, error) {
@@ -37,17 +34,6 @@ func (f *fakeDomainSvc) AdminSaveDomainConfig(_ context.Context, in []service.Do
 	}
 	return f.cfg, nil
 }
-
-func (f *fakeDomainSvc) MyProbeDomains(context.Context) ([]string, error) {
-	return f.probeDomains, nil
-}
-
-func (f *fakeDomainSvc) ReportDomainProbes(_ context.Context, results []service.ProbeResult) error {
-	f.reported = results
-	return nil
-}
-
-func (f *fakeDomainSvc) PortalOrigin() string { return f.origin }
 
 // domainEngine 建引擎；auth 为 nil 时不带认证（未登录），reauth 为 nil 时放行。
 func domainEngine(svc Service, auth, reauth gin.HandlerFunc) *gin.Engine {
@@ -69,7 +55,6 @@ func domainEngine(svc Service, auth, reauth gin.HandlerFunc) *gin.Engine {
 		Switch:       func(string) gin.HandlerFunc { return func(c *gin.Context) { c.Next() } },
 	}
 	New(svc, nil, 0).RegisterAdmin(e.Group("/v1"), kit)
-	New(svc, nil, 0).RegisterPublic(e.Group("/v1"), kit)
 	return e
 }
 
@@ -264,98 +249,5 @@ func TestAdminSaveDomainsServiceError(t *testing.T) {
 	fields := errObj["fields"].(map[string]any)
 	if fields["groups"] != "只能有一个缺省组" {
 		t.Fatalf("fields: %v", fields)
-	}
-}
-
-func TestMyProbeDomains(t *testing.T) {
-	f := &fakeDomainSvc{probeDomains: []string{"https://sub-a.example.com", "https://sub-b.example.com"}}
-	e := domainEngine(f, passAuth, nil)
-	w := do(e, http.MethodGet, "/v1/me/subscription-domains", "")
-	if w.Code != http.StatusOK {
-		t.Fatalf("status %d body=%s", w.Code, w.Body.String())
-	}
-	got := decMap(t, w)
-	doms, ok := got["domains"].([]any)
-	if !ok || len(doms) != 2 || doms[0] != "https://sub-a.example.com" {
-		t.Fatalf("domains: %v", got["domains"])
-	}
-}
-
-func TestMyProbeDomainsEmpty(t *testing.T) {
-	f := &fakeDomainSvc{}
-	e := domainEngine(f, passAuth, nil)
-	w := do(e, http.MethodGet, "/v1/me/subscription-domains", "")
-	if w.Code != http.StatusOK {
-		t.Fatalf("status %d body=%s", w.Code, w.Body.String())
-	}
-	if w.Body.String() != `{"domains":[]}` {
-		t.Fatalf("应为 {\"domains\":[]}: %s", w.Body.String())
-	}
-}
-
-func TestReportDomainProbes(t *testing.T) {
-	f := &fakeDomainSvc{}
-	e := domainEngine(f, passAuth, nil)
-	body := `{"results":[{"base_url":"https://sub-a.example.com","ok":true},{"base_url":"https://sub-b.example.com","ok":false}]}`
-	w := do(e, http.MethodPost, "/v1/me/subscription-domains/probe", body)
-	if w.Code != http.StatusNoContent {
-		t.Fatalf("status %d body=%s", w.Code, w.Body.String())
-	}
-	if len(f.reported) != 2 || f.reported[0].BaseURL != "https://sub-a.example.com" || !f.reported[0].OK ||
-		f.reported[1].BaseURL != "https://sub-b.example.com" || f.reported[1].OK {
-		t.Fatalf("reported: %+v", f.reported)
-	}
-}
-
-func TestReportDomainProbesTooMany(t *testing.T) {
-	f := &fakeDomainSvc{}
-	e := domainEngine(f, passAuth, nil)
-	body := `{"results":[` +
-		`{"base_url":"https://a1.example.com","ok":true},{"base_url":"https://a2.example.com","ok":true},` +
-		`{"base_url":"https://a3.example.com","ok":true},{"base_url":"https://a4.example.com","ok":true},` +
-		`{"base_url":"https://a5.example.com","ok":true},{"base_url":"https://a6.example.com","ok":true},` +
-		`{"base_url":"https://a7.example.com","ok":true},{"base_url":"https://a8.example.com","ok":true},` +
-		`{"base_url":"https://a9.example.com","ok":true},{"base_url":"https://a10.example.com","ok":true},` +
-		`{"base_url":"https://a11.example.com","ok":true}]}`
-	w := do(e, http.MethodPost, "/v1/me/subscription-domains/probe", body)
-	if w.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("11 条应 422: %d body=%s", w.Code, w.Body.String())
-	}
-	fields := decMap(t, w)["error"].(map[string]any)["fields"].(map[string]any)
-	if fields["results"] != "一次最多报告 10 个域名" {
-		t.Fatalf("fields: %v", fields)
-	}
-	if f.reported != nil {
-		t.Fatalf("替身不应被调用")
-	}
-}
-
-func TestSubProbe(t *testing.T) {
-	f := &fakeDomainSvc{origin: "https://panel.example.com"}
-	e := domainEngine(f, nil, nil)
-	w := do(e, http.MethodGet, "/v1/sub-probe", "")
-	if w.Code != http.StatusNoContent {
-		t.Fatalf("status %d body=%s", w.Code, w.Body.String())
-	}
-	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "https://panel.example.com" {
-		t.Fatalf("ACAO: %q", got)
-	}
-	if got := w.Header().Get("Vary"); got != "Origin" {
-		t.Fatalf("Vary: %q", got)
-	}
-}
-
-func TestSubProbeNoOrigin(t *testing.T) {
-	f := &fakeDomainSvc{origin: ""}
-	e := domainEngine(f, nil, nil)
-	w := do(e, http.MethodGet, "/v1/sub-probe", "")
-	if w.Code != http.StatusNoContent {
-		t.Fatalf("status %d body=%s", w.Code, w.Body.String())
-	}
-	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "" {
-		t.Fatalf("origin 为空不应带 ACAO: %q", got)
-	}
-	if got := w.Header().Get("Vary"); got != "Origin" {
-		t.Fatalf("Vary: %q", got)
 	}
 }
