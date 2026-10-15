@@ -25,6 +25,7 @@ paths:
   - 管理员群组、用户群的 chat id 必须是负数（群组与超级群都是负数），后台与 settings 两层校验；正数是私聊，在私聊里回复会被当成绑定码。
 - 管理员群组提醒（模板 `admin.order_paid`、`admin.ticket_opened`、`admin.ticket_replied`，开关 `telegram.admin_paid_notify` / `telegram.admin_ticket_notify`，缺省关）同样走投递表：`writeAdminNotice` 写一行 `user_id` 为空、收件地址为群 chat id 的投递（为空才不会被用户解绑时的 `SuppressQueuedTelegram` 压掉），去重键 `admin-paid:<订单>` / `admin-ticket:<消息>`，`notification_events.user_id` 记事件涉及的用户。
   - 收款提醒随 `scan_paid.go` 的支付成功通知在同一事务里写（游标保证不漏不重）；金额 `paidAmount` 是订单总额两位小数加币种（order 的 `PaidNotice.Total`、`Currency`），缺币种时写「—」。
+  - 流量重置单（用户 10-14 定）：不给用户写支付成功通知（没有专门模板，门户下单页当场显示结果），收款提醒照发，「套餐」一栏写 `流量重置 · <套餐名>`（模板正文不改，与 00044 种子逐字一致）。实现是只写管理员提醒的扫描条目（`scanItem.Code` 为空、`Key` 用 `admin-paid:<订单>`，`writeScanItems` 只调 `writeAdminNotice`）；收款提醒关着时跳过、游标照样推进。
   - 工单提醒由 support 在建单、用户回复的事务里经 `AdminTicketNotifier` → `NotifyAdminsTicket` 写，附提单人的套餐、剩余流量、到期、余额（经 `SubscriptionSummaries`、`Balances` 批量读这一个人），邮箱打码，正文截到 `adminTicketBodyMax`。这些上下文读失败只记 Warn、写「—」，不拖垮建单与回复；只有写去重键与投递失败才随调用方事务回滚。
   - Bot API 回包最多读 64 KiB（`tgResponseMax`：sendMessage 成功时整条消息按 `\uXXXX` 转义回来，4096 字的中文约 24 KB）；2xx 却解析不了或缺 message_id 记永久失败，不重发，免得群里重复。
   - 派发把工单提醒发出去后，按 Telegram 回的 message_id 写 `telegram_ticket_messages`（payload 里的 `ticket_id`）；映射保留 `TicketMessageRetentionDays`，由 `retention:notify` 清理。
