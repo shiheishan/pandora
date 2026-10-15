@@ -207,15 +207,15 @@ export function passwordProblem(p: string): string | null {
 }
 
 // ===========================================================================
-// 用户组：删除前的拦截与「被引用」列（后端 409 的四种情况，按同样的先后顺序）
+// 用户组：删除前的拦截与「被引用」列（后端 409 的情况，按同样的先后顺序）
+// 专属价格不拦：没卖过的随组删除，卖过的由后端 409 拒绝（提示改用停用）
 // ===========================================================================
-export function groupBlocker(g: Pick<UserGroup, 'users' | 'plans' | 'prices' | 'coupons' | 'exclusive_pools'>): string | null {
+export function groupBlocker(g: Pick<UserGroup, 'users' | 'plans' | 'coupons' | 'exclusive_pools'>): string | null {
   // R104：与后端 409 同一顺序，先看节点池名单（删了会让那个池悄悄对所有人开放）
   const pool = g.exclusive_pools[0]
   if (pool) return `节点池「${pool.name}」限定了这个组，先在节点池里把它移出名单`
   if (g.users > 0) return `组内还有 ${g.users} 位用户，先把他们移出去`
   if (g.plans > 0) return `还有 ${g.plans} 个套餐按这个组控制可见性，先解除`
-  if (g.prices > 0) return `还有 ${g.prices} 个专属价格挂在这个组上，先删掉`
   if (g.coupons > 0) return `还有 ${g.coupons} 张优惠券限定了这个组，先解除`
   return null
 }
@@ -237,6 +237,25 @@ export function devicePolicyBody(form: { mode: 'loose' | 'strict'; grace: string
 export function groupRefs(g: Pick<UserGroup, 'plans' | 'prices' | 'coupons'>): string {
   const parts = [g.plans && `套餐 ${g.plans}`, g.prices && `价格 ${g.prices}`, g.coupons && `优惠券 ${g.coupons}`].filter(Boolean)
   return parts.length ? parts.join(' · ') : '—'
+}
+
+/** 停用组在下拉里的后缀 */
+export const GROUP_DISABLED_SUFFIX = '（已停用）'
+/** 下拉、勾选项里一个组的显示名：停用的组加「（已停用）」 */
+export const groupOptionLabel = (g: { name: string; status: string }): string => (g.status === 'disabled' ? `${g.name}${GROUP_DISABLED_SUFFIX}` : g.name)
+/**
+ * 分配 / 选择类下拉的候选：隐藏停用组，但 keep 里的（当前已选的值）照样保留，不能把已有引用丢掉或显示成空。
+ * 筛选类下拉不用它（停用组里还有成员，要能筛出来）。保持原顺序。
+ */
+export function assignableGroups<T extends { id: string; status: string }>(groups: readonly T[], keep: readonly string[] = []): T[] {
+  return groups.filter((g) => g.status !== 'disabled' || keep.includes(g.id))
+}
+/** 停用确认的正文 */
+export const GROUP_DISABLE_NOTICE = '已有成员不受影响，照样看到这个组的套餐、专属价格、节点池和订阅域名。停用后不能再把用户加进这个组，后台各处的分配下拉里也不再出现它；可以随时重新启用。'
+/** 删组确认的正文：有专属价时说明会一并删除、买过的会被拒绝 */
+export function groupDeleteNotice(g: Pick<UserGroup, 'prices'>): string {
+  if (g.prices > 0) return `删除后无法恢复。会一并删除这个组的 ${g.prices} 条专属价格；如果其中有人买过，删除会被拒绝，可以改用停用。`
+  return '删除后无法恢复。这个组已经没有成员，也没有套餐或优惠券引用它。'
 }
 
 // ===========================================================================

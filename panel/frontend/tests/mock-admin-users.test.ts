@@ -162,6 +162,46 @@ describe('mock api · admin users ops', () => {
     expect((await send('DELETE', `/v1/user-groups/${created.id}`, {})).status).toBe(200)
   })
 
+  it('disables a group: hidden from new members, existing ones untouched, can be re-enabled', async () => {
+    const created = (await (await send('POST', '/v1/user-groups', { name: '停用测试' })).json()) as { id: string }
+    const gid = created.id
+    // 两位种子用户原来的分组，用例结束时还原（后面的用例按种子分组计数）
+    const groupOf = async (id: string) => ((await (await get(`/v1/users/${id}`)).json()) as { group_id: string | null }).group_id ?? ''
+    const seedGroup = await groupOf(SEED_USER)
+    const twinGroup = await groupOf(TWIN_USER)
+
+    expect((await send('POST', `/v1/users/${SEED_USER}/group`, { group_id: gid })).status).toBe(200)
+    expect((await send('POST', `/v1/user-groups/${gid}/status`, { disabled: true })).status).toBe(200)
+
+    const { groups } = (await (await get('/v1/user-groups')).json()) as { groups: Array<{ id: string; status: string }> }
+    expect(groups.find((g) => g.id === gid)?.status).toBe('disabled')
+
+    expect((await send('POST', `/v1/users/${SEED_USER}/group`, { group_id: gid })).status).toBe(200)
+    const conflict = await send('POST', `/v1/users/${TWIN_USER}/group`, { group_id: gid })
+    expect(conflict.status).toBe(409)
+
+    const missing = await send('POST', `/v1/user-groups/${gid}/status`, {})
+    expect(missing.status).toBe(422)
+    expect(await missing.json()).toMatchObject({ error: { fields: { disabled: expect.any(String) } } })
+
+    const badField = await send('POST', `/v1/user-groups/${gid}/status`, { disabled: true, x: 1 })
+    expect(badField.status).toBe(400)
+
+    const notFound = await send('POST', '/v1/user-groups/00000000-0000-4000-8000-000000000000/status', { disabled: true })
+    expect(notFound.status).toBe(404)
+
+    await reauth()
+    const genBad = await send('POST', '/v1/users/bulk/generate', { count: 1, email_prefix: 'gen', email_domain: 'example.com', reason: '停用组测试生成', group_id: gid }, 'gen-disabled')
+    expect(genBad.status).toBe(422)
+    expect(await genBad.json()).toMatchObject({ error: { fields: { group_id: '分组已停用' } } })
+
+    expect((await send('POST', `/v1/user-groups/${gid}/status`, { disabled: false })).status).toBe(200)
+    expect((await send('POST', `/v1/users/${TWIN_USER}/group`, { group_id: gid })).status).toBe(200)
+
+    expect((await send('POST', `/v1/users/${SEED_USER}/group`, { group_id: seedGroup })).status).toBe(200)
+    expect((await send('POST', `/v1/users/${TWIN_USER}/group`, { group_id: twinGroup })).status).toBe(200)
+  })
+
   it('validates the global device mode and reflects it in GET v1/devices', async () => {
     expect((await send('POST', '/v1/settings/device-limit', { mode: 'kick' })).status).toBe(422)
     expect((await send('POST', '/v1/settings/device-limit', { mode: 'strict', grace: 6 })).status).toBe(422)

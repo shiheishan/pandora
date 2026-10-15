@@ -195,3 +195,21 @@ func (h *Handler) deleteUserGroup(c *gin.Context) {
 	}
 	httpx.OK(c, admOKResponse{OK: true})
 }
+
+func (h *Handler) setUserGroupStatus(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpx.Fail(c, errs.New(errs.NotFound))
+		return
+	}
+	var req admSetUserGroupStatusRequest
+	if err := httpx.BindJSON(c, &req); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	if err := h.svc.SetGroupStatus(c.Request.Context(), id, *req.Disabled); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	httpx.OK(c, admOKResponse{OK: true})
+}

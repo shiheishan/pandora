@@ -32,6 +32,7 @@ type Service interface {
 	CreateGroup(ctx context.Context, code, name, description string) (uuid.UUID, error)
 	UpdateGroup(ctx context.Context, id uuid.UUID, name, description string) error
 	DeleteGroup(ctx context.Context, id uuid.UUID) error
+	SetGroupStatus(ctx context.Context, id uuid.UUID, disabled bool) error
 
 	PreviewBulk(ctx context.Context, f service.BulkFilter) (service.BulkPreview, error)
 	ExportUsers(ctx context.Context, f service.BulkFilter, limit int) ([]service.ExportRow, error)
@@ -111,6 +112,7 @@ func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	v1.POST("/user-groups", k.RequireAuth, h.createUserGroup)
 	v1.POST("/user-groups/:id", k.RequireAuth, h.updateUserGroup)
 	v1.DELETE("/user-groups/:id", k.RequireAuth, h.deleteUserGroup)
+	v1.POST("/user-groups/:id/status", k.RequireAuth, h.setUserGroupStatus)
 	// 后台改用户字段、注销、改邀请人、按筛选批量封禁（xb-reg）：改邮箱、注销、改邀请人、批量封禁要近期重认证，批量封禁另挂幂等
 	v1.POST("/users/bulk/ban", k.RequireAuth, k.RecentReauth, k.Idempotency("user_bulk_ban"), h.bulkBan)
 	v1.POST("/users/:id/email", k.RequireAuth, k.RecentReauth, h.setUserEmail)

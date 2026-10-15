@@ -2,6 +2,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useApi } from '../../../shell/runtime'
 import { Button, Card, Checkbox, Input, QueryView, Switch, useToast } from '../../../ui'
+import { assignableGroups, groupOptionLabel } from '../users/model'
 import {
   bodyFrom,
   domainConfigSchema,
@@ -13,6 +14,7 @@ import {
   type DomainGroupBody,
   type DomainRowForm,
   type GroupForm,
+  type UserGroupOptions,
 } from './domainGroups'
 import { SUB_KEY, useFailure, useInvalidateSubscription } from './subscriptionQueries'
 import nodesCss from './nodes.module.css'
@@ -24,7 +26,7 @@ export function SubscriptionDomains() {
     queryKey: [...SUB_KEY, 'domains'],
     queryFn: ({ signal }) => api.get('v1/subscription-domains', domainConfigSchema, { signal }),
   })
-  // 只取用户组的 id 与 name
+  // 只取用户组的 id、name 与 status
   const userGroups = useQuery({
     queryKey: ['admin', 'nodes', 'subscription', 'user-groups'],
     queryFn: ({ signal }) => api.get('v1/user-groups', userGroupOptionsSchema, { signal }).then((r) => r.groups),
@@ -36,7 +38,7 @@ export function SubscriptionDomains() {
   )
 }
 
-function DomainsFormView({ saved, userGroups }: { saved: DomainConfig; userGroups: Array<{ id: string; name: string }> }) {
+function DomainsFormView({ saved, userGroups }: { saved: DomainConfig; userGroups: UserGroupOptions['groups'] }) {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
@@ -45,6 +47,7 @@ function DomainsFormView({ saved, userGroups }: { saved: DomainConfig; userGroup
   const [errors, setErrors] = useState<Record<string, string>>({})
   const limits = saved.limits
   const base = formFrom(saved)
+  const savedUserGroupIds = saved.groups.flatMap((g) => g.user_group_ids)
   const form = draft ?? base
   const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(base)
 
@@ -142,23 +145,28 @@ function DomainsFormView({ saved, userGroups }: { saved: DomainConfig; userGroup
                 </div>
                 <div className={css.userGroups}>
                   <span className={css.subLabel}>分给用户组</span>
-                  {userGroups.length === 0 ? (
-                    <span className={nodesCss.faint}>还没有用户组</span>
-                  ) : (
-                    userGroups.map((ug) => {
-                      const owner = form.find((x) => x.userGroupIds.includes(ug.id))
-                      const taken = owner != null && owner.key !== g.key
-                      return (
-                        <Checkbox
-                          key={ug.id}
-                          label={taken ? `${ug.name}（已在「${owner.name.trim() || '未命名'}」）` : ug.name}
-                          checked={g.userGroupIds.includes(ug.id)}
-                          disabled={disabled || taken}
-                          onChange={(e) => toggleUserGroup(g.key, ug.id, e.target.checked)}
-                        />
-                      )
-                    })
-                  )}
+                  {(() => {
+                    // 停用的组隐藏；已保存的分配与当前勾选的照样显示并标「（已停用）」（误点取消后还能勾回来）
+                    const candidates = assignableGroups(userGroups, [...savedUserGroupIds, ...g.userGroupIds])
+                    return candidates.length === 0 ? (
+                      <span className={nodesCss.faint}>还没有可选的用户组</span>
+                    ) : (
+                      candidates.map((ug) => {
+                        const owner = form.find((x) => x.userGroupIds.includes(ug.id))
+                        const taken = owner != null && owner.key !== g.key
+                        const labelText = taken ? `${groupOptionLabel(ug)}（已在「${owner.name.trim() || '未命名'}」）` : groupOptionLabel(ug)
+                        return (
+                          <Checkbox
+                            key={ug.id}
+                            label={labelText}
+                            checked={g.userGroupIds.includes(ug.id)}
+                            disabled={disabled || taken}
+                            onChange={(e) => toggleUserGroup(g.key, ug.id, e.target.checked)}
+                          />
+                        )
+                      })
+                    )
+                  })()}
                 </div>
                 <div className={css.domainRows}>
                   <span className={css.subLabel}>域名（组内按权重随机取）</span>

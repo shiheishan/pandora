@@ -270,7 +270,7 @@ func (s *Service) AdminResetPassword(ctx context.Context, userID uuid.UUID, newP
 	})
 }
 
-// AssignGroup 把用户放进某个分组（groupID 为 nil 则移出）；用户或分组不存在回 422。
+// AssignGroup 把用户放进某个分组（groupID 为 nil 则移出）；用户或分组不存在回 422，分组已停用回 409（用户本来就在这个组里时不拦）。
 func (s *Service) AssignGroup(ctx context.Context, userID uuid.UUID, groupID *uuid.UUID) error {
 	return s.tx.Do(ctx, func(ctx context.Context) error {
 		u, ok, err := s.repo.LockUser(ctx, userID)
@@ -282,6 +282,19 @@ func (s *Service) AssignGroup(ctx context.Context, userID uuid.UUID, groupID *uu
 		}
 		if u.Status == StatusDeleted {
 			return errAccountDeleted()
+		}
+		// 停用的组不收新成员；本来就在这个组里再提交一次同一个组不算新成员（幂等，不报错）
+		if groupID != nil && (u.UserGroupID == nil || *u.UserGroupID != *groupID) {
+			st, ok, err := s.repo.GroupStatus(ctx, *groupID)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return errs.Newf(errs.ValidationFailed, "用户或分组不存在")
+			}
+			if st == GroupDisabled {
+				return errs.Newf(errs.Conflict, "这个分组已停用，不能再加入新成员")
+			}
 		}
 		ok, err = s.repo.SetUserGroup(ctx, userID, groupID)
 		if err != nil {

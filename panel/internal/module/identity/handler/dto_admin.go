@@ -99,6 +99,7 @@ type admUserGroupRow struct {
 	Name           string               `json:"name"`
 	Description    string               `json:"description"`
 	Users          int64                `json:"users"`
+	Status         string               `json:"status"`
 	Plans          int64                `json:"plans"`
 	Prices         int64                `json:"prices"`
 	Coupons        int64                `json:"coupons"`
@@ -113,6 +114,11 @@ type admUserGroupBodyRequest struct {
 	Code        string `json:"code" binding:"max=64"`
 	Name        string `json:"name" binding:"max=200"`
 	Description string `json:"description" binding:"max=2000"`
+}
+
+// admSetUserGroupStatusRequest 是 POST /v1/user-groups/:id/status 的请求体：disabled 为 true 停用、false 启用。
+type admSetUserGroupStatusRequest struct {
+	Disabled *bool `json:"disabled" binding:"required"`
 }
 
 type admCreateUserGroupResponse struct {
@@ -221,6 +227,7 @@ func admGroupRowFrom(g service.Group) admUserGroupRow {
 		Name:           g.Name,
 		Description:    g.Description,
 		Users:          g.Users,
+		Status:         g.Status,
 		Plans:          g.Plans,
 		Prices:         g.Prices,
 		Coupons:        g.Coupons,

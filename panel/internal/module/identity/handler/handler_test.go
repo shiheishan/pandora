@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -27,10 +28,16 @@ import (
 // fakeSvc 只实现用例用到的方法；其余方法走嵌入的 nil 接口，被调到会 panic（说明路由接错了）。
 type fakeSvc struct {
 	Service
-	start      service.RegistrationStart
-	lastFilter service.UserFilter
-	rows       []service.UserRow
-	changed    bool
+	start       service.RegistrationStart
+	lastFilter  service.UserFilter
+	rows        []service.UserRow
+	changed     bool
+	groupStatus []string
+}
+
+func (f *fakeSvc) SetGroupStatus(_ context.Context, id uuid.UUID, disabled bool) error {
+	f.groupStatus = append(f.groupStatus, fmt.Sprintf("%s:%t", id, disabled))
+	return nil
 }
 
 func (f *fakeSvc) StartRegistration(context.Context, string, string, string) (service.RegistrationStart, error) {
@@ -55,7 +62,7 @@ func (f *fakeSvc) ListUsers(_ context.Context, fl service.UserFilter, _, _ int) 
 func (f *fakeSvc) AdminListGroups(context.Context) ([]service.Group, error) {
 	return []service.Group{{
 		ID:   uuid.MustParse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
-		Code: "default", Name: "默认", Description: "", Users: 1,
+		Code: "default", Name: "默认", Description: "", Users: 1, Status: "active",
 	}}, nil
 }
 
@@ -175,6 +182,7 @@ func TestRoutes(t *testing.T) {
 		"GET /v1/users/bulk/generate/jobs/:id", "GET /v1/users/bulk/generate/jobs/:id/result",
 		"POST /v1/ip-clusters/:key/disable-accounts", "POST /v1/ip-clusters/:key/review",
 		"POST /v1/me/password", "POST /v1/user-groups", "POST /v1/user-groups/:id",
+		"POST /v1/user-groups/:id/status",
 		"POST /v1/users/:id/delete", "POST /v1/users/:id/email",
 		"POST /v1/users/:id/group", "POST /v1/users/:id/note", "POST /v1/users/:id/referrer",
 		"POST /v1/users/:id/reset-password", "POST /v1/users/:id/status",
@@ -430,12 +438,52 @@ func TestAdminUserJSONKeys(t *testing.T) {
 	gr := decodeMap(t, w.Body.Bytes())
 	groups, _ := gr["groups"].([]any)
 	g0, _ := groups[0].(map[string]any)
-	assertKeys(t, g0, "id", "code", "name", "description", "users", "plans", "prices", "coupons", "exclusive_pools")
+	assertKeys(t, g0, "id", "code", "name", "description", "users", "status", "plans", "prices", "coupons", "exclusive_pools")
+	if g0["status"] != "active" {
+		t.Fatalf("group status %v", g0["status"])
+	}
 	ep, _ := g0["exclusive_pools"].([]any)
 	if ep == nil {
 		t.Fatal("exclusive_pools 不应为 null")
 	}
 	if len(ep) != 0 {
 		t.Fatalf("exclusive_pools %v", ep)
+	}
+}
+
+func TestSetUserGroupStatus(t *testing.T) {
+	f := &fakeSvc{}
+	e := newEngine(f, true, nil)
+
+	// 成功启停
+	w := do(e, http.MethodPost, "/v1/user-groups/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/status", `{"disabled":true}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d %s", w.Code, w.Body)
+	}
+	resp := decodeMap(t, w.Body.Bytes())
+	if resp["ok"] != true {
+		t.Fatalf("want ok=true, got %v", resp["ok"])
+	}
+	wantCall := []string{"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:true"}
+	if strings.Join(f.groupStatus, ",") != strings.Join(wantCall, ",") {
+		t.Fatalf("groupStatus calls %v, want %v", f.groupStatus, wantCall)
+	}
+
+	// 缺少 disabled 字段期望 422
+	w = do(e, http.MethodPost, "/v1/user-groups/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/status", `{}`)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("want 422, got %d %s", w.Code, w.Body)
+	}
+
+	// 多余字段期望 400
+	w = do(e, http.MethodPost, "/v1/user-groups/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/status", `{"disabled":false,"x":1}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d %s", w.Code, w.Body)
+	}
+
+	// 路径 id 换成 not-a-uuid 期望 404
+	w = do(e, http.MethodPost, "/v1/user-groups/not-a-uuid/status", `{"disabled":true}`)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("want 404, got %d %s", w.Code, w.Body)
 	}
 }

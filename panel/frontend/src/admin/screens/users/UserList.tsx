@@ -3,7 +3,7 @@ import { formatMoney, relativeTime } from '../../../core/format'
 import { href } from '../../../core/router'
 import { Empty, Pager, QueryView, Segmented, Select, Table, Tag, type TableColumn } from '../../../ui'
 import { useUserGroups, useUsers, USERS_PAGE, type UserRow } from './api'
-import { deviceView, expiryView, initial, listParams, shortId, STATUS_FILTERS, trafficView, USER_STATUS_VIEW, userLabel, type StatusFilter } from './model'
+import { deviceView, expiryView, groupOptionLabel, initial, listParams, shortId, STATUS_FILTERS, trafficView, USER_STATUS_VIEW, userLabel, type StatusFilter } from './model'
 import css from './Users.module.css'
 
 export interface ListState {
@@ -32,7 +32,7 @@ export function UserList({
 
   const groupOptions = [
     { value: 'none', label: '未分组（默认）' },
-    ...(groups.data ?? []).map((g) => ({ value: g.id, label: g.name })),
+    ...(groups.data ?? []).map((g) => ({ value: g.id, label: groupOptionLabel(g) })),
   ]
 
   return (

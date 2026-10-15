@@ -68,6 +68,8 @@ export interface Group {
   code: string
   name: string
   description: string
+  /** 停用的组不能再加新成员，已有成员不受影响 */
+  status: 'active' | 'disabled'
   /** 引用计数：套餐可见性、专属价格、优惠券限定（后端按表实时数，这里是固定种子） */
   plans: number
   prices: number
@@ -84,10 +86,13 @@ export function setPoolSource(fn: (groupId: string) => PoolRef[]): void {
 export const exclusivePoolsOf = (groupId: string) => poolSource(groupId)
 
 export const GROUPS: Group[] = [
-  { id: '9c0e1a2b-2222-4b00-8000-000000000001', code: 'vip', name: 'VIP', description: '长期付费与大客户', plans: 2, prices: 3, coupons: 1 },
-  { id: '9c0e1a2b-2222-4b00-8000-000000000002', code: 'enterprise', name: '企业客户', description: '对公结算', plans: 1, prices: 1, coupons: 0 },
-  { id: '9c0e1a2b-2222-4b00-8000-000000000003', code: 'trial', name: '体验用户', description: '', plans: 0, prices: 0, coupons: 2 },
+  { id: '9c0e1a2b-2222-4b00-8000-000000000001', code: 'vip', name: 'VIP', description: '长期付费与大客户', status: 'active', plans: 2, prices: 3, coupons: 1 },
+  { id: '9c0e1a2b-2222-4b00-8000-000000000002', code: 'enterprise', name: '企业客户', description: '对公结算', status: 'active', plans: 1, prices: 1, coupons: 0 },
+  { id: '9c0e1a2b-2222-4b00-8000-000000000003', code: 'trial', name: '体验用户', description: '', status: 'active', plans: 0, prices: 0, coupons: 2 },
 ]
+
+/** 演示：这些组的专属价「有人买过」，删组时回 409（Go 里由订单项、订阅、礼品卡的 RESTRICT 外键挡住）；不进响应 */
+export const SOLD_PRICE_GROUP_IDS = new Set<string>([GROUPS[0]!.id, GROUPS[1]!.id])
 
 const PLANS: Array<[string, number, number | null, number | null]> = [
   // 名称, 月价（分）, 流量上限（GiB）, 套餐设备数
@@ -509,13 +514,18 @@ export const users_: MockModule = {
       })
     },
 
-    // 分配用户组：无 reauth、无幂等；空串移出分组；不存在 422 无 fields
+    // 分配用户组：无 reauth、无幂等；空串移出分组；不存在 422 无 fields；
+    // 目标组停用且用户不在其中回 409，已在组内再提交幂等 200
     'POST /v1/users/:id/group': async (ctx) => {
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       const groupId = typeof body.group_id === 'string' ? body.group_id : ''
       const u = findUser(ctx)
-      if (!u || (groupId && !GROUPS.some((g) => g.id === groupId))) return ctx.fail(422, 'validation_failed', '用户或分组不存在')
+      const target = groupId ? GROUPS.find((g) => g.id === groupId) : undefined
+      if (!u || (groupId && !target)) return ctx.fail(422, 'validation_failed', '用户或分组不存在')
+      if (target && target.status === 'disabled' && u.group_id !== groupId) {
+        return ctx.fail(409, 'conflict', '这个分组已停用，不能再加入新成员')
+      }
       u.group_id = groupId || null
       ctx.send(200, { ok: true })
     },
@@ -533,7 +543,7 @@ export const users_: MockModule = {
     },
 
     // 运营类：用户组增删改、批量运营、设备策略、流量重置（users-ops.ts）
-    ...opsRoutes({ users, groups: GROUPS, current, hasSubState, effectiveLimit, exclusivePools: exclusivePoolsOf }),
+    ...opsRoutes({ users, groups: GROUPS, soldPriceGroups: SOLD_PRICE_GROUP_IDS, current, hasSubState, effectiveLimit, exclusivePools: exclusivePoolsOf }),
     // 后台改邮箱 / 显示名与备注 / 邀请人、注销（users-edit.ts）；改单份订阅的到期与流量上限（users-sub-edit.ts）
     ...editRoutes({ users }),
     ...subEditRoutes({ users }),

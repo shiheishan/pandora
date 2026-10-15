@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/testkit"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -226,16 +225,34 @@ func TestDeleteUserGroupCascadesPlanVisibility(t *testing.T) {
 	}
 }
 
-// 组价仍引用分组时不许删组（prices.user_group_id 保持 RESTRICT）。
-func TestDeleteUserGroupReferencedByPriceRestricted(t *testing.T) {
+// 组价没被买过时删组连价格一起删（00050：prices.user_group_id 是 ON DELETE CASCADE，价格守卫只放行这种级联删除）。
+// 买过的组价挡住删组由 identity 的 TestPGDeleteGroupRefusedWhenPriceSold 覆盖。
+func TestDeleteUserGroupCascadesUnsoldPrices(t *testing.T) {
 	e, ctx := newEnv(t)
 	ctx, _ = seedAdmin(t, ctx, e)
 	g := seedGroup(t, ctx, e, "")
 	_ = groupOnlyPublishedPlan(t, ctx, e, g)
-	err := execSavepoint(t, ctx, e, "sp_delgrp", `DELETE FROM user_groups WHERE id = ?`, g)
-	// ON DELETE RESTRICT 回 restrict_violation（23001），不是 23503；identity 的 repo 把两者都当外键冲突
-	if testkit.SQLState(err) != "23001" {
-		t.Fatalf("期望 23001，得到 %v", err)
+	if n := scanInt64(t, ctx, e, `SELECT count(*) FROM prices WHERE user_group_id = ?`, g); n == 0 {
+		t.Fatal("夹具应有组专属价")
+	}
+	if err := execSavepoint(t, ctx, e, "sp_delgrp", `DELETE FROM user_groups WHERE id = ?`, g); err != nil {
+		t.Fatalf("没卖过的组价应随组级联删除，得到 %v", err)
+	}
+	if n := scanInt64(t, ctx, e, `SELECT count(*) FROM prices WHERE user_group_id = ?`, g); n != 0 {
+		t.Fatalf("删组后组专属价应为 0 条，得到 %d", n)
+	}
+}
+
+// 删组的级联只能删掉没卖过的组价，靠的是「所有引用 prices(id) 的外键都是 RESTRICT」：
+// 哪天有人把订单项、订阅或礼品卡的 price_id 改成 CASCADE / SET NULL，删组就会悄悄删掉卖过的价格，这里先红。
+func TestPriceReferencesAreRestrict(t *testing.T) {
+	e, ctx := newEnv(t)
+	total := scanInt64(t, ctx, e, `SELECT count(*) FROM pg_constraint WHERE contype = 'f' AND confrelid = 'prices'::regclass`)
+	if total < 3 {
+		t.Fatalf("引用 prices 的外键应至少有订单项、订阅、礼品卡 3 条，得到 %d", total)
+	}
+	if n := scanInt64(t, ctx, e, `SELECT count(*) FROM pg_constraint WHERE contype = 'f' AND confrelid = 'prices'::regclass AND confdeltype <> 'r'`); n != 0 {
+		t.Fatalf("引用 prices 的外键必须全是 ON DELETE RESTRICT，有 %d 条不是", n)
 	}
 }
 
