@@ -97,7 +97,7 @@ func (a *shadowsocksAdapter) openUDPWith(sc *ssScratch, user *ssUser, salt, ciph
 		return vlessDestination{}, nil, false
 	}
 	var dest vlessDestination
-	consumed, err := parseSSDestination(opened, &dest)
+	consumed, err := parseSSAddr(opened, &dest)
 	if err != nil {
 		return vlessDestination{}, nil, false
 	}
@@ -118,7 +118,7 @@ func (a *shadowsocksAdapter) decodeUDPPacket(salt, ciphertext, plain []byte, fro
 			return false
 		}
 		var candidate vlessDestination
-		consumed, err := parseSSDestination(opened, &candidate)
+		consumed, err := parseSSAddr(opened, &candidate)
 		if err != nil {
 			return false
 		}

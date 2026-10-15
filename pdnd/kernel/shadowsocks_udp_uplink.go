@@ -6,8 +6,6 @@ import (
 	"net"
 	"net/netip"
 	"time"
-
-	M "github.com/sagernet/sing/common/metadata"
 )
 
 // ssUDPResolve 与 ssUDPResolveTTL 是域名目标的解析函数与会话内缓存时长（与 hy2 同值）；做成变量只为测试替换。
@@ -171,7 +169,7 @@ func (s *ssUDPSession) writeUplink(dest vlessDestination, payload []byte) (int, 
 		n, err := s.upstream.WriteTo(payload, addr)
 		return n, err
 	}
-	target := M.ParseSocksaddrHostPort(dest.Host, dest.Port)
+	target := ssUDPTarget(dest)
 	s.mu.Lock()
 	if s.lastAddr != nil && s.lastDest == target && time.Since(s.resolved) < ssUDPResolveTTL {
 		addr := s.lastAddr

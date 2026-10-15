@@ -107,7 +107,7 @@ func openSS2022UDPBody(remote cipher.AEAD, hdr []byte, wire, plain []byte) (vles
 		return vlessDestination{}, nil, errSS2022UDPHeader
 	}
 	var dest vlessDestination
-	consumed, err := parseSSDestination(body[11+pad:], &dest)
+	consumed, err := parseSSAddr(body[11+pad:], &dest)
 	if err != nil {
 		return vlessDestination{}, nil, errSS2022UDPHeader
 	}

@@ -26,6 +26,15 @@ func selectUDPRoute(plane DataPlane, meta route.Meta) (tag string, ok bool) {
 	return "", false
 }
 
+// ssUDPTarget 把解出的目标转成 Socksaddr：IP 目标直接用 IP（不经字符串、不分配），域名目标用 Domain。
+// UDP 路径解目标用 parseSSAddr，IP 目标不带 Host，一律经它取目标。
+func ssUDPTarget(dest vlessDestination) M.Socksaddr {
+	if dest.IP.IsValid() {
+		return M.SocksaddrFrom(dest.IP, dest.Port)
+	}
+	return M.ParseSocksaddrHostPort(dest.Domain, dest.Port)
+}
+
 // udpRouteMeta 是 SS UDP 包发往 dest 时的路由元数据（建上游与按目标复查共用）。
 func (h *ssUDPHub) udpRouteMeta(dest vlessDestination, client netip.AddrPort) route.Meta {
 	return route.Meta{
@@ -41,7 +50,7 @@ func (s *ssUDPSession) routeAllows(dest vlessDestination) bool {
 	if !s.routeOK {
 		return true
 	}
-	target := M.ParseSocksaddrHostPort(dest.Host, dest.Port)
+	target := ssUDPTarget(dest)
 	s.mu.Lock()
 	same := target == s.routedDest
 	s.mu.Unlock()

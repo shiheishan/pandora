@@ -161,8 +161,8 @@ func (h *ssUDPHub) establishUDPSession(s *ssUDPSession) (net.PacketConn, error) 
 	firstDest := s.firstDest
 	meta := h.udpRouteMeta(firstDest, s.clientAddr())
 	s.routeTag, s.routeOK = selectUDPRoute(h.udpPlane, meta)
-	s.routedDest = M.ParseSocksaddrHostPort(firstDest.Host, firstDest.Port)
-	upstream, err := h.udpPlane.ListenUDP(s.ctx, meta, M.ParseSocksaddrHostPort(firstDest.Host, firstDest.Port))
+	s.routedDest = ssUDPTarget(firstDest)
+	upstream, err := h.udpPlane.ListenUDP(s.ctx, meta, s.routedDest)
 	if err != nil {
 		return nil, err
 	}

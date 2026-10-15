@@ -328,7 +328,17 @@ func (a *shadowsocksAdapter) readRequest(conn net.Conn) (core.User, *ssStream, v
 	return core.User{ID: selected.ID, DeviceLimit: selected.DeviceLimit, SpeedLimit: selected.SpeedLimit}, stream, destination, nil
 }
 
+// parseSSDestination 解 SOCKS 地址并填好 Host（TCP 按 Host 拨号用）。
 func parseSSDestination(buf []byte, destination *vlessDestination) (int, error) {
+	n, err := parseSSAddr(buf, destination)
+	if err == nil && destination.IP.IsValid() {
+		destination.Host = destination.IP.String()
+	}
+	return n, err
+}
+
+// parseSSAddr 解 SOCKS 地址；IP 目标不填 Host（UDP 每包省一次 IP.String() 分配，UDP 路径经 ssUDPTarget 取目标）。
+func parseSSAddr(buf []byte, destination *vlessDestination) (int, error) {
 	if len(buf) < 1 {
 		return 0, io.ErrUnexpectedEOF
 	}
@@ -341,7 +351,6 @@ func parseSSDestination(buf []byte, destination *vlessDestination) (int, error) 
 		var ip [4]byte
 		copy(ip[:], buf[offset:offset+4])
 		destination.IP = netip.AddrFrom4(ip)
-		destination.Host = destination.IP.String()
 		offset += 4
 	case 3:
 		if len(buf) < offset+1 {
@@ -361,7 +370,6 @@ func parseSSDestination(buf []byte, destination *vlessDestination) (int, error) 
 		var ip [16]byte
 		copy(ip[:], buf[offset:offset+16])
 		destination.IP = netip.AddrFrom16(ip)
-		destination.Host = destination.IP.String()
 		offset += 16
 	default:
 		return 0, fmt.Errorf("shadowsocks address type unsupported")

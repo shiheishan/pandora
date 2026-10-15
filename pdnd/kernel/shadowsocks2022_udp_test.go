@@ -5,6 +5,7 @@ package kernel
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -76,6 +77,21 @@ func ss2022UDPSessionCount(a *ss2022Adapter) int {
 	n := a.udpLive
 	a.udpMu.Unlock()
 	return n
+}
+
+// startSS2022UDPCore 经 NativeCore 起一个 SS2022 入站（真数据面），返回适配器。
+func startSS2022UDPCore(t *testing.T, method string, users ...core.User) *ss2022Adapter {
+	t.Helper()
+	c, _, tag := startLifecycleCore(t, lifecycleProto{name: "shadowsocks", raw: map[string]any{
+		"method":   method,
+		"password": base64.StdEncoding.EncodeToString(ss2022TestIPSK(ss2022TestKeyLen(method))),
+	}}, users)
+	adapter := deviceWiringAdapter(t, c, tag)
+	a, ok := adapter.(*ss2022Adapter)
+	if !ok {
+		t.Fatalf("adapter is %T, want *ss2022Adapter", adapter)
+	}
+	return a
 }
 
 // ss2022TCPUDPPlane 同时支持回环 TCP 拨号与 udpRelayTestPlane 的 UDP 出站。
@@ -406,9 +422,9 @@ func TestSS2022UDPDelUserClosesSessions(t *testing.T) {
 }
 
 func TestSS2022UDPSessionQuota(t *testing.T) {
-	prev := ssUDPIdleTimeout
-	ssUDPIdleTimeout = 300 * time.Millisecond
-	t.Cleanup(func() { ssUDPIdleTimeout = prev })
+	// 空闲时限要明显长于第三个客户端的等待（500ms）：原先 300ms 时客户端 1 的会话在第三个客户端重试期间
+	// 就被空闲回收、名额归还，第三个客户端因此建成了会话（用例构造错，不是名额没生效）。
+	setSSUDPIdle(t, 2*time.Second)
 
 	method := "2022-blake3-aes-128-gcm"
 	user := core.User{ID: 8926, UUID: "ss2022-udp-quota"}
@@ -436,11 +452,13 @@ func TestSS2022UDPSessionQuota(t *testing.T) {
 		t.Fatalf("会话数=%d，期望 2", ss2022UDPSessionCount(a))
 	}
 
-	_ = pc1.Close()
-	if ok, why := waitFor(5*time.Second, func() (bool, string) {
-		return ss2022UDPSessionCount(a) == 1, fmt.Sprintf("count=%d", ss2022UDPSessionCount(a))
+	if ok, why := waitFor(8*time.Second, func() (bool, string) {
+		a.udpQuota.mu.Lock()
+		inUse := a.udpQuota.byUser[user.ID]
+		a.udpQuota.mu.Unlock()
+		return ss2022UDPSessionCount(a) == 0 && inUse == 0, fmt.Sprintf("会话=%d 名额=%d", ss2022UDPSessionCount(a), inUse)
 	}); !ok {
-		t.Fatalf("关掉 pc1 后应只剩 1 个会话：%s", why)
+		t.Fatalf("空闲后未回收：%s", why)
 	}
 	if err := ss2022UDPRoundTrip(pc3, echo, payload, 2*time.Second); err != nil {
 		t.Fatalf("名额腾出后客户端 3：%v", err)
@@ -526,11 +544,12 @@ func TestSS2022IdleUDPSessionHeap(t *testing.T) {
 	const sessions = 1000
 	method := "2022-blake3-aes-128-gcm"
 	user := core.User{ID: 8928, UUID: "ss2022-udp-mem"}
-	a := startSS2022Adapter(t, method, &udpRelayTestPlane{}, func(ad *ss2022Adapter) {
-		ad.udpQuota.mu.Lock()
-		ad.udpQuota.limit = 2000
-		ad.udpQuota.mu.Unlock()
-	}, user)
+	// 走真 NativeCore 的数据面（同经典 TestShadowsocksIdleUDPSessionHeap 的 startSSUDPCore）：直连出站的
+	// 下行就绪了才借收包缓冲；udpRelayTestPlane 只给 net.PacketConn，下行只能常驻 64KB 阻塞读，量的就不是空闲会话了。
+	a := startSS2022UDPCore(t, method, user)
+	a.udpQuota.mu.Lock()
+	a.udpQuota.limit = 2000
+	a.udpQuota.mu.Unlock()
 	echo := hy2EchoUDP(t)
 	clients := make([]net.PacketConn, sessions)
 	for i := range clients {
