@@ -2,7 +2,6 @@ package repo
 
 import (
 	"context"
-	"database/sql"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -49,13 +48,17 @@ func (r *Repo) DomainConfig(ctx context.Context) (DomainConfigRows, error) {
 	}
 	var rows DomainConfigRows
 	err := r.d.Base().WithContext(ctx).Transaction(func(g *gorm.DB) error {
+		// 必须是事务里的第一条语句（PG 要求）；不用 sql.TxOptions，database/sql 由 depguard 挡在模块外
+		if err := g.Exec("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY").Error; err != nil {
+			return err
+		}
 		got, err := readDomainConfig(g)
 		if err != nil {
 			return err
 		}
 		rows = got
 		return nil
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	})
 	if err != nil {
 		return DomainConfigRows{}, mapErr(err)
 	}
