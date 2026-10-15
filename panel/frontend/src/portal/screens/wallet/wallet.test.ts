@@ -76,7 +76,6 @@ function detail(over: Partial<OrderDetail> = {}): OrderDetail {
       balance_applied: 0,
       payable_amount: 4720,
       paid_amount: 4720,
-      refunded_amount: 0,
       plan_name: '专业版',
       item_name: '专业版',
       cancellable: false,
@@ -93,10 +92,9 @@ function detail(over: Partial<OrderDetail> = {}): OrderDetail {
 }
 
 describe('订单页', () => {
-  it('状态徽标：已退款两类为 info，pending_payment 为「待支付」', () => {
+  it('状态徽标：pending_payment 为「待支付」', () => {
     expect(statusBadge('fulfilled')).toEqual({ label: '已支付', tone: 'ok' })
     expect(statusBadge('expired')).toEqual({ label: '已取消', tone: 'neutral' })
-    expect(statusBadge('partially_refunded')).toEqual({ label: '部分退款', tone: 'info' })
     expect(statusBadge('pending_payment').label).toBe('待支付')
   })
 
@@ -124,7 +122,6 @@ describe('订单页', () => {
     expect(orderResult(detail({ status: 'expired' }))).toBe('超时未支付，已自动取消')
     expect(orderResult(detail({ status: 'cancelled', cancel_reason: 'user_cancelled' }))).toBe('已由您取消')
     expect(orderResult(detail({ status: 'cancelled', cancel_reason: '渠道维护' }))).toBe('渠道维护')
-    expect(orderResult(detail({ status: 'refunded', refunded_amount: 4720 }))).toBe('已退款 ¥47.20')
   })
 
   it('事实行：原价、优惠带券码、实付、支付记录；待支付显示过期时间', () => {

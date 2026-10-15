@@ -268,7 +268,6 @@ export function seedOrders(u: User) {
     total_amount: s.amount,
     payable_amount: s.amount,
     paid_amount: k % 3 === 2 ? 0 : s.amount,
-    refunded_amount: 0,
     balance_applied: 0,
     created_at: s.created_at,
     paid_at: (k % 3 === 2 ? null : s.created_at) as string | null,

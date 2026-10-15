@@ -16,7 +16,7 @@ const REFERENCE_MAX = 128
 // 订单
 // ===========================================================================
 
-/** 状态分段 → 后端多值 status（R63）；退款不单列（契约），在「全部」里看 */
+/** 状态分段 → 后端多值 status（R63） */
 export const ORDER_FILTERS = [
   ['all', '全部', ''],
   ['pending', '待支付', 'pending_payment'],
@@ -102,7 +102,6 @@ export function orderFacts(o: OrderDetail): Array<[string, string]> {
   if (o.balance_applied > 0) facts.push(['余额抵扣', money(o.balance_applied)])
   facts.push(['应付', money(o.payable_amount)])
   if (o.paid_amount > 0) facts.push(['实收', money(o.paid_amount)])
-  if (o.refunded_amount > 0) facts.push(['已退款', money(o.refunded_amount)])
   facts.push(['币种', o.currency], ['渠道', channelLabel(o, o.manual_reason !== null)], ['来源', sourceLabel(o)])
   if (o.manual_reason) facts.push(['开单原因', o.manual_reason])
   if (PENDING.includes(o.status) && o.expires_at) facts.push(['支付截止', formatDateTime(o.expires_at)])
@@ -115,7 +114,7 @@ export function orderFacts(o: OrderDetail): Array<[string, string]> {
 
 // ---------------------------------------------------------------------------
 // 支付记录：设计每行一个状态——以支付尝试为行，有对应入账的显示入账状态；线下入账没有
-// 支付尝试，单独成行并标「人工确认」；退款（设计缺）按同一行式附在后面
+// 支付尝试，单独成行并标「人工确认」
 // ---------------------------------------------------------------------------
 interface PayLine {
   key: string
@@ -138,14 +137,6 @@ const INTENT_VIEW: Record<string, { label: string; tone: Tone }> = {
 const PAYMENT_VIEW: Record<string, { label: string; tone: Tone }> = {
   succeeded: { label: '成功', tone: 'ok' },
 }
-const REFUND_VIEW: Record<string, { label: string; tone: Tone }> = {
-  pending: { label: '退款处理中', tone: 'warn' },
-  approved: { label: '退款处理中', tone: 'warn' },
-  processing: { label: '退款处理中', tone: 'warn' },
-  succeeded: { label: '已退款', tone: 'info' },
-  failed: { label: '退款失败', tone: 'danger' },
-  rejected: { label: '退款已驳回', tone: 'neutral' },
-}
 
 export function paymentLines(h: PaymentHistory): PayLine[] {
   const byIntent = new Map(h.payments.filter((p) => p.payment_intent_id).map((p) => [p.payment_intent_id!, p]))
@@ -156,7 +147,7 @@ export function paymentLines(h: PaymentHistory): PayLine[] {
     return {
       key: i.id,
       channel: i.provider_name,
-      ref: p?.provider_payment_id ?? i.provider_ref ?? i.failure_message ?? '—',
+      ref: p?.provider_payment_id ?? i.provider_ref ?? '—',
       amount: p?.amount ?? i.amount,
       currency: i.currency,
       ...view,
@@ -180,9 +171,6 @@ export function paymentLines(h: PaymentHistory): PayLine[] {
       at: p.paid_at,
       surcharge: p.surcharge_amount > 0 ? p.surcharge_amount : undefined,
     })
-  }
-  for (const r of h.refunds) {
-    lines.push({ key: r.id, channel: '退款', ref: r.reason, amount: -r.amount, currency: r.currency, ...REFUND_VIEW[r.status]!, at: r.succeeded_at ?? r.created_at })
   }
   return lines.sort((a, b) => a.at.localeCompare(b.at))
 }

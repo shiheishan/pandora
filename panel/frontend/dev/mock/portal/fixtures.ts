@@ -107,7 +107,6 @@ export interface OrderFixture {
   balance_applied: number
   payable_amount: number
   paid_amount: number
-  refunded_amount?: number
   coupon_code?: string
   subscription_id?: string
   created_at: string

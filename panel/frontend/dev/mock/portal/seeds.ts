@@ -11,7 +11,7 @@ function order(now: number, daysAgo: number, init: Partial<OrderFixture> & Pick<
   const discount = init.discount_amount ?? 0
   const total = init.subtotal - discount
   const balanceApplied = init.balance_applied ?? 0
-  const paid = ['paid', 'fulfilled', 'partially_refunded', 'refunded'].includes(init.status)
+  const paid = ['paid', 'fulfilled'].includes(init.status)
   return {
     id: randomUUID(),
     order_no: `PD-2${String(++seq).padStart(3, '0')}`,
@@ -43,7 +43,6 @@ export function pastOrders(now: number, sub: SubFixture): OrderFixture[] {
     order(now, 20, { kind: 'new', status: 'cancelled', plan_name: std.name, item_name: std.name, interval: 'year', interval_count: 1, subtotal: std.prices[2]!.unit_amount, cancel_reason: 'user_cancelled', cancelled_at: new Date(now - 20 * DAY_MS).toISOString() }),
     order(now, 34, { ...renew, status: 'fulfilled' }),
     order(now, 40, { kind: 'topup', status: 'fulfilled', subtotal: 3000 }),
-    order(now, 52, { kind: 'addon', status: 'refunded', plan_name: pack.name, item_name: pack.name, subtotal: pack.unit_amount, refunded_amount: pack.unit_amount }),
     order(now, 64, { ...renew, status: 'fulfilled' }),
     order(now, 75, { kind: 'new', status: 'cancelled', plan_name: pro.name, item_name: pro.name, interval: 'month', interval_count: 1, subtotal: month.unit_amount, cancel_reason: '支付渠道维护，系统取消' }),
     order(now, 94, { kind: 'new', status: 'fulfilled', plan_name: pro.name, item_name: pro.name, interval: 'month', interval_count: 1, subscription_id: sub.id, subtotal: month.unit_amount }),

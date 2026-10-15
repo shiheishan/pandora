@@ -93,7 +93,6 @@ describe('orders', () => {
       total_amount: 0,
       payable_amount: 0,
       paid_amount: 0,
-      refunded_amount: 0,
       balance_applied: 0,
       created_at: '2026-09-23T10:00:00Z',
       paid_at: null,
@@ -142,25 +141,23 @@ describe('orders', () => {
     expect(new Map(orderFacts(detail({ cancel_reason: '用户来信要求取消' }))).get('取消原因')).toBe('用户来信要求取消')
   })
 
-  it('merges intents with their payments, offline receipts and refunds into one list', () => {
+  it('merges intents with their payments and offline receipts into one list', () => {
     const h: PaymentHistory = {
       payment_intents: [
-        { id: 'i1', provider_code: 'epay', provider_name: '聚合收银台', currency: 'CNY', amount: 2500, surcharge_amount: 0, status: 'cancelled', provider_ref: null, failure_code: 'x', failure_message: '用户取消', expires_at: null, created_at: '2026-09-23T10:00:00Z', updated_at: '2026-09-23T10:00:00Z' },
-        { id: 'i2', provider_code: 'epay', provider_name: '聚合收银台', currency: 'CNY', amount: 2500, surcharge_amount: 0, status: 'succeeded', provider_ref: 'EP1', failure_code: null, failure_message: null, expires_at: null, created_at: '2026-09-23T10:05:00Z', updated_at: '2026-09-23T10:05:00Z' },
+        { id: 'i1', provider_code: 'epay', provider_name: '聚合收银台', currency: 'CNY', amount: 2500, surcharge_amount: 0, status: 'cancelled', provider_ref: null, expires_at: null, created_at: '2026-09-23T10:00:00Z', updated_at: '2026-09-23T10:00:00Z' },
+        { id: 'i2', provider_code: 'epay', provider_name: '聚合收银台', currency: 'CNY', amount: 2500, surcharge_amount: 0, status: 'succeeded', provider_ref: 'EP1', expires_at: null, created_at: '2026-09-23T10:05:00Z', updated_at: '2026-09-23T10:05:00Z' },
       ],
       payments: [
-        { id: 'p1', payment_intent_id: 'i2', provider_code: 'epay', provider_name: '聚合收银台', provider_payment_id: 'TX9', currency: 'CNY', amount: 2500, surcharge_amount: 0, fee_amount: 15, refunded_amount: 500, status: 'succeeded', method: null, paid_at: '2026-09-23T10:06:00Z' },
-        { id: 'p2', payment_intent_id: null, provider_code: 'offline', provider_name: '线下收款', provider_payment_id: 'offline:ICBC-1', currency: 'CNY', amount: 100, surcharge_amount: 0, fee_amount: 0, refunded_amount: 0, status: 'succeeded', method: null, paid_at: '2026-09-23T11:00:00Z' },
+        { id: 'p1', payment_intent_id: 'i2', provider_code: 'epay', provider_name: '聚合收银台', provider_payment_id: 'TX9', currency: 'CNY', amount: 2500, surcharge_amount: 0, fee_amount: 15, status: 'succeeded', method: null, paid_at: '2026-09-23T10:06:00Z' },
+        { id: 'p2', payment_intent_id: null, provider_code: 'offline', provider_name: '线下收款', provider_payment_id: 'offline:ICBC-1', currency: 'CNY', amount: 100, surcharge_amount: 0, fee_amount: 0, status: 'succeeded', method: null, paid_at: '2026-09-23T11:00:00Z' },
       ],
-      refunds: [{ id: 'r1', payment_id: 'p1', provider_refund_id: null, currency: 'CNY', amount: 500, reason: '补差', status: 'processing', entitlement_revoked: false, commission_reversed: false, failure_message: null, succeeded_at: null, created_at: '2026-09-23T12:00:00Z' }],
     }
     expect(paymentLines(h).map((l) => [l.channel, l.ref, l.amount, l.label])).toEqual([
-      ['聚合收银台', '用户取消', 2500, '已关闭'],
+      ['聚合收银台', '—', 2500, '已关闭'],
       ['聚合收银台', 'TX9', 2500, '成功'],
       ['线下收款', 'offline:ICBC-1', 100, '人工确认'],
-      ['退款', '补差', -500, '退款处理中'],
     ])
-    expect(paymentLines({ payment_intents: [], payments: [], refunds: [] })).toEqual([])
+    expect(paymentLines({ payment_intents: [], payments: [] })).toEqual([])
   })
 })
 

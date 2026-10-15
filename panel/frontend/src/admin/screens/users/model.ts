@@ -54,15 +54,13 @@ export const SUB_STATUS_VIEW: Record<SubStatus, { label: string; tone: Tone }> =
   expired: { label: '已过期', tone: 'danger' },
 }
 
-/** 库里 5 个状态 + 2 个退款状态 → 设计 3 个 + 已过期 + 退款 */
+/** 库里 5 个状态 → 设计 3 个 + 已过期 */
 export const ORDER_STATUS_VIEW: Record<OrderStatus, { label: string; tone: Tone }> = {
   pending_payment: { label: '待支付', tone: 'warn' },
   paid: { label: '已支付', tone: 'ok' },
   fulfilled: { label: '已支付', tone: 'ok' },
   cancelled: { label: '已取消', tone: 'neutral' },
   expired: { label: '已过期', tone: 'neutral' },
-  refunded: { label: '已退款', tone: 'info' },
-  partially_refunded: { label: '部分退款', tone: 'info' },
 }
 
 export const RISK_VIEW: Record<RiskLevel, { label: string; tone: Tone }> = {

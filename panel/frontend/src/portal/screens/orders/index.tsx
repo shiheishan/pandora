@@ -147,8 +147,8 @@ function RefreshNote({ outcome: o }: { outcome: QueryOutcome | undefined }) {
 // ---------------------------------------------------------------------------
 // 已结束的订单：筛选 + 按月分组 + 显示更早
 // ---------------------------------------------------------------------------
-const FILTER_LABELS: Record<OrderFilter, string> = { all: '全部', paid: '已支付', cancelled: '已取消', refunded: '已退款' }
-const FILTER_EMPTY: Record<OrderFilter, string> = { all: '没有已结束的订单', paid: '没有已支付的订单', cancelled: '没有已取消的订单', refunded: '没有已退款的订单' }
+const FILTER_LABELS: Record<OrderFilter, string> = { all: '全部', paid: '已支付', cancelled: '已取消' }
+const FILTER_EMPTY: Record<OrderFilter, string> = { all: '没有已结束的订单', paid: '没有已支付的订单', cancelled: '没有已取消的订单' }
 
 function OrderList({ filter, onFilter, selected }: { filter: OrderFilter; onFilter: (f: OrderFilter) => void; selected: string | undefined }) {
   const pages = useOrderPages(filter)
@@ -157,8 +157,8 @@ function OrderList({ filter, onFilter, selected }: { filter: OrderFilter; onFilt
   const total = pages.data?.pages[0]?.total ?? 0
   const selectedLoaded = selected !== undefined && rows.some((r) => r.id === selected)
 
-  const count = (f: OrderFilter) => (!counts ? null : f === 'all' ? counts.paid + counts.closed + counts.refunded : f === 'paid' ? counts.paid : f === 'cancelled' ? counts.closed : counts.refunded)
-  const filters = (Object.keys(FILTER_LABELS) as OrderFilter[]).filter((f) => f !== 'refunded' || (counts?.refunded ?? 0) > 0 || filter === 'refunded')
+  const count = (f: OrderFilter) => (!counts ? null : f === 'all' ? counts.paid + counts.closed : f === 'paid' ? counts.paid : counts.closed)
+  const filters = Object.keys(FILTER_LABELS) as OrderFilter[]
   const neverOrdered = filter === 'all' && pages.isSuccess && total === 0 && (!counts || counts.open === 0)
 
   return (
