@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/aegispanel/aegis/internal/module/promo/model"
 )
@@ -14,6 +15,21 @@ import (
 func (r *Repo) MemberDiscountByUser(ctx context.Context, userID uuid.UUID) (model.MemberDiscount, bool, error) {
 	var m model.MemberDiscount
 	err := r.d.Conn(ctx).Where("user_id = ?", userID).Take(&m).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return model.MemberDiscount{}, false, nil
+		}
+		return model.MemberDiscount{}, false, mapErr(err)
+	}
+	return m, true, nil
+}
+
+// LockMemberDiscountByUser 读单个用户的会员折扣行并加行锁（SELECT … FOR UPDATE），必须在事务里调用；没有行 ok 为 false。
+func (r *Repo) LockMemberDiscountByUser(ctx context.Context, userID uuid.UUID) (model.MemberDiscount, bool, error) {
+	var m model.MemberDiscount
+	err := r.d.Conn(ctx).Where("user_id = ?", userID).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Take(&m).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return model.MemberDiscount{}, false, nil

@@ -158,10 +158,8 @@ type Preview struct {
 type CatalogReader interface {
 	// MissingPlans 返回 ids 里不存在的套餐 ID（已下架、已归档的也算存在）；全部存在时返回空切片。
 	MissingPlans(ctx context.Context, ids []uuid.UUID) ([]uuid.UUID, error)
-	// PriceSubtotal 取在售价格的币种与金额；价格必须属于 planID 这个套餐，不在售或对不上回 errs.NotFound。
-	PriceSubtotal(ctx context.Context, planID, priceID uuid.UUID) (currency string, amount decimal.Decimal, err error)
-	// PriceInterval 取在售价格的计费周期（billing_interval）；与 PriceSubtotal 同样的可见性规则，买不到回 errs.NotFound。
-	PriceInterval(ctx context.Context, planID, priceID uuid.UUID) (string, error)
+	// PriceSubtotal 取在售价格的币种、金额与计费周期（billing_interval），一次 catalog 查询；价格必须属于 planID 这个套餐，不在售或对不上回 errs.NotFound。
+	PriceSubtotal(ctx context.Context, planID, priceID uuid.UUID) (currency string, amount decimal.Decimal, interval string, err error)
 	// PackSubtotal 取在售流量包的币种与金额；不在售回 errs.NotFound。
 	PackSubtotal(ctx context.Context, packID uuid.UUID) (currency string, amount decimal.Decimal, err error)
 }

@@ -88,7 +88,8 @@ func (s *Service) SetMemberDiscount(ctx context.Context, userID uuid.UUID, perce
 
 	var out MemberDiscountView
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
-		old, ok, err := s.repo.MemberDiscountByUser(ctx, userID)
+		// 锁住旧行再写，审计里的 before 才准；还没有行时锁不到东西，两个并发首次设置靠 upsert 的 ON CONFLICT 收敛，此时 before 都记 nil（金额不受影响）。
+		old, ok, err := s.repo.LockMemberDiscountByUser(ctx, userID)
 		if err != nil {
 			return err
 		}
@@ -136,7 +137,7 @@ func (s *Service) SetMemberDiscount(ctx context.Context, userID uuid.UUID, perce
 // ClearMemberDiscount 清除单个用户的会员折扣；本来就没有时什么都不写、照样回 nil（幂等）。
 func (s *Service) ClearMemberDiscount(ctx context.Context, userID uuid.UUID) error {
 	return s.tx.Do(ctx, func(ctx context.Context) error {
-		old, ok, err := s.repo.MemberDiscountByUser(ctx, userID)
+		old, ok, err := s.repo.LockMemberDiscountByUser(ctx, userID)
 		if err != nil {
 			return err
 		}

@@ -232,25 +232,22 @@ func (s *Service) Preview(ctx context.Context, userID uuid.UUID, code string, it
 
 	if item.PackID != nil {
 		cur, amt, err = cat.PackSubtotal(ctx, *item.PackID)
+		if err != nil {
+			return Preview{}, err
+		}
 		planID = nil
 		interval = nil
 	} else {
 		if item.PlanID == nil || item.PriceID == nil {
 			return Preview{}, errs.New(errs.NotFound)
 		}
-		cur, amt, err = cat.PriceSubtotal(ctx, *item.PlanID, *item.PriceID)
-		if err != nil {
-			return Preview{}, err
-		}
-		iv, err := cat.PriceInterval(ctx, *item.PlanID, *item.PriceID)
+		var iv string
+		cur, amt, iv, err = cat.PriceSubtotal(ctx, *item.PlanID, *item.PriceID)
 		if err != nil {
 			return Preview{}, err
 		}
 		planID = item.PlanID
 		interval = &iv
-	}
-	if err != nil {
-		return Preview{}, err
 	}
 
 	applied, err := s.Evaluate(ctx, code, Target{

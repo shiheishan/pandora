@@ -86,7 +86,7 @@ func (a oePromoCatalog) MissingPlans(ctx context.Context, ids []uuid.UUID) ([]uu
 	return missing, nil
 }
 
-func (a oePromoCatalog) PriceSubtotal(ctx context.Context, planID, priceID uuid.UUID) (string, decimal.Decimal, error) {
+func (a oePromoCatalog) PriceSubtotal(ctx context.Context, planID, priceID uuid.UUID) (string, decimal.Decimal, string, error) {
 	req := catalogsvc.OfferRequest{Use: catalogsvc.UseNew, PlanID: &planID}
 	if p, ok := authn.From(ctx); ok {
 		uid := p.UserID
@@ -94,22 +94,9 @@ func (a oePromoCatalog) PriceSubtotal(ctx context.Context, planID, priceID uuid.
 	}
 	o, err := a.c.Offer(ctx, priceID, req)
 	if err != nil {
-		return "", decimal.Zero, err
+		return "", decimal.Zero, "", err
 	}
-	return string(o.Price.Currency), o.Price.UnitAmount, nil
-}
-
-func (a oePromoCatalog) PriceInterval(ctx context.Context, planID, priceID uuid.UUID) (string, error) {
-	req := catalogsvc.OfferRequest{Use: catalogsvc.UseNew, PlanID: &planID}
-	if p, ok := authn.From(ctx); ok {
-		uid := p.UserID
-		req.UserID = &uid
-	}
-	o, err := a.c.Offer(ctx, priceID, req)
-	if err != nil {
-		return "", err
-	}
-	return o.Price.BillingInterval, nil
+	return string(o.Price.Currency), o.Price.UnitAmount, o.Price.BillingInterval, nil
 }
 
 func (a oePromoCatalog) PackSubtotal(ctx context.Context, packID uuid.UUID) (string, decimal.Decimal, error) {
