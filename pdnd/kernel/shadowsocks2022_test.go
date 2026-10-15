@@ -530,3 +530,64 @@ func TestSS2022UpsertKeepsOtherUsers(t *testing.T) {
 		t.Fatalf("upsert 后 user2 应仍能回显: got=%q err=%v", got2, err)
 	}
 }
+
+// ss2022RecordFirstFlight 用 sing 客户端对一个只收不回的本地监听写首包，返回客户端写出的全部字节
+// （服务端从没见过这个 salt，回放时不会撞 salt 防重放表）。
+func ss2022RecordFirstFlight(t *testing.T, method string, psks [][]byte, dest M.Socksaddr) []byte {
+	t.Helper()
+	sink, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sink.Close() })
+	go func() {
+		for {
+			c, acceptErr := sink.Accept()
+			if acceptErr != nil {
+				return
+			}
+			go func() { _, _ = io.Copy(io.Discard, c); _ = c.Close() }()
+		}
+	}()
+	return ss2022RecordClientFirstWrite(t, method, psks, sink.Addr().String(), dest, nil)
+}
+
+// 别的节点的 iPSK 配上正确的 uPSK（中转线路误用自己的 iPSK、换主密钥后客户端还拿着旧订阅）：身份头解不出用户，排空不回显。
+func TestSS2022TCPOtherNodeIPSKDrainsUntilPeerClose(t *testing.T) {
+	method := "2022-blake3-aes-128-gcm"
+	const uuid = "4ddddddd-dddd-4ddd-8ddd-dddddddddd0d"
+	a := startSS2022Adapter(t, method, &vlessTestPlane{}, func(ad *ss2022Adapter) {
+		ad.headerTimeout = drainTestHeaderTimeout
+	}, core.User{ID: 1, UUID: uuid})
+	addr := net.JoinHostPort("127.0.0.1", fmt.Sprint(a.spec.Config.Port))
+	otherIPSK := bytes.Repeat([]byte{0x5a}, 16)
+	if bytes.Equal(otherIPSK, a.ipsk) {
+		t.Fatal("夹具错误：别的节点的 iPSK 与本节点相同")
+	}
+	psks := [][]byte{otherIPSK, ss2022UserPSK(uuid, 16)}
+	payload := ss2022RecordFirstFlight(t, method, psks, M.ParseSocksaddrHostPort("127.0.0.1", 443))
+	probeUntilPeerClose(t, addr, payload, 3*drainTestHeaderTimeout)
+}
+
+// 篡改身份头（EIH）一个字节：查不到用户，排空不回显；同一份首包不改再发能连上（对照），也说明认证失败时没记 salt。
+func TestSS2022TCPTamperedEIHDrainsUntilPeerClose(t *testing.T) {
+	method := "2022-blake3-aes-128-gcm"
+	const uuid = "5eeeeeee-eeee-4eee-8eee-eeeeeeeeee0e"
+	echoTarget := M.SocksaddrFromNet(startMultiEcho(t)).Unwrap()
+	a := startSS2022Adapter(t, method, &vlessTestPlane{target: echoTarget}, func(ad *ss2022Adapter) {
+		ad.headerTimeout = drainTestHeaderTimeout
+	}, core.User{ID: 1, UUID: uuid})
+	addr := net.JoinHostPort("127.0.0.1", fmt.Sprint(a.spec.Config.Port))
+	payload := ss2022RecordFirstFlight(t, method, ss2022TestClientPSKs(a, uuid), echoTarget)
+	tampered := append([]byte(nil), payload...)
+	tampered[16] ^= 0x01 // salt 16 字节之后就是身份头
+	probeUntilPeerClose(t, addr, tampered, 3*drainTestHeaderTimeout)
+
+	conn := dialDrainProbe(t, addr, payload)
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	var one [1]byte
+	if n, err := conn.Read(one[:]); n != 1 || err != nil {
+		t.Fatalf("未篡改的首包应被接受并收到回包：n=%d err=%v", n, err)
+	}
+}

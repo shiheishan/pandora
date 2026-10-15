@@ -583,3 +583,59 @@ func TestSS2022IdleUDPSessionHeap(t *testing.T) {
 		t.Fatalf("每个空闲会话常驻 %d 字节，超过 16KB 上限", perSession)
 	}
 }
+
+// 别的节点的 iPSK 配上正确的 uPSK：认不出用户，快路径丢包，不回包、不建会话。
+func TestSS2022UDPOtherNodeIPSKDropped(t *testing.T) {
+	method := "2022-blake3-aes-128-gcm"
+	user := core.User{ID: 8929, UUID: "ss2022-udp-other-node"}
+	a := startSS2022Adapter(t, method, &udpRelayTestPlane{}, nil, user)
+	echo := hy2EchoUDP(t)
+	otherIPSK := make([]byte, 16)
+	for i := range otherIPSK {
+		otherIPSK[i] = 0x5a
+	}
+	pc := ss2022UDPTestClient(t, a, method, [][]byte{otherIPSK, ss2022UserPSK(user.UUID, a.method.keyLen)}, nil)
+	if err := ss2022UDPRoundTrip(pc, echo, "other-node", time.Second); err == nil {
+		t.Fatal("别的节点的 iPSK 应收不到回包")
+	}
+	if cnt := ss2022UDPSessionCount(a); cnt != 0 {
+		t.Fatalf("会话数=%d，期望 0", cnt)
+	}
+}
+
+// 篡改身份头（EIH）一个字节：丢包、不转发、不建会话；同一个包不改再发被转发（对照）。
+func TestSS2022UDPTamperedEIHDropped(t *testing.T) {
+	method := "2022-blake3-aes-128-gcm"
+	user := core.User{ID: 8930, UUID: "ss2022-udp-tampered-eih"}
+	a := startSS2022Adapter(t, method, &udpRelayTestPlane{}, nil, user)
+	u := ss2022BenchUser(t, a, user.UUID)
+	sink, recvCount := startSSCountingSink(t)
+	pkt := ss2022TestClientPacket(a.ipsk, u.MasterKey, 0x0102030405060708, 1, time.Now(), sink.AddrPort(), []byte("eih-probe"))
+	tampered := append([]byte(nil), pkt...)
+	tampered[16] ^= 0x01 // 分离头 16 字节之后就是身份头
+	raw, err := net.DialUDP("udp4", nil, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: a.spec.Config.Port})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	for i := 0; i < 3; i++ {
+		if _, err := raw.Write(tampered); err != nil {
+			t.Fatal(err)
+		}
+	}
+	time.Sleep(300 * time.Millisecond)
+	if n := recvCount(); n != 0 {
+		t.Fatalf("篡改身份头的包被转发了 %d 个", n)
+	}
+	if cnt := ss2022UDPSessionCount(a); cnt != 0 {
+		t.Fatalf("会话数=%d，期望 0", cnt)
+	}
+	if _, err := raw.Write(pkt); err != nil {
+		t.Fatal(err)
+	}
+	if ok, why := waitFor(2*time.Second, func() (bool, string) {
+		return recvCount() == 1, fmt.Sprintf("recv=%d", recvCount())
+	}); !ok {
+		t.Fatalf("未篡改的包应被转发：%s", why)
+	}
+}
