@@ -4,7 +4,7 @@
 --   1. catalog：套餐的「流量重置价格」plan_reset_prices（#32）。每个套餐每个币种至多一档；没有行 = 不卖重置。
 --      订单行快照了金额，所以价格直接可改，不随版本冻结。
 --   2. order：新订单种类 traffic_reset（用户自己买「把当期已用流量清零」）。必须指向一份订阅；订单行是第三种形状
---      （有套餐与版本、没有价格档与周期）；同一订阅同时只许一张未完结的重置单。
+--      （有套餐与版本、没有价格档与周期）；同一订阅同时只许一张未完结的重置单；永远按原价收（没有减免、不挂券）。
 --   3. subscription：流量重置日志的原因加 order（用户购买，结算履约时写）。
 --   4. promo：单个用户的会员折扣 member_discounts（#33，与 Xboard v2_user.discount 同语义：减免百分比 1–100）。
 --   5. order：会员折扣那部分单独记一列 member_discount_amount。discount_amount 仍是订单上的全部减免
@@ -45,6 +45,10 @@ ALTER TABLE orders ADD CONSTRAINT orders_target_subscription
 -- 同一订阅同时只许一张未完结的重置单：两张都付了就白清两次。与续费、换套餐的那条索引分开，不互相挡
 CREATE UNIQUE INDEX orders_one_open_traffic_reset ON orders (subscription_id)
   WHERE kind = 'traffic_reset' AND status IN ('pending_payment', 'paid');
+
+-- 重置单永远按原价收：不吃券、不吃会员折扣（用户 10-14 定），所以没有减免、也不挂券
+ALTER TABLE orders ADD CONSTRAINT orders_traffic_reset_no_discount
+  CHECK (kind <> 'traffic_reset' OR (discount_amount = 0 AND coupon_id IS NULL));
 
 -- 5. 会员折扣那部分：discount_amount 里属于会员折扣的钱（券的部分 = discount_amount − 它）
 ALTER TABLE orders
@@ -100,6 +104,8 @@ SET LOCAL statement_timeout = '5min';
 
 -- 重置单、重置订单行、按购买写的重置日志、记了会员折扣的订单在旧结构里放不下；订单与日志不许删，
 -- 有就拒绝回退（要退先人工处理这些行）。测试库只会在跑过本块用例后才有这类行。
+-- 券的周期限定与会员折扣也拒绝回退：删掉 coupon_intervals 会让限定了周期的券悄悄对所有周期可用（限制被放宽），
+-- 删掉 member_discounts 会无提示地丢掉后台设的折扣、且无法恢复。要退先由管理员清掉这些设置（停用相关的券、清除会员折扣）。
 -- +goose StatementBegin
 DO $$
 BEGIN
@@ -107,6 +113,9 @@ BEGIN
      OR EXISTS (SELECT 1 FROM order_items WHERE plan_id IS NOT NULL AND price_id IS NULL)
      OR EXISTS (SELECT 1 FROM traffic_reset_logs WHERE reason = 'order') THEN
     RAISE EXCEPTION '库里已有流量重置单、会员折扣订单或按购买写的重置日志，不能退回 00045；订单与日志不可删，先人工处理';
+  END IF;
+  IF EXISTS (SELECT 1 FROM coupon_intervals) OR EXISTS (SELECT 1 FROM member_discounts) THEN
+    RAISE EXCEPTION '库里还有券的周期限定（coupon_intervals）或会员折扣（member_discounts），不能退回 00045：回退会放宽券的周期限制、丢掉会员折扣；先清掉券的周期限定与会员折扣';
   END IF;
 END
 $$;
@@ -127,6 +136,8 @@ ALTER TABLE order_items ADD CONSTRAINT order_items_target CHECK (
   OR (traffic_pack_id IS NOT NULL AND plan_id IS NULL AND price_id IS NULL AND plan_version_id IS NULL
     AND snapshot_plan_version IS NULL AND snapshot_interval IS NULL AND snapshot_interval_count IS NULL
     AND snapshot_traffic_bytes IS NOT NULL));
+
+ALTER TABLE orders DROP CONSTRAINT orders_traffic_reset_no_discount;
 
 ALTER TABLE orders
   DROP CONSTRAINT orders_member_discount_portal_only,

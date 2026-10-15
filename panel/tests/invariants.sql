@@ -1248,6 +1248,34 @@ SELECT _reject('XB-ORDER', '同一订阅第二张未完结的流量重置单必�
           2.00, 0, 0, 0, 2.00, 0, 2.00, now() + interval '30 minutes');
 $sql$, 'orders_one_open_traffic_reset');
 
+-- orders：重置单永远按原价收（用户 10-14 定），没有减免、不挂券。用已过期的单，避开「同一订阅只许一张未完结」的索引
+SELECT _accept('XB-ORDER', '没有减免的已过期流量重置单应当通过', $sql$
+  INSERT INTO orders (order_no, user_id, kind, status, currency, subscription_id,
+                      subtotal_amount, discount_amount, proration_credit_amount, waived_amount,
+                      total_amount, balance_applied, payable_amount, expires_at, expired_at)
+  VALUES ('INV-RESET-005', '00000000-0000-7000-8000-000000000101', 'traffic_reset', 'expired', 'USD',
+          '00000000-0000-7000-8000-000000000701',
+          2.00, 0, 0, 0, 2.00, 0, 2.00, now() - interval '1 minute', now());
+$sql$);
+
+SELECT _reject('XB-ORDER', '带减免的流量重置单必须拒绝', $sql$
+  INSERT INTO orders (order_no, user_id, kind, status, currency, subscription_id,
+                      subtotal_amount, discount_amount, proration_credit_amount, waived_amount,
+                      total_amount, balance_applied, payable_amount, expires_at, expired_at)
+  VALUES ('INV-RESET-006', '00000000-0000-7000-8000-000000000101', 'traffic_reset', 'expired', 'USD',
+          '00000000-0000-7000-8000-000000000701',
+          2.00, 0.50, 0, 0, 1.50, 0, 1.50, now() - interval '1 minute', now());
+$sql$, 'orders_traffic_reset_no_discount');
+
+SELECT _reject('XB-ORDER', '挂了券的流量重置单必须拒绝', $sql$
+  INSERT INTO orders (order_no, user_id, kind, status, currency, subscription_id, coupon_id,
+                      subtotal_amount, discount_amount, proration_credit_amount, waived_amount,
+                      total_amount, balance_applied, payable_amount, expires_at, expired_at)
+  VALUES ('INV-RESET-007', '00000000-0000-7000-8000-000000000101', 'traffic_reset', 'expired', 'USD',
+          '00000000-0000-7000-8000-000000000701', '00000000-0000-7000-8000-000000000c31',
+          2.00, 0, 0, 0, 2.00, 0, 2.00, now() - interval '1 minute', now());
+$sql$, 'orders_traffic_reset_no_discount');
+
 SELECT _reject('XB-ORDER', '未知的订单种类必须拒绝', $sql$
   INSERT INTO orders (order_no, user_id, kind, currency, subscription_id,
                       subtotal_amount, discount_amount, proration_credit_amount, waived_amount,

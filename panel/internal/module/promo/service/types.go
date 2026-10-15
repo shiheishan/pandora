@@ -184,6 +184,9 @@ var (
 	ErrCouponMinAmount    = errs.Newf(errs.ValidationFailed, "订单金额未达到优惠码的使用门槛")
 	ErrCouponNotForPlan   = errs.Newf(errs.ValidationFailed, "这个优惠码不适用于所选套餐")
 	ErrCouponNotForPeriod = errs.Newf(errs.ValidationFailed, "这个优惠码不适用于所选时长")
+	// ErrCouponNotForReset 是流量重置单带了券码：重置单永远按原价收，不吃券也不吃会员折扣（用户 10-14 定）。
+	// promo 自己不判断，由 order 在报价与建单时对重置单直接回它；列在 rejections 里，报价落到 coupon_error。
+	ErrCouponNotForReset = errs.Newf(errs.ValidationFailed, "流量重置不能使用优惠码")
 	// 不说破「你不在某个组里」，只让他知道这码他用不了。
 	ErrCouponNotForUser = errs.Newf(errs.ValidationFailed, "这个优惠码不可用")
 )
@@ -201,6 +204,7 @@ var (
 var rejections = []error{
 	ErrCouponNotFound, ErrCouponExpired, ErrCouponUsedUp, ErrCouponUserLimit,
 	ErrCouponMinAmount, ErrCouponNotForPlan, ErrCouponNotForPeriod, ErrCouponNotForUser,
+	ErrCouponNotForReset,
 }
 
 // IsRejection 报告 err 是否是「这个码对这一单不能用」（用户输入问题，不是系统故障）。
