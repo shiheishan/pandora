@@ -27,7 +27,9 @@ BACKUP_DIR=/var/backups/pandora
 ENV_EXAMPLE=/opt/pandora/docker/env.example
 
 require_pw() {
-  local name="$1" val="${!name-}"
+  # 分两行：同一条 local 里右边的 ${!name} 展开时 name 还没赋值
+  local name="$1"
+  local val="${!name-}"
   [[ "$val" =~ ^[A-Za-z0-9_-]{32,}$ ]] || die "${name} 不合规：须至少 32 个 URL 安全字符（字母、数字、_、-）"
 }
 
