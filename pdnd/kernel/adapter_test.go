@@ -93,9 +93,9 @@ func TestNativeProtocolUserBatchesAreAtomic(t *testing.T) {
 		t.Fatalf("shadowsocks partially published invalid batch: err=%v users=%v", err, ss.users)
 	}
 
-	ss2022 := &ss2022Adapter{hasUser: true, user: core.User{ID: 7, UUID: valid}}
-	if err := ss2022.AddUsers([]core.User{{ID: 1, UUID: valid}, {ID: 2, UUID: valid}}); err == nil || !ss2022.hasUser || ss2022.user.ID != 7 {
-		t.Fatalf("shadowsocks 2022 partially published invalid batch: err=%v user=%+v has=%v", err, ss2022.user, ss2022.hasUser)
+	ss2022 := &ss2022Adapter{method: ss2022Spec{name: "2022-blake3-aes-128-gcm", keyLen: 16}, users: make(map[[16]byte]*ssUser)}
+	if err := ss2022.AddUsers([]core.User{{ID: 1, UUID: valid}, {ID: 2}}); err == nil || len(ss2022.users) != 0 {
+		t.Fatalf("shadowsocks 2022 partially published invalid batch: err=%v users=%d", err, len(ss2022.users))
 	}
 
 	tuic := &tuicAdapter{users: make(map[string]int)}

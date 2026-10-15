@@ -64,7 +64,7 @@ func (p *ssGatedPlane) releaseGated() {
 }
 
 // startSSCountingSink 起一个只收不回的 UDP 接收端，返回地址与「已收到包数」读取函数。
-func startSSCountingSink(t *testing.T) (*net.UDPAddr, func() int) {
+func startSSCountingSink(t testing.TB) (*net.UDPAddr, func() int) {
 	t.Helper()
 	pc, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
