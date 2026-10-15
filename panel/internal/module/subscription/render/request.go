@@ -310,24 +310,25 @@ func lineSafeName(name string) string {
 	return s
 }
 
-// splitInfo 把信息节点与真实节点分开（各自保持顺序）。
+// splitInfo 把信息节点与真实节点分开（各自保持顺序）。prepare 把信息节点放在最前，
+// 所以只切 rc.nodes、不复制；info 截断了容量，往里 append 不会覆盖真实节点。
 func (rc renderCtx) splitInfo() (info, real []Node) {
-	for _, n := range rc.nodes {
-		if n.info {
-			info = append(info, n)
-		} else {
-			real = append(real, n)
-		}
+	i := 0
+	for i < len(rc.nodes) && rc.nodes[i].info {
+		i++
 	}
-	return info, real
+	return rc.nodes[:i:i], rc.nodes[i:]
 }
 
 // fillTemplate 把模板里的占位换成 vals 里的值（原样替换，占位整行出现与行内出现一视同仁）。
-// 键按长度从长到短排序，保证结果确定。
-func fillTemplate(tmpl string, vals map[string]string) string {
+// 从左往右扫，同一位置有多个占位能匹配时取最长的（等长按字典序），保证结果确定。
+// 不用 strings.NewReplacer：每次拉取都要现建一个替换器，再经它的缓冲多拷一遍整份订阅。
+func fillTemplate(tmpl string, vals map[string]string) []byte {
 	keys := make([]string, 0, len(vals))
-	for k := range vals {
+	size := len(tmpl)
+	for k, v := range vals {
 		keys = append(keys, k)
+		size += len(v)
 	}
 	sort.Slice(keys, func(i, j int) bool {
 		if len(keys[i]) != len(keys[j]) {
@@ -335,11 +336,37 @@ func fillTemplate(tmpl string, vals map[string]string) string {
 		}
 		return keys[i] < keys[j]
 	})
-	pairs := make([]string, 0, 2*len(keys))
+	var firsts strings.Builder
 	for _, k := range keys {
-		pairs = append(pairs, k, vals[k])
+		if k != "" && !strings.Contains(firsts.String(), k[:1]) {
+			firsts.WriteString(k[:1])
+		}
 	}
-	return strings.NewReplacer(pairs...).Replace(tmpl)
+	out := make([]byte, 0, size)
+	for i := 0; i < len(tmpl); {
+		// 先整段跳到下一个可能是占位开头的字节
+		j := strings.IndexAny(tmpl[i:], firsts.String())
+		if j < 0 {
+			out = append(out, tmpl[i:]...)
+			break
+		}
+		out = append(out, tmpl[i:i+j]...)
+		i += j
+		matched := false
+		for _, k := range keys {
+			if k != "" && strings.HasPrefix(tmpl[i:], k) {
+				out = append(out, vals[k]...)
+				i += len(k)
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			out = append(out, tmpl[i])
+			i++
+		}
+	}
+	return out
 }
 
 // dropLinesWith 去掉模板里含 token 的整行。
