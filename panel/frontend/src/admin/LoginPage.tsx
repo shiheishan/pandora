@@ -5,6 +5,7 @@ import { Logo } from '../shell/Logo'
 import { useRuntime } from '../shell/runtime'
 import { Button, Input } from '../ui'
 import css from './LoginPage.module.css'
+import { documentSiteName } from './site'
 
 const loginSchema = z.object({
   access_token: z.string().min(1),
@@ -14,6 +15,7 @@ const loginSchema = z.object({
 })
 
 export function LoginPage() {
+  const site = documentSiteName()
   const { api, tokens } = useRuntime()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -21,8 +23,8 @@ export function LoginPage() {
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    document.title = '登录 · Pandora 控制台'
-  }, [])
+    document.title = `登录 · ${site} 控制台`
+  }, [site])
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
@@ -53,7 +55,7 @@ export function LoginPage() {
           </div>
           <div className={css.release}>管理控制台 · {__APP_RELEASE__}</div>
         </div>
-        <div className={css.footnote}>Pandora 管理后台 · 敏感操作需二次认证</div>
+        <div className={css.footnote}>{site} 管理后台 · 敏感操作需二次认证</div>
       </aside>
       <main className={css.formSide}>
         <form className={css.form} onSubmit={submit} noValidate>
