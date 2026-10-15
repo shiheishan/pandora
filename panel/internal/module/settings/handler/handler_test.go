@@ -51,6 +51,7 @@ func (f *fakeSettings) SetSite(ctx context.Context, u service.SiteUpdate) error 
 		v.Currency = *u.Currency
 	}
 	f.setSiteVal = v
+	f.site = v
 	return nil
 }
 
@@ -211,8 +212,8 @@ func TestGetSiteRequiresAuth(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &sr); err != nil {
 		t.Fatal(err)
 	}
-	if sr.Timezone != "Asia/Shanghai" {
-		t.Fatalf("timezone %q", sr.Timezone)
+	if sr.Timezone != "Asia/Shanghai" || sr.Name != "N" {
+		t.Fatalf("site %+v", sr)
 	}
 }
 
@@ -241,6 +242,22 @@ func TestSetSite(t *testing.T) {
 	}
 	if fake.setSiteVal.Name != "Keep" || fake.setSiteVal.Currency != "USD" || fake.setSiteVal.Timezone != "Asia/Tokyo" {
 		t.Fatalf("setSite %+v", fake.setSiteVal)
+	}
+	var sr siteResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &sr); err != nil || sr != (siteResponse{Name: "Keep", Timezone: "Asia/Tokyo"}) {
+		t.Fatalf("set site response %s", rec.Body.String())
+	}
+
+	// 只改站点名：时区保持
+	rec = do(e, http.MethodPost, "/v1/settings/site", `{"name":"夜海加速"}`, hdrs)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	if fake.setSiteVal.Name != "夜海加速" || fake.setSiteVal.Timezone != "Asia/Tokyo" {
+		t.Fatalf("setSite name only %+v", fake.setSiteVal)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &sr); err != nil || sr != (siteResponse{Name: "夜海加速", Timezone: "Asia/Tokyo"}) {
+		t.Fatalf("set name response %s", rec.Body.String())
 	}
 
 	rec = do(e, http.MethodPost, "/v1/settings/site", `{"timezone":"x","extra":1}`, hdrs)

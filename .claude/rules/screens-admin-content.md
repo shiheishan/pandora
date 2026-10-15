@@ -9,7 +9,8 @@ paths:
 - 公告「已撤回」是终态、只读，只给「复制为新公告」；已发布的公告不能退回草稿、发布时间不能改（后端 409），按钮取舍集中在 `logic.ts`。
 - 知识库发布只归档「同一受众组合」的旧发布版；受众字段默认沿用上一版，改了受众要提示旧版不会被自动归档（`logic.ts` 的 `audienceChanged`）。
 - 主题的 `custom_css` 继续停用：schema 收下但界面不出现、请求不带。
-- 站点名只有一个来源——生效主题的站点名（门户标题、邮件 `{{site}}`、发件人名都取它），激活确认框要写明会随之改变。
+- 站点名只有一个来源——系统设置 `site.name`（门户标题、浏览器标签、邮件 `{{site}}` 与发件人名、订阅配置名都取它），在本页「站点设置」卡（`ThemeTab.tsx` 的 `SiteCard`，与站点时区一起，`v1/settings/site`）里改。主题编辑器没有站点名输入，只提示并给「去改站点名」跳到那张卡；激活确认框写明站点名不随主题变化。
+- 站点设置的形状与查询只在 `src/admin/site.ts` 定义一次（`siteSettingsSchema`、`useSiteSettings`，缓存键 `['admin','content','site']`），本目录的 `schemas.ts` / `queries.ts` 只再导出；后台外框的标题与侧栏读同一份缓存，这里保存后 `invalidate('site')` 外框跟着变。
 - 编辑抽屉的实时预览只用 43 个颜色令牌本身（`theme.ts` 的 `previewVars` 挂在预览容器 style 上）；预览子树的样式不要用 `styles/roles.css` 的派生变量，它们在 `:root` 已算好，预览容器改不动。
 - Logo 只能上传成 data URL（门户 CSP 只允许 `'self'` 与 `data:` 图片），上传前查类型与 48KB。
 - 主题保存 422 的 `fields` 键（`code`、`name`、`branding.<键>`、`tokens.<组>.<变量名>`）与 `theme.ts` 的前端校验同名，改一边要改另一边。

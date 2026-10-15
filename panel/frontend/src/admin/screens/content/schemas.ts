@@ -128,9 +128,10 @@ export const slotsResponse = z.object({ slots: z.array(slotSchema) })
 export const slotSaved = z.object({ saved: z.literal(true), dropped: z.array(z.string()).nullable() })
 
 // ---------------------------------------------------------------------------
-// 站点时区（R49）
+// 站点设置：形状只在 admin/site.ts 定义一次，外框与本页共用
 // ---------------------------------------------------------------------------
-export const siteSettingsSchema = z.object({ timezone: z.string() })
+// 站点设置（GET/POST v1/settings/site）；放在这里而不是 admin/site.ts，测试与冒烟（node 侧 tsconfig）引它时不带进 tsx 运行时
+export const siteSettingsSchema = z.object({ name: z.string(), timezone: z.string() })
 
 // ---------------------------------------------------------------------------
 // 套餐目录子集（GET v1/plans）：知识库「限定套餐」只要名字与状态

@@ -1,6 +1,6 @@
 package service
 
-// 门户标题、Logo 与标语取自生效主题的 branding；保存时站点名必填（门户标题要用）。
+// 主题 branding 只管门户的标语与 Logo；站点名只认系统设置 site.name（门户标题、入口页 <title>、邮件都取它），主题里不再有站点名。
 //
 // Logo 只收 data:image/… 的 base64：门户的 CSP 是 img-src 'self' data:，
 // 外链图片根本加载不出来；SVG 经 <img> 渲染时其中的脚本不会执行。
@@ -16,11 +16,10 @@ import (
 )
 
 // BrandingKeys 是 branding 允许的全部键。
-var BrandingKeys = []string{"site_name", "tagline", "logo"}
+var BrandingKeys = []string{"tagline", "logo"}
 
 const (
-	MaxSiteNameRunes = 40
-	MaxTaglineRunes  = 80
+	MaxTaglineRunes = 80
 	// MaxLogoBytes 是 Logo 解码后的上限：它随每次 GET v1/appearance 下发，不能大。
 	MaxLogoBytes = 48 * 1024
 )
@@ -50,21 +49,13 @@ func normalizeBranding(raw json.RawMessage) (json.RawMessage, error) {
 		return strings.TrimSpace(s)
 	}
 	for k := range in {
-		if !slices.Contains(BrandingKeys, k) {
-			fields["branding"] = "不认识的品牌字段：" + k + "（只允许站点名称、标语与 Logo）"
+		if k == "site_name" {
+			fields["branding.site_name"] = "站点名不在主题里设置：到「内容与外观 → 主题与插槽」的站点设置里改"
+		} else if !slices.Contains(BrandingKeys, k) {
+			fields["branding"] = "不认识的品牌字段：" + k + "（只允许标语与 Logo）"
 		}
 	}
 	out := map[string]string{}
-	switch name := str("site_name"); {
-	case name == "":
-		fields["branding.site_name"] = "站点名称必填：门户标题取自生效主题"
-	case strings.ContainsRune(name, 0):
-		fields["branding.site_name"] = "不能包含空字符"
-	case utf8.RuneCountInString(name) > MaxSiteNameRunes:
-		fields["branding.site_name"] = "站点名称最多 40 个字"
-	default:
-		out["site_name"] = name
-	}
 	if tag := str("tagline"); strings.ContainsRune(tag, 0) {
 		fields["branding.tagline"] = "不能包含空字符"
 	} else if utf8.RuneCountInString(tag) > MaxTaglineRunes {
@@ -109,8 +100,8 @@ func checkLogo(logo string) string {
 	return ""
 }
 
-// filterBranding 是门户读取时的防线：不论库里存了什么（迁移前的主题、
-// 手工改过的行），只放行三个已知键里的非空字符串，Logo 还得是 data:image/。
+// filterBranding 是门户读取时的防线：只放行标语与 Logo 两个已知键里的非空字符串，
+// Logo 还得是 data:image/；库里旧行带的 site_name 也在这里丢掉。
 func filterBranding(raw json.RawMessage) json.RawMessage {
 	var in map[string]any
 	_ = json.Unmarshal(raw, &in)

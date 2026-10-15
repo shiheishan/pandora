@@ -135,12 +135,14 @@ func (s *Service) SaveTheme(ctx context.Context, in SaveThemeInput) ([]string, e
 	if err != nil {
 		return nil, err
 	}
+	// 主题改了 branding，入口页快照立刻失效
+	s.invalidatePageMeta()
 	return notes, nil
 }
 
 // ActivateTheme 切换生效主题。
 func (s *Service) ActivateTheme(ctx context.Context, code string) error {
-	return s.tx.Do(ctx, func(ctx context.Context) error {
+	err := s.tx.Do(ctx, func(ctx context.Context) error {
 		_, ok, err := s.repo.ThemeByCode(ctx, code)
 		if err != nil {
 			return err
@@ -168,6 +170,11 @@ func (s *Service) ActivateTheme(ctx context.Context, code string) error {
 			Data:         map[string]any{"code": code},
 		})
 	})
+	if err == nil {
+		// 生效主题换了，入口页快照立刻失效
+		s.invalidatePageMeta()
+	}
+	return err
 }
 
 // DeleteTheme 删除非内置、未生效的自定义主题。
@@ -209,6 +216,7 @@ func (s *Service) Public(ctx context.Context) (PublicAppearance, error) {
 	for _, sl := range slots {
 		out.Slots[sl.Key] = sl.Content
 	}
+	out.SiteName = s.PageMeta(ctx).SiteName
 	return out, nil
 }
 

@@ -2,13 +2,14 @@
 // 以及门户一次取齐的外观数据。别的模块只调本包。
 //
 // 主题与插槽都会渲染进门户、被所有访客看到，所以写入一律走白名单：令牌只收设计稿的 CSS 变量（tokens.go），
-// 品牌只收站点名、标语与 data: 形式的 Logo（branding.go），插槽 HTML 经 SanitizeHTML 净化后才落库（sanitize.go）。
+// 品牌只收标语与 data: 形式的 Logo（站点名只认系统设置 site.name），插槽 HTML 经 SanitizeHTML 净化后才落库（sanitize.go）。
 // 门户读取时再按同一套白名单过滤一次，库里被手工改过的行也出不去。
 package service
 
 import (
 	"context"
 	"encoding/json"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,7 +30,7 @@ type auditWriter interface {
 	Write(ctx context.Context, e auditsvc.Event) error
 }
 
-// SiteSettings 是 settings service 的只读面：插槽的更新时间按站点时区显示。*settingsvc.Service 直接满足。
+// SiteSettings 是 settings service 的只读面：插槽的更新时间按站点时区显示，站点名也从这里取（PageMeta）。*settingsvc.Service 直接满足。
 type SiteSettings interface {
 	Site(ctx context.Context) (settingsvc.Site, error)
 }
@@ -40,6 +41,12 @@ type Service struct {
 	tx    txRunner
 	audit auditWriter
 	site  SiteSettings
+
+	// meta 是 PageMeta 的进程内缓存；metaGen 是它的失效代号，保存或激活主题后加一。
+	meta    pageMetaCache
+	metaGen atomic.Uint64
+	// now 是测试用的时钟，nil 表示 time.Now。
+	now func() time.Time
 }
 
 // New 构造 appearance service。
@@ -97,6 +104,8 @@ type SaveSlotInput struct {
 
 // PublicAppearance 是门户渲染需要的全部外观数据。
 type PublicAppearance struct {
+	// SiteName 是站点名：取系统设置（经 PageMeta 快照，最多晚 30 秒），永不为空。
+	SiteName string
 	// Theme 是生效主题（已按白名单过滤）；没有生效主题为 nil。
 	Theme *Theme
 	// Slots 是启用且非空的插槽：键 → 净化后的 HTML；永不为 nil。

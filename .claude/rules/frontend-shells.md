@@ -23,6 +23,7 @@ paths:
   - 「欠费单」叫「挂账」（保留规则 6，契约后台-05）
   - 套餐模块多一个设计稿没有的「流量包」标签
 - 改密码成功后，后端已在同一事务里吊销全部会话：前端直接清令牌回登录页，不再发任何请求
+- 浏览器标题（`Shell.tsx`、`LoginPage.tsx`）、登录页页脚与侧栏品牌区随站点名：已登录读 `site.ts` 的 `useAdminSiteName()`（`v1/settings/site`，与内容页共用缓存），登录前读服务端写进入口页的 `<meta name="application-name">`（`documentSiteName()`，开发期没有就是 Pandora）；站点名是 Pandora 时侧栏照旧画 pandora 字标
 - 2 小时无操作自动退出（`idle.ts` 的 `startIdleWatch`，在 `Shell.tsx` 挂上）：后台有定时轮询，服务端按 last_seen 判的空闲在开着的标签页上永远不会触发，所以前端只把点击、按键、滚轮、触摸算作操作，多个标签页经 localStorage 共享最近操作时间
 - 侧栏徽标与仪表盘「需要处理」共用 `tasks.ts` 的同一条查询和同一种缓存形状
 - `Sidebar.module.css` 在侧栏内把 `--surface`、`--text` 等语义令牌重定义成深色，`ui/Menu` 等组件因此能直接用在深底上；侧栏里的组件不要另写一套深色样式
@@ -38,6 +39,7 @@ paths:
   - 生成与识别的格式只写在 `entry-links.ts` 一处
 - 快捷登录只收已登录设备在账号安全页生成的链接或令牌（保留规则 1，与设计稿不同）
 - 外观：生效主题的颜色经 CSSOM 写到 `<html>`，不注入 `<style>`
+- 站点名取 `GET v1/appearance` 的顶层 `site_name`（系统设置 `site.name`），不读主题 branding；标语与 Logo 才取生效主题。服务端下发入口页时已把站点名写进 `<title>`，`useAppearanceTheme` 接口回来后照样同步 `document.title`
   - 键的白名单是 `styles/design-tokens.ts` 的 `COLOR_TOKENS`
   - Logo 只认 `data:image/`，因为 CSP 的 img-src 只放行 `'self' data:`
 - 外框与页面共用同一个查询键的读接口，schema 必须是全字段，各处经 `select` 取自己要的部分
