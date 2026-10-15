@@ -165,7 +165,8 @@ func quoteChangeLines(ctx context.Context, s *Service, userID uuid.UUID, in Quot
 					PeriodEnd:      &end,
 					PreviousEnd:    &prev,
 				}
-				disc, cc, ce, err := quoteCouponEval(ctx, s, userID, in.CouponCode, &planID, p.Currency, p.UnitAmount)
+				iv := p.BillingInterval
+				disc, cc, ce, err := quoteCouponEval(ctx, s, userID, in.CouponCode, &planID, &iv, p.Currency, p.UnitAmount)
 				if err != nil {
 					return nil, err
 				}
@@ -229,6 +230,7 @@ func (s *Service) placeChange(ctx context.Context, d changeDraft) (Created, mode
 		return Created{}, model.Order{}, err
 	}
 	subID := d.Sub.ID
+	interval := offer.Price.BillingInterval
 	auditData := map[string]any{
 		"subscription_id":  subID.String(),
 		"to_plan_id":       planID.String(),
@@ -244,6 +246,7 @@ func (s *Service) placeChange(ctx context.Context, d changeDraft) (Created, mode
 		Currency:        offer.Price.Currency,
 		Subtotal:        offer.Price.UnitAmount,
 		CouponPlanID:    &planID,
+		CouponInterval:  &interval,
 		SubscriptionID:  &subID,
 		Item:            item,
 		Checkout:        d.Checkout,
