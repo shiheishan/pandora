@@ -340,7 +340,7 @@ func TestGenerateCouponsBatchWithPlansPG(t *testing.T) {
 	}
 	tmpl := couponFromSpec("", dupSpec)
 	tmpl.CreatedBy = &admin
-	inserted, err := e.svc.repo.InsertCouponsIfAbsent(ctx, &tmpl, []string{"DUPX0000000", "NEWX0000001"}, nil)
+	inserted, err := e.svc.repo.InsertCouponsIfAbsent(ctx, &tmpl, []string{"DUPX0000000", "NEWX0000001"}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,7 +356,7 @@ func TestInsertCouponsPlanGonePG(t *testing.T) {
 
 	tmpl := couponFromSpec("", fixedSpec("1.00"))
 	tmpl.Name = "套餐已删"
-	_, err := e.svc.repo.InsertCouponsIfAbsent(ctx, &tmpl, []string{"PGONE000001"}, []uuid.UUID{uuid.New()})
+	_, err := e.svc.repo.InsertCouponsIfAbsent(ctx, &tmpl, []string{"PGONE000001"}, []uuid.UUID{uuid.New()}, nil)
 	if !errors.Is(err, repo.ErrPlanGone) {
 		t.Fatalf("期望 ErrPlanGone，得 %v", err)
 	}

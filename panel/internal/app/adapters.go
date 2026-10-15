@@ -388,3 +388,17 @@ var (
 	_ contentsvc.Site                 = (*settingssvc.Service)(nil)
 	_ contentsvc.SubscribeLinks       = contentSubscribeLinks{}
 )
+
+// PriceInterval 按「新购」取在售价格的计费周期（xb-order #34：券限定计费周期的试算用），可见性与 PriceSubtotal 相同；买不到回 NotFound。
+func (a promoCatalog) PriceInterval(ctx context.Context, planID, priceID uuid.UUID) (string, error) {
+	req := catalogsvc.OfferRequest{Use: catalogsvc.UseNew, PlanID: &planID}
+	if p, ok := authn.From(ctx); ok {
+		uid := p.UserID
+		req.UserID = &uid
+	}
+	o, err := a.c.Offer(ctx, priceID, req)
+	if err != nil {
+		return "", asNotFound(err)
+	}
+	return o.Price.BillingInterval, nil
+}
