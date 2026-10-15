@@ -7,7 +7,7 @@
 --   4. notify：三个发到管理员群组的 Telegram 模板种子，与 notify service registry.go 的默认内容逐字一致（PG 测试对照）。
 -- 锁与耗时：tickets 换 CHECK 要扫一遍全表校验（ACCESS EXCLUSIVE），tickets 是小表（工单量级），在事务里直接做；
 -- 部分索引同理普通建。还没有生产部署（用户 10-09 确认），不需要 NOT VALID 两步。
--- 预检：无（新表、只放宽取值）。失败即整个事务回滚，库停在 00043。
+-- 预检：无（新表、只放宽取值）。失败即整个事务回滚，库停在 00042。
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '60s';
 

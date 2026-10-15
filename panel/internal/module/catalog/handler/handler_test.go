@@ -54,6 +54,15 @@ type fakeSvc struct {
 	setPackStatusOut service.TrafficPack
 
 	activePacks []service.TrafficPack
+
+	planResetPricesPlanID uuid.UUID
+	planResetPricesOut    []service.ResetPrice
+	planResetPricesErr    error
+
+	replaceResetPricesPlanID uuid.UUID
+	replaceResetPricesIn     []service.ResetPrice
+	replaceResetPricesOut    []service.ResetPrice
+	replaceResetPricesErr    error
 }
 
 func (f *fakeSvc) PortalCatalog(_ context.Context, userID *uuid.UUID) ([]service.OfferPlan, error) {
@@ -103,6 +112,23 @@ func (f *fakeSvc) SetTrafficPackStatus(_ context.Context, packID uuid.UUID, stat
 
 func (f *fakeSvc) ActiveTrafficPacks(context.Context) ([]service.TrafficPack, error) {
 	return f.activePacks, nil
+}
+
+func (f *fakeSvc) PlanResetPrices(_ context.Context, planID uuid.UUID) ([]service.ResetPrice, error) {
+	f.planResetPricesPlanID = planID
+	if f.planResetPricesErr != nil {
+		return nil, f.planResetPricesErr
+	}
+	return f.planResetPricesOut, nil
+}
+
+func (f *fakeSvc) ReplacePlanResetPrices(_ context.Context, planID uuid.UUID, in []service.ResetPrice) ([]service.ResetPrice, error) {
+	f.replaceResetPricesPlanID = planID
+	f.replaceResetPricesIn = in
+	if f.replaceResetPricesErr != nil {
+		return nil, f.replaceResetPricesErr
+	}
+	return f.replaceResetPricesOut, nil
 }
 
 type fakeSubs struct {
@@ -673,5 +699,61 @@ func TestServiceErrSoldOutMapsTo409(t *testing.T) {
 	}
 	if env.Error.Code != string(errs.Conflict) {
 		t.Fatalf("code %s", env.Error.Code)
+	}
+}
+
+// 14. 后台 GET/PUT /v1/plans/:id/reset-prices
+func TestAdminPlanResetPrices(t *testing.T) {
+	planID := mustParseUUID("88888888-8888-4888-8888-888888888888")
+	f := &fakeSvc{
+		planResetPricesOut: []service.ResetPrice{
+			{Currency: money.CNY, UnitAmount: decimal.RequireFromString("18.00")},
+		},
+		replaceResetPricesOut: []service.ResetPrice{
+			{Currency: money.CNY, UnitAmount: decimal.RequireFromString("18.00")},
+		},
+	}
+	e := newAdminEngine(New(f), nil)
+	path := "/v1/plans/" + planID.String() + "/reset-prices"
+
+	w := doJSON(e, http.MethodGet, path, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET status %d %s", w.Code, w.Body)
+	}
+	if f.planResetPricesPlanID != planID {
+		t.Fatalf("PlanResetPrices planID %v", f.planResetPricesPlanID)
+	}
+	if w.Body.String() != `{"reset_prices":[{"currency":"CNY","unit_amount":1800}]}` {
+		t.Fatalf("GET body %s", w.Body)
+	}
+
+	w = doJSON(e, http.MethodPut, path, `{"reset_prices":[{"currency":"CNY","unit_amount":1800}]}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT status %d %s", w.Code, w.Body)
+	}
+	if f.replaceResetPricesPlanID != planID {
+		t.Fatalf("ReplacePlanResetPrices planID %v", f.replaceResetPricesPlanID)
+	}
+	if len(f.replaceResetPricesIn) != 1 || !f.replaceResetPricesIn[0].UnitAmount.Equal(decimal.RequireFromString("18.00")) {
+		t.Fatalf("ReplacePlanResetPrices in %+v", f.replaceResetPricesIn)
+	}
+
+	f.replaceResetPricesIn = nil
+	f.replaceResetPricesOut = []service.ResetPrice{}
+	w = doJSON(e, http.MethodPut, path, `{"reset_prices":[]}`)
+	if w.Code != http.StatusOK || w.Body.String() != `{"reset_prices":[]}` {
+		t.Fatalf("PUT empty status %d body %s", w.Code, w.Body)
+	}
+	if f.replaceResetPricesIn == nil {
+		t.Fatalf("ReplacePlanResetPrices 应收到空切片而非 nil")
+	}
+	if len(f.replaceResetPricesIn) != 0 {
+		t.Fatalf("ReplacePlanResetPrices in len %d", len(f.replaceResetPricesIn))
+	}
+
+	f.replaceResetPricesErr = errs.Invalid(map[string]string{"reset_prices.0.currency": "只支持 CNY 或 USD"})
+	w = doJSON(e, http.MethodPut, path, `{"reset_prices":[{"currency":"EUR","unit_amount":100}]}`)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("PUT invalid status %d %s", w.Code, w.Body)
 	}
 }

@@ -274,7 +274,7 @@ type okResponse struct {
 
 // resetLogsQuery 是重置日志的筛选参数。
 type resetLogsQuery struct {
-	Reason string `form:"reason" binding:"omitempty,oneof=renewal cycle_roll manual gift_card plan_change"`
+	Reason string `form:"reason" binding:"omitempty,oneof=renewal cycle_roll manual gift_card plan_change order"`
 	UserID string `form:"user_id" binding:"omitempty,uuid"`
 }
 

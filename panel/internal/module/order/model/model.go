@@ -11,14 +11,16 @@ import (
 
 // Order 是 orders 表的一行。
 type Order struct {
-	ID                    uuid.UUID       `gorm:"column:id;type:uuid;primaryKey;default:uuidv7()"`
-	OrderNo               string          `gorm:"column:order_no"`
-	UserID                uuid.UUID       `gorm:"column:user_id;type:uuid"`
-	Kind                  string          `gorm:"column:kind"`
-	Status                string          `gorm:"column:status"`
-	Currency              string          `gorm:"column:currency"`
-	SubtotalAmount        decimal.Decimal `gorm:"column:subtotal_amount"`
-	DiscountAmount        decimal.Decimal `gorm:"column:discount_amount"`
+	ID             uuid.UUID       `gorm:"column:id;type:uuid;primaryKey;default:uuidv7()"`
+	OrderNo        string          `gorm:"column:order_no"`
+	UserID         uuid.UUID       `gorm:"column:user_id;type:uuid"`
+	Kind           string          `gorm:"column:kind"`
+	Status         string          `gorm:"column:status"`
+	Currency       string          `gorm:"column:currency"`
+	SubtotalAmount decimal.Decimal `gorm:"column:subtotal_amount"`
+	DiscountAmount decimal.Decimal `gorm:"column:discount_amount"`
+	// MemberDiscountAmount 是 DiscountAmount 里属于会员折扣的部分（00046；券的部分 = DiscountAmount − 它）
+	MemberDiscountAmount  decimal.Decimal `gorm:"column:member_discount_amount"`
 	ProrationCreditAmount decimal.Decimal `gorm:"column:proration_credit_amount"`
 	WaivedAmount          decimal.Decimal `gorm:"column:waived_amount"`
 	TotalAmount           decimal.Decimal `gorm:"column:total_amount"`

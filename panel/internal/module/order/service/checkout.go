@@ -25,7 +25,8 @@ type draft struct {
 	UserID         uuid.UUID
 	Currency       money.Currency
 	Subtotal       decimal.Decimal
-	CouponPlanID   *uuid.UUID // 券适用范围：套餐类订单给套餐 id，流量包为 nil；充值不用券
+	CouponPlanID   *uuid.UUID // 券适用范围：套餐类订单给套餐 id，流量包为 nil；充值与流量重置不用券
+	CouponInterval *string    // 券限定周期用：新购、续费、换套餐给价格档的 billing_interval；流量包为 nil；充值、流量重置与人工单不用券
 	SubscriptionID *uuid.UUID
 	Label          *string
 	Item           *model.Item // 充值为 nil；OrderID、Currency 由 place 填
@@ -101,10 +102,15 @@ func (s *Service) place(ctx context.Context, d draft) (Created, model.Order, err
 	var couponCode string
 	if d.Kind != KindTopup && d.Manual == nil {
 		couponCode = promosvc.NormalizeCode(d.Checkout.CouponCode)
-		if couponCode != "" {
+		if d.Kind == KindTrafficReset {
+			if couponCode != "" {
+				return Created{}, model.Order{}, promosvc.ErrCouponNotForReset
+			}
+		} else if couponCode != "" {
 			applied, err := s.promo.Evaluate(ctx, couponCode, promosvc.Target{
 				UserID:   d.UserID,
 				PlanID:   d.CouponPlanID,
+				Interval: d.CouponInterval,
 				Currency: string(d.Currency),
 				Subtotal: d.Subtotal,
 			})
@@ -122,8 +128,23 @@ func (s *Service) place(ctx context.Context, d draft) (Created, model.Order, err
 	if d.Manual != nil && d.Manual.Grant {
 		discount = d.Subtotal
 	}
+
+	// 会员折扣（照 Xboard：与券都按小计算、相加，合计不超过小计）：门户的非充值、非流量重置单才打（重置单永远按原价，用户 10-14 定），后台人工单不打
+	member := decimal.Zero
+	memberPct := 0
+	if d.Kind != KindTopup && d.Kind != KindTrafficReset && d.Manual == nil {
+		pct, err := s.promo.MemberPercent(ctx, d.UserID)
+		if err != nil {
+			return Created{}, model.Order{}, err
+		}
+		member = promosvc.MemberDiscount(d.Subtotal, discount, pct)
+		if member.IsPositive() {
+			memberPct = pct
+		}
+	}
+
 	// total 是免零头之前的应付（报价的 total 同口径，expect 按它比）；免掉的零头单独记 waived_amount
-	total := OrderTotal(d.Subtotal, discount, d.ProrationCredit)
+	total := OrderTotal(d.Subtotal, discount.Add(member), d.ProrationCredit)
 
 	bal, err := s.balanceFor(ctx, d, total)
 	if err != nil {
@@ -153,7 +174,8 @@ func (s *Service) place(ctx context.Context, d draft) (Created, model.Order, err
 		Status:                StatusPending,
 		Currency:              string(d.Currency),
 		SubtotalAmount:        d.Subtotal,
-		DiscountAmount:        discount,
+		DiscountAmount:        discount.Add(member),
+		MemberDiscountAmount:  member,
 		ProrationCreditAmount: d.ProrationCredit,
 		WaivedAmount:          waived,
 		TotalAmount:           total.Sub(waived),
@@ -182,6 +204,7 @@ func (s *Service) place(ctx context.Context, d draft) (Created, model.Order, err
 		reserved, err := s.promo.Reserve(ctx, couponCode, promosvc.Target{
 			UserID:   d.UserID,
 			PlanID:   d.CouponPlanID,
+			Interval: d.CouponInterval,
 			Currency: string(d.Currency),
 			Subtotal: d.Subtotal,
 		}, promosvc.OrderRef{ID: o.ID, No: o.OrderNo})
@@ -200,8 +223,8 @@ func (s *Service) place(ctx context.Context, d draft) (Created, model.Order, err
 		couponID = &reserved.CouponID
 		discount = reserved.Discount
 		o.CouponID = couponID
-		o.DiscountAmount = discount
-		if !OrderTotal(d.Subtotal, discount, d.ProrationCredit).Equal(total) {
+		o.DiscountAmount = discount.Add(member)
+		if !OrderTotal(d.Subtotal, discount.Add(member), d.ProrationCredit).Equal(total) {
 			return Created{}, model.Order{}, ErrQuoteChanged
 		}
 	}
@@ -257,6 +280,10 @@ func (s *Service) place(ctx context.Context, d draft) (Created, model.Order, err
 				auditData[k] = v
 			}
 		}
+		if member.IsPositive() {
+			auditData["member_discount"] = member.StringFixed(2)
+			auditData["member_percent"] = memberPct
+		}
 		for k, v := range d.AuditData {
 			auditData[k] = v
 		}
@@ -276,6 +303,7 @@ func (s *Service) place(ctx context.Context, d draft) (Created, model.Order, err
 		Currency:       d.Currency,
 		Total:          o.TotalAmount,
 		Discount:       o.DiscountAmount,
+		MemberDiscount: o.MemberDiscountAmount,
 		BalanceApplied: o.BalanceApplied,
 		Payable:        o.PayableAmount,
 		Waived:         o.WaivedAmount,

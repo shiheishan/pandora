@@ -191,3 +191,14 @@ export const versionCreatedSchema = z.object({ version: versionRowSchema })
 export const publishedSchema = z.object({ ok: z.literal(true), plan_row_version: int, version_row_version: int })
 export const priceCreatedSchema = z.object({ price: priceRowSchema })
 export const poolsBoundSchema = z.object({ bound: count, row_version: int, version_id: z.string() })
+
+// 套餐的流量重置价格（GET/PUT v1/plans/:id/reset-prices）：放在这里，假后端测试（node 侧 tsconfig）能引
+export const resetPriceItemSchema = z.object({
+  currency: z.enum(['CNY', 'USD']),
+  unit_amount: z.number().int().positive(),
+})
+export const planResetPricesSchema = z.object({
+  reset_prices: z.array(resetPriceItemSchema),
+})
+export type ResetPriceItem = z.output<typeof resetPriceItemSchema>
+export type PlanResetPrices = z.output<typeof planResetPricesSchema>

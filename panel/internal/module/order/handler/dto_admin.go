@@ -139,22 +139,23 @@ type adminOrderItemResponse struct {
 // adminOrderDetailBody 是后台详情的 order 对象：列表行加明细。
 type adminOrderDetailBody struct {
 	adminOrderRowResponse
-	UserID         string                   `json:"user_id"`
-	StateVersion   int64                    `json:"state_version"`
-	SubtotalAmount int64                    `json:"subtotal_amount"`
-	DiscountAmount int64                    `json:"discount_amount"`
-	CouponID       *string                  `json:"coupon_id"`
-	ManualReason   *string                  `json:"manual_reason"`
-	CreatedBy      *string                  `json:"created_by"`
-	CreatedByEmail *string                  `json:"created_by_email"`
-	SubscriptionID *string                  `json:"subscription_id"`
-	ExpiresAt      *time.Time               `json:"expires_at"`
-	FulfilledAt    *time.Time               `json:"fulfilled_at"`
-	CancelledAt    *time.Time               `json:"cancelled_at"`
-	ExpiredAt      *time.Time               `json:"expired_at"`
-	CancelReason   *string                  `json:"cancel_reason"`
-	UpdatedAt      time.Time                `json:"updated_at"`
-	Items          []adminOrderItemResponse `json:"items"`
+	UserID               string                   `json:"user_id"`
+	StateVersion         int64                    `json:"state_version"`
+	SubtotalAmount       int64                    `json:"subtotal_amount"`
+	DiscountAmount       int64                    `json:"discount_amount"`
+	MemberDiscountAmount int64                    `json:"member_discount_amount"`
+	CouponID             *string                  `json:"coupon_id"`
+	ManualReason         *string                  `json:"manual_reason"`
+	CreatedBy            *string                  `json:"created_by"`
+	CreatedByEmail       *string                  `json:"created_by_email"`
+	SubscriptionID       *string                  `json:"subscription_id"`
+	ExpiresAt            *time.Time               `json:"expires_at"`
+	FulfilledAt          *time.Time               `json:"fulfilled_at"`
+	CancelledAt          *time.Time               `json:"cancelled_at"`
+	ExpiredAt            *time.Time               `json:"expired_at"`
+	CancelReason         *string                  `json:"cancel_reason"`
+	UpdatedAt            time.Time                `json:"updated_at"`
+	Items                []adminOrderItemResponse `json:"items"`
 }
 
 // adminOrderDetailResponse 是 GET /orders/:id（后台）。
@@ -214,6 +215,7 @@ func adminOrderDetailFrom(d service.AdminOrderDetail) (adminOrderDetailResponse,
 		StateVersion:          o.StateVersion,
 		SubtotalAmount:        cc.of(o.Subtotal),
 		DiscountAmount:        cc.of(o.Discount.Add(o.Waived)),
+		MemberDiscountAmount:  cc.of(o.MemberDiscount),
 		CouponID:              idStr(o.CouponID),
 		ManualReason:          o.ManualReason,
 		CreatedBy:             idStr(o.CreatedBy),

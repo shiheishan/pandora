@@ -49,6 +49,8 @@ type Catalog interface {
 	CaptureStock(ctx context.Context, planID uuid.UUID, qty int) error
 	PlansByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]catalogsvc.Plan, error)
 	VersionsByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]catalogsvc.Version, error)
+	// ResetPrice 是套餐按币种的流量重置价格；没设（不卖）回 ok=false
+	ResetPrice(ctx context.Context, planID uuid.UUID, cur money.Currency) (decimal.Decimal, bool, error)
 }
 
 // Ledger 是 ledger service 用到的面。
@@ -68,6 +70,8 @@ type Promo interface {
 	Release(ctx context.Context, orderID uuid.UUID, reason string) error
 	Capture(ctx context.Context, orderID uuid.UUID) error
 	Codes(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error)
+	// MemberPercent 是用户的会员折扣（减免百分比 1–100）；没有设置回 0。不加锁（报价与建单各读一次，变了由 expect 比对拦下）
+	MemberPercent(ctx context.Context, userID uuid.UUID) (int, error)
 }
 
 // Subscriptions 是 subscription service 用到的面。
@@ -82,6 +86,8 @@ type Subscriptions interface {
 	GrantTrafficPack(ctx context.Context, in subsvc.PackGrant) (subsvc.Pack, error)
 	ChangePlan(ctx context.Context, in subsvc.PlanChange) (subsvc.PlanChangeResult, error)
 	Quotas(ctx context.Context, subID uuid.UUID) ([]subsvc.Quota, error)
+	// ResetTraffic 把订阅当期已用流量清零（与后台手动重置、礼品卡同一个方法），流量重置单履约时调，Reason 用 subsvc.ResetOrder
+	ResetTraffic(ctx context.Context, in subsvc.TrafficReset) (int64, error)
 	// PeriodOrderIDsBySubscriptions 是每份订阅本周期的付费来源订单（按发生先后）：换套餐折算剩余价值的基数
 	PeriodOrderIDsBySubscriptions(ctx context.Context, subIDs []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error)
 }

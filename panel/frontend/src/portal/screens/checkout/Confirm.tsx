@@ -28,6 +28,8 @@ function titleOf(t: Target, h: Holdings, plans: readonly Plan[]): string {
       return `换成${plans.find((p) => p.id === t.planId)?.name ?? '别的套餐'}`
     case 'new':
       return h.held.length ? '再买一份' : `买${plans.find((p) => p.id === t.planId)?.name ?? '套餐'}`
+    case 'reset':
+      return '重置流量'
     default:
       return '加流量'
   }
@@ -49,7 +51,9 @@ export function ConfirmForm({ target, h, plans, packs, requested }: { target: Ta
     setCouponState(code)
     navigate('/checkout', { query: { ...Object.fromEntries(query), coupon: code }, replace: true })
   }
-  const quote = useQuote(target.kind === 'change' && !target.subId ? null : target.kind === 'pack' && !target.subId ? null : quoteRequest(target, h.held, coupon))
+  // 流量重置永远按原价，不收券、不打会员折扣，用户 10-14 定
+  const couponAllowed = target.kind !== 'reset'
+  const quote = useQuote(target.kind === 'change' && !target.subId ? null : target.kind === 'pack' && !target.subId ? null : quoteRequest(target, h.held, couponAllowed ? coupon : null))
   // 换套餐还没选是哪一份：按套餐展开报价，给每个选项写今天付多少
   const chooser = useQuote(target.kind === 'change' && target.chooser ? { action: 'change', plan_id: target.planId } : null)
   usePageHead(titleOf(target, h, plans), target.kind === 'new' ? '/plans' : '/subs')
@@ -87,17 +91,19 @@ export function ConfirmForm({ target, h, plans, packs, requested }: { target: Ta
           requested={requested}
           refetch={() => quote.refetch()}
           coupon={
-            <CouponBox
-              open={couponOpen}
-              onOpen={() => setCouponOpen(true)}
-              input={couponInput}
-              onInput={setCouponInput}
-              applied={coupon}
-              onApply={(code) => setCoupon(code || null)}
-              rows={quote.data.quotes}
-            />
+            couponAllowed ? (
+              <CouponBox
+                open={couponOpen}
+                onOpen={() => setCouponOpen(true)}
+                input={couponInput}
+                onInput={setCouponInput}
+                applied={coupon}
+                onApply={(code) => setCoupon(code || null)}
+                rows={quote.data.quotes}
+              />
+            ) : null
           }
-          couponCode={coupon}
+          couponCode={couponAllowed ? coupon : null}
         />
       )}
     </div>
@@ -266,7 +272,7 @@ function Priced({
   const method = methodList.find((m) => methodKey(m) === methodChoice) ?? methodList[0] ?? null
   const pay = payCopy(quote, row, split, useBalance, copy.verb, methodList.map((m) => m.label).join('、'))
   const blocked = pay.tooSmall ? pay.button : required && !name.trim() ? '先给它起个名字' : pay.needsMethod && !method ? '暂时没有能用的付款方式' : null
-  const periods = target.kind !== 'pack' && tiers.length > 0
+  const periods = target.kind !== 'pack' && target.kind !== 'reset' && tiers.length > 0
 
   const create = useMutation({
     mutationFn: ({ path, body, key }: { path: string; body: Record<string, unknown>; key: string }) => api.post(path, orderCreatedSchema, { body, idempotencyKey: key }),

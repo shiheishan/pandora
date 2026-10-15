@@ -33,6 +33,8 @@ type Service interface {
 	CreateTrafficPack(ctx context.Context, in service.PackInput) (service.TrafficPack, error)
 	UpdateTrafficPack(ctx context.Context, packID uuid.UUID, expected *time.Time, in service.PackInput) (service.TrafficPack, error)
 	SetTrafficPackStatus(ctx context.Context, packID uuid.UUID, status string, expected *time.Time) (service.TrafficPack, error)
+	PlanResetPrices(ctx context.Context, planID uuid.UUID) ([]service.ResetPrice, error)
+	ReplacePlanResetPrices(ctx context.Context, planID uuid.UUID, in []service.ResetPrice) ([]service.ResetPrice, error)
 	PortalCatalog(ctx context.Context, userID *uuid.UUID) ([]service.OfferPlan, error)
 }
 
@@ -100,4 +102,7 @@ func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	v1.POST("/traffic-packs", k.RequireAuth, k.RecentReauth, k.Idempotency("catalog_traffic_pack_create"), h.createTrafficPack)
 	v1.PUT("/traffic-packs/:id", k.RequireAuth, k.RecentReauth, k.Idempotency("catalog_traffic_pack_update"), h.updateTrafficPack)
 	v1.POST("/traffic-packs/:id/status", k.RequireAuth, k.RecentReauth, k.Idempotency("catalog_traffic_pack_status"), h.setTrafficPackStatus)
+
+	v1.GET("/plans/:id/reset-prices", k.RequireAuth, h.getPlanResetPrices)
+	v1.PUT("/plans/:id/reset-prices", k.RequireAuth, k.RecentReauth, k.Idempotency("catalog_plan_reset_prices"), h.putPlanResetPrices)
 }

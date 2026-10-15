@@ -85,13 +85,14 @@ export type OrderEffect =
   | { type: 'upgrade'; subId: string; planId: string; priceId: string; credit: number; refund: number }
   /** 差价不到支付最低额而免掉（SmallDue，设计稿 2.6 推荐 A） */
   | { type: 'addon'; bytes: number; subId: string }
+  | { type: 'reset'; subId: string }
   | { type: 'topup'; amount: number }
   | { type: 'none' }
 
 export interface OrderFixture {
   id: string
   order_no: string
-  kind: 'new' | 'renewal' | 'topup' | 'addon' | 'upgrade'
+  kind: 'new' | 'renewal' | 'topup' | 'addon' | 'upgrade' | 'traffic_reset'
   status: string
   plan_name?: string
   item_name?: string
@@ -102,6 +103,7 @@ export interface OrderFixture {
   /** 优惠后（变更套餐另减折算） */
   total_amount: number
   discount_amount: number
+  member_discount_amount?: number
   balance_applied: number
   payable_amount: number
   paid_amount: number

@@ -4,7 +4,7 @@ import { formatDateTime, formatMoney } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
 import { endsIntent } from './intent'
 
-const ORDER_KINDS = ['new', 'renewal', 'topup', 'addon', 'upgrade'] as const
+const ORDER_KINDS = ['new', 'renewal', 'topup', 'addon', 'upgrade', 'traffic_reset'] as const
 export const ORDER_STATUSES = ['pending_payment', 'paid', 'fulfilled', 'cancelled', 'expired', 'partially_refunded', 'refunded'] as const
 
 export const orderRowSchema = z.object({
@@ -15,6 +15,7 @@ export const orderRowSchema = z.object({
   currency: z.string(),
   total_amount: z.number().int(),
   discount_amount: z.number().int(),
+  member_discount_amount: z.number().int(),
   balance_applied: z.number().int(),
   payable_amount: z.number().int(),
   paid_amount: z.number().int(),
@@ -72,6 +73,8 @@ export function orderTitle(o: Pick<OrderRow, 'kind' | 'plan_name' | 'item_name' 
       return '余额充值'
     case 'addon':
       return `流量包 · ${o.item_name}`
+    case 'traffic_reset':
+      return o.item_name
     case 'upgrade':
       return `${plan} · 变更套餐`
     case 'renewal':
@@ -318,6 +321,7 @@ export function orderResult(o: Pick<OrderDetail, 'status' | 'kind' | 'cancel_rea
     case 'paid':
       if (o.kind === 'topup') return '余额已到账'
       if (o.kind === 'addon') return '流量包已到账'
+      if (o.kind === 'traffic_reset') return '本期流量已清零'
       if (o.kind === 'upgrade') return '已换好套餐，链接不变'
       return [method, o.subscription_period_end ? `有效期至 ${formatDateTime(o.subscription_period_end).slice(0, 10)}` : '已开通'].filter(Boolean).join(' · ')
     case 'expired':

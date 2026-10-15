@@ -42,3 +42,11 @@ export const trafficGrantedSchema = z.object({
 
 // 按筛选批量封禁（POST v1/users/bulk/ban）：封了几人、跳过的按原因计数
 export const bulkBanSchema = z.object({ banned: count, skipped: z.record(z.string(), count) })
+
+// 会员折扣：单个用户的会员减免百分比（10 表示九折）；页面与假后端测试共用
+export const memberDiscountSchema = z.object({
+  user_id: z.string(),
+  percent: z.number().int().min(1).max(100).nullable(),
+  updated_at: z.string().nullable(),
+})
+export type MemberDiscountData = z.output<typeof memberDiscountSchema>
