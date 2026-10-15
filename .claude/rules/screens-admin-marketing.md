@@ -14,3 +14,4 @@ paths:
 - 佣金设置分两张表单：比例 / 冻结 / 最低提现 / 范围在 `Commission.tsx` 的 `Settings`；多级分销与提现开关、方式在 `CommissionLevels.tsx`（`levelsModel.ts` 构建请求体，文件名不要和 `CommissionLevels.tsx` 只差大小写；提现方式开关两种状态都至少选一种，关着时管的是其他币种，三级之和与开启全 0 的错误都挂 `distribution_l1`）。两张都发 `POST v1/commission/config`，只发自己那几项。
 - 单独佣金设置（`CommissionOverrides.tsx`）：按邮箱设，比例或范围留空 = 跟全局，再保存整行覆盖；增删都要 reauth、不带幂等键。
 - 打 USDT 提现的款：流水号填链上交易哈希（前端只看形状），实付 USDT 数量可选、十进制字符串；面板不发起链上转账，文案不要暗示会自动打款。
+- 券的「限定时长」（`applicable_intervals`，`COUPON_INTERVAL_OPTIONS`）：不选即不限，单张与批量生成共用 `CouponForm`；选了的券只能用在这些计费周期的新购 / 续费 / 换套餐上，流量包与流量重置没有周期、用不了。列表在适用套餐后写 `intervalScopeLabel`；响应恒为数组，schema 仍把 null 收成 `[]`
