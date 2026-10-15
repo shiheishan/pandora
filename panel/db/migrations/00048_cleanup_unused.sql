@@ -25,7 +25,7 @@ DROP TABLE acme_accounts;
 DROP TABLE dns_credentials;
 
 -- +goose Down
--- 按 00025_certs.sql 原样重建表结构（数据不恢复，见文件头）。
+-- 按 00025_certs.sql 原样重建表结构（数据不恢复，见文件头）。下面正文逐字照抄 00025，其中「见文件头」指 00025 的文件头。
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '2min';
 

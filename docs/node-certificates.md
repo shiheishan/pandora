@@ -7,6 +7,8 @@ pdnd 的 TLS 入站（trojan、anytls、naive、hysteria2、tuic、juicity，以
 文中的域名一律用 `example.com` 占位，换成你自己的。
 
 > **哪些是将来时**：本文凡是写「后续版本」的部分都是规划，还没有实现、也没有排期。
+>
+> 以后做 file 模式的路径检查与热更新（1.2、1.3 的「后续版本」）时，可以参考已删的 pdnd 证书仓库：`git show bd01b3b2^:pdnd/certstore/file.go`（按 mtime 与大小轮询、坏证书保留旧的、`read_failed` / `bad_pem` / `key_mismatch` / `expired` / `path_escape` 错误码都在里面，连同同目录的 `atomicfile.go` 与测试）。
 
 ---
 

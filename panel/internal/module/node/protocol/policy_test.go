@@ -167,7 +167,7 @@ func TestPlaintextTCPIsRejectedButCDNTransportsStay(t *testing.T) {
 
 func TestPlainTLSGivesAReadableMessage(t *testing.T) {
 	for _, nodeType := range []string{"vless", "vmess"} {
-		expectRejected(t, nodeType, `{"tls":1,"network":"tcp"}`, "protocol_config.tls", "证书自动申请上线后开放")
+		expectRejected(t, nodeType, `{"tls":1,"network":"tcp"}`, "protocol_config.tls", "普通 TLS 暂未开放")
 		expectRejected(t, nodeType, `{"tls":7,"network":"ws"}`, "protocol_config.tls", "0（不加密）或 2（REALITY）")
 	}
 }
