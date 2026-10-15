@@ -150,6 +150,29 @@ services:
       postgres:
         condition: service_healthy
 
+  # 只占住网络命名空间与发布端口（同 Kubernetes Pod 的 pause 容器）：serve 与 nginx 都 network_mode 挂在它上面。
+  # 命名空间跟着这个几乎不重建的容器走，重建或就地拉起 serve、nginx 都不会让另一个留在失效的命名空间里。
+  # 镜像借用 pandora-nginx（自带 coreutils 的 sleep），只跑 sleep，不起 nginx。
+  netns:
+    image: ${PANDORA_IMAGE_REPO:-ghcr.io/shiheishan}/pandora-nginx:${PANDORA_VERSION:?在 .env 里填 PANDORA_VERSION}
+    entrypoint: ["sleep", "infinity"]
+    init: true
+    restart: unless-stopped
+    security_opt:
+      - "no-new-privileges:true"
+    logging: *logging
+    read_only: true
+    cap_drop:
+      - ALL
+    networks:
+      - edge
+      - backend
+    ports:
+      - "${PANDORA_HTTP_PUBLISH:-80}:80"
+      - "${PANDORA_HTTPS_PUBLISH:-443}:443"
+      - "${PANDORA_LOOPBACK_PUBLISH:-127.0.0.1:9080}:9080"
+      - "${PANDORA_GRPC_PUBLISH:-9443}:9443"
+
   serve:
     image: ${PANDORA_IMAGE_REPO:-ghcr.io/shiheishan}/pandora:${PANDORA_VERSION:?在 .env 里填 PANDORA_VERSION}
     command: ["serve"]
@@ -171,19 +194,14 @@ services:
       nofile:
         soft: 65536
         hard: 65536
-    networks:
-      - edge
-      - backend
-    # 门户 127.0.0.1:9000、后台 127.0.0.1:9001 只在本网络命名空间的回环上（validate.go 在 production 强制），
-    # nginx 共用这个命名空间反代；节点 gRPC 9443 由面板自己终结 mTLS
-    ports:
-      - "${PANDORA_HTTP_PUBLISH:-80}:80"
-      - "${PANDORA_HTTPS_PUBLISH:-443}:443"
-      - "${PANDORA_LOOPBACK_PUBLISH:-127.0.0.1:9080}:9080"
-      - "${PANDORA_GRPC_PUBLISH:-9443}:9443"
+    # 门户 127.0.0.1:9000、后台 127.0.0.1:9001 只在回环上（validate.go 在 production 强制），nginx 要同一个回环才能反代：
+    # serve 与 nginx 都加入 netns 的网络命名空间（端口也发布在 netns 上）。节点 gRPC 9443 由面板自己终结 mTLS。
+    network_mode: "service:netns"
     volumes:
       - backups:/var/backups/pandora:ro
     depends_on:
+      netns:
+        condition: service_started
       migrate:
         condition: service_completed_successfully
       postgres:
@@ -226,7 +244,7 @@ services:
     security_opt:
       - "no-new-privileges:true"
     logging: *logging
-    network_mode: "service:serve"
+    network_mode: "service:netns"
     environment:
       PANDORA_PUBLIC_BASE_URL: ${PANDORA_PUBLIC_BASE_URL:?在 .env 里填 PANDORA_PUBLIC_BASE_URL}
       PANDORA_ADMIN_PATH: ${PANDORA_ADMIN_PATH:?在 .env 里填 PANDORA_ADMIN_PATH}
@@ -241,9 +259,10 @@ services:
         hard: 65536
     stop_grace_period: 30s
     depends_on:
+      netns:
+        condition: service_started
       serve:
         condition: service_started
-        restart: true
     # pandora 镜像没有 shell，就绪由这里一并看（serve 两个 /readyz 会 ping PG 与 Redis；
     # 最后一条只看 nginx 在不在答，/healthz 在边缘被 deny，回 403 也算）
     healthcheck:

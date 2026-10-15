@@ -44,8 +44,8 @@ paths:
   - 发版（`release.yml` 的 `images` job）用 `--build-context release=<已出来源证明的 tarball 解开的目录>` 覆盖 `release` 阶段：镜像里就是 Release 附件里那份字节；镜像各自 `actions/attest`。只打版本号标签，不打 latest。
   - `pandora-nginx` 阶段不写 RUN（arm64 不用模拟器）；目录、默认站点、日志软链都在 `nginx-entrypoint.sh` 里做。
 - 安全模型与裸机相同，不为容器放宽：
-  - serve 的两个 HTTP 监听照旧绑回环；nginx 用 `network_mode: "service:serve"` 共用网络命名空间，经 127.0.0.1 反代。不改 `validate.go`。
-  - serve 每次启动都换网络命名空间。compose 发起的重建靠 nginx 的 `depends_on.restart: true` 连带重启；serve 被 Docker 就地拉起（崩溃、OOM）compose 不管，靠 `nginx-entrypoint.sh` 的看门狗：宽限 60 秒后连续 6 次（30 秒）连 `127.0.0.1:9000` 被拒绝就让 nginx 退出、由 `restart: unless-stopped` 拉起重新加入。只认「拒绝连接」，面板回 5xx 或超时不算。
+  - serve 的两个 HTTP 监听照旧绑回环；serve 与 nginx 都用 `network_mode: "service:netns"` 加入同一个网络命名空间，nginx 经 127.0.0.1 反代。不改 `validate.go`。
+  - 命名空间由 `netns` 服务持有（同 Kubernetes Pod 的 pause 容器：借 pandora-nginx 镜像只跑 `sleep infinity`，端口也发布在它上面）。不要改回 nginx 挂 serve：serve 重建换容器 id 后，挂在旧 id 上的 nginx 重启也接不回来（10-14 CI 量到）；之前的看门狗只能处理就地拉起，已删。
   - nginx 只用 `render-nginx.sh` 渲染 `nginx-pandora.conf`；渲染后的容器专用改动只有两处（`listen 127.0.0.1:9080` → `listen 9080`；容器无 IPv6 时删 `listen [::]:`），每处先核数量、不对就停。模板改了这两行要同步改入口脚本。
   - 真实 IP 信任表由 `PANDORA_REALIP_FROM`（`gateway` 或 IP/CIDR，逗号分隔）每次启动重写；空 = 不信任任何代理。`gateway` 只在 80/443 不对公网发布时可用（前面另有反代、转发到宿主回环的 9080；前面的反代必须覆写 X-Real-IP）。
   - PG 与 Redis 只在 `internal: true` 的 backend 网络，不映射宿主端口；Redis 口令经标准输入的配置给（`redis-server -`），不进进程参数。

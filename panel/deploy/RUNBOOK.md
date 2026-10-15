@@ -769,7 +769,7 @@ ss -lntup | grep -E ':<端口>\b'     # 谁占着这个端口
 ## 14. Docker / Compose 部署
 
 适用于通过 `panel/deploy/docker/compose.yaml`（含 1Panel 编排导入）部署的环境。
-组件分为 7 个容器：`postgres`、`redis`、`migrate`（初始化与迁移）、`serve`、`worker`、`nginx`（与 serve 共用网络命名空间）以及轻量级运维容器 `ops`（`profiles: ["ops"]`）。
+组件分为 8 个容器：`postgres`、`redis`、`migrate`（初始化与迁移）、`serve`、`worker`、`nginx`、只持有网络命名空间与发布端口的 `netns`（serve 与 nginx 都挂在它上面）以及轻量级运维容器 `ops`（`profiles: ["ops"]`）。
 
 ### 命令对照表
 
@@ -855,14 +855,12 @@ docker compose logs nginx
 ```
 
 #### 常见原因
-`nginx` 容器通过 `network_mode: "service:serve"` 共享了 `serve` 容器的网络命名空间。`serve` 每次启动（重建，或崩溃、OOM 后被 Docker 就地拉起）都换一个新的网络命名空间，还留在旧命名空间里的 `nginx` 就收不到宿主端口进来的流量。
-- 经 compose 重建 `serve`（`up -d`、`restart serve`）：`depends_on.restart: true` 会让 compose 连带重启 `nginx`。
-- `serve` 被 Docker 就地拉起（compose 不参与）：`nginx` 入口脚本的看门狗在连续 30 秒连不上 `127.0.0.1:9000` 后让 nginx 退出，Docker 按 `restart: unless-stopped` 把它拉起、重新加入 `serve` 当前的命名空间；`docker compose logs nginx` 里能看到「连续 30 秒连不上 127.0.0.1:9000」。正常情况下 1–2 分钟内自己恢复，超过这个时间还不通再按下面处理。
+`serve` 与 `nginx` 都通过 `network_mode: "service:netns"` 加入 `netns` 容器的网络命名空间，宿主端口也发布在 `netns` 上。重建或就地拉起 `serve`、`nginx` 都不换命名空间；只有 `netns` 被重建（改了它的配置或镜像版本）时，另外两个要跟着重建才能接上——`docker compose up -d` 会按依赖一起处理，手工只重建了 `netns` 时就会出现这种情况。
 
 #### 处理
-**【写】** 重新构建并拉起关联的 nginx 容器以接入新网络命名空间：
+**【写】** 重建挂在 netns 上的两个容器，让它们接入当前的命名空间：
 ```bash
-docker compose up -d --force-recreate nginx
+docker compose up -d --force-recreate serve nginx
 ```
 
 #### 什么时候升级处理

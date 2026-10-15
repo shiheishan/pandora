@@ -229,21 +229,21 @@ jobs:
 
       - name: Recreate serve and ensure nginx network link remains healthy
         run: |
-          # nginx 共用 serve 的网络命名空间，强制重建 serve 后 nginx 会随之重启并仍可通信
+          # serve 与 nginx 都挂在 netns 容器的网络命名空间上：强制重建 serve 不换命名空间，nginx 不用动就能继续反代
           dc up -d --force-recreate serve
-          # 重建刚返回时 nginx 可能还没跟着换到新的命名空间，健康状态也可能是旧的：按请求实际通不通判，最多等 60 秒
+          # 重建刚返回时 serve 可能还在启动，健康状态也可能是旧的：按请求实际通不通判，最多等 60 秒
           ok=0
           for _ in $(seq 1 30); do
             if curl -fsS -o /dev/null --max-time 3 http://127.0.0.1:9080/; then ok=1; break; fi
             sleep 2
           done
-          [ "$ok" = 1 ] || { echo "::error::重建 serve 后经 9080 打不开门户（nginx 没跟着重建？）"; exit 1; }
+          [ "$ok" = 1 ] || { echo "::error::重建 serve 后经 9080 打不开门户（nginx 与 serve 不在同一个命名空间？）"; exit 1; }
           wait-healthy
 
-      - name: Kill serve in place and ensure nginx rejoins its network namespace
+      - name: Kill serve in place and ensure nginx keeps serving
         run: |
-          # 模拟崩溃 / OOM：从宿主杀掉 serve 主进程，Docker 按 restart: unless-stopped 就地拉起（换了新的网络命名空间）；
-          # compose 不参与，靠 nginx 入口脚本的看门狗发现连不上 127.0.0.1:9000 后自行退出、被 Docker 拉起重新加入
+          # 模拟崩溃 / OOM：从宿主杀掉 serve 主进程，Docker 按 restart: unless-stopped 就地拉起；
+          # serve 重新加入 netns 容器的命名空间，nginx 不受影响，serve 起来后门户就通
           serve_cid="$(dc ps -q serve)"
           [ -n "$serve_cid" ] || { echo "::error::未找到 serve 容器"; exit 1; }
           before="$(docker inspect -f '{{.RestartCount}}' "$serve_cid")"
@@ -256,13 +256,13 @@ jobs:
             sleep 2
           done
           [ "$now" -gt "$before" ] || { echo "::error::serve 被杀后 Docker 没有就地拉起"; exit 1; }
-          # 看门狗：nginx 启动后宽限 60 秒，之后连续 30 秒拒绝连接才退出；最多等 180 秒
+          # 最多等 60 秒（serve 启动加连库）
           ok=0
-          for _ in $(seq 1 60); do
+          for _ in $(seq 1 20); do
             if curl -fsS -o /dev/null --max-time 3 http://127.0.0.1:9080/; then ok=1; break; fi
             sleep 3
           done
-          [ "$ok" = 1 ] || { echo "::error::serve 就地重启后 nginx 没有回到新的网络命名空间（看门狗没生效？）"; exit 1; }
+          [ "$ok" = 1 ] || { echo "::error::serve 就地重启后经 9080 打不开门户"; exit 1; }
           wait-healthy
 
       - name: Verify compose up idempotency and migration skipping

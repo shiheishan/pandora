@@ -22,16 +22,17 @@ Pandora 面板提供两种部署方式：裸机 `install.sh`（systemd 托管）
 
 ## 2. 组成
 
-### 服务清单（7 个服务）
+### 服务清单（8 个服务）
 
 | 服务名 | 使用镜像 | 网络 | 作用说明 |
 |---|---|---|---|
 | `postgres` | `postgres:18-bookworm` | `backend`（internal） | 数据库。经 SCRAM-SHA-256 认证，严格调参，不对外暴露宿主端口 |
 | `redis` | `redis:8-alpine` | `backend`（internal） | 缓存与 asynq 队列基座。开启 AOF、禁用高危命令，不对外暴露宿主端口 |
 | `migrate` | `pandora-ops` | `service:postgres` | 一次性任务：初始化角色权限、升级前自动转储、执行 Goose 迁移 |
-| `serve` | `pandora` | `edge` + `backend` | 面板 Web 核心与节点 gRPC。持有外部端口映射，挂载备份卷只读 |
+| `netns` | `pandora-nginx`（只跑 `sleep`） | `edge` + `backend` | 只持有网络命名空间与外部端口映射（同 Kubernetes Pod 的 pause 容器），serve 与 nginx 都挂在它上面 |
+| `serve` | `pandora` | `service:netns` | 面板 Web 核心与节点 gRPC。挂载备份卷只读 |
 | `worker` | `pandora` | `edge` + `backend` | 异步任务调度与定时后台处理（清理、统计等） |
-| `nginx` | `pandora-nginx` | `service:serve` | 边缘 HTTP/HTTPS 反向代理与限流。与 `serve` 共享网络命名空间 |
+| `nginx` | `pandora-nginx` | `service:netns` | 边缘 HTTP/HTTPS 反向代理与限流。与 `serve` 在同一个网络命名空间 |
 | `ops` | `pandora-ops` | `service:postgres` | 运维工具镜像（`profiles: ["ops"]`）。用于备份、校验、手工连库等 |
 
 ### 端口映射说明
@@ -52,7 +53,7 @@ Pandora 面板提供两种部署方式：裸机 `install.sh`（systemd 托管）
 
 ### 安全网络隔离模型
 
-- **回环约束**：面板的核心 HTTP 监听（门户 `127.0.0.1:9000` 与后台 `127.0.0.1:9001`）被程序底层强制仅绑定回环地址；`nginx` 容器通过 `network_mode: "service:serve"` 与 `serve` 共享网络命名空间，反代直接走容器内回环，任何外部流量均无法绕过 nginx 访问面板后端。
+- **回环约束**：面板的核心 HTTP 监听（门户 `127.0.0.1:9000` 与后台 `127.0.0.1:9001`）被程序底层强制仅绑定回环地址；`serve` 与 `nginx` 都通过 `network_mode: "service:netns"` 加入同一个网络命名空间，反代直接走容器内回环，任何外部流量均无法绕过 nginx 访问面板后端。
 - **数据不出网**：`postgres` 与 `redis` 仅接入 `internal: true` 的 `backend` 专用网络，不出公网、不向宿主机映射任何端口，杜绝因防火墙配置失误造成的数据库泄露。
 
 ---
@@ -292,7 +293,6 @@ Pandora 原生支持直接导入 1Panel 编排面板，**无需**使用 1Panel �
 3. **禁止原地覆盖恢复生产库**：为杜绝误操作与文件锁死，容器环境下禁止直接向正在运行的正式库覆盖恢复数据，必须先恢复到临时库再重命名切换。
 4. **无证书自动续期**：内置 Nginx 模式需通过宿主挂载更新，反代模式由外部代理统一续期。
 5. **公网 IPv6 客户端识别**：若 80/443 对公网发布，经由宿主机 `docker-proxy` 转入的客户端（典型是 IPv6 客户端）在 Nginx 端将显示为网关 IP，按 IP 限流机制会将其归并计算。
-6. **serve 崩溃后 nginx 自愈有延迟**：nginx 与 serve 共用网络命名空间，serve 被 Docker 就地拉起后，nginx 入口脚本的看门狗要连续 30 秒连不上面板才退出、被 Docker 拉起重新接上，期间站点不通（通常 1–2 分钟内恢复，见 RUNBOOK 14.3）。
 
 ---
 
