@@ -48,7 +48,7 @@ func publishedWithEntitlementFixture(t *testing.T, e *env, ctx context.Context) 
 	}
 	lim := int64(1 << 30)
 	verRV, err := e.svc.UpdateVersion(ctx, plan.ID, ver.ID, ver.RowVersion, VersionInput{
-		QuotaResetStrategy: ResetBillingCycle,
+		QuotaResetStrategy:   ResetBillingCycle,
 		RenewalExtendsPeriod: true, RenewalResetsQuota: true, RenewalKeepsAddons: true,
 		DeviceReleaseHours: 24, OveragePolicy: OveragePolicySuspend,
 		Entitlements: []Entitlement{{Code: "feat.a", Value: json.RawMessage(`true`)}},

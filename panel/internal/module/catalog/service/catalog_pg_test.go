@@ -151,7 +151,7 @@ func TestPublishRequiresPrice(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = e.svc.UpdateVersion(ctx, plan.ID, ver.ID, ver.RowVersion, VersionInput{
-		QuotaResetStrategy: ResetBillingCycle,
+		QuotaResetStrategy:   ResetBillingCycle,
 		RenewalExtendsPeriod: true, RenewalResetsQuota: true, RenewalKeepsAddons: true,
 		DeviceReleaseHours: 24, OveragePolicy: OveragePolicySuspend,
 		Quotas: []Quota{{Metric: MetricTraffic, Limit: int64Ptr(1 << 30), Unit: "bytes", Period: PeriodCycle}},
@@ -225,7 +225,7 @@ func TestPublishGroupPriceCoverage(t *testing.T) {
 		t.Fatal(err)
 	}
 	verRV, err := e.svc.UpdateVersion(ctx, plan.ID, ver.ID, ver.RowVersion, VersionInput{
-		QuotaResetStrategy: ResetBillingCycle,
+		QuotaResetStrategy:   ResetBillingCycle,
 		RenewalExtendsPeriod: true, RenewalResetsQuota: true, RenewalKeepsAddons: true,
 		DeviceReleaseHours: 24, OveragePolicy: OveragePolicySuspend,
 		Quotas: []Quota{{Metric: MetricTraffic, Limit: int64Ptr(1 << 30), Unit: "bytes", Period: PeriodCycle}},
@@ -278,7 +278,7 @@ func TestOptimisticLockConflicts(t *testing.T) {
 	assertRowVersionConflict(t, err)
 
 	_, err = e.svc.UpdateVersion(ctx, base.ID, draft.ID, draft.RowVersion+1, VersionInput{
-		QuotaResetStrategy: ResetBillingCycle,
+		QuotaResetStrategy:   ResetBillingCycle,
 		RenewalExtendsPeriod: true, RenewalResetsQuota: true, RenewalKeepsAddons: true,
 		DeviceReleaseHours: 24, OveragePolicy: OveragePolicySuspend,
 	})
@@ -319,7 +319,7 @@ func TestUpdatePublishedVersionRejectedInGo(t *testing.T) {
 		}
 	}
 	_, err = e.svc.UpdateVersion(ctx, plan.ID, pub.ID, pub.RowVersion, VersionInput{
-		QuotaResetStrategy: ResetBillingCycle,
+		QuotaResetStrategy:   ResetBillingCycle,
 		RenewalExtendsPeriod: true, RenewalResetsQuota: true,
 		RenewalKeepsAddons: true, DeviceReleaseHours: 99, OveragePolicy: OveragePolicySuspend,
 	})

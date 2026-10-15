@@ -255,7 +255,7 @@ func groupOnlyPublishedPlan(t *testing.T, ctx context.Context, e *env, g uuid.UU
 		t.Fatal(err)
 	}
 	verRV, err := e.svc.UpdateVersion(ctx, plan.ID, ver.ID, ver.RowVersion, VersionInput{
-		QuotaResetStrategy: ResetBillingCycle,
+		QuotaResetStrategy:   ResetBillingCycle,
 		RenewalExtendsPeriod: true, RenewalResetsQuota: true, RenewalKeepsAddons: true,
 		DeviceReleaseHours: 24, OveragePolicy: OveragePolicySuspend,
 		Quotas: []Quota{{Metric: MetricTraffic, Limit: int64Ptr(1 << 30), Unit: "bytes", Period: PeriodCycle}},
