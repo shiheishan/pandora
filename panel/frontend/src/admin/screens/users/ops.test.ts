@@ -38,7 +38,8 @@ describe('用户组', () => {
     expect(groupBlocker({ ...g, users: 3, plans: 1 })).toBe('组内还有 3 位用户，先把他们移出去')
     expect(groupBlocker({ ...g, plans: 2, coupons: 1 })).toBe('还有 2 个套餐按这个组控制可见性，先解除')
     // 专属价不再拦删除
-    expect(groupBlocker({ ...g, prices: 1 })).toBeNull()
+    const withPrice = { ...g, prices: 1 }
+    expect(groupBlocker(withPrice)).toBeNull()
     expect(groupBlocker({ ...g, coupons: 4 })).toContain('4 张优惠券')
   })
 
