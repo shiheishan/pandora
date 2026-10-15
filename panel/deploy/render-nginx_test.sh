@@ -170,6 +170,58 @@ cp "$NGX/nginx.conf" "$TEST_DIR/nginx.once"
 cmp -s "$TEST_DIR/nginx.once" "$NGX/nginx.conf" \
   || { printf 'second render changed nginx.conf\n' >&2; exit 1; }
 
+# 订阅域名
+mkdir -p "$TEST_DIR/subtls/sub-a.example.test"
+printf 'cert-dummy\n' >"$TEST_DIR/subtls/sub-a.example.test/fullchain.pem"
+printf 'key-dummy\n' >"$TEST_DIR/subtls/sub-a.example.test/privkey.pem"
+
+printf 'PANDORA_ADMIN_PATH=%s\nPANDORA_SUB_DOMAINS= sub-a.example.test , SUB-B.example.test\n' "$path" >"$TEST_DIR/sub-deploy.env"
+sub_err="$TEST_DIR/sub.err"
+PANDORA_SUB_TLS_DIR="$TEST_DIR/subtls" "$SCRIPT_DIR/render-nginx.sh" \
+  "$TEST_DIR/config.yaml" "$TEST_DIR/sub-deploy.env" "$TEST_DIR/sub.conf" "$REALIP" 2>"$sub_err"
+
+[[ "$(grep -c 'server_name sub-a.example.test;' "$TEST_DIR/sub.conf")" -eq 2 ]]
+[[ "$(grep -c 'server_name sub-b.example.test;' "$TEST_DIR/sub.conf")" -eq 1 ]]
+grep -Fq 'no certificate for subscription domain sub-b.example.test' "$sub_err"
+grep -Fq "ssl_certificate $TEST_DIR/subtls/sub-a.example.test/fullchain.pem;" "$TEST_DIR/sub.conf"
+refute -Fq 'sub-b.example.test/fullchain.pem' "$TEST_DIR/sub.conf"
+refute -Fq 'sub-b.example.test/privkey.pem' "$TEST_DIR/sub.conf"
+[[ "$(grep -c 'location = /v1/sub-probe' "$TEST_DIR/sub.conf")" -eq 1 ]]
+[[ "$(grep -cE 'location ~ \^/\[0-9a-f\]\{12\}/' "$TEST_DIR/sub.conf")" -eq 1 ]]
+
+[[ "$(grep -c "$path" "$TEST_DIR/sub.conf")" -eq "$(grep -c "$path" "$OUT")" ]]
+refute -Fq '__PANDORA_' "$TEST_DIR/sub.conf"
+assert_proxy_headers_per_location "$TEST_DIR/sub.conf"
+banned_words "$TEST_DIR/sub.conf"
+[[ "$(grep -c -F 'return 308 https://$host$request_uri;' "$TEST_DIR/sub.conf")" -ge 2 ]]
+
+printf 'PANDORA_ADMIN_PATH=%s\nPANDORA_SUB_DOMAINS=\n' "$path" >"$TEST_DIR/sub-empty-deploy.env"
+"$SCRIPT_DIR/render-nginx.sh" "$TEST_DIR/config.yaml" "$TEST_DIR/sub-empty-deploy.env" "$TEST_DIR/sub-empty.conf" "$REALIP" >/dev/null
+cmp -s "$OUT" "$TEST_DIR/sub-empty.conf" || { printf 'empty PANDORA_SUB_DOMAINS output differed from no sub domains\n' >&2; exit 1; }
+
+PANDORA_NGINX_VERSION=1.24.0 PANDORA_SUB_TLS_DIR="$TEST_DIR/subtls" "$SCRIPT_DIR/render-nginx.sh" \
+  "$TEST_DIR/config.yaml" "$TEST_DIR/sub-deploy.env" "$TEST_DIR/sub-legacy.conf" "$REALIP" >/dev/null 2>&1
+[[ "$(grep -c 'listen 0.0.0.0:443 ssl http2;' "$TEST_DIR/sub-legacy.conf")" -eq 2 ]]
+refute -Eq '^[[:space:]]*http2 on;' "$TEST_DIR/sub-legacy.conf"
+
+printf 'PANDORA_ADMIN_PATH=%s\nPANDORA_SUB_DOMAINS=panel.example.test\n' "$path" >"$TEST_DIR/sub-rej-panel.env"
+PANDORA_SUB_TLS_DIR="$TEST_DIR/subtls" reject_render "$TEST_DIR/config.yaml" "$TEST_DIR/sub-rej-panel.env" "$TEST_DIR/rej.conf" "$TEST_DIR/rej-realip.conf"
+
+printf 'PANDORA_ADMIN_PATH=%s\nPANDORA_SUB_DOMAINS=203.0.113.9\n' "$path" >"$TEST_DIR/sub-rej-ip.env"
+PANDORA_SUB_TLS_DIR="$TEST_DIR/subtls" reject_render "$TEST_DIR/config.yaml" "$TEST_DIR/sub-rej-ip.env" "$TEST_DIR/rej.conf" "$TEST_DIR/rej-realip.conf"
+
+printf 'PANDORA_ADMIN_PATH=%s\nPANDORA_SUB_DOMAINS=bad_domain.example.test\n' "$path" >"$TEST_DIR/sub-rej-underscore.env"
+PANDORA_SUB_TLS_DIR="$TEST_DIR/subtls" reject_render "$TEST_DIR/config.yaml" "$TEST_DIR/sub-rej-underscore.env" "$TEST_DIR/rej.conf" "$TEST_DIR/rej-realip.conf"
+
+printf 'PANDORA_ADMIN_PATH=%s\nPANDORA_SUB_DOMAINS=a.example.test,a.example.test\n' "$path" >"$TEST_DIR/sub-rej-dup.env"
+PANDORA_SUB_TLS_DIR="$TEST_DIR/subtls" reject_render "$TEST_DIR/config.yaml" "$TEST_DIR/sub-rej-dup.env" "$TEST_DIR/rej.conf" "$TEST_DIR/rej-realip.conf"
+
+printf 'PANDORA_ADMIN_PATH=%s\nPANDORA_SUB_DOMAINS=foo.localhost\n' "$path" >"$TEST_DIR/sub-rej-localhost.env"
+PANDORA_SUB_TLS_DIR="$TEST_DIR/subtls" reject_render "$TEST_DIR/config.yaml" "$TEST_DIR/sub-rej-localhost.env" "$TEST_DIR/rej.conf" "$TEST_DIR/rej-realip.conf"
+
+printf 'PANDORA_ADMIN_PATH=%s\nPANDORA_SUB_DOMAINS=a.example.test\nPANDORA_SUB_DOMAINS=b.example.test\n' "$path" >"$TEST_DIR/sub-rej-multi.env"
+PANDORA_SUB_TLS_DIR="$TEST_DIR/subtls" reject_render "$TEST_DIR/config.yaml" "$TEST_DIR/sub-rej-multi.env" "$TEST_DIR/rej.conf" "$TEST_DIR/rej-realip.conf"
+
 # 模板：仅两种占位符、恰好一行 http2 on;
 [[ "$(grep -cE '__PANDORA_(ADMIN_PATH|DOMAIN)__' "$SCRIPT_DIR/nginx-pandora.conf")" -ge 2 ]]
 if grep -oE '__[A-Z0-9_]+__' "$SCRIPT_DIR/nginx-pandora.conf" | grep -vxE '__PANDORA_ADMIN_PATH__|__PANDORA_DOMAIN__'; then
