@@ -204,6 +204,8 @@ func reviewSource(reason string) string {
 		return ReviewSourceSourceCheck
 	case strings.HasPrefix(reason, reviewUnderfundedPrefix):
 		return ReviewSourceUnderfunded
+	case reason == reviewDeletedReason:
+		return ReviewSourceAccountDeleted
 	default:
 		return ReviewSourceOther
 	}

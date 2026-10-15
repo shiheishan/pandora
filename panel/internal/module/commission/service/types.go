@@ -283,12 +283,14 @@ type SettleStats struct {
 	AutoTransferred int // 提现关闭时解冻、随后在单独事务里自动转入余额的条数（含上一轮转失败、这一轮补转的）
 }
 
-// 待复核的来源（由 review_reason 归类，给后台区分提示）：同源嫌疑、同源检查失败或未装配、解冻时待结科目余额不足、其它。
+// 待复核的来源（由 review_reason 归类，给后台区分提示）：同源嫌疑、同源检查失败或未装配、解冻时待结科目余额不足、
+// 受益人已注销（只能作废，通过会回 409）、其它。
 const (
-	ReviewSourceSameSource  = "same_source"
-	ReviewSourceSourceCheck = "source_check"
-	ReviewSourceUnderfunded = "underfunded"
-	ReviewSourceOther       = "other"
+	ReviewSourceSameSource     = "same_source"
+	ReviewSourceSourceCheck    = "source_check"
+	ReviewSourceUnderfunded    = "underfunded"
+	ReviewSourceAccountDeleted = "account_deleted"
+	ReviewSourceOther          = "other"
 )
 
 // ReviewEntryRow 是后台待复核列表的一行；邮箱不打码（管理员核对用）。

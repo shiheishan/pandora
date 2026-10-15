@@ -440,8 +440,10 @@ export function approveReasonError(reason: string): string | null {
 /**
  * 冻结期说明：未到期「冻结至 MM-DD HH:mm」；已到期「冻结期已过，通过后下一轮自动解冻」。
  * 解冻时待结科目余额不足转来的条目（underfunded）通过后解冻仍会失败、作废也冲不回，只能先核对账本，不说「会自动解冻」。
+ * 受益人已注销的条目（account_deleted）只能作废。
  */
 export function freezeLabel(entry: Pick<ReviewEntry, 'frozen_until' | 'review_source'>, now: Date): string {
+  if (entry.review_source === 'account_deleted') return '受益人账号已注销：只能作废，作废后冲回平台收入'
   if (entry.review_source === 'underfunded') return '待结科目余额不足：通过后解冻仍会失败，作废也冲不回，请先核对账本'
   if (new Date(entry.frozen_until).getTime() <= now.getTime()) return '冻结期已过，通过后下一轮自动解冻'
   return `冻结至 ${formatDateTime(entry.frozen_until)}`
