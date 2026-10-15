@@ -34,12 +34,16 @@ paths:
   - 选组：用户组分到的组 → 缺省组 → 都没有用 `public_base_url`（`service/domain_set.go` 的 `groupFor`、`domainGroupFor`）；只有缺省组时不查用户组
   - `MyLinks`、换链接组内按有效权重随机（`pickWeighted`，crypto/rand），有效权重 = 基础权重（1–100）× 分数；Surfboard 托管配置取组里基础权重最高的、同权重取前面的（`stableBaseURL`、`subscribeURLFor`）；过期提示的续费页仍用 `public_base_url`
   - 分数在 Redis `subdom:score`（`service/domain_scores.go`）：6 小时半衰期向 1 衰减、夹在 [0.1, 3]（下限大于 0：任何域名都不会被压成 0；上限防独占）；Redis 不可用按基础权重，不让生成链接失败
-  - 唯一的信号：经**令牌主人所在组**的已登记域名（`hostBaseURL` + `groupHas`，Host 可伪造，别组的不算）到达的成功拉取 +0.05；同一凭据对同一域名每小时只记一次（进程内去重表，上限 5 万条）；进程内攒 10 秒一批写，不给拉取加往返。冲刷在下一次拉取或下一次读分数（生成链接、后台查看）时顺带触发，没有定时任务，低流量时会滞后到那时；丢一批只影响增速。连不上的域名拿不到加分，相对权重随衰减自然变低
-  - 门户浏览器探测已去掉（审查 10-14）：门户入口页对匿名访客与所有用户组一样，CSP 放行订阅域名会公开只给某些组的域名；任何账号都能伪造失败上报操纵比例；首页也不该依赖数据库。不要再加回来
+  - 拉取信号：经**令牌主人所在组**的已登记域名（`hostBaseURL` + `groupHas`，Host 可伪造，别组的不算）到达的成功拉取 +0.05；同一凭据对同一域名每小时只记一次（进程内去重表，上限 5 万条）；进程内攒 10 秒一批写，不给拉取加往返。冲刷在下一次拉取或下一次读分数（生成链接、后台查看）时顺带触发，没有定时任务，低流量时会滞后到那时；丢一批只影响增速
+  - 探测信号（用户 10-14 重申「成功加权、失败降权、保留随机性」，失败信号是产品要求，只靠拉取给不出失败）：门户「我的套餐」页登录后 `POST /v1/sub-probe/ticket`（按账号每小时 6 次）领票据，隐藏 iframe 打开 `GET /v1/sub-probe/frame?t=`，探测页对本组每个域名 `GET <域名>/v1/sub-probe`（204，5 秒超时），再凭票据 `POST /v1/sub-probe/report`（`service/domain_probe.go`、`handler/probe_frame.go`）。成功 +0.1、失败 −0.3
+    - 为何用独立探测页：门户入口页对匿名访客一样，CSP 列订阅域名就公开了只给某些组的域名、能从门户反查订阅域名（审查 10-14 应改 1 方案三）。入口页 CSP 不含任何订阅域名，只多一个 `frame-src 'self'`（`app/portal_csp.go`），入口页也不读库；探测页的 CSP 按请求生成，connect-src 只有 `'self'` 与本人所在组的域名，脚本固定、按 sha256 放行，`frame-ancestors 'self'` 并去掉全局的 `X-Frame-Options`。不许用 `connect-src https:` 之类放宽
+    - 票据：HMAC（主密钥 HKDF 用途串 `crypto.InfoHMACSubProbe`），5 分钟，绑账号 id 与所在组指纹（组 id + 组内域名按顺序，`groupFingerprint`）；探测页与上报都复核签名、过期、账号仍有生效订阅（`repo.HasLiveSubscription`，口径同 `StateLive`）、当前组指纹一致，任一不符统一 401「探测票据无效或已过期」。没有生效订阅或组里没域名时票据接口回空串，门户不开 iframe。票据与探测页读配置走 30 秒快照
+    - `/v1/sub-probe`（GET/HEAD）只在请求 Origin 恰好等于门户源（`PortalOrigin`，public_base_url 的 scheme://host）时回 ACAO，`Vary: Origin`；CORS 中间件挂在限流前，429 也带 ACAO。探测页把 429 与 5xx 当「不计」，被 CSP 拦下（`securitypolicyviolation` 按 origin 精确比）也不计
+    - 防操纵（应改 3，`service/domain_probe_scores.go`，一次上报一段 Lua）：票据一次性（`subdom:probe:ticket:<nonce>`）；账号×域名每 30 分钟最多记一次，成败都算（`subdom:probe:seen:`）；失败要同一小时桶里 ≥3 个不同账号报同一域名才扣分，本小时第 3 个起生效（`subdom:probe:fail:`，固定小时桶）；每个域名每小时探测净变动封顶 ±0.5（`subdom:probe:net:`）；只收票据所绑组里的域名。拉取信号不受这些限制，口径不变
   - 地址口径与 nginx 一致（`NormalizeBaseURL`）：只收 https + DNS 域名（至少两段、末段字母开头、≤253），不收 IP、localhost 与端口（`:443` 自动去掉）
   - 拉取快照读整份配置时三条 SELECT 在同一个只读可重复读事务里（`repo.DomainConfig`），已在事务里（后台保存）直接用当前事务
   - 后台 `GET/PUT /subscription-domains`：整份替换，PUT 要近期重认证、写审计 `subscription.domains_changed`（域名不是秘密，前后整份记），先咨询锁 `LockDomainConfig` 再读旧值、没变化不写不审计（`service/domains.go`、`handler/domains.go`）；校验文案与假后端 `frontend/dev/mock/admin/subscription-domains.ts` 逐字一致
-  - nginx 订阅域名上只放行拉取路径，其余 404（`deploy/render-nginx.sh`）
+  - nginx 订阅域名上只放行拉取路径与 `= /v1/sub-probe`，其余 404（`deploy/render-nginx.sh`）；探测页、票据、上报只走门户主域名
 - 后台模板接口：`/subscription-templates[/:format[/preview]]`；保存与恢复缺省要近期重认证、写审计（只记 sha256 与字节数，不记全文），事务里先按格式加咨询锁（`LockTemplateFormat`）再读旧值（`handler/templates.go`、`service/templates.go`）；预览只渲染示例节点，在后台只读模式的豁免表里（`settings/handler/middleware.go` 与假后端 `frontend/dev/mock-api.ts` 同步）
 
 ## 链接、换链、备注

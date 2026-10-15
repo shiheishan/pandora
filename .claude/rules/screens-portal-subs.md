@@ -26,3 +26,4 @@ paths:
 - 换新链接之后的完成页在新链接下写「添加好以后在 App 里点一次更新…原来那条可以删掉」，旁边给按 App 的更新说明链接（`common/UpdateHelp.tsx`）
 - 选购页套餐卡（`plans/labels.ts` 的 `planCardView`，原型 planCard）：同款只有「续费」；不同款能换的只有一份时「换成 X」并写今天付多少；多份时「下一步选换掉哪一份」（不预选）；「另买一份」模式全是「买这个」；`allow_upgrade=false` 或不能续时按钮置灰并给出路。
 - 流量包挂在一份上（设计稿 2.4）：选购页流量包标签多份时选「加到哪一份」，预选剩得最少的；没有在用的套餐时不卖。
+- 订阅域名探测（`subs/probe.ts`，`MySubs` 里 `useSubDomainProbe()`，用户 10-14 定）：不显示任何东西；每 30 分钟最多一次（`localStorage` 的 `pandora.subProbeAt`，读写包 try/catch，只是省请求，防刷靠服务端）；`api.post('v1/sub-probe/ticket')` 领票据，空串就不探测；否则开隐藏 iframe（`hidden`、`aria-hidden`、`tabIndex=-1`、`referrerPolicy=no-referrer`）指向 `probeFrameURL`（`resolveApiUrl('v1/sub-probe/frame', document.baseURI, {t})`），收到同源、来自这个 iframe 的 `pandora-sub-probe-done` 消息或 30 秒后移除。门户自己不 fetch 任何订阅域名；探测与上报在面板下发的探测页里

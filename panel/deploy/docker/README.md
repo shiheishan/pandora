@@ -139,7 +139,7 @@ grep '^PANDORA_ADMIN_PATH=' .env
 
 ### 订阅域名（可选）
 
-后台「节点 → 订阅 → 订阅域名」里填了额外的订阅域名时，在 `.env` 的 `PANDORA_SUB_DOMAINS` 里逐个登记（逗号分隔，两边要一致），证书按域名放进 `PANDORA_SUB_TLS_DIR`（缺省 `./tls-sub`）下的 `<域名>/fullchain.pem` 与 `privkey.pem`，然后 `docker compose up -d --force-recreate nginx`。这些域名上只放行订阅拉取，其余路径 404；缺证书的域名只开 80（ACME 校验 + 跳 https）。订阅域名的证书不自动签发，自备或用宿主机 Certbot 签好放进去。
+后台「节点 → 订阅 → 订阅域名」里填了额外的订阅域名时，在 `.env` 的 `PANDORA_SUB_DOMAINS` 里逐个登记（逗号分隔，两边要一致），证书按域名放进 `PANDORA_SUB_TLS_DIR`（缺省 `./tls-sub`）下的 `<域名>/fullchain.pem` 与 `privkey.pem`，然后 `docker compose up -d --force-recreate nginx`。这些域名上只放行订阅拉取与门户探测接口 `/v1/sub-probe`，其余路径 404；缺证书的域名只开 80（ACME 校验 + 跳 https）。订阅域名的证书不自动签发，自备或用宿主机 Certbot 签好放进去。
 
 注意：nginx 只在容器启动时渲染配置。改了 `.env` 的 `PANDORA_SUB_DOMAINS` 要 `docker compose up -d --force-recreate nginx`（新值只有重建容器才传得进去）；只补了证书、`.env` 没动，`docker compose restart nginx` 也行。只 `up -d` 的话，`.env` 没变化时容器不会重建，配置不会更新。
 
