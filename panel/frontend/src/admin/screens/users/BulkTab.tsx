@@ -21,6 +21,7 @@ import {
 import { BulkBanForm } from './BulkBanForm'
 import { JOB_STATUS_VIEW, jobFilename, jobFinished, jobPercent } from './jobs'
 import {
+  assignableGroups,
   BULK_EXPIRY,
   BULK_STATUS,
   bulkFilter,
@@ -28,6 +29,7 @@ import {
   expiryView,
   exportQuery,
   generateProblems,
+  groupOptionLabel,
   MAIL_MAX,
   type BulkExpiry,
   type BulkForm,
@@ -85,7 +87,7 @@ function FilterPanel({ now }: { now: Date }) {
           label="用户组"
           size="sm"
           emptyOption="不限"
-          options={(groups.data ?? []).map((g) => ({ value: g.id, label: g.name }))}
+          options={(groups.data ?? []).map((g) => ({ value: g.id, label: groupOptionLabel(g) }))}
           value={form.group}
           onChange={(e) => set({ group: e.target.value })}
         />
@@ -357,10 +359,11 @@ function GeneratePanel() {
           hint={`生成的邮箱形如 ${form.prefix.trim().toLowerCase() || '前缀'}-8 位随机@${form.domain.trim().toLowerCase() || '后缀'}`}
           onChange={(e) => set('domain', e.target.value)}
         />
+        {/* 停用的组不收新成员：隐藏（已选中的照样显示，提交时后端回 422 分组已停用） */}
         <Select
           label="用户组"
           emptyOption="不分组"
-          options={(groups.data ?? []).map((g) => ({ value: g.id, label: g.name }))}
+          options={assignableGroups(groups.data ?? [], form.group ? [form.group] : []).map((g) => ({ value: g.id, label: groupOptionLabel(g) }))}
           value={form.group}
           error={errors.group}
           onChange={(e) => set('group', e.target.value)}

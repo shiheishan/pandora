@@ -9,10 +9,12 @@ import { ExtendDialog } from './ExtendDialog'
 import { MemberDiscount } from './MemberDiscount'
 import { PeriodEndDialog, QuotaLimitDialog } from './SubEditDialogs'
 import {
+  assignableGroups,
   currentSubscription,
   deviceLimitLabel,
   expiryView,
   extendableSubscriptions,
+  groupOptionLabel,
   isLive,
   isOrderTarget,
   ORDER_STATUS_VIEW,
@@ -101,7 +103,8 @@ function GroupPicker({ d }: { d: UserDetail }) {
   const invalidate = useInvalidateUsers()
   const groups = useUserGroups()
   const [busy, setBusy] = useState(false)
-  const options = (groups.data ?? []).map((g) => ({ value: g.id, label: g.name }))
+  // 停用的组不收新成员：下拉里隐藏，但用户当前就在停用组里时照样显示并标「（已停用）」
+  const options = assignableGroups(groups.data ?? [], d.group_id ? [d.group_id] : []).map((g) => ({ value: g.id, label: groupOptionLabel(g) }))
   const assign = async (groupId: string) => {
     setBusy(true)
     try {

@@ -31,9 +31,9 @@ export const domainConfigSchema = z.object({
 })
 export type DomainConfig = z.output<typeof domainConfigSchema>
 
-/** GET v1/user-groups 里只取 id 与 name（zod 默认丢掉多余键） */
+/** GET v1/user-groups 里只取 id、name、status（zod 默认丢掉多余键）；停用的组在勾选区隐藏，已勾选的照样显示 */
 export const userGroupOptionsSchema = z.object({
-  groups: z.array(z.object({ id: z.string(), name: z.string() })),
+  groups: z.array(z.object({ id: z.string(), name: z.string(), status: z.enum(['active', 'disabled']) })),
 })
 export type UserGroupOptions = z.output<typeof userGroupOptionsSchema>
 

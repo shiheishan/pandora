@@ -109,13 +109,15 @@ export type SubscriptionRow = z.output<typeof subscriptionSchema>
 export type Quota = z.output<typeof quotaSchema>
 
 // ---------------------------------------------------------------------------
-// GET v1/user-groups：筛选下拉与抽屉里的分配下拉
+// GET v1/user-groups：用户组页、筛选下拉与各处的分配下拉
 // ---------------------------------------------------------------------------
+// 停用的组：分配下拉里隐藏（当前值照样显示并标「（已停用）」），不能再加新成员；已有成员不受影响
 const userGroupSchema = z.object({
   id: z.string(),
   code: z.string(),
   name: z.string(),
   description: z.string(),
+  status: z.enum(['active', 'disabled']),
   users: count,
   plans: count,
   prices: count,

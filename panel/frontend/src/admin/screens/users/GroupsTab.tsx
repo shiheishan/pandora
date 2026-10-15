@@ -1,12 +1,13 @@
+import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { isApiError } from '../../../core/api'
 import { formatCount } from '../../../core/format'
 import { href } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
-import { Button, Card, ConfirmModal, Empty, Input, QueryView, Table, useToast, type TableColumn } from '../../../ui'
+import { Button, Card, ConfirmModal, Empty, Input, QueryView, Table, Tag, useToast, type TableColumn } from '../../../ui'
 import { useFailure } from '../../actions'
 import { groupSavedSchema, okSchema, useInvalidateUsers, useUserGroups, type UserGroup } from './api'
-import { EXCLUSIVE_NONE_HINT, exclusivePoolsLabel, groupBlocker, groupRefs } from './model'
+import { EXCLUSIVE_NONE_HINT, GROUP_DISABLE_NOTICE, exclusivePoolsLabel, groupBlocker, groupDeleteNotice, groupRefs } from './model'
 import ops from './Ops.module.css'
 import css from './Users.module.css'
 
@@ -22,10 +23,20 @@ export function GroupsTab() {
   const toast = useToast()
   const fail = useFailure()
   const invalidate = useInvalidateUsers()
+  const client = useQueryClient()
+  // 用户组变了：用户列表与分组下拉、套餐页（删组会连带删专属价）、订阅域名页自己的用户组查询都要刷新
+  const refresh = () =>
+    void Promise.all([
+      invalidate(true),
+      client.invalidateQueries({ queryKey: ['admin', 'plans'] }),
+      client.invalidateQueries({ queryKey: ['admin', 'nodes', 'subscription', 'user-groups'] }),
+    ])
   const [draft, setDraft] = useState<Draft | null>(null)
   const [draftError, setDraftError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState<UserGroup | null>(null)
+  const [disabling, setDisabling] = useState<UserGroup | null>(null)
+  const [statusBusy, setStatusBusy] = useState<string | null>(null)
 
   const edit = (g: UserGroup) => {
     setDraft({ id: g.id, name: g.name, description: g.description })
@@ -39,9 +50,9 @@ export function GroupsTab() {
       await api.post(`v1/user-groups/${encodeURIComponent(draft.id)}`, groupSavedSchema, { body: { name: draft.name.trim(), description: draft.description.trim() } })
       toast('用户组已保存')
       setDraft(null)
-      void invalidate(true)
+      refresh()
     } catch (e) {
-      if (!fail(e, (f) => setDraftError(f.name ?? Object.values(f)[0] ?? null))) void invalidate(true)
+      if (!fail(e, (f) => setDraftError(f.name ?? Object.values(f)[0] ?? null))) refresh()
     } finally {
       setSaving(false)
     }
@@ -52,11 +63,24 @@ export function GroupsTab() {
       await api.delete(`v1/user-groups/${encodeURIComponent(deleting.id)}`, okSchema)
       toast(`已删除用户组「${deleting.name}」`)
     } catch (e) {
-      // 409 的原文说清了是成员、套餐、价格还是优惠券挡住了
+      // 409 的原文说清了是成员、节点池、套餐、优惠券挡住，还是专属价已经有人买过
       fail(e)
     }
     setDeleting(null)
-    void invalidate(true)
+    refresh()
+  }
+  const setStatus = async (g: UserGroup, disabled: boolean) => {
+    setStatusBusy(g.id)
+    try {
+      await api.post(`v1/user-groups/${encodeURIComponent(g.id)}/status`, okSchema, { body: { disabled } })
+      toast(disabled ? `已停用用户组「${g.name}」` : `已启用用户组「${g.name}」`)
+    } catch (e) {
+      fail(e)
+    } finally {
+      setStatusBusy(null)
+      setDisabling(null)
+      refresh()
+    }
   }
 
   const columns: TableColumn<UserGroup>[] = [
@@ -71,7 +95,10 @@ export function GroupsTab() {
           </span>
         ) : (
           <span className={css.stack}>
-            <span className={ops.groupName}>{g.name}</span>
+            <span className={ops.groupName}>
+              {g.name}
+              {g.status === 'disabled' ? <> <Tag tone="neutral">已停用</Tag></> : null}
+            </span>
             <span className={css.small}>
               {g.description || '—'} · <span className={css.mono}>{g.code}</span>
             </span>
@@ -93,7 +120,7 @@ export function GroupsTab() {
     {
       key: 'ops',
       header: '',
-      width: '190px',
+      width: '240px',
       align: 'right',
       render: (g) => {
         if (draft?.id === g.id)
@@ -117,6 +144,15 @@ export function GroupsTab() {
               <Button size="xs" variant="ghost" onClick={() => edit(g)}>
                 编辑
               </Button>
+              {g.status === 'disabled' ? (
+                <Button size="xs" variant="ghost" busy={statusBusy === g.id} onClick={() => void setStatus(g, false)}>
+                  启用
+                </Button>
+              ) : (
+                <Button size="xs" variant="ghost" onClick={() => setDisabling(g)}>
+                  停用
+                </Button>
+              )}
               <Button size="xs" variant="ghost" className={blocker ? undefined : css.dangerText} disabled={blocker !== null} title={blocker ?? undefined} onClick={() => setDeleting(g)}>
                 删除
               </Button>
@@ -139,11 +175,21 @@ export function GroupsTab() {
           {(d) => <Table label="用户组" columns={columns} rows={d} rowKey={(g) => g.id} />}
         </QueryView>
       </div>
-      <CreateGroup onDone={() => void invalidate(true)} />
+      <CreateGroup onDone={refresh} />
+      <ConfirmModal
+        open={disabling !== null}
+        title={`停用用户组「${disabling?.name ?? ''}」？`}
+        body={GROUP_DISABLE_NOTICE}
+        confirmLabel="停用"
+        onConfirm={async () => {
+          if (disabling) await setStatus(disabling, true)
+        }}
+        onCancel={() => setDisabling(null)}
+      />
       <ConfirmModal
         open={deleting !== null}
         title={`删除用户组「${deleting?.name ?? ''}」？`}
-        body="删除后无法恢复。这个组已经没有成员，也没有套餐、价格或优惠券引用它。"
+        body={deleting ? groupDeleteNotice(deleting) : ''}
         confirmLabel="删除"
         tone="danger"
         onConfirm={remove}

@@ -5,6 +5,7 @@ import type { Group, Sub, User } from './users.ts'
 export interface UsersStore {
   users: User[]
   groups: Group[]
+  soldPriceGroups: ReadonlySet<string>
   /** 当前订阅：与后端 currentSubscriptionSQL 同一挑法 */
   current(u: User): Sub | undefined
   hasSubState(u: User, state: string): boolean
@@ -241,7 +242,7 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
       const code = (typeof body.code === 'string' ? body.code.trim() : '') || slug(name)
       if (groups.some((g) => g.code === code)) return ctx.fail(409, 'conflict', '这个分组标识已存在')
       const id = randomUUID()
-      groups.push({ id, code, name, description: typeof body.description === 'string' ? body.description : '', plans: 0, prices: 0, coupons: 0 })
+      groups.push({ id, code, name, description: typeof body.description === 'string' ? body.description : '', status: 'active', plans: 0, prices: 0, coupons: 0 })
       ctx.send(200, { id })
     },
 
@@ -260,7 +261,20 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
       ctx.send(200, { id: g.id })
     },
 
-    // 删除：成员、套餐可见性、专属价格、优惠券限定任一不为 0 都回 409，message 写明是哪一种
+    // 启停：无 reauth、无幂等；停用只挡新成员
+    'POST /v1/user-groups/:id/status': async (ctx) => {
+      const body = await ctx.body()
+      if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
+      const extra = unknownField(body, ['disabled'])
+      if (extra) return ctx.fail(400, 'bad_request', `请求体包含未知字段 "${extra}"`)
+      if (typeof body.disabled !== 'boolean') return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { disabled: '必填' })
+      const g = groups.find((x) => x.id === ctx.params.id)
+      if (!g) return ctx.fail(404, 'not_found', '资源不存在或无权访问')
+      g.status = body.disabled ? 'disabled' : 'active'
+      ctx.send(200, { ok: true })
+    },
+
+    // 删除：节点池名单、成员、套餐可见性、优惠券限定任一不为 0 回 409；专属价没卖过的随组删除，卖过的回 409（提示改用停用）
     'DELETE /v1/user-groups/:id': (ctx) => {
       const k = groups.findIndex((x) => x.id === ctx.params.id)
       if (k < 0) return ctx.fail(404, 'not_found', '资源不存在或无权访问')
@@ -270,8 +284,8 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
       if (pool) return ctx.fail(409, 'conflict', `节点池「${pool.name}」限定了这个分组，先在节点池里把它移出名单再删`)
       if (users.some((u) => u.group_id === g.id)) return ctx.fail(409, 'conflict', '这个分组下还有用户，先把他们移出去')
       if (g.plans > 0) return ctx.fail(409, 'conflict', '还有套餐按这个分组控制可见性，先解除')
-      if (g.prices > 0) return ctx.fail(409, 'conflict', '还有分组专属价格挂在这里，先删掉那些价格')
       if (g.coupons > 0) return ctx.fail(409, 'conflict', '还有优惠券限定了这个分组，先解除')
+      if (g.prices > 0 && store.soldPriceGroups.has(g.id)) return ctx.fail(409, 'conflict', '这个分组的专属价已经有人买过（订单、订阅或礼品卡用过），不能删除；不想再用可以停用这个分组')
       groups.splice(k, 1)
       ctx.send(200, { ok: true })
     },
@@ -348,6 +362,7 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
         if (runes(reason) < 5 || runes(reason) > 500) return invalid({ reason: '请写清生成原因，5 到 500 个字' })
         if (groupId && !UUID.test(groupId)) return invalid({ group_id: '分组标识格式不正确' })
         if (groupId && !groups.some((g) => g.id === groupId)) return invalid({ group_id: '分组不存在' })
+        if (groupId && groups.find((g) => g.id === groupId)!.status === 'disabled') return invalid({ group_id: '分组已停用' })
         const alphabet = 'abcdefghijkmnpqrstuvwxyz23456789'
         const pick = (n: number, from: string) => Array.from({ length: n }, () => from[randomInt(from.length)]).join('')
         const made: Array<{ email: string; password: string }> = []

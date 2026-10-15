@@ -4,6 +4,7 @@ import { navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, Checkbox, ConfirmModal, Empty, Input, Modal, QueryView, Select, Tag, useToast } from '../../../ui'
 import { UK, useUserGroups } from '../users/api'
+import { assignableGroups, groupOptionLabel } from '../users/model'
 import { createPoolBody, emptyPoolForm, patchPoolBody, planNamesLabel, POOL_STATUS, poolDeleteBlock, poolFormFrom, poolGroupsChanged, poolGroupsLabel, type PoolForm } from './infra'
 import x from './infra.module.css'
 import css from './nodes.module.css'
@@ -186,6 +187,8 @@ function PoolModal({ pool, onClose }: { pool: Pool | null; onClose: () => void }
 function PoolGroups({ picked, disabled, error, onChange }: { picked: readonly string[]; disabled: boolean; error?: string; onChange: (ids: string[]) => void }) {
   const groups = useUserGroups()
   const toggle = (id: string) => onChange(picked.includes(id) ? picked.filter((g) => g !== id) : [...picked, id])
+  // 停用的组隐藏；已勾选的照样显示并标「（已停用）」
+  const shown = assignableGroups(groups.data ?? [], picked)
   return (
     <fieldset className={`${css.stack} ${x.fieldset}`}>
       <legend className={css.faint}>仅限用户组（不选 = 不限定）</legend>
@@ -193,12 +196,12 @@ function PoolGroups({ picked, disabled, error, onChange }: { picked: readonly st
         <span className={css.faint}>正在读取用户组…</span>
       ) : groups.isError ? (
         <span className={css.faint}>用户组读取失败，稍后再试。</span>
-      ) : groups.data.length === 0 ? (
-        <span className={css.faint}>还没有用户组，先到「用户 · 用户组」建一个。</span>
+      ) : shown.length === 0 ? (
+        <span className={css.faint}>还没有可选的用户组，先到「用户 · 用户组」建一个或启用。</span>
       ) : (
         <div className={x.groupChecks}>
-          {groups.data.map((g) => (
-            <Checkbox key={g.id} label={g.name} checked={picked.includes(g.id)} disabled={disabled} onChange={() => toggle(g.id)} />
+          {shown.map((g) => (
+            <Checkbox key={g.id} label={groupOptionLabel(g)} checked={picked.includes(g.id)} disabled={disabled} onChange={() => toggle(g.id)} />
           ))}
         </div>
       )}

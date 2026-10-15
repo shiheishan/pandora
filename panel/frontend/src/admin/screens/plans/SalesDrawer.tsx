@@ -3,6 +3,7 @@ import { useApi } from '../../../shell/runtime'
 import { Button, Checkbox, Drawer, Input, Select, Switch, useToast } from '../../../ui'
 import { useIntentKey } from '../../actions'
 import { useUserGroups } from '../users/api'
+import { assignableGroups, groupOptionLabel } from '../users/model'
 import { rowVersionSchema, useInvalidatePlans, VISIBILITIES, type PlanDetail } from './api'
 import { useCatalogFailure } from './failure'
 import { HighlightsField } from './Highlights'
@@ -120,15 +121,17 @@ function SalesBody({ plan, open, onClose }: { plan: PlanDetail; open: boolean; o
 export function GroupPicker({ picked, onChange, error }: { picked: readonly string[]; onChange: (ids: string[]) => void; error?: string }) {
   const groups = useUserGroups()
   const toggle = (id: string) => onChange(picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id])
+  // 停用的组隐藏；已勾选的照样显示并标「（已停用）」
+  const shown = assignableGroups(groups.data ?? [], picked)
   return (
     <fieldset className={`${css.stack} ${css.fieldset}`}>
       <legend className={css.small}>可见的用户组</legend>
-      {groups.data?.length === 0 ? (
-        <p className={css.small}>还没有用户组，先到「用户 · 用户组」建一个。</p>
+      {groups.data && shown.length === 0 ? (
+        <p className={css.small}>还没有可选的用户组，先到「用户 · 用户组」建一个或启用。</p>
       ) : (
         <div className={css.toggles}>
-          {groups.data?.map((g) => (
-            <Checkbox key={g.id} label={g.name} checked={picked.includes(g.id)} onChange={() => toggle(g.id)} />
+          {shown.map((g) => (
+            <Checkbox key={g.id} label={groupOptionLabel(g)} checked={picked.includes(g.id)} onChange={() => toggle(g.id)} />
           ))}
         </div>
       )}

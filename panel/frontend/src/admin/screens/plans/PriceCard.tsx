@@ -4,6 +4,7 @@ import { useApi } from '../../../shell/runtime'
 import { Button, Card, ConfirmModal, Input, Select, useToast } from '../../../ui'
 import { useIntentKey } from '../../actions'
 import { useUserGroups } from '../users/api'
+import { assignableGroups, groupOptionLabel } from '../users/model'
 import { priceCreatedSchema, rowVersionSchema, useInvalidatePlans, type PlanDetail, type PriceRow } from './api'
 import { useCatalogFailure } from './failure'
 import { CUSTOM_UNITS, emptyPriceForm, PERIOD_OPTIONS, periodLabel, priceBody, priceProblems, type PriceForm } from './model'
@@ -17,7 +18,10 @@ const CURRENCY_OPTIONS = [
 export function PriceCard({ plan }: { plan: PlanDetail }) {
   const writable = plan.status !== 'archived'
   const groups = useUserGroups()
-  const groupName = (gid: string) => groups.data?.find((g) => g.id === gid)?.name ?? '用户组专属'
+  const groupName = (gid: string) => {
+    const g = groups.data?.find((x) => x.id === gid)
+    return g ? groupOptionLabel(g) : '用户组专属'
+  }
   const [archiving, setArchiving] = useState<PriceRow | null>(null)
   const rows = [...plan.prices.filter((p) => p.status === 'active'), ...plan.prices.filter((p) => p.status === 'archived')]
 
@@ -58,13 +62,14 @@ export function PriceCard({ plan }: { plan: PlanDetail }) {
           </div>
         )
       })}
-      {writable && <AddPrice plan={plan} groups={groups.data ?? []} />}
+      {/* 停用的组不再给新价格选 */}
+      {writable && <AddPrice plan={plan} groups={assignableGroups(groups.data ?? [])} />}
       <ArchivePrice plan={plan} price={archiving} onClose={() => setArchiving(null)} />
     </Card>
   )
 }
 
-function AddPrice({ plan, groups }: { plan: PlanDetail; groups: ReadonlyArray<{ id: string; name: string }> }) {
+function AddPrice({ plan, groups }: { plan: PlanDetail; groups: ReadonlyArray<{ id: string; name: string; status: string }> }) {
   const api = useApi()
   const toast = useToast()
   const fail = useCatalogFailure()
