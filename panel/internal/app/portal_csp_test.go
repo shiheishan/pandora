@@ -37,14 +37,19 @@ func portalCSP(t *testing.T, r captchaProviderReader) string {
 	return rec.Header().Get("Content-Security-Policy")
 }
 
-// 关人机验证（或读设置失败）时门户入口页 CSP 与不挂选项时逐字一致；开了只多出所选那家的来源。
+// 关人机验证（或读设置失败）时门户入口页 CSP 只比不挂选项时多一个 frame-src 'self'（订阅域名探测页）；
+// 开了只再多出所选那家的来源。入口页 CSP 不含任何订阅域名：connect-src 只有 'self'。
 func TestPortalCaptchaCSP(t *testing.T) {
 	base := portalCSP(t, fakeSignup{})
 	plainRec := httptest.NewRecorder()
 	webapp.Handler(fstest.MapFS{"index.html": {Data: []byte(`<!doctype html>`)}}).
 		ServeHTTP(plainRec, httptest.NewRequest(http.MethodGet, "/", nil))
-	if plain := plainRec.Header().Get("Content-Security-Policy"); base != plain {
-		t.Fatalf("captcha off changed CSP:\n got %q\nwant %q", base, plain)
+	plain := plainRec.Header().Get("Content-Security-Policy")
+	if want := strings.Replace(plain, "script-src 'self'; ", "script-src 'self'; frame-src 'self'; ", 1); base != want {
+		t.Fatalf("captcha off CSP:\n got %q\nwant %q", base, want)
+	}
+	if !strings.Contains(base, "connect-src 'self';") || strings.Contains(base, "https://") {
+		t.Fatalf("入口页 CSP 不应放行任何外部来源（含订阅域名）: %q", base)
 	}
 	if got := portalCSP(t, fakeSignup{err: errors.New("db down")}); got != base {
 		t.Fatalf("settings error must not widen CSP: %q", got)
@@ -56,7 +61,7 @@ func TestPortalCaptchaCSP(t *testing.T) {
 		if !strings.Contains(got, "script-src 'self' https://www.google.com/recaptcha/ https://www.gstatic.com/recaptcha/;") {
 			t.Fatalf("%s script-src: %q", p, got)
 		}
-		if !strings.Contains(got, "frame-src https://www.google.com/recaptcha/ https://recaptcha.google.com/recaptcha/;") {
+		if !strings.Contains(got, "frame-src 'self' https://www.google.com/recaptcha/ https://recaptcha.google.com/recaptcha/;") {
 			t.Fatalf("%s frame-src: %q", p, got)
 		}
 		// 只放行 /recaptcha/ 路径，不放行整个域名（www.google.com 上有 JSONP 端点）
@@ -71,7 +76,7 @@ func TestPortalCaptchaCSP(t *testing.T) {
 	}
 
 	got := portalCSP(t, fakeSignup{s: settingssvc.Signup{CaptchaProvider: settingssvc.CaptchaTurnstile}})
-	if !strings.Contains(got, "script-src 'self' "+cloudflare+";") || !strings.Contains(got, "frame-src "+cloudflare+";") {
+	if !strings.Contains(got, "script-src 'self' "+cloudflare+";") || !strings.Contains(got, "frame-src 'self' "+cloudflare+";") {
 		t.Fatalf("turnstile CSP: %q", got)
 	}
 	if strings.Contains(got, "google.com") || strings.Contains(got, "gstatic.com") {

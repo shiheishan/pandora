@@ -35,6 +35,8 @@ work=/run/pandora-render
 install -d -m 0700 "$work"
 printf 'public_base_url: %s\n' "$url" >"$work/config.yaml"
 printf 'PANDORA_ADMIN_PATH=%s\n' "$admin_path" >"$work/deploy.env"
+# 订阅域名（逗号分隔，可空）：格式与证书检查都在 render-nginx.sh 里做，证书挂在 /etc/pandora/tls/sub/<域名>/
+printf 'PANDORA_SUB_DOMAINS=%s\n' "${PANDORA_SUB_DOMAINS:-}" >>"$work/deploy.env"
 
 # --- 4. 真实 IP 信任表（每次启动按环境变量重写）---
 realip_file=/etc/pandora/cloudflare-realip.conf

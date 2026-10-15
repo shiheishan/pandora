@@ -31,6 +31,7 @@ func (f *fakeExtrasSettings) SubscriptionExtras(context.Context) (settingssvc.Su
 type fakeTemplateReader struct {
 	calls int
 	m     map[string]string
+	rows  repo.DomainConfigRows
 	err   error
 }
 
@@ -42,14 +43,30 @@ func (f *fakeTemplateReader) TemplateContents(context.Context) (map[string]strin
 	return f.m, nil
 }
 
+func (f *fakeTemplateReader) DomainConfig(context.Context) (repo.DomainConfigRows, error) {
+	return f.rows, nil
+}
+
 func TestPullExtrasGet(t *testing.T) {
 	ctx := context.Background()
 	var pe pullExtras
 	t0 := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
 	settings := &fakeExtrasSettings{val: settingssvc.SubscriptionExtras{
-		InfoNodes: true, ProtocolPrefix: true, LinkBaseURLs: []string{"https://sub.example.com"},
+		InfoNodes: true, ProtocolPrefix: true,
 	}}
-	tr := &fakeTemplateReader{m: map[string]string{"clash": "mixed-port: 7891\n{{proxies}}\n{{proxy_groups}}\n"}}
+	defGroupID := uuid.MustParse("00000000-0000-4000-8000-000000000010")
+	tr := &fakeTemplateReader{
+		m: map[string]string{"clash": "mixed-port: 7891\n{{proxies}}\n{{proxy_groups}}\n"},
+		rows: repo.DomainConfigRows{
+			Groups: []repo.DomainGroupRow{
+				{ID: defGroupID, Name: "默认", IsDefault: true, Position: 0},
+			},
+			Domains: []repo.DomainRow{
+				{GroupID: defGroupID, BaseURL: "https://sub.example.test", Weight: 2, Position: 0},
+			},
+			Assigns: []repo.DomainAssignRow{},
+		},
+	}
 
 	snap, err := pe.get(ctx, settings, tr, t0)
 	if err != nil {
@@ -63,6 +80,12 @@ func TestPullExtrasGet(t *testing.T) {
 	}
 	if snap.template(render.FormatLoon) != "" {
 		t.Fatal("没有 loon 模板应为空")
+	}
+	if snap.domains.empty() {
+		t.Fatal("snap.domains 不应为空")
+	}
+	if g := snap.domains.groupFor(nil); g == nil || g.ID != defGroupID {
+		t.Fatalf("groupFor(nil) 返回异常: %+v", g)
 	}
 
 	_, err = pe.get(ctx, settings, tr, t0.Add(10*time.Second))
@@ -94,7 +117,7 @@ func TestPullExtrasGet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snap2.settings.InfoNodes || snap2.settings.ProtocolPrefix || len(snap2.settings.LinkBaseURLs) > 0 {
+	if snap2.settings.InfoNodes || snap2.settings.ProtocolPrefix {
 		t.Fatalf("src nil 时 settings 应为零值 %+v", snap2.settings)
 	}
 
@@ -218,44 +241,57 @@ func stringsHasPrefix(s, prefix string) bool {
 	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
 }
 
-func TestPickLinkBase(t *testing.T) {
-	if pickLinkBase(nil, "https://panel.example.com") != "https://panel.example.com" {
-		t.Fatal("空列表")
-	}
-	if pickLinkBase([]string{"https://a.example.com"}, "fb") != "https://a.example.com" {
-		t.Fatal("单个元素")
-	}
-	bases := []string{"https://a.example.com", "https://b.example.com", "https://c.example.com"}
-	seen := map[string]bool{}
-	for i := 0; i < 200; i++ {
-		u := pickLinkBase(bases, "fb")
-		seen[u] = true
-		found := false
-		for _, b := range bases {
-			if b == u {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Fatalf("结果不在列表里 %q", u)
-		}
-	}
-	for _, b := range bases {
-		if !seen[b] {
-			t.Fatalf("200 次内应出现过 %s", b)
-		}
-	}
-}
-
 func TestSubscribeURLFor(t *testing.T) {
-	got := subscribeURLFor([]string{"https://a.example.com"}, "https://panel.example.com", "a1b2c3d4e5f6", "tok")
-	want := "https://a.example.com/a1b2c3d4e5f6/tok"
-	if got != want {
-		t.Fatalf("有 bases: %q", got)
+	fallback := "https://panel.example.test"
+	prefix := "a1b2c3d4e5f6"
+	token := "tok"
+
+	// 1. ex == nil → 用 fallback
+	gotNil := subscribeURLFor(nil, nil, fallback, prefix, token)
+	wantNil := linkURL(fallback, prefix, token)
+	if gotNil != wantNil {
+		t.Fatalf("ex nil: got %q want %q", gotNil, wantNil)
 	}
-	got2 := subscribeURLFor(nil, "https://panel.example.com", "a1b2c3d4e5f6", "tok")
-	if got2 != "https://panel.example.com/a1b2c3d4e5f6/tok" {
-		t.Fatalf("无 bases: %q", got2)
+
+	// 2. 有一个缺省组（域名 a 权重 1、b 权重 5、c 权重 5）→ 取 b（最高权重、同权重取前面的）
+	defGroup := DomainGroup{
+		ID:        uuid.New(),
+		Name:      "默认",
+		IsDefault: true,
+		Domains: []Domain{
+			{BaseURL: "https://a.example.test", Weight: 1},
+			{BaseURL: "https://b.example.test", Weight: 5},
+			{BaseURL: "https://c.example.test", Weight: 5},
+		},
+	}
+	// 3. 用户组 G 分到另一组（只有域名 d）→ 传 &G 取 d；传别的用户组取缺省组的 b
+	userGroupG := uuid.New()
+	otherUserGroup := uuid.New()
+	vipGroup := DomainGroup{
+		ID:           uuid.New(),
+		Name:         "专线",
+		IsDefault:    false,
+		Domains:      []Domain{{BaseURL: "https://d.example.test", Weight: 10}},
+		UserGroupIDs: []uuid.UUID{userGroupG},
+	}
+
+	exWithDefault := &extrasSnapshot{domains: newDomainSet([]DomainGroup{defGroup, vipGroup})}
+	if got := subscribeURLFor(exWithDefault, nil, fallback, prefix, token); got != linkURL("https://b.example.test", prefix, token) {
+		t.Fatalf("缺省组无用户组: got %q want %q", got, linkURL("https://b.example.test", prefix, token))
+	}
+	if got := subscribeURLFor(exWithDefault, &userGroupG, fallback, prefix, token); got != linkURL("https://d.example.test", prefix, token) {
+		t.Fatalf("用户组 G: got %q want %q", got, linkURL("https://d.example.test", prefix, token))
+	}
+	if got := subscribeURLFor(exWithDefault, &otherUserGroup, fallback, prefix, token); got != linkURL("https://b.example.test", prefix, token) {
+		t.Fatalf("未分配的用户组: got %q want %q", got, linkURL("https://b.example.test", prefix, token))
+	}
+
+	// 4. 只有非缺省组、用户没分到 → fallback
+	exNoDefault := &extrasSnapshot{domains: newDomainSet([]DomainGroup{vipGroup})}
+	if got := subscribeURLFor(exNoDefault, nil, fallback, prefix, token); got != wantNil {
+		t.Fatalf("只有非缺省组用户未分组: got %q want %q", got, wantNil)
+	}
+	if got := subscribeURLFor(exNoDefault, &otherUserGroup, fallback, prefix, token); got != wantNil {
+		t.Fatalf("只有非缺省组用户分到未登记组: got %q want %q", got, wantNil)
 	}
 }

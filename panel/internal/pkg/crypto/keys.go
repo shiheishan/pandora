@@ -25,6 +25,8 @@ const (
 	InfoHMACNodeDevice = "pandora/hmac/node-device/v1"
 	// InfoSS2022ServerPSK 是 Shadowsocks 2022 节点的服务端身份密钥（iPSK）：HKDF 的 info 后接 0x00、方法名、0x00、节点 id 的 16 字节，不存库
 	InfoSS2022ServerPSK = "pandora/ss2022/server-psk/v1"
+	// InfoHMACSubProbe 是订阅域名探测票据的签名（绑账号与所在域名组版本，5 分钟有效）
+	InfoHMACSubProbe = "pandora/hmac/sub-probe/v1"
 )
 
 const minMasterLen = 32

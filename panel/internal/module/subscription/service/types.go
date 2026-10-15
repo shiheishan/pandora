@@ -442,6 +442,8 @@ type PullRequest struct {
 	Types string
 	// Filter 是查询参数 filter 原文（按节点名关键字过滤，| 或逗号分隔）；空不过滤
 	Filter string
+	// Host 是请求的 Host 头（可能带端口）；经后台登记过的订阅域名到达的成功拉取给该域名加分
+	Host string
 }
 
 // Userinfo 是 Subscription-Userinfo 头的四个数：字节与 Unix 秒。Expire 为 0 时不写 expire。

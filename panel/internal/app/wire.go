@@ -215,7 +215,7 @@ func buildServices(r *runtime) (*services, error) {
 		Hasher:        keys,
 		Limiter:       limiter,
 		PublicBaseURL: cfg.PublicBaseURL,
-		// 订阅附加设置（信息节点、协议前缀、订阅域名）也在 settings
+		// 订阅附加设置（信息节点、协议前缀）也在 settings；订阅域名分组是 subscription 自己的表
 		Extras: settingsSvc,
 		Render: render.Options{Singbox: render.SingboxTemplate{
 			GeositeURLPrefix: cfg.Subscription.Singbox.GeositeURLPrefix,
@@ -223,6 +223,8 @@ func buildServices(r *runtime) (*services, error) {
 			BlockAds:         cfg.Subscription.Singbox.BlockAds,
 		}},
 	})
+	// 订阅域名分数（有效权重 = 基础权重 × 分数）放 Redis，多进程共享；Redis 不可用时按基础权重
+	subSvc.UseDomainScores(r.redis)
 	// 订阅里影响节点名单的事实变了（开通、续期、换套餐…），提交后推进节点名单纪元
 	subSvc.UseRosterNotifier(nodeSvc)
 	// 名单与线路：node 经 subscription 取可服务订阅、经 identity 取账号状态与用户组、经 catalog 取版本限速与绑池；

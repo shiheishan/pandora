@@ -1,9 +1,10 @@
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useApi } from '../../../shell/runtime'
-import { Button, Card, QueryView, Switch, TextArea, useToast } from '../../../ui'
+import { Button, Card, QueryView, Switch, useToast } from '../../../ui'
 import { extrasBody, extrasFormFrom, subscriptionExtrasSchema, type ExtrasForm, type SubscriptionExtras } from './subscription'
 import { useFailure, useInvalidateSubscription, useSubscriptionExtras } from './subscriptionQueries'
+import { SubscriptionDomains } from './SubscriptionDomains'
 import { SubscriptionTemplates } from './SubscriptionTemplates'
 import css from './nodes.module.css'
 
@@ -11,6 +12,7 @@ export function SubscriptionTab() {
   return (
     <div className={css.stack}>
       <ExtrasCard />
+      <SubscriptionDomains />
       <SubscriptionTemplates />
     </div>
   )
@@ -31,7 +33,6 @@ function ExtrasFormView({ saved }: { saved: SubscriptionExtras }) {
   const fail = useFailure()
   const invalidate = useInvalidateSubscription()
   const [draft, setDraft] = useState<ExtrasForm | null>(null)
-  const [errors, setErrors] = useState<Record<string, string>>({})
   const form = draft ?? extrasFormFrom(saved)
   const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(extrasFormFrom(saved))
   const edit = (patch: Partial<ExtrasForm>) => setDraft({ ...form, ...patch })
@@ -42,15 +43,14 @@ function ExtrasFormView({ saved }: { saved: SubscriptionExtras }) {
       toast('订阅附加设置已保存，最多 30 秒后在订阅里生效')
       void invalidate().then(() => setDraft(null))
     },
-    onError: (e) => fail(e, setErrors),
+    // 只剩两个开关，没有可标红的字段：服务端校验失败一律弹提示
+    onError: (e) => fail(e),
   })
 
   const submit = () => {
-    const out = extrasBody(form, saved)
-    if ('errors' in out) return setErrors(out.errors)
-    setErrors({})
-    if (Object.keys(out.body).length === 0) return
-    save.mutate(out.body)
+    const { body } = extrasBody(form, saved)
+    if (Object.keys(body).length === 0) return
+    save.mutate(body)
   }
 
   const disabled = save.isPending
@@ -79,18 +79,6 @@ function ExtrasFormView({ saved }: { saved: SubscriptionExtras }) {
             />
             <div className={css.faint}>如 [vless] 香港 01、[Hy2] 东京 02，方便在客户端里分辨协议。</div>
           </div>
-          <TextArea
-            label="订阅域名"
-            fieldClassName={css.span2}
-            rows={4}
-            mono
-            value={form.urlsText}
-            placeholder={'https://sub1.example.com\nhttps://sub2.example.com'}
-            hint="每行一个，只写到域名（可带端口），必须 https。生成订阅链接时随机取一个；留空用面板对外地址。这些域名要解析到本面板。"
-            error={errors.link_base_urls}
-            disabled={disabled}
-            onChange={(e) => edit({ urlsText: e.target.value })}
-          />
         </div>
       </Card>
       <div className={css.toolbar}>

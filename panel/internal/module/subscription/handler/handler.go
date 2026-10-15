@@ -1,6 +1,6 @@
 // Package handler 是 subscription 模块的 HTTP 层：订阅链接拉取、链接列表与换链接、线路预览、按日用量、后台换链接，
-// 门户「我的套餐」、改名、流量包与转移，后台加时长、加流量、手动重置流量、改设备数与重置日志。
-// 只做参数绑定与校验、调 service、写响应。
+// 门户「我的套餐」、改名、流量包与转移，后台加时长、加流量、手动重置流量、改设备数与重置日志，
+// 以及订阅域名分组与探测（门户票据、探测页、上报、公开探测接口）。只做参数绑定与校验、调 service、写响应。
 package handler
 
 import (
@@ -47,6 +47,7 @@ type Service interface {
 	AdminSetPeriodEnd(ctx context.Context, subID uuid.UUID, end time.Time, reason string) (service.AdminSetPeriodEndResult, error)
 	AdminSetQuotaLimit(ctx context.Context, subID uuid.UUID, metric, period string, limit *int64, reason string) error
 	TemplateService
+	DomainService
 }
 
 var _ Service = (*service.Service)(nil)
@@ -100,6 +101,16 @@ func (h *Handler) RegisterPublic(v1 *gin.RouterGroup, k route.Kit) {
 	v1.POST("/me/subscriptions/:id/rotate", k.RequireAuth, h.rotateLimit(), h.rotateSubscriptionLink)
 	v1.GET("/me/subscriptions/:id/nodes", k.RequireAuth, h.mySubscriptionNodes)
 	v1.GET("/me/subscriptions/:id/usage", k.RequireAuth, h.mySubscriptionUsage)
+	// 订阅域名探测：门户登录后领票据（按账号每小时 6 次），隐藏 iframe 打开探测页，探测页凭票据上报（票据鉴权，按 IP 限流）
+	v1.POST("/sub-probe/ticket", k.RequireAuth,
+		h.limit(ratelimit.Dimension{Rule: ratelimit.PerWindow("sub_probe_ticket", probeTicketsPerHour, time.Hour), Key: byAccount}),
+		h.probeTicket)
+	v1.GET("/sub-probe/frame", h.limit(ratelimit.Dimension{Rule: ratelimit.PerMinute("sub_probe_frame_ip", probeFramePerMinute), Key: ratelimit.ByIP}), h.probeFrame)
+	v1.POST("/sub-probe/report", h.limit(ratelimit.Dimension{Rule: ratelimit.PerMinute("sub_probe_report_ip", probeReportPerMinute), Key: ratelimit.ByIP}), h.probeReport)
+	// 公开探测接口：订阅域名上浏览器跨源 GET/HEAD，只回 204；CORS 头先于限流写（429 也带）
+	subProbeLimit := h.limit(ratelimit.Dimension{Rule: ratelimit.PerMinute("sub_probe_ip", subProbePerMinute), Key: ratelimit.ByIP})
+	v1.GET("/sub-probe", h.probeCORS, subProbeLimit, h.subProbe)
+	v1.HEAD("/sub-probe", h.probeCORS, subProbeLimit, h.subProbe)
 }
 
 // RegisterAdmin 注册后台路由。加时长、加流量每执行一次多一份，要近期重认证与独立的幂等作用域。
@@ -121,6 +132,9 @@ func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	v1.PUT("/subscription-templates/:format", k.RequireAuth, k.RecentReauth, h.adminSaveTemplate)
 	v1.DELETE("/subscription-templates/:format", k.RequireAuth, k.RecentReauth, h.adminResetTemplate)
 	v1.POST("/subscription-templates/:format/preview", k.RequireAuth, h.adminPreviewTemplate)
+	// 订阅域名分组：整份替换，影响之后新生成的所有订阅链接；保存要近期重认证（审计在 service）
+	v1.GET("/subscription-domains", k.RequireAuth, h.adminDomains)
+	v1.PUT("/subscription-domains", k.RequireAuth, k.RecentReauth, h.adminSaveDomains)
 }
 
 // RegisterRoot 注册订阅链接拉取 GET /:prefix/:token：公开、不在 /v1 下（链接里出现 /v1/subscribe 这样的字样等于自带指纹）。

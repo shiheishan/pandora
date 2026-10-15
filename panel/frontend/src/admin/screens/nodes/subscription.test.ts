@@ -5,7 +5,6 @@ import {
   formatLabel,
   formatSize,
   missingPlaceholders,
-  parseUrlLines,
   templateBytes,
   type SubscriptionExtras,
 } from './subscription'
@@ -13,7 +12,6 @@ import {
 const saved: SubscriptionExtras = {
   info_nodes: false,
   protocol_prefix: true,
-  link_base_urls: ['https://sub1.example.com'],
 }
 
 describe('formatLabel', () => {
@@ -25,17 +23,9 @@ describe('formatLabel', () => {
   })
 })
 
-describe('parseUrlLines', () => {
-  it('trims lines and drops empty', () => {
-    expect(parseUrlLines(' a \r\n\n b ')).toEqual(['a', 'b'])
-  })
-})
-
 describe('extrasFormFrom', () => {
-  it('joins urls with newline', () => {
-    expect(extrasFormFrom({ ...saved, link_base_urls: ['https://a.example.com', 'https://b.example.com'] }).urlsText).toBe(
-      'https://a.example.com\nhttps://b.example.com',
-    )
+  it('keeps the two switches', () => {
+    expect(extrasFormFrom(saved)).toEqual({ infoNodes: false, protocolPrefix: true })
   })
 })
 
@@ -49,17 +39,6 @@ describe('extrasBody', () => {
   it('returns empty body when nothing changed', () => {
     const form = extrasFormFrom(saved)
     expect(extrasBody(form, saved)).toEqual({ body: {} })
-  })
-
-  it('errors when more than 10 urls', () => {
-    const lines = Array.from({ length: 11 }, (_, i) => `https://sub${i}.example.com`).join('\n')
-    const form = { ...extrasFormFrom(saved), urlsText: lines }
-    expect(extrasBody(form, saved)).toEqual({ errors: { link_base_urls: '订阅地址最多 10 个' } })
-  })
-
-  it('errors when a line does not start with https://', () => {
-    const form = { ...extrasFormFrom(saved), urlsText: 'https://ok.example.com\nhttp://bad.example.com' }
-    expect(extrasBody(form, saved)).toEqual({ errors: { link_base_urls: '第 2 个订阅地址必须以 https:// 开头' } })
   })
 })
 

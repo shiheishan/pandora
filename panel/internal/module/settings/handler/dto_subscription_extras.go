@@ -15,26 +15,19 @@ type SubscriptionExtrasSettings interface {
 }
 
 type subscriptionExtrasResponse struct {
-	InfoNodes      bool     `json:"info_nodes"`
-	ProtocolPrefix bool     `json:"protocol_prefix"`
-	LinkBaseURLs   []string `json:"link_base_urls"`
+	InfoNodes      bool `json:"info_nodes"`
+	ProtocolPrefix bool `json:"protocol_prefix"`
 }
 
 type setSubscriptionExtrasRequest struct {
-	InfoNodes      *bool     `json:"info_nodes"`
-	ProtocolPrefix *bool     `json:"protocol_prefix"`
-	LinkBaseURLs   *[]string `json:"link_base_urls"`
+	InfoNodes      *bool `json:"info_nodes"`
+	ProtocolPrefix *bool `json:"protocol_prefix"`
 }
 
 func subscriptionExtrasToResponse(e service.SubscriptionExtras) subscriptionExtrasResponse {
-	urls := e.LinkBaseURLs
-	if urls == nil {
-		urls = []string{}
-	}
 	return subscriptionExtrasResponse{
 		InfoNodes:      e.InfoNodes,
 		ProtocolPrefix: e.ProtocolPrefix,
-		LinkBaseURLs:   urls,
 	}
 }
 
@@ -58,7 +51,6 @@ func (h *Handler) setSubscriptionExtras(c *gin.Context) {
 	if err := h.svc.SetSubscriptionExtras(ctx, service.SubscriptionExtrasUpdate{
 		InfoNodes:      req.InfoNodes,
 		ProtocolPrefix: req.ProtocolPrefix,
-		LinkBaseURLs:   req.LinkBaseURLs,
 	}); err != nil {
 		httpx.Fail(c, err)
 		return

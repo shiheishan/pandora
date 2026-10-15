@@ -32,7 +32,8 @@ import (
 type fakeUsers struct {
 	mu      sync.Mutex
 	emails  map[uuid.UUID]string
-	deleted map[uuid.UUID]bool // markDeleted 标记的已注销账号
+	deleted map[uuid.UUID]bool       // markDeleted 标记的已注销账号
+	groups  map[uuid.UUID]*uuid.UUID // setGroup 设的用户组；没设为 nil
 }
 
 // IsDeleted 报告 markDeleted 标过的账号。
@@ -52,6 +53,15 @@ func (f *fakeUsers) markDeleted(id uuid.UUID) {
 	f.deleted[id] = true
 }
 
+func (f *fakeUsers) setGroup(id uuid.UUID, g *uuid.UUID) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.groups == nil {
+		f.groups = make(map[uuid.UUID]*uuid.UUID)
+	}
+	f.groups[id] = g
+}
+
 func (f *fakeUsers) Emails(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -64,7 +74,11 @@ func (f *fakeUsers) Emails(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]st
 	return out, nil
 }
 
-func (f *fakeUsers) UserGroupID(context.Context, uuid.UUID) (*uuid.UUID, error) { return nil, nil }
+func (f *fakeUsers) UserGroupID(_ context.Context, id uuid.UUID) (*uuid.UUID, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.groups[id], nil
+}
 
 // fakeSite 实现 SiteSettings。
 type fakeSite struct{}

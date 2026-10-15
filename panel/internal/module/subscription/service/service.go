@@ -107,6 +107,8 @@ type Service struct {
 	failures *failureSampler
 	// extras 是拉取用的后台模板与订阅附加设置的进程内快照（pull_extras.go），30 秒过期。
 	extras pullExtras
+	// scores 是订阅域名的分数（Redis，domain_scores.go）；装配时经 UseDomainScores 注入，nil 时一律按基础权重
+	scores *domainScores
 }
 
 // New 构造 subscription service。catalog 一般是 catalog service，users 是 identity service，sealer 是 crypto.Keys.Sealer()。
@@ -272,6 +274,7 @@ func (s *Service) MissingPorts() []string {
 		{"RosterNotifier", s.roster != nil},
 		{"PluginEvents", s.events != nil},
 		{"Realtime", s.rt != nil},
+		{"DomainScores", s.scores != nil},
 	} {
 		if !p.ok {
 			out = append(out, p.name)

@@ -121,7 +121,7 @@ func TestSubscribeOKHeaders(t *testing.T) {
 	if h.Get("Profile-Web-Page-Url") != "" {
 		t.Fatalf("生效中不该带续费页: %q", h.Get("Profile-Web-Page-Url"))
 	}
-	if f.pullReq != (service.PullRequest{Prefix: "a1b2c3d4e5f6", Token: "tok.yaml", Target: "clash"}) {
+	if f.pullReq != (service.PullRequest{Prefix: "a1b2c3d4e5f6", Token: "tok.yaml", Target: "clash", Host: "example.com"}) {
 		t.Fatalf("pullReq %+v", f.pullReq)
 	}
 }

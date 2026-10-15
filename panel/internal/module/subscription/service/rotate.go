@@ -63,7 +63,7 @@ func (s *Service) MyRotate(ctx context.Context, subID uuid.UUID) (string, error)
 	if err != nil {
 		return "", err
 	}
-	base, err := s.linkBase(ctx, d)
+	base, err := s.linkBase(ctx, d, p.UserID)
 	if err != nil {
 		return "", err
 	}

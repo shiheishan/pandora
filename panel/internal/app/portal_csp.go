@@ -81,9 +81,11 @@ func (c *providerCache) get(ctx context.Context) (string, error) {
 	return res.value, res.err
 }
 
-// portalCaptchaCSP 按注册设置给门户入口页追加人机验证的脚本与 iframe 来源：
-// 没开人机验证时什么都不加（CSP 与原来逐字一致）；开了只放行所选那一家的固定来源。
-// 读设置失败时不放行任何第三方来源（人机验证加载不了，注册会停在人机验证这一步，而不是放宽 CSP）。
+// portalCaptchaCSP 按注册设置给门户入口页追加 iframe 与人机验证的来源：
+//   - frame-src 总有 'self'：「我的套餐」页用隐藏的同源 iframe 打开订阅域名探测页（/v1/sub-probe/frame）；
+//     订阅域名本身不进入口页 CSP（入口页对匿名访客一样，列出来就公开了只给某些组的域名），只进探测页按请求生成的 CSP；
+//   - 没开人机验证时只多这一项；开了再放行所选那一家的固定来源；
+//   - 读设置失败时不放行任何第三方来源（人机验证加载不了，注册会停在人机验证这一步，而不是放宽 CSP）。
 func portalCaptchaCSP(settings captchaProviderReader) func(ctx context.Context) webapp.ExtraSources {
 	return portalCaptchaCSPWith(&providerCache{
 		read: settings.SignupCaptchaProvider, gen: settings.SignupGeneration, now: time.Now,
@@ -96,11 +98,16 @@ func portalCaptchaCSPWith(c *providerCache) func(ctx context.Context) webapp.Ext
 		provider, err := c.get(ctx)
 		if err != nil {
 			plog.From(ctx).Warn("读取注册设置失败，门户入口页不放行人机验证来源", zap.Error(err))
-			return webapp.ExtraSources{}
+			return webapp.ExtraSources{Frame: []string{portalFrameSelf}}
 		}
-		return captchaSources(provider)
+		x := captchaSources(provider)
+		x.Frame = append([]string{portalFrameSelf}, x.Frame...)
+		return x
 	}
 }
+
+// portalFrameSelf 是门户入口页 frame-src 固定带的同源来源（订阅域名探测页）。
+const portalFrameSelf = "'self'"
 
 // captchaSources 是各家人机验证要的固定来源，取值照官方文档（2026-10-14 查）：
 //   - reCAPTCHA：https://developers.google.com/recaptcha/docs/faq 的 CSP 一节——script-src 只放

@@ -5,9 +5,13 @@ import (
 	"encoding/base64"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
 
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/module/subscription/render"
+	"github.com/aegispanel/aegis/internal/pkg/testkit"
 )
 
 // wiringExtras 实现 ExtrasSettings：固定返回一份附加设置。
@@ -92,23 +96,169 @@ func TestPullUsesCustomTemplate(t *testing.T) {
 	}
 }
 
-func TestLinksUseLinkBaseURLs(t *testing.T) {
+func TestLinksUseDomainGroups(t *testing.T) {
 	de, ctx, user, sub := rotateSetup(t)
-	de.useExtras(settingssvc.SubscriptionExtras{LinkBaseURLs: []string{"https://sub-a.example.test", "https://sub-b.example.test"}})
+	admin := adminCtx(ctx, uuid.New())
+	G1 := seedUserGroup(t, de.env, ctx, "vip")
+	G2 := seedUserGroup(t, de.env, ctx, "other")
+	_, err := de.svc.AdminSaveDomainConfig(admin, []DomainGroupInput{
+		{Name: "默认", IsDefault: true, Domains: []Domain{
+			{BaseURL: "https://sub-a.example.test", Weight: 1},
+			{BaseURL: "https://sub-b.example.test", Weight: 1},
+		}},
+		{Name: "专线", Domains: []Domain{{BaseURL: "https://vip.example.test", Weight: 1}}, UserGroupIDs: []uuid.UUID{G1}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	de.svc.extras.snap.Store(nil)
+
 	links, err := de.svc.MyLinks(userCtx(ctx, user))
 	if err != nil || len(links) != 1 {
 		t.Fatalf("链接列表: %v %d", err, len(links))
 	}
 	u := links[0].URL
 	if !strings.HasPrefix(u, "https://sub-a.example.test/"+testPrefix+"/") && !strings.HasPrefix(u, "https://sub-b.example.test/"+testPrefix+"/") {
-		t.Fatalf("链接没用订阅域名：%s", u)
+		t.Fatalf("缺省组链接: %s", u)
+	}
+
+	de.users.setGroup(user, &G1)
+	de.svc.extras.snap.Store(nil)
+	links, err = de.svc.MyLinks(userCtx(ctx, user))
+	if err != nil || !strings.HasPrefix(links[0].URL, "https://vip.example.test/") {
+		t.Fatalf("G1 链接: %v", links)
 	}
 	url, err := de.svc.MyRotate(userCtx(ctx, user), sub.ID)
+	if err != nil || !strings.HasPrefix(url, "https://vip.example.test/") {
+		t.Fatalf("G1 换链: %q err %v", url, err)
+	}
+
+	de.users.setGroup(user, &G2)
+	de.svc.extras.snap.Store(nil)
+	links, err = de.svc.MyLinks(userCtx(ctx, user))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(url, "https://sub-a.example.test/") && !strings.HasPrefix(url, "https://sub-b.example.test/") {
-		t.Fatalf("换链接返回的地址没用订阅域名：%s", url)
+	u = links[0].URL
+	if !strings.HasPrefix(u, "https://sub-a.example.test/") && !strings.HasPrefix(u, "https://sub-b.example.test/") {
+		t.Fatalf("G2 走缺省: %s", u)
+	}
+
+	_, err = de.svc.AdminSaveDomainConfig(admin, []DomainGroupInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	de.svc.extras.snap.Store(nil)
+	links, err = de.svc.MyLinks(userCtx(ctx, user))
+	if err != nil || !strings.HasPrefix(links[0].URL, testBaseURL+"/") {
+		t.Fatalf("清空后走面板: %v", links)
+	}
+}
+
+func TestPullSurfboardManagedURLUsesTopWeight(t *testing.T) {
+	de, ctx, user, _, token := setupPull(t)
+	admin := adminCtx(ctx, uuid.New())
+	G := seedUserGroup(t, de.env, ctx, "surf")
+	_, err := de.svc.AdminSaveDomainConfig(admin, []DomainGroupInput{
+		{Name: "缺省", IsDefault: true, Domains: []Domain{
+			{BaseURL: "https://sub-a.example.test", Weight: 1},
+			{BaseURL: "https://sub-b.example.test", Weight: 9},
+		}},
+		{Name: "专线", Domains: []Domain{{BaseURL: "https://vip.example.test", Weight: 1}}, UserGroupIDs: []uuid.UUID{G}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	de.svc.extras.snap.Store(nil)
+
+	res, err := de.svc.Pull(ctx, PullRequest{Prefix: testPrefix, Token: token, Target: string(render.FormatSurfboard)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(res.Body), "#!MANAGED-CONFIG https://sub-b.example.test/") {
+		t.Fatalf("缺省组最高权重: %s", res.Body)
+	}
+
+	de.owners.setGroup(user, &G)
+	de.svc.extras.snap.Store(nil)
+	res, err = de.svc.Pull(ctx, PullRequest{Prefix: testPrefix, Token: token, Target: string(render.FormatSurfboard)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(res.Body), "#!MANAGED-CONFIG https://vip.example.test/") {
+		t.Fatalf("用户组专线: %s", res.Body)
+	}
+}
+
+func TestPullViaSubDomainNotesSuccess(t *testing.T) {
+	de, ctx, _, _, token := setupPull(t)
+	admin := adminCtx(ctx, uuid.New())
+	_, err := de.svc.AdminSaveDomainConfig(admin, []DomainGroupInput{{
+		Name: "缺省", IsDefault: true,
+		Domains: []Domain{{BaseURL: "https://sub-a.example.test", Weight: 1}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	de.svc.extras.snap.Store(nil)
+	_, rdb := testkit.Redis(t)
+	de.svc.UseDomainScores(rdb)
+
+	origNow := de.svc.now
+	base := time.Now().UTC()
+	var cur time.Time
+	cur = base
+	de.svc.now = func() time.Time { return cur }
+	t.Cleanup(func() { de.svc.now = origNow })
+
+	if _, err := de.svc.Pull(ctx, PullRequest{Prefix: testPrefix, Token: token, Host: "sub-a.example.test"}); err != nil {
+		t.Fatalf("第一次拉取: %v", err)
+	}
+	cur = base.Add(11 * time.Second)
+	if _, err := de.svc.Pull(ctx, PullRequest{Prefix: testPrefix, Token: token, Host: "sub-a.example.test"}); err != nil {
+		t.Fatalf("第二次拉取: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	var score float64
+	for time.Now().Before(deadline) {
+		m, ok := de.svc.scores.Read(ctx, []string{"https://sub-a.example.test"}, cur)
+		if ok && almost(m["https://sub-a.example.test"], 1.05, 0.01) {
+			score = m["https://sub-a.example.test"]
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if score == 0 {
+		t.Fatalf("分数应 ≈ 1.05（同一凭据去重），实际 %v", score)
+	}
+
+	G := seedUserGroup(t, de.env, ctx, "vip-pull")
+	_, err = de.svc.AdminSaveDomainConfig(admin, []DomainGroupInput{
+		{Name: "缺省", IsDefault: true, Domains: []Domain{{BaseURL: "https://sub-a.example.test", Weight: 1}}},
+		{Name: "专线", Domains: []Domain{{BaseURL: "https://vip.example.test", Weight: 1}}, UserGroupIDs: []uuid.UUID{G}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	de.svc.extras.snap.Store(nil)
+	cur = base.Add(22 * time.Second)
+	if _, err := de.svc.Pull(ctx, PullRequest{Prefix: testPrefix, Token: token, Host: "vip.example.test"}); err != nil {
+		t.Fatalf("别组 Host 拉取: %v", err)
+	}
+	// 加分在拉取里同步攒进 pending，没攒进去就不会有后台写：直接看 pending 与 Redis 即可，不用等
+	de.svc.scores.mu.Lock()
+	_, queued := de.svc.scores.pending["https://vip.example.test"]
+	de.svc.scores.mu.Unlock()
+	if queued || rdb.HExists(ctx, domainScoreKey, "https://vip.example.test").Val() {
+		t.Fatal("令牌主人不在专线组，vip 域名不应加分")
+	}
+
+	if _, err := de.svc.Pull(ctx, PullRequest{Prefix: testPrefix, Token: token, Host: "other.example.test"}); err != nil {
+		t.Fatal(err)
+	}
+	if rdb.HExists(ctx, domainScoreKey, "https://other.example.test").Val() {
+		t.Fatal("未登记域名不应写分数")
 	}
 }
 

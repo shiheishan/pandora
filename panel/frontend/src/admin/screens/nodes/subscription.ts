@@ -16,7 +16,6 @@ export const FORMAT_LABEL: Readonly<Record<TemplateFormat, string>> = {
 export const subscriptionExtrasSchema = z.object({
   info_nodes: z.boolean(),
   protocol_prefix: z.boolean(),
-  link_base_urls: z.array(z.string()),
 })
 export type SubscriptionExtras = z.output<typeof subscriptionExtrasSchema>
 
@@ -46,36 +45,16 @@ export function formatLabel(format: string): string {
 export interface ExtrasForm {
   infoNodes: boolean
   protocolPrefix: boolean
-  urlsText: string
 }
 
 export function extrasFormFrom(s: SubscriptionExtras): ExtrasForm {
-  return { infoNodes: s.info_nodes, protocolPrefix: s.protocol_prefix, urlsText: s.link_base_urls.join('\n') }
+  return { infoNodes: s.info_nodes, protocolPrefix: s.protocol_prefix }
 }
 
-/** 按行拆分，去掉空行；不去重、不校验 URL */
-export function parseUrlLines(text: string): string[] {
-  const out: string[] = []
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.trim()
-    if (line) out.push(line)
-  }
-  return out
-}
-
-export function extrasBody(form: ExtrasForm, saved: SubscriptionExtras): { body: Partial<SubscriptionExtras> } | { errors: Record<string, string> } {
-  const urls = parseUrlLines(form.urlsText)
-  if (urls.length > 10) return { errors: { link_base_urls: '订阅地址最多 10 个' } }
-  for (let i = 0; i < urls.length; i++) {
-    if (!urls[i]!.toLowerCase().startsWith('https://')) return { errors: { link_base_urls: `第 ${i + 1} 个订阅地址必须以 https:// 开头` } }
-  }
-
+export function extrasBody(form: ExtrasForm, saved: SubscriptionExtras): { body: Partial<SubscriptionExtras> } {
   const body: Partial<SubscriptionExtras> = {}
   if (form.infoNodes !== saved.info_nodes) body.info_nodes = form.infoNodes
   if (form.protocolPrefix !== saved.protocol_prefix) body.protocol_prefix = form.protocolPrefix
-  const savedUrls = saved.link_base_urls
-  const urlsChanged = urls.length !== savedUrls.length || urls.some((u, i) => u !== savedUrls[i])
-  if (urlsChanged) body.link_base_urls = urls
   return { body }
 }
 

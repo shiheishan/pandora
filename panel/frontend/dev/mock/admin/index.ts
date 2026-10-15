@@ -9,6 +9,7 @@ import { plans } from './plans.ts'
 import { security } from './security.ts'
 import { signupSettings } from './signup-settings.ts'
 import { subscriptionModule } from './subscription.ts'
+import { subscriptionDomainsModule } from './subscription-domains.ts'
 import { system } from './system.ts'
 import { tickets } from './tickets.ts'
 import { users } from './users.ts'
@@ -31,4 +32,5 @@ export const ADMIN_MODULES: readonly MockModule[] = [
   commissionOverrides,
   planResets,
   memberDiscounts,
+  subscriptionDomainsModule,
 ]

@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/aegispanel/aegis/internal/module/settings/service"
-	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
 	"github.com/gin-gonic/gin"
 )
@@ -43,16 +42,13 @@ func (f *fakeExtras) SetSubscriptionExtras(ctx context.Context, u service.Subscr
 	if u.ProtocolPrefix != nil {
 		v.ProtocolPrefix = *u.ProtocolPrefix
 	}
-	if u.LinkBaseURLs != nil {
-		v.LinkBaseURLs = *u.LinkBaseURLs
-	}
 	f.extras = v
 	return nil
 }
 
 func TestGetSubscriptionExtrasRequiresAuth(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	fake := &fakeExtras{extras: service.SubscriptionExtras{LinkBaseURLs: []string{}}}
+	fake := &fakeExtras{extras: service.SubscriptionExtras{}}
 	h := New(fake)
 	e := gin.New()
 	e.Use(httpx.Errors())
@@ -67,25 +63,19 @@ func TestGetSubscriptionExtrasRequiresAuth(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
 	}
-	if !json.Valid(rec.Body.Bytes()) {
-		t.Fatal("invalid json")
-	}
-	if !containsJSONArray(rec.Body.String(), "link_base_urls") {
-		t.Fatalf("body %s", rec.Body.String())
-	}
-}
-
-func containsJSONArray(body string, key string) bool {
 	var m map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(body), &m); err != nil {
-		return false
+	if err := json.Unmarshal(rec.Body.Bytes(), &m); err != nil {
+		t.Fatalf("json: %v", err)
 	}
-	raw, ok := m[key]
-	if !ok {
-		return false
+	if _, ok := m["info_nodes"]; !ok {
+		t.Fatalf("missing info_nodes: %s", rec.Body.String())
 	}
-	var arr []json.RawMessage
-	return json.Unmarshal(raw, &arr) == nil
+	if _, ok := m["protocol_prefix"]; !ok {
+		t.Fatalf("missing protocol_prefix: %s", rec.Body.String())
+	}
+	if _, ok := m["link_base_urls"]; ok {
+		t.Fatalf("unexpected link_base_urls: %s", rec.Body.String())
+	}
 }
 
 func TestSetSubscriptionExtras(t *testing.T) {
@@ -94,7 +84,6 @@ func TestSetSubscriptionExtras(t *testing.T) {
 		extras: service.SubscriptionExtras{
 			InfoNodes:      false,
 			ProtocolPrefix: false,
-			LinkBaseURLs:   []string{"https://a.example.com"},
 		},
 	}
 	h := New(fake)
@@ -125,16 +114,11 @@ func TestSetSubscriptionExtras(t *testing.T) {
 	if !resp.InfoNodes || !resp.ProtocolPrefix {
 		t.Fatalf("resp %+v", resp)
 	}
-	if len(resp.LinkBaseURLs) != 1 || resp.LinkBaseURLs[0] != "https://a.example.com" {
-		t.Fatalf("link_base_urls %v", resp.LinkBaseURLs)
-	}
 }
 
 func TestSetSubscriptionExtrasValidation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	fake := &fakeExtras{
-		setErr: errs.Invalid(map[string]string{"link_base_urls": "x"}),
-	}
+	fake := &fakeExtras{}
 	h := New(fake)
 	e := gin.New()
 	e.Use(httpx.Errors())
@@ -144,8 +128,8 @@ func TestSetSubscriptionExtrasValidation(t *testing.T) {
 		"X-Test-Reauth": "1",
 	}
 
-	rec := do(e, http.MethodPost, "/v1/settings/subscription", `{"link_base_urls":["http://a.example.com"]}`, hdrs)
-	if rec.Code != http.StatusUnprocessableEntity || errCode(t, rec) != "validation_failed" {
+	rec := do(e, http.MethodPost, "/v1/settings/subscription", `{"link_base_urls":["https://a.example.com"]}`, hdrs)
+	if rec.Code != http.StatusBadRequest || errCode(t, rec) != "bad_request" {
 		t.Fatalf("status %d code %s body %s", rec.Code, errCode(t, rec), rec.Body.String())
 	}
 }

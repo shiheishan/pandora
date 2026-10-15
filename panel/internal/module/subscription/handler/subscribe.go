@@ -58,6 +58,7 @@ func subscribeTarget(c *gin.Context) string {
 func (h *Handler) subscribe(c *gin.Context) {
 	ctx := c.Request.Context()
 	res, err := h.svc.Pull(ctx, service.PullRequest{
+		Host:   c.Request.Host,
 		Prefix: c.Param("prefix"),
 		Token:  c.Param("token"),
 		Target: subscribeTarget(c),

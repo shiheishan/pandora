@@ -1,13 +1,27 @@
 package service
 
-import "context"
+import (
+	"context"
 
-// linkBase 取生成订阅链接用的地址前缀：后台填了订阅域名就随机取一个（pickLinkBase），没填用面板对外地址。
-// 订阅域名走拉取同一份进程内快照（pull_extras.go），后台改动最多 30 秒后生效。
-func (s *Service) linkBase(ctx context.Context, d *Delivery) (string, error) {
-	ex, err := s.extras.get(ctx, d.Extras, s.repo, s.clock())
+	"github.com/google/uuid"
+)
+
+// linkBase 取生成订阅链接用的地址前缀：按用户组找组 → 组内按有效权重随机；
+// Redis 读不到分数时按基础权重；分组走快照，后台改动最多 30 秒生效。
+// 没有组或组内没有域名用面板对外地址 fallback。
+func (s *Service) linkBase(ctx context.Context, d *Delivery, userID uuid.UUID) (string, error) {
+	now := s.clock()
+	ex, err := s.extras.get(ctx, d.Extras, extrasSource{s}, now)
 	if err != nil {
 		return "", err
 	}
-	return pickLinkBase(ex.settings.LinkBaseURLs, d.PublicBaseURL), nil
+	g, err := s.domainGroupFor(ctx, ex, userID)
+	if err != nil {
+		return "", err
+	}
+	if g == nil || len(g.Domains) == 0 {
+		return d.PublicBaseURL, nil
+	}
+	scores, _ := s.scores.Read(ctx, baseURLsOf(g), now)
+	return pickWeighted(g.Domains, scores), nil
 }

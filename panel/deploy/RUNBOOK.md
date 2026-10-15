@@ -941,3 +941,73 @@ docker compose up -d --force-recreate serve nginx
   docker compose run --rm -T --entrypoint sh ops -c 'rm -f /var/backups/pandora/pre-upgrade-2026*.dump'
   ```
 
+---
+
+## 14. 订阅域名打不开
+
+后台「节点 → 订阅」页的「订阅域名」管哪些用户拿到哪个域名的链接；nginx 只认 `/etc/pandora/deploy.env` 里 `PANDORA_SUB_DOMAINS` 登记过的订阅域名，且这些域名上只放行订阅拉取（`GET /<12位前缀>/<令牌>`）与门户探测接口 `/v1/sub-probe`（回 204），其余路径一律 404。两边要一致：后台填了、部署没登记 → 链接打不开。
+
+### 怎么确认
+
+```bash
+# 根路径应回 404（说明 443 块已生效、证书可用）
+curl -s -o /dev/null -w '%{http_code}\n' https://<订阅域名>/
+# 用自己的一条订阅链接（换成订阅域名）应回 200
+curl -s -o /dev/null -w '%{http_code}\n' 'https://<订阅域名>/<前缀>/<令牌>'
+# 门户探测接口应回 204（门户「我的套餐」页靠它判断这个域名连不连得上）
+curl -s -o /dev/null -w '%{http_code}\n' https://<订阅域名>/v1/sub-probe
+# 检查 nginx 生成的站点配置中该域名的 server 块个数：2 = 80 与 443 都有（证书已就绪），1 = 只有 80（缺证书）
+grep -c 'server_name <订阅域名>;' /etc/nginx/conf.d/pandora.conf
+# 重新应用查看是否有缺证书的告警
+sudo /opt/pandora/deploy/edge-tls.sh apply
+```
+
+拉取链接不要用 `curl -I` 判断：它发 HEAD，拉取接口不处理 HEAD（会回 404）；`/v1/sub-probe` 的 HEAD 回 204。
+
+### 常见原因
+
+- **`deploy.env` 没登记或拼错**：未在 `PANDORA_SUB_DOMAINS` 中登记的域名，80 端口回 444（默认阻断未知 Host），443 落到面板主站的 server 块上、客户端报证书与域名不匹配。
+- **证书没放或文件名不对**：证书目录必须在 `/etc/pandora/tls/sub/<订阅域名>/`，文件必须叫 `fullchain.pem` 与 `privkey.pem`（缺证书时脚本只渲染 80，443 连不上）。
+- **证书续期后没 reload**：certbot 或其它工具续期后未重载 nginx（certbot 申请时须带 `--deploy-hook 'systemctl reload nginx'`）。
+- **DNS 没解析过来**：订阅域名的 A / AAAA 记录未解析到面板所在服务器的公网 IP。
+- **注意**：订阅域名的证书目前不自动申请与续期（`edge-tls.sh` 只管面板主域名），需要运维自己管理。
+- **后台显示的「有效权重」= 基础权重 × 分数**：分数在 0.1–3 之间，随时间（6 小时半衰期）回落到 1。经该域名的成功拉取和门户探测成功会升高它；门户探测失败会降低它；探测的成功和失败都要同一小时里至少 3 个不同账号报同一域名才算，且每个域名每小时探测带来的升降各不超过 0.5。某个域名分数明显低于 1，说明有不少用户的浏览器连不上它：多半是 DNS、证书或被墙；一直是 1 说明最近没人经它拉取，也没人探测（门户用户只探测自己所在组的域名，要有生效中的订阅）。
+
+### 处理
+
+新加一个订阅域名（以 `sub-a.example.com` 为例）：
+
+1. **DNS 解析**：将 `sub-a.example.com` 解析到面板服务器公网 IP。
+2. **【写】登记域名**：编辑 `/etc/pandora/deploy.env`，追加或修改 `PANDORA_SUB_DOMAINS`（多个以逗号分隔）：
+   ```bash
+   PANDORA_SUB_DOMAINS=sub-a.example.com,sub-b.example.com
+   ```
+3. **【写】先渲染出 80**（供 ACME HTTP-01 校验）：
+   ```bash
+   sudo /opt/pandora/deploy/edge-tls.sh apply
+   ```
+   此时该域名仅有 80 端口，且已配置 `/.well-known/acme-challenge/` 目录指向 `/var/www/pandora-acme`。
+4. **【写】申请并放置证书**：
+   - 方式一（使用 certbot webroot 申请并软链接）：
+     ```bash
+     sudo certbot certonly --webroot -w /var/www/pandora-acme -d sub-a.example.com --deploy-hook 'systemctl reload nginx'
+     sudo install -d -m 0755 /etc/pandora/tls/sub
+     sudo ln -sfn /etc/letsencrypt/live/sub-a.example.com /etc/pandora/tls/sub/sub-a.example.com
+     ```
+   - 方式二（自备证书）：
+     ```bash
+     sudo install -d -m 0755 /etc/pandora/tls/sub/sub-a.example.com
+     # 将 fullchain.pem 与 privkey.pem 放入该目录，私钥权限收紧
+     sudo chmod 0600 /etc/pandora/tls/sub/sub-a.example.com/privkey.pem
+     ```
+5. **【写】重新渲染生效**：
+   ```bash
+   sudo /opt/pandora/deploy/edge-tls.sh apply
+   ```
+   此时检测到证书存在，将同时渲染 443 块并重载 nginx。
+6. **后台分配**：在面板后台「节点 → 订阅」中将域名加进对应的订阅域名组。
+
+### 什么时候升级处理
+
+- `deploy.env` 已正确配置、证书文件存在且 `nginx -t` 报错无法定位。
+- 订阅链接持续返回 502/503（面板上游服务 `pandora-serve` 异常）。带上 `pandora.conf`、`journalctl -u pandora-serve -n 50` 和 `curl -v` 输出提给开发。
