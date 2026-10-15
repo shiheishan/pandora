@@ -77,7 +77,7 @@ describe('mock api · admin nodes', () => {
     const disabled = (await list()).find((n) => n.serving_status === 'disabled')!
     const move = await call('POST', `/v1/nodes/${disabled.id}/move`, { server_id: src!.server_id, row_version: disabled.row_version }, 'move-1')
     expect(move.status).toBe(409)
-    expect(await move.json()).toMatchObject({ error: { fields: { active_identities: '1' } } })
+    expect(await move.json()).toMatchObject({ error: { code: 'conflict', message: '只有从没服务过的草稿节点能迁移；其余请复制到新服务器后再退役原节点' } })
   })
 
   it('validates protocol config against the schema and rejects unknown fields', async () => {

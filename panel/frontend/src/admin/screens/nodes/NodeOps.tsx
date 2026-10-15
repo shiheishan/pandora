@@ -4,7 +4,7 @@ import { isApiError } from '../../../core/api'
 import { navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, Checkbox, ConfirmModal, Input, Modal, Select, useToast } from '../../../ui'
-import { MOVE_BLOCKED_HINT, activationHint, canActivate, canMove, canTransition, moveBlockers } from './logic'
+import { MOVE_BLOCKED_HINT, activationHint, canActivate, canMove, canTransition } from './logic'
 import css from './nodes.module.css'
 import { copyPortValue } from './runtime'
 import { endsIntent, useFailure, useIntentKey, useInvalidateNodes, useServers } from './queries'
@@ -26,7 +26,6 @@ export function NodeOps({ node, onGone }: { node: NodeRow; onGone: () => void })
   const [confirm, setConfirm] = useState<Pending>(null)
   const [copying, setCopying] = useState(false)
   const [moveTo, setMoveTo] = useState('')
-  const [moveBlock, setMoveBlock] = useState<string[] | null>(null)
   const retired = node.serving_status === 'retired'
   const enabling = node.serving_status === 'draft' || node.serving_status === 'disabled'
   const toggleTo = enabling ? 'active' : 'disabled'
@@ -113,7 +112,6 @@ export function NodeOps({ node, onGone }: { node: NodeRow; onGone: () => void })
     },
     onError: (e) => {
       if (endsIntent(e)) moveIntent.reset()
-      if (isApiError(e, 'conflict') && moveBlockers(e.fields).length) return setMoveBlock(moveBlockers(e.fields))
       fail(e)
       void invalidate()
     },
@@ -203,21 +201,6 @@ export function NodeOps({ node, onGone }: { node: NodeRow; onGone: () => void })
         }}
         onCancel={() => setConfirm(null)}
       />
-      <Modal
-        open={moveBlock !== null}
-        onClose={() => setMoveBlock(null)}
-        title="节点仍绑定部署资产，不能迁移"
-        actions={
-          <Button size="dialog" variant="primary" onClick={() => setMoveBlock(null)}>
-            知道了
-          </Button>
-        }
-      >
-        <div className={css.stack}>
-          <div className={css.muted}>{MOVE_BLOCKED_HINT}</div>
-          <ul className={css.blockers}>{moveBlock?.map((b) => <li key={b}>{b}</li>)}</ul>
-        </div>
-      </Modal>
       {copying && <CopyModal node={node} onClose={() => setCopying(false)} />}
     </div>
   )

@@ -394,11 +394,6 @@
   color: var(--danger);
 }
 
-.blockers {
-  margin: 0;
-  padding-left: 18px;
-}
-
 .eyebrowWarn {
   color: var(--warn);
   font-family: var(--font-mono);

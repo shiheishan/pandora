@@ -15,7 +15,6 @@ import {
   heartbeatLabel,
   isStable,
   mapProtocolErrors,
-  moveBlockers,
   moveItem,
   nodeState,
   orderItems,
@@ -158,14 +157,10 @@ describe('state', () => {
 describe('reserved rule 5: move', () => {
   it('only allows never-deployed drafts', () => {
     expect(canMove({ serving_status: 'draft', last_heartbeat_at: null, identity_serial: null })).toBe(true)
-    expect(canMove({ serving_status: 'disabled', last_heartbeat_at: null, identity_serial: null })).toBe(true)
+    expect(canMove({ serving_status: 'disabled', last_heartbeat_at: null, identity_serial: null })).toBe(false)
     expect(canMove({ serving_status: 'draft', last_heartbeat_at: '2026-09-24T10:00:00Z', identity_serial: null })).toBe(false)
     expect(canMove({ serving_status: 'draft', last_heartbeat_at: null, identity_serial: 1 })).toBe(false)
     expect(canMove({ serving_status: 'active', last_heartbeat_at: null, identity_serial: null })).toBe(false)
-  })
-
-  it('lists the non-zero blockers from the 409', () => {
-    expect(moveBlockers({ control_node: '0', active_identities: '1', traffic_reports: '1440', row_version: 'x' })).toEqual(['有效身份 1', '流量上报 1440'])
   })
 })
 

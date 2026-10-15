@@ -624,10 +624,8 @@ export const nodes: MockModule = {
         const target = servers.find((s) => s.id === body.server_id)
         if (!target) return invalid({ server_id: '服务器不存在' })
         if (target.id === n.server_id) return { status: 200, body: adminNode(n) }
-        if (n.serving_status === 'active') return err(409, 'conflict', '活动中的节点不能移动')
-        if (n.last_heartbeat_at || n.identity_serial) {
-          return err(409, 'conflict', '节点仍绑定控制面或 Agent 资产', { control_node: '0', active_identities: n.identityRevoked ? '0' : '1', runtime_instances: '1', metrics: '288', pending_tasks: '0', provisioning: '1', bootstrap_tokens: '0', config_applications: '12', usage_sources: '1', usage_batches: '30', traffic_reports: '1440' })
-        }
+        // 与 service.nodeMovable 一致：只有从没服务过的草稿；409 只带文案，不带 fields
+        if (n.serving_status !== 'draft' || n.last_heartbeat_at || n.identity_serial) return err(409, 'conflict', '只有从没服务过的草稿节点能迁移；其余请复制到新服务器后再退役原节点')
         if (target.status !== 'ready') return err(409, 'conflict', '目标服务器当前不接受节点')
         n.server_id = target.id
         touch(n)
