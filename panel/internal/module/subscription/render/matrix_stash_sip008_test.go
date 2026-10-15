@@ -28,6 +28,14 @@ func sip008Cell(name string) cell {
 	if name == "shadowtls" {
 		return skip("ShadowTLS")
 	}
+	switch name {
+	case "ss2022-aes128":
+		return has(`"password":"`+ss2022PW128+`"`, `"method":"2022-blake3-aes-128-gcm"`)
+	case "ss2022-aes256":
+		return has(`"password":"`+ss2022PW256+`"`, `"method":"2022-blake3-aes-256-gcm"`)
+	case "ss2022-chacha":
+		return skip("多用户不支持")
+	}
 	if strings.HasPrefix(name, "ss-") {
 		method := "aes-128-gcm"
 		if name == "ss-chacha" {

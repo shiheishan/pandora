@@ -9,6 +9,7 @@ package render
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"net"
@@ -251,6 +252,48 @@ func mieruTransport(cfg map[string]any) string {
 // ssMethod 是 Shadowsocks 加密方式（内核名 method；表单名 cipher 由 node 模块翻译好）。
 func ssMethod(cfg map[string]any) string {
 	return cfgStr(cfg, "method", "aes-256-gcm")
+}
+
+// ss2022KeyLens 是 Shadowsocks 2022 方法的密钥长度（SIP022）。chacha20 版列在这里只为认出它：
+// 多用户靠 SIP023 身份头，身份头用 AES 块加密，chacha20 版做不了，面板也不开放，订阅里跳过。
+var ss2022KeyLens = map[string]int{
+	"2022-blake3-aes-128-gcm":       16,
+	"2022-blake3-aes-256-gcm":       32,
+	"2022-blake3-chacha20-poly1305": 32,
+}
+
+const ss2022ChachaMethod = "2022-blake3-chacha20-poly1305"
+
+// isSS2022 报告 method 是不是 Shadowsocks 2022 方法。
+func isSS2022(method string) bool { _, ok := ss2022KeyLens[method]; return ok }
+
+// ss2022UserPSK 从代理 UUID 算用户密钥 uPSK：SHA-256("pandora/ss2022/user-psk/v1" || 0x00 || 小写 UUID) 取前 keyLen 字节。
+// 节点端（pdnd）按同一算法从名单里的 UUID 算，两端各自实现，测试向量钉住（ss2022_test.go）。
+func ss2022UserPSK(proxyUUID string, keyLen int) []byte {
+	h := sha256.New()
+	h.Write([]byte("pandora/ss2022/user-psk/v1"))
+	h.Write([]byte{0})
+	h.Write([]byte(strings.ToLower(proxyUUID)))
+	return h.Sum(nil)[:keyLen]
+}
+
+// ssPassword 返回 Shadowsocks 客户端密码：经典 AEAD 是代理 UUID；2022 是 base64(iPSK):base64(uPSK)（SIP023 多用户写法），
+// iPSK 来自 node 模块注入的 Config["password"]。写不出时返回 "" 和跳过原因。
+func ssPassword(cfg map[string]any, proxyUUID string) (string, string) {
+	method := ssMethod(cfg)
+	keyLen, ok := ss2022KeyLens[method]
+	if !ok {
+		return proxyUUID, ""
+	}
+	if method == ss2022ChachaMethod {
+		return "", "Shadowsocks 2022 多用户不支持 " + ss2022ChachaMethod
+	}
+	ipsk := strings.TrimSpace(cfgStr(cfg, "password", ""))
+	raw, err := base64.StdEncoding.DecodeString(ipsk)
+	if err != nil || len(raw) != keyLen {
+		return "", "节点缺少 Shadowsocks 2022 服务端密钥"
+	}
+	return ipsk + ":" + base64.StdEncoding.EncodeToString(ss2022UserPSK(proxyUUID, keyLen)), ""
 }
 
 func firstNonEmptyStr(values ...string) string {

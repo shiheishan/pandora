@@ -34,7 +34,7 @@ func TestClashPremiumOnlyGetsProxiesItUnderstands(t *testing.T) {
 	}
 	for _, banned := range []string{
 		`type: "vless"`, `type: "hysteria2"`, `type: "tuic"`, `type: "anytls"`, `type: "mieru"`,
-		"reality-opts", "client-fingerprint", "v2ray-http-upgrade", "xhttp", "shadow-tls",
+		"reality-opts", "client-fingerprint", "v2ray-http-upgrade", "xhttp", "shadow-tls", "2022-blake3",
 	} {
 		if strings.Contains(text, banned) {
 			t.Errorf("premium config contains %s:\n%s", banned, text)

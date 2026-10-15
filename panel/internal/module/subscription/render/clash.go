@@ -141,8 +141,12 @@ func nodeToClash(n Node, uuid string, premium bool) (map[string]any, string) {
 		setClashStream(p, n, o, premium)
 
 	case "shadowsocks":
+		pw, reason := ssPassword(n.Config, uuid)
+		if reason != "" {
+			return nil, reason
+		}
 		p["type"] = "ss"
-		p["password"] = uuid
+		p["password"] = pw
 		p["cipher"] = ssMethod(n.Config)
 		// 节点端的 Shadowsocks 同一端口 TCP、UDP 都听，udp 沿用上面的缺省 true
 
@@ -243,7 +247,12 @@ func nodeToClash(n Node, uuid string, premium bool) (map[string]any, string) {
 // 代理，整份 YAML 加载失败，所以宁可少给。
 func clashPremiumUnsupported(n Node) string {
 	switch n.Type {
-	case "shadowsocks", "socks", "http":
+	case "shadowsocks":
+		if isSS2022(ssMethod(n.Config)) {
+			return "Clash Premium 不支持 Shadowsocks 2022"
+		}
+		return ""
+	case "socks", "http":
 		return ""
 	case "vmess", "trojan":
 		o := parseStream(n, "")

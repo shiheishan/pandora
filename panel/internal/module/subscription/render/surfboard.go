@@ -99,6 +99,9 @@ func surfboardNodeLine(n Node, uuid string) (string, string) {
 	case "shadowsocks":
 		// 节点端的 Shadowsocks 同一端口 TCP、UDP 都听（与 clash.go 的 udp: true 同一口径）
 		method := ssMethod(n.Config)
+		if isSS2022(method) {
+			return "", "Surfboard 不支持 Shadowsocks 2022 多用户密钥"
+		}
 		line := name + " = ss, " + n.Host + ", " + port + ", encrypt-method=" + method + ", password=" + uuid + ", udp-relay=true"
 		return line, ""
 

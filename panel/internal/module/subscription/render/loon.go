@@ -77,8 +77,12 @@ func loonNodeLine(n Node, uuid string) (string, string) {
 	switch n.Type {
 	case "shadowsocks":
 		// 节点端的 Shadowsocks 同一端口 TCP、UDP 都听（与 clash.go 的 udp: true 同一口径）
+		pw, reason := ssPassword(n.Config, uuid)
+		if reason != "" {
+			return "", reason
+		}
 		method := ssMethod(n.Config)
-		line := name + " = Shadowsocks," + n.Host + "," + port + "," + method + "," + loonQuote(uuid) + ",udp=true"
+		line := name + " = Shadowsocks," + n.Host + "," + port + "," + method + "," + loonQuote(pw) + ",udp=true"
 		return line, ""
 
 	case "shadowtls":

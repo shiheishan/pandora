@@ -17,6 +17,19 @@ func loonSurfboardMatrix() map[string]loonSurfboardRow {
 			loon:      has("chacha20-ietf-poly1305", "udp=true"),
 			surfboard: has("encrypt-method=chacha20-ietf-poly1305", "udp-relay=true"),
 		},
+		// Loon 文档的 2022 示例就是 iPSK:uPSK 冒号写法；Surfboard 文档要求 2022 密码是单个定长 base64，认不了多用户
+		"ss2022-aes128": {
+			loon:      has("= Shadowsocks,node.example.com,8390,2022-blake3-aes-128-gcm,", `"`+ss2022PW128+`"`, "udp=true"),
+			surfboard: skip("Surfboard 不支持 Shadowsocks 2022"),
+		},
+		"ss2022-aes256": {
+			loon:      has("= Shadowsocks,node.example.com,8391,2022-blake3-aes-256-gcm,", `"`+ss2022PW256+`"`, "udp=true"),
+			surfboard: skip("Surfboard 不支持 Shadowsocks 2022"),
+		},
+		"ss2022-chacha": {
+			loon:      skip("多用户不支持"),
+			surfboard: skip("Surfboard 不支持 Shadowsocks 2022"),
+		},
 		"hy2-obfs": {
 			loon:      has("= Hysteria2,", "salamander-password=obfs-pass-1", "sni=sni.example.com", "skip-cert-verify=true", "udp=true"),
 			surfboard: has("= hysteria2,", "salamander-password=obfs-pass-1", "sni=sni.example.com", "skip-cert-verify=true", "udp-relay=true"),

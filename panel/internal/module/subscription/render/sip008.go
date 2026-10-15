@@ -34,13 +34,18 @@ func nodeToSIP008(n Node, proxyUUID string) (*sip008Server, string) {
 		return nil, "SIP008 只有 Shadowsocks"
 	}
 
+	pw, reason := ssPassword(n.Config, proxyUUID)
+	if reason != "" {
+		return nil, reason
+	}
+
 	id := uuid.NewSHA1(uuid.NameSpaceURL, []byte(n.Host+":"+strconv.Itoa(n.Port)+"#"+n.Name)).String()
 	s := &sip008Server{
 		ID:         id,
 		Remarks:    n.Name,
 		Server:     n.Host,
 		ServerPort: n.Port,
-		Password:   proxyUUID,
+		Password:   pw,
 		Method:     ssMethod(n.Config),
 	}
 	return s, ""
