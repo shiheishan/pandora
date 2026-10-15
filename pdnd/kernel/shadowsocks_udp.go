@@ -9,6 +9,8 @@ import (
 	"net/netip"
 	"strconv"
 	"sync/atomic"
+
+	"github.com/sagernet/sing/common/buf"
 )
 
 // ssUDPDropStats 按原因记 SS UDP 丢掉的包数（诊断与测试用，不上报）。
@@ -66,7 +68,7 @@ func (a *shadowsocksAdapter) fastPathUDP(wire, plain []byte, found *[]*ssUDPSess
 	}
 	salt := wire[:a.method.SaltLen]
 	ciphertext := wire[a.method.SaltLen:]
-	*found = a.lookupUDPSessions(from, (*found)[:0])
+	*found = a.lookupUDPSessions(ssUDPKey{addr: from}, (*found)[:0])
 	for _, s := range *found {
 		if s.user.retired.Load() {
 			continue
@@ -130,6 +132,29 @@ func (a *shadowsocksAdapter) decodeUDPPacket(salt, ciphertext, plain []byte, fro
 		return nil, dest, nil, errSSUDPAuth
 	}
 	return selected, dest, payload, nil
+}
+
+// slowPathUDP 对全部用户试解一个包；认证通过后找到或新建 (地址, 用户) 会话并转发。
+// 明文借池化缓冲（不能原地解：GCM 失败会清零 dst），forwardUDP 同步写完或复制进
+// 建立期小队列后不再引用，返回前归还。
+func (a *shadowsocksAdapter) slowPathUDP(wire []byte, from netip.AddrPort) error {
+	salt := wire[:a.method.SaltLen]
+	ciphertext := wire[a.method.SaltLen:]
+	plain := buf.Get(len(ciphertext))
+	defer func() { _ = buf.Put(plain) }()
+	epoch := a.sessions.epoch()
+	user, dest, payload, err := a.decodeUDPPacket(salt, ciphertext, plain, from)
+	if err != nil {
+		return errSSUDPAuth
+	}
+	if !a.acceptUDPSalt(salt) {
+		return errSSUDPReplay
+	}
+	sess, err := a.getOrOpenUDPSession(ssUDPKey{addr: from}, from, user, epoch, dest, nil)
+	if err != nil {
+		return err
+	}
+	return a.forwardUDP(sess, dest, payload)
 }
 
 // 以下三个函数经典 AEAD 已不用，只剩 SS2022（shadowsocks2022_udp.go）在用；SS2022 多用户重写时一起挪走。

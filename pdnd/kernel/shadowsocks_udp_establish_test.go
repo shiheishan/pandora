@@ -269,10 +269,12 @@ func TestShadowsocksUDPWritePacketDropsNonFatal(t *testing.T) {
 	a := startSSUDPAdapter(t, &udpRelayTestPlane{}, core.User{ID: 8826, UUID: "ss-udp-write-drop"})
 	user := a.loadUsers().list[0]
 	ctx, cancel := context.WithCancel(context.Background())
+	client := netip.MustParseAddrPort("127.0.0.1:9")
 	s := &ssUDPSession{
-		adapter: a, client: netip.MustParseAddrPort("127.0.0.1:9"), user: user,
+		hub: &a.ssUDPHub, user: user,
 		ctx: ctx, cancel: cancel,
 	}
+	s.client.Store(&client)
 	w := ssUDPClientWriter{s: s}
 	pkt := func(p string) *buf.Buffer {
 		b := buf.NewSize(len(p))
@@ -311,10 +313,10 @@ func TestShadowsocksUDPLookupSkipsCanceled(t *testing.T) {
 	deadCancel()
 
 	client := netip.MustParseAddrPort("127.0.0.1:40000")
-	a := &shadowsocksAdapter{udp: map[netip.AddrPort][]*ssUDPSession{
-		client: {{ctx: dead}, {ctx: live}},
-	}}
-	got := a.lookupUDPSessions(client, nil)
+	a := &shadowsocksAdapter{ssUDPHub: ssUDPHub{udp: map[ssUDPKey][]*ssUDPSession{
+		{addr: client}: {{ctx: dead}, {ctx: live}},
+	}}}
+	got := a.lookupUDPSessions(ssUDPKey{addr: client}, nil)
 	if len(got) != 1 {
 		t.Fatalf("lookup 长度=%d，期望 1", len(got))
 	}

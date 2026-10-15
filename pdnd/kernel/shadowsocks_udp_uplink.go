@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/netip"
 	"time"
 
 	M "github.com/sagernet/sing/common/metadata"
@@ -52,7 +53,7 @@ func (s *ssUDPSession) holdDevice() bool {
 	if s.device {
 		return true
 	}
-	if !s.adapter.online.enter(s.coreUser, s.ip) {
+	if !s.hub.udpOnline.enter(s.coreUser, s.ip) {
 		return false
 	}
 	s.device = true
@@ -67,7 +68,7 @@ func (s *ssUDPSession) releaseIdleDevice(cutoff int64) {
 	s.devMu.Lock()
 	defer s.devMu.Unlock()
 	if s.device && s.lastUplink.Load() < cutoff {
-		s.adapter.online.leave(s.coreUser, s.ip)
+		s.hub.udpOnline.leave(s.coreUser, s.ip)
 		s.device = false
 		s.deviceHeld.Store(false)
 	}
@@ -78,23 +79,48 @@ func (s *ssUDPSession) releaseDevice() {
 	s.devMu.Lock()
 	defer s.devMu.Unlock()
 	if s.device {
-		s.adapter.online.leave(s.coreUser, s.ip)
+		s.hub.udpOnline.leave(s.coreUser, s.ip)
 	}
 	s.device = false
 	s.devDone = true
 	s.deviceHeld.Store(false)
 }
 
+// roam 把会话的回包地址换成 to（SIP022：服务端按 session id 路由，客户端换网络后来源地址会变，
+// 回包发往最近一次验证通过的来源）。设备键随之换：占着设备时先 leave 旧 IP 再 enter 新 IP，
+// 占不到就取消会话并返回 false；会话已收尾也返回 false。
+func (s *ssUDPSession) roam(to netip.AddrPort) bool {
+	s.devMu.Lock()
+	defer s.devMu.Unlock()
+	if s.devDone {
+		return false
+	}
+	ip := to.Addr().String()
+	if ip != s.ip && s.device {
+		s.hub.udpOnline.leave(s.coreUser, s.ip)
+		if !s.hub.udpOnline.enter(s.coreUser, ip) {
+			s.device = false
+			s.deviceHeld.Store(false)
+			s.cancel()
+			return false
+		}
+	}
+	s.ip = ip
+	addr := to
+	s.client.Store(&addr)
+	return true
+}
+
 // forwardUDP 把明文 payload 发往 s 的上游。每个认证通过、归到本会话的上行包都算客户端
 // 活跃（含被限速丢掉的）；设备名额让出过就在这里重新占，占不到就关会话。
-func (a *shadowsocksAdapter) forwardUDP(s *ssUDPSession, dest vlessDestination, payload []byte) error {
+func (h *ssUDPHub) forwardUDP(s *ssUDPSession, dest vlessDestination, payload []byte) error {
 	s.lastUplink.Store(time.Now().UnixNano())
 	if !s.holdDevice() {
 		if s.ctx.Err() != nil {
 			return nil // 会话已在收尾（devDone），不是设备超限
 		}
 		s.cancel()
-		return deviceLimitError("shadowsocks")
+		return deviceLimitError(h.udpProto)
 	}
 	if !s.ready.Load() && s.enqueuePending(dest, payload) {
 		return nil
@@ -118,7 +144,7 @@ func (s *ssUDPSession) enqueuePending(dest vlessDestination, payload []byte) boo
 		return false
 	}
 	if len(s.pending) >= ssUDPPendingMax {
-		s.adapter.udpDrops.pending.Add(1)
+		s.hub.udpDrops.pending.Add(1)
 		return true
 	}
 	s.pending = append(s.pending, ssUDPPendingPacket{
@@ -132,11 +158,11 @@ func (s *ssUDPSession) enqueuePending(dest vlessDestination, payload []byte) boo
 // 都不能阻塞：限速见 allowUplink。
 func (s *ssUDPSession) writeUplink(dest vlessDestination, payload []byte) (int, error) {
 	if !s.routeAllows(dest) {
-		s.adapter.udpDrops.route.Add(1)
+		s.hub.udpDrops.route.Add(1)
 		return 0, nil
 	}
 	if !s.allowUplink(len(payload)) {
-		s.adapter.udpDrops.rate.Add(1)
+		s.hub.udpDrops.rate.Add(1)
 		return 0, nil
 	}
 	if dest.IP.IsValid() {
@@ -157,15 +183,15 @@ func (s *ssUDPSession) writeUplink(dest vlessDestination, payload []byte) (int, 
 	// 会话同时只解一个，解析期间到的包丢掉（UDP 允许丢包，客户端会重发）。
 	if s.resolving {
 		s.mu.Unlock()
-		s.adapter.udpDrops.resolve.Add(1)
+		s.hub.udpDrops.resolve.Add(1)
 		return 0, nil
 	}
 	s.resolving = true
 	copyPayload := append([]byte(nil), payload...)
 	s.mu.Unlock()
-	s.adapter.wg.Add(1)
+	s.hub.udpWG.Add(1)
 	go func() {
-		defer s.adapter.wg.Done()
+		defer s.hub.udpWG.Done()
 		ctx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
 		defer cancel()
 		addr, err := ssUDPResolve(ctx, target)

@@ -26,11 +26,11 @@ func selectUDPRoute(plane DataPlane, meta route.Meta) (tag string, ok bool) {
 	return "", false
 }
 
-// ssUDPRouteMeta 是 SS UDP 包发往 dest 时的路由元数据（建上游与按目标复查共用）。
-func ssUDPRouteMeta(dest vlessDestination, client netip.AddrPort) route.Meta {
+// udpRouteMeta 是 SS UDP 包发往 dest 时的路由元数据（建上游与按目标复查共用）。
+func (h *ssUDPHub) udpRouteMeta(dest vlessDestination, client netip.AddrPort) route.Meta {
 	return route.Meta{
 		Domain: dest.Domain, IP: dest.IP, Port: dest.Port,
-		Network: "udp", Protocol: "shadowsocks",
+		Network: "udp", Protocol: h.udpProto,
 		SourceIP: client.Addr(), SourcePort: client.Port(),
 	}
 }
@@ -48,7 +48,7 @@ func (s *ssUDPSession) routeAllows(dest vlessDestination) bool {
 	if same {
 		return true
 	}
-	tag, ok := selectUDPRoute(s.adapter.plane, ssUDPRouteMeta(dest, s.client))
+	tag, ok := selectUDPRoute(s.hub.udpPlane, s.hub.udpRouteMeta(dest, s.clientAddr()))
 	if !ok || tag != s.routeTag {
 		return false
 	}
