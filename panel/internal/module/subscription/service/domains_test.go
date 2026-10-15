@@ -17,7 +17,7 @@ func TestNormalizeBaseURL(t *testing.T) {
 		in, want string
 	}{
 		{"https://Sub.Example.TEST/", "https://sub.example.test"},
-		{"https://a.example.test:8443", "https://a.example.test:8443"},
+		{"https://A.example.test:443/", "https://a.example.test"},
 		{"  https://a.example.test/  ", "https://a.example.test"},
 	}
 	for _, c := range ok {
@@ -34,13 +34,20 @@ func TestNormalizeBaseURL(t *testing.T) {
 		{"http://a.example.test", "必须以 https:// 开头"},
 		{"https://", "必须包含域名"},
 		{"https://user@a.example.test", "不能包含用户名或密码"},
-		{"https://a.example.test/x", "只能写到域名（可带端口），不能带路径、参数"},
-		{"https://a.example.test?q=1", "只能写到域名（可带端口），不能带路径、参数"},
-		{"https://a.example.test#f", "只能写到域名（可带端口），不能带路径、参数"},
+		{"https://a.example.test/x", "只能写到域名，不能带路径、参数"},
+		{"https://a.example.test?q=1", "只能写到域名，不能带路径、参数"},
+		{"https://a.example.test#f", "只能写到域名，不能带路径、参数"},
 		{"https://" + strings.Repeat("a", 250) + ".test", "长度不能超过 255"},
 		{"https://a_b.example.test", "域名只能含小写字母、数字、点和短横线（中文域名请写成 xn-- 开头的形式）"},
-		{"https://a.example.test:0", "端口必须在 1–65535 之间"},
-		{"https://a.example.test:70000", "端口必须在 1–65535 之间"},
+		{"https://a.example.test:0", "不能带端口（订阅域名只走 443）"},
+		{"https://a.example.test:70000", "不能带端口（订阅域名只走 443）"},
+		{"https://a.example.test:8443", "不能带端口（订阅域名只走 443）"},
+		{"https://203.0.113.9", "只能写域名，不能写 IP 地址"},
+		{"https://[2001:db8::1]", "只能写域名，不能写 IP 地址"},
+		{"https://localhost", "域名格式不正确"},
+		{"https://a.localhost", "域名格式不正确"},
+		{"https://example", "域名格式不正确"},
+		{"https://a.123", "域名格式不正确"},
 		{"https://a.example.test:abc", "格式不正确"},
 	}
 	for _, c := range errWant {
@@ -235,10 +242,6 @@ func TestDomainSet(t *testing.T) {
 		if !ok || base != "https://sub.example.test" {
 			t.Fatalf("host %q => %q ok=%v", host, base, ok)
 		}
-	}
-	with8443 := newDomainSet([]DomainGroup{{IsDefault: true, Domains: []Domain{{BaseURL: "https://sub.example.test:8443", Weight: 1}}}})
-	if base, ok := with8443.hostBaseURL("sub.example.test:8443"); !ok || base != "https://sub.example.test:8443" {
-		t.Fatalf("8443 登记: %q %v", base, ok)
 	}
 	if _, ok := dsSub.hostBaseURL("sub.example.test:8443"); ok {
 		t.Fatal("未登记 8443 应假")

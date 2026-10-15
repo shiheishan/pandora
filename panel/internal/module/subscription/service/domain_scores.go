@@ -1,11 +1,11 @@
 // 订阅域名的分数（Redis，多进程共享）：有效权重 = 基础权重 × 分数，按分数放大或缩小一个域名的被选中概率。
-// 成功（订阅拉取、门户探测）加、失败（探测失败）减，随时间按半衰期向 1 衰减，夹在
-// [domainScoreMin, domainScoreMax]：下限 0.1 保证任何域名都不会被压成 0（浏览器上报的失败可伪造，
-// 不能让某个域名被恶意打到永远选不上）；上限 3 防止单个域名独占流量。
+// 分数只由「经令牌主人所在组的已登记域名到达的成功拉取」加分（每次 +0.05），随时间按 6 小时半衰期向 1 衰减；
+// 连不上的域名拿不到加分，相对权重随衰减自然变低。夹在 [domainScoreMin, domainScoreMax]：
+// 下限 0.1 不让任何域名被压成 0；上限 3 防止单个域名独占流量。
 // 分数值带写入时刻存成 hash（field = base_url，value = "<score 四位小数>|<unix 毫秒>"），读时现算衰减。
 // Redis 不可用时按基础权重（分数当 1），不让生成链接失败。
-// 订阅拉取的成功信号在进程内攒 domainScoreFlushEvery（10 秒）一批写，避免每次拉取都多一次 Redis 往返；
-// 丢一批成功信号无妨，只影响分数的增长速度。
+// 成功信号在进程内攒 domainScoreFlushEvery（10 秒）一批写，避免每次拉取都多一次 Redis 往返；
+// 读分数时也顺带冲刷攒下的信号（低流量时不必等下一次拉取）；丢一批成功信号无妨，只影响分数的增长速度。
 
 package service
 
@@ -36,10 +36,10 @@ const (
 	domainScoreMax = 3.0
 	// scorePullSuccess 是一次经该域名的正常订阅拉取加的分。
 	scorePullSuccess = 0.05
-	// scoreProbeSuccess 是一次门户探测成功加的分。
-	scoreProbeSuccess = 0.1
-	// scoreProbeFailure 是一次门户探测失败减的分（浏览器上报的失败可伪造，减得比成功加得慢）。
-	scoreProbeFailure = -0.3
+	// domainScoreCredWindow 内同一凭据对同一域名只记一次成功，一个人高频拉取刷不动分数。
+	domainScoreCredWindow = time.Hour
+	// domainScoreCredMax 是去重表的条目上限，超了就丢弃新信号，防内存无界。
+	domainScoreCredMax = 50000
 	// domainScoreFlushEvery 是成功信号的攒批间隔。
 	domainScoreFlushEvery = 10 * time.Second
 	// domainScoreTTL 是分数 hash 的过期时间（长期没人用的域名，分数自然归零值）。
@@ -54,7 +54,7 @@ const (
 // rdb 为 nil（或接收者为 nil）时所有方法按「Redis 不可用」处理：Read 回 (nil, false)、Apply 回 nil、NoteSuccess 丢弃。
 type domainScores struct {
 	rdb *redis.Client
-	// mu 保护 pending 与 lastFlush。
+	// mu 保护 pending、lastFlush 与 credSeen。
 	mu sync.Mutex
 	// pending 是还没批量写入的成功信号（base_url → 攒下的加量）。
 	pending map[string]float64
@@ -62,11 +62,13 @@ type domainScores struct {
 	lastFlush time.Time
 	// flushing 标记后台写是否在进行，同时保证同一时间只有一批。
 	flushing atomic.Bool
+	// credSeen 是凭据去重表（凭据|域名 → 上次记成功的时刻）。
+	credSeen map[string]time.Time
 }
 
 // newDomainScores 构造分数存取；rdb 为 nil 时返回的对象按「Redis 不可用」处理。
 func newDomainScores(rdb *redis.Client) *domainScores {
-	return &domainScores{rdb: rdb, pending: make(map[string]float64)}
+	return &domainScores{rdb: rdb, pending: make(map[string]float64), credSeen: make(map[string]time.Time)}
 }
 
 // UseDomainScores 为订阅模块注入 Redis 客户端，启用域名分数。只在启动装配时调用（不并发安全）。
@@ -128,6 +130,11 @@ func (d *domainScores) Read(ctx context.Context, baseURLs []string, now time.Tim
 	if d == nil || d.rdb == nil || len(baseURLs) == 0 {
 		return nil, d != nil && d.rdb != nil
 	}
+	// 低流量时攒下的成功信号不必等下一次拉取，有人生成链接或后台查看分数时也会顺带冲刷；
+	// 仍可能滞后到下一次读或拉取，丢一批只影响增速
+	d.mu.Lock()
+	d.maybeFlushLocked(ctx, now)
+	d.mu.Unlock()
 	cctx, cancel := context.WithTimeout(ctx, domainScoreTimeout)
 	defer cancel()
 	vals, err := d.rdb.HMGet(cctx, domainScoreKey, baseURLs...).Result()
@@ -214,32 +221,55 @@ func (d *domainScores) Apply(ctx context.Context, deltas map[string]float64, now
 	return applyScoresScript.Run(cctx, d.rdb, []string{domainScoreKey}, args...).Err()
 }
 
-// NoteSuccess 记一次成功信号：加量先攒在进程内，攒满 domainScoreFlushEvery 由后台一次写入，
-// 避免每次拉取都多一次 Redis 往返。单个域名攒的总量封顶 domainScoreMax - domainScoreMin（再多也只会被夹回上限）。
-// 丢一批成功信号无妨，只影响分数的增长速度。Redis 不可用或 baseURL 为空时丢弃。
-func (d *domainScores) NoteSuccess(ctx context.Context, baseURL string, now time.Time) {
+// NoteSuccess 记一次成功信号（credKey 是凭据标识）：加量先攒在进程内，到点由后台一次写入，
+// 避免每次拉取都多一次 Redis 往返。同一凭据（credKey）对同一域名在 domainScoreCredWindow 里只记一次，
+// 一个人高频拉取刷不动分数；去重表超过 domainScoreCredMax 条后丢弃新信号。单个域名攒的总量封顶
+// domainScoreMax - domainScoreMin（再多也只会被夹回上限）。丢一批成功信号无妨，只影响分数的增长速度。
+// Redis 不可用或 baseURL 为空时丢弃。
+func (d *domainScores) NoteSuccess(ctx context.Context, baseURL, credKey string, now time.Time) {
 	if d == nil || d.rdb == nil || baseURL == "" {
 		return
 	}
 	d.mu.Lock()
-	d.pending[baseURL] += scorePullSuccess
-	if most := domainScoreMax - domainScoreMin; d.pending[baseURL] > most {
-		d.pending[baseURL] = most
+	key := credKey + "|" + baseURL
+	t, seen := d.credSeen[key]
+	if !seen || now.Sub(t) >= domainScoreCredWindow {
+		if len(d.credSeen) < domainScoreCredMax || seen {
+			d.credSeen[key] = now
+			d.pending[baseURL] += scorePullSuccess
+			if most := domainScoreMax - domainScoreMin; d.pending[baseURL] > most {
+				d.pending[baseURL] = most
+			}
+		}
 	}
+	d.maybeFlushLocked(ctx, now)
+	d.mu.Unlock()
+}
+
+// maybeFlushLocked 到点就把攒下的成功信号交给后台写（调用方持有 mu）：
+// lastFlush 为零只开始计时；不到 domainScoreFlushEvery 或后台写正在进行就不冲。
+// 取走 pending 时顺便清掉 credSeen 里过了去重窗口的条目；pending 为空不起 goroutine。
+func (d *domainScores) maybeFlushLocked(ctx context.Context, now time.Time) {
 	if d.lastFlush.IsZero() {
 		// 第一次只开始计时，让这批攒满一个间隔再写
 		d.lastFlush = now
-		d.mu.Unlock()
 		return
 	}
 	if now.Sub(d.lastFlush) < domainScoreFlushEvery || !d.flushing.CompareAndSwap(false, true) {
-		d.mu.Unlock()
 		return
 	}
 	batch := d.pending
 	d.pending = make(map[string]float64)
 	d.lastFlush = now
-	d.mu.Unlock()
+	for k, t := range d.credSeen {
+		if now.Sub(t) >= domainScoreCredWindow {
+			delete(d.credSeen, k)
+		}
+	}
+	if len(batch) == 0 {
+		d.flushing.Store(false)
+		return
+	}
 	go func() {
 		defer d.flushing.Store(false)
 		// 背景写与调用方的 ctx（可能随请求取消）脱钩，只留超时

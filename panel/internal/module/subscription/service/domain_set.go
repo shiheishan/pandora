@@ -91,6 +91,19 @@ func (d domainSet) hostBaseURL(host string) (string, bool) {
 	return "", false
 }
 
+// groupHas 报告 g 里是否登记了 baseURL；g 为 nil 时为假。
+func groupHas(g *DomainGroup, baseURL string) bool {
+	if g == nil {
+		return false
+	}
+	for _, d := range g.Domains {
+		if d.BaseURL == baseURL {
+			return true
+		}
+	}
+	return false
+}
+
 // baseURLsOf 返回组内全部基址（按组内顺序）。
 func baseURLsOf(g *DomainGroup) []string {
 	if g == nil {

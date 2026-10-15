@@ -223,14 +223,35 @@ func TestPullViaSubDomainNotesSuccess(t *testing.T) {
 	var score float64
 	for time.Now().Before(deadline) {
 		m, ok := de.svc.scores.Read(ctx, []string{"https://sub-a.example.test"}, cur)
-		if ok && m["https://sub-a.example.test"] > 1 {
+		if ok && almost(m["https://sub-a.example.test"], 1.05, 0.01) {
 			score = m["https://sub-a.example.test"]
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	if score <= 1 {
-		t.Fatalf("分数应 > 1，实际 %v", score)
+	if score == 0 {
+		t.Fatalf("分数应 ≈ 1.05（同一凭据去重），实际 %v", score)
+	}
+
+	G := seedUserGroup(t, de.env, ctx, "vip-pull")
+	_, err = de.svc.AdminSaveDomainConfig(admin, []DomainGroupInput{
+		{Name: "缺省", IsDefault: true, Domains: []Domain{{BaseURL: "https://sub-a.example.test", Weight: 1}}},
+		{Name: "专线", Domains: []Domain{{BaseURL: "https://vip.example.test", Weight: 1}}, UserGroupIDs: []uuid.UUID{G}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	de.svc.extras.snap.Store(nil)
+	cur = base.Add(22 * time.Second)
+	if _, err := de.svc.Pull(ctx, PullRequest{Prefix: testPrefix, Token: token, Host: "vip.example.test"}); err != nil {
+		t.Fatalf("别组 Host 拉取: %v", err)
+	}
+	// 加分在拉取里同步攒进 pending，没攒进去就不会有后台写：直接看 pending 与 Redis 即可，不用等
+	de.svc.scores.mu.Lock()
+	_, queued := de.svc.scores.pending["https://vip.example.test"]
+	de.svc.scores.mu.Unlock()
+	if queued || rdb.HExists(ctx, domainScoreKey, "https://vip.example.test").Val() {
+		t.Fatal("令牌主人不在专线组，vip 域名不应加分")
 	}
 
 	if _, err := de.svc.Pull(ctx, PullRequest{Prefix: testPrefix, Token: token, Host: "other.example.test"}); err != nil {

@@ -188,9 +188,10 @@ func (s *Service) Pull(ctx context.Context, req PullRequest) (PullResult, error)
 	if err := s.recordFetch(ctx, d, entry.with(FetchOK, count, len(body))); err != nil {
 		return PullResult{}, err
 	}
-	// 经已登记的订阅域名到达的成功拉取是这个域名「能连上」的信号（进程内攒批写 Redis，不多一次往返）
-	if base, ok := ex.domains.hostBaseURL(req.Host); ok {
-		s.scores.NoteSuccess(ctx, base, now)
+	// 经令牌主人所在组的订阅域名到达的成功拉取，是这个域名「能连上」的信号；别组的域名（Host 可伪造）不加分。
+	// 进程内攒批写 Redis，不多一次往返；同一凭据对同一域名每小时只记一次
+	if base, ok := ex.domains.hostBaseURL(req.Host); ok && groupHas(ex.domains.groupFor(owner.UserGroupID), base) {
+		s.scores.NoteSuccess(ctx, base, credID.String(), now)
 	}
 	return res, nil
 }

@@ -79,7 +79,7 @@ func TestDomainScoresNilSafe(t *testing.T) {
 	if err := d.Apply(context.Background(), map[string]float64{"https://a.example.test": 1}, t0); err != nil {
 		t.Fatalf("nil 接收者 Apply = %v，要 nil", err)
 	}
-	d.NoteSuccess(context.Background(), "https://a.example.test", t0) // 不 panic
+	d.NoteSuccess(context.Background(), "https://a.example.test", "c1", t0) // 不 panic
 
 	nd := newDomainScores(nil)
 	if m, ok := nd.Read(context.Background(), []string{"https://a.example.test"}, t0); m != nil || ok {
@@ -88,7 +88,7 @@ func TestDomainScoresNilSafe(t *testing.T) {
 	if err := nd.Apply(context.Background(), map[string]float64{"https://a.example.test": 1}, t0); err != nil {
 		t.Fatalf("rdb nil 的 Apply = %v，要 nil", err)
 	}
-	nd.NoteSuccess(context.Background(), "https://a.example.test", t0) // 不 panic
+	nd.NoteSuccess(context.Background(), "https://a.example.test", "c1", t0) // 不 panic
 }
 
 func TestDomainScoresApplyAndRead(t *testing.T) {
@@ -137,23 +137,75 @@ func TestDomainScoresNoteSuccessBatches(t *testing.T) {
 	a := "https://a.example.test"
 
 	// 前两次只开始计时、攒量，不写 Redis
-	d.NoteSuccess(ctx, a, t0)
-	d.NoteSuccess(ctx, a, t0)
+	d.NoteSuccess(ctx, a, "c1", t0)
+	d.NoteSuccess(ctx, a, "c2", t0)
 	if scores, ok := d.Read(ctx, []string{a}, t0); !ok || !almost(scores[a], 1, 1e-3) {
 		t.Fatalf("攒批期间 a = (%v, %v)，要 1", scores[a], ok)
 	}
 
-	// 攒满 domainScoreFlushEvery 后触发后台写
-	d.NoteSuccess(ctx, a, t0.Add(11*time.Second))
+	// 攒满 domainScoreFlushEvery 后触发后台写（三个不同凭据 ×0.05）
+	d.NoteSuccess(ctx, a, "c3", t0.Add(11*time.Second))
 	flushedAt := t0.Add(11 * time.Second)
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		scores, ok := d.Read(ctx, []string{a}, flushedAt)
-		if ok && almost(scores[a], 1.15, 1e-3) { // 三次 ×0.05
-			return
+		if ok && almost(scores[a], 1.15, 1e-3) {
+			break
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("后台写没生效：a = %v（ok=%v），要 1.15", scores[a], ok)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// 同一凭据对同一域名在一小时内连记两次只算一次（换一个域名，不和上面共用 hash 里的分数）
+	b := "https://b.example.test"
+	d2 := newDomainScores(rdb)
+	d2.NoteSuccess(ctx, b, "same", t0)                     // 记一次、开始计时
+	d2.NoteSuccess(ctx, b, "same", t0.Add(11*time.Second)) // 去重不加量，但到点触发冲刷
+	waitScore(t, d2, b, t0.Add(11*time.Second), 1.05)
+
+	// 一小时之后再记会再算
+	c := "https://c.example.test"
+	d3 := newDomainScores(rdb)
+	d3.NoteSuccess(ctx, c, "same", t0)
+	d3.NoteSuccess(ctx, c, "same", t0.Add(domainScoreCredWindow+time.Second)) // 过了去重窗口，加量并触发冲刷
+	waitScore(t, d3, c, t0.Add(domainScoreCredWindow+time.Second), 1.10)
+}
+
+// waitScore 轮询最多 2 秒，等后台批量写让 url 的分数到 want。
+func waitScore(t *testing.T, d *domainScores, url string, at time.Time, want float64) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		scores, ok := d.Read(context.Background(), []string{url}, at)
+		if ok && almost(scores[url], want, 1e-3) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s = %v（ok=%v），要 %v", url, scores[url], ok, want)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestDomainScoresReadFlushes(t *testing.T) {
+	_, rdb := testkit.Redis(t)
+	d := newDomainScores(rdb)
+	ctx := context.Background()
+	a := "https://a.example.test"
+
+	d.NoteSuccess(ctx, a, "c1", t0)
+	d.NoteSuccess(ctx, a, "c2", t0.Add(5*time.Second))
+	readAt := t0.Add(11 * time.Second)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		scores, ok := d.Read(ctx, []string{a}, readAt)
+		if ok && almost(scores[a], 1.10, 1e-3) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Read 冲刷后 a = %v（ok=%v），要 1.10", scores[a], ok)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

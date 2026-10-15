@@ -9,6 +9,7 @@ package service
 import (
 	"context"
 	"errors"
+	"net"
 	"net/url"
 	"regexp"
 	"sort"
@@ -42,7 +43,7 @@ const (
 
 // Domain 是组内一个订阅域名的基址与基础权重。
 type Domain struct {
-	BaseURL string // 规范化后的 https://host[:port]
+	BaseURL string // 规范化后的 https://host（只走 443，不带端口）
 	Weight  int
 }
 
@@ -86,9 +87,9 @@ type DomainConfigView struct {
 	ScoresAvailable bool
 }
 
-var domainHostnameRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
+var domainHostnameRE = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]([a-z0-9-]*[a-z0-9])?$`)
 
-// NormalizeBaseURL 把用户输入规范成 https 基址；失败返回 errors.New，文案见 sd-spec。
+// NormalizeBaseURL 把用户输入规范成 https 基址（只写到域名，不带端口，只走 443）；失败返回 errors.New，文案见 sd-spec。
 func NormalizeBaseURL(raw string) (string, error) {
 	s := strings.TrimSpace(raw)
 	s = strings.TrimRight(s, "/")
@@ -96,7 +97,7 @@ func NormalizeBaseURL(raw string) (string, error) {
 		return "", errors.New("长度不能超过 255")
 	}
 	if strings.Contains(s, "?") || strings.Contains(s, "#") {
-		return "", errors.New("只能写到域名（可带端口），不能带路径、参数")
+		return "", errors.New("只能写到域名，不能带路径、参数")
 	}
 	u, err := url.Parse(s)
 	if err != nil {
@@ -112,27 +113,33 @@ func NormalizeBaseURL(raw string) (string, error) {
 		return "", errors.New("不能包含用户名或密码")
 	}
 	if u.Path != "" && u.Path != "/" {
-		return "", errors.New("只能写到域名（可带端口），不能带路径、参数")
+		return "", errors.New("只能写到域名，不能带路径、参数")
 	}
 	if u.RawQuery != "" || u.Fragment != "" {
-		return "", errors.New("只能写到域名（可带端口），不能带路径、参数")
+		return "", errors.New("只能写到域名，不能带路径、参数")
 	}
 	host := strings.ToLower(u.Hostname())
-	if !domainHostnameRE.MatchString(host) {
-		return "", errors.New("域名只能含小写字母、数字、点和短横线（中文域名请写成 xn-- 开头的形式）")
+	if net.ParseIP(host) != nil || strings.Contains(host, ":") || strings.Contains(host, "[") {
+		return "", errors.New("只能写域名，不能写 IP 地址")
+	}
+	for _, r := range host {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '.' && r != '-' {
+			return "", errors.New("域名只能含小写字母、数字、点和短横线（中文域名请写成 xn-- 开头的形式）")
+		}
 	}
 	port := u.Port()
 	if port != "" {
-		n, err := strconv.Atoi(port)
-		if err != nil || n < 1 || n > 65535 {
-			return "", errors.New("端口必须在 1–65535 之间")
+		if port != "443" {
+			if _, err := strconv.Atoi(port); err != nil {
+				return "", errors.New("格式不正确")
+			}
+			return "", errors.New("不能带端口（订阅域名只走 443）")
 		}
 	}
-	outHost := host
-	if port != "" {
-		outHost = host + ":" + port
+	if len(host) > 253 || host == "localhost" || strings.HasSuffix(host, ".localhost") || !domainHostnameRE.MatchString(host) {
+		return "", errors.New("域名格式不正确")
 	}
-	return "https://" + outHost, nil
+	return "https://" + host, nil
 }
 
 func invalidGroups(msg string) error {

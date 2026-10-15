@@ -84,17 +84,16 @@ type Normalized = { ok: true; url: string } | { ok: false; message: string }
 const failURL = (message: string): Normalized => ({ ok: false, message })
 
 /**
- * NormalizeBaseURL 的假实现，与 Go 逐条对应：去首尾空白、去末尾所有 /、
- * scheme 大小写不敏感但必须 https、host 转小写、只许 [a-z0-9.-] 且首尾是字母数字、
- * 端口 1–65535、不许路径/参数/片段/用户信息、长度 ≤ 255。
- * 不用 new URL()：WHATWG 对超范围端口直接抛错，而 Go 的 url.Parse 能解析出来再报端口。
+ * NormalizeBaseURL 的假实现，与 Go 逐条对应：只写到域名，不带端口（只走 443），不能用 IP；
+ * DNS 名正则与 nginx 一致；:443 去掉；其余端口报「不能带端口（订阅域名只走 443）」。
  */
+const DNS_NAME_RE = /^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]([a-z0-9-]*[a-z0-9])?$/
+const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/
+
 function normalizeBaseURL(raw: string): Normalized {
   const v = raw.trim().replace(/\/+$/, '')
   if (v.length > BASE_URL_MAX) return failURL('长度不能超过 255')
-  // Go 的 url.Parse 拒绝控制字符
   if ([...v].some((c) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f)) return failURL('格式不正确')
-  // scheme：有冒号时冒号前须是合法 scheme 形式，否则 url.Parse 失败；没有 scheme 时报 https
   const colon = v.indexOf(':')
   if (colon !== -1 && !/^[a-zA-Z][a-zA-Z0-9+.-]*$/.test(v.slice(0, colon))) return failURL('格式不正确')
   if (colon === -1 || v.slice(0, colon).toLowerCase() !== 'https') return failURL('必须以 https:// 开头')
@@ -109,7 +108,6 @@ function normalizeBaseURL(raw: string): Normalized {
   })()
   const authority = rest.slice(0, cut)
   const tail = rest.slice(cut)
-  // host:port 拆分（IPv6 字面量带方括号，端口跟在 ] 后面）
   let host = authority
   let port = ''
   const rb = authority.indexOf(']')
@@ -130,16 +128,24 @@ function normalizeBaseURL(raw: string): Normalized {
   }
   if (host === '') return failURL('必须包含域名')
   if (authority.includes('@')) return failURL('不能包含用户名或密码')
-  if (tail !== '') return failURL('只能写到域名（可带端口），不能带路径、参数')
+  if (tail !== '') return failURL('只能写到域名，不能带路径、参数')
   const lower = host.toLowerCase()
-  if (!/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(lower)) {
-    return failURL('域名只能含小写字母、数字、点和短横线（中文域名请写成 xn-- 开头的形式）')
+  if (IPV4_RE.test(lower) || lower.includes(':') || lower.includes('[')) {
+    return failURL('只能写域名，不能写 IP 地址')
   }
-  if (port !== '') {
-    const n = Number(port)
-    if (n < 1 || n > 65535) return failURL('端口必须在 1–65535 之间')
+  for (const c of lower) {
+    if (!/[a-z0-9.-]/.test(c)) {
+      return failURL('域名只能含小写字母、数字、点和短横线（中文域名请写成 xn-- 开头的形式）')
+    }
   }
-  return { ok: true, url: `https://${lower}${port === '' ? '' : ':' + port}` }
+  if (port !== '' && port !== '443') {
+    if (!/^[0-9]+$/.test(port)) return failURL('格式不正确')
+    return failURL('不能带端口（订阅域名只走 443）')
+  }
+  if (lower.length > 253 || lower === 'localhost' || lower.endsWith('.localhost') || !DNS_NAME_RE.test(lower)) {
+    return failURL('域名格式不正确')
+  }
+  return { ok: true, url: `https://${lower}` }
 }
 
 /** PUT 请求体：整份替换，顶层只许 groups（缺省或 null 当空） */

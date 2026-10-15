@@ -2,10 +2,13 @@ package repo
 
 import (
 	"context"
+	"database/sql"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 
 	"github.com/aegispanel/aegis/internal/module/subscription/model"
+	"github.com/aegispanel/aegis/internal/pkg/db"
 )
 
 // DomainGroupRow 是 subscription_domain_groups 表读取时的一行。
@@ -37,17 +40,37 @@ type DomainConfigRows struct {
 	Assigns []DomainAssignRow
 }
 
-// DomainConfig 读出整份订阅域名分组、域名及用户组分配。
-// 拉取侧经 service 的进程内快照缓存，不是每次拉取都查。
+// DomainConfig 读整份配置。三条 SELECT 要在同一个快照里读：不在事务里时开一个只读、可重复读的短事务，
+// 否则读的中途碰上后台保存提交，会读到旧组 id 配新域名行，各组变空、链接回落到面板地址 30 秒。
+// 已在事务里（后台保存先加锁再读）就直接用当前事务。
 func (r *Repo) DomainConfig(ctx context.Context) (DomainConfigRows, error) {
+	if db.InTx(ctx) {
+		return readDomainConfig(r.d.Conn(ctx))
+	}
 	var rows DomainConfigRows
-	if err := r.d.Conn(ctx).Raw("SELECT id, name, is_default, position FROM subscription_domain_groups ORDER BY position").Scan(&rows.Groups).Error; err != nil {
+	err := r.d.Base().WithContext(ctx).Transaction(func(g *gorm.DB) error {
+		got, err := readDomainConfig(g)
+		if err != nil {
+			return err
+		}
+		rows = got
+		return nil
+	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
 		return DomainConfigRows{}, mapErr(err)
 	}
-	if err := r.d.Conn(ctx).Raw("SELECT group_id, base_url, weight, position FROM subscription_domains ORDER BY group_id, position").Scan(&rows.Domains).Error; err != nil {
+	return rows, nil
+}
+
+func readDomainConfig(g *gorm.DB) (DomainConfigRows, error) {
+	var rows DomainConfigRows
+	if err := g.Raw("SELECT id, name, is_default, position FROM subscription_domain_groups ORDER BY position").Scan(&rows.Groups).Error; err != nil {
 		return DomainConfigRows{}, mapErr(err)
 	}
-	if err := r.d.Conn(ctx).Raw("SELECT user_group_id, group_id FROM subscription_domain_group_user_groups ORDER BY group_id, user_group_id::text").Scan(&rows.Assigns).Error; err != nil {
+	if err := g.Raw("SELECT group_id, base_url, weight, position FROM subscription_domains ORDER BY group_id, position").Scan(&rows.Domains).Error; err != nil {
+		return DomainConfigRows{}, mapErr(err)
+	}
+	if err := g.Raw("SELECT user_group_id, group_id FROM subscription_domain_group_user_groups ORDER BY group_id, user_group_id::text").Scan(&rows.Assigns).Error; err != nil {
 		return DomainConfigRows{}, mapErr(err)
 	}
 	if rows.Groups == nil {

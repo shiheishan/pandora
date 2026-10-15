@@ -100,9 +100,11 @@ describe('mock api · admin subscription domains', () => {
         '只能有一个缺省组',
       ],
       [{ groups: [{ name: 'A', domains: [{ base_url: 'http://a.example.com' }] }] }, '第 1 组第 1 个域名：必须以 https:// 开头'],
-      [{ groups: [{ name: 'A', domains: [{ base_url: 'https://a.example.com/path' }] }] }, '第 1 组第 1 个域名：只能写到域名（可带端口），不能带路径、参数'],
+      [{ groups: [{ name: 'A', domains: [{ base_url: 'https://a.example.com/path' }] }] }, '第 1 组第 1 个域名：只能写到域名，不能带路径、参数'],
       [{ groups: [{ name: 'A', domains: [{ base_url: 'https://a_b.example.com' }] }] }, '第 1 组第 1 个域名：域名只能含小写字母、数字、点和短横线（中文域名请写成 xn-- 开头的形式）'],
-      [{ groups: [{ name: 'A', domains: [{ base_url: 'https://a.example.com:70000' }] }] }, '第 1 组第 1 个域名：端口必须在 1–65535 之间'],
+      [{ groups: [{ name: 'A', domains: [{ base_url: 'https://a.example.com:70000' }] }] }, '第 1 组第 1 个域名：不能带端口（订阅域名只走 443）'],
+      [{ groups: [{ name: 'A', domains: [{ base_url: 'https://203.0.113.9' }] }] }, '第 1 组第 1 个域名：只能写域名，不能写 IP 地址'],
+      [{ groups: [{ name: 'A', domains: [{ base_url: 'https://localhost' }] }] }, '第 1 组第 1 个域名：域名格式不正确'],
       [
         {
           groups: [{ name: 'A', domains: [{ base_url: 'https://a.example.com' }, { base_url: 'https://a.example.com/' }] }],
