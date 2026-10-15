@@ -268,15 +268,15 @@ export function NodesTab({ rest }: { rest: string[] }) {
         onClose={() => setBatchEditing(false)}
         onDone={() => setPicked(new Set())}
       />
-      <Modal open={creating} onClose={() => setCreating(false)} size="lg" title="新建节点" eyebrow="建成草稿，签发安装令牌并启用后才会下发">
+      <Modal open={creating} onClose={() => setCreating(false)} size="lg" title="新建节点" eyebrow="建成草稿，上线后才会下发">
         {creating && (
           <NodeForm
             node={null}
             onCancel={() => setCreating(false)}
             onSaved={(saved) => {
               setCreating(false)
-              toast('节点已创建为草稿，签发安装令牌并启用后才会下发')
-              navigate(`/nodes/nodes/${saved.id}/identity`)
+              toast('节点已创建为草稿。所在服务器还没接入的，到「服务器」页签发安装令牌；接入后在「操作」里上线')
+              navigate(`/nodes/nodes/${saved.id}/proto`)
             }}
           />
         )}

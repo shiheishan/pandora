@@ -1,12 +1,8 @@
 package handler
 
 import (
-	"strings"
-
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 
-	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
 )
 
@@ -25,30 +21,6 @@ func (h *Handler) issueServerBootstrapToken(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 	out, err := h.svc.IssueBootstrapToken(ctx, id, req.TTLMinutes)
-	if err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	httpx.Created(c, bootstrapTokenResponseFrom(out))
-}
-
-func (h *Handler) issueNodeBootstrapToken(c *gin.Context) {
-	var req nodeBootstrapTokenRequest
-	if err := httpx.BindJSON(c, &req); err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	if strings.TrimSpace(req.ServerID) == "" {
-		httpx.Fail(c, errs.Newf(errs.Conflict, "先把节点放到服务器上，再签发安装令牌"))
-		return
-	}
-	sid, err := uuid.Parse(strings.TrimSpace(req.ServerID))
-	if err != nil {
-		httpx.Fail(c, errs.Invalid(map[string]string{"server_id": "不是合法的服务器 id"}))
-		return
-	}
-	ctx := c.Request.Context()
-	out, err := h.svc.IssueBootstrapToken(ctx, sid, req.TTLMinutes)
 	if err != nil {
 		httpx.Fail(c, err)
 		return

@@ -63,20 +63,6 @@ func TestServerBootstrapTokenTTLValidation(t *testing.T) {
 	poolExpectErr(t, w, errs.Unavailable, "")
 }
 
-func TestNodeBootstrapTokenNeedsServer(t *testing.T) {
-	e := newIdentityEngine(&poolReauthStub{})
-	path := "/v1/nodes/bootstrap-token"
-
-	w := doPool(e, http.MethodPost, path, `{"node_name":"n1","ttl_minutes":30}`)
-	poolExpectErr(t, w, errs.Conflict, "")
-
-	w = doPool(e, http.MethodPost, path, `{"node_name":"n1","server_id":"bad","ttl_minutes":30}`)
-	poolExpectErr(t, w, errs.ValidationFailed, "server_id")
-
-	w = doPool(e, http.MethodPost, path, `{"node_name":"n1","server_id":"`+uuid.NewString()+`","ttl_minutes":30}`)
-	poolExpectErr(t, w, errs.Unavailable, "")
-}
-
 func TestIdentityRoutesReauth(t *testing.T) {
 	stub := &poolReauthStub{deny: true}
 	e := newIdentityEngine(stub)
@@ -92,18 +78,13 @@ func TestIdentityRoutesReauth(t *testing.T) {
 
 	for _, path := range []string{
 		"/v1/servers/" + id + "/bootstrap-token",
-		"/v1/nodes/bootstrap-token",
 		"/v1/nodes/" + id + "/revoke-identity",
 	} {
-		body := ""
-		if path == "/v1/nodes/bootstrap-token" {
-			body = `{"node_name":"n","server_id":"` + id + `","ttl_minutes":30}`
-		}
-		w := doPool(e, http.MethodPost, path, body)
+		w := doPool(e, http.MethodPost, path, "")
 		poolExpectErr(t, w, errs.ReauthRequired, "")
 	}
-	if stub.calls != 3 {
-		t.Fatalf("重认证应调用 3 次，实际 %d", stub.calls)
+	if stub.calls != 2 {
+		t.Fatalf("重认证应调用 2 次，实际 %d", stub.calls)
 	}
 }
 

@@ -25,6 +25,7 @@ paths:
 - 服务器只有 draft / ready / draining / maintenance / retired 五态；卡片「标记维护」发 `draining`（显示「维护中」），maintenance 是进一步停机；完整状态走详情里的合法边下拉，`infra.ts` 与 mock 的状态边表照后端 `serverStatusTransitions` 原样写，`infra.test.ts` 逐边钉住。
 - 服务器删除只许草稿或已退役；名下节点不拒绝而是级联静默（身份吊销、摘掉 `server_id`），文案按此改写了设计稿的「先迁移或删除」。
 - 安装令牌固定传 `ttl_minutes: 30`（后端缺省 20）。
+- 签安装令牌只有服务器页一个入口（`serverActions.ts` 的 `useIssueServerToken`，`v1/servers/:id/bootstrap-token`）；节点抽屉「身份与令牌」只读（身份、服务器待用令牌数），给「去服务器」跳转，不再有签发按钮（10-14 删了 `v1/nodes/bootstrap-token` 与 UniProxy 服务端令牌）。
 
 运行状态与端口（w4deliver）：
 

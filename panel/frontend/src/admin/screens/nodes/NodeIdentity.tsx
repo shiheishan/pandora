@@ -1,11 +1,12 @@
 import { useMutation } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
 import { formatDateTime } from '../../../core/format'
+import { navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, Modal, QueryView, Tag, useToast } from '../../../ui'
 import css from './nodes.module.css'
-import { useFailure, useIntentKey, useInvalidateNodes, useNodeIdentity } from './queries'
-import { bootstrapTokenResponse, okResponse, type NodeRow } from './schemas'
+import { useFailure, useInvalidateNodes, useNodeIdentity } from './queries'
+import { okResponse, type NodeRow } from './schemas'
 
 interface Secret {
   title: string
@@ -27,23 +28,7 @@ export function NodeIdentity({ node }: { node: NodeRow }) {
   const fail = useFailure()
   const invalidate = useInvalidateNodes()
   const identity = useNodeIdentity(node.id)
-  const bootstrapIntent = useIntentKey()
-  const [secret, setSecret] = useState<Secret | null>(null)
   const [confirm, setConfirm] = useState<'revoke' | null>(null)
-  const retired = node.serving_status === 'retired'
-
-  const bootstrap = useMutation({
-    mutationFn: () => {
-      const body = { node_name: node.name, ttl_minutes: 30, ...(node.server_id ? { server_id: node.server_id } : {}) }
-      return api.post('v1/nodes/bootstrap-token', bootstrapTokenResponse, { body, idempotencyKey: bootstrapIntent.keyFor([node.id, 'bootstrap']) })
-    },
-    onSuccess: (r) => {
-      bootstrapIntent.reset()
-      void invalidate()
-      setSecret({ title: '一键安装令牌', token: r.token, command: r.install_command, hint: `在新机器上执行命令，按提示粘贴上面的令牌。${formatDateTime(r.expires_at)} 前有效，只显示这一次。` })
-    },
-    onError: (error) => fail(error, { intent: bootstrapIntent }),
-  })
 
   const revoke = useMutation({
     mutationFn: () => api.post(`v1/nodes/${node.id}/revoke-identity`, okResponse),
@@ -73,16 +58,22 @@ export function NodeIdentity({ node }: { node: NodeRow }) {
                 '还没有身份（节点从未接入）'
               )}
             </dd>
-            <dt>待用安装令牌</dt>
+            <dt>服务器待用安装令牌</dt>
             <dd>{d.bootstrap_tokens_pending} 个未用未过期</dd>
           </dl>
         )}
       </QueryView>
 
-      <Action title="签发一键安装令牌" detail="生成一条在新机器上执行的安装命令，30 分钟内有效。" disabledReason={retired ? '已退役的节点不能签发' : null}>
-        <Button size="sm" busy={bootstrap.isPending} onClick={() => bootstrap.mutate()}>
-          签发
-        </Button>
+      <Action
+        title="安装令牌"
+        detail="安装令牌按服务器签发：到「服务器」页打开这台节点所在的服务器签发，一台服务器接入一次，上面的节点都跟着服务。"
+        disabledReason={!node.server_id ? '节点还没放到服务器上，先在「协议参数」里选服务器' : null}
+      >
+        {node.server_id ? (
+          <Button size="sm" onClick={() => navigate(`/nodes/servers/${node.server_id}`)}>
+            去服务器
+          </Button>
+        ) : null}
       </Action>
       <Action title="吊销节点身份" detail="节点会被拒绝接入，需要重新注册。用于机器被入侵或转让。">
         <Button size="sm" className={css.dangerButton} busy={revoke.isPending} onClick={() => setConfirm('revoke')}>
@@ -102,7 +93,6 @@ export function NodeIdentity({ node }: { node: NodeRow }) {
         }}
         onCancel={() => setConfirm(null)}
       />
-      <SecretModal secret={secret} onClose={() => setSecret(null)} />
     </div>
   )
 }

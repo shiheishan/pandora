@@ -266,7 +266,7 @@ function CopyModal({ node, onClose }: { node: NodeRow; onClose: () => void }) {
       intent.reset()
       void invalidate()
       created.warnings?.forEach((w) => toast(w, 'danger'))
-      toast('已复制为草稿节点，签发安装令牌并启用后才会下发')
+      toast('已复制为草稿节点，上线后才会下发')
       onClose()
       navigate(`/nodes/nodes/${created.id}/proto`)
     },

@@ -671,24 +671,6 @@ export const nodes: MockModule = {
         return { status: 200, body: { ok: true, updated: items.length, serving_status: to } }
       })
     },
-    'POST /v1/nodes/bootstrap-token': async (ctx) => {
-      if (!ctx.requireReauth()) return
-      const body = await ctx.body()
-      if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
-      await ctx.idempotent('node_bootstrap_token_issue', () => {
-        const name = text(body.node_name).trim()
-        if (!name) return invalid({ node_name: '必填' })
-        const n = store.find((x) => x.name === name)
-        if (n && (n.serving_status === 'retired' || n.deleted)) return err(409, 'conflict', '已退役或销毁节点不能签发引导令牌')
-        const ttl = int(body.ttl_minutes)
-        const minutes = ttl && ttl >= 1 && ttl <= 30 ? ttl : 20
-        return {
-          status: 201,
-          unreplayable: true,
-          body: { token: `pbt_${randomBytes(24).toString('base64url')}`, expires_at: new Date(Date.now() + minutes * 60_000).toISOString(), install_command: 'curl -fsSL https://panel.example.test/install.sh | sudo bash -s -- --enroll' },
-        }
-      })
-    },
     'POST /v1/nodes/reality-keypair': (ctx) => {
       ctx.send(200, { private_key: randomBytes(32).toString('base64url'), public_key: randomBytes(32).toString('base64url'), short_id: randomBytes(4).toString('hex'), hint: '私钥只在保存时写入，之后读接口不回显' })
     },

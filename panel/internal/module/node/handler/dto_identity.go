@@ -10,12 +10,6 @@ type bootstrapTokenRequest struct {
 	TTLMinutes int `json:"ttl_minutes"` // 0 或省略 = 缺省 20 分钟
 }
 
-type nodeBootstrapTokenRequest struct {
-	NodeName   string `json:"node_name"` // 前端会发，忽略
-	ServerID   string `json:"server_id"` // 节点所在服务器；空 = 节点还没放到服务器上
-	TTLMinutes int    `json:"ttl_minutes"`
-}
-
 type bootstrapTokenResponse struct {
 	Token          string    `json:"token"`
 	ExpiresAt      time.Time `json:"expires_at"`
