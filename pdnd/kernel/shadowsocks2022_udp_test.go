@@ -83,7 +83,7 @@ type ss2022TCPUDPPlane struct {
 	udpRelayTestPlane
 }
 
-func (ss2022TCPUDPPlane) DialTCP(_ context.Context, _ route.Meta, destination M.Socksaddr) (net.Conn, error) {
+func (*ss2022TCPUDPPlane) DialTCP(_ context.Context, _ route.Meta, destination M.Socksaddr) (net.Conn, error) {
 	return net.Dial("tcp", net.JoinHostPort(destination.Addr.String(), fmt.Sprint(destination.Port)))
 }
 
@@ -118,7 +118,7 @@ func newSS2022SwitchConn(serverPort int) (*ss2022SwitchConn, *net.UDPConn, *net.
 					continue
 				}
 			}
-			pkt := append([]byte(nil), buf[:n])
+			pkt := append([]byte(nil), buf[:n]...)
 			select {
 			case c.in <- pkt:
 			case <-c.done:
@@ -360,7 +360,7 @@ func TestSS2022UDPRoaming(t *testing.T) {
 func TestSS2022UDPDelUserClosesSessions(t *testing.T) {
 	method := "2022-blake3-aes-128-gcm"
 	u1 := core.User{ID: 8925, UUID: "ss2022-udp-del-a"}
-	a := startSS2022Adapter(t, method, ss2022TCPUDPPlane{}, nil, u1)
+	a := startSS2022Adapter(t, method, &ss2022TCPUDPPlane{}, nil, u1)
 	echoUDP := hy2EchoUDP(t)
 	tcpEcho := startLifecycleEcho(t, false)
 	payload := "ss2022-del-payload"

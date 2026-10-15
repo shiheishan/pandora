@@ -101,7 +101,7 @@ func TestSS2022TestClientPacketAccepted(t *testing.T) {
 	}
 }
 
-func benchSS2022UDPReadySession(b *testing.B) (*ss2022Adapter, *ssUser, uint64, netip.AddrPort, []byte, *ss2022UDPScratch, []byte) {
+func benchSS2022UDPReadySession(b testing.TB) (*ss2022Adapter, *ssUser, uint64, netip.AddrPort, []byte, *ss2022UDPScratch, []byte) {
 	user := core.User{ID: 8902, UUID: "ss2022-udp-bench"}
 	a := startSS2022Adapter(b, "2022-blake3-aes-128-gcm", &udpRelayTestPlane{}, nil, user)
 	u := ss2022BenchUser(b, a, user.UUID)
