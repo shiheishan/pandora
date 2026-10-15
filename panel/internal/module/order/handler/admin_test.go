@@ -14,7 +14,7 @@ import (
 )
 
 // 后台列表：筛选参数交给 service（to 是日期时取次日零点）；plan_name、interval 恒为字符串；
-// paid_at、provider_code、provider_name 为空时是 null；refunded_amount 恒 0；manual、item_count 恒有。
+// paid_at、provider_code、provider_name 为空时是 null；manual、item_count 恒有。
 func TestAdminOrdersShape(t *testing.T) {
 	userID := uuid.New()
 	var got service.ListFilter
@@ -41,7 +41,7 @@ func TestAdminOrdersShape(t *testing.T) {
 	if row["plan_name"] != "" || row["interval"] != "" || num(t, row, "interval_count") != 0 || num(t, row, "item_count") != 1 || row["manual"] != false {
 		t.Fatalf("行 %v", row)
 	}
-	if num(t, row, "total_amount") != 5000 || num(t, row, "refunded_amount") != 0 || row["user_email"] != "a@example.test" {
+	if num(t, row, "total_amount") != 5000 || row["user_email"] != "a@example.test" {
 		t.Fatalf("金额 %v", row)
 	}
 	mustNull(t, row, "paid_at", "provider_code", "provider_name")
@@ -115,7 +115,7 @@ func TestAdminOrderDetailShape(t *testing.T) {
 	mustErr(t, do(e, http.MethodGet, "/v1/orders/123", ""), http.StatusNotFound, string(errs.NotFound))
 }
 
-// 后台支付记录：refunds 恒为 []；failure_code、failure_message 恒 null；provider_ref、payment_intent_id、method 可空。
+// 后台支付记录：provider_ref、payment_intent_id、method 可空。
 func TestAdminOrderPaymentsShape(t *testing.T) {
 	orderID := uuid.New()
 	f := &fakeSvc{adminPayments: func(uuid.UUID) (paymentsvc.OrderHistory, error) {
@@ -129,17 +129,14 @@ func TestAdminOrderPaymentsShape(t *testing.T) {
 	w := do(newEngine(f, true, nil), http.MethodGet, "/v1/orders/"+orderID.String()+"/payments", "")
 	mustStatus(t, w, http.StatusOK)
 	m := obj(t, w)
-	if r, ok := m["refunds"].([]any); !ok || len(r) != 0 {
-		t.Fatalf("refunds 应为 []，得到 %#v", m["refunds"])
-	}
 	in := m["payment_intents"].([]any)[0].(map[string]any)
-	mustNull(t, in, "failure_code", "failure_message", "provider_ref", "expires_at")
+	mustNull(t, in, "provider_ref", "expires_at")
 	if in["status"] != "succeeded" || num(t, in, "amount") != 1500 {
 		t.Fatalf("意图 %v", in)
 	}
 	p := m["payments"].([]any)[0].(map[string]any)
 	mustNull(t, p, "payment_intent_id", "method")
-	if num(t, p, "fee_amount") != 9 || num(t, p, "refunded_amount") != 0 || p["provider_payment_id"] != "R1" {
+	if num(t, p, "fee_amount") != 9 || p["provider_payment_id"] != "R1" {
 		t.Fatalf("收款 %v", p)
 	}
 }

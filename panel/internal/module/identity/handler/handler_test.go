@@ -414,7 +414,7 @@ func TestAdminUserJSONKeys(t *testing.T) {
 	assertKeys(t, q0, "metric", "period", "limit", "consumed", "remaining")
 	ordKeys := []string{
 		"id", "order_no", "user_email", "kind", "status", "currency", "total_amount", "payable_amount",
-		"paid_amount", "refunded_amount", "balance_applied", "created_at", "paid_at", "provider_code",
+		"paid_amount", "balance_applied", "created_at", "paid_at", "provider_code",
 		"provider_name", "plan_name", "interval", "interval_count", "item_count", "manual",
 	}
 	ro, _ := det["recent_orders"].([]any)[0].(map[string]any)

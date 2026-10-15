@@ -74,7 +74,6 @@ type admOrderRowResponse struct {
 	TotalAmount    int64      `json:"total_amount"`
 	PayableAmount  int64      `json:"payable_amount"`
 	PaidAmount     int64      `json:"paid_amount"`
-	RefundedAmount int64      `json:"refunded_amount"`
 	BalanceApplied int64      `json:"balance_applied"`
 	CreatedAt      time.Time  `json:"created_at"`
 	PaidAt         *time.Time `json:"paid_at"`
@@ -185,7 +184,6 @@ func admOrderRowFrom(cc *admCents, o service.AdminOrderRow) admOrderRowResponse 
 		TotalAmount:    cc.of(o.Total),
 		PayableAmount:  cc.of(o.Payable),
 		PaidAmount:     cc.of(o.Paid),
-		RefundedAmount: 0,
 		BalanceApplied: cc.of(o.BalanceApplied),
 		CreatedAt:      o.CreatedAt,
 		PaidAt:         o.PaidAt,

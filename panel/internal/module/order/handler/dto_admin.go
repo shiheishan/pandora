@@ -11,8 +11,6 @@ import (
 )
 
 // 后台订单接口的 DTO；JSON 形状对照前端 admin/screens/billing/schemas.ts。
-// 不做退款（产品决定），退款相关的键输出固定值：refunded_amount 恒 0，failure_code、failure_message 恒 null，
-// refunds 恒为空数组。
 
 // parseDay 解析后台筛选的日期：先按 YYYY-MM-DD，再按 RFC3339；end 为真且是日期时取次日零点（左闭右开）。
 func parseDay(field, raw string, end bool) (*time.Time, error) {
@@ -97,7 +95,6 @@ type adminOrderRowResponse struct {
 	TotalAmount    int64      `json:"total_amount"`
 	PayableAmount  int64      `json:"payable_amount"`
 	PaidAmount     int64      `json:"paid_amount"`
-	RefundedAmount int64      `json:"refunded_amount"`
 	BalanceApplied int64      `json:"balance_applied"`
 	CreatedAt      time.Time  `json:"created_at"`
 	PaidAt         *time.Time `json:"paid_at"`
@@ -174,7 +171,6 @@ func adminOrderRowFrom(cc *cents, v service.AdminOrderView) adminOrderRowRespons
 		TotalAmount:    cc.of(v.Total),
 		PayableAmount:  cc.of(v.Payable),
 		PaidAmount:     cc.of(v.Paid),
-		RefundedAmount: 0,
 		BalanceApplied: cc.of(v.BalanceApplied),
 		CreatedAt:      v.CreatedAt,
 		PaidAt:         v.PaidAt,
@@ -266,8 +262,6 @@ type intentResponse struct {
 	SurchargeAmount int64      `json:"surcharge_amount"`
 	Status          string     `json:"status"`
 	ProviderRef     *string    `json:"provider_ref"`
-	FailureCode     *string    `json:"failure_code"`
-	FailureMessage  *string    `json:"failure_message"`
 	ExpiresAt       *time.Time `json:"expires_at"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
@@ -284,17 +278,15 @@ type paymentResponse struct {
 	Amount            int64     `json:"amount"`
 	FeeAmount         int64     `json:"fee_amount"`
 	SurchargeAmount   int64     `json:"surcharge_amount"`
-	RefundedAmount    int64     `json:"refunded_amount"`
 	Status            string    `json:"status"`
 	Method            *string   `json:"method"`
 	PaidAt            time.Time `json:"paid_at"`
 }
 
-// orderPaymentsResponse 是 GET /orders/:id/payments；refunds 恒为空数组。
+// orderPaymentsResponse 是 GET /orders/:id/payments：支付尝试与收款。
 type orderPaymentsResponse struct {
 	PaymentIntents []intentResponse  `json:"payment_intents"`
 	Payments       []paymentResponse `json:"payments"`
-	Refunds        []struct{}        `json:"refunds"`
 }
 
 func orderPaymentsFrom(h paymentsvc.OrderHistory) (orderPaymentsResponse, error) {
@@ -302,7 +294,6 @@ func orderPaymentsFrom(h paymentsvc.OrderHistory) (orderPaymentsResponse, error)
 	out := orderPaymentsResponse{
 		PaymentIntents: make([]intentResponse, 0, len(h.Intents)),
 		Payments:       make([]paymentResponse, 0, len(h.Payments)),
-		Refunds:        []struct{}{},
 	}
 	for _, in := range h.Intents {
 		out.PaymentIntents = append(out.PaymentIntents, intentResponse{
@@ -330,7 +321,6 @@ func orderPaymentsFrom(h paymentsvc.OrderHistory) (orderPaymentsResponse, error)
 			Amount:            cc.of(p.Amount),
 			FeeAmount:         cc.of(p.Fee),
 			SurchargeAmount:   cc.of(p.Surcharge),
-			RefundedAmount:    0,
 			Status:            p.Status,
 			Method:            p.Method,
 			PaidAt:            p.PaidAt,
