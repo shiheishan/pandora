@@ -66,9 +66,11 @@ function ReviewRow({ entry: e, onDialog }: { entry: ReviewEntry; onDialog: (d: D
         <Button size="xs" className={local.reject} onClick={() => onDialog({ kind: 'void', entry: e })}>
           作废
         </Button>
-        <Button size="xs" variant="primary" onClick={() => onDialog({ kind: 'approve', entry: e })}>
-          通过
-        </Button>
+        {e.review_source !== 'account_deleted' && (
+          <Button size="xs" variant="primary" onClick={() => onDialog({ kind: 'approve', entry: e })}>
+            通过
+          </Button>
+        )}
       </span>
     </div>
   )

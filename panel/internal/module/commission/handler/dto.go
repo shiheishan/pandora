@@ -211,7 +211,7 @@ type reviewEntryResponse struct {
 	Amount        int64     `json:"amount"`
 	Currency      string    `json:"currency"`
 	ReviewReason  string    `json:"review_reason"`
-	ReviewSource  string    `json:"review_source"` // same_source / source_check / underfunded / other
+	ReviewSource  string    `json:"review_source"` // same_source / source_check / underfunded / account_deleted / other
 	CreatedAt     time.Time `json:"created_at"`
 	FrozenUntil   time.Time `json:"frozen_until"`
 }

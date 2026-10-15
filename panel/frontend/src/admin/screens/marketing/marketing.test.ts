@@ -393,6 +393,8 @@ describe('commission', () => {
         expect(label).toContain('余额不足')
         expect(label).not.toContain('自动解冻')
       }
+      // 受益人已注销：只能作废
+      expect(freezeLabel({ frozen_until: '2025-06-01T00:00:00Z', review_source: 'account_deleted' }, after)).toContain('只能作废')
     })
   })
 })
