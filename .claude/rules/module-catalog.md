@@ -16,6 +16,7 @@ paths:
   - 流量包（`TrafficPack`）流量上限为 1 PiB（`maxPackBytes` = 1<<50），乐观锁通过触发器维护的 `updated_at` / `row_version` 控制。
 - 版本语义与价格冻结：
   - 套餐已发布版本（`published`）及其关联权益、配额、绑池与价格行（`prices`）均冻结不可变，保障订单与订阅的快照一致性。
+  - 价格行不可删（守卫 `catalog_guard_price`），唯一例外是删用户组的级联：00050 起 `prices.user_group_id` 是 ON DELETE CASCADE，守卫只放行「所属组已不存在」的 DELETE；被订单项、订阅、礼品卡引用的价格由它们的 RESTRICT 外键挡住，删组整笔回滚。catalog 的 Go 代码不删价格。
   - 价格没有试用天数，版本没有宽限期（只存不用，00049 删列；订阅只有 active / expired）。注册试用是 identity → subscription 的 `TrialGranter`，与价格无关。
 - 流量重置价格（xb-order #32，`plan_reset_prices`，00046）：
   - 每个套餐每个币种至多一档，`unit_amount > 0`；没有行 = 门户不卖流量重置。订单行快照了金额，所以价格直接可改、不随版本冻结。

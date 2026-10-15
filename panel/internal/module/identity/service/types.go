@@ -31,23 +31,30 @@ const RegistrationPending = "pending"
 
 // 审计动作名与资源类型。
 const (
-	ActionRegistered           = "user.registered"
-	ActionCreated              = "user.created"
-	ActionPasswordChanged      = "user.password_changed"
-	ActionPasswordResetRequest = "user.password_reset_requested"
-	ActionPasswordReset        = "user.password_reset"
-	ActionPasswordResetByAdmin = "user.password_reset_by_admin"
-	ActionStatusChange         = "user.status_change"
-	ActionGroupChanged         = "user.group_changed"
-	ActionUserGroupSaved       = "user_group.saved"
-	ActionUserGroupDeleted     = "user_group.deleted"
-	ActionEmailChanged         = "user.email_changed"
-	ActionNoteChanged          = "user.note_changed"
-	ActionDeleted              = "user.deleted"
-	ActionBulkBanned           = "user.bulk_banned"
+	ActionRegistered             = "user.registered"
+	ActionCreated                = "user.created"
+	ActionPasswordChanged        = "user.password_changed"
+	ActionPasswordResetRequest   = "user.password_reset_requested"
+	ActionPasswordReset          = "user.password_reset"
+	ActionPasswordResetByAdmin   = "user.password_reset_by_admin"
+	ActionStatusChange           = "user.status_change"
+	ActionGroupChanged           = "user.group_changed"
+	ActionUserGroupSaved         = "user_group.saved"
+	ActionUserGroupDeleted       = "user_group.deleted"
+	ActionUserGroupStatusChanged = "user_group.status_changed"
+	ActionEmailChanged           = "user.email_changed"
+	ActionNoteChanged            = "user.note_changed"
+	ActionDeleted                = "user.deleted"
+	ActionBulkBanned             = "user.bulk_banned"
 
 	ResourceUser      = "user"
 	ResourceUserGroup = "user_group"
+)
+
+// 用户组状态（user_groups.status）。
+const (
+	GroupActive   = "active"
+	GroupDisabled = "disabled"
 )
 
 // 验证码邮件模板（notify 模块种的模板码）。
@@ -180,6 +187,8 @@ type Group struct {
 	Name        string
 	Description string
 	Users       int64
+	// Status：GroupActive / GroupDisabled
+	Status string
 	// 下面经 OpsGroupUsage 补：引用该组的套餐、价格、券数，与把它列入限定名单的节点池（永不为 nil）
 	Plans          int64
 	Prices         int64

@@ -25,8 +25,9 @@ const (
 )
 
 var (
-	errGenerationLeaseLost = errors.New("identity: generation lease lost")
-	errGenerationGroupGone = errors.New("identity: generation group gone")
+	errGenerationLeaseLost     = errors.New("identity: generation lease lost")
+	errGenerationGroupGone     = errors.New("identity: generation group gone")
+	errGenerationGroupDisabled = errors.New("identity: generation group disabled")
 )
 
 // RunGenerationJob 执行一次批量生成任务（asynq 处理函数调用）。
@@ -65,6 +66,9 @@ func (s *Service) RunGenerationJob(ctx context.Context, id uuid.UUID) error {
 		next, err := s.writeGenerationBatch(ctx, job, completed, results, creds)
 		if errors.Is(err, errGenerationGroupGone) {
 			return s.failGeneration(ctx, job, "所选分组已被删除，任务停止；已生成的账号见结果", completed)
+		}
+		if errors.Is(err, errGenerationGroupDisabled) {
+			return s.failGeneration(ctx, job, "所选分组已停用，任务停止；已生成的账号见结果", completed)
 		}
 		if errors.Is(err, errGenerationLeaseLost) {
 			return nil
@@ -151,12 +155,16 @@ func (s *Service) writeGenerationBatch(ctx context.Context, job model.UserGenera
 			return errGenerationLeaseLost
 		}
 		if job.GroupID != nil {
-			exists, err := s.repo.GroupExists(ctx, *job.GroupID)
+			// 执行时复查：提交后组被删或被停用都停止任务
+			st, ok, err := s.repo.GroupStatus(ctx, *job.GroupID)
 			if err != nil {
 				return err
 			}
-			if !exists {
+			if !ok {
 				return errGenerationGroupGone
+			}
+			if st == GroupDisabled {
+				return errGenerationGroupDisabled
 			}
 		}
 		tried := map[string]bool{}

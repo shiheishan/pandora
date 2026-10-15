@@ -32,8 +32,10 @@ type UserGroup struct {
 	Code        string    `gorm:"column:code"`
 	Name        string    `gorm:"column:name"`
 	Description *string   `gorm:"column:description"`
-	CreatedAt   time.Time `gorm:"column:created_at;autoCreateTime"`
-	UpdatedAt   time.Time `gorm:"column:updated_at;autoUpdateTime"`
+	// active 正常 / disabled 停用（不能再加新成员，已有成员不受影响）
+	Status    string    `gorm:"column:status;default:active"`
+	CreatedAt time.Time `gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt time.Time `gorm:"column:updated_at;autoUpdateTime"`
 }
 
 // TableName 固定表名。
