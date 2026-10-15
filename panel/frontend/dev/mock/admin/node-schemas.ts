@@ -211,8 +211,13 @@ export const NODE_PROTOCOL_SCHEMAS = {
       "methods": [
         "aes-128-gcm",
         "aes-256-gcm",
-        "chacha20-ietf-poly1305"
-      ]
+        "chacha20-ietf-poly1305",
+        "2022-blake3-aes-128-gcm",
+        "2022-blake3-aes-256-gcm"
+      ],
+      "hints": {
+        "cipher": "2022 开头的是 Shadowsocks 2022：服务端密钥由面板按节点生成，用户密钥跟随各自的订阅链接，不用填密码；Clash Premium 与 Surfboard 不支持，这两种订阅里会略过该节点。"
+      }
     },
     {
       "node_type": "shadowtls",

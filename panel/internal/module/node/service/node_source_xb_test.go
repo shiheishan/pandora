@@ -164,7 +164,7 @@ func TestDeliverableFromRowsXB(t *testing.T) {
 		},
 	}
 
-	nodes, err := deliverableFromRows(rows, nil, now, loc)
+	nodes, err := deliverableFromRows(rows, nil, now, loc, testPSKDeriver())
 	if err != nil {
 		t.Fatalf("deliverableFromRows 失败: %v", err)
 	}

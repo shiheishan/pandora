@@ -3,7 +3,7 @@ package service
 // 节点配置文档。
 //
 // 文档形状：协议字段经 protocol.KernelConfig 摊平在顶层；必有 server_port、protocol（只进摘要）；
-// 有生效路由时才有 outbounds、routes、final。JSON 用 json.Marshal(map) 确定性编码（键排序、无多余空白）。
+// shadowsocks 2022 方法有 password（base64 服务端身份密钥）；有生效路由时才有 outbounds、routes、final。JSON 用 json.Marshal(map) 确定性编码（键排序、无多余空白）。
 
 import (
 	"context"
@@ -95,7 +95,7 @@ func (s *Service) serverConfigsWithSkips(ctx context.Context, serverIDs []uuid.U
 		echBad = map[uuid.UUID]string{}
 	}
 
-	out, skips = assembleServerConfigs(rows, layersByNode, echByNode, echBad)
+	out, skips = assembleServerConfigs(rows, layersByNode, echByNode, echBad, s.psk)
 	return out, skips, nil
 }
 
@@ -103,7 +103,7 @@ func (s *Service) serverConfigsWithSkips(ctx context.Context, serverIDs []uuid.U
 // 记进返回的跳过集合（节点 id → 所在服务器与错误摘要），不让整批失败：建流对齐与配置纪元都是一批服务器一起算，
 // 一台节点的坏配置不能让同批其他服务器都拿不到配置。
 // 被跳过的节点不在这次下发的文档里，节点端会按文档集合停掉它的入站，直到配置修好；后台列表把它显示为失败。
-func assembleServerConfigs(rows []repo.ConfigNodeRow, layersByNode map[uuid.UUID][]routingLayer, echByNode map[uuid.UUID][]echDocKey, echBad map[uuid.UUID]string) (map[uuid.UUID][]NodeConfigDoc, map[uuid.UUID]configSkip) {
+func assembleServerConfigs(rows []repo.ConfigNodeRow, layersByNode map[uuid.UUID][]routingLayer, echByNode map[uuid.UUID][]echDocKey, echBad map[uuid.UUID]string, psk PSKDeriver) (map[uuid.UUID][]NodeConfigDoc, map[uuid.UUID]configSkip) {
 	out := make(map[uuid.UUID][]NodeConfigDoc)
 	skips := make(map[uuid.UUID]configSkip)
 	for _, row := range rows {
@@ -132,7 +132,7 @@ func assembleServerConfigs(rows []repo.ConfigNodeRow, layersByNode map[uuid.UUID
 		}
 		layers := layersByNode[*row.NodeID]
 		ech := echByNode[*row.NodeID]
-		doc, err := buildNodeConfigDoc(*row.NodeID, nodeType, port, protoCfg, layers, ech)
+		doc, err := buildNodeConfigDoc(*row.NodeID, nodeType, port, protoCfg, layers, ech, psk)
 		if err != nil {
 			skips[*row.NodeID] = configSkip{ServerID: row.ServerID, Reason: err.Error()}
 			continue
@@ -148,8 +148,8 @@ func assembleServerConfigs(rows []repo.ConfigNodeRow, layersByNode map[uuid.UUID
 }
 
 // buildNodeConfigDoc 组装一个节点的配置文档：协议字段经 protocol.KernelConfig 翻译后摊平在顶层，
-// 加 server_port（入站端口），有路由时加 outbounds / routes / final；协议支持且提供了密钥时加 ech_keys。
-func buildNodeConfigDoc(nodeID uuid.UUID, nodeType string, port int, protocolConfig string, layers []routingLayer, ech []echDocKey) (NodeConfigDoc, error) {
+// 加 server_port（入站端口），shadowsocks 2022 方法加 password（服务端身份密钥，ss2022.go）；有路由时加 outbounds / routes / final；协议支持且提供了密钥时加 ech_keys。
+func buildNodeConfigDoc(nodeID uuid.UUID, nodeType string, port int, protocolConfig string, layers []routingLayer, ech []echDocKey, psk PSKDeriver) (NodeConfigDoc, error) {
 	storedText := protocolConfig
 	if strings.TrimSpace(protocolConfig) == "" {
 		storedText = "{}"
@@ -167,6 +167,9 @@ func buildNodeConfigDoc(nodeID uuid.UUID, nodeType string, port int, protocolCon
 	// 协议配置不能顶替基础字段、也不能夹带路由；shadowtls 握手端口已由 KernelConfig 折进 server，文档 server_port 永远是入站端口。
 	for _, k := range configDocReservedKeys {
 		delete(doc, k)
+	}
+	if err := applySS2022ServerPSK(psk, nodeID, nodeType, doc); err != nil {
+		return NodeConfigDoc{}, fmt.Errorf("节点 %s: %w", nodeID, err)
 	}
 	doc["server_port"] = port
 	// protocol 只为让摘要区分协议：改了协议、配置原样不变时 SHA 也要变，节点端才会重装；

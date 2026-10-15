@@ -20,6 +20,11 @@ paths:
 - `fallback` 形状与 pdnd `kernel/probe_fallback.go:parseProbeFallback` 一致（`validate_policy.go` 注释）；面板另拒回环/私网；Trojan 回落只在 tcp（`validateTrojanFallbackNetwork`）。回落只进节点配置文档，不进订阅（`policy_test.go` 下发形状断言）。
 - mKCP MTU 576–1460 与 `validate_mkcp.go` 的 `mkcpMinMTU`/`mkcpMaxMTU` 须与 pdnd `kernel/mkcp_transport.go` 一致；`TestMKCPMTUBoundsMatchNodeAgent` 数值写死，改一边要改另一边。
 
+## Shadowsocks 加密方式
+- `shadowsocksMethods` = 经典 AEAD 三种（`shadowsocksAEADMethods`）+ `ss2022Methods`（`2022-blake3-aes-128-gcm` 16 字节、`2022-blake3-aes-256-gcm` 32 字节，`protocol/ss2022.go` 的 `SS2022KeyLen`）。`2022-blake3-chacha20-poly1305` 不开放：多用户靠 SIP023 身份头，身份头用 AES 块加密，chacha20 版做不了，客户端给多段密钥直接报错。
+- ShadowTLS 的内层 `method` 只收经典三种（schema 枚举与 `validate_kernel.go` 都用 `shadowsocksAEADMethods`）。
+- schema 仍不收 `password`：2022 的服务端身份密钥由 node service 派生后只进配置文档与订阅线路（`node/service/ss2022.go`）。表单说明 `ss2022CipherHint`（`schema_hints.go`）。
+
 ## 其它
 - 前端假后端的 `panel/frontend/dev/mock/admin/node-schemas.ts` 是 schema 响应的原样导出：改了 schema 或 handler 的 DTO，`TestMockNodeSchemasMatchGo`（node/handler）会红，按它的提示加 `-update` 重导。
 - 表单说明在 schema `Hints`（`schema_hints.go`）；`policy_test.go` 的 `TestSchemaEnumsMatchPolicyLists` 要求 hint 指向真实字段。

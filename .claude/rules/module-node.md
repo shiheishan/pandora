@@ -45,6 +45,11 @@ paths:
 - ECH `node_ech_keys`：密钥由 `protocol.GenerateECHKey` 生成（与 Xboard 同格式），私钥经 Sealer 封存（AAD `node_ech_key:<节点 id>`），审计、日志、错误里不出现私钥。每节点至多一把当前钥；轮换后旧钥再下发 `ECHRetiredKeyGrace`（7 天）供拿着旧订阅的客户端解密；满期只由任务 `node:ech_purge`（每小时）判定，它删行并推配置纪元，读路径（`ECHKeysByNodes`、`GetNodeECH`）不按时间过滤，库里还有的旧钥照常下发与计数（文档最多 `echDocKeysMax` 把），期望文档与节点端手里的才不会错开；停用 `DisableNodeECH` 立即删光。配置文档键 `ech_keys`（当前钥在前、`send_as_retry` 只有当前钥为 true），只在 `protocol.ECHCapable`（按翻译后的内核配置判）时写；订阅只用当前钥。不支持 REALITY 与 QUIC 类协议；开了 ECH 的节点只收 TLS 1.3。
 - 批量修改 `BatchEditNodes`（`service/nodes_batch.go`）：白名单字段（池、倍率、标签、服务状态、流量上限与重置日、时段倍率），一个事务，按 id 升序锁全部节点，状态先走 `BatchNodeStatus`，其余逐个走 `patchNodeTx`；任一失败整批回滚，错误带 `node_id`；上限 `NodeBatchEditMax`；接口要重认证与幂等，审计 `node.batch_update`。
 
+## Shadowsocks 2022 服务端身份密钥（共用约定 2026-10-14）
+- 每个 2022 节点一把 iPSK，不存库：`HKDF-SHA256(主密钥, info = crypto.InfoSS2022ServerPSK + 节点 id 的 16 字节)`，长度按方法（`protocol.SS2022KeyLen`）；派生只有 `service/ss2022.go` 的 `applySS2022ServerPSK`（端口 `PSKDeriver` = `*crypto.Keys`，`UsePSKDeriver` 装配，进 `MissingPorts`）。向量钉在 `service/ss2022_test.go`。
+- 配置文档（`buildNodeConfigDoc`）与订阅线路（`deliverableFromRows`）都在 `protocol.KernelConfig` 之后调它：2022 方法写 `password` = base64(iPSK)，其它 shadowsocks 删掉 `password`；没装配派生器时文档只跳过该节点、线路装载回错误。中转经 `relayRenderNode` 浅拷贝父节点 Config，自然用父节点那把。
+- 换主密钥会让全部 2022 节点的 iPSK 一起变（节点与订阅同时变，客户端重新拉订阅），是接受的代价；iPSK 只取决于节点 id，线路缓存键不用改。复制节点得新 id、新密钥。
+
 ## 同机端口（先到先得）
 - L4 唯一口径：`protocol.ListenL4` = 写入 `nodes.listen_l4` = pdnd `kernel/port_claims.go`（`protocol/port_l4.go`、`protocol/port_l4_test.go`）。
 - L4 三种取值 `tcp` / `udp` / `tcp+udp`；shadowsocks 无条件 `tcp+udp`（同端口 TCP、UDP 都听，用户 2026-10-14 定）。冲突口径 `protocol.L4Conflicts`：相等，或一方是 `tcp+udp`；`tcp` 与 `udp` 同端口可共存。门禁按 `protocol.ConflictingL4s` 查占用者（`repo.NodePortHolder`），提示标签 `443/TCP+UDP`。
