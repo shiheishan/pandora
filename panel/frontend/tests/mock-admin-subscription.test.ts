@@ -23,34 +23,20 @@ describe('mock api · admin subscription', () => {
   const call = (method: string, path: string, body?: unknown) => mockFetch(base, auth, method, path, body)
   const json = async (res: Response) => (await res.json()) as Record<string, unknown>
 
-  it('reads subscription extras defaults and normalizes link_base_urls on save', async () => {
+  it('reads subscription extras defaults and saves them; rejects link_base_urls as unknown field', async () => {
     const initial = subscriptionExtrasSchema.parse(await json(await call('GET', '/v1/settings/subscription')))
-    expect(initial).toEqual({ info_nodes: false, protocol_prefix: false, link_base_urls: [] })
+    expect(initial).toEqual({ info_nodes: false, protocol_prefix: false })
 
     const saved = subscriptionExtrasSchema.parse(
-      await json(
-        await call('POST', '/v1/settings/subscription', {
-          info_nodes: true,
-          protocol_prefix: true,
-          link_base_urls: ['HTTPS://Sub.Example.COM/', 'https://sub.example.com', '  https://alt.example.com:8443/  '],
-        }),
-      ),
+      await json(await call('POST', '/v1/settings/subscription', { info_nodes: true, protocol_prefix: true })),
     )
     expect(saved.info_nodes).toBe(true)
     expect(saved.protocol_prefix).toBe(true)
-    expect(saved.link_base_urls).toEqual(['https://sub.example.com', 'https://alt.example.com:8443'])
   })
 
-  it('rejects bad link_base_urls with fields.link_base_urls', async () => {
-    expect(await json(await call('POST', '/v1/settings/subscription', { link_base_urls: ['http://a.example.com'] }))).toMatchObject({
-      error: { fields: { link_base_urls: '第 1 个订阅地址必须以 https:// 开头' } },
-    })
-    expect(await json(await call('POST', '/v1/settings/subscription', { link_base_urls: ['https://a.example.com/path'] }))).toMatchObject({
-      error: { fields: { link_base_urls: '第 1 个订阅地址只能写到域名（可带端口），不能带路径、参数' } },
-    })
-    const eleven = Array.from({ length: 11 }, (_, i) => `https://h${i}.example.com`)
-    expect(await json(await call('POST', '/v1/settings/subscription', { link_base_urls: eleven }))).toMatchObject({
-      error: { fields: { link_base_urls: '订阅地址最多 10 个' } },
+  it('rejects link_base_urls with 400 bad_request', async () => {
+    expect(await json(await call('POST', '/v1/settings/subscription', { link_base_urls: ['https://sub.example.com'] }))).toMatchObject({
+      error: { code: 'bad_request' },
     })
   })
 

@@ -153,36 +153,6 @@ function validateTemplate(format: SubFormat, content: string): Record<string, st
   return null
 }
 
-function normalizeLinkBaseURLs(raw: unknown): string[] | Record<string, string> {
-  if (!Array.isArray(raw)) return { link_base_urls: '第 1 个订阅地址格式不正确' }
-  const out: string[] = []
-  const seen = new Set<string>()
-  let n = 0
-  for (const item of raw) {
-    if (typeof item !== 'string') return { link_base_urls: `第 ${n + 1} 个订阅地址格式不正确` }
-    n++
-    let v = item.trim()
-    if (!v) continue
-    v = v.replace(/\/+$/, '')
-    if (!v.toLowerCase().startsWith('https://')) return { link_base_urls: `第 ${n} 个订阅地址必须以 https:// 开头` }
-    try {
-      const u = new URL(v)
-      if (u.username || u.password) return { link_base_urls: `第 ${n} 个订阅地址不能包含用户名或密码` }
-      if (u.pathname !== '/' && u.pathname !== '') return { link_base_urls: `第 ${n} 个订阅地址只能写到域名（可带端口），不能带路径、参数` }
-      if (u.search || u.hash) return { link_base_urls: `第 ${n} 个订阅地址只能写到域名（可带端口），不能带路径、参数` }
-      const host = u.host.toLowerCase()
-      const canonical = `https://${host}`
-      if (seen.has(canonical)) continue
-      seen.add(canonical)
-      out.push(canonical)
-      if (out.length > 10) return { link_base_urls: '订阅地址最多 10 个' }
-    } catch {
-      return { link_base_urls: `第 ${n} 个订阅地址格式不正确` }
-    }
-  }
-  return out
-}
-
 type Decoded = { ok: true; body: Json } | { ok: false; result: MockResult }
 async function decode(ctx: MockContext, shape: Record<string, 'boolean' | 'strings' | 'string'>): Promise<Decoded> {
   const bad = (message = '请求体不是合法的 JSON'): Decoded => ({ ok: false, result: err(400, 'bad_request', message) })
@@ -199,7 +169,7 @@ async function decode(ctx: MockContext, shape: Record<string, 'boolean' | 'strin
   return { ok: true, body }
 }
 
-const extras = { info_nodes: false, protocol_prefix: false, link_base_urls: [] as string[] }
+const extras = { info_nodes: false, protocol_prefix: false }
 const custom = new Map<string, { content: string; updated_at: string }>()
 
 function templateDetail(format: SubFormat) {
@@ -219,21 +189,16 @@ function templateDetail(format: SubFormat) {
 export const subscriptionModule: MockModule = {
   routes: {
     'GET /v1/settings/subscription': (ctx) => {
-      ctx.send(200, { ...extras, link_base_urls: [...extras.link_base_urls] })
+      ctx.send(200, { ...extras })
     },
     'POST /v1/settings/subscription': async (ctx) => {
       if (!ctx.requireReauth()) return
-      const d = await decode(ctx, { info_nodes: 'boolean', protocol_prefix: 'boolean', link_base_urls: 'strings' })
+      const d = await decode(ctx, { info_nodes: 'boolean', protocol_prefix: 'boolean' })
       if (!d.ok) return reply(ctx, d.result)
       const b = d.body
       if (b.info_nodes !== undefined) extras.info_nodes = b.info_nodes as boolean
       if (b.protocol_prefix !== undefined) extras.protocol_prefix = b.protocol_prefix as boolean
-      if (b.link_base_urls !== undefined) {
-        const norm = normalizeLinkBaseURLs(b.link_base_urls)
-        if (!Array.isArray(norm)) return reply(ctx, invalid(norm as Record<string, string>))
-        extras.link_base_urls = norm
-      }
-      ctx.send(200, { ...extras, link_base_urls: [...extras.link_base_urls] })
+      ctx.send(200, { ...extras })
     },
 
     'GET /v1/subscription-templates': (ctx) => {
