@@ -37,7 +37,7 @@ const (
 	domainScoreMax = 3.0
 	// scorePullSuccess 是一次经该域名的正常订阅拉取加的分。
 	scorePullSuccess = 0.05
-	// scoreProbeSuccess 是探测页报告一次「连得上」加的分。
+	// scoreProbeSuccess 是探测页报告一次「连得上」加的分（要满足多人规则才生效，见 domain_probe_scores.go）。
 	scoreProbeSuccess = 0.1
 	// scoreProbeFailure 是探测页报告一次「连不上」扣的分（要满足多人规则才生效，见 domain_probe_scores.go）。
 	scoreProbeFailure = -0.3

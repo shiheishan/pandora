@@ -1,5 +1,7 @@
-// 门户探测页上报的分数防操纵：票据一次性；账号×域名 30 分钟只记一次；失败需同一小时桶内至少 3 个不同账号才扣分；
+// 门户探测页上报的分数防操纵：票据一次性；账号×域名 30 分钟只记一次；成功与失败对称——同一小时桶内至少 3 个不同账号
+// 报同一域名成功才加分、报失败才扣分（防单个账号长期把某域名顶高、把用户引向被监控的域名，或把某域名压低）；
 // 每个域名每小时探测净变动封顶 ±0.5。以上在一段 Lua 里原子完成，一次上报一次 Redis 往返。
+// 拉取成功信号不走这里：它是真实流量，已按令牌主人所在组、同一凭据每小时一次计。
 
 package service
 
@@ -15,13 +17,14 @@ const (
 	// probeTicketKeyPrefix、probeSeenKeyPrefix、probeFailKeyPrefix、probeNetKeyPrefix 是探测防操纵用的 Redis 键前缀。
 	probeTicketKeyPrefix = "subdom:probe:ticket:"
 	probeSeenKeyPrefix   = "subdom:probe:seen:"
+	probeOKKeyPrefix     = "subdom:probe:ok:"
 	probeFailKeyPrefix   = "subdom:probe:fail:"
 	probeNetKeyPrefix    = "subdom:probe:net:"
 	// probeDedupeWindow 内同一账号对同一域名只记一次（成败都算一次）。
 	probeDedupeWindow = 30 * time.Minute
-	// probeFailMinReporters 是同一小时里至少要有这么多不同账号报同一域名失败，失败才开始扣分。
-	probeFailMinReporters = 3
-	// probeWindow 是失败人数与净变动的统计窗口（固定小时桶）。
+	// probeMinReporters 是同一小时里至少要有这么多不同账号报同一域名成功（或失败），成功才加分（失败才扣分）。
+	probeMinReporters = 3
+	// probeWindow 是上报人数与净变动的统计窗口（固定小时桶）。
 	probeWindow = time.Hour
 	// probeNetCap 是每个域名每小时探测带来的净变动上限（正负都封顶）。
 	probeNetCap = 0.5
@@ -33,7 +36,7 @@ type probeSignal struct {
 	OK      bool
 }
 
-// applyProbeScript 原子处理一次探测上报（KEYS[1] 分数 hash，KEYS[2] 票据键，之后每条信号三个键：seen、fail、net）。
+// applyProbeScript 原子处理一次探测上报（KEYS[1] 分数 hash，KEYS[2] 票据键，之后每条信号四个键：seen、ok 集合、fail 集合、net）。
 var applyProbeScript = redis.NewScript(luaApplyDelta + `
 if not redis.call('SET', KEYS[2], '1', 'NX', 'PX', ARGV[6]) then return 0 end
 local now = tonumber(ARGV[1])
@@ -42,7 +45,7 @@ local lo = tonumber(ARGV[3])
 local hi = tonumber(ARGV[4])
 local ttl = tonumber(ARGV[5])
 local dedupe = tonumber(ARGV[7])
-local minfail = tonumber(ARGV[8])
+local minrep = tonumber(ARGV[8])
 local win = tonumber(ARGV[9])
 local cap = tonumber(ARGV[10])
 local succ = tonumber(ARGV[11])
@@ -51,20 +54,19 @@ local acct = ARGV[13]
 local n = (#ARGV - 13) / 2
 local applied = 0
 for i = 0, n - 1 do
-  local seen = KEYS[3 + 3 * i]
-  local fset = KEYS[4 + 3 * i]
-  local net = KEYS[5 + 3 * i]
+  local seen = KEYS[3 + 4 * i]
+  local okset = KEYS[4 + 4 * i]
+  local fset = KEYS[5 + 4 * i]
+  local net = KEYS[6 + 4 * i]
   local field = ARGV[14 + 2 * i]
   local ok = ARGV[15 + 2 * i] == '1'
   if redis.call('SET', seen, '1', 'NX', 'PX', dedupe) then
+    local set, d = fset, fail
+    if ok then set, d = okset, succ end
+    redis.call('SADD', set, acct)
+    redis.call('PEXPIRE', set, win * 2)
     local delta = 0
-    if ok then
-      delta = succ
-    else
-      redis.call('SADD', fset, acct)
-      redis.call('PEXPIRE', fset, win * 2)
-      if redis.call('SCARD', fset) >= minfail then delta = fail end
-    end
+    if redis.call('SCARD', set) >= minrep then delta = d end
     if delta ~= 0 then
       local used = tonumber(redis.call('GET', net) or '0') or 0
       local target = math.min(math.max(used + delta, -cap), cap)
@@ -92,8 +94,8 @@ func (d *domainScores) ApplyProbe(ctx context.Context, acct, nonce string, ticke
 	if left < time.Second {
 		left = time.Second
 	}
-	bucket := strconv.FormatInt(now.Unix()/int64(probeWindow/time.Second), 10)
-	names := make([]string, 0, 2+3*len(signals))
+	bucket := probeHourBucket(now)
+	names := make([]string, 0, 2+4*len(signals))
 	names = append(names, domainScoreKey, probeTicketKeyPrefix+nonce)
 	args := []any{
 		now.UnixMilli(),
@@ -103,7 +105,7 @@ func (d *domainScores) ApplyProbe(ctx context.Context, acct, nonce string, ticke
 		domainScoreTTL.Milliseconds(),
 		left.Milliseconds(),
 		probeDedupeWindow.Milliseconds(),
-		probeFailMinReporters,
+		probeMinReporters,
 		probeWindow.Milliseconds(),
 		probeNetCap,
 		scoreProbeSuccess,
@@ -112,6 +114,7 @@ func (d *domainScores) ApplyProbe(ctx context.Context, acct, nonce string, ticke
 	}
 	for _, sig := range signals {
 		names = append(names, probeRedisName(probeSeenKeyPrefix, acct, sig.BaseURL),
+			probeRedisName(probeOKKeyPrefix, sig.BaseURL, bucket),
 			probeRedisName(probeFailKeyPrefix, sig.BaseURL, bucket),
 			probeRedisName(probeNetKeyPrefix, sig.BaseURL, bucket))
 		okFlag := "0"
@@ -132,4 +135,9 @@ func (d *domainScores) ApplyProbe(ctx context.Context, acct, nonce string, ticke
 // probeRedisName 拼探测防操纵用的 Redis 键名：前缀 + a + "|" + b。
 func probeRedisName(prefix, a, b string) string {
 	return prefix + a + "|" + b
+}
+
+// probeHourBucket 是 now 所在的固定小时桶编号（unix 秒 / 3600），上报人集合与净变动按它分桶。
+func probeHourBucket(now time.Time) string {
+	return strconv.FormatInt(now.Unix()/int64(probeWindow/time.Second), 10)
 }

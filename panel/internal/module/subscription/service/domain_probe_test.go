@@ -1,6 +1,6 @@
 package service
 
-// 订阅域名探测的单元测试（不连库）：票据签发与验签、组指纹、ApplyProbe 的防操纵规则。
+// 订阅域名探测的单元测试（不连库）：票据签发与验签、组指纹、ApplyProbe 的防操纵规则（成功与失败都要 3 个账号）。
 // 连库的用例在 domain_probe_pg_test.go。
 
 import (
@@ -131,7 +131,7 @@ func TestGroupFingerprint(t *testing.T) {
 	}
 }
 
-func TestApplyProbeSuccessAndTicketOnce(t *testing.T) {
+func TestApplyProbeSuccessNeedsThreeAccountsAndTicketOnce(t *testing.T) {
 	_, rdb := testkit.Redis(t)
 	d := newDomainScores(rdb)
 	ctx := context.Background()
@@ -139,22 +139,36 @@ func TestApplyProbeSuccessAndTicketOnce(t *testing.T) {
 	a := "https://a.example.test"
 	b := "https://b.example.test"
 
-	n, err := d.ApplyProbe(ctx, "u1", "n1", 5*time.Minute, []probeSignal{{BaseURL: a, OK: true}}, now)
+	// 前两个账号报成功：不到 3 人，不加分（防单个账号把某域名顶高）
+	for _, acct := range []string{"u1", "u2"} {
+		n, err := d.ApplyProbe(ctx, acct, "n-"+acct, 5*time.Minute, []probeSignal{{BaseURL: a, OK: true}}, now)
+		if err != nil || n != 0 {
+			t.Fatalf("%s 报成功 = (%d, %v)，要 (0, nil)", acct, n, err)
+		}
+	}
+	if rdb.HExists(ctx, domainScoreKey, a).Val() {
+		t.Fatal("a 不该有分数记录")
+	}
+	// 第三个不同账号：成功开始加分
+	n, err := d.ApplyProbe(ctx, "u3", "n-u3", 5*time.Minute, []probeSignal{{BaseURL: a, OK: true}}, now)
 	if err != nil || n != 1 {
-		t.Fatalf("第一次 = (%d, %v)，要 (1, nil)", n, err)
+		t.Fatalf("u3 报成功 = (%d, %v)，要 (1, nil)", n, err)
 	}
 	scores, ok := d.Read(ctx, []string{a}, now)
 	if !ok || !almost(scores[a], 1.1, 1e-3) {
 		t.Fatalf("a = %v（ok=%v），要 1.1", scores[a], ok)
 	}
 
-	// 同一 nonce 再报（换域名）：票据一次性，整次上报不生效
-	n, err = d.ApplyProbe(ctx, "u1", "n1", 5*time.Minute, []probeSignal{{BaseURL: b, OK: true}}, now)
+	// 同一 nonce 再报（换账号、换域名）：票据一次性，整次上报不生效，连上报人集合都不进
+	n, err = d.ApplyProbe(ctx, "u4", "n-u3", 5*time.Minute, []probeSignal{{BaseURL: b, OK: true}}, now)
 	if err != nil || n != 0 {
 		t.Fatalf("同票据第二次 = (%d, %v)，要 (0, nil)", n, err)
 	}
 	if rdb.HExists(ctx, domainScoreKey, b).Val() {
 		t.Fatal("b 不该有分数记录")
+	}
+	if rdb.Exists(ctx, probeRedisName(probeOKKeyPrefix, b, probeHourBucket(now))).Val() != 0 {
+		t.Fatal("被票据一次性挡下的上报不该进上报人集合")
 	}
 }
 
@@ -165,17 +179,23 @@ func TestApplyProbeDedupePerAccount(t *testing.T) {
 	now := probeTestNow
 	a := "https://a.example.test"
 
-	if n, err := d.ApplyProbe(ctx, "u1", "n1", time.Minute, []probeSignal{{BaseURL: a, OK: true}}, now); err != nil || n != 1 {
-		t.Fatalf("u1 第一次 = (%d, %v)，要 1", n, err)
+	// 先凑够两个别的账号，让 u3 的成功能生效
+	for _, acct := range []string{"u1", "u2"} {
+		if n, err := d.ApplyProbe(ctx, acct, "n-"+acct, time.Minute, []probeSignal{{BaseURL: a, OK: true}}, now); err != nil || n != 0 {
+			t.Fatalf("%s = (%d, %v)，要 0", acct, n, err)
+		}
+	}
+	if n, err := d.ApplyProbe(ctx, "u3", "n3", time.Minute, []probeSignal{{BaseURL: a, OK: true}}, now); err != nil || n != 1 {
+		t.Fatalf("u3 第一次 = (%d, %v)，要 1", n, err)
 	}
 	// 同一账号同一域名 30 分钟内换票据再报：去重不生效
-	if n, err := d.ApplyProbe(ctx, "u1", "n2", time.Minute, []probeSignal{{BaseURL: a, OK: true}}, now); err != nil || n != 0 {
-		t.Fatalf("u1 第二次 = (%d, %v)，要 0", n, err)
+	if n, err := d.ApplyProbe(ctx, "u3", "n4", time.Minute, []probeSignal{{BaseURL: a, OK: true}}, now); err != nil || n != 0 {
+		t.Fatalf("u3 第二次 = (%d, %v)，要 0", n, err)
 	}
-	// 过了去重窗口再报：生效
+	// 过了去重窗口再报（仍在同一小时桶，集合里已有 3 人）：生效
 	mr.FastForward(31 * time.Minute)
 	now = now.Add(31 * time.Minute)
-	if n, err := d.ApplyProbe(ctx, "u1", "n3", time.Minute, []probeSignal{{BaseURL: a, OK: true}}, now); err != nil || n != 1 {
+	if n, err := d.ApplyProbe(ctx, "u3", "n5", time.Minute, []probeSignal{{BaseURL: a, OK: true}}, now); err != nil || n != 1 {
 		t.Fatalf("31 分钟后 = (%d, %v)，要 1", n, err)
 	}
 }
@@ -230,26 +250,28 @@ func TestApplyProbeNetCap(t *testing.T) {
 		t.Fatalf("b = %v（ok=%v），要 0.5（封顶）", scores[b], ok)
 	}
 
-	// 成功：u1..u5 依次报 c 各生效一次，u6 被封顶挡下
-	for _, acct := range []string{"u1", "u2", "u3", "u4", "u5"} {
+	// 成功：u1..u8 依次报 c：前两个不到 3 人不计，u3..u7 各 +0.1，u8 被封顶挡下
+	wantS := []int{0, 0, 1, 1, 1, 1, 1, 0}
+	for i, acct := range []string{"u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8"} {
 		n, err := d.ApplyProbe(ctx, acct, "ns-"+acct, time.Minute, []probeSignal{{BaseURL: c, OK: true}}, now)
-		if err != nil || n != 1 {
-			t.Fatalf("%s 报 c 成功 = (%d, %v)，要 1", acct, n, err)
+		if err != nil || n != wantS[i] {
+			t.Fatalf("%s 报 c 成功 = (%d, %v)，要 %d", acct, n, err, wantS[i])
 		}
-	}
-	if n, err := d.ApplyProbe(ctx, "u6", "ns-u6", time.Minute, []probeSignal{{BaseURL: c, OK: true}}, now); err != nil || n != 0 {
-		t.Fatalf("u6 报 c 成功 = (%d, %v)，要 0", n, err)
 	}
 	scores, ok = d.Read(ctx, []string{c}, now)
 	if !ok || !almost(scores[c], 1.5, 1e-3) {
 		t.Fatalf("c = %v（ok=%v），要 1.5（封顶）", scores[c], ok)
 	}
 
-	// 推到下一个小时桶：净变动额度重置
+	// 推到下一个小时桶：上报人集合与净变动额度都重置，又要凑够 3 人
 	mr.FastForward(time.Hour)
 	now = now.Add(time.Hour)
-	if n, err := d.ApplyProbe(ctx, "u7", "ns-u7", time.Minute, []probeSignal{{BaseURL: c, OK: true}}, now); err != nil || n != 1 {
-		t.Fatalf("新桶 u7 报 c = (%d, %v)，要 1", n, err)
+	wantNew := []int{0, 0, 1}
+	for i, acct := range []string{"u9", "u10", "u11"} {
+		n, err := d.ApplyProbe(ctx, acct, "ns-"+acct, time.Minute, []probeSignal{{BaseURL: c, OK: true}}, now)
+		if err != nil || n != wantNew[i] {
+			t.Fatalf("新桶 %s 报 c = (%d, %v)，要 %d", acct, n, err, wantNew[i])
+		}
 	}
 }
 

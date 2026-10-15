@@ -35,6 +35,18 @@ func setupProbe(t *testing.T) (*deliveryEnv, context.Context, uuid.UUID, *redis.
 	return de, ctx, user, rdb
 }
 
+// seedProbeReporters 往 base 当前小时桶的成功上报人集合里预先放几个别的账号（PG 用例只有一个真实账号，用它凑人数）。
+func seedProbeReporters(t *testing.T, rdb *redis.Client, base string, now time.Time, accts ...string) {
+	t.Helper()
+	members := make([]any, len(accts))
+	for i, a := range accts {
+		members[i] = a
+	}
+	if err := rdb.SAdd(context.Background(), probeRedisName(probeOKKeyPrefix, base, probeHourBucket(now)), members...).Err(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func assertUnauthorized(t *testing.T, err error) {
 	t.Helper()
 	if errs.As(err).Code != errs.Unauthorized {
@@ -206,6 +218,8 @@ func TestProbeReportOwnGroupOnlyPG(t *testing.T) {
 		t.Fatalf("签发: %v %q", err, ticket)
 	}
 
+	// 成功要同一小时 3 个不同账号：先放两个别的账号，本账号是第 3 个
+	seedProbeReporters(t, rdb, "https://sub-a.example.test", base, "other-1", "other-2")
 	err = de.svc.ReportProbeResults(uctx, ticket, []ProbeResult{
 		{BaseURL: "https://vip.example.test", OK: true},
 		{BaseURL: "https://SUB-A.example.test/", OK: true},
@@ -237,6 +251,7 @@ func TestProbeReportTicketOncePG(t *testing.T) {
 	}
 
 	b := "https://sub-b.example.test"
+	seedProbeReporters(t, rdb, b, base, "other-1", "other-2")
 	if err := de.svc.ReportProbeResults(uctx, ticket, []ProbeResult{{BaseURL: b, OK: true}}); err != nil {
 		t.Fatal(err)
 	}
@@ -266,4 +281,29 @@ func TestProbeReportBadTicketPG(t *testing.T) {
 	if rdb.Exists(ctx, domainScoreKey).Val() != 0 {
 		t.Fatal("坏票据不应创建分数 hash")
 	}
+}
+
+// 成功与失败对称：同一小时只有 2 个账号报某域名成功不加分，第 3 个起才加分。
+func TestProbeReportSuccessNeedsThreeAccountsPG(t *testing.T) {
+	de, ctx, user, rdb := setupProbe(t)
+	origNow := de.svc.now
+	base := probeTestNow
+	de.svc.now = func() time.Time { return base }
+	t.Cleanup(func() { de.svc.now = origNow })
+
+	uctx := userCtx(ctx, user)
+	ticket, err := de.svc.IssueProbeTicket(uctx)
+	if err != nil || ticket == "" {
+		t.Fatalf("签发: %v %q", err, ticket)
+	}
+	a, b := "https://sub-a.example.test", "https://sub-b.example.test"
+	seedProbeReporters(t, rdb, a, base, "other-1")            // 本账号是第 2 个
+	seedProbeReporters(t, rdb, b, base, "other-1", "other-2") // 本账号是第 3 个
+	if err := de.svc.ReportProbeResults(uctx, ticket, []ProbeResult{{BaseURL: a, OK: true}, {BaseURL: b, OK: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if rdb.HExists(ctx, domainScoreKey, a).Val() {
+		t.Fatal("只有 2 个账号报成功，a 不该加分")
+	}
+	waitScore(t, de.svc.scores, b, base, 1.1)
 }
