@@ -46,7 +46,7 @@ paths:
 - 批量修改 `BatchEditNodes`（`service/nodes_batch.go`）：白名单字段（池、倍率、标签、服务状态、流量上限与重置日、时段倍率），一个事务，按 id 升序锁全部节点，状态先走 `BatchNodeStatus`，其余逐个走 `patchNodeTx`；任一失败整批回滚，错误带 `node_id`；上限 `NodeBatchEditMax`；接口要重认证与幂等，审计 `node.batch_update`。
 
 ## Shadowsocks 2022 服务端身份密钥（共用约定 2026-10-14）
-- 每个 2022 节点一把 iPSK，不存库：`HKDF-SHA256(主密钥, info = crypto.InfoSS2022ServerPSK + 节点 id 的 16 字节)`，长度按方法（`protocol.SS2022KeyLen`）；派生只有 `service/ss2022.go` 的 `applySS2022ServerPSK`（端口 `PSKDeriver` = `*crypto.Keys`，`UsePSKDeriver` 装配，进 `MissingPorts`）。向量钉在 `service/ss2022_test.go`。
+- 每个 2022 节点一把 iPSK，不存库：`HKDF-SHA256(主密钥, info = crypto.InfoSS2022ServerPSK || 0x00 || 方法名 || 0x00 || 节点 id 的 16 字节)`（带方法名：同一节点 128 与 256 两把彼此独立，不是前缀关系），长度按方法（`protocol.SS2022KeyLen`）；派生只有 `service/ss2022.go` 的 `applySS2022ServerPSK`（端口 `PSKDeriver` = `*crypto.Keys`，`UsePSKDeriver` 装配，进 `MissingPorts`）。向量钉在 `service/ss2022_test.go`。
 - 配置文档（`buildNodeConfigDoc`）与订阅线路（`deliverableFromRows`）都在 `protocol.KernelConfig` 之后调它：2022 方法写 `password` = base64(iPSK)，其它 shadowsocks 删掉 `password`；没装配派生器时文档只跳过该节点、线路装载回错误。中转经 `relayRenderNode` 浅拷贝父节点 Config，自然用父节点那把。
 - 换主密钥会让全部 2022 节点的 iPSK 一起变（节点与订阅同时变，客户端重新拉订阅），是接受的代价；iPSK 只取决于节点 id，线路缓存键不用改。复制节点得新 id、新密钥。
 

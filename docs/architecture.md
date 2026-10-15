@@ -510,7 +510,7 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 | 幂等请求指纹（落库的 method、target、请求体摘要） | `pandora/hmac/idempotency/v1` |
 | 节点设备标识的 HMAC | `pandora/hmac/node-device/v1` |
 | 面板 CA 私钥封存 | `pandora/node-ca/key/v1`（node 模块） |
-| Shadowsocks 2022 节点的服务端身份密钥（不存库，按节点派生） | `pandora/ss2022/server-psk/v1`，info 后接节点 id 的 16 字节（node 模块 `service/ss2022.go`） |
+| Shadowsocks 2022 节点的服务端身份密钥（不存库，按节点派生） | `pandora/ss2022/server-psk/v1`，info 后接 0x00、方法名、0x00、节点 id 的 16 字节（node 模块 `service/ss2022.go`） |
 | 插件钩子签名 | 每个钩子自己的密钥（不变） |
 
 被封存的数据：渠道凭据、DNS 凭据、ACME 账户私钥、证书私钥、面板 CA 私钥、批量建用户的结果、提现收款信息。原来的 `Envelope` 没有 DEK，名不副实，改名为 `Sealer`。

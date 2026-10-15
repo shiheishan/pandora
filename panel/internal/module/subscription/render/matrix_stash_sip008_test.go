@@ -53,6 +53,10 @@ func stashCell(name string, clash cell) cell {
 	if name == "juicity" {
 		return has(`type: "juicity"`)
 	}
+	// Stash 的 2022 多用户写法未经真机确认，三种 2022 夹具一律跳过（stash.go）。
+	if strings.HasPrefix(name, "ss2022-") {
+		return skip("Stash 暂不支持 Shadowsocks 2022")
+	}
 	if strings.Contains(name, "httpupgrade") || name == "trojan-tls-httpupgrade" {
 		return skip("HTTP Upgrade")
 	}

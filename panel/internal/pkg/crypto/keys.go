@@ -23,7 +23,7 @@ const (
 	InfoHMACIdempotency = "pandora/hmac/idempotency/v1"
 	// InfoHMACNodeDevice 是节点在线设备键（IPv4 地址 / IPv6 /64）：IPv4 只有 2^32 个，不加密钥的摘要可穷举还原
 	InfoHMACNodeDevice = "pandora/hmac/node-device/v1"
-	// InfoSS2022ServerPSK 是 Shadowsocks 2022 节点的服务端身份密钥（iPSK）：HKDF 的 info 后接节点 id 的 16 字节，不存库
+	// InfoSS2022ServerPSK 是 Shadowsocks 2022 节点的服务端身份密钥（iPSK）：HKDF 的 info 后接 0x00、方法名、0x00、节点 id 的 16 字节，不存库
 	InfoSS2022ServerPSK = "pandora/ss2022/server-psk/v1"
 )
 

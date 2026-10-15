@@ -256,6 +256,8 @@ func ssMethod(cfg map[string]any) string {
 
 // ss2022KeyLens 是 Shadowsocks 2022 方法的密钥长度（SIP022）。chacha20 版列在这里只为认出它：
 // 多用户靠 SIP023 身份头，身份头用 AES 块加密，chacha20 版做不了，面板也不开放，订阅里跳过。
+// 与 node/protocol/ss2022.go 的 ss2022KeyLens 是两份（render 是纯函数包，不能 import 节点模块），
+// 加改方法两边一起改；对照测试在 node/service/ss2022_keylen_parity_test.go。
 var ss2022KeyLens = map[string]int{
 	"2022-blake3-aes-128-gcm":       16,
 	"2022-blake3-aes-256-gcm":       32,

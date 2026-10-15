@@ -216,7 +216,7 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "2022-blake3-aes-256-gcm"
       ],
       "hints": {
-        "cipher": "2022 开头的是 Shadowsocks 2022：服务端密钥由面板按节点生成，用户密钥跟随各自的订阅链接，不用填密码；Clash Premium 与 Surfboard 不支持，这两种订阅里会略过该节点。"
+        "cipher": "2022 开头的是 Shadowsocks 2022：服务端密钥由面板按节点生成，用户密钥跟随各自的订阅链接，不用填密码；Clash Premium、Surfboard、Loon、Stash 不支持，这几种订阅里会略过该节点。"
       }
     },
     {

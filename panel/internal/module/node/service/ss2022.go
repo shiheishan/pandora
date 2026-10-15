@@ -26,9 +26,12 @@ func (s *Service) UsePSKDeriver(d PSKDeriver) { s.psk = d }
 
 var errSS2022KeysMissing = errors.New("SS2022 服务端密钥的派生器未装配")
 
-// ss2022ServerPSK 派生节点的服务端身份密钥：info = InfoSS2022ServerPSK 后接节点 id 的 16 字节，长度 keyLen。
-func ss2022ServerPSK(d PSKDeriver, nodeID uuid.UUID, keyLen int) []byte {
-	return d.Derive(crypto.InfoSS2022ServerPSK+string(nodeID[:]), keyLen)
+// ss2022ServerPSK 派生节点的服务端身份密钥，长度 keyLen：
+// info = InfoSS2022ServerPSK || 0x00 || 方法名（内核名，如 2022-blake3-aes-256-gcm）|| 0x00 || 节点 id 的 16 字节。
+// 带方法名是为了同一节点 128 与 256 两把彼此独立（只带节点 id 时 HKDF 输出的 16 字节恰是 32 字节的前缀）；
+// 方法名里没有 0x00，分隔符保证拼接无歧义。
+func ss2022ServerPSK(d PSKDeriver, nodeID uuid.UUID, method string, keyLen int) []byte {
+	return d.Derive(crypto.InfoSS2022ServerPSK+"\x00"+method+"\x00"+string(nodeID[:]), keyLen)
 }
 
 // applySS2022ServerPSK 给翻译后的 shadowsocks 内核配置填服务端密钥：2022 方法写 password = base64(iPSK)，
@@ -47,6 +50,6 @@ func applySS2022ServerPSK(d PSKDeriver, nodeID uuid.UUID, nodeType string, kerne
 	if d == nil {
 		return errSS2022KeysMissing
 	}
-	kernel["password"] = base64.StdEncoding.EncodeToString(ss2022ServerPSK(d, nodeID, keyLen))
+	kernel["password"] = base64.StdEncoding.EncodeToString(ss2022ServerPSK(d, nodeID, method, keyLen))
 	return nil
 }

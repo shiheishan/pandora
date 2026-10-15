@@ -4,7 +4,7 @@ package protocol
 // schema.go 的字面量被说明文字淹没（对齐门按正则读那份字面量）。
 
 // ss2022CipherHint 是 Shadowsocks 加密方式的说明：2022 方法的密钥谁来管、哪些客户端不支持。
-const ss2022CipherHint = "2022 开头的是 Shadowsocks 2022：服务端密钥由面板按节点生成，用户密钥跟随各自的订阅链接，不用填密码；Clash Premium 与 Surfboard 不支持，这两种订阅里会略过该节点。"
+const ss2022CipherHint = "2022 开头的是 Shadowsocks 2022：服务端密钥由面板按节点生成，用户密钥跟随各自的订阅链接，不用填密码；Clash Premium、Surfboard、Loon、Stash 不支持，这几种订阅里会略过该节点。"
 
 // fallbackHint 是回落字段的说明：回落目标是什么、谁会被转过去。
 const fallbackHint = "选填，host:port。回落目标是一个明文 HTTP 站点，认证失败的探测会被转过去，" +

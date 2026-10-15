@@ -30,20 +30,26 @@ func TestSS2022ServerPSKVector(t *testing.T) {
 	id := uuid.MustParse("00112233-4455-6677-8899-aabbccddeeff")
 	d := testPSKDeriver()
 
-	got16 := base64.StdEncoding.EncodeToString(ss2022ServerPSK(d, id, 16))
-	const want16 = "G4hzx91XF5eSWFwQRrU+TA=="
+	got16 := base64.StdEncoding.EncodeToString(ss2022ServerPSK(d, id, "2022-blake3-aes-128-gcm", 16))
+	const want16 = "XXxtJS4oXYj2Z7kdpmCOMg=="
 	if got16 != want16 {
 		t.Fatalf("16 字节向量不符: got %s, want %s", got16, want16)
 	}
 
-	got32 := base64.StdEncoding.EncodeToString(ss2022ServerPSK(d, id, 32))
-	const want32 = "G4hzx91XF5eSWFwQRrU+TAYU2Hb/PdR4I2vAvXmyuRg="
+	got32 := base64.StdEncoding.EncodeToString(ss2022ServerPSK(d, id, "2022-blake3-aes-256-gcm", 32))
+	const want32 = "Tfo+q+4+jzb10GSIuded876XrwK8zsCkeQ73mJtvOvg="
 	if got32 != want32 {
 		t.Fatalf("32 字节向量不符: got %s, want %s", got32, want32)
 	}
+	// 同一节点两种方法的密钥彼此独立：128 的不是 256 的前缀。
+	raw16 := ss2022ServerPSK(d, id, "2022-blake3-aes-128-gcm", 16)
+	raw32 := ss2022ServerPSK(d, id, "2022-blake3-aes-256-gcm", 32)
+	if string(raw16) == string(raw32[:16]) {
+		t.Fatalf("128 与 256 的 iPSK 不应互为前缀")
+	}
 
 	id2 := uuid.MustParse("00112233-4455-6677-8899-aabbccddee00")
-	gotDiff := base64.StdEncoding.EncodeToString(ss2022ServerPSK(d, id2, 16))
+	gotDiff := base64.StdEncoding.EncodeToString(ss2022ServerPSK(d, id2, "2022-blake3-aes-128-gcm", 16))
 	if gotDiff == got16 {
 		t.Fatalf("换节点 id 后密钥不应相同")
 	}
@@ -58,7 +64,7 @@ func TestApplySS2022ServerPSK(t *testing.T) {
 		if err := applySS2022ServerPSK(d, id, "shadowsocks", kernel); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		const want32 = "G4hzx91XF5eSWFwQRrU+TAYU2Hb/PdR4I2vAvXmyuRg="
+		const want32 = "Tfo+q+4+jzb10GSIuded876XrwK8zsCkeQ73mJtvOvg="
 		if kernel["password"] != want32 {
 			t.Fatalf("password = %v, want %s", kernel["password"], want32)
 		}
@@ -114,7 +120,7 @@ func TestBuildNodeConfigDocSS2022(t *testing.T) {
 	if err := json.Unmarshal(doc2022.JSON, &m2022); err != nil {
 		t.Fatalf("unmarshal error: %v", err)
 	}
-	const want16 = "G4hzx91XF5eSWFwQRrU+TA=="
+	const want16 = "XXxtJS4oXYj2Z7kdpmCOMg=="
 	if m2022["password"] != want16 {
 		t.Fatalf("password = %v, want %s", m2022["password"], want16)
 	}
@@ -173,7 +179,7 @@ func TestDeliverableSS2022RelayUsesParentPSK(t *testing.T) {
 	if len(nodes) != 2 {
 		t.Fatalf("期望得到 2 条线路，实际 got %d", len(nodes))
 	}
-	const want32 = "G4hzx91XF5eSWFwQRrU+TAYU2Hb/PdR4I2vAvXmyuRg="
+	const want32 = "Tfo+q+4+jzb10GSIuded876XrwK8zsCkeQ73mJtvOvg="
 	for i, n := range nodes {
 		if n.Config["password"] != want32 {
 			t.Fatalf("节点 %d (%s) Config[password] = %v, want %s", i, n.Name, n.Config["password"], want32)
