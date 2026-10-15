@@ -26,3 +26,4 @@ paths:
 - 换新链接之后的完成页在新链接下写「添加好以后在 App 里点一次更新…原来那条可以删掉」，旁边给按 App 的更新说明链接（`common/UpdateHelp.tsx`）
 - 选购页套餐卡（`plans/labels.ts` 的 `planCardView`，原型 planCard）：同款只有「续费」；不同款能换的只有一份时「换成 X」并写今天付多少；多份时「下一步选换掉哪一份」（不预选）；「另买一份」模式全是「买这个」；`allow_upgrade=false` 或不能续时按钮置灰并给出路。
 - 流量包挂在一份上（设计稿 2.4）：选购页流量包标签多份时选「加到哪一份」，预选剩得最少的；没有在用的套餐时不卖。
+- 订阅域名探测（`subs/probe.ts`，`MySubs` 里 `useSubDomainProbe()`，用户 10-14 定）：不显示任何东西；每 30 分钟最多一次（`localStorage` 的 `pandora.subProbeAt`，读写包 try/catch），取 `v1/me/subscription-domains`，对每个域名跨源 `fetch <域名>/v1/sub-probe`（`mode: 'cors'`、`credentials: 'omit'`、`referrerPolicy: 'no-referrer'`、5 秒超时），204 算成功；被 CSP 拦下的（`securitypolicyviolation`）不上报，免得把「本页不允许连」当成「域名连不上」；结果经 `api.post('v1/me/subscription-domains/probe')` 静默上报。这是前端唯一绕过 `useApi` 的请求，只因要探测的就是那些别的源本身
