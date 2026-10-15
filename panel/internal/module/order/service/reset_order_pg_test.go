@@ -439,3 +439,119 @@ VALUES ('RST-' || upper(?), ?, 'traffic_reset', 'paid', 'CNY', ?,
 		t.Fatalf("撞索引应 errOpenReset，得到 %v", err)
 	}
 }
+
+// TestResetOrderLateInRollGap 付款落在「这一期已结束、滚动任务还没推到下一期」的间隙里：回调进挂账 ineligible_subscription，
+// 已用量不变。起点挪到建单之前，专门打到「这一期已结束」这一支，而不是「起点晚于建单」那一支。
+func TestResetOrderLateInRollGap(t *testing.T) {
+	e, ctx := newEnv(t)
+	code := payCode()
+	e.mkPayProvider(t, ctx, code)
+	user := e.mkUser(t, ctx)
+	sub, planID, _, _ := e.liveSub(t, ctx, user, 3000)
+	e.setResetPrice(t, ctx, planID, 800)
+	e.mustExec(t, ctx, `UPDATE quota_balances SET consumed = ? WHERE subscription_id = ? AND metric = 'traffic.bytes' AND period = 'cycle'`,
+		10*gib, sub.ID)
+
+	c, err := e.svc.CreateResetOrder(asUser(ctx, user), ResetOrderInput{SubscriptionID: sub.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, err := e.svc.Pay(asUser(ctx, user), PayInput{OrderID: c.OrderID, Provider: code})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 建单之后、回调之前，把 cycle 行改成这一期已结束（滚动任务至多约 10 分钟才推到下一期）
+	e.mustExec(t, ctx, `UPDATE quota_balances
+SET period_start = now() - interval '30 days', period_end = now() - interval '1 minute'
+WHERE subscription_id = ? AND metric = 'traffic.bytes' AND period = 'cycle'`, sub.ID)
+
+	ack, err := e.payments.HandleWebhook(ctx, code, epayInbound("pay-"+randHex(8), intent.OutTradeNo, 800))
+	if err != nil || !ackOK(ack) {
+		t.Fatalf("回调 %s %v", ack.Body, err)
+	}
+	kind, ostatus, _ := e.lateCase(t, ctx, c.OrderID)
+	if kind != "ineligible_subscription" || ostatus != StatusPending {
+		t.Fatalf("挂账 kind=%q order_status=%q", kind, ostatus)
+	}
+	if e.consumedTraffic(t, ctx, sub.ID) != 10*gib {
+		t.Fatal("consumed 不应变")
+	}
+	e.assertNoDrift(t, ctx)
+}
+
+// TestResetOrderRefusedInRollGap 建单落在「这一期已结束、还没滚」的间隙里：报价与建单都回 ErrResetPeriodSwitching，
+// 不落订单。两次都是 Go 侧业务拒绝，不是 PG 报错，事务不会 aborted，之后照常查库。
+func TestResetOrderRefusedInRollGap(t *testing.T) {
+	e, ctx := newEnv(t)
+	user := e.mkUser(t, ctx)
+	sub, planID, _, _ := e.liveSub(t, ctx, user, 3000)
+	e.setResetPrice(t, ctx, planID, 800)
+	e.mustExec(t, ctx, `UPDATE quota_balances
+SET period_start = now() - interval '30 days', period_end = now() - interval '1 minute'
+WHERE subscription_id = ? AND metric = 'traffic.bytes' AND period = 'cycle'`, sub.ID)
+
+	_, err := e.svc.Quote(asUser(ctx, user), QuoteInput{Action: QuoteReset, SubscriptionID: &sub.ID})
+	if !errors.Is(err, ErrResetPeriodSwitching) {
+		t.Fatalf("报价应 ErrResetPeriodSwitching，得到 %v", err)
+	}
+	if codeOf(err) != errs.Conflict {
+		t.Fatalf("报价应 conflict，得到 %v", err)
+	}
+	_, err = e.svc.CreateResetOrder(asUser(ctx, user), ResetOrderInput{SubscriptionID: sub.ID})
+	if !errors.Is(err, ErrResetPeriodSwitching) {
+		t.Fatalf("建单应 ErrResetPeriodSwitching，得到 %v", err)
+	}
+	if n := e.count(t, ctx, `SELECT count(*) FROM orders WHERE kind = 'traffic_reset' AND subscription_id = ?`, sub.ID); n != 0 {
+		t.Fatalf("不该落订单，得到 %d 张", n)
+	}
+	e.assertNoDrift(t, ctx)
+}
+
+// TestResetOrderDayRollDoesNotBlock 同一份同时有 day 与 cycle 两条限额流量配额：作依据的是周期最长的 cycle 行，
+// 建单后日行滚到新的一天不该把付款送进挂账，回调照常履约清零全部流量配额行。
+func TestResetOrderDayRollDoesNotBlock(t *testing.T) {
+	e, ctx := newEnv(t)
+	code := payCode()
+	e.mkPayProvider(t, ctx, code)
+	user := e.mkUser(t, ctx)
+	sub, planID, _, _ := e.liveSub(t, ctx, user, 3000)
+	e.setResetPrice(t, ctx, planID, 800)
+	e.mustExec(t, ctx, `UPDATE quota_balances SET consumed = ? WHERE subscription_id = ? AND metric = 'traffic.bytes' AND period = 'cycle'`,
+		10*gib, sub.ID)
+	// 同一份再加一条日行（周期比 cycle 短，不作依据）
+	e.mustExec(t, ctx, `INSERT INTO quota_balances (subscription_id, metric, period, period_start, period_end, limit_value, consumed)
+VALUES (?, 'traffic.bytes', 'day', now() - interval '1 hour', now() + interval '23 hours', ?, ?)`,
+		sub.ID, 5*gib, 2*gib)
+
+	c, err := e.svc.CreateResetOrder(asUser(ctx, user), ResetOrderInput{SubscriptionID: sub.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, err := e.svc.Pay(asUser(ctx, user), PayInput{OrderID: c.OrderID, Provider: code})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 建单之后、回调之前，日行滚到新的一天（起点变成建单之后；起点晚于建单的判断只看依据行，不受影响）
+	e.mustExec(t, ctx, `UPDATE quota_balances
+SET period_start = (SELECT created_at FROM orders WHERE id = ?) + interval '1 millisecond',
+    period_end = (SELECT created_at FROM orders WHERE id = ?) + interval '1 day',
+    consumed = 0
+WHERE subscription_id = ? AND metric = 'traffic.bytes' AND period = 'day'`,
+		c.OrderID, c.OrderID, sub.ID)
+
+	ack, err := e.payments.HandleWebhook(ctx, code, epayInbound("pay-"+randHex(8), intent.OutTradeNo, 800))
+	if err != nil || !ackOK(ack) {
+		t.Fatalf("回调 %s %v", ack.Body, err)
+	}
+	kind, ostatus, _ := e.lateCase(t, ctx, c.OrderID)
+	if kind != "" {
+		t.Fatalf("不该进挂账，kind=%q order_status=%q", kind, ostatus)
+	}
+	if o := e.order(t, ctx, c.OrderID); o.Status != StatusFulfilled {
+		t.Fatalf("订单 %s", o.Status)
+	}
+	if e.consumedTraffic(t, ctx, sub.ID) != 0 {
+		t.Fatal("cycle consumed 应清零")
+	}
+	e.assertNoDrift(t, ctx)
+}
