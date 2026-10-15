@@ -8,8 +8,23 @@ import { overview } from './overview.ts'
 import { plans } from './plans.ts'
 import { quote } from './quote.ts'
 import { referral } from './referral.ts'
+import { subdomains } from './subdomains.ts'
 import { subs } from './subs.ts'
 import { tickets } from './tickets.ts'
 import { wallet } from './wallet.ts'
 
-export const PORTAL_MODULES: readonly MockModule[] = [overview, subs, plans, quote, checkout, orders, wallet, referral, tickets, messages, help, account]
+export const PORTAL_MODULES: readonly MockModule[] = [
+  overview,
+  subs,
+  plans,
+  quote,
+  checkout,
+  orders,
+  wallet,
+  referral,
+  tickets,
+  messages,
+  help,
+  account,
+  subdomains,
+]
