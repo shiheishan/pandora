@@ -6,6 +6,7 @@
 -- 冻结守卫（catalog_guard_plan_version / catalog_guard_price）按 to_jsonb 整行比较，不点名列，删列后照常生效；
 -- DROP COLUMN 不触发行级触发器，已发布版本与价格的冻结不受影响。
 --
+-- 部署顺序：先停旧版本进程再迁移（旧进程的 GORM 结构体还带这三列，删列后它读写价格与版本会报错）。
 -- 锁与耗时：DROP COLUMN 只改目录（不重写表），要两张表的 ACCESS EXCLUSIVE，拿到即完成；
 --   没有生产部署，表很小。拿不到锁时 lock_timeout 5 秒报错。
 -- 预检（可选，看会丢什么）：SELECT count(*) FROM prices WHERE trial_days <> 0;

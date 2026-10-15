@@ -88,7 +88,7 @@ func TestAdminOrderDetailShape(t *testing.T) {
 	w := do(e, http.MethodGet, "/v1/orders/"+orderID.String(), "")
 	mustStatus(t, w, http.StatusOK)
 	o := sub(t, obj(t, w), "order")
-	mustAbsent(t, o, "organization_id", "tax_amount")
+	mustAbsent(t, o, "organization_id", "tax_amount", "refunded_amount")
 	mustNull(t, o, "coupon_id", "manual_reason", "created_by", "created_by_email", "subscription_id",
 		"fulfilled_at", "cancelled_at", "expired_at", "cancel_reason", "paid_at", "provider_code", "provider_name")
 	if num(t, o, "subtotal_amount") != 3000 || num(t, o, "discount_amount") != 500 || num(t, o, "state_version") != 3 {

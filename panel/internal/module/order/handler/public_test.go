@@ -368,7 +368,7 @@ func TestMyOrderDetailShape(t *testing.T) {
 	mustStatus(t, w, http.StatusOK)
 	o := sub(t, obj(t, w), "order")
 	mustNull(t, o, "subscription_id")
-	mustAbsent(t, o, "coupon_code", "subscription_period_end")
+	mustAbsent(t, o, "coupon_code", "subscription_period_end", "refunded_amount")
 	if o["plan_name"] != "月付套餐" || o["interval"] != "month" || num(t, o, "interval_count") != 1 {
 		t.Fatalf("套餐字段 %v", o)
 	}
