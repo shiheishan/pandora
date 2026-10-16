@@ -359,7 +359,7 @@ func (s *Service) placeRenewal(ctx context.Context, d renewalDraft) (Created, mo
 		return Created{}, model.Order{}, errs.Newf(errs.Conflict, "这条订阅没有关联价格，无法续费")
 	}
 	uid := d.UserID
-	// 续费不锁套餐行（Lock: false）：价格行由冻结触发器钉死不可改，续费也不动库存与限购，
+	// 续费不锁套餐行（Lock: false）：价格行由冻结触发器钉死不可改，
 	// 锁了只会让同套餐的续费与新购在整段建单事务里排队，还多出一条与结算成环的路径，不值得。
 	// 不锁的代价只在后台恰好同时关掉「允许续费」或下架价格的那一瞬间：这张单按改之前的状态建成，可接受。
 	offer, err := s.catalog.Offer(ctx, *priceID, catalogsvc.OfferRequest{

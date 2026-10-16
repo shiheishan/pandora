@@ -12,7 +12,7 @@ package service
 // 未完结的续费或变更单（库里 orders_one_open_subscription_change 兜底）。
 //
 // 锁序：订单（结算时）→ 订阅 → 券 → 账务科目。建单没有订单锁，先锁订阅；目标套餐行不锁（价格行冻结不可改，
-// 换套餐也不动库存与限购，与续费同一取舍）。
+// 与续费同一取舍）。
 
 import (
 	"context"

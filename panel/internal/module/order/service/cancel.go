@@ -34,7 +34,7 @@ func checkReason(reason string) (string, error) {
 	return r, nil
 }
 
-// Cancel 取消待付订单并释放它占的库存、限购、优惠券、余额冻结与支付意图。
+// Cancel 取消待付订单并释放它占的优惠券、余额冻结与支付意图。
 // 门户只能取消自己的单，原因固定 user_cancelled；后台要带 expected_state_version 与 5–500 字原因。
 // 已取消的单重复取消回 AlreadyTerminal（先看终态、再比版本）。
 func (s *Service) Cancel(ctx context.Context, in CancelInput) (CancelResult, error) {
@@ -101,7 +101,7 @@ func (s *Service) Cancel(ctx context.Context, in CancelInput) (CancelResult, err
 	return out, nil
 }
 
-// CancelUserPending 注销账号时取消该用户全部待付订单：逐张释放库存、限购、优惠券、余额冻结并作废在途支付意图，
+// CancelUserPending 注销账号时取消该用户全部待付订单：逐张释放优惠券、余额冻结并作废在途支付意图，
 // 原因记 account_deleted。只给 identity 的注销调用（实现 identitysvc.OrderCanceller），在它的事务里、锁住用户行之后进来；
 // 之后到的付款回调按「迟到付款」处理（挂起后入余额），不开订阅、不计佣金。ctx 须是后台登录主体。返回取消的张数。
 func (s *Service) CancelUserPending(ctx context.Context, userID uuid.UUID) (int, error) {
