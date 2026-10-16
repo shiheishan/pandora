@@ -89,6 +89,8 @@ func TestSetPlanPoolsDraftAndPublished(t *testing.T) {
 		t.Fatal(err)
 	}
 	rv := detail.RowVersion
+	// 建套餐时写线路也会推进一次名单纪元；这里只数改线路这一次
+	markBefore := g.markChanged
 	upd, err := e.svc.SetPlanPools(ctx, plan.ID, PoolsUpdate{
 		ExpectedRowVersion: rv,
 		PoolIDs:            []uuid.UUID{p2, p1},
@@ -103,8 +105,8 @@ func TestSetPlanPoolsDraftAndPublished(t *testing.T) {
 	if len(g.calls) != 1 || len(g.calls[0]) != 2 {
 		t.Fatalf("guard 锁池调用: %v", g.calls)
 	}
-	if g.markChanged != 1 {
-		t.Fatalf("MarkUsersChanged 期望 1，得到 %d", g.markChanged)
+	if n := g.markChanged - markBefore; n != 1 {
+		t.Fatalf("MarkUsersChanged 期望 1，得到 %d", n)
 	}
 	if n := poolCountAuditPlanPools(t, ctx, e, plan.ID); n != 1 {
 		t.Fatalf("审计 plan.pools_update 期望 1，得到 %d", n)
@@ -328,10 +330,17 @@ func TestCreatePlanWithPools(t *testing.T) {
 
 }
 
+// 用提交态：回滚态的用例整体在一个外层事务里，service 的 tx.Do 加入它而不是自己开事务，
+// 出错时不会回滚已插的套餐行，测不出「整笔回滚」。
 func TestCreatePlanWithoutGuardRollback(t *testing.T) {
-	e, ctx := newEnv(t)
+	e, ctx := newEnvCommitted(t)
 	ctx, _ = seedAdmin(t, ctx, e)
 	p1 := seedPool(t, ctx, e, "active")
+	t.Cleanup(func() {
+		if err := e.exec(context.Background(), `DELETE FROM node_pools WHERE id = ?`, p1); err != nil {
+			t.Errorf("清理节点池: %v", err)
+		}
+	})
 	name := "无guard回滚" + uniqCode(t, "ng")
 	_, err := e.svc.CreatePlan(ctx, PlanCreate{
 		Kind: KindSubscription,
@@ -351,6 +360,10 @@ func TestCreatePlanWithoutGuardRollback(t *testing.T) {
 		t.Fatalf("无 guard 带池创建期望 503，得到 %v", err)
 	}
 	if n := scanInt64(t, ctx, e, `SELECT count(*) FROM plans WHERE name = ?`, name); n != 0 {
+		var leaked uuid.UUID
+		if err := e.row(ctx, `SELECT id FROM plans WHERE name = ?`, name).Scan(&leaked); err == nil {
+			e.plans = append(e.plans, leaked)
+		}
 		t.Fatal("创建失败应整笔回滚，不留套餐行")
 	}
 }

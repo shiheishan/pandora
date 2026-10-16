@@ -118,17 +118,6 @@ func versionFromModel(m model.PlanVersion, ents []model.Entitlement, quotas []mo
 	}
 }
 
-func entitlementModels(ents []Entitlement) []model.Entitlement {
-	out := make([]model.Entitlement, len(ents))
-	for i, e := range ents {
-		out[i] = model.Entitlement{
-			Code:  e.Code,
-			Value: string(e.Value),
-		}
-	}
-	return out
-}
-
 func quotaModels(quotas []Quota) []model.QuotaDefinition {
 	out := make([]model.QuotaDefinition, len(quotas))
 	for i, q := range quotas {
