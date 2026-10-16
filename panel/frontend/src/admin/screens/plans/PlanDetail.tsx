@@ -1,133 +1,450 @@
 import { useState } from 'react'
-import { formatBytes, formatCount, formatDateTime } from '../../../core/format'
-import { useApi } from '../../../shell/runtime'
-import { Button, ConfirmModal, QueryView, StatStrip, Tag, useToast } from '../../../ui'
-import { useIntentKey } from '../../actions'
-import { rowVersionSchema, useInvalidatePlans, usePlan, type PlanDetail, type PlanRow } from './api'
-import { useCatalogFailure } from './failure'
-import { PLAN_STATUS_VIEW, trafficOf, VISIBILITY_LABELS } from './model'
-import css from './Plans.module.css'
-import { PoolCard } from './PoolCard'
-import { PriceCard } from './PriceCard'
-import { ResetPriceCard } from './ResetPriceCard'
-import { SalesDrawer } from './SalesDrawer'
-import { Versions } from './Versions'
+import { formatMoney } from '../../../core/format'
+import { Button, ConfirmModal, Input, Modal, QueryView, Select, Switch, Tabs, Tag, useToast, type TabItem } from '../../../ui'
+import { usePlan, usePlanPools, type PlanDetail } from './api'
+import css from './Detail.module.css'
+import { BasicModal, OnceModal, ResetModal, SalesModal, UsageModal, usePlanWrite } from './EditModals'
+import {
+  activeTierPrice,
+  ARCHIVE_BODY,
+  detailTabs,
+  draftVersion,
+  isLive,
+  overviewGroups,
+  overviewNotes,
+  parseAmount,
+  PLAN_STATUS_VIEW,
+  planSubtitle,
+  poolBindingWarning,
+  poolMeta,
+  poolsBody,
+  priceListRows,
+  publishCopy,
+  rowVersionBody,
+  tierPriceBody,
+  TIERS,
+  togglePool,
+  versionListRows,
+  type DetailTab,
+  type OverviewGroupKey,
+  type TierKey,
+} from './model'
 
-export function PlanDetailView({ id, row, onEdit }: { id: string; row: PlanRow | undefined; onEdit: (plan: PlanDetail) => void }) {
+export function PlanDetailModal({
+  id,
+  tab,
+  onTab,
+  onClose,
+}: {
+  id: string | null
+  tab: DetailTab
+  onTab: (t: DetailTab) => void
+  onClose: () => void
+}) {
   const detail = usePlan(id)
-  return (
-    <QueryView query={detail} rows={4} empty={null}>
-      {(plan) => <Loaded plan={plan} row={row} onEdit={() => onEdit(plan)} />}
-    </QueryView>
-  )
-}
-
-function Loaded({ plan, row, onEdit }: { plan: PlanDetail; row: PlanRow | undefined; onEdit: () => void }) {
-  const archived = plan.status === 'archived'
-  const [archiving, setArchiving] = useState(false)
-  const [sales, setSales] = useState(false)
-  const view = PLAN_STATUS_VIEW[plan.status]
-  const current = plan.versions.find((v) => v.id === plan.current_version_id)
-  const shown = current ?? plan.versions[0]
-  const traffic = shown ? trafficOf(shown.quotas) : null
-
-  const notes: Array<{ text: string; info?: boolean }> = []
-  // node_count 只数当前发布版本的池；从没发布过的草稿不适用，发布时后端会拦「池里没有可服务节点」
-  if (!archived && row && row.version !== null && row.node_count === 0)
-    notes.push({ text: '当前版本没有在线节点：买了这个套餐的用户会拿到一份空订阅。在「线路 · 节点池」里绑定有在线节点的池。' })
-  if (!archived && !plan.allow_new_purchase) notes.push({ text: '已关闭新购：门户看得到也买不了，已有订阅照常续费。', info: true })
-  if (!archived && plan.visibility !== 'public') notes.push({ text: `可见范围：${VISIBILITY_LABELS[plan.visibility]}。`, info: true })
-  if (plan.highlights.length) notes.push({ text: `门户卖点：${plan.highlights.join(' · ')}。`, info: true })
-  if (plan.visible_from || plan.visible_until)
-    notes.push({ text: `上架时间窗：${plan.visible_from ? formatDateTime(plan.visible_from) : '不限'} 至 ${plan.visible_until ? formatDateTime(plan.visible_until) : '不限'}。`, info: true })
-
-  return (
-    <>
-      <section className={css.head} aria-label="套餐概况">
-        <div className={css.headText}>
-          <div className={css.headTitle}>
-            <h2>{plan.name}</h2>
-            <Tag tone={view.tone}>{view.label}</Tag>
-            {plan.recommended && <Tag tone="brand">推荐</Tag>}
-            <span className={css.cardCode}>{plan.code}</span>
-          </div>
-          <p className={css.desc}>{plan.description || '没有说明'}</p>
-        </div>
-        {!archived && (
-          <div className={css.headActions}>
-            <Button size="sm" variant="outline" onClick={onEdit}>
-              用向导编辑
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => setSales(true)}>
-              销售设置
-            </Button>
-            <Button size="sm" variant="outline" className={css.dangerText} onClick={() => setArchiving(true)}>
-              归档套餐
-            </Button>
-          </div>
-        )}
-        {archived && <p className={`${css.small} ${css.headWide}`}>已归档：门户不再展示、不能新购，已有订阅照常续费到期。归档不可恢复。</p>}
-        <div className={css.headWide}>
-          <StatStrip
-            label="套餐事实"
-            items={[
-              { label: '有效订阅', value: row ? formatCount(row.active_subscriptions) : '—' },
-              { label: '当前版本', value: current ? `v${current.version}` : '未发布' },
-              { label: '每周期流量', value: shown ? (traffic === null ? '不限' : formatBytes(traffic)) : '—' },
-              { label: '设备上限', value: shown ? (shown.max_devices === null ? '不限' : String(shown.max_devices)) : '—' },
-            ]}
-          />
-        </div>
-      </section>
-
-      {notes.map((n) => (
-        <p key={n.text} className={`${css.note} ${n.info ? css.noteInfo : ''}`}>
-          {n.text}
-        </p>
-      ))}
-
-      <div className={css.cards}>
-        <PriceCard plan={plan} />
-        <PoolCard plan={plan} />
-        <ResetPriceCard plan={plan} />
-      </div>
-      <Versions plan={plan} />
-
-      <ArchiveDialog plan={plan} open={archiving} onClose={() => setArchiving(false)} />
-      <SalesDrawer plan={plan} open={sales} onClose={() => setSales(false)} />
-    </>
-  )
-}
-
-/** POST v1/plans/{id}/archive：reauth + 幂等；不可逆（库里触发器只许 active / draft → archived） */
-function ArchiveDialog({ plan, open, onClose }: { plan: PlanDetail; open: boolean; onClose: () => void }) {
-  const api = useApi()
+  const plan = detail.data
+  const draft = plan ? draftVersion(plan) : undefined
+  const { busy, run } = usePlanWrite()
   const toast = useToast()
-  const fail = useCatalogFailure()
-  const intent = useIntentKey()
-  const invalidate = useInvalidatePlans()
-  const confirm = async () => {
-    const body = { expected_row_version: plan.row_version }
-    try {
-      await api.post(`v1/plans/${encodeURIComponent(plan.id)}/archive`, rowVersionSchema, { body, idempotencyKey: intent.keyFor([plan.id, body]) })
-      intent.reset()
-      toast(`「${plan.name}」已归档`)
-      onClose()
-    } catch (e) {
-      fail(e, { intent })
-    } finally {
-      void invalidate()
+
+  const [editGroup, setEditGroup] = useState<OverviewGroupKey | null>(null)
+  const [archiveOpen, setArchiveOpen] = useState(false)
+  const [publishN, setPublishN] = useState<number | null>(null)
+
+  const tabs = plan ? detailTabs(plan) : []
+  const activeTab = tabs.some((t) => t.value === tab) ? tab : 'overview'
+  const tabItems: TabItem<DetailTab>[] = tabs.map((t) => ({
+    value: t.value,
+    label: t.label,
+    badge: t.count !== undefined ? t.count : undefined,
+  }))
+
+  const handleArchive = async () => {
+    if (!plan) return
+    const res = await run('post', `v1/plans/${encodeURIComponent(plan.id)}/archive`, rowVersionBody(plan.row_version))
+    if (res) {
+      toast('已归档')
+      setArchiveOpen(false)
     }
   }
+
+  const handlePublish = async () => {
+    if (!plan || publishN === null) return
+    const d = draftVersion(plan)
+    if (!d) return
+    const res = await run(
+      'post',
+      `v1/plans/${encodeURIComponent(plan.id)}/versions/${d.id}/publish`,
+      rowVersionBody(plan.row_version),
+    )
+    if (res) {
+      toast(`v${publishN} 已发布`)
+      setPublishN(null)
+    }
+  }
+
   return (
-    <ConfirmModal
-      open={open}
-      title={`归档「${plan.name}」？`}
-      body="门户不再展示、不能再新购，已有订阅照常续费到期。归档后不能恢复上架；只想暂停售卖，请改用「销售设置」关闭新购或隐藏。"
-      confirmLabel="归档"
-      tone="danger"
-      onCancel={onClose}
-      onConfirm={confirm}
-    />
+    <Modal
+      open={id !== null}
+      onClose={onClose}
+      size={680}
+      tall
+      title={plan ? plan.name : '载入中…'}
+      headExtra={
+        plan ? (
+          <>
+            <Tag tone={PLAN_STATUS_VIEW[plan.status].tone}>{PLAN_STATUS_VIEW[plan.status].label}</Tag>
+            {plan.recommended && <Tag tone="brand">推荐</Tag>}
+            {plan.status === 'draft' && draft && (
+              <Button variant="primary" size="sm" disabled={busy} onClick={() => setPublishN(draft.version)}>
+                {`发布 v${draft.version}`}
+              </Button>
+            )}
+          </>
+        ) : undefined
+      }
+      subtitle={plan ? planSubtitle(plan) : undefined}
+    >
+      <QueryView query={detail} rows={6} empty="不存在或已删除">
+        {(p) => (
+          <div className={css.bodyStack}>
+            <Tabs label="套餐详情" items={tabItems} value={activeTab} onChange={onTab} />
+            {activeTab === 'overview' && (
+              <OverviewTab plan={p} onEdit={(key) => setEditGroup(key)} onArchive={() => setArchiveOpen(true)} />
+            )}
+            {activeTab === 'prices' && <PricesTab plan={p} busy={busy} run={run} />}
+            {activeTab === 'pools' && <PoolsTab plan={p} busy={busy} run={run} />}
+            {activeTab === 'versions' && (
+              <VersionsTab
+                plan={p}
+                busy={busy}
+                onPublish={(n) => setPublishN(n)}
+                onNewVersion={() => setEditGroup('usage')}
+              />
+            )}
+          </div>
+        )}
+      </QueryView>
+
+      {plan && editGroup === 'basic' && <BasicModal open plan={plan} onClose={() => setEditGroup(null)} />}
+      {plan && editGroup === 'usage' && <UsageModal open plan={plan} onClose={() => setEditGroup(null)} />}
+      {plan && editGroup === 'sales' && <SalesModal open plan={plan} onClose={() => setEditGroup(null)} />}
+      {plan && editGroup === 'reset' && <ResetModal open plan={plan} onClose={() => setEditGroup(null)} />}
+      {plan && editGroup === 'once' && <OnceModal open plan={plan} onClose={() => setEditGroup(null)} />}
+
+      {plan && archiveOpen && (
+        <ConfirmModal
+          open
+          tone="danger"
+          title={`归档「${plan.name}」？`}
+          body={ARCHIVE_BODY}
+          confirmLabel="归档"
+          onCancel={() => setArchiveOpen(false)}
+          onConfirm={handleArchive}
+        />
+      )}
+
+      {plan && publishN !== null && (
+        <ConfirmModal
+          open
+          title={publishCopy(plan, publishN).title}
+          body={publishCopy(plan, publishN).body}
+          confirmLabel="发布"
+          onCancel={() => setPublishN(null)}
+          onConfirm={handlePublish}
+        />
+      )}
+    </Modal>
+  )
+}
+
+function OverviewTab({
+  plan,
+  onEdit,
+  onArchive,
+}: {
+  plan: PlanDetail
+  onEdit: (key: OverviewGroupKey) => void
+  onArchive: () => void
+}) {
+  const notes = overviewNotes(plan)
+  const groups = overviewGroups(plan)
+  const live = isLive(plan)
+
+  return (
+    <div className={css.bodyStack}>
+      {notes.length > 0 && (
+        <div className={css.notes}>
+          {notes.map((note) => (
+            <div key={note} className={css.note}>
+              <span className={css.noteDot} aria-hidden="true" />
+              <span>{note}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {groups.map((group) => (
+        <section key={group.key} className={css.section}>
+          <div className={css.sectionHeader}>
+            <h3 className={css.sectionTitle}>{group.title}</h3>
+            {live && (
+              <Button size="sm" onClick={() => onEdit(group.key)}>
+                编辑
+              </Button>
+            )}
+          </div>
+          {group.rows.map((row) => {
+            const valClass = [css.kvVal, row.mono && css.mono, row.muted && css.muted].filter(Boolean).join(' ')
+            return (
+              <div key={row.k} className={css.kvRow}>
+                <span className={css.kvKey}>{row.k}</span>
+                <span className={valClass}>{row.v}</span>
+              </div>
+            )
+          })}
+        </section>
+      ))}
+
+      {live && (
+        <div className={css.archiveRow}>
+          <div className={css.archiveInfo}>
+            <span className={css.archiveTitle}>归档这个套餐</span>
+            <span className={css.mutedSmall}>用户端不再展示、不能新购，老用户不能续费；不可恢复</span>
+          </div>
+          <Button size="sm" variant="secondary" className={css.dangerBtn} onClick={onArchive}>
+            归档
+          </Button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function PricesTab({
+  plan,
+  busy,
+  run,
+}: {
+  plan: PlanDetail
+  busy: boolean
+  run: ReturnType<typeof usePlanWrite>['run']
+}) {
+  const toast = useToast()
+  const rows = priceListRows(plan)
+  const live = isLive(plan)
+  const [newTier, setNewTier] = useState<TierKey>('month:1')
+  const [newAmount, setNewAmount] = useState('')
+  const [addError, setAddError] = useState<string | undefined>()
+
+  const existing = activeTierPrice(plan, newTier)
+  const hint = existing ? `这一档在售 ${formatMoney(existing.unit_amount)}，添加后替换` : undefined
+
+  const handleStop = async (tier: TierKey | null) => {
+    if (!tier) return
+    const res = await run(
+      'put',
+      `v1/plans/${encodeURIComponent(plan.id)}/prices`,
+      tierPriceBody(plan.row_version, tier, null),
+    )
+    if (res) {
+      toast('这一档已停售')
+    }
+  }
+
+  const handleAdd = async () => {
+    const cents = parseAmount(newAmount)
+    if (cents === null) {
+      setAddError('填价格，最多两位小数')
+      return
+    }
+    const res = await run(
+      'put',
+      `v1/plans/${encodeURIComponent(plan.id)}/prices`,
+      tierPriceBody(plan.row_version, newTier, cents),
+      {
+        onFields: (fields) => {
+          setAddError(Object.values(fields).join('；'))
+        },
+      },
+    )
+    if (res) {
+      setNewAmount('')
+      setAddError(undefined)
+      toast('价格已保存')
+    }
+  }
+
+  const tierOptions = TIERS.map((t) => ({ value: t.key, label: t.label }))
+
+  return (
+    <section className={css.section}>
+      <div className={css.sectionHeader}>
+        <h3 className={css.sectionTitle}>在售价格</h3>
+      </div>
+      {rows.map((row) => (
+        <div key={row.id} className={[css.priceRow, !row.active && css.dimmed].filter(Boolean).join(' ')}>
+          <span className={css.kvKey}>{row.label}</span>
+          <span className={css.mono}>{row.amount}</span>
+          {row.active && live ? (
+            <Button size="xs" variant="ghost" disabled={busy} onClick={() => void handleStop(row.tier)}>
+              停售
+            </Button>
+          ) : row.active ? null : (
+            <span className={css.mutedSmall}>已停售</span>
+          )}
+        </div>
+      ))}
+      {live && (
+        <div className={css.priceAddRow}>
+          <Select
+            label="计费周期"
+            options={tierOptions}
+            value={newTier}
+            onChange={(e) => {
+              setNewTier(e.target.value as TierKey)
+              setAddError(undefined)
+            }}
+          />
+          <Input
+            mono
+            inputMode="decimal"
+            placeholder="价格（元）"
+            value={newAmount}
+            onChange={(e) => {
+              setNewAmount(e.target.value)
+              setAddError(undefined)
+            }}
+            hint={hint}
+            error={addError}
+          />
+          <Button variant="primary" size="sm" disabled={busy} onClick={() => void handleAdd()}>
+            添加价格
+          </Button>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function PoolsTab({
+  plan,
+  busy,
+  run,
+}: {
+  plan: PlanDetail
+  busy: boolean
+  run: ReturnType<typeof usePlanWrite>['run']
+}) {
+  const toast = useToast()
+  const poolsQuery = usePlanPools(plan.id)
+  const live = isLive(plan)
+
+  const handleToggle = async (poolId: string, poolName: string, currentlyBound: boolean) => {
+    const nextIds = togglePool(plan.pool_ids, poolId)
+    const res = await run('put', `v1/plans/${encodeURIComponent(plan.id)}/pools`, poolsBody(plan.row_version, nextIds))
+    if (res) {
+      toast(currentlyBound ? `已移除「${poolName}」` : `已加入「${poolName}」`)
+    }
+  }
+
+  return (
+    <section className={css.section}>
+      <div className={css.sectionHeader}>
+        <h3 className={css.sectionTitle}>可用线路</h3>
+        <span className={css.mutedSmall}>{`已选 ${plan.pool_ids.length} 个 · 改动立即生效`}</span>
+      </div>
+
+      <QueryView query={poolsQuery} rows={4} empty={null} isEmpty={() => false}>
+        {(pools) => {
+          const warning = live ? poolBindingWarning(pools, plan.pool_ids) : null
+          return (
+            <div className={css.stack}>
+              {warning && (
+                <div className={css.note}>
+                  <span className={css.noteDot} aria-hidden="true" />
+                  <span>{warning}</span>
+                </div>
+              )}
+              {pools.length === 0 ? (
+                <div className={css.mutedSmall}>还没有可用的节点池，先到「节点 › 节点池」建一个。</div>
+              ) : (
+                pools.map((pool) => {
+                  const on = plan.pool_ids.includes(pool.id)
+                  return (
+                    <div key={pool.id} className={css.poolRow}>
+                      <div className={css.poolInfo}>
+                        <span className={css.poolName}>{pool.name}</span>
+                        <span className={css.mutedSmall}>{poolMeta(pool)}</span>
+                      </div>
+                      <Switch
+                        aria-label={pool.name}
+                        checked={on}
+                        disabled={busy || !live}
+                        onChange={() => void handleToggle(pool.id, pool.name, on)}
+                      />
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          )
+        }}
+      </QueryView>
+    </section>
+  )
+}
+
+function VersionsTab({
+  plan,
+  busy,
+  onPublish,
+  onNewVersion,
+}: {
+  plan: PlanDetail
+  busy: boolean
+  onPublish: (n: number) => void
+  onNewVersion: () => void
+}) {
+  const rows = versionListRows(plan)
+  const draft = draftVersion(plan)
+  const live = isLive(plan)
+
+  return (
+    <section className={css.section}>
+      <div className={css.sectionHeader}>
+        <h3 className={css.sectionTitle}>版本记录</h3>
+        {live && (
+          <Button
+            size="sm"
+            disabled={draft !== undefined}
+            title={draft ? `已有草稿 v${draft.version}，先发布它` : undefined}
+            onClick={onNewVersion}
+          >
+            新建版本
+          </Button>
+        )}
+      </div>
+      {rows.map((row) => (
+        <div key={row.id} className={css.versionRow}>
+          <span className={css.versionN}>{`v${row.n}`}</span>
+          <div className={css.versionMeta}>
+            <div className={css.versionHeader}>
+              <Tag tone={row.tone}>{row.label}</Tag>
+              <span className={css.versionDate}>{row.at}</span>
+            </div>
+            <div className={css.versionSummary}>
+              {row.summary}
+              {row.by ? ` · ${row.by}` : ''}
+            </div>
+          </div>
+          {row.isDraft && (
+            <Button variant="primary" size="xs" disabled={busy} onClick={() => onPublish(row.n)}>
+              发布
+            </Button>
+          )}
+        </div>
+      ))}
+    </section>
   )
 }
