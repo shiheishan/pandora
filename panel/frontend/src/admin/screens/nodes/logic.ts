@@ -170,8 +170,6 @@ export function activationHint(warning: string): string {
   return `已上线。${warning}`
 }
 
-export const MOVE_BLOCKED_HINT = '只能迁移从未部署过的草稿节点。已部署节点请用「复制节点」选目标服务器，再退役原节点。'
-
 // ---------------------------------------------------------------------------
 // 服务状态转换：与后端 node_status.go 的 nodeServingTransitions 一致（retired 只走 retire 接口）
 // ---------------------------------------------------------------------------
@@ -540,75 +538,91 @@ export const clearedSecrets = (fields: readonly ProtocolField[], current: FormVa
 // 路由规则行（D-D-1：下拉只放后端支持的匹配类型）
 // ---------------------------------------------------------------------------
 export const MATCH_KINDS = [
-  ['domain', '域名'],
   ['domain_suffix', '域名后缀'],
   ['ip_cidr', 'IP 段'],
-  ['port', '端口'],
-  ['network', '网络（tcp / udp）'],
-  ['source', '来源 IP 段'],
-  ['source_port', '来源端口'],
   ['fallback', '兜底（全部）'],
 ] as const
 export type MatchKind = (typeof MATCH_KINDS)[number][0]
 
-/** matcher 的别名键归一到下拉值（契约列出的全部写法） */
+/** matcher 的别名键归一到下拉值（只认可编辑的三种；其余走只读的旧类型） */
 const ALIASES: Readonly<Record<string, MatchKind>> = {
-  domain: 'domain',
-  domains: 'domain',
   domain_suffix: 'domain_suffix',
   domain_suffixes: 'domain_suffix',
   ip: 'ip_cidr',
   ip_cidr: 'ip_cidr',
   ip_cidrs: 'ip_cidr',
-  port: 'port',
-  ports: 'port',
-  network: 'network',
-  networks: 'network',
-  source: 'source',
-  source_ip_cidr: 'source',
-  source_cidrs: 'source',
-  source_port: 'source_port',
-  source_ports: 'source_port',
+}
+
+/** 不再提供新建的旧匹配类型：库里已有的规则只读显示、原样保存 */
+const LEGACY_LABELS: Readonly<Record<string, string>> = {
+  domain: '域名',
+  domains: '域名',
+  port: '端口',
+  ports: '端口',
+  network: '网络',
+  networks: '网络',
+  source: '来源 IP 段',
+  source_ip_cidr: '来源 IP 段',
+  source_cidrs: '来源 IP 段',
+  source_port: '来源端口',
+  source_ports: '来源端口',
 }
 
 export interface RuleRow {
   kind: MatchKind
   value: string
   outbound: string
+  /** 界面不编辑启用与备注，保存时原样带回 */
   enabled: boolean
   note: string
+  /** 旧匹配类型（或多个匹配键）：matcher 原样保存，界面只读显示 label 与 value */
+  legacy?: { label: string; value: string; matcher: Record<string, unknown> }
 }
+
+const listText = (raw: unknown) => (Array.isArray(raw) ? raw : [raw]).map(String).join(', ')
 
 export function routeToRow(r: Route): RuleRow {
   const entries = Object.entries(r.matcher)
   const base = { outbound: r.outbound_tag, enabled: r.enabled, note: r.note }
   if (entries.length === 0) return { ...base, kind: 'fallback', value: '' }
   const [key, raw] = entries[0]!
-  const values = Array.isArray(raw) ? raw : [raw]
-  return { ...base, kind: ALIASES[key] ?? 'domain', value: values.map(String).join(', ') }
+  const kind = ALIASES[key]
+  if (entries.length === 1 && kind) return { ...base, kind, value: listText(raw) }
+  return {
+    ...base,
+    kind: 'domain_suffix',
+    value: '',
+    legacy: {
+      label: entries.map(([k]) => LEGACY_LABELS[k] ?? MATCH_KINDS.find(([m]) => m === ALIASES[k])?.[1] ?? k).join(' + '),
+      value: entries.map(([, v]) => listText(v)).join('；'),
+      matcher: r.matcher,
+    },
+  }
 }
 
-/** 规则行 → PUT 的 routes；优先级按序号 ×10；错误以序号为键 */
+/** 新加的一条规则：域名后缀走直连 */
+export const newRule = (): RuleRow => ({ kind: 'domain_suffix', value: '', outbound: 'direct', enabled: true, note: '' })
+
+/** 规则行 → PUT 的 routes；优先级按序号 ×10；错误以序号为键。旧类型的 matcher 原样带回 */
 export function rowsToRoutes(rows: readonly RuleRow[]): { routes: Array<Record<string, unknown>>; errors: Record<number, string> } {
   const errors: Record<number, string> = {}
   const routes = rows.map((r, i) => {
     let matcher: Record<string, unknown> = {}
-    if (r.kind !== 'fallback') {
+    if (r.legacy) matcher = r.legacy.matcher
+    else if (r.kind !== 'fallback') {
       const parts = r.value
         .split(/[,，\s]+/)
         .map((s) => s.trim())
         .filter(Boolean)
       if (!parts.length) errors[i] = '填匹配值'
-      const numeric = r.kind === 'port' || r.kind === 'source_port'
-      if (numeric && parts.some((p) => !/^\d+(-\d+)?$/.test(p))) errors[i] = '端口填数字或范围，如 443、8000-9000'
-      matcher = { [r.kind]: numeric ? parts.map((p) => (/^\d+$/.test(p) ? Number(p) : p)) : parts }
+      matcher = { [r.kind]: parts }
     }
     if (!r.outbound) errors[i] ??= '选择出站'
     return { priority: (i + 1) * 10, matcher, outbound_tag: r.outbound, enabled: r.enabled, note: r.note.trim() }
   })
   const lastEnabled = rows.map((r, i) => (r.enabled ? i : -1)).filter((i) => i >= 0)
   rows.forEach((r, i) => {
-    if (r.enabled && r.kind === 'fallback' && i !== lastEnabled[lastEnabled.length - 1]) errors[i] ??= '兜底规则必须是最后一条启用的规则'
+    if (r.enabled && !r.legacy && r.kind === 'fallback' && i !== lastEnabled[lastEnabled.length - 1]) errors[i] ??= '兜底规则必须是最后一条启用的规则'
   })
   return { routes, errors }
 }
@@ -673,6 +687,7 @@ export function renameOutbound(rows: readonly RuleRow[], from: string, to: strin
 /** 规则的简短文字（抽屉只读列表） */
 export function ruleSummary(r: Route): string {
   const row = routeToRow(r)
+  if (row.legacy) return `${row.legacy.label} ${row.legacy.value}`
   return row.kind === 'fallback' ? '兜底（全部）' : `${MATCH_KINDS.find(([k]) => k === row.kind)?.[1]} ${row.value}`
 }
 

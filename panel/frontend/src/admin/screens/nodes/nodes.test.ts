@@ -27,6 +27,7 @@ import {
   withProtocolDefaults,
   clearableSecret,
   insertRule,
+  MATCH_KINDS,
   renameOutbound,
   routeToRow,
   rowsToOutbounds,
@@ -371,29 +372,41 @@ describe('basic info and PATCH', () => {
 })
 
 describe('routing rows', () => {
-  it('reads every matcher alias and the empty fallback', () => {
+  it('reads the editable aliases and the empty fallback', () => {
     expect(routeToRow({ priority: 10, matcher: { domain_suffixes: ['example.com', 'example.org'] }, outbound_tag: 'US', enabled: true, note: '' })).toMatchObject({ kind: 'domain_suffix', value: 'example.com, example.org' })
-    expect(routeToRow({ priority: 20, matcher: { ports: [25, 465] }, outbound_tag: 'block', enabled: true, note: '' })).toMatchObject({ kind: 'port', value: '25, 465' })
+    expect(routeToRow({ priority: 15, matcher: { ip: ['10.0.0.0/8'] }, outbound_tag: 'direct', enabled: true, note: '' })).toMatchObject({ kind: 'ip_cidr', value: '10.0.0.0/8' })
     expect(routeToRow({ priority: 30, matcher: {}, outbound_tag: 'direct', enabled: true, note: '' }).kind).toBe('fallback')
   })
 
-  it('builds matchers with numeric ports and enforces the fallback-last rule', () => {
+  it('keeps legacy matchers read-only and saves them unchanged with enabled and note', () => {
+    const port = routeToRow({ priority: 20, matcher: { ports: [25, 465] }, outbound_tag: 'block', enabled: false, note: '禁止发信' })
+    expect(port.legacy).toMatchObject({ label: '端口', value: '25, 465' })
+    const multi = routeToRow({ priority: 25, matcher: { domain_suffix: ['example.com'], network: 'udp' }, outbound_tag: 'direct', enabled: true, note: '' })
+    expect(multi.legacy?.label).toBe('域名后缀 + 网络')
+    const { routes, errors } = rowsToRoutes([port, multi, { kind: 'fallback', value: '', outbound: 'direct', enabled: true, note: '' }])
+    expect(errors).toEqual({})
+    expect(routes[0]).toEqual({ priority: 10, matcher: { ports: [25, 465] }, outbound_tag: 'block', enabled: false, note: '禁止发信' })
+    expect(routes[1]!.matcher).toEqual({ domain_suffix: ['example.com'], network: 'udp' })
+    expect(MATCH_KINDS.map(([k]) => k)).toEqual(['domain_suffix', 'ip_cidr', 'fallback'])
+  })
+
+  it('builds matchers and enforces the fallback-last rule', () => {
     const { routes, errors } = rowsToRoutes([
-      { kind: 'port', value: '25, 465 8000-9000', outbound: 'block', enabled: true, note: '' },
+      { kind: 'ip_cidr', value: '10.0.0.0/8, 192.168.0.0/16', outbound: 'block', enabled: true, note: ' 备注 ' },
       { kind: 'fallback', value: '', outbound: 'direct', enabled: true, note: '' },
     ])
     expect(errors).toEqual({})
-    expect(routes[0]).toEqual({ priority: 10, matcher: { port: [25, 465, '8000-9000'] }, outbound_tag: 'block', enabled: true, note: '' })
+    expect(routes[0]).toEqual({ priority: 10, matcher: { ip_cidr: ['10.0.0.0/8', '192.168.0.0/16'] }, outbound_tag: 'block', enabled: true, note: '备注' })
     expect(routes[1]!.matcher).toEqual({})
     const bad = rowsToRoutes([
       { kind: 'fallback', value: '', outbound: 'direct', enabled: true, note: '' },
-      { kind: 'domain', value: '', outbound: '', enabled: true, note: '' },
+      { kind: 'domain_suffix', value: '', outbound: '', enabled: true, note: '' },
     ])
     expect(bad.errors).toEqual({ 0: '兜底规则必须是最后一条启用的规则', 1: '填匹配值' })
   })
 
   it('inserts new rules before a trailing fallback', () => {
-    const add = { kind: 'domain' as const, value: 'example.net', outbound: 'direct', enabled: true, note: '' }
+    const add = { kind: 'domain_suffix' as const, value: 'example.net', outbound: 'direct', enabled: true, note: '' }
     const fb = { kind: 'fallback' as const, value: '', outbound: 'US', enabled: true, note: '' }
     expect(insertRule([fb], add)).toEqual([add, fb])
     expect(insertRule([add], fb)).toEqual([add, fb])
@@ -402,7 +415,7 @@ describe('routing rows', () => {
 
   it('counts and renames rules that point at an outbound', () => {
     const rows = [
-      { kind: 'domain' as const, value: 'a', outbound: 'US-LAX-01', enabled: true, note: '' },
+      { kind: 'domain_suffix' as const, value: 'a', outbound: 'US-LAX-01', enabled: true, note: '' },
       { kind: 'fallback' as const, value: '', outbound: 'direct', enabled: true, note: '' },
     ]
     // 按 tag 原样精确匹配（与后端 checkRouteRefs、下发和 pdnd 一致）
