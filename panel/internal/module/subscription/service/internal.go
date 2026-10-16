@@ -178,6 +178,41 @@ func (s *Service) versionFor(ctx context.Context, planID, versionID uuid.UUID) (
 	return v, nil
 }
 
+// planOf 读一个套餐（开通、续费、叠加、换套餐、送流量判断类型用）；读不到回 ErrVersionUnavailable。
+func (s *Service) planOf(ctx context.Context, planID uuid.UUID) (catalogsvc.Plan, error) {
+	plans, err := s.catalog.PlansByIDs(ctx, []uuid.UUID{planID})
+	if err != nil {
+		return catalogsvc.Plan{}, err
+	}
+	p, ok := plans[planID]
+	if !ok {
+		return catalogsvc.Plan{}, ErrVersionUnavailable
+	}
+	return p, nil
+}
+
+// trafficPeriod 是套餐类型对应的流量配额周期：订阅套餐 cycle（每周期一份、滚动清零），一次性套餐 total（不清零）。
+// 流量落在哪一行一律按套餐类型判断，不信版本里配额定义的 period（开发库里可能有 cycle 的一次性版本）。
+func trafficPeriod(kind string) string {
+	if kind == catalogsvc.KindOneTime {
+		return PeriodTotal
+	}
+	return PeriodCycle
+}
+
+// withKind 返回 v 的副本：traffic.bytes 配额定义的周期按套餐类型改正（trafficPeriod）。开通、换套餐、续费恢复、叠加建配额前都过一遍。
+func withKind(v catalogsvc.Version, kind string) catalogsvc.Version {
+	qs := make([]catalogsvc.Quota, len(v.Quotas))
+	copy(qs, v.Quotas)
+	for i := range qs {
+		if qs[i].Metric == MetricTraffic {
+			qs[i].Period = trafficPeriod(kind)
+		}
+	}
+	v.Quotas = qs
+	return v
+}
+
 // quotaDef 在版本的配额定义里找 (metric, period)；没有返回 false。
 func quotaDef(v catalogsvc.Version, metric, period string) (catalogsvc.Quota, bool) {
 	for _, q := range v.Quotas {

@@ -70,6 +70,7 @@ func (s *Service) GrantSignupTrial(ctx context.Context, userID, planID uuid.UUID
 			IntervalCount: intervalCount,
 		}
 
+		v = withKind(v, plan.Kind)
 		label, _ := NormalizeLabel(plan.Name)
 		start := s.clock()
 		end := start.Add(time.Duration(hours) * time.Hour).Truncate(time.Microsecond)
