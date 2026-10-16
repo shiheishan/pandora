@@ -1,6 +1,6 @@
 package service
 
-// ChargeTraffic 的 PG 集成测试：配额扣到负、不限量、流量包先到先扣、滚动空窗、站点时区切日、耗尽通知、并发不死锁。
+// ChargeTraffic 的 PG 集成测试：配额扣到负、不限量、送的量算进余量、滚动空窗、站点时区切日、耗尽通知、并发不死锁。
 
 import (
 	"context"
@@ -19,7 +19,7 @@ import (
 type chargeTZSite struct{ tz string }
 
 func (s chargeTZSite) Site(context.Context) (settingssvc.Site, error) {
-	return settingssvc.Site{Name: "测试站", Timezone: s.tz, Currency: "CNY"}, nil
+	return settingssvc.Site{Name: "测试站", Timezone: s.tz}, nil
 }
 
 // chargeSub 开一份订阅，套餐只有一条 traffic.bytes 配额（limit 为 nil 表示不限）。
@@ -58,16 +58,6 @@ func chargeUsageTotal(t *testing.T, e *env, ctx context.Context, subID uuid.UUID
 	return n
 }
 
-// chargePackConsumed 读一笔流量包的已用量。
-func chargePackConsumed(t *testing.T, e *env, ctx context.Context, id uuid.UUID) int64 {
-	t.Helper()
-	var n int64
-	if err := e.row(ctx, `SELECT consumed_bytes FROM traffic_pack_grants WHERE id = ?`, id).Scan(&n); err != nil {
-		t.Fatal(err)
-	}
-	return n
-}
-
 func TestChargeQuotaGoesNegativePG(t *testing.T) {
 	e := newEnv(t)
 	ctx := e.txCtx()
@@ -92,31 +82,31 @@ func TestChargeUnlimitedPG(t *testing.T) {
 	}
 }
 
-func TestChargePacksFirstComeFirstServedPG(t *testing.T) {
+// TestChargeWithBonusPG 用真实提交：上限 100 已用完、送 50，扣 30 还剩 20 不通知；再扣 30 用尽通知一次。
+func TestChargeWithBonusPG(t *testing.T) {
 	e := newEnv(t)
-	ctx := e.txCtx()
+	ctx := context.Background()
 	sub := chargeSub(t, e, ctx, PeriodCycle, i64(100))
-	var packs []uuid.UUID
-	for _, n := range []int64{30, 50} {
-		p, err := e.svc.GrantTrafficPack(ctx, PackGrant{UserID: sub.UserID, SubscriptionID: &sub.ID, Source: PackSourceAdmin, SourceID: uuid.New(), Bytes: n})
-		if err != nil {
-			t.Fatalf("发流量包: %v", err)
-		}
-		packs = append(packs, p.ID)
+	setConsumed(t, e, ctx, sub.ID, MetricTraffic, PeriodCycle, 100)
+	e.exec(t, ctx, `UPDATE quota_balances SET bonus_value = ? WHERE subscription_id = ? AND metric = ? AND period = ?`, 50, sub.ID, MetricTraffic, PeriodCycle)
+	base := e.roster.count(sub.ID)
+
+	chargeOK(t, e, ctx, TrafficCharge{UID: sub.NodeUID, Bytes: 30})
+	q := quotaOf(t, e, ctx, sub.ID, MetricTraffic, PeriodCycle)
+	if q.Consumed != 130 {
+		t.Fatalf("consumed 应为 130，得 %d", q.Consumed)
 	}
-	chargeOK(t, e, ctx, TrafficCharge{UID: sub.NodeUID, Bytes: 150})
-	if q := quotaOf(t, e, ctx, sub.ID, MetricTraffic, PeriodCycle); q.Consumed != 100 {
-		t.Fatalf("配额 consumed 应为 100，得 %d", q.Consumed)
+	if n := e.roster.count(sub.ID) - base; n != 0 {
+		t.Fatalf("还剩 20 额度，不该通知用尽，得 %d", n)
 	}
-	if a, b := chargePackConsumed(t, e, ctx, packs[0]), chargePackConsumed(t, e, ctx, packs[1]); a != 30 || b != 20 {
-		t.Fatalf("先到先扣：第一笔 %d（期望 30），第二笔 %d（期望 20）", a, b)
+
+	chargeOK(t, e, ctx, TrafficCharge{UID: sub.NodeUID, Bytes: 30})
+	q = quotaOf(t, e, ctx, sub.ID, MetricTraffic, PeriodCycle)
+	if q.Consumed != 160 {
+		t.Fatalf("consumed 应为 160，得 %d", q.Consumed)
 	}
-	chargeOK(t, e, ctx, TrafficCharge{UID: sub.NodeUID, Bytes: 40})
-	if b := chargePackConsumed(t, e, ctx, packs[1]); b != 50 {
-		t.Fatalf("第二笔应用完，得 %d", b)
-	}
-	if q := quotaOf(t, e, ctx, sub.ID, MetricTraffic, PeriodCycle); q.Consumed != 110 {
-		t.Fatalf("包不够的部分记在套餐上，consumed 应为 110，得 %d", q.Consumed)
+	if n := e.roster.count(sub.ID) - base; n != 1 {
+		t.Fatalf("用尽应通知 1 次，得 %d", n)
 	}
 }
 

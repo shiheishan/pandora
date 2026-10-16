@@ -92,8 +92,8 @@ func hasCredentialInsert(evs []realtime.Event) bool {
 	return false
 }
 
-// TestRealtimeProvisionAndPack 验证开通与发流量包在提交后会推实时事件。
-func TestRealtimeProvisionAndPack(t *testing.T) {
+// TestRealtimeProvision 验证开通在提交后会推实时事件。
+func TestRealtimeProvision(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	user := newUser(t, e, ctx)
@@ -107,17 +107,6 @@ func TestRealtimeProvisionAndPack(t *testing.T) {
 	if !hasCredentialInsert(evs) {
 		t.Fatalf("应有 subscription_credentials INSERT，事件: %+v", evs)
 	}
-	pack, err := e.svc.GrantTrafficPack(ctx, PackGrant{
-		UserID: user, SubscriptionID: &sub.ID, Source: PackSourceAdmin,
-		SourceID: uuid.New(), Bytes: gib,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	evs = collectEvents(t, ps, time.Second)
-	if !hasEvent(evs, "traffic_pack_grants", realtime.OpInsert, pack.ID.String()) {
-		t.Fatalf("应有 traffic_pack_grants INSERT，事件: %+v", evs)
-	}
 }
 
 var errBoom = errors.New("故意回滚")
@@ -128,12 +117,11 @@ func TestRealtimeRollbackNoEvent(t *testing.T) {
 	ctx := context.Background()
 	user := newUser(t, e, ctx)
 	planID, versionID := newPlan(t, e, ctx, quotaSpec{MetricTraffic, PeriodCycle, i64(gib)})
-	sub := provision(t, e, ctx, user, planID, versionID, "")
 	ps := listenUser(t, e, user)
 	err := e.svc.tx.Do(ctx, func(ctx context.Context) error {
-		if _, err := e.svc.GrantTrafficPack(ctx, PackGrant{
-			UserID: user, SubscriptionID: &sub.ID, Source: PackSourceAdmin,
-			SourceID: uuid.New(), Bytes: gib,
+		if _, err := e.svc.Provision(ctx, Provision{
+			UserID: user, PlanID: planID, PlanVersionID: versionID,
+			Price: monthly(), Actor: Actor{Kind: ActorSystem},
 		}); err != nil {
 			return err
 		}

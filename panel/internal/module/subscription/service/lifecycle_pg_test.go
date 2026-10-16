@@ -30,15 +30,6 @@ func TestProvisionPG(t *testing.T) {
 		quotaSpec{MetricTraffic, PeriodCycle, i64(100 * gib)},
 		quotaSpec{MetricTraffic, PeriodDay, i64(5 * gib)})
 
-	// 开通前先有一笔未分配的流量包（无订阅时兑换的送流量卡）
-	pack, err := e.svc.GrantTrafficPack(ctx, PackGrant{UserID: user, Source: PackSourceGiftCard, SourceID: uuid.New(), Bytes: gib})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if pack.SubscriptionID != nil {
-		t.Fatalf("应未分配: %+v", pack)
-	}
-
 	sub := provision(t, e, ctx, user, planID, versionID, "Work")
 	if sub.Status != StatusActive || sub.Label == nil || *sub.Label != "Work" || sub.NodeUID == 0 || sub.ProxyUUID == uuid.Nil {
 		t.Fatalf("订阅: %+v", sub)
@@ -61,25 +52,10 @@ func TestProvisionPG(t *testing.T) {
 	if n := countRows(t, e, ctx, `SELECT count(*) FROM subscription_events WHERE subscription_id = ? AND event_type = 'activated' AND from_status IS NULL`, sub.ID); n != 1 {
 		t.Fatalf("activated 事件 %d", n)
 	}
-	// 唯一一份生效中的：未分配的流量包自动挂上，转移流水记 system
-	if n := countRows(t, e, ctx, `SELECT count(*) FROM traffic_pack_grants WHERE id = ? AND subscription_id = ?`, pack.ID, sub.ID); n != 1 {
-		t.Fatal("未分配流量包没挂上")
-	}
-	if n := countRows(t, e, ctx, `SELECT count(*) FROM traffic_pack_transfers WHERE grant_id = ? AND actor_kind = 'system' AND from_subscription_id IS NULL`, pack.ID); n != 1 {
-		t.Fatal("没有挂接流水")
-	}
-
-	// 同名自动加序号；第二份开通时已有两份生效中的，新的未分配流量包不替用户选
-	pack2, err := e.svc.GrantTrafficPack(ctx, PackGrant{UserID: user, Source: PackSourceGiftCard, SourceID: uuid.New(), Bytes: gib})
-	if err != nil {
-		t.Fatal(err)
-	}
+	// 同名自动加序号
 	sub2 := provision(t, e, ctx, user, planID, versionID, "work")
 	if sub2.Label == nil || *sub2.Label != "work 2" {
 		t.Fatalf("同名加序号: %v", sub2.Label)
-	}
-	if n := countRows(t, e, ctx, `SELECT count(*) FROM traffic_pack_grants WHERE id = ? AND subscription_id IS NULL`, pack2.ID); n != 1 {
-		t.Fatal("多份生效中时不该自动挂")
 	}
 
 	// 版本不属于该套餐
