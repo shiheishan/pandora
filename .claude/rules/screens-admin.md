@@ -18,4 +18,4 @@ paths:
   - `users/model.ts` 的 `ORDER_STATUS_VIEW` / `orderWhat` / `parseYuan` 与 `plans/model.ts` 的周期文案被订单页复用
   - `plans/api.ts` 的 `planOptionsKey` 给用户、内容两个模块各自查套餐目录，挂在 `PK` 下，套餐页写后一并失效
   - `users/api.ts` 的 `useUserGroups` 被套餐页（可见用户组、组专属价）借用
-- 设计稿之外按契约补了不少功能（各模块的筛选、确认框、抽屉、状态等），照设计稿改版时不要把它们删掉。
+- 10-16 起按设计稿显示效果还原：设计稿没显示的功能前后端一起删，安全项保留（见 redesign-2026-10-16.md）。
