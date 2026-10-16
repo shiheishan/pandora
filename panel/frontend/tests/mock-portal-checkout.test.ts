@@ -133,8 +133,8 @@ describe('mock api · portal checkout (purchase model)', () => {
     expect(body.error.fields.lapsed).toBe('true')
   })
 
-  it('订单详情的 subscription_id：新买的是新开的那份，续费是原来那份，没履约时 null', async () => {
-    // Go 无 omitempty：没履约时也在，值为 null（门户 orderDetailSchema 的 nullable）
+  it('订单详情的 subscription_id：新买的履约后是新开的那份；续费建单时就指向原来那份（与 Go 同口径）', async () => {
+    // Go 无 omitempty：恒在，没有时为 null（门户 orderDetailSchema 的 nullable）
     const detail = async (id: string) => ((await (await call('GET', `/v1/orders/${id}`)).json()) as { order: { subscription_id: string | null } }).order
     await scenario('proto-s7b')
     const [mine] = (await subs()).subscriptions
@@ -146,7 +146,7 @@ describe('mock api · portal checkout (purchase model)', () => {
     const fresh = (await subs()).subscriptions.find((s) => s.label === '妈妈的 iPad')!
     expect(fresh.id).not.toBe(mine!.id)
     expect((await detail(order.order_id)).subscription_id).toBe(fresh.id)
-    // 待支付的续费：订单上记着那一份，但没履约时详情仍是 null
+    // 待支付的续费：订单建单时就记着那一份，详情照实给（「改用余额付」靠它回确认页）
     await scenario('proto-s3')
     const [s3] = (await subs()).subscriptions
     const rq = await quote({ action: 'renew', subscription_id: s3!.id })
@@ -154,7 +154,7 @@ describe('mock api · portal checkout (purchase model)', () => {
     const renewal = await call('POST', `/v1/me/subscriptions/${s3!.id}/renew`, { price_id: rr.price_id, as_of: rq.as_of, expect: { total: rr.total, balance_applied: 0, payable: rr.total } }, true)
     const pending = (await renewal.json()) as { order_id: string; status: string }
     expect(pending.status).toBe('pending_payment')
-    expect((await detail(pending.order_id)).subscription_id).toBeNull()
+    expect((await detail(pending.order_id)).subscription_id).toBe(s3!.id)
   })
 
   it('另买一份：不带 new_copy 拦同款；同款没起名时名字必填；同一套餐只能有一张未付款的新购单', async () => {
