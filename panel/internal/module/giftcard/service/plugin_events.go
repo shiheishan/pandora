@@ -48,7 +48,6 @@ func pluginGranted(g granted) (map[string]any, error) {
 			return nil, fmt.Errorf("套餐退款: %w", err)
 		}
 		m["plan_refund"] = cents
-		m["refund_currency"] = string(g.refundCur)
 	}
 	if g.ledgerTxn != nil {
 		m["ledger_txn_id"] = g.ledgerTxn.String()

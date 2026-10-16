@@ -152,12 +152,11 @@ type placementOptionDTO struct {
 	State          string     `json:"state,omitempty"`
 	PeriodEnd      *time.Time `json:"period_end,omitempty"`
 	NewPeriodEnd   *time.Time `json:"new_period_end,omitempty"`
+	NewPermanent   bool       `json:"new_permanent,omitempty"`
 	Credit         int64      `json:"credit,omitempty"`
-	Currency       string     `json:"currency,omitempty"`
 	GiftDaysLost   int        `json:"gift_days_lost,omitempty"`
 	TrafficUsed    int64      `json:"traffic_used,omitempty"`
 	TrafficCap     int64      `json:"traffic_cap,omitempty"`
-	PackRemaining  int64      `json:"pack_remaining,omitempty"`
 }
 
 type placementDTO struct {
@@ -178,8 +177,10 @@ type cardDTO struct {
 	ThemeColor    string        `json:"theme_color"`
 	CreatedAt     time.Time     `json:"created_at"`
 	PlanName      string        `json:"plan_name,omitempty"`
+	PlanKind      string        `json:"plan_kind,omitempty"`
 	Interval      string        `json:"interval,omitempty"`
 	IntervalCount int           `json:"interval_count,omitempty"`
+	ValidityDays  *int          `json:"validity_days,omitempty"`
 	Placement     *placementDTO `json:"placement"`
 }
 
@@ -201,8 +202,10 @@ func previewFrom(p service.CardPreview) (previewResponse, error) {
 		ThemeColor:    p.ThemeColor,
 		CreatedAt:     p.CreatedAt,
 		PlanName:      p.PlanName,
+		PlanKind:      p.PlanKind,
 		Interval:      p.Interval,
 		IntervalCount: p.IntervalCount,
+		ValidityDays:  p.ValidityDays,
 	}
 	if p.Placement != nil {
 		pl := &placementDTO{Question: p.Placement.Question, DefaultKey: p.Placement.DefaultKey,
@@ -211,9 +214,9 @@ func previewFrom(p service.CardPreview) (previewResponse, error) {
 			v := placementOptionDTO{
 				Key: o.Key, Kind: o.Kind, Expired: o.Expired, Badge: o.Badge,
 				Label: o.Label, PlanName: o.PlanName, State: o.State,
-				PeriodEnd: o.PeriodEnd, NewPeriodEnd: o.NewPeriodEnd,
-				Credit: c.of(o.Credit), Currency: string(o.Currency), GiftDaysLost: o.GiftDaysLost,
-				TrafficUsed: o.TrafficUsed, TrafficCap: o.TrafficCap, PackRemaining: o.PackRemaining,
+				PeriodEnd: o.PeriodEnd, NewPeriodEnd: o.NewPeriodEnd, NewPermanent: o.NewPermanent,
+				Credit: c.of(o.Credit), GiftDaysLost: o.GiftDaysLost,
+				TrafficUsed: o.TrafficUsed, TrafficCap: o.TrafficCap,
 			}
 			if o.SubscriptionID != nil {
 				v.SubscriptionID = o.SubscriptionID.String()

@@ -15,7 +15,6 @@ type Template struct {
 	Description   string           `gorm:"column:description"`
 	Type          string           `gorm:"column:type"`
 	Status        string           `gorm:"column:status"`
-	Currency      string           `gorm:"column:currency"`
 	BalanceAmount *decimal.Decimal `gorm:"column:balance_amount"`
 	TrafficBytes  *int64           `gorm:"column:traffic_bytes"`
 	ExpireDays    *int             `gorm:"column:expire_days"`
@@ -101,7 +100,6 @@ type Redemption struct {
 	TemplateID     uuid.UUID        `gorm:"column:template_id;type:uuid"`
 	UserID         uuid.UUID        `gorm:"column:user_id;type:uuid"`
 	PrizeLabel     *string          `gorm:"column:prize_label"`
-	Currency       string           `gorm:"column:currency"`
 	BalanceAmount  *decimal.Decimal `gorm:"column:balance_amount"`
 	LedgerTxnID    *uuid.UUID       `gorm:"column:ledger_txn_id;type:uuid"`
 	TrafficBytes   *int64           `gorm:"column:traffic_bytes"`
@@ -111,7 +109,6 @@ type Redemption struct {
 	PlanMode       *string          `gorm:"column:plan_mode"`
 	SubscriptionID *uuid.UUID       `gorm:"column:subscription_id;type:uuid"`
 	RefundAmount   *decimal.Decimal `gorm:"column:refund_amount"`
-	RefundCurrency *string          `gorm:"column:refund_currency"`
 	RedeemedAt     time.Time        `gorm:"column:redeemed_at;autoCreateTime"`
 }
 

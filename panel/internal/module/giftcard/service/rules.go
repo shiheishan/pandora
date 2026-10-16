@@ -149,6 +149,9 @@ func validateRewards(cardType string, r Rewards) string {
 		if r.PlanID == nil || *r.PlanID == uuid.Nil {
 			return "套餐卡必须指定套餐"
 		}
+		if r.PriceID == nil || *r.PriceID == uuid.Nil {
+			return "套餐卡必须选一档价格：订阅套餐选一个周期，一次性套餐选它的价格"
+		}
 	case TypeMystery:
 		if len(r.Pool) < minPrizes {
 			return "盲盒至少要有 2 个奖品，否则它就是一张普通卡"
@@ -302,13 +305,9 @@ func drawPrize(pool []Prize) (Prize, error) {
 	return pool[len(pool)-1], nil
 }
 
-// formatAmount 按币种格式化金额：人民币用 ¥，其余写币种代码。
-func formatAmount(d decimal.Decimal, cur money.Currency) string {
-	s := d.StringFixed(money.Scale)
-	if cur == "" || cur == money.CNY {
-		return "¥" + s
-	}
-	return string(cur) + " " + s
+// formatAmount 金额写成 ¥12.30。
+func formatAmount(d decimal.Decimal) string {
+	return "¥" + d.StringFixed(money.Scale)
 }
 
 // formatBytes 把字节数写成 GB / MB（向下取整）。
