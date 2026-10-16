@@ -61,7 +61,7 @@ const gib = int64(1) << 30
 
 // orderCommitTables 是真提交用例前后要清的表（CASCADE 带走订单行、预留、订阅子表等）。
 var orderCommitTables = []string{
-	"orders", "plan_purchase_counters",
+	"orders",
 	"late_payment_cases", "payment_events", "payments", "payment_intents",
 	"balance_holds", "coupon_redemptions", "subscriptions",
 	"ledger_entries", "ledger_transactions", "ledger_accounts",
@@ -409,9 +409,9 @@ func (e *env) mkEpayProvider(t *testing.T, ctx context.Context, code, baseURL st
 		t.Fatal(err)
 	}
 	e.mustExec(t, ctx, `
-INSERT INTO payment_providers (id, code, adapter, display_name, credentials_sealed, currencies, base_url, methods, default_method,
+INSERT INTO payment_providers (id, code, adapter, display_name, credentials_sealed, base_url, methods, default_method,
                                allow_private_host, min_amount, enabled, accepting_new)
-VALUES (?, ?, 'epay', '易支付测试', ?, '["CNY"]'::jsonb, ?, '["alipay"]'::jsonb, 'alipay', true, 0.01, true, true)`,
+VALUES (?, ?, 'epay', '易支付测试', ?, ?, '["alipay"]'::jsonb, 'alipay', true, 0.01, true, true)`,
 		id, code, sealed, baseURL)
 }
 
@@ -497,29 +497,6 @@ func (e *env) reservationState(t *testing.T, ctx context.Context, orderID uuid.U
 		t.Fatal(err)
 	}
 	return st
-}
-
-// stock 读套餐的已预留与已售。
-func (e *env) stock(t *testing.T, ctx context.Context, planID uuid.UUID) (reserved, sold int) {
-	t.Helper()
-	if err := e.row(ctx, `SELECT stock_reserved, stock_sold FROM plans WHERE id = ?`, planID).Scan(&reserved, &sold); err != nil {
-		t.Fatal(err)
-	}
-	return reserved, sold
-}
-
-// counter 读限购计数（没有行时为 0、0）。
-func (e *env) counter(t *testing.T, ctx context.Context, planID, user uuid.UUID) (purchased, reserved int) {
-	t.Helper()
-	err := e.row(ctx, `SELECT purchased, reserved FROM plan_purchase_counters WHERE plan_id = ? AND user_id = ?`, planID, user).
-		Scan(&purchased, &reserved)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, 0
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	return purchased, reserved
 }
 
 // strCol 读一个可空文本（没有行或为 NULL 时回空串）。
