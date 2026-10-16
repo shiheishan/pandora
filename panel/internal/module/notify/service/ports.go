@@ -45,7 +45,7 @@ type Subscriptions interface {
 	// ExpiredForNotify 取 status=expired、续费窗口没关、到期时间在 (endedAfter, endedUntil] 内的订阅；
 	// onlyWithoutLive 为 true 时排除名下另有生效订阅的用户。
 	ExpiredForNotify(ctx context.Context, endedAfter, endedUntil time.Time, onlyWithoutLive bool) ([]subsvc.NotifyCandidate, error)
-	// QuotaUsageForNotify 取生效订阅本期流量用量（含挂在这一份上的流量包余量）达到 minPercent% 的配额行。
+	// QuotaUsageForNotify 取生效订阅本期流量用量（剩余含本期赠送）达到 minPercent% 的配额行。
 	QuotaUsageForNotify(ctx context.Context, minPercent int) ([]subsvc.QuotaNotice, error)
 	// LivePlanIDs 取用户名下生效订阅的套餐 id（去重）。
 	LivePlanIDs(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error)

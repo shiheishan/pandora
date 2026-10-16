@@ -15,7 +15,7 @@ import (
 
 // SubscriptionSummaries 是 /traffic 与工单提醒要的订阅摘要；*subsvc.Service 直接满足。
 type SubscriptionSummaries interface {
-	// SummariesByUsers 批量取用户的全部订阅摘要（含状态口径、套餐名、配额与流量包余量）。
+	// SummariesByUsers 批量取用户的全部订阅摘要（含状态口径、套餐名与配额）。
 	SummariesByUsers(ctx context.Context, userIDs []uuid.UUID) (map[uuid.UUID]subsvc.UserSubscriptions, error)
 }
 
