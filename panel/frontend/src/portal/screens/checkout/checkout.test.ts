@@ -174,7 +174,7 @@ describe('完成页', () => {
   })
 
   it('花了多少：余额、渠道、免掉的差价', () => {
-    const pay = (amount: number, method?: string) => ({ status: 'succeeded', amount, currency: 'CNY', created_at: '', method, provider_name: 'W9 演示收银（假商户）' })
+    const pay = (amount: number, method?: string) => ({ status: 'succeeded', amount, created_at: '', method, provider_name: 'W9 演示收银（假商户）' })
     expect(paidText({ balance_applied: 850, payments: [pay(950, 'alipay')] })).toBe('余额付了 ¥8.50，支付宝付了 ¥9.50')
     expect(paidText({ balance_applied: 0, payments: [] }, 30)).toBe('零头 ¥0.30 已免')
   })
@@ -223,7 +223,7 @@ describe('支付', () => {
   })
 
   it('成功文案按订单种类', () => {
-    const base = { paid_amount: 0, total_amount: 5000, currency: 'CNY' }
+    const base = { paid_amount: 0, total_amount: 5000 }
     expect(paySuccessText({ ...base, kind: 'upgrade' })).toBe('已换好，链接不变')
     expect(paySuccessText({ ...base, kind: 'topup' })).toBe('余额 +¥50.00')
   })

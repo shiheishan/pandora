@@ -161,7 +161,7 @@ describe('orders', () => {
 
   it('标题按 kind 映射，周期缺席（omitempty）时只写套餐名', () => {
     expect(orderTitle({ kind: 'topup', item_name: '' })).toBe('余额充值')
-    expect(orderTitle({ kind: 'addon', plan_name: '100 GB', item_name: '100 GB' })).toBe('流量包 · 100 GB')
+    expect(orderTitle({ kind: 'stack', plan_name: '流量版', item_name: '流量版' })).toBe('叠加 · 流量版')
     expect(orderTitle({ kind: 'new', plan_name: '专业版', item_name: '专业版', interval: 'month', interval_count: 1 })).toBe('专业版 · 月付')
     expect(orderTitle({ kind: 'new', plan_name: '专业版', item_name: '专业版' })).toBe('专业版')
     expect(orderTitle({ kind: 'renewal', plan_name: '专业版', item_name: '专业版', interval: 'year', interval_count: 1 })).toBe('专业版 · 年付续费')
@@ -175,7 +175,7 @@ describe('orders', () => {
   })
 
   it('订单行 schema：无 omitempty 的字段必填，omitempty 的可缺席，未知 kind 拒收', () => {
-    const row = { id: 'o', order_no: 'PD-1', kind: 'stack', status: 'pending_payment', total_amount: 1, discount_amount: 0, member_discount_amount: 0, balance_applied: 0, payable_amount: 1, paid_amount: 0, item_name: '', cancellable: true, has_payment_intent: false, created_at: 'x' }
+    const row = { id: 'o', order_no: 'PD-1', kind: 'stack', status: 'pending_payment', total_amount: 1, discount_amount: 0, balance_applied: 0, payable_amount: 1, paid_amount: 0, item_name: '', cancellable: true, has_payment_intent: false, created_at: 'x' }
     expect(orderRowSchema.safeParse(row).success).toBe(true)
     expect(orderRowSchema.safeParse({ ...row, kind: 'gift' }).success).toBe(false)
     const missing: Partial<typeof row> = { ...row }
