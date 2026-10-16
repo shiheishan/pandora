@@ -72,9 +72,9 @@ describe('rankView - 节点排行', () => {
     expect(view.rows).toHaveLength(4)
 
     // display_name 有值时用 display_name，initials 用 name 前两字符大写
-    expect(view.rows[0].name).toBe('香港 01')
-    expect(view.rows[0].initials).toBe('HK')
-    expect(view.rows[0].userId).toBeUndefined()
+    expect(view.rows[0]!.name).toBe('香港 01')
+    expect(view.rows[0]!.initials).toBe('HK')
+    expect(view.rows[0]!.userId).toBeUndefined()
 
     // display_name 为 null 时回退到 name
     const sg = view.rows.find((r) => r.key === 'node-3')!
@@ -88,17 +88,17 @@ describe('rankView - 节点排行', () => {
     // 分母 = 2500 GiB
     // 合计 = 2000 GiB，4 行，均值 = 500 GiB
     // node-1: 1000 GiB. pct = 1000 * 1000 / 2500 = 400 -> 40.0%
-    expect(view.rows[0].share).toBe('占 40.0%')
+    expect(view.rows[0]!.share).toBe('占 40.0%')
     // 差 = 1000 - 500 = +500 GiB
-    expect(view.rows[0].above).toBe(true)
-    expect(view.rows[0].delta).toBe('+500 GB')
-    expect(view.rows[0].tip.title).toBe('香港 01')
-    expect(view.rows[0].tip.main).toBe('1000 GB · 占 40.0%')
-    expect(view.rows[0].tip.sub).toContain('高于均值 500 GB')
-    expect(view.rows[0].tip.sub).toContain('下行 90% · 上行 10%')
-    expect(view.rows[0].tip.sub).toContain('最近上报 2 分钟前')
+    expect(view.rows[0]!.above).toBe(true)
+    expect(view.rows[0]!.delta).toBe('+500 GB')
+    expect(view.rows[0]!.tip.title).toBe('香港 01')
+    expect(view.rows[0]!.tip.main).toBe('1000 GB · 占 40.0%')
+    expect(view.rows[0]!.tip.sub).toContain('高于均值 500 GB')
+    expect(view.rows[0]!.tip.sub).toContain('下行 90% · 上行 10%')
+    expect(view.rows[0]!.tip.sub).toContain('最近上报 2 分钟前')
     // 节点 tip.sub 不应该含「订阅」
-    expect(view.rows[0].tip.sub).not.toContain('订阅')
+    expect(view.rows[0]!.tip.sub).not.toContain('订阅')
 
     // node-3: 200 GiB. pct = 200 * 1000 / 2500 = 80 -> 8.0%
     // 差 = 200 - 500 = -300 GiB, 数学减号 U+2212 '−'
@@ -117,7 +117,7 @@ describe('rankView - 节点排行', () => {
     // maxTotal = 1000 GiB
     // axis = 1000 * 1.12 = 1120 GiB
     // 第一名 widthPct = 1000 / 1120 * 100 = 89.2857... -> 89.29
-    expect(view.rows[0].widthPct).toBe(89.29)
+    expect(view.rows[0]!.widthPct).toBe(89.29)
     // avg = 500 GiB. avgPct = 500 / 1120 * 100 = 44.6428... -> 44.64
     expect(view.avgPct).toBe(44.64)
   })
@@ -155,7 +155,7 @@ describe('rankView - 节点排行', () => {
     // pct = 2000 * 1000 / 2500 = 800 -> 80.0%
     expect(view.total.label).toBe('前 4 个节点')
     expect(view.total.sub).toBe('均值 500 GB · 占全部 80.0%')
-    expect(view.total.value).toBe('2000 GB')
+    expect(view.total.value).toBe('1.95 TB') // 2000 GiB，与「共 2.44 TB」同一换算
     expect(view.total.of).toBe('共 2.44 TB') // 2500 * GiB
     expect(view.more).toEqual({ label: '查看全部节点', module: 'nodes', tab: 'nodes' })
   })
@@ -230,24 +230,24 @@ describe('rankView - 用户排行', () => {
     expect(view.rows).toHaveLength(3)
 
     // 用户 1: initials 为首字符大写 'A', userId 保留
-    expect(view.rows[0].name).toBe('a***@example.test')
-    expect(view.rows[0].initials).toBe('A')
-    expect(view.rows[0].userId).toBe('usr-1')
-    expect(view.rows[0].tip.sub).toContain('2 个订阅')
-    expect(view.rows[0].tip.sub).toContain('最近上报 刚刚')
+    expect(view.rows[0]!.name).toBe('a***@example.test')
+    expect(view.rows[0]!.initials).toBe('A')
+    expect(view.rows[0]!.userId).toBe('usr-1')
+    expect(view.rows[0]!.tip.sub).toContain('2 个订阅')
+    expect(view.rows[0]!.tip.sub).toContain('最近上报 刚刚')
 
     // 用户 2: email_masked 为 '***'，initials 为 '*'
-    expect(view.rows[1].name).toBe('***')
-    expect(view.rows[1].initials).toBe('*')
-    expect(view.rows[1].userId).toBe('usr-2')
-    expect(view.rows[1].tip.sub).toContain('1 个订阅')
+    expect(view.rows[1]!.name).toBe('***')
+    expect(view.rows[1]!.initials).toBe('*')
+    expect(view.rows[1]!.userId).toBe('usr-2')
+    expect(view.rows[1]!.tip.sub).toContain('1 个订阅')
 
     // 用户 3: 0 流量
-    expect(view.rows[2].value).toBe('0 B')
-    expect(view.rows[2].share).toBe('占 0.0%')
-    expect(view.rows[2].widthPct).toBe(0)
-    expect(view.rows[2].upPct).toBe(0)
-    expect(view.rows[2].tip.sub).toContain('0 个订阅')
+    expect(view.rows[2]!.value).toBe('0 B')
+    expect(view.rows[2]!.share).toBe('占 0.0%')
+    expect(view.rows[2]!.widthPct).toBe(0)
+    expect(view.rows[2]!.upPct).toBe(0)
+    expect(view.rows[2]!.tip.sub).toContain('0 个订阅')
 
     // total & more
     expect(view.total.label).toBe('前 3 位用户')
@@ -294,8 +294,8 @@ describe('rankView - 差值为 0 的展示（±0 B）', () => {
       quality: { invalid_report_count: 0, invalid_entry_count: 0 },
     }
     const view = rankView(nodeTrafficSchema.parse(singleRaw), 'total')
-    expect(view.rows[0].delta).toBe('+0 B')
-    expect(view.rows[0].above).toBe(true)
+    expect(view.rows[0]!.delta).toBe('+0 B')
+    expect(view.rows[0]!.above).toBe(true)
   })
 })
 
