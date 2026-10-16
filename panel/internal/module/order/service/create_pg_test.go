@@ -13,10 +13,9 @@ import (
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
-// 新购、不用余额、无券：待付，金额恒等，预留 held，库存与限购各占 1，订单行快照正确。
+// 新购、不用余额、无券：待付，金额恒等，预留 held，订单行快照正确。
 func TestCreateNewOrderPlain(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
@@ -34,7 +33,7 @@ func TestCreateNewOrderPlain(t *testing.T) {
 	mustEq(t, "BalanceApplied", c.BalanceApplied, dec("0"))
 
 	o := e.order(t, ctx, c.OrderID)
-	if o.Kind != KindNew || o.UserID != user || o.Currency != "CNY" || o.SubscriptionID != nil || o.CouponID != nil {
+	if o.Kind != KindNew || o.UserID != user || o.SubscriptionID != nil || o.CouponID != nil {
 		t.Fatalf("订单形状不对: %+v", o)
 	}
 	mustEq(t, "subtotal", o.SubtotalAmount, dec("30"))
@@ -50,12 +49,6 @@ func TestCreateNewOrderPlain(t *testing.T) {
 	}
 	if n := e.count(t, ctx, `SELECT count(*) FROM order_reservation_events WHERE order_id = ? AND event_kind = 'reserve' AND actor_kind = 'user' AND actor_id = ?`, c.OrderID, user); n != 1 {
 		t.Fatalf("reserve 流水 %d 条", n)
-	}
-	if r, s := e.stock(t, ctx, planID); r != 1 || s != 0 {
-		t.Fatalf("库存 reserved=%d sold=%d", r, s)
-	}
-	if p, r := e.counter(t, ctx, planID, user); p != 0 || r != 1 {
-		t.Fatalf("限购 purchased=%d reserved=%d", p, r)
 	}
 
 	var name, interval, quotas string
@@ -110,7 +103,7 @@ func TestCreateNewOrderCouponAndPartialBalance(t *testing.T) {
 	e.assertNoDrift(t, ctx)
 }
 
-// 新购、余额全额付（应付 0）：当场履约，开出订阅，order_paid 1 笔，库存转已售，券 captured。
+// 新购、余额全额付（应付 0）：当场履约，开出订阅，order_paid 1 笔，券 captured。
 func TestCreateNewOrderZeroPayFulfils(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
@@ -141,12 +134,6 @@ func TestCreateNewOrderZeroPayFulfils(t *testing.T) {
 	}
 	if n := e.txnCount(t, ctx, ledgersvc.KindOrderPaid, c.OrderID); n != 1 {
 		t.Fatalf("order_paid %d 笔", n)
-	}
-	if r, s := e.stock(t, ctx, planID); r != 0 || s != 1 {
-		t.Fatalf("库存 reserved=%d sold=%d", r, s)
-	}
-	if p, r := e.counter(t, ctx, planID, user); p != 1 || r != 0 {
-		t.Fatalf("限购 purchased=%d reserved=%d", p, r)
 	}
 	if st := e.strCol(t, ctx, `SELECT status FROM coupon_redemptions WHERE order_id = ?`, c.OrderID); st != "captured" {
 		t.Fatalf("券 %s", st)
@@ -201,45 +188,28 @@ func TestCreateNewOrderPendingConflict(t *testing.T) {
 	}
 }
 
-// 限购 1：已成交一单后另买一份回 ErrPurchaseLimit；待付单先被 order_pending 挡住（限购检查在它之后）。
-func TestCreateNewOrderPurchaseLimit(t *testing.T) {
+// 已有同款一次性套餐：不带 new_copy 回 ErrSamePlanUseStack（让用户选叠加或另开）；带 new_copy 另开一份成功。
+func TestCreateNewOrderSameOneTimeNeedsStack(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month")
+	planID, _, priceID := e.mkOneTimePlan(t, ctx, 1000, 100*gib, intp(30))
 	e.giveBalance(t, ctx, user, 1000)
 	first := e.buyNew(t, ctx, user, planID, priceID, Checkout{UseBalance: dec("10")})
 	if first.Status != StatusFulfilled {
 		t.Fatalf("第一单应余额全额付清，状态 %s", first.Status)
 	}
-	_, err := e.svc.CreateNewOrder(asUser(ctx, user), NewOrderInput{PlanID: planID, PriceID: priceID, NewCopy: true, Label: "另一份"})
-	if !errors.Is(err, ErrPurchaseLimit) {
-		t.Fatalf("期望 ErrPurchaseLimit，得到 %v", err)
-	}
 
-	// 待付的单：同用户再买先撞 order_pending
-	other := e.mkUser(t, ctx)
-	e.buyNew(t, ctx, other, planID, priceID, Checkout{})
-	if p, r := e.counter(t, ctx, planID, other); p != 0 || r != 1 {
-		t.Fatalf("待付单应占限购 reserved=1，得到 purchased=%d reserved=%d", p, r)
+	_, err := e.svc.CreateNewOrder(asUser(ctx, user), NewOrderInput{PlanID: planID, PriceID: priceID})
+	if !errors.Is(err, ErrSamePlanUseStack) {
+		t.Fatalf("期望 ErrSamePlanUseStack，得到 %v", err)
 	}
-	_, err = e.svc.CreateNewOrder(asUser(ctx, other), NewOrderInput{PlanID: planID, PriceID: priceID})
-	if codeOf(err) != errs.OrderPending {
-		t.Fatalf("期望 order_pending，得到 %v", err)
+	c, err := e.svc.CreateNewOrder(asUser(ctx, user), NewOrderInput{PlanID: planID, PriceID: priceID, NewCopy: true, Label: "另一份"})
+	if err != nil {
+		t.Fatalf("new_copy 新购一次性套餐: %v", err)
 	}
-}
-
-// 库存 1：第一单成功，另一个用户的第二单售罄。
-func TestCreateNewOrderSoldOut(t *testing.T) {
-	e, ctx := newEnv(t)
-	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month")
-	e.buyNew(t, ctx, e.mkUser(t, ctx), planID, priceID, Checkout{})
-
-	_, err := e.svc.CreateNewOrder(asUser(ctx, e.mkUser(t, ctx)), NewOrderInput{PlanID: planID, PriceID: priceID})
-	if !errors.Is(err, catalogsvc.ErrSoldOut) {
-		t.Fatalf("期望售罄，得到 %v", err)
-	}
-	if r, s := e.stock(t, ctx, planID); r != 1 || s != 0 {
-		t.Fatalf("库存 reserved=%d sold=%d", r, s)
+	o := e.order(t, ctx, c.OrderID)
+	if o.SubscriptionLabel == nil || *o.SubscriptionLabel != "另一份" {
+		t.Fatalf("备注名 %v", o.SubscriptionLabel)
 	}
 }
 
@@ -331,39 +301,7 @@ func TestCreateRenewalOrder(t *testing.T) {
 	}
 }
 
-// 流量包：建单成功；目标订阅不是本人的回 404。
-func TestCreatePackOrder(t *testing.T) {
-	e, ctx := newEnv(t)
-	user := e.mkUser(t, ctx)
-	planID, versionID, priceID := e.mkPlan(t, ctx, 1000, "month")
-	sub := e.provision(t, ctx, user, planID, versionID, priceID, 1000)
-	packID := e.mkPack(t, ctx, 600, 50*gib)
-
-	c, err := e.svc.CreatePackOrder(asUser(ctx, user), PackOrderInput{PackID: packID, SubscriptionID: sub.ID})
-	if err != nil {
-		t.Fatalf("流量包建单: %v", err)
-	}
-	mustEq(t, "Payable", c.Payable, dec("6"))
-	o := e.order(t, ctx, c.OrderID)
-	if o.Kind != KindAddon || o.SubscriptionID == nil || *o.SubscriptionID != sub.ID {
-		t.Fatalf("流量包单形状不对: kind=%s sub=%v", o.Kind, o.SubscriptionID)
-	}
-	var bytes int64
-	var gotPack uuid.UUID
-	if err := e.row(ctx, `SELECT traffic_pack_id, snapshot_traffic_bytes FROM order_items WHERE order_id = ?`, c.OrderID).Scan(&gotPack, &bytes); err != nil {
-		t.Fatal(err)
-	}
-	if gotPack != packID || bytes != 50*gib {
-		t.Fatalf("订单行 pack=%s bytes=%d", gotPack, bytes)
-	}
-
-	_, err = e.svc.CreatePackOrder(asUser(ctx, e.mkUser(t, ctx)), PackOrderInput{PackID: packID, SubscriptionID: sub.ID})
-	if codeOf(err) != errs.NotFound {
-		t.Fatalf("加到别人的订阅应 404，得到 %v", err)
-	}
-}
-
-// 充值：1.00 成功、0.99 与 50000.01 回 422；币种为空取 CNY。
+// 充值：1.00 成功、0.99 与 50000.01 回 422。
 func TestCreateTopup(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
@@ -372,9 +310,6 @@ func TestCreateTopup(t *testing.T) {
 	c, err := e.svc.CreateTopup(uctx, TopupInput{Amount: dec("1.00")})
 	if err != nil {
 		t.Fatalf("充值 1.00: %v", err)
-	}
-	if c.Currency != money.CNY {
-		t.Fatalf("缺省币种 %s", c.Currency)
 	}
 	o := e.order(t, ctx, c.OrderID)
 	if o.Kind != KindTopup || o.Status != StatusPending || o.SubscriptionID != nil {
@@ -386,7 +321,7 @@ func TestCreateTopup(t *testing.T) {
 	}
 
 	for _, amt := range []string{"0.99", "50000.01"} {
-		_, err := e.svc.CreateTopup(uctx, TopupInput{Amount: dec(amt), Currency: money.CNY})
+		_, err := e.svc.CreateTopup(uctx, TopupInput{Amount: dec(amt)})
 		if codeOf(err) != errs.ValidationFailed {
 			t.Fatalf("充值 %s 应 422，得到 %v", amt, err)
 		}
@@ -461,7 +396,7 @@ func TestCreateRenewalWithoutPrice(t *testing.T) {
 	planID, versionID, _ := e.mkPlan(t, ctx, 1000, "month")
 	sub, err := e.subs.Provision(ctx, subsvc.Provision{
 		UserID: user, PlanID: planID, PlanVersionID: versionID,
-		Price: subsvc.PriceSnapshot{Currency: money.CNY, Amount: dec("10"), Interval: "month", IntervalCount: 1},
+		Price: subsvc.PriceSnapshot{Amount: dec("10"), Interval: "month", IntervalCount: 1},
 		Actor: subsvc.Actor{Kind: subsvc.ActorSystem},
 	})
 	if err != nil {

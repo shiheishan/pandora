@@ -10,7 +10,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
 
-// pendingWithEverything 建一张占了库存、限购、券与部分余额的待付新购单；返回用户、套餐与订单 id。
+// pendingWithEverything 建一张占了券与部分余额的待付新购单；返回用户、套餐与订单 id。
 func (e *env) pendingWithEverything(t *testing.T, ctx context.Context) (user, planID, orderID uuid.UUID) {
 	t.Helper()
 	user = e.mkUser(t, ctx)
@@ -34,12 +34,6 @@ func (e *env) assertReleased(t *testing.T, ctx context.Context, user, planID, or
 	if n := e.count(t, ctx, `SELECT count(*) FROM order_reservation_events WHERE order_id = ? AND event_kind = ? AND to_state = 'released'`, orderID, event); n != 1 {
 		t.Fatalf("%s 流水 %d 条", event, n)
 	}
-	if r, s := e.stock(t, ctx, planID); r != 0 || s != 0 {
-		t.Fatalf("库存 reserved=%d sold=%d，期望全部退回", r, s)
-	}
-	if p, r := e.counter(t, ctx, planID, user); p != 0 || r != 0 {
-		t.Fatalf("限购 purchased=%d reserved=%d，期望全部退回", p, r)
-	}
 	if st := e.strCol(t, ctx, `SELECT status FROM coupon_redemptions WHERE order_id = ?`, orderID); st != "released" {
 		t.Fatalf("券 %s，期望 released", st)
 	}
@@ -50,7 +44,7 @@ func (e *env) assertReleased(t *testing.T, ctx context.Context, user, planID, or
 	e.assertNoDrift(t, ctx)
 }
 
-// 用户取消待付新购单：订单 cancelled（user_cancelled），库存、限购、券、冻结全部退回。
+// 用户取消待付新购单：订单 cancelled（user_cancelled），券、冻结全部退回。
 func TestCancelByUserReleasesEverything(t *testing.T) {
 	e, ctx := newEnv(t)
 	user, planID, orderID := e.pendingWithEverything(t, ctx)
@@ -166,8 +160,8 @@ func TestExpireDue(t *testing.T) {
 	if st := e.order(t, ctx, fresh.OrderID).Status; st != StatusPending {
 		t.Fatalf("未到期的单被动了: %s", st)
 	}
-	if r, _ := e.stock(t, ctx, freshPlan); r != 1 {
-		t.Fatalf("未到期单的库存预留 %d，期望 1", r)
+	if st := e.reservationState(t, ctx, fresh.OrderID); st != ReservationHeld {
+		t.Fatalf("未到期单的预留 %s，期望 held", st)
 	}
 	if _, err := e.svc.Cancel(asUser(ctx, user), CancelInput{OrderID: dueID}); !errors.Is(err, errOrderExpired) {
 		t.Fatalf("取消已过期的单应回「订单已过期」，得到 %v", err)
