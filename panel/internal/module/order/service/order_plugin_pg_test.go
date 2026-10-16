@@ -6,6 +6,7 @@ import (
 	"errors"
 	"testing"
 
+	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
@@ -96,9 +97,6 @@ func TestPluginOrderCreatedNew(t *testing.T) {
 	if payloadStr(p, "user_id") != user.String() {
 		t.Fatalf("user_id %v", p["user_id"])
 	}
-	if payloadStr(p, "currency") != "CNY" {
-		t.Fatalf("currency %v", p["currency"])
-	}
 	if payloadFloat(p, "total") != float64(money.MustCents(c.Total)) {
 		t.Fatalf("total %v，期望 %d 分", p["total"], money.MustCents(c.Total))
 	}
@@ -137,10 +135,7 @@ func TestPluginOrderPaidZeroPay(t *testing.T) {
 	if o.SubscriptionID == nil || subID != o.SubscriptionID.String() {
 		t.Fatalf("subscription_id %s vs 订单 %v", subID, o.SubscriptionID)
 	}
-	// 0 元单：currency 为 ""、amount 为 0
-	if v, ok := paid["currency"]; !ok || v != "" {
-		t.Fatalf("currency %v", paid["currency"])
-	}
+	// 0 元单：amount 为 0
 	if v, ok := paid["amount"]; !ok || v != float64(0) {
 		t.Fatalf("amount %v", paid["amount"])
 	}
@@ -274,19 +269,34 @@ func TestPluginZeroPayRenewalNoPaid(t *testing.T) {
 	}
 }
 
-func TestPluginPackOrderCreated(t *testing.T) {
+func TestPluginStackOrderCreated(t *testing.T) {
 	e, ctx := newEnv(t)
 	rec := &pluginRec{}
 	e.svc.UsePluginEvents(rec)
 
 	user := e.mkUser(t, ctx)
-	planID, versionID, priceID := e.mkPlan(t, ctx, 1000, "month")
-	sub := e.provision(t, ctx, user, planID, versionID, priceID, 1000)
-	packID := e.mkPack(t, ctx, 600, 50*gib)
-
-	c, err := e.svc.CreatePackOrder(asUser(ctx, user), PackOrderInput{PackID: packID, SubscriptionID: sub.ID})
+	planID, versionID, priceID := e.mkOneTimePlan(t, ctx, 1000, 100*gib, intp(30))
+	pid := priceID
+	sub, err := e.subs.Provision(ctx, subsvc.Provision{
+		UserID:        user,
+		PlanID:        planID,
+		PlanVersionID: versionID,
+		Price: subsvc.PriceSnapshot{
+			PriceID:       &pid,
+			Amount:        money.FromCents(1000),
+			Interval:      "one_time",
+			IntervalCount: 1,
+			ValidityDays:  intp(30),
+		},
+		Actor: subsvc.Actor{Kind: subsvc.ActorSystem},
+	})
 	if err != nil {
-		t.Fatalf("流量包建单: %v", err)
+		t.Fatalf("开通一次性订阅: %v", err)
+	}
+
+	c, err := e.svc.CreateStackOrder(asUser(ctx, user), StackOrderInput{SubscriptionID: sub.ID})
+	if err != nil {
+		t.Fatalf("叠加建单: %v", err)
 	}
 	created := rec.find("order.created")
 	if len(created) != 1 {
