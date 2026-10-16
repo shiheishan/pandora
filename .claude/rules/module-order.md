@@ -10,7 +10,7 @@ paths:
 
 - 锁序（防死锁 40P01）：
   - 结算主链：订单行（`OrderByID` 锁行）→ 订阅（`subs.Lock`，续费/换套餐/叠加/流量重置）→ 预留确认（`captureReservation` 锁券）→ 记账（`postSettlement`，经 `lockAccounts` 稳定顺序锁科目）→ 订单状态（`markPaid`）→ `PaidHook` → 履约（`fulfil`）。
-  - 建单主链：新购锁套餐行（`catalog.Offer`）；续费/叠加/流量重置锁订阅；换套餐建单先锁订阅（`subs.Lock`）；再调 `promo.Reserve` / `ledger.HoldForOrder`，最后插订单。取消/超时释放先锁订单行。门户各建单事务与后台开单（`requireUser`）的第一步是 `rejectDeleted`（identity `IsDeleted`，给用户行加共享锁），已注销 409「账号已注销」。后台调账 `AdjustBalance` 对已注销账号只拒加钱，扣减照常（仍要原因、重认证、审计），用于线下退款后冲平留在账号上的余额（注销前的余额、注销时释放的冻结、注销后转入的迟到付款）。
+  - 建单主链：新购锁套餐行（`catalog.Offer`）；续费/叠加/流量重置锁订阅；换套餐建单先锁订阅（`subs.Lock`）；带券时先 `promo.Lock` 把券行锁成 FOR UPDATE，再插订单，再 `promo.Reserve`（同一行，重入）与 `ledger.HoldForOrder`。先锁券是防死锁：插订单时 coupon_id 外键检查给券行加 KEY SHARE，若之后才升级成 FOR UPDATE，同券并发建单会互等（40P01）；10-16 去掉库存后新购的套餐行只是共享锁，挡不住同套餐并发。取消/超时释放先锁订单行。门户各建单事务与后台开单（`requireUser`）的第一步是 `rejectDeleted`（identity `IsDeleted`，给用户行加共享锁），已注销 409「账号已注销」。后台调账 `AdjustBalance` 对已注销账号只拒加钱，扣减照常（仍要原因、重认证、审计），用于线下退款后冲平留在账号上的余额（注销前的余额、注销时释放的冻结、注销后转入的迟到付款）。
   - 注销账号：identity 在注销事务里锁用户行后先调 commission 的 `LockForDeletion`（拿 `LockUser` 咨询锁），再调 `CancelUserPending`（`service/cancel.go`），按 id 升序锁该用户全部待付单逐张 `releaseOrder`（原因 `ReasonAccountDeleted`，作废在途支付意图），之后到的回调按 `CaseReleasedOrder` 挂账；停完订阅后调 commission 的 `VoidForDeletedUser`（见下面「注销作废」）。咨询锁要在释放冻结之前拿：释放会锁他的余额科目，转余额是拿着咨询锁与可提现佣金再等余额，反过来就互等。
   - 发起支付（`Pay`）：事务里锁订单行、核对可付，调 `payments.BeginIntent` 占住意图后提交；`payments.CompleteIntent` 在事务外调（渠道可能联网，不占库连接和订单锁）。`/orders/:id/pay` 按账号每分钟 10 次（`PayPerMinute`，键 `order_pay`）。
   - 余额全额支付走 `CaptureFromBalance`：用户余额、冻结、收入三科目按 ID 升序一次锁完，冻结直出 captured，不要分步锁。
