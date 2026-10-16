@@ -32,6 +32,11 @@
 --   SELECT count(*) FROM prices WHERE status = 'active' AND (user_group_id IS NOT NULL OR valid_from IS NOT NULL
 --     OR valid_until IS NOT NULL OR (billing_interval, interval_count) NOT IN
 --       (('month', 1), ('month', 3), ('month', 6), ('year', 1), ('one_time', 1)));   -- 这些会被归档
+--   被归档的价格若正被套餐卡模板引用，兑换时会被拒（giftcard 提示价格已下架，管理员重选价格后可兑）：
+--   SELECT t.id, t.name FROM gift_card_templates t JOIN prices p ON p.id = t.price_id
+--    WHERE t.type = 'plan' AND p.status = 'active' AND (p.user_group_id IS NOT NULL OR p.valid_from IS NOT NULL
+--      OR p.valid_until IS NOT NULL OR (p.billing_interval, p.interval_count) NOT IN
+--        (('month', 1), ('month', 3), ('month', 6), ('year', 1), ('one_time', 1)));
 -- 失败回滚：任一步失败（含 lock_timeout 超时）整笔回滚，库停在上一版，排查后重试。
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '5min';
@@ -189,7 +194,8 @@ DROP TABLE traffic_packs;
 -- 放不下、要拒绝的：设了有效天数的一次性价（旧结构里一次性价只有永久一种，退回会把限期的变成永久），
 --   设了重置次数上限的套餐（旧结构没有上限，退回会放宽）。有就拒绝回退。
 -- 退不回原样、但不放宽的：Up 归档掉的价格保持归档；invite_only 改成的 hidden 保持 hidden；被删的卖点、时间窗、排序、
---   库存、限购、版本上的多余列按缺省值加回（一次性套餐的版本清零方式记 never，其余记 billing_cycle）。
+--   库存、限购、版本上的多余列按缺省值加回（一次性套餐的版本清零方式记 never，其余记 billing_cycle）；
+--   一次性套餐被 Up 关掉的 allow_renewal 保持关闭。
 -- 线路退回按版本绑定：套餐的绑定复制到它的每个版本（含已发布的，先插后挂冻结守卫）。
 -- traffic_packs 与 plan_reset_prices 按 00051 之后的结构重建（没有币种），流量包商品为空表。
 SET LOCAL lock_timeout = '5s';
