@@ -27,7 +27,7 @@ description: pandora 的产品验证：像用户一样用内置浏览器把门�
 | 速度 | 秒级起，状态在内存，重启复原 | 数据真实，状态累积 |
 | 能验 | 页面交互、文案、表单校验、错误态；页面按契约走通 | 真实数据流：下单入账、佣金、订阅文件、节点接入、权限 |
 | 不能验 | 后端逻辑、真支付、真节点、邮件 | 破坏性场景（空/错/慢）造不出来 |
-| 账号 | 门户 `user@pandora.dev`，后台 `admin@pandora.dev`，口令见 `panel/frontend/dev/mock-api.ts` 的 `MOCK_ACCOUNTS` | 管理员由 `install.sh` 首装时建，或按 `panel/deploy/RUNBOOK.md`「管理员进不来」一节用 `pandora admin create --email … --password-stdin` 建；凭据在 `ops-local/<目录>/admin-cred.txt`、`admin-path.txt`（0600；一次性测试机不建 1Password 条目，红线见根 CLAUDE.md） |
+| 账号 | 门户 `user@example.test`，后台 `admin@example.test`，口令见 `panel/frontend/dev/mock-api.ts` 的 `MOCK_ACCOUNTS`（以它为准） | 管理员由 `install.sh` 首装时建，或按 `panel/deploy/RUNBOOK.md`「管理员进不来」一节用 `pandora admin create --email … --password-stdin` 建；凭据在 `ops-local/<目录>/admin-cred.txt`、`admin-path.txt`（0600；一次性测试机不建 1Password 条目，红线见根 CLAUDE.md） |
 
 怎么选：
 - 改的是页面布局、文案、表单、前端状态：只跑假后端。
@@ -108,7 +108,7 @@ description: pandora 的产品验证：像用户一样用内置浏览器把门�
 | 订单 | `/#/orders` | 看待支付单；取消订单并确认 | 取消见 `paths.ts` 的 A0、C5b；已取消的单不能再支付 |
 | 退出 | `/#/account` | 点退出登录 | 回登录页；`localStorage` 里门户令牌被清掉 |
 
-上次复核：2026-10-08（主线 63ff0c1），只核了登录落点、结账余额开关、场景名三处，其余行没有逐条核；skill 第四次审查又按 `panel/frontend/src/portal` 的文案改了「添加到 App」「换新链接」两行（旧叫法「导入」「重置链接」在 `tests/mock-portal-wording.test.ts` 的禁用词里）。购买模型改造（多订阅、自选抵扣）后受影响页面的复核还欠着；对不上的先改上表，再走流程。还没有现成页面的流程写在这里，别提前编。
+上表没有逐行对照当前页面复核过；对不上的先改上表，再走流程。叫法以 `tests/mock-portal-wording.test.ts` 的禁用词为准。还没有现成页面的流程不写进来。
 
 ## 后台流程
 

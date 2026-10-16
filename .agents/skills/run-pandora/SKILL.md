@@ -21,7 +21,7 @@ description: Run, start, build and screenshot pandora. On this Mac (no docker/PG
 
 - Node ≥ 22.12，`panel/frontend/node_modules` 已装（装依赖时不要同时跑 go）。
 - Playwright 的 chromium 已在 `~/Library/Caches/ms-playwright`（`@playwright/test` 是前端的 devDependency）。
-- Go：本机缺省 1.27.1，pdnd 链接会失败，所有 go 命令加 `GOTOOLCHAIN=go1.26.9`（取 go.mod 的版本）。
+- Go：本机缺省 1.27.1，比 go.mod 新；所有 go 命令加 `GOTOOLCHAIN=go1.26.9`（取 go.mod 的版本），结论才与 CI 一致。
 
 ## 驱动假后端（首选）
 

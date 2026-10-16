@@ -28,6 +28,6 @@ panel 与 pdnd 是两个独立的 Go module。两端之间的契约分两类：�
 
 ## 节点入站证书
 
-- 面板不签发、不下发节点入站证书（「面板集中签发」与 pdnd 的 certbundle、certstore 已于 10-14 删除，迁移 00048 删表）；入站证书由节点机上的 certbot / acme.sh 放进约定目录，见 `docs/node-certificates.md`。约定目录两端各有一份：面板 `node/protocol/validate_policy.go` 的 `nodeCertificateDir`，与文档第 1 节。
+- 面板不签发、不下发节点入站证书，pdnd 也没有证书包或证书存储模块；入站证书由节点机上的 certbot / acme.sh 放进约定目录，见 `docs/node-certificates.md`。约定目录两端各有一份：面板 `node/protocol/validate_policy.go` 的 `nodeCertificateDir`，与文档第 1 节。
 - 以后要做面板下发，按节点 gRPC 会话设计新的消息，两端一起改，不恢复旧的 HPKE 证书包。
 - proto 里的 `Certificate` 消息是节点 mTLS 客户端证书的续期结果，不是入站证书，别混用。

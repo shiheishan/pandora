@@ -4,6 +4,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 
 - 项目全貌、部署与进度看 README.md；当前任务看 `.claude/TASKS.md`。
 - 面板前端在 `panel/frontend`（React + TypeScript + Vite），构建产物嵌入 `panel/web`，由面板在根 `/` 下发。
+- 「交互」里停下问我的规则、「协作方式」「长任务的任务清单」「环境与工具坑」「Compact instructions」写给主会话和 opus 子 Agent；经 composer-dispatch 启动的编码子 Agent 按任务说明和自己的系统提示办，这几节跳过。
 
 ## 当前阶段：清理与发版准备（P8 之后）
 
@@ -60,7 +61,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 - **opus 子 Agent**（Agent 工具，显式传 `model: opus`）：只在大任务里用，每个负责一块（一个模块或一个主题），在自己的 worktree 里读代码、定细节、把编码派给 composer、核对 composer 的改动并提交。
 - **composer-2.5**：写代码的主力，用 composer-dispatch skill 派（`claude -p` 经本机 magpie，参数都在它的 launch.sh 里），不用 Agent 工具。它只有读写文件的工具，不能跑命令。
   - composer（`claude -p`）改不了 `.claude/` 下的文件（敏感文件策略），规则文件由派它的人自己改。
-  - 经 magpie 调子 Agent 只有一套接口：`ANTHROPIC_BASE_URL=http://127.0.0.1:3425`、`ANTHROPIC_API_KEY=magpie`、模型 `group/gemini`。group/gemini 的成员与分配方式由用户在 magpie 里配（10-14 起为省 Cursor 额度按会话轮流分给 composer-2.5 与 FLUX 中转站的 gemini 3.8，vef 中转站的 gemini 3.8 可开可关），所以同一次派活实际可能由任一成员完成；不要擅自改 magpie 分组。FLUX 走 /v1/messages 直通、不回报缓存数，magpie 卡片上的命中率会因此偏低，以 FLUX 后台为准。核对改动不因模型降低标准；Gemini 常见小错是排序、测试夹具不合库约束、漏装配。
+  - 经 magpie 调子 Agent 只有一套接口：`ANTHROPIC_BASE_URL=http://127.0.0.1:3425`、`ANTHROPIC_API_KEY=magpie`、模型 `group/gemini`。分组成员与分配方式由用户在 magpie 里配，同一次派活可能由其中任一成员完成；不要擅自改 magpie 分组。核对改动不因模型降低标准；Gemini 常见小错是排序、测试夹具不合库约束、漏装配。
 
 ### 按任务大小选路
 
@@ -72,7 +73,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 
 - 调查优先：先读代码，定好接口、数据结构、迁移号、要改的文件，写进任务说明；子 Agent 不负责定这些。
 - 按覆盖面切：一块是一组互不重叠的文件或一个主题，同一个文件只归一个子 Agent。共享文件（公共类型、路由表、proto、迁移）由主 Agent 先写好，或先派一块单独做完。
-- 任务说明写到不用再判断：只许改的文件、要做什么、可核对的完成标准。子 Agent 看不到主对话，也读不到 `~/.claude/CLAUDE.md`。
+- 任务说明写到不用再判断：只许改的文件、要做什么、可核对的完成标准。子 Agent 会自动加载 CLAUDE.md，但看不到主对话和记忆，记忆里的产品决定要写进说明。
 
 ### 子 Agent 规则
 
@@ -91,7 +92,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 
 ## 在哪里找约定
 
-- 按目录生效的约定在 `.claude/rules/`，改到对应文件时自动加载。改了对应代码，同步改写这些规则。
+- 按目录生效的约定在 `.claude/rules/`，文件头的 `paths:` 写着管哪些目录。它只在用 Read / Edit / Write 碰到匹配文件时自动加载；用 Bash（cat、sed、grep）读文件或只看 `git diff` 时不会加载。所以要改或审某个目录的代码，先用 Read 打开那里的一个文件，或直接读对应的规则文件；给子 Agent 写任务说明、审查简报时，把相关规则文件的路径写进去。改了对应代码，同步改写这些规则。
 - 验证、推送后等 CI：verify skill。
 - 性能改动：perf-gate skill；合入前独立审查：pre-merge-review skill；发版：release skill。
 - skill 用 `~/ai/skills/bin/skills` 管理：项目自己的 skill 在 `.agents/skills/`（`.claude/skills` 是指向它的链接）；共享的 composer-dispatch、skill-creator 是本机链接，不入库。新做或改 skill 用 skill-creator。

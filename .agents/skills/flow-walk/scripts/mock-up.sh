@@ -33,8 +33,8 @@ case "${1:-}" in
     start admin "$ADMIN_PORT" "$dir"
     for _ in $(seq 1 30); do
       if listening "$PORTAL_PORT" && listening "$ADMIN_PORT"; then
-        echo "门户 http://127.0.0.1:$PORTAL_PORT/   user@pandora.dev"
-        echo "后台 http://127.0.0.1:$ADMIN_PORT/   admin@pandora.dev（只读：viewer@pandora.dev）"
+        echo "门户 http://127.0.0.1:$PORTAL_PORT/   user@example.test"
+        echo "后台 http://127.0.0.1:$ADMIN_PORT/   admin@example.test"
         echo "口令见 dev/mock-api.ts 的 MOCK_ACCOUNTS；日志在 $STATE/*.log"
         exit 0
       fi

@@ -81,7 +81,7 @@ description: pandora 的同机性能闸门：在固定测试机上先量基线�
 
 改 **pdnd** 热路径时必须考虑节点端闸门：kernel 适配器、转发与计量、用户表与名单应用、会话与缓存、hy2/TUIC 的 UDP 收发等。**性能优化**必须带 `--target` 前缀；只防退化可以不带。
 
-脚本在 `pdnd/tests/perf/gate/`（入口 `gate.sh`，机制见同目录 `README.md` 与设计契约 `.claude/briefs/nodegate-design.md`）。
+脚本在 `pdnd/tests/perf/gate/`（入口 `gate.sh`，机制见同目录 `README.md`）。
 
 步骤与面板闸门相同：**当天基线跑两遍 A/A** → **跑候选** → `gate.sh compare <基线-a> <候选> --aa <基线-b> [--target …]`。
 
