@@ -24,9 +24,6 @@ const (
 // MaxPoolUserGroups 是一个池「仅限用户组」名单的上限。
 const MaxPoolUserGroups = 100
 
-// MaxPlanPools 是一个套餐版本一次最多绑定的池数。
-const MaxPlanPools = 500
-
 // Pool 是后台节点池列表的一行。
 type Pool struct {
 	ID     uuid.UUID
@@ -88,12 +85,7 @@ type PlanPoolOption struct {
 	Bound            bool
 }
 
-// PlanPools 是套餐页绑池选择器：有草稿版本给草稿（可编辑），否则给当前已发布版本（只读）。
-// 没有任何版本时 VersionID 为 nil，Pools 仍列出可选的池且都未绑定。
+// PlanPools 是套餐页绑池选择器：可选的池与是否已绑。
 type PlanPools struct {
-	VersionID     *uuid.UUID
-	VersionStatus string
-	RowVersion    int64
-	Editable      bool
-	Pools         []PlanPoolOption
+	Pools []PlanPoolOption
 }

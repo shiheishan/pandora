@@ -13,16 +13,14 @@ import (
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 )
 
-// Catalog 是 node 要的目录读写面（套餐版本绑池，表归 catalog），由 catalog service 实现。
+// Catalog 是 node 要的目录读写面（套餐绑池，表归 catalog），由 catalog service 实现。
 type Catalog interface {
-	// VersionPools 批量取版本绑定的池（一条 SQL）。
-	VersionPools(ctx context.Context, versionIDs []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error)
-	// PoolUsage 批量取池被套餐版本引用的情况（一条 SQL）。
+	// PlanPools 批量取套餐绑定的池（一条 SQL）；没绑池的套餐不在返回的 map 里。
+	PlanPools(ctx context.Context, planIDs []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error)
+	// PoolUsage 批量取池被套餐引用的情况（一条 SQL）。
 	PoolUsage(ctx context.Context, poolIDs []uuid.UUID) (map[uuid.UUID]catalogsvc.PoolUsage, error)
-	// PoolBindingVersion 取套餐页绑池选择器对应的版本（草稿优先，否则当前发布版本）。
-	PoolBindingVersion(ctx context.Context, planID uuid.UUID) (catalogsvc.PoolBindingVersion, error)
-	// SetVersionPools 整体替换草稿版本的绑池（调用方已锁好池），返回版本新的 row_version。
-	SetVersionPools(ctx context.Context, planID, versionID uuid.UUID, expectedRowVersion int64, poolIDs []uuid.UUID) (int64, error)
+	// PlansByIDs 批量取套餐（一条 SQL）；不存在的 id 不在返回的 map 里。
+	PlansByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]catalogsvc.Plan, error)
 }
 
 // UserGroups 是 node 要的用户组读取面，由 identity service 实现（组很少，取全量）。
