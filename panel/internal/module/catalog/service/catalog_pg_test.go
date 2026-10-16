@@ -150,10 +150,10 @@ func TestPublishRequiresActivePrice(t *testing.T) {
 	ctx, _ = seedAdmin(t, ctx, e)
 
 	detail := publishedPlan(t, ctx, e, publishedPlanOpts{Draft: true})
-	if detail.PlanUsage.DraftVersionID == nil {
+	if detail.DraftVersionID == nil {
 		t.Fatal("无草稿版本")
 	}
-	verID := *detail.PlanUsage.DraftVersionID
+	verID := *detail.DraftVersionID
 
 	// 归档唯一在售价
 	for _, p := range detail.Prices {
@@ -176,7 +176,7 @@ func TestPublishVersionFlow(t *testing.T) {
 	ctx, _ = seedAdmin(t, ctx, e)
 
 	detail := publishedPlan(t, ctx, e, publishedPlanOpts{Draft: true})
-	verID := *detail.PlanUsage.DraftVersionID
+	verID := *detail.DraftVersionID
 
 	pub, err := e.svc.PublishVersion(ctx, detail.ID, verID, detail.RowVersion)
 	if err != nil {

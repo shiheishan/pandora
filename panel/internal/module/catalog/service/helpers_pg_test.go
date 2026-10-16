@@ -332,7 +332,7 @@ func publishedPlan(t *testing.T, ctx context.Context, e *env, opts publishedPlan
 		t.Fatal(err)
 	}
 	if e.committed {
-		e.plans = append(e.plans, detail.Plan.ID)
+		e.plans = append(e.plans, detail.ID)
 	}
 	return detail
 }
@@ -384,21 +384,6 @@ func inSavepoint(t *testing.T, ctx context.Context, e *env, name string, fn func
 		t.Fatal(rerr)
 	}
 	return nil
-}
-
-// execBypassTriggers 在测试事务里临时关掉触发器（冻结守卫、外键）执行一条 SQL，
-// 只用来造产品代码造不出来的状态（例如已发布价格的窗口已过期）。CHECK 约束仍然生效。
-func execBypassTriggers(t *testing.T, ctx context.Context, e *env, q string, args ...any) {
-	t.Helper()
-	if err := e.exec(ctx, "SET LOCAL session_replication_role = replica"); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.exec(ctx, q, args...); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.exec(ctx, "SET LOCAL session_replication_role = origin"); err != nil {
-		t.Fatal(err)
-	}
 }
 
 // assertRestrictViolation 断言错误为 PostgreSQL restrict_violation (23001)。

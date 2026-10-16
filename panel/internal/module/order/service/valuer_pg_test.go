@@ -4,11 +4,12 @@ import (
 	"testing"
 )
 
-// RemainingValue 与换套餐报价同一份折算；HasPaidOrder 只认应付大于 0 的已付单（余额全额付不算）。
+// RemainingValue 与换套餐报价同一份折算（付费时长用掉两成 → 剩 80.00）；HasPaidOrder 只认应付大于 0 的已付单（余额全额付不算）。
 func TestRemainingValueAndPaidHistory(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	sub := e.activeSub(t, ctx, user, 10000, 20)
+	e.usePaidTime(t, ctx, sub.ID, 1, 5)
 
 	v, gift, err := e.svc.RemainingValue(ctx, sub.ID, e.svc.clock())
 	if err != nil {

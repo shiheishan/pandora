@@ -46,7 +46,7 @@ func TestManualOrderBelowMinimum(t *testing.T) {
 	}
 }
 
-// 线下已收款换套餐：剩余价值 15.00 抵 100 元，线下收 85.00，当场换过去（offline 一行收款、PaidHook 一次、审计方向 upgrade）。
+// 线下已收款换套餐：付费时长用掉一半、剩余价值 15.00 抵 100 元，线下收 85.00，当场换过去（offline 一行收款、PaidHook 一次、审计方向 upgrade）。
 // 最后：同一张凭证号再开一单回「凭证号已用于其他订单」（放最后：出错时已写的部分留在外层事务里）。
 func TestManualOrderOfflineChange(t *testing.T) {
 	e, ctx := newEnv(t)
@@ -56,6 +56,7 @@ func TestManualOrderOfflineChange(t *testing.T) {
 	admin := e.mkUser(t, ctx)
 	actx := asAdmin(ctx, admin)
 	sub := e.activeSub(t, ctx, user, 3000, 50)
+	e.usePaidTime(t, ctx, sub.ID, 1, 2)
 	planB, _, priceB := e.mkPlan(t, ctx, 10000, "month")
 
 	c, err := e.svc.CreateManualOrder(actx, ManualOrderInput{

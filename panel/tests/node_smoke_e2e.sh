@@ -233,7 +233,7 @@ sec "3. 夹具（池、服务器、节点）"
 
 POOL_CODE="smk-$RUN"
 api POST "$ADM/v1/node-pools" -H "$AH" -H 'Content-Type: application/json' \
-  -d "{\"kind\":\"subscription\",\"name\":\"Smoke pool $RUN\"}"
+  -d "{\"code\":\"$POOL_CODE\",\"name\":\"Smoke pool $RUN\"}"
 [ "$HTTP_CODE" = 200 ] || fatal "create pool" "HTTP $HTTP_CODE"
 POOL_ID=$(jget_body id) || fatal "pool id missing"
 ok "节点池 $POOL_CODE"

@@ -1,84 +1,103 @@
-/* 订阅域名卡片（分组、权重、用户组分配） */
+/* 订阅域名段：平铺列表 + 添加 */
 
-.cardBody {
+.section {
   display: flex;
   flex-direction: column;
   gap: var(--space-12);
-  padding: var(--space-16);
-}
-
-.groups {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-12);
-}
-
-.group {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-12);
-  padding: var(--space-12);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-}
-
-.groupHead {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: var(--space-12);
-  align-items: end;
-}
-
-.groupNo {
-  margin-bottom: 4px;
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-}
-
-.subLabel {
-  margin-bottom: 4px;
-  color: var(--text-2);
-  font-size: var(--fs-caption);
-  font-weight: var(--fw-medium);
-}
-
-.userGroups {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.domainRows {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-8);
-}
-
-.domainRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 88px minmax(0, auto) auto;
-  gap: var(--space-8);
-  align-items: center;
-}
-
-/* 域名行的有效权重说明：太长时截断，完整文字随 title */
-.effective {
-  overflow: hidden;
   min-width: 0;
+  padding-top: var(--space-16);
+  border-top: 1px solid var(--text);
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-12);
+  padding-bottom: var(--space-12);
+  border-bottom: 1px solid var(--border);
+}
+
+.headText {
+  min-width: 0;
+}
+
+.title {
+  margin: 0;
+  font-size: inherit;
+  font-weight: var(--fw-semibold);
+}
+
+.hint {
+  margin: 4px 0 0;
   color: var(--text-3);
   font-size: var(--fs-caption);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.domainAdd {
+.addRow {
   display: flex;
-  justify-content: flex-end;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-8);
+  min-width: 0;
 }
 
-.groupFooter {
+.addInput {
+  width: 220px;
+  min-width: 0;
+}
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
   display: flex;
-  justify-content: flex-end;
-  border-top: 1px solid var(--border);
-  padding-top: var(--space-12);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8) var(--space-12);
+  padding: var(--space-8) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.row:last-child {
+  border-bottom: none;
+}
+
+.host {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-body);
+  word-break: break-all;
+}
+
+.scope {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+.empty {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+@media (max-width: 639px) {
+  .head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .addRow {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .addInput {
+    width: 100%;
+  }
 }

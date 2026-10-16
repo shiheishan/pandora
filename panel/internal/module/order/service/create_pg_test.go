@@ -258,14 +258,14 @@ func TestCreateNewOrderExpect(t *testing.T) {
 	mustEq(t, "Payable", c.Payable, line.WithBalance.Payable)
 }
 
-// 续费：订单指向订阅、订单行用订阅自己的版本；同一订阅第二张续费单回 ErrOpenChange。
+// 续费：订单指向订阅、订单行记套餐当前版本（新周期开始时由配额滚动切过去，module-order「续费」）；同一订阅第二张续费单回 ErrOpenChange。
 func TestCreateRenewalOrder(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	planID, v1, priceID := e.mkPlan(t, ctx, 1000, "month")
 	sub := e.provision(t, ctx, user, planID, v1, priceID, 1000)
 
-	// 套餐发布了第二版并切为当前版本：续费仍用订阅自己的第一版
+	// 套餐发布了第二版并切为当前版本：续费单记第二版（订阅本身仍是第一版，到新周期才切）
 	var v2 uuid.UUID
 	if err := e.row(ctx, `INSERT INTO plan_versions (plan_id, version, max_devices) VALUES (?, 2, 5) RETURNING id`, planID).Scan(&v2); err != nil {
 		t.Fatal(err)
@@ -286,8 +286,11 @@ func TestCreateRenewalOrder(t *testing.T) {
 	if err := e.row(ctx, `SELECT plan_version_id, snapshot_plan_version FROM order_items WHERE order_id = ?`, c.OrderID).Scan(&itemVersion, &vno); err != nil {
 		t.Fatal(err)
 	}
-	if itemVersion != v1 || vno != 1 {
-		t.Fatalf("订单行版本 %s(v%d)，期望订阅自己的 %s(v1)", itemVersion, vno, v1)
+	if itemVersion != v2 || vno != 2 {
+		t.Fatalf("订单行版本 %s(v%d)，期望套餐当前的 %s(v2)", itemVersion, vno, v2)
+	}
+	if got, err := e.subs.Get(ctx, sub.ID, nil); err != nil || got.PlanVersionID != v1 {
+		t.Fatalf("建续费单不该动订阅的版本: %v %v", got.PlanVersionID, err)
 	}
 
 	_, err = e.svc.CreateRenewalOrder(asUser(ctx, user), RenewalOrderInput{SubscriptionID: sub.ID, PriceID: &priceID})

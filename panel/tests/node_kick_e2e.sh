@@ -413,7 +413,7 @@ ok "shadowsocks cipher=$CIPHER"
 #-------------------------------------------------------------------------------
 sec "2. 夹具：池、服务器、节点"
 expect_http 200 POST "$ADM/v1/node-pools" -H "$AH" -H 'Content-Type: application/json' \
-  -d "{\"kind\":\"subscription\",\"name\":\"Kick pool $RUN\"}"
+  -d "{\"code\":\"kick-$RUN\",\"name\":\"Kick pool $RUN\"}"
 POOL_ID=$(json_get "$HTTP_BODY" id)
 is_uuid "$POOL_ID" || die "pool id invalid"
 

@@ -1,46 +1,10 @@
 import { z } from 'zod'
 
-/** 有可编辑模板的订阅格式，顺序即列表顺序（与后端 render.TemplateFormats 一致） */
-export const TEMPLATE_FORMATS = ['clash', 'clash-premium', 'stash', 'singbox', 'surfboard', 'loon'] as const
-export type TemplateFormat = (typeof TEMPLATE_FORMATS)[number]
-
-export const FORMAT_LABEL: Readonly<Record<TemplateFormat, string>> = {
-  clash: 'Clash Meta（mihomo）',
-  'clash-premium': 'Clash Premium',
-  stash: 'Stash',
-  singbox: 'sing-box',
-  surfboard: 'Surfboard',
-  loon: 'Loon',
-}
-
 export const subscriptionExtrasSchema = z.object({
   info_nodes: z.boolean(),
   protocol_prefix: z.boolean(),
 })
 export type SubscriptionExtras = z.output<typeof subscriptionExtrasSchema>
-
-export const templateListSchema = z.object({
-  templates: z.array(z.object({ format: z.string(), customized: z.boolean(), bytes: z.number().int(), updated_at: z.string().nullable() })),
-})
-export type TemplateSummary = z.output<typeof templateListSchema>['templates'][number]
-
-export const templateDetailSchema = z.object({
-  format: z.string(),
-  customized: z.boolean(),
-  content: z.string(),
-  default: z.string(),
-  updated_at: z.string().nullable(),
-  placeholders: z.array(z.object({ token: z.string(), required: z.boolean(), desc: z.string() })),
-  max_bytes: z.number().int(),
-})
-export type TemplateDetail = z.output<typeof templateDetailSchema>
-
-export const templatePreviewSchema = z.object({ body: z.string(), content_type: z.string(), node_count: z.number().int() })
-export type TemplatePreview = z.output<typeof templatePreviewSchema>
-
-export function formatLabel(format: string): string {
-  return (FORMAT_LABEL as Readonly<Record<string, string>>)[format] ?? format
-}
 
 export interface ExtrasForm {
   infoNodes: boolean
@@ -58,15 +22,63 @@ export function extrasBody(form: ExtrasForm, saved: SubscriptionExtras): { body:
   return { body }
 }
 
-export function templateBytes(content: string): number {
-  return new TextEncoder().encode(content).length
+/** 与后端 render.DetectFormat 同口径，后端改了这里跟着改 */
+export interface ClientFormat {
+  /** 客户端，界面主列 */
+  clients: string
+  /** UA 里认的关键词，界面等宽灰字 */
+  ua: string
+  /** 给的格式 */
+  format: string
+  /** 认不出的客户端都给它 */
+  fallback?: boolean
 }
 
-export function missingPlaceholders(content: string, placeholders: TemplateDetail['placeholders']): string[] {
-  return placeholders.filter((p) => p.required && !content.includes(p.token)).map((p) => p.token)
-}
-
-export function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  return `${(bytes / 1024).toFixed(1)} KB`
-}
+export const CLIENT_FORMATS: readonly ClientFormat[] = [
+  {
+    clients: 'sing-box 官方客户端、Hiddify、Karing',
+    ua: 'sing-box|sfi|sfa|sfm|sft|hiddify|karing',
+    format: 'sing-box',
+  },
+  {
+    clients: 'Shadowrocket',
+    ua: 'shadowrocket',
+    format: 'URI 列表 + 流量信息行',
+  },
+  {
+    clients: 'Loon',
+    ua: 'loon',
+    format: 'Loon',
+  },
+  {
+    clients: 'Surfboard',
+    ua: 'surfboard',
+    format: 'Surfboard',
+  },
+  {
+    clients: 'Stash',
+    ua: 'stash',
+    format: 'Stash',
+  },
+  {
+    clients: 'Shadowsocks 官方客户端',
+    ua: 'shadowsocks（不含 ShadowsocksX / SSR）',
+    format: 'SIP008',
+  },
+  {
+    clients: 'Clash Verge、Mihomo、FlClash、Clash Nyanpasu、OpenClash',
+    ua: 'meta|mihomo|verge|flclash|nyanpasu|openclash|koala|clashmi',
+    format: 'Clash Meta（mihomo）',
+  },
+  {
+    clients: 'ClashX、Clash for Windows 等旧版 Clash',
+    ua: 'clash',
+    format: 'Clash Premium',
+  },
+  {
+    clients: '其他客户端（v2rayN、v2rayNG、NekoBox、Quantumult X 等）',
+    ua: '其余',
+    format: '通用 URI（base64）',
+    fallback: true,
+  },
+]

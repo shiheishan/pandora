@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -13,7 +14,8 @@ import (
 )
 
 // activeSub 让用户用余额全额买下一个 cents 元/月的套餐（零元单当场开通，开通事件挂着这张订单），
-// 再把本期流量用掉 usedGiB（上限 100 GiB）。刚买下时时间比例接近 1，剩余价值由流量比例决定，金额是确定的。
+// 再把本期流量用掉 usedGiB（上限 100 GiB）。订阅套餐的剩余价值只按剩余付费时间比算、不看流量（module-order「换套餐剩余价值」），
+// 所以用掉的流量不影响金额；要确定的剩余价值，再用 usePaidTime 把周期挪到付费时长用掉的那一点并定住时钟。
 func (e *env) activeSub(t *testing.T, ctx context.Context, user uuid.UUID, cents int64, usedGiB int64) subsvc.Subscription {
 	t.Helper()
 	planID, _, priceID := e.mkPlan(t, ctx, cents, "month")
@@ -33,6 +35,27 @@ func (e *env) activeSub(t *testing.T, ctx context.Context, user uuid.UUID, cents
 		t.Fatal(err)
 	}
 	return sub
+}
+
+// usePaidTime 把订阅 subID 的本周期挪到「付费时长已用掉 usedNum/usedDen」的那一刻，并把 order 的时钟定在那一刻，
+// 剩余价值 = 付费合计 × (1 − usedNum/usedDen)，精确到分、不随跑测的时刻漂。
+// 周期起点取「真实现在 − 28 天 × 已用比例」：一个月至少 28 天，定住的时刻不早于真实现在（最多晚 3 天 × 已用比例），
+// 订单的 created_at（GORM 取真实时钟）仍早于定住的时刻、待付单也不会因此过期。周期长度按 subsvc.AddInterval 算，
+// 与折算里接付费单的口径一致；月长是整天，乘除 2、5 都整除，比例精确。
+func (e *env) usePaidTime(t *testing.T, ctx context.Context, subID uuid.UUID, usedNum, usedDen int64) time.Time {
+	t.Helper()
+	wall := time.Now().UTC().Truncate(time.Microsecond)
+	start := wall.Add(-28 * day * time.Duration(usedNum) / time.Duration(usedDen))
+	end := subsvc.AddInterval(start, "month", 1)
+	span := end.Sub(start)
+	if span*time.Duration(usedNum)%time.Duration(usedDen) != 0 {
+		t.Fatalf("周期 %s 不能按 %d/%d 整分", span, usedNum, usedDen)
+	}
+	at := start.Add(span * time.Duration(usedNum) / time.Duration(usedDen))
+	e.mustExec(t, ctx, `UPDATE subscriptions SET current_period_start = ?, current_period_end = ? WHERE id = ?`, start, end, subID)
+	e.mustExec(t, ctx, `UPDATE quota_balances SET period_start = ?, period_end = ? WHERE subscription_id = ? AND period = 'cycle'`, start, end, subID)
+	e.svc.now = func() time.Time { return at }
+	return at
 }
 
 // changeQuote 取「把 sub 换成 planID」的报价（应只有一条），连同确认下单要带回的 expect（不用余额）。
@@ -67,11 +90,12 @@ func mustErrMsg(t *testing.T, what string, err error, want *errs.Error) {
 	}
 }
 
-// 升级补差：30 元/月用掉一半流量，剩余价值 15.00；换成 100 元/月补 85.00，付款后换过去，不退余额。
+// 升级补差：30 元/月、付费时长用掉一半，剩余价值 15.00（流量用掉多少不算）；换成 100 元/月补 85.00，付款后换过去，不退余额。
 func TestPlanChangeUpgradeTopUp(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	sub := e.activeSub(t, ctx, user, 3000, 50)
+	sub := e.activeSub(t, ctx, user, 3000, 90)
+	e.usePaidTime(t, ctx, sub.ID, 1, 2)
 	planB, _, priceB := e.mkPlan(t, ctx, 10000, "month")
 
 	q, exp := e.changeQuote(t, ctx, user, sub.ID, planB)
@@ -119,11 +143,12 @@ func TestPlanChangeUpgradeTopUp(t *testing.T) {
 	e.assertNoDrift(t, ctx)
 }
 
-// 降级退余额：100 元/月用掉两成流量，剩余价值 80.00；换成 30 元/月应付 0、当场生效，差额 50.00 退进余额。
+// 降级退余额：100 元/月、付费时长用掉两成，剩余价值 80.00；换成 30 元/月应付 0、当场生效，差额 50.00 退进余额。
 func TestPlanChangeDowngradeRefundsBalance(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	sub := e.activeSub(t, ctx, user, 10000, 20)
+	e.usePaidTime(t, ctx, sub.ID, 1, 5)
 	planB, _, priceB := e.mkPlan(t, ctx, 3000, "month")
 
 	q, exp := e.changeQuote(t, ctx, user, sub.ID, planB)
@@ -153,11 +178,12 @@ func TestPlanChangeDowngradeRefundsBalance(t *testing.T) {
 	e.assertNoDrift(t, ctx)
 }
 
-// 零元直接生效：剩余价值 15.00 恰好抵完 15 元的新价，应付 0、当场换过去，不退也不扣余额。
+// 零元直接生效：付费时长用掉一半，剩余价值 15.00 恰好抵完 15 元的新价，应付 0、当场换过去，不退也不扣余额。
 func TestPlanChangeZeroPayTakesEffect(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	sub := e.activeSub(t, ctx, user, 3000, 50)
+	e.usePaidTime(t, ctx, sub.ID, 1, 2)
 	planB, _, priceB := e.mkPlan(t, ctx, 1500, "month")
 
 	_, exp := e.changeQuote(t, ctx, user, sub.ID, planB)
@@ -185,7 +211,7 @@ func TestPlanChangeZeroPayTakesEffect(t *testing.T) {
 	}
 	mustEq(t, "余额", e.balanceOf(t, ctx, user), dec("0"))
 
-	// 换过去之后再换回原价位：新周期刚开始、流量没用，剩余价值来自这张换套餐单（15 − 0 − 0），不是 0
+	// 换过去之后再换回原价位：新周期刚开始，剩余价值来自这张换套餐单（15 − 0 − 0），不是 0
 	planC, _, _ := e.mkPlan(t, ctx, 5000, "month")
 	q, _ := e.changeQuote(t, ctx, user, sub.ID, planC)
 	if !q.Credit.IsPositive() || q.Credit.GreaterThan(dec("15")) {

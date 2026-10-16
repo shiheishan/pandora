@@ -28,13 +28,14 @@ func (e *env) auditField(t *testing.T, ctx context.Context, action string, order
 		key, action, orderID)
 }
 
-// 零头免除端到端：剩余价值 15.00 抵 15.50 的新价，余 0.50 低于最低额 1.00、用户没余额 → 门户换套餐免掉，当场生效。
+// 零头免除端到端：付费时长用掉一半，剩余价值 15.00 抵 15.50 的新价，余 0.50 低于最低额 1.00、用户没余额 → 门户换套餐免掉，当场生效。
 // 库里 waived_amount 0.50、total 0；Created 的 Waived 带出（对外 discount_amount 含它）；审计记 small_due_waived 与方向；
 // 下一次折算的基数是 15.50 − 0.50 = 15.00。
 func TestPlanChangeSmallDueWaived(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	sub := e.activeSub(t, ctx, user, 3000, 50)
+	e.usePaidTime(t, ctx, sub.ID, 1, 2)
 	e.mkMinPay(t, ctx, 100)
 	planB, _, priceB := e.mkPlan(t, ctx, 1550, "month")
 
@@ -76,11 +77,12 @@ func TestPlanChangeSmallDueWaived(t *testing.T) {
 	e.assertNoDrift(t, ctx)
 }
 
-// 降级加券：剩余价值 80.00，新价 30.00 再用 5 元券，应付 0、退余额 80 − 25 = 55.00；券当场核销。
+// 降级加券：付费时长用掉两成，剩余价值 80.00，新价 30.00 再用 5 元券，应付 0、退余额 80 − 25 = 55.00；券当场核销。
 func TestPlanChangeDowngradeWithCoupon(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	sub := e.activeSub(t, ctx, user, 10000, 20)
+	e.usePaidTime(t, ctx, sub.ID, 1, 5)
 	planB, _, priceB := e.mkPlan(t, ctx, 3000, "month")
 	code := couponCode()
 	e.mkCoupon(t, ctx, code, 500)
@@ -195,10 +197,12 @@ func TestPlanChangeAfterLateRenewalCallback(t *testing.T) {
 
 // 待付换套餐单挂着时 RemainingValue 拒（套餐卡不能先把同一份剩余价值退掉）；
 // 订阅周期在建单之后重起（模拟套餐卡换套餐），再付这张单：钱进挂账 ineligible_subscription，不换不退。
+// 建单时付费时长用掉一半：剩余价值 15.00，应付 85.00。
 func TestPlanChangeSettlementAfterPeriodRestart(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	sub := e.activeSub(t, ctx, user, 3000, 50)
+	e.usePaidTime(t, ctx, sub.ID, 1, 2)
 	planB, _, priceB := e.mkPlan(t, ctx, 10000, "month")
 	c, err := e.svc.CreatePlanChangeOrder(asUser(ctx, user), PlanChangeOrderInput{SubscriptionID: sub.ID, PlanID: planB, PriceID: priceB})
 	if err != nil || c.Status != StatusPending {
