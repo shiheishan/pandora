@@ -188,3 +188,29 @@ func (r *Repo) Quotas(ctx context.Context, versionIDs []uuid.UUID) (map[uuid.UUI
 	}
 	return out, nil
 }
+
+// versionIDRow 是 VersionIDsByPlans 查询的一行。
+type versionIDRow struct {
+	PlanID uuid.UUID `gorm:"column:plan_id"`
+	ID     uuid.UUID `gorm:"column:id"`
+}
+
+// VersionIDsByPlans 批量取套餐的全部版本 id（任何状态，一条 SQL）：套餐 id → 版本 id（按版本号升序）。没有版本的套餐不在 map 里。
+func (r *Repo) VersionIDsByPlans(ctx context.Context, planIDs []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error) {
+	if len(planIDs) == 0 {
+		return map[uuid.UUID][]uuid.UUID{}, nil
+	}
+	var rows []versionIDRow
+	err := r.d.Conn(ctx).Raw(
+		"SELECT plan_id, id FROM plan_versions WHERE plan_id IN ? ORDER BY plan_id, version",
+		planIDs,
+	).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[uuid.UUID][]uuid.UUID)
+	for _, row := range rows {
+		out[row.PlanID] = append(out[row.PlanID], row.ID)
+	}
+	return out, nil
+}
