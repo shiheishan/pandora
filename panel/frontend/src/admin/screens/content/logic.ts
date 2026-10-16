@@ -1,5 +1,5 @@
 import { formatDateTime } from '../../../core/format'
-import type { Announcement, AnnStatus, Kind, Page, Platform, Severity, Slot, Visibility } from './schemas'
+import { PLATFORMS, type Announcement, type AnnStatus, type Kind, type Page, type Platform, type Severity, type Slot, type Visibility } from './schemas'
 
 const runes = (s: string) => [...s.trim()].length
 
@@ -24,25 +24,14 @@ export function fromLocalInput(value: string, original?: string | null): string 
   return Number.isNaN(d.getTime()) ? '' : d.toISOString()
 }
 
-function toDateInput(iso: string | null | undefined): string {
-  return toLocalInput(iso).slice(0, 10)
-}
-
-export function fromDateInput(value: string, original?: string | null): string {
-  if (!value) return ''
-  if (original && toDateInput(original) === value) return original
-  const d = new Date(`${value}T00:00`)
-  return Number.isNaN(d.getTime()) ? '' : d.toISOString()
-}
-
 // ---------------------------------------------------------------------------
 // 公告 · 展示
 // ---------------------------------------------------------------------------
-export const ANN_STATUS: Record<AnnStatus, { label: string; tone: 'ok' | 'warn' | 'info' | 'muted' }> = {
+export const ANN_STATUS: Record<AnnStatus, { label: string; tone: 'ok' | 'warn' | 'info' | 'neutral' }> = {
   published: { label: '已发布', tone: 'ok' },
   draft: { label: '草稿', tone: 'warn' },
   scheduled: { label: '定时', tone: 'info' },
-  withdrawn: { label: '已撤回', tone: 'muted' },
+  withdrawn: { label: '已撤回', tone: 'neutral' },
 }
 
 export const SEVERITY: Record<Severity, { label: string; tone: 'neutral' | 'info' | 'warn' | 'danger' }> = {
@@ -58,11 +47,43 @@ export function annTargetLabel(a: Pick<Announcement, 'plan_targets' | 'user_grou
   return names.length === 0 ? '全部用户' : names.join('、')
 }
 
-/** 列表里的时间：草稿写「草稿」，定时写 MM-DD HH:mm，其余写发布日 MM-DD */
+/** 列表上方的状态筛选：全部计总数，其余按 status 计数 */
+export const ANN_FILTERS = [['all', '全部'], ['published', '已发布'], ['scheduled', '定时'], ['draft', '草稿'], ['withdrawn', '已撤回']] as const
+export type AnnFilter = (typeof ANN_FILTERS)[number][0]
+
+/** 地址上的 ?f= 值校验；null 或不在表里的值都不算 */
+export function isAnnFilter(v: string | null): v is AnnFilter {
+  return v !== null && ANN_FILTERS.some(([value]) => value === v)
+}
+
+/** 筛选页签的条目：全部 = 总数，其余按 status 计数 */
+export function annFilterItems(list: readonly Announcement[]): Array<{ value: AnnFilter; label: string; count: number }> {
+  return ANN_FILTERS.map(([value, label]) => ({
+    value,
+    label,
+    count: value === 'all' ? list.length : list.filter((a) => a.status === value).length,
+  }))
+}
+
+/** 表格里的行：按筛选过滤，置顶的排前面，其余保持后端原顺序（sort 稳定） */
+export function visibleAnns(list: readonly Announcement[], filter: AnnFilter): Announcement[] {
+  const rows = filter === 'all' ? [...list] : list.filter((a) => a.status === filter)
+  return rows.sort((a, b) => Number(b.pinned) - Number(a.pinned))
+}
+
+/** 列表里的时间：草稿「未发布」，定时 MM-DD HH:mm 发布，其余 MM-DD 发布 */
 export function annWhen(a: Pick<Announcement, 'status' | 'publish_at' | 'created_at'>): string {
-  if (a.status === 'draft') return '草稿'
+  if (a.status === 'draft') return '未发布'
   const at = formatDateTime(a.publish_at ?? a.created_at).slice(5)
-  return a.status === 'scheduled' ? at : at.slice(0, 5)
+  return a.status === 'scheduled' ? `${at} 发布` : `${at.slice(0, 5)} 发布`
+}
+
+/** 弹窗头部的 meta：新建还没保存，定时还差一把，已发布的报发布时间 */
+export function annMeta(a: Announcement | null): string {
+  if (!a) return '保存后出现在列表里'
+  if (a.status === 'scheduled' && a.publish_at) return `将于 ${formatDateTime(a.publish_at).slice(5)} 发布`
+  if (a.publish_at) return `发布于 ${formatDateTime(a.publish_at).slice(5)}`
+  return '保存后出现在列表里'
 }
 
 // ---------------------------------------------------------------------------
@@ -175,7 +196,7 @@ export function annActions(status: AnnStatus | 'new', publishAt: string, now: Da
 // ---------------------------------------------------------------------------
 export const KIND_LABEL: Record<Kind, string> = { kb_article: '知识库', tutorial: '教程', page: '页面', legal: '法律条款' }
 export const PLATFORM_LABEL: Record<Platform, string> = { web: '网页', windows: 'Windows', macos: 'macOS', linux: 'Linux', android: 'Android', ios: 'iOS' }
-export const VISIBILITY_LABEL: Record<Visibility, string> = { authenticated: '门户用户', internal: '仅后台' }
+export const VISIBILITY_LABEL: Record<Visibility, string> = { authenticated: '登录用户', internal: '仅后台' }
 export const PAGE_STATUS_LABEL = { draft: '草稿', published: '已发布', archived: '已归档' } as const
 
 export interface Article {
@@ -208,18 +229,30 @@ export function groupArticles(pages: readonly Page[]): Article[] {
 
 const UNCATEGORIZED = '未分类'
 
-/** 左栏：先按分类分组（分类按中文排序、未分类垫底），组内按标题；q 对最新版的标题与 slug 做不区分大小写的包含 */
-export function groupByCategory(articles: readonly Article[], q = ''): Array<{ cat: string; items: Article[] }> {
+/** 表格行：q 对最新版标题与 slug 做不区分大小写包含；先按分类（中文 localeCompare，未分类垫底），再按标题 */
+export function articleRows(articles: readonly Article[], q = ''): Article[] {
   const needle = q.trim().toLowerCase()
-  const hit = (a: Article) => !needle || a.latest.title.toLowerCase().includes(needle) || a.slug.includes(needle)
-  const groups = new Map<string, Article[]>()
-  for (const a of articles.filter(hit)) {
-    const cat = a.latest.category || UNCATEGORIZED
-    groups.set(cat, [...(groups.get(cat) ?? []), a])
-  }
-  return [...groups.entries()]
-    .sort(([a], [b]) => (a === UNCATEGORIZED ? 1 : b === UNCATEGORIZED ? -1 : a.localeCompare(b, 'zh')))
-    .map(([cat, items]) => ({ cat, items: items.sort((x, y) => x.latest.title.localeCompare(y.latest.title, 'zh')) }))
+  const hit = (a: Article) => !needle || a.latest.title.toLowerCase().includes(needle) || a.slug.toLowerCase().includes(needle)
+  const catKey = (a: Article) => a.latest.category?.trim() || UNCATEGORIZED
+  return [...articles.filter(hit)].sort((a, b) => {
+    const ca = catKey(a)
+    const cb = catKey(b)
+    if (ca !== cb) {
+      if (ca === UNCATEGORIZED) return 1
+      if (cb === UNCATEGORIZED) return -1
+      const byCat = ca.localeCompare(cb, 'zh')
+      if (byCat !== 0) return byCat
+    }
+    return a.latest.title.localeCompare(b.latest.title, 'zh')
+  })
+}
+
+/** 列表「平台」列：空 = 全部平台，否则按 PLATFORMS 顺序取 PLATFORM_LABEL，用 / 连接 */
+export function platformsLabel(platforms: readonly string[]): string {
+  if (platforms.length === 0) return '全部平台'
+  const order = new Map(PLATFORMS.map((p, i) => [p, i]))
+  const sorted = [...platforms].sort((a, b) => (order.get(a as Platform) ?? 99) - (order.get(b as Platform) ?? 99))
+  return sorted.map((p) => PLATFORM_LABEL[p as Platform] ?? p).join(' / ')
 }
 
 export function knownCategories(articles: readonly Article[]): string[] {
@@ -234,20 +267,15 @@ export interface KbForm {
   kind: Kind
   category: string
   title: string
-  summary: string
   body: string
   locale: string
   platforms: string[]
-  minClient: string
-  maxClient: string
   planIds: string[]
   visibility: Visibility
-  /** date 输入值，空 = 不设复审 */
-  reviewDue: string
 }
 
 export function emptyKbForm(kind: Kind): KbForm {
-  return { slug: '', kind, category: '', title: '', summary: '', body: '', locale: 'zh-CN', platforms: [], minClient: '', maxClient: '', planIds: [], visibility: 'authenticated', reviewDue: '' }
+  return { slug: '', kind, category: '', title: '', body: '', locale: 'zh-CN', platforms: [], planIds: [], visibility: 'authenticated' }
 }
 
 export function kbFormFrom(p: Page): KbForm {
@@ -256,31 +284,16 @@ export function kbFormFrom(p: Page): KbForm {
     kind: p.kind,
     category: p.category ?? '',
     title: p.title,
-    summary: p.summary ?? '',
     body: p.body ?? '',
     locale: p.locale,
     platforms: [...p.target_platforms],
-    minClient: p.min_client_version ?? '',
-    maxClient: p.max_client_version ?? '',
     planIds: [...p.target_plan_ids],
     visibility: p.visibility,
-    reviewDue: toDateInput(p.review_due_at),
   }
 }
 
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 const LOCALE = /^[a-z]{2,3}(?:-[A-Z]{2})?$/
-const CLIENT_VERSION = /^v?[0-9]+(?:\.[0-9]+){0,2}$/
-
-export function compareVersion(a: string, b: string): number {
-  const parse = (raw: string) => {
-    const parts = raw.replace(/^v/, '').split('.')
-    return [0, 1, 2].map((i) => Number.parseInt(parts[i] ?? '0', 10) || 0)
-  }
-  const [l, r] = [parse(a), parse(b)]
-  for (let i = 0; i < 3; i++) if (l[i]! !== r[i]!) return l[i]! < r[i]! ? -1 : 1
-  return 0
-}
 
 /** 照 normalizePublishInput 的规则与文案；takenSlugs 是已有文章的 slug（新文章撞上时后端只会回版本冲突，先在前端说清楚） */
 export function validateKb(form: KbForm, takenSlugs: readonly string[] = []): Record<string, string> {
@@ -291,15 +304,9 @@ export function validateKb(form: KbForm, takenSlugs: readonly string[] = []): Re
   if (runes(form.category) > 80) errors.category = '分类最长 80 字'
   const t = runes(form.title)
   if (t < 2 || t > 160) errors.title = '标题需在 2–160 字之间'
-  if (runes(form.summary) > 500) errors.summary = '摘要最长 500 字'
   const b = runes(form.body)
   if (b < 10 || b > 100000) errors.body = '正文需在 10–100000 字之间'
   if (!LOCALE.test(form.locale.trim())) errors.locale = '语言格式不正确'
-  const min = form.minClient.trim()
-  const max = form.maxClient.trim()
-  if (min && !CLIENT_VERSION.test(min)) errors.min_client_version = '最低客户端版本格式不正确'
-  if (max && !CLIENT_VERSION.test(max)) errors.max_client_version = '最高客户端版本格式不正确'
-  else if (min && max && CLIENT_VERSION.test(min) && compareVersion(min, max) > 0) errors.max_client_version = '最高客户端版本不能低于最低版本'
   return errors
 }
 
@@ -321,30 +328,32 @@ export interface KbBody {
   expected_latest_version: number
 }
 
-/** review_due_at 是 *time.Time，空串解析会 400，所以不设时整个键省略 */
+/**
+ * 界面已不提供摘要、客户端版本、复审日期；这几项从来源版本原样带上，免得保存新版本时把旧值清掉、改变受众。
+ * review_due_at 空串解析会 400，original 没有时整个键省略。
+ */
 export function kbBody(form: KbForm, status: 'draft' | 'published', expectedLatest: number, original?: Page | null): KbBody {
-  const review = fromDateInput(form.reviewDue, original?.review_due_at)
   return {
     slug: form.slug.trim().toLowerCase(),
     kind: form.kind,
     category: form.category.trim(),
     title: form.title.trim(),
-    summary: form.summary.trim(),
+    summary: original?.summary ?? '',
     body: form.body.trim(),
     locale: form.locale.trim(),
     target_platforms: [...form.platforms].sort(),
-    min_client_version: form.minClient.trim(),
-    max_client_version: form.maxClient.trim(),
+    min_client_version: original?.min_client_version ?? '',
+    max_client_version: original?.max_client_version ?? '',
     target_plan_ids: [...form.planIds].sort(),
     visibility: form.visibility,
     status,
-    ...(review ? { review_due_at: review } : {}),
+    ...(original?.review_due_at ? { review_due_at: original.review_due_at } : {}),
     expected_latest_version: expectedLatest,
   }
 }
 
 /**
- * 受众（语言、平台、客户端版本范围、限定套餐、可见性）与来源版本不同：
+ * 受众（语言、平台、限定套餐、可见性）与来源版本不同：
  * 后端只归档「同一受众组合」的旧发布版，改了受众，旧版会和新版同时对用户可见
  */
 export function audienceChanged(form: KbForm, from: Page): boolean {
@@ -352,8 +361,6 @@ export function audienceChanged(form: KbForm, from: Page): boolean {
   return (
     form.locale.trim() !== from.locale ||
     !same(form.platforms, from.target_platforms) ||
-    form.minClient.trim() !== (from.min_client_version ?? '') ||
-    form.maxClient.trim() !== (from.max_client_version ?? '') ||
     !same(form.planIds, from.target_plan_ids) ||
     form.visibility !== from.visibility
   )

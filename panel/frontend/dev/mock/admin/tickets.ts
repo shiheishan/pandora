@@ -192,10 +192,21 @@ for (let i = 0; i < 26; i++) {
   )
 }
 
+// 设计稿给了 13 条快捷回复，撑起「前 4 个 + 全部 N」浮层
 let macros = [
   { id: randomUUID(), title: '线路排查', body: '您好，我们已记录该线路问题，请提供本地运营商与测速截图，我们会在 2 小时内反馈。', sort_order: 10, created_at: at(900), updated_at: at(900) },
-  { id: randomUUID(), title: '重新导入', body: '请在门户「我的订阅」中复制最新订阅地址，删除旧配置后重新导入。', sort_order: 20, created_at: at(800), updated_at: at(800) },
+  { id: randomUUID(), title: '重新导入', body: '请在用户端「我的订阅」中复制最新订阅地址，删除旧配置后重新导入。', sort_order: 20, created_at: at(800), updated_at: at(800) },
   { id: randomUUID(), title: '已退款', body: '款项已原路退回，预计 1–3 个工作日到账。', sort_order: 30, created_at: at(700), updated_at: at(700) },
+  { id: randomUUID(), title: '流量已重置', body: '已为您重置本期流量，重新连接即可生效。', sort_order: 40, created_at: at(600), updated_at: at(600) },
+  { id: randomUUID(), title: '设备数超限', body: '您的套餐最多同时在线 3 台设备，请在用户端「设备管理」里下线旧设备。', sort_order: 50, created_at: at(590), updated_at: at(590) },
+  { id: randomUUID(), title: '客户端推荐', body: '推荐 iOS 用 Stash、Android 用 Clash Meta、Windows 用 Clash Verge。', sort_order: 60, created_at: at(580), updated_at: at(580) },
+  { id: randomUUID(), title: '续费指引', body: '在用户端「套餐」里选择当前套餐点「续费」，剩余时长会自动叠加。', sort_order: 70, created_at: at(570), updated_at: at(570) },
+  { id: randomUUID(), title: '发票申请', body: '请提供抬头与税号，我们会在 3 个工作日内开具并发送到邮箱。', sort_order: 80, created_at: at(560), updated_at: at(560) },
+  { id: randomUUID(), title: '节点维护中', body: '该节点正在维护，预计 30 分钟内恢复，请先切换到同地区其他节点。', sort_order: 90, created_at: at(550), updated_at: at(550) },
+  { id: randomUUID(), title: '修改邮箱', body: '出于安全考虑，请用旧邮箱发信说明新邮箱地址，我们核实后为您修改。', sort_order: 100, created_at: at(540), updated_at: at(540) },
+  { id: randomUUID(), title: '已转技术', body: '已转交技术同事处理，有进展会第一时间回复您。', sort_order: 110, created_at: at(530), updated_at: at(530) },
+  { id: randomUUID(), title: '请补充日志', body: '请在客户端「日志」页导出最近 10 分钟的日志并附在回复里。', sort_order: 120, created_at: at(520), updated_at: at(520) },
+  { id: randomUUID(), title: '感谢反馈', body: '感谢您的反馈，已记录在改进计划中。', sort_order: 130, created_at: at(510), updated_at: at(510) },
 ]
 
 // ---------------------------------------------------------------------------
