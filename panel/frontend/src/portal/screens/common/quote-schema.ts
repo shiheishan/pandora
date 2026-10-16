@@ -31,14 +31,15 @@ const creditDetailSchema = z.object({
 const quoteRowSchema = z.object({
   subscription_id: z.string().nullable(),
   plan_id: z.string().nullable(),
-  pack_id: z.string().nullable(),
   price_id: z.string().nullable(),
+  /** month / year / one_time；流量重置是 one_time */
   interval: z.string(),
   interval_count: z.number().int(),
+  /** 一次性套餐这一档的有效天数，null = 永久或不适用（订阅套餐、流量重置） */
+  validity_days: z.number().int().nullable(),
   subtotal: z.number().int(),
+  /** 优惠码优惠（没有会员折扣） */
   discount: z.number().int(),
-  member_discount: z.number().int(),
-  member_percent: z.number().int(),
   coupon: z.object({ code: z.string() }).nullable(),
   coupon_error: z.string().nullable(),
   /** 原套餐没用完的部分（只有换套餐非零） */
@@ -59,7 +60,6 @@ export type QuoteRow = z.output<typeof quoteRowSchema>
 export const quoteSchema = z.object({
   /** 报价时刻：建单时原样带回，剩余价值的时间比例按它算（服务端只收 10 分钟内的） */
   as_of: z.string(),
-  currency: z.string(),
   balance: z.number().int(),
   /** 支付最低额（分）：所有启用渠道里最大的那个 */
   min_payment: z.number().int(),

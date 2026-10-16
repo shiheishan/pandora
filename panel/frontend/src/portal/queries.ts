@@ -47,7 +47,8 @@ export const meSchema = z.object({
 // 余额与流水（契约门户-05）：外框只读 balance，钱包页读 history，同键一份全字段
 export const balanceSchema = z.object({
   balance: z.number().int(),
-  currency: z.string(),
+  /** Go 已不回（只有人民币）；外框 Shell.tsx 还在把它传给 formatMoney，外框改完后删掉这一行 */
+  currency: z.string().optional(),
   history: z.array(z.object({ kind: z.string(), delta: z.number().int(), memo: z.string(), at: z.string() })),
 })
 export const notificationsSchema = z.object({ unread: z.number() })
@@ -141,17 +142,6 @@ export function useSubscriptions<T = Subscription[]>(select?: (subs: Subscriptio
     queryKey: SUBSCRIPTIONS_KEY,
     queryFn: ({ signal }) => api.get('v1/me/subscriptions', subscriptionsSchema, { signal }),
     select: (d) => (select ? select(d.subscriptions) : (d.subscriptions as T)),
-    meta: { topics: ['subscriptions.changed', 'orders.changed'] },
-  })
-}
-
-/** 顶层的未分配流量包余量：与订阅列表同键同一次请求 */
-export function useUnattachedPackBytes() {
-  const api = useApi()
-  return useQuery({
-    queryKey: SUBSCRIPTIONS_KEY,
-    queryFn: ({ signal }) => api.get('v1/me/subscriptions', subscriptionsSchema, { signal }),
-    select: (d) => d.unattached_pack_bytes,
     meta: { topics: ['subscriptions.changed', 'orders.changed'] },
   })
 }
