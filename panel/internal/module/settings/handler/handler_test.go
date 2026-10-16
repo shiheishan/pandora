@@ -47,9 +47,6 @@ func (f *fakeSettings) SetSite(ctx context.Context, u service.SiteUpdate) error 
 	if u.Timezone != nil {
 		v.Timezone = *u.Timezone
 	}
-	if u.Currency != nil {
-		v.Currency = *u.Currency
-	}
 	f.setSiteVal = v
 	f.site = v
 	return nil
@@ -193,7 +190,7 @@ func TestSiteConfig(t *testing.T) {
 
 func TestGetSiteRequiresAuth(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	fake := &fakeSettings{site: service.Site{Name: "N", Timezone: "Asia/Shanghai", Currency: "CNY"}}
+	fake := &fakeSettings{site: service.Site{Name: "N", Timezone: "Asia/Shanghai"}}
 	h := New(fake)
 	e := gin.New()
 	e.Use(httpx.Errors())
@@ -220,7 +217,7 @@ func TestGetSiteRequiresAuth(t *testing.T) {
 func TestSetSite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	fake := &fakeSettings{
-		site: service.Site{Name: "Keep", Timezone: "UTC", Currency: "USD"},
+		site: service.Site{Name: "Keep", Timezone: "UTC"},
 	}
 	h := New(fake)
 	e := gin.New()
@@ -240,7 +237,7 @@ func TestSetSite(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
 	}
-	if fake.setSiteVal.Name != "Keep" || fake.setSiteVal.Currency != "USD" || fake.setSiteVal.Timezone != "Asia/Tokyo" {
+	if fake.setSiteVal.Name != "Keep" || fake.setSiteVal.Timezone != "Asia/Tokyo" {
 		t.Fatalf("setSite %+v", fake.setSiteVal)
 	}
 	var sr siteResponse
