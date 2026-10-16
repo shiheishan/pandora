@@ -30,9 +30,11 @@ import (
 
 // fakePoolCatalog 是内存里的 Catalog：套餐绑池、池用量、套餐都由用例直接填。
 type fakePoolCatalog struct {
-	planPools map[uuid.UUID][]uuid.UUID
-	usage     map[uuid.UUID]catalogsvc.PoolUsage
-	plans     map[uuid.UUID]catalogsvc.Plan
+	planPools    map[uuid.UUID][]uuid.UUID
+	usage        map[uuid.UUID]catalogsvc.PoolUsage
+	plans        map[uuid.UUID]catalogsvc.Plan
+	released     map[uuid.UUID][]uuid.UUID
+	releaseCalls []uuid.UUID
 }
 
 func (f *fakePoolCatalog) PlanPools(_ context.Context, planIDs []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error) {
@@ -75,6 +77,15 @@ func (f *fakePoolCatalog) PlansByIDs(_ context.Context, ids []uuid.UUID) (map[uu
 		}
 	}
 	return out, nil
+}
+
+func (f *fakePoolCatalog) ReleaseArchivedPoolBindings(_ context.Context, poolID uuid.UUID) ([]uuid.UUID, error) {
+	f.releaseCalls = append(f.releaseCalls, poolID)
+	res := f.released[poolID]
+	if res == nil {
+		return []uuid.UUID{}, nil
+	}
+	return res, nil
 }
 
 // fakeVersionsInUse 是 VersionsInUse 端口的假实现：默认返回空 map。

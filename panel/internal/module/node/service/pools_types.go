@@ -34,7 +34,7 @@ type Pool struct {
 	// Nodes 是池里未删除的节点数，ActiveNodes 是其中在役的（serving_status = active，协议必然配好）。
 	Nodes       int64
 	ActiveNodes int64
-	// Plans 是绑定了这个池的套餐数；PlanNames 是这些套餐的名字（去重、升序）。
+	// Plans 是绑定了这个池的未归档套餐数（草稿与在售；归档套餐的绑定不占池）；PlanNames 是这些套餐的名字（去重、升序）。
 	Plans     int
 	PlanNames []string
 	// Members 是池里未删除的节点，按 sort_order、node_no。

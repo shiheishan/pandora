@@ -51,6 +51,10 @@ func (c *countingCatalog) PlansByIDs(context.Context, []uuid.UUID) (map[uuid.UUI
 	return map[uuid.UUID]catalogsvc.Plan{}, nil
 }
 
+func (c *countingCatalog) ReleaseArchivedPoolBindings(context.Context, uuid.UUID) ([]uuid.UUID, error) {
+	return []uuid.UUID{}, nil
+}
+
 func (c *countingCatalog) count() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()

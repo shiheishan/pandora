@@ -3,12 +3,14 @@ import { ApiError } from '../../../core/api'
 import { classifyFailure } from '../../actions'
 import type { PlanRow, PriceRow } from '../plans/schemas'
 import {
+  LATE_KIND_LABELS,
   adjustBody,
   adjustmentView,
   adjustProblems,
   ageDays,
   belowMinimumText,
   canCancel,
+  cancelReasonLabel,
   canMarkPaid,
   canQueryChannel,
   channelLabel,
@@ -273,6 +275,11 @@ describe('write forms', () => {
 })
 
 describe('late payments, providers and adjustments', () => {
+  it('labels the archived-plan case and its cancel reason (10-16)', () => {
+    expect(LATE_KIND_LABELS.archived_plan).toBe('套餐归档后到账')
+    expect(cancelReasonLabel('plan_archived')).toBe('套餐已归档，实付已转入用户余额')
+  })
+
   it('words late cases and filter query helpers', () => {
     expect(lateReason({ case_kind: 'released_order', order_no: 'PD1' })).toBe('订单取消后到账 · PD1')
     expect(lateKindLabel('excess_capture')).toBe('超额扣款')

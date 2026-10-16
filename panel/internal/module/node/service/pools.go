@@ -383,7 +383,7 @@ func validatePoolNameRegion(name, region string, create bool) map[string]string 
 	return fields
 }
 
-// DeletePool 删除空池（无在役节点、无套餐绑定）。
+// DeletePool 删除空池（无在役节点、无未归档套餐绑定）；已归档套餐的绑定不挡，在同一事务里一起删掉（用户 2026-10-16 定）。
 func (s *Service) DeletePool(ctx context.Context, id uuid.UUID) error {
 	if s.catalog == nil {
 		return errPoolPortMissing
@@ -408,7 +408,11 @@ func (s *Service) DeletePool(ctx context.Context, id uuid.UUID) error {
 			return err
 		}
 		if usage[id].Plans > 0 {
-			return errs.Newf(errs.Conflict, "还有套餐绑定着这个节点池，先解除绑定再删")
+			return errs.Newf(errs.Conflict, "还有在售或草稿套餐绑定着这个节点池，先在套餐的线路里去掉它再删")
+		}
+		released, err := s.catalog.ReleaseArchivedPoolBindings(ctx, id)
+		if err != nil {
+			return err
 		}
 		if err := s.repo.DetachDeletedPoolNodes(ctx, id); err != nil {
 			return err
@@ -423,8 +427,13 @@ func (s *Service) DeletePool(ctx context.Context, id uuid.UUID) error {
 		if !ok {
 			return errs.New(errs.NotFound)
 		}
+		releasedIDs := make([]string, 0, len(released))
+		for _, rid := range released {
+			releasedIDs = append(releasedIDs, rid.String())
+		}
 		return s.auditPool(ctx, ActionPoolDeleted, id, map[string]any{
 			"code": cur.Code, "name": cur.Name,
+			"released_archived_plans": releasedIDs,
 		})
 	})
 }

@@ -17,10 +17,12 @@ import (
 type Catalog interface {
 	// PlanPools 批量取套餐绑定的池（一条 SQL）；没绑池的套餐不在返回的 map 里。
 	PlanPools(ctx context.Context, planIDs []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error)
-	// PoolUsage 批量取池被套餐引用的情况（一条 SQL）。
+	// PoolUsage 批量取池被套餐引用的情况（一条 SQL；Plans 只算未归档套餐）。
 	PoolUsage(ctx context.Context, poolIDs []uuid.UUID) (map[uuid.UUID]catalogsvc.PoolUsage, error)
 	// PlansByIDs 批量取套餐（一条 SQL）；不存在的 id 不在返回的 map 里。
 	PlansByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]catalogsvc.Plan, error)
+	// ReleaseArchivedPoolBindings 删掉已归档套餐对这个池的绑定（删池时在同一事务里、DELETE 池之前调），返回涉及的套餐 id。
+	ReleaseArchivedPoolBindings(ctx context.Context, poolID uuid.UUID) ([]uuid.UUID, error)
 }
 
 // UserGroups 是 node 要的用户组读取面，由 identity service 实现（组很少，取全量）。

@@ -4,11 +4,11 @@ import { APP_UPDATE, guideApps, guideText, parseGuideDevice } from './app-update
 import { appLink, CLIENTS, DEVICES, detectDevice, guessDeviceFromName, protocolLabel, rateLabel, shareMessage } from './clients'
 import { throttleNote } from './catalog'
 import { createPlacedOrder, recallPayable } from './intent'
-import { isPaymentLapsed, payHereNote } from './PayFlow'
+import { archivedPaidText, isPaymentLapsed, lapsedCancelLabel, payHereNote } from './PayFlow'
 import { refusalOf } from './quote'
 import { ApiError } from '../../../core/api'
 import { orderQuerySchema, queryFailure, queryOutcome } from './order-query'
-import { expiryNote, intervalLabel, isPayable, orderRowSchema, orderTitle } from './orders'
+import { archivedRefundText, expiryNote, intervalLabel, isPayable, isPlanArchivedRefund, orderRowSchema, orderTitle } from './orders'
 import { canRenew, pickPrimary, subscriptionSchema, usageReportSchema, type Subscription } from './subscriptions'
 import { buildUsageBars, bytesParts, expiryInfo, pickTrafficQuota, projectUsage, resetAtOf, trafficSummary, usageLevel } from './traffic'
 
@@ -370,6 +370,10 @@ describe('order query (我已支付，刷新状态)', () => {
     const late = queryOutcome({ ...r, quarantine_kind: 'released_order', order_status: 'cancelled' })
     expect(late.kind).toBe('settled')
     expect(late.text).toContain('工单')
+    expect(late.wallet).toBeUndefined()
+    // 套餐归档后才付款（10-16）：自动转余额，不走工单；查单结果没有手续费，用统一说法，给去钱包的按钮
+    const archived = queryOutcome({ ...r, quarantine_kind: 'archived_plan', order_status: 'cancelled' })
+    expect(archived).toEqual({ kind: 'settled', text: '款项已到账，但套餐已停售，没有开通；应付金额已转入钱包余额，支付手续费不退。', wallet: true })
     expect(queryOutcome({ ...r, channel_status: 'unpaid', reconciled: false, order_status: 'pending_payment' }).kind).toBe('pending')
     expect(queryOutcome({ ...r, channel_status: 'not_found', reconciled: false, order_status: 'pending_payment' }).kind).toBe('pending')
     expect(queryFailure(new ApiError({ status: 409, code: 'conflict', message: '该订单从未发起过支付，无法向渠道查单' }))).toEqual({ kind: 'failed', text: '查询失败：该订单从未发起过支付，无法向渠道查单' })
@@ -406,6 +410,23 @@ describe('付款与建单被拒', () => {
   it('发起支付超过付款期限按码认（409 order_lapsed），同样文案的普通 409 不算', () => {
     expect(isPaymentLapsed(new ApiError({ status: 409, code: 'order_lapsed', message: '随便什么话' }))).toBe(true)
     expect(isPaymentLapsed(new ApiError({ status: 409, code: 'conflict', message: '这张订单已超过付款期限，请取消后重新下单' }))).toBe(false)
+  })
+
+  it('套餐停售不能再付（409 order_lapsed + reason=plan_archived）：取消按钮不说「重新下单」', () => {
+    const retired = new ApiError({ status: 409, code: 'order_lapsed', message: '套餐已停售，不能再付款，可以取消这张订单', fields: { reason: 'plan_archived' } })
+    expect(isPaymentLapsed(retired)).toBe(true)
+    expect(lapsedCancelLabel(retired)).toBe('取消这张订单')
+    expect(lapsedCancelLabel(new ApiError({ status: 409, code: 'order_lapsed', message: 'x' }))).toBe('取消这张单，重新下单')
+  })
+
+  it('套餐归档转余额：有手续费写「应付金额」并注明不退，没有写「付的钱」，不知道用统一说法', () => {
+    expect(archivedRefundText(300)).toBe('应付金额已转入钱包余额（支付手续费不退）')
+    expect(archivedRefundText(0)).toBe('付的钱已转入钱包余额')
+    expect(archivedRefundText(undefined)).toBe('应付金额已转入钱包余额，支付手续费不退')
+    expect(archivedPaidText({ surcharge_kept: 0 })).toBe('套餐已停售，没有开通；付的钱已转入钱包余额。')
+    expect(isPlanArchivedRefund({ status: 'cancelled', cancel_reason: 'plan_archived' })).toBe(true)
+    expect(isPlanArchivedRefund({ status: 'cancelled', cancel_reason: 'user_cancelled' })).toBe(false)
+    expect(isPlanArchivedRefund({ status: 'expired', cancel_reason: 'plan_archived' })).toBe(false)
   })
 
   it('order_pending 按 fields 认：order_id 与 lapsed，不靠文案', () => {

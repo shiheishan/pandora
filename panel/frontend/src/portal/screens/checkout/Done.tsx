@@ -9,7 +9,7 @@ import { flowCss } from '../common/Flow'
 import { useHoldings } from '../common/holdings'
 import { ImportSheet, type ImportTarget } from '../common/ImportSheet'
 import { LinkBox } from '../common/LinkBox'
-import { PAID_STATUSES, useOrder } from '../common/orders'
+import { archivedRefundText, isPlanArchivedRefund, PAID_STATUSES, useOrder } from '../common/orders'
 import { ResultView } from '../common/Result'
 import { UpdateHelpLink } from '../common/UpdateHelp'
 import { doneLines, doneSub, readDone } from './result-copy'
@@ -54,6 +54,19 @@ export function Done({ orderId }: { orderId: string }) {
   if (order.isPending || h.subs.isPending || subsStale || linksStale) return <Skeleton height={260} />
   if (order.isError) return <LoadError error={order.error} onRetry={() => void order.refetch()} what="订单" />
   const o = order.data!
+  if (!paid && isPlanArchivedRefund(o)) {
+    // 套餐归档后才付款（10-16）：不开通，钱已转进钱包余额
+    return (
+      <Card className={flowCss.narrow}>
+        <Empty
+          bare
+          title="套餐已停售，没有开通"
+          description={`${archivedRefundText(o.surcharge_kept)}，可以用来买别的套餐。`}
+          action={<a href={href('/wallet')}>去钱包看看</a>}
+        />
+      </Card>
+    )
+  }
   if (!paid) {
     const closed = o.status === 'cancelled' || o.status === 'expired'
     return (

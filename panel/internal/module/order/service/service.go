@@ -46,6 +46,8 @@ type Catalog interface {
 	GetPlan(ctx context.Context, planID uuid.UUID) (catalogsvc.PlanDetail, error)
 	// PlansByIDs 也是流量重置价与次数上限的来源（Plan.ResetPrice、Plan.ResetLimit）
 	PlansByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]catalogsvc.Plan, error)
+	// PlanStatuses 只取套餐状态（一条 SQL）：结算时判断订单行套餐是否已归档
+	PlanStatuses(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error)
 	VersionsByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]catalogsvc.Version, error)
 	// PricesByIDs 读价格档（含已归档；价格行不可改，履约时据订单行的 price_id 取一次性价的有效天数）
 	PricesByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]catalogsvc.Price, error)

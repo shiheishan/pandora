@@ -123,6 +123,11 @@ describe('订单页', () => {
     expect(orderResult(detail({ status: 'expired' }))).toBe('超时未支付，已自动取消')
     expect(orderResult(detail({ status: 'cancelled', cancel_reason: 'user_cancelled' }))).toBe('已由您取消')
     expect(orderResult(detail({ status: 'cancelled', cancel_reason: '渠道维护' }))).toBe('渠道维护')
+    // 套餐归档后才付款：不开通，钱转余额（10-16）
+    expect(orderResult(detail({ status: 'cancelled', cancel_reason: 'plan_archived', surcharge_kept: 0 }))).toBe('套餐已停售，没有开通；付的钱已转入钱包余额')
+    // 手续费不退（10-16 改口）：扣了手续费写「应付金额」；字段缺了用统一说法
+    expect(orderResult(detail({ status: 'cancelled', cancel_reason: 'plan_archived', surcharge_kept: 300 }))).toBe('套餐已停售，没有开通；应付金额已转入钱包余额（支付手续费不退）')
+    expect(orderResult(detail({ status: 'cancelled', cancel_reason: 'plan_archived' }))).toBe('套餐已停售，没有开通；应付金额已转入钱包余额，支付手续费不退')
   })
 
   it('事实行：原价、优惠带券码、实付、支付记录；待支付显示过期时间', () => {

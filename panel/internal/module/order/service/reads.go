@@ -295,6 +295,13 @@ func (s *Service) MyOrder(ctx context.Context, id uuid.UUID) (MyOrderDetail, err
 	if err != nil {
 		return MyOrderDetail{}, err
 	}
+	if o.CancelReason != nil && *o.CancelReason == ReasonPlanArchived {
+		for _, it := range hist.Intents {
+			if it.Status == paymentsvc.IntentSucceeded {
+				out.SurchargeKept = out.SurchargeKept.Add(it.Surcharge)
+			}
+		}
+	}
 	for _, p := range hist.Payments {
 		out.Payments = append(out.Payments, PaymentLine{
 			Status:       p.Status,

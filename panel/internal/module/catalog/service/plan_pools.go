@@ -29,15 +29,20 @@ type PoolBinding struct {
 	PlanName string
 	// OnSale 是套餐在售（active 且有当前版本）。
 	OnSale bool
+	// Archived 是套餐已归档；归档套餐的绑定照常下发给到期前的老用户，但不占池：不计入 PoolUsage.Plans / PlanNames，删池时由 ReleaseArchivedPoolBindings 一起删掉。
+	Archived bool
 	// VersionIDs 是这个套餐的全部版本（任何状态，按版本号升序），给 node 判断「有没有人在用」。永不为 nil。
 	VersionIDs []uuid.UUID
 }
 
 // PoolUsage 是一个节点池被套餐引用的情况。
+// Plans 是绑定了这个池的未归档套餐数（草稿与在售；挡删池、后台「被 N 个套餐使用」都用它）。
+// PlanNames 同口径（未归档的名字，去重升序，永不为 nil）。
+// Bindings 是全部绑定（含归档，带 Archived），给 node 判断有没有人在用，永不为 nil。
 type PoolUsage struct {
-	Plans     int           // 绑定了这个池的套餐数（任何状态）
-	PlanNames []string      // 这些套餐的名字，去重后升序，永不为 nil
-	Bindings  []PoolBinding // 按套餐名、套餐 id 排序，永不为 nil
+	Plans     int           // 绑定了这个池的未归档套餐数
+	PlanNames []string      // 这些未归档套餐的名字，去重后升序，永不为 nil
+	Bindings  []PoolBinding // 全部绑定（含归档），按套餐名、套餐 id 排序，永不为 nil
 }
 
 // PlanPools 批量取套餐绑定的池：套餐 id → 池 id（升序）。没绑的套餐不在 map 里。
@@ -50,6 +55,7 @@ func (s *Service) PlanPools(ctx context.Context, planIDs []uuid.UUID) (map[uuid.
 }
 
 // PoolUsage 批量取池被套餐引用的情况：池 id → 用量。没被引用的池不在 map 里。
+// Plans 与 PlanNames 只计入未归档套餐；只被归档套餐绑定的池仍会出现在 map 里（Plans=0、PlanNames=[]、Bindings 非空）。
 func (s *Service) PoolUsage(ctx context.Context, poolIDs []uuid.UUID) (map[uuid.UUID]PoolUsage, error) {
 	if len(poolIDs) == 0 {
 		return map[uuid.UUID]PoolUsage{}, nil
@@ -74,8 +80,10 @@ func (s *Service) PoolUsage(ctx context.Context, poolIDs []uuid.UUID) (map[uuid.
 	out := make(map[uuid.UUID]PoolUsage)
 	for _, row := range rows {
 		u := out[row.PoolID]
-		u.Plans++
-		u.PlanNames = append(u.PlanNames, row.PlanName)
+		if !row.Archived {
+			u.Plans++
+			u.PlanNames = append(u.PlanNames, row.PlanName)
+		}
 		vids := verByPlan[row.PlanID]
 		if vids == nil {
 			vids = []uuid.UUID{}
@@ -84,6 +92,7 @@ func (s *Service) PoolUsage(ctx context.Context, poolIDs []uuid.UUID) (map[uuid.
 			PlanID:     row.PlanID,
 			PlanName:   row.PlanName,
 			OnSale:     row.OnSale,
+			Archived:   row.Archived,
 			VersionIDs: vids,
 		})
 		out[row.PoolID] = u
@@ -116,6 +125,30 @@ func (s *Service) PoolUsage(ctx context.Context, poolIDs []uuid.UUID) (map[uuid.
 		out[pid] = u
 	}
 	return out, nil
+}
+
+// ReleaseArchivedPoolBindings 删掉已归档套餐对这个池的绑定（删池时 node 在同一事务里、DELETE 池之前调），返回涉及的套餐 id（升序，永不为 nil）。
+// 不推名单纪元：能删的池已经没有在役节点。每个涉及的套餐推一条实时变更，后台套餐页刷新线路。
+func (s *Service) ReleaseArchivedPoolBindings(ctx context.Context, poolID uuid.UUID) ([]uuid.UUID, error) {
+	var ids []uuid.UUID
+	err := s.tx.Do(ctx, func(ctx context.Context) error {
+		var err error
+		ids, err = s.repo.DeleteArchivedPoolBindings(ctx, poolID)
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			s.catalogChanged(ctx, rtTablePlans, realtime.OpUpdate, id)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, catalogErr(err)
+	}
+	if ids == nil {
+		ids = []uuid.UUID{}
+	}
+	return ids, nil
 }
 
 func uuidSlicesEqualSet(a, b []uuid.UUID) bool {

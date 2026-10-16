@@ -2,6 +2,7 @@ package repo
 
 import (
 	"context"
+	"sort"
 
 	"github.com/google/uuid"
 
@@ -14,6 +15,7 @@ type PoolPlanRow struct {
 	PlanID   uuid.UUID `gorm:"column:plan_id"`
 	PlanName string    `gorm:"column:plan_name"`
 	OnSale   bool      `gorm:"column:on_sale"`
+	Archived bool      `gorm:"column:archived"`
 }
 
 // planPoolScanRow 是 PlanPools 查询的一行。
@@ -50,7 +52,8 @@ func (r *Repo) PoolPlanRows(ctx context.Context, poolIDs []uuid.UUID) ([]PoolPla
 	}
 	var rows []PoolPlanRow
 	err := r.d.Conn(ctx).Raw(`SELECT pnp.pool_id, pnp.plan_id, pl.name AS plan_name,
-		(pl.status = 'active' AND pl.current_version_id IS NOT NULL) AS on_sale
+		(pl.status = 'active' AND pl.current_version_id IS NOT NULL) AS on_sale,
+		(pl.status = 'archived') AS archived
 		FROM plan_node_pools pnp
 		JOIN plans pl ON pl.id = pnp.plan_id
 		WHERE pnp.pool_id IN ?
@@ -62,6 +65,24 @@ func (r *Repo) PoolPlanRows(ctx context.Context, poolIDs []uuid.UUID) ([]PoolPla
 		return []PoolPlanRow{}, nil
 	}
 	return rows, nil
+}
+
+// DeleteArchivedPoolBindings 删掉已归档套餐对这个池的绑定，返回被删绑定的套餐 id（升序）。在调用方事务里执行（删池时由 node 调）。
+func (r *Repo) DeleteArchivedPoolBindings(ctx context.Context, poolID uuid.UUID) ([]uuid.UUID, error) {
+	var ids []uuid.UUID
+	err := r.d.Conn(ctx).Raw(`DELETE FROM plan_node_pools pnp USING plans pl
+ WHERE pnp.pool_id = ? AND pl.id = pnp.plan_id AND pl.status = 'archived'
+RETURNING pnp.plan_id`, poolID).Scan(&ids).Error
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	if len(ids) == 0 {
+		return []uuid.UUID{}, nil
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		return ids[i].String() < ids[j].String()
+	})
+	return ids, nil
 }
 
 // ReplacePlanPools 整体替换套餐的绑池：先 DELETE 该套餐全部行，poolIDs 非空再用 Create 批量插入。

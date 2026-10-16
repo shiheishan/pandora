@@ -81,5 +81,8 @@ paths:
 - 截止时刻在库里按 `now()` 算（`make_interval`），不用进程时钟，免得面板时钟快于库时被 guard 拒掉整批。
 - 删掉之后再拿这枚令牌来登记，拒绝原因从 `token_expired` 变成 `token_unknown`（行已不在）；面板与节点端都不该依赖这两个原因的区别。
 
+## 删节点池
+- `DeletePool`（`service/pools.go`）：锁池行 → 没有未删节点 → catalog `PoolUsage` 的 `Plans`（只算草稿与在售套餐）为 0 → 调 catalog `ReleaseArchivedPoolBindings` 删掉归档套餐对这个池的绑定 → 删池；审计 `node_pool.deleted` 带 `released_archived_plans`。归档套餐的绑定不挡删池（用户 2026-10-16 定）；不推纪元（能删的池已没有在役节点）。node 只经 `Catalog` 端口调，不碰 `plan_node_pools`。
+
 ## 发布检查的提示
 - `CheckPublishable`（`service/plan_pools.go`）三种拒绝分开写：没绑池 `poolNoteUnbound`、绑的池都停用 `poolNoteAllDisabled`、池里没有可服务节点；后台据此排查（用户 2026-10-14 定）。门户侧不暴露原因。池状态只管能不能再绑，不影响已有绑定的下发。

@@ -104,6 +104,13 @@ func (s *Service) captureReservation(ctx context.Context, o model.Order, actor A
 // releaseOrder 取消或超时释放。调用方已锁住订单行且 o.Status == StatusPending（不满足回 ErrStateChanged）。
 // to 是 StatusCancelled 或 StatusExpired，event 是 EventCancel 或 EventExpire，reason 写进预留 release_reason 与订单 cancel_reason。
 func (s *Service) releaseOrder(ctx context.Context, o model.Order, to, reason, event string, actor Actor) (model.Order, error) {
+	return s.releaseOrderWith(ctx, o, to, reason, event, actor, nil)
+}
+
+// releaseOrderWith 同 releaseOrder；beforeHold 非 nil 时在释放预留与券之后、释放余额冻结之前调用（归档套餐的迟到付款在这里挂账并转余额，
+// 见 CloseArchivedOrder），它出错整笔回滚。
+func (s *Service) releaseOrderWith(ctx context.Context, o model.Order, to, reason, event string, actor Actor,
+	beforeHold func(ctx context.Context) error) (model.Order, error) {
 	if o.Status != StatusPending {
 		return model.Order{}, ErrStateChanged
 	}
@@ -145,6 +152,11 @@ func (s *Service) releaseOrder(ctx context.Context, o model.Order, to, reason, e
 
 	if o.CouponID != nil {
 		if err := s.promo.Release(ctx, o.ID, reason); err != nil {
+			return model.Order{}, err
+		}
+	}
+	if beforeHold != nil {
+		if err := beforeHold(ctx); err != nil {
 			return model.Order{}, err
 		}
 	}

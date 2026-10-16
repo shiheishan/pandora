@@ -105,6 +105,28 @@ func (r *Repo) PlansByIDs(ctx context.Context, ids []uuid.UUID) ([]model.Plan, e
 	return plans, nil
 }
 
+// planStatusRow 是 PlanStatuses 查询的一行。
+type planStatusRow struct {
+	ID     uuid.UUID `gorm:"column:id"`
+	Status string    `gorm:"column:status"`
+}
+
+// PlanStatuses 批量取套餐状态（一条 SQL，只读 id 与 status）：套餐 id → 状态；不存在的 id 不在 map 里。
+func (r *Repo) PlanStatuses(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error) {
+	out := make(map[uuid.UUID]string, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	var rows []planStatusRow
+	if err := r.d.Conn(ctx).Raw(`SELECT id, status FROM plans WHERE id IN ?`, ids).Scan(&rows).Error; err != nil {
+		return nil, mapErr(err)
+	}
+	for _, row := range rows {
+		out[row.ID] = row.Status
+	}
+	return out, nil
+}
+
 // InsertPlan 插入套餐，回填 ID 等列（用 Create）；有重置价时写前 money.Check。
 func (r *Repo) InsertPlan(ctx context.Context, p *model.Plan) error {
 	if p.ResetPrice != nil {
