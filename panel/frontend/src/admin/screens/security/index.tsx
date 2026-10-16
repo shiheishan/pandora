@@ -1,4 +1,5 @@
 import type { AdminScreenProps } from '../index'
+import { SignupSecurity } from '../users/SignupSecurity'
 import { AccessTab } from './AccessTab'
 import { AuditTab } from './AuditTab'
 import { RiskTab } from './RiskTab'
@@ -10,6 +11,8 @@ export default function Security({ tab }: AdminScreenProps) {
       return <AccessTab />
     case 'risk':
       return <RiskTab />
+    case 'signup':
+      return <SignupSecurity />
     case 'switches':
       return <SwitchesTab />
     default:
