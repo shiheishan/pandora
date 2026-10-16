@@ -93,11 +93,11 @@ type fakeValuer struct {
 	err   error
 }
 
-func (f fakeValuer) RemainingValue(context.Context, uuid.UUID, time.Time) (decimal.Decimal, money.Currency, int, error) {
+func (f fakeValuer) RemainingValue(context.Context, uuid.UUID, time.Time) (decimal.Decimal, int, error) {
 	if f.err != nil {
-		return decimal.Zero, "", 0, f.err
+		return decimal.Zero, 0, f.err
 	}
-	return f.value, money.CNY, f.lost, nil
+	return f.value, f.lost, nil
 }
 
 // fakePaid 代替 order 的付费记录查询。
@@ -157,7 +157,7 @@ func setupEnv(t *testing.T, commit bool) (*env, context.Context) {
 	txm := tx.NewManager(d)
 	users := &fakeUsers{emails: map[uuid.UUID]string{}}
 	settings := settingssvc.New(settingsrepo.New(d), txm, sealer, rdb, auditSvc)
-	ledgerSvc := ledgersvc.New(ledgerrepo.New(d), txm, settings, auditSvc)
+	ledgerSvc := ledgersvc.New(ledgerrepo.New(d), txm, auditSvc)
 	catalogSvc := catalogsvc.New(catalogrepo.New(d), txm, auditSvc, users)
 	subSvc := subsvc.New(subrepo.New(d), txm, auditSvc, settings, catalogSvc, users, sealer)
 	idemSvc := idemsvc.New(idemrepo.New(d), txm)
@@ -248,10 +248,10 @@ func (e *env) asAdmin(ctx context.Context) context.Context {
 	return reqid.With(ctx, reqid.New())
 }
 
-// mkPlan 用 SQL 建一个在售套餐（一个已发布版本，带 100 GiB 周期流量配额）与一个 CNY 月付价格（同 order 的测试）。
+// mkPlan 用 SQL 建一个在售套餐（一个已发布版本，带 100 GiB 周期流量配额）与一个月付价格（同 order 的测试）。
 func (e *env) mkPlan(t *testing.T, ctx context.Context, unitCents int64) (planID, versionID, priceID uuid.UUID) {
 	t.Helper()
-	if err := e.row(ctx, `INSERT INTO plans (code, name) VALUES (?, ?) RETURNING id`,
+	if err := e.row(ctx, `INSERT INTO plans (code, name, kind) VALUES (?, ?, 'subscription') RETURNING id`,
 		"g-"+randHex(12), "测试套餐-"+randHex(4)).Scan(&planID); err != nil {
 		t.Fatal(err)
 	}
@@ -263,8 +263,30 @@ func (e *env) mkPlan(t *testing.T, ctx context.Context, unitCents int64) (planID
 		versionID, catalogsvc.MetricTraffic, "cycle", 100*gib)
 	e.mustExec(t, ctx, `UPDATE plan_versions SET status = 'published', frozen_at = now() WHERE id = ?`, versionID)
 	e.mustExec(t, ctx, `UPDATE plans SET status = 'active', current_version_id = ? WHERE id = ?`, versionID, planID)
-	if err := e.row(ctx, `INSERT INTO prices (plan_id, currency, unit_amount, billing_interval, interval_count) VALUES (?, 'CNY', ?, 'month', 1) RETURNING id`,
+	if err := e.row(ctx, `INSERT INTO prices (plan_id, plan_kind, unit_amount, billing_interval, interval_count) VALUES (?, 'subscription', ?, 'month', 1) RETURNING id`,
 		planID, money.FromCents(unitCents)).Scan(&priceID); err != nil {
+		t.Fatal(err)
+	}
+	return planID, versionID, priceID
+}
+
+// mkOneTimePlan 用 SQL 建一个一次性套餐（一个已发布版本，带 100 GiB 总量配额）与一个一次性价格。
+func (e *env) mkOneTimePlan(t *testing.T, ctx context.Context, unitCents int64, validityDays *int) (planID, versionID, priceID uuid.UUID) {
+	t.Helper()
+	if err := e.row(ctx, `INSERT INTO plans (code, name, kind) VALUES (?, ?, 'one_time') RETURNING id`,
+		"g-"+randHex(12), "一次性套餐-"+randHex(4)).Scan(&planID); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.row(ctx, `INSERT INTO plan_versions (plan_id, version, max_devices) VALUES (?, 1, 3) RETURNING id`,
+		planID).Scan(&versionID); err != nil {
+		t.Fatal(err)
+	}
+	e.mustExec(t, ctx, `INSERT INTO quota_definitions (plan_version_id, metric, period, limit_value) VALUES (?, ?, ?, ?)`,
+		versionID, catalogsvc.MetricTraffic, "total", 100*gib)
+	e.mustExec(t, ctx, `UPDATE plan_versions SET status = 'published', frozen_at = now() WHERE id = ?`, versionID)
+	e.mustExec(t, ctx, `UPDATE plans SET status = 'active', current_version_id = ? WHERE id = ?`, versionID, planID)
+	if err := e.row(ctx, `INSERT INTO prices (plan_id, plan_kind, unit_amount, billing_interval, interval_count, validity_days) VALUES (?, 'one_time', ?, 'one_time', 1, ?) RETURNING id`,
+		planID, money.FromCents(unitCents), validityDays).Scan(&priceID); err != nil {
 		t.Fatal(err)
 	}
 	return planID, versionID, priceID
@@ -276,11 +298,26 @@ func (e *env) mkSub(t *testing.T, ctx context.Context, user, planID, versionID, 
 	pid := priceID
 	sub, err := e.subs.Provision(ctx, subsvc.Provision{
 		UserID: user, PlanID: planID, PlanVersionID: versionID,
-		Price: subsvc.PriceSnapshot{PriceID: &pid, Currency: money.CNY, Amount: dec("30"), Interval: "month", IntervalCount: 1},
+		Price: subsvc.PriceSnapshot{PriceID: &pid, Amount: dec("30"), Interval: "month", IntervalCount: 1},
 		Actor: subsvc.Actor{Kind: subsvc.ActorSystem},
 	})
 	if err != nil {
 		t.Fatalf("开订阅: %v", err)
+	}
+	return sub
+}
+
+// mkOneTimeSub 直接经 subscription 开一份生效中的一次性订阅。
+func (e *env) mkOneTimeSub(t *testing.T, ctx context.Context, user, planID, versionID, priceID uuid.UUID, validityDays *int) subsvc.Subscription {
+	t.Helper()
+	pid := priceID
+	sub, err := e.subs.Provision(ctx, subsvc.Provision{
+		UserID: user, PlanID: planID, PlanVersionID: versionID,
+		Price: subsvc.PriceSnapshot{PriceID: &pid, Amount: dec("30"), Interval: "one_time", IntervalCount: 1, ValidityDays: validityDays},
+		Actor: subsvc.Actor{Kind: subsvc.ActorSystem},
+	})
+	if err != nil {
+		t.Fatalf("开一次性订阅: %v", err)
 	}
 	return sub
 }
@@ -311,29 +348,24 @@ func (e *env) mkCodes(t *testing.T, ctx context.Context, templateID uuid.UUID, n
 	return g.Sample
 }
 
-// balanceOf 取用户可用余额（CNY）。
+// balanceOf 取用户可用余额。
 func (e *env) balanceOf(t *testing.T, ctx context.Context, user uuid.UUID) decimal.Decimal {
 	t.Helper()
-	// 礼品卡按站点币种发余额（缺省 USD），不能写死 CNY
-	cur, err := e.ledger.DefaultCurrency(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, err := e.ledger.Balance(ctx, user, cur)
+	b, err := e.ledger.Balance(ctx, user)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return b
 }
 
-// balanceIn 读用户某币种的余额。
-func (e *env) balanceIn(t *testing.T, ctx context.Context, user uuid.UUID, cur money.Currency) decimal.Decimal {
+// bonusOf 取订阅的赠送流量累计。
+func (e *env) bonusOf(t *testing.T, ctx context.Context, subID uuid.UUID) int64 {
 	t.Helper()
-	b, err := e.ledger.Balance(ctx, user, cur)
-	if err != nil {
+	var n int64
+	if err := e.row(ctx, `SELECT coalesce(sum(bonus_value), 0) FROM quota_balances WHERE subscription_id = ? AND metric = 'traffic.bytes'`, subID).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
-	return b
+	return n
 }
 
 // subOf 读一份订阅。
