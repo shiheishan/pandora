@@ -32,7 +32,10 @@
 }
 
 .who {
+  display: flex;
   flex: 1 1 280px;
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
 }
 
