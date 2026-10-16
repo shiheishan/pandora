@@ -6,8 +6,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/aegispanel/aegis/internal/module/subscription/repo"
 )
 
 // TrafficCharge 是一笔要记到订阅上的流量：UID 是 subscriptions.node_uid，Bytes 是已按节点倍率折算的计费字节（可以为 0）。

@@ -12,6 +12,13 @@ import (
 )
 
 // lapse 把订阅改成 days 天前已到期（状态改 expired），cycle 行跟到旧到期，day 行停在到期前一天。
+// endSub 把订阅改成已过期且关了续费窗口（期末在 40 天前）。
+func endSub(t *testing.T, e *env, ctx context.Context, subID uuid.UUID) {
+	t.Helper()
+	e.exec(t, ctx, `UPDATE subscriptions SET status = 'expired', current_period_start = now() - interval '90 days',
+		current_period_end = now() - interval '40 days', renewal_closed_at = now() WHERE id = ?`, subID)
+}
+
 func lapse(t *testing.T, e *env, ctx context.Context, subID uuid.UUID, days int) time.Time {
 	t.Helper()
 	end := time.Now().UTC().Truncate(time.Microsecond).AddDate(0, 0, -days)

@@ -68,7 +68,7 @@ func TestWebhookSettlesNewOrder(t *testing.T) {
 	e, ctx := newEnv(t)
 	code := payCode()
 	e.mkPayProvider(t, ctx, code)
-	user, planID, orderID := e.pendingWithEverything(t, ctx)
+	user, _, orderID := e.pendingWithEverything(t, ctx)
 
 	ack := e.payAndNotify(t, ctx, user, orderID, code, "pay-"+randHex(8))
 	if !ackOK(ack) {

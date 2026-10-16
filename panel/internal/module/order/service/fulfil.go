@@ -182,7 +182,7 @@ func (s *Service) fulfilPlanChange(ctx context.Context, o model.Order, actor sub
 	if it.PlanID == nil || it.PlanVersionID == nil {
 		return fmt.Errorf("order: 换套餐订单行缺套餐或版本 %s", o.ID)
 	}
-	price, err := itemPrice(o, it)
+	price, err := s.itemPrice(ctx, o, it)
 	if err != nil {
 		return err
 	}

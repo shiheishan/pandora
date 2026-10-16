@@ -137,14 +137,15 @@ func TestValidatePlanCreate(t *testing.T) {
 }
 
 func TestValidateSales(t *testing.T) {
-	fields := func(in SalesInput) map[string]string {
+	// 传指针：validateSales 会就地规整入参，用例要看到规整后的值
+	fields := func(in *SalesInput) map[string]string {
 		f := map[string]string{}
-		validateSales(KindSubscription, &in, f)
+		validateSales(KindSubscription, in, f)
 		return f
 	}
 	t.Run("空 visibility 规整成 public", func(t *testing.T) {
 		in := SalesInput{}
-		if f := fields(in); len(f) != 0 {
+		if f := fields(&in); len(f) != 0 {
 			t.Fatalf("fields=%v", f)
 		}
 		if in.Visibility != VisibilityPublic {
@@ -152,7 +153,7 @@ func TestValidateSales(t *testing.T) {
 		}
 	})
 	t.Run("未知 visibility", func(t *testing.T) {
-		if f := fields(SalesInput{Visibility: "secret"}); f["visibility"] == "" {
+		if f := fields(&SalesInput{Visibility: "secret"}); f["visibility"] == "" {
 			t.Fatalf("fields=%v", f)
 		}
 	})
@@ -162,39 +163,39 @@ func TestValidateSales(t *testing.T) {
 			if v == VisibilityGroup {
 				in.VisibleGroupIDs = []uuid.UUID{uuid.New()}
 			}
-			if f := fields(in); len(f) != 0 {
+			if f := fields(&in); len(f) != 0 {
 				t.Fatalf("visibility=%s fields=%v", v, f)
 			}
 		}
 	})
 	t.Run("group 没带组", func(t *testing.T) {
 		in := SalesInput{Visibility: VisibilityGroup}
-		if f := fields(in); f["visible_group_ids"] == "" {
+		if f := fields(&in); f["visible_group_ids"] == "" {
 			t.Fatalf("fields=%v", f)
 		}
 	})
 	t.Run("非 group 带组", func(t *testing.T) {
 		in := SalesInput{Visibility: VisibilityPublic, VisibleGroupIDs: []uuid.UUID{uuid.New()}}
-		if f := fields(in); f["visible_group_ids"] == "" {
+		if f := fields(&in); f["visible_group_ids"] == "" {
 			t.Fatalf("fields=%v", f)
 		}
 	})
 	t.Run("组里有 Nil", func(t *testing.T) {
 		in := SalesInput{Visibility: VisibilityGroup, VisibleGroupIDs: []uuid.UUID{uuid.Nil}}
-		if f := fields(in); f["visible_group_ids"] == "" {
+		if f := fields(&in); f["visible_group_ids"] == "" {
 			t.Fatalf("fields=%v", f)
 		}
 	})
 	t.Run("组重复", func(t *testing.T) {
 		id := uuid.New()
 		in := SalesInput{Visibility: VisibilityGroup, VisibleGroupIDs: []uuid.UUID{id, id}}
-		if f := fields(in); f["visible_group_ids"] == "" {
+		if f := fields(&in); f["visible_group_ids"] == "" {
 			t.Fatalf("fields=%v", f)
 		}
 	})
 	t.Run("VisibleGroupIDs 为 nil 规整成空切片", func(t *testing.T) {
 		in := SalesInput{Visibility: VisibilityPublic}
-		if f := fields(in); len(f) != 0 {
+		if f := fields(&in); len(f) != 0 {
 			t.Fatalf("fields=%v", f)
 		}
 		if in.VisibleGroupIDs == nil || len(in.VisibleGroupIDs) != 0 {

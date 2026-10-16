@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -35,7 +34,7 @@ func TestPortalCatalogVisibility(t *testing.T) {
 	older := publishedPlan(t, ctx, e, publishedPlanOpts{Name: "普通早建"})
 	time.Sleep(2 * time.Millisecond)
 	rec := publishedPlan(t, ctx, e, publishedPlanOpts{Name: "推荐套餐"})
-	rec, err = e.svc.UpdateSales(ctx, rec.ID, SalesUpdate{
+	rec, err := e.svc.UpdateSales(ctx, rec.ID, SalesUpdate{
 		ExpectedRowVersion: rec.RowVersion,
 		Sales: SalesInput{
 			Visibility:       VisibilityPublic,

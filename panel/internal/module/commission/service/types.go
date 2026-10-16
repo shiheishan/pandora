@@ -285,3 +285,12 @@ type ReviewEntryPage struct {
 	Entries    []ReviewEntryRow
 	NextCursor string
 }
+
+// VoidResult 是账号注销时作废佣金的结果（只有人民币）。
+type VoidResult struct {
+	VoidedEntries       int             // 作废的冻结中、待复核条目数
+	VoidedPending       decimal.Decimal // 上面这些条目的金额合计（冲回待结佣金）
+	Forfeited           decimal.Decimal // 作废的可提现佣金（冲回可提现佣金）
+	RejectedWithdrawals int             // 驳回的申请中提现笔数
+	RejectedAmount      decimal.Decimal // 驳回的提现金额合计（驳回后退回可提现、随即一并作废，已含在 Forfeited 里）
+}

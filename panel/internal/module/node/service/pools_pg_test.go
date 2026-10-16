@@ -304,7 +304,7 @@ func TestDeletePool(t *testing.T) {
 	}
 
 	usagePool := seedPoolRow(t, ctx, e, PoolActive)
-	e.cat.usage[usagePool] = catalogsvc.PoolUsage{Versions: 1}
+	e.cat.usage[usagePool] = catalogsvc.PoolUsage{Plans: 1}
 	err = poolSavepoint(t, ctx, e, func() error {
 		return e.svc.DeletePool(ctx, usagePool)
 	})

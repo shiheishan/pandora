@@ -122,7 +122,7 @@ func newOEEnv(t *testing.T, commit bool) (e *oeEnv, ctx context.Context) {
 	identitySvc := identitysvc.New(identityrepo.New(d), txm, settings, auditSvc, keys, rdb, ratelimit.New(rdb), &config.Config{})
 	ledgerSvc := ledgersvc.New(ledgerrepo.New(d), txm, auditSvc)
 	catalogSvc := catalogsvc.New(catalogrepo.New(d), txm, auditSvc, identitySvc)
-	promoSvc := promosvc.New(promorepo.New(d), txm, auditSvc, settings)
+	promoSvc := promosvc.New(promorepo.New(d), txm, auditSvc)
 	promoSvc.UseUsers(identitySvc)
 	promoSvc.UseCatalog(oePromoCatalog{c: catalogSvc})
 	paymentSvc := paymentsvc.New(paymentrepo.New(d), txm, ledgerSvc, identitySvc, settings, auditSvc, sealer, paymentsvc.Config{

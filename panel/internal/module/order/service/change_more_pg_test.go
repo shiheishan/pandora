@@ -204,7 +204,7 @@ func TestPlanChangeSettlementAfterPeriodRestart(t *testing.T) {
 	if err != nil || c.Status != StatusPending {
 		t.Fatalf("换套餐下单: %+v %v", c, err)
 	}
-	_, _, _, err = e.svc.RemainingValue(ctx, sub.ID, time.Now())
+	_, _, err = e.svc.RemainingValue(ctx, sub.ID, time.Now())
 	mustErrMsg(t, "有待付变更单时 RemainingValue", err, ErrOpenChange)
 
 	e.mustExec(t, ctx, `UPDATE subscriptions SET current_period_start = ? WHERE id = ?`, time.Now().UTC().Add(time.Second), sub.ID)

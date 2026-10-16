@@ -1,11 +1,8 @@
 package service
 
 import (
-	"context"
 	"testing"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 // TestRollSwitchPlanVersionPG 订阅套餐滚进新周期时切到套餐当前版本，并按新版本写 cycle 上限、清零用量与送的量。

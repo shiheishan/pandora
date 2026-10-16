@@ -132,7 +132,7 @@ func TestPoolRoutesRegistered(t *testing.T) {
 	}
 	for _, want := range []string{
 		"GET /v1/node-pools", "POST /v1/node-pools", "POST /v1/node-pools/:id", "DELETE /v1/node-pools/:id",
-		"GET /v1/plans/:id/pools", "POST /v1/plans/:id/pools",
+		"GET /v1/plans/:id/pools",
 	} {
 		if !have[want] {
 			t.Fatalf("缺路由 %s", want)
