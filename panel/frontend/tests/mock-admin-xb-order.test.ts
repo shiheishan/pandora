@@ -1,12 +1,9 @@
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'
-import { planResetPricesSchema } from '../src/admin/screens/plans/schemas'
 import { bearer, close, loginAs, mockFetch, serve } from './mock-helpers'
 
-const STD = '9c0e1a2b-3333-4b00-8000-000000000001'
-
-describe('mock api · admin xb-order (reset prices, member discount, coupon intervals)', () => {
+describe('mock api · admin xb-order (coupon intervals)', () => {
   let server: Server
   let base: string
   let auth: Record<string, string>
@@ -18,7 +15,6 @@ describe('mock api · admin xb-order (reset prices, member discount, coupon inte
   afterAll(() => close(server))
 
   const get = (path: string) => mockFetch(base, auth, 'GET', path)
-  const send = (method: string, path: string, body?: unknown, key?: string) => mockFetch(base, auth, method, path, body, key)
 
   const reauthHeaders = async () => {
     await fetch(`${base}/__mock/expire-reauth`, { method: 'POST' })
@@ -29,49 +25,6 @@ describe('mock api · admin xb-order (reset prices, member discount, coupon inte
     })
     return bearer(((await reauth.json()) as { access_token: string }).access_token)
   }
-
-  describe('plan reset prices', () => {
-    it('GET returns seed CNY 1800 for first active plan', async () => {
-      const res = await get(`/v1/plans/${STD}/reset-prices`)
-      expect(res.status).toBe(200)
-      const data = planResetPricesSchema.parse(await res.json())
-      expect(data.reset_prices).toEqual([{ currency: 'CNY', unit_amount: 1800 }])
-    })
-
-    it('PUT replaces prices after reauth and replays with idempotency key', async () => {
-      const fresh = await reauthHeaders()
-      const body = { reset_prices: [{ currency: 'CNY', unit_amount: 2000 }, { currency: 'USD', unit_amount: 300 }] }
-      const put = await mockFetch(base, fresh, 'PUT', `/v1/plans/${STD}/reset-prices`, body, 'reset-1')
-      expect(put.status).toBe(200)
-      expect(planResetPricesSchema.parse(await put.json()).reset_prices).toEqual(body.reset_prices)
-      const replay = await mockFetch(base, fresh, 'PUT', `/v1/plans/${STD}/reset-prices`, body, 'reset-1')
-      expect(replay.status).toBe(200)
-    })
-
-    it('PUT without reauth returns 403 reauth_required', async () => {
-      await fetch(`${base}/__mock/expire-reauth`, { method: 'POST' })
-      const res = await send('PUT', `/v1/plans/${STD}/reset-prices`, { reset_prices: [] }, 'reset-no-reauth')
-      expect(res.status).toBe(403)
-      expect((await res.json()).error.code).toBe('reauth_required')
-    })
-
-    it('PUT validates max 2 entries and positive amounts', async () => {
-      const fresh = await reauthHeaders()
-      const tooMany = await mockFetch(base, fresh, 'PUT', `/v1/plans/${STD}/reset-prices`, {
-        reset_prices: [
-          { currency: 'CNY', unit_amount: 100 },
-          { currency: 'USD', unit_amount: 100 },
-          { currency: 'CNY', unit_amount: 200 },
-        ],
-      }, 'reset-too-many')
-      expect(tooMany.status).toBe(422)
-      expect((await tooMany.json()).error.fields.reset_prices).toBe('最多配置 CNY、USD 各一档')
-
-      const zero = await mockFetch(base, fresh, 'PUT', `/v1/plans/${STD}/reset-prices`, { reset_prices: [{ currency: 'CNY', unit_amount: 0 }] }, 'reset-zero')
-      expect(zero.status).toBe(422)
-      expect((await zero.json()).error.fields['reset_prices.0.unit_amount']).toBe('重置价格须大于 0，最多两位小数')
-    })
-  })
 
   describe('coupon applicable_intervals', () => {
     it('creates coupon with intervals and lists them back', async () => {

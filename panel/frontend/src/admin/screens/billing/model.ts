@@ -245,7 +245,7 @@ interface PriceChoice {
 /** 在售套餐（已发布、有当前版本）的在售价格；按单价升序 */
 export function priceChoices(plans: readonly PlanRow[]): PriceChoice[] {
   return plans
-    .filter((p) => p.status === 'active' && p.current_version_id !== null)
+    .filter((p) => p.status === 'active' && p.version !== null)
     .flatMap((p) =>
       p.prices
         .filter((x) => x.status === 'active')

@@ -194,27 +194,28 @@ describe('write forms', () => {
     expect(referenceProblem(' ICBC-1 ')).toBeNull()
   })
 
-  const price = (over: Partial<PriceRow>): PriceRow =>
-    ({ id: 'p', unit_amount: 2500, billing_interval: 'month', interval_count: 1, status: 'active', user_group_id: null, valid_from: null, valid_until: null, row_version: 1, ...over } as PriceRow)
+  const price = (over: Partial<PriceRow>): PriceRow => ({ id: 'p', unit_amount: 2500, billing_interval: 'month', interval_count: 1, validity_days: null, status: 'active', created_at: '2026-01-01T00:00:00Z', ...over })
   const plan = (over: Partial<PlanRow>): PlanRow => ({
     id: 'pl',
     row_version: 1,
     code: 'std',
     name: '标准版',
     description: null,
+    kind: 'subscription',
     status: 'active',
     visibility: 'public',
-    sort_order: 1,
-    current_version_id: 'v1',
-    draft_version_id: null,
-    version: 1,
-    max_devices: 3,
-    traffic_limit: null,
+    recommended: false,
     prices: [],
+    traffic_bytes: null,
+    max_devices: 3,
+    throttle_kbps: null,
+    version: 1,
+    draft_version: null,
+    draft_version_id: null,
+    pool_ids: [],
+    reset: null,
     active_subscriptions: 0,
     node_count: 1,
-    highlights: [],
-    recommended: false,
     ...over,
   })
 
@@ -222,7 +223,7 @@ describe('write forms', () => {
     const choices = priceChoices([
       plan({ prices: [price({ id: 'a' }), price({ id: 'b', status: 'archived' }), price({ id: 'c', billing_interval: 'year', unit_amount: 19900 })] }),
       plan({ id: 'draft', status: 'draft', prices: [price({ id: 'd' })] }),
-      plan({ id: 'nover', current_version_id: null, prices: [price({ id: 'e' })] }),
+      plan({ id: 'nover', version: null, prices: [price({ id: 'e' })] }),
     ])
     expect(choices.map((c) => c.value)).toEqual(['pl:a', 'pl:c'])
     expect(choices[0]!.planName).toBe('标准版')

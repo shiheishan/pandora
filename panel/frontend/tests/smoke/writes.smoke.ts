@@ -12,7 +12,7 @@ import { codesResponse, batchesResponse, toggleResponse } from '../../src/admin/
 import { orderItems } from '../../src/admin/screens/nodes/logic'
 import { nodesResponse, okUpdated } from '../../src/admin/screens/nodes/schemas'
 import { salesBody, salesForm } from '../../src/admin/screens/plans/model'
-import { planResponseSchema, rowVersionSchema } from '../../src/admin/screens/plans/schemas'
+import { planResponseSchema } from '../../src/admin/screens/plans/schemas'
 import { switchesResponse, switchSaved } from '../../src/admin/screens/security/schemas'
 import { templatesResponse, templateSaved } from '../../src/admin/screens/system/schemas'
 import { okSchema as ticketOk, ticketDetailSchema } from '../../src/admin/screens/tickets/api'
@@ -148,11 +148,11 @@ describe('各模块写操作的响应能被页面 schema 解析', () => {
     await api.put('v1/nodes/order', okUpdated, { body: { items: orderItems(nodes.nodes) } })
   })
 
-  writeCase('plans/SalesDrawer.tsx SalesBody', 'v1/plans/{id}', '套餐：原样保存销售设置', async () => {
+  writeCase('plans/EditModals.tsx SalesModal', 'v1/plans/{id}/sales', '套餐：原样保存销售设置', async () => {
     const api = pageClient('admin')
     const { plan } = await api.get(`v1/plans/${s.plan_id}`, planResponseSchema)
-    const body = salesBody(salesForm(plan), plan)
-    await api.put(`v1/plans/${s.plan_id}`, rowVersionSchema, { body, idempotencyKey: randomUUID() })
+    const body = salesBody(salesForm(plan), plan.kind, plan.row_version)
+    await api.put(`v1/plans/${s.plan_id}/sales`, planResponseSchema, { body, idempotencyKey: randomUUID() })
   })
 
   writeCase('system/TemplatesTab.tsx TemplateEditor', 'v1/mail/templates', '系统：原样保存一个通知模板', async () => {
