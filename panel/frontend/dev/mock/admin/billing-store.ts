@@ -5,7 +5,7 @@ import { currentOf, plans, trafficOf } from './plans-store.ts'
 import { seedOrders, setOrderSource, userStore, type Sub, type User } from './users.ts'
 
 /** users.ts 的 Sub 与订单视图现在还带这几个旧字段（币种、流量包），那边删掉后这里一并删；用展开写进去，那边删了也不报多余属性 */
-const LEGACY_SUB_FIELDS = { currency: 'CNY', pack_bytes: 0 }
+const LEGACY_SUB_FIELDS = { currency: 'CNY' }
 const LEGACY_ORDER_FIELDS = { currency: 'CNY' }
 
 const MIN = 60_000

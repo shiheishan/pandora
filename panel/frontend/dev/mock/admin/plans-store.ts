@@ -55,9 +55,6 @@ export interface Price {
   validity_days: number | null
   status: 'active' | 'archived'
   created_at: string
-  // 其它模块假后端还在读，F 块改完删
-  currency: 'CNY'
-  user_group_id: null
 }
 
 export interface Plan {
@@ -109,8 +106,6 @@ function seedPrice(
     validity_days: null,
     status: 'active',
     created_at: iso(daysAgo * DAY),
-    currency: 'CNY',
-    user_group_id: null,
     ...over,
   }
 }

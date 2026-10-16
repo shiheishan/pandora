@@ -267,8 +267,6 @@ const routes: Record<string, MockRoute> = {
             validity_days: null,
             status: 'active',
             created_at: nowStr,
-            currency: 'CNY',
-            user_group_id: null,
           })
         })
       } else if (oneTimeToCreate) {
@@ -280,8 +278,6 @@ const routes: Record<string, MockRoute> = {
           validity_days: oneTimeToCreate.validity_days,
           status: 'active',
           created_at: nowStr,
-          currency: 'CNY',
-          user_group_id: null,
         })
       }
 
@@ -511,8 +507,6 @@ const routes: Record<string, MockRoute> = {
               validity_days: null,
               status: 'active',
               created_at: nowStr,
-              currency: 'CNY',
-              user_group_id: null,
             })
             changes++
           }
@@ -534,8 +528,6 @@ const routes: Record<string, MockRoute> = {
             validity_days: vd,
             status: 'active',
             created_at: nowStr,
-            currency: 'CNY',
-            user_group_id: null,
           })
           changes++
         }
