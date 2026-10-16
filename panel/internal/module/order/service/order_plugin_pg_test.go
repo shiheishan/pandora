@@ -75,7 +75,7 @@ func TestPluginOrderCreatedNew(t *testing.T) {
 	e.svc.UsePluginEvents(rec)
 
 	user := e.mkUser(t, ctx)
-	planID, _, priceID := e.mkPlan(t, ctx, 3000, "month", intp(10), intp(3))
+	planID, _, priceID := e.mkPlan(t, ctx, 3000, "month")
 	c := e.buyNew(t, ctx, user, planID, priceID, Checkout{})
 
 	created := rec.find("order.created")
@@ -113,7 +113,7 @@ func TestPluginOrderPaidZeroPay(t *testing.T) {
 	e.svc.UsePluginEvents(rec)
 
 	user := e.mkUser(t, ctx)
-	planID, _, priceID := e.mkPlan(t, ctx, 2000, "month", intp(5), intp(2))
+	planID, _, priceID := e.mkPlan(t, ctx, 2000, "month")
 	code := couponCode()
 	e.mkCoupon(t, ctx, code, 500)
 	e.giveBalance(t, ctx, user, 5000)
@@ -253,7 +253,7 @@ func TestPluginOrderExpiredReason(t *testing.T) {
 func TestPluginZeroPayRenewalNoPaid(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	planID, v1, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	planID, v1, priceID := e.mkPlan(t, ctx, 1000, "month")
 	sub := e.provision(t, ctx, user, planID, v1, priceID, 1000)
 	e.giveBalance(t, ctx, user, 5000)
 
@@ -280,7 +280,7 @@ func TestPluginPackOrderCreated(t *testing.T) {
 	e.svc.UsePluginEvents(rec)
 
 	user := e.mkUser(t, ctx)
-	planID, versionID, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	planID, versionID, priceID := e.mkPlan(t, ctx, 1000, "month")
 	sub := e.provision(t, ctx, user, planID, versionID, priceID, 1000)
 	packID := e.mkPack(t, ctx, 600, 50*gib)
 
@@ -304,7 +304,7 @@ func TestPluginEmitErrorFailsOrder(t *testing.T) {
 	e.svc.UsePluginEvents(rec)
 
 	user := e.mkUser(t, ctx)
-	planID, _, priceID := e.mkPlan(t, ctx, 3000, "month", intp(10), intp(3))
+	planID, _, priceID := e.mkPlan(t, ctx, 3000, "month")
 	_, err := e.svc.CreateNewOrder(asUser(ctx, user), NewOrderInput{PlanID: planID, PriceID: priceID, Checkout: Checkout{}})
 	if err == nil {
 		t.Fatal("期望建单失败")

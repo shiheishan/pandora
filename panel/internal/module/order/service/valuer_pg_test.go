@@ -24,7 +24,7 @@ func TestRemainingValueAndPaidHistory(t *testing.T) {
 	if paid, err := e.svc.HasPaidOrder(ctx, user); err != nil || paid {
 		t.Fatalf("余额全额付不算付过费: %v %v", paid, err)
 	}
-	planID, _, priceID := e.mkPlan(t, ctx, 500, "month", nil, nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 500, "month")
 	c := e.buyNew(t, ctx, user, planID, priceID, Checkout{})
 	if paid, err := e.svc.HasPaidOrder(ctx, user); err != nil || paid {
 		t.Fatalf("待支付不算付过费: %v %v", paid, err)

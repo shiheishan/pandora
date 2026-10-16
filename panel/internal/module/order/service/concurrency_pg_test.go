@@ -22,7 +22,7 @@ func TestConcurrentPurchaseThenCancelOrSettle(t *testing.T) {
 	e, ctx := newCommitEnv(t)
 	code := payCode()
 	e.mkPayProvider(t, ctx, code)
-	planID, _, priceID := e.mkPlan(t, ctx, 3000, "month", intp(5), nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 3000, "month")
 	cc := couponCode()
 	couponID := e.mkCoupon(t, ctx, cc, 500)
 
@@ -152,7 +152,7 @@ func TestConcurrentCancelVersusWebhook(t *testing.T) {
 	code := payCode()
 	e.mkPayProvider(t, ctx, code)
 	user := e.mkUser(t, ctx)
-	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month", intp(3), intp(1))
+	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month")
 	c := e.buyNew(t, ctx, user, planID, priceID, Checkout{})
 	intent, err := e.svc.Pay(asUser(ctx, user), PayInput{OrderID: c.OrderID, Provider: code})
 	if err != nil {
@@ -233,7 +233,7 @@ func TestConcurrentCancelVersusWebhook(t *testing.T) {
 func TestConcurrentRenewalsOneWins(t *testing.T) {
 	e, ctx := newCommitEnv(t)
 	user := e.mkUser(t, ctx)
-	planID, versionID, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	planID, versionID, priceID := e.mkPlan(t, ctx, 1000, "month")
 	sub := e.provision(t, ctx, user, planID, versionID, priceID, 1000)
 
 	results := make([]error, 2)
@@ -275,7 +275,7 @@ func TestConcurrentZeroPayVersusWebhookNoDeadlock(t *testing.T) {
 	e, ctx := newCommitEnv(t)
 	code := payCode()
 	e.mkPayProvider(t, ctx, code)
-	planID, _, priceID := e.mkPlan(t, ctx, 2000, "month", intp(100), nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 2000, "month")
 	cc := couponCode()
 	couponID := e.mkCoupon(t, ctx, cc, 500)
 
@@ -353,7 +353,7 @@ func TestConcurrentZeroPayVersusWebhookNoDeadlock(t *testing.T) {
 func TestExpireDueSkipsLockedOrder(t *testing.T) {
 	e, ctx := newCommitEnv(t)
 	user := e.mkUser(t, ctx)
-	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month", intp(5), nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month")
 	c := e.buyNew(t, ctx, user, planID, priceID, Checkout{})
 	e.mustExec(t, ctx, `UPDATE orders SET expires_at = now() - interval '1 minute' WHERE id = ?`, c.OrderID)
 	e.mustExec(t, ctx, `UPDATE order_reservations SET expires_at = now() - interval '1 minute' WHERE order_id = ?`, c.OrderID)

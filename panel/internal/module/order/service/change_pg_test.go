@@ -16,7 +16,7 @@ import (
 // 再把本期流量用掉 usedGiB（上限 100 GiB）。刚买下时时间比例接近 1，剩余价值由流量比例决定，金额是确定的。
 func (e *env) activeSub(t *testing.T, ctx context.Context, user uuid.UUID, cents int64, usedGiB int64) subsvc.Subscription {
 	t.Helper()
-	planID, _, priceID := e.mkPlan(t, ctx, cents, "month", nil, nil)
+	planID, _, priceID := e.mkPlan(t, ctx, cents, "month")
 	e.giveBalance(t, ctx, user, cents)
 	c := e.buyNew(t, ctx, user, planID, priceID, Checkout{UseBalance: money.FromCents(cents)})
 	if c.Status != StatusFulfilled {
@@ -72,7 +72,7 @@ func TestPlanChangeUpgradeTopUp(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	sub := e.activeSub(t, ctx, user, 3000, 50)
-	planB, _, priceB := e.mkPlan(t, ctx, 10000, "month", nil, nil)
+	planB, _, priceB := e.mkPlan(t, ctx, 10000, "month")
 
 	q, exp := e.changeQuote(t, ctx, user, sub.ID, planB)
 	mustEq(t, "报价 credit", q.Credit, dec("15"))
@@ -124,7 +124,7 @@ func TestPlanChangeDowngradeRefundsBalance(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	sub := e.activeSub(t, ctx, user, 10000, 20)
-	planB, _, priceB := e.mkPlan(t, ctx, 3000, "month", nil, nil)
+	planB, _, priceB := e.mkPlan(t, ctx, 3000, "month")
 
 	q, exp := e.changeQuote(t, ctx, user, sub.ID, planB)
 	mustEq(t, "报价 credit", q.Credit, dec("80"))
@@ -158,7 +158,7 @@ func TestPlanChangeZeroPayTakesEffect(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	sub := e.activeSub(t, ctx, user, 3000, 50)
-	planB, _, priceB := e.mkPlan(t, ctx, 1500, "month", nil, nil)
+	planB, _, priceB := e.mkPlan(t, ctx, 1500, "month")
 
 	_, exp := e.changeQuote(t, ctx, user, sub.ID, planB)
 	c, err := e.svc.CreatePlanChangeOrder(asUser(ctx, user), PlanChangeOrderInput{
@@ -186,7 +186,7 @@ func TestPlanChangeZeroPayTakesEffect(t *testing.T) {
 	mustEq(t, "余额", e.balanceOf(t, ctx, user), dec("0"))
 
 	// 换过去之后再换回原价位：新周期刚开始、流量没用，剩余价值来自这张换套餐单（15 − 0 − 0），不是 0
-	planC, _, _ := e.mkPlan(t, ctx, 5000, "month", nil, nil)
+	planC, _, _ := e.mkPlan(t, ctx, 5000, "month")
 	q, _ := e.changeQuote(t, ctx, user, sub.ID, planC)
 	if !q.Credit.IsPositive() || q.Credit.GreaterThan(dec("15")) {
 		t.Fatalf("连换两次的剩余价值 %s，应在 (0, 15]", q.Credit.StringFixed(2))
@@ -200,7 +200,7 @@ func TestPlanChangeAndRenewalMutuallyExclusive(t *testing.T) {
 	user := e.mkUser(t, ctx)
 	uctx := asUser(ctx, user)
 	sub := e.activeSub(t, ctx, user, 3000, 50)
-	planB, _, priceB := e.mkPlan(t, ctx, 10000, "month", nil, nil)
+	planB, _, priceB := e.mkPlan(t, ctx, 10000, "month")
 
 	if _, err := e.svc.CreatePlanChangeOrder(uctx, PlanChangeOrderInput{
 		SubscriptionID: sub.ID, PlanID: sub.PlanID, PriceID: *sub.Price.PriceID,

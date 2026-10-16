@@ -134,7 +134,7 @@ func (a promoCatalog) MissingPlans(ctx context.Context, ids []uuid.UUID) ([]uuid
 	return missing, nil
 }
 
-func (a promoCatalog) PriceSubtotal(ctx context.Context, planID, priceID uuid.UUID) (string, decimal.Decimal, string, error) {
+func (a promoCatalog) PriceSubtotal(ctx context.Context, planID, priceID uuid.UUID) (decimal.Decimal, error) {
 	req := catalogsvc.OfferRequest{Use: catalogsvc.UseNew, PlanID: &planID}
 	if p, ok := authn.From(ctx); ok {
 		uid := p.UserID
@@ -142,17 +142,9 @@ func (a promoCatalog) PriceSubtotal(ctx context.Context, planID, priceID uuid.UU
 	}
 	o, err := a.c.Offer(ctx, priceID, req)
 	if err != nil {
-		return "", decimal.Zero, "", errs.New(errs.NotFound)
+		return decimal.Zero, errs.New(errs.NotFound)
 	}
-	return string(o.Price.Currency), o.Price.UnitAmount, o.Price.BillingInterval, nil
-}
-
-func (a promoCatalog) PackSubtotal(ctx context.Context, packID uuid.UUID) (string, decimal.Decimal, error) {
-	p, err := a.c.PackOffer(ctx, packID, false)
-	if err != nil {
-		return "", decimal.Zero, errs.New(errs.NotFound)
-	}
-	return string(p.Currency), p.UnitAmount, nil
+	return o.Price.UnitAmount, nil
 }
 
 // env 只经闭包取连接：service 包的测试不 import pkg/db（depguard）。
@@ -213,9 +205,9 @@ func setupEnv(t *testing.T, commit bool) (*env, context.Context) {
 	txm := tx.NewManager(d)
 	users := &fakeUsers{emails: map[uuid.UUID]string{}}
 	settings := settingssvc.New(settingsrepo.New(d), txm, sealer, rdb, auditSvc)
-	ledgerSvc := ledgersvc.New(ledgerrepo.New(d), txm, settings, auditSvc)
+	ledgerSvc := ledgersvc.New(ledgerrepo.New(d), txm, auditSvc)
 	catalogSvc := catalogsvc.New(catalogrepo.New(d), txm, auditSvc, users)
-	promoSvc := promosvc.New(promorepo.New(d), txm, auditSvc, settings)
+	promoSvc := promosvc.New(promorepo.New(d), txm, auditSvc)
 	promoSvc.UseUsers(users)
 	promoSvc.UseCatalog(promoCatalog{c: catalogSvc})
 	subSvc := subsvc.New(subrepo.New(d), txm, auditSvc, settings, catalogSvc, users, sealer)
@@ -313,11 +305,11 @@ func asAdmin(ctx context.Context, admin uuid.UUID) context.Context {
 	return reqid.With(ctx, reqid.New())
 }
 
-// mkPlan 用 SQL 建一个在售套餐（一个已发布版本，带 100 GiB 周期流量配额）与一个 CNY 价格；stock、limit 为 nil 表示不限。
+// mkPlan 用 SQL 建一个在售的订阅套餐（一个已发布版本，带 100 GiB 周期流量配额）与一个价格（interval 一期）。
 // 目录的后台建套餐要走草稿、发布与发布闸门，测试只要在售状态，所以直接写库（同 subscription 的测试）。
-func (e *env) mkPlan(t *testing.T, ctx context.Context, unitCents int64, interval string, stock, limit *int) (planID, versionID, priceID uuid.UUID) {
+func (e *env) mkPlan(t *testing.T, ctx context.Context, unitCents int64, interval string) (planID, versionID, priceID uuid.UUID) {
 	t.Helper()
-	if err := e.row(ctx, `INSERT INTO plans (code, name) VALUES (?, ?) RETURNING id`,
+	if err := e.row(ctx, `INSERT INTO plans (code, name, kind) VALUES (?, ?, 'subscription') RETURNING id`,
 		"o-"+randHex(12), "测试套餐-"+randHex(4)).Scan(&planID); err != nil {
 		t.Fatal(err)
 	}
@@ -328,31 +320,43 @@ func (e *env) mkPlan(t *testing.T, ctx context.Context, unitCents int64, interva
 	e.mustExec(t, ctx, `INSERT INTO quota_definitions (plan_version_id, metric, period, limit_value) VALUES (?, ?, ?, ?)`,
 		versionID, catalogsvc.MetricTraffic, "cycle", 100*gib)
 	e.mustExec(t, ctx, `UPDATE plan_versions SET status = 'published', frozen_at = now() WHERE id = ?`, versionID)
-	e.mustExec(t, ctx, `UPDATE plans SET status = 'active', current_version_id = ?, stock_total = ?, purchase_limit_per_user = ? WHERE id = ?`,
-		versionID, stock, limit, planID)
-	if err := e.row(ctx, `INSERT INTO prices (plan_id, currency, unit_amount, billing_interval, interval_count) VALUES (?, 'CNY', ?, ?, 1) RETURNING id`,
+	e.mustExec(t, ctx, `UPDATE plans SET status = 'active', current_version_id = ? WHERE id = ?`, versionID, planID)
+	if err := e.row(ctx, `INSERT INTO prices (plan_id, plan_kind, unit_amount, billing_interval, interval_count) VALUES (?, 'subscription', ?, ?, 1) RETURNING id`,
 		planID, money.FromCents(unitCents), interval).Scan(&priceID); err != nil {
 		t.Fatal(err)
 	}
 	return planID, versionID, priceID
 }
 
-// mkPack 用 SQL 建一个在售的 CNY 流量包。
-func (e *env) mkPack(t *testing.T, ctx context.Context, unitCents int64, bytes int64) uuid.UUID {
+// mkOneTimePlan 用 SQL 建一个在售的一次性套餐（不许续费；一个已发布版本，total 流量 totalBytes）与它唯一的价格；
+// validityDays 为 nil 表示永久。
+func (e *env) mkOneTimePlan(t *testing.T, ctx context.Context, unitCents, totalBytes int64, validityDays *int) (planID, versionID, priceID uuid.UUID) {
 	t.Helper()
-	var id uuid.UUID
-	if err := e.row(ctx, `INSERT INTO traffic_packs (name, traffic_bytes, currency, unit_amount) VALUES (?, ?, 'CNY', ?) RETURNING id`,
-		"测试流量包-"+randHex(4), bytes, money.FromCents(unitCents)).Scan(&id); err != nil {
+	if err := e.row(ctx, `INSERT INTO plans (code, name, kind, allow_renewal) VALUES (?, ?, 'one_time', false) RETURNING id`,
+		"o-"+randHex(12), "一次性套餐-"+randHex(4)).Scan(&planID); err != nil {
 		t.Fatal(err)
 	}
-	return id
+	if err := e.row(ctx, `INSERT INTO plan_versions (plan_id, version, max_devices) VALUES (?, 1, 3) RETURNING id`,
+		planID).Scan(&versionID); err != nil {
+		t.Fatal(err)
+	}
+	e.mustExec(t, ctx, `INSERT INTO quota_definitions (plan_version_id, metric, period, limit_value) VALUES (?, ?, ?, ?)`,
+		versionID, catalogsvc.MetricTraffic, "total", totalBytes)
+	e.mustExec(t, ctx, `UPDATE plan_versions SET status = 'published', frozen_at = now() WHERE id = ?`, versionID)
+	e.mustExec(t, ctx, `UPDATE plans SET status = 'active', current_version_id = ? WHERE id = ?`, versionID, planID)
+	if err := e.row(ctx, `INSERT INTO prices (plan_id, plan_kind, unit_amount, billing_interval, interval_count, validity_days)
+		VALUES (?, 'one_time', ?, 'one_time', 1, ?) RETURNING id`,
+		planID, money.FromCents(unitCents), validityDays).Scan(&priceID); err != nil {
+		t.Fatal(err)
+	}
+	return planID, versionID, priceID
 }
 
-// mkCoupon 用 SQL 建一张 CNY 立减券（不限套餐、每人一次）。
+// mkCoupon 用 SQL 建一张立减券（不限套餐、每人一次）。
 func (e *env) mkCoupon(t *testing.T, ctx context.Context, code string, amountOffCents int64) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID
-	if err := e.row(ctx, `INSERT INTO coupons (code, name, amount_off, currency) VALUES (?, ?, ?, 'CNY') RETURNING id`,
+	if err := e.row(ctx, `INSERT INTO coupons (code, name, amount_off) VALUES (?, ?, ?) RETURNING id`,
 		code, "测试券", money.FromCents(amountOffCents)).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
@@ -367,8 +371,7 @@ func (e *env) giveBalance(t *testing.T, ctx context.Context, user uuid.UUID, cen
 	t.Helper()
 	amt := money.FromCents(cents)
 	_, err := e.ledger.Post(ctx, ledgersvc.Posting{
-		Kind:     ledgersvc.KindBalanceTopup,
-		Currency: money.CNY,
+		Kind: ledgersvc.KindBalanceTopup,
 		Legs: []ledgersvc.Leg{
 			{Account: ledgersvc.PlatformAccount(ledgersvc.ChannelCash, "test"), Direction: ledgersvc.Debit, Amount: amt},
 			{Account: ledgersvc.UserAccount(ledgersvc.UserBalance, user), Direction: ledgersvc.Credit, Amount: amt},
@@ -379,10 +382,10 @@ func (e *env) giveBalance(t *testing.T, ctx context.Context, user uuid.UUID, cen
 	}
 }
 
-// balanceOf 取用户可用余额（CNY）。
+// balanceOf 取用户可用余额。
 func (e *env) balanceOf(t *testing.T, ctx context.Context, user uuid.UUID) decimal.Decimal {
 	t.Helper()
-	b, err := e.ledger.Balance(ctx, user, money.CNY)
+	b, err := e.ledger.Balance(ctx, user)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -594,13 +597,13 @@ func (e *env) buyNew(t *testing.T, ctx context.Context, user, planID, priceID uu
 	return c
 }
 
-// provision 直接给用户开一份订阅（续费、流量包用例的前置），价格快照指向 priceID。
+// provision 直接给用户开一份订阅（续费、换套餐用例的前置），价格快照指向 priceID（月付）。
 func (e *env) provision(t *testing.T, ctx context.Context, user, planID, versionID, priceID uuid.UUID, cents int64) subsvc.Subscription {
 	t.Helper()
 	pid := priceID
 	sub, err := e.subs.Provision(ctx, subsvc.Provision{
 		UserID: user, PlanID: planID, PlanVersionID: versionID,
-		Price: subsvc.PriceSnapshot{PriceID: &pid, Currency: money.CNY, Amount: money.FromCents(cents), Interval: "month", IntervalCount: 1},
+		Price: subsvc.PriceSnapshot{PriceID: &pid, Amount: money.FromCents(cents), Interval: "month", IntervalCount: 1},
 		Actor: subsvc.Actor{Kind: subsvc.ActorSystem},
 	})
 	if err != nil {

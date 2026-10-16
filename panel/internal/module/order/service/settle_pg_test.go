@@ -114,7 +114,7 @@ func TestWebhookReplaySettlesOnce(t *testing.T) {
 	code := payCode()
 	e.mkPayProvider(t, ctx, code)
 	user := e.mkUser(t, ctx)
-	planID, _, priceID := e.mkPlan(t, ctx, 990, "month", nil, nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 990, "month")
 	c := e.buyNew(t, ctx, user, planID, priceID, Checkout{})
 	intent, err := e.svc.Pay(asUser(ctx, user), PayInput{OrderID: c.OrderID, Provider: code})
 	if err != nil {
@@ -147,7 +147,7 @@ func TestWebhookSettlesRenewal(t *testing.T) {
 	code := payCode()
 	e.mkPayProvider(t, ctx, code)
 	user := e.mkUser(t, ctx)
-	planID, versionID, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	planID, versionID, priceID := e.mkPlan(t, ctx, 1000, "month")
 	sub := e.provision(t, ctx, user, planID, versionID, priceID, 1000)
 
 	c, err := e.svc.CreateRenewalOrder(asUser(ctx, user), RenewalOrderInput{SubscriptionID: sub.ID})
@@ -234,7 +234,7 @@ func TestWebhookExcessCapture(t *testing.T) {
 	code := payCode()
 	e.mkPayProvider(t, ctx, code)
 	user := e.mkUser(t, ctx)
-	planID, _, priceID := e.mkPlan(t, ctx, 1200, "month", nil, nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 1200, "month")
 	c := e.buyNew(t, ctx, user, planID, priceID, Checkout{})
 	intent, err := e.svc.Pay(asUser(ctx, user), PayInput{OrderID: c.OrderID, Provider: code})
 	if err != nil {
@@ -264,7 +264,7 @@ func TestWebhookAmountMismatchRejected(t *testing.T) {
 	code := payCode()
 	e.mkPayProvider(t, ctx, code)
 	user := e.mkUser(t, ctx)
-	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month")
 	c := e.buyNew(t, ctx, user, planID, priceID, Checkout{})
 	intent, err := e.svc.Pay(asUser(ctx, user), PayInput{OrderID: c.OrderID, Provider: code})
 	if err != nil {
@@ -383,7 +383,7 @@ func TestWebhookSettlesPack(t *testing.T) {
 	code := payCode()
 	e.mkPayProvider(t, ctx, code)
 	user := e.mkUser(t, ctx)
-	planID, versionID, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	planID, versionID, priceID := e.mkPlan(t, ctx, 1000, "month")
 	sub := e.provision(t, ctx, user, planID, versionID, priceID, 1000)
 	packID := e.mkPack(t, ctx, 600, 20*gib)
 	c, err := e.svc.CreatePackOrder(asUser(ctx, user), PackOrderInput{PackID: packID, SubscriptionID: sub.ID})
@@ -408,7 +408,7 @@ func TestMarkPaid(t *testing.T) {
 	user := e.mkUser(t, ctx)
 	admin := e.mkUser(t, ctx)
 	actx := asAdmin(ctx, admin)
-	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month")
 	c := e.buyNew(t, ctx, user, planID, priceID, Checkout{})
 	reason := "用户线下转账已核对"
 
@@ -456,7 +456,7 @@ WHERE p.order_id = ? AND pp.code = 'offline'`, c.OrderID); n != 1 {
 func TestQueryOwnership(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month")
 	c := e.buyNew(t, ctx, user, planID, priceID, Checkout{})
 
 	if _, err := e.svc.Query(asUser(ctx, e.mkUser(t, ctx)), c.OrderID); codeOf(err) != errs.NotFound {
@@ -494,7 +494,7 @@ func TestPaidHookCalls(t *testing.T) {
 	mustEq(t, "Paid（渠道实收）", got.Paid, dec("15"))
 
 	zeroUser := e.mkUser(t, ctx)
-	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month")
 	e.giveBalance(t, ctx, zeroUser, 1000)
 	if c := e.buyNew(t, ctx, zeroUser, planID, priceID, Checkout{UseBalance: dec("10")}); c.Status != StatusFulfilled {
 		t.Fatalf("零应付单 %s", c.Status)
@@ -512,7 +512,7 @@ func TestPaidHookErrorRollsBack(t *testing.T) {
 	hook := &spyHook{fail: errors.New("佣金写入失败")}
 	e.svc.UsePaidHook(hook)
 	user := e.mkUser(t, ctx)
-	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month")
 	c := e.buyNew(t, ctx, user, planID, priceID, Checkout{})
 	intent, err := e.svc.Pay(asUser(ctx, user), PayInput{OrderID: c.OrderID, Provider: code})
 	if err != nil {
@@ -567,7 +567,7 @@ func TestQueryReconcilesPaidOrder(t *testing.T) {
 	e.mkEpayProvider(t, ctx, code, srv.URL)
 
 	user := e.mkUser(t, ctx)
-	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month")
 	c := e.buyNew(t, ctx, user, planID, priceID, Checkout{})
 	if _, err := e.svc.Pay(asUser(ctx, user), PayInput{OrderID: c.OrderID, Provider: code}); err != nil {
 		t.Fatalf("发起支付: %v", err)

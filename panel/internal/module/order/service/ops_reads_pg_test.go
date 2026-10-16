@@ -50,7 +50,7 @@ func TestUserOrderStatsPG(t *testing.T) {
 	insertOrder(u1, "CNY", "pending_payment", dec("5.00"))
 	insertOrder(u1, "USD", "fulfilled", dec("15.00"))
 	// u2：全额用余额买一单（payable 为 0）：算订单数，不算实付
-	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month")
 	e.giveBalance(t, ctx, u2, 1000)
 	if c := e.buyNew(t, ctx, u2, planID, priceID, Checkout{UseBalance: dec("10")}); c.Status != StatusFulfilled {
 		t.Fatalf("余额单状态 %s", c.Status)

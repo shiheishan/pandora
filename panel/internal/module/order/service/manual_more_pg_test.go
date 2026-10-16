@@ -21,7 +21,7 @@ func TestManualOrderBelowMinimum(t *testing.T) {
 	admin := e.mkUser(t, ctx)
 	actx := asAdmin(ctx, admin)
 	e.mkMinPay(t, ctx, 5000)
-	planID, _, priceID := e.mkPlan(t, ctx, 2000, "month", nil, nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 2000, "month")
 
 	pv, err := e.svc.ManualPreview(actx, ManualPreviewInput{UserID: user, PlanID: planID, PriceID: &priceID})
 	if err != nil {
@@ -56,7 +56,7 @@ func TestManualOrderOfflineChange(t *testing.T) {
 	admin := e.mkUser(t, ctx)
 	actx := asAdmin(ctx, admin)
 	sub := e.activeSub(t, ctx, user, 3000, 50)
-	planB, _, priceB := e.mkPlan(t, ctx, 10000, "month", nil, nil)
+	planB, _, priceB := e.mkPlan(t, ctx, 10000, "month")
 
 	c, err := e.svc.CreateManualOrder(actx, ManualOrderInput{
 		UserID: user, PlanID: planB, PriceID: priceB, Reason: manualReason,
@@ -90,7 +90,7 @@ WHERE p.order_id = ? AND pp.code = 'offline'`, c.OrderID); n != 1 {
 	e.assertNoDrift(t, ctx)
 
 	other := e.mkUser(t, ctx)
-	planN, _, priceN := e.mkPlan(t, ctx, 2000, "month", nil, nil)
+	planN, _, priceN := e.mkPlan(t, ctx, 2000, "month")
 	_, err = e.svc.CreateManualOrder(actx, ManualOrderInput{
 		UserID: other, PlanID: planN, PriceID: priceN, Reason: manualReason,
 		Settlement: SettlementOffline, Reference: "BANK-DUP-1",
@@ -126,7 +126,7 @@ func TestManualPreviewMatchesCreate(t *testing.T) {
 		return pv
 	}
 
-	locked, _, lockedPrice := e.mkPlan(t, ctx, 10000, "month", nil, nil)
+	locked, _, lockedPrice := e.mkPlan(t, ctx, 10000, "month")
 	e.mustExec(t, ctx, `UPDATE plans SET allow_upgrade = false WHERE id = ?`, locked)
 	pv := preview(locked, lockedPrice)
 	if op := optionOf(pv, changeKey); op.Unavailable != catalogsvc.ErrChangeNotAllowed.Message {
@@ -142,7 +142,7 @@ func TestManualPreviewMatchesCreate(t *testing.T) {
 		Target: &Choice{Kind: PlacementChange, SubscriptionID: &sub.ID}})
 	mustErrMsg(t, "建单：不允许变更", err, catalogsvc.ErrChangeNotAllowed)
 
-	planUSD, _, _ := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	planUSD, _, _ := e.mkPlan(t, ctx, 1000, "month")
 	e.mustExec(t, ctx, `UPDATE prices SET status = 'archived', row_version = row_version + 1 WHERE plan_id = ?`, planUSD)
 	var usdPrice uuid.UUID
 	if err := e.row(ctx, `INSERT INTO prices (plan_id, currency, unit_amount, billing_interval, interval_count) VALUES (?, 'USD', 10, 'month', 1) RETURNING id`,
@@ -156,7 +156,7 @@ func TestManualPreviewMatchesCreate(t *testing.T) {
 	}
 	mustEq(t, "币种不一致时应付按全价", op.Due, dec("10"))
 
-	hidden, _, hiddenPrice := e.mkPlan(t, ctx, 10000, "month", nil, nil)
+	hidden, _, hiddenPrice := e.mkPlan(t, ctx, 10000, "month")
 	e.mustExec(t, ctx, `UPDATE plans SET visibility = 'hidden' WHERE id = ?`, hidden)
 	pv = preview(hidden, hiddenPrice)
 	if op := optionOf(pv, PlacementNew); op.Unavailable == "" {
@@ -177,7 +177,7 @@ func TestManualPreviewMatchesCreate(t *testing.T) {
 	if err != nil || c.Status != StatusPending {
 		t.Fatalf("待付人工换套餐: %+v %v", c, err)
 	}
-	planD, _, priceD := e.mkPlan(t, ctx, 5000, "month", nil, nil)
+	planD, _, priceD := e.mkPlan(t, ctx, 5000, "month")
 	if op := optionOf(preview(planD, priceD), changeKey); op.Unavailable != ErrOpenChange.Message {
 		t.Fatalf("有未完结单：change 选项 %q", op.Unavailable)
 	}
@@ -190,7 +190,7 @@ func TestPlanChangeAndManualIdempotentReplay(t *testing.T) {
 	user := e.mkUser(t, ctx)
 	admin := e.mkUser(t, ctx)
 	sub := e.activeSub(t, ctx, user, 3000, 50)
-	planB, _, priceB := e.mkPlan(t, ctx, 10000, "month", nil, nil)
+	planB, _, priceB := e.mkPlan(t, ctx, 10000, "month")
 	reply := func(c Created) (idemsvc.Response, error) {
 		return idemsvc.JSON(201, map[string]string{"order_id": c.OrderID.String()})
 	}
@@ -227,7 +227,7 @@ func TestPlanChangeAndManualIdempotentReplay(t *testing.T) {
 	run(asUser(ctx, user), user, "subscription_change_plan_create", func(c context.Context) (Created, error) {
 		return e.svc.CreatePlanChangeOrder(c, PlanChangeOrderInput{SubscriptionID: sub.ID, PlanID: planB, PriceID: priceB, Reply: reply})
 	})
-	planN, _, priceN := e.mkPlan(t, ctx, 2000, "month", nil, nil)
+	planN, _, priceN := e.mkPlan(t, ctx, 2000, "month")
 	other := e.mkUser(t, ctx)
 	run(asAdmin(ctx, admin), admin, "order_create", func(c context.Context) (Created, error) {
 		return e.svc.CreateManualOrder(c, ManualOrderInput{UserID: other, PlanID: planN, PriceID: priceN, Reason: manualReason, Reply: reply})

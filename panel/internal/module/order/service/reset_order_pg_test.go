@@ -25,7 +25,7 @@ func (e *env) setResetPrice(t *testing.T, ctx context.Context, planID uuid.UUID,
 // liveSub 开通一份生效中的订阅（月付 cents 元）。
 func (e *env) liveSub(t *testing.T, ctx context.Context, user uuid.UUID, cents int64) (sub subsvc.Subscription, planID, versionID, priceID uuid.UUID) {
 	t.Helper()
-	planID, versionID, priceID = e.mkPlan(t, ctx, cents, "month", nil, nil)
+	planID, versionID, priceID = e.mkPlan(t, ctx, cents, "month")
 	sub = e.provision(t, ctx, user, planID, versionID, priceID, cents)
 	return sub, planID, versionID, priceID
 }

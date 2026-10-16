@@ -14,7 +14,7 @@ import (
 func (e *env) pendingWithEverything(t *testing.T, ctx context.Context) (user, planID, orderID uuid.UUID) {
 	t.Helper()
 	user = e.mkUser(t, ctx)
-	planID, _, priceID := e.mkPlan(t, ctx, 3000, "month", intp(10), intp(2))
+	planID, _, priceID := e.mkPlan(t, ctx, 3000, "month")
 	code := couponCode()
 	e.mkCoupon(t, ctx, code, 500)
 	e.giveBalance(t, ctx, user, 1000)
@@ -79,7 +79,7 @@ func TestCancelByUserReleasesEverything(t *testing.T) {
 func TestCancelRepeatAndForeign(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month")
 	c := e.buyNew(t, ctx, user, planID, priceID, Checkout{})
 
 	if _, err := e.svc.Cancel(asUser(ctx, e.mkUser(t, ctx)), CancelInput{OrderID: c.OrderID}); codeOf(err) != errs.NotFound {
@@ -103,7 +103,7 @@ func TestCancelByAdmin(t *testing.T) {
 	user := e.mkUser(t, ctx)
 	admin := e.mkUser(t, ctx)
 	actx := asAdmin(ctx, admin)
-	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month")
 	c := e.buyNew(t, ctx, user, planID, priceID, Checkout{})
 	reason := "用户来信要求取消"
 
@@ -138,7 +138,7 @@ func TestExpireDue(t *testing.T) {
 	e, ctx := newEnv(t)
 	user, planID, dueID := e.pendingWithEverything(t, ctx)
 	other := e.mkUser(t, ctx)
-	freshPlan, _, freshPrice := e.mkPlan(t, ctx, 1000, "month", intp(3), nil)
+	freshPlan, _, freshPrice := e.mkPlan(t, ctx, 1000, "month")
 	fresh := e.buyNew(t, ctx, other, freshPlan, freshPrice, Checkout{})
 
 	e.mustExec(t, ctx, `UPDATE orders SET expires_at = now() - interval '1 minute' WHERE id = ?`, dueID)
@@ -186,7 +186,7 @@ func TestExpireDue(t *testing.T) {
 func TestCancelFulfilledRejected(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month")
 	e.giveBalance(t, ctx, user, 1000)
 	c := e.buyNew(t, ctx, user, planID, priceID, Checkout{UseBalance: dec("10")})
 	if c.Status != StatusFulfilled {

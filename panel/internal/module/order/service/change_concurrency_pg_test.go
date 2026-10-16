@@ -50,7 +50,7 @@ func TestConcurrentPlanChanges(t *testing.T) {
 	e, ctx := newCommitEnv(t)
 	user := e.mkUser(t, ctx)
 	uctx := asUser(ctx, user)
-	planB, _, priceB := e.mkPlan(t, ctx, 10000, "month", nil, nil)
+	planB, _, priceB := e.mkPlan(t, ctx, 10000, "month")
 
 	sub := e.activeSub(t, ctx, user, 3000, 50)
 	change := func() error {

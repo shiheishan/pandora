@@ -20,7 +20,7 @@ import (
 func TestCreateNewOrderPlain(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	planID, versionID, priceID := e.mkPlan(t, ctx, 3000, "month", intp(10), intp(3))
+	planID, versionID, priceID := e.mkPlan(t, ctx, 3000, "month")
 
 	c := e.buyNew(t, ctx, user, planID, priceID, Checkout{})
 	if c.Status != StatusPending {
@@ -85,7 +85,7 @@ FROM order_items WHERE order_id = ?`, c.OrderID).Scan(&name, &ver, &interval, &i
 func TestCreateNewOrderCouponAndPartialBalance(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	planID, _, priceID := e.mkPlan(t, ctx, 3000, "month", nil, nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 3000, "month")
 	code := couponCode()
 	couponID := e.mkCoupon(t, ctx, code, 500)
 	e.giveBalance(t, ctx, user, 1000)
@@ -114,7 +114,7 @@ func TestCreateNewOrderCouponAndPartialBalance(t *testing.T) {
 func TestCreateNewOrderZeroPayFulfils(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	planID, _, priceID := e.mkPlan(t, ctx, 2000, "month", intp(5), intp(2))
+	planID, _, priceID := e.mkPlan(t, ctx, 2000, "month")
 	code := couponCode()
 	e.mkCoupon(t, ctx, code, 500)
 	e.giveBalance(t, ctx, user, 5000)
@@ -162,7 +162,7 @@ func TestCreateNewOrderZeroPayFulfils(t *testing.T) {
 func TestCreateNewOrderSamePlanNeedsNewCopy(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	planID, versionID, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	planID, versionID, priceID := e.mkPlan(t, ctx, 1000, "month")
 	e.provision(t, ctx, user, planID, versionID, priceID, 1000)
 
 	_, err := e.svc.CreateNewOrder(asUser(ctx, user), NewOrderInput{PlanID: planID, PriceID: priceID})
@@ -188,7 +188,7 @@ func TestCreateNewOrderSamePlanNeedsNewCopy(t *testing.T) {
 func TestCreateNewOrderPendingConflict(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month")
 	first := e.buyNew(t, ctx, user, planID, priceID, Checkout{})
 
 	_, err := e.svc.CreateNewOrder(asUser(ctx, user), NewOrderInput{PlanID: planID, PriceID: priceID})
@@ -205,7 +205,7 @@ func TestCreateNewOrderPendingConflict(t *testing.T) {
 func TestCreateNewOrderPurchaseLimit(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month", nil, intp(1))
+	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month")
 	e.giveBalance(t, ctx, user, 1000)
 	first := e.buyNew(t, ctx, user, planID, priceID, Checkout{UseBalance: dec("10")})
 	if first.Status != StatusFulfilled {
@@ -231,7 +231,7 @@ func TestCreateNewOrderPurchaseLimit(t *testing.T) {
 // 库存 1：第一单成功，另一个用户的第二单售罄。
 func TestCreateNewOrderSoldOut(t *testing.T) {
 	e, ctx := newEnv(t)
-	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month", intp(1), nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month")
 	e.buyNew(t, ctx, e.mkUser(t, ctx), planID, priceID, Checkout{})
 
 	_, err := e.svc.CreateNewOrder(asUser(ctx, e.mkUser(t, ctx)), NewOrderInput{PlanID: planID, PriceID: priceID})
@@ -247,7 +247,7 @@ func TestCreateNewOrderSoldOut(t *testing.T) {
 func TestCreateNewOrderExpect(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	planID, _, priceID := e.mkPlan(t, ctx, 3000, "month", nil, nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 3000, "month")
 	code := couponCode()
 	e.mkCoupon(t, ctx, code, 500)
 	e.giveBalance(t, ctx, user, 800)
@@ -292,7 +292,7 @@ func TestCreateNewOrderExpect(t *testing.T) {
 func TestCreateRenewalOrder(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	planID, v1, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	planID, v1, priceID := e.mkPlan(t, ctx, 1000, "month")
 	sub := e.provision(t, ctx, user, planID, v1, priceID, 1000)
 
 	// 套餐发布了第二版并切为当前版本：续费仍用订阅自己的第一版
@@ -335,7 +335,7 @@ func TestCreateRenewalOrder(t *testing.T) {
 func TestCreatePackOrder(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	planID, versionID, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	planID, versionID, priceID := e.mkPlan(t, ctx, 1000, "month")
 	sub := e.provision(t, ctx, user, planID, versionID, priceID, 1000)
 	packID := e.mkPack(t, ctx, 600, 50*gib)
 
@@ -400,7 +400,7 @@ func TestCreateTopup(t *testing.T) {
 func TestCreateNewOrderCompletesIdempotencyClaim(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month")
 	uctx := asUser(ctx, user)
 
 	key := "idem-" + randHex(16)
@@ -458,7 +458,7 @@ func TestQuoteRejects(t *testing.T) {
 func TestCreateRenewalWithoutPrice(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	planID, versionID, _ := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	planID, versionID, _ := e.mkPlan(t, ctx, 1000, "month")
 	sub, err := e.subs.Provision(ctx, subsvc.Provision{
 		UserID: user, PlanID: planID, PlanVersionID: versionID,
 		Price: subsvc.PriceSnapshot{Currency: money.CNY, Amount: dec("10"), Interval: "month", IntervalCount: 1},

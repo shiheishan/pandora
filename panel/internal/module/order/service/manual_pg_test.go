@@ -20,7 +20,7 @@ func TestManualOrderOfflineNewThenGrantRenewal(t *testing.T) {
 	user := e.mkUser(t, ctx)
 	admin := e.mkUser(t, ctx)
 	actx := asAdmin(ctx, admin)
-	planID, _, priceID := e.mkPlan(t, ctx, 2000, "month", intp(5), intp(1))
+	planID, _, priceID := e.mkPlan(t, ctx, 2000, "month")
 
 	pv, err := e.svc.ManualPreview(actx, ManualPreviewInput{UserID: user, PlanID: planID, PriceID: &priceID})
 	if err != nil {
@@ -107,8 +107,8 @@ func TestManualOrderChange(t *testing.T) {
 	admin := e.mkUser(t, ctx)
 	actx := asAdmin(ctx, admin)
 	sub := e.activeSub(t, ctx, user, 3000, 50)
-	planB, _, priceB := e.mkPlan(t, ctx, 10000, "month", nil, nil)
-	planC, _, priceC := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	planB, _, priceB := e.mkPlan(t, ctx, 10000, "month")
+	planC, _, priceC := e.mkPlan(t, ctx, 1000, "month")
 	target := &Choice{Kind: PlacementChange, SubscriptionID: &sub.ID}
 
 	pv, err := e.svc.ManualPreview(actx, ManualPreviewInput{UserID: user, PlanID: planB, PriceID: &priceB, EntrySubscriptionID: &sub.ID})
@@ -173,7 +173,7 @@ func TestManualOrderValidation(t *testing.T) {
 	user := e.mkUser(t, ctx)
 	admin := e.mkUser(t, ctx)
 	actx := asAdmin(ctx, admin)
-	planID, _, priceID := e.mkPlan(t, ctx, 2000, "month", nil, nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 2000, "month")
 	in := func(reason, settlement, ref string) ManualOrderInput {
 		return ManualOrderInput{UserID: user, PlanID: planID, PriceID: priceID, Reason: reason, Settlement: settlement, Reference: ref}
 	}
