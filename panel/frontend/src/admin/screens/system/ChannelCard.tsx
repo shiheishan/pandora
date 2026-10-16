@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import type { Tone } from './logic'
 import css from './notify.module.css'
 
-const TONE_CLASS: Record<Tone, string> = { ok: css.tagOk, warn: css.tagWarn, muted: css.tagMuted }
+const TONE_CLASS: Record<Tone, string | undefined> = { ok: css.tagOk, warn: css.tagWarn, muted: css.tagMuted }
 
 /** 通知渠道卡（一行）：图标 + 标题/状态标签 + 一行描述；给了 onOpen 整卡可点（键盘可达）并在右侧显示「配置」，没给（站内信）时是不可点的 div */
 export function ChannelCard({ icon, title, tag, dirty = false, desc, onOpen }: {

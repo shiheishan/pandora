@@ -10,7 +10,7 @@ import { hookDeleted, type Hook, type HookEvent } from './schemas'
 import css from './hooks.module.css'
 import shared from './system.module.css'
 
-const TONE_CLASS: Record<string, string> = { ok: css.toneOk, warn: css.toneWarn, muted: css.toneMuted }
+const TONE_CLASS: Record<string, string | undefined> = { ok: css.toneOk, warn: css.toneWarn, muted: css.toneMuted }
 
 export function HooksTab() {
   const hooks = useHooks()
