@@ -9,21 +9,11 @@ import (
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 )
-
-// VoidResult 是账号注销时作废佣金的结果；金额按币种分开，没有的币种不出现。
-type VoidResult struct {
-	VoidedEntries       int                                // 作废的冻结中、待复核条目数
-	VoidedPending       map[money.Currency]decimal.Decimal // 上面这些条目的金额合计（冲回待结佣金）
-	Forfeited           map[money.Currency]decimal.Decimal // 作废的可提现佣金（冲回可提现佣金）
-	RejectedWithdrawals int                                // 驳回的申请中提现笔数
-	RejectedAmount      map[money.Currency]decimal.Decimal // 驳回的提现金额合计（驳回后退回可提现、随即一并作废，已含在 Forfeited 里）
-}
 
 // VoidForDeletedUser 在账号注销的事务里作废这个人名下全部未出账的佣金（用户 2026-10-14 定），由 identity 的 DeleteUser 经端口调用：
 //  1. 有已批准待打款的提现就整笔拒绝注销（ErrApprovedWithdrawalPending，用户 10-14 定：管理员可能已线下打款）；
@@ -31,8 +21,8 @@ type VoidResult struct {
 //  2. 他作为受益人的冻结中条目（待复核与否）逐条作废：记 commission_voided 冲回计提（借 待结佣金 / 贷 平台收入 main，按条目唯一），
 //     条目转 voided，原因 account_deleted，复核人记执行注销的管理员。
 //  3. 清掉他条目上「等自动转余额」的标记。
-//  4. 逐币种按唯一口径算剩下的可用佣金（第 1 步驳回的已退回来），为正的记一笔 commission_voided（借 可提现佣金 / 贷 平台收入 main），
-//     并写 commission_forfeitures（每人每币种最多一行，库里唯一）。可提现是池、不按条目扣，所以这部分不落到条目上，
+//  4. 按唯一口径算剩下的可用佣金（第 1 步驳回的已退回来），为正的记一笔 commission_voided（借 可提现佣金 / 贷 平台收入 main），
+//     并写 commission_forfeitures（每人最多一行，库里唯一）。可提现是池、不按条目扣，所以这部分不落到条目上，
 //     可用佣金口径相应减去作废合计（见 available）。
 //
 // 已打款的提现、已转余额的钱不动。全部做完后他的待结、可提现佣金科目都为 0。再调一次什么都不做、返回全 0。
@@ -56,9 +46,9 @@ func (s *Service) VoidForDeletedUser(ctx context.Context, userID uuid.UUID) (Voi
 		return VoidResult{}, err
 	}
 	res := VoidResult{
-		VoidedPending:  map[money.Currency]decimal.Decimal{},
-		Forfeited:      map[money.Currency]decimal.Decimal{},
-		RejectedAmount: map[money.Currency]decimal.Decimal{},
+		VoidedPending:  decimal.Zero,
+		Forfeited:      decimal.Zero,
+		RejectedAmount: decimal.Zero,
 	}
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
 		if err := s.repo.LockUser(ctx, userID); err != nil {
@@ -84,9 +74,8 @@ func (s *Service) VoidForDeletedUser(ctx context.Context, userID uuid.UUID) (Voi
 			if !changed {
 				return errPayoutStateLost
 			}
-			cur := money.Currency(w.Currency)
 			res.RejectedWithdrawals++
-			res.RejectedAmount[cur] = res.RejectedAmount[cur].Add(w.Amount)
+			res.RejectedAmount = res.RejectedAmount.Add(w.Amount)
 		}
 
 		entries, err := s.repo.LockPendingEntriesOf(ctx, userID)
@@ -97,32 +86,29 @@ func (s *Service) VoidForDeletedUser(ctx context.Context, userID uuid.UUID) (Voi
 			if err := s.voidPendingForDeleted(ctx, e, adminID); err != nil {
 				return err
 			}
-			cur := money.Currency(e.Currency)
 			res.VoidedEntries++
-			res.VoidedPending[cur] = res.VoidedPending[cur].Add(e.CommissionAmount)
+			res.VoidedPending = res.VoidedPending.Add(e.CommissionAmount)
 		}
 
 		if _, err := s.repo.ClearAutoTransferOf(ctx, userID, now); err != nil {
 			return err
 		}
 
-		list, err := s.availableByCurrency(ctx, userID)
+		avail, err := s.available(ctx, userID)
 		if err != nil {
 			return err
 		}
-		for _, ca := range list {
-			if !ca.avail.IsPositive() {
-				if ca.avail.IsNegative() {
-					plog.From(ctx).Warn("commission: 注销时可用佣金为负（账本被手工改过？），不作废",
-						zap.String("user_id", userID.String()), zap.String("currency", string(ca.cur)),
-						zap.String("available", ca.avail.StringFixed(2)))
-				}
-				continue
+		if !avail.IsPositive() {
+			if avail.IsNegative() {
+				plog.From(ctx).Warn("commission: 注销时可用佣金为负（账本被手工改过？），不作废",
+					zap.String("user_id", userID.String()),
+					zap.String("available", avail.StringFixed(2)))
 			}
-			if err := s.forfeitAvailable(ctx, userID, ca.cur, ca.avail); err != nil {
+		} else {
+			if err := s.forfeitAvailable(ctx, userID, avail); err != nil {
 				return err
 			}
-			res.Forfeited[ca.cur] = ca.avail
+			res.Forfeited = avail
 		}
 		return nil
 	})
@@ -146,7 +132,6 @@ func (s *Service) LockForDeletion(ctx context.Context, userID uuid.UUID) error {
 func (s *Service) voidPendingForDeleted(ctx context.Context, e model.Entry, adminID uuid.UUID) error {
 	txnID, err := s.ledger.Post(ctx, ledgersvc.Posting{
 		Kind:       ledgersvc.KindCommissionVoided,
-		Currency:   money.Currency(e.Currency),
 		SourceType: SourceCommissionEntry,
 		SourceID:   e.ID,
 		Memo:       "账号注销，作废冻结中的佣金",
@@ -171,15 +156,14 @@ func (s *Service) voidPendingForDeleted(ctx context.Context, e model.Entry, admi
 	return nil
 }
 
-// forfeitAvailable 作废某币种剩下的可用佣金：记 commission_voided（借 可提现佣金 / 贷 平台收入 main），写 commission_forfeitures。
-func (s *Service) forfeitAvailable(ctx context.Context, userID uuid.UUID, cur money.Currency, amount decimal.Decimal) error {
+// forfeitAvailable 作废剩下的可用佣金：记 commission_voided（借 可提现佣金 / 贷 平台收入 main），写 commission_forfeitures。
+func (s *Service) forfeitAvailable(ctx context.Context, userID uuid.UUID, amount decimal.Decimal) error {
 	id, err := uuid.NewV7()
 	if err != nil {
 		return errs.Wrap(errs.Internal, err)
 	}
 	txnID, err := s.ledger.Post(ctx, ledgersvc.Posting{
 		Kind:       ledgersvc.KindCommissionVoided,
-		Currency:   cur,
 		SourceType: SourceCommissionForfeiture,
 		SourceID:   id,
 		Memo:       "账号注销，作废可提现佣金",
@@ -197,7 +181,6 @@ func (s *Service) forfeitAvailable(ctx context.Context, userID uuid.UUID, cur mo
 	err = s.repo.InsertForfeiture(ctx, &model.Forfeiture{
 		ID:          id,
 		UserID:      userID,
-		Currency:    string(cur),
 		Amount:      amount,
 		Reason:      ReasonAccountDeleted,
 		LedgerTxnID: txnID,

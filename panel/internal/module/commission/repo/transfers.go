@@ -31,12 +31,12 @@ func (r *Repo) TransfersOf(ctx context.Context, userID uuid.UUID, limit int) ([]
 	return out, mapErr(err)
 }
 
-// TransferTotalOf 用户在某币种下累计转余额金额。
-func (r *Repo) TransferTotalOf(ctx context.Context, userID uuid.UUID, currency string) (decimal.Decimal, error) {
+// TransferTotalOf 用户累计转余额金额。
+func (r *Repo) TransferTotalOf(ctx context.Context, userID uuid.UUID) (decimal.Decimal, error) {
 	var total decimal.Decimal
 	err := r.d.Conn(ctx).Raw(
-		`SELECT COALESCE(sum(amount), 0) FROM commission_transfers WHERE user_id = ? AND currency = ?`,
-		userID, currency,
+		`SELECT COALESCE(sum(amount), 0) FROM commission_transfers WHERE user_id = ?`,
+		userID,
 	).Scan(&total).Error
 	return total, mapErr(err)
 }

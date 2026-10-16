@@ -2,22 +2,18 @@ package service
 
 import (
 	"context"
-	"sort"
 	"time"
 
-	"github.com/aegispanel/aegis/internal/module/commission/repo"
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 )
 
-// MyCommission 返回门户「我的佣金」：一个币种的汇总（取法见 summaryCurrency）、最近 100 条佣金、50 条提现、50 笔转余额（明细含全部币种）。
-// 横幅比例与计佣范围按该用户的单独设置（无则用全局）。提现关闭只关站点币种：汇总币种是站点币种时门户隐藏提现入口，
-// 别的币种照常显示（门户按 SiteCurrency 判断）。第 2、3 级的条目不给上级看下线邮箱（From 为空）。
+// MyCommission 返回门户「我的佣金」：汇总、最近 100 条佣金、50 条提现、50 笔转余额。
+// 横幅比例与计佣范围按该用户的单独设置（无则用全局）。第 2、3 级的条目不给上级看下线邮箱（From 为空）。
 func (s *Service) MyCommission(ctx context.Context, userID uuid.UUID) (MyCommission, error) {
 	refs, err := s.needRefs()
 	if err != nil {
@@ -39,24 +35,16 @@ func (s *Service) MyCommission(ctx context.Context, userID uuid.UUID) (MyCommiss
 	if err != nil {
 		return MyCommission{}, err
 	}
-	cur, err := s.summaryCurrency(ctx, userID)
+	et, err := s.repo.EntryTotalsOf(ctx, userID)
 	if err != nil {
 		return MyCommission{}, err
 	}
-	site, err := s.ledger.DefaultCurrency(ctx)
-	if err != nil {
-		return MyCommission{}, err
-	}
-	et, err := s.repo.EntryTotalsOf(ctx, userID, string(cur))
-	if err != nil {
-		return MyCommission{}, err
-	}
-	wt, err := s.repo.WithdrawalTotalsOf(ctx, userID, string(cur))
+	wt, err := s.repo.WithdrawalTotalsOf(ctx, userID)
 	if err != nil {
 		return MyCommission{}, err
 	}
 	// 与提现、转余额同一口径；展示时不显示负数
-	avail, err := s.availableFrom(ctx, userID, cur, et, wt)
+	avail, err := s.availableFrom(ctx, userID, et, wt)
 	if err != nil {
 		return MyCommission{}, err
 	}
@@ -69,7 +57,6 @@ func (s *Service) MyCommission(ctx context.Context, userID uuid.UUID) (MyCommiss
 	}
 	out := MyCommission{
 		Summary: Summary{
-			Currency:        cur,
 			Pending:         et.Pending,
 			Available:       avail,
 			Withdrawing:     wt.InFlight,
@@ -84,7 +71,6 @@ func (s *Service) MyCommission(ctx context.Context, userID uuid.UUID) (MyCommiss
 			DirectRateBP:    DirectRateBP(rate, dist),
 			WithdrawEnabled: wd.Enabled,
 			WithdrawMethods: nonNilStrings(wd.Methods),
-			SiteCurrency:    site,
 		},
 		Entries:     []EntryView{},
 		Withdrawals: []WithdrawalView{},
@@ -116,7 +102,6 @@ func (s *Service) MyCommission(ctx context.Context, userID uuid.UUID) (MyCommiss
 			Amount:       e.CommissionAmount,
 			Base:         e.BaseAmount,
 			RateBP:       e.RateBP,
-			Currency:     e.Currency,
 			Status:       e.Status,
 			FrozenUntil:  e.FrozenUntil,
 			CreatedAt:    e.CreatedAt,
@@ -139,7 +124,6 @@ func (s *Service) MyCommission(ctx context.Context, userID uuid.UUID) (MyCommiss
 		out.Withdrawals = append(out.Withdrawals, WithdrawalView{
 			ID:           w.ID,
 			Amount:       w.Amount,
-			Currency:     w.Currency,
 			Status:       w.Status,
 			RejectReason: reason,
 			RequestedAt:  w.RequestedAt,
@@ -156,7 +140,6 @@ func (s *Service) MyCommission(ctx context.Context, userID uuid.UUID) (MyCommiss
 		out.Transfers = append(out.Transfers, TransferView{
 			LedgerTxnID: t.LedgerTxnID,
 			Amount:      t.Amount,
-			Currency:    t.Currency,
 			CreatedAt:   t.CreatedAt,
 		})
 	}
@@ -176,8 +159,7 @@ func MaskEmail(e string) string {
 	return "***"
 }
 
-// AdminOverview 返回后台分销概览：按币种分组的汇总与当前参数；「本月」按站点时区的月初算。
-// 顶层金额是站点币种那一组（没有数据时为 0），顶层笔数是全部币种合计。
+// AdminOverview 返回后台分销概览：全站金额与笔数合计、当前参数；「本月」按站点时区的月初算。
 func (s *Service) AdminOverview(ctx context.Context) (Overview, error) {
 	refs, err := s.needRefs()
 	if err != nil {
@@ -199,15 +181,11 @@ func (s *Service) AdminOverview(ctx context.Context) (Overview, error) {
 	if err != nil {
 		return Overview{}, err
 	}
-	siteCur, err := s.ledger.DefaultCurrency(ctx)
+	eo, err := s.repo.EntryOverview(ctx, monthStart(s.clock(), site.Timezone))
 	if err != nil {
 		return Overview{}, err
 	}
-	eos, err := s.repo.EntryOverviewByCurrency(ctx, monthStart(s.clock(), site.Timezone))
-	if err != nil {
-		return Overview{}, err
-	}
-	wos, err := s.repo.WithdrawalOverviewByCurrency(ctx)
+	wo, err := s.repo.WithdrawalOverview(ctx)
 	if err != nil {
 		return Overview{}, err
 	}
@@ -215,8 +193,15 @@ func (s *Service) AdminOverview(ctx context.Context) (Overview, error) {
 	if err != nil {
 		return Overview{}, err
 	}
-	out := Overview{
-		Currency:            siteCur,
+	return Overview{
+		Pending:             eo.Pending,
+		Available:           eo.Available,
+		PaidOut:             wo.PaidOut,
+		ThisMonth:           eo.ThisMonth,
+		TotalEarned:         eo.Total,
+		Entries:             eo.Entries,
+		NeedReview:          eo.NeedReview,
+		WaitingWithdrawals:  wo.Waiting,
 		InvitedUsers:        invited,
 		RatePercent:         cfg.RatePercent,
 		FreezeDays:          cfg.FreezeDays,
@@ -226,47 +211,7 @@ func (s *Service) AdminOverview(ctx context.Context) (Overview, error) {
 		DistributionLevels:  dist.Levels,
 		WithdrawEnabled:     wd.Enabled,
 		WithdrawMethods:     nonNilStrings(wd.Methods),
-		ByCurrency:          mergeOverview(siteCur, eos, wos),
-	}
-	for _, c := range out.ByCurrency {
-		out.Entries += c.Entries
-		out.NeedReview += c.NeedReview
-		out.WaitingWithdrawals += c.WaitingWithdrawals
-		if c.Currency == siteCur {
-			out.Pending, out.Available, out.PaidOut = c.Pending, c.Available, c.PaidOut
-			out.ThisMonth, out.TotalEarned = c.ThisMonth, c.TotalEarned
-		}
-	}
-	return out, nil
-}
-
-// mergeOverview 把条目与提现两组按币种合并成一张表（币种升序），站点币种没有数据时也补一行 0。
-func mergeOverview(siteCur money.Currency, eos []repo.EntryOverview, wos []repo.WithdrawalOverview) []CurrencyOverview {
-	byCur := map[money.Currency]*CurrencyOverview{}
-	get := func(c money.Currency) *CurrencyOverview {
-		if row, ok := byCur[c]; ok {
-			return row
-		}
-		row := &CurrencyOverview{Currency: c}
-		byCur[c] = row
-		return row
-	}
-	get(siteCur)
-	for _, e := range eos {
-		row := get(money.Currency(e.Currency))
-		row.Pending, row.Available, row.ThisMonth, row.TotalEarned = e.Pending, e.Available, e.ThisMonth, e.Total
-		row.Entries, row.NeedReview = e.Entries, e.NeedReview
-	}
-	for _, w := range wos {
-		row := get(money.Currency(w.Currency))
-		row.PaidOut, row.WaitingWithdrawals = w.PaidOut, w.Waiting
-	}
-	out := make([]CurrencyOverview, 0, len(byCur))
-	for _, row := range byCur {
-		out = append(out, *row)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Currency < out[j].Currency })
-	return out
+	}, nil
 }
 
 // monthStart 返回 now 在站点时区下所在月份的月初（UTC）；时区无效按 UTC。
@@ -327,7 +272,6 @@ func (s *Service) AdminWithdrawals(ctx context.Context, status string) ([]AdminW
 			UserID:          w.UserID,
 			Email:           emails[w.UserID],
 			Amount:          w.Amount,
-			Currency:        w.Currency,
 			Status:          w.Status,
 			Method:          w.Method,
 			PayoutDetail:    string(payout),
@@ -336,7 +280,7 @@ func (s *Service) AdminWithdrawals(ctx context.Context, status string) ([]AdminW
 			RejectReason:    reason,
 			RequestedAt:     w.RequestedAt,
 			CompletedAt:     w.CompletedAt,
-			EarnedTotal:     earned[repo.UserCurrency{UserID: w.UserID, Currency: w.Currency}],
+			EarnedTotal:     earned[w.UserID],
 		})
 	}
 	return out, nil

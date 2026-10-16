@@ -398,7 +398,7 @@ func TestLevelsOverrideRateUsesDirect(t *testing.T) {
 	}
 }
 
-// 门户「付费好友」只算直接邀请（第 1 级）；第 2、3 级条目不给上级看下线邮箱；汇总带站点币种。
+// 门户「付费好友」只算直接邀请（第 1 级）；第 2、3 级条目不给上级看下线邮箱。
 func TestMyCommissionLevelOneOnly(t *testing.T) {
 	e, ctx := newEnv(t)
 	admin := newUser(t, e, ctx)
@@ -417,7 +417,7 @@ func TestMyCommissionLevelOneOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mc.Summary.PaidInvitees != 0 || mc.Summary.Orders != 1 || mc.Summary.SiteCurrency != testCurrency {
+	if mc.Summary.PaidInvitees != 0 || mc.Summary.Orders != 1 {
 		t.Fatalf("只有第 2 级条目时 %+v", mc.Summary)
 	}
 	if len(mc.Entries) != 1 || mc.Entries[0].Level != 2 || mc.Entries[0].From != "" {

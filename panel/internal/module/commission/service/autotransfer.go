@@ -8,7 +8,6 @@ import (
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/module/commission/model"
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 )
@@ -49,7 +48,7 @@ func (s *Service) autoTransferDue(ctx context.Context, limit int, plan autoTrans
 // 锁序：用户咨询锁（LockUser，与手动转余额、提现申请、注销作废同一把）→ 条目行（SKIP LOCKED，标记已清就跳过）→ 一笔分录同时锁可提现佣金与余额科目。
 // 受益人已注销时只清标记、不转（注销时标记已清，正常走不到）。
 // 转的金额是这条佣金与当前可用佣金里较小的那个：标记挂着期间用户可能已经手动转走一部分；可用为 0 时只清标记、不记账。
-// 条目不是站点币种（站点币种被改过）或提现已重新打开时只清标记，钱留在可提现。
+// 提现已重新打开时只清标记，钱留在可提现。
 // 转余额记录带 entry_id，库里唯一，同一条佣金最多自动转一次；写审计 commission.auto_transferred_to_balance。
 func (s *Service) autoTransferOne(ctx context.Context, e model.Entry, plan autoTransferPlan) (bool, error) {
 	done := false
@@ -67,7 +66,6 @@ func (s *Service) autoTransferOne(ctx context.Context, e model.Entry, plan autoT
 		if err != nil {
 			return err
 		}
-		cur := money.Currency(locked.Currency)
 		amount := locked.CommissionAmount
 		switch {
 		case gone:
@@ -78,12 +76,8 @@ func (s *Service) autoTransferOne(ctx context.Context, e model.Entry, plan autoT
 			plog.From(ctx).Info("commission: 提现已重新打开，自动转余额只清标记",
 				zap.String("entry_id", locked.ID.String()))
 			amount = decimal.Zero
-		case cur != plan.site:
-			plog.From(ctx).Warn("commission: 条目已不是站点币种，不再自动转余额",
-				zap.String("entry_id", locked.ID.String()), zap.String("currency", locked.Currency))
-			amount = decimal.Zero // 只清标记
 		default:
-			avail, err := s.available(ctx, locked.ReferrerUserID, cur)
+			avail, err := s.available(ctx, locked.ReferrerUserID)
 			if err != nil {
 				return err
 			}
@@ -93,7 +87,7 @@ func (s *Service) autoTransferOne(ctx context.Context, e model.Entry, plan autoT
 		}
 		if amount.IsPositive() {
 			id := locked.ID
-			txnID, err := s.postTransfer(ctx, locked.ReferrerUserID, cur, amount, &id, autoTransferMemo)
+			txnID, err := s.postTransfer(ctx, locked.ReferrerUserID, amount, &id, autoTransferMemo)
 			if err != nil {
 				return err
 			}
@@ -104,7 +98,6 @@ func (s *Service) autoTransferOne(ctx context.Context, e model.Entry, plan autoT
 				Data: map[string]any{
 					"amount":       amount.StringFixed(2),
 					"entry_amount": locked.CommissionAmount.StringFixed(2),
-					"currency":     locked.Currency,
 					"ledger_txn":   txnID.String(),
 					"order_no":     locked.OrderNo,
 				},
@@ -112,7 +105,7 @@ func (s *Service) autoTransferOne(ctx context.Context, e model.Entry, plan autoT
 				return err
 			}
 			done = true
-		} else if !gone && plan.on && cur == plan.site {
+		} else if !gone && plan.on {
 			plog.From(ctx).Info("commission: 可用佣金已被用户转走，自动转余额只清标记",
 				zap.String("entry_id", locked.ID.String()))
 		}

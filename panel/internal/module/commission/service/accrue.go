@@ -19,7 +19,7 @@ const (
 	reviewSameSource         = "推荐人与购买人来自同一来源地址"
 	reviewSourceCheckFailed  = "同源检查失败，需人工确认推荐人与购买人是否同源"
 	reviewSourceCheckMissing = "同源检查未装配，需人工确认推荐人与购买人是否同源"
-	// reviewUnderfundedPrefix 是解冻时待结科目余额不足转复核的原因开头（后面跟金额与币种，见 settleOne）。
+	// reviewUnderfundedPrefix 是解冻时待结科目余额不足转复核的原因开头（后面跟金额，见 settleOne）。
 	reviewUnderfundedPrefix = "待结佣金科目余额不足"
 )
 
@@ -28,7 +28,7 @@ const (
 // 没有推荐人、费率为 0、「首单」口径下不是首单、佣金截断后为 0、这一单已经计提过，都是正常情况，返回 nil。
 //
 // 锁序：order 调用时已持有平台收入科目；「首单」口径再加被推荐人咨询锁；记账依次锁各级受益人的待结佣金科目
-// （都排在平台收入之后），同币种的计提都被平台收入科目串行化，不会互相死锁；不碰套餐、券、订阅。
+// （都排在平台收入之后），计提都被平台收入科目串行化，不会互相死锁；不碰套餐、券、订阅。
 func (s *Service) OnOrderPaid(ctx context.Context, o ordersvc.PaidOrder) error {
 	if !o.Total.IsPositive() || o.Kind == ordersvc.KindTopup {
 		return nil
@@ -61,7 +61,7 @@ func (s *Service) OnOrderPaid(ctx context.Context, o ordersvc.PaidOrder) error {
 		if scope == settingssvc.CommissionScopeFirstOrder {
 			// 「首单」按佣金记录判：被推荐人已有别的订单计过佣，这一单就不再计。
 			// 已作废（voided）的条目也算「已有首单」（用户 10-13 定）：首单佣金被复核作废后，第二单不再计佣。
-			// 先锁被推荐人：不同币种的两张单不共用平台收入科目锁，不加这把锁会并发各计一条
+			// 先锁被推荐人：不同订单不共用平台收入科目锁，不加这把锁会并发各计一条
 			if err := s.repo.LockReferee(ctx, o.UserID); err != nil {
 				return err
 			}
@@ -109,7 +109,6 @@ func (s *Service) OnOrderPaid(ctx context.Context, o ordersvc.PaidOrder) error {
 			}
 			txnID, err := s.ledger.Post(ctx, ledgersvc.Posting{
 				Kind:       ledgersvc.KindCommissionAccrued,
-				Currency:   o.Currency,
 				SourceType: ledgersvc.SourceOrder,
 				SourceID:   o.OrderID,
 				Memo:       memo,
@@ -128,7 +127,6 @@ func (s *Service) OnOrderPaid(ctx context.Context, o ordersvc.PaidOrder) error {
 				OrderID:          o.OrderID,
 				OrderNo:          o.OrderNo,
 				PaymentID:        paymentID,
-				Currency:         string(o.Currency),
 				BaseAmount:       o.Total,
 				RateBP:           rateBP,
 				Level:            b.Level,

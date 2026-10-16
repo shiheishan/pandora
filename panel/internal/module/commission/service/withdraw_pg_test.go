@@ -266,7 +266,7 @@ func TestMyCommissionSummary(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := mc.Summary
-	if s.Currency != testCurrency || !s.Pending.Equal(dec2("5.00")) || !s.Available.Equal(dec2("7.00")) ||
+	if !s.Pending.Equal(dec2("5.00")) || !s.Available.Equal(dec2("7.00")) ||
 		!s.Withdrawing.Equal(dec2("10.00")) || !s.Settled.IsZero() || !s.TotalEarned.Equal(dec2("25.00")) {
 		t.Fatalf("金额汇总 %+v", s)
 	}
