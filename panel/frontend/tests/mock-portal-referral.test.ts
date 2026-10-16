@@ -58,11 +58,11 @@ describe('mock api · portal referral', () => {
     const res = await mockFetch(base, auth, 'GET', '/v1/me/commission')
     expect(res.status).toBe(200)
     const json = (await res.json()) as {
-      summary: { withdraw_enabled: boolean; withdraw_methods: string[]; direct_rate_bp: number; site_currency: string; paid_invitees: number }
+      summary: { withdraw_enabled: boolean; withdraw_methods: string[]; direct_rate_bp: number; paid_invitees: number }
       entries: Array<{ level: number; from: string; status: string }>
     }
     expect(json.summary.withdraw_enabled).toBe(true)
-    expect(json.summary.site_currency).toBe('CNY')
+    expect(json.summary).not.toHaveProperty('site_currency')
     // 付费好友只算第 1 级、不算已作废的；第 2、3 级条目不带邮箱
     expect(json.summary.paid_invitees).toBe(
       new Set(json.entries.filter((e) => e.level === 1 && e.status !== 'reversed').map((e) => e.from)).size,

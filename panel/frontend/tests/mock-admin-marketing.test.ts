@@ -1,7 +1,7 @@
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'
-import { giftStatsSchema, overviewSchema } from '../src/admin/screens/marketing/schemas'
+import { couponsResponse, giftStatsSchema, overviewSchema, templatesResponse } from '../src/admin/screens/marketing/schemas'
 import { bearer, close, loginAs, mockFetch, serve } from './mock-helpers'
 
 describe('mock api · admin marketing', () => {
@@ -80,5 +80,39 @@ describe('mock api · admin marketing', () => {
     expect(dup.status).toBe(409)
     const bad = await post('/v1/commission/config', { rate_percent: 51 })
     expect(await bad.json()).toMatchObject({ error: { code: 'validation_failed', fields: { rate_percent: '佣金比例需在 0 到 50 之间' } } })
+  })
+
+  it('serves RMB-only coupons with a start time and rejects the dropped fields', async () => {
+    const listed = await (await fetch(`${base}/v1/coupons?limit=200`, { headers: auth })).json()
+    expect(couponsResponse.safeParse(listed).success).toBe(true)
+    for (const c of (listed as { coupons: Array<Record<string, unknown>> }).coupons) {
+      expect(c).not.toHaveProperty('currency')
+      expect(c).not.toHaveProperty('applicable_intervals')
+      expect(c).toHaveProperty('valid_from')
+      expect(c).toHaveProperty('user_group_id')
+    }
+    expect((await post('/v1/coupons', { code: 'RMB1', discount_type: 'percent', discount_value: 10, currency: 'CNY' })).status).toBe(400)
+    expect((await post('/v1/coupons', { code: 'RMB2', discount_type: 'percent', discount_value: 10, applicable_intervals: ['month'] })).status).toBe(400)
+    const reversed = await post('/v1/coupons', {
+      code: 'RMB3',
+      discount_type: 'percent',
+      discount_value: 10,
+      valid_from: '2026-11-02T00:00:00Z',
+      valid_until: '2026-11-01T00:00:00Z',
+    })
+    expect(reversed.status).toBe(422)
+    expect(await reversed.json()).toMatchObject({ error: { code: 'validation_failed', fields: { valid_until: '结束时间必须晚于开始时间' } } })
+  })
+
+  it('marks plan-card templates with price_archived and requires an active price of that plan', async () => {
+    const listed = await (await fetch(`${base}/v1/gift-cards`, { headers: auth })).json()
+    expect(templatesResponse.safeParse(listed).success).toBe(true)
+    const { templates } = listed as { templates: Array<{ type: string; price_archived: boolean; rewards: { plan_id?: string } }> }
+    expect(templates.every((t) => typeof t.price_archived === 'boolean')).toBe(true)
+    const card = templates.find((t) => t.type === 'plan')!
+    expect(card.price_archived).toBe(false)
+    const noPrice = await post('/v1/gift-cards', { name: '无价格档', type: 'plan', status: 'active', rewards: { plan_id: card.rewards.plan_id }, conditions: {}, limits: {} })
+    expect(noPrice.status).toBe(422)
+    expect(await noPrice.json()).toMatchObject({ error: { fields: { rewards: '价格档不存在、已停售或不属于该套餐' } } })
   })
 })

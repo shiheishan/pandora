@@ -8,12 +8,14 @@ import { buildUsageBars, bytesParts, projectUsage, type TrafficSummary } from '.
 
 interface UsageCardProps {
   subscriptionId: string
-  /** 主卡算好的流量摘要（含流量包）；没有流量额度时为 null，只画柱不预测 */
+  /** 主卡算好的流量摘要；没有流量额度时为 null，只画柱不预测 */
   summary: TrafficSummary | null
   resetAt: string | null
+  /** 开了付费流量重置才给「流量不够？」链到重置页 */
+  resetPrice: number | null
 }
 
-export function UsageCard({ subscriptionId, summary, resetAt }: UsageCardProps) {
+export function UsageCard({ subscriptionId, summary, resetAt, resetPrice }: UsageCardProps) {
   const usage = useSubscriptionUsage(subscriptionId)
 
   if (usage.isPending) {
@@ -48,9 +50,9 @@ export function UsageCard({ subscriptionId, summary, resetAt }: UsageCardProps) 
           {projection && (
             <div className={projection.short ? css.projectionShort : css.projection}>
               {projection.text}
-              {projection.short && (
-                <a className={css.inlineLink} href={href('/plans', { tab: 'packs' })}>
-                  买流量包 →
+              {projection.short && resetPrice !== null && (
+                <a className={css.inlineLink} href={href(`/subs/${subscriptionId}/traffic`)}>
+                  流量不够？
                 </a>
               )}
             </div>

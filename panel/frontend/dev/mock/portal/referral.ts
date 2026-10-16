@@ -166,7 +166,6 @@ const available = (c: CommissionState) => ledgerBalance(c) - sum(c.withdrawals, 
 function summary(c: CommissionState) {
   const live = c.entries.filter((e) => e.status !== 'reversed')
   return {
-    currency: 'CNY',
     pending: sum(c.entries, (e) => (e.status === 'pending' ? e.amount : 0)),
     available: available(c),
     withdrawing: sum(c.withdrawals, (w) => (IN_FLIGHT.has(w.status) ? w.amount : 0)),
@@ -178,8 +177,6 @@ function summary(c: CommissionState) {
     min_withdraw: MIN_WITHDRAW,
     withdraw_enabled: c.withdrawEnabled,
     withdraw_methods: c.withdrawMethods,
-    // mock 只有 CNY 一种币种，也就是站点币种
-    site_currency: 'CNY',
     // R81 / R114：计佣范围（真后端已上线，legacy 场景也照回）；multi 场景取「首单」，横幅写「好友首单付费」
     scope: scenario() === 'multi' ? 'first_order' : 'every_order',
     // R69：Go 的 CommissionSummary 无 omitempty，各场景恒在
@@ -281,9 +278,9 @@ export const referral: MockModule = {
       const c = commissionState(ctx.user.userId)
       ctx.send(200, {
         summary: summary(c),
-        entries: c.entries.slice(0, 100).map((e) => ({ ...e, rate_percent: RATE_PERCENT, rate_bp: RATE_PERCENT * 100, currency: 'CNY' })),
-        withdrawals: c.withdrawals.slice(0, 50).map((w) => ({ ...w, currency: 'CNY' })),
-        transfers: c.transfers.slice(0, 50).map((t) => ({ ...t, currency: 'CNY' })),
+        entries: c.entries.slice(0, 100).map((e) => ({ ...e, rate_percent: RATE_PERCENT, rate_bp: RATE_PERCENT * 100 })),
+        withdrawals: c.withdrawals.slice(0, 50),
+        transfers: c.transfers.slice(0, 50),
       })
     },
 

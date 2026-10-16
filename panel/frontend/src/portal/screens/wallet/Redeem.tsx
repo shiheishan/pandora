@@ -207,9 +207,10 @@ function redeemResult(card: GiftCard, o: PlacementOption | undefined, r: RedeemR
   const prize = r.prize_label ? [`抽中了「${r.prize_label}」`] : []
   if (o?.kind === 'new') {
     const created = fresh.find((s) => !before.has(s.id))
+    const newEnd = o?.new_permanent ? '永久有效' : created?.current_period_end ? day(created.current_period_end) : end
     return {
       title: '新的一份开好了',
-      happened: [`${created ? naming.dn(created) : np}，用到 ${created?.current_period_end ? day(created.current_period_end) : end}`],
+      happened: [`${created ? naming.dn(created) : np}，${newEnd}`],
       kept: before.size ? ['原来的照常用，链接没变'] : [],
       changeable: '可以在「我的套餐」里给它起个名字，好分清。',
       newSub: created,
@@ -217,6 +218,7 @@ function redeemResult(card: GiftCard, o: PlacementOption | undefined, r: RedeemR
   }
   if (o?.kind === 'change') {
     const credit = o.credit ?? 0
+    const changeEnd = o.new_permanent ? '永久有效' : end
     return {
       title: o.expired ? '已恢复使用' : `已换成${np}`,
       next: (
@@ -225,20 +227,29 @@ function redeemResult(card: GiftCard, o: PlacementOption | undefined, r: RedeemR
           <UpdateHelpLink />
         </>
       ),
-      happened: [`${naming.multi && sub ? `「${naming.sn(sub)}」` : '你原来的套餐'}现在是${np}，用到 ${end}`, ...(credit > 0 ? [`${money(credit)} 已退到余额${balance !== null ? `，现在余额 ${money(balance)}` : ''}（在「钱包」里，可用于续费、加流量、买套餐）`] : [])],
+      happened: [`${naming.multi && sub ? `「${naming.sn(sub)}」` : '你原来的套餐'}现在是${np}，${changeEnd}`, ...(credit > 0 ? [`${money(credit)} 已退到余额${balance !== null ? `，现在余额 ${money(balance)}` : ''}（在「钱包」里，可用于续费、加流量、买套餐）`] : [])],
       kept: ['链接没变'],
     }
   }
+  if (o?.kind === 'stack') {
+    const stackEnd = o.new_permanent ? '永久有效' : end
+    return {
+      title: '已叠加',
+      happened: [`${who}总流量加上了${o.new_permanent ? '，永久有效' : stackEnd ? `，用到 ${stackEnd}` : ''}`, ...balanceLine],
+      kept: ['链接没变，设备不用重新添加'],
+    }
+  }
   if (o?.kind === 'renew' || o?.kind === 'extend_days') {
-    return { title: '兑换好了', happened: [...prize, `${who}用到 ${end}${o.period_end ? `（原来 ${day(o.period_end)}）` : ''}`, ...balanceLine], kept: ['链接没变，设备不用重新添加'] }
+    const renewEnd = o.new_permanent ? '永久有效' : end
+    return { title: '兑换好了', happened: [...prize, `${who}${o.new_permanent ? '永久有效' : `用到 ${renewEnd}`}${o.period_end && !o.new_permanent ? `（原来 ${day(o.period_end)}）` : ''}`, ...balanceLine], kept: ['链接没变，设备不用重新添加'] }
   }
   if (o?.kind === 'reset_traffic') {
-    return { title: '流量已清零重算', happened: [...prize, `${who}这个月又有 ${gb(o.traffic_cap ?? 0)} 能用`, ...balanceLine], kept: ['链接没变', ...(end ? [`到期日不变（${end}）`] : [])] }
+    return { title: '流量已清零重算', happened: [...prize, `${who}本期又有 ${gb(o.traffic_cap ?? 0)} 能用`, ...balanceLine], kept: ['链接没变', ...(end ? [`到期日不变（${end}）`] : [])] }
   }
   if (o?.kind === 'add_traffic' || r.traffic_bytes) {
     return {
       title: `已加 ${gb(r.traffic_bytes ?? 0)}`,
-      happened: [...prize, sub ? `${gb(r.traffic_bytes ?? 0)} 加到了${who}，用完为止` : `${gb(r.traffic_bytes ?? 0)} 流量包先存着，有在用的套餐时可以加上`, ...balanceLine],
+      happened: [...prize, sub ? `${gb(r.traffic_bytes ?? 0)} 加到了${who}${sub.plan_kind === 'one_time' ? '的总流量上' : '本期的流量上，只在本期有效'}` : `本期流量 +${gb(r.traffic_bytes ?? 0)}`, ...balanceLine],
       kept: sub ? ['链接没变，不用重新添加'] : [],
     }
   }

@@ -14,7 +14,7 @@
 }
 
 /* ===========================================================================
- * 卡片下面：再买一份、兑换、流量包转移
+ * 卡片下面：再买一份、兑换
  * ========================================================================= */
 .addRow {
   display: flex;
@@ -63,100 +63,9 @@
   text-align: center;
 }
 
-.transfer {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-8);
-  padding: 12px 14px;
-  border: 1px solid var(--info-line);
-  border-radius: var(--radius-lg);
-  background: var(--info-soft);
-  color: var(--info);
-  font-size: 13px;
-}
-
-.transferRow {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-8);
-}
-
 /* ===========================================================================
- * 子页：加流量、换个套餐、节点与用量
+ * 子页：流量不够、换个套餐、节点与用量
  * ========================================================================= */
-.packGrid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-8);
-}
-
-.pack {
-  padding: 12px 6px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  color: var(--text);
-  line-height: 1.35;
-  font-variant-numeric: tabular-nums;
-  text-align: center;
-}
-
-.pack:hover {
-  border-color: var(--border-hover);
-}
-
-.pack[aria-checked='true'] {
-  border-color: var(--brand);
-  background: var(--brand-tint);
-}
-
-.packSize {
-  display: block;
-  font-size: 20px;
-  font-weight: var(--fw-semibold);
-}
-
-.packPrice {
-  display: block;
-  color: var(--text-2);
-}
-
-.pack[aria-checked='true'] .packPrice {
-  color: var(--brand-ink);
-}
-
-.packAfter {
-  display: block;
-  margin-top: 2px;
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-}
-
-.best {
-  display: inline-block;
-  margin-top: 6px;
-  padding: 0 6px;
-  border-radius: var(--radius-tag);
-  background: var(--ok-soft);
-  color: var(--ok);
-  font-size: var(--fs-caption);
-  font-style: normal;
-  line-height: 1.5;
-}
-
-.sec {
-  margin: var(--space-8) 0 0;
-  font-size: var(--fs-h3);
-  font-weight: var(--fw-semibold);
-}
-
-.sec small {
-  margin-left: 6px;
-  color: var(--text-2);
-  font-size: 13px;
-  font-weight: var(--fw-regular);
-}
 
 /* 主按钮下面隔一条线的一行文字链（换大套餐） */
 .aside {
@@ -278,10 +187,4 @@
 .cardNote {
   color: var(--text-3);
   font-size: var(--fs-caption);
-}
-
-@media (max-width: 639px) {
-  .packGrid {
-    gap: 6px;
-  }
 }

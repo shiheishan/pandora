@@ -1,111 +1,108 @@
-import type { Pack, Plan } from '../common/catalog'
+import { href } from '../../../core/router'
+import type { Plan } from '../common/catalog'
+import type { Landing } from '../common/landings'
 import { createPlacedOrder } from '../common/intent'
-import { isHeld, leftOf } from '../common/purchase'
+import { isHeld } from '../common/purchase'
 import { expectation, type BalanceSplit, type Quote, type QuoteRequest, type QuoteRow } from '../common/quote'
 import { isLive, type Subscription } from '../common/subscriptions'
-import { renewOrder } from '../plans/labels'
 
 // ---------------------------------------------------------------------------
 // 确认页的地址（.claude/rules/screens-portal.md 约定地址）：
 //   ?renew=<一份>[&from=plans]              续费（过期 30 天内的是「恢复使用」）
 //   ?change=<一份>&plan=<套餐>              把这一份换成 X
-//   ?change-plan=<套餐>[&sub=<一份>]        先选换掉哪一份（不预选；能换的只有一份时直接定）
+//   ?stack=<一份>                           一次性同款叠加到那一份
 //   ?new=<套餐>                             另买一份
-//   ?pack=<流量包>&sub=<一份>               加流量（没带 sub 且多份时先选加到哪一份，选过带 pick=1）
 //   ?reset=<一份>  买流量重置（把这一份当期已用流量清零）
-//   ?plan=<套餐>                            老地址：没有套餐 → 新买；有同款 → 续费；否则 → 选换掉哪一份
+//   ?plan=<套餐>                            老地址：没有份 → 新买；有份 → 先选放到哪里（LandingChooser）
+//   ?change-plan=<套餐>                     同 ?plan=，兼容老地址
 //   以上都可带 &price=<价格> 预选「买多久」
 // ---------------------------------------------------------------------------
 export type Target =
   | { kind: 'renew'; subId: string; fromPlans: boolean }
-  | { kind: 'change'; subId: string | null; planId: string; chooser: boolean }
+  | { kind: 'change'; subId: string; planId: string }
   | { kind: 'new'; planId: string }
-  | { kind: 'pack'; packId: string; subId: string | null; chooser: boolean }
+  | { kind: 'stack'; subId: string }
   | { kind: 'reset'; subId: string }
+  | { kind: 'choose'; planId: string }
 
-export type Problem = 'missing' | 'plan_gone' | 'pack_gone' | 'sub_gone'
+export type Problem = 'missing' | 'plan_gone' | 'sub_gone'
 type Parsed = { target: Target } | { problem: Problem }
 
-/** 能换成 plan 的份：手上的、能付费换套餐的、不是同款的 */
-export const changeCandidates = (held: readonly Subscription[], planId: string) => held.filter((s) => s.changeable && s.plan_id !== planId)
-
-function changeOrRenew(planId: string, held: readonly Subscription[], picked: string | null): Target | Problem {
-  const holders = renewOrder(held.filter((s) => s.plan_id === planId && s.renew_until !== null))
-  const cands = changeCandidates(held, planId)
-  if (!cands.length) return holders[0] ? { kind: 'renew', subId: holders[0].id, fromPlans: true } : held.length ? 'sub_gone' : { kind: 'new', planId }
-  // 只有一份能换时直接定，不问；多份时不预选（换掉生效中的那份永不作默认）
-  if (cands.length === 1) return { kind: 'change', subId: cands[0]!.id, planId, chooser: false }
-  return { kind: 'change', subId: cands.some((s) => s.id === picked) ? picked : null, planId, chooser: true }
-}
-
-export function parseTarget(query: URLSearchParams, held: readonly Subscription[], plans: readonly Plan[], packs: readonly Pack[]): Parsed {
-  const wrap = (t: Target | Problem): Parsed => (typeof t === 'string' ? { problem: t } : { target: t })
-  const packId = query.get('pack')
-  if (packId) {
-    if (!packs.some((p) => p.id === packId)) return { problem: 'pack_gone' }
-    const live = held.filter(isLive)
-    if (!live.length) return { problem: 'sub_gone' }
-    // 没带是哪一份：预选剩得最少的那份（与选购页流量包标签同一规则）
-    const least = [...live].sort((a, b) => (leftOf(a).left ?? Number.MAX_SAFE_INTEGER) - (leftOf(b).left ?? Number.MAX_SAFE_INTEGER))[0]!
-    const named = query.get('sub')
-    // 地址点名的那一份不在用了（停用、不是你的）：不悄悄换成别的一份
-    if (named && !live.some((s) => s.id === named)) return { problem: 'sub_gone' }
-    const sub = named ?? least.id
-    // 从卡片或选购页来的已经带了是哪一份，不再问；老地址没带、多份时才在确认页选（选过的带 pick=1 继续显示）
-    return { target: { kind: 'pack', packId, subId: sub, chooser: live.length > 1 && (!query.get('sub') || query.get('pick') === '1') } }
-  }
+export function parseTarget(query: URLSearchParams, held: readonly Subscription[], plans: readonly Plan[]): Parsed {
   const reset = query.get('reset')
   if (reset) {
     const sub = held.find((s) => s.id === reset)
     return sub && isLive(sub) ? { target: { kind: 'reset', subId: sub.id } } : { problem: 'sub_gone' }
   }
+
   const renew = query.get('renew')
   if (renew) {
     const sub = held.find((s) => s.id === renew)
     return sub && sub.renew_until !== null ? { target: { kind: 'renew', subId: sub.id, fromPlans: query.get('from') === 'plans' } } : { problem: 'sub_gone' }
   }
-  const change = query.get('change')
-  const changePlan = query.get('change-plan')
-  if (change || changePlan) {
-    const planId = changePlan ?? query.get('plan') ?? ''
-    if (!plans.some((p) => p.id === planId)) return { problem: 'plan_gone' }
-    if (change && !changePlan) {
-      const sub = held.find((s) => s.id === change)
-      return sub && sub.changeable && sub.plan_id !== planId ? { target: { kind: 'change', subId: sub.id, planId, chooser: false } } : { problem: 'sub_gone' }
-    }
-    return wrap(changeOrRenew(planId, held, query.get('sub')))
+
+  const stack = query.get('stack')
+  if (stack) {
+    const sub = held.find((s) => s.id === stack)
+    return sub && sub.stackable ? { target: { kind: 'stack', subId: sub.id } } : { problem: 'sub_gone' }
   }
+
+  const change = query.get('change')
+  if (change) {
+    const planId = query.get('plan') ?? ''
+    if (!plans.some((p) => p.id === planId)) return { problem: 'plan_gone' }
+    const sub = held.find((s) => s.id === change)
+    return sub && sub.changeable && sub.plan_id !== planId ? { target: { kind: 'change', subId: sub.id, planId } } : { problem: 'sub_gone' }
+  }
+
   const newPlan = query.get('new')
   if (newPlan) return plans.some((p) => p.id === newPlan) ? { target: { kind: 'new', planId: newPlan } } : { problem: 'plan_gone' }
-  const legacy = query.get('plan')
-  if (legacy) {
-    if (!plans.some((p) => p.id === legacy)) return { problem: 'plan_gone' }
-    if (!held.length) return { target: { kind: 'new', planId: legacy } }
-    const owner = renewOrder(held.filter((s) => s.plan_id === legacy && s.renew_until !== null))[0]
-    if (owner) return { target: { kind: 'renew', subId: owner.id, fromPlans: true } }
-    return wrap(changeOrRenew(legacy, held, null))
+
+  const legacyPlan = query.get('plan') ?? query.get('change-plan')
+  if (legacyPlan) {
+    if (!plans.some((p) => p.id === legacyPlan)) return { problem: 'plan_gone' }
+    if (!held.length) return { target: { kind: 'new', planId: legacyPlan } }
+    return { target: { kind: 'choose', planId: legacyPlan } }
   }
+
   return { problem: 'missing' }
 }
 
-/** 报价请求：换套餐还没选是哪一份时按套餐展开（给「换掉哪一份」每个选项写今天付多少） */
-export function quoteRequest(t: Target, held: readonly Subscription[], coupon: string | null): QuoteRequest {
+/** 报价请求；choose 不报价，返回 null */
+export function quoteRequest(t: Target, held: readonly Subscription[], coupon: string | null): QuoteRequest | null {
+  if (t.kind === 'choose') return null
   const c = coupon ? { coupon_code: coupon } : {}
   switch (t.kind) {
     case 'renew':
       return { action: 'renew', subscription_id: t.subId, ...c }
     case 'change':
-      return t.subId ? { action: 'change', subscription_id: t.subId, plan_id: t.planId, ...c } : { action: 'change', plan_id: t.planId, ...c }
+      return { action: 'change', subscription_id: t.subId, plan_id: t.planId, ...c }
     case 'new':
       return { action: 'new', plan_id: t.planId, new_copy: held.some(isHeld), ...c }
+    case 'stack':
+      return { action: 'stack', subscription_id: t.subId, ...c }
     case 'reset':
       return { action: 'reset', subscription_id: t.subId, ...c }
-    default:
-      return { action: 'pack', pack_id: t.packId, ...(t.subId ? { subscription_id: t.subId } : {}), ...c }
   }
 }
 
 export { defaultTier, sortTiers } from '../common/quote'
+
+/** 从 landings 选项跳到确认页地址 */
+export function landingHref(planId: string, l: Landing, price: string | null): string {
+  const q: Record<string, string> = {}
+  if (price) q.price = price
+  switch (l.mode) {
+    case 'new':
+      return href('/checkout', { new: planId, ...q })
+    case 'renew':
+      return href('/checkout', { renew: l.subscription_id!, ...q })
+    case 'stack':
+      return href('/checkout', { stack: l.subscription_id!, ...q })
+    case 'change':
+      return href('/checkout', { change: l.subscription_id!, plan: planId, ...q })
+  }
+}
 
 // ---------------------------------------------------------------------------
 // 建单：四个接口各自的请求体，都带 as_of + expect（服务端重算比对，不符回 409 quote_changed）。
@@ -128,14 +125,16 @@ export function orderRequest(i: OrderInput): { path: string; body: Record<string
   if (i.coupon) extra.coupon_code = i.coupon
   const t = i.target
   switch (t.kind) {
-    case 'pack':
-      return { path: 'v1/me/traffic-pack-orders', body: { pack_id: t.packId, subscription_id: t.subId, ...extra } }
+    case 'choose':
+      throw new Error('choose 目标不能建单')
+    case 'stack':
+      return { path: `v1/me/subscriptions/${encodeURIComponent(t.subId)}/stack`, body: { price_id: i.row.price_id, ...extra } }
     case 'reset':
       return { path: `v1/me/subscriptions/${encodeURIComponent(t.subId)}/traffic-reset`, body: extra }
     case 'renew':
       return { path: `v1/me/subscriptions/${encodeURIComponent(t.subId)}/renew`, body: { price_id: i.row.price_id, ...extra } }
     case 'change':
-      return { path: `v1/me/subscriptions/${encodeURIComponent(t.subId!)}/change-plan`, body: { plan_id: t.planId, price_id: i.row.price_id, ...extra } }
+      return { path: `v1/me/subscriptions/${encodeURIComponent(t.subId)}/change-plan`, body: { plan_id: t.planId, price_id: i.row.price_id, ...extra } }
     default: {
       const label = i.label?.trim()
       return { path: 'v1/orders', body: { plan_id: t.planId, price_id: i.row.price_id, ...(i.newCopy ? { new_copy: true } : {}), ...(label ? { label } : {}), ...extra } }

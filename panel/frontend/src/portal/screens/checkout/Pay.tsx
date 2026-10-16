@@ -61,7 +61,6 @@ export function Pay({ orderId }: { orderId: string }) {
       <PayPanel
         orderId={orderId}
         amount={o.payable_amount}
-        currency={o.currency}
         method={method}
         returnUrl={doneReturnUrl(orderId, query)}
         onPaid={doneTo}

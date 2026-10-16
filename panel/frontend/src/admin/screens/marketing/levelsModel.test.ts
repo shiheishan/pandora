@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
-  buildLevelsConfig,
   buildOverrideBody,
+  buildSettingsConfig,
   levelsSum,
-  levelsToForm,
   overrideSummary,
-  type LevelsForm,
+  settingsToForm,
+  type SettingsForm,
 } from './levelsModel'
 import type { CommissionOverview } from './schemas'
 
@@ -19,7 +19,7 @@ const baseOverview = (): CommissionOverview => ({
   waiting_withdrawals: 0,
   rate_percent: 10,
   freeze_days: 7,
-  min_withdraw: 100,
+  min_withdraw: 10050,
   total_earned: 0,
   invited_users: 0,
   scope: 'every_order',
@@ -29,21 +29,47 @@ const baseOverview = (): CommissionOverview => ({
   withdraw_methods: ['alipay'],
 })
 
-const validLevels = (): LevelsForm => ({
+const validForm = (): SettingsForm => ({
+  rate: '20',
+  freezeDays: '7',
+  scope: 'every_order',
   distributionOn: true,
   l1: '50',
   l2: '30',
   l3: '20',
   withdrawOn: true,
+  minWithdraw: '100.50',
   methods: ['wechat', 'alipay'],
 })
 
-describe('buildLevelsConfig', () => {
-  it('合法时输出六个字段且 methods 按目录排序', () => {
-    const r = buildLevelsConfig(validLevels())
+describe('settingsToForm', () => {
+  it('正确从 overview 映射到表单字段', () => {
+    const f = settingsToForm(baseOverview())
+    expect(f).toEqual({
+      rate: '10',
+      freezeDays: '7',
+      scope: 'every_order',
+      distributionOn: false,
+      l1: '0',
+      l2: '0',
+      l3: '0',
+      withdrawOn: true,
+      minWithdraw: '100.50',
+      methods: ['alipay'],
+    })
+  })
+})
+
+describe('buildSettingsConfig', () => {
+  it('合法时输出全部 10 个字段且 methods 按目录排序', () => {
+    const r = buildSettingsConfig(validForm())
     expect(r).toEqual({
       ok: true,
       body: {
+        rate_percent: 20,
+        freeze_days: 7,
+        min_withdraw: 10050,
+        scope: 'every_order',
         distribution_enabled: true,
         distribution_l1: 50,
         distribution_l2: 30,
@@ -54,46 +80,85 @@ describe('buildLevelsConfig', () => {
     })
   })
 
+  it('rate_percent 校验', () => {
+    expect(buildSettingsConfig({ ...validForm(), rate: '51' })).toEqual({
+      ok: false,
+      errors: { rate_percent: '佣金比例需在 0 到 50 之间' },
+    })
+    expect(buildSettingsConfig({ ...validForm(), rate: '-1' })).toEqual({
+      ok: false,
+      errors: { rate_percent: '佣金比例需在 0 到 50 之间' },
+    })
+    expect(buildSettingsConfig({ ...validForm(), rate: 'abc' })).toEqual({
+      ok: false,
+      errors: { rate_percent: '佣金比例需在 0 到 50 之间' },
+    })
+    expect(buildSettingsConfig({ ...validForm(), rate: '0' }).ok).toBe(true)
+  })
+
+  it('freeze_days 校验', () => {
+    expect(buildSettingsConfig({ ...validForm(), freezeDays: '91' })).toEqual({
+      ok: false,
+      errors: { freeze_days: '冻结天数需在 0 到 90 之间' },
+    })
+    expect(buildSettingsConfig({ ...validForm(), freezeDays: '-1' })).toEqual({
+      ok: false,
+      errors: { freeze_days: '冻结天数需在 0 到 90 之间' },
+    })
+    expect(buildSettingsConfig({ ...validForm(), freezeDays: '0' }).ok).toBe(true)
+  })
+
+  it('min_withdraw 校验', () => {
+    expect(buildSettingsConfig({ ...validForm(), minWithdraw: '10.555' })).toEqual({
+      ok: false,
+      errors: { min_withdraw: '填金额，最多两位小数' },
+    })
+    expect(buildSettingsConfig({ ...validForm(), minWithdraw: 'invalid' })).toEqual({
+      ok: false,
+      errors: { min_withdraw: '填金额，最多两位小数' },
+    })
+  })
+
   it('三级之和超 100', () => {
-    const r = buildLevelsConfig({ ...validLevels(), l1: '60', l2: '30', l3: '20' })
+    const r = buildSettingsConfig({ ...validForm(), l1: '60', l2: '30', l3: '20' })
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.errors.distribution_l1).toBe('三级比例之和不能超过 100')
   })
 
   it('开启分销且三级全 0', () => {
-    const r = buildLevelsConfig({ ...validLevels(), distributionOn: true, l1: '0', l2: '0', l3: '0' })
+    const r = buildSettingsConfig({ ...validForm(), distributionOn: true, l1: '0', l2: '0', l3: '0' })
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.errors.distribution_l1).toBe('开启多级分销时至少要给一级设比例')
   })
 
   it('关闭分销且三级全 0 合法', () => {
-    const r = buildLevelsConfig({ ...validLevels(), distributionOn: false, l1: '0', l2: '0', l3: '0', methods: ['alipay'] })
+    const r = buildSettingsConfig({ ...validForm(), distributionOn: false, l1: '0', l2: '0', l3: '0', methods: ['alipay'] })
     expect(r.ok).toBe(true)
   })
 
   it('非整数比例', () => {
-    const r = buildLevelsConfig({ ...validLevels(), l2: '10.5' })
+    const r = buildSettingsConfig({ ...validForm(), l2: '10.5' })
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.errors.distribution_l2).toBe('比例需在 0 到 100 之间')
   })
 
   it('开着提现且无方式', () => {
-    const r = buildLevelsConfig({ ...validLevels(), withdrawOn: true, methods: [] })
+    const r = buildSettingsConfig({ ...validForm(), withdrawOn: true, methods: [] })
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.errors.withdraw_methods).toBe('开着提现时至少要选一种提现方式')
   })
 
-  it('关闭提现也不能全取消方式（其他币种还要用）', () => {
-    const r = buildLevelsConfig({ ...validLevels(), withdrawOn: false, methods: [] })
+  it('关闭提现也至少要选一种提现方式', () => {
+    const r = buildSettingsConfig({ ...validForm(), withdrawOn: false, methods: [] })
     expect(r.ok).toBe(false)
-    if (!r.ok) expect(r.errors.withdraw_methods).toBe('关着提现时其他币种的佣金仍按这里的方式提现，至少要选一种')
-    expect(buildLevelsConfig({ ...validLevels(), withdrawOn: false, methods: ['alipay'] }).ok).toBe(true)
+    if (!r.ok) expect(r.errors.withdraw_methods).toBe('关着提现时也至少要选一种提现方式，重新打开提现时直接生效')
+    expect(buildSettingsConfig({ ...validForm(), withdrawOn: false, methods: ['alipay'] }).ok).toBe(true)
   })
 })
 
 describe('levelsSum', () => {
   it('非法项当 0', () => {
-    expect(levelsSum({ distributionOn: false, l1: '10', l2: 'x', l3: '5', withdrawOn: false, methods: [] })).toBe(15)
+    expect(levelsSum({ ...validForm(), l1: '10', l2: 'x', l3: '5' })).toBe(15)
   })
 })
 
@@ -138,15 +203,5 @@ describe('overrideSummary', () => {
     expect(overrideSummary({ rate_percent: null, scope: 'every_order' })).toBe('比例跟全局 · 每笔订单')
     expect(overrideSummary({ rate_percent: 0, scope: null })).toBe('不拿佣金 · 范围跟全局')
     expect(overrideSummary({ rate_percent: 10, scope: null })).toBe('比例 10% · 范围跟全局')
-  })
-})
-
-describe('levelsToForm', () => {
-  it('概览转表单：份额转字符串，方式复制一份', () => {
-    const o = { ...baseOverview(), distribution_enabled: true, distribution_levels: [50, 30, 20] as [number, number, number] }
-    const f = levelsToForm(o)
-    expect(f).toEqual({ distributionOn: true, l1: '50', l2: '30', l3: '20', withdrawOn: true, methods: ['alipay'] })
-    f.methods.push('wechat')
-    expect(o.withdraw_methods).toEqual(['alipay'])
   })
 })

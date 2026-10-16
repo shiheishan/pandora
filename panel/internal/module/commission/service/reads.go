@@ -224,18 +224,18 @@ func monthStart(now time.Time, tz string) time.Time {
 	return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, loc).UTC()
 }
 
-// AdminWithdrawals 按申请时间倒序列出最近 200 笔提现（status 为空不筛），收款信息在这里解封给管理员打款用。
-func (s *Service) AdminWithdrawals(ctx context.Context, status string) ([]AdminWithdrawal, error) {
-	switch status {
-	case "", WithdrawalRequested, WithdrawalApproved, WithdrawalRejected, WithdrawalPaid:
-	default:
-		return nil, errs.Invalid(map[string]string{"status": "状态只能是 requested、approved、rejected 或 paid"})
+// AdminWithdrawals 按申请时间倒序列出最近 200 笔提现（statuses 为空不筛，多个状态取并集），收款信息在这里解封给管理员打款用。
+// 后台「处理中」传 requested,approved，「已完成」传 paid,rejected。
+func (s *Service) AdminWithdrawals(ctx context.Context, statuses []string) ([]AdminWithdrawal, error) {
+	statuses, err := withdrawalStatusFilter(statuses)
+	if err != nil {
+		return nil, err
 	}
 	refs, err := s.needRefs()
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.repo.ListWithdrawals(ctx, status, AdminWithdrawalsLimit)
+	rows, err := s.repo.ListWithdrawals(ctx, statuses, AdminWithdrawalsLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -328,4 +328,22 @@ func nonNilStrings(in []string) []string {
 		return []string{}
 	}
 	return in
+}
+
+// withdrawalStatusFilter 校验并去重提现状态筛选；有一个不认识就整体 422。
+func withdrawalStatusFilter(statuses []string) ([]string, error) {
+	out := make([]string, 0, len(statuses))
+	seen := make(map[string]bool, len(statuses))
+	for _, st := range statuses {
+		switch st {
+		case WithdrawalRequested, WithdrawalApproved, WithdrawalRejected, WithdrawalPaid:
+		default:
+			return nil, errs.Invalid(map[string]string{"status": "状态只能是 requested、approved、rejected 或 paid"})
+		}
+		if !seen[st] {
+			seen[st] = true
+			out = append(out, st)
+		}
+	}
+	return out, nil
 }

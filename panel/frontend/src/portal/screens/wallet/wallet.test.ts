@@ -36,13 +36,15 @@ describe('礼品卡', () => {
     expect(giftFace(card({ rewards: { balance: 10000 } }))).toBe('¥100.00 余额')
     expect(giftFace(card({ rewards: { traffic_bytes: 200 * GIB, expire_days: 7 } }))).toBe('流量 +200 GB + 延长 7 天')
     expect(giftFace(card({ type: 'plan', plan_name: '专业版', interval: 'month', interval_count: 1 }))).toBe('专业版 · 1 个月')
+    expect(giftFace(card({ type: 'plan', plan_name: '大包', plan_kind: 'one_time', validity_days: 30 }))).toBe('大包 · 一次性 · 有效 30 天')
+    expect(giftFace(card({ type: 'plan', plan_name: '永久包', plan_kind: 'one_time', validity_days: undefined }))).toBe('永久包 · 一次性 · 永久有效')
     expect(giftFace(card({ type: 'mystery', rewards: { pool: [{ label: 'A', weight: 0 }, { label: 'B', weight: 0 }] } }))).toBe('盲盒：可能抽到 A / B')
     expect(giftFace(card({ name: '空卡' }))).toBe('空卡')
   })
 
   it('说明：后台说明优先，缺省按类型', () => {
     expect(giftNote(card({ description: '限国庆' }))).toBe('限国庆')
-    expect(giftNote(card({ rewards: { traffic_bytes: GIB } }))).toBe('流量包不过期，用完为止')
+    expect(giftNote(card({ rewards: { traffic_bytes: GIB } }))).toBe('送的流量：按时间的套餐只在本期有效，一次性套餐加到总流量上')
     expect(giftNote(card({ type: 'mystery' }))).toBe('兑换时随机抽取其中一项')
   })
 
@@ -69,10 +71,8 @@ function detail(over: Partial<OrderDetail> = {}): OrderDetail {
       order_no: 'PD-1',
       kind: 'new',
       status: 'fulfilled',
-      currency: 'CNY',
       total_amount: 4720,
       discount_amount: 1180,
-      member_discount_amount: 0,
       balance_applied: 0,
       payable_amount: 4720,
       paid_amount: 4720,
@@ -82,7 +82,7 @@ function detail(over: Partial<OrderDetail> = {}): OrderDetail {
       has_payment_intent: true,
       created_at: '2026-09-21T10:00:00Z',
       items: [{ name: '专业版', quantity: 1, unit_amount: 5900, line_amount: 5900 }],
-      payments: [{ status: 'succeeded', amount: 4720, currency: 'CNY', created_at: '2026-09-21T10:01:00Z', method: 'alipay', provider_name: '易支付' }],
+      payments: [{ status: 'succeeded', amount: 4720, created_at: '2026-09-21T10:01:00Z', method: 'alipay', provider_name: '易支付' }],
       coupon_code: 'AUTUMN26',
       subscription_period_end: '2026-11-05T10:00:00Z',
       subscription_id: 's1',
@@ -119,6 +119,7 @@ describe('订单页', () => {
   it('结果：按状态与种类（契约门户-04 映射）', () => {
     expect(orderResult(detail())).toBe('支付宝 · 有效期至 2026-11-05')
     expect(orderResult(detail({ kind: 'topup' }))).toBe('余额已到账')
+    expect(orderResult(detail({ kind: 'stack' }))).toBe('已叠加，总流量加上了')
     expect(orderResult(detail({ status: 'expired' }))).toBe('超时未支付，已自动取消')
     expect(orderResult(detail({ status: 'cancelled', cancel_reason: 'user_cancelled' }))).toBe('已由您取消')
     expect(orderResult(detail({ status: 'cancelled', cancel_reason: '渠道维护' }))).toBe('渠道维护')

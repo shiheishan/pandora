@@ -1,209 +1,472 @@
-.cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-  gap: var(--space-12);
-}
-
-.card {
+/* 顶层间距与工具栏 */
+.toolbarRow {
   display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 0;
-  padding: var(--space-16);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  background: var(--surface);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  min-height: 32px;
 }
 
-.faceLine {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-8);
-}
-
-.face {
-  font-size: 20px;
-  font-weight: var(--fw-semibold);
-  font-variant-numeric: tabular-nums;
-}
-
-.cardName {
+.rightMeta {
   display: flex;
   align-items: center;
-  gap: var(--space-8);
-  font-weight: var(--fw-medium);
+  gap: 12px;
 }
 
-.swatch {
-  flex: none;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-}
-
-.cardActions {
+/* 模板逐行列表 */
+.templateList {
   display: flex;
-  gap: var(--space-8);
-  margin-top: auto;
+  flex-direction: column;
+  border-top: 1px solid var(--text);
 }
 
-.cardActions > :first-child {
-  flex: 1;
+.templateRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 24px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
 }
 
-.newCard {
-  min-height: 150px;
-  border: 1px dashed var(--border-hover);
-  border-radius: var(--radius-card);
-  background: transparent;
+.templateRowPaused {
+  opacity: 0.6;
+}
+
+.tplFaceCol {
+  flex: none;
+  width: 120px;
+}
+
+.tplFace {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tplKind {
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.tplMainCol {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.tplTitleLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.tplName {
+  font-weight: 600;
+}
+
+.typeTag {
+  padding: 1px 7px;
+  background: var(--surface-3);
   color: var(--text-2);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.tplMetaLine {
+  margin-top: 2px;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.tplActionsCol {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.tplGenBtn {
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--text);
+  background: transparent;
+  color: var(--text);
   font: inherit;
+  font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
 }
 
-.newCard:hover {
-  border-color: var(--text-3);
-  color: var(--text);
+.tplGenBtn:hover {
+  opacity: 0.8;
 }
 
-.newCard:focus-visible {
+.tplGenBtn:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
-.split {
-  display: grid;
-  grid-template-columns: minmax(260px, 1fr) minmax(0, 1.6fr);
-  gap: var(--space-16);
-  align-items: start;
-}
-
-.batch {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  width: 100%;
-  padding: var(--space-12) 14px;
+.tplPauseBtn {
+  height: 24px;
+  padding: 0;
   border: 0;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-  color: inherit;
+  background: transparent;
+  color: var(--text-2);
   font: inherit;
-  text-align: left;
+  font-size: 12px;
   cursor: pointer;
 }
 
-.batch:hover {
-  background: var(--surface-2);
+.tplPauseBtn:hover {
+  color: var(--text);
 }
 
-.batchOn,
-.batchOn:hover {
-  background: var(--surface-3);
+.tplPauseBtn:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
-.batchTop {
+.tplPauseBtn:disabled,
+.tplGenBtn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* 批次与卡码视图 */
+.batchesStack {
   display: flex;
-  align-items: center;
-  gap: var(--space-8);
-  font-weight: var(--fw-medium);
+  flex-direction: column;
+  gap: 20px;
 }
 
-.pending {
-  color: var(--warn);
-  font-size: var(--fs-caption);
+.tableWrap {
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-top: 1px solid var(--text);
+  border-bottom: 1px solid var(--border-strong);
 }
 
-.codeRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 90px minmax(0, 1fr) 60px;
-  gap: 10px;
-  align-items: center;
-  min-height: 40px;
-  padding: 0 var(--space-16);
-  border-bottom: 1px solid var(--border);
-  font-size: var(--fs-caption);
+.dataTable {
+  width: 100%;
+  min-width: 700px;
+  border-collapse: collapse;
 }
 
-.usageRow {
-  display: grid;
-  grid-template-columns: 170px minmax(0, 1fr) minmax(0, 1fr) 110px;
-  gap: var(--space-12);
-  align-items: center;
-  min-width: 600px;
-  min-height: 42px;
-  padding: 0 var(--space-16);
-  border-bottom: 1px solid var(--border);
+.th {
+  padding: 8px 14px 8px 0;
+  border-bottom: 1px solid var(--border-strong);
+  color: var(--text-3);
+  font-size: 12px;
+  font-weight: 400;
+  text-align: left;
 }
 
-.codeRow:last-of-type,
-.usageRow:last-child {
-  border-bottom: 0;
-}
-
-.right {
+.thRight {
   text-align: right;
 }
 
-.ellipsis {
+.thQty {
+  width: 90px;
+}
+
+.thAction {
+  width: 100px;
+  padding-right: 0;
+}
+
+.batchTr {
+  border-top: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.batchTr:first-child {
+  border-top: 0;
+}
+
+.batchTrSelected {
+  background: var(--surface-2);
+  box-shadow: inset 2px 0 0 var(--text);
+}
+
+.batchTd {
+  padding: 10px 14px 10px 8px;
+}
+
+.batchTdStandard {
+  padding: 10px 14px 10px 0;
+}
+
+.batchTdQty {
+  padding: 10px 14px 10px 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-align: right;
+}
+
+.batchTdExport {
+  padding: 10px 14px 10px 0;
+  font-size: 12px;
+}
+
+.batchTdBtn {
+  padding: 10px 0;
+  text-align: right;
+}
+
+.exportPending {
+  color: var(--warn);
+}
+
+.exportDone {
+  color: var(--text-3);
+}
+
+.textActionBtn {
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.textActionBtn:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.textActionBtn:disabled {
+  color: var(--text-3);
+  cursor: not-allowed;
+}
+
+.textActionBtn:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* 卡码区块 */
+.codesSection {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--text);
+}
+
+.codesHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 0 10px;
+}
+
+.codesTitle {
+  flex: 1;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.codeStatusSelect {
+  flex: none;
+  width: 120px;
+}
+
+.codeGridRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 90px minmax(0, 1fr) 60px;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.codeText {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.whoText {
   overflow: hidden;
+  color: var(--text-3);
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.danger {
-  color: var(--danger);
+.rightAlign {
+  text-align: right;
 }
 
-.eyebrow {
-  color: var(--warn);
-  font-family: var(--font-mono);
-  letter-spacing: 0.06em;
+.dangerBtn {
+  color: var(--danger) !important;
 }
 
-.sample {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  padding: 10px var(--space-12);
-  border-radius: var(--radius-md);
-  background: var(--surface-3);
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
+.emptyBlock {
+  padding: 28px 0;
+  border-top: 1px solid var(--border);
+  color: var(--text-3);
+  text-align: center;
+  font-size: 13px;
 }
 
-/* 模板抽屉 */
-.section {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding-top: var(--space-12);
+/* 使用记录表格 */
+.usagesTable {
+  width: 100%;
+  min-width: 680px;
+  border-collapse: collapse;
+}
+
+.usageTr {
   border-top: 1px solid var(--border);
 }
 
-.prize {
+.usageTr:first-child {
+  border-top: 0;
+}
+
+.usageTd {
+  padding: 9px 14px 9px 0;
+  font-size: 12px;
+}
+
+.usageTdMono {
+  padding: 9px 14px 9px 0;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.usageTdRight {
+  padding: 9px 0;
+  text-align: right;
+  font-size: 12px;
+}
+
+/* 弹窗中的小块 */
+.formSection {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.secTitle {
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.fieldGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fieldLabel {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.radioGroup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.radioOption {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.radioOption:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.radioBox {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--text);
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--surface);
+}
+
+.radioBoxOn {
+  background: var(--text);
+}
+
+.formGrid4 {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) 64px repeat(3, minmax(0, 1fr)) auto;
-  gap: var(--space-8);
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px 14px;
+  align-items: start;
+}
+
+.condSwitches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 24px;
+}
+
+.prizeRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1.8fr) 60px repeat(3, minmax(0, 1fr)) auto;
+  gap: 8px;
   align-items: end;
 }
 
-.remove {
+.removeBtn {
   margin-bottom: 2px;
 }
 
-.color {
-  padding: 2px;
+.sampleGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--surface-2);
 }
 
-@media (max-width: 960px) {
-  .split {
-    grid-template-columns: minmax(0, 1fr);
-  }
+.sampleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
 }
 
 @media (max-width: 640px) {
-  .prize {
+  .prizeRow {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
+}
+
+.subLine {
+  display: block;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.thTime {
+  width: 120px;
+}
+
+.usageTdMuted {
+  color: var(--text-2);
 }
