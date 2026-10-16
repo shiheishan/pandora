@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { isApiError } from '../../../core/api'
 import { formatMoney } from '../../../core/format'
 import { navigate } from '../../../core/router'
+import { useBalance } from '../../queries'
 import { useApi } from '../../../shell/runtime'
 import { Button, Modal, Skeleton } from '../../../ui'
 import { methodKey, usePaymentMethods, type PaymentMethod } from './catalog'
@@ -11,7 +12,7 @@ import { detectDevice } from './clients'
 import { feeLine, surchargeNote } from './fee'
 import { queryFailure, queryOutcome, useQueryOrderPayment, type QueryOutcome } from './order-query'
 import css from './PayFlow.module.css'
-import { archivedRefundText, isPlanArchivedRefund, PAID_STATUSES, useCancelOrder, useOrder, type OrderDetail } from './orders'
+import { archivedRefundText, isPlanArchivedRefund, PAID_STATUSES, rebuyQuery, useCancelOrder, useOrder, type OrderDetail } from './orders'
 import { afterOrderCheck, payFailureAction, PAY_IN_PROGRESS_MAX_RETRIES } from './payRetry'
 import { QrCode } from './qr'
 import { formatDate } from './traffic'
@@ -119,6 +120,7 @@ const stateOrder = (s: PayState) => s.orderId
 // ---------------------------------------------------------------------------
 function Choose({ state, onPick, onLater }: { state: Extract<PayState, { phase: 'choose' }>; onPick: (m: PaymentMethod) => void; onLater: () => void }) {
   const methods = usePaymentMethods(state.amount)
+  const order = useOrder(state.orderId)
   return (
     <div className={css.body}>
       <div className={css.amount}>{formatMoney(state.amount)}</div>
@@ -155,6 +157,37 @@ function Choose({ state, onPick, onLater }: { state: Extract<PayState, { phase: 
       <button type="button" className={css.later} onClick={onLater}>
         稍后支付
       </button>
+      {order.data && <SwitchToBalance order={order.data} onLeave={onLater} />}
+    </div>
+  )
+}
+
+/**
+ * 改用余额付（用户 10-16 定：已下的单也能用余额付）。余额只在下单时冻结，已下的单补不进去，
+ * 所以是取消这张（不扣钱、优惠码退回），带着同样的套餐与价格档回确认页重下，余额在那里默认用上。
+ * 充值单、余额为 0、认不出原来买的是什么的不显示。onLeave：在弹窗里时先关弹窗。
+ */
+export function SwitchToBalance({ order, onLeave }: { order: OrderDetail; onLeave?: () => void }) {
+  const balance = useBalance()
+  const cancel = useCancelOrder()
+  const rebuy = rebuyQuery(order)
+  const left = balance.data?.balance ?? 0
+  if (!rebuy || left <= 0 || order.status !== 'pending_payment') return null
+  return (
+    <div className={css.switchBalance}>
+      <p>余额还有 {formatMoney(left)}。想用余额付：先取消这张单（不扣钱，用过的优惠码退回），再按现在的价格回到确认页，余额自动用上。</p>
+      <Button
+        size="sm"
+        busy={cancel.isPending}
+        onClick={() =>
+          void cancel.mutateAsync(order.id).then(() => {
+            onLeave?.()
+            navigate('/checkout', { query: rebuy })
+          })
+        }
+      >
+        取消这张单，改用余额付
+      </Button>
     </div>
   )
 }

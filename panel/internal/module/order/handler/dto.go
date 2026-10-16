@@ -512,12 +512,14 @@ type myOrdersResponse struct {
 	Counts myOrderCountsResponse `json:"counts"`
 }
 
-// myOrderItemResponse 是详情里的一条订单行。
+// myOrderItemResponse 是详情里的一条订单行。PlanID、PriceID 让门户「改用余额付」时按同样的套餐与价格档重新下单；充值单为 null。
 type myOrderItemResponse struct {
-	Name       string `json:"name"`
-	Quantity   int    `json:"quantity"`
-	UnitAmount int64  `json:"unit_amount"`
-	LineAmount int64  `json:"line_amount"`
+	Name       string  `json:"name"`
+	Quantity   int     `json:"quantity"`
+	UnitAmount int64   `json:"unit_amount"`
+	LineAmount int64   `json:"line_amount"`
+	PlanID     *string `json:"plan_id"`
+	PriceID    *string `json:"price_id"`
 }
 
 // myOrderPaymentResponse 是详情里的一笔收款（不回渠道单号）。
@@ -606,6 +608,8 @@ func myOrderDetailFrom(d service.MyOrderDetail) (myOrderDetailResponse, error) {
 			Quantity:   it.Quantity,
 			UnitAmount: cc.of(it.UnitAmount),
 			LineAmount: cc.of(it.LineAmount),
+			PlanID:     idStr(it.PlanID),
+			PriceID:    idStr(it.PriceID),
 		})
 	}
 	for _, p := range d.Payments {

@@ -408,7 +408,7 @@ function NameField({ required, name, onName, plan, h }: { required: boolean; nam
 }
 
 /**
- * 报价或建单被拒：同一套餐有一张还没付款的新购单（order_pending，fields.order_id）时给「去付款 / 取消它」；
+ * 报价或建单被拒：同一套餐有一张还没付款的新购单，或同一份有一张没付的续费、叠加、换套餐单（order_pending，fields.order_id）时给「去付款 / 取消它」；
  * 那张已超过付款期限（fields.lapsed）时只给「取消它」。取消后重新报价，可以直接再点一次。
  */
 function Refusal({ refusal, onCleared }: { refusal: RefusalInfo; onCleared: () => void }) {

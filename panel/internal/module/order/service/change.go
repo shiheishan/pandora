@@ -40,7 +40,7 @@ var changeKindWords = map[string]string{KindRenewal: "续费", KindUpgrade: "换
 
 // openChangeConflict 这份订阅挂着未完结的续费、叠加或换套餐单时拒绝再建：
 // 待付的回 order_pending 带 fields.order_id（过了付款期限再带 lapsed），门户据此给「去付款 / 取消它」；
-// 已付未履约（正在入账）的回普通冲突，稍后再试。没有就回 nil。
+// paid 只在结算事务里短暂出现、别的事务读不到，那一支只是防御，回普通冲突。没有就回 nil。
 func (s *Service) openChangeConflict(ctx context.Context, subID uuid.UUID, now time.Time) error {
 	o, ok, err := s.repo.OpenChangeOrder(ctx, subID)
 	if err != nil || !ok {

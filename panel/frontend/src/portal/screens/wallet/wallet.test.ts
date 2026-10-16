@@ -81,7 +81,7 @@ function detail(over: Partial<OrderDetail> = {}): OrderDetail {
       cancellable: false,
       has_payment_intent: true,
       created_at: '2026-09-21T10:00:00Z',
-      items: [{ name: '专业版', quantity: 1, unit_amount: 5900, line_amount: 5900 }],
+      items: [{ name: '专业版', quantity: 1, unit_amount: 5900, line_amount: 5900, plan_id: 'plan-pro', price_id: 'price-pro-m' }],
       payments: [{ status: 'succeeded', amount: 4720, created_at: '2026-09-21T10:01:00Z', method: 'alipay', provider_name: '易支付' }],
       coupon_code: 'AUTUMN26',
       subscription_period_end: '2026-11-05T10:00:00Z',

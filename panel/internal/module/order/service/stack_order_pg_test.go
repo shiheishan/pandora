@@ -202,9 +202,7 @@ func TestStackOrderZeroPayAndRejects(t *testing.T) {
 		}
 
 		_, err = e.svc.CreateStackOrder(asUser(ctx, user), StackOrderInput{SubscriptionID: sub.ID})
-		if codeOf(err) != errs.Conflict {
-			t.Fatalf("第二张错误码 %v，期望 conflict", codeOf(err))
-		}
+		mustOpenChange(t, "第二张叠加单", err, first.OrderID)
 	})
 }
 

@@ -148,3 +148,16 @@
 .body p {
   margin: 0;
 }
+
+/* 「改用余额付」：选支付方式与付款面板下方一条说明 + 按钮 */
+.switchBalance {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-8);
+  margin-top: var(--space-16);
+  padding-top: var(--space-16);
+  border-top: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: 13px;
+}

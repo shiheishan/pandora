@@ -324,8 +324,22 @@ export function orderRow(o: OrderFixture) {
   }
 }
 
-/** 履约过的订单状态（Go：status = 'fulfilled' 或 fulfilled_at 非空） */
-const FULFILLED_ONCE: ReadonlySet<string> = new Set(['fulfilled'])
+/** 订单行的套餐与价格档（与 Go 的 myOrderItemResponse 同口径：充值为 null） */
+function itemRefs(state: PortalState, o: OrderFixture): { plan_id: string | null; price_id: string | null } {
+  const e = o.effect
+  switch (e.type) {
+    case 'new':
+    case 'upgrade':
+      return { plan_id: e.planId, price_id: e.priceId }
+    case 'renewal':
+    case 'stack':
+      return { plan_id: state.subs.find((s) => s.id === e.subId)?.plan_id ?? null, price_id: e.priceId }
+    case 'reset':
+      return { plan_id: state.subs.find((s) => s.id === e.subId)?.plan_id ?? null, price_id: null }
+    default:
+      return { plan_id: null, price_id: null }
+  }
+}
 
 export function orderDetail(state: PortalState, o: OrderFixture) {
   const legacy = scenario() === 'legacy'
@@ -333,15 +347,15 @@ export function orderDetail(state: PortalState, o: OrderFixture) {
   return {
     order: {
       ...orderRow(o),
-      items: [{ name: o.item_name ?? o.plan_name ?? '余额充值', quantity: 1, unit_amount: o.subtotal, line_amount: o.subtotal }],
+      items: [{ name: o.item_name ?? o.plan_name ?? '余额充值', quantity: 1, unit_amount: o.subtotal, line_amount: o.subtotal, ...itemRefs(state, o) }],
       payments:
         o.paid_at && o.payable_amount > 0
           ? [{ status: 'succeeded', amount: o.paid_amount, created_at: o.paid_at, provider_name: o.payProvider === 'epay' ? '易支付' : (o.payProvider ?? ''), ...(legacy ? {} : { method: o.payMethod }) }]
           : [],
       ...(!legacy && o.coupon_code ? { coupon_code: o.coupon_code } : {}),
       ...(!legacy && o.status === 'fulfilled' && sub ? { subscription_period_end: sub.current_period_end } : {}),
-      // Go 无 omitempty（billing.MyOrderDetail.SubscriptionID）：履约后是落到的那一份，没履约时 null
-      subscription_id: FULFILLED_ONCE.has(o.status) && sub ? sub.id : null,
+      // 与 Go 同口径：续费、叠加、换套餐、重置单建单时就指向那一份；新购履约后才有
+      subscription_id: sub ? sub.id : null,
     },
   }
 }

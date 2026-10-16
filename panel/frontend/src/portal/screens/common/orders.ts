@@ -104,7 +104,17 @@ export function usePendingOrders() {
 // ---------------------------------------------------------------------------
 export const orderDetailSchema = z.object({
   order: orderRowSchema.extend({
-    items: z.array(z.object({ name: z.string(), quantity: z.number().int(), unit_amount: z.number().int(), line_amount: z.number().int() })),
+    // plan_id、price_id：「改用余额付」按同样的套餐与价格档重新下单；充值单为 null
+    items: z.array(
+      z.object({
+        name: z.string(),
+        quantity: z.number().int(),
+        unit_amount: z.number().int(),
+        line_amount: z.number().int(),
+        plan_id: z.string().nullable(),
+        price_id: z.string().nullable(),
+      }),
+    ),
     payments: z.array(
       z.object({
         status: z.string(),
@@ -116,7 +126,7 @@ export const orderDetailSchema = z.object({
     ),
     coupon_code: z.string().optional(),
     subscription_period_end: z.string().optional(),
-    // 履约后落到的那一份（新购是新开的那份，续费、换套餐、叠加是原来那份）；没履约时 null
+    // 落到的那一份：续费、换套餐、叠加、重置单建单时就有（原来那份）；新购履约后才有（新开的那份），之前为 null
     subscription_id: z.string().nullable(),
     // 套餐归档转余额（cancel_reason=plan_archived）时扣下不退的支付手续费（分），其余订单为 0
     surcharge_kept: z.number().int().optional(),
@@ -361,4 +371,29 @@ export function orderFacts(o: OrderDetail): Array<{ k: string; v: string }> {
     facts.push({ k: '支付记录', v: [payMethodName([p]), formatMoney(p.amount), PAYMENT_STATUS[p.status] ?? p.status, formatDateTime(p.created_at)].join(' · ') })
   }
   return facts
+}
+
+/**
+ * 待付单「改用余额付」：已下的单不能再补余额（下单时才冻结），做法是取消它、带着同样的套餐与价格档回确认页（#/checkout）重下，
+ * 余额在确认页默认用上。能重下的给确认页的地址参数；充值单、缺套餐或订阅信息的给 null。
+ */
+export function rebuyQuery(o: Pick<OrderDetail, 'kind' | 'subscription_id' | 'items'>): Record<string, string> | null {
+  const it = o.items[0]
+  const plan = it?.plan_id ?? null
+  const price = it?.price_id ?? null
+  const sub = o.subscription_id
+  switch (o.kind) {
+    case 'new':
+      return plan && price ? { new: plan, price } : null
+    case 'renewal':
+      return sub && price ? { renew: sub, price } : null
+    case 'stack':
+      return sub && price ? { stack: sub, price } : null
+    case 'upgrade':
+      return sub && plan && price ? { change: sub, plan, price } : null
+    case 'traffic_reset':
+      return sub ? { reset: sub } : null
+    default:
+      return null
+  }
 }

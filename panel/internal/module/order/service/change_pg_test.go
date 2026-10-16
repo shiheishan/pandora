@@ -81,7 +81,6 @@ func (e *env) planOf(t *testing.T, ctx context.Context, subID uuid.UUID) uuid.UU
 	return sub.PlanID
 }
 
-// mustErrMsg 核对错误码与文案（service 的哨兵错误经事务返回后按码与文案比）。
 // mustOpenChange 断言被那张未完结的续费、叠加或换套餐单拦下：回 order_pending，fields.order_id 指向它。
 func mustOpenChange(t *testing.T, what string, err error, orderID uuid.UUID) {
 	t.Helper()
@@ -91,6 +90,7 @@ func mustOpenChange(t *testing.T, what string, err error, orderID uuid.UUID) {
 	}
 }
 
+// mustErrMsg 核对错误码与文案（service 的哨兵错误经事务返回后按码与文案比）。
 func mustErrMsg(t *testing.T, what string, err error, want *errs.Error) {
 	t.Helper()
 	got := errs.As(err)

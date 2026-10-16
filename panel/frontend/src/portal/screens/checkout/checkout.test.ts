@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { monthlyNote, periodName, periodOf, periodUnit, savingAmount, type Price } from '../common/catalog'
 import { payReturnUrl, paySuccessText } from '../common/PayFlow'
 import { makeNaming } from '../common/purchase'
+import { rebuyQuery } from '../common/orders'
 import { balanceSplit } from '../common/quote'
 import { BASIC, GIB, ONCE, PLANS as BASE_PLANS, quote, row, split, STD, sub } from '../common/testing'
 import { changeFormula, confirmCopy, payCopy, tierNote } from './copy'
@@ -226,5 +227,18 @@ describe('支付', () => {
     const base = { paid_amount: 0, total_amount: 5000 }
     expect(paySuccessText({ ...base, kind: 'upgrade' })).toBe('已换好，链接不变')
     expect(paySuccessText({ ...base, kind: 'topup' })).toBe('余额 +¥50.00')
+  })
+})
+
+describe('改用余额付：按原单重下的确认页参数', () => {
+  const item = (plan: string | null, price: string | null) => [{ name: 'x', quantity: 1, unit_amount: 100, line_amount: 100, plan_id: plan, price_id: price }]
+  it('各种类按套餐、价格档、那一份回确认页；充值与缺信息的不给', () => {
+    expect(rebuyQuery({ kind: 'new', subscription_id: null, items: item('p1', 'pr1') })).toEqual({ new: 'p1', price: 'pr1' })
+    expect(rebuyQuery({ kind: 'renewal', subscription_id: 's1', items: item('p1', 'pr1') })).toEqual({ renew: 's1', price: 'pr1' })
+    expect(rebuyQuery({ kind: 'stack', subscription_id: 's1', items: item('p1', 'pr1') })).toEqual({ stack: 's1', price: 'pr1' })
+    expect(rebuyQuery({ kind: 'upgrade', subscription_id: 's1', items: item('p2', 'pr2') })).toEqual({ change: 's1', plan: 'p2', price: 'pr2' })
+    expect(rebuyQuery({ kind: 'traffic_reset', subscription_id: 's1', items: item('p1', null) })).toEqual({ reset: 's1' })
+    expect(rebuyQuery({ kind: 'topup', subscription_id: null, items: item(null, null) })).toBeNull()
+    expect(rebuyQuery({ kind: 'new', subscription_id: null, items: [] })).toBeNull()
   })
 })
