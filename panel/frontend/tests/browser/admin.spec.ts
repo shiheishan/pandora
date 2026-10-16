@@ -15,14 +15,13 @@ async function openManual(page: Page, u: User): Promise<Locator> {
   return dlg
 }
 
-/** 「套餐与周期」下拉：按「套餐名 · … ¥金额」选 */
+/** 「套餐与周期」下拉（ui 的 Select：combobox 按钮 + listbox）：按「套餐名 · … ¥金额」选 */
 async function pickPrice(dlg: Locator, plan: string, amount: string): Promise<string> {
-  const select = dlg.getByLabel('套餐与周期')
-  const option = select.locator('option').filter({ hasText: new RegExp(`^${plan} · .*¥${amount.replace('.', '\\.')}`) })
-  const value = await option.first().getAttribute('value')
-  if (!value) throw new Error(`下拉里没有 ${plan} ¥${amount}`)
-  await select.selectOption(value)
-  return text(option.first())
+  await dlg.getByRole('combobox', { name: '套餐与周期' }).click()
+  const option = dlg.getByRole('option', { name: new RegExp(`^${plan} · .*¥${amount.replace('.', '\\.')}$`) })
+  const label = await text(option)
+  await option.click()
+  return label
 }
 
 /** 落点区（多项时是 fieldset，只有一项时是带名字的 group） */
