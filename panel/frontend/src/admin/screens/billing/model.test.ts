@@ -160,7 +160,7 @@ describe('orders', () => {
   })
 
   it('builds order subtitle for portal vs manual', () => {
-    expect(orderSubtitle(detail({ status: 'fulfilled', manual_reason: null }))).toBe('已履约 · 用户端下单')
+    expect(orderSubtitle(detail({ status: 'fulfilled', manual_reason: null }))).toBe('已支付 · 用户端下单')
     expect(orderSubtitle(detail({ status: 'pending_payment', manual_reason: '对公开单' }))).toBe('待支付 · 人工开单')
   })
 

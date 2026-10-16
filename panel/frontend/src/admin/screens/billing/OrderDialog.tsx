@@ -13,7 +13,6 @@ import { canCancel, canMarkPaid, canQueryChannel, orderFacts, orderSubtitle, pay
 export function OrderDialog({ id, onClose }: { id: string | null; onClose: () => void }) {
   const q = useOrder(id)
   const open = id !== null
-  const o = q.data
 
   if (!open) {
     return <Modal open={false} onClose={onClose} title="订单详情" />
