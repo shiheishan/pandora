@@ -7,10 +7,10 @@ paths:
 
 - 页面只改自己目录，不动 `portal/screens/index.ts` 的 `SCREENS` 登记表；页头标题与副标题由 Shell 按 `portal/pages.ts` 画，页面只管内容区。
 - 页面之间的约定地址（改任何一个都要同步两端；购买模型 10-07 起）：
-  - 我的套餐：`#/subs`（每份一张卡）、`#/subs/<一份>/detail`（节点与每天用量）、`#/subs/<一份>/traffic`（加流量）、`#/subs/<一份>/change`（换个套餐）、`#/subs/<一份>/rotated?old=<旧尾号>`（换新链接之后）、`#/subs/new`（再买一份）
-  - 选购：`#/plans`；`?tab=packs` 流量包标签、`?mode=new` 另买一份、`?sub=<一份>` 流量包加到哪一份
-  - 确认：`#/checkout?renew=<一份>[&from=plans]`、`?change=<一份>&plan=<套餐>`、`?change-plan=<套餐>[&sub=<一份>]`（先选换掉哪一份，不预选）、`?new=<套餐>`、`?pack=<流量包>&sub=<一份>`（没带 sub 且多份时在确认页选，选过带 `pick=1`）；都可带 `&price=` 预选买多久。老地址 `?plan=` 照新规则解析（没有套餐新买、有同款续费、否则选换掉哪一份），过期提示里的 `?renew=` 兼容
-  - 付款：`#/checkout/pay/<订单>?m=<provider:method>&<完成页上下文>`；完成：`#/checkout/done/<订单>?k=renew|change|new|pack&sub=&was=&old=&refund=&gb=&waived=&revive=`（收银台回跳也回这里，上下文全在地址里）
+  - 我的套餐：`#/subs`（每份一张卡）、`#/subs/<一份>/detail`（节点与每天用量）、`#/subs/<一份>/traffic`（流量不够：重置与换更大套餐）、`#/subs/<一份>/change`（换个套餐）、`#/subs/<一份>/rotated?old=<旧尾号>`（换新链接之后）、`#/subs/new`（再买一份）
+  - 选购：`#/plans`；`?kind=one_time` 一次性标签（缺省按时间；目录里只有一类时不显示标签、忽略它）
+  - 确认：`#/checkout?renew=<一份>[&from=plans]`、`?change=<一份>&plan=<套餐>`、`?new=<套餐>`、`?stack=<一份>`（一次性同款叠加）、`?reset=<一份>`（流量重置）；`?plan=<套餐>`：没有份时就是新买，有份时先按落点接口选放到哪里（`checkout/Landing.tsx`，不预选，只有一个选项直接跳），`?change-plan=<套餐>` 同 `?plan=`；都可带 `&price=` 预选买多久。流量包地址 `?pack=`、`?tab=packs` 与「另买一份」模式 `?mode=new` 已删（10-16）
+  - 付款：`#/checkout/pay/<订单>?m=<provider:method>&<完成页上下文>`；完成：`#/checkout/done/<订单>?k=renew|change|new|stack|reset&sub=&was=&old=&refund=&waived=&revive=&stack=<叠加的字节>`（收银台回跳也回这里，上下文全在地址里）
   - 钱包：`#/wallet`；兑换卡 `#/wallet/redeem`
   - `#/orders/<订单 id>`：订单页展开该行；`?paid=1` 是订单页与钱包支付弹窗的收银台回跳（`common/PayFlow.tsx` 的 `payReturnUrl`），弹支付确认
   - `#/messages?tab=announcements`：消息页公告标签
