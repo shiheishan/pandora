@@ -81,7 +81,7 @@ func (f *fakeSvc) UserDetail(_ context.Context, id uuid.UUID) (service.UserDetai
 	sub := service.AdminSub{
 		ID: subID, Label: &label, PlanName: "基础套餐", PlanVersion: 2, Status: "active",
 		PeriodStart: periodStart, PeriodEnd: periodEnd,
-		Amount: decimal.RequireFromString("12.34"), Currency: "CNY",
+		Amount: decimal.RequireFromString("12.34"),
 		Quotas: []service.AdminQuota{{
 			Metric: "traffic.bytes", Limit: &lim, Consumed: 42, Remaining: &lim,
 		}},
@@ -92,24 +92,21 @@ func (f *fakeSvc) UserDetail(_ context.Context, id uuid.UUID) (service.UserDetai
 	return service.UserDetail{
 		UserRow: service.UserRow{
 			ID: id, Email: "u@example.test", Status: "active", RiskLevel: "normal",
-			GroupName: "默认", Currency: "CNY",
-			Balance: decimal.RequireFromString("1.00"), SubscriptionCount: 1,
+			GroupName: "默认",
+			Balance:   decimal.RequireFromString("1.00"), SubscriptionCount: 1,
 			Current: &current,
 		},
 		EmailVerified: true, IsAdmin: false, ReferralCount: 3, OrderCount: 7,
 		Subscriptions: []service.AdminSub{sub},
 		RecentOrders: []service.AdminOrderRow{{
 			ID: orderID, OrderNo: "ORD-1", UserEmail: "u@example.test", Kind: "new", Status: "paid",
-			Currency: "CNY",
-			Total:    decimal.RequireFromString("12.34"), Payable: decimal.RequireFromString("12.34"),
+			Total: decimal.RequireFromString("12.34"), Payable: decimal.RequireFromString("12.34"),
 			Paid: decimal.RequireFromString("12.34"), BalanceApplied: decimal.Zero,
 			CreatedAt: paidAt, PaidAt: &paidAt,
 			ProviderCode: &prov, ProviderName: &provName,
 			PlanName: "基础套餐", Interval: "month", IntervalCount: 1, ItemCount: 1, Manual: false,
 		}},
-		PaidTotals: []service.CurrencyAmount{{
-			Currency: "CNY", Amount: decimal.RequireFromString("12.34"),
-		}},
+		PaidTotal:           decimal.RequireFromString("12.34"),
 		Telegram:            &service.TelegramRef{Username: "testuser", BoundAt: paidAt},
 		UnattachedPackBytes: 0,
 	}, nil
@@ -317,18 +314,12 @@ func TestUserDetailStats(t *testing.T) {
 	}
 	got := decodeMap(t, w.Body.Bytes())
 	stats, _ := got["stats"].(map[string]any)
-	assertKeys(t, stats, "order_count", "paid_totals", "referral_count")
+	assertKeys(t, stats, "order_count", "paid_total", "referral_count")
 	if stats["referral_count"] != float64(3) || stats["order_count"] != float64(7) {
 		t.Fatalf("stats %v", stats)
 	}
-	paid, _ := stats["paid_totals"].([]any)
-	if len(paid) != 1 {
-		t.Fatalf("paid_totals %v", paid)
-	}
-	pt0, _ := paid[0].(map[string]any)
-	assertKeys(t, pt0, "amount", "currency")
-	if pt0["currency"] != "CNY" || pt0["amount"] != float64(1234) {
-		t.Fatalf("paid total %v", pt0)
+	if stats["paid_total"] != float64(1234) {
+		t.Fatalf("paid_total %v", stats["paid_total"])
 	}
 }
 
@@ -346,12 +337,12 @@ func TestAdminUserJSONKeys(t *testing.T) {
 	f := &fakeSvc{rows: []service.UserRow{
 		{
 			ID: withCurrent, Email: "with@example.test", Status: "active", RiskLevel: "normal",
-			GroupName: "g", Currency: "CNY", Balance: decimal.RequireFromString("9.99"),
+			GroupName: "g", Balance: decimal.RequireFromString("9.99"),
 			SubscriptionCount: 1, Current: curSub,
 		},
 		{
 			ID: noCurrent, Email: "none@example.test", Status: "active", RiskLevel: "normal",
-			GroupName: "g", Currency: "CNY", Balance: decimal.Zero,
+			GroupName: "g", Balance: decimal.Zero,
 			SubscriptionCount: 0, Current: nil,
 		},
 	}}
@@ -368,7 +359,7 @@ func TestAdminUserJSONKeys(t *testing.T) {
 	}
 	rowKeys := []string{
 		"id", "email", "display_name", "status", "risk_level", "group_name", "group_id",
-		"created_at", "last_login_at", "subscription_count", "active_plan", "balance", "currency", "current_subscription",
+		"created_at", "last_login_at", "subscription_count", "active_plan", "balance", "current_subscription",
 	}
 	for i, u := range users {
 		m, _ := u.(map[string]any)
@@ -405,14 +396,14 @@ func TestAdminUserJSONKeys(t *testing.T) {
 	}
 	assertKeys(t, det, append(rowKeys, detailExtra...)...)
 	stats, _ := det["stats"].(map[string]any)
-	assertKeys(t, stats, "paid_totals", "order_count", "referral_count")
+	assertKeys(t, stats, "paid_total", "order_count", "referral_count")
 	tg, _ := det["telegram"].(map[string]any)
 	assertKeys(t, tg, "username", "bound_at")
 	subs, _ := det["subscriptions"].([]any)
 	s0, _ := subs[0].(map[string]any)
 	assertKeys(t, s0,
 		"id", "label", "plan_name", "plan_version", "status", "current_period_start", "current_period_end",
-		"amount", "currency", "quotas", "device_limit_override", "plan_max_devices",
+		"amount", "quotas", "device_limit_override", "plan_max_devices",
 		"online_devices", "pack_remaining_bytes",
 	)
 	if s0["amount"] != float64(1234) {
@@ -421,7 +412,7 @@ func TestAdminUserJSONKeys(t *testing.T) {
 	q0, _ := s0["quotas"].([]any)[0].(map[string]any)
 	assertKeys(t, q0, "metric", "period", "limit", "consumed", "remaining")
 	ordKeys := []string{
-		"id", "order_no", "user_email", "kind", "status", "currency", "total_amount", "payable_amount",
+		"id", "order_no", "user_email", "kind", "status", "total_amount", "payable_amount",
 		"paid_amount", "balance_applied", "created_at", "paid_at", "provider_code",
 		"provider_name", "plan_name", "interval", "interval_count", "item_count", "manual",
 	}

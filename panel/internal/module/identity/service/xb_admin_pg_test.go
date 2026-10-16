@@ -81,10 +81,10 @@ func TestPGDeleteUser(t *testing.T) {
 	unbind := &fakeUnbinder{seq: &seq}
 	voider := &fakeVoider{seq: &seq, res: CommissionVoid{
 		VoidedEntries:       2,
-		VoidedPending:       map[string]decimal.Decimal{"CNY": decimal.RequireFromString("7.5")},
-		Forfeited:           map[string]decimal.Decimal{"CNY": decimal.RequireFromString("10")},
+		VoidedPending:       decimal.RequireFromString("7.5"),
+		Forfeited:           decimal.RequireFromString("10"),
 		RejectedWithdrawals: 1,
-		RejectedAmount:      map[string]decimal.Decimal{"CNY": decimal.RequireFromString("4")},
+		RejectedAmount:      decimal.RequireFromString("4"),
 	}}
 	rec := &pluginRec{}
 	e.svc.UseAccountCloser(closer)
@@ -143,14 +143,14 @@ func TestPGDeleteUser(t *testing.T) {
 	if e.auditCount(ctx, ActionDeleted, target.ID) != 1 {
 		t.Fatal("audit deleted")
 	}
-	// 注销审计带上作废条目数、驳回提现数与按币种的金额合计
+	// 注销审计带上作废条目数、驳回提现数与金额合计
 	var auditData string
 	if err := e.row(ctx, `SELECT data::text FROM audit_events WHERE action = ? AND resource_id = ?`, ActionDeleted, target.ID).Scan(&auditData); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		`"voided_commission_entries": 2`, `"voided_commission_pending": {"CNY": "7.50"}`, `"forfeited_commission": {"CNY": "10.00"}`,
-		`"rejected_withdrawals": 1`, `"rejected_withdrawal_amount": {"CNY": "4.00"}`,
+		`"voided_commission_entries": 2`, `"voided_commission_pending": "7.50"`, `"forfeited_commission": "10.00"`,
+		`"rejected_withdrawals": 1`, `"rejected_withdrawal_amount": "4.00"`,
 	} {
 		if !strings.Contains(auditData, want) {
 			t.Fatalf("注销审计缺 %s：%s", want, auditData)

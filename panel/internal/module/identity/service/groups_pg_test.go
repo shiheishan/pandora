@@ -46,7 +46,7 @@ func groupPrice(t *testing.T, ctx context.Context, e *env, gid uuid.UUID, status
 		t.Fatal(err)
 	}
 	var priceID uuid.UUID
-	if err := e.row(ctx, `INSERT INTO prices (plan_id, currency, unit_amount, user_group_id, status) VALUES (?, 'CNY', ?, ?, ?) RETURNING id`, planID, amount, gid, status).Scan(&priceID); err != nil {
+	if err := e.row(ctx, `INSERT INTO prices (plan_id, unit_amount, user_group_id, status) VALUES (?, ?, ?, ?) RETURNING id`, planID, amount, gid, status).Scan(&priceID); err != nil {
 		t.Fatal(err)
 	}
 	return priceID
@@ -94,7 +94,7 @@ func TestPGDeleteGroupRefusedWhenPriceSold(t *testing.T) {
 	if err := e.row(ctx, `SELECT plan_id FROM prices WHERE id = ?`, p).Scan(&planID); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.exec(ctx, `INSERT INTO gift_card_templates (name, type, currency, plan_id, price_id) VALUES (?, 'plan', 'CNY', ?, ?)`, "ug-"+uuid.NewString()[:8], planID, p); err != nil {
+	if err := e.exec(ctx, `INSERT INTO gift_card_templates (name, type, plan_id, price_id) VALUES (?, 'plan', ?, ?)`, "ug-"+uuid.NewString()[:8], planID, p); err != nil {
 		t.Fatal(err)
 	}
 	f.groups.usage[gid] = GroupUsage{Prices: 1}
@@ -144,7 +144,7 @@ func TestPGDirectPriceDeleteStillGuarded(t *testing.T) {
 		t.Fatal(err)
 	}
 	var publicPrice uuid.UUID
-	if err := e.row(ctx, `INSERT INTO prices (plan_id, currency, unit_amount) VALUES (?, 'CNY', 5) RETURNING id`, publicPlan).Scan(&publicPrice); err != nil {
+	if err := e.row(ctx, `INSERT INTO prices (plan_id, unit_amount) VALUES (?, 5) RETURNING id`, publicPlan).Scan(&publicPrice); err != nil {
 		t.Fatal(err)
 	}
 	err = inSavepoint(t, ctx, e, "sp_del_pub", func() error { return e.exec(ctx, `DELETE FROM prices WHERE id = ?`, publicPrice) })

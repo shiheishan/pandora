@@ -12,7 +12,6 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/pluginevents"
 	"github.com/google/uuid"
-	"github.com/shopspring/decimal"
 )
 
 // DeleteUserResult 是注销的结果。
@@ -299,10 +298,10 @@ func (s *Service) DeleteUser(ctx context.Context, userID uuid.UUID, reason strin
 				"cancelled_orders":           cancelled,
 				"disabled_invites":           invites,
 				"voided_commission_entries":  voided.VoidedEntries,
-				"voided_commission_pending":  amountsByCurrency(voided.VoidedPending),
-				"forfeited_commission":       amountsByCurrency(voided.Forfeited),
+				"voided_commission_pending":  voided.VoidedPending.StringFixed(2),
+				"forfeited_commission":       voided.Forfeited.StringFixed(2),
 				"rejected_withdrawals":       voided.RejectedWithdrawals,
-				"rejected_withdrawal_amount": amountsByCurrency(voided.RejectedAmount),
+				"rejected_withdrawal_amount": voided.RejectedAmount.StringFixed(2),
 			},
 		}); err != nil {
 			return err
@@ -324,13 +323,4 @@ func (s *Service) DeleteUser(ctx context.Context, userID uuid.UUID, reason strin
 		return DeleteUserResult{}, err
 	}
 	return result, nil
-}
-
-// amountsByCurrency 把按币种的金额换成审计用的 {币种: "12.30"}；空时给空对象，不给 null。
-func amountsByCurrency(m map[string]decimal.Decimal) map[string]string {
-	out := make(map[string]string, len(m))
-	for cur, amt := range m {
-		out[cur] = amt.StringFixed(2)
-	}
-	return out
 }
