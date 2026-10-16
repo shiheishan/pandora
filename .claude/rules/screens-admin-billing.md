@@ -5,25 +5,29 @@ paths:
 
 # 后台 · 订单与收款
 
-- 保留规则 6：设计稿的「欠费单」按后端「挂账」语义做——订单取消后才到账、续费或变更时订阅已结束、超额扣款，是平台欠用户的钱；「转入余额」是贷记，待处理合计按币种分开（分和美分不能相加）。不要改回「欠费 / 催缴」的语义。
-- 支付渠道开关只动 `accepting_new`（关 = 结账页不再显示、进行中的回调照常）；「完全停用」才动 `enabled`，放在「更多」菜单里。系统内置的 `offline` 渠道只读，不给开关（`model.ts` 的 `isOffline` / `toggleBody`）。
-- 新建 / 编辑渠道（`ProviderDialog.tsx`）对易支付、BTCPay Server、CoinPayments 三类在线渠道（`isEditableProvider`、`PROVIDER_ADAPTERS`）：新建时先选类型（`switchAdapter` 换类型保留编码、最低额与手续费），只有易支付有下单 / 查询路径与支付方式；凭据位的标签随类型（`credentialLabels`：商户号与密钥 / Store ID 与 API Key / Client ID 与 Client Secret），BTCPay 另有只写不读的 Webhook 密钥（列表只有 `has_webhook_secret`），CoinPayments 的地址可留空（后端用官方地址）。类型相关的说明在 `ProviderFields.tsx`。code 与类型建后不可改（PUT 请求体不带这两个键）；「最低付款额（元）」写进渠道 config 的 `min_amount`（分，范围 0.01–1000 元，默认 1.00，`parseMinAmount`），低于它的在线支付不发起，线下收款与赠送不受限，卡片备注里也写出来；留空 = 请求体不带 `min_amount`（后端：编辑保留原值、新建按 ¥1.00），前端从不发 0，说明文字随新建 / 编辑写「留空按默认」/「留空表示不改」（`minAmountHint`）；商户号与密钥只写不读，列表只有 `has_credentials`，编辑留空 = 不改；新建的渠道是「已启用、暂停收新单」，在卡片上打开收单才进结账页。后台改动在门户结账页最多 5 分钟后生效（各网关的渠道缓存），页面上写明了。
-- 用户手续费（00042）：每个在线渠道「固定（元）+ 比例（%）」，请求体 `fee_fixed` 是分、`fee_percent` 是字符串（`parseFeeFixed` / `parseFeePercent`），两项都 0 = 不收；卡片备注写「向用户加收 x% + ¥y」（`feeLabel`）。订单抽屉的支付记录在金额后写「含手续费 ¥x」（`surcharge_amount`）。
+- 保留规则 6：页签「待处理到账」（代码里仍叫 late / arrears，后端叫挂账 suspense）——订单取消后才到账、续费或变更时订阅已结束、超额扣款，是平台欠用户的钱；「转入余额」是贷记。不要改回「欠费 / 催缴」的语义。界面文案一律写「待处理到账」，不写「挂账」。
+  - 默认只看待处理（`lateFilterOf` / `lateFilterQuery`：地址不带 `s` 即待处理，「全部」写 `s=all`）；右上「待处理合计」只用接口的 `pending_amount`（只有人民币，一个数）。设计稿的「N 笔 · 最久 N 天」没有接口，不做。
+- 支付渠道是表格行（10-16）：顶部统计由前端从列表算（`providerStats`：在线渠道、收新单中、已停用或暂停、未配置凭据，不含 offline）；列为渠道（名称、编码、类型 `providerKind`、状态说明 `providerNote`、支付方式、回调地址）/ 今日成交（接口的 `today`，一个金额，没有笔数）/ 成功率 / 操作。开关「收单」只动 `accepting_new`（关 = 结账页不再显示、进行中的回调照常）；行内「停用」是完全停用，才动 `enabled`，都要过确认框。系统内置的 `offline` 渠道只读，不给开关、不能编辑（`model.ts` 的 `isOffline` / `toggleBody`）。可编辑的渠道点整行打开编辑。「回调地址」卡设计稿没画，但它是唯一配置回调前缀的地方，保留在表格下方。
+- 新建 / 编辑渠道（`ProviderDialog.tsx`）对易支付、BTCPay Server、CoinPayments 三类在线渠道（`isEditableProvider`、`PROVIDER_ADAPTERS`）：新建时先选类型（`switchAdapter` 换类型保留编码、最低额与手续费），只有易支付有下单 / 查询路径与支付方式；凭据位的标签随类型（`credentialLabels`：商户号与密钥 / Store ID 与 API Key / Client ID 与 Client Secret），BTCPay 另有只写不读的 Webhook 密钥（列表只有 `has_webhook_secret`），CoinPayments 的地址可留空（后端用官方地址）。类型相关的说明在 `ProviderFields.tsx`。code 与类型建后不可改（PUT 请求体不带这两个键）；「最低付款额（元）」写进渠道 config 的 `min_amount`（分，范围 0.01–1000 元，默认 1.00，`parseMinAmount`），低于它的在线支付不发起，线下收款与赠送不受限，卡片备注里也写出来；留空 = 请求体不带 `min_amount`（后端：编辑保留原值、新建按 ¥1.00），前端从不发 0，说明文字随新建 / 编辑写「留空按默认」/「留空表示不改」（`minAmountHint`）；商户号与密钥只写不读，列表只有 `has_credentials`，编辑留空 = 不改；新建的渠道是「已启用、暂停收新单」，在卡片上打开收单才进结账页。后台改动在用户端结账页最多 5 分钟后生效（各网关的渠道缓存），写在「?」帮助与编辑弹窗里。
+- 用户手续费（00042）：每个在线渠道「固定（元）+ 比例（%）」，请求体 `fee_fixed` 是分、`fee_percent` 是字符串（`parseFeeFixed` / `parseFeePercent`），两项都 0 = 不收；卡片备注写「向用户加收 x% + ¥y」（`feeLabel`）。订单详情的支付记录在金额后写「含手续费 ¥x」（`surcharge_amount`）。
 - 回调地址：渠道卡显示该渠道的 `notify_url`；「回调地址」卡（`CallbackBaseCard.tsx`，`GET/PUT v1/payment-settings`，PUT 要近期重认证、不带幂等键）读写前缀，留空用站点地址。
 - 订单详情的「取消原因」：系统写的代码经 `cancelReasonLabel` 翻成中文（`account_deleted` =「账号已注销」，注销账号时一并取消的待付单）；管理员取消时填的原因原样显示。后端加了新的系统原因代码，这里同步加。
-- 人工开单不提供「从余额扣除」（D-C-3 已决），弹窗里引导先到用户详情调账、再用赠送开单。
+- 订单列表与详情（10-16）：详情是弹窗（`OrderDialog.tsx`，地址仍是 `/billing/orders/<id>`），副标题 `orderSubtitle`（状态 · 来源）；「手工标记已支付」并在弹窗里：凭证号与收款说明在体内，「标记已支付」在弹窗底部，提交前确认框；「取消订单」在底部左侧，原因必填。
+- 渠道列写到具体支付方式：后端列表行与详情给 `method`（成功那笔收款的方式，没有为 null），支付尝试也给 `method`；`channelLabel` / `payChannel` 写成「渠道名 · 方式中文名」（`methodLabel`：alipay 支付宝、wxpay 微信支付、offline 线下收款，不认识的原样显示；线下与没有方式时只写渠道名）。
+- 人工开单不提供「从余额扣除」（D-C-3 已决），引导写在「?」帮助里（`billing:orders`）。结算方式是单选组（原生 radio，每项带说明），不是下拉框。
 - 人工开单的落点由管理员选（购买模型统一，2026-10-07）：选好用户、套餐、价格后调 `POST v1/orders/manual/preview`（只读，不要重新认证、不带幂等键），服务端按 `purchase.Options` 给出选项与默认值，页面（`PlacementPicker.tsx`、`placement.ts`）只负责把每项的结果写成人话，不重算规则、不算钱。
-  - 选项：续一期（同款，生效中的按到期从早到晚，再接过期 30 天内的）、恢复并改成 P、另开一份、把某份换成 P。每项写明到期日变化、剩余价值去向与链接是否变化。
+  - 选项：续一期（订阅同款，生效中的按到期从早到晚，再接过期 30 天内的）、叠加（`stack`，一次性套餐同款，默认就是它：总流量加上、天数顺延）、恢复并改成 P、新开一份、换掉某份改成 P。每项写明到期日变化、剩余价值去向与链接是否变化。服务端给 `unavailable_reason` 的项灰着不能选，写出原因；唯一选项不可用时按钮写「这单开不了」。
   - 有入口上下文（从用户抽屉某份订阅点「给这份开单」，地址带 `&sub=<订阅 id>`）时预选入口那份；没有默认值时一个都不选，提交按钮灰着写「先选落点」；只有一个选项时不让选，直接写出结果。换掉生效中的订阅永远不是默认（服务端保证，页面不另行兜底）。
   - 提交带 `target: {kind, subscription_id?}`；换了用户、套餐或价格，点过的落点作废；409 或带 `fields.target` 的 422（落点已失效或没选）后重新取一遍选项。
   - preview 的 422 落到表单项上（`previewFailure`）：`fields.price_id` 落到「套餐与周期」，按钮写「先换一个价格」；`fields.entry_subscription_id` 时去掉入口重取、不预选，落点区写明原因。其余失败整块提示并给重试。
   - 待支付单低于站点最低付款额时服务端回 422 带 `fields.settlement`（billing.errManualBelowMinimum），随通用的 `useFailure` 落到「结算方式」上，并重取一次 preview。提交前的拦截全用 preview 给的数：顶层 `min_payment`（与报价、建单同一个 minPayment），每个落点的 `due`（按待用户支付开时的应付，换套餐已先抵）与 `below_minimum`（与建单同一个判定）；`manualBelowMinimum` 只把它写成「这单应付 ¥x，低于…¥y」，给「改用赠送」「改用线下已收款」两个按钮，提交按钮灰着写「低于最低付款额」。不再读渠道列表自己算
-  - 响应多 `proration_credit` / `balance_refund` 时即落成了换套餐，`manualCreatedToast` 按落点（`kind`）报续费、换套餐或另开，换套餐时带退回余额的金额。
+  - 响应多 `proration_credit` / `balance_refund` 时即落成了换套餐，`manualCreatedToast` 按落点（`kind`）报续费、叠加、换套餐或新开，换套餐时带退回余额的金额。
   - 删掉了「自动续同款、自动换别的套餐」的说明：后端不再替管理员挑落点。
-- 枚举只收库里的取值（`schemas.ts`）：订单 5 态（不做退款，没有退款态，支付记录也没有 refunds 与失败原因）、类型 6 种（换套餐不论补差退差都是 upgrade；`traffic_reset` 是门户买的流量重置）、支付意图 requires_action / succeeded / cancelled / expired、收款只有 succeeded、挂账 suspense / applied；后端不回的键（organization_id、tax_amount、行的 product_id）不写进 schema。
+- 枚举只收库里的取值（`schemas.ts`）：订单 5 态（不做退款，没有退款态，支付记录也没有 refunds 与失败原因）、类型 6 种 new / renewal / upgrade / topup / traffic_reset / stack（换套餐不论补差退差都是 upgrade；`traffic_reset` 是用户端买的流量重置；没有流量包 addon）、支付意图 requires_action / succeeded / cancelled / expired、收款只有 succeeded、挂账 suspense / applied；后端不回的键（organization_id、tax_amount、行的 product_id）不写进 schema。
 - 取消订单、标记已支付的失败文案（凭证号重复、订阅已结束款项进挂账都回 409）是后端中文原文，经 `useFailure` 原样 Toast，不要按状态码改写。
 - 会改用户余额或订阅的写（标记已支付、向渠道查单补记、人工开单、转入余额）成功后，除了 `useInvalidateBilling` 还要调 `users/api.ts` 的 `useInvalidateUsers`。
 - 「向渠道查单」只对发起过支付的待支付订单出现（`canQueryChannel`：`provider_code` 非空且非 offline）；查单与取消不挂 reauth，人工开单与标记已支付挂 reauth。
 - 用户抽屉的「为其开单」跳 `#/billing/orders?new=<用户 id>`，订单页靠 `?new=` 打开人工开单弹窗并预选用户；改这个参数要同步 `users/UserDrawer.tsx`。
 - 人工开单（落点、最低付款额、赠送 / 线下已收款）的页面文字或结构改了，同改 `panel/frontend/tests/browser/admin.spec.ts`（按角色与可见文字选元素、按页面文字断言，见 `frontend-browser-e2e.md`），否则要等 CI 的浏览器步骤红了才发现。
-- 订单详情的 `discount_amount` 是全部减免（券 + 会员折扣），`member_discount_amount` 是其中会员折扣的部分（`orderFacts` 大于 0 时多写「其中会员折扣」），人工单恒为 0
+- 只有人民币（10-16）：schema、页面、假后端都没有 `currency` / `currencies`，`formatMoney` 只传一个参数；收入调整不按币种筛。
+- 订单详情的 `discount_amount` 是全部减免（券与赠送），没有会员折扣。

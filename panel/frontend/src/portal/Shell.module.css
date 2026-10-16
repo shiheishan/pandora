@@ -214,11 +214,6 @@
   letter-spacing: var(--ls-h1);
 }
 
-.subtitle {
-  margin: 4px 0 0;
-  color: var(--text-2);
-}
-
 .footer {
   width: 100%;
   max-width: var(--content-max);

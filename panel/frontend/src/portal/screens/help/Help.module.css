@@ -64,6 +64,50 @@
   font-weight: var(--fw-semibold);
 }
 
+.guideCard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  text-decoration: none;
+  border-radius: var(--radius-lg);
+}
+
+.guideCard:hover {
+  border-color: var(--border-hover);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.guideCard:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.guideCard[aria-current='page'] {
+  border-color: var(--brand);
+  background: var(--brand-tint);
+}
+
+.guideCardText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.guideCardText small {
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.guideCardArrow {
+  color: var(--text-3);
+  font-size: 18px;
+}
+
 .article {
   max-width: 760px;
   padding: 28px 32px;

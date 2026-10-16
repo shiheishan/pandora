@@ -66,12 +66,39 @@
 }
 
 .stepOn {
-  color: var(--text);
+  color: var(--brand);
   font-weight: var(--fw-semibold);
 }
 
 .stepDone {
   color: var(--text-3);
+  font-weight: var(--fw-regular);
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.headTitle {
+  margin: 0;
+  font-size: 18px;
+  font-weight: var(--fw-semibold);
+}
+
+.sent {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  background: var(--ok-soft);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+}
+
+.sentTitle {
+  color: var(--ok);
   font-weight: var(--fw-semibold);
 }
 

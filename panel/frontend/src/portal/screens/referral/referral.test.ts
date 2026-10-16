@@ -9,7 +9,6 @@ import {
   headline,
   inviteLink,
   inviteUsage,
-  otherAvailableCurrencies,
   parseWithdrawAmount,
   payoutError,
   ratePercentText,
@@ -36,6 +35,9 @@ const SUMMARY = {
   site_currency: 'CNY',
   scope: 'every_order' as const,
 }
+
+const WITHDRAW_CLOSED_HINT =
+  '提现已关闭，佣金解冻后会自动转入余额，可直接用余额购买与续费。关闭前已可提现的部分不会自动转，请点「全部转入余额」。'
 
 function commission(over: Partial<Commission> = {}): Commission {
   return commissionSchema.parse({ summary: SUMMARY, entries: [], withdrawals: [], transfers: [], ...over })
@@ -84,7 +86,7 @@ describe('邀请码列表', () => {
 
   it('状态文案', () => {
     expect(codeStatusLabel('active')).toBe('有效')
-    expect(codeStatusLabel('exhausted')).toBe('已用完')
+    expect(codeStatusLabel('exhausted')).toBe('已用满')
     expect(codeStatusLabel('disabled')).toBe('已停用')
   })
 })
@@ -95,8 +97,8 @@ describe('邀请横幅', () => {
   })
 
   it('横幅比例与首单展示；费率为 0 不提佣金', () => {
-    expect(headline(2000, 'every_order')).toBe('邀请好友付费，您得 20% 佣金')
-    expect(headline(495, 'first_order')).toBe('好友首单付费，您得 4.95% 佣金')
+    expect(headline(2000, 'every_order')).toBe('好友每次付款，你都拿 20% 佣金')
+    expect(headline(495, 'first_order')).toBe('好友首单付款，你拿 4.95% 佣金')
     expect(headline(0, 'first_order')).toBe('邀请好友注册')
   })
 
@@ -110,13 +112,13 @@ describe('邀请横幅', () => {
   it('邀请码用量：无上限不说，用满警示', () => {
     const base = { code: 'X', created_at: '' }
     expect(inviteUsage({ ...base, invited: 3, max_uses: null })).toBeNull()
-    expect(inviteUsage({ ...base, invited: 3, max_uses: 10 })).toEqual({ text: '邀请码最多可用 10 次，已用 3 次', exhausted: false })
+    expect(inviteUsage({ ...base, invited: 3, max_uses: 10 })).toEqual({ text: '这个邀请码已有 3 人注册，还能再邀请 7 人。', exhausted: false })
     expect(inviteUsage({ ...base, invited: 6, max_uses: 6 })?.exhausted).toBe(true)
   })
 })
 
 describe('申请提现', () => {
-  const limits = { min: 10000, available: 13560, currency: 'CNY' }
+  const limits = { min: 10000, available: 13560 }
 
   it('元转分，上下限取概况', () => {
     expect(parseWithdrawAmount('120.5', limits)).toEqual({ cents: 12050 })
@@ -135,37 +137,11 @@ describe('申请提现', () => {
     expect(withdrawBlock({ ...SUMMARY, available: 9999 })).toBe('可用佣金满 ¥100.00 才能申请提现')
   })
 
-  it('关提现只关站点币种：站点币种锁表单并提示去转余额，别的币种照常能提', () => {
+  it('关提现：withdrawClosedHere 为 true，固定提示文案', () => {
     const closed = { ...SUMMARY, withdraw_enabled: false }
     expect(withdrawClosedHere(closed)).toBe(true)
-    expect(withdrawClosedHint(closed)).toContain('请点「全部转入余额」')
+    expect(withdrawClosedHint(closed)).toBe(WITHDRAW_CLOSED_HINT)
     expect(withdrawClosedHint(SUMMARY)).toBeNull()
-
-    const usd = { ...closed, currency: 'USD' }
-    expect(withdrawClosedHere(usd)).toBe(false)
-    expect(withdrawBlock(usd)).toBeNull()
-    expect(withdrawClosedHint(usd)).toBe('提现已关闭只针对 CNY；USD 佣金转不进余额，仍可申请提现。')
-  })
-
-  it('站点币种与其他币种都有可提时，提示写明其他币种仍可提现与入口', () => {
-    const closed = { ...SUMMARY, withdraw_enabled: false }
-    const hint = withdrawClosedHint(closed, ['USD'])
-    expect(hint).toContain('你的 USD 佣金仍可申请提现')
-    expect(hint).toContain('先点「全部转入余额」')
-    // 本站币种已没有可用额时汇总会切到别的币种，这句不再需要
-    expect(withdrawClosedHint({ ...closed, available: 0 }, ['USD'])).not.toContain('USD')
-
-    const base = { amount: 100, base: 1000, rate_percent: 10, rate_bp: 1000, level: 1, share_percent: 100, frozen_until: null, created_at: '2026-09-01T00:00:00Z', order_no: 'N1', from: '' }
-    const c = commission({
-      summary: closed,
-      entries: [
-        { ...base, currency: 'USD', status: 'available' },
-        { ...base, currency: 'USD', status: 'available' },
-        { ...base, currency: 'CNY', status: 'available' },
-        { ...base, currency: 'USD', status: 'pending' },
-      ],
-    })
-    expect(otherAvailableCurrencies(c)).toEqual(['USD'])
   })
 
   it('payoutError 校验收款账号', () => {
@@ -213,25 +189,28 @@ describe('佣金记录', () => {
       }),
     )
     expect(rows.map((r) => [r.title, r.ref, r.amount, r.status, r.tone])).toEqual([
-      ['转入余额', undefined, -5000, '完成', 'minus'],
-      ['好友 me***@gmail.com', 'PD-24101', 1180, '已结算', 'plus'],
-      ['申请提现 · 支付宝', undefined, -12000, '已打款', 'minus'],
+      ['转入余额', undefined, -5000, '已完成', 'minus'],
+      ['好友付款返佣', 'PD-24101', 1180, '可用', 'plus'],
+      ['提现', '支付宝', -12000, '已打款', 'minus'],
     ])
   })
 
-  it('佣金状态：冻结至某日、冲销划掉；多级分销好友标题', () => {
+  it('佣金状态：冻结至某日、冲销划掉；多级分销标题与 meta', () => {
     const rows = commissionRecords(
       commission({
         entries: [
           entry('pending', '2026-09-22T02:00:00Z', '2026-09-29T10:00:00Z'),
-          { ...entry('reversed', '2026-09-01T02:00:00Z', null, 2), order_no: '' },
+          { ...entry('reversed', '2026-09-01T12:00:00Z', null, 2), order_no: '', from: '' },
         ],
       }),
     )
     expect(rows[0]!.status).toBe('冻结至 09-29')
-    expect(rows[1]).toMatchObject({ title: '第 2 级好友', status: '已冲销', tone: 'void' })
+    expect(rows[1]).toMatchObject({ title: '第 2 级好友付款返佣', status: '已冲销', tone: 'void' })
+    expect(rows[1]!.meta).toBe('09-01')
     expect(rows[1]!.ref).toBeUndefined()
     expect(commissionRecords(commission({ entries: [entry('pending', '2026-09-22T02:00:00Z')] }))[0]!.status).toBe('冻结中')
+    const level1 = commissionRecords(commission({ entries: [entry('available', '2026-09-20T02:00:00Z')] }))[0]!
+    expect(level1.meta).toContain('me***@gmail.com')
   })
 
   it('提现状态映射，驳回带原因、失败退回划掉', () => {
