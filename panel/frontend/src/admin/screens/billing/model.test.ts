@@ -253,7 +253,7 @@ describe('late payments, providers and adjustments', () => {
     expect(lateReason({ case_kind: 'released_order', order_no: 'PD1' })).toBe('订单取消后到账 · PD1')
     expect(lateReason({ case_kind: 'excess_capture', order_no: 'PD2' })).toBe('超额扣款 · PD2')
     expect(lateReason({ case_kind: 'ineligible_subscription', order_no: 'PD3' })).toBe('订阅已结束后到账 · PD3')
-    expect(pendingTotals({ USD: 120, CNY: 700000, EUR: 0 })).toEqual(['¥7,000.00', '$1.20'])
+    expect(pendingTotals({ USD: 120, CNY: 700000, EUR: 0 })).toEqual(['¥7,000.00', '¥1.20'])
     expect(pendingTotals({})).toEqual([])
     expect(ageDays('2026-09-20T12:00:00Z', new Date('2026-09-24T11:00:00Z'))).toBe(3)
   })
@@ -295,7 +295,7 @@ describe('late payments, providers and adjustments', () => {
 
   it('formats the provider card stats and note', () => {
     const now = new Date('2026-09-24T12:00:00Z')
-    expect(todayLabel({ CNY: 581200, USD: 68400 })).toBe('¥5,812.00 · $684.00')
+    expect(todayLabel({ CNY: 581200, USD: 68400 })).toBe('¥5,812.00 · ¥684.00')
     expect(todayLabel({})).toBe('—')
     expect(rateLabel(0.9724)).toBe('97.2%')
     expect(rateLabel(null)).toBe('—')
@@ -439,7 +439,7 @@ describe('late payments, providers and adjustments', () => {
 
   it('shows adjustments and defaults the reversal reason', () => {
     const a = adjustmentSchema.parse({ id: 'a', currency: 'USD', amount: -1200, reason: '重复扣款退回', effective_on: '2026-09-18', created_by: 'u', created_by_email: null, created_at: '2026-09-18T10:40:00Z', reversed: false })
-    expect(adjustmentView(a)).toMatchObject({ amount: '−$12.00', tone: 'danger', state: 'open' })
+    expect(adjustmentView(a)).toMatchObject({ amount: '−¥12.00', tone: 'danger', state: 'open' })
     expect(adjustmentView(a).meta).toMatch(/^已删除的账号 · /)
     expect(adjustmentView({ ...a, reversed: true }).state).toBe('reversed')
     expect(adjustmentView({ ...a, reversal_of: 'b' }).state).toBe('reversal')

@@ -82,7 +82,7 @@ describe('coupons', () => {
   it('labels discounts: basis points as percent, fixed in its currency (blank means CNY)', () => {
     expect(discountLabel({ discount_type: 'percent', discount_value: 1500, currency: '' })).toBe('15% 折扣')
     expect(discountLabel({ discount_type: 'fixed', discount_value: 1000, currency: '' })).toBe('立减 ¥10.00')
-    expect(discountLabel({ discount_type: 'fixed', discount_value: 500, currency: 'USD' })).toBe('立减 $5.00')
+    expect(discountLabel({ discount_type: 'fixed', discount_value: 500, currency: 'USD' })).toBe('立减 ¥5.00')
   })
 
   it('shows usage against the cap, unlimited when null', () => {

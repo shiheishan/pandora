@@ -8,14 +8,19 @@ paths:
 # 面板前端：组件库与设计令牌
 
 - 设计稿 `设计规范.dc.html` 是唯一依据：颜色、字号、间距、圆角、控件高度都先落成令牌，组件（CSS Modules）只引用令牌，不写色值
-- 两个入口的差异（门户用朱砂、后台保持墨色中性，控件高度、圆角、字号等）全部来自 `styles/roles.css` 的同名角色令牌，按 `<html data-app>` 切换
+- 两个入口的差异（门户用朱砂、后台保持墨色中性，控件高度、圆角、字号、输入框边框 `--control-border-width` / `--control-bg`、浮层 `--popover-border` / `--popover-shadow`、字段标签 `--label-*` 等）全部来自 `styles/roles.css` 的同名角色令牌，按 `<html data-app>` 切换；角色令牌与 `design-tokens.ts` 的 `ROLE_TOKENS` 同源，两个入口的键必须相同
   - 组件里不写 admin / portal 分支
   - 确实需要入口选择器时用 `:root[data-app='…']`。现有两处：`Button.module.css` 的后台小号按钮字号，`Toast.module.css` 的门户窄屏上移
+- 后台（10-16 设计稿）在全局令牌上另有覆盖：`roles.css` 的 `html[data-app='admin']`（与 `[data-theme='dark']`）两块，把 `--surface*`、`--border`、`--border-strong` 换成设计稿的值（卡片与页面同底、层次靠线），所有 `--radius-*` 归零（直角）；值与 `design-tokens.ts` 的 `ADMIN_OVERRIDES` / `ADMIN_RADIUS` 同源（`tests/tokens.test.ts` 的 "admin overrides"，showcase 在后台模式下照覆盖值核对）。这些不进 `COLOR_TOKENS`，与 Go 端、门户主题无关
+  - 选择器用 `html[...]`：要压过 `:root`，又要输给 `:root[data-theme='dark']`
+  - 后台的浮层统一墨色细框、无阴影，输入框只有下边线、聚焦把下边线描黑；组件里写 `var(--popover-border)` 等角色令牌，不写 admin 分支
 - `ui/*.module.css` 只能引用全局令牌或本文件声明的局部变量。守卫：`tests/tokens.test.ts` 的 "ui/%s only references declared custom properties"
 - 样式一律用 CSS Modules；React 的 `style` 属性只用于真正动态的尺寸（列宽、抽屉宽度、骨架尺寸）
 - 弹层用浏览器原生能力，不自己造
   - `Modal` / `Drawer` 基于 `<dialog>.showModal()`
+  - 例外：`Select` 是自绘的 listbox（10-16 设计稿），列表 `position: fixed` 就地渲染在组件里、不 portal 到 body（在 `<dialog>` 里才留在顶层）；Esc 收起时拦住事件，不让外层弹窗跟着关
   - Toast 容器是 popover，每条提示都要重新推到顶层，否则会被已打开的 dialog 盖住
+- 10-16 新增的共用组件：`FilterTabs`（radiogroup + 可移动 tabindex）、`Toolbar` / `SearchField`、`Table` 的排序与表尾、`Modal` 的定宽与头体底结构；`Select` 的纯逻辑（方向键、首字母、定位）在 `ui/select-logic.ts`，配单测，组件只管摆放与事件
 - 页面只从 `ui/index.ts` import。`cx`、`useModalDialog`、`Field` 是内部实现，不导出
 - 颜色令牌（43 个）有四处同源，增、删、改任何一个都要几处一起改：
   - `styles/tokens.css`：浅色与 `[data-theme='dark']` 两组的键必须完全相同

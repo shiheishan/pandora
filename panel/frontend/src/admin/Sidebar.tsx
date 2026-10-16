@@ -1,13 +1,14 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { HugeiconsIcon } from '@hugeicons/react'
 import { href } from '../core/router'
-import { toggleTheme, useTheme } from '../core/theme'
-import { Logo } from '../shell/Logo'
-import { signOut, useRuntime } from '../shell/runtime'
-import { Menu } from '../ui'
-import { identityLabels, type AdminMe } from './me'
 import { MODULES, NAV_GROUPS, modulePath, type ModuleKey } from './modules'
+import { NAV_ICONS, PORTAL_ICON } from './nav-icons'
 import { taskCount, useDashboardTasks } from './tasks'
 import css from './Sidebar.module.css'
-import { DEFAULT_SITE_NAME, useAdminSiteName } from './site'
+
+function cx(...classes: Array<string | boolean | undefined | null>): string {
+  return classes.filter(Boolean).join(' ')
+}
 
 // 侧栏徽标：GET v1/dashboard/tasks，与仪表盘「需要处理」共用同一个查询（./tasks）
 function useNavBadges(): Partial<Record<ModuleKey, number>> {
@@ -15,91 +16,95 @@ function useNavBadges(): Partial<Record<ModuleKey, number>> {
   return { tickets: taskCount(data?.items, 'tickets_open'), marketing: taskCount(data?.items, 'withdrawals_pending') }
 }
 
-export function Sidebar({
-  current,
-  me,
-  onOpenPalette,
-  onChangePassword,
-  onBindTelegram,
-}: {
-  current: ModuleKey
-  me: AdminMe | undefined
-  onOpenPalette: () => void
-  onChangePassword: () => void
-  onBindTelegram: () => void
-}) {
-  const runtime = useRuntime()
-  const theme = useTheme()
-  const site = useAdminSiteName()
+export function Sidebar({ current, collapsed }: { current: ModuleKey; collapsed: boolean }) {
   const badges = useNavBadges()
-  const who = identityLabels(me)
+  const navRef = useRef<HTMLElement>(null)
+  const [fadeTop, setFadeTop] = useState(false)
+  const [fadeBottom, setFadeBottom] = useState(false)
+
+  const updateFade = useCallback(() => {
+    const el = navRef.current
+    if (!el) return
+    const top = el.scrollTop > 1
+    const bottom = Math.ceil(el.scrollTop + el.clientHeight) < el.scrollHeight - 1
+    setFadeTop((prev) => (prev !== top ? top : prev))
+    setFadeBottom((prev) => (prev !== bottom ? bottom : prev))
+  }, [])
+
+  // ResizeObserver 在 observe 时会先回调一次，初值也由它算，不在 effect 里同步 setState
+  useEffect(() => {
+    const el = navRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(updateFade)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [updateFade])
 
   return (
-    <aside className={css.sidebar}>
-      <div className={css.brand}>
-        {site === DEFAULT_SITE_NAME ? (
-          <Logo size={21} className={css.logo} />
-        ) : (
-          <>
-            <Logo size={21} wordmark={false} className={css.logo} />
-            <span className={css.siteName} title={site}>{site}</span>
-          </>
-        )}
-        <span className={css.release}>{__APP_RELEASE__}</span>
-      </div>
-      <button type="button" className={css.search} onClick={onOpenPalette}>
-        <span>搜索或跳转…</span>
-        <kbd className={css.kbd}>⌘K</kbd>
-      </button>
-      <nav className={css.nav} aria-label="主导航">
-        {NAV_GROUPS.map(([group, keys]) => (
-          <div key={group} className={css.group}>
-            <div className={css.groupLabel}>{group}</div>
-            {keys.map((key) => {
-              const on = key === current
-              const badge = badges[key] ?? 0
-              return (
-                <a key={key} href={href(modulePath(key))} className={on ? `${css.item} ${css.on}` : css.item} aria-current={on ? 'page' : undefined}>
-                  <span className={css.dot} aria-hidden="true" />
-                  <span className={css.itemLabel}>{MODULES[key].title}</span>
-                  {badge > 0 && <span className={css.badge}>{badge > 99 ? '99+' : badge}</span>}
-                </a>
-              )
-            })}
-          </div>
-        ))}
+    <aside id="admin-sidebar" className={cx(css.sidebar, collapsed && css.collapsed)}>
+      <nav aria-label="主导航" ref={navRef} onScroll={updateFade} className={css.nav}>
+        <div className={css.navGroups}>
+          {NAV_GROUPS.map(([group, keys]) => (
+            <div key={group} className={css.group}>
+              <p className={css.groupTitle} aria-hidden={collapsed ? 'true' : undefined}>
+                {group}
+              </p>
+              {keys.map((key) => {
+                const on = key === current
+                const badge = badges[key] ?? 0
+                const title = MODULES[key].title
+                const ariaLabel = collapsed ? (badge > 0 ? `${title} · ${badge}` : title) : undefined
+                const tipText = badge > 0 ? `${title} · ${badge}` : title
+
+                return (
+                  <a
+                    key={key}
+                    href={href(modulePath(key))}
+                    className={css.item}
+                    aria-current={on ? 'page' : undefined}
+                    aria-label={ariaLabel}
+                  >
+                    <span className={css.itemIcon}>
+                      <HugeiconsIcon icon={NAV_ICONS[key]} size={16} strokeWidth={1.75} aria-hidden="true" />
+                    </span>
+                    <span className={css.label}>{title}</span>
+                    {badge > 0 && <span className={css.badge}>{badge > 99 ? '99+' : badge}</span>}
+                    {badge > 0 && <span className={css.dot} aria-hidden="true" />}
+                    <span className={css.tip} aria-hidden="true">
+                      {tipText}
+                    </span>
+                  </a>
+                )
+              })}
+            </div>
+          ))}
+        </div>
+
+        <div className={css.secondary}>
+          <a
+            href="../"
+            target="_blank"
+            rel="noopener"
+            className={css.item}
+            aria-label={collapsed ? '打开用户端' : undefined}
+          >
+            <span className={css.itemIcon}>
+              <HugeiconsIcon icon={PORTAL_ICON} size={16} strokeWidth={1.75} aria-hidden="true" />
+            </span>
+            <span className={css.label}>打开用户端 ↗</span>
+            <span className={css.tip} aria-hidden="true">
+              打开用户端
+            </span>
+          </a>
+        </div>
       </nav>
-      <Menu
-        label="账户"
-        placement="top"
-        align="start"
-        className={css.account}
-        menuClassName={css.accountMenu}
-        triggerClassName={css.accountButton}
-        trigger={
-          <>
-            <span className={css.avatar} aria-hidden="true">
-              {who.initial}
-            </span>
-            <span className={css.who}>
-              <span className={css.whoTitle}>{who.title}</span>
-              <span className={css.whoSub}>{who.subtitle}</span>
-            </span>
-            <span className={css.more} aria-hidden="true">
-              ⋯
-            </span>
-          </>
-        }
-        entries={[
-          { key: 'theme', label: `切换到${theme === 'dark' ? '浅色' : '深色'}模式`, onSelect: toggleTheme },
-          { key: 'password', label: '修改我的密码', onSelect: onChangePassword },
-          { key: 'telegram', label: '绑定 Telegram', onSelect: onBindTelegram },
-          // 门户与后台同域，后台在前缀下，入口页的上一级就是门户根
-          { key: 'portal', label: '打开用户门户 ↗', onSelect: () => window.open('../', '_blank', 'noopener') },
-          { kind: 'separator', key: 'sep' },
-          { key: 'logout', label: '退出登录', danger: true, onSelect: () => void signOut(runtime) },
-        ]}
-      />
+
+      {!collapsed && (
+        <>
+          <div aria-hidden="true" className={cx(css.fadeTop, fadeTop && css.fadeOn)} />
+          <div aria-hidden="true" className={cx(css.fadeBottom, fadeBottom && css.fadeOn)} />
+        </>
+      )}
     </aside>
   )
 }
