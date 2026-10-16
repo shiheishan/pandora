@@ -70,11 +70,16 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: panel/frontend/package-lock.json
+          # Pro 图标包（@hugeicons-pro）走私有源：setup-node 写 .npmrc，令牌只在装依赖的步骤经 NODE_AUTH_TOKEN 传入
+          registry-url: https://npm.collectui.pro/
+          scope: '@hugeicons-pro'
       - uses: actions/setup-go@v7
         with:
           go-version-file: panel/go.mod
           cache-dependency-path: panel/go.sum
       - name: Install locked dependencies
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.HUGEICONS_NPM_TOKEN }}
         run: npm ci
       - name: Lint
         run: npm run lint
@@ -88,6 +93,8 @@ jobs:
       # 上一步的独立构建让构建失败直接落在「Build」上，不和同步混在一起
       - name: Sync the real build into web/{admin,portal} for go:embed
         working-directory: panel
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.HUGEICONS_NPM_TOKEN }}
         run: make frontend-embed
       - name: Real build is embeddable and served at the gateway root
         working-directory: panel

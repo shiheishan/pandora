@@ -87,9 +87,13 @@ jobs:
           node-version: 22
           # v5 起有 packageManager 字段时会自动开缓存；发版构建显式关掉
           package-manager-cache: false
+          # Pro 图标包（@hugeicons-pro）走私有源：setup-node 写 .npmrc，令牌只在装依赖的步骤经 NODE_AUTH_TOKEN 传入
+          registry-url: https://npm.collectui.pro/
+          scope: '@hugeicons-pro'
       - name: Build both architectures
         env:
           PANDORA_VERSION: ${{ steps.version.outputs.version }}
+          NODE_AUTH_TOKEN: ${{ secrets.HUGEICONS_NPM_TOKEN }}
         run: bash panel/deploy/build-release.sh "$RUNNER_TEMP/dist"
       - name: Collect the release assets and write SHA256SUMS
         env:

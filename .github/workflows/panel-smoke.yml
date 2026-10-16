@@ -80,9 +80,14 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: panel/frontend/package-lock.json
+          # Pro 图标包（@hugeicons-pro）走私有源：setup-node 写 .npmrc，令牌只在装依赖的步骤经 NODE_AUTH_TOKEN 传入
+          registry-url: https://npm.collectui.pro/
+          scope: '@hugeicons-pro'
       # pandora serve 嵌入真前端产物（同 make frontend-embed，发布包也这么做）：门户在 public、后台在 admin 根上，
       # 浏览器测试点的就是它。仓库里只有占位页，所以必须在起栈编译 pandora 之前构建
       - name: Embed the real frontend
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.HUGEICONS_NPM_TOKEN }}
         run: make -C panel frontend-embed
       - name: Start the stack
         id: stack
@@ -92,6 +97,8 @@ jobs:
         run: node panel/frontend/tests/smoke/seed.ts "$RUNNER_TEMP/smoke"
       - name: Install frontend dependencies
         working-directory: panel/frontend
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.HUGEICONS_NPM_TOKEN }}
         run: npm ci
       # 冒烟自己的 tsconfig：页面模块会连带 .tsx，node 侧那份没开 jsx
       - name: Typecheck the smoke tables
