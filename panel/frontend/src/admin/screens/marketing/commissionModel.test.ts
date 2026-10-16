@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { approveReasonError, buildCommissionConfig, commissionStats, commissionToForm, freezeLabel, voidReasonError, withdrawalState } from './commissionModel'
+import { approveReasonError, commissionStats, freezeLabel, voidReasonError, withdrawalState } from './commissionModel'
 import { entryReviewResponse, overviewSchema, reviewEntriesResponse, type CommissionOverview } from './schemas'
 
 describe('commission', () => {
@@ -25,12 +25,10 @@ describe('commission', () => {
 
   it('maps withdrawal statuses; only approved can be paid', () => {
     expect(withdrawalState('requested')).toMatchObject({ label: '待审核', canReview: true, canPay: false })
-    expect(withdrawalState('reviewing').canReview).toBe(true)
-    expect(withdrawalState('approved')).toMatchObject({ label: '待打款', canPay: true })
-    expect(withdrawalState('processing')).toMatchObject({ canReview: false, canPay: false })
-    expect(withdrawalState('paid').label).toBe('已打款')
-    expect(withdrawalState('failed').label).toBe('打款失败')
-    expect(withdrawalState('returned').label).toBe('已退回')
+    expect(withdrawalState('approved')).toMatchObject({ label: '待打款', canReview: false, canPay: true })
+    expect(withdrawalState('paid')).toMatchObject({ label: '已打款', canReview: false, canPay: false })
+    expect(withdrawalState('rejected')).toMatchObject({ label: '已拒绝', canReview: false, canPay: false })
+    expect(withdrawalState('other')).toMatchObject({ label: 'other', canReview: false, canPay: false })
   })
 
   it('formats the four overview stats', () => {
@@ -43,15 +41,6 @@ describe('commission', () => {
     expect(overviewSchema.safeParse(legacy).success).toBe(false)
   })
 
-  it('round-trips the settings form into the config body with scope', () => {
-    const form = commissionToForm(overview)
-    expect(form).toEqual({ rate: 20, scope: 'every_order', freezeDays: '7', minWithdraw: '100.50' })
-    expect(buildCommissionConfig(form)).toEqual({ ok: true, body: { rate_percent: 20, freeze_days: 7, min_withdraw: 10050, scope: 'every_order' } })
-    expect(buildCommissionConfig({ ...form, scope: 'first_order' })).toEqual({ ok: true, body: { rate_percent: 20, freeze_days: 7, min_withdraw: 10050, scope: 'first_order' } })
-    const bad = buildCommissionConfig({ rate: 51, scope: 'every_order', freezeDays: '91', minWithdraw: 'x' })
-    expect(!bad.ok && Object.keys(bad.errors).sort()).toEqual(['freeze_days', 'min_withdraw', 'rate_percent'])
-  })
-
   describe('review entries', () => {
     const iso = '2026-10-01T12:00:00Z'
     const row = {
@@ -60,7 +49,6 @@ describe('commission', () => {
       referrer_email: 'ref@example.com',
       referee_email: 'buy@example.com',
       amount: 1234,
-      currency: 'CNY',
       review_reason: '同源嫌疑',
       review_source: 'same_source',
       created_at: iso,

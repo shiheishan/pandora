@@ -1,5 +1,5 @@
 import { formatMoney } from '../../../core/format'
-import { formatDateTime, minorToYuan, parseCount, yuanToMinor, type Built, type FieldErrors, type Tone } from './logic'
+import { formatDateTime, type Tone } from './logic'
 import type { CommissionOverview, ReviewEntry } from './schemas'
 
 // ---------------------------------------------------------------------------
@@ -32,61 +32,28 @@ export function freezeLabel(entry: Pick<ReviewEntry, 'frozen_until' | 'review_so
   return `冻结至 ${formatDateTime(entry.frozen_until)}`
 }
 
-/** 状态映射（契约 GET v1/withdrawals）；打款只对 approved 开放（processing 由后端拒绝标记） */
+/** 状态映射（契约 GET v1/withdrawals）；打款只对 approved 开放 */
 export function withdrawalState(status: string): { label: string; tone: Tone; canReview: boolean; canPay: boolean } {
   switch (status) {
     case 'requested':
-    case 'reviewing':
       return { label: '待审核', tone: 'warn', canReview: true, canPay: false }
     case 'approved':
       return { label: '待打款', tone: 'info', canReview: false, canPay: true }
-    case 'processing':
-      return { label: '打款中', tone: 'info', canReview: false, canPay: false }
     case 'paid':
       return { label: '已打款', tone: 'ok', canReview: false, canPay: false }
     case 'rejected':
       return { label: '已拒绝', tone: 'neutral', canReview: false, canPay: false }
-    case 'failed':
-      return { label: '打款失败', tone: 'danger', canReview: false, canPay: false }
-    case 'returned':
-      return { label: '已退回', tone: 'danger', canReview: false, canPay: false }
     default:
       return { label: status, tone: 'neutral', canReview: false, canPay: false }
   }
 }
 
-/** 四个统计（契约设计映射） */
+/** 四个统计（契约设计映射，formatMoney 单参） */
 export function commissionStats(o: CommissionOverview): Array<{ label: string; value: string }> {
   return [
-    { label: '累计佣金', value: formatMoney(o.total_earned, 'CNY') },
-    { label: '冻结中', value: formatMoney(o.pending, 'CNY') },
-    { label: '已提现', value: formatMoney(o.paid_out, 'CNY') },
+    { label: '累计佣金', value: formatMoney(o.total_earned) },
+    { label: '冻结中', value: formatMoney(o.pending) },
+    { label: '已提现', value: formatMoney(o.paid_out) },
     { label: '邀请注册', value: o.invited_users.toLocaleString('zh-CN') },
   ]
-}
-
-export interface CommissionForm {
-  rate: number
-  scope: 'first_order' | 'every_order'
-  freezeDays: string
-  minWithdraw: string
-}
-
-export const commissionToForm = (o: CommissionOverview): CommissionForm => ({
-  rate: o.rate_percent,
-  scope: o.scope,
-  freezeDays: String(o.freeze_days),
-  minWithdraw: minorToYuan(o.min_withdraw),
-})
-
-/** 表单 → POST v1/commission/config（后端 DisallowUnknownFields，只发这四个字段） */
-export function buildCommissionConfig(f: CommissionForm): Built<Record<string, unknown>> {
-  const errors: FieldErrors = {}
-  if (!Number.isInteger(f.rate) || f.rate < 0 || f.rate > 50) errors.rate_percent = '佣金比例需在 0 到 50 之间'
-  const freeze = parseCount(f.freezeDays)
-  if (freeze === null || Number.isNaN(freeze) || freeze > 90) errors.freeze_days = '冻结天数需在 0 到 90 之间'
-  const min = yuanToMinor(f.minWithdraw)
-  if (min === null) errors.min_withdraw = '填金额，最多两位小数'
-  if (Object.keys(errors).length) return { ok: false, errors }
-  return { ok: true, body: { rate_percent: f.rate, freeze_days: freeze, min_withdraw: min, scope: f.scope } }
 }
