@@ -12,7 +12,7 @@ const WAIT_FOR_REPLY = false
 const CATEGORIES: ReadonlyArray<[string, string]> = [
   ['general', '一般咨询'],
   ['technical', '连接与技术'],
-  ['subscription', '订阅与套餐'],
+  ['subscription', '套餐与链接'],
   ['billing', '账单与支付'],
   ['account', '账号与安全'],
   ['abuse', '举报与投诉'],
