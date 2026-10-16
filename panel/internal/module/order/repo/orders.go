@@ -12,10 +12,10 @@ import (
 	"github.com/aegispanel/aegis/internal/module/order/model"
 )
 
-// CreateOrder 插入订单（九个金额字段先过 checkMoney），并回填 id、时间戳。
+// CreateOrder 插入订单（八个金额字段先过 checkMoney），并回填 id、时间戳。
 func (r *Repo) CreateOrder(ctx context.Context, o *model.Order) error {
 	if err := checkMoney(
-		o.SubtotalAmount, o.DiscountAmount, o.MemberDiscountAmount, o.ProrationCreditAmount, o.WaivedAmount,
+		o.SubtotalAmount, o.DiscountAmount, o.ProrationCreditAmount, o.WaivedAmount,
 		o.TotalAmount, o.BalanceApplied, o.PayableAmount, o.PaidAmount,
 	); err != nil {
 		return err
@@ -117,13 +117,13 @@ SELECT * FROM orders
 	return o, true, nil
 }
 
-// OpenChangeOrderExists 该订阅是否已有未完结的续费或换套餐单。
+// OpenChangeOrderExists 该订阅是否已有未完结的续费、叠加或换套餐单。
 func (r *Repo) OpenChangeOrderExists(ctx context.Context, subscriptionID uuid.UUID) (bool, error) {
 	var n int64
 	err := r.d.Conn(ctx).Raw(`
 SELECT COUNT(*) FROM orders
  WHERE subscription_id = ?
-   AND kind IN ('renewal', 'upgrade')
+   AND kind IN ('renewal', 'upgrade', 'stack')
    AND status IN ('pending_payment', 'paid')`, subscriptionID).Scan(&n).Error
 	if err != nil {
 		return false, mapErr(err)
@@ -131,7 +131,7 @@ SELECT COUNT(*) FROM orders
 	return n > 0, nil
 }
 
-// OpenChangeSubscriptions 是 subIDs 里挂着未完结续费或变更单的订阅（OpenChangeOrderExists 的批量版，报价与开单预览用）。
+// OpenChangeSubscriptions 是 subIDs 里挂着未完结续费、叠加或换套餐单的订阅（OpenChangeOrderExists 的批量版，报价与开单预览用）。
 func (r *Repo) OpenChangeSubscriptions(ctx context.Context, subIDs []uuid.UUID) (map[uuid.UUID]bool, error) {
 	out := make(map[uuid.UUID]bool, len(subIDs))
 	if len(subIDs) == 0 {
@@ -140,7 +140,7 @@ func (r *Repo) OpenChangeSubscriptions(ctx context.Context, subIDs []uuid.UUID) 
 	rows, err := r.d.Conn(ctx).Raw(`
 SELECT DISTINCT subscription_id FROM orders
  WHERE subscription_id IN ?
-   AND kind IN ('renewal', 'upgrade')
+   AND kind IN ('renewal', 'upgrade', 'stack')
    AND status IN ('pending_payment', 'paid')`, subIDs).Rows()
 	if err != nil {
 		return nil, mapErr(err)
