@@ -4,7 +4,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// 节点池的状态（node_pools.status）。池状态之间可以任意切换：停用的池不能再被绑进套餐版本，
+// 节点池的状态（node_pools.status）。池状态之间可以任意切换：停用的池不能再被绑进套餐，
 // 已有的绑定不受影响。
 const (
 	PoolActive   = "active"
@@ -24,9 +24,6 @@ const (
 // MaxPoolUserGroups 是一个池「仅限用户组」名单的上限。
 const MaxPoolUserGroups = 100
 
-// MaxPlanPools 是一个套餐版本一次最多绑定的池数。
-const MaxPlanPools = 500
-
 // Pool 是后台节点池列表的一行。
 type Pool struct {
 	ID     uuid.UUID
@@ -37,7 +34,7 @@ type Pool struct {
 	// Nodes 是池里未删除的节点数，ActiveNodes 是其中在役的（serving_status = active，协议必然配好）。
 	Nodes       int64
 	ActiveNodes int64
-	// Plans 是绑定了这个池的套餐版本数；PlanNames 是这些版本的套餐名（去重、升序）。
+	// Plans 是绑定了这个池的套餐数；PlanNames 是这些套餐的名字（去重、升序）。
 	Plans     int
 	PlanNames []string
 	// Members 是池里未删除的节点，按 sort_order、node_no。
@@ -88,12 +85,7 @@ type PlanPoolOption struct {
 	Bound            bool
 }
 
-// PlanPools 是套餐页绑池选择器：有草稿版本给草稿（可编辑），否则给当前已发布版本（只读）。
-// 没有任何版本时 VersionID 为 nil，Pools 仍列出可选的池且都未绑定。
+// PlanPools 是套餐页绑池选择器：可选的池与是否已绑。
 type PlanPools struct {
-	VersionID     *uuid.UUID
-	VersionStatus string
-	RowVersion    int64
-	Editable      bool
-	Pools         []PlanPoolOption
+	Pools []PlanPoolOption
 }

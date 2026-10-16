@@ -1,7 +1,7 @@
 package service
 
 // 订阅线路微缓存（delivery_cache.go）与行转线路（node_source.go 的 deliverableFromRows）的单元测试，不连库。
-// 缓存层用计数的 load；服务层用只实现 VersionPools 的假 catalog（版本一律不绑池，走不到 repo）。
+// 缓存层用计数的 load；服务层用只实现 PlanPools 的假 catalog（套餐一律不绑池，走不到 repo）与假的 PlanVersions。
 // 并发用例要用 -race 跑才有意义：
 //
 //	GOTOOLCHAIN=go1.26.9 go test -race ./internal/module/node/service/ -run 'DeliveryCache|DeliverableNodesCache|DeliverableFromRows|DeliveryKey'
@@ -20,21 +20,20 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
 	"github.com/aegispanel/aegis/internal/module/node/repo"
 	"github.com/aegispanel/aegis/internal/module/subscription/render"
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 )
 
-// countingCatalog 是只实现 VersionPools 的假 Catalog：数调用次数，可注入错误，版本一律不绑池。
-// 其余方法不会被调到（嵌入的接口是 nil，调到就 panic）。
+// countingCatalog 是只实现 PlanPools 的假 Catalog：数调用次数，可注入错误，套餐一律不绑池。
 type countingCatalog struct {
-	Catalog
 	mu    sync.Mutex
 	calls int
 	err   error
 }
 
-func (c *countingCatalog) VersionPools(context.Context, []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error) {
+func (c *countingCatalog) PlanPools(_ context.Context, _ []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.calls++
@@ -42,6 +41,14 @@ func (c *countingCatalog) VersionPools(context.Context, []uuid.UUID) (map[uuid.U
 		return nil, c.err
 	}
 	return map[uuid.UUID][]uuid.UUID{}, nil
+}
+
+func (c *countingCatalog) PoolUsage(context.Context, []uuid.UUID) (map[uuid.UUID]catalogsvc.PoolUsage, error) {
+	return map[uuid.UUID]catalogsvc.PoolUsage{}, nil
+}
+
+func (c *countingCatalog) PlansByIDs(context.Context, []uuid.UUID) (map[uuid.UUID]catalogsvc.Plan, error) {
+	return map[uuid.UUID]catalogsvc.Plan{}, nil
 }
 
 func (c *countingCatalog) count() int {
@@ -56,10 +63,23 @@ func (c *countingCatalog) setErr(err error) {
 	c.err = err
 }
 
-// newCacheTestService 构造只装了假 catalog 的 Service：repo 为 nil，版本不绑池时不会读它。
+type fakeCacheVersions struct {
+	planID uuid.UUID
+}
+
+func (f *fakeCacheVersions) VersionsByIDs(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]catalogsvc.Version, error) {
+	out := make(map[uuid.UUID]catalogsvc.Version, len(ids))
+	for _, id := range ids {
+		out[id] = catalogsvc.Version{ID: id, PlanID: f.planID}
+	}
+	return out, nil
+}
+
+// newCacheTestService 构造装了假 catalog 与假 versions 的 Service：repo 为 nil，套餐不绑池时不会读它。
 func newCacheTestService(cat Catalog) *Service {
 	s := New(nil, nil, nil, nil)
 	s.UseCatalog(cat)
+	s.UseDelivery(nil, nil, &fakeCacheVersions{planID: uuid.New()})
 	return s
 }
 

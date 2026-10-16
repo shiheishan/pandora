@@ -119,13 +119,14 @@ func (c *invListCatalog) PoolUsage(_ context.Context, poolIDs []uuid.UUID) (map[
 		bindings := make([]catalogsvc.PoolBinding, 0, len(names))
 		for _, name := range names {
 			bindings = append(bindings, catalogsvc.PoolBinding{
-				VersionID: uuid.New(),
-				PlanName:  name,
-				OnSale:    true,
+				PlanID:     uuid.New(),
+				PlanName:   name,
+				OnSale:     true,
+				VersionIDs: []uuid.UUID{uuid.New()},
 			})
 		}
 		out[id] = catalogsvc.PoolUsage{
-			Versions:  len(bindings),
+			Plans:     len(bindings),
 			PlanNames: names,
 			Bindings:  bindings,
 		}

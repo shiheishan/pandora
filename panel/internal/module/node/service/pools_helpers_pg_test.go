@@ -28,20 +28,17 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 )
 
-// fakePoolCatalog 是内存里的 Catalog：版本绑池、池用量、绑池选择器的版本都由用例直接填。
+// fakePoolCatalog 是内存里的 Catalog：套餐绑池、池用量、套餐都由用例直接填。
 type fakePoolCatalog struct {
-	versionPools map[uuid.UUID][]uuid.UUID
-	usage        map[uuid.UUID]catalogsvc.PoolUsage
-	binding      catalogsvc.PoolBindingVersion
-	bindingErr   error
-	setCalls     int
-	setErr       error
+	planPools map[uuid.UUID][]uuid.UUID
+	usage     map[uuid.UUID]catalogsvc.PoolUsage
+	plans     map[uuid.UUID]catalogsvc.Plan
 }
 
-func (f *fakePoolCatalog) VersionPools(_ context.Context, versionIDs []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error) {
+func (f *fakePoolCatalog) PlanPools(_ context.Context, planIDs []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error) {
 	out := map[uuid.UUID][]uuid.UUID{}
-	for _, id := range versionIDs {
-		if p, ok := f.versionPools[id]; ok {
+	for _, id := range planIDs {
+		if p, ok := f.planPools[id]; ok {
 			out[id] = p
 		}
 	}
@@ -56,9 +53,10 @@ func (f *fakePoolCatalog) PoolUsage(_ context.Context, poolIDs []uuid.UUID) (map
 				bindings := make([]catalogsvc.PoolBinding, 0, len(u.PlanNames))
 				for _, name := range u.PlanNames {
 					bindings = append(bindings, catalogsvc.PoolBinding{
-						VersionID: uuid.New(),
-						PlanName:  name,
-						OnSale:    true,
+						PlanID:     uuid.New(),
+						PlanName:   name,
+						OnSale:     true,
+						VersionIDs: []uuid.UUID{uuid.New()},
 					})
 				}
 				u.Bindings = bindings
@@ -69,17 +67,14 @@ func (f *fakePoolCatalog) PoolUsage(_ context.Context, poolIDs []uuid.UUID) (map
 	return out, nil
 }
 
-func (f *fakePoolCatalog) PoolBindingVersion(context.Context, uuid.UUID) (catalogsvc.PoolBindingVersion, error) {
-	return f.binding, f.bindingErr
-}
-
-func (f *fakePoolCatalog) SetVersionPools(_ context.Context, _, versionID uuid.UUID, expected int64, poolIDs []uuid.UUID) (int64, error) {
-	f.setCalls++
-	if f.setErr != nil {
-		return 0, f.setErr
+func (f *fakePoolCatalog) PlansByIDs(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]catalogsvc.Plan, error) {
+	out := map[uuid.UUID]catalogsvc.Plan{}
+	for _, id := range ids {
+		if p, ok := f.plans[id]; ok {
+			out[id] = p
+		}
 	}
-	f.versionPools[versionID] = poolIDs
-	return expected + 1, nil
+	return out, nil
 }
 
 // fakeVersionsInUse 是 VersionsInUse 端口的假实现：默认返回空 map。
@@ -148,8 +143,9 @@ func newPoolEnvMode(t *testing.T, committed bool) (*poolEnv, context.Context) {
 	mr, rdb := testkit.Redis(t)
 	svc := New(repo.New(d), tx.NewManager(d), auditSvc, rdb)
 	cat := &fakePoolCatalog{
-		versionPools: map[uuid.UUID][]uuid.UUID{},
-		usage:        map[uuid.UUID]catalogsvc.PoolUsage{},
+		planPools: map[uuid.UUID][]uuid.UUID{},
+		usage:     map[uuid.UUID]catalogsvc.PoolUsage{},
+		plans:     map[uuid.UUID]catalogsvc.Plan{},
 	}
 	groups := &fakePoolGroups{}
 	svc.UseCatalog(cat)

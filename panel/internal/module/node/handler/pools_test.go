@@ -197,11 +197,19 @@ func TestPoolPathIDNotFound(t *testing.T) {
 		{http.MethodPost, "/v1/node-pools/abc", `{"name":"x"}`},
 		{http.MethodDelete, "/v1/node-pools/abc", ""},
 		{http.MethodGet, "/v1/plans/abc/pools", ""},
-		{http.MethodPost, "/v1/plans/abc/pools", `{}`},
 	}
 	for _, tc := range cases {
 		w := doPool(e, tc.method, tc.path, tc.body)
 		poolExpectErr(t, w, errs.NotFound, "")
+	}
+}
+
+func TestPoolRouteNotRegistered(t *testing.T) {
+	e := newPoolEngine(&poolReauthStub{})
+	// POST /plans/:id/pools 已删除（改绑走 catalog 的 PUT /plans/:id/pools）
+	w := doPool(e, http.MethodPost, "/v1/plans/"+uuid.NewString()+"/pools", `{}`)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("POST /plans/:id/pools 期望 404，得到 %d", w.Code)
 	}
 }
 
@@ -228,49 +236,6 @@ func TestPoolUnknownFieldRejected(t *testing.T) {
 	strict(`{"name":"x","region":"r","status":"draining","code":"c","allowed_user_group_ids":[]}`, &ur)
 	if ur.AllowedUserGroupIDs == nil || len(*ur.AllowedUserGroupIDs) != 0 {
 		t.Fatalf("[] 名单应是非 nil 空切片：%v", ur.AllowedUserGroupIDs)
-	}
-}
-
-func TestSetPlanPoolsValidation(t *testing.T) {
-	e := newPoolEngine(&poolReauthStub{})
-	w := doPool(e, http.MethodPost, "/v1/plans/"+uuid.NewString()+"/pools",
-		`{"version_id":"x","expected_version_row_version":0,"pool_ids":["a","a"]}`)
-	poolExpectErr(t, w, errs.ValidationFailed, "")
-	_, fields := poolErrBody(t, w)
-	for _, k := range []string{"version_id", "expected_version_row_version", "pool_ids"} {
-		if fields[k] == "" {
-			t.Fatalf("fields 缺 %s：%v", k, fields)
-		}
-	}
-
-	a, b := uuid.New(), uuid.New()
-	vid := uuid.New()
-	gotVID, ids, err := parsePlanPoolsSetRequest(planPoolsSetRequest{
-		VersionID: vid.String(), ExpectedVersionRowVersion: 3, PoolIDs: []string{b.String(), a.String()},
-	})
-	if err != nil || gotVID != vid || len(ids) != 2 || ids[0].String() > ids[1].String() {
-		t.Fatalf("合法请求: vid=%v ids=%v err=%v", gotVID, ids, err)
-	}
-
-	_, ids, err = parsePlanPoolsSetRequest(planPoolsSetRequest{VersionID: vid.String(), ExpectedVersionRowVersion: 1})
-	if err != nil || ids == nil || len(ids) != 0 {
-		t.Fatalf("null pool_ids 应是非 nil 空切片: %v %v", ids, err)
-	}
-
-	_, _, err = parsePlanPoolsSetRequest(planPoolsSetRequest{
-		VersionID: vid.String(), ExpectedVersionRowVersion: 1, PoolIDs: []string{a.String(), a.String()},
-	})
-	if errs.As(err).Fields["pool_ids"] == "" {
-		t.Fatalf("重复池 id 应拒绝: %v", err)
-	}
-
-	tooMany := make([]string, service.MaxPlanPools+1)
-	for i := range tooMany {
-		tooMany[i] = uuid.NewString()
-	}
-	_, _, err = parsePlanPoolsSetRequest(planPoolsSetRequest{VersionID: vid.String(), ExpectedVersionRowVersion: 1, PoolIDs: tooMany})
-	if errs.As(err).Fields["pool_ids"] == "" {
-		t.Fatalf("超过上限应拒绝: %v", err)
 	}
 }
 
@@ -311,30 +276,19 @@ func TestPoolResponseShape(t *testing.T) {
 	poolExpectKeys(t, keys, "ok")
 }
 
-// 对照前端 plans/schemas.ts 的 planPoolsSchema 与 poolsBoundSchema。
+// 对照前端 plans/schemas.ts 的 planPoolsSchema。
 func TestPlanPoolsResponseShape(t *testing.T) {
 	keys, m := poolJSONKeys(t, planPoolsResponseFrom(service.PlanPools{}))
-	poolExpectKeys(t, keys, "version_id", "version_status", "row_version", "editable", "pools")
-	if m["version_id"] != "" {
-		t.Fatalf("没有版本时 version_id 应为空串: %#v", m["version_id"])
-	}
+	poolExpectKeys(t, keys, "pools")
 	if arr, ok := m["pools"].([]any); !ok || len(arr) != 0 {
 		t.Fatalf("pools 应是空数组: %#v", m["pools"])
 	}
 
-	vid := uuid.New()
 	_, m = poolJSONKeys(t, planPoolsResponseFrom(service.PlanPools{
-		VersionID: &vid, VersionStatus: "draft", RowVersion: 2, Editable: true,
 		Pools: []service.PlanPoolOption{{ID: uuid.New(), Name: "A", ActiveNodes: 2, DeliverableNodes: 1, Bound: true}},
 	}))
-	if m["version_id"] != vid.String() {
-		t.Fatalf("version_id: %#v", m["version_id"])
-	}
 	poolExpectKeys(t, poolSortedKeys(m["pools"].([]any)[0].(map[string]any)),
 		"id", "name", "active_nodes", "deliverable_nodes", "bound")
-
-	keys, _ = poolJSONKeys(t, planPoolsSetResponse{Bound: 1, RowVersion: 3, VersionID: vid.String()})
-	poolExpectKeys(t, keys, "bound", "row_version", "version_id")
 }
 
 func TestParsePoolUserGroupIDs(t *testing.T) {

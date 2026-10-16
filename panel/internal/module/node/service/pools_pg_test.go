@@ -317,20 +317,16 @@ func TestDeletePool(t *testing.T) {
 	}
 }
 
-func TestDeletePoolReferencedByVersionFK(t *testing.T) {
+func TestDeletePoolReferencedByPlanFK(t *testing.T) {
 	e, ctx := newPoolEnv(t)
 	poolID := seedPoolRow(t, ctx, e, PoolActive)
 
 	var planID uuid.UUID
 	code := poolRandName(t, "pl")
-	if err := e.row(ctx, `INSERT INTO plans (code, name) VALUES (?, ?) RETURNING id`, code, "套餐").Scan(&planID); err != nil {
+	if err := e.row(ctx, `INSERT INTO plans (code, name, kind) VALUES (?, ?, 'subscription') RETURNING id`, code, "套餐").Scan(&planID); err != nil {
 		t.Fatal(err)
 	}
-	var versionID uuid.UUID
-	if err := e.row(ctx, `INSERT INTO plan_versions (plan_id, version) VALUES (?, 1) RETURNING id`, planID).Scan(&versionID); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.exec(ctx, `INSERT INTO plan_node_pools (plan_version_id, pool_id) VALUES (?, ?)`, versionID, poolID); err != nil {
+	if err := e.exec(ctx, `INSERT INTO plan_node_pools (plan_id, pool_id) VALUES (?, ?)`, planID, poolID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -354,7 +350,7 @@ func TestListPoolsCounts(t *testing.T) {
 	delID := seedPoolNode(t, ctx, e, poolID, nil, "draft", 0)
 	deletePoolNode(t, ctx, e, delID)
 
-	e.cat.usage[poolID] = catalogsvc.PoolUsage{Versions: 2, PlanNames: []string{"A", "B"}}
+	e.cat.usage[poolID] = catalogsvc.PoolUsage{Plans: 2, PlanNames: []string{"A", "B"}}
 
 	list, err := e.svc.ListPools(ctx)
 	if err != nil {

@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"sort"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -29,12 +28,6 @@ type poolUpdateRequest struct {
 	AllowedUserGroupIDs *[]string `json:"allowed_user_group_ids"`
 	// Code 前端会发，忽略。
 	Code string `json:"code"`
-}
-
-type planPoolsSetRequest struct {
-	VersionID                 string   `json:"version_id"`
-	ExpectedVersionRowVersion int64    `json:"expected_version_row_version"`
-	PoolIDs                   []string `json:"pool_ids"`
 }
 
 type poolListResponse struct {
@@ -75,11 +68,7 @@ type poolOKResponse struct {
 }
 
 type planPoolsResponse struct {
-	VersionID     string                   `json:"version_id"`
-	VersionStatus string                   `json:"version_status"`
-	RowVersion    int64                    `json:"row_version"`
-	Editable      bool                     `json:"editable"`
-	Pools         []planPoolOptionResponse `json:"pools"`
+	Pools []planPoolOptionResponse `json:"pools"`
 }
 
 type planPoolOptionResponse struct {
@@ -88,12 +77,6 @@ type planPoolOptionResponse struct {
 	ActiveNodes      int64  `json:"active_nodes"`
 	DeliverableNodes int64  `json:"deliverable_nodes"`
 	Bound            bool   `json:"bound"`
-}
-
-type planPoolsSetResponse struct {
-	Bound      int    `json:"bound"`
-	RowVersion int64  `json:"row_version"`
-	VersionID  string `json:"version_id"`
 }
 
 func poolResponseFrom(p service.Pool) poolResponse {
@@ -137,10 +120,6 @@ func poolListResponseFrom(ps []service.Pool) poolListResponse {
 }
 
 func planPoolsResponseFrom(p service.PlanPools) planPoolsResponse {
-	versionID := ""
-	if p.VersionID != nil {
-		versionID = p.VersionID.String()
-	}
 	pools := make([]planPoolOptionResponse, 0, len(p.Pools))
 	for _, o := range p.Pools {
 		pools = append(pools, planPoolOptionResponse{
@@ -151,13 +130,7 @@ func planPoolsResponseFrom(p service.PlanPools) planPoolsResponse {
 			Bound:            o.Bound,
 		})
 	}
-	return planPoolsResponse{
-		VersionID:     versionID,
-		VersionStatus: p.VersionStatus,
-		RowVersion:    p.RowVersion,
-		Editable:      p.Editable,
-		Pools:         pools,
-	}
+	return planPoolsResponse{Pools: pools}
 }
 
 // parsePoolUserGroupIDs：超过 service.MaxPoolUserGroups 个 → allowed_user_group_ids「一个节点池最多限定 100 个用户组」；
@@ -187,51 +160,6 @@ func parsePoolUserGroupIDs(raw []string) ([]uuid.UUID, error) {
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i].String() < ids[j].String() })
 	return ids, nil
-}
-
-// parsePlanPoolsSetRequest：version_id 不是 UUID →「必须是有效 UUID」；expected_version_row_version <= 0 →「必须是正整数」；
-// pool_ids 超过 service.MaxPlanPools 个 →「一次最多绑定 500 个节点池」；有非法 UUID 或重复 → pool_ids「必须是无重复的 UUID 列表」。
-// 多个字段的错误合在一个 map 里。pool_ids 为 null 视同 []。返回的 poolIDs 按 String() 升序、非 nil。
-func parsePlanPoolsSetRequest(req planPoolsSetRequest) (versionID uuid.UUID, poolIDs []uuid.UUID, err error) {
-	fields := map[string]string{}
-
-	vid, verr := uuid.Parse(strings.TrimSpace(req.VersionID))
-	if verr != nil {
-		fields["version_id"] = "必须是有效 UUID"
-	}
-	if req.ExpectedVersionRowVersion <= 0 {
-		fields["expected_version_row_version"] = "必须是正整数"
-	}
-
-	raw := req.PoolIDs
-	if raw == nil {
-		raw = []string{}
-	}
-	if len(raw) > service.MaxPlanPools {
-		fields["pool_ids"] = "一次最多绑定 500 个节点池"
-	}
-
-	seen := make(map[uuid.UUID]struct{}, len(raw))
-	parsed := make([]uuid.UUID, 0, len(raw))
-	for _, s := range raw {
-		id, perr := uuid.Parse(strings.TrimSpace(s))
-		if perr != nil {
-			fields["pool_ids"] = "必须是无重复的 UUID 列表"
-			continue
-		}
-		if _, dup := seen[id]; dup {
-			fields["pool_ids"] = "必须是无重复的 UUID 列表"
-			continue
-		}
-		seen[id] = struct{}{}
-		parsed = append(parsed, id)
-	}
-
-	if len(fields) > 0 {
-		return uuid.Nil, nil, errs.Invalid(fields)
-	}
-	sort.Slice(parsed, func(i, j int) bool { return parsed[i].String() < parsed[j].String() })
-	return vid, parsed, nil
 }
 
 // poolPathID：c.Param(name) 不是 UUID → errs.New(errs.NotFound)。

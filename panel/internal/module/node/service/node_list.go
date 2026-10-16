@@ -135,7 +135,7 @@ func (s *Service) nodeListExtrasFor(ctx context.Context, rows []repo.NodeListRow
 	for _, u := range usage {
 		for _, b := range u.Bindings {
 			if !b.OnSale {
-				notOnSale = append(notOnSale, b.VersionID)
+				notOnSale = append(notOnSale, b.VersionIDs...)
 			}
 		}
 	}
@@ -174,7 +174,7 @@ func (s *Service) nodeListExtrasFor(ctx context.Context, rows []repo.NodeListRow
 	}, nil
 }
 
-// livePlanNames 计算每个池的在用套餐名列表（在售或有人在用的版本所属套餐名，去重升序）。
+// livePlanNames 计算每个池的在售或有人在用的套餐名列表（去重升序）。
 // usage 为空或池无在用绑定时返回空切片。
 func livePlanNames(usage map[uuid.UUID]catalogsvc.PoolUsage, inUse map[uuid.UUID]bool) map[uuid.UUID][]string {
 	out := make(map[uuid.UUID][]string, len(usage))
@@ -182,7 +182,7 @@ func livePlanNames(usage map[uuid.UUID]catalogsvc.PoolUsage, inUse map[uuid.UUID
 		seen := make(map[string]bool)
 		var names []string
 		for _, b := range u.Bindings {
-			if b.OnSale || inUse[b.VersionID] {
+			if b.OnSale || anyInUse(b.VersionIDs, inUse) {
 				if !seen[b.PlanName] {
 					seen[b.PlanName] = true
 					names = append(names, b.PlanName)
@@ -197,6 +197,18 @@ func livePlanNames(usage map[uuid.UUID]catalogsvc.PoolUsage, inUse map[uuid.UUID
 		out[pid] = names
 	}
 	return out
+}
+
+func anyInUse(ids []uuid.UUID, inUse map[uuid.UUID]bool) bool {
+	if inUse == nil {
+		return false
+	}
+	for _, id := range ids {
+		if inUse[id] {
+			return true
+		}
+	}
+	return false
 }
 
 // nodeRowFromList 把一行读模型转成 NodeRow：心跳取所在服务器的，下发说明按 nodeDeliveryVerdict；

@@ -22,7 +22,7 @@ type deliveryFixture struct {
 	n1, n2, n3, n4, n5, n6, n7, n8 uuid.UUID
 	v                              uuid.UUID
 	// 订阅（按用户）
-	uA, uB, uD, uOverride, uPack, uExhausted, uExpired, uPastEnd, uBanned, uNoQuota fixtureSub
+	uA, uB, uD, uOverride, uExhausted, uExpired, uPastEnd, uBanned, uNoQuota fixtureSub
 	// 订阅主人
 	userA, userB, userD uuid.UUID
 	// 节点 → 线路名
@@ -74,9 +74,6 @@ func seedDeliveryFixture(t *testing.T, ctx context.Context, e *deliveryEnv) *del
 	o := quota(0)
 	o.DeviceLimit = intPtr(0)
 	f.uOverride = e.dSub(t, ctx, e.dUser(t, ctx, "active", &f.gA), f.v, o)
-	o = quota(gib)
-	o.PackGranted, o.PackConsumed = 100, 10
-	f.uPack = e.dSub(t, ctx, e.dUser(t, ctx, "active", &f.gA), f.v, o)
 	f.uExhausted = e.dSub(t, ctx, e.dUser(t, ctx, "active", &f.gA), f.v, quota(gib))
 	o = quota(0)
 	o.Expired = true
@@ -143,8 +140,8 @@ func TestRostersPG(t *testing.T) {
 		}
 	}
 
-	all := sortedUIDs(f.uA, f.uB, f.uD, f.uOverride, f.uPack, f.uNoQuota)
-	onlyA := sortedUIDs(f.uA, f.uOverride, f.uPack, f.uNoQuota)
+	all := sortedUIDs(f.uA, f.uB, f.uD, f.uOverride, f.uNoQuota)
+	onlyA := sortedUIDs(f.uA, f.uOverride, f.uNoQuota)
 	r1, _ := rosterOf(rosters, f.s1, f.n1)
 	if got := rosterUIDs(r1); !slices.Equal(got, all) {
 		t.Fatalf("n1 名单 %v，期望 %v", got, all)

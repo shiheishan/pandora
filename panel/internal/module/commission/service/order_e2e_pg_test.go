@@ -86,7 +86,7 @@ func (a oePromoCatalog) MissingPlans(ctx context.Context, ids []uuid.UUID) ([]uu
 	return missing, nil
 }
 
-func (a oePromoCatalog) PriceSubtotal(ctx context.Context, planID, priceID uuid.UUID) (decimal.Decimal, string, error) {
+func (a oePromoCatalog) PriceSubtotal(ctx context.Context, planID, priceID uuid.UUID) (decimal.Decimal, error) {
 	req := catalogsvc.OfferRequest{Use: catalogsvc.UseNew, PlanID: &planID}
 	if p, ok := authn.From(ctx); ok {
 		uid := p.UserID
@@ -94,17 +94,9 @@ func (a oePromoCatalog) PriceSubtotal(ctx context.Context, planID, priceID uuid.
 	}
 	o, err := a.c.Offer(ctx, priceID, req)
 	if err != nil {
-		return decimal.Zero, "", err
-	}
-	return o.Price.UnitAmount, o.Price.BillingInterval, nil
-}
-
-func (a oePromoCatalog) PackSubtotal(ctx context.Context, packID uuid.UUID) (decimal.Decimal, error) {
-	p, err := a.c.PackOffer(ctx, packID, false)
-	if err != nil {
 		return decimal.Zero, err
 	}
-	return p.UnitAmount, nil
+	return o.Price.UnitAmount, nil
 }
 
 // newOEEnv 按 wire.go 装配真 service；commit 为 false 时整例在测试事务里回滚。
@@ -214,7 +206,7 @@ func oeRefer(t *testing.T, e *oeEnv, ctx context.Context, referee, referrer uuid
 
 func (e *oeEnv) oeMkPlan(t *testing.T, ctx context.Context, unitCents int64) (planID, priceID uuid.UUID) {
 	t.Helper()
-	if err := e.row(ctx, `INSERT INTO plans (code, name) VALUES (?, ?) RETURNING id`,
+	if err := e.row(ctx, `INSERT INTO plans (code, name, kind) VALUES (?, ?, 'subscription') RETURNING id`,
 		"oe-"+randHex(12), "测试套餐-"+randHex(4)).Scan(&planID); err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +219,7 @@ func (e *oeEnv) oeMkPlan(t *testing.T, ctx context.Context, unitCents int64) (pl
 		versionID, catalogsvc.MetricTraffic, "cycle", 100*oeGib)
 	e.oeMustExec(t, ctx, `UPDATE plan_versions SET status = 'published', frozen_at = now() WHERE id = ?`, versionID)
 	e.oeMustExec(t, ctx, `UPDATE plans SET status = 'active', current_version_id = ? WHERE id = ?`, versionID, planID)
-	if err := e.row(ctx, `INSERT INTO prices (plan_id, unit_amount, billing_interval, interval_count) VALUES (?, ?, 'month', 1) RETURNING id`,
+	if err := e.row(ctx, `INSERT INTO prices (plan_id, plan_kind, unit_amount, billing_interval, interval_count) VALUES (?, 'subscription', ?, 'month', 1) RETURNING id`,
 		planID, money.FromCents(unitCents)).Scan(&priceID); err != nil {
 		t.Fatal(err)
 	}

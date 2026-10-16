@@ -18,12 +18,12 @@ import (
 
 // DeliverableNodes 实现 subscription 的 NodeSource：这份订阅能拿的线路，协议配置已是内核字段名，已按新鲜度分层排好序。
 //
-// 订阅生效、账号 active 由拉取路径先判过，这里只管节点：套餐版本绑的池里满足 repo.DeliverableNodeCond 的节点，
+// 订阅生效、账号 active 由拉取路径先判过，这里只管节点：套餐版本所属套餐绑的池里满足 repo.DeliverableNodeCond 的节点，
 // 经 poolAdmits 按订阅主人的用户组过滤，再按 preferFresh 分层。
 // 结果只取决于 q.PlanVersionID 与 q.UserGroupID（SubscriptionID、UserID 不参与），按这两项缓存 deliveryCacheTTL
 // （delivery_cache.go）：返回的切片与其中的 Config 被所有命中者共享，调用方只读不改。永不为 nil。
 func (s *Service) DeliverableNodes(ctx context.Context, q subsvc.NodeQuery) ([]render.Node, error) {
-	if s.catalog == nil {
+	if s.catalog == nil || s.versions == nil {
 		return nil, errDeliveryPortMissing
 	}
 	versionID, groupID := q.PlanVersionID, q.UserGroupID
@@ -32,13 +32,21 @@ func (s *Service) DeliverableNodes(ctx context.Context, q subsvc.NodeQuery) ([]r
 	})
 }
 
-// loadDeliverableNodes 现算一份线路，不经缓存。两次读：版本绑池（catalog）、候选节点（一条 SQL）。永不为 nil。
+// loadDeliverableNodes 现算一份线路，不经缓存。三次读：版本取套餐（catalog）、套餐绑池（catalog）、候选节点（一条 SQL）。永不为 nil。
 func (s *Service) loadDeliverableNodes(ctx context.Context, planVersionID uuid.UUID, userGroupID *uuid.UUID) ([]render.Node, error) {
-	vp, err := s.catalog.VersionPools(ctx, []uuid.UUID{planVersionID})
+	verMap, err := s.versions.VersionsByIDs(ctx, []uuid.UUID{planVersionID})
 	if err != nil {
 		return nil, err
 	}
-	pools := vp[planVersionID]
+	v, ok := verMap[planVersionID]
+	if !ok {
+		return []render.Node{}, nil
+	}
+	pp, err := s.catalog.PlanPools(ctx, []uuid.UUID{v.PlanID})
+	if err != nil {
+		return nil, err
+	}
+	pools := pp[v.PlanID]
 	if len(pools) == 0 {
 		return []render.Node{}, nil
 	}
