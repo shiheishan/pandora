@@ -10,7 +10,6 @@ const int = z.number().int()
 const count = int.nonnegative()
 /** DASH-01：numeric 聚合的字节一律是十进制字符串，禁止 JSON number */
 const decimalBytes = z.string().regex(/^\d+$/)
-const currency = z.string().min(1)
 
 // ---------------------------------------------------------------------------
 // GET v1/dashboard/backlog/notifications（DASH-01 冻结）
@@ -40,8 +39,8 @@ export type Backlog = z.output<typeof backlogSchema>
 // ---------------------------------------------------------------------------
 // GET v1/overview（report/service Overview）
 // ---------------------------------------------------------------------------
+// 全站只有人民币：营收是一个对象（分），不再按币种分行
 const revenueRowSchema = z.object({
-  currency,
   today: int,
   last_7_days: int,
   last_30_days: int,
@@ -60,7 +59,7 @@ const revenueRowSchema = z.object({
 export const overviewSchema = z.object({
   users: z.object({ total: count, active: count, today: count, last_7_days: count }),
   subscriptions: z.object({ active: count, expiring_7_days: count, expired: count, new_7_days: count }),
-  revenue: z.array(revenueRowSchema),
+  revenue: revenueRowSchema,
   orders: z.object({ paid_today: count, pending: count, failed_today: count }),
   ledger_drift_accounts: count,
   nodes: z.object({ total: count, online: count }),
@@ -70,7 +69,6 @@ export type Overview = z.output<typeof overviewSchema>
 // ---------------------------------------------------------------------------
 // GET v1/revenue/timeseries（previous_total 为紧邻前一等长区间的 displayed_net 合计）
 // ---------------------------------------------------------------------------
-export type RevenueCurrency = 'CNY' | 'USD'
 export type RevenueDays = 7 | 30 | 90
 const revenuePointSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -80,7 +78,6 @@ const revenuePointSchema = z.object({
   displayed_net: int,
 })
 export const revenueSchema = z.object({
-  currency,
   days: count,
   points: z.array(revenuePointSchema),
   previous_total: int,
@@ -218,19 +215,19 @@ export function useOverview() {
   })
 }
 
-export function useRevenue(cur: RevenueCurrency, days: RevenueDays) {
+export function useRevenue(days: RevenueDays) {
   const api = useApi()
   return useQuery({
-    queryKey: ['admin', 'dash', 'revenue', cur, days],
-    queryFn: ({ signal }) => api.get('v1/revenue/timeseries', revenueSchema, { signal, query: { currency: cur, days } }),
+    queryKey: ['admin', 'dash', 'revenue', days],
+    queryFn: ({ signal }) => api.get('v1/revenue/timeseries', revenueSchema, { signal, query: { days } }),
     meta: { topics: ['orders.changed'] },
-    // 切币种、切区间时保留上一张图，不闪骨架
+    // 切区间时保留上一张图，不闪骨架
     placeholderData: keepPreviousData,
   })
 }
 
-/** 仪表盘固定取近 24 小时前 5 名；「流量」KPI 读同一条查询的 totals，只发一次请求 */
-const TRAFFIC_QUERY = { range: '24h', limit: 5 } as const
+/** 仪表盘固定取近 24 小时前 10 名；「流量」KPI 读同一条查询的 totals，只发一次请求 */
+const TRAFFIC_QUERY = { range: '24h', limit: 10 } as const
 
 export function useNodeTraffic() {
   const api = useApi()

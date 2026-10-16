@@ -1,8 +1,8 @@
-import { formatBytes, formatCount, formatMoney, relativeTime } from '../../../core/format'
+import { formatBytes, formatCount, formatMoney } from '../../../core/format'
 import type { RouteQuery } from '../../../core/router'
 import type { ModuleKey } from '../../modules'
 import type { TaskItem } from '../../tasks'
-import type { ActivityPoint, Backlog, BackupStatus, ComponentState, NodeTraffic, RevenuePoint, SystemComponent, SystemStatus, UserTraffic } from './api'
+import type { Backlog, BackupStatus, ComponentState, NodeTraffic, Overview, SystemComponent, SystemStatus } from './api'
 
 // ===========================================================================
 // 格式化
@@ -54,6 +54,8 @@ export interface TaskCard {
   title: string
   count: number
   sub: string
+  unit: string
+  stats: { label: string; value: string }[]
   tone: Tone
   action: string
   /** 点卡片去处理的页面 */
@@ -68,7 +70,7 @@ const NOTIFY_HINT = '统计含邮件、Telegram、站内信；来自投递记录
 /** 通知积压卡：优先用冻结契约的 backlog 明细，拿不到时退回 tasks 条目里的摘要 */
 function notificationCard(backlog: Backlog | undefined, item: Extract<TaskItem, { kind: 'notifications_backlog' }> | undefined): TaskCard | null {
   const target: Target = { module: 'system', tab: 'notify' }
-  const base = { key: 'notifications_backlog', title: '通知投递积压', action: '查看通道', target, hint: NOTIFY_HINT }
+  const base = { key: 'notifications_backlog', title: '通知投递积压', action: '查看通道', target, hint: NOTIFY_HINT, unit: '条待投递' }
   if (backlog) {
     const c = backlog.counts
     const queued = c.ready + c.scheduled
@@ -77,12 +79,17 @@ function notificationCard(backlog: Backlog | undefined, item: Extract<TaskItem, 
     const parts = backlogged
       ? [`最久等待 ${formatDuration(backlog.max_ready_lag_seconds)}`, retrying > 0 ? `重试中 ${formatCount(retrying)}` : '', c.failed_total > 0 ? `${formatCount(c.failed_total)} 封失败` : '']
       : ['无超阈值到期积压', c.failed_total > 0 ? `累计失败 ${formatCount(c.failed_total)}` : '']
-    return { ...base, count: queued, sub: parts.filter(Boolean).join(' · '), tone: backlogged ? 'warn' : 'ok', pending: backlogged }
+    const stats = [
+      { label: '最久等待', value: formatDuration(backlog.max_ready_lag_seconds) },
+      { label: '累计失败', value: `${formatCount(c.failed_total)} 封` },
+    ]
+    return { ...base, count: queued, sub: parts.filter(Boolean).join(' · '), stats, tone: backlogged ? 'warn' : 'ok', pending: backlogged }
   }
   if (item) {
     const backlogged = item.backlog_state === 'backlogged'
     const sub = backlogged ? `积压超过阈值${item.failed_total > 0 ? ` · ${formatCount(item.failed_total)} 封失败` : ''}` : '无超阈值到期积压'
-    return { ...base, count: item.queued, sub, tone: backlogged ? 'warn' : 'ok', pending: backlogged }
+    const stats = [{ label: '累计失败', value: `${formatCount(item.failed_total)} 封` }]
+    return { ...base, count: item.queued, sub, stats, tone: backlogged ? 'warn' : 'ok', pending: backlogged }
   }
   return null
 }
@@ -95,31 +102,40 @@ function taskCard(item: TaskItem): TaskCard | null {
         item.oldest_wait_seconds !== null && item.count > 0 ? `最久已等 ${formatDuration(item.oldest_wait_seconds)}` : '',
         item.high_priority > 0 ? `${item.high_priority} 个高优先级` : '',
       ].filter(Boolean)
+      const oldest =
+        item.oldest_wait_seconds === null || item.count === 0 ? '—' : formatDuration(item.oldest_wait_seconds)
       return {
         key: item.kind,
         title: '待处理工单',
         count: item.count,
         sub: item.count > 0 ? parts.join(' · ') : none,
+        unit: '个未回复',
+        stats: [
+          { label: '高优先级', value: `${item.high_priority} 个` },
+          { label: '最久等待', value: oldest },
+        ],
         tone: item.count > 0 ? 'danger' : 'ok',
         action: '去回复',
         target: { module: 'tickets', tab: null },
         pending: item.count > 0,
       }
     }
-    case 'withdrawals_pending': {
-      const sum = item.amounts.filter((a) => a.amount !== 0).map((a) => formatMoney(a.amount, a.currency))
+    case 'withdrawals_pending':
       return {
         key: item.kind,
         title: '提现待审核',
         count: item.count,
-        sub: item.count > 0 && sum.length > 0 ? `合计 ${sum.join(' + ')}` : item.count > 0 ? '' : none,
+        sub: item.count > 0 ? `合计 ${formatMoney(item.amount)}` : none,
+        unit: '笔待审核',
+        stats: [{ label: '合计金额', value: formatMoney(item.amount) }],
         tone: item.count > 0 ? 'info' : 'ok',
         action: '去审核',
         target: { module: 'marketing', tab: 'commission' },
         pending: item.count > 0,
       }
-    }
     case 'nodes_offline': {
+      const sampleNames = item.sample.map((s) => s.name).join('、') || '—'
+      const longest = item.longest_offline_seconds === null ? '—' : formatDuration(item.longest_offline_seconds)
       const first = item.sample[0]?.name
       const parts = [
         first ? (item.count > 1 ? `${first} 等` : first) : '',
@@ -130,6 +146,8 @@ function taskCard(item: TaskItem): TaskCard | null {
         title: '离线节点',
         count: item.count,
         sub: item.count > 0 ? parts.join(' · ') : '全部在线',
+        unit: '个节点离线',
+        stats: [{ label: '最长离线', value: longest }, { label: '包括', value: sampleNames }],
         tone: item.count > 0 ? 'warn' : 'ok',
         action: '查看节点',
         target: { module: 'nodes', tab: 'nodes' },
@@ -142,31 +160,32 @@ function taskCard(item: TaskItem): TaskCard | null {
         title: '超时未支付订单',
         count: item.count,
         sub: item.count > 0 ? `超过 ${Math.round(item.threshold_seconds / 60)} 分钟，可能是回调丢失` : none,
+        unit: '张超时未支付',
+        stats: [{ label: '超时阈值', value: `${Math.round(item.threshold_seconds / 60)} 分钟` }],
         tone: item.count > 0 ? 'warn' : 'ok',
         action: '去核对',
-        // 带上「待支付」筛选（订单页 s=pending，含 pending_payment），落地就是要核对的那几单
         target: { module: 'billing', tab: 'orders', query: { s: 'pending' } },
         pending: item.count > 0,
       }
     case 'ledger_drift':
-      // 待补·前端：设计没有，但它是必须立刻查的严重信号——只在大于 0 时出现
       if (item.count === 0) return null
       return {
         key: item.kind,
         title: '账本漂移',
         count: item.count,
         sub: '余额与账本流水对不上的账户',
+        unit: '个账户对不上',
+        stats: [],
         tone: 'danger',
         action: '去核对',
         target: { module: 'billing', tab: null },
         pending: true,
       }
     case 'notifications_backlog':
-      return null // 由 notificationCard 合并 backlog 明细后产出
+      return null
   }
 }
 
-// 设计稿的卡片顺序；账本漂移排最前（最严重）
 const TASK_ORDER = ['ledger_drift', 'tickets_open', 'withdrawals_pending', 'nodes_offline', 'orders_pending_stale', 'notifications_backlog']
 
 export function taskCards(items: readonly TaskItem[] | undefined, backlog: Backlog | undefined): TaskCard[] {
@@ -181,6 +200,32 @@ export function taskCards(items: readonly TaskItem[] | undefined, backlog: Backl
   return cards.sort((a, b) => TASK_ORDER.indexOf(a.key) - TASK_ORDER.indexOf(b.key))
 }
 
+const TASK_TONE_RANK: Record<Tone, number> = { danger: 0, warn: 1, info: 2, ok: 3, neutral: 4 }
+
+export interface TaskBoard {
+  hero: TaskCard | null
+  rest: TaskCard[]
+  pending: number
+  urgent: number
+  summary: string
+}
+
+export function taskBoard(cards: readonly TaskCard[]): TaskBoard {
+  const pending = cards.filter((c) => c.pending).length
+  const urgent = cards.filter((c) => c.pending && c.tone === 'danger').length
+  const pendingCards = cards.filter((c) => c.pending)
+  let hero: TaskCard | null = null
+  if (pendingCards.length > 0) {
+    hero = pendingCards.reduce((best, c) => (TASK_TONE_RANK[c.tone] < TASK_TONE_RANK[best.tone] ? c : best))
+  }
+  const rest = cards.filter((c) => c !== hero).sort((a, b) => {
+    if (a.pending !== b.pending) return a.pending ? -1 : 1
+    return 0
+  })
+  const summary = pending === 0 ? '0 项' : `${pending} 项` + (urgent > 0 ? ` · ${urgent} 项紧急` : '')
+  return { hero, rest, pending, urgent, summary }
+}
+
 // ===========================================================================
 // 经营 KPI
 // ===========================================================================
@@ -192,96 +237,117 @@ export function kpiRevenueDelta(today: number, yesterday: number): { text: strin
   return { text: `较昨日 ${formatPercent(change)}`, tone: change > 0 ? 'ok' : change < 0 ? 'danger' : 'neutral' }
 }
 
-// ===========================================================================
-// 收入趋势
-// ===========================================================================
-
-interface Bar {
+export interface KpiTile {
   key: string
-  /** 0–100 的高度百分比；负值与 0 画成贴底细线 */
-  height: number
-  tip: string
-  today: boolean
+  label: string
+  value: string
+  sub: string
+  subTone?: Tone
+  tip?: string
+  target: Target
+  muted: boolean
 }
 
-interface RevenueSummary {
-  total: number
-  average: number
-  /** 较上一区间，previous_total 为 0 时 null */
-  delta: number | null
-  empty: boolean
-  bars: Bar[]
+function signedMoney(amount: number): string {
+  return `${amount > 0 ? '+' : ''}${formatMoney(amount)}`
 }
 
-export function revenueSummary(points: readonly RevenuePoint[], currency: string, previousTotal: number): RevenueSummary {
-  const total = points.reduce((sum, p) => sum + p.displayed_net, 0)
-  const max = Math.max(1, ...points.map((p) => p.displayed_net))
-  const bars = points.map((p, i) => {
-    const actual = p.actual_credit - p.actual_debit
-    const split = p.adjustment !== 0 ? ` · 实收 ${formatMoney(actual, currency)} · 调整 ${formatMoney(p.adjustment, currency)}` : ''
-    return {
-      key: p.date,
-      height: p.displayed_net > 0 ? Math.round((p.displayed_net / max) * 100) : 0,
-      tip: `${p.date.slice(5)} · ${formatMoney(p.displayed_net, currency)}${split}`,
-      today: i === points.length - 1,
+export function kpiTiles(o: Overview | undefined, traffic: NodeTraffic | undefined): KpiTile[] {
+  const tiles: KpiTile[] = []
+  if (o) {
+    const r = o.revenue
+    const revEmpty = r.total === 0 && r.today === 0
+    if (revEmpty) {
+      tiles.push({
+        key: 'revenue',
+        label: '今日收入',
+        value: '—',
+        sub: '还没有订单',
+        target: { module: 'billing', tab: 'orders' },
+        muted: true,
+      })
+    } else {
+      const delta = kpiRevenueDelta(r.today, r.yesterday)
+      const tip = [
+        r.adjustment_today !== 0 ? `含调整 ${signedMoney(r.adjustment_today)}` : '',
+        `近 7 天 ${formatMoney(r.last_7_days)}`,
+        `近 30 天 ${formatMoney(r.last_30_days)}`,
+        `今日已付订单 ${formatCount(o.orders.paid_today)} · 待支付 ${formatCount(o.orders.pending)} · 今日失败 ${formatCount(o.orders.failed_today)}`,
+      ]
+        .filter(Boolean)
+        .join('\n')
+      tiles.push({
+        key: 'revenue',
+        label: '今日收入',
+        value: formatMoney(r.today),
+        sub: r.adjustment_today !== 0 ? `${delta.text} · 含调整` : delta.text,
+        subTone: delta.tone,
+        tip,
+        target: { module: 'billing', tab: 'orders' },
+        muted: false,
+      })
     }
-  })
-  return {
-    total,
-    average: points.length ? Math.round(total / points.length) : 0,
-    delta: percentChange(total, previousTotal),
-    empty: points.every((p) => p.displayed_net === 0 && p.actual_credit === 0 && p.actual_debit === 0 && p.adjustment === 0),
-    bars,
+    const s = o.subscriptions
+    const subsEmpty = s.active === 0 && s.expired === 0
+    if (subsEmpty) {
+      tiles.push({
+        key: 'subs',
+        label: '有效订阅',
+        value: '0',
+        sub: '还没有人购买套餐',
+        target: { module: 'users', tab: 'list' },
+        muted: true,
+      })
+    } else {
+      tiles.push({
+        key: 'subs',
+        label: '有效订阅',
+        value: formatCount(s.active),
+        sub: `本周新增 ${formatCount(s.new_7_days)}`,
+        tip: `7 天内到期 ${formatCount(s.expiring_7_days)} · 已过期 ${formatCount(s.expired)}`,
+        target: { module: 'users', tab: 'list' },
+        muted: false,
+      })
+    }
   }
-}
-
-// ===========================================================================
-// 注册与活跃
-// ===========================================================================
-
-interface ActivityBar {
-  key: string
-  registered: number
-  active: number
-  tip: string
-}
-
-interface ActivitySummary {
-  registeredTotal: number
-  /** 日活均值；没有点时为 0 */
-  activeAverage: number
-  empty: boolean
-  bars: ActivityBar[]
-}
-
-export function activitySummary(points: readonly ActivityPoint[]): ActivitySummary {
-  const regMax = Math.max(1, ...points.map((p) => p.registered))
-  const actMax = Math.max(1, ...points.map((p) => p.active_users))
-  const registeredTotal = points.reduce((s, p) => s + p.registered, 0)
-  const activeTotal = points.reduce((s, p) => s + p.active_users, 0)
-  return {
-    registeredTotal,
-    activeAverage: points.length ? Math.round(activeTotal / points.length) : 0,
-    empty: points.every((p) => p.registered === 0 && p.active_users === 0 && p.logins === 0 && p.orders === 0),
-    bars: points.map((p) => ({
-      key: p.day,
-      // 设计稿：注册柱最高 70%，活跃柱最高 100%，两者量级不同各自归一
-      registered: Math.round((p.registered / regMax) * 70),
-      active: Math.round((p.active_users / actMax) * 100),
-      tip: [
-        p.day,
-        `注册 ${formatCount(p.registered)}`,
-        `活跃 ${formatCount(p.active_users)}`,
-        `登录 ${formatCount(p.logins)}`,
-        `订单 ${formatCount(p.orders)}`,
-        `独立 IP ${formatCount(p.unique_ips)}`,
-      ].join(' · '),
-    })),
+  let trafficTile: KpiTile
+  if (traffic === undefined) {
+    trafficTile = {
+      key: 'traffic',
+      label: '流量 · 近 24 小时',
+      value: '—',
+      sub: '',
+      tip: '节点原始上报的合计，不是计费账本',
+      target: { module: 'nodes', tab: 'nodes' },
+      muted: true,
+    }
+  } else if (traffic.totals.reported_bytes === '0') {
+    trafficTile = {
+      key: 'traffic',
+      label: '流量 · 近 24 小时',
+      value: '—',
+      sub: '还没有节点上报',
+      tip: '节点原始上报的合计，不是计费账本',
+      target: { module: 'nodes', tab: 'nodes' },
+      muted: true,
+    }
+  } else {
+    trafficTile = {
+      key: 'traffic',
+      label: '流量 · 近 24 小时',
+      value: formatBytes(traffic.totals.reported_bytes),
+      sub: o ? `${formatCount(o.nodes.online)} / ${formatCount(o.nodes.total)} 节点在线` : '',
+      tip: '节点原始上报的合计，不是计费账本',
+      target: { module: 'nodes', tab: 'nodes' },
+      muted: false,
+    }
   }
+  tiles.push(trafficTile)
+  return tiles
 }
 
 // ===========================================================================
-// 系统状态（7 行组件 + 待补·前端的第 8 行「数据库备份」）
+// 系统状态
 // ===========================================================================
 
 interface BackupSummary {
@@ -294,9 +360,7 @@ function ageText(hours: number): string {
 }
 
 export function backupSummary(b: BackupStatus): BackupSummary {
-  // 读不到不等于没备份（后端注释：权限或 systemd 沙箱都可能挡住），状态记为未知
   if (!b.readable) return { state: 'unknown', meta: '读不到备份目录' }
-  // latest 只算能恢复的那份（有校验、有封条）：有文件却没有这样的一份时说清楚，不说「还没有」
   if (!b.latest) return { state: 'warn', meta: (b.count ?? 0) > 0 ? `${b.count} 份都恢复不了（缺封条或校验）` : '还没有备份' }
   const problems = [
     b.stale ? '过期' : '',
@@ -312,19 +376,22 @@ export function backupSummary(b: BackupStatus): BackupSummary {
 export interface SystemRow {
   key: string
   name: string
+  short: string
   state: ComponentState
   meta: string
-  /** 行 tooltip：后端给的 message 原文 */
   hint?: string
-  /** 点击行为：跳模块或打开备份抽屉 */
   action?: { kind: 'go'; target: Target } | { kind: 'backup' }
 }
 
-interface SystemView {
+export interface SystemView {
   rows: SystemRow[]
+  attention: SystemRow[]
+  healthy: SystemRow[]
   degraded: number
   label: string
   tone: 'ok' | 'warn'
+  alert: { title: string; body: string } | null
+  footer: string
 }
 
 const COMPONENT_NAMES: Record<SystemComponent['key'], string> = {
@@ -332,13 +399,23 @@ const COMPONENT_NAMES: Record<SystemComponent['key'], string> = {
   redis: 'Redis 缓存',
   node_fabric: 'NativeCore 调度',
   payment_callbacks: '支付回调队列',
-  mail: '邮件投递 · SMTP',
+  mail: '邮件投递',
   telegram: 'Telegram',
   sse: 'SSE 推送',
   backup: '数据库备份',
 }
 
-/** R52：down / unknown 时 metrics 的任何字段都可能缺，缺失显示 — */
+const COMPONENT_SHORT: Record<SystemComponent['key'], string> = {
+  postgres: '主库',
+  redis: '缓存',
+  node_fabric: '节点调度',
+  payment_callbacks: '支付回调',
+  mail: '邮件投递',
+  telegram: 'Telegram',
+  sse: 'SSE 推送',
+  backup: '数据库备份',
+}
+
 const num = (v: number | null | undefined) => (v == null ? '—' : formatCount(v))
 
 function queueMeta(m: { queued?: number; retrying?: number; failed_total?: number }): string {
@@ -349,7 +426,6 @@ function queueMeta(m: { queued?: number; retrying?: number; failed_total?: numbe
 
 function componentMeta(c: SystemComponent): string {
   const latency = c.latency_ms !== undefined ? formatLatency(c.latency_ms) : ''
-  // 整个 metrics 为空（down / unknown 常见）：只剩延迟可说，没有就是 —
   if (Object.keys(c.metrics).length === 0) return latency || '—'
   switch (c.key) {
     case 'postgres': {
@@ -380,77 +456,62 @@ const ROW_ACTIONS: Partial<Record<SystemComponent['key'], Target>> = {
   telegram: { module: 'system', tab: 'notify' },
 }
 
+function systemAlert(attention: SystemRow[]): { title: string; body: string } | null {
+  if (attention.length === 0) return null
+  // 标题只点名确实降级（warn / down）的服务；状态未知的只在正文里说明
+  const nonBackup = attention.filter((r) => r.key !== 'backup' && (r.state === 'warn' || r.state === 'down'))
+  let title: string
+  if (nonBackup.length === 0) {
+    title = attention.some((r) => r.key === 'backup') ? '数据库备份需要处理' : '部分服务状态未知'
+  } else if (nonBackup.length === 1) {
+    title = `${nonBackup[0]!.short}受影响`
+  } else if (nonBackup.length === 2) {
+    title = `${nonBackup[0]!.short}与${nonBackup[1]!.short}受影响`
+  } else {
+    title = `${nonBackup.map((r) => r.short).join('、')}受影响`
+  }
+  const body = `${attention.map((r) => `${r.short}：${r.hint?.trim() ? r.hint : r.meta}`).join('；')}。`
+  return { title, body }
+}
+
 export function systemRows(status: SystemStatus): SystemView {
   const backup = backupSummary(status.backup)
-  const backupRow: SystemRow = { key: 'backup', name: COMPONENT_NAMES.backup, state: backup.state, meta: backup.meta, action: { kind: 'backup' } }
+  const backupRow: SystemRow = {
+    key: 'backup',
+    name: COMPONENT_NAMES.backup,
+    short: COMPONENT_SHORT.backup,
+    state: backup.state,
+    meta: backup.meta,
+    action: { kind: 'backup' },
+  }
   const rows: SystemRow[] = status.components
     .filter((c) => c.key !== 'backup')
     .map((c) => {
       const target = ROW_ACTIONS[c.key]
-      return { key: c.key, name: COMPONENT_NAMES[c.key], state: c.state, meta: componentMeta(c), hint: c.message, action: target ? { kind: 'go' as const, target } : undefined }
+      return {
+        key: c.key,
+        name: COMPONENT_NAMES[c.key],
+        short: COMPONENT_SHORT[c.key],
+        state: c.state,
+        meta: componentMeta(c),
+        hint: c.message,
+        action: target ? { kind: 'go' as const, target } : undefined,
+      }
     })
-  // 备份行的状态以后端组件为准（它还看 missing_checksum 等），文案由完整的 backup 段给出；
-  // Go 总会给 backup 组件，find 落空只是类型上的可能，此时退回 backup 段自己的判断
   const fromServer = status.components.find((c) => c.key === 'backup')
   rows.push(fromServer ? { ...backupRow, state: fromServer.state, hint: fromServer.message } : backupRow)
-  const degraded = rows.filter((r) => r.state === 'warn' || r.state === 'down').length
+  const attention = rows.filter((r) => r.state !== 'ok')
+  const healthy = rows.filter((r) => r.state === 'ok')
+  const degraded = attention.filter((r) => r.state === 'warn' || r.state === 'down').length
   const bad = status.state === 'degraded' || degraded > 0
-  return { rows, degraded, label: bad ? `${Math.max(degraded, 1)} 项降级` : '全部正常', tone: bad ? 'warn' : 'ok' }
-}
-
-// ===========================================================================
-// 流量排行
-// ===========================================================================
-
-interface TrafficRow {
-  key: string
-  rank: number
-  name: string
-  /** 条宽 0–100，以第一名为 100 */
-  width: number
-  value: string
-  tip: string
-  /** 用户行点进用户详情（#/users/list/<id>），节点行没有单节点深链 */
-  userId?: string
-}
-
-function ratio(part: string, whole: string): number {
-  const w = BigInt(whole)
-  if (w === 0n) return 0
-  return Number((BigInt(part) * 100n) / w)
-}
-
-export function trafficRows(data: NodeTraffic | UserTraffic, now: Date = new Date()): TrafficRow[] {
-  const top = data.items[0]?.total_bytes ?? '0'
-  return data.items.map((item, i) => {
-    const isNode = 'node_id' in item
-    const name = isNode ? (item.display_name ?? item.name) : item.email_masked
-    const tip = [
-      `上行 ${formatBytes(item.upload_bytes)}`,
-      `下行 ${formatBytes(item.download_bytes)}`,
-      isNode ? '' : `${item.subscription_count} 个订阅`,
-      `最近 ${relativeTime(item.last_report_at, now)}`,
-    ].filter(Boolean).join(' · ')
-    return {
-      key: isNode ? item.node_id : item.user_id,
-      rank: i + 1,
-      name,
-      width: Math.max(2, ratio(item.total_bytes, top)),
-      value: formatBytes(item.total_bytes),
-      tip,
-      userId: isNode ? undefined : item.user_id,
-    }
-  })
-}
-
-/** 卡片底部的小字：未归属流量、质量计数；全部未归属时给告警（DASH-01 的 all unattributed 状态） */
-export function trafficNotes(data: NodeTraffic | UserTraffic): { notes: string[]; allUnattributed: boolean } {
-  const notes: string[] = []
-  const t = data.totals
-  if (t.unattributed_bytes !== '0') notes.push(`未归属 ${formatBytes(t.unattributed_bytes)}`)
-  const q = data.quality
-  if (q.invalid_report_count > 0) notes.push(`无效上报 ${q.invalid_report_count}`)
-  if (q.invalid_entry_count > 0) notes.push(`无效条目 ${q.invalid_entry_count}`)
-  const allUnattributed = data.items.length === 0 && t.reported_bytes !== '0' && t.attributed_bytes === '0'
-  return { notes, allUnattributed }
+  return {
+    rows,
+    attention,
+    healthy,
+    degraded,
+    label: bad ? `${Math.max(degraded, 1)} 项降级` : '全部正常',
+    tone: bad ? 'warn' : 'ok',
+    alert: systemAlert(attention),
+    footer: `共 ${rows.length} 项服务`,
+  }
 }

@@ -1,51 +1,79 @@
+import { ArrowRight01Icon, ArrowRight02Icon } from '@hugeicons-pro/core-stroke-rounded'
+import { HugeiconsIcon } from '@hugeicons/react'
 import { formatCount } from '../../../core/format'
 import { Skeleton } from '../../../ui'
 import { useDashboardTasks } from '../../tasks'
 import { useBacklog } from './api'
 import css from './Dash.module.css'
-import { taskCards, type TaskCard } from './model'
-import { CardError, Dot, targetHref } from './parts'
+import { taskBoard, taskCards } from './model'
+import { CardError, Dot, GroupHead, targetHref, toneText } from './parts'
 
 export function Tasks() {
   const tasks = useDashboardTasks()
   const backlog = useBacklog()
 
   const loading = tasks.isPending || backlog.isPending
-  const cards = taskCards(tasks.data?.items, backlog.data)
-  const pending = cards.filter((c) => c.pending).length
-  const summary = pending === 0 ? '眼下没有要处理的事' : `${pending} 项 · 点一下直接去处理`
+  const board = taskBoard(taskCards(tasks.data?.items, backlog.data))
 
   return (
-    <section className={css.section} aria-labelledby="dash-tasks">
-      <div className={css.sectionHead}>
-        <h2 id="dash-tasks" className={css.sectionTitle}>
-          需要处理
-        </h2>
-        {!loading && cards.length > 0 && <span className={css.hint}>{summary}</span>}
-      </div>
-      {tasks.isError && <CardError boxed what="待办计数" error={tasks.error} onRetry={() => void tasks.refetch()} />}
-      {backlog.isError && <CardError boxed what="通知积压" error={backlog.error} onRetry={() => void backlog.refetch()} />}
-      {(loading || cards.length > 0) && (
-        <div className={css.taskGrid}>
-          {loading
-            ? Array.from({ length: 5 }, (_, i) => <Skeleton key={i} height={126} radius="var(--radius-lg)" />)
-            : cards.map((card) => <TaskTile key={card.key} card={card} />)}
+    <section className={css.tasks} aria-labelledby="dash-tasks">
+      <GroupHead id="dash-tasks" title="待办" hint={!loading && tasks.data ? board.summary : undefined} />
+      {tasks.isError && <CardError what="待办计数" error={tasks.error} onRetry={() => void tasks.refetch()} />}
+      {backlog.isError && <CardError what="通知积压" error={backlog.error} onRetry={() => void backlog.refetch()} />}
+      {loading ? (
+        <Skeleton height={180} />
+      ) : tasks.isError && !tasks.data ? null : board.hero === null ? (
+        <div className={css.tasksEmpty}>
+          <Dot tone="ok" />
+          <span className={css.tasksEmptyTitle}>没有待处理的事</span>
+          <span className={css.tasksEmptyHint}>新工单、离线节点、支付异常会出现在这里</span>
+        </div>
+      ) : (
+        <div className={css.tasksBoard}>
+          <a className={css.heroCard} href={targetHref(board.hero.target)} title={board.hero.hint}>
+            <span className={css.heroHead}>
+              <Dot tone={board.hero.tone} />
+              <span className={`${css.heroUrgent} ${toneText(board.hero.tone) ?? ''}`}>最紧急</span>
+              <span className={css.heroTitle}>{board.hero.title}</span>
+              <span className={css.spacer} />
+              <span className={css.heroAction}>
+                {board.hero.action}
+                <HugeiconsIcon icon={ArrowRight02Icon} size={13} aria-hidden="true" />
+              </span>
+            </span>
+            <span className={css.heroBody}>
+              <span className={`${css.heroCount} ${toneText(board.hero.tone) ?? ''}`}>{formatCount(board.hero.count)}</span>
+              <span className={css.heroUnit}>{board.hero.unit}</span>
+            </span>
+            {board.hero.stats.length > 0 && (
+              <span className={css.heroStats}>
+                {board.hero.stats.map((st, i) => (
+                  <span key={st.label} className={i > 0 ? `${css.heroStat} ${css.heroStatBorder}` : css.heroStat}>
+                    <span className={css.heroStatLabel}>{st.label}</span>
+                    <span className={css.heroStatValue}>{st.value}</span>
+                  </span>
+                ))}
+              </span>
+            )}
+          </a>
+          <div className={css.taskList}>
+            {board.rest.map((c) => (
+              <a
+                key={c.key}
+                className={c.pending ? css.taskItem : `${css.taskItem} ${css.taskItemMuted}`}
+                href={targetHref(c.target)}
+                title={c.hint ?? c.action}
+              >
+                <Dot tone={c.tone} />
+                <span className={css.taskTitle}>{c.title}</span>
+                <span className={css.taskSub}>{c.sub}</span>
+                <span className={css.taskCount}>{formatCount(c.count)}</span>
+                <HugeiconsIcon icon={ArrowRight01Icon} size={14} className={css.taskArrow} aria-hidden="true" />
+              </a>
+            ))}
+          </div>
         </div>
       )}
     </section>
-  )
-}
-
-function TaskTile({ card }: { card: TaskCard }) {
-  return (
-    <a className={css.task} href={targetHref(card.target)} title={card.hint}>
-      <span className={css.taskHead}>
-        <Dot tone={card.tone} />
-        <span>{card.title}</span>
-      </span>
-      <span className={css.taskCount}>{formatCount(card.count)}</span>
-      <span className={css.taskSub}>{card.sub}</span>
-      <span className={css.taskAct}>{card.action} →</span>
-    </a>
   )
 }

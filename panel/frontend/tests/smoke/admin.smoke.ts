@@ -51,9 +51,9 @@ const rows: Row[] = [
   // ---- 仪表盘 ----
   { at: 'dash/api.ts', seed: '开通事务写入、worker 派发的支付通知', path: 'v1/dashboard/backlog/notifications', schema: backlogSchema },
   { at: 'dash/api.ts', path: 'v1/overview', schema: overviewSchema },
-  { at: 'dash/api.ts', path: 'v1/revenue/timeseries', query: { currency: 'CNY', days: 30 }, schema: revenueSchema },
-  { at: 'dash/api.ts', seed: 'nodesim 经会话上报流量', path: 'v1/dashboard/traffic/nodes', query: { range: '24h', limit: 5 }, schema: nodeTrafficSchema },
-  { at: 'dash/api.ts', seed: 'nodesim 经会话上报流量', path: 'v1/dashboard/traffic/users', query: { range: '24h', limit: 5 }, schema: userTrafficSchema },
+  { at: 'dash/api.ts', path: 'v1/revenue/timeseries', query: { days: 30 }, schema: revenueSchema },
+  { at: 'dash/api.ts', seed: 'nodesim 经会话上报流量', path: 'v1/dashboard/traffic/nodes', query: { range: '24h', limit: 10 }, schema: nodeTrafficSchema },
+  { at: 'dash/api.ts', seed: 'nodesim 经会话上报流量', path: 'v1/dashboard/traffic/users', query: { range: '24h', limit: 10 }, schema: userTrafficSchema },
   { at: 'dash/api.ts', path: 'v1/system/status', schema: systemStatusSchema },
   { at: 'dash/api.ts', path: 'v1/stats/timeseries', query: { days: 14 }, schema: activitySchema },
 
