@@ -183,7 +183,7 @@ describe('parsing', () => {
     expect(kbpsToMbps(null)).toBe('')
     expect(kbpsToMbps(1500)).toBe('1.5')
     expect(throttleLabel(null)).toBe('不限速')
-    expect(throttleLabel(2048)).toBe('2 Mbps')
+    expect(throttleLabel(2000)).toBe('2 Mbps')
   })
 
   it('converts bytes to gb text', () => {
@@ -346,15 +346,15 @@ describe('overviewGroups', () => {
   it('renders basic, usage, reset off, sales for a subscription', () => {
     const groups = overviewGroups(planDetail({ description: null, reset: null }))
     expect(groups.map((g) => g.key)).toEqual(['basic', 'usage', 'reset', 'sales'])
-    expect(groups[0].rows).toEqual([
+    expect(groups[0]!.rows).toEqual([
       { k: '名称', v: '标准套餐' },
       { k: '代码', v: 'standard', mono: true },
       { k: '说明', v: '未填写', muted: true },
     ])
-    expect(groups[1].rows[0]).toEqual({ k: '每周期流量', v: '10.0 GB' })
-    expect(groups[1].rows[3]).toEqual({ k: '版本', v: 'v1' })
-    expect(groups[2].rows).toEqual([{ k: '状态', v: '未开启', muted: true }])
-    expect(groups[3].rows[1]).toEqual({ k: '新购 / 续费 / 变更', v: '允许 · 允许 · 允许' })
+    expect(groups[1]!.rows[0]).toEqual({ k: '每周期流量', v: '10.0 GB' })
+    expect(groups[1]!.rows[3]).toEqual({ k: '版本', v: 'v1' })
+    expect(groups[2]!.rows).toEqual([{ k: '状态', v: '未开启', muted: true }])
+    expect(groups[3]!.rows[1]).toEqual({ k: '新购 / 续费 / 变更', v: '允许 · 允许 · 允许' })
   })
 
   it('renders reset on, group visibility and draft version note', () => {
@@ -374,7 +374,7 @@ describe('overviewGroups', () => {
     ])
     const sales = groups.find((g) => g.key === 'sales')!
     expect(sales.rows[0]).toEqual({ k: '可见范围', v: '指定用户组可见 · 2 个用户组' })
-    expect(groups[1].rows[3]).toEqual({ k: '版本', v: 'v1 · 草稿 v2 待发布' })
+    expect(groups[1]!.rows[3]).toEqual({ k: '版本', v: 'v1 · 草稿 v2 待发布' })
   })
 
   it('renders the one-time price group last', () => {
@@ -390,7 +390,7 @@ describe('overviewGroups', () => {
       ],
     })
     const forever = overviewGroups(planDetail({ kind: 'one_time', prices: [price({ id: 'o', billing_interval: 'one_time', unit_amount: 9900 })] }))
-    expect(forever[forever.length - 1].rows[1]).toEqual({ k: '有效期', v: '永久' })
+    expect(forever[forever.length - 1]!.rows[1]).toEqual({ k: '有效期', v: '永久' })
   })
 })
 
@@ -415,7 +415,7 @@ describe('price lists', () => {
 
   it('computes the per-month hint', () => {
     expect(tierHint('258', 'year:1', '25')).toBe('折合 ¥21.50 / 月，省 14%')
-    expect(tierHint('258', 'year:1', '258')).toBe('折合 ¥21.50 / 月')
+    expect(tierHint('258', 'year:1', '258')).toBe('折合 ¥21.50 / 月，省 92%')
     expect(tierHint('258', 'year:1', '')).toBe('折合 ¥21.50 / 月')
     expect(tierHint('300', 'year:1', '25')).toBe('折合 ¥25.00 / 月')
     expect(tierHint('', 'year:1', '25')).toBe('')
@@ -449,7 +449,7 @@ describe('version list and copies', () => {
     const p = planDetail({
       version: 2,
       versions: [
-        version({ id: 'v3', version: 3, status: 'draft', published_at: null, created_at: '2026-03-01T08:00:00', traffic_bytes: null, max_devices: null, throttle_kbps: 2048 }),
+        version({ id: 'v3', version: 3, status: 'draft', published_at: null, created_at: '2026-03-01T08:00:00', traffic_bytes: null, max_devices: null, throttle_kbps: 2000 }),
         version({ id: 'v2', version: 2, status: 'published', published_at: '2026-02-05T10:00:00' }),
         version({ id: 'v1', version: 1, status: 'published', published_at: null, created_at: '2026-01-02T12:00:00' }),
       ],
@@ -458,8 +458,8 @@ describe('version list and copies', () => {
     expect(rows.map((r) => r.label)).toEqual(['草稿', '当前', '历史'])
     expect(rows.map((r) => r.tone)).toEqual(['warn', 'ok', 'neutral'])
     expect(rows[0]).toMatchObject({ at: '2026-03-01', summary: '不限流量 · 设备不限 · 限速 2 Mbps', isDraft: true, by: 'admin@example.com' })
-    expect(rows[2].at).toBe('2026-01-02')
-    expect(rows[1].summary).toBe('10.0 GB / 周期 · 3 台设备')
+    expect(rows[2]!.at).toBe('2026-01-02')
+    expect(rows[1]!.summary).toBe('10.0 GB / 周期 · 3 台设备')
   })
 
   it('builds publish copy', () => {
@@ -548,9 +548,9 @@ describe('reset', () => {
 
   it('validates only when on', () => {
     expect(resetProblems({ on: false, price: '', limit: 'x' })).toEqual({})
+    // 次数留空为不限
     expect(resetProblems({ on: true, price: '', limit: '' })).toEqual({
       'reset.price': '填每次价格，大于 0、最多两位小数',
-      'reset.limit': '填 1–1000 的整数，或留空为不限',
     })
     expect(resetProblems({ on: true, price: '0', limit: '1001' })).toEqual({
       'reset.price': '填每次价格，大于 0、最多两位小数',
@@ -635,7 +635,7 @@ describe('create', () => {
   })
 
   it('validates reset only when on', () => {
-    const off = { ...emptyCreate(), name: '标准' }
+    const off = { ...emptyCreate(), name: '标准', tiers: { ...emptyCreate().tiers, 'month:1': '25' } }
     expect(createProblems(off)).toEqual({})
     const on = { ...off, resetOn: true, resetPrice: '', resetLimit: '0' }
     expect(createProblems(on)).toEqual({

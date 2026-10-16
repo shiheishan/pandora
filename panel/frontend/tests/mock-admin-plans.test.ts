@@ -22,7 +22,6 @@ describe('mock api · admin plans (two-kind redesign)', () => {
   afterAll(() => close(server))
 
   const STD = '9c0e1a2b-3333-4b00-8000-000000000001'
-  const PRO = '9c0e1a2b-3333-4b00-8000-000000000002'
   const FAMILY = '9c0e1a2b-3333-4b00-8000-000000000003'
 
   const get = (path: string) => mockFetch(base, auth, 'GET', path)
@@ -377,7 +376,7 @@ describe('mock api · admin plans (two-kind redesign)', () => {
 
   // 9. pools
   it('9. pools update updates GET pools bound state', async () => {
-    let d = await detailOf(STD)
+    const d = await detailOf(STD)
     const { live } = await poolIds()
 
     // 绑定单一池

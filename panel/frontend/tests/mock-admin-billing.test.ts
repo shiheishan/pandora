@@ -42,9 +42,9 @@ describe('mock api · admin billing', () => {
   // dev/mock/admin/users.ts 的第 3 个种子用户（id 固定）
   const SEED_USER = '1a2b3c43-0000-4000-8000-000000000003'
   const firstPlan = async () => {
-    const plans = await json<{ plans: Array<{ id: string; status: string; prices: Array<{ id: string; status: string; currency: string }> }> }>(await get(admin, 'plans'))
+    const plans = await json<{ plans: Array<{ id: string; status: string; prices: Array<{ id: string; status: string }> }> }>(await get(admin, 'plans'))
     const plan = plans.plans.find((p) => p.status === 'active')!
-    return { plan_id: plan.id, price_id: plan.prices.find((x) => x.status === 'active' && x.currency === 'CNY')!.id }
+    return { plan_id: plan.id, price_id: plan.prices.find((x) => x.status === 'active')!.id }
   }
 
   it('counts the dashboard stale-pending card from the same orders the pending filter lists', async () => {
@@ -142,9 +142,9 @@ describe('mock api · admin billing', () => {
   type Detail = { balance: number; subscriptions: Array<SubRow & { pack_remaining_bytes: number }>; recent_orders: Array<{ id: string; kind: string }>; unattached_pack_bytes: number }
   const detailOf = async (id: string) => json<Detail>(await get(admin, `users/${id}`))
   const planByName = async (name: string) => {
-    const plans = await json<{ plans: Array<{ id: string; name: string; status: string; prices: Array<{ id: string; status: string; currency: string; unit_amount: number }> }> }>(await get(admin, 'plans'))
+    const plans = await json<{ plans: Array<{ id: string; name: string; status: string; prices: Array<{ id: string; status: string; unit_amount: number }> }> }>(await get(admin, 'plans'))
     const plan = plans.plans.find((p) => p.name === name && p.status === 'active')!
-    const price = plan.prices.find((x) => x.status === 'active' && x.currency === 'CNY')!
+    const price = plan.prices.find((x) => x.status === 'active')!
     return { plan_id: plan.id, price_id: price.id, amount: price.unit_amount }
   }
   const preview = async (user: string, plan: { plan_id: string; price_id: string }, entry?: string, token = admin) =>

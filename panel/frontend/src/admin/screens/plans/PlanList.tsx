@@ -188,5 +188,5 @@ function PlanTable({ rows, onOpen, hasAny }: { rows: readonly PlanRow[]; onOpen:
 
 /** 每格外包一层：归档整行降透明度（Table 没有行 class） */
 function cellCls(row: PlanRow): string {
-  return row.status === 'archived' ? css.archived : ''
+  return row.status === 'archived' ? (css.archived ?? '') : ''
 }

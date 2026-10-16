@@ -1,5 +1,5 @@
 import { formatBytes, formatCount, formatDateTime, formatMoney } from '../../../core/format'
-import type { PlanDetail, PlanKind, PlanReset, PlanRow, PlanStatus, PriceRow, VersionRow, Visibility } from './schemas'
+import type { PlanDetail, PlanKind, PlanRow, PlanStatus, PriceRow, VersionRow, Visibility } from './schemas'
 
 export type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'neutral'
 export type Fields = Record<string, string>
@@ -96,11 +96,8 @@ export function bytesToGb(bytes: number | null): string {
   if (bytes === null) return ''
   if (bytes % GiB === 0) return String(bytes / GiB)
   const whole = Math.floor(bytes / GiB)
-  let frac = Math.round(((bytes % GiB) * 100) / GiB)
-  if (frac === 100) {
-    frac = 0
-    return String(whole + 1)
-  }
+  const frac = Math.round(((bytes % GiB) * 100) / GiB)
+  if (frac === 100) return String(whole + 1)
   return frac === 0 ? String(whole) : `${whole}.${String(frac).padStart(2, '0').replace(/0+$/, '')}`
 }
 
@@ -724,7 +721,7 @@ export function createFieldKey(serverKey: string, f: CreateForm): string {
   if (m) {
     const filled = TIERS.filter((t) => f.tiers[t.key].trim() !== '')
     const idx = Number(m[1])
-    if (idx < filled.length) return `tier.${filled[idx].key}`
+    if (idx < filled.length) return `tier.${filled[idx]!.key}`
   }
   return serverKey
 }
