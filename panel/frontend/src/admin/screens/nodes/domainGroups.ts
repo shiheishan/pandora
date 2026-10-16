@@ -170,7 +170,7 @@ export function removeDomainBody(
   const src = cfg.groups.find((g) => g.id === groupId)
   const groupName = src?.name ?? ''
   const body = toBody(cfg)
-  const idx = body.groups.findIndex((g, i) => cfg.groups[i]?.id === groupId)
+  const idx = body.groups.findIndex((_g, i) => cfg.groups[i]?.id === groupId)
   if (idx < 0) return { body, dropsGroup: false, groupName }
 
   const g = body.groups[idx]!
