@@ -28,7 +28,7 @@ import {
   serverSchema,
   serversResponse,
 } from '../../src/admin/screens/nodes/schemas'
-import { packsSchema, planPoolsSchema, planResponseSchema, plansSchema, poolOptionsSchema } from '../../src/admin/screens/plans/schemas'
+import { planPoolsSchema, planResponseSchema, plansSchema, poolOptionsSchema } from '../../src/admin/screens/plans/schemas'
 import { accessResponse, auditResponse, clustersResponse, switchesResponse } from '../../src/admin/screens/security/schemas'
 import { deliveriesResponse, hooksResponse, mailSettingsSchema, telegramSettingsSchema, templatesResponse as mailTemplatesResponse } from '../../src/admin/screens/system/schemas'
 import { assigneesSchema, macrosSchema, queueSchema, ticketDetailSchema } from '../../src/admin/screens/tickets/api'
@@ -113,11 +113,10 @@ const rows: Row[] = [
   { at: 'content/queries.ts', path: 'v1/settings/site', schema: siteSettingsSchema },
 
   // ---- 套餐 ----
-  { at: 'plans/api.ts', seed: '后台 POST plans/complete', path: 'v1/plans', schema: plansSchema },
+  { at: 'plans/api.ts', seed: '后台 POST plans', path: 'v1/plans', schema: plansSchema },
   { at: 'plans/api.ts', path: `v1/plans/${s.plan_id}`, schema: planResponseSchema },
   { at: 'plans/api.ts', path: `v1/plans/${s.plan_id}/pools`, schema: planPoolsSchema },
   { at: 'plans/api.ts', path: 'v1/node-pools', schema: poolOptionsSchema },
-  { at: 'plans/api.ts', seed: '后台 POST traffic-packs', path: 'v1/traffic-packs', schema: packsSchema },
 
   // ---- 系统 ----
   { at: 'system/queries.ts', path: 'v1/settings/mail', schema: mailSettingsSchema },
