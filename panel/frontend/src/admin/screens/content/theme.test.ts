@@ -161,7 +161,8 @@ describe('theme form', () => {
 describe('theme rows', () => {
   it('returns five light swatches in THEME_COLORS order with fallbacks', () => {
     expect(themeSwatches(theme())).toEqual(['#f5f4f0', '#e7e5df', '#62615c', '#1c1c1f', '#b9442b'])
-    expect(themeSwatches({ tokens: { light: {}, dark: {} } })).toEqual(['var(--bg)', 'var(--border)', 'var(--text-2)', 'var(--text)', 'var(--brand)'])
+    // 缺的令牌回退设计规范默认浅色，与编辑表单一致
+    expect(themeSwatches({ tokens: { light: {}, dark: {} } }).some((v) => v.startsWith('var('))).toBe(false)
   })
 
   it('tells the admin what activation replaces', () => {

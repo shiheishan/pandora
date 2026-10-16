@@ -27,11 +27,11 @@ export function fromLocalInput(value: string, original?: string | null): string 
 // ---------------------------------------------------------------------------
 // 公告 · 展示
 // ---------------------------------------------------------------------------
-export const ANN_STATUS: Record<AnnStatus, { label: string; tone: 'ok' | 'warn' | 'info' | 'muted' }> = {
+export const ANN_STATUS: Record<AnnStatus, { label: string; tone: 'ok' | 'warn' | 'info' | 'neutral' }> = {
   published: { label: '已发布', tone: 'ok' },
   draft: { label: '草稿', tone: 'warn' },
   scheduled: { label: '定时', tone: 'info' },
-  withdrawn: { label: '已撤回', tone: 'muted' },
+  withdrawn: { label: '已撤回', tone: 'neutral' },
 }
 
 export const SEVERITY: Record<Severity, { label: string; tone: 'neutral' | 'info' | 'warn' | 'danger' }> = {

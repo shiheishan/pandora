@@ -166,7 +166,6 @@ function SiteCard() {
   const fail = useFailure()
   const invalidate = useInvalidateContent()
   const site = useSiteSettings()
-  const id = useId()
   const [name, setName] = useState<string | null>(null)
   const [picked, setPicked] = useState<string | null>(null)
   const [errors, setErrors] = useState<Record<string, string>>({})

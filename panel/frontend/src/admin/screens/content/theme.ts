@@ -58,13 +58,13 @@ export function themeToForm(target: ThemeTarget): ThemeForm {
     name = target.theme.name
   } else if (source) {
     code = `${source.code}-copy`.slice(0, 39)
-    name = `${source.name} 副本`.slice(0, 60)
+    name = `${[...source.name].slice(0, 57).join('')} 副本`
   }
   const colors = {} as Record<ColorKey, string>
   for (const [key, token] of THEME_COLORS) {
     colors[key] = expandHex(source?.tokens.light[token] ?? LIGHT_DEFAULT[token] ?? '')
   }
-  return { code, name, tagline: str(branding.tagline), colors }
+  return { code, name, tagline: str(branding.tagline).trim(), colors }
 }
 
 // ---------------------------------------------------------------------------
@@ -127,7 +127,7 @@ export function buildThemeRequest(form: ThemeForm, target: ThemeTarget): { ok: t
 
 /** 主题列表行上的 5 个色块：浅色组取值，缺键回退当前界面令牌 */
 export function themeSwatches(t: Pick<Theme, 'tokens'>): string[] {
-  return THEME_COLORS.map(([, token]) => t.tokens.light[token] ?? `var(${token})`)
+  return THEME_COLORS.map(([, token]) => t.tokens.light[token] ?? LIGHT_DEFAULT[token] ?? `var(${token})`)
 }
 
 /** 激活确认框：先说后果。站点名只认系统设置（site.name），不随生效主题变化，在「站点设置」里改 */

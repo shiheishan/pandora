@@ -122,7 +122,7 @@ function EditorBody({ formId, target, onBusy, onClose }: { formId: string; targe
 const HEX6 = /^#[0-9a-f]{6}$/i
 const toHex6 = (v: string) => (v.length === 4 ? `#${[...v.slice(1)].map((c) => c + c).join('')}` : v).toLowerCase()
 
-function ColorRow({ colorKey, token, label, value, error, onChange }: { colorKey: ColorKey; token: string; label: string; value: string; error?: string; onChange: (value: string) => void }) {
+function ColorRow({ token, label, value, error, onChange }: { colorKey: ColorKey; token: string; label: string; value: string; error?: string; onChange: (value: string) => void }) {
   const id = useId()
   const v = value.trim()
   const style: CSSProperties = { background: v }
