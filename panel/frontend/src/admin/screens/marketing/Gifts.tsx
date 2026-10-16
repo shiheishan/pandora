@@ -293,7 +293,7 @@ function Batches({ selected }: { selected: string | null }) {
         title={exportBatchTarget ? `一次性导出 ${batchLabel(exportBatchTarget)}？` : ''}
         body="导出的 CSV 含完整卡码，只能导出这一次；之后列表里只显示掩码。请把文件存到安全的位置。"
         confirmLabel="导出 CSV"
-        onConfirm={() => exportBatchTarget && exporter.mutateAsync(exportBatchTarget.id).catch(() => setExportBatchTarget(null))}
+        onConfirm={() => (exportBatchTarget ? exporter.mutateAsync(exportBatchTarget.id).catch(() => setExportBatchTarget(null)) : undefined)}
         onCancel={() => setExportBatchTarget(null)}
       />
     </div>

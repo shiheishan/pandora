@@ -51,12 +51,12 @@ describe('coupons', () => {
   it('formats coupon period label for future start, until, or perpetual', () => {
     const now = new Date('2026-10-16T12:00:00Z')
     // 未来开始 + 结束
-    expect(couponPeriodLabel({ valid_from: '2026-11-01T00:00:00Z', valid_until: '2026-12-01T00:00:00Z' }, now)).toEqual({
+    expect(couponPeriodLabel({ valid_from: '2026-11-01T12:00:00Z', valid_until: '2026-12-01T12:00:00Z' }, now)).toEqual({
       short: '11-01 起 · 至 12-01',
       full: '2026-11-01 → 2026-12-01',
     })
     // 过去开始 + 长期（无结束）
-    expect(couponPeriodLabel({ valid_from: '2026-09-01T00:00:00Z', valid_until: null }, now)).toEqual({
+    expect(couponPeriodLabel({ valid_from: '2026-09-01T12:00:00Z', valid_until: null }, now)).toEqual({
       short: '长期',
       full: '2026-09-01 → 长期',
     })
@@ -66,7 +66,7 @@ describe('coupons', () => {
       full: '创建即生效 → 长期',
     })
     // 过去开始 + 有结束
-    expect(couponPeriodLabel({ valid_from: '2026-10-01T00:00:00Z', valid_until: '2026-11-01T00:00:00Z' }, now)).toEqual({
+    expect(couponPeriodLabel({ valid_from: '2026-10-01T12:00:00Z', valid_until: '2026-11-01T12:00:00Z' }, now)).toEqual({
       short: '至 11-01',
       full: '2026-10-01 → 2026-11-01',
     })
@@ -153,5 +153,4 @@ describe('coupons', () => {
     })
     expect(row.applicable_plan_ids).toEqual([])
   })
-})
 })

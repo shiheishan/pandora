@@ -32,7 +32,7 @@ export function templateFace(t: Pick<GiftTemplate, 'type' | 'rewards'>, plans: r
 /** 周期价文案：月付、季付、半年付、年付、一次性、其余「每 N 月 / 年」接「 · ¥x」 */
 export function priceLabel(p: Plan['prices'][number]): string {
   const count = p.interval_count
-  let period = ''
+  let period: string
   if (p.billing_interval === 'one_time') {
     period = '一次性'
   } else if (p.billing_interval === 'month') {

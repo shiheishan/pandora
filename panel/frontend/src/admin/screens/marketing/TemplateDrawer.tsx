@@ -1,5 +1,5 @@
 import { useMutation } from '@tanstack/react-query'
-import { useEffect, useState, type FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import { useApi } from '../../../shell/runtime'
 import { Button, Input, Modal, Select, Switch, useToast } from '../../../ui'
 import { TEMPLATE_TYPES, buildTemplateRequest, emptyPrize, emptyTemplateForm, priceLabel, type PrizeForm, type TemplateForm } from './giftModel'
@@ -25,12 +25,15 @@ export function TemplateModal({
   const [form, setForm] = useState<TemplateForm>(emptyTemplateForm)
   const [errors, setErrors] = useState<FieldErrors>({})
 
-  useEffect(() => {
+  // 每次打开都从空表单开始（渲染期按 open 的变化重置，不在 effect 里 setState）
+  const [prevOpen, setPrevOpen] = useState(open)
+  if (open !== prevOpen) {
+    setPrevOpen(open)
     if (open) {
       setForm(emptyTemplateForm())
       setErrors({})
     }
-  }, [open])
+  }
 
   const set = <K extends keyof TemplateForm>(key: K, value: TemplateForm[K]) => setForm((f) => ({ ...f, [key]: value }))
   const setPrize = (i: number, patch: Partial<PrizeForm>) => set('pool', form.pool.map((p, j) => (j === i ? { ...p, ...patch } : p)))

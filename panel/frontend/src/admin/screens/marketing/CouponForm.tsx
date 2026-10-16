@@ -67,7 +67,6 @@ export function CouponFormModal({
 function CouponFormInner({
   open,
   plans,
-  onClose,
   onCreated,
   onSubmittingChange,
 }: {
