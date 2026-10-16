@@ -56,7 +56,7 @@ export type UserRow = z.output<typeof userRowSchema>
 // （列表行里的 subscription_count / active_plan / current_subscription 在这里是零值，不用）
 // ---------------------------------------------------------------------------
 // period：配额周期（total / cycle / day / month），后台改流量上限按「指标 + 周期」定位一行
-const quotaSchema = z.object({ metric: z.string(), period: z.string(), limit: int.nullable(), consumed: count, remaining: int.nullable() })
+export const quotaSchema = z.object({ metric: z.string(), period: z.string(), limit: int.nullable(), consumed: count, remaining: int.nullable() })
 const subscriptionSchema = z.object({
   id: z.string(),
   // 用户起的备注名（购买模型统一）：没起为 null；后台只读，改名是用户在用户端里做的事

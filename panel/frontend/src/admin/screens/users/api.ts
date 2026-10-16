@@ -6,7 +6,7 @@ import { planOptionsKey } from '../plans/api'
 import { exactEmail } from './model'
 import { signupSettingsSchema } from './signupSettings'
 import { bulkBanSchema, generationJobSchema, generationJobsSchema } from './opsSchemas'
-import { userDetailSchema, usersSchema } from './schemas'
+import { quotaSchema, userDetailSchema, usersSchema } from './schemas'
 export { bulkBanSchema }
 
 // 订单的封闭枚举与列表行归订单与收款模块（后台-05），用户详情「最近订单」同形
