@@ -7,7 +7,6 @@ import (
 	"github.com/shopspring/decimal"
 
 	idemsvc "github.com/aegispanel/aegis/internal/module/idempotency/service"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
 // 卡型。
@@ -39,7 +38,7 @@ const (
 	PlanGrantChanged = "changed"
 )
 
-// Prize 是盲盒奖池里的一项；Weight 是相对权重（70/20/10 与 7/2/1 等价）。余额按模板的币种，零值表示不送。
+// Prize 是盲盒奖池里的一项；Weight 是相对权重（70/20/10 与 7/2/1 等价）。零值表示不送。
 type Prize struct {
 	Label        string
 	Weight       int
@@ -48,7 +47,7 @@ type Prize struct {
 	ExpireDays   int
 }
 
-// Rewards 是一张卡送什么，按卡型解释：general 用前四项，plan 用 PlanID / PriceID，mystery 用 Pool。
+// Rewards 是一张卡送什么，按卡型解释：general 用前四项，plan 用 PlanID / PriceID（两者都必填），mystery 用 Pool。
 // 余额零值表示不送。
 type Rewards struct {
 	Balance      decimal.Decimal
@@ -81,12 +80,12 @@ type Template struct {
 	Description string
 	Type        string
 	Status      string
-	// Currency 是余额奖励（含奖池）的币种
-	Currency   money.Currency
-	Rewards    Rewards
-	Conditions Conditions
-	Limits     Limits
-	ThemeColor string
+	Rewards     Rewards
+	Conditions  Conditions
+	Limits      Limits
+	ThemeColor  string
+	// PriceArchived 是套餐卡指向的价格档已下架（归档或不存在）：后台标「价格已下架」，兑换会被拒，编辑时必须重选在售价
+	PriceArchived bool
 	// CodeTotal、CodeUsed 是这个模板下的码数与已兑换数
 	CodeTotal int64
 	CodeUsed  int64
@@ -195,7 +194,7 @@ type CodeReportRow struct {
 	UsedAt       *time.Time
 }
 
-// Stats 是后台礼品卡统计。金额按站点币种（Currency）计，其它币种的不计入。
+// Stats 是后台礼品卡统计。
 type Stats struct {
 	Templates   int64
 	CodesTotal  int64
@@ -207,13 +206,11 @@ type Stats struct {
 	TrafficOut int64
 	// BalanceIssued 已发行通用卡的面额合计：每张码按所属模板当前的余额奖励计，不论是否兑换、停用或过期
 	BalanceIssued decimal.Decimal
-	Currency      money.Currency
 }
 
 // Granted 是一次兑换实际发出去的东西。
 type Granted struct {
 	Balance      decimal.Decimal
-	Currency     money.Currency
 	TrafficBytes int64
 	ExpireDays   int
 	QuotaReset   bool
@@ -248,7 +245,6 @@ type RedeemResult struct {
 	Type         string
 	PrizeLabel   string
 	Balance      decimal.Decimal
-	Currency     money.Currency
 	TrafficBytes int64
 	ExpireDays   int
 	QuotaReset   bool
@@ -264,16 +260,18 @@ type CardPreview struct {
 	Description string
 	Type        string
 	Status      string
-	Currency    money.Currency
 	Rewards     Rewards
 	Conditions  Conditions
 	Limits      Limits
 	ThemeColor  string
 	CreatedAt   time.Time
-	// PlanName、Interval、IntervalCount 只给套餐卡（找不到套餐或价格时为空）
+	// PlanName、PlanKind、Interval、IntervalCount、ValidityDays 只给套餐卡
+	// PlanKind 是套餐类型（catalog 的 "subscription" / "one_time"）；ValidityDays 只给一次性套餐的价格：有效天数，nil 为永久
 	PlanName      string
+	PlanKind      string
 	Interval      string
 	IntervalCount int
+	ValidityDays  *int
 	// Placement 是这张卡在当前用户名下怎么用；纯余额卡为 nil
 	Placement *CardPlacement
 }
@@ -292,7 +290,6 @@ type MyRedemption struct {
 	CodeHint     string
 	PrizeLabel   string
 	Balance      decimal.Decimal
-	Currency     money.Currency
 	TrafficBytes int64
 	ExpireDays   int
 	RedeemedAt   time.Time

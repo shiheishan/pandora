@@ -10,7 +10,6 @@ import (
 
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
 // 余额卡：余额入账一笔 gift_card_balance（平台赠送费用 → 用户余额），码转 used，写一条兑换流水；
@@ -95,12 +94,12 @@ func TestRedeemUnusableCodesLookTheSame(t *testing.T) {
 	mustCode(t, e.svc.ToggleCode(e.asAdmin(ctx), usedID, true), errs.Conflict)
 }
 
-// 套餐卡、无订阅：另开一份；没有价格档时快照按 month×1、金额 0。
+// 套餐卡、无订阅：另开一份。
 func TestRedeemPlanCardProvisionsNew(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	planID, _, _ := e.mkPlan(t, ctx, 3000)
-	tpl := e.mkTemplate(t, ctx, TemplateInput{Type: TypePlan, Rewards: Rewards{PlanID: &planID}})
+	planID, _, priceID := e.mkPlan(t, ctx, 3000)
+	tpl := e.mkTemplate(t, ctx, TemplateInput{Type: TypePlan, Rewards: Rewards{PlanID: &planID, PriceID: &priceID}})
 	code := e.mkCodes(t, ctx, tpl.ID, 1, nil)[0]
 
 	pv, err := e.svc.Preview(asUser(ctx, user), code)
@@ -126,8 +125,8 @@ func TestRedeemPlanCardProvisionsNew(t *testing.T) {
 		t.Fatalf("订阅 %d 份，期望 1", len(us.Subscriptions))
 	}
 	s := us.Subscriptions[0]
-	if s.PlanID != planID || s.Price.Interval != "month" || s.Price.IntervalCount != 1 || !s.Price.Amount.IsZero() || s.Price.PriceID != nil {
-		t.Fatalf("订阅快照 %+v，期望 month×1、金额 0、无价格档", s.Price)
+	if s.PlanID != planID || s.Price.Interval != "month" || s.Price.IntervalCount != 1 || !s.Price.Amount.IsZero() || s.Price.PriceID == nil || *s.Price.PriceID != priceID {
+		t.Fatalf("订阅快照 %+v，期望 month×1、金额 0、价格档 %s", s.Price, priceID)
 	}
 	var mode string
 	if err := e.row(ctx, `SELECT plan_mode FROM gift_card_redemptions WHERE user_id = ?`, user).Scan(&mode); err != nil || mode != PlanGrantNew {
@@ -163,8 +162,8 @@ func TestRedeemPlanCardChangesPlan(t *testing.T) {
 	user := e.mkUser(t, ctx)
 	oldPlan, oldVersion, oldPrice := e.mkPlan(t, ctx, 3000)
 	sub := e.mkSub(t, ctx, user, oldPlan, oldVersion, oldPrice)
-	newPlan, _, _ := e.mkPlan(t, ctx, 5000)
-	tpl := e.mkTemplate(t, ctx, TemplateInput{Type: TypePlan, Rewards: Rewards{PlanID: &newPlan}})
+	newPlan, _, newPrice := e.mkPlan(t, ctx, 5000)
+	tpl := e.mkTemplate(t, ctx, TemplateInput{Type: TypePlan, Rewards: Rewards{PlanID: &newPlan, PriceID: &newPrice}})
 	codes := e.mkCodes(t, ctx, tpl.ID, 2, nil)
 	change := &Choice{Kind: KindChange, SubscriptionID: &sub.ID}
 
@@ -197,8 +196,7 @@ func TestRedeemPlanCardChangesPlan(t *testing.T) {
 	if after := e.subOf(t, ctx, sub.ID); after.PlanID != newPlan {
 		t.Fatalf("订阅套餐 %s，期望换成 %s", after.PlanID, newPlan)
 	}
-	// 换掉退的钱跟原订阅的付费单走（fakeValuer 回 CNY），不一定是站点币种
-	mustEq(t, "退回余额", e.balanceIn(t, ctx, user, money.CNY), dec("12.34"))
+	mustEq(t, "退回余额", e.balanceOf(t, ctx, user), dec("12.34"))
 	if n := e.count(t, ctx, `SELECT count(*) FROM ledger_transactions WHERE kind = 'plan_change_refund' AND source_type = 'gift_card_code'`); n != 1 {
 		t.Fatalf("退款交易 %d 笔，期望 1", n)
 	}
@@ -241,8 +239,8 @@ func TestRedeemExtendDaysAndRescue(t *testing.T) {
 	}
 }
 
-// 送流量：有生效订阅时挂上去；一份都没有时留作未分配，照样能兑。
-func TestRedeemTrafficPack(t *testing.T) {
+// 送流量：有生效订阅的用户兑 5 GiB 通用卡 → bonusOf(sub) == 5*gib；没有订阅的用户兑 → ErrNoTrafficTarget，码仍 unused。
+func TestRedeemTrafficBonus(t *testing.T) {
 	e, ctx := newEnv(t)
 	withSub := e.mkUser(t, ctx)
 	planID, versionID, priceID := e.mkPlan(t, ctx, 3000)
@@ -254,15 +252,18 @@ func TestRedeemTrafficPack(t *testing.T) {
 	if _, err := e.redeem(ctx, withSub, codes[0], nil); err != nil {
 		t.Fatalf("有订阅兑流量: %v", err)
 	}
-	if n := e.count(t, ctx, `SELECT count(*) FROM traffic_pack_grants WHERE user_id = ? AND subscription_id = ? AND source = 'gift_card' AND granted_bytes = ?`,
-		withSub, sub.ID, 5*gib); n != 1 {
-		t.Fatalf("挂到订阅上的流量包 %d 笔，期望 1", n)
+	if b := e.bonusOf(t, ctx, sub.ID); b != 5*gib {
+		t.Fatalf("订阅赠送流量 %d，期望 %d", b, 5*gib)
 	}
-	if _, err := e.redeem(ctx, noSub, codes[1], nil); err != nil {
-		t.Fatalf("无订阅兑流量: %v", err)
+	if st := e.codeStatus(t, ctx, codes[0]); st != CodeUsed {
+		t.Fatalf("码状态 %s，期望 used", st)
 	}
-	if n := e.count(t, ctx, `SELECT count(*) FROM traffic_pack_grants WHERE user_id = ? AND subscription_id IS NULL`, noSub); n != 1 {
-		t.Fatalf("未分配的流量包 %d 笔，期望 1", n)
+
+	if _, err := e.redeem(ctx, noSub, codes[1], nil); !errors.Is(err, ErrNoTrafficTarget) {
+		t.Fatalf("无订阅兑流量应回 ErrNoTrafficTarget，得到 %v", err)
+	}
+	if st := e.codeStatus(t, ctx, codes[1]); st != CodeUnused {
+		t.Fatalf("无订阅兑流量失败后码状态 %s，期望 unused", st)
 	}
 }
 

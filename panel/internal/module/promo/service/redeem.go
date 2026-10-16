@@ -38,13 +38,6 @@ func (s *Service) apply(ctx context.Context, c model.Coupon, t Target) (*Applied
 	if err := checkPlan(plans[c.ID], t.PlanID); err != nil {
 		return nil, err
 	}
-	ivs, err := s.repo.IntervalsByCoupons(ctx, []uuid.UUID{c.ID})
-	if err != nil {
-		return nil, err
-	}
-	if err := checkInterval(ivs[c.ID], t.Interval); err != nil {
-		return nil, err
-	}
 	n, err := s.repo.CountActiveByUser(ctx, c.ID, t.UserID)
 	if err != nil {
 		return nil, err
@@ -121,7 +114,6 @@ func (s *Service) Reserve(ctx context.Context, code string, t Target, o OrderRef
 			OrderID:        o.ID,
 			OrderNo:        strings.TrimSpace(o.No),
 			DiscountAmount: a.Discount,
-			Currency:       c.Currency,
 			Status:         RedemptionHeld,
 		})
 		if err != nil {
@@ -215,7 +207,7 @@ func (s *Service) Codes(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]str
 	return s.repo.CouponCodes(ctx, ids)
 }
 
-// Preview 门户试算套餐或流量包应付金额。
+// Preview 门户试算套餐应付金额。
 func (s *Service) Preview(ctx context.Context, userID uuid.UUID, code string, item PreviewItem) (Preview, error) {
 	if c := NormalizeCode(code); c != "" && !validCode(c) {
 		return Preview{}, ErrCouponNotFound
@@ -225,36 +217,15 @@ func (s *Service) Preview(ctx context.Context, userID uuid.UUID, code string, it
 		return Preview{}, err
 	}
 
-	var planID *uuid.UUID
-	var interval *string
-	var cur string
-	var amt decimal.Decimal
-
-	if item.PackID != nil {
-		cur, amt, err = cat.PackSubtotal(ctx, *item.PackID)
-		if err != nil {
-			return Preview{}, err
-		}
-		planID = nil
-		interval = nil
-	} else {
-		if item.PlanID == nil || item.PriceID == nil {
-			return Preview{}, errs.New(errs.NotFound)
-		}
-		var iv string
-		cur, amt, iv, err = cat.PriceSubtotal(ctx, *item.PlanID, *item.PriceID)
-		if err != nil {
-			return Preview{}, err
-		}
-		planID = item.PlanID
-		interval = &iv
+	amt, err := cat.PriceSubtotal(ctx, item.PlanID, item.PriceID)
+	if err != nil {
+		return Preview{}, err
 	}
 
+	planID := item.PlanID
 	applied, err := s.Evaluate(ctx, code, Target{
 		UserID:   userID,
-		PlanID:   planID,
-		Interval: interval,
-		Currency: cur,
+		PlanID:   &planID,
 		Subtotal: amt,
 	})
 	if err != nil {
@@ -269,7 +240,6 @@ func (s *Service) Preview(ctx context.Context, userID uuid.UUID, code string, it
 		Subtotal: amt,
 		Discount: discount,
 		Payable:  amt.Sub(discount),
-		Currency: cur,
 		Applied:  applied,
 	}, nil
 }

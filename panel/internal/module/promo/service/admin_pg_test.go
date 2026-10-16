@@ -70,8 +70,8 @@ func TestCreateAndList(t *testing.T) {
 	if found == nil {
 		t.Fatal("列表未找到新建的券")
 	}
-	if found.Code != code || found.Currency != "CNY" || found.MaxPerUser != 1 {
-		t.Fatalf("列表字段 code=%s currency=%s maxPerUser=%d", found.Code, found.Currency, found.MaxPerUser)
+	if found.Code != code || found.MaxPerUser != 1 {
+		t.Fatalf("列表字段 code=%s maxPerUser=%d", found.Code, found.MaxPerUser)
 	}
 	if found.Face.Kind != KindFixed || !found.Face.AmountOff.Equal(decimal.RequireFromString("2.50")) {
 		t.Fatalf("Face %v", found.Face)
@@ -340,7 +340,7 @@ func TestGenerateCouponsBatchWithPlansPG(t *testing.T) {
 	}
 	tmpl := couponFromSpec("", dupSpec)
 	tmpl.CreatedBy = &admin
-	inserted, err := e.svc.repo.InsertCouponsIfAbsent(ctx, &tmpl, []string{"DUPX0000000", "NEWX0000001"}, nil, nil)
+	inserted, err := e.svc.repo.InsertCouponsIfAbsent(ctx, &tmpl, []string{"DUPX0000000", "NEWX0000001"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,7 +356,7 @@ func TestInsertCouponsPlanGonePG(t *testing.T) {
 
 	tmpl := couponFromSpec("", fixedSpec("1.00"))
 	tmpl.Name = "套餐已删"
-	_, err := e.svc.repo.InsertCouponsIfAbsent(ctx, &tmpl, []string{"PGONE000001"}, []uuid.UUID{uuid.New()}, nil)
+	_, err := e.svc.repo.InsertCouponsIfAbsent(ctx, &tmpl, []string{"PGONE000001"}, []uuid.UUID{uuid.New()})
 	if !errors.Is(err, repo.ErrPlanGone) {
 		t.Fatalf("期望 ErrPlanGone，得 %v", err)
 	}
@@ -396,24 +396,23 @@ func TestConstraints(t *testing.T) {
 	e := newEnv(t)
 	ctx := e.txCtx()
 
-	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name, amount_off, percent_off_bp, currency)
-		VALUES ('X1', 'n', 1, 1, 'CNY')`)
-	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name, currency)
-		VALUES ('X2', 'n', 'CNY')`)
-	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name, percent_off_bp, currency)
-		VALUES ('X3', 'n', 10001, 'CNY')`)
-	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name, amount_off, currency)
-		VALUES ('ÄB', 'n', 1, 'CNY')`)
-	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name, amount_off, currency)
-		VALUES ('A B', 'n', 1, 'CNY')`)
-	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name, amount_off, max_discount, currency)
-		VALUES ('X5', 'n', 1, 10, 'CNY')`)
-	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name, amount_off, currency)
-		VALUES ('low', 'n', 1, 'CNY')`)
+	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name, amount_off, percent_off_bp)
+		VALUES ('X1', 'n', 1, 1)`)
+	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name) VALUES ('X2', 'n')`)
+	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name, percent_off_bp)
+		VALUES ('X3', 'n', 10001)`)
+	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name, amount_off)
+		VALUES ('ÄB', 'n', 1)`)
+	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name, amount_off)
+		VALUES ('A B', 'n', 1)`)
+	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name, amount_off, max_discount)
+		VALUES ('X5', 'n', 1, 10)`)
+	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name, amount_off)
+		VALUES ('low', 'n', 1)`)
 
 	code := randCode("CAP")
-	execSQL(t, e, ctx, `INSERT INTO coupons (code, name, amount_off, currency, max_redemptions)
-		VALUES (?, 'n', 1, 'CNY', 1)`, code)
+	execSQL(t, e, ctx, `INSERT INTO coupons (code, name, amount_off, max_redemptions)
+		VALUES (?, 'n', 1, 1)`, code)
 	assertSQLFails(t, e, ctx, `UPDATE coupons SET reserved_count = 2 WHERE code = ?`, code)
 
 	var cid uuid.UUID
@@ -423,74 +422,18 @@ func TestConstraints(t *testing.T) {
 	uid := newUser(t, e, ctx)
 	ord1 := newOrder(t, e, ctx, uid)
 	ord2 := newOrder(t, e, ctx, uid)
-	execSQL(t, e, ctx, `INSERT INTO coupon_redemptions (coupon_id, user_id, order_id, order_no, discount_amount, currency, status)
-		VALUES (?, ?, ?, ?, 1, 'CNY', 'held')`, cid, uid, ord1.ID, ord1.No)
-	// 订单是真的，失败只能来自币种与券不一致
-	assertSQLFails(t, e, ctx, `INSERT INTO coupon_redemptions (coupon_id, user_id, order_id, order_no, discount_amount, currency, status)
-		VALUES (?, ?, ?, ?, 1, 'USD', 'held')`, cid, uid, ord2.ID, ord2.No)
+	execSQL(t, e, ctx, `INSERT INTO coupon_redemptions (coupon_id, user_id, order_id, order_no, discount_amount, status)
+		VALUES (?, ?, ?, ?, 1, 'held')`, cid, uid, ord1.ID, ord1.No)
+	execSQL(t, e, ctx, `INSERT INTO coupon_redemptions (coupon_id, user_id, order_id, order_no, discount_amount, status)
+		VALUES (?, ?, ?, ?, 1, 'held')`, cid, uid, ord2.ID, ord2.No)
 	assertSQLFails(t, e, ctx, `DELETE FROM coupon_redemptions WHERE coupon_id = ?`, cid)
 
 	okCode := "A-B_" + strings.ToUpper(randHex(8))
-	execSQL(t, e, ctx, `INSERT INTO coupons (code, name, amount_off, currency) VALUES (?, 'n', 1, 'CNY')`, okCode)
+	execSQL(t, e, ctx, `INSERT INTO coupons (code, name, amount_off) VALUES (?, 'n', 1)`, okCode)
 
 	planID := newPlan(t, e, ctx)
 	execSQL(t, e, ctx, `INSERT INTO coupon_plans (coupon_id, plan_id) VALUES (?, ?)`, cid, planID)
 	assertSQLFails(t, e, ctx, `INSERT INTO coupon_plans (coupon_id, plan_id) VALUES (?, ?)`, cid, planID)
-}
-
-func TestCurrencyDefaultsToSite(t *testing.T) {
-	e := newEnv(t)
-	ctx := e.txCtx()
-	admin := newUser(t, e, ctx)
-	actx := adminCtx(ctx, admin)
-
-	e.site.currency = "USD"
-	spec := percentSpec(1000)
-	spec.Currency = ""
-	id, _, err := e.svc.CreateCoupon(actx, randCode("CUR"), spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var cur string
-	if err := e.row(ctx, `SELECT currency FROM coupons WHERE id = ?`, id).Scan(&cur); err != nil {
-		t.Fatal(err)
-	}
-	if cur != "USD" {
-		t.Fatalf("默认站点币种: %q", cur)
-	}
-
-	spec2 := percentSpec(1000)
-	id2, _, err := e.svc.CreateCoupon(actx, randCode("CUR2"), spec2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := e.row(ctx, `SELECT currency FROM coupons WHERE id = ?`, id2).Scan(&cur); err != nil {
-		t.Fatal(err)
-	}
-	if cur != "CNY" {
-		t.Fatalf("显式币种: %q", cur)
-	}
-
-	spec3 := fixedSpec("1.00")
-	spec3.Currency = ""
-	codes, err := e.svc.GenerateCoupons(actx, "CU", 2, spec3)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := e.row(ctx, `SELECT currency FROM coupons WHERE code = ?`, codes[0]).Scan(&cur); err != nil {
-		t.Fatal(err)
-	}
-	if cur != "USD" {
-		t.Fatalf("批量默认币种: %q", cur)
-	}
-
-	e.site.currency = "EUR"
-	spec4 := fixedSpec("1.00")
-	spec4.Currency = ""
-	_, _, err = e.svc.CreateCoupon(actx, randCode("EUR"), spec4)
-	if err == nil || errs.As(err).Fields["currency"] == "" {
-		t.Fatalf("不支持站点币种: %v", err)
-	}
 }
 
 func TestCreateRejectsBadCode(t *testing.T) {
@@ -544,102 +487,4 @@ func assertSQLFails(t *testing.T, e *env, ctx context.Context, sql string, args 
 		t.Fatalf("期望失败: %s", sql)
 	}
 	execSQL(t, e, ctx, "ROLLBACK TO SAVEPOINT sp")
-}
-
-func TestCouponIntervalsListedPG(t *testing.T) {
-	e := newEnv(t)
-	ctx := e.txCtx()
-	admin := newUser(t, e, ctx)
-	actx := adminCtx(ctx, admin)
-
-	spec1 := fixedSpec("1.00")
-	spec1.Intervals = []string{"year", "month"}
-	code1 := randCode("LIST1")
-	id1, _, err := e.svc.CreateCoupon(actx, code1, spec1)
-	if err != nil {
-		t.Fatalf("CreateCoupon 1 失败: %v", err)
-	}
-
-	spec2 := fixedSpec("2.00")
-	code2 := randCode("LIST2")
-	id2, _, err := e.svc.CreateCoupon(actx, code2, spec2)
-	if err != nil {
-		t.Fatalf("CreateCoupon 2 失败: %v", err)
-	}
-
-	specBatch := fixedSpec("3.00")
-	specBatch.Intervals = []string{"quarter"}
-	batchPrefix := "BQ"
-	batchCodes, err := e.svc.GenerateCoupons(actx, batchPrefix, 2, specBatch)
-	if err != nil {
-		t.Fatalf("GenerateCoupons 失败: %v", err)
-	}
-	if len(batchCodes) != 2 {
-		t.Fatalf("期望批量生成 2 张券，实际 %d", len(batchCodes))
-	}
-
-	var count1 int64
-	if err := e.row(ctx, "SELECT count(*) FROM coupon_intervals WHERE coupon_id = ?", id1).Scan(&count1); err != nil {
-		t.Fatalf("查 coupon_intervals 1 失败: %v", err)
-	}
-	if count1 != 2 {
-		t.Fatalf("coupon_intervals 1 期望 2 行，实际 %d", count1)
-	}
-
-	var count2 int64
-	if err := e.row(ctx, "SELECT count(*) FROM coupon_intervals WHERE coupon_id = ?", id2).Scan(&count2); err != nil {
-		t.Fatalf("查 coupon_intervals 2 失败: %v", err)
-	}
-	if count2 != 0 {
-		t.Fatalf("coupon_intervals 2 期望 0 行，实际 %d", count2)
-	}
-
-	for _, bcode := range batchCodes {
-		var bid uuid.UUID
-		if err := e.row(ctx, "SELECT id FROM coupons WHERE code = ?", bcode).Scan(&bid); err != nil {
-			t.Fatalf("查批量券 id 失败: %v", err)
-		}
-		var bcount int64
-		if err := e.row(ctx, "SELECT count(*) FROM coupon_intervals WHERE coupon_id = ?", bid).Scan(&bcount); err != nil {
-			t.Fatalf("查批量券 coupon_intervals 失败: %v", err)
-		}
-		if bcount != 1 {
-			t.Fatalf("批量券 coupon_intervals 期望 1 行，实际 %d", bcount)
-		}
-	}
-
-	rows, _, err := e.svc.ListCoupons(ctx, ListFilter{}, 50, 0)
-	if err != nil {
-		t.Fatalf("ListCoupons 失败: %v", err)
-	}
-	byCode := make(map[string]Coupon, len(rows))
-	for _, r := range rows {
-		byCode[r.Code] = r
-	}
-
-	c1, ok := byCode[code1]
-	if !ok {
-		t.Fatalf("ListCoupons 未找到 code1 %s", code1)
-	}
-	if len(c1.Intervals) != 2 || c1.Intervals[0] != "month" || c1.Intervals[1] != "year" {
-		t.Fatalf("code1 Intervals 期望 [month year], 实际 %v", c1.Intervals)
-	}
-
-	c2, ok := byCode[code2]
-	if !ok {
-		t.Fatalf("ListCoupons 未找到 code2 %s", code2)
-	}
-	if c2.Intervals == nil || len(c2.Intervals) != 0 {
-		t.Fatalf("code2 Intervals 期望空切片且非 nil, 实际 %v", c2.Intervals)
-	}
-
-	for _, bcode := range batchCodes {
-		bc, ok := byCode[bcode]
-		if !ok {
-			t.Fatalf("ListCoupons 未找到批量券 %s", bcode)
-		}
-		if len(bc.Intervals) != 1 || bc.Intervals[0] != "quarter" {
-			t.Fatalf("批量券 Intervals 期望 [quarter], 实际 %v", bc.Intervals)
-		}
-	}
 }

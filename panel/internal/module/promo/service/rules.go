@@ -95,13 +95,6 @@ func validateSpec(spec Spec) (Spec, error) {
 		fields["discount_type"] = "只支持 percent 或 fixed"
 	}
 
-	cur, err := money.ParseCurrency(spec.Currency)
-	if err != nil {
-		fields["currency"] = "只支持 CNY 或 USD"
-	} else {
-		out.Currency = string(cur)
-	}
-
 	if spec.MaxDiscount != nil {
 		if spec.Face.Kind != KindPercent {
 			fields["max_discount"] = "定额券不设封顶"
@@ -143,44 +136,6 @@ func validateSpec(spec Spec) (Spec, error) {
 		fields["applicable_plan_ids"] = "最多 200 个套餐"
 	}
 	out.PlanIDs = deduped
-
-	intervals := spec.Intervals
-	if intervals == nil {
-		intervals = []string{}
-	}
-	seenInt := make(map[string]struct{}, len(intervals))
-	invalidInt := false
-	for _, iv := range intervals {
-		iv = strings.TrimSpace(iv)
-		if iv == "" {
-			continue
-		}
-		if _, ok := seenInt[iv]; ok {
-			continue
-		}
-		allowed := false
-		for _, bi := range BillingIntervals {
-			if iv == bi {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			invalidInt = true
-			continue
-		}
-		seenInt[iv] = struct{}{}
-	}
-	if invalidInt {
-		fields["applicable_intervals"] = "计费周期只能是 day、week、month、quarter、year、one_time"
-	}
-	normIntervals := make([]string, 0, len(seenInt))
-	for _, bi := range BillingIntervals {
-		if _, ok := seenInt[bi]; ok {
-			normIntervals = append(normIntervals, bi)
-		}
-	}
-	out.Intervals = normIntervals
 
 	if len(fields) > 0 {
 		return Spec{}, errs.Invalid(fields)
@@ -224,16 +179,13 @@ func checkBasics(c model.Coupon, t Target, now time.Time) error {
 	if c.MaxRedemptions != nil && c.RedeemedCount+c.ReservedCount >= *c.MaxRedemptions {
 		return ErrCouponUsedUp
 	}
-	if c.Currency != t.Currency {
-		return ErrCouponNotFound
-	}
 	if t.Subtotal.LessThan(c.MinOrderAmount) {
 		return ErrCouponMinAmount
 	}
 	return nil
 }
 
-// checkPlan 判断券限定的套餐（planIDs 为空即不限）是否包含这一单的套餐；流量包订单 planID 为 nil。
+// checkPlan 判断券限定的套餐（planIDs 为空即不限）是否包含这一单的套餐；没有套餐的单 planID 为 nil。
 func checkPlan(planIDs []uuid.UUID, planID *uuid.UUID) error {
 	if len(planIDs) == 0 {
 		return nil
@@ -247,22 +199,6 @@ func checkPlan(planIDs []uuid.UUID, planID *uuid.UUID) error {
 		}
 	}
 	return ErrCouponNotForPlan
-}
-
-// checkInterval 判断券限定的计费周期（intervals 为空即不限）是否包含这一单的周期；没有周期的单（流量包、流量重置）interval 为 nil。
-func checkInterval(intervals []string, interval *string) error {
-	if len(intervals) == 0 {
-		return nil
-	}
-	if interval == nil {
-		return ErrCouponNotForPeriod
-	}
-	for _, iv := range intervals {
-		if iv == *interval {
-			return nil
-		}
-	}
-	return ErrCouponNotForPeriod
 }
 
 func discountFor(f Face, maxDiscount *decimal.Decimal, subtotal decimal.Decimal) decimal.Decimal {
@@ -294,10 +230,6 @@ func CanTransition(from, to string) bool {
 }
 
 func checkTarget(t Target) error {
-	// 币种必须已是规范的大写代码：券的币种按原样比较
-	if cur, err := money.ParseCurrency(t.Currency); err != nil || string(cur) != t.Currency {
-		return errs.Wrap(errs.Internal, fmt.Errorf("promo target: 币种 %q 不规范", t.Currency))
-	}
 	if err := money.CheckNonNegative(t.Subtotal); err != nil {
 		return errs.Wrap(errs.Internal, fmt.Errorf("promo target: %w", err))
 	}

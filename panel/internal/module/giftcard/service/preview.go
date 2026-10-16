@@ -2,10 +2,12 @@ package service
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
 
+	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
@@ -43,7 +45,6 @@ func (s *Service) Preview(ctx context.Context, rawCode string) (CardPreview, err
 		Description: t.Description,
 		Type:        t.Type,
 		Status:      t.Status,
-		Currency:    t.Currency,
 		Rewards:     t.Rewards,
 		Conditions:  t.Conditions,
 		Limits:      t.Limits,
@@ -57,12 +58,15 @@ func (s *Service) Preview(ctx context.Context, rawCode string) (CardPreview, err
 		}
 		out.Rewards = Rewards{Pool: labels}
 	}
+	planKind := ""
 	if t.Type == TypePlan {
-		if err := s.previewPlan(ctx, t, &out); err != nil {
+		plan, err := s.previewPlan(ctx, t, &out)
+		if err != nil {
 			return CardPreview{}, err
 		}
+		planKind = plan.Kind
 	}
-	o := offerOf(t)
+	o := offerOf(t, planKind)
 	if o.Kind == offerNone {
 		return out, nil
 	}
@@ -72,7 +76,7 @@ func (s *Service) Preview(ctx context.Context, rawCode string) (CardPreview, err
 	}
 	cands := candidatesOf(us)
 	opts, def := placementOptions(o, cands, s.valuer != nil)
-	views, err := s.placementViews(ctx, t, o, opts, cands, us, now)
+	views, err := s.placementViews(ctx, t, o, opts, cands, now)
 	if err != nil {
 		return CardPreview{}, err
 	}
@@ -83,42 +87,45 @@ func (s *Service) Preview(ctx context.Context, rawCode string) (CardPreview, err
 	return out, nil
 }
 
-// previewPlan 给套餐卡补上套餐名与周期。套餐或价格后来被删掉时不报错：卡面照样能看，兑换那一步给出明确原因。
-func (s *Service) previewPlan(ctx context.Context, t Template, out *CardPreview) error {
-	r := t.Rewards
-	if r.PlanID == nil {
-		return nil
+// previewPlan 给套餐卡补上套餐名、类型与周期。套餐或价格后来被删掉时不报错：卡面照样能看，兑换那一步给出明确原因。
+func (s *Service) previewPlan(ctx context.Context, t Template, out *CardPreview) (catalogsvc.Plan, error) {
+	plan, err := s.cardPlan(ctx, t)
+	if errors.Is(err, errPlanUnavailable) {
+		return catalogsvc.Plan{}, nil
 	}
-	plans, err := s.catalog.PlansByIDs(ctx, []uuid.UUID{*r.PlanID})
 	if err != nil {
-		return err
+		return catalogsvc.Plan{}, err
 	}
-	if p, ok := plans[*r.PlanID]; ok {
-		out.PlanName = p.Name
+	out.PlanName = plan.Name
+	out.PlanKind = plan.Kind
+	if t.Rewards.PriceID == nil {
+		return plan, nil
 	}
-	if r.PriceID == nil {
-		return nil
-	}
-	prices, err := s.catalog.PricesByIDs(ctx, []uuid.UUID{*r.PriceID})
+	prices, err := s.catalog.PricesByIDs(ctx, []uuid.UUID{*t.Rewards.PriceID})
 	if err != nil {
-		return err
+		return plan, err
 	}
-	if pr, ok := prices[*r.PriceID]; ok {
+	if pr, ok := prices[*t.Rewards.PriceID]; ok {
 		out.Interval, out.IntervalCount = pr.BillingInterval, pr.IntervalCount
+		out.ValidityDays = pr.ValidityDays
 	}
-	return nil
+	return plan, nil
 }
 
 // placementViews 把选项展开成「这一份现在的样子」与「落地之后到哪天」。
 func (s *Service) placementViews(ctx context.Context, t Template, o offer, opts []Option,
-	cands []candidate, us subsvc.UserSubscriptions, now time.Time) ([]Placement, error) {
+	cands []candidate, now time.Time) ([]Placement, error) {
 	byID := make(map[uuid.UUID]candidate, len(cands))
 	for _, c := range cands {
 		byID[c.SubscriptionID] = c
 	}
-	prices := make(map[uuid.UUID]subsvc.PriceSnapshot, len(us.Subscriptions))
-	for _, sub := range us.Subscriptions {
-		prices[sub.ID] = sub.Price
+	// 套餐卡的价格快照只取一次（所有落点共用卡上那一档价）；价格已下架时预览也给出同一句原因
+	var price subsvc.PriceSnapshot
+	if o.Kind == offerPlan {
+		var err error
+		if price, err = s.giftPrice(ctx, t.Rewards.PriceID); err != nil {
+			return nil, err
+		}
 	}
 	out := make([]Placement, 0, len(opts))
 	for _, op := range opts {
@@ -128,29 +135,32 @@ func (s *Service) placementViews(ctx context.Context, t Template, o offer, opts 
 			c = byID[*op.SubscriptionID]
 			planID, end := c.PlanID, c.PeriodEnd
 			p.Label, p.PlanID, p.PlanName, p.State, p.PeriodEnd = c.Label, &planID, c.PlanName, c.State, &end
-			p.TrafficUsed, p.TrafficCap, p.PackRemaining = c.TrafficUsed, c.TrafficCap, c.PackRemaining
+			p.TrafficUsed, p.TrafficCap = c.TrafficUsed, c.TrafficCap
 		}
 		switch op.Kind {
-		case KindNew, KindRenew, KindChange:
-			var fallback *subsvc.PriceSnapshot
-			if op.Kind == KindRenew {
-				if sp, ok := prices[c.SubscriptionID]; ok {
-					fallback = &sp
+		case KindNew, KindRenew, KindChange, KindStack:
+			if price.Interval == catalogsvc.IntervalOneTime {
+				if (op.Kind == KindStack && c.Permanent) || price.ValidityDays == nil {
+					p.NewPermanent = true
+				} else {
+					from := now
+					if op.Kind == KindStack && c.PeriodEnd.After(now) {
+						from = c.PeriodEnd
+					}
+					end := from.AddDate(0, 0, *price.ValidityDays)
+					p.NewPeriodEnd = &end
 				}
+			} else {
+				// 续生效中的那份从原到期日接着算；其余（新开、换掉、续已过期的）从现在起算一整期
+				from := now
+				if op.Kind == KindRenew {
+					from, _ = subsvc.RenewalBase(c.PeriodEnd, now, nil)
+				}
+				end := subsvc.AddInterval(from, price.Interval, price.IntervalCount)
+				p.NewPeriodEnd = &end
 			}
-			price, err := s.giftPrice(ctx, t.Rewards.PriceID, fallback)
-			if err != nil {
-				return nil, err
-			}
-			// 续生效中的那份从原到期日接着算；其余（新开、换掉、续已过期的）从现在起算一整期
-			from := now
-			if op.Kind == KindRenew {
-				from, _ = subsvc.RenewalBase(c.PeriodEnd, now, nil)
-			}
-			end := subsvc.AddInterval(from, price.Interval, price.IntervalCount)
-			p.NewPeriodEnd = &end
 			if op.Kind == KindChange && s.valuer != nil {
-				credit, cur, lost, err := s.valuer.RemainingValue(ctx, c.SubscriptionID, now)
+				credit, lost, err := s.valuer.RemainingValue(ctx, c.SubscriptionID, now)
 				if e := errs.As(err); e != nil && e.Code == errs.Conflict {
 					// 这份订阅上有没完结的续费或换套餐单：兑换时会被拒，这里干脆不给「换掉」
 					continue
@@ -161,7 +171,7 @@ func (s *Service) placementViews(ctx context.Context, t Template, o offer, opts 
 				if credit.IsPositive() {
 					p.Credit = credit
 				}
-				p.Currency, p.GiftDaysLost = cur, lost
+				p.GiftDaysLost = lost
 			}
 		case KindExtendDays:
 			// 盲盒抽中几天说不准，不给「之后到哪天」

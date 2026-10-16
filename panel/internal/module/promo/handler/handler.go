@@ -1,4 +1,4 @@
-// Package handler 是 promo 模块的 HTTP 层：后台优惠券管理、单个用户的会员折扣与门户优惠码试算。
+// Package handler 是 promo 模块的 HTTP 层：后台优惠券管理与门户优惠码试算。
 package handler
 
 import (
@@ -18,9 +18,6 @@ type Service interface {
 	ListCoupons(ctx context.Context, f service.ListFilter, limit, offset int) ([]service.Coupon, int64, error)
 	Redemptions(ctx context.Context, id uuid.UUID) ([]service.Redemption, error)
 	Preview(ctx context.Context, userID uuid.UUID, code string, item service.PreviewItem) (service.Preview, error)
-	MemberDiscountOf(ctx context.Context, userID uuid.UUID) (service.MemberDiscountView, error)
-	SetMemberDiscount(ctx context.Context, userID uuid.UUID, percent int) (service.MemberDiscountView, error)
-	ClearMemberDiscount(ctx context.Context, userID uuid.UUID) error
 }
 
 var _ Service = (*service.Service)(nil)
@@ -39,10 +36,6 @@ func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	v1.POST("/coupons", k.RequireAuth, k.RecentReauth, h.createCoupon)
 	v1.POST("/coupons/batch", k.RequireAuth, k.RecentReauth, k.Idempotency("coupon_batch_generate"), h.generateCoupons)
 	v1.POST("/coupons/:id/status", k.RequireAuth, k.RecentReauth, h.setCouponStatus)
-	// 单个用户的会员折扣（xb-order #33）：改钱的口径，写操作要近期重认证并写审计
-	v1.GET("/member-discounts/:user_id", k.RequireAuth, h.getMemberDiscount)
-	v1.PUT("/member-discounts/:user_id", k.RequireAuth, k.RecentReauth, h.setMemberDiscount)
-	v1.DELETE("/member-discounts/:user_id", k.RequireAuth, k.RecentReauth, h.clearMemberDiscount)
 }
 
 // RegisterPublic 注册门户优惠码试算路由。

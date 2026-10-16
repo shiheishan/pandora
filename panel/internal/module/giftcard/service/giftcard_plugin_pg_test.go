@@ -82,8 +82,8 @@ func TestPluginGiftcardRedeemedPlan(t *testing.T) {
 	rec := &pluginRec{}
 	e.svc.UsePluginEvents(rec)
 	user := e.mkUser(t, ctx)
-	planID, _, _ := e.mkPlan(t, ctx, 3000)
-	tpl := e.mkTemplate(t, ctx, TemplateInput{Type: TypePlan, Rewards: Rewards{PlanID: &planID}})
+	planID, _, priceID := e.mkPlan(t, ctx, 3000)
+	tpl := e.mkTemplate(t, ctx, TemplateInput{Type: TypePlan, Rewards: Rewards{PlanID: &planID, PriceID: &priceID}})
 	code := e.mkCodes(t, ctx, tpl.ID, 1, nil)[0]
 
 	if _, err := e.redeem(ctx, user, code, nil); err != nil {

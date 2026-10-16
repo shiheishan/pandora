@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
 	"github.com/aegispanel/aegis/internal/module/giftcard/model"
 	idemsvc "github.com/aegispanel/aegis/internal/module/idempotency/service"
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
@@ -81,9 +82,19 @@ func (s *Service) Redeem(ctx context.Context, in RedeemInput) (RedeemResult, err
 			}
 		}
 		// 落点在发放与抽奖之前选定：同一张卡失败回滚再重试，抽奖结果不会因此换
-		o := offerOf(t)
+		var plan catalogsvc.Plan
+		planKind := ""
+		if t.Type == TypePlan {
+			var err error
+			plan, err = s.cardPlan(ctx, t)
+			if err != nil {
+				return err
+			}
+			planKind = plan.Kind
+		}
+		o := offerOf(t, planKind)
 		var opt Option
-		placed, targetLive := false, false
+		placed, targetPermanent := false, false
 		if o.Kind != offerNone {
 			us, err := subs.get(ctx)
 			if err != nil {
@@ -94,15 +105,15 @@ func (s *Service) Redeem(ctx context.Context, in RedeemInput) (RedeemResult, err
 			if opt, placed, err = resolveChoice(in.Choice, opts); err != nil {
 				return err
 			}
-			targetLive = placed && opt.SubscriptionID != nil && liveIn(cands, *opt.SubscriptionID)
-			if !placed && !o.trafficOnly() {
-				return ErrNoPlacement
+			targetPermanent = placed && opt.SubscriptionID != nil && permanentIn(cands, *opt.SubscriptionID)
+			if !placed {
+				return o.noTargetErr()
 			}
 		}
 		// 套餐卡的拒绝检查（含换掉时的剩余价值与未完结订单）都在码转 used 之前做完
 		var prep planPrep
 		if t.Type == TypePlan && placed {
-			if prep, err = s.preparePlan(ctx, user, t, opt, now); err != nil {
+			if prep, err = s.preparePlan(ctx, user, t, plan, opt, now); err != nil {
 				return err
 			}
 		}
@@ -114,7 +125,7 @@ func (s *Service) Redeem(ctx context.Context, in RedeemInput) (RedeemResult, err
 		if !moved {
 			return ErrCodeUnusable
 		}
-		g, err := s.grant(ctx, grantInput{user: user, codeID: c.ID, t: t, opt: opt, placed: placed, targetLive: targetLive, prep: prep, now: now})
+		g, err := s.grant(ctx, grantInput{user: user, codeID: c.ID, t: t, opt: opt, placed: placed, targetPermanent: targetPermanent, prep: prep, now: now})
 		if err != nil {
 			return err
 		}
@@ -150,11 +161,11 @@ func (s *Service) Redeem(ctx context.Context, in RedeemInput) (RedeemResult, err
 	return out, nil
 }
 
-// liveIn 报告候选里这份订阅是不是生效中。
-func liveIn(cands []candidate, id uuid.UUID) bool {
+// permanentIn 报告候选里这份订阅是不是永久套餐。
+func permanentIn(cands []candidate, id uuid.UUID) bool {
 	for _, c := range cands {
 		if c.SubscriptionID == id {
-			return c.State == StateLive
+			return c.Permanent
 		}
 	}
 	return false
@@ -256,18 +267,19 @@ func (s *Service) checkLimits(ctx context.Context, user uuid.UUID, t Template, n
 
 // granted 是一次兑换实际发出的东西（写兑换流水、审计与回执）。
 type granted struct {
-	prizeLabel string
-	balance    decimal.Decimal
-	ledgerTxn  *uuid.UUID
-	traffic    int64
-	days       int
-	reset      bool
-	planID     *uuid.UUID
-	planMode   string
-	subID      *uuid.UUID
-	refund     decimal.Decimal
-	refundCur  money.Currency
-	summary    []string
+	prizeLabel     string
+	balance        decimal.Decimal
+	ledgerTxn      *uuid.UUID
+	traffic        int64
+	days           int
+	reset          bool
+	planID         *uuid.UUID
+	planMode       string
+	subID          *uuid.UUID
+	refund         decimal.Decimal
+	skippedDays    int
+	skippedTraffic int64
+	summary        []string
 }
 
 // result 把发放结果做成给用户的回执。
@@ -277,7 +289,6 @@ func (g granted) result(t Template) RedeemResult {
 		Type:         t.Type,
 		PrizeLabel:   g.prizeLabel,
 		Balance:      g.balance,
-		Currency:     t.Currency,
 		TrafficBytes: g.traffic,
 		ExpireDays:   g.days,
 		QuotaReset:   g.reset,
@@ -297,7 +308,6 @@ func redemptionModel(c model.Code, t Template, user uuid.UUID, g granted, redeem
 		CodeID:         c.ID,
 		TemplateID:     t.ID,
 		UserID:         user,
-		Currency:       string(t.Currency),
 		BalanceAmount:  decPtr(g.balance),
 		LedgerTxnID:    g.ledgerTxn,
 		TrafficBytes:   int64Ptr(g.traffic),
@@ -315,16 +325,12 @@ func redemptionModel(c model.Code, t Template, user uuid.UUID, g granted, redeem
 		mode := g.planMode
 		m.PlanMode = &mode
 	}
-	if m.RefundAmount != nil {
-		cur := string(g.refundCur)
-		m.RefundCurrency = &cur
-	}
 	return m
 }
 
 // auditGranted 是兑换审计的 Data：发了什么（金额写成字符串），不记卡密。
 func auditGranted(t Template, g granted) map[string]any {
-	d := map[string]any{"template": t.Name, "type": t.Type, "currency": string(t.Currency)}
+	d := map[string]any{"template": t.Name, "type": t.Type}
 	if g.prizeLabel != "" {
 		d["prize_label"] = g.prizeLabel
 	}
@@ -348,7 +354,12 @@ func auditGranted(t Template, g granted) map[string]any {
 	}
 	if g.refund.IsPositive() {
 		d["refund"] = g.refund.StringFixed(money.Scale)
-		d["refund_currency"] = string(g.refundCur)
+	}
+	if g.skippedDays > 0 {
+		d["skipped_expire_days"] = g.skippedDays
+	}
+	if g.skippedTraffic > 0 {
+		d["skipped_traffic_bytes"] = g.skippedTraffic
 	}
 	return d
 }
@@ -369,7 +380,6 @@ func (s *Service) MyRedemptions(ctx context.Context) ([]MyRedemption, error) {
 			TemplateName: r.TemplateName,
 			Type:         r.Type,
 			CodeHint:     r.CodeMask,
-			Currency:     money.Currency(r.Currency),
 			RedeemedAt:   r.RedeemedAt,
 		}
 		if r.PrizeLabel != nil {

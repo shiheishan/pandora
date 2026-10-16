@@ -203,12 +203,13 @@ func TestNotifyAdminsTicket_EnabledAndDisabled(t *testing.T) {
 					PlanName: "尊贵套餐",
 					Quotas: []subsvc.Quota{
 						{
-							Metric:    subsvc.MetricTraffic,
-							Limit:     ptrInt64(100 << 30),
-							Remaining: ptrInt64(60 << 30),
+							Metric: subsvc.MetricTraffic,
+							Limit:  ptrInt64(100 << 30),
+							// 剩余含本期赠送的 10 GB：100 + 10 − 40
+							Consumed:  40 << 30,
+							Remaining: ptrInt64(70 << 30),
 						},
 					},
-					PackRemainingBytes: 10 << 30,
 				},
 			},
 		},

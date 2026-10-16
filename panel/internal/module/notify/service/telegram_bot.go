@@ -74,9 +74,9 @@ func helpText(ex settingssvc.TelegramExtras) string {
 // formatTrafficReply 把生效中的订阅逐条列出：
 //
 //	「套餐名」（有备注名时接「 · 备注」）
-//	流量：已用 X / 共 Y，剩余 Z   （取第一条 Metric == subsvc.MetricTraffic 的配额；Limit 为 nil 写「流量：已用 X（不限量）」；没有流量配额行就不写这一行）
-//	流量包余量：N               （PackRemainingBytes > 0 时）
-//	到期：<noticeTime(PeriodEnd, loc)>
+//	流量：已用 X / 共 Y，剩余 Z   （取第一条 Metric == subsvc.MetricTraffic 的配额；共 Y 含本期赠送，即已用 + 剩余；
+//	                              Limit 为 nil 写「流量：已用 X（不限量）」；没有流量配额行就不写这一行）
+//	到期：<paidExpiry(PeriodEnd, loc)>（永久的一次性套餐写「永久」）
 //
 // 多份之间空一行；subs 为空返回 tgNoLiveSub。字节数用 humanBytes。
 func formatTrafficReply(subs []subsvc.Summary, loc *time.Location) string {
@@ -99,21 +99,22 @@ func formatTrafficReply(subs []subsvc.Summary, loc *time.Location) string {
 				if q.Limit == nil {
 					lines = append(lines, "流量：已用 "+humanBytes(q.Consumed)+"（不限量）")
 				} else {
-					rem := int64(0)
+					// 剩余 = 上限 + 本期赠送 − 已用（库里的生成列），总量按已用 + 剩余算才含赠送
+					total, rem := *q.Limit, *q.Limit-q.Consumed
 					if q.Remaining != nil {
 						rem = *q.Remaining
+						total = q.Consumed + rem
 					}
-					lines = append(lines, "流量：已用 "+humanBytes(q.Consumed)+" / 共 "+humanBytes(*q.Limit)+"，剩余 "+humanBytes(rem))
+					if rem < 0 {
+						rem = 0
+					}
+					lines = append(lines, "流量：已用 "+humanBytes(q.Consumed)+" / 共 "+humanBytes(total)+"，剩余 "+humanBytes(rem))
 				}
 				break
 			}
 		}
 
-		if sub.PackRemainingBytes > 0 {
-			lines = append(lines, "流量包余量："+humanBytes(sub.PackRemainingBytes))
-		}
-
-		lines = append(lines, "到期："+noticeTime(sub.PeriodEnd, loc))
+		lines = append(lines, "到期："+paidExpiry(sub.PeriodEnd, loc))
 		blocks = append(blocks, strings.Join(lines, "\n"))
 	}
 	return strings.Join(blocks, "\n\n")

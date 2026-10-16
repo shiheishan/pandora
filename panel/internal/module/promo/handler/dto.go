@@ -23,17 +23,14 @@ type couponRequest struct {
 	Name           string   `json:"name" binding:"max=200"`
 	DiscountType   string   `json:"discount_type" binding:"required,oneof=percent fixed"`
 	DiscountValue  int64    `json:"discount_value" binding:"min=1"`
-	Currency       string   `json:"currency" binding:"max=8"`
 	MaxDiscount    *int64   `json:"max_discount"`
 	MinOrder       *int64   `json:"min_order_amount"`
 	MaxRedemptions *int     `json:"max_redemptions"`
 	MaxPerUser     *int     `json:"max_redemptions_per_user"`
 	PlanIDs        []string `json:"applicable_plan_ids" binding:"max=200,dive,uuid"`
-	// Intervals 是限定的计费周期（空为不限）；取值与 catalog 价格档的 billing_interval 一致，由 service 校验
-	Intervals   []string `json:"applicable_intervals" binding:"max=6,dive,max=16"`
-	UserGroupID *string  `json:"user_group_id" binding:"omitempty,uuid"`
-	ValidFrom   string   `json:"valid_from" binding:"max=64"`
-	ValidUntil  string   `json:"valid_until" binding:"max=64"`
+	UserGroupID    *string  `json:"user_group_id" binding:"omitempty,uuid"`
+	ValidFrom      string   `json:"valid_from" binding:"max=64"`
+	ValidUntil     string   `json:"valid_until" binding:"max=64"`
 }
 
 // generateCouponsRequest 是批量生成请求（字段与 couponRequest 平铺）。
@@ -52,9 +49,6 @@ func (r couponRequest) spec() (service.Spec, error) {
 	case service.KindFixed:
 		face = service.Face{Kind: service.KindFixed, AmountOff: money.FromCents(r.DiscountValue)}
 	}
-
-	// 没给币种时留空，由 service 填站点币种
-	cur := strings.TrimSpace(r.Currency)
 
 	var maxDisc *decimal.Decimal
 	if r.MaxDiscount != nil {
@@ -102,13 +96,11 @@ func (r couponRequest) spec() (service.Spec, error) {
 	return service.Spec{
 		Name:           strings.TrimSpace(r.Name),
 		Face:           face,
-		Currency:       cur,
 		MaxDiscount:    maxDisc,
 		MinOrder:       minOrder,
 		MaxRedemptions: r.MaxRedemptions,
 		MaxPerUser:     perUser,
 		PlanIDs:        planIDs,
-		Intervals:      r.Intervals,
 		UserGroupID:    groupID,
 		ValidFrom:      from,
 		ValidUntil:     until,
@@ -134,14 +126,12 @@ type couponResponse struct {
 	Name                  string     `json:"name"`
 	DiscountType          string     `json:"discount_type"`
 	DiscountValue         int64      `json:"discount_value"`
-	Currency              string     `json:"currency"`
 	MaxDiscount           *int64     `json:"max_discount"`
 	MinOrderAmount        int64      `json:"min_order_amount"`
 	MaxRedemptions        *int       `json:"max_redemptions"`
 	MaxRedemptionsPerUser int        `json:"max_redemptions_per_user"`
 	RedeemedCount         int        `json:"redeemed_count"`
 	ApplicablePlanIDs     []string   `json:"applicable_plan_ids"`
-	ApplicableIntervals   []string   `json:"applicable_intervals"` // 永不为 null，空为不限
 	UserGroupID           *string    `json:"user_group_id"`
 	ValidFrom             *time.Time `json:"valid_from"`
 	ValidUntil            *time.Time `json:"valid_until"`
@@ -174,11 +164,6 @@ func couponFrom(c service.Coupon) couponResponse {
 		planIDs[i] = id.String()
 	}
 
-	intervals := c.Intervals
-	if intervals == nil {
-		intervals = []string{}
-	}
-
 	var gid *string
 	if c.UserGroupID != nil {
 		s := c.UserGroupID.String()
@@ -191,14 +176,12 @@ func couponFrom(c service.Coupon) couponResponse {
 		Name:                  c.Name,
 		DiscountType:          discType,
 		DiscountValue:         discVal,
-		Currency:              c.Currency,
 		MaxDiscount:           maxDisc,
 		MinOrderAmount:        money.MustCents(c.MinOrder),
 		MaxRedemptions:        c.MaxRedemptions,
 		MaxRedemptionsPerUser: c.MaxPerUser,
 		RedeemedCount:         c.Redeemed,
 		ApplicablePlanIDs:     planIDs,
-		ApplicableIntervals:   intervals,
 		UserGroupID:           gid,
 		ValidFrom:             c.ValidFrom,
 		ValidUntil:            c.ValidUntil,
@@ -219,7 +202,6 @@ type redemptionResponse struct {
 	Email    string    `json:"email"`
 	OrderNo  string    `json:"order_no"`
 	Discount int64     `json:"discount"`
-	Currency string    `json:"currency"`
 	At       time.Time `json:"at"`
 	Reverted bool      `json:"reverted"`
 }
@@ -235,7 +217,6 @@ func redemptionFrom(r service.Redemption) redemptionResponse {
 		Email:    r.Email,
 		OrderNo:  r.OrderNo,
 		Discount: money.MustCents(r.Discount),
-		Currency: r.Currency,
 		At:       r.At,
 		Reverted: r.Released,
 	}
@@ -268,7 +249,6 @@ type setStatusRequest struct {
 type previewRequest struct {
 	PlanID     string `json:"plan_id"`
 	PriceID    string `json:"price_id"`
-	PackID     string `json:"pack_id"`
 	CouponCode string `json:"coupon_code" binding:"max=100"`
 }
 
@@ -284,7 +264,6 @@ type previewResponse struct {
 	Subtotal int64              `json:"subtotal"`
 	Discount int64              `json:"discount"`
 	Payable  int64              `json:"payable"`
-	Currency string             `json:"currency"`
 	Coupon   *previewCouponFace `json:"coupon"`
 }
 
@@ -323,7 +302,6 @@ func previewFrom(p service.Preview) (previewResponse, error) {
 		Subtotal: sub,
 		Discount: disc,
 		Payable:  pay,
-		Currency: p.Currency,
 		Coupon:   face,
 	}, nil
 }
