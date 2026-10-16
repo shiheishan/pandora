@@ -12,13 +12,14 @@ func TestServingMultiPeriodQuotaPG(t *testing.T) {
 	e := newEnv(t)
 	ctx := e.txCtx()
 
-	planTD, verTD := newPlan(t, e, ctx,
+	// total 只属于一次性套餐（订阅套餐的流量行按类型落成 cycle）
+	planTD, verTD := newOneTimePlan(t, e, ctx,
 		quotaSpec{MetricTraffic, PeriodTotal, i64(100 * gib)}, quotaSpec{MetricTraffic, PeriodDay, i64(10 * gib)})
 	planCM, verCM := newPlan(t, e, ctx,
 		quotaSpec{MetricTraffic, PeriodCycle, i64(100 * gib)}, quotaSpec{MetricTraffic, PeriodMonth, i64(50 * gib)})
 
 	// total 用满、day 还有余量 → 不可服务
-	subTotalOut := provision(t, e, ctx, newUser(t, e, ctx), planTD, verTD, "总量用满")
+	subTotalOut := provisionOneTime(t, e, ctx, newUser(t, e, ctx), planTD, verTD, nil)
 	setConsumed(t, e, ctx, subTotalOut.ID, MetricTraffic, PeriodTotal, 100*gib)
 	setConsumed(t, e, ctx, subTotalOut.ID, MetricTraffic, PeriodDay, 1*gib)
 
@@ -28,13 +29,13 @@ func TestServingMultiPeriodQuotaPG(t *testing.T) {
 	setConsumed(t, e, ctx, subMonthOut.ID, MetricTraffic, PeriodMonth, 50*gib)
 
 	// 两行都有余量 → 可服务
-	subBothLeft := provision(t, e, ctx, newUser(t, e, ctx), planTD, verTD, "都有余量")
+	subBothLeft := provisionOneTime(t, e, ctx, newUser(t, e, ctx), planTD, verTD, nil)
 	setConsumed(t, e, ctx, subBothLeft.ID, MetricTraffic, PeriodTotal, 95*gib)
 	setConsumed(t, e, ctx, subBothLeft.ID, MetricTraffic, PeriodDay, 2*gib)
 
 	// total 用满但送的流量有余量 → 可服务
 	uBonus := newUser(t, e, ctx)
-	subBonus := provision(t, e, ctx, uBonus, planTD, verTD, "送量兜底")
+	subBonus := provisionOneTime(t, e, ctx, uBonus, planTD, verTD, nil)
 	setConsumed(t, e, ctx, subBonus.ID, MetricTraffic, PeriodTotal, 100*gib)
 	e.exec(t, ctx, `UPDATE quota_balances SET bonus_value = ? WHERE subscription_id = ? AND metric = ? AND period = ?`,
 		100, subBonus.ID, MetricTraffic, PeriodTotal)

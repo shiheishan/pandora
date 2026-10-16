@@ -200,12 +200,14 @@ func trafficPeriod(kind string) string {
 	return PeriodCycle
 }
 
-// withKind 返回 v 的副本：traffic.bytes 配额定义的周期按套餐类型改正（trafficPeriod）。开通、换套餐、续费恢复、叠加建配额前都过一遍。
+// withKind 返回 v 的副本：traffic.bytes 配额定义里跟着套餐走的那一行（cycle 或 total）按套餐类型改正（trafficPeriod）。
+// 开通、换套餐、续费恢复、叠加建配额前都过一遍。day / month 是独立的滚动窗口，不随套餐类型变，原样保留：
+// 若也改成 cycle，同一版本的日、月、周期行会折成三条 (traffic.bytes, cycle)，建配额撞唯一键（「记录已存在」）。
 func withKind(v catalogsvc.Version, kind string) catalogsvc.Version {
 	qs := make([]catalogsvc.Quota, len(v.Quotas))
 	copy(qs, v.Quotas)
 	for i := range qs {
-		if qs[i].Metric == MetricTraffic {
+		if qs[i].Metric == MetricTraffic && (qs[i].Period == PeriodCycle || qs[i].Period == PeriodTotal) {
 			qs[i].Period = trafficPeriod(kind)
 		}
 	}
