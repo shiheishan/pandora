@@ -35,7 +35,6 @@ func toSubscription(m model.Subscription) Subscription {
 		RenewalClosedAt: m.RenewalClosedAt,
 		Price: PriceSnapshot{
 			PriceID:       m.PriceID,
-			Currency:      money.Currency(m.SnapshotCurrency),
 			Amount:        m.SnapshotAmount,
 			Interval:      m.SnapshotInterval,
 			IntervalCount: m.SnapshotIntervalCount,
@@ -58,6 +57,7 @@ func toQuota(m model.QuotaBalance) Quota {
 		PeriodStart: m.PeriodStart,
 		PeriodEnd:   m.PeriodEnd,
 		Limit:       m.LimitValue,
+		Bonus:       m.BonusValue,
 		Consumed:    m.Consumed,
 		Remaining:   m.Remaining,
 	}
@@ -77,26 +77,11 @@ func sortQuotas(qs []Quota) {
 	})
 }
 
-// toPack 把流量包余额行转成对外类型。
-func toPack(m model.PackGrant) Pack {
-	return Pack{
-		ID:             m.ID,
-		UserID:         m.UserID,
-		SubscriptionID: m.SubscriptionID,
-		Source:         m.Source,
-		SourceID:       m.SourceID,
-		GrantedBytes:   m.GrantedBytes,
-		ConsumedBytes:  m.ConsumedBytes,
-		RemainingBytes: m.GrantedBytes - m.ConsumedBytes,
-		CreatedAt:      m.CreatedAt,
-	}
-}
-
-// validatePrice 校验价格快照：币种、金额两位小数且不为负、周期合法。调用方传错是程序错误，回 internal_error。
+// validatePrice 校验价格快照：金额两位小数且不为负、周期合法、有效天数只属于一次性价且为正。调用方传错是程序错误，回 internal_error。
 func validatePrice(p PriceSnapshot) error {
 	switch {
-	case !p.Currency.Valid():
-		return errs.Wrap(errs.Internal, fmt.Errorf("subscription: 价格快照币种 %q 不合法", p.Currency))
+	case p.ValidityDays != nil && (p.Interval != "one_time" || *p.ValidityDays < 1 || *p.ValidityDays > 36500):
+		return errs.Wrap(errs.Internal, fmt.Errorf("subscription: 价格快照有效天数 %d 不合法", *p.ValidityDays))
 	case money.CheckNonNegative(p.Amount) != nil:
 		return errs.Wrap(errs.Internal, fmt.Errorf("subscription: 价格快照金额 %s 不合法", p.Amount))
 	case !ValidInterval(p.Interval) || p.IntervalCount < 1 || p.IntervalCount > 32767:

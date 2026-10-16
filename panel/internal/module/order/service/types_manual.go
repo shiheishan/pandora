@@ -7,7 +7,6 @@ import (
 	"github.com/shopspring/decimal"
 
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
 // PlanChangeOrderInput 是门户换套餐（POST /v1/me/subscriptions/{id}/change-plan）：在原订阅上换成 PlanID 的 PriceID 档。
@@ -32,7 +31,8 @@ const (
 
 // 落点动作。
 const (
-	PlacementRenew  = "renew"  // 续到同款那份
+	PlacementRenew  = "renew"  // 续到同款那份（订阅套餐）
+	PlacementStack  = "stack"  // 叠加到同款那份（一次性套餐）
 	PlacementChange = "change" // 把那份换成这个套餐（Expired 时是「恢复并改成它」）
 	PlacementNew    = "new"    // 另开一份
 )
@@ -68,7 +68,7 @@ type ManualPreviewInput struct {
 	EntrySubscriptionID *uuid.UUID
 }
 
-// ManualPreview 是开单预览：选项、默认选中的 Key（空串表示不预选）与这个币种上的最低付款额（价格档未知时为 0）。
+// ManualPreview 是开单预览：选项、默认选中的 Key（空串表示不预选）与最低付款额（价格档未知时为 0）。
 type ManualPreview struct {
 	Options    []Placement
 	DefaultKey string
@@ -91,18 +91,16 @@ type Placement struct {
 	PeriodEnd *time.Time
 	// NewPeriodEnd 落地之后的到期日（价格档未知时按套餐第一个在售价格，都没有按一个月）
 	NewPeriodEnd *time.Time
-	// Credit、Currency、GiftDaysLost 只用在 change 上：原套餐没用完的部分、它的币种、不保留的赠送整天数
+	// Credit、GiftDaysLost 只用在 change 上：原套餐没用完的部分、不保留的赠送整天数
 	Credit       decimal.Decimal
-	Currency     money.Currency
 	GiftDaysLost int
-	// 本期套餐流量（不限量记 0）与挂在这一份上的流量包余量（字节）
-	TrafficUsed   int64
-	TrafficCap    int64
-	PackRemaining int64
+	// 本期套餐流量（字节；上限不含送的量，不限量记 0）
+	TrafficUsed int64
+	TrafficCap  int64
 	// Due 是按「待用户支付」开时用户要付多少（change 先抵 Credit）；BelowMinimum 是它低于站点最低额、用户没法在线付
 	Due          decimal.Decimal
 	BelowMinimum bool
-	// Unavailable 非空表示按这个价格档开不了这一项，内容是建单会回的那句话（目录不允许、价格下架、币种不一致、
+	// Unavailable 非空表示按这个价格档开不了这一项，内容是建单会回的那句话（目录不允许、价格下架、
 	// 已有未完结的续费或变更单等）；只在给了价格档时检查目录
 	Unavailable string
 }
