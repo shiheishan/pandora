@@ -200,7 +200,7 @@ describe('佣金记录', () => {
       commission({
         entries: [
           entry('pending', '2026-09-22T02:00:00Z', '2026-09-29T10:00:00Z'),
-          { ...entry('reversed', '2026-09-01T02:00:00Z', null, 2), order_no: '', from: '' },
+          { ...entry('reversed', '2026-09-01T12:00:00Z', null, 2), order_no: '', from: '' },
         ],
       }),
     )
