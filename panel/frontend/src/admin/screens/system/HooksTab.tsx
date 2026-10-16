@@ -1,69 +1,48 @@
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useApi } from '../../../shell/runtime'
-import { Button, ConfirmModal, Empty, Input, QueryView, Switch, useToast } from '../../../ui'
+import { Button, ConfirmModal, QueryView, Switch, useToast } from '../../../ui'
 import { useSaveHook } from './hookActions'
-import { EventPicker, HookModal, SecretModal } from './HookDialogs'
-import { deliveryRow, durationLabel, eventsLabel, hookBody, hookFormFrom, hookTone, hostOf, newHookCode, successRate, validateHook } from './logic'
+import { CreateHookModal, HookModal, SecretModal } from './HookDialogs'
+import { deliveryRow, eventsLabel, hookBody, hookFormFrom, hookHealth, hookTone } from './logic'
 import { useDeliveries, useFailure, useHooks, useInvalidateSystem } from './queries'
-import { hookDeleted, hookTested, type Hook, type HookEvent } from './schemas'
-import css from './system.module.css'
+import { hookDeleted, type Hook, type HookEvent } from './schemas'
+import css from './hooks.module.css'
+import shared from './system.module.css'
+
+const TONE_CLASS: Record<string, string> = { ok: css.toneOk, warn: css.toneWarn, muted: css.toneMuted }
 
 export function HooksTab() {
   const hooks = useHooks()
+  const [creating, setCreating] = useState(false)
   const [secret, setSecret] = useState<{ secret: string; hint: string } | null>(null)
 
   return (
     <QueryView query={hooks} rows={4} empty={null}>
       {({ hooks: list, events }) => (
-        <div className={css.stack}>
-          <CreateBar events={events} existing={list.map((h) => h.code)} onSecret={setSecret} />
-          {list.length === 0 && <Empty title="还没有 Webhook 钩子" description="填上端点地址、选好事件，新建一个钩子；事件发生时面板会带签名 POST 过去。" />}
-          {list.map((h) => (
-            <HookCard key={h.code} hook={h} events={events} onSecret={setSecret} />
-          ))}
+        <div className={shared.stack}>
+          <div className={css.topbar}>
+            <span className={css.count}>
+              {list.length} 个钩子 · 启用 {list.filter((h) => h.enabled).length}
+            </span>
+            <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
+              新建钩子
+            </Button>
+          </div>
+          {list.length === 0 ? (
+            <div className={css.empty}>还没有钩子。点「新建钩子」填上端点 URL、选好事件就能创建。</div>
+          ) : (
+            <section className={css.list} aria-label="Webhook 钩子">
+              {list.map((h) => (
+                <HookCard key={h.code} hook={h} events={events} onSecret={setSecret} />
+              ))}
+            </section>
+          )}
+          <CreateHookModal open={creating} events={events} existing={list.map((h) => h.code)} onClose={() => setCreating(false)} onCreated={setSecret} />
           <SecretModal secret={secret} onClose={() => setSecret(null)} />
         </div>
       )}
     </QueryView>
-  )
-}
-
-function CreateBar({ events, existing, onSecret }: { events: HookEvent[]; existing: string[]; onSecret: (s: { secret: string; hint: string }) => void }) {
-  const toast = useToast()
-  const [url, setUrl] = useState('')
-  const [picked, setPicked] = useState<string[]>(['order.paid', 'order.cancelled'].filter((e) => events.some((x) => x.name === e)))
-  const [errors, setErrors] = useState<Record<string, string>>({})
-  const save = useSaveHook((r) => {
-    toast('钩子已创建')
-    setUrl('')
-    if (r.secret) onSecret({ secret: r.secret, hint: r.secret_hint ?? '签名密钥只显示这一次，请立刻填进插件那边的配置' })
-  }, setErrors)
-
-  const submit = () => {
-    const code = newHookCode(existing)
-    const form = { name: hostOf(url) || code, description: '', endpoint: url, events: picked, timeoutMs: '5000', maxAttempts: '5', enabled: true, secret: '' }
-    const errs = validateHook(form)
-    setErrors(errs)
-    if (Object.keys(errs).length === 0) save.mutate(hookBody(code, form))
-  }
-
-  return (
-    <section className={css.createBar} aria-label="新建钩子">
-      <Input label="端点 URL" fieldClassName={css.createUrl} mono value={url} placeholder="https://" error={errors.endpoint_url} disabled={save.isPending} onChange={(e) => setUrl(e.target.value)} />
-      <div className={css.createEvents}>
-        <div className={css.label}>订阅事件</div>
-        <EventPicker events={events} value={picked} onChange={setPicked} />
-        {errors.events && (
-          <div className={css.error} role="alert">
-            {errors.events}
-          </div>
-        )}
-      </div>
-      <Button variant="primary" busy={save.isPending} onClick={submit}>
-        新建钩子
-      </Button>
-    </section>
   )
 }
 
@@ -77,11 +56,6 @@ function HookCard({ hook: h, events, onSecret }: { hook: Hook; events: HookEvent
   const [removing, setRemoving] = useState(false)
   const toggle = useSaveHook((_, body) => toast(body.enabled ? '钩子已启用' : '钩子已停用'))
 
-  const test = useMutation({
-    mutationFn: () => api.post(`v1/plugin-hooks/${encodeURIComponent(h.code)}/test`, hookTested, {}),
-    onSuccess: (r) => toast(`测试事件已投递 · ${r.response_code} · ${durationLabel(r.duration_ms)}`),
-    onError: (e) => fail(e),
-  })
   const remove = useMutation({
     mutationFn: () => api.delete(`v1/plugin-hooks/${encodeURIComponent(h.code)}`, hookDeleted),
     onSuccess: () => {
@@ -96,34 +70,32 @@ function HookCard({ hook: h, events, onSecret }: { hook: Hook; events: HookEvent
     toggle.mutate(hookBody(h.code, { ...hookFormFrom(h), enabled: on }))
   }
 
-  const tone = hookTone(h)
   return (
-    <section className={css.hook} aria-label={`钩子 ${h.name}`}>
-      <div className={css.hookHead}>
-        <span className={`${css.dot} ${css[tone]}`} aria-label={tone === 'muted' ? '已停用' : tone === 'warn' ? '近 7 天有失败' : '正常'} />
-        <div className={css.hookMain}>
-          <div className={css.hookUrl} title={h.endpoint_url}>
+    <div className={css.row}>
+      <div className={css.rowHead}>
+        <span className={`${css.dot} ${css[hookTone(h)]}`} role="img" aria-label={hookHealth(h)} />
+        <button type="button" className={css.main} onClick={() => setEditing(true)} aria-label={`编辑钩子 ${h.name}`}>
+          <span className={css.firstLine}>
+            <span className={css.name}>{h.name}</span>
+            <span className={css.health}>{hookHealth(h)}</span>
+          </span>
+          <span className={css.url} title={h.endpoint_url}>
             {h.endpoint_url}
-          </div>
-          <div className={css.faint}>
-            {h.name} · {eventsLabel(h.events, events.length)} · 成功率 {successRate(h)}
-            {h.queued_count > 0 && ` · 排队 ${h.queued_count}`}
-            {h.last_sent_at && ` · 最近送达 ${h.last_sent_at.slice(5)}`}
-          </div>
+          </span>
+          <span className={css.events}>{eventsLabel(h.events, events)}</span>
+        </button>
+        <div className={css.actions}>
+          <Switch aria-label={`启用钩子 ${h.name}`} checked={h.enabled} disabled={toggle.isPending} onChange={(e) => flip(e.target.checked)} />
+          <button type="button" className={css.textBtn} aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+            {open ? '收起记录' : '投递记录'}
+          </button>
+          <button type="button" className={css.textBtn} onClick={() => setEditing(true)}>
+            编辑
+          </button>
+          <button type="button" className={`${css.textBtn} ${css.danger}`} disabled={remove.isPending} onClick={() => setRemoving(true)}>
+            删除
+          </button>
         </div>
-        <Switch aria-label={`启用钩子 ${h.name}`} checked={h.enabled} disabled={toggle.isPending} onChange={(e) => flip(e.target.checked)} />
-        <Button size="xs" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-          {open ? '收起记录' : '投递记录'}
-        </Button>
-        <Button size="xs" busy={test.isPending} onClick={() => test.mutate()}>
-          测试投递
-        </Button>
-        <Button size="xs" onClick={() => setEditing(true)}>
-          编辑
-        </Button>
-        <Button size="xs" variant="ghost" className={css.dangerText} disabled={remove.isPending} onClick={() => setRemoving(true)}>
-          删除
-        </Button>
       </div>
       {open && <Deliveries code={h.code} />}
       {editing && (
@@ -140,13 +112,7 @@ function HookCard({ hook: h, events, onSecret }: { hook: Hook; events: HookEvent
       <ConfirmModal
         open={removing}
         title="删除这个钩子？"
-        body={
-          <>
-            <span className={css.mono}>{h.endpoint_url}</span>
-            <br />
-            删除后不再向这个地址投递事件，排队中的投递也不会再发出，不能恢复。
-          </>
-        }
+        body="之后的事件不会再投递到这个端点，投递记录一起删除。"
         confirmLabel="删除钩子"
         tone="danger"
         onConfirm={() => {
@@ -155,28 +121,38 @@ function HookCard({ hook: h, events, onSecret }: { hook: Hook; events: HookEvent
         }}
         onCancel={() => setRemoving(false)}
       />
-    </section>
+    </div>
   )
 }
 
 function Deliveries({ code }: { code: string }) {
   const deliveries = useDeliveries(code)
   return (
-    <div className={css.deliveries}>
-      <QueryView query={deliveries} rows={3} empty={<div className={css.pad}><span className={css.faint}>还没有投递记录。事件发生后这里会列出最近 50 条。</span></div>}>
-        {(rows) =>
-          rows.map((d, i) => {
-            const r = deliveryRow(d)
-            return (
-              <div key={`${d.created_at}-${i}`} className={css.delivery} title={d.error_message || undefined}>
-                <span className={css[r.tone]}>{r.code}</span>
-                <span className={css.ellipsis}>{r.event}</span>
-                <span className={css.right}>{r.duration}</span>
-                <span className={`${css.right} ${css.faint}`}>{r.at}</span>
-              </div>
-            )
-          })
-        }
+    <div className={css.detail}>
+      <QueryView query={deliveries} rows={3} empty={<div className={css.delivEmpty}>还没有投递记录。事件发生后这里会列出最近 50 条。</div>}>
+        {(rows) => (
+          <>
+            <div className={`${css.delivRow} ${css.delivHead}`} aria-hidden="true">
+              <span>时间</span>
+              <span>事件</span>
+              <span className={css.num}>响应</span>
+              <span className={css.num}>耗时</span>
+              <span className={css.num}>次数</span>
+            </div>
+            {rows.map((d, i) => {
+              const r = deliveryRow(d)
+              return (
+                <div key={`${d.created_at}-${i}`} className={css.delivRow} title={d.error_message || undefined}>
+                  <span className={css.at}>{r.at}</span>
+                  <span>{r.event}</span>
+                  <span className={`${css.code} ${css.num} ${TONE_CLASS[r.tone] ?? ''}`}>{r.code}</span>
+                  <span className={`${css.at} ${css.num} ${css.dim}`}>{r.duration}</span>
+                  <span className={`${css.at} ${css.num} ${css.dim}`}>{r.attempts}</span>
+                </div>
+              )
+            })}
+          </>
+        )}
       </QueryView>
     </div>
   )

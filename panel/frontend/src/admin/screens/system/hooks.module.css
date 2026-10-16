@@ -1,0 +1,275 @@
+/* Webhook 钩子页（tab=hooks）：顶栏、列表行、投递记录与两个弹窗的局部样式；公共类复用 system.module.css */
+
+/* ---- 顶栏：计数 + 新建按钮 ---- */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 32px;
+}
+
+.count {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- 列表：上边一条正文色细线，每行一条细分隔线 ---- */
+.list {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--text);
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--border);
+}
+
+.rowHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 20px;
+  padding: 14px 0;
+}
+
+/* 状态圆点：ok 绿 / warn 橙 / muted 灰 */
+.dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.ok {
+  background: var(--ok);
+}
+
+.warn {
+  background: var(--warn);
+}
+
+.muted {
+  background: var(--border-strong);
+}
+
+/* 中间信息区：整块可点打开编辑 */
+.main {
+  flex: 1 1 300px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.main:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.firstLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.name {
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+}
+
+.health {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  white-space: nowrap;
+}
+
+.url {
+  overflow: hidden;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.events {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+/* 右侧操作列 */
+.actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.textBtn {
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  cursor: pointer;
+}
+
+.textBtn:hover {
+  color: var(--text);
+}
+
+.textBtn:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.textBtn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.danger {
+  color: var(--danger);
+}
+
+.danger:hover {
+  color: var(--danger);
+}
+
+/* ---- 投递记录：左缩进，上边一条深一点的线 ---- */
+.detail {
+  margin: 0 0 14px 18px;
+  border-top: 1px solid var(--border-strong);
+}
+
+.delivRow {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr) 60px 70px 50px;
+  gap: 12px;
+  padding: 7px 0;
+  font-size: var(--fs-caption);
+}
+
+.delivHead {
+  border-bottom: 1px solid var(--border-strong);
+  color: var(--text-3);
+}
+
+.delivRow:not(.delivHead) {
+  border-bottom: 1px solid var(--border);
+}
+
+.num {
+  text-align: right;
+}
+
+.dim {
+  color: var(--text-2);
+}
+
+.at,
+.code {
+  font-family: var(--font-mono);
+}
+
+/* 状态码按 tone 上色 */
+.toneOk {
+  color: var(--ok);
+}
+
+.toneWarn {
+  color: var(--warn);
+}
+
+.toneMuted {
+  color: var(--text-3);
+}
+
+.delivEmpty {
+  padding: 7px 0;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+/* ---- 空列表 ---- */
+.empty {
+  padding: 40px 0;
+  color: var(--text-3);
+  text-align: center;
+}
+
+/* ---- 新建弹窗：订阅事件小按钮 ---- */
+.eventChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  cursor: pointer;
+}
+
+.chip:hover {
+  border-color: var(--border-hover);
+}
+
+.chip:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.chipOn,
+.chipOn:hover {
+  border-color: var(--text);
+  background: var(--text);
+  color: var(--on-ink);
+}
+
+/* ---- 编辑弹窗：三个小节标题 ---- */
+.section {
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--text);
+  font-weight: var(--fw-semibold);
+}
+
+/* 订阅事件一节的 Switch 列表 */
+.eventSwitches {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 14px;
+  font-size: var(--fs-caption);
+}
+
+/* ---- 密钥块：深底等宽 ---- */
+.secret {
+  display: block;
+  padding: 12px 14px;
+  background: var(--text);
+  color: var(--on-ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  overflow-wrap: anywhere;
+  user-select: all;
+}

@@ -52,7 +52,7 @@
   min-width: 0;
   overflow: auto;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 0;
   background: var(--surface);
 }
 
@@ -192,7 +192,7 @@
 
   min-width: 0;
   overflow: hidden;
-  border-radius: 10px;
+  border-radius: 0;
   background: var(--sidebar);
   color: #c9c7c1;
 }
@@ -240,7 +240,7 @@
   height: 24px;
   padding: 0 10px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 0;
   background: transparent;
   color: var(--text-2);
   font-size: var(--fs-caption);
