@@ -102,6 +102,7 @@ export function BulkBanForm({ filter, total, onDone }: { filter: BulkFilter; tot
           setReason(e.target.value)
           setErrors({})
         }}
+        data-autofocus=""
       />
       <div className={ops.mailActions}>
         {actionMsg && <span className={css.tone_warn}>{actionMsg}</span>}

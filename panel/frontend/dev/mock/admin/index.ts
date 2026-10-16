@@ -14,7 +14,6 @@ import { system } from './system.ts'
 import { tickets } from './tickets.ts'
 import { users } from './users.ts'
 import { planResets } from './plans-reset.ts'
-import { memberDiscounts } from './users-member.ts'
 
 export const ADMIN_MODULES: readonly MockModule[] = [
   dash,
@@ -31,6 +30,5 @@ export const ADMIN_MODULES: readonly MockModule[] = [
   subscriptionModule,
   commissionOverrides,
   planResets,
-  memberDiscounts,
   subscriptionDomainsModule,
 ]
