@@ -97,6 +97,10 @@ func (s *Service) place(ctx context.Context, d draft) (Created, model.Order, err
 				return Created{}, model.Order{}, promosvc.ErrCouponNotForReset
 			}
 		} else if couponCode != "" {
+			// 先锁券行、再插订单：插订单的外键检查给券行加 KEY SHARE，之后 Reserve 再锁成 FOR UPDATE 会与同券并发建单互等（40P01）
+			if err := s.promo.Lock(ctx, couponCode); err != nil {
+				return Created{}, model.Order{}, err
+			}
 			applied, err := s.promo.Evaluate(ctx, couponCode, promosvc.Target{
 				UserID:   d.UserID,
 				PlanID:   d.CouponPlanID,
