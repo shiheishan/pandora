@@ -86,7 +86,6 @@ func (s *Service) enrichDetail(ctx context.Context, d *UserDetail) error {
 	} else {
 		d.Subscriptions = us.Subscriptions
 	}
-	d.UnattachedPackBytes = us.UnattachedPackBytes
 
 	bal, err := wallets.UserBalances(ctx, []uuid.UUID{uid})
 	if err != nil {

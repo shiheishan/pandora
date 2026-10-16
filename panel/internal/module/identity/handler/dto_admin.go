@@ -45,16 +45,15 @@ type admUserRefResponse struct {
 // userDetailResponse 是后台用户详情（identity 字段）。
 type userDetailResponse struct {
 	userRowResponse
-	EmailVerified       bool                      `json:"email_verified"`
-	IsAdmin             bool                      `json:"is_admin"`
-	Referrer            *admUserRefResponse       `json:"referrer"`
-	Stats               admUserStatsResponse      `json:"stats"`
-	Subscriptions       []admSubscriptionResponse `json:"subscriptions"`
-	RecentOrders        []admOrderRowResponse     `json:"recent_orders"`
-	Telegram            *admTelegramResponse      `json:"telegram"`
-	UnattachedPackBytes int64                     `json:"unattached_pack_bytes"`
-	AdminNote           *string                   `json:"admin_note"` // 后台备注，只在后台详情出现
-	DeletedAt           *time.Time                `json:"deleted_at"` // 注销时间；没注销为 null
+	EmailVerified bool                      `json:"email_verified"`
+	IsAdmin       bool                      `json:"is_admin"`
+	Referrer      *admUserRefResponse       `json:"referrer"`
+	Stats         admUserStatsResponse      `json:"stats"`
+	Subscriptions []admSubscriptionResponse `json:"subscriptions"`
+	RecentOrders  []admOrderRowResponse     `json:"recent_orders"`
+	Telegram      *admTelegramResponse      `json:"telegram"`
+	AdminNote     *string                   `json:"admin_note"` // 后台备注，只在后台详情出现
+	DeletedAt     *time.Time                `json:"deleted_at"` // 注销时间；没注销为 null
 }
 
 // admUserStatsResponse 是详情里的统计（实收、订单数、邀请数）。
@@ -168,12 +167,11 @@ func admUserRowFrom(cc *admCents, u service.UserRow) userRowResponse {
 func admUserDetailFrom(d service.UserDetail) (userDetailResponse, error) {
 	var cc admCents
 	out := userDetailResponse{
-		userRowResponse:     admUserRowFrom(&cc, d.UserRow),
-		EmailVerified:       d.EmailVerified,
-		IsAdmin:             d.IsAdmin,
-		Subscriptions:       make([]admSubscriptionResponse, 0, len(d.Subscriptions)),
-		RecentOrders:        make([]admOrderRowResponse, 0, len(d.RecentOrders)),
-		UnattachedPackBytes: d.UnattachedPackBytes,
+		userRowResponse: admUserRowFrom(&cc, d.UserRow),
+		EmailVerified:   d.EmailVerified,
+		IsAdmin:         d.IsAdmin,
+		Subscriptions:   make([]admSubscriptionResponse, 0, len(d.Subscriptions)),
+		RecentOrders:    make([]admOrderRowResponse, 0, len(d.RecentOrders)),
 	}
 	for _, s := range d.Subscriptions {
 		out.Subscriptions = append(out.Subscriptions, admSubscriptionFrom(&cc, s))

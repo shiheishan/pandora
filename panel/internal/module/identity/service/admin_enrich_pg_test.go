@@ -108,9 +108,8 @@ func TestPGUserDetailEnrich(t *testing.T) {
 	s1 := AdminSub{ID: uuid.New(), PlanName: "详单套餐1", Live: true, Status: "active"}
 	s2 := AdminSub{ID: uuid.New(), PlanName: "详单套餐2", Live: false, Status: "expired"}
 	fakes.subs.admin[u.ID] = AdminUserSubs{
-		Subscriptions:       []AdminSub{s1, s2},
-		Current:             &s1,
-		UnattachedPackBytes: 5,
+		Subscriptions: []AdminSub{s1, s2},
+		Current:       &s1,
 	}
 	fakes.orders.stats = map[uuid.UUID]OrderStat{
 		u.ID: {
@@ -131,7 +130,7 @@ func TestPGUserDetailEnrich(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(d.Subscriptions) != 2 || d.UnattachedPackBytes != 5 || d.OrderCount != 3 {
+	if len(d.Subscriptions) != 2 || d.OrderCount != 3 {
 		t.Fatalf("subs/pack/orders %+v", d)
 	}
 	if !d.PaidTotal.Equal(decimal.RequireFromString("20")) {
