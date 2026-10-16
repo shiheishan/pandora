@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback } from 'react'
 import { useApi } from '../../../shell/runtime'
-import { deliveriesResponse, hooksResponse, mailSettingsSchema, telegramSettingsSchema, templatesResponse } from './schemas'
+import { deliveriesResponse, hooksResponse, mailSettingsSchema, telegramExtrasSchema, telegramSettingsSchema, templatesResponse } from './schemas'
 
 export { useFailure, useIntentKey } from '../../actions'
 
@@ -15,6 +15,11 @@ export function useMailSettings() {
 export function useTelegramSettings() {
   const api = useApi()
   return useQuery({ queryKey: [...SK, 'telegram'], queryFn: ({ signal }) => api.get('v1/settings/telegram', telegramSettingsSchema, { signal }) })
+}
+
+export function useTelegramExtras() {
+  const api = useApi()
+  return useQuery({ queryKey: [...SK, 'telegram-extras'], queryFn: ({ signal }) => api.get('v1/settings/telegram/extras', telegramExtrasSchema, { signal }) })
 }
 
 export function useTemplates() {

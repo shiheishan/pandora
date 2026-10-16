@@ -42,6 +42,8 @@ type OrderSummaryRow struct {
 	HasIntent    bool
 	ProviderCode *string
 	ProviderName *string
+	// Method 是最近一笔收款的支付方式（payments.method，可空）；没有收款为 nil
+	Method *string
 }
 
 // LockActiveIntent 读订单的在途意图（status='requires_action'）并 FOR NO KEY UPDATE；没有时 found=false。
@@ -275,7 +277,8 @@ func (r *Repo) IntentsByOrder(ctx context.Context, orderID uuid.UUID) ([]IntentR
 	return out, nil
 }
 
-// OrderSummaries 一条 SQL 取一批订单的摘要：HasIntent = 有任何意图；渠道取最近一笔收款的渠道，没有收款取最近一次意图的渠道。
+// OrderSummaries 一条 SQL 取一批订单的摘要：HasIntent = 有任何意图；渠道取最近一笔收款的渠道，没有收款取最近一次意图的渠道；
+// Method 只取最近一笔收款的支付方式（收款只有成功一种状态），没有收款为 NULL。
 // 只返回至少有一个意图或一笔收款的订单。
 func (r *Repo) OrderSummaries(ctx context.Context, orderIDs []uuid.UUID) ([]OrderSummaryRow, error) {
 	if len(orderIDs) == 0 {
@@ -291,10 +294,11 @@ func (r *Repo) OrderSummaries(ctx context.Context, orderIDs []uuid.UUID) ([]Orde
 		SELECT o.order_id,
 		       EXISTS (SELECT 1 FROM payment_intents pi WHERE pi.order_id = o.order_id) AS has_intent,
 		       COALESCE(pay_pp.code, intent_pp.code) AS provider_code,
-		       COALESCE(pay_pp.display_name, intent_pp.display_name) AS provider_name
+		       COALESCE(pay_pp.display_name, intent_pp.display_name) AS provider_name,
+		       latest_pay.method AS method
 		FROM ids o
 		LEFT JOIN LATERAL (
-		  SELECT p.provider_id FROM payments p WHERE p.order_id = o.order_id ORDER BY p.paid_at DESC, p.id DESC LIMIT 1
+		  SELECT p.provider_id, p.method FROM payments p WHERE p.order_id = o.order_id ORDER BY p.paid_at DESC, p.id DESC LIMIT 1
 		) latest_pay ON true
 		LEFT JOIN payment_providers pay_pp ON pay_pp.id = latest_pay.provider_id
 		LEFT JOIN LATERAL (

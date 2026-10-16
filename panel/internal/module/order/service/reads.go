@@ -207,6 +207,7 @@ func (e enriched) adminView(o model.Order) AdminOrderView {
 		Manual:       o.CreatedBy != nil,
 		ProviderCode: sum.ProviderCode,
 		ProviderName: sum.ProviderName,
+		Method:       sum.Method,
 	}
 	items := e.items[o.ID]
 	v.ItemCount = len(items)

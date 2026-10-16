@@ -1,12 +1,12 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback } from 'react'
 import { useApi } from '../../../shell/runtime'
-import { packsSchema, planPoolsSchema, planResetPricesSchema, planResponseSchema, plansSchema, poolOptionsSchema, type PackStatus } from './schemas'
+import { planPoolsSchema, planResponseSchema, plansSchema, poolOptionsSchema, type PlanDetail } from './schemas'
 
 export * from './schemas'
 
 // ---------------------------------------------------------------------------
-// 查询：目录变化推 plans.changed（plans / plan_versions / prices，R33 起含流量包）
+// 查询：目录变化推 plans.changed（plans / plan_versions / prices）
 // ---------------------------------------------------------------------------
 export const PK = ['admin', 'plans'] as const
 
@@ -17,6 +17,7 @@ export const PK = ['admin', 'plans'] as const
 export const planOptionsKey = (module: string) => [...PK, 'options', module] as const
 const topics = ['plans.changed'] as const
 
+/** 全部套餐（不分页、含已归档）：类型页签的计数要全量，搜索与筛选在前端做 */
 export function usePlans() {
   const api = useApi()
   return useQuery({
@@ -26,38 +27,30 @@ export function usePlans() {
   })
 }
 
+const detailKey = (id: string | null) => [...PK, 'detail', id] as const
+
 export function usePlan(id: string | null) {
   const api = useApi()
   return useQuery({
-    queryKey: [...PK, 'detail', id],
+    queryKey: detailKey(id),
     queryFn: ({ signal }) => api.get(`v1/plans/${encodeURIComponent(id!)}`, planResponseSchema, { signal }).then((r) => r.plan),
     enabled: id !== null,
     meta: { topics },
   })
 }
 
-/** 向导新建时没有套餐 id：传 null 不取 */
+/** 详情「线路」页签的绑池选择器 */
 export function usePlanPools(id: string | null) {
   const api = useApi()
   return useQuery({
     queryKey: [...PK, 'pools', id],
-    queryFn: ({ signal }) => api.get(`v1/plans/${encodeURIComponent(id!)}/pools`, planPoolsSchema, { signal }),
+    queryFn: ({ signal }) => api.get(`v1/plans/${encodeURIComponent(id!)}/pools`, planPoolsSchema, { signal }).then((r) => r.pools),
     enabled: id !== null,
     meta: { topics },
   })
 }
 
-export function usePlanResetPrices(id: string | null) {
-  const api = useApi()
-  return useQuery({
-    queryKey: [...PK, 'reset-prices', id],
-    queryFn: ({ signal }) => api.get(`v1/plans/${encodeURIComponent(id!)}/reset-prices`, planResetPricesSchema, { signal }),
-    enabled: id !== null,
-    meta: { topics },
-  })
-}
-
-/** 只在新建向导的「可用线路」一步才取 */
+/** 新建弹窗的线路候选（还没有套餐 id）：只列未停用的池 */
 export function usePoolOptions(enabled: boolean) {
   const api = useApi()
   return useQuery({
@@ -68,17 +61,23 @@ export function usePoolOptions(enabled: boolean) {
   })
 }
 
-export function useTrafficPacks(status: PackStatus | '') {
-  const api = useApi()
-  return useQuery({
-    queryKey: [...PK, 'packs', status],
-    queryFn: ({ signal }) => api.get('v1/traffic-packs', packsSchema, { signal, query: { status: status || undefined } }).then((r) => r.packs),
-    meta: { topics },
-  })
-}
-
-/** 写成功后整个前缀重拉：列表卡片的起价、版本号、节点数都可能跟着变 */
+/** 写成功后整个前缀重拉：列表的价格、版本号、节点数都可能跟着变 */
 export function useInvalidatePlans() {
   const client = useQueryClient()
   return useCallback(() => client.invalidateQueries({ queryKey: PK }), [client])
+}
+
+/**
+ * 写接口都回 {plan: PlanDetail}：先把详情缓存换成响应里的最新值（下一次写就带上新的 row_version），
+ * 再按前缀失效让列表等跟上
+ */
+export function useApplyPlan() {
+  const client = useQueryClient()
+  return useCallback(
+    (plan: PlanDetail) => {
+      client.setQueryData(detailKey(plan.id), plan)
+      return client.invalidateQueries({ queryKey: PK })
+    },
+    [client],
+  )
 }

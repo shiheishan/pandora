@@ -34,7 +34,6 @@ export interface Sub {
   plan_max_devices: number | null
   online_devices: number
   /** 订单与收款假后端还在读，那边改完后删 */
-  pack_bytes: number
   /** 本期送的量，缺省 0 */
   bonus_bytes?: number
   created_at: string
@@ -57,7 +56,6 @@ export interface User {
   currency: string
   subs: Sub[]
   /** 还没加到任何一份的流量包余量（字节）：订单与收款假后端还在读，那边改完后删 */
-  unattached_bytes: number
   referrer: string | null
   telegram: { username: string; bound_at: string } | null
   /** 后台不分角色：是不是管理员 */
@@ -132,7 +130,6 @@ function makeSub(i: number, j: number, state: 'live' | 'expired'): Sub {
     device_limit_override: i % 11 === 5 ? 10 : null,
     plan_max_devices: devices,
     online_devices: state === 'live' ? (i * 5 + j) % ((devices ?? 3) + 2) : 0,
-    pack_bytes: 0,
     created_at: new Date(start - DAY).toISOString(),
     token: `tk${String(i).padStart(3, '0')}${j}`,
   }
@@ -159,7 +156,6 @@ const users: User[] = Array.from({ length: 48 }, (_, i) => {
     balance: (i * 1375) % 26500,
     currency: 'CNY',
     subs,
-    unattached_bytes: 0,
     referrer: null,
     telegram: i % 3 === 0 ? { username: NAMES[i % NAMES.length]!.replace(/[._]/g, ''), bound_at: iso((i + 1) * DAY) } : null,
     is_admin: i === 0,
@@ -200,7 +196,6 @@ user3.subs.push({
   device_limit_override: null,
   plan_max_devices: 3,
   online_devices: 1,
-  pack_bytes: 0,
   bonus_bytes: 0,
   created_at: new Date(user3Start - DAY).toISOString(),
   token: 'tk002ot',
@@ -227,7 +222,6 @@ user4.subs.push({
   device_limit_override: null,
   plan_max_devices: 3,
   online_devices: 0,
-  pack_bytes: 0,
   bonus_bytes: 0,
   created_at: new Date(user4Start - DAY).toISOString(),
   token: 'tk003ot',
@@ -245,14 +239,12 @@ if (twinFirst) {
     current_period_start: new Date(Date.parse(twinFirst.current_period_start ?? '') + 12 * DAY).toISOString(),
     current_period_end: new Date(Date.parse(twinFirst.current_period_end ?? '') + 12 * DAY).toISOString(),
     traffic_used: Math.round((twinFirst.traffic_limit ?? 100 * GiB) * 0.82),
-    pack_bytes: 0,
     online_devices: 0,
     token: 'tk005b',
     created_at: new Date(Date.parse(twinFirst.created_at) + 12 * DAY).toISOString(),
   }
   twinFirst.label = '常用'
   twinFirst.status = 'active'
-  twinFirst.pack_bytes = 0
   twin.subs.push(second)
 }
 

@@ -30,11 +30,11 @@ function build(): NotificationFixture[] {
   const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString()
   const n = (code: string, subject: string, body: string, minutes: number, read: boolean): NotificationFixture => ({ id: randomUUID(), code, subject, body, sent_at: ago(minutes), read_at: read ? ago(minutes - 1) : null })
   return [
-    n('ticket.replied', '工单有新回复', '你的工单「订阅链接导入 Clash 失败」客服已回复，点击查看。', 6, false),
-    n('order.paid', '订单支付成功', '订单 PD-23392 已支付 ¥25.00，流量包 50 GB 已到账。', 42, false),
+    n('ticket.replied', '工单有新回复', '你的工单「链接添加到 Clash 失败」客服已回复，点击查看。', 6, false),
+    n('order.paid', '订单支付成功', '订单 PD-23392 已支付 ¥25.00，套餐已续上。', 42, false),
     n('quota.warning', '本期流量已用 80%', '专业版本期已用 320 GB / 400 GB，距离重置还有 3 天。', 60 * 26, true),
     n('security.new_login', '新设备登录提醒', '你的账号于昨天 22:14 在一台新的 macOS 设备上登录。如果不是你本人，请立即修改密码。', 60 * 30, true),
-    n('subscription.expiring', '订阅将在 7 天后到期', '专业版将于 7 天后到期，续费后订阅地址不变。', 60 * 24 * 5, true),
+    n('subscription.expiring', '套餐将在 7 天后到期', '专业版将于 7 天后到期，续费后链接不变。', 60 * 24 * 5, true),
   ]
 }
 

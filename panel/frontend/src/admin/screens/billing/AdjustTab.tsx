@@ -1,25 +1,16 @@
 import { useState } from 'react'
 import { isApiError } from '../../../core/api'
 import { formatMoney } from '../../../core/format'
-import { navigate, useHashLocation } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
-import { Button, ConfirmModal, Empty, Input, Modal, QueryView, Select, TextArea, useToast } from '../../../ui'
+import { Button, ConfirmModal, Empty, Input, Modal, QueryView, TextArea, useToast } from '../../../ui'
 import { useFailure, useIntentKey } from '../../actions'
 import { parseYuan } from '../users/model'
-import { adjustmentSchema, useAdjustments, useInvalidateBilling, type Adjustment, type Currency } from './api'
+import { adjustmentSchema, useAdjustments, useInvalidateBilling, type Adjustment } from './api'
 import css from './Billing.module.css'
 import { adjustBody, adjustmentView, adjustProblems, emptyAdjust, reasonProblem, reverseReason, todayLocal, type AdjustForm } from './model'
 
-const CURRENCY_OPTIONS = [
-  { value: 'CNY', label: 'CNY' },
-  { value: 'USD', label: 'USD' },
-]
-
 export function AdjustTab() {
-  const location = useHashLocation()
-  const c = location.query.get('c')
-  const currency = c === 'CNY' || c === 'USD' ? c : ''
-  const list = useAdjustments(currency)
+  const list = useAdjustments()
   const [formOpen, setFormOpen] = useState(false)
   const [reversing, setReversing] = useState<Adjustment | null>(null)
 
@@ -29,14 +20,6 @@ export function AdjustTab() {
         <span className={css.bannerTitle}>收入调整</span>
         <span className={css.small}>只追加，不改原账；冲销会生成一条反向记录</span>
         <span className={css.spacer} />
-        <Select
-          size="sm"
-          aria-label="币种"
-          emptyOption="全部币种"
-          options={CURRENCY_OPTIONS}
-          value={currency}
-          onChange={(e) => navigate('/billing/adjust', { replace: true, query: { c: e.target.value || undefined } })}
-        />
         <Button size="sm" variant="primary" aria-expanded={formOpen} onClick={() => setFormOpen((v) => !v)}>
           登记调整
         </Button>
@@ -49,7 +32,7 @@ export function AdjustTab() {
         empty={
           <Empty
             bare
-            title={currency ? `没有 ${currency} 的收入调整` : '还没有收入调整'}
+            title="还没有收入调整"
             description="渠道手续费返还、线下补录这类不经订单的收入，在这里登记后计入报表。"
           />
         }
@@ -59,7 +42,6 @@ export function AdjustTab() {
             <div role="row" className={`${css.adjRow} ${css.adjHeader}`}>
               <span role="columnheader">原因 · 登记人</span>
               <span role="columnheader">生效日</span>
-              <span role="columnheader">币种</span>
               <span role="columnheader" className={css.right}>
                 金额
               </span>
@@ -89,9 +71,6 @@ function Row({ a, onReverse }: { a: Adjustment; onReverse: () => void }) {
       <span role="cell" className={`${css.mono} ${css.muted}`}>
         {a.effective_on}
       </span>
-      <span role="cell" className={css.muted}>
-        {a.currency}
-      </span>
       <span role="cell" className={`${css.right} ${css.num} ${css[`tone_${v.tone}`]}`}>
         {v.amount}
       </span>
@@ -108,7 +87,7 @@ function Row({ a, onReverse }: { a: Adjustment; onReverse: () => void }) {
   )
 }
 
-/** 设计稿的行内表单：币种、金额、原因 + 契约补的生效日；提交前再确认一次（登记后不能改，只能冲销） */
+/** 设计稿的行内表单：金额、原因 + 契约补的生效日；提交前再确认一次（登记后不能改，只能冲销） */
 function AdjustFormRow({ onClose }: { onClose: () => void }) {
   const api = useApi()
   const toast = useToast()
@@ -146,7 +125,6 @@ function AdjustFormRow({ onClose }: { onClose: () => void }) {
   const cents = parseYuan(form.amount) ?? 0
   return (
     <div className={css.adjForm}>
-      <Select size="sm" fieldClassName={css.adjCurrency} aria-label="调整币种" options={CURRENCY_OPTIONS} value={form.currency} onChange={(e) => set('currency', e.target.value as Currency)} error={errors.currency} />
       <Input size="sm" fieldClassName={css.adjAmount} mono aria-label="调整金额（元）" placeholder="金额，可为负" inputMode="decimal" value={form.amount} onChange={(e) => set('amount', e.target.value)} error={errors.amount} autoFocus />
       <Input size="sm" fieldClassName={css.adjReason} aria-label="调整原因" placeholder="原因（必填，写入审计）" value={form.reason} onChange={(e) => set('reason', e.target.value)} error={errors.reason} />
       <Input size="sm" fieldClassName={css.adjDate} type="date" aria-label="生效日（默认今天）" title="生效日，留空为今天" max={today} value={form.effectiveOn} onChange={(e) => set('effectiveOn', e.target.value)} error={errors.effective_on} />
@@ -159,7 +137,7 @@ function AdjustFormRow({ onClose }: { onClose: () => void }) {
       <ConfirmModal
         open={confirming}
         title="登记收入调整"
-        body={`${cents > 0 ? '+' : '−'}${formatMoney(Math.abs(cents), form.currency)} · ${form.reason.trim()}，生效日 ${form.effectiveOn || '今天'}。登记后不能修改，只能冲销。`}
+        body={`${cents > 0 ? '+' : '−'}${formatMoney(Math.abs(cents))} · ${form.reason.trim()}，生效日 ${form.effectiveOn || '今天'}。登记后不能修改，只能冲销。`}
         confirmLabel="登记"
         onCancel={() => setConfirming(false)}
         onConfirm={submit}
@@ -218,7 +196,7 @@ function ReverseDialog({ a, onClose }: { a: Adjustment; onClose: () => void }) {
       <div className={css.dialogBody}>
         <p className={css.dialogText}>
           系统会追加一条金额相反的记录（{v.amount.startsWith('+') ? '−' : '+'}
-          {formatMoney(Math.abs(a.amount), a.currency)}，生效日同为 {a.effective_on}），原记录保留。
+          {formatMoney(Math.abs(a.amount))}，生效日同为 {a.effective_on}），原记录保留。
         </p>
         <TextArea
           label="冲销原因（写入审计）"

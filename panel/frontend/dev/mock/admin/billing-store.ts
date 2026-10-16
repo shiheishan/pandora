@@ -4,6 +4,10 @@ import { addInterval } from './billing-placement.ts'
 import { currentOf, plans, trafficOf } from './plans-store.ts'
 import { seedOrders, setOrderSource, userStore, type Sub, type User } from './users.ts'
 
+/** users.ts 的 Sub 与订单视图现在还带这几个旧字段（币种、流量包），那边删掉后这里一并删；用展开写进去，那边删了也不报多余属性 */
+const LEGACY_SUB_FIELDS = { currency: 'CNY' }
+const LEGACY_ORDER_FIELDS = { currency: 'CNY' }
+
 const MIN = 60_000
 const DAY = 86_400_000
 const iso = (msAgo: number) => new Date(Date.now() - msAgo).toISOString()
@@ -37,7 +41,6 @@ export interface Provider {
   accepting_new: boolean
   has_credentials: boolean
   base_url: string
-  currencies: string[]
   // 非机密配置（Go 无 omitempty）：methods 是 config.methods 原样，没配为空数组
   submit_path: string
   api_path: string
@@ -66,15 +69,15 @@ export function notifyUrlForProvider(code: string): string {
 const epayPaths = { submit_path: '/submit.php', api_path: '/api.php', allow_private_host: false, min_amount: 100 }
 const noConfig = { submit_path: '', api_path: '', methods: [], default_method: '', allow_private_host: false, min_amount: 0 }
 export const providers: Provider[] = [
-  { id: randomUUID(), code: 'epay', adapter: 'epay', display_name: '聚合收银台', enabled: true, accepting_new: true, has_credentials: true, base_url: 'https://pay.example.com', currencies: ['CNY'], ...epayPaths, methods: ['alipay', 'wxpay'], default_method: 'alipay', fee_fixed: 0, fee_percent: '0.00' },
+  { id: randomUUID(), code: 'epay', adapter: 'epay', display_name: '聚合收银台', enabled: true, accepting_new: true, has_credentials: true, base_url: 'https://pay.example.com', ...epayPaths, methods: ['alipay', 'wxpay'], default_method: 'alipay', fee_fixed: 0, fee_percent: '0.00' },
   // payctl 早期建的渠道：只有 default_method、没有 methods
-  { id: randomUUID(), code: 'epay_backup', adapter: 'epay', display_name: '易支付 · 备用', enabled: true, accepting_new: false, has_credentials: false, base_url: 'https://pay2.example.com', currencies: ['CNY', 'USD'], ...epayPaths, methods: [], default_method: 'alipay', fee_fixed: 0, fee_percent: '0.00' },
-  { id: randomUUID(), code: 'btcpay', adapter: 'btcpay', display_name: 'BTCPay', enabled: true, accepting_new: false, has_credentials: true, base_url: 'https://btcpay.example.com', currencies: ['CNY'], submit_path: '', api_path: '', methods: [], default_method: '', allow_private_host: false, min_amount: 100, fee_fixed: 0, fee_percent: '1.00' },
-  { id: randomUUID(), code: 'offline', adapter: 'offline', display_name: '线下收款', enabled: true, accepting_new: false, has_credentials: true, base_url: '', currencies: ['CNY', 'USD'], ...noConfig, fee_fixed: 0, fee_percent: '0.00' },
+  { id: randomUUID(), code: 'epay_backup', adapter: 'epay', display_name: '易支付 · 备用', enabled: true, accepting_new: false, has_credentials: false, base_url: 'https://pay2.example.com', ...epayPaths, methods: [], default_method: 'alipay', fee_fixed: 0, fee_percent: '0.00' },
+  { id: randomUUID(), code: 'btcpay', adapter: 'btcpay', display_name: 'BTCPay', enabled: true, accepting_new: false, has_credentials: true, base_url: 'https://btcpay.example.com', submit_path: '', api_path: '', methods: [], default_method: '', allow_private_host: false, min_amount: 100, fee_fixed: 0, fee_percent: '1.00' },
+  { id: randomUUID(), code: 'offline', adapter: 'offline', display_name: '线下收款', enabled: true, accepting_new: false, has_credentials: true, base_url: '', ...noConfig, fee_fixed: 0, fee_percent: '0.00' },
 ]
-/** 站点最低付款额（分，billing.minPaymentSQL）：启用且收新单、支持 CNY 的渠道里最小的 min_amount；一个都没有为 0 */
+/** 站点最低付款额（分，billing.minPaymentSQL）：启用且收新单的渠道里最小的 min_amount；一个都没有为 0 */
 export function siteMinPayment(): number {
-  const mins = providers.filter((p) => p.enabled && p.accepting_new && p.currencies.includes('CNY')).map((p) => p.min_amount)
+  const mins = providers.filter((p) => p.enabled && p.accepting_new).map((p) => p.min_amount)
   return mins.length ? Math.min(...mins) : 0
 }
 /** 凭据只写不读：单独存，providerView 展开 Provider 时带不出去（与 Go 的列表只给 has_credentials 一致） */
@@ -90,7 +93,7 @@ const providerName = (code: string) => providers.find((p) => p.code === code)?.d
 interface Intent {
   id: string
   provider_code: string
-  currency: string
+  method: string
   amount: number
   surcharge_amount: number
   status: string
@@ -104,7 +107,6 @@ interface Payment {
   payment_intent_id: string | null
   provider_code: string
   provider_payment_id: string
-  currency: string
   amount: number
   surcharge_amount: number
   fee_amount: number
@@ -123,7 +125,6 @@ interface Item {
   interval_count: number | null
   quantity: number
   unit_amount: number
-  currency: string
 }
 
 export interface Order {
@@ -133,10 +134,8 @@ export interface Order {
   user_email: string
   kind: string
   status: string
-  currency: string
   subtotal_amount: number
   discount_amount: number
-  member_discount_amount: number
   total_amount: number
   balance_applied: number
   payable_amount: number
@@ -171,10 +170,8 @@ function blank(u: User, over: Partial<Order>): Order {
     user_email: u.email,
     kind: 'new',
     status: 'pending_payment',
-    currency: 'CNY',
     subtotal_amount: 0,
     discount_amount: 0,
-    member_discount_amount: 0,
     total_amount: 0,
     balance_applied: 0,
     payable_amount: 0,
@@ -200,16 +197,18 @@ function blank(u: User, over: Partial<Order>): Order {
 }
 
 export function intentFor(o: Order, code: string, status: string, at: string, over: Partial<Intent> = {}): Intent {
-  return { id: randomUUID(), provider_code: code, currency: o.currency, amount: o.payable_amount, surcharge_amount: 0, status, provider_ref: `${code.toUpperCase()}${o.order_no.slice(2)}`, expires_at: new Date(Date.parse(at) + 30 * MIN).toISOString(), created_at: at, updated_at: at, ...over }
+  const defaultMethod = code === 'epay' || code === 'epay_backup' ? 'alipay' : ''
+  return { id: randomUUID(), provider_code: code, amount: o.payable_amount, surcharge_amount: 0, status, provider_ref: `${code.toUpperCase()}${o.order_no.slice(2)}`, expires_at: new Date(Date.parse(at) + 30 * MIN).toISOString(), created_at: at, updated_at: at, ...over, method: over.method ?? defaultMethod }
 }
 
 export function paymentFor(o: Order, code: string, intent: Intent | null, at: string, ref?: string): Payment {
   const surcharge = intent?.surcharge_amount ?? 0
   const amount = intent?.amount ?? o.payable_amount
-  return { id: randomUUID(), payment_intent_id: intent?.id ?? null, provider_code: code, provider_payment_id: ref ?? `${code}:${o.order_no}`, currency: o.currency, amount, surcharge_amount: surcharge, fee_amount: code === 'offline' ? 0 : Math.round(amount * 0.006), status: 'succeeded', method: code === 'offline' ? null : 'alipay', paid_at: at }
+  const method = code === 'offline' ? 'offline' : intent ? intent.method || null : 'alipay'
+  return { id: randomUUID(), payment_intent_id: intent?.id ?? null, provider_code: code, provider_payment_id: ref ?? `${code}:${o.order_no}`, amount, surcharge_amount: surcharge, fee_amount: code === 'offline' ? 0 : Math.round(amount * 0.006), status: 'succeeded', method, paid_at: at }
 }
 
-const planItem = (planId: string | null, name: string, amount: number, currency: string, interval = 'month', count = 1): Item => ({
+const planItem = (planId: string | null, name: string, amount: number, interval = 'month', count = 1): Item => ({
   id: randomUUID(),
   plan_id: planId,
   price_id: null,
@@ -220,7 +219,6 @@ const planItem = (planId: string | null, name: string, amount: number, currency:
   interval_count: planId ? count : null,
   quantity: 1,
   unit_amount: amount,
-  currency,
 })
 
 
@@ -235,7 +233,6 @@ for (const u of userStore) {
       order_no: s.order_no,
       kind: s.kind,
       status: s.status,
-      currency: s.currency,
       subtotal_amount: s.total_amount,
       total_amount: s.total_amount,
       payable_amount: s.payable_amount,
@@ -248,7 +245,7 @@ for (const u of userStore) {
       expired_at: expired ? new Date(Date.parse(s.created_at) + 30 * MIN).toISOString() : null,
       subscription_id: expired ? null : s.sub_id,
       state_version: expired ? 2 : 3,
-      items: [planItem(s.plan_id, s.plan_name, s.total_amount, s.currency)],
+      items: [planItem(s.plan_id, s.plan_name, s.total_amount)],
     })
     if (s.provider_code) {
       const intent = intentFor(o, s.provider_code, expired ? 'expired' : 'succeeded', s.created_at)
@@ -267,21 +264,20 @@ const OPS = { created_by: randomUUID(), created_by_email: 'ops@example.test' }
 
 function add(u: User, over: Partial<Order>, then?: (o: Order) => void): Order {
   const o = blank(u, { subtotal_amount: over.total_amount ?? 0, ...over })
-  if (o.items.length === 0 && o.kind !== 'topup')
-    o.items.push(o.kind === 'addon' ? planItem(null, '100 GB 加油包', o.subtotal_amount, o.currency) : planItem(pro.id, pro.name, o.subtotal_amount, o.currency))
+  if (o.items.length === 0 && o.kind !== 'topup') o.items.push(planItem(pro.id, pro.name, o.subtotal_amount))
   then?.(o)
   orders.push(o)
   return o
 }
-const paidVia = (code: string) => (o: Order) => {
-  const i = intentFor(o, code, 'succeeded', o.created_at)
+const paidVia = (code: string, method?: string) => (o: Order) => {
+  const i = intentFor(o, code, 'succeeded', o.created_at, method ? { method } : {})
   o.intents.push(i)
   o.payments.push(paymentFor(o, code, i, o.created_at))
 }
 const done = (at: string) => ({ created_at: at, updated_at: at, paid_at: at, fulfilled_at: at, state_version: 3 })
 
 // 待支付：等回调、首笔失败、人工开的待用户支付（还没发起支付）
-add(U(7), { total_amount: 2500, payable_amount: 2500, created_at: iso(4 * MIN), expires_at: iso(-26 * MIN), items: [planItem(std.id, std.name, 2500, 'CNY')] }, (o) =>
+add(U(7), { total_amount: 2500, payable_amount: 2500, created_at: iso(4 * MIN), expires_at: iso(-26 * MIN), items: [planItem(std.id, std.name, 2500)] }, (o) =>
   o.intents.push(intentFor(o, 'epay', 'requires_action', iso(3 * MIN))),
 )
 add(U(7), { kind: 'topup', total_amount: 10000, payable_amount: 10000, created_at: iso(9 * MIN), expires_at: iso(-21 * MIN) }, (o) =>
@@ -289,19 +285,19 @@ add(U(7), { kind: 'topup', total_amount: 10000, payable_amount: 10000, created_a
 )
 add(U(3), { total_amount: 4500, payable_amount: 4500, created_at: iso(15 * MIN), expires_at: iso(-15 * MIN), manual_reason: '对公转账客户，先开单再付款', ...OPS })
 // 超时未支付（仪表盘「超时未支付订单」数的就是这两张）：创建超过 30 分钟、过期作业还没处理，像是回调丢了
-add(U(9), { total_amount: 4500, payable_amount: 4500, created_at: iso(2 * 60 * MIN), expires_at: iso(90 * MIN), items: [planItem(pro.id, pro.name, 4500, 'CNY')] }, (o) =>
+add(U(9), { total_amount: 4500, payable_amount: 4500, created_at: iso(2 * 60 * MIN), expires_at: iso(90 * MIN), items: [planItem(pro.id, pro.name, 4500)] }, (o) =>
   o.intents.push(intentFor(o, 'epay', 'requires_action', iso(2 * 60 * MIN - MIN))),
 )
-add(U(6), { total_amount: 2500, payable_amount: 2500, created_at: iso(6 * 60 * MIN), expires_at: iso(5 * 60 * MIN + 30 * MIN), items: [planItem(std.id, std.name, 2500, 'CNY')] }, (o) =>
+add(U(6), { total_amount: 2500, payable_amount: 2500, created_at: iso(6 * 60 * MIN), expires_at: iso(5 * 60 * MIN + 30 * MIN), items: [planItem(std.id, std.name, 2500)] }, (o) =>
   o.intents.push(intentFor(o, 'epay_backup', 'requires_action', iso(6 * 60 * MIN - 2 * MIN))),
 )
-add(U(11), { total_amount: 69000, payable_amount: 69000, created_at: iso(22 * MIN), expires_at: iso(-8 * MIN), state_version: 2, items: [planItem(pro.id, pro.name, 69000, 'CNY', 'year')] }, (o) =>
+add(U(11), { total_amount: 69000, payable_amount: 69000, created_at: iso(22 * MIN), expires_at: iso(-8 * MIN), state_version: 2, items: [planItem(pro.id, pro.name, 69000, 'year')] }, (o) =>
   o.intents.push(intentFor(o, 'epay', 'requires_action', iso(21 * MIN))),
 )
-// 已支付：余额全额、美元、流量包（R32）、多项、充值
-add(U(5), { status: 'fulfilled', total_amount: 6900, balance_applied: 6900, ...done(iso(3 * 60 * MIN)), items: [planItem(std.id, std.name, 6900, 'CNY', 'month', 3)] })
-add(U(4), { status: 'fulfilled', currency: 'USD', total_amount: 890, payable_amount: 890, paid_amount: 890, ...done(iso(5 * 60 * MIN)), items: [planItem(pro.id, pro.name, 890, 'USD')] }, paidVia('epay_backup'))
-add(U(1), { kind: 'addon', status: 'fulfilled', total_amount: 2500, payable_amount: 2500, paid_amount: 2500, ...done(todayIso(7 * 60 * MIN)) }, paidVia('epay'))
+// 已支付：余额全额、微信、叠加、流量重置、充值
+add(U(5), { status: 'fulfilled', total_amount: 6900, balance_applied: 6900, ...done(iso(3 * 60 * MIN)), items: [planItem(std.id, std.name, 6900, 'month', 3)] })
+add(U(4), { status: 'fulfilled', total_amount: 8900, payable_amount: 8900, paid_amount: 8900, ...done(iso(5 * 60 * MIN)), items: [planItem(pro.id, pro.name, 8900)] }, paidVia('epay_backup'))
+add(U(1), { kind: 'stack', status: 'fulfilled', total_amount: 9900, payable_amount: 9900, paid_amount: 9900, ...done(todayIso(8 * 60 * MIN)), items: [planItem(std.id, std.name, 9900)] }, paidVia('epay'))
 add(
   U(1),
   {
@@ -323,26 +319,21 @@ add(
         interval_count: null,
         quantity: 1,
         unit_amount: 1800,
-        currency: 'CNY',
       },
     ],
   },
   paidVia('epay'),
 )
-add(
-  U(13),
-  { status: 'fulfilled', total_amount: 7000, payable_amount: 7000, paid_amount: 7000, ...done(iso(20 * 60 * MIN)), items: [planItem(std.id, std.name, 4500, 'CNY'), planItem(null, '100 GB 加油包', 2500, 'CNY')] },
-  paidVia('epay'),
-)
+add(U(13), { status: 'fulfilled', total_amount: 4500, payable_amount: 4500, paid_amount: 4500, ...done(iso(20 * 60 * MIN)), items: [planItem(std.id, std.name, 4500)] }, paidVia('epay'))
 add(U(9), { kind: 'topup', status: 'paid', total_amount: 20000, payable_amount: 20000, paid_amount: 20000, ...done(iso(DAY)), fulfilled_at: null, state_version: 2 }, (o) => {
   o.intents.push(intentFor(o, 'epay', 'cancelled', iso(DAY + 2 * MIN)))
-  paidVia('epay')(o)
+  paidVia('epay', 'wxpay')(o)
 })
 // 人工：赠送（全额减免）、线下已收款（offline 入账没有支付尝试）
 add(U(2), { status: 'fulfilled', subtotal_amount: 4500, discount_amount: 4500, total_amount: 0, ...done(iso(2 * DAY)), manual_reason: '工单 TK20260920 补偿一个月', ...OPS })
 add(
   U(6),
-  { status: 'fulfilled', total_amount: 69000, payable_amount: 69000, paid_amount: 69000, ...done(iso(3 * DAY)), manual_reason: '企业客户对公转账，年付', ...OPS, items: [planItem(pro.id, pro.name, 69000, 'CNY', 'year')] },
+  { status: 'fulfilled', total_amount: 69000, payable_amount: 69000, paid_amount: 69000, ...done(iso(3 * DAY)), manual_reason: '企业客户对公转账，年付', ...OPS, items: [planItem(pro.id, pro.name, 69000, 'year')] },
   (o) => o.payments.push(paymentFor(o, 'offline', null, o.created_at, 'offline:ICBC-20260921-0088')),
 )
 // 已取消
@@ -369,7 +360,7 @@ export const stalePendingCount = (thresholdMs: number, now = Date.now()) => orde
 export const findOrder = (id: string | undefined) => (isUuid(id) ? orders.find((o) => o.id === id) : undefined)
 
 // ---------------------------------------------------------------------------
-// 视图：列表行（首项快照，R32 流量包单显示包名）、详情、支付记录
+// 视图：列表行（首项快照）、详情、支付记录
 // ---------------------------------------------------------------------------
 export function orderRow(o: Order) {
   const first = o.items[0]
@@ -381,7 +372,6 @@ export function orderRow(o: Order) {
     user_email: o.user_email,
     kind: o.kind,
     status: o.status,
-    currency: o.currency,
     total_amount: o.total_amount,
     payable_amount: o.payable_amount,
     paid_amount: o.paid_amount,
@@ -390,6 +380,7 @@ export function orderRow(o: Order) {
     paid_at: o.paid_at,
     provider_code: code,
     provider_name: code ? providerName(code) : null,
+    method: pay?.method ?? null,
     plan_name: first ? (first.plan_name ?? first.product_name) : '',
     interval: first?.interval ?? '',
     interval_count: first?.interval_count ?? 0,
@@ -406,7 +397,6 @@ export function orderDetail(o: Order) {
     state_version: o.state_version,
     subtotal_amount: o.subtotal_amount,
     discount_amount: o.discount_amount,
-    member_discount_amount: o.member_discount_amount ?? 0,
     coupon_id: null,
     manual_reason: o.manual_reason,
     created_by: o.created_by,
@@ -431,7 +421,7 @@ export function orderDetail(o: Order) {
 
 export function orderHistory(o: Order) {
   return {
-    payment_intents: o.intents.map((i) => ({ ...i, provider_name: providerName(i.provider_code) })),
+    payment_intents: o.intents.map((i) => ({ ...i, method: i.method || null, provider_name: providerName(i.provider_code) })),
     payments: o.payments.map((p) => ({ ...p, provider_name: providerName(p.provider_code) })),
   }
 }
@@ -451,7 +441,7 @@ setOrderSource((userId) =>
   orders
     .filter((o) => o.user_id === userId)
     .sort((a, b) => b.created_at.localeCompare(a.created_at))
-    .map(orderRow),
+    .map((o) => ({ ...orderRow(o), ...LEGACY_ORDER_FIELDS })),
 )
 
 // ---------------------------------------------------------------------------
@@ -460,7 +450,7 @@ setOrderSource((userId) =>
 // 续费把那份往后推，换套餐就地改成新套餐（链接不变）并把没用完的价值退进余额
 // ---------------------------------------------------------------------------
 export interface PlacementEffect {
-  kind: 'renew' | 'change'
+  kind: 'renew' | 'stack' | 'change'
   subscriptionId: string
   /** change：原套餐没用完的部分与退进余额的部分 */
   credit: number
@@ -476,21 +466,24 @@ function applyEffect(o: Order, u: User, fx: PlacementEffect, at: string): void {
   const count = item.interval_count ?? 1
   const now = Date.parse(at)
   const live = sub.status === 'active'
-  if (fx.kind === 'renew') {
+  const plan = plans.find((p) => p.id === item.plan_id)
+  const version = plan ? currentOf(plan) : undefined
+  if (fx.kind === 'renew' || fx.kind === 'stack') {
     // 生效中的接在原到期日后；过期 30 天内的从付款起算（恢复使用）
     const from = live && sub.current_period_end ? Date.parse(sub.current_period_end) : now
     sub.current_period_end = addInterval(from, interval, count).toISOString()
     if (!live) Object.assign(sub, { status: 'active', current_period_start: at, traffic_used: 0 })
+    if (fx.kind === 'stack' && version) {
+      const add = trafficOf(version)
+      if (add) sub.traffic_limit = (sub.traffic_limit ?? 0) + add
+    }
   } else {
-    const plan = plans.find((p) => p.id === item.plan_id)
-    const version = plan ? currentOf(plan) : undefined
     if (plan) {
       Object.assign(sub, {
         plan_id: plan.id,
         plan_name: plan.name,
         plan_version: version?.version ?? 1,
         amount: item.unit_amount,
-        currency: item.currency,
         traffic_limit: version ? trafficOf(version) : null,
         plan_max_devices: version?.max_devices ?? null,
       })
@@ -526,34 +519,27 @@ export function fulfil(o: Order, at: string): void {
     current_period_start: at,
     current_period_end: new Date(Date.parse(at) + (item.interval === 'year' ? 365 : 30 * (item.interval_count ?? 1)) * DAY).toISOString(),
     amount: o.total_amount,
-    currency: o.currency,
     traffic_limit: traffic,
     traffic_used: 0,
     device_limit_override: null,
     plan_max_devices: version?.max_devices ?? null,
     online_devices: 0,
-    pack_bytes: 0,
     created_at: at,
     token: `tk-manual-${o.order_no}`,
+    ...LEGACY_SUB_FIELDS,
   }
   u.subs.push(sub)
   o.subscription_id = sub.id
-  // 未分配的流量包：开通后这是唯一一份在用的订阅，就挂到它上面（billing provision）
-  if (u.unattached_bytes > 0 && u.subs.filter((x) => x.status === 'active').length === 1) {
-    sub.pack_bytes += u.unattached_bytes
-    u.unattached_bytes = 0
-  }
 }
 
 // ===========================================================================
-// 挂账（保留规则 6）：订单取消后才到账、续费或变更时订阅已结束、或超额扣款的钱，挂在 suspense 科目
+// 待处理到账（保留规则 6）：订单取消后才到账、续费或变更时订阅已结束、或超额扣款的钱，挂在 suspense 科目
 // ===========================================================================
 export interface LateCase {
   id: string
   case_kind: 'released_order' | 'excess_capture' | 'ineligible_subscription'
   status: 'suspense' | 'applied'
   amount: number
-  currency: string
   order: Order
   received_at: string
   resolved_at?: string
@@ -567,7 +553,6 @@ const lateSeed = (kind: LateCase['case_kind'], o: Order, amount: number, days: n
   case_kind: kind,
   status: 'suspense',
   amount,
-  currency: o.currency,
   order: o,
   received_at: iso(days * DAY + 37 * MIN),
   ...over,
@@ -575,7 +560,7 @@ const lateSeed = (kind: LateCase['case_kind'], o: Order, amount: number, days: n
 export const lateCases: LateCase[] = [
   lateSeed('released_order', cancelledOrder, 2500, 4),
   lateSeed('released_order', expiredOrders[0] ?? cancelledOrder, 4500, 12),
-  lateSeed('excess_capture', orders.find((o) => o.currency === 'USD') ?? cancelledOrder, 120, 33, { currency: 'USD' }),
+  lateSeed('excess_capture', cancelledOrder, 1200, 33),
   lateSeed('released_order', expiredOrders[1] ?? cancelledOrder, 6800, 40),
   lateSeed('ineligible_subscription', ineligibleRenewal, 4500, 6),
   lateSeed('excess_capture', orders.find((o) => o.kind === 'topup' && o.status === 'paid') ?? cancelledOrder, 1000, 21, {
@@ -591,7 +576,6 @@ export function lateView(c: LateCase) {
     case_kind: c.case_kind,
     status: c.status,
     amount: c.amount,
-    currency: c.currency,
     order_no: c.order.order_no,
     order_status: c.order.status,
     user_id: c.order.user_id,
@@ -609,8 +593,8 @@ export function lateView(c: LateCase) {
 export function providerView(p: Provider) {
   const today = todayLocal()
   const pays = orders.flatMap((o) => o.payments).filter((x) => x.provider_code === p.code)
-  const sums: Record<string, number> = {}
-  for (const x of pays) if (x.status === 'succeeded' && todayLocal(new Date(x.paid_at)) === today) sums[x.currency] = (sums[x.currency] ?? 0) + x.amount
+  let todayTotal = 0
+  for (const x of pays) if (x.status === 'succeeded' && todayLocal(new Date(x.paid_at)) === today) todayTotal += x.amount
   const since = Date.now() - DAY
   const terminal = orders
     .flatMap((o) => o.intents)
@@ -624,7 +608,7 @@ export function providerView(p: Provider) {
     fee_percent,
     has_webhook_secret,
     notify_url: notifyUrlForProvider(p.code),
-    today: sums,
+    today: todayTotal,
     success_rate_24h: terminal.length ? terminal.filter((i) => i.status === 'succeeded').length / terminal.length : null,
     last_callback_at: p.code === 'offline' ? null : last,
   }
@@ -635,7 +619,6 @@ export function providerView(p: Provider) {
 // ===========================================================================
 export interface Adjustment {
   id: string
-  currency: 'CNY' | 'USD'
   amount: number
   reason: string
   effective_on: string
@@ -644,9 +627,8 @@ export interface Adjustment {
   created_by_email: string | null
   created_at: string
 }
-const adjSeed = (currency: Adjustment['currency'], amount: number, reason: string, days: number, email: string | null): Adjustment => ({
+const adjSeed = (amount: number, reason: string, days: number, email: string | null): Adjustment => ({
   id: randomUUID(),
-  currency,
   amount,
   reason,
   effective_on: todayLocal(new Date(Date.now() - days * DAY)),
@@ -655,9 +637,9 @@ const adjSeed = (currency: Adjustment['currency'], amount: number, reason: strin
   created_at: iso(days * DAY),
 })
 export const adjustments: Adjustment[] = [
-  adjSeed('CNY', 240000, '线下对公转账补录 · 9 月', 12, 'admin@example.test'),
-  adjSeed('USD', -1200, '重复扣款退回，渠道已原路退款', 6, 'ops@example.test'),
-  adjSeed('CNY', 31240, '渠道手续费返还 · 8 月', 3, null),
+  adjSeed(240000, '线下对公转账补录 · 9 月', 12, 'admin@example.test'),
+  adjSeed(-1200, '重复扣款退回，渠道已原路退款', 6, 'ops@example.test'),
+  adjSeed(31240, '渠道手续费返还 · 8 月', 3, null),
 ]
 
 export function adjustmentView(a: Adjustment) {

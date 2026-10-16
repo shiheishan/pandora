@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { z } from 'zod'
 import { isApiError, type ApiClient } from '../core/api'
 import type { TokenStore } from '../core/token'
@@ -7,7 +7,7 @@ import { Button, Input } from '../ui'
 import { useCaptcha } from './Captcha'
 import captchaCss from './Captcha.module.css'
 import css from './AuthPage.module.css'
-import { useSignupConfig } from './queries'
+import { useAppearance, useSignupConfig } from './queries'
 
 const startSchema = z.object({ ok: z.literal(true), message: z.string() })
 const loginSchema = z.object({ access_token: z.string().min(1) })
@@ -24,16 +24,31 @@ export async function consumeMailLogin(api: ApiClient, tokens: TokenStore, token
 export function MailLinkLoginForm({ initialError }: { initialError: string | null }) {
   const { api } = useRuntime()
   const signup = useSignupConfig()
+  const appearance = useAppearance()
+  const siteName = appearance.data?.site_name?.trim() || 'Pandora'
   const cap = useCaptcha(signup.data?.captcha ?? null)
   const [email, setEmail] = useState('')
   const [error, setError] = useState<string | null>(initialError)
   const [captchaError, setCaptchaError] = useState<string | null>(null)
-  const [successMessage, setSuccessMessage] = useState<string | null>(null)
+  const [sent, setSent] = useState(false)
+  const [cool, setCool] = useState(0)
   const [busy, setBusy] = useState(false)
+
+  const cooling = cool > 0
+  useEffect(() => {
+    if (!cooling) return
+    const id = window.setInterval(() => {
+      setCool((n) => (n <= 1 ? 0 : n - 1))
+    }, 1000)
+    return () => window.clearInterval(id)
+  }, [cooling])
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) return setError('请输入有效邮箱')
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) {
+      if (!sent) return setError('请输入有效邮箱')
+      return
+    }
     setBusy(true)
     setError(null)
     setCaptchaError(null)
@@ -47,10 +62,10 @@ export function MailLinkLoginForm({ initialError }: { initialError: string | nul
     try {
       const body: { email: string; captcha_token?: string } = { email: email.trim() }
       if (captchaToken) body.captcha_token = captchaToken
-      const out = await api.post('v1/auth/mail-link/start', startSchema, { auth: false, body })
-      setSuccessMessage(out.message)
+      await api.post('v1/auth/mail-link/start', startSchema, { auth: false, body })
+      setSent(true)
+      setCool(60)
     } catch (err) {
-      setSuccessMessage(null)
       if (isApiError(err) && err.fields.captcha) setCaptchaError(err.fields.captcha)
       else setError(message(err, '发送失败，请稍后重试'))
     } finally {
@@ -62,17 +77,32 @@ export function MailLinkLoginForm({ initialError }: { initialError: string | nul
 
   return (
     <form className={css.form} onSubmit={submit} noValidate>
-      <p className={css.muted}>输入注册邮箱，我们会发一封带登录链接的邮件，15 分钟内点开即可登录，不用输入密码。</p>
-      <Input label="邮箱" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} error={error ?? undefined} />
+      {!sent ? (
+        <>
+          <p className={css.muted}>不用输入密码：我们把登录链接发到你的邮箱，点开就能登录，15 分钟内有效。</p>
+          <Input label="邮箱" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} error={error ?? undefined} />
+        </>
+      ) : (
+        <div className={css.sent} role="status">
+          <b className={css.sentTitle}>登录链接已发送</b>
+          <span>
+            如果 {email.trim()} 已注册，去它的收件箱找一封来自 {siteName} 的邮件，点里面的按钮登录。没收到的话看看垃圾邮件。
+          </span>
+        </div>
+      )}
       {cap.element}
       {captchaError && (
         <p className={captchaCss.error} role="alert">
           {captchaError}
         </p>
       )}
-      {successMessage && <p className={css.muted}>{successMessage}</p>}
-      <Button type="submit" variant="primary" block busy={busy}>
-        {successMessage ? '重新发送' : '发送登录链接'}
+      {sent && error && (
+        <p className={captchaCss.error} role="alert">
+          {error}
+        </p>
+      )}
+      <Button type="submit" variant={sent ? undefined : 'primary'} block busy={busy} disabled={sent && cool > 0}>
+        {sent ? (cool > 0 ? `${cool} 秒后可以重发` : '重新发送') : '发送登录链接'}
       </Button>
     </form>
   )

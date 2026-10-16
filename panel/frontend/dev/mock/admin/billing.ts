@@ -224,6 +224,9 @@ function manualSubject(body: Json) {
   return { ok: true as const, user, plan, price }
 }
 
+/** 一次性套餐：套餐有 kind 时看 kind，没有时看价格档是不是 one_time（套餐目录还在改，两种都认） */
+const isOneTime = (plan: unknown, price?: { billing_interval: string }) => (plan as { kind?: string }).kind === 'one_time' || price?.billing_interval === 'one_time'
+
 export const billing: MockModule = {
   routes: {
     // ---- 订单 ---------------------------------------------------------------
@@ -319,11 +322,10 @@ export const billing: MockModule = {
       const price = plan.prices.find((x) => x.id === priceId)
       const now = Date.now()
       const cands = candidatesOf(user, now)
-      const { options, defaultKey } = planOptions(plan.id, cands, entry)
-      const info = price ? { interval: price.billing_interval, count: price.interval_count, currency: price.currency } : { interval: 'month', count: 1, currency: 'CNY' }
-      // billing.ManualOrderPreview：站点最低额（价格档的币种，非 CNY 不限）与每个落点按「待用户支付」开时的应付、
-      // 是否低于最低额（与建单 422 同一个判定）。价格档找不到时都给 0 / false
-      const minPay = price && price.currency === 'CNY' ? siteMinPayment() : 0
+      const { options, defaultKey } = planOptions(plan.id, cands, entry, isOneTime(plan, price))
+      const info = price ? { interval: price.billing_interval, count: price.interval_count } : { interval: 'month', count: 1 }
+      // billing.ManualOrderPreview：站点最低额与每个落点按「待用户支付」开时的应付、是否低于最低额（与建单 422 同一个判定）
+      const minPay = price ? siteMinPayment() : 0
       ctx.send(200, {
         options: options.map((o) => {
           const c = cands.find((x) => x.sub.id === o.subscription_id)
@@ -367,7 +369,7 @@ export const billing: MockModule = {
         // 落点：照 preview 同一套规则重算，target 必须是其中一项
         const now = Date.now()
         const cands = candidatesOf(user, now)
-        const { options } = planOptions(plan.id, cands, '')
+        const { options } = planOptions(plan.id, cands, '', isOneTime(plan, price))
         let chosen: Option | undefined
         if (body.target !== undefined) {
           const t = body.target
@@ -395,7 +397,7 @@ export const billing: MockModule = {
         if (settlement === 'offline' && payable <= 0) return err(409, 'conflict', '这张订单不需要支付，请改用赠送')
         // 待支付单低于站点最低付款额：用户付不了，后台单不用余额、不免零头，回 422 带 fields.settlement
         // （billing.errManualBelowMinimum），后台落到「结算方式」上
-        if (settlement === 'pending' && price.currency === 'CNY' && manualDueBelowMinimum(payable, siteMinPayment())) {
+        if (settlement === 'pending' && manualDueBelowMinimum(payable, siteMinPayment())) {
           const msg = '应付金额低于支付渠道的最低付款额，用户无法在线支付，请改用赠送或线下已收款'
           return err(422, 'validation_failed', msg, { settlement: msg })
         }
@@ -407,13 +409,10 @@ export const billing: MockModule = {
           order_no: nextOrderNo(),
           user_id: user.id,
           user_email: user.email,
-          kind: pick.kind === 'renew' ? 'renewal' : pick.kind === 'change' ? 'upgrade' : 'new',
+          kind: pick.kind === 'renew' ? 'renewal' : pick.kind === 'stack' ? 'stack' : pick.kind === 'change' ? 'upgrade' : 'new',
           status: 'pending_payment',
-          currency: price.currency,
           subtotal_amount: amount,
           discount_amount: grant ? amount : 0,
-          // 后台人工单不打会员折扣
-          member_discount_amount: 0,
           total_amount: payable,
           balance_applied: 0,
           payable_amount: payable,
@@ -443,13 +442,12 @@ export const billing: MockModule = {
               interval_count: price.interval_count,
               quantity: 1,
               unit_amount: amount,
-              currency: price.currency,
             },
           ],
           intents: [],
           payments: [],
         }
-        if (pick.kind !== 'new' && targetSub) pendingEffects.set(o.id, { kind: pick.kind as 'renew' | 'change', subscriptionId: targetSub.id, credit, refund })
+        if (pick.kind !== 'new' && targetSub) pendingEffects.set(o.id, { kind: pick.kind as 'renew' | 'stack' | 'change', subscriptionId: targetSub.id, credit, refund })
         if (paysNow) {
           o.paid_at = at
           if (!grant) Object.assign(o, { state_version: 3 })
@@ -461,10 +459,10 @@ export const billing: MockModule = {
           fulfil(o, at)
         }
         orders.push(o)
-        const { discount_amount, id: order_id, order_no, currency, total_amount, balance_applied, payable_amount, status } = o
+        const { discount_amount, id: order_id, order_no, total_amount, balance_applied, payable_amount, status } = o
         // 落成换套餐时多这两项：原套餐的剩余价值，与已经退进余额的部分（待支付的单付款后才退）
         const change = pick.kind === 'change' ? { proration_credit: credit, balance_refund: o.status === 'fulfilled' ? refund : 0 } : {}
-        return { status: 201, body: { discount_amount, order_id, order_no, currency, total_amount, balance_applied, payable_amount, status, ...change } }
+        return { status: 201, body: { discount_amount, order_id, order_no, total_amount, balance_applied, payable_amount, status, ...change } }
       })
     },
 
@@ -494,7 +492,7 @@ export const billing: MockModule = {
         o.payments.push(p)
         // 续费 / 变更单的订阅已结束：钱照常入账、隔离进挂账，订单不动，回 409 说明去向（R117）
         if (subscriptionEnded.has(o.id)) {
-          lateCases.unshift({ id: randomUUID(), case_kind: 'ineligible_subscription', status: 'suspense', amount: o.payable_amount, currency: o.currency, order: o, received_at: at })
+          lateCases.unshift({ id: randomUUID(), case_kind: 'ineligible_subscription', status: 'suspense', amount: o.payable_amount, order: o, received_at: at })
           return err(409, 'conflict', '订阅已结束，款项已转入挂账，可在挂账里转入用户余额')
         }
         Object.assign(o, { paid_amount: o.payable_amount, paid_at: at, state_version: o.state_version + 2, updated_at: at })
@@ -529,7 +527,7 @@ export const billing: MockModule = {
           if (o.status !== 'cancelled' && o.status !== 'expired') return view('unpaid', false, false)
           const p = paymentFor(o, last.provider_code, null, at, ref)
           o.payments.push(p)
-          lateCases.unshift({ id: randomUUID(), case_kind: 'released_order', status: 'suspense', amount: o.payable_amount, currency: o.currency, order: o, received_at: at })
+          lateCases.unshift({ id: randomUUID(), case_kind: 'released_order', status: 'suspense', amount: o.payable_amount, order: o, received_at: at })
           return view('paid', true, false, 'released_order')
         }
         const active = o.intents.find((i) => i.status === 'requires_action')
@@ -554,12 +552,12 @@ export const billing: MockModule = {
       const rows = lateCases
         .filter((c) => !status || c.status === status)
         .sort((a, b) => Number(b.status === 'suspense') - Number(a.status === 'suspense') || b.received_at.localeCompare(a.received_at))
-      const pending: Record<string, number> = {}
-      for (const c of lateCases) if (c.status === 'suspense') pending[c.currency] = (pending[c.currency] ?? 0) + c.amount
+      let pending_amount = 0
+      for (const c of lateCases) if (c.status === 'suspense') pending_amount += c.amount
       ctx.send(200, {
         cases: rows.slice(offset, offset + limit).map(lateView),
         total: rows.length,
-        pending_amounts: pending,
+        pending_amount,
       })
     },
 
@@ -577,7 +575,7 @@ export const billing: MockModule = {
         const at = new Date().toISOString()
         Object.assign(c, { status: 'applied', resolved_at: at, resolution_reason: reason })
         const u = userStore.find((x) => x.id === c.order.user_id)
-        if (u && u.currency === c.currency) u.balance += c.amount
+        if (u) u.balance += c.amount
         return { status: 200, body: { ledger_txn_id: randomUUID() } }
       })
     },
@@ -647,7 +645,6 @@ export const billing: MockModule = {
           enabled: true,
           accepting_new: false,
           has_credentials: true,
-          currencies: ['CNY'],
           ...parsed.ok.config,
           min_amount: parsed.ok.min_amount ?? 100,
           fee_fixed: parsed.ok.fee_fixed,
@@ -705,10 +702,7 @@ export const billing: MockModule = {
 
     // ---- 收入调整（报表口径，只追加）---------------------------------------------
     'GET /v1/revenue/adjustments': (ctx) => {
-      const currency = (ctx.query.get('currency') ?? '').toUpperCase()
-      if (currency && currency !== 'CNY' && currency !== 'USD') return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { currency: '仅支持 CNY 或 USD' })
       const rows = adjustments
-        .filter((a) => !currency || a.currency === currency)
         .sort((a, b) => b.created_at.localeCompare(a.created_at))
         .slice(0, 200)
       ctx.send(200, { adjustments: rows.map(adjustmentView) })
@@ -719,11 +713,9 @@ export const billing: MockModule = {
       const body = await ctx.body()
       if (!body) return ctx.send(BAD_JSON.status, BAD_JSON.body)
       await ctx.idempotent('revenue_adjustment_create', () => {
-        const bad = unknownField(body, ['currency', 'amount', 'reason', 'effective_on'])
+        const bad = unknownField(body, ['amount', 'reason', 'effective_on'])
         if (bad) return bad
         const f: Record<string, string> = {}
-        const currency = str(body.currency).trim().toUpperCase()
-        if (currency !== 'CNY' && currency !== 'USD') f.currency = '仅支持 CNY 或 USD'
         const amount = body.amount
         if (typeof amount !== 'number' || !Number.isInteger(amount) || amount === 0 || Math.abs(amount) > 1e12) f.amount = '调整金额必须非零且绝对值不超过 100 亿'
         if (chars(body.reason) < 5 || chars(body.reason) > 500) f.reason = '理由需为 5–500 个字符'
@@ -734,7 +726,6 @@ export const billing: MockModule = {
         if (effective > today) return invalid({ effective_on: '生效日期不能晚于租户今天' })
         const a: Adjustment = {
           id: randomUUID(),
-          currency: currency as Adjustment['currency'],
           amount: amount as number,
           reason: str(body.reason).trim(),
           effective_on: effective || today,
@@ -762,7 +753,6 @@ export const billing: MockModule = {
         if (adjustments.some((a) => a.reversal_of === original.id)) return err(409, 'conflict', '该调整已撤销')
         const a: Adjustment = {
           id: randomUUID(),
-          currency: original.currency,
           amount: -original.amount,
           reason,
           effective_on: original.effective_on,

@@ -360,6 +360,8 @@ type OrderPaymentSummary struct {
 	// 渠道：有收款取最近一笔收款的渠道，否则取最近一次支付尝试的渠道；都没有为 nil。
 	ProviderCode *string
 	ProviderName *string
+	// Method 是成功那笔收款的支付方式（alipay、wxpay、offline 等，渠道给什么记什么）；没有收款或没记方式为 nil。
+	Method *string
 }
 
 // ---------------------------------------------------------------------------

@@ -99,7 +99,7 @@ export const NAV_GROUPS: ReadonlyArray<readonly [string, readonly ModuleKey[]]> 
  * 已登记、但页面还没接上的页签（「模块:页签」）：外框直接画空状态，不交给模块页面分发。
  * 各模块块接好页面后从这里删掉自己那一项。
  */
-export const PENDING_TABS: ReadonlySet<string> = new Set(['security:signup'])
+export const PENDING_TABS: ReadonlySet<string> = new Set()
 
 export const isPendingTab = (module: ModuleKey, tab: string | null): boolean => tab != null && PENDING_TABS.has(`${module}:${tab}`)
 

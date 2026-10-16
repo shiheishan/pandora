@@ -3,7 +3,7 @@ import { periodLabel } from '../plans/model'
 import type { PlanRow } from '../plans/schemas'
 import { ORDER_STATUS_VIEW, orderWhat, parseYuan, REASON_MIN, type Tone } from '../users/model'
 import type { PlacementChoice } from './placement'
-import type { Adjustment, Currency, LateCase, LateKind, LateStatus, ManualCreated, OrderDetail, OrderQueried, OrderRow, OrderStatus, PaymentHistory, Placement, Provider } from './schemas'
+import type { Adjustment, LateCase, LateKind, LateStatus, ManualCreated, OrderQueried, OrderDetail, OrderRow, OrderStatus, PaymentHistory, Placement, Provider } from './schemas'
 
 export { ORDER_STATUS_VIEW, orderWhat }
 
@@ -33,20 +33,41 @@ export function filterStatuses(f: OrderFilter): string | undefined {
   return ORDER_FILTERS.find(([k]) => k === f)?.[2] || undefined
 }
 
+const METHOD_LABELS: Readonly<Record<string, string>> = { alipay: '支付宝', wxpay: '微信支付', offline: '线下收款' }
+
+/** 支付方式的中文名；不认识的原样显示 */
+export function methodLabel(method: string): string {
+  return METHOD_LABELS[method] ?? method
+}
+
+/** 渠道名 + 方式：有方式且不是线下时写「渠道 · 方式」，否则只写渠道名 */
+export function payChannel(providerName: string, method: string | null | undefined): string {
+  if (!method || method === 'offline') return providerName
+  return `${providerName} · ${methodLabel(method)}`
+}
+
 /**
- * 渠道列：有入账或支付尝试就是渠道名；否则全额余额支付显示「余额」，人工单显示「人工」（抽屉按
+ * 渠道列：有入账或支付尝试就是渠道名（含支付方式）；否则全额余额支付显示「余额」，人工单显示「人工」（抽屉按
  * manual_reason 传；列表的人工单改在订单号旁挂「人工」标识，R114），其余「—」
  */
-export function channelLabel(o: Pick<OrderRow, 'provider_name' | 'balance_applied' | 'total_amount'>, manual = false): string {
-  if (o.provider_name) return o.provider_name
+export function channelLabel(
+  o: Pick<OrderRow, 'provider_name' | 'method' | 'balance_applied' | 'total_amount'>,
+  manual = false,
+): string {
+  if (o.provider_name) return payChannel(o.provider_name, o.method)
   if (o.balance_applied > 0 && o.balance_applied === o.total_amount) return '余额'
   return manual ? '人工' : '—'
 }
 
 /** 来源：人工单按 manual_reason 判断（不是 kind），开单人账号删掉后 email 为 null */
 function sourceLabel(o: Pick<OrderDetail, 'manual_reason' | 'created_by_email'>): string {
-  if (o.manual_reason === null) return '门户下单'
+  if (o.manual_reason === null) return '用户端下单'
   return `人工开单 · ${o.created_by_email ?? '已删除的管理员'}`
+}
+
+/** 订单详情弹窗副标题 */
+export function orderSubtitle(o: Pick<OrderDetail, 'status' | 'manual_reason'>): string {
+  return `${ORDER_STATUS_VIEW[o.status].label} · ${o.manual_reason === null ? '用户端下单' : '人工开单'}`
 }
 
 const PENDING: readonly OrderStatus[] = ['pending_payment']
@@ -70,7 +91,11 @@ export function queriedView(r: OrderQueried): { tone: Tone; text: string } {
   if (r.channel_status === 'not_found') return { tone: 'neutral', text: `渠道 ${r.provider_code} 没有这笔订单的付款记录，订单未变（${status}）。` }
   if (r.channel_status === 'unpaid') return { tone: 'neutral', text: `渠道 ${r.provider_code} 显示尚未付款，订单未变（${status}）。` }
   if (r.already_recorded) return { tone: 'info', text: `渠道确认已付款；这笔钱此前已经入账（回调或之前的查单），没有重复记账。订单：${status}。` }
-  if (r.quarantine_kind) return { tone: 'warn', text: `渠道确认已付款，但订单已${status}，款项已补记进挂账（${LATE_KIND_LABELS[r.quarantine_kind]}），可在「挂账」里处理。` }
+  if (r.quarantine_kind)
+    return {
+      tone: 'warn',
+      text: `渠道确认已付款，但订单已${status}，款项已补记进待处理到账（${LATE_KIND_LABELS[r.quarantine_kind]}），可在「待处理到账」里处理。`,
+    }
   if (r.reconciled) return { tone: 'ok', text: `渠道确认已付款，已按回调同一流程补记入账。订单：${status}。` }
   return { tone: 'warn', text: `渠道确认已付款，但没有补记，订单：${status}。` }
 }
@@ -80,7 +105,7 @@ export function canCancel(o: Pick<OrderRow, 'status'>): boolean {
   return PENDING.includes(o.status)
 }
 
-/** 抽屉 facts（设计稿：用户 / 内容 / 金额 / 币种 / 渠道 / 来源），按契约补上应付、余额抵扣、过期时间与取消原因 */
+/** 抽屉 facts（设计稿：用户 / 内容 / 金额 / 渠道 / 来源），按契约补上应付、余额抵扣、过期时间与取消原因 */
 // 系统写的取消原因是代码（后台取消写的是管理员填的原文，原样显示）
 const CANCEL_REASON_LABELS: Readonly<Record<string, string>> = {
   account_deleted: '账号已注销',
@@ -91,18 +116,17 @@ export function cancelReasonLabel(reason: string): string {
 }
 
 export function orderFacts(o: OrderDetail): Array<[string, string]> {
-  const money = (n: number) => formatMoney(n, o.currency)
+  const money = (n: number) => formatMoney(n)
   const facts: Array<[string, string]> = [
     ['用户', o.user_email],
     ['内容', orderWhat(o)],
     ['金额', money(o.total_amount)],
   ]
   if (o.discount_amount > 0) facts.push(['优惠', `− ${money(o.discount_amount)}`])
-  if (o.member_discount_amount > 0) facts.push(['其中会员折扣', `− ${money(o.member_discount_amount)}`])
   if (o.balance_applied > 0) facts.push(['余额抵扣', money(o.balance_applied)])
   facts.push(['应付', money(o.payable_amount)])
   if (o.paid_amount > 0) facts.push(['实收', money(o.paid_amount)])
-  facts.push(['币种', o.currency], ['渠道', channelLabel(o, o.manual_reason !== null)], ['来源', sourceLabel(o)])
+  facts.push(['渠道', channelLabel(o, o.manual_reason !== null)], ['来源', sourceLabel(o)])
   if (o.manual_reason) facts.push(['开单原因', o.manual_reason])
   if (PENDING.includes(o.status) && o.expires_at) facts.push(['支付截止', formatDateTime(o.expires_at)])
   if (o.paid_at) facts.push(['支付时间', formatDateTime(o.paid_at)])
@@ -121,7 +145,6 @@ interface PayLine {
   channel: string
   ref: string
   amount: number
-  currency: string
   label: string
   tone: Tone
   at: string
@@ -146,10 +169,9 @@ export function paymentLines(h: PaymentHistory): PayLine[] {
     const view = p ? PAYMENT_VIEW[p.status]! : INTENT_VIEW[i.status]!
     return {
       key: i.id,
-      channel: i.provider_name,
+      channel: payChannel(i.provider_name, p?.method ?? i.method),
       ref: p?.provider_payment_id ?? i.provider_ref ?? '—',
       amount: p?.amount ?? i.amount,
-      currency: i.currency,
       ...view,
       at: p?.paid_at ?? i.created_at,
       surcharge: (() => {
@@ -163,10 +185,9 @@ export function paymentLines(h: PaymentHistory): PayLine[] {
     const offline = p.provider_code === 'offline' && p.status === 'succeeded'
     lines.push({
       key: p.id,
-      channel: p.provider_name,
+      channel: payChannel(p.provider_name, p.method),
       ref: p.provider_payment_id,
       amount: p.amount,
-      currency: p.currency,
       ...(offline ? { label: '人工确认', tone: 'info' as Tone } : PAYMENT_VIEW[p.status]!),
       at: p.paid_at,
       surcharge: p.surcharge_amount > 0 ? p.surcharge_amount : undefined,
@@ -197,7 +218,7 @@ export function referenceProblem(text: string): string | null {
 // ===========================================================================
 export type Settlement = 'grant' | 'pending' | 'offline'
 export const SETTLEMENTS: ReadonlyArray<{ value: Settlement; label: string; hint: string }> = [
-  { value: 'pending', label: '待用户支付', hint: '生成一张待支付订单，用户在门户「订单」里付款；30 分钟内不付自动过期' },
+  { value: 'pending', label: '待用户支付', hint: '生成一张待支付订单，用户在用户端「订单」里付款；30 分钟内不付自动过期' },
   { value: 'offline', label: '线下已收款', hint: '已通过转账等方式收到钱：填凭证号，当场入账并开通，同时计收入与佣金' },
   { value: 'grant', label: '赠送（0 元）', hint: '全额减免、当场开通，不计收入' },
 ]
@@ -217,25 +238,22 @@ interface PriceChoice {
   value: string
   label: string
   amount: number
-  currency: string
   /** 落点选项的标题要写「换成<套餐名>」 */
   planName: string
 }
 
-/** 在售套餐（已发布、有当前版本）的在售价格；组专属价在名字里注明，后端下单时再校验资格 */
+/** 在售套餐（已发布、有当前版本）的在售价格；按单价升序 */
 export function priceChoices(plans: readonly PlanRow[]): PriceChoice[] {
   return plans
-    .filter((p) => p.status === 'active' && p.current_version_id !== null)
+    .filter((p) => p.status === 'active' && p.version !== null)
     .flatMap((p) =>
       p.prices
         .filter((x) => x.status === 'active')
-        // CNY 在前，同币种按价格升序（后端按创建时间倒序给）
-        .sort((a, b) => Number(b.currency === 'CNY') - Number(a.currency === 'CNY') || a.currency.localeCompare(b.currency) || a.unit_amount - b.unit_amount)
+        .sort((a, b) => a.unit_amount - b.unit_amount)
         .map((x) => ({
           value: `${p.id}:${x.id}`,
-          label: `${p.name} · ${periodLabel(x.billing_interval, x.interval_count)} ${formatMoney(x.unit_amount, x.currency)}${x.user_group_id ? '（组专属）' : ''}`,
+          label: `${p.name} · ${periodLabel(x.billing_interval, x.interval_count)} ${formatMoney(x.unit_amount)}`,
           amount: x.unit_amount,
-          currency: x.currency,
           planName: p.name,
         })),
     )
@@ -274,7 +292,6 @@ export function manualBody(f: ManualForm, target: PlacementChoice | null) {
 interface BelowMinimum {
   due: number
   min: number
-  currency: string
 }
 
 /**
@@ -286,14 +303,13 @@ export function manualBelowMinimum(
   settlement: Settlement,
   option: Pick<Placement, 'due' | 'below_minimum'> | undefined,
   minPayment: number | undefined,
-  currency: string | undefined,
 ): BelowMinimum | null {
-  if (settlement !== 'pending' || !option?.below_minimum || !minPayment || !currency) return null
-  return { due: option.due, min: minPayment, currency }
+  if (settlement !== 'pending' || !option?.below_minimum || !minPayment) return null
+  return { due: option.due, min: minPayment }
 }
 
 export function belowMinimumText(b: BelowMinimum): string {
-  return `这单应付 ${formatMoney(b.due, b.currency)}，低于支付渠道的最低付款额 ${formatMoney(b.min, b.currency)}，用户没法在线付。请改用「赠送」或「线下已收款」`
+  return `这单应付 ${formatMoney(b.due)}，低于支付渠道的最低付款额 ${formatMoney(b.min)}，用户没法在线付。请改用「赠送」或「线下已收款」`
 }
 
 /** preview 的请求体：用户、套餐、价格都选好才发；入口订阅（从订阅行点「给这份开单」）只影响默认值 */
@@ -305,7 +321,7 @@ export function previewParams(f: ManualForm, entrySubscriptionId: string | null)
 }
 
 // ===========================================================================
-// 挂账（保留规则 6）：订单取消后才到账、续费或变更时订阅已结束、或超额扣款的钱，平台欠用户的
+// 待处理到账（保留规则 6）：订单取消后才到账、续费或变更时订阅已结束、或超额扣款的钱，平台欠用户的
 // ===========================================================================
 export const LATE_FILTERS = [
   ['all', '全部', ''],
@@ -317,12 +333,35 @@ export function isLateFilter(v: string | null): v is LateFilter {
   return LATE_FILTERS.some(([k]) => k === v)
 }
 
+/** 地址上的 s → 筛选；不认识或没有时默认只看待处理 */
+export function lateFilterOf(v: string | null): LateFilter {
+  if (v === 'all') return 'all'
+  if (v === 'applied') return 'applied'
+  if (v === 'suspense') return 'suspense'
+  return 'suspense'
+}
+
+/** 筛选 → 地址上的 s：默认的「待处理」不写进地址 */
+export function lateFilterQuery(f: LateFilter): string | undefined {
+  if (f === 'suspense') return undefined
+  return f
+}
+
 export const LATE_STATUS_VIEW: Record<LateStatus, { label: string; tone: Tone }> = {
   suspense: { label: '待处理', tone: 'warn' },
   applied: { label: '已转入余额', tone: 'ok' },
 }
 
-const LATE_KIND_LABELS: Record<LateKind, string> = { released_order: '订单取消后到账', excess_capture: '超额扣款', ineligible_subscription: '订阅已结束后到账' }
+export const LATE_KIND_LABELS: Record<LateKind, string> = {
+  released_order: '订单取消后到账',
+  excess_capture: '超额扣款',
+  ineligible_subscription: '订阅已结束后到账',
+}
+
+export function lateKindLabel(k: LateKind): string {
+  return LATE_KIND_LABELS[k]
+}
+
 export function lateReason(c: Pick<LateCase, 'case_kind' | 'order_no'>): string {
   return `${LATE_KIND_LABELS[c.case_kind]} · ${c.order_no}`
 }
@@ -331,14 +370,6 @@ export function lateReason(c: Pick<LateCase, 'case_kind' | 'order_no'>): string 
 export function ageDays(receivedAt: string, now: Date): number {
   const ms = now.getTime() - Date.parse(receivedAt)
   return Number.isFinite(ms) ? Math.max(0, Math.floor(ms / 86_400_000)) : 0
-}
-
-/** 待处理合计按币种分开（R3）：CNY 在前，零额不列；没有待处理的返回空数组 */
-export function pendingTotals(amounts: Readonly<Record<string, number>>): string[] {
-  return Object.entries(amounts)
-    .filter(([, v]) => v > 0)
-    .sort(([a], [b]) => (a === 'CNY' ? -1 : b === 'CNY' ? 1 : a.localeCompare(b)))
-    .map(([currency, v]) => formatMoney(v, currency))
 }
 
 // ===========================================================================
@@ -361,9 +392,28 @@ export function toggleBody(target: ProviderMode): { enabled: boolean; accepting_
   return { enabled: false, accepting_new: false }
 }
 
-export function todayLabel(today: Readonly<Record<string, number>>): string {
-  const parts = pendingTotals(today)
-  return parts.length ? parts.join(' · ') : '—'
+export function todayLabel(today: number): string {
+  return formatMoney(today)
+}
+
+/** 渠道列表上方的统计（不含系统内置的 offline） */
+export function providerStats(rows: readonly Provider[]): Array<{ n: number; label: string; tone: 'neutral' | 'ok' | 'warn' }> {
+  const online = rows.filter((p) => !isOffline(p))
+  const on = online.filter((p) => providerMode(p) === 'on').length
+  const noCreds = online.filter((p) => !p.has_credentials).length
+  const stats: Array<{ n: number; label: string; tone: 'neutral' | 'ok' | 'warn' }> = [
+    { n: online.length, label: '个在线渠道', tone: 'neutral' },
+    { n: on, label: '个收新单中', tone: 'ok' },
+    { n: online.length - on, label: '个已停用或暂停', tone: 'neutral' },
+  ]
+  if (noCreds > 0) stats.push({ n: noCreds, label: '个未配置凭据', tone: 'warn' })
+  return stats
+}
+
+/** 类型标签：offline 是「内置」，其余按 adapterLabel */
+export function providerKind(p: Pick<Provider, 'code' | 'adapter'>): string {
+  if (isOffline(p)) return '内置'
+  return adapterLabel(p.adapter)
 }
 
 export function rateLabel(rate: number | null): string {
@@ -384,7 +434,7 @@ export function providerNote(p: Provider, now: Date): { text: string; tone: Tone
   if (mode === 'paused') parts.push('已停止新单，进行中的支付仍会回调')
   if (!p.has_credentials) parts.push('未配置凭据')
   if (p.adapter === 'btcpay' && !p.has_webhook_secret) parts.push('未配置 Webhook 密钥')
-  if (p.min_amount > 0) parts.push(`最低付款 ${formatMoney(p.min_amount, 'CNY')}`)
+  if (p.min_amount > 0) parts.push(`最低付款 ${formatMoney(p.min_amount)}`)
   const fee = feeLabel(p)
   if (fee) parts.push(fee)
   parts.push(p.last_callback_at ? `最近回调 ${ago(p.last_callback_at, now)}` : '尚无回调')
@@ -412,11 +462,6 @@ export const EPAY_METHODS = [
   { value: 'alipay', label: '支付宝' },
   { value: 'wxpay', label: '微信支付' },
 ] as const
-
-/** 与门户 paymentMethodLabels 同一张表；不认识的方式原样显示 */
-export function methodLabel(method: string): string {
-  return EPAY_METHODS.find((m) => m.value === method)?.label ?? method
-}
 
 /** 门户实际会列出的方式：config.methods 非空用它，否则 default_method（与 PaymentMethods 的 SQL 同口径） */
 export function effectiveMethods(p: Pick<Provider, 'methods' | 'default_method'>): string[] {
@@ -492,7 +537,7 @@ export function feeLabel(p: Pick<Provider, 'fee_fixed' | 'fee_percent'>): string
   if (fixed === 0 && (pct === '0' || pctNum === 0)) return ''
   const parts: string[] = []
   if (pctNum > 0) parts.push(`${pct}%`)
-  if (fixed > 0) parts.push(formatMoney(fixed, 'CNY'))
+  if (fixed > 0) parts.push(formatMoney(fixed))
   return parts.length ? `向用户加收 ${parts.join(' + ')}` : ''
 }
 
@@ -691,13 +736,12 @@ export function minAmountHint(mode: 'create' | 'edit'): string {
 const ADJUST_MAX = 1_000_000_000_000
 
 export interface AdjustForm {
-  currency: Currency
   amount: string
   reason: string
   /** YYYY-MM-DD，空 = 租户今天 */
   effectiveOn: string
 }
-export const emptyAdjust = (): AdjustForm => ({ currency: 'CNY', amount: '', reason: '', effectiveOn: '' })
+export const emptyAdjust = (): AdjustForm => ({ amount: '', reason: '', effectiveOn: '' })
 
 /** 本地日期 YYYY-MM-DD：生效日输入框的上限（租户今天由后端最终判定） */
 export function todayLocal(now: Date = new Date()): string {
@@ -718,13 +762,13 @@ export function adjustProblems(f: AdjustForm, today: string): Fields {
 }
 
 export function adjustBody(f: AdjustForm) {
-  return { currency: f.currency, amount: parseYuan(f.amount) ?? 0, reason: f.reason.trim(), ...(f.effectiveOn ? { effective_on: f.effectiveOn } : {}) }
+  return { amount: parseYuan(f.amount) ?? 0, reason: f.reason.trim(), ...(f.effectiveOn ? { effective_on: f.effectiveOn } : {}) }
 }
 
 export function adjustmentView(a: Adjustment) {
   const reversal = a.reversal_of !== undefined
   return {
-    amount: `${a.amount > 0 ? '+' : '−'}${formatMoney(Math.abs(a.amount), a.currency)}`,
+    amount: `${a.amount > 0 ? '+' : '−'}${formatMoney(Math.abs(a.amount))}`,
     tone: (a.amount < 0 ? 'danger' : 'neutral') as Tone,
     meta: `${a.created_by_email ?? '已删除的账号'} · ${formatDateTime(a.created_at)}`,
     /** 冲销单与已冲销的都不能再冲销（后端 409） */
@@ -740,7 +784,7 @@ export function reverseReason(a: Pick<Adjustment, 'reason'>): string {
 /** 开单成功的提示：按落点说清续了、换了还是新开了，换套餐时带上原订阅剩余价值的去向 */
 export function manualCreatedToast(r: ManualCreated, settlement: Settlement, kind: PlacementChoice['kind'] = 'new'): string {
   if (kind === 'change') {
-    const refund = r.balance_refund !== undefined && r.balance_refund > 0 ? `，原套餐剩余价值 ${formatMoney(r.balance_refund, r.currency)} 已退回余额` : ''
+    const refund = r.balance_refund !== undefined && r.balance_refund > 0 ? `，原套餐剩余价值 ${formatMoney(r.balance_refund)} 已退回余额` : ''
     return settlement === 'pending'
       ? `订单 ${r.order_no} 已创建（在原订阅上换套餐），等待用户在 30 分钟内支付`
       : `订单 ${r.order_no} 已在原订阅上换套餐，订阅链接不变${refund}`
@@ -752,9 +796,16 @@ export function manualCreatedToast(r: ManualCreated, settlement: Settlement, kin
         ? `订单 ${r.order_no} 已按线下收款入账，订阅已续期，链接不变`
         : `订单 ${r.order_no} 已赠送续期，订阅链接不变`
   }
+  if (kind === 'stack') {
+    return settlement === 'pending'
+      ? `订单 ${r.order_no} 已创建（叠加到原订阅），等待用户在 30 分钟内支付`
+      : settlement === 'offline'
+        ? `订单 ${r.order_no} 已按线下收款入账，已叠加到原订阅，链接不变`
+        : `订单 ${r.order_no} 已赠送，已叠加到原订阅，链接不变`
+  }
   return settlement === 'pending'
     ? `订单 ${r.order_no} 已创建，等待用户在 30 分钟内支付`
     : settlement === 'offline'
-      ? `订单 ${r.order_no} 已按线下收款入账，已另开一份订阅`
-      : `订单 ${r.order_no} 已赠送开通，已另开一份订阅`
+      ? `订单 ${r.order_no} 已按线下收款入账，已新开一份订阅`
+      : `订单 ${r.order_no} 已赠送开通，已新开一份订阅`
 }

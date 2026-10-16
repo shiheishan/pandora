@@ -1,0 +1,65 @@
+/* 邮件模板：渠道筛选 + 三列表格 + 720 编辑弹窗（10-16 设计稿） */
+
+/* 表格：模板列（加粗单行省略）与标识列（等宽灰字） */
+.name {
+  display: block;
+  overflow: hidden;
+  font-weight: var(--fw-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.code {
+  display: block;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 状态列：12px 右对齐小字（列宽已定 112px，不换行） */
+.status {
+  font-size: var(--fs-caption);
+  white-space: nowrap;
+}
+
+/* 弹窗内容：自上而下一列，段落间 14px */
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* 「预览」小节标题行：右侧灰字，下有正文色细线 */
+.previewHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--text);
+}
+
+.previewTitle {
+  flex: 1;
+  font-weight: var(--fw-semibold);
+}
+
+/* 预览块：浅底，主题加粗一行 + 正文 pre-wrap */
+.previewBody {
+  padding: 16px 18px;
+  background: var(--surface-2);
+}
+
+.previewSubject {
+  margin-bottom: 8px;
+  font-weight: var(--fw-semibold);
+}
+
+.previewText {
+  color: var(--text-2);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
