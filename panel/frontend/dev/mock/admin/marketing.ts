@@ -37,7 +37,8 @@ const page = (q: URLSearchParams, def: number, max: number) => {
 // 让券的「适用套餐」与套餐卡在营销页上对得上套餐页
 // ---------------------------------------------------------------------------
 const PRO = plans.find((p) => p.id === PLAN_IDS[1])!
-const PRO_MONTH = PRO.prices.find((p) => p.status === 'active' && p.currency === 'CNY' && p.billing_interval === 'month' && !p.user_group_id)!
+// 只认在售的月付一档；不看币种与用户组（10-16 起只有人民币，套餐模块的种子正在去掉这两维）
+const PRO_MONTH = PRO.prices.find((p) => p.status === 'active' && p.billing_interval === 'month' && p.interval_count === 1)!
 
 // ---------------------------------------------------------------------------
 // 优惠券（契约后台-06 · 优惠券）
@@ -48,14 +49,14 @@ interface Coupon {
   name: string
   discount_type: 'percent' | 'fixed'
   discount_value: number
-  currency: string
   max_discount: number | null
   min_order_amount: number
   max_redemptions: number | null
   max_redemptions_per_user: number
   redeemed_count: number
   applicable_plan_ids: string[]
-  applicable_intervals: string[]
+  /** promo couponResponse.UserGroupID（*string，无 omitempty） */
+  user_group_id: string | null
   valid_from: string | null
   valid_until: string | null
   status: string
@@ -67,13 +68,12 @@ const COUPON_FIELDS = [
   'name',
   'discount_type',
   'discount_value',
-  'currency',
   'max_discount',
   'min_order_amount',
   'max_redemptions',
   'max_redemptions_per_user',
   'applicable_plan_ids',
-  'applicable_intervals',
+  'user_group_id',
   'valid_from',
   'valid_until',
 ] as const
@@ -81,14 +81,13 @@ const COUPON_FIELDS = [
 const coupon = (c: Partial<Coupon> & Pick<Coupon, 'code' | 'discount_type' | 'discount_value'>, ageDays: number): Coupon => ({
   id: randomUUID(),
   name: c.code,
-  currency: 'CNY',
   max_discount: null,
   min_order_amount: 0,
   max_redemptions: null,
   max_redemptions_per_user: 1,
   redeemed_count: 0,
   applicable_plan_ids: [],
-  applicable_intervals: [],
+  user_group_id: null,
   valid_from: null,
   valid_until: null,
   status: 'active',
@@ -107,7 +106,7 @@ const coupons: Coupon[] = [
   coupon({ code: 'FLASH100', discount_type: 'fixed', discount_value: 2000, max_redemptions: 100, redeemed_count: 100, status: 'exhausted' }, 30),
 ]
 
-const redemptions = new Map<string, Array<{ email: string; order_no: string; discount: number; currency: string; at: string; reverted: boolean }>>()
+const redemptions = new Map<string, Array<{ email: string; order_no: string; discount: number; at: string; reverted: boolean }>>()
 coupons.forEach((c) => {
   const n = Math.min(c.redeemed_count, 3)
   redemptions.set(
@@ -116,7 +115,6 @@ coupons.forEach((c) => {
       email: ['zhang.wei@qq.com', 'mei.x@outlook.com', 'tomato@sina.com'][i]!,
       order_no: `PD-2609-${3312 + i}`,
       discount: [11980, 1180, 2780][i]!,
-      currency: 'CNY',
       at: days(-i - 0.2),
       reverted: i === 2,
     })),
@@ -147,26 +145,14 @@ function normalizeCoupon(body: Json, needCode: boolean): MockResult | Omit<Coupo
   const from = time(body.valid_from)
   const until = time(body.valid_until)
   if (from === 'bad' || until === 'bad') return err(422, 'validation_failed', '时间格式不正确')
-  if (from && until && until <= from) return err(422, 'validation_failed', '结束时间必须晚于开始时间')
+  if (from && until && until <= from) return invalid({ valid_until: '结束时间必须晚于开始时间' })
   const perUser = int(body.max_redemptions_per_user)
 
-  const VALID_INTERVALS = ['day', 'week', 'month', 'quarter', 'year', 'one_time']
-  let intervals: string[] = []
-  if (body.applicable_intervals !== undefined && body.applicable_intervals !== null) {
-    if (!Array.isArray(body.applicable_intervals)) {
-      fields.applicable_intervals = '计费周期只能是 day、week、month、quarter、year、one_time'
-    } else {
-      const arr = body.applicable_intervals.map(String)
-      for (const item of arr) {
-        if (!VALID_INTERVALS.includes(item)) {
-          fields.applicable_intervals = '计费周期只能是 day、week、month、quarter、year、one_time'
-          break
-        }
-      }
-      if (!fields.applicable_intervals) {
-        intervals = VALID_INTERVALS.filter((v) => arr.includes(v))
-      }
-    }
+  let groupId: string | null = null
+  if (body.user_group_id !== undefined && body.user_group_id !== null) {
+    const g = text(body.user_group_id)
+    if (!UUID.test(g)) fields.user_group_id = '格式不正确'
+    else groupId = g
   }
 
   if (Object.keys(fields).length) return invalid(fields)
@@ -176,13 +162,12 @@ function normalizeCoupon(body: Json, needCode: boolean): MockResult | Omit<Coupo
     name: text(body.name) || code,
     discount_type: type as Coupon['discount_type'],
     discount_value: value,
-    currency: text(body.currency) || 'CNY',
     max_discount: int(body.max_discount),
     min_order_amount: int(body.min_order_amount) ?? 0,
     max_redemptions: int(body.max_redemptions),
     max_redemptions_per_user: perUser && perUser > 0 ? perUser : 1,
     applicable_plan_ids: Array.isArray(body.applicable_plan_ids) ? body.applicable_plan_ids.map(String) : [],
-    applicable_intervals: intervals,
+    user_group_id: groupId,
     valid_from: from,
     valid_until: until,
   }
@@ -300,9 +285,16 @@ function grantedOf(t: Template): Json {
   return { ...(balance ? { balance } : {}), ...(traffic_bytes ? { traffic_bytes } : {}), ...(expire_days ? { expire_days } : {}), ...(reset_quota ? { reset_quota } : {}) }
 }
 
+/** 套餐卡的价格档已不在售（templateDTO.PriceArchived） */
+const priceArchived = (t: Template) => {
+  if (t.type !== 'plan' || !t.rewards.price_id) return false
+  const price = plans.find((p) => p.id === t.rewards.plan_id)?.prices.find((p) => p.id === t.rewards.price_id)
+  return !price || price.status !== 'active'
+}
+
 const templateView = (t: Template) => {
   const own = codes.filter((c) => c.template_id === t.id)
-  return { ...t, code_total: own.length, code_used: own.filter((c) => c.status === 'used').length }
+  return { ...t, code_total: own.length, code_used: own.filter((c) => c.status === 'used').length, price_archived: priceArchived(t) }
 }
 const batchView = (b: Batch) => {
   const own = codes.filter((c) => c.batch_id === b.id)
@@ -329,6 +321,11 @@ function rewardsError(type: string, r: Rewards): string | null {
   if (type === 'plan') {
     if (!r.plan_id) return '套餐卡必须指定套餐'
     if (!UUID.test(r.plan_id)) return '套餐标识格式不正确'
+    // giftcard checkCatalogRefs：套餐卡必须带价格档，且在售、属于该套餐
+    const plan = plans.find((p) => p.id === r.plan_id)
+    if (!plan) return '套餐不存在'
+    const price = plan.prices.find((p) => p.id === r.price_id)
+    if (!r.price_id || !price || price.status !== 'active') return '价格档不存在、已停售或不属于该套餐'
     return null
   }
   if (type === 'mystery') {
@@ -366,7 +363,6 @@ interface ReviewEntryRow {
   referrer_email: string
   referee_email: string
   amount: number
-  currency: string
   review_reason: string
   review_source: 'same_source' | 'source_check' | 'underfunded' | 'account_deleted' | 'other'
   created_at: string
@@ -375,9 +371,9 @@ interface ReviewEntryRow {
   review_required: boolean
 }
 const reviewEntries: ReviewEntryRow[] = [
-  { id: '01900000-0000-7000-8000-00000000c003', order_no: 'P20261005C2', referrer_email: 'erin@example.com', referee_email: 'frank@example.com', amount: 4200, currency: 'USD', review_reason: '待结佣金科目余额不足，无法解冻 42.00 USD', review_source: 'underfunded', created_at: '2026-10-05T08:40:00Z', frozen_until: '2026-10-08T08:40:00Z', status: 'pending', review_required: true },
-  { id: '01900000-0000-7000-8000-00000000c002', order_no: 'P20261003B7', referrer_email: 'carol@example.com', referee_email: 'dave@example.com', amount: 990, currency: 'CNY', review_reason: '同源检查失败，需人工确认推荐人与购买人是否同源', review_source: 'source_check', created_at: '2026-10-03T11:05:00Z', frozen_until: '2026-10-06T11:05:00Z', status: 'pending', review_required: true },
-  { id: '01900000-0000-7000-8000-00000000c001', order_no: 'P20261001A1', referrer_email: 'alice@example.com', referee_email: 'bob@example.com', amount: 2580, currency: 'CNY', review_reason: '推荐人与购买人来自同一来源地址', review_source: 'same_source', created_at: '2026-10-01T03:20:00Z', frozen_until: '2026-12-31T03:20:00Z', status: 'pending', review_required: true },
+  { id: '01900000-0000-7000-8000-00000000c003', order_no: 'P20261005C2', referrer_email: 'erin@example.com', referee_email: 'frank@example.com', amount: 4200, review_reason: '待结佣金科目余额不足，无法解冻 ¥42.00', review_source: 'underfunded', created_at: '2026-10-05T08:40:00Z', frozen_until: '2026-10-08T08:40:00Z', status: 'pending', review_required: true },
+  { id: '01900000-0000-7000-8000-00000000c002', order_no: 'P20261003B7', referrer_email: 'carol@example.com', referee_email: 'dave@example.com', amount: 990, review_reason: '同源检查失败，需人工确认推荐人与购买人是否同源', review_source: 'source_check', created_at: '2026-10-03T11:05:00Z', frozen_until: '2026-10-06T11:05:00Z', status: 'pending', review_required: true },
+  { id: '01900000-0000-7000-8000-00000000c001', order_no: 'P20261001A1', referrer_email: 'alice@example.com', referee_email: 'bob@example.com', amount: 2580, review_reason: '推荐人与购买人来自同一来源地址', review_source: 'same_source', created_at: '2026-10-01T03:20:00Z', frozen_until: '2026-12-31T03:20:00Z', status: 'pending', review_required: true },
 ]
 const awaitingReview = () => reviewEntries.filter((x) => x.status === 'pending' && x.review_required)
 
@@ -397,7 +393,6 @@ interface Withdrawal {
   email: string
   user_id: string
   amount: number
-  currency: string
   status: string
   method: string
   payout_detail: string
@@ -413,7 +408,6 @@ const withdrawal = (email: string, amount: number, status: string, payout: strin
   email,
   user_id: randomUUID(),
   amount,
-  currency: 'CNY',
   status,
   method: 'alipay',
   payout_detail: payout,
@@ -445,7 +439,7 @@ function usdtPaidErrors(method: string, ref: string, paidUsdt: unknown): Record<
 }
 const withdrawals: Withdrawal[] = [
   withdrawal('chen.l@gmail.com', 42000, 'requested', '支付宝 · 138****2201', 0.1),
-  withdrawal('dora@proton.me', 128000, 'reviewing', 'USDT · TBXSw8fM4jpQkGc6zZjsVABFpVN7UvXPdV', 0.5, { method: 'usdt_trc20' }),
+  withdrawal('dora@proton.me', 128000, 'requested', 'USDT · TBXSw8fM4jpQkGc6zZjsVABFpVN7UvXPdV', 0.5, { method: 'usdt_trc20' }),
   withdrawal('m.chen@gmail.com', 30000, 'approved', '支付宝 · 186****0932', 1.2),
   withdrawal('yx_agent@163.com', 260000, 'paid', '银行卡 · 招商 **** 7781', 4, {
     completed_at: days(-3),
@@ -453,7 +447,7 @@ const withdrawals: Withdrawal[] = [
     payout_reference: 'CMB-20261010-0001',
   }),
   withdrawal('sp4m@mail.ru', 18000, 'rejected', '支付宝 · 150****1188', 5, { reject_reason: '邀请关系异常，多个账号共用同一设备', earned_total: 18000 }),
-  withdrawal('late@example.test', 50000, 'failed', '银行卡 · 建设 **** 1024', 7, { method: 'other' }),
+  withdrawal('late@example.test', 50000, 'rejected', '银行卡 · 建设 **** 1024', 7, { method: 'other', reject_reason: '收款账户信息有误，请核对后重新申请' }),
   withdrawal('usdt.payee@example.test', 88000, 'approved', '0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed', 0.8, { method: 'usdt_erc20' }),
 ]
 
@@ -700,7 +694,7 @@ export const marketing: MockModule = {
 
     // --- 佣金与提现 ---------------------------------------------------------
     'GET /v1/commission/overview': (ctx) => {
-      const waiting = withdrawals.filter((w) => ['requested', 'reviewing', 'approved', 'processing'].includes(w.status)).length
+      const waiting = withdrawals.filter((w) => ['requested', 'approved'].includes(w.status)).length
       ctx.send(200, {
         pending: 390400,
         available: 1528000,
@@ -732,7 +726,6 @@ export const marketing: MockModule = {
         referrer_email: x.referrer_email,
         referee_email: x.referee_email,
         amount: x.amount,
-        currency: x.currency,
         review_reason: x.review_reason,
         review_source: x.review_source,
         created_at: x.created_at,
@@ -761,8 +754,12 @@ export const marketing: MockModule = {
       ctx.send(200, { status: row.status })
     },
     'GET /v1/withdrawals': (ctx) => {
-      const status = ctx.query.get('status') ?? ''
-      const rows = withdrawals.filter((w) => !status || w.status === status).sort((a, b) => b.requested_at.localeCompare(a.requested_at))
+      // 与后端同口径：status 收逗号分隔的多个状态，去空白、去空段、去重；有一个不认识就 422
+      const wanted = [...new Set((ctx.query.get('status') ?? '').split(',').map((x) => x.trim()).filter(Boolean))]
+      if (wanted.some((x) => !['requested', 'approved', 'rejected', 'paid'].includes(x))) {
+        return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { status: '状态只能是 requested、approved、rejected 或 paid' })
+      }
+      const rows = withdrawals.filter((w) => wanted.length === 0 || wanted.includes(w.status)).sort((a, b) => b.requested_at.localeCompare(a.requested_at))
       ctx.send(200, { withdrawals: rows.slice(0, 200) })
     },
     'POST /v1/withdrawals/:id/review': async (ctx) => {
@@ -777,7 +774,7 @@ export const marketing: MockModule = {
       if (body.action === 'approve' && reason) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { reason: '批准时不能填写拒绝理由' })
       const w = withdrawals.find((x) => x.id === ctx.params.id)
       if (!w) return reply(ctx, notFound())
-      if (w.status !== 'requested' && w.status !== 'reviewing') return ctx.fail(409, 'conflict', '该提现申请已被处理过')
+      if (w.status !== 'requested') return ctx.fail(409, 'conflict', '该提现申请已被处理过')
       w.status = body.action === 'approve' ? 'approved' : 'rejected'
       if (body.action === 'reject') {
         w.reject_reason = reason
@@ -863,9 +860,9 @@ export const marketing: MockModule = {
         if (nextLevels[0] + nextLevels[1] + nextLevels[2] > 100) fields.distribution_l1 = '三级比例之和不能超过 100'
         else if (nextDistEnabled && nextLevels[0] === 0 && nextLevels[1] === 0 && nextLevels[2] === 0) fields.distribution_l1 = '开启多级分销时至少要给一级设比例'
       }
-      // 与后端同口径：关着提现也至少留一种（其他币种还按这些方式提现）
+      // 与后端同口径（settings/service/commission_levels.go）：开关都至少留一种提现方式
       if (!fields.withdraw_methods && nextMethods.length === 0) {
-        fields.withdraw_methods = nextWithdrawEnabled ? '开着提现时至少要选一种提现方式' : '关着提现时其他币种的佣金仍按这里的方式提现，至少要选一种'
+        fields.withdraw_methods = nextWithdrawEnabled ? '开着提现时至少要选一种提现方式' : '关着提现时也至少要选一种提现方式，重新打开提现时直接生效'
       }
 
       if (Object.keys(fields).length) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', fields)
