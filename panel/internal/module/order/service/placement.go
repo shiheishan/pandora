@@ -2,7 +2,7 @@ package service
 
 // 后台开单「这单落到哪一份」：
 //
-//	同款可续（生效中按到期从早到晚，再可救回的按到期从晚到早）→ 不同款可救回的（恢复并改成它）→ 新开一份 →
+//	同款可续或可叠加（一次性）（生效中按到期从早到晚，再可救回的按到期从晚到早）→ 不同款可救回的（恢复并改成它）→ 新开一份 →
 //	不同款生效中的（换掉）。
 //	默认：入口那份；否则第一个同款；否则只剩新开就新开；否则不预选。只有一份而且就是同款时只返回这一项。
 //	换掉生效中的那份永不自动默认。已停用的订阅不出现在任何选项里。
@@ -31,11 +31,11 @@ var (
 type candidate struct {
 	Sub      subsvc.Subscription
 	PlanName string
+	PlanKind string
 	State    subsvc.State
 	// TrafficUsed、TrafficCap 是本期套餐流量（cycle / total 的 traffic.bytes，不限量的上限记 0）
-	TrafficUsed   int64
-	TrafficCap    int64
-	PackRemaining int64
+	TrafficUsed int64
+	TrafficCap  int64
 	// Quotas 是这一份的配额（折算剩余价值用）
 	Quotas []subsvc.Quota
 }
@@ -47,14 +47,18 @@ func candidatesFrom(us subsvc.UserSubscriptions) []candidate {
 		if sum.State == subsvc.StateEnded {
 			continue
 		}
-		c := candidate{Sub: sum.Subscription, PlanName: sum.PlanName, State: sum.State, PackRemaining: sum.PackRemainingBytes, Quotas: sum.Quotas}
-		for _, q := range sum.Quotas {
-			if q.Metric != catalogsvc.MetricTraffic || q.Limit == nil ||
-				(q.Period != catalogsvc.PeriodCycle && q.Period != catalogsvc.PeriodTotal) {
-				continue
-			}
-			c.TrafficUsed += q.Consumed
-			c.TrafficCap += *q.Limit
+		var trafficCap int64
+		if sum.TrafficLimit != nil {
+			trafficCap = *sum.TrafficLimit + sum.TrafficBonus
+		}
+		c := candidate{
+			Sub:         sum.Subscription,
+			PlanName:    sum.PlanName,
+			PlanKind:    sum.PlanKind,
+			State:       sum.State,
+			TrafficUsed: sum.TrafficUsed,
+			TrafficCap:  trafficCap,
+			Quotas:      sum.Quotas,
 		}
 		out = append(out, c)
 	}
@@ -100,7 +104,6 @@ func placementOf(kind string, c candidate) Placement {
 		PeriodEnd:      &end,
 		TrafficUsed:    c.TrafficUsed,
 		TrafficCap:     c.TrafficCap,
-		PackRemaining:  c.PackRemaining,
 	}
 }
 
@@ -129,7 +132,7 @@ func filterState(cs []candidate, st subsvc.State) []candidate {
 
 // planPlacements 给出开单 planID 的全部落点与默认 Key（空串表示不预选）。entrySub 是后台从哪一行订阅点进来的，
 // 它对应的选项优先作为默认。
-func planPlacements(planID uuid.UUID, cands []candidate, entrySub *uuid.UUID) ([]Placement, string) {
+func planPlacements(planID uuid.UUID, kind string, cands []candidate, entrySub *uuid.UUID) ([]Placement, string) {
 	var same, other []candidate
 	alive := 0
 	for _, c := range cands {
@@ -143,16 +146,20 @@ func planPlacements(planID uuid.UUID, cands []candidate, entrySub *uuid.UUID) ([
 			other = append(other, c)
 		}
 	}
+	sameKind := PlacementRenew
+	if kind == catalogsvc.KindOneTime {
+		sameKind = PlacementStack
+	}
 	var opts []Placement
 	for _, c := range byEnd(filterState(same, subsvc.StateLive), false) {
-		opts = append(opts, placementOf(PlacementRenew, c))
+		opts = append(opts, placementOf(sameKind, c))
 	}
 	for _, c := range byEnd(filterState(same, subsvc.StateRevivable), true) {
-		opts = append(opts, placementOf(PlacementRenew, c))
+		opts = append(opts, placementOf(sameKind, c))
 	}
-	renews := len(opts)
-	// 只有一份、而且就是同款：不问，直接续
-	if alive == 1 && renews == 1 {
+	sameCount := len(opts)
+	// 只有一份、而且就是同款：不问，直接续或叠加
+	if alive == 1 && sameCount == 1 {
 		return withEntry(opts, opts[0].Key, entrySub)
 	}
 	for _, c := range byEnd(filterState(other, subsvc.StateRevivable), true) {
@@ -166,7 +173,7 @@ func planPlacements(planID uuid.UUID, cands []candidate, entrySub *uuid.UUID) ([
 	}
 	def := ""
 	switch {
-	case renews > 0:
+	case sameCount > 0:
 		opts[0].Badge = BadgeSamePlan
 		def = opts[0].Key
 	case len(opts) == 1:
@@ -207,11 +214,17 @@ func resolvePlacement(choice *Choice, opts []Placement) (Placement, error) {
 	return Placement{}, errChoiceRequired
 }
 
-// newPeriodEnd 是落地之后的到期日：续一期时生效中的接在原到期之后、可救回的从现在起算；换套餐与新开从现在起算。
-func newPeriodEnd(op Placement, now time.Time, interval string, count int) time.Time {
-	base := now
-	if op.Kind == PlacementRenew && op.State == subsvc.StateLive && op.PeriodEnd != nil && op.PeriodEnd.After(now) {
-		base = *op.PeriodEnd
+// newPeriodEnd 是落地之后的到期日：叠加用 subsvc.StackEnd；续费且生效中且原到期在 now 之后从原到期接一期；其余从 now 起算。
+func newPeriodEnd(op Placement, now time.Time, p subsvc.PriceSnapshot) time.Time {
+	if op.Kind == PlacementStack {
+		oldEnd := now
+		if op.PeriodEnd != nil {
+			oldEnd = *op.PeriodEnd
+		}
+		return subsvc.StackEnd(oldEnd, now, p)
 	}
-	return subsvc.AddInterval(base, interval, count)
+	if op.Kind == PlacementRenew && op.State == subsvc.StateLive && op.PeriodEnd != nil && op.PeriodEnd.After(now) {
+		return subsvc.PeriodEndFor(*op.PeriodEnd, p)
+	}
+	return subsvc.PeriodEndFor(now, p)
 }
