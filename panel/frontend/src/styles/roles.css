@@ -36,6 +36,10 @@
   /* 浮层（菜单、弹窗、抽屉、下拉列表）：浅边框加阴影 */
   --popover-border: var(--border);
   --popover-shadow: var(--shadow);
+  /* 表单字段的标签：12 号灰字 */
+  --label-size: var(--fs-caption);
+  --label-color: var(--text-2);
+  --label-weight: var(--fw-regular);
 }
 
 /* ===========================================================================
@@ -77,6 +81,10 @@
   /* 浮层用墨色细框，不要阴影 */
   --popover-border: var(--text);
   --popover-shadow: none;
+  /* 表单字段的标签：13 号墨色 500（10-16 设计稿） */
+  --label-size: var(--fs-body-sm);
+  --label-color: var(--text);
+  --label-weight: var(--fw-medium);
 }
 
 /* ===========================================================================

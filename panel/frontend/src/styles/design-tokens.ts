@@ -156,6 +156,9 @@ export const ROLE_TOKENS: readonly RoleToken[] = [
   r('--control-bg', 'var(--surface)', 'transparent', '输入框底色'),
   r('--popover-border', 'var(--border)', 'var(--text)', '菜单、弹窗、下拉列表的边框色'),
   r('--popover-shadow', 'var(--shadow)', 'none', '浮层阴影'),
+  r('--label-size', 'var(--fs-caption)', 'var(--fs-body-sm)', '表单字段标签字号'),
+  r('--label-color', 'var(--text-2)', 'var(--text)', '表单字段标签颜色'),
+  r('--label-weight', 'var(--fw-regular)', 'var(--fw-medium)', '表单字段标签字重'),
 ]
 
 // ---------------------------------------------------------------------------
