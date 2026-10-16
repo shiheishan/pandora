@@ -76,6 +76,7 @@ type admOrderRowResponse struct {
 	PaidAt         *time.Time `json:"paid_at"`
 	ProviderCode   *string    `json:"provider_code"`
 	ProviderName   *string    `json:"provider_name"`
+	Method         *string    `json:"method"`
 	PlanName       string     `json:"plan_name"`
 	Interval       string     `json:"interval"`
 	IntervalCount  int        `json:"interval_count"`
@@ -178,6 +179,7 @@ func admOrderRowFrom(cc *admCents, o service.AdminOrderRow) admOrderRowResponse 
 		PaidAt:         o.PaidAt,
 		ProviderCode:   o.ProviderCode,
 		ProviderName:   o.ProviderName,
+		Method:         o.Method,
 		PlanName:       o.PlanName,
 		Interval:       o.Interval,
 		IntervalCount:  o.IntervalCount,

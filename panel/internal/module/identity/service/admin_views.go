@@ -74,6 +74,8 @@ type AdminOrderRow struct {
 	PaidAt         *time.Time
 	ProviderCode   *string
 	ProviderName   *string
+	// Method 是成功那笔收款的支付方式；没有收款为 nil
+	Method *string
 	// PlanName 是首项为套餐时的快照名，否则空串；Interval、IntervalCount 是首项的周期，没有为空串、0
 	PlanName      string
 	Interval      string

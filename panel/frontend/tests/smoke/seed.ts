@@ -220,32 +220,58 @@ step('管理员登录')
 const admin = str(await call(ADM, '/v1/auth/login', { body: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD } }), 'access_token')
 
 // ============================================================================
-//  池与套餐草稿先行。两条规则互相咬合：上线接口发现「所在池没绑任何套餐」会带 warnings，
-//  而发布版本要求绑定池里已有可服务节点——所以先用向导建草稿版本并绑池（草稿绑定就算绑了），
-//  节点上线后再发布这个版本（用户买的是哪个版本就看哪个版本的池；无池节点不服务任何人，R104、R105）
+//  池与套餐草稿先行：发布要求套餐绑定的池里已有可服务节点，所以先建草稿套餐并绑池（线路按套餐绑定），
+//  节点上线后再发布（无池节点不服务任何人，R104、R105）。两类套餐各一个（10-16）：
+//  订阅套餐按时间、多档周期价；一次性套餐按流量、一个价加有效天数
 // ============================================================================
+
+const GB = 1024 ** 3
 
 step('节点池')
 const poolId = str(await call(ADM, '/v1/node-pools', { token: admin, body: { name: 'Smoke Pool', code: 'smoke-pool' }, expect: [200, 201] }), 'id')
 
-step('套餐向导：建套餐、绑池、定价（草稿，暂不发布）')
-const plan = await call(ADM, '/v1/plans/complete', {
+step('订阅套餐（草稿，暂不发布）：月付与季付两档')
+const plan = await call(ADM, '/v1/plans', {
   token: admin,
   idem: true,
   body: {
-    code: 'smoke-std',
+    kind: 'subscription',
     name: 'Smoke Standard',
     visibility: 'public',
-    traffic_gb: 100,
+    traffic_bytes: 100 * GB,
     max_devices: 3,
     pool_ids: [poolId],
-    prices: [{ billing_interval: 'month', interval_count: 1, unit_amount: 990, currency: 'CNY' }],
+    prices: [
+      { billing_interval: 'month', interval_count: 1, unit_amount: 990 },
+      { billing_interval: 'month', interval_count: 3, unit_amount: 2700 },
+    ],
+    reset: { price: 300, limit: 2 },
     publish: false,
   },
   expect: 201,
 })
 const planId = str(plan, 'plan.id')
-const versionId = str(plan, 'version_id')
+const versionId = str(plan, 'plan.draft_version_id')
+
+step('一次性套餐（草稿，暂不发布）：50G、有效 30 天')
+const oneTime = await call(ADM, '/v1/plans', {
+  token: admin,
+  idem: true,
+  body: {
+    kind: 'one_time',
+    name: 'Smoke Once',
+    visibility: 'public',
+    traffic_bytes: 50 * GB,
+    max_devices: 3,
+    pool_ids: [poolId],
+    unit_amount: 500,
+    validity_days: 30,
+    publish: false,
+  },
+  expect: 201,
+})
+const oneTimePlanId = str(oneTime, 'plan.id')
+const oneTimeVersionId = str(oneTime, 'plan.draft_version_id')
 
 // ============================================================================
 //  服务器 → 节点 → 接入令牌 → nodesim（真实 pdnd 客户端）→ activate → 发布套餐版本
@@ -334,16 +360,19 @@ const activated = await call(ADM, `/v1/nodes/${nodeId}/activate`, { token: admin
 if (activated.serving_status !== 'active') throw new Error(`上线后状态不对：${JSON.stringify(activated).slice(0, 300)}`)
 if (activated.warnings !== undefined) throw new Error(`上线带了提示：${JSON.stringify(activated.warnings)}`)
 
-step('发布套餐版本（绑定池里现在有可服务节点了）')
-// 两个乐观锁都取自详情，与后台「版本」页的发布对话框同一个请求
-const detail = (await call(ADM, `/v1/plans/${planId}`, { token: admin })).plan as Json
-const version = (detail.versions as Json[]).find((v) => v.id === versionId)
-if (!version) throw new Error(`套餐详情里没有刚建的版本：${JSON.stringify(detail).slice(0, 300)}`)
-await call(ADM, `/v1/plans/${planId}/versions/${versionId}/publish`, {
-  token: admin,
-  idem: true,
-  body: { expected_plan_row_version: num(detail, 'row_version'), expected_version_row_version: num(version, 'row_version') },
-})
+step('发布两个套餐的草稿版本（绑定的池里现在有可服务节点了）')
+// 乐观锁取自详情，与后台套餐页的发布对话框同一个请求
+for (const [id, version] of [
+  [planId, versionId],
+  [oneTimePlanId, oneTimeVersionId],
+] as const) {
+  const detail = (await call(ADM, `/v1/plans/${id}`, { token: admin })).plan as Json
+  await call(ADM, `/v1/plans/${id}/versions/${version}/publish`, {
+    token: admin,
+    idem: true,
+    body: { expected_row_version: num(detail, 'row_version') },
+  })
+}
 
 // ============================================================================
 //  易支付渠道：后台接口建 epay，收银台指向回环上无人听的端口，只用来拼跳转地址；
@@ -447,7 +476,9 @@ step('门户下单')
 const catalog = await call(PUB, '/v1/plans', { token: user })
 const onSale = (catalog.plans as Json[] | undefined)?.find((p) => p.id === planId)
 if (!onSale) throw new Error(`门户套餐目录里没有刚发布的套餐：${JSON.stringify(catalog).slice(0, 300)}`)
+// 目录里的价格按四档顺序列（月 / 季 / 半年 / 年），第一档是月付
 const priceId = str((onSale.prices as Json[])[0] ?? {}, 'id')
+if (!(catalog.plans as Json[]).some((p) => p.id === oneTimePlanId)) throw new Error(`门户套餐目录里没有一次性套餐：${JSON.stringify(catalog).slice(0, 300)}`)
 const order = await call(PUB, '/v1/orders', { token: user, idem: true, body: { plan_id: planId, price_id: priceId, use_balance: 0 }, expect: [200, 201] })
 const orderId = str(order, 'order_id')
 
@@ -562,7 +593,7 @@ await call(PUB, '/v1/gift-cards/redeem', { token: user, idem: true, body: { code
 
 step('优惠券，并用它下一张单（兑换记录在下单时落定，不必付款；被邀请人已有这个套餐，用续费单）')
 const couponId = str(
-  await call(ADM, '/v1/coupons', { token: admin, body: { code: 'SMOKE10', discount_type: 'percent', discount_value: 1000, currency: 'CNY' }, expect: [200, 201] }),
+  await call(ADM, '/v1/coupons', { token: admin, body: { code: 'SMOKE10', discount_type: 'percent', discount_value: 1000 }, expect: [200, 201] }),
   'id',
 )
 const couponOrderId = str(
@@ -570,21 +601,16 @@ const couponOrderId = str(
   'order_id',
 )
 
-step('流量包：后台上架，门户用余额买一个（应付为 0，同步履约，我的流量包不空）')
-const pack = await call(ADM, '/v1/traffic-packs', {
-  token: admin,
-  idem: true,
-  body: { name: 'Smoke 10GB', traffic_bytes: 10737418240, currency: 'CNY', unit_amount: 500, recommended: false, sort_order: 0 },
-  expect: [200, 201],
-})
-const packId = str(pack, (pack.pack as Json | undefined) ? 'pack.id' : 'id')
-// 流量包加到一份在用的套餐上（购买模型统一 Q5：subscription_id 必填）
-const packOrder = await call(PUB, '/v1/me/traffic-pack-orders', { token: user, idem: true, body: { pack_id: packId, subscription_id: subscriptionId, use_balance: 500, coupon_code: '' }, expect: [200, 201] })
-// 应付为 0 的流量包单当场履约：响应里就该是 fulfilled，否则下面「我的流量包」必然为空
-if (packOrder.status !== 'fulfilled') throw new Error(`流量包单没有当场履约：${JSON.stringify(packOrder).slice(0, 400)}`)
+step('一次性套餐：门户用礼品卡的余额新购一份，再叠加一次（应付都为 0，当场履约）')
+const oneTimePriceId = str(((catalog.plans as Json[]).find((p) => p.id === oneTimePlanId)?.prices as Json[] | undefined)?.[0] ?? {}, 'id')
+const oneTimeOrder = await call(PUB, '/v1/orders', { token: user, idem: true, body: { plan_id: oneTimePlanId, price_id: oneTimePriceId, use_balance: 500 }, expect: [200, 201] })
+if (oneTimeOrder.status !== 'fulfilled') throw new Error(`余额付清的一次性新购单没有当场履约：${JSON.stringify(oneTimeOrder).slice(0, 400)}`)
+const oneTimeSubscriptionId = await subscriptionOf(user, oneTimePlanId)
+const stackOrder = await call(PUB, `/v1/me/subscriptions/${oneTimeSubscriptionId}/stack`, { token: user, idem: true, body: { price_id: oneTimePriceId, use_balance: 500 }, expect: [200, 201] })
+if (stackOrder.status !== 'fulfilled') throw new Error(`余额付清的叠加单没有当场履约：${JSON.stringify(stackOrder).slice(0, 400)}`)
 
 step('收入调整与手动流量重置')
-await call(ADM, '/v1/revenue/adjustments', { token: admin, idem: true, body: { currency: 'CNY', amount: 1000, reason: 'smoke adjustment', effective_on: '' }, expect: [200, 201] })
+await call(ADM, '/v1/revenue/adjustments', { token: admin, idem: true, body: { amount: 1000, reason: 'smoke adjustment', effective_on: '' }, expect: [200, 201] })
 // 手动重置按订阅行操作（购买模型统一：一个人可以有多份）
 await call(ADM, `/v1/subscriptions/${subscriptionId}/traffic-reset`, { token: admin, idem: true, body: { note: 'smoke manual reset' }, expect: [200, 201] })
 
@@ -603,7 +629,7 @@ const sealCt = Buffer.concat([sealCipher.update('支付宝 smoke@example.test', 
 const sealed = Buffer.concat([Buffer.from([1, 1]), sealNonce, sealCt]).toString('hex')
 sqlFixture(
   '提现申请',
-  `INSERT INTO withdrawals (user_id, currency, amount, payout_sealed, method, status) VALUES ('${userId}', 'CNY', 1.00, decode('${sealed}', 'hex'), 'alipay', 'requested');`,
+  `INSERT INTO withdrawals (user_id, amount, payout_sealed, method, status) VALUES ('${userId}', 1.00, decode('${sealed}', 'hex'), 'alipay', 'requested');`,
 )
 
 // ============================================================================
@@ -635,7 +661,6 @@ const lists: Array<[string, string, string, string?]> = [
   [ADM, '/v1/gift-cards', admin],
   [ADM, '/v1/coupons', admin],
   [ADM, `/v1/coupons/${couponId}/redemptions`, admin],
-  [ADM, '/v1/traffic-packs', admin],
   [ADM, '/v1/revenue/adjustments', admin],
   [ADM, '/v1/traffic-resets', admin],
   [ADM, '/v1/late-payments', admin],
@@ -650,8 +675,7 @@ const lists: Array<[string, string, string, string?]> = [
   [PUB, '/v1/orders', user],
   [PUB, '/v1/me/subscriptions', user],
   [PUB, `/v1/me/subscriptions/${subscriptionId}/nodes`, user],
-  [PUB, '/v1/traffic-packs', user],
-  [PUB, '/v1/me/traffic-packs', user],
+  [PUB, `/v1/me/checkout/landings?plan_id=${oneTimePlanId}`, user],
   [PUB, '/v1/me/commission', user],
   [PUB, '/v1/support/tickets', user],
   [PUB, '/v1/me/announcements', user],
@@ -685,7 +709,9 @@ writeFileSync(
       page_slug: pageSlug,
       gift_card_id: giftCardId,
       coupon_id: couponId,
-      pack_id: packId,
+      one_time_plan_id: oneTimePlanId,
+      one_time_price_id: oneTimePriceId,
+      one_time_subscription_id: oneTimeSubscriptionId,
       hook_code: hookCode,
       provider_code: PROVIDER,
     },
