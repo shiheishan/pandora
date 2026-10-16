@@ -57,7 +57,7 @@ func (f *fakeDir) ListGroups(context.Context) ([]identitysvc.Group, error) {
 // fakePlans 是内存里的 catalog 套餐。
 type fakePlans struct{ plans []catalogsvc.Plan }
 
-func (f *fakePlans) ListPlans(context.Context) ([]catalogsvc.PlanSummary, error) {
+func (f *fakePlans) ListPlans(context.Context, catalogsvc.PlanFilter) ([]catalogsvc.PlanSummary, error) {
 	out := make([]catalogsvc.PlanSummary, 0, len(f.plans))
 	for _, p := range f.plans {
 		out = append(out, catalogsvc.PlanSummary{Plan: p})

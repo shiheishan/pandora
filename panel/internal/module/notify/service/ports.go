@@ -33,7 +33,7 @@ type Directory interface {
 // Plans 是 notify 要的套餐读取面；*catalogsvc.Service 满足。
 type Plans interface {
 	// ListPlans 后台套餐列表（含已归档）。
-	ListPlans(ctx context.Context) ([]catalogsvc.PlanSummary, error)
+	ListPlans(ctx context.Context, f catalogsvc.PlanFilter) ([]catalogsvc.PlanSummary, error)
 	// PlansByIDs 批量取套餐（含已归档）。
 	PlansByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]catalogsvc.Plan, error)
 }
