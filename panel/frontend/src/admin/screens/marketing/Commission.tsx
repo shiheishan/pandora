@@ -1,6 +1,7 @@
 import { useMutation } from '@tanstack/react-query'
 import { useState, type FormEvent } from 'react'
 import { formatMoney } from '../../../core/format'
+import { navigate, useHashLocation } from '../../../core/router'
 import {
   isUSDTMethod,
   looksLikeTxHash,
@@ -8,42 +9,67 @@ import {
   withdrawMethodLabel,
 } from '../../../core/withdraw-methods'
 import { useApi } from '../../../shell/runtime'
-import { Button, Empty, Input, Modal, QueryView, Segmented, StatStrip, Tag, TextArea, useToast } from '../../../ui'
+import { Button, ConfirmModal, Empty, FilterTabs, Input, Modal, QueryView, StatStrip, Tabs, Tag, TextArea, useToast } from '../../../ui'
 import local from './Commission.module.css'
-import { CommissionLevels } from './CommissionLevels'
-import { CommissionOverrides } from './CommissionOverrides'
-import { buildCommissionConfig, commissionStats, commissionToForm, formatDateTime, withdrawalState, type CommissionForm, type FieldErrors } from './logic'
+import { CommissionSettings } from './CommissionSettings'
+import { commissionStats, withdrawalState } from './commissionModel'
+import { formatDateTime, type FieldErrors } from './logic'
 import css from './marketing.module.css'
 import { ReviewEntries } from './ReviewEntries'
-import { useCommissionOverview, useFailure, useIntentKey, useInvalidateMarketing, useWithdrawals } from './queries'
-import { okResponse, paidResponse, reviewResponse, type CommissionOverview, type Withdrawal } from './schemas'
+import { useCommissionOverview, useFailure, useIntentKey, useInvalidateMarketing, useWithdrawals, type WithdrawalFilter } from './queries'
+import { paidResponse, reviewResponse, type CommissionOverview, type Withdrawal } from './schemas'
 
-export function Commission() {
+type CommissionTab = 'review' | 'withdraw' | 'settings'
+
+export function Commission({ rest }: { rest: string[] }) {
   const overview = useCommissionOverview()
+  const rawTab = rest[0]
+  const currentTab: CommissionTab =
+    rawTab === 'withdraw' || rawTab === 'settings' ? rawTab : 'review'
+
+  const onTabChange = (nextTab: CommissionTab) => {
+    navigate(`/marketing/commission/${nextTab}`)
+  }
+
+  const needReview = overview.data?.need_review ?? 0
+  const waitingWithdrawals = overview.data?.waiting_withdrawals ?? 0
+
+  const tabItems = [
+    {
+      value: 'review' as const,
+      label: '待复核佣金',
+      badge: needReview > 0 ? needReview : undefined,
+    },
+    {
+      value: 'withdraw' as const,
+      label: '提现申请',
+      badge: waitingWithdrawals > 0 ? waitingWithdrawals : undefined,
+    },
+    {
+      value: 'settings' as const,
+      label: '规则设置',
+    },
+  ]
+
   return (
     <div className={css.stack}>
       <StatStrip label="佣金统计" items={overview.data ? commissionStats(overview.data) : undefined} />
-      <ReviewEntries />
-      <div className={local.columns}>
-        <Withdrawals />
-        <section className={`${css.panel} ${local.settings}`}>
-          <div className={css.panelHead}>
-            <h3 className={css.panelTitle}>邀请与佣金设置</h3>
-          </div>
-          <QueryView query={overview} rows={4} isEmpty={() => false} empty={null}>
-            {(data) => (
-              <>
-                <Settings key={`${data.rate_percent}-${data.freeze_days}-${data.min_withdraw}-${data.scope}`} overview={data} />
-                <CommissionLevels
-                  key={`${data.distribution_enabled}-${data.distribution_levels.join('/')}-${data.withdraw_enabled}-${data.withdraw_methods.join(',')}`}
-                  overview={data}
-                />
-              </>
-            )}
-          </QueryView>
-        </section>
-      </div>
-      <CommissionOverrides />
+      <Tabs<CommissionTab>
+        label="佣金与提现"
+        value={currentTab}
+        items={tabItems}
+        onChange={onTabChange}
+      />
+      {currentTab === 'review' && <ReviewEntries />}
+      {currentTab === 'withdraw' && <Withdrawals />}
+      {currentTab === 'settings' && (
+        <QueryView query={overview} rows={4} isEmpty={() => false} empty={null}>
+          {(data: CommissionOverview) => {
+            const settingsKey = `${data.rate_percent}-${data.freeze_days}-${data.min_withdraw}-${data.scope}-${data.distribution_enabled}-${data.distribution_levels.join('/')}-${data.withdraw_enabled}-${data.withdraw_methods.join(',')}`
+            return <CommissionSettings key={settingsKey} overview={data} />
+          }}
+        </QueryView>
+      )}
     </div>
   )
 }
@@ -51,21 +77,53 @@ export function Commission() {
 // ---------------------------------------------------------------------------
 // 提现申请
 // ---------------------------------------------------------------------------
-type Dialog = { kind: 'reject' | 'pay'; withdrawal: Withdrawal } | null
+type Dialog =
+  | { kind: 'approve'; withdrawal: Withdrawal }
+  | { kind: 'reject'; withdrawal: Withdrawal }
+  | { kind: 'pay'; withdrawal: Withdrawal }
+  | null
 
 function Withdrawals() {
-  const list = useWithdrawals()
+  const loc = useHashLocation()
+  const rawStatus = loc.query.get('status')
+  const filter: WithdrawalFilter =
+    rawStatus === 'done' || rawStatus === 'all' ? rawStatus : 'open'
+
+  const list = useWithdrawals(filter)
   const [dialog, setDialog] = useState<Dialog>(null)
 
+  const onFilterChange = (nextFilter: WithdrawalFilter) => {
+    navigate('/marketing/commission/withdraw', {
+      query: nextFilter === 'open' ? undefined : { status: nextFilter },
+      replace: true,
+    })
+  }
+
+  const emptyTitle =
+    filter === 'open'
+      ? '没有待处理的提现'
+      : filter === 'done'
+        ? '还没有处理完的提现'
+        : '还没有提现申请'
+
   return (
-    <section className={`${css.panel} ${local.withdrawals}`}>
-      <div className={css.panelHead}>
-        <h3 className={css.panelTitle}>提现申请</h3>
-        <span className={css.faint}>审核通过后打款，审核与打款都需要重新验证身份</span>
+    <section className={local.section}>
+      <div className={local.filterRow}>
+        <FilterTabs<WithdrawalFilter>
+          label="提现状态筛选"
+          value={filter}
+          onChange={onFilterChange}
+          items={[
+            { value: 'open', label: '处理中' },
+            { value: 'done', label: '已完成' },
+            { value: 'all', label: '全部' },
+          ]}
+        />
       </div>
-      <QueryView query={list} empty={<Empty bare title="还没有提现申请" description="用户在门户申请提现后会出现在这里。" />}>
+      <QueryView query={list} empty={<Empty bare title={emptyTitle} />}>
         {(rows) => rows.map((w) => <WithdrawalRow key={w.id} withdrawal={w} onDialog={setDialog} />)}
       </QueryView>
+      <ApproveDialog withdrawal={dialog?.kind === 'approve' ? dialog.withdrawal : null} onClose={() => setDialog(null)} />
       <RejectDialog withdrawal={dialog?.kind === 'reject' ? dialog.withdrawal : null} onClose={() => setDialog(null)} />
       <PayDialog withdrawal={dialog?.kind === 'pay' ? dialog.withdrawal : null} onClose={() => setDialog(null)} />
     </section>
@@ -73,44 +131,21 @@ function Withdrawals() {
 }
 
 function WithdrawalRow({ withdrawal: w, onDialog }: { withdrawal: Withdrawal; onDialog: (d: Dialog) => void }) {
-  const api = useApi()
-  const toast = useToast()
-  const fail = useFailure()
-  const invalidate = useInvalidateMarketing()
   const state = withdrawalState(w.status)
-  // 设计里「通过」没有确认框；后端要 reauth，由常驻对话框接管
-  const approve = useMutation({
-    mutationFn: () => api.post(`v1/withdrawals/${w.id}/review`, reviewResponse, { body: { action: 'approve' } }),
-    onSuccess: () => {
-      toast('已通过，等待打款')
-      void invalidate()
-    },
-    onError: (error) => {
-      fail(error)
-      void invalidate()
-    },
-  })
 
   return (
-    <div className={local.row}>
+    <div className={local.withdrawalRow}>
       <span className={local.who}>
         <span className={local.ellipsis}>{w.email}</span>
-        <span className={`${css.faint} ${local.ellipsis}`}>
+        <span className={`${local.reviewMeta} ${local.ellipsis}`}>
           {formatDateTime(w.requested_at)} · {withdrawMethodLabel(w.method)} · {w.payout_detail || '未填收款信息'}
+          {w.status === 'rejected' && w.reject_reason && ` · 拒绝理由：${w.reject_reason === 'account_deleted' ? '账号已注销' : w.reject_reason}`}
+          {w.status === 'paid' && w.payout_reference && ` · 流水号 ${w.payout_reference}`}
+          {w.status === 'paid' && w.paid_usdt_amount && ` · 实付 ${w.paid_usdt_amount} USDT`}
         </span>
-        {w.status === 'paid' && w.payout_reference && (
-          <span className={`${css.faint} ${local.ellipsis}`}>
-            流水号：{w.payout_reference}
-            {w.paid_usdt_amount ? ` · 实付 ${w.paid_usdt_amount} USDT` : ''}
-          </span>
-        )}
-        {w.status === 'rejected' && w.reject_reason && <span className={`${css.faint} ${local.ellipsis}`}>拒绝理由：{w.reject_reason === 'account_deleted' ? '账号已注销' : w.reject_reason}</span>}
       </span>
-      <span className={local.amount}>
-        <span className={local.money}>{formatMoney(w.amount, w.currency)}</span>
-        <span className={css.faint} title="该用户累计获得的佣金，用来核对提现是否合理">
-          累计 {formatMoney(w.earned_total, w.currency)}
-        </span>
+      <span className={local.amount} title={`累计获得 ${formatMoney(w.earned_total)}`}>
+        {formatMoney(w.amount)}
       </span>
       <span className={local.state}>
         <Tag tone={state.tone}>{state.label}</Tag>
@@ -118,21 +153,58 @@ function WithdrawalRow({ withdrawal: w, onDialog }: { withdrawal: Withdrawal; on
       <span className={local.actions}>
         {state.canReview && (
           <>
-            <Button size="xs" className={local.reject} onClick={() => onDialog({ kind: 'reject', withdrawal: w })} disabled={approve.isPending}>
-              拒绝
-            </Button>
-            <Button size="xs" variant="primary" busy={approve.isPending} onClick={() => approve.mutate()}>
+            <button type="button" className={local.btnPass} onClick={() => onDialog({ kind: 'approve', withdrawal: w })}>
               通过
-            </Button>
+            </button>
+            <button type="button" className={local.btnVoid} onClick={() => onDialog({ kind: 'reject', withdrawal: w })}>
+              拒绝
+            </button>
           </>
         )}
         {state.canPay && (
-          <Button size="xs" variant="primary" className={local.pay} onClick={() => onDialog({ kind: 'pay', withdrawal: w })}>
-            打款
-          </Button>
+          <button type="button" className={local.btnPass} onClick={() => onDialog({ kind: 'pay', withdrawal: w })}>
+            记录打款
+          </button>
         )}
       </span>
     </div>
+  )
+}
+
+function ApproveDialog({ withdrawal, onClose }: { withdrawal: Withdrawal | null; onClose: () => void }) {
+  const api = useApi()
+  const toast = useToast()
+  const fail = useFailure()
+  const invalidate = useInvalidateMarketing()
+
+  const onConfirm = async () => {
+    if (!withdrawal) return
+    try {
+      await api.post(`v1/withdrawals/${withdrawal.id}/review`, reviewResponse, { body: { action: 'approve' } })
+      toast('已通过，等待打款')
+      void invalidate()
+      onClose()
+    } catch (error) {
+      fail(error)
+      void invalidate()
+      onClose()
+    }
+  }
+
+  const bodyText = withdrawal
+    ? `${withdrawal.email} · ${formatMoney(withdrawal.amount)} · ${withdrawMethodLabel(withdrawal.method)}。通过后进入「待打款」，打款后再回来记录流水号。`
+    : ''
+
+  return (
+    <ConfirmModal
+      open={withdrawal !== null}
+      title="通过这笔提现？"
+      body={bodyText}
+      confirmLabel="通过"
+      cancelLabel="取消"
+      onConfirm={onConfirm}
+      onCancel={onClose}
+    />
   )
 }
 
@@ -184,10 +256,17 @@ function RejectDialog({ withdrawal, onClose }: { withdrawal: Withdrawal | null; 
     >
       {withdrawal && (
         <form id="withdrawal-reject" className={css.stack} onSubmit={submit} noValidate>
-          <div className={css.muted}>
-            {withdrawal.email} 申请提现 {formatMoney(withdrawal.amount, withdrawal.currency)}。拒绝后金额退回用户佣金余额。
-          </div>
-          <TextArea label="拒绝理由" rows={3} value={reason} onChange={(e) => setReason(e.target.value)} error={errors.reason} data-autofocus="" placeholder="如：邀请关系异常" />
+          <div className={css.muted}>佣金退回用户的可提现余额。</div>
+          <TextArea
+            label="拒绝理由"
+            rows={3}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            error={errors.reason}
+            data-autofocus=""
+            placeholder="如：邀请关系异常"
+            hint="用户会看到这条理由"
+          />
         </form>
       )}
     </Modal>
@@ -245,14 +324,14 @@ function PayDialog({ withdrawal, onClose }: { withdrawal: Withdrawal | null; onC
       open={withdrawal !== null}
       onClose={close}
       dismissible={!pay.isPending}
-      title={withdrawal ? `确认已向 ${withdrawal.email} 打款 ${formatMoney(withdrawal.amount, withdrawal.currency)}？` : ''}
+      title="记录打款"
       actions={
         <>
           <Button size="dialog" onClick={close} disabled={pay.isPending}>
             取消
           </Button>
           <Button size="dialog" variant="primary" type="submit" form="withdrawal-pay" busy={pay.isPending}>
-            确认已打款
+            记录打款
           </Button>
         </>
       }
@@ -287,65 +366,3 @@ function PayDialog({ withdrawal, onClose }: { withdrawal: Withdrawal | null; onC
   )
 }
 
-// ---------------------------------------------------------------------------
-// 邀请与佣金设置
-// ---------------------------------------------------------------------------
-function Settings({ overview }: { overview: CommissionOverview }) {
-  const api = useApi()
-  const toast = useToast()
-  const fail = useFailure()
-  const invalidate = useInvalidateMarketing()
-  const [form, setForm] = useState<CommissionForm>(() => commissionToForm(overview))
-  const [errors, setErrors] = useState<FieldErrors>({})
-
-  const save = useMutation({
-    mutationFn: (body: object) => api.post('v1/commission/config', okResponse, { body }),
-    onSuccess: () => {
-      toast('佣金设置已保存')
-      void invalidate()
-    },
-    onError: (error) => fail(error, setErrors),
-  })
-
-  const submit = (event: FormEvent) => {
-    event.preventDefault()
-    const built = buildCommissionConfig(form)
-    if (!built.ok) return setErrors(built.errors)
-    setErrors({})
-    save.mutate(built.body)
-  }
-
-  return (
-    <form className={local.form} onSubmit={submit} noValidate>
-      <label className={local.rate}>
-        <span className={css.groupLabel}>返佣比例</span>
-        <span className={local.rateLine}>
-          <input type="range" min={0} max={50} step={1} value={form.rate} onChange={(e) => setForm({ ...form, rate: Number(e.target.value) })} className={local.range} />
-          <span className={css.mono}>{form.rate}%</span>
-        </span>
-        {errors.rate_percent && <span className={css.error}>{errors.rate_percent}</span>}
-      </label>
-      <div>
-        <div className={css.groupLabel}>计佣范围</div>
-        <Segmented<CommissionForm['scope']>
-          label="计佣范围"
-          size="sm"
-          value={form.scope}
-          onChange={(scope) => setForm({ ...form, scope })}
-          options={[
-            { value: 'first_order', label: '仅首单' },
-            { value: 'every_order', label: '每笔订单' },
-          ]}
-          className={local.scope}
-        />
-      </div>
-      <div className={local.pair}>
-        <Input label="结算冻结期（天）" mono inputMode="numeric" value={form.freezeDays} onChange={(e) => setForm({ ...form, freezeDays: e.target.value })} error={errors.freeze_days} />
-        <Input label="最低提现（¥）" mono inputMode="decimal" value={form.minWithdraw} onChange={(e) => setForm({ ...form, minWithdraw: e.target.value })} error={errors.min_withdraw} />
-      </div>
-      <Button type="submit" variant="primary" block busy={save.isPending}>
-        保存设置
-      </Button>
-    </form>
-  )
-}

@@ -1,53 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import {
-  GB,
-  approveReasonError,
-  basisPointsToPercent,
-  batchFileName,
-  batchLabel,
-  buildCommissionConfig,
-  buildCouponRequest,
-  buildGenerateRequest,
-  buildTemplateRequest,
-  codeFilterQuery,
-  codesReportFileName,
-  commissionStats,
-  commissionToForm,
-  couponBatchLabel,
-  couponState,
-  discountLabel,
-  emptyCouponForm,
-  formatGB,
-  freezeLabel,
-  grantedLabel,
-  intervalScopeLabel,
-  minorToYuan,
-  parseCount,
-  percentToBasisPoints,
-  planScopeLabel,
-  redeemRate,
-  templateFace,
-  templateToForm,
-  usage,
-  validUntilLabel,
-  voidReasonError,
-  withdrawalState,
-  yuanToMinor,
-} from './logic'
-import {
-  couponSchema,
-  entryReviewResponse,
-  overviewSchema,
-  reviewEntriesResponse,
-  templatesResponse,
-  type CommissionOverview,
-  type GiftTemplate,
-  type Plan,
-} from './schemas'
+import { GB, basisPointsToPercent, buildCouponRequest, couponBatchLabel, couponPeriodLabel, couponState, discountLabel, emptyCouponForm, formatGB, minorToYuan, parseCount, percentToBasisPoints, planScopeLabel, usage, yuanToMinor } from './logic'
+import { couponSchema, type Plan } from './schemas'
 
 const PLANS: Plan[] = [
-  { id: 'p1', name: '基础版', status: 'active', prices: [] },
-  { id: 'p2', name: '专业版', status: 'active', prices: [] },
+  { id: 'p1', name: '基础版', kind: 'subscription', status: 'active', prices: [] },
+  { id: 'p2', name: '专业版', kind: 'subscription', status: 'active', prices: [] },
 ]
 
 describe('input conversion', () => {
@@ -79,17 +36,40 @@ describe('input conversion', () => {
 })
 
 describe('coupons', () => {
-  it('labels discounts: basis points as percent, fixed in its currency (blank means CNY)', () => {
-    expect(discountLabel({ discount_type: 'percent', discount_value: 1500, currency: '' })).toBe('15% 折扣')
-    expect(discountLabel({ discount_type: 'fixed', discount_value: 1000, currency: '' })).toBe('立减 ¥10.00')
-    expect(discountLabel({ discount_type: 'fixed', discount_value: 500, currency: 'USD' })).toBe('立减 ¥5.00')
+  it('labels discounts: basis points as percent, fixed in CNY', () => {
+    expect(discountLabel({ discount_type: 'percent', discount_value: 1500 })).toBe('15% 折扣')
+    expect(discountLabel({ discount_type: 'fixed', discount_value: 1000 })).toBe('立减 ¥10.00')
+    expect(discountLabel({ discount_type: 'fixed', discount_value: 500 })).toBe('立减 ¥5.00')
   })
 
   it('shows usage against the cap, unlimited when null', () => {
     expect(usage({ redeemed_count: 412, max_redemptions: 1000 })).toEqual({ label: '412 / 1000', ratio: 0.412 })
     expect(usage({ redeemed_count: 5, max_redemptions: null })).toEqual({ label: '5 / 不限', ratio: 0 })
     expect(usage({ redeemed_count: 120, max_redemptions: 100 }).ratio).toBe(1)
-    expect(validUntilLabel(null)).toBe('长期')
+  })
+
+  it('formats coupon period label for future start, until, or perpetual', () => {
+    const now = new Date('2026-10-16T12:00:00Z')
+    // 未来开始 + 结束
+    expect(couponPeriodLabel({ valid_from: '2026-11-01T12:00:00Z', valid_until: '2026-12-01T12:00:00Z' }, now)).toEqual({
+      short: '11-01 起 · 至 12-01',
+      full: '2026-11-01 → 2026-12-01',
+    })
+    // 过去开始 + 长期（无结束）
+    expect(couponPeriodLabel({ valid_from: '2026-09-01T12:00:00Z', valid_until: null }, now)).toEqual({
+      short: '长期',
+      full: '2026-09-01 → 长期',
+    })
+    // 都空
+    expect(couponPeriodLabel({ valid_from: null, valid_until: null }, now)).toEqual({
+      short: '长期',
+      full: '创建即生效 → 长期',
+    })
+    // 过去开始 + 有结束
+    expect(couponPeriodLabel({ valid_from: '2026-10-01T12:00:00Z', valid_until: '2026-11-01T12:00:00Z' }, now)).toEqual({
+      short: '至 11-01',
+      full: '2026-10-01 → 2026-11-01',
+    })
   })
 
   it('maps plan scope to names, falling back to a count without the catalog', () => {
@@ -97,12 +77,6 @@ describe('coupons', () => {
     expect(planScopeLabel(['p2', 'p1'], PLANS)).toBe('专业版、基础版')
     expect(planScopeLabel(['p2', 'gone'], PLANS)).toBe('专业版、已删除的套餐')
     expect(planScopeLabel(['p1', 'p2'], undefined)).toBe('2 个套餐')
-  })
-
-  it('maps interval scope to labels, empty to unlimited', () => {
-    expect(intervalScopeLabel([])).toBe('不限时长')
-    expect(intervalScopeLabel(['month', 'year'])).toBe('月付、年付')
-    expect(intervalScopeLabel(['day', 'week', 'quarter', 'one_time'])).toBe('按天、按周、季付、一次性')
   })
 
   it('only active and paused coupons get a switch; expired and exhausted become tags', () => {
@@ -120,9 +94,11 @@ describe('coupons', () => {
       ok: true,
       body: { code: 'AUTUMN26', discount_type: 'percent', discount_value: 1500, max_redemptions: 1000, max_redemptions_per_user: 1, max_discount: 3000 },
     })
-    const fixed = buildCouponRequest({ ...emptyCouponForm(false), code: 'X', kind: 'fixed', value: '10', currency: 'USD', minOrder: '50', planIds: ['p1'], intervals: ['month', 'year'] }, false)
-    expect(fixed.ok && fixed.body).toMatchObject({ discount_type: 'fixed', discount_value: 1000, currency: 'USD', max_redemptions: null, min_order_amount: 5000, applicable_plan_ids: ['p1'], applicable_intervals: ['month', 'year'] })
-    // fixed 不带封顶优惠，percent 不带币种
+    const fixed = buildCouponRequest({ ...emptyCouponForm(false), code: 'X', kind: 'fixed', value: '10', minOrder: '50', planIds: ['p1'] }, false)
+    expect(fixed.ok && fixed.body).toMatchObject({ discount_type: 'fixed', discount_value: 1000, max_redemptions: null, min_order_amount: 5000, applicable_plan_ids: ['p1'] })
+    // 没有 currency、applicable_intervals、max_discount
+    expect(fixed.ok && 'currency' in fixed.body).toBe(false)
+    expect(fixed.ok && 'applicable_intervals' in fixed.body).toBe(false)
     expect(fixed.ok && 'max_discount' in fixed.body).toBe(false)
   })
 
@@ -140,14 +116,19 @@ describe('coupons', () => {
     expect(!bad.ok && Object.keys(bad.errors).sort()).toEqual(['count', 'name', 'prefix'])
   })
 
-  describe('valid_until', () => {
+  describe('valid_from and valid_until', () => {
     beforeEach(() => vi.useFakeTimers({ now: new Date('2026-09-24T10:00:00Z') }))
     afterEach(() => vi.useRealTimers())
-    it('sends RFC3339 and rejects the past', () => {
-      const future = buildCouponRequest({ ...emptyCouponForm(false), code: 'A', validUntil: '2026-10-07T23:59' }, false)
+    it('sends RFC3339, converts valid_from and rejects past or start after end', () => {
+      const future = buildCouponRequest({ ...emptyCouponForm(false), code: 'A', validFrom: '2026-10-01T00:00', validUntil: '2026-10-07T23:59' }, false)
+      expect(future.ok && future.body.valid_from).toMatch(/^2026-10-01T\d\d:00:00\.000Z$/)
       expect(future.ok && future.body.valid_until).toMatch(/^2026-10-0\dT\d\d:59:00\.000Z$/)
+
       const past = buildCouponRequest({ ...emptyCouponForm(false), code: 'A', validUntil: '2026-01-01T00:00' }, false)
       expect(!past.ok && past.errors.valid_until).toBe('结束时间要晚于现在')
+
+      const inverted = buildCouponRequest({ ...emptyCouponForm(false), code: 'A', validFrom: '2026-10-10T00:00', validUntil: '2026-10-05T00:00' }, false)
+      expect(!inverted.ok && inverted.errors.valid_until).toBe('结束时间要晚于开始时间')
     })
   })
 
@@ -158,14 +139,12 @@ describe('coupons', () => {
       name: 'A',
       discount_type: 'percent',
       discount_value: 1,
-      currency: '',
       max_discount: null,
       min_order_amount: 0,
       max_redemptions: null,
       max_redemptions_per_user: 1,
       redeemed_count: 0,
       applicable_plan_ids: null,
-      applicable_intervals: null,
       valid_from: null,
       valid_until: null,
       status: 'active',
@@ -173,237 +152,5 @@ describe('coupons', () => {
       discounted_total: 0,
     })
     expect(row.applicable_plan_ids).toEqual([])
-    expect(row.applicable_intervals).toEqual([])
-  })
-})
-
-describe('gift cards', () => {
-  const tpl = (t: Partial<GiftTemplate>): GiftTemplate => ({
-    id: 't',
-    name: '卡',
-    description: '',
-    type: 'general',
-    status: 'active',
-    rewards: {},
-    conditions: {},
-    limits: {},
-    theme_color: '',
-    code_total: 0,
-    code_used: 0,
-    created_at: '2026-09-24T00:00:00Z',
-    ...t,
-  })
-
-  it('derives the face, kind and after-redeem text per card type', () => {
-    expect(templateFace(tpl({ rewards: { balance: 10000 } }), PLANS)).toEqual({ face: '¥100.00', kind: '余额', after: '直接入账' })
-    expect(templateFace(tpl({ rewards: { traffic_bytes: 100 * GB } }), PLANS)).toEqual({ face: '100 GB', kind: '流量', after: '当期有效' })
-    expect(templateFace(tpl({ rewards: { expire_days: 30 } }), PLANS).face).toBe('30 天')
-    expect(templateFace(tpl({ type: 'plan', rewards: { plan_id: 'p2' } }), PLANS)).toEqual({ face: '专业版', kind: '套餐', after: '立即开通' })
-    expect(templateFace(tpl({ type: 'plan', rewards: { plan_id: 'p2' } }), undefined).face).toBe('套餐')
-    expect(templateFace(tpl({ type: 'mystery', rewards: { pool: [{ label: 'a', weight: 1 }, { label: 'b', weight: 1 }] } }), PLANS)).toMatchObject({ face: '盲盒', kind: '2 个奖品' })
-  })
-
-  it('describes what a redemption granted', () => {
-    expect(grantedLabel({ granted: { balance: 10000 }, template_name: '100 元卡' })).toBe('余额 +¥100.00')
-    expect(grantedLabel({ granted: { traffic_bytes: 100 * GB, expire_days: 30 }, template_name: 'x' })).toBe('流量 +100 GB · +30 天')
-    expect(grantedLabel({ granted: {}, template_name: '专业版月卡' })).toBe('专业版月卡')
-    expect(grantedLabel({ granted: { balance: 500 }, template_name: '盲盒', prize_label: '¥5 余额' })).toBe('¥5 余额（余额 +¥5.00）')
-  })
-
-  it('shares one code filter between the list and the masked report export', () => {
-    expect(codeFilterQuery('b1', '')).toEqual({ batch_id: 'b1' })
-    expect(codeFilterQuery('b1', 'used')).toEqual({ batch_id: 'b1', status: 'used' })
-  })
-
-  it('names batches and export files from the id', () => {
-    const b = { id: '3f9a1c2b-0000-4000-8000-000000000000', created_at: new Date(2026, 8, 23, 12).toISOString() }
-    expect(batchLabel(b)).toBe('GB-0923-3F9A')
-    expect(batchFileName(b.id)).toBe('gift-codes-3f9a1c2b.csv')
-    expect(codesReportFileName(b.id)).toBe('gift-codes-report-3f9a1c2b.csv')
-    expect(redeemRate(1287, 2040)).toBe('63.1%')
-    expect(redeemRate(0, 0)).toBe('—')
-  })
-
-  it('round-trips a template through the form and sends only known reward keys', () => {
-    const t = tpl({ id: 'x', rewards: { balance: 10050, traffic_bytes: 50 * GB, reset_quota: true }, conditions: { require_invite: true }, limits: { max_use_per_user: 2 }, theme_color: '#123456' })
-    const built = buildTemplateRequest(templateToForm(t))
-    expect(built).toEqual({
-      ok: true,
-      body: {
-        id: 'x',
-        name: '卡',
-        description: '',
-        type: 'general',
-        status: 'active',
-        rewards: { balance: 10050, traffic_bytes: 50 * GB, reset_quota: true },
-        conditions: { require_invite: true },
-        limits: { max_use_per_user: 2 },
-        theme_color: '#123456',
-      },
-    })
-  })
-
-  it('mirrors the backend reward and condition rules', () => {
-    const empty = buildTemplateRequest({ ...templateToForm(null), name: '空卡' })
-    expect(!empty.ok && empty.errors.rewards).toBe('通用卡至少要送一样东西：余额、流量、延长到期或重置流量')
-    const both = buildTemplateRequest({ ...templateToForm(null), name: 'x', balance: '1', newUserOnly: true, paidUserOnly: true })
-    expect(!both.ok && Object.keys(both.errors)).toEqual(['conditions'])
-    const plan = buildTemplateRequest({ ...templateToForm(null), name: 'x', type: 'plan', planId: 'p1' })
-    expect(!plan.ok && plan.errors.rewards).toBe('套餐卡要选定套餐和价格')
-    const mystery = buildTemplateRequest({
-      ...templateToForm(null),
-      name: 'x',
-      type: 'mystery',
-      pool: [
-        { label: '¥5', weight: '80', balance: '5', trafficGb: '', days: '' },
-        { label: '空奖', weight: '20', balance: '', trafficGb: '', days: '' },
-      ],
-    })
-    expect(!mystery.ok && mystery.errors.rewards).toBe('第 2 个奖品什么都不送')
-    const pool = buildTemplateRequest({
-      ...templateToForm(null),
-      name: 'x',
-      type: 'mystery',
-      pool: [
-        { label: '¥5', weight: '80', balance: '5', trafficGb: '', days: '' },
-        { label: '50G', weight: '20', balance: '', trafficGb: '50', days: '' },
-      ],
-    })
-    expect(pool.ok && pool.body.rewards).toEqual({
-      pool: [
-        { label: '¥5', weight: 80, balance: 500 },
-        { label: '50G', weight: 20, traffic_bytes: 50 * GB },
-      ],
-    })
-  })
-
-  describe('code generation', () => {
-    beforeEach(() => vi.useFakeTimers({ now: new Date('2026-09-24T10:00:00Z') }))
-    afterEach(() => vi.useRealTimers())
-    it('limits count and prefix and sends only what was filled', () => {
-      expect(buildGenerateRequest({ count: '100', prefix: '', expiresAt: '' })).toEqual({ ok: true, body: { count: 100 } })
-      expect(buildGenerateRequest({ count: '10', prefix: 'gc', expiresAt: '2026-12-31T23:59' })).toMatchObject({ ok: true, body: { count: 10, prefix: 'GC' } })
-      const bad = buildGenerateRequest({ count: '5001', prefix: 'A-B', expiresAt: '2026-01-01T00:00' })
-      expect(!bad.ok && bad.errors).toEqual({ count: '一次生成 1 到 5000 个', prefix: '只能用大写字母和数字，最多 8 位', expires_at: '有效期不能设在过去' })
-    })
-  })
-
-  it('tolerates a null template list', () => {
-    expect(templatesResponse.parse({ templates: null }).templates).toEqual([])
-  })
-})
-
-describe('commission', () => {
-  const overview: CommissionOverview = overviewSchema.parse({
-    pending: 390400,
-    available: 1,
-    paid_out: 3166000,
-    this_month: 0,
-    entries: 0,
-    need_review: 0,
-    waiting_withdrawals: 0,
-    rate_percent: 20,
-    freeze_days: 7,
-    min_withdraw: 10050,
-    total_earned: 4821000,
-    invited_users: 2318,
-    scope: 'every_order',
-    distribution_enabled: false,
-    distribution_levels: [0, 0, 0],
-    withdraw_enabled: true,
-    withdraw_methods: ['alipay'],
-  })
-
-  it('maps withdrawal statuses; only approved can be paid', () => {
-    expect(withdrawalState('requested')).toMatchObject({ label: '待审核', canReview: true, canPay: false })
-    expect(withdrawalState('reviewing').canReview).toBe(true)
-    expect(withdrawalState('approved')).toMatchObject({ label: '待打款', canPay: true })
-    expect(withdrawalState('processing')).toMatchObject({ canReview: false, canPay: false })
-    expect(withdrawalState('paid').label).toBe('已打款')
-    expect(withdrawalState('failed').label).toBe('打款失败')
-    expect(withdrawalState('returned').label).toBe('已退回')
-  })
-
-  it('formats the four overview stats', () => {
-    expect(commissionStats(overview).map((s) => s.value)).toEqual(['¥48,210.00', '¥3,904.00', '¥31,660.00', '2,318'])
-  })
-
-  it('requires the backend-reported totals and scope', () => {
-    const legacy: Partial<CommissionOverview> = { ...overview }
-    delete legacy.scope
-    expect(overviewSchema.safeParse(legacy).success).toBe(false)
-  })
-
-  it('round-trips the settings form into the config body with scope', () => {
-    const form = commissionToForm(overview)
-    expect(form).toEqual({ rate: 20, scope: 'every_order', freezeDays: '7', minWithdraw: '100.50' })
-    expect(buildCommissionConfig(form)).toEqual({ ok: true, body: { rate_percent: 20, freeze_days: 7, min_withdraw: 10050, scope: 'every_order' } })
-    expect(buildCommissionConfig({ ...form, scope: 'first_order' })).toEqual({ ok: true, body: { rate_percent: 20, freeze_days: 7, min_withdraw: 10050, scope: 'first_order' } })
-    const bad = buildCommissionConfig({ rate: 51, scope: 'every_order', freezeDays: '91', minWithdraw: 'x' })
-    expect(!bad.ok && Object.keys(bad.errors).sort()).toEqual(['freeze_days', 'min_withdraw', 'rate_percent'])
-  })
-
-  describe('review entries', () => {
-    const iso = '2026-10-01T12:00:00Z'
-    const row = {
-      id: 'a0000000-0000-4000-8000-000000000001',
-      order_no: 'ORD-1',
-      referrer_email: 'ref@example.com',
-      referee_email: 'buy@example.com',
-      amount: 1234,
-      currency: 'CNY',
-      review_reason: '同源嫌疑',
-      review_source: 'same_source',
-      created_at: iso,
-      frozen_until: iso,
-    }
-
-    it('parses review list and entry review responses', () => {
-      const list = reviewEntriesResponse.parse({
-        entries: [row, { ...row, id: 'a0000000-0000-4000-8000-000000000002', order_no: 'ORD-2' }],
-        next_cursor: 'abc',
-      })
-      expect(list.entries).toHaveLength(2)
-      expect(list.next_cursor).toBe('abc')
-      expect(reviewEntriesResponse.safeParse({ entries: [{ ...row, amount: 12.5 }], next_cursor: '' }).success).toBe(false)
-      expect(reviewEntriesResponse.safeParse({ entries: [{ ...row, referee_email: undefined }], next_cursor: '' }).success).toBe(false)
-      expect(reviewEntriesResponse.safeParse({ entries: [{ ...row, review_source: 'mystery' }], next_cursor: '' }).success).toBe(false)
-      expect(entryReviewResponse.parse({ status: 'pending' }).status).toBe('pending')
-      expect(entryReviewResponse.parse({ status: 'voided' }).status).toBe('voided')
-      expect(entryReviewResponse.safeParse({ status: 'approved' }).success).toBe(false)
-    })
-
-    it('validates void reason length by character count', () => {
-      expect(voidReasonError('')).toBe('作废必须填写原因，至少 5 个字')
-      expect(voidReasonError('   ')).toBe('作废必须填写原因，至少 5 个字')
-      expect(voidReasonError('四个字啊')).toBe('作废必须填写原因，至少 5 个字')
-      expect(voidReasonError('  abcd  ')).toBe('作废必须填写原因，至少 5 个字')
-      expect(voidReasonError('同源刷单确认')).toBeNull()
-      expect(voidReasonError('abcde')).toBeNull()
-      expect(voidReasonError('长'.repeat(501))).toBe('原因最多 500 个字')
-      expect(voidReasonError('长'.repeat(500))).toBeNull()
-    })
-
-    it('lets the approve reason be blank but caps it at 500 characters', () => {
-      expect(approveReasonError('')).toBeNull()
-      expect(approveReasonError('  核实无误  ')).toBeNull()
-      expect(approveReasonError('长'.repeat(500))).toBeNull()
-      expect(approveReasonError('长'.repeat(501))).toBe('原因最多 500 个字')
-    })
-
-    it('labels freeze period relative to now', () => {
-      const before = new Date('2026-12-01T00:00:00Z')
-      const after = new Date('2025-07-01T00:00:00Z')
-      expect(freezeLabel({ frozen_until: '2026-12-31T12:00:00Z', review_source: 'same_source' }, before)).toContain('冻结至')
-      expect(freezeLabel({ frozen_until: '2025-06-01T00:00:00Z', review_source: 'source_check' }, after)).toBe('冻结期已过，通过后下一轮自动解冻')
-      // 余额不足转来的：不论冻结期，都不说「会自动解冻」
-      for (const at of [before, after]) {
-        const label = freezeLabel({ frozen_until: '2025-06-01T00:00:00Z', review_source: 'underfunded' }, at)
-        expect(label).toContain('余额不足')
-        expect(label).not.toContain('自动解冻')
-      }
-      // 受益人已注销：只能作废
-      expect(freezeLabel({ frozen_until: '2025-06-01T00:00:00Z', review_source: 'account_deleted' }, after)).toContain('只能作废')
-    })
   })
 })

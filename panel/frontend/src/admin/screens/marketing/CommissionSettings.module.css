@@ -1,0 +1,140 @@
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  max-width: 760px;
+}
+
+.secBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.secHead {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--text);
+}
+
+.secHeadSwitch {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--text);
+}
+
+.secHeadTitle {
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.secTitle {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.grid3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px 20px;
+  transition: opacity 0.15s;
+}
+
+.disabledBlock {
+  opacity: 0.4;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+/* 计佣范围 */
+.scopeField {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.scopeLabel {
+  font-size: var(--label-size);
+  font-weight: var(--label-weight);
+  color: var(--label-color);
+}
+
+.scopeTabs {
+  height: 30px;
+  display: flex;
+  align-items: center;
+}
+
+/* 提现方式 */
+.methodsBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8) var(--space-16);
+}
+
+/* 单独佣金设置在 overrides 中的样式 */
+.overridesRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px var(--space-16);
+  padding: 11px 0;
+  border-top: 1px solid var(--border);
+}
+
+.who {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
+.ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.overrideActions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-14, 14px);
+  width: 120px;
+}
+
+.btnReject {
+  color: var(--danger);
+}
+
+@media (max-width: 639px) {
+  .grid3 {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  .overrideActions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}

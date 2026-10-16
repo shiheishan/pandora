@@ -102,11 +102,11 @@ func (r *Repo) WithdrawalsOf(ctx context.Context, userID uuid.UUID, limit int) (
 	return out, mapErr(err)
 }
 
-// ListWithdrawals 后台列表；status 为空则不筛状态。
-func (r *Repo) ListWithdrawals(ctx context.Context, status string, limit int) ([]model.Withdrawal, error) {
+// ListWithdrawals 后台列表；statuses 为空则不筛状态，否则取这些状态的并集。
+func (r *Repo) ListWithdrawals(ctx context.Context, statuses []string, limit int) ([]model.Withdrawal, error) {
 	q := r.d.Conn(ctx).Model(&model.Withdrawal{})
-	if status != "" {
-		q = q.Where("status = ?", status)
+	if len(statuses) > 0 {
+		q = q.Where("status IN ?", statuses)
 	}
 	var out []model.Withdrawal
 	err := q.Order("requested_at DESC, id DESC").Limit(limit).Find(&out).Error
