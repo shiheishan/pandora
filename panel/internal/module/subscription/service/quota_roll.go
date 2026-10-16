@@ -4,7 +4,8 @@ package service
 //
 //	day / month  自然周期，独立于订阅周期（年付套餐按月给流量、月付套餐按日限量）；新周期从旧周期末起。
 //	cycle        跟订阅的计费周期：提前续费不动本期 cycle 行（本期剩余照常用到原到期日），到点由这里滚进新周期，
-//	             上限按版本定义写回（救回折算加进来的只属于上一期），日志记 renewal。
+//	             上限按套餐当前版本写（救回折算加进来的只属于上一期），日志记 renewal；滚进新周期时本期送的量（bonus_value）清零，
+//	             订阅套餐在 cycle 行滚动时把 plan_version_id 切到套餐当前版本（一次性套餐是 total 行不滚动、不受影响）。
 //	过长的旧行   周期末被错写成订阅周期末的 day / month 行，从 period_start 按自然周期数到最近一个已过的边界，一步追上。
 //	落后多期     任务停过时也一步追上、只写一条重置日志，不逐期补发。
 //
@@ -23,6 +24,7 @@ import (
 	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
 	"github.com/aegispanel/aegis/internal/module/subscription/model"
 	"github.com/aegispanel/aegis/internal/module/subscription/repo"
+	"github.com/aegispanel/aegis/internal/pkg/realtime"
 )
 
 // 配额滚动的分批参数：每批一个短事务、至多 rollQuotaBatch 行，一遍至多 rollQuotaMaxBatches 批；被锁跳过的隔 rollQuotaRetryDelay 补一遍。
@@ -37,6 +39,8 @@ type RollStats struct {
 	// Rolled 是滚动的 day / month 行数，Cycle 是滚动的 cycle 行数
 	Rolled int
 	Cycle  int
+	// Switched 是滚进新周期时切到套餐当前版本的订阅数
+	Switched int
 	// Passes 是跑了几遍（1 或 2）
 	Passes int
 }
@@ -82,9 +86,9 @@ func (s *Service) rollPass(ctx context.Context, st *RollStats) error {
 
 // rollBatch 在一个事务里锁一批到期行、算新周期、批量写回并记重置日志；统计只在提交成功后累加。
 func (s *Service) rollBatch(ctx context.Context, st *RollStats) (selected, applied int, err error) {
-	var dayMonth, cycle int
+	var dayMonth, cycle, switched int
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
-		dayMonth, cycle = 0, 0
+		dayMonth, cycle, switched = 0, 0, 0
 		now := s.clock()
 		cands, err := s.repo.LockDueQuotaRolls(ctx, now, rollQuotaBatch)
 		if err != nil {
@@ -94,14 +98,14 @@ func (s *Service) rollBatch(ctx context.Context, st *RollStats) (selected, appli
 		if selected == 0 {
 			return nil
 		}
-		versions, err := s.cycleVersions(ctx, cands)
+		versions, targets, err := s.rollTargets(ctx, cands)
 		if err != nil {
 			return err
 		}
 		rolls := make([]repo.QuotaRoll, 0, len(cands))
 		byID := make(map[uuid.UUID]repo.QuotaRollCandidate, len(cands))
 		for _, c := range cands {
-			roll, ok := planRoll(c, now, versions)
+			roll, ok := planRoll(c, now, versions, targets)
 			if !ok {
 				continue
 			}
@@ -115,12 +119,19 @@ func (s *Service) rollBatch(ctx context.Context, st *RollStats) (selected, appli
 		applied = len(rolled)
 		logs := make([]model.ResetLog, 0, len(rolled))
 		subIDs := make([]uuid.UUID, 0, len(rolled))
+		cycleSwitch := map[uuid.UUID]repo.QuotaRollCandidate{}
 		for _, r := range rolled {
 			c := byID[r.ID]
 			reason := ResetCycleRoll
 			if c.Period == PeriodCycle {
 				reason = ResetRenewal
 				cycle++
+				tv := targets[c.SubscriptionID]
+				if tv != uuid.Nil && tv != c.PlanVersionID {
+					if _, ok := cycleSwitch[c.SubscriptionID]; !ok {
+						cycleSwitch[c.SubscriptionID] = c
+					}
+				}
 			} else {
 				dayMonth++
 			}
@@ -137,6 +148,23 @@ func (s *Service) rollBatch(ctx context.Context, st *RollStats) (selected, appli
 		if err := s.repo.InsertResetLogs(ctx, logs); err != nil {
 			return subErr(err)
 		}
+		sw := make([]repo.VersionSwitch, 0, len(cycleSwitch))
+		for subID, c := range cycleSwitch {
+			sw = append(sw, repo.VersionSwitch{
+				SubscriptionID: subID,
+				From:           c.PlanVersionID,
+				To:             targets[subID],
+			})
+		}
+		switchedIDs, err := s.repo.SwitchPlanVersions(ctx, sw, now)
+		if err != nil {
+			return subErr(err)
+		}
+		switched = len(switchedIDs)
+		for _, id := range switchedIDs {
+			c := cycleSwitch[id]
+			s.rtChanged(ctx, tableSubscriptions, realtime.OpUpdate, id, c.UserID)
+		}
 		// notifyRoster 按订阅去重（AfterCommit 的键），同一份的几行只通知一次
 		s.notifyRoster(ctx, subIDs...)
 		return nil
@@ -144,28 +172,73 @@ func (s *Service) rollBatch(ctx context.Context, st *RollStats) (selected, appli
 	if err == nil {
 		st.Rolled += dayMonth
 		st.Cycle += cycle
+		st.Switched += switched
 	}
 	return selected, applied, err
 }
 
-// cycleVersions 一次读回这批 cycle 行所属订阅的版本（写回上限用）；没有 cycle 行不读。
-func (s *Service) cycleVersions(ctx context.Context, cands []repo.QuotaRollCandidate) (map[uuid.UUID]catalogsvc.Version, error) {
-	seen := map[uuid.UUID]bool{}
-	var ids []uuid.UUID
+// rollTargets 读 cycle 行滚动要用的目标版本与版本定义；没有 cycle 行不读 catalog。
+func (s *Service) rollTargets(ctx context.Context, cands []repo.QuotaRollCandidate) (map[uuid.UUID]catalogsvc.Version, map[uuid.UUID]uuid.UUID, error) {
+	targets := make(map[uuid.UUID]uuid.UUID)
+	planSeen := map[uuid.UUID]bool{}
+	var planIDs []uuid.UUID
+	hasCycle := false
 	for _, c := range cands {
-		if c.Period == PeriodCycle && !seen[c.PlanVersionID] {
-			seen[c.PlanVersionID] = true
-			ids = append(ids, c.PlanVersionID)
+		if c.Period != PeriodCycle {
+			continue
+		}
+		hasCycle = true
+		targets[c.SubscriptionID] = c.PlanVersionID
+		if !planSeen[c.PlanID] {
+			planSeen[c.PlanID] = true
+			planIDs = append(planIDs, c.PlanID)
 		}
 	}
-	if len(ids) == 0 {
-		return map[uuid.UUID]catalogsvc.Version{}, nil
+	if !hasCycle {
+		return map[uuid.UUID]catalogsvc.Version{}, map[uuid.UUID]uuid.UUID{}, nil
 	}
-	return s.catalog.VersionsByIDs(ctx, ids)
+	plans, err := s.catalog.PlansByIDs(ctx, planIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, c := range cands {
+		if c.Period != PeriodCycle {
+			continue
+		}
+		p, ok := plans[c.PlanID]
+		if !ok || p.Kind != catalogsvc.KindSubscription {
+			continue
+		}
+		if p.CurrentVersionID != nil {
+			targets[c.SubscriptionID] = *p.CurrentVersionID
+		}
+	}
+	verSeen := map[uuid.UUID]bool{}
+	var versionIDs []uuid.UUID
+	for _, vID := range targets {
+		if !verSeen[vID] {
+			verSeen[vID] = true
+			versionIDs = append(versionIDs, vID)
+		}
+	}
+	versions, err := s.catalog.VersionsByIDs(ctx, versionIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	out := make(map[uuid.UUID]catalogsvc.Version, len(versions))
+	for id, v := range versions {
+		p, ok := plans[v.PlanID]
+		if !ok {
+			out[id] = v
+			continue
+		}
+		out[id] = withKind(v, p.Kind)
+	}
+	return out, targets, nil
 }
 
 // planRoll 算一条到期行的新周期；不该滚（没走过任何自然边界、未知周期）返回 false。
-func planRoll(c repo.QuotaRollCandidate, now time.Time, versions map[uuid.UUID]catalogsvc.Version) (repo.QuotaRoll, bool) {
+func planRoll(c repo.QuotaRollCandidate, now time.Time, versions map[uuid.UUID]catalogsvc.Version, targets map[uuid.UUID]uuid.UUID) (repo.QuotaRoll, bool) {
 	switch c.Period {
 	case PeriodDay, PeriodMonth:
 		start, ok := naturalRollStart(c.Period, c.PeriodStart, c.PeriodEnd, now)
@@ -177,7 +250,12 @@ func planRoll(c repo.QuotaRollCandidate, now time.Time, versions map[uuid.UUID]c
 	case PeriodCycle:
 		start, end := cycleRollWindow(c.PeriodEnd, c.SubPeriodEnd, now, c.SnapshotInterval, c.SnapshotIntervalCount)
 		roll := repo.QuotaRoll{ID: c.ID, PeriodStart: start, PeriodEnd: end}
-		if v, ok := versions[c.PlanVersionID]; ok {
+		targetVID := targets[c.SubscriptionID]
+		if targetVID == uuid.Nil {
+			targetVID = c.PlanVersionID
+		}
+		// 版本里没有这一行的定义（读不到版本、或一次性套餐遗留的 cycle 行）就不动上限
+		if v, ok := versions[targetVID]; ok {
 			if def, ok := quotaDef(v, c.Metric, PeriodCycle); ok {
 				roll.SetLimit, roll.Limit = true, def.Limit
 			}

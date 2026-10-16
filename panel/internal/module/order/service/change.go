@@ -1,17 +1,18 @@
 package service
 
-// 换套餐是在原订阅上换一个套餐，不是开第二条订阅：
+// 换套餐是在原订阅上换一个套餐，不是开第二条订阅，可以跨类型（订阅 ↔ 一次性，即落点里的「换掉」）：
 //
 //	金额   新价（优惠后）减原订阅的剩余价值：为正就补差价；为负就 total = 0，差额在履约时退进余额
 //	周期   从履约那一刻按新价格档重开一整期（subscription.ChangePlan）
 //	零头   门户换套餐抵扣后付不了的零头（≤ 0.99）可以免，单独记 waived_amount，不并进券折扣
 //
+// 剩余价值口径：原订阅是订阅套餐按剩余付费时间比例，是一次性套餐按剩余流量比例、有天数时再按剩余天数、取较小（细节在 proration.go）。
 // 升级与降级都是 kind='upgrade'；方向由金额决定。剩余价值在下单那一刻按报价时刻（as_of）算定、写进订单
 // （proration_credit_amount），之后随订单冻结；为了让这个数在付款前不失效，同一条订阅同时只允许一张
 // 未完结的续费或变更单（库里 orders_one_open_subscription_change 兜底）。
 //
 // 锁序：订单（结算时）→ 订阅 → 券 → 账务科目。建单没有订单锁，先锁订阅；目标套餐行不锁（价格行冻结不可改，
-// 换套餐也不动库存与限购，与续费同一取舍）。
+// 与续费同一取舍）。
 
 import (
 	"context"
@@ -47,7 +48,7 @@ type quoteSource struct {
 	basis prorationBasis
 }
 
-// changeSourcesFor 是「把哪一份换成 planID」的候选：本人未停用、不是这个套餐、没有未完结续费或变更单、本期币种一致的订阅，
+// changeSourcesFor 是「把哪一份换成 planID」的候选：本人未停用、不是这个套餐、没有未完结续费或变更单的订阅，
 // 最多 maxQuoteRows 份。未完结单与折算基数都按批读。
 func (s *Service) changeSourcesFor(ctx context.Context, userID, planID uuid.UUID) ([]quoteSource, error) {
 	us, err := s.subs.ByUser(ctx, userID)
@@ -72,9 +73,9 @@ func (s *Service) changeSourcesFor(ctx context.Context, userID, planID uuid.UUID
 		if open[sum.ID] {
 			continue // 有未完结的续费或变更单：这一份现在不能换，不列
 		}
-		srcs = append(srcs, basisSource{Sub: sum.Subscription, Quotas: sum.Quotas})
+		srcs = append(srcs, basisSource{Sub: sum.Subscription, Kind: sum.PlanKind, Quotas: sum.Quotas})
 	}
-	bases, mixed, err := s.loadBases(ctx, srcs)
+	bases, err := s.loadBases(ctx, srcs)
 	if err != nil {
 		return nil, err
 	}
@@ -82,9 +83,6 @@ func (s *Service) changeSourcesFor(ctx context.Context, userID, planID uuid.UUID
 	for _, src := range srcs {
 		if len(out) >= maxQuoteRows {
 			break
-		}
-		if mixed[src.Sub.ID] {
-			continue
 		}
 		out = append(out, quoteSource{sub: src.Sub, basis: bases[src.Sub.ID]})
 	}
@@ -144,20 +142,17 @@ func quoteChangeLines(ctx context.Context, s *Service, userID uuid.UUID, in Quot
 			}
 			targets++
 			for _, p := range op.Prices {
-				credit, detail, err := sourceCredit(src.basis, now, p.Currency)
-				if err != nil {
-					continue // 原订阅本期币种与这个价格不同，换不过去
-				}
+				credit, detail := sourceCredit(src.basis, now)
 				subID, planID, priceID := src.sub.ID, op.Plan.ID, p.ID
 				prev, start := src.sub.PeriodEnd, now
-				end := subsvc.AddInterval(now, p.BillingInterval, p.IntervalCount)
+				end := subsvc.PeriodEndFor(now, priceSnap(p))
 				q := Quote{
 					SubscriptionID: &subID,
 					PlanID:         &planID,
 					PriceID:        &priceID,
-					Currency:       p.Currency,
 					Interval:       p.BillingInterval,
 					IntervalCount:  p.IntervalCount,
+					ValidityDays:   p.ValidityDays,
 					Subtotal:       p.UnitAmount,
 					Credit:         credit,
 					CreditDetail:   detail,
@@ -165,8 +160,7 @@ func quoteChangeLines(ctx context.Context, s *Service, userID uuid.UUID, in Quot
 					PeriodEnd:      &end,
 					PreviousEnd:    &prev,
 				}
-				iv := p.BillingInterval
-				disc, cc, ce, err := quoteCouponEval(ctx, s, userID, in.CouponCode, &planID, &iv, p.Currency, p.UnitAmount)
+				disc, cc, ce, err := quoteCouponEval(ctx, s, userID, in.CouponCode, &planID, p.UnitAmount)
 				if err != nil {
 					return nil, err
 				}
@@ -221,16 +215,12 @@ func (s *Service) placeChange(ctx context.Context, d changeDraft) (Created, mode
 	if err != nil {
 		return Created{}, model.Order{}, err
 	}
-	credit, _, err := sourceCredit(basis, d.AsOf, offer.Price.Currency)
-	if err != nil {
-		return Created{}, model.Order{}, err
-	}
+	credit, _ := sourceCredit(basis, d.AsOf)
 	item, err := newOrderItemFromOffer(offer, offer.Price)
 	if err != nil {
 		return Created{}, model.Order{}, err
 	}
 	subID := d.Sub.ID
-	interval := offer.Price.BillingInterval
 	auditData := map[string]any{
 		"subscription_id":  subID.String(),
 		"to_plan_id":       planID.String(),
@@ -243,10 +233,8 @@ func (s *Service) placeChange(ctx context.Context, d changeDraft) (Created, mode
 	return s.place(ctx, draft{
 		Kind:            KindUpgrade,
 		UserID:          d.UserID,
-		Currency:        offer.Price.Currency,
 		Subtotal:        offer.Price.UnitAmount,
 		CouponPlanID:    &planID,
-		CouponInterval:  &interval,
 		SubscriptionID:  &subID,
 		Item:            item,
 		Checkout:        d.Checkout,

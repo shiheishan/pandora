@@ -15,6 +15,7 @@ import (
 type quotaResponse struct {
 	Metric      string     `json:"metric"`
 	Limit       *int64     `json:"limit"`
+	Bonus       int64      `json:"bonus_bytes"`
 	Consumed    int64      `json:"consumed"`
 	Remaining   *int64     `json:"remaining"`
 	Period      string     `json:"period"`
@@ -25,7 +26,6 @@ type quotaResponse struct {
 // renewalPriceResponse 是续费界面要的当前价格档（金额为分）。
 type renewalPriceResponse struct {
 	ID              string `json:"id"`
-	Currency        string `json:"currency"`
 	UnitAmount      int64  `json:"unit_amount"`
 	BillingInterval string `json:"billing_interval"`
 	IntervalCount   int    `json:"interval_count"`
@@ -34,35 +34,42 @@ type renewalPriceResponse struct {
 
 // mySubscriptionResponse 是门户「我的套餐」里的一份。
 type mySubscriptionResponse struct {
-	ID                 string                `json:"id"`
-	PlanID             string                `json:"plan_id"`
-	PriceID            string                `json:"price_id"`
-	PlanName           string                `json:"plan_name"`
-	PlanVersion        int                   `json:"plan_version"`
-	Status             string                `json:"status"`
-	State              string                `json:"state"`
-	PeriodStart        *time.Time            `json:"current_period_start"`
-	PeriodEnd          *time.Time            `json:"current_period_end"`
-	Currency           string                `json:"currency"`
-	Amount             int64                 `json:"amount"`
-	Quotas             []quotaResponse       `json:"quotas"`
-	DeviceLimit        *int                  `json:"device_limit"`
-	OnlineDevices      int                   `json:"online_devices"`
-	QuotaResetStrategy string                `json:"quota_reset_strategy"`
-	NextResetAt        *time.Time            `json:"next_reset_at"`
-	Renewable          bool                  `json:"renewable"`
-	RenewalPrice       *renewalPriceResponse `json:"renewal_price"`
-	PackRemainingBytes int64                 `json:"pack_remaining_bytes"`
-	Label              *string               `json:"label"`
-	ClientName         string                `json:"client_name"`
-	Changeable         bool                  `json:"changeable"`
-	RenewUntil         *time.Time            `json:"renew_until"`
+	ID            string          `json:"id"`
+	PlanID        string          `json:"plan_id"`
+	PriceID       string          `json:"price_id"`
+	PlanName      string          `json:"plan_name"`
+	PlanKind      string          `json:"plan_kind"`
+	PlanVersion   int             `json:"plan_version"`
+	Status        string          `json:"status"`
+	State         string          `json:"state"`
+	PeriodStart   *time.Time      `json:"current_period_start"`
+	PeriodEnd     *time.Time      `json:"current_period_end"`
+	Amount        int64           `json:"amount"`
+	ValidityDays  *int            `json:"validity_days"`
+	Quotas        []quotaResponse `json:"quotas"`
+	DeviceLimit   *int            `json:"device_limit"`
+	OnlineDevices int             `json:"online_devices"`
+	// TrafficLimit、TrafficBonus、TrafficUsed 取自流量配额行；Permanent 为一次性套餐买的永久
+	TrafficLimit *int64                `json:"traffic_limit"`
+	TrafficBonus int64                 `json:"bonus_bytes"`
+	TrafficUsed  int64                 `json:"traffic_used"`
+	Permanent    bool                  `json:"permanent"`
+	ResetsUsed   int                   `json:"resets_used"`
+	ResetLimit   *int                  `json:"reset_limit"`
+	ResetPrice   *int64                `json:"reset_price"`
+	NextResetAt  *time.Time            `json:"next_reset_at"`
+	Renewable    bool                  `json:"renewable"`
+	Stackable    bool                  `json:"stackable"`
+	RenewalPrice *renewalPriceResponse `json:"renewal_price"`
+	Label        *string               `json:"label"`
+	ClientName   string                `json:"client_name"`
+	Changeable   bool                  `json:"changeable"`
+	RenewUntil   *time.Time            `json:"renew_until"`
 }
 
 // mySubscriptionsResponse 是 GET /me/subscriptions 的响应。
 type mySubscriptionsResponse struct {
-	Subscriptions       []mySubscriptionResponse `json:"subscriptions"`
-	UnattachedPackBytes int64                    `json:"unattached_pack_bytes"`
+	Subscriptions []mySubscriptionResponse `json:"subscriptions"`
 }
 
 // cents 把金额换成分；超出范围是程序错误。
@@ -76,7 +83,7 @@ func cents(d decimal.Decimal) (int64, error) {
 
 // mySubscriptionsFrom 把 service 结果转成响应。
 func mySubscriptionsFrom(in service.MySubscriptions) (mySubscriptionsResponse, error) {
-	out := mySubscriptionsResponse{Subscriptions: make([]mySubscriptionResponse, 0, len(in.Subscriptions)), UnattachedPackBytes: in.UnattachedPackBytes}
+	out := mySubscriptionsResponse{Subscriptions: make([]mySubscriptionResponse, 0, len(in.Subscriptions))}
 	for _, s := range in.Subscriptions {
 		v, err := mySubscriptionFrom(s)
 		if err != nil {
@@ -94,27 +101,40 @@ func mySubscriptionFrom(s service.MySubscription) (mySubscriptionResponse, error
 		return mySubscriptionResponse{}, err
 	}
 	v := mySubscriptionResponse{
-		ID:                 s.ID.String(),
-		PlanID:             s.PlanID.String(),
-		PlanName:           s.PlanName,
-		PlanVersion:        s.PlanVersion,
-		Status:             s.Status,
-		State:              string(s.State),
-		PeriodStart:        utcPtr(&s.PeriodStart),
-		PeriodEnd:          utcPtr(&s.PeriodEnd),
-		Currency:           string(s.Price.Currency),
-		Amount:             amount,
-		Quotas:             quotasFrom(s.Quotas),
-		DeviceLimit:        s.EffectiveDeviceLimit,
-		OnlineDevices:      s.OnlineDevices,
-		QuotaResetStrategy: s.QuotaResetStrategy,
-		NextResetAt:        utcPtr(s.NextResetAt),
-		Renewable:          s.Renewable,
-		PackRemainingBytes: s.PackRemainingBytes,
-		Label:              s.Label,
-		ClientName:         s.ClientName,
-		Changeable:         s.Changeable,
-		RenewUntil:         utcPtr(s.RenewUntil),
+		ID:            s.ID.String(),
+		PlanID:        s.PlanID.String(),
+		PlanName:      s.PlanName,
+		PlanKind:      s.PlanKind,
+		PlanVersion:   s.PlanVersion,
+		Status:        s.Status,
+		State:         string(s.State),
+		PeriodStart:   utcPtr(&s.PeriodStart),
+		PeriodEnd:     utcPtr(&s.PeriodEnd),
+		Amount:        amount,
+		ValidityDays:  s.Price.ValidityDays,
+		Quotas:        quotasFrom(s.Quotas),
+		DeviceLimit:   s.EffectiveDeviceLimit,
+		OnlineDevices: s.OnlineDevices,
+		TrafficLimit:  s.TrafficLimit,
+		TrafficBonus:  s.TrafficBonus,
+		TrafficUsed:   s.TrafficUsed,
+		Permanent:     s.Permanent,
+		ResetsUsed:    s.ResetsUsed,
+		ResetLimit:    s.ResetLimit,
+		NextResetAt:   utcPtr(s.NextResetAt),
+		Renewable:     s.Renewable,
+		Stackable:     s.Stackable,
+		Label:         s.Label,
+		ClientName:    s.ClientName,
+		Changeable:    s.Changeable,
+		RenewUntil:    utcPtr(s.RenewUntil),
+	}
+	if s.ResetPrice != nil {
+		c, err := cents(*s.ResetPrice)
+		if err != nil {
+			return mySubscriptionResponse{}, err
+		}
+		v.ResetPrice = &c
 	}
 	if s.Price.PriceID != nil {
 		v.PriceID = s.Price.PriceID.String()
@@ -126,7 +146,6 @@ func mySubscriptionFrom(s service.MySubscription) (mySubscriptionResponse, error
 		}
 		v.RenewalPrice = &renewalPriceResponse{
 			ID:              p.ID.String(),
-			Currency:        string(p.Currency),
 			UnitAmount:      unit,
 			BillingInterval: p.BillingInterval,
 			IntervalCount:   p.IntervalCount,
@@ -143,6 +162,7 @@ func quotasFrom(qs []service.Quota) []quotaResponse {
 		out = append(out, quotaResponse{
 			Metric:      q.Metric,
 			Limit:       q.Limit,
+			Bonus:       q.Bonus,
 			Consumed:    q.Consumed,
 			Remaining:   q.Remaining,
 			Period:      q.Period,
@@ -164,60 +184,6 @@ type renameResponse struct {
 	ClientName string  `json:"client_name"`
 }
 
-// packResponse 是用户看到的一笔流量包余额；order_id 只在来源是订单时有。
-type packResponse struct {
-	ID             string    `json:"id"`
-	SubscriptionID *string   `json:"subscription_id"`
-	Source         string    `json:"source"`
-	OrderID        *string   `json:"order_id"`
-	GrantedBytes   int64     `json:"granted_bytes"`
-	ConsumedBytes  int64     `json:"consumed_bytes"`
-	RemainingBytes int64     `json:"remaining_bytes"`
-	CreatedAt      time.Time `json:"created_at"`
-}
-
-// packBalanceResponse 是 GET /me/traffic-packs 的响应。
-type packBalanceResponse struct {
-	RemainingBytesTotal int64          `json:"remaining_bytes_total"`
-	Packs               []packResponse `json:"packs"`
-}
-
-// packBalanceFrom 转流量包余额。
-func packBalanceFrom(in service.PackBalance) packBalanceResponse {
-	out := packBalanceResponse{RemainingBytesTotal: in.RemainingBytesTotal, Packs: make([]packResponse, 0, len(in.Packs))}
-	for _, p := range in.Packs {
-		v := packResponse{
-			ID:             p.ID.String(),
-			Source:         p.Source,
-			GrantedBytes:   p.GrantedBytes,
-			ConsumedBytes:  p.ConsumedBytes,
-			RemainingBytes: p.RemainingBytes,
-			CreatedAt:      utc(p.CreatedAt),
-		}
-		if p.SubscriptionID != nil {
-			id := p.SubscriptionID.String()
-			v.SubscriptionID = &id
-		}
-		if p.Source == service.PackSourceOrder {
-			id := p.SourceID.String()
-			v.OrderID = &id
-		}
-		out.Packs = append(out.Packs, v)
-	}
-	return out
-}
-
-// transferRequest：from_subscription_id 为 null 表示「还没加到任何一份」的流量包。
-type transferRequest struct {
-	FromSubscriptionID *string `json:"from_subscription_id" binding:"omitempty,uuid"`
-	ToSubscriptionID   string  `json:"to_subscription_id"`
-}
-
-// transferResponse 是转移结果。
-type transferResponse struct {
-	MovedBytes int64 `json:"moved_bytes"`
-}
-
 // ---- 后台 ----
 
 // extendRequest 是后台加时长。
@@ -235,20 +201,19 @@ type extendResponse struct {
 	PeriodEnd      time.Time `json:"period_end"`
 }
 
-// trafficGrantRequest 是后台加流量包（字节）。
+// trafficGrantRequest 是后台加本期流量（字节）。
 type trafficGrantRequest struct {
 	Bytes  int64  `json:"bytes"`
 	Reason string `json:"reason"`
 }
 
-// trafficGrantResponse 是加流量包的响应。
+// trafficGrantResponse 是加本期流量的响应；BonusBytes 是加完后本期送的量合计。
 type trafficGrantResponse struct {
-	SubscriptionID      string `json:"subscription_id"`
-	UserID              string `json:"user_id"`
-	UserEmail           string `json:"user_email"`
-	GrantID             string `json:"grant_id"`
-	GrantedBytes        int64  `json:"granted_bytes"`
-	RemainingBytesTotal int64  `json:"remaining_bytes_total"`
+	SubscriptionID string `json:"subscription_id"`
+	UserID         string `json:"user_id"`
+	UserEmail      string `json:"user_email"`
+	GrantedBytes   int64  `json:"granted_bytes"`
+	BonusBytes     int64  `json:"bonus_bytes"`
 }
 
 // trafficResetRequest 是后台手动重置流量。

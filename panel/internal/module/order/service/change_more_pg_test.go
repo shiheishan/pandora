@@ -17,8 +17,8 @@ import (
 func (e *env) mkMinPay(t *testing.T, ctx context.Context, cents int64) {
 	t.Helper()
 	e.mustExec(t, ctx, `
-INSERT INTO payment_providers (code, adapter, display_name, currencies, min_amount, enabled, accepting_new)
-VALUES (?, 'epay', 'MinPay', '["CNY"]'::jsonb, ?, true, true)`, "epay-"+randHex(8), money.FromCents(cents))
+INSERT INTO payment_providers (code, adapter, display_name, min_amount, enabled, accepting_new)
+VALUES (?, 'epay', 'MinPay', ?, true, true)`, "epay-"+randHex(8), money.FromCents(cents))
 }
 
 // auditField 读某订单上某个审计动作的 data 里的一项（没有时为空串）。
@@ -36,7 +36,7 @@ func TestPlanChangeSmallDueWaived(t *testing.T) {
 	user := e.mkUser(t, ctx)
 	sub := e.activeSub(t, ctx, user, 3000, 50)
 	e.mkMinPay(t, ctx, 100)
-	planB, _, priceB := e.mkPlan(t, ctx, 1550, "month", nil, nil)
+	planB, _, priceB := e.mkPlan(t, ctx, 1550, "month")
 
 	q, exp := e.changeQuote(t, ctx, user, sub.ID, planB)
 	mustEq(t, "报价 total（免零头之前）", q.Total, dec("0.50"))
@@ -68,7 +68,7 @@ func TestPlanChangeSmallDueWaived(t *testing.T) {
 	if p := e.planOf(t, ctx, sub.ID); p != planB {
 		t.Fatalf("订阅套餐 %s", p)
 	}
-	planC, _, _ := e.mkPlan(t, ctx, 5000, "month", nil, nil)
+	planC, _, _ := e.mkPlan(t, ctx, 5000, "month")
 	next, _ := e.changeQuote(t, ctx, user, sub.ID, planC)
 	if next.CreditDetail == nil || !next.CreditDetail.Paid.Equal(dec("15")) {
 		t.Fatalf("下一次折算的付费基数 %+v，期望 15.00", next.CreditDetail)
@@ -81,7 +81,7 @@ func TestPlanChangeDowngradeWithCoupon(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	sub := e.activeSub(t, ctx, user, 10000, 20)
-	planB, _, priceB := e.mkPlan(t, ctx, 3000, "month", nil, nil)
+	planB, _, priceB := e.mkPlan(t, ctx, 3000, "month")
 	code := couponCode()
 	e.mkCoupon(t, ctx, code, 500)
 
@@ -114,65 +114,13 @@ func TestPlanChangeDowngradeWithCoupon(t *testing.T) {
 	e.assertNoDrift(t, ctx)
 }
 
-// 币种：目标价格币种与原订阅本期不同回 ErrPlanChangeCurrency（按订阅报价不列）；本期付费单币种不一致（CNY 开通、USD 续费）
-// 回「无法折算」，按套餐报价跳过这一份，RemainingValue 也拒。
-func TestPlanChangeCurrencyErrors(t *testing.T) {
-	e, ctx := newEnv(t)
-	user := e.mkUser(t, ctx)
-	uctx := asUser(ctx, user)
-	sub := e.activeSub(t, ctx, user, 3000, 50)
-	planUSD, _, _ := e.mkPlan(t, ctx, 1000, "month", nil, nil)
-	var usdPrice uuid.UUID
-	e.mustExec(t, ctx, `UPDATE prices SET status = 'archived', row_version = row_version + 1 WHERE plan_id = ?`, planUSD)
-	if err := e.row(ctx, `INSERT INTO prices (plan_id, currency, unit_amount, billing_interval, interval_count) VALUES (?, 'USD', 10, 'month', 1) RETURNING id`,
-		planUSD).Scan(&usdPrice); err != nil {
-		t.Fatal(err)
-	}
-	_, err := e.svc.CreatePlanChangeOrder(uctx, PlanChangeOrderInput{SubscriptionID: sub.ID, PlanID: planUSD, PriceID: usdPrice})
-	mustErrMsg(t, "换成别的币种", err, ErrPlanChangeCurrency)
-	res, err := e.svc.Quote(uctx, QuoteInput{Action: QuoteChange, SubscriptionID: &sub.ID, PlanID: &planUSD})
-	if err != nil || len(res.Quotes) != 0 {
-		t.Fatalf("别的币种的价格不该列：%d 条 %v", len(res.Quotes), err)
-	}
-
-	// 原套餐加一个 USD 价格，用 USD 余额续一期：本期两张付费单币种不同
-	var srcUSD uuid.UUID
-	if err := e.row(ctx, `INSERT INTO prices (plan_id, currency, unit_amount, billing_interval, interval_count) VALUES (?, 'USD', 5, 'month', 1) RETURNING id`,
-		sub.PlanID).Scan(&srcUSD); err != nil {
-		t.Fatal(err)
-	}
-	amt := money.FromCents(500)
-	if _, err := e.ledger.Post(ctx, ledgersvc.Posting{
-		Kind: ledgersvc.KindBalanceTopup, Currency: money.USD,
-		Legs: []ledgersvc.Leg{
-			{Account: ledgersvc.PlatformAccount(ledgersvc.ChannelCash, "test"), Direction: ledgersvc.Debit, Amount: amt},
-			{Account: ledgersvc.UserAccount(ledgersvc.UserBalance, user), Direction: ledgersvc.Credit, Amount: amt},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	r, err := e.svc.CreateRenewalOrder(uctx, RenewalOrderInput{SubscriptionID: sub.ID, PriceID: &srcUSD, Checkout: Checkout{UseBalance: amt}})
-	if err != nil || r.Status != StatusFulfilled {
-		t.Fatalf("USD 续费: %+v %v", r, err)
-	}
-	planB, _, priceB := e.mkPlan(t, ctx, 10000, "month", nil, nil)
-	_, err = e.svc.CreatePlanChangeOrder(uctx, PlanChangeOrderInput{SubscriptionID: sub.ID, PlanID: planB, PriceID: priceB})
-	mustErrMsg(t, "本期币种不一致", err, errProrationMixedCurrency)
-	res, err = e.svc.Quote(uctx, QuoteInput{Action: QuoteChange, PlanID: &planB})
-	if err != nil || len(res.Quotes) != 0 {
-		t.Fatalf("币种不一致的那一份不该列：%d 条 %v", len(res.Quotes), err)
-	}
-	_, _, _, err = e.svc.RemainingValue(ctx, sub.ID, time.Now())
-	mustErrMsg(t, "RemainingValue 本期币种不一致", err, errProrationMixedCurrency)
-}
-
-// 归属与目录：别人的订阅 404（下单与报价）；目标套餐隐藏、只对别组开放的组价、不允许变更、价格属于别的套餐都被拒，不留订单。
+// 归属与目录：别人的订阅 404（下单与报价）；目标套餐隐藏、不允许变更、价格属于别的套餐都被拒，不留订单。
 func TestPlanChangeRejectsForeignAndCatalog(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	other := e.mkUser(t, ctx)
 	sub := e.activeSub(t, ctx, user, 3000, 50)
-	planB, _, priceB := e.mkPlan(t, ctx, 10000, "month", nil, nil)
+	planB, _, priceB := e.mkPlan(t, ctx, 10000, "month")
 
 	_, err := e.svc.CreatePlanChangeOrder(asUser(ctx, other), PlanChangeOrderInput{SubscriptionID: sub.ID, PlanID: planB, PriceID: priceB})
 	if codeOf(err) != errs.NotFound {
@@ -190,22 +138,11 @@ func TestPlanChangeRejectsForeignAndCatalog(t *testing.T) {
 			t.Fatalf("%s：得到 %v，期望 %s %s", what, err, want, msg)
 		}
 	}
-	hidden, _, hiddenPrice := e.mkPlan(t, ctx, 10000, "month", nil, nil)
+	hidden, _, hiddenPrice := e.mkPlan(t, ctx, 10000, "month")
 	e.mustExec(t, ctx, `UPDATE plans SET visibility = 'hidden' WHERE id = ?`, hidden)
 	try("目标套餐隐藏", hidden, hiddenPrice, errs.NotFound, "")
 
-	grouped, _, _ := e.mkPlan(t, ctx, 10000, "month", nil, nil)
-	var group, groupPrice uuid.UUID
-	if err := e.row(ctx, `INSERT INTO user_groups (code, name) VALUES (?, '测试组') RETURNING id`, "g-"+randHex(8)).Scan(&group); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.row(ctx, `INSERT INTO prices (plan_id, currency, unit_amount, billing_interval, interval_count, user_group_id)
-		VALUES (?, 'CNY', 50, 'month', 1, ?) RETURNING id`, grouped, group).Scan(&groupPrice); err != nil {
-		t.Fatal(err)
-	}
-	try("别组的组价", grouped, groupPrice, errs.NotFound, "")
-
-	locked, _, lockedPrice := e.mkPlan(t, ctx, 10000, "month", nil, nil)
+	locked, _, lockedPrice := e.mkPlan(t, ctx, 10000, "month")
 	e.mustExec(t, ctx, `UPDATE plans SET allow_upgrade = false WHERE id = ?`, locked)
 	try("不允许变更", locked, lockedPrice, catalogsvc.ErrChangeNotAllowed.Code, catalogsvc.ErrChangeNotAllowed.Message)
 
@@ -246,7 +183,7 @@ func TestPlanChangeAfterLateRenewalCallback(t *testing.T) {
 	if !after.PeriodStart.Equal(oldEnd.AddDate(0, -1, 0)) {
 		t.Fatalf("回调晚到不该重起周期：起点 %s", after.PeriodStart)
 	}
-	planB, _, _ := e.mkPlan(t, ctx, 10000, "month", nil, nil)
+	planB, _, _ := e.mkPlan(t, ctx, 10000, "month")
 	q, _ := e.changeQuote(t, ctx, user, sub.ID, planB)
 	if q.CreditDetail == nil || !q.CreditDetail.Paid.Equal(dec("60")) {
 		t.Fatalf("付费基数 %+v，期望两张单合计 60.00", q.CreditDetail)
@@ -262,7 +199,7 @@ func TestPlanChangeSettlementAfterPeriodRestart(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	sub := e.activeSub(t, ctx, user, 3000, 50)
-	planB, _, priceB := e.mkPlan(t, ctx, 10000, "month", nil, nil)
+	planB, _, priceB := e.mkPlan(t, ctx, 10000, "month")
 	c, err := e.svc.CreatePlanChangeOrder(asUser(ctx, user), PlanChangeOrderInput{SubscriptionID: sub.ID, PlanID: planB, PriceID: priceB})
 	if err != nil || c.Status != StatusPending {
 		t.Fatalf("换套餐下单: %+v %v", c, err)

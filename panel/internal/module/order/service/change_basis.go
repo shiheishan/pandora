@@ -1,12 +1,11 @@
 package service
 
 // 换套餐剩余价值的输入（折算基数）：subscription 给出每份订阅本周期挂了订单的事件（按先后），本模块读这些订单的付费与
-// 计费周期，流量取 cycle / total 的 traffic.bytes 配额（有上限的），cycle 行加上提前续费后还没开始的几期。
-// 报价与后台开单预览一次要折算多份，loadBases 按批读：本周期订单 1 次、订单与订单行各 1 次，配额来自订阅摘要。
+// 计费周期；订阅套餐按付费单接出 PaidSpan，一次性套餐按周期全长与 total 流量配额。
+// 报价与后台开单预览一次要折算多份，loadBases 按批读：本周期订单 1 次、订单与订单行各 1 次，套餐类型 1 次。
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,15 +14,17 @@ import (
 	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
 	"github.com/aegispanel/aegis/internal/module/order/model"
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
-// paidKinds 是参与剩余价值基数的订单种类（买下订阅时长的那几种）。
-var paidKinds = map[string]bool{KindNew: true, KindRenewal: true, KindUpgrade: true}
+// paidKinds 是参与剩余价值基数的订单种类（买下订阅时长或叠加的那几种）。
+var paidKinds = map[string]bool{
+	KindNew: true, KindRenewal: true, KindUpgrade: true, KindStack: true,
+}
 
-// basisSource 是一份要折算的订阅连同它的配额（批量时取订阅摘要里的，单份时现读）。
+// basisSource 是一份要折算的订阅：Kind 是它套餐的类型（catalogsvc.KindSubscription / KindOneTime），Quotas 是它的配额。
 type basisSource struct {
 	Sub    subsvc.Subscription
+	Kind   string
 	Quotas []subsvc.Quota
 }
 
@@ -68,10 +69,16 @@ func (s *Service) loadPeriodOrders(ctx context.Context, subIDs []uuid.UUID) (per
 	return po, nil
 }
 
-// basisOf 组一份订阅的折算输入；本周期付费单币种不一致回 errProrationMixedCurrency。
-func basisOf(src basisSource, orderIDs []uuid.UUID, po periodOrders) (prorationBasis, error) {
+// basisOf 组一份订阅的折算输入。
+func basisOf(src basisSource, orderIDs []uuid.UUID, po periodOrders) prorationBasis {
 	sub := src.Sub
-	b := prorationBasis{PeriodStart: sub.PeriodStart, PeriodEnd: sub.PeriodEnd, Value: decimal.Zero}
+	oneTime := src.Kind == catalogsvc.KindOneTime
+	b := prorationBasis{
+		PeriodStart: sub.PeriodStart,
+		PeriodEnd:   sub.PeriodEnd,
+		Value:       decimal.Zero,
+		OneTime:     oneTime,
+	}
 	paidUntil := sub.PeriodStart
 	for _, id := range orderIDs {
 		o, ok := po.orders[id]
@@ -79,40 +86,34 @@ func basisOf(src basisSource, orderIDs []uuid.UUID, po periodOrders) (prorationB
 			continue
 		}
 		it, ok := po.items[id]
-		if !ok || it.SnapshotInterval == nil || it.SnapshotIntervalCount == nil {
+		if !ok {
 			continue
 		}
-		cur := money.Currency(o.Currency)
-		if b.Currency != "" && b.Currency != cur {
-			return b, errProrationMixedCurrency
-		}
-		b.Currency = cur
-		// 付费 = max(小计 − 折扣 − 免掉的零头, 0)：0 元单、全额券、人工赠送单为 0
 		b.Value = b.Value.Add(decimal.Max(o.SubtotalAmount.Sub(o.DiscountAmount).Sub(o.WaivedAmount), decimal.Zero))
-		// 0 元单的计费周期也接进付费总时长（产品决定，见 proration.go 开头）
-		paidUntil = subsvc.AddInterval(paidUntil, *it.SnapshotInterval, *it.SnapshotIntervalCount)
+		if !oneTime && it.SnapshotInterval != nil && it.SnapshotIntervalCount != nil {
+			paidUntil = subsvc.AddInterval(paidUntil, *it.SnapshotInterval, *it.SnapshotIntervalCount)
+		}
+	}
+	if oneTime {
+		b.PaidSpan = sub.PeriodEnd.Sub(sub.PeriodStart)
+		b.Permanent = subsvc.IsPermanent(sub.PeriodEnd)
+		for _, q := range src.Quotas {
+			if q.Metric != catalogsvc.MetricTraffic || q.Period != catalogsvc.PeriodTotal || q.Limit == nil {
+				continue
+			}
+			b.Traffic = append(b.Traffic, trafficAllowance{Cap: *q.Limit, Consumed: q.Consumed})
+		}
+		return b
 	}
 	b.PaidSpan = paidUntil.Sub(sub.PeriodStart)
-	for _, q := range src.Quotas {
-		if q.Metric != catalogsvc.MetricTraffic || q.Limit == nil ||
-			(q.Period != catalogsvc.PeriodCycle && q.Period != catalogsvc.PeriodTotal) {
-			continue
-		}
-		t := trafficAllowance{Cap: *q.Limit, Consumed: q.Consumed}
-		if q.Period == catalogsvc.PeriodCycle && q.PeriodEnd != nil {
-			t.Cap += pendingCycleAllowance(t.Cap, q.PeriodStart, *q.PeriodEnd, sub.PeriodEnd)
-		}
-		b.Traffic = append(b.Traffic, t)
-	}
-	return b, nil
+	return b
 }
 
-// loadBases 批量读折算输入。本周期付费单币种不一致的那份不进 bases，记进 mixed。
-func (s *Service) loadBases(ctx context.Context, srcs []basisSource) (bases map[uuid.UUID]prorationBasis, mixed map[uuid.UUID]bool, err error) {
-	bases = make(map[uuid.UUID]prorationBasis, len(srcs))
-	mixed = map[uuid.UUID]bool{}
+// loadBases 批量读折算输入（订阅 id → 输入）。
+func (s *Service) loadBases(ctx context.Context, srcs []basisSource) (map[uuid.UUID]prorationBasis, error) {
+	bases := make(map[uuid.UUID]prorationBasis, len(srcs))
 	if len(srcs) == 0 {
-		return bases, mixed, nil
+		return bases, nil
 	}
 	subIDs := make([]uuid.UUID, 0, len(srcs))
 	for _, src := range srcs {
@@ -120,43 +121,37 @@ func (s *Service) loadBases(ctx context.Context, srcs []basisSource) (bases map[
 	}
 	po, err := s.loadPeriodOrders(ctx, subIDs)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	for _, src := range srcs {
-		b, err := basisOf(src, po.ids[src.Sub.ID], po)
-		if errors.Is(err, errProrationMixedCurrency) {
-			mixed[src.Sub.ID] = true
-			continue
-		}
-		if err != nil {
-			return nil, nil, err
-		}
-		bases[src.Sub.ID] = b
+		bases[src.Sub.ID] = basisOf(src, po.ids[src.Sub.ID], po)
 	}
-	return bases, mixed, nil
+	return bases, nil
 }
 
-// loadBasis 读一份订阅的折算输入（配额现读）；本周期付费单币种不一致回 errProrationMixedCurrency。
+// loadBasis 读一份订阅的折算输入：配额现读（s.subs.Quotas），套餐类型现读（s.catalog.PlansByIDs）。
 func (s *Service) loadBasis(ctx context.Context, sub subsvc.Subscription) (prorationBasis, error) {
 	quotas, err := s.subs.Quotas(ctx, sub.ID)
 	if err != nil {
 		return prorationBasis{}, err
 	}
-	bases, mixed, err := s.loadBases(ctx, []basisSource{{Sub: sub, Quotas: quotas}})
+	plans, err := s.catalog.PlansByIDs(ctx, []uuid.UUID{sub.PlanID})
 	if err != nil {
 		return prorationBasis{}, err
 	}
-	if mixed[sub.ID] {
-		return prorationBasis{}, errProrationMixedCurrency
+	plan, ok := plans[sub.PlanID]
+	if !ok {
+		return prorationBasis{}, catalogsvc.ErrNotFound
+	}
+	bases, err := s.loadBases(ctx, []basisSource{{Sub: sub, Kind: plan.Kind, Quotas: quotas}})
+	if err != nil {
+		return prorationBasis{}, err
 	}
 	return bases[sub.ID], nil
 }
 
-// sourceCredit 是原订阅在 asOf 时刻的剩余价值与明细；本期付费单的币种与新价不同就不能换。
-func sourceCredit(b prorationBasis, asOf time.Time, cur money.Currency) (decimal.Decimal, *CreditDetail, error) {
-	if b.Currency != "" && b.Currency != cur {
-		return decimal.Zero, nil, ErrPlanChangeCurrency
-	}
+// sourceCredit 是原订阅在 asOf 时刻的剩余价值与明细。
+func sourceCredit(b prorationBasis, asOf time.Time) (decimal.Decimal, *CreditDetail) {
 	credit, d := prorationCredit(b, asOf)
-	return credit, &d, nil
+	return credit, &d
 }

@@ -1,4 +1,4 @@
-// Package handler 是 order 模块的 HTTP 层：门户报价、下单（含换套餐）、支付、取消、查单与我的订单；
+// Package handler 是 order 模块的 HTTP 层：门户报价、下单（含换套餐、叠加）、支付、取消、查单与我的订单；
 // 后台订单列表、详情、取消、标记已支付、查单与人工开单。
 package handler
 
@@ -21,8 +21,9 @@ type Service interface {
 	Quote(ctx context.Context, in service.QuoteInput) (service.QuoteResult, error)
 	CreateNewOrder(ctx context.Context, in service.NewOrderInput) (service.Created, error)
 	CreateRenewalOrder(ctx context.Context, in service.RenewalOrderInput) (service.Created, error)
-	CreatePackOrder(ctx context.Context, in service.PackOrderInput) (service.Created, error)
+	CreateStackOrder(ctx context.Context, in service.StackOrderInput) (service.Created, error)
 	CreateResetOrder(ctx context.Context, in service.ResetOrderInput) (service.Created, error)
+	Landings(ctx context.Context, planID uuid.UUID) (service.Landings, error)
 	CreatePlanChangeOrder(ctx context.Context, in service.PlanChangeOrderInput) (service.Created, error)
 	ManualPreview(ctx context.Context, in service.ManualPreviewInput) (service.ManualPreview, error)
 	CreateManualOrder(ctx context.Context, in service.ManualOrderInput) (service.Created, error)
@@ -42,10 +43,11 @@ type Service interface {
 var _ Service = (*service.Service)(nil)
 var _ route.Module = (*Handler)(nil)
 
-// 幂等作用域（流量包、新购与后台人工单共用 order_create）。
+// 幂等作用域（新购与后台人工单共用 order_create）。
 const (
 	ScopeOrderCreate      = "order_create"
 	ScopeRenewalCreate    = "subscription_renewal_create"
+	ScopeStackCreate      = "subscription_stack_create"
 	ScopePlanChangeCreate = "subscription_change_plan_create"
 	ScopeTopupCreate      = "balance_topup_create"
 	ScopeAdminCancel      = "admin_order_cancel"
@@ -85,11 +87,14 @@ func (h *Handler) RegisterPublic(v1 *gin.RouterGroup, k route.Kit) {
 	v1.POST("/me/subscriptions/:id/renew", k.RequireAuth, checkout, k.Idempotency(ScopeRenewalCreate), h.createRenewal)
 	// 换套餐有自己的幂等域；金额走统一报价的 action=change
 	v1.POST("/me/subscriptions/:id/change-plan", k.RequireAuth, checkout, k.Idempotency(ScopePlanChangeCreate), h.createPlanChange)
-	v1.POST("/me/traffic-pack-orders", k.RequireAuth, checkout, k.Idempotency(ScopeOrderCreate), h.createPackOrder)
+	// 一次性套餐叠加：金额走统一报价的 action=stack
+	v1.POST("/me/subscriptions/:id/stack", k.RequireAuth, checkout, k.Idempotency(ScopeStackCreate), h.createStack)
 	// 买流量重置（xb-order #32）：重置哪一份由路径给出，金额走统一报价的 action=reset
 	v1.POST("/me/subscriptions/:id/traffic-reset", k.RequireAuth, checkout, k.Idempotency(ScopeOrderCreate), h.createResetOrder)
 	v1.POST("/me/topups", k.RequireAuth, checkout, k.Idempotency(ScopeTopupCreate), h.createTopup)
 	v1.POST("/me/checkout/quote", k.RequireAuth, checkout, h.quote)
+	// 买某个套餐可以落到哪里，用户自己选
+	v1.GET("/me/checkout/landings", k.RequireAuth, checkout, h.landings)
 	// 发起支付不加幂等键：在途意图由 payment 复用，连点两次拿回同一个收银台；按账号每分钟 10 次
 	v1.POST("/orders/:id/pay", k.RequireAuth, checkout, h.pay)
 	v1.POST("/orders/:id/cancel", k.RequireAuth, h.cancel)

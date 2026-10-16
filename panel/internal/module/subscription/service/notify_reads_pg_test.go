@@ -107,17 +107,17 @@ func TestQuotaUsageForNotifyPG(t *testing.T) {
 	onLine := provision(t, e, ctx, newUser(t, e, ctx), planLim, verLim, "达线")
 	setConsumed(t, e, ctx, onLine.ID, MetricTraffic, PeriodCycle, 80*gib)
 
-	uPack := newUser(t, e, ctx)
-	withPack := provision(t, e, ctx, uPack, planLim, verLim, "包拉回")
-	setConsumed(t, e, ctx, withPack.ID, MetricTraffic, PeriodCycle, 90*gib)
-	e.exec(t, ctx, `INSERT INTO traffic_pack_grants (user_id, subscription_id, source, source_id, granted_bytes, consumed_bytes)
-		VALUES (?, ?, 'admin', ?, ?, 0)`, uPack, withPack.ID, uuid.New(), 50*gib)
+	uBonus := newUser(t, e, ctx)
+	withBonus := provision(t, e, ctx, uBonus, planLim, verLim, "送量拉回")
+	setConsumed(t, e, ctx, withBonus.ID, MetricTraffic, PeriodCycle, 90*gib)
+	e.exec(t, ctx, `UPDATE quota_balances SET bonus_value = ? WHERE subscription_id = ? AND metric = ? AND period = ?`,
+		50*gib, withBonus.ID, MetricTraffic, PeriodCycle)
 
-	uPackHit := newUser(t, e, ctx)
-	packStillHigh := provision(t, e, ctx, uPackHit, planLim, verLim, "包仍跨线")
-	setConsumed(t, e, ctx, packStillHigh.ID, MetricTraffic, PeriodCycle, 90*gib)
-	e.exec(t, ctx, `INSERT INTO traffic_pack_grants (user_id, subscription_id, source, source_id, granted_bytes, consumed_bytes)
-		VALUES (?, ?, 'admin', ?, ?, 0)`, uPackHit, packStillHigh.ID, uuid.New(), 10*gib)
+	uBonusHit := newUser(t, e, ctx)
+	bonusStillHigh := provision(t, e, ctx, uBonusHit, planLim, verLim, "送量仍跨线")
+	setConsumed(t, e, ctx, bonusStillHigh.ID, MetricTraffic, PeriodCycle, 90*gib)
+	e.exec(t, ctx, `UPDATE quota_balances SET bonus_value = ? WHERE subscription_id = ? AND metric = ? AND period = ?`,
+		10*gib, bonusStillHigh.ID, MetricTraffic, PeriodCycle)
 
 	unlim := provision(t, e, ctx, newUser(t, e, ctx), planUnlim, verUnlim, "不限量")
 	setConsumed(t, e, ctx, unlim.ID, MetricTraffic, PeriodCycle, 90*gib)
@@ -133,16 +133,16 @@ func TestQuotaUsageForNotifyPG(t *testing.T) {
 	if _, ok := bySub[unlim.ID]; ok {
 		t.Fatal("limit_value 为空不应出现")
 	}
-	if _, ok := bySub[withPack.ID]; ok {
-		t.Fatal("流量包把可用总量抬高后不应再跨 80% 线")
+	if _, ok := bySub[withBonus.ID]; ok {
+		t.Fatal("送的量把可用总量抬高后不应再跨 80% 线")
 	}
 	qOn, ok := bySub[onLine.ID]
 	if !ok || qOn.Total != 100*gib || qOn.Consumed != 80*gib {
 		t.Fatalf("达线行: ok=%v q=%+v", ok, qOn)
 	}
-	qPack, ok := bySub[packStillHigh.ID]
-	if !ok || qPack.Total != 100*gib+10*gib {
-		t.Fatalf("跨线且 Total 含包余量: ok=%v q=%+v", ok, qPack)
+	qBonus, ok := bySub[bonusStillHigh.ID]
+	if !ok || qBonus.Total != 100*gib+10*gib {
+		t.Fatalf("跨线且 Total 含送的量: ok=%v q=%+v", ok, qBonus)
 	}
 
 	_, errPct := e.svc.QuotaUsageForNotify(ctx, 0)

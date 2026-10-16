@@ -12,7 +12,6 @@ import (
 	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
 	"github.com/aegispanel/aegis/internal/module/subscription/model"
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
 // ActionTrialGranted 是注册试用开通的审计动作。
@@ -60,23 +59,18 @@ func (s *Service) GrantSignupTrial(ctx context.Context, userID, planID uuid.UUID
 			return err
 		}
 
-		site, err := s.settings.Site(ctx)
-		if err != nil {
-			return err
-		}
-
 		intervalCount := (hours + 23) / 24
 		if intervalCount < 1 {
 			intervalCount = 1
 		}
 		snap := PriceSnapshot{
 			PriceID:       nil,
-			Currency:      money.Currency(site.Currency),
 			Amount:        decimal.Zero,
 			Interval:      "day",
 			IntervalCount: intervalCount,
 		}
 
+		v = withKind(v, plan.Kind)
 		label, _ := NormalizeLabel(plan.Name)
 		start := s.clock()
 		end := start.Add(time.Duration(hours) * time.Hour).Truncate(time.Microsecond)

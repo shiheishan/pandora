@@ -9,24 +9,23 @@ import (
 
 	"github.com/google/uuid"
 
-	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
 	orderrepo "github.com/aegispanel/aegis/internal/module/order/repo"
 	paymentsvc "github.com/aegispanel/aegis/internal/module/payment/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
-// 库存 5、20 个用户并发新购（券 + 部分余额）：恰好 5 单成功、其余售罄；
-// 再对这 5 单并发地取消 2 单、回调结算 3 单：库存、券计数、冻结与账务全部守恒。
+// 5 个用户并发新购（券 + 部分余额）：全部成功；
+// 再对这 5 单并发地取消 2 单、回调结算 3 单：券计数、冻结与账务全部守恒。
 func TestConcurrentPurchaseThenCancelOrSettle(t *testing.T) {
 	e, ctx := newCommitEnv(t)
 	code := payCode()
 	e.mkPayProvider(t, ctx, code)
-	planID, _, priceID := e.mkPlan(t, ctx, 3000, "month", intp(5), nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 3000, "month")
 	cc := couponCode()
 	couponID := e.mkCoupon(t, ctx, cc, 500)
 
-	const buyers = 20
+	const buyers = 5
 	users := make([]uuid.UUID, buyers)
 	for i := range users {
 		users[i] = e.mkUser(t, ctx)
@@ -57,22 +56,14 @@ func TestConcurrentPurchaseThenCancelOrSettle(t *testing.T) {
 	wg.Wait()
 
 	var won []result
-	soldOut := 0
 	for _, r := range results {
-		switch {
-		case r.err == nil:
-			won = append(won, r)
-		case errors.Is(r.err, catalogsvc.ErrSoldOut):
-			soldOut++
-		default:
-			t.Fatalf("并发新购意外错误: %v", r.err)
+		if r.err != nil {
+			t.Fatalf("并发新购失败: %v", r.err)
 		}
+		won = append(won, r)
 	}
-	if len(won) != 5 || soldOut != buyers-5 {
-		t.Fatalf("成功 %d 单、售罄 %d 单，期望 5 与 %d", len(won), soldOut, buyers-5)
-	}
-	if r, s := e.stock(t, ctx, planID); r != 5 || s != 0 {
-		t.Fatalf("库存 reserved=%d sold=%d，期望 5 与 0", r, s)
+	if len(won) != buyers {
+		t.Fatalf("成功 %d 单，期望 %d", len(won), buyers)
 	}
 	for _, r := range won {
 		mustEq(t, "应付", r.created.Payable, dec("20"))
@@ -128,10 +119,6 @@ func TestConcurrentPurchaseThenCancelOrSettle(t *testing.T) {
 			t.Fatalf("第 %d 单冻结 %s，期望 %s", i, st, holdWant)
 		}
 	}
-	reserved, sold := e.stock(t, ctx, planID)
-	if reserved != 0 || sold != 3 {
-		t.Fatalf("库存 reserved=%d sold=%d，期望 0 与 3", reserved, sold)
-	}
 	var cReserved, cRedeemed int
 	if err := e.row(ctx, `SELECT reserved_count, redeemed_count FROM coupons WHERE id = ?`, couponID).Scan(&cReserved, &cRedeemed); err != nil {
 		t.Fatal(err)
@@ -152,7 +139,7 @@ func TestConcurrentCancelVersusWebhook(t *testing.T) {
 	code := payCode()
 	e.mkPayProvider(t, ctx, code)
 	user := e.mkUser(t, ctx)
-	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month", intp(3), intp(1))
+	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month")
 	c := e.buyNew(t, ctx, user, planID, priceID, Checkout{})
 	intent, err := e.svc.Pay(asUser(ctx, user), PayInput{OrderID: c.OrderID, Provider: code})
 	if err != nil {
@@ -194,8 +181,6 @@ func TestConcurrentCancelVersusWebhook(t *testing.T) {
 		t.Fatalf("收款 %d 行，期望 1", k)
 	}
 	o := e.order(t, ctx, c.OrderID)
-	reserved, sold := e.stock(t, ctx, planID)
-	purchased, limitReserved := e.counter(t, ctx, planID, user)
 	cases := e.count(t, ctx, `SELECT count(*) FROM late_payment_cases WHERE order_id = ?`, c.OrderID)
 	switch o.Status {
 	case StatusCancelled:
@@ -208,9 +193,6 @@ func TestConcurrentCancelVersusWebhook(t *testing.T) {
 		if cases != 1 || kind != string(paymentsvc.CaseReleasedOrder) {
 			t.Fatalf("挂账 %d 条 kind=%q，期望 1 条 released_order", cases, kind)
 		}
-		if reserved != 0 || sold != 0 || purchased != 0 || limitReserved != 0 {
-			t.Fatalf("取消后资源未退回: stock %d/%d limit %d/%d", reserved, sold, purchased, limitReserved)
-		}
 	case StatusFulfilled:
 		for i, err := range cancelErrs {
 			if err != nil && !errors.Is(err, ErrAlreadyPaid) {
@@ -219,9 +201,6 @@ func TestConcurrentCancelVersusWebhook(t *testing.T) {
 		}
 		if cases != 0 {
 			t.Fatalf("履约时不该有挂账，得到 %d", cases)
-		}
-		if reserved != 0 || sold != 1 || purchased != 1 || limitReserved != 0 {
-			t.Fatalf("履约后资源不对: stock %d/%d limit %d/%d", reserved, sold, purchased, limitReserved)
 		}
 	default:
 		t.Fatalf("订单停在 %s", o.Status)
@@ -233,7 +212,7 @@ func TestConcurrentCancelVersusWebhook(t *testing.T) {
 func TestConcurrentRenewalsOneWins(t *testing.T) {
 	e, ctx := newCommitEnv(t)
 	user := e.mkUser(t, ctx)
-	planID, versionID, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	planID, versionID, priceID := e.mkPlan(t, ctx, 1000, "month")
 	sub := e.provision(t, ctx, user, planID, versionID, priceID, 1000)
 
 	results := make([]error, 2)
@@ -269,13 +248,13 @@ func TestConcurrentRenewalsOneWins(t *testing.T) {
 	}
 }
 
-// 锁序回归（审查 B1）：用户 A 用余额全额零元新购（限量套餐 + 券 C），同时用户 B 同套餐、同券的订单回调到账，并发多轮。
-// 结算若先锁平台收入科目再锁套餐 / 券，就会与零元建单（先套餐 / 券、后平台收入）成环（40P01）。断言每轮两边都成功、库存与券计数守恒。
+// 锁序回归（审查 B1）：用户 A 用余额全额零元新购（券 C），同时用户 B 同套餐、同券的订单回调到账，并发多轮。
+// 结算若先锁平台收入科目再锁券，就会与零元建单（先券、后平台收入）成环（40P01）。断言每轮两边都成功、券计数守恒。
 func TestConcurrentZeroPayVersusWebhookNoDeadlock(t *testing.T) {
 	e, ctx := newCommitEnv(t)
 	code := payCode()
 	e.mkPayProvider(t, ctx, code)
-	planID, _, priceID := e.mkPlan(t, ctx, 2000, "month", intp(100), nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 2000, "month")
 	cc := couponCode()
 	couponID := e.mkCoupon(t, ctx, cc, 500)
 
@@ -335,10 +314,6 @@ func TestConcurrentZeroPayVersusWebhookNoDeadlock(t *testing.T) {
 		}
 	}
 
-	reserved, sold := e.stock(t, ctx, planID)
-	if reserved != 0 || sold != 2*rounds {
-		t.Fatalf("库存 reserved=%d sold=%d，期望 0 与 %d", reserved, sold, 2*rounds)
-	}
 	var cReserved, cRedeemed int
 	if err := e.row(ctx, `SELECT reserved_count, redeemed_count FROM coupons WHERE id = ?`, couponID).Scan(&cReserved, &cRedeemed); err != nil {
 		t.Fatal(err)
@@ -353,7 +328,7 @@ func TestConcurrentZeroPayVersusWebhookNoDeadlock(t *testing.T) {
 func TestExpireDueSkipsLockedOrder(t *testing.T) {
 	e, ctx := newCommitEnv(t)
 	user := e.mkUser(t, ctx)
-	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month", intp(5), nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month")
 	c := e.buyNew(t, ctx, user, planID, priceID, Checkout{})
 	e.mustExec(t, ctx, `UPDATE orders SET expires_at = now() - interval '1 minute' WHERE id = ?`, c.OrderID)
 	e.mustExec(t, ctx, `UPDATE order_reservations SET expires_at = now() - interval '1 minute' WHERE order_id = ?`, c.OrderID)

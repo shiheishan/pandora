@@ -56,6 +56,7 @@ func (s *Service) ByUser(ctx context.Context, userID uuid.UUID) (UserSubscriptio
 // RenewableForPlan 取用户在这个套餐上可以原地续费的订阅（没停用的里面生效中优先、到期晚优先、创建晚优先）；
 // 没有返回 false。lock 为真时锁住选中的那一行并复核（调用方随后要在它上面续费），必须在事务里调用。
 // 门户新购同套餐时 order 用它拦截改走续费；套餐卡、后台人工单用它定默认续哪一份。
+// 一次性套餐时它就是用户手里「可叠加的那一份」（同套餐、未停用、到期最晚优先）。
 func (s *Service) RenewableForPlan(ctx context.Context, userID, planID uuid.UUID, lock bool) (Subscription, bool, error) {
 	rows, err := s.repo.SubscriptionsByUserPlan(ctx, userID, planID)
 	if err != nil {
@@ -89,7 +90,7 @@ func (s *Service) RenewableForPlan(ctx context.Context, userID, planID uuid.UUID
 }
 
 // SummariesByUsers 批量取一组用户的订阅摘要；每个入参用户都在结果里（没有订阅的是空列表）。
-// SQL 条数与用户数无关：订阅、配额、两种流量包余量各一条，加 catalog 的版本与套餐。
+// SQL 条数与用户数无关：订阅、配额、重置次数各一条，加 catalog 的版本与套餐。
 func (s *Service) SummariesByUsers(ctx context.Context, userIDs []uuid.UUID) (map[uuid.UUID]UserSubscriptions, error) {
 	out, _, err := s.summarize(ctx, userIDs)
 	return out, err
@@ -108,10 +109,6 @@ func (s *Service) summarize(ctx context.Context, userIDs []uuid.UUID) (map[uuid.
 	if err != nil {
 		return nil, nil, subErr(err)
 	}
-	unattached, err := s.repo.UnattachedRemainingByUsers(ctx, userIDs)
-	if err != nil {
-		return nil, nil, subErr(err)
-	}
 	subIDs := make([]uuid.UUID, 0, len(subs))
 	planSet := map[uuid.UUID]struct{}{}
 	versionSet := map[uuid.UUID]struct{}{}
@@ -121,10 +118,6 @@ func (s *Service) summarize(ctx context.Context, userIDs []uuid.UUID) (map[uuid.
 		versionSet[m.PlanVersionID] = struct{}{}
 	}
 	qrows, err := s.repo.QuotasBySubscriptions(ctx, subIDs, false)
-	if err != nil {
-		return nil, nil, subErr(err)
-	}
-	packs, err := s.repo.PackRemainingBySubscriptions(ctx, subIDs)
 	if err != nil {
 		return nil, nil, subErr(err)
 	}
@@ -140,14 +133,25 @@ func (s *Service) summarize(ctx context.Context, userIDs []uuid.UUID) (map[uuid.
 	for _, q := range qrows {
 		quotas[q.SubscriptionID] = append(quotas[q.SubscriptionID], toQuota(q))
 	}
+	// 每份订阅按套餐类型算付费重置的起数时刻，一次批量数完全部次数
+	since := make([]repo.ResetSince, 0, len(subs))
+	for _, m := range subs {
+		since = append(since, repo.ResetSince{
+			SubscriptionID: m.ID,
+			Since:          resetSince(plans[m.PlanID].Kind, m, quotas[m.ID]),
+		})
+	}
+	resets, err := s.repo.PaidResetCounts(ctx, since)
+	if err != nil {
+		return nil, nil, subErr(err)
+	}
 	now := s.clock()
 	for _, m := range subs {
 		us := out[m.UserID]
-		us.Subscriptions = append(us.Subscriptions, summaryOf(m, plans[m.PlanID], versions[m.PlanVersionID], quotas[m.ID], packs[m.ID], now))
+		us.Subscriptions = append(us.Subscriptions, summaryOf(m, plans[m.PlanID], versions[m.PlanVersionID], quotas[m.ID], resets[m.ID], now))
 		out[m.UserID] = us
 	}
 	for id, us := range out {
-		us.UnattachedPackBytes = unattached[id]
 		if i := currentIndex(us.Subscriptions); i >= 0 {
 			cur := us.Subscriptions[i]
 			us.Current = &cur
@@ -157,22 +161,39 @@ func (s *Service) summarize(ctx context.Context, userIDs []uuid.UUID) (map[uuid.
 	return out, plans, nil
 }
 
-// summaryOf 拼一份订阅的摘要。
-func summaryOf(m model.Subscription, plan catalogsvc.Plan, v catalogsvc.Version, qs []Quota, packLeft int64, now time.Time) Summary {
+// summaryOf 拼一份订阅的摘要。流量三项取套餐类型对应的流量配额行（订阅套餐 cycle、一次性 total）里
+// 周期起点最晚的那一行；没有这行上限为 nil（不限或没有流量配额）、其余按 0。
+func summaryOf(m model.Subscription, plan catalogsvc.Plan, v catalogsvc.Version, qs []Quota, resetsUsed int, now time.Time) Summary {
 	sub := toSubscription(m)
 	if qs == nil {
 		qs = []Quota{}
 	}
 	sortQuotas(qs)
+	var trafficLimit *int64
+	var trafficBonus, trafficUsed int64
+	for _, q := range qs {
+		if q.Metric == MetricTraffic && q.Period == trafficPeriod(plan.Kind) {
+			trafficLimit = q.Limit
+			trafficBonus = q.Bonus
+			trafficUsed = q.Consumed
+			break
+		}
+	}
 	return Summary{
-		Subscription:       sub,
-		State:              sub.StateAt(now),
-		PlanName:           plan.Name,
-		PlanVersion:        v.Version,
-		PlanMaxDevices:     v.MaxDevices,
-		QuotaResetStrategy: v.QuotaResetStrategy,
-		Quotas:             qs,
-		PackRemainingBytes: packLeft,
+		Subscription:   sub,
+		State:          sub.StateAt(now),
+		PlanName:       plan.Name,
+		PlanKind:       plan.Kind,
+		PlanVersion:    v.Version,
+		PlanMaxDevices: v.MaxDevices,
+		Permanent:      plan.Kind == catalogsvc.KindOneTime && IsPermanent(m.CurrentPeriodEnd),
+		TrafficLimit:   trafficLimit,
+		TrafficBonus:   trafficBonus,
+		TrafficUsed:    trafficUsed,
+		ResetsUsed:     resetsUsed,
+		ResetLimit:     plan.ResetLimit,
+		ResetPrice:     plan.ResetPrice,
+		Quotas:         qs,
 	}
 }
 

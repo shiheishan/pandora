@@ -29,20 +29,6 @@ func TestAdminSubsPG(t *testing.T) {
 	consumed := int64(42 * gib)
 	setConsumed(t, e, ctx, liveSub.ID, MetricTraffic, PeriodCycle, consumed)
 
-	packBytes := int64(5 * gib)
-	if _, err := e.svc.GrantTrafficPack(ctx, PackGrant{
-		UserID: userA, SubscriptionID: &liveSub.ID, Source: PackSourceOrder, SourceID: uuid.New(), Bytes: packBytes,
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	unattachedBytes := int64(3 * gib)
-	if _, err := e.svc.GrantTrafficPack(ctx, PackGrant{
-		UserID: userC, Source: PackSourceGiftCard, SourceID: uuid.New(), Bytes: unattachedBytes,
-	}); err != nil {
-		t.Fatal(err)
-	}
-
 	fake := &fakeOnline{counts: map[uuid.UUID]int{liveSub.ID: 2}}
 	e.svc.UseOnlineDeviceCounter(fake)
 
@@ -75,14 +61,8 @@ func TestAdminSubsPG(t *testing.T) {
 	if ua.Current.OnlineDevices != 2 {
 		t.Fatalf("A Current 在线数: %d", ua.Current.OnlineDevices)
 	}
-	if ua.Current.PackRemainingBytes != packBytes {
-		t.Fatalf("A Current 流量包余量: %d want %d", ua.Current.PackRemainingBytes, packBytes)
-	}
 	if !ua.Current.Amount.Equal(wantAmount) {
 		t.Fatalf("A Current Amount: %s want %s", ua.Current.Amount, wantAmount)
-	}
-	if ua.Current.Currency != "CNY" {
-		t.Fatalf("A Current Currency: %s", ua.Current.Currency)
 	}
 	// 套餐只有一条 cycle 流量配额：第一条 traffic.bytes 就是本期那一行
 	var foundConsumed bool
@@ -120,7 +100,7 @@ func TestAdminSubsPG(t *testing.T) {
 		t.Fatalf("B Amount: %s", ub.Current.Amount)
 	}
 
-	// C：无订阅，未分配流量包
+	// C：无订阅
 	uc := m[userC]
 	if uc.Subscriptions == nil {
 		t.Fatal("C Subscriptions 为 nil")
@@ -130,9 +110,6 @@ func TestAdminSubsPG(t *testing.T) {
 	}
 	if uc.Current != nil {
 		t.Fatalf("C Current: %+v", uc.Current)
-	}
-	if uc.UnattachedPackBytes != unattachedBytes {
-		t.Fatalf("C 未分配流量包: %d want %d", uc.UnattachedPackBytes, unattachedBytes)
 	}
 
 	if fake.calls != 1 {

@@ -1,9 +1,9 @@
-// Package service 是 order 模块的业务层：报价、下单（新购、续费、流量包、充值）、结算编排（实现 payment 的 Settler）、
+// Package service 是 order 模块的业务层：报价、落点、下单（新购、续费、叠加、换套餐、流量重置、充值）、结算编排（实现 payment 的 Settler）、
 // 取消与超时释放、我的订单与后台订单。别的模块只调本包。
 //
-// 锁序（全模块同向，避免 40P01）：订单 → 订阅 → 套餐行 → 限购计数 → 券 → 账务科目（用户余额、冻结、平台收入、渠道）。
-// 建单没有订单锁：续费、流量包先锁订阅，新购先锁套餐行（catalog.Offer Lock）；结算、取消、超时先锁订单。
-// 结算先确认预留（库存、限购、券）再记账，见 SettlePayment。
+// 锁序（全模块同向，避免 40P01）：订单 → 订阅 → 套餐行 → 券 → 账务科目（用户余额、冻结、平台收入、渠道）。
+// 建单没有订单锁：续费、叠加、换套餐、流量重置先锁订阅，新购先锁套餐行（catalog.Offer Lock）；结算、取消、超时先锁订单。
+// 结算先确认预留（券）再记账，见 SettlePayment。
 // 下单事务里一律先插订单行，再调 promo.Reserve、ledger.HoldForOrder 等（它们的 order_id 有外键）。
 package service
 
@@ -25,7 +25,6 @@ import (
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/aegispanel/aegis/internal/pkg/pluginevents"
 	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
@@ -43,19 +42,16 @@ type Catalog interface {
 	ListOffers(ctx context.Context, req catalogsvc.OfferRequest) ([]catalogsvc.OfferPlan, error)
 	// GetPlan 是后台套餐详情（含全部价格档）：人工开单预览用它确认套餐存在、取价格档
 	GetPlan(ctx context.Context, planID uuid.UUID) (catalogsvc.PlanDetail, error)
-	PackOffer(ctx context.Context, packID uuid.UUID, lock bool) (catalogsvc.TrafficPack, error)
-	ReserveStock(ctx context.Context, planID uuid.UUID, qty int) (bool, error)
-	ReleaseStock(ctx context.Context, planID uuid.UUID, qty int) error
-	CaptureStock(ctx context.Context, planID uuid.UUID, qty int) error
+	// PlansByIDs 也是流量重置价与次数上限的来源（Plan.ResetPrice、Plan.ResetLimit）
 	PlansByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]catalogsvc.Plan, error)
 	VersionsByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]catalogsvc.Version, error)
-	// ResetPrice 是套餐按币种的流量重置价格；没设（不卖）回 ok=false
-	ResetPrice(ctx context.Context, planID uuid.UUID, cur money.Currency) (decimal.Decimal, bool, error)
+	// PricesByIDs 读价格档（含已归档；价格行不可改，履约时据订单行的 price_id 取一次性价的有效天数）
+	PricesByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]catalogsvc.Price, error)
 }
 
 // Ledger 是 ledger service 用到的面。
 type Ledger interface {
-	Balance(ctx context.Context, userID uuid.UUID, cur money.Currency) (decimal.Decimal, error)
+	Balance(ctx context.Context, userID uuid.UUID) (decimal.Decimal, error)
 	HoldForOrder(ctx context.Context, in ledgersvc.HoldInput) (ledgersvc.Hold, error)
 	ReleaseOrderHold(ctx context.Context, orderID uuid.UUID, memo string) (bool, error)
 	CaptureFromBalance(ctx context.Context, in ledgersvc.HoldInput) (ledgersvc.Hold, uuid.UUID, error)
@@ -70,8 +66,6 @@ type Promo interface {
 	Release(ctx context.Context, orderID uuid.UUID, reason string) error
 	Capture(ctx context.Context, orderID uuid.UUID) error
 	Codes(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error)
-	// MemberPercent 是用户的会员折扣（减免百分比 1–100）；没有设置回 0。不加锁（报价与建单各读一次，变了由 expect 比对拦下）
-	MemberPercent(ctx context.Context, userID uuid.UUID) (int, error)
 }
 
 // Subscriptions 是 subscription service 用到的面。
@@ -79,15 +73,18 @@ type Subscriptions interface {
 	Get(ctx context.Context, id uuid.UUID, owner *uuid.UUID) (subsvc.Subscription, error)
 	Lock(ctx context.Context, id uuid.UUID, owner *uuid.UUID) (subsvc.Subscription, error)
 	ByUser(ctx context.Context, userID uuid.UUID) (subsvc.UserSubscriptions, error)
+	// RenewableForPlan 是本人这个套餐还没停用的一份（订阅套餐可续、一次性套餐可叠加）
 	RenewableForPlan(ctx context.Context, userID, planID uuid.UUID, lock bool) (subsvc.Subscription, bool, error)
-	CheckPackTarget(ctx context.Context, userID, subID uuid.UUID) error
 	Provision(ctx context.Context, in subsvc.Provision) (subsvc.Subscription, error)
 	Renew(ctx context.Context, in subsvc.Renewal) (subsvc.RenewalResult, error)
-	GrantTrafficPack(ctx context.Context, in subsvc.PackGrant) (subsvc.Pack, error)
+	// Stack 是一次性套餐叠加单的履约
+	Stack(ctx context.Context, in subsvc.Stacking) (subsvc.RenewalResult, error)
 	ChangePlan(ctx context.Context, in subsvc.PlanChange) (subsvc.PlanChangeResult, error)
 	Quotas(ctx context.Context, subID uuid.UUID) ([]subsvc.Quota, error)
 	// ResetTraffic 把订阅当期已用流量清零（与后台手动重置、礼品卡同一个方法），流量重置单履约时调，Reason 用 subsvc.ResetOrder
 	ResetTraffic(ctx context.Context, in subsvc.TrafficReset) (int64, error)
+	// ResetsUsed 是本周期（订阅套餐）或有效期内（一次性套餐）已付费重置的次数：建流量重置单时与 Plan.ResetLimit 比
+	ResetsUsed(ctx context.Context, subID uuid.UUID) (int, error)
 	// PeriodOrderIDsBySubscriptions 是每份订阅本周期的付费来源订单（按发生先后）：换套餐折算剩余价值的基数
 	PeriodOrderIDsBySubscriptions(ctx context.Context, subIDs []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error)
 }
@@ -101,7 +98,7 @@ type Payments interface {
 	Query(ctx context.Context, orderID uuid.UUID) (paymentsvc.QueryResult, error)
 	OrderHistory(ctx context.Context, orderID uuid.UUID) (paymentsvc.OrderHistory, error)
 	OrderSummaries(ctx context.Context, orderIDs []uuid.UUID) (map[uuid.UUID]paymentsvc.OrderPaymentSummary, error)
-	MinPayment(ctx context.Context, cur money.Currency) (decimal.Decimal, error)
+	MinPayment(ctx context.Context) (decimal.Decimal, error)
 }
 
 // Users 是 identity service 用到的面。

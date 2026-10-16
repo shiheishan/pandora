@@ -32,12 +32,12 @@ func TestServingMultiPeriodQuotaPG(t *testing.T) {
 	setConsumed(t, e, ctx, subBothLeft.ID, MetricTraffic, PeriodTotal, 95*gib)
 	setConsumed(t, e, ctx, subBothLeft.ID, MetricTraffic, PeriodDay, 2*gib)
 
-	// total 用满但流量包有余量 → 可服务
-	uPack := newUser(t, e, ctx)
-	subPack := provision(t, e, ctx, uPack, planTD, verTD, "包兜底")
-	setConsumed(t, e, ctx, subPack.ID, MetricTraffic, PeriodTotal, 100*gib)
-	e.exec(t, ctx, `INSERT INTO traffic_pack_grants (user_id, subscription_id, source, source_id, granted_bytes, consumed_bytes)
-		VALUES (?, ?, 'admin', ?, 100, 10)`, uPack, subPack.ID, uuid.New())
+	// total 用满但送的流量有余量 → 可服务
+	uBonus := newUser(t, e, ctx)
+	subBonus := provision(t, e, ctx, uBonus, planTD, verTD, "送量兜底")
+	setConsumed(t, e, ctx, subBonus.ID, MetricTraffic, PeriodTotal, 100*gib)
+	e.exec(t, ctx, `UPDATE quota_balances SET bonus_value = ? WHERE subscription_id = ? AND metric = ? AND period = ?`,
+		100, subBonus.ID, MetricTraffic, PeriodTotal)
 
 	list, err := e.svc.ServingSubscriptions(ctx)
 	if err != nil {
@@ -45,7 +45,7 @@ func TestServingMultiPeriodQuotaPG(t *testing.T) {
 	}
 	byID := servingByID(list)
 	for id, want := range map[uuid.UUID]bool{
-		subTotalOut.ID: false, subMonthOut.ID: false, subBothLeft.ID: true, subPack.ID: true,
+		subTotalOut.ID: false, subMonthOut.ID: false, subBothLeft.ID: true, subBonus.ID: true,
 	} {
 		if _, ok := byID[id]; ok != want {
 			t.Fatalf("订阅 %s 应可服务=%v 实际=%v", id, want, ok)

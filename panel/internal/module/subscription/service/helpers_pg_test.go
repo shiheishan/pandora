@@ -22,7 +22,6 @@ import (
 	"github.com/aegispanel/aegis/internal/module/subscription/repo"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/aegispanel/aegis/internal/pkg/reqid"
 	"github.com/aegispanel/aegis/internal/pkg/testkit"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
@@ -84,7 +83,7 @@ func (f *fakeUsers) UserGroupID(_ context.Context, id uuid.UUID) (*uuid.UUID, er
 type fakeSite struct{}
 
 func (fakeSite) Site(context.Context) (settingssvc.Site, error) {
-	return settingssvc.Site{Name: "测试站", Timezone: "UTC", Currency: "CNY"}, nil
+	return settingssvc.Site{Name: "测试站", Timezone: "UTC"}, nil
 }
 
 // spyRoster 记下名单通知。
@@ -205,7 +204,7 @@ func newUser(t *testing.T, e *env, ctx context.Context) uuid.UUID {
 	return id
 }
 
-// newOrder 给 user 插一张待付订单（10.00 CNY）并返回 ID：subscription_events.order_id、subscriptions.source_order_id
+// newOrder 给 user 插一张待付订单（10.00 元）并返回 ID：subscription_events.order_id、subscriptions.source_order_id
 // 有指向 orders 的外键。kind 是 renewal / upgrade 时 subID 必填（库里要求指向同一用户的一份订阅），new 时为 nil。
 // 订单号满足 ^[A-Z0-9-]{1,64}$，随机取，全局唯一。订单真落库时（ctx 里没有事务，或所在事务已提交）登记清理：
 // 先删引用它的事件、清掉订阅上的来源单，再删订单。
@@ -213,9 +212,9 @@ func newOrder(t *testing.T, e *env, ctx context.Context, user uuid.UUID, kind st
 	t.Helper()
 	var id uuid.UUID
 	no := "T-" + strings.ToUpper(randHex(16))
-	if err := e.row(ctx, `INSERT INTO orders (order_no, user_id, kind, currency, subtotal_amount, total_amount, payable_amount,
+	if err := e.row(ctx, `INSERT INTO orders (order_no, user_id, kind, subtotal_amount, total_amount, payable_amount,
 		subscription_id, expires_at)
-		VALUES (?, ?, ?, 'CNY', 10, 10, 10, ?, now() + interval '30 minutes') RETURNING id`, no, user, kind, subID).Scan(&id); err != nil {
+		VALUES (?, ?, ?, 10, 10, 10, ?, now() + interval '30 minutes') RETURNING id`, no, user, kind, subID).Scan(&id); err != nil {
 		t.Fatalf("建订单: %v", err)
 	}
 	tx.AfterCommit(ctx, "", func(context.Context) {
@@ -253,12 +252,24 @@ func i64(n int64) *int64 { return &n }
 // gib 是 1 GiB。
 const gib = int64(1) << 30
 
-// newPlan 用 SQL 建一个套餐与一个已发布的版本（配额按 quotas），返回套餐与版本 id。
+// newPlan 用 SQL 建一个订阅套餐与一个已发布的版本（配额按 quotas），返回套餐与版本 id。
 func newPlan(t *testing.T, e *env, ctx context.Context, quotas ...quotaSpec) (uuid.UUID, uuid.UUID) {
 	t.Helper()
+	return newPlanOfKind(t, e, ctx, catalogsvc.KindSubscription, quotas...)
+}
+
+// newOneTimePlan 用 SQL 建一个一次性套餐（不许续费）与一个已发布的版本，返回套餐与版本 id；流量配额应写 total 周期。
+func newOneTimePlan(t *testing.T, e *env, ctx context.Context, quotas ...quotaSpec) (uuid.UUID, uuid.UUID) {
+	t.Helper()
+	return newPlanOfKind(t, e, ctx, catalogsvc.KindOneTime, quotas...)
+}
+
+// newPlanOfKind 建一个指定类型的套餐与它的第一个已发布版本。
+func newPlanOfKind(t *testing.T, e *env, ctx context.Context, kind string, quotas ...quotaSpec) (uuid.UUID, uuid.UUID) {
+	t.Helper()
 	var planID, versionID uuid.UUID
-	if err := e.row(ctx, `INSERT INTO plans (code, name) VALUES (?, ?) RETURNING id`,
-		"s-"+randHex(8), "测试套餐-"+randHex(4)).Scan(&planID); err != nil {
+	if err := e.row(ctx, `INSERT INTO plans (code, name, kind, allow_renewal) VALUES (?, ?, ?, ?) RETURNING id`,
+		"s-"+randHex(8), "测试套餐-"+randHex(4), kind, kind == catalogsvc.KindSubscription).Scan(&planID); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.row(ctx, `INSERT INTO plan_versions (plan_id, version, max_devices) VALUES (?, 1, 3) RETURNING id`,
@@ -273,9 +284,34 @@ func newPlan(t *testing.T, e *env, ctx context.Context, quotas ...quotaSpec) (uu
 	return planID, versionID
 }
 
-// monthly 是 CNY 月付 10.00 的价格快照（没有价格档）。
+// monthly 是月付 10.00 的价格快照（没有价格档）。
 func monthly() PriceSnapshot {
-	return PriceSnapshot{Currency: money.CNY, Amount: decimal.RequireFromString("10.00"), Interval: "month", IntervalCount: 1}
+	return PriceSnapshot{Amount: decimal.RequireFromString("10.00"), Interval: "month", IntervalCount: 1}
+}
+
+// oneTime 是一次性 20.00 的价格快照（没有价格档）；days 为 nil 表示永久。
+func oneTime(days *int) PriceSnapshot {
+	return PriceSnapshot{Amount: decimal.RequireFromString("20.00"), Interval: "one_time", IntervalCount: 1, ValidityDays: days}
+}
+
+// intp 取 int 的指针。
+func intp(n int) *int { return &n }
+
+// newVersion 给套餐再建一个已发布的版本（版本号 n），并设为套餐当前版本；返回版本 id。
+func newVersion(t *testing.T, e *env, ctx context.Context, planID uuid.UUID, n int, quotas ...quotaSpec) uuid.UUID {
+	t.Helper()
+	var versionID uuid.UUID
+	if err := e.row(ctx, `INSERT INTO plan_versions (plan_id, version, max_devices) VALUES (?, ?, 3) RETURNING id`,
+		planID, n).Scan(&versionID); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range quotas {
+		e.exec(t, ctx, `INSERT INTO quota_definitions (plan_version_id, metric, period, limit_value) VALUES (?, ?, ?, ?)`,
+			versionID, q.metric, q.period, q.limit)
+	}
+	e.exec(t, ctx, `UPDATE plan_versions SET status = 'published', frozen_at = now() WHERE id = ?`, versionID)
+	e.exec(t, ctx, `UPDATE plans SET current_version_id = ? WHERE id = ?`, versionID, planID)
+	return versionID
 }
 
 func adminCtx(ctx context.Context, adminID uuid.UUID) context.Context {

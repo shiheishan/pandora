@@ -21,7 +21,7 @@ func TestReportOrderCountsPG(t *testing.T) {
 	}
 
 	// 同一用户同一套餐只能有一张待付新购单，四张单分给四个用户
-	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month")
 
 	stalePending := e.buyNew(t, ctx, e.mkUser(t, ctx), planID, priceID, Checkout{})
 	e.mustExec(t, ctx, `UPDATE orders SET created_at = ? WHERE id = ?`, now.Add(-2*time.Hour), stalePending.OrderID)
