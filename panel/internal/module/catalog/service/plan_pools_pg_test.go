@@ -336,7 +336,11 @@ func TestCreatePlanWithoutGuardRollback(t *testing.T) {
 	e, ctx := newEnvCommitted(t)
 	ctx, _ = seedAdmin(t, ctx, e)
 	p1 := seedPool(t, ctx, e, "active")
+	// t.Cleanup 后进先出，这里先于删套餐执行：回滚真失败时先拆掉套餐对池的绑定（RESTRICT），免得多报一条清理错误
 	t.Cleanup(func() {
+		if err := e.exec(context.Background(), `DELETE FROM plan_node_pools WHERE pool_id = ?`, p1); err != nil {
+			t.Errorf("清理套餐线路: %v", err)
+		}
 		if err := e.exec(context.Background(), `DELETE FROM node_pools WHERE id = ?`, p1); err != nil {
 			t.Errorf("清理节点池: %v", err)
 		}
