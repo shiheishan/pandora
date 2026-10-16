@@ -134,7 +134,7 @@ func seedTrafficSub(t *testing.T, ctx context.Context, e *trafficEnv) (uuid.UUID
 	if err := e.row(ctx, `INSERT INTO users (email) VALUES (?) RETURNING id`, poolRandName(t, "tu")+"@example.test").Scan(&userID); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.row(ctx, `INSERT INTO plans (code, name) VALUES (?, ?) RETURNING id`, poolRandName(t, "tp"), "流量测试套餐").Scan(&planID); err != nil {
+	if err := e.row(ctx, `INSERT INTO plans (code, name, kind) VALUES (?, ?, 'subscription') RETURNING id`, poolRandName(t, "tp"), "流量测试套餐").Scan(&planID); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.row(ctx, `INSERT INTO plan_versions (plan_id, version, max_devices) VALUES (?, 1, 3) RETURNING id`, planID).Scan(&versionID); err != nil {

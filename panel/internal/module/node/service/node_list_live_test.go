@@ -15,6 +15,8 @@ func TestLivePlanNames(t *testing.T) {
 	vOnSale := uuid.New()
 	vInUse := uuid.New()
 	vAnotherInUse := uuid.New()
+	vMulti1 := uuid.New()
+	vMulti2 := uuid.New()
 
 	tests := []struct {
 		name     string
@@ -27,7 +29,7 @@ func TestLivePlanNames(t *testing.T) {
 			usage: map[uuid.UUID]catalogsvc.PoolUsage{
 				poolID: {
 					Bindings: []catalogsvc.PoolBinding{
-						{VersionID: vDraft, PlanName: "草稿套餐", OnSale: false},
+						{PlanID: uuid.New(), PlanName: "草稿套餐", OnSale: false, VersionIDs: []uuid.UUID{vDraft}},
 					},
 				},
 			},
@@ -43,7 +45,7 @@ func TestLivePlanNames(t *testing.T) {
 			usage: map[uuid.UUID]catalogsvc.PoolUsage{
 				poolID: {
 					Bindings: []catalogsvc.PoolBinding{
-						{VersionID: vOnSale, PlanName: "在售套餐", OnSale: true},
+						{PlanID: uuid.New(), PlanName: "在售套餐", OnSale: true, VersionIDs: []uuid.UUID{vOnSale}},
 					},
 				},
 			},
@@ -57,7 +59,7 @@ func TestLivePlanNames(t *testing.T) {
 			usage: map[uuid.UUID]catalogsvc.PoolUsage{
 				poolID: {
 					Bindings: []catalogsvc.PoolBinding{
-						{VersionID: vInUse, PlanName: "旧版有人用", OnSale: false},
+						{PlanID: uuid.New(), PlanName: "旧版有人用", OnSale: false, VersionIDs: []uuid.UUID{vInUse}},
 					},
 				},
 			},
@@ -69,13 +71,30 @@ func TestLivePlanNames(t *testing.T) {
 			},
 		},
 		{
-			name: "同名套餐多个版本去重并升序",
+			name: "不在售套餐有多个版本且只有一个有人在用：仍算在用",
 			usage: map[uuid.UUID]catalogsvc.PoolUsage{
 				poolID: {
 					Bindings: []catalogsvc.PoolBinding{
-						{VersionID: vOnSale, PlanName: "套餐乙", OnSale: true},
-						{VersionID: vInUse, PlanName: "套餐乙", OnSale: false},
-						{VersionID: vAnotherInUse, PlanName: "套餐甲", OnSale: false},
+						{PlanID: uuid.New(), PlanName: "多版本套餐", OnSale: false, VersionIDs: []uuid.UUID{vMulti1, vMulti2}},
+					},
+				},
+			},
+			inUse: map[uuid.UUID]bool{
+				vMulti1: false,
+				vMulti2: true,
+			},
+			wantLive: map[uuid.UUID][]string{
+				poolID: {"多版本套餐"},
+			},
+		},
+		{
+			name: "同名套餐去重并升序",
+			usage: map[uuid.UUID]catalogsvc.PoolUsage{
+				poolID: {
+					Bindings: []catalogsvc.PoolBinding{
+						{PlanID: uuid.New(), PlanName: "套餐乙", OnSale: true, VersionIDs: []uuid.UUID{vOnSale}},
+						{PlanID: uuid.New(), PlanName: "套餐乙", OnSale: false, VersionIDs: []uuid.UUID{vInUse}},
+						{PlanID: uuid.New(), PlanName: "套餐甲", OnSale: false, VersionIDs: []uuid.UUID{vAnotherInUse}},
 					},
 				},
 			},
