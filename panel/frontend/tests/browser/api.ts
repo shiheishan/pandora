@@ -141,10 +141,10 @@ export async function portalGet(token: string, path: string): Promise<Json> {
 }
 
 // ----------------------------------------------------------------------------
-//  后台造前提：调余额、赠送开一份、加流量包
+//  后台造前提：调余额、赠送开一份
 // ----------------------------------------------------------------------------
 export async function setBalance(u: User, cents: number, reason: string): Promise<void> {
-  await admin(`/v1/users/${u.id}/balance`, { body: { amount: cents, currency: 'CNY', reason: `w9browser ${reason}` } })
+  await admin(`/v1/users/${u.id}/balance`, { body: { amount: cents, reason: `w9browser ${reason}` } })
 }
 
 export async function grant(u: User, plan: { id: string; prices: string[] }, target: Json = { kind: 'new' }, price = 0): Promise<Json> {

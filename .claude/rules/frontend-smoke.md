@@ -15,6 +15,7 @@ paths:
 - 发现响应形状与页面 schema 不一致时只报告，不在冒烟里放宽断言，也不为了冒烟放宽 Go 的校验
 - 输入只从状态目录读（`smoke.env`、`seed.json`），不写任何真实部署的值
 - 后台请求之间留 300ms：后台 IP 限流每分钟 240 次，写死在代码里。`seed.ts` 与 `harness.ts` 用同一节奏，新增后台调用也要走各自的节流函数
+- 种子造两类套餐（10-16）：订阅套餐（月付、季付两档，带流量重置）与一次性套餐（有天数），都先建草稿绑池、节点上线后再发布（发布体 `expected_row_version`）；门户用户用礼品卡余额新购一次性并叠加一次，读表覆盖两类套餐与落点接口。请求体不带 `currency`（后端 DisallowUnknownFields，带了回 400）
 - SQL 夹具只用于产品接口造不出的数据，每处都写明原因。现有两处：演示支付渠道、提现申请
 - `writes.smoke.ts` 会改种子数据。`vitest.config.ts` 的 `ReadsBeforeWrites` sequencer 把它固定排在两张读表之后，文件串行执行。这个顺序放在配置里而不是 workflow 里，本机单跑也成立
 - `seed.ts` 由 Node 直接执行（原生剥类型）

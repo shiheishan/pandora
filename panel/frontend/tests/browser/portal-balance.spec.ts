@@ -73,7 +73,18 @@ test('B3：换贵的', async ({ browser, world }) => {
   const before = await tailOf(card(page, std.name))
 
   await step(page, 'B3', async () => {
-    const row = await changeTo(page, std.name, pro.name)
+    // 从选购页买别的套餐：有份时先问放到哪里（落点由用户选，不预选），选「把你的W9 标准换成W9 进阶」
+    await nav(page, '选购')
+    await planCard(page, pro.name).getByRole('link', { name: '买这个' }).click()
+    await expect(page.getByRole('heading', { level: 1, name: `买${pro.name}` })).toBeVisible()
+    const choices = page.getByRole('radiogroup', { name: `${pro.name}放到哪里` })
+    await expect(choices.getByRole('radio', { checked: true })).toHaveCount(0)
+    const options = (await choices.getByRole('radio').allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim())
+    expect(options.some((o) => o.startsWith('另开一份')), `选项里要有另开一份：${options.join(' / ')}`).toBe(true)
+    await narrowShot(page, 'B3-landing')
+    await choices.getByRole('radio', { name: new RegExp(`^把你的${std.name}换成${pro.name}`) }).click()
+    await expect(page.getByRole('heading', { level: 1, name: `换成${pro.name}` })).toBeVisible()
+    const row = options.join(' / ')
     const formula = await seen(page, /^¥42\.00 − 原套餐没用完的 ¥[\d.]+ = 今天付 ¥[\d.]+$/)
     const [, credit = '', pay = ''] = /没用完的 ¥([\d.]+) = 今天付 ¥([\d.]+)/.exec(formula) ?? []
     expect(yuan(credit), '刚买的一份几乎没用：抵扣接近 ¥30').toBeGreaterThan(2900)
@@ -87,7 +98,7 @@ test('B3：换贵的', async ({ browser, world }) => {
     await backToSubs(page)
     const after = await tailOf(card(page, pro.name))
     expect(after, '换套餐链接不变').toBe(before)
-    return `换个套餐页「${row}」；确认页「${formula}」；${paid}；完成页「${lines[0]}」；链接 ····${before} → ····${after}`
+    return `选购页买${pro.name}先选落点「${row}」；确认页「${formula}」；${paid}；完成页「${lines[0]}」；链接 ····${before} → ····${after}`
   })
 })
 

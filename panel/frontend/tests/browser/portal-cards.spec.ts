@@ -4,7 +4,7 @@ import { giftCode } from './seed.ts'
 import type { Page } from '@playwright/test'
 
 // ============================================================================
-//  门户 C6（礼品卡七种用法）与 C7（流量包跟着那一份，在用的不能挪）
+//  门户 C6（礼品卡七种用法）与 C7（送的流量跟着那一份；10-16 起没有流量包）
 // ============================================================================
 
 /** 从我的套餐底部「有卡？去兑换」进兑换页，输卡号、查询，停在卡面 */
@@ -71,8 +71,9 @@ test('C6：礼品卡', async ({ browser, world }) => {
     await expect(page.getByRole('heading', { name: '已加 2G' })).toBeVisible()
     const lines = await happened(page)
     await backToSubs(page)
-    await expect(card(page, std.name)).toContainText('含流量包 2G')
-    return `卡面「${face}」；「${s}」；完成页「${lines[0]}」；卡片写含流量包 2G`
+    // 送的流量当期有效：按时间的套餐卡片写「含送的 2G，本期有效」
+    await expect(card(page, std.name)).toContainText('含送的 2G，本期有效')
+    return `卡面「${face}」；「${s}」；完成页「${lines[0]}」；卡片写含送的 2G，本期有效`
   })
 
   await step(page, 'C6d', async () => {
@@ -139,26 +140,25 @@ test('C6：礼品卡', async ({ browser, world }) => {
   })
 })
 
-test('C7：流量包跟着那一份，在用的不能挪', async ({ browser, world }) => {
+test('C7：送的流量跟着那一份', async ({ browser, world }) => {
   const { basic, std } = world.plans
   const u = await newUser('c7')
   await grant(u, basic)
   await grant(u, std, { kind: 'new' })
   const subs = await subscriptionsOf(u)
   const stdSub = str(subs.find((s) => s.plan_id === std.id), 'id')
-  // 后台按订阅给标准版加 1G：挂在标准版上，两份都在用
-  await admin(`/v1/subscriptions/${stdSub}/traffic-pack`, { body: { bytes: 1024 ** 3, reason: 'w9browser C7 流量包挂在标准版' }, expect: [200, 201] })
+  // 后台按订阅给标准版加 1G（本期有效）：只加在标准版上，两份都在用
+  await admin(`/v1/subscriptions/${stdSub}/traffic-pack`, { body: { bytes: 1024 ** 3, reason: 'w9browser C7 给标准版加流量' }, expect: [200, 201] })
   const page = await openPortal(browser, u)
 
   await step(page, 'C7', async () => {
     const from = card(page, std.name)
-    const usage = from.getByText(/含流量包 1G/)
+    const usage = from.getByText(/含送的 1G/)
     await expect(usage).toBeVisible()
-    await expect(card(page, basic.name)).not.toContainText('含流量包')
-    // 用户 10-09 删掉了「升级前的旧流量包挪一次」：流量包只在那份彻底停用后才能转走，两份都在用时页面上没有挪的入口
-    await expect(page.getByText(/挪|升级前买的/)).toHaveCount(0)
-    await expect(page.getByRole('button', { name: /^挪到/ })).toHaveCount(0)
+    await expect(card(page, basic.name)).not.toContainText('含送的')
+    // 10-16 删了流量包：页面上不再出现这三个字
+    await expect(page.getByText(/流量包/)).toHaveCount(0)
     await narrowShot(page, 'C7-cards')
-    return `标准版写「${await text(usage)}」，基础版没有流量包；页面上没有挪的按钮和提示`
+    return `标准版写「${await text(usage)}」，基础版没有送的流量；页面上没有「流量包」`
   })
 })
