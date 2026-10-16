@@ -291,6 +291,15 @@ func TestOrderHistoryAndSummaries(t *testing.T) {
 	if s := sums[order4]; s.HasIntent || s.ProviderCode == nil || *s.ProviderCode != OfflineProviderCode {
 		t.Fatalf("线下收款应取收款的渠道: %+v", s)
 	}
+	// 支付方式只取收款：线下收款记 offline；只发起过支付、什么都没有的为 nil
+	if s := sums[order4]; s.Method == nil || *s.Method != OfflineMethod {
+		t.Fatalf("线下收款的方式应是 offline: %+v", s)
+	}
+	for _, id := range []uuid.UUID{order2, order3} {
+		if s := sums[id]; s.Method != nil {
+			t.Fatalf("没有收款不应有支付方式: %s %+v", id, s)
+		}
+	}
 
 	none, err := e.svc.OrderSummaries(ctx, nil)
 	if err != nil || len(none) != 0 {

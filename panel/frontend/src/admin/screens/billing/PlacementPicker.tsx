@@ -1,7 +1,7 @@
 import { useId } from 'react'
 import { Button, Tag } from '../../../ui'
 import css from './Billing.module.css'
-import { badgeLabel, placementResult, placementTitle } from './placement'
+import { badgeLabel, placementResult, placementTitle, unavailableLine } from './placement'
 import type { Placement } from './schemas'
 
 /**
@@ -28,13 +28,15 @@ export function PlacementPicker({
   const prefix = useId()
   if (options.length === 1) {
     const only = options[0]!
+    const off = unavailableLine(only)
     return (
       <div className={css.stack} role="group" aria-label="这单落到哪一份">
         <span className={css.fieldLabel}>这单落到哪一份</span>
-        <div className={`${css.placeItem} ${css.placeItemOn}`}>
+        <div className={`${css.placeItem} ${off ? css.placeItemOff : css.placeItemOn}`}>
           <div className={css.placeText}>
             <span className={css.placeTitle}>{placementTitle(only, targetPlan)}</span>
             <span className={css.placeResult}>{placementResult(only, settlement)}</span>
+            {off && <span className={`${css.small} ${css.tone_danger}`}>{off}</span>}
           </div>
         </div>
       </div>
@@ -46,18 +48,29 @@ export function PlacementPicker({
       <div className={css.placeList}>
         {options.map((o) => {
           const on = o.key === selected
+          const off = unavailableLine(o)
+          const disabled = Boolean(o.unavailable_reason)
           const badge = badgeLabel(o.badge)
-          // 名字取标题、说明取结果：读屏与浏览器检查工具都读得到每一项写了什么（不是内部的 key）
           const titleId = `${prefix}-${o.key}-t`
           const resultId = `${prefix}-${o.key}-r`
           return (
-            <label key={o.key} className={on ? `${css.placeItem} ${css.placeItemOn}` : css.placeItem}>
+            <label
+              key={o.key}
+              className={
+                disabled
+                  ? `${css.placeItem} ${css.placeItemOff}`
+                  : on
+                    ? `${css.placeItem} ${css.placeItemOn}`
+                    : css.placeItem
+              }
+            >
               <input
                 type="radio"
                 name="manual-placement"
                 className={css.placeRadio}
                 value={o.key}
                 checked={on}
+                disabled={disabled}
                 aria-labelledby={titleId}
                 aria-describedby={resultId}
                 onChange={() => onPick(o.key)}
@@ -71,6 +84,7 @@ export function PlacementPicker({
                 <span id={resultId} className={css.placeResult}>
                   {placementResult(o, settlement)}
                 </span>
+                {off && <span className={`${css.small} ${css.tone_danger}`}>{off}</span>}
               </span>
             </label>
           )

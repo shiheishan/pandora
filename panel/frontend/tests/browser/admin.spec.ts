@@ -61,7 +61,7 @@ test('C1：后台开单的落点', async ({ browser, world }) => {
 
   await step(page, 'C1c', async () => {
     await placement(dlg).getByRole('radio', { name: new RegExp(`把${std.name}换成${pro.name}`) }).check()
-    await dlg.getByLabel('结算方式').selectOption({ label: '赠送（0 元）' })
+    await dlg.getByRole('radio', { name: /^赠送（0 元）/ }).check()
     await dlg.getByLabel('开单原因（写入审计）').fill('w9browser 后台开单换套餐')
     await submit(page, dlg.getByRole('button', { name: '赠送开通' }))
     const toast = await seen(page, /已在原订阅上换套餐/)
@@ -81,7 +81,7 @@ test('C2：待支付低于最低额，改用赠送', async ({ browser, world }) 
   await step(page, 'C2', async () => {
     dlg = await openManual(page, u)
     await pickPrice(dlg, mini.name, '0.50')
-    await expect(dlg.getByLabel('结算方式')).toHaveValue('pending')
+    await expect(dlg.getByRole('radio', { name: /^待用户支付/ })).toBeChecked()
     const warn = dlg.getByRole('alert').filter({ hasText: '低于支付渠道的最低付款额' })
     await expect(warn).toBeVisible()
     const said = await text(warn)
@@ -94,7 +94,7 @@ test('C2：待支付低于最低额，改用赠送', async ({ browser, world }) 
 
   await step(page, 'C4b', async () => {
     await dlg.getByRole('button', { name: '改用赠送' }).click()
-    await expect(dlg.getByLabel('结算方式')).toHaveValue('grant')
+    await expect(dlg.getByRole('radio', { name: /^赠送（0 元）/ })).toBeChecked()
     await dlg.getByLabel('开单原因（写入审计）').fill('w9browser 后台赠送开通')
     await submit(page, dlg.getByRole('button', { name: '赠送开通' }))
     const toast = await seen(page, /已赠送开通，已另开一份订阅/)
@@ -142,7 +142,7 @@ test('C4：后台线下已收款', async ({ browser, world }) => {
   await step(page, 'C4', async () => {
     const dlg = await openManual(page, u)
     await pickPrice(dlg, basic.name, '10.00')
-    await dlg.getByLabel('结算方式').selectOption({ label: '线下已收款' })
+    await dlg.getByRole('radio', { name: /^线下已收款/ }).check()
     await dlg.getByLabel('凭证号').fill(`W9B-OFFLINE-${u.id.slice(0, 6)}`)
     await dlg.getByLabel('开单原因（写入审计）').fill('w9browser 后台线下已收款')
     await submit(page, dlg.getByRole('button', { name: '入账并开通' }))

@@ -81,6 +81,7 @@ function ProviderFormModal({ editing, onClose }: { editing: Provider | null; onC
       onClose={onClose}
       dismissible={!busy}
       title={editing ? `编辑 ${editing.display_name}` : `新建${adapterLabel(form.adapter)}渠道`}
+      subtitle={editing ? '凭据留空表示不改' : '保存后默认不收新单，确认无误再打开'}
       actions={
         <>
           <Button size="dialog" onClick={onClose} disabled={busy}>
@@ -218,7 +219,7 @@ function ProviderFormModal({ editing, onClose }: { editing: Provider | null; onC
         />
         {errors.allow_private_host && <span className={`${css.small} ${css.tone_danger}`}>{errors.allow_private_host}</span>}
         <p className={css.small}>
-          保存前会按渠道规则试连一次地址（须为 https 公网地址）。凭据加密保存、不回显。改动在门户结账页最多 5 分钟后生效（各网关的渠道缓存）。
+          保存前会按渠道规则试连一次地址（须为 https 公网地址）。凭据加密保存、不回显。改动在用户端结账页最多 5 分钟后生效（各网关的渠道缓存）。
           {editing ? '' : '新建的渠道先处于「暂停收新单」，核对无误后在卡片上打开。'}
         </p>
       </div>

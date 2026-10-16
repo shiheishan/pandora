@@ -43,3 +43,4 @@ paths:
   - 渠道凭据经 AAD 加密封存（`sealer.Seal` / `Open`），数据库不存明文密钥。
   - 外部 HTTP 客户端统一用 `safehttp.Client(allowPrivate)`（包级两个共用客户端，适配器重建时复用连接）：不走环境代理、不跟随跳转、在拨号层执行 `safehttp.CheckDialAddr`，按解析后的真实 IP 拦截内网、环回与元数据地址（防 SSRF 与 DNS 重绑定），响应用 `safehttp.ReadBody` 限 256 KiB；单请求超时 `safehttp.Timeout` 6 秒（易支付与巡检查单也受它约束）；生产环境严禁开启 `AllowPrivateHost`。
   - 主动查单（`Query`）禁止在外部事务内或持有订单锁时调用，避免与回调入账加锁顺序交叉死锁。后台查单必须落审计记录。
+- 给 order 的读接口（`service/history.go`）：`OrderHistory` 是一张单的支付尝试与收款（意图带用户选的 `Method`，收款的 `Method` 渠道没回时取意图的）；`OrderSummaries` 一批订单一条 SQL（`repo.OrderSummaries`），给 HasIntent、渠道（有收款取最近一笔收款的，否则最近一次意图的）与 `Method`（只取最近一笔收款的方式，线下收款是 `offline`，没有收款为 nil）。后台订单列表的「渠道」列靠它，不许改成逐单查。
