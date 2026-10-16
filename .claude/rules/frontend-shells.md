@@ -25,6 +25,10 @@ paths:
   - 页签已登记、页面还没接上的，放进 `modules.ts` 的 `PENDING_TABS`（外框画空状态，不交给模块页面分发）；接好页面后删掉那一项
 - 页面级说明只放页签栏最右侧的「?」（`PageHelp.tsx`，悬停或聚焦展开），数据在 `page-help.ts` 的 `PAGE_HELP`：键是「模块:页签」，没有页签的模块用模块名；值是 `{ label, sections: [{ title, ordered?, items }] }`，要点是字符串或 `{ term, text }`。各模块只改这份数据，不在页面里写说明段落；字段旁的就地提示不受此限
 - ⌘K（`CommandPalette.tsx`）：候选来自 `modules.ts` 的 `paletteGroups(query)`——空查询一组「快速跳转」列全部模块，有查询一组「页面」列模块、「模块 › 页签」与 `PALETTE_EXTRAS` 深链；实体搜索经组件的 `sources` 传入，分组接在「页面」之后
+  - 实体搜索（10-16）：`entity-search.ts` 的 `useEntitySearch` 在有查询时并行查 `GET v1/users`、`v1/orders`、`v1/nodes`（`q`、`limit=4`），分「用户」「订单」「节点」三组接在「页面」之后、`sources` 之前；防抖 200ms，查询键带搜索词、`signal` 传给 `api.get`，搜索词变了旧请求由 react-query 取消；某组失败就不显示那组，不报错；没有结果且还在查时显示「正在搜索…」
+  - 实体候选带 `path`（`EntityItem`），选中直接 `navigate` 到那一条：`/users/list/<用户id>`、`/billing/orders/<订单id>`、`/nodes/nodes/<节点id>`；只用本文件里的最小 schema 与状态文案，不 import `screens/**`（外框不把模块页面拉进主包）
+- 实时事件（`EventsCapsule.tsx`，纯函数在 `events.ts`）：按 topic + table + op 生成通用条目（事件只说哪一行变了，没有业务内容），每条有未读点、「全部标为已读」，页签 全部 / 订单 / 订阅 / 工单 / 节点 / 其他（按现有 topic 归类，不新增事件类型）；最多留 30 条，已读只在内存，刷新即清（10-16 用户定，不持久化）
+  - 点事件标已读并跳到对应页：订单、工单、节点、服务器、套餐有 id 时直接打开那一条（工单消息、订阅、删除事件退回列表页）；底部「审计日志 →」去 `/security/audit`
 - 接口回 404 时统一显示「不存在或已删除」（`ui/QueryView`），不提权限
 - 与设计稿不同的产品命名：
   - 「欠费单」叫「待处理到账」（10-16 设计稿，取代原「挂账」）
