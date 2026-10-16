@@ -1,22 +1,41 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { Search01Icon } from '@hugeicons-pro/core-stroke-rounded'
 import css from './CommandPalette.module.css'
-import { paletteGroups, type PaletteItem } from './modules'
+import { paletteGroups, type PaletteGroup, type PaletteItem } from './modules'
 
 export function CommandPalette({
   open,
   onClose,
   onPick,
+  sources,
 }: {
   open: boolean
   onClose: () => void
   onPick: (item: PaletteItem) => void
+  /** 额外的候选来源（如实体搜索）：有查询时，结果分组接在「页面」组之后 */
+  sources?: ReadonlyArray<(query: string) => PaletteGroup[]>
 }) {
+  const baseId = useId()
+  const listId = `${baseId}-list`
   const dialog = useRef<HTMLDialogElement>(null)
   const input = useRef<HTMLInputElement>(null)
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
-  const items = paletteGroups(query).flatMap((g) => g.items)
-  const index = Math.min(active, Math.max(0, items.length - 1))
+
+  const groups = [
+    ...paletteGroups(query),
+    ...(query.trim() ? (sources ?? []).flatMap((s) => s(query)) : []),
+  ].filter((g) => g.items.length > 0)
+  const flat = groups.flatMap((g) => g.items)
+  const index = Math.min(active, Math.max(0, flat.length - 1))
+
+  let currentOffset = 0
+  const groupsWithOffset = groups.map((group) => {
+    const start = currentOffset
+    currentOffset += group.items.length
+    return { group, start }
+  })
 
   useEffect(() => {
     const el = dialog.current
@@ -31,6 +50,12 @@ export function CommandPalette({
     }
   }, [open])
 
+  useEffect(() => {
+    if (flat.length === 0) return
+    const el = document.getElementById(`${baseId}-opt-${index}`)
+    el?.scrollIntoView({ block: 'nearest' })
+  }, [baseId, index, flat.length])
+
   const pick = (item: PaletteItem | undefined) => {
     if (!item) return
     onPick(item)
@@ -38,15 +63,16 @@ export function CommandPalette({
   }
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (flat.length === 0) return
     if (event.key === 'ArrowDown') {
       event.preventDefault()
-      setActive(Math.min(index + 1, items.length - 1))
+      setActive((index + 1) % flat.length)
     } else if (event.key === 'ArrowUp') {
       event.preventDefault()
-      setActive(Math.max(index - 1, 0))
+      setActive((index - 1 + flat.length) % flat.length)
     } else if (event.key === 'Enter') {
       event.preventDefault()
-      pick(items[index])
+      pick(flat[index])
     }
   }
 
@@ -54,7 +80,7 @@ export function CommandPalette({
     <dialog
       ref={dialog}
       className={css.overlay}
-      aria-label="搜索或跳转"
+      aria-label="搜索与跳转"
       onCancel={(event) => {
         event.preventDefault()
         onClose()
@@ -65,44 +91,73 @@ export function CommandPalette({
     >
       {open && (
         <div className={css.panel}>
-          <input
-            ref={input}
-            className={css.input}
-            value={query}
-            placeholder="跳转到页面，如「礼品卡」「REALITY」「提现」"
-            role="combobox"
-            aria-expanded="true"
-            aria-controls="palette-list"
-            aria-activedescendant={items[index] ? `palette-${index}` : undefined}
-            onChange={(e) => {
-              setQuery(e.target.value)
-              setActive(0)
-            }}
-            onKeyDown={onKeyDown}
-          />
-          <div id="palette-list" role="listbox" className={css.list}>
-            {items.map((item, i) => (
-              <button
-                key={item.key}
-                id={`palette-${i}`}
-                type="button"
-                role="option"
-                aria-selected={i === index}
-                tabIndex={-1}
-                className={i === index ? `${css.item} ${css.active}` : css.item}
-                onMouseMove={() => setActive(i)}
-                onClick={() => pick(item)}
-              >
-                <span className={css.title}>{item.title}</span>
-                <span className={css.path}>{item.sub}</span>
-              </button>
-            ))}
-            {items.length === 0 && <div className={css.empty}>没有匹配的页面</div>}
+          <div className={css.inputRow}>
+            <HugeiconsIcon icon={Search01Icon} size={16} strokeWidth={1.75} aria-hidden="true" className={css.searchIcon} />
+            <input
+              ref={input}
+              className={css.input}
+              value={query}
+              placeholder="搜索用户邮箱、订单号、节点名，或输入模块名跳转"
+              role="combobox"
+              aria-expanded="true"
+              aria-controls={listId}
+              aria-activedescendant={flat[index] ? `${baseId}-opt-${index}` : undefined}
+              onChange={(e) => {
+                setQuery(e.target.value)
+                setActive(0)
+              }}
+              onKeyDown={onKeyDown}
+            />
+            <kbd className={css.escKbd}>esc</kbd>
           </div>
-          <div className={css.keys} aria-hidden="true">
+          <div id={listId} role="listbox" aria-label="搜索结果" className={css.list}>
+            {groupsWithOffset.map(({ group, start }, gIdx) => {
+              const gId = `${baseId}-g-${gIdx}`
+              return (
+                <div key={`${group.label}-${gIdx}`} role="group" aria-labelledby={gId}>
+                  <div id={gId} className={css.groupLabel}>
+                    {group.label}
+                  </div>
+                  {group.items.map((item, i) => {
+                    const flatIdx = start + i
+                    const isSelected = flatIdx === index
+                    const optId = `${baseId}-opt-${flatIdx}`
+                    return (
+                      <button
+                        key={item.key}
+                        id={optId}
+                        type="button"
+                        role="option"
+                        aria-selected={isSelected}
+                        tabIndex={-1}
+                        className={isSelected ? `${css.item} ${css.active}` : css.item}
+                        onMouseMove={() => setActive(flatIdx)}
+                        onClick={() => pick(item)}
+                      >
+                        <span className={css.kind}>{item.kind}</span>
+                        <span className={item.mono ? `${css.title} ${css.mono}` : css.title}>{item.title}</span>
+                        <span className={css.sub}>{item.sub}</span>
+                        {isSelected && (
+                          <span className={css.enter} aria-hidden="true">
+                            ↵
+                          </span>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+              )
+            })}
+            {flat.length === 0 && (
+              <div className={css.empty}>没有找到「{query}」相关的结果</div>
+            )}
+          </div>
+          <div className={css.footer} aria-hidden="true">
             <span>↑↓ 选择</span>
             <span>↵ 打开</span>
             <span>esc 关闭</span>
+            <span className={css.footerSpacer} />
+            <span className={css.shortcutHint}>⌘K / Ctrl K 随时唤起</span>
           </div>
         </div>
       )}

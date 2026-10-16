@@ -1,0 +1,219 @@
+.topbar {
+  position: relative;
+  z-index: 30;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 56px;
+  padding: 0 20px 0 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.brandLogo {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 0;
+  background: var(--text);
+  color: var(--on-ink);
+  --logo-dot: var(--sidebar-brand);
+}
+
+.brandText {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.siteName {
+  font-size: 14px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.02em;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.release {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.iconButton {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s, transform 0.15s;
+}
+
+.iconButton:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.iconButton:active {
+  transform: scale(0.97);
+}
+
+.toggleSidebar {
+  margin-left: 6px;
+}
+
+.searchWrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: center;
+  margin: 0 16px;
+}
+
+.searchButton {
+  position: relative;
+  width: 100%;
+  max-width: 440px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 10px;
+  border: 0;
+  border-bottom: 1px solid var(--border-strong);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 13px;
+  text-align: left;
+  cursor: text;
+  transition: border-color 0.15s;
+}
+
+.searchButton:hover {
+  border-color: var(--border-hover);
+}
+
+.searchIcon {
+  flex: none;
+  display: block;
+}
+
+.searchText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.searchKbd {
+  flex: none;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  border-radius: 0;
+  background: var(--surface-3);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.avatarButton {
+  /* 设计稿字面色值，后台旧侧栏也使用相同配色 */
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: #2d1b16;
+  color: #f2a58f;
+  font-size: 12px;
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.avatarButton:active {
+  transform: scale(0.97);
+}
+
+.accountMenuWrap {
+  position: relative;
+  flex: none;
+  margin-left: 4px;
+}
+
+.accountMenu {
+  width: 240px;
+  padding: 4px;
+}
+
+.accountHeader {
+  padding: 4px 8px 8px;
+}
+
+.whoTitle {
+  font-size: 13px;
+  font-weight: var(--fw-medium);
+  color: var(--text);
+}
+
+.whoSubtitle {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 639px) {
+  .topbar {
+    padding: 0 8px;
+  }
+
+  .brandText {
+    display: none;
+  }
+
+  .searchWrap {
+    flex: none;
+    justify-content: flex-end;
+    margin: 0;
+  }
+
+  .searchButton {
+    width: 36px;
+    height: 36px;
+    max-width: 36px;
+    padding: 0;
+    justify-content: center;
+    border-bottom: 0;
+    cursor: pointer;
+  }
+
+  .searchButton:hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+
+  .searchText,
+  .searchKbd {
+    display: none;
+  }
+}

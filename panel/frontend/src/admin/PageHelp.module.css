@@ -1,0 +1,94 @@
+.wrap {
+  display: inline-flex;
+  align-items: center;
+}
+
+.trigger {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  white-space: nowrap;
+  cursor: help;
+  transition: color 0.15s ease;
+}
+
+.trigger:hover,
+.trigger:focus-visible,
+.trigger.open {
+  color: var(--text);
+}
+
+.label {
+  display: inline;
+}
+
+.tooltip {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 70;
+  margin-top: 8px;
+  width: 400px;
+  max-width: calc(100vw - 48px);
+  padding: 14px 16px;
+  background: var(--text);
+  color: var(--on-ink);
+  font-size: var(--fs-caption);
+  line-height: 1.65;
+  pointer-events: none;
+  text-align: left;
+  white-space: normal;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 0.15s ease, visibility 0.15s ease;
+}
+
+.tooltip.open {
+  visibility: visible;
+  opacity: 1;
+}
+
+.sectionTitle {
+  font-weight: 600;
+  font-size: 12.5px;
+  margin-bottom: 8px;
+}
+
+.section + .section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--on-ink) 18%, transparent);
+}
+
+.list {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  text-wrap: pretty;
+}
+
+.orderedList {
+  padding-left: 18px;
+}
+
+.unorderedList {
+  padding-left: 16px;
+}
+
+.term {
+  font-weight: 600;
+}
+
+@media (max-width: 639px) {
+  .label {
+    display: none;
+  }
+}

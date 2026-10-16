@@ -118,7 +118,7 @@ export function EventsCapsule({ onNavigate }: { onNavigate: (module: ModuleKey, 
         }}
       >
         <span className={live ? css.dotLive : css.dotWait} aria-hidden="true" />
-        <span>实时事件</span>
+        <span className={css.label}>实时事件</span>
         {unread > 0 && <span className={css.count}>{unread > 99 ? '99+' : unread}</span>}
       </button>
       {open && (

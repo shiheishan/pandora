@@ -2,30 +2,60 @@ import { useEffect, useState } from 'react'
 import { navigate, useHashLocation } from '../core/router'
 import { ScreenFrame } from '../shell/ScreenFrame'
 import { signOut, useRuntime } from '../shell/runtime'
-import { Tabs } from '../ui'
+import { Empty, Tabs } from '../ui'
 import { ChangePasswordDialog } from './ChangePasswordDialog'
-import { TelegramBindDialog } from './TelegramBindDialog'
 import { CommandPalette } from './CommandPalette'
-import { EventsCapsule } from './EventsCapsule'
 import { ADMIN_IDLE_MS, startIdleWatch } from './idle'
-import { useAdminMe } from './me'
-import { MODULES, modulePath, resolveRoute, type ModuleKey } from './modules'
+import { MODULES, modulePath, resolveRoute, isPendingTab, type ModuleKey } from './modules'
+import { pageHelp } from './page-help'
+import { PageHelpTip } from './PageHelp'
 import { SCREENS } from './screens'
 import css from './Shell.module.css'
 import { Sidebar } from './Sidebar'
 import { useAdminSiteName } from './site'
+import { TelegramBindDialog } from './TelegramBindDialog'
+import { Topbar } from './Topbar'
+
+const SIDEBAR_STORAGE_KEY = 'pandora-admin-sidebar'
+
+function getInitialSidebarCollapsed(): boolean {
+  try {
+    const saved = localStorage.getItem(SIDEBAR_STORAGE_KEY)
+    if (saved === 'icons') return true
+    if (saved === 'expanded') return false
+  } catch {
+    // 忽略存储读取异常
+  }
+  if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+    return window.matchMedia('(max-width: 959px)').matches
+  }
+  return false
+}
+
+function persistSidebarCollapsed(collapsed: boolean): void {
+  try {
+    localStorage.setItem(SIDEBAR_STORAGE_KEY, collapsed ? 'icons' : 'expanded')
+  } catch {
+    // 忽略存储写入异常
+  }
+}
 
 export function Shell() {
   const location = useHashLocation()
-  const me = useAdminMe()
   const site = useAdminSiteName()
   const route = resolveRoute(location.path)
   const def = MODULES[route.module]
   const Screen = SCREENS[route.module]
+  const [collapsed, setCollapsed] = useState(getInitialSidebarCollapsed)
   const [palette, setPalette] = useState(false)
   const [password, setPassword] = useState(false)
   const [telegram, setTelegram] = useState(false)
   const runtime = useRuntime()
+
+  const toggleSidebar = () => {
+    persistSidebarCollapsed(!collapsed)
+    setCollapsed(!collapsed)
+  }
 
   // 2 小时无操作自动退出（后台轮询会让服务端的空闲计时一直续上，见 idle.ts）
   useEffect(() => startIdleWatch({ timeoutMs: ADMIN_IDLE_MS, onIdle: () => void signOut(runtime) }), [runtime])
@@ -47,7 +77,7 @@ export function Shell() {
     const onKey = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault()
-        setPalette(true)
+        setPalette((v) => !v)
       }
     }
     window.addEventListener('keydown', onKey)
@@ -56,37 +86,48 @@ export function Shell() {
 
   const go = (module: ModuleKey, tab?: string | null) => navigate(modulePath(module, tab))
   const tabs = def.tabs ?? []
+  const help = pageHelp(route.module, route.tab)
+  const pending = isPendingTab(route.module, route.tab)
 
   return (
     <div className={css.frame}>
-      <Sidebar current={route.module} me={me.data} onOpenPalette={() => setPalette(true)} onChangePassword={() => setPassword(true)} onBindTelegram={() => setTelegram(true)} />
-      <main className={css.main}>
-        <header className={css.topbar}>
-          <div className={css.crumbs}>
-            <span>{def.group}</span>
-            <span aria-hidden="true">/</span>
-            <span className={css.crumbCurrent}>{def.title}</span>
-          </div>
-          <div className={css.spacer} />
-          <EventsCapsule onNavigate={go} />
-        </header>
-        <div className={css.pageHead}>
-          <h1 className={css.title}>{def.title}</h1>
-          {tabs.length > 0 && route.tab && (
-            <Tabs
-              label={def.title}
-              items={tabs.map(([value, label]) => ({ value, label }))}
-              value={route.tab}
-              onChange={(tab) => go(route.module, tab)}
-            />
+      <Topbar
+        collapsed={collapsed}
+        onToggleSidebar={toggleSidebar}
+        onOpenPalette={() => setPalette(true)}
+        onNavigate={go}
+        onChangePassword={() => setPassword(true)}
+        onBindTelegram={() => setTelegram(true)}
+      />
+      <div className={css.body}>
+        <Sidebar current={route.module} collapsed={collapsed} />
+        <main className={css.main}>
+          {(tabs.length > 0 || help) && (
+            <div className={css.pageHead}>
+              <div className={css.tabBar}>
+                {tabs.length > 0 && route.tab && (
+                  <Tabs
+                    label={def.title}
+                    items={tabs.map(([value, label]) => ({ value, label }))}
+                    value={route.tab}
+                    onChange={(tab) => go(route.module, tab)}
+                  />
+                )}
+                {help && <PageHelpTip help={help} />}
+              </div>
+            </div>
           )}
-        </div>
-        <div className={css.content}>
-          <ScreenFrame resetKey={route.canonical}>
-            <Screen tab={route.tab} rest={route.rest} />
-          </ScreenFrame>
-        </div>
-      </main>
+          <div className={css.content}>
+            {pending ? (
+              <Empty title="这一页正在按新设计重做" description="暂时还不能用，做好后会出现在这里。" />
+            ) : (
+              <ScreenFrame resetKey={route.canonical}>
+                <Screen tab={route.tab} rest={route.rest} />
+              </ScreenFrame>
+            )}
+          </div>
+        </main>
+      </div>
       <CommandPalette open={palette} onClose={() => setPalette(false)} onPick={(item) => go(item.module, item.tab)} />
       <ChangePasswordDialog open={password} onClose={() => setPassword(false)} />
       <TelegramBindDialog open={telegram} onClose={() => setTelegram(false)} />

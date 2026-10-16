@@ -6,18 +6,21 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 30px;
+  height: 36px;
   padding: 0 10px;
-  border: 1px solid var(--border-strong);
-  border-radius: 15px;
-  background: var(--surface);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--text-2);
   font-size: var(--fs-caption);
   cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
 }
 
-.capsule:hover {
-  border-color: var(--border-hover);
+.capsule:hover,
+.capsule[aria-expanded='true'] {
+  background: var(--surface-2);
+  color: var(--text);
 }
 
 .dotLive,
@@ -75,7 +78,7 @@
 
 .count {
   padding: 0 6px;
-  border-radius: 8px;
+  border-radius: 0;
   background: var(--text);
   color: var(--on-ink);
   font-family: var(--font-mono);
@@ -84,29 +87,32 @@
 
 .panel {
   position: absolute;
-  top: 38px;
+  top: calc(100% + 10px);
   right: 0;
-  z-index: 30;
-  width: 360px;
-  /* 下拉在右栏的滚动容器里，左边会被侧栏截断：不超过右栏宽度 */
-  max-width: calc(100vw - 224px - 56px);
+  z-index: 41;
+  width: 400px;
+  max-width: calc(100vw - 24px);
   overflow: hidden;
-  border: 1px solid var(--border-strong);
-  border-radius: 10px;
+  border: 1px solid var(--popover-border);
+  border-radius: 0;
   background: var(--surface);
-  box-shadow: 0 16px 40px -12px rgba(20, 20, 30, 0.25);
+  box-shadow: var(--popover-shadow);
+  display: flex;
+  flex-direction: column;
 }
 
 .head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--surface-3);
+  gap: 10px;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--border);
 }
 
 .headTitle {
+  font-size: 14px;
   font-weight: var(--fw-semibold);
+  color: var(--text);
 }
 
 .state {
@@ -116,12 +122,12 @@
 }
 
 .list {
-  max-height: 340px;
+  max-height: 380px;
   overflow-y: auto;
 }
 
 .empty {
-  padding: 24px 14px;
+  padding: 36px 16px;
   text-align: center;
   color: var(--text-3);
   font-size: var(--fs-caption);
@@ -130,15 +136,16 @@
 .item {
   width: 100%;
   display: grid;
-  grid-template-columns: 8px 1fr auto;
-  gap: 10px;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  gap: 12px;
   align-items: start;
-  padding: 10px 14px;
+  padding: 12px 16px;
   border: 0;
-  border-bottom: 1px solid var(--surface-2);
+  border-bottom: 1px solid var(--border);
   background: var(--surface);
   text-align: left;
   cursor: pointer;
+  transition: background-color 0.15s;
 }
 
 .item:hover:not(:disabled) {
@@ -154,9 +161,9 @@
 .warn,
 .danger,
 .info {
-  width: 6px;
-  height: 6px;
-  margin-top: 6px;
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
   border-radius: 50%;
   background: var(--info);
 }
@@ -177,21 +184,29 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
 .title {
   font-weight: var(--fw-medium);
+  color: var(--text);
 }
 
 .body {
-  color: var(--text-2);
+  color: var(--text-3);
   font-size: var(--fs-caption);
   font-family: var(--font-mono);
 }
 
 .at {
-  margin-top: 2px;
   font-family: var(--font-mono);
   font-size: var(--fs-micro);
   color: var(--text-3);
+  white-space: nowrap;
+}
+
+@media (max-width: 639px) {
+  .label {
+    display: none;
+  }
 }
