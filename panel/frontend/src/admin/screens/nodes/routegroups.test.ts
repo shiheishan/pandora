@@ -46,8 +46,8 @@ describe('route group references and sources', () => {
 
   it('counts and renames references exactly, like the backend and pdnd', () => {
     const rows = [
-      { kind: 'port' as const, value: '1', outbound: 'HK', enabled: true, note: '' },
-      { kind: 'port' as const, value: '2', outbound: 'hk', enabled: true, note: '' },
+      { kind: 'domain_suffix' as const, value: '1', outbound: 'HK', enabled: true, note: '' },
+      { kind: 'domain_suffix' as const, value: '2', outbound: 'hk', enabled: true, note: '' },
     ]
     expect(rulesUsing(rows, ' HK ')).toBe(1)
     expect(renameOutbound(rows, 'HK', 'HK-2').map((r) => r.outbound)).toEqual(['HK-2', 'hk'])
