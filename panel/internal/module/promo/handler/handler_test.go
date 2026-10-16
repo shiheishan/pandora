@@ -169,7 +169,6 @@ func TestListCouponsShape(t *testing.T) {
 			{
 				ID: fixedID, Code: "FIX10", Name: "定额", Status: service.StatusActive,
 				Face:            service.Face{Kind: service.KindFixed, AmountOff: decFixed(t, "10.50")},
-				Currency:        "CNY",
 				MinOrder:        decimal.Zero,
 				MaxPerUser:      1,
 				PlanIDs:         nil,
@@ -179,12 +178,10 @@ func TestListCouponsShape(t *testing.T) {
 			{
 				ID: pctID, Code: "VIP20", Name: "百分比", Status: service.StatusActive,
 				Face:            service.Face{Kind: service.KindPercent, PercentBP: 2000},
-				Currency:        "CNY",
 				MaxDiscount:     ptrDec(decFixed(t, "5.00")),
 				MinOrder:        decimal.Zero,
 				MaxPerUser:      1,
 				PlanIDs:         []uuid.UUID{planA},
-				Intervals:       []string{"year"},
 				CreatedAt:       now,
 				DiscountedTotal: decimal.Zero,
 			},
@@ -214,19 +211,11 @@ func TestListCouponsShape(t *testing.T) {
 	if plans0 == nil || len(plans0) != 0 {
 		t.Fatalf("applicable_plan_ids 应为 [] 非 null: %v", c0["applicable_plan_ids"])
 	}
-	ivs0, ok0 := c0["applicable_intervals"].([]any)
-	if !ok0 || ivs0 == nil || len(ivs0) != 0 {
-		t.Fatalf("c0 applicable_intervals 应为 [] 非 null: %v", c0["applicable_intervals"])
-	}
 	if c0["max_discount"] != nil {
 		t.Fatalf("max_discount 应为 null: %v", c0["max_discount"])
 	}
 	if c1["discount_value"] != float64(2000) || c1["max_discount"] != float64(500) {
 		t.Fatalf("第二张 %v %v", c1["discount_value"], c1["max_discount"])
-	}
-	ivs1, ok1 := c1["applicable_intervals"].([]any)
-	if !ok1 || len(ivs1) != 1 || ivs1[0] != "year" {
-		t.Fatalf("c1 applicable_intervals 期望 [year]: %v", c1["applicable_intervals"])
 	}
 	if f.lastList.Query != "vip" || f.lastList.Status != "active" || f.lastLimit != 50 {
 		t.Fatalf("ListFilter/limit %+v limit=%d", f.lastList, f.lastLimit)
@@ -257,24 +246,11 @@ func TestCreateCouponMapping(t *testing.T) {
 	if f.createSpec.Face.Kind != service.KindFixed || !f.createSpec.Face.AmountOff.Equal(decFixed(t, "10.50")) {
 		t.Fatalf("Face fixed %v", f.createSpec.Face)
 	}
-	if f.createSpec.Currency != "" || !f.createSpec.MinOrder.Equal(decFixed(t, "50.00")) || f.createSpec.MaxPerUser != 2 {
+	if !f.createSpec.MinOrder.Equal(decFixed(t, "50.00")) || f.createSpec.MaxPerUser != 2 {
 		t.Fatalf("Spec %+v", f.createSpec)
 	}
 	if f.createSpec.Name != "SUMMER" {
 		t.Fatalf("Name %q", f.createSpec.Name)
-	}
-	if len(f.createSpec.Intervals) != 0 {
-		t.Fatalf("不带 applicable_intervals 应为 nil 或空: %v", f.createSpec.Intervals)
-	}
-
-	f3 := &fakeSvc{}
-	e3 := newEngine(f3, true, &authn.Principal{UserID: uuid.New(), SessionID: "s", Audience: authn.AudienceAdmin})
-	w = do(e3, http.MethodPost, "/v1/coupons", `{"code":"MONTHONLY","discount_type":"fixed","discount_value":1000,"applicable_intervals":["month"]}`)
-	if w.Code != http.StatusOK {
-		t.Fatalf("applicable_intervals create status %d %s", w.Code, w.Body)
-	}
-	if len(f3.createSpec.Intervals) != 1 || f3.createSpec.Intervals[0] != "month" {
-		t.Fatalf("createSpec Intervals 期望 [month], got %v", f3.createSpec.Intervals)
 	}
 
 	f2 := &fakeSvc{}
@@ -366,7 +342,7 @@ func TestSetStatusAndRedemptions(t *testing.T) {
 
 	f.redemptions = []service.Redemption{{
 		UserID: uuid.New(), Email: "u@example.test", OrderNo: "o1",
-		Discount: decFixed(t, "3.30"), Currency: "CNY", At: time.Now(), Released: true,
+		Discount: decFixed(t, "3.30"), At: time.Now(), Released: true,
 	}}
 	w = do(e, http.MethodGet, "/v1/coupons/"+cid.String()+"/redemptions", "")
 	if w.Code != http.StatusOK {
@@ -394,7 +370,6 @@ func TestSetStatusAndRedemptions(t *testing.T) {
 func TestPreview(t *testing.T) {
 	planA := uuid.New()
 	priceB := uuid.New()
-	packA := uuid.New()
 	userID := uuid.New()
 	p := &authn.Principal{UserID: userID, SessionID: "s", Audience: authn.AudiencePublic}
 
@@ -403,7 +378,6 @@ func TestPreview(t *testing.T) {
 			Subtotal: decFixed(t, "30.00"),
 			Discount: decFixed(t, "3.00"),
 			Payable:  decFixed(t, "27.00"),
-			Currency: "CNY",
 			Applied: &service.Applied{
 				Code: "X",
 				Face: service.Face{Kind: service.KindPercent, PercentBP: 1000},
@@ -424,8 +398,7 @@ func TestPreview(t *testing.T) {
 	if coupon["discount_type"] != "percent" || coupon["discount_value"] != float64(1000) {
 		t.Fatalf("coupon %v", coupon)
 	}
-	if f.previewUser != userID || f.previewItem.PlanID == nil || *f.previewItem.PlanID != planA ||
-		f.previewItem.PriceID == nil || *f.previewItem.PriceID != priceB || f.previewItem.PackID != nil {
+	if f.previewUser != userID || f.previewItem.PlanID != planA || f.previewItem.PriceID != priceB {
 		t.Fatalf("PreviewItem/user %v %v", f.previewItem, f.previewUser)
 	}
 
@@ -446,22 +419,14 @@ func TestPreview(t *testing.T) {
 		t.Fatalf("fields %v", fields)
 	}
 
-	w = do(e, http.MethodPost, "/v1/coupons/preview", `{"pack_id":"bad"}`)
+	// 只给 price_id 不给 plan_id 回 422 且 fields 里有 plan_id
+	w = do(e, http.MethodPost, "/v1/coupons/preview", `{"price_id":"`+priceB.String()+`"}`)
 	if w.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("bad pack %d", w.Code)
+		t.Fatalf("missing plan_id status %d", w.Code)
 	}
 	fields = errFields(t, w)
-	if fields["pack_id"] == nil {
+	if fields["plan_id"] == nil {
 		t.Fatalf("fields %v", fields)
-	}
-
-	w = do(e, http.MethodPost, "/v1/coupons/preview", `{"pack_id":"`+packA.String()+`","plan_id":"`+planA.String()+`"}`)
-	if w.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("both %d", w.Code)
-	}
-	fields = errFields(t, w)
-	if fields["pack_id"] != "流量包与套餐只能二选一" {
-		t.Fatalf("pack_id msg %v", fields["pack_id"])
 	}
 
 	eNoAuth := newEngine(&fakeSvc{}, false, nil)
