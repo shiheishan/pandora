@@ -23,12 +23,10 @@ function rotateWait(perSub: number[], all: number[], now: number): number | null
 
 export const subs: MockModule = {
   routes: {
-    // 设计稿 2.9：每项多 label / client_name / changeable / renew_until，pack_remaining_bytes 是这一份自己的；
-    // 顶层 unattached_pack_bytes 是还没加到任何一份的流量包余量
     'GET /v1/me/subscriptions': async (ctx) => {
       if (!(await gate(ctx))) return
       const state = portalState(ctx.user.userId)
-      ctx.send(200, { subscriptions: state.subs.map(subscriptionView), unattached_pack_bytes: state.unattachedBytes })
+      ctx.send(200, { subscriptions: state.subs.map(subscriptionView) })
     },
 
     // 设计稿 2.8：改名不推进节点纪元；空串或 null 清除；同一用户下不区分大小写唯一，冲突 409

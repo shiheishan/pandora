@@ -96,8 +96,6 @@ export function buildProto(s: ProtoScenario): PortalState {
   const { balance, subs } = DATA[s]()
   return {
     subs,
-    unattachedBytes: 0,
-    transfers: [],
     balance,
     ledger: balance > 0 ? [{ kind: 'balance_topup', delta: balance, memo: '充值', at: new Date(Date.now() - DAY_MS).toISOString() }] : [],
     orders: [],
