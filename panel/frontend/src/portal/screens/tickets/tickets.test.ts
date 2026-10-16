@@ -69,12 +69,14 @@ describe('状态与按钮', () => {
     expect(ticketStatus({ status: 'closed', closed_reason: null }).label).toBe('已关闭')
   })
 
-  it('撤回只在未关闭且客服没回复过时出现；关闭与回复只看是否已关闭（resolved 仍可回复）', () => {
+  it('撤回只在未关闭且客服没回复过时出现；关闭需客服已回复；回复只看是否已关闭（resolved 仍可回复）', () => {
     const agent = { id: 'm2', author_kind: 'agent' as const, author_name: null, body: 'y', created_at: ROW.created_at }
     expect(canWithdraw(detail())).toBe(true)
     expect(canWithdraw(detail({ messages: [...detail().messages, agent] }))).toBe(false)
     expect(canWithdraw(detail({ status: 'closed' }))).toBe(false)
-    expect(canClose(detail({ status: 'resolved' }))).toBe(true)
+    expect(canClose(detail())).toBe(false)
+    expect(canClose(detail({ messages: [...detail().messages, agent] }))).toBe(true)
+    expect(canClose(detail({ status: 'closed', messages: [...detail().messages, agent] }))).toBe(false)
     expect(canReply(detail({ status: 'resolved' }))).toBe(true)
     expect(canReply(detail({ status: 'closed' }))).toBe(false)
   })
@@ -96,9 +98,9 @@ describe('消息时间', () => {
 
 describe('新建表单校验（与 support.create 同口径）', () => {
   it('标题 4–120 字、正文 10–5000 字，去首尾空白按字数计', () => {
-    expect(validateTicket({ subject: '', body: '' })).toEqual({ subject: '请用一句话描述问题', body: '请写下详细描述' })
+    expect(validateTicket({ subject: '', body: '' })).toEqual({ subject: '请填写标题', body: '至少写 10 个字，客服才好判断' })
     expect(validateTicket({ subject: '丢包', body: '晚上很卡' }).subject).toBe('标题需在 4–120 字之间')
-    expect(validateTicket({ subject: '节点丢包', body: '  晚上很卡  ' }).body).toBe('详细描述至少 10 个字，方便客服定位问题')
+    expect(validateTicket({ subject: '节点丢包', body: '  晚上很卡  ' }).body).toBe('至少写 10 个字，客服才好判断')
     expect(validateTicket({ subject: '节点丢包严重', body: '每天晚上九点到十一点丢包' })).toEqual({})
   })
 })

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  accessDetail,
   accessOutcomeLabel,
   accessQuery,
   actorLabel,
@@ -7,6 +8,7 @@ import {
   authLabel,
   clockTime,
   clusterPlace,
+  clusterViews,
   disableCandidates,
   disableSummary,
   EMPTY_ACCESS_FILTER,
@@ -15,6 +17,7 @@ import {
   hasAuditFilter,
   ipLabel,
   isAccessError,
+  isMarkedNormal,
   objectLabel,
   reviewState,
   reviewText,
@@ -116,6 +119,12 @@ describe('access log', () => {
     expect(ipLabel({})).toBe('—')
   })
 
+  it('puts the account in the row: email, short id or anonymous, then the action', () => {
+    expect(accessDetail({ user_email: 'a@example.test', action: 'auth.login' })).toBe('a@example.test · auth.login')
+    expect(accessDetail({ user_id: '0123456789abcdef' })).toBe('用户 01234567')
+    expect(accessDetail({ action: 'auth.login' })).toBe('匿名 · auth.login')
+  })
+
   it('accepts omitempty rows and rejects unknown categories', () => {
     expect(accessResponse.safeParse({ items: [{ category: 'subscribe', occurred_at: '2026-09-25T00:00:00Z' }] }).success).toBe(true)
     expect(accessResponse.safeParse({ items: [{ category: 'http', occurred_at: '2026-09-25T00:00:00Z' }] }).success).toBe(false)
@@ -132,6 +141,18 @@ describe('risk clusters', () => {
     expect(reviewState({ decision: 'disabled', decided_at: '2026-09-22T00:00:00Z', expires_at: null }, now)).toEqual({ kind: 'disabled', at: '2026-09-22T00:00:00Z' })
     expect(reviewText({ kind: 'open' })).toBeNull()
     expect(reviewText({ kind: 'expired' })).toContain('30 天')
+  })
+
+  it('splits the segments: open from the default list, marked-normal and all from the full list', () => {
+    const normal = { ...cluster, key: 'n1', review: { decision: 'normal' as const, decided_at: '2026-09-20T00:00:00Z', expires_at: '2026-10-20T00:00:00Z' } }
+    const lapsed = { ...cluster, key: 'n2', review: { decision: 'normal' as const, decided_at: '2026-08-20T00:00:00Z', expires_at: '2026-09-19T00:00:00Z' } }
+    expect(isMarkedNormal(normal, now)).toBe(true)
+    expect(isMarkedNormal(lapsed, now)).toBe(false)
+    const views = clusterViews([cluster, lapsed], [cluster, normal, lapsed], now)
+    expect(views.open!.map((c) => c.key)).toEqual(['ab12', 'n2'])
+    expect(views.done!.map((c) => c.key)).toEqual(['n1'])
+    expect(views.all).toHaveLength(3)
+    expect(clusterViews(undefined, undefined, now)).toEqual({ open: null, done: null, all: null })
   })
 
   it('offers only members that are not already suspended or banned', () => {

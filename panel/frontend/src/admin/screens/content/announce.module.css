@@ -1,0 +1,236 @@
+/* 公告（AnnounceTab + AnnounceEditor）专用样式 */
+
+/* ---- 列表页 ---- */
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  min-width: 0;
+}
+
+/* 置顶标记：品牌色细框小字 */
+.pin {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--brand);
+  color: var(--brand);
+  font-size: 11px;
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+}
+
+/* 表格标题列：加粗、单行省略 */
+.annTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-weight: var(--fw-medium);
+}
+
+.annTitleText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 单元格内容的淡显外壳：Table 没有行类名，已撤回的行在每个单元格里包一层 */
+.dim {
+  opacity: 0.6;
+}
+
+/* 级别文字颜色（设计稿 220–229：普通灰、提示 info、警告 warn、紧急 danger） */
+.sev_info {
+  color: var(--text-3);
+}
+
+.sev_notice {
+  color: var(--info);
+}
+
+.sev_warning {
+  color: var(--warn);
+}
+
+.sev_critical {
+  color: var(--danger);
+}
+
+/* 时间列：12px 灰、右对齐（对齐由 Table 列的 align 管，这里只管字） */
+.when {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  white-space: nowrap;
+}
+
+/* 可见范围列：单行省略 */
+.target {
+  display: block;
+  overflow: hidden;
+  color: var(--text-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- 弹窗 ---- */
+/* 头部：状态标签 + meta 一行（title 是 h2，meta 在里面压回正文字号） */
+.headRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.headMeta {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-regular);
+}
+
+/* 已撤回说明：上下细线的灰字段落 */
+.lockedNote {
+  margin: 0;
+  padding: 10px 0;
+  border-top: 1px solid var(--border-strong);
+  border-bottom: 1px solid var(--border-strong);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+/* 冲突横幅沿用 info 色；「别人刚改过」用 warn 色 */
+.banner {
+  padding: 8px 12px;
+  border: 1px solid var(--info-line);
+  border-radius: var(--radius-control);
+  background: var(--info-soft);
+  color: var(--info);
+  font-size: var(--fs-caption);
+}
+
+.bannerWarn {
+  border-color: var(--warn-line);
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.bannerRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-12);
+}
+
+.bannerSpacer {
+  flex: 1;
+}
+
+/* 标题输入：大号 600 字重、只有下边线 */
+.titleInput {
+  height: 44px;
+  padding: 0 2px;
+  border: 0;
+  border-bottom: 1px solid var(--border-strong);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 20px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.01em;
+}
+
+.titleInput:focus {
+  border-bottom-color: var(--text);
+  outline: none;
+}
+
+/* 级别 / 可见范围 / 时间四格：auto-fit、窄时换行 */
+.fieldGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 14px 20px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.fieldLabel {
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+/* datetime-local 输入照设计稿只有下边线 */
+.timeInput {
+  height: 30px;
+  padding: 0 2px;
+  border: 0;
+  border-bottom: 1px solid var(--border-strong);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+}
+
+.timeInput:focus {
+  border-bottom-color: var(--text);
+  outline: none;
+}
+
+/* 可见范围的触发按钮与菜单 */
+.picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  max-width: none;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-caption);
+}
+
+.picker:hover {
+  border-color: var(--border-hover);
+}
+
+.pickerText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pickerMenu {
+  width: 280px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+/* 底部左提示 / 错误文字 */
+.footerHint {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+/* 撤回按钮：次按钮样式、文字危险色 */
+.dangerText {
+  color: var(--danger);
+}
+
+.errorStack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.error {
+  color: var(--danger);
+  font-size: var(--fs-caption);
+}

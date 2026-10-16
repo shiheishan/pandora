@@ -1,15 +1,22 @@
 /* ===========================================================================
- * 双栏外壳：一整块卡片，高度跟视口走，两栏各自滚动
+ * 页面外壳：顶部工具栏在双栏外，双栏只有顶部一条墨线（10-16 设计稿）
  * ========================================================================= */
+.screen {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
 .page {
   display: grid;
   /* 设计稿 minmax(240, 340)；960 宽时内容区只剩 ~700，左栏按比例收，别把右栏挤到三行控件 */
   grid-template-columns: minmax(240px, min(340px, 38%)) minmax(0, 1fr);
-  height: calc(100vh - 200px);
+  height: calc(100vh - 240px);
   min-height: 520px;
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  border: 0;
+  border-top: 1px solid var(--text);
+  border-radius: 0;
   background: var(--surface);
 }
 
@@ -40,39 +47,17 @@
   border-bottom: 1px solid var(--surface-3);
 }
 
-/* 五个分段挤在 340 宽里：每段等分 */
+/* 五个筛选页签挤在 340 宽里：每段等分 */
 .filters {
   display: flex;
   width: 100%;
 }
 
-/* 压过 ui/Segmented 的 .sm .option 内边距：五段等分，不留两侧空白 */
+/* 压过 ui/FilterTabs 的 .tab 内边距：五段等分，不留两侧空白 */
 .filters > button[role='radio'] {
   flex: 1;
   min-width: 0;
   padding-inline: 2px;
-}
-
-.searchRow {
-  display: flex;
-  gap: var(--space-8);
-}
-
-.search {
-  flex: 1;
-  min-width: 0;
-  height: var(--h-control-sm);
-  padding: 0 10px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-  outline: none;
-}
-
-.search:focus {
-  border-color: var(--text);
 }
 
 .queueList {
@@ -410,10 +395,30 @@
   border-top: 1px solid var(--surface-3);
 }
 
+/* -------------------------------------------------------------------------
+ * 快捷回复条（10-16 设计稿）：一行放不下就截断，右侧「全部 N」浮层与「管理」
+ * ------------------------------------------------------------------------- */
 .macros {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-12);
+}
+
+/* 前 4 个 chip 所在的弹性区：超出就收掉，不让换行把回复框顶高 */
+.macroChips {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  align-items: center;
   gap: 6px;
+}
+
+.macroLabel {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  white-space: nowrap;
 }
 
 .macro,
@@ -421,7 +426,6 @@
   height: 24px;
   padding: 0 var(--space-8);
   border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
   background: var(--surface);
   color: var(--text-2);
   font: inherit;
@@ -429,14 +433,146 @@
   cursor: pointer;
 }
 
-.macro:hover,
-.macroManage:hover {
+/* chip：最多 160 宽，超出省略 */
+.macro {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.macro:hover {
   border-color: var(--border-hover);
   color: var(--text);
 }
 
+/* 「全部 N」按钮：开着的浮层锚点 */
+.macroAllWrap {
+  position: relative;
+  flex: none;
+}
+
+.macroAll {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: 24px;
+  padding: 0 var(--space-8);
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-caption);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.macroAllOpen,
+.macroAll:hover {
+  border-color: var(--text);
+}
+
+.macroAllCaret {
+  flex: none;
+}
+
+/* 点外面关闭用的透明遮罩：垫在浮层（z-index 40）下面 */
+.macroAllScrim {
+  position: fixed;
+  inset: 0;
+  z-index: 39;
+}
+
+/* 浮层：锚在按钮上方，宽 340，纯组件态弹层（不用 dialog，避免和 Composer 所在层级纠缠） */
+.macroAllPanel {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  width: 340px;
+  max-width: calc(100vw - 32px);
+  border: 1px solid var(--text);
+  background: var(--surface);
+}
+
+.macroAllSearch {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  outline: none;
+}
+
+.macroAllList {
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.macroAllItem {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px var(--space-12);
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.macroAllItem:hover {
+  background: var(--surface-2);
+}
+
+.macroAllTitle {
+  font-size: 12.5px;
+  font-weight: var(--fw-medium);
+}
+
+.macroAllBody {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.macroAllEmpty {
+  padding: 20px var(--space-12);
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  text-align: center;
+}
+
+.macroDivider {
+  flex: none;
+  align-self: stretch;
+  width: 1px;
+  background: var(--border);
+}
+
+/* 「管理」：无边框的文字小按钮 */
 .macroManage {
-  border-style: dashed;
+  flex: none;
+  border: 0;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.macroManage:hover {
+  background: var(--surface-3);
+  color: var(--text);
 }
 
 .macroHint {
@@ -461,7 +597,7 @@
 }
 
 /* ===========================================================================
- * 快捷回复管理
+ * 快捷回复管理（列表 + 底部新增）
  * ========================================================================= */
 .macroForm {
   display: flex;
@@ -472,8 +608,10 @@
 .macroList {
   display: flex;
   flex-direction: column;
+  max-height: max(160px, calc(100vh - 360px));
   margin: 0;
   padding: 0;
+  overflow-y: auto;
   list-style: none;
 }
 
@@ -504,4 +642,27 @@
   font-size: var(--fs-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 「修改」「删除」小文字按钮（设计稿） */
+.macroAction {
+  flex: none;
+  height: 24px;
+  padding: 0 var(--space-8);
+  border: 0;
+  background: transparent;
+  font-size: var(--fs-caption);
+  cursor: pointer;
+}
+
+.macroAction:hover {
+  background: var(--surface-3);
+}
+
+.macroActionDanger {
+  color: var(--danger);
+}
+
+.macroActionDanger:hover {
+  background: var(--danger-tint);
 }

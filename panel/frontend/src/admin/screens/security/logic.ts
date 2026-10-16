@@ -149,10 +149,20 @@ export function ipLabel(item: Pick<AccessItem, 'ip' | 'geo'>): string {
   return item.geo ? `${item.ip} · ${item.geo}` : item.ip
 }
 
+/** 行里的账号：邮箱 > 短用户 id > 匿名 */
+export function accessUser(item: Pick<AccessItem, 'user_email' | 'user_id'>): string {
+  return item.user_email ?? (item.user_id ? `用户 ${item.user_id.slice(0, 8)}` : '匿名')
+}
+
+/** 行末的明细（设计稿「账号 · 明细」）：账号 · 动作；没有动作只给账号 */
+export function accessDetail(item: Pick<AccessItem, 'user_email' | 'user_id' | 'action'>): string {
+  return item.action ? `${accessUser(item)} · ${item.action}` : accessUser(item)
+}
+
 /** 行提示：账号、客户端与网络类型（契约：邮箱与 UA 放 tooltip） */
 export function accessTooltip(item: AccessItem): string {
   const kind = item.network_kind ? NETWORK_LABEL[item.network_kind] : undefined
-  return [item.user_email ?? (item.user_id ? `用户 ${item.user_id.slice(0, 8)}` : '匿名'), item.user_agent, kind, formatDateTime(item.occurred_at)].filter(Boolean).join('\n')
+  return [accessUser(item), item.user_agent, kind, formatDateTime(item.occurred_at)].filter(Boolean).join('\n')
 }
 
 export function accessKey(item: AccessItem, index: number): string {
@@ -193,6 +203,23 @@ export function reviewText(state: ReviewState): string | null {
       return '标记正常已满 30 天，重新提示'
     default:
       return null
+  }
+}
+
+/** 风控的分段筛选：待处理 = 后端默认列表（不含 30 天内标记正常的），已标记正常 / 全部取 include_reviewed=1 的列表 */
+export type ClusterView = 'open' | 'done' | 'all'
+
+/** 当前有效的「标记正常」（过期的不算） */
+export function isMarkedNormal(c: Pick<Cluster, 'review'>, now: Date = new Date()): boolean {
+  return reviewState(c.review, now).kind === 'normal'
+}
+
+/** 分段的列表与计数：open 来自默认列表，done / all 来自含已标记正常的列表；任一列表还没到时为 null */
+export function clusterViews(open: readonly Cluster[] | undefined, all: readonly Cluster[] | undefined, now: Date = new Date()): Record<ClusterView, readonly Cluster[] | null> {
+  return {
+    open: open ?? null,
+    done: all ? all.filter((c) => isMarkedNormal(c, now)) : null,
+    all: all ?? null,
   }
 }
 
@@ -260,8 +287,8 @@ interface SwitchMeta {
 /** 按显示顺序：可切换的、核心能力。D-A-3 已决（5.A.2、R102）：设计稿的「订阅下发使用缓存」不做；三个没有代码读取的开关（ops.bulk_export / ops.reports / node.autoscale）后端从种子删除，字典也不再收 */
 export const SWITCH_META: Readonly<Record<string, SwitchMeta>> = {
   'auth.registration': { title: '暂停新用户注册', desc: '注册页不可用，邀请链接同样失效。', note: '实际能否注册还取决于「通知与插件 · 注册与验证」里的注册模式。', whenMissing: false },
-  'billing.checkout': { title: '暂停下单与支付', desc: '新购、续费、变更套餐、流量包、充值与发起支付一律拒绝；已发起支付的回调照常处理。', whenMissing: true },
-  'marketing.giftcard.redeem': { title: '暂停礼品卡兑换', desc: '门户兑换礼品卡一律拒绝，发现卡码泄露时使用。', whenMissing: true },
+  'billing.checkout': { title: '暂停下单与支付', desc: '新购、续费、变更套餐、充值与发起支付一律拒绝；已发起支付的回调照常处理。', whenMissing: true },
+  'marketing.giftcard.redeem': { title: '暂停礼品卡兑换', desc: '用户端兑换礼品卡一律拒绝，发现卡码泄露时使用。', whenMissing: true },
   'admin.writes': { title: '管理端只读模式', desc: '除降级开关、登录与二次认证、修改自己的密码外，后台所有写操作都会被拒绝。', whenMissing: true },
   'notify.email': { title: '暂停邮件投递', desc: '邮件留在队列里不发送，恢复后按序投递。', note: '注册验证码也会滞留：开了注册邮箱验证时，暂停期间新用户注册实际走不通。', whenMissing: true },
   'auth.login': { title: '用户登录', desc: '核心能力，数据库约束保证不能关闭。' },

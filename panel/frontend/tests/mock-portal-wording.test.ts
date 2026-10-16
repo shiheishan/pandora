@@ -47,11 +47,36 @@ function textsOf(path: string, code: string, appButtons: boolean): Array<{ line:
 
 const texts = (path: string) => textsOf(path, readFileSync(path, 'utf8'), relative(ROOT, path) === APP_BUTTON_FILE)
 
+/** `src/portal/` 根目录下的页面级 .ts/.tsx（不进子目录） */
+function rootPortalTsFiles(): string[] {
+  return readdirSync(ROOT, { withFileTypes: true })
+    .filter((e) => e.isFile() && /\.(ts|tsx)$/.test(e.name) && !/\.test\.ts$/.test(e.name) && e.name !== 'testing.ts')
+    .map((e) => join(ROOT, e.name))
+}
+
+const SCAN_DIRS_1016 = ['screens/account', 'screens/help', 'screens/messages', 'screens/tickets', 'screens/referral'] as const
+
+function scanScope1016(): string[] {
+  return [...rootPortalTsFiles(), ...SCAN_DIRS_1016.flatMap((d) => files(join(ROOT, d)))]
+}
+
+// 购买链路各页归另一块在改，合并后把范围放宽到整个 `src/portal/`
+const BANNED_1016 = ['门户', '流量包', '自动续费'] as const
+
 describe('门户叫法', () => {
   it('界面文字里没有「订阅、导入、抵扣、折算、剩余价值、降级、客户端、落点、约付、周期、重置订阅、重置链接」', () => {
     const hits = files(ROOT).flatMap((f) =>
       texts(f)
         .filter((t) => BANNED.some((w) => t.text.includes(w)))
+        .map((t) => `${relative(ROOT, f)}:${t.line} ${t.text}`),
+    )
+    expect(hits).toEqual([])
+  })
+
+  it('10-16：本块文件的界面文字里没有「门户、流量包、自动续费」', () => {
+    const hits = scanScope1016().flatMap((f) =>
+      texts(f)
+        .filter((t) => BANNED_1016.some((w) => t.text.includes(w)))
         .map((t) => `${relative(ROOT, f)}:${t.line} ${t.text}`),
     )
     expect(hits).toEqual([])
