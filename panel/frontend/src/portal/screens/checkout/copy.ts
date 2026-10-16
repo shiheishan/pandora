@@ -1,6 +1,6 @@
 import { href } from '../../../core/router'
-import { priceFor, type Plan } from '../common/catalog'
-import { day, devicesText, gb, leftOf, money, moneyShort, periodLabel, planTraffic, type Naming } from '../common/purchase'
+import { planTraffic, priceFor, type Plan } from '../common/catalog'
+import { day, devicesText, gb, leftOf, money, moneyShort, periodLabel, type Naming } from '../common/purchase'
 import type { BalanceSplit, Quote, QuoteRow } from '../common/quote'
 import { isLive, type Subscription } from '../common/subscriptions'
 import { pickTrafficQuota } from '../common/traffic'

@@ -1,21 +1,19 @@
 import type { Json, MockModule } from '../types.ts'
-import { BillingError, couponCheck, couponFace, isUuid, readStrict } from './billing.ts'
-import { findPack, findPlan, MIN_PAYMENT, plansNow, type CatalogPack, type CatalogPlan, type CatalogPrice } from './catalog.ts'
-import { addInterval, gate, isLiveSub, isRevivable, portalState, usedBytes, type PortalState, type SubFixture } from './fixtures.ts'
+import { assertNoPendingReset, BillingError, couponCheck, couponFace, isUuid, readStrict } from './billing.ts'
+import { findPlan, MIN_PAYMENT, plansNow, type CatalogPlan, type CatalogPrice } from './catalog.ts'
+import { addInterval, gate, isDead, isLiveSub, isRevivable, portalState, subPermanent, usedBytes, type PortalState, type SubFixture } from './fixtures.ts'
 import { applyBalance, waiveSmallDue, type Balance } from './purchase.ts'
-import { assertNoPendingReset, memberPercentOf, RESET_PRICES } from './reset.ts'
-
 // ---------------------------------------------------------------------------
-// 统一报价（设计稿 2.2）：POST /v1/me/checkout/quote 与四个建单接口共用这里的算法。
-// 剩余价值 = 本期实付 × min(剩余时间比, 剩余流量比)，向下取整；过期 30 天内的那份为 0。
-// 建单带 as_of + expect 时按 as_of 重算、比对，不符回 409 quote_changed。
+// 统一报价：POST /v1/me/checkout/quote 与建单接口共用。
+// total = max(0, subtotal − discount − credit)；剩余价值 credit = 本期实付 × min(剩余时间比, 剩余流量比)，
+// 永久的一次性只看流量比，向下取整；过期 30 天内的那份为 0。建单带 as_of + expect 按 as_of 重算比对，不符 409 quote_changed。
 // ---------------------------------------------------------------------------
 const DAY_MS = 86_400_000
-/** as_of 只接受 [now-10min, now] */
+/** as_of 只接受 [now-10min, now]（允许 5 秒时钟误差） */
 const AS_OF_WINDOW_MS = 10 * 60_000
 const MAX_ROWS = 20
 
-export type QuoteAction = 'renew' | 'change' | 'new' | 'pack' | 'reset'
+export type QuoteAction = 'renew' | 'change' | 'new' | 'stack' | 'reset'
 
 export interface CreditDetail {
   paid: number
@@ -29,14 +27,12 @@ export interface CreditDetail {
 export interface QuoteRow {
   subscription_id: string | null
   plan_id: string | null
-  pack_id: string | null
   price_id: string | null
   interval: string
   interval_count: number
+  validity_days: number | null
   subtotal: number
   discount: number
-  member_discount: number
-  member_percent: number
   coupon: { code: string } | null
   coupon_error: string | null
   credit: number
@@ -51,14 +47,19 @@ export interface QuoteRow {
 }
 
 export function creditOf(sub: SubFixture, at: number): { credit: number; detail: CreditDetail } {
+  const plan = findPlan(sub.plan_id)
   const start = new Date(sub.current_period_start).getTime()
   const end = new Date(sub.current_period_end).getTime()
   const live = isLiveSub(sub)
   const timeRatio = live && end > start ? Math.min(1, Math.max(0, (end - at) / (end - start))) : 0
   const used = usedBytes(sub)
-  const trafficLeft = Math.max(0, sub.limitBytes - used)
-  const trafficRatio = !live ? 0 : sub.limitBytes > 0 ? trafficLeft / sub.limitBytes : 1
-  const ratio = Math.min(timeRatio, trafficRatio)
+  const limit = sub.limitBytes
+  const bonus = sub.bonusBytes
+  const trafficLeft = limit === null ? 0 : Math.max(0, limit + bonus - used)
+  const trafficTotal = limit === null ? 0 : limit + bonus
+  const trafficRatio = !live ? 0 : limit === null ? 1 : trafficTotal > 0 ? trafficLeft / trafficTotal : 1
+  const permanentOne = plan?.kind === 'one_time' && subPermanent(sub)
+  const ratio = permanentOne ? trafficRatio : Math.min(timeRatio, trafficRatio)
   return {
     credit: Math.floor(sub.amount * ratio),
     detail: {
@@ -66,34 +67,43 @@ export function creditOf(sub: SubFixture, at: number): { credit: number; detail:
       days_left: live ? Math.max(0, Math.ceil((end - at) / DAY_MS)) : 0,
       days_total: Math.max(1, Math.round((end - start) / DAY_MS)),
       traffic_left: trafficLeft,
-      traffic_total: sub.limitBytes,
+      traffic_total: trafficTotal,
       ratio_ppm: Math.round(ratio * 1_000_000),
     },
   }
+}
+
+function periodEndMs(start: number, plan: CatalogPlan, price: CatalogPrice): number {
+  if (plan.kind === 'one_time' && price.validity_days != null) return start + price.validity_days * DAY_MS
+  return addInterval(start, price)
+}
+
+function stackEndMs(sub: SubFixture, price: CatalogPrice, at: number): number {
+  if (subPermanent(sub)) return new Date(sub.current_period_end).getTime()
+  if (price.validity_days === null) return addInterval(at, price)
+  const base = Math.max(new Date(sub.current_period_end).getTime(), at)
+  return base + price.validity_days * DAY_MS
 }
 
 interface RowSpec {
   sub: SubFixture | null
   plan: CatalogPlan | null
   price: CatalogPrice | null
-  pack: CatalogPack | null
-  /** 新周期起点；null = 没有周期（流量包） */
   start: number | null
+  endMs: number | null
   credit: { credit: number; detail: CreditDetail } | null
-  /** 流量重置等业务：不算券、不算会员折扣 */
+  /** 流量重置：不收券 */
   noDiscount?: boolean
 }
 
 /** strictCoupon：建单时优惠码不能用就整单拒绝；报价时写进 coupon_error、不让报价失败 */
 function row(state: PortalState, spec: RowSpec, coupon: unknown, strictCoupon: boolean, subtotalOverride?: number): QuoteRow {
-  const subtotal = subtotalOverride !== undefined ? subtotalOverride : spec.pack ? spec.pack.unit_amount : spec.price!.unit_amount
+  const subtotal = subtotalOverride !== undefined ? subtotalOverride : spec.price!.unit_amount
   let discount = 0
   let couponError: string | null = null
   if (spec.noDiscount) {
     if (coupon !== undefined && coupon !== null && coupon !== '') {
-      if (strictCoupon) {
-        throw new BillingError(422, 'validation_failed', '流量重置不能使用优惠码')
-      }
+      if (strictCoupon) throw new BillingError(422, 'validation_failed', '流量重置不能使用优惠码')
       couponError = '流量重置不能使用优惠码'
     }
   } else {
@@ -104,58 +114,67 @@ function row(state: PortalState, spec: RowSpec, coupon: unknown, strictCoupon: b
       couponError = e.message
     }
   }
-  const pct = spec.noDiscount ? 0 : memberPercentOf(state)
-  const member = Math.min(Math.floor((subtotal * pct) / 100), Math.max(subtotal - discount, 0))
-  const member_percent = member > 0 ? pct : 0
   const credit = spec.credit?.credit ?? 0
-  const total = Math.max(0, subtotal - discount - member - credit)
-  const refund = Math.max(0, credit - (subtotal - discount - member))
+  const total = Math.max(0, subtotal - discount - credit)
+  const refund = Math.max(0, credit - (subtotal - discount))
+  const validityDays = spec.plan?.kind === 'one_time' ? (spec.price?.validity_days ?? null) : null
+  let periodEnd: string | null = null
+  if (spec.endMs !== null) periodEnd = new Date(spec.endMs).toISOString()
+  else if (spec.start !== null && spec.plan && spec.price) periodEnd = new Date(periodEndMs(spec.start, spec.plan, spec.price)).toISOString()
   return {
     subscription_id: spec.sub?.id ?? null,
     plan_id: spec.plan?.id ?? null,
-    pack_id: spec.pack?.id ?? null,
     price_id: spec.price?.id ?? null,
-    interval: spec.price?.billing_interval ?? '',
-    interval_count: spec.price?.interval_count ?? 0,
+    interval: spec.price?.billing_interval ?? 'one_time',
+    interval_count: spec.price?.interval_count ?? 1,
+    validity_days: validityDays,
     subtotal,
     discount,
-    member_discount: member,
-    member_percent,
     coupon: discount > 0 ? { code: couponFace(coupon)!.code } : null,
     coupon_error: couponError,
     credit,
     credit_detail: spec.credit?.detail ?? null,
     total,
     refund,
-    // 只有换套餐抵扣后 ≤ ¥0.99 的零头能免（A 路）；其余付不了的标 below_minimum、下单回 422
     with_balance: waiveSmallDue(applyBalance(total, state.balance, state.balance, MIN_PAYMENT), spec.credit !== null),
     without_balance: waiveSmallDue(applyBalance(total, state.balance, 0, MIN_PAYMENT), spec.credit !== null),
     period_start: spec.start === null ? null : new Date(spec.start).toISOString(),
-    period_end: spec.start === null || !spec.price ? null : new Date(addInterval(spec.start, spec.price)).toISOString(),
+    period_end: periodEnd,
     previous_end: spec.sub ? spec.sub.current_period_end : null,
   }
 }
 
-const cnyPrices = (plan: CatalogPlan) => plan.prices.filter((p) => p.currency === 'CNY')
 function ownedSub(state: PortalState, id: unknown): SubFixture {
   const sub = typeof id === 'string' ? state.subs.find((s) => s.id === id) : undefined
   if (!sub) throw new BillingError(404, 'not_found', '订阅不存在')
   return sub
 }
 
-function changeCheck(sub: SubFixture, plan: CatalogPlan, now: number) {
-  if (plan.id === sub.plan_id) throw new BillingError(409, 'conflict', '与当前套餐相同，请使用续费')
-  if (!plan.allow_upgrade) throw new BillingError(409, 'conflict', '目标套餐不允许变更')
-  if (!isLiveSub(sub) && !isRevivable(sub, now)) throw new BillingError(409, 'conflict', '当前订阅状态不能变更')
+function assertSubActive(sub: SubFixture, at: number) {
+  if (!isLiveSub(sub) && !isRevivable(sub, at)) {
+    throw new BillingError(409, 'conflict', '订阅已过期太久，不能再续费')
+  }
 }
 
-const changeSpec = (sub: SubFixture, plan: CatalogPlan, price: CatalogPrice, at: number): RowSpec => ({ sub, plan, price, pack: null, start: at, credit: creditOf(sub, at) })
+function changeCheck(sub: SubFixture, plan: CatalogPlan, at: number) {
+  if (plan.id === sub.plan_id) throw new BillingError(409, 'conflict', '与当前套餐相同，请使用续费')
+  if (!plan.allowUpgrade) throw new BillingError(409, 'conflict', '目标套餐不允许变更')
+  if (!isLiveSub(sub) && !isRevivable(sub, at)) throw new BillingError(409, 'conflict', '当前订阅状态不能变更')
+}
+
+const changeSpec = (sub: SubFixture, plan: CatalogPlan, price: CatalogPrice, at: number): RowSpec => ({
+  sub,
+  plan,
+  price,
+  start: at,
+  endMs: null,
+  credit: creditOf(sub, at),
+})
 
 export interface QuoteInput {
   action: unknown
   subscription_id?: unknown
   plan_id?: unknown
-  pack_id?: unknown
   coupon_code?: unknown
   new_copy?: unknown
 }
@@ -166,11 +185,36 @@ export function quoteRows(state: PortalState, req: QuoteInput, at: number, stric
   switch (req.action) {
     case 'renew': {
       const sub = ownedSub(state, req.subscription_id)
+      assertSubActive(sub, at)
       const plan = findPlan(sub.plan_id)
-      if (!isLiveSub(sub) && !isRevivable(sub, at)) throw new BillingError(409, 'conflict', '这条订阅当前不能续费')
-      if (!plan?.allow_renewal) throw new BillingError(409, 'conflict', '该套餐当前不允许续费')
+      if (!plan) throw new BillingError(404, 'not_found', '套餐不存在')
+      if (plan.kind === 'one_time') throw new BillingError(409, 'conflict', '目标套餐不允许变更')
+      if (!plan.allowRenewal) throw new BillingError(409, 'conflict', '该套餐当前不允许续费')
       const start = isLiveSub(sub) ? new Date(sub.current_period_end).getTime() : at
-      return cnyPrices(plan).map((price) => row(state, { sub, plan, price, pack: null, start, credit: null }, coupon, strictCoupon))
+      return plan.prices.map((price) => row(state, { sub, plan, price, start, endMs: null, credit: null }, coupon, strictCoupon))
+    }
+    case 'stack': {
+      const sub = ownedSub(state, req.subscription_id)
+      assertSubActive(sub, at)
+      const plan = findPlan(sub.plan_id)
+      if (!plan || plan.kind !== 'one_time') throw new BillingError(409, 'conflict', '只有一次性套餐可以叠加')
+      if (!plan.allowNew) throw new BillingError(409, 'conflict', '该套餐当前不接受新购')
+      const start = new Date(sub.current_period_start).getTime()
+      return plan.prices.map((price) =>
+        row(
+          state,
+          {
+            sub,
+            plan,
+            price,
+            start,
+            endMs: stackEndMs(sub, price, at),
+            credit: null,
+          },
+          coupon,
+          strictCoupon,
+        ),
+      )
     }
     case 'change': {
       const sub = req.subscription_id === undefined ? null : ownedSub(state, req.subscription_id)
@@ -178,22 +222,21 @@ export function quoteRows(state: PortalState, req: QuoteInput, at: number, stric
       if (req.plan_id !== undefined && !plan) throw new BillingError(404, 'not_found', '套餐不存在')
       if (sub && plan) {
         changeCheck(sub, plan, at)
-        return cnyPrices(plan).map((price) => row(state, changeSpec(sub, plan, price, at), coupon, strictCoupon))
+        return plan.prices.map((price) => row(state, changeSpec(sub, plan, price, at), coupon, strictCoupon))
       }
       if (sub) {
         if (!isLiveSub(sub) && !isRevivable(sub, at)) throw new BillingError(409, 'conflict', '当前订阅状态不能变更')
-        // A 路实现：最多展开 20 个套餐，每个套餐的全部价格档都返回
         return plansNow()
-          .filter((p) => p.id !== sub.plan_id && p.allow_upgrade && cnyPrices(p).length > 0)
+          .filter((p) => p.id !== sub.plan_id && p.allowUpgrade && p.prices.length > 0)
           .slice(0, MAX_ROWS)
-          .flatMap((p) => cnyPrices(p).map((price) => row(state, changeSpec(sub, p, price, at), coupon, strictCoupon)))
+          .flatMap((p) => p.prices.map((price) => row(state, changeSpec(sub, p, price, at), coupon, strictCoupon)))
       }
       if (plan) {
-        if (!plan.allow_upgrade) throw new BillingError(409, 'conflict', '目标套餐不允许变更')
+        if (!plan.allowUpgrade) throw new BillingError(409, 'conflict', '目标套餐不允许变更')
         return state.subs
           .filter((s) => s.plan_id !== plan.id && (isLiveSub(s) || isRevivable(s, at)))
           .slice(0, MAX_ROWS)
-          .flatMap((s) => cnyPrices(plan).map((price) => row(state, changeSpec(s, plan, price, at), coupon, strictCoupon)))
+          .flatMap((s) => plan.prices.map((price) => row(state, changeSpec(s, plan, price, at), coupon, strictCoupon)))
       }
       throw new BillingError(422, 'validation_failed', '参数不合法', { plan_id: '订阅与套餐至少给一个' })
     }
@@ -201,39 +244,44 @@ export function quoteRows(state: PortalState, req: QuoteInput, at: number, stric
       if (!isUuid(req.plan_id)) throw new BillingError(422, 'validation_failed', '参数不合法', { plan_id: '必填' })
       const plan = findPlan(req.plan_id)
       if (!plan) throw new BillingError(404, 'not_found', '套餐不存在')
-      return cnyPrices(plan).map((price) => row(state, { sub: null, plan, price, pack: null, start: at, credit: null }, coupon, strictCoupon))
-    }
-    case 'pack': {
-      const pack = findPack(req.pack_id)
-      if (!pack) throw new BillingError(404, 'not_found', '流量包不存在或已下架')
-      const sub = req.subscription_id === undefined ? null : ownedSub(state, req.subscription_id)
-      return [row(state, { sub, plan: null, price: null, pack, start: null, credit: null }, coupon, strictCoupon)]
+      if (!plan.allowNew) throw new BillingError(409, 'conflict', '该套餐当前不接受新购')
+      const newCopy = req.new_copy === true
+      if (!newCopy) {
+        const same = state.subs.filter((s) => s.plan_id === plan.id && (isLiveSub(s) || isRevivable(s, at)))
+        if (same.length > 0) {
+          const msg =
+            plan.kind === 'one_time'
+              ? '你已有这个一次性套餐，可以叠加到原来那一份，或选择另开一份'
+              : '你已有这个套餐的订阅，请在原订阅上续费，订阅链接不变'
+          throw new BillingError(409, 'conflict', msg)
+        }
+      }
+      return plan.prices.map((price) => row(state, { sub: null, plan, price, start: at, endMs: null, credit: null }, coupon, strictCoupon))
     }
     case 'reset': {
       const sub = ownedSub(state, req.subscription_id)
-      if (!isLiveSub(sub) || !(sub.plan_id in RESET_PRICES) || !sub.limitBytes || sub.limitBytes <= 0) {
+      const plan = findPlan(sub.plan_id)
+      if (!plan || plan.reset === null || sub.limitBytes === null || sub.limitBytes <= 0 || !isLiveSub(sub)) {
         return []
       }
+      if (plan.reset.limit !== null && sub.resetsUsed >= plan.reset.limit) {
+        throw new BillingError(409, 'conflict', '本期的流量重置次数已用完')
+      }
       assertNoPendingReset(state, sub.id)
-      const subtotal = RESET_PRICES[sub.plan_id]!
-      const plan = findPlan(sub.plan_id) ?? null
-      return [row(state, { sub, plan, price: null, pack: null, start: null, credit: null, noDiscount: true }, coupon, strictCoupon, subtotal)]
+      const subtotal = plan.reset.price
+      return [row(state, { sub, plan, price: null, start: null, endMs: null, credit: null, noDiscount: true }, coupon, strictCoupon, subtotal)]
     }
     default:
-      throw new BillingError(422, 'validation_failed', '参数不合法', { action: '只能是 renew / change / new / pack / reset' })
+      throw new BillingError(422, 'validation_failed', '参数不合法', { action: '只能是 new、renew、stack、change 或 reset' })
   }
 }
 
-// ---------------------------------------------------------------------------
-// 建单时的比对：as_of 窗口、按 as_of 重算、余额经 ApplyBalance、与 expect 逐项比
-// ---------------------------------------------------------------------------
 export const QUOTE_CHANGED = () => new BillingError(409, 'quote_changed', '金额刚变了，请再确认一次')
 
 export function quoteTime(body: Json, now = Date.now()): number {
   if (body.as_of === undefined) return now
   const at = typeof body.as_of === 'string' ? Date.parse(body.as_of) : Number.NaN
   if (Number.isNaN(at)) throw new BillingError(422, 'validation_failed', '参数不合法', { as_of: '须为 RFC3339 时间' })
-  // 允许 5 秒时钟误差
   if (at < now - AS_OF_WINDOW_MS || at > now + 5000) throw QUOTE_CHANGED()
   return at
 }
@@ -259,34 +307,72 @@ export function settle(state: PortalState, rows: QuoteRow[], priceId: string | n
   return { row: hit, balance }
 }
 
-
-/** 同一套餐同时只能有一张未付款的新购单（设计稿 2.4，防两个标签页各付一次）；报价与建单都拦（Go quoteNewTx / CreateOrder 都调 ensureNoPendingNewOrder） */
+/** 同一套餐同时只能有一张未付款的新购单（防两个标签页各付一次）；报价与建单都拦（Go ensureNoPendingNewOrder）。过了付款期限还没关掉的那张也拦，另带 lapsed=true，门户只给「取消它」 */
 export function assertNoPendingNew(state: PortalState, planId: string, planName: string) {
-  // 不先清超时单：过了付款期限但还没被关掉的那张也拦（A 路），文案换成「已超过付款期限」
   const open = state.orders.find((o) => o.kind === 'new' && o.status === 'pending_payment' && o.effect.type === 'new' && o.effect.planId === planId)
   if (!open) return
   const lapsed = open.expires_at !== undefined && new Date(open.expires_at).getTime() <= Date.now()
   const msg = lapsed ? `你有一张已超过付款期限的「${planName}」订单，取消后再买` : `你有一张还没付款的「${planName}」订单，继续付款或取消后再买`
-  // 超过付款期限的那张另带 lapsed=true（Go ensureNoPendingNewOrder），门户只给「取消它」
   throw new BillingError(409, 'order_pending', msg, lapsed ? { order_id: open.id, lapsed: 'true' } : { order_id: open.id })
+}
+
+function hasPendingChange(state: PortalState, subId: string): boolean {
+  return state.orders.some(
+    (o) =>
+      o.subscription_id === subId &&
+      o.status === 'pending_payment' &&
+      (o.kind === 'renewal' || o.kind === 'stack' || o.kind === 'upgrade'),
+  )
+}
+
+function landingCandidates(state: PortalState, at: number): SubFixture[] {
+  const live = state.subs.filter((s) => !isDead(s, at))
+  live.sort((a, b) => {
+    const al = isLiveSub(a) ? 1 : 0
+    const bl = isLiveSub(b) ? 1 : 0
+    if (al !== bl) return bl - al
+    return new Date(b.current_period_end).getTime() - new Date(a.current_period_end).getTime()
+  })
+  return live.filter((s) => !hasPendingChange(state, s.id)).slice(0, MAX_ROWS)
 }
 
 export const quote: MockModule = {
   routes: {
-    // 只读、不幂等；挂 checkout 开关（假后端恒开）
+    'GET /v1/me/checkout/landings': async (ctx) => {
+      if (!(await gate(ctx))) return
+      const planId = ctx.query.get('plan_id')
+      if (!planId || !isUuid(planId)) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { plan_id: '请选择套餐' })
+      const plan = findPlan(planId)
+      if (!plan) return ctx.fail(404, 'not_found', '套餐不存在')
+      if (!plan.allowNew) return ctx.fail(409, 'conflict', '该套餐当前不接受新购')
+      const state = portalState(ctx.user.userId)
+      const at = Date.now()
+      const subs = landingCandidates(state, at)
+      const options: Array<{ mode: string; subscription_id?: string }> = [{ mode: 'new' }]
+      for (const sub of subs) {
+        if (sub.plan_id === plan.id) {
+          if (plan.kind === 'one_time') options.push({ mode: 'stack', subscription_id: sub.id })
+          else if (plan.allowRenewal) options.push({ mode: 'renew', subscription_id: sub.id })
+        }
+      }
+      for (const sub of subs) {
+        if (sub.plan_id !== plan.id && plan.allowUpgrade) options.push({ mode: 'change', subscription_id: sub.id })
+      }
+      ctx.send(200, { options })
+    },
+
     'POST /v1/me/checkout/quote': async (ctx) => {
       if (!(await gate(ctx))) return
-      const body = await readStrict(ctx, ['action', 'subscription_id', 'plan_id', 'pack_id', 'coupon_code', 'new_copy'])
+      const body = await readStrict(ctx, ['action', 'subscription_id', 'plan_id', 'coupon_code', 'new_copy'])
       if (!body) return
       const state = portalState(ctx.user.userId)
       const at = Date.now()
       try {
         const req = body as unknown as QuoteInput
-        // 与 Go 一致：同款已有一张没付的新购单时报价阶段就回 409 order_pending（门户确认页按码给「取消它 / 去付款」）
         const plan = req.action === 'new' && isUuid(req.plan_id) ? findPlan(req.plan_id) : undefined
         if (plan) assertNoPendingNew(state, plan.id, plan.name)
         const quotes = quoteRows(state, req, at)
-        ctx.send(200, { as_of: new Date(at).toISOString(), currency: 'CNY', balance: state.balance, min_payment: MIN_PAYMENT, quotes })
+        ctx.send(200, { as_of: new Date(at).toISOString(), balance: state.balance, min_payment: MIN_PAYMENT, quotes })
       } catch (e) {
         if (!(e instanceof BillingError)) throw e
         ctx.fail(e.status, e.code, e.message, e.fields)
