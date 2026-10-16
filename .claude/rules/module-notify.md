@@ -14,7 +14,8 @@ paths:
   - 到期类的键带周期末 Unix 秒（`expiring:`、`expired:`、`recall:`），流量预警带档位与配额当期起点（`quota:<订阅>:<档>:<起点>`）；不带周期的话续费后的下一期再也发不出。
 - 内置模板登记在 `registry.go`，后台只能改内容不能新建；默认内容与迁移 `00007_notify.sql`、`00026_notify_inbox.sql` 的种子逐字一致，「恢复默认」回到代码里的值，改一处必须同改另一处（PG 测试对照）。模板变量走白名单，主题去换行防邮件头注入（`headerSafe`）。
 - 模板类别：transactional 不可退订；service 用户可按渠道关；marketing 是营销与群发。
-- 扫描 `notify:scan` 约每 5 分钟：先按游标写支付成功通知（`scan_paid.go`，停机多久都不漏，第一次只回看 `paidLookback`），再扫到期提醒、过期召回与流量预警。每轮最多写 `scanBatch` 件，余下的下一轮接着写（一轮写完会超任务时限）。时刻按站点时区显示到分钟。
+- 扫描 `notify:scan` 约每 5 分钟：先按游标写支付成功通知（`scan_paid.go`，停机多久都不漏，第一次只回看 `paidLookback`），再扫到期提醒、过期召回与流量预警。每轮最多写 `scanBatch` 件，余下的下一轮接着写（一轮写完会超任务时限）。时刻按站点时区显示到分钟；永久的一次性套餐（`subsvc.IsPermanent`）的到期写「永久」（`paidExpiry`）。
+  支付成功只有 `order.paid` 一套模板（新购、续费、叠加、换套餐共用）；剩余流量取配额行的 `Remaining`，已含本期赠送（`bonus_value`），TG `/traffic` 的「共」按已用 + 剩余算。
 - `SaveMailSettings` 在一个事务里先写 SMTP 设置再写注册设置：开启邮箱验证的校验要读到新的 SMTP 值。
 - 公告：已撤回不可再编辑，已发布只能保持发布（`canSaveAs`）；定时公告由 `PublishDueAnnouncements` 每分钟转为已发布。
 - Telegram bot（`telegram.go`、`telegram_bot.go`）只认私聊、管理员群组里的回复、用户群的入群申请三种更新，其余一律忽略、不回话：
