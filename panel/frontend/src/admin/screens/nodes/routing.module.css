@@ -1,0 +1,138 @@
+/* 路由页（全局与路由组共用）：上下两段（出站在上、规则在下）+ 底部发布行 */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  min-width: 0;
+}
+
+/* 段：上边一条粗线分隔，直角 */
+.section {
+  padding: var(--space-12) 0 0;
+  border-top: 1px solid var(--text);
+}
+
+.sectionHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+  padding-bottom: var(--space-8);
+  border-bottom: 1px solid var(--border);
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: var(--fs-body);
+  font-weight: var(--fw-semibold);
+}
+
+.sectionHint {
+  margin: var(--space-4) 0 0;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+/* 出站行：标签 | 类型 | 地址 | 操作 */
+.rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 160px 110px minmax(0, 1fr) auto;
+  gap: var(--space-8);
+  align-items: center;
+  padding: var(--space-8) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.tag {
+  overflow: hidden;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-weight: var(--fw-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.type {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+}
+
+.address {
+  overflow: hidden;
+  min-width: 0;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 仍被规则引用的出站：删除按钮降一点不透明度做视觉提示（按钮仍可点，点了 toast 拦下） */
+.referred {
+  opacity: 0.55;
+}
+
+.builtinText {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+/* 就地添加出站的表单 */
+.addForm {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 180px;
+  gap: var(--space-8);
+  align-items: start;
+  padding: var(--space-12) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.addSettings {
+  grid-column: 1 / -1;
+}
+
+.addActions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-8);
+}
+
+/* 底部发布行 */
+.publishRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-12);
+}
+
+.dirtyNote {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+.spacer {
+  flex: 1;
+}
+
+/* 窄屏：出站行折成两列换行，不横向溢出 */
+@media (max-width: 639px) {
+  .row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .type {
+    grid-column: 1;
+  }
+
+  .address {
+    grid-column: 1 / -1;
+  }
+}
