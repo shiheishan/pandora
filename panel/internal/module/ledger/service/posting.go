@@ -21,15 +21,12 @@ type lockedAccount struct {
 	Balance decimal.Decimal
 }
 
-// validatePosting 校验一笔交易：kind 与币种合法；来源成对且 source_type 匹配 ^[a-z_]{1,32}$；
+// validatePosting 校验一笔交易：kind 合法；来源成对且 source_type 匹配 ^[a-z_]{1,32}$；
 // 备注是合法 UTF-8、不含 NUL、不超过 500 字（按 rune 计）；至少两条分录；
 // 每条分录科目类型合法、归属形状对、方向合法、金额 > 0 且 money.Check 通过；借贷相等。
 func validatePosting(p Posting) error {
 	if !p.Kind.Valid() {
 		return fmt.Errorf("%w: 交易类型不合法", ErrInvalidPosting)
-	}
-	if !p.Currency.Valid() {
-		return fmt.Errorf("%w: 币种不合法", ErrInvalidPosting)
 	}
 	sourceTypeEmpty := p.SourceType == ""
 	sourceIDEmpty := p.SourceID == uuid.Nil

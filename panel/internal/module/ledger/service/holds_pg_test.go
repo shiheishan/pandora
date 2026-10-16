@@ -5,19 +5,17 @@ import (
 	"testing"
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
 )
 
 func TestHoldAndRelease(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	cur := money.USD
-	order := e.newOrder(t, ctx, user, cur)
-	e.fund(t, ctx, user, cur, "10.00")
+	order := e.newOrder(t, ctx, user)
+	e.fund(t, ctx, user, "10.00")
 
 	hold, err := e.svc.HoldForOrder(ctx, HoldInput{
-		OrderID: order, UserID: user, Currency: cur, Amount: dec("4.00"),
+		OrderID: order, UserID: user, Amount: dec("4.00"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -25,10 +23,10 @@ func TestHoldAndRelease(t *testing.T) {
 	if hold.Status != HoldHeld || !hold.Amount.Equal(dec("4.00")) {
 		t.Fatalf("冻结状态/金额不对: %+v", hold)
 	}
-	if !e.balanceOf(t, ctx, user, cur).Equal(dec("6.00")) {
+	if !e.balanceOf(t, ctx, user).Equal(dec("6.00")) {
 		t.Fatalf("可用余额应为 6")
 	}
-	if !e.accountBalance(t, ctx, UserAccount(UserBalanceHold, user), cur).Equal(dec("4.00")) {
+	if !e.accountBalance(t, ctx, UserAccount(UserBalanceHold, user)).Equal(dec("4.00")) {
 		t.Fatalf("hold 科目应为 4")
 	}
 
@@ -36,10 +34,10 @@ func TestHoldAndRelease(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("首次释放应 true: ok=%v err=%v", ok, err)
 	}
-	if !e.balanceOf(t, ctx, user, cur).Equal(dec("10.00")) {
+	if !e.balanceOf(t, ctx, user).Equal(dec("10.00")) {
 		t.Fatalf("释放后可用应为 10")
 	}
-	if !e.accountBalance(t, ctx, UserAccount(UserBalanceHold, user), cur).Equal(dec("0")) {
+	if !e.accountBalance(t, ctx, UserAccount(UserBalanceHold, user)).Equal(dec("0")) {
 		t.Fatalf("hold 科目应为 0")
 	}
 	var st string
@@ -64,10 +62,9 @@ func TestHoldAndRelease(t *testing.T) {
 func TestHoldInsufficient(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	cur := money.USD
-	e.fund(t, ctx, user, cur, "3.00")
+	e.fund(t, ctx, user, "3.00")
 	_, err := e.svc.HoldForOrder(ctx, HoldInput{
-		OrderID: uuid.New(), UserID: user, Currency: cur, Amount: dec("4.00"),
+		OrderID: uuid.New(), UserID: user, Amount: dec("4.00"),
 	})
 	if !errors.Is(err, ErrInsufficientBalance) {
 		t.Fatalf("期望余额不足，得 %v", err)
@@ -77,57 +74,55 @@ func TestHoldInsufficient(t *testing.T) {
 func TestHoldTwice(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	cur := money.USD
-	order := e.newOrder(t, ctx, user, cur)
-	e.fund(t, ctx, user, cur, "10.00")
+	order := e.newOrder(t, ctx, user)
+	e.fund(t, ctx, user, "10.00")
 	if _, err := e.svc.HoldForOrder(ctx, HoldInput{
-		OrderID: order, UserID: user, Currency: cur, Amount: dec("1.00"),
+		OrderID: order, UserID: user, Amount: dec("1.00"),
 	}); err != nil {
 		t.Fatal(err)
 	}
 	_, err := e.svc.HoldForOrder(ctx, HoldInput{
-		OrderID: order, UserID: user, Currency: cur, Amount: dec("1.00"),
+		OrderID: order, UserID: user, Amount: dec("1.00"),
 	})
 	if !errors.Is(err, ErrHoldExists) {
 		t.Fatalf("第二次冻结应 ErrHoldExists，得 %v", err)
 	}
-	if !e.balanceOf(t, ctx, user, cur).Equal(dec("9.00")) {
-		t.Fatalf("ErrHoldExists 后同一 ctx 可用余额应为 9，得 %s", e.balanceOf(t, ctx, user, cur))
+	if !e.balanceOf(t, ctx, user).Equal(dec("9.00")) {
+		t.Fatalf("ErrHoldExists 后同一 ctx 可用余额应为 9，得 %s", e.balanceOf(t, ctx, user))
 	}
 }
 
 func TestPostOrderPaidMixed(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	cur := money.USD
-	order := e.newOrder(t, ctx, user, cur)
-	e.fund(t, ctx, user, cur, "10.00")
+	order := e.newOrder(t, ctx, user)
+	e.fund(t, ctx, user, "10.00")
 	if _, err := e.svc.HoldForOrder(ctx, HoldInput{
-		OrderID: order, UserID: user, Currency: cur, Amount: dec("3.00"),
+		OrderID: order, UserID: user, Amount: dec("3.00"),
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	txnID, err := e.svc.PostOrderPaid(ctx, OrderPaid{
-		OrderID: order, UserID: user, Currency: cur,
+		OrderID: order, UserID: user,
 		Total: dec("10.00"), Paid: dec("7.00"), Fee: dec("0.20"), Provider: "epay",
 	})
 	if err != nil || txnID == uuid.Nil {
 		t.Fatalf("结算应成功: id=%v err=%v", txnID, err)
 	}
-	if !e.accountBalance(t, ctx, UserAccount(UserBalanceHold, user), cur).Equal(dec("0")) {
+	if !e.accountBalance(t, ctx, UserAccount(UserBalanceHold, user)).Equal(dec("0")) {
 		t.Fatalf("hold 应为 0")
 	}
-	if !e.balanceOf(t, ctx, user, cur).Equal(dec("7.00")) {
+	if !e.balanceOf(t, ctx, user).Equal(dec("7.00")) {
 		t.Fatalf("用户余额应为 7")
 	}
-	if !e.accountBalance(t, ctx, PlatformAccount(PlatformRevenue, RefMain), cur).Equal(dec("10.00")) {
+	if !e.accountBalance(t, ctx, PlatformAccount(PlatformRevenue, RefMain)).Equal(dec("10.00")) {
 		t.Fatalf("revenue 应为 10")
 	}
-	if !e.accountBalance(t, ctx, PlatformAccount(ChannelCash, "epay"), cur).Equal(dec("6.80")) {
+	if !e.accountBalance(t, ctx, PlatformAccount(ChannelCash, "epay")).Equal(dec("6.80")) {
 		t.Fatalf("channel 应为 6.80")
 	}
-	if !e.accountBalance(t, ctx, PlatformAccount(PlatformFeeExpense, "epay"), cur).Equal(dec("0.20")) {
+	if !e.accountBalance(t, ctx, PlatformAccount(PlatformFeeExpense, "epay")).Equal(dec("0.20")) {
 		t.Fatalf("fee 应为 0.20")
 	}
 	var st string
@@ -148,16 +143,15 @@ func TestPostOrderPaidMixed(t *testing.T) {
 func TestPostOrderPaidChannelOnly(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	cur := money.USD
-	order := e.newOrder(t, ctx, user, cur)
+	order := e.newOrder(t, ctx, user)
 	if _, err := e.svc.PostOrderPaid(ctx, OrderPaid{
-		OrderID: order, UserID: user, Currency: cur,
+		OrderID: order, UserID: user,
 		Total: dec("5.00"), Paid: dec("5.00"), Fee: dec("0"), Provider: "epay",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	_, err := e.svc.PostOrderPaid(ctx, OrderPaid{
-		OrderID: order, UserID: user, Currency: cur,
+		OrderID: order, UserID: user,
 		Total: dec("5.00"), Paid: dec("5.00"), Fee: dec("0"), Provider: "epay",
 	})
 	if !errors.Is(err, ErrDuplicatePosting) {
@@ -175,11 +169,10 @@ func TestPostOrderPaidChannelOnly(t *testing.T) {
 func TestPostOrderPaidAfterRelease(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	cur := money.USD
-	order := e.newOrder(t, ctx, user, cur)
-	e.fund(t, ctx, user, cur, "10.00")
+	order := e.newOrder(t, ctx, user)
+	e.fund(t, ctx, user, "10.00")
 	if _, err := e.svc.HoldForOrder(ctx, HoldInput{
-		OrderID: order, UserID: user, Currency: cur, Amount: dec("3.00"),
+		OrderID: order, UserID: user, Amount: dec("3.00"),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +181,7 @@ func TestPostOrderPaidAfterRelease(t *testing.T) {
 		t.Fatalf("释放应成功: ok=%v err=%v", ok, err)
 	}
 	_, err = e.svc.PostOrderPaid(ctx, OrderPaid{
-		OrderID: order, UserID: user, Currency: cur,
+		OrderID: order, UserID: user,
 		Total: dec("10.00"), Paid: dec("7.00"), Provider: "epay",
 	})
 	if !errors.Is(err, ErrHoldReleased) {
@@ -197,8 +190,8 @@ func TestPostOrderPaidAfterRelease(t *testing.T) {
 	if codeOf(err) != errs.Conflict {
 		t.Fatalf("ErrHoldReleased 应为 Conflict，得 %s", codeOf(err))
 	}
-	if !e.balanceOf(t, ctx, user, cur).Equal(dec("10.00")) {
-		t.Fatalf("余额应仍为 10，得 %s", e.balanceOf(t, ctx, user, cur))
+	if !e.balanceOf(t, ctx, user).Equal(dec("10.00")) {
+		t.Fatalf("余额应仍为 10，得 %s", e.balanceOf(t, ctx, user))
 	}
 	e.assertNoDrift(t, ctx)
 }
@@ -206,12 +199,11 @@ func TestPostOrderPaidAfterRelease(t *testing.T) {
 func TestCaptureFromBalance(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	cur := money.USD
-	order := e.newOrder(t, ctx, user, cur)
-	e.fund(t, ctx, user, cur, "10.00")
+	order := e.newOrder(t, ctx, user)
+	e.fund(t, ctx, user, "10.00")
 
 	h, txnID, err := e.svc.CaptureFromBalance(ctx, HoldInput{
-		OrderID: order, UserID: user, Currency: cur, Amount: dec("4.00"),
+		OrderID: order, UserID: user, Amount: dec("4.00"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -222,13 +214,13 @@ func TestCaptureFromBalance(t *testing.T) {
 	if h.CaptureTxnID == nil || *h.CaptureTxnID != txnID || txnID == uuid.Nil {
 		t.Fatalf("CaptureTxnID 应等于返回的 txnID: cap=%v txn=%v", h.CaptureTxnID, txnID)
 	}
-	if !e.balanceOf(t, ctx, user, cur).Equal(dec("6.00")) {
+	if !e.balanceOf(t, ctx, user).Equal(dec("6.00")) {
 		t.Fatalf("用户余额应为 6")
 	}
-	if !e.accountBalance(t, ctx, UserAccount(UserBalanceHold, user), cur).Equal(dec("0")) {
+	if !e.accountBalance(t, ctx, UserAccount(UserBalanceHold, user)).Equal(dec("0")) {
 		t.Fatalf("hold 科目应为 0")
 	}
-	if !e.accountBalance(t, ctx, PlatformAccount(PlatformRevenue, RefMain), cur).Equal(dec("4.00")) {
+	if !e.accountBalance(t, ctx, PlatformAccount(PlatformRevenue, RefMain)).Equal(dec("4.00")) {
 		t.Fatalf("revenue 应为 4")
 	}
 	var st string
@@ -244,13 +236,13 @@ func TestCaptureFromBalance(t *testing.T) {
 		t.Fatalf("已扣款后释放应 ErrHoldCaptured，得 %v", err)
 	}
 	_, _, err = e.svc.CaptureFromBalance(ctx, HoldInput{
-		OrderID: order, UserID: user, Currency: cur, Amount: dec("4.00"),
+		OrderID: order, UserID: user, Amount: dec("4.00"),
 	})
 	if !errors.Is(err, ErrHoldExists) {
 		t.Fatalf("同单再 Capture 应 ErrHoldExists，得 %v", err)
 	}
-	if !e.balanceOf(t, ctx, user, cur).Equal(dec("6.00")) {
-		t.Fatalf("ErrHoldExists 后余额应仍为 6，得 %s", e.balanceOf(t, ctx, user, cur))
+	if !e.balanceOf(t, ctx, user).Equal(dec("6.00")) {
+		t.Fatalf("ErrHoldExists 后余额应仍为 6，得 %s", e.balanceOf(t, ctx, user))
 	}
 	e.assertNoDrift(t, ctx)
 }
@@ -258,10 +250,9 @@ func TestCaptureFromBalance(t *testing.T) {
 func TestCaptureFromBalanceInsufficient(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	cur := money.USD
-	e.fund(t, ctx, user, cur, "3.00")
+	e.fund(t, ctx, user, "3.00")
 	_, _, err := e.svc.CaptureFromBalance(ctx, HoldInput{
-		OrderID: uuid.New(), UserID: user, Currency: cur, Amount: dec("4.00"),
+		OrderID: uuid.New(), UserID: user, Amount: dec("4.00"),
 	})
 	if !errors.Is(err, ErrInsufficientBalance) {
 		t.Fatalf("余额不足应 ErrInsufficientBalance，得 %v", err)
@@ -271,22 +262,21 @@ func TestCaptureFromBalanceInsufficient(t *testing.T) {
 func TestPostOrderPaidBalanceOnly(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	cur := money.USD
-	order := e.newOrder(t, ctx, user, cur)
-	e.fund(t, ctx, user, cur, "5.00")
+	order := e.newOrder(t, ctx, user)
+	e.fund(t, ctx, user, "5.00")
 	if _, err := e.svc.HoldForOrder(ctx, HoldInput{
-		OrderID: order, UserID: user, Currency: cur, Amount: dec("5.00"),
+		OrderID: order, UserID: user, Amount: dec("5.00"),
 	}); err != nil {
 		t.Fatal(err)
 	}
 	txnID, err := e.svc.PostOrderPaid(ctx, OrderPaid{
-		OrderID: order, UserID: user, Currency: cur,
+		OrderID: order, UserID: user,
 		Total: dec("5.00"), Paid: dec("0"),
 	})
 	if err != nil || txnID == uuid.Nil {
 		t.Fatalf("纯余额结算应成功: %v %v", txnID, err)
 	}
-	if !e.accountBalance(t, ctx, PlatformAccount(PlatformRevenue, RefMain), cur).Equal(dec("5.00")) {
+	if !e.accountBalance(t, ctx, PlatformAccount(PlatformRevenue, RefMain)).Equal(dec("5.00")) {
 		t.Fatalf("revenue 应为 5")
 	}
 	var st string
@@ -301,14 +291,13 @@ func TestPostOrderPaidBalanceOnly(t *testing.T) {
 func TestPostOrderPaidZeroTotal(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	cur := money.USD
-	order := e.newOrder(t, ctx, user, cur)
+	order := e.newOrder(t, ctx, user)
 	var before int64
 	if err := e.row(ctx, `SELECT count(*) FROM ledger_transactions`).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
 	id, err := e.svc.PostOrderPaid(ctx, OrderPaid{
-		OrderID: order, UserID: user, Currency: cur, Total: dec("0"), Paid: dec("0"),
+		OrderID: order, UserID: user, Total: dec("0"), Paid: dec("0"),
 	})
 	if err != nil || id != uuid.Nil {
 		t.Fatalf("零总额应 Nil 无错: id=%v err=%v", id, err)
@@ -325,16 +314,15 @@ func TestPostOrderPaidZeroTotal(t *testing.T) {
 func TestPostOrderPaidMismatch(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	cur := money.USD
-	order := e.newOrder(t, ctx, user, cur)
-	e.fund(t, ctx, user, cur, "10.00")
+	order := e.newOrder(t, ctx, user)
+	e.fund(t, ctx, user, "10.00")
 	if _, err := e.svc.HoldForOrder(ctx, HoldInput{
-		OrderID: order, UserID: user, Currency: cur, Amount: dec("3.00"),
+		OrderID: order, UserID: user, Amount: dec("3.00"),
 	}); err != nil {
 		t.Fatal(err)
 	}
 	_, err := e.svc.PostOrderPaid(ctx, OrderPaid{
-		OrderID: order, UserID: user, Currency: cur,
+		OrderID: order, UserID: user,
 		Total: dec("10.00"), Paid: dec("8.00"), Provider: "epay",
 	})
 	if !errors.Is(err, ErrInvalidPosting) {
@@ -342,21 +330,21 @@ func TestPostOrderPaidMismatch(t *testing.T) {
 	}
 
 	_, err = e.svc.PostOrderPaid(ctx, OrderPaid{
-		OrderID: uuid.New(), UserID: user, Currency: cur,
+		OrderID: uuid.New(), UserID: user,
 		Total: dec("5.00"), Paid: dec("6.00"), Provider: "epay",
 	})
 	if !errors.Is(err, ErrInvalidPosting) {
 		t.Fatalf("Paid>Total 应 ErrInvalidPosting，得 %v", err)
 	}
 	_, err = e.svc.PostOrderPaid(ctx, OrderPaid{
-		OrderID: uuid.New(), UserID: user, Currency: cur,
+		OrderID: uuid.New(), UserID: user,
 		Total: dec("10.00"), Paid: dec("5.00"), Fee: dec("6.00"), Provider: "epay",
 	})
 	if !errors.Is(err, ErrInvalidPosting) {
 		t.Fatalf("Fee>Paid 应 ErrInvalidPosting，得 %v", err)
 	}
 	_, err = e.svc.PostOrderPaid(ctx, OrderPaid{
-		OrderID: uuid.New(), UserID: user, Currency: cur,
+		OrderID: uuid.New(), UserID: user,
 		Total: dec("10.00"), Paid: dec("1.00"), Fee: dec("0"),
 	})
 	if !errors.Is(err, ErrInvalidPosting) {
@@ -367,16 +355,15 @@ func TestPostOrderPaidMismatch(t *testing.T) {
 func TestPostOrderPaidHoldNotUsed(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	cur := money.USD
-	order := e.newOrder(t, ctx, user, cur)
-	e.fund(t, ctx, user, cur, "10.00")
+	order := e.newOrder(t, ctx, user)
+	e.fund(t, ctx, user, "10.00")
 	if _, err := e.svc.HoldForOrder(ctx, HoldInput{
-		OrderID: order, UserID: user, Currency: cur, Amount: dec("3.00"),
+		OrderID: order, UserID: user, Amount: dec("3.00"),
 	}); err != nil {
 		t.Fatal(err)
 	}
 	_, err := e.svc.PostOrderPaid(ctx, OrderPaid{
-		OrderID: order, UserID: user, Currency: cur,
+		OrderID: order, UserID: user,
 		Total: dec("10.00"), Paid: dec("10.00"), Provider: "x",
 	})
 	if !errors.Is(err, ErrInvalidPosting) {

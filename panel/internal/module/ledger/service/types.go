@@ -6,7 +6,6 @@ import (
 	"errors"
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -131,7 +130,7 @@ const (
 	Credit Direction = "credit"
 )
 
-// AccountRef 指定一个科目：用户类给 UserID（Ref 留空），平台类给 Ref（UserID 留零值）。币种由所在交易决定。
+// AccountRef 指定一个科目：用户类给 UserID（Ref 留空），平台类给 Ref（UserID 留零值）。
 type AccountRef struct {
 	Type   AccountType
 	UserID uuid.UUID
@@ -158,7 +157,6 @@ type Leg struct {
 // Posting 是一笔待记的交易。SourceType 与 SourceID 要么都给、要么都不给。
 type Posting struct {
 	Kind       Kind
-	Currency   money.Currency
 	SourceType string
 	SourceID   uuid.UUID
 	Memo       string

@@ -1,7 +1,6 @@
 package service
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/base64"
@@ -12,12 +11,9 @@ import (
 	auditrepo "github.com/aegispanel/aegis/internal/module/audit/repo"
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/module/ledger/repo"
-	settingsrepo "github.com/aegispanel/aegis/internal/module/settings/repo"
-	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/aegispanel/aegis/internal/pkg/reqid"
 	"github.com/aegispanel/aegis/internal/pkg/reqmeta"
 	"github.com/aegispanel/aegis/internal/pkg/testkit"
@@ -46,7 +42,6 @@ type env struct {
 func newEnv(t *testing.T) (*env, context.Context) {
 	t.Helper()
 	d := testkit.DB(t)
-	_, rdb := testkit.Redis(t)
 
 	master := make([]byte, 32)
 	for i := range master {
@@ -56,17 +51,12 @@ func newEnv(t *testing.T) (*env, context.Context) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sealer, err := crypto.NewSealer(bytes.Repeat([]byte{7}, 32), 1)
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	auditSvc, err := auditsvc.New(auditrepo.New(d), keys)
 	if err != nil {
 		t.Fatal(err)
 	}
-	settings := settingssvc.New(settingsrepo.New(d), tx.NewManager(d), sealer, rdb, auditSvc)
-	svc := New(repo.New(d), tx.NewManager(d), settings, auditSvc)
+	svc := New(repo.New(d), tx.NewManager(d), auditSvc)
 	accounts := &fakeAccounts{deleted: map[uuid.UUID]bool{}}
 	svc.UseAccountStates(accounts)
 
@@ -94,7 +84,6 @@ func newCommitEnv(t *testing.T) (*env, context.Context) {
 	ledgerTables := []string{"balance_holds", "ledger_entries", "ledger_transactions", "ledger_accounts"}
 	testkit.Truncate(t, d, ledgerTables...)
 	t.Cleanup(func() { testkit.Truncate(t, d, ledgerTables...) })
-	_, rdb := testkit.Redis(t)
 
 	master := make([]byte, 32)
 	for i := range master {
@@ -104,16 +93,11 @@ func newCommitEnv(t *testing.T) (*env, context.Context) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sealer, err := crypto.NewSealer(bytes.Repeat([]byte{7}, 32), 1)
-	if err != nil {
-		t.Fatal(err)
-	}
 	auditSvc, err := auditsvc.New(auditrepo.New(d), keys)
 	if err != nil {
 		t.Fatal(err)
 	}
-	settings := settingssvc.New(settingsrepo.New(d), tx.NewManager(d), sealer, rdb, auditSvc)
-	svc := New(repo.New(d), tx.NewManager(d), settings, auditSvc)
+	svc := New(repo.New(d), tx.NewManager(d), auditSvc)
 	accounts := &fakeAccounts{deleted: map[uuid.UUID]bool{}}
 	svc.UseAccountStates(accounts)
 
@@ -159,12 +143,12 @@ func (e *env) mkUser(t *testing.T, ctx context.Context) uuid.UUID {
 
 // newOrder 插一张待付的新购订单并返回 ID：balance_holds.order_id 有指向 orders 的外键，冻结要挂在真订单上。
 // 订单号用随机串，满足 ^[A-Z0-9-]{1,64}$ 且全局唯一。真提交的环境在用例结束时连同它的冻结一起删掉。
-func (e *env) newOrder(t *testing.T, ctx context.Context, user uuid.UUID, cur money.Currency) uuid.UUID {
+func (e *env) newOrder(t *testing.T, ctx context.Context, user uuid.UUID) uuid.UUID {
 	t.Helper()
 	no := "T-" + strings.ToUpper(strings.ReplaceAll(uuid.NewString(), "-", ""))
 	var id uuid.UUID
-	if err := e.row(ctx, `INSERT INTO orders (order_no, user_id, kind, currency, subtotal_amount, total_amount, payable_amount, expires_at)
-		VALUES (?, ?, 'new', ?, 10, 10, 10, now() + interval '30 minutes') RETURNING id`, no, user, string(cur)).Scan(&id); err != nil {
+	if err := e.row(ctx, `INSERT INTO orders (order_no, user_id, kind, subtotal_amount, total_amount, payable_amount, expires_at)
+		VALUES (?, ?, 'new', 10, 10, 10, now() + interval '30 minutes') RETURNING id`, no, user).Scan(&id); err != nil {
 		t.Fatalf("建订单: %v", err)
 	}
 	if e.replica != nil {
@@ -181,12 +165,11 @@ func (e *env) newOrder(t *testing.T, ctx context.Context, user uuid.UUID, cur mo
 	return id
 }
 
-func (e *env) fund(t *testing.T, ctx context.Context, user uuid.UUID, cur money.Currency, amount string) {
+func (e *env) fund(t *testing.T, ctx context.Context, user uuid.UUID, amount string) {
 	t.Helper()
 	amt := dec(amount)
 	_, err := e.svc.Post(ctx, Posting{
-		Kind:     KindBalanceTopup,
-		Currency: cur,
+		Kind: KindBalanceTopup,
 		Legs: []Leg{
 			{Account: PlatformAccount(ChannelCash, "test"), Direction: Debit, Amount: amt},
 			{Account: UserAccount(UserBalance, user), Direction: Credit, Amount: amt},
@@ -197,16 +180,16 @@ func (e *env) fund(t *testing.T, ctx context.Context, user uuid.UUID, cur money.
 	}
 }
 
-func (e *env) balanceOf(t *testing.T, ctx context.Context, user uuid.UUID, cur money.Currency) decimal.Decimal {
+func (e *env) balanceOf(t *testing.T, ctx context.Context, user uuid.UUID) decimal.Decimal {
 	t.Helper()
-	bal, err := e.svc.Balance(ctx, user, cur)
+	bal, err := e.svc.Balance(ctx, user)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return bal
 }
 
-func (e *env) accountBalance(t *testing.T, ctx context.Context, ref AccountRef, cur money.Currency) decimal.Decimal {
+func (e *env) accountBalance(t *testing.T, ctx context.Context, ref AccountRef) decimal.Decimal {
 	t.Helper()
 	var owner *uuid.UUID
 	if ref.Type.UserOwned() {
@@ -216,9 +199,9 @@ func (e *env) accountBalance(t *testing.T, ctx context.Context, ref AccountRef, 
 	var bal sql.NullString
 	err := e.row(ctx, `
 SELECT balance FROM ledger_accounts
-WHERE account_type = ? AND currency = ?
+WHERE account_type = ?
   AND owner_user_id IS NOT DISTINCT FROM ? AND owner_ref = ?`,
-		string(ref.Type), string(cur), owner, ref.Ref,
+		string(ref.Type), owner, ref.Ref,
 	).Scan(&bal)
 	if err == sql.ErrNoRows {
 		return decimal.Zero

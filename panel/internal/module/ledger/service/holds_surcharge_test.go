@@ -4,7 +4,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -15,7 +14,6 @@ func TestOrderPaidLegsSurcharge(t *testing.T) {
 	p := OrderPaid{
 		OrderID:   orderID,
 		UserID:    userID,
-		Currency:  money.CNY,
 		Total:     decimal.RequireFromString("10.00"),
 		Paid:      decimal.RequireFromString("10.00"),
 		Fee:       decimal.RequireFromString("0.05"),
@@ -61,7 +59,6 @@ func TestOrderPaidLegsSurchargeWithBalance(t *testing.T) {
 	p := OrderPaid{
 		OrderID:   orderID,
 		UserID:    userID,
-		Currency:  money.CNY,
 		Total:     decimal.RequireFromString("10.00"),
 		Paid:      decimal.RequireFromString("6.00"),
 		Fee:       decimal.Zero,
@@ -107,7 +104,6 @@ func TestOrderPaidLegsNoSurcharge(t *testing.T) {
 	p := OrderPaid{
 		OrderID:   orderID,
 		UserID:    userID,
-		Currency:  money.CNY,
 		Total:     decimal.RequireFromString("10.00"),
 		Paid:      decimal.RequireFromString("10.00"),
 		Fee:       decimal.RequireFromString("0.05"),
@@ -141,7 +137,6 @@ func TestValidateOrderPaidSurcharge(t *testing.T) {
 	base := OrderPaid{
 		OrderID:   orderID,
 		UserID:    userID,
-		Currency:  money.CNY,
 		Total:     decimal.RequireFromString("10.00"),
 		Paid:      decimal.RequireFromString("10.00"),
 		Fee:       decimal.RequireFromString("0.50"),

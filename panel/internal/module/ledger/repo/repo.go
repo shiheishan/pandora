@@ -37,7 +37,6 @@ func mapErr(err error) error { return constraintErrs.Map(err) }
 // AccountKey 是科目的业务键：用户类科目 OwnerUserID 非空、OwnerRef 为空；平台类反之。
 type AccountKey struct {
 	Type        string
-	Currency    string
 	OwnerUserID *uuid.UUID
 	OwnerRef    string
 }
