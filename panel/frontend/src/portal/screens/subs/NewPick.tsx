@@ -53,6 +53,7 @@ export function NewPick() {
   const failed = h.subs.isError ? h.subs : plans.isError ? plans : null
   if (failed) return <LoadError error={failed.error} onRetry={() => void failed.refetch()} what="套餐" />
   const first = h.held.find(isLive)
+  const buyable = plans.data!.filter((p) => p.allow_new_purchase)
   return (
     <div className={flowCss.stack}>
       <Callout>会得到一个新链接，和现在的分开用：各自的流量、各自到期。</Callout>
@@ -68,11 +69,11 @@ export function NewPick() {
           </div>
         </div>
       )}
-      {plans.data!.length === 0 ? (
+      {buyable.length === 0 ? (
         <Empty title="暂时没有可买的套餐" description="新套餐上架后会出现在这里。" />
       ) : (
         <div className={flowCss.cards}>
-          {plans.data!.map((p) => (
+          {buyable.map((p) => (
             <NewPlanCard key={p.id} plan={p} held={h.held} />
           ))}
         </div>

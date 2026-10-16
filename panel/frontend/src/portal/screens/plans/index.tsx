@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { navigate, useHashLocation } from '../../../core/router'
 import { Empty, Skeleton, Tag } from '../../../ui'
 import { LoadError, Slot } from '../common/Blocks'
-import { usePlans, type PlanKind } from '../common/catalog'
+import { listable, usePlans, type PlanKind } from '../common/catalog'
 import { flowCss } from '../common/Flow'
 import { useHoldings, type Holdings } from '../common/holdings'
 import { PlanCard } from '../common/PlanCard'
@@ -32,7 +32,9 @@ export default function Plans() {
   // 总是写明 kind：缺省值随持有变（只持有一次性时缺省是一次性），省掉就切不回「按时间」
   const setKind = (kind: PlanKind) => navigate('/plans', { query: { ...Object.fromEntries(query), kind }, replace: true })
 
-  const catalogKinds = useMemo(() => new Set((plans.data ?? []).map((p) => p.kind)), [plans.data])
+  const heldIds = useMemo(() => new Set(h.held.map((s) => s.plan_id)), [h.held])
+  const shown = useMemo(() => (plans.data ?? []).filter((p) => listable(p, heldIds)), [plans.data, heldIds])
+  const catalogKinds = useMemo(() => new Set(shown.map((p) => p.kind)), [shown])
   const asked = query.get('kind')
   const showTabs = catalogKinds.has('subscription') && catalogKinds.has('one_time')
   // 只有一类时忽略地址里的 kind，直接列那一类
@@ -42,7 +44,7 @@ export default function Plans() {
   if (h.subs.isError) return <LoadError error={h.subs.error} onRetry={() => void h.subs.refetch()} what="套餐" />
   if (plans.isError) return <LoadError error={plans.error} onRetry={() => void plans.refetch()} what="套餐" />
 
-  const list = plans.data.filter((p) => p.kind === kind)
+  const list = shown.filter((p) => p.kind === kind)
   return (
     <div className={flowCss.stack}>
       <Slot name="portal.plans.notice" />

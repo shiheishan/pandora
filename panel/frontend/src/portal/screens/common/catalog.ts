@@ -12,6 +12,13 @@ export const plansSchema = z.object({ plans: z.array(planSchema) })
 /** 套餐卡的限速事实：「限速 N Mbps」，不限速为 null（全程生效的按用户限速） */
 export const throttleNote = (kbps: number | null) => (kbps === null ? null : `限速 ${Number((kbps / 1000).toFixed(3))} Mbps`)
 
+/**
+ * 选购页列不列这个套餐：接新购的都列；关了新购的只在名下已有、还能续时列（落点只剩续）。
+ * 「再买一份」传 heldPlanIds 为空集，只列接新购的。
+ */
+export const listable = (plan: Pick<Plan, 'id' | 'allow_new_purchase' | 'allow_renewal'>, heldPlanIds: ReadonlySet<string>) =>
+  plan.allow_new_purchase || (plan.allow_renewal && heldPlanIds.has(plan.id))
+
 /** 匿名接口但会解析 Bearer：登录后带令牌才看得到 authenticated / group 套餐，所以走默认的带令牌请求。 */
 export function usePlans() {
   const api = useApi()

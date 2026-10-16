@@ -23,16 +23,19 @@ type portalReset struct {
 
 // portalPlan 是用户端目录里的一项：当前发布版本的用量与这次能用的价格。
 type portalPlan struct {
-	ID           string        `json:"id"`
-	Name         string        `json:"name"`
-	Description  *string       `json:"description"`
-	Kind         string        `json:"kind"`
-	Recommended  bool          `json:"recommended"`
-	TrafficBytes *int64        `json:"traffic_bytes"`
-	MaxDevices   *int          `json:"max_devices"`
-	ThrottleKbps *int          `json:"throttle_kbps"`
-	Prices       []portalPrice `json:"prices"`
-	Reset        *portalReset  `json:"reset"`
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	Description *string `json:"description"`
+	Kind        string  `json:"kind"`
+	Recommended bool    `json:"recommended"`
+	// AllowNewPurchase 为假：不接新购（另买一份、一次性叠加），已持有的照 AllowRenewal 续；门户选购页据此不列
+	AllowNewPurchase bool          `json:"allow_new_purchase"`
+	AllowRenewal     bool          `json:"allow_renewal"`
+	TrafficBytes     *int64        `json:"traffic_bytes"`
+	MaxDevices       *int          `json:"max_devices"`
+	ThrottleKbps     *int          `json:"throttle_kbps"`
+	Prices           []portalPrice `json:"prices"`
+	Reset            *portalReset  `json:"reset"`
 }
 
 type portalPlansResponse struct {
@@ -52,16 +55,18 @@ func portalPlanFrom(op service.OfferPlan) portalPlan {
 		}
 	}
 	return portalPlan{
-		ID:           op.Plan.ID.String(),
-		Name:         op.Plan.Name,
-		Description:  op.Plan.Description,
-		Kind:         op.Plan.Kind,
-		Recommended:  op.Plan.Recommended,
-		TrafficBytes: op.Version.TrafficLimit(),
-		MaxDevices:   op.Version.MaxDevices,
-		ThrottleKbps: op.Version.ThrottleKbps,
-		Prices:       prices,
-		Reset:        portalResetFrom(op.Plan.ResetPrice, op.Plan.ResetLimit),
+		ID:               op.Plan.ID.String(),
+		Name:             op.Plan.Name,
+		Description:      op.Plan.Description,
+		Kind:             op.Plan.Kind,
+		Recommended:      op.Plan.Recommended,
+		AllowNewPurchase: op.Plan.AllowNewPurchase,
+		AllowRenewal:     op.Plan.AllowRenewal,
+		TrafficBytes:     op.Version.TrafficLimit(),
+		MaxDevices:       op.Version.MaxDevices,
+		ThrottleKbps:     op.Version.ThrottleKbps,
+		Prices:           prices,
+		Reset:            portalResetFrom(op.Plan.ResetPrice, op.Plan.ResetLimit),
 	}
 }
 

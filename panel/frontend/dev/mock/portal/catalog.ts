@@ -23,7 +23,7 @@ export interface CatalogPlan {
   throttle_kbps: number | null
   prices: CatalogPrice[]
   reset: { price: number; limit: number | null } | null
-  /** 销售开关（Go 目录 DTO 不回，只给报价 / 落点 / 下单判断用） */
+  /** 销售开关：目录 DTO 回 allow_new_purchase / allow_renewal；allowUpgrade 只给报价 / 落点 / 下单判断用 */
   allowNew: boolean
   allowRenewal: boolean
   /** 能从别的套餐换过来 */
@@ -215,6 +215,8 @@ export function planView(p: CatalogPlan) {
     description: p.description,
     kind: p.kind,
     recommended: p.recommended,
+    allow_new_purchase: p.allowNew,
+    allow_renewal: p.allowRenewal,
     traffic_bytes: p.trafficBytes,
     max_devices: p.max_devices,
     throttle_kbps: p.throttle_kbps,

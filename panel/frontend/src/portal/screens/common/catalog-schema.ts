@@ -24,6 +24,9 @@ export const planSchema = z.object({
   description: z.string().nullable(),
   kind: z.enum(PLAN_KINDS),
   recommended: z.boolean(),
+  /** 假 = 不接新购（另买一份、一次性叠加）；已持有的按 allow_renewal 续。选购页与「再买一份」不列 */
+  allow_new_purchase: z.boolean(),
+  allow_renewal: z.boolean(),
   /** 订阅套餐是每期流量，一次性套餐是总流量；null = 不限 */
   traffic_bytes: z.number().int().nullable(),
   max_devices: z.number().int().nullable(),

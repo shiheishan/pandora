@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { href } from '../../../core/router'
 import { makeNaming } from '../common/purchase'
 import { ONCE, STD, sub } from '../common/testing'
+import { listable } from '../common/catalog'
 import { planCardView, renewOrder } from './labels'
 
 const NOW = new Date('2026-10-07T12:00:00Z')
@@ -68,4 +69,12 @@ describe('选购页套餐卡', () => {
     const gone = sub({ id: 'gone', status: 'expired', current_period_end: '2026-10-01T00:00:00Z' })
     expect(renewOrder([gone, late, early]).map((s) => s.id)).toEqual(['early', 'late', 'gone'])
   })
+})
+
+describe('选购页列哪些套餐（listable）', () => {
+  const held = new Set(['std'])
+  it('接新购的都列', () => expect(listable({ ...STD, id: 'x' }, held)).toBe(true))
+  it('关了新购、名下没有：不列', () => expect(listable({ ...STD, id: 'x', allow_new_purchase: false }, held)).toBe(false))
+  it('关了新购、名下有且能续：列（只剩续）', () => expect(listable({ ...STD, allow_new_purchase: false }, held)).toBe(true))
+  it('关了新购也关了续：名下有也不列', () => expect(listable({ ...STD, allow_new_purchase: false, allow_renewal: false }, held)).toBe(false))
 })
