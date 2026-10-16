@@ -1,20 +1,36 @@
-import { useState } from 'react'
-import { navigate } from '../../../core/router'
-import { Button, Empty, QueryView, Tag } from '../../../ui'
+import { useState, type ReactNode } from 'react'
+import { navigate, useHashLocation } from '../../../core/router'
+import { Button, Empty, FilterTabs, IconClose, Modal, QueryView, Table, Tag, Toolbar } from '../../../ui'
 import { AnnounceEditor } from './AnnounceEditor'
-import css from './content.module.css'
-import { ANN_STATUS, annTargetLabel, annWhen, SEVERITY, type AnnForm } from './logic'
+import css from './announce.module.css'
+import { ANN_STATUS, annFilterItems, annTargetLabel, annWhen, isAnnFilter, SEVERITY, visibleAnns, type AnnFilter, type AnnForm } from './logic'
 import { useAnnouncements } from './queries'
-import type { Announcement } from './schemas'
+import type { Announcement, Severity } from './schemas'
 
-const open = (id: string) => navigate(`/content/announce/${id}`)
+/** 列表路径：筛选放在 ?f= 上，all 不写进地址 */
+const LIST_PATH = '/content/announce'
+
+/** 级别文字的颜色类（普通灰、提示 info、警告 warn、紧急 danger） */
+const SEV_CLASS: Record<Severity, string> = { info: css.sev_info, notice: css.sev_notice, warning: css.sev_warning, critical: css.sev_critical }
 
 export function AnnounceTab({ rest }: { rest: string[] }) {
   const query = useAnnouncements()
-  // 「复制为新公告」的预填；每次复制换一个 seed，让新建编辑区重新挂载
+  const { query: urlQuery } = useHashLocation()
+  // 地址上的筛选；没有或不认识就是全部
+  const raw = urlQuery.get('f')
+  const filter: AnnFilter = isAnnFilter(raw) ? raw : 'all'
+  // 「复制为新公告」的预填；每次复制换一个 seed，让新建弹窗重新挂载
   const [draft, setDraft] = useState<{ seed: number; form: AnnForm | null }>({ seed: 0, form: null })
   const selected = rest[0] ?? null
 
+  /** 当前筛选的地址值：all 不写进地址 */
+  const fQuery = filter === 'all' ? undefined : { f: filter }
+  const setFilter = (next: AnnFilter) => {
+    // 开着弹窗切筛选也只回到列表路径
+    navigate(LIST_PATH, { replace: true, query: next === 'all' ? undefined : { f: next } })
+  }
+  const open = (id: string) => navigate(`${LIST_PATH}/${id}`, { query: fQuery })
+  const close = () => navigate(LIST_PATH, { query: fQuery })
   const startNew = (form: AnnForm | null) => {
     setDraft((d) => ({ seed: d.seed + 1, form }))
     open('new')
@@ -24,37 +40,92 @@ export function AnnounceTab({ rest }: { rest: string[] }) {
     <QueryView query={query} rows={5} empty={null}>
       {(data) => {
         const list = data.announcements
-        const current: Announcement | 'new' | null = selected === 'new' ? 'new' : (list.find((a) => a.id === selected) ?? list[0] ?? null)
+        const current: Announcement | 'new' | null = selected === 'new' ? 'new' : (list.find((a) => a.id === selected) ?? null)
         return (
-          <div className={css.annLayout}>
-            <div className={css.list}>
-              <Button variant="primary" onClick={() => startNew(null)}>
-                ＋ 新建公告
-              </Button>
-              {current === 'new' && (
-                <button type="button" className={`${css.annItem} ${css.selected}`} aria-current="true">
-                  <span className={css.itemHead}>
-                    <span className={`${css.itemTitle} ${css.untitled}`}>未保存的新公告</span>
-                  </span>
-                  <span className={css.itemMeta}>
-                    <span className={css.warn}>草稿</span>
-                    <span>保存后出现在列表里</span>
-                  </span>
-                </button>
-              )}
-              {list.map((a) => (
-                <AnnItem key={a.id} a={a} current={current !== 'new' && current?.id === a.id} />
-              ))}
-              {list.length === 0 && current !== 'new' && <Empty bare title="还没有公告" description="新建一条公告，发布后门户「消息」页与首页公告栏都能看到。" />}
-            </div>
-            {current === 'new' ? (
-              <AnnounceEditor key={`new:${draft.seed}`} data={data} original={null} prefill={draft.form} onCopy={startNew} />
+          <div className={css.page}>
+            <Toolbar
+              end={
+                <Button variant="primary" onClick={() => startNew(null)}>
+                  新建公告
+                </Button>
+              }
+            >
+              <FilterTabs label="按状态筛选" items={annFilterItems(list)} value={filter} onChange={setFilter} />
+            </Toolbar>
+            <Table
+              label="公告列表"
+              rows={visibleAnns(list, filter)}
+              rowKey={(a) => a.id}
+              onRowClick={(a) => open(a.id)}
+              columns={[
+                {
+                  key: 'title',
+                  header: '标题',
+                  render: (a) =>
+                    dim(
+                      a,
+                      <span className={css.annTitle}>
+                        {a.pinned && <span className={css.pin}>置顶</span>}
+                        <span className={css.annTitleText}>{a.title}</span>
+                      </span>,
+                    ),
+                },
+                {
+                  key: 'status',
+                  header: '状态',
+                  width: '72px',
+                  render: (a) =>
+                    dim(
+                      a,
+                      <Tag tone={ANN_STATUS[a.status].tone}>{ANN_STATUS[a.status].label}</Tag>,
+                    ),
+                },
+                {
+                  key: 'severity',
+                  header: '级别',
+                  width: '64px',
+                  render: (a) => dim(a, <span className={SEV_CLASS[a.severity]}>{SEVERITY[a.severity].label}</span>),
+                },
+                {
+                  key: 'target',
+                  header: '可见范围',
+                  width: '104px',
+                  render: (a) => dim(a, <span className={css.target}>{annTargetLabel(a)}</span>),
+                },
+                {
+                  key: 'when',
+                  header: '时间',
+                  width: '112px',
+                  align: 'right',
+                  render: (a) => dim(a, <span className={css.when}>{annWhen(a)}</span>),
+                },
+              ]}
+              empty={
+                list.length === 0 ? (
+                  <Empty bare title="还没有公告" description="新建一条公告，发布后用户端「消息」页与首页公告栏都能看到。" />
+                ) : (
+                  <Empty bare title="这个状态下没有公告" />
+                )
+              }
+            />
+            {selected === null ? null : current === 'new' ? (
+              <AnnounceEditor key={`new:${draft.seed}`} data={data} original={null} prefill={draft.form} onCopy={startNew} onClose={close} />
             ) : current ? (
-              <AnnounceEditor key={current.id} data={data} original={current} prefill={null} onCopy={startNew} />
+              <AnnounceEditor key={current.id} data={data} original={current} prefill={null} onCopy={startNew} onClose={close} />
             ) : (
-              <section className={css.panel}>
-                <Empty bare title="没有选中的公告" description="左侧新建一条公告开始编辑。" />
-              </section>
+              <Modal
+                open
+                size={640}
+                title="公告"
+                onClose={close}
+                headExtra={
+                  <Button variant="ghost" size="sm" aria-label="关闭" onClick={close}>
+                    <IconClose />
+                  </Button>
+                }
+              >
+                <Empty bare title="公告不存在或已删除" />
+              </Modal>
             )}
           </div>
         )
@@ -63,27 +134,7 @@ export function AnnounceTab({ rest }: { rest: string[] }) {
   )
 }
 
-function AnnItem({ a, current }: { a: Announcement; current: boolean }) {
-  const st = ANN_STATUS[a.status]
-  const sev = SEVERITY[a.severity]
-  return (
-    <button
-      type="button"
-      className={`${css.annItem} ${current ? css.selected : ''} ${a.status === 'withdrawn' ? css.withdrawn : ''}`}
-      aria-current={current || undefined}
-      onClick={() => open(a.id)}
-    >
-      <span className={css.itemHead}>
-        {a.pinned && <span className={css.pin}>置顶</span>}
-        <span className={css.itemTitle}>{a.title}</span>
-        {(a.severity === 'warning' || a.severity === 'critical') && <Tag tone={sev.tone}>{sev.label}</Tag>}
-      </span>
-      <span className={css.itemMeta}>
-        <span className={css[st.tone]}>{st.label}</span>
-        <span>
-          {annTargetLabel(a)} · {annWhen(a)}
-        </span>
-      </span>
-    </button>
-  )
+/** 已撤回的行整行淡显：Table 没有行类名，在每个单元格的 render 外包一层 */
+function dim(a: Announcement, node: ReactNode): ReactNode {
+  return a.status === 'withdrawn' ? <span className={css.dim}>{node}</span> : node
 }

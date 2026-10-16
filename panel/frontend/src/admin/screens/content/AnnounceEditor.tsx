@@ -1,12 +1,11 @@
 import { useMutation } from '@tanstack/react-query'
-import { useId, useState } from 'react'
+import { useState } from 'react'
 import { isApiError } from '../../../core/api'
 import { formatDateTime } from '../../../core/format'
-import { navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
-import { Button, ConfirmModal, Input, Menu, Select, Switch, TextArea, useToast, type MenuEntry } from '../../../ui'
-import css from './content.module.css'
-import { annActions, annBody, annFieldErrors, annFormFrom, emptyAnnForm, SEVERITY, validateAnn, type AnnBody, type AnnForm } from './logic'
+import { Button, ConfirmModal, IconClose, Input, Menu, Modal, Select, Switch, Tag, TextArea, useToast, type MenuEntry } from '../../../ui'
+import css from './announce.module.css'
+import { ANN_STATUS, annActions, annBody, annFieldErrors, annFormFrom, annMeta, emptyAnnForm, SEVERITY, validateAnn, type AnnBody, type AnnForm } from './logic'
 import { useFailure, useIntentKey, useInvalidateContent } from './queries'
 import { annSaved, annWithdrawn, SEVERITIES, type Announcement, type AnnouncementsData, type Severity } from './schemas'
 
@@ -16,17 +15,17 @@ interface Props {
   original: Announcement | null
   prefill: AnnForm | null
   onCopy: (form: AnnForm) => void
+  onClose: () => void
 }
 
 const same = (a: AnnForm, b: AnnForm) => JSON.stringify(a) === JSON.stringify(b)
 
-export function AnnounceEditor({ data, original, prefill, onCopy }: Props) {
+export function AnnounceEditor({ data, original, prefill, onCopy, onClose }: Props) {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
   const intent = useIntentKey()
   const invalidate = useInvalidateContent()
-  const ids = useId()
   const fresh = () => (original ? annFormFrom(original) : (prefill ?? emptyAnnForm()))
   const [form, setForm] = useState<AnnForm>(fresh)
   // base：表单是从哪一版载入的；seen：上次看到的版本号。版本变了而表单没改就跟着换成最新
@@ -59,8 +58,8 @@ export function AnnounceEditor({ data, original, prefill, onCopy }: Props) {
       setBase(form)
       const when = body.publish_at ? formatDateTime(body.publish_at).slice(5) : ''
       toast(r.status === 'scheduled' ? `已定时，${when} 发布` : r.status === 'draft' ? '草稿已保存' : original?.status === 'published' ? '已保存修改' : '公告已发布')
-      // 新建：等列表带上新公告再换地址，免得先落到第一条上闪一下
-      void invalidate('announcements').then(() => !original && navigate(`/content/announce/${r.id}`, { replace: true }))
+      // 等列表带上新公告再关弹窗，回来就能看到它
+      void invalidate('announcements').then(onClose)
     },
     onError: (error) => {
       if (isApiError(error, 'conflict')) void invalidate('announcements')
@@ -73,7 +72,7 @@ export function AnnounceEditor({ data, original, prefill, onCopy }: Props) {
     onSuccess: () => {
       intent.reset()
       toast('公告已撤回')
-      void invalidate('announcements')
+      void invalidate('announcements').then(onClose)
     },
     onError: (error) => {
       if (isApiError(error, 'conflict')) void invalidate('announcements')
@@ -89,15 +88,59 @@ export function AnnounceEditor({ data, original, prefill, onCopy }: Props) {
 
   const busy = save.isPending || withdraw.isPending
   const disabled = locked || busy
+  // 底部左提示：已撤回没有，已发布说明保存即生效，其余提醒两个留空的行为
+  const hint = locked ? null : actions.scheduleLocked ? '已发布，修改保存后用户端立即更新' : '定时发布留空即立即发布；自动下线留空则一直显示'
 
   return (
-    <section className={css.panel} aria-label="编辑公告">
-      {locked && <div className={css.banner}>已撤回的公告不能再编辑或重新发布。需要再发一次时，复制为新公告。</div>}
-      {status === 'scheduled' && original?.publish_at && <div className={css.banner}>定时公告，将于 {formatDateTime(original.publish_at)} 自动发布；到点前可以修改或撤回。</div>}
+    <Modal
+      open
+      size={640}
+      divided
+      dismissible={!busy}
+      onClose={onClose}
+      title={
+        <span className={css.headRow}>
+          {/* 新建还没有状态，头部按草稿显示 */}
+          {original ? <Tag tone={ANN_STATUS[original.status].tone}>{ANN_STATUS[original.status].label}</Tag> : <Tag tone="warn">草稿</Tag>}
+          <span className={css.headMeta}>{annMeta(original)}</span>
+        </span>
+      }
+      headExtra={
+        <Button variant="ghost" size="sm" aria-label="关闭" onClick={onClose}>
+          <IconClose />
+        </Button>
+      }
+      footerStart={hint ? <span className={css.footerHint}>{hint}</span> : undefined}
+      actions={
+        <>
+          {locked && original && (
+            <Button size="dialog" variant="primary" onClick={() => onCopy({ ...annFormFrom(original), publishAt: '', expiresAt: '' })}>
+              复制为新公告
+            </Button>
+          )}
+          {actions.withdraw && (
+            <Button size="dialog" className={css.dangerText} disabled={busy} busy={withdraw.isPending} onClick={() => setWithdrawing(true)}>
+              撤回
+            </Button>
+          )}
+          {actions.draft && (
+            <Button size="dialog" disabled={busy} busy={save.isPending && save.variables?.publish === false} onClick={() => submit(false)}>
+              存为草稿
+            </Button>
+          )}
+          {actions.primary && (
+            <Button size="dialog" variant="primary" disabled={busy} busy={save.isPending && save.variables?.publish === true} onClick={() => submit(true)}>
+              {actions.primary}
+            </Button>
+          )}
+        </>
+      }
+    >
+      {locked && <p className={css.lockedNote}>已撤回的公告不能再编辑或重新发布。需要再发一次时，复制为新公告。</p>}
       {stale && original && (
-        <div className={`${css.banner} ${css.warnBanner} ${css.row}`}>
+        <div className={`${css.banner} ${css.bannerWarn} ${css.bannerRow}`}>
           <span>这条公告刚被其他管理员修改过，保存会覆盖对方的修改。</span>
-          <span className={css.spacer} />
+          <span className={css.bannerSpacer} />
           <Button
             size="xs"
             onClick={() => {
@@ -113,22 +156,18 @@ export function AnnounceEditor({ data, original, prefill, onCopy }: Props) {
       <Input aria-label="公告标题" className={css.titleInput} value={form.title} placeholder="公告标题" error={errors.title} disabled={disabled} onChange={(e) => edit({ title: e.target.value })} />
       <TextArea aria-label="公告正文" rows={9} value={form.body} placeholder="正文，支持 Markdown" error={errors.body} disabled={disabled} onChange={(e) => edit({ body: e.target.value })} />
 
-      <div className={css.editorBar}>
-        <span className={css.inline}>
-          可见范围
+      <div className={css.fieldGrid}>
+        <label className={css.field}>
+          <span className={css.fieldLabel}>级别</span>
+          <Select size="sm" value={form.severity} disabled={disabled} options={SEVERITIES.map((s) => ({ value: s, label: SEVERITY[s].label }))} onChange={(e) => edit({ severity: e.target.value as Severity })} />
+        </label>
+        <label className={css.field}>
+          <span className={css.fieldLabel}>可见范围</span>
           <TargetPicker data={data} original={original} form={form} disabled={disabled} onChange={edit} />
-        </span>
-        <span className={css.inline}>
-          <label htmlFor={`${ids}-sev`}>级别</label>
-          <Select id={`${ids}-sev`} size="sm" className={css.inlineSelect} value={form.severity} disabled={disabled} options={SEVERITIES.map((s) => ({ value: s, label: SEVERITY[s].label }))} onChange={(e) => edit({ severity: e.target.value as Severity })} />
-        </span>
-        <Switch label="置顶" checked={form.pinned} disabled={disabled} onChange={(e) => edit({ pinned: e.target.checked })} />
-      </div>
-      <div className={css.editorBar}>
-        <span className={css.inline}>
-          <label htmlFor={`${ids}-pub`}>定时发布</label>
+        </label>
+        <label className={css.field}>
+          <span className={css.fieldLabel}>定时发布</span>
           <Input
-            id={`${ids}-pub`}
             type="datetime-local"
             size="sm"
             className={css.timeInput}
@@ -137,46 +176,29 @@ export function AnnounceEditor({ data, original, prefill, onCopy }: Props) {
             title={status === 'published' ? '已发布的公告不能改发布时间' : undefined}
             onChange={(e) => edit({ publishAt: e.target.value })}
           />
-        </span>
-        <span className={css.inline}>
-          <label htmlFor={`${ids}-exp`}>自动下线</label>
-          <Input id={`${ids}-exp`} type="datetime-local" size="sm" className={css.timeInput} value={form.expiresAt} disabled={disabled} onChange={(e) => edit({ expiresAt: e.target.value })} />
-        </span>
-        {errors.expiresAt && (
-          <span className={css.error} role="alert">
-            {errors.expiresAt}
-          </span>
-        )}
-        {errors.targets && (
-          <span className={css.error} role="alert">
-            {errors.targets}
-          </span>
-        )}
+        </label>
+        <label className={css.field}>
+          <span className={css.fieldLabel}>自动下线</span>
+          <Input type="datetime-local" size="sm" className={css.timeInput} value={form.expiresAt} disabled={disabled} onChange={(e) => edit({ expiresAt: e.target.value })} />
+        </label>
       </div>
+      {(errors.expiresAt || errors.targets) && (
+        <div className={css.errorStack}>
+          {errors.expiresAt && (
+            <span className={css.error} role="alert">
+              {errors.expiresAt}
+            </span>
+          )}
+          {errors.targets && (
+            <span className={css.error} role="alert">
+              {errors.targets}
+            </span>
+          )}
+        </div>
+      )}
 
-      <div className={css.editorBar}>
-        <span className={css.faint}>{locked ? '' : actions.scheduleLocked ? '已发布，修改保存后门户立即更新' : '定时发布留空即立即发布；自动下线留空则一直显示'}</span>
-        <span className={css.spacer} />
-        {locked && original && (
-          <Button variant="primary" onClick={() => onCopy({ ...annFormFrom(original), publishAt: '', expiresAt: '' })}>
-            复制为新公告
-          </Button>
-        )}
-        {actions.withdraw && (
-          <Button variant="danger" disabled={busy} busy={withdraw.isPending} onClick={() => setWithdrawing(true)}>
-            撤回
-          </Button>
-        )}
-        {actions.draft && (
-          <Button disabled={busy} busy={save.isPending && save.variables?.publish === false} onClick={() => submit(false)}>
-            保存草稿
-          </Button>
-        )}
-        {actions.primary && (
-          <Button variant="primary" disabled={busy} busy={save.isPending && save.variables?.publish === true} onClick={() => submit(true)}>
-            {actions.primary}
-          </Button>
-        )}
+      <div>
+        <Switch label="置顶" checked={form.pinned} disabled={disabled} onChange={(e) => edit({ pinned: e.target.checked })} />
       </div>
 
       <ConfirmModal
@@ -185,7 +207,7 @@ export function AnnounceEditor({ data, original, prefill, onCopy }: Props) {
         body={
           status === 'scheduled'
             ? '这条公告不会再发布，撤回后也不能再编辑，只能复制为新公告。只想改时间的话，直接修改定时发布时间或存回草稿。'
-            : '门户立即隐藏这条公告，已推送出去的通知不会撤回。撤回后不能再编辑或重新发布，只能复制为新公告。'
+            : '用户端立即隐藏这条公告，已推送出去的通知不会撤回。撤回后不能再编辑或重新发布，只能复制为新公告。'
         }
         confirmLabel="撤回"
         tone="danger"
@@ -195,7 +217,7 @@ export function AnnounceEditor({ data, original, prefill, onCopy }: Props) {
         }}
         onCancel={() => setWithdrawing(false)}
       />
-    </section>
+    </Modal>
   )
 }
 
