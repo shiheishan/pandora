@@ -128,7 +128,7 @@ export const Select = forwardRef<HTMLButtonElement, SelectProps>(function Select
       }
 
       // 确定初始活动项
-      let actIdx = -1
+      let actIdx: number
       if (initialActiveIdx !== undefined) {
         actIdx = initialActiveIdx
       } else {

@@ -1,6 +1,9 @@
 import type { Key, KeyboardEvent, ReactNode } from 'react'
 import { Checkbox } from './Checkbox'
 import { cx } from './cx'
+
+// 没有类名时不输出空的 class 属性
+const cn = (...names: Parameters<typeof cx>): string | undefined => cx(...names) || undefined
 import { Empty } from './Empty'
 import { Skeleton } from './Skeleton'
 import css from './Table.module.css'
@@ -78,7 +81,7 @@ export function Table<T>({
   const span = columns.length + (selection ? 1 : 0)
 
   return (
-    <div className={cx(css.root, footer != null && css.hasFooter)}>
+    <div className={cn(css.root, footer != null && css.hasFooter)}>
       <div className={css.scroll}>
         <table className={css.table} aria-label={label} aria-busy={loading || undefined}>
           <colgroup>
@@ -90,7 +93,7 @@ export function Table<T>({
           <thead>
             <tr>
               {selection && (
-                <th scope="col" className={cx(stickyHeader && css.sticky)}>
+                <th scope="col" className={cn(stickyHeader && css.sticky)}>
                   <Checkbox
                     small
                     aria-label="全选"
@@ -111,7 +114,7 @@ export function Table<T>({
                     key={c.key}
                     scope="col"
                     aria-sort={ariaSort}
-                    className={cx(
+                    className={cn(
                       c.align === 'right' && css.right,
                       stickyHeader && css.sticky,
                       isSorted && css.sorted,
@@ -120,7 +123,7 @@ export function Table<T>({
                     {canSort ? (
                       <button
                         type="button"
-                        className={cx(css.sortButton, c.align === 'right' && css.sortButtonRight)}
+                        className={cn(css.sortButton, c.align === 'right' && css.sortButtonRight)}
                         onClick={() => onSortChange!(c.key)}
                       >
                         <span>{c.header}</span>
@@ -132,7 +135,7 @@ export function Table<T>({
                           strokeWidth={2}
                           fill="none"
                           aria-hidden="true"
-                          className={cx(
+                          className={cn(
                             css.sortIcon,
                             isSorted && css.sortIconActive,
                             isSorted && sort?.dir === 'desc' && css.sortIconDesc,
@@ -172,7 +175,7 @@ export function Table<T>({
                 return (
                   <tr
                     key={key}
-                    className={cx(isPicked && css.picked, onRowClick && css.clickable)}
+                    className={cn(isPicked && css.picked, onRowClick && css.clickable)}
                     onClick={onRowClick ? () => onRowClick(row) : undefined}
                     tabIndex={onRowClick ? 0 : undefined}
                     onKeyDown={onRowClick ? (e) => activateOnKey(e, () => onRowClick(row)) : undefined}
@@ -183,7 +186,7 @@ export function Table<T>({
                       </td>
                     )}
                     {columns.map((c) => (
-                      <td key={c.key} className={cx(c.align === 'right' && css.right, c.mono && 'mono')}>
+                      <td key={c.key} className={cn(c.align === 'right' && css.right, c.mono && 'mono')}>
                         {c.render(row)}
                       </td>
                     ))}

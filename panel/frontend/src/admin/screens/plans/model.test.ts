@@ -180,7 +180,7 @@ describe('文案', () => {
 
   it('起价：在售、优先公开价与 CNY；额度文案', () => {
     expect(priceFrom(plan().prices)).toBe('¥29.00 起')
-    expect(priceFrom([price({ currency: 'USD', unit_amount: 450 })])).toBe('$4.50 起')
+    expect(priceFrom([price({ currency: 'USD', unit_amount: 450 })])).toBe('¥4.50 起')
     expect(priceFrom([price({ status: 'archived' })])).toBe('无价格')
     expect(quotaLabel(200 * GiB, 3)).toBe('200 GB · 3 设备')
     expect(quotaLabel(null, null)).toBe('不限流量 · 不限设备')
