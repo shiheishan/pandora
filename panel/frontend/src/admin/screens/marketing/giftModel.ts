@@ -1,6 +1,6 @@
 import { formatMoney } from '../../../core/format'
-import { GB, formatGB, localInputToIso, minorToYuan, pad, parseCount, yuanToMinor, type Built, type FieldErrors, type Tone } from './logic'
-import type { Batch, GiftTemplate, Plan, Rewards, Usage } from './schemas'
+import { GB, formatGB, localInputToIso, pad, parseCount, yuanToMinor, type Built, type FieldErrors, type Tone } from './logic'
+import type { Batch, GiftTemplate, Plan, Usage } from './schemas'
 
 // ---------------------------------------------------------------------------
 // 礼品卡
@@ -11,23 +11,49 @@ export const TEMPLATE_TYPES = [
   ['mystery', '盲盒'],
 ] as const
 
-/** 模板卡片：面额、类型标签、「兑换后」说明（契约 GET v1/gift-cards 的设计映射） */
+export const TEMPLATE_TYPE_LABEL: Record<GiftTemplate['type'], string> = {
+  general: '通用卡',
+  plan: '套餐卡',
+  mystery: '盲盒',
+}
+
+/** 模板行：面额、类型标签、「兑换后」说明（契约 GET v1/gift-cards 的设计映射） */
 export function templateFace(t: Pick<GiftTemplate, 'type' | 'rewards'>, plans: readonly Plan[] | undefined): { face: string; kind: string; after: string } {
   const r = t.rewards
   if (t.type === 'plan') return { face: plans?.find((p) => p.id === r.plan_id)?.name ?? '套餐', kind: '套餐', after: '立即开通' }
   if (t.type === 'mystery') return { face: '盲盒', kind: `${r.pool?.length ?? 0} 个奖品`, after: '随机抽取' }
-  if (r.balance) return { face: formatMoney(r.balance, 'CNY'), kind: '余额', after: '直接入账' }
+  if (r.balance) return { face: formatMoney(r.balance), kind: '余额', after: '直接入账' }
   if (r.traffic_bytes) return { face: formatGB(r.traffic_bytes), kind: '流量', after: '当期有效' }
   if (r.expire_days) return { face: `${r.expire_days} 天`, kind: '延期', after: '顺延到期' }
   if (r.reset_quota) return { face: '重置', kind: '流量', after: '清零本期用量' }
   return { face: '—', kind: '通用', after: '—' }
 }
 
+/** 周期价文案：月付、季付、半年付、年付、一次性、其余「每 N 月 / 年」接「 · ¥x」 */
+export function priceLabel(p: Plan['prices'][number]): string {
+  const count = p.interval_count
+  let period = ''
+  if (p.billing_interval === 'one_time') {
+    period = '一次性'
+  } else if (p.billing_interval === 'month') {
+    if (count === 1) period = '月付'
+    else if (count === 3) period = '季付'
+    else if (count === 6) period = '半年付'
+    else period = `每 ${count} 月`
+  } else if (p.billing_interval === 'year') {
+    if (count === 1) period = '年付'
+    else period = `每 ${count} 年`
+  } else {
+    period = `${count > 1 ? `每 ${count} ` : ''}${p.billing_interval}`
+  }
+  return `${period} · ${formatMoney(p.unit_amount)}`
+}
+
 /** 兑换得到的内容：「余额 +¥100.00 · 流量 +100 GB」；套餐卡 granted 为空用模板名，盲盒用 prize_label */
 export function grantedLabel(u: Pick<Usage, 'granted' | 'template_name' | 'prize_label'>): string {
   const g = u.granted
   const parts = [
-    g.balance ? `余额 +${formatMoney(g.balance, 'CNY')}` : '',
+    g.balance ? `余额 +${formatMoney(g.balance)}` : '',
     g.traffic_bytes ? `流量 +${formatGB(g.traffic_bytes)}` : '',
     g.expire_days ? `+${g.expire_days} 天` : '',
     g.reset_quota ? '重置流量' : '',
@@ -75,11 +101,8 @@ export interface PrizeForm {
 }
 
 export interface TemplateForm {
-  id: string | null
   type: GiftTemplate['type']
   name: string
-  description: string
-  status: GiftTemplate['status']
   balance: string
   trafficGb: string
   days: string
@@ -89,41 +112,25 @@ export interface TemplateForm {
   pool: PrizeForm[]
   newUserOnly: boolean
   paidUserOnly: boolean
-  requireInvite: boolean
-  allowedPlanIds: string[]
   maxUsePerUser: string
-  cooldownHours: string
-  themeColor: string
 }
 
 const emptyPrize = (): PrizeForm => ({ label: '', weight: '1', balance: '', trafficGb: '', days: '' })
 
-export function templateToForm(t: GiftTemplate | null): TemplateForm {
-  const r: Rewards = t?.rewards ?? {}
-  const yuan = (v?: number) => (v ? minorToYuan(v) : '')
-  const gb = (v?: number) => (v ? String(Number((v / GB).toFixed(3))) : '')
+export function emptyTemplateForm(): TemplateForm {
   return {
-    id: t?.id ?? null,
-    type: t?.type ?? 'general',
-    name: t?.name ?? '',
-    description: t?.description ?? '',
-    status: t?.status ?? 'active',
-    balance: yuan(r.balance),
-    trafficGb: gb(r.traffic_bytes),
-    days: r.expire_days ? String(r.expire_days) : '',
-    resetQuota: r.reset_quota ?? false,
-    planId: r.plan_id ?? '',
-    priceId: r.price_id ?? '',
-    pool: r.pool?.length
-      ? r.pool.map((p) => ({ label: p.label, weight: String(p.weight), balance: yuan(p.balance), trafficGb: gb(p.traffic_bytes), days: p.expire_days ? String(p.expire_days) : '' }))
-      : [emptyPrize(), emptyPrize()],
-    newUserOnly: t?.conditions.new_user_only ?? false,
-    paidUserOnly: t?.conditions.paid_user_only ?? false,
-    requireInvite: t?.conditions.require_invite ?? false,
-    allowedPlanIds: t?.conditions.allowed_plan_ids ?? [],
-    maxUsePerUser: t?.limits.max_use_per_user ? String(t.limits.max_use_per_user) : '',
-    cooldownHours: t?.limits.cooldown_hours ? String(t.limits.cooldown_hours) : '',
-    themeColor: t?.theme_color || '#b9442b',
+    type: 'general',
+    name: '',
+    balance: '',
+    trafficGb: '',
+    days: '',
+    resetQuota: false,
+    planId: '',
+    priceId: '',
+    pool: [emptyPrize(), emptyPrize()],
+    newUserOnly: false,
+    paidUserOnly: false,
+    maxUsePerUser: '1',
   }
 }
 export { emptyPrize }
@@ -136,8 +143,11 @@ function gbToBytes(input: string): number | null {
   return Math.round(Number(s) * GB)
 }
 
-/** 表单 → POST v1/gift-cards 的请求体；错误键 name / rewards / conditions / limits 与后端 fields 同名 */
-export function buildTemplateRequest(f: TemplateForm): Built<Record<string, unknown>> {
+/**
+ * 表单 → POST v1/gift-cards 的新建请求体；不带 id。
+ * 错误键 name / rewards / conditions / limits 与后端 fields 同名。
+ */
+export function buildTemplateRequest(f: TemplateForm, plans: readonly Plan[] | undefined): Built<Record<string, unknown>> {
   const errors: FieldErrors = {}
   const name = f.name.trim()
   if (!name || [...name].length > 120) errors.name = '名称必填，不超过 120 字'
@@ -148,6 +158,7 @@ export function buildTemplateRequest(f: TemplateForm): Built<Record<string, unkn
     const n = parseCount(s)
     return n === null ? 0 : n
   }
+
   if (f.type === 'general') {
     const balance = money(f.balance)
     const traffic = gbToBytes(f.trafficGb)
@@ -157,8 +168,28 @@ export function buildTemplateRequest(f: TemplateForm): Built<Record<string, unkn
     else if (expire > 3650) errors.rewards = '延长天数不能超过 3650 天'
     else Object.assign(rewards, balance ? { balance } : {}, traffic ? { traffic_bytes: traffic } : {}, expire ? { expire_days: expire } : {}, f.resetQuota ? { reset_quota: true } : {})
   } else if (f.type === 'plan') {
-    if (!f.planId || !f.priceId) errors.rewards = '套餐卡要选定套餐和价格'
-    else Object.assign(rewards, { plan_id: f.planId, price_id: f.priceId })
+    if (!f.planId) {
+      errors.rewards = '请选择套餐'
+    } else {
+      const plan = plans?.find((p) => p.id === f.planId)
+      if (!plan) {
+        errors.rewards = '请选择套餐'
+      } else if (plan.kind === 'subscription') {
+        const activePrice = plan.prices.find((p) => p.id === f.priceId && p.status === 'active')
+        if (!activePrice) {
+          errors.rewards = '订阅套餐要选一档周期价'
+        } else {
+          Object.assign(rewards, { plan_id: plan.id, price_id: activePrice.id })
+        }
+      } else if (plan.kind === 'one_time') {
+        const activePrice = plan.prices.find((p) => p.status === 'active')
+        if (!activePrice) {
+          errors.rewards = '这个一次性套餐没有在售价格'
+        } else {
+          Object.assign(rewards, { plan_id: plan.id, price_id: activePrice.id })
+        }
+      }
+    }
   } else {
     if (f.pool.length < 2) errors.rewards = '盲盒至少要有 2 个奖品'
     else if (f.pool.length > 50) errors.rewards = '盲盒奖品不能超过 50 个'
@@ -182,28 +213,39 @@ export function buildTemplateRequest(f: TemplateForm): Built<Record<string, unkn
   const conditions: Record<string, unknown> = {
     ...(f.newUserOnly ? { new_user_only: true } : {}),
     ...(f.paidUserOnly ? { paid_user_only: true } : {}),
-    ...(f.requireInvite ? { require_invite: true } : {}),
-    ...(f.allowedPlanIds.length ? { allowed_plan_ids: f.allowedPlanIds } : {}),
   }
   const maxUse = parseCount(f.maxUsePerUser)
-  const cooldown = parseCount(f.cooldownHours)
-  if (Number.isNaN(maxUse) || Number.isNaN(cooldown)) errors.limits = '次数与冷却小时填非负整数，留空为不限'
-  const limits: Record<string, unknown> = { ...(maxUse ? { max_use_per_user: maxUse } : {}), ...(cooldown ? { cooldown_hours: cooldown } : {}) }
+  if (Number.isNaN(maxUse)) errors.limits = '限兑次数填非负整数，留空为不限'
+  const limits: Record<string, unknown> = { ...(maxUse ? { max_use_per_user: maxUse } : {}) }
 
   if (Object.keys(errors).length) return { ok: false, errors }
   return {
     ok: true,
     body: {
-      ...(f.id ? { id: f.id } : {}),
       name,
-      description: f.description.trim(),
+      description: '',
       type: f.type,
-      status: f.status,
+      status: 'active',
       rewards,
       conditions,
       limits,
-      theme_color: f.themeColor,
+      theme_color: '',
     },
+  }
+}
+
+/** 把现有模板原样转成保存请求体（修改 status） */
+export function templateStatusBody(t: GiftTemplate, status: 'active' | 'paused'): Record<string, unknown> {
+  return {
+    id: t.id,
+    name: t.name,
+    description: t.description,
+    type: t.type,
+    status,
+    rewards: t.rewards,
+    conditions: t.conditions,
+    limits: t.limits,
+    theme_color: t.theme_color,
   }
 }
 
