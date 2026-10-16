@@ -183,6 +183,8 @@ export interface PaletteItem {
   title: string
   /** 右侧灰字：模块所属分组，或深链能做的事 */
   sub: string
+  /** 标题用等宽字（邮箱、订单号、节点名这类实体） */
+  mono?: boolean
   module: ModuleKey
   tab: string | null
 }
