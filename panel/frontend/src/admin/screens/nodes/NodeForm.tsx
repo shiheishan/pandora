@@ -1,5 +1,5 @@
 import { useMutation } from '@tanstack/react-query'
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { isApiError } from '../../../core/api'
 import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, Input, Modal, Select, Switch, Tag, TextArea, useToast } from '../../../ui'
@@ -253,23 +253,13 @@ export function NodeCreateWizard({ open, onClose, onCreated }: { open: boolean; 
   const fields = useMemo(() => (schema ? protocolFields(schema) : []), [schema])
   const current = values
 
-  // 每次打开从头开始；只看 open，后台重新拉到协议定义时不清掉已填的内容
-  useEffect(() => {
-    setStep(0)
-    setBasic(emptyBasic())
-    setValues({})
-    setErrors({})
-    setCountryCustom(false)
-    setShowAdvanced(false)
-  }, [open])
-
-  // 协议定义到了、还没选协议时，预选第一个并填上它的默认值
-  useEffect(() => {
-    if (!open || basic.nodeType || !defaultType) return
+  // 每次打开由调用方换 key 重挂载，状态从头开始。协议定义到了、还没选协议时，
+  // 在渲染期预选第一个并填上它的默认值（React 文档「根据前一次渲染调整状态」的写法，不在 effect 里 setState）
+  if (open && !basic.nodeType && defaultType) {
     const sch = stable.find((s) => s.node_type === defaultType)
-    setBasic((b) => ({ ...b, nodeType: defaultType }))
+    setBasic({ ...basic, nodeType: defaultType })
     setValues(protocolDefaults(sch ? protocolFields(sch) : []))
-  }, [open, basic.nodeType, defaultType, stable])
+  }
 
   const setBasicKey = <K extends keyof BasicForm>(key: K, v: BasicForm[K]) => setBasic((b) => ({ ...b, [key]: v }))
   const setValue = (path: string, v: string) => {

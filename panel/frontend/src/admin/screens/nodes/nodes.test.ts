@@ -45,7 +45,6 @@ import {
 import { nodeDetailSchema, nodeRowSchema, protocolSchemasResponse, type NodeDetail, type ProtocolSchema } from './schemas'
 
 const miniSchema = (s: Partial<ProtocolSchema> & Pick<ProtocolSchema, 'node_type'>): ProtocolSchema => ({
-  node_type: s.node_type,
   version: s.version ?? 1,
   status: s.status ?? 'stable',
   required: s.required ?? [],
@@ -217,7 +216,8 @@ describe('protocol form', () => {
   })
 
   it('falls back to path labels and required-first without fields metadata', () => {
-    const ss = protocolFields(schemaOf('shadowsocks'))
+    // 去掉 fields 元数据，测退回路径（mock 的协议定义现在带 fields）
+    const ss = protocolFields({ ...schemaOf('shadowsocks'), fields: undefined })
     expect(ss[0]!.path).toBe('cipher')
     expect(ss[0]!.label).toBe('cipher')
   })
@@ -284,7 +284,11 @@ describe('protocol form', () => {
     expect(values['reality_settings.private_key']).toBe('')
     const { config, errors } = toProtocolConfig(fields, { ...values, 'reality_settings.private_key': 'K', mtu: 'x' }, s.property_types)
     expect(config).toMatchObject({ network: 'tcp', tls: 2, reality_settings: { dest: 'a:443', private_key: 'K' } })
-    expect(errors).toEqual({ mtu: '填数字' })
+    // mtu 只在 network=mkcp 时显示：隐藏时不校验、不写入
+    expect(errors).toEqual({})
+    expect(config).not.toHaveProperty('mtu')
+    const mkcp = toProtocolConfig(fields, { ...values, network: 'mkcp', 'reality_settings.private_key': 'K', mtu: 'x' }, s.property_types)
+    expect(mkcp.errors.mtu).toBe('填数字')
   })
 
   it('R106: blank secrets when editing same protocol; explicit null when cleared', () => {

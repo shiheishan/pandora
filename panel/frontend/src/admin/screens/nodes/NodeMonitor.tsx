@@ -23,14 +23,30 @@ function niceTicks(maxMbps: number): { top: number; step: number } {
 
 /** 单调三次样条折线（设计稿 ch 算法） */
 function smoothPath(points: ReadonlyArray<readonly [number, number]>): string {
-  if (points.length === 0) return ''
-  if (points.length === 1) return `M${points[0][0]},${points[0][1]}`
-  const m = points.slice(1).map((p, i) => (p[1] - points[i][1]) / (p[0] - points[i][0] || 1))
-  const t = points.map((_, i) => (i === 0 ? m[0]! : i === points.length - 1 ? m[i - 1]! : m[i - 1]! * m[i]! <= 0 ? 0 : 2 / (1 / m[i - 1]! + 1 / m[i]!)))
-  let path = `M${points[0][0]},${points[0][1]}`
-  for (let i = 0; i < points.length - 1; i++) {
-    const dx = (points[i + 1][0] - points[i][0]) / 3
-    path += `C${points[i][0] + dx},${points[i][1] + t[i]! * dx} ${points[i + 1][0] - dx},${points[i + 1][1] - t[i + 1]! * dx} ${points[i + 1][0]},${points[i + 1][1]}`
+  const first = points[0]
+  if (!first) return ''
+  if (points.length === 1) return `M${first[0]},${first[1]}`
+  // 相邻两点的斜率：m[i] 是 points[i] → points[i+1]
+  const m: number[] = []
+  for (let i = 0; i + 1 < points.length; i++) {
+    const [x0, y0] = points[i]!
+    const [x1, y1] = points[i + 1]!
+    m.push((y1 - y0) / (x1 - x0 || 1))
+  }
+  const last = points.length - 1
+  const t = points.map((_, i) => {
+    if (i === 0) return m[0] ?? 0
+    const prev = m[i - 1] ?? 0
+    if (i === last) return prev
+    const next = m[i] ?? 0
+    return prev * next <= 0 ? 0 : 2 / (1 / prev + 1 / next)
+  })
+  let path = `M${first[0]},${first[1]}`
+  for (let i = 0; i < last; i++) {
+    const [x0, y0] = points[i]!
+    const [x1, y1] = points[i + 1]!
+    const dx = (x1 - x0) / 3
+    path += `C${x0 + dx},${y0 + (t[i] ?? 0) * dx} ${x1 - dx},${y1 - (t[i + 1] ?? 0) * dx} ${x1},${y1}`
   }
   return path
 }

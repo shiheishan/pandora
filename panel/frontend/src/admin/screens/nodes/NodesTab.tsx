@@ -47,6 +47,8 @@ export function NodesTab({ rest }: { rest: string[] }) {
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set())
   const [sorting, setSorting] = useState<NodeRow[] | null>(null)
   const [creating, setCreating] = useState(false)
+  // 每次打开新建向导换一个 key，向导重挂载、状态从头开始
+  const [createKey, setCreateKey] = useState(0)
   const [batchEditing, setBatchEditing] = useState(false)
   const list = useNodes()
 
@@ -196,7 +198,13 @@ export function NodesTab({ rest }: { rest: string[] }) {
           </Button>
         )}
         {!sorting && (
-          <Button variant="primary" onClick={() => setCreating(true)}>
+          <Button
+            variant="primary"
+            onClick={() => {
+              setCreateKey((k) => k + 1)
+              setCreating(true)
+            }}
+          >
             新建节点
           </Button>
         )}
@@ -269,6 +277,7 @@ export function NodesTab({ rest }: { rest: string[] }) {
         onDone={() => setPicked(new Set())}
       />
       <NodeCreateWizard
+        key={createKey}
         open={creating}
         onClose={() => setCreating(false)}
         onCreated={(saved) => {

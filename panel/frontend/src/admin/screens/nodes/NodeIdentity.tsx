@@ -1,5 +1,5 @@
 import { formatDateTime } from '../../../core/format'
-import { Button, QueryView, Tag, useToast } from '../../../ui'
+import { QueryView, Tag, useToast } from '../../../ui'
 import css from './detail.module.css'
 import { useNodeIdentity } from './queries'
 import type { NodeRow } from './schemas'
