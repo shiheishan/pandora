@@ -1,28 +1,27 @@
 export type PageKey = 'overview' | 'subs' | 'plans' | 'checkout' | 'orders' | 'wallet' | 'referral' | 'tickets' | 'messages' | 'help' | 'account'
 
-// [标题, 副标题]；设计稿「按时间订阅，或按流量买流量包」等副标题原样保留
+// 页标题；设计稿页头只有标题，没有副标题（10-16）
 // 叫法（购买模型 10-07，原型第 7 节）：订阅叫「套餐」「一份」，订阅地址叫「链接」，客户端叫「App」
-export const PAGES: Readonly<Record<PageKey, readonly [string, string]>> = {
-  overview: ['概览', ''],
-  subs: ['我的套餐', ''],
-  plans: ['选购', ''],
+export const PAGES: Readonly<Record<PageKey, string>> = {
+  overview: '概览',
+  subs: '我的套餐',
+  plans: '选购',
   // 确认页的标题随意图变（续费 / 换成进阶版 / 再买一份 / 加流量），由页面经 usePageHead 覆盖
-  checkout: ['确认', ''],
-  orders: ['我的订单', ''],
-  wallet: ['钱包', ''],
-  referral: ['邀请返利', '好友通过您的链接购买，您获得佣金'],
-  // 设计稿写「工作日 10 分钟内首次响应」，后端 SLA 是普通 12 小时、紧急 1 小时（support.slaHours），不做时效承诺
-  tickets: ['工单支持', '提交问题后，客服会在这里回复你'],
-  messages: ['消息', ''],
-  help: ['帮助中心', ''],
-  account: ['账号安全', ''],
+  checkout: '确认',
+  orders: '我的订单',
+  wallet: '钱包',
+  referral: '邀请返利',
+  tickets: '工单支持',
+  messages: '消息',
+  help: '帮助中心',
+  account: '账号安全',
 }
 
 /** 用户 10-07 拍板：导航只有「我的套餐 / 选购 / 钱包」三项，概览、订单、工单等收进菜单 */
 export const NAV_PAGES: readonly PageKey[] = ['subs', 'plans', 'wallet']
 /** 顶部导航与底部标签栏的文字：「订单」比页标题「我的订单」短 */
 const NAV_LABELS: Readonly<Partial<Record<PageKey, string>>> = { orders: '订单' }
-export const navLabel = (page: PageKey) => NAV_LABELS[page] ?? PAGES[page][0]
+export const navLabel = (page: PageKey) => NAV_LABELS[page] ?? PAGES[page]
 export const MENU_PAGES: readonly PageKey[] = ['overview', 'orders', 'referral', 'tickets', 'help', 'account']
 /** 空路径、未知页面与登录后落到这里 */
 export const HOME_PAGE: PageKey = 'subs'

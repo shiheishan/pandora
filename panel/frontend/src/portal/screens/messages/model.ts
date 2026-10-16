@@ -4,7 +4,6 @@ export const messageTab = (query: URLSearchParams): MessageTab => (query.get('ta
 
 const TARGETS: Readonly<Record<string, string>> = {
   'order.paid': '/orders',
-  'order.pack_paid': '/orders',
   'ticket.replied': '/tickets',
   'subscription.expiring': '/subs',
   'quota.warning': '/subs',
