@@ -1,0 +1,193 @@
+/* ===========================================================================
+ * 用户详情弹窗（760 宽，4 页签）
+ * ========================================================================= */
+
+/* 头部：头像首字 + 邮箱/标签 */
+.titleRow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+}
+
+.avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--surface-3);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-semibold);
+}
+
+.userName {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* --- 内容 ---------------------------------------------------------------- */
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.notice {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+.tabPanel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+}
+
+/* --- 资料与风控共用的分组 -------------------------------------------------- */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: var(--fs-body-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+
+.facts {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+}
+
+.factRow {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: center;
+  gap: 0 var(--space-12);
+  border-top: 1px solid var(--border);
+}
+
+.factRow:first-child {
+  border-top: none;
+}
+
+.facts dt {
+  padding: 10px 0;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+.facts dd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+  min-width: 0;
+  padding: 8px 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.factValue {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+}
+
+.factStack {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-8);
+  min-width: 0;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+}
+
+.tone_warn {
+  color: var(--warn);
+}
+
+.tone_danger {
+  color: var(--danger);
+}
+
+.link {
+  color: var(--link);
+  text-decoration: var(--link-decoration);
+  text-decoration-color: var(--link-underline);
+  text-underline-offset: 3px;
+}
+
+.dangerText {
+  color: var(--danger);
+}
+
+/* 共享 IP 聚类的账号邮箱列表（风控页签） */
+.related {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* --- 账号处置 -------------------------------------------------------------- */
+.actions {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+}
+
+.actionRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+  padding: 12px 0;
+}
+
+.actionRow + .actionRow {
+  border-top: 1px solid var(--border);
+}
+
+.actionText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.actionLabel {
+  font-weight: var(--fw-medium);
+  color: var(--text);
+}
+
+.actionDesc {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+/* 用户组下拉（搬自 tabs.tsx 的 GroupPicker） */
+.groupSelect {
+  width: 160px;
+}

@@ -68,7 +68,7 @@ export type UserRow = z.output<typeof userRowSchema>
 const quotaSchema = z.object({ metric: z.string(), period: z.string(), limit: int.nullable(), consumed: count, remaining: int.nullable() })
 const subscriptionSchema = z.object({
   id: z.string(),
-  // 用户起的备注名（购买模型统一）：没起为 null；后台只读，改名是用户在门户里做的事
+  // 用户起的备注名（购买模型统一）：没起为 null；后台只读，改名是用户在用户端里做的事
   label: z.string().nullable(),
   plan_name: z.string(),
   plan_version: int,
