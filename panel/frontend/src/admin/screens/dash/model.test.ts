@@ -1,20 +1,56 @@
 import { describe, expect, it } from 'vitest'
 import type { TaskItem } from '../../tasks'
-import { nodeTrafficSchema, overviewSchema, systemStatusSchema, type Backlog, type NodeTraffic, type SystemStatus, type UserTraffic } from './api'
+import { nodeTrafficSchema, overviewSchema, systemStatusSchema, type Backlog, type NodeTraffic, type Overview, type SystemStatus } from './api'
 import {
-  activitySummary,
   backupSummary,
   formatDuration,
   formatLatency,
   formatPercent,
   kpiRevenueDelta,
+  kpiTiles,
   percentChange,
-  revenueSummary,
   systemRows,
+  taskBoard,
   taskCards,
-  trafficNotes,
-  trafficRows,
 } from './model'
+
+const REVENUE_ROW = {
+  today: 1,
+  yesterday: 1,
+  last_7_days: 1,
+  last_30_days: 1,
+  total: 1,
+  actual_today: 1,
+  actual_7_days: 1,
+  actual_30_days: 1,
+  actual_total: 1,
+  adjustment_today: 0,
+  adjustment_7_days: 0,
+  adjustment_30_days: 0,
+  adjustment_total: 0,
+  actual_yesterday: 1,
+}
+
+const OVERVIEW: Overview = {
+  users: { total: 100, active: 80, today: 2, last_7_days: 10 },
+  subscriptions: { active: 50, expiring_7_days: 3, expired: 5, new_7_days: 8 },
+  revenue: REVENUE_ROW,
+  orders: { paid_today: 4, pending: 1, failed_today: 0 },
+  ledger_drift_accounts: 0,
+  nodes: { total: 10, online: 9 },
+}
+
+const TRAFFIC_24H: NodeTraffic = {
+  range: '24h',
+  snapshot_at: '2026-09-24T08:00:00.000000Z',
+  from: '2026-09-23T08:00:00.000000Z',
+  to: '2026-09-24T08:00:00.000000Z',
+  basis: 'strict_raw_report_entries',
+  items: [],
+  totals: { reported_bytes: '1024000', attributed_bytes: '1024000', unattributed_bytes: '0' },
+  ranking: { returned_bytes: '0', other_node_bytes: '0' },
+  quality: { invalid_report_count: 0, invalid_entry_count: 0 },
+}
 
 describe('格式化', () => {
   it('formatPercent / percentChange', () => {
@@ -38,7 +74,7 @@ describe('格式化', () => {
 
 const TASKS: TaskItem[] = [
   { kind: 'tickets_open', count: 7, high_priority: 2, oldest_wait_seconds: 3 * 3600 },
-  { kind: 'withdrawals_pending', count: 3, amounts: [{ currency: 'CNY', amount: 128000 }, { currency: 'USD', amount: 0 }] },
+  { kind: 'withdrawals_pending', count: 3, amount: 128000 },
   { kind: 'nodes_offline', count: 3, sample: [{ id: 'n1', name: 'JP-TYO-03' }], longest_offline_seconds: 26 * 60 },
   { kind: 'orders_pending_stale', count: 0, threshold_seconds: 1800 },
   { kind: 'notifications_backlog', queued: 214, failed_total: 9, backlog_state: 'backlogged' },
@@ -70,6 +106,27 @@ describe('需要处理', () => {
     expect(cards.filter((c) => c.pending)).toHaveLength(4)
   })
 
+  it('各卡 unit 与 stats', () => {
+    const cards = taskCards(TASKS, BACKLOG)
+    const byKey = Object.fromEntries(cards.map((c) => [c.key, c]))
+    expect(byKey.tickets_open).toMatchObject({
+      unit: '个未回复',
+      stats: [{ label: '高优先级', value: '2 个' }, { label: '最久等待', value: '3 小时' }],
+    })
+    expect(byKey.withdrawals_pending).toMatchObject({
+      unit: '笔待审核',
+      stats: [{ label: '合计金额', value: '¥1,280.00' }],
+    })
+    expect(byKey.nodes_offline).toMatchObject({
+      unit: '个节点离线',
+      stats: [{ label: '最长离线', value: '26 分钟' }, { label: '包括', value: 'JP-TYO-03' }],
+    })
+    expect(byKey.notifications_backlog!.stats).toEqual([
+      { label: '最久等待', value: '21 分钟' },
+      { label: '累计失败', value: '9 封' },
+    ])
+  })
+
   it('账本漂移大于 0 时排在最前、红色', () => {
     const cards = taskCards([...TASKS.slice(0, 5), { kind: 'ledger_drift', count: 2 }], undefined)
     expect(cards[0]).toMatchObject({ key: 'ledger_drift', tone: 'danger', count: 2, target: { module: 'billing', tab: null } })
@@ -94,6 +151,41 @@ describe('需要处理', () => {
   })
 })
 
+describe('taskBoard', () => {
+  it('hero 选 danger 的工单，summary 含紧急项', () => {
+    const cards = taskCards(TASKS, BACKLOG)
+    const board = taskBoard(cards)
+    expect(board.hero?.key).toBe('tickets_open')
+    expect(board.summary).toBe('4 项 · 1 项紧急')
+    expect(board.pending).toBe(4)
+    expect(board.urgent).toBe(1)
+    expect(board.rest.filter((c) => c.pending).length).toBe(3)
+    expect(board.rest[0]?.pending).toBe(true)
+  })
+
+  it('全部为 0 时 hero 为 null 且 summary 为 0 项', () => {
+    const none: TaskItem[] = [
+      { kind: 'tickets_open', count: 0, high_priority: 0, oldest_wait_seconds: null },
+      { kind: 'withdrawals_pending', count: 0, amount: 0 },
+      { kind: 'nodes_offline', count: 0, sample: [], longest_offline_seconds: null },
+      { kind: 'orders_pending_stale', count: 0, threshold_seconds: 1800 },
+      { kind: 'ledger_drift', count: 0 },
+    ]
+    const board = taskBoard(taskCards(none, undefined))
+    expect(board.hero).toBeNull()
+    expect(board.summary).toBe('0 项')
+    expect(board.pending).toBe(0)
+  })
+
+  it('rest 里 pending 在前', () => {
+    const cards = taskCards(TASKS, BACKLOG)
+    const { rest } = taskBoard(cards)
+    const firstPendingIdx = rest.findIndex((c) => c.pending)
+    const lastNonPendingIdx = rest.map((c, i) => (c.pending ? -1 : i)).filter((i) => i >= 0).pop()!
+    expect(firstPendingIdx).toBeLessThan(lastNonPendingIdx)
+  })
+})
+
 describe('经营 KPI', () => {
   it('较昨日：昨日为 0 时不算百分比', () => {
     expect(kpiRevenueDelta(1000, 0)).toEqual({ text: '昨日无收入', tone: 'neutral' })
@@ -101,46 +193,34 @@ describe('经营 KPI', () => {
     expect(kpiRevenueDelta(1124, 1000)).toEqual({ text: '较昨日 +12.4%', tone: 'ok' })
     expect(kpiRevenueDelta(969, 1000)).toEqual({ text: '较昨日 −3.1%', tone: 'danger' })
   })
-})
 
-describe('收入趋势', () => {
-  const p = (date: string, net: number, adjustment = 0) => ({ date, actual_credit: net - adjustment, actual_debit: 0, adjustment, displayed_net: net })
-
-  it('合计、日均、较上一区间、柱高与今日柱', () => {
-    const s = revenueSummary([p('2026-09-22', 100), p('2026-09-23', -20, -20), p('2026-09-24', 200)], 'CNY', 200)
-    expect(s.total).toBe(280)
-    expect(s.average).toBe(93)
-    expect(s.delta).toBeCloseTo(0.4)
-    expect(s.bars.map((b) => b.height)).toEqual([50, 0, 100])
-    expect(s.bars.map((b) => b.today)).toEqual([false, false, true])
-    expect(s.bars[1]!.tip).toBe('09-23 · -¥0.20 · 实收 ¥0.00 · 调整 -¥0.20')
-    expect(s.empty).toBe(false)
+  it('kpiTiles 正常', () => {
+    const tiles = kpiTiles(OVERVIEW, TRAFFIC_24H)
+    expect(tiles.map((t) => t.key)).toEqual(['revenue', 'subs', 'traffic'])
+    expect(tiles[0]).toMatchObject({ label: '今日收入', muted: false })
+    expect(tiles[0]!.value).toBe('¥0.01')
+    expect(tiles[1]).toMatchObject({ label: '有效订阅', value: '50', muted: false })
+    expect(tiles[2]).toMatchObject({ muted: false, sub: '9 / 10 节点在线' })
   })
 
-  it('previous_total 为 0 时较上一区间为 null；全零为空', () => {
-    const s = revenueSummary([p('2026-09-24', 0)], 'USD', 0)
-    expect(s.delta).toBeNull()
-    expect(s.empty).toBe(true)
-  })
-})
-
-describe('注册与活跃', () => {
-  const pt = (day: string, registered: number, active_users: number) => ({ day, registered, logins: 3, orders: 1, unique_ips: 2, active_users })
-
-  it('注册柱最高 70%、活跃柱最高 100%', () => {
-    const s = activitySummary([pt('09-23', 50, 5000), pt('09-24', 100, 2500)])
-    expect(s.registeredTotal).toBe(150)
-    expect(s.activeAverage).toBe(3750)
-    expect(s.bars.map((b) => [b.registered, b.active])).toEqual([
-      [35, 100],
-      [70, 50],
-    ])
-    expect(s.bars[0]!.tip).toBe('09-23 · 注册 50 · 活跃 5,000 · 登录 3 · 订单 1 · 独立 IP 2')
+  it('kpiTiles 收入为空 muted', () => {
+    const o = { ...OVERVIEW, revenue: { ...REVENUE_ROW, today: 0, total: 0 } }
+    const rev = kpiTiles(o, TRAFFIC_24H)[0]!
+    expect(rev).toMatchObject({ value: '—', sub: '还没有订单', muted: true })
   })
 
-  it('没有点时日活均值为 0；全零为空', () => {
-    expect(activitySummary([])).toMatchObject({ registeredTotal: 0, activeAverage: 0, bars: [] })
-    expect(activitySummary([{ ...pt('09-24', 0, 0), logins: 0, orders: 0 }]).empty).toBe(true)
+  it('kpiTiles 订阅为空 muted', () => {
+    const o = { ...OVERVIEW, subscriptions: { active: 0, expiring_7_days: 0, expired: 0, new_7_days: 0 } }
+    const subs = kpiTiles(o, TRAFFIC_24H)[1]!
+    expect(subs).toMatchObject({ value: '0', sub: '还没有人购买套餐', muted: true })
+  })
+
+  it('kpiTiles traffic 为 undefined 与 reported_bytes 为 0', () => {
+    const noQuery = kpiTiles(OVERVIEW, undefined)[2]!
+    expect(noQuery).toMatchObject({ value: '—', sub: '', muted: true })
+    const zero: NodeTraffic = { ...TRAFFIC_24H, totals: { ...TRAFFIC_24H.totals, reported_bytes: '0' } }
+    const noReport = kpiTiles(OVERVIEW, zero)[2]!
+    expect(noReport).toMatchObject({ value: '—', sub: '还没有节点上报', muted: true })
   })
 })
 
@@ -189,10 +269,12 @@ describe('系统状态', () => {
       ['postgres', 'ok', '3 ms · 3.00 GB · 连接 23/200'],
       ['backup', 'ok', '最近一份 5 小时前'],
     ])
-    expect(view).toMatchObject({ label: '全部正常', tone: 'ok' })
+    expect(view).toMatchObject({ label: '全部正常', tone: 'ok', alert: null, footer: '共 2 项服务' })
+    expect(view.attention).toHaveLength(0)
+    expect(view.healthy).toHaveLength(2)
   })
 
-  it('components 按契约映射，备份永远是第 8 行，可点的行按权限给链接', () => {
+  it('attention / healthy / alert：node_fabric、mail、backup 三项 warn', () => {
     const status: SystemStatus = {
       ...STATUS_BASE,
       state: 'degraded',
@@ -208,16 +290,12 @@ describe('系统状态', () => {
       ],
     }
     const view = systemRows(status)
-    expect(view.rows.map((r) => r.meta)).toEqual([
-      '3 ms · 1.00 GB · 连接 23/200',
-      '0.4 ms',
-      '在线 41/44 · 2 个节点配置未同步',
-      '0 积压',
-      '214 排队 · 21 重试 · 9 失败',
-      '48 排队',
-      '38 连接',
-      '最近一份 5 小时前',
-    ])
+    expect(view.attention.map((r) => r.key)).toEqual(['node_fabric', 'mail', 'sse', 'backup'])
+    expect(view.healthy.map((r) => r.key)).toEqual(['postgres', 'redis', 'payment_callbacks', 'telegram'])
+    expect(view.alert).toMatchObject({ title: '节点调度与邮件投递受影响' })
+    expect(view.alert!.body.startsWith('节点调度：')).toBe(true)
+    expect(view.alert!.body.endsWith('。')).toBe(true)
+    expect(view.footer).toBe('共 8 项服务')
     expect(view.rows.at(-1)).toMatchObject({ key: 'backup', state: 'warn', hint: '未配异地', action: { kind: 'backup' } })
     expect(view).toMatchObject({ degraded: 3, label: '3 项降级', tone: 'warn' })
     expect(view.rows.find((r) => r.key === 'mail')!.action).toEqual({ kind: 'go', target: { module: 'system', tab: 'notify' } })
@@ -226,74 +304,28 @@ describe('系统状态', () => {
   })
 })
 
-const NODE_TRAFFIC: NodeTraffic = {
-  range: '24h',
-  snapshot_at: '2026-09-24T08:00:00.000000Z',
-  from: '2026-09-23T08:00:00.000000Z',
-  to: '2026-09-24T08:00:00.000000Z',
-  basis: 'strict_raw_report_entries',
-  items: [
-    { node_id: 'n1', name: 'hk-hkg-01', display_name: 'HK-HKG-01', upload_bytes: '100', download_bytes: '900', total_bytes: '1000', last_report_at: '2026-09-24T07:59:00.000000Z' },
-    { node_id: 'n2', name: 'sg-sin-02', display_name: null, upload_bytes: '0', download_bytes: '10', total_bytes: '10', last_report_at: '2026-09-24T07:00:00.000000Z' },
-  ],
-  totals: { reported_bytes: '1010', attributed_bytes: '1000', unattributed_bytes: '10' },
-  ranking: { returned_bytes: '1010', other_node_bytes: '0' },
-  quality: { invalid_report_count: 0, invalid_entry_count: 1 },
-}
-
-describe('流量排行', () => {
-  it('节点名 display_name ?? name，条宽以第一名为 100、最小 2', () => {
-    const rows = trafficRows(NODE_TRAFFIC, new Date('2026-09-24T08:00:00Z'))
-    expect(rows.map((r) => [r.name, r.width, r.value])).toEqual([
-      ['HK-HKG-01', 100, '1000 B'],
-      ['sg-sin-02', 2, '10 B'],
-    ])
-    expect(rows[0]!.tip).toBe('上行 100 B · 下行 900 B · 最近 1 分钟')
-    expect(rows[0]!.userId).toBeUndefined()
-  })
-
-  it('用户行带 user_id、只显示脱敏邮箱', () => {
-    const users: UserTraffic = {
-      ...NODE_TRAFFIC,
-      items: [{ user_id: 'u1', email_masked: 'a***@example.com', upload_bytes: '1', download_bytes: '1', total_bytes: '2', subscription_count: 2, last_report_at: '2026-09-24T07:59:00.000000Z' }],
-      ranking: { returned_bytes: '2', other_user_bytes: '0' },
-    }
-    expect(trafficRows(users)[0]).toMatchObject({ name: 'a***@example.com', userId: 'u1' })
-  })
-
-  it('底部小字与全部未归属告警', () => {
-    expect(trafficNotes(NODE_TRAFFIC)).toEqual({ notes: ['未归属 10 B', '无效条目 1'], allUnattributed: false })
-    const orphan: UserTraffic = {
-      ...NODE_TRAFFIC,
-      items: [],
-      totals: { reported_bytes: '500', attributed_bytes: '0', unattributed_bytes: '500' },
-      ranking: { returned_bytes: '0', other_user_bytes: '0' },
-      quality: { invalid_report_count: 0, invalid_entry_count: 0 },
-    }
-    expect(trafficNotes(orphan)).toEqual({ notes: ['未归属 500 B'], allUnattributed: true })
-  })
-})
-
 describe('schema 守住契约形状', () => {
   it('概览：Go 必回的字段齐全才过，缺 yesterday / new_7_days / nodes 判为不符', () => {
-    const row = { currency: 'CNY', today: 1, yesterday: 1, actual_yesterday: 1, last_7_days: 1, last_30_days: 1, total: 1, actual_today: 1, actual_7_days: 1, actual_30_days: 1, actual_total: 1, adjustment_today: 0, adjustment_7_days: 0, adjustment_30_days: 0, adjustment_total: 0 }
     const full = {
       users: { total: 1, active: 1, today: 0, last_7_days: 0 },
       subscriptions: { active: 1, expiring_7_days: 0, expired: 0, new_7_days: 0 },
       nodes: { total: 2, online: 1 },
-      revenue: [row, { ...row, currency: 'USD' }],
+      revenue: REVENUE_ROW,
       orders: { paid_today: 0, pending: 0, failed_today: 0 },
       ledger_drift_accounts: 0,
     }
     expect(overviewSchema.safeParse(full).success).toBe(true)
     const without = <T extends object>(o: T, key: keyof T) => Object.fromEntries(Object.entries(o).filter(([k]) => k !== key))
-    expect(overviewSchema.safeParse({ ...full, revenue: [without(row, 'yesterday')] }).success).toBe(false)
+    expect(overviewSchema.safeParse({ ...full, revenue: without(REVENUE_ROW, 'yesterday') }).success).toBe(false)
     expect(overviewSchema.safeParse({ ...full, subscriptions: { active: 1, expiring_7_days: 0, expired: 0 } }).success).toBe(false)
     expect(overviewSchema.safeParse(without(full, 'nodes')).success).toBe(false)
   })
 
   it('数字形态的字节判为不符约定', () => {
-    const numeric = { ...NODE_TRAFFIC, totals: { ...NODE_TRAFFIC.totals, reported_bytes: 1010 } }
+    const numeric = {
+      ...TRAFFIC_24H,
+      totals: { ...TRAFFIC_24H.totals, reported_bytes: 1010 },
+    }
     expect(nodeTrafficSchema.safeParse(numeric).success).toBe(false)
   })
 
@@ -301,7 +333,6 @@ describe('schema 守住契约形状', () => {
     const components = [{ key: 'postgres', state: 'down', metrics: {}, message: '数据库不可达' }, { key: 'backup', state: 'unknown', metrics: {}, message: '读不到' }]
     const res = systemStatusSchema.safeParse({ backup: { dir: '/x', readable: false, message: '读不到' }, database: { error: '读取数据库状态失败' }, state: 'degraded', components })
     expect(res.success).toBe(true)
-    // state / components 是 Go 必回的，缺了判为不符
     expect(systemStatusSchema.safeParse({ backup: { dir: '/x', readable: false }, database: { error: 'x' } }).success).toBe(false)
   })
 })

@@ -11,7 +11,7 @@ const count = int.nonnegative()
 
 const taskItemSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('tickets_open'), count, high_priority: count, oldest_wait_seconds: count.nullable() }),
-  z.object({ kind: z.literal('withdrawals_pending'), count, amounts: z.array(z.object({ currency: z.string().min(1), amount: int })) }),
+  z.object({ kind: z.literal('withdrawals_pending'), count, amount: int }),
   z.object({
     kind: z.literal('nodes_offline'),
     count,

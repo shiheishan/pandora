@@ -174,7 +174,7 @@ describe('dashboard/tasks', () => {
     as_of: '2026-09-24T08:00:00Z',
     items: [
       { kind: 'tickets_open', count: 7, high_priority: 2, oldest_wait_seconds: null },
-      { kind: 'withdrawals_pending', count: 3, amounts: [{ currency: 'CNY', amount: 128000 }] },
+      { kind: 'withdrawals_pending', count: 3, amount: 128000 },
       { kind: 'notifications_backlog', queued: 214, failed_total: 9, backlog_state: 'backlogged' },
     ],
   }

@@ -31,7 +31,7 @@ paths:
 - 改密码成功后，后端已在同一事务里吊销全部会话：前端直接清令牌回登录页，不再发任何请求
 - 浏览器标题（`Shell.tsx`、`LoginPage.tsx`）、登录页页脚与顶栏品牌区随站点名：已登录读 `site.ts` 的 `useAdminSiteName()`（`v1/settings/site`，与内容页共用缓存），登录前读服务端写进入口页的 `<meta name="application-name">`（`documentSiteName()`，开发期没有就是 Pandora）；顶栏只画环形标记加站点名文字，不写死 Pandora
 - 2 小时无操作自动退出（`idle.ts` 的 `startIdleWatch`，在 `Shell.tsx` 挂上）：后台有定时轮询，服务端按 last_seen 判的空闲在开着的标签页上永远不会触发，所以前端只把点击、按键、滚轮、触摸算作操作，多个标签页经 localStorage 共享最近操作时间
-- 侧栏徽标与仪表盘「需要处理」共用 `tasks.ts` 的同一条查询和同一种缓存形状
+- 侧栏徽标与仪表盘「待办」共用 `tasks.ts` 的同一条查询和同一种缓存形状
 
 ## 门户（src/portal）
 

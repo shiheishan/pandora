@@ -26,6 +26,12 @@ export interface PageHelp {
 const one = (label: string, title: string, items: readonly HelpItem[]): PageHelp => ({ label, sections: [{ title, items }] })
 
 export const PAGE_HELP: Readonly<Record<string, PageHelp>> = {
+  dash: one('仪表盘怎么看', '每张卡各自取数，一张没取到不影响别的', [
+    { term: '待办', text: '需要人处理的事，最紧急的一项放大在左边；点一项直接去处理。' },
+    { term: '经营', text: '金额都是人民币；每日净收入 = 账本实收 + 后台登记的收入调整。' },
+    { term: '运行', text: '流量来自节点原始上报，不是计费账本；服务健康每分钟自动刷新，也可以点「刷新」。' },
+    '鼠标放在数字或曲线上可以看到明细；曲线聚焦后也能用方向键逐天查看。',
+  ]),
   'users:groups': one('用户组怎么用', '用户组决定「谁能看到什么」', ['按组控制套餐可见、节点池与优惠券。', '新用户默认不属于任何组。']),
   'billing:arrears': one('待处理到账是什么', '钱到了，但没有可以对应的订单', [
     '订单取消后才到账、续费或变更时订阅已结束、或超额扣款的款项，暂记在这里。',
