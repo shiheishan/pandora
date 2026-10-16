@@ -14,10 +14,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/realtime"
 )
 
-// maxPackList 是门户流量包明细的最多笔数。
-const maxPackList = 100
-
-// MySubscriptions 是门户「我的套餐」：本人的全部订阅（新建在前）与未分配的流量包余量。
+// MySubscriptions 是门户「我的套餐」：本人的全部订阅（新建在前）。
 func (s *Service) MySubscriptions(ctx context.Context) (MySubscriptions, error) {
 	p, err := principal(ctx)
 	if err != nil {
@@ -28,15 +25,11 @@ func (s *Service) MySubscriptions(ctx context.Context) (MySubscriptions, error) 
 		return MySubscriptions{}, err
 	}
 	us := all[p.UserID]
-	out := MySubscriptions{Subscriptions: make([]MySubscription, 0, len(us.Subscriptions)), UnattachedPackBytes: us.UnattachedPackBytes}
+	out := MySubscriptions{Subscriptions: make([]MySubscription, 0, len(us.Subscriptions))}
 	if len(us.Subscriptions) == 0 {
 		return out, nil
 	}
 	site, err := s.settings.Site(ctx)
-	if err != nil {
-		return MySubscriptions{}, err
-	}
-	groupID, err := s.users.UserGroupID(ctx, p.UserID)
 	if err != nil {
 		return MySubscriptions{}, err
 	}
@@ -52,7 +45,7 @@ func (s *Service) MySubscriptions(ctx context.Context) (MySubscriptions, error) 
 	}
 	now := s.clock()
 	for _, sm := range us.Subscriptions {
-		out.Subscriptions = append(out.Subscriptions, mySubscription(sm, plans[sm.PlanID], prices, groupID, site.Name, now))
+		out.Subscriptions = append(out.Subscriptions, mySubscription(sm, plans[sm.PlanID], prices, site.Name, now))
 	}
 	s.fillOnlineDevices(ctx, out.Subscriptions)
 	return out, nil
@@ -78,24 +71,25 @@ func (s *Service) fillOnlineDevices(ctx context.Context, subs []MySubscription) 
 	}
 }
 
-// mySubscription 拼门户的一份订阅。
-func mySubscription(sm Summary, plan catalogsvc.Plan, prices map[uuid.UUID]catalogsvc.Price, groupID *uuid.UUID, site string, now time.Time) MySubscription {
+// mySubscription 拼门户的一份订阅。Renewable = 没停用、订阅套餐、套餐没归档且允许续费；
+// Stackable = 没停用、一次性套餐、套餐没归档且接受新购（一次性不能续费，只能叠加或另开一份）。
+func mySubscription(sm Summary, plan catalogsvc.Plan, prices map[uuid.UUID]catalogsvc.Price, site string, now time.Time) MySubscription {
 	v := MySubscription{Summary: sm, EffectiveDeviceLimit: sm.PlanMaxDevices}
 	if sm.DeviceLimit != nil {
 		v.EffectiveDeviceLimit = sm.DeviceLimit
 	}
 	v.NextResetAt = nextResetAt(sm.Quotas)
 	v.Changeable = sm.State.AcceptsChange()
-	v.Renewable = v.Changeable && plan.AllowRenewal
+	v.Renewable = v.Changeable && plan.Kind == catalogsvc.KindSubscription && plan.Status != catalogsvc.PlanArchived && plan.AllowRenewal
+	v.Stackable = v.Changeable && plan.Kind == catalogsvc.KindOneTime && plan.Status != catalogsvc.PlanArchived && plan.AllowNewPurchase
 	if sm.Price.PriceID != nil {
 		if pr, ok := prices[*sm.Price.PriceID]; ok {
 			v.RenewalPrice = &RenewalPrice{
 				ID:              pr.ID,
-				Currency:        pr.Currency,
 				UnitAmount:      pr.UnitAmount,
 				BillingInterval: pr.BillingInterval,
 				IntervalCount:   pr.IntervalCount,
-				Available:       renewalPriceUsable(pr, sm.PlanID, groupID, now),
+				Available:       renewalPriceUsable(pr, sm.PlanID),
 			}
 		}
 	}
@@ -111,25 +105,17 @@ func mySubscription(sm Summary, plan catalogsvc.Plan, prices map[uuid.UUID]catal
 	return v
 }
 
-// renewalPriceUsable 是门户展示用的「这个价格档还能续」：在售、属于本套餐、组价与用户组相符、在有效期内。
-// 真正下单时 order 经 catalog.Offer 再判一次，以那边为准。
-func renewalPriceUsable(pr catalogsvc.Price, planID uuid.UUID, groupID *uuid.UUID, now time.Time) bool {
-	if pr.Status != catalogsvc.PriceActive || pr.PlanID != planID || !pr.Currency.Valid() {
-		return false
-	}
-	if pr.UserGroupID != nil && (groupID == nil || *groupID != *pr.UserGroupID) {
-		return false
-	}
-	if pr.ValidFrom != nil && pr.ValidFrom.After(now) {
-		return false
-	}
-	return pr.ValidUntil == nil || pr.ValidUntil.After(now)
+// renewalPriceUsable 是门户展示用的「这个价格档还在售、属于本套餐」。真正下单时 order 经 catalog.Offer
+// 再判一次，以那边为准。
+func renewalPriceUsable(pr catalogsvc.Price, planID uuid.UUID) bool {
+	return pr.Status == catalogsvc.PriceActive && pr.PlanID == planID
 }
 
-// nextResetAt 取第一条流量配额行（已按 sortQuotas 排好：周期起点最晚的在前）的周期末，与前端显示的那一行是同一行。
+// nextResetAt 取 cycle 周期流量配额行的周期末（已按 sortQuotas 排好：周期起点最晚的在前），与前端显示的
+// 那一行是同一行。一次性套餐的流量不清零（只有 total 行），返回 nil。
 func nextResetAt(qs []Quota) *time.Time {
 	for i := range qs {
-		if qs[i].Metric == MetricTraffic {
+		if qs[i].Metric == MetricTraffic && qs[i].Period == PeriodCycle {
 			return qs[i].PeriodEnd
 		}
 	}
@@ -193,51 +179,4 @@ func (s *Service) labelTaken(ctx context.Context, userID, subID uuid.UUID, label
 	e := errs.Newf(errs.Conflict, msg)
 	e.Fields = map[string]string{"label": msg}
 	return e
-}
-
-// MyTrafficPacks 是门户「我的流量包」：全部剩余与最近 100 笔明细。
-func (s *Service) MyTrafficPacks(ctx context.Context) (PackBalance, error) {
-	p, err := principal(ctx)
-	if err != nil {
-		return PackBalance{}, err
-	}
-	total, err := s.repo.PackRemainingByUser(ctx, p.UserID)
-	if err != nil {
-		return PackBalance{}, subErr(err)
-	}
-	rows, err := s.repo.PackGrantsByUser(ctx, p.UserID, maxPackList)
-	if err != nil {
-		return PackBalance{}, subErr(err)
-	}
-	out := PackBalance{RemainingBytesTotal: total, Packs: make([]Pack, 0, len(rows))}
-	for _, g := range rows {
-		out.Packs = append(out.Packs, toPack(g))
-	}
-	return out, nil
-}
-
-// MyTransferPacks 是门户把本人未分配（from 为 nil）或已停用那一份上的流量包转到另一份上；返回挪过去的字节。
-func (s *Service) MyTransferPacks(ctx context.Context, from *uuid.UUID, to uuid.UUID) (int64, error) {
-	p, err := principal(ctx)
-	if err != nil {
-		return 0, err
-	}
-	actor := actorFrom(p)
-	var moved int64
-	err = s.tx.Do(ctx, func(ctx context.Context) error {
-		n, err := s.TransferPacks(ctx, Transfer{UserID: p.UserID, From: from, To: to, Actor: actor})
-		if err != nil {
-			return err
-		}
-		moved = n
-		if n == 0 {
-			return nil
-		}
-		data := map[string]any{"to_subscription_id": to, "moved_bytes": n}
-		if from != nil {
-			data["from_subscription_id"] = *from
-		}
-		return s.writeAudit(ctx, ActionPackTransferred, to, data)
-	})
-	return moved, err
 }
