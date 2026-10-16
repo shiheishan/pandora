@@ -6,14 +6,14 @@ paths:
 # 订阅模块（状态、交付、拉取、续费）
 
 ## 状态口径（全仓库只认这里）
-- 库里 `status` 只有 `active` / `expired`（`service/types.go`）；产品上的「能不能续费、换套餐、挂流量包」用 `StateAt` → `StateLive` / `StateRevivable` / `StateEnded`，关窗只看 `renewal_closed_at`（`service/state.go`）
-- `State.AcceptsChange()` 是可续费、可变更、可作流量包转入目标的唯一判定（`Renew`、`Extend`、`ChangePlan`、`TransferPacks`、order 侧下单前都应对齐）
+- 库里 `status` 只有 `active` / `expired`（`service/types.go`）；产品上的「能不能续费、叠加、换套餐」用 `StateAt` → `StateLive` / `StateRevivable` / `StateEnded`，关窗只看 `renewal_closed_at`（`service/state.go`）
+- `State.AcceptsChange()` 是可续费、可叠加、可变更的唯一判定（`Renew`、`Stack`、`Extend`、`ChangePlan`、order 侧下单前都应对齐）
 - 「当前订阅」：`SummariesByUsers` / `ByUser` 里 `currentIndex`（生效优先 → 到期晚 → 创建晚）（`service/read.go`、`service/state.go`）；后台别另写一套
 - `status` 转换表只在 `CanTransition`（`active↔expired`）；关窗只写 `renewal_closed_at`、不经 `transition`（`service/state.go` 注释）
 
 ## 谁能连、能拉哪些线（与 node 分工）
-- 节点名单：`Service.ServingSubscriptions` + `repo.ServingSubscriptions`（生效且未耗尽流量；账号、套餐绑池、池用户组不在这里判）（`service/serving.go`）
-- 订阅里的线路列表：`NodeSource.DeliverableNodes` 由 node 实现（`node/service/node_source.go`），subscription 经 `UseNodeSource` 注入；没装配拉取/预览回 `ErrDeliveryUnavailable`（503）（`service/nodes.go`、`service/pull.go`）
+- 节点名单：`Service.ServingSubscriptions` + `repo.ServingSubscriptions`（生效且未耗尽流量：本期窗口里没有 `remaining <= 0` 的限额行，remaining 含送的量；一次性套餐流量用完后订阅仍 active 但不进名单；账号、套餐绑池、池用户组不在这里判）（`service/serving.go`）；结果带 `PlanID`，node 按套餐取线路（catalog `PlanPools`）
+- 订阅里的线路列表：`NodeSource.DeliverableNodes` 由 node 实现（`node/service/node_source.go`），`NodeQuery` 带 `PlanID`（线路池按套餐绑定），subscription 经 `UseNodeSource` 注入；没装配拉取/预览回 `ErrDeliveryUnavailable`（503）（`service/nodes.go`、`service/pull.go`）
 - `DeliverableNodes` 的结果按（套餐版本, 用户组）在 node 进程内缓存 5 秒、被所有命中者共享：拉取与预览只读不改返回的切片和 `Config`（`node/service/delivery_cache.go`）
 - 拉取路径先判主人 `identity` 账号 `active`、再调 `DeliverableNodes`，用户组取自同一次 `Owners.Get`（`identitysvc.User.UserGroupID`），不另读；门户预览 `MyNodes` 还要求 `StateLive` + 有效凭据，只给名称、协议、倍率（节点标签只在后台用，门户不显示，用户 2026-10-14 定）（`service/pull.go`、`service/nodes_preview.go`）
 - 池用户组限定：node 侧只有 `poolAdmits`（`node/service/delivery.go`）；默认组（`user_group_id` 为空）进不了限定了组的池
@@ -29,7 +29,7 @@ paths:
 - `Profile-Update-Interval`：正常 12 小时，过期 1 小时；续费页 `renewalPageURL`（`service/pull.go`）
 - 查询参数：`target`/`flag`/`type` 选格式（`subscribeTarget`）；`types` 按协议过滤、`filter` 按名字关键字过滤（`render.ParseTypes`/`ParseKeywords`，口径照 Xboard）（`handler/subscribe.go`）
 - 后台模板、订阅附加设置（信息节点、协议前缀，settings 的 `subscription.info_nodes` 等）与订阅域名分组（本模块的表）在拉取侧走进程内快照，30 秒过期（`service/pull_extras.go`）；附加设置改动最多 30 秒后生效，本进程保存或恢复模板、保存订阅域名后快照立即作废。重读失败时有旧快照就沿用、打 Warn、5 秒后再试，没有旧快照才让拉取失败
-- 信息节点的「距下次重置」用 `PullByTokenHash` 里同一行配额顺带取的 `traffic_period_end`（`PullRow.TrafficPeriodEnd`），不另查库
+- 信息节点的「距下次重置」用 `PullByTokenHash` 里同一行配额顺带取的 `traffic_period_end`（`PullRow.TrafficPeriodEnd`），不另查库；`Subscription-Userinfo` 的总量 = 这一行的上限 + 送的量（`bonus_value`，不限量的行按 0）
 - 订阅域名分组（迁移 00048，三张表 `subscription_domain_groups`、`subscription_domains`、`subscription_domain_group_user_groups`，属本模块；用户 10-14 定，取代 settings 的 `subscription.link_base_urls`）：
   - 选组：用户组分到的组 → 缺省组 → 都没有用 `public_base_url`（`service/domain_set.go` 的 `groupFor`、`domainGroupFor`）；只有缺省组时不查用户组
   - `MyLinks`、换链接组内按有效权重随机（`pickWeighted`，crypto/rand），有效权重 = 基础权重（1–100）× 分数；Surfboard 托管配置取组里基础权重最高的、同权重取前面的（`stableBaseURL`、`subscribeURLFor`）；过期提示的续费页仍用 `public_base_url`
@@ -59,23 +59,28 @@ paths:
 
 ## 到期与续费窗口
 - `RenewalWindow` = 30 天（`service/types.go`）；`ExpireDue`：到期改 `expired`（不动凭据）→ 满窗写 `renewal_closed_at` 并吊销凭据（`service/expire.go`）
-- 续费 `Renew`：提前续接 `RenewalBase`；过期恢复 `restartQuotas`（`service/renew.go`、`service/period.go`）
+- 两类套餐（catalog `Plan.Kind`）：流量落在哪一行一律按套餐类型判断（`trafficPeriod`：订阅 → cycle，一次性 → total），开通、换套餐、叠加、续费重建配额前先 `withKind` 把版本里流量定义的 period 改对，不信版本里存的 period（`service/internal.go`）
+- 期末 `PeriodEndFor`：订阅按周期；一次性有天数 = 起点 + N 天，永久 = 远期哨兵（`IsPermanent` 判断，50 年以上）（`service/period.go`）
+- 续费 `Renew`：只许订阅套餐（一次性回 `ErrRenewOneTime`）；提前续接 `RenewalBase`，版本与配额不动，新周期开始时由配额滚动切到套餐当前版本；过期恢复当场切到当前版本并 `rebuildQuotas`（清已用与送的量）（`service/renew.go`、`service/plan_change.go`）
+- 叠加 `Stack`：只许一次性套餐、同一个套餐（版本须属于它）；total 行上限加上新版本的流量（饱和加，新版本不限就置不限），已用与送的量不动、不写重置日志；期末 `StackEnd`（原来永久就不变、新价永久则永久、否则 max(原到期, now) + N 天）；版本切到下单时的当前版本；已过期没停用的恢复成 active；事件 `renewed`（payload `mode: stack`）（`service/stack.go`）
+- 换套餐 `ChangePlan` 可以跨类型，周期从现在起按新价重开，`rebuildQuotas` 按新版本重建（`service/plan_change.go`）
 - 延期 `Extend`：救回折算 cycle 上限、走过到期日重对齐 day/month（`service/extend.go`）
-- 开通 `Provision`：唯一生效订阅时 `attachUnassignedPacks` 挂未分配流量包（`service/provision.go`）；注册试用 `GrantSignupTrial` 与它共用 `provisionAt`（指定起止），不建订单、不计佣，每人终身一次（`subscription_trials` 主键，只追加），套餐不可用时记日志跳过（`service/trial.go`）
+- 开通 `Provision`：按套餐类型建 cycle 或 total 流量行（`service/provision.go`）；注册试用 `GrantSignupTrial` 与它共用 `provisionAt`（指定起止），不建订单、不计佣，每人终身一次（`subscription_trials` 主键，只追加），套餐不可用时记日志跳过（`service/trial.go`）
 - 注销账号 `CloseUserSubscriptions`：identity 在注销事务里调，生效中的改 expired（到期截到现在）、关续费窗口、吊销全部凭据，提交后通知名单（`service/close.go`）
-- 后台直接改：`AdminSetPeriodEnd` 只改生效中的到期时刻（晚于现在、10 年内，不折算流量），`AdminSetQuotaLimit` 按「指标 + 周期」改一行当期上限（0–10 TiB 或不限，下个周期滚动按版本重设）；都要原因，各写一条订阅事件（`period_end_set` / `quota_limit_set`，状态不变）与审计，并推实时变更（`service/admin_edit.go`）
+- 后台直接改：`AdminSetPeriodEnd` 只改生效中的到期时刻（晚于现在、10 年内，不折算流量），`AdminSetQuotaLimit` 按「指标 + 周期」改一行当期上限（0–10 TiB 或不限，下个周期滚动按套餐当前版本重设）；都要原因，各写一条订阅事件（`period_end_set` / `quota_limit_set`，状态不变）与审计，并推实时变更（`service/admin_edit.go`）
 - 后台改订阅（改到期、改上限、加时长、加流量、重置流量、改设备数、换链接）一律经 `lockForAdmin` / `rejectDeletedOwner`：先不加锁读出属主，经 identity 的 `IsDeleted`（给用户行加共享锁）拒已注销账号 409，再锁订阅行（`service/internal.go`）。给 order/giftcard 的写方法（Provision、Renew、Extend 等）不在这里判断：注销时待付订单已在同一事务里取消，order、giftcard 在各自事务开头判断。
 
-## 流量包
-- addon 履约必须带生效订阅：`CheckPackTarget`；订单来源 `GrantTrafficPack` 不强制生效中（晚到回调照发）（`service/packs.go`）
-- `TransferPacks`：来源须 `StateEnded`，目标须未停用；不能从仍在用的那份转出（`service/packs.go`）
-- `(Source, SourceID)` 防重：`ErrPackDuplicate`
+## 送流量
+- `GrantBonus`（`service/bonus.go`）：礼品卡、后台「加流量」（`AdminGrantTraffic`，同一事务、审计 `traffic_granted`）、盲盒奖品共用，加到流量配额行的 `bonus_value`（饱和加）：订阅套餐加在本周期 cycle 行（滚动时清零，当期有效），一次性加在 total 行（一直有效）；只许 `StateLive`（否则 `ErrNotActive`），没有限额流量行回 `ErrUnlimited`；不写事件与审计（调用方写），提交后通知名单
+- `remaining`（生成列）= `limit_value + bonus_value − consumed`：扣量、名单、拉取总量、流量提醒都按它；换套餐与过期恢复重建配额时清零
 
 ## 流量重置
+- 付费重置次数 `ResetsUsed`（`service/resets_used.go`）：数 `traffic_reset_logs` 里 reason = order 的不同订单号，订阅套餐从本周期 cycle 行起点、一次性从 total 行起点起数；order 建重置单时与 `Plan.ResetLimit` 比，摘要里也带 `ResetsUsed`、`ResetLimit`、`ResetPrice`
 - 后台手动、礼品卡、用户购买（xb-order #32）共用 `ResetTraffic`（`service/reset.go`）：只清生效中订阅全部流量配额行的已用量，每行一条 `traffic_reset_logs`，提交后通知名单；原因 `manual`（ActorID 必填）、`gift_card`、`order`（`ResetOrder`，UserID 必填校验归属，备注写订单号，由 order 履约流量重置单时调）。`TrafficReset.At` 非零时按它判生效（order 结算传结算时刻），零值用自己的时钟
 
 ## 配额滚动
 - `RollQuotas`：第一遍后 `QuotaRollsRemain`，有则隔 `rollQuotaRetryDelay` 再滚一遍（`service/quota_roll.go`）
+- 滚动清零 `consumed` 与 `bonus_value`；订阅套餐的 cycle 行滚进新周期时把订阅的 `plan_version_id` 切到套餐当前版本（`SwitchPlanVersions`，只改仍是旧版本的行），上限按新版本写；版本里没有这一行的定义就不动上限（一次性套餐遗留的 cycle 行照滚、不切版本）
 - 周期起止只在 `period.go` 算，repo 只筛到期行
 
 ## 锁序
