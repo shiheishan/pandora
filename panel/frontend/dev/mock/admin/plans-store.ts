@@ -4,18 +4,22 @@ import { activeNodesInPool, pools } from './nodes-infra.ts'
 import { activeSubscriptions, GROUPS, PLAN_IDS } from './users.ts'
 
 // ---------------------------------------------------------------------------
-// 工具
+// 工具与通用常量
 // ---------------------------------------------------------------------------
 const DAY = 86_400_000
 export const GiB = 1024 ** 3
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-const CODE = /^[a-z0-9][a-z0-9_-]{1,63}$/
 const iso = (msAgo: number) => new Date(Date.now() - msAgo).toISOString()
-export const err = (status: number, code: string, message: string, fields?: Record<string, string>): MockResult => ({ status, body: { error: { code, message, ...(fields ? { fields } : {}) } } })
+
+export const err = (status: number, code: string, message: string, fields?: Record<string, string>): MockResult => ({
+  status,
+  body: { error: { code, message, ...(fields ? { fields } : {}) } },
+})
 export const invalid = (fields: Record<string, string>) => err(422, 'validation_failed', '请求参数校验未通过', fields)
 export const NOT_FOUND = err(404, 'not_found', '资源不存在或无权访问')
 export const DUP = err(409, 'conflict', '目录对象已存在或活动报价发生冲突')
-export const stale = (current: number, kind = '套餐') => err(409, 'conflict', `${kind}已被其他管理员修改，请刷新后重试`, { row_version: `current=${current}` })
+export const stale = (current: number, kind = '套餐') =>
+  err(409, 'conflict', `${kind}已被其他管理员修改，请刷新后重试`, { row_version: `current=${current}` })
 export const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v)
 export const str = (v: unknown) => (typeof v === 'string' ? v : '')
 
@@ -25,447 +29,741 @@ export function unknownField(body: Json, allowed: readonly string[]): MockResult
   return extra ? err(400, 'bad_request', `请求体包含未知字段 "${extra}"`) : null
 }
 
-
-// 在线节点数：与节点池列表的 active_nodes 同一口径，取节点假后端的同一份节点表（节点页改了状态，套餐这边跟着变）
-export const activeNodes = activeNodesInPool
 const poolId = (code: string) => pools.find((p) => p.code === code)?.id ?? randomUUID()
 const livePool = (id: string) => pools.some((p) => p.id === id && p.status !== 'disabled')
 
 // ---------------------------------------------------------------------------
-// 存储
+// 存储类型
 // ---------------------------------------------------------------------------
-interface Quota {
-  metric: string
-  limit: number | null
-  unit: string
-  period: string
-}
-interface Version {
+export interface Version {
   id: string
   version: number
-  status: 'draft' | 'published' | 'retired'
-  frozen_at: string | null
-  row_version: number
-  quota_reset_strategy: string
-  quota_reset_day: number | null
-  renewal_extends_period: boolean
-  renewal_resets_quota: boolean
-  renewal_keeps_addons: boolean
+  status: 'draft' | 'published'
+  published_at: string | null
+  traffic_bytes: number | null
   max_devices: number | null
-  max_concurrent: number | null
-  device_release_hours: number
-  overage_policy: string
   throttle_kbps: number | null
-  notes: string | null
-  entitlements: Array<{ code: string; value: unknown }>
-  quotas: Quota[]
-  pool_ids: string[]
   created_by_email: string | null
   created_at: string
 }
-interface Price {
+
+export interface Price {
   id: string
-  currency: string
-  unit_amount: number
-  billing_interval: string
+  billing_interval: 'month' | 'year' | 'one_time'
   interval_count: number
+  unit_amount: number // 整数分
+  validity_days: number | null
   status: 'active' | 'archived'
-  user_group_id: string | null
-  valid_from: string | null
-  valid_until: string | null
-  row_version: number
   created_at: string
+  // 其它模块假后端还在读，F 块改完删
+  currency: 'CNY'
+  user_group_id: null
 }
+
 export interface Plan {
   id: string
   row_version: number
   code: string
   name: string
   description: string | null
+  kind: 'subscription' | 'one_time'
   status: 'draft' | 'active' | 'archived'
-  visibility: string
+  visibility: 'public' | 'authenticated' | 'group' | 'hidden'
   visible_group_ids: string[]
-  visible_from: string | null
-  visible_until: string | null
   allow_new_purchase: boolean
   allow_renewal: boolean
   allow_upgrade: boolean
-  purchase_limit_per_user: number | null
-  stock_total: number | null
-  stock_reserved: number
-  sort_order: number
-  highlights: string[]
   recommended: boolean
+  reset_price: number | null
+  reset_limit: number | null
   current_version_id: string | null
-  versions: Version[]
-  prices: Price[]
+  pool_ids: string[]
+  versions: Version[] // version 降序
+  prices: Price[] // created_at 降序
   created_at: string
 }
 
-/** 版本语义的库默认值（POST versions 建出来就是这样，后端不复制当前版本） */
-export function blankVersion(n: number, email: string | null): Version {
-  return {
-    id: randomUUID(),
-    version: n,
-    status: 'draft',
-    frozen_at: null,
-    row_version: 1,
-    quota_reset_strategy: 'billing_cycle',
-    quota_reset_day: null,
-    renewal_extends_period: true,
-    renewal_resets_quota: true,
-    renewal_keeps_addons: true,
-    max_devices: null,
-    max_concurrent: null,
-    device_release_hours: 0,
-    overage_policy: 'suspend',
-    throttle_kbps: null,
-    notes: null,
-    entitlements: [],
-    quotas: [],
-    pool_ids: [],
-    created_by_email: email,
-    created_at: new Date().toISOString(),
-  }
-}
-
-export function quotasFor(gb: number | null, devices: number | null): Quota[] {
-  const q: Quota[] = []
-  if (gb) q.push({ metric: 'traffic.bytes', limit: gb * GiB, unit: 'bytes', period: 'cycle' })
-  if (devices) q.push({ metric: 'devices.active', limit: devices, unit: 'count', period: 'cycle' })
-  return q
-}
-
-function seedVersion(n: number, status: Version['status'], gb: number, devices: number, poolCodes: string[], daysAgo: number, email: string | null = 'ops@example.test'): Version {
-  return {
-    ...blankVersion(n, email),
-    status,
-    frozen_at: status === 'draft' ? null : iso(daysAgo * DAY),
-    row_version: status === 'draft' ? 2 : 3,
-    max_devices: devices,
-    quotas: quotasFor(gb, devices),
-    pool_ids: poolCodes.map(poolId),
-    entitlements: status === 'draft' ? [] : [{ code: 'streaming', value: true }],
-    created_at: iso((daysAgo + 2) * DAY),
-  }
-}
-
-export function seedPrice(currency: string, amount: number, interval: string, count: number, daysAgo: number, over: Partial<Price> = {}): Price {
-  return {
-    id: randomUUID(),
-    currency,
-    unit_amount: amount,
-    billing_interval: interval,
-    interval_count: count,
-    status: 'active',
-    user_group_id: null,
-    valid_from: null,
-    valid_until: null,
-    row_version: 1,
-    created_at: iso(daysAgo * DAY),
-    ...over,
-  }
-}
-
-export function seedPlan(id: string, code: string, name: string, description: string, status: Plan['status'], sort: number, versions: Version[], prices: Price[], over: Partial<Plan> = {}): Plan {
-  const current = versions.find((v) => v.status === 'published' && v.frozen_at && !versions.some((w) => w.status === 'published' && w.version > v.version))
-  return {
-    id,
-    row_version: 5,
-    code,
-    name,
-    description,
-    status,
-    visibility: 'public',
-    visible_group_ids: [],
-    visible_from: null,
-    visible_until: null,
-    allow_new_purchase: status !== 'archived',
-    allow_renewal: true,
-    allow_upgrade: true,
-    purchase_limit_per_user: null,
-    stock_total: null,
-    stock_reserved: 0,
-    sort_order: sort,
-    highlights: [],
-    recommended: false,
-    current_version_id: current?.id ?? null,
-    versions: [...versions].sort((a, b) => b.version - a.version),
-    prices: [...prices].sort((a, b) => b.created_at.localeCompare(a.created_at)),
-    created_at: iso(400 * DAY),
-    ...over,
-  }
-}
-
-const VIP = GROUPS[0]!.id
-const ENTERPRISE = GROUPS[1]!.id
-export const plans: Plan[] = [
-  seedPlan(
-    PLAN_IDS[0]!,
-    'std',
-    '标准版',
-    '日常浏览与流媒体，适合个人单设备到三设备。',
-    'active',
-    10,
-    // v1 是 R99 之前的存量写法（「用完限速」策略），读取照收、保存时改回 suspend
-    [{ ...seedVersion(1, 'published', 150, 3, ['global'], 200), overage_policy: 'throttle', throttle_kbps: 5000 }, seedVersion(2, 'published', 200, 3, ['global'], 55)],
-    [
-      seedPrice('CNY', 2000, 'month', 1, 300, { status: 'archived', row_version: 2 }),
-      seedPrice('CNY', 2500, 'month', 1, 60),
-      seedPrice('CNY', 6900, 'month', 3, 60),
-      seedPrice('USD', 390, 'month', 1, 40),
-    ],
-    { highlights: ['全部常规线路', '工单支持'] },
-  ),
-  seedPlan(
-    PLAN_IDS[1]!,
-    'pro',
-    '专业版',
-    '高流量与低延迟线路，包含亚太精选与全部线路。',
-    'active',
-    20,
-    [
-      seedVersion(1, 'published', 400, 5, ['global'], 260),
-      { ...seedVersion(2, 'published', 500, 5, ['asia', 'global'], 100), throttle_kbps: 300_000 },
-      seedVersion(3, 'draft', 600, 5, ['asia', 'global'], 1, 'zhou.min@example.test'),
-    ],
-    [
-      seedPrice('CNY', 4500, 'month', 1, 120),
-      seedPrice('CNY', 45000, 'year', 1, 120),
-      seedPrice('USD', 690, 'month', 1, 90),
-      seedPrice('CNY', 3900, 'month', 1, 30, { user_group_id: VIP }),
-    ],
-    { stock_total: 500, stock_reserved: 3, highlights: ['亚太精选 + 欧美线路', '流媒体解锁', '工单优先处理'], recommended: true },
-  ),
-  seedPlan(PLAN_IDS[2]!, 'family', '家庭版', '多设备共享，适合家庭与小团队。', 'active', 30, [seedVersion(1, 'published', 1000, 8, ['global'], 140)], [seedPrice('CNY', 6800, 'month', 1, 140)], {
-    visible_until: new Date(Date.now() + 45 * DAY).toISOString(),
-    purchase_limit_per_user: 2,
-  }),
-  seedPlan(PLAN_IDS[3]!, 'trial', '体验版', '新用户 3 天体验。', 'archived', 40, [seedVersion(1, 'published', 20, 1, ['global'], 320)], [seedPrice('CNY', 0, 'one_time', 1, 320)]),
-  seedPlan(
-    '9c0e1a2b-3333-4b00-8000-000000000005',
-    'ent-line',
-    '企业专线',
-    '对公结算，专属线路与 SLA。',
-    'draft',
-    50,
-    [seedVersion(1, 'draft', 2000, 20, ['enterprise'], 3)],
-    [seedPrice('CNY', 199900, 'month', 1, 3)],
-    { visibility: 'group', visible_group_ids: [ENTERPRISE], allow_new_purchase: true },
-  ),
-]
-
+// ---------------------------------------------------------------------------
+// 辅助导出
+// ---------------------------------------------------------------------------
 export const find = (id: string) => plans.find((p) => p.id === id)
 export const currentOf = (p: Plan) => p.versions.find((v) => v.id === p.current_version_id)
 export const draftOf = (p: Plan) => p.versions.find((v) => v.status === 'draft')
-export const trafficOf = (v: Version | undefined) => v?.quotas.find((q) => q.metric === 'traffic.bytes')?.limit ?? null
-export const touch = (x: { row_version: number }) => void (x.row_version += 1)
+export const trafficOf = (v: Version | undefined): number | null => v?.traffic_bytes ?? null
+
+// ---------------------------------------------------------------------------
+// 种子数据
+// ---------------------------------------------------------------------------
+function seedPrice(
+  interval: 'month' | 'year' | 'one_time',
+  count: number,
+  amount: number,
+  daysAgo: number,
+  over: Partial<Price> = {},
+): Price {
+  return {
+    id: randomUUID(),
+    billing_interval: interval,
+    interval_count: count,
+    unit_amount: amount,
+    validity_days: null,
+    status: 'active',
+    created_at: iso(daysAgo * DAY),
+    currency: 'CNY',
+    user_group_id: null,
+    ...over,
+  }
+}
+
+export const plans: Plan[] = [
+  // 0: 标准版 standard
+  {
+    id: PLAN_IDS[0]!,
+    row_version: 5,
+    code: 'standard',
+    name: '标准版',
+    description: '日常浏览与流媒体，适合个人单设备到三设备。',
+    kind: 'subscription',
+    status: 'active',
+    visibility: 'public',
+    visible_group_ids: [],
+    allow_new_purchase: true,
+    allow_renewal: true,
+    allow_upgrade: true,
+    recommended: true,
+    reset_price: 1000,
+    reset_limit: 2,
+    current_version_id: '9c0e1a2b-4444-4b00-8000-000000000102',
+    pool_ids: [poolId('global')],
+    versions: [
+      {
+        id: '9c0e1a2b-4444-4b00-8000-000000000102',
+        version: 2,
+        status: 'published',
+        published_at: iso(55 * DAY),
+        traffic_bytes: 200 * GiB,
+        max_devices: 3,
+        throttle_kbps: null,
+        created_by_email: 'ops@example.test',
+        created_at: iso(57 * DAY),
+      },
+      {
+        id: '9c0e1a2b-4444-4b00-8000-000000000101',
+        version: 1,
+        status: 'published',
+        published_at: iso(200 * DAY),
+        traffic_bytes: 150 * GiB,
+        max_devices: 3,
+        throttle_kbps: 5000,
+        created_by_email: 'ops@example.test',
+        created_at: iso(202 * DAY),
+      },
+    ],
+    prices: [
+      seedPrice('year', 1, 25800, 50),
+      seedPrice('month', 3, 6900, 55),
+      seedPrice('month', 1, 2500, 60),
+      seedPrice('month', 1, 2000, 300, { status: 'archived' }),
+    ],
+    created_at: iso(400 * DAY),
+  },
+  // 1: 专业版 pro
+  {
+    id: PLAN_IDS[1]!,
+    row_version: 5,
+    code: 'pro',
+    name: '专业版',
+    description: '高流量与低延迟线路，包含亚太精选与全部线路。',
+    kind: 'subscription',
+    status: 'active',
+    visibility: 'public',
+    visible_group_ids: [],
+    allow_new_purchase: true,
+    allow_renewal: true,
+    allow_upgrade: true,
+    recommended: false,
+    reset_price: 1800,
+    reset_limit: null,
+    current_version_id: '9c0e1a2b-4444-4b00-8000-000000000202',
+    pool_ids: [poolId('asia'), poolId('global')],
+    versions: [
+      {
+        id: '9c0e1a2b-4444-4b00-8000-000000000203',
+        version: 3,
+        status: 'draft',
+        published_at: null,
+        traffic_bytes: 600 * GiB,
+        max_devices: 5,
+        throttle_kbps: 300_000,
+        created_by_email: 'zhou.min@example.test',
+        created_at: iso(1 * DAY),
+      },
+      {
+        id: '9c0e1a2b-4444-4b00-8000-000000000202',
+        version: 2,
+        status: 'published',
+        published_at: iso(100 * DAY),
+        traffic_bytes: 500 * GiB,
+        max_devices: 5,
+        throttle_kbps: 300_000,
+        created_by_email: 'ops@example.test',
+        created_at: iso(102 * DAY),
+      },
+      {
+        id: '9c0e1a2b-4444-4b00-8000-000000000201',
+        version: 1,
+        status: 'published',
+        published_at: iso(260 * DAY),
+        traffic_bytes: 400 * GiB,
+        max_devices: 5,
+        throttle_kbps: null,
+        created_by_email: 'ops@example.test',
+        created_at: iso(262 * DAY),
+      },
+    ],
+    prices: [
+      seedPrice('year', 1, 45000, 110),
+      seedPrice('month', 1, 4500, 120),
+    ],
+    created_at: iso(400 * DAY),
+  },
+  // 2: 家庭版 family
+  {
+    id: PLAN_IDS[2]!,
+    row_version: 5,
+    code: 'family',
+    name: '家庭版',
+    description: '多设备共享，适合家庭与小团队。',
+    kind: 'subscription',
+    status: 'active',
+    visibility: 'public',
+    visible_group_ids: [],
+    allow_new_purchase: false,
+    allow_renewal: true,
+    allow_upgrade: true,
+    recommended: false,
+    reset_price: null,
+    reset_limit: null,
+    current_version_id: '9c0e1a2b-4444-4b00-8000-000000000301',
+    pool_ids: [poolId('global')],
+    versions: [
+      {
+        id: '9c0e1a2b-4444-4b00-8000-000000000301',
+        version: 1,
+        status: 'published',
+        published_at: iso(140 * DAY),
+        traffic_bytes: 1000 * GiB,
+        max_devices: 8,
+        throttle_kbps: null,
+        created_by_email: 'ops@example.test',
+        created_at: iso(142 * DAY),
+      },
+    ],
+    prices: [seedPrice('month', 1, 6800, 140)],
+    created_at: iso(400 * DAY),
+  },
+  // 3: 体验版 trial
+  {
+    id: PLAN_IDS[3]!,
+    row_version: 5,
+    code: 'trial',
+    name: '体验版',
+    description: '新用户体验。',
+    kind: 'one_time',
+    status: 'archived',
+    visibility: 'public',
+    visible_group_ids: [],
+    allow_new_purchase: false,
+    allow_renewal: false,
+    allow_upgrade: true,
+    recommended: false,
+    reset_price: null,
+    reset_limit: null,
+    current_version_id: '9c0e1a2b-4444-4b00-8000-000000000401',
+    pool_ids: [poolId('global')],
+    versions: [
+      {
+        id: '9c0e1a2b-4444-4b00-8000-000000000401',
+        version: 1,
+        status: 'published',
+        published_at: iso(320 * DAY),
+        traffic_bytes: 20 * GiB,
+        max_devices: 1,
+        throttle_kbps: null,
+        created_by_email: 'ops@example.test',
+        created_at: iso(322 * DAY),
+      },
+    ],
+    prices: [
+      seedPrice('one_time', 1, 0, 320, { validity_days: 7 }),
+    ],
+    created_at: iso(400 * DAY),
+  },
+  // 4: 企业专线 enterprise-line
+  {
+    id: '9c0e1a2b-3333-4b00-8000-000000000005',
+    row_version: 5,
+    code: 'enterprise-line',
+    name: '企业专线',
+    description: '对公结算，专属线路与 SLA。',
+    kind: 'subscription',
+    status: 'draft',
+    visibility: 'group',
+    visible_group_ids: [GROUPS[1]!.id],
+    allow_new_purchase: true,
+    allow_renewal: true,
+    allow_upgrade: true,
+    recommended: false,
+    reset_price: null,
+    reset_limit: null,
+    current_version_id: null,
+    pool_ids: [poolId('enterprise')],
+    versions: [
+      {
+        id: '9c0e1a2b-4444-4b00-8000-000000000501',
+        version: 1,
+        status: 'draft',
+        published_at: null,
+        traffic_bytes: 2000 * GiB,
+        max_devices: 20,
+        throttle_kbps: null,
+        created_by_email: 'ops@example.test',
+        created_at: iso(3 * DAY),
+      },
+    ],
+    prices: [seedPrice('month', 1, 199900, 3)],
+    created_at: iso(400 * DAY),
+  },
+  // 5: 年度买断 annual-once
+  {
+    id: '9c0e1a2b-3333-4b00-8000-000000000006',
+    row_version: 5,
+    code: 'annual-once',
+    name: '年度买断',
+    description: '一年有效，大流量总额度。',
+    kind: 'one_time',
+    status: 'active',
+    visibility: 'public',
+    visible_group_ids: [],
+    allow_new_purchase: true,
+    allow_renewal: false,
+    allow_upgrade: true,
+    recommended: false,
+    reset_price: null,
+    reset_limit: null,
+    current_version_id: '9c0e1a2b-4444-4b00-8000-000000000601',
+    pool_ids: [poolId('asia'), poolId('global')],
+    versions: [
+      {
+        id: '9c0e1a2b-4444-4b00-8000-000000000601',
+        version: 1,
+        status: 'published',
+        published_at: iso(20 * DAY),
+        traffic_bytes: 1200 * GiB,
+        max_devices: 3,
+        throttle_kbps: null,
+        created_by_email: 'ops@example.test',
+        created_at: iso(21 * DAY),
+      },
+    ],
+    prices: [
+      seedPrice('one_time', 1, 19900, 20, { validity_days: 365 }),
+    ],
+    created_at: iso(400 * DAY),
+  },
+]
+
+// ---------------------------------------------------------------------------
+// DTO 转换（严格对齐 Go 结构体字段）
+// ---------------------------------------------------------------------------
+export function priceRow(p: Price) {
+  return {
+    id: p.id,
+    billing_interval: p.billing_interval,
+    interval_count: p.interval_count,
+    unit_amount: p.unit_amount,
+    validity_days: p.validity_days,
+    status: p.status,
+    created_at: p.created_at,
+  }
+}
+
+const tierOrderKey = (p: Price): number => {
+  if (p.billing_interval === 'month' && p.interval_count === 1) return 1
+  if (p.billing_interval === 'month' && p.interval_count === 3) return 2
+  if (p.billing_interval === 'month' && p.interval_count === 6) return 3
+  if (p.billing_interval === 'year' && p.interval_count === 1) return 4
+  if (p.billing_interval === 'one_time' && p.interval_count === 1) return 5
+  return 99
+}
+
+export function versionRow(v: Version) {
+  return {
+    id: v.id,
+    version: v.version,
+    status: v.status,
+    published_at: v.published_at,
+    traffic_bytes: v.traffic_bytes,
+    max_devices: v.max_devices,
+    throttle_kbps: v.throttle_kbps,
+    created_by_email: v.created_by_email,
+    created_at: v.created_at,
+  }
+}
 
 export function listRow(p: Plan) {
   const cur = currentOf(p)
   const draft = draftOf(p)
+  const usageVersion = cur ?? draft
+
+  // prices 只给在售的、按 (month,1) (month,3) (month,6) (year,1) (one_time,1) 排
+  const activePrices = p.prices
+    .filter((x) => x.status === 'active')
+    .sort((a, b) => tierOrderKey(a) - tierOrderKey(b))
+    .map(priceRow)
+
+  const activeSubs = activeSubscriptions(p.id)
+  const nodeCount = p.pool_ids.reduce((n, pid) => n + activeNodesInPool(pid), 0)
+
   return {
     id: p.id,
     row_version: p.row_version,
     code: p.code,
     name: p.name,
     description: p.description,
+    kind: p.kind,
     status: p.status,
     visibility: p.visibility,
-    sort_order: p.sort_order,
-    current_version_id: p.current_version_id,
-    draft_version_id: draft?.id ?? null,
-    version: cur?.version ?? null,
-    max_devices: cur?.max_devices ?? null,
-    traffic_limit: trafficOf(cur),
-    prices: p.prices.map(priceRow),
-    active_subscriptions: activeSubscriptions(p.id),
-    node_count: cur ? cur.pool_ids.reduce((n, id) => n + activeNodes(id), 0) : 0,
-    highlights: p.highlights,
     recommended: p.recommended,
+    prices: activePrices,
+    traffic_bytes: usageVersion?.traffic_bytes ?? null,
+    max_devices: usageVersion?.max_devices ?? null,
+    throttle_kbps: usageVersion?.throttle_kbps ?? null,
+    version: cur?.version ?? null,
+    draft_version: draft?.version ?? null,
+    draft_version_id: draft?.id ?? null,
+    pool_ids: p.pool_ids,
+    reset: p.reset_price !== null ? { price: p.reset_price, limit: p.reset_limit } : null,
+    active_subscriptions: activeSubs,
+    node_count: nodeCount,
   }
 }
 
-/** 接口形状里没有 created_at（只在这里用于排序） */
-export function priceRow(x: Price) {
-  const row: Partial<Price> = { ...x }
-  delete row.created_at
-  return row
-}
-
 export function detail(p: Plan) {
-  const rest: Partial<Plan> = { ...p }
-  delete rest.created_at
-  return { ...rest, prices: p.prices.map(priceRow) }
+  const row = listRow(p)
+  // 详情里 prices 换成全部价格、created_at 降序
+  const allPrices = [...p.prices]
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .map(priceRow)
+
+  const allVersions = [...p.versions]
+    .sort((a, b) => b.version - a.version)
+    .map(versionRow)
+
+  return {
+    ...row,
+    prices: allPrices,
+    visible_group_ids: p.visible_group_ids,
+    allow_new_purchase: p.allow_new_purchase,
+    allow_renewal: p.allow_renewal,
+    allow_upgrade: p.allow_upgrade,
+    versions: allVersions,
+  }
 }
 
 // ---------------------------------------------------------------------------
-// 校验：与 Go 同键名、同文案
+// 校验规则与文案（同 Go rules.go）
 // ---------------------------------------------------------------------------
-const VISIBILITIES = ['public', 'authenticated', 'group', 'invite_only', 'hidden']
-const INTERVALS = ['day', 'week', 'month', 'quarter', 'year', 'one_time']
+const maxInt32 = 2147483647
+const maxTrafficBytes = 1024 ** 5 // 1 PiB
+const maxValidityDays = 36500
+const maxResetLimit = 1000
+const maxPlanPools = 500
+const maxNameRunes = 120
+const maxDescRunes = 2000
+const maxAmountCents = 1_000_000 * 100 // 1,000,000 元 = 100,000,000 分
 
-/** validatePlanFields */
-export function planFieldProblems(b: Json): Record<string, string> {
-  const f: Record<string, string> = {}
-  if (!CODE.test(str(b.code).trim())) f.code = '需为 2-64 位小写字母、数字、下划线或连字符'
-  const name = [...str(b.name).trim()].length
-  if (name < 1 || name > 120) f.name = '必填且最多 120 个字符'
-  const vis = str(b.visibility)
-  if (!VISIBILITIES.includes(vis)) f.visibility = '不支持的可见性'
-  const groups = Array.isArray(b.visible_group_ids) ? (b.visible_group_ids as unknown[]) : []
+const isSubTier = (interval: string, count: number) =>
+  (interval === 'month' && [1, 3, 6].includes(count)) || (interval === 'year' && count === 1)
+
+const tierKey = (interval: string, count: number) => `${interval}/${count}`
+
+function checkAmount(key: string, v: unknown, positive: boolean, fields: Record<string, string>) {
+  if (typeof v !== 'number' || !Number.isInteger(v)) {
+    fields[key] = '最多两位小数'
+    return
+  }
+  if (v < 0) {
+    fields[key] = '不能为负数'
+    return
+  }
+  if (positive && v === 0) {
+    fields[key] = '必须大于 0'
+    return
+  }
+  if (v > maxAmountCents) {
+    fields[key] = '不能超过 1000000 元'
+  }
+}
+
+export function prepareBasic(nameIn: unknown, descIn: unknown, fields: Record<string, string>): { name: string; description: string | null } {
+  const name = str(nameIn).trim()
+  const nameRunes = [...name].length
+  if (nameRunes === 0 || nameRunes > maxNameRunes || name.includes('\0')) {
+    fields.name = `必填，最多 ${maxNameRunes} 个字符，且不能包含非法字符`
+  }
+  let description: string | null = null
+  if (descIn !== undefined && descIn !== null) {
+    const d = str(descIn).trim()
+    if (d === '') {
+      description = null
+    } else if (d.includes('\0') || [...d].length > maxDescRunes) {
+      fields.description = `最多 ${maxDescRunes} 个字符，且不能包含非法字符`
+      description = d
+    } else {
+      description = d
+    }
+  }
+  return { name, description }
+}
+
+export function validateUsage(inUsage: { traffic_bytes?: unknown; max_devices?: unknown; throttle_kbps?: unknown }, fields: Record<string, string>) {
+  if (inUsage.traffic_bytes !== undefined && inUsage.traffic_bytes !== null) {
+    const tb = inUsage.traffic_bytes
+    if (!isInt(tb) || tb <= 0 || tb > maxTrafficBytes) {
+      fields.traffic_bytes = '必须大于 0 且不超过 1 PiB；不限流量请留空'
+    }
+  }
+  if (inUsage.max_devices !== undefined && inUsage.max_devices !== null) {
+    const md = inUsage.max_devices
+    if (!isInt(md) || md <= 0 || md > maxInt32) {
+      fields.max_devices = '必须为正整数；不限设备请留空'
+    }
+  }
+  if (inUsage.throttle_kbps !== undefined && inUsage.throttle_kbps !== null) {
+    const tk = inUsage.throttle_kbps
+    if (!isInt(tk) || tk <= 0 || tk > maxInt32) {
+      fields.throttle_kbps = '必须为正整数；不限速请留空'
+    }
+  }
+}
+
+export function validateReset(price: unknown, limit: unknown, fields: Record<string, string>) {
+  checkAmount('reset.price', price, true, fields)
+  if (limit !== undefined && limit !== null) {
+    if (!isInt(limit) || limit < 1 || limit > maxResetLimit) {
+      fields['reset.limit'] = `次数上限为 1–${maxResetLimit}，不限请留空`
+    }
+  }
+}
+
+export function validateSales(
+  kind: string,
+  inSales: {
+    visibility?: unknown
+    visible_group_ids?: unknown
+    allow_new_purchase?: unknown
+    allow_renewal?: unknown
+    allow_upgrade?: unknown
+    recommended?: unknown
+  },
+  fields: Record<string, string>,
+) {
+  const vis = str(inSales.visibility) || 'public'
+  if (!['public', 'authenticated', 'group', 'hidden'].includes(vis)) {
+    fields.visibility = '不支持的可见范围'
+  }
+  const groups = Array.isArray(inSales.visible_group_ids) ? (inSales.visible_group_ids as unknown[]) : []
   if (
-    b.visible_group_ids !== undefined &&
-    b.visible_group_ids !== null &&
-    (!Array.isArray(b.visible_group_ids) || groups.some((g) => typeof g !== 'string' || !UUID.test(g)) || new Set(groups).size !== groups.length)
-  )
-    f.visible_group_ids = '必须是无重复的 UUID 列表'
-  else if (vis === 'group' && !groups.length) f.visible_group_ids = '分组可见套餐至少需要一个用户组'
-  else if (vis !== 'group' && groups.length) f.visible_group_ids = '只有分组可见套餐可以设置用户组'
-  const from = b.visible_from ? Date.parse(str(b.visible_from)) : null
-  const until = b.visible_until ? Date.parse(str(b.visible_until)) : null
-  if (from !== null && until !== null && until <= from) f.visible_until = '必须晚于 visible_from'
-  if (b.purchase_limit_per_user != null && !(isInt(b.purchase_limit_per_user) && b.purchase_limit_per_user > 0)) f.purchase_limit_per_user = '必须为正整数'
-  if (b.stock_total != null && !(isInt(b.stock_total) && b.stock_total >= 0)) f.stock_total = '不能为负数'
-  return f
+    inSales.visible_group_ids !== undefined &&
+    inSales.visible_group_ids !== null &&
+    (!Array.isArray(inSales.visible_group_ids) || groups.some((g) => typeof g !== 'string' || !UUID.test(g)) || new Set(groups).size !== groups.length)
+  ) {
+    fields.visible_group_ids = '必须是无重复的 UUID 列表'
+  } else {
+    for (const gid of groups) {
+      if (!GROUPS.some((g) => g.id === gid)) {
+        fields.visible_group_ids = '用户组不存在'
+        break
+      }
+    }
+  }
+  if (!fields.visible_group_ids) {
+    if (vis === 'group' && groups.length === 0) {
+      fields.visible_group_ids = '指定用户组可见时至少选一个用户组'
+    }
+    if (vis !== 'group' && groups.length > 0) {
+      fields.visible_group_ids = '只有指定用户组可见时才能选用户组'
+    }
+  }
+  if (kind === 'one_time' && inSales.allow_renewal === true) {
+    fields.allow_renewal = '一次性套餐不能续费'
+  }
 }
 
-/** validateVersionSemantics（不含 pool_ids，那是专用接口的事） */
-export function semanticsProblems(b: Json): Record<string, string> {
-  const f: Record<string, string> = {}
-  const strategy = str(b.quota_reset_strategy)
-  if (!['never', 'natural_month', 'billing_cycle', 'fixed_day'].includes(strategy)) f.quota_reset_strategy = '不支持的重置策略'
-  if (strategy === 'fixed_day' && !(isInt(b.quota_reset_day) && b.quota_reset_day >= 1 && b.quota_reset_day <= 28)) f.quota_reset_day = '固定日必须为 1-28'
-  if (strategy !== 'fixed_day' && b.quota_reset_day != null) f.quota_reset_day = '非固定日策略不能设置该字段'
-  if (b.max_devices != null && !(isInt(b.max_devices) && b.max_devices > 0)) f.max_devices = '必须为正整数'
-  if (b.max_concurrent != null && !(isInt(b.max_concurrent) && b.max_concurrent > 0)) f.max_concurrent = '必须为正整数'
-  if (!(isInt(b.device_release_hours) && b.device_release_hours >= 0)) f.device_release_hours = '不能为负数'
-  // R99：新写入的超额策略只收 suspend（省略按 suspend），限速与策略解耦，只校验 null 或正整数
-  if (b.overage_policy !== undefined && b.overage_policy !== 'suspend') f.overage_policy = '超额策略只支持 suspend（流量用完后停止服务）'
-  if (b.throttle_kbps != null && !(isInt(b.throttle_kbps) && b.throttle_kbps > 0)) f.throttle_kbps = '必须为正整数'
-  const quotas = Array.isArray(b.quotas) ? (b.quotas as Json[]) : []
-  quotas.forEach((q, i) => {
-    if (!q || typeof q.metric !== 'string' || !q.metric) f[`quotas.${i}`] = '缺少 metric'
-    else if (!['total', 'cycle', 'day', 'month'].includes(str(q.period))) f[`quotas.${i}.period`] = '不支持的周期'
-    else if (q.limit != null && !(isInt(q.limit) && q.limit >= 0)) f[`quotas.${i}.limit`] = '不能为负数'
+export function validateTiers(tiers: unknown, fields: Record<string, string>) {
+  if (!Array.isArray(tiers) || tiers.length === 0) {
+    fields.prices = '订阅套餐至少设一档价格'
+    return
+  }
+  const seen = new Set<string>()
+  tiers.forEach((t: Json, i: number) => {
+    const key = `prices.${i}`
+    const bi = str(t?.billing_interval)
+    const ic = Number(t?.interval_count)
+    if (!isSubTier(bi, ic)) {
+      fields[key] = '周期只能是月付、季付、半年付或年付'
+      return
+    }
+    const tk = tierKey(bi, ic)
+    if (seen.has(tk)) {
+      fields[key] = '同一周期只能有一档价格'
+      return
+    }
+    seen.add(tk)
+    checkAmount(`${key}.unit_amount`, t?.unit_amount, false, fields)
   })
-  const ents = Array.isArray(b.entitlements) ? (b.entitlements as Json[]) : []
-  ents.forEach((e, i) => {
-    if (!e || typeof e.code !== 'string' || !e.code) f[`entitlements.${i}`] = '缺少 code'
+}
+
+export function validateTierChanges(changes: unknown, fields: Record<string, string>) {
+  if (!Array.isArray(changes) || changes.length === 0) {
+    fields.prices = '至少给出一档价格'
+    return
+  }
+  const seen = new Set<string>()
+  changes.forEach((t: Json, i: number) => {
+    const key = `prices.${i}`
+    const bi = str(t?.billing_interval)
+    const ic = Number(t?.interval_count)
+    if (!isSubTier(bi, ic)) {
+      fields[key] = '周期只能是月付、季付、半年付或年付'
+      return
+    }
+    const tk = tierKey(bi, ic)
+    if (seen.has(tk)) {
+      fields[key] = '同一周期只能出现一次'
+      return
+    }
+    seen.add(tk)
+    if (t?.unit_amount !== undefined && t?.unit_amount !== null) {
+      checkAmount(`${key}.unit_amount`, t.unit_amount, false, fields)
+    }
   })
-  return f
 }
 
-/** R100 卖点：数组、最多 5 条、每条去首尾空白后 1–40 字、不许重复；recommended 必须是 bool。只校验出现了的字段 */
-export function salesPointProblems(b: Json): Record<string, string> {
-  const f: Record<string, string> = {}
-  if (b.recommended !== undefined && typeof b.recommended !== 'boolean') f.recommended = '必须是布尔值'
-  if (b.highlights === undefined) return f
-  if (!Array.isArray(b.highlights) || b.highlights.some((h) => typeof h !== 'string')) return { ...f, highlights: '必须是字符串数组' }
-  const list = (b.highlights as string[]).map((h) => h.trim())
-  if (list.length > 5) f.highlights = '最多 5 条'
-  list.forEach((h, i) => {
-    const n = [...h].length
-    if (n < 1 || n > 40) f[`highlights.${i}`] = '每条 1-40 个字'
-    else if (list.indexOf(h) !== i) f[`highlights.${i}`] = '不能重复'
-  })
-  return f
-}
-
-/** 写入出现了的卖点与推荐（按去空白后的顺序） */
-export function applySalesPoints(p: Plan, b: Json): void {
-  if (Array.isArray(b.highlights)) p.highlights = (b.highlights as string[]).map((h) => h.trim())
-  if (typeof b.recommended === 'boolean') p.recommended = b.recommended
-}
-
-/** validatePriceInput */
-export function priceProblems(b: Json): Record<string, string> {
-  const f: Record<string, string> = {}
-  if (!['CNY', 'USD'].includes(str(b.currency))) f.currency = '仅允许 CNY 或 USD'
-  if (!(isInt(b.unit_amount) && b.unit_amount >= 0)) f.unit_amount = '不能为负数'
-  if (!INTERVALS.includes(str(b.billing_interval))) f.billing_interval = '不支持的计费周期'
-  if (!(isInt(b.interval_count) && b.interval_count > 0)) f.interval_count = '必须为正整数'
-  if (b.user_group_id != null && !(typeof b.user_group_id === 'string' && UUID.test(b.user_group_id))) f.user_group_id = '必须是 UUID'
-  else if (b.user_group_id != null && !GROUPS.some((g) => g.id === b.user_group_id)) f.user_group_id = '用户组不存在'
-  const from = b.valid_from ? Date.parse(str(b.valid_from)) : null
-  const until = b.valid_until ? Date.parse(str(b.valid_until)) : null
-  if (from !== null && until !== null && until <= from) f.valid_until = '必须晚于 valid_from'
-  return f
+export function validateOneTime(inOne: { unit_amount?: unknown; validity_days?: unknown }, fields: Record<string, string>) {
+  checkAmount('unit_amount', inOne.unit_amount, false, fields)
+  if (inOne.validity_days !== undefined && inOne.validity_days !== null) {
+    const vd = inOne.validity_days
+    if (!isInt(vd) || vd < 1 || vd > maxValidityDays) {
+      fields.validity_days = `有效天数为 1–${maxValidityDays}，永久请留空`
+    }
+  }
 }
 
 export function poolProblems(ids: unknown): string | null {
-  if (!Array.isArray(ids) || ids.some((x) => typeof x !== 'string' || !UUID.test(x)) || new Set(ids).size !== ids.length || ids.length > 500) return '必须是不重复的节点分组 UUID 列表'
-  if (ids.some((x) => !livePool(x as string))) return '包含不存在或已禁用的节点分组'
+  if (ids === undefined || ids === null) return null
+  if (!Array.isArray(ids) || ids.some((x) => typeof x !== 'string' || !UUID.test(x)) || new Set(ids).size !== ids.length) {
+    return '必须是无重复的 UUID 列表'
+  }
+  if (ids.length > maxPlanPools) {
+    return `一个套餐最多绑定 ${maxPlanPools} 个节点池`
+  }
+  if (ids.some((x) => !livePool(x as string))) {
+    return '包含不存在或已停用的节点池'
+  }
   return null
 }
 
-/** 发布前置条件（publishPlanVersionTx）：可见范围内有当前有效价、池里有可服务节点、仅邀请不能发布 */
-export function publishProblems(p: Plan, v: Version): Record<string, string> | null {
-  const now = Date.now()
-  const live = p.prices.filter((x) => x.status === 'active' && (!x.valid_from || Date.parse(x.valid_from) <= now) && (!x.valid_until || Date.parse(x.valid_until) > now))
-  const priced = p.visibility === 'group' ? live.some((x) => x.user_group_id === null || p.visible_group_ids.includes(x.user_group_id)) : live.some((x) => x.user_group_id === null)
-  if (!priced) return { prices: '没有覆盖可见范围的当前有效 CNY / USD 价格' }
-  if (!v.pool_ids.length || v.pool_ids.every((id) => activeNodes(id) === 0)) return { pool_ids: '没有启用的节点分组，或分组里没有可服务节点' }
-  if (p.visibility === 'invite_only') return { visibility: '仅邀请可见的套餐不能发布' }
+export function publishProblems(p: { prices: Price[]; pool_ids: string[] }): Record<string, string> | null {
+  const activePrices = p.prices.filter((x) => x.status === 'active')
+  if (activePrices.length === 0) {
+    return { prices: '发布前至少设一档在售价格' }
+  }
+  if (p.pool_ids.length === 0) {
+    return { pool_ids: '发布前至少绑定一个节点池' }
+  }
+  const assignable = p.pool_ids.filter(livePool)
+  if (assignable.length === 0) {
+    return { pool_ids: '绑定的节点池都已停用：先在「线路 · 节点池」里启用，或换绑一个启用中的池' }
+  }
+  const totalActiveNodes = p.pool_ids.reduce((sum, pid) => sum + activeNodesInPool(pid), 0)
+  if (totalActiveNodes === 0) {
+    return { pool_ids: '绑定池中至少需要一个可服务节点' }
+  }
   return null
 }
 
-export function publish(p: Plan, v: Version): void {
-  v.status = 'published'
-  v.frozen_at = new Date().toISOString()
-  touch(v)
-  p.current_version_id = v.id
-  if (p.status === 'draft') p.status = 'active'
-  touch(p)
+// ---------------------------------------------------------------------------
+// autoCode：逐行移植自 code.go (autoCodeBase + pickCode)
+// ---------------------------------------------------------------------------
+const codeWords: Record<string, string> = {
+  标准: 'standard',
+  专业: 'pro',
+  高级: 'premium',
+  家庭: 'family',
+  体验: 'trial',
+  试用: 'trial',
+  企业: 'enterprise',
+  定制: 'custom',
+  基础: 'basic',
+  旗舰: 'ultimate',
+  年: 'yearly',
+  季: 'quarterly',
+  月: 'monthly',
+  旧: 'legacy',
+  新: 'new',
+  学生: 'student',
+  团队: 'team',
+  个人: 'personal',
 }
 
-export function applySemantics(v: Version, b: Json): void {
-  v.quota_reset_strategy = str(b.quota_reset_strategy)
-  v.quota_reset_day = (b.quota_reset_day as number | null) ?? null
-  v.renewal_extends_period = b.renewal_extends_period === true
-  v.renewal_resets_quota = b.renewal_resets_quota === true
-  v.renewal_keeps_addons = b.renewal_keeps_addons === true
-  v.max_devices = (b.max_devices as number | null) ?? null
-  v.max_concurrent = (b.max_concurrent as number | null) ?? null
-  v.device_release_hours = b.device_release_hours as number
-  v.overage_policy = str(b.overage_policy) || 'suspend'
-  v.throttle_kbps = (b.throttle_kbps as number | null) ?? null
-  v.notes = typeof b.notes === 'string' && b.notes.trim() ? b.notes : null
-  v.entitlements = (Array.isArray(b.entitlements) ? (b.entitlements as Json[]) : []).map((e) => ({ code: str(e.code), value: e.value ?? null }))
-  v.quotas = (Array.isArray(b.quotas) ? (b.quotas as Json[]) : []).map((q) => ({ metric: str(q.metric), limit: (q.limit as number | null) ?? null, unit: str(q.unit), period: str(q.period) }))
+const codeWordOrder: string[] = Object.keys(codeWords).sort((a, b) => {
+  const la = [...a].length
+  const lb = [...b].length
+  if (la !== lb) return lb - la
+  return a.localeCompare(b)
+})
+
+const maxCodeBase = 32
+
+export function autoCodeBase(name: string): string {
+  let s = name.trim()
+  for (const k of codeWordOrder) {
+    s = s.replaceAll(k, ` ${codeWords[k]} `)
+  }
+  const chars: string[] = []
+  let dash = false
+  for (const r of s.toLowerCase()) {
+    const code = r.charCodeAt(0)
+    if (r.length === 1 && ((code >= 97 && code <= 122) || (code >= 48 && code <= 57))) {
+      if (dash && chars.length > 0) {
+        chars.push('-')
+      }
+      dash = false
+      chars.push(r)
+      continue
+    }
+    dash = true
+  }
+  let base = chars.join('')
+  if (base.length > maxCodeBase) {
+    base = base.slice(0, maxCodeBase).replace(/-+$/, '')
+  }
+  if (base.length === 0) return 'plan'
+  if (base.length === 1) return `plan-${base}`
+  return base
 }
 
-export function applyBasics(p: Plan, b: Json): void {
-  p.code = str(b.code).trim()
-  p.name = str(b.name).trim()
-  p.description = typeof b.description === 'string' && b.description.trim() ? b.description : null
-  p.visibility = str(b.visibility)
-  p.visible_group_ids = Array.isArray(b.visible_group_ids) ? (b.visible_group_ids as string[]) : []
-  p.purchase_limit_per_user = (b.purchase_limit_per_user as number | null) ?? null
-  p.stock_total = (b.stock_total as number | null) ?? null
-  p.sort_order = isInt(b.sort_order) ? b.sort_order : 0
+export function pickCode(base: string, taken: string[]): string {
+  const used = new Set(taken)
+  if (!used.has(base)) return base
+  for (let i = 2; ; i++) {
+    const c = `${base}-${i}`
+    if (!used.has(c)) return c
+  }
 }
 
-export const priceKey = (x: Json | Price) => `${String(x.billing_interval)}/${String(x.interval_count)}/${String(x.currency)}`
-
-/** validateWizardInput：向导的价格清单（prices.{i}.x） */
-export function wizardPriceProblems(list: Json[]): Record<string, string> {
-  const f: Record<string, string> = {}
-  const seen = new Map<string, number>()
-  list.forEach((x, i) => {
-    const n = i + 1
-    if (!(isInt(x.unit_amount) && x.unit_amount > 0)) f[`prices.${i}.unit_amount`] = `第 ${n} 档价格要大于 0`
-    if (!(isInt(x.interval_count) && x.interval_count > 0)) f[`prices.${i}.interval_count`] = `第 ${n} 档的周期数要大于 0`
-    if (!['CNY', 'USD'].includes(str(x.currency))) f[`prices.${i}.currency`] = `第 ${n} 档没有选币种`
-    if (!INTERVALS.includes(str(x.billing_interval))) f[`prices.${i}.billing_interval`] = `第 ${n} 档周期不支持`
-    const prev = seen.get(priceKey(x))
-    if (prev !== undefined) f[`prices.${i}.billing_interval`] = `第 ${n} 档和第 ${prev} 档的周期与币种完全相同`
-    seen.set(priceKey(x), n)
-  })
-  return f
+export function autoCode(name: string, taken: string[]): string {
+  return pickCode(autoCodeBase(name), taken)
 }
-
-export const newPrice = (x: Json): Price =>
-  seedPrice(str(x.currency), x.unit_amount as number, str(x.billing_interval), x.interval_count as number, 0, {
-    created_at: new Date().toISOString(),
-  })
