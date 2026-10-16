@@ -323,7 +323,7 @@ ok "shadowsocks cipher from schema: $CIPHER"
 
 POOL_CODE="exp-$STAMP"
 expect_http 200 POST "$ADM/v1/node-pools" -H "$AH" -H 'Content-Type: application/json' \
-  -d "{\"kind\":\"subscription\",\"name\":\"Expiry pool $STAMP\"}"
+  -d "{\"code\":\"$POOL_CODE\",\"name\":\"Expiry pool $STAMP\"}"
 POOL_ID=$(json_get "$HTTP_BODY" id)
 is_uuid "$POOL_ID" || die "node pool id invalid"
 

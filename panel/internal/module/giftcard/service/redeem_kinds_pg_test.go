@@ -44,8 +44,9 @@ func TestRedeemPlanCardStacksOneTime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("兑换: %v", err)
 	}
-	if !strings.Contains(res.PlanGranted, "一次性套餐") {
-		t.Fatalf("回执套餐名 %q", res.PlanGranted)
+	// PlanGranted 是回执里的卡名（模板名），不是套餐名
+	if res.PlanGranted != tpl.Name {
+		t.Fatalf("回执 PlanGranted %q，期望模板名 %q", res.PlanGranted, tpl.Name)
 	}
 
 	var count int64

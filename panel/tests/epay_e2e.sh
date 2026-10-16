@@ -128,7 +128,7 @@ print("aes-128-gcm")
 ' 2>/dev/null)
 ok "shadowsocks cipher=${CIPHER}"
 
-rp=$(json -X POST "$ADM/v1/node-pools" -H "$AH" -d "{\"kind\":\"subscription\",\"name\":\"Epay pool ${STAMP}\"}")
+rp=$(json -X POST "$ADM/v1/node-pools" -H "$AH" -d "{\"code\":\"epay-${STAMP}\",\"name\":\"Epay pool ${STAMP}\"}")
 POOL_ID=$(echo "$rp" | jqr "['id']")
 [ -n "$POOL_ID" ] && ok "节点池已创建" || { bad "建池失败" "$rp"; exit 1; }
 

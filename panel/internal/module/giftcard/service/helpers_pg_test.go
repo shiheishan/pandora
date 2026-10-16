@@ -273,7 +273,7 @@ func (e *env) mkPlan(t *testing.T, ctx context.Context, unitCents int64) (planID
 // mkOneTimePlan 用 SQL 建一个一次性套餐（一个已发布版本，带 100 GiB 总量配额）与一个一次性价格。
 func (e *env) mkOneTimePlan(t *testing.T, ctx context.Context, unitCents int64, validityDays *int) (planID, versionID, priceID uuid.UUID) {
 	t.Helper()
-	if err := e.row(ctx, `INSERT INTO plans (code, name, kind) VALUES (?, ?, 'one_time') RETURNING id`,
+	if err := e.row(ctx, `INSERT INTO plans (code, name, kind, allow_renewal) VALUES (?, ?, 'one_time', false) RETURNING id`,
 		"g-"+randHex(12), "一次性套餐-"+randHex(4)).Scan(&planID); err != nil {
 		t.Fatal(err)
 	}

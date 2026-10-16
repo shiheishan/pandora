@@ -161,7 +161,7 @@ func newPlan(t *testing.T, e *env, ctx context.Context) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID
 	if err := e.row(ctx,
-		`INSERT INTO plans (code, name) VALUES (?, ?) RETURNING id`,
+		`INSERT INTO plans (code, name, kind) VALUES (?, ?, 'subscription') RETURNING id`,
 		"p-"+randHex(8), "测试套餐",
 	).Scan(&id); err != nil {
 		t.Fatal(err)
