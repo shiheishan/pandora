@@ -24,7 +24,8 @@ type fakeSvc struct {
 	quote         func(service.QuoteInput) (service.QuoteResult, error)
 	createNew     func(service.NewOrderInput) (service.Created, error)
 	createRenewal func(service.RenewalOrderInput) (service.Created, error)
-	createPack    func(service.PackOrderInput) (service.Created, error)
+	createStack   func(service.StackOrderInput) (service.Created, error)
+	landings      func(uuid.UUID) (service.Landings, error)
 	createChange  func(service.PlanChangeOrderInput) (service.Created, error)
 	manualPreview func(service.ManualPreviewInput) (service.ManualPreview, error)
 	createManual  func(service.ManualOrderInput) (service.Created, error)
@@ -53,8 +54,12 @@ func (f *fakeSvc) CreateRenewalOrder(_ context.Context, in service.RenewalOrderI
 	return f.createRenewal(in)
 }
 
-func (f *fakeSvc) CreatePackOrder(_ context.Context, in service.PackOrderInput) (service.Created, error) {
-	return f.createPack(in)
+func (f *fakeSvc) CreateStackOrder(_ context.Context, in service.StackOrderInput) (service.Created, error) {
+	return f.createStack(in)
+}
+
+func (f *fakeSvc) Landings(_ context.Context, planID uuid.UUID) (service.Landings, error) {
+	return f.landings(planID)
 }
 
 func (f *fakeSvc) CreatePlanChangeOrder(_ context.Context, in service.PlanChangeOrderInput) (service.Created, error) {
