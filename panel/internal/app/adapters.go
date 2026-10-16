@@ -111,6 +111,7 @@ func (a opsOrderAdapter) RecentOrders(ctx context.Context, userID uuid.UUID, lim
 			PaidAt:         v.PaidAt,
 			ProviderCode:   v.ProviderCode,
 			ProviderName:   v.ProviderName,
+			Method:         v.Method,
 			ItemCount:      v.ItemCount,
 			Manual:         v.Manual,
 		}
