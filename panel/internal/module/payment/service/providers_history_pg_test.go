@@ -6,7 +6,6 @@ import (
 
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -73,7 +72,7 @@ WHERE code = ? AND position(convert_to(?, 'UTF8') IN credentials_sealed) = 0`, c
 	if v.BaseURL != "https://pay.example.test" || len(v.Methods) != 2 || v.DefaultMethod != "alipay" {
 		t.Fatalf("view settings %+v", v)
 	}
-	if len(v.Today) != 0 || v.SuccessRate24h != nil || v.LastCallbackAt != nil {
+	if !v.Today.Equal(decimal.Zero) || v.SuccessRate24h != nil || v.LastCallbackAt != nil {
 		t.Fatalf("新渠道不应有统计: %+v", v)
 	}
 
@@ -163,8 +162,8 @@ func TestListProvidersStatsInSiteTimezone(t *testing.T) {
 		t.Helper()
 		orderID, _ := e.mkOrder(t, ctx, user)
 		if err := e.exec(ctx, `
-INSERT INTO payments (order_id, user_id, provider_id, provider_payment_id, currency, amount, paid_at)
-VALUES (?, ?, ?, ?, 'CNY', ?, ?)`, orderID, user, p.ID, ref, amount, at); err != nil {
+INSERT INTO payments (order_id, user_id, provider_id, provider_payment_id, amount, paid_at)
+VALUES (?, ?, ?, ?, ?, ?)`, orderID, user, p.ID, ref, amount, at); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -175,8 +174,8 @@ VALUES (?, ?, ?, ?, 'CNY', ?, ?)`, orderID, user, p.ID, ref, amount, at); err !=
 		t.Helper()
 		orderID, orderNo := e.mkOrder(t, ctx, user)
 		if err := e.exec(ctx, `
-INSERT INTO payment_intents (order_id, order_no, user_id, provider_id, out_trade_no, currency, amount, status, http_method, redirect_url)
-VALUES (?, ?, ?, ?, ?, 'CNY', 1.00, ?, 'GET', 'https://checkout.example.test/x')`,
+INSERT INTO payment_intents (order_id, order_no, user_id, provider_id, out_trade_no, amount, status, http_method, redirect_url)
+VALUES (?, ?, ?, ?, ?, 1.00, ?, 'GET', 'https://checkout.example.test/x')`,
 			orderID, orderNo, user, p.ID, "S-"+uuid.New().String()[:12], status); err != nil {
 			t.Fatalf("intent %d: %v", n, err)
 		}
@@ -203,7 +202,7 @@ VALUES (?, 'unverified:x', 'payment.unknown', false, 'ignored', now(), now())`, 
 		t.Fatal(err)
 	}
 	v := findProvider(t, views, code)
-	if len(v.Today) != 1 || !v.Today[money.CNY].Equal(decimal.RequireFromString("7.00")) {
+	if !v.Today.Equal(decimal.RequireFromString("7.00")) {
 		t.Fatalf("今日金额应只算站点时区今天的 7.00: %v", v.Today)
 	}
 	if v.SuccessRate24h == nil || *v.SuccessRate24h != 0.5 {
@@ -240,7 +239,7 @@ func TestOrderHistoryAndSummaries(t *testing.T) {
 	order4, orderNo4 := e.mkOrder(t, ctx, user)
 	if _, err := e.svc.RecordOffline(ctx, OfflineInput{
 		OrderID: order4, OrderNo: orderNo4, UserID: user,
-		Amount: dec("2.00"), Currency: money.CNY, Reference: "BANK-HIST", Reason: "线下",
+		Amount: dec("2.00"), Reference: "BANK-HIST", Reason: "线下",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +260,7 @@ func TestOrderHistoryAndSummaries(t *testing.T) {
 	}
 	pv := h.Payments[0]
 	if pv.IntentID == nil || *pv.IntentID != second.IntentID || !pv.Amount.Equal(dec("8.00")) ||
-		pv.ProviderCode != code || pv.ProviderPaymentID != "pay-hist-1" || pv.Currency != money.CNY {
+		pv.ProviderCode != code || pv.ProviderPaymentID != "pay-hist-1" {
 		t.Fatalf("payment view %+v", pv)
 	}
 

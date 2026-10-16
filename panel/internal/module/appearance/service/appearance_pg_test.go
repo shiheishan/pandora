@@ -24,7 +24,7 @@ import (
 type apFakeSite struct{ name string }
 
 func (f apFakeSite) Site(context.Context) (settingsvc.Site, error) {
-	return settingsvc.Site{Name: f.name, Timezone: "UTC", Currency: "CNY"}, nil
+	return settingsvc.Site{Name: f.name, Timezone: "UTC"}, nil
 }
 
 type apEnv struct {

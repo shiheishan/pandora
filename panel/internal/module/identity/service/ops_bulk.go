@@ -2,9 +2,6 @@ package service
 
 import (
 	"context"
-	"fmt"
-	"sort"
-	"strings"
 
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/google/uuid"
@@ -14,27 +11,12 @@ import (
 // CSVCell 是导出 CSV 的单元格防注入（以 = + - @ 等开头的前面加单引号），口径与审计导出相同。
 func CSVCell(s string) string { return auditsvc.CSVSafe(s) }
 
-// formatPaid 把按币种划分的实付金额格式化为展示文本：
-// 按币种代码字母序，每个币种 "CNY 12.30"（保留两位小数），多个用 " / " 连接；没有付费订单或实付为零时返回 "0"。
-func formatPaid(m map[string]decimal.Decimal) string {
-	if len(m) == 0 {
+// formatPaid 把实付金额格式化为展示文本：不为正写 "0"，否则保留两位小数。
+func formatPaid(d decimal.Decimal) string {
+	if !d.IsPositive() {
 		return "0"
 	}
-	keys := make([]string, 0, len(m))
-	for k, v := range m {
-		if v.GreaterThan(decimal.Zero) {
-			keys = append(keys, k)
-		}
-	}
-	if len(keys) == 0 {
-		return "0"
-	}
-	sort.Strings(keys)
-	parts := make([]string, len(keys))
-	for i, k := range keys {
-		parts[i] = fmt.Sprintf("%s %s", k, m[k].StringFixed(2))
-	}
-	return strings.Join(parts, " / ")
+	return d.StringFixed(2)
 }
 
 // PreviewBulk 按筛选条件预览命中人数与前 10 个样本。

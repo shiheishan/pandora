@@ -12,12 +12,6 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// CurrencyAmount 是一个币种上的合计。
-type CurrencyAmount struct {
-	Currency string
-	Amount   decimal.Decimal
-}
-
 // InsertLateCase 插一行；同一笔收款第二个案返回 ErrDuplicate。写前 money.Check(c.Amount)。
 func (r *Repo) InsertLateCase(ctx context.Context, c *model.LateCase) error {
 	if err := money.Check(c.Amount); err != nil {
@@ -77,17 +71,14 @@ func (r *Repo) ListLateCases(ctx context.Context, status string, limit, offset i
 	return out, total, nil
 }
 
-// PendingLateTotals status = 'suspense' 的金额按币种合计。
-func (r *Repo) PendingLateTotals(ctx context.Context) ([]CurrencyAmount, error) {
-	var out []CurrencyAmount
+// PendingLateTotals status = 'suspense' 的待处理金额合计。
+func (r *Repo) PendingLateTotals(ctx context.Context) (decimal.Decimal, error) {
+	var total decimal.Decimal
 	err := r.d.Conn(ctx).Raw(
-		`SELECT currency, sum(amount) AS amount FROM late_payment_cases WHERE status = 'suspense' GROUP BY currency`,
-	).Scan(&out).Error
+		`SELECT coalesce(sum(amount), 0) FROM late_payment_cases WHERE status = 'suspense'`,
+	).Row().Scan(&total)
 	if err != nil {
-		return nil, err
+		return decimal.Zero, err
 	}
-	if out == nil {
-		return []CurrencyAmount{}, nil
-	}
-	return out, nil
+	return total, nil
 }

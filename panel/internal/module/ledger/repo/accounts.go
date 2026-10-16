@@ -24,7 +24,6 @@ func (r *Repo) EnsureAccounts(ctx context.Context, keys []AccountKey) error {
 	for i, k := range keys {
 		rows[i] = model.Account{
 			AccountType: k.Type,
-			Currency:    k.Currency,
 			OwnerUserID: k.OwnerUserID,
 			OwnerRef:    k.OwnerRef,
 			Balance:     decimal.Zero,
@@ -44,17 +43,17 @@ func (r *Repo) LockAccounts(ctx context.Context, keys []AccountKey) ([]model.Acc
 	}
 	var b strings.Builder
 	b.WriteString("SELECT * FROM ledger_accounts WHERE ")
-	args := make([]any, 0, len(keys)*4)
+	args := make([]any, 0, len(keys)*3)
 	for i, k := range keys {
 		if i > 0 {
 			b.WriteString(" OR ")
 		}
 		if k.OwnerUserID != nil {
-			b.WriteString("(account_type = ? AND currency = ? AND owner_user_id = ? AND owner_ref = '')")
-			args = append(args, k.Type, k.Currency, *k.OwnerUserID)
+			b.WriteString("(account_type = ? AND owner_user_id = ? AND owner_ref = '')")
+			args = append(args, k.Type, *k.OwnerUserID)
 		} else {
-			b.WriteString("(account_type = ? AND currency = ? AND owner_user_id IS NULL AND owner_ref = ?)")
-			args = append(args, k.Type, k.Currency, k.OwnerRef)
+			b.WriteString("(account_type = ? AND owner_user_id IS NULL AND owner_ref = ?)")
+			args = append(args, k.Type, k.OwnerRef)
 		}
 	}
 	b.WriteString(" ORDER BY id FOR UPDATE")
@@ -100,15 +99,15 @@ func (r *Repo) SetBalances(ctx context.Context, balances map[uuid.UUID]decimal.D
 	return nil
 }
 
-// UserBalances 读一批用户在某币种、某类用户科目上的余额；没有科目的用户不在结果里。ids 为空返回空 map。
-func (r *Repo) UserBalances(ctx context.Context, accountType, currency string, userIDs []uuid.UUID) (map[uuid.UUID]decimal.Decimal, error) {
+// UserBalances 读一批用户在某类用户科目上的余额；没有科目的用户不在结果里。ids 为空返回空 map。
+func (r *Repo) UserBalances(ctx context.Context, accountType string, userIDs []uuid.UUID) (map[uuid.UUID]decimal.Decimal, error) {
 	if len(userIDs) == 0 {
 		return map[uuid.UUID]decimal.Decimal{}, nil
 	}
 	var rows []model.Account
 	err := r.d.Conn(ctx).Model(&model.Account{}).Where(
-		"account_type = ? AND currency = ? AND owner_user_id IN ?",
-		accountType, currency, userIDs,
+		"account_type = ? AND owner_user_id IN ?",
+		accountType, userIDs,
 	).Find(&rows).Error
 	if err != nil {
 		return nil, err

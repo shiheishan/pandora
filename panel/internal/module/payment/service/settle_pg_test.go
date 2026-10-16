@@ -10,7 +10,6 @@ import (
 
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
 	"github.com/aegispanel/aegis/internal/module/payment/provider"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
 )
 
@@ -27,7 +26,6 @@ func TestWebhookUnverifiedEvidenceWhitelisted(t *testing.T) {
 		"payment_id": "pay-" + huge,
 		"order_no":   "ORD-" + huge,
 		"amount":     990,
-		"currency":   "CNY",
 		"raw": map[string]any{
 			"out_trade_no": "T" + huge,
 			"trade_status": "TRADE_SUCCESS",
@@ -127,7 +125,6 @@ func TestWebhookSettleVsCreateIntentNoDeadlock(t *testing.T) {
 				OrderNo:      orderNo,
 				UserID:       user,
 				Amount:       dec("9.90"),
-				Currency:     money.CNY,
 				ProviderCode: code,
 				Title:        "测试订单",
 				ClientIP:     "203.0.113.1",

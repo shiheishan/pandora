@@ -73,14 +73,13 @@ func (f *fakeOpsSubs) AdminSubs(_ context.Context, userIDs []uuid.UUID) (map[uui
 
 // fakeWallets 是 OpsWallets 的测试替身。
 type fakeWallets struct {
-	currency string
-	bal      map[uuid.UUID]decimal.Decimal
-	calls    int
+	bal   map[uuid.UUID]decimal.Decimal
+	calls int
 }
 
 var _ OpsWallets = (*fakeWallets)(nil)
 
-func (f *fakeWallets) UserBalances(_ context.Context, userIDs []uuid.UUID) (string, map[uuid.UUID]decimal.Decimal, error) {
+func (f *fakeWallets) UserBalances(_ context.Context, userIDs []uuid.UUID) (map[uuid.UUID]decimal.Decimal, error) {
 	f.calls++
 	out := make(map[uuid.UUID]decimal.Decimal, len(userIDs))
 	for _, id := range userIDs {
@@ -90,7 +89,7 @@ func (f *fakeWallets) UserBalances(_ context.Context, userIDs []uuid.UUID) (stri
 			out[id] = decimal.Zero
 		}
 	}
-	return f.currency, out, nil
+	return out, nil
 }
 
 // fakeTelegram 是 OpsTelegram 的测试替身。
@@ -150,13 +149,13 @@ func writeEvent(t *testing.T, e *env, ctx context.Context, user uuid.UUID, ip, a
 	}
 }
 
-// adminEnv 在 newEnv 上挂齐五个假端口（wallets 币种 CNY）。
+// adminEnv 在 newEnv 上挂齐五个假端口。
 func adminEnv(t *testing.T) (*env, context.Context, *opsFakes) {
 	e, ctx := newEnv(t)
 	f := &opsFakes{
 		subs:     &fakeOpsSubs{current: map[uuid.UUID]CurrentSub{}, admin: map[uuid.UUID]AdminUserSubs{}},
 		orders:   &fakeExportOpsOrders{},
-		wallets:  &fakeWallets{currency: "CNY", bal: map[uuid.UUID]decimal.Decimal{}},
+		wallets:  &fakeWallets{bal: map[uuid.UUID]decimal.Decimal{}},
 		telegram: &fakeTelegram{refs: map[uuid.UUID]*TelegramRef{}},
 		groups:   &fakeGroupUsage{usage: map[uuid.UUID]GroupUsage{}},
 	}
@@ -174,7 +173,7 @@ func opsEnv(t *testing.T) (*env, context.Context, *fakeOpsSubs) {
 	fs := &fakeOpsSubs{current: map[uuid.UUID]CurrentSub{}, admin: map[uuid.UUID]AdminUserSubs{}}
 	e.svc.UseOpsSubscriptions(fs)
 	e.svc.UseOpsOrders(&fakeExportOpsOrders{})
-	e.svc.UseOpsWallets(&fakeWallets{currency: "CNY", bal: map[uuid.UUID]decimal.Decimal{}})
+	e.svc.UseOpsWallets(&fakeWallets{bal: map[uuid.UUID]decimal.Decimal{}})
 	e.svc.UseOpsTelegram(&fakeTelegram{refs: map[uuid.UUID]*TelegramRef{}})
 	e.svc.UseOpsGroupUsage(&fakeGroupUsage{usage: map[uuid.UUID]GroupUsage{}})
 	return e, ctx, fs

@@ -113,41 +113,37 @@ func (r *Repo) ListWithdrawals(ctx context.Context, status string, limit int) ([
 	return out, mapErr(err)
 }
 
-// WithdrawalTotals 是某用户某币种的提现汇总：InFlight 申请中与已批准，Paid 已打款。
+// WithdrawalTotals 是某用户的提现汇总：InFlight 申请中与已批准，Paid 已打款。
 type WithdrawalTotals struct {
 	InFlight decimal.Decimal `gorm:"column:in_flight"`
 	Paid     decimal.Decimal `gorm:"column:paid"`
 }
 
-// WithdrawalTotalsOf 按用户与币种汇总提现金额。
-func (r *Repo) WithdrawalTotalsOf(ctx context.Context, userID uuid.UUID, currency string) (WithdrawalTotals, error) {
+// WithdrawalTotalsOf 按用户汇总提现金额。
+func (r *Repo) WithdrawalTotalsOf(ctx context.Context, userID uuid.UUID) (WithdrawalTotals, error) {
 	var t WithdrawalTotals
 	err := r.d.Conn(ctx).Raw(`
 SELECT
   COALESCE(sum(amount) FILTER (WHERE status IN ('requested','approved')), 0) AS in_flight,
   COALESCE(sum(amount) FILTER (WHERE status = 'paid'), 0) AS paid
 FROM withdrawals
-WHERE user_id = ? AND currency = ?`, userID, currency).Scan(&t).Error
+WHERE user_id = ?`, userID).Scan(&t).Error
 	return t, mapErr(err)
 }
 
-// WithdrawalOverview 是全站某一币种的提现汇总：PaidOut 已打款总额，Waiting 申请中笔数。
+// WithdrawalOverview 是全站提现汇总：PaidOut 已打款总额，Waiting 申请中笔数。
 type WithdrawalOverview struct {
-	Currency string          `gorm:"column:currency"`
-	PaidOut  decimal.Decimal `gorm:"column:paid_out"`
-	Waiting  int64           `gorm:"column:waiting"`
+	PaidOut decimal.Decimal `gorm:"column:paid_out"`
+	Waiting int64           `gorm:"column:waiting"`
 }
 
-// WithdrawalOverviewByCurrency 按币种分组的全站提现概览，币种升序；没有提现的币种不出现。
-func (r *Repo) WithdrawalOverviewByCurrency(ctx context.Context) ([]WithdrawalOverview, error) {
-	var out []WithdrawalOverview
+// WithdrawalOverview 全站提现概览；没有提现时金额为 0、笔数为 0。
+func (r *Repo) WithdrawalOverview(ctx context.Context) (WithdrawalOverview, error) {
+	var out WithdrawalOverview
 	err := r.d.Conn(ctx).Raw(`
 SELECT
-  currency,
   COALESCE(sum(amount) FILTER (WHERE status = 'paid'), 0) AS paid_out,
   count(*) FILTER (WHERE status = 'requested') AS waiting
-FROM withdrawals
-GROUP BY currency
-ORDER BY currency`).Scan(&out).Error
+FROM withdrawals`).Scan(&out).Error
 	return out, mapErr(err)
 }

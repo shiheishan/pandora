@@ -12,62 +12,22 @@ import (
 func TestFormatPaid(t *testing.T) {
 	tests := []struct {
 		name string
-		in   map[string]decimal.Decimal
+		in   decimal.Decimal
 		want string
 	}{
 		{
-			name: "nil map",
-			in:   nil,
-			want: "0",
-		},
-		{
-			name: "空 map",
-			in:   map[string]decimal.Decimal{},
-			want: "0",
-		},
-		{
 			name: "金额为零",
-			in: map[string]decimal.Decimal{
-				"CNY": decimal.Zero,
-			},
+			in:   decimal.Zero,
 			want: "0",
 		},
 		{
-			name: "多个币种但金额都为零",
-			in: map[string]decimal.Decimal{
-				"CNY": decimal.Zero,
-				"USD": decimal.Zero,
-			},
-			want: "0",
-		},
-		{
-			name: "单币种有实付",
-			in: map[string]decimal.Decimal{
-				"CNY": decimal.RequireFromString("12.30"),
-			},
-			want: "CNY 12.30",
-		},
-		{
-			name: "多币种按字母序排列",
-			in: map[string]decimal.Decimal{
-				"USD": decimal.RequireFromString("5.00"),
-				"CNY": decimal.RequireFromString("12.30"),
-			},
-			want: "CNY 12.30 / USD 5.00",
-		},
-		{
-			name: "多币种中包含零金额币种",
-			in: map[string]decimal.Decimal{
-				"CNY": decimal.RequireFromString("12.30"),
-				"USD": decimal.Zero,
-			},
-			want: "CNY 12.30",
+			name: "有实付",
+			in:   decimal.RequireFromString("12.30"),
+			want: "12.30",
 		},
 		{
 			name: "负数防御",
-			in: map[string]decimal.Decimal{
-				"CNY": decimal.RequireFromString("-1.00"),
-			},
+			in:   decimal.RequireFromString("-1.00"),
 			want: "0",
 		},
 	}
@@ -132,10 +92,7 @@ func TestExportUsersWithOrders(t *testing.T) {
 		stats: map[uuid.UUID]OrderStat{
 			u1.ID: {
 				Orders: 3,
-				Paid: map[string]decimal.Decimal{
-					"USD": decimal.RequireFromString("5.00"),
-					"CNY": decimal.RequireFromString("12.30"),
-				},
+				Paid:   decimal.RequireFromString("12.30"),
 			},
 			// u2 没有任何订单
 		},
@@ -166,8 +123,8 @@ func TestExportUsersWithOrders(t *testing.T) {
 	if row1.Orders != 3 {
 		t.Fatalf("u1 Orders got %d want 3", row1.Orders)
 	}
-	if row1.Paid != "CNY 12.30 / USD 5.00" {
-		t.Fatalf("u1 Paid got %q want %q", row1.Paid, "CNY 12.30 / USD 5.00")
+	if row1.Paid != "12.30" {
+		t.Fatalf("u1 Paid got %q want %q", row1.Paid, "12.30")
 	}
 
 	if row2.Orders != 0 {

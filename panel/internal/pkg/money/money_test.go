@@ -63,17 +63,11 @@ func TestMulRatioTruncatesTowardZero(t *testing.T) {
 	}
 }
 
-func TestCheckAndCurrency(t *testing.T) {
+func TestCheck(t *testing.T) {
 	if err := CheckNonNegative(dec("-0.01")); !errors.Is(err, ErrNegative) {
 		t.Fatalf("负数: %v", err)
 	}
 	if err := Check(dec("1.234")); !errors.Is(err, ErrPrecision) {
 		t.Fatalf("精度: %v", err)
-	}
-	if c, err := ParseCurrency("cny"); err != nil || c != CNY {
-		t.Fatalf("cny → %q, %v", c, err)
-	}
-	if _, err := ParseCurrency("JPY"); !errors.Is(err, ErrCurrency) {
-		t.Fatalf("JPY: %v", err)
 	}
 }

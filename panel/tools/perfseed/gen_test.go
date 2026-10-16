@@ -22,7 +22,7 @@ func basePlans() []PlanSpec {
 	return []PlanSpec{
 		{
 			PlanID: "plan-a", VersionID: "ver-a", PriceID: "price-a",
-			Name: "Plan A", VersionNo: 1, Currency: "CNY", Amount: "15.00",
+			Name: "Plan A", VersionNo: 1, Amount: "15.00",
 			Interval: "month", IntervalCount: 1,
 			Quotas: []QuotaDef{{
 				Metric: "traffic.bytes", Limit: int64Ptr(200e9), Unit: "bytes", Period: "cycle",
@@ -31,7 +31,7 @@ func basePlans() []PlanSpec {
 		},
 		{
 			PlanID: "plan-b", VersionID: "ver-b", PriceID: "price-b",
-			Name: "Plan B", VersionNo: 1, Currency: "CNY", Amount: "30.00",
+			Name: "Plan B", VersionNo: 1, Amount: "30.00",
 			Interval: "month", IntervalCount: 1, Quotas: nil,
 			EntitlementsJSON: "[]", QuotasJSON: "[]",
 		},
@@ -284,7 +284,7 @@ func TestGenerateValidation(t *testing.T) {
 	bad4 := base
 	bad4.Plans = []PlanSpec{{
 		PlanID: "p", VersionID: "v", PriceID: "pr", Name: "n", VersionNo: 1,
-		Currency: "CNY", Amount: "1.00", Interval: "year", IntervalCount: 1,
+		Amount: "1.00", Interval: "year", IntervalCount: 1,
 		EntitlementsJSON: "[]", QuotasJSON: "[]",
 	}}
 	if _, err := Generate(bad4, testIssuer); err == nil {
@@ -294,7 +294,7 @@ func TestGenerateValidation(t *testing.T) {
 	bad5 := base
 	bad5.Plans = []PlanSpec{{
 		PlanID: "p", VersionID: "v", PriceID: "pr", Name: "n", VersionNo: 1,
-		Currency: "CNY", Amount: "1.00", Interval: "month", IntervalCount: 1,
+		Amount: "1.00", Interval: "month", IntervalCount: 1,
 		Quotas:           []QuotaDef{{Metric: "m", Period: "day"}},
 		EntitlementsJSON: "[]", QuotasJSON: "[]",
 	}}

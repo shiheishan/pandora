@@ -157,11 +157,11 @@ func TestSetCommissionWithdrawValidation(t *testing.T) {
 	err = s.SetCommissionWithdraw(ctx, CommissionWithdrawUpdate{Enabled: &enabled, Methods: &empty})
 	assertFieldValidation(t, err, "withdraw_methods")
 
-	// 关着提现也不许全取消：其他币种还按这些方式提现
+	// 关着提现也不许全取消：重新打开时要用这些方式
 	disabled := false
 	err = s.SetCommissionWithdraw(ctx, CommissionWithdrawUpdate{Enabled: &disabled, Methods: &empty})
 	assertFieldValidation(t, err, "withdraw_methods")
-	if got := errs.As(err).Fields["withdraw_methods"]; got != "关着提现时其他币种的佣金仍按这里的方式提现，至少要选一种" {
+	if got := errs.As(err).Fields["withdraw_methods"]; got != "关着提现时也至少要选一种提现方式，重新打开提现时直接生效" {
 		t.Fatalf("关着提现全取消的提示 %q", got)
 	}
 	alipay := []string{WithdrawMethodAlipay}

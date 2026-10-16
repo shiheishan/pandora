@@ -13,15 +13,15 @@ import (
 func ensurePlatformAccount(t *testing.T, e *env, ctx context.Context, accountType, ownerRef string) uuid.UUID {
 	t.Helper()
 	if err := e.exec(ctx, `
-		INSERT INTO ledger_accounts (account_type, currency, owner_ref, balance)
-		VALUES (?, 'CNY', ?, 0) ON CONFLICT DO NOTHING`,
+			INSERT INTO ledger_accounts (account_type, owner_ref, balance)
+			VALUES (?, ?, 0) ON CONFLICT DO NOTHING`,
 		accountType, ownerRef); err != nil {
 		t.Fatal(err)
 	}
 	var id uuid.UUID
 	if err := e.row(ctx, `
-		SELECT id FROM ledger_accounts
-		 WHERE account_type = ? AND currency = 'CNY' AND owner_ref = ?`,
+			SELECT id FROM ledger_accounts
+			 WHERE account_type = ? AND owner_ref = ?`,
 		accountType, ownerRef).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
@@ -33,8 +33,8 @@ func insertBalancedTxn(t *testing.T, e *env, ctx context.Context, kind string, o
 	t.Helper()
 	var txnID uuid.UUID
 	if err := e.row(ctx, `
-		INSERT INTO ledger_transactions (kind, currency, actor_kind, occurred_at)
-		VALUES (?, 'CNY', 'system', ?) RETURNING id`, kind, occurred).Scan(&txnID); err != nil {
+			INSERT INTO ledger_transactions (kind, actor_kind, occurred_at)
+			VALUES (?, 'system', ?) RETURNING id`, kind, occurred).Scan(&txnID); err != nil {
 		t.Fatal(err)
 	}
 	for _, leg := range []struct {
@@ -45,8 +45,8 @@ func insertBalancedTxn(t *testing.T, e *env, ctx context.Context, kind string, o
 		{creditAcct, "credit"},
 	} {
 		if err := e.exec(ctx, `
-			INSERT INTO ledger_entries (transaction_id, account_id, currency, direction, amount)
-			VALUES (?, ?, 'CNY', ?, ?)`, txnID, leg.acct, leg.dir, amount); err != nil {
+				INSERT INTO ledger_entries (transaction_id, account_id, direction, amount)
+				VALUES (?, ?, ?, ?)`, txnID, leg.acct, leg.dir, amount); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -67,7 +67,7 @@ func insertRevenueFixture(t *testing.T, e *env, ctx context.Context) (uuid.UUID,
 
 func findRevenueDay(days []RevenueDay, day string) (RevenueDay, bool) {
 	for _, d := range days {
-		if d.Day == day && d.Currency == "CNY" {
+		if d.Day == day {
 			return d, true
 		}
 	}
@@ -122,25 +122,15 @@ func TestRevenueTotalsPG(t *testing.T) {
 	e, ctx := newEnv(t)
 	insertRevenueFixture(t, e, ctx)
 
-	totals, err := e.svc.RevenueTotals(ctx)
+	total, err := e.svc.RevenueTotals(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var cny *RevenueTotal
-	for i := range totals {
-		if totals[i].Currency == "CNY" {
-			cny = &totals[i]
-			break
-		}
+	if total.Credit.LessThan(dec("100.00")) {
+		t.Fatalf("credit 下界: %s", total.Credit)
 	}
-	if cny == nil {
-		t.Fatal("缺少 CNY 汇总")
-	}
-	if cny.Credit.LessThan(dec("100.00")) {
-		t.Fatalf("CNY credit 下界: %s", cny.Credit)
-	}
-	if cny.Debit.LessThan(dec("10.00")) {
-		t.Fatalf("CNY debit 下界: %s", cny.Debit)
+	if total.Debit.LessThan(dec("10.00")) {
+		t.Fatalf("debit 下界: %s", total.Debit)
 	}
 }
 
@@ -153,8 +143,8 @@ func TestDriftAccountsPG(t *testing.T) {
 	}
 	ref := "drift-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:8]
 	if err := e.exec(ctx, `
-		INSERT INTO ledger_accounts (account_type, currency, owner_ref, balance)
-		VALUES ('suspense', 'CNY', ?, 5.00)`, ref); err != nil {
+			INSERT INTO ledger_accounts (account_type, owner_ref, balance)
+			VALUES ('suspense', ?, 5.00)`, ref); err != nil {
 		t.Fatal(err)
 	}
 	n1, err := e.svc.DriftAccounts(ctx)

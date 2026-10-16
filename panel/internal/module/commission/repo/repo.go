@@ -57,7 +57,7 @@ func (r *Repo) LockUser(ctx context.Context, userID uuid.UUID) error {
 	return mapErr(err)
 }
 
-// LockReferee 在当前事务里对被推荐人加咨询锁，串行化「首单」口径的计提判定（不同币种的订单不共用平台收入科目锁）。
+// LockReferee 在当前事务里对被推荐人加咨询锁，串行化「首单」口径的计提判定。
 func (r *Repo) LockReferee(ctx context.Context, refereeID uuid.UUID) error {
 	key := "commission:referee:" + refereeID.String()
 	err := r.d.Conn(ctx).Exec(

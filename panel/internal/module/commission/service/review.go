@@ -12,7 +12,6 @@ import (
 	"github.com/aegispanel/aegis/internal/module/commission/repo"
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
 )
 
@@ -56,7 +55,6 @@ func (s *Service) ReviewEntry(ctx context.Context, id uuid.UUID, approve bool, r
 			"reason":        reason,
 			"review_reason": deref(e.ReviewReason),
 			"amount":        e.CommissionAmount.StringFixed(2),
-			"currency":      e.Currency,
 			"order_no":      e.OrderNo,
 		}
 		if approve {
@@ -79,7 +77,6 @@ func (s *Service) ReviewEntry(ctx context.Context, id uuid.UUID, approve bool, r
 		}
 		txnID, err := s.ledger.Post(ctx, ledgersvc.Posting{
 			Kind:       ledgersvc.KindCommissionVoided,
-			Currency:   money.Currency(e.Currency),
 			SourceType: SourceCommissionEntry,
 			SourceID:   e.ID,
 			Memo:       "佣金复核作废，冲回计提",
@@ -185,7 +182,6 @@ func (s *Service) AdminReviewEntries(ctx context.Context, cursor string, limit i
 			ReferrerEmail: emails[e.ReferrerUserID],
 			RefereeEmail:  emails[e.RefereeUserID],
 			Amount:        e.CommissionAmount,
-			Currency:      e.Currency,
 			ReviewReason:  deref(e.ReviewReason),
 			ReviewSource:  reviewSource(deref(e.ReviewReason)),
 			CreatedAt:     e.CreatedAt,

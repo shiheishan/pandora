@@ -38,9 +38,8 @@ type AdminSub struct {
 	Live        bool
 	PeriodStart time.Time
 	PeriodEnd   time.Time
-	// Amount、Currency 是订阅上的价格快照
-	Amount   decimal.Decimal
-	Currency string
+	// Amount 是订阅上的价格快照
+	Amount decimal.Decimal
 	// Quotas 按 metric 升序、同一指标内周期起点倒序；永不为 nil
 	Quotas []AdminQuota
 	// DeviceLimitOverride 是管理员覆盖（nil 沿用套餐版本，0 不限）；PlanMaxDevices 是锁定版本的设备数（nil 不限）
@@ -71,7 +70,6 @@ type AdminOrderRow struct {
 	UserEmail      string
 	Kind           string
 	Status         string
-	Currency       string
 	Total          decimal.Decimal
 	Payable        decimal.Decimal
 	Paid           decimal.Decimal
@@ -86,12 +84,6 @@ type AdminOrderRow struct {
 	IntervalCount int
 	ItemCount     int
 	Manual        bool
-}
-
-// CurrencyAmount 是某币种下的一笔金额。
-type CurrencyAmount struct {
-	Currency string
-	Amount   decimal.Decimal
 }
 
 // ---- Telegram ----
@@ -126,8 +118,8 @@ type GroupUsage struct {
 
 // OpsWallets 由 app 适配器包 ledger 实现。
 type OpsWallets interface {
-	// UserBalances 返回站点币种，与这批用户在该币种下的可用余额（每个入参都有值，没有科目的为 0）。
-	UserBalances(ctx context.Context, userIDs []uuid.UUID) (currency string, balances map[uuid.UUID]decimal.Decimal, err error)
+	// UserBalances 返回这批用户的可用余额（每个入参都有值，没有科目的为 0）。
+	UserBalances(ctx context.Context, userIDs []uuid.UUID) (map[uuid.UUID]decimal.Decimal, error)
 }
 
 // OpsTelegram 由 notify 实现。

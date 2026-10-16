@@ -7,7 +7,6 @@ import (
 
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -80,9 +79,9 @@ func TestWebhookSettlesWithSurcharge(t *testing.T) {
 		t.Fatalf("payments amount=%s surcharge_amount=%s", payAmt, paySur)
 	}
 
-	cash := e.accountBalance(t, ctx, ledgersvc.PlatformAccount(ledgersvc.ChannelCash, code), money.CNY)
-	rev := e.accountBalance(t, ctx, ledgersvc.PlatformAccount(ledgersvc.PlatformRevenue, ledgersvc.RefMain), money.CNY)
-	surRev := e.accountBalance(t, ctx, ledgersvc.PlatformAccount(ledgersvc.PlatformRevenue, ledgersvc.RefSurcharge), money.CNY)
+	cash := e.accountBalance(t, ctx, ledgersvc.PlatformAccount(ledgersvc.ChannelCash, code))
+	rev := e.accountBalance(t, ctx, ledgersvc.PlatformAccount(ledgersvc.PlatformRevenue, ledgersvc.RefMain))
+	surRev := e.accountBalance(t, ctx, ledgersvc.PlatformAccount(ledgersvc.PlatformRevenue, ledgersvc.RefSurcharge))
 	if !cash.Equal(dec("10.40")) || !rev.Equal(dec("9.90")) || !surRev.Equal(dec("0.50")) {
 		t.Fatalf("渠道现金 %s、主营收入 %s、手续费收入 %s", cash, rev, surRev)
 	}
@@ -121,9 +120,9 @@ func TestWebhookNotPayableSurcharge(t *testing.T) {
 		t.Fatalf("late_payment_cases.amount=%s", amt)
 	}
 
-	susp := e.accountBalance(t, ctx, ledgersvc.PlatformAccount(ledgersvc.LatePaymentSuspense, ledgersvc.RefMain), money.CNY)
-	surRev := e.accountBalance(t, ctx, ledgersvc.PlatformAccount(ledgersvc.PlatformRevenue, ledgersvc.RefSurcharge), money.CNY)
-	cash := e.accountBalance(t, ctx, ledgersvc.PlatformAccount(ledgersvc.ChannelCash, code), money.CNY)
+	susp := e.accountBalance(t, ctx, ledgersvc.PlatformAccount(ledgersvc.LatePaymentSuspense, ledgersvc.RefMain))
+	surRev := e.accountBalance(t, ctx, ledgersvc.PlatformAccount(ledgersvc.PlatformRevenue, ledgersvc.RefSurcharge))
+	cash := e.accountBalance(t, ctx, ledgersvc.PlatformAccount(ledgersvc.ChannelCash, code))
 	if !susp.Equal(dec("9.90")) || !surRev.Equal(dec("0.50")) || !cash.Equal(dec("10.40")) {
 		t.Fatalf("挂账 %s、手续费收入 %s、渠道现金 %s", susp, surRev, cash)
 	}
@@ -226,7 +225,7 @@ func TestZeroFeeUnchanged(t *testing.T) {
 		t.Fatalf("应 200: %s", string(ack.Body))
 	}
 
-	surRev := e.accountBalance(t, ctx, ledgersvc.PlatformAccount(ledgersvc.PlatformRevenue, ledgersvc.RefSurcharge), money.CNY)
+	surRev := e.accountBalance(t, ctx, ledgersvc.PlatformAccount(ledgersvc.PlatformRevenue, ledgersvc.RefSurcharge))
 	if !surRev.Equal(decimal.Zero) {
 		t.Fatalf("手续费收入科目 %s", surRev)
 	}

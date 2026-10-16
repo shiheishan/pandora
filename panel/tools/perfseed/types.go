@@ -103,7 +103,6 @@ type CatalogPrice struct {
 	PriceID         string `json:"price_id"`
 	BillingInterval string `json:"billing_interval"`
 	IntervalCount   int    `json:"interval_count"`
-	Currency        string `json:"currency"`
 	UnitAmountCents int64  `json:"unit_amount_cents"`
 }
 
@@ -116,7 +115,6 @@ type PlanSpec struct {
 	PriceID          string
 	Name             string // plans.name
 	VersionNo        int    // plan_versions.version
-	Currency         string // CNY / USD
 	Amount           string // 两位小数，如 "15.00"
 	Interval         string // 只支持 "month"
 	IntervalCount    int    // 只支持 1
@@ -199,7 +197,6 @@ type SubscriptionRow struct {
 	Status        string // active / expired
 	PeriodStart   time.Time
 	PeriodEnd     time.Time
-	Currency      string
 	Amount        string
 	Interval      string
 	IntervalCount int
@@ -240,7 +237,6 @@ type OrderRow struct {
 	OrderNo        string
 	UserID         string
 	Kind           string // new / renewal
-	Currency       string
 	Amount         string
 	SubscriptionID string
 	CreatedAt      time.Time
@@ -262,7 +258,6 @@ type OrderItemRow struct {
 	EntitlementsJSON string
 	QuotasJSON       string
 	Amount           string
-	Currency         string
 	CreatedAt        time.Time
 }
 
@@ -283,7 +278,6 @@ type PaymentRow struct {
 	OrderID           string
 	UserID            string
 	ProviderPaymentID string // "offline:" + 线下凭证号
-	Currency          string
 	Amount            string
 	PaidAt            time.Time
 }
@@ -301,7 +295,6 @@ type PaymentEventRow struct {
 type LedgerTxnRow struct {
 	ID         string
 	OrderID    string
-	Currency   string
 	Amount     string
 	OccurredAt time.Time
 }

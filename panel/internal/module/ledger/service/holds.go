@@ -14,10 +14,9 @@ import (
 
 // HoldInput 是按订单冻结余额的入参。
 type HoldInput struct {
-	OrderID  uuid.UUID
-	UserID   uuid.UUID
-	Currency money.Currency
-	Amount   decimal.Decimal
+	OrderID uuid.UUID
+	UserID  uuid.UUID
+	Amount  decimal.Decimal
 }
 
 // Hold 是一条订单余额冻结。
@@ -25,7 +24,6 @@ type Hold struct {
 	ID           uuid.UUID
 	OrderID      uuid.UUID
 	UserID       uuid.UUID
-	Currency     money.Currency
 	Amount       decimal.Decimal
 	Status       string
 	HoldTxnID    uuid.UUID
@@ -37,7 +35,6 @@ type Hold struct {
 type OrderPaid struct {
 	OrderID   uuid.UUID
 	UserID    uuid.UUID
-	Currency  money.Currency
 	Total     decimal.Decimal
 	Paid      decimal.Decimal
 	Fee       decimal.Decimal
@@ -66,9 +63,6 @@ func validateHoldInput(in HoldInput) error {
 	if in.OrderID == uuid.Nil || in.UserID == uuid.Nil {
 		return fmt.Errorf("%w: 订单或用户不能为空", ErrInvalidPosting)
 	}
-	if !in.Currency.Valid() {
-		return fmt.Errorf("%w: 币种不合法", ErrInvalidPosting)
-	}
 	if !in.Amount.IsPositive() {
 		return fmt.Errorf("%w: 冻结金额必须大于 0", ErrInvalidPosting)
 	}
@@ -89,7 +83,6 @@ func (s *Service) holdForOrder(ctx context.Context, in HoldInput) (Hold, error) 
 	}
 	txnID, err := s.postChecked(ctx, Posting{
 		Kind:       KindBalanceHold,
-		Currency:   in.Currency,
 		SourceType: SourceOrder,
 		SourceID:   in.OrderID,
 		Legs: []Leg{
@@ -106,7 +99,6 @@ func (s *Service) holdForOrder(ctx context.Context, in HoldInput) (Hold, error) 
 	h := &model.Hold{
 		OrderID:   in.OrderID,
 		UserID:    in.UserID,
-		Currency:  string(in.Currency),
 		Amount:    in.Amount,
 		Status:    HoldHeld,
 		HoldTxnID: txnID,
@@ -157,13 +149,8 @@ func (s *Service) releaseOrderHold(ctx context.Context, orderID uuid.UUID, memo 
 	if h.Status != HoldHeld {
 		return false, nil
 	}
-	cur, err := money.ParseCurrency(h.Currency)
-	if err != nil {
-		return false, err
-	}
 	txnID, err := s.postChecked(ctx, Posting{
 		Kind:       KindBalanceRelease,
-		Currency:   cur,
 		SourceType: SourceOrder,
 		SourceID:   orderID,
 		Memo:       memo,
@@ -195,7 +182,7 @@ func (s *Service) CaptureFromBalance(ctx context.Context, in HoldInput) (Hold, u
 	var h Hold
 	var txnID uuid.UUID
 	err := s.tx.Do(ctx, func(ctx context.Context) error {
-		_, err := s.lockAccounts(ctx, in.Currency, []AccountRef{
+		_, err := s.lockAccounts(ctx, []AccountRef{
 			UserAccount(UserBalance, in.UserID),
 			UserAccount(UserBalanceHold, in.UserID),
 			PlatformAccount(PlatformRevenue, RefMain),
@@ -208,12 +195,11 @@ func (s *Service) CaptureFromBalance(ctx context.Context, in HoldInput) (Hold, u
 			return err
 		}
 		txnID, err = s.postOrderPaid(ctx, OrderPaid{
-			OrderID:  in.OrderID,
-			UserID:   in.UserID,
-			Currency: in.Currency,
-			Total:    in.Amount,
-			Paid:     decimal.Zero,
-			Fee:      decimal.Zero,
+			OrderID: in.OrderID,
+			UserID:  in.UserID,
+			Total:   in.Amount,
+			Paid:    decimal.Zero,
+			Fee:     decimal.Zero,
 		})
 		if err != nil {
 			return err
@@ -249,9 +235,6 @@ func (s *Service) PostOrderPaid(ctx context.Context, p OrderPaid) (uuid.UUID, er
 func validateOrderPaid(p OrderPaid) error {
 	if p.OrderID == uuid.Nil || p.UserID == uuid.Nil {
 		return fmt.Errorf("%w: 订单或用户不能为空", ErrInvalidPosting)
-	}
-	if !p.Currency.Valid() {
-		return fmt.Errorf("%w: 币种不合法", ErrInvalidPosting)
 	}
 	for _, check := range []struct {
 		d   decimal.Decimal
@@ -313,9 +296,6 @@ func (s *Service) postOrderPaid(ctx context.Context, p OrderPaid) (uuid.UUID, er
 		if h.UserID != p.UserID {
 			return uuid.Nil, fmt.Errorf("%w: 冻结用户与订单用户不一致", ErrInvalidPosting)
 		}
-		if h.Currency != string(p.Currency) {
-			return uuid.Nil, fmt.Errorf("%w: 冻结币种与订单不一致", ErrInvalidPosting)
-		}
 	} else if holdFound && h.Status == HoldHeld {
 		return uuid.Nil, fmt.Errorf("%w: 有 held 冻结但未使用余额抵扣", ErrInvalidPosting)
 	}
@@ -325,7 +305,6 @@ func (s *Service) postOrderPaid(ctx context.Context, p OrderPaid) (uuid.UUID, er
 	legs := orderPaidLegs(p, applied)
 	txnID, err := s.postChecked(ctx, Posting{
 		Kind:       KindOrderPaid,
-		Currency:   p.Currency,
 		SourceType: SourceOrder,
 		SourceID:   p.OrderID,
 		Legs:       legs,
@@ -385,12 +364,10 @@ func orderPaidLegs(p OrderPaid, applied decimal.Decimal) []Leg {
 }
 
 func toHold(m model.Hold) Hold {
-	cur, _ := money.ParseCurrency(m.Currency)
 	return Hold{
 		ID:           m.ID,
 		OrderID:      m.OrderID,
 		UserID:       m.UserID,
-		Currency:     cur,
 		Amount:       m.Amount,
 		Status:       m.Status,
 		HoldTxnID:    m.HoldTxnID,

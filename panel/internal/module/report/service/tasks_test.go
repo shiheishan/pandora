@@ -12,7 +12,6 @@ import (
 	nodesvc "github.com/aegispanel/aegis/internal/module/node/service"
 	notifysvc "github.com/aegispanel/aegis/internal/module/notify/service"
 	supportsvc "github.com/aegispanel/aegis/internal/module/support/service"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
 func TestBacklogStates(t *testing.T) {
@@ -122,9 +121,8 @@ func TestTasksMapping(t *testing.T) {
 
 	wait120 := int64(120)
 	e.ports.tickets = supportsvc.OpenTicketStats{Count: 3, HighPriority: 1, OldestWaitSeconds: &wait120}
-	e.ports.withdrawals = []commissionsvc.PendingWithdrawalSum{
-		{Currency: money.CNY, Count: 2, Amount: dec("30.00")},
-		{Currency: money.USD, Count: 1, Amount: dec("5.00")},
+	e.ports.withdrawals = commissionsvc.PendingWithdrawalSum{
+		Count: 3, Amount: dec("35.00"),
 	}
 	id1, id2 := uuid.MustParse("00000000-0000-4000-8000-000000000001"), uuid.MustParse("00000000-0000-4000-8000-000000000002")
 	long900 := int64(900)
@@ -157,12 +155,8 @@ func TestTasksMapping(t *testing.T) {
 		tasks.TicketsOpen.OldestWaitSeconds == nil || *tasks.TicketsOpen.OldestWaitSeconds != 120 {
 		t.Fatalf("TicketsOpen=%+v", tasks.TicketsOpen)
 	}
-	if tasks.WithdrawalsPending.Count != 3 || len(tasks.WithdrawalsPending.Amounts) != 2 {
+	if tasks.WithdrawalsPending.Count != 3 || !tasks.WithdrawalsPending.Amount.Equal(dec("35.00")) {
 		t.Fatalf("WithdrawalsPending=%+v", tasks.WithdrawalsPending)
-	}
-	if !tasks.WithdrawalsPending.Amounts[0].Amount.Equal(dec("30.00")) ||
-		!tasks.WithdrawalsPending.Amounts[1].Amount.Equal(dec("5.00")) {
-		t.Fatalf("amounts=%+v", tasks.WithdrawalsPending.Amounts)
 	}
 	if tasks.NodesOffline.Count != 4 || len(tasks.NodesOffline.Sample) != 2 {
 		t.Fatalf("NodesOffline=%+v", tasks.NodesOffline)
@@ -188,9 +182,6 @@ func TestTasksEmptySlices(t *testing.T) {
 	tasks, err := e.svc.Tasks(context.Background())
 	if err != nil {
 		t.Fatal(err)
-	}
-	if tasks.WithdrawalsPending.Amounts == nil || len(tasks.WithdrawalsPending.Amounts) != 0 {
-		t.Fatalf("WithdrawalsPending.Amounts=%v", tasks.WithdrawalsPending.Amounts)
 	}
 	if tasks.NodesOffline.Sample == nil || len(tasks.NodesOffline.Sample) != 0 {
 		t.Fatalf("NodesOffline.Sample=%v", tasks.NodesOffline.Sample)

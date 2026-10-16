@@ -61,12 +61,12 @@ func TestSiteDefaultsAndRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantDef := Site{Name: "Pandora", Timezone: "UTC", Currency: "CNY"}
+	wantDef := Site{Name: "Pandora", Timezone: "UTC"}
 	if site != wantDef {
 		t.Fatalf("default %+v want %+v", site, wantDef)
 	}
 
-	want := Site{Name: "示例站", Timezone: "Asia/Shanghai", Currency: "CNY"}
+	want := Site{Name: "示例站", Timezone: "Asia/Shanghai"}
 	if err := svc.SetSite(ctx, fullSite(want)); err != nil {
 		t.Fatal(err)
 	}
@@ -92,14 +92,6 @@ func TestSiteDefaultsAndRoundTrip(t *testing.T) {
 	if errs.As(err).Code != errs.ValidationFailed {
 		t.Fatalf("Local tz: %v", err)
 	}
-	err = svc.SetSite(ctx, SiteUpdate{Currency: ptr("cny")})
-	if errs.As(err).Code != errs.ValidationFailed {
-		t.Fatalf("lowercase currency: %v", err)
-	}
-	err = svc.SetSite(ctx, SiteUpdate{Currency: ptr("EUR")})
-	if errs.As(err).Code != errs.ValidationFailed {
-		t.Fatalf("unsupported currency: %v", err)
-	}
 }
 
 // 只改时区不会把别人刚改的站点名写回旧值。
@@ -121,7 +113,7 @@ func TestSetSitePartialKeepsOtherFields(t *testing.T) {
 }
 
 func fullSite(v Site) SiteUpdate {
-	return SiteUpdate{Name: &v.Name, Timezone: &v.Timezone, Currency: &v.Currency}
+	return SiteUpdate{Name: &v.Name, Timezone: &v.Timezone}
 }
 
 func TestMailPasswordSealRoundTrip(t *testing.T) {

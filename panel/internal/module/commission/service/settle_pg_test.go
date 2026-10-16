@@ -27,7 +27,7 @@ func TestSettleUnderfundedQuarantines(t *testing.T) {
 	}
 	// 一笔不对应任何条目的解冻分录把待结科目搬空（模拟账本与条目对不上）
 	if _, err := e.ledger.Post(ctx, ledgersvc.Posting{
-		Kind: ledgersvc.KindCommissionSettled, Currency: testCurrency,
+		Kind:       ledgersvc.KindCommissionSettled,
 		SourceType: SourceCommissionEntry, SourceID: uuid.New(), Memo: "测试：搬空待结科目",
 		Legs: []ledgersvc.Leg{
 			{Account: ledgersvc.UserAccount(ledgersvc.UserCommissionPending, referrer), Direction: ledgersvc.Debit, Amount: dec2("10.00")},

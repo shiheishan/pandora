@@ -25,7 +25,6 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/aegispanel/aegis/internal/pkg/reqid"
 	"github.com/aegispanel/aegis/internal/pkg/reqmeta"
 	"github.com/aegispanel/aegis/internal/pkg/testkit"
@@ -33,9 +32,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
-
-// testCurrency 是测试用的币种：站点币种缺省 CNY，测试不改站点设置。
-const testCurrency = money.CNY
 
 // fakeRefs 实现 Referrals：推荐关系与邮箱都在内存里（并发用例会从多个 goroutine 读）。
 type fakeRefs struct {
@@ -179,7 +175,7 @@ func newEnv(t *testing.T) (*env, context.Context) {
 	}
 	txm := tx.NewManager(d)
 	settings := settingssvc.New(settingsrepo.New(d), txm, sealer, rdb, auditSvc)
-	ledger := ledgersvc.New(ledgerrepo.New(d), txm, settings, auditSvc)
+	ledger := ledgersvc.New(ledgerrepo.New(d), txm, auditSvc)
 	svc := New(repo.New(d), txm, ledger, settings, sealer, auditSvc)
 	refs := &fakeRefs{referrer: map[uuid.UUID]uuid.UUID{}, emails: map[uuid.UUID]string{}}
 	svc.UseReferrals(refs)
@@ -265,47 +261,34 @@ func setConfig(t *testing.T, e *env, ctx context.Context, admin uuid.UUID, rate,
 	}
 }
 
-// newPaidOrder 给 user 插一张已付的新购订单（金额 total、币种 testCurrency），返回交给 PaidHook 的摘要。
+// newPaidOrder 给 user 插一张已付的新购订单（金额 total），返回交给 PaidHook 的摘要。
 func newPaidOrder(t *testing.T, e *env, ctx context.Context, user uuid.UUID, total string) ordersvc.PaidOrder {
-	t.Helper()
-	return newPaidOrderIn(t, e, ctx, user, total, testCurrency)
-}
-
-// newPaidOrderIn 同 newPaidOrder，币种由调用方给。
-func newPaidOrderIn(t *testing.T, e *env, ctx context.Context, user uuid.UUID, total string, cur money.Currency) ordersvc.PaidOrder {
 	t.Helper()
 	no := "CM-" + strings.ToUpper(randHex(16))
 	var id uuid.UUID
-	if err := e.row(ctx, `INSERT INTO orders (order_no, user_id, kind, status, currency, subtotal_amount, total_amount,
+	if err := e.row(ctx, `INSERT INTO orders (order_no, user_id, kind, status, subtotal_amount, total_amount,
 		payable_amount, paid_amount, paid_at, expires_at)
-		VALUES (?, ?, 'new', 'paid', ?, ?, ?, ?, ?, now(), now() + interval '30 minutes') RETURNING id`,
-		no, user, string(cur), total, total, total, total).Scan(&id); err != nil {
+		VALUES (?, ?, 'new', 'paid', ?, ?, ?, ?, now(), now() + interval '30 minutes') RETURNING id`,
+		no, user, total, total, total, total).Scan(&id); err != nil {
 		t.Fatalf("建订单: %v", err)
 	}
 	amt := dec2(total)
 	return ordersvc.PaidOrder{
-		OrderID:  id,
-		OrderNo:  no,
-		UserID:   user,
-		Kind:     ordersvc.KindNew,
-		Currency: cur,
-		Total:    amt,
-		Paid:     amt,
-		PaidAt:   time.Now().UTC(),
+		OrderID: id,
+		OrderNo: no,
+		UserID:  user,
+		Kind:    ordersvc.KindNew,
+		Total:   amt,
+		Paid:    amt,
+		PaidAt:  time.Now().UTC(),
 	}
 }
 
 // accrueAvailable 让 referrer 通过 referee 的一张订单拿到一笔已解冻的佣金（冻结天数须为 0），返回佣金额。
 func accrueAvailable(t *testing.T, e *env, ctx context.Context, referrer, referee uuid.UUID, total string) decimal.Decimal {
 	t.Helper()
-	return accrueAvailableIn(t, e, ctx, referrer, referee, total, testCurrency)
-}
-
-// accrueAvailableIn 同 accrueAvailable，订单币种由调用方给。
-func accrueAvailableIn(t *testing.T, e *env, ctx context.Context, referrer, referee uuid.UUID, total string, cur money.Currency) decimal.Decimal {
-	t.Helper()
 	refer(e, referee, referrer)
-	o := newPaidOrderIn(t, e, ctx, referee, total, cur)
+	o := newPaidOrder(t, e, ctx, referee, total)
 	if err := e.svc.OnOrderPaid(ctx, o); err != nil {
 		t.Fatalf("计提: %v", err)
 	}
@@ -322,18 +305,12 @@ func accrueAvailableIn(t *testing.T, e *env, ctx context.Context, referrer, refe
 	return amt
 }
 
-// accountBalance 读用户某类科目（testCurrency）的余额缓存（没有科目时为 0）。
+// accountBalance 读用户某类科目的余额缓存（没有科目时为 0）。
 func accountBalance(t *testing.T, e *env, ctx context.Context, user uuid.UUID, typ ledgersvc.AccountType) decimal.Decimal {
 	t.Helper()
-	return accountBalanceIn(t, e, ctx, user, typ, testCurrency)
-}
-
-// accountBalanceIn 同 accountBalance，币种由调用方给。
-func accountBalanceIn(t *testing.T, e *env, ctx context.Context, user uuid.UUID, typ ledgersvc.AccountType, cur money.Currency) decimal.Decimal {
-	t.Helper()
 	var bal decimal.Decimal
-	if err := e.row(ctx, `SELECT COALESCE((SELECT balance FROM ledger_accounts WHERE account_type = ? AND owner_user_id = ? AND currency = ?), 0)`,
-		string(typ), user, string(cur)).Scan(&bal); err != nil {
+	if err := e.row(ctx, `SELECT COALESCE((SELECT balance FROM ledger_accounts WHERE account_type = ? AND owner_user_id = ?), 0)`,
+		string(typ), user).Scan(&bal); err != nil {
 		t.Fatal(err)
 	}
 	return bal

@@ -15,10 +15,9 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
-// ProviderAmount 是一个渠道在一个币种上的金额合计。
+// ProviderAmount 是一个渠道在站点时区今天的成功收款合计。
 type ProviderAmount struct {
 	ProviderID uuid.UUID
-	Currency   string
 	Amount     decimal.Decimal
 }
 
@@ -91,9 +90,6 @@ func (r *Repo) InsertProvider(ctx context.Context, p *model.Provider) error {
 	if p.Methods == nil {
 		p.Methods = []string{}
 	}
-	if p.Currencies == nil {
-		p.Currencies = []string{}
-	}
 	return mapErr(r.d.Conn(ctx).Create(p).Error)
 }
 
@@ -126,7 +122,7 @@ func (r *Repo) UpdateProviderFields(ctx context.Context, id uuid.UUID, fields ma
 			updates[k] = amt
 			continue
 		}
-		if k == "currencies" || k == "methods" {
+		if k == "methods" {
 			arr, ok := v.([]string)
 			if !ok {
 				return false, fmt.Errorf("payment: %s 须为 []string", k)
@@ -148,16 +144,14 @@ func (r *Repo) UpdateProviderFields(ctx context.Context, id uuid.UUID, fields ma
 	return res.RowsAffected == 1, nil
 }
 
-// MinAcceptingAmount 启用、收新单、币种含 cur 的在线渠道里最小的 min_amount；一个都没有时 found=false。
+// MinAcceptingAmount 启用、收新单的在线渠道里最小的 min_amount；一个都没有时 found=false。
 // 线下渠道不算（它的 min_amount 是 0，会把门槛拉没）。
-func (r *Repo) MinAcceptingAmount(ctx context.Context, cur string) (decimal.Decimal, bool, error) {
+func (r *Repo) MinAcceptingAmount(ctx context.Context) (decimal.Decimal, bool, error) {
 	var min decimal.NullDecimal
 	// 聚合总有一行，单列可空的 numeric 用 Row().Scan 扫进 NullDecimal（GORM 的 Scan 会把结构体当模型按列名填）
 	err := r.d.Conn(ctx).Raw(
 		`SELECT MIN(min_amount) FROM payment_providers
-		 WHERE enabled AND accepting_new AND adapter <> 'offline'
-		   AND currencies @> jsonb_build_array(?::text)`,
-		cur,
+		 WHERE enabled AND accepting_new AND adapter <> 'offline'`,
 	).Row().Scan(&min)
 	if err != nil {
 		return decimal.Zero, false, err
@@ -172,11 +166,11 @@ func (r *Repo) MinAcceptingAmount(ctx context.Context, cur string) (decimal.Deci
 func (r *Repo) ProviderTodayTotals(ctx context.Context, tz string) ([]ProviderAmount, error) {
 	var out []ProviderAmount
 	err := r.d.Conn(ctx).Raw(
-		`SELECT provider_id, currency, SUM(amount) AS amount
+		`SELECT provider_id, SUM(amount) AS amount
 		 FROM payments
 		 WHERE status = 'succeeded'
 		   AND (paid_at AT TIME ZONE @tz)::date = (now() AT TIME ZONE @tz)::date
-		 GROUP BY provider_id, currency`,
+		 GROUP BY provider_id`,
 		map[string]any{"tz": tz},
 	).Scan(&out).Error
 	if err != nil {

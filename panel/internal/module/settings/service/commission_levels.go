@@ -79,8 +79,8 @@ type CommissionDistributionUpdate struct {
 	L1, L2, L3 *int
 }
 
-// CommissionWithdraw 是提现开关与可用方式（按目录顺序，去重）。关闭提现只关站点币种：站点币种的佣金解冻后自动转入余额，
-// 其他币种仍按 Methods 提现。
+// CommissionWithdraw 是提现开关与可用方式（按目录顺序，去重）。关闭提现后佣金解冻即自动转入余额，
+// Methods 留着，重新打开时直接生效。
 type CommissionWithdraw struct {
 	Enabled bool
 	Methods []string
@@ -296,11 +296,11 @@ func (s *Service) SetCommissionWithdraw(ctx context.Context, u CommissionWithdra
 		if u.Methods != nil {
 			v.Methods, _ = normalizeWithdrawMethods(*u.Methods)
 		}
-		// 关着提现只关站点币种，其他币种仍按这些方式提现：开关两种状态都至少要留一种（全取消时其他币种的佣金就领不到了）
+		// 开关两种状态都至少要留一种方式：关着时留着的方式在重新打开提现时直接生效
 		if len(v.Methods) == 0 {
 			msg := "开着提现时至少要选一种提现方式"
 			if !v.Enabled {
-				msg = "关着提现时其他币种的佣金仍按这里的方式提现，至少要选一种"
+				msg = "关着提现时也至少要选一种提现方式，重新打开提现时直接生效"
 			}
 			return errs.Invalid(map[string]string{"withdraw_methods": msg})
 		}

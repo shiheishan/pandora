@@ -4,6 +4,7 @@ import (
 	"github.com/aegispanel/aegis/internal/module/payment/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
+	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/aegispanel/aegis/internal/pkg/pagination"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -105,13 +106,13 @@ func (h *Handler) listLatePayments(c *gin.Context) {
 		}
 		cases = append(cases, lc)
 	}
-	pending, err := centsByCurrency(list.Pending)
+	pending, err := money.ToCents(list.Pending)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
 	}
 	httpx.OK(c, listLatePaymentsResponse{
-		Cases: cases, Total: list.Total, PendingAmounts: pending,
+		Cases: cases, Total: list.Total, PendingAmount: pending,
 	})
 }
 

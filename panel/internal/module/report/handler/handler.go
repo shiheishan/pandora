@@ -16,8 +16,8 @@ import (
 // Service 是 handler 用到的 report service 方法；*service.Service 实现它。
 type Service interface {
 	Overview(ctx context.Context) (service.Overview, error)
-	RevenueTimeseries(ctx context.Context, currency string, days int) (service.RevenueSeries, error)
-	ListAdjustments(ctx context.Context, currency string) ([]service.Adjustment, error)
+	RevenueTimeseries(ctx context.Context, days int) (service.RevenueSeries, error)
+	ListAdjustments(ctx context.Context) ([]service.Adjustment, error)
 	CreateAdjustment(ctx context.Context, in service.CreateAdjustmentInput) (service.Adjustment, error)
 	ReverseAdjustment(ctx context.Context, id uuid.UUID, reason string) (service.Adjustment, error)
 	NodeTraffic(ctx context.Context, q service.TrafficQuery) (service.NodeTraffic, error)
@@ -81,7 +81,7 @@ func (h *Handler) revenueTimeseries(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	s, err := h.svc.RevenueTimeseries(c.Request.Context(), q.Currency, q.Days)
+	s, err := h.svc.RevenueTimeseries(c.Request.Context(), q.Days)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
@@ -95,12 +95,7 @@ func (h *Handler) revenueTimeseries(c *gin.Context) {
 }
 
 func (h *Handler) listAdjustments(c *gin.Context) {
-	var q currencyQuery
-	if err := httpx.BindQuery(c, &q); err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	rows, err := h.svc.ListAdjustments(c.Request.Context(), q.Currency)
+	rows, err := h.svc.ListAdjustments(c.Request.Context())
 	if err != nil {
 		httpx.Fail(c, err)
 		return
@@ -120,7 +115,6 @@ func (h *Handler) createAdjustment(c *gin.Context) {
 		return
 	}
 	a, err := h.svc.CreateAdjustment(c.Request.Context(), service.CreateAdjustmentInput{
-		Currency:    req.Currency,
 		Amount:      money.FromCents(req.Amount),
 		Reason:      req.Reason,
 		EffectiveOn: req.EffectiveOn,

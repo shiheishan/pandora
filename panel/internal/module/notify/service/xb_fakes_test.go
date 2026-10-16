@@ -49,26 +49,21 @@ func (f *fakeLinks) ActiveLinks(_ context.Context, userID uuid.UUID) ([]string, 
 	return []string{}, nil
 }
 
-// fakeBalances 按用户返回预设余额，币种固定。
+// fakeBalances 按用户返回预设余额。
 type fakeBalances struct {
-	byUser   map[uuid.UUID]decimal.Decimal
-	currency string
-	err      error
+	byUser map[uuid.UUID]decimal.Decimal
+	err    error
 }
 
-func (f *fakeBalances) UserBalances(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]decimal.Decimal, string, error) {
+func (f *fakeBalances) UserBalances(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]decimal.Decimal, error) {
 	if f.err != nil {
-		return nil, "", f.err
+		return nil, f.err
 	}
 	out := map[uuid.UUID]decimal.Decimal{}
 	for _, id := range ids {
 		out[id] = f.byUser[id]
 	}
-	cur := f.currency
-	if cur == "" {
-		cur = "CNY"
-	}
-	return out, cur, nil
+	return out, nil
 }
 
 // fakeAdmins 把 active 里的用户当作可登录的管理员。

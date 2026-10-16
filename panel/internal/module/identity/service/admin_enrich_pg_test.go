@@ -74,8 +74,8 @@ func TestPGListUsersEnrich(t *testing.T) {
 	if ra.Current == nil || ra.Current.ID != liveID {
 		t.Fatalf("user A current %+v", ra.Current)
 	}
-	if !ra.Balance.Equal(decimal.RequireFromString("12.34")) || ra.Currency != "CNY" {
-		t.Fatalf("user A balance %s %s", ra.Balance, ra.Currency)
+	if !ra.Balance.Equal(decimal.RequireFromString("12.34")) {
+		t.Fatalf("user A balance %s", ra.Balance)
 	}
 
 	rb := rowByID(rows, ub.ID)
@@ -115,11 +115,7 @@ func TestPGUserDetailEnrich(t *testing.T) {
 	fakes.orders.stats = map[uuid.UUID]OrderStat{
 		u.ID: {
 			Orders: 3,
-			Paid: map[string]decimal.Decimal{
-				"USD": decimal.RequireFromString("10"),
-				"CNY": decimal.RequireFromString("20"),
-				"EUR": decimal.Zero,
-			},
+			Paid:   decimal.RequireFromString("20"),
 		},
 	}
 	fakes.orders.recent = map[uuid.UUID][]AdminOrderRow{
@@ -138,11 +134,8 @@ func TestPGUserDetailEnrich(t *testing.T) {
 	if len(d.Subscriptions) != 2 || d.UnattachedPackBytes != 5 || d.OrderCount != 3 {
 		t.Fatalf("subs/pack/orders %+v", d)
 	}
-	if len(d.PaidTotals) != 2 || d.PaidTotals[0].Currency != "CNY" || !d.PaidTotals[0].Amount.Equal(decimal.RequireFromString("20")) {
-		t.Fatalf("paid %+v", d.PaidTotals)
-	}
-	if d.PaidTotals[1].Currency != "USD" || !d.PaidTotals[1].Amount.Equal(decimal.RequireFromString("10")) {
-		t.Fatalf("paid USD %+v", d.PaidTotals)
+	if !d.PaidTotal.Equal(decimal.RequireFromString("20")) {
+		t.Fatalf("paid %+v", d.PaidTotal)
 	}
 	if len(d.RecentOrders) != 2 {
 		t.Fatalf("recent %d", len(d.RecentOrders))
@@ -169,8 +162,8 @@ func TestPGUserDetailEnrich(t *testing.T) {
 	if d2.RecentOrders == nil || len(d2.RecentOrders) != 0 {
 		t.Fatalf("empty recent %v", d2.RecentOrders)
 	}
-	if d2.PaidTotals == nil || len(d2.PaidTotals) != 0 {
-		t.Fatalf("empty paid %v", d2.PaidTotals)
+	if !d2.PaidTotal.IsZero() {
+		t.Fatalf("empty paid %v", d2.PaidTotal)
 	}
 	if d2.Telegram != nil {
 		t.Fatalf("empty telegram %+v", d2.Telegram)

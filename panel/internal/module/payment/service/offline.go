@@ -23,7 +23,7 @@ func (s *Service) RecordOffline(ctx context.Context, in OfflineInput) (RecordRes
 	if orderNo == "" || len(orderNo) > 64 {
 		return RecordResult{}, errs.Newf(errs.BadRequest, "线下收款参数不完整")
 	}
-	if !in.Amount.IsPositive() || money.Check(in.Amount) != nil || !in.Currency.Valid() {
+	if !in.Amount.IsPositive() || money.Check(in.Amount) != nil {
 		return RecordResult{}, errs.Newf(errs.BadRequest, "线下收款参数不完整")
 	}
 
@@ -60,7 +60,6 @@ func (s *Service) RecordOffline(ctx context.Context, in OfflineInput) (RecordRes
 		Offline:    target,
 		Amount:     in.Amount,
 		Fee:        decimal.Zero,
-		Currency:   in.Currency,
 		Method:     OfflineMethod,
 		Raw: map[string]string{
 			"source":    "admin_offline",

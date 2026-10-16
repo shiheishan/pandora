@@ -32,17 +32,9 @@ const (
 // adjustmentMaxAbs 是单笔调整的绝对值上限（元），与库里 CHECK 一致。
 var adjustmentMaxAbs = decimal.New(10000000000, 0)
 
-// ListAdjustments 列出最近的报表调整（含冲正行），按登记时间倒序；currency 为空列全部币种。
-func (s *Service) ListAdjustments(ctx context.Context, currency string) ([]Adjustment, error) {
-	curStr := ""
-	if strings.TrimSpace(currency) != "" {
-		cur, err := money.ParseCurrency(currency)
-		if err != nil {
-			return nil, errs.Invalid(map[string]string{"currency": "仅支持 CNY 或 USD"})
-		}
-		curStr = string(cur)
-	}
-	rows, err := s.repo.ListAdjustments(ctx, curStr, AdjustmentListLimit)
+// ListAdjustments 列出最近的报表调整（含冲正行），按登记时间倒序。
+func (s *Service) ListAdjustments(ctx context.Context) ([]Adjustment, error) {
+	rows, err := s.repo.ListAdjustments(ctx, AdjustmentListLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +63,6 @@ func (s *Service) ListAdjustments(ctx context.Context, currency string) ([]Adjus
 		}
 		out = append(out, adjustmentOut(model.Adjustment{
 			ID:          r.ID,
-			Currency:    r.Currency,
 			Amount:      r.Amount,
 			Reason:      r.Reason,
 			EffectiveOn: r.EffectiveOn,
@@ -96,12 +87,6 @@ func (s *Service) CreateAdjustment(ctx context.Context, in CreateAdjustmentInput
 	today := dayString(midnight(s.now(), loc))
 
 	fields := map[string]string{}
-	var cur money.Currency
-	if c, err := money.ParseCurrency(in.Currency); err != nil {
-		fields["currency"] = "仅支持 CNY 或 USD"
-	} else {
-		cur = c
-	}
 	if in.Amount.IsZero() || in.Amount.Abs().GreaterThan(adjustmentMaxAbs) || money.Check(in.Amount) != nil {
 		fields["amount"] = "调整金额必须非零且绝对值不超过 100 亿"
 	}
@@ -130,7 +115,6 @@ func (s *Service) CreateAdjustment(ctx context.Context, in CreateAdjustmentInput
 	var created model.Adjustment
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
 		a := model.Adjustment{
-			Currency:    string(cur),
 			Amount:      in.Amount,
 			Reason:      reason,
 			EffectiveOn: effectiveOn,
@@ -145,7 +129,6 @@ func (s *Service) CreateAdjustment(ctx context.Context, in CreateAdjustmentInput
 			ResourceType: ResourceAdjustment,
 			ResourceID:   &a.ID,
 			Data: map[string]any{
-				"currency":     a.Currency,
 				"amount":       a.Amount.StringFixed(2),
 				"effective_on": a.EffectiveOn,
 				"reason":       a.Reason,
@@ -201,7 +184,6 @@ func (s *Service) ReverseAdjustment(ctx context.Context, id uuid.UUID, reason st
 			return errs.Newf(errs.Conflict, "该调整已撤销")
 		}
 		a := model.Adjustment{
-			Currency:    orig.Currency,
 			Amount:      orig.Amount.Neg(),
 			Reason:      reason,
 			EffectiveOn: orig.EffectiveOn,
@@ -221,7 +203,6 @@ func (s *Service) ReverseAdjustment(ctx context.Context, id uuid.UUID, reason st
 			ResourceID:   &a.ID,
 			Data: map[string]any{
 				"original_id":     id.String(),
-				"currency":        a.Currency,
 				"amount":          a.Amount.StringFixed(2),
 				"original_reason": orig.Reason,
 				"reason":          reason,
@@ -260,7 +241,6 @@ func checkReason(s string) (string, bool) {
 func adjustmentOut(a model.Adjustment, email *string, reversed bool) Adjustment {
 	return Adjustment{
 		ID:             a.ID,
-		Currency:       money.Currency(a.Currency),
 		Amount:         a.Amount,
 		Reason:         a.Reason,
 		EffectiveOn:    a.EffectiveOn,

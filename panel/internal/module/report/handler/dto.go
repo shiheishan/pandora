@@ -15,12 +15,7 @@ const trafficTimeLayout = "2006-01-02T15:04:05.000000Z"
 // --- 请求与查询 ---
 
 type revenueTimeseriesQuery struct {
-	Currency string `form:"currency"`
-	Days     int    `form:"days"`
-}
-
-type currencyQuery struct {
-	Currency string `form:"currency"`
+	Days int `form:"days"`
 }
 
 type daysQuery struct {
@@ -34,7 +29,6 @@ type trafficQuery struct {
 }
 
 type createAdjustmentRequest struct {
-	Currency    string `json:"currency" binding:"required"`
 	Amount      int64  `json:"amount"`
 	Reason      string `json:"reason" binding:"required"`
 	EffectiveOn string `json:"effective_on"`
@@ -49,7 +43,7 @@ type reverseAdjustmentRequest struct {
 type overviewResponse struct {
 	Users               userCountsResponse         `json:"users"`
 	Subscriptions       subscriptionCountsResponse `json:"subscriptions"`
-	Revenue             []revenueRowResponse       `json:"revenue"`
+	Revenue             revenueRowResponse         `json:"revenue"`
 	Orders              orderCountsResponse        `json:"orders"`
 	LedgerDriftAccounts int64                      `json:"ledger_drift_accounts"`
 	Nodes               nodeCountsResponse         `json:"nodes"`
@@ -81,25 +75,23 @@ type nodeCountsResponse struct {
 }
 
 type revenueRowResponse struct {
-	Currency         string `json:"currency"`
-	Today            int64  `json:"today"`
-	Last7Days        int64  `json:"last_7_days"`
-	Last30Days       int64  `json:"last_30_days"`
-	Total            int64  `json:"total"`
-	ActualToday      int64  `json:"actual_today"`
-	Actual7Days      int64  `json:"actual_7_days"`
-	Actual30Days     int64  `json:"actual_30_days"`
-	ActualTotal      int64  `json:"actual_total"`
-	AdjustmentToday  int64  `json:"adjustment_today"`
-	Adjustment7Days  int64  `json:"adjustment_7_days"`
-	Adjustment30Days int64  `json:"adjustment_30_days"`
-	AdjustmentTotal  int64  `json:"adjustment_total"`
-	Yesterday        int64  `json:"yesterday"`
-	ActualYesterday  int64  `json:"actual_yesterday"`
+	Today            int64 `json:"today"`
+	Last7Days        int64 `json:"last_7_days"`
+	Last30Days       int64 `json:"last_30_days"`
+	Total            int64 `json:"total"`
+	ActualToday      int64 `json:"actual_today"`
+	Actual7Days      int64 `json:"actual_7_days"`
+	Actual30Days     int64 `json:"actual_30_days"`
+	ActualTotal      int64 `json:"actual_total"`
+	AdjustmentToday  int64 `json:"adjustment_today"`
+	Adjustment7Days  int64 `json:"adjustment_7_days"`
+	Adjustment30Days int64 `json:"adjustment_30_days"`
+	AdjustmentTotal  int64 `json:"adjustment_total"`
+	Yesterday        int64 `json:"yesterday"`
+	ActualYesterday  int64 `json:"actual_yesterday"`
 }
 
 type revenueSeriesResponse struct {
-	Currency      string                 `json:"currency"`
 	Days          int                    `json:"days"`
 	Points        []revenuePointResponse `json:"points"`
 	PreviousTotal int64                  `json:"previous_total"`
@@ -115,7 +107,6 @@ type revenuePointResponse struct {
 
 type adjustmentResponse struct {
 	ID             string    `json:"id"`
-	Currency       string    `json:"currency"`
 	Amount         int64     `json:"amount"`
 	Reason         string    `json:"reason"`
 	EffectiveOn    string    `json:"effective_on"`
@@ -171,14 +162,9 @@ type taskTicketsOpen struct {
 }
 
 type taskWithdrawalsPending struct {
-	Kind    string                       `json:"kind"`
-	Count   int64                        `json:"count"`
-	Amounts []taskCurrencyAmountResponse `json:"amounts"`
-}
-
-type taskCurrencyAmountResponse struct {
-	Currency string `json:"currency"`
-	Amount   int64  `json:"amount"`
+	Kind   string `json:"kind"`
+	Count  int64  `json:"count"`
+	Amount int64  `json:"amount"`
 }
 
 type taskNodesOffline struct {
@@ -315,13 +301,9 @@ func cents(d decimal.Decimal) (int64, error) {
 }
 
 func overviewFrom(o service.Overview) (overviewResponse, error) {
-	rev := make([]revenueRowResponse, 0, len(o.Revenue))
-	for _, r := range o.Revenue {
-		row, err := revenueRowFrom(r)
-		if err != nil {
-			return overviewResponse{}, err
-		}
-		rev = append(rev, row)
+	rev, err := revenueRowFrom(o.Revenue)
+	if err != nil {
+		return overviewResponse{}, err
 	}
 	return overviewResponse{
 		Users: userCountsResponse{
@@ -355,8 +337,7 @@ func revenueRowFrom(r service.RevenueRow) (revenueRowResponse, error) {
 		out[i] = n
 	}
 	return revenueRowResponse{
-		Currency: string(r.Currency),
-		Today:    out[0], Last7Days: out[1], Last30Days: out[2], Total: out[3],
+		Today: out[0], Last7Days: out[1], Last30Days: out[2], Total: out[3],
 		ActualToday: out[4], Actual7Days: out[5], Actual30Days: out[6], ActualTotal: out[7],
 		AdjustmentToday: out[8], Adjustment7Days: out[9], Adjustment30Days: out[10], AdjustmentTotal: out[11],
 		Yesterday: out[12], ActualYesterday: out[13],
@@ -391,7 +372,7 @@ func revenueSeriesFrom(s service.RevenueSeries) (revenueSeriesResponse, error) {
 		return revenueSeriesResponse{}, err
 	}
 	return revenueSeriesResponse{
-		Currency: string(s.Currency), Days: s.Days, Points: pts, PreviousTotal: prev,
+		Days: s.Days, Points: pts, PreviousTotal: prev,
 	}, nil
 }
 
@@ -406,7 +387,7 @@ func adjustmentFrom(a service.Adjustment) (adjustmentResponse, error) {
 		rev = &s
 	}
 	return adjustmentResponse{
-		ID: a.ID.String(), Currency: string(a.Currency), Amount: amt, Reason: a.Reason,
+		ID: a.ID.String(), Amount: amt, Reason: a.Reason,
 		EffectiveOn: a.EffectiveOn, ReversalOf: rev, CreatedBy: a.CreatedBy.String(),
 		CreatedByEmail: a.CreatedByEmail, CreatedAt: a.CreatedAt, Reversed: a.Reversed,
 	}, nil
@@ -444,13 +425,9 @@ func backlogFrom(b service.NotificationBacklog) backlogResponse {
 }
 
 func tasksFrom(t service.Tasks) (tasksResponse, error) {
-	amounts := make([]taskCurrencyAmountResponse, 0, len(t.WithdrawalsPending.Amounts))
-	for _, a := range t.WithdrawalsPending.Amounts {
-		n, err := cents(a.Amount)
-		if err != nil {
-			return tasksResponse{}, err
-		}
-		amounts = append(amounts, taskCurrencyAmountResponse{Currency: string(a.Currency), Amount: n})
+	withdrawAmount, err := cents(t.WithdrawalsPending.Amount)
+	if err != nil {
+		return tasksResponse{}, err
 	}
 	sample := make([]taskNodeSample, len(t.NodesOffline.Sample))
 	for i, n := range t.NodesOffline.Sample {
@@ -461,7 +438,7 @@ func tasksFrom(t service.Tasks) (tasksResponse, error) {
 			Kind: "tickets_open", Count: t.TicketsOpen.Count, HighPriority: t.TicketsOpen.HighPriority,
 			OldestWaitSeconds: t.TicketsOpen.OldestWaitSeconds,
 		},
-		taskWithdrawalsPending{Kind: "withdrawals_pending", Count: t.WithdrawalsPending.Count, Amounts: amounts},
+		taskWithdrawalsPending{Kind: "withdrawals_pending", Count: t.WithdrawalsPending.Count, Amount: withdrawAmount},
 		taskNodesOffline{
 			Kind: "nodes_offline", Count: t.NodesOffline.Count, Sample: sample,
 			LongestOfflineSeconds: t.NodesOffline.LongestOfflineSeconds,

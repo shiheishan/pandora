@@ -236,7 +236,7 @@ func Generate(in GenInput, issue CredentialIssuer) (*Seed, error) {
 
 			out.Orders = append(out.Orders, OrderRow{
 				ID: orderID, OrderNo: orderNo, UserID: userID, Kind: kind,
-				Currency: plan.Currency, Amount: plan.Amount, SubscriptionID: subID,
+				Amount: plan.Amount, SubscriptionID: subID,
 				CreatedAt: createdOrder, ExpiresAt: expiresAt, PaidAt: paidAt,
 			})
 			out.OrderItems = append(out.OrderItems, OrderItemRow{
@@ -244,7 +244,7 @@ func Generate(in GenInput, issue CredentialIssuer) (*Seed, error) {
 				PlanVersionID: plan.VersionID, Name: plan.Name, VersionNo: plan.VersionNo,
 				Interval: plan.Interval, IntervalCount: plan.IntervalCount,
 				EntitlementsJSON: plan.EntitlementsJSON, QuotasJSON: plan.QuotasJSON,
-				Amount: plan.Amount, Currency: plan.Currency, CreatedAt: createdOrder,
+				Amount: plan.Amount, CreatedAt: createdOrder,
 			})
 			out.Reservations = append(out.Reservations, ReservationRow{
 				ID: newID(), OrderID: orderID, UserID: userID,
@@ -256,7 +256,7 @@ func Generate(in GenInput, issue CredentialIssuer) (*Seed, error) {
 			provPay := "offline:" + ref
 			out.Payments = append(out.Payments, PaymentRow{
 				ID: payID, OrderID: orderID, UserID: userID, ProviderPaymentID: provPay,
-				Currency: plan.Currency, Amount: plan.Amount, PaidAt: paidAt,
+				Amount: plan.Amount, PaidAt: paidAt,
 			})
 			rawPayload := fmt.Sprintf(`{"source":"admin_offline","actor_id":"","reference":%q,"reason":"perfseed 历史订单"}`, ref)
 			out.PaymentEvents = append(out.PaymentEvents, PaymentEventRow{
@@ -264,11 +264,11 @@ func Generate(in GenInput, issue CredentialIssuer) (*Seed, error) {
 				ProviderPaymentID: provPay, RawPayload: rawPayload, ReceivedAt: paidAt,
 			})
 			out.LedgerTxns = append(out.LedgerTxns, LedgerTxnRow{
-				ID: newID(), OrderID: orderID, Currency: plan.Currency, Amount: plan.Amount, OccurredAt: paidAt,
+				ID: newID(), OrderID: orderID, Amount: plan.Amount, OccurredAt: paidAt,
 			})
 
 			ocData, _ := json.Marshal(map[string]any{
-				"order_no": orderNo, "kind": kind, "amount": plan.Amount, "currency": plan.Currency,
+				"order_no": orderNo, "kind": kind, "amount": plan.Amount,
 			})
 			out.Audits = append(out.Audits, AuditRow{
 				ActorKind: "user", ActorID: strPtr(userID), ActorAudience: strPtr("public"),
@@ -277,7 +277,7 @@ func Generate(in GenInput, issue CredentialIssuer) (*Seed, error) {
 			})
 			psData, _ := json.Marshal(map[string]any{
 				"order_no": orderNo, "kind": kind, "amount": plan.Amount, "fee": "0.00",
-				"currency": plan.Currency, "provider": "offline", "method": "offline", "payment_id": payID,
+				"provider": "offline", "method": "offline", "payment_id": payID,
 			})
 			out.Audits = append(out.Audits, AuditRow{
 				ActorKind: "system", ActorID: nil, ActorAudience: nil, AuthContext: nil,
@@ -347,7 +347,7 @@ func Generate(in GenInput, issue CredentialIssuer) (*Seed, error) {
 		out.Subscriptions = append(out.Subscriptions, SubscriptionRow{
 			ID: subID, UserID: userID, PlanID: plan.PlanID, PlanVersionID: plan.VersionID, PriceID: plan.PriceID,
 			Status: status, PeriodStart: tl.T0, PeriodEnd: tl.periodEnd,
-			Currency: plan.Currency, Amount: plan.Amount, Interval: plan.Interval, IntervalCount: plan.IntervalCount,
+			Amount: plan.Amount, Interval: plan.Interval, IntervalCount: plan.IntervalCount,
 			ProxyUUID: uuid.NewString(), CreatedAt: tl.T0, UpdatedAt: lastEventAt,
 		})
 

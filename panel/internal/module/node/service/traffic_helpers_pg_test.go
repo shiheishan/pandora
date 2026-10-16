@@ -141,8 +141,8 @@ func seedTrafficSub(t *testing.T, ctx context.Context, e *trafficEnv) (uuid.UUID
 		t.Fatal(err)
 	}
 	if err := e.row(ctx, `INSERT INTO subscriptions (user_id, plan_id, plan_version_id, current_period_start, current_period_end,
-		snapshot_currency, snapshot_amount, snapshot_interval, snapshot_interval_count)
-		VALUES (?, ?, ?, now(), now() + interval '30 days', 'CNY', 10, 'month', 1) RETURNING id, node_uid`,
+		snapshot_amount, snapshot_interval, snapshot_interval_count)
+		VALUES (?, ?, ?, now(), now() + interval '30 days', 10, 'month', 1) RETURNING id, node_uid`,
 		userID, planID, versionID).Scan(&subID, &uid); err != nil {
 		t.Fatal(err)
 	}

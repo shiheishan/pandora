@@ -9,7 +9,6 @@ import (
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
 	"github.com/aegispanel/aegis/internal/module/payment/provider"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -272,7 +271,7 @@ SELECT case_kind, order_status, status, amount::text FROM late_payment_cases WHE
 		t.Fatal("不应 order_paid：Settler 的写入应在保存点上撤回")
 	}
 	susp := ledgersvc.PlatformAccount(ledgersvc.LatePaymentSuspense, ledgersvc.RefMain)
-	bal := e.accountBalance(t, ctx, susp, money.CNY)
+	bal := e.accountBalance(t, ctx, susp)
 	if !bal.Equal(dec("9.90")) {
 		t.Fatalf("suspense 贷方余额 %s", bal)
 	}
@@ -321,9 +320,9 @@ func TestWebhookNotPayableQuarantinesWithFee(t *testing.T) {
 	if e.ledgerTxnCount(t, ctx, ledgersvc.KindLatePaymentSuspense) != 1 {
 		t.Fatal("应有 late_payment_suspense")
 	}
-	cash := e.accountBalance(t, ctx, ledgersvc.PlatformAccount(ledgersvc.ChannelCash, code), money.CNY)
-	fee := e.accountBalance(t, ctx, ledgersvc.PlatformAccount(ledgersvc.PlatformFeeExpense, code), money.CNY)
-	susp := e.accountBalance(t, ctx, ledgersvc.PlatformAccount(ledgersvc.LatePaymentSuspense, ledgersvc.RefMain), money.CNY)
+	cash := e.accountBalance(t, ctx, ledgersvc.PlatformAccount(ledgersvc.ChannelCash, code))
+	fee := e.accountBalance(t, ctx, ledgersvc.PlatformAccount(ledgersvc.PlatformFeeExpense, code))
+	susp := e.accountBalance(t, ctx, ledgersvc.PlatformAccount(ledgersvc.LatePaymentSuspense, ledgersvc.RefMain))
 	if !cash.Equal(dec("9.30")) || !fee.Equal(dec("0.60")) || !susp.Equal(dec("9.90")) {
 		t.Fatalf("渠道净收款 %s（应 9.30）、手续费 %s（应 0.60）、挂账 %s（应 9.90）", cash, fee, susp)
 	}
@@ -378,7 +377,7 @@ func TestValidateRecordAmountsFee(t *testing.T) {
 		{"9.90", "-0.01", false},
 	}
 	for _, c := range cases {
-		err := validateRecordAmounts(recordInput{Amount: dec(c.amount), Fee: dec(c.fee), Currency: money.CNY})
+		err := validateRecordAmounts(recordInput{Amount: dec(c.amount), Fee: dec(c.fee)})
 		if c.ok != (err == nil) {
 			t.Fatalf("金额 %s 手续费 %s：err=%v", c.amount, c.fee, err)
 		}
@@ -398,7 +397,7 @@ func TestRecordOffline(t *testing.T) {
 
 	res, err := e.svc.RecordOffline(ctx, OfflineInput{
 		OrderID: orderID, OrderNo: orderNo, UserID: user,
-		Amount: dec("9.90"), Currency: money.CNY,
+		Amount:    dec("9.90"),
 		Reference: "BANK-001", Reason: "线下转账",
 	})
 	if err != nil {
@@ -420,7 +419,7 @@ func TestRecordOffline(t *testing.T) {
 
 	res2, err := e.svc.RecordOffline(ctx, OfflineInput{
 		OrderID: orderID, OrderNo: orderNo, UserID: user,
-		Amount: dec("9.90"), Currency: money.CNY,
+		Amount:    dec("9.90"),
 		Reference: "BANK-001", Reason: "线下转账",
 	})
 	if err != nil {
@@ -436,7 +435,7 @@ func TestRecordOffline(t *testing.T) {
 	e.settler.mu.Unlock()
 	_, err = e.svc.RecordOffline(ctx, OfflineInput{
 		OrderID: orderBad, OrderNo: orderNoBad, UserID: user,
-		Amount: dec("1.00"), Currency: money.CNY,
+		Amount:    dec("1.00"),
 		Reference: "BANK-002", Reason: "线下",
 	})
 	if err == nil {
@@ -454,7 +453,7 @@ func TestRecordOffline(t *testing.T) {
 
 	_, err = e.svc.RecordOffline(ctx, OfflineInput{
 		OrderID: orderID, OrderNo: orderNo, UserID: user,
-		Amount: dec("1.00"), Currency: money.CNY,
+		Amount:    dec("1.00"),
 		Reference: "", Reason: "",
 	})
 	if err == nil {
@@ -475,7 +474,7 @@ func TestCreateIntentReuseAndRotate(t *testing.T) {
 
 	in := CreateIntentInput{
 		OrderID: orderID, OrderNo: orderNo, UserID: user,
-		Amount: dec("9.90"), Currency: money.CNY, ProviderCode: code,
+		Amount: dec("9.90"), ProviderCode: code,
 		Title: "测试订单", ClientIP: "203.0.113.2",
 	}
 	r1, err := e.svc.CreateIntent(ctx, in)
@@ -520,15 +519,15 @@ func TestCreateIntentReuseAndRotate(t *testing.T) {
 	}
 }
 
-// 渠道停收、停用、币种与订单过期拒收。
+// 渠道停收、停用与订单过期拒收。
 func TestCreateIntentRejects(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	orderID, orderNo := e.mkOrder(t, ctx, user)
 	base := CreateIntentInput{
 		OrderID: orderID, OrderNo: orderNo, UserID: user,
-		Amount: dec("9.90"), Currency: money.CNY,
-		Title: "测试", ClientIP: "203.0.113.3",
+		Amount: dec("9.90"),
+		Title:  "测试", ClientIP: "203.0.113.3",
 	}
 
 	paused := "fake-pause-" + uuid.New().String()[:8]
@@ -555,16 +554,6 @@ func TestCreateIntentRejects(t *testing.T) {
 		t.Fatalf("停用: %v", err)
 	}
 
-	usdCode := "fake-usd-" + uuid.New().String()[:8]
-	_ = e.mkFakeProvider(t, ctx, usdCode)
-	base.ProviderCode = usdCode
-	base.Currency = money.USD
-	_, err = e.svc.CreateIntent(ctx, base)
-	if errs.As(err).Code != errs.ValidationFailed {
-		t.Fatalf("USD: %s", errs.As(err).Code)
-	}
-
-	base.Currency = money.CNY
 	lapseCode := "fake-lapse-" + uuid.New().String()[:8]
 	_ = e.mkFakeProvider(t, ctx, lapseCode)
 	base.ProviderCode = lapseCode

@@ -141,7 +141,7 @@ func (r *Repo) EntriesOf(ctx context.Context, referrerID uuid.UUID, limit int) (
 	return out, mapErr(err)
 }
 
-// EntryTotals 是某推荐人在某币种下的佣金汇总。
+// EntryTotals 是某推荐人的佣金汇总。
 type EntryTotals struct {
 	Pending      decimal.Decimal `gorm:"column:pending"`
 	Available    decimal.Decimal `gorm:"column:available"`
@@ -150,9 +150,9 @@ type EntryTotals struct {
 	PaidInvitees int64           `gorm:"column:paid_invitees"`
 }
 
-// EntryTotalsOf 按推荐人与币种汇总佣金；已作废的条目不计入任何一项。orders 是条目数（含第 2、3 级），
+// EntryTotalsOf 按推荐人汇总佣金；已作废的条目不计入任何一项。orders 是条目数（含第 2、3 级），
 // paid_invitees 只算直接邀请（第 1 级）的人，和「邀请注册」同口径。
-func (r *Repo) EntryTotalsOf(ctx context.Context, referrerID uuid.UUID, currency string) (EntryTotals, error) {
+func (r *Repo) EntryTotalsOf(ctx context.Context, referrerID uuid.UUID) (EntryTotals, error) {
 	var t EntryTotals
 	err := r.d.Conn(ctx).Raw(`
 SELECT
@@ -162,47 +162,39 @@ SELECT
   count(*) FILTER (WHERE status <> 'voided') AS orders,
   count(DISTINCT referee_user_id) FILTER (WHERE status <> 'voided' AND level = 1) AS paid_invitees
 FROM commission_entries
-WHERE referrer_user_id = ? AND currency = ?`, referrerID, currency).Scan(&t).Error
+WHERE referrer_user_id = ?`, referrerID).Scan(&t).Error
 	return t, mapErr(err)
-}
-
-// UserCurrency 用户与币种组合键。
-type UserCurrency struct {
-	UserID   uuid.UUID
-	Currency string
 }
 
 // earnedRow 是 EarnedByUsers 查询的一行。
 type earnedRow struct {
 	ReferrerUserID uuid.UUID       `gorm:"column:referrer_user_id"`
-	Currency       string          `gorm:"column:currency"`
 	Total          decimal.Decimal `gorm:"column:total"`
 }
 
-// EarnedByUsers 批量汇总各推荐人各币种已赚佣金总额（不含已作废）。
-func (r *Repo) EarnedByUsers(ctx context.Context, userIDs []uuid.UUID) (map[UserCurrency]decimal.Decimal, error) {
+// EarnedByUsers 批量汇总各推荐人已赚佣金总额（不含已作废）。
+func (r *Repo) EarnedByUsers(ctx context.Context, userIDs []uuid.UUID) (map[uuid.UUID]decimal.Decimal, error) {
 	if len(userIDs) == 0 {
-		return map[UserCurrency]decimal.Decimal{}, nil
+		return map[uuid.UUID]decimal.Decimal{}, nil
 	}
 	var rows []earnedRow
 	err := r.d.Conn(ctx).Raw(`
-SELECT referrer_user_id, currency, sum(commission_amount) AS total
+SELECT referrer_user_id, sum(commission_amount) AS total
 FROM commission_entries
 WHERE referrer_user_id IN ? AND status <> 'voided'
-GROUP BY referrer_user_id, currency`, userIDs).Scan(&rows).Error
+GROUP BY referrer_user_id`, userIDs).Scan(&rows).Error
 	if err != nil {
 		return nil, mapErr(err)
 	}
-	out := make(map[UserCurrency]decimal.Decimal, len(rows))
+	out := make(map[uuid.UUID]decimal.Decimal, len(rows))
 	for _, row := range rows {
-		out[UserCurrency{UserID: row.ReferrerUserID, Currency: row.Currency}] = row.Total
+		out[row.ReferrerUserID] = row.Total
 	}
 	return out, nil
 }
 
-// EntryOverview 是全站某一币种的佣金汇总。
+// EntryOverview 是全站佣金汇总。
 type EntryOverview struct {
-	Currency   string          `gorm:"column:currency"`
 	Pending    decimal.Decimal `gorm:"column:pending"`
 	Available  decimal.Decimal `gorm:"column:available"`
 	ThisMonth  decimal.Decimal `gorm:"column:this_month"`
@@ -211,32 +203,18 @@ type EntryOverview struct {
 	NeedReview int64           `gorm:"column:need_review"`
 }
 
-// EntryOverviewByCurrency 按币种分组的全站佣金概览（本月按 created_at 统计；已作废的不计入金额与笔数），币种升序；没有条目的币种不出现。
-func (r *Repo) EntryOverviewByCurrency(ctx context.Context, monthStart time.Time) ([]EntryOverview, error) {
-	var out []EntryOverview
+// EntryOverview 全站佣金概览（本月按 created_at 统计；已作废的不计入金额与笔数）；没有条目时各金额为 0。
+func (r *Repo) EntryOverview(ctx context.Context, monthStart time.Time) (EntryOverview, error) {
+	var out EntryOverview
 	err := r.d.Conn(ctx).Raw(`
 SELECT
-  currency,
   COALESCE(sum(commission_amount) FILTER (WHERE status = 'pending'), 0) AS pending,
   COALESCE(sum(commission_amount) FILTER (WHERE status = 'available'), 0) AS available,
   COALESCE(sum(commission_amount) FILTER (WHERE created_at >= ? AND status <> 'voided'), 0) AS this_month,
   COALESCE(sum(commission_amount) FILTER (WHERE status <> 'voided'), 0) AS total,
   count(*) FILTER (WHERE status <> 'voided') AS entries,
   count(*) FILTER (WHERE review_required AND status = 'pending') AS need_review
-FROM commission_entries
-GROUP BY currency
-ORDER BY currency`, monthStart).Scan(&out).Error
-	return out, mapErr(err)
-}
-
-// EntryCurrenciesOf 返回推荐人有（未作废的）佣金条目的全部币种（升序）。提现与转余额只会发生在这些币种里；
-// 只有作废条目的币种既没有可用额也不该出现在汇总里。
-func (r *Repo) EntryCurrenciesOf(ctx context.Context, referrerID uuid.UUID) ([]string, error) {
-	var out []string
-	err := r.d.Conn(ctx).Raw(
-		`SELECT DISTINCT currency FROM commission_entries WHERE referrer_user_id = ? AND status <> 'voided' ORDER BY currency`,
-		referrerID,
-	).Scan(&out).Error
+FROM commission_entries`, monthStart).Scan(&out).Error
 	return out, mapErr(err)
 }
 

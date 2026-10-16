@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
 func TestConcurrentDebitsNoOverdraft(t *testing.T) {
@@ -16,8 +15,7 @@ func TestConcurrentDebitsNoOverdraft(t *testing.T) {
 	e, ctx := newCommitEnv(t)
 	admin := e.mkUser(t, ctx)
 	user := e.mkUser(t, ctx)
-	cur := money.CNY
-	e.fund(t, ctx, user, cur, "10.00")
+	e.fund(t, ctx, user, "10.00")
 
 	const n = 20
 	var wg sync.WaitGroup
@@ -30,10 +28,9 @@ func TestConcurrentDebitsNoOverdraft(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			_, err := e.svc.AdjustBalance(asAdmin(ctx, admin), Adjustment{
-				UserID:   user,
-				Amount:   dec("-1.00"),
-				Currency: string(cur),
-				Reason:   "并发扣减测试",
+				UserID: user,
+				Amount: dec("-1.00"),
+				Reason: "并发扣减测试",
 			})
 			mu.Lock()
 			if err == nil {
@@ -54,8 +51,8 @@ func TestConcurrentDebitsNoOverdraft(t *testing.T) {
 	if okCount != 10 || conflictCount != 10 {
 		t.Fatalf("成功应为 10、Conflict 应为 10，得 ok=%d conflict=%d", okCount, conflictCount)
 	}
-	if !e.balanceOf(t, ctx, user, cur).Equal(dec("0.00")) {
-		t.Fatalf("最终余额应为 0，得 %s", e.balanceOf(t, ctx, user, cur))
+	if !e.balanceOf(t, ctx, user).Equal(dec("0.00")) {
+		t.Fatalf("最终余额应为 0，得 %s", e.balanceOf(t, ctx, user))
 	}
 	e.assertNoDrift(t, ctx)
 }
@@ -67,9 +64,8 @@ func TestConcurrentOppositeOrderNoDeadlock(t *testing.T) {
 	e, ctx := newCommitEnv(t)
 	a := e.mkUser(t, ctx)
 	b := e.mkUser(t, ctx)
-	cur := money.CNY
-	e.fund(t, ctx, a, cur, "100.00")
-	e.fund(t, ctx, b, cur, "100.00")
+	e.fund(t, ctx, a, "100.00")
+	e.fund(t, ctx, b, "100.00")
 
 	const n = 40
 	var wg sync.WaitGroup
@@ -94,10 +90,9 @@ func TestConcurrentOppositeOrderNoDeadlock(t *testing.T) {
 				}
 			}
 			_, err := e.svc.Post(context.Background(), Posting{
-				Kind:     KindCommissionToBalance,
-				Currency: cur,
-				Memo:     "并发顺序测试",
-				Legs:     legs,
+				Kind: KindCommissionToBalance,
+				Memo: "并发顺序测试",
+				Legs: legs,
 			})
 			if err != nil {
 				mu.Lock()
@@ -111,8 +106,8 @@ func TestConcurrentOppositeOrderNoDeadlock(t *testing.T) {
 	for _, err := range errList {
 		t.Errorf("Post 失败: %v", err)
 	}
-	if !e.balanceOf(t, ctx, a, cur).Equal(dec("100.00")) || !e.balanceOf(t, ctx, b, cur).Equal(dec("100.00")) {
-		t.Fatalf("A/B 余额应仍为 100，得 A=%s B=%s", e.balanceOf(t, ctx, a, cur), e.balanceOf(t, ctx, b, cur))
+	if !e.balanceOf(t, ctx, a).Equal(dec("100.00")) || !e.balanceOf(t, ctx, b).Equal(dec("100.00")) {
+		t.Fatalf("A/B 余额应仍为 100，得 A=%s B=%s", e.balanceOf(t, ctx, a), e.balanceOf(t, ctx, b))
 	}
 	e.assertNoDrift(t, ctx)
 }
@@ -123,7 +118,6 @@ func TestConcurrentEnsureSameAccount(t *testing.T) {
 	}
 	e, ctx := newCommitEnv(t)
 	user := e.mkUser(t, ctx)
-	cur := money.CNY
 
 	const n = 10
 	var wg sync.WaitGroup
@@ -135,8 +129,7 @@ func TestConcurrentEnsureSameAccount(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			_, err := e.svc.Post(context.Background(), Posting{
-				Kind:     KindBalanceTopup,
-				Currency: cur,
+				Kind: KindBalanceTopup,
 				Legs: []Leg{
 					{Account: PlatformAccount(ChannelCash, "test"), Direction: Debit, Amount: dec("1.00")},
 					{Account: UserAccount(UserBalance, user), Direction: Credit, Amount: dec("1.00")},
@@ -154,8 +147,8 @@ func TestConcurrentEnsureSameAccount(t *testing.T) {
 	for _, err := range errList {
 		t.Errorf("fund 失败: %v", err)
 	}
-	if !e.balanceOf(t, ctx, user, cur).Equal(dec("10.00")) {
-		t.Fatalf("余额应为 10，得 %s", e.balanceOf(t, ctx, user, cur))
+	if !e.balanceOf(t, ctx, user).Equal(dec("10.00")) {
+		t.Fatalf("余额应为 10，得 %s", e.balanceOf(t, ctx, user))
 	}
 	var acctN int64
 	if err := e.row(ctx, `SELECT count(*) FROM ledger_accounts WHERE owner_user_id = ?`, user).Scan(&acctN); err != nil {

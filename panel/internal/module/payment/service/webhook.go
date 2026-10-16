@@ -31,7 +31,6 @@ func (s *Service) HandleWebhook(ctx context.Context, code string, in provider.In
 		OutTradeNo:        n.OutTradeNo,
 		Amount:            n.Amount,
 		Fee:               n.Fee,
-		Currency:          n.Currency,
 		Method:            n.Method,
 		Raw:               n.Raw,
 		SignatureVerified: n.SignatureVerified,

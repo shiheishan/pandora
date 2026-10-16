@@ -55,7 +55,6 @@ type admSubscriptionResponse struct {
 	CurrentPeriodStart  *time.Time         `json:"current_period_start"`
 	CurrentPeriodEnd    *time.Time         `json:"current_period_end"`
 	Amount              int64              `json:"amount"`
-	Currency            string             `json:"currency"`
 	Quotas              []admQuotaResponse `json:"quotas"`
 	DeviceLimitOverride *int               `json:"device_limit_override"`
 	PlanMaxDevices      *int               `json:"plan_max_devices"`
@@ -70,7 +69,6 @@ type admOrderRowResponse struct {
 	UserEmail      string     `json:"user_email"`
 	Kind           string     `json:"kind"`
 	Status         string     `json:"status"`
-	Currency       string     `json:"currency"`
 	TotalAmount    int64      `json:"total_amount"`
 	PayableAmount  int64      `json:"payable_amount"`
 	PaidAmount     int64      `json:"paid_amount"`
@@ -84,11 +82,6 @@ type admOrderRowResponse struct {
 	IntervalCount  int        `json:"interval_count"`
 	ItemCount      int        `json:"item_count"`
 	Manual         bool       `json:"manual"`
-}
-
-type admPaidTotalResponse struct {
-	Currency string `json:"currency"`
-	Amount   int64  `json:"amount"`
 }
 
 type admTelegramResponse struct {
@@ -164,7 +157,6 @@ func admSubscriptionFrom(cc *admCents, s service.AdminSub) admSubscriptionRespon
 		CurrentPeriodStart:  &ps,
 		CurrentPeriodEnd:    &pe,
 		Amount:              cc.of(s.Amount),
-		Currency:            s.Currency,
 		Quotas:              quotas,
 		DeviceLimitOverride: s.DeviceLimitOverride,
 		PlanMaxDevices:      s.PlanMaxDevices,
@@ -180,7 +172,6 @@ func admOrderRowFrom(cc *admCents, o service.AdminOrderRow) admOrderRowResponse 
 		UserEmail:      o.UserEmail,
 		Kind:           o.Kind,
 		Status:         o.Status,
-		Currency:       o.Currency,
 		TotalAmount:    cc.of(o.Total),
 		PayableAmount:  cc.of(o.Payable),
 		PaidAmount:     cc.of(o.Paid),
