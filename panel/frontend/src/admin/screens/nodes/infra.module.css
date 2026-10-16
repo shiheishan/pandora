@@ -6,93 +6,128 @@
   color: var(--text-2);
 }
 
-/* ---- 安装命令条：深底，令牌与命令分两块 ---- */
-.installBar {
-  --bar-warn: #e0a54a;
-  --bar-line: #3a3a40;
+/* ---- 安装弹窗 ---- */
+.installSteps {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px 16px;
-  border-radius: var(--radius-card);
-  background: var(--sidebar);
-  color: var(--sidebar-text);
+  gap: var(--space-16);
 }
 
-.installHead {
+.installStep {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
+  gap: var(--space-12);
 }
 
-.installTitle {
+.installNo {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: var(--fw-semibold);
+}
+
+.installContent {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.installStepTitle {
   font-weight: var(--fw-medium);
 }
 
-.installWarn {
-  color: var(--bar-warn);
-  font-family: var(--font-mono);
-  font-size: 11px;
-}
-
-.installRow {
+.installBox {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
-}
-
-.installLabel {
-  flex: none;
-  width: 36px;
-  padding-top: 1px;
-  color: var(--sidebar-text-2);
-  font-size: var(--fs-caption);
-}
-
-.installNote {
-  color: var(--sidebar-text-2);
-  font-size: var(--fs-caption);
+  align-items: stretch;
+  border: 1px solid var(--border-strong);
 }
 
 .installCode {
   flex: 1;
   min-width: 0;
-  color: var(--toast-ok);
+  overflow-x: auto;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  color: var(--text);
   font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-  word-break: break-all;
-  user-select: all;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
-.barButton {
+.installCopyBtn {
   flex: none;
-  height: 26px;
-  padding: 0 10px;
-  border: 1px solid var(--bar-line);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--sidebar-text);
-  font-size: var(--fs-caption);
-  cursor: pointer;
-}
-
-.barButton:hover {
-  border-color: var(--sidebar-text-2);
-}
-
-.barButton:focus-visible {
-  outline: 2px solid var(--sidebar-text);
-  outline-offset: 1px;
-}
-
-.barClose {
+  min-width: 76px;
+  padding: 0 12px;
   border: 0;
-  background: transparent;
-  color: var(--sidebar-text-2);
-  font-size: 16px;
-  line-height: 1;
+  border-left: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
   cursor: pointer;
+}
+
+.installCopyBtn:hover {
+  background: var(--surface-2);
+}
+
+.installCopied {
+  color: var(--ok);
+}
+
+.installHint {
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.installFooterNotice {
+  color: var(--warn);
+  font-size: 12px;
+}
+
+/* ---- 服务器详情弹窗（键值行、操作） ---- */
+.detailRows {
+  display: flex;
+  flex-direction: column;
+}
+
+.detailRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-12);
+  padding: 6px 0;
+  border-bottom: 1px solid var(--surface-3);
+}
+
+.detailKey {
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.detailVal {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-align: right;
+  word-break: break-all;
+}
+
+.detailFootActions {
+  display: flex;
+  gap: var(--space-8);
+}
+
+.editModalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-8);
+  margin-top: var(--space-16);
 }
 
 /* ---- 服务器卡片 ---- */
@@ -247,47 +282,6 @@
 
 .dangerText {
   color: var(--danger);
-}
-
-/* ---- 服务器详情 ---- */
-.nodeList {
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-}
-
-.nodeItem {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 110px 90px;
-  gap: 10px;
-  align-items: center;
-  padding: 8px 12px;
-  border: 0;
-  border-bottom: 1px solid var(--border);
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-}
-
-.nodeItem:last-child {
-  border-bottom: 0;
-}
-
-button.nodeItem {
-  cursor: pointer;
-}
-
-button.nodeItem:hover {
-  background: var(--surface-2);
-}
-
-.statusForm {
-  display: grid;
-  grid-template-columns: 180px minmax(0, 1fr) auto;
-  gap: 8px;
-  align-items: end;
 }
 
 /* ---- 节点池 ---- */

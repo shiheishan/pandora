@@ -282,18 +282,31 @@ type adminNodeResponse struct {
 	TrafficRateSchedule   []nodeRateRangeResponse  `json:"traffic_rate_schedule"`
 }
 
+// nodeProtocolFieldResponse 是协议表单上一个字段的显示元数据。
+type nodeProtocolFieldResponse struct {
+	Path         string              `json:"path"`
+	Label        string              `json:"label"`
+	Advanced     bool                `json:"advanced,omitempty"`
+	ShowIf       map[string][]string `json:"show_if,omitempty"`
+	Default      any                 `json:"default,omitempty"`
+	Placeholder  string              `json:"placeholder,omitempty"`
+	OptionLabels map[string]string   `json:"option_labels,omitempty"`
+}
+
 // nodeProtocolSchemaResponse 是一种协议的 schema（protocolSchemaSchema）。
 type nodeProtocolSchemaResponse struct {
-	NodeType            string              `json:"node_type"`
-	Version             int                 `json:"version"`
-	Status              string              `json:"status"`
-	Required            []string            `json:"required"`
-	AllowedProperties   []string            `json:"allowed_properties"`
-	Methods             []string            `json:"methods,omitempty"`
-	Enums               map[string][]string `json:"enums,omitempty"`
-	PropertyTypes       map[string]string   `json:"property_types,omitempty"`
-	SensitiveProperties []string            `json:"sensitive_properties,omitempty"`
-	Hints               map[string]string   `json:"hints,omitempty"`
+	NodeType            string                      `json:"node_type"`
+	Version             int                         `json:"version"`
+	Status              string                      `json:"status"`
+	Required            []string                    `json:"required"`
+	AllowedProperties   []string                    `json:"allowed_properties"`
+	Methods             []string                    `json:"methods,omitempty"`
+	Enums               map[string][]string         `json:"enums,omitempty"`
+	PropertyTypes       map[string]string           `json:"property_types,omitempty"`
+	SensitiveProperties []string                    `json:"sensitive_properties,omitempty"`
+	Hints               map[string]string           `json:"hints,omitempty"`
+	Note                string                      `json:"note,omitempty"`
+	Fields              []nodeProtocolFieldResponse `json:"fields,omitempty"`
 }
 
 type nodeProtocolSchemasResponse struct {
@@ -467,5 +480,26 @@ func nodeProtocolSchemaFrom(s protocol.Schema) nodeProtocolSchemaResponse {
 		PropertyTypes:       s.PropertyTypes,
 		SensitiveProperties: s.SensitiveProperties,
 		Hints:               s.Hints,
+		Note:                s.Note,
+		Fields:              nodeProtocolFieldsFrom(s.Fields),
 	}
+}
+
+func nodeProtocolFieldsFrom(fields []protocol.FormField) []nodeProtocolFieldResponse {
+	if len(fields) == 0 {
+		return nil
+	}
+	out := make([]nodeProtocolFieldResponse, len(fields))
+	for i, f := range fields {
+		out[i] = nodeProtocolFieldResponse{
+			Path:         f.Path,
+			Label:        f.Label,
+			Advanced:     f.Advanced,
+			ShowIf:       f.ShowIf,
+			Default:      f.Default,
+			Placeholder:  f.Placeholder,
+			OptionLabels: f.OptionLabels,
+		}
+	}
+	return out
 }

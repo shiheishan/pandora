@@ -250,8 +250,8 @@ function slugify(name: string): string {
 // ---------------------------------------------------------------------------
 export const globalRouting: { outbounds: Array<{ tag: string; type: string; settings: unknown }>; routes: Json[] } = {
   outbounds: [
-    { tag: 'US-LAX-01', type: 'trojan', settings: { server: 'us1.example.test', port: 443 } },
-    { tag: 'HK-RELAY', type: 'shadowsocks', settings: { server: 'hk-relay.example.test', port: 8388 } },
+    { tag: 'US-LAX-01', type: 'trojan', settings: { server: 'us1.example.test', server_port: 443 } },
+    { tag: 'HK-RELAY', type: 'shadowsocks', settings: { server: 'hk-relay.example.test', server_port: 8388 } },
   ],
   routes: [
     { priority: 10, matcher: { domain_suffix: ['doubleclick.net', 'googlesyndication.com'] }, outbound_tag: 'block', enabled: true, note: '广告' },

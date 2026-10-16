@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { Button, Input, Select, TextArea, useToast } from '../../../ui'
 import { OUTBOUND_TYPES, outboundToRow, routeToRow, rowsToOutbounds, rowsToRoutes, rulesUsing, type OutboundRow, type RuleRow } from './logic'
-import { RuleRows } from './NodeRouting'
+import { AddRuleButton, RuleRows } from './NodeRouting'
 import css from './routing.module.css'
 import n from './nodes.module.css'
 import type { Outbound, Route } from './schemas'
@@ -166,9 +166,10 @@ export function ScopeRoutingEditor({
       <section className={css.section} aria-label="规则">
         <div className={css.sectionHead}>
           <h3 className={css.sectionTitle}>规则</h3>
+          <AddRuleButton rows={rules} disabled={busy} onChange={setRules} />
         </div>
         <p className={css.sectionHint}>{ruleHint}</p>
-        <RuleRows rows={rules} errors={ruleErrors} outbounds={tags} disabled={busy} onChange={setRules} emptyHint={emptyHint} />
+        <RuleRows rows={rules} errors={ruleErrors} outbounds={tags} disabled={busy} onChange={setRules} emptyHint={emptyHint} inlineAdd={false} />
       </section>
 
       {formError && <div className={n.errorBox}>{formError}</div>}

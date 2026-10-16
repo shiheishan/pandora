@@ -73,27 +73,3 @@ export function runState(n: RuntimeFields): RunState | null {
 
 export const sameRunState = (a: RunState | null, b: RunState | null): boolean =>
   a === b || (!!a && !!b && a.label === b.label && a.tone === b.tone && a.detail === b.detail)
-
-/** 生效回执的失败阶段（node_config_applications.phase）翻成中文 */
-export function applyPhaseLabel(phase: string): string {
-  switch (phase) {
-    case 'failed':
-      return '应用失败'
-    case 'precheck_failed':
-      return '预检失败'
-    case 'health_failed':
-      return '健康检查失败'
-    case 'rolled_back':
-      return '已回滚'
-  }
-  return phase
-}
-
-/** 复制弹窗的端口框：空串沿用原节点（undefined），合法端口返回数字，其余 'invalid' */
-export function copyPortValue(raw: string): number | undefined | 'invalid' {
-  const v = raw.trim()
-  if (!v) return undefined
-  if (!/^\d{1,5}$/.test(v)) return 'invalid'
-  const n = Number(v)
-  return n >= 1 && n <= 65535 ? n : 'invalid'
-}
