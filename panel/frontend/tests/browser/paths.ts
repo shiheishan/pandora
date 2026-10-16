@@ -65,6 +65,4 @@ export const PATHS: readonly PathStep[] = [
  * 被产品问题卡住、在 CI 里标 test.fixme 的步骤：id → 一句原因（复现与期望写在报告里）。
  * 表里这些行记「失败（产品问题）」而不是「未执行」
  */
-export const PRODUCT_ISSUES: Readonly<Record<string, string>> = {
-  D4: '名下只有一次性套餐时选购页默认停在「一次性」；点「按时间」标签把地址里的 kind 删掉，又回到缺省的「一次性」，按时间的套餐看不到（plans/index.tsx 的 setKind）',
-}
+export const PRODUCT_ISSUES: Readonly<Record<string, string>> = {}

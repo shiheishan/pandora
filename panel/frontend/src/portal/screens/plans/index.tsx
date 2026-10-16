@@ -10,7 +10,7 @@ import { planCardView } from './labels'
 import css from './Plans.module.css'
 
 // ---------------------------------------------------------------------------
-// 选购：按时间 / 一次性两类套餐；?kind=one_time 选一次性，缺省按时间。
+// 选购：按时间 / 一次性两类套餐；?kind= 指定，缺省按时间（只持有一次性时缺省一次性）。
 // 落点（另开 / 续 / 叠加 / 换掉）在确认页由 landings 让用户选。
 // ---------------------------------------------------------------------------
 
@@ -29,7 +29,8 @@ export default function Plans() {
   const { query } = useHashLocation()
   const h = useHoldings()
   const plans = usePlans()
-  const setKind = (kind: PlanKind) => navigate('/plans', { query: { ...Object.fromEntries(query), kind: kind === 'subscription' ? null : kind }, replace: true })
+  // 总是写明 kind：缺省值随持有变（只持有一次性时缺省是一次性），省掉就切不回「按时间」
+  const setKind = (kind: PlanKind) => navigate('/plans', { query: { ...Object.fromEntries(query), kind }, replace: true })
 
   const catalogKinds = useMemo(() => new Set((plans.data ?? []).map((p) => p.kind)), [plans.data])
   const asked = query.get('kind')

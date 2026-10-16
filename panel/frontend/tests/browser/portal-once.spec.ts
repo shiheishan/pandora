@@ -87,8 +87,7 @@ test('D：一次性新购、叠加、换成按时间的套餐', async ({ browser
   })
 })
 
-// 产品问题（paths.ts 的 PRODUCT_ISSUES.D4）：名下只有一次性套餐时点「按时间」标签回不到按时间的套餐
-test.fixme('D4：只有一次性套餐时切到「按时间」', async ({ browser, world }) => {
+test('D4：只有一次性套餐时切到「按时间」', async ({ browser, world }) => {
   const { once, std } = world.plans
   const u = await newUser('d4')
   await grant(u, once)
