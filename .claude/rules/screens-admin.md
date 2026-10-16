@@ -19,3 +19,11 @@ paths:
   - `plans/api.ts` 的 `planOptionsKey` 给用户、内容两个模块各自查套餐目录，挂在 `PK` 下，套餐页写后一并失效
   - `users/api.ts` 的 `useUserGroups` 被套餐页（可见用户组、组专属价）借用
 - 10-16 起按设计稿显示效果还原：设计稿没显示的功能前后端一起删，安全项保留（见 redesign-2026-10-16.md）。
+- 外壳（10-16）：页头没有面包屑和标题，页签栏直接在顶；页签右端的「?」读 `admin/page-help.ts` 的 `PAGE_HELP`，键是 `模块:页签`（没有页签的模块用模块名）。新页面或改页签时在那里补一条（`{label, sections:[{title, ordered?, items}]}`，items 是字符串或 `{term, text}`），`admin.test.ts` 核对每个键都落在真实页面上。
+- `admin/modules.ts` 的 `PENDING_TABS` 是「还没按新设计做出来」的页签，外壳给它们显示空状态；页面接好后从集合里删掉那一项。套餐模块没有页签，详情路径是 `/plans/<id>`。
+- 共用组件（都从 `ui/index.ts` 取）：
+  - `Modal`：`size` 取 `'sm'|'md'|'lg'`（400 / 560 / 720）或 `ModalWidth` 数值（400、440、480、520、560、640、680、720、760），另有 `subtitle`、`headExtra`、`footerStart`、`tall`、`divided`、`bodyClassName`；结构是头 / 体 / 底，体内滚动
+  - `Select`：自绘 listbox，props 与旧的原生版兼容，`onChange` 的 `e.target.value` 照旧可用；不要再往里塞 `<option>`
+  - `FilterTabs`（带计数的筛选页签，`items: {value,label,count?}[]`）、`Toolbar` + `SearchField`（列表上方的筛选条，`SearchField` 必须给 `aria-label`）
+  - `Table`：列可设 `sortable`，配 `sort` / `onSortChange`；另有 `footer`、`stickyHeader`
+- 金额只有人民币：`formatMoney(minor)` 只收一个参数；带币种的两参写法是过渡用的 `@deprecated` 重载，改到哪个模块就去掉哪里的第二个参数，全部改完删重载。
