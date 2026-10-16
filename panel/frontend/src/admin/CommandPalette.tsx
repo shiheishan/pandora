@@ -60,12 +60,19 @@ export function CommandPalette({
     el?.scrollIntoView({ block: 'nearest' })
   }, [baseId, index, flat.length])
 
+  // 关闭时就清空：重开后立刻输入不会和打开时的清空抢先后
+  const close = () => {
+    setQuery('')
+    setActive(0)
+    onClose()
+  }
+
   const pick = (item: PaletteItem | undefined) => {
     if (!item) return
     // 实体候选自带完整地址，直接打开那一条；其余走调用方的 onPick
     if (isEntityItem(item)) navigate(item.path)
     else onPick(item)
-    onClose()
+    close()
   }
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -89,10 +96,10 @@ export function CommandPalette({
       aria-label="搜索与跳转"
       onCancel={(event) => {
         event.preventDefault()
-        onClose()
+        close()
       }}
       onClick={(event) => {
-        if (event.target === event.currentTarget) onClose()
+        if (event.target === event.currentTarget) close()
       }}
     >
       {open && (
