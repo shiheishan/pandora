@@ -18,28 +18,37 @@ const GIB = 1024 ** 3
 // 字段与 Go 的 mySubscriptionView 一一对应；renewable 同口径：生效状态即可续费
 function sub(over: Partial<Subscription> = {}): Subscription {
   const status = over.status ?? 'active'
+  const live = status === 'active'
   return subscriptionSchema.parse({
     id: 's1',
     plan_id: 'p1',
     price_id: '',
     plan_name: '专业版',
+    plan_kind: 'subscription',
     plan_version: 3,
     status,
+    state: live ? 'live' : 'revivable',
     current_period_start: '2026-09-01T00:00:00Z',
     current_period_end: '2026-11-05T10:00:00Z',
-    currency: 'CNY',
     amount: 5900,
-    quotas: [{ metric: 'traffic.bytes', limit: 500 * GIB, consumed: 312 * GIB, remaining: 188 * GIB, period: 'cycle', period_start: '2026-09-01T00:00:00Z', period_end: null }],
+    validity_days: null,
+    quotas: [{ metric: 'traffic.bytes', limit: 500 * GIB, bonus_bytes: 0, consumed: 312 * GIB, remaining: 188 * GIB, period: 'cycle', period_start: '2026-09-01T00:00:00Z', period_end: null }],
     device_limit: null,
     online_devices: 0,
-    quota_reset_strategy: 'billing_cycle',
+    traffic_limit: 500 * GIB,
+    bonus_bytes: 0,
+    traffic_used: 312 * GIB,
+    permanent: false,
+    resets_used: 0,
+    reset_limit: null,
+    reset_price: null,
     next_reset_at: null,
-    renewable: status === 'active',
+    renewable: live,
+    stackable: false,
     renewal_price: null,
-    pack_remaining_bytes: 0,
     label: null,
     client_name: 'Pandora · 专业版',
-    changeable: status === 'active',
+    changeable: live,
     renew_until: null,
     ...over,
   })
@@ -53,9 +62,9 @@ describe('traffic', () => {
     expect(bytesParts(1.5)).toEqual(['2', 'B'])
   })
 
-  it('摘要：总量 = 已用 + 剩余，remaining=null 为不限', () => {
-    expect(trafficSummary({ metric: 'traffic.bytes', limit: 500, consumed: 400, remaining: 100 }, 30)).toEqual({ used: 400, total: 500, remaining: 100, pack: 30, ratio: 0.8 })
-    expect(trafficSummary({ metric: 'traffic.bytes', limit: null, consumed: 7, remaining: null })).toMatchObject({ total: null, remaining: null, ratio: 0 })
+  it('摘要：total = limit + bonus，remaining = max(0, total - consumed)；limit=null 为不限', () => {
+    expect(trafficSummary({ metric: 'traffic.bytes', limit: 470, bonus_bytes: 30, consumed: 400, remaining: 0 })).toEqual({ used: 400, total: 500, remaining: 100, bonus: 30, ratio: 0.8 })
+    expect(trafficSummary({ metric: 'traffic.bytes', limit: null, consumed: 7, remaining: null })).toMatchObject({ total: null, remaining: null, bonus: 0, ratio: 0 })
     expect(trafficSummary(null)).toBeNull()
   })
 
@@ -92,18 +101,18 @@ describe('traffic', () => {
     expect(past?.label).toBe(`已于 ${past?.date} 到期`)
   })
 
-  it('重置日：never 不重置；next_reset_at → 额度周期末 → 用量窗口末', () => {
-    expect(resetAtOf({ quota_reset_strategy: 'never', next_reset_at: 'x' }, null, undefined)).toBeNull()
-    expect(resetAtOf({ next_reset_at: 'a' }, { period_end: 'b' }, { period_end: 'c' })).toBe('a')
-    expect(resetAtOf({}, { period_end: null }, { period_end: 'c' })).toBe('c')
-    expect(resetAtOf({}, null, undefined)).toBeNull()
+  it('重置日：一次性为 null；否则 next_reset_at → 额度周期末 → 用量窗口末', () => {
+    expect(resetAtOf({ plan_kind: 'one_time', next_reset_at: 'x' }, null, undefined)).toBeNull()
+    expect(resetAtOf({ plan_kind: 'subscription', next_reset_at: 'a' }, { period_end: 'b' }, { period_end: 'c' })).toBe('a')
+    expect(resetAtOf({ plan_kind: 'subscription' }, { period_end: null }, { period_end: 'c' })).toBe('c')
+    expect(resetAtOf({ plan_kind: 'subscription' }, null, undefined)).toBeNull()
   })
 
-  it('预测：够用 / 比重置早用完（含流量包）/ 不限 / 无用量', () => {
-    const s = trafficSummary({ metric: 'traffic.bytes', limit: 500 * GIB, consumed: 312 * GIB, remaining: 188 * GIB })!
+  it('预测：够用 / 比重置早用完 / 不限 / 无用量', () => {
+    const s = trafficSummary({ metric: 'traffic.bytes', limit: 500 * GIB, bonus_bytes: 0, consumed: 312 * GIB, remaining: 188 * GIB })!
     const reset = '2026-09-27T12:00:00Z' // 3 天后
     expect(projectUsage(s, 11 * GIB, reset, NOW)).toEqual({ text: '按目前的速度，本期预计用到 345 GB，够用。', short: false })
-    const tight = trafficSummary({ metric: 'traffic.bytes', limit: 100 * GIB, consumed: 90 * GIB, remaining: 10 * GIB }, 2 * GIB)!
+    const tight = trafficSummary({ metric: 'traffic.bytes', limit: 100 * GIB, bonus_bytes: 0, consumed: 90 * GIB, remaining: 10 * GIB })!
     expect(projectUsage(tight, 5 * GIB, reset, NOW)).toEqual({ text: '按目前的速度，约 2 天后用完，比重置早。', short: true })
     expect(projectUsage({ ...s, total: null, remaining: null }, GIB, reset, NOW).short).toBe(false)
     expect(projectUsage(s, 0, reset, NOW).text).toBe('本期还没有产生用量。')
@@ -166,7 +175,7 @@ describe('orders', () => {
   })
 
   it('订单行 schema：无 omitempty 的字段必填，omitempty 的可缺席，未知 kind 拒收', () => {
-    const row = { id: 'o', order_no: 'PD-1', kind: 'addon', status: 'pending_payment', currency: 'CNY', total_amount: 1, discount_amount: 0, member_discount_amount: 0, balance_applied: 0, payable_amount: 1, paid_amount: 0, item_name: '', cancellable: true, has_payment_intent: false, created_at: 'x' }
+    const row = { id: 'o', order_no: 'PD-1', kind: 'stack', status: 'pending_payment', total_amount: 1, discount_amount: 0, member_discount_amount: 0, balance_applied: 0, payable_amount: 1, paid_amount: 0, item_name: '', cancellable: true, has_payment_intent: false, created_at: 'x' }
     expect(orderRowSchema.safeParse(row).success).toBe(true)
     expect(orderRowSchema.safeParse({ ...row, kind: 'gift' }).success).toBe(false)
     const missing: Partial<typeof row> = { ...row }
@@ -185,7 +194,7 @@ describe('orders', () => {
 describe('subscriptions', () => {
   it('全字段可解析，扩展字段缺席即拒收（Go 无 omitempty）；状态枚举外的值拒收', () => {
     const missing: Partial<Subscription> = { ...sub() }
-    delete missing.pack_remaining_bytes
+    delete missing.bonus_bytes
     expect(subscriptionSchema.safeParse(missing).success).toBe(false)
     expect(subscriptionSchema.safeParse({ ...sub(), status: 'weird' }).success).toBe(false)
     expect(subscriptionSchema.safeParse({ ...sub(), quotas: null }).success).toBe(false)
@@ -239,16 +248,26 @@ describe('subscriptions', () => {
     expect(expiryText(sub({ current_period_end: '2026-09-24T18:00:00Z' }), NOW)).toMatchObject({ main: '还剩 6 小时', tone: 'warn' })
     expect(expiryText(sub({ status: 'expired', current_period_end: '2026-09-21T11:00:00Z' }), NOW)).toMatchObject({ main: '已过期 3 天', tone: 'danger' })
     expect(expiryText(sub({ current_period_end: null }), NOW).main).toBe('长期有效')
+    expect(expiryText(sub({ permanent: true, current_period_end: '2099-01-01T00:00:00Z' }), NOW)).toMatchObject({ main: '永久有效', sub: '', tone: 'ok' })
+    expect(isExpiredNow(sub({ permanent: true, status: 'active', current_period_end: '2000-01-01T00:00:00Z' }), NOW)).toBe(false)
     expect(isExpiredNow(sub({ status: 'expired' }), NOW)).toBe(true)
     expect(isExpiredNow(sub({ current_period_end: '2026-09-20T08:30:00Z' }), NOW)).toBe(true)
     expect(isExpiredNow(sub(), NOW)).toBe(false)
   })
 
-  it('卡片用量：剩余含这一份的流量包，低于 15% 标快用完了', () => {
+  it('卡片用量：送的流量写在右侧，低于 15% 标快用完了', () => {
     expect(usageText(sub())).toMatchObject({ label: '本期流量', right: '剩 188G / 共 500G', pct: 62, low: false })
-    const low = sub({ quotas: [{ metric: 'traffic.bytes', limit: 100 * GIB, consumed: 92 * GIB, remaining: 8 * GIB, period: 'month', period_start: '2026-09-01T00:00:00Z', period_end: null }] })
-    expect(usageText(low)).toMatchObject({ label: '本月流量 · 快用完了', right: '剩 8G / 共 100G', low: true })
-    expect(usageText({ ...low, pack_remaining_bytes: 30 * GIB }).right).toBe('剩 38G / 共 130G（含流量包 30G）')
+    const low = sub({
+      traffic_limit: 100 * GIB,
+      bonus_bytes: 0,
+      traffic_used: 92 * GIB,
+      quotas: [{ metric: 'traffic.bytes', limit: 100 * GIB, bonus_bytes: 0, consumed: 92 * GIB, remaining: 8 * GIB, period: 'cycle', period_start: '2026-09-01T00:00:00Z', period_end: null }],
+    })
+    expect(usageText(low)).toMatchObject({ label: '本期流量 · 快用完了', right: '剩 8G / 共 100G', low: true })
+    expect(usageText({ ...low, bonus_bytes: 30 * GIB, traffic_used: 92 * GIB }).right).toBe('剩 38G / 共 130G（含送的 30G，本期有效）')
+    const once = sub({ plan_kind: 'one_time', bonus_bytes: 10 * GIB, traffic_limit: 100 * GIB, traffic_used: 50 * GIB })
+    expect(usageText(once).right).toContain('（含送的 10G）')
+    expect(usageText({ ...once, plan_kind: 'one_time' }).label).toBe('总流量')
   })
 
   it('疑似泄露：近 24 小时来源超过设备上限，过期的不提示', () => {
