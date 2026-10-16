@@ -419,6 +419,8 @@ function basicErrors(body: Json, creating: boolean): Record<string, string> {
 const findNode = (id: string | undefined) => store.find((n) => n.id === id && !n.deleted)
 
 /** 只给 tests/mock-admin-nodes.test.ts 核对 R106 / R107 的补回：接口永远抹掉敏感键，测试只能从库里看 */
+/** 没删除的节点 id（实时事件模拟取真实行用，见 events.ts） */
+export const liveNodeIds = () => store.filter((n) => !n.deleted).map((n) => n.id)
 export const storedProtocolConfig = (id: string) => structuredClone(findNode(id)?.protocol_config ?? null)
 const touch = (n: Node) => {
   n.row_version += 1

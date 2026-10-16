@@ -4,6 +4,7 @@ import type { Plugin } from 'vite'
 import { shareAppearance } from './mock/admin/content.ts'
 import { ADMIN_MODULES } from './mock/admin/index.ts'
 import { readSharedSiteName, readSharedTheme } from './mock/appearance-share.ts'
+import { pickAdminEvent } from './mock/admin/events.ts'
 import { adminWritesEnabled, onSwitchChanged } from './mock/admin/security.ts'
 import { MOCK_SITE } from './mock/portal/fixtures.ts'
 import { PORTAL_MODULES } from './mock/portal/index.ts'
@@ -495,18 +496,16 @@ export function mockApi(app: MockApp): Plugin {
     return found.handler(ctx)
   }
 
-  // 与后端同帧格式：首帧 retry，事件 id / event / data，25 秒注释心跳；这里每 15 秒随机推一条表变更，
+  // 与后端同帧格式：首帧 retry，事件 id / event / data，25 秒注释心跳；这里每 15 秒随机推一条表变更（后台取种子里真有的行，见 mock/admin/events.ts），
   // 后台另在降级开关切换后立即推 switches.changed
   function stream(req: IncomingMessage, res: ServerResponse) {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' })
     res.write('retry: 5000\n\n')
-    const topics = app === 'admin' ? ADMIN_TOPICS : PORTAL_TOPICS
     let seq = 0
     const unsubscribe = app === 'admin' ? onSwitchChanged((payload) => res.write(`id: ${++seq}\nevent: switches.changed\ndata: ${JSON.stringify(payload)}\n\n`)) : () => undefined
     const tick = setInterval(() => {
-      const [topic, table] = topics[Math.floor(Math.random() * topics.length)]!
-      const op = ['INSERT', 'UPDATE', 'UPDATE', 'DELETE'][Math.floor(Math.random() * 4)]
-      res.write(`id: ${++seq}\nevent: ${topic}\ndata: ${JSON.stringify({ table, op, id: randomUUID() })}\n\n`)
+      const { topic, payload } = app === 'admin' ? pickAdminEvent() : pickPortalEvent()
+      res.write(`id: ${++seq}\nevent: ${topic}\ndata: ${JSON.stringify(payload)}\n\n`)
     }, 15_000)
     const ping = setInterval(() => res.write(': ping\n\n'), 25_000)
     req.on('close', () => {
@@ -534,15 +533,13 @@ export function mockApi(app: MockApp): Plugin {
   }
 }
 
-const ADMIN_TOPICS: ReadonlyArray<readonly [string, string]> = [
-  ['orders.changed', 'orders'],
-  ['tickets.changed', 'tickets'],
-  ['nodes.changed', 'nodes'],
-  ['subscriptions.changed', 'subscriptions'],
-  ['plans.changed', 'prices'],
-]
-
 const PORTAL_TOPICS: ReadonlyArray<readonly [string, string]> = [
   ['orders.changed', 'orders'],
   ['announcements.changed', 'announcements'],
 ]
+
+function pickPortalEvent() {
+  const [topic, table] = PORTAL_TOPICS[Math.floor(Math.random() * PORTAL_TOPICS.length)]!
+  const op = ['INSERT', 'UPDATE', 'UPDATE', 'DELETE'][Math.floor(Math.random() * 4)]!
+  return { topic, payload: { table, op, id: randomUUID() } }
+}

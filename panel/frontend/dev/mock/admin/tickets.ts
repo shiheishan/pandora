@@ -267,6 +267,9 @@ function envelope(code: string, message: string, fields?: Record<string, string>
   return { error: { code, message, ...(fields ? { fields } : {}) } }
 }
 
+/** 全部工单 id（实时事件模拟取真实行用，见 events.ts） */
+export const ticketIds = () => rows.map((r) => r.id)
+
 const notFound: MockResult = { status: 404, body: envelope('not_found', '工单不存在') }
 const touch = (t: Row) => {
   t.updated_at = new Date().toISOString()
