@@ -135,7 +135,7 @@ func TestGiftedDaysLeft(t *testing.T) {
 		now  time.Time
 		want int
 	}{
-		{"一次性套餐恒为 0", prorationBasis{OneTime: true, PaidSpan: month, PeriodStart: start, PeriodEnd: start.Add(month + 7*day)}, start, 0},
+		{"一次性：礼品卡叠加送的 7 天", prorationBasis{OneTime: true, PaidSpan: month, PeriodStart: start, PeriodEnd: start.Add(month + 7*day)}, start, 7},
 		{"只有付费的一期：没有赠送", prorationBasis{PaidSpan: month, PeriodStart: start, PeriodEnd: start.Add(month)}, start.Add(3 * day), 0},
 		{"付费一期 + 加时长卡 7 天", prorationBasis{PaidSpan: month, PeriodStart: start, PeriodEnd: start.Add(month + 7*day)}, start.Add(3 * day), 7},
 	}

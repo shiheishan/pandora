@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
@@ -370,5 +371,57 @@ func TestPlanChangeCrossKind(t *testing.T) {
 	} else if cycleLimit.Valid {
 		// 当前实现保留 cycle 行并把 limit_value 置空（不限）
 		t.Fatalf("遗留 cycle 行 limit_value=%d，期望 NULL", cycleLimit.Int64)
+	}
+}
+
+// 礼品卡叠加送的流量与天数不进换套餐折算（审查 1016-A3）：付费的 100 GiB 用完后叠加一张同款套餐卡，
+// 换成别的套餐时剩余价值仍为 0；剩余天数只算付费的 30 天。
+func TestPlanChangeIgnoresGiftedStack(t *testing.T) {
+	e, ctx := newEnv(t)
+	user := e.mkUser(t, ctx)
+	planID, verID, priceID := e.mkOneTimePlan(t, ctx, 1000, 100*gib, intp(30))
+	e.giveBalance(t, ctx, user, 1000)
+	if c := e.buyNew(t, ctx, user, planID, priceID, Checkout{UseBalance: dec("10")}); c.Status != StatusFulfilled {
+		t.Fatalf("新购应余额付清，状态 %s", c.Status)
+	}
+	subID := uuid.MustParse(e.strCol(t, ctx, `SELECT id::text FROM subscriptions WHERE user_id = ?`, user))
+	e.mustExec(t, ctx, `UPDATE quota_balances SET consumed = ? WHERE subscription_id = ? AND period = 'total'`, 100*gib, subID)
+	targetPlan, _, _ := e.mkPlan(t, ctx, 3000, "month")
+
+	credit := func() (decimal.Decimal, *CreditDetail) {
+		t.Helper()
+		res, err := e.svc.Quote(asUser(ctx, user), QuoteInput{Action: QuoteChange, SubscriptionID: &subID, PlanID: &targetPlan})
+		if err != nil {
+			t.Fatalf("换套餐报价: %v", err)
+		}
+		if len(res.Quotes) < 1 {
+			t.Fatal("没有报价")
+		}
+		return res.Quotes[0].Credit, res.Quotes[0].CreditDetail
+	}
+	if c, _ := credit(); !c.IsZero() {
+		t.Fatalf("用完付费流量后剩余价值 %s，期望 0", c)
+	}
+
+	gift := uuid.New()
+	pid := priceID
+	if _, err := e.subs.Stack(ctx, subsvc.Stacking{
+		SubscriptionID: subID,
+		UserID:         user,
+		PlanVersionID:  verID,
+		Price:          subsvc.PriceSnapshot{PriceID: &pid, Amount: decimal.Zero, Interval: "one_time", IntervalCount: 1, ValidityDays: intp(30)},
+		PaidAt:         time.Now(),
+		GiftCodeID:     &gift,
+		Actor:          subsvc.Actor{Kind: subsvc.ActorSystem},
+		Source:         "gift_card",
+	}); err != nil {
+		t.Fatalf("套餐卡叠加: %v", err)
+	}
+	c, d := credit()
+	if !c.IsZero() {
+		t.Fatalf("叠加套餐卡后剩余价值 %s，期望仍为 0（送的流量不折钱）", c)
+	}
+	if d == nil || d.DaysTotal != 30 || d.TrafficTotal != 100*gib {
+		t.Fatalf("折算明细 %+v，期望付费 30 天、100 GiB", d)
 	}
 }

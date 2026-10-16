@@ -6,6 +6,8 @@ package service
 
 import (
 	"context"
+	"encoding/json"
+	"math"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,11 +35,12 @@ type periodOrders struct {
 	ids    map[uuid.UUID][]uuid.UUID
 	orders map[uuid.UUID]model.Order
 	items  map[uuid.UUID]model.Item
+	prices map[uuid.UUID]catalogsvc.Price // 一次性订单行的价格（取有效天数）
 }
 
 // loadPeriodOrders 一次读出 subIDs 本周期的订单与订单行。
 func (s *Service) loadPeriodOrders(ctx context.Context, subIDs []uuid.UUID) (periodOrders, error) {
-	po := periodOrders{orders: map[uuid.UUID]model.Order{}, items: map[uuid.UUID]model.Item{}}
+	po := periodOrders{orders: map[uuid.UUID]model.Order{}, items: map[uuid.UUID]model.Item{}, prices: map[uuid.UUID]catalogsvc.Price{}}
 	ids, err := s.subs.PeriodOrderIDsBySubscriptions(ctx, subIDs)
 	if err != nil {
 		return po, err
@@ -66,7 +69,70 @@ func (s *Service) loadPeriodOrders(ctx context.Context, subIDs []uuid.UUID) (per
 			po.items[it.OrderID] = it
 		}
 	}
+	var priceIDs []uuid.UUID
+	for _, it := range po.items {
+		if it.PriceID != nil && it.SnapshotInterval != nil && *it.SnapshotInterval == "one_time" {
+			priceIDs = append(priceIDs, *it.PriceID)
+		}
+	}
+	if len(priceIDs) > 0 {
+		if po.prices, err = s.catalog.PricesByIDs(ctx, priceIDs); err != nil {
+			return po, err
+		}
+	}
 	return po, nil
+}
+
+// paidOneTime 是一次性订阅本周期付费单买下的时长与 total 流量：任一付费单的价格永久，permanent 为 true；
+// 任一付费单的 total 流量不限，unlimited 为 true。
+type paidOneTime struct {
+	span      time.Duration
+	permanent bool
+	traffic   int64
+	unlimited bool
+}
+
+// add 计入一张付费单的订单行。
+func (p *paidOneTime) add(it model.Item, po periodOrders) {
+	price, ok := po.prices[derefID(it.PriceID)]
+	if !ok || price.ValidityDays == nil {
+		p.permanent = true
+	} else {
+		p.span += time.Duration(*price.ValidityDays) * day
+	}
+	var quotas []struct {
+		Metric string `json:"metric"`
+		Limit  *int64 `json:"limit"`
+		Period string `json:"period"`
+	}
+	if err := json.Unmarshal([]byte(it.SnapshotQuotas), &quotas); err != nil {
+		return
+	}
+	for _, q := range quotas {
+		if q.Metric != catalogsvc.MetricTraffic || q.Period != catalogsvc.PeriodTotal {
+			continue
+		}
+		if q.Limit == nil {
+			p.unlimited = true
+			continue
+		}
+		p.traffic = saturatingAdd(p.traffic, *q.Limit)
+	}
+}
+
+func derefID(id *uuid.UUID) uuid.UUID {
+	if id == nil {
+		return uuid.Nil
+	}
+	return *id
+}
+
+// saturatingAdd 是不溢出的 int64 相加（流量上限到边界时取最大值）。
+func saturatingAdd(a, b int64) int64 {
+	if b > 0 && a > math.MaxInt64-b {
+		return math.MaxInt64
+	}
+	return a + b
 }
 
 // basisOf 组一份订阅的折算输入。
@@ -80,6 +146,7 @@ func basisOf(src basisSource, orderIDs []uuid.UUID, po periodOrders) prorationBa
 		OneTime:     oneTime,
 	}
 	paidUntil := sub.PeriodStart
+	var paid paidOneTime
 	for _, id := range orderIDs {
 		o, ok := po.orders[id]
 		if !ok || !paidKinds[o.Kind] || o.Status != StatusFulfilled {
@@ -90,18 +157,29 @@ func basisOf(src basisSource, orderIDs []uuid.UUID, po periodOrders) prorationBa
 			continue
 		}
 		b.Value = b.Value.Add(decimal.Max(o.SubtotalAmount.Sub(o.DiscountAmount).Sub(o.WaivedAmount), decimal.Zero))
-		if !oneTime && it.SnapshotInterval != nil && it.SnapshotIntervalCount != nil {
+		if oneTime {
+			paid.add(it, po)
+		} else if it.SnapshotInterval != nil && it.SnapshotIntervalCount != nil {
 			paidUntil = subsvc.AddInterval(paidUntil, *it.SnapshotInterval, *it.SnapshotIntervalCount)
 		}
 	}
 	if oneTime {
-		b.PaidSpan = sub.PeriodEnd.Sub(sub.PeriodStart)
-		b.Permanent = subsvc.IsPermanent(sub.PeriodEnd)
+		// 永久只认付费买下的永久：礼品卡送成永久的，仍按付费天数折
+		b.Permanent = paid.permanent && subsvc.IsPermanent(sub.PeriodEnd)
+		b.PaidSpan = paid.span
+		if b.Permanent {
+			b.PaidSpan = sub.PeriodEnd.Sub(sub.PeriodStart)
+		}
 		for _, q := range src.Quotas {
 			if q.Metric != catalogsvc.MetricTraffic || q.Period != catalogsvc.PeriodTotal || q.Limit == nil {
 				continue
 			}
-			b.Traffic = append(b.Traffic, trafficAllowance{Cap: *q.Limit, Consumed: q.Consumed})
+			// 上限只算付费的；已用量不拆付费与赠送，全记在付费上（偏向少折）
+			capPaid := *q.Limit
+			if !paid.unlimited {
+				capPaid = min(capPaid, paid.traffic)
+			}
+			b.Traffic = append(b.Traffic, trafficAllowance{Cap: capPaid, Consumed: q.Consumed})
 		}
 		return b
 	}

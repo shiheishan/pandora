@@ -27,7 +27,7 @@ paths:
   - 库里恒等式 `total = greatest(subtotal − discount − proration_credit, 0) − waived`；`OrderTotal` 只算前半段，`waived` 由调用方另减。`proration_credit` 仅 upgrade 单非零。
   - 券只按套餐限定（`promosvc.Target{UserID, PlanID, Subtotal}`）；新购、续费、叠加、换套餐给套餐 id；充值与流量重置不用券。
   - 续费只许订阅套餐（catalog `UseRenewal` 拒一次性与已归档）；续费单的订单行记套餐当前版本，提前续费由配额滚动在新周期开始时切过去，过期恢复当场切。
-  - 换套餐剩余价值（`proration.go`，可以跨类型）：原订阅是订阅套餐 `= 本周期付费合计 × 剩余付费时间比`（付费天数先用、赠天最后用，不看流量）；是一次性套餐 `= 本周期付费合计（含叠加单）× min(剩余天数比, 剩余流量比)`，永久的天数比按 1、不限流量的流量比按 1、送的量不计入。向零截断到分，比值交叉相乘。
+  - 换套餐剩余价值（`proration.go`，可以跨类型）：原订阅是订阅套餐 `= 本周期付费合计 × 剩余付费时间比`（付费天数先用、赠天最后用，不看流量）；是一次性套餐 `= 本周期付费合计（含叠加单）× min(剩余付费天数比, 剩余付费流量比)`：天数与流量都只算付费单买下的（天数 = 各付费单价格有效天数之和，流量 = 各付费单订单行快照的 total 流量之和），礼品卡叠加送的天数最后用、送的流量不进上限、已用量全记在付费上；付费买下永久的天数比按 1，送成永久的仍按付费天数；不限流量的流量比按 1。向零截断到分，比值交叉相乘。
   - 余额抵扣 `PlanBalance`；换套餐零头免除 `WaiveSmallDue`（仅 upgrade 单，上限 99 分，单独记 `waived_amount`，不并入券折扣）。
 - 换套餐与购买落点：
   - 同一订阅同时只许一张未完结的续费、叠加或变更单（库约束 `orders_one_open_subscription_change` 覆盖 renewal、upgrade、stack，建单先拦截回 409 `ErrOpenChange`）。
