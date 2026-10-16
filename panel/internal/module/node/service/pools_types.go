@@ -4,7 +4,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// 节点池的状态（node_pools.status）。池状态之间可以任意切换：停用的池不能再被绑进套餐版本，
+// 节点池的状态（node_pools.status）。池状态之间可以任意切换：停用的池不能再被绑进套餐，
 // 已有的绑定不受影响。
 const (
 	PoolActive   = "active"
@@ -34,7 +34,7 @@ type Pool struct {
 	// Nodes 是池里未删除的节点数，ActiveNodes 是其中在役的（serving_status = active，协议必然配好）。
 	Nodes       int64
 	ActiveNodes int64
-	// Plans 是绑定了这个池的套餐版本数；PlanNames 是这些版本的套餐名（去重、升序）。
+	// Plans 是绑定了这个池的套餐数；PlanNames 是这些套餐的名字（去重、升序）。
 	Plans     int
 	PlanNames []string
 	// Members 是池里未删除的节点，按 sort_order、node_no。

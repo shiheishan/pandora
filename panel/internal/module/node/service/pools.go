@@ -93,7 +93,7 @@ func (s *Service) ListPools(ctx context.Context) ([]Pool, error) {
 			Status:            r.Status,
 			Nodes:             c.Nodes,
 			ActiveNodes:       c.Active,
-			Plans:             u.Versions,
+			Plans:             u.Plans,
 			PlanNames:         planNames,
 			Members:           poolMembersFromRows(members[r.ID]),
 			AllowedUserGroups: poolUserGroupsFromIDs(groupIDsByPool[r.ID], groupName),
@@ -407,7 +407,7 @@ func (s *Service) DeletePool(ctx context.Context, id uuid.UUID) error {
 		if err != nil {
 			return err
 		}
-		if usage[id].Versions > 0 {
+		if usage[id].Plans > 0 {
 			return errs.Newf(errs.Conflict, "还有套餐绑定着这个节点池，先解除绑定再删")
 		}
 		if err := s.repo.DetachDeletedPoolNodes(ctx, id); err != nil {
