@@ -295,17 +295,17 @@ type nodeProtocolFieldResponse struct {
 
 // nodeProtocolSchemaResponse 是一种协议的 schema（protocolSchemaSchema）。
 type nodeProtocolSchemaResponse struct {
-	NodeType            string              `json:"node_type"`
-	Version             int                 `json:"version"`
-	Status              string              `json:"status"`
-	Required            []string            `json:"required"`
-	AllowedProperties   []string            `json:"allowed_properties"`
-	Methods             []string            `json:"methods,omitempty"`
-	Enums               map[string][]string `json:"enums,omitempty"`
-	PropertyTypes       map[string]string   `json:"property_types,omitempty"`
-	SensitiveProperties []string            `json:"sensitive_properties,omitempty"`
-	Hints               map[string]string   `json:"hints,omitempty"`
-	Note                string              `json:"note,omitempty"`
+	NodeType            string                      `json:"node_type"`
+	Version             int                         `json:"version"`
+	Status              string                      `json:"status"`
+	Required            []string                    `json:"required"`
+	AllowedProperties   []string                    `json:"allowed_properties"`
+	Methods             []string                    `json:"methods,omitempty"`
+	Enums               map[string][]string         `json:"enums,omitempty"`
+	PropertyTypes       map[string]string           `json:"property_types,omitempty"`
+	SensitiveProperties []string                    `json:"sensitive_properties,omitempty"`
+	Hints               map[string]string           `json:"hints,omitempty"`
+	Note                string                      `json:"note,omitempty"`
 	Fields              []nodeProtocolFieldResponse `json:"fields,omitempty"`
 }
 

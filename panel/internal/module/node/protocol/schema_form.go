@@ -1,19 +1,24 @@
 package protocol
 
+import (
+	"slices"
+	"strings"
+)
+
 // FormField 是协议表单上一个字段的显示元数据（中文名、显示条件、是否高级、默认值等）。
 type FormField struct {
-	Path         string              `json:"path"`
-	Label        string              `json:"label"`
-	Advanced     bool                `json:"advanced,omitempty"`
+	Path     string `json:"path"`
+	Label    string `json:"label"`
+	Advanced bool   `json:"advanced,omitempty"`
 	// ShowIf：每个键是另一个字段的路径，值是让本字段显示的取值（按表单字符串比较：
 	// 布尔为 "true"/"false"，数字为十进制文本，"" 表示没填）；所有键同时满足才显示。
-	ShowIf       map[string][]string `json:"show_if,omitempty"`
+	ShowIf map[string][]string `json:"show_if,omitempty"`
 	// Default 是新建时预填的值，类型同存储（number→数字、boolean→布尔、其余→字符串）；
 	// 只给节点端实际缺省或唯一可选的值。
-	Default      any                 `json:"default,omitempty"`
-	Placeholder  string              `json:"placeholder,omitempty"`
+	Default     any    `json:"default,omitempty"`
+	Placeholder string `json:"placeholder,omitempty"`
 	// OptionLabels：枚举值 → 显示文字；键 "" 是选填枚举「不选」那一项的文字。
-	OptionLabels map[string]string   `json:"option_labels,omitempty"`
+	OptionLabels map[string]string `json:"option_labels,omitempty"`
 }
 
 type formSpec struct {
@@ -146,10 +151,10 @@ var protocolForms = map[string]formSpec{
 			certFields(showTLS1), mkcpFields(), xhttpFields(),
 		),
 		hints: map[string]string{
-			"tls":     "不加密时不能用裸 tcp。",
-			"ws_path": "旧字段名，与「路径」二选一即可。",
+			"tls":       "不加密时不能用裸 tcp。",
+			"ws_path":   "旧字段名，与「路径」二选一即可。",
 			"grpc_path": "旧字段名，与 serviceName 二选一即可。",
-			"mask":    "把 UDP 包变成随机字节，盖掉 mKCP 自身的特征。",
+			"mask":      "把 UDP 包变成随机字节，盖掉 mKCP 自身的特征。",
 		},
 	},
 	"vmess": {
@@ -164,10 +169,10 @@ var protocolForms = map[string]formSpec{
 			transportFields(), certFields(showTLS1), mkcpFields(), xhttpFields(),
 		),
 		hints: map[string]string{
-			"tls": "VMess 不支持 REALITY，只有这一个选项。",
-			"ws_path": "旧字段名，与「路径」二选一即可。",
+			"tls":       "VMess 不支持 REALITY，只有这一个选项。",
+			"ws_path":   "旧字段名，与「路径」二选一即可。",
 			"grpc_path": "旧字段名，与 serviceName 二选一即可。",
-			"mask": "把 UDP 包变成随机字节，盖掉 mKCP 自身的特征。",
+			"mask":      "把 UDP 包变成随机字节，盖掉 mKCP 自身的特征。",
 		},
 	},
 	"trojan": {
@@ -183,15 +188,15 @@ var protocolForms = map[string]formSpec{
 			mkcpFields(),
 		),
 		hints: map[string]string{
-			"ws_path": "旧字段名，与「路径」二选一即可。",
-			"grpc_path": "旧字段名，与 serviceName 二选一即可。",
-			"mask": "把 UDP 包变成随机字节，盖掉 mKCP 自身的特征。",
-			"tls_settings.server_name": "只进订阅，告诉客户端握手用的域名。",
+			"ws_path":                     "旧字段名，与「路径」二选一即可。",
+			"grpc_path":                   "旧字段名，与 serviceName 二选一即可。",
+			"mask":                        "把 UDP 包变成随机字节，盖掉 mKCP 自身的特征。",
+			"tls_settings.server_name":    "只进订阅，告诉客户端握手用的域名。",
 			"tls_settings.allow_insecure": "只进订阅；自签证书时才打开。",
 		},
 	},
 	"shadowsocks": {
-		note: "只有加密方式一项；用户密钥由面板按订阅生成。",
+		note:   "只有加密方式一项；用户密钥由面板按订阅生成。",
 		fields: []FormField{{Path: "cipher", Label: "加密方式"}},
 	},
 	"hysteria2": {
@@ -209,7 +214,7 @@ var protocolForms = map[string]formSpec{
 			clientTLSFields(nil),
 		),
 		hints: map[string]string{
-			"tls_settings.server_name": "只进订阅，告诉客户端握手用的域名。",
+			"tls_settings.server_name":    "只进订阅，告诉客户端握手用的域名。",
 			"tls_settings.allow_insecure": "只进订阅；自签证书时才打开。",
 		},
 	},
@@ -228,7 +233,7 @@ var protocolForms = map[string]formSpec{
 			clientTLSFields(nil),
 		),
 		hints: map[string]string{
-			"tls_settings.server_name": "只进订阅，告诉客户端握手用的域名。",
+			"tls_settings.server_name":    "只进订阅，告诉客户端握手用的域名。",
 			"tls_settings.allow_insecure": "只进订阅；自签证书时才打开。",
 		},
 	},
@@ -256,7 +261,7 @@ var protocolForms = map[string]formSpec{
 			[]FormField{{Path: "fallback", Label: "回落地址", Placeholder: "127.0.0.1:80"}},
 		),
 		hints: map[string]string{
-			"tls_settings.server_name": "只进订阅，告诉客户端握手用的域名。",
+			"tls_settings.server_name":    "只进订阅，告诉客户端握手用的域名。",
 			"tls_settings.allow_insecure": "只进订阅；自签证书时才打开。",
 		},
 	},
@@ -273,7 +278,7 @@ var protocolForms = map[string]formSpec{
 			[]FormField{{Path: "fallback", Label: "回落地址", Placeholder: "127.0.0.1:80"}},
 		),
 		hints: map[string]string{
-			"tls_settings.server_name": "只进订阅，告诉客户端握手用的域名。",
+			"tls_settings.server_name":    "只进订阅，告诉客户端握手用的域名。",
 			"tls_settings.allow_insecure": "只进订阅；自签证书时才打开。",
 		},
 	},
@@ -292,11 +297,11 @@ var protocolForms = map[string]formSpec{
 		},
 		hints: map[string]string{
 			"handshake_server": "被借用握手的真实站点。",
-			"wildcard_sni": "打开后服务端用客户端给的 SNI 当握手目标，等于认证用户能让节点去连任意主机的 443；默认 off。",
+			"wildcard_sni":     "打开后服务端用客户端给的 SNI 当握手目标，等于认证用户能让节点去连任意主机的 443；默认 off。",
 		},
 	},
 	"mieru": {
-		note: "只有传输方式一项。",
+		note:   "只有传输方式一项。",
 		fields: []FormField{{Path: "transport", Label: "传输方式", Default: "TCP"}},
 	},
 	"socks": {
@@ -333,7 +338,7 @@ func withForms(in []Schema) []Schema {
 			continue
 		}
 		out[i].Note = spec.note
-		out[i].Fields = cloneFields(spec.fields)
+		out[i].Fields = pruneShowIf(s, cloneFields(spec.fields))
 		if len(spec.hints) == 0 {
 			continue
 		}
@@ -351,4 +356,46 @@ func withForms(in []Schema) []Schema {
 		out[i].Hints = hints
 	}
 	return out
+}
+
+// pruneShowIf 把共用的显示条件收窄到本协议的枚举：取值不在本协议枚举里的去掉（如 trojan 没有 xhttp）。
+// 某个键一个可选值都不剩时留空列表，前端据此永不显示该字段（如 vless / vmess 暂不开放普通 TLS 的证书路径）；
+// 字段本身仍保留，满足「每个 AllowedProperties 恰好出现一次」。
+func pruneShowIf(s Schema, fields []FormField) []FormField {
+	for i := range fields {
+		if len(fields[i].ShowIf) == 0 {
+			continue
+		}
+		next := make(map[string][]string, len(fields[i].ShowIf))
+		for dep, vals := range fields[i].ShowIf {
+			enums := schemaEnums(s, dep)
+			kept := make([]string, 0, len(vals))
+			for _, v := range vals {
+				if v == "" || enums == nil || slices.Contains(enums, v) {
+					kept = append(kept, v)
+				}
+			}
+			next[dep] = kept
+		}
+		fields[i].ShowIf = next
+	}
+	return fields
+}
+
+// schemaEnums 是字段的枚举：先按完整路径，再按末段键名，cipher / method 取 Methods；没有枚举回 nil。
+func schemaEnums(s Schema, path string) []string {
+	if e, ok := s.Enums[path]; ok {
+		return e
+	}
+	leaf := path
+	if i := strings.LastIndex(path, "."); i >= 0 {
+		leaf = path[i+1:]
+	}
+	if e, ok := s.Enums[leaf]; ok {
+		return e
+	}
+	if path == "cipher" || path == "method" {
+		return s.Methods
+	}
+	return nil
 }
