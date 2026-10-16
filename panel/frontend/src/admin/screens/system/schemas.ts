@@ -32,6 +32,18 @@ export const telegramSettingsSchema = z.object({
 })
 export type TelegramSettings = z.output<typeof telegramSettingsSchema>
 
+/** Telegram 扩展设置（/v1/settings/telegram/extras，与主设置分开保存，整份提交 7 个键） */
+export const telegramExtrasSchema = z.object({
+  sub_command_enabled: z.boolean(),
+  start_message: z.string(),
+  admin_paid_notify: z.boolean(),
+  admin_ticket_notify: z.boolean(),
+  join_review_enabled: z.boolean(),
+  user_group_chat_id: z.number().nullable(),
+  discuss_link: z.string(),
+})
+export type TelegramExtras = z.output<typeof telegramExtrasSchema>
+
 export const okResponse = z.object({ ok: z.literal(true) })
 export const telegramSaved = z.object({ ok: z.literal(true), enabled: z.boolean() })
 export const telegramTested = z.object({ sent: z.literal(true) })
