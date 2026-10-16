@@ -54,7 +54,6 @@ const userRowShape = {
   subscription_count: count,
   active_plan: z.string().nullable(),
   balance: int,
-  currency: z.string(),
   current_subscription: currentSubSchema.nullable(),
 }
 const userRowSchema = z.object(userRowShape)
@@ -77,13 +76,10 @@ const subscriptionSchema = z.object({
   current_period_start: time.nullable(),
   current_period_end: time.nullable(),
   amount: int,
-  currency: z.string(),
   quotas: z.array(quotaSchema),
   device_limit_override: count.nullable(),
   plan_max_devices: count.nullable(),
   online_devices: count,
-  // 挂在这一份上的流量包余量（字节）：流量包按订阅挂，不再是用户名下一个总数
-  pack_remaining_bytes: count,
 })
 export const userDetailSchema = z.object({
   ...userRowShape,
@@ -91,20 +87,16 @@ export const userDetailSchema = z.object({
   subscriptions: z.array(subscriptionSchema),
   recent_orders: z.array(orderRowSchema),
   is_admin: z.boolean(),
-  // R80 / R114：实收按币种（币种升序、只列大于 0 的）；paid_total 已弃用（跨币种直接相加），不收
-  stats: z.object({ paid_totals: z.array(z.object({ currency: z.string(), amount: int })), order_count: count, referral_count: count }),
+  // 10-16 起只有人民币：实收是一个数（分）
+  stats: z.object({ paid_total: int, order_count: count, referral_count: count }),
   referrer: z.object({ id: z.string(), email: z.string() }).nullable(),
   telegram: z.object({ username: z.string(), bound_at: time }).nullable(),
-  // 还没加到任何一份的流量包余量（字节，与门户 v1/me/subscriptions 同名同口径）：节点不会用它，
-  // 用户开通第一份订阅时自动挂上，或在门户里自己挑一份挂上
-  unattached_pack_bytes: count,
   // 后台备注（只在后台详情出现）；没写为 null
   admin_note: z.string().nullable(),
   // 注销时间；没注销为 null
   deleted_at: time.nullable(),
 })
 export type UserDetail = z.output<typeof userDetailSchema>
-export type PaidTotal = UserDetail['stats']['paid_totals'][number]
 export type SubscriptionRow = z.output<typeof subscriptionSchema>
 export type Quota = z.output<typeof quotaSchema>
 
@@ -185,7 +177,7 @@ export const bulkPreviewSchema = z.object({
   samples: z.array(z.string()),
   sample_rows: z.array(z.object({ email: z.string(), plan_name: z.string().nullable(), current_period_end: time.nullable() })),
 })
-// 批量生成任务与加流量包的 schema 在 opsSchemas.ts（不依赖 React，假后端测试也引用）
+// 批量生成任务与加流量的 schema 在 opsSchemas.ts（不依赖 React，假后端测试也引用）
 export { generationJobSchema, trafficGrantedSchema, type GenerationJob } from './opsSchemas'
 /** 一个批量生成任务的进度：没结束时每 1.5 秒轮询一次，结束即停 */
 export function useGenerationJob(id: string | null) {
@@ -235,38 +227,8 @@ export const devicesSchema = z.object({
 export type OnlineDevice = z.output<typeof onlineDeviceSchema>
 export type DeviceMode = z.output<typeof devicesSchema>['mode']
 
-// ---------------------------------------------------------------------------
-// 流量重置：日志的 plan_name / actor_email / note 是 omitempty，空时整键省略
-// ---------------------------------------------------------------------------
-export const RESET_REASONS = ['renewal', 'cycle_roll', 'manual', 'gift_card', 'plan_change', 'order'] as const
-export type ResetReason = (typeof RESET_REASONS)[number]
-const resetLogSchema = z.object({
-  id: z.string(),
-  user_email: z.string(),
-  plan_name: z.string().optional(),
-  metric: z.string(),
-  reason: z.enum(RESET_REASONS),
-  consumed_before: count,
-  actor_email: z.string().optional(),
-  note: z.string().optional(),
-  created_at: time,
-})
-export const resetLogsSchema = z.object({ logs: z.array(resetLogSchema), total: count })
-export type ResetLog = z.output<typeof resetLogSchema>
-export const resetStatsSchema = z.object({
-  last_30_days: count,
-  // 只有近 30 天出现过的原因才有键
-  by_reason: z.object({ renewal: count.optional(), cycle_roll: count.optional(), manual: count.optional(), gift_card: count.optional(), plan_change: count.optional(), order: count.optional() }),
-  freed_bytes: count,
-  manual_count: count,
-})
+// POST v1/subscriptions/{id}/traffic-reset：清掉的字节数
 export const resetDoneSchema = z.object({ reset: z.literal(true), freed_bytes: count })
-
-// ---------------------------------------------------------------------------
-// 会员折扣：单个用户的会员减免百分比（10 表示九折）
-// ---------------------------------------------------------------------------
-import { memberDiscountSchema } from './opsSchemas'
-export { memberDiscountSchema, type MemberDiscountData } from './opsSchemas'
 
 // ---------------------------------------------------------------------------
 // GET v1/plans：批量筛选的「套餐」下拉只要 id / 名称 / 状态
@@ -370,48 +332,6 @@ export function useDevices() {
   })
 }
 
-export const RESETS_PAGE = 25
-
-export function useTrafficResets(reason: ResetReason | '', offset: number) {
-  const api = useApi()
-  return useQuery({
-    queryKey: [...UK, 'resets', 'list', reason, offset],
-    queryFn: ({ signal }) => api.get('v1/traffic-resets', resetLogsSchema, { signal, query: { reason: reason || undefined, limit: RESETS_PAGE, offset } }),
-    placeholderData: keepPreviousData,
-  })
-}
-
-export function useResetStats() {
-  const api = useApi()
-  return useQuery({
-    queryKey: [...UK, 'resets', 'stats'],
-    queryFn: ({ signal }) => api.get('v1/traffic-resets/stats', resetStatsSchema, { signal }),
-  })
-}
-
-/** 抽屉「流量重置」标签：后端固定最近 50 条，不分页 */
-export function useUserResets(id: string) {
-  const api = useApi()
-  return useQuery({
-    queryKey: [...UK, 'resets', 'user', id],
-    queryFn: ({ signal }) => api.get(`v1/users/${encodeURIComponent(id)}/traffic-resets`, resetLogsSchema, { signal }),
-  })
-}
-
-export function useMemberDiscount(userId: string | null) {
-  const api = useApi()
-  return useQuery({
-    queryKey: [...UK, 'member-discount', userId],
-    queryFn: ({ signal }) => api.get(`v1/member-discounts/${encodeURIComponent(userId!)}`, memberDiscountSchema, { signal }),
-    enabled: userId !== null,
-  })
-}
-
-export function useInvalidateMemberDiscount() {
-  const client = useQueryClient()
-  return useCallback((userId: string) => client.invalidateQueries({ queryKey: [...UK, 'member-discount', userId] }), [client])
-}
-
 /** 写成功后：列表、详情与设备策略重拉（分组人数变了时连带用户组） */
 export function useInvalidateUsers() {
   const client = useQueryClient()
@@ -428,14 +348,7 @@ export function useInvalidateUsers() {
   )
 }
 
-/** 手动重置后：日志、统计、单用户历史，以及列表与详情里的本期用量 */
-export function useInvalidateResets() {
-  const client = useQueryClient()
-  const users = useInvalidateUsers()
-  return useCallback(() => Promise.all([client.invalidateQueries({ queryKey: [...UK, 'resets'] }), users()]), [client, users])
-}
-
-// GET v1/settings/signup：后台「用户 → 注册与邀请」
+// GET v1/settings/signup：SignupGrowth（营销）与 SignupSecurity（安全）两个组件共用
 export function useSignupSettings() {
   const api = useApi()
   return useQuery({
