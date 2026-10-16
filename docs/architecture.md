@@ -144,7 +144,7 @@ nodeapi/                         buf 生成的 Go 代码，单独的 Go module�
 | payment | payment_providers、payment_intents、payments、payment_events、late_payment_cases | 渠道适配、回调、查单、挂账。adminops 那套渠道写法删掉 |
 | ledger | ledger_accounts、ledger_transactions、ledger_entries、balance_holds | 记账、余额、冻结、调账 |
 | promo | coupons、coupon_plans、coupon_intervals（券限定的计费周期）、coupon_redemptions、member_discounts（单个用户的会员折扣） | 优惠券与会员折扣；订单定价经 promo service 取会员折扣率 |
-| commission | commission_entries、withdrawals、commission_transfers、commission_user_overrides、commission_forfeitures | 佣金计提（订单结算时经 order 的 PaidHook；可开三级分销，每级一条条目）、解冻、提现审核与打款、转余额（提现关闭时解冻后自动转）、按用户单独的比例与计佣范围。commission_transfers 记每笔佣金转余额，与账本的 commission_to_balance 交易一一对应，自动转的带 entry_id；账号注销时（identity 经端口在同一事务里调）作废名下冻结、待复核的条目，驳回在途提现，剩下的可提现佣金按币种作废并记进 commission_forfeitures；可用佣金按本模块的表算（已解冻 − 未驳回的提现 − 已转余额 − 注销作废） |
+| commission | commission_entries、withdrawals、commission_transfers、commission_user_overrides、commission_forfeitures | 佣金计提（订单结算时经 order 的 PaidHook；可开三级分销，每级一条条目）、解冻、提现审核与打款、转余额（提现关闭时解冻后自动转）、按用户单独的比例与计佣范围。commission_transfers 记每笔佣金转余额，与账本的 commission_to_balance 交易一一对应，自动转的带 entry_id；账号注销时（identity 经端口在同一事务里调）作废名下冻结、待复核的条目，驳回在途提现，剩下的可提现佣金作废并记进 commission_forfeitures；可用佣金按本模块的表算（已解冻 − 未驳回的提现 − 已转余额 − 注销作废） |
 | giftcard | gift_card_templates、gift_card_prizes、gift_card_template_plans、gift_card_codes、gift_card_redemptions、gift_card_batches | 发放调 subscription、ledger 的 service |
 | subscription | subscriptions、subscription_events、subscription_credentials、quota_balances、traffic_pack_grants、traffic_pack_transfers、traffic_reset_logs、subscription_usage_daily、subscription_fetch_log、subscription_trials、subscription_templates、subscription_domain_groups、subscription_domains、subscription_domain_group_user_groups（订阅域名分组，00048） | 状态口径（生效、可救回、已停用）只在这里定义；节点上报的扣量调它的批量扣量方法 |
 | node | servers、nodes、node_pools、node_pool_user_groups、node_ca（面板 CA）、server_identities、bootstrap_tokens、node_outbounds、node_routes、route_groups、route_group_members、node_traffic_reports、node_traffic_hourly、node_user_traffic_hourly、node_metrics、node_alive_ips、node_relays（中转节点，00045）、node_ech_keys（ECH 密钥，00045） | 后台编排、gRPC 会话、接入、流量入账（入账后调 subscription 扣量）。设计里的 node_configs、node_config_applications、node_user_traffic_daily、node_tasks 没有建：配置文档每次由节点与路由表现算，应用结果按会话回执记在 nodes 上，小时汇总在入账时同事务写 |
@@ -190,7 +190,7 @@ identity, auth ─► settings, audit
 | 项 | 做法 |
 |---|---|
 | tenant_id 列、复合外键、`UNIQUE(tenant_id, id)` | 全部去掉，外键改为单列；唯一约束去掉 tenant 前缀（例如 `UNIQUE(email)`） |
-| tenants 表 | 删除。时区、币种、站点名进 settings；`settings jsonb` 拆成普通键。站点名只认 settings 的 `site.name`（10-14 起主题 branding 不再有站点名，入口页 `<title>` 由服务端按它写） |
+| tenants 表 | 删除。时区、站点名进 settings（10-16 起全系统只有人民币，不再有币种设置）；`settings jsonb` 拆成普通键。站点名只认 settings 的 `site.name`（10-14 起主题 branding 不再有站点名，入口页 `<title>` 由服务端按它写） |
 | RLS、`current_tenant_id`、`set_config`、`db.Scope` | 全部删除 |
 | 每租户种子触发器 | 改成基线迁移里的普通 INSERT：降级开关、通知模板、线下收款渠道 |
 | 最后一个管理员的锁锚 | 改为 `pg_advisory_xact_lock(常量)` |
@@ -209,9 +209,9 @@ identity, auth ─► settings, audit
 | 类 | 内容 |
 |---|---|
 | 行级约束 | NOT NULL、CHECK（状态枚举、金额非负、订单恒等式 `payable = total − balance_applied`、`total = greatest(subtotal − discount − proration_credit, 0)`、`proration_credit` 只许 upgrade、人工单原因 ≥5 字、paid/fulfilled ⇒ paid_amount = total 且 paid_at 非空、cancelled ⇒ cancel_reason 非空、券容量、`stock_sold + stock_reserved ≤ stock_total`、`consumed_bytes ≤ granted_bytes`、佣金 `commission = trunc(trunc(base × rate_bp / 10000) × share_percent / 100)`（分级份额，未开多级时 100）、`rate_bp` 在 (0, 5000]、提现方式封闭目录、USDT 打款的流水号是交易哈希形状） |
-| 唯一与外键 | 每单一笔 order_paid / balance_hold / balance_release 的部分唯一索引，late_payment、plan_change_refund 的唯一，`UNIQUE(provider, provider_payment_id)`，`UNIQUE(provider, provider_event_id)`，`UNIQUE(order, referrer)`，每人一笔在途提现的部分唯一索引，`nodes` 端口占用唯一索引等；balance_holds 与佣金三张表引用账本交易用 `(txn_id, currency) → ledger_transactions(id, currency)` 复合外键，钉住币种 |
+| 唯一与外键 | 每单一笔 order_paid / balance_hold / balance_release 的部分唯一索引，late_payment、plan_change_refund 的唯一，`UNIQUE(provider, provider_payment_id)`，`UNIQUE(provider, provider_event_id)`，`UNIQUE(order, referrer)`，每人一笔在途提现的部分唯一索引，`nodes` 端口占用唯一索引等；balance_holds 与佣金三张表引用账本交易用普通外键 `txn_id → ledger_transactions(id)` |
 | 追加写触发器 | 一个通用的 `deny_mutation()`，挂在 ledger_transactions、ledger_entries、subscription_events、order_reservation_events、各类预留流水、traffic_reset_logs、traffic_pack_transfers、gift_card_redemptions、referrals、referral_changes、subscription_trials、commission_transfers、commission_forfeitures、audit_events、node_config_applications、node_traffic_reports、node_metrics、revenue_report_adjustments、order_items；另有 `deny_delete()`，挂在 payment_events、commission_entries、withdrawals、late_payment_cases。运行角色同时收回这些表的 UPDATE/DELETE/TRUNCATE |
-| 账本配平 | `assert_ledger_balanced` 保留为唯一的提交时（DEFERRABLE）检查：每笔交易借贷和为 0、只有一个币种。这是钱的底线，跨行检查写不成 CHECK |
+| 账本配平 | `assert_ledger_balanced` 保留为唯一的提交时（DEFERRABLE）检查：每笔交易借贷和为 0。这是钱的底线，跨行检查写不成 CHECK |
 | 余额不透支 | 新增 CHECK：用户类科目的余额缓存不得为负（现在只靠 Go 判断） |
 | 认证材料守卫 | server_identities 的密钥字段不可改，吊销只能 active → revoked 且不可逆 |
 | 目录冻结 | 已发布的 plan_version 及其子表不可改，价格不可改（订单快照依赖它） |
@@ -232,9 +232,9 @@ identity, auth ─► settings, audit
   - 形状由 00016 的 CHECK 钉住：复核人与复核时间成对；有原因而不再待复核的必须复核过；voided 必须有冲回交易、作废原因与复核时间。
 - 多级分销（后台开关，缺省关）：先按直接邀请人的比例（含单独设置）算这一单的佣金总额，再按三级份额（百分比，合计 ≤ 100，剩余不发、站点留下）逐级向零截断到分；缺的级不分，上溯防环、最多 3 级。单独比例设成 0 的人在哪一级都不拿，跳过他继续往上。每级一条条目（`UNIQUE (order_id, level)`），各自冻结、同源复核（受益人对购买人）、作废，互不影响。
 - 提现：requested → approved / rejected，approved → paid。没有 reviewing、processing、failed、returned；只有打款这一步记账（commission_paid）。提现方式 `method` 是封闭目录（alipay / wechat / bank / paypal / usdt_trc20 / usdt_erc20 / usdt_bep20；迁移前的旧申请是 other，只显示），后台设白名单（缺省只开 alipay）。USDT 打款时流水号是链上交易哈希，可选记实付 USDT 数量（只记录）；面板不发起任何链上转账。
-- 提现关闭（后台开关，缺省开）只关站点币种：
-  - 站点币种：门户不显示提现。`commission:settle` 解冻时给条目挂 `auto_transfer_due`，解冻提交后再逐条在单独的事务里转入余额（先拿用户咨询锁，一笔分录同时锁可提现与余额；同手动转余额的记账路径），转失败的下一轮重试，提现重新打开后只清标记不转；`commission_transfers.entry_id` 唯一保证只转一次，审计 `commission.auto_transferred_to_balance`。关闭前已解冻的部分不自动转，由用户自己转。
-  - 别的币种：转不进余额，照常按白名单里的方式提现；所以关着提现时后台也不能把方式全部取消。
+- 提现关闭（后台开关，缺省开）：
+  - 门户不显示提现，申请提现回 `ErrWithdrawDisabled`。`commission:settle` 解冻时给条目挂 `auto_transfer_due`，解冻提交后再逐条在单独的事务里转入余额（先拿用户咨询锁，一笔分录同时锁可提现与余额；同手动转余额的记账路径），转失败的下一轮重试，提现重新打开后只清标记不转；`commission_transfers.entry_id` 唯一保证只转一次，审计 `commission.auto_transferred_to_balance`。关闭前已解冻的部分不自动转，由用户自己转。
+  - 白名单照旧管着，所以关着提现时后台也不能把方式全部取消。
 
 ---
 
@@ -242,7 +242,7 @@ identity, auth ─► settings, audit
 
 | # | 规则 |
 |---|---|
-| R1 | 库里的金额列一律 `NUMERIC(20,2)`，单位是元；币种列加 `CHECK (currency IN ('CNY','USD'))`，两种都是 2 位小数 |
+| R1 | 库里的金额列一律 `NUMERIC(20,2)`，单位是元。全系统只有人民币（用户 2026-10-16 定，迁移 00051 删掉了所有币种列），库里与 Go 里都没有币种这一维；只有调第三方支付接口时传固定的 CNY（`payment/provider.FiatCurrency`） |
 | R2 | repo 写入前断言 `d.Equal(d.Truncate(2))`（`money.Check`），不满足就报错。PostgreSQL 遇到多余小数会静默四舍五入，必须在写入前拦住；库里拦不住：`NUMERIC(20,2)` 列先舍入再查 CHECK，`CHECK (amount = round(amount, 2))` 永远成立，不要加这种假兜底 |
 | R3 | 所有按比例得出的金额（百分比券、会员折扣、换套餐折算、待开始周期额度、佣金）一律**向零截断**，与现状逐分一致。唯一的例外是向用户加收的支付手续费（`payment/service/surcharge.go`，2026-10-14 定）：向上取整到分，平台不少收 |
 | R4 | 只在 service 的领域计算函数里舍入，每个公式只在最后一步舍入一次；handler 只做单位换算，repo 只存不算，SQL 里不做金额算术 |
@@ -252,8 +252,8 @@ identity, auth ─► settings, audit
 | R8 | 非钱的数量（流量字节、配额、bp、百分比）仍用 int64 和 BIGINT。流量计费倍率从 float64 改为整数千分比 `rate_milli`，计费字节 = bytes × rate_milli / 1000，向零截断。例外：渠道手续费比例 `payment_providers.fee_percent` 是 `NUMERIC(5,2)` 的百分比（后台照 Xboard 填「2.5%」这种两位小数），Go 里是 decimal，与金额一起算，不经浮点 |
 | R9 | jsonb 里不放钱：礼品卡余额奖励、奖池、兑换记录、渠道 `min_amount`、`commission.min_withdraw` 改为带类型的列或类型化设置 |
 | R10 | 券面值拆成 `amount_off NUMERIC(20,2)` 和 `percent_off_bp INT` 两列，加 CHECK 恰好一个非空 |
-| R11 | 账本：分录金额 > 0，配平与单币种在库里检查（5.3）；余额缓存在 Go 里同事务更新；交易 kind 加 CHECK 枚举；礼品卡赠送改记新科目 `platform_promo_expense`，不再和渠道手续费混用一个科目 |
-| R12 | 币种小数位只在 `pkg/money` 一处定义；去掉写死的 `/100` |
+| R11 | 账本：分录金额 > 0，配平在库里检查（5.3）；余额缓存在 Go 里同事务更新；交易 kind 加 CHECK 枚举；礼品卡赠送改记新科目 `platform_promo_expense`，不再和渠道手续费混用一个科目 |
+| R12 | 金额小数位只在 `pkg/money` 一处定义；去掉写死的 `/100` |
 
 订单减免的先后（xb-order，照 Xboard）：小计是 catalog 按用户组取到的价格档单价（用户组专属价已在这里体现）；优惠券与会员折扣都按小计算、相加，合计不超过小计（超出时压会员部分）；再减换套餐剩余价值，得到总额；最后余额抵扣与零头免除。`discount_amount` 记券 + 会员，其中会员部分另记 `member_discount_amount`。流量重置单例外：永远按原价收，不收券、不打会员折扣（用户 10-14 定，库约束 `orders_traffic_reset_no_discount`）。
 
@@ -604,5 +604,5 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 | 审计被当作业务数据源（改密失败限流、登录失败去重、同源 IP 判断） | 前两项改用 Redis 限流；同源 IP 改为 audit service 带时间窗的查询 |
 | 审计哈希链造成全局串行和 40001 | 删除哈希链 |
 | CSV 导出里用浮点表示钱 | decimal |
-| 门户余额接口写死 "CNY" | 用账户的币种 |
+| 门户余额接口写死 "CNY" | 10-16 起全系统只有人民币，接口不再带币种 |
 | 证书相关 15 条路由没有登记在 routes.txt | routebudget 随旧代码删除；新路由表由 gin 导出，测试检查 |
