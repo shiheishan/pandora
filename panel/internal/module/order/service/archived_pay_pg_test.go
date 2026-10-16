@@ -173,14 +173,19 @@ func TestArchivedPlanStackPaidToBalance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// 先发起付款再归档：归档后不再让发起付款（ErrPlanRetired），已建好的在途意图照旧能付
+	code := payCode()
+	e.mkPayProvider(t, ctx, code)
+	intent, err := e.svc.Pay(asUser(ctx, user), PayInput{OrderID: created.OrderID, Provider: code})
+	if err != nil {
+		t.Fatal(err)
+	}
 	e.archivePlan(t, ctx, planID)
 
 	balBefore := e.balanceOf(t, ctx, user)
-	code := payCode()
-	e.mkPayProvider(t, ctx, code)
-	ack := e.payAndNotify(t, ctx, user, created.OrderID, code, "stk-"+randHex(8))
-	if !ackOK(ack) {
-		t.Fatalf("回调: %s", ack.Body)
+	ack, err := e.payments.HandleWebhook(ctx, code, epayInbound("stk-"+randHex(8), intent.OutTradeNo, 1000))
+	if err != nil || !ackOK(ack) {
+		t.Fatalf("回调 %s %v", ack.Body, err)
 	}
 
 	e.assertArchivedRefund(t, ctx, created.OrderID, dec("10"))

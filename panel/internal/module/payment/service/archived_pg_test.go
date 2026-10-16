@@ -1,6 +1,7 @@
 package service
 
 import (
+	"database/sql"
 	"errors"
 	"net/http"
 	"strings"
@@ -164,4 +165,85 @@ func TestCaseKindValid(t *testing.T) {
 	if CaseKind("nope").Valid() {
 		t.Fatal("未知种类应不合法")
 	}
+}
+
+// TestWebhookArchivedPlanFeeAndSurcharge 钉住当前口径（用户 2026-10-16「手续费不退」）：
+// 加收的支付手续费 surcharge 照记手续费收入、不退；渠道手续费照记费用；挂账与转入余额都只有应付 = 实收 − surcharge。
+func TestWebhookArchivedPlanFeeAndSurcharge(t *testing.T) {
+	e, ctx := newEnv(t)
+	user := e.mkUser(t, ctx)
+	code := "fake-arc-sc-" + uuid.New().String()[:8]
+	_ = e.mkFakeProvider(t, ctx, code)
+	e.setFee(t, ctx, code, "0.30", "2")
+	orderID, orderNo := e.mkOrder(t, ctx, user)
+	e.settler.mu.Lock()
+	e.settler.notPayable[orderID] = NotPayable(CaseArchivedPlan, archivedOrderStatus)
+	e.settler.mu.Unlock()
+	intent := e.createIntent(t, ctx, code, orderID, orderNo, user, "9.90")
+	if !intent.Amount.Equal(dec("10.40")) || !intent.Surcharge.Equal(dec("0.50")) {
+		t.Fatalf("意图金额 %s surcharge %s", intent.Amount, intent.Surcharge)
+	}
+
+	// 实收 10.40，其中加收手续费 0.50；渠道另扣 0.20 渠道手续费
+	in := fakeInboundFee("evt-arc-sc-1", "payment.succeeded", "pay-arc-sc-1", intent.OutTradeNo, 1040, 20)
+	ack, err := e.svc.HandleWebhook(ctx, code, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ack.HTTPStatus != http.StatusOK {
+		t.Fatalf("应 200: %s", string(ack.Body))
+	}
+
+	// legsOf 把某类交易的全部分录拼成「科目/owner_ref/方向/金额」按字典序排好的一串（numeric(20,2) 转文本带两位小数）
+	legsOf := func(kind ledgersvc.Kind) string {
+		t.Helper()
+		var agg sql.NullString
+		if err := e.row(ctx, `
+			SELECT string_agg(a.account_type || '/' || a.owner_ref || '/' || le.direction || '/' || le.amount::text, ','
+			                  ORDER BY a.account_type, a.owner_ref, le.direction, le.amount)
+			FROM ledger_entries le
+			JOIN ledger_transactions lt ON lt.id = le.transaction_id
+			JOIN ledger_accounts a ON a.id = le.account_id
+			WHERE lt.kind = ?`, string(kind)).Scan(&agg); err != nil {
+			t.Fatal(err)
+		}
+		return agg.String
+	}
+
+	// 挂账分录：渠道现金 10.20 + 渠道手续费 0.20 = 挂账 9.90 + 加收手续费收入 0.50
+	wantSuspense := strings.Join([]string{
+		"channel_cash/" + code + "/debit/10.20",
+		"late_payment_suspense/" + ledgersvc.RefMain + "/credit/9.90",
+		"platform_fee_expense/" + code + "/debit/0.20",
+		"platform_revenue/" + ledgersvc.RefSurcharge + "/credit/0.50",
+	}, ",")
+	if got := legsOf(ledgersvc.KindLatePaymentSuspense); got != wantSuspense {
+		t.Fatalf("挂账分录\n得到 %s\n期望 %s", got, wantSuspense)
+	}
+	// 转入分录：挂账借 9.90、用户余额贷 9.90（不含 surcharge；用户科目 owner_ref 为空）
+	wantApplied := "late_payment_suspense/" + ledgersvc.RefMain + "/debit/9.90,user_balance//credit/9.90"
+	if got := legsOf(ledgersvc.KindLatePaymentApplied); got != wantApplied {
+		t.Fatalf("转入分录\n得到 %s\n期望 %s", got, wantApplied)
+	}
+
+	var caseAmt string
+	if err := e.row(ctx, `SELECT amount::text FROM late_payment_cases WHERE order_id = ?`, orderID).Scan(&caseAmt); err != nil {
+		t.Fatal(err)
+	}
+	if !dec(caseAmt).Equal(dec("9.90")) {
+		t.Fatalf("挂账案金额 %s，期望 9.90（实收 − surcharge）", caseAmt)
+	}
+	if b := e.accountBalance(t, ctx, ledgersvc.UserAccount(ledgersvc.UserBalance, user)); !b.Equal(dec("9.90")) {
+		t.Fatalf("用户余额 %s，期望 9.90", b)
+	}
+	if b := e.accountBalance(t, ctx, ledgersvc.PlatformAccount(ledgersvc.PlatformRevenue, ledgersvc.RefSurcharge)); !b.Equal(dec("0.50")) {
+		t.Fatalf("手续费收入 %s，期望 0.50（不退）", b)
+	}
+	if b := e.accountBalance(t, ctx, ledgersvc.PlatformAccount(ledgersvc.LatePaymentSuspense, ledgersvc.RefMain)); !b.IsZero() {
+		t.Fatalf("挂账科目余额 %s，期望 0", b)
+	}
+	if e.ledgerTxnCount(t, ctx, ledgersvc.KindOrderPaid) != 0 {
+		t.Fatal("不应记 order_paid（不记订单收入）")
+	}
+	e.assertNoDrift(t, ctx)
 }

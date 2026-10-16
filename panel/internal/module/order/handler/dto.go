@@ -537,6 +537,8 @@ type myOrderDetailBody struct {
 	SubscriptionID        *string                  `json:"subscription_id"`
 	Items                 []myOrderItemResponse    `json:"items"`
 	Payments              []myOrderPaymentResponse `json:"payments"`
+	// SurchargeKept 是套餐归档转余额时扣下不退的支付手续费（分），其余订单为 0
+	SurchargeKept int64 `json:"surcharge_kept"`
 }
 
 // myOrderDetailResponse 是 GET /orders/:id。
@@ -596,6 +598,7 @@ func myOrderDetailFrom(d service.MyOrderDetail) (myOrderDetailResponse, error) {
 		SubscriptionID:        idStr(d.Order.SubscriptionID),
 		Items:                 make([]myOrderItemResponse, 0, len(d.Items)),
 		Payments:              make([]myOrderPaymentResponse, 0, len(d.Payments)),
+		SurchargeKept:         cc.of(d.SurchargeKept),
 	}
 	for _, it := range d.Items {
 		body.Items = append(body.Items, myOrderItemResponse{

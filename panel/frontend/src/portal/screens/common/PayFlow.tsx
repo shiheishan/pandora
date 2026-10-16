@@ -11,7 +11,7 @@ import { detectDevice } from './clients'
 import { feeLine, surchargeNote } from './fee'
 import { queryFailure, queryOutcome, useQueryOrderPayment, type QueryOutcome } from './order-query'
 import css from './PayFlow.module.css'
-import { PAID_STATUSES, useCancelOrder, useOrder, type OrderDetail } from './orders'
+import { archivedRefundText, isPlanArchivedRefund, PAID_STATUSES, useCancelOrder, useOrder, type OrderDetail } from './orders'
 import { afterOrderCheck, payFailureAction, PAY_IN_PROGRESS_MAX_RETRIES } from './payRetry'
 import { QrCode } from './qr'
 import { formatDate } from './traffic'
@@ -169,8 +169,18 @@ function Choose({ state, onPick, onLater }: { state: Extract<PayState, { phase: 
 // ---------------------------------------------------------------------------
 const POLL_PAY_MS = 3000
 
-/** 发起支付回 409 order_lapsed：这张单已超过付款期限（billing.ErrOrderPaymentExpired），只能取消后重新下单 */
+/** 发起支付回 409 order_lapsed：这张单不能再付，只能取消（超过付款期限，或套餐已停售 fields.reason=plan_archived） */
 export const isPaymentLapsed = (e: unknown) => isApiError(e, 'order_lapsed')
+
+/** 不能再付时取消按钮的说法：套餐停售了不能「重新下单」 */
+export function lapsedCancelLabel(e: unknown): string {
+  return isApiError(e, 'order_lapsed') && e.fields.reason === 'plan_archived' ? '取消这张订单' : '取消这张单，重新下单'
+}
+
+/** 套餐归档后才付款（10-16）的结果一句话：不开通，钱已转进钱包余额 */
+export function archivedPaidText(o: Pick<OrderDetail, 'surcharge_kept'>): string {
+  return `套餐已停售，没有开通；${archivedRefundText(o.surcharge_kept)}。`
+}
 
 interface PayPanelProps {
   orderId: string
@@ -267,10 +277,17 @@ export function PayPanel({ orderId, amount, method, returnUrl, onPaid, onUnpayab
     setConflictRefreshFailed(false)
     pay.mutate()
   }
+  const archived = order.data !== undefined && isPlanArchivedRefund(order.data)
+  const toWallet = () => {
+    onLater?.()
+    navigate('/wallet')
+  }
   const error = closed
-    ? order.data?.status === 'expired'
-      ? '这单超过 30 分钟没付，已经自动取消了，没有扣钱。'
-      : '这单已经取消了，没有扣钱。'
+    ? archived
+      ? archivedPaidText(order.data!)
+      : order.data?.status === 'expired'
+        ? '这单超过 30 分钟没付，已经自动取消了，没有扣钱。'
+        : '这单已经取消了，没有扣钱。'
     : unsupported
       ? '这个付款方式暂时用不了，换一个付款方式。'
       : superseded
@@ -308,7 +325,12 @@ export function PayPanel({ orderId, amount, method, returnUrl, onPaid, onUnpayab
           )}
           {isPaymentLapsed(pay.error) && (
             <Button variant="primary" block busy={cancel.isPending} onClick={() => cancel.mutate(orderId, { onSuccess: () => (afterCancel ? afterCancel() : onLater?.()) })}>
-              取消这张单，重新下单
+              {lapsedCancelLabel(pay.error)}
+            </Button>
+          )}
+          {archived && (
+            <Button variant="primary" block onClick={toWallet}>
+              去钱包看看
             </Button>
           )}
         </>
@@ -355,6 +377,11 @@ export function PayPanel({ orderId, amount, method, returnUrl, onPaid, onUnpayab
         <div className={outcome.kind === 'failed' ? css.error : css.hint} role="status">
           {outcome.text}
         </div>
+      )}
+      {outcome?.wallet && !archived && (
+        <Button variant="primary" block onClick={toWallet}>
+          去钱包看看
+        </Button>
       )}
       {onOtherMethod && !closed && (
         <button type="button" className={css.later} onClick={onOtherMethod}>
@@ -435,10 +462,11 @@ function useConfirmation(orderId: string | undefined) {
     const timer = setTimeout(() => setTimedOut(true), POLL_LIMIT_MS)
     return () => clearTimeout(timer)
   }, [orderId])
-  // 转为已支付时刷新余额、套餐
+  // 转为已支付、或套餐停售转了余额时刷新余额、套餐
+  const refunded = order.data !== undefined && isPlanArchivedRefund(order.data)
   useEffect(() => {
-    if (paid) refresh()
-  }, [paid]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (paid || refunded) refresh()
+  }, [paid, refunded]) // eslint-disable-line react-hooks/exhaustive-deps
   return { order, status, paid, closed, timedOut }
 }
 
@@ -453,7 +481,9 @@ function Confirming({ confirm, onClose }: { confirm: ReturnType<typeof useConfir
     : closed
       ? status === 'expired'
         ? '订单已超时取消，没有扣款。'
-        : '订单已取消。'
+        : order.data && isPlanArchivedRefund(order.data)
+          ? archivedPaidText(order.data)
+          : '订单已取消。'
       : timedOut
         ? '支付结果确认中，可稍后在订单中查看。'
         : null
@@ -469,6 +499,17 @@ function Confirming({ confirm, onClose }: { confirm: ReturnType<typeof useConfir
       <Button block onClick={onClose} data-autofocus>
         {message ? '查看订单' : '稍后查看'}
       </Button>
+      {order.data && isPlanArchivedRefund(order.data) && (
+        <Button
+          block
+          onClick={() => {
+            onClose()
+            navigate('/wallet')
+          }}
+        >
+          去钱包看看
+        </Button>
+      )}
     </div>
   )
 }

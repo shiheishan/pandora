@@ -114,8 +114,11 @@ var (
 	ErrAlreadyPaid      = errs.Newf(errs.Conflict, "订单已支付，不能取消")
 	ErrStateChanged     = errs.Newf(errs.Conflict, "订单状态已变化，请刷新后再操作")
 	ErrNotPayable       = errs.Newf(errs.Conflict, "该订单当前状态不可支付")
-	// ErrPlanRetired 是订单行套餐已归档（归档前下的待付单）：不再发起付款
-	ErrPlanRetired        = errs.Newf(errs.Conflict, "套餐已停售，不能再付款，可以取消这张订单")
+	// ErrPlanRetired 是订单行套餐已归档（归档前下的待付单）：不再发起付款。
+	// 用 order_lapsed（409，「这张单不能再付、只能取消」）而不是普通 conflict：
+	// 门户对普通 409 会刷新订单、仍待付就报「被新的发起取代」，盖掉这句话；
+	// fields.reason 让门户把按钮写成「取消这张订单」而不是「重新下单」。Fields 只读共享。
+	ErrPlanRetired        = &errs.Error{Code: errs.OrderLapsed, Message: "套餐已停售，不能再付款，可以取消这张订单", Fields: map[string]string{"reason": "plan_archived"}}
 	ErrNoExternalPayment  = errs.Newf(errs.Conflict, "该订单无需外部支付")
 	ErrPaymentLapsed      = errs.Newf(errs.OrderLapsed, "这张订单已超过付款期限，请取消后重新下单")
 	ErrMarkPaidZero       = errs.Newf(errs.Conflict, "这张订单不需要支付")
@@ -478,6 +481,9 @@ type MyOrderDetail struct {
 	Payments              []PaymentLine
 	CouponCode            *string
 	SubscriptionPeriodEnd *time.Time
+	// SurchargeKept 是套餐归档转余额（cancel_reason=plan_archived）时扣下不退的支付手续费合计；
+	// 其余订单为 0。门户据此决定写「付的钱已转入」还是「应付金额已转入（手续费不退）」。
+	SurchargeKept decimal.Decimal
 }
 
 // AdminOrderView 是后台订单列表的一行。

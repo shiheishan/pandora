@@ -118,6 +118,8 @@ export const orderDetailSchema = z.object({
     subscription_period_end: z.string().optional(),
     // 履约后落到的那一份（新购是新开的那份，续费、换套餐、叠加是原来那份）；没履约时 null
     subscription_id: z.string().nullable(),
+    // 套餐归档转余额（cancel_reason=plan_archived）时扣下不退的支付手续费（分），其余订单为 0
+    surcharge_kept: z.number().int().optional(),
   }),
 })
 export type OrderDetail = z.output<typeof orderDetailSchema>['order']
@@ -303,8 +305,22 @@ export function payMethodName(payments: ReadonlyArray<Pick<OrderDetail['payments
   return names.size === 1 ? [...names][0]! : '在线'
 }
 
+/** 套餐归档后才付款（10-16）：订单取消、不开通，钱转进钱包余额 */
+export const isPlanArchivedRefund = (o: { status: string; cancel_reason?: string }) => o.status === 'cancelled' && o.cancel_reason === 'plan_archived'
+
+/**
+ * 归档转余额的去向说明（10-16 定「手续费不退」）：扣了手续费写「应付金额」并注明不退；没扣写「付的钱」。
+ * surchargeKept 不知道（查单结果里没有）时用统一说法。
+ */
+export function archivedRefundText(surchargeKept: number | undefined): string {
+  if (surchargeKept === undefined) return '应付金额已转入钱包余额，支付手续费不退'
+  return surchargeKept > 0 ? '应付金额已转入钱包余额（支付手续费不退）' : '付的钱已转入钱包余额'
+}
+
 /** 展开区「结果」（契约门户-04 订单详情映射） */
-export function orderResult(o: Pick<OrderDetail, 'status' | 'kind' | 'cancel_reason' | 'subscription_period_end' | 'payments' | 'expires_at'>): string {
+export function orderResult(
+  o: Pick<OrderDetail, 'status' | 'kind' | 'cancel_reason' | 'subscription_period_end' | 'payments' | 'expires_at' | 'surcharge_kept'>,
+): string {
   const method = o.payments.length ? payMethodName(o.payments) : ''
   switch (o.status) {
     case 'fulfilled':
@@ -317,7 +333,7 @@ export function orderResult(o: Pick<OrderDetail, 'status' | 'kind' | 'cancel_rea
     case 'expired':
       return '超时未支付，已自动取消'
     case 'cancelled':
-      if (o.cancel_reason === 'plan_archived') return '套餐已停售，没有开通；付的钱已转入钱包余额'
+      if (o.cancel_reason === 'plan_archived') return `套餐已停售，没有开通；${archivedRefundText(o.surcharge_kept)}`
       return !o.cancel_reason || o.cancel_reason === 'user_cancelled' ? '已由您取消' : o.cancel_reason
     default:
       return o.expires_at ? `待支付，${formatDateTime(o.expires_at)} 前有效` : '待支付'
