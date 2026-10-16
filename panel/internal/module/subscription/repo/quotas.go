@@ -43,3 +43,21 @@ func (r *Repo) UpdateQuota(ctx context.Context, id uuid.UUID, cols map[string]an
 	}
 	return nil
 }
+
+// AddQuotaBonus 把 bytes 饱和加到一条配额行的 bonus_value 上，返回加完后的值；行不存在回错误。只在事务里、行已锁住时调用。
+func (r *Repo) AddQuotaBonus(ctx context.Context, id uuid.UUID, bytes int64) (int64, error) {
+	var bonus int64
+	res := r.d.Conn(ctx).Raw(`
+		UPDATE quota_balances
+		   SET bonus_value = CASE WHEN bonus_value > 9223372036854775807 - ? THEN 9223372036854775807 ELSE bonus_value + ? END,
+		       updated_at = ?
+		 WHERE id = ?
+		RETURNING bonus_value`, bytes, bytes, now(), id).Scan(&bonus)
+	if res.Error != nil {
+		return 0, mapErr(res.Error)
+	}
+	if res.RowsAffected != 1 {
+		return 0, fmt.Errorf("subscription: 配额行 %s 不存在", id)
+	}
+	return bonus, nil
+}

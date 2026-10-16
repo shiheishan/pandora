@@ -31,7 +31,7 @@ type PullRow struct {
 	// TrafficPeriodEnd 是同一行配额的周期末（下次重置时刻）；没有配额行或 total 类为 nil。信息节点的「距下次重置」用它
 	TrafficPeriodEnd *time.Time `gorm:"column:traffic_period_end"`
 	// TrafficBonus 是同一行配额上送的量（bonus_value）；没有配额行为 nil
-	TrafficBonus     *int64     `gorm:"column:traffic_bonus"`
+	TrafficBonus *int64 `gorm:"column:traffic_bonus"`
 }
 
 // PullByTokenHash 按令牌哈希读拉取所需的一行；没有返回 false。
