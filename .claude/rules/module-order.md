@@ -61,6 +61,7 @@ paths:
     - 之后不再出钱：转余额、提现申请、自动转余额（`autoTransferOne`）、后台批准提现、标记已打款、通过待复核条目都回 409 `ErrAccountDeleted`「账号已注销」（无锁的 `AccountDeleted`，各自已锁住用户咨询锁、提现行或条目行再读，注销的作废一定排在它们提交之后）；后台驳回提现、作废条目照常。
     - 注销提交那一刻才由并发结算计提、没赶上作废的条目：`settleOne` 解冻时读到受益人已注销，不解冻、转人工复核（原因「受益人账号已注销，请作废这条佣金」），由后台作废（作废要记复核人，解冻任务里没有）。
   - 收款账号按方式校验（`ValidatePayoutAccount`：TRC20 base58check、ERC20/BEP20 EIP-55），仍用 Sealer 密封；USDT 打款的流水号是交易哈希（`ValidatePaidUSDT`），实付 USDT 数量只记录，面板不发起任何链上转账。旧申请的方式是 `other`，只显示、不可选。
+- 后台订单读视图（`service/reads.go` 的 `enrich` / `adminView`）：一页订单的订单行、支付摘要、邮箱各一条批量查询，不逐单查。列表行与详情的 `method` 是成功那笔收款的支付方式（取自 payment 的 `OrderSummaries`，原样给 alipay / wxpay / offline…，没有收款为 null，中文名由前端翻）；`GET /orders/:id/payments` 的意图也带 `method`（空串给 null）。
 - 优惠券（promo）：
   - 流量重置单不收券（用户 10-14 定）：rejection `ErrCouponNotForReset`「流量重置不能使用优惠码」由 order 对重置单直接回，promo 的 `apply` 不认订单种类。
   - 券试算 `Preview` 经 `CatalogReader.PriceSubtotal` 一次拿金额（一个价格档只查一次 catalog）。
