@@ -1,24 +1,24 @@
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useApi } from '../../../shell/runtime'
-import { Button, Card, QueryView, Switch, useToast } from '../../../ui'
+import { Button, QueryView, Switch, useToast } from '../../../ui'
 import { extrasBody, extrasFormFrom, subscriptionExtrasSchema, type ExtrasForm, type SubscriptionExtras } from './subscription'
 import { useFailure, useInvalidateSubscription, useSubscriptionExtras } from './subscriptionQueries'
 import { SubscriptionDomains } from './SubscriptionDomains'
 import { SubscriptionTemplates } from './SubscriptionTemplates'
-import css from './nodes.module.css'
+import css from './subscription.module.css'
 
 export function SubscriptionTab() {
   return (
     <div className={css.stack}>
-      <ExtrasCard />
-      <SubscriptionDomains />
+      <ExtrasSection />
       <SubscriptionTemplates />
+      <SubscriptionDomains />
     </div>
   )
 }
 
-function ExtrasCard() {
+function ExtrasSection() {
   const settings = useSubscriptionExtras()
   return (
     <QueryView query={settings} rows={4} empty={null}>
@@ -56,38 +56,38 @@ function ExtrasFormView({ saved }: { saved: SubscriptionExtras }) {
   const disabled = save.isPending
 
   return (
-    <>
-      <Card title="订阅附加设置">
-        <div className={css.form}>
-          <div className={css.span2}>
-            <Switch
-              label="订阅里显示剩余流量、距下次重置、到期（信息节点）"
-              checked={form.infoNodes}
-              disabled={disabled}
-              onChange={(e) => edit({ infoNodes: e.target.checked })}
-            />
-            <div className={css.faint}>
-              开启后订阅最前面多出几条名字是流量与到期信息的节点，地址是本机占位、连不上；只为在客户端里看到这些信息。
-            </div>
-          </div>
-          <div className={css.span2}>
-            <Switch
-              label="节点名前加协议前缀"
-              checked={form.protocolPrefix}
-              disabled={disabled}
-              onChange={(e) => edit({ protocolPrefix: e.target.checked })}
-            />
-            <div className={css.faint}>如 [vless] 香港 01、[Hy2] 东京 02，方便在客户端里分辨协议。</div>
+    <section className={css.section} aria-label="订阅附加设置">
+      <header className={css.sectionHead}>
+        <h3 className={css.sectionTitle}>订阅附加设置</h3>
+      </header>
+      <div className={css.extrasFields}>
+        <div className={css.extrasField}>
+          <Switch
+            label="订阅里显示剩余流量、距下次重置、到期（信息节点）"
+            checked={form.infoNodes}
+            disabled={disabled}
+            onChange={(e) => edit({ infoNodes: e.target.checked })}
+          />
+          <div className={css.faint}>
+            开启后订阅最前面多出几条名字是流量与到期信息的节点，地址是本机占位、连不上；只为在客户端里看到这些信息。
           </div>
         </div>
-      </Card>
-      <div className={css.toolbar}>
-        {dirty && <span className={css.faint}>有未保存的修改</span>}
-        <span className={css.spacer} />
+        <div className={css.extrasField}>
+          <Switch
+            label="节点名前加协议前缀"
+            checked={form.protocolPrefix}
+            disabled={disabled}
+            onChange={(e) => edit({ protocolPrefix: e.target.checked })}
+          />
+          <div className={css.faint}>如 [vless] 香港 01、[Hy2] 东京 02，方便在客户端里分辨协议。</div>
+        </div>
+      </div>
+      <div className={css.extrasActions}>
         <Button variant="primary" disabled={!dirty} busy={save.isPending} onClick={submit}>
           保存
         </Button>
+        {dirty && <span className={css.faint}>有未保存的修改</span>}
       </div>
-    </>
+    </section>
   )
 }
