@@ -111,7 +111,7 @@ function goToCheckout(planId: string, l: Landing, price: string | null, replace:
   const hash = full.startsWith('#') ? full.slice(1) : full
   const [path, search] = hash.split('?')
   const query = search ? Object.fromEntries(new URLSearchParams(search)) : undefined
-  navigate(path, { query, replace })
+  navigate(path ?? '', { query, replace })
 }
 
 function AutoLanding({ option, planId, price }: { option: Landing; planId: string; price: string | null }) {

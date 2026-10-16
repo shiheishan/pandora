@@ -1,5 +1,5 @@
 import { payMethodName, type OrderDetail } from '../common/orders'
-import { day, gb, leftOf, money, type Naming } from '../common/purchase'
+import { day, gb, money, type Naming } from '../common/purchase'
 import { planTraffic, type Plan } from '../common/catalog'
 import type { Subscription } from '../common/subscriptions'
 import { pickTrafficQuota } from '../common/traffic'

@@ -163,7 +163,7 @@ describe('确认页的文字', () => {
   it('续费：剩的流量到期不累加', () => {
     const one = sub({ usedGiB: 92 })
     const c = confirmCopy({ target: { kind: 'renew', subId: one.id, fromPlans: true }, sub: one, plan: STD, row: row(), naming: makeNaming([one], undefined), held: [one], now: NOW })
-    expect(c.notes[0]).toMatch(/^现在剩的 8G 用到 10月\d+日，到时不累加；10月\d+日 起新的一期，每月 100G。$/)
+    expect(c.notes[0]).toMatch(/^现在剩的 8G 用到 10月\d+日，到时不累加；10月\d+日 起新的一期，每期 100G。$/)
   })
 })
 

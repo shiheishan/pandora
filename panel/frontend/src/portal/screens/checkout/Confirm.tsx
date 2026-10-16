@@ -223,7 +223,7 @@ function Priced({
   })
 
   async function submit() {
-    if (blocked) return
+    if (blocked || target.kind === 'choose') return
     setRefusal(null)
     const request = orderRequest({ target, quote, row, split, coupon: couponCode, label: target.kind === 'new' ? name : undefined, newCopy: target.kind === 'new' && h.held.length > 0 })
     const intent = intentOf(request)

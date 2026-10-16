@@ -76,7 +76,8 @@ describe('兑换卡', () => {
       { key: 'stack:a', kind: 'stack', subscription_id: 'a', new_period_end: '2026-11-30T12:00:00Z' },
     ]
     const v = redeemViews({ card: once, held: [MINE], naming: makeNaming([MINE], undefined), monthPrice: month, now: NOW }, opts, 'stack:a')[0]!
-    expect(v.label).toBe('叠加到「我的」')
+    // 只有一份时按套餐名称呼
+    expect(v.label).toBe('叠加到大包')
     expect(v.desc).toBe('总流量加上，天数顺延到 11月30日，链接不变')
     expect(v.verb).toBe('兑换，叠加')
   })

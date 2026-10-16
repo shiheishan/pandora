@@ -18,7 +18,6 @@ import {
 } from './model'
 
 const SUMMARY = {
-  currency: 'CNY',
   pending: 1180,
   available: 13560,
   withdrawing: 0,
@@ -32,7 +31,6 @@ const SUMMARY = {
   min_withdraw: 10000,
   withdraw_enabled: true,
   withdraw_methods: ['alipay'],
-  site_currency: 'CNY',
   scope: 'every_order' as const,
 }
 
@@ -57,7 +55,7 @@ describe('佣金概况 schema', () => {
   })
 
   it('提现状态是封闭枚举', () => {
-    const w = { id: 'w', amount: 1, currency: 'CNY', method: 'alipay', status: 'queued', reject_reason: '', requested_at: '2026-09-01T00:00:00Z', completed_at: null }
+    const w = { id: 'w', amount: 1, method: 'alipay', status: 'queued', reject_reason: '', requested_at: '2026-09-01T00:00:00Z', completed_at: null }
     expect(commissionSchema.safeParse({ summary: SUMMARY, entries: [], withdrawals: [w], transfers: [] }).success).toBe(false)
   })
 
@@ -162,7 +160,6 @@ describe('佣金记录', () => {
     rate_bp: 2000,
     level,
     share_percent: 100,
-    currency: 'CNY',
     status,
     frozen_until,
     created_at,
@@ -172,7 +169,6 @@ describe('佣金记录', () => {
   const withdrawal = (status: Commission['withdrawals'][number]['status'], requested_at: string, reject_reason = '', method = 'alipay') => ({
     id: status,
     amount: 12000,
-    currency: 'CNY',
     method,
     status,
     reject_reason,
@@ -184,7 +180,7 @@ describe('佣金记录', () => {
     const rows = commissionRecords(
       commission({
         entries: [entry('available', '2026-09-20T02:00:00Z')],
-        transfers: [{ ledger_txn_id: 't1', amount: 5000, currency: 'CNY', created_at: '2026-09-22T02:00:00Z' }],
+        transfers: [{ ledger_txn_id: 't1', amount: 5000, created_at: '2026-09-22T02:00:00Z' }],
         withdrawals: [withdrawal('paid', '2026-09-10T02:00:00Z')],
       }),
     )

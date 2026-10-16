@@ -16,9 +16,9 @@ describe('SubCard', () => {
       plan_kind: 'one_time',
       stackable: true,
       renewable: false,
+      ...far,
       renew_until: null,
       reset_price: null,
-      ...far,
     })
     const html = renderToStaticMarkup(
       createElement(ToastProvider, null, createElement(SubCard, { sub: once, naming: makeNaming([once], []), link: link('o1', 'a3f9'), actions: { onImport: noop, onRename: noop, onRotate: noop } })),
