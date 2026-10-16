@@ -122,7 +122,7 @@
   overflow: hidden;
 }
 
-/* 表格最小宽：订单照设计稿七列之和，960 宽时在卡片内横向滚动；挂账五列放得下 */
+/* 表格最小宽：订单照设计稿七列之和，960 宽时在卡片内横向滚动；待处理到账五列放得下 */
 .tableBox table {
   min-width: 640px;
 }
@@ -342,126 +342,56 @@
 }
 
 /* ===========================================================================
- * 挂账
+ * 待处理到账
  * ========================================================================= */
-.banner {
-  display: flex;
-  align-items: center;
-  gap: var(--space-12);
-  padding: 12px 16px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  background: var(--surface);
-}
-
-.bannerText {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
+/* 区块标题（收入调整的表头里还在用） */
 .bannerTitle {
   font-weight: 600;
 }
 
-.total {
+/* 右上合计：小字 + 等宽较大的数字 */
+.pendingTotal {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 2px;
 }
 
-.totalValue {
+.pendingTotalValue {
   font-family: var(--font-mono);
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 600;
 }
 
 /* ===========================================================================
  * 支付渠道
  * ========================================================================= */
-.cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: var(--space-16);
-}
-
-.card {
+/* 顶部统计：数字加粗等宽 + 文字，项间距 16px */
+.providerStats {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-12);
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  background: var(--surface);
+  align-items: baseline;
+  gap: 16px;
 }
 
-.cardOff {
-  opacity: 0.65;
+.statNum {
+  font-family: var(--font-mono);
+  font-weight: 600;
 }
 
-.cardHead {
+.providerName {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+
+/* 操作格：开关 + 收单 + 编辑 + 停用，靠右排 */
+.rowActions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 10px;
-}
-
-.abbr {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 8px;
-  background: var(--surface-3);
-  color: var(--text-2);
-  font-size: var(--fs-caption);
-  font-weight: 600;
-}
-
-.cardName {
-  font-weight: 600;
-}
-
-.stats {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-8);
-  margin: 0;
-}
-
-.stats dt {
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-}
-
-.stats dd {
-  margin: 0;
-  font-weight: 600;
-}
-
-.statMono {
-  font-family: var(--font-mono);
-}
-
-.note {
-  font-size: var(--fs-caption);
-}
-
-.moreButton {
-  height: 28px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-2);
-  cursor: pointer;
-}
-
-.moreButton:hover {
-  background: var(--surface-3);
 }
 
 /* ===========================================================================
@@ -496,10 +426,6 @@
   background: var(--surface-2);
 }
 
-.adjCurrency {
-  width: 90px;
-}
-
 .adjAmount {
   width: 130px;
 }
@@ -518,13 +444,13 @@
   overflow-x: auto;
 }
 
-/* 登记人 · 时间叠在原因下面（设计稿是单列，960 宽放不下六列） */
+/* 登记人 · 时间叠在原因下面（设计稿是单列，960 宽放不下五列） */
 .adjRow {
   display: grid;
-  grid-template-columns: minmax(200px, 1fr) 96px 48px 120px 52px;
+  grid-template-columns: minmax(200px, 1fr) 96px 120px 52px;
   gap: var(--space-12);
   align-items: center;
-  min-width: 600px;
+  min-width: 540px;
   padding: 10px 16px;
   border-bottom: 1px solid var(--surface-2);
 }
