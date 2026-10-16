@@ -233,7 +233,7 @@ sec "3. 夹具（池、服务器、节点）"
 
 POOL_CODE="smk-$RUN"
 api POST "$ADM/v1/node-pools" -H "$AH" -H 'Content-Type: application/json' \
-  -d "{\"code\":\"$POOL_CODE\",\"name\":\"Smoke pool $RUN\"}"
+  -d "{\"kind\":\"subscription\",\"name\":\"Smoke pool $RUN\"}"
 [ "$HTTP_CODE" = 200 ] || fatal "create pool" "HTTP $HTTP_CODE"
 POOL_ID=$(jget_body id) || fatal "pool id missing"
 ok "节点池 $POOL_CODE"
@@ -349,12 +349,12 @@ ready_cnt=$(db "SELECT count(*) FROM servers WHERE id IN ('$(echo "$SERVER_ID_LI
 sec "7. 套餐（池里有可服务节点后才能发布）"
 
 admin_auth
-api POST "$ADM/v1/plans/complete" -H "$AH" -H 'Content-Type: application/json' \
+api POST "$ADM/v1/plans" -H "$AH" -H 'Content-Type: application/json' \
   -H "Idempotency-Key: smoke-plan-$RUN" \
-  -d "{\"code\":\"smoke-$RUN\",\"name\":\"Smoke $RUN\",\"visibility\":\"public\",\"traffic_gb\":100,\"pool_ids\":[\"$POOL_ID\"],\"prices\":[{\"billing_interval\":\"month\",\"interval_count\":1,\"unit_amount\":1000,\"currency\":\"CNY\"}],\"publish\":true}"
-[ "$HTTP_CODE" = 201 ] || fatal "plans/complete" "HTTP $HTTP_CODE"
+  -d "{\"kind\":\"subscription\",\"name\":\"Smoke $RUN\",\"visibility\":\"public\",\"traffic_bytes\":107374182400,\"pool_ids\":[\"$POOL_ID\"],\"prices\":[{\"billing_interval\":\"month\",\"interval_count\":1,\"unit_amount\":1000}],\"publish\":true}"
+[ "$HTTP_CODE" = 201 ] || fatal "POST /plans" "HTTP $HTTP_CODE"
 PLAN=$(jget_body plan.id) || fatal "plan id"
-PRICE=$(jget_body price_ids.0) || fatal "price id"
+PRICE=$(jget_body plan.prices.0.id) || fatal "price id"
 ok "套餐 smoke-$RUN"
 
 #-------------------------------------------------------------------------------

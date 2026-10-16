@@ -267,7 +267,7 @@ pg -c "SELECT occurred_at, data->>'reason' AS reason FROM audit_events WHERE act
 2. **【写】** 节点进程：`systemctl restart pandora-native`。会断开这个节点上的用户连接。
 3. **【写】** 时钟：启用时间同步，例如 `timedatectl set-ntp true`，或者装 chrony。
 4. **【写】** 身份失效：在后台这台服务器的详情里签发一键安装令牌，在节点机上执行生成的安装命令，重新接入（见第 11.4 节）。
-5. 手工改库（不经后台）改了名单或配置相关的表（订阅、配额、流量包、用户状态、节点池、用户组、节点配置、服务器）：面板不会马上下发。会话管理器靠「纪元」发现变化，手工 SQL 不动纪元，要等下一次纪元变化（后台任何一次相关的改动都会触发），Redis 读不到纪元时每 15 秒全量比对一次。急的话 **【写】** `systemctl restart pandora-serve`，节点重连时全量重新对齐。能在后台改的，一律在后台改。
+5. 手工改库（不经后台）改了名单或配置相关的表（订阅、配额、用户状态、套餐线路、节点池、用户组、节点配置、服务器）：面板不会马上下发。会话管理器靠「纪元」发现变化，手工 SQL 不动纪元，要等下一次纪元变化（后台任何一次相关的改动都会触发），Redis 读不到纪元时每 15 秒全量比对一次。急的话 **【写】** `systemctl restart pandora-serve`，节点重连时全量重新对齐。能在后台改的，一律在后台改。
 
 ### 什么时候升级处理
 
@@ -366,7 +366,7 @@ echo | openssl s_client -connect <面板地址>:443 -servername <面板域名> 2
 
   ```bash
   pg -v no='<订单号>' <<'SQL'
-  SELECT order_no, status, total_amount, currency, expires_at, paid_at FROM orders WHERE order_no = :'no';
+  SELECT order_no, status, total_amount, expires_at, paid_at FROM orders WHERE order_no = :'no';
   SELECT received_at, processing_status, left(processing_error, 160) AS error
     FROM payment_events WHERE raw_payload::text LIKE '%' || :'no' || '%' ORDER BY received_at;
   SQL

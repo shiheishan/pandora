@@ -128,7 +128,7 @@ print("aes-128-gcm")
 ' 2>/dev/null)
 ok "shadowsocks cipher=${CIPHER}"
 
-rp=$(json -X POST "$ADM/v1/node-pools" -H "$AH" -d "{\"code\":\"epay-${STAMP}\",\"name\":\"Epay pool ${STAMP}\"}")
+rp=$(json -X POST "$ADM/v1/node-pools" -H "$AH" -d "{\"kind\":\"subscription\",\"name\":\"Epay pool ${STAMP}\"}")
 POOL_ID=$(echo "$rp" | jqr "['id']")
 [ -n "$POOL_ID" ] && ok "节点池已创建" || { bad "建池失败" "$rp"; exit 1; }
 
@@ -160,16 +160,16 @@ tg=$(code -X POST "$ADM/v1/payment-providers/${EPAY_CODE}/toggle" -H "$AH" -H 'C
 [ "$tg" = "200" ] && ok "渠道 accepting_new=true" || { bad "toggle 失败" "HTTP ${tg}"; exit 1; }
 
 admin_reauth || true
-rpc=$(curl -sS -w '\n%{http_code}' -X POST "$ADM/v1/plans/complete" -H "$AH" -H 'Content-Type: application/json' \
+rpc=$(curl -sS -w '\n%{http_code}' -X POST "$ADM/v1/plans" -H "$AH" -H 'Content-Type: application/json' \
   -H "Idempotency-Key: epay-plan-${STAMP}" \
-  -d "{\"code\":\"epay-plan-${STAMP}\",\"name\":\"Epay Plan ${STAMP}\",\"visibility\":\"public\",\"traffic_gb\":1,\"pool_ids\":[\"${POOL_ID}\"],\"prices\":[{\"billing_interval\":\"month\",\"interval_count\":1,\"unit_amount\":990,\"currency\":\"CNY\"}],\"publish\":true}")
+  -d "{\"kind\":\"subscription\",\"name\":\"Epay Plan ${STAMP}\",\"visibility\":\"public\",\"traffic_bytes\":1073741824,\"pool_ids\":[\"${POOL_ID}\"],\"prices\":[{\"billing_interval\":\"month\",\"interval_count\":1,\"unit_amount\":990}],\"publish\":true}")
 rpc_body=${rpc%$'\n'*}; rpc_code=${rpc##*$'\n'}
 PLAN_ID=$(echo "$rpc_body" | jqr "['plan']['id']")
-PRICE_ID=$(echo "$rpc_body" | jqr "['price_ids'][0]")
+PRICE_ID=$(echo "$rpc_body" | jqr "['plan']['prices'][0]['id']")
 PLAN_RV=$(echo "$rpc_body" | jqr "['plan']['row_version']")
 [ "$rpc_code" = "201" ] && [ -n "$PLAN_ID" ] && [ -n "$PRICE_ID" ] \
   && ok "套餐已发布 plan=${PLAN_ID} price=${PRICE_ID}" \
-  || { bad "plans/complete 失败" "HTTP ${rpc_code} ${rpc_body}"; exit 1; }
+  || { bad "建套餐失败" "HTTP ${rpc_code} ${rpc_body}"; exit 1; }
 
 #-------------------------------------------------------------------------------
 sec "1. 注册并登录"
@@ -201,9 +201,9 @@ r4h=$(curl -sS -w '\n%{http_code}' -X POST "$PUB/v1/orders" -H "$AUTH" -H 'Conte
   -d "{\"plan_id\":\"${PLAN_ID}\",\"price_id\":\"${PRICE_ID}\",\"use_balance\":0}")
 r4=${r4h%$'\n'*}; r4c=${r4h##*$'\n'}
 ORDER_ID=$(echo "$r4" | jqr "['order_id']"); ORDER_NO=$(echo "$r4" | jqr "['order_no']")
-PAYABLE=$(echo "$r4" | jqr "['payable_amount']"); CURRENCY=$(echo "$r4" | jqr "['currency']")
+PAYABLE=$(echo "$r4" | jqr "['payable_amount']")
 [ "$r4c" = "201" ] && [ -n "$ORDER_ID" ] && [ "$PAYABLE" = "990" ] \
-  && ok "订单已创建 ${ORDER_NO} 应付 ${PAYABLE} ${CURRENCY}（201）" \
+  && ok "订单已创建 ${ORDER_NO} 应付 ${PAYABLE} 分（201）" \
   || bad "下单失败" "HTTP ${r4c} ${r4}"
 
 MONEY=$(python3 -c "print(f'{int(${PAYABLE})//100}.{int(${PAYABLE})%100:02d}')")
