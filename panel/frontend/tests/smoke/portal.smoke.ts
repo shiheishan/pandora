@@ -2,9 +2,10 @@ import { z } from 'zod'
 import { appearanceSchema, balanceSchema, commissionSchema, meSchema, notificationsSchema, siteConfigSchema, subscriptionsSchema } from '../../src/portal/queries'
 import { preferencesSchema, sessionSchema, telegramSchema } from '../../src/portal/screens/account/api'
 import { listSchema as announcementListSchema } from '../../src/portal/screens/common/announcements'
-import { packSchema, paymentMethodSchema, plansSchema } from '../../src/portal/screens/common/catalog'
+import { paymentMethodSchema, plansSchema } from '../../src/portal/screens/common/catalog'
+import { landingsSchema } from '../../src/portal/screens/common/landings'
 import { orderDetailSchema, ordersPageSchema } from '../../src/portal/screens/common/orders'
-import { linksSchema, nodesSchema, trafficPacksSchema, usageReportSchema } from '../../src/portal/screens/common/subscriptions'
+import { linksSchema, nodesSchema, usageReportSchema } from '../../src/portal/screens/common/subscriptions'
 import { contentDetailSchema, contentPageSchema, HELP_QUERY } from '../../src/portal/screens/help/api'
 import { NOTIFICATION_LIMIT, notificationSchema } from '../../src/portal/screens/messages/api'
 import { inviteSchema } from '../../src/portal/screens/referral/api'
@@ -40,15 +41,17 @@ const rows: Row[] = [
   },
 
   // ---- 套餐与下单 ----
-  { at: 'common/catalog.ts', seed: '后台 POST plans/complete', path: 'v1/plans', schema: plansSchema },
-  { at: 'common/catalog.ts', seed: '后台 POST traffic-packs', path: 'v1/traffic-packs', schema: z.object({ packs: z.array(packSchema) }) },
+  { at: 'common/catalog.ts', seed: '后台 POST plans（订阅套餐两档价 + 一次性套餐）', path: 'v1/plans', schema: plansSchema },
+  // 落点：订阅套餐那份挂着待付的续费单（不列），一次性套餐那份可叠加
+  { at: 'common/landings.ts', seed: '订阅套餐一份（挂着待付续费单）', path: 'v1/me/checkout/landings', query: { plan_id: s.plan_id }, schema: landingsSchema },
+  { at: 'common/landings.ts', seed: '门户用余额新购并叠加一次性套餐', path: 'v1/me/checkout/landings', query: { plan_id: s.one_time_plan_id }, schema: landingsSchema },
   { at: 'common/catalog.ts', seed: '后台建的 smokepay 易支付渠道', path: 'v1/payment-methods', schema: z.object({ methods: z.array(paymentMethodSchema) }) },
 
   // ---- 订阅 ----
   { at: 'common/subscriptions.ts', path: 'v1/me/subscription-links', schema: linksSchema },
   { at: 'common/subscriptions.ts', seed: 'nodesim 接入 + POST activate，池绑在套餐版本上', path: `v1/me/subscriptions/${s.subscription_id}/nodes`, schema: nodesSchema },
   { at: 'common/subscriptions.ts', seed: 'nodesim 上报流量，入账同事务写按日用量', path: `v1/me/subscriptions/${s.subscription_id}/usage`, schema: usageReportSchema },
-  { at: 'common/subscriptions.ts', seed: '门户用余额买流量包（应付 0 同步履约）', path: 'v1/me/traffic-packs', schema: trafficPacksSchema },
+  { at: 'common/subscriptions.ts', seed: '门户用余额新购一次性套餐', path: `v1/me/subscriptions/${s.one_time_subscription_id}/nodes`, schema: nodesSchema },
 
   // ---- 订单 ----
   { at: 'common/orders.ts', path: 'v1/orders', query: { status: 'pending_payment' }, schema: ordersPageSchema },

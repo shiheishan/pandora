@@ -30,7 +30,7 @@ import {
 } from '../../src/admin/screens/nodes/schemas'
 import { planPoolsSchema, planResponseSchema, plansSchema, poolOptionsSchema } from '../../src/admin/screens/plans/schemas'
 import { accessResponse, auditResponse, clustersResponse, switchesResponse } from '../../src/admin/screens/security/schemas'
-import { deliveriesResponse, hooksResponse, mailSettingsSchema, telegramSettingsSchema, templatesResponse as mailTemplatesResponse } from '../../src/admin/screens/system/schemas'
+import { deliveriesResponse, hooksResponse, mailSettingsSchema, telegramExtrasSchema, telegramSettingsSchema, templatesResponse as mailTemplatesResponse } from '../../src/admin/screens/system/schemas'
 import { assigneesSchema, macrosSchema, queueSchema, ticketDetailSchema } from '../../src/admin/screens/tickets/api'
 import { devicesSchema, planOptionsSchema, profileSchema, userDetailSchema, userGroupsSchema, usersSchema } from '../../src/admin/screens/users/api'
 import { rawGet, runTable, state, type Row } from './harness'
@@ -112,12 +112,14 @@ const rows: Row[] = [
   // ---- 套餐 ----
   { at: 'plans/api.ts', seed: '后台 POST plans', path: 'v1/plans', schema: plansSchema },
   { at: 'plans/api.ts', path: `v1/plans/${s.plan_id}`, schema: planResponseSchema },
+  { at: 'plans/api.ts', seed: '后台 POST plans（kind=one_time）', path: `v1/plans/${s.one_time_plan_id}`, schema: planResponseSchema },
   { at: 'plans/api.ts', path: `v1/plans/${s.plan_id}/pools`, schema: planPoolsSchema },
   { at: 'plans/api.ts', path: 'v1/node-pools', schema: poolOptionsSchema },
 
   // ---- 系统 ----
   { at: 'system/queries.ts', path: 'v1/settings/mail', schema: mailSettingsSchema },
   { at: 'system/queries.ts', path: 'v1/settings/telegram', schema: telegramSettingsSchema },
+  { at: 'system/queries.ts', path: 'v1/settings/telegram/extras', schema: telegramExtrasSchema },
   { at: 'system/queries.ts', path: 'v1/mail/templates', schema: mailTemplatesResponse },
   { at: 'system/queries.ts', seed: '后台 POST plugin-hooks', path: 'v1/plugin-hooks', schema: hooksResponse },
   {
