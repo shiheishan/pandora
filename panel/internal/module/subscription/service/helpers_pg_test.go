@@ -353,6 +353,20 @@ func quotaOf(t *testing.T, e *env, ctx context.Context, subID uuid.UUID, metric,
 	return Quota{}
 }
 
+// assertNoQuota 断言这一份没有 (metric, period) 的配额行。
+func assertNoQuota(t *testing.T, e *env, ctx context.Context, subID uuid.UUID, metric, period string) {
+	t.Helper()
+	qs, err := e.svc.Quotas(ctx, subID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range qs {
+		if q.Metric == metric && q.Period == period {
+			t.Fatalf("不应再有配额行 %s/%s：%+v", metric, period, q)
+		}
+	}
+}
+
 // setConsumed 直接改配额已用量（模拟节点扣量）。
 func setConsumed(t *testing.T, e *env, ctx context.Context, subID uuid.UUID, metric, period string, n int64) {
 	t.Helper()

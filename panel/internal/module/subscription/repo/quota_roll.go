@@ -60,7 +60,8 @@ const quotaRollDueWhere = `
      OR (qb.period = 'cycle' AND qb.period_end <= ? AND s.current_period_end > qb.period_end))`
 
 // LockDueQuotaRolls 锁住一批到期的配额行（见 quotaRollDueWhere），按 id 加 FOR UPDATE SKIP LOCKED：
-// 与节点扣量同序，正在被扣量锁着的行这批跳过。
+// 与节点扣量同序，正在被扣量锁着的行这批跳过。订阅行一并加 FOR NO KEY UPDATE SKIP LOCKED：滚动要切版本（改 subscriptions），
+// 别的路径都是先锁订阅、再锁配额，这里不能拿着配额锁再去等订阅锁（审查 1016-A2 应改 1）；订阅正被锁着的，这批跳过，下一遍再滚。
 func (r *Repo) LockDueQuotaRolls(ctx context.Context, now time.Time, limit int) ([]QuotaRollCandidate, error) {
 	var out []QuotaRollCandidate
 	err := r.d.Conn(ctx).Raw(`
@@ -70,7 +71,8 @@ func (r *Repo) LockDueQuotaRolls(ctx context.Context, now time.Time, limit int) 
 		  JOIN subscriptions s ON s.id = qb.subscription_id`+quotaRollDueWhere+`
 		 ORDER BY qb.id
 		 LIMIT ?
-		   FOR UPDATE OF qb SKIP LOCKED`, now, now, now, now, limit).Scan(&out).Error
+		   FOR UPDATE OF qb SKIP LOCKED
+		   FOR NO KEY UPDATE OF s SKIP LOCKED`, now, now, now, now, limit).Scan(&out).Error
 	return out, mapErr(err)
 }
 

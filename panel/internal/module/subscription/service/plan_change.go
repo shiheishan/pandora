@@ -95,22 +95,25 @@ func (s *Service) ChangePlan(ctx context.Context, in PlanChange) (PlanChangeResu
 	return out, err
 }
 
-// rebuildQuotas 按版本 v 重建一份订阅的全部配额：已有行的上限改成 v 的定义（v 没有这一行的定义就置空 = 不限）、
-// 已用量与送的量清零、周期对齐到 [start, cycleEnd)；v 多出来的 (metric, period) 补插新行。返回清零前的旧行（写重置日志用）。
+// rebuildQuotas 按版本 v 重建一份订阅的全部配额：已有行的上限改成 v 的定义、已用量与送的量清零、周期对齐到 [start, cycleEnd)；
+// v 没有定义的行直接删掉（不置 NULL：置空等于不限，门户、后台、机器人按第一条流量行取值时会显示成不限，审查 1016-A2 阻塞 1）；
+// v 多出来的 (metric, period) 补插新行。返回清零前的旧行（写重置日志用）。
 func (s *Service) rebuildQuotas(ctx context.Context, m model.Subscription, v catalogsvc.Version, start, cycleEnd time.Time) ([]model.QuotaBalance, error) {
 	rows, err := s.repo.QuotasBySubscriptions(ctx, []uuid.UUID{m.ID}, true)
 	if err != nil {
 		return nil, subErr(err)
 	}
 	have := make(map[[2]string]bool, len(rows))
+	var stale []uuid.UUID
 	for _, q := range rows {
-		have[[2]string{q.Metric, q.Period}] = true
-		var limit *int64
-		if def, ok := quotaDef(v, q.Metric, q.Period); ok {
-			limit = def.Limit
+		def, ok := quotaDef(v, q.Metric, q.Period)
+		if !ok {
+			stale = append(stale, q.ID)
+			continue
 		}
+		have[[2]string{q.Metric, q.Period}] = true
 		if err := s.repo.UpdateQuota(ctx, q.ID, map[string]any{
-			"limit_value":  limit,
+			"limit_value":  def.Limit,
 			"consumed":     0,
 			"bonus_value":  0,
 			"period_start": start,
@@ -118,6 +121,9 @@ func (s *Service) rebuildQuotas(ctx context.Context, m model.Subscription, v cat
 		}); err != nil {
 			return nil, subErr(err)
 		}
+	}
+	if err := s.repo.DeleteQuotas(ctx, stale); err != nil {
+		return nil, subErr(err)
 	}
 	var missing []model.QuotaBalance
 	for _, row := range quotaRows(m.ID, v.Quotas, start, cycleEnd) {

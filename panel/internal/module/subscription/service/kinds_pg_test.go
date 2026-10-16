@@ -205,11 +205,8 @@ func TestChangePlanAcrossKindsPG(t *testing.T) {
 				if total.Limit == nil || *total.Limit != 50*gib || total.Consumed != 0 {
 					t.Fatalf("total 行应补上且上限 50 GiB 已用 0，得: %+v", total)
 				}
-				// 原 cycle 行上限置空
-				cycle := quotaOf(t, e, ctx, sub.ID, MetricTraffic, PeriodCycle)
-				if cycle.Limit != nil || cycle.Consumed != 0 {
-					t.Fatalf("原 cycle 行上限应置空 (nil) 已用 0，得: %+v", cycle)
-				}
+				// 原 cycle 行删掉（留着上限为空的行会被显示成不限）
+				assertNoQuota(t, e, ctx, sub.ID, MetricTraffic, PeriodCycle)
 				// 有效期大约 10 天
 				diff := res.PeriodEnd.Sub(got.PeriodStart)
 				if diff < 9*24*time.Hour || diff > 11*24*time.Hour {
@@ -222,11 +219,8 @@ func TestChangePlanAcrossKindsPG(t *testing.T) {
 				if cycle.Limit == nil || *cycle.Limit != 120*gib || cycle.Consumed != 0 {
 					t.Fatalf("cycle 行应补上且上限 120 GiB 已用 0，得: %+v", cycle)
 				}
-				// total 行上限置空
-				total := quotaOf(t, e, ctx, sub.ID, MetricTraffic, PeriodTotal)
-				if total.Limit != nil || total.Consumed != 0 {
-					t.Fatalf("原 total 行上限应置空 (nil) 已用 0，得: %+v", total)
-				}
+				// 原 total 行删掉
+				assertNoQuota(t, e, ctx, sub.ID, MetricTraffic, PeriodTotal)
 			}
 		})
 	}

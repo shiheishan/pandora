@@ -97,6 +97,17 @@ func TestGrantBonusRejectPG(t *testing.T) {
 			want: ErrNotActive,
 		},
 		{
+			// 本期已结束、还没滚动（订阅提前续过，期末在后面）：送进去会被滚动清零，拒绝（审查 1016-A2 应改 2）
+			name: "周期切换中",
+			prep: func(t *testing.T) (uuid.UUID, BonusGrant) {
+				planID, versionID := newPlan(t, e, ctx, quotaSpec{MetricTraffic, PeriodCycle, i64(10 * gib)})
+				sub := provision(t, e, ctx, user, planID, versionID, "")
+				e.exec(t, ctx, `UPDATE quota_balances SET period_start = now() - interval '31 days', period_end = now() - interval '1 minute' WHERE subscription_id = ? AND period = 'cycle'`, sub.ID)
+				return sub.ID, BonusGrant{SubscriptionID: sub.ID, Bytes: gib, Source: BonusGiftCard}
+			},
+			want: ErrBonusPeriodSwitching,
+		},
+		{
 			name: "后台缺 ActorID",
 			prep: func(t *testing.T) (uuid.UUID, BonusGrant) {
 				planID, versionID := newPlan(t, e, ctx, quotaSpec{MetricTraffic, PeriodCycle, i64(10 * gib)})

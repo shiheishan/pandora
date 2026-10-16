@@ -39,7 +39,7 @@ paths:
     订单行是第三种形状：套餐与订阅当时的版本，没有价格档与周期，名字「流量重置 · <套餐名>」。同一订阅同时只许一张未完结的重置单（`orders_one_open_traffic_reset`；建单与报价先查回 `order_pending`，撞索引回 `errOpenReset`）。
     永远按原价收（用户 10-14 定）：不收券。`place` 对重置单带券码直接回 rejection `promosvc.ErrCouponNotForReset`（不调 Evaluate），报价带券码落 `coupon_error`、`discount` 为 0；库约束 `orders_traffic_reset_no_discount`（重置单 `discount_amount = 0` 且 `coupon_id` 为空）兜底。可用余额：余额全额抵扣时应付为 0，照样走 `settleZeroPay` 当场履约（这条路不是只为折扣存在，保留）。
     履约调 `subs.ResetTraffic`（原因 `subsvc.ResetOrder`，备注订单号，`At` 传结算时刻，与 `resetPayable` 判生效用同一个 now；写重置日志、通知节点名单）。佣金照现有口径（非充值、总额 > 0 的收款单计佣），基数即原价。
-    插件事件与叠加单同口径：发 `order.created`、应付为 0（余额全额）的单发 `order.paid`，不发 `subscription.provisioned`。付款后给管理员群组发收款提醒、不给用户发支付成功通知（见 module-notify）。
+    插件事件：发 `order.created`、应付为 0（余额全额）的单发 `order.paid`，不发 `subscription.provisioned`（重置不改到期；叠加单顺延到期，按续期发 `subscription.provisioned`）。付款后给管理员群组发收款提醒、不给用户发支付成功通知（见 module-notify）。
   - 后台开单落点由人选（`planPlacements` / `candidatesFrom` 最多 50 份，生效中优先、新的优先）：同款订阅套餐是续费、同款一次性是叠加（`PlacementStack`），换掉生效中的永不自动默认。
   - 人工开单（`CreateManualOrder`）：原因必填 5–500 字，审计 `order.manual_created`；结算方式收 `grant`（赠送履约）、`pending`、`offline`（同一事务调 `RecordOffline`），不接受 `balance`。
 - 账本与佣金：
