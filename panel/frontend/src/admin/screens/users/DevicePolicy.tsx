@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { formatCount, relativeTime } from '../../../core/format'
 import { navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
@@ -7,6 +7,7 @@ import { useFailure } from '../../actions'
 import { DEVICE_WINDOWS, okSchema, useDevices, useFindUserByEmail, useInvalidateUsers, type DeviceMode, type DeviceWindow, type OnlineDevice } from './api'
 import { devicePolicyBody, nearLimit, pips } from './model'
 import ops from './Ops.module.css'
+import signupCss from './Signup.module.css'
 import css from './Users.module.css'
 
 // 设计稿的「拒绝新设备 / 踢下最早的设备」按后端两种判定改写（契约后台-03 GET v1/devices）
@@ -15,15 +16,28 @@ const MODES: ReadonlyArray<[DeviceMode, string, string]> = [
   ['strict', '超限停止下发', '面板跨节点汇总，超出上限 + 宽容值后停止向该订阅下发'],
 ]
 
-export function DevicePolicy({ now }: { now: Date }) {
+/**
+ * 全局设备数策略与接近/超出上限的订阅（10-16 起放在安全模块）。
+ * props:
+ *   - now: 可选的基准时间；不传时组件内部每分钟自动刷新一次，用于计算「最近在线」相对时间。
+ */
+export function DevicePolicy({ now: propNow }: { now?: Date } = {}) {
+  const [internalNow, setInternalNow] = useState(() => new Date())
+  useEffect(() => {
+    if (propNow) return
+    const timer = setInterval(() => setInternalNow(new Date()), 60_000)
+    return () => clearInterval(timer)
+  }, [propNow])
+  const now = propNow ?? internalNow
+
   const devices = useDevices()
   return (
-    <div className={ops.splitDevices}>
+    <div className={signupCss.deviceStack}>
       <Card
         title={
-          <span className={css.stack}>
+          <span className={ops.cardTitle}>
             全局设备数策略
-            <span className={`${css.small} ${ops.titleNote}`}>单个订阅的上限在用户详情「订阅」标签里覆盖</span>
+            <span className={`${css.small} ${ops.titleNote}`}>单个订阅的上限在用户详情「订阅与设备」里覆盖</span>
           </span>
         }
       >
@@ -80,48 +94,67 @@ function PolicyForm({ mode: saved, grace: savedGrace, window: savedWindow }: { m
     }
   }
 
+  const strict = mode === 'strict'
+  const graceHint = strict ? '在线数超过「上限 + 宽容值」才停止下发（0–5）' : '仅「超限停止下发」时生效'
+
   return (
     <div className={ops.formStack}>
-      <fieldset className={ops.modeSet}>
+      <fieldset className={signupCss.modeSet}>
         <legend className={css.fieldLabel}>超出上限时</legend>
-        {MODES.map(([value, title, desc]) => (
-          <label key={value} className={mode === value ? `${ops.modeOption} ${ops.modeOn}` : ops.modeOption}>
-            <input type="radio" name="device-mode" value={value} checked={mode === value} onChange={() => setMode(value)} />
-            <span className={css.stack}>
-              <span className={ops.groupName}>{title}</span>
-              <span className={css.small}>{desc}</span>
-            </span>
-          </label>
-        ))}
+        <div className={signupCss.modeGrid}>
+          {MODES.map(([value, title, desc]) => (
+            <label key={value} className={mode === value ? `${ops.modeOption} ${ops.modeOn}` : ops.modeOption}>
+              <input
+                type="radio"
+                name="device-mode"
+                value={value}
+                checked={mode === value}
+                onChange={() => {
+                  setMode(value)
+                  setError(null)
+                }}
+              />
+              <span className={css.stack}>
+                <span className={ops.groupName}>{title}</span>
+                <span className={css.small}>{desc}</span>
+              </span>
+            </label>
+          ))}
+        </div>
       </fieldset>
-      {mode === 'strict' && (
+      <div className={signupCss.twoCols}>
         <Input
           label="宽容值"
           mono
           inputMode="numeric"
           value={grace}
+          disabled={busy || !strict}
           error={error ?? undefined}
-          hint="在线数超过「上限 + 宽容值」才停止下发，给换网、重连留余量（0–5）"
+          hint={graceHint}
           onChange={(e) => {
             setGrace(e.target.value)
             setError(null)
           }}
         />
-      )}
-      <Select
-        label="设备识别窗口"
-        value={String(win)}
-        options={DEVICE_WINDOWS.map((m) => ({ value: String(m), label: `${m} 分钟` }))}
-        onChange={(e) => setWin(Number(e.target.value) as DeviceWindow)}
-        hint={
-          mode === 'strict'
-            ? '窗口内出现过的来源 IP 都算在线。窗口越长，换了网络的旧 IP 被多算得越久；超限停止下发的订阅，大约要一个窗口后才恢复。'
-            : '窗口内出现过的来源 IP 都算在线。窗口越长，换了网络的旧 IP 被多算得越久。'
-        }
-      />
-      <Button variant="primary" busy={busy} disabled={!dirty} onClick={() => void save()}>
-        保存策略
-      </Button>
+        <Select
+          label="设备识别窗口"
+          value={String(win)}
+          options={DEVICE_WINDOWS.map((m) => ({ value: String(m), label: `${m} 分钟` }))}
+          disabled={busy}
+          onChange={(e) => setWin(Number(e.target.value) as DeviceWindow)}
+          hint={
+            strict
+              ? '窗口内出现过的来源 IP 都算在线。窗口越长，换了网络的旧 IP 被多算得越久；超限停止下发的订阅，大约要一个窗口后才恢复。'
+              : '窗口内出现过的来源 IP 都算在线。窗口越长，换了网络的旧 IP 被多算得越久。'
+          }
+        />
+      </div>
+      <div className={signupCss.policyFooter}>
+        <span className={signupCss.statusText}>{dirty ? '有未保存的修改' : '当前策略已生效'}</span>
+        <Button variant="primary" busy={busy} disabled={!dirty} onClick={() => void save()}>
+          保存策略
+        </Button>
+      </div>
     </div>
   )
 }
