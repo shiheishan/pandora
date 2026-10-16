@@ -464,13 +464,17 @@ func TestPoolUsageOnSaleAndVersionIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 	u := usage[p1]
-	if u.Plans != 3 {
-		t.Fatalf("Plans 期望 3，得到 %d", u.Plans)
+	// 归档套餐不占池：Plans、PlanNames 只算在售与草稿；Bindings 仍含归档的那条（见 pool_release_pg_test.go）
+	if u.Plans != 2 {
+		t.Fatalf("Plans 期望 2，得到 %d", u.Plans)
 	}
 	names := append([]string(nil), u.PlanNames...)
 	sort.Strings(names)
-	if len(names) != 3 {
+	if len(names) != 2 {
 		t.Fatalf("PlanNames=%v", names)
+	}
+	if len(u.Bindings) != 3 {
+		t.Fatalf("Bindings 期望 3（含归档），得到 %d", len(u.Bindings))
 	}
 
 	var activeBinding *PoolBinding
