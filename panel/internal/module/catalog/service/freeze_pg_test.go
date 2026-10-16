@@ -34,10 +34,10 @@ func publishedWithEntitlementFixture(t *testing.T, e *env, ctx context.Context) 
 	t.Helper()
 	ctx, _ = seedAdmin(t, ctx, e)
 	detail := publishedPlan(t, ctx, e, publishedPlanOpts{Draft: true})
-	if detail.PlanUsage.DraftVersionID == nil {
+	if detail.DraftVersionID == nil {
 		t.Fatal("无草稿版本")
 	}
-	verID := *detail.PlanUsage.DraftVersionID
+	verID := *detail.DraftVersionID
 	if err := e.exec(ctx, `INSERT INTO entitlements (plan_version_id, code, value) VALUES (?, 'feat.a', 'true'::jsonb)`, verID); err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func publishedWithEntitlementFixture(t *testing.T, e *env, ctx context.Context) 
 	if err := e.row(ctx, `SELECT id FROM entitlements WHERE plan_version_id = ? LIMIT 1`, verID).Scan(&eid); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.svc.PublishVersion(ctx, detail.Plan.ID, verID, detail.Plan.RowVersion); err != nil {
+	if _, err := e.svc.PublishVersion(ctx, detail.ID, verID, detail.RowVersion); err != nil {
 		t.Fatal(err)
 	}
 	return verID, eid
@@ -55,10 +55,10 @@ func draftFixture(t *testing.T, e *env, ctx context.Context) (planID, versionID 
 	t.Helper()
 	ctx, _ = seedAdmin(t, ctx, e)
 	detail := publishedPlan(t, ctx, e, publishedPlanOpts{Draft: true})
-	if detail.PlanUsage.DraftVersionID == nil {
+	if detail.DraftVersionID == nil {
 		t.Fatal("无草稿版本")
 	}
-	return detail.Plan.ID, *detail.PlanUsage.DraftVersionID
+	return detail.ID, *detail.DraftVersionID
 }
 
 func TestFreezeTriggerPlanVersionUpdate(t *testing.T) {
@@ -166,8 +166,9 @@ func TestFreezeTriggerDraftVersionUpdateOK(t *testing.T) {
 func TestFreezeTriggerDraftChildInsertOK(t *testing.T) {
 	e, ctx := newEnv(t)
 	_, verID := draftFixture(t, e, ctx)
+	// 草稿已带 traffic.bytes/cycle（唯一键是 版本 + 指标 + 周期），插一条别的周期，证明的是冻结守卫放行草稿。
 	err := execSavepoint(t, ctx, e, "sp1",
-		`INSERT INTO quota_definitions (plan_version_id, metric, limit_value, unit, period) VALUES (?, 'traffic.bytes', 100, 'bytes', 'cycle')`, verID)
+		`INSERT INTO quota_definitions (plan_version_id, metric, limit_value, unit, period) VALUES (?, 'traffic.bytes', 100, 'bytes', 'day')`, verID)
 	if err != nil {
 		t.Fatalf("草稿子表应可插: %v", err)
 	}

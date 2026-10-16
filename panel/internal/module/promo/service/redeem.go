@@ -77,6 +77,19 @@ func (s *Service) Evaluate(ctx context.Context, code string, t Target) (*Applied
 	return s.apply(ctx, c, t)
 }
 
+// Lock 在调用方的建单事务里先把券行锁住（SELECT … FOR UPDATE），order 在插订单之前调。
+// 原因（防 40P01）：订单的 coupon_id 外键检查会对券行加 FOR KEY SHARE；若先插订单、再由 Reserve 把券行锁成 FOR UPDATE，
+// 两个用同一张券并发建单的事务会各拿着 KEY SHARE 等对方放（锁升级死锁）。先锁券，同券建单就在这里排队。
+// 码为空或字符集外时什么都不做；券不存在时也不报错，交给随后的 Evaluate 回 ErrCouponNotFound。
+func (s *Service) Lock(ctx context.Context, code string) error {
+	code = NormalizeCode(code)
+	if code == "" || !validCode(code) {
+		return nil
+	}
+	_, _, err := s.repo.LockCouponByCode(ctx, code)
+	return err
+}
+
 // Reserve 在下单事务里占用一张券。
 func (s *Service) Reserve(ctx context.Context, code string, t Target, o OrderRef) (*Applied, error) {
 	code = NormalizeCode(code)

@@ -41,8 +41,8 @@ type trafficAllowance struct {
 type prorationBasis struct {
 	Value decimal.Decimal // 本周期付费合计（元）；本周期没有付费单时为 0
 	// OneTime 为 true 表示原订阅是一次性套餐；Permanent 为一次性且期末是永久哨兵
-	OneTime     bool
-	Permanent   bool
+	OneTime   bool
+	Permanent bool
 	// PaidSpan 是本周期付费单买下的总时长（一次性按各付费单价格的有效天数相加）；礼品卡、加时长卡送的不算，
 	// 折算时付费的先用、送的最后用，送的那段不折钱
 	PaidSpan    time.Duration

@@ -15,6 +15,22 @@ type rtFakePoolGuard struct{}
 func (rtFakePoolGuard) LockAssignablePools(context.Context, []uuid.UUID) error { return nil }
 func (rtFakePoolGuard) MarkUsersChanged(context.Context)                       {}
 
+// expectCreatedAndPublished 认领新建并发布一个套餐的推送。CreatePlan 带发布是一个事务，
+// 同一事务里同一行只发第一次登记的那条（去重键 topic + id），所以发布时对版本与套餐行的 UPDATE
+// 被同事务里先登记的 INSERT 吸收：公共频道只有 plans、plan_versions、prices 三条 INSERT，门户据此重拉。
+func expectCreatedAndPublished(t *testing.T, spy *rtSpy, planID uuid.UUID) {
+	t.Helper()
+	spy.expect(t, realtime.ChannelPublic(), realtime.TopicPlans, map[string]any{
+		"table": rtTablePlans, "op": realtime.OpInsert, "id": planID.String(),
+	})
+	spy.expect(t, realtime.ChannelPublic(), realtime.TopicPlans, map[string]any{
+		"table": rtTableVersions, "op": realtime.OpInsert,
+	})
+	spy.expect(t, realtime.ChannelPublic(), realtime.TopicPlans, map[string]any{
+		"table": rtTablePrices, "op": realtime.OpInsert,
+	})
+}
+
 func TestRealtimeCatalogCreatePlan(t *testing.T) {
 	e, ctx := newEnvCommitted(t)
 	pub, spy := newRTSpy(t, realtime.ChannelPublic(), realtime.ChannelAdmin())
@@ -23,21 +39,7 @@ func TestRealtimeCatalogCreatePlan(t *testing.T) {
 	ctx, _ = seedAdmin(t, ctx, e)
 	p := publishedPlan(t, ctx, e, publishedPlanOpts{})
 
-	spy.expect(t, realtime.ChannelPublic(), realtime.TopicPlans, map[string]any{
-		"table": rtTablePlans, "op": realtime.OpInsert, "id": p.ID.String(),
-	})
-	spy.expect(t, realtime.ChannelPublic(), realtime.TopicPlans, map[string]any{
-		"table": rtTableVersions, "op": realtime.OpInsert,
-	})
-	spy.expect(t, realtime.ChannelPublic(), realtime.TopicPlans, map[string]any{
-		"table": rtTablePrices, "op": realtime.OpInsert,
-	})
-	spy.expect(t, realtime.ChannelPublic(), realtime.TopicPlans, map[string]any{
-		"table": rtTableVersions, "op": realtime.OpUpdate,
-	})
-	spy.expect(t, realtime.ChannelPublic(), realtime.TopicPlans, map[string]any{
-		"table": rtTablePlans, "op": realtime.OpUpdate, "id": p.ID.String(),
-	})
+	expectCreatedAndPublished(t, spy, p.ID)
 	spy.expect(t, realtime.ChannelAdmin(), realtime.TopicPlans, map[string]any{
 		"table": rtTablePlans, "op": realtime.OpInsert, "id": p.ID.String(),
 	})
@@ -52,22 +54,7 @@ func TestRealtimeCatalogUpdatePricesAndPools(t *testing.T) {
 	ctx, _ = seedAdmin(t, ctx, e)
 	p := publishedPlan(t, ctx, e, publishedPlanOpts{})
 
-	// 消费建套餐并发布产生的推送（顺序与 CreatePlan+publishTx 一致）
-	spy.expect(t, realtime.ChannelPublic(), realtime.TopicPlans, map[string]any{
-		"table": rtTablePlans, "op": realtime.OpInsert, "id": p.ID.String(),
-	})
-	spy.expect(t, realtime.ChannelPublic(), realtime.TopicPlans, map[string]any{
-		"table": rtTableVersions, "op": realtime.OpInsert,
-	})
-	spy.expect(t, realtime.ChannelPublic(), realtime.TopicPlans, map[string]any{
-		"table": rtTablePrices, "op": realtime.OpInsert,
-	})
-	spy.expect(t, realtime.ChannelPublic(), realtime.TopicPlans, map[string]any{
-		"table": rtTableVersions, "op": realtime.OpUpdate,
-	})
-	spy.expect(t, realtime.ChannelPublic(), realtime.TopicPlans, map[string]any{
-		"table": rtTablePlans, "op": realtime.OpUpdate, "id": p.ID.String(),
-	})
+	expectCreatedAndPublished(t, spy, p.ID)
 
 	// 改价触发 plans.changed
 	amt := decimal.RequireFromString("19.90")
@@ -110,21 +97,7 @@ func TestRealtimeCatalogArchivePlan(t *testing.T) {
 	ctx, _ = seedAdmin(t, ctx, e)
 	p := publishedPlan(t, ctx, e, publishedPlanOpts{})
 
-	spy.expect(t, realtime.ChannelPublic(), realtime.TopicPlans, map[string]any{
-		"table": rtTablePlans, "op": realtime.OpInsert, "id": p.ID.String(),
-	})
-	spy.expect(t, realtime.ChannelPublic(), realtime.TopicPlans, map[string]any{
-		"table": rtTableVersions, "op": realtime.OpInsert,
-	})
-	spy.expect(t, realtime.ChannelPublic(), realtime.TopicPlans, map[string]any{
-		"table": rtTablePrices, "op": realtime.OpInsert,
-	})
-	spy.expect(t, realtime.ChannelPublic(), realtime.TopicPlans, map[string]any{
-		"table": rtTableVersions, "op": realtime.OpUpdate,
-	})
-	spy.expect(t, realtime.ChannelPublic(), realtime.TopicPlans, map[string]any{
-		"table": rtTablePlans, "op": realtime.OpUpdate, "id": p.ID.String(),
-	})
+	expectCreatedAndPublished(t, spy, p.ID)
 
 	_, err := e.svc.ArchivePlan(ctx, p.ID, p.RowVersion)
 	if err != nil {

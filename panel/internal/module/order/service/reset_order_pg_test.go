@@ -247,18 +247,18 @@ func TestResetOrderCancelReleases(t *testing.T) {
 	}
 }
 
-// TestResetOrderRejectsCoupon 重置单不收任何券（用户 10-14 定）：限定周期的与不限的都拒。
+// TestResetOrderRejectsCoupon 重置单不收任何券（用户 10-14 定）：限定本套餐的与不限套餐的都拒（券只按套餐限定）。
 func TestResetOrderRejectsCoupon(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	sub, planID, _, _ := e.liveSub(t, ctx, user, 3000)
 	e.setResetPrice(t, ctx, planID, 800)
 
-	// 限 month 的券
+	// 限定本套餐的券（对新购、续费本该可用）
 	cid := e.mkCoupon(t, ctx, couponCode(), 200)
-	e.mustExec(t, ctx, `INSERT INTO coupon_intervals (coupon_id, billing_interval) VALUES (?, 'month')`, cid)
+	e.mustExec(t, ctx, `INSERT INTO coupon_plans (coupon_id, plan_id) VALUES (?, ?)`, cid, planID)
 	limited := e.strCol(t, ctx, `SELECT code FROM coupons WHERE id = ?`, cid)
-	// 不限周期的券
+	// 不限套餐的券
 	open := couponCode()
 	e.mkCoupon(t, ctx, open, 200)
 
