@@ -27,8 +27,8 @@ func checkCouponMoney(c *model.Coupon) error {
 	return checkMoney(vals...)
 }
 
-// InsertCouponIfAbsent 插入一张券及其限定的套餐与计费周期，券码已存在时跳过（ON CONFLICT DO NOTHING，不让事务出错）；返回是否插入。
-func (r *Repo) InsertCouponIfAbsent(ctx context.Context, c *model.Coupon, planIDs []uuid.UUID, intervals []string) (bool, error) {
+// InsertCouponIfAbsent 插入一张券及其限定的套餐，券码已存在时跳过（ON CONFLICT DO NOTHING，不让事务出错）；返回是否插入。
+func (r *Repo) InsertCouponIfAbsent(ctx context.Context, c *model.Coupon, planIDs []uuid.UUID) (bool, error) {
 	if err := checkCouponMoney(c); err != nil {
 		return false, err
 	}
@@ -51,22 +51,13 @@ func (r *Repo) InsertCouponIfAbsent(ctx context.Context, c *model.Coupon, planID
 			return false, mapErr(err)
 		}
 	}
-	if len(intervals) > 0 {
-		rows := make([]model.CouponInterval, len(intervals))
-		for i, iv := range intervals {
-			rows[i] = model.CouponInterval{CouponID: c.ID, BillingInterval: iv}
-		}
-		if err := r.d.Conn(ctx).Create(&rows).Error; err != nil {
-			return false, mapErr(err)
-		}
-	}
 	return true, nil
 }
 
 // InsertCouponsIfAbsent 用一条语句插入一批券码相同规格的券（tmpl 提供除 code 外的全部字段）及其限定的套餐：
 // 撞已有券码的跳过（ON CONFLICT DO NOTHING，不让事务出错），返回真正插入的券码（顺序不定）。
 // 券与 coupon_plans 在同一条语句里写（数据修改 CTE），往返次数与张数无关。
-func (r *Repo) InsertCouponsIfAbsent(ctx context.Context, tmpl *model.Coupon, codes []string, planIDs []uuid.UUID, intervals []string) ([]string, error) {
+func (r *Repo) InsertCouponsIfAbsent(ctx context.Context, tmpl *model.Coupon, codes []string, planIDs []uuid.UUID) ([]string, error) {
 	if len(codes) == 0 {
 		return []string{}, nil
 	}
@@ -97,9 +88,9 @@ func (r *Repo) InsertCouponsIfAbsent(ctx context.Context, tmpl *model.Coupon, co
 
 	const sql = `
 WITH ins AS (
-  INSERT INTO coupons (code, name, amount_off, percent_off_bp, currency, max_discount, min_order_amount,
+  INSERT INTO coupons (code, name, amount_off, percent_off_bp, max_discount, min_order_amount,
                        max_redemptions, max_redemptions_per_user, user_group_id, valid_from, valid_until, status, created_by)
-  SELECT c, CAST(? AS text), CAST(? AS numeric), CAST(? AS integer), CAST(? AS text), CAST(? AS numeric),
+  SELECT c, CAST(? AS text), CAST(? AS numeric), CAST(? AS integer), CAST(? AS numeric),
          CAST(? AS numeric), CAST(? AS integer), CAST(? AS integer), CAST(? AS uuid),
          CAST(? AS timestamptz), CAST(? AS timestamptz), CAST(? AS text), CAST(? AS uuid)
     FROM unnest(CAST(? AS text[])) AS c
@@ -108,9 +99,6 @@ WITH ins AS (
 ), plans AS (
   INSERT INTO coupon_plans (coupon_id, plan_id)
   SELECT ins.id, p FROM ins CROSS JOIN unnest(CAST(? AS uuid[])) AS p
-), intervals AS (
-  INSERT INTO coupon_intervals (coupon_id, billing_interval)
-  SELECT ins.id, v FROM ins CROSS JOIN unnest(CAST(? AS text[])) AS v
 )
 SELECT code FROM ins`
 
@@ -118,7 +106,6 @@ SELECT code FROM ins`
 		tmpl.Name,
 		amountOff,
 		percentOffBP,
-		tmpl.Currency,
 		maxDiscount,
 		tmpl.MinOrderAmount,
 		maxRedemptions,
@@ -130,7 +117,6 @@ SELECT code FROM ins`
 		createdBy,
 		textArrayLiteral(codes),
 		uuidArray(planIDs),
-		textArrayLiteral(intervals),
 	).Rows()
 	if err != nil {
 		return nil, mapErr(err)
@@ -171,30 +157,6 @@ func (r *Repo) PlanIDsByCoupons(ctx context.Context, couponIDs []uuid.UUID) (map
 			return nil, err
 		}
 		out[cid] = append(out[cid], pid)
-	}
-	return out, rows.Err()
-}
-
-// IntervalsByCoupons 批量取券限定的计费周期（一条 SQL）；没有限定的券不在结果里。
-func (r *Repo) IntervalsByCoupons(ctx context.Context, couponIDs []uuid.UUID) (map[uuid.UUID][]string, error) {
-	out := make(map[uuid.UUID][]string, len(couponIDs))
-	if len(couponIDs) == 0 {
-		return out, nil
-	}
-	rows, err := r.d.Conn(ctx).Raw(
-		"SELECT coupon_id, billing_interval FROM coupon_intervals WHERE coupon_id IN ? ORDER BY coupon_id, billing_interval", couponIDs,
-	).Rows()
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var cid uuid.UUID
-		var iv string
-		if err := rows.Scan(&cid, &iv); err != nil {
-			return nil, err
-		}
-		out[cid] = append(out[cid], iv)
 	}
 	return out, rows.Err()
 }

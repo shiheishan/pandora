@@ -20,11 +20,7 @@ func (s *Service) CreateCoupon(ctx context.Context, code string, spec Spec) (uui
 	if err := validateCode(code); err != nil {
 		return uuid.Nil, "", err
 	}
-	spec, err := s.withSiteCurrency(ctx, spec)
-	if err != nil {
-		return uuid.Nil, "", err
-	}
-	spec, err = validateSpec(spec)
+	spec, err := validateSpec(spec)
 	if err != nil {
 		return uuid.Nil, "", err
 	}
@@ -38,7 +34,7 @@ func (s *Service) CreateCoupon(ctx context.Context, code string, spec Spec) (uui
 	var id uuid.UUID
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
 		// ON CONFLICT DO NOTHING 判重：撞码不让调用方的事务进入出错状态
-		inserted, err := s.repo.InsertCouponIfAbsent(ctx, &c, spec.PlanIDs, spec.Intervals)
+		inserted, err := s.repo.InsertCouponIfAbsent(ctx, &c, spec.PlanIDs)
 		if err != nil {
 			if errors.Is(err, repo.ErrPlanGone) {
 				return errs.Newf(errs.Conflict, "套餐已变更，请刷新后重试")
@@ -78,10 +74,6 @@ func (s *Service) GenerateCoupons(ctx context.Context, prefix string, count int,
 	if strings.TrimSpace(spec.Name) == "" {
 		return nil, errs.Invalid(map[string]string{"name": "批量生成必须填活动名称，之后要靠它把整批券找回来"})
 	}
-	spec, err = s.withSiteCurrency(ctx, spec)
-	if err != nil {
-		return nil, err
-	}
 	spec, err = validateSpec(spec)
 	if err != nil {
 		return nil, err
@@ -112,7 +104,7 @@ func (s *Service) GenerateCoupons(ctx context.Context, prefix string, count int,
 				used[gen] = struct{}{}
 				batch = append(batch, gen)
 			}
-			inserted, err := s.repo.InsertCouponsIfAbsent(ctx, &tmpl, batch, spec.PlanIDs, spec.Intervals)
+			inserted, err := s.repo.InsertCouponsIfAbsent(ctx, &tmpl, batch, spec.PlanIDs)
 			if err != nil {
 				if errors.Is(err, repo.ErrPlanGone) {
 					return errs.Newf(errs.Conflict, "套餐已变更，请刷新后重试")
@@ -212,28 +204,17 @@ func (s *Service) ListCoupons(ctx context.Context, f ListFilter, limit, offset i
 	if err != nil {
 		return nil, 0, err
 	}
-	intervals, err := s.repo.IntervalsByCoupons(ctx, ids)
-	if err != nil {
-		return nil, 0, err
-	}
 	out := make([]Coupon, 0, len(rows))
 	for _, row := range rows {
 		planIDs := plans[row.ID]
 		if planIDs == nil {
 			planIDs = []uuid.UUID{}
 		}
-		ivs := intervals[row.ID]
-		if ivs == nil {
-			ivs = []string{}
-		} else {
-			ivs = intervalsInBillingOrder(ivs)
-		}
 		out = append(out, Coupon{
 			ID:              row.ID,
 			Code:            row.Code,
 			Name:            row.Name,
 			Face:            faceOf(row.Coupon),
-			Currency:        row.Currency,
 			MaxDiscount:     row.MaxDiscount,
 			MinOrder:        row.MinOrderAmount,
 			MaxRedemptions:  row.MaxRedemptions,
@@ -241,7 +222,6 @@ func (s *Service) ListCoupons(ctx context.Context, f ListFilter, limit, offset i
 			Redeemed:        row.RedeemedCount,
 			Reserved:        row.ReservedCount,
 			PlanIDs:         planIDs,
-			Intervals:       ivs,
 			UserGroupID:     row.UserGroupID,
 			ValidFrom:       row.ValidFrom,
 			ValidUntil:      row.ValidUntil,
@@ -290,7 +270,6 @@ func (s *Service) Redemptions(ctx context.Context, id uuid.UUID) ([]Redemption, 
 			Email:    emails[row.UserID],
 			OrderNo:  row.OrderNo,
 			Discount: row.DiscountAmount,
-			Currency: row.Currency,
 			At:       row.CreatedAt,
 			Released: row.Status == RedemptionReleased,
 		})
@@ -302,7 +281,6 @@ func couponFromSpec(code string, spec Spec) model.Coupon {
 	c := model.Coupon{
 		Code:                  code,
 		Name:                  spec.Name,
-		Currency:              spec.Currency,
 		MaxDiscount:           spec.MaxDiscount,
 		MinOrderAmount:        spec.MinOrder,
 		MaxRedemptions:        spec.MaxRedemptions,
@@ -325,8 +303,7 @@ func couponFromSpec(code string, spec Spec) model.Coupon {
 
 func auditFace(code string, spec Spec) map[string]any {
 	m := map[string]any{
-		"type":      spec.Face.Kind,
-		"intervals": spec.Intervals,
+		"type": spec.Face.Kind,
 	}
 	if code != "" {
 		m["code"] = code
@@ -337,19 +314,4 @@ func auditFace(code string, spec Spec) map[string]any {
 		m["value"] = spec.Face.AmountOff.StringFixed(2)
 	}
 	return m
-}
-
-// intervalsInBillingOrder 按 BillingIntervals 顺序输出已限定的周期。
-func intervalsInBillingOrder(ivs []string) []string {
-	set := make(map[string]struct{}, len(ivs))
-	for _, iv := range ivs {
-		set[iv] = struct{}{}
-	}
-	out := make([]string, 0, len(set))
-	for _, bi := range BillingIntervals {
-		if _, ok := set[bi]; ok {
-			out = append(out, bi)
-		}
-	}
-	return out
 }

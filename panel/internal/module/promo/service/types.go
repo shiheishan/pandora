@@ -49,9 +49,6 @@ const (
 	RedemptionsLimit = 200
 )
 
-// BillingIntervals 是券可限定的计费周期（与 catalog 价格档 billing_interval 的枚举、00046 coupon_intervals 的 CHECK 一致）。
-var BillingIntervals = []string{"day", "week", "month", "quarter", "year", "one_time"}
-
 // Face 是券面：Kind 为 percent 时 PercentBP 有效（万分比，1–10000），为 fixed 时 AmountOff 有效（元）。
 type Face struct {
 	Kind      string
@@ -59,17 +56,15 @@ type Face struct {
 	AmountOff decimal.Decimal
 }
 
-// Spec 是后台新建券的规格，单张创建与批量生成共用；handler 已做缺省值（币种 CNY、每人 1 次、名称缺省为码）。
+// Spec 是后台新建券的规格，单张创建与批量生成共用；handler 已做缺省值（每人 1 次、名称缺省为码）。
 type Spec struct {
 	Name           string
 	Face           Face
-	Currency       string
 	MaxDiscount    *decimal.Decimal // 只用于百分比券；nil 为不封顶
 	MinOrder       decimal.Decimal  // 0 为没有门槛
 	MaxRedemptions *int             // nil 为不限
 	MaxPerUser     int
 	PlanIDs        []uuid.UUID // 空为全部套餐
-	Intervals      []string    // 空为不限周期
 	UserGroupID    *uuid.UUID  // nil 为不限
 	ValidFrom      *time.Time
 	ValidUntil     *time.Time
@@ -87,7 +82,6 @@ type Coupon struct {
 	Code            string
 	Name            string
 	Face            Face
-	Currency        string
 	MaxDiscount     *decimal.Decimal
 	MinOrder        decimal.Decimal
 	MaxRedemptions  *int
@@ -95,7 +89,6 @@ type Coupon struct {
 	Redeemed        int
 	Reserved        int
 	PlanIDs         []uuid.UUID
-	Intervals       []string // 永不为 nil
 	UserGroupID     *uuid.UUID
 	ValidFrom       *time.Time
 	ValidUntil      *time.Time
@@ -110,17 +103,14 @@ type Redemption struct {
 	Email    string // 经 UserDirectory 批量取；取不到为空串
 	OrderNo  string
 	Discount decimal.Decimal
-	Currency string
 	At       time.Time
 	Released bool
 }
 
-// Target 是一次试算或占用的对象：谁、买哪个套餐、什么币种、小计多少。
+// Target 是一次试算或占用的对象：谁、买哪个套餐、小计多少。
 type Target struct {
 	UserID   uuid.UUID
-	PlanID   *uuid.UUID // 流量包订单为 nil：限定了套餐的券对它不适用
-	Interval *string    // 这一单价格档的计费周期；流量包、流量重置单为 nil：限定了周期的券对它不适用
-	Currency string
+	PlanID   *uuid.UUID      // 没有套餐时为 nil：限定了套餐的券对它不适用
 	Subtotal decimal.Decimal // 已是 2 位小数的非负金额
 }
 
@@ -138,11 +128,10 @@ type OrderRef struct {
 	No string
 }
 
-// PreviewItem 是门户试算的对象：{PlanID, PriceID} 试算套餐，或 {PackID} 试算流量包，二选一（handler 已校验）。
+// PreviewItem 是门户试算的对象：{PlanID, PriceID} 试算套餐（两者必填，handler 已校验）。
 type PreviewItem struct {
-	PlanID  *uuid.UUID
-	PriceID *uuid.UUID
-	PackID  *uuid.UUID
+	PlanID  uuid.UUID
+	PriceID uuid.UUID
 }
 
 // Preview 是门户试算的结果；没填码时 Applied 为 nil、Discount 为 0。
@@ -150,7 +139,6 @@ type Preview struct {
 	Subtotal decimal.Decimal
 	Discount decimal.Decimal
 	Payable  decimal.Decimal
-	Currency string
 	Applied  *Applied
 }
 
@@ -158,10 +146,8 @@ type Preview struct {
 type CatalogReader interface {
 	// MissingPlans 返回 ids 里不存在的套餐 ID（已下架、已归档的也算存在）；全部存在时返回空切片。
 	MissingPlans(ctx context.Context, ids []uuid.UUID) ([]uuid.UUID, error)
-	// PriceSubtotal 取在售价格的币种、金额与计费周期（billing_interval），一次 catalog 查询；价格必须属于 planID 这个套餐，不在售或对不上回 errs.NotFound。
-	PriceSubtotal(ctx context.Context, planID, priceID uuid.UUID) (currency string, amount decimal.Decimal, interval string, err error)
-	// PackSubtotal 取在售流量包的币种与金额；不在售回 errs.NotFound。
-	PackSubtotal(ctx context.Context, packID uuid.UUID) (currency string, amount decimal.Decimal, err error)
+	// PriceSubtotal 取在售价格的金额，一次 catalog 查询；价格必须属于 planID 这个套餐，不在售或对不上回 errs.NotFound。
+	PriceSubtotal(ctx context.Context, planID, priceID uuid.UUID) (decimal.Decimal, error)
 }
 
 // UserDirectory 由 identity 实现，启动装配时经 UseUsers 注入。
@@ -173,16 +159,15 @@ type UserDirectory interface {
 }
 
 // 用户输入的券码不能用时的错误（报价时 order 把它们的文案放进 coupon_error，见 IsRejection）。
-// 「不存在」「还没开始」「币种不对」「已停用」对外是同一句：提前说「明天生效」等于泄露未公布的活动。
+// 「不存在」「还没开始」「已停用」对外是同一句：提前说「明天生效」等于泄露未公布的活动。
 var (
-	ErrCouponNotFound     = errs.Newf(errs.ValidationFailed, "优惠码不存在或已失效")
-	ErrCouponExpired      = errs.Newf(errs.ValidationFailed, "优惠码已过期")
-	ErrCouponUsedUp       = errs.Newf(errs.Conflict, "优惠码已达使用上限")
-	ErrCouponUserLimit    = errs.Newf(errs.Conflict, "你已使用过这个优惠码")
-	ErrCouponMinAmount    = errs.Newf(errs.ValidationFailed, "订单金额未达到优惠码的使用门槛")
-	ErrCouponNotForPlan   = errs.Newf(errs.ValidationFailed, "这个优惠码不适用于所选套餐")
-	ErrCouponNotForPeriod = errs.Newf(errs.ValidationFailed, "这个优惠码不适用于所选时长")
-	// ErrCouponNotForReset 是流量重置单带了券码：重置单永远按原价收，不吃券也不吃会员折扣（用户 10-14 定）。
+	ErrCouponNotFound   = errs.Newf(errs.ValidationFailed, "优惠码不存在或已失效")
+	ErrCouponExpired    = errs.Newf(errs.ValidationFailed, "优惠码已过期")
+	ErrCouponUsedUp     = errs.Newf(errs.Conflict, "优惠码已达使用上限")
+	ErrCouponUserLimit  = errs.Newf(errs.Conflict, "你已使用过这个优惠码")
+	ErrCouponMinAmount  = errs.Newf(errs.ValidationFailed, "订单金额未达到优惠码的使用门槛")
+	ErrCouponNotForPlan = errs.Newf(errs.ValidationFailed, "这个优惠码不适用于所选套餐")
+	// ErrCouponNotForReset 是流量重置单带了券码：重置单永远按原价收，不吃券（用户 10-14 定）。
 	// promo 自己不判断，由 order 在报价与建单时对重置单直接回它；列在 rejections 里，报价落到 coupon_error。
 	ErrCouponNotForReset = errs.Newf(errs.ValidationFailed, "流量重置不能使用优惠码")
 	// 不说破「你不在某个组里」，只让他知道这码他用不了。
@@ -201,7 +186,7 @@ var (
 
 var rejections = []error{
 	ErrCouponNotFound, ErrCouponExpired, ErrCouponUsedUp, ErrCouponUserLimit,
-	ErrCouponMinAmount, ErrCouponNotForPlan, ErrCouponNotForPeriod, ErrCouponNotForUser,
+	ErrCouponMinAmount, ErrCouponNotForPlan, ErrCouponNotForUser,
 	ErrCouponNotForReset,
 }
 
