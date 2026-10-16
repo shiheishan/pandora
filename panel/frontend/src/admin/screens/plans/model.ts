@@ -1,14 +1,14 @@
-import { formatBytes, formatDateTime, formatMoney } from '../../../core/format'
-import type { BillingInterval, Currency, PlanDetail, PlanRow, PlanStatus, PriceRow, Quota, ResetStrategy, TrafficPack, VersionRow, Visibility } from './api'
+import { formatBytes, formatCount, formatDateTime, formatMoney } from '../../../core/format'
+import type { PlanDetail, PlanKind, PlanReset, PlanRow, PlanStatus, PriceRow, VersionRow, Visibility } from './schemas'
 
-type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'neutral'
-type Fields = Record<string, string>
+export type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'neutral'
+export type Fields = Record<string, string>
 
-/** 契约：GB = 字节 ÷ 1024³（与 catalog/service BytesPerGB = 1<<30 一致） */
+/** 契约：GB = 字节 ÷ 1024³（与后端一致） */
 export const GiB = 1024 ** 3
 
 // ===========================================================================
-// 状态与文案
+// 常量与文案
 // ===========================================================================
 export const PLAN_STATUS_VIEW: Record<PlanStatus, { label: string; tone: Tone }> = {
   draft: { label: '草稿', tone: 'warn' },
@@ -16,72 +16,56 @@ export const PLAN_STATUS_VIEW: Record<PlanStatus, { label: string; tone: Tone }>
   archived: { label: '已归档', tone: 'neutral' },
 }
 
+export const KIND_LABELS: Record<PlanKind, string> = {
+  subscription: '订阅套餐',
+  one_time: '一次性套餐',
+}
+
 export const VISIBILITY_LABELS: Record<Visibility, string> = {
   public: '所有人可见',
   authenticated: '登录用户可见',
   group: '指定用户组可见',
-  invite_only: '仅邀请（不能发布）',
   hidden: '隐藏',
 }
 
-export const RESET_LABELS: Record<ResetStrategy, string> = {
-  billing_cycle: '按账单周期重置',
-  natural_month: '每月 1 日重置',
-  fixed_day: '每月固定日重置',
-  never: '不重置',
+export type TierKey = 'month:1' | 'month:3' | 'month:6' | 'year:1'
+
+export interface Tier {
+  key: TierKey
+  interval: string
+  count: number
+  label: string
+  short: string
+  months: number
 }
 
-/** 版本状态：草稿 / 当前发布（id 等于 current_version_id）/ 历史 */
-export function versionView(v: Pick<VersionRow, 'id' | 'status'>, currentId: string | null): { label: string; tone: Tone } {
-  if (v.status === 'draft') return { label: '草稿', tone: 'warn' }
-  if (v.status === 'published' && v.id === currentId) return { label: '当前发布', tone: 'ok' }
-  return { label: '历史', tone: 'neutral' }
+/** 订阅套餐的四档周期价，顺序即展示顺序 */
+export const TIERS: readonly Tier[] = [
+  { key: 'month:1', interval: 'month', count: 1, label: '每月', short: '月', months: 1 },
+  { key: 'month:3', interval: 'month', count: 3, label: '每季度', short: '季', months: 3 },
+  { key: 'month:6', interval: 'month', count: 6, label: '每半年', short: '半年', months: 6 },
+  { key: 'year:1', interval: 'year', count: 1, label: '每年', short: '年', months: 12 },
+]
+
+/** (interval, count) 是四档之一时给出它的 key，否则 null */
+export function tierOf(interval: string, count: number): TierKey | null {
+  return TIERS.find((t) => t.interval === interval && t.count === count)?.key ?? null
 }
 
-const day = (at: string) => formatDateTime(at).slice(0, 10)
+const PERIOD_UNITS: Record<string, string> = { day: '天', week: '周', month: '个月', quarter: '个季度', year: '年' }
 
-/** 设计稿的「草稿 · 周敏 · 09-22」「2026-08-01 发布」 */
-export function versionNote(v: Pick<VersionRow, 'status' | 'frozen_at' | 'created_at' | 'created_by_email'>): string {
-  if (v.status === 'draft') return ['草稿', v.created_by_email, day(v.created_at).slice(5)].filter(Boolean).join(' · ')
-  return v.frozen_at ? `${day(v.frozen_at)} 发布` : day(v.created_at)
-}
-
-// ===========================================================================
-// 周期：设计稿五档 ↔ (billing_interval, interval_count)；季付就是 month×3
-// ===========================================================================
-export const PERIOD_OPTIONS = [
-  { value: 'month:1', label: '每月' },
-  { value: 'month:3', label: '每季度' },
-  { value: 'month:6', label: '每半年' },
-  { value: 'year:1', label: '每年' },
-  { value: 'one_time:1', label: '一次性' },
-] as const
-
-const UNIT_LABELS: Record<BillingInterval, string> = { day: '天', week: '周', month: '个月', quarter: '个季度', year: '年', one_time: '' }
-export const CUSTOM_UNITS = [
-  { value: 'day', label: '天' },
-  { value: 'week', label: '周' },
-  { value: 'month', label: '个月' },
-  { value: 'year', label: '年' },
-] as const
-
-const periodKey = (interval: BillingInterval, count: number) => `${interval}:${count}`
-
-export function parsePeriod(key: string): { billing_interval: BillingInterval; interval_count: number } {
-  const [interval, n] = key.split(':')
-  return { billing_interval: interval as BillingInterval, interval_count: Number(n) }
-}
-
-export function periodLabel(interval: BillingInterval, count: number): string {
+/** 周期文案：四档给设计稿的 label，其它（订单页会传旧周期）写「每 N 个单位」 */
+export function periodLabel(interval: string, count: number): string {
   if (interval === 'one_time') return '一次性'
-  if (interval === 'quarter' && count === 1) return '每季度'
-  const preset = PERIOD_OPTIONS.find((o) => o.value === periodKey(interval, count))
-  if (preset) return preset.label
-  return count === 1 && interval !== 'month' ? `每${UNIT_LABELS[interval]}` : `每 ${count} ${UNIT_LABELS[interval]}`
+  const key = tierOf(interval, count)
+  if (key) return TIERS.find((t) => t.key === key)!.label
+  const unit = PERIOD_UNITS[interval] ?? interval
+  if (count === 1 && interval !== 'month') return `每${unit}`
+  return `每 ${count} ${unit}`
 }
 
 // ===========================================================================
-// 数字输入
+// 输入解析
 // ===========================================================================
 /** 元 → 分：非负、最多两位小数，「¥」前缀可有可无；不合法为 null */
 export function parseAmount(input: string): number | null {
@@ -92,598 +76,718 @@ export function parseAmount(input: string): number | null {
   return Number.isSafeInteger(cents) ? cents : null
 }
 
-/** 非负整数；空串为 null，不合法为 NaN */
-function parseCount(input: string): number | null {
+/** 去空白后：空串 → null（不限）；正整数且 ≤ max → 数字；否则 'bad' */
+export function parseOptionalInt(input: string, max: number): number | null | 'bad' {
   const text = input.trim()
   if (text === '') return null
-  return /^\d+$/.test(text) && Number.isSafeInteger(Number(text)) ? Number(text) : Number.NaN
+  if (!/^\d+$/.test(text)) return 'bad'
+  const n = Number(text)
+  if (!Number.isSafeInteger(n) || n < 1 || n > max) return 'bad'
+  return n
 }
 
-const isBad = (n: number | null) => n !== null && Number.isNaN(n)
+/** 流量展示：null = 不限 */
+export function formatTraffic(bytes: number | null): string {
+  return bytes === null ? '不限' : formatBytes(bytes)
+}
+
+/** 表单初值：null → ''；整除 GiB 时整数文本，否则至多两位小数去尾零 */
+export function bytesToGb(bytes: number | null): string {
+  if (bytes === null) return ''
+  if (bytes % GiB === 0) return String(bytes / GiB)
+  const whole = Math.floor(bytes / GiB)
+  let frac = Math.round(((bytes % GiB) * 100) / GiB)
+  if (frac === 100) {
+    frac = 0
+    return String(whole + 1)
+  }
+  return frac === 0 ? String(whole) : `${whole}.${String(frac).padStart(2, '0').replace(/0+$/, '')}`
+}
+
+/** kbps → Mbps 表单初值；null → '' */
+export function kbpsToMbps(kbps: number | null): string {
+  return kbps === null ? '' : String(kbps / 1000)
+}
+
+/** 限速文案：null = 不限速 */
+export function throttleLabel(kbps: number | null): string {
+  return kbps === null ? '不限速' : `${kbps / 1000} Mbps`
+}
+
+/** 分 → 元的文本，去掉多余的零（重置价、一次性价的表单初值） */
+const yuanText = (cents: number): string => {
+  const whole = Math.floor(cents / 100)
+  const frac = String(cents % 100).padStart(2, '0').replace(/0+$/, '')
+  return frac ? `${whole}.${frac}` : String(whole)
+}
+
+const strOrNull = (n: number | null): string => (n === null ? '' : String(n))
 
 // ===========================================================================
-// 列表卡片与详情事实
+// 列表
 // ===========================================================================
-/** 起价：在售价里优先公开价、优先 CNY，取最低一档 */
-export function priceFrom(prices: readonly PriceRow[]): string {
-  const live = prices.filter((p) => p.status === 'active')
-  const pool = live.filter((p) => p.user_group_id === null)
-  const pick = (pool.length ? pool : live).filter((p, _, all) => (all.some((x) => x.currency === 'CNY') ? p.currency === 'CNY' : true))
-  if (!pick.length) return '无价格'
-  const low = pick.reduce((a, b) => (b.unit_amount < a.unit_amount ? b : a))
-  return `${formatMoney(low.unit_amount, low.currency)} 起`
+export type KindFilter = 'all' | PlanKind
+export type StatusFilter = 'all' | PlanStatus
+
+export function isKindFilter(v: string | null): v is KindFilter {
+  return v === 'all' || v === 'subscription' || v === 'one_time'
 }
 
-export function quotaLabel(trafficBytes: number | null, devices: number | null): string {
-  return `${trafficBytes === null ? '不限流量' : formatBytes(trafficBytes)} · ${devices === null ? '不限设备' : `${devices} 设备`}`
+export function isStatusFilter(v: string | null): v is StatusFilter {
+  return v === 'all' || v === 'draft' || v === 'active' || v === 'archived'
 }
 
-export function trafficOf(quotas: readonly Quota[]): number | null {
-  return quotas.find((q) => q.metric === 'traffic.bytes')?.limit ?? null
+export function filterPlans(rows: readonly PlanRow[], f: { kind: KindFilter; status: StatusFilter; q: string }): PlanRow[] {
+  const q = f.q.trim().toLowerCase()
+  return rows.filter((r) => {
+    if (f.kind !== 'all' && r.kind !== f.kind) return false
+    if (f.status !== 'all' && r.status !== f.status) return false
+    if (q && !r.name.toLowerCase().includes(q) && !r.code.toLowerCase().includes(q)) return false
+    return true
+  })
 }
 
-export function versionSummary(v: Pick<VersionRow, 'quotas' | 'max_devices' | 'throttle_kbps'>): string {
-  const traffic = trafficOf(v.quotas)
-  const parts = [traffic === null ? '不限流量' : `${formatBytes(traffic)} / 周期`, v.max_devices === null ? '不限设备' : `${v.max_devices} 台设备`]
-  if (v.throttle_kbps !== null) parts.push(`限速 ${v.throttle_kbps / 1000} Mbps`)
-  return parts.join(' · ')
+/** 类型页签计数：只按状态筛，不看搜索词（与设计稿一致） */
+export function kindCounts(rows: readonly PlanRow[], status: StatusFilter): Record<KindFilter, number> {
+  const out: Record<KindFilter, number> = { all: 0, subscription: 0, one_time: 0 }
+  for (const r of rows) {
+    if (status !== 'all' && r.status !== status) continue
+    out.all++
+    out[r.kind]++
+  }
+  return out
 }
 
-/** 发布前能在前端看出来的阻碍（后端 422 的前置条件），只做提示，最终以后端为准 */
-export function publishBlockers(plan: Pick<PlanDetail, 'prices' | 'visibility'>, version: Pick<VersionRow, 'pool_ids'>): string[] {
+export const STATUS_FILTER_OPTIONS = [
+  { value: 'all', label: '全部状态' },
+  { value: 'active', label: '在售' },
+  { value: 'draft', label: '草稿' },
+  { value: 'archived', label: '已归档' },
+] as const
+/** 在售价：按 TIERS 顺序排（one_time 排最后） */
+export function activePrices(prices: readonly PriceRow[]): PriceRow[] {
+  return prices
+    .filter((p) => p.status === 'active')
+    .sort((a, b) => {
+      const ia = TIERS.findIndex((t) => t.interval === a.billing_interval && t.count === a.interval_count)
+      const ib = TIERS.findIndex((t) => t.interval === b.billing_interval && t.count === b.interval_count)
+      return (ia === -1 ? TIERS.length : ia) - (ib === -1 ? TIERS.length : ib)
+    })
+}
+
+/** 列表卡片的全部文案 */
+export function planListView(row: PlanRow): {
+  kind: string
+  price: string
+  priceSub: string
+  quota: string
+  quotaSub: string
+  lines: string
+  linesWarn: boolean
+  subs: string
+} {
+  const live = activePrices(row.prices)
+  let price = '未定价'
+  let priceSub = ''
+  if (row.kind === 'subscription') {
+    const first = live[0]
+    if (first) {
+      const tier = TIERS.find((t) => t.interval === first.billing_interval && t.count === first.interval_count)
+      price = `${formatMoney(first.unit_amount)} / ${tier?.short ?? periodLabel(first.billing_interval, first.interval_count)}`
+      priceSub = live.length > 1 ? `另有 ${live.length - 1} 个周期` : ''
+    }
+  } else {
+    const once = live.find((p) => p.billing_interval === 'one_time')
+    if (once) {
+      price = formatMoney(once.unit_amount)
+      priceSub = once.validity_days === null ? '一次性 · 永久有效' : `一次性 · 有效 ${once.validity_days} 天`
+    }
+  }
+  const quota =
+    row.traffic_bytes === null
+      ? '不限流量'
+      : row.kind === 'subscription'
+        ? `${formatBytes(row.traffic_bytes)} / 周期`
+        : `${formatBytes(row.traffic_bytes)} 总量`
+  const quotaSub = `${row.max_devices === null ? '设备不限' : `${row.max_devices} 台设备`}${row.reset ? ' · 可重置' : ''}`
+  const lines = row.pool_ids.length === 0 ? '未绑定' : `${row.pool_ids.length} 个节点池`
+  const linesWarn = row.status !== 'archived' && (row.pool_ids.length === 0 || row.node_count === 0)
+  return { kind: KIND_LABELS[row.kind], price, priceSub, quota, quotaSub, lines, linesWarn, subs: formatCount(row.active_subscriptions) }
+}
+
+// ===========================================================================
+// 详情
+// ===========================================================================
+export type DetailTab = 'overview' | 'prices' | 'pools' | 'versions'
+
+export function isDetailTab(v: string | undefined): v is DetailTab {
+  return v === 'overview' || v === 'prices' || v === 'pools' || v === 'versions'
+}
+
+/** 详情页签：一次性套餐没有「价格」页签（价格在概览的「价格与有效期」组里改） */
+export function detailTabs(p: PlanDetail): Array<{ value: DetailTab; label: string; count?: number }> {
+  const out: Array<{ value: DetailTab; label: string; count?: number }> = [{ value: 'overview', label: '概览' }]
+  if (p.kind === 'subscription') out.push({ value: 'prices', label: '价格', count: activePrices(p.prices).length })
+  out.push({ value: 'pools', label: '线路', count: p.pool_ids.length })
+  out.push({ value: 'versions', label: '版本', count: p.versions.length })
+  return out
+}
+
+export function planSubtitle(p: PlanDetail): string {
+  return `${KIND_LABELS[p.kind]} · ${p.code} · ${formatCount(p.active_subscriptions)} 个有效订阅`
+}
+
+export const isLive = (p: PlanDetail): boolean => p.status !== 'archived'
+
+export function draftVersion(p: PlanDetail): VersionRow | undefined {
+  return p.versions.find((v) => v.status === 'draft')
+}
+
+export function currentVersion(p: PlanDetail): VersionRow | undefined {
+  return p.versions.find((v) => v.status === 'published' && v.version === p.version)
+}
+
+/** 概览顶部的提示，按严重程度排序 */
+export function overviewNotes(p: PlanDetail): string[] {
   const out: string[] = []
-  if (!plan.prices.some((p) => p.status === 'active')) out.push('还没有在售价格，发布会被拒绝')
-  if (!version.pool_ids.length) out.push('这个版本没有绑定节点池，发布会被拒绝')
-  if (plan.visibility === 'invite_only') out.push('「仅邀请」可见的套餐不能发布，先在销售设置里改可见范围')
-  return out
-}
-
-// ===========================================================================
-// 版本表单：设计稿三项 + 「高级」折叠；entitlements 与其它 quotas 原样回填
-// ===========================================================================
-export interface VersionForm {
-  gb: string
-  devices: string
-  mbps: string
-  strategy: ResetStrategy
-  resetDay: string
-  renewalExtends: boolean
-  renewalResets: boolean
-  renewalKeepsAddons: boolean
-  maxConcurrent: string
-  releaseHours: string
-  notes: string
-}
-
-const str = (n: number | null) => (n === null ? '' : String(n))
-const mbpsOf = (kbps: number | null) => (kbps === null ? '' : String(kbps / 1000))
-const MBPS_HINT = '填正数 Mbps，最多三位小数；不限速请留空'
-
-export function versionForm(v: VersionRow): VersionForm {
-  const traffic = trafficOf(v.quotas)
-  return {
-    gb: traffic === null ? '' : String(Math.floor(traffic / GiB)),
-    devices: str(v.max_devices),
-    mbps: mbpsOf(v.throttle_kbps),
-    strategy: v.quota_reset_strategy,
-    resetDay: str(v.quota_reset_day),
-    renewalExtends: v.renewal_extends_period,
-    renewalResets: v.renewal_resets_quota,
-    renewalKeepsAddons: v.renewal_keeps_addons,
-    maxConcurrent: str(v.max_concurrent),
-    releaseHours: String(v.device_release_hours),
-    notes: v.notes ?? '',
+  if (p.status === 'archived') {
+    out.push('已归档：用户端不再展示、不能新购，老用户不能续费，已有订阅到期后结束。')
+  } else {
+    if (p.pool_ids.length === 0) {
+      out.push('还没有绑定线路：买了这个套餐的用户会拿到一份空订阅。到「线路」里选择节点池。')
+    } else if (p.node_count === 0) {
+      out.push('绑定的节点池里没有可下发的节点：这个套餐的订阅里将是 0 个节点。')
+    }
   }
-}
-
-/** Mbps → kbps（正整数）；空为 null（不限速），不合法为 NaN */
-function parseKbps(input: string): number | null {
-  const text = input.trim()
-  if (text === '') return null
-  if (!/^\d+(\.\d{1,3})?$/.test(text)) return Number.NaN
-  const kbps = Math.round(Number(text) * 1000)
-  return kbps > 0 ? kbps : Number.NaN
-}
-
-/** 键名与后端 validateVersionSemantics 一致；流量框另记为 traffic（后端报在 quotas.{i}.limit） */
-export function versionProblems(f: VersionForm): Fields {
-  const out: Fields = {}
-  if (isBad(parseCount(f.gb)) || parseCount(f.gb) === 0) out.traffic = '填正整数 GB；不限流量请留空'
-  const devices = parseCount(f.devices)
-  if (isBad(devices) || devices === 0) out.max_devices = '必须为正整数；不限请留空'
-  const concurrent = parseCount(f.maxConcurrent)
-  if (isBad(concurrent) || concurrent === 0) out.max_concurrent = '必须为正整数；不限请留空'
-  if (parseCount(f.releaseHours) === null || isBad(parseCount(f.releaseHours))) out.device_release_hours = '填 0 或正整数小时'
-  if (f.strategy === 'fixed_day') {
-    const d = parseCount(f.resetDay)
-    if (d === null || Number.isNaN(d) || d < 1 || d > 28) out.quota_reset_day = '固定日必须为 1-28'
+  if (p.status !== 'archived' && !p.allow_new_purchase) {
+    out.push(p.kind === 'subscription' ? '已关闭新购：用户端看得到但买不了，已有订阅照常续费。' : '已关闭新购：用户端看得到但买不了，已买的照常用到期。')
   }
-  // R99（D-C-5）：限速全程生效、与超额策略无关，只校验正数
-  if (isBad(parseKbps(f.mbps))) out.throttle_kbps = MBPS_HINT
+  const draft = draftVersion(p)
+  if (draft) {
+    if (p.status === 'draft') {
+      out.push(`还没上架：发布草稿 v${draft.version} 后开始售卖。`)
+    } else if (p.kind === 'subscription') {
+      out.push(`有一个未发布的草稿 v${draft.version}：发布后新购使用它，老用户下个周期切换。`)
+    } else {
+      out.push(`有一个未发布的草稿 v${draft.version}：发布后新购使用它，已买的不受影响。`)
+    }
+  }
   return out
 }
 
-/** 流量与设备数写进 quotas（同 metric 各一条，周期沿用原条目，没有就按 cycle），其余条目原样保留 */
-function syncQuotas(quotas: readonly Quota[], trafficBytes: number | null, devices: number | null): Quota[] {
-  const keep = quotas.filter((q) => q.metric !== 'traffic.bytes' && q.metric !== 'devices.active')
-  const periodOf = (metric: string) => quotas.find((q) => q.metric === metric)?.period ?? 'cycle'
-  const out = [...keep]
-  if (trafficBytes !== null) out.push({ metric: 'traffic.bytes', limit: trafficBytes, unit: 'bytes', period: periodOf('traffic.bytes') })
-  if (devices !== null) out.push({ metric: 'devices.active', limit: devices, unit: 'count', period: periodOf('devices.active') })
-  return out
+export type OverviewGroupKey = 'basic' | 'usage' | 'reset' | 'sales' | 'once'
+
+/** 概览的分组只读展示 */
+export function overviewGroups(p: PlanDetail): Array<{ key: OverviewGroupKey; title: string; rows: Array<{ k: string; v: string; mono?: boolean; muted?: boolean }> }> {
+  const draft = draftVersion(p)
+  const groups: Array<{ key: OverviewGroupKey; title: string; rows: Array<{ k: string; v: string; mono?: boolean; muted?: boolean }> }> = [
+    {
+      key: 'basic',
+      title: '基本资料',
+      rows: [
+        { k: '名称', v: p.name },
+        { k: '代码', v: p.code, mono: true },
+        ...(p.description ? [{ k: '说明', v: p.description }] : [{ k: '说明', v: '未填写', muted: true }]),
+      ],
+    },
+    {
+      key: 'usage',
+      title: '用量',
+      rows: [
+        { k: p.kind === 'subscription' ? '每周期流量' : '总流量', v: formatTraffic(p.traffic_bytes) },
+        { k: '同时在线设备', v: p.max_devices === null ? '不限' : `${p.max_devices} 台` },
+        { k: '限速', v: throttleLabel(p.throttle_kbps) },
+        {
+          k: '版本',
+          v: p.version === null ? '未发布' : `v${p.version}${draft ? ` · 草稿 v${draft.version} 待发布` : ''}`,
+        },
+      ],
+    },
+  ]
+  if (p.reset) {
+    const limit =
+      p.reset.limit === null ? '不限' : p.kind === 'subscription' ? `每周期最多 ${p.reset.limit} 次` : `有效期内最多 ${p.reset.limit} 次`
+    groups.push({
+      key: 'reset',
+      title: '流量重置',
+      rows: [
+        { k: '状态', v: '允许用户付费重置' },
+        { k: '每次价格', v: formatMoney(p.reset.price), mono: true },
+        { k: '次数限制', v: limit },
+      ],
+    })
+  } else {
+    groups.push({ key: 'reset', title: '流量重置', rows: [{ k: '状态', v: '未开启', muted: true }] })
+  }
+  const salesRows: Array<{ k: string; v: string }> = [
+    {
+      k: '可见范围',
+      v: p.visibility === 'group' ? `${VISIBILITY_LABELS.group} · ${p.visible_group_ids.length} 个用户组` : VISIBILITY_LABELS[p.visibility],
+    },
+    {
+      k: p.kind === 'subscription' ? '新购 / 续费 / 变更' : '新购 / 变更',
+      v: (p.kind === 'subscription' ? [p.allow_new_purchase, p.allow_renewal, p.allow_upgrade] : [p.allow_new_purchase, p.allow_upgrade])
+        .map((on) => (on ? '允许' : '关闭'))
+        .join(' · '),
+    },
+    { k: '推荐标记', v: p.recommended ? '已标为推荐' : '无' },
+  ]
+  groups.push({ key: 'sales', title: '销售', rows: salesRows })
+  if (p.kind === 'one_time') {
+    const once = activePrices(p.prices).find((pr) => pr.billing_interval === 'one_time')
+    groups.push({
+      key: 'once',
+      title: '价格与有效期',
+      rows: [
+        { k: '价格', v: once ? formatMoney(once.unit_amount) : '未定价', mono: once !== undefined },
+        { k: '有效期', v: once?.validity_days === undefined || once.validity_days === null ? '永久' : `${once.validity_days} 天` },
+        { k: '到期后', v: '不能续费，订阅结束' },
+      ],
+    })
+  }
+  return groups
+}
+
+/** 价格列表：在售的按 TIERS 顺序在前，已归档的按 created_at 降序在后 */
+export function priceListRows(p: PlanDetail): Array<{ id: string; label: string; amount: string; active: boolean; tier: TierKey | null }> {
+  const rowOf = (pr: PriceRow, active: boolean) => ({
+    id: pr.id,
+    label: periodLabel(pr.billing_interval, pr.interval_count),
+    amount: formatMoney(pr.unit_amount),
+    active,
+    tier: tierOf(pr.billing_interval, pr.interval_count),
+  })
+  const live = activePrices(p.prices).map((pr) => rowOf(pr, true))
+  const archived = p.prices
+    .filter((pr) => pr.status !== 'active')
+    .sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0))
+    .map((pr) => rowOf(pr, false))
+  return [...live, ...archived]
+}
+
+export function activeTierPrice(p: PlanDetail, tier: TierKey): PriceRow | undefined {
+  const t = TIERS.find((x) => x.key === tier)!
+  return activePrices(p.prices).find((pr) => pr.billing_interval === t.interval && pr.interval_count === t.count)
+}
+
+/** 折合每月价与相对月付的折扣提示（金额按元的文本输入） */
+export function tierHint(amountText: string, tier: TierKey, monthText: string): string {
+  const cents = parseAmount(amountText)
+  if (cents === null || cents <= 0) return ''
+  const amount = cents / 100
+  const months = TIERS.find((t) => t.key === tier)?.months ?? 1
+  if (months <= 1) return ''
+  const parts = [`折合 ¥${(amount / months).toFixed(2)} / 月`]
+  const monthCents = parseAmount(monthText)
+  if (monthCents !== null && monthCents > 0) {
+    const perMonths = (monthCents / 100) * months
+    if (amount < perMonths) parts.push(`省 ${Math.round((1 - amount / perMonths) * 100)}%`)
+  }
+  return parts.join('，')
 }
 
 /**
- * PUT v1/plans/{id}/versions/{vid} 的请求体（全量覆盖，pool_ids 必须省略）。
- * R99：新写入的超额策略只收 suspend（流量用完后停止服务），存量的其它值保存时一并改成 suspend。
- * base 是表单来源版本（entitlements 与其它 quotas 取自它），rowVersion 是目标草稿的乐观锁——
- * 「另存为新版本」时两者不是同一个版本。先过 versionProblems 再调用。
+ * 按所选节点池的可下发节点数给出「0 节点」提示，没问题时返回 null。
+ * 可下发数与订阅下载同一口径（后端 subscription.DeliverableNodeSQL）。
  */
-export function versionBody(f: VersionForm, base: Pick<VersionRow, 'quotas' | 'entitlements'>, rowVersion: number) {
-  const gb = parseCount(f.gb)
-  const devices = parseCount(f.devices)
-  const kbps = parseKbps(f.mbps)
-  return {
-    expected_row_version: rowVersion,
-    quota_reset_strategy: f.strategy,
-    quota_reset_day: f.strategy === 'fixed_day' ? parseCount(f.resetDay) : null,
-    renewal_extends_period: f.renewalExtends,
-    renewal_resets_quota: f.renewalResets,
-    renewal_keeps_addons: f.renewalKeepsAddons,
-    max_devices: devices,
-    max_concurrent: parseCount(f.maxConcurrent),
-    device_release_hours: parseCount(f.releaseHours) ?? 0,
-    overage_policy: 'suspend',
-    throttle_kbps: kbps,
-    notes: f.notes.trim() || null,
-    entitlements: base.entitlements.map((e) => ({ code: e.code, value: e.value })),
-    quotas: syncQuotas(base.quotas, gb === null ? null : gb * GiB, devices),
-  }
+export function poolBindingWarning(pools: ReadonlyArray<{ id: string; deliverable_nodes: number }>, picked: readonly string[]): string | null {
+  if (picked.length === 0) return '还没绑定节点池：此套餐的订阅里将是 0 个节点。'
+  const total = pools.filter((p) => picked.includes(p.id)).reduce((sum, p) => sum + p.deliverable_nodes, 0)
+  if (total > 0) return null
+  return '所选节点池里没有可下发的节点：此套餐的订阅里将是 0 个节点。检查池里的节点是否在役、上报过心跳、服务器已就绪、协议与地址已配好。'
 }
 
-// ===========================================================================
-// 卖点（R100）：最多 5 条，每条去首尾空白后 1–40 字、不许重复，按给定顺序；向导与销售设置共用
-// ===========================================================================
-export const HIGHLIGHT_MAX = 5
-export const HIGHLIGHT_CHARS = 40
+export function togglePool(ids: readonly string[], id: string): string[] {
+  return ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]
+}
 
-/** 键名与后端一致：整体问题记 highlights，单条记 highlights.{i} */
-export function highlightProblems(list: readonly string[]): Fields {
-  const out: Fields = {}
-  if (list.length > HIGHLIGHT_MAX) out.highlights = `最多 ${HIGHLIGHT_MAX} 条`
-  const seen = new Map<string, number>()
-  list.forEach((raw, i) => {
-    const text = raw.trim()
-    const n = [...text].length
-    if (n === 0) out[`highlights.${i}`] = '不能为空；不要这一条就移除'
-    else if (n > HIGHLIGHT_CHARS) out[`highlights.${i}`] = `最多 ${HIGHLIGHT_CHARS} 个字`
-    else if (seen.has(text)) out[`highlights.${i}`] = `和第 ${seen.get(text)} 条重复`
-    if (n) seen.set(text, i + 1)
+export function poolMeta(pool: { active_nodes: number; deliverable_nodes: number }): string {
+  return `${pool.deliverable_nodes} / ${pool.active_nodes} 个节点可下发`
+}
+
+/** 版本行的展示：versions 原顺序（降序）；草稿 warn、当前 ok、历史 neutral */
+export function versionListRows(p: PlanDetail): Array<{ id: string; n: number; label: string; tone: Tone; at: string; summary: string; by: string | null; isDraft: boolean }> {
+  return p.versions.map((v) => {
+    const isDraft = v.status === 'draft'
+    const isCurrent = !isDraft && v.version === p.version
+    const traffic = v.traffic_bytes === null ? '不限流量' : p.kind === 'subscription' ? `${formatBytes(v.traffic_bytes)} / 周期` : `${formatBytes(v.traffic_bytes)} 总量`
+    const parts = [traffic, v.max_devices === null ? '设备不限' : `${v.max_devices} 台设备`]
+    if (v.throttle_kbps !== null) parts.push(`限速 ${v.throttle_kbps / 1000} Mbps`)
+    return {
+      id: v.id,
+      n: v.version,
+      label: isDraft ? '草稿' : isCurrent ? '当前' : '历史',
+      tone: isDraft ? 'warn' : isCurrent ? 'ok' : 'neutral',
+      at: formatDateTime(v.published_at ?? v.created_at).slice(0, 10),
+      summary: parts.join(' · '),
+      by: v.created_by_email,
+      isDraft,
+    }
   })
-  return out
 }
 
-const cleanHighlights = (list: readonly string[]) => list.map((h) => h.trim())
-const sameHighlights = (a: readonly string[], b: readonly string[]) => cleanHighlights(a).join('\n') === cleanHighlights(b).join('\n')
-
-// ===========================================================================
-// 向导：新建走 POST v1/plans/complete，编辑走 PUT v1/plans/{id}/complete
-// ===========================================================================
-export const WIZARD_STEPS = ['基本资料', '用量与设备', '销售价格', '可用线路', '确认'] as const
-
-export interface WizardPrice {
-  key: string
-  amount: string
-  currency: Currency
-  period: string
+export function publishCopy(p: PlanDetail, n: number): { title: string; body: string } {
+  const body =
+    p.kind === 'subscription'
+      ? '发布后新购使用这个版本，订阅老用户在下个周期切换。已发布的版本不能再改。'
+      : '发布后新购使用这个版本，已买的老用户不受影响。已发布的版本不能再改。'
+  return { title: `发布 v${n}？`, body: p.status === 'draft' ? `首个版本发布后套餐开始售卖。${body}` : body }
 }
 
-export interface WizardForm {
+export const ARCHIVE_BODY =
+  '用户端不再展示、不能新购；老用户不能续费，已有订阅到期后结束。归档后不能恢复；只想暂停售卖，请在「销售」里关闭新购。'
+
+// ===========================================================================
+// 表单（字符串状态）+ 校验 + 请求体；校验键名 = 后端 422 的 fields 键
+// ===========================================================================
+
+// --- 基本资料：PUT v1/plans/:id/basic ---
+export interface BasicForm {
   name: string
-  code: string
   description: string
-  highlights: string[]
-  recommended: boolean
-  visibility: Visibility
-  groupIds: string[]
-  sortOrder: string
-  gb: string
-  devices: string
-  mbps: string
-  strategy: ResetStrategy
-  resetDay: string
-  prices: WizardPrice[]
-  poolIds: string[]
-  allowNew: boolean
-  allowRenewal: boolean
-  allowUpgrade: boolean
-  purchaseLimit: string
-  stockTotal: string
-  publish: boolean
 }
 
-let seq = 0
-export const newPriceRow = (period = 'month:1'): WizardPrice => ({ key: `p${++seq}`, amount: '', currency: 'CNY', period })
-
-export function emptyWizard(): WizardForm {
-  return {
-    name: '',
-    code: '',
-    description: '',
-    highlights: [],
-    recommended: false,
-    visibility: 'public',
-    groupIds: [],
-    sortOrder: '0',
-    gb: '',
-    devices: '',
-    mbps: '',
-    strategy: 'billing_cycle',
-    resetDay: '',
-    prices: [newPriceRow()],
-    poolIds: [],
-    allowNew: true,
-    allowRenewal: true,
-    allowUpgrade: true,
-    purchaseLimit: '',
-    stockTotal: '',
-    publish: true,
-  }
+export function basicForm(p: PlanDetail): BasicForm {
+  return { name: p.name, description: p.description ?? '' }
 }
 
-const yuan = (minor: number) => (minor % 100 === 0 ? String(minor / 100) : (minor / 100).toFixed(2))
-
-/** 编辑初值：额度与线路取当前发布版本（没有就取最新版本），价格回填全部在售公开价（两种币种都要，契约后台-04） */
-export function wizardFromPlan(plan: PlanDetail): WizardForm {
-  const cur = plan.versions.find((v) => v.id === plan.current_version_id) ?? plan.versions[0]
-  const traffic = cur ? trafficOf(cur.quotas) : null
-  return {
-    name: plan.name,
-    code: plan.code,
-    description: plan.description ?? '',
-    highlights: [...plan.highlights],
-    recommended: plan.recommended,
-    visibility: plan.visibility,
-    groupIds: [...plan.visible_group_ids],
-    sortOrder: String(plan.sort_order),
-    gb: traffic === null ? '' : String(Math.floor(traffic / GiB)),
-    devices: str(cur?.max_devices ?? null),
-    mbps: mbpsOf(cur?.throttle_kbps ?? null),
-    strategy: cur?.quota_reset_strategy ?? 'billing_cycle',
-    resetDay: str(cur?.quota_reset_day ?? null),
-    prices: publicPrices(plan.prices).map((p) => ({
-      key: p.id,
-      amount: yuan(p.unit_amount),
-      currency: p.currency,
-      period: periodKey(p.billing_interval, p.interval_count),
-    })),
-    poolIds: [...(cur?.pool_ids ?? [])],
-    allowNew: plan.allow_new_purchase,
-    allowRenewal: plan.allow_renewal,
-    allowUpgrade: plan.allow_upgrade,
-    purchaseLimit: str(plan.purchase_limit_per_user),
-    stockTotal: str(plan.stock_total),
-    publish: plan.status === 'active',
-  }
-}
-
-/** 向导管得到的价格：在售、非用户组专属（组价与时间窗只在详情价格卡里管） */
-const publicPrices = (prices: readonly PriceRow[]) => prices.filter((p) => p.status === 'active' && p.user_group_id === null)
-
-const CODE_RE = /^[a-z0-9][a-z0-9_-]{1,63}$/
-
-/**
- * 与 Go 的 validatePlanFields / validateWizardInput 同规则，键名一致。
- */
-export function wizardProblems(f: WizardForm, mode: 'new' | 'edit'): Fields {
+export function basicProblems(f: BasicForm): Fields {
   const out: Fields = {}
-  if (!CODE_RE.test(f.code.trim())) out.code = '需为 2-64 位小写字母、数字、下划线或连字符，首位不能是符号'
   const name = [...f.name.trim()].length
-  if (name < 1 || name > 120) out.name = '必填且最多 120 个字符'
-  if (f.visibility === 'group' && !f.groupIds.length) out.visible_group_ids = '分组可见套餐至少需要一个用户组'
-  if (!/^-?\d+$/.test(f.sortOrder.trim())) out.sort_order = '填整数，越小越靠前'
-  Object.assign(out, highlightProblems(f.highlights))
-  const gb = parseCount(f.gb)
-  if (isBad(gb)) out.traffic_gb = '填整数 GB；不限流量请留空'
-  const devices = parseCount(f.devices)
-  if (isBad(devices) || devices === 0) out.max_devices = '必须为正整数；不限请留空'
-  if (isBad(parseKbps(f.mbps))) out.throttle_kbps = MBPS_HINT
-  if (mode === 'new' && f.strategy === 'fixed_day') {
-    const d = parseCount(f.resetDay)
-    if (d === null || Number.isNaN(d) || d < 1 || d > 28) out.quota_reset_day = '固定日必须为 1-28'
-  }
-  const seen = new Map<string, number>()
-  f.prices.forEach((p, i) => {
-    const amount = parseAmount(p.amount)
-    if (amount === null || amount <= 0) out[`prices.${i}.unit_amount`] = `第 ${i + 1} 档价格要大于 0`
-    const key = `${p.period}/${p.currency}`
-    const prev = seen.get(key)
-    if (prev !== undefined) out[`prices.${i}.billing_interval`] = `第 ${i + 1} 档和第 ${prev} 档的周期与币种完全相同`
-    seen.set(key, i + 1)
-  })
-  if (mode === 'new' && f.publish) {
-    if (!f.prices.length) out.prices = '要上架就至少得有一档价格，否则用户看得到却买不了'
-    if (!f.poolIds.length) out.pool_ids = '要上架就得选节点池，否则买了也没有线路可用'
-    if (f.visibility === 'invite_only') out.visibility = '「仅邀请」可见的套餐不能发布'
-  }
-  const limit = parseCount(f.purchaseLimit)
-  if (isBad(limit) || limit === 0) out.purchase_limit_per_user = '必须为正整数；不限请留空'
-  if (isBad(parseCount(f.stockTotal))) out.stock_total = '填 0 或正整数；不限请留空'
+  if (name < 1 || name > 120) out.name = '请填写名称，最多 120 个字'
+  if ([...f.description.trim()].length > 2000) out.description = '最多 2000 个字'
   return out
 }
 
-const STEP_OF: ReadonlyArray<[number, RegExp]> = [
-  [1, /^(name|code|description|highlights(\.\d+)?|recommended|visibility|visible_group_ids|sort_order)$/],
-  [2, /^(traffic_gb|max_devices|throttle_kbps|quota_reset_strategy|quota_reset_day)$/],
-  [3, /^prices(\.|$)/],
-  [4, /^pool_ids$/],
-  [5, /^(purchase_limit_per_user|stock_total|allow_\w+|publish)$/],
-]
-
-/** 后端或前端的 fields 键落在第几步；认不出的为 null（页面改用 Toast） */
-export function stepOfField(key: string): number | null {
-  return STEP_OF.find(([, re]) => re.test(key))?.[0] ?? null
-}
-
-const pricesBody = (prices: readonly WizardPrice[]) =>
-  prices.map((p) => ({ ...parsePeriod(p.period), unit_amount: parseAmount(p.amount) ?? 0, currency: p.currency }))
-
-const planBasics = (f: WizardForm) => ({
-  code: f.code.trim(),
-  name: f.name.trim(),
-  description: f.description.trim() || null,
-  visibility: f.visibility,
-  sort_order: Number(f.sortOrder.trim()),
-  visible_group_ids: f.visibility === 'group' ? f.groupIds : [],
-  purchase_limit_per_user: parseCount(f.purchaseLimit),
-  stock_total: parseCount(f.stockTotal),
-})
-
-/**
- * POST v1/plans/complete；流量 / 设备 / 限速留空 = 不限（发 null，不发 0：设备 0 会被版本校验拒绝）。
- * 卖点与推荐是可选字段（R100，缺省为空与 false），只在填了时才带
- */
-export function createBody(f: WizardForm) {
-  const devices = parseCount(f.devices)
-  return {
-    ...planBasics(f),
-    ...(f.highlights.length ? { highlights: cleanHighlights(f.highlights) } : {}),
-    ...(f.recommended ? { recommended: true } : {}),
-    allow_new_purchase: f.allowNew,
-    allow_renewal: f.allowRenewal,
-    allow_upgrade: f.allowUpgrade,
-    traffic_gb: parseCount(f.gb) || null,
-    max_devices: devices || null,
-    throttle_kbps: parseKbps(f.mbps),
-    quota_reset_strategy: f.strategy,
-    ...(f.strategy === 'fixed_day' ? { quota_reset_day: parseCount(f.resetDay) } : {}),
-    pool_ids: f.poolIds,
-    prices: pricesBody(f.prices),
-    publish: f.publish,
-  }
-}
-
-const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.length && [...a].sort().join() === [...b].sort().join()
-const priceSig = (prices: readonly WizardPrice[]) =>
-  pricesBody(prices)
-    .map((p) => `${p.billing_interval}:${p.interval_count}:${p.currency}:${p.unit_amount}`)
-    .sort()
-    .join('|')
-
-/**
- * PUT v1/plans/{id}/complete（修订 R1）：基本资料每次整体覆盖；额度、价格、线路没改就不动，
- * 改了才发——额度或线路一变后端就开新版本并立即发布。价格只同步清单里出现的币种的公开价。
- * R99 起 max_devices 与 throttle_kbps 是三态：没改就不带这个键，清空发 null（改回不限），填了发正整数；
- * traffic_gb 仍是 null = 不动、0 = 不限。卖点与推荐（R100）缺省 = 不动，也只在改了时带
- */
-export function updateBody(f: WizardForm, original: WizardForm, rowVersion: number) {
-  const gb = parseCount(f.gb)
-  const unchanged = (k: 'devices' | 'mbps') => f[k].trim() === original[k].trim()
+export function basicBody(f: BasicForm, rowVersion: number) {
   return {
     expected_row_version: rowVersion,
-    ...planBasics(f),
-    allow_new_purchase: f.allowNew,
-    allow_renewal: f.allowRenewal,
-    allow_upgrade: f.allowUpgrade,
-    // 流量清空 = 改为不限，后端认 0
-    traffic_gb: f.gb.trim() === original.gb.trim() ? null : (gb ?? 0),
-    ...(unchanged('devices') ? {} : { max_devices: parseCount(f.devices) }),
-    ...(unchanged('mbps') ? {} : { throttle_kbps: parseKbps(f.mbps) }),
-    ...(sameHighlights(f.highlights, original.highlights) ? {} : { highlights: cleanHighlights(f.highlights) }),
-    ...(f.recommended === original.recommended ? {} : { recommended: f.recommended }),
-    prices: priceSig(f.prices) === priceSig(original.prices) ? null : pricesBody(f.prices),
-    pool_ids: sameList(f.poolIds, original.poolIds) ? null : f.poolIds,
+    name: f.name.trim(),
+    description: f.description.trim() || null,
   }
 }
 
-/** 编辑时整币种删光的价格不会被归档（后端只同步清单里出现的币种），要提示去价格卡里归档 */
-export function removedCurrencies(f: WizardForm, original: WizardForm): Currency[] {
-  const had = new Set(original.prices.map((p) => p.currency))
-  const has = new Set(f.prices.map((p) => p.currency))
-  return [...had].filter((c) => !has.has(c))
+// --- 用量：PUT v1/plans/:id/usage（写进草稿版本，没有就新建） ---
+export interface UsageForm {
+  gb: string
+  devices: string
+  mbps: string
 }
 
-// ===========================================================================
-// 销售设置：PUT v1/plans/{id} 整体覆盖（三个 allow_* 是 bool）
-// ===========================================================================
+/** 有草稿取草稿版本的值，否则取套餐当前的三项 */
+export function usageForm(p: PlanDetail): UsageForm {
+  const draft = draftVersion(p)
+  return {
+    gb: bytesToGb(draft ? draft.traffic_bytes : p.traffic_bytes),
+    devices: strOrNull(draft ? draft.max_devices : p.max_devices),
+    mbps: kbpsToMbps(draft ? draft.throttle_kbps : p.throttle_kbps),
+  }
+}
+
+export function usageProblems(f: UsageForm): Fields {
+  const out: Fields = {}
+  if (parseOptionalInt(f.gb, 1048576) === 'bad') out.traffic_bytes = '填正整数，或留空为不限'
+  if (parseOptionalInt(f.devices, 2147483647) === 'bad') out.max_devices = '填正整数，或留空为不限'
+  if (parseOptionalInt(f.mbps, 2147483) === 'bad') out.throttle_kbps = '填正整数，或留空为不限速'
+  return out
+}
+
+export function usageBody(f: UsageForm, rowVersion: number) {
+  const gb = parseOptionalInt(f.gb, 1048576)
+  const devices = parseOptionalInt(f.devices, 2147483647)
+  const mbps = parseOptionalInt(f.mbps, 2147483)
+  return {
+    expected_row_version: rowVersion,
+    traffic_bytes: typeof gb === 'number' ? gb * GiB : null,
+    max_devices: typeof devices === 'number' ? devices : null,
+    throttle_kbps: typeof mbps === 'number' ? mbps * 1000 : null,
+  }
+}
+
+// --- 销售：PUT v1/plans/:id/sales ---
 export interface SalesForm {
-  highlights: string[]
-  recommended: boolean
   visibility: Visibility
   groupIds: string[]
-  from: string
-  until: string
   allowNew: boolean
   allowRenewal: boolean
   allowUpgrade: boolean
-  purchaseLimit: string
-  stockTotal: string
-  sortOrder: string
-}
-
-/** RFC3339 → <input type="datetime-local"> 的本地时间值 */
-function toLocalInput(at: string | null): string {
-  if (!at) return ''
-  const d = new Date(at)
-  if (Number.isNaN(d.getTime())) return ''
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
-}
-
-function fromLocalInput(value: string): string | null {
-  if (!value) return null
-  const d = new Date(value)
-  return Number.isNaN(d.getTime()) ? null : d.toISOString()
+  recommended: boolean
 }
 
 export function salesForm(p: PlanDetail): SalesForm {
   return {
-    highlights: [...p.highlights],
-    recommended: p.recommended,
     visibility: p.visibility,
     groupIds: [...p.visible_group_ids],
-    from: toLocalInput(p.visible_from),
-    until: toLocalInput(p.visible_until),
     allowNew: p.allow_new_purchase,
     allowRenewal: p.allow_renewal,
     allowUpgrade: p.allow_upgrade,
-    purchaseLimit: str(p.purchase_limit_per_user),
-    stockTotal: str(p.stock_total),
-    sortOrder: String(p.sort_order),
+    recommended: p.recommended,
   }
 }
 
-export function salesProblems(f: SalesForm, stockReserved: number): Fields {
-  const out: Fields = highlightProblems(f.highlights)
-  if (f.visibility === 'group' && !f.groupIds.length) out.visible_group_ids = '分组可见套餐至少需要一个用户组'
-  const from = fromLocalInput(f.from)
-  const until = fromLocalInput(f.until)
-  if (from && until && until <= from) out.visible_until = '必须晚于上架时间'
-  const limit = parseCount(f.purchaseLimit)
-  if (isBad(limit) || limit === 0) out.purchase_limit_per_user = '必须为正整数；不限请留空'
-  const stock = parseCount(f.stockTotal)
-  if (isBad(stock)) out.stock_total = '填 0 或正整数；不限请留空'
-  else if (stock !== null && stock < stockReserved) out.stock_total = `不能低于已预留库存 ${stockReserved}`
-  if (!/^-?\d+$/.test(f.sortOrder.trim())) out.sort_order = '填整数，越小越靠前'
+export function salesProblems(f: SalesForm): Fields {
+  const out: Fields = {}
+  if (f.visibility === 'group' && f.groupIds.length === 0) out.visible_group_ids = '指定用户组可见时至少选一个用户组'
   return out
 }
 
-export function salesBody(f: SalesForm, p: PlanDetail) {
+export function salesBody(f: SalesForm, kind: PlanKind, rowVersion: number) {
   return {
-    expected_row_version: p.row_version,
-    code: p.code,
-    name: p.name,
-    description: p.description,
+    expected_row_version: rowVersion,
     visibility: f.visibility,
     visible_group_ids: f.visibility === 'group' ? f.groupIds : [],
-    visible_from: fromLocalInput(f.from),
-    visible_until: fromLocalInput(f.until),
     allow_new_purchase: f.allowNew,
-    allow_renewal: f.allowRenewal,
+    allow_renewal: kind === 'subscription' ? f.allowRenewal : false,
     allow_upgrade: f.allowUpgrade,
-    purchase_limit_per_user: parseCount(f.purchaseLimit),
-    stock_total: parseCount(f.stockTotal),
-    sort_order: Number(f.sortOrder.trim()),
-    highlights: cleanHighlights(f.highlights),
     recommended: f.recommended,
   }
 }
 
-// ===========================================================================
-// 新增价格：POST v1/plans/{id}/prices（周期可自定义；「高级」里是用户组、时间窗）
-// ===========================================================================
-export interface PriceForm {
-  currency: Currency
-  amount: string
-  period: string
-  customCount: string
-  customUnit: BillingInterval
-  groupId: string
-  from: string
-  until: string
+// --- 流量重置：PUT v1/plans/:id/reset ---
+export interface ResetForm {
+  on: boolean
+  price: string
+  limit: string
 }
 
-export const emptyPriceForm = (): PriceForm => ({ currency: 'CNY', amount: '', period: 'month:1', customCount: '', customUnit: 'day', groupId: '', from: '', until: '' })
+export function resetForm(p: PlanDetail): ResetForm {
+  if (!p.reset) return { on: false, price: '', limit: '' }
+  return { on: true, price: yuanText(p.reset.price), limit: strOrNull(p.reset.limit) }
+}
 
-export function priceProblems(f: PriceForm): Fields {
+export function resetProblems(f: ResetForm): Fields {
   const out: Fields = {}
-  if (parseAmount(f.amount) === null) out.unit_amount = '填金额（元），最多两位小数'
-  if (f.period === 'custom') {
-    const n = parseCount(f.customCount)
-    if (n === null || Number.isNaN(n) || n < 1 || n > 32767) out.interval_count = '填正整数'
-  }
-  const from = fromLocalInput(f.from)
-  const until = fromLocalInput(f.until)
-  if (from && until && until <= from) out.valid_until = '必须晚于生效时间'
+  if (!f.on) return out
+  const price = parseAmount(f.price)
+  if (price === null || price <= 0) out['reset.price'] = '填每次价格，大于 0、最多两位小数'
+  const limit = parseOptionalInt(f.limit, 1000)
+  if (limit === 'bad') out['reset.limit'] = '填 1–1000 的整数，或留空为不限'
   return out
 }
 
-export function priceBody(f: PriceForm) {
-  const period = f.period === 'custom' ? { billing_interval: f.customUnit, interval_count: parseCount(f.customCount) ?? 1 } : parsePeriod(f.period)
+export function resetBody(f: ResetForm, rowVersion: number) {
   return {
-    currency: f.currency,
-    unit_amount: parseAmount(f.amount) ?? 0,
-    ...period,
-    user_group_id: f.groupId || null,
-    valid_from: fromLocalInput(f.from),
-    valid_until: fromLocalInput(f.until),
+    expected_row_version: rowVersion,
+    enabled: f.on,
+    price: f.on ? (parseAmount(f.price) ?? 0) : 0,
+    limit: f.on ? (parseOptionalInt(f.limit, 1000) ?? null) : null,
   }
 }
 
-// ===========================================================================
-// 流量包（修订 R73）
-// ===========================================================================
-export const PACK_STATUS_VIEW = { active: { label: '在售', tone: 'ok' }, archived: { label: '已下架', tone: 'neutral' } } as const satisfies Record<string, { label: string; tone: Tone }>
-
-export interface PackForm {
-  name: string
-  gb: string
-  currency: Currency
+// --- 一次性价格：PUT v1/plans/:id/prices（unit_amount + validity_days） ---
+export interface OnceForm {
   amount: string
-  recommended: boolean
-  sortOrder: string
+  days: string
 }
 
-export function packForm(p?: TrafficPack): PackForm {
-  if (!p) return { name: '', gb: '', currency: 'CNY', amount: '', recommended: false, sortOrder: '0' }
-  return { name: p.name, gb: String(Math.round((p.traffic_bytes / GiB) * 100) / 100), currency: p.currency, amount: yuan(p.unit_amount), recommended: p.recommended, sortOrder: String(p.sort_order) }
+export function onceForm(p: PlanDetail): OnceForm {
+  const once = activePrices(p.prices).find((pr) => pr.billing_interval === 'one_time')
+  return { amount: once ? yuanText(once.unit_amount) : '', days: once?.validity_days === undefined || once.validity_days === null ? '' : String(once.validity_days) }
 }
 
-/** GB 可带两位小数 → 字节取整 */
-function packBytes(gb: string): number | null {
-  const text = gb.trim()
-  if (!/^\d+(\.\d{1,2})?$/.test(text)) return null
-  const bytes = Math.round(Number(text) * GiB)
-  return bytes > 0 ? bytes : null
+export function onceProblems(f: OnceForm): Fields {
+  const out: Fields = {}
+  if (parseAmount(f.amount) === null) out.unit_amount = '填价格，最多两位小数'
+  const days = parseOptionalInt(f.days, 36500)
+  if (days === 'bad') out.validity_days = '填 1–36500 的天数，或留空为永久'
+  return out
 }
 
-/** 与 catalog/service preparePackInput 同规则、同键名 */
-export function packProblems(f: PackForm): Fields {
+export function onceBody(f: OnceForm, rowVersion: number) {
+  const days = parseOptionalInt(f.days, 36500)
+  return {
+    expected_row_version: rowVersion,
+    unit_amount: parseAmount(f.amount) ?? 0,
+    validity_days: typeof days === 'number' ? days : null,
+  }
+}
+
+// --- 订阅单档改价：PUT v1/plans/:id/prices（prices，null = 停售这一档） ---
+export function tierPriceBody(rowVersion: number, tier: TierKey, amount: number | null) {
+  const t = TIERS.find((x) => x.key === tier)!
+  return {
+    expected_row_version: rowVersion,
+    prices: [{ billing_interval: t.interval, interval_count: t.count, unit_amount: amount }],
+  }
+}
+
+// --- 线路：PUT v1/plans/:id/pools（整体替换） ---
+export function poolsBody(rowVersion: number, ids: readonly string[]) {
+  return { expected_row_version: rowVersion, pool_ids: [...ids] }
+}
+
+// --- 发布、归档：只带乐观锁 ---
+export function rowVersionBody(rowVersion: number) {
+  return { expected_row_version: rowVersion }
+}
+
+// --- 新建：POST v1/plans ---
+export interface CreateForm {
+  kind: PlanKind
+  name: string
+  description: string
+  tiers: Record<TierKey, string>
+  amount: string
+  days: string
+  gb: string
+  devices: string
+  poolIds: string[]
+  resetOn: boolean
+  resetPrice: string
+  resetLimit: string
+  publish: boolean
+}
+
+export function emptyCreate(kind: PlanKind = 'subscription'): CreateForm {
+  return {
+    kind,
+    name: '',
+    description: '',
+    tiers: { 'month:1': '', 'month:3': '', 'month:6': '', 'year:1': '' },
+    amount: '',
+    days: '',
+    gb: '',
+    devices: '',
+    poolIds: [],
+    resetOn: false,
+    resetPrice: '',
+    resetLimit: '',
+    publish: true,
+  }
+}
+
+export function createProblems(f: CreateForm): Fields {
   const out: Fields = {}
   const name = [...f.name.trim()].length
-  if (name < 1 || name > 60) out.name = '名称 1 到 60 个字'
-  const bytes = packBytes(f.gb)
-  if (bytes === null || bytes > 2 ** 50) out.traffic_bytes = '容量必须大于 0，且不超过 1 PiB'
-  const amount = parseAmount(f.amount)
-  if (amount === null || amount < 1 || amount > 100_000_000) out.unit_amount = '价格必须大于 0，且不超过 100 万'
-  const sort = f.sortOrder.trim()
-  if (!/^-?\d+$/.test(sort) || Math.abs(Number(sort)) > 1_000_000) out.sort_order = '排序号填 -1000000 到 1000000 的整数'
+  if (name < 1 || name > 120) out.name = '请填写名称，最多 120 个字'
+  if (f.kind === 'subscription') {
+    let filled = 0
+    for (const t of TIERS) {
+      const text = f.tiers[t.key].trim()
+      if (text === '') continue
+      filled++
+      if (parseAmount(text) === null) out[`tier.${t.key}`] = '填数字，最多两位小数'
+    }
+    if (filled === 0) out['tier.month:1'] = '至少填一个周期的价格'
+  } else {
+    if (parseAmount(f.amount) === null) out.unit_amount = '填价格，最多两位小数'
+    if (parseOptionalInt(f.days, 36500) === 'bad') out.validity_days = '填 1–36500 的天数，或留空为永久'
+  }
+  if (parseOptionalInt(f.gb, 1048576) === 'bad') out.traffic_bytes = '填正整数，或留空为不限'
+  if (parseOptionalInt(f.devices, 2147483647) === 'bad') out.max_devices = '填正整数，或留空为不限'
+  if (f.resetOn) {
+    const price = parseAmount(f.resetPrice)
+    if (price === null || price <= 0) out['reset.price'] = '填每次价格，大于 0、最多两位小数'
+    const limit = parseOptionalInt(f.resetLimit, 1000)
+    if (limit === 'bad') out['reset.limit'] = '填 1–1000 的整数，或留空为不限'
+  }
   return out
 }
 
-export function packBody(f: PackForm) {
-  return {
+/** 新建的请求体：只带本类型的键，另一类型的价格键不出现 */
+export function createBody(f: CreateForm) {
+  const gb = parseOptionalInt(f.gb, 1048576)
+  const devices = parseOptionalInt(f.devices, 2147483647)
+  const resetLimit = f.resetOn ? parseOptionalInt(f.resetLimit, 1000) : null
+  const base = {
+    kind: f.kind,
     name: f.name.trim(),
-    traffic_bytes: packBytes(f.gb) ?? 0,
-    currency: f.currency,
-    unit_amount: parseAmount(f.amount) ?? 0,
-    recommended: f.recommended,
-    sort_order: Number(f.sortOrder.trim()),
+    description: f.description.trim() || null,
+    traffic_bytes: typeof gb === 'number' ? gb * GiB : null,
+    max_devices: typeof devices === 'number' ? devices : null,
+    throttle_kbps: null,
+    pool_ids: [...f.poolIds],
+    reset: f.resetOn ? { price: parseAmount(f.resetPrice) ?? 0, limit: typeof resetLimit === 'number' ? resetLimit : null } : null,
+    visibility: 'public' as const,
+    visible_group_ids: [] as string[],
+    allow_new_purchase: true,
+    allow_renewal: f.kind === 'subscription',
+    allow_upgrade: true,
+    recommended: false,
+    publish: f.publish,
+  }
+  if (f.kind === 'subscription') {
+    const prices = TIERS.filter((t) => f.tiers[t.key].trim() !== '').map((t) => ({
+      billing_interval: t.interval,
+      interval_count: t.count,
+      unit_amount: parseAmount(f.tiers[t.key]) ?? 0,
+    }))
+    return { ...base, prices }
+  }
+  const days = parseOptionalInt(f.days, 36500)
+  return { ...base, unit_amount: parseAmount(f.amount) ?? 0, validity_days: typeof days === 'number' ? days : null }
+}
+
+/** 后端 422 的 prices.<i> 指发出去的第 i 档，映射回表单的 tier.<周期>；其它键原样 */
+export function createFieldKey(serverKey: string, f: CreateForm): string {
+  const m = serverKey.match(/^prices\.(\d+)(?:\.unit_amount)?$/)
+  if (m) {
+    const filled = TIERS.filter((t) => f.tiers[t.key].trim() !== '')
+    const idx = Number(m[1])
+    if (idx < filled.length) return `tier.${filled[idx].key}`
+  }
+  return serverKey
+}
+
+// ===========================================================================
+// 套餐代码预览：与 Go catalog/service/code.go 逐条相同，改一边要改另一边
+// ===========================================================================
+const CODE_WORDS: Record<string, string> = {
+  标准: 'standard', 专业: 'pro', 高级: 'premium', 家庭: 'family', 体验: 'trial', 试用: 'trial',
+  企业: 'enterprise', 定制: 'custom', 基础: 'basic', 旗舰: 'ultimate', 年: 'yearly', 季: 'quarterly',
+  月: 'monthly', 旧: 'legacy', 新: 'new', 学生: 'student', 团队: 'team', 个人: 'personal',
+}
+
+/** 词表替换顺序：长词优先，同长按字典序 */
+const CODE_WORD_ORDER = Object.keys(CODE_WORDS).sort((a, b) => {
+  const la = [...a].length
+  const lb = [...b].length
+  if (la !== lb) return lb - la
+  return a < b ? -1 : a > b ? 1 : 0
+})
+
+const MAX_CODE_BASE = 32
+
+/** 按名称算出代码主体（未查重） */
+function autoCodeBase(name: string): string {
+  let s = name.trim()
+  for (const k of CODE_WORD_ORDER) {
+    s = s.split(k).join(` ${CODE_WORDS[k]} `)
+  }
+  let out = ''
+  let dash = false
+  for (const ch of s.toLowerCase()) {
+    if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')) {
+      if (dash && out.length > 0) out += '-'
+      dash = false
+      out += ch
+      continue
+    }
+    dash = true
+  }
+  if (out.length > MAX_CODE_BASE) out = out.slice(0, MAX_CODE_BASE).replace(/-+$/, '')
+  if (out.length === 0) return 'plan'
+  if (out.length === 1) return `plan-${out}`
+  return out
+}
+
+/** base 被占用时依次试 -2、-3…… */
+export function autoCode(name: string, taken: readonly string[]): string {
+  const used = new Set(taken)
+  const base = autoCodeBase(name)
+  if (!used.has(base)) return base
+  for (let i = 2; ; i++) {
+    const c = `${base}-${i}`
+    if (!used.has(c)) return c
   }
 }
 
-/** 列表行的一句话摘要（卡片副行、确认框里用） */
-export function planFacts(row: Pick<PlanRow, 'traffic_limit' | 'max_devices' | 'prices' | 'version'>): { price: string; quota: string } {
-  // 列表的额度取自当前发布版本：还没发布过时两列都是 null，不能读成「不限」
-  return { price: priceFrom(row.prices), quota: row.version === null ? '未发布' : quotaLabel(row.traffic_limit, row.max_devices) }
+/** 新建弹窗里代码字段的预览提示 */
+export function codeHint(name: string, taken: readonly string[]): string {
+  if (name.trim() === '') return ''
+  return `套餐代码将自动生成为 ${autoCode(name, taken)}`
+}
+
+export function createdToast(publish: boolean): string {
+  return publish ? '已创建并上架' : '已保存为草稿'
 }
