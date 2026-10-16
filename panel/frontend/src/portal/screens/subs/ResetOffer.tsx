@@ -1,14 +1,39 @@
 import { href } from '../../../core/router'
 import { isApiError } from '../../../core/api'
-import { money } from '../common/purchase'
+import { gb, resetsLeft, money } from '../common/purchase'
 import { useQuote } from '../common/quote'
 import type { Subscription } from '../common/subscriptions'
-import { pickTrafficQuota } from '../common/traffic'
-import { gb } from '../common/purchase'
 import css from './Subs.module.css'
 
 export function ResetOffer({ sub }: { sub: Subscription }) {
-  const quote = useQuote({ action: 'reset', subscription_id: sub.id })
+  const left = resetsLeft(sub)
+  const scope = sub.plan_kind === 'one_time' ? '有效期内' : '本期'
+  const title = sub.plan_kind === 'one_time' ? '重置流量' : '重置本期流量'
+  const limitText = sub.traffic_limit !== null ? gb(sub.traffic_limit) : '限额'
+  const n = left ?? 0
+  const quote = useQuote(sub.reset_price === null || n === 0 ? null : { action: 'reset', subscription_id: sub.id })
+
+  if (sub.reset_price === null) return null
+
+  if (n === 0) {
+    return (
+      <div className={css.optRow}>
+        <div className={css.optText}>
+          <b>{title}</b>
+          <small>{scope}的 {sub.reset_limit} 次已用完</small>
+        </div>
+      </div>
+    )
+  }
+
+  const quotaHint =
+    left === Number.POSITIVE_INFINITY
+      ? null
+      : left !== null
+        ? sub.plan_kind === 'one_time'
+          ? `有效期内还能买 ${left} 次`
+          : `本期还能买 ${left} 次`
+        : null
 
   if (quote.isPending) return null
 
@@ -17,7 +42,8 @@ export function ResetOffer({ sub }: { sub: Subscription }) {
       return (
         <div className={css.optRow}>
           <div className={css.optText}>
-            <b>重置本期流量</b>
+            <b>{title}</b>
+            {quotaHint && <small>{quotaHint}</small>}
             <small>有一张待付款的重置订单</small>
           </div>
           <a className={css.optButton} href={href('/orders')}>
@@ -26,12 +52,12 @@ export function ResetOffer({ sub }: { sub: Subscription }) {
         </div>
       )
     }
-    // 409 conflict：这份卖重置，只是本期刚结束、还没换到下一期（几分钟），照后端原话提示稍后再来，不给按钮
     if (isApiError(quote.error, 'conflict')) {
       return (
         <div className={css.optRow}>
           <div className={css.optText}>
-            <b>重置本期流量</b>
+            <b>{title}</b>
+            {quotaHint && <small>{quotaHint}</small>}
             <small>{quote.error.message}</small>
           </div>
         </div>
@@ -43,15 +69,18 @@ export function ResetOffer({ sub }: { sub: Subscription }) {
   const row = quote.data?.quotes[0]
   if (!row) return null
 
-  const limit = pickTrafficQuota(sub.quotas)?.limit
-  const limitText = limit ? gb(limit) : '限额'
   const btnText = `重置 · ${money(row.total)}`
+  const desc =
+    sub.plan_kind === 'one_time'
+      ? `把已用的流量清零，马上能用满 ${limitText}；到期时间不变`
+      : `把这一期已用的流量清零，马上能用满 ${limitText}；到期时间不变`
 
   return (
     <div className={css.optRow}>
       <div className={css.optText}>
-        <b>重置本期流量</b>
-        <small>把这一期已用的流量清零，马上能用满 {limitText}；到期时间不变</small>
+        <b>{title}</b>
+        {quotaHint && <small>{quotaHint}</small>}
+        <small>{desc}</small>
       </div>
       <a className={css.optButton} href={href('/checkout', { reset: sub.id })}>
         {btnText}

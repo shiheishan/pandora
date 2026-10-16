@@ -1,10 +1,8 @@
 import { href, useHashLocation } from '../../../core/router'
 import { Card, Empty, Skeleton } from '../../../ui'
 import { usePageHead } from '../../head'
-import { useUnattachedPackBytes } from '../../queries'
 import type { PortalScreenProps } from '../index'
 import { LoadError, Slot } from '../common/Blocks'
-import { usePackCatalog } from '../common/catalog'
 import { flowCss } from '../common/Flow'
 import { useHoldings } from '../common/holdings'
 import { LinkBox } from '../common/LinkBox'
@@ -18,13 +16,12 @@ import { SubCard } from '../common/SubCard'
 import css from './Subs.module.css'
 import { useSubDomainProbe } from './probe'
 import { Traffic } from './Traffic'
-import { TransferBars } from './Transfer'
 
 // ---------------------------------------------------------------------------
 // 我的套餐（原型 home）与它的子页（地址见 .claude/rules/screens-portal.md）：
 //   #/subs                    每份一张卡
 //   #/subs/<id>/detail        节点与每天用量
-//   #/subs/<id>/traffic       加流量
+//   #/subs/<id>/traffic       流量不够
 //   #/subs/<id>/change        换个套餐
 //   #/subs/<id>/rotated       换新链接之后的完成页
 //   #/subs/new                再买一份
@@ -42,10 +39,7 @@ export default function Subs({ rest }: PortalScreenProps) {
 function MySubs() {
   useSubDomainProbe()
   const h = useHoldings()
-  const packs = usePackCatalog()
-  const unattached = useUnattachedPackBytes()
   const { actions, sheets } = useSheets(h)
-  const minPack = packs.data?.length ? Math.min(...packs.data.map((p) => p.unit_amount)) : null
 
   if (h.subs.isPending) {
     return (
@@ -70,7 +64,6 @@ function MySubs() {
     return (
       <div className={css.page}>
         <Slot name="portal.subscribe.notice" />
-        <TransferBars h={h} unattached={unattached.data ?? 0} />
         <Empty
           title="你还没有套餐"
           description={h.subs.data.length > 0 ? '之前的套餐已经停用了。选一个套餐，拿到链接后添加到 App 就能用。' : '选一个套餐，拿到链接后添加到 App 就能用。'}
@@ -92,10 +85,9 @@ function MySubs() {
   return (
     <div className={css.page}>
       <Slot name="portal.subscribe.notice" />
-      <TransferBars h={h} unattached={unattached.data ?? 0} />
       <div className={css.cards}>
         {h.held.map((sub) => (
-          <SubCard key={sub.id} sub={sub} naming={h.naming} link={h.linkOf(sub.id)} minPack={minPack} actions={actions} />
+          <SubCard key={sub.id} sub={sub} naming={h.naming} link={h.linkOf(sub.id)} actions={actions} />
         ))}
       </div>
       <a className={css.addRow} href={href('/subs/new')} id="btn-new-copy">
