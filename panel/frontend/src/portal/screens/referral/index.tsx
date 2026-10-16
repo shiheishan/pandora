@@ -14,7 +14,6 @@ import {
   headline,
   inviteLink,
   inviteUsage,
-  otherAvailableCurrencies,
   parseWithdrawAmount,
   payoutError,
   withdrawBlock,
@@ -41,8 +40,8 @@ export default function Referral() {
             summary && [
               { label: '邀请注册', value: summary.invitees },
               { label: '付费好友', value: summary.paid_invitees },
-              { label: '累计佣金', value: formatMoney(summary.total_earned, summary.currency) },
-              { label: '可用佣金', value: formatMoney(summary.available, summary.currency) },
+              { label: '累计佣金', value: formatMoney(summary.total_earned) },
+              { label: '可用佣金', value: formatMoney(summary.available) },
             ]
           }
         />
@@ -50,7 +49,7 @@ export default function Referral() {
       <div className={css.grid}>
         <div className={css.useArea}>
           {commission.data ? (
-            <UseCard summary={commission.data.summary} others={otherAvailableCurrencies(commission.data)} />
+            <UseCard summary={commission.data.summary} />
           ) : (
             !commission.isError && <Skeleton height={260} radius="var(--radius-lg)" />
           )}
@@ -110,7 +109,7 @@ function InviteBanner({ summary }: { summary: Commission['summary'] | undefined 
 // 使用佣金：两个动作用同一个「可用佣金」（账本余额 − 在途提现），失败文案照后端
 // 幂等键：断网与 5xx 保留键（重试要拿回同一结果）；成功或 4xx 业务拒绝即动作结束、丢弃键（common/intent）
 // ---------------------------------------------------------------------------
-function UseCard({ summary, others }: { summary: Commission['summary']; others: readonly string[] }) {
+function UseCard({ summary }: { summary: Commission['summary'] }) {
   const toast = useToast()
   const transfer = useTransferCommission()
   const withdraw = useRequestWithdrawal()
@@ -123,9 +122,9 @@ function UseCard({ summary, others }: { summary: Commission['summary']; others: 
   const [payout, setPayout] = useState('')
   const [errors, setErrors] = useState<{ amount?: string; method?: string; payout?: string; form?: string }>({})
 
-  const money = (v: number) => formatMoney(v, summary.currency)
+  const money = (v: number) => formatMoney(v)
   const block = withdrawBlock(summary)
-  const closedHint = withdrawClosedHint(summary, others)
+  const closedHint = withdrawClosedHint(summary)
   // 后台改了开放方式后重新拉取，原先选的方式可能已经关了：退回第一种开放的方式
   const activeMethod = summary.withdraw_methods.includes(method) ? method : (summary.withdraw_methods[0] ?? '')
 
@@ -145,7 +144,7 @@ function UseCard({ summary, others }: { summary: Commission['summary']; others: 
   }
 
   function submitWithdraw() {
-    const parsed = parseWithdrawAmount(amount, { min: summary.min_withdraw, available: summary.available, currency: summary.currency })
+    const parsed = parseWithdrawAmount(amount, { min: summary.min_withdraw, available: summary.available })
     const detail = payout.trim()
     const payoutErr = payoutError(activeMethod, payout)
     const next = {
@@ -247,7 +246,7 @@ function UseCard({ summary, others }: { summary: Commission['summary']; others: 
       <ConfirmModal
         open={confirming}
         title={`将 ${money(summary.available)} 转入余额？`}
-        body="转入后不可再提现。余额可用于购买套餐、续费与流量包。"
+        body="转入后不可再提现。余额可用于购买套餐和续费。"
         confirmLabel="转入余额"
         onConfirm={doTransfer}
         onCancel={() => setConfirming(false)}
@@ -277,7 +276,7 @@ function RecordsCard() {
                       {r.title}
                       {r.ref && (
                         <>
-                          {' · '}
+                          {' '}
                           <span className={css.ref}>{r.ref}</span>
                         </>
                       )}
@@ -286,7 +285,7 @@ function RecordsCard() {
                   </span>
                   <span className={css[r.tone]}>
                     {r.amount > 0 ? '+' : '−'}
-                    {formatMoney(Math.abs(r.amount), r.currency)}
+                    {formatMoney(Math.abs(r.amount))}
                   </span>
                   <span className={css.recordStatus}>{r.status}</span>
                 </li>
