@@ -82,6 +82,15 @@ func (e *env) planOf(t *testing.T, ctx context.Context, subID uuid.UUID) uuid.UU
 }
 
 // mustErrMsg 核对错误码与文案（service 的哨兵错误经事务返回后按码与文案比）。
+// mustOpenChange 断言被那张未完结的续费、叠加或换套餐单拦下：回 order_pending，fields.order_id 指向它。
+func mustOpenChange(t *testing.T, what string, err error, orderID uuid.UUID) {
+	t.Helper()
+	got := errs.As(err)
+	if err == nil || got.Code != errs.OrderPending || got.Fields["order_id"] != orderID.String() {
+		t.Fatalf("%s：得到 %v（fields %v），期望 order_pending 指向 %s", what, err, got.Fields, orderID)
+	}
+}
+
 func mustErrMsg(t *testing.T, what string, err error, want *errs.Error) {
 	t.Helper()
 	got := errs.As(err)
@@ -241,9 +250,9 @@ func TestPlanChangeAndRenewalMutuallyExclusive(t *testing.T) {
 		t.Fatalf("换套餐下单: %+v %v", change, err)
 	}
 	_, err = e.svc.CreateRenewalOrder(uctx, RenewalOrderInput{SubscriptionID: sub.ID})
-	mustErrMsg(t, "有待付变更单时续费", err, ErrOpenChange)
+	mustOpenChange(t, "有待付变更单时续费", err, change.OrderID)
 	_, err = e.svc.CreatePlanChangeOrder(uctx, PlanChangeOrderInput{SubscriptionID: sub.ID, PlanID: planB, PriceID: priceB})
-	mustErrMsg(t, "有待付变更单时再换", err, ErrOpenChange)
+	mustOpenChange(t, "有待付变更单时再换", err, change.OrderID)
 	// 报价也不列这一份（按套餐展开时跳过有未完结单的订阅）
 	res, err := e.svc.Quote(uctx, QuoteInput{Action: QuoteChange, PlanID: &planB})
 	if err != nil || len(res.Quotes) != 0 {
@@ -258,7 +267,7 @@ func TestPlanChangeAndRenewalMutuallyExclusive(t *testing.T) {
 		t.Fatalf("取消后续费: %+v %v", renewal, err)
 	}
 	_, err = e.svc.CreatePlanChangeOrder(uctx, PlanChangeOrderInput{SubscriptionID: sub.ID, PlanID: planB, PriceID: priceB})
-	mustErrMsg(t, "有待付续费单时换套餐", err, ErrOpenChange)
+	mustOpenChange(t, "有待付续费单时换套餐", err, renewal.OrderID)
 	if n := e.count(t, ctx, `SELECT count(*) FROM orders WHERE subscription_id = ? AND status = 'pending_payment'`, sub.ID); n != 1 {
 		t.Fatalf("这份订阅上待付单 %d 张，期望 1", n)
 	}

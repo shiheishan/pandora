@@ -127,7 +127,8 @@ describe('加时长（与后端 subscriptionExtendable / validateAdminExtend 同
 describe('订单与输入', () => {
   it('订单「买了什么」', () => {
     expect(orderWhat({ kind: 'new', plan_name: '标准版', interval: 'month', interval_count: 1, item_count: 1 })).toBe('标准版 · 月付')
-    expect(orderWhat({ kind: 'renewal', plan_name: '专业版', interval: 'month', interval_count: 3, item_count: 2 })).toBe('专业版 · 3 × 月付 等 2 项')
+    expect(orderWhat({ kind: 'stack', plan_name: '流量卡', interval: 'one_time', interval_count: 1, item_count: 1 })).toMatch(/^叠加 · 流量卡/)
+    expect(orderWhat({ kind: 'renewal', plan_name: '专业版', interval: 'month', interval_count: 3, item_count: 2 })).toBe('续费 · 专业版 · 3 × 月付 等 2 项')
     expect(orderWhat({ kind: 'topup', plan_name: '', interval: '', interval_count: 0, item_count: 1 })).toBe('余额充值')
     expect(orderWhat({ kind: 'stack', plan_name: '', interval: '', interval_count: 0, item_count: 1 })).toBe('叠加')
     expect(orderWhat({ kind: 'unknown_kind', plan_name: '', interval: '', interval_count: 0, item_count: 1 })).toBe('')

@@ -50,12 +50,12 @@ test('C8：改名与按份换新链接', async ({ browser, world }) => {
   const rotate = page.getByRole('dialog', { name: '换一个新链接？' })
 
   await step(page, 'C8', async () => {
-    await card(page, basic.name).getByRole('button', { name: '起个名字', exact: true }).click()
+    await card(page, basic.name).getByRole('button', { name: '起名字', exact: true }).click()
     await naming.getByLabel('名字', { exact: true }).fill('妈妈的')
     await submit(page, naming.getByRole('button', { name: '保存' }))
     const toast = await seen(page, /已改名，App 里更新一次后显示「.+ · 妈妈的」/)
     await expect(card(page, '妈妈的')).toBeVisible()
-    await card(page, std.name).getByRole('button', { name: '起个名字', exact: true }).click()
+    await card(page, std.name).getByRole('button', { name: '起名字', exact: true }).click()
     await naming.getByLabel('名字', { exact: true }).fill('妈妈的')
     await submit(page, naming.getByRole('button', { name: '保存' }))
     const err = naming.getByText(`这个名字已经用在「妈妈的 · ${basic.name}」上了，换一个吧`)

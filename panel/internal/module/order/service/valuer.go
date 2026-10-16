@@ -18,7 +18,7 @@ func (s *Service) RemainingValue(ctx context.Context, subscriptionID uuid.UUID, 
 	if err != nil {
 		return decimal.Zero, 0, err
 	}
-	open, err := s.repo.OpenChangeOrderExists(ctx, sub.ID)
+	_, open, err := s.repo.OpenChangeOrder(ctx, sub.ID)
 	if err != nil {
 		return decimal.Zero, 0, err
 	}

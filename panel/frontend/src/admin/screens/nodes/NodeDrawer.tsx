@@ -47,8 +47,8 @@ export function NodeDrawer({ node, detail, tab, onClose }: { node: NodeRow | nul
             <span className={css.titleName}>{node.name}</span>
             {state && (
               <span className={css.statusTags}>
-                <Tag tone={statusTone(state.tone)}>{state.label}</Tag>
-                {state.note === '草稿' && <Tag tone="neutral">草稿</Tag>}
+                {/* 草稿在列表里归「已停用」筛选，头部只标「草稿」，不同时挂两个状态 */}
+                <Tag tone={statusTone(state.tone)}>{state.note === '草稿' ? '草稿' : state.label}</Tag>
               </span>
             )}
           </span>

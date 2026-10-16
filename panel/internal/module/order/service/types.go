@@ -108,7 +108,7 @@ var (
 	ErrSamePlanUseRenewal = errs.Newf(errs.Conflict, "你已有这个套餐的订阅，请在原订阅上续费，订阅链接不变")
 	// ErrSamePlanUseStack 是一次性套餐已有同一个、没选「另开一份」：让用户选叠加到原来那一份还是另开一份
 	ErrSamePlanUseStack = errs.Newf(errs.Conflict, "你已有这个一次性套餐，可以叠加到原来那一份，或选择另开一份")
-	ErrOpenChange       = errs.Newf(errs.Conflict, "这条订阅还有未完成的续费、叠加或变更套餐订单，请先支付或取消")
+	ErrOpenChange       = errs.Newf(errs.Conflict, "这份套餐还有未完成的续费、叠加或换套餐订单，请先付款或取消")
 	ErrQuoteChanged     = errs.Newf(errs.QuoteChanged, "金额刚变了，请再确认一次")
 	ErrBelowMinimum     = errs.Newf(errs.ValidationFailed, "应付金额低于支付渠道的最低付款额，请先充值或使用余额支付")
 	ErrAlreadyPaid      = errs.Newf(errs.Conflict, "订单已支付，不能取消")

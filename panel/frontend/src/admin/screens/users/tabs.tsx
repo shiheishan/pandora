@@ -137,7 +137,7 @@ function SubscriptionCard({
   const endStr = s.current_period_end ? formatDateTime(s.current_period_end).slice(0, 10) : '—'
   const validityDesc = isOneTime
     ? `${formatMoney(s.amount)} · 开通 ${startStr} · ${isPerm ? '永久有效' : `到期 ${endStr}`}`
-    : `${formatMoney(s.amount)} · 本期 ${startStr} 起 · 到期 ${endStr}`
+    : `${formatMoney(s.amount)} · ${startStr} 起 · 到期 ${endStr}`
 
   // 有效期按钮逻辑
   const extendable = extendableSubscriptions([s], now).length > 0 && !isPerm

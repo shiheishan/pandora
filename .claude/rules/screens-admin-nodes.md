@@ -27,7 +27,7 @@ paths:
 - 服务器只有 draft / ready / draining / maintenance / retired 五态；卡片「标记维护」发 `draining`（显示「维护中」），maintenance 是进一步停机；详情弹窗（`ServerDrawer.tsx` 的 `ServerDetail`）只读键值 + 编辑名称、容量、备注 + 退役（服务中的要先标记维护）与删除；`infra.ts` 与 mock 的状态边表照后端 `serverStatusTransitions` 原样写，`infra.test.ts` 逐边钉住。
 - 服务器删除只许草稿或已退役；名下节点不拒绝而是级联静默（身份吊销、摘掉 `server_id`），文案按此改写了设计稿的「先迁移或删除」。
 - 安装令牌固定传 `ttl_minutes: 30`（后端缺省 20）。
-- 签安装令牌只有服务器卡片一个入口（`serverActions.ts` 的 `useIssueServerToken`，`v1/servers/:id/bootstrap-token`），签好后弹安装弹窗（命令、令牌两步各自复制，关闭即不再显示）；节点详情「身份与操作」只显示节点 ID、身份、证书指纹（`identity.fingerprint_sha256`）与服务器待用令牌数，不签发令牌、没有单节点令牌（10-14 删了 `v1/nodes/bootstrap-token` 与 UniProxy 服务端令牌）。
+- 签安装令牌只有服务器卡片一个入口（`serverActions.ts` 的 `useIssueServerToken`，`v1/servers/:id/bootstrap-token`），签好后弹安装弹窗（只给一条安装命令，令牌就在命令里、脚本不另要；关闭即不再显示，别再加「粘贴令牌」那一步）；节点详情「身份与操作」只显示节点 ID、身份、证书指纹（`identity.fingerprint_sha256`）与服务器待用令牌数，不签发令牌、没有单节点令牌（10-14 删了 `v1/nodes/bootstrap-token` 与 UniProxy 服务端令牌）。
 
 运行状态与端口（w4deliver）：
 

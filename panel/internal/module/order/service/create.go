@@ -344,12 +344,8 @@ func (s *Service) placeRenewal(ctx context.Context, d renewalDraft) (Created, mo
 	if !sub.StateAt(now).AcceptsChange() {
 		return Created{}, model.Order{}, subsvc.ErrRenewalWindowClosed
 	}
-	open, err := s.repo.OpenChangeOrderExists(ctx, sub.ID)
-	if err != nil {
+	if err := s.openChangeConflict(ctx, sub.ID, now); err != nil {
 		return Created{}, model.Order{}, err
-	}
-	if open {
-		return Created{}, model.Order{}, ErrOpenChange
 	}
 	priceID := d.PriceID
 	if priceID == nil {

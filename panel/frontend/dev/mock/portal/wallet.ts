@@ -6,7 +6,7 @@ import { ChoiceError, options, resolve, type Candidate, type Choice, type Offer,
 import { creditOf } from './quote.ts'
 
 const DAY_MS = 86_400_000
-const INVALID = '卡密无效、已被使用或已过期'
+const INVALID = '卡号无效、已被使用或已过期'
 const NO_PLACEMENT = '现在没有在用的套餐，这张卡暂时用不了。先续费再来兑换，卡不会过期'
 const normalize = (code: unknown) => (typeof code === 'string' ? code.replace(/\s+/g, '').toUpperCase() : '')
 

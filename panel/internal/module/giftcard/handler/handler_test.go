@@ -154,7 +154,7 @@ func TestPreviewUnusable(t *testing.T) {
 	f := &fakeSvc{preview: func(string) (service.CardPreview, error) { return service.CardPreview{}, service.ErrCodeUnusable }}
 	w := do(newEngine(f, false, nil), http.MethodPost, "/v1/gift-cards/preview", `{"code":"NOPE12345"}`)
 	mustStatus(t, w, http.StatusUnprocessableEntity)
-	if !strings.Contains(w.Body.String(), "卡密无效、已被使用或已过期") {
+	if !strings.Contains(w.Body.String(), "卡号无效、已被使用或已过期") {
 		t.Fatalf("错误文案 %s", w.Body)
 	}
 }

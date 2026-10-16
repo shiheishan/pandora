@@ -38,6 +38,12 @@ function TrafficBody({ sub, naming }: { sub: Subscription; naming: ReturnType<ty
         : `含送的 ${gb(bonus)}，本期有效`
       : null
 
+  // 下一期从流量清零那天起（next_reset_at）：提前续过费的，那天自动开新一期；最后一期要续上才有
+  const nextCycle = sub.next_reset_at
+    ? sub.current_period_end && new Date(sub.next_reset_at) < new Date(sub.current_period_end)
+      ? `${day(sub.next_reset_at)} 起`
+      : `${day(sub.next_reset_at)} 续上后`
+    : null
   return (
     <div className={`${flowCss.stack} ${flowCss.narrow}`}>
       {naming.multi && (
@@ -50,9 +56,7 @@ function TrafficBody({ sub, naming }: { sub: Subscription; naming: ReturnType<ty
         {total !== null && <> / 共 {gb(total)}</>}
         {bonusNote && <>（{bonusNote}）</>}
         。
-        {sub.plan_kind === 'subscription' && sub.current_period_end && sub.traffic_limit !== null && (
-          <> {day(sub.current_period_end)} 续上后，新的一期又有 {gb(sub.traffic_limit)}。</>
-        )}
+        {sub.plan_kind === 'subscription' && nextCycle && sub.traffic_limit !== null && <> {nextCycle}，新的一期又有 {gb(sub.traffic_limit)}。</>}
       </p>
       <ResetOffer sub={sub} />
       <BiggerPlan sub={sub} />

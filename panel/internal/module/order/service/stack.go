@@ -32,12 +32,8 @@ func (s *Service) placeStack(ctx context.Context, d stackDraft) (Created, model.
 	if !d.Sub.StateAt(now).AcceptsChange() {
 		return Created{}, model.Order{}, subsvc.ErrRenewalWindowClosed
 	}
-	open, err := s.repo.OpenChangeOrderExists(ctx, d.Sub.ID)
-	if err != nil {
+	if err := s.openChangeConflict(ctx, d.Sub.ID, now); err != nil {
 		return Created{}, model.Order{}, err
-	}
-	if open {
-		return Created{}, model.Order{}, ErrOpenChange
 	}
 
 	uid := d.UserID

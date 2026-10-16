@@ -21,7 +21,7 @@ export function parseTopupAmount(input: string): { cents: number } | { error: st
 /** 契约门户-05 余额明细的 kind 映射；未知类型返回 null，由调用方显示 memo */
 const LEDGER: Readonly<Record<string, string>> = {
   balance_topup: '充值',
-  balance_hold: '下单用余额（冻结）',
+  balance_hold: '下单用余额',
   plan_change_refund: '换套餐退回',
   balance_release: '订单取消退回',
   balance_adjusted: '人工调整',

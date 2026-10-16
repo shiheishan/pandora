@@ -348,7 +348,7 @@ export function BalanceForm({ user, onClose, onDone }: { user: UserDetail; onClo
         onConfirm={() => void submit()}
       >
         <p className={css.dialogText}>
-          {confirming !== null && confirming < 0 ? '扣减' : '增加'} {formatMoney(Math.abs(confirming ?? 0))}，当前余额 {formatMoney(user.balance)}。
+          {confirming !== null && confirming < 0 ? '扣减' : '增加'} {formatMoney(Math.abs(confirming ?? 0))}，余额 {formatMoney(user.balance)} → {formatMoney(user.balance + (confirming ?? 0))}。
         </p>
         <p className={css.dialogText}>原因：{reason.trim()}</p>
       </ActionModal>

@@ -33,7 +33,7 @@ export function ProfileTab({ d, now, onAdjustBalance }: { d: UserDetail; now: Da
       <StatStrip
         label="用户统计"
         items={[
-          { label: '累计消费', value: formatMoney(d.stats.paid_total) },
+          { label: '累计实付', value: formatMoney(d.stats.paid_total) },
           { label: '订单数', value: String(d.stats.order_count) },
           { label: '邀请人数', value: String(d.stats.referral_count) },
         ]}

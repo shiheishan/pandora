@@ -117,21 +117,26 @@ SELECT * FROM orders
 	return o, true, nil
 }
 
-// OpenChangeOrderExists 该订阅是否已有未完结的续费、叠加或换套餐单。
-func (r *Repo) OpenChangeOrderExists(ctx context.Context, subscriptionID uuid.UUID) (bool, error) {
-	var n int64
+// OpenChangeOrder 找该订阅最近一张未完结（待付或已付未履约）的续费、叠加或换套餐单；库里唯一索引保证至多一张。
+func (r *Repo) OpenChangeOrder(ctx context.Context, subscriptionID uuid.UUID) (model.Order, bool, error) {
+	var o model.Order
 	err := r.d.Conn(ctx).Raw(`
-SELECT COUNT(*) FROM orders
+SELECT * FROM orders
  WHERE subscription_id = ?
    AND kind IN ('renewal', 'upgrade', 'stack')
-   AND status IN ('pending_payment', 'paid')`, subscriptionID).Scan(&n).Error
+   AND status IN ('pending_payment', 'paid')
+ ORDER BY created_at DESC
+ LIMIT 1`, subscriptionID).Scan(&o).Error
 	if err != nil {
-		return false, mapErr(err)
+		return model.Order{}, false, mapErr(err)
 	}
-	return n > 0, nil
+	if o.ID == uuid.Nil {
+		return model.Order{}, false, nil
+	}
+	return o, true, nil
 }
 
-// OpenChangeSubscriptions 是 subIDs 里挂着未完结续费、叠加或换套餐单的订阅（OpenChangeOrderExists 的批量版，报价与开单预览用）。
+// OpenChangeSubscriptions 是 subIDs 里挂着未完结续费、叠加或换套餐单的订阅（OpenChangeOrder 的批量版，报价与开单预览用）。
 func (r *Repo) OpenChangeSubscriptions(ctx context.Context, subIDs []uuid.UUID) (map[uuid.UUID]bool, error) {
 	out := make(map[uuid.UUID]bool, len(subIDs))
 	if len(subIDs) == 0 {

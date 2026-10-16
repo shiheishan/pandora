@@ -208,7 +208,7 @@ func TestConcurrentCancelVersusWebhook(t *testing.T) {
 	e.assertNoDrift(t, ctx)
 }
 
-// 同一用户并发给同一订阅建两张续费单：恰好一张成功，另一张 ErrOpenChange。
+// 同一用户并发给同一订阅建两张续费单：恰好一张成功，另一张被拦（order_pending 或唯一索引兜底的 ErrOpenChange）。
 func TestConcurrentRenewalsOneWins(t *testing.T) {
 	e, ctx := newCommitEnv(t)
 	user := e.mkUser(t, ctx)
@@ -234,7 +234,7 @@ func TestConcurrentRenewalsOneWins(t *testing.T) {
 		switch {
 		case err == nil:
 			ok++
-		case errors.Is(err, ErrOpenChange) || codeOf(err) == errs.Conflict:
+		case errors.Is(err, ErrOpenChange) || codeOf(err) == errs.Conflict || codeOf(err) == errs.OrderPending:
 			open++
 		default:
 			t.Fatalf("意外错误: %v", err)

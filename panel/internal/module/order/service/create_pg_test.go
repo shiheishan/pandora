@@ -258,7 +258,7 @@ func TestCreateNewOrderExpect(t *testing.T) {
 	mustEq(t, "Payable", c.Payable, line.WithBalance.Payable)
 }
 
-// 续费：订单指向订阅、订单行记套餐当前版本（新周期开始时由配额滚动切过去，module-order「续费」）；同一订阅第二张续费单回 ErrOpenChange。
+// 续费：订单指向订阅、订单行记套餐当前版本（新周期开始时由配额滚动切过去，module-order「续费」）；同一订阅第二张续费单回 order_pending。
 func TestCreateRenewalOrder(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
@@ -294,8 +294,8 @@ func TestCreateRenewalOrder(t *testing.T) {
 	}
 
 	_, err = e.svc.CreateRenewalOrder(asUser(ctx, user), RenewalOrderInput{SubscriptionID: sub.ID, PriceID: &priceID})
-	if !errors.Is(err, ErrOpenChange) {
-		t.Fatalf("第二张续费单应 ErrOpenChange，得到 %v", err)
+	if codeOf(err) != errs.OrderPending {
+		t.Fatalf("第二张续费单应 order_pending（指向第一张），得到 %v", err)
 	}
 	// 别人的订阅：404
 	_, err = e.svc.CreateRenewalOrder(asUser(ctx, e.mkUser(t, ctx)), RenewalOrderInput{SubscriptionID: sub.ID, PriceID: &priceID})

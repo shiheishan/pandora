@@ -89,13 +89,17 @@ const KIND_LABELS: Readonly<Record<string, string>> = {
   traffic_reset: '流量重置',
 }
 
-/** 订单「买了什么」：套餐名 · 周期（多项时提示还有几项）；充值单没有套餐名 */
+/** 续费、变更、叠加单在「买了什么」前标出类型，不然和新购长得一样 */
+const KIND_PREFIXED: ReadonlySet<string> = new Set(['renewal', 'upgrade', 'stack'])
+
+/** 订单「买了什么」：[类型 ·] 套餐名 · 周期（多项时提示还有几项）；充值单没有套餐名 */
 export function orderWhat(o: Pick<OrderRow, 'plan_name' | 'interval' | 'interval_count' | 'item_count'> & { kind: string }): string {
+  const tag = o.plan_name && KIND_PREFIXED.has(o.kind) ? KIND_LABELS[o.kind] : ''
   const name = o.plan_name || KIND_LABELS[o.kind] || ''
   const every = INTERVAL_LABELS[o.interval]
   const cycle = every ? (o.interval_count > 1 ? `${o.interval_count} × ${every}` : every) : ''
   const more = o.item_count > 1 ? ` 等 ${o.item_count} 项` : ''
-  return [name, cycle].filter(Boolean).join(' · ') + more
+  return [tag, name, cycle].filter(Boolean).join(' · ') + more
 }
 
 export function initial(email: string, displayName: string | null): string {

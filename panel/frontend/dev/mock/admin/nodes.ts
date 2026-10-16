@@ -207,7 +207,7 @@ function activationWarnings(n: Node): string[] {
 
 // subscription.DeliveryState / NodeDeliveryFacts.Refine 的文案，与 Go 一字不差
 const DELIVERY_NOTES = {
-  notActive: '服务状态不是 active，不下发',
+  notActive: '节点不在服务中（草稿、已停用或已退役）',
   neverSeen: '从未上报过心跳，不下发 —— 多半是建了没装 agent，或是测试留下的记录。发出去就是一条必然连不上的线路',
   stale: '心跳已超时，但仍在下发 —— 只有当套餐里一个新鲜节点都没有时才会用到它。空订阅会让客户端清空服务器列表，比给一条可能不通的线路更糟',
   serverNotReady: '所属服务器未就绪或已删除，不下发',

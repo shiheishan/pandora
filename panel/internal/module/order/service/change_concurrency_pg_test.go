@@ -34,7 +34,7 @@ func oneWins(t *testing.T, results []error) {
 		switch {
 		case err == nil:
 			ok++
-		case errors.Is(err, ErrOpenChange) || codeOf(err) == errs.Conflict:
+		case errors.Is(err, ErrOpenChange) || codeOf(err) == errs.Conflict || codeOf(err) == errs.OrderPending:
 			open++
 		default:
 			t.Fatalf("意外错误: %v", err)

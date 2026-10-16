@@ -161,9 +161,12 @@ export function SubCard({ sub, naming, link, actions, compact = false }: { sub: 
               换个套餐
             </a>
           )}
-          <button type="button" className={css.quiet} onClick={() => actions.onRename(sub)} id={`btn-rename-${sub.id}`}>
-            {sub.label ? '改名' : '起个名字'}
-          </button>
+          {/* 上面已有「起个名字，好分清是谁的」提示条时不再重复给入口 */}
+          {!(naming.multi && !sub.label) && (
+            <button type="button" className={css.quiet} onClick={() => actions.onRename(sub)} id={`btn-rename-${sub.id}`}>
+              {sub.label ? '改名' : '起个名字'}
+            </button>
+          )}
           {!expired && leak === null && link && (
             <button type="button" className={css.quiet} onClick={() => actions.onRotate(sub)} id={`btn-rotate-${sub.id}`}>
               换新链接

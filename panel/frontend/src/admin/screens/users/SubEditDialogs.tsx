@@ -272,7 +272,7 @@ export function ResetTrafficDialog({
     >
       {subscription && (
         <p className={css.dialogText}>
-          {user.email} 的{subName(subscription)}已用{used !== undefined ? ` ${formatBytes(used)}` : '流量'} 将清零。只重置这一份。
+          {user.email} 的「{subName(subscription)}」已用{used !== undefined ? ` ${formatBytes(used)} ` : '的流量'}将清零。只重置这一份。
         </p>
       )}
       <TextArea

@@ -81,6 +81,7 @@ export function ResetOffer({ sub }: { sub: Subscription }) {
         <b>{title}</b>
         {quotaHint && <small>{quotaHint}</small>}
         <small>{desc}</small>
+        {sub.traffic_used === 0 && <small>{scope}还没用流量，现在重置不会多出流量</small>}
       </div>
       <a className={css.optButton} href={href('/checkout', { reset: sub.id })}>
         {btnText}

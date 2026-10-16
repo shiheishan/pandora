@@ -230,7 +230,7 @@ export function confirmCopy(c: ConfirmCtx): ConfirmCopy {
         ...coupon(row),
         ...(limit !== null && limit !== undefined && left !== null ? [{ k: '重置后能用', v: `${gb(left)} → ${gb(limit)}` }] : []),
       ],
-      notes: ['只清这一期已用的流量；到期时间都不变。'],
+      notes: ['只清这一期已用的流量；到期时间都不变。', ...(sub.traffic_used === 0 ? ['这一期还没用流量，现在重置不会多出流量。'] : [])],
     }
   }
   return { title: '确认', verb: '确认', callout: [], rows: [], notes: [] }

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	authsvc "github.com/aegispanel/aegis/internal/module/auth/service"
 	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
@@ -205,9 +206,21 @@ func (a supportPlans) ActivePlanNames(ctx context.Context, userIDs []uuid.UUID) 
 	}
 	out := make(map[uuid.UUID]string, len(sums))
 	for id, us := range sums {
-		if us.Current != nil && us.Current.State == subsvc.StateLive {
-			out[id] = us.Current.PlanName
+		if us.Current == nil || us.Current.State != subsvc.StateLive {
+			continue
 		}
+		// 一人可有多份：只写当前那份会让客服以为他只有这一份
+		live := 0
+		for _, sum := range us.Subscriptions {
+			if sum.State == subsvc.StateLive {
+				live++
+			}
+		}
+		name := us.Current.PlanName
+		if live > 1 {
+			name = fmt.Sprintf("%s 等 %d 份", name, live)
+		}
+		out[id] = name
 	}
 	return out, nil
 }

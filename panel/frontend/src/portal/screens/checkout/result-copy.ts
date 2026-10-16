@@ -135,7 +135,8 @@ export function doneLines(c: DoneContext, order: OrderDetail, sub: Subscription 
       return {
         title: '叠加好了',
         happened: [`已叠加到${sub ? naming.who(sub) : '这一份'}：总流量加上 ${gb(bytes)}${extend}，链接不变`, paid],
-        kept: ['链接没变，不用重新添加', ...(end && !permanent ? [`有效期到 ${end}`] : permanent ? ['永久有效'] : [])],
+        // 顺延后的日期已写在「发生了什么」里，不再列进「没变的」；永久有效的才真没变
+        kept: ['链接没变，不用重新添加', ...(permanent ? ['永久有效'] : [])],
         showNewLink: false,
       }
     }

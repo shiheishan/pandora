@@ -273,10 +273,15 @@ export function sweepExpired(state: PortalState) {
 /** 续费、叠加与变更互斥：同一份只能有一张在途单 */
 export function assertNoOpenChange(state: PortalState, subId: string) {
   sweepExpired(state)
-  const open = state.orders.some(
+  const open = state.orders.find(
     (o) => o.subscription_id === subId && (o.kind === 'renewal' || o.kind === 'upgrade' || o.kind === 'stack') && o.status === 'pending_payment',
   )
-  if (open) throw new BillingError(409, 'conflict', '这条订阅还有未完成的续费、叠加或变更套餐订单，请先支付或取消')
+  if (!open) return
+  // 与后端 openChangeConflict 同口径：order_pending 带那张单，过了付款期限再带 lapsed
+  const word = open.kind === 'renewal' ? '续费' : open.kind === 'stack' ? '叠加' : '换套餐'
+  const lapsed = open.expires_at !== undefined && new Date(open.expires_at).getTime() <= Date.now()
+  const msg = lapsed ? `这份套餐还有一张已超过付款期限的${word}订单，取消后再操作` : `这份套餐还有一张没付款的${word}订单，继续付款或取消后再操作`
+  throw new BillingError(409, 'order_pending', msg, lapsed ? { order_id: open.id, lapsed: 'true' } : { order_id: open.id })
 }
 
 export function assertNoPendingReset(state: PortalState, subId: string) {

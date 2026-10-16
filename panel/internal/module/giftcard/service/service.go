@@ -201,7 +201,7 @@ var errSealedMismatch = errors.New("giftcard: 批次密文与码表对不上")
 var (
 	// ErrCodeUnusable 对所有「这个码不能用」的情况回同一句话：不存在、已用、已停用、已过期、模板停用都是它，
 	// 免得爆破的人靠错误文案分辨哪些码真实存在。
-	ErrCodeUnusable = errs.Newf(errs.ValidationFailed, "卡密无效、已被使用或已过期")
+	ErrCodeUnusable = errs.Newf(errs.ValidationFailed, "卡号无效、已被使用或已过期")
 	// ErrAccountDeleted 是已注销的账号兑换礼品卡（与 identity 同码同文案）。
 	ErrAccountDeleted = errs.Newf(errs.Conflict, "账号已注销")
 	// ErrTemplateInactive 是码本身可用、但所属活动已暂停或归档（只在兑换时给出，预览一律回 ErrCodeUnusable）。

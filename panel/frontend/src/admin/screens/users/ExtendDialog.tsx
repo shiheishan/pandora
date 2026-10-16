@@ -91,7 +91,7 @@ export function ExtendDialog({
       onCancel={close}
       onConfirm={() => void submit()}
     >
-      <p className={css.dialogText}>到期时间、本周期流量配额与订阅链接的有效期一起往后推；已用流量不清零。已过到期日的订阅从现在起算。</p>
+      <p className={css.dialogText}>到期时间与订阅链接的有效期往后推；正处在最后一期的，这一期的流量周期也跟着延长，已用流量不清零。已过到期日的订阅从现在起算。</p>
       {rescue && (
         <p className={css.dialogText}>
           {lapsedDays !== null ? `这条订阅已过期 ${lapsedDays} 天，延长后旧链接恢复可用。` : '这条订阅已过期，延长后旧链接恢复可用。'}

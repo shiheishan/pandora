@@ -32,14 +32,35 @@ func (s *Service) checkChangeSource(ctx context.Context, sub subsvc.Subscription
 	if !sub.StateAt(now).AcceptsChange() {
 		return subsvc.ErrRenewalWindowClosed
 	}
-	open, err := s.repo.OpenChangeOrderExists(ctx, sub.ID)
-	if err != nil {
+	return s.openChangeConflict(ctx, sub.ID, now)
+}
+
+// changeKindWords 是续费、换套餐、叠加单在提示里的叫法。
+var changeKindWords = map[string]string{KindRenewal: "续费", KindUpgrade: "换套餐", KindStack: "叠加"}
+
+// openChangeConflict 这份订阅挂着未完结的续费、叠加或换套餐单时拒绝再建：
+// 待付的回 order_pending 带 fields.order_id（过了付款期限再带 lapsed），门户据此给「去付款 / 取消它」；
+// 已付未履约（正在入账）的回普通冲突，稍后再试。没有就回 nil。
+func (s *Service) openChangeConflict(ctx context.Context, subID uuid.UUID, now time.Time) error {
+	o, ok, err := s.repo.OpenChangeOrder(ctx, subID)
+	if err != nil || !ok {
 		return err
 	}
-	if open {
-		return ErrOpenChange
+	word := changeKindWords[o.Kind]
+	if o.Status != StatusPending {
+		return errs.Newf(errs.Conflict, "这份套餐有一张"+word+"订单正在入账，稍后再试")
 	}
-	return nil
+	lapsed := !o.ExpiresAt.After(now)
+	msg := "这份套餐还有一张没付款的" + word + "订单，继续付款或取消后再操作"
+	if lapsed {
+		msg = "这份套餐还有一张已超过付款期限的" + word + "订单，取消后再操作"
+	}
+	e := errs.Newf(errs.OrderPending, msg)
+	e.Fields = map[string]string{"order_id": o.ID.String()}
+	if lapsed {
+		e.Fields["lapsed"] = "true"
+	}
+	return e
 }
 
 // quoteSource 是换套餐报价的一份原订阅与它的折算输入。
