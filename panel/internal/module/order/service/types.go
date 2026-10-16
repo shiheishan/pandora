@@ -65,6 +65,7 @@ const (
 	ReasonUserCancelled  = "user_cancelled"
 	ReasonExpired        = "expired"
 	ReasonAccountDeleted = "account_deleted" // 后台注销账号时一并取消（CancelUserPending）
+	ReasonPlanArchived   = "plan_archived"   // 套餐归档后才到账：不开通，钱转余额，订单关掉（CloseArchivedOrder）
 )
 
 // 审计动作名与资源类型。

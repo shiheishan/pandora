@@ -331,6 +331,8 @@ func (s *Service) recordPaymentTx(ctx context.Context, in recordInput, hook reco
 	switch {
 	case settleErr == nil:
 		result, err = s.afterSettleSuccess(ctx, evID, in, haveIntent, intent, orderID, paymentID, method, surcharge)
+	case errors.As(settleErr, &npe) && npe.Kind == CaseArchivedPlan:
+		result, err = s.afterSettleArchived(ctx, evID, in, npe, haveIntent, intent, orderID, userID, orderNo, paymentID, surcharge)
 	case errors.As(settleErr, &npe):
 		result, err = s.afterSettleQuarantine(ctx, evID, in, npe, haveIntent, intent, orderID, userID, orderNo, paymentID, surcharge)
 	default:
@@ -428,8 +430,16 @@ func (s *Service) afterSettleQuarantine(ctx context.Context, evID uuid.UUID, in 
 	if in.Offline != nil {
 		return RecordResult{}, errs.Newf(errs.Conflict, "该订单当前状态不可支付")
 	}
+	res, _, err := s.quarantine(ctx, evID, in, npe, haveIntent, intent, orderID, userID, orderNo, paymentID, surcharge)
+	return res, err
+}
+
+// quarantine 记挂账：late_payment_suspense 分录、挂账案（suspense）、意图标成功、事件处理完、审计 payment.quarantined。返回新建的挂账案。
+func (s *Service) quarantine(ctx context.Context, evID uuid.UUID, in recordInput, npe *NotPayableError,
+	haveIntent bool, intent model.Intent, orderID, userID uuid.UUID, orderNo string, paymentID uuid.UUID, surcharge decimal.Decimal) (RecordResult, model.LateCase, error) {
+
 	if !npe.Kind.Valid() || !orderStatusPattern.MatchString(npe.OrderStatus) {
-		return RecordResult{}, errors.New("payment: 挂账参数不合法")
+		return RecordResult{}, model.LateCase{}, errors.New("payment: 挂账参数不合法")
 	}
 
 	legs := buildSuspenseLegs(in, surcharge)
@@ -441,7 +451,7 @@ func (s *Service) afterSettleQuarantine(ctx context.Context, evID uuid.UUID, in 
 		Legs:       legs,
 	})
 	if err != nil {
-		return RecordResult{}, err
+		return RecordResult{}, model.LateCase{}, err
 	}
 
 	lateID := uuid.Must(uuid.NewV7())
@@ -459,17 +469,17 @@ func (s *Service) afterSettleQuarantine(ctx context.Context, evID uuid.UUID, in 
 		SuspenseTxnID:  txnID,
 	}
 	if err := s.repo.InsertLateCase(ctx, late); err != nil {
-		return RecordResult{}, err
+		return RecordResult{}, model.LateCase{}, err
 	}
 
 	if haveIntent && intent.Status == string(IntentRequiresAction) {
 		if err := s.markIntentSucceeded(ctx, intent); err != nil {
-			return RecordResult{}, err
+			return RecordResult{}, model.LateCase{}, err
 		}
 	}
 
 	if _, err := s.repo.FinishEvent(ctx, evID, eventProcessed, nil); err != nil {
-		return RecordResult{}, err
+		return RecordResult{}, model.LateCase{}, err
 	}
 
 	pid := paymentID
@@ -490,7 +500,7 @@ func (s *Service) afterSettleQuarantine(ctx context.Context, evID uuid.UUID, in 
 			"suspense_txn":        txnID.String(),
 		},
 	}); err != nil {
-		return RecordResult{}, err
+		return RecordResult{}, model.LateCase{}, err
 	}
 
 	return RecordResult{
@@ -498,7 +508,7 @@ func (s *Service) afterSettleQuarantine(ctx context.Context, evID uuid.UUID, in 
 		PaymentID:      paymentID,
 		QuarantineKind: npe.Kind,
 		LedgerTxnID:    txnID,
-	}, nil
+	}, *late, nil
 }
 
 // markIntentSucceeded 把付款对应的意图转成 succeeded。意图是读时的快照、没加锁，这期间可能已被「换个方式付」作废：

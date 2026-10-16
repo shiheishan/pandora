@@ -57,6 +57,7 @@ type stubSettler struct {
 	users      map[uuid.UUID]uuid.UUID
 	notPayable map[uuid.UUID]error
 	calls      atomic.Int64
+	closeCalls atomic.Int64 // CloseArchivedOrder 的调用次数
 	ledger     *ledgersvc.Service
 	last       SettleInput // 最近一次 SettlePayment 入参（测试断言用）
 	// before 非空时在结算最前面调用（并发用例在这里拿订单锁）；返回错误即结算失败。
@@ -95,6 +96,12 @@ func (s *stubSettler) SettlePayment(ctx context.Context, in SettleInput) error {
 		return npErr
 	}
 	return nil
+}
+
+// CloseArchivedOrder 桩：没有订单表要动，直接调 settle（记挂账、转余额），并记下调用次数。
+func (s *stubSettler) CloseArchivedOrder(ctx context.Context, orderID uuid.UUID, settle func(ctx context.Context) error) error {
+	s.closeCalls.Add(1)
+	return settle(ctx)
 }
 
 type env struct {

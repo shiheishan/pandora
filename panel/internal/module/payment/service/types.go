@@ -24,8 +24,12 @@ import (
 //   - payment 调用前开了保存点：Settler 返回任何错误，payment 都先回滚到保存点，Settler 这次的写入（哪怕写了一半、
 //     哪怕有语句已失败）一律撤销。返回 NotPayable 时 payment 接着在同一事务里记挂账；其他错误原样返回，整笔回滚。
 //   - 锁序：Settler 先锁订单行；payment 在调它之前不锁意图（插收款时外键检查只对意图加 KEY SHARE）。
+//   - 订单行套餐已归档时 SettlePayment 返回 NotPayable(CaseArchivedPlan, …)；payment 回滚保存点后（订单行锁随之释放）调
+//     CloseArchivedOrder(orderID, settle)：Settler 重新锁订单行、释放预留与券，在释放余额冻结之前调 settle（payment 记挂账、
+//     意图标成功、转入余额），再释放余额冻结、作废其余在途意图、把订单关成取消。订单已不是待付时只调 settle。
 type Settler interface {
 	SettlePayment(ctx context.Context, in SettleInput) error
+	CloseArchivedOrder(ctx context.Context, orderID uuid.UUID, settle func(ctx context.Context) error) error
 }
 
 // SettleInput 是一笔已确认、已落库的收款。
@@ -52,12 +56,14 @@ const (
 	CaseReleasedOrder          CaseKind = "released_order"          // 订单已取消或超时
 	CaseExcessCapture          CaseKind = "excess_capture"          // 订单已经付过
 	CaseIneligibleSubscription CaseKind = "ineligible_subscription" // 订阅已不收这笔续费或变更
+	// CaseArchivedPlan 是订单行套餐已归档（归档前下单、归档后付款）：不开通，入账时由系统自动转入用户余额（用户 2026-10-16 定，迁移 00058）
+	CaseArchivedPlan CaseKind = "archived_plan"
 )
 
-// Valid 报告挂账类型是否在库里登记的 3 种之一。
+// Valid 报告挂账类型是否在库里登记的 4 种之一。
 func (k CaseKind) Valid() bool {
 	switch k {
-	case CaseReleasedOrder, CaseExcessCapture, CaseIneligibleSubscription:
+	case CaseReleasedOrder, CaseExcessCapture, CaseIneligibleSubscription, CaseArchivedPlan:
 		return true
 	default:
 		return false
