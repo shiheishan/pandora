@@ -97,10 +97,10 @@ func TestFormatTrafficReply(t *testing.T) {
 		t.Errorf("expiry mismatch in: %s", res1)
 	}
 
-	// 2. 有配额 + 流量包
+	// 2. 有配额 + 本期赠送 10 GB：剩余 = 100 + 10 − 40，共 = 已用 + 剩余
 	limit := int64(100 * 1024 * 1024 * 1024)
-	rem := int64(60 * 1024 * 1024 * 1024)
-	subWithPack := subsvc.Summary{
+	rem := int64(70 * 1024 * 1024 * 1024)
+	subWithBonus := subsvc.Summary{
 		Subscription: subsvc.Subscription{
 			PeriodEnd: now.Add(48 * time.Hour),
 		},
@@ -113,24 +113,20 @@ func TestFormatTrafficReply(t *testing.T) {
 				Remaining: &rem,
 			},
 		},
-		PackRemainingBytes: 50 * 1024 * 1024 * 1024,
 	}
-	res2 := formatTrafficReply([]subsvc.Summary{subWithPack}, loc)
+	res2 := formatTrafficReply([]subsvc.Summary{subWithBonus}, loc)
 	if !strings.Contains(res2, "「主力套餐」") {
 		t.Errorf("title mismatch in: %s", res2)
 	}
-	if !strings.Contains(res2, "流量：已用 40.0 GB / 共 100.0 GB，剩余 60.0 GB") {
+	if !strings.Contains(res2, "流量：已用 40.0 GB / 共 110.0 GB，剩余 70.0 GB") {
 		t.Errorf("traffic format mismatch in: %s", res2)
-	}
-	if !strings.Contains(res2, "流量包余量：50.0 GB") {
-		t.Errorf("pack remaining mismatch in: %s", res2)
 	}
 	if !strings.Contains(res2, "到期：2026-10-16 12:00") {
 		t.Errorf("expiry mismatch in: %s", res2)
 	}
 
 	// 3. 两份合并（空行隔开）
-	res3 := formatTrafficReply([]subsvc.Summary{subUnlimited, subWithPack}, loc)
+	res3 := formatTrafficReply([]subsvc.Summary{subUnlimited, subWithBonus}, loc)
 	blocks := strings.Split(res3, "\n\n")
 	if len(blocks) != 2 {
 		t.Fatalf("expected 2 blocks separated by double newline, got %d:\n%s", len(blocks), res3)

@@ -16,7 +16,6 @@ import (
 
 	"github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/aegispanel/aegis/internal/pkg/route"
 )
 
@@ -26,10 +25,10 @@ type fakeSvc struct {
 	mine        service.MySubscriptions
 	renameID    uuid.UUID
 	renameLabel *string
-	moveFrom    *uuid.UUID
-	moveTo      uuid.UUID
 	extendDays  int
 	extendOut   service.AdminExtendResult
+	grantBytes  int64
+	grantOut    service.AdminTrafficGrantResult
 	logFilter   service.ResetLogFilter
 	logs        []service.ResetLogView
 	limitSet    *int
@@ -45,14 +44,16 @@ func (f *fakeSvc) SetMyLabel(_ context.Context, id uuid.UUID, label *string) (se
 	return service.LabelResult{Label: label, ClientName: "Pandora · 基础版"}, nil
 }
 
-func (f *fakeSvc) MyTransferPacks(_ context.Context, from *uuid.UUID, to uuid.UUID) (int64, error) {
-	f.moveFrom, f.moveTo = from, to
-	return 42, nil
-}
-
 func (f *fakeSvc) AdminExtend(_ context.Context, id uuid.UUID, days int, _ string) (service.AdminExtendResult, error) {
 	f.extendDays = days
 	out := f.extendOut
+	out.SubscriptionID = id
+	return out, nil
+}
+
+func (f *fakeSvc) AdminGrantTraffic(_ context.Context, id uuid.UUID, bytes int64, _ string) (service.AdminTrafficGrantResult, error) {
+	f.grantBytes = bytes
+	out := f.grantOut
 	out.SubscriptionID = id
 	return out, nil
 }
@@ -118,22 +119,29 @@ func TestMySubscriptionsShape(t *testing.T) {
 	subID, planID, priceID := uuid.New(), uuid.New(), uuid.New()
 	end := time.Date(2026, 11, 12, 0, 0, 0, 0, time.UTC)
 	limit := int64(100)
+	resetPrice := decimal.RequireFromString("5.00")
 	f := &fakeSvc{mine: service.MySubscriptions{
-		UnattachedPackBytes: 7,
 		Subscriptions: []service.MySubscription{{
 			Summary: service.Summary{
 				Subscription: service.Subscription{
 					ID: subID, PlanID: planID, Status: service.StatusActive,
 					PeriodStart: end.AddDate(0, -1, 0), PeriodEnd: end,
-					Price: service.PriceSnapshot{PriceID: &priceID, Currency: money.CNY, Amount: decimal.RequireFromString("12.34"), Interval: "month", IntervalCount: 1},
+					Price: service.PriceSnapshot{PriceID: &priceID, Amount: decimal.RequireFromString("12.34"), Interval: "month", IntervalCount: 1},
 				},
-				State:    service.StateLive,
-				PlanName: "基础版",
-				Quotas:   []service.Quota{{Metric: service.MetricTraffic, Period: service.PeriodCycle, Limit: &limit, Consumed: 3}},
+				State:        service.StateLive,
+				PlanName:     "基础版",
+				PlanKind:     "subscription",
+				TrafficLimit: &limit,
+				TrafficBonus: 20,
+				TrafficUsed:  3,
+				ResetsUsed:   1,
+				ResetPrice:   &resetPrice,
+				Quotas:       []service.Quota{{Metric: service.MetricTraffic, Period: service.PeriodCycle, Limit: &limit, Bonus: 20, Consumed: 3}},
 			},
 			Renewable:    true,
+			Stackable:    false,
 			Changeable:   true,
-			RenewalPrice: &service.RenewalPrice{ID: priceID, Currency: money.CNY, UnitAmount: decimal.RequireFromString("12.34"), BillingInterval: "month", IntervalCount: 1, Available: true},
+			RenewalPrice: &service.RenewalPrice{ID: priceID, UnitAmount: decimal.RequireFromString("12.34"), BillingInterval: "month", IntervalCount: 1, Available: true},
 			ClientName:   "Pandora · 基础版",
 		}},
 	}}
@@ -142,21 +150,48 @@ func TestMySubscriptionsShape(t *testing.T) {
 		t.Fatalf("status %d body=%s", w.Code, w.Body.String())
 	}
 	got := decMap(t, w)
-	if got["unattached_pack_bytes"].(float64) != 7 {
-		t.Fatalf("unattached: %v", got)
+	if _, ok := got["unattached_pack_bytes"]; ok {
+		t.Fatalf("unexpected unattached_pack_bytes: %v", got)
 	}
 	subs := got["subscriptions"].([]any)
 	s := subs[0].(map[string]any)
+	if _, ok := s["currency"]; ok {
+		t.Fatalf("unexpected currency: %v", s)
+	}
 	if s["amount"].(float64) != 1234 || s["price_id"] != priceID.String() || s["state"] != "live" {
 		t.Fatalf("sub: %v", s)
 	}
+	if s["plan_kind"] != "subscription" {
+		t.Fatalf("plan_kind: %v", s["plan_kind"])
+	}
+	if s["bonus_bytes"].(float64) != 20 {
+		t.Fatalf("bonus_bytes: %v", s["bonus_bytes"])
+	}
+	if s["resets_used"].(float64) != 1 {
+		t.Fatalf("resets_used: %v", s["resets_used"])
+	}
+	if s["reset_price"].(float64) != 500 {
+		t.Fatalf("reset_price: %v", s["reset_price"])
+	}
+	if s["stackable"] != false {
+		t.Fatalf("stackable: %v", s["stackable"])
+	}
+	if s["validity_days"] != nil {
+		t.Fatalf("validity_days: %v", s["validity_days"])
+	}
 	rp := s["renewal_price"].(map[string]any)
+	if _, ok := rp["currency"]; ok {
+		t.Fatalf("unexpected currency in renewal_price: %v", rp)
+	}
 	if rp["unit_amount"].(float64) != 1234 || rp["available"] != true {
 		t.Fatalf("renewal_price: %v", rp)
 	}
 	q := s["quotas"].([]any)[0].(map[string]any)
 	if _, legacy := q["granted_addon"]; legacy || q["limit"].(float64) != 100 {
 		t.Fatalf("quota: %v", q)
+	}
+	if q["bonus_bytes"].(float64) != 20 {
+		t.Fatalf("quota bonus_bytes: %v", q)
 	}
 }
 
@@ -183,18 +218,25 @@ func TestRename(t *testing.T) {
 	}
 }
 
-func TestTransfer(t *testing.T) {
-	f := &fakeSvc{}
-	e := newEngine(f, false)
-	if w := do(e, http.MethodPost, "/v1/me/traffic-packs/transfer", `{"from_subscription_id":null,"to_subscription_id":"x"}`); w.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("坏目标: %d body=%s", w.Code, w.Body.String())
+func TestAdminGrantTraffic(t *testing.T) {
+	uid := uuid.New()
+	f := &fakeSvc{grantOut: service.AdminTrafficGrantResult{
+		UserID:       uid,
+		UserEmail:    "a@example.com",
+		GrantedBytes: 1024,
+		BonusBytes:   2048,
+	}}
+	e := newEngine(f, true)
+	id := uuid.New()
+	if w := do(e, http.MethodPost, "/v1/subscriptions/"+id.String()+"/traffic-pack", `{"bytes":0,"reason":"补偿"}`); w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("流量 0: %d", w.Code)
 	}
-	to := uuid.New()
-	w := do(e, http.MethodPost, "/v1/me/traffic-packs/transfer", `{"from_subscription_id":null,"to_subscription_id":"`+to.String()+`"}`)
-	if w.Code != http.StatusOK || f.moveFrom != nil || f.moveTo != to {
-		t.Fatalf("转移: %d body=%s", w.Code, w.Body.String())
+	w := do(e, http.MethodPost, "/v1/subscriptions/"+id.String()+"/traffic-pack", `{"bytes":1024,"reason":"补偿流量"}`)
+	if w.Code != http.StatusOK || f.grantBytes != 1024 {
+		t.Fatalf("加流量: %d body=%s", w.Code, w.Body.String())
 	}
-	if got := decMap(t, w); got["moved_bytes"].(float64) != 42 {
+	got := decMap(t, w)
+	if got["subscription_id"] != id.String() || got["user_email"] != "a@example.com" || got["granted_bytes"].(float64) != 1024 || got["bonus_bytes"].(float64) != 2048 {
 		t.Fatalf("body: %v", got)
 	}
 }

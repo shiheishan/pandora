@@ -74,8 +74,8 @@ func TestPGListUsersEnrich(t *testing.T) {
 	if ra.Current == nil || ra.Current.ID != liveID {
 		t.Fatalf("user A current %+v", ra.Current)
 	}
-	if !ra.Balance.Equal(decimal.RequireFromString("12.34")) || ra.Currency != "CNY" {
-		t.Fatalf("user A balance %s %s", ra.Balance, ra.Currency)
+	if !ra.Balance.Equal(decimal.RequireFromString("12.34")) {
+		t.Fatalf("user A balance %s", ra.Balance)
 	}
 
 	rb := rowByID(rows, ub.ID)
@@ -108,18 +108,13 @@ func TestPGUserDetailEnrich(t *testing.T) {
 	s1 := AdminSub{ID: uuid.New(), PlanName: "详单套餐1", Live: true, Status: "active"}
 	s2 := AdminSub{ID: uuid.New(), PlanName: "详单套餐2", Live: false, Status: "expired"}
 	fakes.subs.admin[u.ID] = AdminUserSubs{
-		Subscriptions:       []AdminSub{s1, s2},
-		Current:             &s1,
-		UnattachedPackBytes: 5,
+		Subscriptions: []AdminSub{s1, s2},
+		Current:       &s1,
 	}
 	fakes.orders.stats = map[uuid.UUID]OrderStat{
 		u.ID: {
 			Orders: 3,
-			Paid: map[string]decimal.Decimal{
-				"USD": decimal.RequireFromString("10"),
-				"CNY": decimal.RequireFromString("20"),
-				"EUR": decimal.Zero,
-			},
+			Paid:   decimal.RequireFromString("20"),
 		},
 	}
 	fakes.orders.recent = map[uuid.UUID][]AdminOrderRow{
@@ -135,14 +130,11 @@ func TestPGUserDetailEnrich(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(d.Subscriptions) != 2 || d.UnattachedPackBytes != 5 || d.OrderCount != 3 {
+	if len(d.Subscriptions) != 2 || d.OrderCount != 3 {
 		t.Fatalf("subs/pack/orders %+v", d)
 	}
-	if len(d.PaidTotals) != 2 || d.PaidTotals[0].Currency != "CNY" || !d.PaidTotals[0].Amount.Equal(decimal.RequireFromString("20")) {
-		t.Fatalf("paid %+v", d.PaidTotals)
-	}
-	if d.PaidTotals[1].Currency != "USD" || !d.PaidTotals[1].Amount.Equal(decimal.RequireFromString("10")) {
-		t.Fatalf("paid USD %+v", d.PaidTotals)
+	if !d.PaidTotal.Equal(decimal.RequireFromString("20")) {
+		t.Fatalf("paid %+v", d.PaidTotal)
 	}
 	if len(d.RecentOrders) != 2 {
 		t.Fatalf("recent %d", len(d.RecentOrders))
@@ -169,8 +161,8 @@ func TestPGUserDetailEnrich(t *testing.T) {
 	if d2.RecentOrders == nil || len(d2.RecentOrders) != 0 {
 		t.Fatalf("empty recent %v", d2.RecentOrders)
 	}
-	if d2.PaidTotals == nil || len(d2.PaidTotals) != 0 {
-		t.Fatalf("empty paid %v", d2.PaidTotals)
+	if !d2.PaidTotal.IsZero() {
+		t.Fatalf("empty paid %v", d2.PaidTotal)
 	}
 	if d2.Telegram != nil {
 		t.Fatalf("empty telegram %+v", d2.Telegram)
@@ -202,7 +194,6 @@ func TestPGAdminListGroups(t *testing.T) {
 	poolID := uuid.New()
 	fakes.groups.usage[g1] = GroupUsage{
 		Plans:          2,
-		Prices:         1,
 		Coupons:        3,
 		ExclusivePools: []PoolRef{{ID: poolID, Name: "池A"}},
 	}
@@ -224,13 +215,13 @@ func TestPGAdminListGroups(t *testing.T) {
 			row2 = &groups[i]
 		}
 	}
-	if row1 == nil || row1.Plans != 2 || row1.Prices != 1 || row1.Coupons != 3 {
+	if row1 == nil || row1.Plans != 2 || row1.Coupons != 3 {
 		t.Fatalf("g1 usage %+v", row1)
 	}
 	if len(row1.ExclusivePools) != 1 || row1.ExclusivePools[0].Name != "池A" {
 		t.Fatalf("g1 pools %+v", row1.ExclusivePools)
 	}
-	if row2 == nil || row2.Plans != 0 || row2.Prices != 0 || row2.Coupons != 0 {
+	if row2 == nil || row2.Plans != 0 || row2.Coupons != 0 {
 		t.Fatalf("g2 counts %+v", row2)
 	}
 	if row2.ExclusivePools == nil || len(row2.ExclusivePools) != 0 {

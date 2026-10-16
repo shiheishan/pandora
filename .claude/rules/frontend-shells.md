@@ -15,18 +15,28 @@ paths:
   - 带幂等键的写操作要传 `{ fields, intent }`，键的去留由这一处按 `endsIntent` 决定
   - 自己先处理 4xx 分支、不经 `useFailure` 的写操作，在 catch 开头直接调用 `endsIntent`
 - 后台权限只分有和没有：登录了就是管理员，能做全部操作
-  - 前端不按权限隐藏任何入口、按钮或标签；侧栏、⌘K、页头标签、仪表盘卡片全部照 `modules.ts` 的登记显示
+  - 前端不按权限隐藏任何入口、按钮或页签；侧栏、⌘K、页签栏、仪表盘卡片全部照 `modules.ts` 的登记显示
   - 页面不等 `GET v1/me` 回来再渲染；me 只给头像与名字用（`me.ts`），身份一律显示「管理员」
-  - 新增模块或标签时，只在 `modules.ts` 与侧栏 `NAV_GROUPS` 登记，不再登记权限码
+- 外框布局（10-16 设计稿）：顶栏（`Topbar.tsx`）横跨整页，下面左侧栏（`Sidebar.tsx`）、右侧主区；主区没有面包屑和大标题，页头直接是页签条
+  - 顶栏：Logo + 站点名 + 版本号、收起侧栏、居中搜索（点开 ⌘K）、主题切换、实时事件（`EventsCapsule`）、头像菜单（菜单头「管理员 · 名字」+ 邮箱；修改我的密码、绑定 Telegram、退出登录）
+  - 侧栏浅底，可收起成 56px 图标栏（状态由 `Shell.tsx` 持有，存 localStorage `pandora-admin-sidebar`，读写包 try/catch；没存过时窄于 960 默认收起）；收起时悬停或聚焦出模块名提示、徽标变小红点；底部「打开用户端 ↗」（入口页的上一级 `../`）
+  - 窄于 640（`Shell.tsx` 的 `useNarrow`）侧栏不占位，改成从左滑出的抽屉：顶栏按钮叫「打开导航 / 关闭导航」，盖遮罩；换页、点遮罩、Esc 关闭；收着时 `inert`；不改也不写 localStorage 的收起状态
+  - 模块图标在 `nav-icons.ts`（Hugeicons），新模块要同时登记图标
+- 新增模块或页签：`modules.ts` 的 `MODULES` 与 `NAV_GROUPS`、`nav-icons.ts`；不再登记权限码
+  - 页签已登记、页面还没接上的，放进 `modules.ts` 的 `PENDING_TABS`（外框画空状态，不交给模块页面分发）；接好页面后删掉那一项
+- 页面级说明只放页签栏最右侧的「?」（`PageHelp.tsx`，悬停或聚焦展开），数据在 `page-help.ts` 的 `PAGE_HELP`：键是「模块:页签」，没有页签的模块用模块名；值是 `{ label, sections: [{ title, ordered?, items }] }`，要点是字符串或 `{ term, text }`。各模块只改这份数据，不在页面里写说明段落；字段旁的就地提示不受此限
+- ⌘K（`CommandPalette.tsx`）：候选来自 `modules.ts` 的 `paletteGroups(query)`——空查询一组「快速跳转」列全部模块，有查询一组「页面」列模块、「模块 › 页签」与 `PALETTE_EXTRAS` 深链；实体搜索经组件的 `sources` 传入，分组接在「页面」之后
+  - 实体搜索（10-16）：`entity-search.ts` 的 `useEntitySearch` 在有查询时并行查 `GET v1/users`、`v1/orders`、`v1/nodes`（`q`、`limit=4`），分「用户」「订单」「节点」三组接在「页面」之后、`sources` 之前；防抖 200ms，查询键带搜索词、`signal` 传给 `api.get`，搜索词变了旧请求由 react-query 取消；某组失败就不显示那组，不报错；没有结果且还在查时显示「正在搜索…」
+  - 实体候选带 `path`（`EntityItem`），选中直接 `navigate` 到那一条：`/users/list/<用户id>`、`/billing/orders/<订单id>`、`/nodes/nodes/<节点id>`；只用本文件里的最小 schema 与状态文案，不 import `screens/**`（外框不把模块页面拉进主包）
+- 实时事件（`EventsCapsule.tsx`，纯函数在 `events.ts`）：按 topic + table + op 生成通用条目（事件只说哪一行变了，没有业务内容），每条有未读点、「全部标为已读」，页签 全部 / 订单 / 订阅 / 工单 / 节点 / 其他（按现有 topic 归类，不新增事件类型）；最多留 30 条，已读只在内存，刷新即清（10-16 用户定，不持久化）
+  - 点事件标已读并跳到对应页：订单、工单、节点、服务器、套餐有 id 时直接打开那一条（工单消息、订阅、删除事件退回列表页）；底部「审计日志 →」去 `/security/audit`
 - 接口回 404 时统一显示「不存在或已删除」（`ui/QueryView`），不提权限
 - 与设计稿不同的产品命名：
-  - 「欠费单」叫「挂账」（保留规则 6，契约后台-05）
-  - 套餐模块多一个设计稿没有的「流量包」标签
+  - 「欠费单」叫「待处理到账」（10-16 设计稿，取代原「挂账」）
 - 改密码成功后，后端已在同一事务里吊销全部会话：前端直接清令牌回登录页，不再发任何请求
-- 浏览器标题（`Shell.tsx`、`LoginPage.tsx`）、登录页页脚与侧栏品牌区随站点名：已登录读 `site.ts` 的 `useAdminSiteName()`（`v1/settings/site`，与内容页共用缓存），登录前读服务端写进入口页的 `<meta name="application-name">`（`documentSiteName()`，开发期没有就是 Pandora）；站点名是 Pandora 时侧栏照旧画 pandora 字标
+- 浏览器标题（`Shell.tsx`、`LoginPage.tsx`）、登录页页脚与顶栏品牌区随站点名：已登录读 `site.ts` 的 `useAdminSiteName()`（`v1/settings/site`，与内容页共用缓存），登录前读服务端写进入口页的 `<meta name="application-name">`（`documentSiteName()`，开发期没有就是 Pandora）；顶栏只画环形标记加站点名文字，不写死 Pandora
 - 2 小时无操作自动退出（`idle.ts` 的 `startIdleWatch`，在 `Shell.tsx` 挂上）：后台有定时轮询，服务端按 last_seen 判的空闲在开着的标签页上永远不会触发，所以前端只把点击、按键、滚轮、触摸算作操作，多个标签页经 localStorage 共享最近操作时间
-- 侧栏徽标与仪表盘「需要处理」共用 `tasks.ts` 的同一条查询和同一种缓存形状
-- `Sidebar.module.css` 在侧栏内把 `--surface`、`--text` 等语义令牌重定义成深色，`ui/Menu` 等组件因此能直接用在深底上；侧栏里的组件不要另写一套深色样式
+- 侧栏徽标与仪表盘「待办」共用 `tasks.ts` 的同一条查询和同一种缓存形状
 
 ## 门户（src/portal）
 

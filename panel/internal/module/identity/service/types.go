@@ -143,9 +143,8 @@ type UserRow struct {
 	SubscriptionCount int
 	// ActivePlan 是当前订阅生效时的套餐名，否则 nil
 	ActivePlan *string
-	// Balance 是站点币种下的可用余额，Currency 是站点币种
-	Balance  decimal.Decimal
-	Currency string
+	// Balance 是可用余额
+	Balance decimal.Decimal
 	// Current 是当前订阅，没有订阅为 nil
 	Current *AdminSub
 }
@@ -172,12 +171,10 @@ type UserDetail struct {
 	Subscriptions []AdminSub
 	// RecentOrders 是最近 20 单；永不为 nil
 	RecentOrders []AdminOrderRow
-	// PaidTotals 是按币种的实付（与 OpsOrders.UserOrderStats 同口径），币种升序、只列大于 0 的；永不为 nil
-	PaidTotals []CurrencyAmount
+	// PaidTotal 是实付合计（与 OpsOrders.UserOrderStats 同口径）
+	PaidTotal  decimal.Decimal
 	OrderCount int64
 	Telegram   *TelegramRef
-	// UnattachedPackBytes 是还没加到任何一份的流量包余量
-	UnattachedPackBytes int64
 }
 
 // Group 是后台用户组列表的一行。
@@ -189,9 +186,8 @@ type Group struct {
 	Users       int64
 	// Status：GroupActive / GroupDisabled
 	Status string
-	// 下面经 OpsGroupUsage 补：引用该组的套餐、价格、券数，与把它列入限定名单的节点池（永不为 nil）
+	// 下面经 OpsGroupUsage 补：引用该组的套餐、券数，与把它列入限定名单的节点池（永不为 nil）
 	Plans          int64
-	Prices         int64
 	Coupons        int64
 	ExclusivePools []PoolRef
 }

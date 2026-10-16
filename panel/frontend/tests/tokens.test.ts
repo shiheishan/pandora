@@ -1,6 +1,8 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
+  ADMIN_OVERRIDES,
+  ADMIN_RADIUS,
   COLOR_TOKENS,
   RADIUS_SCALE,
   ROLE_TOKENS,
@@ -73,6 +75,26 @@ describe('role tokens', () => {
   it('portal and admin declare the same role keys', () => {
     expect([...admin.keys()].sort()).toEqual([...portal.keys()].sort())
     expect([...portal.keys()].sort()).toEqual(ROLE_TOKENS.map((t) => t.name).sort())
+  })
+})
+
+describe('admin overrides', () => {
+  const lightBlock = merged(roles.get("html[data-app='admin']"))
+  const darkBlock = merged(roles.get("html[data-app='admin'][data-theme='dark']"))
+
+  it.each(ADMIN_OVERRIDES.map((t) => [t.name, t] as const))('%s', (name, token) => {
+    expect(normalizeCssValue(lightBlock.get(name) ?? 'missing')).toBe(normalizeCssValue(token.light))
+    expect(darkBlock.get(name) ?? null).toBe(token.dark)
+  })
+
+  it('zeroes every radius', () => {
+    for (const name of ADMIN_RADIUS) expect(lightBlock.get(name), name).toBe('0')
+  })
+
+  it('declares nothing beyond ADMIN_OVERRIDES and ADMIN_RADIUS', () => {
+    const names = [...ADMIN_OVERRIDES.map((t) => t.name), ...ADMIN_RADIUS].sort()
+    expect([...lightBlock.keys()].sort()).toEqual(names)
+    expect([...darkBlock.keys()].sort()).toEqual(ADMIN_OVERRIDES.filter((t) => t.dark != null).map((t) => t.name).sort())
   })
 })
 

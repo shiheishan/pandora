@@ -12,6 +12,13 @@ import (
 )
 
 // lapse 把订阅改成 days 天前已到期（状态改 expired），cycle 行跟到旧到期，day 行停在到期前一天。
+// endSub 把订阅改成已过期且关了续费窗口（期末在 40 天前）。
+func endSub(t *testing.T, e *env, ctx context.Context, subID uuid.UUID) {
+	t.Helper()
+	e.exec(t, ctx, `UPDATE subscriptions SET status = 'expired', current_period_start = now() - interval '90 days',
+		current_period_end = now() - interval '40 days', renewal_closed_at = now() WHERE id = ?`, subID)
+}
+
 func lapse(t *testing.T, e *env, ctx context.Context, subID uuid.UUID, days int) time.Time {
 	t.Helper()
 	end := time.Now().UTC().Truncate(time.Microsecond).AddDate(0, 0, -days)
@@ -29,15 +36,6 @@ func TestProvisionPG(t *testing.T) {
 	planID, versionID := newPlan(t, e, ctx,
 		quotaSpec{MetricTraffic, PeriodCycle, i64(100 * gib)},
 		quotaSpec{MetricTraffic, PeriodDay, i64(5 * gib)})
-
-	// 开通前先有一笔未分配的流量包（无订阅时兑换的送流量卡）
-	pack, err := e.svc.GrantTrafficPack(ctx, PackGrant{UserID: user, Source: PackSourceGiftCard, SourceID: uuid.New(), Bytes: gib})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if pack.SubscriptionID != nil {
-		t.Fatalf("应未分配: %+v", pack)
-	}
 
 	sub := provision(t, e, ctx, user, planID, versionID, "Work")
 	if sub.Status != StatusActive || sub.Label == nil || *sub.Label != "Work" || sub.NodeUID == 0 || sub.ProxyUUID == uuid.Nil {
@@ -61,25 +59,10 @@ func TestProvisionPG(t *testing.T) {
 	if n := countRows(t, e, ctx, `SELECT count(*) FROM subscription_events WHERE subscription_id = ? AND event_type = 'activated' AND from_status IS NULL`, sub.ID); n != 1 {
 		t.Fatalf("activated 事件 %d", n)
 	}
-	// 唯一一份生效中的：未分配的流量包自动挂上，转移流水记 system
-	if n := countRows(t, e, ctx, `SELECT count(*) FROM traffic_pack_grants WHERE id = ? AND subscription_id = ?`, pack.ID, sub.ID); n != 1 {
-		t.Fatal("未分配流量包没挂上")
-	}
-	if n := countRows(t, e, ctx, `SELECT count(*) FROM traffic_pack_transfers WHERE grant_id = ? AND actor_kind = 'system' AND from_subscription_id IS NULL`, pack.ID); n != 1 {
-		t.Fatal("没有挂接流水")
-	}
-
-	// 同名自动加序号；第二份开通时已有两份生效中的，新的未分配流量包不替用户选
-	pack2, err := e.svc.GrantTrafficPack(ctx, PackGrant{UserID: user, Source: PackSourceGiftCard, SourceID: uuid.New(), Bytes: gib})
-	if err != nil {
-		t.Fatal(err)
-	}
+	// 同名自动加序号
 	sub2 := provision(t, e, ctx, user, planID, versionID, "work")
 	if sub2.Label == nil || *sub2.Label != "work 2" {
 		t.Fatalf("同名加序号: %v", sub2.Label)
-	}
-	if n := countRows(t, e, ctx, `SELECT count(*) FROM traffic_pack_grants WHERE id = ? AND subscription_id IS NULL`, pack2.ID); n != 1 {
-		t.Fatal("多份生效中时不该自动挂")
 	}
 
 	// 版本不属于该套餐
@@ -279,10 +262,8 @@ func TestChangePlanPG(t *testing.T) {
 	if *cycle.Limit != 200*gib || cycle.Consumed != 0 {
 		t.Fatalf("cycle 行: %+v", cycle)
 	}
-	day := quotaOf(t, e, ctx, sub.ID, MetricTraffic, PeriodDay)
-	if day.Limit != nil || day.Consumed != 0 {
-		t.Fatalf("新版本没有的 day 行应不限: %+v", day)
-	}
+	// 新版本没有的 day 行删掉（审查 1016-A2：不留上限为空的残行被当成不限）
+	assertNoQuota(t, e, ctx, sub.ID, MetricTraffic, PeriodDay)
 	month := quotaOf(t, e, ctx, sub.ID, MetricTraffic, PeriodMonth)
 	if *month.Limit != 150*gib {
 		t.Fatalf("补的 month 行: %+v", month)

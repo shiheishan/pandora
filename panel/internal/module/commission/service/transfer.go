@@ -15,14 +15,13 @@ import (
 
 // postTransfer 记一笔佣金转余额：借 可提现佣金 / 贷 用户余额（commission_to_balance），并写 commission_transfers（entryID 非 nil 时是自动转余额，库里按条目唯一）。
 // 调用方必须已在本事务里 LockUser。返回账本交易 id。
-func (s *Service) postTransfer(ctx context.Context, userID uuid.UUID, cur money.Currency, amount decimal.Decimal, entryID *uuid.UUID, memo string) (uuid.UUID, error) {
+func (s *Service) postTransfer(ctx context.Context, userID uuid.UUID, amount decimal.Decimal, entryID *uuid.UUID, memo string) (uuid.UUID, error) {
 	transferID, err := uuid.NewV7()
 	if err != nil {
 		return uuid.Nil, errs.Wrap(errs.Internal, err)
 	}
 	txnID, err := s.ledger.Post(ctx, ledgersvc.Posting{
 		Kind:       ledgersvc.KindCommissionToBalance,
-		Currency:   cur,
 		SourceType: SourceCommissionTransfer,
 		SourceID:   transferID,
 		Memo:       memo,
@@ -40,7 +39,6 @@ func (s *Service) postTransfer(ctx context.Context, userID uuid.UUID, cur money.
 	if err := s.repo.InsertTransfer(ctx, &model.Transfer{
 		ID:          transferID,
 		UserID:      userID,
-		Currency:    string(cur),
 		Amount:      amount,
 		LedgerTxnID: txnID,
 		EntryID:     entryID,
@@ -50,8 +48,7 @@ func (s *Service) postTransfer(ctx context.Context, userID uuid.UUID, cur money.
 	return txnID, nil
 }
 
-// TransferToBalance 把站点币种的可提现佣金转成账户余额，返回账本交易 id。
-// 只认站点币种：门户钱包只显示站点币种的余额，别的币种转进去用户看不到，那部分佣金走提现（见 transferCurrency）。
+// TransferToBalance 把可提现佣金转成账户余额，返回账本交易 id。
 // 提现要审批、要等打款、有最低门槛；多数人只是想拿佣金续费，这条路让钱直接回到站内。
 // 账本：借 可提现佣金 / 贷 用户余额，负债在科目间搬家。与提现申请用同一把用户锁、同一口径：在途提现占用的部分不能再转。
 func (s *Service) TransferToBalance(ctx context.Context, userID uuid.UUID, amount decimal.Decimal) (uuid.UUID, error) {
@@ -69,14 +66,14 @@ func (s *Service) TransferToBalance(ctx context.Context, userID uuid.UUID, amoun
 		if err := s.rejectDeleted(ctx, userID); err != nil {
 			return err
 		}
-		cur, avail, err := s.transferCurrency(ctx, userID)
+		avail, err := s.available(ctx, userID)
 		if err != nil {
 			return err
 		}
 		if avail.LessThan(amount) {
 			return ErrTransferInsufficient
 		}
-		txnID, err = s.postTransfer(ctx, userID, cur, amount, nil, "佣金转入余额")
+		txnID, err = s.postTransfer(ctx, userID, amount, nil, "佣金转入余额")
 		if err != nil {
 			return err
 		}
@@ -86,7 +83,6 @@ func (s *Service) TransferToBalance(ctx context.Context, userID uuid.UUID, amoun
 			ResourceID:   &txnID,
 			Data: map[string]any{
 				"amount":            amount.StringFixed(2),
-				"currency":          string(cur),
 				"commission_before": avail.StringFixed(2),
 				"commission_after":  avail.Sub(amount).StringFixed(2),
 			},

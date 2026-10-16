@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -112,7 +111,7 @@ func TestAutoTransferUniqueEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 	spareLedger, err := e.ledger.Post(ctx, ledgersvc.Posting{
-		Kind: ledgersvc.KindCommissionToBalance, Currency: testCurrency,
+		Kind:       ledgersvc.KindCommissionToBalance,
 		SourceType: SourceCommissionTransfer, SourceID: dupID, Memo: "测试：重复自动转余额",
 		Legs: []ledgersvc.Leg{
 			{Account: ledgersvc.UserAccount(ledgersvc.UserCommissionAvailable, referrer), Direction: ledgersvc.Debit, Amount: dec2("0.01")},
@@ -122,56 +121,10 @@ func TestAutoTransferUniqueEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = e.exec(ctx, `INSERT INTO commission_transfers (id, user_id, currency, amount, ledger_txn_id, entry_id)
-		VALUES (?, ?, 'CNY', 0.01, ?, ?)`, dupID, referrer, spareLedger, autoEntryID)
+	err = e.exec(ctx, `INSERT INTO commission_transfers (id, user_id, amount, ledger_txn_id, entry_id)
+		VALUES (?, ?, 0.01, ?, ?)`, dupID, referrer, spareLedger, autoEntryID)
 	if err == nil || !strings.Contains(err.Error(), "commission_transfers_entry_key") {
 		t.Fatalf("同一 entry_id 应撞 commission_transfers_entry_key，得到 %v", err)
-	}
-}
-
-func TestAutoTransferSkipsNonSiteCurrency(t *testing.T) {
-	e, ctx := newEnv(t)
-	admin := newUser(t, e, ctx)
-	setConfig(t, e, ctx, admin, 10, 0, "10.00", "every_order")
-	setWithdraw(t, e, ctx, admin, false, "alipay")
-	referrer, buyer := newUser(t, e, ctx), newUser(t, e, ctx)
-	refer(e, buyer, referrer)
-	o := newPaidOrderIn(t, e, ctx, buyer, "200.00", money.USD)
-	if err := e.svc.OnOrderPaid(ctx, o); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.exec(ctx, `UPDATE commission_entries SET frozen_until = now() - interval '1 second' WHERE order_id = ?`, o.OrderID); err != nil {
-		t.Fatal(err)
-	}
-
-	st, err := e.svc.SettleDue(ctx, SettleBatchDefault)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st.AutoTransferred != 0 || st.Settled != 1 {
-		t.Fatalf("统计 %+v", st)
-	}
-	if bal := accountBalanceIn(t, e, ctx, referrer, ledgersvc.UserCommissionAvailable, money.USD); !bal.Equal(dec2("20.00")) {
-		t.Fatalf("USD 可提现 %s", bal)
-	}
-	if bal := accountBalanceIn(t, e, ctx, referrer, ledgersvc.UserBalance, money.USD); !bal.IsZero() {
-		t.Fatalf("USD 余额 %s", bal)
-	}
-	var trN int
-	if err := e.row(ctx, `SELECT count(*) FROM commission_transfers WHERE user_id = ?`, referrer).Scan(&trN); err != nil || trN != 0 {
-		t.Fatalf("不应有 transfers %d err=%v", trN, err)
-	}
-	// 去向：关提现只关站点币种，这笔 USD 佣金照常能申请提现；方式白名单照旧管着
-	if _, err := e.svc.RequestWithdrawal(userCtx(ctx, referrer), referrer, dec2("20.00"), "wechat", "wechat wx@example.test"); !assertValidationFieldErr(err, "method") {
-		t.Fatalf("关着时未开放的方式仍应拦: %v", err)
-	}
-	id, err := e.svc.RequestWithdrawal(userCtx(ctx, referrer), referrer, dec2("20.00"), "alipay", "alipay usd@example.test")
-	if err != nil {
-		t.Fatalf("关提现时 USD 佣金应能提现: %v", err)
-	}
-	var cur string
-	if err := e.row(ctx, `SELECT currency FROM withdrawals WHERE id = ?`, id).Scan(&cur); err != nil || cur != "USD" {
-		t.Fatalf("提现币种 %s err=%v", cur, err)
 	}
 }
 
@@ -255,7 +208,7 @@ func TestSettleOnlyFlagsThenTransfersSeparately(t *testing.T) {
 	}
 	entryID := entryIDOf(t, e, ctx, o.OrderID, referrer)
 
-	out, err := e.svc.settleOne(ctx, entryID, autoTransferPlan{on: true, site: testCurrency})
+	out, err := e.svc.settleOne(ctx, entryID, autoTransferPlan{on: true})
 	if err != nil || out != settleDone {
 		t.Fatalf("解冻 out=%v err=%v", out, err)
 	}
@@ -269,7 +222,7 @@ func TestSettleOnlyFlagsThenTransfersSeparately(t *testing.T) {
 		t.Fatalf("可提现 %s", bal)
 	}
 
-	n, failed, err := e.svc.autoTransferDue(ctx, SettleBatchDefault, autoTransferPlan{on: true, site: testCurrency})
+	n, failed, err := e.svc.autoTransferDue(ctx, SettleBatchDefault, autoTransferPlan{on: true})
 	if err != nil || n != 1 || failed != 0 {
 		t.Fatalf("补转 n=%d failed=%d err=%v", n, failed, err)
 	}
@@ -289,7 +242,7 @@ func TestSettleOnlyFlagsThenTransfersSeparately(t *testing.T) {
 		t.Fatal(err)
 	}
 	id2 := entryIDOf(t, e, ctx, o2.OrderID, referrer)
-	if out, err := e.svc.settleOne(ctx, id2, autoTransferPlan{on: false, site: testCurrency}); err != nil || out != settleDone {
+	if out, err := e.svc.settleOne(ctx, id2, autoTransferPlan{on: false}); err != nil || out != settleDone {
 		t.Fatalf("解冻 out=%v err=%v", out, err)
 	}
 	if autoTransferDueOf(t, e, ctx, id2) {
@@ -352,7 +305,7 @@ func TestAutoTransferClampsToAvailable(t *testing.T) {
 	if _, err := e.svc.TransferToBalance(uctx, referrer, dec2("15.00")); err != nil {
 		t.Fatal(err)
 	}
-	n, failed, err := e.svc.autoTransferDue(ctx, SettleBatchDefault, autoTransferPlan{on: true, site: testCurrency})
+	n, failed, err := e.svc.autoTransferDue(ctx, SettleBatchDefault, autoTransferPlan{on: true})
 	if err != nil || n != 1 || failed != 0 {
 		t.Fatalf("补转 n=%d failed=%d err=%v", n, failed, err)
 	}
@@ -373,7 +326,7 @@ func TestAutoTransferClampsToAvailable(t *testing.T) {
 	if _, err := e.svc.TransferToBalance(uctx, referrer, dec2("10.00")); err != nil {
 		t.Fatal(err)
 	}
-	n, failed, err = e.svc.autoTransferDue(ctx, SettleBatchDefault, autoTransferPlan{on: true, site: testCurrency})
+	n, failed, err = e.svc.autoTransferDue(ctx, SettleBatchDefault, autoTransferPlan{on: true})
 	if err != nil || n != 0 || failed != 0 {
 		t.Fatalf("没钱可转 n=%d failed=%d err=%v", n, failed, err)
 	}
@@ -409,7 +362,7 @@ func TestAutoTransferSkippedAfterWithdrawReopened(t *testing.T) {
 	}
 	entryID := entryIDOf(t, e, ctx, o.OrderID, referrer)
 	// 只做解冻这一步（模拟转余额那个事务还没来得及做或失败了）
-	if out, err := e.svc.settleOne(ctx, entryID, autoTransferPlan{on: true, site: testCurrency}); err != nil || out != settleDone {
+	if out, err := e.svc.settleOne(ctx, entryID, autoTransferPlan{on: true}); err != nil || out != settleDone {
 		t.Fatalf("解冻 out=%v err=%v", out, err)
 	}
 	if !autoTransferDueOf(t, e, ctx, entryID) {

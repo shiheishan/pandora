@@ -9,9 +9,9 @@ paths:
   - 易支付方式只收支付宝与微信支付（`EpayMethods = alipay, wxpay`），后台配置与下单严格过滤。
   - 协议规范：金额为元单位十进制字符串（`money.FormatProvider`）；MD5 签名参数名 ASCII 升序拼接，末尾直接拼商户密钥（不做 URL 编码）；异步通知为 GET 请求，处理成功必须回纯文本 `success`；无渠道事件 ID，以 `trade_no:TRADE_STATUS` 合成幂等键。
 - 加密货币渠道（#57，适配器在 `provider/btcpay`、`provider/coinpayments`，外部 HTTP 一律走 `provider/safehttp`）：
-  - BTCPay Server（Greenfield）：凭据 = Store ID（商户号位）+ API Key（密钥位）+ Webhook 密钥，都封存。按站点币种建发票、跳 `checkoutLink`；Webhook 在 BTCPay 商店里配（后台渠道卡显示回调地址），`BTCPay-Sig: sha256=hex(HMAC-SHA256)` 常数时间比对，验签通过后按发票号回查，金额币种状态一律以回查为准。只有 `Settled` 且附加状态不是手动标记（`Marked`）或部分付款（`PaidPartial`，商店开了付款容差时出现）才算成功；`Expired` / `Invalid` 算失败；部分付款不算成功，留证据给后台线下处理。事件 ID = `发票号:状态[:MARKED|:PARTIAL]`。
-  - CoinPayments（新版 v2 REST，`https://a-api.coinpayments.net`）：凭据 = Client ID + Client Secret。请求与回调同一种签名：`base64(HMAC-SHA256(secret, BOM + 方法 + 完整 URL + ClientID + 时间戳 + 请求体))`，回调还核对 `X-CoinPayments-Client` 与时间窗（±5 分钟），URL 用建发票时登记的回调地址（`NotifyURLs` 候选）。只有 `completed` 算成功；`cancelled` / `timedOut` / `deleted` 算失败；任一笔付款实收低于应收按待定（部分付款不算成功）。法币币种 ID 从公开接口查，包级缓存 24 小时。
-  - 两个适配器都：币种与金额以渠道发票的法币金额与意图核对，不符拒绝；不跟随跳转；Raw 与日志里不出现 API Key、密钥。
+  - BTCPay Server（Greenfield）：凭据 = Store ID（商户号位）+ API Key（密钥位）+ Webhook 密钥，都封存。按人民币（`provider.FiatCurrency` = CNY，全系统只此一处写币种代码）建发票、跳 `checkoutLink`；人民币发票要商店的汇率源支持 CNY，属商店配置；Webhook 在 BTCPay 商店里配（后台渠道卡显示回调地址），`BTCPay-Sig: sha256=hex(HMAC-SHA256)` 常数时间比对，验签通过后按发票号回查，金额币种状态一律以回查为准。只有 `Settled` 且附加状态不是手动标记（`Marked`）或部分付款（`PaidPartial`，商店开了付款容差时出现）才算成功；`Expired` / `Invalid` 算失败；部分付款不算成功，留证据给后台线下处理。事件 ID = `发票号:状态[:MARKED|:PARTIAL]`。
+  - CoinPayments（新版 v2 REST，`https://a-api.coinpayments.net`）：凭据 = Client ID + Client Secret。请求与回调同一种签名：`base64(HMAC-SHA256(secret, BOM + 方法 + 完整 URL + ClientID + 时间戳 + 请求体))`，回调还核对 `X-CoinPayments-Client` 与时间窗（±5 分钟），URL 用建发票时登记的回调地址（`NotifyURLs` 候选）。只有 `completed` 算成功；`cancelled` / `timedOut` / `deleted` 算失败；任一笔付款实收低于应收按待定（部分付款不算成功）。法币 ID 按 `provider.FiatCurrency` 从公开接口查，包级缓存 24 小时；查不到 CNY 时建单直接报错，不做换算。
+  - 两个适配器都：渠道回传的法币币种须等于 `provider.FiatCurrency`、金额与意图一致，不符拒绝；不跟随跳转；Raw 与日志里不出现 API Key、密钥。
 - 用户手续费（#15，代码里叫 surcharge，区别于渠道成本 `Fee`）：
   - 每个在线渠道「固定 + 比例」（`fee_fixed` 元、`fee_percent` 百分比），缺省 0；线下渠道库里 CHECK 不许设。公式 `Surcharge(应付) = 应付 × 比例 / 100 + 固定`，向上取整到分（`service/surcharge.go`）。
   - 发起支付时意图金额 = 订单应付 + surcharge，`surcharge_amount` 记在意图和收款上；最低付款额按应付判断。入账时 `SettleInput.Amount = 实收 − surcharge`（等于订单应付，订单那边的核对不变），`SettleInput.Surcharge` 交给账本单独贷记 `platform_revenue / payment_surcharge`，不计入佣金基数、不改订单总额。
@@ -23,7 +23,7 @@ paths:
   - 「建单中」一律按库时钟判断：`payment_intents` 的 `created_at` / `updated_at` 由库默认值 `now()` 写（`InsertIntent` 不传；PG 的 `now()` 是 BeginIntent 那笔事务开始的时刻，比插入早毫秒级），窗口在 SQL 里比（`repo.IntentCreatedWithin`），不拿应用机时钟和库里的时间比。`TestBeginIntentWindowUsesDBClock` 断言 `created_at = now()` 并把应用时钟拨慢 5 分钟来钉这两点。
   - 调用方提交后，`CompleteIntent` 在事务外调渠道 `CreatePayment`，再开短事务按 `WHERE status = requires_action AND redirect_url = ''` 回写收银台信息和 `provider_ref`。
     - 入口断言不在事务里：`pkgtx.InTx(ctx)`（只在 `tx.Manager.Do` 回调里为真；测试的 `testkit.TxCtx` 不算）为真时记 Error、回 `internal_error`，不联网。
-    - 总时长 `completeIntentBudget` 15 秒 = 渠道 12 秒 + 落库 `completeIntentPersistTimeout` 3 秒。必须低于 nginx 的 `proxy_read_timeout`（20 秒，`deploy/nginx-pandora.conf`）和面板请求超时：否则 nginx 先给用户回 504，用户以为失败再点，后端这次其实建好了，白白多出一张作废的发票。`safehttp.Timeout` 单请求 6 秒，CoinPayments 冷缓存（先查币种 ID 再建发票）两次请求也在 12 秒内。
+    - 总时长 `completeIntentBudget` 15 秒 = 渠道 12 秒 + 落库 `completeIntentPersistTimeout` 3 秒。必须低于 nginx 的 `proxy_read_timeout`（20 秒，`deploy/nginx-pandora.conf`）和面板请求超时：否则 nginx 先给用户回 504，用户以为失败再点，后端这次其实建好了，白白多出一张作废的发票。`safehttp.Timeout` 单请求 6 秒，CoinPayments 冷缓存（先查法币 ID 再建发票）两次请求也在 12 秒内。
     - 0 行 = 占位已被作废（并发再点、订单取消或超时），回 409 `conflict`；渠道已返回发票号的，仍另开短事务把 `provider_ref` 记到那条已作废的占位上（`repo.SetIntentProviderRef`，只在为空时写），以后这张发票被付了能按单号找回来源。前端收到 `conflict` 先刷新订单再判断能不能付。
     - 渠道失败或返回不合格时作废占位、回 503，再点支付会以 `订单号-序号` 重建。落库用 `context.WithoutCancel` 加 3 秒超时，用户断开也不留半状态。
   - 进程在两段之间退出留下的占位意图，30 秒后再点支付时被作废重建；巡检照常会查它。
@@ -36,10 +36,12 @@ paths:
   - 发票绑定：意图有 `provider_ref`（BTCPay、CoinPayments 建单时存的发票号）时，这次的渠道单号必须等于它（同店别的发票、孤儿发票、几套系统共用账户撞单号）；易支付不存 provider_ref，不受影响。
     - 不一致：记 Error 日志，`recordPayment` 在入账事务回滚后另开事务落一条证据事件（`payment_events`，`provider_event_id` = `ref_mismatch:` + 原事件号（截到 180 字节）、`processing_status = ignored`、`raw_payload` 只放 `reject` / `event_id` / `out_trade_no` / `channel_ref`），再回 `ErrProviderRefMismatch` 整笔拒收。原事件行随入账事务回滚、不占去重键，渠道重投时每次都重新核对；证据按原事件号去重（`InsertEvent` 撞键不插），同一事件只留一条。这两点由 `record_ref_pg_test.go` 的真提交用例（`newCommitEnv`）钉住，改这里别换回 `newEnv`。
     - **临时口径（待沙箱核实）**：CoinPayments 官方文档没写明建单响应 `invoices[].id` 与回调 `invoice.id`（及按 id 查发票的 `id`）是同一个号，在沙箱核实前 CoinPayments 不一致只记 Error 日志、照常入账、不落证据；核实一致后改回与 BTCPay 同样拒收，删掉 `record.go` 里这条分支。收回登记在 release skill 的发版前检查单里（带核对 SQL）。
-  - 防重与幂等：按 `(ProviderID, PaymentRef)` 加咨询锁（`LockPaymentKey`），已入账记录比对金额与币种，一致标记 `AlreadyHandled`，不一致回 409。
-  - 结算保存点：调用 `Settler.SettlePayment` 前开启保存点 `payment_settle`。结算报错回滚至保存点；若返回 `NotPayableError` 则转入挂账（`CaseReleasedOrder`, `CaseExcessCapture`, `CaseIneligibleSubscription`），并在同一事务落 `late_payment_cases` 与 `late_payment_suspense` 账目。
+  - 防重与幂等：按 `(ProviderID, PaymentRef)` 加咨询锁（`LockPaymentKey`），已入账记录比对金额，一致标记 `AlreadyHandled`，不一致回 409。
+  - 结算保存点：调用 `Settler.SettlePayment` 前开启保存点 `payment_settle`。结算报错回滚至保存点；若返回 `NotPayableError` 则转入挂账（`CaseReleasedOrder`, `CaseExcessCapture`, `CaseIneligibleSubscription`, `CaseArchivedPlan`），并在同一事务落 `late_payment_cases` 与 `late_payment_suspense` 账目（`quarantine`）。
+  - `archived_plan`（迁移 00058，用户 2026-10-16 定）：订单行套餐已归档。线上收款走 `afterSettleArchived`（`service/archived.go`）：调 `Settler.CloseArchivedOrder`，在 order 释放券之后、释放余额冻结之前回调里记挂账，紧接着 `applyLateCase`（与后台 `ApplyLatePayment` 共用：`late_payment_applied` 分录、案转 `applied`、`resolution_reason` 固定为 `archivedApplyReason`、审计 `late_payment.applied`；转入时用 `systemActorCtx` 清掉登录主体与请求元数据，审计与账本 actor 固定为系统）。不记订单收入；surcharge 照记手续费收入、不退，挂账与转入余额都只有 实收 − surcharge（用户 2026-10-16 定「手续费不退」，用例 `TestWebhookArchivedPlanFeeAndSurcharge` 钉住两笔分录）。不新增账本种类，不发站内信（挂账本来就不发）。线下收款（`RecordOffline`）回 `ErrArchivedPlanOffline`（409「套餐已归档，不能开通」），不挂账。同一笔收款重放按 (渠道, 流水号) 去重，不会二次入余额；订单关掉后别的收款再到按 `released_order` 挂账等后台处理。
   - 订单结清后自动作废该订单名下其他在途意图（`CloseOrderIntents`）。
 - 安全与查单约定：
   - 渠道凭据经 AAD 加密封存（`sealer.Seal` / `Open`），数据库不存明文密钥。
   - 外部 HTTP 客户端统一用 `safehttp.Client(allowPrivate)`（包级两个共用客户端，适配器重建时复用连接）：不走环境代理、不跟随跳转、在拨号层执行 `safehttp.CheckDialAddr`，按解析后的真实 IP 拦截内网、环回与元数据地址（防 SSRF 与 DNS 重绑定），响应用 `safehttp.ReadBody` 限 256 KiB；单请求超时 `safehttp.Timeout` 6 秒（易支付与巡检查单也受它约束）；生产环境严禁开启 `AllowPrivateHost`。
   - 主动查单（`Query`）禁止在外部事务内或持有订单锁时调用，避免与回调入账加锁顺序交叉死锁。后台查单必须落审计记录。
+- 给 order 的读接口（`service/history.go`）：`OrderHistory` 是一张单的支付尝试与收款（意图带用户选的 `Method`，收款的 `Method` 渠道没回时取意图的）；`OrderSummaries` 一批订单一条 SQL（`repo.OrderSummaries`），给 HasIntent、渠道（有收款取最近一笔收款的，否则最近一次意图的）与 `Method`（只取最近一笔收款的方式，线下收款是 `offline`，没有收款为 nil）。后台订单列表的「渠道」列靠它，不许改成逐单查。

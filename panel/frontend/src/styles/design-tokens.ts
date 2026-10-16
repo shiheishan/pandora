@@ -134,7 +134,7 @@ export const ROLE_TOKENS: readonly RoleToken[] = [
   r('--accent', 'var(--brand)', 'var(--text)', '主按钮、开关、选中、进度'),
   r('--accent-hover', 'var(--brand-hover)', 'var(--text)', '主按钮悬停'),
   r('--on-accent', 'var(--on-brand)', 'var(--on-ink)', '主按钮上的字'),
-  r('--focus-halo', 'var(--brand-soft)', 'var(--border)', '输入框聚焦外圈 3px'),
+  r('--focus-halo', 'var(--brand-soft)', 'transparent', '输入框聚焦外圈 3px（后台没有）'),
   r('--focus-ring', 'var(--brand)', 'var(--text)', '键盘焦点外圈'),
   r('--link', 'var(--brand)', 'var(--text)', '文字链接'),
   r('--link-hover', 'var(--brand-ink)', 'var(--text-2)', '链接悬停'),
@@ -146,13 +146,45 @@ export const ROLE_TOKENS: readonly RoleToken[] = [
   r('--h-control-sm', '36px', '28px', '门户弹窗按钮与菜单项 / 后台工具栏与表格内'),
   r('--h-control-xs', '32px', '24px', '门户顶栏控件 / 后台紧凑按钮'),
   r('--pad-button', '16px', '12px', '按钮水平内边距（实心按钮 +2）'),
-  r('--pad-input', '12px', '10px', '输入框水平内边距'),
+  r('--pad-input', '12px', '2px', '输入框水平内边距（后台只有下边线）'),
   r('--h-dialog-action', '36px', '32px', '弹窗按钮高度'),
   r('--switch-knob-on', '#fff', 'var(--bg)', '开关选中时的圆钮'),
   r('--radius-control', 'var(--radius-md)', 'var(--radius-sm)', '按钮、输入框圆角 9 / 7'),
   r('--radius-card', 'var(--radius-xl)', 'var(--radius-lg)', '卡片圆角 14 / 12'),
   r('--pad-card', 'var(--space-20)', 'var(--space-16)', '卡片内边距 20 / 16'),
+  r('--control-border-width', '1px', '0 0 1px', '输入框边框：四边 / 只有下边线'),
+  r('--control-bg', 'var(--surface)', 'transparent', '输入框底色'),
+  r('--popover-border', 'var(--border)', 'var(--text)', '菜单、弹窗、下拉列表的边框色'),
+  r('--popover-shadow', 'var(--shadow)', 'none', '浮层阴影'),
+  r('--label-size', 'var(--fs-caption)', 'var(--fs-body-sm)', '表单字段标签字号'),
+  r('--label-color', 'var(--text-2)', 'var(--text)', '表单字段标签颜色'),
+  r('--label-weight', 'var(--fw-regular)', 'var(--fw-medium)', '表单字段标签字重'),
 ]
+
+// ---------------------------------------------------------------------------
+// 后台在全局令牌上的覆盖（10-16 设计稿）：卡片与页面同底、所有圆角归零。
+// 只作用于 <html data-app="admin">，写在 roles.css 的 html[data-app='admin'] 两块里；
+// 不进 COLOR_TOKENS（那是 Go 端与门户主题共用的键集），dark 为 null 表示深色沿用 tokens.css。
+// 圆角另见 ADMIN_RADIUS。
+// ---------------------------------------------------------------------------
+export interface AdminOverride {
+  name: string
+  light: string
+  dark: string | null
+}
+
+const o = (name: string, light: string, dark: string | null = null): AdminOverride => ({ name, light, dark })
+
+export const ADMIN_OVERRIDES: readonly AdminOverride[] = [
+  o('--surface', '#f5f4f0', '#111113'),
+  o('--surface-2', '#efede8', '#18181b'),
+  o('--surface-3', '#e8e6e0', '#202023'),
+  o('--border', '#e3e1da'),
+  o('--border-strong', '#d5d2ca'),
+]
+
+/** 后台所有圆角归零，不分深浅（只写在 html[data-app='admin'] 那一块） */
+export const ADMIN_RADIUS: readonly string[] = RADIUS_SCALE.map((t) => t.name)
 
 /** 比较 CSS 值时忽略空白、大小写与小数点前的 0：rgba(20, 20, 24, 0.4) ≡ rgba(20,20,24,.4)。 */
 export function normalizeCssValue(value: string): string {

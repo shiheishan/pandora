@@ -13,7 +13,6 @@ import (
 	coinpayments "github.com/aegispanel/aegis/internal/module/payment/provider/coinpayments"
 	"github.com/aegispanel/aegis/internal/module/payment/provider/epay"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -30,7 +29,6 @@ type providerRecord struct {
 	ID                                    uuid.UUID
 	Code, Adapter, DisplayName            string
 	Enabled, AcceptingNew, HasCredentials bool
-	Currencies                            []string
 	BaseURL, SubmitPath, APIPath          string
 	Methods                               []string
 	DefaultMethod                         string
@@ -81,7 +79,6 @@ func (s *Service) record(m model.Provider) (providerRecord, error) {
 		Enabled:          m.Enabled,
 		AcceptingNew:     m.AcceptingNew,
 		HasCredentials:   len(m.CredentialsSealed) > 0,
-		Currencies:       m.Currencies,
 		BaseURL:          m.BaseURL,
 		SubmitPath:       m.SubmitPath,
 		APIPath:          m.APIPath,
@@ -218,16 +215,11 @@ func (s *Service) PaymentMethods(ctx context.Context, amount *decimal.Decimal) (
 			}
 			methods = []string{""}
 		}
-		currencies := m.Currencies
-		if currencies == nil {
-			currencies = []string{}
-		}
 		for _, method := range methods {
 			pm := PaymentMethod{
 				Provider:    m.Code,
 				DisplayName: m.DisplayName,
 				Method:      method,
-				Currencies:  currencies,
 				FeeFixed:    m.FeeFixed,
 				FeePercent:  m.FeePercent,
 			}
@@ -243,12 +235,9 @@ func (s *Service) PaymentMethods(ctx context.Context, amount *decimal.Decimal) (
 	return out, nil
 }
 
-// MinPayment 返回站点在该币种上的在线支付最低额（元）；非 CNY 为 0。
-func (s *Service) MinPayment(ctx context.Context, cur money.Currency) (decimal.Decimal, error) {
-	if cur != money.CNY {
-		return decimal.Zero, nil
-	}
-	amt, ok, err := s.repo.MinAcceptingAmount(ctx, "CNY")
+// MinPayment 返回在线支付最低额（元）；没有启用且收新单的在线渠道时为 0。
+func (s *Service) MinPayment(ctx context.Context) (decimal.Decimal, error) {
+	amt, ok, err := s.repo.MinAcceptingAmount(ctx)
 	if err != nil {
 		return decimal.Zero, err
 	}

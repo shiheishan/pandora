@@ -1,12 +1,12 @@
 import { expireOrderSql, newUser, setBalance, sql } from './api.ts'
-import { backToSubs, card, expect, go, happened, monthsLater, nav, narrowShot, openPortal, payByCashier, planCard, setSwitch, step, tailOf, test, text, submit } from './fixtures.ts'
+import { backToSubs, card, expect, go, happened, monthsLater, nav, narrowShot, openPortal, payByCashier, planCard, step, tailOf, test, text, submit } from './fixtures.ts'
 
 // ============================================================================
-//  门户 A 组（A0–A5）：新购走渠道付、另买一份（不起名被拦、同款提示续费、起名）、
-//  续费余额够、流量包挂到指定那份。一个用户从头走到尾，和真人一样一步接一步
+//  门户 A 组（A0–A4）：新购走渠道付、另买一份（不起名被拦、同款提示续费、起名）、
+//  续费余额够。一个用户从头走到尾，和真人一样一步接一步（10-16 起没有流量包，一次性套餐见 portal-once.spec.ts）
 // ============================================================================
 
-test('A：新购、另买一份、续费、加流量', async ({ browser, world }) => {
+test('A：新购、另买一份、续费', async ({ browser, world }) => {
   const { std } = world.plans
   const u = await newUser('a')
   const page = await openPortal(browser, u)
@@ -93,26 +93,6 @@ test('A：新购、另买一份、续费、加流量', async ({ browser, world }
     await expect(page.getByRole('heading', { name: '发生了什么' }).locator('xpath=following-sibling::ul[1]').getByRole('listitem').first()).toContainText(`用到 ${to}（原来 ${from}）`)
     const lines = await happened(page)
     return `确认页「${callout}」「余额够付，¥30.00 全部用余额」；完成页「${lines[0]}」「${lines[1]}」`
-  })
-
-  await step(page, 'A5', async () => {
-    await backToSubs(page)
-    await card(page, '妈妈的').getByRole('link', { name: /^加流量/ }).click()
-    await expect(page.getByRole('heading', { level: 1, name: '加流量' })).toBeVisible()
-    await expect(page.getByText(`给 妈妈的 · ${std.name} 加流量`)).toBeVisible()
-    await page.getByRole('radio', { name: /^12G/ }).click()
-    await page.getByRole('link', { name: /^加 12G · ¥5\.00/ }).click()
-    const callout = page.getByText(`12G 马上加到「妈妈的 · ${std.name}」，只给这份用，用完为止`)
-    const calloutText = await text(callout)
-    await setSwitch(page, '用余额', false)
-    await expect(page.getByText('要付 ¥5.00', { exact: true })).toBeVisible()
-    await submit(page, page.getByRole('button', { name: '加 12G，付 ¥5.00' }))
-    const paid = await payByCashier(page, world, '5.00')
-    await expect(page.getByRole('heading', { name: '已加 12G' })).toBeVisible({ timeout: 20_000 })
-    await backToSubs(page)
-    await expect(card(page, '妈妈的')).toContainText('含流量包 12G')
-    await expect(card(page, std.name)).not.toContainText('含流量包')
-    return `从「妈妈的」卡片加流量：「${calloutText}」，关掉余额后付 ¥5.00；${paid}；完成页「已加 12G」；只有「妈妈的」写含流量包 12G`
   })
 })
 

@@ -31,7 +31,7 @@ export function Detail({ id }: { id: string }) {
 
 function Usage({ sub }: { sub: Subscription }) {
   const { summary, resetAt } = usePlanTraffic(sub)
-  return <UsageCard subscriptionId={sub.id} summary={summary} resetAt={resetAt} />
+  return <UsageCard subscriptionId={sub.id} summary={summary} resetAt={resetAt} resetPrice={sub.reset_price} />
 }
 
 // 保留规则 3：只有名称 / 协议 / 倍率；这一份不在可用状态时接口回 404

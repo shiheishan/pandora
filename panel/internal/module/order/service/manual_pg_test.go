@@ -20,7 +20,7 @@ func TestManualOrderOfflineNewThenGrantRenewal(t *testing.T) {
 	user := e.mkUser(t, ctx)
 	admin := e.mkUser(t, ctx)
 	actx := asAdmin(ctx, admin)
-	planID, _, priceID := e.mkPlan(t, ctx, 2000, "month", intp(5), intp(1))
+	planID, _, priceID := e.mkPlan(t, ctx, 2000, "month")
 
 	pv, err := e.svc.ManualPreview(actx, ManualPreviewInput{UserID: user, PlanID: planID, PriceID: &priceID})
 	if err != nil {
@@ -59,12 +59,6 @@ WHERE p.order_id = ? AND pp.code = 'offline'`, c.OrderID); n != 1 {
 	if n := e.count(t, ctx, `SELECT count(*) FROM audit_events WHERE action = ? AND resource_id = ?`, ActionManualCreated, c.OrderID); n != 1 {
 		t.Fatalf("人工单审计 %d 条", n)
 	}
-	if r, s := e.stock(t, ctx, planID); r != 0 || s != 1 {
-		t.Fatalf("库存 reserved=%d sold=%d", r, s)
-	}
-	if p, r := e.counter(t, ctx, planID, user); p != 1 || r != 0 {
-		t.Fatalf("限购 purchased=%d reserved=%d", p, r)
-	}
 
 	// 有了同款的一份：只剩「续一期」，不问直接续
 	pv, err = e.svc.ManualPreview(actx, ManualPreviewInput{UserID: user, PlanID: planID, PriceID: &priceID})
@@ -100,15 +94,16 @@ WHERE p.order_id = ? AND pp.code = 'offline'`, c.OrderID); n != 1 {
 	e.assertNoDrift(t, ctx)
 }
 
-// 人工赠送换套餐：新价算 0 元，原套餐剩余价值 15.00 全额退进余额；线下已收款而应付为 0 的单回 409「请改用赠送」。
+// 人工赠送换套餐：新价算 0 元，原套餐付费时长用掉一半、剩余价值 15.00 全额退进余额；线下已收款而应付为 0 的单回 409「请改用赠送」。
 func TestManualOrderChange(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	admin := e.mkUser(t, ctx)
 	actx := asAdmin(ctx, admin)
 	sub := e.activeSub(t, ctx, user, 3000, 50)
-	planB, _, priceB := e.mkPlan(t, ctx, 10000, "month", nil, nil)
-	planC, _, priceC := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	e.usePaidTime(t, ctx, sub.ID, 1, 2)
+	planB, _, priceB := e.mkPlan(t, ctx, 10000, "month")
+	planC, _, priceC := e.mkPlan(t, ctx, 1000, "month")
 	target := &Choice{Kind: PlacementChange, SubscriptionID: &sub.ID}
 
 	pv, err := e.svc.ManualPreview(actx, ManualPreviewInput{UserID: user, PlanID: planB, PriceID: &priceB, EntrySubscriptionID: &sub.ID})
@@ -152,7 +147,7 @@ func TestManualOrderChange(t *testing.T) {
 	}
 	e.assertNoDrift(t, ctx)
 
-	// 另一个用户：新价 10 元低于剩余价值 15 元，线下已收款没东西可收，建单前就拒掉、不落订单
+	// 另一个用户：刚买下 30 元/月（时钟定在上面那一刻，至多晚开通 1.5 天），剩余价值远高于新价 10 元，线下已收款没东西可收，建单前就拒掉、不落订单
 	other := e.mkUser(t, ctx)
 	otherSub := e.activeSub(t, ctx, other, 3000, 50)
 	_, err = e.svc.CreateManualOrder(actx, ManualOrderInput{
@@ -173,7 +168,7 @@ func TestManualOrderValidation(t *testing.T) {
 	user := e.mkUser(t, ctx)
 	admin := e.mkUser(t, ctx)
 	actx := asAdmin(ctx, admin)
-	planID, _, priceID := e.mkPlan(t, ctx, 2000, "month", nil, nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 2000, "month")
 	in := func(reason, settlement, ref string) ManualOrderInput {
 		return ManualOrderInput{UserID: user, PlanID: planID, PriceID: priceID, Reason: reason, Settlement: settlement, Reference: ref}
 	}

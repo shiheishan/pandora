@@ -7,7 +7,6 @@ import (
 
 	"github.com/aegispanel/aegis/internal/module/ledger/model"
 	"github.com/aegispanel/aegis/internal/module/ledger/repo"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
 )
 
@@ -51,7 +50,7 @@ func (s *Service) post(ctx context.Context, p Posting) (uuid.UUID, error) {
 			return uuid.Nil, ErrDuplicatePosting
 		}
 	}
-	accounts, err := s.lockAccounts(ctx, p.Currency, accountKeys(p.Legs))
+	accounts, err := s.lockAccounts(ctx, accountKeys(p.Legs))
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -74,7 +73,6 @@ func (s *Service) post(ctx context.Context, p Posting) (uuid.UUID, error) {
 	}
 	txn := &model.Transaction{
 		Kind:       string(p.Kind),
-		Currency:   string(p.Currency),
 		SourceType: sourceType,
 		SourceID:   sourceID,
 		Memo:       p.Memo,
@@ -86,7 +84,6 @@ func (s *Service) post(ctx context.Context, p Posting) (uuid.UUID, error) {
 		acc := accounts[leg.Account]
 		entries[i] = model.Entry{
 			AccountID: acc.ID,
-			Currency:  string(p.Currency),
 			Direction: string(leg.Direction),
 			Amount:    leg.Amount,
 		}
@@ -101,11 +98,11 @@ func (s *Service) post(ctx context.Context, p Posting) (uuid.UUID, error) {
 }
 
 // lockAccounts 按稳定顺序确保科目存在并加锁，返回科目引用到已锁行的映射。
-func (s *Service) lockAccounts(ctx context.Context, cur money.Currency, refs []AccountRef) (map[AccountRef]lockedAccount, error) {
+func (s *Service) lockAccounts(ctx context.Context, refs []AccountRef) (map[AccountRef]lockedAccount, error) {
 	refs = sortedRefs(refs)
 	keys := make([]repo.AccountKey, len(refs))
 	for i, ref := range refs {
-		keys[i] = keyOf(ref, cur)
+		keys[i] = keyOf(ref)
 	}
 	if err := s.repo.EnsureAccounts(ctx, keys); err != nil {
 		if errors.Is(err, repo.ErrForeignKey) {
@@ -132,10 +129,9 @@ func (s *Service) lockAccounts(ctx context.Context, cur money.Currency, refs []A
 	return accounts, nil
 }
 
-func keyOf(ref AccountRef, cur money.Currency) repo.AccountKey {
+func keyOf(ref AccountRef) repo.AccountKey {
 	k := repo.AccountKey{
 		Type:     string(ref.Type),
-		Currency: string(cur),
 		OwnerRef: ref.Ref,
 	}
 	if ref.Type.UserOwned() {

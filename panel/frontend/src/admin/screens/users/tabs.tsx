@@ -1,163 +1,106 @@
-import { useState, type ReactNode } from 'react'
+import { useState } from 'react'
 import { formatBytes, formatDateTime, formatMoney, relativeTime } from '../../../core/format'
 import { href, navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
-import { Button, Empty, Select, StatStrip, Tag, useToast } from '../../../ui'
+import { Button, Empty, Tag, useToast } from '../../../ui'
 import { useFailure } from '../../actions'
-import { okSchema, useInvalidateUsers, useUserGroups, useUserProfile, type SubscriptionRow, type UserDetail } from './api'
+import { okSchema, useInvalidateUsers, type SubscriptionRow, type UserDetail } from './api'
+import { BalanceForm, RotateDialog } from './dialogs'
 import { ExtendDialog } from './ExtendDialog'
-import { MemberDiscount } from './MemberDiscount'
-import { PeriodEndDialog, QuotaLimitDialog } from './SubEditDialogs'
+import { GrantTrafficDialog } from './GrantTrafficDialog'
 import {
-  assignableGroups,
   currentSubscription,
   deviceLimitLabel,
-  expiryView,
   extendableSubscriptions,
-  groupOptionLabel,
   isLive,
   isOrderTarget,
+  isPermanent,
   ORDER_STATUS_VIEW,
   orderWhat,
-  paidTotalsLabel,
-  RISK_VIEW,
+  pips,
+  planKind,
   SUB_STATUS_VIEW,
+  subExpiryView,
   subName,
   trafficQuota,
   trafficView,
-  unattachedNext,
 } from './model'
-import { ResetDialog } from './Resets'
-import { TrafficPackDialog } from './TrafficPackDialog'
-import css from './Users.module.css'
+import { PeriodEndDialog, QuotaLimitDialog, ResetTrafficDialog } from './SubEditDialogs'
+import css from './Subs.module.css'
 
-// ===========================================================================
-// 画像
-// ===========================================================================
-export function ProfileTab({ d, now }: { d: UserDetail; now: Date }) {
-  const risk = RISK_VIEW[d.risk_level]
-  // 注册 IP 是明文 IP，只从风控画像接口取（契约）
-  const profile = useUserProfile(d.id)
-  const facts: Array<[string, ReactNode]> = [
-    ['显示名', d.display_name || '—'],
-    ['邮箱验证', d.email_verified ? '已验证' : <span className={css.tone_warn}>未验证</span>],
-    ['风险等级', <Tag tone={risk.tone}>{risk.label}</Tag>],
-    ['身份', d.is_admin ? '管理员' : '普通用户'],
-    ['余额', <span className={css.mono}>{formatMoney(d.balance, d.currency)}</span>],
-    [
-      '邀请人',
-      d.referrer ? (
-        <a href={href(`/users/list/${encodeURIComponent(d.referrer.id)}`)} className={css.link}>
-          {d.referrer.email}
-        </a>
-      ) : (
-        '—'
-      ),
-    ],
-  ]
-  facts.push(['注册 IP', <span className={css.mono}>{profile.data ? profile.data.registered_ip || '无记录' : '…'}</span>])
-  facts.push(['最近登录', d.last_login_at ? `${relativeTime(d.last_login_at, now)} · ${formatDateTime(d.last_login_at)}` : '从未登录'])
-  facts.push(['Telegram', d.telegram ? `已绑定 @${d.telegram.username} · ${formatDateTime(d.telegram.bound_at).slice(0, 10)}` : '未绑定'])
-
-  return (
-    <>
-      <StatStrip
-        label="用户统计"
-        items={[
-          { label: '累计消费', value: paidTotalsLabel(d.stats.paid_totals, d.currency) },
-          { label: '订单数', value: String(d.stats.order_count) },
-          { label: '邀请人数', value: String(d.stats.referral_count) },
-        ]}
-      />
-      <dl className={css.facts}>
-        <dt>用户组</dt>
-        <dd>
-          <GroupPicker d={d} />
-        </dd>
-        <dt>会员折扣</dt>
-        <dd>
-          <MemberDiscount userId={d.id} />
-        </dd>
-        {facts.map(([k, v]) => (
-          <FactRow key={k} label={k} value={v} />
-        ))}
-      </dl>
-    </>
-  )
-}
-
-function FactRow({ label, value }: { label: string; value: ReactNode }) {
-  return (
-    <>
-      <dt>{label}</dt>
-      <dd>{value}</dd>
-    </>
-  )
-}
-
-/** 用户组：POST v1/users/{id}/group（无幂等）；「未分组（默认）」传空串（契约） */
-function GroupPicker({ d }: { d: UserDetail }) {
-  const api = useApi()
-  const toast = useToast()
-  const fail = useFailure()
-  const invalidate = useInvalidateUsers()
-  const groups = useUserGroups()
-  const [busy, setBusy] = useState(false)
-  // 停用的组不收新成员：下拉里隐藏，但用户当前就在停用组里时照样显示并标「（已停用）」
-  const options = assignableGroups(groups.data ?? [], d.group_id ? [d.group_id] : []).map((g) => ({ value: g.id, label: groupOptionLabel(g) }))
-  const assign = async (groupId: string) => {
-    setBusy(true)
-    try {
-      await api.post(`v1/users/${encodeURIComponent(d.id)}/group`, okSchema, { body: { group_id: groupId } })
-      toast(groupId ? `已分配到「${options.find((o) => o.value === groupId)?.label ?? '所选分组'}」` : '已移出分组')
-      void invalidate(true)
-    } catch (e) {
-      fail(e)
-    } finally {
-      setBusy(false)
-    }
-  }
-  return <Select size="sm" aria-label="用户组" emptyOption="未分组（默认）" options={options} value={d.group_id ?? ''} disabled={busy || groups.isPending} onChange={(e) => void assign(e.target.value)} fieldClassName={css.groupSelect} />
-}
-
-// ===========================================================================
-// 订阅：全部订阅（待补·前端，设计只画一条），当前订阅排最前。
-// 购买模型统一后每份订阅各自一行：显示备注名、这一份的流量包余量，开单、加时长、加流量、
-// 重置流量都落在被点的这一份上，不再由系统替管理员挑
-// ===========================================================================
 type RowAction = { kind: 'extend' | 'traffic' | 'reset' | 'period' | 'quota'; id: string }
 
 export function SubscriptionsTab({ d, now }: { d: UserDetail; now: Date }) {
   const invalidate = useInvalidateUsers()
   const [action, setAction] = useState<RowAction | null>(null)
+  const [rotateOpen, setRotateOpen] = useState(false)
   const current = currentSubscription(d.subscriptions)
   const ordered = current ? [current, ...d.subscriptions.filter((s) => s !== current)] : d.subscriptions
   const close = () => setAction(null)
   const done = () => void invalidate()
+  const notDeleted = d.status !== 'deleted'
+
+  const targetSub = action ? d.subscriptions.find((s) => s.id === action.id) ?? null : null
+
   return (
     <>
-      {/* 保留规则 2：后台看不到订阅地址，设计稿的「订阅地址 + 复制」整块换成这句说明 */}
-      <p className={css.notice}>订阅地址仅用户本人可见；如疑似泄露，请点「更换订阅地址」后让用户在门户重新复制。</p>
-      {d.unattached_pack_bytes > 0 && <UnattachedPacks bytes={d.unattached_pack_bytes} subscriptions={d.subscriptions} />}
+      <div className={css.notice}>
+        <span className={css.noticeText}>
+          订阅地址仅用户本人可见；如疑似泄露，更换后让用户在用户端重新复制，旧地址立即失效。
+        </span>
+        {ordered.length > 0 && notDeleted && (
+          <Button size="sm" onClick={() => setRotateOpen(true)}>
+            更换订阅地址
+          </Button>
+        )}
+      </div>
+
       {ordered.length === 0 ? (
-        <Empty bare title="还没有订阅" description="用户在门户下单，或在订单页人工开单后，这里会出现订阅。" />
+        <Empty bare title="还没有订阅" description="用户在用户端下单，或在订单页人工开单后，这里会出现订阅。" />
       ) : (
         ordered.map((s) => (
-          <SubscriptionCard key={s.id} userId={d.id} s={s} now={now} current={s === current} onAction={(kind) => setAction({ kind, id: s.id })} />
+          <SubscriptionCard
+            key={s.id}
+            user={d}
+            s={s}
+            now={now}
+            current={s === current}
+            notDeleted={notDeleted}
+            onAction={(kind) => setAction({ kind, id: s.id })}
+          />
         ))
       )}
-      <ExtendDialog user={d} subscriptionId={action?.kind === 'extend' ? action.id : null} open={action?.kind === 'extend'} onClose={close} onDone={done} now={now} />
-      <TrafficPackDialog user={d} subscriptionId={action?.kind === 'traffic' ? action.id : null} open={action?.kind === 'traffic'} onClose={close} onDone={done} />
-      <ResetDialog user={action?.kind === 'reset' ? { id: d.id, email: d.email } : null} subscriptionId={action?.kind === 'reset' ? action.id : null} onClose={close} onDone={close} />
+
+      <RotateDialog user={d} open={rotateOpen} onClose={() => setRotateOpen(false)} onDone={done} />
+      <ExtendDialog
+        user={d}
+        subscriptionId={action?.kind === 'extend' ? action.id : null}
+        open={action?.kind === 'extend'}
+        onClose={close}
+        onDone={done}
+        now={now}
+      />
+      <GrantTrafficDialog
+        user={d}
+        subscription={action?.kind === 'traffic' ? targetSub : null}
+        onClose={close}
+        onDone={done}
+      />
+      <ResetTrafficDialog
+        user={{ id: d.id, email: d.email }}
+        subscription={action?.kind === 'reset' ? targetSub : null}
+        onClose={close}
+        onDone={done}
+      />
       <PeriodEndDialog
-        subscription={action?.kind === 'period' ? d.subscriptions.find((s) => s.id === action.id) ?? null : null}
+        subscription={action?.kind === 'period' ? targetSub : null}
         open={action?.kind === 'period'}
         onClose={close}
         onDone={done}
         now={now}
       />
       <QuotaLimitDialog
-        subscription={action?.kind === 'quota' ? d.subscriptions.find((s) => s.id === action.id) ?? null : null}
+        subscription={action?.kind === 'quota' ? targetSub : null}
         open={action?.kind === 'quota'}
         onClose={close}
         onDone={done}
@@ -166,141 +109,178 @@ export function SubscriptionsTab({ d, now }: { d: UserDetail; now: Date }) {
   )
 }
 
-/**
- * 未分配的流量包：还没加到任何一份订阅，节点不会用它。写明有多少、为什么没生效、会怎样挂上去
- * （后台没有挪流量包的入口，挪是用户在门户里做的事）
- */
-function UnattachedPacks({ bytes, subscriptions }: { bytes: number; subscriptions: readonly SubscriptionRow[] }) {
-  const live = subscriptions.filter((s) => isLive(s.status)).length
-  return (
-    <p className={`${css.notice} ${css.notice_warn}`} role="note" aria-label="未分配的流量包">
-      <strong>未分配的流量包 {formatBytes(bytes)}</strong>：还没加到任何一份订阅，暂时不能用。{unattachedNext(live)}
-    </p>
-  )
-}
-
-function SubscriptionCard({ userId, s, now, current, onAction }: { userId: string; s: SubscriptionRow; now: Date; current: boolean; onAction: (kind: RowAction['kind']) => void }) {
+function SubscriptionCard({
+  user,
+  s,
+  now,
+  current,
+  notDeleted,
+  onAction,
+}: {
+  user: UserDetail
+  s: SubscriptionRow
+  now: Date
+  current: boolean
+  notDeleted: boolean
+  onAction: (kind: RowAction['kind']) => void
+}) {
+  const name = subName(s)
+  const isOneTime = planKind(s) === 'one_time'
+  const isPerm = isPermanent(s.current_period_end, now)
   const st = SUB_STATUS_VIEW[s.status]
-  const exp = expiryView(s.current_period_end, now)
+  const exp = subExpiryView(s.current_period_end, now)
   const quota = trafficQuota(s.quotas)
   const t = quota ? trafficView(quota.limit, quota.consumed) : null
+
+  // 有效期说明
+  const startStr = s.current_period_start ? formatDateTime(s.current_period_start).slice(0, 10) : '—'
+  const endStr = s.current_period_end ? formatDateTime(s.current_period_end).slice(0, 10) : '—'
+  const validityDesc = isOneTime
+    ? `${formatMoney(s.amount)} · 开通 ${startStr} · ${isPerm ? '永久有效' : `到期 ${endStr}`}`
+    : `${formatMoney(s.amount)} · ${startStr} 起 · 到期 ${endStr}`
+
+  // 有效期按钮逻辑
+  const extendable = extendableSubscriptions([s], now).length > 0 && !isPerm
+  const extendTitle = isPerm ? '永久有效，不用加时长' : extendable ? undefined : '只有生效中，或过期不满 30 天的订阅能加时长'
+  const editablePeriod = s.status === 'active' && !isPerm
+  const periodTitle = isPerm ? '永久有效，没有到期时间' : s.status === 'active' ? undefined : '这一份不在生效中'
+
+  // 流量按钮逻辑
+  const live = isLive(s.status)
+  const trafficActive = s.status === 'active'
+  const quotaTitle = s.status !== 'active' ? '这一份不在生效中' : !quota ? '这一份没有流量配额' : undefined
+
   return (
-    <section className={current ? `${css.subCard} ${css.subCurrent}` : css.subCard} aria-label={subName(s)}>
+    <section className={current ? `${css.subCard} ${css.subCurrent}` : css.subCard} aria-label={name}>
       <div className={css.subHead}>
         <span className={css.subPlan}>{s.label ?? s.plan_name}</span>
         <span className={css.muted}>{s.label ? `${s.plan_name} · v${s.plan_version}` : `v${s.plan_version}`}</span>
+        <span className={css.subType}>{isOneTime ? '一次性套餐' : '订阅套餐'}</span>
         <Tag tone={st.tone}>{st.label}</Tag>
         <span className={css.spacer} />
-        {isLive(s.status) && <span className={css[`tone_${exp.tone}`]}>{exp.text}</span>}
+        {live && <span className={css[`tone_${exp.tone}`]}>{exp.text}</span>}
       </div>
-      <div className={css.subMeta}>
-        {formatMoney(s.amount, s.currency)}
-        {s.current_period_start && ` · 本期 ${formatDateTime(s.current_period_start).slice(0, 10)} 起`}
-        {s.current_period_end && ` · 到期 ${formatDateTime(s.current_period_end).slice(0, 10)}`}
+
+      {/* 有效期块 */}
+      <div className={css.subSection}>
+        <div className={css.sectionMain}>
+          <span className={css.sectionLabel}>有效期</span>
+          <span className={css.sectionDesc}>{validityDesc}</span>
+        </div>
+        {notDeleted && (
+          <div className={css.actions}>
+            <Button
+              size="xs"
+              aria-label={`给${name}加时长`}
+              disabled={!extendable}
+              title={extendTitle}
+              onClick={() => onAction('extend')}
+            >
+              加时长
+            </Button>
+            <Button
+              size="xs"
+              aria-label={`改${name}的到期时间`}
+              disabled={!editablePeriod}
+              title={periodTitle}
+              onClick={() => onAction('period')}
+            >
+              改到期
+            </Button>
+          </div>
+        )}
       </div>
-      {t && (
-        <div className={css.quota}>
-          <div className={css.quotaRow}>
-            <span>本期流量</span>
-            <span className={css.mono}>{t.text}</span>
+
+      {/* 流量块 */}
+      <div className={css.subSection}>
+        <div className={css.sectionMain}>
+          <span className={css.sectionLabel}>{isOneTime ? '总流量' : '本期流量'}</span>
+          {t ? (
+            <>
+              <div className={css.sectionDesc}>
+                <span className={css.mono}>{t.text}</span>
+              </div>
+              <div className={css.track} aria-hidden="true">
+                <span className={`${css.fill} ${css[`fill_${t.tone}`]}`} style={{ width: `${t.percent}%` }} />
+              </div>
+              <div className={css.small}>
+                剩余 {quota && quota.remaining !== null ? formatBytes(quota.remaining) : '不限'}
+                {isOneTime ? ' · 不清零，用完即止' : ' · 新周期清零'}
+              </div>
+            </>
+          ) : (
+            <div className={css.sectionDesc}>没有流量配额</div>
+          )}
+        </div>
+        {notDeleted && (
+          <div className={css.actions}>
+            <Button
+              size="xs"
+              aria-label={`给${name}加流量`}
+              disabled={!live}
+              title={live ? undefined : '这一份已不在使用中'}
+              onClick={() => onAction('traffic')}
+            >
+              加流量
+            </Button>
+            <Button
+              size="xs"
+              aria-label={`重置${name}的本期流量`}
+              disabled={!trafficActive}
+              title={trafficActive ? undefined : '这一份不在生效中'}
+              onClick={() => onAction('reset')}
+            >
+              重置流量
+            </Button>
+            <Button
+              size="xs"
+              aria-label={`改${name}的流量上限`}
+              disabled={!trafficActive || !quota}
+              title={quotaTitle}
+              onClick={() => onAction('quota')}
+            >
+              改上限
+            </Button>
           </div>
-          <div className={css.trackLg} aria-hidden="true">
-            <span className={`${css.fill} ${css[`fill_${t.tone}`]}`} style={{ width: `${t.percent}%` }} />
-          </div>
-          {quota && quota.remaining !== null && <div className={css.small}>剩余 {formatBytes(quota.remaining)}</div>}
+        )}
+      </div>
+
+      {/* 设备块 */}
+      <DeviceLimit s={s} name={name} notDeleted={notDeleted} />
+
+      {/* 卡底按钮 */}
+      {notDeleted && (
+        <div className={css.subFooter}>
+          <Button
+            size="sm"
+            disabled={!isOrderTarget(s, now)}
+            aria-label={isOneTime ? `给${name}开单` : `续费${name}`}
+            onClick={() => navigate('/billing/orders', { query: { new: user.id, sub: s.id } })}
+          >
+            {isOneTime ? '给这份开单' : '续费这一份'}
+          </Button>
         </div>
       )}
-      <div className={css.quotaRow}>
-        <span>流量包余量（只用于这一份）</span>
-        <span className={css.mono}>{formatBytes(s.pack_remaining_bytes)}</span>
-      </div>
-      <DeviceLimit s={s} />
-      <RowActions userId={userId} s={s} now={now} onAction={onAction} />
     </section>
   )
 }
 
-/**
- * 这一份订阅上的操作：「给这份开单」带入口订阅打开人工开单；加时长、加流量、重置流量各开自己的对话框，
- * 都只作用于这一份。不适用的按钮灰着并在悬停里写明原因，不藏起来
- */
-function RowActions({ userId, s, now, onAction }: { userId: string; s: SubscriptionRow; now: Date; onAction: (kind: RowAction['kind']) => void }) {
-  const name = subName(s)
-  const extendable = extendableSubscriptions([s], now).length > 0
-  const live = isLive(s.status)
-  const quota = trafficQuota(s.quotas)
-  const inactiveTitle = '这一份不在生效中'
-  return (
-    <div className={css.subActions}>
-      <Button
-        size="xs"
-        aria-label={`给${name}开单`}
-        disabled={!isOrderTarget(s, now)}
-        title={isOrderTarget(s, now) ? '打开人工开单，并预选这一份作为落点' : '这一份已彻底停用，不能作为落点；要另开请用上方「为其开单」'}
-        onClick={() => navigate('/billing/orders', { query: { new: userId, sub: s.id } })}
-      >
-        给这份开单
-      </Button>
-      <Button
-        size="xs"
-        aria-label={`给${name}加时长`}
-        disabled={!extendable}
-        title={extendable ? undefined : '只有生效中，或过期不满 30 天的订阅能加时长'}
-        onClick={() => onAction('extend')}
-      >
-        加时长
-      </Button>
-      <Button size="xs" aria-label={`给${name}加流量`} disabled={!live} title={live ? undefined : '这一份已不在使用中，流量包用不上'} onClick={() => onAction('traffic')}>
-        加流量
-      </Button>
-      <Button
-        size="xs"
-        aria-label={`重置${name}的本期流量`}
-        disabled={s.status !== 'active'}
-        title={s.status === 'active' ? undefined : inactiveTitle}
-        onClick={() => onAction('reset')}
-      >
-        重置流量
-      </Button>
-      <Button
-        size="xs"
-        aria-label={`改${name}的到期时间`}
-        disabled={s.status !== 'active'}
-        title={s.status === 'active' ? undefined : inactiveTitle}
-        onClick={() => onAction('period')}
-      >
-        改到期
-      </Button>
-      <Button
-        size="xs"
-        aria-label={`改${name}的流量上限`}
-        disabled={s.status !== 'active' || !quota}
-        title={s.status !== 'active' ? inactiveTitle : !quota ? '这一份没有流量配额' : undefined}
-        onClick={() => onAction('quota')}
-      >
-        改上限
-      </Button>
-    </div>
-  )
-}
-
-/**
- * 本订阅设备上限（覆盖全局策略）：POST v1/subscriptions/{id}/device-limit（无幂等）。
- * 设计稿范围 1–20，后端 0–1000，前端按 1–1000；0（不限）与 null（恢复套餐默认）走两个快捷按钮
- */
-function DeviceLimit({ s }: { s: SubscriptionRow }) {
+function DeviceLimit({ s, name, notDeleted }: { s: SubscriptionRow; name: string; notDeleted: boolean }) {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
   const invalidate = useInvalidateUsers()
   const [busy, setBusy] = useState(false)
   const shown = deviceLimitLabel(s)
-  const value = s.device_limit_override ?? s.plan_max_devices ?? 0
-  const set = async (limit: number | null) => {
+  const limit = s.device_limit_override ?? s.plan_max_devices ?? 0
+  const isOver = limit > 0 && s.online_devices > limit
+  const pipList = pips(s.online_devices, limit)
+
+  const set = async (limitVal: number | null) => {
     setBusy(true)
     try {
-      await api.post(`v1/subscriptions/${encodeURIComponent(s.id)}/device-limit`, okSchema, { body: { limit } })
-      toast(limit === null ? '已恢复套餐默认的设备上限' : limit === 0 ? '已改为不限设备数' : `设备上限已改为 ${limit} 台`)
+      await api.post(`v1/subscriptions/${encodeURIComponent(s.id)}/device-limit`, okSchema, { body: { limit: limitVal } })
+      toast(limitVal === null ? '已恢复套餐默认的设备上限' : limitVal === 0 ? '已改为不限设备数' : `设备上限已改为 ${limitVal} 台`)
       void invalidate()
     } catch (e) {
       fail(e)
@@ -308,104 +288,131 @@ function DeviceLimit({ s }: { s: SubscriptionRow }) {
       setBusy(false)
     }
   }
-  const source = shown.source === 'override' ? '已覆盖' : shown.source === 'plan' ? '套餐规定' : '未设上限'
+
+  const sourceText = shown.source === 'override' ? '已覆盖套餐上限' : shown.source === 'plan' ? '套餐规定上限' : '未设上限'
+
   return (
-    <div className={css.deviceRow}>
-      <span className={css.deviceLabel}>
-        本订阅设备上限 <span className={css.muted}>（{source}，在线 {s.online_devices} 台）</span>
-      </span>
-      <Button size="xs" aria-label="减少一台" disabled={busy || value <= 1} onClick={() => void set(value - 1)}>
-        −
-      </Button>
-      <span className={css.deviceValue}>{shown.text}</span>
-      <Button size="xs" aria-label="增加一台" disabled={busy || value >= 1000} onClick={() => void set(value === 0 ? 1 : value + 1)}>
-        +
-      </Button>
-      <Button size="xs" variant="ghost" disabled={busy || s.device_limit_override === null} onClick={() => void set(null)}>
-        恢复套餐默认
-      </Button>
-      <Button size="xs" variant="ghost" disabled={busy || s.device_limit_override === 0} onClick={() => void set(0)}>
-        不限
-      </Button>
+    <div className={css.subSection}>
+      <div className={css.sectionMain}>
+        <span className={css.sectionLabel}>设备 · {sourceText}</span>
+        <div className={css.sectionDesc}>
+          <span className={css.pips} aria-hidden="true">
+            {pipList.map((p, i) => (
+              <span
+                key={i}
+                className={`${css.pip} ${p === 'over' ? css.pipOver : p === 'on' ? css.pipOn : css.pipOff}`}
+              />
+            ))}
+          </span>{' '}
+          <span className={isOver ? css.tone_danger : undefined}>
+            在线 {s.online_devices} / {shown.text}
+          </span>
+        </div>
+      </div>
+      {notDeleted && (
+        <div className={css.deviceControls}>
+          <div className={css.deviceStepper}>
+            <Button size="xs" aria-label={`减少${name}的一台设备上限`} disabled={busy || limit <= 1} onClick={() => void set(limit - 1)}>
+              −
+            </Button>
+            <span className={css.deviceValue}>{shown.text}</span>
+            <Button size="xs" aria-label={`增加${name}的一台设备上限`} disabled={busy || limit >= 1000} onClick={() => void set(limit === 0 ? 1 : limit + 1)}>
+              +
+            </Button>
+          </div>
+          <Button size="xs" variant="ghost" aria-label={`设置${name}的设备上限为不限`} disabled={busy || s.device_limit_override === 0} onClick={() => void set(0)}>
+            不限
+          </Button>
+          <Button size="xs" variant="ghost" aria-label={`恢复${name}的设备上限默认`} disabled={busy || s.device_limit_override === null} onClick={() => void set(null)}>
+            恢复默认
+          </Button>
+        </div>
+      )}
     </div>
   )
 }
 
-// ===========================================================================
-// 设备：D-B-8 已决（5.A.2）方案 A——节点只上报 IP 哈希，没有客户端名与明文 IP，只给台数与上限
-// ===========================================================================
-export function DevicesTab({ d }: { d: UserDetail }) {
-  const live = d.subscriptions.filter((s) => isLive(s.status))
-  if (live.length === 0) return <Empty bare title="暂无在线设备" description="用户没有生效中的订阅。" />
-  return (
-    <>
-      {live.map((s) => {
-        const limit = s.device_limit_override ?? s.plan_max_devices ?? 0
-        const over = limit > 0 && s.online_devices > limit
-        return (
-          <div key={s.id} className={css.deviceCard}>
-            <span className={css.stack}>
-              <span className={css.subPlan}>{subName(s)}</span>
-              <span className={css.small}>近 5 分钟在线（按来源 IP 去重）</span>
-            </span>
-            <span className={css.pips} aria-hidden="true">
-              {Array.from({ length: Math.min(Math.max(limit, s.online_devices), 12) }, (_, i) => (
-                <span key={i} className={i < s.online_devices ? (over ? `${css.pip} ${css.pipOver}` : `${css.pip} ${css.pipOn}`) : css.pip} />
-              ))}
-            </span>
-            <span className={`${css.mono} ${over ? css.tone_danger : ''}`}>
-              {s.online_devices}/{limit === 0 ? '不限' : limit}
-            </span>
-          </div>
-        )
-      })}
-      <p className={css.small}>逐台设备的客户端与 IP 暂不提供：节点只上报 IP 的哈希。订阅拉取来源可在「风控」标签查看。</p>
-    </>
-  )
-}
+export function OrdersTab({
+  d,
+  now,
+  balanceOpen,
+  onBalanceOpen,
+}: {
+  d: UserDetail
+  now: Date
+  balanceOpen: boolean
+  onBalanceOpen: (open: boolean) => void
+}) {
+  const invalidate = useInvalidateUsers()
+  const notDeleted = d.status !== 'deleted'
 
-// ===========================================================================
-// 订单：最近 20 单；「在订单页查看全部」按 user_id 精确筛选（R63）
-// ===========================================================================
-export function OrdersTab({ d, now }: { d: UserDetail; now: Date }) {
-  if (d.recent_orders.length === 0) return <Empty bare title="还没有订单" description="用户下单或管理员人工开单后，这里会列出最近 20 单。" />
   return (
     <>
-      <ul className={css.orders}>
-        {d.recent_orders.map((o) => {
-          const st = ORDER_STATUS_VIEW[o.status]
-          const amount = o.paid_amount || o.payable_amount
-          const row = (
-            <>
-              <span className={css.stack}>
-                <span className={css.mono}>
-                  {o.order_no}
-                  {o.manual && (
-                    <Tag tone="outline" className={css.manualTag}>
-                      人工
-                    </Tag>
-                  )}
-                </span>
-                <span className={css.small}>
-                  {orderWhat(o)} · {relativeTime(o.created_at, now)}
-                </span>
-              </span>
-              <span className={css.mono}>{formatMoney(amount, o.currency)}</span>
-              <Tag tone={st.tone}>{st.label}</Tag>
-            </>
-          )
-          return (
-            <li key={o.id}>
-              <a className={css.orderRow} href={href(`/billing/orders/${encodeURIComponent(o.id)}`)}>
-                {row}
-              </a>
-            </li>
-          )
-        })}
-      </ul>
-      <a className={css.link} href={href('/billing/orders', { user_id: d.id })}>
-        在订单页查看全部 {d.stats.order_count} 单
-      </a>
+      <div className={css.ordersTop}>
+        <div className={css.balanceBlock}>
+          <span className={css.balanceLabel}>账户余额</span>
+          <span className={css.balanceAmount}>{formatMoney(d.balance)}</span>
+        </div>
+        {notDeleted && (
+          <div className={css.topActions}>
+            <Button size="sm" aria-expanded={balanceOpen} onClick={() => onBalanceOpen(!balanceOpen)}>
+              调整余额
+            </Button>
+            <Button size="sm" variant="primary" onClick={() => navigate('/billing/orders', { query: { new: d.id } })}>
+              新开订单
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {balanceOpen && notDeleted && (
+        <BalanceForm user={d} onClose={() => onBalanceOpen(false)} onDone={() => void invalidate()} />
+      )}
+
+      {d.recent_orders.length === 0 ? (
+        <Empty bare title="还没有订单" description="用户在用户端下单，或在订单页人工开单后，这里会列出最近 20 单。" />
+      ) : (
+        <div className={css.ordersTable}>
+          <div className={css.ordersHead}>
+            <span>订单</span>
+            <span>金额</span>
+            <span>状态</span>
+          </div>
+          <ul className={css.ordersList}>
+            {d.recent_orders.map((o) => {
+              const st = ORDER_STATUS_VIEW[o.status]
+              const amount = o.paid_amount || o.payable_amount
+              return (
+                <li key={o.id} className={css.orderItem}>
+                  <a className={css.orderLink} href={href(`/billing/orders/${encodeURIComponent(o.id)}`)}>
+                    <span className={css.orderMain}>
+                      <span className={css.orderNo}>
+                        {o.order_no}
+                        {o.manual && (
+                          <Tag tone="outline" className={css.manualTag}>
+                            人工
+                          </Tag>
+                        )}
+                      </span>
+                      <span className={css.small}>
+                        {orderWhat(o)} · {relativeTime(o.created_at, now)}
+                      </span>
+                    </span>
+                    <span className={css.mono}>{formatMoney(amount)}</span>
+                    <Tag tone={st.tone}>{st.label}</Tag>
+                  </a>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      )}
+
+      {d.recent_orders.length > 0 && (
+        <a className={css.allOrdersLink} href={href('/billing/orders', { user_id: d.id })}>
+          在订单页查看全部 {d.stats.order_count} 单 →
+        </a>
+      )}
     </>
   )
 }

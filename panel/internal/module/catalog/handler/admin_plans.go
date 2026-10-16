@@ -1,52 +1,45 @@
 package handler
 
 import (
+	"context"
+
+	"github.com/aegispanel/aegis/internal/module/catalog/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
+// planDetailResponse 组装写接口与详情共用的响应：只查这一个套餐的在用订阅数与可服务节点数。
+func (h *Handler) planDetailResponse(ctx context.Context, d service.PlanDetail) (planDetailResponse, error) {
+	subs, nodes, err := h.counts(ctx, []uuid.UUID{d.ID})
+	if err != nil {
+		return planDetailResponse{}, err
+	}
+	out := planDetailFrom(d)
+	out.ActiveSubscriptions = subs[d.ID]
+	out.NodeCount = nodes[d.ID]
+	return out, nil
+}
+
 func (h *Handler) listPlans(c *gin.Context) {
 	ctx := c.Request.Context()
-	rows, err := h.svc.ListPlans(ctx)
+	rows, err := h.svc.ListPlans(ctx, planFilterFrom(c))
 	if err != nil {
 		httpx.Fail(c, err)
 		return
 	}
 
-	subs := map[uuid.UUID]int64{}
-	if h.subs != nil && len(rows) > 0 {
-		counts, err := h.subs.LiveSubscriptionCounts(ctx, collectPlanIDs(rows))
-		if err != nil {
-			httpx.Fail(c, err)
-			return
-		}
-		if counts != nil {
-			subs = counts
-		}
+	// 计数一次批量取：全部套餐 id 各查一遍。
+	subs, nodes, err := h.counts(ctx, collectPlanIDs(rows))
+	if err != nil {
+		httpx.Fail(c, err)
+		return
 	}
 
-	nodes := map[uuid.UUID]int64{}
-	ids := collectCurrentVersionIDs(rows)
-	if h.nodes != nil && len(ids) > 0 {
-		counts, err := h.nodes.ServingNodeCounts(ctx, ids)
-		if err != nil {
-			httpx.Fail(c, err)
-			return
-		}
-		if counts != nil {
-			nodes = counts
-		}
-	}
-
-	plans := make([]planRowResponse, 0, len(rows))
+	plans := make([]planRow, 0, len(rows))
 	for _, r := range rows {
-		var nodeCount int64
-		if r.CurrentVersionID != nil {
-			nodeCount = nodes[*r.CurrentVersionID]
-		}
-		plans = append(plans, planRowFromSummary(r, subs[r.ID], nodeCount))
+		plans = append(plans, planRowFrom(r, subs[r.ID], nodes[r.ID]))
 	}
 
 	httpx.OK(c, listPlansResponse{Plans: plans})
@@ -63,7 +56,12 @@ func (h *Handler) getPlan(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	httpx.OK(c, getPlanResponse{Plan: catalogPlanDetailFrom(d)})
+	plan, err := h.planDetailResponse(c.Request.Context(), d)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	httpx.OK(c, getPlanResponse{Plan: plan})
 }
 
 func (h *Handler) createPlan(c *gin.Context) {
@@ -72,7 +70,7 @@ func (h *Handler) createPlan(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	in, err := planInputFromCreate(req)
+	in, err := planCreateFrom(req)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
@@ -82,137 +80,171 @@ func (h *Handler) createPlan(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	httpx.Created(c, createPlanResponse{Plan: catalogPlanDetailFrom(d)})
-}
-
-func (h *Handler) createPlanComplete(c *gin.Context) {
-	var req createPlanCompleteRequest
-	if err := httpx.BindJSON(c, &req); err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	in, err := wizardCreateFromRequest(req)
+	plan, err := h.planDetailResponse(c.Request.Context(), d)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	w, err := h.svc.CreatePlanComplete(c.Request.Context(), in)
-	if err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	httpx.Created(c, wizardCreatedResponse(w))
+	httpx.Created(c, createPlanResponse{Plan: plan})
 }
 
-func (h *Handler) updatePlanComplete(c *gin.Context) {
+func (h *Handler) updateBasic(c *gin.Context) {
 	planID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		httpx.Fail(c, errs.New(errs.NotFound))
 		return
 	}
-	var req updatePlanCompleteRequest
+	var req basicUpdateRequest
 	if err := httpx.BindJSON(c, &req); err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	in, err := wizardUpdateFromRequest(req)
+	d, err := h.svc.UpdateBasic(c.Request.Context(), planID, basicUpdateFrom(req))
 	if err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	w, err := h.svc.UpdatePlanComplete(c.Request.Context(), planID, in)
+	plan, err := h.planDetailResponse(c.Request.Context(), d)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	httpx.OK(c, wizardUpdatedResponse(w))
+	httpx.OK(c, getPlanResponse{Plan: plan})
 }
 
-func (h *Handler) updatePlan(c *gin.Context) {
+func (h *Handler) updateSales(c *gin.Context) {
 	planID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		httpx.Fail(c, errs.New(errs.NotFound))
 		return
 	}
-	var req updatePlanRequest
+	var req salesUpdateRequest
 	if err := httpx.BindJSON(c, &req); err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	in, err := planInputFromUpdate(req)
+	in, err := salesUpdateFrom(req)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	next, err := h.svc.UpdatePlan(c.Request.Context(), planID, req.ExpectedRowVersion, in)
+	d, err := h.svc.UpdateSales(c.Request.Context(), planID, in)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	httpx.OK(c, updatePlanResponse{OK: true, RowVersion: next})
+	plan, err := h.planDetailResponse(c.Request.Context(), d)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	httpx.OK(c, getPlanResponse{Plan: plan})
 }
 
-func (h *Handler) archivePlan(c *gin.Context) {
+func (h *Handler) updateReset(c *gin.Context) {
 	planID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		httpx.Fail(c, errs.New(errs.NotFound))
 		return
 	}
-	var req expectedRowVersionRequest
+	var req resetUpdateRequest
 	if err := httpx.BindJSON(c, &req); err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	next, err := h.svc.ArchivePlan(c.Request.Context(), planID, req.ExpectedRowVersion)
+	d, err := h.svc.UpdateReset(c.Request.Context(), planID, resetUpdateFrom(req))
 	if err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	httpx.OK(c, okRowVersionResponse{OK: true, RowVersion: next})
+	plan, err := h.planDetailResponse(c.Request.Context(), d)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	httpx.OK(c, getPlanResponse{Plan: plan})
 }
 
-func (h *Handler) createVersion(c *gin.Context) {
+func (h *Handler) updatePrices(c *gin.Context) {
 	planID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		httpx.Fail(c, errs.New(errs.NotFound))
 		return
 	}
-	v, err := h.svc.CreateVersion(c.Request.Context(), planID)
+	var req pricesUpdateRequest
+	if err := httpx.BindJSON(c, &req); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	in, err := pricesUpdateFrom(req)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	httpx.Created(c, createVersionResponse{Version: versionRowFrom(v)})
+	d, err := h.svc.UpdatePrices(c.Request.Context(), planID, in)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	plan, err := h.planDetailResponse(c.Request.Context(), d)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	httpx.OK(c, getPlanResponse{Plan: plan})
 }
 
-func (h *Handler) updateVersion(c *gin.Context) {
+func (h *Handler) updatePools(c *gin.Context) {
 	planID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		httpx.Fail(c, errs.New(errs.NotFound))
 		return
 	}
-	versionID, err := uuid.Parse(c.Param("versionID"))
-	if err != nil {
-		httpx.Fail(c, errs.New(errs.NotFound))
-		return
-	}
-	var req updateVersionRequest
+	var req poolsUpdateRequest
 	if err := httpx.BindJSON(c, &req); err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	if req.PoolIDs != nil {
-		httpx.Fail(c, errs.Invalid(map[string]string{
-			"pool_ids": "请使用 POST /v1/plans/{id}/pools 专用端点更新节点池绑定",
-		}))
-		return
-	}
-	next, err := h.svc.UpdateVersion(c.Request.Context(), planID, versionID, req.ExpectedRowVersion, versionInputFromRequest(req))
+	in, err := poolsUpdateFrom(req)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	httpx.OK(c, okRowVersionResponse{OK: true, RowVersion: next})
+	d, err := h.svc.SetPlanPools(c.Request.Context(), planID, in)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	plan, err := h.planDetailResponse(c.Request.Context(), d)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	httpx.OK(c, getPlanResponse{Plan: plan})
+}
+
+func (h *Handler) updateUsage(c *gin.Context) {
+	planID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpx.Fail(c, errs.New(errs.NotFound))
+		return
+	}
+	var req usageUpdateRequest
+	if err := httpx.BindJSON(c, &req); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	d, err := h.svc.UpdateUsage(c.Request.Context(), planID, usageUpdateFrom(req))
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	plan, err := h.planDetailResponse(c.Request.Context(), d)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	httpx.OK(c, getPlanResponse{Plan: plan})
 }
 
 func (h *Handler) publishVersion(c *gin.Context) {
@@ -226,60 +258,26 @@ func (h *Handler) publishVersion(c *gin.Context) {
 		httpx.Fail(c, errs.New(errs.NotFound))
 		return
 	}
-	var req publishVersionRequest
+	var req expectedRowVersionRequest
 	if err := httpx.BindJSON(c, &req); err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	planRV, versionRV, err := h.svc.PublishVersion(
-		c.Request.Context(),
-		planID,
-		versionID,
-		req.ExpectedPlanRowVersion,
-		req.ExpectedVersionRowVersion,
-	)
+	d, err := h.svc.PublishVersion(c.Request.Context(), planID, versionID, req.ExpectedRowVersion)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	httpx.OK(c, publishVersionResponse{
-		OK:                true,
-		PlanRowVersion:    planRV,
-		VersionRowVersion: versionRV,
-	})
+	plan, err := h.planDetailResponse(c.Request.Context(), d)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	httpx.OK(c, getPlanResponse{Plan: plan})
 }
 
-func (h *Handler) createPrice(c *gin.Context) {
+func (h *Handler) archivePlan(c *gin.Context) {
 	planID, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpx.Fail(c, errs.New(errs.NotFound))
-		return
-	}
-	var req createPriceRequest
-	if err := httpx.BindJSON(c, &req); err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	in, err := priceInputFromRequest(req)
-	if err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	p, err := h.svc.CreatePrice(c.Request.Context(), planID, in)
-	if err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	httpx.Created(c, createPriceResponse{Price: priceRowFrom(p)})
-}
-
-func (h *Handler) archivePrice(c *gin.Context) {
-	planID, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpx.Fail(c, errs.New(errs.NotFound))
-		return
-	}
-	priceID, err := uuid.Parse(c.Param("priceID"))
 	if err != nil {
 		httpx.Fail(c, errs.New(errs.NotFound))
 		return
@@ -289,10 +287,15 @@ func (h *Handler) archivePrice(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	next, err := h.svc.ArchivePrice(c.Request.Context(), planID, priceID, req.ExpectedRowVersion)
+	d, err := h.svc.ArchivePlan(c.Request.Context(), planID, req.ExpectedRowVersion)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	httpx.OK(c, okRowVersionResponse{OK: true, RowVersion: next})
+	plan, err := h.planDetailResponse(c.Request.Context(), d)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	httpx.OK(c, getPlanResponse{Plan: plan})
 }

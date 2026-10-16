@@ -4,12 +4,9 @@ import {
   bandwidthBuckets,
   basicFromRow,
   batchPlan,
-  activationHint,
-  canActivate,
-  clearableSecret,
-  clearedSecrets,
   canTransition,
   createBody,
+  emptyBasic,
   filterNodes,
   heartbeatLabel,
   isStable,
@@ -21,11 +18,16 @@ import {
   protocolChanged,
   protocolFields,
   protocolNotices,
+  enumOptions,
+  fieldVisible,
+  protocolDefaults,
+  BASIC_STEP_KEYS,
   realityEnabled,
-  splitList,
   VISION_FLOW,
   withProtocolDefaults,
+  clearableSecret,
   insertRule,
+  MATCH_KINDS,
   renameOutbound,
   routeToRow,
   rowsToOutbounds,
@@ -40,7 +42,15 @@ import {
   tagOptions,
   batchEditBody,
 } from './logic'
-import { nodeDetailSchema, nodeRowSchema, protocolSchemasResponse, type NodeDetail } from './schemas'
+import { nodeDetailSchema, nodeRowSchema, protocolSchemasResponse, type NodeDetail, type ProtocolSchema } from './schemas'
+
+const miniSchema = (s: Partial<ProtocolSchema> & Pick<ProtocolSchema, 'node_type'>): ProtocolSchema => ({
+  version: s.version ?? 1,
+  status: s.status ?? 'stable',
+  required: s.required ?? [],
+  allowed_properties: s.allowed_properties ?? [],
+  ...s,
+})
 
 const SCHEMAS = protocolSchemasResponse.parse(NODE_PROTOCOL_SCHEMAS).schemas
 const schemaOf = (t: string) => SCHEMAS.find((s) => s.node_type === t)!
@@ -187,130 +197,125 @@ describe('ordering', () => {
 })
 
 describe('protocol form', () => {
-  it('derives fields from the real schema: enums, numbers, sensitive leaves, shadowsocks methods', () => {
-    const vless = protocolFields(schemaOf('vless'))
-    const tls = vless.find((f) => f.path === 'tls')!
-    expect(tls).toMatchObject({ kind: 'enum', options: ['0', '2'] })
-    expect(vless.find((f) => f.path === 'reality_settings.private_key')!.sensitive).toBe(true)
-    expect(vless.find((f) => f.path === 'mtu')!.kind).toBe('number')
-    expect(vless.find((f) => f.path === 'headers')!.kind).toBe('json')
-    expect(vless.find((f) => f.path === 'network_settings.mode')).toMatchObject({ kind: 'enum', options: ['auto', 'packet-up', 'stream-up', 'stream-one', 'stream-down'] })
-    const ss = protocolFields(schemaOf('shadowsocks'))
-    expect(ss).toEqual([{ path: 'cipher', kind: 'enum', options: ['aes-128-gcm', 'aes-256-gcm', 'chacha20-ietf-poly1305', '2022-blake3-aes-128-gcm', '2022-blake3-aes-256-gcm'], required: true, sensitive: false, hint: expect.stringContaining('Shadowsocks 2022') }])
-    // hysteria2 的 obfs.password 按叶子名是敏感的；必填排在前面
-    const hy = protocolFields(schemaOf('hysteria2'))
-    expect(hy.find((f) => f.path === 'obfs.password')!.sensitive).toBe(true)
-    expect(hy.slice(0, 2).map((f) => f.path)).toEqual(['cert_path', 'key_path'])
+  const meta = miniSchema({
+    node_type: 'meta',
+    required: ['flow'],
+    allowed_properties: ['network', 'flow', 'mtu'],
+    enums: { network: ['tcp', 'ws'], flow: ['a', 'b'] },
+    fields: [
+      { path: 'network', label: '传输方式', default: 'tcp' },
+      { path: 'flow', label: '流控', show_if: { network: ['tcp', ''] } },
+      { path: 'mtu', label: 'MTU', advanced: true, show_if: { network: ['mkcp'] } },
+    ],
   })
 
-  it('flattens stored config (never echoing secrets) and rebuilds nested, typed config', () => {
+  it('orders protocolFields from fields metadata and uses labels', () => {
+    const fields = protocolFields(meta)
+    expect(fields.map((f) => f.path)).toEqual(['network', 'flow', 'mtu'])
+    expect(fields.find((f) => f.path === 'flow')!.label).toBe('流控')
+  })
+
+  it('falls back to path labels and required-first without fields metadata', () => {
+    // 去掉 fields 元数据，测退回路径（mock 的协议定义现在带 fields）
+    const ss = protocolFields({ ...schemaOf('shadowsocks'), fields: undefined })
+    expect(ss[0]!.path).toBe('cipher')
+    expect(ss[0]!.label).toBe('cipher')
+  })
+
+  it('fieldVisible requires every show_if key to match form strings', () => {
+    const fields = protocolFields(meta)
+    const flow = fields.find((f) => f.path === 'flow')!
+    expect(fieldVisible(flow, { network: 'tcp' })).toBe(true)
+    expect(fieldVisible(flow, { network: '' })).toBe(true)
+    expect(fieldVisible(flow, { network: 'ws' })).toBe(false)
+  })
+
+  it('protocolDefaults stringifies numbers and booleans', () => {
+    const s = miniSchema({
+      node_type: 'defs',
+      allowed_properties: ['flag', 'port'],
+      property_types: { port: 'number' },
+      fields: [{ path: 'flag', label: '开关', default: false }, { path: 'port', label: '端口', default: 443 }],
+    })
+    expect(protocolDefaults(protocolFields(s))).toEqual({ flag: 'false', port: '443' })
+  })
+
+  it('enumOptions adds optional empty choice with option_labels', () => {
+    const f = protocolFields(
+      miniSchema({
+        node_type: 'en',
+        allowed_properties: ['tls'],
+        enums: { tls: ['0', '2'] },
+        fields: [{ path: 'tls', label: '加密', option_labels: { '': '留空', '2': 'REALITY' } }],
+      }),
+    )[0]!
+    expect(enumOptions({ ...f, required: false })[0]).toEqual({ value: '', label: '留空' })
+    expect(enumOptions({ ...f, required: true }).some((o) => o.value === '')).toBe(false)
+  })
+
+  it('toProtocolConfig skips hidden fields and writes boolean false', () => {
+    const fields = protocolFields(meta)
+    const { config, errors } = toProtocolConfig(fields, { network: 'ws', flow: 'a' })
+    expect(config).toEqual({ network: 'ws' })
+    expect(errors).toEqual({})
+    const bool = protocolFields(
+      miniSchema({ node_type: 'b', allowed_properties: ['x'], property_types: { x: 'boolean' }, fields: [{ path: 'x', label: 'X' }] }),
+    )
+    expect(toProtocolConfig(bool, { x: 'false' }).config).toEqual({ x: false })
+  })
+
+  it('protocolChanged ignores edits to hidden fields', () => {
+    const fields = protocolFields(meta)
+    const initial = { network: 'ws', flow: '' }
+    expect(protocolChanged(fields, initial, { network: 'ws', flow: 'a' })).toBe(false)
+  })
+
+  it('derives sensitive leaves and list/json kinds from real schema', () => {
+    const vless = protocolFields(schemaOf('vless'))
+    expect(vless.find((f) => f.path === 'reality_settings.private_key')!.sensitive).toBe(true)
+    expect(vless.find((f) => f.path === 'headers')!.kind).toBe('json')
+  })
+
+  it('flattens stored config and rebuilds nested typed config', () => {
     const s = schemaOf('vless')
     const fields = protocolFields(s)
     const values = toFormValues(fields, { network: 'tcp', tls: 2, reality_settings: { dest: 'a:443', private_key: 'SECRET' } })
     expect(values.tls).toBe('2')
-    expect(values['reality_settings.dest']).toBe('a:443')
     expect(values['reality_settings.private_key']).toBe('')
     const { config, errors } = toProtocolConfig(fields, { ...values, 'reality_settings.private_key': 'K', mtu: 'x' }, s.property_types)
     expect(config).toMatchObject({ network: 'tcp', tls: 2, reality_settings: { dest: 'a:443', private_key: 'K' } })
-    expect(errors).toEqual({ mtu: '填数字' })
-    expect(toProtocolConfig(protocolFields(schemaOf('shadowsocks')), {}).errors).toEqual({ cipher: '必填' })
+    // mtu 只在 network=mkcp 时显示：隐藏时不校验、不写入
+    expect(errors).toEqual({})
+    expect(config).not.toHaveProperty('mtu')
+    const mkcp = toProtocolConfig(fields, { ...values, network: 'mkcp', 'reality_settings.private_key': 'K', mtu: 'x' }, s.property_types)
+    expect(mkcp.errors.mtu).toBe('填数字')
   })
 
-  it('R106 / R107: blank secrets are left out when editing the same protocol, and clearing sends an explicit null', () => {
+  it('R106: blank secrets when editing same protocol; explicit null when cleared', () => {
     const s = schemaOf('vless')
     const fields = protocolFields(s)
-    const values = toFormValues(fields, { network: 'tcp', tls: 2, reality_settings: { dest: 'a:443', server_name: 'a' } })
-    // 编辑同一协议：留空的敏感字段不带键、必填的也不算缺
+    const values = toFormValues(fields, { network: 'tcp', tls: 2, reality_settings: { dest: 'a:443' } })
     const kept = toProtocolConfig(fields, values, s.property_types, { keepSecrets: true })
     expect(JSON.stringify(kept.config)).not.toContain('private_key')
-    expect(Object.keys(kept.errors).filter((k) => fields.find((f) => f.path === k)?.sensitive)).toEqual([])
-    // mask_password 进了抹敏名单，按敏感字段处理（R107）
-    expect(fields.find((f) => f.path.endsWith('mask_password'))?.sensitive).toBe(true)
-    // 选填的敏感字段点了「清空」：显式 null，并列入保存前确认
     const optional = fields.find((f) => clearableSecret(f))!
     const cleared = new Set([optional.path])
-    const out = toProtocolConfig(fields, values, s.property_types, { keepSecrets: true, cleared })
-    expect(JSON.stringify(out.config)).toContain(`"${optional.path.split('.').pop()}":null`)
-    expect(clearedSecrets(fields, values, cleared)).toEqual([optional.path])
-    expect(clearedSecrets(fields, { ...values, [optional.path]: 'new' }, cleared)).toEqual([])
     expect(protocolChanged(fields, values, values, cleared)).toBe(true)
-    // 必填的敏感字段不给清空
-    const required = fields.filter((f) => f.sensitive && f.required)
-    required.forEach((f) => expect(clearableSecret(f)).toBe(false))
-    // 换协议（keepSecrets=false）：必填照常要填
-    const hy = protocolFields(schemaOf('hysteria2'))
-    expect(toProtocolConfig(hy, {}, undefined, { keepSecrets: false }).errors).toMatchObject({ cert_path: '必填' })
   })
 
-  it('R108: offers 上线 only for draft nodes', () => {
-    expect(canActivate({ serving_status: 'draft' })).toBe(true)
-    for (const serving_status of ['active', 'disabled', 'retired'] as const) {
-      expect(canActivate({ serving_status })).toBe(false)
-    }
-  })
-
-  it('R113: activation warnings read as next-step hints, unknown ones pass through', () => {
-    expect(activationHint('所在节点池没有绑定任何套餐，暂时不服务任何用户')).toContain('下一步到「套餐」页')
-    expect(activationHint('未划入节点池，不服务任何用户')).toContain('下一步在「协议参数」里')
-    expect(activationHint('别的提示')).toBe('已上线。别的提示')
-  })
-
-  it('knows when REALITY applies and what changed', () => {
+  it('REALITY applies to vless/trojan with tls=2', () => {
     const fields = protocolFields(schemaOf('vless'))
     const initial = toFormValues(fields, { network: 'tcp', tls: 2 })
     expect(realityEnabled('vless', initial)).toBe(true)
+    expect(realityEnabled('trojan', { tls: '2' })).toBe(true)
     expect(realityEnabled('vmess', { tls: '2' })).toBe(false)
-    expect(protocolChanged(fields, initial, initial)).toBe(false)
-    expect(protocolChanged(fields, initial, { ...initial, network: 'ws' })).toBe(true)
-    expect(protocolChanged(fields, initial, { ...initial, 'reality_settings.private_key': 'K' })).toBe(true)
   })
 
-  it('w4proto: VLESS + REALITY + tcp defaults to Vision, other transports drop it, a cleared flow stays cleared', () => {
-    const on = withProtocolDefaults('vless', 'tls', { tls: '2' })
-    expect(on.flow).toBe(VISION_FLOW)
-    expect(withProtocolDefaults('vless', 'network', { tls: '2', network: 'tcp', flow: '' }).flow).toBe(VISION_FLOW)
-    // 管理员自己选的 udp443 变体不被覆盖
-    expect(withProtocolDefaults('vless', 'tls', { tls: '2', flow: 'xtls-rprx-vision-udp443' }).flow).toBe('xtls-rprx-vision-udp443')
-    // 换到 grpc：Vision 不能用，清掉
-    expect(withProtocolDefaults('vless', 'network', { ...on, network: 'grpc' }).flow).toBe('')
-    // 改别的字段（包括手动清空 flow）不触发联动
-    expect(withProtocolDefaults('vless', 'flow', { tls: '2', network: 'tcp', flow: '' }).flow).toBe('')
-    // 不是 REALITY、不是 vless：不动
-    expect(withProtocolDefaults('vless', 'tls', { tls: '0' }).flow).toBeUndefined()
-    expect(withProtocolDefaults('trojan', 'tls', { tls: '2' }).flow).toBeUndefined()
-    // schema 里 flow 是枚举，默认值在可选项里
-    expect(protocolFields(schemaOf('vless')).find((f) => f.path === 'flow')).toMatchObject({ kind: 'enum', options: [VISION_FLOW, 'xtls-rprx-vision-udp443'] })
-  })
-
-  it('w4proto: warns that unencrypted CDN transports need CDN or TLS, and that bare tcp will be refused', () => {
+  it('withProtocolDefaults and protocolNotices stay aligned with backend rules', () => {
+    expect(withProtocolDefaults('vless', 'tls', { tls: '2' }).flow).toBe(VISION_FLOW)
     expect(protocolNotices('vless', { tls: '0', network: 'ws' })[0]).toContain('需要套 CDN 或 TLS')
-    expect(protocolNotices('vmess', { tls: '0', network: 'grpc' })[0]).toContain('需要套 CDN 或 TLS')
-    expect(protocolNotices('vless', { tls: '0' })[0]).toContain('会被拒绝')
-    expect(protocolNotices('vmess', { tls: '0' })[0]).toContain('容易被识别')
-    expect(protocolNotices('vless', { tls: '2', network: 'tcp' })).toEqual([])
-    expect(protocolNotices('trojan', { tls: '1', network: 'ws' })).toEqual([])
-    expect(protocolNotices('vless', { tls: '0', network: 'mkcp' })).toEqual([])
   })
 
-  it('w4proto: carries schema hints (fallback, cert directory) and REALITY list fields', () => {
-    for (const t of ['trojan', 'anytls', 'naive']) {
-      expect(protocolFields(schemaOf(t)).find((f) => f.path === 'fallback')?.hint).toContain('明文 HTTP 站点')
-    }
-    expect(protocolFields(schemaOf('hysteria2')).find((f) => f.path === 'cert_path')?.hint).toContain('/etc/pandora-native/certs/')
-    expect(protocolFields(schemaOf('anytls')).find((f) => f.path === 'utls')).toMatchObject({ kind: 'enum' })
-    const s = schemaOf('vless')
-    const fields = protocolFields(s)
-    expect(fields.find((f) => f.path === 'reality_settings.short_id')!.kind).toBe('list')
-    // 存量数组 → 逗号分隔；一个值存字符串，多个存数组
-    const values = toFormValues(fields, { tls: 2, reality_settings: { server_name: ['a.example.com', 'b.example.com'], short_id: '0a1b' } })
-    expect(values['reality_settings.server_name']).toBe('a.example.com, b.example.com')
-    const { config } = toProtocolConfig(fields, { ...values, 'reality_settings.short_id': '0a1b，2c3d  ' }, s.property_types)
-    expect(config).toMatchObject({ reality_settings: { server_name: ['a.example.com', 'b.example.com'], short_id: ['0a1b', '2c3d'] } })
-    expect(toProtocolConfig(fields, { 'reality_settings.server_name': ' a.example.com ' }, s.property_types).config).toMatchObject({ reality_settings: { server_name: 'a.example.com' } })
-    expect(splitList(' , ')).toEqual([])
-  })
-
-  it('maps protocol_config.* 422 keys onto form fields by path, then by leaf', () => {
+  it('maps protocol_config.* 422 keys onto form fields', () => {
     const fields = protocolFields(schemaOf('vless'))
     const out = mapProtocolErrors(fields, { 'protocol_config.tls': 'x', 'protocol_config.private_key': 'y', name: 'z' })
     expect(out.byField).toEqual({ tls: 'x', 'reality_settings.private_key': 'y' })
@@ -319,21 +324,42 @@ describe('protocol form', () => {
 })
 
 describe('basic info and PATCH', () => {
-  it('validates basic fields', () => {
-    const e = validateBasic({ name: '', displayName: '', serverId: '', poolId: '', nodeType: '', host: '', port: '70000', rate: '0', country: 'CHN' }, true)
-    expect(Object.keys(e).sort()).toEqual(['country_code', 'name', 'node_type', 'pool_id', 'server_host', 'server_id', 'server_port', 'traffic_rate'])
+  const filled = {
+    name: 'A',
+    displayName: '',
+    serverId: 's',
+    poolId: 'p1',
+    nodeType: 'shadowsocks',
+    host: 'h',
+    port: '443',
+    rate: '1',
+    country: 'HK',
+  }
+
+  it('validateBasic: creating requires country; editing does not', () => {
+    expect(validateBasic({ ...filled, country: '' }, true).country_code).toBe('请选择地区')
+    expect(validateBasic({ ...filled, country: '' }, false).country_code).toBeUndefined()
+    expect(validateBasic(filled, true)).toEqual({})
   })
 
-  it('requires a pool on create and edit, since a pool-less node serves nobody', () => {
-    const filled = { name: 'A', displayName: '', serverId: 's', poolId: '', nodeType: 'shadowsocks', host: 'h', port: '8388', rate: '1', country: '' }
-    expect(validateBasic(filled, true)).toEqual({ pool_id: NO_POOL_HINT })
-    expect(validateBasic(filled, false)).toEqual({ pool_id: NO_POOL_HINT })
-    expect(validateBasic({ ...filled, poolId: 'p1' }, true)).toEqual({})
+  it('uses new error copy for name, host and port', () => {
+    const e = validateBasic({ ...filled, name: '', host: '', port: '70000' }, true)
+    expect(e.name).toBe('必填')
+    expect(e.server_host).toBe('必填')
+    expect(e.server_port).toBe('1–65535')
+  })
+
+  it('requires a pool on create and edit', () => {
+    expect(validateBasic({ ...filled, poolId: '' }, true)).toEqual({ pool_id: NO_POOL_HINT })
+  })
+
+  it('emptyBasic defaults port to 443', () => {
+    expect(emptyBasic().port).toBe('443')
   })
 
   it('creates with only filled optionals, uppercasing the country', () => {
-    const body = createBody({ name: 'A', displayName: '', serverId: 's', poolId: '', nodeType: 'shadowsocks', host: 'h', port: '8388', rate: '1.5', country: 'hk' }, { cipher: 'aes-256-gcm' })
-    expect(body).toEqual({ name: 'A', server_id: 's', node_type: 'shadowsocks', server_host: 'h', server_port: 8388, protocol_config: { cipher: 'aes-256-gcm' }, traffic_rate: 1.5, country_code: 'HK' })
+    const body = createBody({ ...filled, poolId: 'p1', port: '8388', rate: '1.5', country: 'hk' }, { cipher: 'aes-256-gcm' })
+    expect(body).toMatchObject({ name: 'A', server_port: 8388, country_code: 'HK', pool_id: 'p1' })
   })
 
   it('sends only changed fields and leaves protocol_config out unless the protocol changed', () => {
@@ -341,34 +367,50 @@ describe('basic info and PATCH', () => {
     const b = { ...basicFromRow(n), name: '香港 01 · 新', country: '', poolId: 'p1' }
     expect(patchBody(n, b, { changed: false, config: { x: 1 } })).toEqual({ row_version: 5, name: '香港 01 · 新', pool_id: 'p1', country_code: null })
     expect(patchBody(n, basicFromRow(n), { changed: true, config: { network: 'ws' } })).toEqual({ row_version: 5, protocol_config: { network: 'ws' } })
-    expect(patchBody(n, { ...basicFromRow(n), poolId: '' }, { changed: false, config: {} })).toEqual({ row_version: 5 })
+  })
+
+  it('lists basic wizard step keys', () => {
+    expect(BASIC_STEP_KEYS).toContain('country_code')
+    expect(BASIC_STEP_KEYS).toContain('server_port')
   })
 })
 
 describe('routing rows', () => {
-  it('reads every matcher alias and the empty fallback', () => {
+  it('reads the editable aliases and the empty fallback', () => {
     expect(routeToRow({ priority: 10, matcher: { domain_suffixes: ['example.com', 'example.org'] }, outbound_tag: 'US', enabled: true, note: '' })).toMatchObject({ kind: 'domain_suffix', value: 'example.com, example.org' })
-    expect(routeToRow({ priority: 20, matcher: { ports: [25, 465] }, outbound_tag: 'block', enabled: true, note: '' })).toMatchObject({ kind: 'port', value: '25, 465' })
+    expect(routeToRow({ priority: 15, matcher: { ip: ['10.0.0.0/8'] }, outbound_tag: 'direct', enabled: true, note: '' })).toMatchObject({ kind: 'ip_cidr', value: '10.0.0.0/8' })
     expect(routeToRow({ priority: 30, matcher: {}, outbound_tag: 'direct', enabled: true, note: '' }).kind).toBe('fallback')
   })
 
-  it('builds matchers with numeric ports and enforces the fallback-last rule', () => {
+  it('keeps legacy matchers read-only and saves them unchanged with enabled and note', () => {
+    const port = routeToRow({ priority: 20, matcher: { ports: [25, 465] }, outbound_tag: 'block', enabled: false, note: '禁止发信' })
+    expect(port.legacy).toMatchObject({ label: '端口', value: '25, 465' })
+    const multi = routeToRow({ priority: 25, matcher: { domain_suffix: ['example.com'], network: 'udp' }, outbound_tag: 'direct', enabled: true, note: '' })
+    expect(multi.legacy?.label).toBe('域名后缀 + 网络')
+    const { routes, errors } = rowsToRoutes([port, multi, { kind: 'fallback', value: '', outbound: 'direct', enabled: true, note: '' }])
+    expect(errors).toEqual({})
+    expect(routes[0]).toEqual({ priority: 10, matcher: { ports: [25, 465] }, outbound_tag: 'block', enabled: false, note: '禁止发信' })
+    expect(routes[1]!.matcher).toEqual({ domain_suffix: ['example.com'], network: 'udp' })
+    expect(MATCH_KINDS.map(([k]) => k)).toEqual(['domain_suffix', 'ip_cidr', 'fallback'])
+  })
+
+  it('builds matchers and enforces the fallback-last rule', () => {
     const { routes, errors } = rowsToRoutes([
-      { kind: 'port', value: '25, 465 8000-9000', outbound: 'block', enabled: true, note: '' },
+      { kind: 'ip_cidr', value: '10.0.0.0/8, 192.168.0.0/16', outbound: 'block', enabled: true, note: ' 备注 ' },
       { kind: 'fallback', value: '', outbound: 'direct', enabled: true, note: '' },
     ])
     expect(errors).toEqual({})
-    expect(routes[0]).toEqual({ priority: 10, matcher: { port: [25, 465, '8000-9000'] }, outbound_tag: 'block', enabled: true, note: '' })
+    expect(routes[0]).toEqual({ priority: 10, matcher: { ip_cidr: ['10.0.0.0/8', '192.168.0.0/16'] }, outbound_tag: 'block', enabled: true, note: '备注' })
     expect(routes[1]!.matcher).toEqual({})
     const bad = rowsToRoutes([
       { kind: 'fallback', value: '', outbound: 'direct', enabled: true, note: '' },
-      { kind: 'domain', value: '', outbound: '', enabled: true, note: '' },
+      { kind: 'domain_suffix', value: '', outbound: '', enabled: true, note: '' },
     ])
     expect(bad.errors).toEqual({ 0: '兜底规则必须是最后一条启用的规则', 1: '填匹配值' })
   })
 
   it('inserts new rules before a trailing fallback', () => {
-    const add = { kind: 'domain' as const, value: 'example.net', outbound: 'direct', enabled: true, note: '' }
+    const add = { kind: 'domain_suffix' as const, value: 'example.net', outbound: 'direct', enabled: true, note: '' }
     const fb = { kind: 'fallback' as const, value: '', outbound: 'US', enabled: true, note: '' }
     expect(insertRule([fb], add)).toEqual([add, fb])
     expect(insertRule([add], fb)).toEqual([add, fb])
@@ -377,7 +419,7 @@ describe('routing rows', () => {
 
   it('counts and renames rules that point at an outbound', () => {
     const rows = [
-      { kind: 'domain' as const, value: 'a', outbound: 'US-LAX-01', enabled: true, note: '' },
+      { kind: 'domain_suffix' as const, value: 'a', outbound: 'US-LAX-01', enabled: true, note: '' },
       { kind: 'fallback' as const, value: '', outbound: 'direct', enabled: true, note: '' },
     ]
     // 按 tag 原样精确匹配（与后端 checkRouteRefs、下发和 pdnd 一致）

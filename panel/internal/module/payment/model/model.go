@@ -15,7 +15,6 @@ type Provider struct {
 	Adapter           string          `gorm:"column:adapter"`
 	DisplayName       string          `gorm:"column:display_name"`
 	CredentialsSealed []byte          `gorm:"column:credentials_sealed"`
-	Currencies        []string        `gorm:"column:currencies;type:jsonb;serializer:json"`
 	BaseURL           string          `gorm:"column:base_url"`
 	SubmitPath        string          `gorm:"column:submit_path"`
 	APIPath           string          `gorm:"column:api_path"`
@@ -44,7 +43,6 @@ type Intent struct {
 	OutTradeNo      string            `gorm:"column:out_trade_no"`
 	ProviderRef     *string           `gorm:"column:provider_ref"`
 	Method          string            `gorm:"column:method"`
-	Currency        string            `gorm:"column:currency"`
 	Amount          decimal.Decimal   `gorm:"column:amount;type:numeric(20,2)"`
 	SurchargeAmount decimal.Decimal   `gorm:"column:surcharge_amount;type:numeric(20,2)"`
 	Status          string            `gorm:"column:status"`
@@ -69,7 +67,6 @@ type Payment struct {
 	PaymentIntentID   *uuid.UUID      `gorm:"column:payment_intent_id;type:uuid"`
 	ProviderID        uuid.UUID       `gorm:"column:provider_id;type:uuid"`
 	ProviderPaymentID string          `gorm:"column:provider_payment_id"`
-	Currency          string          `gorm:"column:currency"`
 	Amount            decimal.Decimal `gorm:"column:amount;type:numeric(20,2)"`
 	FeeAmount         decimal.Decimal `gorm:"column:fee_amount;type:numeric(20,2)"`
 	SurchargeAmount   decimal.Decimal `gorm:"column:surcharge_amount;type:numeric(20,2)"`
@@ -110,7 +107,6 @@ type LateCase struct {
 	PaymentID        uuid.UUID       `gorm:"column:payment_id;type:uuid"`
 	PaymentEventID   *uuid.UUID      `gorm:"column:payment_event_id;type:uuid"`
 	CaseKind         string          `gorm:"column:case_kind"`
-	Currency         string          `gorm:"column:currency"`
 	Amount           decimal.Decimal `gorm:"column:amount;type:numeric(20,2)"`
 	Status           string          `gorm:"column:status"`
 	SuspenseTxnID    uuid.UUID       `gorm:"column:suspense_txn_id;type:uuid"`

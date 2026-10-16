@@ -30,7 +30,8 @@ type PullRow struct {
 	TrafficConsumed  *int64     `gorm:"column:traffic_consumed"`
 	// TrafficPeriodEnd 是同一行配额的周期末（下次重置时刻）；没有配额行或 total 类为 nil。信息节点的「距下次重置」用它
 	TrafficPeriodEnd *time.Time `gorm:"column:traffic_period_end"`
-	PackRemaining    int64      `gorm:"column:pack_remaining"`
+	// TrafficBonus 是同一行配额上送的量（bonus_value）；没有配额行为 nil
+	TrafficBonus *int64 `gorm:"column:traffic_bonus"`
 }
 
 // PullByTokenHash 按令牌哈希读拉取所需的一行；没有返回 false。
@@ -56,16 +57,14 @@ func (r *Repo) PullByTokenHash(ctx context.Context, hash []byte, now time.Time) 
 		       q.limit_value AS traffic_limit,
 		       q.consumed AS traffic_consumed,
 		       q.period_end AS traffic_period_end,
-		       (SELECT coalesce(sum(g.granted_bytes - g.consumed_bytes), 0)::bigint
-		          FROM traffic_pack_grants g
-		         WHERE g.subscription_id = s.id AND g.consumed_bytes < g.granted_bytes) AS pack_remaining
+		       q.bonus_value AS traffic_bonus
 		  FROM subscription_credentials sc
 		  JOIN subscriptions s ON s.id = sc.subscription_id
 		  LEFT JOIN LATERAL (
-			SELECT qb.limit_value, qb.consumed, qb.period_end
+			SELECT qb.limit_value, qb.bonus_value, qb.consumed, qb.period_end
 			  FROM quota_balances qb
 			 WHERE qb.subscription_id = s.id AND `+trafficQuotaWindowCond+`
-			 ORDER BY (qb.limit_value IS NULL), (qb.limit_value - qb.consumed), qb.period_end DESC NULLS LAST
+			 ORDER BY (qb.limit_value IS NULL), (qb.limit_value + qb.bonus_value - qb.consumed), qb.period_end DESC NULLS LAST
 			 LIMIT 1
 		  ) q ON true
 		 WHERE sc.token_hash = ?`, wNow, wGrace, hash).Scan(&row).Error

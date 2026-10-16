@@ -162,7 +162,7 @@ func (s *Service) Pull(ctx context.Context, req PullRequest) (PullResult, error)
 	}
 
 	nodes, err := s.nodes.DeliverableNodes(ctx, NodeQuery{
-		SubscriptionID: subID, UserID: row.UserID, PlanVersionID: row.PlanVersionID, UserGroupID: owner.UserGroupID,
+		SubscriptionID: subID, UserID: row.UserID, PlanID: row.PlanID, PlanVersionID: row.PlanVersionID, UserGroupID: owner.UserGroupID,
 	})
 	if err != nil {
 		return fail(err)
@@ -211,8 +211,8 @@ func (s *Service) allowFetch(ctx context.Context, d *Delivery, perHour int, e fe
 	return err
 }
 
-// userinfoOf 算 Subscription-Userinfo：总量 = 本期套餐额度（不限或没有配额行按 0）+ 挂在这一份上的流量包剩余；
-// 已用量只算套餐部分，全部计入 download（我们只记总量，编一个上下行比例会让用户看到假数据）；expire 是到期时刻。
+// userinfoOf 算 Subscription-Userinfo：总量 = 本期套餐额度（不限或没有配额行按 0）+ 这一行上送的量；
+// 全部计入 download（我们只记总量，编一个上下行比例会让用户看到假数据）；expire 是到期时刻。
 func userinfoOf(row repo.PullRow) Userinfo {
 	u := Userinfo{Expire: row.PeriodEnd.Unix()}
 	var limit int64
@@ -222,7 +222,10 @@ func userinfoOf(row repo.PullRow) Userinfo {
 	if row.TrafficConsumed != nil {
 		u.Download = *row.TrafficConsumed
 	}
-	u.Total = limit + row.PackRemaining
+	if row.TrafficBonus != nil && row.TrafficLimit != nil {
+		limit += *row.TrafficBonus
+	}
+	u.Total = limit
 	return u
 }
 

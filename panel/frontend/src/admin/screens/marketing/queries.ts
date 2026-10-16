@@ -101,11 +101,23 @@ export function useCommissionOverview() {
   })
 }
 
-export function useWithdrawals() {
+/**
+ * 提现列表按「处理中 / 已完成 / 全部」筛：后端 status 收逗号分隔的多个状态
+ * （处理中 = requested,approved；已完成 = paid,rejected；全部不带 status）
+ */
+export type WithdrawalFilter = 'open' | 'done' | 'all'
+export const WITHDRAWAL_FILTER_STATUS: Readonly<Record<WithdrawalFilter, string | undefined>> = {
+  open: 'requested,approved',
+  done: 'paid,rejected',
+  all: undefined,
+}
+
+export function useWithdrawals(filter: WithdrawalFilter) {
   const api = useApi()
+  const status = WITHDRAWAL_FILTER_STATUS[filter]
   return useQuery({
-    queryKey: [...MK, 'withdrawals'],
-    queryFn: ({ signal }) => api.get('v1/withdrawals', withdrawalsResponse, { signal }).then((r) => r.withdrawals),
+    queryKey: [...MK, 'withdrawals', filter],
+    queryFn: ({ signal }) => api.get('v1/withdrawals', withdrawalsResponse, { signal, query: status ? { status } : {} }).then((r) => r.withdrawals),
   })
 }
 

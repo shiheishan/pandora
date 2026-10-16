@@ -1,223 +1,227 @@
-/* 侧栏内的中性层次取自 管理后台.dc.html 外壳（规范只收了 --sidebar* 五个令牌），
- * 这里把它们映射到 ui 组件读的语义令牌上，账户菜单因此不必另写一套 */
 .sidebar {
-  --surface: #1f1f23;
-  --surface-2: #1b1b1f;
-  --surface-3: #2a2a2f;
-  --border: #303036;
-  --border-strong: #2a2a2f;
-  --text: #d9d7d1;
-  --text-2: #9a988f;
-  --text-3: #6d6b66;
-  --shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
-  --focus-ring: var(--sidebar-text);
-  --danger: #f07a86;
-  --danger-tint: #2a2a2f;
-
-  height: 100vh;
+  position: relative;
+  z-index: 10;
+  flex: none;
+  width: 184px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 14px 10px;
-  overflow-y: auto;
-  background: var(--sidebar);
-  color: var(--sidebar-text-2);
-}
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 4px 8px;
-}
-
-.logo {
-  color: var(--sidebar-text);
-  font-size: var(--fs-body);
-  --logo-dot: var(--sidebar-brand);
-}
-
-/* 站点名不是默认的 Pandora 时，替代 pandora 字标显示在环形标记旁 */
-.siteName {
-  min-width: 0;
   overflow: hidden;
-  color: var(--sidebar-text);
-  font-weight: var(--fw-semibold);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+  transition: width 0.2s cubic-bezier(0.23, 1, 0.32, 1);
 }
 
-.release {
-  margin-left: auto;
-  padding: 1px 5px;
-  border: 1px solid #2c2c31;
-  border-radius: 4px;
-  color: var(--text-3);
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
-}
-
-.search {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 32px;
-  padding: 0 10px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  color: #8f8d87;
-  text-align: left;
-  cursor: pointer;
-}
-
-.search:hover {
-  border-color: #3a3a40;
-  color: #c9c7c1;
-}
-
-.search > span {
-  flex: 1;
-}
-
-.kbd {
-  padding: 0 5px;
-  border: 1px solid #34343a;
-  border-radius: 4px;
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
+.collapsed {
+  width: 56px;
+  overflow: visible;
 }
 
 .nav {
   flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  padding: 16px 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.nav::-webkit-scrollbar {
+  display: none;
+}
+
+.collapsed .nav {
+  overflow: visible;
+}
+
+.navGroups {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .group {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
 }
 
-.groupLabel {
-  padding: 0 10px 4px;
+.groupTitle {
+  margin: 0 0 6px;
+  padding: 0 20px;
+  overflow: hidden;
   color: var(--text-3);
-  font-size: var(--fs-caption);
-  letter-spacing: 0.04em;
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-medium);
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  transition: opacity 0.15s ease;
+}
+
+.collapsed .groupTitle {
+  opacity: 0;
 }
 
 .item {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   height: 32px;
-  padding: 0 10px;
-  border-radius: var(--radius-sm);
-  color: var(--sidebar-text-2);
+  padding: 0 20px;
+  color: var(--text-2);
+  font-size: var(--fs-body-sm);
   text-decoration: none;
+  white-space: nowrap;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.itemIcon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
 }
 
 .item:hover {
-  background: #222226;
-  color: var(--sidebar-text);
+  background: var(--surface-2);
+  color: var(--text);
   text-decoration: none;
 }
 
-.on,
-.on:hover {
-  background: var(--sidebar-active);
-  color: var(--sidebar-text);
-  font-weight: var(--fw-medium);
+.item:active {
+  background: var(--surface-3);
 }
 
-.dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 2px;
-  background: #3a3a40;
-}
-
-.on .dot {
-  background: var(--sidebar-brand);
-}
-
-.itemLabel {
-  flex: 1;
-}
-
-.badge {
-  min-width: 18px;
-  height: 18px;
-  display: grid;
-  place-items: center;
-  padding: 0 5px;
-  border-radius: 9px;
-  background: #3a231c;
-  color: #f2a58f;
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
-}
-
-.account {
-  display: flex;
-}
-
-.accountButton {
-  width: 100%;
-  gap: 10px;
-  padding: 8px;
-  border-radius: 8px;
-  text-align: left;
-}
-
-.accountButton:hover {
-  background: var(--surface);
-}
-
-.accountMenu {
-  width: auto;
-  left: 0;
-  right: 0;
-  padding: 5px;
-  border-radius: 9px;
-}
-
-.avatar {
-  width: 28px;
-  height: 28px;
-  flex: none;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  background: #2d1b16;
-  color: #f2a58f;
-  font-size: var(--fs-caption);
+.item[aria-current='page'] {
+  color: var(--text);
   font-weight: var(--fw-semibold);
+  box-shadow: inset 2px 0 0 var(--text);
 }
 
-.who {
+.item[aria-current='page'] .itemIcon {
+  color: var(--text);
+}
+
+.label {
   flex: 1;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.whoTitle {
-  color: #e9e8e4;
-  font-size: var(--fs-caption);
-  font-weight: var(--fw-medium);
-}
-
-.whoSub {
   overflow: hidden;
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  white-space: nowrap;
   text-overflow: ellipsis;
 }
 
-.more {
+.badge {
+  flex: none;
   color: var(--text-3);
+  font-size: var(--fs-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.collapsed .label,
+.collapsed .badge {
+  display: none;
+}
+
+.dot {
+  display: none;
+}
+
+.collapsed .dot {
+  display: block;
+  position: absolute;
+  top: 8px;
+  right: 14px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--brand);
+  box-shadow: 0 0 0 2px var(--bg);
+}
+
+.tip {
+  display: none;
+}
+
+.collapsed .tip {
+  display: block;
+  position: absolute;
+  left: 100%;
+  top: 50%;
+  z-index: 70;
+  margin-left: 8px;
+  transform: translateY(-50%);
+  padding: 4px 8px;
+  background: var(--text);
+  color: var(--on-ink);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-regular);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.collapsed .item:hover .tip,
+.collapsed .item:focus-visible .tip {
+  opacity: 1;
+}
+
+.secondary {
+  margin-top: auto;
+  padding-top: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.fadeTop,
+.fadeBottom {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 32px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.fadeTop {
+  top: 0;
+  background: linear-gradient(to bottom, var(--bg), transparent);
+}
+
+.fadeBottom {
+  bottom: 0;
+  background: linear-gradient(to top, var(--bg), transparent);
+}
+
+.fadeOn {
+  opacity: 1;
+}
+
+@media (max-width: 639px) {
+  .sidebar {
+    position: fixed;
+    top: 56px;
+    bottom: 0;
+    left: 0;
+    z-index: 40;
+    width: 240px;
+    transform: translateX(-100%);
+    transition: transform 0.2s cubic-bezier(0.23, 1, 0.32, 1);
+    box-shadow: none;
+  }
+
+  .sidebar.open {
+    transform: none;
+    box-shadow: var(--shadow-lg, 0 8px 24px rgb(0 0 0 / 0.18));
+  }
+}
+
+@media (max-width: 639px) and (prefers-reduced-motion: reduce) {
+  .sidebar {
+    transition: none;
+  }
 }

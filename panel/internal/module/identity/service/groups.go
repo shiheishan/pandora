@@ -63,7 +63,6 @@ func (s *Service) AdminListGroups(ctx context.Context) ([]Group, error) {
 			continue
 		}
 		out[i].Plans = u.Plans
-		out[i].Prices = u.Prices
 		out[i].Coupons = u.Coupons
 		if u.ExclusivePools == nil {
 			out[i].ExclusivePools = []PoolRef{}
@@ -148,8 +147,7 @@ func (s *Service) SetGroupStatus(ctx context.Context, id uuid.UUID, disabled boo
 	})
 }
 
-// DeleteGroup 删除一个没有用户、也没被节点池、套餐可见名单、优惠券引用的用户组，连带删掉它从没被买过的专属价格；
-// 专属价被买过时回 409（提示改用停用）；不存在回 404。
+// DeleteGroup 删除一个没有用户、也没被节点池、套餐可见名单、优惠券引用的用户组；不存在回 404。
 func (s *Service) DeleteGroup(ctx context.Context, id uuid.UUID) error {
 	return s.tx.Do(ctx, func(ctx context.Context) error {
 		ok, err := s.repo.LockGroup(ctx, id)
@@ -167,16 +165,11 @@ func (s *Service) DeleteGroup(ctx context.Context, id uuid.UUID) error {
 			return errs.Newf(errs.Conflict, "这个分组下还有用户，先把他们移出去")
 		}
 		// 套餐可见名单对组是级联删除，外键兜不住：删了套餐就对谁都不可见，所以先查引用
-		u, err := s.ensureGroupUnused(ctx, id)
-		if err != nil {
+		if err := s.ensureGroupUnused(ctx, id); err != nil {
 			return err
 		}
 		ok, err = s.repo.DeleteGroup(ctx, id)
 		if err != nil {
-			if errors.Is(err, repo.ErrForeignKey) {
-				// 组专属价级联删除时撞上订单项、订阅、礼品卡的 RESTRICT 外键（被买过）；成员、节点池、优惠券已在前面查过
-				return errs.Newf(errs.Conflict, "这个分组的专属价已经有人买过（订单、订阅或礼品卡用过），不能删除；不想再用可以停用这个分组")
-			}
 			return err
 		}
 		if !ok {
@@ -186,7 +179,6 @@ func (s *Service) DeleteGroup(ctx context.Context, id uuid.UUID) error {
 			Action:       ActionUserGroupDeleted,
 			ResourceType: ResourceUserGroup,
 			ResourceID:   &id,
-			Data:         map[string]any{"prices_deleted": u.Prices},
 		})
 	})
 }
@@ -246,16 +238,15 @@ func groupSlug(name string) string {
 	return s
 }
 
-// ensureGroupUnused 删组前拒绝仍被节点池、套餐可见名单、优惠券引用的组；组专属价格不拦（外键 ON DELETE CASCADE 连组一起删，
-// 买过的由订单项、订阅、礼品卡的 RESTRICT 外键挡住），返回的引用统计供审计记删了几条价格。
-func (s *Service) ensureGroupUnused(ctx context.Context, id uuid.UUID) (GroupUsage, error) {
+// ensureGroupUnused 删组前拒绝仍被节点池、套餐可见名单、优惠券引用的组。
+func (s *Service) ensureGroupUnused(ctx context.Context, id uuid.UUID) error {
 	gu, err := s.needGroupUsage()
 	if err != nil {
-		return GroupUsage{}, err
+		return err
 	}
 	usage, err := gu.GroupUsage(ctx)
 	if err != nil {
-		return GroupUsage{}, err
+		return err
 	}
 	u := usage[id]
 	switch {
@@ -264,11 +255,11 @@ func (s *Service) ensureGroupUnused(ctx context.Context, id uuid.UUID) (GroupUsa
 		for _, p := range u.ExclusivePools {
 			names = append(names, "「"+p.Name+"」")
 		}
-		return GroupUsage{}, errs.Newf(errs.Conflict, "节点池"+strings.Join(names, "、")+"限定了这个分组，先把它从这些池的名单里移除")
+		return errs.Newf(errs.Conflict, "节点池"+strings.Join(names, "、")+"限定了这个分组，先把它从这些池的名单里移除")
 	case u.Plans > 0:
-		return GroupUsage{}, errs.Newf(errs.Conflict, "还有套餐按这个分组控制可见性，先解除")
+		return errs.Newf(errs.Conflict, "还有套餐按这个分组控制可见性，先解除")
 	case u.Coupons > 0:
-		return GroupUsage{}, errs.Newf(errs.Conflict, "还有优惠券限定了这个分组，先解除")
+		return errs.Newf(errs.Conflict, "还有优惠券限定了这个分组，先解除")
 	}
-	return u, nil
+	return nil
 }

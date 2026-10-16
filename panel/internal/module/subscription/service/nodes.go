@@ -14,6 +14,8 @@ import (
 // NodeQuery 是「这份订阅能拿哪些线路」的查询条件。
 type NodeQuery struct {
 	SubscriptionID, UserID, PlanVersionID uuid.UUID
+	// PlanID 是订阅所属套餐；线路池按套餐绑定（catalog.PlanPools）
+	PlanID uuid.UUID
 	// UserGroupID 是订阅主人所在的用户组（节点池可以限定用户组）；没有分组为 nil
 	UserGroupID *uuid.UUID
 }

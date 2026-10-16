@@ -26,6 +26,7 @@ type fakeSvc struct {
 	Service
 	my          service.MyCommission
 	withdrawals []service.AdminWithdrawal
+	gotStatuses []string
 	overview    service.Overview
 	gotAmount   decimal.Decimal
 	gotPayout   string
@@ -61,7 +62,8 @@ func (f *fakeSvc) AdminOverview(context.Context) (service.Overview, error) {
 	return f.overview, nil
 }
 
-func (f *fakeSvc) AdminWithdrawals(context.Context, string) ([]service.AdminWithdrawal, error) {
+func (f *fakeSvc) AdminWithdrawals(_ context.Context, statuses []string) ([]service.AdminWithdrawal, error) {
+	f.gotStatuses = statuses
 	return f.withdrawals, nil
 }
 
@@ -188,10 +190,10 @@ func TestRoutes(t *testing.T) {
 func TestMyCommissionShape(t *testing.T) {
 	now := time.Date(2026, 10, 12, 8, 0, 0, 0, time.UTC)
 	f := &fakeSvc{my: service.MyCommission{
-		Summary: service.Summary{Currency: "CNY", MinWithdraw: decimal.RequireFromString("100"), Scope: "every_order", RatePercent: 10},
+		Summary: service.Summary{MinWithdraw: decimal.RequireFromString("100"), Scope: "every_order", RatePercent: 10},
 		Entries: []service.EntryView{{
 			Amount: decimal.RequireFromString("12.34"), Base: decimal.RequireFromString("123.45"), RateBP: 1000,
-			Currency: "CNY", Status: "pending", FrozenUntil: now, CreatedAt: now, OrderNo: "N1", From: "al***@x.test",
+			Status: "pending", FrozenUntil: now, CreatedAt: now, OrderNo: "N1", From: "al***@x.test",
 		}},
 		Withdrawals: []service.WithdrawalView{},
 		Transfers:   []service.TransferView{},
@@ -288,7 +290,7 @@ func TestSetConfigOnlyGivenFields(t *testing.T) {
 func TestListWithdrawalsShape(t *testing.T) {
 	f := &fakeSvc{withdrawals: []service.AdminWithdrawal{{
 		ID: uuid.New(), UserID: uuid.New(), Email: "a@b.test", Amount: decimal.RequireFromString("30"),
-		Currency: "CNY", Status: "requested", PayoutDetail: "alipay", RequestedAt: time.Now().UTC(),
+		Status: "requested", PayoutDetail: "alipay", RequestedAt: time.Now().UTC(),
 		EarnedTotal: decimal.RequireFromString("50.5"),
 	}}}
 	w := do(newEngine(f, true, nil), http.MethodGet, "/v1/withdrawals", "")
@@ -307,6 +309,21 @@ func TestListWithdrawalsShape(t *testing.T) {
 	}
 	if _, ok := row["completed_at"]; !ok {
 		t.Fatal("completed_at 字段应输出为 null")
+	}
+	if f.gotStatuses != nil {
+		t.Fatalf("不带 status 不应筛状态: %v", f.gotStatuses)
+	}
+}
+
+// status 逗号分隔多个状态（去空白、丢空段），原样交给 service 校验。
+func TestListWithdrawalsStatusList(t *testing.T) {
+	f := &fakeSvc{}
+	w := do(newEngine(f, true, nil), http.MethodGet, "/v1/withdrawals?status=requested,%20approved,", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if len(f.gotStatuses) != 2 || f.gotStatuses[0] != "requested" || f.gotStatuses[1] != "approved" {
+		t.Fatalf("statuses %v", f.gotStatuses)
 	}
 }
 
@@ -348,33 +365,25 @@ func TestAdminWritesRequireRecentReauth(t *testing.T) {
 	}
 }
 
-// 概览：顶层是站点币种那一组，by_currency 按币种列出。
+// 概览：金额为全站合计（分）。
 func TestOverviewShape(t *testing.T) {
 	f := &fakeSvc{overview: service.Overview{
-		Currency: "USD", Pending: decimal.RequireFromString("1.5"), Entries: 3, NeedReview: 1,
+		Pending: decimal.RequireFromString("20"), Entries: 3, NeedReview: 1,
 		MinWithdraw: decimal.RequireFromString("100"), Scope: "every_order",
-		ByCurrency: []service.CurrencyOverview{
-			{Currency: "CNY", Pending: decimal.RequireFromString("20"), Entries: 2, NeedReview: 1},
-			{Currency: "USD", Pending: decimal.RequireFromString("1.5"), Entries: 1},
-		},
 	}}
 	w := do(newEngine(f, true, nil), http.MethodGet, "/v1/commission/overview", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
 	var resp struct {
-		Currency   string           `json:"currency"`
-		Pending    int64            `json:"pending"`
-		NeedReview int64            `json:"need_review"`
-		ByCurrency []map[string]any `json:"by_currency"`
+		Pending    int64 `json:"pending"`
+		NeedReview int64 `json:"need_review"`
+		Entries    int64 `json:"entries"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	if resp.Currency != "USD" || resp.Pending != 150 || resp.NeedReview != 1 || len(resp.ByCurrency) != 2 {
+	if resp.Pending != 2000 || resp.NeedReview != 1 || resp.Entries != 3 {
 		t.Fatalf("概览 %s", w.Body)
-	}
-	if resp.ByCurrency[0]["currency"] != "CNY" || resp.ByCurrency[0]["pending"] != float64(2000) || resp.ByCurrency[0]["need_review"] != float64(1) {
-		t.Fatalf("by_currency %v", resp.ByCurrency[0])
 	}
 }

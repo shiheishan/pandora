@@ -101,8 +101,8 @@ func TestQuoteCreditDetail(t *testing.T) {
 		if in.Action != service.QuoteChange || in.SubscriptionID == nil || *in.SubscriptionID != subID {
 			t.Fatalf("入参 %+v", in)
 		}
-		return service.QuoteResult{Currency: money.CNY, Quotes: []service.Quote{{
-			SubscriptionID: &subID, PlanID: &planID, PriceID: &priceID, Currency: money.CNY, Interval: "month", IntervalCount: 1,
+		return service.QuoteResult{Quotes: []service.Quote{{
+			SubscriptionID: &subID, PlanID: &planID, PriceID: &priceID, Interval: "month", IntervalCount: 1,
 			Subtotal: money.FromCents(3000), Credit: money.FromCents(1234), Total: money.FromCents(1766),
 			CreditDetail: &service.CreditDetail{Paid: money.FromCents(2000), DaysLeft: 19, DaysTotal: 31,
 				TrafficLeft: 70, TrafficTotal: 100, RatioPPM: 612903},
@@ -186,63 +186,110 @@ func TestCreateManualOrderErrors(t *testing.T) {
 
 // 开单预览：只读，不要重认证、不挂幂等；空值省略，due、below_minimum 总在。
 func TestManualPreviewShape(t *testing.T) {
-	userID, planID, priceID, subID, entry := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
-	end := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
-	newEnd := time.Date(2026, 11, 12, 0, 0, 0, 0, time.UTC)
-	var got service.ManualPreviewInput
-	f := &fakeSvc{manualPreview: func(in service.ManualPreviewInput) (service.ManualPreview, error) {
-		got = in
-		curPlan := uuid.New()
-		return service.ManualPreview{
-			DefaultKey: "change:" + subID.String(),
-			MinPayment: money.FromCents(100),
-			Options: []service.Placement{
-				{Key: "new", Kind: service.PlacementNew, NewPeriodEnd: &newEnd, Due: money.FromCents(3000)},
-				{Key: "change:" + subID.String(), Kind: service.PlacementChange, SubscriptionID: &subID, Expired: true,
-					Label: "家里", PlanID: &curPlan, PlanName: "标准", State: subsvc.StateRevivable, PeriodEnd: &end, NewPeriodEnd: &newEnd,
-					Credit: money.FromCents(2950), Currency: money.CNY, GiftDaysLost: 3, TrafficUsed: 5, TrafficCap: 10, PackRemaining: 2,
-					Due: money.FromCents(50), BelowMinimum: true, Unavailable: "已有未完结的续费或变更单"},
-			},
-		}, nil
-	}}
-	rec := &kitRec{}
-	e := newEngine(f, true, rec)
-	w := do(e, http.MethodPost, "/v1/orders/manual/preview", `{"user_id":"`+userID.String()+`","plan_id":"`+planID.String()+
-		`","price_id":"`+priceID.String()+`","entry_subscription_id":"`+entry.String()+`"}`)
-	mustStatus(t, w, http.StatusOK)
-	if got.UserID != userID || got.PlanID != planID || got.PriceID == nil || *got.PriceID != priceID ||
-		got.EntrySubscriptionID == nil || *got.EntrySubscriptionID != entry {
-		t.Fatalf("入参 %+v", got)
-	}
-	m := obj(t, w)
-	if m["default_key"] != "change:"+subID.String() || num(t, m, "min_payment") != 100 {
-		t.Fatalf("响应 %v", m)
-	}
-	opts := m["options"].([]any)
-	o0, o1 := opts[0].(map[string]any), opts[1].(map[string]any)
-	mustAbsent(t, o0, "subscription_id", "expired", "badge", "label", "plan_id", "plan_name", "state", "period_end",
-		"credit", "currency", "gift_days_lost", "traffic_used", "traffic_cap", "pack_remaining", "unavailable_reason")
-	if o1["unavailable_reason"] != "已有未完结的续费或变更单" {
-		t.Fatalf("不可选原因 %v", o1["unavailable_reason"])
-	}
-	if o0["key"] != "new" || num(t, o0, "due") != 3000 || o0["below_minimum"] != false || o0["new_period_end"] == nil {
-		t.Fatalf("new 选项 %v", o0)
-	}
-	if o1["subscription_id"] != subID.String() || o1["expired"] != true || o1["state"] != "revivable" || num(t, o1, "credit") != 2950 ||
-		o1["currency"] != "CNY" || num(t, o1, "gift_days_lost") != 3 || num(t, o1, "due") != 50 || o1["below_minimum"] != true ||
-		num(t, o1, "traffic_cap") != 10 || num(t, o1, "pack_remaining") != 2 || o1["plan_name"] != "标准" {
-		t.Fatalf("change 选项 %v", o1)
-	}
-	if rec.reauth != 0 || len(rec.scopes) != 0 {
-		t.Fatalf("预览不该要求重认证或幂等：reauth=%d scopes=%v", rec.reauth, rec.scopes)
+	for _, tc := range []struct {
+		name        string
+		optionKey   string
+		optionKind  string
+		badge       string
+		credit      int64
+		unavailable string
+		belowMin    bool
+	}{
+		{
+			name:        "change",
+			optionKey:   "change:",
+			optionKind:  service.PlacementChange,
+			credit:      2950,
+			unavailable: "已有未完结的续费或变更单",
+			belowMin:    true,
+		},
+		{
+			name:       "stack",
+			optionKey:  "stack:",
+			optionKind: service.PlacementStack,
+			badge:      service.BadgeSamePlan,
+			credit:     0,
+			belowMin:   false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			userID, planID, priceID, subID, entry := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+			end := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+			newEnd := time.Date(2026, 11, 12, 0, 0, 0, 0, time.UTC)
+			var got service.ManualPreviewInput
+			optKey := tc.optionKey + subID.String()
+			f := &fakeSvc{manualPreview: func(in service.ManualPreviewInput) (service.ManualPreview, error) {
+				got = in
+				curPlan := uuid.New()
+				return service.ManualPreview{
+					DefaultKey: optKey,
+					MinPayment: money.FromCents(100),
+					Options: []service.Placement{
+						{Key: "new", Kind: service.PlacementNew, NewPeriodEnd: &newEnd, Due: money.FromCents(3000)},
+						{Key: optKey, Kind: tc.optionKind, SubscriptionID: &subID, Expired: tc.optionKind == service.PlacementChange,
+							Badge: tc.badge, Label: "家里", PlanID: &curPlan, PlanName: "标准", State: subsvc.StateRevivable, PeriodEnd: &end, NewPeriodEnd: &newEnd,
+							Credit: money.FromCents(tc.credit), GiftDaysLost: 3, TrafficUsed: 5, TrafficCap: 10,
+							Due: money.FromCents(50), BelowMinimum: tc.belowMin, Unavailable: tc.unavailable},
+					},
+				}, nil
+			}}
+			rec := &kitRec{}
+			e := newEngine(f, true, rec)
+			w := do(e, http.MethodPost, "/v1/orders/manual/preview", `{"user_id":"`+userID.String()+`","plan_id":"`+planID.String()+
+				`","price_id":"`+priceID.String()+`","entry_subscription_id":"`+entry.String()+`"}`)
+			mustStatus(t, w, http.StatusOK)
+			if got.UserID != userID || got.PlanID != planID || got.PriceID == nil || *got.PriceID != priceID ||
+				got.EntrySubscriptionID == nil || *got.EntrySubscriptionID != entry {
+				t.Fatalf("入参 %+v", got)
+			}
+			m := obj(t, w)
+			if m["default_key"] != optKey || num(t, m, "min_payment") != 100 {
+				t.Fatalf("响应 %v", m)
+			}
+			opts := m["options"].([]any)
+			o0, o1 := opts[0].(map[string]any), opts[1].(map[string]any)
+			mustAbsent(t, o0, "subscription_id", "expired", "badge", "label", "plan_id", "plan_name", "state", "period_end",
+				"credit", "currency", "gift_days_lost", "traffic_used", "traffic_cap", "pack_remaining", "unavailable_reason")
+			mustAbsent(t, o1, "currency", "pack_remaining")
+			if tc.unavailable != "" {
+				if o1["unavailable_reason"] != tc.unavailable {
+					t.Fatalf("不可选原因 %v", o1["unavailable_reason"])
+				}
+			} else {
+				mustAbsent(t, o1, "unavailable_reason")
+			}
+			if o0["key"] != "new" || num(t, o0, "due") != 3000 || o0["below_minimum"] != false || o0["new_period_end"] == nil {
+				t.Fatalf("new 选项 %v", o0)
+			}
+			if o1["key"] != optKey || o1["kind"] != tc.optionKind || o1["subscription_id"] != subID.String() ||
+				o1["state"] != "revivable" ||
+				num(t, o1, "gift_days_lost") != 3 || num(t, o1, "due") != 50 || o1["below_minimum"] != tc.belowMin ||
+				num(t, o1, "traffic_cap") != 10 || o1["plan_name"] != "标准" {
+				t.Fatalf("选项 %v", o1)
+			}
+			// credit 为 0 时省略
+			if tc.credit == 0 {
+				mustAbsent(t, o1, "credit")
+			} else if num(t, o1, "credit") != float64(tc.credit) {
+				t.Fatalf("credit %v", o1["credit"])
+			}
+			if tc.badge != "" && o1["badge"] != tc.badge {
+				t.Fatalf("badge 不符: %v", o1["badge"])
+			}
+			if rec.reauth != 0 || len(rec.scopes) != 0 {
+				t.Fatalf("预览不该要求重认证或幂等：reauth=%d scopes=%v", rec.reauth, rec.scopes)
+			}
+		})
 	}
 
+	userID, planID := uuid.New(), uuid.New()
+	f := &fakeSvc{manualPreview: func(in service.ManualPreviewInput) (service.ManualPreview, error) {
+		return service.ManualPreview{}, nil
+	}}
+	e := newEngine(f, true, nil)
 	// price_id、entry_subscription_id 可空；格式不对 422
-	w = do(e, http.MethodPost, "/v1/orders/manual/preview", `{"user_id":"`+userID.String()+`","plan_id":"`+planID.String()+`"}`)
+	w := do(e, http.MethodPost, "/v1/orders/manual/preview", `{"user_id":"`+userID.String()+`","plan_id":"`+planID.String()+`"}`)
 	mustStatus(t, w, http.StatusOK)
-	if got.PriceID != nil || got.EntrySubscriptionID != nil {
-		t.Fatalf("入参 %+v", got)
-	}
 	b := mustErr(t, do(e, http.MethodPost, "/v1/orders/manual/preview", `{"user_id":"`+userID.String()+`","plan_id":"`+planID.String()+
 		`","price_id":"x"}`), http.StatusUnprocessableEntity, string(errs.ValidationFailed))
 	if b.Error.Fields["price_id"] != "格式不正确" {
@@ -263,7 +310,7 @@ func TestDiscountAmountIncludesWaived(t *testing.T) {
 		createChange: func(service.PlanChangeOrderInput) (service.Created, error) { return c, nil },
 		myOrders: func(service.ListFilter) (service.MyOrderList, error) {
 			return service.MyOrderList{Orders: []service.MyOrderView{{OrderRow: service.OrderRow{
-				ID: uuid.New(), OrderNo: "AO2", Kind: "upgrade", Status: "fulfilled", Currency: money.CNY,
+				ID: uuid.New(), OrderNo: "AO2", Kind: "upgrade", Status: "fulfilled",
 				Subtotal: money.FromCents(1550), Discount: money.FromCents(0), Waived: money.FromCents(50), ProrationCredit: money.FromCents(1500),
 			}}}, Total: 1}, nil
 		},

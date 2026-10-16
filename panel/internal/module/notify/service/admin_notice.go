@@ -150,9 +150,9 @@ func truncateTicketBody(s string, max int) string {
 // 变量：ticket_no、subject、body（截到 adminTicketBodyMax 字，超出加「…」）、email（maskEmail）、
 //
 //	plan / traffic / expires_at：取 UserSubscriptions.Current 且 State == StateLive 的那份——plan 为 PlanName，
-//	traffic 为第一条 MetricTraffic 配额的 Remaining 加 PackRemainingBytes（humanBytes；Limit 为 nil 写「不限量」；没有流量配额行写「—」），
-//	expires_at 为 noticeTime(PeriodEnd, 站点时区)；没有生效订阅时 plan 写「无生效订阅」，traffic、expires_at 写「—」；
-//	balance：余额.StringFixed(2) + " " + 币种。
+//	traffic 为第一条 MetricTraffic 配额的 Remaining（含本期赠送；humanBytes；Limit 为 nil 写「不限量」；没有流量配额行写「—」），
+//	expires_at 为 paidExpiry(PeriodEnd, 站点时区)（永久写「永久」）；没有生效订阅时 plan 写「无生效订阅」，traffic、expires_at 写「—」；
+//	balance：余额.StringFixed(2) + " 元"。
 //
 // 模板：Kind 为 "opened" 用 TemplateAdminTicketOpened，否则 TemplateAdminTicketReplied。去重键 "admin-ticket:" + MessageID。
 func (s *Service) NotifyAdminsTicket(ctx context.Context, in AdminTicketInput) error {
@@ -204,17 +204,17 @@ func (s *Service) NotifyAdminsTicket(ctx context.Context, in AdminTicketInput) e
 			if loc, err := scanSiteLocation(ctx, s); err != nil {
 				lg.Warn("notify: 工单提醒读站点时区失败", zap.Error(err))
 			} else {
-				expiresAtStr = noticeTime(cur.PeriodEnd, loc)
+				expiresAtStr = paidExpiry(cur.PeriodEnd, loc)
 			}
 		}
 	}
 
 	balanceStr := "—"
-	if balances, currency, err := s.balances.UserBalances(ctx, []uuid.UUID{in.UserID}); err != nil {
+	if balances, err := s.balances.UserBalances(ctx, []uuid.UUID{in.UserID}); err != nil {
 		lg.Warn("notify: 工单提醒读余额失败", zap.Error(err))
 	} else {
 		bal := balances[in.UserID]
-		balanceStr = bal.StringFixed(2) + " " + currency
+		balanceStr = bal.StringFixed(2) + " 元"
 	}
 
 	code := TemplateAdminTicketReplied
@@ -246,7 +246,7 @@ func (s *Service) NotifyAdminsTicket(ctx context.Context, in AdminTicketInput) e
 	})
 }
 
-// ticketTraffic 是工单提醒里的剩余流量：第一条流量配额的剩余加流量包余量；Limit 为 nil 写「不限量」，没有流量配额写「—」。
+// ticketTraffic 是工单提醒里的剩余流量：第一条流量配额的剩余（含本期赠送）；Limit 为 nil 写「不限量」，没有流量配额写「—」。
 func ticketTraffic(cur *subsvc.Summary) string {
 	for _, q := range cur.Quotas {
 		if q.Metric != subsvc.MetricTraffic {
@@ -261,15 +261,12 @@ func ticketTraffic(cur *subsvc.Summary) string {
 		} else {
 			rem = *q.Limit - q.Consumed
 		}
-		return humanBytes(rem + cur.PackRemainingBytes)
+		return humanBytes(rem)
 	}
 	return "—"
 }
 
-// paidAmount 是收款提醒里的金额：订单总额（两位小数）加币种；没有币种时（旧数据或测试夹具）显示「—」。
+// paidAmount 是收款提醒里的金额：订单总额两位小数加「元」。
 func paidAmount(p ordersvc.PaidNotice) string {
-	if p.Currency == "" {
-		return "—"
-	}
-	return p.Total.StringFixed(2) + " " + p.Currency
+	return p.Total.StringFixed(2) + " 元"
 }

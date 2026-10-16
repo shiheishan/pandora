@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	authsvc "github.com/aegispanel/aegis/internal/module/auth/service"
 	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
@@ -20,7 +21,6 @@ import (
 	supportsvc "github.com/aegispanel/aegis/internal/module/support/service"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/aegispanel/aegis/internal/pkg/redisx"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -47,8 +47,8 @@ func (a promoCatalog) MissingPlans(ctx context.Context, ids []uuid.UUID) ([]uuid
 	return missing, nil
 }
 
-// PriceSubtotal 按「新购」取在售价格的币种、金额与计费周期（billing_interval），一次 catalog 查询；价格须属于 planID，按当前登录用户判断可见性与用户组；买不到一律回 NotFound（xb-order #34：券限定计费周期的试算用）。
-func (a promoCatalog) PriceSubtotal(ctx context.Context, planID, priceID uuid.UUID) (string, decimal.Decimal, string, error) {
+// PriceSubtotal 按「新购」取在售价格的金额，一次 catalog 查询；价格须属于 planID，按当前登录用户判断可见性；买不到一律回 NotFound（券试算用）。
+func (a promoCatalog) PriceSubtotal(ctx context.Context, planID, priceID uuid.UUID) (decimal.Decimal, error) {
 	req := catalogsvc.OfferRequest{Use: catalogsvc.UseNew, PlanID: &planID}
 	if p, ok := authn.From(ctx); ok {
 		uid := p.UserID
@@ -56,18 +56,9 @@ func (a promoCatalog) PriceSubtotal(ctx context.Context, planID, priceID uuid.UU
 	}
 	o, err := a.c.Offer(ctx, priceID, req)
 	if err != nil {
-		return "", decimal.Zero, "", asNotFound(err)
+		return decimal.Zero, asNotFound(err)
 	}
-	return string(o.Price.Currency), o.Price.UnitAmount, o.Price.BillingInterval, nil
-}
-
-// PackSubtotal 取在售流量包的币种与金额；下架或不存在回 NotFound。
-func (a promoCatalog) PackSubtotal(ctx context.Context, packID uuid.UUID) (string, decimal.Decimal, error) {
-	p, err := a.c.PackOffer(ctx, packID, false)
-	if err != nil {
-		return "", decimal.Zero, asNotFound(err)
-	}
-	return string(p.Currency), p.UnitAmount, nil
+	return o.Price.UnitAmount, nil
 }
 
 // asNotFound 把 catalog 的业务拒绝（不在售、未发布、下架等）统一成 NotFound，内部错误原样返回。
@@ -113,7 +104,6 @@ func (a opsOrderAdapter) RecentOrders(ctx context.Context, userID uuid.UUID, lim
 			UserEmail:      v.UserEmail,
 			Kind:           v.Kind,
 			Status:         v.Status,
-			Currency:       string(v.Currency),
 			Total:          v.Total,
 			Payable:        v.Payable,
 			Paid:           v.Paid,
@@ -122,6 +112,7 @@ func (a opsOrderAdapter) RecentOrders(ctx context.Context, userID uuid.UUID, lim
 			PaidAt:         v.PaidAt,
 			ProviderCode:   v.ProviderCode,
 			ProviderName:   v.ProviderName,
+			Method:         v.Method,
 			ItemCount:      v.ItemCount,
 			Manual:         v.Manual,
 		}
@@ -139,21 +130,13 @@ func (a opsOrderAdapter) RecentOrders(ctx context.Context, userID uuid.UUID, lim
 	return out, nil
 }
 
-// opsWalletAdapter 把 ledger 的站点币种与余额批量查询适配成 identity 后台用户列表/详情用的 OpsWallets。
+// opsWalletAdapter 把 ledger 的余额批量查询适配成 identity 后台用户列表/详情用的 OpsWallets。
 type opsWalletAdapter struct{ l *ledgersvc.Service }
 
 var _ identitysvc.OpsWallets = opsWalletAdapter{}
 
-func (a opsWalletAdapter) UserBalances(ctx context.Context, userIDs []uuid.UUID) (string, map[uuid.UUID]decimal.Decimal, error) {
-	cur, err := a.l.DefaultCurrency(ctx)
-	if err != nil {
-		return "", nil, err
-	}
-	bal, err := a.l.Balances(ctx, userIDs, cur)
-	if err != nil {
-		return "", nil, err
-	}
-	return string(cur), bal, nil
+func (a opsWalletAdapter) UserBalances(ctx context.Context, userIDs []uuid.UUID) (map[uuid.UUID]decimal.Decimal, error) {
+	return a.l.Balances(ctx, userIDs)
 }
 
 // groupUsageAdapter 组合 catalog、promo、node 的组引用统计，供 identity 后台用户组列表 OpsGroupUsage。
@@ -182,7 +165,6 @@ func (a groupUsageAdapter) GroupUsage(ctx context.Context) (map[uuid.UUID]identi
 	for id, rc := range refs {
 		u := out[id]
 		u.Plans = rc.Plans
-		u.Prices = rc.Prices
 		out[id] = u
 	}
 	for id, n := range coupons {
@@ -224,9 +206,21 @@ func (a supportPlans) ActivePlanNames(ctx context.Context, userIDs []uuid.UUID) 
 	}
 	out := make(map[uuid.UUID]string, len(sums))
 	for id, us := range sums {
-		if us.Current != nil && us.Current.State == subsvc.StateLive {
-			out[id] = us.Current.PlanName
+		if us.Current == nil || us.Current.State != subsvc.StateLive {
+			continue
 		}
+		// 一人可有多份：只写当前那份会让客服以为他只有这一份
+		live := 0
+		for _, sum := range us.Subscriptions {
+			if sum.State == subsvc.StateLive {
+				live++
+			}
+		}
+		name := us.Current.PlanName
+		if live > 1 {
+			name = fmt.Sprintf("%s 等 %d 份", name, live)
+		}
+		out[id] = name
 	}
 	return out, nil
 }
@@ -254,7 +248,7 @@ func (a reportRedis) Ping(ctx context.Context) error { return redisx.Ping(ctx, a
 
 var _ reportsvc.Pinger = reportRedis{}
 
-// commissionVoidAdapter 把 commission 的注销作废适配成 identity 要的 CommissionVoider（币种换成字符串键）。
+// commissionVoidAdapter 把 commission 的注销作废适配成 identity 要的 CommissionVoider。
 type commissionVoidAdapter struct{ s *commissionsvc.Service }
 
 var _ identitysvc.CommissionVoider = commissionVoidAdapter{}
@@ -270,20 +264,11 @@ func (a commissionVoidAdapter) VoidForDeletedUser(ctx context.Context, userID uu
 	}
 	return identitysvc.CommissionVoid{
 		VoidedEntries:       r.VoidedEntries,
-		VoidedPending:       byCurrencyCode(r.VoidedPending),
-		Forfeited:           byCurrencyCode(r.Forfeited),
+		VoidedPending:       r.VoidedPending,
+		Forfeited:           r.Forfeited,
 		RejectedWithdrawals: r.RejectedWithdrawals,
-		RejectedAmount:      byCurrencyCode(r.RejectedAmount),
+		RejectedAmount:      r.RejectedAmount,
 	}, nil
-}
-
-// byCurrencyCode 把按 money.Currency 分的金额换成按币种代码字符串分的。
-func byCurrencyCode(m map[money.Currency]decimal.Decimal) map[string]decimal.Decimal {
-	out := make(map[string]decimal.Decimal, len(m))
-	for cur, amt := range m {
-		out[string(cur)] = amt
-	}
-	return out
 }
 
 // ---- xb-tg：Telegram 用户命令、管理员群组提醒与在 TG 里回复工单、知识库占位变量 ----
@@ -308,20 +293,12 @@ func (a notifySubscribeLinks) ActiveLinks(ctx context.Context, userID uuid.UUID)
 	return out, nil
 }
 
-// notifyBalances 让 notify 的工单提醒经 ledger 批量取用户在站点币种下的余额。
+// notifyBalances 让 notify 的工单提醒经 ledger 批量取用户余额。
 type notifyBalances struct{ l *ledgersvc.Service }
 
-// UserBalances 返回余额与站点币种；没有账户的用户为 0。
-func (a notifyBalances) UserBalances(ctx context.Context, userIDs []uuid.UUID) (map[uuid.UUID]decimal.Decimal, string, error) {
-	cur, err := a.l.DefaultCurrency(ctx)
-	if err != nil {
-		return nil, "", err
-	}
-	bal, err := a.l.Balances(ctx, userIDs, cur)
-	if err != nil {
-		return nil, "", err
-	}
-	return bal, string(cur), nil
+// UserBalances 返回余额；没有账户的用户为 0。
+func (a notifyBalances) UserBalances(ctx context.Context, userIDs []uuid.UUID) (map[uuid.UUID]decimal.Decimal, error) {
+	return a.l.Balances(ctx, userIDs)
 }
 
 // notifyTicketReplier 让 notify 在 Telegram 管理员群组里收到的回复以该管理员身份回复工单：与后台回复走同一个

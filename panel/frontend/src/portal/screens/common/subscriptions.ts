@@ -110,27 +110,7 @@ export function useSubscriptionUsage(subscriptionId: string | undefined) {
 }
 
 // ---------------------------------------------------------------------------
-// GET v1/me/traffic-packs（修订 R30；设计稿 2.4 每笔带上挂在哪一份，未分配为 null）：余量新增推 subscriptions.changed（R33）
-// ---------------------------------------------------------------------------
-export const trafficPacksSchema = z.object({
-  remaining_bytes_total: z.number().int(),
-  packs: z.array(
-    z.object({
-      id: z.string(),
-      subscription_id: z.string().nullable(),
-      source: z.enum(['order', 'gift_card', 'migration', 'admin']),
-      order_id: z.string().nullable(),
-      granted_bytes: z.number().int(),
-      consumed_bytes: z.number().int(),
-      remaining_bytes: z.number().int(),
-      created_at: z.string(),
-    }),
-  ),
-})
-
-
-// ---------------------------------------------------------------------------
-// 一份的流量摘要与下次重置：卡片、用量图共用；流量包余量取这一份上的 pack_remaining_bytes（设计稿 2.9）。用量查询与用量图同键，缓存共享、不多发请求。
+// 一份的流量摘要与下次重置：卡片、用量图共用。用量查询与用量图同键，缓存共享、不多发请求。
 // ---------------------------------------------------------------------------
 interface PlanTraffic {
   summary: TrafficSummary | null
@@ -143,7 +123,7 @@ export function usePlanTraffic(sub: Subscription): PlanTraffic {
   const usage = useSubscriptionUsage(sub.id)
   const quota = pickTrafficQuota(sub.quotas)
   return {
-    summary: trafficSummary(quota, sub.pack_remaining_bytes),
+    summary: trafficSummary(quota),
     resetAt: resetAtOf(sub, quota, usage.data),
     timeZone: usage.data?.timezone,
   }

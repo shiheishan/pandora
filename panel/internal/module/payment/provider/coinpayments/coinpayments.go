@@ -59,7 +59,7 @@ type Provider struct {
 	now    func() time.Time
 }
 
-// 币种 ID 缓存放在包级：适配器每次调用都按渠道记录重新构造，挂在实例上等于不缓存。
+// 法币 ID 缓存放在包级：适配器每次调用都按渠道记录重新构造，挂在实例上等于不缓存。
 var (
 	curMu    sync.Mutex
 	curCache = map[string]cachedID{}
@@ -225,22 +225,22 @@ type invoice struct {
 	} `json:"payments"`
 }
 
-func normalize(inv invoice) (amount decimal.Decimal, cur money.Currency, st provider.Status, partial bool, err error) {
+func normalize(inv invoice) (amount decimal.Decimal, st provider.Status, partial bool, err error) {
 	amtStr := inv.Amount.Total.string()
 	if amtStr == "" {
 		amtStr = inv.Amount.Breakdown.Total.string()
 	}
 	amount, err = money.ParseProvider(amtStr)
 	if err != nil {
-		return decimal.Zero, "", provider.StatusPending, false, fmt.Errorf("coinpayments: 发票金额非法: %w", err)
+		return decimal.Zero, provider.StatusPending, false, fmt.Errorf("coinpayments: 发票金额非法: %w", err)
 	}
-	cur, err = money.ParseCurrency(strings.ToUpper(strings.TrimSpace(inv.Currency.Symbol)))
-	if err != nil {
-		return decimal.Zero, "", provider.StatusPending, false, fmt.Errorf("coinpayments: 发票币种 %q 不受支持", inv.Currency.Symbol)
+	sym := strings.TrimSpace(inv.Currency.Symbol)
+	if !strings.EqualFold(sym, provider.FiatCurrency) {
+		return decimal.Zero, provider.StatusPending, false, fmt.Errorf("coinpayments: 发票币种 %q 不受支持", sym)
 	}
 	partial = invoicePartial(inv)
 	st = mapInvoiceStatus(inv.Status, partial)
-	return amount, cur, st, partial, nil
+	return amount, st, partial, nil
 }
 
 func invoicePartial(inv invoice) bool {
@@ -373,9 +373,6 @@ func sanitizeSubject(s string) string {
 
 // CreatePayment 在 CoinPayments 创建发票并返回收银台链接。
 func (p *Provider) CreatePayment(ctx context.Context, req provider.CreateRequest) (provider.CreateResponse, error) {
-	if !req.Currency.Valid() {
-		return provider.CreateResponse{}, fmt.Errorf("coinpayments: 不支持的币种 %s", req.Currency)
-	}
 	if !req.Amount.IsPositive() {
 		return provider.CreateResponse{}, errors.New("coinpayments: 金额必须为正")
 	}
@@ -386,7 +383,7 @@ func (p *Provider) CreatePayment(ctx context.Context, req provider.CreateRequest
 		return provider.CreateResponse{}, err
 	}
 
-	curID, err := p.currencyID(ctx, string(req.Currency))
+	curID, err := p.currencyID(ctx, provider.FiatCurrency)
 	if err != nil {
 		return provider.CreateResponse{}, err
 	}
@@ -556,7 +553,7 @@ func (p *Provider) ParseNotification(ctx context.Context, in provider.Inbound) (
 		return provider.Notification{}, errors.New("coinpayments: 回查发票缺少 invoiceId")
 	}
 
-	amount, cur, st, partial, err := normalize(inv)
+	amount, st, partial, err := normalize(inv)
 	if err != nil {
 		return provider.Notification{}, err
 	}
@@ -588,7 +585,6 @@ func (p *Provider) ParseNotification(ctx context.Context, in provider.Inbound) (
 		OutTradeNo:        inv.InvoiceID,
 		Amount:            amount,
 		Fee:               money.Zero,
-		Currency:          cur,
 		Status:            st,
 		Method:            "",
 		SignatureVerified: true,
@@ -648,7 +644,7 @@ func (p *Provider) QueryPayment(ctx context.Context, outTradeNo string) (provide
 
 	chosen := matched[0]
 	for _, it := range matched {
-		_, _, st, partial, err := normalize(it)
+		_, st, partial, err := normalize(it)
 		if err != nil {
 			continue
 		}
@@ -658,7 +654,7 @@ func (p *Provider) QueryPayment(ctx context.Context, outTradeNo string) (provide
 		}
 	}
 
-	amount, cur, st, _, err := normalize(chosen)
+	amount, st, _, err := normalize(chosen)
 	if err != nil {
 		return provider.QueryResult{}, err
 	}
@@ -667,7 +663,6 @@ func (p *Provider) QueryPayment(ctx context.Context, outTradeNo string) (provide
 		Found:      true,
 		PaymentRef: chosen.ID,
 		Amount:     amount,
-		Currency:   cur,
 		Status:     st,
 		Method:     "",
 	}, nil

@@ -107,20 +107,6 @@ func TestScanOrderPaid(t *testing.T) {
 	if noticeCountInbox(t, e, uid) != 2 {
 		t.Fatal("old order must not be notified, the two new ones once each")
 	}
-
-	// 流量包订单用流量包的文案
-	pack := int64(100) << 30
-	subs.paid = append(subs.paid, ordersvc.PaidNotice{OrderID: uuid.MustParse("018f0000-0000-7000-8000-000000000015"),
-		UserID: uid, OrderNo: "PD20260601003", Kind: ordersvc.KindAddon, TrafficBytes: &pack,
-		SubscriptionID: subID, FulfilledAt: paidAt.Add(2 * time.Minute)})
-	if n, err := e.svc.Scan(e.ctx); err != nil || n != 1 {
-		t.Fatalf("pack scan %d %v", n, err)
-	}
-	latest, err := e.repo.ListInbox(e.ctx, uid, false, 1)
-	if err != nil || len(latest) != 1 || latest[0].TemplateCode != TemplatePackPaid ||
-		!strings.Contains(latest[0].Body, "100.0 GB 流量包已加到「进阶套餐」") {
-		t.Fatalf("pack inbox %+v %v", latest, err)
-	}
 }
 
 func TestScanExpiredAndRecall(t *testing.T) {
@@ -166,7 +152,7 @@ func TestScanQuota96Only95Tier(t *testing.T) {
 	dir, plans, subs := e.usePorts()
 	uid := e.insertTestUser(t, dir)
 	planID := uuid.MustParse("018f0000-0000-7000-8000-000000000020")
-	plans.plans = []catalogsvc.Plan{{ID: planID, Name: "流量包"}}
+	plans.plans = []catalogsvc.Plan{{ID: planID, Name: "按量套餐"}}
 	subs.quota = []subsvc.QuotaNotice{{
 		SubscriptionID: uuid.New(),
 		UserID:         uid,

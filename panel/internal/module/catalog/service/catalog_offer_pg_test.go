@@ -1,6 +1,6 @@
 package service
 
-// 门户目录、下单快照、流量包与用户组外键的 PG 测试。
+// 门户目录、下单快照与用户组外键的 PG 测试。
 
 import (
 	"context"
@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -17,8 +16,37 @@ func TestPortalCatalogVisibility(t *testing.T) {
 	e, ctx := newEnv(t)
 	ctx, _ = seedAdmin(t, ctx, e)
 	g := seedGroup(t, ctx, e, "")
-	public := publishedPlan(t, ctx, e, publishedPlanOpts{})
+
+	public := publishedPlan(t, ctx, e, publishedPlanOpts{Name: "公开套餐"})
+	authOnly := publishedPlan(t, ctx, e, publishedPlanOpts{
+		Name:       "登录可见",
+		Visibility: VisibilityAuthenticated,
+	})
 	grpOnly := groupOnlyPublishedPlan(t, ctx, e, g)
+	hidden := publishedPlan(t, ctx, e, publishedPlanOpts{Name: "隐藏套餐", Visibility: VisibilityHidden})
+
+	oneTime := publishedPlan(t, ctx, e, publishedPlanOpts{
+		Kind:    KindOneTime,
+		Name:    "一次性门户",
+		OneTime: &OneTimeInput{UnitAmount: decimal.RequireFromString("19.90"), ValidityDays: nil},
+	})
+
+	older := publishedPlan(t, ctx, e, publishedPlanOpts{Name: "普通早建"})
+	time.Sleep(2 * time.Millisecond)
+	rec := publishedPlan(t, ctx, e, publishedPlanOpts{Name: "推荐套餐"})
+	rec, err := e.svc.UpdateSales(ctx, rec.ID, SalesUpdate{
+		ExpectedRowVersion: rec.RowVersion,
+		Sales: SalesInput{
+			Visibility:       VisibilityPublic,
+			AllowNewPurchase: true,
+			AllowRenewal:     true,
+			AllowUpgrade:     true,
+			Recommended:      true,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	anon, err := e.svc.PortalCatalog(ctx, nil)
 	if err != nil {
@@ -27,8 +55,17 @@ func TestPortalCatalogVisibility(t *testing.T) {
 	if !portalHasPlan(anon, public.ID) {
 		t.Fatal("匿名应看到 public 套餐")
 	}
+	if portalHasPlan(anon, authOnly.ID) {
+		t.Fatal("匿名不应看到 authenticated 套餐")
+	}
 	if portalHasPlan(anon, grpOnly.ID) {
 		t.Fatal("匿名不应看到 group 套餐")
+	}
+	if portalHasPlan(anon, hidden.ID) {
+		t.Fatal("匿名不应看到 hidden 套餐")
+	}
+	if !portalHasPlan(anon, oneTime.ID) {
+		t.Fatal("匿名应看到一次性套餐")
 	}
 
 	in := seedUser(t, ctx, e, &g)
@@ -36,17 +73,357 @@ func TestPortalCatalogVisibility(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !portalHasPlan(inGrp, authOnly.ID) {
+		t.Fatal("登录用户应看到 authenticated 套餐")
+	}
 	if !portalHasPlan(inGrp, grpOnly.ID) {
 		t.Fatal("组内用户应看到 group 套餐")
 	}
+
 	out := seedUser(t, ctx, e, nil)
-	outGrp, _ := e.svc.PortalCatalog(ctx, &out)
+	outGrp, err := e.svc.PortalCatalog(ctx, &out)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if portalHasPlan(outGrp, grpOnly.ID) {
 		t.Fatal("组外用户不应看到 group 套餐")
 	}
+
+	assertPortalOrder(t, anon, rec.ID, older.ID)
+	assertPortalOrder(t, inGrp, rec.ID, older.ID)
+
+	draft := publishedPlan(t, ctx, e, publishedPlanOpts{Name: "草稿不出", Draft: true})
+	list, _ := e.svc.PortalCatalog(ctx, nil)
+	if portalHasPlan(list, draft.ID) {
+		t.Fatal("草稿套餐不应出现在门户")
+	}
 }
 
-func portalHasPlan(list []OfferPlan, id uuid.UUID) bool {
+func assertPortalOrder(t *testing.T, list []OfferPlan, recommendedID, olderID uuid.UUID) {
+	t.Helper()
+	ri, oi := -1, -1
+	for i, o := range list {
+		if o.Plan.ID == recommendedID {
+			ri = i
+		}
+		if o.Plan.ID == olderID {
+			oi = i
+		}
+	}
+	if ri < 0 || oi < 0 {
+		t.Fatalf("门户列表缺推荐或对照套餐: rec=%d older=%d", ri, oi)
+	}
+	if ri >= oi {
+		t.Fatalf("推荐套餐应排在普通套餐前: rec=%d older=%d", ri, oi)
+	}
+}
+
+func TestPortalSkipsNoActivePrice(t *testing.T) {
+	e, ctx := newEnv(t)
+	ctx, _ = seedAdmin(t, ctx, e)
+
+	noprice := publishedPlan(t, ctx, e, publishedPlanOpts{Name: "无价"})
+	if err := e.exec(ctx, `UPDATE prices SET status = 'archived', row_version = row_version + 1 WHERE plan_id = ?`, noprice.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	closed := publishedPlan(t, ctx, e, publishedPlanOpts{
+		Name:             "关新购",
+		AllowNewPurchase: boolPtr(false),
+	})
+
+	list, err := e.svc.PortalCatalog(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if portalHasPlan(list, noprice.ID) {
+		t.Fatal("无在售价套餐不应出现")
+	}
+	if !portalHasPlan(list, closed.ID) {
+		t.Fatal("关新购仍应出现在目录（只是不能新购）")
+	}
+}
+
+func TestOfferGates(t *testing.T) {
+	e, ctx := newEnv(t)
+	ctx, _ = seedAdmin(t, ctx, e)
+	buyer := seedUser(t, ctx, e, nil)
+	uid := &buyer
+
+	sub := publishedPlan(t, ctx, e, publishedPlanOpts{Name: "订阅门控"})
+	subPrice := sub.Prices[0].ID
+
+	onetime := publishedPlan(t, ctx, e, publishedPlanOpts{
+		Kind:    KindOneTime,
+		Name:    "一次性门控",
+		OneTime: &OneTimeInput{UnitAmount: decimal.RequireFromString("8.00"), ValidityDays: nil},
+	})
+	otPrice := onetime.Prices[0].ID
+
+	closedNew := publishedPlan(t, ctx, e, publishedPlanOpts{
+		Name:             "关新购门控",
+		AllowNewPurchase: boolPtr(false),
+	})
+	closedNewPrice := closedNew.Prices[0].ID
+
+	noUpgrade := publishedPlan(t, ctx, e, publishedPlanOpts{Name: "关变更"})
+	_, err := e.svc.UpdateSales(ctx, noUpgrade.ID, SalesUpdate{
+		ExpectedRowVersion: noUpgrade.RowVersion,
+		Sales: SalesInput{
+			Visibility:       VisibilityPublic,
+			AllowNewPurchase: true,
+			AllowRenewal:     true,
+			AllowUpgrade:     false,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	noUpgrade, _ = e.svc.GetPlan(ctx, noUpgrade.ID)
+
+	hidden := publishedPlan(t, ctx, e, publishedPlanOpts{Name: "隐藏门控", Visibility: VisibilityHidden})
+	hiddenPrice := hidden.Prices[0].ID
+
+	arch := publishedPlan(t, ctx, e, publishedPlanOpts{Name: "待归档"})
+	archPrice := arch.Prices[0].ID
+	archRV := arch.RowVersion
+	_, err = e.svc.ArchivePlan(ctx, arch.ID, archRV)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	archPricePlan := publishedPlan(t, ctx, e, publishedPlanOpts{
+		Name: "归档价",
+		Tiers: []TierInput{
+			{BillingInterval: IntervalMonth, IntervalCount: 1, UnitAmount: decimal.RequireFromString("9.90")},
+			{BillingInterval: IntervalMonth, IntervalCount: 3, UnitAmount: decimal.RequireFromString("27.00")},
+		},
+	})
+	var month1, month3 uuid.UUID
+	for _, p := range archPricePlan.Prices {
+		if p.Status != PriceActive {
+			continue
+		}
+		if p.BillingInterval == IntervalMonth && p.IntervalCount == 1 {
+			month1 = p.ID
+		}
+		if p.BillingInterval == IntervalMonth && p.IntervalCount == 3 {
+			month3 = p.ID
+		}
+	}
+	archPricePlan, err = e.svc.GetPlan(ctx, archPricePlan.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.svc.UpdatePrices(ctx, archPricePlan.ID, PricesUpdate{
+		ExpectedRowVersion: archPricePlan.RowVersion,
+		Tiers: []TierChange{
+			{BillingInterval: IntervalMonth, IntervalCount: 1, UnitAmount: nil},
+			{BillingInterval: IntervalMonth, IntervalCount: 3, UnitAmount: ptrDec("27.00")},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	other := publishedPlan(t, ctx, e, publishedPlanOpts{Name: "另一套餐"})
+	otherPrice := other.Prices[0].ID
+
+	cases := []struct {
+		name string
+		run  func() error
+		want error
+	}{
+		{
+			name: "UseNew 正常",
+			run: func() error {
+				_, err := e.svc.Offer(ctx, subPrice, OfferRequest{Use: UseNew, UserID: uid})
+				return err
+			},
+		},
+		{
+			name: "关新购",
+			run: func() error {
+				_, err := e.svc.Offer(ctx, closedNewPrice, OfferRequest{Use: UseNew, UserID: uid})
+				return err
+			},
+			want: ErrNewPurchaseClosed,
+		},
+		{
+			name: "UseStack 订阅不允许",
+			run: func() error {
+				_, err := e.svc.Offer(ctx, subPrice, OfferRequest{Use: UseStack, UserID: uid, PlanID: &sub.ID})
+				return err
+			},
+			want: ErrStackNotAllowed,
+		},
+		{
+			name: "UseStack 一次性正常",
+			run: func() error {
+				_, err := e.svc.Offer(ctx, otPrice, OfferRequest{Use: UseStack, UserID: uid, PlanID: &onetime.ID})
+				return err
+			},
+		},
+		{
+			name: "续费用一次性价",
+			run: func() error {
+				_, err := e.svc.Offer(ctx, otPrice, OfferRequest{Use: UseRenewal, UserID: uid, PlanID: &onetime.ID})
+				return err
+			},
+			want: ErrChangeNotAllowed,
+		},
+		{
+			name: "续费归档套餐",
+			run: func() error {
+				_, err := e.svc.Offer(ctx, archPrice, OfferRequest{Use: UseRenewal, UserID: uid, PlanID: &arch.ID})
+				return err
+			},
+			want: ErrRenewalNotAllowed,
+		},
+		{
+			name: "续费归档价",
+			run: func() error {
+				_, err := e.svc.Offer(ctx, month1, OfferRequest{Use: UseRenewal, UserID: uid, PlanID: &archPricePlan.ID})
+				return err
+			},
+			want: ErrRenewPriceGone,
+		},
+		{
+			name: "新购归档价",
+			run: func() error {
+				_, err := e.svc.Offer(ctx, month1, OfferRequest{Use: UseNew, UserID: uid})
+				return err
+			},
+			want: ErrPriceArchived,
+		},
+		{
+			name: "UseChange 关升级",
+			run: func() error {
+				_, err := e.svc.Offer(ctx, noUpgrade.Prices[0].ID, OfferRequest{Use: UseChange, UserID: uid})
+				return err
+			},
+			want: ErrChangeNotAllowed,
+		},
+		{
+			name: "Manual 跳过可见性",
+			run: func() error {
+				_, err := e.svc.Offer(ctx, hiddenPrice, OfferRequest{Use: UseNew, Manual: true, UserID: uid})
+				return err
+			},
+		},
+		{
+			name: "续费 PlanID 不符",
+			run: func() error {
+				_, err := e.svc.Offer(ctx, otherPrice, OfferRequest{Use: UseRenewal, UserID: uid, PlanID: &sub.ID})
+				return err
+			},
+			want: ErrRenewPriceGone,
+		},
+		{
+			name: "新购 PlanID 不符",
+			run: func() error {
+				_, err := e.svc.Offer(ctx, otherPrice, OfferRequest{Use: UseNew, UserID: uid, PlanID: &sub.ID})
+				return err
+			},
+			want: ErrNotFound,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.run()
+			if tc.want == nil {
+				if err != nil {
+					t.Fatalf("期望成功，得到 %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("期望 %v，得到 %v", tc.want, err)
+			}
+		})
+	}
+
+	// 续费仍可用在售价
+	_, err = e.svc.Offer(ctx, month3, OfferRequest{Use: UseRenewal, UserID: uid, PlanID: &archPricePlan.ID})
+	if err != nil {
+		t.Fatalf("月3 续费应成功: %v", err)
+	}
+}
+
+func TestPlanOffersTierSort(t *testing.T) {
+	e, ctx := newEnv(t)
+	ctx, _ = seedAdmin(t, ctx, e)
+
+	plan := publishedPlan(t, ctx, e, publishedPlanOpts{
+		Name: "多档排序",
+		Tiers: []TierInput{
+			{BillingInterval: IntervalYear, IntervalCount: 1, UnitAmount: decimal.RequireFromString("99.00")},
+			{BillingInterval: IntervalMonth, IntervalCount: 6, UnitAmount: decimal.RequireFromString("49.00")},
+			{BillingInterval: IntervalMonth, IntervalCount: 1, UnitAmount: decimal.RequireFromString("9.90")},
+			{BillingInterval: IntervalMonth, IntervalCount: 3, UnitAmount: decimal.RequireFromString("27.00")},
+		},
+	})
+
+	op, err := e.svc.PlanOffers(ctx, plan.ID, OfferRequest{Use: UseNew, UserID: uuidPtr(seedUser(t, ctx, e, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(op.Prices) != 4 {
+		t.Fatalf("期望 4 档价，得到 %d", len(op.Prices))
+	}
+	want := []struct {
+		interval string
+		count    int
+	}{
+		{IntervalMonth, 1}, {IntervalMonth, 3}, {IntervalMonth, 6}, {IntervalYear, 1},
+	}
+	for i, w := range want {
+		p := op.Prices[i]
+		if p.BillingInterval != w.interval || p.IntervalCount != w.count {
+			t.Fatalf("下标 %d: 得到 %s/%d，期望 %s/%d", i, p.BillingInterval, p.IntervalCount, w.interval, w.count)
+		}
+	}
+}
+
+func TestListOffersUseChange(t *testing.T) {
+	e, ctx := newEnv(t)
+	ctx, _ = seedAdmin(t, ctx, e)
+	buyer := seedUser(t, ctx, e, nil)
+
+	sub := publishedPlan(t, ctx, e, publishedPlanOpts{Name: "换套餐订阅"})
+	ot := publishedPlan(t, ctx, e, publishedPlanOpts{
+		Kind:    KindOneTime,
+		Name:    "换套餐一次性",
+		OneTime: &OneTimeInput{UnitAmount: decimal.RequireFromString("15.00"), ValidityDays: nil},
+	})
+	closed := publishedPlan(t, ctx, e, publishedPlanOpts{Name: "不许变更"})
+	_, err := e.svc.UpdateSales(ctx, closed.ID, SalesUpdate{
+		ExpectedRowVersion: closed.RowVersion,
+		Sales: SalesInput{
+			Visibility:       VisibilityPublic,
+			AllowNewPurchase: true,
+			AllowRenewal:     true,
+			AllowUpgrade:     false,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := e.svc.ListOffers(ctx, OfferRequest{Use: UseChange, UserID: &buyer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !listHasPlan(list, sub.ID) || !listHasPlan(list, ot.ID) {
+		t.Fatal("应列出订阅与一次性换套餐目标")
+	}
+	if listHasPlan(list, closed.ID) {
+		t.Fatal("关了升级的套餐不应出现在换套餐列表")
+	}
+}
+
+func listHasPlan(list []OfferPlan, id uuid.UUID) bool {
 	for _, o := range list {
 		if o.Plan.ID == id {
 			return true
@@ -55,151 +432,13 @@ func portalHasPlan(list []OfferPlan, id uuid.UUID) bool {
 	return false
 }
 
-func TestPortalSkipsExpiredPriceAndNoPrice(t *testing.T) {
-	e, ctx := newEnv(t)
-	ctx, _ = seedAdmin(t, ctx, e)
-	expired := publishedPlan(t, ctx, e, publishedPlanOpts{})
-	// 已发布套餐的价格整行冻结，产品代码造不出「窗口已过期」的在售价；绕过触发器直接改（CHECK 仍生效，窗口两端都设成过去）。
-	now := time.Now().UTC()
-	execBypassTriggers(t, ctx, e, `UPDATE prices SET valid_from = ?, valid_until = ? WHERE plan_id = ?`,
-		now.Add(-2*time.Hour), now.Add(-time.Hour), expired.ID)
-
-	noprice, err := e.svc.CreatePlanComplete(ctx, WizardCreate{
-		Plan: PlanInput{
-			Code: uniqCode(t, "nop"), Name: "无价门户", Visibility: VisibilityPublic,
-			AllowNewPurchase: true, AllowRenewal: true, AllowUpgrade: true, Highlights: []string{},
-		},
-		TrafficGB: int64Ptr(1),
-		Prices:    []WizardPrice{{BillingInterval: "month", IntervalCount: 1, UnitAmount: decimal.RequireFromString("1.00"), Currency: "CNY"}},
-		Publish:   true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := e.exec(ctx, `UPDATE prices SET status = 'archived', row_version = row_version + 1 WHERE plan_id = ?`, noprice.Plan.ID); err != nil {
-		t.Fatal(err)
-	}
-
-	closed := publishedPlan(t, ctx, e, publishedPlanOpts{AllowNewPurchase: boolPtr(false)})
-
-	list, _ := e.svc.PortalCatalog(ctx, nil)
-	if portalHasPlan(list, expired.ID) {
-		t.Fatal("过期价套餐不应出现")
-	}
-	if portalHasPlan(list, noprice.Plan.ID) {
-		t.Fatal("无可用价套餐不应出现")
-	}
-	if !portalHasPlan(list, closed.ID) {
-		t.Fatal("关新购仍应出现在目录")
-	}
-}
-
-func TestOfferGates(t *testing.T) {
-	e, ctx := newEnv(t)
-	ctx, _ = seedAdmin(t, ctx, e)
-	closed := publishedPlan(t, ctx, e, publishedPlanOpts{AllowNewPurchase: boolPtr(false)})
-	detail, _ := e.svc.GetPlan(ctx, closed.ID)
-	priceID := detail.Prices[0].ID
-	_, err := e.svc.Offer(ctx, priceID, OfferRequest{Use: UseNew, UserID: uuidPtr(seedUser(t, ctx, e, nil))})
-	if !errors.Is(err, ErrNewPurchaseClosed) {
-		t.Fatalf("新购关闭: %v", err)
-	}
-
-	arch := publishedPlan(t, ctx, e, publishedPlanOpts{})
-	d2, _ := e.svc.GetPlan(ctx, arch.ID)
-	p := d2.Prices[0]
-	_, _ = e.svc.ArchivePrice(ctx, arch.ID, p.ID, p.RowVersion)
-	_, err = e.svc.Offer(ctx, p.ID, OfferRequest{Use: UseNew, UserID: uuidPtr(seedUser(t, ctx, e, nil))})
-	if !errors.Is(err, ErrPriceArchived) {
-		t.Fatalf("新购归档价: %v", err)
-	}
-	_, err = e.svc.Offer(ctx, p.ID, OfferRequest{Use: UseRenewal, UserID: uuidPtr(seedUser(t, ctx, e, nil))})
-	if !errors.Is(err, ErrRenewPriceGone) {
-		t.Fatalf("续费归档价: %v", err)
-	}
-
-	hidden := publishedPlan(t, ctx, e, publishedPlanOpts{Visibility: VisibilityHidden})
-	hd, _ := e.svc.GetPlan(ctx, hidden.ID)
-	hp := hd.Prices[0].ID
-	_, err = e.svc.Offer(ctx, hp, OfferRequest{Use: UseNew, Manual: true, UserID: uuidPtr(seedUser(t, ctx, e, nil))})
-	if err != nil {
-		t.Fatalf("人工开单 hidden: %v", err)
-	}
-}
-
-func TestPackOfferArchived(t *testing.T) {
-	e, ctx := newEnv(t)
-	ctx, _ = seedAdmin(t, ctx, e)
-	pack, err := e.svc.CreateTrafficPack(ctx, PackInput{
-		Name: "小包", TrafficBytes: 1 << 30, Currency: "CNY",
-		UnitAmount: decimal.RequireFromString("5.00"),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = e.svc.SetTrafficPackStatus(ctx, pack.ID, PackArchived, &pack.UpdatedAt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = e.svc.PackOffer(ctx, pack.ID, false)
-	if !errors.Is(err, ErrPackArchived) {
-		t.Fatalf("下架包: %v", err)
-	}
-}
-
-// --- 11. 流量包 ---
-
-func TestTrafficPackLifecycle(t *testing.T) {
-	e, ctx := newEnv(t)
-	ctx, _ = seedAdmin(t, ctx, e)
-	pack, err := e.svc.CreateTrafficPack(ctx, PackInput{
-		Name: "流量", TrafficBytes: 2 << 30, Currency: "CNY",
-		UnitAmount: decimal.RequireFromString("3.00"),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	upd, err := e.svc.UpdateTrafficPack(ctx, pack.ID, &pack.UpdatedAt, PackInput{
-		Name: "流量改", TrafficBytes: 2 << 30, Currency: "CNY",
-		UnitAmount: decimal.RequireFromString("4.00"),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	stale := pack.UpdatedAt
-	_, err = e.svc.UpdateTrafficPack(ctx, pack.ID, &stale, PackInput{
-		Name: "旧锁", TrafficBytes: 2 << 30, Currency: "CNY",
-		UnitAmount: decimal.RequireFromString("5.00"),
-	})
-	if errCode(err) != errs.Conflict {
-		t.Fatalf("旧 updated_at 应 409，得到 %v", err)
-	}
-	if errFields(err)["updated_at"] == "" {
-		t.Fatal("fields 缺 updated_at")
-	}
-
-	arch, err := e.svc.SetTrafficPackStatus(ctx, upd.ID, PackArchived, &upd.UpdatedAt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	restored, err := e.svc.SetTrafficPackStatus(ctx, arch.ID, PackActive, &arch.UpdatedAt)
-	if err != nil || restored.Status != PackActive {
-		t.Fatalf("上架: err=%v status=%s", err, restored.Status)
-	}
-	_, err = e.svc.SetTrafficPackStatus(ctx, restored.ID, PackActive, &restored.UpdatedAt)
-	if errCode(err) != errs.Conflict {
-		t.Fatalf("重复上架应 409，得到 %v", err)
-	}
-}
-
-// --- 12. 删用户组：可见组级联删除，只往收紧方向变 ---
-
 func TestDeleteUserGroupCascadesPlanVisibility(t *testing.T) {
 	e, ctx := newEnv(t)
 	ctx, _ = seedAdmin(t, ctx, e)
 	g := seedGroup(t, ctx, e, "")
 	plan := publishedPlan(t, ctx, e, publishedPlanOpts{
-		Visibility: VisibilityGroup, VisibleGroupIDs: []uuid.UUID{g},
+		Visibility:      VisibilityGroup,
+		VisibleGroupIDs: []uuid.UUID{g},
 	})
 	if err := e.exec(ctx, `DELETE FROM user_groups WHERE id = ?`, g); err != nil {
 		t.Fatalf("只被套餐可见组引用的分组应能删除：%v", err)
@@ -225,26 +464,6 @@ func TestDeleteUserGroupCascadesPlanVisibility(t *testing.T) {
 	}
 }
 
-// 组价没被买过时删组连价格一起删（00050：prices.user_group_id 是 ON DELETE CASCADE，价格守卫只放行这种级联删除）。
-// 买过的组价挡住删组由 identity 的 TestPGDeleteGroupRefusedWhenPriceSold 覆盖。
-func TestDeleteUserGroupCascadesUnsoldPrices(t *testing.T) {
-	e, ctx := newEnv(t)
-	ctx, _ = seedAdmin(t, ctx, e)
-	g := seedGroup(t, ctx, e, "")
-	_ = groupOnlyPublishedPlan(t, ctx, e, g)
-	if n := scanInt64(t, ctx, e, `SELECT count(*) FROM prices WHERE user_group_id = ?`, g); n == 0 {
-		t.Fatal("夹具应有组专属价")
-	}
-	if err := execSavepoint(t, ctx, e, "sp_delgrp", `DELETE FROM user_groups WHERE id = ?`, g); err != nil {
-		t.Fatalf("没卖过的组价应随组级联删除，得到 %v", err)
-	}
-	if n := scanInt64(t, ctx, e, `SELECT count(*) FROM prices WHERE user_group_id = ?`, g); n != 0 {
-		t.Fatalf("删组后组专属价应为 0 条，得到 %d", n)
-	}
-}
-
-// 删组的级联只能删掉没卖过的组价，靠的是「所有引用 prices(id) 的外键都是 RESTRICT」：
-// 哪天有人把订单项、订阅或礼品卡的 price_id 改成 CASCADE / SET NULL，删组就会悄悄删掉卖过的价格，这里先红。
 func TestPriceReferencesAreRestrict(t *testing.T) {
 	e, ctx := newEnv(t)
 	total := scanInt64(t, ctx, e, `SELECT count(*) FROM pg_constraint WHERE contype = 'f' AND confrelid = 'prices'::regclass`)
@@ -256,51 +475,29 @@ func TestPriceReferencesAreRestrict(t *testing.T) {
 	}
 }
 
-// groupOnlyPublishedPlan 发布仅组价、无公开价的 group 可见套餐（价格触发器禁止 DELETE，不能靠删公开价）。
 func groupOnlyPublishedPlan(t *testing.T, ctx context.Context, e *env, g uuid.UUID) PlanDetail {
 	t.Helper()
-	plan, err := e.svc.CreatePlan(ctx, PlanInput{
-		Code: uniqCode(t, "gonly"), Name: "仅组价", Visibility: VisibilityGroup,
-		VisibleGroupIDs:  []uuid.UUID{g},
-		AllowNewPurchase: true, AllowRenewal: true, AllowUpgrade: true, Highlights: []string{},
+	return publishedPlan(t, ctx, e, publishedPlanOpts{
+		Name:            "仅组可见",
+		Visibility:      VisibilityGroup,
+		VisibleGroupIDs: []uuid.UUID{g},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ver, err := e.svc.CreateVersion(ctx, plan.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	verRV, err := e.svc.UpdateVersion(ctx, plan.ID, ver.ID, ver.RowVersion, VersionInput{
-		QuotaResetStrategy:   ResetBillingCycle,
-		RenewalExtendsPeriod: true, RenewalResetsQuota: true, RenewalKeepsAddons: true,
-		DeviceReleaseHours: 24, OveragePolicy: OveragePolicySuspend,
-		Quotas: []Quota{{Metric: MetricTraffic, Limit: int64Ptr(1 << 30), Unit: "bytes", Period: PeriodCycle}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = e.svc.CreatePrice(ctx, plan.ID, PriceInput{
-		Currency: "CNY", UnitAmount: decimal.RequireFromString("7.00"),
-		BillingInterval: "month", IntervalCount: 1, UserGroupID: &g,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	detail, _ := e.svc.GetPlan(ctx, plan.ID)
-	_, _, err = e.svc.PublishVersion(ctx, plan.ID, ver.ID, detail.RowVersion, verRV)
-	if err != nil {
-		t.Fatal(err)
-	}
-	detail, err = e.svc.GetPlan(ctx, plan.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return detail
 }
 
-// 本文件专用小工具（不与 helpers 重名）。
+func portalHasPlan(list []OfferPlan, id uuid.UUID) bool {
+	for _, o := range list {
+		if o.Plan.ID == id {
+			return true
+		}
+	}
+	return false
+}
 
 func boolPtr(b bool) *bool { return &b }
 
 func uuidPtr(id uuid.UUID) *uuid.UUID { return &id }
+
+func ptrDec(s string) *decimal.Decimal {
+	d := decimal.RequireFromString(s)
+	return &d
+}

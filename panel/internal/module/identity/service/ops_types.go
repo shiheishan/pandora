@@ -305,10 +305,10 @@ type OpsSubscriptions interface {
 	AdminSubs(ctx context.Context, userIDs []uuid.UUID) (map[uuid.UUID]AdminUserSubs, error)
 }
 
-// OrderStat 是一个用户的订单总数与按币种划分的实付金额汇总。
+// OrderStat 是一个用户的订单总数与实付金额汇总。
 type OrderStat struct {
 	Orders int64
-	Paid   map[string]decimal.Decimal
+	Paid   decimal.Decimal
 }
 
 // OpsOrders 由 order 模块经适配器实现（app/adapters.go），启动装配时经 UseOpsOrders 注入。

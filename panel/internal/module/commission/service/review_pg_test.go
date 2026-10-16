@@ -39,13 +39,13 @@ func newReviewEntry(t *testing.T, e *env, ctx context.Context, referrer, buyer u
 	return id, amt
 }
 
-// platformRevenue 读平台收入 main 科目（testCurrency）的余额缓存（没有科目时为 0）。
+// platformRevenue 读平台收入 main 科目的余额缓存（没有科目时为 0）。
 func platformRevenue(t *testing.T, e *env, ctx context.Context) decimal.Decimal {
 	t.Helper()
 	var bal decimal.Decimal
 	if err := e.row(ctx, `SELECT COALESCE((SELECT balance FROM ledger_accounts
-		WHERE account_type = ? AND owner_ref = ? AND currency = ?), 0)`,
-		string(ledgersvc.PlatformRevenue), ledgersvc.RefMain, string(testCurrency)).Scan(&bal); err != nil {
+		WHERE account_type = ? AND owner_ref = ?), 0)`,
+		string(ledgersvc.PlatformRevenue), ledgersvc.RefMain).Scan(&bal); err != nil {
 		t.Fatal(err)
 	}
 	return bal
@@ -316,7 +316,7 @@ func TestAdminReviewEntriesPaging(t *testing.T) {
 	}
 	row := p1.Entries[0]
 	if row.ReferrerEmail != e.refs.emails[referrer] || row.RefereeEmail != e.refs.emails[buyers[ids[2]]] ||
-		row.ReviewReason == "" || row.ReviewSource != ReviewSourceSameSource || !row.Amount.Equal(dec2("10.00")) || row.Currency != string(testCurrency) || row.OrderNo == "" {
+		row.ReviewReason == "" || row.ReviewSource != ReviewSourceSameSource || !row.Amount.Equal(dec2("10.00")) || row.OrderNo == "" {
 		t.Fatalf("行 %+v", row)
 	}
 	p2, err := e.svc.AdminReviewEntries(ctx, p1.NextCursor, 2)

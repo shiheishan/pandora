@@ -16,11 +16,11 @@ import (
 )
 
 func platformKey(typ, ref string) AccountKey {
-	return AccountKey{Type: typ, Currency: "CNY", OwnerRef: ref}
+	return AccountKey{Type: typ, OwnerRef: ref}
 }
 
 func userKey(typ string, user uuid.UUID) AccountKey {
-	return AccountKey{Type: typ, Currency: "CNY", OwnerUserID: &user, OwnerRef: ""}
+	return AccountKey{Type: typ, OwnerUserID: &user, OwnerRef: ""}
 }
 
 func TestEnsureAndLockAccounts(t *testing.T) {
@@ -43,8 +43,8 @@ func TestEnsureAndLockAccounts(t *testing.T) {
 
 	var n int64
 	if err := g.Raw(`SELECT count(*) FROM ledger_accounts WHERE
-		(account_type = 'channel_cash' AND currency = 'CNY' AND owner_user_id IS NULL AND owner_ref = 'alipay')
-		OR (account_type = 'user_balance' AND currency = 'CNY' AND owner_user_id = ? AND owner_ref = '')`, user).
+		(account_type = 'channel_cash' AND owner_user_id IS NULL AND owner_ref = 'alipay')
+		OR (account_type = 'user_balance' AND owner_user_id = ? AND owner_ref = '')`, user).
 		Row().Scan(&n); err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestSetBalancesAndUserBalances(t *testing.T) {
 		if err := r.SetBalances(ctx, map[uuid.UUID]decimal.Decimal{locked[0].ID: want}); err != nil {
 			t.Fatal(err)
 		}
-		m, err := r.UserBalances(ctx, "user_balance", "CNY", []uuid.UUID{user})
+		m, err := r.UserBalances(ctx, "user_balance", []uuid.UUID{user})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -182,13 +182,12 @@ func TestInsertTransactionAndHistory(t *testing.T) {
 	amt := decimal.RequireFromString("10")
 	txn := &model.Transaction{
 		Kind:      "balance_topup",
-		Currency:  "CNY",
 		Memo:      "充值",
 		ActorKind: "system",
 	}
 	entries := []model.Entry{
-		{AccountID: cashID, Currency: "CNY", Direction: "debit", Amount: amt},
-		{AccountID: balID, Currency: "CNY", Direction: "credit", Amount: amt},
+		{AccountID: cashID, Direction: "debit", Amount: amt},
+		{AccountID: balID, Direction: "credit", Amount: amt},
 	}
 	if err := r.InsertTransaction(ctx, txn, entries); err != nil {
 		t.Fatalf("InsertTransaction: %v", err)
@@ -202,7 +201,7 @@ func TestInsertTransactionAndHistory(t *testing.T) {
 		}
 	}
 
-	rows, err := r.History(ctx, user, "user_balance", "CNY", 10)
+	rows, err := r.History(ctx, user, "user_balance", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +215,7 @@ func TestInsertTransactionAndHistory(t *testing.T) {
 
 	emptyCtx := testkit.TxCtx(t, d)
 	if err := r.InsertTransaction(emptyCtx, &model.Transaction{
-		Kind: "balance_topup", Currency: "CNY", ActorKind: "system",
+		Kind: "balance_topup", ActorKind: "system",
 	}, nil); err == nil {
 		t.Fatal("空分录应报错")
 	}
@@ -230,7 +229,7 @@ func TestHolds(t *testing.T) {
 		r := New(d)
 		g := d.Conn(ctx)
 		user := mkUser(t, g)
-		order := newOrder(t, g, user, "CNY")
+		order := newOrder(t, g, user)
 
 		keys := []AccountKey{
 			userKey("user_balance", user),
@@ -255,14 +254,13 @@ func TestHolds(t *testing.T) {
 		src := "order"
 		holdTxn := &model.Transaction{
 			Kind:       "balance_hold",
-			Currency:   "CNY",
 			SourceType: &src,
 			SourceID:   &order,
 			ActorKind:  "system",
 		}
 		if err := r.InsertTransaction(ctx, holdTxn, []model.Entry{
-			{AccountID: balID, Currency: "CNY", Direction: "debit", Amount: amt},
-			{AccountID: holdAccID, Currency: "CNY", Direction: "credit", Amount: amt},
+			{AccountID: balID, Direction: "debit", Amount: amt},
+			{AccountID: holdAccID, Direction: "credit", Amount: amt},
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -270,7 +268,6 @@ func TestHolds(t *testing.T) {
 		h := &model.Hold{
 			OrderID:   order,
 			UserID:    user,
-			Currency:  "CNY",
 			Amount:    amt,
 			Status:    "held",
 			HoldTxnID: holdTxn.ID,
@@ -292,22 +289,22 @@ func TestHolds(t *testing.T) {
 		r := New(d)
 		g := d.Conn(ctx)
 		user := mkUser(t, g)
-		order := newOrder(t, g, user, "CNY")
+		order := newOrder(t, g, user)
 		src := "order"
-		txnID, err := insertTxn(g, "balance_hold", "CNY", &src, &order)
+		txnID, err := insertTxn(g, "balance_hold", &src, &order)
 		if err != nil {
 			t.Fatal(err)
 		}
 		amt := decimal.RequireFromString("1")
 		h1 := &model.Hold{
-			OrderID: order, UserID: user, Currency: "CNY", Amount: amt,
+			OrderID: order, UserID: user, Amount: amt,
 			Status: "held", HoldTxnID: txnID,
 		}
 		if err := r.InsertHold(ctx, h1); err != nil {
 			t.Fatal(err)
 		}
 		h2 := &model.Hold{
-			OrderID: order, UserID: user, Currency: "CNY", Amount: amt,
+			OrderID: order, UserID: user, Amount: amt,
 			Status: "held", HoldTxnID: txnID,
 		}
 		err = r.InsertHold(ctx, h2)
@@ -333,7 +330,7 @@ func TestHolds(t *testing.T) {
 		r := New(d)
 		g := d.Conn(ctx)
 		user := mkUser(t, g)
-		order := newOrder(t, g, user, "CNY")
+		order := newOrder(t, g, user)
 		src := "order"
 
 		keys := []AccountKey{
@@ -357,16 +354,16 @@ func TestHolds(t *testing.T) {
 		}
 		amt := decimal.RequireFromString("3")
 		holdTxn := &model.Transaction{
-			Kind: "balance_hold", Currency: "CNY", SourceType: &src, SourceID: &order, ActorKind: "system",
+			Kind: "balance_hold", SourceType: &src, SourceID: &order, ActorKind: "system",
 		}
 		if err := r.InsertTransaction(ctx, holdTxn, []model.Entry{
-			{AccountID: balID, Currency: "CNY", Direction: "debit", Amount: amt},
-			{AccountID: holdAccID, Currency: "CNY", Direction: "credit", Amount: amt},
+			{AccountID: balID, Direction: "debit", Amount: amt},
+			{AccountID: holdAccID, Direction: "credit", Amount: amt},
 		}); err != nil {
 			t.Fatal(err)
 		}
 		h := &model.Hold{
-			OrderID: order, UserID: user, Currency: "CNY", Amount: amt,
+			OrderID: order, UserID: user, Amount: amt,
 			Status: "held", HoldTxnID: holdTxn.ID,
 		}
 		if err := r.InsertHold(ctx, h); err != nil {
@@ -374,11 +371,11 @@ func TestHolds(t *testing.T) {
 		}
 
 		relTxn := &model.Transaction{
-			Kind: "balance_release", Currency: "CNY", SourceType: &src, SourceID: &order, ActorKind: "system",
+			Kind: "balance_release", SourceType: &src, SourceID: &order, ActorKind: "system",
 		}
 		if err := r.InsertTransaction(ctx, relTxn, []model.Entry{
-			{AccountID: holdAccID, Currency: "CNY", Direction: "debit", Amount: amt},
-			{AccountID: balID, Currency: "CNY", Direction: "credit", Amount: amt},
+			{AccountID: holdAccID, Direction: "debit", Amount: amt},
+			{AccountID: balID, Direction: "credit", Amount: amt},
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -414,7 +411,7 @@ func TestTransactionExists(t *testing.T) {
 
 	src := "order"
 	order := uuid.New()
-	if _, err := insertTxn(g, "order_paid", "CNY", &src, &order); err != nil {
+	if _, err := insertTxn(g, "order_paid", &src, &order); err != nil {
 		t.Fatal(err)
 	}
 	cases := []struct {

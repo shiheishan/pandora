@@ -44,15 +44,15 @@ func TestPullOK(t *testing.T) {
 	}
 
 	setConsumed(t, de.env, ctx, sub.ID, MetricTraffic, PeriodCycle, 1*gib)
-	de.exec(t, ctx, `INSERT INTO traffic_pack_grants (user_id, subscription_id, source, source_id, granted_bytes)
-		VALUES (?, ?, 'admin', gen_random_uuid(), ?)`, sub.UserID, sub.ID, 2*gib)
+	de.exec(t, ctx, `UPDATE quota_balances SET bonus_value = ? WHERE subscription_id = ? AND metric = ? AND period = ?`,
+		2*gib, sub.ID, MetricTraffic, PeriodCycle)
 
 	res2, err := pull(de, ctx, token, testPrefix)
 	if err != nil {
 		t.Fatalf("第二次拉取: %v", err)
 	}
 	if res2.Userinfo.Total != 12*gib || res2.Userinfo.Download != 1*gib {
-		t.Fatalf("Userinfo 含包与用量: %+v", res2.Userinfo)
+		t.Fatalf("Userinfo 含送的量与用量: %+v", res2.Userinfo)
 	}
 
 	var fetchCount int

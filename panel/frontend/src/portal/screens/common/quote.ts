@@ -7,17 +7,16 @@ import { useApi } from '../../../shell/runtime'
 // ---------------------------------------------------------------------------
 // POST v1/me/checkout/quote（购买模型设计稿 2.2）：金额与默认值一律由服务端算，前端只在
 // with_balance / without_balance 两组数之间切换，不做任何金额运算。
-// 字段与 Go 的 billing.QuoteOutput / Quote / purchase.Balance 一一对应，都没有 omitempty：
+// 字段与 Go order/handler 的 quoteResponse / quoteRowResponse 一一对应，都没有 omitempty：
 // 指针字段（各 id、优惠码、明细、周期）为 null 而不缺席。
 // ---------------------------------------------------------------------------
 export { quoteSchema, type BalanceSplit, type Quote, type QuoteRow } from './quote-schema'
 import { quoteSchema, type BalanceSplit, type Quote, type QuoteRow } from './quote-schema'
 
 export interface QuoteRequest {
-  action: 'renew' | 'change' | 'new' | 'pack' | 'reset'
+  action: 'new' | 'renew' | 'stack' | 'change' | 'reset'
   subscription_id?: string
   plan_id?: string
-  pack_id?: string
   coupon_code?: string
   new_copy?: boolean
 }
@@ -72,8 +71,8 @@ export function refusalOf(error: unknown, kind: ReturnType<typeof purchaseRefusa
 // 价格档：报价按（订阅，套餐）展开时每个价格档各一条（A 路实现）。列表里每个组合只显示一档：
 // 与这一份现在同样长的那档；确认页「买多久」才把三档都摆出来。
 // ---------------------------------------------------------------------------
-/** 「买多久」按时长排：1 个月、3 个月、1 年，其余排后 */
-const rowMonths = (r: Pick<QuoteRow, 'interval' | 'interval_count'>) => periodMonths(periodOf({ billing_interval: r.interval as never, interval_count: r.interval_count })) ?? 999
+/** 「买多久」按时长排：1 个月、3 个月、半年、1 年，一次性与其余排后 */
+const rowMonths = (r: Pick<QuoteRow, 'interval' | 'interval_count'>) => periodMonths(periodOf({ billing_interval: r.interval, interval_count: r.interval_count })) ?? 999
 export const sortTiers = (rows: readonly QuoteRow[]) => [...rows].sort((a, b) => rowMonths(a) - rowMonths(b) || a.subtotal - b.subtotal)
 
 /** 默认的一档：地址点名的 → 续费沿用原价格 → 与这一份现在同样长的 → 第一档 */

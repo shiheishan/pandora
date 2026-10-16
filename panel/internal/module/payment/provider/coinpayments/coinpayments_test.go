@@ -103,7 +103,7 @@ func TestCreatePayment(t *testing.T) {
 			if err := json.Unmarshal(body, &req); err != nil {
 				t.Fatal(err)
 			}
-			// 同一个假服务收两次建单（第二次验币种缓存），invoiceId 依次是 ORD-CREATE、ORD-CREATE-2
+			// 同一个假服务收两次建单（第二次验 ID 缓存），invoiceId 依次是 ORD-CREATE、ORD-CREATE-2
 			wantInvoice := "ORD-CREATE"
 			if createHits.Add(1) == 2 {
 				wantInvoice = "ORD-CREATE-2"
@@ -132,7 +132,6 @@ func TestCreatePayment(t *testing.T) {
 	resp, err := p.CreatePayment(context.Background(), provider.CreateRequest{
 		OutTradeNo: "ORD-CREATE",
 		Amount:     money.FromCents(1030),
-		Currency:   money.CNY,
 		Subject:    "测试商品",
 		NotifyURL:  testNotify1,
 		ReturnURL:  "https://panel.example.test/return",
@@ -144,20 +143,19 @@ func TestCreatePayment(t *testing.T) {
 		t.Errorf("响应不符: %+v", resp)
 	}
 	if currencyHits.Load() != 1 {
-		t.Errorf("币种接口应只调 1 次，实际 %d", currencyHits.Load())
+		t.Errorf("/api/v2/currencies 应只调 1 次，实际 %d", currencyHits.Load())
 	}
 
 	_, err = p.CreatePayment(context.Background(), provider.CreateRequest{
 		OutTradeNo: "ORD-CREATE-2",
 		Amount:     money.FromCents(1030),
-		Currency:   money.CNY,
 		NotifyURL:  testNotify1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if currencyHits.Load() != 1 {
-		t.Errorf("第二次建单应走缓存，币种接口仍为 %d 次", currencyHits.Load())
+		t.Errorf("第二次建单应走缓存，/api/v2/currencies 仍为 %d 次", currencyHits.Load())
 	}
 	if createHits.Load() != 2 {
 		t.Errorf("建单接口应调 2 次，实际 %d", createHits.Load())
@@ -194,7 +192,6 @@ func TestCreatePaymentRejectsHTTPNotify(t *testing.T) {
 	_, err = p.CreatePayment(context.Background(), provider.CreateRequest{
 		OutTradeNo: "X",
 		Amount:     money.FromCents(100),
-		Currency:   money.CNY,
 		NotifyURL:  "http://panel.example.test/n",
 	})
 	if err == nil || !strings.Contains(err.Error(), "https") {
@@ -202,7 +199,7 @@ func TestCreatePaymentRejectsHTTPNotify(t *testing.T) {
 	}
 }
 
-func TestCreatePaymentCurrencyNotFound(t *testing.T) {
+func TestCreatePaymentFiatIDNotFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `[]`)
 	}))
@@ -211,7 +208,6 @@ func TestCreatePaymentCurrencyNotFound(t *testing.T) {
 	_, err := p.CreatePayment(context.Background(), provider.CreateRequest{
 		OutTradeNo: "X",
 		Amount:     money.FromCents(100),
-		Currency:   money.CNY,
 		NotifyURL:  testNotify1,
 	})
 	if err == nil || !strings.Contains(err.Error(), "找不到币种") {
@@ -360,28 +356,21 @@ func TestParseNotificationPaidIsPending(t *testing.T) {
 	}
 }
 
-func TestParseNotificationCurrency(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"id":"CPINV1","invoiceId":"ORD1","status":"completed","amount":{"total":"10.30"},"currency":{"symbol":"USD"}}`)
-	}))
-	defer srv.Close()
-	p := testProviderWithServer(t, srv)
+func TestParseNotificationRejectsUnsupportedFiatSymbol(t *testing.T) {
 	body := []byte(`{"type":"InvoiceCompleted","invoice":{"id":"CPINV1"}}`)
-	n, err := p.ParseNotification(context.Background(), signedInbound(testNotify1, body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n.Currency != money.USD {
-		t.Errorf("currency %s", n.Currency)
-	}
-
-	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"id":"CPINV1","invoiceId":"ORD1","status":"completed","amount":{"total":"1.00"},"currency":{"symbol":"BTC"}}`)
-	}))
-	defer srv2.Close()
-	p2 := testProviderWithServer(t, srv2)
-	if _, err := p2.ParseNotification(context.Background(), signedInbound(testNotify1, body)); err == nil {
-		t.Error("BTC 应报错")
+	for _, sym := range []string{"USD", "BTC"} {
+		sym := sym
+		t.Run(sym, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprintf(w, `{"id":"CPINV1","invoiceId":"ORD1","status":"completed","amount":{"total":"10.30"},"currency":{"symbol":"%s"}}`, sym)
+			}))
+			defer srv.Close()
+			p := testProviderWithServer(t, srv)
+			_, err := p.ParseNotification(context.Background(), signedInbound(testNotify1, body))
+			if err == nil || !strings.Contains(err.Error(), "不受支持") {
+				t.Fatalf("got %v", err)
+			}
+		})
 	}
 }
 

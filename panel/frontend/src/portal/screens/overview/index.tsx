@@ -5,7 +5,6 @@ import { Button, Card, Empty, Modal, Skeleton, Tag } from '../../../ui'
 import { useBalance, useCommissionAvailable } from '../../queries'
 import { SEVERITY_LABEL, useAnnouncements, type Announcement } from '../common/announcements'
 import { LoadError, Slot } from '../common/Blocks'
-import { usePackCatalog } from '../common/catalog'
 import { flowCss } from '../common/Flow'
 import { useHoldings } from '../common/holdings'
 import { expiryNote, orderTitle, usePendingOrders } from '../common/orders'
@@ -26,8 +25,6 @@ function useNow(intervalMs = 30_000): Date {
 
 export default function Overview() {
   const h = useHoldings()
-  const packs = usePackCatalog()
-  const minPack = packs.data?.length ? Math.min(...packs.data.map((p) => p.unit_amount)) : null
   const [reading, setReading] = useState<Announcement | null>(null)
   const noop = () => undefined
 
@@ -51,7 +48,7 @@ export default function Overview() {
           ) : h.held.length ? (
             <>
               {h.held.map((sub) => (
-                <SubCard key={sub.id} compact sub={sub} naming={h.naming} link={h.linkOf(sub.id)} minPack={minPack} actions={{ onImport: noop, onRename: noop, onRotate: noop }} />
+                <SubCard key={sub.id} compact sub={sub} naming={h.naming} link={h.linkOf(sub.id)} actions={{ onImport: noop, onRename: noop, onRotate: noop }} />
               ))}
               <a className={flowCss.textButton} href={href('/subs')}>
                 去我的套餐：添加到 App、换新链接、改名 →
@@ -121,7 +118,7 @@ function PendingOrders() {
     <div key={o.id} className={css.pending}>
       <Tag tone="warn">待支付</Tag>
       <span className={css.pendingWhat}>{orderTitle(o)}</span>
-      <span className={css.pendingAmount}>{formatMoney(o.payable_amount, o.currency)}</span>
+      <span className={css.pendingAmount}>{formatMoney(o.payable_amount)}</span>
       <span className={css.pendingNote}>{expiryNote(o.expires_at, now)}</span>
       <a className={css.pendingGo} href={href(`/orders/${o.id}`)}>
         去支付 →
@@ -145,12 +142,12 @@ function Stats({ held, loading }: { held: readonly Subscription[]; loading: bool
     <div className={css.stats}>
       <a className={css.stat} href={href('/wallet')}>
         <span className={css.caption}>余额</span>
-        <span className={css.statValue}>{balance.data ? formatMoney(balance.data.balance, balance.data.currency) : balance.isError ? '—' : <Skeleton width={72} height={24} />}</span>
+        <span className={css.statValue}>{balance.data ? formatMoney(balance.data.balance) : balance.isError ? '—' : <Skeleton width={72} height={24} />}</span>
       </a>
       <a className={css.stat} href={href('/referral')}>
         <span className={css.caption}>可提佣金</span>
         <span className={css.statValue}>
-          {commission.data ? formatMoney(commission.data.available, commission.data.currency) : commission.isError ? '—' : <Skeleton width={72} height={24} />}
+          {commission.data ? formatMoney(commission.data.available) : commission.isError ? '—' : <Skeleton width={72} height={24} />}
         </span>
       </a>
       <a className={css.stat} href={href('/subs')}>

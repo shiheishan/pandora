@@ -84,7 +84,7 @@ func (r *Repo) ClearAutoTransferOf(ctx context.Context, referrerID uuid.UUID, at
 	return res.RowsAffected, mapErr(res.Error)
 }
 
-// InsertForfeiture 插入一行注销作废记录；同一人同一币种已有时回 ErrDuplicate。
+// InsertForfeiture 插入一行注销作废记录；同一人已有时回 ErrDuplicate。
 func (r *Repo) InsertForfeiture(ctx context.Context, f *model.Forfeiture) error {
 	if err := checkMoney(f.Amount); err != nil {
 		return err
@@ -95,12 +95,12 @@ func (r *Repo) InsertForfeiture(ctx context.Context, f *model.Forfeiture) error 
 	return nil
 }
 
-// ForfeitTotalOf 用户在某币种下注销时作废的可提现佣金合计（没有为 0）。
-func (r *Repo) ForfeitTotalOf(ctx context.Context, userID uuid.UUID, currency string) (decimal.Decimal, error) {
+// ForfeitTotalOf 用户注销时作废的可提现佣金合计（没有为 0）。
+func (r *Repo) ForfeitTotalOf(ctx context.Context, userID uuid.UUID) (decimal.Decimal, error) {
 	var total decimal.Decimal
 	err := r.d.Conn(ctx).Raw(
-		`SELECT COALESCE(sum(amount), 0) FROM commission_forfeitures WHERE user_id = ? AND currency = ?`,
-		userID, currency,
+		`SELECT COALESCE(sum(amount), 0) FROM commission_forfeitures WHERE user_id = ?`,
+		userID,
 	).Scan(&total).Error
 	return total, mapErr(err)
 }

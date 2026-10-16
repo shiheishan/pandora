@@ -1,13 +1,13 @@
 import { useMutation } from '@tanstack/react-query'
 import { useId, useState } from 'react'
 import { isApiError } from '../../../core/api'
-import { navigate } from '../../../core/router'
+import { formatDateTime } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
-import { Button, Checkbox, ConfirmModal, Input, Menu, Select, TextArea, useToast, type MenuEntry } from '../../../ui'
-import css from './content.module.css'
-import { audienceChanged, emptyKbForm, KIND_LABEL, kbBody, kbFormFrom, PLATFORM_LABEL, validateKb, VISIBILITY_LABEL, type Article, type KbBody, type KbForm } from './logic'
+import { Button, ConfirmModal, IconClose, Input, Menu, Modal, Select, Tag, TextArea, useToast, type MenuEntry } from '../../../ui'
+import css from './kb.module.css'
+import { audienceChanged, emptyKbForm, kbBody, kbFormFrom, PAGE_STATUS_LABEL, PLATFORM_LABEL, validateKb, VISIBILITY_LABEL, type Article, type KbBody, type KbForm } from './logic'
 import { useFailure, useIntentKey, useInvalidateContent, usePlanCatalog } from './queries'
-import { KINDS, pageArchived, pageSaved, PLATFORMS, VISIBILITIES, type Kind, type Page, type Visibility } from './schemas'
+import { pageArchived, pageSaved, PLATFORMS, VISIBILITIES, type Kind, type Page, type Visibility } from './schemas'
 
 interface Props {
   /** null = 新文章 */
@@ -17,11 +17,14 @@ interface Props {
   kind: Kind
   categories: readonly string[]
   takenSlugs: readonly string[]
+  onClose: () => void
 }
+
+const STATUS_TONE = { draft: 'warn', published: 'ok', archived: 'neutral' } as const
 
 const same = (a: KbForm, b: KbForm) => JSON.stringify(a) === JSON.stringify(b)
 
-export function KbEditor({ article, page, kind, categories, takenSlugs }: Props) {
+export function KbEditor({ article, page, kind, categories, takenSlugs, onClose }: Props) {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
@@ -47,13 +50,12 @@ export function KbEditor({ article, page, kind, categories, takenSlugs }: Props)
   const edit = (patch: Partial<KbForm>) => setForm((f) => ({ ...f, ...patch }))
 
   const save = useMutation({
-    mutationFn: ({ body }: { body: KbBody; restore?: boolean }) => api.post('v1/content-pages', pageSaved, { body, idempotencyKey: intent.keyFor([body.slug, body]) }),
-    onSuccess: (r, { restore }) => {
+    mutationFn: ({ body }: { body: KbBody }) => api.post('v1/content-pages', pageSaved, { body, idempotencyKey: intent.keyFor([body.slug, body]) }),
+    onSuccess: (r) => {
       intent.reset()
-      // 恢复存的是已归档那一版而不是表单；本地若有未保存的修改，留着并按「有新版本」提示
-      if (!restore) setBase(form)
-      toast(restore ? `已恢复为 v${r.page.version}` : r.page.status === 'published' ? `已保存为 v${r.page.version}` : `草稿 v${r.page.version} 已保存`)
-      void invalidate('pages').then(() => !article && navigate(`/content/kb/${r.page.slug}`, { replace: true }))
+      setBase(form)
+      toast(r.page.status === 'published' ? `已发布 v${r.page.version}` : `草稿 v${r.page.version} 已保存`)
+      void invalidate('pages').then(onClose)
     },
     onError: (error) => {
       if (isApiError(error, 'conflict')) void invalidate('pages')
@@ -65,8 +67,8 @@ export function KbEditor({ article, page, kind, categories, takenSlugs }: Props)
     mutationFn: (p: Page) => api.post(`v1/content-pages/${p.id}/archive`, pageArchived, { body: { expected_version: p.version }, idempotencyKey: intent.keyFor([p.id, 'archive', p.version]) }),
     onSuccess: (r) => {
       intent.reset()
-      toast(r.page.already_archived ? '这个版本已经归档过了' : '已归档，门户不再展示')
-      void invalidate('pages')
+      toast(r.page.already_archived ? '这个版本已经归档过了' : '已归档，用户端不再展示')
+      void invalidate('pages').then(onClose)
     },
     onError: (error) => {
       if (isApiError(error, 'conflict')) void invalidate('pages')
@@ -80,21 +82,53 @@ export function KbEditor({ article, page, kind, categories, takenSlugs }: Props)
     if (Object.keys(errs).length === 0) save.mutate({ body: kbBody(form, status, latestVersion, page) })
   }
 
-  const restore = () => {
-    if (page) save.mutate({ body: kbBody(kbFormFrom(page), 'published', latestVersion, page), restore: true })
-  }
-
   const busy = save.isPending || archive.isPending
   const catalog = usePlanCatalog()
   const planName = (id: string) => catalog.data?.find((p) => p.id === id)?.name ?? (catalog.isPending ? '…' : '不可用套餐')
   const changedAudience = page !== null && audienceChanged(form, page)
+  const status = article?.latest.status ?? 'draft'
+  const titleLabel = article ? article.latest.title : '新文章'
 
   return (
-    <section className={css.panel} aria-label={article ? `编辑文章 ${article.latest.title}` : '新文章'}>
+    <Modal
+      open
+      size={720}
+      divided
+      dismissible={!busy}
+      onClose={onClose}
+      title={
+        <span className={css.headRow}>
+          <Tag tone={STATUS_TONE[status]}>{PAGE_STATUS_LABEL[status]}</Tag>
+          <span className={css.headMeta}>每次保存生成新版本 · 用户端展示最新发布的版本</span>
+        </span>
+      }
+      headExtra={
+        <Button variant="ghost" size="sm" aria-label="关闭" onClick={onClose} disabled={busy}>
+          <IconClose />
+        </Button>
+      }
+      footerStart={
+        article?.published ? (
+          <Button size="dialog" className={css.dangerText} disabled={busy} busy={archive.isPending} onClick={() => setArchiving(true)}>
+            归档
+          </Button>
+        ) : undefined
+      }
+      actions={
+        <>
+          <Button size="dialog" disabled={busy} busy={save.isPending && save.variables?.body.status === 'draft'} onClick={() => submit('draft')}>
+            存为草稿
+          </Button>
+          <Button size="dialog" variant="primary" disabled={busy} busy={save.isPending && save.variables?.body.status === 'published'} onClick={() => submit('published')}>
+            发布新版本
+          </Button>
+        </>
+      }
+    >
       {stale && page && (
-        <div className={`${css.banner} ${css.warnBanner} ${css.row}`}>
+        <div className={`${css.banner} ${css.bannerWarn} ${css.bannerRow}`}>
           <span>这篇文章刚有了新版本 v{page.version}，保存会在它之上再生成一个版本。</span>
-          <span className={css.spacer} />
+          <span className={css.bannerSpacer} />
           <Button
             size="xs"
             onClick={() => {
@@ -106,88 +140,97 @@ export function KbEditor({ article, page, kind, categories, takenSlugs }: Props)
           </Button>
         </div>
       )}
-      {!article && (
-        <Input
-          label="标识"
-          mono
-          value={form.slug}
-          error={errors.slug}
-          hint="小写字母、数字与单个连字符，如 clash-verge-rev；门户链接用它，保存后不能改"
-          disabled={busy}
-          onChange={(e) => edit({ slug: e.target.value })}
-        />
-      )}
-      <div className={css.titleRow}>
-        <Input aria-label="文章标题" className={css.kbTitle} value={form.title} placeholder="文章标题" error={errors.title} disabled={busy} onChange={(e) => edit({ title: e.target.value })} />
-        <Input aria-label="分类" list={`${ids}-cats`} className={css.kbTitle} value={form.category} placeholder="分类" error={errors.category} disabled={busy} onChange={(e) => edit({ category: e.target.value })} />
-        <datalist id={`${ids}-cats`}>
-          {categories.map((c) => (
-            <option key={c} value={c} />
-          ))}
-        </datalist>
-      </div>
-      <TextArea aria-label="文章正文" mono rows={14} value={form.body} placeholder="正文，支持 Markdown，至少 10 个字" error={errors.body} disabled={busy} onChange={(e) => edit({ body: e.target.value })} />
-      <div className={css.faint}>
-        可用变量：{'{{siteName}}'} 站点名、{'{{siteUrl}}'} 面板地址、{'{{subscribeUrl}}'} 订阅链接（另有 {'{{urlEncodeSubscribeUrl}}'}、{'{{safeBase64SubscribeUrl}}'}），门户按每个用户替换。把只给有效订阅用户看的内容写在 {'<!--access start-->'} 与 {'<!--access end-->'} 之间，没有有效订阅的用户看到的是一句提示。
+
+      <Input aria-label="文章标题" className={css.titleInput} value={form.title} placeholder="文章标题" error={errors.title} disabled={busy} onChange={(e) => edit({ title: e.target.value })} />
+      <TextArea aria-label="文章正文" mono rows={9} value={form.body} placeholder="正文，支持 Markdown，至少 10 个字" error={errors.body} disabled={busy} onChange={(e) => edit({ body: e.target.value })} />
+      <p className={css.hint}>
+        可用变量：{'{{siteName}}'} 站点名、{'{{siteUrl}}'} 面板地址、{'{{subscribeUrl}}'} 订阅链接（另有 {'{{urlEncodeSubscribeUrl}}'}、{'{{safeBase64SubscribeUrl}}'}），用户端按每个用户替换。把只给有效订阅用户看的内容写在 {'<!--access start-->'} 与{' '}
+        {'<!--access end-->'} 之间，没有有效订阅的用户看到的是一句提示。
+      </p>
+
+      <div className={css.fieldGrid}>
+        <label className={css.field}>
+          <span className={css.fieldLabel}>标识</span>
+          {article ? (
+            <span className={css.slugInput}>{form.slug}</span>
+          ) : (
+            <Input size="sm" mono value={form.slug} placeholder="how-to-import" error={errors.slug} disabled={busy} onChange={(e) => edit({ slug: e.target.value })} />
+          )}
+        </label>
+        <label className={css.field}>
+          <span className={css.fieldLabel}>分类</span>
+          <Input size="sm" list={`${ids}-cats`} value={form.category} placeholder="未分类" error={errors.category} disabled={busy} onChange={(e) => edit({ category: e.target.value })} />
+          <datalist id={`${ids}-cats`}>
+            {categories.map((c) => (
+              <option key={c} value={c} />
+            ))}
+          </datalist>
+        </label>
+        <label className={css.field}>
+          <span className={css.fieldLabel}>可见性</span>
+          <Select size="sm" value={form.visibility} disabled={busy} options={VISIBILITIES.map((v) => ({ value: v, label: VISIBILITY_LABEL[v] }))} onChange={(e) => edit({ visibility: e.target.value as Visibility })} />
+        </label>
+        <label className={css.field}>
+          <span className={css.fieldLabel}>限定套餐</span>
+          <PlanPicker planIds={form.planIds} plans={catalog.data ?? []} planName={planName} disabled={busy} onChange={(planIds) => edit({ planIds })} />
+        </label>
+        <label className={css.field}>
+          <span className={css.fieldLabel}>语言</span>
+          <Input size="sm" mono value={form.locale} error={errors.locale} disabled={busy} onChange={(e) => edit({ locale: e.target.value })} />
+        </label>
       </div>
 
-      <details className={css.settings} open={!article || undefined}>
-        <summary>发布设置</summary>
-        <div className={css.settingsBody}>
-          <Select label="类型" value={form.kind} disabled={busy} options={KINDS.map((k) => ({ value: k, label: KIND_LABEL[k] }))} onChange={(e) => edit({ kind: e.target.value as Kind })} />
-          <Select label="可见性" value={form.visibility} disabled={busy} options={VISIBILITIES.map((v) => ({ value: v, label: VISIBILITY_LABEL[v] }))} onChange={(e) => edit({ visibility: e.target.value as Visibility })} />
-          <TextArea label="摘要（可选）" fieldClassName={css.full} rows={2} value={form.summary} error={errors.summary} disabled={busy} onChange={(e) => edit({ summary: e.target.value })} />
-          <Input label="语言" mono value={form.locale} error={errors.locale} disabled={busy} onChange={(e) => edit({ locale: e.target.value })} />
-          <Input label="复审日期（可选）" type="date" value={form.reviewDue} disabled={busy} onChange={(e) => edit({ reviewDue: e.target.value })} />
-          <Input label="最低客户端版本" mono value={form.minClient} placeholder="不限" error={errors.min_client_version} disabled={busy} onChange={(e) => edit({ minClient: e.target.value })} />
-          <Input label="最高客户端版本" mono value={form.maxClient} placeholder="不限" error={errors.max_client_version} disabled={busy} onChange={(e) => edit({ maxClient: e.target.value })} />
-          <div className={css.full}>
-            <div className={css.groupLabel}>平台（不选 = 全部平台）</div>
-            <div className={css.checks}>
-              {PLATFORMS.map((p) => (
-                <Checkbox
-                  key={p}
-                  label={PLATFORM_LABEL[p]}
-                  checked={form.platforms.includes(p)}
-                  disabled={busy}
-                  onChange={(e) => edit({ platforms: e.target.checked ? [...form.platforms, p] : form.platforms.filter((x) => x !== p) })}
-                />
-              ))}
-            </div>
-          </div>
-          <div className={css.full}>
-            <div className={css.groupLabel}>限定套餐（不选 = 所有登录用户）</div>
-            <PlanPicker planIds={form.planIds} plans={catalog.data ?? []} planName={planName} disabled={busy} onChange={(planIds) => edit({ planIds })} />
-          </div>
-          {changedAudience && <div className={`${css.full} ${css.banner} ${css.warnBanner}`}>受众（语言、平台、客户端版本、限定套餐或可见性）和上一版不同：保存后上一版的发布内容不会被自动归档，两版会同时对各自的用户可见；不需要旧版时请在版本历史里查看并归档。</div>}
+      <div className={css.platformRow}>
+        <span className={css.platformLabel}>平台（不选 = 全部平台）</span>
+        {PLATFORMS.map((p) => {
+          const on = form.platforms.includes(p)
+          return (
+            <button
+              key={p}
+              type="button"
+              className={`${css.platformBtn} ${on ? css.platformBtnOn : ''}`}
+              aria-pressed={on}
+              disabled={busy}
+              onClick={() => edit({ platforms: on ? form.platforms.filter((x) => x !== p) : [...form.platforms, p] })}
+            >
+              {PLATFORM_LABEL[p]}
+            </button>
+          )
+        })}
+      </div>
+
+      {changedAudience && (
+        <div className={`${css.banner} ${css.bannerWarn}`}>
+          受众（语言、平台、限定套餐或可见性）和上一版不同：保存后上一版的发布内容不会被自动归档，两版会同时对各自的用户可见；不需要旧版时先把它归档。
         </div>
-      </details>
+      )}
 
-      <div className={css.faint}>每次保存生成新版本，门户展示最新发布的版本</div>
-      <div className={css.editorBar}>
-        <span className={css.spacer} />
-        {article?.published && (
-          <Button variant="danger" disabled={busy} busy={archive.isPending} onClick={() => setArchiving(true)}>
-            归档
-          </Button>
+      <div>
+        <div className={css.historyHead}>版本历史</div>
+        {article ? (
+          article.rows.map((r) => {
+            const isLatest = r.id === article.latest.id
+            return (
+              <div key={r.id} className={css.historyRow}>
+                <span className={css.historyVer}>v{r.version}</span>
+                <Tag tone={STATUS_TONE[r.status]} className={css.historyTag}>
+                  {PAGE_STATUS_LABEL[r.status]}{isLatest ? ' · 当前' : ''}
+                </Tag>
+                <span className={css.historyMeta}>
+                  {r.created_by_name ?? '未知作者'} · {formatDateTime(r.created_at).slice(5, 10)}
+                </span>
+              </div>
+            )
+          })
+        ) : (
+          <div className={css.historyEmpty}>保存后在这里看到每个版本。</div>
         )}
-        {article?.archived && (
-          <Button disabled={busy} busy={save.isPending && save.variables?.restore === true} onClick={restore}>
-            恢复
-          </Button>
-        )}
-        <Button disabled={busy} busy={save.isPending && save.variables?.body.status === 'draft'} onClick={() => submit('draft')}>
-          保存草稿
-        </Button>
-        <Button variant="primary" disabled={busy} busy={save.isPending && save.variables?.body.status === 'published' && !save.variables.restore} onClick={() => submit('published')}>
-          保存为 v{latestVersion + 1}
-        </Button>
       </div>
 
       <ConfirmModal
         open={archiving}
-        title={`归档 v${article?.published?.version ?? ''}？`}
-        body="门户不再展示这篇文章（如果另有面向其他受众的已发布版本，那一版照常展示）。之后可以点「恢复」重新发布成新版本。"
+        title={`归档「${titleLabel}」？`}
+        body="用户端不再展示这篇文章（如果另有面向其他受众的已发布版本，那一版照常展示）。版本历史保留，之后可以基于它发布新版本。"
         confirmLabel="归档"
         tone="danger"
         onConfirm={() => {
@@ -196,7 +239,7 @@ export function KbEditor({ article, page, kind, categories, takenSlugs }: Props)
         }}
         onCancel={() => setArchiving(false)}
       />
-    </section>
+    </Modal>
   )
 }
 

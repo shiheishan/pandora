@@ -6,6 +6,7 @@ import (
 
 	"github.com/aegispanel/aegis/internal/module/notify/repo"
 	ordersvc "github.com/aegispanel/aegis/internal/module/order/service"
+	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/google/uuid"
 )
 
@@ -90,18 +91,9 @@ func (s *Service) scanPaid(ctx context.Context, now time.Time, loc *time.Locatio
 			Vars: map[string]string{
 				"order_no":   p.OrderNo,
 				"plan":       sub.PlanID.String(),
-				"expires_at": noticeTime(sub.PeriodEnd, loc),
+				"expires_at": paidExpiry(sub.PeriodEnd, loc),
 			},
 			Key: "order-paid:" + p.OrderID.String(),
-		}
-		// 流量包订单不是「套餐已开通」，换流量包的文案（用户 10-13 定）
-		if p.Kind == ordersvc.KindAddon && p.TrafficBytes != nil {
-			it.Code = TemplatePackPaid
-			it.Vars = map[string]string{
-				"order_no": p.OrderNo,
-				"plan":     sub.PlanID.String(),
-				"traffic":  humanBytes(*p.TrafficBytes),
-			}
 		}
 		isReset := p.Kind == ordersvc.KindTrafficReset
 		if isReset {
@@ -152,4 +144,12 @@ func (s *Service) scanPaid(ctx context.Context, now time.Time, loc *time.Locatio
 		}
 	}
 	return written, werr
+}
+
+// paidExpiry 是支付成功通知里的「有效期至」：永久的一次性套餐写「永久」，其余按站点时区到分钟。
+func paidExpiry(end time.Time, loc *time.Location) string {
+	if subsvc.IsPermanent(end) {
+		return "永久"
+	}
+	return noticeTime(end, loc)
 }

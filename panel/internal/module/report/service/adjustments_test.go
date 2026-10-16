@@ -25,9 +25,8 @@ func TestCreateAdjustmentSuccess(t *testing.T) {
 	ctx := adminCtx(admin)
 
 	got, err := e.svc.CreateAdjustment(ctx, CreateAdjustmentInput{
-		Currency: "CNY",
-		Amount:   dec("12.34"),
-		Reason:   "补录线下收款",
+		Amount: dec("12.34"),
+		Reason: "补录线下收款",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -55,14 +54,13 @@ func TestCreateAdjustmentValidation(t *testing.T) {
 		in   CreateAdjustmentInput
 		key  string
 	}{
-		{"currency EUR", CreateAdjustmentInput{Currency: "EUR", Amount: dec("1"), Reason: "补录线下收款说明"}, "currency"},
-		{"amount zero", CreateAdjustmentInput{Currency: "CNY", Amount: dec("0"), Reason: "补录线下收款说明"}, "amount"},
-		{"amount over max", CreateAdjustmentInput{Currency: "CNY", Amount: dec("10000000000.01"), Reason: "补录线下收款说明"}, "amount"},
-		{"amount precision", CreateAdjustmentInput{Currency: "CNY", Amount: dec("1.234"), Reason: "补录线下收款说明"}, "amount"},
-		{"reason short", CreateAdjustmentInput{Currency: "CNY", Amount: dec("1"), Reason: "短"}, "reason"},
-		{"reason null", CreateAdjustmentInput{Currency: "CNY", Amount: dec("1"), Reason: "abcde\x00f"}, "reason"},
-		{"effective future", CreateAdjustmentInput{Currency: "CNY", Amount: dec("1"), Reason: "补录线下收款说明", EffectiveOn: "2026-03-11"}, "effective_on"},
-		{"effective bad format", CreateAdjustmentInput{Currency: "CNY", Amount: dec("1"), Reason: "补录线下收款说明", EffectiveOn: "2026/03/01"}, "effective_on"},
+		{"amount zero", CreateAdjustmentInput{Amount: dec("0"), Reason: "补录线下收款说明"}, "amount"},
+		{"amount over max", CreateAdjustmentInput{Amount: dec("10000000000.01"), Reason: "补录线下收款说明"}, "amount"},
+		{"amount precision", CreateAdjustmentInput{Amount: dec("1.234"), Reason: "补录线下收款说明"}, "amount"},
+		{"reason short", CreateAdjustmentInput{Amount: dec("1"), Reason: "短"}, "reason"},
+		{"reason null", CreateAdjustmentInput{Amount: dec("1"), Reason: "abcde\x00f"}, "reason"},
+		{"effective future", CreateAdjustmentInput{Amount: dec("1"), Reason: "补录线下收款说明", EffectiveOn: "2026-03-11"}, "effective_on"},
+		{"effective bad format", CreateAdjustmentInput{Amount: dec("1"), Reason: "补录线下收款说明", EffectiveOn: "2026/03/01"}, "effective_on"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -89,9 +87,8 @@ func TestCreateAdjustmentValidation(t *testing.T) {
 func TestCreateAdjustmentUnauthorized(t *testing.T) {
 	e := newTestEnv()
 	_, err := e.svc.CreateAdjustment(context.Background(), CreateAdjustmentInput{
-		Currency: "CNY",
-		Amount:   dec("1"),
-		Reason:   "补录线下收款说明",
+		Amount: dec("1"),
+		Reason: "补录线下收款说明",
 	})
 	var pe *errs.Error
 	if !errors.As(err, &pe) || pe.Code != errs.Unauthorized {
@@ -105,9 +102,8 @@ func TestReverseAdjustmentSuccess(t *testing.T) {
 	ctx := adminCtx(admin)
 
 	orig, err := e.svc.CreateAdjustment(ctx, CreateAdjustmentInput{
-		Currency: "CNY",
-		Amount:   dec("12.34"),
-		Reason:   "补录线下收款",
+		Amount: dec("12.34"),
+		Reason: "补录线下收款",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -139,9 +135,8 @@ func TestReverseAdjustmentErrors(t *testing.T) {
 	ctx := adminCtx(admin)
 
 	orig, err := e.svc.CreateAdjustment(ctx, CreateAdjustmentInput{
-		Currency: "CNY",
-		Amount:   dec("12.34"),
-		Reason:   "补录线下收款",
+		Amount: dec("12.34"),
+		Reason: "补录线下收款",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -179,24 +174,24 @@ func TestListAdjustments(t *testing.T) {
 	admin := uuid.New()
 	ctx := adminCtx(admin)
 
-	cny, err := e.svc.CreateAdjustment(ctx, CreateAdjustmentInput{
-		Currency: "CNY", Amount: dec("1"), Reason: "补录线下收款说明",
+	adj1, err := e.svc.CreateAdjustment(ctx, CreateAdjustmentInput{
+		Amount: dec("1"), Reason: "补录线下收款说明",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = e.svc.CreateAdjustment(ctx, CreateAdjustmentInput{
-		Currency: "USD", Amount: dec("2"), Reason: "补录线下收款说明",
+		Amount: dec("2"), Reason: "补录线下收款说明",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = e.svc.ReverseAdjustment(ctx, cny.ID, "撤销补录线下收款")
+	_, err = e.svc.ReverseAdjustment(ctx, adj1.ID, "撤销补录线下收款")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	all, err := e.svc.ListAdjustments(ctx, "")
+	all, err := e.svc.ListAdjustments(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,27 +201,13 @@ func TestListAdjustments(t *testing.T) {
 	if all[0].CreatedAt.Before(all[1].CreatedAt) {
 		t.Fatal("expected newest first")
 	}
-	var cnyOrigReversed bool
+	var origReversed bool
 	for _, a := range all {
-		if a.ID == cny.ID && a.Reversed {
-			cnyOrigReversed = true
+		if a.ID == adj1.ID && a.Reversed {
+			origReversed = true
 		}
 	}
-	if !cnyOrigReversed {
-		t.Fatal("CNY original should be reversed")
-	}
-
-	cnyList, err := e.svc.ListAdjustments(ctx, "CNY")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(cnyList) != 2 {
-		t.Fatalf("cny: %d", len(cnyList))
-	}
-
-	_, err = e.svc.ListAdjustments(ctx, "EUR")
-	var pe *errs.Error
-	if !errors.As(err, &pe) || pe.Code != errs.ValidationFailed {
-		t.Fatalf("eur: %v", err)
+	if !origReversed {
+		t.Fatal("original should be reversed")
 	}
 }

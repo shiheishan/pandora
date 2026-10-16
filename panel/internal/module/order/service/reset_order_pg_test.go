@@ -15,17 +15,16 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
-// setResetPrice 给套餐配该币种的流量重置价。
+// setResetPrice 给套餐配流量重置价。
 func (e *env) setResetPrice(t *testing.T, ctx context.Context, planID uuid.UUID, cents int64) {
 	t.Helper()
-	e.mustExec(t, ctx, `INSERT INTO plan_reset_prices (plan_id, currency, unit_amount) VALUES (?, 'CNY', ?)`,
-		planID, money.FromCents(cents))
+	e.mustExec(t, ctx, "UPDATE plans SET reset_price = ? WHERE id = ?", money.FromCents(cents), planID)
 }
 
 // liveSub 开通一份生效中的订阅（月付 cents 元）。
 func (e *env) liveSub(t *testing.T, ctx context.Context, user uuid.UUID, cents int64) (sub subsvc.Subscription, planID, versionID, priceID uuid.UUID) {
 	t.Helper()
-	planID, versionID, priceID = e.mkPlan(t, ctx, cents, "month", nil, nil)
+	planID, versionID, priceID = e.mkPlan(t, ctx, cents, "month")
 	sub = e.provision(t, ctx, user, planID, versionID, priceID, cents)
 	return sub, planID, versionID, priceID
 }
@@ -248,18 +247,18 @@ func TestResetOrderCancelReleases(t *testing.T) {
 	}
 }
 
-// TestResetOrderRejectsCoupon 重置单不收任何券（用户 10-14 定）：限定周期的与不限的都拒。
+// TestResetOrderRejectsCoupon 重置单不收任何券（用户 10-14 定）：限定本套餐的与不限套餐的都拒（券只按套餐限定）。
 func TestResetOrderRejectsCoupon(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	sub, planID, _, _ := e.liveSub(t, ctx, user, 3000)
 	e.setResetPrice(t, ctx, planID, 800)
 
-	// 限 month 的券
+	// 限定本套餐的券（对新购、续费本该可用）
 	cid := e.mkCoupon(t, ctx, couponCode(), 200)
-	e.mustExec(t, ctx, `INSERT INTO coupon_intervals (coupon_id, billing_interval) VALUES (?, 'month')`, cid)
+	e.mustExec(t, ctx, `INSERT INTO coupon_plans (coupon_id, plan_id) VALUES (?, ?)`, cid, planID)
 	limited := e.strCol(t, ctx, `SELECT code FROM coupons WHERE id = ?`, cid)
-	// 不限周期的券
+	// 不限套餐的券
 	open := couponCode()
 	e.mkCoupon(t, ctx, open, 200)
 
@@ -421,11 +420,11 @@ func TestResetOrderOpenIndexConflict(t *testing.T) {
 	// PendingResetOrderForSubscription 只查 status = 'pending_payment'，而索引条件是 status IN ('pending_payment', 'paid')，
 	// 所以预插一张 status = 'paid' 的重置单能躲过待付检查、撞上索引
 	e.mustExec(t, ctx, `
-INSERT INTO orders (order_no, user_id, kind, status, currency, subscription_id,
+INSERT INTO orders (order_no, user_id, kind, status, subscription_id,
                     subtotal_amount, discount_amount, proration_credit_amount, waived_amount,
                     total_amount, balance_applied, payable_amount, paid_amount,
                     expires_at, paid_at)
-VALUES ('RST-' || upper(?), ?, 'traffic_reset', 'paid', 'CNY', ?,
+VALUES ('RST-' || upper(?), ?, 'traffic_reset', 'paid', ?,
         8, 0, 0, 0,
         8, 0, 8, 8,
         now() + interval '30 minutes', now())`,
@@ -554,4 +553,111 @@ WHERE subscription_id = ? AND metric = 'traffic.bytes' AND period = 'day'`,
 		t.Fatal("cycle consumed 应清零")
 	}
 	e.assertNoDrift(t, ctx)
+}
+
+// TestResetOrderLimitReached 限制重置次数：达到 reset_limit 后建单与报价都被拒；NULL 为不限。
+func TestResetOrderLimitReached(t *testing.T) {
+	cases := []struct {
+		name    string
+		kind    string
+		wantErr error
+	}{
+		{
+			name:    "订阅套餐达到次数上限",
+			kind:    "subscription",
+			wantErr: ErrResetLimitReached,
+		},
+		{
+			name:    "一次性套餐达到次数上限",
+			kind:    "one_time",
+			wantErr: ErrResetLimitReachedOneTime,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e, ctx := newEnv(t)
+			user := e.mkUser(t, ctx)
+			var sub subsvc.Subscription
+			var planID uuid.UUID
+			if tc.kind == "subscription" {
+				sub, planID, _, _ = e.liveSub(t, ctx, user, 3000)
+			} else {
+				var versionID, priceID uuid.UUID
+				planID, versionID, priceID = e.mkOneTimePlan(t, ctx, 3000, 100*gib, intp(30))
+				pid := priceID
+				var err error
+				sub, err = e.subs.Provision(ctx, subsvc.Provision{
+					UserID:        user,
+					PlanID:        planID,
+					PlanVersionID: versionID,
+					Price: subsvc.PriceSnapshot{
+						PriceID:       &pid,
+						Amount:        money.FromCents(3000),
+						Interval:      "one_time",
+						IntervalCount: 1,
+						ValidityDays:  intp(30),
+					},
+					Actor: subsvc.Actor{Kind: subsvc.ActorSystem},
+				})
+				if err != nil {
+					t.Fatalf("开通一次性订阅: %v", err)
+				}
+			}
+
+			e.setResetPrice(t, ctx, planID, 800)
+			e.mustExec(t, ctx, `UPDATE plans SET reset_limit = 1 WHERE id = ?`, planID)
+			e.giveBalance(t, ctx, user, 1000)
+
+			c, err := e.svc.CreateResetOrder(asUser(ctx, user), ResetOrderInput{
+				SubscriptionID: sub.ID,
+				Checkout:       Checkout{UseBalance: dec("8")},
+			})
+			if err != nil || c.Status != StatusFulfilled {
+				t.Fatalf("第一次重置建单: %+v %v", c, err)
+			}
+
+			// 第二次建单应超限
+			_, err = e.svc.CreateResetOrder(asUser(ctx, user), ResetOrderInput{
+				SubscriptionID: sub.ID,
+				Checkout:       Checkout{UseBalance: dec("8")},
+			})
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("第二次建单应 %v，得到 %v", tc.wantErr, err)
+			}
+
+			// 报价也应返回错误
+			_, err = e.svc.Quote(asUser(ctx, user), QuoteInput{Action: QuoteReset, SubscriptionID: &sub.ID})
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("报价应 %v，得到 %v", tc.wantErr, err)
+			}
+			e.assertNoDrift(t, ctx)
+		})
+	}
+
+	t.Run("默认不限次数连续两次成功", func(t *testing.T) {
+		e, ctx := newEnv(t)
+		user := e.mkUser(t, ctx)
+		sub, planID, _, _ := e.liveSub(t, ctx, user, 3000)
+		e.setResetPrice(t, ctx, planID, 800)
+		e.giveBalance(t, ctx, user, 2000)
+
+		c1, err := e.svc.CreateResetOrder(asUser(ctx, user), ResetOrderInput{
+			SubscriptionID: sub.ID,
+			Checkout:       Checkout{UseBalance: dec("8")},
+		})
+		if err != nil || c1.Status != StatusFulfilled {
+			t.Fatalf("第一次重置建单: %+v %v", c1, err)
+		}
+
+		c2, err := e.svc.CreateResetOrder(asUser(ctx, user), ResetOrderInput{
+			SubscriptionID: sub.ID,
+			Checkout:       Checkout{UseBalance: dec("8")},
+		})
+		if err != nil || c2.Status != StatusFulfilled {
+			t.Fatalf("第二次重置建单: %+v %v", c2, err)
+		}
+		mustEq(t, "剩余余额", e.balanceOf(t, ctx, user), dec("4"))
+		e.assertNoDrift(t, ctx)
+	})
 }

@@ -86,7 +86,7 @@ func (a oePromoCatalog) MissingPlans(ctx context.Context, ids []uuid.UUID) ([]uu
 	return missing, nil
 }
 
-func (a oePromoCatalog) PriceSubtotal(ctx context.Context, planID, priceID uuid.UUID) (string, decimal.Decimal, string, error) {
+func (a oePromoCatalog) PriceSubtotal(ctx context.Context, planID, priceID uuid.UUID) (decimal.Decimal, error) {
 	req := catalogsvc.OfferRequest{Use: catalogsvc.UseNew, PlanID: &planID}
 	if p, ok := authn.From(ctx); ok {
 		uid := p.UserID
@@ -94,17 +94,9 @@ func (a oePromoCatalog) PriceSubtotal(ctx context.Context, planID, priceID uuid.
 	}
 	o, err := a.c.Offer(ctx, priceID, req)
 	if err != nil {
-		return "", decimal.Zero, "", err
+		return decimal.Zero, err
 	}
-	return string(o.Price.Currency), o.Price.UnitAmount, o.Price.BillingInterval, nil
-}
-
-func (a oePromoCatalog) PackSubtotal(ctx context.Context, packID uuid.UUID) (string, decimal.Decimal, error) {
-	p, err := a.c.PackOffer(ctx, packID, false)
-	if err != nil {
-		return "", decimal.Zero, err
-	}
-	return string(p.Currency), p.UnitAmount, nil
+	return o.Price.UnitAmount, nil
 }
 
 // newOEEnv 按 wire.go 装配真 service；commit 为 false 时整例在测试事务里回滚。
@@ -128,9 +120,9 @@ func newOEEnv(t *testing.T, commit bool) (e *oeEnv, ctx context.Context) {
 	txm := tx.NewManager(d)
 	settings := settingssvc.New(settingsrepo.New(d), txm, sealer, rdb, auditSvc)
 	identitySvc := identitysvc.New(identityrepo.New(d), txm, settings, auditSvc, keys, rdb, ratelimit.New(rdb), &config.Config{})
-	ledgerSvc := ledgersvc.New(ledgerrepo.New(d), txm, settings, auditSvc)
+	ledgerSvc := ledgersvc.New(ledgerrepo.New(d), txm, auditSvc)
 	catalogSvc := catalogsvc.New(catalogrepo.New(d), txm, auditSvc, identitySvc)
-	promoSvc := promosvc.New(promorepo.New(d), txm, auditSvc, settings)
+	promoSvc := promosvc.New(promorepo.New(d), txm, auditSvc)
 	promoSvc.UseUsers(identitySvc)
 	promoSvc.UseCatalog(oePromoCatalog{c: catalogSvc})
 	paymentSvc := paymentsvc.New(paymentrepo.New(d), txm, ledgerSvc, identitySvc, settings, auditSvc, sealer, paymentsvc.Config{
@@ -214,7 +206,7 @@ func oeRefer(t *testing.T, e *oeEnv, ctx context.Context, referee, referrer uuid
 
 func (e *oeEnv) oeMkPlan(t *testing.T, ctx context.Context, unitCents int64) (planID, priceID uuid.UUID) {
 	t.Helper()
-	if err := e.row(ctx, `INSERT INTO plans (code, name) VALUES (?, ?) RETURNING id`,
+	if err := e.row(ctx, `INSERT INTO plans (code, name, kind) VALUES (?, ?, 'subscription') RETURNING id`,
 		"oe-"+randHex(12), "测试套餐-"+randHex(4)).Scan(&planID); err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +219,7 @@ func (e *oeEnv) oeMkPlan(t *testing.T, ctx context.Context, unitCents int64) (pl
 		versionID, catalogsvc.MetricTraffic, "cycle", 100*oeGib)
 	e.oeMustExec(t, ctx, `UPDATE plan_versions SET status = 'published', frozen_at = now() WHERE id = ?`, versionID)
 	e.oeMustExec(t, ctx, `UPDATE plans SET status = 'active', current_version_id = ? WHERE id = ?`, versionID, planID)
-	if err := e.row(ctx, `INSERT INTO prices (plan_id, currency, unit_amount, billing_interval, interval_count) VALUES (?, 'CNY', ?, 'month', 1) RETURNING id`,
+	if err := e.row(ctx, `INSERT INTO prices (plan_id, plan_kind, unit_amount, billing_interval, interval_count) VALUES (?, 'subscription', ?, 'month', 1) RETURNING id`,
 		planID, money.FromCents(unitCents)).Scan(&priceID); err != nil {
 		t.Fatal(err)
 	}
@@ -252,8 +244,8 @@ func (e *oeEnv) oeMkPayProvider(t *testing.T, ctx context.Context, code string) 
 		t.Fatal(err)
 	}
 	e.oeMustExec(t, ctx, `
-INSERT INTO payment_providers (id, code, adapter, display_name, credentials_sealed, currencies, base_url, methods, default_method, min_amount, enabled, accepting_new)
-VALUES (?, ?, 'epay', '易支付测试', ?, '["CNY"]'::jsonb, 'https://pay.example.test', '["alipay"]'::jsonb, 'alipay', 0.01, true, true)`,
+INSERT INTO payment_providers (id, code, adapter, display_name, credentials_sealed, base_url, methods, default_method, min_amount, enabled, accepting_new)
+VALUES (?, ?, 'epay', '易支付测试', ?, 'https://pay.example.test', '["alipay"]'::jsonb, 'alipay', 0.01, true, true)`,
 		id, code, sealed)
 }
 
@@ -314,10 +306,10 @@ func oeCount(t *testing.T, e *oeEnv, ctx context.Context, q string, args ...any)
 	return n
 }
 
-func oeCNYBalance(t *testing.T, e *oeEnv, ctx context.Context, user uuid.UUID, typ ledgersvc.AccountType) decimal.Decimal {
+func oeLedgerBalance(t *testing.T, e *oeEnv, ctx context.Context, user uuid.UUID, typ ledgersvc.AccountType) decimal.Decimal {
 	t.Helper()
 	var bal decimal.Decimal
-	if err := e.row(ctx, `SELECT COALESCE((SELECT balance FROM ledger_accounts WHERE account_type = ? AND owner_user_id = ? AND currency = 'CNY'), 0)`,
+	if err := e.row(ctx, `SELECT COALESCE((SELECT balance FROM ledger_accounts WHERE account_type = ? AND owner_user_id = ?), 0)`,
 		string(typ), user).Scan(&bal); err != nil {
 		t.Fatal(err)
 	}
@@ -408,20 +400,19 @@ func TestOrderSettlementAccruesCommission(t *testing.T) {
 	var (
 		gotReferrer uuid.UUID
 		commAmt     decimal.Decimal
-		currency    string
 		reviewReq   bool
 	)
-	if err := e.row(ctx, `SELECT referrer_user_id, commission_amount, currency, review_required FROM commission_entries WHERE order_id = ?`, orderID).
-		Scan(&gotReferrer, &commAmt, &currency, &reviewReq); err != nil {
+	if err := e.row(ctx, `SELECT referrer_user_id, commission_amount, review_required FROM commission_entries WHERE order_id = ?`, orderID).
+		Scan(&gotReferrer, &commAmt, &reviewReq); err != nil {
 		t.Fatal(err)
 	}
-	if gotReferrer != referrer || !commAmt.Equal(dec2("10.00")) || currency != "CNY" || reviewReq {
-		t.Fatalf("条目 referrer=%s amount=%s currency=%s review=%v", gotReferrer, commAmt, currency, reviewReq)
+	if gotReferrer != referrer || !commAmt.Equal(dec2("10.00")) || reviewReq {
+		t.Fatalf("条目 referrer=%s amount=%s review=%v", gotReferrer, commAmt, reviewReq)
 	}
 	if n := oeCount(t, e, ctx, `SELECT count(*) FROM ledger_transactions WHERE kind = 'commission_accrued' AND source_id = ?`, orderID); n != 1 {
 		t.Fatalf("commission_accrued %d 笔", n)
 	}
-	if bal := oeCNYBalance(t, e, ctx, referrer, ledgersvc.UserCommissionPending); !bal.Equal(dec2("10.00")) {
+	if bal := oeLedgerBalance(t, e, ctx, referrer, ledgersvc.UserCommissionPending); !bal.Equal(dec2("10.00")) {
 		t.Fatalf("待结佣金 %s", bal)
 	}
 	// 同一回调原样重推：结算只发生一次，佣金也只计一次
@@ -483,7 +474,7 @@ func TestOrderSettlementHookFailureRollsBack(t *testing.T) {
 	if n := oeCount(t, e, ctx, `SELECT count(*) FROM ledger_transactions WHERE kind = 'commission_accrued' AND source_id = ?`, orderID); n != 0 {
 		t.Fatalf("commission_accrued 应回滚，得到 %d", n)
 	}
-	if bal := oeCNYBalance(t, e, ctx, referrer, ledgersvc.UserCommissionPending); !bal.IsZero() {
+	if bal := oeLedgerBalance(t, e, ctx, referrer, ledgersvc.UserCommissionPending); !bal.IsZero() {
 		t.Fatalf("待结佣金应为 0，得到 %s", bal)
 	}
 	hook.fail.Store(false)
@@ -503,7 +494,7 @@ func TestOrderSettlementHookFailureRollsBack(t *testing.T) {
 	if n := oeCount(t, e, ctx, `SELECT count(*) FROM ledger_transactions WHERE kind = 'commission_accrued' AND source_id = ?`, orderID); n != 1 {
 		t.Fatalf("commission_accrued %d 笔", n)
 	}
-	if bal := oeCNYBalance(t, e, ctx, referrer, ledgersvc.UserCommissionPending); !bal.Equal(dec2("10.00")) {
+	if bal := oeLedgerBalance(t, e, ctx, referrer, ledgersvc.UserCommissionPending); !bal.Equal(dec2("10.00")) {
 		t.Fatalf("待结佣金 %s", bal)
 	}
 	oeAssertNoDrift(t, e, ctx)

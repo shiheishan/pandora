@@ -14,14 +14,14 @@ import (
 )
 
 // 后台列表：筛选参数交给 service（to 是日期时取次日零点）；plan_name、interval 恒为字符串；
-// paid_at、provider_code、provider_name 为空时是 null；manual、item_count 恒有。
+// paid_at、provider_code、provider_name、method 为空时是 null；manual、item_count 恒有。
 func TestAdminOrdersShape(t *testing.T) {
 	userID := uuid.New()
 	var got service.ListFilter
 	f := &fakeSvc{adminOrders: func(lf service.ListFilter) (service.AdminOrderList, error) {
 		got = lf
 		return service.AdminOrderList{Total: 1, Orders: []service.AdminOrderView{{
-			OrderRow: service.OrderRow{ID: uuid.New(), OrderNo: "AO1", Kind: "topup", Status: "pending_payment", Currency: money.CNY,
+			OrderRow: service.OrderRow{ID: uuid.New(), OrderNo: "AO1", Kind: "topup", Status: "pending_payment",
 				Total: money.FromCents(5000), Payable: money.FromCents(5000)},
 			UserEmail: "a@example.test", ItemCount: 1,
 		}}}, nil
@@ -38,13 +38,32 @@ func TestAdminOrdersShape(t *testing.T) {
 	}
 	m := obj(t, w)
 	row := m["orders"].([]any)[0].(map[string]any)
+	mustAbsent(t, row, "currency")
 	if row["plan_name"] != "" || row["interval"] != "" || num(t, row, "interval_count") != 0 || num(t, row, "item_count") != 1 || row["manual"] != false {
 		t.Fatalf("行 %v", row)
 	}
 	if num(t, row, "total_amount") != 5000 || row["user_email"] != "a@example.test" {
 		t.Fatalf("金额 %v", row)
 	}
-	mustNull(t, row, "paid_at", "provider_code", "provider_name")
+	mustNull(t, row, "paid_at", "provider_code", "provider_name", "method")
+}
+
+// 后台列表：成功那笔收款的支付方式原样给出。
+func TestAdminOrdersMethod(t *testing.T) {
+	code, name, method := "epay", "聚合收银台", "wxpay"
+	f := &fakeSvc{adminOrders: func(service.ListFilter) (service.AdminOrderList, error) {
+		return service.AdminOrderList{Total: 1, Orders: []service.AdminOrderView{{
+			OrderRow: service.OrderRow{ID: uuid.New(), OrderNo: "AO2", Kind: "new", Status: "fulfilled",
+				Total: money.FromCents(2500), Payable: money.FromCents(2500), Paid: money.FromCents(2500)},
+			UserEmail: "b@example.test", ItemCount: 1, ProviderCode: &code, ProviderName: &name, Method: &method,
+		}}}, nil
+	}}
+	w := do(newEngine(f, true, nil), http.MethodGet, "/v1/orders", "")
+	mustStatus(t, w, http.StatusOK)
+	row := obj(t, w)["orders"].([]any)[0].(map[string]any)
+	if row["method"] != "wxpay" || row["provider_name"] != "聚合收银台" {
+		t.Fatalf("行 %v", row)
+	}
 }
 
 // 后台列表的 422：user_id、from、to 格式不对。
@@ -74,13 +93,13 @@ func TestAdminOrderDetailShape(t *testing.T) {
 			return service.AdminOrderDetail{}, service.ErrNotFound
 		}
 		return service.AdminOrderDetail{
-			Order: service.AdminOrderView{OrderRow: service.OrderRow{ID: orderID, Kind: "new", Status: "pending_payment", Currency: money.CNY,
+			Order: service.AdminOrderView{OrderRow: service.OrderRow{ID: orderID, Kind: "new", Status: "pending_payment",
 				Subtotal: money.FromCents(3000), Discount: money.FromCents(500), Total: money.FromCents(2500), Payable: money.FromCents(2500),
 				StateVersion: 3}},
 			Items: []service.ItemRow{
 				{ID: uuid.New(), PlanID: &planID, Name: "月付套餐", Entitlements: `["a"]`, Quotas: `[{"k":"traffic.bytes","v":1}]`,
-					Quantity: 1, UnitAmount: money.FromCents(3000), LineAmount: money.FromCents(3000), Currency: money.CNY},
-				{ID: uuid.New(), Name: "流量包", Quantity: 1, UnitAmount: money.FromCents(100), LineAmount: money.FromCents(100), Currency: money.CNY},
+					Quantity: 1, UnitAmount: money.FromCents(3000), LineAmount: money.FromCents(3000)},
+				{ID: uuid.New(), Name: "流量重置", Quantity: 1, UnitAmount: money.FromCents(100), LineAmount: money.FromCents(100)},
 			},
 		}, nil
 	}}
@@ -88,9 +107,9 @@ func TestAdminOrderDetailShape(t *testing.T) {
 	w := do(e, http.MethodGet, "/v1/orders/"+orderID.String(), "")
 	mustStatus(t, w, http.StatusOK)
 	o := sub(t, obj(t, w), "order")
-	mustAbsent(t, o, "organization_id", "tax_amount", "refunded_amount")
+	mustAbsent(t, o, "organization_id", "tax_amount", "refunded_amount", "currency", "member_discount_amount")
 	mustNull(t, o, "coupon_id", "manual_reason", "created_by", "created_by_email", "subscription_id",
-		"fulfilled_at", "cancelled_at", "expired_at", "cancel_reason", "paid_at", "provider_code", "provider_name")
+		"fulfilled_at", "cancelled_at", "expired_at", "cancel_reason", "paid_at", "provider_code", "provider_name", "method")
 	if num(t, o, "subtotal_amount") != 3000 || num(t, o, "discount_amount") != 500 || num(t, o, "state_version") != 3 {
 		t.Fatalf("金额 %v", o)
 	}
@@ -98,44 +117,51 @@ func TestAdminOrderDetailShape(t *testing.T) {
 		t.Fatal("expires_at 应有值")
 	}
 	items := o["items"].([]any)
-	plan, pack := items[0].(map[string]any), items[1].(map[string]any)
-	mustAbsent(t, plan, "product_id")
+	plan, item1 := items[0].(map[string]any), items[1].(map[string]any)
+	mustAbsent(t, plan, "product_id", "currency")
 	if plan["plan_name"] != "月付套餐" || plan["product_name"] != "月付套餐" {
 		t.Fatalf("套餐行 %v", plan)
 	}
 	if q, ok := plan["snapshot_quotas"].([]any); !ok || len(q) != 1 {
 		t.Fatalf("快照应原样输出 %#v", plan["snapshot_quotas"])
 	}
-	mustNull(t, pack, "plan_name", "plan_id")
-	mustAbsent(t, pack, "product_id")
-	if q, ok := pack["snapshot_entitlements"].([]any); !ok || len(q) != 0 {
-		t.Fatalf("空快照应是 []，得到 %#v", pack["snapshot_entitlements"])
+	mustNull(t, item1, "plan_name", "plan_id")
+	mustAbsent(t, item1, "product_id", "currency")
+	if q, ok := item1["snapshot_entitlements"].([]any); !ok || len(q) != 0 {
+		t.Fatalf("空快照应是 []，得到 %#v", item1["snapshot_entitlements"])
 	}
 	mustErr(t, do(e, http.MethodGet, "/v1/orders/"+uuid.NewString(), ""), http.StatusNotFound, string(errs.NotFound))
 	mustErr(t, do(e, http.MethodGet, "/v1/orders/123", ""), http.StatusNotFound, string(errs.NotFound))
 }
 
-// 后台支付记录：provider_ref、payment_intent_id、method 可空。
+// 后台支付记录：provider_ref、payment_intent_id、method 可空；意图的 method 空串输出 null，有值原样给。
 func TestAdminOrderPaymentsShape(t *testing.T) {
 	orderID := uuid.New()
 	f := &fakeSvc{adminPayments: func(uuid.UUID) (paymentsvc.OrderHistory, error) {
 		return paymentsvc.OrderHistory{
-			Intents: []paymentsvc.IntentView{{ID: uuid.New(), ProviderCode: "epay", ProviderName: "易支付", Currency: money.CNY,
-				Amount: money.FromCents(1500), Status: paymentsvc.IntentSucceeded}},
+			Intents: []paymentsvc.IntentView{{ID: uuid.New(), ProviderCode: "epay", ProviderName: "易支付",
+				Amount: money.FromCents(1500), Status: paymentsvc.IntentSucceeded},
+				{ID: uuid.New(), ProviderCode: "epay", ProviderName: "易支付", Method: "alipay",
+					Amount: money.FromCents(1500), Status: paymentsvc.IntentCancelled}},
 			Payments: []paymentsvc.PaymentView{{ID: uuid.New(), ProviderCode: "offline", ProviderName: "线下", ProviderPaymentID: "R1",
-				Currency: money.CNY, Amount: money.FromCents(1500), Fee: money.FromCents(9), Status: "succeeded"}},
+				Amount: money.FromCents(1500), Fee: money.FromCents(9), Status: "succeeded"}},
 		}, nil
 	}}
 	w := do(newEngine(f, true, nil), http.MethodGet, "/v1/orders/"+orderID.String()+"/payments", "")
 	mustStatus(t, w, http.StatusOK)
 	m := obj(t, w)
 	in := m["payment_intents"].([]any)[0].(map[string]any)
-	mustNull(t, in, "provider_ref", "expires_at")
+	mustNull(t, in, "provider_ref", "expires_at", "method")
+	if in2 := m["payment_intents"].([]any)[1].(map[string]any); in2["method"] != "alipay" {
+		t.Fatalf("第二次尝试的方式 %v", in2)
+	}
+	mustAbsent(t, in, "currency")
 	if in["status"] != "succeeded" || num(t, in, "amount") != 1500 {
 		t.Fatalf("意图 %v", in)
 	}
 	p := m["payments"].([]any)[0].(map[string]any)
 	mustNull(t, p, "payment_intent_id", "method")
+	mustAbsent(t, p, "currency")
 	if num(t, p, "fee_amount") != 9 || p["provider_payment_id"] != "R1" {
 		t.Fatalf("收款 %v", p)
 	}

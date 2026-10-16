@@ -32,6 +32,29 @@ func (r *Repo) ReportSubscriptionCounts(ctx context.Context, now, expiringBefore
 	return out, nil
 }
 
+// PlanCountRow 是一个套餐的生效订阅数。
+type PlanCountRow struct {
+	PlanID uuid.UUID `gorm:"column:plan_id"`
+	N      int64     `gorm:"column:n"`
+}
+
+// LiveCountsByPlan 一条 SQL 数出每个套餐的生效订阅；「生效」与 ReportSubscriptionCounts 同一口径。planIDs 为空不查库。
+func (r *Repo) LiveCountsByPlan(ctx context.Context, planIDs []uuid.UUID, now time.Time) ([]PlanCountRow, error) {
+	if len(planIDs) == 0 {
+		return []PlanCountRow{}, nil
+	}
+	var out []PlanCountRow
+	err := r.d.Conn(ctx).Raw(`
+		SELECT plan_id, count(*) AS n
+		  FROM subscriptions
+		 WHERE plan_id IN ? AND status = 'active' AND current_period_end > ? AND renewal_closed_at IS NULL
+		 GROUP BY plan_id`, planIDs, now).Scan(&out).Error
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	return out, nil
+}
+
 // SubscriptionOwnerRow 是订阅 id 与主人用户 id 的一行。
 type SubscriptionOwnerRow struct {
 	ID     uuid.UUID `gorm:"column:id"`

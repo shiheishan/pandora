@@ -39,6 +39,7 @@ func (s *Service) MyNodes(ctx context.Context, subID uuid.UUID) ([]NodePreview, 
 	nodes, err := s.nodes.DeliverableNodes(ctx, NodeQuery{
 		SubscriptionID: sub.ID,
 		UserID:         sub.UserID,
+		PlanID:         sub.PlanID,
 		PlanVersionID:  sub.PlanVersionID,
 		UserGroupID:    groupID,
 	})

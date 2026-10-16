@@ -5,19 +5,19 @@ import { useApi } from '../../../shell/runtime'
 import { Button, Empty, Input, Skeleton, Switch, useToast } from '../../../ui'
 import { usePageHead } from '../../head'
 import { LoadError } from '../common/Blocks'
-import { methodKey, usePaymentMethods, type Pack, type Plan } from '../common/catalog'
+import { methodKey, usePaymentMethods, type Plan } from '../common/catalog'
 import { feeLine } from '../common/fee'
-import { Alt, Callout, Chips, ChoiceList, flowCss, Notes, Rows } from '../common/Flow'
+import { Alt, Callout, flowCss, Notes, Rows } from '../common/Flow'
 import type { Holdings } from '../common/holdings'
 import { endsIntent, recallPayable, useIntentKey } from '../common/intent'
 import { orderCreatedSchema, useCancelOrder, useOrderPayable } from '../common/orders'
-import { daysLeft, gb, leftOf, money, nameIdeas, nameRequired, NEW_COPY_IDEAS, periodLabel, profileName } from '../common/purchase'
-import { balanceSplit, purchaseRefusal, refusalOf, tierOf, useQuote, type Quote, type QuoteRow, type RefusalInfo } from '../common/quote'
+import { daysLeft, money, nameIdeas, nameRequired, NEW_COPY_IDEAS, periodLabel, profileName } from '../common/purchase'
+import { balanceSplit, purchaseRefusal, refusalOf, useQuote, type Quote, type QuoteRow, type RefusalInfo } from '../common/quote'
 import { isLive, type Subscription } from '../common/subscriptions'
 import css from './Checkout.module.css'
 import { confirmCopy, payCopy, tierNote, type Note } from './copy'
 import { doneQuery } from './result-copy'
-import { changeCandidates, defaultTier, intentOf, orderRequest, placedOrders, quoteRequest, sortTiers, type Target } from './model'
+import { defaultTier, intentOf, orderRequest, placedOrders, quoteRequest, sortTiers, type Target } from './model'
 
 function titleOf(t: Target, h: Holdings, plans: readonly Plan[]): string {
   const sub = 'subId' in t && t.subId ? h.held.find((s) => s.id === t.subId) : undefined
@@ -28,10 +28,12 @@ function titleOf(t: Target, h: Holdings, plans: readonly Plan[]): string {
       return `换成${plans.find((p) => p.id === t.planId)?.name ?? '别的套餐'}`
     case 'new':
       return h.held.length ? '再买一份' : `买${plans.find((p) => p.id === t.planId)?.name ?? '套餐'}`
+    case 'stack':
+      return '叠加'
     case 'reset':
       return '重置流量'
     default:
-      return '加流量'
+      return '确认'
   }
 }
 
@@ -40,7 +42,7 @@ function titleOf(t: Target, h: Holdings, plans: readonly Plan[]): string {
  * → 付款方式 → 主按钮 → 退路。金额全取报价接口；建单带 as_of + expect，金额变了（409 quote_changed）
  * 就重新报价、在金额旁标「已更新」，让用户再点一次。
  */
-export function ConfirmForm({ target, h, plans, packs, requested }: { target: Target; h: Holdings; plans: readonly Plan[]; packs: readonly Pack[]; requested: string | null }) {
+export function ConfirmForm({ target, h, plans, requested }: { target: Target; h: Holdings; plans: readonly Plan[]; requested: string | null }) {
   // 用过的优惠码记在地址里（?coupon=）：去钱包充值再回来，码还在（首次点击测试）
   const { query } = useHashLocation()
   const initial = query.get('coupon')
@@ -51,25 +53,18 @@ export function ConfirmForm({ target, h, plans, packs, requested }: { target: Ta
     setCouponState(code)
     navigate('/checkout', { query: { ...Object.fromEntries(query), coupon: code }, replace: true })
   }
-  // 流量重置永远按原价，不收券、不打会员折扣，用户 10-14 定
+  // 流量重置永远按原价，不收券，用户 10-14 定
   const couponAllowed = target.kind !== 'reset'
-  const quote = useQuote(target.kind === 'change' && !target.subId ? null : target.kind === 'pack' && !target.subId ? null : quoteRequest(target, h.held, couponAllowed ? coupon : null))
-  // 换套餐还没选是哪一份：按套餐展开报价，给每个选项写今天付多少
-  const chooser = useQuote(target.kind === 'change' && target.chooser ? { action: 'change', plan_id: target.planId } : null)
+  const quote = useQuote(quoteRequest(target, h.held, couponAllowed ? coupon : null))
   usePageHead(titleOf(target, h, plans), target.kind === 'new' ? '/plans' : '/subs')
 
   const sub = 'subId' in target && target.subId ? h.held.find((s) => s.id === target.subId) : undefined
   const plan = target.kind === 'change' || target.kind === 'new' ? plans.find((p) => p.id === target.planId) : sub ? plans.find((p) => p.id === sub.plan_id) : undefined
-  const pack = target.kind === 'pack' ? packs.find((p) => p.id === target.packId) : undefined
 
   return (
     <div className={`${flowCss.stack} ${flowCss.narrow}`} data-screen={`confirm-${target.kind}`}>
-      {target.kind === 'change' && target.chooser && <ChangeChooser target={target} h={h} plan={plan} rows={chooser.data?.quotes} loading={chooser.isPending} />}
-      {target.kind === 'pack' && <PackTarget target={target} h={h} />}
       {target.kind === 'new' && plan && <SamePlanTip plan={plan} h={h} />}
-      {(target.kind === 'change' && !target.subId) || (target.kind === 'pack' && !target.subId) ? (
-        <Waiting target={target} plan={plan} />
-      ) : quote.isPending ? (
+      {quote.isPending ? (
         <Skeleton height={260} />
       ) : quote.isError && purchaseRefusal(quote.error) === 'order_pending' ? (
         // 同款已有一张没付的新购单：报价阶段就拦（建单也拦），这里直接给「取消它 / 去付款」，不当加载失败
@@ -87,7 +82,6 @@ export function ConfirmForm({ target, h, plans, packs, requested }: { target: Ta
           sub={sub}
           plan={plan}
           oldPlan={sub ? plans.find((p) => p.id === sub.plan_id) : undefined}
-          pack={pack}
           requested={requested}
           refetch={() => quote.refetch()}
           coupon={
@@ -110,41 +104,6 @@ export function ConfirmForm({ target, h, plans, packs, requested }: { target: Ta
   )
 }
 
-/** 换套餐、多份能换：先选换掉哪一份，不预选 */
-function ChangeChooser({ target, h, plan, rows, loading }: { target: Extract<Target, { kind: 'change' }>; h: Holdings; plan: Plan | undefined; rows: QuoteRow[] | undefined; loading: boolean }) {
-  const cands = changeCandidates(h.held, target.planId)
-  const np = plan?.name ?? ''
-  const pick = (id: string) => navigate('/checkout', { query: { 'change-plan': target.planId, sub: id }, replace: true })
-  return (
-    <>
-      <p className={flowCss.q}>把哪一份换成{np}？</p>
-      <ChoiceList
-        label="换掉哪一份"
-        selected={target.subId}
-        onSelect={pick}
-        items={cands.map((s) => {
-          const row = tierOf(rows ?? [], s, (r) => r.subscription_id === s.id)
-          const pay = !row ? (loading ? '正在算价钱…' : '') : row.total > 0 ? `今天付 ${money(row.total)}` : row.refund > 0 ? `今天不用付，退 ${money(row.refund)} 到钱包余额` : '今天不用付'
-          return { key: s.id, label: h.naming.dn(s), desc: [`${isLive(s) ? '' : '已过期，恢复并'}${s.plan_name} → ${np}`, pay, '链接不变'].filter(Boolean).join(' · ') }
-        })}
-      />
-    </>
-  )
-}
-
-/** 加流量、多份、地址没带是哪一份：选「加到哪一份」，预选剩得最少的那份 */
-function PackTarget({ target, h }: { target: Extract<Target, { kind: 'pack' }>; h: Holdings }) {
-  const live = h.held.filter(isLive)
-  if (!target.chooser) return null
-  const pick = (id: string) => navigate('/checkout', { query: { pack: target.packId, sub: id, pick: 1 }, replace: true })
-  return (
-    <div className={css.field}>
-      <span className={css.fieldLabel}>加到哪一份</span>
-      <Chips label="加到哪一份" selected={target.subId} onSelect={pick} items={live.map((s) => ({ key: s.id, label: h.naming.sn(s), note: leftOf(s).left === null ? '不限' : `剩 ${gb(leftOf(s).left!)}` }))} />
-    </div>
-  )
-}
-
 /** 另买同款：上方提示「只想延长它？改成续费 →」，和底部主按钮拉开距离 */
 function SamePlanTip({ plan, h }: { plan: Plan; h: Holdings }) {
   const holder = h.held.find((s) => s.plan_id === plan.id && s.renew_until !== null)
@@ -161,19 +120,6 @@ function SamePlanTip({ plan, h }: { plan: Plan; h: Holdings }) {
         </a>
       </div>
     </div>
-  )
-}
-
-function Waiting({ target, plan }: { target: Target; plan: Plan | undefined }) {
-  const change = target.kind === 'change'
-  return (
-    <>
-      <p className={flowCss.faint}>{change ? '选好后这里会算出要付多少、到期日变成几号。' : '选好后这里会算出加完能用多少。'}</p>
-      <Button variant="primary" block disabled id="btn-submit">
-        {change ? '先选换掉哪一份' : '先选加到哪一份'}
-      </Button>
-      {change && plan && <Alt href={href('/checkout', { new: plan.id })}>都不换，另外再买一份{plan.name}</Alt>}
-    </>
   )
 }
 
@@ -232,7 +178,6 @@ function Priced({
   sub,
   plan,
   oldPlan,
-  pack,
   requested,
   refetch,
   coupon,
@@ -244,7 +189,6 @@ function Priced({
   sub: Subscription | undefined
   plan: Plan | undefined
   oldPlan: Plan | undefined
-  pack: Pack | undefined
   requested: string | null
   refetch: () => Promise<unknown>
   coupon: ReactNode
@@ -267,19 +211,19 @@ function Priced({
   const row = tiers.find((r) => r.price_id === priceId) ?? defaultTier(tiers, sub, requested) ?? tiers[0]!
   const split = balanceSplit(row, useBalance)
   const methods = usePaymentMethods(split.payable > 0 ? split.payable : undefined)
-  const copy = confirmCopy({ target, sub, plan, oldPlan, pack, row, naming: h.naming, held: h.held, now: new Date() })
+  const copy = confirmCopy({ target, sub, plan, oldPlan, row, naming: h.naming, held: h.held, now: new Date() })
   const methodList = methods.data ?? []
   const method = methodList.find((m) => methodKey(m) === methodChoice) ?? methodList[0] ?? null
   const pay = payCopy(quote, row, split, useBalance, copy.verb, methodList.map((m) => m.label).join('、'))
   const blocked = pay.tooSmall ? pay.button : required && !name.trim() ? '先给它起个名字' : pay.needsMethod && !method ? '暂时没有能用的付款方式' : null
-  const periods = target.kind !== 'pack' && target.kind !== 'reset' && tiers.length > 0
+  const periods = target.kind !== 'reset' && tiers.length > 1
 
   const create = useMutation({
     mutationFn: ({ path, body, key }: { path: string; body: Record<string, unknown>; key: string }) => api.post(path, orderCreatedSchema, { body, idempotencyKey: key }),
   })
 
   async function submit() {
-    if (blocked) return
+    if (blocked || target.kind === 'choose') return
     setRefusal(null)
     const request = orderRequest({ target, quote, row, split, coupon: couponCode, label: target.kind === 'new' ? name : undefined, newCopy: target.kind === 'new' && h.held.length > 0 })
     const intent = intentOf(request)
@@ -289,9 +233,9 @@ function Priced({
       was: sub?.current_period_end ?? null,
       oldPlan: target.kind === 'change' ? (sub?.plan_name ?? null) : null,
       refund: row.refund,
-      packBytes: pack?.traffic_bytes ?? 0,
       waived: split.waived,
       revive: (target.kind === 'renew' || target.kind === 'change') && sub !== undefined && !isLive(sub),
+      stackBytes: target.kind === 'stack' ? (plan?.traffic_bytes ?? 0) : 0,
     })
     const toPay = (orderId: string) => navigate(`/checkout/pay/${orderId}`, { query: { ...ctx, m: method ? methodKey(method) : '' } })
     setBusy(true)
@@ -464,7 +408,7 @@ function NameField({ required, name, onName, plan, h }: { required: boolean; nam
 }
 
 /**
- * 报价或建单被拒：同一套餐有一张还没付款的新购单（order_pending，fields.order_id）时给「去付款 / 取消它」；
+ * 报价或建单被拒：同一套餐有一张还没付款的新购单，或同一份有一张没付的续费、叠加、换套餐单（order_pending，fields.order_id）时给「去付款 / 取消它」；
  * 那张已超过付款期限（fields.lapsed）时只给「取消它」。取消后重新报价，可以直接再点一次。
  */
 function Refusal({ refusal, onCleared }: { refusal: RefusalInfo; onCleared: () => void }) {

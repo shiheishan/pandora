@@ -2,17 +2,24 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
 import { formatMoney } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
-import { planSchema, type Plan, type Price } from './catalog-schema'
+import { planSchema, type Plan, type PlanKind, type Price } from './catalog-schema'
 
 // GET v1/plans 的形状在 catalog-schema.ts（纯 zod，测试也用），这里转出
-export { type Plan, type Price } from './catalog-schema'
+export { PLAN_KINDS, type Plan, type PlanKind, type Price } from './catalog-schema'
 
 export const plansSchema = z.object({ plans: z.array(planSchema) })
 
-/** 套餐卡的限速事实：「限速 N Mbps」，不限速为 null（R99：全程生效的按用户限速） */
+/** 套餐卡的限速事实：「限速 N Mbps」，不限速为 null（全程生效的按用户限速） */
 export const throttleNote = (kbps: number | null) => (kbps === null ? null : `限速 ${Number((kbps / 1000).toFixed(3))} Mbps`)
 
-/** 匿名接口但会解析 Bearer：登录后带令牌才看得到 authenticated / group 套餐与组专属价格，所以走默认的带令牌请求。 */
+/**
+ * 选购页列不列这个套餐：接新购的都列；关了新购的只在名下已有、还能续时列（落点只剩续）。
+ * 「再买一份」传 heldPlanIds 为空集，只列接新购的。
+ */
+export const listable = (plan: Pick<Plan, 'id' | 'allow_new_purchase' | 'allow_renewal'>, heldPlanIds: ReadonlySet<string>) =>
+  plan.allow_new_purchase || (plan.allow_renewal && heldPlanIds.has(plan.id))
+
+/** 匿名接口但会解析 Bearer：登录后带令牌才看得到 authenticated / group 套餐，所以走默认的带令牌请求。 */
 export function usePlans() {
   const api = useApi()
   return useQuery({
@@ -24,36 +31,12 @@ export function usePlans() {
 }
 
 // ---------------------------------------------------------------------------
-// GET v1/traffic-packs（修订 R30）
-// ---------------------------------------------------------------------------
-export const packSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  traffic_bytes: z.number().int(),
-  currency: z.string(),
-  unit_amount: z.number().int(),
-  recommended: z.boolean(),
-})
-export type Pack = z.output<typeof packSchema>
-
-export function usePackCatalog() {
-  const api = useApi()
-  return useQuery({
-    queryKey: ['portal', 'traffic-pack-catalog'],
-    queryFn: ({ signal }) => api.get('v1/traffic-packs', z.object({ packs: z.array(packSchema) }), { signal }),
-    select: (d) => d.packs,
-    meta: { topics: ['plans.changed'] },
-  })
-}
-
-// ---------------------------------------------------------------------------
-// GET v1/payment-methods（修订 R61）：只列能收 CNY 的方式
+// GET v1/payment-methods：只有人民币，没有币种字段；fee / total 只在带了 amount 时回（Go omitempty）
 // ---------------------------------------------------------------------------
 export const paymentMethodSchema = z.object({
   provider: z.string(),
   method: z.string(),
   label: z.string(),
-  currencies: z.array(z.string()),
   fee_fixed: z.number().int().nonnegative(),
   fee_percent: z.string(),
   fee: z.number().int().nonnegative().optional(),
@@ -73,65 +56,74 @@ export function usePaymentMethods(amount?: number) {
         query: validAmount ? { amount: validAmount } : undefined,
         signal,
       }),
-    select: (d) => d.methods.filter((m) => m.currencies.includes('CNY')),
+    select: (d) => d.methods,
     placeholderData: keepPreviousData,
     staleTime: 5 * 60_000,
   })
 }
 
 // ---------------------------------------------------------------------------
-// 周期：设计稿三档 1m / 3m / 12m，其余组合走通用文案
+// 价格档：订阅套餐只有 (month,1) (month,3) (month,6) (year,1) 四档；一次性套餐只有 (one_time,1)
 // ---------------------------------------------------------------------------
-type PeriodKey = '1m' | '3m' | '12m' | string
+export type PeriodKey = '1m' | '3m' | '6m' | '12m' | 'once' | string
 
-export function periodOf(p: Pick<Price, 'billing_interval' | 'interval_count'>): PeriodKey {
+export function periodOf(p: { billing_interval: string; interval_count: number }): PeriodKey {
   const { billing_interval: i, interval_count: n } = p
+  if (i === 'one_time') return 'once'
   if (i === 'month' && n === 1) return '1m'
-  if ((i === 'month' && n === 3) || (i === 'quarter' && n === 1)) return '3m'
+  if (i === 'month' && n === 3) return '3m'
+  if (i === 'month' && n === 6) return '6m'
   if ((i === 'year' && n === 1) || (i === 'month' && n === 12)) return '12m'
   return `${i}:${n}`
 }
 
-const NAMED: Readonly<Record<string, [string, string, number]>> = {
-  '1m': ['月付', '月', 1],
-  '3m': ['季付', '季', 3],
-  '12m': ['年付', '年', 12],
+// [档名, 价签后缀里的单位, 折合月数, 「买多久」]
+const NAMED: Readonly<Record<string, [string, string, number, string]>> = {
+  '1m': ['月付', '月', 1, '1 个月'],
+  '3m': ['季付', '季', 3, '3 个月'],
+  '6m': ['半年付', '半年', 6, '半年'],
+  '12m': ['年付', '年', 12, '1 年'],
 }
-const UNIT: Readonly<Record<string, string>> = { day: '天', week: '周', month: '个月', quarter: '个季度', year: '年' }
 
-/** 「月付 / 季付 / 年付」，通用组合为「每 2 个月」「一次性」 */
+/** 「月付 / 季付 / 半年付 / 年付 / 一次性」 */
 export function periodName(key: PeriodKey): string {
-  const named = NAMED[key]
-  if (named) return named[0]
-  const [i = '', n = '1'] = key.split(':')
-  if (i === 'one_time') return '一次性'
-  return `每 ${n} ${UNIT[i] ?? i}`
+  if (key === 'once') return '一次性'
+  return NAMED[key]?.[0] ?? key
 }
 
-/** 价格后缀「/ 月」「/ 季」「/ 年」，通用组合为「/ 2 个月」 */
+/** 价签后缀「/ 月」「/ 季」「/ 半年」「/ 年」；一次性没有后缀 */
 export function periodUnit(key: PeriodKey): string {
   const named = NAMED[key]
-  if (named) return `/ ${named[1]}`
-  const [i = '', n = '1'] = key.split(':')
-  if (i === 'one_time') return ''
-  return `/ ${n === '1' ? '' : `${n} `}${UNIT[i] ?? i}`
+  return named ? `/ ${named[1]}` : ''
 }
 
-/** 该档折合几个月；通用组合无法按月比较时为 null */
+/** 「买多久」：1 个月 / 3 个月 / 半年 / 1 年；一次性为空串 */
+export function periodSpan(key: PeriodKey): string {
+  return NAMED[key]?.[3] ?? ''
+}
+
+/** 该档折合几个月；一次性与非常规组合为 null */
 export const periodMonths = (key: PeriodKey): number | null => NAMED[key]?.[2] ?? null
 
-export const cnyPrices = (plan: Pick<Plan, 'prices'>): Price[] => plan.prices.filter((p) => p.currency === 'CNY')
+/** 价格档按时长排：1 个月、3 个月、半年、1 年，一次性与其余排后 */
+export const sortPrices = <P extends { billing_interval: string; interval_count: number; unit_amount: number }>(prices: readonly P[]): P[] =>
+  [...prices].sort((a, b) => (periodMonths(periodOf(a)) ?? 999) - (periodMonths(periodOf(b)) ?? 999) || a.unit_amount - b.unit_amount)
 
 export function priceFor(plan: Pick<Plan, 'prices'>, key: PeriodKey): Price | undefined {
-  return cnyPrices(plan).find((p) => periodOf(p) === key)
+  return plan.prices.find((p) => periodOf(p) === key)
 }
 
-/** 卡片副文案：月付「按月付费」（后端无自动续费，契约门户-03 改文案），多月档「折合 ¥Y / 月」 */
+/** 卡片上的大价签：订阅套餐有月付写月付，否则写最短的一档；一次性套餐就是那一个价 */
+export function headlinePrice(plan: Pick<Plan, 'prices'>): Price | null {
+  return priceFor(plan, '1m') ?? sortPrices(plan.prices)[0] ?? null
+}
+
+/** 卡片副文案：月付「按月付费」，多月档「折合 ¥Y / 月」；一次性为空串 */
 export function monthlyNote(price: Price): string {
   const months = periodMonths(periodOf(price))
   if (months === 1) return '按月付费'
   if (!months) return ''
-  return `折合 ${formatMoney(Math.round(price.unit_amount / months), price.currency)} / 月`
+  return `折合 ${formatMoney(Math.round(price.unit_amount / months))} / 月`
 }
 
 /** 相对「月付 × 月数」省了多少（分）；没有月付价或不省时为 0 */
@@ -142,52 +134,38 @@ export function savingAmount(plan: Pick<Plan, 'prices'>, price: Price): number {
   return Math.max(0, monthly.unit_amount * months - price.unit_amount)
 }
 
-/**
- * 分段按钮上的「年付 · 省 N%」：取所有同时有月付与该档价格的套餐里最小的省幅，
- * 保证每个套餐都至少省这么多，不夸大；算不出或为 0 时返回 0。
- */
-export function savingPercent(plans: ReadonlyArray<Pick<Plan, 'prices'>>, key: PeriodKey): number {
-  const months = periodMonths(key)
-  if (!months || months === 1) return 0
-  const pct = plans.flatMap((plan) => {
-    const monthly = priceFor(plan, '1m')
-    const price = priceFor(plan, key)
-    return monthly && price ? [Math.floor((1 - price.unit_amount / (monthly.unit_amount * months)) * 100)] : []
-  })
-  return pct.length ? Math.max(0, Math.min(...pct)) : 0
-}
-
-/** 流量包「约 ¥0.25 / GB」（1<<30 字节为 1 GB，与 formatBytes 同口径） */
-export function perGbNote(pack: Pick<Pack, 'unit_amount' | 'traffic_bytes' | 'currency'>): string {
-  const gb = pack.traffic_bytes / 1024 ** 3
-  if (gb <= 0) return ''
-  return `约 ${formatMoney(Math.round(pack.unit_amount / gb), pack.currency)} / GB`
-}
-
 // ---------------------------------------------------------------------------
-// 额度文案：重置按 quota_reset_strategy
+// 套餐事实的说法（选购页卡片、换套餐、确认页共用）。「周期」「订阅」是用户端禁用词：
+// 订阅套餐的流量说「每期」，两类套餐叫「按时间」「一次性」。
 // ---------------------------------------------------------------------------
-/** 契约门户-03：never「不重置」、natural_month「每月 1 日重置」、fixed_day「每月 N 日重置」；billing_cycle 为「到期日自动重置」 */
-export function resetNote(plan: Pick<Plan, 'quota_reset_strategy' | 'quota_reset_day'>): string {
-  switch (plan.quota_reset_strategy) {
-    case 'never':
-      return '不重置'
-    case 'natural_month':
-      return '每月 1 日重置'
-    case 'fixed_day':
-      return plan.quota_reset_day ? `每月 ${plan.quota_reset_day} 日重置` : '每月固定日重置'
-    default:
-      return '到期日自动重置'
-  }
+/** 两类套餐在用户端的叫法 */
+export const KIND_NAME: Readonly<Record<PlanKind, string>> = { subscription: '按时间', one_time: '一次性' }
+
+/** 原型的短写法：8G、100G、1.5T；不到 1G 写 MB */
+export function gb(bytes: number): string {
+  const g = Math.max(0, bytes) / 1024 ** 3
+  if (g >= 1024) return `${trim(g / 1024)}T`
+  if (g >= 1) return `${trim(g)}G`
+  return `${Math.round(Math.max(0, bytes) / 1024 ** 2)}M`
+}
+const trim = (n: number) => (n >= 10 ? String(Math.round(n)) : String(Math.round(n * 10) / 10))
+
+/** 流量：订阅套餐「每期 100G」，一次性「共 50G」，不限「不限流量」 */
+export function planTraffic(plan: Pick<Plan, 'kind' | 'traffic_bytes'>): string {
+  if (plan.traffic_bytes === null) return '不限流量'
+  return plan.kind === 'one_time' ? `共 ${gb(plan.traffic_bytes)}` : `每期 ${gb(plan.traffic_bytes)}`
 }
 
-/**
- * 额度周期后缀：month 与按月重置的 cycle 为「/ 月」，day「/ 天」，total「总量」；
- * 按计费周期重置（billing_cycle）的 cycle 跟着所选价格走，年付即「/ 年」。
- */
-export function quotaPeriodNote(plan: Pick<Plan, 'quota_reset_strategy'>, period: 'total' | 'cycle' | 'day' | 'month', key: PeriodKey): string {
-  if (period === 'day') return '/ 天'
-  if (period === 'total') return '总量'
-  if (period === 'month' || plan.quota_reset_strategy === 'natural_month' || plan.quota_reset_strategy === 'fixed_day') return '/ 月'
-  return periodUnit(key) || '总量'
+/** 一次性的有效期：「有效 30 天」「永久有效」 */
+export const validityText = (days: number | null) => (days === null ? '永久有效' : `有效 ${days} 天`)
+
+/** 设备数：「3 台」「不限台数」 */
+export const devicesText = (n: number | null) => (n === null ? '不限台数' : `${n} 台`)
+
+/** 流量重置的价目：「流量重置 ¥10 / 次，每期最多 2 次」；一次性说「有效期内」；没开为 null */
+export function resetPriceText(plan: Pick<Plan, 'kind' | 'reset'>): string | null {
+  if (!plan.reset) return null
+  const price = `流量重置 ${formatMoney(plan.reset.price)} / 次`
+  if (plan.reset.limit === null) return `${price}，不限次数`
+  return `${price}，${plan.kind === 'one_time' ? '有效期内' : '每期'}最多 ${plan.reset.limit} 次`
 }

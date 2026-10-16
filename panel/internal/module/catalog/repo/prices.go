@@ -67,34 +67,17 @@ func (r *Repo) PricesByPlans(ctx context.Context, planIDs []uuid.UUID) ([]model.
 	return rows, nil
 }
 
-// ActivePrices 读这些套餐的在售价格（status='active'），按 plan_id, unit_amount, interval_count, id 升序；lock 为 ForShare/ForUpdate 时锁住这些行。
+// ActivePrices 读这些套餐的在售价格（status='active'），按 plan_id、周期从短到长（month 在 year 前，再按 interval_count）、id 升序；
+// lock 为 ForShare/ForUpdate 时锁住这些行。
 func (r *Repo) ActivePrices(ctx context.Context, planIDs []uuid.UUID, lock Lock) ([]model.Price, error) {
 	if len(planIDs) == 0 {
 		return []model.Price{}, nil
 	}
 	var rows []model.Price
 	err := r.d.Conn(ctx).Raw(
-		"SELECT * FROM prices WHERE plan_id IN ? AND status = 'active' ORDER BY plan_id, unit_amount, interval_count, id"+lock.suffix(),
+		"SELECT * FROM prices WHERE plan_id IN ? AND status = 'active'"+
+			" ORDER BY plan_id, (billing_interval = 'year'), interval_count, id"+lock.suffix(),
 		planIDs,
-	).Scan(&rows).Error
-	if err != nil {
-		return nil, err
-	}
-	if rows == nil {
-		return []model.Price{}, nil
-	}
-	return rows, nil
-}
-
-// LockActivePublicPrices 锁住套餐在这些币种下的在售公开价（status='active' AND user_group_id IS NULL AND currency IN ?），按 id 升序 FOR UPDATE。
-func (r *Repo) LockActivePublicPrices(ctx context.Context, planID uuid.UUID, currencies []string) ([]model.Price, error) {
-	if len(currencies) == 0 {
-		return []model.Price{}, nil
-	}
-	var rows []model.Price
-	err := r.d.Conn(ctx).Raw(
-		"SELECT * FROM prices WHERE plan_id = ? AND status = 'active' AND user_group_id IS NULL AND currency IN ? ORDER BY id FOR UPDATE",
-		planID, currencies,
 	).Scan(&rows).Error
 	if err != nil {
 		return nil, err

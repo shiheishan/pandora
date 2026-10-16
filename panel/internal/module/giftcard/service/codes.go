@@ -4,11 +4,9 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/shopspring/decimal"
 
 	"github.com/aegispanel/aegis/internal/module/giftcard/repo"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
 // 卡密列表与报表的口径。
@@ -194,13 +192,9 @@ func (s *Service) ExportCodes(ctx context.Context, f CodeFilter) ([]CodeReportRo
 	return out, nil
 }
 
-// Stats 后台礼品卡统计；金额只计站点币种的部分。
+// Stats 后台礼品卡统计。
 func (s *Service) Stats(ctx context.Context) (Stats, error) {
 	if _, err := adminPrincipal(ctx); err != nil {
-		return Stats{}, err
-	}
-	cur, err := s.ledger.DefaultCurrency(ctx)
-	if err != nil {
 		return Stats{}, err
 	}
 	row, err := s.repo.Stats(ctx)
@@ -212,10 +206,9 @@ func (s *Service) Stats(ctx context.Context) (Stats, error) {
 		CodesTotal:    row.CodesTotal,
 		CodesUsed:     row.CodesUsed,
 		CodesUnused:   row.CodesUnused,
-		BalanceOut:    amountIn(row.BalanceOut, cur),
+		BalanceOut:    row.BalanceOut,
 		TrafficOut:    row.TrafficOut,
-		BalanceIssued: amountIn(row.BalanceIssued, cur),
-		Currency:      cur,
+		BalanceIssued: row.BalanceIssued,
 	}, nil
 }
 
@@ -243,7 +236,7 @@ func (s *Service) ListUsages(ctx context.Context, templateID *uuid.UUID) ([]Usag
 			CodeMasked:   r.CodeMask,
 			UserEmail:    emails[r.UserID],
 			RedeemedAt:   r.RedeemedAt,
-			Granted:      Granted{Currency: money.Currency(r.Currency), QuotaReset: r.QuotaReset},
+			Granted:      Granted{QuotaReset: r.QuotaReset},
 		}
 		if r.PrizeLabel != nil {
 			u.PrizeLabel = *r.PrizeLabel
@@ -260,14 +253,6 @@ func (s *Service) ListUsages(ctx context.Context, templateID *uuid.UUID) ([]Usag
 		out = append(out, u)
 	}
 	return out, nil
-}
-
-// amountIn 取按币种分组的合计里某个币种的那一份；没有为 0。
-func amountIn(byCur map[string]decimal.Decimal, cur money.Currency) decimal.Decimal {
-	if d, ok := byCur[string(cur)]; ok {
-		return d
-	}
-	return decimal.Zero
 }
 
 // idString 把可空 id 写成审计里的字符串（nil 为空串）。

@@ -29,6 +29,19 @@ func (s *Service) ReportSubscriptionCounts(ctx context.Context, now, expiringBef
 	}, nil
 }
 
+// LiveSubscriptionCounts 是每个套餐的生效订阅数（后台套餐列表「有效订阅」，catalog 经 SubscriptionCounter 调）；没有生效订阅的套餐不在结果里。
+func (s *Service) LiveSubscriptionCounts(ctx context.Context, planIDs []uuid.UUID) (map[uuid.UUID]int64, error) {
+	rows, err := s.repo.LiveCountsByPlan(ctx, planIDs, s.clock())
+	if err != nil {
+		return nil, subErr(err)
+	}
+	out := make(map[uuid.UUID]int64, len(rows))
+	for _, r := range rows {
+		out[r.PlanID] = r.N
+	}
+	return out, nil
+}
+
 // OwnersBySubscription 批量取订阅的主人：订阅 id → 用户 id（一条 SQL）；不存在的 id 不在结果里，ids 为空不查库。
 // 调用方负责把 ids 分批（每批不超过 5000）。
 func (s *Service) OwnersBySubscription(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]uuid.UUID, error) {

@@ -13,7 +13,6 @@ import (
 	"testing"
 
 	"github.com/aegispanel/aegis/internal/module/payment/provider"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/shopspring/decimal"
 )
 
@@ -117,7 +116,6 @@ func TestCreatePayment(t *testing.T) {
 	resp, err := p.CreatePayment(context.Background(), provider.CreateRequest{
 		OutTradeNo: "ORD1",
 		Amount:     decimal.RequireFromString("10.30"),
-		Currency:   money.CNY,
 		Subject:    "套餐",
 	})
 	if err != nil {
@@ -163,7 +161,6 @@ func TestCreatePaymentRejectsEchoMismatch(t *testing.T) {
 	_, err = p.CreatePayment(context.Background(), provider.CreateRequest{
 		OutTradeNo: "ORD1",
 		Amount:     decimal.RequireFromString("10.30"),
-		Currency:   money.CNY,
 	})
 	if err == nil {
 		t.Fatal("期望金额回显不一致时报错")
@@ -183,7 +180,6 @@ func TestCreatePaymentRejectsBadCheckoutLink(t *testing.T) {
 	_, err = p.CreatePayment(context.Background(), provider.CreateRequest{
 		OutTradeNo: "ORD1",
 		Amount:     decimal.RequireFromString("10.30"),
-		Currency:   money.CNY,
 	})
 	if err == nil {
 		t.Fatal("期望非法 checkoutLink 报错")
@@ -203,7 +199,6 @@ func TestCreatePaymentDoesNotFollowRedirect(t *testing.T) {
 	_, err = p.CreatePayment(context.Background(), provider.CreateRequest{
 		OutTradeNo: "ORD1",
 		Amount:     decimal.RequireFromString("10.30"),
-		Currency:   money.CNY,
 	})
 	if err == nil {
 		t.Fatal("期望 302 不跟随并报错")
@@ -454,23 +449,20 @@ func TestParseNotificationInvalidFails(t *testing.T) {
 	}
 }
 
-func TestParseNotificationCurrency(t *testing.T) {
+func TestParseNotificationRejectsUnsupportedInvoiceCurrency(t *testing.T) {
 	t.Run("USD", func(t *testing.T) {
 		inv := invoiceJSON("INV1", "Settled", "None", "10.30", "USD", "ORD1")
 		srv, _ := newWebhookTestServer(t, inv)
 		defer srv.Close()
 		p, _ := New(testConfig(srv.URL))
 		body := webhookBody(testStoreID, "INV1", "InvoiceSettled")
-		n, err := p.ParseNotification(context.Background(), provider.Inbound{
+		_, err := p.ParseNotification(context.Background(), provider.Inbound{
 			Method: http.MethodPost,
 			Header: sigHeader(webhookSig(body, testSecret)),
 			Body:   body,
 		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if n.Currency != money.USD {
-			t.Fatalf("currency=%s", n.Currency)
+		if err == nil {
+			t.Fatal("期望渠道回传 USD 时报错")
 		}
 	})
 	t.Run("BTC", func(t *testing.T) {

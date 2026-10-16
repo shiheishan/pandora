@@ -1,11 +1,12 @@
 import { useState } from 'react'
+import { isApiError } from '../../../core/api'
 import { formatBytes, formatDateTime } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
 import { Input, TextArea, useToast } from '../../../ui'
-import { useFailure } from '../../actions'
-import { okSchema, periodEndSetSchema, type SubscriptionRow } from './api'
+import { endsIntent, useFailure, useIntentKey } from '../../actions'
+import { okSchema, periodEndSetSchema, resetDoneSchema, useInvalidateUsers, type SubscriptionRow } from './api'
 import { ActionModal } from './dialogs'
-import { REASON_MAX, REASON_MIN, subName, trafficQuota } from './model'
+import { NOTE_MAX, noteProblem, REASON_MAX, REASON_MIN, subName, trafficQuota } from './model'
 import { GiB, isoToLocalInput, localToRFC3339, parseLimitGiB, periodEndProblem } from './subEdit'
 import css from './Users.module.css'
 
@@ -196,6 +197,97 @@ export function QuotaLimitDialog({
           />
         </>
       )}
+    </ActionModal>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// 重置流量：POST v1/subscriptions/{id}/traffic-reset（reauth + 幂等 traffic_manual_reset）
+// ---------------------------------------------------------------------------
+export function ResetTrafficDialog({
+  user,
+  subscription,
+  onClose,
+  onDone,
+}: {
+  user: { id: string; email: string }
+  subscription: SubscriptionRow | null
+  onClose: () => void
+  onDone: () => void
+}) {
+  const api = useApi()
+  const toast = useToast()
+  const fail = useFailure()
+  const intent = useIntentKey()
+  const invalidate = useInvalidateUsers()
+  const [note, setNote] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const quota = subscription ? trafficQuota(subscription.quotas) : undefined
+  const used = quota?.consumed
+
+  const close = () => {
+    setNote('')
+    setError(null)
+    intent.reset()
+    onClose()
+  }
+
+  const submit = async () => {
+    if (!subscription) return
+    const problem = noteProblem(note)
+    if (problem) return setError(problem)
+    const body = { note: note.trim() }
+    setBusy(true)
+    try {
+      const r = await api.post(`v1/subscriptions/${encodeURIComponent(subscription.id)}/traffic-reset`, resetDoneSchema, {
+        body,
+        idempotencyKey: intent.keyFor([subscription.id, body]),
+      })
+      intent.reset()
+      toast(`已重置 ${user.email} 的${subName(subscription)}的本期流量，清零 ${formatBytes(r.freed_bytes)}`)
+      void invalidate()
+      close()
+      onDone()
+    } catch (e) {
+      if (endsIntent(e)) intent.reset()
+      if (isApiError(e, 'validation_failed') && Object.keys(e.fields).length === 0) setError(e.message)
+      else fail(e, (f) => setError(f.note ?? Object.values(f)[0] ?? null))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <ActionModal
+      open={subscription !== null}
+      title="立即重置已用流量？"
+      busy={busy}
+      confirm="重置"
+      tone="danger"
+      disabled={!subscription}
+      onCancel={close}
+      onConfirm={() => void submit()}
+    >
+      {subscription && (
+        <p className={css.dialogText}>
+          {user.email} 的「{subName(subscription)}」已用{used !== undefined ? ` ${formatBytes(used)} ` : '的流量'}将清零。只重置这一份。
+        </p>
+      )}
+      <TextArea
+        label="重置原因"
+        rows={2}
+        value={note}
+        maxLength={NOTE_MAX * 2}
+        onChange={(e) => {
+          setNote(e.target.value)
+          setError(null)
+        }}
+        error={error ?? undefined}
+        hint="写进审计日志，5 到 500 个字"
+        data-autofocus=""
+      />
     </ActionModal>
   )
 }

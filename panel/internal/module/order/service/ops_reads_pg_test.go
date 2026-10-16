@@ -16,7 +16,7 @@ func TestUserOrderStatsPG(t *testing.T) {
 	u1 := e.mkUser(t, ctx)
 	u2 := e.mkUser(t, ctx)
 
-	insertOrder := func(uid uuid.UUID, cur, status string, amt decimal.Decimal) {
+	insertOrder := func(uid uuid.UUID, status string, amt decimal.Decimal) {
 		now := time.Now().UTC()
 		var paidAmt decimal.Decimal
 		var paidAt, fulfilledAt *time.Time
@@ -30,27 +30,27 @@ func TestUserOrderStatsPG(t *testing.T) {
 		orderNo := fmt.Sprintf("TOPUP%s", strings.ToUpper(randHex(12))) // order_no 只许大写（CHECK）
 		e.mustExec(t, ctx, `
 			INSERT INTO orders (
-				order_no, user_id, kind, status, currency,
+				order_no, user_id, kind, status,
 				subtotal_amount, total_amount, payable_amount, paid_amount,
 				expires_at, paid_at, fulfilled_at, created_at, updated_at
 			) VALUES (
-				?, ?, 'topup', ?, ?,
+				?, ?, 'topup', ?,
 				?, ?, ?, ?,
 				?, ?, ?, ?, ?
 			)`,
-			orderNo, uid, status, cur,
+			orderNo, uid, status,
 			amt, amt, amt, paidAmt,
 			now.Add(30*time.Minute), paidAt, fulfilledAt, now, now,
 		)
 	}
 
-	// u1：两笔 CNY 已付、一笔待付、一笔 USD 已付
-	insertOrder(u1, "CNY", "paid", dec("10.50"))
-	insertOrder(u1, "CNY", "fulfilled", dec("20.25"))
-	insertOrder(u1, "CNY", "pending_payment", dec("5.00"))
-	insertOrder(u1, "USD", "fulfilled", dec("15.00"))
+	// u1：两笔已付（paid 10.50、fulfilled 20.25）、一笔待付 5.00、再一笔已付 fulfilled 15.00
+	insertOrder(u1, "paid", dec("10.50"))
+	insertOrder(u1, "fulfilled", dec("20.25"))
+	insertOrder(u1, "pending_payment", dec("5.00"))
+	insertOrder(u1, "fulfilled", dec("15.00"))
 	// u2：全额用余额买一单（payable 为 0）：算订单数，不算实付
-	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month")
 	e.giveBalance(t, ctx, u2, 1000)
 	if c := e.buyNew(t, ctx, u2, planID, priceID, Checkout{UseBalance: dec("10")}); c.Status != StatusFulfilled {
 		t.Fatalf("余额单状态 %s", c.Status)
@@ -68,16 +68,12 @@ func TestUserOrderStatsPG(t *testing.T) {
 	if st1.Orders != 4 {
 		t.Fatalf("u1 订单数 got %d want 4", st1.Orders)
 	}
-	wantCNY := dec("30.75")
-	if gotCNY := st1.Paid["CNY"]; !gotCNY.Equal(wantCNY) {
-		t.Fatalf("u1 CNY 实付 got %s want %s", gotCNY, wantCNY)
-	}
-	wantUSD := dec("15.00")
-	if gotUSD := st1.Paid["USD"]; !gotUSD.Equal(wantUSD) {
-		t.Fatalf("u1 USD 实付 got %s want %s", gotUSD, wantUSD)
+	wantPaid := dec("45.75")
+	if !st1.Paid.Equal(wantPaid) {
+		t.Fatalf("u1 实付 got %s want %s", st1.Paid, wantPaid)
 	}
 
-	if st2 := stats[u2]; st2.Orders != 1 || !st2.Paid["CNY"].IsZero() {
+	if st2 := stats[u2]; st2.Orders != 1 || !st2.Paid.IsZero() {
 		t.Fatalf("u2 余额单应计 1 单、实付 0，got %+v", st2)
 	}
 

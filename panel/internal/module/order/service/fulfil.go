@@ -12,7 +12,6 @@ import (
 	"github.com/aegispanel/aegis/internal/module/order/model"
 	"github.com/aegispanel/aegis/internal/module/order/repo"
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/aegispanel/aegis/internal/pkg/realtime"
 )
 
@@ -38,7 +37,7 @@ func (s *Service) markPaid(ctx context.Context, o model.Order, at time.Time) (mo
 //	topup：无事可做（钱在结算记账时已进余额）
 //	new：开通新订阅（source_order_id 指向本单），同一更新把 subscription_id 写成新订阅
 //	renewal：在原订阅上续一期（版本沿用订阅自己的）
-//	addon：给目标订阅发一笔流量包余额
+//	stack：在原订阅上叠加（subscription.Stack：总流量加上、天数顺延，版本切到下单时的当前版本）
 //	upgrade：把原订阅原地换成新套餐（周期从现在起算一整期），剩余价值抵完新价还有余的退进余额（plan_change_refund）
 //	traffic_reset：把目标订阅当期已用流量清零（subscription.ResetTraffic，原因 order，备注订单号；写重置日志并通知节点）
 //
@@ -61,7 +60,7 @@ func (s *Service) fulfil(ctx context.Context, o model.Order, at time.Time, actor
 		if it.PlanID == nil || it.PlanVersionID == nil {
 			return model.Order{}, fmt.Errorf("order: 新购订单行缺套餐或版本 %s", o.ID)
 		}
-		price, err := itemPrice(o, it)
+		price, err := s.itemPrice(ctx, o, it)
 		if err != nil {
 			return model.Order{}, err
 		}
@@ -91,7 +90,7 @@ func (s *Service) fulfil(ctx context.Context, o model.Order, at time.Time, actor
 		if err != nil {
 			return model.Order{}, err
 		}
-		price, err := itemPrice(o, it)
+		price, err := s.itemPrice(ctx, o, it)
 		if err != nil {
 			return model.Order{}, err
 		}
@@ -113,20 +112,31 @@ func (s *Service) fulfil(ctx context.Context, o model.Order, at time.Time, actor
 		if err := s.fulfilPlanChange(ctx, o, actor); err != nil {
 			return model.Order{}, err
 		}
-	case KindAddon:
+	case KindStack:
+		if o.SubscriptionID == nil {
+			return model.Order{}, fmt.Errorf("order: 叠加订单缺订阅 %s", o.ID)
+		}
 		it, err := s.onlyItem(ctx, o)
 		if err != nil {
 			return model.Order{}, err
 		}
-		if it.SnapshotTrafficBytes == nil {
-			return model.Order{}, fmt.Errorf("order: 流量包订单行缺流量 %s", o.ID)
+		if it.PlanVersionID == nil {
+			return model.Order{}, fmt.Errorf("order: 叠加订单行缺版本 %s", o.ID)
 		}
-		if _, err := s.subs.GrantTrafficPack(ctx, subsvc.PackGrant{
+		price, err := s.itemPrice(ctx, o, it)
+		if err != nil {
+			return model.Order{}, err
+		}
+		orderID := o.ID
+		if _, err := s.subs.Stack(ctx, subsvc.Stacking{
+			SubscriptionID: *o.SubscriptionID,
 			UserID:         o.UserID,
-			SubscriptionID: o.SubscriptionID,
-			Source:         subsvc.PackSourceOrder,
-			SourceID:       o.ID,
-			Bytes:          *it.SnapshotTrafficBytes,
+			PlanVersionID:  *it.PlanVersionID,
+			Price:          price,
+			PaidAt:         at,
+			OrderID:        &orderID,
+			Actor:          actor,
+			Source:         "order",
 		}); err != nil {
 			return model.Order{}, err
 		}
@@ -172,7 +182,7 @@ func (s *Service) fulfilPlanChange(ctx context.Context, o model.Order, actor sub
 	if it.PlanID == nil || it.PlanVersionID == nil {
 		return fmt.Errorf("order: 换套餐订单行缺套餐或版本 %s", o.ID)
 	}
-	price, err := itemPrice(o, it)
+	price, err := s.itemPrice(ctx, o, it)
 	if err != nil {
 		return err
 	}
@@ -194,7 +204,6 @@ func (s *Service) fulfilPlanChange(ctx context.Context, o model.Order, actor sub
 	}
 	_, err = s.ledger.Post(ctx, ledgersvc.Posting{
 		Kind:       ledgersvc.KindPlanChangeRefund,
-		Currency:   money.Currency(o.Currency),
 		SourceType: ledgersvc.SourceOrder,
 		SourceID:   o.ID,
 		Memo:       "换套餐剩余价值退回余额",
@@ -206,7 +215,7 @@ func (s *Service) fulfilPlanChange(ctx context.Context, o model.Order, actor sub
 	return err
 }
 
-// settleZeroPay 建单事务里应付为 0 的单当场履约：先确认预留（库存、限购、券），再在有余额抵扣时
+// settleZeroPay 建单事务里应付为 0 的单当场履约：先确认预留（券），再在有余额抵扣时
 // CaptureFromBalance 一步冻结并扣款（不先 HoldForOrder），转 paid，再履约。锁序与 SettlePayment 一致：
 // 套餐 / 券在前、账务科目（含平台收入）在后。不调 PaidHook（零应付单不计佣，产品决定）。
 func (s *Service) settleZeroPay(ctx context.Context, o model.Order, actor Actor) (model.Order, error) {
@@ -215,10 +224,9 @@ func (s *Service) settleZeroPay(ctx context.Context, o model.Order, actor Actor)
 	}
 	if o.BalanceApplied.IsPositive() {
 		if _, _, err := s.ledger.CaptureFromBalance(ctx, ledgersvc.HoldInput{
-			OrderID:  o.ID,
-			UserID:   o.UserID,
-			Currency: money.Currency(o.Currency),
-			Amount:   o.BalanceApplied,
+			OrderID: o.ID,
+			UserID:  o.UserID,
+			Amount:  o.BalanceApplied,
 		}); err != nil {
 			return model.Order{}, err
 		}
@@ -252,7 +260,7 @@ func subActor(a Actor) subsvc.Actor {
 	}
 }
 
-// onlyItem 取订单唯一的一条订单行（新购、续费、流量包都只有一条）。
+// onlyItem 取订单唯一的一条订单行（新购、续费、叠加、换套餐、流量重置都只有一条）。
 func (s *Service) onlyItem(ctx context.Context, o model.Order) (model.Item, error) {
 	items, err := s.repo.ItemsByOrders(ctx, []uuid.UUID{o.ID})
 	if err != nil {
@@ -265,17 +273,28 @@ func (s *Service) onlyItem(ctx context.Context, o model.Order) (model.Item, erro
 }
 
 // itemPrice 把套餐订单行快照映射成订阅的价格快照。
-func itemPrice(o model.Order, it model.Item) (subsvc.PriceSnapshot, error) {
+func (s *Service) itemPrice(ctx context.Context, o model.Order, it model.Item) (subsvc.PriceSnapshot, error) {
 	if it.SnapshotInterval == nil || it.SnapshotIntervalCount == nil {
 		return subsvc.PriceSnapshot{}, fmt.Errorf("order: 订单行缺周期快照 %s", o.ID)
 	}
-	return subsvc.PriceSnapshot{
+	snap := subsvc.PriceSnapshot{
 		PriceID:       it.PriceID,
-		Currency:      money.Currency(o.Currency),
 		Amount:        it.UnitAmount,
 		Interval:      *it.SnapshotInterval,
 		IntervalCount: *it.SnapshotIntervalCount,
-	}, nil
+	}
+	if *it.SnapshotInterval == "one_time" && it.PriceID != nil {
+		prices, err := s.catalog.PricesByIDs(ctx, []uuid.UUID{*it.PriceID})
+		if err != nil {
+			return subsvc.PriceSnapshot{}, err
+		}
+		p, ok := prices[*it.PriceID]
+		if !ok {
+			return subsvc.PriceSnapshot{}, fmt.Errorf("order: 订单行价格档不存在 %s", *it.PriceID)
+		}
+		snap.ValidityDays = p.ValidityDays
+	}
+	return snap, nil
 }
 
 // reload 在事务里重读一次订单（状态更新后返回最新行）。

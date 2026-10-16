@@ -215,9 +215,10 @@ func newEngines(r *runtime, svc *services, hub *realtime.Hub, httpm *metrics.HTT
 	settingsH := settingsh.New(svc.settings)
 	authH := authh.New(svc.auth, svc.limiter, authOptions(r.cfg))
 	idemH := idemh.New(svc.idem, svc.idemFPKey)
-	// 套餐列表的可服务节点数由 node 数（catalog 不依赖 node）
+	// 套餐列表的可服务节点数由 node 数、生效订阅数由 subscription 数（catalog 不依赖这两个模块）
 	catalogH := catalogh.New(svc.catalog)
 	catalogH.UseNodeCounter(svc.node)
+	catalogH.UseSubscriptionCounter(svc.sub)
 	notifyH := notifyh.New(svc.notify)
 	notifyH.UseLimiter(svc.limiter)
 	kit := route.Kit{

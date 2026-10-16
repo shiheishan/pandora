@@ -13,6 +13,7 @@ type QuotaRollCandidate struct {
 	ID                    uuid.UUID `gorm:"column:id"`
 	SubscriptionID        uuid.UUID `gorm:"column:subscription_id"`
 	UserID                uuid.UUID `gorm:"column:user_id"`
+	PlanID                uuid.UUID `gorm:"column:plan_id"`
 	PlanVersionID         uuid.UUID `gorm:"column:plan_version_id"`
 	Metric                string    `gorm:"column:metric"`
 	Period                string    `gorm:"column:period"`
@@ -59,17 +60,19 @@ const quotaRollDueWhere = `
      OR (qb.period = 'cycle' AND qb.period_end <= ? AND s.current_period_end > qb.period_end))`
 
 // LockDueQuotaRolls 锁住一批到期的配额行（见 quotaRollDueWhere），按 id 加 FOR UPDATE SKIP LOCKED：
-// 与节点扣量同序，正在被扣量锁着的行这批跳过。
+// 与节点扣量同序，正在被扣量锁着的行这批跳过。订阅行一并加 FOR NO KEY UPDATE SKIP LOCKED：滚动要切版本（改 subscriptions），
+// 别的路径都是先锁订阅、再锁配额，这里不能拿着配额锁再去等订阅锁（审查 1016-A2 应改 1）；订阅正被锁着的，这批跳过，下一遍再滚。
 func (r *Repo) LockDueQuotaRolls(ctx context.Context, now time.Time, limit int) ([]QuotaRollCandidate, error) {
 	var out []QuotaRollCandidate
 	err := r.d.Conn(ctx).Raw(`
-		SELECT qb.id, qb.subscription_id, s.user_id, s.plan_version_id, qb.metric, qb.period, qb.period_start, qb.period_end,
+		SELECT qb.id, qb.subscription_id, s.user_id, s.plan_id, s.plan_version_id, qb.metric, qb.period, qb.period_start, qb.period_end,
 		       s.current_period_end AS sub_period_end, s.snapshot_interval, s.snapshot_interval_count
 		  FROM quota_balances qb
 		  JOIN subscriptions s ON s.id = qb.subscription_id`+quotaRollDueWhere+`
 		 ORDER BY qb.id
 		 LIMIT ?
-		   FOR UPDATE OF qb SKIP LOCKED`, now, now, now, now, limit).Scan(&out).Error
+		   FOR UPDATE OF qb SKIP LOCKED
+		   FOR NO KEY UPDATE OF s SKIP LOCKED`, now, now, now, now, limit).Scan(&out).Error
 	return out, mapErr(err)
 }
 
@@ -84,7 +87,7 @@ func (r *Repo) QuotaRollsRemain(ctx context.Context, now time.Time) (bool, error
 	return remain, mapErr(err)
 }
 
-// ApplyQuotaRolls 用一条 UPDATE … FROM (VALUES …) 把一批配额行滚进新周期：已用量清零、周期改成给定起止、按需改上限；
+// ApplyQuotaRolls 用一条 UPDATE … FROM (VALUES …) 把一批配额行滚进新周期：已用量与本期送的量清零、周期改成给定起止、按需改上限；
 // 返回实际改到的行与清零前的用量。只在事务里、且行已被 LockDueQuotaRolls 锁住时调用。
 func (r *Repo) ApplyQuotaRolls(ctx context.Context, rolls []QuotaRoll, at time.Time) ([]RolledQuota, error) {
 	out := []RolledQuota{}
@@ -104,6 +107,7 @@ func (r *Repo) ApplyQuotaRolls(ctx context.Context, rolls []QuotaRoll, at time.T
 	err := r.d.Conn(ctx).Raw(`
 		UPDATE quota_balances AS qb
 		   SET consumed = 0,
+		       bonus_value = 0,
 		       period_start = v.ps,
 		       period_end = v.pe,
 		       limit_value = CASE WHEN v.set_limit THEN v.lim ELSE qb.limit_value END,
@@ -112,4 +116,44 @@ func (r *Repo) ApplyQuotaRolls(ctx context.Context, rolls []QuotaRoll, at time.T
 		 WHERE qb.id = v.id
 		RETURNING qb.id, qb.subscription_id, qb.metric, OLD.consumed AS consumed_before`, args...).Scan(&out).Error
 	return out, mapErr(err)
+}
+
+// VersionSwitch 是滚动时把一份订阅从旧版本切到套餐当前版本。
+type VersionSwitch struct{ SubscriptionID, From, To uuid.UUID }
+
+// SwitchPlanVersions 用一条 UPDATE … FROM (VALUES …) 批量切版本：只改 plan_version_id 仍是 From 的行（并发换套餐、续费改过的不动），
+// 同时写 updated_at；返回实际改到的订阅 id。只在事务里调用。
+func (r *Repo) SwitchPlanVersions(ctx context.Context, sw []VersionSwitch, at time.Time) ([]uuid.UUID, error) {
+	if len(sw) == 0 {
+		return []uuid.UUID{}, nil
+	}
+	var values strings.Builder
+	args := make([]any, 0, 1+3*len(sw))
+	args = append(args, at)
+	for i, w := range sw {
+		if i > 0 {
+			values.WriteString(", ")
+		}
+		values.WriteString("(?::uuid, ?::uuid, ?::uuid)")
+		args = append(args, w.SubscriptionID, w.From, w.To)
+	}
+	var rows []struct {
+		ID uuid.UUID `gorm:"column:id"`
+	}
+	err := r.d.Conn(ctx).Raw(`
+		UPDATE subscriptions AS s
+		   SET plan_version_id = v.to_version,
+		       updated_at = ?
+		  FROM (VALUES `+values.String()+`) AS v(id, from_version, to_version)
+		 WHERE s.id = v.id
+		   AND s.plan_version_id = v.from_version
+		RETURNING s.id`, args...).Scan(&rows).Error
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	out := make([]uuid.UUID, len(rows))
+	for i, row := range rows {
+		out[i] = row.ID
+	}
+	return out, nil
 }

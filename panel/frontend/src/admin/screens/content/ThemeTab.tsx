@@ -1,16 +1,13 @@
 import { useMutation } from '@tanstack/react-query'
-import { useId, useState, type CSSProperties } from 'react'
+import { useId, useState } from 'react'
 import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, Empty, Input, QueryView, Select, Skeleton, Switch, Tag, TextArea, useToast } from '../../../ui'
-import css from './content.module.css'
 import { droppedMessage, slotDirty, timezoneOptions } from './logic'
 import { useFailure, useIntentKey, useInvalidateContent, useSiteSettings, useSlots, useThemes } from './queries'
 import { siteSettingsSchema, slotSaved, themeActivated, themeDeleted, type Slot, type Theme } from './schemas'
 import { activateNotice, themeSwatches, themeTagline, type ThemeTarget } from './theme'
 import { ThemeEditor } from './ThemeEditor'
-import theme from './theme.module.css'
-
-const SITE_NAME_INPUT_ID = 'site-settings-name'
+import css from './theme.module.css'
 
 export function ThemeTab() {
   const themes = useThemes()
@@ -18,104 +15,105 @@ export function ThemeTab() {
   const [editing, setEditing] = useState<ThemeTarget | null>(null)
   const [activating, setActivating] = useState<Theme | null>(null)
   const [deleting, setDeleting] = useState<Theme | null>(null)
-  const list = themes.data ?? []
-  const active = list.find((t) => t.is_active)
-
-  // 主题编辑器里的「去改站点名」：关掉抽屉，把焦点交给站点设置卡的站点名输入框
-  const editSiteName = () => {
-    setEditing(null)
-    requestAnimationFrame(() => {
-      const el = document.getElementById(SITE_NAME_INPUT_ID)
-      el?.scrollIntoView({ block: 'center' })
-      el?.focus()
-    })
-  }
 
   return (
     <div className={css.stack}>
-      <div className={css.themeGrid}>
-        {/* 列表末尾总有「新建主题」卡，所以没有主题时也不显示空状态 */}
-        <QueryView query={themes} rows={2} isEmpty={() => false} empty={null}>
-          {(l) => (
-            <>
-              {l.map((t) => (
-                <ThemeCard key={t.id} theme={t} onEdit={() => setEditing(t.is_builtin ? { kind: 'create', from: t } : { kind: 'edit', theme: t })} onActivate={() => setActivating(t)} onDelete={() => setDeleting(t)} />
-              ))}
-              <button type="button" className={theme.newCard} onClick={() => setEditing({ kind: 'create', from: active ?? null })}>
-                ＋ 新建主题{active ? `（复制「${active.name}」）` : ''}
-              </button>
-            </>
-          )}
-        </QueryView>
+      <section className={css.section} aria-label="站点设置">
+        <h3 className={css.sectionTitle}>站点设置</h3>
         <SiteCard />
-      </div>
+      </section>
 
-      <section className={css.slots} aria-label="前端插槽">
-        <div className={css.slotsHead}>
-          <span className={css.cardTitle}>前端插槽</span>
-          <span className={css.faint}>在门户固定位置插入文本或 HTML 片段；失焦自动保存，脚本、样式与事件属性会被过滤</span>
+      <section className={css.section} aria-label="主题">
+        <div className={css.themeHead}>
+          <h3 className={css.sectionTitle}>
+            主题 <span className={css.themeHeadNote}>用户端同一时间只用一套，明暗两组随用户切换</span>
+          </h3>
+          <Button size="sm" variant="primary" onClick={() => setEditing({ kind: 'create', from: null })}>
+            新建
+          </Button>
         </div>
-        <QueryView query={slots} rows={4} empty={<Empty bare title="没有可用的插槽位" description="插槽位由门户代码定义，升级后会出现在这里。" />}>
-          {(list) => list.map((s) => <SlotRow key={s.key} slot={s} />)}
+        <QueryView query={themes} rows={2} empty={<Empty bare title="还没有主题" />}>
+          {(list) => (
+            <div className={css.themeList}>
+              {list.map((t) => (
+                <ThemeRow
+                  key={t.id}
+                  theme={t}
+                  onCopy={() => setEditing({ kind: 'create', from: t })}
+                  onEdit={() => setEditing({ kind: 'edit', theme: t })}
+                  onActivate={() => setActivating(t)}
+                  onDelete={() => setDeleting(t)}
+                />
+              ))}
+            </div>
+          )}
         </QueryView>
       </section>
 
-      <ThemeEditor target={editing} onClose={() => setEditing(null)} onEditSiteName={editSiteName} />
+      <section className={css.section} aria-label="前端插槽">
+        <h3 className={css.sectionTitle}>前端插槽</h3>
+        <p className={css.sectionNote}>在用户端固定位置插入文本或 HTML 片段；失焦自动保存，脚本、样式与事件属性会被过滤</p>
+        <QueryView query={slots} rows={4} empty={<Empty bare title="没有可用的插槽位" description="插槽位由用户端代码定义，升级后会出现在这里。" />}>
+          {(list) => (
+            <div className={css.slotList}>
+              {list.map((s) => (
+                <SlotRow key={s.key} slot={s} />
+              ))}
+            </div>
+          )}
+        </QueryView>
+      </section>
+
+      <ThemeEditor target={editing} onClose={() => setEditing(null)} />
       <ThemeConfirms activating={activating} deleting={deleting} onDone={() => (setActivating(null), setDeleting(null))} />
     </div>
   )
 }
 
-function ThemeCard({ theme: t, onEdit, onActivate, onDelete }: { theme: Theme; onEdit: () => void; onActivate: () => void; onDelete: () => void }) {
-  const p = themeSwatches(t)
-  const vars = { '--pv-bg': p.bg, '--pv-fg': p.fg, '--pv-accent': p.accent } as CSSProperties
+// ---------------------------------------------------------------------------
+// 主题列表的一行：色块、名称与标语、激活 / 复制 / 编辑 / 删除
+// ---------------------------------------------------------------------------
+function ThemeRow({ theme: t, onCopy, onEdit, onActivate, onDelete }: { theme: Theme; onCopy: () => void; onEdit: () => void; onActivate: () => void; onDelete: () => void }) {
+  const swatches = themeSwatches(t)
   const tagline = themeTagline(t)
+  const desc = [tagline ? `标语「${tagline}」` : '', t.is_active ? '用户端所有用户看到的都是这一套。' : ''].filter(Boolean).join('。')
   return (
-    <section className={css.themeCard} style={vars} aria-label={`主题 ${t.name}`}>
-      <div className={css.preview} aria-hidden="true">
-        <div className={css.previewLine} />
-        <div className={css.previewLine} />
-        <div className={css.previewButton} />
+    <div className={css.themeRow}>
+      <div className={css.swatchStrip} aria-hidden="true">
+        {swatches.map((c, i) => (
+          <span key={i} className={css.swatch} style={{ background: c }} />
+        ))}
       </div>
-      <div className={css.cardBody}>
-        <div className={css.row}>
-          <span className={css.cardName}>{t.name}</span>
+      <div className={css.themeInfo}>
+        <div className={css.themeTitle}>
+          <span className={css.themeName}>{t.name}</span>
+          <span className={css.themeCode}>{t.code}</span>
           {t.is_builtin && <Tag tone="neutral">内置</Tag>}
           {t.is_active && <Tag tone="ok">使用中</Tag>}
         </div>
-        <div className={css.swatches} aria-hidden="true">
-          <span className={`${css.swatch} ${css.swatchBg}`} />
-          <span className={`${css.swatch} ${css.swatchFg}`} />
-          <span className={`${css.swatch} ${css.swatchAccent}`} />
-        </div>
-        <div className={css.faint}>
-          <span className={css.mono}>{t.code}</span>
-          {tagline ? ` · 标语「${tagline}」` : ''}
-          {t.is_active ? '。门户所有用户看到的都是这一套，明暗两组随用户切换。' : ''}
-        </div>
-        <div className={theme.actions}>
-          {t.is_builtin ? (
-            <Button size="xs" onClick={onEdit}>
-              另存为
-            </Button>
-          ) : (
-            <Button size="xs" onClick={onEdit}>
-              编辑
-            </Button>
-          )}
-          {!t.is_active && (
-            <Button size="xs" variant="primary" onClick={onActivate}>
-              激活
-            </Button>
-          )}
-          {!t.is_builtin && !t.is_active && (
-            <Button size="xs" variant="ghost" onClick={onDelete}>
-              删除
-            </Button>
-          )}
-        </div>
+        {desc && <div className={css.themeDesc}>{desc}</div>}
       </div>
-    </section>
+      <div className={css.themeActions}>
+        {!t.is_active && (
+          <button type="button" className={`${css.textBtn} ${css.textBtnStrong}`} onClick={onActivate}>
+            激活
+          </button>
+        )}
+        <button type="button" className={css.textBtn} onClick={onCopy}>
+          复制
+        </button>
+        {!t.is_builtin && (
+          <button type="button" className={css.textBtn} onClick={onEdit}>
+            编辑
+          </button>
+        )}
+        {!t.is_builtin && !t.is_active && (
+          <button type="button" className={`${css.textBtn} ${css.textBtnDanger}`} onClick={onDelete}>
+            删除
+          </button>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -143,13 +141,13 @@ function ThemeConfirms({ activating, deleting, onDone }: { activating: Theme | n
         title={activating ? `激活「${activating.name}」？` : ''}
         body={activating ? activateNotice(activating) : ''}
         confirmLabel="激活主题"
-        onConfirm={() => run(() => api.post(`v1/themes/${encodeURIComponent(activating!.code)}/activate`, themeActivated), `已激活「${activating!.name}」，门户刷新后生效`)}
+        onConfirm={() => run(() => api.post(`v1/themes/${encodeURIComponent(activating!.code)}/activate`, themeActivated), '主题已激活，用户端刷新后生效')}
         onCancel={onDone}
       />
       <ConfirmModal
         open={deleting !== null}
         title={deleting ? `删除「${deleting.name}」？` : ''}
-        body="删除后无法恢复；正在使用的主题和内置主题不能删除。"
+        body="删除后不能恢复。内置主题与正在使用的主题不能删除。"
         confirmLabel="删除主题"
         tone="danger"
         onConfirm={() => run(() => api.delete(`v1/themes/${encodeURIComponent(deleting!.code)}`, themeDeleted), `已删除「${deleting!.name}」`)}
@@ -159,13 +157,15 @@ function ThemeConfirms({ activating, deleting, onDone }: { activating: Theme | n
   )
 }
 
+// ---------------------------------------------------------------------------
+// 站点设置：站点名 + 时区，只提交改了的键
+// ---------------------------------------------------------------------------
 function SiteCard() {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
   const invalidate = useInvalidateContent()
   const site = useSiteSettings()
-  const id = useId()
   const [name, setName] = useState<string | null>(null)
   const [picked, setPicked] = useState<string | null>(null)
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -217,54 +217,52 @@ function SiteCard() {
     save.mutate(body)
   }
 
+  if (site.isPending) return <Skeleton height={32} />
+  if (site.isError)
+    return (
+      <QueryView query={site} empty={null}>
+        {() => null}
+      </QueryView>
+    )
   return (
-    <section className={css.tzCard} aria-label="站点设置">
-      <span className={css.cardTitle}>站点设置</span>
-      {site.isPending ? (
-        <Skeleton height={32} />
-      ) : site.isError ? (
-        <QueryView query={site} empty={null}>
-          {() => null}
-        </QueryView>
-      ) : (
-        <>
-          <Input
-            id={SITE_NAME_INPUT_ID}
-            label="站点名"
-            value={nameValue}
-            maxLength={40}
-            error={errors.name}
-            hint="门户标题、浏览器标签、邮件里的站点名与发件人名、订阅配置名都用它；主题只管标语与 Logo。"
-            disabled={save.isPending}
-            onChange={(e) => {
-              setName(e.target.value)
-              if (errors.name) setErrors((prev) => ({ ...prev, name: '' }))
-            }}
-          />
-          <label htmlFor={`${id}-s`} className={css.cardTitle}>
-            站点时区
-          </label>
-          <Select
-            id={`${id}-s`}
-            value={tzValue}
-            error={errors.timezone}
-            disabled={save.isPending}
-            options={timezoneOptions(current?.timezone)}
-            onChange={(e) => {
-              setPicked(e.target.value)
-              if (errors.timezone) setErrors((prev) => ({ ...prev, timezone: '' }))
-            }}
-          />
-        </>
-      )}
-      <div className={css.faint}>门户用量图按天统计、后台收入趋势都按这个时区切日；修改只影响之后的数据，已记下的按日用量不重算。</div>
-      <Button variant="primary" size="sm" disabled={!dirty} busy={save.isPending} onClick={submit}>
-        保存
-      </Button>
-    </section>
+    <>
+      <div className={css.siteRow}>
+        <Input
+          className={css.siteName}
+          label="站点名"
+          value={nameValue}
+          maxLength={40}
+          error={errors.name}
+          disabled={save.isPending}
+          onChange={(e) => {
+            setName(e.target.value)
+            if (errors.name) setErrors((prev) => ({ ...prev, name: '' }))
+          }}
+        />
+        <Select
+          className={css.siteTz}
+          label="时区"
+          value={tzValue}
+          error={errors.timezone}
+          disabled={save.isPending}
+          options={timezoneOptions(current?.timezone)}
+          onChange={(e) => {
+            setPicked(e.target.value)
+            if (errors.timezone) setErrors((prev) => ({ ...prev, timezone: '' }))
+          }}
+        />
+        <Button variant="primary" size="sm" disabled={!dirty} busy={save.isPending} onClick={submit}>
+          保存
+        </Button>
+      </div>
+      <p className={css.sectionNote}>用户端用量图按天统计、后台收入趋势都按这个时区切日；修改只影响之后的数据，已记下的按日用量不重算。</p>
+    </>
   )
 }
 
+// ---------------------------------------------------------------------------
+// 插槽：开关切换即保存，文本失焦且真的变了才保存（每次保存都要 reauth 与新幂等键）
+// ---------------------------------------------------------------------------
 function SlotRow({ slot }: { slot: Slot }) {
   const api = useApi()
   const toast = useToast()
@@ -290,29 +288,33 @@ function SlotRow({ slot }: { slot: Slot }) {
   })
 
   return (
-    <div className={css.slotRow}>
-      <div>
+    <div className={slot.enabled ? css.slotRow : `${css.slotRow} ${css.slotOff}`}>
+      <div className={css.slotMeta}>
         <label className={css.slotName} htmlFor={`${id}-c`}>
           {slot.label}
         </label>
         <div className={css.slotKey}>{slot.key}</div>
-        <div className={css.slotWhere}>{slot.where}</div>
-      </div>
-      <div>
-        <TextArea
-          id={`${id}-c`}
-          rows={2}
-          className={css.slotArea}
-          value={content}
+        <Switch
+          aria-label={`启用「${slot.label}」`}
+          label={slot.enabled ? '已开启' : '已关闭'}
+          checked={slot.enabled}
           disabled={save.isPending}
-          hint={slot.updated_at ? `更新于 ${slot.updated_at}` : undefined}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={() => {
-            if (slotDirty(draft, slot)) save.mutate({ content, enabled: slot.enabled })
-          }}
+          onChange={(e) => save.mutate({ content, enabled: e.target.checked })}
         />
       </div>
-      <Switch className={css.slotSwitch} aria-label={`启用「${slot.label}」`} checked={slot.enabled} disabled={save.isPending} onChange={(e) => save.mutate({ content, enabled: e.target.checked })} />
+      <TextArea
+        id={`${id}-c`}
+        className={css.slotArea}
+        rows={3}
+        mono
+        value={content}
+        placeholder="留空则不显示"
+        disabled={save.isPending}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => {
+          if (slotDirty(draft, slot)) save.mutate({ content, enabled: slot.enabled })
+        }}
+      />
     </div>
   )
 }

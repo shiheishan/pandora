@@ -18,7 +18,6 @@ func created() service.Created {
 	return service.Created{
 		OrderID:        uuid.New(),
 		OrderNo:        "AO20261012-ABCDEFGH",
-		Currency:       money.CNY,
 		Total:          money.FromCents(2500),
 		Discount:       money.FromCents(500),
 		BalanceApplied: money.FromCents(1000),
@@ -39,8 +38,11 @@ func TestCreateOrderShape(t *testing.T) {
 	w := do(newEngine(f, false, rec), http.MethodPost, "/v1/orders", body)
 	mustStatus(t, w, http.StatusCreated)
 	m := obj(t, w)
-	if m["order_id"] != c.OrderID.String() || m["order_no"] != c.OrderNo || m["status"] != "pending_payment" || m["currency"] != "CNY" {
+	if m["order_id"] != c.OrderID.String() || m["order_no"] != c.OrderNo || m["status"] != "pending_payment" {
 		t.Fatalf("响应 %v", m)
+	}
+	if _, ok := m["currency"]; ok {
+		t.Fatalf("不应有 currency: %v", m)
 	}
 	if num(t, m, "total_amount") != 2500 || num(t, m, "discount_amount") != 500 || num(t, m, "balance_applied") != 1000 || num(t, m, "payable_amount") != 1500 {
 		t.Fatalf("金额应是整数分: %v", m)
@@ -115,41 +117,144 @@ func TestCreateRenewal(t *testing.T) {
 	mustErr(t, do(e, http.MethodPost, "/v1/me/subscriptions/not-a-uuid/renew", `{}`), http.StatusNotFound, string(errs.NotFound))
 }
 
-// 流量包：201；缺目标订阅 422（文案「请选择加到哪一份」）。
-func TestCreatePackOrder(t *testing.T) {
-	packID, subID := uuid.New(), uuid.New()
-	var got service.PackOrderInput
-	f := &fakeSvc{createPack: func(in service.PackOrderInput) (service.Created, error) { got = in; return created(), nil }}
-	rec := &kitRec{}
-	e := newEngine(f, false, rec)
-	w := do(e, http.MethodPost, "/v1/me/traffic-pack-orders", `{"pack_id":"`+packID.String()+`","subscription_id":"`+subID.String()+`"}`)
-	mustStatus(t, w, http.StatusCreated)
-	if got.PackID != packID || got.SubscriptionID != subID {
-		t.Fatalf("入参 %+v", got)
+// 叠加：201；price_id 传给 service；格式不对 422；挂 stack 幂等域。
+func TestCreateStack(t *testing.T) {
+	subID := uuid.New()
+	priceID := uuid.New()
+	cases := []struct {
+		name  string
+		path  string
+		body  string
+		want  int
+		code  string
+		check func(service.StackOrderInput)
+	}{
+		{
+			name: "带 price_id",
+			path: "/v1/me/subscriptions/" + subID.String() + "/stack",
+			body: `{"price_id":"` + priceID.String() + `"}`,
+			want: http.StatusCreated,
+			check: func(got service.StackOrderInput) {
+				if got.SubscriptionID != subID || got.PriceID == nil || *got.PriceID != priceID || got.Reply == nil {
+					t.Fatalf("入参 %+v", got)
+				}
+			},
+		},
+		{
+			name: "price_id 格式不对",
+			path: "/v1/me/subscriptions/" + subID.String() + "/stack",
+			body: `{"price_id":"not-uuid"}`,
+			want: http.StatusUnprocessableEntity,
+			code: string(errs.ValidationFailed),
+		},
 	}
-	mustContain(t, rec.scopes, ScopeOrderCreate)
-	b := mustErr(t, do(e, http.MethodPost, "/v1/me/traffic-pack-orders", `{"pack_id":"`+packID.String()+`"}`), http.StatusUnprocessableEntity, string(errs.ValidationFailed))
-	if b.Error.Fields["subscription_id"] != "请选择加到哪一份" {
-		t.Fatalf("fields %v", b.Error.Fields)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got service.StackOrderInput
+			f := &fakeSvc{createStack: func(in service.StackOrderInput) (service.Created, error) {
+				got = in
+				return created(), nil
+			}}
+			rec := &kitRec{}
+			e := newEngine(f, false, rec)
+			w := do(e, http.MethodPost, tc.path, tc.body)
+			if tc.code != "" {
+				mustErr(t, w, tc.want, tc.code)
+				return
+			}
+			mustStatus(t, w, tc.want)
+			if tc.check != nil {
+				tc.check(got)
+			}
+			mustContain(t, rec.scopes, ScopeStackCreate)
+		})
 	}
 }
 
-// 充值回 200（不是 201）；金额是分；币种去空白后交给 service。
+// 落点：缺 plan_id 422；合法 uuid 返回 options。
+func TestLandings(t *testing.T) {
+	planID := uuid.New()
+	subID := uuid.New()
+	cases := []struct {
+		name  string
+		path  string
+		want  int
+		code  string
+		check func(map[string]any)
+	}{
+		{
+			name: "缺 plan_id",
+			path: "/v1/me/checkout/landings",
+			want: http.StatusUnprocessableEntity,
+			code: string(errs.ValidationFailed),
+		},
+		{
+			name: "合法 plan_id",
+			path: "/v1/me/checkout/landings?plan_id=" + planID.String(),
+			want: http.StatusOK,
+			check: func(m map[string]any) {
+				opts, ok := m["options"].([]any)
+				if !ok || len(opts) != 2 {
+					t.Fatalf("options %v", m["options"])
+				}
+				if opts[0].(map[string]any)["mode"] != "new" {
+					t.Fatalf("第一项 %v", opts[0])
+				}
+				s1 := opts[1].(map[string]any)
+				if s1["mode"] != "stack" || s1["subscription_id"] != subID.String() {
+					t.Fatalf("第二项 %v", s1)
+				}
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotPlan uuid.UUID
+			f := &fakeSvc{landings: func(id uuid.UUID) (service.Landings, error) {
+				gotPlan = id
+				return service.Landings{Options: []service.Landing{
+					{Mode: service.LandingNew},
+					{Mode: service.LandingStack, SubscriptionID: &subID},
+				}}, nil
+			}}
+			w := do(newEngine(f, false, nil), http.MethodGet, tc.path, "")
+			if tc.code != "" {
+				b := mustErr(t, w, tc.want, tc.code)
+				if b.Error.Fields["plan_id"] != "请选择套餐" {
+					t.Fatalf("fields %v", b.Error.Fields)
+				}
+				return
+			}
+			mustStatus(t, w, tc.want)
+			if gotPlan != planID {
+				t.Fatalf("plan_id %v", gotPlan)
+			}
+			if tc.check != nil {
+				tc.check(obj(t, w))
+			}
+		})
+	}
+}
+
+// 充值回 200（不是 201）；金额是分。
 func TestCreateTopupIs200(t *testing.T) {
 	var got service.TopupInput
 	id := uuid.New()
 	f := &fakeSvc{createTopup: func(in service.TopupInput) (service.TopupCreated, error) {
 		got = in
-		return service.TopupCreated{OrderID: id, OrderNo: "AO20261012-TOPUP001", Amount: in.Amount, Currency: money.CNY}, nil
+		return service.TopupCreated{OrderID: id, OrderNo: "AO20261012-TOPUP001", Amount: in.Amount}, nil
 	}}
 	rec := &kitRec{}
-	w := do(newEngine(f, false, rec), http.MethodPost, "/v1/me/topups", `{"amount":10000,"currency":" CNY "}`)
+	w := do(newEngine(f, false, rec), http.MethodPost, "/v1/me/topups", `{"amount":10000}`)
 	mustStatus(t, w, http.StatusOK)
 	m := obj(t, w)
-	if num(t, m, "amount") != 10000 || m["order_id"] != id.String() || m["currency"] != "CNY" {
+	if num(t, m, "amount") != 10000 || m["order_id"] != id.String() {
 		t.Fatalf("响应 %v", m)
 	}
-	if !got.Amount.Equal(money.FromCents(10000)) || got.Currency != money.CNY || got.Reply == nil {
+	if _, ok := m["currency"]; ok {
+		t.Fatalf("不应有 currency: %v", m)
+	}
+	if !got.Amount.Equal(money.FromCents(10000)) || got.Reply == nil {
 		t.Fatalf("入参 %+v", got)
 	}
 	mustContain(t, rec.scopes, ScopeTopupCreate)
@@ -161,32 +266,33 @@ func TestReplyStatus(t *testing.T) {
 	if err != nil || r.Status != http.StatusCreated {
 		t.Fatalf("建单重放 %d %v", r.Status, err)
 	}
-	r, err = topupReply(service.TopupCreated{OrderID: uuid.New(), OrderNo: "AO1", Amount: money.FromCents(100), Currency: money.CNY})
+	r, err = topupReply(service.TopupCreated{OrderID: uuid.New(), OrderNo: "AO1", Amount: money.FromCents(100)})
 	if err != nil || r.Status != http.StatusOK {
 		t.Fatalf("充值重放 %d %v", r.Status, err)
 	}
 }
 
-// 报价：金额是分；没有剩余价值明细时 credit_detail 为 null；券为空时 coupon / coupon_error 都是 null；有券时 coupon 是对象。
+// 报价：金额是分；没有剩余价值明细时 credit_detail 为 null；券为空时 coupon / coupon_error 都是 null；有券时 coupon 是对象；无 member_discount/currency/pack_id；有 validity_days。
 func TestQuoteShape(t *testing.T) {
 	planID, priceID := uuid.New(), uuid.New()
 	start := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)
 	code := "SAVE5"
+	days := 30
 	f := &fakeSvc{quote: func(in service.QuoteInput) (service.QuoteResult, error) {
 		if in.Action != "new" || in.PlanID == nil || *in.PlanID != planID {
 			t.Fatalf("入参 %+v", in)
 		}
 		return service.QuoteResult{
-			AsOf: start, Currency: money.CNY, Balance: money.FromCents(800), MinPayment: money.FromCents(1),
+			AsOf: start, Balance: money.FromCents(800), MinPayment: money.FromCents(1),
 			Quotes: []service.Quote{
-				{PlanID: &planID, PriceID: &priceID, Currency: money.CNY, Interval: "month", IntervalCount: 1,
+				{PlanID: &planID, PriceID: &priceID, Interval: "month", IntervalCount: 1,
 					Subtotal: money.FromCents(3000), Total: money.FromCents(3000),
 					WithBalance:    service.BalancePlan{Applied: money.FromCents(800), Payable: money.FromCents(2200)},
 					WithoutBalance: service.BalancePlan{Payable: money.FromCents(3000)},
 					PeriodStart:    &start, PeriodEnd: &end},
-				{PlanID: &planID, PriceID: &priceID, Currency: money.CNY, Interval: "year", IntervalCount: 1,
-					Subtotal: money.FromCents(30000), Discount: money.FromCents(500), MemberDiscount: money.FromCents(3000), MemberPercent: 10, Total: money.FromCents(26500), CouponCode: &code},
+				{PlanID: &planID, PriceID: &priceID, Interval: "one_time", IntervalCount: 1, ValidityDays: &days,
+					Subtotal: money.FromCents(30000), Discount: money.FromCents(500), Total: money.FromCents(29500), CouponCode: &code},
 			},
 		}, nil
 	}}
@@ -194,6 +300,9 @@ func TestQuoteShape(t *testing.T) {
 	w := do(newEngine(f, false, rec), http.MethodPost, "/v1/me/checkout/quote", `{"action":"new","plan_id":"`+planID.String()+`"}`)
 	mustStatus(t, w, http.StatusOK)
 	m := obj(t, w)
+	if _, ok := m["currency"]; ok {
+		t.Fatalf("不应有 currency: %v", m)
+	}
 	if num(t, m, "balance") != 800 || num(t, m, "min_payment") != 1 {
 		t.Fatalf("响应 %v", m)
 	}
@@ -202,22 +311,21 @@ func TestQuoteShape(t *testing.T) {
 		t.Fatalf("quotes %v", m["quotes"])
 	}
 	q0 := quotes[0].(map[string]any)
-	mustNull(t, q0, "credit_detail", "coupon", "coupon_error", "subscription_id", "pack_id", "previous_end")
+	mustNull(t, q0, "credit_detail", "coupon", "coupon_error", "subscription_id", "validity_days", "previous_end")
+	mustAbsent(t, q0, "pack_id", "member_discount", "member_percent", "currency")
 	if num(t, q0, "subtotal") != 3000 || num(t, sub(t, q0, "with_balance"), "applied") != 800 || num(t, sub(t, q0, "with_balance"), "payable") != 2200 {
 		t.Fatalf("第一条报价 %v", q0)
-	}
-	if num(t, q0, "member_discount") != 0 || num(t, q0, "member_percent") != 0 {
-		t.Fatalf("第一条报价会员折扣字段 %v", q0)
 	}
 	if q0["period_start"] == nil || q0["period_end"] == nil {
 		t.Fatalf("周期应有值 %v", q0)
 	}
 	q1 := quotes[1].(map[string]any)
+	mustAbsent(t, q1, "pack_id", "member_discount", "member_percent", "currency")
 	if sub(t, q1, "coupon")["code"] != code || num(t, q1, "discount") != 500 {
 		t.Fatalf("第二条报价 %v", q1)
 	}
-	if num(t, q1, "member_discount") != 3000 || num(t, q1, "member_percent") != 10 {
-		t.Fatalf("第二条报价会员折扣字段 %v", q1)
+	if num(t, q1, "validity_days") != 30 {
+		t.Fatalf("validity_days 应为 30，得到 %v", q1["validity_days"])
 	}
 	mustContain(t, rec.switches, SwitchCheckout)
 	if len(rec.scopes) != 0 {
@@ -233,7 +341,7 @@ func TestPay(t *testing.T) {
 			t.Fatalf("入参 %+v", in)
 		}
 		return paymentsvc.IntentResult{IntentID: intentID, HTTPMethod: "GET", RedirectURL: "https://pay.example.test/x",
-			Amount: money.FromCents(1500), Currency: money.CNY}, nil
+			Amount: money.FromCents(1500)}, nil
 	}}
 	e := newEngine(f, false, nil)
 	w := do(e, http.MethodPost, "/v1/orders/"+orderID.String()+"/pay", `{"provider":" epay "}`)
@@ -241,6 +349,9 @@ func TestPay(t *testing.T) {
 	m := obj(t, w)
 	if m["intent_id"] != intentID.String() || num(t, m, "amount") != 1500 || m["reused"] != false {
 		t.Fatalf("响应 %v", m)
+	}
+	if _, ok := m["currency"]; ok {
+		t.Fatalf("不应有 currency: %v", m)
 	}
 	if ff, ok := m["form_fields"].(map[string]any); !ok || len(ff) != 0 {
 		t.Fatalf("form_fields 应为 {}，得到 %#v", m["form_fields"])
@@ -319,7 +430,7 @@ func TestMyOrdersShape(t *testing.T) {
 		got = lf
 		return service.MyOrderList{
 			Orders: []service.MyOrderView{{
-				OrderRow: service.OrderRow{ID: uuid.New(), OrderNo: "AO1", Kind: "topup", Status: "pending_payment", Currency: money.CNY,
+				OrderRow: service.OrderRow{ID: uuid.New(), OrderNo: "AO1", Kind: "topup", Status: "pending_payment",
 					Total: money.FromCents(10000), Payable: money.FromCents(10000), CreatedAt: created, ExpiresAt: created.Add(30 * time.Minute)},
 				ItemName: "余额充值", Cancellable: true,
 			}},
@@ -341,7 +452,7 @@ func TestMyOrdersShape(t *testing.T) {
 	if num(t, row, "total_amount") != 10000 || row["item_name"] != "余额充值" || row["cancellable"] != true {
 		t.Fatalf("行 %v", row)
 	}
-	mustAbsent(t, row, "plan_name", "interval", "interval_count", "paid_at", "cancelled_at", "cancel_reason")
+	mustAbsent(t, row, "plan_name", "interval", "interval_count", "paid_at", "cancelled_at", "cancel_reason", "currency")
 	if row["expires_at"] == nil {
 		t.Fatal("expires_at 应恒有")
 	}
@@ -355,11 +466,11 @@ func TestMyOrderDetailShape(t *testing.T) {
 			return service.MyOrderDetail{}, service.ErrNotFound
 		}
 		return service.MyOrderDetail{
-			Order: service.MyOrderView{OrderRow: service.OrderRow{ID: orderID, Kind: "new", Status: "pending_payment", Currency: money.CNY,
+			Order: service.MyOrderView{OrderRow: service.OrderRow{ID: orderID, Kind: "new", Status: "pending_payment",
 				Total: money.FromCents(1000), Payable: money.FromCents(1000)}, ItemName: "月付套餐", PlanName: ptr("月付套餐"),
 				Interval: ptr("month"), IntervalCount: ptr(1)},
 			Items: []service.ItemRow{{Name: "月付套餐", Quantity: 1, UnitAmount: money.FromCents(1000), LineAmount: money.FromCents(1000)}},
-			Payments: []service.PaymentLine{{Status: "succeeded", Amount: money.FromCents(1000), Currency: money.CNY,
+			Payments: []service.PaymentLine{{Status: "succeeded", Amount: money.FromCents(1000),
 				ProviderName: "易支付"}},
 		}, nil
 	}}
@@ -368,7 +479,7 @@ func TestMyOrderDetailShape(t *testing.T) {
 	mustStatus(t, w, http.StatusOK)
 	o := sub(t, obj(t, w), "order")
 	mustNull(t, o, "subscription_id")
-	mustAbsent(t, o, "coupon_code", "subscription_period_end", "refunded_amount")
+	mustAbsent(t, o, "coupon_code", "subscription_period_end", "refunded_amount", "currency")
 	if o["plan_name"] != "月付套餐" || o["interval"] != "month" || num(t, o, "interval_count") != 1 {
 		t.Fatalf("套餐字段 %v", o)
 	}
@@ -377,7 +488,7 @@ func TestMyOrderDetailShape(t *testing.T) {
 		t.Fatalf("items %v", o["items"])
 	}
 	pay := o["payments"].([]any)[0].(map[string]any)
-	mustAbsent(t, pay, "method")
+	mustAbsent(t, pay, "method", "currency")
 	if pay["provider_name"] != "易支付" || num(t, pay, "amount") != 1000 {
 		t.Fatalf("payments %v", pay)
 	}

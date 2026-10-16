@@ -2,10 +2,10 @@ import { href } from '../../../core/router'
 import { Card, Empty, Skeleton, Tag } from '../../../ui'
 import { usePageHead } from '../../head'
 import { LoadError } from '../common/Blocks'
-import { priceFor, usePlans, type Plan } from '../common/catalog'
+import { devicesText, KIND_NAME, planTraffic, priceFor, usePlans, validityText, type Plan } from '../common/catalog'
 import { flowCss } from '../common/Flow'
 import { useHoldings } from '../common/holdings'
-import { day, devicesText, money, moneyShort, perPeriod, planTraffic } from '../common/purchase'
+import { day, money, moneyShort, perPeriod } from '../common/purchase'
 import { tierOf, useQuote, type QuoteRow } from '../common/quote'
 import type { Subscription } from '../common/subscriptions'
 import css from './Subs.module.css'
@@ -17,10 +17,11 @@ function changeResult(row: Pick<QuoteRow, 'total' | 'refund'>): string {
   return '换过去今天不用付'
 }
 
-/** 同一档月价比较：比现在贵的标「更大」，便宜的标「更便宜」 */
+/** 同一档月价比较：比现在贵的标「更大」，便宜的标「更便宜」；只在同类型的订阅套餐之间比 */
 function sizeTag(target: Plan, current: Plan | undefined): 'bigger' | 'cheaper' | null {
+  if (!current || target.kind !== current.kind || target.kind === 'one_time') return null
   const a = priceFor(target, '1m')?.unit_amount
-  const b = current ? priceFor(current, '1m')?.unit_amount : undefined
+  const b = priceFor(current, '1m')?.unit_amount
   if (a === undefined || b === undefined || a === b) return null
   return a > b ? 'bigger' : 'cheaper'
 }
@@ -46,7 +47,7 @@ export function ChangePick({ id }: { id: string }) {
       <p className={flowCss.lead}>
         {h.naming.multi ? `「${h.naming.dn(sub)}」` : '你'}现在是 <b>{sub.plan_name}</b>
         {current && `：${planTraffic(current)} · ${devicesText(current.max_devices)}`}
-        {price && ` · ${moneyShort(price.unit_amount)}${perPeriod(price.billing_interval, price.interval_count)}`}
+        {price && price.billing_interval !== 'one_time' && ` · ${moneyShort(price.unit_amount)}${perPeriod(price.billing_interval, price.interval_count)}`}
       </p>
       <Card>
         {quote.isPending ? (
@@ -57,11 +58,13 @@ export function ChangePick({ id }: { id: string }) {
           <Empty bare title="暂时没有能换的套餐" description="可以另买一份，或者到期后再来看看。" />
         ) : (
           <div>
-            {[...new Set(quote.data.quotes.map((q) => q.plan_id))].map((planId) => {
-              const plan = plans.data!.find((p) => p.id === planId)
-              const row = tierOf(quote.data.quotes, sub, (q) => q.plan_id === planId)
-              return plan && row ? <Row key={planId} sub={sub} row={row} plan={plan} current={current} /> : null
-            })}
+            {[...new Set(quote.data.quotes.map((q) => q.plan_id))]
+              .filter((planId) => planId !== sub.plan_id)
+              .map((planId) => {
+                const plan = plans.data!.find((p) => p.id === planId)
+                const row = tierOf(quote.data.quotes, sub, (q) => q.plan_id === planId)
+                return plan && row ? <Row key={planId} sub={sub} row={row} plan={plan} current={current} /> : null
+              })}
           </div>
         )}
       </Card>
@@ -72,14 +75,21 @@ export function ChangePick({ id }: { id: string }) {
 
 function Row({ sub, row, plan, current }: { sub: Subscription; row: QuoteRow; plan: Plan; current: Plan | undefined }) {
   const tag = sizeTag(plan, current)
-  const month = priceFor(plan, '1m')
+  const month = plan.kind === 'subscription' ? priceFor(plan, '1m') : undefined
+  const priceNote =
+    plan.kind === 'one_time'
+      ? validityText(row.validity_days ?? priceFor(plan, 'once')?.validity_days ?? null)
+      : month
+        ? `${moneyShort(month.unit_amount)}${perPeriod(month.billing_interval, month.interval_count)}`
+        : `${perPeriod(row.interval, row.interval_count)}`
   return (
     <div className={css.optRow}>
       <div className={css.optText}>
-        <b>{plan.name}</b> {tag === 'bigger' ? <Tag tone="brand">更大</Tag> : tag === 'cheaper' ? <Tag>更便宜</Tag> : null}
+        <b>{plan.name}</b>{' '}
+        <Tag>{KIND_NAME[plan.kind]}</Tag>{' '}
+        {tag === 'bigger' ? <Tag tone="brand">更大</Tag> : tag === 'cheaper' ? <Tag>更便宜</Tag> : null}
         <small>
-          {planTraffic(plan)} · {devicesText(plan.max_devices)}
-          {month && ` · ${moneyShort(month.unit_amount)}/月`}
+          {planTraffic(plan)} · {devicesText(plan.max_devices)} · {priceNote}
         </small>
         <small className={css.optResult}>
           {changeResult(row)}

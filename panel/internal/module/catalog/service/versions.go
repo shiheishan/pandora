@@ -1,293 +1,197 @@
 package service
 
+// 版本承载用量（流量配额、设备数、限速）；改用量写进草稿（没有就新建，权益从当前版本复制），
+// 发布即冻结并成为当前版本：新购用新版本，订阅老用户在下个周期切换（subscription 的周期滚动做），一次性老用户不受影响。
+
 import (
 	"context"
 	"errors"
-	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/aegispanel/aegis/internal/module/catalog/model"
 	"github.com/aegispanel/aegis/internal/module/catalog/repo"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/aegispanel/aegis/internal/pkg/realtime"
-	"github.com/google/uuid"
 )
 
-// CreateVersion 给套餐建一个草稿版本。
-func (s *Service) CreateVersion(ctx context.Context, planID uuid.UUID) (Version, error) {
-	var out Version
-	err := s.tx.Do(ctx, func(ctx context.Context) error {
-		v, err := s.createVersionTx(ctx, planID)
-		if err != nil {
-			return err
-		}
-		out = v
-		return nil
-	})
-	return out, catalogErr(err)
-}
-
-// createVersionTx：repo.PlanByID(ForUpdate)，查不到 ErrNotFound；archived → 冲突；
-// createdBy 取登录主体；repo.InsertNextVersion；审计后返回 versionFromModel。
-func (s *Service) createVersionTx(ctx context.Context, planID uuid.UUID) (Version, error) {
-	plan, found, err := s.repo.PlanByID(ctx, planID, repo.ForUpdate)
+// writeUsageTx 把用量写入草稿版本（权益与流量配额一并替换）。
+func (s *Service) writeUsageTx(ctx context.Context, kind string, versionID uuid.UUID, usage UsageInput, ents []model.Entitlement) error {
+	ok, err := s.repo.UpdateVersionUsage(ctx, versionID, usage.MaxDevices, usage.ThrottleKbps)
 	if err != nil {
-		return Version{}, err
-	}
-	if !found {
-		return Version{}, ErrNotFound
-	}
-	if plan.Status == PlanArchived {
-		return Version{}, errs.Newf(errs.Conflict, "已归档套餐不能创建新版本")
-	}
-
-	var createdBy *uuid.UUID
-	if p, ok := authn.From(ctx); ok && p.UserID != uuid.Nil {
-		id := p.UserID
-		createdBy = &id
-	}
-
-	v, err := s.repo.InsertNextVersion(ctx, planID, createdBy)
-	if err != nil {
-		if errors.Is(err, repo.ErrDuplicate) {
-			return Version{}, errs.Newf(errs.Conflict, "该套餐已有未发布的草稿版本，请先编辑或发布它")
-		}
-		return Version{}, err
-	}
-	s.catalogChanged(ctx, rtTableVersions, realtime.OpInsert, v.ID)
-
-	ver := versionFromModel(v, nil, nil)
-	if err := s.writeAudit(ctx, ActionVersionCreate, ResourcePlanVersion, ver.ID, map[string]any{
-		"after": map[string]any{"plan_id": planID, "version": ver.Version},
-	}); err != nil {
-		return Version{}, err
-	}
-	return ver, nil
-}
-
-// UpdateVersion 全量覆盖草稿版本的语义、权益与配额，返回新的 row_version。
-func (s *Service) UpdateVersion(ctx context.Context, planID, versionID uuid.UUID, expected int64, in VersionInput) (int64, error) {
-	if expected <= 0 {
-		return 0, errs.Invalid(map[string]string{"expected_row_version": "必须为正整数"})
-	}
-	if err := validateVersionInput(&in); err != nil {
-		return 0, err
-	}
-	var next int64
-	err := s.tx.Do(ctx, func(ctx context.Context) error {
-		n, err := s.updateVersionTx(ctx, planID, versionID, expected, in)
-		if err != nil {
-			return err
-		}
-		next = n
-		return nil
-	})
-	return next, catalogErr(err)
-}
-
-func (s *Service) updateVersionTx(ctx context.Context, planID, versionID uuid.UUID, expected int64, in VersionInput) (int64, error) {
-	_, found, err := s.repo.PlanByID(ctx, planID, repo.ForUpdate)
-	if err != nil {
-		return 0, err
-	}
-	if !found {
-		return 0, ErrNotFound
-	}
-
-	cur, found, err := s.repo.VersionByID(ctx, planID, versionID, repo.ForUpdate)
-	if err != nil {
-		return 0, err
-	}
-	if !found {
-		return 0, ErrNotFound
-	}
-	if cur.RowVersion != expected {
-		return 0, rowConflict("套餐版本", cur.RowVersion)
-	}
-	if cur.Status != VersionDraft {
-		return 0, errs.Newf(errs.Conflict, "只有未发布草稿版本可以编辑")
-	}
-
-	mv := &model.PlanVersion{
-		QuotaResetStrategy:   in.QuotaResetStrategy,
-		QuotaResetDay:        in.QuotaResetDay,
-		RenewalExtendsPeriod: in.RenewalExtendsPeriod,
-		RenewalResetsQuota:   in.RenewalResetsQuota,
-		RenewalKeepsAddons:   in.RenewalKeepsAddons,
-		MaxDevices:           in.MaxDevices,
-		MaxConcurrent:        in.MaxConcurrent,
-		DeviceReleaseHours:   in.DeviceReleaseHours,
-		ThrottleKbps:         in.ThrottleKbps,
-		Notes:                in.Notes,
-	}
-	ok, err := s.repo.UpdateVersionSemantics(ctx, versionID, expected, mv)
-	if err != nil {
-		return 0, err
+		return err
 	}
 	if !ok {
-		return 0, rowConflict("套餐版本", cur.RowVersion)
+		return errs.Newf(errs.Conflict, "只有未发布的草稿版本可以修改")
+	}
+	if ents == nil {
+		ents = []model.Entitlement{}
+	}
+	for i := range ents {
+		ents[i].ID = uuid.Nil
+	}
+	if err := s.repo.ReplaceVersionChildren(ctx, versionID, ents, quotaModels(trafficQuotas(kind, usage.TrafficBytes))); err != nil {
+		return err
 	}
 	s.catalogChanged(ctx, rtTableVersions, realtime.OpUpdate, versionID)
-	if err := s.repo.ReplaceVersionChildren(ctx, versionID, entitlementModels(in.Entitlements), quotaModels(in.Quotas)); err != nil {
-		return 0, err
-	}
-
-	next := expected + 1
-	if err := s.writeAudit(ctx, ActionVersionUpdate, ResourcePlanVersion, versionID, map[string]any{
-		"before": map[string]any{"row_version": expected},
-		"after": map[string]any{
-			"row_version":  next,
-			"entitlements": len(in.Entitlements),
-			"quotas":       len(in.Quotas),
-		},
-	}); err != nil {
-		return 0, err
-	}
-	return next, nil
+	return nil
 }
 
-// PublishVersion 发布草稿版本并设为套餐当前版本，返回 (套餐新 row_version, 版本新 row_version)。
-func (s *Service) PublishVersion(ctx context.Context, planID, versionID uuid.UUID, expectedPlan, expectedVersion int64) (int64, int64, error) {
-	if expectedPlan <= 0 || expectedVersion <= 0 {
-		return 0, 0, errs.Invalid(map[string]string{
-			"expected_plan_row_version":    "必须为正整数",
-			"expected_version_row_version": "必须为正整数",
-		})
+// UpdateUsage 改用量：写入草稿版本（没有则新建），不发布。
+func (s *Service) UpdateUsage(ctx context.Context, planID uuid.UUID, in UsageUpdate) (PlanDetail, error) {
+	if err := checkExpected(in.ExpectedRowVersion); err != nil {
+		return PlanDetail{}, err
 	}
-	var planNext, verNext int64
+	fields := map[string]string{}
+	validateUsage(in.Usage, fields)
+	if err := invalid(fields); err != nil {
+		return PlanDetail{}, err
+	}
+
 	err := s.tx.Do(ctx, func(ctx context.Context) error {
-		p, v, err := s.publishVersionTx(ctx, planID, versionID, expectedPlan, expectedVersion)
+		cur, err := s.lockEditablePlan(ctx, planID, in.ExpectedRowVersion)
 		if err != nil {
 			return err
 		}
-		planNext, verNext = p, v
-		return nil
+
+		drafts, err := s.repo.DraftVersionIDs(ctx, []uuid.UUID{planID})
+		if err != nil {
+			return err
+		}
+
+		var vid uuid.UUID
+		var ents []model.Entitlement
+
+		if draftID, ok := drafts[planID]; ok {
+			vid = draftID
+			entMap, err := s.repo.Entitlements(ctx, []uuid.UUID{vid})
+			if err != nil {
+				return err
+			}
+			ents = entMap[vid]
+		} else {
+			var createdBy *uuid.UUID
+			if p, ok := authn.From(ctx); ok && p.UserID != uuid.Nil {
+				id := p.UserID
+				createdBy = &id
+			}
+			v, err := s.repo.InsertNextVersion(ctx, planID, createdBy)
+			if err != nil {
+				if errors.Is(err, repo.ErrDuplicate) {
+					return errs.Newf(errs.Conflict, "该套餐已有未发布的草稿版本")
+				}
+				return err
+			}
+			s.catalogChanged(ctx, rtTableVersions, realtime.OpInsert, v.ID)
+			vid = v.ID
+			if cur.CurrentVersionID != nil {
+				entMap, err := s.repo.Entitlements(ctx, []uuid.UUID{*cur.CurrentVersionID})
+				if err != nil {
+					return err
+				}
+				ents = entMap[*cur.CurrentVersionID]
+			}
+		}
+
+		if err := s.writeUsageTx(ctx, cur.Kind, vid, in.Usage, ents); err != nil {
+			return err
+		}
+
+		next, err := s.bumpPlanRow(ctx, planID, in.ExpectedRowVersion)
+		if err != nil {
+			return err
+		}
+		return s.writeAudit(ctx, ActionPlanUsage, ResourcePlan, planID, map[string]any{
+			"after": map[string]any{
+				"row_version":   next,
+				"version_id":    vid,
+				"traffic_bytes": in.Usage.TrafficBytes,
+				"max_devices":   in.Usage.MaxDevices,
+				"throttle_kbps": in.Usage.ThrottleKbps,
+			},
+		})
 	})
-	return planNext, verNext, catalogErr(err)
+	if err != nil {
+		return PlanDetail{}, catalogErr(err)
+	}
+	return s.GetPlan(ctx, planID)
 }
 
-func (s *Service) publishVersionTx(ctx context.Context, planID, versionID uuid.UUID, expectedPlan, expectedVersion int64) (int64, int64, error) {
-	plan, found, err := s.repo.PlanByID(ctx, planID, repo.ForUpdate)
+// publishTx 发布草稿版本并设为套餐当前版本（新建即发布与 PublishVersion 共用）。
+func (s *Service) publishTx(ctx context.Context, planID, versionID uuid.UUID, expected int64) error {
+	plan, err := s.lockEditablePlan(ctx, planID, expected)
 	if err != nil {
-		return 0, 0, err
-	}
-	if !found {
-		return 0, 0, ErrNotFound
-	}
-	if plan.Status == PlanArchived {
-		return 0, 0, errs.Newf(errs.Conflict, "已归档套餐不能重新发布")
+		return err
 	}
 
 	ver, found, err := s.repo.VersionByID(ctx, planID, versionID, repo.ForUpdate)
 	if err != nil {
-		return 0, 0, err
+		return err
 	}
 	if !found {
-		return 0, 0, ErrNotFound
-	}
-	if plan.RowVersion != expectedPlan {
-		return 0, 0, rowConflict("套餐", plan.RowVersion)
-	}
-	if ver.RowVersion != expectedVersion {
-		return 0, 0, rowConflict("套餐版本", ver.RowVersion)
+		return ErrNotFound
 	}
 	if ver.Status != VersionDraft {
-		return 0, 0, errs.Newf(errs.Conflict, "只有未发布草稿版本可以发布")
-	}
-	if plan.Visibility == VisibilityInviteOnly {
-		return 0, 0, errs.Invalid(map[string]string{"visibility": "邀请购买授权尚未实现，禁止发布"})
+		return errs.Newf(errs.Conflict, "只有未发布的草稿版本可以发布")
 	}
 
-	now := s.now()
-	groupMap, err := s.repo.VisibleGroups(ctx, []uuid.UUID{planID})
+	prices, err := s.repo.ActivePrices(ctx, []uuid.UUID{planID}, repo.ForShare)
 	if err != nil {
-		return 0, 0, err
+		return err
 	}
-	groups := groupMap[planID]
-	if groups == nil {
-		groups = []uuid.UUID{}
-	}
-
-	priceRows, err := s.repo.ActivePrices(ctx, []uuid.UUID{planID}, repo.ForShare)
-	if err != nil {
-		return 0, 0, err
-	}
-	prices := make([]Price, 0, len(priceRows))
-	for _, row := range priceRows {
-		prices = append(prices, priceFromModel(row))
-	}
-	if !publishPriceCoverage(plan.Visibility, groups, prices, now) {
-		return 0, 0, errs.Invalid(map[string]string{"prices": "至少需要一个当前有效且适用的 CNY 或 USD 活动价格"})
+	if len(prices) == 0 {
+		return errs.Invalid(map[string]string{"prices": "发布前至少设一档在售价格"})
 	}
 
 	if s.gate != nil {
-		if err := s.gate.CheckPublishable(ctx, versionID); err != nil {
-			return 0, 0, err
+		if err := s.gate.CheckPublishable(ctx, planID); err != nil {
+			return err
 		}
 	}
 
-	ok, err := s.repo.PublishVersion(ctx, versionID, expectedVersion)
+	ok, err := s.repo.PublishVersion(ctx, versionID)
 	if err != nil {
-		return 0, 0, err
+		return err
 	}
 	if !ok {
-		return 0, 0, rowConflict("套餐版本", ver.RowVersion)
+		return errs.Newf(errs.Conflict, "只有未发布的草稿版本可以发布")
 	}
 	s.catalogChanged(ctx, rtTableVersions, realtime.OpUpdate, versionID)
-	ok, err = s.repo.ActivateVersion(ctx, planID, versionID, expectedPlan)
+
+	ok, err = s.repo.ActivateVersion(ctx, planID, versionID, expected)
 	if err != nil {
-		return 0, 0, err
+		return err
 	}
 	if !ok {
-		return 0, 0, rowConflict("套餐", plan.RowVersion)
+		return rowConflict("套餐", plan.RowVersion)
 	}
 	s.catalogChanged(ctx, rtTablePlans, realtime.OpUpdate, planID)
 
-	priceIDs := qualifyingPublishPriceIDs(plan.Visibility, groups, prices, now)
-	planNext := expectedPlan + 1
-	verNext := expectedVersion + 1
-	if err := s.writeAudit(ctx, ActionVersionPublish, ResourcePlanVersion, versionID, map[string]any{
+	return s.writeAudit(ctx, ActionVersionPublish, ResourcePlanVersion, versionID, map[string]any{
 		"before": map[string]any{
-			"plan_row_version":    expectedPlan,
-			"version_row_version": expectedVersion,
+			"plan_row_version":   expected,
+			"current_version_id": plan.CurrentVersionID,
+			"plan_status":        plan.Status,
 		},
 		"after": map[string]any{
-			"plan_id":             planID,
-			"plan_row_version":    planNext,
-			"version_row_version": verNext,
-			"price_ids":           priceIDs,
+			"plan_id":          planID,
+			"plan_row_version": expected + 1,
+			"version":          ver.Version,
 		},
-	}); err != nil {
-		return 0, 0, err
-	}
-	return planNext, verNext, nil
+	})
 }
 
-// qualifyingPublishPriceIDs 收集参与发布价格覆盖判断的在售 id（CNY/USD、在窗、公开或组内适用）。
-func qualifyingPublishPriceIDs(visibility string, groups []uuid.UUID, prices []Price, now time.Time) []uuid.UUID {
-	groupSet := make(map[uuid.UUID]bool, len(groups))
-	for _, g := range groups {
-		groupSet[g] = true
+// PublishVersion 发布指定草稿版本。
+func (s *Service) PublishVersion(ctx context.Context, planID, versionID uuid.UUID, expected int64) (PlanDetail, error) {
+	if err := checkExpected(expected); err != nil {
+		return PlanDetail{}, err
 	}
-	var ids []uuid.UUID
-	for _, p := range prices {
-		if p.Status != PriceActive {
-			continue
-		}
-		if p.Currency != money.CNY && p.Currency != money.USD {
-			continue
-		}
-		if !priceInWindow(p, now) {
-			continue
-		}
-		if p.UserGroupID == nil {
-			ids = append(ids, p.ID)
-			continue
-		}
-		if visibility == VisibilityGroup && groupSet[*p.UserGroupID] {
-			ids = append(ids, p.ID)
-		}
+	err := s.tx.Do(ctx, func(ctx context.Context) error {
+		return s.publishTx(ctx, planID, versionID, expected)
+	})
+	if err != nil {
+		return PlanDetail{}, catalogErr(err)
 	}
-	return ids
+	return s.GetPlan(ctx, planID)
 }

@@ -4,17 +4,21 @@ import { isApiError } from '../../../core/api'
 import { formatCount } from '../../../core/format'
 import { href } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
-import { Button, Card, ConfirmModal, Empty, Input, QueryView, Table, Tag, useToast, type TableColumn } from '../../../ui'
+import { Button, ConfirmModal, Empty, Input, Modal, QueryView, Table, Tag, TextArea, useToast, type TableColumn } from '../../../ui'
 import { useFailure } from '../../actions'
 import { groupSavedSchema, okSchema, useInvalidateUsers, useUserGroups, type UserGroup } from './api'
-import { EXCLUSIVE_NONE_HINT, GROUP_DISABLE_NOTICE, exclusivePoolsLabel, groupBlocker, groupDeleteNotice, groupRefs } from './model'
-import ops from './Ops.module.css'
+import { EXCLUSIVE_NONE_HINT, GROUP_DISABLE_NOTICE, GROUP_DELETE_NOTICE, exclusivePoolsLabel, groupBlocker, groupRefs } from './model'
+import gcss from './Groups.module.css'
 import css from './Users.module.css'
 
-interface Draft {
+interface EditDraft {
   id: string
+  code: string
   name: string
   description: string
+  users: number
+  plans: number
+  coupons: number
 }
 
 export function GroupsTab() {
@@ -31,28 +35,43 @@ export function GroupsTab() {
       client.invalidateQueries({ queryKey: ['admin', 'plans'] }),
       client.invalidateQueries({ queryKey: ['admin', 'nodes', 'subscription', 'user-groups'] }),
     ])
-  const [draft, setDraft] = useState<Draft | null>(null)
-  const [draftError, setDraftError] = useState<string | null>(null)
+  const [editing, setEditing] = useState<EditDraft | null>(null)
+  const [editError, setEditError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [createOpen, setCreateOpen] = useState(false)
   const [deleting, setDeleting] = useState<UserGroup | null>(null)
   const [disabling, setDisabling] = useState<UserGroup | null>(null)
   const [statusBusy, setStatusBusy] = useState<string | null>(null)
 
-  const edit = (g: UserGroup) => {
-    setDraft({ id: g.id, name: g.name, description: g.description })
-    setDraftError(null)
+  const openEdit = (g: UserGroup) => {
+    setEditing({
+      id: g.id,
+      code: g.code,
+      name: g.name,
+      description: g.description,
+      users: g.users,
+      plans: g.plans,
+      coupons: g.coupons,
+    })
+    setEditError(null)
   }
-  const save = async () => {
-    if (!draft) return
-    if (!draft.name.trim()) return setDraftError('名称必填')
+  const closeEdit = () => {
+    setEditing(null)
+    setEditError(null)
+  }
+  const saveEdit = async () => {
+    if (!editing) return
+    if (!editing.name.trim()) return setEditError('名称必填')
     setSaving(true)
     try {
-      await api.post(`v1/user-groups/${encodeURIComponent(draft.id)}`, groupSavedSchema, { body: { name: draft.name.trim(), description: draft.description.trim() } })
+      await api.post(`v1/user-groups/${encodeURIComponent(editing.id)}`, groupSavedSchema, {
+        body: { name: editing.name.trim(), description: editing.description.trim() },
+      })
       toast('用户组已保存')
-      setDraft(null)
+      closeEdit()
       refresh()
     } catch (e) {
-      if (!fail(e, (f) => setDraftError(f.name ?? Object.values(f)[0] ?? null))) refresh()
+      if (!fail(e, (f) => setEditError(f.name ?? Object.values(f)[0] ?? null))) refresh()
     } finally {
       setSaving(false)
     }
@@ -87,23 +106,17 @@ export function GroupsTab() {
     {
       key: 'name',
       header: '用户组',
-      render: (g) =>
-        draft?.id === g.id ? (
-          <span className={ops.groupEdit}>
-            <Input size="sm" aria-label="名称" value={draft.name} error={draftError ?? undefined} onChange={(e) => setDraft({ ...draft, name: e.target.value })} data-autofocus="" />
-            <Input size="sm" aria-label="说明" value={draft.description} placeholder="说明（选填）" onChange={(e) => setDraft({ ...draft, description: e.target.value })} />
+      render: (g) => (
+        <span className={css.stack}>
+          <span className={gcss.groupName}>
+            {g.name}
+            {g.status === 'disabled' ? <> <Tag tone="neutral">已停用</Tag></> : null}
           </span>
-        ) : (
-          <span className={css.stack}>
-            <span className={ops.groupName}>
-              {g.name}
-              {g.status === 'disabled' ? <> <Tag tone="neutral">已停用</Tag></> : null}
-            </span>
-            <span className={css.small}>
-              {g.description || '—'} · <span className={css.mono}>{g.code}</span>
-            </span>
+          <span className={css.small}>
+            {g.description || '—'} · <span className={css.mono}>{g.code}</span>
           </span>
-        ),
+        </span>
+      ),
     },
     { key: 'users', header: '成员', width: '72px', align: 'right', mono: true, render: (g) => formatCount(g.users) },
     {
@@ -120,62 +133,99 @@ export function GroupsTab() {
     {
       key: 'ops',
       header: '',
-      width: '240px',
+      width: '280px',
       align: 'right',
       render: (g) => {
-        if (draft?.id === g.id)
-          return (
-            <span className={ops.rowActions}>
-              <Button size="xs" variant="ghost" disabled={saving} onClick={() => setDraft(null)}>
-                取消
-              </Button>
-              <Button size="xs" variant="primary" busy={saving} onClick={() => void save()}>
-                保存
-              </Button>
-            </span>
-          )
         const blocker = groupBlocker(g)
         return (
-          <span className={ops.rowActions}>
+          <span className={gcss.rowActions}>
             <a className={css.link} href={href('/users/list', { g: g.id })}>
               查看成员
             </a>
-            <>
-              <Button size="xs" variant="ghost" onClick={() => edit(g)}>
-                编辑
+            <Button size="xs" variant="ghost" onClick={() => openEdit(g)}>
+              编辑
+            </Button>
+            <span className={gcss.actionSep} aria-hidden="true" />
+            {g.status === 'disabled' ? (
+              <Button size="xs" variant="ghost" busy={statusBusy === g.id} onClick={() => void setStatus(g, false)}>
+                启用
               </Button>
-              {g.status === 'disabled' ? (
-                <Button size="xs" variant="ghost" busy={statusBusy === g.id} onClick={() => void setStatus(g, false)}>
-                  启用
-                </Button>
-              ) : (
-                <Button size="xs" variant="ghost" onClick={() => setDisabling(g)}>
-                  停用
-                </Button>
-              )}
-              <Button size="xs" variant="ghost" className={blocker ? undefined : css.dangerText} disabled={blocker !== null} title={blocker ?? undefined} onClick={() => setDeleting(g)}>
-                删除
+            ) : (
+              <Button size="xs" variant="ghost" onClick={() => setDisabling(g)}>
+                停用
               </Button>
-            </>
+            )}
+            <Button
+              size="xs"
+              variant="ghost"
+              className={blocker ? undefined : css.dangerText}
+              disabled={blocker !== null}
+              title={blocker ?? undefined}
+              onClick={() => setDeleting(g)}
+            >
+              删除
+            </Button>
           </span>
         )
       },
     },
   ]
 
+  const foot = groups.data
+    ? (() => {
+        const d = groups.data
+        const disabledCount = d.filter((g) => g.status === 'disabled').length
+        const memberTotal = d.reduce((a, g) => a + g.users, 0)
+        return (
+          <footer className={gcss.foot}>
+            <span>
+              共 {formatCount(d.length)} 个用户组 · {formatCount(disabledCount)} 个已停用 · {formatCount(memberTotal)} 位成员
+            </span>
+            <span className={gcss.footHint}>在用户详情的「资料」里给单个用户分配用户组</span>
+          </footer>
+        )
+      })()
+    : null
+
   return (
-    <div className={ops.split}>
-      <div className={ops.plainTable}>
-        <QueryView
-          query={groups}
-          rows={4}
-          isEmpty={(d) => d.length === 0}
-          empty={<Empty bare title="还没有用户组" description="新注册用户默认不属于任何组；在右侧建一个，再到用户详情里分配。" />}
-        >
-          {(d) => <Table label="用户组" columns={columns} rows={d} rowKey={(g) => g.id} />}
-        </QueryView>
-      </div>
-      <CreateGroup onDone={refresh} />
+    <div className={gcss.page}>
+      <header className={gcss.header}>
+        <h2>用户组</h2>
+        <Button variant="primary" onClick={() => setCreateOpen(true)}>
+          新建用户组
+        </Button>
+      </header>
+      <QueryView
+        query={groups}
+        rows={4}
+        isEmpty={(d) => d.length === 0}
+        empty={
+          <Empty
+            bare
+            title="还没有用户组"
+            description="新注册用户默认不属于任何组；点右上角「新建用户组」建一个，再到用户详情里分配。"
+          />
+        }
+      >
+        {(d) => (
+          <div className={gcss.tableWrap}>
+            <Table label="用户组" columns={columns} rows={d} rowKey={(g) => g.id} />
+          </div>
+        )}
+      </QueryView>
+      {foot}
+      <EditGroupModal
+        draft={editing}
+        error={editError}
+        busy={saving}
+        onClose={closeEdit}
+        onChange={(patch) => {
+          if (editing) setEditing({ ...editing, ...patch })
+          setEditError(null)
+        }}
+        onSave={() => void saveEdit()}
+      />
+      <CreateGroupModal open={createOpen} onClose={() => setCreateOpen(false)} onDone={refresh} />
       <ConfirmModal
         open={disabling !== null}
         title={`停用用户组「${disabling?.name ?? ''}」？`}
@@ -189,7 +239,7 @@ export function GroupsTab() {
       <ConfirmModal
         open={deleting !== null}
         title={`删除用户组「${deleting?.name ?? ''}」？`}
-        body={deleting ? groupDeleteNotice(deleting) : ''}
+        body={deleting ? GROUP_DELETE_NOTICE : ''}
         confirmLabel="删除"
         tone="danger"
         onConfirm={remove}
@@ -199,10 +249,77 @@ export function GroupsTab() {
   )
 }
 
+function EditGroupModal({
+  draft,
+  error,
+  busy,
+  onClose,
+  onChange,
+  onSave,
+}: {
+  draft: EditDraft | null
+  error: string | null
+  busy: boolean
+  onClose: () => void
+  onChange: (patch: Partial<Pick<EditDraft, 'name' | 'description'>>) => void
+  onSave: () => void
+}) {
+  const g = draft
+  return (
+    <Modal
+      open={g !== null}
+      onClose={onClose}
+      title="编辑用户组"
+      size={480}
+      dismissible={!busy}
+      subtitle={
+        g ? (
+          <>
+            标识 <code className={css.mono}>{g.code}</code> · 创建后不能修改
+          </>
+        ) : null
+      }
+      actions={
+        <>
+          <Button size="dialog" onClick={onClose} disabled={busy}>
+            取消
+          </Button>
+          <Button size="dialog" variant="primary" busy={busy} onClick={onSave}>
+            保存
+          </Button>
+        </>
+      }
+    >
+      {g ? (
+        <div className={gcss.formStack}>
+          <Input
+            label="名称"
+            value={g.name}
+            error={error ?? undefined}
+            onChange={(e) => onChange({ name: e.target.value })}
+            data-autofocus=""
+          />
+          <TextArea label="说明" rows={2} placeholder="选填，只在后台可见" value={g.description} onChange={(e) => onChange({ description: e.target.value })} />
+          <dl className={gcss.metaDl}>
+            <div className={gcss.metaRow}>
+              <dt>成员</dt>
+              <dd>{formatCount(g.users)} 位</dd>
+            </div>
+            <div className={gcss.metaRow}>
+              <dt>被引用</dt>
+              <dd>{groupRefs(g)}</dd>
+            </div>
+          </dl>
+        </div>
+      ) : null}
+    </Modal>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // 新建：POST v1/user-groups（无幂等）。不填标识时后端由名称生成，纯中文名得 group-<8 位十六进制>
 // ---------------------------------------------------------------------------
-function CreateGroup({ onDone }: { onDone: () => void }) {
+function CreateGroupModal({ open, onClose, onDone }: { open: boolean; onClose: () => void; onDone: () => void }) {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
@@ -213,6 +330,19 @@ function CreateGroup({ onDone }: { onDone: () => void }) {
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
 
+  const reset = () => {
+    setName('')
+    setDescription('')
+    setCode('')
+    setAdvanced(false)
+    setErrors({})
+  }
+  const close = () => {
+    if (busy) return
+    reset()
+    onClose()
+  }
+
   const submit = async () => {
     if (!name.trim()) return setErrors({ name: '请填写名称' })
     setBusy(true)
@@ -222,11 +352,8 @@ function CreateGroup({ onDone }: { onDone: () => void }) {
       if (code.trim()) body.code = code.trim()
       await api.post('v1/user-groups', groupSavedSchema, { body })
       toast(`已创建用户组「${name.trim()}」`)
-      setName('')
-      setDescription('')
-      setCode('')
-      setErrors({})
-      setAdvanced(false)
+      reset()
+      onClose()
       onDone()
     } catch (e) {
       // 409：标识撞了（没填标识时是名称生成的那个），提示到高级选项里换一个
@@ -240,9 +367,26 @@ function CreateGroup({ onDone }: { onDone: () => void }) {
   }
 
   return (
-    <Card title="新建用户组">
+    <Modal
+      open={open}
+      onClose={close}
+      title="新建用户组"
+      size={480}
+      dismissible={!busy}
+      actions={
+        <>
+          <Button size="dialog" onClick={close} disabled={busy}>
+            取消
+          </Button>
+          <Button size="dialog" variant="primary" busy={busy} type="submit" form="create-user-group-form">
+            创建
+          </Button>
+        </>
+      }
+    >
       <form
-        className={ops.formStack}
+        id="create-user-group-form"
+        className={gcss.formStack}
         onSubmit={(e) => {
           e.preventDefault()
           void submit()
@@ -258,8 +402,13 @@ function CreateGroup({ onDone }: { onDone: () => void }) {
             setErrors({})
           }}
         />
-        <Input label="说明" placeholder="选填" value={description} onChange={(e) => setDescription(e.target.value)} />
-        <details className={ops.advanced} open={advanced} onToggle={(e) => setAdvanced(e.currentTarget.open)}>
+        <TextArea
+          label="说明"
+          placeholder="选填"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+        />
+        <details className={gcss.advanced} open={advanced} onToggle={(e) => setAdvanced(e.currentTarget.open)}>
           <summary>高级选项</summary>
           <Input
             label="标识（英文）"
@@ -274,11 +423,7 @@ function CreateGroup({ onDone }: { onDone: () => void }) {
             }}
           />
         </details>
-        <Button type="submit" variant="primary" busy={busy}>
-          创建
-        </Button>
-        <p className={css.small}>在用户详情的「画像」里给单个用户分配用户组。</p>
       </form>
-    </Card>
+    </Modal>
   )
 }

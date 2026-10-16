@@ -5,13 +5,21 @@ paths:
 
 # 后台 · 营销
 
+- 地址：`/marketing/coupons[/<券 id>]?status=active|paused`（详情弹窗）、`/marketing/gifts/<templates|batches|usages>[/<批次 id>]`、`/marketing/commission/<review|withdraw|settings>?status=open|done|all`、`/marketing/signup`。「注册试用与邀请」直接挂 users 模块的 `SignupGrowth`（无 props，样式自带），本模块不改 users/ 下的文件。
+- 文件分工：`logic.ts` 放输入换算与优惠券，`giftModel.ts` 放礼品卡，`commissionModel.ts` 放提现与复核，`levelsModel.ts` 放佣金规则表单与单独设置；各配单测（`marketing.test.ts` / `gifts.test.ts` / `commissionModel.test.ts` / `levelsModel.test.ts`）。
+- 只有人民币：券、礼品卡、佣金、提现都没有币种，`formatMoney` 单参。
+- 优惠券（10-16）：新建与批量生成都在弹窗里（`CouponFormModal`），详情（规则 + 最近 200 条兑换）也是弹窗。有开始时间 `valid_from`（空 = 创建即生效）；没有「限定时长」，后端也已删 `applicable_intervals`。批量上限前端 500（`COUPON_BATCH_MAX`），后端 1000，保持现状。
 - 礼品卡明文只在两处出现：生码响应里的前 4 张样例（`sample`）与批次的一次性导出 CSV；列表、使用记录、按筛选导出的报表一律掩码。不要在别处展示或拼出明文。
 - 「导出当前筛选」走 `GET v1/gift-cards/codes/report`（要 reauth，无幂等），与卡码列表共用 `codeFilterQuery`；确认框写明明文只在批次的一次性导出里。
 - 下载文件名优先取 `Content-Disposition`，幂等重放的响应没有这个头，所以兜底按批次 id 前 8 位自拼（`batchFileName` / `codesReportFileName`）。
 - 卡码的行内停用 / 恢复不要 reauth：发现异常要能立刻止血（契约有意设计）。
-- 后端恒回的字段在 schema 里必填、不写降级分支：`gift-cards/stats` 的 `balance_issued`，`commission/overview` 的 `total_earned` / `invited_users` / `scope`（后端缺设置时已兜底 `every_order`），`commission/config` 的 `scope`。
-- 前端校验的错误键与后端 422 `fields` 同名（`logic.ts` 的表单构建），改字段名两边一起改。
-- 佣金设置分两张表单：比例 / 冻结 / 最低提现 / 范围在 `Commission.tsx` 的 `Settings`；多级分销与提现开关、方式在 `CommissionLevels.tsx`（`levelsModel.ts` 构建请求体，文件名不要和 `CommissionLevels.tsx` 只差大小写；提现方式开关两种状态都至少选一种，关着时管的是其他币种，三级之和与开启全 0 的错误都挂 `distribution_l1`）。两张都发 `POST v1/commission/config`，只发自己那几项。
-- 单独佣金设置（`CommissionOverrides.tsx`）：按邮箱设，比例或范围留空 = 跟全局，再保存整行覆盖；增删都要 reauth、不带幂等键。
+- 礼品卡模板（10-16）：逐行列表，没有编辑入口；只能新建（`TemplateModal`）与行内暂停 / 恢复。暂停恢复是把整份模板原样重发 `POST v1/gift-cards`（`templateStatusBody`，只改 status，别的字段原样带回，要 reauth）。新建只填名称、类型、奖励、仅新用户 / 仅付费用户、每人限兑次数；说明、主题色、需邀请、限定套餐、冷却小时不再在界面上出现（新建发空值，老模板的值暂停恢复时原样保留）。盲盒建模板时就填奖品（2–50 个）。套餐卡：订阅套餐必须选一档在售周期价，一次性套餐自动取它唯一的在售价；价格后来下架的模板行标「价格已下架」，这时暂停恢复会被后端 422 拒（要重建模板）。
+- 后端恒回的字段在 schema 里必填、不写降级分支：`gift-cards/stats` 的 `balance_issued`，模板的 `price_archived`，`commission/overview` 的 `total_earned` / `invited_users` / `scope`（后端缺设置时已兜底 `every_order`）。
+- 前端校验的错误键与后端 422 `fields` 同名（各 model 文件的表单构建），改字段名两边一起改。
+- 佣金与提现分三个二级页签：待复核佣金（badge = `need_review`）、提现申请（badge = `waiting_withdrawals`）、规则设置。
+- 提现筛选「处理中 / 已完成 / 全部」：处理中 = `requested,approved`，已完成 = `paid,rejected`，全部不带 status（`queries.ts` 的 `WITHDRAWAL_FILTER_STATUS`，后端 status 收逗号分隔多状态）。提现只有这四态（`withdrawalState`）。「通过」先弹确认框；拒绝必填理由（用户可见）。
+- 佣金规则合成一张表单（`CommissionSettings.tsx`，`levelsModel.ts` 的 `settingsToForm` / `buildSettingsConfig`）：返佣比例、冻结期、计佣范围、三级分销开关与三级比例、开放提现开关、最低提现、提现方式，一次 `POST v1/commission/config` 发全部 10 个字段。三级之和与开启全 0 的错误都挂 `distribution_l1`；提现方式开关两种状态都至少选一种（关着时留着的方式在重新开放时直接生效）。关闭提现 = 佣金解冻即自动转入余额。文件名 `levelsModel.ts` 不要和组件文件只差大小写。
+- 单独佣金设置（`CommissionOverrides.tsx`，放在规则设置页签表单下面）：按邮箱设，比例或范围留空 = 跟全局，再保存整行覆盖；增删都要 reauth、不带幂等键。
 - 打 USDT 提现的款：流水号填链上交易哈希（前端只看形状），实付 USDT 数量可选、十进制字符串；面板不发起链上转账，文案不要暗示会自动打款。
-- 券的「限定时长」（`applicable_intervals`，`COUPON_INTERVAL_OPTIONS`）：不选即不限，单张与批量生成共用 `CouponForm`；选了的券只能用在这些计费周期的新购 / 续费 / 换套餐上，流量包与流量重置没有周期、用不了。列表在适用套餐后写 `intervalScopeLabel`；响应恒为数组，schema 仍把 null 收成 `[]`
+- 页面级说明在 `admin/page-help.ts` 的 `marketing:coupons` / `marketing:gifts` / `marketing:commission`，页面里不写段落说明。
+- 10-16 设计稿没画、但不在删除清单里的现有能力保留：单独佣金设置、提现方式、「导出当前筛选」、使用记录按模板筛选。

@@ -13,7 +13,6 @@ import (
 	auditrepo "github.com/aegispanel/aegis/internal/module/audit/repo"
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/module/promo/repo"
-	settingsvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
@@ -25,17 +24,14 @@ import (
 )
 
 type fakePrice struct {
-	plan     uuid.UUID
-	currency string
-	amount   decimal.Decimal
-	interval string // 空按 month
+	plan   uuid.UUID
+	amount decimal.Decimal
 }
 
 // fakeCatalog 实现 CatalogReader，供试算与建券时校验套餐。
 type fakeCatalog struct {
 	plans  map[uuid.UUID]bool
 	prices map[uuid.UUID]fakePrice
-	packs  map[uuid.UUID]fakePrice
 }
 
 func (f *fakeCatalog) MissingPlans(_ context.Context, ids []uuid.UUID) ([]uuid.UUID, error) {
@@ -48,24 +44,12 @@ func (f *fakeCatalog) MissingPlans(_ context.Context, ids []uuid.UUID) ([]uuid.U
 	return missing, nil
 }
 
-func (f *fakeCatalog) PriceSubtotal(_ context.Context, planID, priceID uuid.UUID) (string, decimal.Decimal, string, error) {
+func (f *fakeCatalog) PriceSubtotal(_ context.Context, planID, priceID uuid.UUID) (decimal.Decimal, error) {
 	p, ok := f.prices[priceID]
 	if !ok || p.plan != planID {
-		return "", decimal.Zero, "", errs.New(errs.NotFound)
+		return decimal.Zero, errs.New(errs.NotFound)
 	}
-	iv := p.interval
-	if iv == "" {
-		iv = "month"
-	}
-	return p.currency, p.amount, iv, nil
-}
-
-func (f *fakeCatalog) PackSubtotal(_ context.Context, packID uuid.UUID) (string, decimal.Decimal, error) {
-	p, ok := f.packs[packID]
-	if !ok {
-		return "", decimal.Zero, errs.New(errs.NotFound)
-	}
-	return p.currency, p.amount, nil
+	return p.amount, nil
 }
 
 // fakeUsers 实现 UserDirectory。
@@ -92,15 +76,6 @@ func (f *fakeUsers) UserGroupID(_ context.Context, userID uuid.UUID) (*uuid.UUID
 	return nil, nil
 }
 
-// fakeSite 实现 SiteSettings，供建券默认币种测试。
-type fakeSite struct {
-	currency string
-}
-
-func (f *fakeSite) Site(context.Context) (settingsvc.Site, error) {
-	return settingsvc.Site{Name: "测试站", Timezone: "UTC", Currency: f.currency}, nil
-}
-
 type env struct {
 	row   func(ctx context.Context, q string, args ...any) *sql.Row
 	exec  func(ctx context.Context, q string, args ...any) error
@@ -109,7 +84,6 @@ type env struct {
 	txm   *tx.Manager
 	cat   *fakeCatalog
 	users *fakeUsers
-	site  *fakeSite
 	// replica 在 session_replication_role = replica 的事务里执行 q：orders、coupon_redemptions 有禁删触发器，
 	// 真提交的用例靠它删自己建的订单与占用（测试库是超级用户）。
 	replica func(q string, args ...any) error
@@ -131,12 +105,10 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	txm := tx.NewManager(d)
-	site := &fakeSite{currency: "CNY"}
-	svc := New(repo.New(d), txm, auditSvc, site)
+	svc := New(repo.New(d), txm, auditSvc)
 	cat := &fakeCatalog{
 		plans:  map[uuid.UUID]bool{},
 		prices: map[uuid.UUID]fakePrice{},
-		packs:  map[uuid.UUID]fakePrice{},
 	}
 	users := &fakeUsers{
 		emails: map[uuid.UUID]string{},
@@ -170,7 +142,6 @@ func newEnv(t *testing.T) *env {
 		txm:   txm,
 		cat:   cat,
 		users: users,
-		site:  site,
 	}
 }
 
@@ -190,7 +161,7 @@ func newPlan(t *testing.T, e *env, ctx context.Context) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID
 	if err := e.row(ctx,
-		`INSERT INTO plans (code, name) VALUES (?, ?) RETURNING id`,
+		`INSERT INTO plans (code, name, kind) VALUES (?, ?, 'subscription') RETURNING id`,
 		"p-"+randHex(8), "测试套餐",
 	).Scan(&id); err != nil {
 		t.Fatal(err)
@@ -237,7 +208,6 @@ func percentSpec(bp int64) Spec {
 	return Spec{
 		Name:       "测试券",
 		Face:       Face{Kind: KindPercent, PercentBP: bp},
-		Currency:   "CNY",
 		MinOrder:   decimal.Zero,
 		MaxPerUser: 1,
 	}
@@ -251,7 +221,6 @@ func fixedSpec(amount string) Spec {
 	return Spec{
 		Name:       "测试券",
 		Face:       Face{Kind: KindFixed, AmountOff: amt},
-		Currency:   "CNY",
 		MinOrder:   decimal.Zero,
 		MaxPerUser: 1,
 	}
@@ -265,7 +234,6 @@ func target(user uuid.UUID, subtotal string) Target {
 	return Target{
 		UserID:   user,
 		PlanID:   nil,
-		Currency: "CNY",
 		Subtotal: amt,
 	}
 }
@@ -276,8 +244,8 @@ func target(user uuid.UUID, subtotal string) Target {
 func newOrder(t *testing.T, e *env, ctx context.Context, user uuid.UUID) OrderRef {
 	t.Helper()
 	o := OrderRef{No: "T-" + strings.ToUpper(randHex(16))}
-	if err := e.row(ctx, `INSERT INTO orders (order_no, user_id, kind, currency, subtotal_amount, total_amount, payable_amount, expires_at)
-		VALUES (?, ?, 'new', 'CNY', 10, 10, 10, now() + interval '30 minutes') RETURNING id`, o.No, user).Scan(&o.ID); err != nil {
+	if err := e.row(ctx, `INSERT INTO orders (order_no, user_id, kind, subtotal_amount, total_amount, payable_amount, expires_at)
+		VALUES (?, ?, 'new', 10, 10, 10, now() + interval '30 minutes') RETURNING id`, o.No, user).Scan(&o.ID); err != nil {
 		t.Fatalf("建订单: %v", err)
 	}
 	tx.AfterCommit(ctx, "", func(context.Context) {

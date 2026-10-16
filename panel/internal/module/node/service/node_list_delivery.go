@@ -10,7 +10,7 @@ import (
 const nodeDeliveryFreshWindow = 10 * time.Minute
 
 const (
-	nodeNoteNotActive       = "服务状态不是 active，不下发"
+	nodeNoteNotActive       = "节点不在服务中（草稿、已停用或已退役）"
 	nodeNoteNoPool          = "未划入节点池，不服务任何用户"
 	nodeNotePoolInactive    = "所在节点池未启用，不下发"
 	nodeNotePoolUnbound     = "所在节点池没有绑定任何套餐，不会出现在任何用户的订阅里"

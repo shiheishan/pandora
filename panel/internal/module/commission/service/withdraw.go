@@ -23,36 +23,35 @@ var errPayoutStateLost = errs.Newf(errs.Conflict, "提现状态已变化，请�
 // errPayoutUnderfunded 是可提现佣金科目余额不够这笔打款（账本与提现记录对不上，需要人工核对）。
 var errPayoutUnderfunded = errs.Newf(errs.Conflict, "可提现佣金账户余额不足，无法打款")
 
-// available 按唯一口径算用户某一币种的可用佣金：已解冻 − 未驳回的提现（在途与已打款）− 已转余额 − 注销时作废的。
+// available 按唯一口径算用户的可用佣金：已解冻 − 未驳回的提现（在途与已打款）− 已转余额 − 注销时作废的。
 // 可能为负（只在账本被手工改过时）。要据此放行动账的调用方必须先在本事务里 LockUser。
-func (s *Service) available(ctx context.Context, userID uuid.UUID, cur money.Currency) (decimal.Decimal, error) {
-	et, err := s.repo.EntryTotalsOf(ctx, userID, string(cur))
+func (s *Service) available(ctx context.Context, userID uuid.UUID) (decimal.Decimal, error) {
+	et, err := s.repo.EntryTotalsOf(ctx, userID)
 	if err != nil {
 		return decimal.Zero, err
 	}
-	wt, err := s.repo.WithdrawalTotalsOf(ctx, userID, string(cur))
+	wt, err := s.repo.WithdrawalTotalsOf(ctx, userID)
 	if err != nil {
 		return decimal.Zero, err
 	}
-	return s.availableFrom(ctx, userID, cur, et, wt)
+	return s.availableFrom(ctx, userID, et, wt)
 }
 
 // availableFrom 同 available，条目与提现汇总由调用方先查好（门户汇总要展示它们）。
-func (s *Service) availableFrom(ctx context.Context, userID uuid.UUID, cur money.Currency, et repo.EntryTotals, wt repo.WithdrawalTotals) (decimal.Decimal, error) {
-	tr, err := s.repo.TransferTotalOf(ctx, userID, string(cur))
+func (s *Service) availableFrom(ctx context.Context, userID uuid.UUID, et repo.EntryTotals, wt repo.WithdrawalTotals) (decimal.Decimal, error) {
+	tr, err := s.repo.TransferTotalOf(ctx, userID)
 	if err != nil {
 		return decimal.Zero, err
 	}
-	fo, err := s.repo.ForfeitTotalOf(ctx, userID, string(cur))
+	fo, err := s.repo.ForfeitTotalOf(ctx, userID)
 	if err != nil {
 		return decimal.Zero, err
 	}
 	return et.Available.Sub(wt.InFlight).Sub(wt.Paid).Sub(tr).Sub(fo), nil
 }
 
-// RequestWithdrawal 发起一笔提现申请，返回申请 id。币种取用户唯一有可用佣金的那个（见 pickCurrency）。只改状态不记账，钱在打款那一步才离开可提现佣金。
-// method 是提现方式，必须在后台开放的方式里。提现关闭只关站点币种（站点币种的佣金改为解冻后自动转余额）：
-// 关着时只在站点币种以外的币种里选，没有就回 ErrWithdrawDisabled。
+// RequestWithdrawal 发起一笔提现申请，返回申请 id。只改状态不记账，钱在打款那一步才离开可提现佣金。
+// method 是提现方式，必须在后台开放的方式里。提现关闭时不能申请提现，解冻的佣金自动转余额。
 // 一个用户同一时间只能有一笔在途；与转余额用同一把用户锁、同一口径，后到的一方一定看得见前一方。
 func (s *Service) RequestWithdrawal(ctx context.Context, userID uuid.UUID, amount decimal.Decimal, method, payoutDetail string) (uuid.UUID, error) {
 	payout, err := validateWithdrawal(amount, method, payoutDetail)
@@ -71,18 +70,8 @@ func (s *Service) RequestWithdrawal(ctx context.Context, userID uuid.UUID, amoun
 		if err != nil {
 			return err
 		}
-		var skip money.Currency
 		if !wd.Enabled {
-			if skip, err = s.ledger.DefaultCurrency(ctx); err != nil {
-				return err
-			}
-			_, _, ok, err := s.pickCurrency(ctx, userID, skip)
-			if err != nil {
-				return err
-			}
-			if !ok {
-				return ErrWithdrawDisabled
-			}
+			return ErrWithdrawDisabled
 		}
 		method = strings.TrimSpace(method)
 		if !sliceContains(wd.Methods, method) {
@@ -102,11 +91,11 @@ func (s *Service) RequestWithdrawal(ctx context.Context, userID uuid.UUID, amoun
 		if inFlight {
 			return ErrWithdrawPending
 		}
-		cur, avail, ok, err := s.pickCurrency(ctx, userID, skip)
+		avail, err := s.available(ctx, userID)
 		if err != nil {
 			return err
 		}
-		if !ok {
+		if !avail.IsPositive() {
 			return ErrNoCommission
 		}
 		if amount.GreaterThan(avail) {
@@ -118,7 +107,6 @@ func (s *Service) RequestWithdrawal(ctx context.Context, userID uuid.UUID, amoun
 		}
 		w := &model.Withdrawal{
 			UserID:       userID,
-			Currency:     string(cur),
 			Amount:       amount,
 			PayoutSealed: sealed,
 			Method:       method,
@@ -135,7 +123,7 @@ func (s *Service) RequestWithdrawal(ctx context.Context, userID uuid.UUID, amoun
 			Action:       ActionWithdrawalRequested,
 			ResourceType: ResourceWithdrawal,
 			ResourceID:   &id,
-			Data:         map[string]any{"amount": amount.StringFixed(2), "currency": string(cur), "method": method},
+			Data:         map[string]any{"amount": amount.StringFixed(2), "method": method},
 		})
 	})
 	if err != nil {
@@ -278,10 +266,8 @@ func (s *Service) MarkWithdrawalPaid(ctx context.Context, id uuid.UUID, referenc
 		if f := ValidatePaidUSDT(w.Method, reference, paidUSDT); f != nil {
 			return errs.Invalid(f)
 		}
-		cur := money.Currency(w.Currency)
 		txnID, err := s.ledger.Post(ctx, ledgersvc.Posting{
 			Kind:       ledgersvc.KindCommissionPaid,
-			Currency:   cur,
 			SourceType: SourceWithdrawal,
 			SourceID:   w.ID,
 			Memo:       "佣金提现打款",
@@ -305,7 +291,6 @@ func (s *Service) MarkWithdrawalPaid(ctx context.Context, id uuid.UUID, referenc
 		}
 		data := map[string]any{
 			"amount":     w.Amount.StringFixed(2),
-			"currency":   w.Currency,
 			"reference":  reference,
 			"ledger_txn": txnID.String(),
 			"method":     w.Method,

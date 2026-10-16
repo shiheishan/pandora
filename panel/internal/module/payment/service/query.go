@@ -192,7 +192,6 @@ func (s *Service) queryRef(ctx context.Context, orderID uuid.UUID, ref repo.Quer
 			OutTradeNo:        ref.OutTradeNo,
 			Amount:            chRes.Amount,
 			Fee:               decimal.Zero,
-			Currency:          chRes.Currency,
 			Method:            chRes.Method,
 			Raw:               map[string]string{"source": "active_query", "method": chRes.Method},
 			SignatureVerified: true,
@@ -200,13 +199,12 @@ func (s *Service) queryRef(ctx context.Context, orderID uuid.UUID, ref repo.Quer
 		}, payHook)
 		if errors.Is(rerr, ErrAmountMismatch) || errors.Is(rerr, ErrProviderRefMismatch) {
 			// 渠道说已付、金额或渠道单号却和意图对不上：比普通失败严重，要人看
-			plog.From(ctx).Error("查单结果与支付意图不符（金额、币种或渠道单号），未入账",
+			plog.From(ctx).Error("查单结果与支付意图不符（金额或渠道单号），未入账",
 				zap.String("order_id", orderID.String()),
 				zap.String("provider", ref.ProviderCode),
 				zap.String("out_trade_no", ref.OutTradeNo),
 				zap.String("channel_ref", chRes.PaymentRef),
-				zap.String("channel_amount", chRes.Amount.StringFixed(2)),
-				zap.String("currency", string(chRes.Currency)))
+				zap.String("channel_amount", chRes.Amount.StringFixed(2)))
 		}
 		if rerr != nil {
 			return out, false, rerr

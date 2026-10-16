@@ -294,7 +294,7 @@ func (s *Service) ListAnnouncements(ctx context.Context) (AdminAnnouncements, er
 	if err != nil {
 		return AdminAnnouncements{}, err
 	}
-	planList, err := s.plans.ListPlans(ctx)
+	planList, err := s.plans.ListPlans(ctx, catalogsvc.PlanFilter{})
 	if err != nil {
 		return AdminAnnouncements{}, err
 	}

@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 )
 
+// portalPlans 是用户端的公开目录：不要求登录，带了登录态就按用户组过滤可见性（在 service）。
 func (h *Handler) portalPlans(c *gin.Context) {
 	var userID *uuid.UUID
 	if p, ok := authn.FromGin(c); ok && p.UserID != uuid.Nil {
@@ -22,17 +23,4 @@ func (h *Handler) portalPlans(c *gin.Context) {
 		plans = []portalPlan{}
 	}
 	httpx.OK(c, portalPlansResponse{Plans: plans})
-}
-
-func (h *Handler) portalTrafficPacks(c *gin.Context) {
-	packs, err := h.svc.ActiveTrafficPacks(c.Request.Context())
-	if err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	out := portalPacksFrom(packs)
-	if out == nil {
-		out = []portalPack{}
-	}
-	httpx.OK(c, portalTrafficPacksResponse{Packs: out})
 }

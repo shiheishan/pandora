@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/google/uuid"
-
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/module/order/model"
 	"github.com/aegispanel/aegis/internal/module/order/repo"
@@ -19,13 +17,13 @@ import (
 // o.ID 为 uuid.Nil 时由库生成并回填。
 //
 // 唯一冲突怎么区分：repo 只把唯一冲突翻成一个哨兵（约束名其实取得到，见 db.ConstraintErrors 的 ByName，这里还没按名分），所以按订单种类判断。orders 上现在有三个唯一约束：
-// 订单号（随机段碰撞，概率极低）、orders_one_open_subscription_change（renewal、upgrade）与 orders_one_open_traffic_reset（traffic_reset）。
-// 续费、换套餐撞了按「已有未完成的续费或变更单」回 ErrOpenChange（订单号碰撞也会落到这里，概率可以忽略）；重置单撞了回 errOpenReset；
+// 订单号（随机段碰撞，概率极低）、orders_one_open_subscription_change（renewal、upgrade、stack）与 orders_one_open_traffic_reset（traffic_reset）。
+// 续费、换套餐、叠加撞了按「已有未完成的续费或变更单」回 ErrOpenChange（订单号碰撞也会落到这里，概率可以忽略）；重置单撞了回 errOpenReset；
 // 其余种类只可能是订单号碰撞，回内部错误，用户重试即可（事务已作废，不能在同一事务里换号重插）。
 func (s *Service) placeOrder(ctx context.Context, o *model.Order, actor Actor) (model.Reservation, error) {
 	if err := s.repo.CreateOrder(ctx, o); err != nil {
 		if repo.IsDuplicate(err) {
-			if o.Kind == KindRenewal || o.Kind == KindUpgrade {
+			if o.Kind == KindRenewal || o.Kind == KindUpgrade || o.Kind == KindStack {
 				return model.Reservation{}, ErrOpenChange
 			}
 			if o.Kind == KindTrafficReset {
@@ -63,69 +61,8 @@ func (s *Service) placeOrder(ctx context.Context, o *model.Order, actor Actor) (
 	return res, nil
 }
 
-// checkPurchaseLimit：limit 为 nil 什么都不做；否则 repo.EnsureCounter，再 repo.CounterForUpdate，
-// purchased + reserved >= *limit 回 ErrPurchaseLimit。
-func (s *Service) checkPurchaseLimit(ctx context.Context, planID, userID uuid.UUID, limit *int) error {
-	if limit == nil {
-		return nil
-	}
-	if err := s.repo.EnsureCounter(ctx, planID, userID); err != nil {
-		return err
-	}
-	c, ok, err := s.repo.CounterForUpdate(ctx, planID, userID)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return fmt.Errorf("order: 限购计数行缺失")
-	}
-	if c.Purchased+c.Reserved >= *limit {
-		return ErrPurchaseLimit
-	}
-	return nil
-}
-
-// holdNewPurchase 新购的库存与限购占用（数量 1）：catalog.ReserveStock(planID, 1) 返回 true 时插一条库存明细；
-// limited 为真时 repo.AdjustCounter(plan, user, 0, +1)（返回 false 当内部错误）并插一条限购明细。
-func (s *Service) holdNewPurchase(ctx context.Context, res model.Reservation, planID, userID uuid.UUID, limited bool) error {
-	ok, err := s.catalog.ReserveStock(ctx, planID, 1)
-	if err != nil {
-		return err
-	}
-	if ok {
-		sr := model.StockReservation{
-			ReservationID: res.ID,
-			OrderID:       res.OrderID,
-			PlanID:        planID,
-			Quantity:      1,
-		}
-		if err := s.repo.CreateStockReservation(ctx, &sr); err != nil {
-			return err
-		}
-	}
-	if !limited {
-		return nil
-	}
-	changed, err := s.repo.AdjustCounter(ctx, planID, userID, 0, 1)
-	if err != nil {
-		return err
-	}
-	if !changed {
-		return fmt.Errorf("order: 限购预留计数更新失败")
-	}
-	lr := model.LimitReservation{
-		ReservationID: res.ID,
-		OrderID:       res.OrderID,
-		PlanID:        planID,
-		UserID:        userID,
-		Quantity:      1,
-	}
-	return s.repo.CreateLimitReservation(ctx, &lr)
-}
-
 // captureReservation 确认占用：锁预留行（repo.ReservationByOrder ForNoKeyUpdate），UpdateReservation held→captured（false 回 ErrStateChanged），
-// 写 capture 流水；然后库存明细逐条 catalog.CaptureStock、限购明细逐条 AdjustCounter(+q, −q)（false 当内部错误）、
-// 订单有券（o.CouponID != nil）时 promo.Capture(o.ID)。余额不在这里处理（由调用方按情况 PostOrderPaid / CaptureFromBalance）。
+// 写 capture 流水；订单有券（o.CouponID != nil）时 promo.Capture(o.ID)。余额不在这里处理（由调用方按情况 PostOrderPaid / CaptureFromBalance）。
 func (s *Service) captureReservation(ctx context.Context, o model.Order, actor Actor) error {
 	res, ok, err := s.repo.ReservationByOrder(ctx, o.ID, repo.ForNoKeyUpdate)
 	if err != nil {
@@ -156,28 +93,6 @@ func (s *Service) captureReservation(ctx context.Context, o model.Order, actor A
 		return err
 	}
 
-	stocks, err := s.repo.StockReservations(ctx, res.ID)
-	if err != nil {
-		return err
-	}
-	for _, st := range stocks {
-		if err := s.catalog.CaptureStock(ctx, st.PlanID, st.Quantity); err != nil {
-			return err
-		}
-	}
-	limits, err := s.repo.LimitReservations(ctx, res.ID)
-	if err != nil {
-		return err
-	}
-	for _, lim := range limits {
-		changed, err := s.repo.AdjustCounter(ctx, lim.PlanID, lim.UserID, lim.Quantity, -lim.Quantity)
-		if err != nil {
-			return err
-		}
-		if !changed {
-			return fmt.Errorf("order: 限购确认计数更新失败")
-		}
-	}
 	if o.CouponID != nil {
 		if err := s.promo.Capture(ctx, o.ID); err != nil {
 			return err
@@ -189,6 +104,13 @@ func (s *Service) captureReservation(ctx context.Context, o model.Order, actor A
 // releaseOrder 取消或超时释放。调用方已锁住订单行且 o.Status == StatusPending（不满足回 ErrStateChanged）。
 // to 是 StatusCancelled 或 StatusExpired，event 是 EventCancel 或 EventExpire，reason 写进预留 release_reason 与订单 cancel_reason。
 func (s *Service) releaseOrder(ctx context.Context, o model.Order, to, reason, event string, actor Actor) (model.Order, error) {
+	return s.releaseOrderWith(ctx, o, to, reason, event, actor, nil)
+}
+
+// releaseOrderWith 同 releaseOrder；beforeHold 非 nil 时在释放预留与券之后、释放余额冻结之前调用（归档套餐的迟到付款在这里挂账并转余额，
+// 见 CloseArchivedOrder），它出错整笔回滚。
+func (s *Service) releaseOrderWith(ctx context.Context, o model.Order, to, reason, event string, actor Actor,
+	beforeHold func(ctx context.Context) error) (model.Order, error) {
 	if o.Status != StatusPending {
 		return model.Order{}, ErrStateChanged
 	}
@@ -228,30 +150,13 @@ func (s *Service) releaseOrder(ctx context.Context, o model.Order, to, reason, e
 		return model.Order{}, err
 	}
 
-	stocks, err := s.repo.StockReservations(ctx, res.ID)
-	if err != nil {
-		return model.Order{}, err
-	}
-	for _, st := range stocks {
-		if err := s.catalog.ReleaseStock(ctx, st.PlanID, st.Quantity); err != nil {
-			return model.Order{}, err
-		}
-	}
-	limits, err := s.repo.LimitReservations(ctx, res.ID)
-	if err != nil {
-		return model.Order{}, err
-	}
-	for _, lim := range limits {
-		changed, err := s.repo.AdjustCounter(ctx, lim.PlanID, lim.UserID, 0, -lim.Quantity)
-		if err != nil {
-			return model.Order{}, err
-		}
-		if !changed {
-			return model.Order{}, fmt.Errorf("order: 限购释放计数更新失败")
-		}
-	}
 	if o.CouponID != nil {
 		if err := s.promo.Release(ctx, o.ID, reason); err != nil {
+			return model.Order{}, err
+		}
+	}
+	if beforeHold != nil {
+		if err := beforeHold(ctx); err != nil {
 			return model.Order{}, err
 		}
 	}

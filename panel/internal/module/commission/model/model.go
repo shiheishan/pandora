@@ -16,7 +16,6 @@ type Entry struct {
 	OrderID          uuid.UUID       `gorm:"column:order_id;type:uuid"`
 	OrderNo          string          `gorm:"column:order_no"`
 	PaymentID        *uuid.UUID      `gorm:"column:payment_id;type:uuid"`
-	Currency         string          `gorm:"column:currency"`
 	BaseAmount       decimal.Decimal `gorm:"column:base_amount"`
 	RateBP           int64           `gorm:"column:rate_bp"`
 	Level            int             `gorm:"column:level"`         // 第几级邀请人 1–3
@@ -45,7 +44,6 @@ func (Entry) TableName() string { return "commission_entries" }
 type Withdrawal struct {
 	ID              uuid.UUID        `gorm:"column:id;type:uuid;primaryKey;default:uuidv7()"`
 	UserID          uuid.UUID        `gorm:"column:user_id;type:uuid"`
-	Currency        string           `gorm:"column:currency"`
 	Amount          decimal.Decimal  `gorm:"column:amount"`
 	PayoutSealed    []byte           `gorm:"column:payout_sealed"`
 	Method          string           `gorm:"column:method"` // 提现方式，见 settings 的提现方式目录；other 是迁移前的自由填写
@@ -69,7 +67,6 @@ func (Withdrawal) TableName() string { return "withdrawals" }
 type Transfer struct {
 	ID          uuid.UUID       `gorm:"column:id;type:uuid;primaryKey"`
 	UserID      uuid.UUID       `gorm:"column:user_id;type:uuid"`
-	Currency    string          `gorm:"column:currency"`
 	Amount      decimal.Decimal `gorm:"column:amount"`
 	LedgerTxnID uuid.UUID       `gorm:"column:ledger_txn_id;type:uuid"`
 	EntryID     *uuid.UUID      `gorm:"column:entry_id;type:uuid"` // 自动转余额对应的佣金条目；手动转为 nil
@@ -79,12 +76,11 @@ type Transfer struct {
 // TableName 固定表名。
 func (Transfer) TableName() string { return "commission_transfers" }
 
-// Forfeiture 是 commission_forfeitures 表的一行（只追加）：账号注销时作废的可提现佣金，每人每币种最多一行。
+// Forfeiture 是 commission_forfeitures 表的一行（只追加）：账号注销时作废的可提现佣金，每人最多一行。
 // ID 即账本 commission_voided 交易的来源 id。
 type Forfeiture struct {
 	ID          uuid.UUID       `gorm:"column:id;type:uuid;primaryKey"`
 	UserID      uuid.UUID       `gorm:"column:user_id;type:uuid"`
-	Currency    string          `gorm:"column:currency"`
 	Amount      decimal.Decimal `gorm:"column:amount"`
 	Reason      string          `gorm:"column:reason"`
 	LedgerTxnID uuid.UUID       `gorm:"column:ledger_txn_id;type:uuid"`

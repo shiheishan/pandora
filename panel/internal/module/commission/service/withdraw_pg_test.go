@@ -200,16 +200,30 @@ func TestAdminWithdrawalsAndOverview(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := e.svc.AdminWithdrawals(ctx, "bogus"); errCode(err) != errs.ValidationFailed {
+	if _, err := e.svc.AdminWithdrawals(ctx, []string{"bogus"}); errCode(err) != errs.ValidationFailed {
 		t.Fatalf("非法状态应 422: %v", err)
 	}
-	rows, err := e.svc.AdminWithdrawals(ctx, WithdrawalRequested)
+	if _, err := e.svc.AdminWithdrawals(ctx, []string{WithdrawalRequested, "bogus"}); errCode(err) != errs.ValidationFailed {
+		t.Fatalf("混进一个非法状态也应 422: %v", err)
+	}
+	// 「已完成」= paid,rejected：刚申请的不在里面
+	done, err := e.svc.AdminWithdrawals(ctx, []string{WithdrawalPaid, WithdrawalRejected})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range done {
+		if r.ID == id || (r.Status != WithdrawalPaid && r.Status != WithdrawalRejected) {
+			t.Fatalf("已完成筛出了 %s", r.Status)
+		}
+	}
+	// 「处理中」= requested,approved（重复的状态去重）
+	rows, err := e.svc.AdminWithdrawals(ctx, []string{WithdrawalRequested, WithdrawalApproved, WithdrawalRequested})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var got *AdminWithdrawal
 	for i := range rows {
-		if rows[i].Status != WithdrawalRequested {
+		if rows[i].Status != WithdrawalRequested && rows[i].Status != WithdrawalApproved {
 			t.Fatalf("按状态筛出了 %s", rows[i].Status)
 		}
 		if rows[i].ID == id {
@@ -266,7 +280,7 @@ func TestMyCommissionSummary(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := mc.Summary
-	if s.Currency != testCurrency || !s.Pending.Equal(dec2("5.00")) || !s.Available.Equal(dec2("7.00")) ||
+	if !s.Pending.Equal(dec2("5.00")) || !s.Available.Equal(dec2("7.00")) ||
 		!s.Withdrawing.Equal(dec2("10.00")) || !s.Settled.IsZero() || !s.TotalEarned.Equal(dec2("25.00")) {
 		t.Fatalf("金额汇总 %+v", s)
 	}

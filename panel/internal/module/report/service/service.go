@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	commissionsvc "github.com/aegispanel/aegis/internal/module/commission/service"
@@ -52,12 +53,12 @@ type store interface {
 	LockAdjustment(ctx context.Context, id uuid.UUID) error
 	// HasReversal 报告这一行是否已被冲正。
 	HasReversal(ctx context.Context, id uuid.UUID) (bool, error)
-	// ListAdjustments 按 created_at、id 倒序取至多 limit 行；currency 为空取全部币种。Reversed 表示该行已被冲正。
-	ListAdjustments(ctx context.Context, currency string, limit int) ([]repo.AdjustmentRow, error)
-	// AdjustmentSumsByDay 按（币种, 生效日）汇总生效日在 [fromDay, toDay) 的调整金额（含冲正行）。
+	// ListAdjustments 按 created_at、id 倒序取至多 limit 行；Reversed 表示该行已被冲正。
+	ListAdjustments(ctx context.Context, limit int) ([]repo.AdjustmentRow, error)
+	// AdjustmentSumsByDay 按生效日汇总生效日在 [fromDay, toDay) 的调整金额（含冲正行）。
 	AdjustmentSumsByDay(ctx context.Context, fromDay, toDay string) ([]repo.AdjustmentDayRow, error)
-	// AdjustmentTotals 按币种汇总全部调整金额（含冲正行）。
-	AdjustmentTotals(ctx context.Context) ([]repo.AdjustmentTotalRow, error)
+	// AdjustmentTotals 汇总全部调整金额（含冲正行）。
+	AdjustmentTotals(ctx context.Context) (decimal.Decimal, error)
 	// UpsertActivity 按 (tz, day) 覆盖写一批按天汇总。
 	UpsertActivity(ctx context.Context, rows []model.ActivityDaily) error
 	// ActivityRows 读 tz 下日子在 [fromDay, toDay) 的汇总行，按日子升序。
@@ -104,7 +105,7 @@ type Nodes interface {
 // Ledger 是 ledger 的聚合读；*ledgersvc.Service 直接满足。
 type Ledger interface {
 	RevenueByDay(ctx context.Context, from, to time.Time) ([]ledgersvc.RevenueDay, error)
-	RevenueTotals(ctx context.Context) ([]ledgersvc.RevenueTotal, error)
+	RevenueTotals(ctx context.Context) (ledgersvc.RevenueTotal, error)
 	DriftAccounts(ctx context.Context) (int64, error)
 }
 
@@ -121,7 +122,7 @@ type Payments interface {
 
 // Commissions 是 commission 的聚合读；*commissionsvc.Service 直接满足。
 type Commissions interface {
-	PendingWithdrawalSums(ctx context.Context) ([]commissionsvc.PendingWithdrawalSum, error)
+	PendingWithdrawalSums(ctx context.Context) (commissionsvc.PendingWithdrawalSum, error)
 }
 
 // Tickets 是 support 的聚合读；*supportsvc.Service 直接满足。

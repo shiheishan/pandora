@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { isApiError } from '../../../core/api'
 import { formatMoney } from '../../../core/format'
 import { navigate } from '../../../core/router'
+import { useBalance } from '../../queries'
 import { useApi } from '../../../shell/runtime'
 import { Button, Modal, Skeleton } from '../../../ui'
 import { methodKey, usePaymentMethods, type PaymentMethod } from './catalog'
@@ -11,20 +12,20 @@ import { detectDevice } from './clients'
 import { feeLine, surchargeNote } from './fee'
 import { queryFailure, queryOutcome, useQueryOrderPayment, type QueryOutcome } from './order-query'
 import css from './PayFlow.module.css'
-import { PAID_STATUSES, useCancelOrder, useOrder, type OrderDetail } from './orders'
+import { archivedRefundText, isPlanArchivedRefund, PAID_STATUSES, rebuyQuery, useCancelOrder, useOrder, type OrderDetail } from './orders'
 import { afterOrderCheck, payFailureAction, PAY_IN_PROGRESS_MAX_RETRIES } from './payRetry'
 import { QrCode } from './qr'
 import { formatDate } from './traffic'
 
 export type PayState =
   /** 下单成功、待外部支付：弹窗一打开就发起 pay 并跳收银台 */
-  | { phase: 'redirect'; orderId: string; orderNo: string; amount: number; currency: string; method: PaymentMethod }
+  | { phase: 'redirect'; orderId: string; orderNo: string; amount: number; method: PaymentMethod }
   /** 0 元订单已当场履约，或回跳后确认已支付（含在付款面板里轮询到已付） */
   | { phase: 'done'; orderId: string }
   /** 收银台回跳：轮询订单直到 paid / fulfilled，最多 2 分钟 */
   | { phase: 'confirm'; orderId: string }
   /** 已有的待支付订单（订单页「去支付」）：先选支付方式，选完进入 redirect */
-  | { phase: 'choose'; orderId: string; orderNo: string; amount: number; currency: string }
+  | { phase: 'choose'; orderId: string; orderNo: string; amount: number }
 
 /** 回跳地址：相对入口页解析，令门户在后台前缀或子路径下也成立；后端要求以 PublicBaseURL + "/" 开头 */
 export function payReturnUrl(orderId: string, base = window.location.href): string {
@@ -32,12 +33,12 @@ export function payReturnUrl(orderId: string, base = window.location.href): stri
 }
 
 /** 支付成功文案，按订单种类（契约门户-03 支付条目） */
-export function paySuccessText(o: Pick<OrderDetail, 'kind' | 'paid_amount' | 'total_amount' | 'currency' | 'subscription_period_end'>): string {
+export function paySuccessText(o: Pick<OrderDetail, 'kind' | 'paid_amount' | 'total_amount' | 'subscription_period_end'>): string {
   switch (o.kind) {
     case 'topup':
-      return `余额 +${formatMoney(o.paid_amount || o.total_amount, o.currency)}`
-    case 'addon':
-      return '流量包已到账'
+      return `余额 +${formatMoney(o.paid_amount || o.total_amount)}`
+    case 'stack':
+      return '已叠加，总流量加上了'
     case 'traffic_reset':
       return '本期流量已清零'
     case 'upgrade':
@@ -54,11 +55,10 @@ const intentSchema = z.object({
   form_fields: z.record(z.string(), z.string()),
   amount: z.number().int(),
   surcharge: z.number().int().nonnegative().default(0),
-  currency: z.string(),
   reused: z.boolean(),
 })
 
-/** 回跳后要刷新的读数：余额、订阅、流量包、订单全在 portal 前缀下 */
+/** 回跳后要刷新的读数：余额、套餐、订单全在 portal 前缀下 */
 function useRefreshAccount() {
   const client = useQueryClient()
   return () => void client.invalidateQueries({ queryKey: ['portal'] })
@@ -76,7 +76,7 @@ export function PaymentModal({ state: given, onClose, onUnpayable }: { state: Pa
   const [picked, setPicked] = useState<{ orderId: string; method: PaymentMethod } | null>(null)
   const state: PayState | null =
     given?.phase === 'choose' && picked?.orderId === given.orderId
-      ? { phase: 'redirect', orderId: given.orderId, orderNo: given.orderNo, amount: given.amount, currency: given.currency, method: picked.method }
+      ? { phase: 'redirect', orderId: given.orderId, orderNo: given.orderNo, amount: given.amount, method: picked.method }
       : given
   const close = () => {
     setPicked(null)
@@ -96,7 +96,6 @@ export function PaymentModal({ state: given, onClose, onUnpayable }: { state: Pa
           <PayPanel
             orderId={state.orderId}
             amount={state.amount}
-            currency={state.currency}
             method={state.method}
             returnUrl={payReturnUrl(state.orderId)}
             onPaid={() => setPaidHere(state.orderId)}
@@ -117,13 +116,14 @@ export function PaymentModal({ state: given, onClose, onUnpayable }: { state: Pa
 const stateOrder = (s: PayState) => s.orderId
 
 // ---------------------------------------------------------------------------
-// 选支付方式：只列能收该币种的方式（GET v1/payment-methods，修订 R61）
+// 选支付方式：列当前可用的方式（GET v1/payment-methods，修订 R61）
 // ---------------------------------------------------------------------------
 function Choose({ state, onPick, onLater }: { state: Extract<PayState, { phase: 'choose' }>; onPick: (m: PaymentMethod) => void; onLater: () => void }) {
   const methods = usePaymentMethods(state.amount)
+  const order = useOrder(state.orderId)
   return (
     <div className={css.body}>
-      <div className={css.amount}>{formatMoney(state.amount, state.currency)}</div>
+      <div className={css.amount}>{formatMoney(state.amount)}</div>
       <div className={css.note}>订单 {state.orderNo}</div>
       {methods.isPending ? (
         <Skeleton height={40} radius="var(--radius-md)" />
@@ -157,6 +157,37 @@ function Choose({ state, onPick, onLater }: { state: Extract<PayState, { phase: 
       <button type="button" className={css.later} onClick={onLater}>
         稍后支付
       </button>
+      {order.data && <SwitchToBalance order={order.data} onLeave={onLater} />}
+    </div>
+  )
+}
+
+/**
+ * 改用余额付（用户 10-16 定：已下的单也能用余额付）。余额只在下单时冻结，已下的单补不进去，
+ * 所以是取消这张（不扣钱、优惠码退回），带着同样的套餐与价格档回确认页重下，余额在那里默认用上。
+ * 充值单、余额为 0、认不出原来买的是什么的不显示。onLeave：在弹窗里时先关弹窗。
+ */
+export function SwitchToBalance({ order, onLeave }: { order: OrderDetail; onLeave?: () => void }) {
+  const balance = useBalance()
+  const cancel = useCancelOrder()
+  const rebuy = rebuyQuery(order)
+  const left = balance.data?.balance ?? 0
+  if (!rebuy || left <= 0 || order.status !== 'pending_payment') return null
+  return (
+    <div className={css.switchBalance}>
+      <p>余额还有 {formatMoney(left)}。想用余额付：先取消这张单（不扣钱，用过的优惠码退回），再按现在的价格回到确认页，余额自动用上。</p>
+      <Button
+        size="sm"
+        busy={cancel.isPending}
+        onClick={() =>
+          void cancel.mutateAsync(order.id).then(() => {
+            onLeave?.()
+            navigate('/checkout', { query: rebuy })
+          })
+        }
+      >
+        取消这张单，改用余额付
+      </Button>
     </div>
   )
 }
@@ -171,13 +202,22 @@ function Choose({ state, onPick, onLater }: { state: Extract<PayState, { phase: 
 // ---------------------------------------------------------------------------
 const POLL_PAY_MS = 3000
 
-/** 发起支付回 409 order_lapsed：这张单已超过付款期限（billing.ErrOrderPaymentExpired），只能取消后重新下单 */
+/** 发起支付回 409 order_lapsed：这张单不能再付，只能取消（超过付款期限，或套餐已停售 fields.reason=plan_archived） */
 export const isPaymentLapsed = (e: unknown) => isApiError(e, 'order_lapsed')
+
+/** 不能再付时取消按钮的说法：套餐停售了不能「重新下单」 */
+export function lapsedCancelLabel(e: unknown): string {
+  return isApiError(e, 'order_lapsed') && e.fields.reason === 'plan_archived' ? '取消这张订单' : '取消这张单，重新下单'
+}
+
+/** 套餐归档后才付款（10-16）的结果一句话：不开通，钱已转进钱包余额 */
+export function archivedPaidText(o: Pick<OrderDetail, 'surcharge_kept'>): string {
+  return `套餐已停售，没有开通；${archivedRefundText(o.surcharge_kept)}。`
+}
 
 interface PayPanelProps {
   orderId: string
   amount: number
-  currency: string
   method: PaymentMethod
   /** 收银台付完回跳到哪：确认页是完成页，订单页与钱包是订单页的 ?paid=1 */
   returnUrl: string
@@ -191,7 +231,7 @@ interface PayPanelProps {
   afterCancel?: () => void
 }
 
-export function PayPanel({ orderId, amount, currency, method, returnUrl, onPaid, onUnpayable, onOtherMethod, onLater, afterCancel }: PayPanelProps) {
+export function PayPanel({ orderId, amount, method, returnUrl, onPaid, onUnpayable, onOtherMethod, onLater, afterCancel }: PayPanelProps) {
   const cancel = useCancelOrder()
   const api = useApi()
   const started = useRef(false)
@@ -270,10 +310,17 @@ export function PayPanel({ orderId, amount, currency, method, returnUrl, onPaid,
     setConflictRefreshFailed(false)
     pay.mutate()
   }
+  const archived = order.data !== undefined && isPlanArchivedRefund(order.data)
+  const toWallet = () => {
+    onLater?.()
+    navigate('/wallet')
+  }
   const error = closed
-    ? order.data?.status === 'expired'
-      ? '这单超过 30 分钟没付，已经自动取消了，没有扣钱。'
-      : '这单已经取消了，没有扣钱。'
+    ? archived
+      ? archivedPaidText(order.data!)
+      : order.data?.status === 'expired'
+        ? '这单超过 30 分钟没付，已经自动取消了，没有扣钱。'
+        : '这单已经取消了，没有扣钱。'
     : unsupported
       ? '这个付款方式暂时用不了，换一个付款方式。'
       : superseded
@@ -295,7 +342,7 @@ export function PayPanel({ orderId, amount, currency, method, returnUrl, onPaid,
   return (
     <div className={css.body} data-screen="pay">
       <p className={css.note}>用{method.label}付</p>
-      <div className={css.amount}>{formatMoney(finalAmount, currency)}</div>
+      <div className={css.amount}>{formatMoney(finalAmount)}</div>
       {note && <div className={css.hint}>{note}</div>}
       {inProgressWaiting ? (
         <div className={css.hint}>正在发起支付，请稍候…</div>
@@ -311,7 +358,12 @@ export function PayPanel({ orderId, amount, currency, method, returnUrl, onPaid,
           )}
           {isPaymentLapsed(pay.error) && (
             <Button variant="primary" block busy={cancel.isPending} onClick={() => cancel.mutate(orderId, { onSuccess: () => (afterCancel ? afterCancel() : onLater?.()) })}>
-              取消这张单，重新下单
+              {lapsedCancelLabel(pay.error)}
+            </Button>
+          )}
+          {archived && (
+            <Button variant="primary" block onClick={toWallet}>
+              去钱包看看
             </Button>
           )}
         </>
@@ -359,6 +411,11 @@ export function PayPanel({ orderId, amount, currency, method, returnUrl, onPaid,
           {outcome.text}
         </div>
       )}
+      {outcome?.wallet && !archived && (
+        <Button variant="primary" block onClick={toWallet}>
+          去钱包看看
+        </Button>
+      )}
       {onOtherMethod && !closed && (
         <button type="button" className={css.later} onClick={onOtherMethod}>
           换个付款方式
@@ -392,7 +449,7 @@ function payErrorText(error: unknown): string {
 function Done({ orderId, onClose }: { orderId: string; onClose: () => void }) {
   const order = useOrder(orderId)
   const refresh = useRefreshAccount()
-  // 打开即刷新一次账户读数（余额、订阅、流量包）
+  // 打开即刷新一次账户读数（余额、套餐）
   useEffect(() => refresh(), []) // eslint-disable-line react-hooks/exhaustive-deps
   return <SuccessBody order={order.data} loading={order.isPending} onClose={onClose} />
 }
@@ -438,10 +495,11 @@ function useConfirmation(orderId: string | undefined) {
     const timer = setTimeout(() => setTimedOut(true), POLL_LIMIT_MS)
     return () => clearTimeout(timer)
   }, [orderId])
-  // 转为已支付时刷新余额、订阅、流量包
+  // 转为已支付、或套餐停售转了余额时刷新余额、套餐
+  const refunded = order.data !== undefined && isPlanArchivedRefund(order.data)
   useEffect(() => {
-    if (paid) refresh()
-  }, [paid]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (paid || refunded) refresh()
+  }, [paid, refunded]) // eslint-disable-line react-hooks/exhaustive-deps
   return { order, status, paid, closed, timedOut }
 }
 
@@ -456,7 +514,9 @@ function Confirming({ confirm, onClose }: { confirm: ReturnType<typeof useConfir
     : closed
       ? status === 'expired'
         ? '订单已超时取消，没有扣款。'
-        : '订单已取消。'
+        : order.data && isPlanArchivedRefund(order.data)
+          ? archivedPaidText(order.data)
+          : '订单已取消。'
       : timedOut
         ? '支付结果确认中，可稍后在订单中查看。'
         : null
@@ -466,12 +526,23 @@ function Confirming({ confirm, onClose }: { confirm: ReturnType<typeof useConfir
       {message ? <div className={css.note}>{message}</div> : <div className={css.hint}>收银台已返回，正在确认支付结果…</div>}
       {order.data && (
         <div className={css.note}>
-          订单 {order.data.order_no} · {formatMoney(order.data.payable_amount, order.data.currency)}
+          订单 {order.data.order_no} · {formatMoney(order.data.payable_amount)}
         </div>
       )}
       <Button block onClick={onClose} data-autofocus>
         {message ? '查看订单' : '稍后查看'}
       </Button>
+      {order.data && isPlanArchivedRefund(order.data) && (
+        <Button
+          block
+          onClick={() => {
+            onClose()
+            navigate('/wallet')
+          }}
+        >
+          去钱包看看
+        </Button>
+      )}
     </div>
   )
 }

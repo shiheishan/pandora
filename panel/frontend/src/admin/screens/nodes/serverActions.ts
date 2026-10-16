@@ -8,7 +8,6 @@ import { bootstrapTokenResponse, serverDeleted, serverSchema, type Server, type 
 export interface InstallSecret {
   serverId: string
   title: string
-  token: string
   command: string
   expiresAt: string
 }
@@ -24,7 +23,7 @@ export function useIssueServerToken(onIssued: (secret: InstallSecret) => void) {
     onSuccess: ({ r, s }) => {
       intent.reset()
       void invalidate()
-      onIssued({ serverId: s.id, title: `在 ${s.name} 上执行`, token: r.token, command: r.install_command, expiresAt: r.expires_at })
+      onIssued({ serverId: s.id, title: `在 ${s.name} 上执行`, command: r.install_command, expiresAt: r.expires_at })
     },
     onError: (error) => fail(error, { intent }),
   })

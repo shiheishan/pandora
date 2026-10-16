@@ -28,11 +28,11 @@ import {
   serverSchema,
   serversResponse,
 } from '../../src/admin/screens/nodes/schemas'
-import { packsSchema, planPoolsSchema, planResponseSchema, plansSchema, poolOptionsSchema } from '../../src/admin/screens/plans/schemas'
+import { planPoolsSchema, planResponseSchema, plansSchema, poolOptionsSchema } from '../../src/admin/screens/plans/schemas'
 import { accessResponse, auditResponse, clustersResponse, switchesResponse } from '../../src/admin/screens/security/schemas'
-import { deliveriesResponse, hooksResponse, mailSettingsSchema, telegramSettingsSchema, templatesResponse as mailTemplatesResponse } from '../../src/admin/screens/system/schemas'
+import { deliveriesResponse, hooksResponse, mailSettingsSchema, telegramExtrasSchema, telegramSettingsSchema, templatesResponse as mailTemplatesResponse } from '../../src/admin/screens/system/schemas'
 import { assigneesSchema, macrosSchema, queueSchema, ticketDetailSchema } from '../../src/admin/screens/tickets/api'
-import { devicesSchema, planOptionsSchema, profileSchema, resetLogsSchema, resetStatsSchema, userDetailSchema, userGroupsSchema, usersSchema } from '../../src/admin/screens/users/api'
+import { devicesSchema, planOptionsSchema, profileSchema, userDetailSchema, userGroupsSchema, usersSchema } from '../../src/admin/screens/users/api'
 import { rawGet, runTable, state, type Row } from './harness'
 
 const s = state.seed
@@ -51,9 +51,9 @@ const rows: Row[] = [
   // ---- 仪表盘 ----
   { at: 'dash/api.ts', seed: '开通事务写入、worker 派发的支付通知', path: 'v1/dashboard/backlog/notifications', schema: backlogSchema },
   { at: 'dash/api.ts', path: 'v1/overview', schema: overviewSchema },
-  { at: 'dash/api.ts', path: 'v1/revenue/timeseries', query: { currency: 'CNY', days: 30 }, schema: revenueSchema },
-  { at: 'dash/api.ts', seed: 'nodesim 经会话上报流量', path: 'v1/dashboard/traffic/nodes', query: { range: '24h', limit: 5 }, schema: nodeTrafficSchema },
-  { at: 'dash/api.ts', seed: 'nodesim 经会话上报流量', path: 'v1/dashboard/traffic/users', query: { range: '24h', limit: 5 }, schema: userTrafficSchema },
+  { at: 'dash/api.ts', path: 'v1/revenue/timeseries', query: { days: 30 }, schema: revenueSchema },
+  { at: 'dash/api.ts', seed: 'nodesim 经会话上报流量', path: 'v1/dashboard/traffic/nodes', query: { range: '24h', limit: 10 }, schema: nodeTrafficSchema },
+  { at: 'dash/api.ts', seed: 'nodesim 经会话上报流量', path: 'v1/dashboard/traffic/users', query: { range: '24h', limit: 10 }, schema: userTrafficSchema },
   { at: 'dash/api.ts', path: 'v1/system/status', schema: systemStatusSchema },
   { at: 'dash/api.ts', path: 'v1/stats/timeseries', query: { days: 14 }, schema: activitySchema },
 
@@ -71,9 +71,6 @@ const rows: Row[] = [
   { at: 'users/api.ts', path: 'v1/users', query: { q: s.portal.email, limit: 100, offset: 0 }, schema: usersSchema },
   { at: 'users/api.ts', path: 'v1/plans', schema: planOptionsSchema },
   { at: 'users/api.ts', seed: '易支付回调开出订阅；nodesim 上报在线 IP', path: 'v1/devices', schema: devicesSchema },
-  { at: 'users/api.ts', seed: '后台 POST subscriptions/{id}/traffic-reset', path: 'v1/traffic-resets', query: { limit: 25, offset: 0 }, schema: resetLogsSchema },
-  { at: 'users/api.ts', path: 'v1/traffic-resets/stats', schema: resetStatsSchema },
-  { at: 'users/api.ts', seed: '后台 POST subscriptions/{id}/traffic-reset', path: `v1/users/${s.portal.user_id}/traffic-resets`, schema: resetLogsSchema },
 
   // ---- 营销 ----
   { at: 'marketing/queries.ts', path: 'v1/plans', schema: marketingPlansResponse },
@@ -113,15 +110,16 @@ const rows: Row[] = [
   { at: 'content/queries.ts', path: 'v1/settings/site', schema: siteSettingsSchema },
 
   // ---- 套餐 ----
-  { at: 'plans/api.ts', seed: '后台 POST plans/complete', path: 'v1/plans', schema: plansSchema },
+  { at: 'plans/api.ts', seed: '后台 POST plans', path: 'v1/plans', schema: plansSchema },
   { at: 'plans/api.ts', path: `v1/plans/${s.plan_id}`, schema: planResponseSchema },
+  { at: 'plans/api.ts', seed: '后台 POST plans（kind=one_time）', path: `v1/plans/${s.one_time_plan_id}`, schema: planResponseSchema },
   { at: 'plans/api.ts', path: `v1/plans/${s.plan_id}/pools`, schema: planPoolsSchema },
   { at: 'plans/api.ts', path: 'v1/node-pools', schema: poolOptionsSchema },
-  { at: 'plans/api.ts', seed: '后台 POST traffic-packs', path: 'v1/traffic-packs', schema: packsSchema },
 
   // ---- 系统 ----
   { at: 'system/queries.ts', path: 'v1/settings/mail', schema: mailSettingsSchema },
   { at: 'system/queries.ts', path: 'v1/settings/telegram', schema: telegramSettingsSchema },
+  { at: 'system/queries.ts', path: 'v1/settings/telegram/extras', schema: telegramExtrasSchema },
   { at: 'system/queries.ts', path: 'v1/mail/templates', schema: mailTemplatesResponse },
   { at: 'system/queries.ts', seed: '后台 POST plugin-hooks', path: 'v1/plugin-hooks', schema: hooksResponse },
   {

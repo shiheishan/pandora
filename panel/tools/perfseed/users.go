@@ -242,14 +242,13 @@ func runUsers(ctx context.Context, o usersOpts) error {
 func loadPlanSpecs(ctx context.Context, conn *pgx.Conn, catalog Catalog) ([]PlanSpec, error) {
 	var out []PlanSpec
 	for _, cp := range catalog.Plans {
-		var priceID, currency string
+		var priceID string
 		var interval string
 		var intervalCount int
 		found := false
 		for _, p := range cp.Prices {
 			if p.BillingInterval == "month" && p.IntervalCount == 1 {
 				priceID = p.PriceID
-				currency = p.Currency
 				interval = p.BillingInterval
 				intervalCount = p.IntervalCount
 				found = true
@@ -271,9 +270,9 @@ func loadPlanSpecs(ctx context.Context, conn *pgx.Conn, catalog Catalog) ([]Plan
 
 		var amount string
 		if err := conn.QueryRow(ctx, `
-			SELECT currency, unit_amount::text, billing_interval, interval_count
+			SELECT unit_amount::text, billing_interval, interval_count
 			FROM prices WHERE id = $1 AND plan_id = $2 AND status = 'active'`, priceID, cp.PlanID).
-			Scan(&currency, &amount, &interval, &intervalCount); err != nil {
+			Scan(&amount, &interval, &intervalCount); err != nil {
 			return nil, fmt.Errorf("套餐 %s 价格: %w", cp.Code, err)
 		}
 
@@ -317,7 +316,6 @@ func loadPlanSpecs(ctx context.Context, conn *pgx.Conn, catalog Catalog) ([]Plan
 			PriceID:          priceID,
 			Name:             name,
 			VersionNo:        versionNo,
-			Currency:         currency,
 			Amount:           amount,
 			Interval:         interval,
 			IntervalCount:    intervalCount,

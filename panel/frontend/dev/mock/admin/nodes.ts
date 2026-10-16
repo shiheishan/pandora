@@ -207,7 +207,7 @@ function activationWarnings(n: Node): string[] {
 
 // subscription.DeliveryState / NodeDeliveryFacts.Refine 的文案，与 Go 一字不差
 const DELIVERY_NOTES = {
-  notActive: '服务状态不是 active，不下发',
+  notActive: '节点不在服务中（草稿、已停用或已退役）',
   neverSeen: '从未上报过心跳，不下发 —— 多半是建了没装 agent，或是测试留下的记录。发出去就是一条必然连不上的线路',
   stale: '心跳已超时，但仍在下发 —— 只有当套餐里一个新鲜节点都没有时才会用到它。空订阅会让客户端清空服务器列表，比给一条可能不通的线路更糟',
   serverNotReady: '所属服务器未就绪或已删除，不下发',
@@ -419,6 +419,8 @@ function basicErrors(body: Json, creating: boolean): Record<string, string> {
 const findNode = (id: string | undefined) => store.find((n) => n.id === id && !n.deleted)
 
 /** 只给 tests/mock-admin-nodes.test.ts 核对 R106 / R107 的补回：接口永远抹掉敏感键，测试只能从库里看 */
+/** 没删除的节点 id（实时事件模拟取真实行用，见 events.ts） */
+export const liveNodeIds = () => store.filter((n) => !n.deleted).map((n) => n.id)
 export const storedProtocolConfig = (id: string) => structuredClone(findNode(id)?.protocol_config ?? null)
 const touch = (n: Node) => {
   n.row_version += 1

@@ -10,7 +10,6 @@ import (
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
 	"github.com/aegispanel/aegis/internal/module/payment/provider"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -62,7 +61,6 @@ func succeededQuery(payRef string) provider.QueryResult {
 		Found:      true,
 		PaymentRef: payRef,
 		Amount:     dec("9.90"),
-		Currency:   money.CNY,
 		Status:     provider.StatusSucceeded,
 		Method:     "alipay",
 	}
@@ -98,7 +96,7 @@ func TestApplyLatePayment(t *testing.T) {
 	user := e.mkUser(t, ctx)
 	_, caseID := e.quarantineCase(t, ctx, user)
 
-	balBefore := e.accountBalance(t, ctx, ledgersvc.UserAccount(ledgersvc.UserBalance, user), money.CNY)
+	balBefore := e.accountBalance(t, ctx, ledgersvc.UserAccount(ledgersvc.UserBalance, user))
 	susp := ledgersvc.PlatformAccount(ledgersvc.LatePaymentSuspense, ledgersvc.RefMain)
 
 	txnID, err := e.svc.ApplyLatePayment(ctx, caseID, "核实后转入余额")
@@ -109,11 +107,11 @@ func TestApplyLatePayment(t *testing.T) {
 		t.Fatal("应有 ledger txn")
 	}
 
-	balAfter := e.accountBalance(t, ctx, ledgersvc.UserAccount(ledgersvc.UserBalance, user), money.CNY)
+	balAfter := e.accountBalance(t, ctx, ledgersvc.UserAccount(ledgersvc.UserBalance, user))
 	if !balAfter.Sub(balBefore).Equal(dec("9.90")) {
 		t.Fatalf("用户余额 +9.90，得 %s", balAfter.Sub(balBefore))
 	}
-	if !e.accountBalance(t, ctx, susp, money.CNY).Equal(decimal.Zero) {
+	if !e.accountBalance(t, ctx, susp).Equal(decimal.Zero) {
 		t.Fatal("suspense 应归零")
 	}
 
@@ -154,8 +152,8 @@ func TestApplyLatePayment(t *testing.T) {
 	if !found {
 		t.Fatal("列表应含本案")
 	}
-	if !list.Pending[money.CNY].Equal(decimal.Zero) {
-		t.Fatalf("待处理 CNY 应为 0，得 %s", list.Pending[money.CNY])
+	if !list.Pending.Equal(decimal.Zero) {
+		t.Fatalf("待处理金额应为 0，得 %s", list.Pending)
 	}
 	e.assertNoDrift(t, ctx)
 }

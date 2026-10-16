@@ -14,19 +14,17 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// Adjustment 是后台人工调账的入参。Amount 正数加、负数减；Currency 为空时用站点币种。
+// Adjustment 是后台人工调账的入参。Amount 正数加、负数减。
 type Adjustment struct {
-	UserID   uuid.UUID
-	Amount   decimal.Decimal
-	Currency string
-	Reason   string
+	UserID uuid.UUID
+	Amount decimal.Decimal
+	Reason string
 }
 
 // AdjustResult 是调账后的结果。
 type AdjustResult struct {
-	Currency money.Currency
-	Balance  decimal.Decimal
-	TxnID    uuid.UUID
+	Balance decimal.Decimal
+	TxnID   uuid.UUID
 }
 
 // 调账原因的字数范围（按 rune 计，去掉首尾空白后）。
@@ -38,7 +36,7 @@ const (
 // errAccountDeleted 是给已注销账号加钱（与 identity 同码同文案）；扣减不拒。
 var errAccountDeleted = errs.Newf(errs.Conflict, "账号已注销")
 
-// normalizeAdjustment 校验调账金额与原因（与币种无关）；返回去掉首尾空白的原因。
+// normalizeAdjustment 校验调账金额与原因；返回去掉首尾空白的原因。
 func normalizeAdjustment(a Adjustment) (reason string, err error) {
 	if a.Amount.IsZero() {
 		return "", errs.Newf(errs.ValidationFailed, "调整金额不能为零")
@@ -76,18 +74,6 @@ func (s *Service) AdjustBalance(ctx context.Context, a Adjustment) (AdjustResult
 	if err != nil {
 		return AdjustResult{}, err
 	}
-	var cur money.Currency
-	if strings.TrimSpace(a.Currency) != "" {
-		cur, err = money.ParseCurrency(a.Currency)
-		if err != nil {
-			return AdjustResult{}, errs.Invalid(map[string]string{"currency": "币种只支持 CNY 或 USD"})
-		}
-	} else {
-		cur, err = s.DefaultCurrency(ctx)
-		if err != nil {
-			return AdjustResult{}, err
-		}
-	}
 	if s.accounts == nil {
 		return AdjustResult{}, errs.Wrap(errs.Internal, errors.New("ledger: AccountStates 未装配"))
 	}
@@ -106,7 +92,7 @@ func (s *Service) AdjustBalance(ctx context.Context, a Adjustment) (AdjustResult
 			}
 		}
 		var adjErr error
-		result, adjErr = s.adjustBalance(ctx, a, cur, reason)
+		result, adjErr = s.adjustBalance(ctx, a, reason)
 		return adjErr
 	})
 	if err != nil {
@@ -115,7 +101,7 @@ func (s *Service) AdjustBalance(ctx context.Context, a Adjustment) (AdjustResult
 	return result, nil
 }
 
-func (s *Service) adjustBalance(ctx context.Context, a Adjustment, cur money.Currency, reason string) (AdjustResult, error) {
+func (s *Service) adjustBalance(ctx context.Context, a Adjustment, reason string) (AdjustResult, error) {
 	abs := a.Amount.Abs()
 	var legs []Leg
 	if a.Amount.IsPositive() {
@@ -131,7 +117,6 @@ func (s *Service) adjustBalance(ctx context.Context, a Adjustment, cur money.Cur
 	}
 	txnID, err := s.postChecked(ctx, Posting{
 		Kind:       KindBalanceAdjusted,
-		Currency:   cur,
 		SourceType: SourceUser,
 		SourceID:   a.UserID,
 		Memo:       reason,
@@ -143,7 +128,7 @@ func (s *Service) adjustBalance(ctx context.Context, a Adjustment, cur money.Cur
 		}
 		return AdjustResult{}, err
 	}
-	after, err := s.Balance(ctx, a.UserID, cur)
+	after, err := s.Balance(ctx, a.UserID)
 	if err != nil {
 		return AdjustResult{}, err
 	}
@@ -154,7 +139,6 @@ func (s *Service) adjustBalance(ctx context.Context, a Adjustment, cur money.Cur
 		ResourceID:   &uid,
 		Data: map[string]any{
 			"amount":        a.Amount.StringFixed(2),
-			"currency":      string(cur),
 			"reason":        reason,
 			"balance_after": after.StringFixed(2),
 			"ledger_txn":    txnID.String(),
@@ -163,8 +147,7 @@ func (s *Service) adjustBalance(ctx context.Context, a Adjustment, cur money.Cur
 		return AdjustResult{}, err
 	}
 	return AdjustResult{
-		Currency: cur,
-		Balance:  after,
-		TxnID:    txnID,
+		Balance: after,
+		TxnID:   txnID,
 	}, nil
 }

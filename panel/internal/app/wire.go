@@ -162,9 +162,9 @@ func buildServices(r *runtime) (*services, error) {
 		return nil, fmt.Errorf("notify: %w", err)
 	}
 
-	ledgerSvc := ledgersvc.New(ledgerrepo.New(r.db), txm, settingsSvc, auditSvc)
+	ledgerSvc := ledgersvc.New(ledgerrepo.New(r.db), txm, auditSvc)
 	catalogSvc := catalogsvc.New(catalogrepo.New(r.db), txm, auditSvc, identitySvc)
-	promoSvc := promosvc.New(promorepo.New(r.db), txm, auditSvc, settingsSvc)
+	promoSvc := promosvc.New(promorepo.New(r.db), txm, auditSvc)
 	paymentSvc := paymentsvc.New(paymentrepo.New(r.db), txm, ledgerSvc, identitySvc, settingsSvc, auditSvc, sealer,
 		paymentsvc.Config{
 			PublicBaseURL: cfg.PublicBaseURL,

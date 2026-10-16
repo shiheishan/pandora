@@ -4,7 +4,6 @@ package service
 const (
 	keySiteName     = "site.name"     // string，1–40 字
 	keySiteTimezone = "site.timezone" // string，IANA 时区名
-	keySiteCurrency = "site.currency" // string，CNY 或 USD（pkg/money 支持的币种）
 
 	keyRegistrationMode  = "auth.registration_mode"  // string：closed / invite_only / open
 	keyEmailVerification = "auth.email_verification" // bool
@@ -22,8 +21,6 @@ const (
 const (
 	defaultSiteName     = "Pandora"
 	defaultSiteTimezone = "UTC"
-	// 站点币种缺省人民币（用户 10-13 定）；USD 仍可经 site.currency 设
-	defaultSiteCurrency = "CNY"
 
 	// 新装缺省开放注册；紧急关闭用 auth.registration 开关。
 	defaultRegistrationMode = RegistrationOpen
@@ -48,11 +45,10 @@ const (
 	MailEncryptionNone = "none"
 )
 
-// Site 是站点级设置（原 tenants 表的站点名、时区、币种）。
+// Site 是站点级设置（原 tenants 表的站点名、时区）。
 type Site struct {
 	Name     string
 	Timezone string
-	Currency string
 }
 
 // Registration 是存下来的注册设置。实际生效的策略还要看 auth.registration 开关，见 RegistrationPolicy。

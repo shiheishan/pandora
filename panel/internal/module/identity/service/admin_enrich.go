@@ -5,10 +5,8 @@ package service
 
 import (
 	"context"
-	"sort"
 
 	"github.com/google/uuid"
-	"github.com/shopspring/decimal"
 )
 
 // recentOrdersLimit 是详情里最近订单的条数。
@@ -35,14 +33,13 @@ func (s *Service) enrichRows(ctx context.Context, rows []UserRow) error {
 	if err != nil {
 		return err
 	}
-	cur, bal, err := wallets.UserBalances(ctx, ids)
+	bal, err := wallets.UserBalances(ctx, ids)
 	if err != nil {
 		return err
 	}
 	for i := range rows {
 		applySubs(&rows[i], m[rows[i].ID])
 		rows[i].Balance = bal[rows[i].ID]
-		rows[i].Currency = cur
 	}
 	return nil
 }
@@ -89,14 +86,12 @@ func (s *Service) enrichDetail(ctx context.Context, d *UserDetail) error {
 	} else {
 		d.Subscriptions = us.Subscriptions
 	}
-	d.UnattachedPackBytes = us.UnattachedPackBytes
 
-	cur, bal, err := wallets.UserBalances(ctx, []uuid.UUID{uid})
+	bal, err := wallets.UserBalances(ctx, []uuid.UUID{uid})
 	if err != nil {
 		return err
 	}
 	d.Balance = bal[uid]
-	d.Currency = cur
 
 	stats, err := orders.UserOrderStats(ctx, []uuid.UUID{uid})
 	if err != nil {
@@ -104,7 +99,7 @@ func (s *Service) enrichDetail(ctx context.Context, d *UserDetail) error {
 	}
 	st := stats[uid]
 	d.OrderCount = st.Orders
-	d.PaidTotals = paidTotals(st.Paid)
+	d.PaidTotal = st.Paid
 
 	recent, err := orders.RecentOrders(ctx, uid, recentOrdersLimit)
 	if err != nil {
@@ -118,18 +113,4 @@ func (s *Service) enrichDetail(ctx context.Context, d *UserDetail) error {
 
 	d.Telegram, err = telegram.AdminTelegramBinding(ctx, uid)
 	return err
-}
-
-// paidTotals 把按币种的实付转成列表：只留大于 0 的，币种升序，永不为 nil。
-func paidTotals(m map[string]decimal.Decimal) []CurrencyAmount {
-	out := make([]CurrencyAmount, 0, len(m))
-	for ccy, amt := range m {
-		if amt.IsPositive() {
-			out = append(out, CurrencyAmount{Currency: ccy, Amount: amt})
-		}
-	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].Currency < out[j].Currency
-	})
-	return out
 }

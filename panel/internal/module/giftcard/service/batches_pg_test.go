@@ -137,6 +137,14 @@ func TestSaveTemplateValidation(t *testing.T) {
 	_, err := e.svc.SaveTemplate(admin, TemplateInput{Name: "错价", Type: TypePlan, Rewards: Rewards{PlanID: &planA, PriceID: &priceB}})
 	mustCode(t, err, errs.ValidationFailed)
 
+	_, err = e.svc.SaveTemplate(admin, TemplateInput{Name: "无价", Type: TypePlan, Rewards: Rewards{PlanID: &planA}})
+	mustCode(t, err, errs.ValidationFailed)
+
+	planArch, _, priceArch := e.mkPlan(t, ctx, 2000)
+	e.mustExec(t, ctx, `UPDATE prices SET status = 'archived', row_version = row_version + 1 WHERE id = ?`, priceArch)
+	_, err = e.svc.SaveTemplate(admin, TemplateInput{Name: "已归档价", Type: TypePlan, Rewards: Rewards{PlanID: &planArch, PriceID: &priceArch}})
+	mustCode(t, err, errs.ValidationFailed)
+
 	_, err = e.svc.SaveTemplate(admin, TemplateInput{Name: "互斥", Type: TypeGeneral, Rewards: Rewards{Balance: dec("1")},
 		Conditions: Conditions{NewUserOnly: true, PaidUserOnly: true}})
 	mustCode(t, err, errs.ValidationFailed)
@@ -172,6 +180,41 @@ func TestSaveTemplateValidation(t *testing.T) {
 	}
 	if !seen {
 		t.Fatal("模板列表里没有刚建的模板")
+	}
+}
+
+// 建套餐卡后归档它的价格，ListTemplates 里这张模板 PriceArchived == true，别的模板为 false。
+func TestListTemplatesMarksArchivedPrice(t *testing.T) {
+	e, ctx := newEnv(t)
+	admin := e.asAdmin(ctx)
+	planID, _, priceID := e.mkPlan(t, ctx, 3000)
+	planTpl := e.mkTemplate(t, ctx, TemplateInput{Name: "套餐卡模板", Type: TypePlan, Rewards: Rewards{PlanID: &planID, PriceID: &priceID}})
+	genTpl := e.mkTemplate(t, ctx, TemplateInput{Name: "通用卡模板", Type: TypeGeneral, Rewards: Rewards{Balance: dec("5")}})
+
+	// 归档价格
+	e.mustExec(t, ctx, `UPDATE prices SET status = 'archived', row_version = row_version + 1 WHERE id = ?`, priceID)
+
+	list, err := e.svc.ListTemplates(admin)
+	if err != nil {
+		t.Fatalf("ListTemplates: %v", err)
+	}
+	foundPlan, foundGen := false, false
+	for _, x := range list {
+		if x.ID == planTpl.ID {
+			foundPlan = true
+			if !x.PriceArchived {
+				t.Errorf("套餐卡模板 %s 的 PriceArchived 应为 true", x.ID)
+			}
+		}
+		if x.ID == genTpl.ID {
+			foundGen = true
+			if x.PriceArchived {
+				t.Errorf("通用卡模板 %s 的 PriceArchived 应为 false", x.ID)
+			}
+		}
+	}
+	if !foundPlan || !foundGen {
+		t.Fatalf("列表里未找全模板: plan=%v gen=%v", foundPlan, foundGen)
 	}
 }
 
@@ -222,7 +265,7 @@ func TestConcurrentRedeemSameCode(t *testing.T) {
 	}
 }
 
-// 统计与使用明细：金额按站点币种，明细只有掩码。
+// 统计与使用明细：明细只有掩码。
 func TestStatsAndUsages(t *testing.T) {
 	e, ctx := newEnv(t)
 	tpl := e.mkTemplate(t, ctx, TemplateInput{Type: TypeGeneral, Rewards: Rewards{Balance: dec("4")}})

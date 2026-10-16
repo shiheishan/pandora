@@ -80,9 +80,8 @@ func TestVoidForDeletedUser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cny := testCurrency
-	if res.VoidedEntries != 2 || !res.VoidedPending[cny].Equal(dec2("90.00")) ||
-		res.RejectedWithdrawals != 1 || !res.RejectedAmount[cny].Equal(dec2("12.00")) || !res.Forfeited[cny].Equal(dec2("30.00")) {
+	if res.VoidedEntries != 2 || !res.VoidedPending.Equal(dec2("90.00")) ||
+		res.RejectedWithdrawals != 1 || !res.RejectedAmount.Equal(dec2("12.00")) || !res.Forfeited.Equal(dec2("30.00")) {
 		t.Fatalf("作废结果 %+v", res)
 	}
 
@@ -120,7 +119,7 @@ func TestVoidForDeletedUser(t *testing.T) {
 	assertWithdrawal(paidID, WithdrawalPaid, "")
 
 	// 已转余额不动：转余额记录与余额都还是 20.00
-	if tr, err := e.svc.repo.TransferTotalOf(ctx, a, string(testCurrency)); err != nil || !tr.Equal(dec2("20.00")) {
+	if tr, err := e.svc.repo.TransferTotalOf(ctx, a); err != nil || !tr.Equal(dec2("20.00")) {
 		t.Fatalf("转余额合计 %s %v", tr, err)
 	}
 	if bal := accountBalance(t, e, ctx, a, ledgersvc.UserBalance); !bal.Equal(dec2("20.00")) {
@@ -136,7 +135,7 @@ func TestVoidForDeletedUser(t *testing.T) {
 		if bal := accountBalance(t, e, ctx, a, ledgersvc.UserCommissionAvailable); !bal.IsZero() {
 			t.Fatalf("注销后可提现 %s", bal)
 		}
-		if avail, err := e.svc.available(ctx, a, testCurrency); err != nil || !avail.IsZero() {
+		if avail, err := e.svc.available(ctx, a); err != nil || !avail.IsZero() {
 			t.Fatalf("注销后可用佣金口径 %s %v", avail, err)
 		}
 		var n int64
@@ -156,7 +155,7 @@ func TestVoidForDeletedUser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again.VoidedEntries != 0 || again.RejectedWithdrawals != 0 || len(again.VoidedPending) != 0 || len(again.Forfeited) != 0 || len(again.RejectedAmount) != 0 {
+	if again.VoidedEntries != 0 || again.RejectedWithdrawals != 0 || !again.VoidedPending.IsZero() || !again.Forfeited.IsZero() || !again.RejectedAmount.IsZero() {
 		t.Fatalf("重调应全 0：%+v", again)
 	}
 	assertCleared()
@@ -180,7 +179,7 @@ func TestVoidForDeletedUser(t *testing.T) {
 	if err := e.exec(ctx, `UPDATE commission_entries SET auto_transfer_due = true WHERE id = ?`, e3); err != nil {
 		t.Fatal(err)
 	}
-	if done, err := e.svc.autoTransferOne(ctx, model.Entry{ID: e3, ReferrerUserID: a}, autoTransferPlan{on: true, site: testCurrency}); err != nil || done {
+	if done, err := e.svc.autoTransferOne(ctx, model.Entry{ID: e3, ReferrerUserID: a}, autoTransferPlan{on: true}); err != nil || done {
 		t.Fatalf("注销后自动转余额应只清标记：done=%v err=%v", done, err)
 	}
 	if bal := accountBalance(t, e, ctx, a, ledgersvc.UserBalance); !bal.Equal(dec2("20.00")) {
@@ -191,8 +190,8 @@ func TestVoidForDeletedUser(t *testing.T) {
 	}
 	// 后台批准与标记已打款：直接插一笔申请中的提现（门户已进不来）
 	var wid uuid.UUID
-	if err := e.row(ctx, `INSERT INTO withdrawals (user_id, currency, amount, payout_sealed, method) VALUES (?, ?, 5.00, ?, 'alipay') RETURNING id`,
-		a, string(testCurrency), []byte{1}).Scan(&wid); err != nil {
+	if err := e.row(ctx, `INSERT INTO withdrawals (user_id, amount, payout_sealed, method) VALUES (?, 5.00, ?, 'alipay') RETURNING id`,
+		a, []byte{1}).Scan(&wid); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.svc.ReviewWithdrawal(actx, wid, true, ""); !errors.Is(err, ErrAccountDeleted) {
@@ -299,7 +298,7 @@ func TestVoidForDeletedUserRefusesApprovedWithdrawal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.RejectedWithdrawals != 0 || !res.Forfeited[testCurrency].Equal(dec2("4.00")) {
+	if res.RejectedWithdrawals != 0 || !res.Forfeited.Equal(dec2("4.00")) {
 		t.Fatalf("打款后注销的作废结果 %+v", res)
 	}
 }

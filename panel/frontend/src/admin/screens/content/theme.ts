@@ -1,41 +1,31 @@
-import { COLOR_TOKENS, type ColorToken, type TokenGroup } from '../../../styles/design-tokens'
+import { COLOR_TOKENS } from '../../../styles/design-tokens'
 import type { Theme } from './schemas'
 
-export type ThemeMode = 'light' | 'dark'
-const THEME_MODES: readonly ThemeMode[] = ['light', 'dark']
+// ---------------------------------------------------------------------------
+// 编辑器里能改的 5 个浅色颜色：键是表单字段名，令牌名与后端 422 的 fields 键对应
+// ---------------------------------------------------------------------------
+export const THEME_COLORS = [
+  ['bg', '--bg', '背景'],
+  ['line', '--border', '分隔线'],
+  ['muted', '--text-2', '次要文字'],
+  ['ink', '--text', '主文字'],
+  ['accent', '--brand', '品牌色'],
+] as const
+export type ColorKey = (typeof THEME_COLORS)[number][0]
 
-// ---------------------------------------------------------------------------
-// 令牌分组：顺序与名单都来自 design-tokens.ts，后端白名单照抄同一份（Go 测试逐条对照）
-// ---------------------------------------------------------------------------
-const SECTION_LABEL: Readonly<Record<TokenGroup, string>> = {
-  neutral: '中性色',
-  brand: '品牌色',
-  status: '状态色',
-  overlay: '叠加与阴影',
-  supplement: '补充（危险按钮字色、Toast、后台侧栏）',
-}
-export const TOKEN_SECTIONS: ReadonlyArray<{ group: TokenGroup; label: string; tokens: readonly ColorToken[] }> = (Object.keys(SECTION_LABEL) as TokenGroup[]).map((group) => ({
-  group,
-  label: SECTION_LABEL[group],
-  tokens: COLOR_TOKENS.filter((t) => t.group === group),
-}))
+const TOKEN_NAME_BY_KEY: Readonly<Record<ColorKey, string>> = Object.fromEntries(THEME_COLORS.map(([key, token]) => [key, token])) as Readonly<Record<ColorKey, string>>
+/** 令牌名 → 设计规范默认浅色（缺键回退用） */
+const LIGHT_DEFAULT: Readonly<Record<string, string>> = Object.fromEntries(COLOR_TOKENS.map((t) => [t.name, t.light]))
 
-const TOKEN_NAMES: ReadonlySet<string> = new Set(COLOR_TOKENS.map((t) => t.name))
+/** 新建（from = 复制来源，null 是空白新建）或编辑一个自定义主题 */
+export type ThemeTarget = { kind: 'create'; from: Theme | null } | { kind: 'edit'; theme: Theme }
 
-// ---------------------------------------------------------------------------
-// 表单
-// ---------------------------------------------------------------------------
 export interface ThemeForm {
   code: string
   name: string
   tagline: string
-  /** data:image/…;base64,… 或空串 */
-  logo: string
-  tokens: Record<ThemeMode, Record<string, string>>
+  colors: Record<ColorKey, string>
 }
-
-/** 新建（from = 复制来源，默认是当前生效主题；没有主题时取设计稿默认值）或编辑一个自定义主题 */
-export type ThemeTarget = { kind: 'create'; from: Theme | null } | { kind: 'edit'; theme: Theme }
 
 /** 键与后端 422 的 fields 一致 */
 export type ThemeErrors = Record<string, string>
@@ -48,53 +38,41 @@ export function themeTagline(t: Pick<Theme, 'branding'>): string | null {
   return v || null
 }
 
-/**
- * 两组令牌一律补满 43 个：源主题缺的键（旧主题、只存了几个键的自定义主题）用设计稿默认值，
- * 白名单外的键丢掉——保存时整组提交，后端不会再收到不认识的键
- */
-function fullTokens(source: Theme | null): ThemeForm['tokens'] {
-  const out = { light: {}, dark: {} } as ThemeForm['tokens']
-  for (const mode of THEME_MODES) {
-    for (const t of COLOR_TOKENS) out[mode][t.name] = source?.tokens[mode][t.name]?.trim() || t[mode]
-  }
-  return out
+/** 3 位十六进制展开成 6 位并转小写：#abc → #aabbcc；其它原样返回 */
+function expandHex(value: string): string {
+  const v = value.trim()
+  if (/^#[0-9a-fA-F]{3}$/.test(v)) return `#${[...v.slice(1)].map((c) => c + c).join('')}`.toLowerCase()
+  return v
 }
 
+/** 来源主题（编辑 = theme，复制 = from，空白新建 = null） */
+const sourceOf = (target: ThemeTarget): Theme | null => (target.kind === 'edit' ? target.theme : target.from)
+
 export function themeToForm(target: ThemeTarget): ThemeForm {
-  const source = target.kind === 'edit' ? target.theme : target.from
+  const source = sourceOf(target)
   const branding = source?.branding ?? {}
-  const name = target.kind === 'edit' ? target.theme.name : source ? `${source.name} 副本`.slice(0, 60) : ''
-  return {
-    code: target.kind === 'edit' ? target.theme.code : '',
-    name,
-    tagline: str(branding.tagline),
-    logo: str(branding.logo).startsWith('data:image/') ? str(branding.logo) : '',
-    tokens: fullTokens(source),
+  let code = ''
+  let name = ''
+  if (target.kind === 'edit') {
+    code = target.theme.code
+    name = target.theme.name
+  } else if (source) {
+    code = `${source.code}-copy`.slice(0, 39)
+    name = `${[...source.name].slice(0, 57).join('')} 副本`
   }
+  const colors = {} as Record<ColorKey, string>
+  for (const [key, token] of THEME_COLORS) {
+    colors[key] = expandHex(source?.tokens.light[token] ?? LIGHT_DEFAULT[token] ?? '')
+  }
+  return { code, name, tagline: str(branding.tagline).trim(), colors }
 }
 
 // ---------------------------------------------------------------------------
 // 校验：与 Go 同一套规则（前端先拦一遍，后端照样会再校验）
 // ---------------------------------------------------------------------------
 const CODE_PATTERN = /^[a-z][a-z0-9_-]{1,38}$/
-const TOKEN_BAD = /[;{}<>\\]/
+const COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/
 const runes = (v: string) => [...v].length
-const LOGO_MAX_BYTES = 48 * 1024
-const LOGO_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml']
-
-export function tokenValueError(value: string): string | null {
-  const v = value.trim()
-  if (!v) return '必填'
-  if (v.length > 200 || TOKEN_BAD.test(v)) return '须为 200 字符以内，不含 ; { } < > \\'
-  return null
-}
-
-/** 上传前的检查；null = 可以读成 data URL */
-export function logoProblem(file: { type: string; size: number }): string | null {
-  if (!LOGO_TYPES.includes(file.type)) return 'Logo 只支持 PNG、JPEG、WebP 或 SVG'
-  if (file.size > LOGO_MAX_BYTES) return 'Logo 不能超过 48KB'
-  return null
-}
 
 export function validateThemeForm(form: ThemeForm, creating: boolean): ThemeErrors {
   const errors: ThemeErrors = {}
@@ -106,11 +84,8 @@ export function validateThemeForm(form: ThemeForm, creating: boolean): ThemeErro
   const name = form.name.trim()
   if (!name || runes(name) > 60) errors.name = '主题名称必填，最多 60 个字'
   if (runes(form.tagline.trim()) > 80) errors['branding.tagline'] = '标语最多 80 个字'
-  for (const mode of THEME_MODES) {
-    for (const t of COLOR_TOKENS) {
-      const problem = tokenValueError(form.tokens[mode][t.name] ?? '')
-      if (problem) errors[`tokens.${mode}.${t.name}`] = problem
-    }
+  for (const [key, token] of THEME_COLORS) {
+    if (!COLOR_PATTERN.test(form.colors[key].trim())) errors[`tokens.light.${token}`] = '写成 #RRGGBB'
   }
   return errors
 }
@@ -119,58 +94,46 @@ interface ThemeRequest {
   code: string
   name: string
   create: boolean
-  tokens: Record<ThemeMode, Record<string, string>>
+  tokens: Record<'light' | 'dark', Record<string, string>>
   branding: { tagline?: string; logo?: string }
 }
 
-export function buildThemeRequest(form: ThemeForm, creating: boolean): { ok: true; body: ThemeRequest } | { ok: false; errors: ThemeErrors } {
-  const errors = validateThemeForm(form, creating)
-  if (Object.keys(errors).length > 0) return { ok: false, errors }
-  const tokens = { light: {}, dark: {} } as ThemeRequest['tokens']
-  for (const mode of THEME_MODES) {
-    for (const t of COLOR_TOKENS) tokens[mode][t.name] = form.tokens[mode][t.name]!.trim()
-  }
-  const branding: ThemeRequest['branding'] = {}
-  if (form.tagline.trim()) branding.tagline = form.tagline.trim()
-  if (form.logo) branding.logo = form.logo
-  return { ok: true, body: { code: form.code.trim().toLowerCase(), name: form.name.trim(), create: creating, tokens, branding } }
-}
-
-/** 某一组里有几个令牌报错：分段控件上显示，免得错误藏在没打开的那一组里 */
-export function modeErrorCount(errors: ThemeErrors, mode: ThemeMode): number {
-  return Object.keys(errors).filter((k) => k.startsWith(`tokens.${mode}.`)).length
-}
-
-export function firstErrorMode(errors: ThemeErrors): ThemeMode | null {
-  return THEME_MODES.find((m) => modeErrorCount(errors, m) > 0) ?? null
-}
-
-// ---------------------------------------------------------------------------
-// 预览与卡片
-// ---------------------------------------------------------------------------
-
 /**
- * 预览区的 CSS 自定义属性：只放白名单内、取值合法的令牌，挂在预览容器的 style 上（CSSOM，
- * 不受 CSP 约束），作用域就是预览这一棵子树——不污染后台其它地方
+ * 两组令牌一律补满 43 个：来源主题缺的键（旧主题、只存了几个键的自定义主题）用设计稿默认值，
+ * 白名单外的键丢掉——保存时整组提交，后端不会再收到不认识的键
  */
-export function previewVars(group: Readonly<Record<string, string>>): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const [name, value] of Object.entries(group)) {
-    if (TOKEN_NAMES.has(name) && tokenValueError(value) === null) out[name] = value.trim()
+function fullTokens(source: Theme | null): ThemeRequest['tokens'] {
+  const out = { light: {}, dark: {} } as ThemeRequest['tokens']
+  for (const mode of ['light', 'dark'] as const) {
+    for (const t of COLOR_TOKENS) out[mode][t.name] = source?.tokens[mode][t.name]?.trim() || t[mode]
   }
   return out
 }
 
-/** 阴影类令牌的色块用 box-shadow 展示，其余用 background */
-export const isShadowToken = (name: string) => name.includes('shadow')
+export function buildThemeRequest(form: ThemeForm, target: ThemeTarget): { ok: true; body: ThemeRequest } | { ok: false; errors: ThemeErrors } {
+  const creating = target.kind === 'create'
+  const errors = validateThemeForm(form, creating)
+  if (Object.keys(errors).length > 0) return { ok: false, errors }
+  const source = sourceOf(target)
+  const tokens = fullTokens(source)
+  for (const [key, token] of THEME_COLORS) tokens.light[token] = form.colors[key].trim()
+  const branding: ThemeRequest['branding'] = {}
+  if (form.tagline.trim()) branding.tagline = form.tagline.trim()
+  // 界面不再提供 Logo，但来源主题已有 Logo（data:image/）原样带上，不因保存丢掉
+  const logo = str(source?.branding.logo)
+  if (logo.startsWith('data:image/')) branding.logo = logo
+  return { ok: true, body: { code: creating ? form.code.trim().toLowerCase() : target.theme.code, name: form.name.trim(), create: creating, tokens, branding } }
+}
 
-/** 卡片上的三个色块：亮色组的背景、正文、品牌色；缺键回退到当前令牌 */
-export function themeSwatches(t: Pick<Theme, 'tokens'>): { bg: string; fg: string; accent: string } {
-  const light = t.tokens.light
-  return { bg: light['--bg'] ?? 'var(--bg)', fg: light['--text'] ?? 'var(--text)', accent: light['--brand'] ?? 'var(--brand)' }
+/** 主题列表行上的 5 个色块：浅色组取值，缺键回退当前界面令牌 */
+export function themeSwatches(t: Pick<Theme, 'tokens'>): string[] {
+  return THEME_COLORS.map(([, token]) => t.tokens.light[token] ?? LIGHT_DEFAULT[token] ?? `var(${token})`)
 }
 
 /** 激活确认框：先说后果。站点名只认系统设置（site.name），不随生效主题变化，在「站点设置」里改 */
 export function activateNotice(target: Theme): string {
-  return `门户所有用户刷新页面后看到「${target.name}」的配色、标语与 Logo。站点名不随主题变化，在本页的「站点设置」里改。`
+  return `用户端所有用户看到的都会换成「${target.name}」，明暗两组随用户切换，正在使用的主题会被替换。站点名不随主题变化，在本页的「站点设置」里改。`
 }
+
+/** 测试与类型需要：字段键 → 令牌名 */
+export const colorTokenName = (key: ColorKey): string => TOKEN_NAME_BY_KEY[key]

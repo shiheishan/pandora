@@ -4,7 +4,7 @@ import { formatDateTime, formatMoney } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
 import { endsIntent } from './intent'
 
-const ORDER_KINDS = ['new', 'renewal', 'topup', 'addon', 'upgrade', 'traffic_reset'] as const
+const ORDER_KINDS = ['new', 'renewal', 'topup', 'upgrade', 'stack', 'traffic_reset'] as const
 export const ORDER_STATUSES = ['pending_payment', 'paid', 'fulfilled', 'cancelled', 'expired'] as const
 
 export const orderRowSchema = z.object({
@@ -12,10 +12,8 @@ export const orderRowSchema = z.object({
   order_no: z.string(),
   kind: z.enum(ORDER_KINDS),
   status: z.enum(ORDER_STATUSES),
-  currency: z.string(),
   total_amount: z.number().int(),
   discount_amount: z.number().int(),
-  member_discount_amount: z.number().int(),
   balance_applied: z.number().int(),
   payable_amount: z.number().int(),
   paid_amount: z.number().int(),
@@ -63,21 +61,21 @@ export function intervalLabel(interval: string | undefined, count = 1): string {
   return unit ? `${count} ${unit}` : ''
 }
 
-/** 契约门户-04 的标题映射；plan_name 缺席时为空串（修订 R32：流量包订单的 plan_name 即流量包名），流量包标题取 item_name。 */
+/** 契约门户-04 的标题映射；plan_name 缺席时为空串，商品名 Go 无 omitempty 恒在。 */
 export function orderTitle(o: Pick<OrderRow, 'kind' | 'plan_name' | 'item_name' | 'interval' | 'interval_count'>): string {
   const plan = o.plan_name ?? ''
   const period = intervalLabel(o.interval, o.interval_count)
   switch (o.kind) {
     case 'topup':
       return '余额充值'
-    case 'addon':
-      return `流量包 · ${o.item_name}`
     case 'traffic_reset':
       return o.item_name
     case 'upgrade':
       return `${plan} · 变更套餐`
     case 'renewal':
       return `${plan} · ${period ? `${period}续费` : '续费'}`
+    case 'stack':
+      return `叠加 · ${plan || o.item_name}`
     default:
       return period ? `${plan} · ${period}` : plan
   }
@@ -106,12 +104,21 @@ export function usePendingOrders() {
 // ---------------------------------------------------------------------------
 export const orderDetailSchema = z.object({
   order: orderRowSchema.extend({
-    items: z.array(z.object({ name: z.string(), quantity: z.number().int(), unit_amount: z.number().int(), line_amount: z.number().int() })),
+    // plan_id、price_id：「改用余额付」按同样的套餐与价格档重新下单；充值单为 null
+    items: z.array(
+      z.object({
+        name: z.string(),
+        quantity: z.number().int(),
+        unit_amount: z.number().int(),
+        line_amount: z.number().int(),
+        plan_id: z.string().nullable(),
+        price_id: z.string().nullable(),
+      }),
+    ),
     payments: z.array(
       z.object({
         status: z.string(),
         amount: z.number().int(),
-        currency: z.string(),
         created_at: z.string(),
         method: z.string().optional(),
         provider_name: z.string(),
@@ -119,8 +126,10 @@ export const orderDetailSchema = z.object({
     ),
     coupon_code: z.string().optional(),
     subscription_period_end: z.string().optional(),
-    // 履约后落到的那一份（新购是新开的那份，续费、换套餐、流量包是原来那份）；没履约时 null
+    // 落到的那一份：续费、换套餐、叠加、重置单建单时就有（原来那份）；新购履约后才有（新开的那份），之前为 null
     subscription_id: z.string().nullable(),
+    // 套餐归档转余额（cancel_reason=plan_archived）时扣下不退的支付手续费（分），其余订单为 0
+    surcharge_kept: z.number().int().optional(),
   }),
 })
 export type OrderDetail = z.output<typeof orderDetailSchema>['order']
@@ -144,12 +153,11 @@ export function useOrder(id: string | undefined, poll: number | false = false) {
 }
 
 // ---------------------------------------------------------------------------
-// 下单四个接口（新购、续费、变更套餐、流量包）同形的 201 响应
+// 下单接口同形的 201 响应
 // ---------------------------------------------------------------------------
 export const orderCreatedSchema = z.object({
   order_id: z.string(),
   order_no: z.string(),
-  currency: z.string(),
   total_amount: z.number().int(),
   discount_amount: z.number().int(),
   balance_applied: z.number().int(),
@@ -307,20 +315,35 @@ export function payMethodName(payments: ReadonlyArray<Pick<OrderDetail['payments
   return names.size === 1 ? [...names][0]! : '在线'
 }
 
+/** 套餐归档后才付款（10-16）：订单取消、不开通，钱转进钱包余额 */
+export const isPlanArchivedRefund = (o: { status: string; cancel_reason?: string }) => o.status === 'cancelled' && o.cancel_reason === 'plan_archived'
+
+/**
+ * 归档转余额的去向说明（10-16 定「手续费不退」）：扣了手续费写「应付金额」并注明不退；没扣写「付的钱」。
+ * surchargeKept 不知道（查单结果里没有）时用统一说法。
+ */
+export function archivedRefundText(surchargeKept: number | undefined): string {
+  if (surchargeKept === undefined) return '应付金额已转入钱包余额，支付手续费不退'
+  return surchargeKept > 0 ? '应付金额已转入钱包余额（支付手续费不退）' : '付的钱已转入钱包余额'
+}
+
 /** 展开区「结果」（契约门户-04 订单详情映射） */
-export function orderResult(o: Pick<OrderDetail, 'status' | 'kind' | 'cancel_reason' | 'subscription_period_end' | 'payments' | 'expires_at'>): string {
+export function orderResult(
+  o: Pick<OrderDetail, 'status' | 'kind' | 'cancel_reason' | 'subscription_period_end' | 'payments' | 'expires_at' | 'surcharge_kept'>,
+): string {
   const method = o.payments.length ? payMethodName(o.payments) : ''
   switch (o.status) {
     case 'fulfilled':
     case 'paid':
       if (o.kind === 'topup') return '余额已到账'
-      if (o.kind === 'addon') return '流量包已到账'
+      if (o.kind === 'stack') return '已叠加，总流量加上了'
       if (o.kind === 'traffic_reset') return '本期流量已清零'
       if (o.kind === 'upgrade') return '已换好套餐，链接不变'
       return [method, o.subscription_period_end ? `有效期至 ${formatDateTime(o.subscription_period_end).slice(0, 10)}` : '已开通'].filter(Boolean).join(' · ')
     case 'expired':
       return '超时未支付，已自动取消'
     case 'cancelled':
+      if (o.cancel_reason === 'plan_archived') return `套餐已停售，没有开通；${archivedRefundText(o.surcharge_kept)}`
       return !o.cancel_reason || o.cancel_reason === 'user_cancelled' ? '已由您取消' : o.cancel_reason
     default:
       return o.expires_at ? `待支付，${formatDateTime(o.expires_at)} 前有效` : '待支付'
@@ -332,7 +355,7 @@ const PAYMENT_STATUS: Readonly<Record<string, string>> = { succeeded: '成功' }
 
 /** 展开区事实行（契约门户-04 待补·前端）：订单号、时间、结果、金额拆分、支付记录 */
 export function orderFacts(o: OrderDetail): Array<{ k: string; v: string }> {
-  const money = (m: number) => formatMoney(m, o.currency)
+  const money = (m: number) => formatMoney(m)
   const original = o.items.reduce((n, i) => n + i.line_amount, 0)
   const facts = [
     { k: '订单号', v: o.order_no },
@@ -345,7 +368,32 @@ export function orderFacts(o: OrderDetail): Array<{ k: string; v: string }> {
   if (PAID_STATUSES.has(o.status)) facts.push({ k: '实付', v: money(o.paid_amount) })
   if (OPEN_STATUSES.includes(o.status as (typeof OPEN_STATUSES)[number]) && o.expires_at) facts.push({ k: '过期时间', v: formatDateTime(o.expires_at) })
   for (const p of o.payments) {
-    facts.push({ k: '支付记录', v: [payMethodName([p]), formatMoney(p.amount, p.currency), PAYMENT_STATUS[p.status] ?? p.status, formatDateTime(p.created_at)].join(' · ') })
+    facts.push({ k: '支付记录', v: [payMethodName([p]), formatMoney(p.amount), PAYMENT_STATUS[p.status] ?? p.status, formatDateTime(p.created_at)].join(' · ') })
   }
   return facts
+}
+
+/**
+ * 待付单「改用余额付」：已下的单不能再补余额（下单时才冻结），做法是取消它、带着同样的套餐与价格档回确认页（#/checkout）重下，
+ * 余额在确认页默认用上。能重下的给确认页的地址参数；充值单、缺套餐或订阅信息的给 null。
+ */
+export function rebuyQuery(o: Pick<OrderDetail, 'kind' | 'subscription_id' | 'items'>): Record<string, string> | null {
+  const it = o.items[0]
+  const plan = it?.plan_id ?? null
+  const price = it?.price_id ?? null
+  const sub = o.subscription_id
+  switch (o.kind) {
+    case 'new':
+      return plan && price ? { new: plan, price } : null
+    case 'renewal':
+      return sub && price ? { renew: sub, price } : null
+    case 'stack':
+      return sub && price ? { stack: sub, price } : null
+    case 'upgrade':
+      return sub && plan && price ? { change: sub, plan, price } : null
+    case 'traffic_reset':
+      return sub ? { reset: sub } : null
+    default:
+      return null
+  }
 }

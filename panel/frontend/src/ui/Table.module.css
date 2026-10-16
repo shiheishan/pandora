@@ -1,8 +1,10 @@
+.root {
+  display: flex;
+  flex-direction: column;
+}
+
 .scroll {
   overflow-x: auto;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
 }
 
 .table {
@@ -16,38 +18,92 @@
   width: 38px;
 }
 
-.table th,
+.table th {
+  height: 36px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border-strong);
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  text-align: left;
+  background: var(--surface);
+}
+
 .table td {
-  padding: 9px 14px;
+  padding: 12px 14px;
   text-align: left;
   vertical-align: middle;
 }
 
-.table th {
-  padding-top: 8px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--border);
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  font-weight: var(--fw-regular);
-  white-space: nowrap;
+.sticky {
+  position: sticky;
+  top: 0;
+  z-index: 2;
 }
 
 .table tbody tr + tr td {
   border-top: 1px solid var(--border);
 }
 
-.table th:first-child,
-.table td:first-child {
-  padding-left: 14px;
+.table tbody tr:last-child td {
+  border-bottom: 1px solid var(--border);
+}
+
+.hasFooter .table tbody tr:last-child td {
+  border-bottom: none;
 }
 
 .right {
   text-align: right !important;
 }
 
+.sorted {
+  color: var(--text);
+}
+
+.sortButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.sortButton:hover {
+  color: var(--text);
+}
+
+.sortButtonRight {
+  flex-direction: row-reverse;
+}
+
+.sortIcon {
+  opacity: 0;
+  transition: opacity .15s, transform .15s;
+}
+
+.sortButton:hover .sortIcon {
+  opacity: 0.5;
+}
+
+.sortButton .sortIconActive,
+.sortIconActive {
+  opacity: 1;
+}
+
+.sortIconDesc {
+  transform: rotate(180deg);
+}
+
 .clickable {
   cursor: pointer;
+  transition: background-color .15s;
 }
 
 .clickable:hover,
@@ -64,4 +120,11 @@
 
 .emptyCell {
   padding: 0 !important;
+}
+
+.footer {
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  color: var(--text-3);
+  font-size: var(--fs-caption);
 }

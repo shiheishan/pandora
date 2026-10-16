@@ -7,12 +7,11 @@ import (
 	"unicode/utf8"
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
 // Site 读取站点级设置。
 func (s *Service) Site(ctx context.Context) (Site, error) {
-	keys := []string{keySiteName, keySiteTimezone, keySiteCurrency}
+	keys := []string{keySiteName, keySiteTimezone}
 	vals, err := s.store.Values(ctx, keys)
 	if err != nil {
 		return Site{}, err
@@ -25,24 +24,19 @@ func (s *Service) Site(ctx context.Context) (Site, error) {
 	if err != nil {
 		return Site{}, err
 	}
-	cur, err := decodeOr(vals, keySiteCurrency, defaultSiteCurrency)
-	if err != nil {
-		return Site{}, err
-	}
-	return Site{Name: name, Timezone: tz, Currency: cur}, nil
+	return Site{Name: name, Timezone: tz}, nil
 }
 
 // SiteUpdate 是站点设置的部分更新：nil 字段保持原值。
 type SiteUpdate struct {
 	Name     *string
 	Timezone *string
-	Currency *string
 }
 
-// SetSite 在锁住三行的事务里合并、校验并写入站点设置，并发改不同字段不会互相覆盖。
+// SetSite 在锁住两行的事务里合并、校验并写入站点设置，并发改不同字段不会互相覆盖。
 func (s *Service) SetSite(ctx context.Context, u SiteUpdate) error {
 	return s.tx.Do(ctx, func(ctx context.Context) error {
-		keys := []string{keySiteName, keySiteTimezone, keySiteCurrency}
+		keys := []string{keySiteName, keySiteTimezone}
 		vals, err := s.store.LockValues(ctx, keys)
 		if err != nil {
 			return err
@@ -54,18 +48,12 @@ func (s *Service) SetSite(ctx context.Context, u SiteUpdate) error {
 		if old.Timezone, err = decodeOr(vals, keySiteTimezone, defaultSiteTimezone); err != nil {
 			return err
 		}
-		if old.Currency, err = decodeOr(vals, keySiteCurrency, defaultSiteCurrency); err != nil {
-			return err
-		}
 		v := old
 		if u.Name != nil {
 			v.Name = strings.TrimSpace(*u.Name)
 		}
 		if u.Timezone != nil {
 			v.Timezone = *u.Timezone
-		}
-		if u.Currency != nil {
-			v.Currency = *u.Currency
 		}
 		if err := validateSite(v); err != nil {
 			return err
@@ -74,12 +62,10 @@ func (s *Service) SetSite(ctx context.Context, u SiteUpdate) error {
 		before := map[string]any{
 			keySiteName:     old.Name,
 			keySiteTimezone: old.Timezone,
-			keySiteCurrency: old.Currency,
 		}
 		after := map[string]any{
 			keySiteName:     v.Name,
 			keySiteTimezone: v.Timezone,
-			keySiteCurrency: v.Currency,
 		}
 		changes, b, a := diff(before, after)
 		if len(changes) == 0 {
@@ -105,10 +91,6 @@ func validateSite(v Site) error {
 	}
 	if !validTimezone(v.Timezone) {
 		fields["timezone"] = "不是有效的时区"
-	}
-	// 只收 money 支持的币种：别的值会让一切涉及金额的请求失败
-	if !money.Currency(v.Currency).Valid() {
-		fields["currency"] = "币种只支持 CNY 或 USD"
 	}
 	if len(fields) > 0 {
 		return errs.Invalid(fields)

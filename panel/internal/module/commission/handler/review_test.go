@@ -33,7 +33,7 @@ func TestListReviewEntriesShape(t *testing.T) {
 	f := &fakeSvc{reviewPage: service.ReviewEntryPage{
 		Entries: []service.ReviewEntryRow{{
 			ID: id, OrderNo: "N100", ReferrerEmail: "ref@x.test", RefereeEmail: "fr@x.test",
-			Amount: decimal.RequireFromString("12.34"), Currency: "CNY", ReviewReason: "同源嫌疑", ReviewSource: service.ReviewSourceSameSource,
+			Amount: decimal.RequireFromString("12.34"), ReviewReason: "同源嫌疑", ReviewSource: service.ReviewSourceSameSource,
 			CreatedAt: at, FrozenUntil: at.Add(72 * time.Hour),
 		}},
 		NextCursor: "abc",
@@ -59,7 +59,7 @@ func TestListReviewEntriesShape(t *testing.T) {
 	row := resp.Entries[0]
 	want := map[string]any{
 		"id": id.String(), "order_no": "N100", "referrer_email": "ref@x.test", "referee_email": "fr@x.test",
-		"amount": float64(1234), "currency": "CNY", "review_reason": "同源嫌疑", "review_source": "same_source",
+		"amount": float64(1234), "review_reason": "同源嫌疑", "review_source": "same_source",
 		"created_at": "2026-10-13T02:00:00Z", "frozen_until": "2026-10-16T02:00:00Z",
 	}
 	if len(row) != len(want) {

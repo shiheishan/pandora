@@ -7,7 +7,7 @@ import {
   overrideSummary,
   type OverrideForm,
 } from './levelsModel'
-import local from './Commission.module.css'
+import local from './CommissionSettings.module.css'
 import { formatDateTime, type FieldErrors } from './logic'
 import css from './marketing.module.css'
 import { useCommissionOverrides, useFailure, useInvalidateMarketing } from './queries'
@@ -78,16 +78,16 @@ export function CommissionOverrides() {
   }
 
   return (
-    <section className={css.panel}>
-      <div className={css.panelHead}>
-        <h3 className={css.panelTitle}>单独佣金设置</h3>
+    <div className={local.secBlock}>
+      <div className={local.secHead}>
+        <h3 className={local.secTitle}>单独佣金设置</h3>
         <span className={css.faint}>
           只影响这个人作为直接邀请人的以后订单；已计提的佣金不变。设置与删除都需要重新验证身份
         </span>
       </div>
 
-      <form className={local.form} onSubmit={submit} noValidate>
-        <div className={local.pair}>
+      <form className={css.stack} onSubmit={submit} noValidate>
+        <div className={local.grid3}>
           <Input
             label="用户邮箱"
             type="email"
@@ -105,8 +105,6 @@ export function CommissionOverrides() {
             error={errors.rate_percent}
             placeholder="0–50"
           />
-        </div>
-        <div>
           <Select
             label="计佣范围"
             value={form.scope}
@@ -145,20 +143,20 @@ export function CommissionOverrides() {
       >
         {(rows) =>
           rows.map((o) => (
-            <div key={o.user_id} className={local.row}>
+            <div key={o.user_id} className={local.overridesRow}>
               <span className={local.who}>
                 <span className={local.ellipsis}>{o.email}</span>
                 <span className={`${css.faint} ${local.ellipsis}`}>
                   {overrideSummary(o)} · {formatDateTime(o.updated_at)}
                 </span>
               </span>
-              <span className={local.actions}>
+              <span className={local.overrideActions}>
                 <Button size="xs" onClick={() => editOverride(o)}>
                   修改
                 </Button>
                 <Button
                   size="xs"
-                  className={local.reject}
+                  className={local.btnReject}
                   onClick={() => setDeleting(o)}
                   disabled={deleteMutation.isPending}
                 >
@@ -184,6 +182,6 @@ export function CommissionOverrides() {
         }}
         onCancel={() => setDeleting(null)}
       />
-    </section>
+    </div>
   )
 }

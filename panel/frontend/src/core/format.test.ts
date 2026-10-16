@@ -7,8 +7,7 @@ describe('formatMoney', () => {
     expect(formatMoney(0)).toBe('¥0.00')
     expect(formatMoney(128000)).toBe('¥1,280.00')
     expect(formatMoney(-5)).toBe('-¥0.05')
-    expect(formatMoney(123456789, 'USD')).toBe('$1,234,567.89')
-    expect(formatMoney(100, 'EUR')).toBe('EUR 1.00')
+    expect(formatMoney(123456789)).toBe('¥1,234,567.89')
   })
 })
 

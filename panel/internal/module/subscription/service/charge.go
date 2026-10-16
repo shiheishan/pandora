@@ -6,8 +6,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/aegispanel/aegis/internal/module/subscription/repo"
 )
 
 // TrafficCharge 是一笔要记到订阅上的流量：UID 是 subscriptions.node_uid，Bytes 是已按节点倍率折算的计费字节（可以为 0）。
@@ -19,10 +17,10 @@ type TrafficCharge struct {
 // ChargeTraffic 在调用方的事务里（ctx 里有事务就加入，没有就自己开）把一批计费流量记到订阅上，返回 uid → 订阅 id（只含找得到订阅的 uid，
 // 包括 Bytes 为 0 的）。
 //
-// 口径：先扣本期限量配额（含滚动空窗那一行）；超出部分按先到先扣扣挂在这一份上的流量包；都不够仍记在套餐上；饱和加法；当日用量与配额、包同一事务。
+// 口径：先扣本期限量配额（剩余含本期送的量，含滚动空窗那一行），不够仍记在配额上；饱和加法；当日用量与配额同一事务。
 // 切日与门户 MyUsage 同为 dayOf + siteLocation。
 //
-// 锁序：本方法不锁订阅行；配额行按 id → 流量包按（订阅、created_at、id）→ 按日用量按订阅 id。
+// 锁序：本方法不锁订阅行；配额行按 id → 按日用量按订阅 id。
 // 同一批按 uid 升序决定怎么分，并发两批（同一组订阅、反序到达）加锁顺序相同，不会交叉死锁；
 // 与别的路径（续费、重置先锁订阅再锁配额）若成环，由调用方遇 40P01 / 40001 整笔重试（node 的 IngestTraffic）。
 // 不做审计（每分钟一批，留档在 node_traffic_reports）。
@@ -76,23 +74,7 @@ func (s *Service) ChargeTraffic(ctx context.Context, charges []TrafficCharge) (m
 		if err != nil {
 			return subErr(err)
 		}
-		rooms := quotaRooms(rows)
-		var packSubs []uuid.UUID
-		for _, it := range items {
-			if needsPacks(rooms[it.SubID], it.Bytes) {
-				packSubs = append(packSubs, it.SubID)
-			}
-		}
-		var packs []repo.OpenTrafficPack
-		if len(packSubs) > 0 {
-			if packs, err = s.repo.LockOpenTrafficPacks(ctx, sortedUniqueIDs(packSubs)); err != nil {
-				return subErr(err)
-			}
-		}
-		plan := planTrafficCharges(items, rows, packs)
-		if err := s.repo.TakeTrafficPacks(ctx, plan.PackTakes); err != nil {
-			return subErr(err)
-		}
+		plan := planTrafficCharges(items, rows)
 		if err := s.repo.AddQuotaConsumed(ctx, plan.QuotaAdds); err != nil {
 			return subErr(err)
 		}

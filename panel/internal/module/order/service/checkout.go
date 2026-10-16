@@ -10,27 +10,17 @@ import (
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
 	"github.com/aegispanel/aegis/internal/module/order/model"
 	promosvc "github.com/aegispanel/aegis/internal/module/promo/service"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 )
-
-// newPurchase 是新购要占的库存与限购。
-type newPurchase struct {
-	PlanID  uuid.UUID
-	Limited bool // 套餐有每人限购
-}
 
 // draft 是一张待建订单（在建单事务里组装好再交给 place）。
 type draft struct {
 	Kind           string
 	UserID         uuid.UUID
-	Currency       money.Currency
 	Subtotal       decimal.Decimal
-	CouponPlanID   *uuid.UUID // 券适用范围：套餐类订单给套餐 id，流量包为 nil；充值与流量重置不用券
-	CouponInterval *string    // 券限定周期用：新购、续费、换套餐给价格档的 billing_interval；流量包为 nil；充值、流量重置与人工单不用券
+	CouponPlanID   *uuid.UUID // 券适用范围：买套餐的订单给套餐 id；充值与流量重置不用券
 	SubscriptionID *uuid.UUID
 	Label          *string
-	Item           *model.Item // 充值为 nil；OrderID、Currency 由 place 填
-	NewPurchase    *newPurchase
+	Item           *model.Item // 充值为 nil；OrderID 由 place 填
 	Checkout       Checkout
 	// ProrationCredit 是换套餐时原订阅的剩余价值（其余种类为 0）
 	ProrationCredit decimal.Decimal
@@ -63,7 +53,7 @@ func (s *Service) balanceFor(ctx context.Context, d draft, total decimal.Decimal
 	}
 	if d.Manual != nil {
 		if !d.Manual.Grant && !d.Manual.Offline {
-			minPay, err := s.payments.MinPayment(ctx, d.Currency)
+			minPay, err := s.payments.MinPayment(ctx)
 			if err != nil {
 				return BalancePlan{}, err
 			}
@@ -73,7 +63,7 @@ func (s *Service) balanceFor(ctx context.Context, d draft, total decimal.Decimal
 		}
 		return BalancePlan{Applied: decimal.Zero, Payable: total}, nil
 	}
-	minPay, err := s.payments.MinPayment(ctx, d.Currency)
+	minPay, err := s.payments.MinPayment(ctx)
 	if err != nil {
 		return BalancePlan{}, err
 	}
@@ -81,7 +71,7 @@ func (s *Service) balanceFor(ctx context.Context, d draft, total decimal.Decimal
 	available := decimal.Zero
 	// 余额开关打开，或应付低于最低额（Forced / BelowMinimum 与开关无关）时要知道余额
 	if requested.IsPositive() || total.LessThan(minPay) {
-		available, err = s.ledger.Balance(ctx, d.UserID, d.Currency)
+		available, err = s.ledger.Balance(ctx, d.UserID)
 		if err != nil {
 			return BalancePlan{}, err
 		}
@@ -107,11 +97,13 @@ func (s *Service) place(ctx context.Context, d draft) (Created, model.Order, err
 				return Created{}, model.Order{}, promosvc.ErrCouponNotForReset
 			}
 		} else if couponCode != "" {
+			// 先锁券行、再插订单：插订单的外键检查给券行加 KEY SHARE，之后 Reserve 再锁成 FOR UPDATE 会与同券并发建单互等（40P01）
+			if err := s.promo.Lock(ctx, couponCode); err != nil {
+				return Created{}, model.Order{}, err
+			}
 			applied, err := s.promo.Evaluate(ctx, couponCode, promosvc.Target{
 				UserID:   d.UserID,
 				PlanID:   d.CouponPlanID,
-				Interval: d.CouponInterval,
-				Currency: string(d.Currency),
 				Subtotal: d.Subtotal,
 			})
 			if err != nil {
@@ -129,22 +121,8 @@ func (s *Service) place(ctx context.Context, d draft) (Created, model.Order, err
 		discount = d.Subtotal
 	}
 
-	// 会员折扣（照 Xboard：与券都按小计算、相加，合计不超过小计）：门户的非充值、非流量重置单才打（重置单永远按原价，用户 10-14 定），后台人工单不打
-	member := decimal.Zero
-	memberPct := 0
-	if d.Kind != KindTopup && d.Kind != KindTrafficReset && d.Manual == nil {
-		pct, err := s.promo.MemberPercent(ctx, d.UserID)
-		if err != nil {
-			return Created{}, model.Order{}, err
-		}
-		member = promosvc.MemberDiscount(d.Subtotal, discount, pct)
-		if member.IsPositive() {
-			memberPct = pct
-		}
-	}
-
 	// total 是免零头之前的应付（报价的 total 同口径，expect 按它比）；免掉的零头单独记 waived_amount
-	total := OrderTotal(d.Subtotal, discount.Add(member), d.ProrationCredit)
+	total := OrderTotal(d.Subtotal, discount, d.ProrationCredit)
 
 	bal, err := s.balanceFor(ctx, d, total)
 	if err != nil {
@@ -172,10 +150,8 @@ func (s *Service) place(ctx context.Context, d draft) (Created, model.Order, err
 		UserID:                d.UserID,
 		Kind:                  d.Kind,
 		Status:                StatusPending,
-		Currency:              string(d.Currency),
 		SubtotalAmount:        d.Subtotal,
-		DiscountAmount:        discount.Add(member),
-		MemberDiscountAmount:  member,
+		DiscountAmount:        discount,
 		ProrationCreditAmount: d.ProrationCredit,
 		WaivedAmount:          waived,
 		TotalAmount:           total.Sub(waived),
@@ -195,8 +171,7 @@ func (s *Service) place(ctx context.Context, d draft) (Created, model.Order, err
 		o.ManualReason = &reason
 	}
 
-	res, err := s.placeOrder(ctx, &o, d.Actor)
-	if err != nil {
+	if _, err := s.placeOrder(ctx, &o, d.Actor); err != nil {
 		return Created{}, model.Order{}, err
 	}
 
@@ -204,8 +179,6 @@ func (s *Service) place(ctx context.Context, d draft) (Created, model.Order, err
 		reserved, err := s.promo.Reserve(ctx, couponCode, promosvc.Target{
 			UserID:   d.UserID,
 			PlanID:   d.CouponPlanID,
-			Interval: d.CouponInterval,
-			Currency: string(d.Currency),
 			Subtotal: d.Subtotal,
 		}, promosvc.OrderRef{ID: o.ID, No: o.OrderNo})
 		if err != nil {
@@ -223,8 +196,8 @@ func (s *Service) place(ctx context.Context, d draft) (Created, model.Order, err
 		couponID = &reserved.CouponID
 		discount = reserved.Discount
 		o.CouponID = couponID
-		o.DiscountAmount = discount.Add(member)
-		if !OrderTotal(d.Subtotal, discount.Add(member), d.ProrationCredit).Equal(total) {
+		o.DiscountAmount = discount
+		if !OrderTotal(d.Subtotal, discount, d.ProrationCredit).Equal(total) {
 			return Created{}, model.Order{}, ErrQuoteChanged
 		}
 	}
@@ -232,24 +205,16 @@ func (s *Service) place(ctx context.Context, d draft) (Created, model.Order, err
 	if d.Item != nil {
 		it := *d.Item
 		it.OrderID = o.ID
-		it.Currency = string(d.Currency)
 		if err := s.repo.CreateItem(ctx, &it); err != nil {
-			return Created{}, model.Order{}, err
-		}
-	}
-
-	if d.NewPurchase != nil {
-		if err := s.holdNewPurchase(ctx, res, d.NewPurchase.PlanID, d.UserID, d.NewPurchase.Limited); err != nil {
 			return Created{}, model.Order{}, err
 		}
 	}
 
 	if bal.Payable.IsPositive() && bal.Applied.IsPositive() {
 		_, err := s.ledger.HoldForOrder(ctx, ledgersvc.HoldInput{
-			OrderID:  o.ID,
-			UserID:   d.UserID,
-			Currency: d.Currency,
-			Amount:   bal.Applied,
+			OrderID: o.ID,
+			UserID:  d.UserID,
+			Amount:  bal.Applied,
 		})
 		if err != nil {
 			return Created{}, model.Order{}, err
@@ -272,17 +237,12 @@ func (s *Service) place(ctx context.Context, d draft) (Created, model.Order, err
 		auditData := map[string]any{
 			"order_no": o.OrderNo,
 			"kind":     d.Kind,
-			"currency": string(d.Currency),
 			"total":    o.TotalAmount.StringFixed(2),
 		}
 		if d.Kind == KindUpgrade {
 			for k, v := range changeAuditData(o, total) {
 				auditData[k] = v
 			}
-		}
-		if member.IsPositive() {
-			auditData["member_discount"] = member.StringFixed(2)
-			auditData["member_percent"] = memberPct
 		}
 		for k, v := range d.AuditData {
 			auditData[k] = v
@@ -300,10 +260,8 @@ func (s *Service) place(ctx context.Context, d draft) (Created, model.Order, err
 	created := Created{
 		OrderID:        o.ID,
 		OrderNo:        o.OrderNo,
-		Currency:       d.Currency,
 		Total:          o.TotalAmount,
 		Discount:       o.DiscountAmount,
-		MemberDiscount: o.MemberDiscountAmount,
 		BalanceApplied: o.BalanceApplied,
 		Payable:        o.PayableAmount,
 		Waived:         o.WaivedAmount,

@@ -1,36 +1,38 @@
 import { z } from 'zod'
 
 // ---------------------------------------------------------------------------
-// GET v1/plans（字段与 Go 的 planView 一一对应，都没有 omitempty：R69 的重置策略与续费 / 变更开关、
-// R99 / R100 的限速、卖点与推荐都必回；重置日与限速在不适用时为 null）
+// GET v1/plans（Go catalog/handler 的 portalPlan，都没有 omitempty）：
+// 订阅套餐（kind=subscription）按时间算，月 / 季 / 半年 / 年四档价，traffic_bytes 是每期的流量；
+// 一次性套餐（kind=one_time）只有一档 one_time 价，traffic_bytes 是总流量，validity_days 为 null 即永久。
+// reset 为 null 表示没开流量重置；limit 为 null 表示不限次数。没有币种，只有人民币。
 // ---------------------------------------------------------------------------
-const RESET_STRATEGIES = ['never', 'natural_month', 'billing_cycle', 'fixed_day'] as const
+export const PLAN_KINDS = ['subscription', 'one_time'] as const
+export type PlanKind = (typeof PLAN_KINDS)[number]
 
 const priceSchema = z.object({
   id: z.string(),
-  currency: z.string(),
-  unit_amount: z.number().int(),
-  billing_interval: z.enum(['day', 'week', 'month', 'quarter', 'year', 'one_time']),
+  billing_interval: z.enum(['month', 'year', 'one_time']),
   interval_count: z.number().int(),
+  unit_amount: z.number().int(),
+  validity_days: z.number().int().nullable(),
 })
 export type Price = z.output<typeof priceSchema>
 
 export const planSchema = z.object({
   id: z.string(),
-  code: z.string(),
   name: z.string(),
   description: z.string().nullable(),
-  version: z.number().int().nullable(),
-  max_devices: z.number().int().nullable(),
-  quotas: z.array(z.object({ metric: z.string(), limit: z.number().int().nullable(), unit: z.string(), period: z.enum(['total', 'cycle', 'day', 'month']) })),
-  prices: z.array(priceSchema),
-  quota_reset_strategy: z.enum(RESET_STRATEGIES),
-  quota_reset_day: z.number().int().nullable(),
-  allow_renewal: z.boolean(),
-  allow_upgrade: z.boolean(),
-  // 修订 R99：当前发布版本的限速（kbps），null = 不限；R100：卖点（按顺序）与「推荐」
-  throttle_kbps: z.number().int().positive().nullable(),
-  highlights: z.array(z.string()),
+  kind: z.enum(PLAN_KINDS),
   recommended: z.boolean(),
+  /** 假 = 不接新购（另买一份、一次性叠加）；已持有的按 allow_renewal 续。选购页与「再买一份」不列 */
+  allow_new_purchase: z.boolean(),
+  allow_renewal: z.boolean(),
+  /** 订阅套餐是每期流量，一次性套餐是总流量；null = 不限 */
+  traffic_bytes: z.number().int().nullable(),
+  max_devices: z.number().int().nullable(),
+  /** 全程限速（kbps），null = 不限 */
+  throttle_kbps: z.number().int().positive().nullable(),
+  prices: z.array(priceSchema),
+  reset: z.object({ price: z.number().int(), limit: z.number().int().nullable() }).nullable(),
 })
 export type Plan = z.output<typeof planSchema>

@@ -1,6 +1,6 @@
 package repo
 
-// 本文件证明钱的底线确实在库里生效：只追加、提交时配平、单币种、用户类余额不为负、
+// 本文件证明钱的底线确实在库里生效：只追加、提交时配平、用户类余额不为负、
 // 科目归属形状、按来源唯一的交易、每单一笔 hold、提交后不能追加分录。直接写 SQL，绕开 Go 层的检查。
 
 import (
@@ -45,25 +45,25 @@ func mkUser(t *testing.T, g *gorm.DB) uuid.UUID {
 
 // newOrder 插一张待付的新购订单并返回 ID：balance_holds.order_id 有指向 orders 的外键，冻结要挂在真订单上。
 // 订单号用随机串，满足 ^[A-Z0-9-]{1,64}$ 且全局唯一。
-func newOrder(t *testing.T, g *gorm.DB, user uuid.UUID, cur string) uuid.UUID {
+func newOrder(t *testing.T, g *gorm.DB, user uuid.UUID) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID
 	no := "T-" + strings.ToUpper(strings.ReplaceAll(uuid.NewString(), "-", ""))
-	err := g.Raw(`INSERT INTO orders (order_no, user_id, kind, currency, subtotal_amount, total_amount, payable_amount, expires_at)
-		VALUES (?, ?, 'new', ?, 10, 10, 10, now() + interval '30 minutes') RETURNING id`, no, user, cur).Row().Scan(&id)
+	err := g.Raw(`INSERT INTO orders (order_no, user_id, kind, subtotal_amount, total_amount, payable_amount, expires_at)
+		VALUES (?, ?, 'new', 10, 10, 10, now() + interval '30 minutes') RETURNING id`, no, user).Row().Scan(&id)
 	if err != nil {
 		t.Fatalf("建订单: %v", err)
 	}
 	return id
 }
 
-// mkPlatformAccount 直接插一个平台类科目。平台科目按 (类型, 币种, owner_ref) 全库唯一，
+// mkPlatformAccount 直接插一个平台类科目。平台科目按 (类型, owner_ref) 全库唯一，
 // 所以 owner_ref 在 ref 后面拼一段随机后缀，每次都是本用例独有的科目，不会撞到别处已提交的同名科目。
-func mkPlatformAccount(t *testing.T, g *gorm.DB, typ, cur, ref string) uuid.UUID {
+func mkPlatformAccount(t *testing.T, g *gorm.DB, typ, ref string) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID
-	err := g.Raw(`INSERT INTO ledger_accounts (account_type, currency, owner_ref) VALUES (?, ?, ?) RETURNING id`,
-		typ, cur, uniqueRef(ref)).Row().Scan(&id)
+	err := g.Raw(`INSERT INTO ledger_accounts (account_type, owner_ref) VALUES (?, ?) RETURNING id`,
+		typ, uniqueRef(ref)).Row().Scan(&id)
 	if err != nil {
 		t.Fatalf("建平台科目: %v", err)
 	}
@@ -76,11 +76,11 @@ func uniqueRef(ref string) string {
 }
 
 // mkUserAccount 直接插一个用户类科目。
-func mkUserAccount(t *testing.T, g *gorm.DB, typ, cur string, user uuid.UUID) uuid.UUID {
+func mkUserAccount(t *testing.T, g *gorm.DB, typ string, user uuid.UUID) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID
-	err := g.Raw(`INSERT INTO ledger_accounts (account_type, currency, owner_user_id) VALUES (?, ?, ?) RETURNING id`,
-		typ, cur, user).Row().Scan(&id)
+	err := g.Raw(`INSERT INTO ledger_accounts (account_type, owner_user_id) VALUES (?, ?) RETURNING id`,
+		typ, user).Row().Scan(&id)
 	if err != nil {
 		t.Fatalf("建用户科目: %v", err)
 	}
@@ -88,17 +88,17 @@ func mkUserAccount(t *testing.T, g *gorm.DB, typ, cur string, user uuid.UUID) uu
 }
 
 // insertTxn 直接插一笔交易（操作者 system）。
-func insertTxn(g *gorm.DB, kind, cur string, sourceType *string, sourceID *uuid.UUID) (uuid.UUID, error) {
+func insertTxn(g *gorm.DB, kind string, sourceType *string, sourceID *uuid.UUID) (uuid.UUID, error) {
 	var id uuid.UUID
-	err := g.Raw(`INSERT INTO ledger_transactions (kind, currency, source_type, source_id, actor_kind)
-		VALUES (?, ?, ?, ?, 'system') RETURNING id`, kind, cur, sourceType, sourceID).Row().Scan(&id)
+	err := g.Raw(`INSERT INTO ledger_transactions (kind, source_type, source_id, actor_kind)
+		VALUES (?, ?, ?, 'system') RETURNING id`, kind, sourceType, sourceID).Row().Scan(&id)
 	return id, err
 }
 
 // insertEntry 直接插一条分录。
-func insertEntry(g *gorm.DB, txn, account uuid.UUID, cur, dir, amount string) error {
-	return g.Exec(`INSERT INTO ledger_entries (transaction_id, account_id, currency, direction, amount)
-		VALUES (?, ?, ?, ?, ?::numeric)`, txn, account, cur, dir, amount).Error
+func insertEntry(g *gorm.DB, txn, account uuid.UUID, dir, amount string) error {
+	return g.Exec(`INSERT INTO ledger_entries (transaction_id, account_id, direction, amount)
+		VALUES (?, ?, ?, ?::numeric)`, txn, account, dir, amount).Error
 }
 
 // txConn 返回一个测试结束回滚的事务连接。语句出错后这个事务就不能再用，所以预期报错的用例各用一个。
@@ -110,16 +110,16 @@ func txConn(t *testing.T, d *db.DB) *gorm.DB {
 // postRaw 在 g 上插一笔两条分录的交易：借 debitAmt、贷 creditAmt。
 func postRaw(t *testing.T, g *gorm.DB, debitAmt, creditAmt string) (uuid.UUID, error) {
 	t.Helper()
-	cash := mkPlatformAccount(t, g, "channel_cash", "CNY", "test")
-	susp := mkPlatformAccount(t, g, "suspense", "CNY", "manual_adjust")
-	txnID, err := insertTxn(g, "balance_topup", "CNY", nil, nil)
+	cash := mkPlatformAccount(t, g, "channel_cash", "test")
+	susp := mkPlatformAccount(t, g, "suspense", "manual_adjust")
+	txnID, err := insertTxn(g, "balance_topup", nil, nil)
 	if err != nil {
 		return uuid.Nil, err
 	}
-	if err := insertEntry(g, txnID, cash, "CNY", "debit", debitAmt); err != nil {
+	if err := insertEntry(g, txnID, cash, "debit", debitAmt); err != nil {
 		return txnID, err
 	}
-	return txnID, insertEntry(g, txnID, susp, "CNY", "credit", creditAmt)
+	return txnID, insertEntry(g, txnID, susp, "credit", creditAmt)
 }
 
 func TestLedgerBalancedCommits(t *testing.T) {
@@ -163,12 +163,12 @@ func TestLedgerSingleEntryRejectedAtCommit(t *testing.T) {
 	d := testkit.DB(t)
 	cleanLedger(t, d)
 	err := d.Base().Transaction(func(g *gorm.DB) error {
-		cash := mkPlatformAccount(t, g, "channel_cash", "CNY", "test")
-		txnID, err := insertTxn(g, "balance_topup", "CNY", nil, nil)
+		cash := mkPlatformAccount(t, g, "channel_cash", "test")
+		txnID, err := insertTxn(g, "balance_topup", nil, nil)
 		if err != nil {
 			return err
 		}
-		return insertEntry(g, txnID, cash, "CNY", "debit", "10.00")
+		return insertEntry(g, txnID, cash, "debit", "10.00")
 	})
 	if pgCode(err) != "23514" {
 		t.Fatalf("只有一条分录: want 23514, got %v", err)
@@ -179,7 +179,7 @@ func TestLedgerTxnWithoutEntriesRejectedAtCommit(t *testing.T) {
 	d := testkit.DB(t)
 	cleanLedger(t, d)
 	err := d.Base().Transaction(func(g *gorm.DB) error {
-		_, err := insertTxn(g, "balance_topup", "CNY", nil, nil)
+		_, err := insertTxn(g, "balance_topup", nil, nil)
 		return err
 	})
 	if pgCode(err) != "23514" {
@@ -197,32 +197,6 @@ func TestLedgerImmediateCheck(t *testing.T) {
 	if pgCode(err) != "23514" {
 		t.Fatalf("SET CONSTRAINTS ALL IMMEDIATE: want 23514, got %v", err)
 	}
-}
-
-func TestLedgerMixedCurrencyRejected(t *testing.T) {
-	d := testkit.DB(t)
-	t.Run("交易 CNY 分录 USD", func(t *testing.T) {
-		g := txConn(t, d)
-		usd := mkPlatformAccount(t, g, "channel_cash", "USD", "test")
-		txnID, err := insertTxn(g, "balance_topup", "CNY", nil, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := insertEntry(g, txnID, usd, "USD", "debit", "10.00"); pgCode(err) != "23503" {
-			t.Fatalf("want 23503, got %v", err)
-		}
-	})
-	t.Run("分录 CNY 科目 USD", func(t *testing.T) {
-		g := txConn(t, d)
-		usd := mkPlatformAccount(t, g, "channel_cash", "USD", "test")
-		txnID, err := insertTxn(g, "balance_topup", "CNY", nil, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := insertEntry(g, txnID, usd, "CNY", "debit", "10.00"); pgCode(err) != "23503" {
-			t.Fatalf("want 23503, got %v", err)
-		}
-	})
 }
 
 func TestLedgerAppendOnly(t *testing.T) {
@@ -270,12 +244,12 @@ func TestLedgerEntryAmountPositive(t *testing.T) {
 	for _, amount := range []string{"0", "-1"} {
 		t.Run(amount, func(t *testing.T) {
 			g := txConn(t, d)
-			cash := mkPlatformAccount(t, g, "channel_cash", "CNY", "test")
-			txnID, err := insertTxn(g, "balance_topup", "CNY", nil, nil)
+			cash := mkPlatformAccount(t, g, "channel_cash", "test")
+			txnID, err := insertTxn(g, "balance_topup", nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := insertEntry(g, txnID, cash, "CNY", "debit", amount); pgCode(err) != "23514" {
+			if err := insertEntry(g, txnID, cash, "debit", amount); pgCode(err) != "23514" {
 				t.Fatalf("want 23514, got %v", err)
 			}
 		})
@@ -286,7 +260,7 @@ func TestUserAccountNonNegative(t *testing.T) {
 	d := testkit.DB(t)
 	t.Run("用户类不能为负", func(t *testing.T) {
 		g := txConn(t, d)
-		acc := mkUserAccount(t, g, "user_balance", "CNY", mkUser(t, g))
+		acc := mkUserAccount(t, g, "user_balance", mkUser(t, g))
 		err := g.Exec("UPDATE ledger_accounts SET balance = -0.01 WHERE id = ?", acc).Error
 		if pgCode(err) != "23514" {
 			t.Fatalf("want 23514, got %v", err)
@@ -294,7 +268,7 @@ func TestUserAccountNonNegative(t *testing.T) {
 	})
 	t.Run("平台类可以为负", func(t *testing.T) {
 		g := txConn(t, d)
-		acc := mkPlatformAccount(t, g, "suspense", "CNY", "manual_adjust")
+		acc := mkPlatformAccount(t, g, "suspense", "manual_adjust")
 		if err := g.Exec("UPDATE ledger_accounts SET balance = -5 WHERE id = ?", acc).Error; err != nil {
 			t.Fatalf("平台科目应允许负余额: %v", err)
 		}
@@ -308,10 +282,10 @@ func TestAccountOwnerShape(t *testing.T) {
 		sql  string
 		user bool
 	}{
-		{"用户类不挂用户", `INSERT INTO ledger_accounts (account_type, currency, owner_ref) VALUES ('user_balance', 'CNY', 'x')`, false},
-		{"平台类挂了用户", `INSERT INTO ledger_accounts (account_type, currency, owner_user_id, owner_ref) VALUES ('channel_cash', 'CNY', ?, 'x')`, true},
-		{"平台类没有 owner_ref", `INSERT INTO ledger_accounts (account_type, currency, owner_ref) VALUES ('channel_cash', 'CNY', '')`, false},
-		{"用户类带 owner_ref", `INSERT INTO ledger_accounts (account_type, currency, owner_user_id, owner_ref) VALUES ('user_balance', 'CNY', ?, 'x')`, true},
+		{"用户类不挂用户", `INSERT INTO ledger_accounts (account_type, owner_ref) VALUES ('user_balance', 'x')`, false},
+		{"平台类挂了用户", `INSERT INTO ledger_accounts (account_type, owner_user_id, owner_ref) VALUES ('channel_cash', ?, 'x')`, true},
+		{"平台类没有 owner_ref", `INSERT INTO ledger_accounts (account_type, owner_ref) VALUES ('channel_cash', '')`, false},
+		{"用户类带 owner_ref", `INSERT INTO ledger_accounts (account_type, owner_user_id, owner_ref) VALUES ('user_balance', ?, 'x')`, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -331,7 +305,7 @@ func TestAccountOwnerKeyUnique(t *testing.T) {
 	d := testkit.DB(t)
 	g := txConn(t, d)
 	ref := uniqueRef("main")
-	ins := `INSERT INTO ledger_accounts (account_type, currency, owner_ref) VALUES ('platform_revenue', 'CNY', ?)`
+	ins := `INSERT INTO ledger_accounts (account_type, owner_ref) VALUES ('platform_revenue', ?)`
 	if err := g.Exec(ins, ref).Error; err != nil {
 		t.Fatalf("第一个平台科目: %v", err)
 	}
@@ -361,14 +335,14 @@ func TestSourceOnceUnique(t *testing.T) {
 			g := txConn(t, d)
 			src := c.source
 			id := uuid.New()
-			if _, err := insertTxn(g, c.kind, "CNY", &src, &id); err != nil {
+			if _, err := insertTxn(g, c.kind, &src, &id); err != nil {
 				t.Fatal(err)
 			}
 			other := uuid.New()
-			if _, err := insertTxn(g, c.kind, "CNY", &src, &other); err != nil {
+			if _, err := insertTxn(g, c.kind, &src, &other); err != nil {
 				t.Fatalf("不同来源应允许: %v", err)
 			}
-			if _, err := insertTxn(g, c.kind, "CNY", &src, &id); pgCode(err) != "23505" {
+			if _, err := insertTxn(g, c.kind, &src, &id); pgCode(err) != "23505" {
 				t.Fatalf("同一来源第二笔: want 23505, got %v", err)
 			}
 		})
@@ -377,10 +351,10 @@ func TestSourceOnceUnique(t *testing.T) {
 		g := txConn(t, d)
 		src := "order"
 		order := uuid.New()
-		if _, err := insertTxn(g, "balance_hold", "CNY", &src, &order); err != nil {
+		if _, err := insertTxn(g, "balance_hold", &src, &order); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := insertTxn(g, "balance_release", "CNY", &src, &order); err != nil {
+		if _, err := insertTxn(g, "balance_release", &src, &order); err != nil {
 			t.Fatalf("不同 kind 应允许: %v", err)
 		}
 	})
@@ -389,7 +363,7 @@ func TestSourceOnceUnique(t *testing.T) {
 		src := "order"
 		order := uuid.New()
 		for i := 0; i < 2; i++ {
-			if _, err := insertTxn(g, "commission_accrued", "CNY", &src, &order); err != nil {
+			if _, err := insertTxn(g, "commission_accrued", &src, &order); err != nil {
 				t.Fatalf("第 %d 笔 commission_accrued: %v", i+1, err)
 			}
 		}
@@ -403,26 +377,26 @@ func TestLedgerEntryAfterCommitRejected(t *testing.T) {
 	cleanLedger(t, d)
 	var txnID, cash, susp uuid.UUID
 	err := d.Base().Transaction(func(g *gorm.DB) error {
-		cash = mkPlatformAccount(t, g, "channel_cash", "CNY", "test")
-		susp = mkPlatformAccount(t, g, "suspense", "CNY", "manual_adjust")
-		id, err := insertTxn(g, "balance_topup", "CNY", nil, nil)
+		cash = mkPlatformAccount(t, g, "channel_cash", "test")
+		susp = mkPlatformAccount(t, g, "suspense", "manual_adjust")
+		id, err := insertTxn(g, "balance_topup", nil, nil)
 		if err != nil {
 			return err
 		}
 		txnID = id
-		if err := insertEntry(g, id, cash, "CNY", "debit", "10.00"); err != nil {
+		if err := insertEntry(g, id, cash, "debit", "10.00"); err != nil {
 			return err
 		}
-		return insertEntry(g, id, susp, "CNY", "credit", "10.00")
+		return insertEntry(g, id, susp, "credit", "10.00")
 	})
 	if err != nil {
 		t.Fatalf("平账交易应能提交: %v", err)
 	}
 	err = d.Base().Transaction(func(g *gorm.DB) error {
-		if err := insertEntry(g, txnID, cash, "CNY", "debit", "1.00"); err != nil {
+		if err := insertEntry(g, txnID, cash, "debit", "1.00"); err != nil {
 			return err
 		}
-		return insertEntry(g, txnID, susp, "CNY", "credit", "1.00")
+		return insertEntry(g, txnID, susp, "credit", "1.00")
 	})
 	if pgCode(err) != "23001" {
 		t.Fatalf("往已提交的交易追加分录: want 23001, got %v", err)
@@ -440,19 +414,19 @@ func TestLedgerEntryAfterCommitRejected(t *testing.T) {
 func TestLedgerEntryInSavepointAllowed(t *testing.T) {
 	d := testkit.DB(t)
 	g := txConn(t, d)
-	cash := mkPlatformAccount(t, g, "channel_cash", "CNY", "test")
-	susp := mkPlatformAccount(t, g, "suspense", "CNY", "manual_adjust")
-	txnID, err := insertTxn(g, "balance_topup", "CNY", nil, nil)
+	cash := mkPlatformAccount(t, g, "channel_cash", "test")
+	susp := mkPlatformAccount(t, g, "suspense", "manual_adjust")
+	txnID, err := insertTxn(g, "balance_topup", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := g.Exec("SAVEPOINT sp1").Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := insertEntry(g, txnID, cash, "CNY", "debit", "1.00"); err != nil {
+	if err := insertEntry(g, txnID, cash, "debit", "1.00"); err != nil {
 		t.Fatalf("保存点里追加分录: %v", err)
 	}
-	if err := insertEntry(g, txnID, susp, "CNY", "credit", "1.00"); err != nil {
+	if err := insertEntry(g, txnID, susp, "credit", "1.00"); err != nil {
 		t.Fatalf("保存点里追加分录: %v", err)
 	}
 	if err := g.Exec("RELEASE SAVEPOINT sp1").Error; err != nil {
@@ -463,8 +437,8 @@ func TestLedgerEntryInSavepointAllowed(t *testing.T) {
 func TestAdjustMemoRequired(t *testing.T) {
 	d := testkit.DB(t)
 	g := txConn(t, d)
-	err := g.Exec(`INSERT INTO ledger_transactions (kind, currency, memo, actor_kind)
-		VALUES ('balance_adjusted', 'CNY', '  ab ', 'system')`).Error
+	err := g.Exec(`INSERT INTO ledger_transactions (kind, memo, actor_kind)
+		VALUES ('balance_adjusted', '  ab ', 'system')`).Error
 	if pgCode(err) != "23514" {
 		t.Fatalf("want 23514, got %v", err)
 	}
@@ -474,13 +448,13 @@ func TestBalanceHoldOneHoldPerOrder(t *testing.T) {
 	d := testkit.DB(t)
 	g := txConn(t, d)
 	user := mkUser(t, g)
-	order := newOrder(t, g, user, "CNY")
+	order := newOrder(t, g, user)
 	src := "order"
-	txnID, err := insertTxn(g, "balance_hold", "CNY", &src, &order)
+	txnID, err := insertTxn(g, "balance_hold", &src, &order)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ins := `INSERT INTO balance_holds (order_id, user_id, currency, amount, hold_txn_id) VALUES (?, ?, 'CNY', 1, ?)`
+	ins := `INSERT INTO balance_holds (order_id, user_id, amount, hold_txn_id) VALUES (?, ?, 1, ?)`
 	if err := g.Exec(ins, order, user, txnID).Error; err != nil {
 		t.Fatalf("第一笔冻结: %v", err)
 	}

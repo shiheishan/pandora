@@ -2,7 +2,7 @@ import { href } from '../../../core/router'
 import { Tag } from '../../../ui'
 import { flowCss } from './Flow'
 import { LinkBox } from './LinkBox'
-import { day, isLow, moneyShort, type Naming } from './purchase'
+import { day, isLow, money, resetsLeft, type Naming } from './purchase'
 import css from './SubCard.module.css'
 import { expiryText, isExpiredNow, leakSources, usageText } from './card-text'
 import type { Subscription, SubscriptionLink } from './subscriptions'
@@ -15,11 +15,11 @@ interface SubCardActions {
 
 /**
  * 我的套餐里的一份（原型 subCard）：到期、用量条、链接尾号与「复制 / 添加到 App」、App 里显示成什么、
- * 疑似泄露的红条，主按钮「续费」（流量低于 15% 时「加流量」变成主按钮），底部一行「换个套餐 · 改名 · 换新链接」。
- * 已过期的那份没有「加流量」，「换个套餐」从底部移到主按钮旁边，次一级。
+ * 疑似泄露的红条，主按钮「续费」或「再买一份叠加」（流量低于 15% 时「流量不够」变成主按钮），底部一行「换个套餐 · 改名 · 换新链接」。
+ * 已过期的那份没有「流量不够」，「换个套餐」从底部移到主按钮旁边，次一级。
  * 卡片上的按钮自带对象：从哪张卡点进去就作用在哪一份，后面不再问。
  */
-export function SubCard({ sub, naming, link, minPack, actions, compact = false }: { sub: Subscription; naming: Naming; link: SubscriptionLink | undefined; minPack: number | null; actions: SubCardActions; compact?: boolean }) {
+export function SubCard({ sub, naming, link, actions, compact = false }: { sub: Subscription; naming: Naming; link: SubscriptionLink | undefined; actions: SubCardActions; compact?: boolean }) {
   const expired = isExpiredNow(sub)
   const exp = expiryText(sub)
   const usage = usageText(sub)
@@ -36,23 +36,56 @@ export function SubCard({ sub, naming, link, minPack, actions, compact = false }
       </small>
     </a>
   ) : null
-  const traffic =
-    !expired && minPack !== null ? (
-      <a key="traffic" className={low || !renew ? flowCss.twoLinePrimary : flowCss.twoLine} href={href(`/subs/${sub.id}/traffic`)} id={`btn-traffic-${sub.id}`}>
-        加流量
-        <small>{moneyShort(minPack)} 起，马上到账</small>
+
+  const stackSub =
+    sub.plan_kind === 'one_time' && sub.stackable
+      ? expired
+        ? '链接不变，总流量加上' + (sub.permanent ? '' : '，天数顺延')
+        : '总流量加上' + (sub.permanent ? '' : '，天数顺延')
+      : ''
+  const stack =
+    sub.plan_kind === 'one_time' && sub.stackable ? (
+      <a key="stack" className={low || !renew ? flowCss.twoLinePrimary : flowCss.twoLine} href={href('/checkout', { stack: sub.id })} id={`btn-stack-${sub.id}`}>
+        再买一份叠加
+        <small>{stackSub}</small>
       </a>
     ) : null
+
+  const resets = resetsLeft(sub)
+  const resetScope = sub.plan_kind === 'one_time' ? '有效期内' : '本期'
+  const resetLimitNote =
+    resets !== null && resets !== Number.POSITIVE_INFINITY ? `，${resetScope}还能买 ${resets} 次` : ''
+  const traffic =
+    !expired && resets !== null && resets !== 0 ? (
+      <a key="traffic" className={low || (!renew && !stack) ? flowCss.twoLinePrimary : flowCss.twoLine} href={href(`/subs/${sub.id}/traffic`)} id={`btn-traffic-${sub.id}`}>
+        流量不够
+        <small>
+          重置 {money(sub.reset_price!)} / 次{resetLimitNote}
+        </small>
+      </a>
+    ) : null
+
   // 已过期的那份：「换个套餐」和「续费，恢复使用」并列、次一级（首次点击测试 s8：底部灰字找不到）
   const change =
     expired && sub.changeable ? (
-      <a key="change" className={renew ? flowCss.twoLine : flowCss.twoLinePrimary} href={href(`/subs/${sub.id}/change`)} id={`btn-changepick-${sub.id}`}>
+      <a key="change" className={renew || stack ? flowCss.twoLine : flowCss.twoLinePrimary} href={href(`/subs/${sub.id}/change`)} id={`btn-changepick-${sub.id}`}>
         换个套餐
         <small>换成别的，马上恢复</small>
       </a>
     ) : null
-  const buttons = expired ? [renew, change] : low ? [traffic, renew] : [renew, traffic]
+
+  const primaryFirst = low && traffic
+  const buttons = expired
+    ? [renew, stack, change]
+    : primaryFirst
+      ? [traffic, renew, stack]
+      : [renew, stack, traffic]
   const shown = buttons.filter(Boolean)
+
+  const noRenewNudge =
+    sub.plan_kind === 'subscription' && !expired && !sub.renewable ? (
+      <div className={css.nudge}>这个套餐不再续费，到期后结束，可以换个套餐。</div>
+    ) : null
 
   return (
     <article className={css.card} id={`card-${sub.id}`} data-sub={sub.id}>
@@ -85,6 +118,7 @@ export function SubCard({ sub, naming, link, minPack, actions, compact = false }
               <i className={css.fill} style={{ width: `${usage.pct}%` }} />
             </div>
           )}
+          {noRenewNudge}
           {!compact && (
             <a className={css.detailLink} href={href(`/subs/${sub.id}/detail`)}>
               节点和每天用量 ›
@@ -127,9 +161,12 @@ export function SubCard({ sub, naming, link, minPack, actions, compact = false }
               换个套餐
             </a>
           )}
-          <button type="button" className={css.quiet} onClick={() => actions.onRename(sub)} id={`btn-rename-${sub.id}`}>
-            {sub.label ? '改名' : '起个名字'}
-          </button>
+          {/* 上面已有「起个名字，好分清是谁的」提示条时不再重复给入口 */}
+          {!(naming.multi && !sub.label) && (
+            <button type="button" className={css.quiet} onClick={() => actions.onRename(sub)} id={`btn-rename-${sub.id}`}>
+              {sub.label ? '改名' : '起个名字'}
+            </button>
+          )}
           {!expired && leak === null && link && (
             <button type="button" className={css.quiet} onClick={() => actions.onRotate(sub)} id={`btn-rotate-${sub.id}`}>
               换新链接

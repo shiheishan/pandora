@@ -2,7 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
 import { isApiError } from '../../../core/api'
 import { useApi } from '../../../shell/runtime'
-import { ORDER_STATUSES, PAID_STATUSES } from './orders'
+import { archivedRefundText, ORDER_STATUSES, PAID_STATUSES } from './orders'
 
 /** 与 Go billing.OrderPaymentQuery 的 json tag 一一对应；quarantine_kind 带 omitempty */
 export const orderQuerySchema = z.object({
@@ -17,10 +17,11 @@ export const orderQuerySchema = z.object({
 })
 type OrderQueryResult = z.output<typeof orderQuerySchema>
 
-/** 三种结果：settled 已到账、pending 渠道尚未确认、failed 查询失败 */
+/** 三种结果：settled 已到账、pending 渠道尚未确认、failed 查询失败；wallet 为真时给「去钱包看看」按钮 */
 export interface QueryOutcome {
   kind: 'settled' | 'pending' | 'failed'
   text: string
+  wallet?: boolean
 }
 
 export function queryOutcome(r: OrderQueryResult): QueryOutcome {
@@ -29,6 +30,10 @@ export function queryOutcome(r: OrderQueryResult): QueryOutcome {
       kind: 'pending',
       text: r.channel_status === 'not_found' ? '支付渠道还没有这笔付款的记录。刚付完的话，请过一两分钟再刷新。' : '支付渠道尚未确认收到付款。刚付完的话，请过一两分钟再刷新。',
     }
+  }
+  if (r.quarantine_kind === 'archived_plan') {
+    // 套餐归档后才付款（10-16）：不开通，自动转入余额；查单结果里没有手续费，用统一说法
+    return { kind: 'settled', text: `款项已到账，但套餐已停售，没有开通；${archivedRefundText(undefined)}。`, wallet: true }
   }
   if (r.quarantine_kind) {
     // 钱到了但订单已关闭（例如超时取消之后才付）：款项单独记着，等人工处理

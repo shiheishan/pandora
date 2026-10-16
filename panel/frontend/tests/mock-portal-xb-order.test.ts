@@ -2,15 +2,15 @@ import type { Server } from 'node:http'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'
 import { portalState } from '../dev/mock/portal/fixtures'
-import { setMemberPercent } from '../dev/mock/portal/reset'
 import { quoteSchema } from '../src/portal/screens/common/quote-schema'
 import { subscriptionsSchema } from '../src/portal/subscription-schema'
 import { bearer, close, loginAs, mockFetch, serve } from './mock-helpers'
 
 const STD_PLAN = '6f1c2a10-0000-4000-8000-000000000001'
-const FAM_PLAN = '6f1c2a10-0000-4000-8000-000000000003'
+const PRO_PLAN = '6f1c2a10-0000-4000-8000-000000000002'
 
-describe('mock api · portal traffic reset & member discount', () => {
+// 默认场景第一份是专业版（没开流量重置）；用例先把它改成标准版（重置 ¥10 / 次，每期最多 2 次）
+describe('mock api · portal traffic reset', () => {
   let server: Server
   let base: string
   let auth: Record<string, string>
@@ -33,7 +33,10 @@ describe('mock api · portal traffic reset & member discount', () => {
     auth = bearer(cred.access_token)
   })
   afterAll(() => close(server))
-  beforeEach(() => scenario('default'))
+  beforeEach(async () => {
+    await scenario('default')
+    portalState(userId).subs[0]!.plan_id = STD_PLAN
+  })
 
   it('报价 reset：有配价且生效中的有一条且金额对；不卖的套餐或过期为空', async () => {
     const list = (await subs()).subscriptions
@@ -45,7 +48,6 @@ describe('mock api · portal traffic reset & member discount', () => {
     const row = q.quotes[0]!
     expect(row.subscription_id).toBe(sub.id)
     expect(row.plan_id).toBe(sub.plan_id)
-    expect(row.pack_id).toBeNull()
     expect(row.price_id).toBeNull()
     expect(row.interval).toBe('')
     expect(row.interval_count).toBe(0)
@@ -53,15 +55,13 @@ describe('mock api · portal traffic reset & member discount', () => {
     expect(row.period_end).toBeNull()
     expect(row.credit).toBe(0)
     expect(row.refund).toBe(0)
-    expect(row.subtotal).toBe(2500) // 专业版配价 2500
-    expect(row.total).toBe(2500)
-    expect(row.member_discount).toBe(0)
-    expect(row.member_percent).toBe(0)
+    expect(row.subtotal).toBe(1000) // 标准版重置价
+    expect(row.total).toBe(1000)
 
-    // 不卖的套餐为空：修改一份订阅的 plan_id 为家庭版 (FAM_PLAN)
+    // 没开重置的套餐为空：改成专业版（reset 为 null）
     const state = portalState(userId)
     const fixture = state.subs.find((s) => s.id === sub.id)!
-    fixture.plan_id = FAM_PLAN
+    fixture.plan_id = PRO_PLAN
     const qFam = await quote({ action: 'reset', subscription_id: sub.id })
     expect(qFam.quotes).toHaveLength(0)
 
@@ -80,10 +80,11 @@ describe('mock api · portal traffic reset & member discount', () => {
 
     const res = await call('POST', `/v1/me/subscriptions/${sub!.id}/traffic-reset`, body, true)
     expect(res.status).toBe(201)
-    const order = (await res.json()) as { order_id: string; status: string; member_discount_amount: number; payable_amount: number }
+    const order = (await res.json()) as { order_id: string; status: string; payable_amount: number }
     expect(order.status).toBe('pending_payment')
-    expect(order.member_discount_amount).toBe(0)
-    expect(order.payable_amount).toBe(2500)
+    expect(order).not.toHaveProperty('member_discount_amount')
+    expect(order).not.toHaveProperty('currency')
+    expect(order.payable_amount).toBe(1000)
 
     // 再报价回 409 order_pending
     const secondQ = await call('POST', '/v1/me/checkout/quote', { action: 'reset', subscription_id: sub!.id })
@@ -115,24 +116,21 @@ describe('mock api · portal traffic reset & member discount', () => {
     expect(usedAfter).toBe(0)
   })
 
-  it('会员折扣：重置报价不打折，新购照打', async () => {
+  it('次数用完：报价 409 本期的流量重置次数已用完；履约后 resets_used 加一', async () => {
     const state = portalState(userId)
-    setMemberPercent(state, 10)
-
+    const fixture = state.subs[0]!
     const [sub] = (await subs()).subscriptions
-    const q = await quote({ action: 'reset', subscription_id: sub!.id })
-    const r = q.quotes[0]!
-    expect(r.subtotal).toBe(2500)
-    expect(r.member_percent).toBe(0)
-    expect(r.member_discount).toBe(0)
-    expect(r.total).toBe(2500)
+    expect(sub!.reset_limit).toBe(2)
+    expect(sub!.reset_price).toBe(1000)
+    expect(sub!.resets_used).toBe(0)
 
-    // 新购报价也同样计算会员折扣
-    const qNew = await quote({ action: 'new', plan_id: STD_PLAN, new_copy: true })
-    const rNew = qNew.quotes[0]!
-    expect(rNew.member_percent).toBe(10)
-    expect(rNew.member_discount).toBe(Math.floor((rNew.subtotal * 10) / 100))
-    expect(rNew.total).toBe(Math.max(rNew.subtotal - rNew.discount - rNew.member_discount - rNew.credit, 0))
+    fixture.resetsUsed = 2
+    const res = await call('POST', '/v1/me/checkout/quote', { action: 'reset', subscription_id: sub!.id })
+    expect(res.status).toBe(409)
+    const err = ((await res.json()) as { error: { code: string; message: string } }).error
+    expect(err.code).toBe('conflict')
+    expect(err.message).toBe('本期的流量重置次数已用完')
+    expect((await subs()).subscriptions[0]!.resets_used).toBe(2)
   })
 
   it('重置不收券：报价落 coupon_error，建单 422', async () => {
@@ -142,7 +140,7 @@ describe('mock api · portal traffic reset & member discount', () => {
     const q = quoteSchema.parse(await res.json())
     expect(q.quotes[0]!.coupon_error).toBe('流量重置不能使用优惠码')
     expect(q.quotes[0]!.discount).toBe(0)
-    expect(q.quotes[0]!.total).toBe(2500)
+    expect(q.quotes[0]!.total).toBe(1000)
 
     const createRes = await call('POST', `/v1/me/subscriptions/${sub!.id}/traffic-reset`, { coupon_code: 'SAVE5' }, true)
     expect(createRes.status).toBe(422)

@@ -6,7 +6,7 @@ import { LoadError } from '../common/Blocks'
 import { methodKey, usePaymentMethods } from '../common/catalog'
 import { flowCss } from '../common/Flow'
 import { isPayable, PAID_STATUSES, useCancelOrder, useOrder } from '../common/orders'
-import { PayPanel } from '../common/PayFlow'
+import { PayPanel, SwitchToBalance } from '../common/PayFlow'
 import { placedOrders } from './model'
 
 /** 收银台付完回跳到完成页（相对入口页解析，门户在子路径下也成立） */
@@ -61,7 +61,6 @@ export function Pay({ orderId }: { orderId: string }) {
       <PayPanel
         orderId={orderId}
         amount={o.payable_amount}
-        currency={o.currency}
         method={method}
         returnUrl={doneReturnUrl(orderId, query)}
         onPaid={doneTo}
@@ -69,6 +68,7 @@ export function Pay({ orderId }: { orderId: string }) {
         onOtherMethod={() => window.history.back()}
         afterCancel={() => navigate('/plans', { replace: true })}
       />
+      <SwitchToBalance order={o} />
     </Card>
   )
 }

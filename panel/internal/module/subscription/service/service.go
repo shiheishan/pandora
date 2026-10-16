@@ -1,10 +1,10 @@
-// Package service 是 subscription 模块的业务层：订阅、配额、流量包的开通、续期、延期、换套餐、
-// 加流量包与转移、手动重置、改设备数、备注名，以及状态口径与按用户批量读；
+// Package service 是 subscription 模块的业务层：订阅与配额的开通、续期、叠加、延期、换套餐、
+// 送流量（配额行的 bonus_value）、手动重置、改设备数、备注名，以及状态口径与按用户批量读；
 // 还有订阅分发：链接拉取、链接列表与换链接、线路预览、按日用量、拉取日志的保留期清理。
 //
-// 给别的模块用的写方法（Provision、Renew、Extend、ChangePlan、GrantTrafficPack、TransferPacks、ResetTraffic）
+// 给别的模块用的写方法（Provision、Renew、Stack、Extend、ChangePlan、GrantBonus、ResetTraffic）
 // 都经 s.tx.Do 执行：ctx 里已有事务就加入调用方的事务，钱与订阅在同一个事务里落库。
-// 这些方法自己锁订阅行（FOR NO KEY UPDATE）；调用方先锁订单、再调这里（锁序：订单 → 订阅 → 配额 → 流量包）。
+// 这些方法自己锁订阅行（FOR NO KEY UPDATE）；调用方先锁订单、再调这里（锁序：订单 → 订阅 → 配额）。
 //
 // 状态口径（生效、可救回、已停用）只在 state.go 定义；别的模块调 StateAt 或 SummariesByUsers，不再自己写这类 SQL。
 // 名单变化（会影响节点下发的事实）在提交后经可选的 RosterNotifier 通知（由 node 模块注册）。

@@ -15,7 +15,7 @@ import (
 
 // SubscriptionSummaries 是 /traffic 与工单提醒要的订阅摘要；*subsvc.Service 直接满足。
 type SubscriptionSummaries interface {
-	// SummariesByUsers 批量取用户的全部订阅摘要（含状态口径、套餐名、配额与流量包余量）。
+	// SummariesByUsers 批量取用户的全部订阅摘要（含状态口径、套餐名与配额）。
 	SummariesByUsers(ctx context.Context, userIDs []uuid.UUID) (map[uuid.UUID]subsvc.UserSubscriptions, error)
 }
 
@@ -27,8 +27,8 @@ type SubscribeLinks interface {
 
 // Balances 是工单提醒要的用户余额（属 ledger），由 app 适配器实现。
 type Balances interface {
-	// UserBalances 批量取用户在站点币种下的余额；没有账户的用户为 0。返回值里的 currency 是站点币种（如 "CNY"）。
-	UserBalances(ctx context.Context, userIDs []uuid.UUID) (balances map[uuid.UUID]decimal.Decimal, currency string, err error)
+	// UserBalances 批量取用户余额；没有账户的用户为 0。
+	UserBalances(ctx context.Context, userIDs []uuid.UUID) (balances map[uuid.UUID]decimal.Decimal, err error)
 }
 
 // Admins 是管理员名单（属 auth）；*authsvc.Service 直接满足。在 TG 里回复工单前校验发消息的人此刻仍是可登录的管理员。

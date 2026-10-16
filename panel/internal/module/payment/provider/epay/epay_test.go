@@ -341,7 +341,6 @@ func TestCreatePayment(t *testing.T) {
 	resp, err := p.CreatePayment(context.Background(), provider.CreateRequest{
 		OutTradeNo: "AO20260725-t1",
 		Amount:     money.FromCents(990),
-		Currency:   money.CNY,
 		Subject:    "标准套餐 月付",
 		Method:     "alipay",
 		NotifyURL:  "https://a.example.com/v1/webhooks/payments/epay",
@@ -381,7 +380,6 @@ func TestCreatePaymentFormats990(t *testing.T) {
 	resp, err := p.CreatePayment(context.Background(), provider.CreateRequest{
 		OutTradeNo: "X",
 		Amount:     money.FromCents(990),
-		Currency:   money.CNY,
 		NotifyURL:  "https://a.example.com/n",
 		ReturnURL:  "https://a.example.com/r",
 	})
@@ -393,23 +391,11 @@ func TestCreatePaymentFormats990(t *testing.T) {
 	}
 }
 
-func TestCreatePaymentRejectsWrongCurrency(t *testing.T) {
-	p := testProvider(t)
-	_, err := p.CreatePayment(context.Background(), provider.CreateRequest{
-		OutTradeNo: "X",
-		Amount:     money.FromCents(100),
-		Currency:   money.USD,
-	})
-	if err == nil {
-		t.Error("非人民币应当被拒绝")
-	}
-}
-
 func TestCreatePaymentRejectsNonPositiveAmount(t *testing.T) {
 	p := testProvider(t)
 	for _, amt := range []decimal.Decimal{decimal.Zero, decimal.RequireFromString("-0.01")} {
 		_, err := p.CreatePayment(context.Background(), provider.CreateRequest{
-			OutTradeNo: "X", Amount: amt, Currency: money.CNY,
+			OutTradeNo: "X", Amount: amt,
 		})
 		if err == nil {
 			t.Errorf("金额 %s 应当被拒绝", amt)

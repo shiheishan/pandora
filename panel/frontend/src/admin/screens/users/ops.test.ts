@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { banSkippedText, hasAnyFilter } from './BulkBanForm'
 import { jobFilename, jobFinished, jobPercent } from './jobs'
-import { grantReasonProblem, parseGrantGB } from './trafficPack'
-import { bulkPreviewSchema, devicesSchema, generationJobSchema, resetDoneSchema, resetLogsSchema, resetStatsSchema, trafficGrantedSchema, userGroupsSchema, type OnlineDevice } from './api'
+import { bulkPreviewSchema, devicesSchema, generationJobSchema, resetDoneSchema, trafficGrantedSchema, userGroupsSchema, type OnlineDevice } from './api'
 import {
   assignableGroups,
   bulkFilter,
@@ -11,48 +10,42 @@ import {
   exactEmail,
   exportQuery,
   generateProblems,
+  grantReasonProblem,
   GROUP_DISABLE_NOTICE,
   groupBlocker,
-  groupDeleteNotice,
+  GROUP_DELETE_NOTICE,
   groupOptionLabel,
   groupRefs,
+  isOrderTarget,
   nearLimit,
   noteProblem,
+  parseGrantGB,
   pips,
-  resetActor,
-  resettableSubs,
-  defaultResetSub,
-  defaultTrafficSub,
   subName,
   subLabel,
-  trafficPackTargets,
-  isOrderTarget,
   type GenerateForm,
 } from './model'
 
 describe('用户组', () => {
-  const g = { status: 'active' as const, users: 0, plans: 0, prices: 0, coupons: 0, exclusive_pools: [] as Array<{ id: string; name: string }> }
+  const g = { status: 'active' as const, users: 0, plans: 0, coupons: 0, exclusive_pools: [] as Array<{ id: string; name: string }> }
   it('按后端 409 的先后顺序说明为什么不能删（R104 节点池名单排最前）', () => {
     expect(groupBlocker(g)).toBeNull()
     expect(groupBlocker({ ...g, users: 3, exclusive_pools: [{ id: 'p', name: '专属线路 A' }] })).toBe('节点池「专属线路 A」限定了这个组，先在节点池里把它移出名单')
     expect(groupBlocker({ ...g, users: 3, plans: 1 })).toBe('组内还有 3 位用户，先把他们移出去')
     expect(groupBlocker({ ...g, plans: 2, coupons: 1 })).toBe('还有 2 个套餐按这个组控制可见性，先解除')
-    // 专属价不再拦删除
-    const withPrice = { ...g, prices: 1 }
-    expect(groupBlocker(withPrice)).toBeNull()
     expect(groupBlocker({ ...g, coupons: 4 })).toContain('4 张优惠券')
   })
 
   it('R104「可用节点池」：列名单里的池，空是破折号', () => {
     expect(exclusivePoolsLabel(g)).toBe('—')
     expect(exclusivePoolsLabel({ exclusive_pools: [{ id: 'a', name: '专线 A' }, { id: 'b', name: '灰度' }] })).toBe('专线 A、灰度')
-    expect(userGroupsSchema.parse({ groups: [{ id: 'g', code: 'vip', name: 'VIP', description: '', status: 'active', users: 0, plans: 0, prices: 0, coupons: 0, exclusive_pools: null }] }).groups[0]!.exclusive_pools).toEqual([])
-    expect(userGroupsSchema.safeParse({ groups: [{ id: 'g', code: 'vip', name: 'VIP', description: '', users: 0, plans: 0, prices: 0, coupons: 0, exclusive_pools: null }] }).success).toBe(false)
+    expect(userGroupsSchema.parse({ groups: [{ id: 'g', code: 'vip', name: 'VIP', description: '', status: 'active', users: 0, plans: 0, coupons: 0, exclusive_pools: null }] }).groups[0]!.exclusive_pools).toEqual([])
+    expect(userGroupsSchema.safeParse({ groups: [{ id: 'g', code: 'vip', name: 'VIP', description: '', users: 0, plans: 0, coupons: 0, exclusive_pools: null }] }).success).toBe(false)
   })
 
   it('「被引用」只列不为 0 的，都为 0 时是破折号', () => {
     expect(groupRefs(g)).toBe('—')
-    expect(groupRefs({ plans: 2, prices: 0, coupons: 1 })).toBe('套餐 2 · 优惠券 1')
+    expect(groupRefs({ plans: 2, coupons: 1 })).toBe('套餐 2 · 优惠券 1')
   })
 
   it('停用组：分配下拉隐藏，但保留当前值并标「（已停用）」', () => {
@@ -63,11 +56,10 @@ describe('用户组', () => {
     expect(groupOptionLabel(list[0]!)).toBe('VIP')
   })
 
-  it('删组确认：有专属价时写明会一并删除、买过的会被拒', () => {
-    expect(groupDeleteNotice({ prices: 3 })).toContain('3 条专属价格')
-    expect(groupDeleteNotice({ prices: 3 })).toContain('改用停用')
-    expect(groupDeleteNotice({ prices: 0 })).not.toContain('专属价格')
+  it('删组、停用确认的正文', () => {
+    expect(GROUP_DELETE_NOTICE).not.toContain('专属价格')
     expect(GROUP_DISABLE_NOTICE).toContain('已有成员不受影响')
+    expect(GROUP_DISABLE_NOTICE).not.toContain('专属价格')
   })
 })
 
@@ -156,51 +148,10 @@ describe('设备策略', () => {
 })
 
 describe('流量重置', () => {
-  it('操作人：有邮箱用邮箱并追加说明；没有时按原因写成系统', () => {
-    expect(resetActor({ reason: 'manual', actor_email: 'ops@x.io', note: '工单 #1' })).toBe('ops@x.io · 工单 #1')
-    expect(resetActor({ reason: 'manual', actor_email: 'ops@x.io' })).toBe('ops@x.io')
-    expect(resetActor({ reason: 'renewal' })).toBe('系统 · 续费')
-    expect(resetActor({ reason: 'cycle_roll' })).toBe('系统 · 周期滚动')
-    expect(resetActor({ reason: 'plan_change' })).toBe('系统 · 变更套餐')
-  })
-
   it('重置原因 5–500 字，按字符计', () => {
     expect(noteProblem('四个字啊')).not.toBeNull()
     expect(noteProblem('  补偿断线时长  ')).toBeNull()
     expect(noteProblem('字'.repeat(501))).not.toBeNull()
-  })
-
-  it('能重置的只有 status=active 的订阅，也不再替管理员挑一条', () => {
-    const s = (status: 'active' | 'expired', end: string | null) => ({ status, current_period_end: end, id: `${status}-${end}` })
-    expect(resettableSubs([s('expired', '2026-12-01'), s('expired', '2026-12-02')])).toEqual([])
-    expect(resettableSubs([s('active', '2026-10-01'), s('active', '2026-11-01'), s('expired', '2027-01-01')]).map((x) => x.id)).toEqual(['active-2026-10-01', 'active-2026-11-01'])
-  })
-
-  const quota = (limit: number | null, consumed: number) => [{ metric: 'traffic.bytes', period: 'cycle', limit, consumed, remaining: limit === null ? null : Math.max(0, limit - consumed) }]
-  const row = (id: string, over: Partial<{ status: 'active' | 'expired'; end: string | null; limit: number | null; used: number; pack: number }>) => ({
-    id,
-    status: over.status ?? ('active' as const),
-    current_period_end: over.end === undefined ? '2026-11-01T00:00:00Z' : over.end,
-    quotas: quota(over.limit === undefined ? 100 : over.limit, over.used ?? 0),
-    pack_remaining_bytes: over.pack ?? 0,
-  })
-
-  it('多份可重置时预选本期用得最多的；同比例取到期更早的；只有一份就是它', () => {
-    expect(defaultResetSub([])).toBeUndefined()
-    expect(defaultResetSub([row('a', { used: 10 })])?.id).toBe('a')
-    expect(defaultResetSub([row('a', { used: 10 }), row('b', { used: 80 }), row('c', { used: 50 })])?.id).toBe('b')
-    expect(defaultResetSub([row('late', { used: 50, end: '2026-12-01T00:00:00Z' }), row('early', { used: 50, end: '2026-11-01T00:00:00Z' })])?.id).toBe('early')
-    // 不限量的那份用量比例按 0 算；已过期的不参与
-    expect(defaultResetSub([row('free', { limit: null, used: 999 }), row('a', { used: 1 })])?.id).toBe('a')
-    expect(defaultResetSub([row('t', { status: 'expired', used: 99 }), row('a', { used: 1 })])?.id).toBe('a')
-  })
-
-  it('多份可加流量时预选剩余最少的：套餐本期剩余加这份的流量包，不限量的最大', () => {
-    expect(defaultTrafficSub([])).toBeUndefined()
-    expect(defaultTrafficSub([row('a', { used: 10 }), row('b', { used: 90 })])?.id).toBe('b')
-    // b 套餐只剩 10，但这份挂了 50 的流量包，合计 60，比 a 的 40 多
-    expect(defaultTrafficSub([row('a', { used: 60 }), row('b', { used: 90, pack: 50 })])?.id).toBe('a')
-    expect(defaultTrafficSub([row('free', { limit: null }), row('a', { used: 1 })])?.id).toBe('a')
   })
 
   it('订阅的称呼与下拉标签带备注名', () => {
@@ -209,10 +160,9 @@ describe('流量重置', () => {
     expect(subLabel({ label: '妈妈的 iPad', plan_name: '标准版', plan_version: 2, status: 'active' })).toBe('「妈妈的 iPad」标准版 · v2 · 生效中')
   })
 
-  it('加流量只列还在用的订阅；「给这份开单」只对还在用或还能续的订阅有意义', () => {
+  it('「给这份开单」只对还在用或还能续的订阅有意义', () => {
     const now = new Date('2026-10-07T00:00:00Z')
     const s = (status: 'active' | 'expired', end: string | null) => ({ status, current_period_end: end })
-    expect(trafficPackTargets([s('active', null), s('active', '2026-12-01T00:00:00Z'), s('expired', '2026-09-01T00:00:00Z'), s('expired', null)]).map((x) => x.status)).toEqual(['active', 'active'])
     expect(isOrderTarget(s('active', '2026-11-01T00:00:00Z'), now)).toBe(true)
     expect(isOrderTarget(s('expired', '2026-09-20T00:00:00Z'), now)).toBe(true)
     expect(isOrderTarget(s('expired', '2026-08-01T00:00:00Z'), now)).toBe(false)
@@ -228,12 +178,9 @@ describe('流量重置', () => {
 })
 
 describe('schema', () => {
-  it('重置日志：plan_name / actor_email / note 可整键省略，reason 是封闭枚举（含 R38 plan_change）', () => {
-    const log = { id: 'l', user_email: 'a@b.c', metric: 'traffic.bytes', reason: 'plan_change', consumed_before: 1, created_at: '2026-09-24T00:00:00Z' }
-    expect(resetLogsSchema.safeParse({ logs: [log], total: 1 }).success).toBe(true)
-    expect(resetLogsSchema.safeParse({ logs: [{ ...log, reason: 'admin' }], total: 1 }).success).toBe(false)
-    expect(resetStatsSchema.safeParse({ last_30_days: 3, by_reason: { manual: 3 }, freed_bytes: 10, manual_count: 3 }).success).toBe(true)
+  it('重置流量完成：清掉的字节数', () => {
     expect(resetDoneSchema.safeParse({ reset: true, freed_bytes: 0 }).success).toBe(true)
+    expect(resetDoneSchema.safeParse({ reset: true, freed_bytes: 1024 }).success).toBe(true)
   })
 
   it('设备：模式只有 loose / strict，last_seen_at 可为 null', () => {
@@ -259,15 +206,19 @@ describe('schema', () => {
     expect(generationJobSchema.safeParse({ ...job, status: 'done' }).success).toBe(false)
   })
 
-  it('加流量包：GB 换字节、上限 10240 GB、原因 5 到 500 字', () => {
+  it('加流量：GB 换字节、上限 10240 GB、原因 5 到 500 字，响应形状符合 trafficGrantedSchema', () => {
     expect(parseGrantGB('10')).toBe(10 * 1024 ** 3)
     expect(parseGrantGB('10240')).toBe(10240 * 1024 ** 3)
     for (const bad of ['0', '10241', '1.5', '-1', '', 'abc']) expect(parseGrantGB(bad)).toBeNull()
     expect(grantReasonProblem('短')).not.toBeNull()
     expect(grantReasonProblem('补偿线路故障')).toBeNull()
     expect(grantReasonProblem('原'.repeat(501))).not.toBeNull()
+
+    const ok = { subscription_id: 's', user_id: 'u', user_email: 'a@b.c', granted_bytes: 10 * 1024 ** 3, bonus_bytes: 10 * 1024 ** 3 }
+    expect(trafficGrantedSchema.safeParse(ok).success).toBe(true)
+    // 带旧字段 remaining_bytes_total 而缺 bonus_bytes 的判为不符
     expect(
       trafficGrantedSchema.safeParse({ subscription_id: 's', user_id: 'u', user_email: 'a@b.c', grant_id: 'g', granted_bytes: 1, remaining_bytes_total: 1 }).success,
-    ).toBe(true)
+    ).toBe(false)
   })
 })

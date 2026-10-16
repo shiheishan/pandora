@@ -9,7 +9,7 @@ import x from './infra.module.css'
 import css from './nodes.module.css'
 import { useFailure, useInvalidateNodes, useNodes, useServers } from './queries'
 import { serverSchema, type Server } from './schemas'
-import { Meters, SERVER_TABS, ServerDrawer, ServerFields, type ServerTab } from './ServerDrawer'
+import { Meters, ServerDetail, ServerFields } from './ServerDrawer'
 import { useDeleteServer, useIssueServerToken, useSetServerStatus, type InstallSecret } from './serverActions'
 
 export function ServersTab({ rest }: { rest: string[] }) {
@@ -25,7 +25,6 @@ export function ServersTab({ rest }: { rest: string[] }) {
   const tags = useMemo(() => nodesByServer(nodes.data?.nodes ?? []), [nodes.data])
 
   const openId = rest[0] ?? null
-  const tab = (SERVER_TABS.find(([k]) => k === rest[1])?.[0] ?? 'overview') as ServerTab
   const open = servers.data?.find((s) => s.id === openId) ?? null
 
   return (
@@ -37,8 +36,6 @@ export function ServersTab({ rest }: { rest: string[] }) {
           添加服务器
         </Button>
       </div>
-
-      {install && <InstallBar secret={install} onClose={() => setInstall(null)} />}
 
       <QueryView
         query={servers}
@@ -64,7 +61,8 @@ export function ServersTab({ rest }: { rest: string[] }) {
         )}
       </QueryView>
 
-      <ServerDrawer server={open} tab={tab} onClose={() => navigate('/nodes/servers')} />
+      <ServerDetail server={open} nodes={open ? tags.get(open.id) ?? [] : []} onClose={() => navigate('/nodes/servers')} />
+      {install && <InstallModal secret={install} onClose={() => setInstall(null)} />}
       <AddServer
         open={adding}
         onClose={() => setAdding(false)}
@@ -157,44 +155,60 @@ function ServerCard({
   )
 }
 
-/** 顶部深色命令条：令牌与命令分两行、各自复制；关掉就再也看不到 */
-function InstallBar({ secret, onClose }: { secret: InstallSecret; onClose: () => void }) {
+/** 安装 agent 弹窗：一条安装命令（含一次性令牌，脚本不再另要令牌）；关掉就再也看不到 */
+function InstallModal({ secret, onClose }: { secret: InstallSecret; onClose: () => void }) {
   const toast = useToast()
-  const copy = (value: string, what: string) =>
-    navigator.clipboard.writeText(value).then(
-      () => toast(`${what}已复制`),
+  const [copied, setCopied] = useState(false)
+
+  const copy = () =>
+    navigator.clipboard.writeText(secret.command).then(
+      () => {
+        setCopied(true)
+        toast('安装命令已复制')
+      },
       () => toast('浏览器不允许写剪贴板，请手动选中复制', 'danger'),
     )
+
   return (
-    <div className={x.installBar} role="region" aria-label="安装命令">
-      <div className={x.installHead}>
-        <span className={x.installTitle}>{secret.title}</span>
-        <span className={x.installWarn}>令牌 {formatDateTime(secret.expiresAt)} 前有效 · 仅显示一次</span>
-        <span className={css.spacer} />
-        <button type="button" className={x.barClose} aria-label="关闭安装命令" onClick={onClose}>
-          ×
-        </button>
+    <Modal
+      open={true}
+      onClose={onClose}
+      size={560}
+      eyebrow="安装 agent · 接入面板"
+      title={secret.title}
+      footerStart={
+        <span className={x.installFooterNotice}>
+          命令 {formatDateTime(secret.expiresAt)} 前有效，关闭后不再显示；过期或丢失可重新签发。
+        </span>
+      }
+      actions={
+        <Button size="dialog" variant="primary" onClick={onClose}>
+          完成
+        </Button>
+      }
+    >
+      <div className={x.installSteps}>
+        <div className={x.installStep}>
+          <span className={x.installNo}>1</span>
+          <div className={x.installContent}>
+            <span className={x.installStepTitle}>登录服务器，用 root 执行安装命令</span>
+            <div className={x.installBox}>
+              <code className={x.installCode}>{secret.command}</code>
+              <button type="button" className={`${x.installCopyBtn} ${copied ? x.installCopied : ''}`} onClick={() => void copy()}>
+                {copied ? '已复制 ✓' : '复制'}
+              </button>
+            </div>
+            <span className={x.installHint}>
+              脚本会下载 agent、注册为系统服务，并用命令里的一次性令牌接入面板（接入一次即作废）。接入后地区、IP、系统与规格自动回填。
+            </span>
+          </div>
+        </div>
       </div>
-      <div className={x.installRow}>
-        <span className={x.installLabel}>命令</span>
-        <code className={x.installCode}>{secret.command}</code>
-        <button type="button" className={x.barButton} onClick={() => void copy(secret.command, '安装命令')}>
-          复制
-        </button>
-      </div>
-      <div className={x.installRow}>
-        <span className={x.installLabel}>令牌</span>
-        <code className={x.installCode}>{secret.token}</code>
-        <button type="button" className={x.barButton} onClick={() => void copy(secret.token, '令牌')}>
-          复制
-        </button>
-      </div>
-      <div className={x.installNote}>在机器上执行命令，按提示粘贴令牌（令牌不进命令行，不留在 shell 历史里）。</div>
-    </div>
+    </Modal>
   )
 }
 
-/** 添加服务器：契约改设计「点一下生成 new-edge-N」为弹窗，只收名称、容量、备注；成功后由调用方签发安装令牌 */
+/** 添加服务器：只收名称、容量、备注；成功后由调用方签发安装令牌 */
 function AddServer({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (s: Server) => void }) {
   const api = useApi()
   const toast = useToast()

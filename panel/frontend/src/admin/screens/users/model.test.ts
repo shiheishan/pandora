@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { extendedSchema, rotatedSchema, userDetailSchema, usersSchema } from './api'
 import {
+  balanceCents,
   currentSubscription,
   deviceLimitLabel,
   deviceView,
@@ -8,24 +9,23 @@ import {
   extendableSubscriptions,
   extendedEnd,
   expiredDays,
-  isRescue,
   extendReasonProblem,
   initial,
+  isPermanent,
+  isRescue,
   listParams,
-  memberDiscountLabel,
+  loginIps7d,
   orderWhat,
-  paidTotalsLabel,
   parseExtendDays,
   parseYuan,
   passwordProblem,
-  resetActor,
+  planKind,
   rotatableSubscriptions,
   shortId,
+  subExpiryView,
   trafficView,
-  unattachedNext,
   userLabel,
 } from './model'
-import { sharingHint } from './RiskTab'
 
 const NOW = new Date('2026-09-24T12:00:00Z')
 const days = (n: number) => new Date(NOW.getTime() + n * 86_400_000).toISOString()
@@ -127,15 +127,11 @@ describe('加时长（与后端 subscriptionExtendable / validateAdminExtend 同
 describe('订单与输入', () => {
   it('订单「买了什么」', () => {
     expect(orderWhat({ kind: 'new', plan_name: '标准版', interval: 'month', interval_count: 1, item_count: 1 })).toBe('标准版 · 月付')
-    expect(orderWhat({ kind: 'renewal', plan_name: '专业版', interval: 'month', interval_count: 3, item_count: 2 })).toBe('专业版 · 3 × 月付 等 2 项')
+    expect(orderWhat({ kind: 'stack', plan_name: '流量卡', interval: 'one_time', interval_count: 1, item_count: 1 })).toMatch(/^叠加 · 流量卡/)
+    expect(orderWhat({ kind: 'renewal', plan_name: '专业版', interval: 'month', interval_count: 3, item_count: 2 })).toBe('续费 · 专业版 · 3 × 月付 等 2 项')
     expect(orderWhat({ kind: 'topup', plan_name: '', interval: '', interval_count: 0, item_count: 1 })).toBe('余额充值')
-  })
-
-  it('累计消费按币种各写一笔，没有实收时按用户币种写 0（R114）', () => {
-    expect(paidTotalsLabel([], 'CNY')).toBe(paidTotalsLabel([{ currency: 'CNY', amount: 0 }], 'USD'))
-    const both = paidTotalsLabel([{ currency: 'CNY', amount: 12000 }, { currency: 'USD', amount: 500 }], 'CNY')
-    expect(both.split(' · ')).toHaveLength(2)
-    expect(both).toContain('120')
+    expect(orderWhat({ kind: 'stack', plan_name: '', interval: '', interval_count: 0, item_count: 1 })).toBe('叠加')
+    expect(orderWhat({ kind: 'unknown_kind', plan_name: '', interval: '', interval_count: 0, item_count: 1 })).toBe('')
   })
 
   it('调账：元转分，正负号、两位小数；0 与非法返回 null', () => {
@@ -154,17 +150,61 @@ describe('订单与输入', () => {
     expect(passwordProblem(`a1${'x'.repeat(300)}`)).toBe('密码过长')
     expect(passwordProblem('pandora2026')).toBeNull()
   })
+})
 
-  it('未分配的流量包：没有在用的订阅时开通第一份会自动挂上，有在用的要用户自己挑', () => {
-    expect(unattachedNext(0)).toContain('开通第一份订阅时会自动加到那一份上')
-    expect(unattachedNext(1)).toContain('在门户里选一份')
-    expect(unattachedNext(3)).toContain('在门户里选一份')
+describe('套餐类型与有效期（10-16）', () => {
+  it('planKind：流量配额 period 为 total → one_time；cycle → subscription；没有流量配额 → subscription', () => {
+    expect(planKind({ quotas: [{ metric: 'traffic.bytes', period: 'total', limit: 100, consumed: 0, remaining: 100 }] })).toBe('one_time')
+    expect(planKind({ quotas: [{ metric: 'traffic.bytes', period: 'cycle', limit: 100, consumed: 0, remaining: 100 }] })).toBe('subscription')
+    expect(planKind({ quotas: [{ metric: 'other.metric', period: 'total', limit: 100, consumed: 0, remaining: 100 }] })).toBe('subscription')
+    expect(planKind({ quotas: [] })).toBe('subscription')
   })
 
-  it('分享提示阈值', () => {
-    expect(sharingHint(1).tone).toBe('ok')
-    expect(sharingHint(3).tone).toBe('warn')
-    expect(sharingHint(6).tone).toBe('danger')
+  it('isPermanent / subExpiryView：100 年永久有效、10 天后到期、null 长期有效', () => {
+    const horizon100y = new Date(NOW.getTime())
+    horizon100y.setFullYear(horizon100y.getFullYear() + 100)
+    const end100y = horizon100y.toISOString()
+
+    expect(isPermanent(end100y, NOW)).toBe(true)
+    expect(subExpiryView(end100y, NOW)).toEqual({ text: '永久有效', tone: 'neutral' })
+
+    const end10d = days(10)
+    expect(isPermanent(end10d, NOW)).toBe(false)
+    expect(subExpiryView(end10d, NOW)).toEqual({ text: '10 天后到期', tone: 'neutral' })
+
+    expect(isPermanent(null, NOW)).toBe(false)
+    expect(subExpiryView(null, NOW)).toEqual({ text: '长期有效', tone: 'neutral' })
+  })
+})
+
+describe('风控与余额调整（10-16）', () => {
+  it('loginIps7d：7 天内去重 IP 数；同一 IP 出现两行只算 1；空数组为 0', () => {
+    expect(loginIps7d([], NOW)).toBe(0)
+
+    const ips = [
+      { ip: '1.1.1.1', count: 1, first: days(-2), last: days(-2), accounts: 1 },
+      { ip: '2.2.2.2', count: 1, first: days(-5), last: days(-5), accounts: 1 },
+      { ip: '3.3.3.3', count: 1, first: days(-8), last: days(-8), accounts: 1 },
+    ]
+    expect(loginIps7d(ips, NOW)).toBe(2)
+
+    const dupIps = [
+      { ip: '1.1.1.1', count: 1, first: days(-1), last: days(-1), accounts: 1 },
+      { ip: '1.1.1.1', count: 2, first: days(-3), last: days(-3), accounts: 1 },
+      { ip: '2.2.2.2', count: 1, first: days(-8), last: days(-8), accounts: 1 },
+    ]
+    expect(loginIps7d(dupIps, NOW)).toBe(1)
+  })
+
+  it('balanceCents：增加 / 扣减 + 正金额转成分，非法与 0 返回 null', () => {
+    expect(balanceCents('plus', '50')).toBe(5000)
+    expect(balanceCents('minus', '20.5')).toBe(-2050)
+    expect(balanceCents('minus', '¥12')).toBe(-1200)
+
+    expect(balanceCents('plus', '0')).toBeNull()
+    expect(balanceCents('plus', '-5')).toBeNull()
+    expect(balanceCents('plus', '1.234')).toBeNull()
+    expect(balanceCents('plus', 'abc')).toBeNull()
   })
 })
 
@@ -181,7 +221,7 @@ describe('schema', () => {
     expect(extendedSchema.safeParse({ ...ok, period_end: undefined }).success).toBe(false)
   })
 
-  it('用户详情的订阅行（按份）：备注名可为 null，这一份的流量包余量必填', () => {
+  it('用户详情的订阅行（按份）：备注名可为 null', () => {
     const subscription = {
       id: 's1',
       label: '妈妈的 iPad',
@@ -191,12 +231,10 @@ describe('schema', () => {
       current_period_start: days(-20),
       current_period_end: days(10),
       amount: 2500,
-      currency: 'CNY',
       quotas: [],
       device_limit_override: null,
       plan_max_devices: 3,
       online_devices: 0,
-      pack_remaining_bytes: 10 * 1024 ** 3,
     }
     const detail = {
       id: 'u',
@@ -211,16 +249,14 @@ describe('schema', () => {
       subscription_count: 0,
       active_plan: null,
       balance: 0,
-      currency: 'CNY',
       current_subscription: null,
       email_verified: true,
       subscriptions: [subscription],
       recent_orders: [],
       is_admin: false,
-      stats: { paid_totals: [], order_count: 0, referral_count: 0 },
+      stats: { paid_total: 0, order_count: 0, referral_count: 0 },
       referrer: null,
       telegram: null,
-      unattached_pack_bytes: 5 * 1024 ** 3,
       admin_note: null,
       deleted_at: null,
     }
@@ -228,11 +264,7 @@ describe('schema', () => {
     // 已注销（xb-reg）：状态 deleted、注销时间与后台备注可有值
     expect(userDetailSchema.safeParse({ ...detail, status: 'deleted', deleted_at: days(-1), admin_note: '退款纠纷' }).success).toBe(true)
     expect(userDetailSchema.safeParse({ ...detail, admin_note: undefined }).success).toBe(false)
-    // 顶层未分配的流量包余量（B 路 UserDetail.UnattachedPackBytes，非 omitempty）：必填、非负整数
-    expect(userDetailSchema.safeParse({ ...detail, unattached_pack_bytes: undefined }).success).toBe(false)
-    expect(userDetailSchema.safeParse({ ...detail, unattached_pack_bytes: -1 }).success).toBe(false)
     expect(userDetailSchema.safeParse({ ...detail, subscriptions: [{ ...subscription, label: null }] }).success).toBe(true)
-    expect(userDetailSchema.safeParse({ ...detail, subscriptions: [{ ...subscription, pack_remaining_bytes: undefined }] }).success).toBe(false)
     expect(userDetailSchema.safeParse({ ...detail, subscriptions: [{ ...subscription, label: undefined }] }).success).toBe(false)
   })
 
@@ -250,27 +282,10 @@ describe('schema', () => {
       subscription_count: 0,
       active_plan: null,
       balance: 0,
-      currency: 'CNY',
       current_subscription: null,
     }
     expect(usersSchema.safeParse({ users: [row], total: 1 }).success).toBe(true)
     expect(usersSchema.safeParse({ users: [{ ...row, status: 'disabled' }], total: 1 }).success).toBe(false)
-  })
-
-  it('resetActor：order 显示「用户 · 购买重置」，带 note 追加「 · note」', () => {
-    expect(resetActor({ reason: 'order' })).toBe('用户 · 购买重置')
-    expect(resetActor({ reason: 'order', note: 'ord_123456' })).toBe('用户 · 购买重置 · ord_123456')
-    expect(resetActor({ reason: 'order', actor_email: 'buyer@example.test', note: 'ord_123456' })).toBe('buyer@example.test · ord_123456')
-  })
-
-  it('memberDiscountLabel：10 九折、25 七五折、100 免费、其余减免百分比', () => {
-    expect(memberDiscountLabel(null)).toBe('无')
-    expect(memberDiscountLabel(undefined)).toBe('无')
-    expect(memberDiscountLabel(10)).toBe('九折')
-    expect(memberDiscountLabel(20)).toBe('八折')
-    expect(memberDiscountLabel(25)).toBe('七五折')
-    expect(memberDiscountLabel(100)).toBe('免费')
-    expect(memberDiscountLabel(12)).toBe('减免 12%')
   })
 })
 

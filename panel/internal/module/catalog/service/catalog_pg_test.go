@@ -1,294 +1,252 @@
 package service
 
-// 目录后台写用例的 PG 测试：发布、乐观锁、归档、价格、向导、卖点。
+// 目录后台写用例的 PG 测试：新建、发布、乐观锁、归档、列表筛选。
 
 import (
-	"encoding/json"
+	"context"
 	"errors"
 	"strings"
 	"testing"
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/testkit"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
 
-// --- 1. 草稿 → 版本 → 发布全流程 ---
-
-func TestCatalogDraftPublishFlow(t *testing.T) {
+func TestCreateSubscriptionDraft(t *testing.T) {
 	e, ctx := newEnv(t)
 	ctx, _ = seedAdmin(t, ctx, e)
 
-	created, err := e.svc.CreatePlan(ctx, PlanInput{
-		Code:             uniqCode(t, "flow"),
-		Name:             "流程套餐",
-		Visibility:       VisibilityPublic,
-		AllowNewPurchase: true,
-		AllowRenewal:     true,
-		AllowUpgrade:     true,
-		Highlights:       []string{},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if created.Status != PlanDraft || created.RowVersion != 1 {
-		t.Fatalf("新建套餐状态/版本: status=%s row_version=%d", created.Status, created.RowVersion)
-	}
-
-	ver, err := e.svc.CreateVersion(ctx, created.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ver.Status != VersionDraft || ver.RowVersion != 1 {
-		t.Fatalf("草稿版本: status=%s row_version=%d", ver.Status, ver.RowVersion)
-	}
-
-	traffic := int64(5)
-	lim := traffic * BytesPerGB
-	verRV, err := e.svc.UpdateVersion(ctx, created.ID, ver.ID, ver.RowVersion, VersionInput{
-		QuotaResetStrategy:   ResetBillingCycle,
-		RenewalExtendsPeriod: true,
-		RenewalResetsQuota:   true,
-		RenewalKeepsAddons:   true,
-		DeviceReleaseHours:   24,
-		OveragePolicy:        OveragePolicySuspend,
-		Entitlements: []Entitlement{
-			{Code: "demo.feature", Value: json.RawMessage(`"on"`)},
-		},
-		Quotas: []Quota{
-			{Metric: MetricTraffic, Limit: &lim, Unit: "bytes", Period: PeriodCycle},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if verRV != 2 {
-		t.Fatalf("版本 row_version 期望 2，得到 %d", verRV)
-	}
-
-	price, err := e.svc.CreatePrice(ctx, created.ID, PriceInput{
-		Currency:        "CNY",
-		UnitAmount:      decimal.RequireFromString("19.90"),
-		BillingInterval: "month",
-		IntervalCount:   1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	detailBefore, err := e.svc.GetPlan(ctx, created.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	planRV, pubVerRV, err := e.svc.PublishVersion(ctx, created.ID, ver.ID, detailBefore.RowVersion, verRV)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if planRV != detailBefore.RowVersion+1 || pubVerRV != verRV+1 {
-		t.Fatalf("发布后 row_version: plan=%d ver=%d", planRV, pubVerRV)
-	}
-
-	detail, err := e.svc.GetPlan(ctx, created.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if detail.Status != PlanActive {
-		t.Fatalf("套餐 status=%s", detail.Status)
-	}
-	if detail.CurrentVersionID == nil || *detail.CurrentVersionID != ver.ID {
-		t.Fatal("current_version_id 未指向发布版本")
-	}
-	if detail.RowVersion != planRV {
-		t.Fatalf("套餐 row_version=%d", detail.RowVersion)
-	}
-
-	var pub *Version
-	for i := range detail.Versions {
-		if detail.Versions[i].ID == ver.ID {
-			pub = &detail.Versions[i]
-			break
-		}
-	}
-	if pub == nil {
-		t.Fatal("找不到发布版本")
-	}
-	if pub.Status != VersionPublished || pub.FrozenAt == nil {
-		t.Fatalf("版本未冻结: status=%s frozen_at=%v", pub.Status, pub.FrozenAt)
-	}
-	if pub.RowVersion != pubVerRV {
-		t.Fatalf("版本 row_version=%d", pub.RowVersion)
-	}
-	if tl := pub.TrafficLimit(); tl == nil || *tl != lim {
-		t.Fatalf("流量配额 %v", tl)
-	}
-
-	foundPrice := false
-	for _, p := range detail.Prices {
-		if p.ID == price.ID && p.Status == PriceActive {
-			foundPrice = true
-		}
-	}
-	if !foundPrice {
-		t.Fatal("价格未读回")
-	}
-}
-
-// --- 2. 发布前校验 ---
-
-func TestPublishRequiresPrice(t *testing.T) {
-	e, ctx := newEnv(t)
-	ctx, _ = seedAdmin(t, ctx, e)
-
-	plan, err := e.svc.CreatePlan(ctx, PlanInput{
-		Code: uniqCode(t, "noprice"), Name: "无价", Visibility: VisibilityPublic,
-		AllowNewPurchase: true, AllowRenewal: true, AllowUpgrade: true, Highlights: []string{},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ver, err := e.svc.CreateVersion(ctx, plan.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = e.svc.UpdateVersion(ctx, plan.ID, ver.ID, ver.RowVersion, VersionInput{
-		QuotaResetStrategy:   ResetBillingCycle,
-		RenewalExtendsPeriod: true, RenewalResetsQuota: true, RenewalKeepsAddons: true,
-		DeviceReleaseHours: 24, OveragePolicy: OveragePolicySuspend,
-		Quotas: []Quota{{Metric: MetricTraffic, Limit: int64Ptr(1 << 30), Unit: "bytes", Period: PeriodCycle}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	detail, _ := e.svc.GetPlan(ctx, plan.ID)
-	_, _, err = e.svc.PublishVersion(ctx, plan.ID, ver.ID, detail.RowVersion, 2)
-	if errCode(err) != errs.ValidationFailed {
-		t.Fatalf("期望 422，得到 %v", err)
-	}
-	if errFields(err)["prices"] == "" {
-		t.Fatal("fields 缺 prices")
-	}
-}
-
-func TestPublishRejectsInviteOnly(t *testing.T) {
-	e, ctx := newEnv(t)
-	ctx, _ = seedAdmin(t, ctx, e)
-
-	created, err := e.svc.CreatePlanComplete(ctx, WizardCreate{
-		Plan: PlanInput{
-			Code: uniqCode(t, "inv"), Name: "邀请", Visibility: VisibilityInviteOnly,
-			AllowNewPurchase: true, AllowRenewal: true, AllowUpgrade: true, Highlights: []string{},
-		},
-		TrafficGB: int64Ptr(10),
-		Prices: []WizardPrice{{
-			BillingInterval: "month", IntervalCount: 1,
-			UnitAmount: decimal.RequireFromString("9.90"), Currency: "CNY",
-		}},
+	detail, err := e.svc.CreatePlan(ctx, PlanCreate{
+		Kind:    KindSubscription,
+		Name:    "标准套餐",
+		Tiers:   []TierInput{{BillingInterval: IntervalMonth, IntervalCount: 1, UnitAmount: decimal.RequireFromString("9.90")}},
+		Usage:   UsageInput{TrafficBytes: int64Ptr(10 << 30)},
+		Sales:   SalesInput{Visibility: VisibilityPublic, AllowNewPurchase: true, AllowRenewal: true, AllowUpgrade: true},
 		Publish: false,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var draftID uuid.UUID
-	var draftRV int64
-	for _, v := range created.Plan.Versions {
-		if v.Status == VersionDraft {
-			draftID = v.ID
-			draftRV = v.RowVersion
-			break
+	// 库里可能已有别的用例留下的 standard 系列代码，只断言前缀与重名递增。
+	if detail.Kind != KindSubscription || detail.Status != PlanDraft || !strings.HasPrefix(detail.Code, "standard") {
+		t.Fatalf("套餐: kind=%s status=%s code=%s", detail.Kind, detail.Status, detail.Code)
+	}
+	if detail.RowVersion != 1 {
+		t.Fatalf("row_version=%d", detail.RowVersion)
+	}
+	if len(detail.Versions) != 1 || detail.Versions[0].Status != VersionDraft || detail.Versions[0].Version != 1 {
+		t.Fatalf("版本: %+v", detail.Versions)
+	}
+	if detail.CurrentVersionID != nil {
+		t.Fatal("草稿不应有 current_version")
+	}
+	q := detail.Versions[0].Quotas
+	if len(q) != 1 || q[0].Period != PeriodCycle || q[0].Metric != MetricTraffic {
+		t.Fatalf("配额: %+v", q)
+	}
+	var active int
+	for _, p := range detail.Prices {
+		if p.Status == PriceActive && p.PlanKind == KindSubscription {
+			active++
 		}
 	}
-	_, _, err = e.svc.PublishVersion(ctx, created.Plan.ID, draftID, created.Plan.RowVersion, draftRV)
-	if errCode(err) != errs.ValidationFailed {
-		t.Fatalf("期望 422，得到 %v", err)
+	if active != 1 {
+		t.Fatalf("在售价格 plan_kind: %d 条", active)
 	}
-	if errFields(err)["visibility"] == "" {
-		t.Fatal("fields 缺 visibility")
+
+	action := scanString(t, ctx, e, `SELECT action FROM audit_events WHERE resource_id = ? ORDER BY occurred_at DESC LIMIT 1`, detail.ID)
+	if action != ActionPlanCreate {
+		t.Fatalf("审计 action=%s", action)
+	}
+
+	detail2, err := e.svc.CreatePlan(ctx, PlanCreate{
+		Kind:    KindSubscription,
+		Name:    "标准套餐",
+		Tiers:   []TierInput{{BillingInterval: IntervalMonth, IntervalCount: 1, UnitAmount: decimal.RequireFromString("8.00")}},
+		Usage:   UsageInput{TrafficBytes: int64Ptr(10 << 30)},
+		Sales:   SalesInput{Visibility: VisibilityPublic, AllowNewPurchase: true, AllowRenewal: true, AllowUpgrade: true},
+		Publish: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail2.Code == detail.Code || !strings.HasPrefix(detail2.Code, "standard-") {
+		t.Fatalf("重名 code=%s", detail2.Code)
 	}
 }
 
-func TestPublishGroupPriceCoverage(t *testing.T) {
+func TestCreateOneTimePublished(t *testing.T) {
 	e, ctx := newEnv(t)
 	ctx, _ = seedAdmin(t, ctx, e)
-	g1 := seedGroup(t, ctx, e, "")
-	g2 := seedGroup(t, ctx, e, "")
 
-	plan, err := e.svc.CreatePlan(ctx, PlanInput{
-		Code: uniqCode(t, "grp"), Name: "分组", Visibility: VisibilityGroup,
-		VisibleGroupIDs:  []uuid.UUID{g1, g2},
-		AllowNewPurchase: true, AllowRenewal: true, AllowUpgrade: true, Highlights: []string{},
+	days := 30
+	detail, err := e.svc.CreatePlan(ctx, PlanCreate{
+		Kind:    KindOneTime,
+		Name:    "流量包月",
+		OneTime: &OneTimeInput{UnitAmount: decimal.RequireFromString("19.90"), ValidityDays: &days},
+		Usage:   UsageInput{TrafficBytes: int64Ptr(5 << 30)},
+		Sales:   SalesInput{Visibility: VisibilityPublic, AllowNewPurchase: true, AllowRenewal: false, AllowUpgrade: true},
+		Publish: true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ver, err := e.svc.CreateVersion(ctx, plan.ID)
-	if err != nil {
-		t.Fatal(err)
+	if detail.Status != PlanActive || detail.AllowRenewal {
+		t.Fatalf("status=%s allow_renewal=%v", detail.Status, detail.AllowRenewal)
 	}
-	verRV, err := e.svc.UpdateVersion(ctx, plan.ID, ver.ID, ver.RowVersion, VersionInput{
-		QuotaResetStrategy:   ResetBillingCycle,
-		RenewalExtendsPeriod: true, RenewalResetsQuota: true, RenewalKeepsAddons: true,
-		DeviceReleaseHours: 24, OveragePolicy: OveragePolicySuspend,
-		Quotas: []Quota{{Metric: MetricTraffic, Limit: int64Ptr(1 << 30), Unit: "bytes", Period: PeriodCycle}},
-	})
-	if err != nil {
-		t.Fatal(err)
+	if detail.CurrentVersionID == nil || detail.Version == nil || *detail.Version != 1 {
+		t.Fatalf("current_version=%v version=%v", detail.CurrentVersionID, detail.Version)
 	}
-	_, err = e.svc.CreatePrice(ctx, plan.ID, PriceInput{
-		Currency: "CNY", UnitAmount: decimal.RequireFromString("8.00"),
-		BillingInterval: "month", IntervalCount: 1, UserGroupID: &g1,
-	})
-	if err != nil {
-		t.Fatal(err)
+	if len(detail.Versions[0].Quotas) != 1 || detail.Versions[0].Quotas[0].Period != PeriodTotal {
+		t.Fatalf("配额 period=%v", detail.Versions[0].Quotas)
 	}
-	detail, _ := e.svc.GetPlan(ctx, plan.ID)
-	_, _, err = e.svc.PublishVersion(ctx, plan.ID, ver.ID, detail.RowVersion, verRV)
-	if errCode(err) != errs.ValidationFailed {
-		t.Fatalf("期望 422 prices，得到 %v", err)
+	var ot Price
+	found := false
+	for _, p := range detail.Prices {
+		if p.Status == PriceActive {
+			ot = p
+			found = true
+		}
 	}
-	if errFields(err)["prices"] == "" {
-		t.Fatal("fields 缺 prices")
+	if !found || ot.BillingInterval != IntervalOneTime || ot.IntervalCount != 1 {
+		t.Fatalf("价格: %+v", ot)
+	}
+	if ot.ValidityDays == nil || *ot.ValidityDays != 30 {
+		t.Fatalf("validity_days=%v", ot.ValidityDays)
 	}
 }
 
-// --- 3. 乐观锁 ---
+func TestCreateValidation(t *testing.T) {
+	e, ctx := newEnv(t)
+	ctx, _ = seedAdmin(t, ctx, e)
+
+	_, err := e.svc.CreatePlan(ctx, PlanCreate{
+		Kind:    KindOneTime,
+		Name:    "一次性",
+		OneTime: &OneTimeInput{UnitAmount: decimal.RequireFromString("9.90")},
+		Usage:   UsageInput{TrafficBytes: int64Ptr(1 << 30)},
+		Sales:   SalesInput{Visibility: VisibilityPublic, AllowNewPurchase: true, AllowRenewal: true, AllowUpgrade: true},
+	})
+	if errCode(err) != errs.ValidationFailed || errFields(err)["allow_renewal"] == "" {
+		t.Fatalf("一次性续费: %v fields=%v", err, errFields(err))
+	}
+
+	_, err = e.svc.CreatePlan(ctx, PlanCreate{
+		Kind:  KindSubscription,
+		Name:  "坏周期",
+		Tiers: []TierInput{{BillingInterval: IntervalMonth, IntervalCount: 2, UnitAmount: decimal.RequireFromString("9.90")}},
+		Usage: UsageInput{TrafficBytes: int64Ptr(1 << 30)},
+		Sales: SalesInput{Visibility: VisibilityPublic, AllowNewPurchase: true, AllowRenewal: true, AllowUpgrade: true},
+	})
+	if errCode(err) != errs.ValidationFailed {
+		t.Fatalf("订阅非法周期: %v", err)
+	}
+}
+
+func TestPublishRequiresActivePrice(t *testing.T) {
+	e, ctx := newEnv(t)
+	ctx, _ = seedAdmin(t, ctx, e)
+
+	detail := publishedPlan(t, ctx, e, publishedPlanOpts{Draft: true})
+	if detail.DraftVersionID == nil {
+		t.Fatal("无草稿版本")
+	}
+	verID := *detail.DraftVersionID
+
+	// 归档唯一在售价
+	for _, p := range detail.Prices {
+		if p.Status != PriceActive {
+			continue
+		}
+		if err := e.exec(ctx, `UPDATE prices SET status = 'archived', row_version = row_version + 1 WHERE id = ?`, p.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	_, err := e.svc.PublishVersion(ctx, detail.ID, verID, detail.RowVersion)
+	if errCode(err) != errs.ValidationFailed || errFields(err)["prices"] == "" {
+		t.Fatalf("无在售价发布: %v fields=%v", err, errFields(err))
+	}
+}
+
+func TestPublishVersionFlow(t *testing.T) {
+	e, ctx := newEnv(t)
+	ctx, _ = seedAdmin(t, ctx, e)
+
+	detail := publishedPlan(t, ctx, e, publishedPlanOpts{Draft: true})
+	verID := *detail.DraftVersionID
+
+	pub, err := e.svc.PublishVersion(ctx, detail.ID, verID, detail.RowVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pub.Status != PlanActive || pub.RowVersion != detail.RowVersion+1 {
+		t.Fatalf("发布后 status=%s row_version=%d", pub.Status, pub.RowVersion)
+	}
+	var frozen Version
+	for _, v := range pub.Versions {
+		if v.ID == verID {
+			frozen = v
+		}
+	}
+	if frozen.Status != VersionPublished || frozen.FrozenAt == nil {
+		t.Fatalf("版本未冻结: status=%s frozen=%v", frozen.Status, frozen.FrozenAt)
+	}
+}
 
 func TestOptimisticLockConflicts(t *testing.T) {
 	e, ctx := newEnv(t)
 	ctx, _ = seedAdmin(t, ctx, e)
 	base := publishedPlan(t, ctx, e, publishedPlanOpts{})
-	draft, err := e.svc.CreateVersion(ctx, base.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// 建草稿可能动了套餐的 row_version，取最新的再造「过期」版本号。
 	detail, err := e.svc.GetPlan(ctx, base.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	activePrice := detail.Prices[0]
+	stale := detail.RowVersion + 1
 
-	// 过期的版本号用「当前 + 1」：仍是合法的正整数，不会先撞「必须为正整数」的 422。
-	_, err = e.svc.UpdatePlan(ctx, base.ID, detail.RowVersion+1, PlanInput{
-		Code: base.Code, Name: base.Name, Visibility: base.Visibility,
-		AllowNewPurchase: true, AllowRenewal: true, AllowUpgrade: true, Highlights: []string{},
+	_, err = e.svc.UpdateBasic(ctx, base.ID, BasicUpdate{ExpectedRowVersion: stale, Name: "新名"})
+	assertRowVersionConflict(t, err)
+
+	_, err = e.svc.ArchivePlan(ctx, base.ID, stale)
+	assertRowVersionConflict(t, err)
+
+	_, err = e.svc.UpdateSales(ctx, base.ID, SalesUpdate{
+		ExpectedRowVersion: stale,
+		Sales:              SalesInput{Visibility: VisibilityPublic, AllowNewPurchase: true, AllowRenewal: true, AllowUpgrade: true},
 	})
 	assertRowVersionConflict(t, err)
 
-	_, err = e.svc.ArchivePlan(ctx, base.ID, detail.RowVersion+1)
-	assertRowVersionConflict(t, err)
-
-	_, err = e.svc.UpdateVersion(ctx, base.ID, draft.ID, draft.RowVersion+1, VersionInput{
-		QuotaResetStrategy:   ResetBillingCycle,
-		RenewalExtendsPeriod: true, RenewalResetsQuota: true, RenewalKeepsAddons: true,
-		DeviceReleaseHours: 24, OveragePolicy: OveragePolicySuspend,
+	amt := decimal.RequireFromString("12.00")
+	_, err = e.svc.UpdatePrices(ctx, base.ID, PricesUpdate{
+		ExpectedRowVersion: stale,
+		Tiers:              []TierChange{{BillingInterval: IntervalMonth, IntervalCount: 1, UnitAmount: &amt}},
 	})
 	assertRowVersionConflict(t, err)
 
-	_, _, err = e.svc.PublishVersion(ctx, base.ID, draft.ID, detail.RowVersion, draft.RowVersion+1)
+	traffic := int64(20 << 30)
+	_, err = e.svc.UpdateUsage(ctx, base.ID, UsageUpdate{ExpectedRowVersion: stale, Usage: UsageInput{TrafficBytes: &traffic}})
 	assertRowVersionConflict(t, err)
 
-	_, err = e.svc.ArchivePrice(ctx, base.ID, activePrice.ID, activePrice.RowVersion+1)
+	withDraft, err := e.svc.UpdateUsage(ctx, base.ID, UsageUpdate{
+		ExpectedRowVersion: detail.RowVersion,
+		Usage:              UsageInput{TrafficBytes: &traffic},
+	})
+	if err != nil || withDraft.DraftVersionID == nil {
+		t.Fatalf("建草稿: err=%v draft=%v", err, withDraft.DraftVersionID)
+	}
+	_, err = e.svc.PublishVersion(ctx, base.ID, *withDraft.DraftVersionID, withDraft.RowVersion+1)
 	assertRowVersionConflict(t, err)
+
+	// 成功一次后 row_version +1
+	updated, err := e.svc.UpdateBasic(ctx, base.ID, BasicUpdate{ExpectedRowVersion: withDraft.RowVersion, Name: "改名一次"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.RowVersion != withDraft.RowVersion+1 {
+		t.Fatalf("UpdateBasic 后 row_version=%d", updated.RowVersion)
+	}
 }
 
 func assertRowVersionConflict(t *testing.T, err error) {
@@ -301,311 +259,106 @@ func assertRowVersionConflict(t *testing.T, err error) {
 	}
 }
 
-// --- 4. Go 层冻结 ---
-
-func TestUpdatePublishedVersionRejectedInGo(t *testing.T) {
-	e, ctx := newEnv(t)
-	ctx, _ = seedAdmin(t, ctx, e)
-	plan := publishedPlan(t, ctx, e, publishedPlanOpts{})
-	detail, err := e.svc.GetPlan(ctx, plan.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var pub Version
-	for _, v := range detail.Versions {
-		if v.Status == VersionPublished {
-			pub = v
-			break
-		}
-	}
-	_, err = e.svc.UpdateVersion(ctx, plan.ID, pub.ID, pub.RowVersion, VersionInput{
-		QuotaResetStrategy:   ResetBillingCycle,
-		RenewalExtendsPeriod: true, RenewalResetsQuota: true,
-		RenewalKeepsAddons: true, DeviceReleaseHours: 99, OveragePolicy: OveragePolicySuspend,
-	})
-	if !errors.Is(err, ErrSnapshotFrozen) && errCode(err) != errs.Conflict {
-		t.Fatalf("期望冻结/冲突，得到 %v", err)
-	}
-}
-
-// --- 6. 归档 ---
-
 func TestArchivePlan(t *testing.T) {
 	e, ctx := newEnv(t)
 	ctx, _ = seedAdmin(t, ctx, e)
 	plan := publishedPlan(t, ctx, e, publishedPlanOpts{})
 	detail, _ := e.svc.GetPlan(ctx, plan.ID)
 
-	next, err := e.svc.ArchivePlan(ctx, plan.ID, detail.RowVersion)
+	archived, err := e.svc.ArchivePlan(ctx, plan.ID, detail.RowVersion)
 	if err != nil {
 		t.Fatal(err)
 	}
-	after, _ := e.svc.GetPlan(ctx, plan.ID)
-	if after.Status != PlanArchived || after.AllowNewPurchase {
-		t.Fatalf("归档后 status=%s allow_new=%v", after.Status, after.AllowNewPurchase)
+	if archived.Status != PlanArchived {
+		t.Fatalf("status=%s", archived.Status)
 	}
 
-	_, err = e.svc.ArchivePlan(ctx, plan.ID, next)
-	if errCode(err) != errs.Conflict {
-		t.Fatalf("重复归档应 409，得到 %v", err)
+	_, err = e.svc.ArchivePlan(ctx, plan.ID, archived.RowVersion)
+	if !errors.Is(err, ErrPlanArchived) && errCode(err) != errs.Conflict {
+		t.Fatalf("重复归档: %v", err)
 	}
 
-	_, err = e.svc.CreatePrice(ctx, plan.ID, PriceInput{
-		Currency: "CNY", UnitAmount: decimal.RequireFromString("1.00"),
-		BillingInterval: "month", IntervalCount: 1,
-	})
-	if errCode(err) != errs.Conflict {
-		t.Fatalf("归档后建价应 409，得到 %v", err)
-	}
-	_, err = e.svc.CreateVersion(ctx, plan.ID)
-	if errCode(err) != errs.Conflict {
-		t.Fatalf("归档后建版本应 409，得到 %v", err)
-	}
-	_, err = e.svc.UpdatePlan(ctx, plan.ID, next, PlanInput{
-		Code: after.Code, Name: after.Name, Visibility: after.Visibility,
-		AllowNewPurchase: false, AllowRenewal: true, AllowUpgrade: true, Highlights: []string{},
-	})
-	if errCode(err) != errs.Conflict {
-		t.Fatalf("归档后改套餐应 409，得到 %v", err)
+	_, err = e.svc.UpdateBasic(ctx, plan.ID, BasicUpdate{ExpectedRowVersion: archived.RowVersion, Name: "x"})
+	if !errors.Is(err, ErrPlanArchived) {
+		t.Fatalf("归档后改基本信息: %v", err)
 	}
 }
-
-// --- 7. 价格唯一 ---
 
 func TestDuplicateActivePrice(t *testing.T) {
 	e, ctx := newEnv(t)
 	ctx, _ = seedAdmin(t, ctx, e)
 	plan := publishedPlan(t, ctx, e, publishedPlanOpts{})
+	detail, _ := e.svc.GetPlan(ctx, plan.ID)
+	var activeID uuid.UUID
+	for _, p := range detail.Prices {
+		if p.Status == PriceActive {
+			activeID = p.ID
+			break
+		}
+	}
 
-	// 撞唯一索引会中止整个测试事务，包在保存点里。
 	err := inSavepoint(t, ctx, e, "sp_dup", func() error {
-		_, err := e.svc.CreatePrice(ctx, plan.ID, PriceInput{
-			Currency: "CNY", UnitAmount: decimal.RequireFromString("12.00"),
-			BillingInterval: "month", IntervalCount: 1,
-		})
-		return err
+		return e.exec(ctx, `INSERT INTO prices (plan_id, plan_kind, unit_amount, billing_interval, interval_count, status, row_version)
+			VALUES (?, ?, 12.00, 'month', 1, 'active', 1)`, plan.ID, KindSubscription)
 	})
-	if errCode(err) != errs.Conflict {
-		t.Fatalf("重复在售价应 409，得到 %v", err)
+	if err == nil {
+		t.Fatal("期望唯一约束冲突")
 	}
-
-	detail, err := e.svc.GetPlan(ctx, plan.ID)
-	if err != nil {
-		t.Fatal(err)
+	if testkit.SQLState(err) != "23505" {
+		t.Fatalf("期望 23505，得到 %v", err)
 	}
-	if len(detail.Prices) == 0 {
-		t.Fatal("套餐没有价格")
-	}
-	p := detail.Prices[0]
-	_, err = e.svc.ArchivePrice(ctx, plan.ID, p.ID, p.RowVersion)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = e.svc.CreatePrice(ctx, plan.ID, PriceInput{
-		Currency: "CNY", UnitAmount: decimal.RequireFromString("12.00"),
-		BillingInterval: "month", IntervalCount: 1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	_ = activeID
 }
 
-// --- 8. 向导 ---
-
-func TestWizardCreatePublishTrafficQuota(t *testing.T) {
+func TestListPlansFilters(t *testing.T) {
 	e, ctx := newEnv(t)
 	ctx, _ = seedAdmin(t, ctx, e)
-	gb := int64(10)
-	out, err := e.svc.CreatePlanComplete(ctx, WizardCreate{
-		Plan: PlanInput{
-			Code: uniqCode(t, "wiz"), Name: "向导", Visibility: VisibilityPublic,
-			AllowNewPurchase: true, AllowRenewal: true, AllowUpgrade: true, Highlights: []string{},
-		},
-		TrafficGB: &gb,
-		Prices: []WizardPrice{{BillingInterval: "month", IntervalCount: 1,
-			UnitAmount: decimal.RequireFromString("9.90"), Currency: "CNY"}},
-		Publish: true,
-	})
-	if err != nil || !out.Published {
-		t.Fatalf("向导发布: err=%v published=%v", err, out.Published)
-	}
-	var ver *Version
-	for i := range out.Plan.Versions {
-		if out.Plan.Versions[i].ID == out.VersionID {
-			ver = &out.Plan.Versions[i]
-		}
-	}
-	if ver == nil {
-		t.Fatal("版本缺失")
-	}
-	lim := ver.TrafficLimit()
-	if lim == nil || *lim != 10*BytesPerGB {
-		t.Fatalf("traffic.bytes=%v", lim)
-	}
-}
 
-func TestWizardUpdateTrafficRollsVersion(t *testing.T) {
-	e, ctx := newEnv(t)
-	ctx, _ = seedAdmin(t, ctx, e)
-	created, _ := e.svc.CreatePlanComplete(ctx, WizardCreate{
-		Plan: PlanInput{
-			Code: uniqCode(t, "roll"), Name: "滚版本", Visibility: VisibilityPublic,
-			AllowNewPurchase: true, AllowRenewal: true, AllowUpgrade: true, Highlights: []string{},
-		},
-		TrafficGB: int64Ptr(10),
-		Prices: []WizardPrice{{BillingInterval: "month", IntervalCount: 1,
-			UnitAmount: decimal.RequireFromString("9.90"), Currency: "CNY"}},
-		Publish: true,
+	_ = publishedPlan(t, ctx, e, publishedPlanOpts{Name: "筛选订阅A", Kind: KindSubscription})
+	_ = publishedPlan(t, ctx, e, publishedPlanOpts{
+		Name: "筛选一次性B", Kind: KindOneTime, Draft: true,
 	})
-	oldPub := created.VersionID
-	upd, err := e.svc.UpdatePlanComplete(ctx, created.Plan.ID, WizardUpdate{
-		ExpectedRowVersion: created.Plan.RowVersion,
-		Code:               created.Plan.Code,
-		Name:               created.Plan.Name,
-		Visibility:         VisibilityPublic,
-		TrafficGB:          int64Ptr(20),
-	})
+
+	subs, err := e.svc.ListPlans(ctx, PlanFilter{Kind: KindSubscription})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if upd.Plan.CurrentVersionID == nil || *upd.Plan.CurrentVersionID == oldPub {
-		t.Fatal("应产生新当前版本")
-	}
-	pubCount := 0
-	for _, v := range upd.Plan.Versions {
-		if v.Status == VersionPublished {
-			pubCount++
+	foundSub := false
+	for _, s := range subs {
+		if s.Name == "筛选订阅A" {
+			foundSub = true
+		}
+		if s.Kind != KindSubscription {
+			t.Fatalf("kind 筛选泄漏: %s", s.Name)
 		}
 	}
-	if pubCount < 2 {
-		t.Fatalf("旧版本应仍为 published，count=%d", pubCount)
+	if !foundSub {
+		t.Fatal("未找到订阅套餐")
 	}
-	found := false
-	for _, c := range upd.Changed {
-		if strings.Contains(c, "额度") {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("Changed 应含额度说明: %v", upd.Changed)
-	}
-}
 
-func TestWizardUpdatePriceOnly(t *testing.T) {
-	e, ctx := newEnv(t)
-	ctx, _ = seedAdmin(t, ctx, e)
-	created, _ := e.svc.CreatePlanComplete(ctx, WizardCreate{
-		Plan: PlanInput{
-			Code: uniqCode(t, "pr"), Name: "双币", Visibility: VisibilityPublic,
-			AllowNewPurchase: true, AllowRenewal: true, AllowUpgrade: true, Highlights: []string{},
-		},
-		TrafficGB: int64Ptr(10),
-		Prices: []WizardPrice{
-			{BillingInterval: "month", IntervalCount: 1, UnitAmount: decimal.RequireFromString("9.90"), Currency: "CNY"},
-			{BillingInterval: "month", IntervalCount: 1, UnitAmount: decimal.RequireFromString("1.99"), Currency: "USD"},
-		},
-		Publish: true,
-	})
-	upd, err := e.svc.UpdatePlanComplete(ctx, created.Plan.ID, WizardUpdate{
-		ExpectedRowVersion: created.Plan.RowVersion,
-		Code:               created.Plan.Code,
-		Name:               created.Plan.Name,
-		Visibility:         VisibilityPublic,
-		Prices: &[]WizardPrice{
-			{BillingInterval: "month", IntervalCount: 1, UnitAmount: decimal.RequireFromString("10.90"), Currency: "CNY"},
-		},
-	})
+	drafts, err := e.svc.ListPlans(ctx, PlanFilter{Status: PlanDraft, Q: "筛选一次性"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var cnyActive, usdActive int
-	for _, p := range upd.Plan.Prices {
-		if string(p.Currency) == "CNY" && p.Status == PriceActive {
-			cnyActive++
-			if !p.UnitAmount.Equal(decimal.RequireFromString("10.90")) {
-				t.Fatalf("CNY 金额 %s", p.UnitAmount)
-			}
-		}
-		if string(p.Currency) == "USD" && p.Status == PriceActive {
-			usdActive++
-			if !p.UnitAmount.Equal(decimal.RequireFromString("1.99")) {
-				t.Fatalf("USD 不应变 %s", p.UnitAmount)
-			}
-		}
-	}
-	if cnyActive != 1 || usdActive != 1 {
-		t.Fatalf("CNY active=%d USD active=%d", cnyActive, usdActive)
-	}
-	archivedCNY := 0
-	for _, p := range upd.Plan.Prices {
-		if string(p.Currency) == "CNY" && p.Status == PriceArchived {
-			archivedCNY++
-		}
-	}
-	if archivedCNY < 1 {
-		t.Fatal("旧 CNY 应归档")
-	}
-	priceMsg := false
-	for _, c := range upd.Changed {
-		if strings.Contains(c, "价格") {
-			priceMsg = true
-		}
-	}
-	if !priceMsg {
-		t.Fatalf("Changed: %v", upd.Changed)
-	}
-}
-
-func TestWizardDuplicatePricePeriod(t *testing.T) {
-	e, ctx := newEnv(t)
-	ctx, _ = seedAdmin(t, ctx, e)
-	_, err := e.svc.CreatePlanComplete(ctx, WizardCreate{
-		Plan: PlanInput{
-			Code: uniqCode(t, "dup"), Name: "重复价", Visibility: VisibilityPublic,
-			AllowNewPurchase: true, AllowRenewal: true, AllowUpgrade: true, Highlights: []string{},
-		},
-		TrafficGB: int64Ptr(1),
-		Prices: []WizardPrice{
-			{BillingInterval: "month", IntervalCount: 1, UnitAmount: decimal.RequireFromString("1.00"), Currency: "CNY"},
-			{BillingInterval: "month", IntervalCount: 1, UnitAmount: decimal.RequireFromString("2.00"), Currency: "CNY"},
-		},
-		Publish: false,
-	})
-	if errCode(err) != errs.ValidationFailed {
-		t.Fatalf("重复周期币种应 422，得到 %v", err)
-	}
-}
-
-// --- 9. 卖点 ---
-
-func TestPlanHighlights(t *testing.T) {
-	e, ctx := newEnv(t)
-	ctx, _ = seedAdmin(t, ctx, e)
-	_, err := e.svc.CreatePlan(ctx, PlanInput{
-		Code: uniqCode(t, "hl"), Name: "卖点", Visibility: VisibilityPublic,
-		AllowNewPurchase: true, AllowRenewal: true, AllowUpgrade: true,
-		Highlights: []string{"一", "二", "三", "四", "五", "六"},
-	})
-	if errCode(err) != errs.ValidationFailed {
-		t.Fatalf("超过 5 条应 422，得到 %v", err)
-	}
-	if errFields(err)["highlights"] == "" {
-		t.Fatal("fields 缺 highlights")
+	if len(drafts) != 1 || drafts[0].Name != "筛选一次性B" {
+		t.Fatalf("status+q: %+v", drafts)
 	}
 
-	want := []string{"快", "稳", "省"}
-	plan, err := e.svc.CreatePlan(ctx, PlanInput{
-		Code: uniqCode(t, "hlok"), Name: "卖点OK", Visibility: VisibilityPublic,
-		AllowNewPurchase: true, AllowRenewal: true, AllowUpgrade: true, Highlights: want,
-	})
+	// 通配符应被转义，不应把「筛选%」当成 LIKE 模式
+	none, err := e.svc.ListPlans(ctx, PlanFilter{Q: "筛选%"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := range want {
-		if plan.Highlights[i] != want[i] {
-			t.Fatalf("顺序 %v vs %v", plan.Highlights, want)
-		}
+	if len(none) != 0 {
+		t.Fatalf("%% 应转义，得到 %d 条", len(none))
 	}
 }
 
-// --- 10. 门户与下单快照 ---
+func scanString(t *testing.T, ctx context.Context, e *env, q string, args ...any) string {
+	t.Helper()
+	var s string
+	if err := e.row(ctx, q, args...).Scan(&s); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}

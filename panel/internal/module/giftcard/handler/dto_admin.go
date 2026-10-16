@@ -29,23 +29,26 @@ type templateDTO struct {
 	ThemeColor  string        `json:"theme_color"`
 	CodeTotal   int64         `json:"code_total"`
 	CodeUsed    int64         `json:"code_used"`
-	CreatedAt   time.Time     `json:"created_at"`
+	// PriceArchived 套餐卡的价格档已下架（后台标「价格已下架」，编辑时要重选价格）
+	PriceArchived bool      `json:"price_archived"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 func templateFrom(t service.Template, c *cents) templateDTO {
 	return templateDTO{
-		ID:          t.ID.String(),
-		Name:        t.Name,
-		Description: t.Description,
-		Type:        t.Type,
-		Status:      t.Status,
-		Rewards:     rewardsFrom(t.Rewards, c),
-		Conditions:  conditionsFrom(t.Conditions),
-		Limits:      limitsFrom(t.Limits),
-		ThemeColor:  t.ThemeColor,
-		CodeTotal:   t.CodeTotal,
-		CodeUsed:    t.CodeUsed,
-		CreatedAt:   t.CreatedAt,
+		ID:            t.ID.String(),
+		Name:          t.Name,
+		Description:   t.Description,
+		Type:          t.Type,
+		Status:        t.Status,
+		Rewards:       rewardsFrom(t.Rewards, c),
+		Conditions:    conditionsFrom(t.Conditions),
+		Limits:        limitsFrom(t.Limits),
+		ThemeColor:    t.ThemeColor,
+		CodeTotal:     t.CodeTotal,
+		CodeUsed:      t.CodeUsed,
+		PriceArchived: t.PriceArchived,
+		CreatedAt:     t.CreatedAt,
 	}
 }
 

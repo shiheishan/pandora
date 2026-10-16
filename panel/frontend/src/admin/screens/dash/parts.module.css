@@ -1,0 +1,187 @@
+/* ===========================================================================
+ * 仪表盘共用小件（parts.tsx）
+ * ========================================================================= */
+.hint {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  white-space: nowrap;
+}
+
+/* 分区标题：待办 / 经营 / 运行 */
+.groupHead {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px var(--space-12);
+}
+
+.groupTitle {
+  margin: 0;
+  font-size: 20px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.02em;
+}
+
+/* 卡片标题条：下面一条墨色线 */
+.panelHead {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  min-height: 34px;
+  padding-bottom: var(--space-8);
+  border-bottom: 1px solid var(--text);
+}
+
+.panelTitle {
+  margin: 0;
+  font-size: 14px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.01em;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.panelTools {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.toolSep {
+  width: 1px;
+  height: 12px;
+  background: var(--border-strong);
+}
+
+/* 文字页签 */
+.textTabs {
+  display: flex;
+  gap: 14px;
+}
+
+.textTab {
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  font: inherit;
+  font-size: var(--fs-caption);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.textTab:hover {
+  color: var(--text);
+}
+
+.textTabOn {
+  color: var(--text);
+  font-weight: var(--fw-semibold);
+  box-shadow: inset 0 -1.5px 0 var(--text);
+}
+
+/* 箭头链接 */
+.arrowLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  line-height: 18px;
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+.arrowLink:hover {
+  color: var(--text);
+}
+
+.arrowLinkUnderline {
+  color: var(--text);
+  font-weight: var(--fw-medium);
+  box-shadow: inset 0 -1px 0 var(--text);
+}
+
+/* 卡内空状态 */
+.empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  min-height: 200px;
+  border-bottom: 1px solid var(--text);
+}
+
+.emptyTitle {
+  font-size: 14px;
+  font-weight: var(--fw-semibold);
+}
+
+.emptyLink {
+  margin-top: var(--space-8);
+}
+
+/* 状态圆点：颜色只表达状态 */
+.dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+
+.ok {
+  background: var(--ok);
+}
+
+.warn {
+  background: var(--warn);
+}
+
+.danger {
+  background: var(--danger);
+}
+
+.info {
+  background: var(--info);
+}
+
+.neutral {
+  background: var(--border-hover);
+}
+
+.toneOk {
+  color: var(--ok);
+}
+
+.toneDanger {
+  color: var(--danger);
+}
+
+.toneWarn {
+  color: var(--warn);
+}
+
+/* 卡片内的错误与骨架 */
+.error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-12) 0;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+.skeletonStack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: var(--space-16) 0;
+}

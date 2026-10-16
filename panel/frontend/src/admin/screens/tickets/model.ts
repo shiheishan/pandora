@@ -91,7 +91,7 @@ export const PRIORITY_VIEW: Record<TicketPriority, { label: string; dot: 'low' |
 export const CATEGORY_LABELS: Record<TicketCategory, string> = {
   general: '一般咨询',
   billing: '账单与支付',
-  subscription: '订阅与套餐',
+  subscription: '套餐与链接',
   technical: '连接与技术',
   account: '账号与安全',
   abuse: '举报与投诉',

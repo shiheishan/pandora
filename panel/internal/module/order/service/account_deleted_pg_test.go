@@ -18,7 +18,7 @@ func TestCancelUserPendingOnAccountDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	other := e.mkUser(t, ctx)
-	otherPlan, _, otherPrice := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	otherPlan, _, otherPrice := e.mkPlan(t, ctx, 1000, "month")
 	otherOrder := e.buyNew(t, ctx, other, otherPlan, otherPrice, Checkout{})
 
 	if _, err := e.svc.CancelUserPending(asUser(ctx, user), user); codeOf(err) != errs.Forbidden {
@@ -64,7 +64,7 @@ func TestCancelUserPendingOnAccountDeletion(t *testing.T) {
 func TestDeletedUserCannotOrder(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 1000, "month")
 	e.users.markDeleted(user)
 
 	if _, err := e.svc.CreateNewOrder(asUser(ctx, user), NewOrderInput{PlanID: planID, PriceID: priceID}); codeOf(err) != errs.Conflict {

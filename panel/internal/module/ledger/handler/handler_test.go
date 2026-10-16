@@ -15,7 +15,6 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/aegispanel/aegis/internal/pkg/route"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -148,8 +147,7 @@ func TestMyBalanceShape(t *testing.T) {
 	at1 := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
 	at2 := time.Date(2026, 3, 2, 11, 30, 0, 0, time.UTC)
 	f := &fakeSvc{wallet: service.Wallet{
-		Currency: money.CNY,
-		Balance:  decimal.RequireFromString("12.34"),
+		Balance: decimal.RequireFromString("12.34"),
 		History: []service.HistoryItem{
 			{Kind: "balance_topup", Delta: decimal.RequireFromString("10.00"), Memo: "充值", At: at1},
 			{Kind: "balance_hold", Delta: decimal.RequireFromString("-5.50"), Memo: "冻结", At: at2},
@@ -161,9 +159,8 @@ func TestMyBalanceShape(t *testing.T) {
 		t.Fatalf("status %d %s", w.Code, w.Body)
 	}
 	var got struct {
-		Balance  int64  `json:"balance"`
-		Currency string `json:"currency"`
-		History  []struct {
+		Balance int64 `json:"balance"`
+		History []struct {
 			Kind  string `json:"kind"`
 			Delta int64  `json:"delta"`
 			Memo  string `json:"memo"`
@@ -173,8 +170,8 @@ func TestMyBalanceShape(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Balance != 1234 || got.Currency != "CNY" {
-		t.Fatalf("余额/币种 %+v", got)
+	if got.Balance != 1234 {
+		t.Fatalf("余额 %+v", got)
 	}
 	if len(got.History) != 2 || got.History[0].Delta != 1000 || got.History[0].Kind != "balance_topup" ||
 		got.History[1].Delta != -550 || got.History[1].Kind != "balance_hold" {
@@ -189,7 +186,7 @@ func TestMyBalanceShape(t *testing.T) {
 }
 
 func TestMyBalanceEmptyHistory(t *testing.T) {
-	f := &fakeSvc{wallet: service.Wallet{Currency: money.CNY, Balance: decimal.Zero, History: nil}}
+	f := &fakeSvc{wallet: service.Wallet{Balance: decimal.Zero, History: nil}}
 	p := &authn.Principal{UserID: uuid.New(), SessionID: "s", Audience: authn.AudiencePublic}
 	w := do(newPublicEngine(f, p), http.MethodGet, "/v1/me/balance", "")
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"history":[]`) {
@@ -202,14 +199,14 @@ func TestAdjustBalanceOK(t *testing.T) {
 	f := &fakeSvc{adjustRes: service.AdjustResult{Balance: decimal.RequireFromString("30.5")}}
 	var hooks kitHooks
 	p := &authn.Principal{UserID: uuid.New(), SessionID: "s", Audience: authn.AudienceAdmin}
-	body := `{"amount":-2000,"currency":"CNY","reason":"补偿测试原因"}`
+	body := `{"amount":-2000,"reason":"补偿测试原因"}`
 	w := do(newAdminEngine(f, p, &hooks), http.MethodPost, "/v1/users/"+uid.String()+"/balance", body)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d %s", w.Code, w.Body)
 	}
 	wantAmt := decimal.RequireFromString("-20")
 	if f.lastAdjust.UserID != uid || !f.lastAdjust.Amount.Equal(wantAmt) ||
-		f.lastAdjust.Currency != "CNY" || f.lastAdjust.Reason != "补偿测试原因" {
+		f.lastAdjust.Reason != "补偿测试原因" {
 		t.Fatalf("入参 %+v", f.lastAdjust)
 	}
 	var res struct {
@@ -225,7 +222,7 @@ func TestAdjustBalanceOK(t *testing.T) {
 
 func TestAdjustBalanceBadUserID(t *testing.T) {
 	w := do(newAdminEngine(&fakeSvc{}, nil, nil), http.MethodPost, "/v1/users/not-a-uuid/balance",
-		`{"amount":100,"currency":"CNY","reason":"原因够长"}`)
+		`{"amount":100,"reason":"原因够长"}`)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status %d", w.Code)
 	}
@@ -252,7 +249,7 @@ func TestAdjustBalanceConflict(t *testing.T) {
 	f := &fakeSvc{adjustErr: errs.Newf(errs.Conflict, "余额不足，无法扣减这么多")}
 	uid := uuid.NewString()
 	w := do(newAdminEngine(f, nil, nil), http.MethodPost, "/v1/users/"+uid+"/balance",
-		`{"amount":-100,"currency":"CNY","reason":"扣减测试原因"}`)
+		`{"amount":-100,"reason":"扣减测试原因"}`)
 	if w.Code != http.StatusConflict {
 		t.Fatalf("status %d", w.Code)
 	}
@@ -266,7 +263,7 @@ func TestAdjustBalanceValidationFailedNoFields(t *testing.T) {
 	f := &fakeSvc{adjustErr: errs.Newf(errs.ValidationFailed, "调整金额不能为零")}
 	uid := uuid.NewString()
 	w := do(newAdminEngine(f, nil, nil), http.MethodPost, "/v1/users/"+uid+"/balance",
-		`{"amount":100,"currency":"CNY","reason":"非零金额原因"}`)
+		`{"amount":100,"reason":"非零金额原因"}`)
 	if w.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status %d", w.Code)
 	}

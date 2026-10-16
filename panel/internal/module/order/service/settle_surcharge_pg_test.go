@@ -75,7 +75,7 @@ func TestNewOrderSettlesWithSurchargeHookExcludesFee(t *testing.T) {
 	e.setPayFee(t, ctx, code, "0.30", "2")
 
 	user := e.mkUser(t, ctx)
-	planID, _, priceID := e.mkPlan(t, ctx, 990, "month", nil, nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 990, "month")
 	c := e.buyNew(t, ctx, user, planID, priceID, Checkout{})
 
 	intent, err := e.svc.Pay(asUser(ctx, user), PayInput{OrderID: c.OrderID, Provider: code})
@@ -117,7 +117,7 @@ func TestSurchargeUnderpayRejectedOrder(t *testing.T) {
 	e.setPayFee(t, ctx, code, "0.30", "2")
 
 	user := e.mkUser(t, ctx)
-	planID, _, priceID := e.mkPlan(t, ctx, 990, "month", nil, nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 990, "month")
 	c := e.buyNew(t, ctx, user, planID, priceID, Checkout{})
 
 	intent, err := e.svc.Pay(asUser(ctx, user), PayInput{OrderID: c.OrderID, Provider: code})

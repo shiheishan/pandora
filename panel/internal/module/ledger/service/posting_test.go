@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/aegispanel/aegis/internal/module/ledger/repo"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -15,8 +14,7 @@ import (
 func validTwoLegPosting() Posting {
 	uid := uuid.MustParse("018f1234-5678-7abc-8def-0123456789ab")
 	return Posting{
-		Kind:     KindBalanceTopup,
-		Currency: money.CNY,
+		Kind: KindBalanceTopup,
 		Legs: []Leg{
 			{Account: PlatformAccount(ChannelCash, "alipay"), Direction: Debit, Amount: decimal.NewFromInt(10)},
 			{Account: UserAccount(UserBalance, uid), Direction: Credit, Amount: decimal.NewFromInt(10)},
@@ -45,7 +43,6 @@ func TestValidatePosting_errors(t *testing.T) {
 		mut  func(*Posting)
 	}{
 		{"kind 非法", func(p *Posting) { p.Kind = Kind("nope") }},
-		{"币种非法", func(p *Posting) { p.Currency = money.Currency("EUR") }},
 		{"只有一条分录", func(p *Posting) { p.Legs = p.Legs[:1] }},
 		{"金额为 0", func(p *Posting) {
 			p.Legs[0].Amount = decimal.Zero

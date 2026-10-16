@@ -24,7 +24,7 @@ describe('充值金额', () => {
 
 describe('余额流水', () => {
   it('账本类型映射，挂账两类都叫「挂账转入」，未知类型返回 null', () => {
-    expect(ledgerLabel('balance_hold')).toBe('下单用余额（冻结）')
+    expect(ledgerLabel('balance_hold')).toBe('下单用余额')
     expect(ledgerLabel('late_payment_suspense')).toBe('挂账转入')
     expect(ledgerLabel('plan_change_refund')).toBe('换套餐退回')
     expect(ledgerLabel('something_new')).toBeNull()
@@ -36,13 +36,15 @@ describe('礼品卡', () => {
     expect(giftFace(card({ rewards: { balance: 10000 } }))).toBe('¥100.00 余额')
     expect(giftFace(card({ rewards: { traffic_bytes: 200 * GIB, expire_days: 7 } }))).toBe('流量 +200 GB + 延长 7 天')
     expect(giftFace(card({ type: 'plan', plan_name: '专业版', interval: 'month', interval_count: 1 }))).toBe('专业版 · 1 个月')
+    expect(giftFace(card({ type: 'plan', plan_name: '大包', plan_kind: 'one_time', validity_days: 30 }))).toBe('大包 · 一次性 · 有效 30 天')
+    expect(giftFace(card({ type: 'plan', plan_name: '永久包', plan_kind: 'one_time', validity_days: undefined }))).toBe('永久包 · 一次性 · 永久有效')
     expect(giftFace(card({ type: 'mystery', rewards: { pool: [{ label: 'A', weight: 0 }, { label: 'B', weight: 0 }] } }))).toBe('盲盒：可能抽到 A / B')
     expect(giftFace(card({ name: '空卡' }))).toBe('空卡')
   })
 
   it('说明：后台说明优先，缺省按类型', () => {
     expect(giftNote(card({ description: '限国庆' }))).toBe('限国庆')
-    expect(giftNote(card({ rewards: { traffic_bytes: GIB } }))).toBe('流量包不过期，用完为止')
+    expect(giftNote(card({ rewards: { traffic_bytes: GIB } }))).toBe('送的流量：按时间的套餐只在本期有效，一次性套餐加到总流量上')
     expect(giftNote(card({ type: 'mystery' }))).toBe('兑换时随机抽取其中一项')
   })
 
@@ -69,10 +71,8 @@ function detail(over: Partial<OrderDetail> = {}): OrderDetail {
       order_no: 'PD-1',
       kind: 'new',
       status: 'fulfilled',
-      currency: 'CNY',
       total_amount: 4720,
       discount_amount: 1180,
-      member_discount_amount: 0,
       balance_applied: 0,
       payable_amount: 4720,
       paid_amount: 4720,
@@ -81,8 +81,8 @@ function detail(over: Partial<OrderDetail> = {}): OrderDetail {
       cancellable: false,
       has_payment_intent: true,
       created_at: '2026-09-21T10:00:00Z',
-      items: [{ name: '专业版', quantity: 1, unit_amount: 5900, line_amount: 5900 }],
-      payments: [{ status: 'succeeded', amount: 4720, currency: 'CNY', created_at: '2026-09-21T10:01:00Z', method: 'alipay', provider_name: '易支付' }],
+      items: [{ name: '专业版', quantity: 1, unit_amount: 5900, line_amount: 5900, plan_id: 'plan-pro', price_id: 'price-pro-m' }],
+      payments: [{ status: 'succeeded', amount: 4720, created_at: '2026-09-21T10:01:00Z', method: 'alipay', provider_name: '易支付' }],
       coupon_code: 'AUTUMN26',
       subscription_period_end: '2026-11-05T10:00:00Z',
       subscription_id: 's1',
@@ -119,9 +119,15 @@ describe('订单页', () => {
   it('结果：按状态与种类（契约门户-04 映射）', () => {
     expect(orderResult(detail())).toBe('支付宝 · 有效期至 2026-11-05')
     expect(orderResult(detail({ kind: 'topup' }))).toBe('余额已到账')
+    expect(orderResult(detail({ kind: 'stack' }))).toBe('已叠加，总流量加上了')
     expect(orderResult(detail({ status: 'expired' }))).toBe('超时未支付，已自动取消')
     expect(orderResult(detail({ status: 'cancelled', cancel_reason: 'user_cancelled' }))).toBe('已由您取消')
     expect(orderResult(detail({ status: 'cancelled', cancel_reason: '渠道维护' }))).toBe('渠道维护')
+    // 套餐归档后才付款：不开通，钱转余额（10-16）
+    expect(orderResult(detail({ status: 'cancelled', cancel_reason: 'plan_archived', surcharge_kept: 0 }))).toBe('套餐已停售，没有开通；付的钱已转入钱包余额')
+    // 手续费不退（10-16 改口）：扣了手续费写「应付金额」；字段缺了用统一说法
+    expect(orderResult(detail({ status: 'cancelled', cancel_reason: 'plan_archived', surcharge_kept: 300 }))).toBe('套餐已停售，没有开通；应付金额已转入钱包余额（支付手续费不退）')
+    expect(orderResult(detail({ status: 'cancelled', cancel_reason: 'plan_archived' }))).toBe('套餐已停售，没有开通；应付金额已转入钱包余额，支付手续费不退')
   })
 
   it('事实行：原价、优惠带券码、实付、支付记录；待支付显示过期时间', () => {

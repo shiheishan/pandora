@@ -125,7 +125,7 @@ func TestPluginScanTraffic(t *testing.T) {
 	dir, plans, subs := e.usePorts()
 	uid := e.insertTestUser(t, dir)
 	planID := uuid.MustParse("018f0000-0000-7000-8000-000000000020")
-	plans.plans = []catalogsvc.Plan{{ID: planID, Name: "流量包"}}
+	plans.plans = []catalogsvc.Plan{{ID: planID, Name: "按量套餐"}}
 	subs.quota = []subsvc.QuotaNotice{{
 		SubscriptionID: uuid.New(),
 		UserID:         uid,
@@ -153,7 +153,7 @@ func TestPluginScanTraffic(t *testing.T) {
 	if !ok || pct != 95 {
 		t.Fatalf("percent %v", ev.Payload["percent"])
 	}
-	if payloadStr(ev.Payload, "plan") != "流量包" {
+	if payloadStr(ev.Payload, "plan") != "按量套餐" {
 		t.Fatalf("plan %v", ev.Payload["plan"])
 	}
 	cb, _ := payloadInt(ev.Payload, "consumed_bytes")

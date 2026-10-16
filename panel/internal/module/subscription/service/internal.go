@@ -35,7 +35,6 @@ func toSubscription(m model.Subscription) Subscription {
 		RenewalClosedAt: m.RenewalClosedAt,
 		Price: PriceSnapshot{
 			PriceID:       m.PriceID,
-			Currency:      money.Currency(m.SnapshotCurrency),
 			Amount:        m.SnapshotAmount,
 			Interval:      m.SnapshotInterval,
 			IntervalCount: m.SnapshotIntervalCount,
@@ -58,6 +57,7 @@ func toQuota(m model.QuotaBalance) Quota {
 		PeriodStart: m.PeriodStart,
 		PeriodEnd:   m.PeriodEnd,
 		Limit:       m.LimitValue,
+		Bonus:       m.BonusValue,
 		Consumed:    m.Consumed,
 		Remaining:   m.Remaining,
 	}
@@ -77,26 +77,11 @@ func sortQuotas(qs []Quota) {
 	})
 }
 
-// toPack 把流量包余额行转成对外类型。
-func toPack(m model.PackGrant) Pack {
-	return Pack{
-		ID:             m.ID,
-		UserID:         m.UserID,
-		SubscriptionID: m.SubscriptionID,
-		Source:         m.Source,
-		SourceID:       m.SourceID,
-		GrantedBytes:   m.GrantedBytes,
-		ConsumedBytes:  m.ConsumedBytes,
-		RemainingBytes: m.GrantedBytes - m.ConsumedBytes,
-		CreatedAt:      m.CreatedAt,
-	}
-}
-
-// validatePrice 校验价格快照：币种、金额两位小数且不为负、周期合法。调用方传错是程序错误，回 internal_error。
+// validatePrice 校验价格快照：金额两位小数且不为负、周期合法、有效天数只属于一次性价且为正。调用方传错是程序错误，回 internal_error。
 func validatePrice(p PriceSnapshot) error {
 	switch {
-	case !p.Currency.Valid():
-		return errs.Wrap(errs.Internal, fmt.Errorf("subscription: 价格快照币种 %q 不合法", p.Currency))
+	case p.ValidityDays != nil && (p.Interval != "one_time" || *p.ValidityDays < 1 || *p.ValidityDays > 36500):
+		return errs.Wrap(errs.Internal, fmt.Errorf("subscription: 价格快照有效天数 %d 不合法", *p.ValidityDays))
 	case money.CheckNonNegative(p.Amount) != nil:
 		return errs.Wrap(errs.Internal, fmt.Errorf("subscription: 价格快照金额 %s 不合法", p.Amount))
 	case !ValidInterval(p.Interval) || p.IntervalCount < 1 || p.IntervalCount > 32767:
@@ -191,6 +176,43 @@ func (s *Service) versionFor(ctx context.Context, planID, versionID uuid.UUID) (
 		return catalogsvc.Version{}, ErrVersionUnavailable
 	}
 	return v, nil
+}
+
+// planOf 读一个套餐（开通、续费、叠加、换套餐、送流量判断类型用）；读不到回 ErrVersionUnavailable。
+func (s *Service) planOf(ctx context.Context, planID uuid.UUID) (catalogsvc.Plan, error) {
+	plans, err := s.catalog.PlansByIDs(ctx, []uuid.UUID{planID})
+	if err != nil {
+		return catalogsvc.Plan{}, err
+	}
+	p, ok := plans[planID]
+	if !ok {
+		return catalogsvc.Plan{}, ErrVersionUnavailable
+	}
+	return p, nil
+}
+
+// trafficPeriod 是套餐类型对应的流量配额周期：订阅套餐 cycle（每周期一份、滚动清零），一次性套餐 total（不清零）。
+// 流量落在哪一行一律按套餐类型判断，不信版本里配额定义的 period（开发库里可能有 cycle 的一次性版本）。
+func trafficPeriod(kind string) string {
+	if kind == catalogsvc.KindOneTime {
+		return PeriodTotal
+	}
+	return PeriodCycle
+}
+
+// withKind 返回 v 的副本：traffic.bytes 配额定义里跟着套餐走的那一行（cycle 或 total）按套餐类型改正（trafficPeriod）。
+// 开通、换套餐、续费恢复、叠加建配额前都过一遍。day / month 是独立的滚动窗口，不随套餐类型变，原样保留：
+// 若也改成 cycle，同一版本的日、月、周期行会折成三条 (traffic.bytes, cycle)，建配额撞唯一键（「记录已存在」）。
+func withKind(v catalogsvc.Version, kind string) catalogsvc.Version {
+	qs := make([]catalogsvc.Quota, len(v.Quotas))
+	copy(qs, v.Quotas)
+	for i := range qs {
+		if qs[i].Metric == MetricTraffic && (qs[i].Period == PeriodCycle || qs[i].Period == PeriodTotal) {
+			qs[i].Period = trafficPeriod(kind)
+		}
+	}
+	v.Quotas = qs
+	return v
 }
 
 // quotaDef 在版本的配额定义里找 (metric, period)；没有返回 false。

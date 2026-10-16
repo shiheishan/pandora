@@ -16,7 +16,7 @@ import (
 var categories = []Category{
 	{Code: "general", Name: "一般咨询"},
 	{Code: "technical", Name: "连接与技术"},
-	{Code: "subscription", Name: "订阅与套餐"},
+	{Code: "subscription", Name: "套餐与链接"},
 	{Code: "billing", Name: "账单与支付"},
 	{Code: "account", Name: "账号与安全"},
 	{Code: "abuse", Name: "举报与投诉"},

@@ -14,7 +14,8 @@ paths:
   - 到期类的键带周期末 Unix 秒（`expiring:`、`expired:`、`recall:`），流量预警带档位与配额当期起点（`quota:<订阅>:<档>:<起点>`）；不带周期的话续费后的下一期再也发不出。
 - 内置模板登记在 `registry.go`，后台只能改内容不能新建；默认内容与迁移 `00007_notify.sql`、`00026_notify_inbox.sql` 的种子逐字一致，「恢复默认」回到代码里的值，改一处必须同改另一处（PG 测试对照）。模板变量走白名单，主题去换行防邮件头注入（`headerSafe`）。
 - 模板类别：transactional 不可退订；service 用户可按渠道关；marketing 是营销与群发。
-- 扫描 `notify:scan` 约每 5 分钟：先按游标写支付成功通知（`scan_paid.go`，停机多久都不漏，第一次只回看 `paidLookback`），再扫到期提醒、过期召回与流量预警。每轮最多写 `scanBatch` 件，余下的下一轮接着写（一轮写完会超任务时限）。时刻按站点时区显示到分钟。
+- 扫描 `notify:scan` 约每 5 分钟：先按游标写支付成功通知（`scan_paid.go`，停机多久都不漏，第一次只回看 `paidLookback`），再扫到期提醒、过期召回与流量预警。每轮最多写 `scanBatch` 件，余下的下一轮接着写（一轮写完会超任务时限）。时刻按站点时区显示到分钟；永久的一次性套餐（`subsvc.IsPermanent`）的到期写「永久」（`paidExpiry`）。
+  支付成功只有 `order.paid` 一套模板（新购、续费、叠加、换套餐共用）；剩余流量取配额行的 `Remaining`，已含本期赠送（`bonus_value`），TG `/traffic` 的「共」按已用 + 剩余算。
 - `SaveMailSettings` 在一个事务里先写 SMTP 设置再写注册设置：开启邮箱验证的校验要读到新的 SMTP 值。
 - 公告：已撤回不可再编辑，已发布只能保持发布（`canSaveAs`）；定时公告由 `PublishDueAnnouncements` 每分钟转为已发布。
 - Telegram bot（`telegram.go`、`telegram_bot.go`）只认私聊、管理员群组里的回复、用户群的入群申请三种更新，其余一律忽略、不回话：
@@ -24,7 +25,7 @@ paths:
   - 管理员吊销会话、改密码都不影响已绑定的 Telegram：TG 回复只看绑定与 `IsActiveAdmin`（在名单里且账号 active），要让某个 TG 账号失效，得解绑、取消管理员或停用账号。
   - 管理员群组、用户群的 chat id 必须是负数（群组与超级群都是负数），后台与 settings 两层校验；正数是私聊，在私聊里回复会被当成绑定码。
 - 管理员群组提醒（模板 `admin.order_paid`、`admin.ticket_opened`、`admin.ticket_replied`，开关 `telegram.admin_paid_notify` / `telegram.admin_ticket_notify`，缺省关）同样走投递表：`writeAdminNotice` 写一行 `user_id` 为空、收件地址为群 chat id 的投递（为空才不会被用户解绑时的 `SuppressQueuedTelegram` 压掉），去重键 `admin-paid:<订单>` / `admin-ticket:<消息>`，`notification_events.user_id` 记事件涉及的用户。
-  - 收款提醒随 `scan_paid.go` 的支付成功通知在同一事务里写（游标保证不漏不重）；金额 `paidAmount` 是订单总额两位小数加币种（order 的 `PaidNotice.Total`、`Currency`），缺币种时写「—」。
+  - 收款提醒随 `scan_paid.go` 的支付成功通知在同一事务里写（游标保证不漏不重）；金额 `paidAmount` 是订单总额两位小数加「 元」（order 的 `PaidNotice.Total`，如 `29.90 元`）。
   - 流量重置单（用户 10-14 定）：不给用户写支付成功通知（没有专门模板，门户下单页当场显示结果），收款提醒照发，「套餐」一栏写 `流量重置 · <套餐名>`（模板正文不改，与 00044 种子逐字一致）。实现是只写管理员提醒的扫描条目（`scanItem.Code` 为空、`Key` 用 `admin-paid:<订单>`，`writeScanItems` 只调 `writeAdminNotice`）；收款提醒关着时跳过、游标照样推进。
   - 工单提醒由 support 在建单、用户回复的事务里经 `AdminTicketNotifier` → `NotifyAdminsTicket` 写，附提单人的套餐、剩余流量、到期、余额（经 `SubscriptionSummaries`、`Balances` 批量读这一个人），邮箱打码，正文截到 `adminTicketBodyMax`。这些上下文读失败只记 Warn、写「—」，不拖垮建单与回复；只有写去重键与投递失败才随调用方事务回滚。
   - Bot API 回包最多读 64 KiB（`tgResponseMax`：sendMessage 成功时整条消息按 `\uXXXX` 转义回来，4096 字的中文约 24 KB）；2xx 却解析不了或缺 message_id 记永久失败，不重发，免得群里重复。

@@ -9,7 +9,6 @@ import (
 
 	"github.com/aegispanel/aegis/internal/module/payment/provider"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
 )
 
@@ -56,7 +55,6 @@ func (e *env) intentInput(code string, orderID uuid.UUID, orderNo string, user u
 		OrderNo:      orderNo,
 		UserID:       user,
 		Amount:       dec("9.90"),
-		Currency:     money.CNY,
 		ProviderCode: code,
 		Title:        "测试订单",
 		ClientIP:     "203.0.113.1",

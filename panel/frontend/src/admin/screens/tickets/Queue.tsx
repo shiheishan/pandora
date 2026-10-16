@@ -1,12 +1,8 @@
-import { useMutation } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { href } from '../../../core/router'
-import { useApi } from '../../../shell/runtime'
-import { Button, Empty, Segmented, Skeleton, Tag, useToast } from '../../../ui'
-import { useFailure, useIntentKey } from '../../actions'
-import { escalatedSchema, useInvalidateTickets, useTicketQueue, type QueueParams, type Ticket } from './api'
+import { Button, Empty, FilterTabs, Skeleton, Tag } from '../../../ui'
+import { useTicketQueue, type QueueParams, type Ticket } from './api'
 import { CATEGORY_LABELS, FILTERS, PRIORITY_VIEW, statusView, waitLabel, type QueueFilter } from './model'
-import { TicketSettingsDialog } from './TicketSettingsDialog'
 import css from './Tickets.module.css'
 
 export function Queue({
@@ -15,32 +11,30 @@ export function Queue({
   params,
   selected,
   onFilter,
-  onQuery,
 }: {
   filter: QueueFilter
+  /** 地址上的搜索词，只用来拼行的链接（搜索框在页面顶部的工具栏里） */
   query: string
   params: QueueParams
   selected: string | null
   onFilter: (f: QueueFilter) => void
-  onQuery: (q: string) => void
 }) {
   const q = useTicketQueue(params)
   const tickets = q.data?.pages.flatMap((p) => p.tickets) ?? []
   const total = q.data?.pages[0]?.total ?? 0
   const now = useNow()
-  const [settings, setSettings] = useState(false)
 
   return (
     <div className={css.queue}>
       <div className={css.queueHead}>
-        <Segmented size="sm" label="工单筛选" className={css.filters} options={FILTERS.map(([value, label]) => ({ value, label }))} value={filter} onChange={onFilter} />
-        <div className={css.searchRow}>
-          <SearchBox value={query} onChange={onQuery} />
-          <EscalateButton />
-          <Button size="sm" onClick={() => setSettings(true)}>工单设置</Button>
-        </div>
+        <FilterTabs
+          label="工单筛选"
+          className={css.filters}
+          items={FILTERS.map(([value, label]) => ({ value, label }))}
+          value={filter}
+          onChange={onFilter}
+        />
       </div>
-      <TicketSettingsDialog open={settings} onClose={() => setSettings(false)} />
       <div className={css.queueList} aria-busy={q.isFetching || undefined}>
         {q.isPending ? (
           <div className={css.queueSkeleton} role="status" aria-label="加载中">
@@ -107,46 +101,6 @@ function Row({ t, on, now, link }: { t: Ticket; on: boolean; now: Date; link: { 
         <span className={wait.late ? `${css.wait} ${css.late}` : css.wait}>{wait.text}</span>
       </span>
     </a>
-  )
-}
-
-/** 搜索框：输入 300ms 后才回写地址（后端 ILIKE，别每个字都打一次） */
-function SearchBox({ value, onChange }: { value: string; onChange: (q: string) => void }) {
-  const [text, setText] = useState(value)
-  const [synced, setSynced] = useState(value)
-  if (value !== synced) {
-    // 地址被外部改了（切筛选、前进后退）：跟着地址走
-    setSynced(value)
-    setText(value)
-  }
-  useEffect(() => {
-    if (text === value) return
-    const timer = setTimeout(() => onChange(text), 300)
-    return () => clearTimeout(timer)
-  }, [text, value, onChange])
-  return <input className={css.search} type="search" value={text} onChange={(e) => setText(e.target.value)} placeholder="搜索标题、用户或编号" aria-label="搜索工单" />
-}
-
-/** 「检查 SLA 超时」：租户级批量扫描，不是单张升级（契约）；后台每 5 分钟也会自动跑 */
-function EscalateButton() {
-  const api = useApi()
-  const toast = useToast()
-  const fail = useFailure()
-  const invalidate = useInvalidateTickets()
-  const intent = useIntentKey()
-  const run = useMutation({
-    mutationFn: () => api.post('v1/tickets/escalate', escalatedSchema, { idempotencyKey: intent.keyFor('escalate') }),
-    onSuccess: (r) => {
-      intent.reset()
-      void invalidate()
-      toast(r.escalated > 0 ? `已把 ${r.escalated} 张超时工单升级` : '没有新的超时工单')
-    },
-    onError: (e) => fail(e, { intent }),
-  })
-  return (
-    <Button size="sm" busy={run.isPending} onClick={() => run.mutate()} title="立即扫描首次响应已超时的工单并升级（后台每 5 分钟也会自动扫一次）">
-      检查 SLA 超时
-    </Button>
   )
 }
 

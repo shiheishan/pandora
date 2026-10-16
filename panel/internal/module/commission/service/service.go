@@ -1,6 +1,6 @@
 // Package service 是 commission 模块的业务层：订单结算时计提佣金、冻结期满解冻、提现申请与审核打款、佣金转余额、
 // 后台概览与参数、门户我的佣金。别的模块只调本包。开了多级分销时一单最多给往上三级邀请人各计一条（每条独立冻结、解冻、复核）；
-// 提现关闭时站点币种的佣金解冻后挂上标记，再在单独的事务里自动转入余额（commission_to_balance）；别的币种照常提现。
+// 提现关闭时佣金解冻后挂上标记，再在单独的事务里自动转入余额（commission_to_balance）。
 //
 // 三个阶段都在账本上留痕：
 //
@@ -26,7 +26,6 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 	"github.com/google/uuid"
 )
@@ -44,7 +43,6 @@ type auditWriter interface {
 // Ledger 是 commission 用到的 ledger service 方法；*ledgersvc.Service 实现它。
 type Ledger interface {
 	Post(ctx context.Context, p ledgersvc.Posting) (uuid.UUID, error)
-	DefaultCurrency(ctx context.Context) (money.Currency, error)
 }
 
 // Settings 是 commission 用到的 settings service 方法；*settingssvc.Service 实现它。

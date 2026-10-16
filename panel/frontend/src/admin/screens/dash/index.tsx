@@ -2,6 +2,7 @@ import { Activity } from './Activity'
 import { useNodeTraffic, useOverview } from './api'
 import css from './Dash.module.css'
 import { Kpis } from './Kpis'
+import { GroupHead } from './parts'
 import { RevenueTrend } from './RevenueTrend'
 import { SystemStatus } from './SystemStatus'
 import { Tasks } from './Tasks'
@@ -15,15 +16,29 @@ export default function Dash() {
   return (
     <div className={css.page}>
       <Tasks />
-      <Kpis overview={overview} traffic={nodeTraffic} />
-      <div className={css.row}>
-        <RevenueTrend />
-        <SystemStatus />
-      </div>
-      <div className={css.pair}>
-        <Activity />
-        <TrafficRank nodes={nodeTraffic} />
-      </div>
+      <section className={css.group} aria-labelledby="dash-biz">
+        <GroupHead id="dash-biz" title="经营" hint="收入 · 订阅 · 用户增长" />
+        <Kpis overview={overview} traffic={nodeTraffic} />
+        <div className={css.row}>
+          <div className={css.wide}>
+            <RevenueTrend />
+          </div>
+          <div className={css.narrow}>
+            <Activity />
+          </div>
+        </div>
+      </section>
+      <section className={css.group} aria-labelledby="dash-ops">
+        <GroupHead id="dash-ops" title="运行" hint="服务健康 · 节点流量" />
+        <div className={css.row}>
+          <div className={css.wide}>
+            <TrafficRank nodes={nodeTraffic} />
+          </div>
+          <div className={css.narrow}>
+            <SystemStatus />
+          </div>
+        </div>
+      </section>
     </div>
   )
 }

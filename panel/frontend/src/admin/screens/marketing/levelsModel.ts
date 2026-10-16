@@ -1,26 +1,32 @@
 import { WITHDRAW_METHODS } from '../../../core/withdraw-methods'
-import type { FieldErrors } from './logic'
+import { minorToYuan, parseCount, yuanToMinor, type Built, type FieldErrors } from './logic'
 import type { CommissionOverview, CommissionOverride } from './schemas'
 
-type Built<T> = { ok: true; body: T } | { ok: false; errors: FieldErrors }
-
-export interface LevelsForm {
+export interface SettingsForm {
+  rate: string
+  freezeDays: string
+  scope: 'first_order' | 'every_order'
   distributionOn: boolean
   l1: string
   l2: string
   l3: string
   withdrawOn: boolean
+  minWithdraw: string
   methods: string[]
 }
 
-/** 概览 → 多级分销与提现表单 */
-export function levelsToForm(o: CommissionOverview): LevelsForm {
+/** 概览 → 佣金规则表单 */
+export function settingsToForm(o: CommissionOverview): SettingsForm {
   return {
+    rate: String(o.rate_percent),
+    freezeDays: String(o.freeze_days),
+    scope: o.scope,
     distributionOn: o.distribution_enabled,
     l1: String(o.distribution_levels[0]),
     l2: String(o.distribution_levels[1]),
     l3: String(o.distribution_levels[2]),
     withdrawOn: o.withdraw_enabled,
+    minWithdraw: minorToYuan(o.min_withdraw),
     methods: [...o.withdraw_methods],
   }
 }
@@ -34,15 +40,43 @@ function parseLevel(s: string): number | null {
 }
 
 /** 三级份额之和（非法项按 0 算，只用于表单上的合计提示） */
-export function levelsSum(f: LevelsForm): number {
+export function levelsSum(f: SettingsForm): number {
   return [f.l1, f.l2, f.l3].reduce((sum, s) => sum + (parseLevel(s) ?? 0), 0)
 }
 
 const levelMsg = '比例需在 0 到 100 之间'
 
-/** 表单 → POST v1/commission/config（只发这六个字段）；错误键与后端 fields 同名，三级之和与开启全 0 都挂 distribution_l1 */
-export function buildLevelsConfig(f: LevelsForm): Built<Record<string, unknown>> {
+/** 表单 → POST v1/commission/config（一次发全部 10 个字段）；错误键与后端 fields 同名 */
+export function buildSettingsConfig(f: SettingsForm): Built<Record<string, unknown>> {
   const errors: FieldErrors = {}
+
+  // 1. 返佣比例：0–50 整数
+  const rateTrim = f.rate.trim()
+  let rate: number | null = null
+  if (!/^\d+$/.test(rateTrim)) {
+    errors.rate_percent = '佣金比例需在 0 到 50 之间'
+  } else {
+    const n = Number(rateTrim)
+    if (!Number.isInteger(n) || n < 0 || n > 50) {
+      errors.rate_percent = '佣金比例需在 0 到 50 之间'
+    } else {
+      rate = n
+    }
+  }
+
+  // 2. 结算冻结期：0–90 整数
+  const freeze = parseCount(f.freezeDays)
+  if (freeze === null || Number.isNaN(freeze) || freeze < 0 || freeze > 90) {
+    errors.freeze_days = '冻结天数需在 0 到 90 之间'
+  }
+
+  // 3. 最低提现金额：非负金额，最多两位小数
+  const minW = yuanToMinor(f.minWithdraw)
+  if (minW === null) {
+    errors.min_withdraw = '填金额，最多两位小数'
+  }
+
+  // 4. 三级分销
   const l1 = parseLevel(f.l1)
   const l2 = parseLevel(f.l2)
   const l3 = parseLevel(f.l3)
@@ -58,17 +92,23 @@ export function buildLevelsConfig(f: LevelsForm): Built<Record<string, unknown>>
     errors.distribution_l1 = '开启多级分销时至少要给一级设比例'
   }
 
-  // 按目录顺序输出，目录外的值直接去掉
+  // 5. 提现方式：按目录顺序输出，至少选一种
   const methods = WITHDRAW_METHODS.filter((m) => f.methods.includes(m))
-  // 关着提现只关站点币种，其他币种仍按这些方式提现：开关两种状态都至少留一种
   if (methods.length === 0) {
-    errors.withdraw_methods = f.withdrawOn ? '开着提现时至少要选一种提现方式' : '关着提现时其他币种的佣金仍按这里的方式提现，至少要选一种'
+    errors.withdraw_methods = f.withdrawOn
+      ? '开着提现时至少要选一种提现方式'
+      : '关着提现时也至少要选一种提现方式，重新打开提现时直接生效'
   }
+
   if (Object.keys(errors).length) return { ok: false, errors }
 
   return {
     ok: true,
     body: {
+      rate_percent: rate!,
+      freeze_days: freeze!,
+      min_withdraw: minW!,
+      scope: f.scope,
       distribution_enabled: f.distributionOn,
       distribution_l1: l1!,
       distribution_l2: l2!,

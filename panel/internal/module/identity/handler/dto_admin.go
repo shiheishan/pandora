@@ -29,7 +29,6 @@ type userRowResponse struct {
 	SubscriptionCount   int                    `json:"subscription_count"`
 	ActivePlan          *string                `json:"active_plan"`
 	Balance             int64                  `json:"balance"`
-	Currency            string                 `json:"currency"`
 	CurrentSubscription *admCurrentSubResponse `json:"current_subscription"`
 }
 
@@ -46,23 +45,22 @@ type admUserRefResponse struct {
 // userDetailResponse 是后台用户详情（identity 字段）。
 type userDetailResponse struct {
 	userRowResponse
-	EmailVerified       bool                      `json:"email_verified"`
-	IsAdmin             bool                      `json:"is_admin"`
-	Referrer            *admUserRefResponse       `json:"referrer"`
-	Stats               admUserStatsResponse      `json:"stats"`
-	Subscriptions       []admSubscriptionResponse `json:"subscriptions"`
-	RecentOrders        []admOrderRowResponse     `json:"recent_orders"`
-	Telegram            *admTelegramResponse      `json:"telegram"`
-	UnattachedPackBytes int64                     `json:"unattached_pack_bytes"`
-	AdminNote           *string                   `json:"admin_note"` // 后台备注，只在后台详情出现
-	DeletedAt           *time.Time                `json:"deleted_at"` // 注销时间；没注销为 null
+	EmailVerified bool                      `json:"email_verified"`
+	IsAdmin       bool                      `json:"is_admin"`
+	Referrer      *admUserRefResponse       `json:"referrer"`
+	Stats         admUserStatsResponse      `json:"stats"`
+	Subscriptions []admSubscriptionResponse `json:"subscriptions"`
+	RecentOrders  []admOrderRowResponse     `json:"recent_orders"`
+	Telegram      *admTelegramResponse      `json:"telegram"`
+	AdminNote     *string                   `json:"admin_note"` // 后台备注，只在后台详情出现
+	DeletedAt     *time.Time                `json:"deleted_at"` // 注销时间；没注销为 null
 }
 
-// admUserStatsResponse 是详情里的统计（实收按币种、订单数、邀请数）。
+// admUserStatsResponse 是详情里的统计（实收、订单数、邀请数）。
 type admUserStatsResponse struct {
-	PaidTotals    []admPaidTotalResponse `json:"paid_totals"`
-	OrderCount    int64                  `json:"order_count"`
-	ReferralCount int64                  `json:"referral_count"`
+	PaidTotal     int64 `json:"paid_total"`
+	OrderCount    int64 `json:"order_count"`
+	ReferralCount int64 `json:"referral_count"`
 }
 
 type admSetUserStatusRequest struct {
@@ -101,7 +99,6 @@ type admUserGroupRow struct {
 	Users          int64                `json:"users"`
 	Status         string               `json:"status"`
 	Plans          int64                `json:"plans"`
-	Prices         int64                `json:"prices"`
 	Coupons        int64                `json:"coupons"`
 	ExclusivePools []admPoolRefResponse `json:"exclusive_pools"`
 }
@@ -163,7 +160,6 @@ func admUserRowFrom(cc *admCents, u service.UserRow) userRowResponse {
 		SubscriptionCount:   u.SubscriptionCount,
 		ActivePlan:          u.ActivePlan,
 		Balance:             cc.of(u.Balance),
-		Currency:            u.Currency,
 		CurrentSubscription: admCurrentSubFrom(u.Current),
 	}
 }
@@ -171,12 +167,11 @@ func admUserRowFrom(cc *admCents, u service.UserRow) userRowResponse {
 func admUserDetailFrom(d service.UserDetail) (userDetailResponse, error) {
 	var cc admCents
 	out := userDetailResponse{
-		userRowResponse:     admUserRowFrom(&cc, d.UserRow),
-		EmailVerified:       d.EmailVerified,
-		IsAdmin:             d.IsAdmin,
-		Subscriptions:       make([]admSubscriptionResponse, 0, len(d.Subscriptions)),
-		RecentOrders:        make([]admOrderRowResponse, 0, len(d.RecentOrders)),
-		UnattachedPackBytes: d.UnattachedPackBytes,
+		userRowResponse: admUserRowFrom(&cc, d.UserRow),
+		EmailVerified:   d.EmailVerified,
+		IsAdmin:         d.IsAdmin,
+		Subscriptions:   make([]admSubscriptionResponse, 0, len(d.Subscriptions)),
+		RecentOrders:    make([]admOrderRowResponse, 0, len(d.RecentOrders)),
 	}
 	for _, s := range d.Subscriptions {
 		out.Subscriptions = append(out.Subscriptions, admSubscriptionFrom(&cc, s))
@@ -184,15 +179,8 @@ func admUserDetailFrom(d service.UserDetail) (userDetailResponse, error) {
 	for _, o := range d.RecentOrders {
 		out.RecentOrders = append(out.RecentOrders, admOrderRowFrom(&cc, o))
 	}
-	paidTotals := make([]admPaidTotalResponse, 0, len(d.PaidTotals))
-	for _, pt := range d.PaidTotals {
-		paidTotals = append(paidTotals, admPaidTotalResponse{
-			Currency: pt.Currency,
-			Amount:   cc.of(pt.Amount),
-		})
-	}
 	out.Stats = admUserStatsResponse{
-		PaidTotals:    paidTotals,
+		PaidTotal:     cc.of(d.PaidTotal),
 		OrderCount:    d.OrderCount,
 		ReferralCount: d.ReferralCount,
 	}
@@ -229,7 +217,6 @@ func admGroupRowFrom(g service.Group) admUserGroupRow {
 		Users:          g.Users,
 		Status:         g.Status,
 		Plans:          g.Plans,
-		Prices:         g.Prices,
 		Coupons:        g.Coupons,
 		ExclusivePools: pools,
 	}

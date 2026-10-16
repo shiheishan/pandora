@@ -9,10 +9,9 @@ import (
 
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
+	"github.com/aegispanel/aegis/internal/module/payment/model"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
-	"github.com/shopspring/decimal"
 )
 
 // lateStatusFilters 是挂账列表接受的状态筛选；空串表示不筛。
@@ -20,7 +19,7 @@ var lateStatusFilters = map[string]bool{
 	"": true, string(LateSuspense): true, string(LateApplied): true,
 }
 
-// ListLatePayments 后台挂账列表：未处理的排前面；待处理合计按币种分开。
+// ListLatePayments 后台挂账列表：未处理的排前面；待处理合计为单笔金额。
 func (s *Service) ListLatePayments(ctx context.Context, status string, limit, offset int) (LateList, error) {
 	status = strings.TrimSpace(status)
 	if !lateStatusFilters[status] {
@@ -30,7 +29,7 @@ func (s *Service) ListLatePayments(ctx context.Context, status string, limit, of
 	if err != nil {
 		return LateList{}, err
 	}
-	totals, err := s.repo.PendingLateTotals(ctx)
+	pending, err := s.repo.PendingLateTotals(ctx)
 	if err != nil {
 		return LateList{}, err
 	}
@@ -55,7 +54,7 @@ func (s *Service) ListLatePayments(ctx context.Context, status string, limit, of
 	out := LateList{
 		Cases:   make([]LateCase, 0, len(rows)),
 		Total:   total,
-		Pending: make(map[money.Currency]decimal.Decimal, len(totals)),
+		Pending: pending,
 	}
 	for _, r := range rows {
 		out.Cases = append(out.Cases, LateCase{
@@ -63,7 +62,6 @@ func (s *Service) ListLatePayments(ctx context.Context, status string, limit, of
 			Kind:             CaseKind(r.CaseKind),
 			Status:           LateStatus(r.Status),
 			Amount:           r.Amount,
-			Currency:         money.Currency(r.Currency),
 			OrderID:          r.OrderID,
 			OrderNo:          r.OrderNo,
 			OrderStatus:      r.OrderStatus,
@@ -73,9 +71,6 @@ func (s *Service) ListLatePayments(ctx context.Context, status string, limit, of
 			ResolvedAt:       r.ResolvedAt,
 			ResolutionReason: r.ResolutionReason,
 		})
-	}
-	for _, t := range totals {
-		out.Pending[money.Currency(t.Currency)] = t.Amount
 	}
 	return out, nil
 }
@@ -95,47 +90,57 @@ func (s *Service) ApplyLatePayment(ctx context.Context, caseID uuid.UUID, reason
 		if !ok {
 			return errs.New(errs.NotFound)
 		}
-		if !CanTransitionLate(LateStatus(c.Status), LateApplied) {
-			return ErrCaseResolved
-		}
-		cur := money.Currency(c.Currency)
-		txnID, err = s.ledger.Post(ctx, ledgersvc.Posting{
-			Kind:       ledgersvc.KindLatePaymentApplied,
-			Currency:   cur,
-			SourceType: ledgersvc.SourcePayment,
-			SourceID:   c.PaymentID,
-			Memo:       reason,
-			Legs: []ledgersvc.Leg{
-				{Account: ledgersvc.PlatformAccount(ledgersvc.LatePaymentSuspense, ledgersvc.RefMain), Direction: ledgersvc.Debit, Amount: c.Amount},
-				{Account: ledgersvc.UserAccount(ledgersvc.UserBalance, c.UserID), Direction: ledgersvc.Credit, Amount: c.Amount},
-			},
-		})
-		if err != nil {
-			return err
-		}
-		applied, err := s.repo.ApplyLateCase(ctx, c.ID, txnID, reason)
-		if err != nil {
-			return err
-		}
-		if !applied {
-			return errors.New("payment: 挂账状态更新失败")
-		}
-		return s.audit.Write(ctx, auditsvc.Event{
-			Action:       "late_payment.applied",
-			ResourceType: "late_payment_case",
-			ResourceID:   &c.ID,
-			Data: map[string]any{
-				"before_status": string(LateSuspense),
-				"status":        string(LateApplied),
-				"amount":        c.Amount.StringFixed(2),
-				"currency":      c.Currency,
-				"user_id":       c.UserID.String(),
-				"order_id":      c.OrderID.String(),
-				"order_no":      c.OrderNo,
-				"reason":        reason,
-				"ledger_txn":    txnID.String(),
-			},
-		})
+		txnID, err = s.applyLateCase(ctx, c, reason)
+		return err
+	})
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return txnID, nil
+}
+
+// applyLateCase 把已锁住的挂账案转入用户余额：借 late_payment_suspense、贷用户余额，改案状态、写审计 late_payment.applied。
+// 后台处理（ApplyLatePayment，操作者是管理员）与归档套餐的自动转入（afterSettleArchived，ctx 里没有登录主体，审计记为系统）共用。
+// 调用方已在事务里用 LockLateCase 锁住案行，reason 已校验（5–500 字）。返回记账交易 ID。
+func (s *Service) applyLateCase(ctx context.Context, c model.LateCase, reason string) (uuid.UUID, error) {
+	if !CanTransitionLate(LateStatus(c.Status), LateApplied) {
+		return uuid.Nil, ErrCaseResolved
+	}
+	txnID, err := s.ledger.Post(ctx, ledgersvc.Posting{
+		Kind:       ledgersvc.KindLatePaymentApplied,
+		SourceType: ledgersvc.SourcePayment,
+		SourceID:   c.PaymentID,
+		Memo:       reason,
+		Legs: []ledgersvc.Leg{
+			{Account: ledgersvc.PlatformAccount(ledgersvc.LatePaymentSuspense, ledgersvc.RefMain), Direction: ledgersvc.Debit, Amount: c.Amount},
+			{Account: ledgersvc.UserAccount(ledgersvc.UserBalance, c.UserID), Direction: ledgersvc.Credit, Amount: c.Amount},
+		},
+	})
+	if err != nil {
+		return uuid.Nil, err
+	}
+	applied, err := s.repo.ApplyLateCase(ctx, c.ID, txnID, reason)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if !applied {
+		return uuid.Nil, errors.New("payment: 挂账状态更新失败")
+	}
+	err = s.audit.Write(ctx, auditsvc.Event{
+		Action:       "late_payment.applied",
+		ResourceType: "late_payment_case",
+		ResourceID:   &c.ID,
+		Data: map[string]any{
+			"before_status": string(LateSuspense),
+			"status":        string(LateApplied),
+			"case_kind":     c.CaseKind,
+			"amount":        c.Amount.StringFixed(2),
+			"user_id":       c.UserID.String(),
+			"order_id":      c.OrderID.String(),
+			"order_no":      c.OrderNo,
+			"reason":        reason,
+			"ledger_txn":    txnID.String(),
+		},
 	})
 	if err != nil {
 		return uuid.Nil, err

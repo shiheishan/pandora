@@ -1,634 +1,217 @@
 /* ===========================================================================
- * 通用小件
+ * 套餐列表 + 新建弹窗（详情弹窗的样式另有人写）
+ * 只引用全局令牌；后台直角、层次靠线，不写圆角与阴影
  * ========================================================================= */
-.muted {
-  color: var(--text-2);
-}
 
-.small {
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-}
-
-.mono {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-}
-
-.dangerText {
-  color: var(--danger);
-}
-
-.spacer {
-  flex: 1;
-}
-
-.stack {
+/* --- 列表 --- */
+.page {
   display: flex;
   flex-direction: column;
-  gap: var(--space-12);
-  min-width: 0;
-}
-
-.stack p {
-  margin: 0;
-}
-
-.grid2 {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-12);
-}
-
-.grid3 {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-12);
-}
-
-.toggles {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-12) var(--space-20);
-}
-
-/* 无外框的 fieldset（多选组） */
-.fieldset {
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-
-.fieldError {
-  margin: 0;
-  color: var(--danger);
-  font-size: var(--fs-caption);
-}
-
-/* 字段组标题：与 ui/Field 的 label 同字号同色 */
-.legend {
-  margin-bottom: var(--space-4);
-  padding: 0;
-  color: var(--text-2);
-  font-size: var(--fs-caption);
-}
-
-/* 卖点一行：输入框 + 移除 */
-.highlightRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  gap: var(--space-8);
-}
-
-/* 提示条：警示（无可用节点）与说明 */
-.note {
-  margin: 0;
-  padding: 10px 12px;
-  border: 1px solid var(--warn-line);
-  border-radius: var(--radius-md);
-  background: var(--warn-soft);
-  color: var(--warn);
-  font-size: var(--fs-body-sm);
-}
-
-.noteBlock {
-  display: block;
-  margin-top: var(--space-8);
-}
-
-.noteInfo {
-  border-color: var(--info-line);
-  background: var(--info-soft);
-  color: var(--info);
-}
-
-/* 「高级」折叠：原生 details，summary 做成文字按钮 */
-.advanced > summary {
-  width: fit-content;
-  color: var(--text-2);
-  font-size: var(--fs-caption);
-  cursor: pointer;
-  list-style: none;
-}
-
-.advanced > summary::-webkit-details-marker {
-  display: none;
-}
-
-.advanced > summary::before {
-  content: '▸ ';
-}
-
-.advanced[open] > summary::before {
-  content: '▾ ';
-}
-
-.advanced[open] > summary {
-  margin-bottom: var(--space-12);
-}
-
-/* ===========================================================================
- * 套餐标签：左栏卡片 + 右侧详情
- * ========================================================================= */
-.catalog {
-  display: grid;
-  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
-  align-items: start;
   gap: var(--space-16);
 }
 
-.rail {
+/* 状态筛选下拉的宽度 */
+.statusSelect {
+  width: 120px;
+}
+
+/* 单元格两行布局：主行 + 灰色小字 */
+.cellName {
   display: flex;
   flex-direction: column;
-  gap: var(--space-8);
+  gap: 2px;
+  min-width: 0;
 }
 
-.planCard {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  width: 100%;
-  padding: 12px 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-  text-align: left;
-  text-decoration: none;
-  cursor: pointer;
-}
-
-.planCard:hover {
-  border-color: var(--border-hover);
-}
-
-.planCard:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 1px;
-}
-
-.planCard[aria-current='true'] {
-  border-color: var(--text);
-}
-
-.planCardArchived {
-  opacity: 0.6;
-}
-
-.cardHead {
+.nameRow {
   display: flex;
   align-items: center;
   gap: var(--space-8);
   min-width: 0;
 }
 
-.cardName {
+.nameText {
   overflow: hidden;
   font-weight: var(--fw-semibold);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.cardCode {
-  color: var(--text-3);
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-}
-
-.cardHead > :last-child {
-  margin-left: auto;
+.nameTag {
   flex: none;
 }
 
-.cardMeta {
-  display: flex;
-  gap: var(--space-12);
-  color: var(--text-2);
+/* 灰色小字（代码、价格副行、额度副行） */
+.subText {
+  overflow: hidden;
+  color: var(--text-3);
   font-size: var(--fs-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.cardMeta > :last-child {
-  margin-left: auto;
+/* 等宽（价格、有效订阅数） */
+.monoText {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-.detail {
+/* 线路警告色 */
+.warnText {
+  color: var(--warn);
+}
+
+/* 已归档整行降透明度（每格内容外包一层） */
+.archived {
+  opacity: 0.6;
+}
+
+/* 窄屏防竖排：主文字单行不换行 */
+.nowrap {
+  white-space: nowrap;
+}
+
+/* --- 新建弹窗 --- */
+.formStack {
   display: flex;
   flex-direction: column;
+  gap: var(--space-20);
+}
+
+/* 两列网格（窄屏一列） */
+.grid2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-16);
-  min-width: 0;
-  container-type: inline-size;
 }
 
-.head {
+@media (max-width: 639px) {
+  .grid2 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 小节：加粗标题 + 一条墨线 */
+.section {
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: var(--space-16);
-  padding: 18px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
+  flex-direction: column;
+  gap: var(--space-12);
 }
 
-.headText {
-  flex: 1;
-  min-width: 240px;
-}
-
-.headTitle {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.headTitle h2 {
+.sectionTitle {
   margin: 0;
-  font-size: var(--fs-h3);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--text);
+  font-size: inherit;
   font-weight: var(--fw-semibold);
 }
 
-.desc {
-  margin: 4px 0 0;
-  color: var(--text-2);
-  text-wrap: pretty;
-}
-
-.headActions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-8);
-}
-
-.headWide {
-  width: 100%;
-}
-
-/* 设计稿是 340 起；1280 宽时详情栏正好卡在两列的临界点，有没有滚动条就会来回跳，放宽到 320 让 1280 稳定两列、960 稳定一列 */
-.cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
-  align-items: start;
-  gap: var(--space-16);
-}
-
-.cardSub {
+.sectionNote {
+  margin: 0;
   color: var(--text-3);
   font-size: var(--fs-caption);
-  font-weight: var(--fw-regular);
 }
 
-/* 价格行 */
-.priceRow {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--border);
-}
-
-.priceRowArchived {
-  opacity: 0.45;
-}
-
-.amount {
-  width: 96px;
-  flex: none;
-  font-family: var(--font-mono);
-  font-weight: var(--fw-medium);
-}
-
-.priceMeta {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-width: 0;
-  color: var(--text-2);
-}
-
-.addPrice {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-8);
-  padding: 12px 16px;
-}
-
-/* 卡片两列并排时很窄：币种定宽，金额与周期分余下的宽度，按钮放不下就折到下一行 */
-.addPriceRow {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: var(--space-8);
-}
-
-.addPriceRow > :nth-child(1) {
-  flex: 0 0 84px;
-}
-
-.addPriceRow > :nth-child(2) {
-  flex: 1 1 84px;
-}
-
-.addPriceRow > :nth-child(3) {
-  flex: 1 1 112px;
-}
-
-.addPriceRow > :nth-child(4) {
-  flex: none;
-}
-
-.customPeriod {
+/* 类型卡：两张并排的单选卡 */
+.typeGroup {
   display: grid;
-  grid-template-columns: 84px 96px;
-  gap: var(--space-8);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-12);
 }
 
-/* 节点池 chip（向导第 4 步同款） */
-.chips {
+@media (max-width: 639px) {
+  .typeGroup {
+    grid-template-columns: 1fr;
+  }
+}
+
+.typeCard {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-8);
-  padding: 14px 16px;
-}
-
-.chips.inline {
-  padding: 0;
-}
-
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-8);
-  height: 32px;
-  padding: 0 12px;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-12) var(--space-16);
   border: 1px solid var(--border-strong);
-  border-radius: 16px;
   background: var(--surface);
   color: var(--text);
   font: inherit;
+  text-align: left;
+  white-space: normal;
   cursor: pointer;
 }
 
-.chip[aria-pressed='true'] {
+.typeCardActive {
   border-color: var(--text);
-  background: var(--surface-3);
+  background: var(--surface-2);
 }
 
-.chip:disabled {
-  cursor: default;
-}
-
-.chip:focus-visible {
-  outline: 2px solid var(--focus-ring);
+.typeCard:focus-visible {
+  outline: 2px solid var(--text);
   outline-offset: 1px;
 }
 
-.chipBox {
+.typeCardHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  font-weight: var(--fw-semibold);
+}
+
+/* 单选圆点：方框 + 选中内芯（后台直角） */
+.radioDot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
   width: 12px;
   height: 12px;
-  border: 1.5px solid var(--border-strong);
-  border-radius: 3px;
-  background: var(--surface);
+  border: 1px solid var(--text);
 }
 
-.chip[aria-pressed='true'] .chipBox {
-  border-color: var(--text);
+.radioDotInner {
+  width: 6px;
+  height: 6px;
   background: var(--text);
 }
 
-.chipCount {
+.typeCardDesc {
   color: var(--text-3);
-  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  line-height: 1.5;
+}
+
+/* 开关行：开关 + 右侧小字 */
+.switchRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+}
+
+.switchMeta {
+  color: var(--text-3);
   font-size: var(--fs-caption);
 }
 
-.cardFoot {
+/* 线路开关行 */
+.poolRow {
   display: flex;
   align-items: center;
-  gap: var(--space-8);
-  padding: 0 16px 14px;
-}
-
-.cardPad {
-  padding: 14px 16px;
-}
-
-/* 版本行 */
-.version {
-  display: flex;
-  flex-direction: column;
-  border-bottom: 1px solid var(--border);
-}
-
-.version:last-child {
-  border-bottom: 0;
-}
-
-.versionRow {
-  display: grid;
-  grid-template-columns: 52px minmax(0, 1fr) 110px 150px;
-  align-items: center;
+  justify-content: space-between;
   gap: var(--space-12);
-  padding: 12px 16px;
+  padding: var(--space-4) 0;
 }
 
-.versionNo {
-  font-family: var(--font-mono);
-  font-weight: var(--fw-semibold);
-}
-
-.versionActions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-}
-
-.versionForm {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-12);
-  padding: 0 16px 14px 80px;
-}
-
-.versionMain {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
-  align-items: start;
-  gap: 10px;
-}
-
-.alignStart {
-  align-self: flex-start;
-}
-
-/* 与输入框同高的按钮：标签行留位后对齐输入框 */
-.alignEnd {
-  align-self: end;
-}
-
-/* 960 宽时详情栏只有 370 左右：设计稿的 110 / 150 定宽列会把摘要挤成零宽，
- * 状态与操作改成按内容取宽，版本表单去掉 80 缩进、三格改两格 */
-@container (max-width: 600px) {
-  .versionRow {
-    grid-template-columns: 40px minmax(0, 1fr) auto auto;
-  }
-
-  .versionForm {
-    padding-left: 16px;
-  }
-
-  .versionMain,
-  .grid3 {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .priceMeta {
-    overflow-wrap: anywhere;
-  }
-}
-
-/* ===========================================================================
- * 向导：左步骤栏 + 右表单
- * ========================================================================= */
-.wizard {
-  display: grid;
-  grid-template-columns: 180px minmax(0, 1fr);
-  gap: var(--space-20);
-  min-height: 380px;
-}
-
-.steps {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 8px;
-  border-radius: var(--radius-lg);
-  background: var(--surface-2);
-}
-
-.step {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 34px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--text-3);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.step[aria-current='step'] {
-  background: var(--surface);
-  color: var(--text);
-}
-
-.stepDone {
-  color: var(--text);
-}
-
-.stepMark {
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
+.poolMeta {
   flex: none;
-  border-radius: 50%;
-  background: var(--border);
-  color: var(--text-2);
+  color: var(--text-3);
   font-family: var(--font-mono);
   font-size: var(--fs-caption);
 }
 
-.step[aria-current='step'] .stepMark {
-  background: var(--text);
-  color: var(--surface);
-}
-
-.stepDone .stepMark {
-  background: var(--ok-soft);
-  color: var(--ok);
-}
-
-.stepBad .stepMark {
-  background: var(--danger-soft);
+/* 表单错误（线路下的 alert、正文最后的汇总） */
+.formError {
+  margin: 0;
   color: var(--danger);
-}
-
-.stepTitle {
-  margin: 0;
-  font-size: var(--fs-body);
-  font-weight: var(--fw-semibold);
-}
-
-.wizardPrice {
-  display: grid;
-  grid-template-columns: 110px 84px minmax(0, 1fr) auto;
-  align-items: start;
-  gap: var(--space-8);
-}
-
-.summary {
-  display: grid;
-  grid-template-columns: 100px minmax(0, 1fr);
-  row-gap: var(--space-8);
-  margin: 0;
-  padding: 14px;
-  border-radius: var(--radius-md);
-  background: var(--surface-2);
-}
-
-.summaryRow {
-  display: contents;
-}
-
-.summary dt {
-  color: var(--text-3);
-}
-
-.summary dd {
-  margin: 0;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-/* ===========================================================================
- * 流量包标签
- * ========================================================================= */
-.toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-12);
-  margin-bottom: var(--space-12);
-}
-
-.tableCard {
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-}
-
-.tableCard > div:first-child {
-  border: 0;
-  border-radius: 0;
-}
-
-.packName {
-  display: flex;
-  align-items: center;
-  gap: var(--space-8);
-  min-width: 0;
-}
-
-.rowActions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-12);
+  font-size: var(--fs-body-sm);
 }

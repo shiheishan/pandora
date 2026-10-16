@@ -55,12 +55,10 @@ type admSubscriptionResponse struct {
 	CurrentPeriodStart  *time.Time         `json:"current_period_start"`
 	CurrentPeriodEnd    *time.Time         `json:"current_period_end"`
 	Amount              int64              `json:"amount"`
-	Currency            string             `json:"currency"`
 	Quotas              []admQuotaResponse `json:"quotas"`
 	DeviceLimitOverride *int               `json:"device_limit_override"`
 	PlanMaxDevices      *int               `json:"plan_max_devices"`
 	OnlineDevices       int                `json:"online_devices"`
-	PackRemainingBytes  int64              `json:"pack_remaining_bytes"`
 }
 
 // admOrderRowResponse 键与 order 模块 adminOrderRowResponse 完全相同。
@@ -70,7 +68,6 @@ type admOrderRowResponse struct {
 	UserEmail      string     `json:"user_email"`
 	Kind           string     `json:"kind"`
 	Status         string     `json:"status"`
-	Currency       string     `json:"currency"`
 	TotalAmount    int64      `json:"total_amount"`
 	PayableAmount  int64      `json:"payable_amount"`
 	PaidAmount     int64      `json:"paid_amount"`
@@ -79,16 +76,12 @@ type admOrderRowResponse struct {
 	PaidAt         *time.Time `json:"paid_at"`
 	ProviderCode   *string    `json:"provider_code"`
 	ProviderName   *string    `json:"provider_name"`
+	Method         *string    `json:"method"`
 	PlanName       string     `json:"plan_name"`
 	Interval       string     `json:"interval"`
 	IntervalCount  int        `json:"interval_count"`
 	ItemCount      int        `json:"item_count"`
 	Manual         bool       `json:"manual"`
-}
-
-type admPaidTotalResponse struct {
-	Currency string `json:"currency"`
-	Amount   int64  `json:"amount"`
 }
 
 type admTelegramResponse struct {
@@ -164,12 +157,10 @@ func admSubscriptionFrom(cc *admCents, s service.AdminSub) admSubscriptionRespon
 		CurrentPeriodStart:  &ps,
 		CurrentPeriodEnd:    &pe,
 		Amount:              cc.of(s.Amount),
-		Currency:            s.Currency,
 		Quotas:              quotas,
 		DeviceLimitOverride: s.DeviceLimitOverride,
 		PlanMaxDevices:      s.PlanMaxDevices,
 		OnlineDevices:       s.OnlineDevices,
-		PackRemainingBytes:  s.PackRemainingBytes,
 	}
 }
 
@@ -180,7 +171,6 @@ func admOrderRowFrom(cc *admCents, o service.AdminOrderRow) admOrderRowResponse 
 		UserEmail:      o.UserEmail,
 		Kind:           o.Kind,
 		Status:         o.Status,
-		Currency:       o.Currency,
 		TotalAmount:    cc.of(o.Total),
 		PayableAmount:  cc.of(o.Payable),
 		PaidAmount:     cc.of(o.Paid),
@@ -189,6 +179,7 @@ func admOrderRowFrom(cc *admCents, o service.AdminOrderRow) admOrderRowResponse 
 		PaidAt:         o.PaidAt,
 		ProviderCode:   o.ProviderCode,
 		ProviderName:   o.ProviderName,
+		Method:         o.Method,
 		PlanName:       o.PlanName,
 		Interval:       o.Interval,
 		IntervalCount:  o.IntervalCount,

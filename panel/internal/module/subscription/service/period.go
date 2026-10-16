@@ -40,6 +40,40 @@ func AddInterval(from time.Time, interval string, count int) time.Time {
 	}
 }
 
+// permanentHorizon 是判断「永久」的门槛：期末离开通超过 50 年就当作远期哨兵（AddInterval 的 one_time 加 100 年）。
+const permanentHorizon = 50
+
+// IsPermanent 判断期末是不是一次性套餐「永久」的远期哨兵（晚于现在 + 50 年；哨兵是开通时 + 100 年，
+// 留出的余量让判断与时钟无关）。订阅上不另存「永久」，显示与叠加都靠它判断。
+func IsPermanent(end time.Time) bool {
+	return end.After(time.Now().AddDate(permanentHorizon, 0, 0))
+}
+
+// PeriodEndFor 是从 start 开一整期的期末：一次性价有天数时 start + N 天，没有天数（永久）时落远期哨兵；
+// 订阅价按计费周期推进。结果截到微秒（与库里 timestamptz 同精度）。
+func PeriodEndFor(start time.Time, p PriceSnapshot) time.Time {
+	if p.Interval == "one_time" && p.ValidityDays != nil && *p.ValidityDays > 0 {
+		return start.AddDate(0, 0, *p.ValidityDays).Truncate(time.Microsecond)
+	}
+	return AddInterval(start, p.Interval, p.IntervalCount).Truncate(time.Microsecond)
+}
+
+// StackEnd 是一次性套餐叠加后的期末：原来已永久或新价永久 → 永久哨兵（从 now 起）；
+// 否则 max(原期末, now) + N 天。
+func StackEnd(oldEnd, now time.Time, p PriceSnapshot) time.Time {
+	if IsPermanent(oldEnd) || p.ValidityDays == nil || *p.ValidityDays <= 0 {
+		if IsPermanent(oldEnd) {
+			return oldEnd
+		}
+		return AddInterval(now, "one_time", 1).Truncate(time.Microsecond)
+	}
+	base := oldEnd
+	if now.After(base) {
+		base = now
+	}
+	return base.AddDate(0, 0, *p.ValidityDays).Truncate(time.Microsecond)
+}
+
 // CycleLength 是从 from 起一个计费周期的长度。
 func CycleLength(from time.Time, interval string, count int) time.Duration {
 	return AddInterval(from, interval, count).Sub(from)

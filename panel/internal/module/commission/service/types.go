@@ -123,11 +123,7 @@ var (
 	ErrWithdrawalHandled    = errs.Newf(errs.Conflict, "该提现申请已被处理过")
 	ErrWithdrawalNotPayable = errs.Newf(errs.Conflict, "只有已批准的提现才能标记为已打款")
 	ErrWithdrawalNotFound   = errs.Newf(errs.NotFound, "提现申请不存在")
-	// ErrWithdrawCurrencyAmbiguous 是可用佣金分在多个币种：请求里没有币种，不合并、不猜。
-	ErrWithdrawCurrencyAmbiguous = errs.Newf(errs.Conflict, "可提现佣金包含多个币种，请联系管理员分币种处理")
-	// ErrTransferNotSiteCurrency 是可用佣金只有非站点币种：钱包只显示站点币种，这部分请走提现。
-	ErrTransferNotSiteCurrency = errs.Newf(errs.Conflict, "这部分佣金不是站点币种，不能转入余额，请走提现")
-	ErrEntryNotFound           = errs.Newf(errs.NotFound, "佣金条目不存在")
+	ErrEntryNotFound        = errs.Newf(errs.NotFound, "佣金条目不存在")
 	// ErrAccountDeleted 是佣金的受益人或提现的申请人已注销：注销时名下未打款的佣金与在途提现都已作废，不再出钱。
 	ErrAccountDeleted = errs.Newf(errs.Conflict, "账号已注销")
 	// ErrApprovedWithdrawalPending 是注销时他还有已批准、没标记打款的提现（用户 10-14 定：这种情况不许注销，
@@ -137,13 +133,12 @@ var (
 	ErrEntryNotReviewable = errs.Newf(errs.Conflict, "这条佣金不在待复核状态，可能已被处理，请刷新")
 	// ErrVoidUnderfunded 是推荐人的待结佣金科目不够冲回这一条（账本与条目对不上，需要人工核对账本）。
 	ErrVoidUnderfunded = errs.Newf(errs.Conflict, "待结佣金科目余额不足，无法冲回这条佣金，请先核对账本")
-	// ErrWithdrawDisabled 是提现已关闭且没有站点币种以外的可用佣金：关提现只关站点币种，别的币种照常能提。
-	ErrWithdrawDisabled = errs.Newf(errs.Conflict, "提现已关闭：本站币种的佣金改为解冻后自动转入余额，只有其他币种的佣金还能申请提现")
+	// ErrWithdrawDisabled 是提现已关闭：佣金解冻后自动转入余额，不能申请提现。
+	ErrWithdrawDisabled = errs.Newf(errs.Conflict, "提现已关闭：佣金解冻后将自动转入余额，不能申请提现")
 )
 
-// Summary 是门户「我的佣金」的汇总，金额都是 Currency 这一个币种（取法见 summaryCurrency）。
+// Summary 是门户「我的佣金」的汇总。
 type Summary struct {
-	Currency        money.Currency
 	Pending         decimal.Decimal // 冻结中
 	Available       decimal.Decimal // 可提现（已解冻 − 未驳回的提现 − 已转余额 − 注销作废，不小于 0）
 	Withdrawing     decimal.Decimal // 提现处理中（申请中、已批准）
@@ -155,10 +150,9 @@ type Summary struct {
 	RatePercent     int
 	MinWithdraw     decimal.Decimal
 	Scope           string
-	DirectRateBP    int64          // 直接邀请人实得的万分比，横幅用
-	WithdrawEnabled bool           // 是否开放提现；关着时只关站点币种，别的币种照常能提
-	WithdrawMethods []string       // 可选的提现方式，按目录顺序
-	SiteCurrency    money.Currency // 站点币种：门户据此判断关提现时这个汇总币种还能不能提
+	DirectRateBP    int64    // 直接邀请人实得的万分比，横幅用
+	WithdrawEnabled bool     // 是否开放提现
+	WithdrawMethods []string // 可选的提现方式，按目录顺序
 }
 
 // EntryView 是门户佣金明细的一行；From 是打码后的被邀请人邮箱，只有第 1 级（直接邀请）有，第 2、3 级为空。
@@ -166,7 +160,6 @@ type EntryView struct {
 	Amount       decimal.Decimal
 	Base         decimal.Decimal
 	RateBP       int64
-	Currency     string
 	Status       string
 	FrozenUntil  time.Time
 	CreatedAt    time.Time
@@ -180,7 +173,6 @@ type EntryView struct {
 type WithdrawalView struct {
 	ID           uuid.UUID
 	Amount       decimal.Decimal
-	Currency     string
 	Status       string
 	RejectReason string
 	RequestedAt  time.Time
@@ -192,7 +184,6 @@ type WithdrawalView struct {
 type TransferView struct {
 	LedgerTxnID uuid.UUID
 	Amount      decimal.Decimal
-	Currency    string
 	CreatedAt   time.Time
 }
 
@@ -204,23 +195,8 @@ type MyCommission struct {
 	Transfers   []TransferView
 }
 
-// CurrencyOverview 是后台分销概览里某一币种的汇总。
-type CurrencyOverview struct {
-	Currency           money.Currency
-	Pending            decimal.Decimal
-	Available          decimal.Decimal
-	PaidOut            decimal.Decimal
-	ThisMonth          decimal.Decimal
-	TotalEarned        decimal.Decimal
-	Entries            int64
-	NeedReview         int64
-	WaitingWithdrawals int64
-}
-
-// Overview 是后台分销概览：金额字段是站点币种（Currency）那一组，笔数字段是全部币种合计；
-// ByCurrency 按币种列出每一组（只列有数据的币种，站点币种总在里面）。
+// Overview 是后台分销概览：金额为全站合计。
 type Overview struct {
-	Currency            money.Currency
 	Pending             decimal.Decimal
 	Available           decimal.Decimal
 	PaidOut             decimal.Decimal
@@ -230,7 +206,6 @@ type Overview struct {
 	NeedReview          int64
 	WaitingWithdrawals  int64
 	InvitedUsers        int64
-	ByCurrency          []CurrencyOverview
 	RatePercent         int
 	FreezeDays          int
 	MinWithdraw         decimal.Decimal
@@ -241,13 +216,12 @@ type Overview struct {
 	WithdrawMethods     []string
 }
 
-// AdminWithdrawal 是后台提现列表的一行；PayoutDetail 是解封后的收款信息，EarnedTotal 是该用户同币种的累计佣金。
+// AdminWithdrawal 是后台提现列表的一行；PayoutDetail 是解封后的收款信息，EarnedTotal 是该用户的累计佣金。
 type AdminWithdrawal struct {
 	ID              uuid.UUID
 	UserID          uuid.UUID
 	Email           string
 	Amount          decimal.Decimal
-	Currency        string
 	Status          string
 	Method          string
 	PayoutDetail    string
@@ -300,7 +274,6 @@ type ReviewEntryRow struct {
 	ReferrerEmail string
 	RefereeEmail  string
 	Amount        decimal.Decimal
-	Currency      string
 	ReviewReason  string
 	ReviewSource  string // ReviewSource* 之一
 	CreatedAt     time.Time
@@ -311,4 +284,13 @@ type ReviewEntryRow struct {
 type ReviewEntryPage struct {
 	Entries    []ReviewEntryRow
 	NextCursor string
+}
+
+// VoidResult 是账号注销时作废佣金的结果（只有人民币）。
+type VoidResult struct {
+	VoidedEntries       int             // 作废的冻结中、待复核条目数
+	VoidedPending       decimal.Decimal // 上面这些条目的金额合计（冲回待结佣金）
+	Forfeited           decimal.Decimal // 作废的可提现佣金（冲回可提现佣金）
+	RejectedWithdrawals int             // 驳回的申请中提现笔数
+	RejectedAmount      decimal.Decimal // 驳回的提现金额合计（驳回后退回可提现、随即一并作废，已含在 Forfeited 里）
 }

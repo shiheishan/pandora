@@ -81,7 +81,7 @@ function OpenOrders({ onPay }: { onPay: (s: PayState) => void }) {
                 <span className={css.mono}>{o.order_no}</span> · {formatDateTime(o.created_at)} 下单 · {expiryNote(o.expires_at)}
               </div>
             </div>
-            <div className={css.pendingAmount}>{formatMoney(o.payable_amount, o.currency)}</div>
+            <div className={css.pendingAmount}>{formatMoney(o.payable_amount)}</div>
             <div className={css.pendingActions}>
               {o.cancellable && (
                 <button type="button" className={css.quiet} onClick={() => setConfirming(o)}>
@@ -89,7 +89,7 @@ function OpenOrders({ onPay }: { onPay: (s: PayState) => void }) {
                 </button>
               )}
               {o.has_payment_intent && <PaymentRefresh orderId={o.id} onOutcome={(r) => setOutcomes((m) => ({ ...m, [o.id]: r }))} />}
-              <Button variant="primary" size="sm" onClick={() => onPay({ phase: 'choose', orderId: o.id, orderNo: o.order_no, amount: o.payable_amount, currency: o.currency })}>
+              <Button variant="primary" size="sm" onClick={() => onPay({ phase: 'choose', orderId: o.id, orderNo: o.order_no, amount: o.payable_amount })}>
                 去支付
               </Button>
             </div>
@@ -100,7 +100,7 @@ function OpenOrders({ onPay }: { onPay: (s: PayState) => void }) {
       <ConfirmModal
         open={confirming !== null}
         title="取消这笔订单？"
-        body={confirming ? `${orderTitle(confirming)} · ${formatMoney(confirming.payable_amount, confirming.currency)}。取消后优惠码和已冻结的余额会立即退回。` : ''}
+        body={confirming ? `${orderTitle(confirming)} · ${formatMoney(confirming.payable_amount)}。取消后优惠码和已冻结的余额会立即退回。` : ''}
         confirmLabel="取消订单"
         cancelLabel="再想想"
         tone="danger"
@@ -189,7 +189,7 @@ function OrderList({ filter, onFilter, selected }: { filter: OrderFilter; onFilt
               <Empty
                 bare
                 title="还没有订单"
-                description="买套餐、流量包或充值余额后，记录都会出现在这里。"
+                description="买套餐或充值余额后，记录都会出现在这里。"
                 action={
                   <a className={css.linkButton} href={href('/plans')}>
                     去选购套餐
@@ -207,7 +207,7 @@ function OrderList({ filter, onFilter, selected }: { filter: OrderFilter; onFilt
                 <div key={g.key}>
                   <div className={css.groupHead}>
                     <span className={css.groupLabel}>{g.label}</span>
-                    <span className={css.groupSum}>{g.paid > 0 ? `已支付 ${formatMoney(g.paid, g.rows[0]?.currency)}` : '无支付'}</span>
+                    <span className={css.groupSum}>{g.paid > 0 ? `已支付 ${formatMoney(g.paid)}` : '无支付'}</span>
                   </div>
                   {g.rows.map((o) => (
                     <OrderLine key={o.id} order={o} open={o.id === selected} />
@@ -245,7 +245,7 @@ function OrderLine({ order, open }: { order: OrderRow; open: boolean }) {
             <span className={css.mono}>{order.order_no}</span> · {formatDateTime(order.created_at)}
           </span>
         </span>
-        <span className={muted ? css.rowAmountMuted : css.rowAmount}>{formatMoney(order.total_amount, order.currency)}</span>
+        <span className={muted ? css.rowAmountMuted : css.rowAmount}>{formatMoney(order.total_amount)}</span>
         <span className={css.rowBadge}>
           <Tag tone={badge.tone}>{badge.label}</Tag>
         </span>

@@ -1,66 +1,88 @@
 .frame {
-  display: grid;
-  grid-template-columns: 224px minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   height: 100vh;
   overflow: hidden;
+  background: var(--bg);
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
 }
 
 .main {
+  flex: 1;
   min-width: 0;
-  height: 100vh;
   display: flex;
   flex-direction: column;
   overflow-y: auto;
-}
-
-.topbar {
-  position: sticky;
-  top: 0;
-  z-index: 20;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  height: 52px;
-  flex: none;
-  padding: 0 28px;
-  border-bottom: 1px solid var(--border);
-  background: var(--hdr);
-  backdrop-filter: blur(8px);
-}
-
-.crumbs {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-}
-
-.crumbCurrent {
-  color: var(--text);
-  font-weight: var(--fw-medium);
-}
-
-.spacer {
-  flex: 1;
 }
 
 .pageHead {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  padding: 26px 28px 0;
+  padding: 28px 40px 0;
 }
 
-.title {
-  margin: 0;
-  font-size: 22px;
-  font-weight: var(--fw-semibold);
-  letter-spacing: var(--ls-h1);
+.tabBar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+  justify-content: flex-end;
+}
+
+.tabBar > [role='tablist'] {
+  flex: 1;
+  min-width: 0;
+  border-bottom: 0;
 }
 
 .content {
   flex: 1;
   min-width: 0;
-  padding: 20px 28px 48px;
+  padding: 28px 40px 64px;
+}
+
+@media (max-width: 959px) {
+  .pageHead {
+    padding-left: 24px;
+    padding-right: 24px;
+  }
+
+  .content {
+    padding-left: 24px;
+    padding-right: 24px;
+  }
+}
+
+@media (max-width: 639px) {
+  .pageHead {
+    padding: 16px 16px 0;
+  }
+
+  .content {
+    padding: 20px 16px 64px;
+  }
+
+  .scrim {
+    position: fixed;
+    inset: 56px 0 0 0;
+    z-index: 39;
+    background: rgb(0 0 0 / 0.32);
+  }
+}
+
+.scrim {
+  display: none;
+}
+
+@media (max-width: 639px) {
+  .scrim {
+    display: block;
+  }
 }

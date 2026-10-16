@@ -118,13 +118,13 @@ func (e *deliveryEnv) dNode(t *testing.T, ctx context.Context, pool *uuid.UUID, 
 		poolRandName(t, "n"), display, pool, server, serving, port)
 }
 
-// dVersion 建一个套餐与一个草稿版本并绑池（草稿才能改绑池；VersionsByIDs 与 VersionPools 不看状态）。
+// dVersion 建一个套餐与它的版本 1，并把池绑到套餐上。
 func (e *deliveryEnv) dVersion(t *testing.T, ctx context.Context, throttle, maxDevices *int, pools ...uuid.UUID) uuid.UUID {
-	planID := e.insertID(t, ctx, `INSERT INTO plans (code, name) VALUES (?, ?) RETURNING id`, poolRandName(t, "pl"), "测试套餐")
+	planID := e.insertID(t, ctx, `INSERT INTO plans (code, name, kind) VALUES (?, ?, 'subscription') RETURNING id`, poolRandName(t, "pl"), "测试套餐")
 	vid := e.insertID(t, ctx, `INSERT INTO plan_versions (plan_id, version, throttle_kbps, max_devices) VALUES (?, 1, ?, ?) RETURNING id`,
 		planID, throttle, maxDevices)
 	for _, p := range pools {
-		e.mustExec(t, ctx, `INSERT INTO plan_node_pools (plan_version_id, pool_id) VALUES (?, ?)`, vid, p)
+		e.mustExec(t, ctx, `INSERT INTO plan_node_pools (plan_id, pool_id) VALUES (?, ?)`, planID, p)
 	}
 	e.versionPlan[vid] = planID
 	return vid
@@ -135,15 +135,13 @@ func (e *deliveryEnv) dUser(t *testing.T, ctx context.Context, status string, gr
 		poolRandName(t, "u")+"@example.test", status, group)
 }
 
-// subOpts 是夹具订阅的变化项；零值是生效中、没有配额行、没有流量包。
+// subOpts 是夹具订阅的变化项；零值是生效中、没有配额行。
 type subOpts struct {
 	Expired       bool
 	PastEnd       bool
 	DeviceLimit   *int
 	QuotaLimit    *int64
 	QuotaConsumed int64
-	PackGranted   int64
-	PackConsumed  int64
 }
 
 type fixtureSub struct {
@@ -164,8 +162,8 @@ func (e *deliveryEnv) dSub(t *testing.T, ctx context.Context, user, version uuid
 	}
 	var s fixtureSub
 	err := e.row(ctx, `INSERT INTO subscriptions (user_id, plan_id, plan_version_id, status, current_period_start,
-		current_period_end, snapshot_currency, snapshot_amount, snapshot_interval, snapshot_interval_count, device_limit)
-		VALUES (?, ?, ?, ?, `+start+`, `+end+`, 'CNY', 10, 'month', 1, ?) RETURNING id, node_uid, proxy_uuid`,
+		current_period_end, snapshot_amount, snapshot_interval, snapshot_interval_count, device_limit)
+		VALUES (?, ?, ?, ?, `+start+`, `+end+`, 10, 'month', 1, ?) RETURNING id, node_uid, proxy_uuid`,
 		user, e.versionPlan[version], version, status, o.DeviceLimit).Scan(&s.ID, &s.UID, &s.Proxy)
 	if err != nil {
 		t.Fatalf("插订阅: %v", err)
@@ -174,10 +172,6 @@ func (e *deliveryEnv) dSub(t *testing.T, ctx context.Context, user, version uuid
 		e.mustExec(t, ctx, `INSERT INTO quota_balances (subscription_id, metric, period, period_start, period_end, limit_value, consumed)
 			VALUES (?, 'traffic.bytes', 'cycle', now() - interval '1 day', now() + interval '30 days', ?, ?)`,
 			s.ID, *o.QuotaLimit, o.QuotaConsumed)
-	}
-	if o.PackGranted > 0 {
-		e.mustExec(t, ctx, `INSERT INTO traffic_pack_grants (user_id, subscription_id, source, source_id, granted_bytes, consumed_bytes)
-			VALUES (?, ?, 'admin', ?, ?, ?)`, user, s.ID, uuid.New(), o.PackGranted, o.PackConsumed)
 	}
 	return s
 }

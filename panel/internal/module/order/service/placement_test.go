@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 )
 
@@ -50,6 +51,7 @@ func TestPlanPlacements(t *testing.T) {
 	cases := []struct {
 		name    string
 		plan    string
+		kind    string
 		cands   []candidate
 		entry   string
 		want    []k
@@ -57,34 +59,39 @@ func TestPlanPlacements(t *testing.T) {
 		badge   []k
 		expired []k
 	}{
-		{name: "同款只有一份：不问直接续", plan: "std", cands: []candidate{single},
+		{name: "同款只有一份：不问直接续", plan: "std", kind: catalogsvc.KindSubscription, cands: []candidate{single},
 			want: []k{{"renew", "one"}}, def: k{"renew", "one"}},
-		{name: "同款只有一份已过期：只给续", plan: "std", cands: []candidate{expiredStd},
+		{name: "同款只有一份已过期：只给续", plan: "std", kind: catalogsvc.KindSubscription, cands: []candidate{expiredStd},
 			want: []k{{"renew", "exp"}}, def: k{"renew", "exp"}},
-		{name: "不同款只有一份：另开与换掉都不预选", plan: "adv", cands: []candidate{single},
+		{name: "不同款只有一份：另开与换掉都不预选", plan: "adv", kind: catalogsvc.KindSubscription, cands: []candidate{single},
 			want: []k{{"new", ""}, {"change", "one"}}},
-		{name: "不同款只有一份已过期：恢复并改成排在另开前", plan: "adv", cands: []candidate{expiredStd},
+		{name: "不同款只有一份已过期：恢复并改成排在另开前", plan: "adv", kind: catalogsvc.KindSubscription, cands: []candidate{expiredStd},
 			want: []k{{"change", "exp"}, {"new", ""}}, expired: []k{{"change", "exp"}}},
-		{name: "没有任何订阅：只剩新开", plan: "std", cands: nil, want: []k{{"new", ""}}, def: k{"new", ""}},
-		{name: "只有停用的：等于没有", plan: "std", cands: []candidate{deadStd}, want: []k{{"new", ""}}, def: k{"new", ""}},
-		{name: "停用的不算一份：同款仍只返回续", plan: "std", cands: []candidate{deadStd, single},
+		{name: "没有任何订阅：只剩新开", plan: "std", kind: catalogsvc.KindSubscription, cands: nil, want: []k{{"new", ""}}, def: k{"new", ""}},
+		{name: "只有停用的：等于没有", plan: "std", kind: catalogsvc.KindSubscription, cands: []candidate{deadStd}, want: []k{{"new", ""}}, def: k{"new", ""}},
+		{name: "停用的不算一份：同款仍只返回续", plan: "std", kind: catalogsvc.KindSubscription, cands: []candidate{deadStd, single},
 			want: []k{{"renew", "one"}}, def: k{"renew", "one"}},
-		{name: "同款两份：续同款预选、再开、换掉别的", plan: "std", cands: []candidate{mom, mine},
+		{name: "同款两份：续同款预选、再开、换掉别的", plan: "std", kind: catalogsvc.KindSubscription, cands: []candidate{mom, mine},
 			want: []k{{"renew", "mine"}, {"new", ""}, {"change", "mom"}}, def: k{"renew", "mine"}, badge: []k{{"renew", "mine"}}},
-		{name: "不同款两份：不预选，换掉的按到期从早到晚", plan: "adv", cands: []candidate{mine, mom},
+		{name: "不同款两份：不预选，换掉的按到期从早到晚", plan: "adv", kind: catalogsvc.KindSubscription, cands: []candidate{mine, mom},
 			want: []k{{"new", ""}, {"change", "mom"}, {"change", "mine"}}},
-		{name: "同款续的次序：生效中早到晚，再过期的晚到早", plan: "std", cands: []candidate{revD, liveA, revC, liveB},
+		{name: "同款续的次序：生效中早到晚，再过期的晚到早", plan: "std", kind: catalogsvc.KindSubscription, cands: []candidate{revD, liveA, revC, liveB},
 			want: []k{{"renew", "liveB"}, {"renew", "liveA"}, {"renew", "revC"}, {"renew", "revD"}, {"new", ""}},
 			def:  k{"renew", "liveB"}, badge: []k{{"renew", "liveB"}}},
-		{name: "完整次序：同款、不同款过期、新开、不同款生效中", plan: "std", cands: []candidate{mom, expiredBasic, revC, mine},
+		{name: "完整次序：同款、不同款过期、新开、不同款生效中", plan: "std", kind: catalogsvc.KindSubscription, cands: []candidate{mom, expiredBasic, revC, mine},
 			want: []k{{"renew", "mine"}, {"renew", "revC"}, {"change", "expBasic"}, {"new", ""}, {"change", "mom"}},
 			def:  k{"renew", "mine"}, badge: []k{{"renew", "mine"}}, expired: []k{{"change", "expBasic"}}},
-		{name: "从订阅行进来：预选入口那份（不同款生效中）", plan: "adv", cands: []candidate{mine, mom}, entry: "mine",
+		{name: "从订阅行进来：预选入口那份（不同款生效中）", plan: "adv", kind: catalogsvc.KindSubscription, cands: []candidate{mine, mom}, entry: "mine",
 			want: []k{{"new", ""}, {"change", "mom"}, {"change", "mine"}}, def: k{"change", "mine"}},
-		{name: "从订阅行进来：同款多份时预选入口那份", plan: "std", cands: []candidate{liveA, liveB}, entry: "liveA",
+		{name: "从订阅行进来：同款多份时预选入口那份", plan: "std", kind: catalogsvc.KindSubscription, cands: []candidate{liveA, liveB}, entry: "liveA",
 			want: []k{{"renew", "liveB"}, {"renew", "liveA"}, {"new", ""}}, def: k{"renew", "liveA"}, badge: []k{{"renew", "liveB"}}},
-		{name: "入口是停用的那份：不在选项里，按规则取默认", plan: "adv", cands: []candidate{deadStd, mine}, entry: "dead",
+		{name: "入口是停用的那份：不在选项里，按规则取默认", plan: "adv", kind: catalogsvc.KindSubscription, cands: []candidate{deadStd, mine}, entry: "dead",
 			want: []k{{"new", ""}, {"change", "mine"}}},
+		// 一次性套餐用例
+		{name: "一次性同款只有一份：不问直接叠加", plan: "std", kind: catalogsvc.KindOneTime, cands: []candidate{single},
+			want: []k{{"stack", "one"}}, def: k{"stack", "one"}},
+		{name: "一次性同款加别的：叠加同款在前且带徽标", plan: "std", kind: catalogsvc.KindOneTime, cands: []candidate{mom, mine},
+			want: []k{{"stack", "mine"}, {"new", ""}, {"change", "mom"}}, def: k{"stack", "mine"}, badge: []k{{"stack", "mine"}}},
 	}
 	keyOf := func(x k) string {
 		if x[0] == "" {
@@ -98,7 +105,7 @@ func TestPlanPlacements(t *testing.T) {
 			id := fixedID(tc.entry)
 			entry = &id
 		}
-		opts, def := planPlacements(fixedID(tc.plan), tc.cands, entry)
+		opts, def := planPlacements(fixedID(tc.plan), tc.kind, tc.cands, entry)
 		got := make([]string, 0, len(opts))
 		badges := map[string]string{}
 		expired := map[string]bool{}
@@ -161,7 +168,7 @@ func TestResolvePlacement(t *testing.T) {
 	}
 }
 
-// 候选：停用的不取，生效中的优先、新建的优先；本期套餐流量只算 cycle / total 且有上限的 traffic.bytes。
+// 候选：停用的不取，生效中的优先、新建的优先；TrafficCap = limit + bonus。
 func TestCandidatesFrom(t *testing.T) {
 	limit := int64(100)
 	t0 := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
@@ -169,12 +176,10 @@ func TestCandidatesFrom(t *testing.T) {
 		return subsvc.Summary{Subscription: subsvc.Subscription{ID: fixedID(name), CreatedAt: created}, State: st, Quotas: []subsvc.Quota{}}
 	}
 	live := sum("live", subsvc.StateLive, t0)
-	live.Quotas = []subsvc.Quota{
-		{Metric: "traffic.bytes", Period: "cycle", Limit: &limit, Consumed: 30},
-		{Metric: "traffic.bytes", Period: "day", Limit: &limit, Consumed: 99},
-		{Metric: "devices.active", Period: "total", Limit: &limit, Consumed: 1},
-	}
-	live.PackRemainingBytes = 7
+	live.PlanKind = catalogsvc.KindSubscription
+	live.TrafficLimit = &limit
+	live.TrafficBonus = 20
+	live.TrafficUsed = 30
 	us := subsvc.UserSubscriptions{Subscriptions: []subsvc.Summary{
 		sum("old-rev", subsvc.StateRevivable, t0.Add(-time.Hour)),
 		sum("ended", subsvc.StateEnded, t0.Add(time.Hour)),
@@ -191,7 +196,75 @@ func TestCandidatesFrom(t *testing.T) {
 			t.Fatalf("第 %d 份是 %s", i, got[i].Sub.ID)
 		}
 	}
-	if got[1].TrafficUsed != 30 || got[1].TrafficCap != 100 || got[1].PackRemaining != 7 {
+	if got[1].TrafficUsed != 30 || got[1].TrafficCap != 120 {
 		t.Fatalf("流量 %+v", got[1])
+	}
+	if got[1].PlanKind != catalogsvc.KindSubscription {
+		t.Fatalf("PlanKind %+v", got[1].PlanKind)
+	}
+}
+
+// TestNewPeriodEnd 测试各种落点落地后的到期日。
+func TestNewPeriodEnd(t *testing.T) {
+	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	future := now.AddDate(0, 0, 10)
+	past := now.AddDate(0, 0, -5)
+	days30 := 30
+
+	cases := []struct {
+		name string
+		op   Placement
+		p    subsvc.PriceSnapshot
+		want time.Time
+	}{
+		{
+			name: "stack: 原到期在未来 + 有天数 -> 原到期 + N天",
+			op:   Placement{Kind: PlacementStack, PeriodEnd: &future},
+			p:    subsvc.PriceSnapshot{Interval: "one_time", IntervalCount: 1, ValidityDays: &days30},
+			want: future.AddDate(0, 0, 30).Truncate(time.Microsecond),
+		},
+		{
+			name: "stack: 原到期在过去 + 有天数 -> now + N天",
+			op:   Placement{Kind: PlacementStack, PeriodEnd: &past},
+			p:    subsvc.PriceSnapshot{Interval: "one_time", IntervalCount: 1, ValidityDays: &days30},
+			want: now.AddDate(0, 0, 30).Truncate(time.Microsecond),
+		},
+		{
+			name: "stack: 永久（ValidityDays nil） -> now + 100年哨兵",
+			op:   Placement{Kind: PlacementStack, PeriodEnd: &future},
+			p:    subsvc.PriceSnapshot{Interval: "one_time", IntervalCount: 1, ValidityDays: nil},
+			want: subsvc.AddInterval(now, "one_time", 1).Truncate(time.Microsecond),
+		},
+		{
+			name: "renew: 生效中且未到期 -> 从原到期续一期",
+			op:   Placement{Kind: PlacementRenew, State: subsvc.StateLive, PeriodEnd: &future},
+			p:    subsvc.PriceSnapshot{Interval: "month", IntervalCount: 1},
+			want: future.AddDate(0, 1, 0).Truncate(time.Microsecond),
+		},
+		{
+			name: "renew: 可救回（已过期） -> 从 now 续一期",
+			op:   Placement{Kind: PlacementRenew, State: subsvc.StateRevivable, PeriodEnd: &past},
+			p:    subsvc.PriceSnapshot{Interval: "month", IntervalCount: 1},
+			want: now.AddDate(0, 1, 0).Truncate(time.Microsecond),
+		},
+		{
+			name: "change: 从 now 起算一期",
+			op:   Placement{Kind: PlacementChange, PeriodEnd: &future},
+			p:    subsvc.PriceSnapshot{Interval: "month", IntervalCount: 1},
+			want: now.AddDate(0, 1, 0).Truncate(time.Microsecond),
+		},
+		{
+			name: "new: 从 now 起算一期",
+			op:   Placement{Kind: PlacementNew},
+			p:    subsvc.PriceSnapshot{Interval: "month", IntervalCount: 1},
+			want: now.AddDate(0, 1, 0).Truncate(time.Microsecond),
+		},
+	}
+
+	for _, tc := range cases {
+		got := newPeriodEnd(tc.op, now, tc.p)
+		if !got.Equal(tc.want) {
+			t.Errorf("%s: got %v want %v", tc.name, got, tc.want)
+		}
 	}
 }

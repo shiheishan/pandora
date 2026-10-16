@@ -1,5 +1,4 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { z } from 'zod'
 import { useApi } from '../../../shell/runtime'
 import { SUBSCRIPTIONS_KEY } from '../../queries'
 
@@ -15,23 +14,5 @@ export function useRename() {
   return useMutation({
     mutationFn: ({ id, label }: { id: string; label: string }) => api.request(`v1/me/subscriptions/${encodeURIComponent(id)}`, renameSchema, { method: 'PATCH', body: { label: label.trim() || null } }),
     onSuccess: () => void client.invalidateQueries({ queryKey: SUBSCRIPTIONS_KEY }),
-  })
-}
-
-// ---------------------------------------------------------------------------
-// POST v1/me/traffic-packs/transfer（设计稿 2.7）：from 为 null 是「未分配」，否则须是彻底停用的那份；
-// 目标须在用或能救回。不幂等：重复调用第二次没东西可转，moved_bytes=0
-// ---------------------------------------------------------------------------
-const transferSchema = z.object({ moved_bytes: z.number().int() })
-
-export function useTransferPacks() {
-  const api = useApi()
-  const client = useQueryClient()
-  return useMutation({
-    mutationFn: ({ from, to }: { from: string | null; to: string }) => api.post('v1/me/traffic-packs/transfer', transferSchema, { body: { from_subscription_id: from, to_subscription_id: to } }),
-    onSuccess: () => {
-      void client.invalidateQueries({ queryKey: SUBSCRIPTIONS_KEY })
-      void client.invalidateQueries({ queryKey: ['portal', 'traffic-packs'] })
-    },
   })
 }

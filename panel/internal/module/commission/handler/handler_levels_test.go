@@ -16,16 +16,16 @@ func TestMyCommissionLevelsShape(t *testing.T) {
 	now := time.Date(2026, 10, 12, 8, 0, 0, 0, time.UTC)
 	f := &fakeSvc{my: service.MyCommission{
 		Summary: service.Summary{
-			Currency: "CNY", MinWithdraw: decimal.RequireFromString("100"), Scope: "every_order", RatePercent: 10,
-			DirectRateBP: 500, WithdrawEnabled: false, WithdrawMethods: nil, SiteCurrency: "CNY",
+			MinWithdraw: decimal.RequireFromString("100"), Scope: "every_order", RatePercent: 10,
+			DirectRateBP: 500, WithdrawEnabled: false, WithdrawMethods: nil,
 		},
 		Entries: []service.EntryView{{
 			Amount: decimal.RequireFromString("1"), Base: decimal.RequireFromString("10"), RateBP: 1000,
-			Currency: "CNY", Status: "pending", FrozenUntil: now, CreatedAt: now, OrderNo: "N1", From: "u@example.test",
+			Status: "pending", FrozenUntil: now, CreatedAt: now, OrderNo: "N1", From: "u@example.test",
 			Level: 2, SharePercent: 30,
 		}},
 		Withdrawals: []service.WithdrawalView{{
-			ID: uuid.New(), Amount: decimal.RequireFromString("10"), Currency: "CNY", Status: "requested",
+			ID: uuid.New(), Amount: decimal.RequireFromString("10"), Status: "requested",
 			Method: "usdt_trc20", RequestedAt: now,
 		}},
 		Transfers: []service.TransferView{},
@@ -45,9 +45,6 @@ func TestMyCommissionLevelsShape(t *testing.T) {
 	if resp.Summary["direct_rate_bp"] != float64(500) {
 		t.Fatalf("direct_rate_bp %v", resp.Summary["direct_rate_bp"])
 	}
-	if resp.Summary["site_currency"] != "CNY" {
-		t.Fatalf("site_currency %v", resp.Summary["site_currency"])
-	}
 	if resp.Summary["withdraw_enabled"] != false {
 		t.Fatalf("withdraw_enabled %v", resp.Summary["withdraw_enabled"])
 	}
@@ -66,7 +63,7 @@ func TestMyCommissionLevelsShape(t *testing.T) {
 
 func TestOverviewLevelsShape(t *testing.T) {
 	f := &fakeSvc{overview: service.Overview{
-		Currency: "CNY", MinWithdraw: decimal.RequireFromString("100"),
+		MinWithdraw:         decimal.RequireFromString("100"),
 		DistributionEnabled: true, DistributionLevels: [3]int{50, 30, 20},
 		WithdrawEnabled: true, WithdrawMethods: []string{"alipay", "usdt_trc20"},
 	}}
@@ -91,13 +88,13 @@ func TestListWithdrawalsUSDTShape(t *testing.T) {
 	f := &fakeSvc{withdrawals: []service.AdminWithdrawal{
 		{
 			ID: uuid.New(), UserID: uuid.New(), Email: "a@example.test",
-			Amount: decimal.RequireFromString("10"), Currency: "CNY", Status: "paid",
+			Amount: decimal.RequireFromString("10"), Status: "paid",
 			Method: "usdt_erc20", PayoutReference: "0x" + strings.Repeat("ab", 32),
 			PaidUSDTAmount: &d, RequestedAt: time.Now().UTC(),
 		},
 		{
 			ID: uuid.New(), UserID: uuid.New(), Email: "b@example.test",
-			Amount: decimal.RequireFromString("20"), Currency: "CNY", Status: "paid",
+			Amount: decimal.RequireFromString("20"), Status: "paid",
 			Method: "alipay", PayoutDetail: "alipay", RequestedAt: time.Now().UTC(),
 			PaidUSDTAmount: nil,
 		},

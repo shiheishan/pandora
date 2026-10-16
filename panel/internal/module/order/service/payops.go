@@ -11,7 +11,6 @@ import (
 	"github.com/aegispanel/aegis/internal/module/order/repo"
 	paymentsvc "github.com/aegispanel/aegis/internal/module/payment/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/aegispanel/aegis/internal/pkg/reqmeta"
 )
 
@@ -47,6 +46,20 @@ func (s *Service) Pay(ctx context.Context, in PayInput) (paymentsvc.IntentResult
 		if !s.clock().Before(o.ExpiresAt) {
 			return ErrPaymentLapsed
 		}
+		// 套餐归档后，归档前下的待付单不让再发起付款（用户 2026-10-16 定）；已建好的在途意图照旧，付了由结算转余额
+		if planOrder(o.Kind) {
+			it, err := s.onlyItem(ctx, o)
+			if err != nil {
+				return err
+			}
+			archived, err := s.planArchivedFor(ctx, it)
+			if err != nil {
+				return err
+			}
+			if archived {
+				return ErrPlanRetired
+			}
+		}
 		title, err := s.payTitle(ctx, o)
 		if err != nil {
 			return err
@@ -57,7 +70,6 @@ func (s *Service) Pay(ctx context.Context, in PayInput) (paymentsvc.IntentResult
 			OrderNo:      o.OrderNo,
 			UserID:       o.UserID,
 			Amount:       o.PayableAmount,
-			Currency:     money.Currency(o.Currency),
 			ProviderCode: in.Provider,
 			Method:       in.Method,
 			Title:        title,
@@ -177,7 +189,6 @@ func (s *Service) MarkPaid(ctx context.Context, in MarkPaidInput) (MarkPaidResul
 			OrderNo:   o.OrderNo,
 			UserID:    o.UserID,
 			Amount:    o.PayableAmount,
-			Currency:  money.Currency(o.Currency),
 			Reference: reference,
 			Reason:    reason,
 		})
@@ -198,7 +209,6 @@ func (s *Service) MarkPaid(ctx context.Context, in MarkPaidInput) (MarkPaidResul
 		data := map[string]any{
 			"order_no":  o.OrderNo,
 			"amount":    o.PayableAmount.StringFixed(2),
-			"currency":  o.Currency,
 			"reference": reference,
 			"reason":    reason,
 		}
