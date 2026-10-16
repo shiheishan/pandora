@@ -70,20 +70,15 @@ func (r *Repo) ExpiredForNotify(ctx context.Context, endedAfter, endedUntil time
 }
 
 // QuotaUsageForNotify 取生效订阅本期限量 traffic.bytes 配额行，用量达到 Total 的 minPercent% 及以上。
-// 比较一律用 numeric：consumed 允许超额上报、流量包余量是多行之和，bigint 乘 100 会溢出；Total 封顶到 bigint 上限。
+// Total = 上限 + 送的量（bonus_value）。比较一律用 numeric：consumed 允许超额上报，bigint 乘 100 会溢出；Total 封顶到 bigint 上限。
 func (r *Repo) QuotaUsageForNotify(ctx context.Context, now time.Time, minPercent int) ([]QuotaNoticeRow, error) {
 	var out []QuotaNoticeRow
 	err := r.d.Conn(ctx).Raw(`
 		WITH usage AS (
 			SELECT q.subscription_id, s.user_id, s.plan_id, q.consumed, q.limit_value, q.period_start,
-			       q.limit_value::numeric + pk.pack_left AS total
+			       q.limit_value::numeric + q.bonus_value AS total
 			  FROM quota_balances q
 			  JOIN subscriptions s ON s.id = q.subscription_id
-			 CROSS JOIN LATERAL (
-			       SELECT COALESCE(sum(g.granted_bytes - g.consumed_bytes), 0) AS pack_left
-			         FROM traffic_pack_grants g
-			        WHERE g.subscription_id = q.subscription_id
-			          AND g.consumed_bytes < g.granted_bytes) pk
 			 WHERE s.status = 'active'
 			   AND s.current_period_end > ?
 			   AND q.metric = 'traffic.bytes'

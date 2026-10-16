@@ -180,12 +180,13 @@ func TestLiveRequest(t *testing.T) {
 	nextReset := now.Add(7 * 24 * time.Hour)
 	limit := int64(10 << 30)
 	consumed := int64(1 << 30)
+	bonus := int64(1 << 20)
 	row := repo.PullRow{
 		ProxyUUID:        uuid.MustParse("00000000-0000-4000-8000-000000000001"),
 		PeriodEnd:        periodEnd,
 		TrafficLimit:     &limit,
 		TrafficConsumed:  &consumed,
-		PackRemaining:    1 << 20,
+		TrafficBonus:     &bonus,
 		TrafficPeriodEnd: &nextReset,
 	}
 	snapOn := &extrasSnapshot{
@@ -221,7 +222,7 @@ func TestLiveRequest(t *testing.T) {
 	if len(req.Keywords) != 1 || req.Keywords[0] != "香港" {
 		t.Fatalf("Keywords %v", req.Keywords)
 	}
-	if req.Status.Total != limit+row.PackRemaining {
+	if req.Status.Total != limit+bonus {
 		t.Fatalf("Total %d", req.Status.Total)
 	}
 
