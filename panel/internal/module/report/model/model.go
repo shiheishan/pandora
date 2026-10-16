@@ -10,10 +10,9 @@ import (
 
 // Adjustment 是 revenue_report_adjustments 的一行（只追加）：营收报表的人工调整或它的冲正。
 type Adjustment struct {
-	ID       uuid.UUID       `gorm:"column:id;type:uuid;primaryKey;default:uuidv7()"`
-	Currency string          `gorm:"column:currency"`
-	Amount   decimal.Decimal `gorm:"column:amount;type:numeric(20,2)"`
-	Reason   string          `gorm:"column:reason"`
+	ID     uuid.UUID       `gorm:"column:id;type:uuid;primaryKey;default:uuidv7()"`
+	Amount decimal.Decimal `gorm:"column:amount;type:numeric(20,2)"`
+	Reason string          `gorm:"column:reason"`
 	// EffectiveOn 是计入报表的日子（站点时区的自然日），YYYY-MM-DD
 	EffectiveOn string `gorm:"column:effective_on;type:date"`
 	// ReversalOf 非空表示这一行是冲正，指向被冲的原行

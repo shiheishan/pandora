@@ -7,45 +7,30 @@ import (
 	"github.com/shopspring/decimal"
 
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
-	"github.com/aegispanel/aegis/internal/module/report/repo"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
-func adjustmentTotalFromRows(rows []repo.AdjustmentTotalRow, cur money.Currency) decimal.Decimal {
-	for _, r := range rows {
-		if r.Currency == string(cur) {
-			return r.Amount
-		}
-	}
-	return decimal.Zero
-}
-
-func revenueRowForCurrency(
-	cur money.Currency,
+func revenueRow(
 	byDay dayMap,
 	today time.Time,
-	ledgerTotals []ledgersvc.RevenueTotal,
-	adjTotals []repo.AdjustmentTotalRow,
+	ledgerTotal ledgersvc.RevenueTotal,
+	adjTotal decimal.Decimal,
 ) RevenueRow {
 	yesterday := addDays(today, -1)
 	day7Start := addDays(today, -6)
 	day30Start := addDays(today, -29)
 
-	actualToday := dayActual(byDay[dayKey(cur, dayString(today))])
-	actualYesterday := dayActual(byDay[dayKey(cur, dayString(yesterday))])
-	actual7 := sumActualByDay(byDay, cur, day7Start, today)
-	actual30 := sumActualByDay(byDay, cur, day30Start, today)
-	actualTotal := ledgerActualTotal(ledgerTotals, cur)
+	actualToday := dayActual(byDay[dayKey(dayString(today))])
+	actualYesterday := dayActual(byDay[dayKey(dayString(yesterday))])
+	actual7 := sumActualByDay(byDay, day7Start, today)
+	actual30 := sumActualByDay(byDay, day30Start, today)
+	actualTotal := ledgerActualTotal(ledgerTotal)
 
-	adjToday := sumAdjByDay(byDay, cur, today, today)
-	adjYesterday := sumAdjByDay(byDay, cur, yesterday, yesterday)
-	adj7 := sumAdjByDay(byDay, cur, day7Start, today)
-	adj30 := sumAdjByDay(byDay, cur, day30Start, today)
-	adjTotal := adjustmentTotalFromRows(adjTotals, cur)
+	adjToday := sumAdjByDay(byDay, today, today)
+	adjYesterday := sumAdjByDay(byDay, yesterday, yesterday)
+	adj7 := sumAdjByDay(byDay, day7Start, today)
+	adj30 := sumAdjByDay(byDay, day30Start, today)
 
 	return RevenueRow{
-		Currency: cur,
-
 		Today:      actualToday.Add(adjToday),
 		Yesterday:  actualYesterday.Add(adjYesterday),
 		Last7Days:  actual7.Add(adj7),
@@ -65,7 +50,7 @@ func revenueRowForCurrency(
 	}
 }
 
-// Overview 给看板概览：用户、订阅、节点、订单计数，两币种的营收（实际、调整、展示），账本漂移科目数。
+// Overview 给看板概览：用户、订阅、节点、订单计数，全站营收（实际、调整、展示），账本漂移科目数。
 func (s *Service) Overview(ctx context.Context) (Overview, error) {
 	return cached(ctx, s, "report:v1:overview", func(ctx context.Context) (Overview, error) {
 		return s.loadOverview(ctx)
@@ -106,19 +91,16 @@ func (s *Service) loadOverview(ctx context.Context) (Overview, error) {
 	if err != nil {
 		return Overview{}, err
 	}
-	ledgerTotals, err := s.deps.Ledger.RevenueTotals(ctx)
+	ledgerTotal, err := s.deps.Ledger.RevenueTotals(ctx)
 	if err != nil {
 		return Overview{}, err
 	}
-	adjTotals, err := s.repo.AdjustmentTotals(ctx)
+	adjTotal, err := s.repo.AdjustmentTotals(ctx)
 	if err != nil {
 		return Overview{}, err
 	}
 
-	revenue := []RevenueRow{
-		revenueRowForCurrency(money.CNY, byDay, today, ledgerTotals, adjTotals),
-		revenueRowForCurrency(money.USD, byDay, today, ledgerTotals, adjTotals),
-	}
+	revenue := revenueRow(byDay, today, ledgerTotal, adjTotal)
 
 	return Overview{
 		Users: UserCounts{

@@ -16,7 +16,6 @@ func TestAdjustmentCreateReversePG(t *testing.T) {
 	actx, admin := e.asAdmin(t, ctx)
 
 	orig, err := e.svc.CreateAdjustment(actx, CreateAdjustmentInput{
-		Currency:    "CNY",
 		Amount:      dec("100.50"),
 		Reason:      "PG 用例登记调整",
 		EffectiveOn: "2026-03-01",
@@ -61,7 +60,7 @@ func TestAdjustmentCreateReversePG(t *testing.T) {
 		t.Fatalf("reverse reversal: %v", err)
 	}
 
-	list, err := e.svc.ListAdjustments(actx, "CNY")
+	list, err := e.svc.ListAdjustments(actx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +98,6 @@ func TestAdjustmentMutationDeniedPG(t *testing.T) {
 	actx, _ := e.asAdmin(t, ctx)
 
 	orig, err := e.svc.CreateAdjustment(actx, CreateAdjustmentInput{
-		Currency:    "CNY",
 		Amount:      dec("50.00"),
 		Reason:      "只追加防篡改用例",
 		EffectiveOn: "2026-03-01",
@@ -121,32 +119,6 @@ func TestAdjustmentMutationDeniedPG(t *testing.T) {
 	}
 }
 
-// 冲正行币种与原行不同被复合外键拒绝（直接用 SQL 插）。
-func TestAdjustmentCrossCurrencyReversalDeniedPG(t *testing.T) {
-	e, ctx := newPGEnv(t)
-	actx, admin := e.asAdmin(t, ctx)
-
-	orig, err := e.svc.CreateAdjustment(actx, CreateAdjustmentInput{
-		Currency:    "CNY",
-		Amount:      dec("88.00"),
-		Reason:      "原币种CNY",
-		EffectiveOn: "2026-03-01",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// 直接执行 SQL 插入跨币种冲正行（原行为 CNY，冲正行为 USD）
-	err = e.exec(actx, `
-		INSERT INTO revenue_report_adjustments (currency, amount, reason, effective_on, reversal_of, created_by)
-		VALUES ('USD', -88.00, '非法跨币种冲正', '2026-03-01'::date, ?, ?)`,
-		orig.ID, admin,
-	)
-	if err == nil {
-		t.Fatal("跨币种冲正期望被复合外键 revenue_report_adjustments_reversal_fk 拒绝，但成功了")
-	}
-}
-
 // 两个 goroutine 并发冲正同一行，只有一个成功、另一个是冲突错误。
 func TestAdjustmentConcurrentReversePG(t *testing.T) {
 	if testing.Short() {
@@ -156,7 +128,6 @@ func TestAdjustmentConcurrentReversePG(t *testing.T) {
 	actx, _ := e.asAdmin(t, ctx)
 
 	orig, err := e.svc.CreateAdjustment(actx, CreateAdjustmentInput{
-		Currency:    "CNY",
 		Amount:      dec("200.00"),
 		Reason:      "并发冲正原行",
 		EffectiveOn: "2026-03-01",

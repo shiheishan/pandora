@@ -15,7 +15,6 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/aegispanel/aegis/internal/pkg/route"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -26,16 +25,14 @@ import (
 type fakeSvc struct {
 	Service
 
-	overview            service.Overview
-	overviewErr         error
-	revenueSeries       service.RevenueSeries
-	revenueErr          error
-	lastRevenueCurrency string
-	lastRevenueDays     int
+	overview        service.Overview
+	overviewErr     error
+	revenueSeries   service.RevenueSeries
+	revenueErr      error
+	lastRevenueDays int
 
 	adjustments    []service.Adjustment
 	adjustmentsErr error
-	lastListCur    string
 
 	createOut  service.Adjustment
 	createErr  error
@@ -66,13 +63,12 @@ func (f *fakeSvc) Overview(context.Context) (service.Overview, error) {
 	return f.overview, f.overviewErr
 }
 
-func (f *fakeSvc) RevenueTimeseries(_ context.Context, currency string, days int) (service.RevenueSeries, error) {
-	f.lastRevenueCurrency, f.lastRevenueDays = currency, days
+func (f *fakeSvc) RevenueTimeseries(_ context.Context, days int) (service.RevenueSeries, error) {
+	f.lastRevenueDays = days
 	return f.revenueSeries, f.revenueErr
 }
 
-func (f *fakeSvc) ListAdjustments(_ context.Context, currency string) ([]service.Adjustment, error) {
-	f.lastListCur = currency
+func (f *fakeSvc) ListAdjustments(_ context.Context) ([]service.Adjustment, error) {
 	return f.adjustments, f.adjustmentsErr
 }
 
@@ -179,7 +175,7 @@ func TestPostRoutesReauthAndIdempotency(t *testing.T) {
 	p := &authn.Principal{UserID: uuid.New(), SessionID: "s", Audience: authn.AudienceAdmin}
 	e := newAdminEngine(f, p, &hooks)
 
-	body := `{"currency":"CNY","amount":1,"reason":"补录线下收款测试"}`
+	body := `{"amount":1,"reason":"补录线下收款测试"}`
 	w := do(e, http.MethodPost, "/v1/revenue/adjustments", body)
 	if w.Code != http.StatusOK {
 		t.Fatalf("create status %d %s", w.Code, w.Body)
@@ -215,19 +211,19 @@ func TestGetRoutesNoReauth(t *testing.T) {
 func TestCreateAdjustmentOK(t *testing.T) {
 	f := &fakeSvc{createOut: sampleAdjustment()}
 	w := do(newAdminEngine(f, nil, nil), http.MethodPost, "/v1/revenue/adjustments",
-		`{"currency":"CNY","amount":1234,"reason":"补录线下收款","effective_on":"2026-03-01"}`)
+		`{"amount":1234,"reason":"补录线下收款","effective_on":"2026-03-01"}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d %s", w.Code, w.Body)
 	}
 	want := decimal.RequireFromString("12.34")
-	if !f.lastCreate.Amount.Equal(want) || f.lastCreate.EffectiveOn != "2026-03-01" || f.lastCreate.Currency != "CNY" {
+	if !f.lastCreate.Amount.Equal(want) || f.lastCreate.EffectiveOn != "2026-03-01" {
 		t.Fatalf("入参 %+v", f.lastCreate)
 	}
 }
 
 func TestCreateAdjustmentUnknownField(t *testing.T) {
 	w := do(newAdminEngine(&fakeSvc{}, nil, nil), http.MethodPost, "/v1/revenue/adjustments",
-		`{"currency":"CNY","amount":1234,"reason":"补录线下收款","effective_on":"2026-03-01","x":1}`)
+		`{"amount":1234,"reason":"补录线下收款","effective_on":"2026-03-01","x":1}`)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status %d", w.Code)
 	}
@@ -266,13 +262,13 @@ func TestUserTrafficRejectsIdentity(t *testing.T) {
 }
 
 func TestRevenueTimeseriesQuery(t *testing.T) {
-	f := &fakeSvc{revenueSeries: service.RevenueSeries{Currency: money.USD, Days: 30}}
-	w := do(newAdminEngine(f, nil, nil), http.MethodGet, "/v1/revenue/timeseries?currency=USD&days=30", "")
+	f := &fakeSvc{revenueSeries: service.RevenueSeries{Days: 30}}
+	w := do(newAdminEngine(f, nil, nil), http.MethodGet, "/v1/revenue/timeseries?days=30", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d", w.Code)
 	}
-	if f.lastRevenueCurrency != "USD" || f.lastRevenueDays != 30 {
-		t.Fatalf("query %+v %d", f.lastRevenueCurrency, f.lastRevenueDays)
+	if f.lastRevenueDays != 30 {
+		t.Fatalf("query days %d", f.lastRevenueDays)
 	}
 }
 
@@ -304,7 +300,7 @@ func TestReverseAdjustmentConflict(t *testing.T) {
 
 func sampleAdjustment() service.Adjustment {
 	return service.Adjustment{
-		ID: uuid.New(), Currency: money.CNY, Amount: decimal.New(1234, -2),
+		ID: uuid.New(), Amount: decimal.New(1234, -2),
 		Reason: "补录线下收款", EffectiveOn: "2026-03-01", CreatedBy: uuid.New(),
 		CreatedAt: time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC),
 	}
