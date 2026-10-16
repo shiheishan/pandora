@@ -152,7 +152,7 @@ func truncateTicketBody(s string, max int) string {
 //	plan / traffic / expires_at：取 UserSubscriptions.Current 且 State == StateLive 的那份——plan 为 PlanName，
 //	traffic 为第一条 MetricTraffic 配额的 Remaining 加 PackRemainingBytes（humanBytes；Limit 为 nil 写「不限量」；没有流量配额行写「—」），
 //	expires_at 为 noticeTime(PeriodEnd, 站点时区)；没有生效订阅时 plan 写「无生效订阅」，traffic、expires_at 写「—」；
-//	balance：余额.StringFixed(2) + " " + 币种。
+//	balance：余额.StringFixed(2) + " 元"。
 //
 // 模板：Kind 为 "opened" 用 TemplateAdminTicketOpened，否则 TemplateAdminTicketReplied。去重键 "admin-ticket:" + MessageID。
 func (s *Service) NotifyAdminsTicket(ctx context.Context, in AdminTicketInput) error {
@@ -210,11 +210,11 @@ func (s *Service) NotifyAdminsTicket(ctx context.Context, in AdminTicketInput) e
 	}
 
 	balanceStr := "—"
-	if balances, currency, err := s.balances.UserBalances(ctx, []uuid.UUID{in.UserID}); err != nil {
+	if balances, err := s.balances.UserBalances(ctx, []uuid.UUID{in.UserID}); err != nil {
 		lg.Warn("notify: 工单提醒读余额失败", zap.Error(err))
 	} else {
 		bal := balances[in.UserID]
-		balanceStr = bal.StringFixed(2) + " " + currency
+		balanceStr = bal.StringFixed(2) + " 元"
 	}
 
 	code := TemplateAdminTicketReplied
@@ -266,10 +266,7 @@ func ticketTraffic(cur *subsvc.Summary) string {
 	return "—"
 }
 
-// paidAmount 是收款提醒里的金额：订单总额（两位小数）加币种；没有币种时（旧数据或测试夹具）显示「—」。
+// paidAmount 是收款提醒里的金额：订单总额两位小数加「元」。
 func paidAmount(p ordersvc.PaidNotice) string {
-	if p.Currency == "" {
-		return "—"
-	}
-	return p.Total.StringFixed(2) + " " + p.Currency
+	return p.Total.StringFixed(2) + " 元"
 }

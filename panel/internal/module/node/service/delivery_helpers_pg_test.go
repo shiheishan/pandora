@@ -164,8 +164,8 @@ func (e *deliveryEnv) dSub(t *testing.T, ctx context.Context, user, version uuid
 	}
 	var s fixtureSub
 	err := e.row(ctx, `INSERT INTO subscriptions (user_id, plan_id, plan_version_id, status, current_period_start,
-		current_period_end, snapshot_currency, snapshot_amount, snapshot_interval, snapshot_interval_count, device_limit)
-		VALUES (?, ?, ?, ?, `+start+`, `+end+`, 'CNY', 10, 'month', 1, ?) RETURNING id, node_uid, proxy_uuid`,
+		current_period_end, snapshot_amount, snapshot_interval, snapshot_interval_count, device_limit)
+		VALUES (?, ?, ?, ?, `+start+`, `+end+`, 10, 'month', 1, ?) RETURNING id, node_uid, proxy_uuid`,
 		user, e.versionPlan[version], version, status, o.DeviceLimit).Scan(&s.ID, &s.UID, &s.Proxy)
 	if err != nil {
 		t.Fatalf("插订阅: %v", err)

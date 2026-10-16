@@ -98,8 +98,8 @@ func TestAdminOrderPaidScan_EnabledAndDedupe(t *testing.T) {
 	if p.Vars["order_no"] != "PD20260601008" {
 		t.Fatalf("order_no = %q, want PD20260601008", p.Vars["order_no"])
 	}
-	if p.Vars["amount"] != "—" {
-		t.Fatalf("amount = %q, want —", p.Vars["amount"])
+	if p.Vars["amount"] != "0.00 元" {
+		t.Fatalf("amount = %q, want 0.00 元", p.Vars["amount"])
 	}
 	if p.Vars["plan"] != "企业套餐" {
 		t.Fatalf("plan = %q, want 企业套餐", p.Vars["plan"])
@@ -217,7 +217,6 @@ func TestNotifyAdminsTicket_EnabledAndDisabled(t *testing.T) {
 		byUser: map[uuid.UUID]decimal.Decimal{
 			uid: decimal.NewFromFloat(123.45),
 		},
-		currency: "CNY",
 	}
 	e.svc.UseSubscriptionSummaries(fakeSum)
 	e.svc.UseBalances(fakeBal)
@@ -265,8 +264,8 @@ func TestNotifyAdminsTicket_EnabledAndDisabled(t *testing.T) {
 	if p.Vars["traffic"] != "70.0 GB" {
 		t.Fatalf("traffic = %q, want 70.0 GB", p.Vars["traffic"])
 	}
-	if p.Vars["balance"] != "123.45 CNY" {
-		t.Fatalf("balance = %q, want 123.45 CNY", p.Vars["balance"])
+	if p.Vars["balance"] != "123.45 元" {
+		t.Fatalf("balance = %q, want 123.45 元", p.Vars["balance"])
 	}
 
 	// 同一 MessageID 再调不重复
@@ -358,7 +357,6 @@ func TestDispatchAdminTicket_MapsMessage(t *testing.T) {
 		byUser: map[uuid.UUID]decimal.Decimal{
 			uid: decimal.NewFromFloat(0),
 		},
-		currency: "CNY",
 	}
 	e.svc.UseSubscriptionSummaries(fakeSum)
 	e.svc.UseBalances(fakeBal)

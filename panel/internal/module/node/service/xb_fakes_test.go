@@ -12,7 +12,7 @@ import (
 type fakeSite struct{ tz string }
 
 func (f fakeSite) Site(context.Context) (settingssvc.Site, error) {
-	return settingssvc.Site{Name: "测试站", Timezone: f.tz, Currency: "CNY"}, nil
+	return settingssvc.Site{Name: "测试站", Timezone: f.tz}, nil
 }
 
 // fakeSealer 是不加密的封存器：密文 = "sealed:" + AAD + ":" + 明文，Open 核对 AAD，供测试断言 AAD 用对了。
