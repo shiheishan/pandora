@@ -9,6 +9,7 @@ import (
 
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/module/payment/model"
+	"github.com/aegispanel/aegis/internal/module/payment/repo"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
@@ -219,7 +220,7 @@ func (s *Service) CreateProvider(ctx context.Context, in CreateProviderInput) (P
 			AcceptingNew:      false,
 		}
 		if err := s.repo.InsertProvider(ctx, p); err != nil {
-			if errors.Is(err, paymentrepo.ErrDuplicate) {
+			if errors.Is(err, repo.ErrDuplicate) {
 				return errs.Newf(errs.Conflict, "渠道编码已存在，请换一个")
 			}
 			return err
