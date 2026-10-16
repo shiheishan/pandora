@@ -22,17 +22,20 @@ describe('mock api · portal subscriptions (purchase model)', () => {
   })
   afterAll(() => close(server))
 
-  it('列表带备注名、配置名、续到哪天与这一份自己的流量包；顶层有未分配的余量', async () => {
+  it('列表带备注名、配置名、续到哪天；送的流量在 bonus_bytes，顶层只有 subscriptions', async () => {
     await scenario('proto-s2')
     const list = await subs()
-    expect(list.unattached_pack_bytes).toBe(0)
+    expect(Object.keys(list)).toEqual(['subscriptions'])
     expect(list.subscriptions.map((s) => [s.label, s.client_name, s.changeable])).toEqual([
       ['我的', 'Pandora · 我的', true],
       ['妈妈的 iPad', 'Pandora · 妈妈的 iPad', true],
     ])
     expect(list.subscriptions.every((s) => s.renew_until !== null)).toBe(true)
     await scenario('default')
-    expect((await subs()).subscriptions[0]!.pack_remaining_bytes).toBe(30 * 1024 ** 3)
+    const [pro] = (await subs()).subscriptions
+    // 默认场景第一份送了 20G：剩余 = 上限 + 送的 − 已用，配额行也带 bonus_bytes
+    expect([pro!.plan_kind, pro!.bonus_bytes, pro!.quotas[0]!.bonus_bytes]).toEqual(['subscription', 20 * 1024 ** 3, 20 * 1024 ** 3])
+    expect(pro!.quotas[0]!.remaining).toBe(pro!.traffic_limit! + pro!.bonus_bytes - pro!.traffic_used)
   })
 
   it('改名：同一用户下不分大小写唯一（409），超长 422，空串清除', async () => {
@@ -79,12 +82,14 @@ describe('mock api · portal subscriptions (purchase model)', () => {
     expect((await subs()).subscriptions).toHaveLength(3)
   })
 
-  it('每一份不再带「可挪一次的旧流量包」字段（用户 10-09 删掉），与 Go 的 MySubscription 一致', async () => {
+  it('每一份不带已删的字段（流量包、币种、配额重置方式），与 Go 的 mySubscriptionResponse 一致', async () => {
     for (const s of ['default', 'multi', 'proto-s2'] as const) {
       await scenario(s)
       const raw = (await (await call('GET', '/v1/me/subscriptions')).json()) as { subscriptions: Array<Record<string, unknown>> }
       expect(raw.subscriptions.length).toBeGreaterThan(0)
-      for (const sub of raw.subscriptions) expect(Object.keys(sub)).not.toContain('legacy_movable_pack_bytes')
+      for (const sub of raw.subscriptions) {
+        for (const gone of ['legacy_movable_pack_bytes', 'pack_remaining_bytes', 'currency', 'quota_reset_strategy']) expect(Object.keys(sub)).not.toContain(gone)
+      }
     }
   })
 
