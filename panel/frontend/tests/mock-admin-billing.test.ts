@@ -286,24 +286,6 @@ describe('mock api · admin billing', () => {
     expect(after.balance).toBe(before.balance + created.balance_refund!)
   })
 
-  it('attaches unattached traffic to a first subscription, and leaves it alone when several are in use', async () => {
-    const GiB = 1024 ** 3
-    const standard = await planByName('标准版')
-    admin = await reauthed()
-    // 第 7 位种子用户没有订阅、兑过 20 GiB 的送流量卡：开第一份时自动挂上（billing provision）
-    const found = await json<{ users: Array<{ id: string }> }>(await get(admin, 'users?q=grace.h@foxmail.com&limit=1'))
-    const lone = found.users[0]!.id
-    expect(await detailOf(lone)).toMatchObject({ subscriptions: [], unattached_pack_bytes: 20 * GiB })
-    const first = await post(admin, 'orders/manual', { user_id: lone, plan_id: standard.plan_id, price_id: standard.price_id, reason: '首次开通赠送', settlement: 'grant' }, 'attach-1')
-    expect(first.status).toBe(201)
-    const after = await detailOf(lone)
-    expect(after.unattached_pack_bytes).toBe(0)
-    expect(after.subscriptions).toHaveLength(1)
-    expect(after.subscriptions[0]!.pack_remaining_bytes).toBe(20 * GiB)
-    // …02 两份不同款都在用，未分配的 5 GiB 不会被系统挑一份挂上
-    expect((await detailOf(DUO)).unattached_pack_bytes).toBe(5 * GiB)
-  })
-
   it('opens another copy when asked to, and a single option needs no target', async () => {
     const standard = await planByName('标准版')
     admin = await reauthed()

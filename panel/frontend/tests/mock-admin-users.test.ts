@@ -1,7 +1,7 @@
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'
-import { userDetailSchema, resetDoneSchema } from '../src/admin/screens/users/api'
+import { resetDoneSchema, userDetailSchema } from '../src/admin/screens/users/schemas'
 import { generationJobSchema, generationJobsSchema, trafficGrantedSchema } from '../src/admin/screens/users/opsSchemas'
 import { bearer, close, loginAs, mockFetch, serve } from './mock-helpers'
 
@@ -170,7 +170,7 @@ describe('mock api · admin users ops', () => {
     expect(after.find((x) => x.id === other!.id)!.quotas[0]!.limit).toBe(otherInitialLimit)
 
     // 再加一次，bonus_bytes 累加
-    const grantedSecond = trafficGrantedSchema.parse(await (await send('POST', `/v1/subscriptions/${sub}/traffic-pack`, { bytes: 5 * 1024 ** 3, reason: '再次补偿' }, 'tp-1b')).json())
+    const grantedSecond = trafficGrantedSchema.parse(await (await send('POST', `/v1/subscriptions/${sub}/traffic-pack`, { bytes: 5 * 1024 ** 3, reason: '再次补偿线路故障' }, 'tp-1b')).json())
     expect(grantedSecond.bonus_bytes).toBe(addBytes + 5 * 1024 ** 3)
 
     expect((await send('POST', '/v1/subscriptions/00000000-0000-4000-8000-000000000000/traffic-pack', { bytes: 1, reason: '补偿线路故障' }, 'tp-2')).status).toBe(404)

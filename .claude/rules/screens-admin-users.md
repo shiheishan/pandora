@@ -24,7 +24,7 @@ paths:
 - 调整余额（`dialogs.tsx` 的 `BalanceForm`，在「订单与余额」页签里展开）：「增加 / 扣减」单选 + 正金额（`balanceCents`），提交前确认框，原因必填；请求体只有 `{ amount, reason }`（只有人民币）。
 - 批量导出没有 cookie，只能 fetch 带 Bearer 取回再存文件，要 reauth。
 - 用户相关的地址被别处引用：仪表盘排行、工单「查看用户」、订单抽屉、⌘K 都跳 `#/users/list/<用户 id>`，订单标签跳 `#/billing/orders?user_id=`；改地址格式要同步这些入口。
-- 批量运营是上下两段分步（批量操作用户：筛选 → 确认名单 → 选操作；批量生成用户：账号格式 → 归属与原因 → 提交）。批量生成是后台任务：提交回 202 与任务，`useGenerationJob` 轮询到结束为止，进度条按 completed/total；结果 CSV 只能从服务端下（`requestRaw`，只有提交人、要 reauth、24 小时内）。任务与加流量的 schema 在 `opsSchemas.ts`（不依赖 React，假后端测试也引用）。
+- 批量运营是上下两段分步（批量操作用户：筛选 → 确认名单 → 选操作；批量生成用户：账号格式 → 归属与原因 → 提交）。批量生成是后台任务：提交回 202 与任务，`useGenerationJob` 轮询到结束为止，进度条按 completed/total；结果 CSV 只能从服务端下（`requestRaw`，只有提交人、要 reauth、24 小时内）。任务与加流量的 schema 在 `opsSchemas.ts`，用户列表行、详情与重置回执的 schema 在 `schemas.ts`（都不依赖 React，node 侧的假后端测试只从这两个文件取 schema，不 import `api.ts`）。
 - 注册设置（`SignupForm.tsx` 的 `SignupSettingsPanel`，`section` 为 growth / security；`signupSettings.ts`）：GET / POST `v1/settings/signup`，只发改了的字段（`signupBody`），所以两个组件互不覆盖；secret 只写不读（`captcha_secret` 发空串表示清除）；邮件链接登录在没配发信时禁用。
 - 已注销（`status === 'deleted'`）：列表与详情标题一律 `userLabel`（「已注销 #<短 id>」，不显示占位邮箱）；详情顶部一句说明，没有任何写入口。注销对话框要填原因并输入该用户邮箱才能点，管理员不显示「注销账号」。
 - 写操作：改邮箱、改邀请人（按邮箱精确找人，留空清除）、注销要 reauth；显示名与备注不要。原因 5–500 字，fields 标到对应输入框。「改到期」「改上限」只对生效中的那一份（`SubEditDialogs.tsx`、`subEdit.ts`，上限按 GiB 填、提交字节、留空为不限，最多 10 TiB）。
