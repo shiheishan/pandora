@@ -3,104 +3,86 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"sort"
 
 	"github.com/aegispanel/aegis/internal/module/catalog/model"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
 )
 
-// encodeHighlights 把卖点列表编成 jsonb 文本。
-func encodeHighlights(highlights []string) (string, error) {
-	if highlights == nil {
-		highlights = []string{}
-	}
-	b, err := json.Marshal(highlights)
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
-}
-
-func decodeHighlights(raw string) ([]string, error) {
-	if raw == "" {
-		return []string{}, nil
-	}
-	var out []string
-	if err := json.Unmarshal([]byte(raw), &out); err != nil {
-		return nil, err
-	}
-	if out == nil {
-		return []string{}, nil
-	}
-	return out, nil
-}
-
-func planFromModel(m model.Plan, groups []uuid.UUID) (Plan, error) {
-	hl, err := decodeHighlights(m.Highlights)
-	if err != nil {
-		return Plan{}, err
-	}
+func planFromModel(m model.Plan, groups []uuid.UUID) Plan {
 	if groups == nil {
 		groups = []uuid.UUID{}
 	}
 	return Plan{
-		ID:                   m.ID,
-		Code:                 m.Code,
-		Name:                 m.Name,
-		Description:          m.Description,
-		Status:               m.Status,
-		CurrentVersionID:     m.CurrentVersionID,
-		Visibility:           m.Visibility,
-		VisibleGroupIDs:      groups,
-		VisibleFrom:          m.VisibleFrom,
-		VisibleUntil:         m.VisibleUntil,
-		AllowNewPurchase:     m.AllowNewPurchase,
-		AllowRenewal:         m.AllowRenewal,
-		AllowUpgrade:         m.AllowUpgrade,
-		PurchaseLimitPerUser: m.PurchaseLimitPerUser,
-		StockTotal:           m.StockTotal,
-		StockReserved:        m.StockReserved,
-		StockSold:            m.StockSold,
-		Highlights:           hl,
-		Recommended:          m.Recommended,
-		SortOrder:            m.SortOrder,
-		RowVersion:           m.RowVersion,
-		CreatedAt:            m.CreatedAt,
-		UpdatedAt:            m.UpdatedAt,
-	}, nil
+		ID:               m.ID,
+		Code:             m.Code,
+		Name:             m.Name,
+		Description:      m.Description,
+		Kind:             m.Kind,
+		Status:           m.Status,
+		CurrentVersionID: m.CurrentVersionID,
+		Visibility:       m.Visibility,
+		VisibleGroupIDs:  groups,
+		AllowNewPurchase: m.AllowNewPurchase,
+		AllowRenewal:     m.AllowRenewal,
+		AllowUpgrade:     m.AllowUpgrade,
+		Recommended:      m.Recommended,
+		ResetPrice:       m.ResetPrice,
+		ResetLimit:       m.ResetLimit,
+		RowVersion:       m.RowVersion,
+		CreatedAt:        m.CreatedAt,
+		UpdatedAt:        m.UpdatedAt,
+	}
 }
 
 func priceFromModel(m model.Price) Price {
-	cur := money.Currency(m.Currency)
 	return Price{
 		ID:              m.ID,
 		PlanID:          m.PlanID,
-		Currency:        cur,
+		PlanKind:        m.PlanKind,
 		UnitAmount:      m.UnitAmount,
 		BillingInterval: m.BillingInterval,
 		IntervalCount:   m.IntervalCount,
+		ValidityDays:    m.ValidityDays,
 		Status:          m.Status,
-		UserGroupID:     m.UserGroupID,
-		ValidFrom:       m.ValidFrom,
-		ValidUntil:      m.ValidUntil,
 		RowVersion:      m.RowVersion,
 		CreatedAt:       m.CreatedAt,
 	}
 }
 
-func packFromModel(m model.TrafficPack) TrafficPack {
-	return TrafficPack{
-		ID:           m.ID,
-		Name:         m.Name,
-		TrafficBytes: m.TrafficBytes,
-		Currency:     money.Currency(m.Currency),
-		UnitAmount:   m.UnitAmount,
-		Recommended:  m.Recommended,
-		Status:       m.Status,
-		SortOrder:    m.SortOrder,
-		CreatedAt:    m.CreatedAt,
-		UpdatedAt:    m.UpdatedAt,
+// tierRank 给价格周期排序：月付在年付前，同一周期按 interval_count；一次性价排最后（同一套餐里不会混着出现）。
+func tierRank(interval string, count int) int {
+	switch interval {
+	case IntervalMonth:
+		return count
+	case IntervalYear:
+		return 12 * count
 	}
+	return 1 << 20
+}
+
+// sortPricesByTier 把价格按周期从短到长排，同档按 id。
+func sortPricesByTier(ps []Price) {
+	sort.SliceStable(ps, func(i, j int) bool {
+		ri, rj := tierRank(ps[i].BillingInterval, ps[i].IntervalCount), tierRank(ps[j].BillingInterval, ps[j].IntervalCount)
+		if ri != rj {
+			return ri < rj
+		}
+		return ps[i].ID.String() < ps[j].ID.String()
+	})
+}
+
+// trafficQuotas 按套餐类型生成版本的流量配额：订阅按周期（cycle），一次性是总量（total）；不限流量时没有配额行。
+func trafficQuotas(kind string, trafficBytes *int64) []Quota {
+	if trafficBytes == nil {
+		return []Quota{}
+	}
+	period := PeriodCycle
+	if kind == KindOneTime {
+		period = PeriodTotal
+	}
+	b := *trafficBytes
+	return []Quota{{Metric: MetricTraffic, Limit: &b, Unit: UnitBytes, Period: period}}
 }
 
 func versionFromModel(m model.PlanVersion, ents []model.Entitlement, quotas []model.QuotaDefinition) Version {
@@ -121,26 +103,18 @@ func versionFromModel(m model.PlanVersion, ents []model.Entitlement, quotas []mo
 		})
 	}
 	return Version{
-		ID:                   m.ID,
-		PlanID:               m.PlanID,
-		Version:              m.Version,
-		Status:               m.Status,
-		FrozenAt:             m.FrozenAt,
-		QuotaResetStrategy:   m.QuotaResetStrategy,
-		QuotaResetDay:        m.QuotaResetDay,
-		RenewalExtendsPeriod: m.RenewalExtendsPeriod,
-		RenewalResetsQuota:   m.RenewalResetsQuota,
-		RenewalKeepsAddons:   m.RenewalKeepsAddons,
-		MaxDevices:           m.MaxDevices,
-		MaxConcurrent:        m.MaxConcurrent,
-		DeviceReleaseHours:   m.DeviceReleaseHours,
-		ThrottleKbps:         m.ThrottleKbps,
-		Notes:                m.Notes,
-		RowVersion:           m.RowVersion,
-		CreatedBy:            m.CreatedBy,
-		CreatedAt:            m.CreatedAt,
-		Entitlements:         outEnts,
-		Quotas:               outQuotas,
+		ID:           m.ID,
+		PlanID:       m.PlanID,
+		Version:      m.Version,
+		Status:       m.Status,
+		FrozenAt:     m.FrozenAt,
+		MaxDevices:   m.MaxDevices,
+		ThrottleKbps: m.ThrottleKbps,
+		RowVersion:   m.RowVersion,
+		CreatedBy:    m.CreatedBy,
+		CreatedAt:    m.CreatedAt,
+		Entitlements: outEnts,
+		Quotas:       outQuotas,
 	}
 }
 
@@ -187,11 +161,7 @@ func (s *Service) plansWithGroups(ctx context.Context, rows []model.Plan) ([]Pla
 		if groups == nil {
 			groups = []uuid.UUID{}
 		}
-		p, err := planFromModel(r, groups)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, p)
+		out = append(out, planFromModel(r, groups))
 	}
 	return out, nil
 }

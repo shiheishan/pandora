@@ -20,9 +20,6 @@ type Lock int
 const (
 	NoLock Lock = iota
 	ForShare
-	// ForNoKeyUpdate 用于建单时锁套餐行：同一事务随后要 UPDATE 这一行（库存），
-	// 先拿 FOR SHARE 再升级会让两笔并发下单互等死锁；它不挡外键检查的 FOR KEY SHARE。
-	ForNoKeyUpdate
 	ForUpdate
 )
 
@@ -31,8 +28,6 @@ func (l Lock) suffix() string {
 	switch l {
 	case ForShare:
 		return " FOR SHARE"
-	case ForNoKeyUpdate:
-		return " FOR NO KEY UPDATE"
 	case ForUpdate:
 		return " FOR UPDATE"
 	}
@@ -42,7 +37,7 @@ func (l Lock) suffix() string {
 var (
 	// ErrDuplicate 表示唯一约束冲突（套餐代码重复、已有草稿版本、同档在售价重复）。
 	ErrDuplicate = errors.New("catalog: 唯一约束冲突")
-	// ErrForeignKey 表示外键约束冲突（用户组不存在、引用了别的套餐的版本等）。
+	// ErrForeignKey 表示外键约束冲突（用户组或节点池不存在、引用了别的套餐的版本等）。
 	ErrForeignKey = errors.New("catalog: 外键约束冲突")
 	// ErrCheck 表示 CHECK 约束不满足。
 	ErrCheck = errors.New("catalog: CHECK 约束不满足")

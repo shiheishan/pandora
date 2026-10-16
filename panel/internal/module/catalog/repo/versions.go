@@ -94,18 +94,12 @@ func (r *Repo) DraftVersionIDs(ctx context.Context, planIDs []uuid.UUID) (map[uu
 	return out, nil
 }
 
-// UpdateVersionSemantics 全量覆盖草稿版本的语义列并把 row_version 加一；条件 id = ? AND row_version = expected AND status = 'draft'。
-func (r *Repo) UpdateVersionSemantics(ctx context.Context, versionID uuid.UUID, expected int64, v *model.PlanVersion) (bool, error) {
+// UpdateVersionUsage 改草稿版本的设备数与限速并把 row_version 加一；条件 id = ? AND status = 'draft'（草稿只由本模块在套餐行锁下改，不另验乐观锁）。
+func (r *Repo) UpdateVersionUsage(ctx context.Context, versionID uuid.UUID, maxDevices, throttleKbps *int) (bool, error) {
 	res := r.d.Conn(ctx).Exec(`UPDATE plan_versions SET
-		quota_reset_strategy = ?, quota_reset_day = ?,
-		renewal_extends_period = ?, renewal_resets_quota = ?, renewal_keeps_addons = ?,
-		max_devices = ?, max_concurrent = ?, device_release_hours = ?, throttle_kbps = ?, notes = ?,
-		row_version = row_version + 1
-		WHERE id = ? AND row_version = ? AND status = 'draft'`,
-		v.QuotaResetStrategy, v.QuotaResetDay,
-		v.RenewalExtendsPeriod, v.RenewalResetsQuota, v.RenewalKeepsAddons,
-		v.MaxDevices, v.MaxConcurrent, v.DeviceReleaseHours, v.ThrottleKbps, v.Notes,
-		versionID, expected,
+		max_devices = ?, throttle_kbps = ?, row_version = row_version + 1
+		WHERE id = ? AND status = 'draft'`,
+		maxDevices, throttleKbps, versionID,
 	)
 	if res.Error != nil {
 		return false, mapErr(res.Error)
@@ -113,12 +107,12 @@ func (r *Repo) UpdateVersionSemantics(ctx context.Context, versionID uuid.UUID, 
 	return res.RowsAffected == 1, nil
 }
 
-// PublishVersion 发布草稿：status='published', frozen_at=now(), row_version+1；条件 id = ? AND row_version = expected AND status = 'draft'。
-func (r *Repo) PublishVersion(ctx context.Context, versionID uuid.UUID, expected int64) (bool, error) {
+// PublishVersion 发布草稿：status='published', frozen_at=now(), row_version+1；条件 id = ? AND status = 'draft'。
+func (r *Repo) PublishVersion(ctx context.Context, versionID uuid.UUID) (bool, error) {
 	res := r.d.Conn(ctx).Exec(`UPDATE plan_versions SET
 		status = 'published', frozen_at = now(), row_version = row_version + 1
-		WHERE id = ? AND row_version = ? AND status = 'draft'`,
-		versionID, expected,
+		WHERE id = ? AND status = 'draft'`,
+		versionID,
 	)
 	if res.Error != nil {
 		return false, mapErr(res.Error)
