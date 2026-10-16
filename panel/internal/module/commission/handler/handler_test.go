@@ -26,6 +26,7 @@ type fakeSvc struct {
 	Service
 	my          service.MyCommission
 	withdrawals []service.AdminWithdrawal
+	gotStatuses []string
 	overview    service.Overview
 	gotAmount   decimal.Decimal
 	gotPayout   string
@@ -61,7 +62,8 @@ func (f *fakeSvc) AdminOverview(context.Context) (service.Overview, error) {
 	return f.overview, nil
 }
 
-func (f *fakeSvc) AdminWithdrawals(context.Context, string) ([]service.AdminWithdrawal, error) {
+func (f *fakeSvc) AdminWithdrawals(_ context.Context, statuses []string) ([]service.AdminWithdrawal, error) {
+	f.gotStatuses = statuses
 	return f.withdrawals, nil
 }
 
@@ -307,6 +309,21 @@ func TestListWithdrawalsShape(t *testing.T) {
 	}
 	if _, ok := row["completed_at"]; !ok {
 		t.Fatal("completed_at 字段应输出为 null")
+	}
+	if f.gotStatuses != nil {
+		t.Fatalf("不带 status 不应筛状态: %v", f.gotStatuses)
+	}
+}
+
+// status 逗号分隔多个状态（去空白、丢空段），原样交给 service 校验。
+func TestListWithdrawalsStatusList(t *testing.T) {
+	f := &fakeSvc{}
+	w := do(newEngine(f, true, nil), http.MethodGet, "/v1/withdrawals?status=requested,%20approved,", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if len(f.gotStatuses) != 2 || f.gotStatuses[0] != "requested" || f.gotStatuses[1] != "approved" {
+		t.Fatalf("statuses %v", f.gotStatuses)
 	}
 }
 

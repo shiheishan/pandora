@@ -22,14 +22,14 @@ func (h *Handler) overview(c *gin.Context) {
 	httpx.OK(c, resp)
 }
 
-// listWithdrawals 返回最近 200 笔提现（可按状态筛），收款信息已解封，管理员据此打款。
+// listWithdrawals 返回最近 200 笔提现（status 可逗号分隔多个状态，校验在 service），收款信息已解封，管理员据此打款。
 func (h *Handler) listWithdrawals(c *gin.Context) {
 	var q listWithdrawalsQuery
 	if err := httpx.BindQuery(c, &q); err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	rows, err := h.svc.AdminWithdrawals(c.Request.Context(), q.Status)
+	rows, err := h.svc.AdminWithdrawals(c.Request.Context(), q.statuses())
 	if err != nil {
 		httpx.Fail(c, err)
 		return
