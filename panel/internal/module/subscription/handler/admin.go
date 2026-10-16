@@ -47,7 +47,7 @@ func (h *Handler) adminExtend(c *gin.Context) {
 	})
 }
 
-// adminGrantTraffic 给一份生效中的订阅加一笔流量包。
+// adminGrantTraffic 给一份生效中的订阅加本期流量（送的量，订阅套餐当期有效、一次性一直有效）。
 func (h *Handler) adminGrantTraffic(c *gin.Context) {
 	id, ok := subID(c)
 	if !ok {
@@ -68,12 +68,11 @@ func (h *Handler) adminGrantTraffic(c *gin.Context) {
 		return
 	}
 	httpx.OK(c, trafficGrantResponse{
-		SubscriptionID:      res.SubscriptionID.String(),
-		UserID:              res.UserID.String(),
-		UserEmail:           res.UserEmail,
-		GrantID:             res.GrantID.String(),
-		GrantedBytes:        res.GrantedBytes,
-		RemainingBytesTotal: res.RemainingBytesTotal,
+		SubscriptionID: res.SubscriptionID.String(),
+		UserID:         res.UserID.String(),
+		UserEmail:      res.UserEmail,
+		GrantedBytes:   res.GrantedBytes,
+		BonusBytes:     res.BonusBytes,
 	})
 }
 

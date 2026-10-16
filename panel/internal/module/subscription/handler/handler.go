@@ -1,5 +1,5 @@
-// Package handler 是 subscription 模块的 HTTP 层：订阅链接拉取、链接列表与换链接、线路预览、按日用量、后台换链接，
-// 门户「我的套餐」、改名、流量包与转移，后台加时长、加流量、手动重置流量、改设备数与重置日志，
+// Package handler 是 subscription 模块的 HTTP 层：订阅链接拉取、链接列表与换链接、线路预览、按日用量，
+// 门户「我的套餐」与改名，后台加时长、加本期流量、手动重置流量、改设备数与重置日志，
 // 以及订阅域名分组与探测（门户票据、探测页、上报、公开探测接口）。只做参数绑定与校验、调 service、写响应。
 package handler
 
@@ -30,8 +30,6 @@ const renamePerMinute = 10
 type Service interface {
 	MySubscriptions(ctx context.Context) (service.MySubscriptions, error)
 	SetMyLabel(ctx context.Context, subID uuid.UUID, label *string) (service.LabelResult, error)
-	MyTrafficPacks(ctx context.Context) (service.PackBalance, error)
-	MyTransferPacks(ctx context.Context, from *uuid.UUID, to uuid.UUID) (int64, error)
 	AdminExtend(ctx context.Context, subID uuid.UUID, days int, reason string) (service.AdminExtendResult, error)
 	AdminGrantTraffic(ctx context.Context, subID uuid.UUID, bytes int64, reason string) (service.AdminTrafficGrantResult, error)
 	AdminResetTraffic(ctx context.Context, subID uuid.UUID, note string) (int64, error)
@@ -93,9 +91,6 @@ func (h *Handler) RegisterPublic(v1 *gin.RouterGroup, k route.Kit) {
 	v1.PATCH("/me/subscriptions/:id", k.RequireAuth,
 		h.limit(ratelimit.Dimension{Rule: ratelimit.PerMinute("sub_rename", renamePerMinute), Key: byAccount}),
 		h.renameSubscription)
-	v1.GET("/me/traffic-packs", k.RequireAuth, h.myTrafficPacks)
-	// 不要幂等键：重复调用第二次没有东西可转，moved_bytes=0
-	v1.POST("/me/traffic-packs/transfer", k.RequireAuth, h.transferTrafficPacks)
 	v1.GET("/me/subscription-links", k.RequireAuth, h.mySubscriptionLinks)
 	// 换链接按份限频：每份间隔 10 分钟、每份每天 5 次，加按账号每天 20 次（rotateLimit）
 	v1.POST("/me/subscriptions/:id/rotate", k.RequireAuth, h.rotateLimit(), h.rotateSubscriptionLink)
@@ -116,6 +111,7 @@ func (h *Handler) RegisterPublic(v1 *gin.RouterGroup, k route.Kit) {
 // RegisterAdmin 注册后台路由。加时长、加流量每执行一次多一份，要近期重认证与独立的幂等作用域。
 func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	v1.POST("/subscriptions/:id/extend", k.RequireAuth, k.RecentReauth, k.Idempotency(ExtendIdempotencyScope), h.adminExtend)
+	// 加本期流量：路径沿用前端在用的 /traffic-pack
 	v1.POST("/subscriptions/:id/traffic-pack", k.RequireAuth, k.RecentReauth, k.Idempotency(TrafficGrantIdempotencyScope), h.adminGrantTraffic)
 	v1.POST("/subscriptions/:id/traffic-reset", k.RequireAuth, k.RecentReauth, k.Idempotency(TrafficResetIdempotencyScope), h.adminResetTraffic)
 	v1.POST("/subscriptions/:id/device-limit", k.RequireAuth, h.adminSetDeviceLimit)
