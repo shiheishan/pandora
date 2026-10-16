@@ -1,351 +1,127 @@
 package handler
 
 import (
-	"encoding/json"
 	"time"
 
 	"github.com/aegispanel/aegis/internal/module/catalog/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/money"
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
 // --- 请求 DTO ---
 
+// createPlanRequest 是新建套餐的请求体：kind 决定后面的字段哪组生效，业务校验在 service。
 type createPlanRequest struct {
-	Code                 string     `json:"code"`
-	Name                 string     `json:"name"`
-	Description          *string    `json:"description"`
-	Visibility           string     `json:"visibility"`
-	VisibleGroupIDs      []string   `json:"visible_group_ids"`
-	VisibleFrom          *time.Time `json:"visible_from"`
-	VisibleUntil         *time.Time `json:"visible_until"`
-	AllowNewPurchase     *bool      `json:"allow_new_purchase"`
-	AllowRenewal         *bool      `json:"allow_renewal"`
-	AllowUpgrade         *bool      `json:"allow_upgrade"`
-	PurchaseLimitPerUser *int       `json:"purchase_limit_per_user"`
-	StockTotal           *int       `json:"stock_total"`
-	SortOrder            int        `json:"sort_order"`
-	Highlights           []string   `json:"highlights"`
-	Recommended          bool       `json:"recommended"`
+	Kind        string  `json:"kind"`
+	Name        string  `json:"name"`
+	Description *string `json:"description"`
+	// Prices 只给订阅套餐：四档周期价。
+	Prices *[]tierRequest `json:"prices"`
+	// UnitAmount、ValidityDays 只给一次性套餐；validity_days 空 = 永久。
+	UnitAmount   *int64 `json:"unit_amount"`
+	ValidityDays *int   `json:"validity_days"`
+	// 用量（流量字节、设备数、限速 kbps）与请求体平铺，nil = 不限。
+	usageInput
+	// PoolIDs 是要绑定的节点池。
+	PoolIDs []string `json:"pool_ids"`
+	// Reset 是流量重置，空 = 不卖。
+	Reset *resetInput `json:"reset"`
+	// Visibility 是可见性；visible_group_ids 只在 visibility = group 时用。
+	Visibility      string   `json:"visibility"`
+	VisibleGroupIDs []string `json:"visible_group_ids"`
+	// AllowNewPurchase、AllowRenewal、AllowUpgrade 空 = 缺省（见 planCreateFrom）。
+	AllowNewPurchase *bool `json:"allow_new_purchase"`
+	AllowRenewal     *bool `json:"allow_renewal"`
+	AllowUpgrade     *bool `json:"allow_upgrade"`
+	Recommended      bool  `json:"recommended"`
+	// Publish 为真时建成并直接发布上架。
+	Publish bool `json:"publish"`
 }
 
-type updatePlanRequest struct {
-	ExpectedRowVersion   int64      `json:"expected_row_version"`
-	Code                 string     `json:"code"`
-	Name                 string     `json:"name"`
-	Description          *string    `json:"description"`
-	Visibility           string     `json:"visibility"`
-	VisibleGroupIDs      []string   `json:"visible_group_ids"`
-	VisibleFrom          *time.Time `json:"visible_from"`
-	VisibleUntil         *time.Time `json:"visible_until"`
-	AllowNewPurchase     bool       `json:"allow_new_purchase"`
-	AllowRenewal         bool       `json:"allow_renewal"`
-	AllowUpgrade         bool       `json:"allow_upgrade"`
-	PurchaseLimitPerUser *int       `json:"purchase_limit_per_user"`
-	StockTotal           *int       `json:"stock_total"`
-	SortOrder            int        `json:"sort_order"`
-	Highlights           []string   `json:"highlights"`
-	Recommended          bool       `json:"recommended"`
+// tierRequest 是订阅套餐的一档价：unit_amount 是整数分，空 = 不卖这一档（改价时）。
+type tierRequest struct {
+	BillingInterval string `json:"billing_interval"`
+	IntervalCount   int    `json:"interval_count"`
+	UnitAmount      *int64 `json:"unit_amount"`
 }
 
-type entitlementRequest struct {
-	Code  string          `json:"code"`
-	Value json.RawMessage `json:"value"`
+// usageInput 是用量三项，空 = 不限；嵌入请求体，字段平铺在顶层。
+type usageInput struct {
+	TrafficBytes *int64 `json:"traffic_bytes"`
+	MaxDevices   *int   `json:"max_devices"`
+	ThrottleKbps *int   `json:"throttle_kbps"`
 }
 
-type quotaRequest struct {
-	Metric string `json:"metric"`
-	Limit  *int64 `json:"limit"`
-	Unit   string `json:"unit"`
-	Period string `json:"period"`
+// resetInput 是流量重置：price 是每次的整数分，limit 空 = 不限次数。
+type resetInput struct {
+	Price int64 `json:"price"`
+	Limit *int  `json:"limit"`
 }
 
-type updateVersionRequest struct {
-	ExpectedRowVersion   int64                `json:"expected_row_version"`
-	QuotaResetStrategy   string               `json:"quota_reset_strategy"`
-	QuotaResetDay        *int                 `json:"quota_reset_day"`
-	RenewalExtendsPeriod bool                 `json:"renewal_extends_period"`
-	RenewalResetsQuota   bool                 `json:"renewal_resets_quota"`
-	RenewalKeepsAddons   bool                 `json:"renewal_keeps_addons"`
-	MaxDevices           *int                 `json:"max_devices"`
-	MaxConcurrent        *int                 `json:"max_concurrent"`
-	DeviceReleaseHours   int                  `json:"device_release_hours"`
-	OveragePolicy        string               `json:"overage_policy"`
-	ThrottleKbps         *int                 `json:"throttle_kbps"`
-	Notes                *string              `json:"notes"`
-	Entitlements         []entitlementRequest `json:"entitlements"`
-	Quotas               []quotaRequest       `json:"quotas"`
-	PoolIDs              []string             `json:"pool_ids"`
+// basicUpdateRequest 是改名称与说明。
+type basicUpdateRequest struct {
+	ExpectedRowVersion int64   `json:"expected_row_version"`
+	Name               string  `json:"name"`
+	Description        *string `json:"description"`
 }
 
-type createPriceRequest struct {
-	Currency        string     `json:"currency"`
-	UnitAmount      int64      `json:"unit_amount"`
-	BillingInterval string     `json:"billing_interval"`
-	IntervalCount   int16      `json:"interval_count"`
-	UserGroupID     *string    `json:"user_group_id"`
-	ValidFrom       *time.Time `json:"valid_from"`
-	ValidUntil      *time.Time `json:"valid_until"`
+// salesUpdateRequest 是改销售设置；visible_group_ids 只在 visibility = group 时用。
+type salesUpdateRequest struct {
+	ExpectedRowVersion int64    `json:"expected_row_version"`
+	Visibility         string   `json:"visibility"`
+	VisibleGroupIDs    []string `json:"visible_group_ids"`
+	AllowNewPurchase   bool     `json:"allow_new_purchase"`
+	AllowRenewal       bool     `json:"allow_renewal"`
+	AllowUpgrade       bool     `json:"allow_upgrade"`
+	Recommended        bool     `json:"recommended"`
 }
 
+// resetUpdateRequest 是改流量重置：enabled 为假时 price、limit 不看。
+type resetUpdateRequest struct {
+	ExpectedRowVersion int64 `json:"expected_row_version"`
+	Enabled            bool  `json:"enabled"`
+	Price              int64 `json:"price"`
+	Limit              *int  `json:"limit"`
+}
+
+// pricesUpdateRequest 是改价：订阅套餐给 prices（每档 unit_amount 空 = 不卖这一档），
+// 一次性套餐给 unit_amount + validity_days；两组都没给回 422。
+type pricesUpdateRequest struct {
+	ExpectedRowVersion int64          `json:"expected_row_version"`
+	Prices             *[]tierRequest `json:"prices"`
+	UnitAmount         *int64         `json:"unit_amount"`
+	ValidityDays       *int           `json:"validity_days"`
+}
+
+// poolsUpdateRequest 是整体替换套餐线路，空数组 = 清空。
+type poolsUpdateRequest struct {
+	ExpectedRowVersion int64    `json:"expected_row_version"`
+	PoolIDs            []string `json:"pool_ids"`
+}
+
+// usageUpdateRequest 是改用量，三项都空 = 不限。
+type usageUpdateRequest struct {
+	ExpectedRowVersion int64 `json:"expected_row_version"`
+	usageInput
+}
+
+// expectedRowVersionRequest 是发布、归档这类只带乐观锁的写请求。
 type expectedRowVersionRequest struct {
 	ExpectedRowVersion int64 `json:"expected_row_version"`
 }
 
-type publishVersionRequest struct {
-	ExpectedPlanRowVersion    int64 `json:"expected_plan_row_version"`
-	ExpectedVersionRowVersion int64 `json:"expected_version_row_version"`
+// --- 请求到 service 输入的映射 ---
+
+// invalidUUIDList 回 422：列表字段非法或重复，字段名同 JSON 键，文案按项目统一写法。
+func invalidUUIDList(field string) error {
+	return errs.Invalid(map[string]string{field: "必须是无重复的 UUID 列表"})
 }
 
-type wizardPriceRequest struct {
-	BillingInterval string `json:"billing_interval"`
-	IntervalCount   int16  `json:"interval_count"`
-	UnitAmount      int64  `json:"unit_amount"`
-	Currency        string `json:"currency"`
-}
-
-type createPlanCompleteRequest struct {
-	Code                 string   `json:"code"`
-	Name                 string   `json:"name"`
-	Description          *string  `json:"description"`
-	Visibility           string   `json:"visibility"`
-	SortOrder            int      `json:"sort_order"`
-	AllowNewPurchase     *bool    `json:"allow_new_purchase"`
-	AllowRenewal         *bool    `json:"allow_renewal"`
-	AllowUpgrade         *bool    `json:"allow_upgrade"`
-	VisibleGroupIDs      []string `json:"visible_group_ids"`
-	PurchaseLimitPerUser *int     `json:"purchase_limit_per_user"`
-	StockTotal           *int     `json:"stock_total"`
-	Highlights           []string `json:"highlights"`
-	Recommended          bool     `json:"recommended"`
-	TrafficGB            *int64   `json:"traffic_gb"`
-	MaxDevices           *int     `json:"max_devices"`
-	ThrottleKbps         *int     `json:"throttle_kbps"`
-	QuotaResetStrategy   string   `json:"quota_reset_strategy"`
-	QuotaResetDay        *int16   `json:"quota_reset_day"`
-	// PoolIDs 是新建草稿版本要绑定的节点池 id 列表。
-	PoolIDs []string             `json:"pool_ids"`
-	Prices  []wizardPriceRequest `json:"prices"`
-	Publish bool                 `json:"publish"`
-}
-
-type updatePlanCompleteRequest struct {
-	ExpectedRowVersion   int64                 `json:"expected_row_version"`
-	Code                 string                `json:"code"`
-	Name                 string                `json:"name"`
-	Description          *string               `json:"description"`
-	Visibility           string                `json:"visibility"`
-	SortOrder            int                   `json:"sort_order"`
-	AllowNewPurchase     *bool                 `json:"allow_new_purchase"`
-	AllowRenewal         *bool                 `json:"allow_renewal"`
-	AllowUpgrade         *bool                 `json:"allow_upgrade"`
-	VisibleGroupIDs      []string              `json:"visible_group_ids"`
-	PurchaseLimitPerUser *int                  `json:"purchase_limit_per_user"`
-	StockTotal           *int                  `json:"stock_total"`
-	Highlights           *[]string             `json:"highlights"`
-	Recommended          *bool                 `json:"recommended"`
-	TrafficGB            *int64                `json:"traffic_gb"`
-	MaxDevices           optionalInt           `json:"max_devices"`
-	ThrottleKbps         optionalInt           `json:"throttle_kbps"`
-	Prices               *[]wizardPriceRequest `json:"prices"`
-	// PoolIDs：null 表示线路不动；数组表示换成这些池（有变化时会滚出新版本并发布）。
-	PoolIDs *[]string `json:"pool_ids"`
-}
-
-// optionalInt 区分字段缺省与显式 null。
-type optionalInt struct {
-	Set   bool
-	Value *int
-}
-
-func (o *optionalInt) UnmarshalJSON(data []byte) error {
-	o.Set = true
-	if string(data) == "null" {
-		o.Value = nil
-		return nil
-	}
-	var v int
-	if err := json.Unmarshal(data, &v); err != nil {
-		return err
-	}
-	o.Value = &v
-	return nil
-}
-
-func optionalIntToService(o optionalInt) service.OptionalInt {
-	return service.OptionalInt{Set: o.Set, Value: o.Value}
-}
-
-// --- 响应 DTO ---
-
-type planRowResponse struct {
-	ID               string             `json:"id"`
-	RowVersion       int64              `json:"row_version"`
-	Code             string             `json:"code"`
-	Name             string             `json:"name"`
-	Description      *string            `json:"description"`
-	Status           string             `json:"status"`
-	Visibility       string             `json:"visibility"`
-	SortOrder        int                `json:"sort_order"`
-	CurrentVersionID *string            `json:"current_version_id"`
-	DraftVersionID   *string            `json:"draft_version_id"`
-	Version          *int               `json:"version"`
-	MaxDevices       *int               `json:"max_devices"`
-	TrafficLimit     *int64             `json:"traffic_limit"`
-	Highlights       []string           `json:"highlights"`
-	Recommended      bool               `json:"recommended"`
-	Prices           []priceRowResponse `json:"prices"`
-	ActiveSubs       int                `json:"active_subscriptions"`
-	NodeCount        int                `json:"node_count"`
-}
-
-type priceRowResponse struct {
-	ID          string     `json:"id"`
-	Currency    string     `json:"currency"`
-	UnitAmount  int64      `json:"unit_amount"`
-	Interval    string     `json:"billing_interval"`
-	Count       int        `json:"interval_count"`
-	Status      string     `json:"status"`
-	UserGroupID *string    `json:"user_group_id"`
-	ValidFrom   *time.Time `json:"valid_from"`
-	ValidUntil  *time.Time `json:"valid_until"`
-	RowVersion  int64      `json:"row_version"`
-}
-
-type versionRowResponse struct {
-	ID                   string               `json:"id"`
-	Version              int                  `json:"version"`
-	Status               string               `json:"status"`
-	FrozenAt             *time.Time           `json:"frozen_at"`
-	RowVersion           int64                `json:"row_version"`
-	QuotaResetStrategy   string               `json:"quota_reset_strategy"`
-	QuotaResetDay        *int                 `json:"quota_reset_day"`
-	RenewalExtendsPeriod bool                 `json:"renewal_extends_period"`
-	RenewalResetsQuota   bool                 `json:"renewal_resets_quota"`
-	RenewalKeepsAddons   bool                 `json:"renewal_keeps_addons"`
-	MaxDevices           *int                 `json:"max_devices"`
-	MaxConcurrent        *int                 `json:"max_concurrent"`
-	DeviceReleaseHours   int                  `json:"device_release_hours"`
-	OveragePolicy        string               `json:"overage_policy"`
-	ThrottleKbps         *int                 `json:"throttle_kbps"`
-	Notes                *string              `json:"notes"`
-	Entitlements         []entitlementRequest `json:"entitlements"`
-	Quotas               []quotaRequest       `json:"quotas"`
-	PoolIDs              []string             `json:"pool_ids"`
-	CreatedByEmail       *string              `json:"created_by_email"`
-	CreatedAt            time.Time            `json:"created_at"`
-}
-
-type catalogPlanDetailResponse struct {
-	ID                   string               `json:"id"`
-	CurrentVersionID     *string              `json:"current_version_id"`
-	RowVersion           int64                `json:"row_version"`
-	Code                 string               `json:"code"`
-	Name                 string               `json:"name"`
-	Description          *string              `json:"description"`
-	Status               string               `json:"status"`
-	Visibility           string               `json:"visibility"`
-	VisibleGroupIDs      []string             `json:"visible_group_ids"`
-	VisibleFrom          *time.Time           `json:"visible_from"`
-	VisibleUntil         *time.Time           `json:"visible_until"`
-	AllowNewPurchase     bool                 `json:"allow_new_purchase"`
-	AllowRenewal         bool                 `json:"allow_renewal"`
-	AllowUpgrade         bool                 `json:"allow_upgrade"`
-	PurchaseLimitPerUser *int                 `json:"purchase_limit_per_user"`
-	StockTotal           *int                 `json:"stock_total"`
-	StockReserved        int                  `json:"stock_reserved"`
-	SortOrder            int                  `json:"sort_order"`
-	Highlights           []string             `json:"highlights"`
-	Recommended          bool                 `json:"recommended"`
-	Versions             []versionRowResponse `json:"versions"`
-	Prices               []priceRowResponse   `json:"prices"`
-}
-
-type listPlansResponse struct {
-	Plans []planRowResponse `json:"plans"`
-}
-
-type getPlanResponse struct {
-	Plan catalogPlanDetailResponse `json:"plan"`
-}
-
-type createPlanResponse struct {
-	Plan catalogPlanDetailResponse `json:"plan"`
-}
-
-type createPlanCompleteResponse struct {
-	Plan      catalogPlanDetailResponse `json:"plan"`
-	VersionID string                    `json:"version_id"`
-	PriceIDs  []string                  `json:"price_ids"`
-	Published bool                      `json:"published"`
-}
-
-type updatePlanCompleteResponse struct {
-	Plan    catalogPlanDetailResponse `json:"plan"`
-	Changed []string                  `json:"changed"`
-}
-
-type updatePlanResponse struct {
-	OK         bool  `json:"ok"`
-	RowVersion int64 `json:"row_version"`
-}
-
-type okRowVersionResponse struct {
-	OK         bool  `json:"ok"`
-	RowVersion int64 `json:"row_version"`
-}
-
-type createVersionResponse struct {
-	Version versionRowResponse `json:"version"`
-}
-
-type publishVersionResponse struct {
-	OK                bool  `json:"ok"`
-	PlanRowVersion    int64 `json:"plan_row_version"`
-	VersionRowVersion int64 `json:"version_row_version"`
-}
-
-type createPriceResponse struct {
-	Price priceRowResponse `json:"price"`
-}
-
-// --- 解析与转换 ---
-
-func defaultTrueBool(v *bool) bool {
-	return v == nil || *v
-}
-
-func parseVisibleGroupIDs(ids []string) ([]uuid.UUID, error) {
-	seen := make(map[string]bool, len(ids))
-	out := make([]uuid.UUID, 0, len(ids))
-	for _, id := range ids {
-		if seen[id] {
-			return nil, errs.Invalid(map[string]string{"visible_group_ids": "必须是无重复的 UUID 列表"})
-		}
-		uid, err := uuid.Parse(id)
-		if err != nil {
-			return nil, errs.Invalid(map[string]string{"visible_group_ids": "必须是无重复的 UUID 列表"})
-		}
-		seen[id] = true
-		out = append(out, uid)
-	}
-	return out, nil
-}
-
-func parseUserGroupID(s *string) (*uuid.UUID, error) {
-	if s == nil || *s == "" {
-		return nil, nil
-	}
-	uid, err := uuid.Parse(*s)
-	if err != nil {
-		return nil, errs.Invalid(map[string]string{"user_group_id": "用户组不存在"})
-	}
-	return &uid, nil
-}
-
-// parseWizardPoolIDs 把向导里的池 id 解析成去重后的 UUID 列表（保持首次出现的顺序）。
-func parseWizardPoolIDs(ids []string) ([]uuid.UUID, error) {
+// parseUUIDList 把 UUID 字符串列表解析成不重复的 UUID 列表；非法或重复回 422，字段名同 JSON 键，空当空列表。
+func parseUUIDList(field string, ids []string) ([]uuid.UUID, error) {
 	if ids == nil {
 		return []uuid.UUID{}, nil
 	}
@@ -353,221 +129,295 @@ func parseWizardPoolIDs(ids []string) ([]uuid.UUID, error) {
 	out := make([]uuid.UUID, 0, len(ids))
 	for _, id := range ids {
 		if seen[id] {
-			continue
+			return nil, invalidUUIDList(field)
 		}
 		uid, err := uuid.Parse(id)
 		if err != nil {
-			return nil, errs.Invalid(map[string]string{"pool_ids": "必须是节点池 UUID 列表"})
+			return nil, invalidUUIDList(field)
 		}
 		seen[id] = true
 		out = append(out, uid)
 	}
-	if len(out) > 500 {
-		return nil, errs.Invalid(map[string]string{"pool_ids": "一次最多绑定 500 个节点池"})
+	return out, nil
+}
+
+// planCreateFrom 把新建请求映射成 service.PlanCreate；类型与业务校验（kind 合不合法、价格档齐不齐等）交给 service。
+func planCreateFrom(req createPlanRequest) (service.PlanCreate, error) {
+	usage := service.UsageInput{
+		TrafficBytes: req.TrafficBytes,
+		MaxDevices:   req.MaxDevices,
+		ThrottleKbps: req.ThrottleKbps,
+	}
+	out := service.PlanCreate{
+		Kind:        req.Kind,
+		Name:        req.Name,
+		Description: req.Description,
+		Usage:       usage,
+		Sales: service.SalesInput{
+			Visibility:       req.Visibility,
+			AllowNewPurchase: req.AllowNewPurchase == nil || *req.AllowNewPurchase,
+			AllowUpgrade:     req.AllowUpgrade == nil || *req.AllowUpgrade,
+			Recommended:      req.Recommended,
+		},
+		Publish: req.Publish,
+	}
+	// allow_renewal 缺省 = 订阅套餐允许（一次性套餐库里 CHECK 恒 false，service 再校验）。
+	if req.AllowRenewal != nil {
+		out.Sales.AllowRenewal = *req.AllowRenewal
+	} else {
+		out.Sales.AllowRenewal = req.Kind == service.KindSubscription
+	}
+	var err error
+	if out.PoolIDs, err = parseUUIDList("pool_ids", req.PoolIDs); err != nil {
+		return service.PlanCreate{}, err
+	}
+	if out.Sales.VisibleGroupIDs, err = parseUUIDList("visible_group_ids", req.VisibleGroupIDs); err != nil {
+		return service.PlanCreate{}, err
+	}
+	switch req.Kind {
+	case service.KindSubscription:
+		if req.Prices != nil {
+			for _, t := range *req.Prices {
+				if t.UnitAmount == nil {
+					continue
+				}
+				out.Tiers = append(out.Tiers, service.TierInput{
+					BillingInterval: t.BillingInterval,
+					IntervalCount:   t.IntervalCount,
+					UnitAmount:      money.FromCents(*t.UnitAmount),
+				})
+			}
+		}
+	case service.KindOneTime:
+		if req.UnitAmount != nil {
+			out.OneTime = &service.OneTimeInput{
+				UnitAmount:   money.FromCents(*req.UnitAmount),
+				ValidityDays: req.ValidityDays,
+			}
+		}
+	}
+	if req.Reset != nil {
+		out.Reset = &service.ResetInput{Price: money.FromCents(req.Reset.Price), Limit: req.Reset.Limit}
 	}
 	return out, nil
 }
 
-func planInputFromCreate(req createPlanRequest) (service.PlanInput, error) {
-	groups, err := parseVisibleGroupIDs(req.VisibleGroupIDs)
-	if err != nil {
-		return service.PlanInput{}, err
+// basicUpdateFrom 把改基本信息请求映射成 service.BasicUpdate。
+func basicUpdateFrom(req basicUpdateRequest) service.BasicUpdate {
+	return service.BasicUpdate{
+		ExpectedRowVersion: req.ExpectedRowVersion,
+		Name:               req.Name,
+		Description:        req.Description,
 	}
-	return service.PlanInput{
-		Code:                 req.Code,
-		Name:                 req.Name,
-		Description:          req.Description,
-		Visibility:           req.Visibility,
-		VisibleGroupIDs:      groups,
-		VisibleFrom:          req.VisibleFrom,
-		VisibleUntil:         req.VisibleUntil,
-		AllowNewPurchase:     defaultTrueBool(req.AllowNewPurchase),
-		AllowRenewal:         defaultTrueBool(req.AllowRenewal),
-		AllowUpgrade:         defaultTrueBool(req.AllowUpgrade),
-		PurchaseLimitPerUser: req.PurchaseLimitPerUser,
-		StockTotal:           req.StockTotal,
-		SortOrder:            req.SortOrder,
-		Highlights:           nonNilStrings(req.Highlights),
-		Recommended:          req.Recommended,
+}
+
+// salesUpdateFrom 把改销售设置请求映射成 service.SalesUpdate。
+func salesUpdateFrom(req salesUpdateRequest) (service.SalesUpdate, error) {
+	groups, err := parseUUIDList("visible_group_ids", req.VisibleGroupIDs)
+	if err != nil {
+		return service.SalesUpdate{}, err
+	}
+	return service.SalesUpdate{
+		ExpectedRowVersion: req.ExpectedRowVersion,
+		Sales: service.SalesInput{
+			Visibility:       req.Visibility,
+			VisibleGroupIDs:  groups,
+			AllowNewPurchase: req.AllowNewPurchase,
+			AllowRenewal:     req.AllowRenewal,
+			AllowUpgrade:     req.AllowUpgrade,
+			Recommended:      req.Recommended,
+		},
 	}, nil
 }
 
-func planInputFromUpdate(req updatePlanRequest) (service.PlanInput, error) {
-	groups, err := parseVisibleGroupIDs(req.VisibleGroupIDs)
-	if err != nil {
-		return service.PlanInput{}, err
-	}
-	return service.PlanInput{
-		Code:                 req.Code,
-		Name:                 req.Name,
-		Description:          req.Description,
-		Visibility:           req.Visibility,
-		VisibleGroupIDs:      groups,
-		VisibleFrom:          req.VisibleFrom,
-		VisibleUntil:         req.VisibleUntil,
-		AllowNewPurchase:     req.AllowNewPurchase,
-		AllowRenewal:         req.AllowRenewal,
-		AllowUpgrade:         req.AllowUpgrade,
-		PurchaseLimitPerUser: req.PurchaseLimitPerUser,
-		StockTotal:           req.StockTotal,
-		SortOrder:            req.SortOrder,
-		Highlights:           nonNilStrings(req.Highlights),
-		Recommended:          req.Recommended,
-	}, nil
-}
-
-func versionInputFromRequest(req updateVersionRequest) service.VersionInput {
-	ents := make([]service.Entitlement, len(req.Entitlements))
-	for i, e := range req.Entitlements {
-		ents[i] = service.Entitlement{Code: e.Code, Value: e.Value}
-	}
-	quotas := make([]service.Quota, len(req.Quotas))
-	for i, q := range req.Quotas {
-		quotas[i] = service.Quota{Metric: q.Metric, Limit: q.Limit, Unit: q.Unit, Period: q.Period}
-	}
-	return service.VersionInput{
-		QuotaResetStrategy:   req.QuotaResetStrategy,
-		QuotaResetDay:        req.QuotaResetDay,
-		RenewalExtendsPeriod: req.RenewalExtendsPeriod,
-		RenewalResetsQuota:   req.RenewalResetsQuota,
-		RenewalKeepsAddons:   req.RenewalKeepsAddons,
-		MaxDevices:           req.MaxDevices,
-		MaxConcurrent:        req.MaxConcurrent,
-		DeviceReleaseHours:   req.DeviceReleaseHours,
-		OveragePolicy:        req.OveragePolicy,
-		ThrottleKbps:         req.ThrottleKbps,
-		Notes:                req.Notes,
-		Entitlements:         ents,
-		Quotas:               quotas,
+// resetUpdateFrom 把改流量重置请求映射成 service.ResetUpdate。
+func resetUpdateFrom(req resetUpdateRequest) service.ResetUpdate {
+	return service.ResetUpdate{
+		ExpectedRowVersion: req.ExpectedRowVersion,
+		Enabled:            req.Enabled,
+		Price:              money.FromCents(req.Price),
+		Limit:              req.Limit,
 	}
 }
 
-func priceInputFromRequest(req createPriceRequest) (service.PriceInput, error) {
-	gid, err := parseUserGroupID(req.UserGroupID)
-	if err != nil {
-		return service.PriceInput{}, err
-	}
-	return service.PriceInput{
-		Currency:        req.Currency,
-		UnitAmount:      money.FromCents(req.UnitAmount),
-		BillingInterval: req.BillingInterval,
-		IntervalCount:   int(req.IntervalCount),
-		UserGroupID:     gid,
-		ValidFrom:       req.ValidFrom,
-		ValidUntil:      req.ValidUntil,
-	}, nil
-}
-
-func wizardPricesFromRequest(in []wizardPriceRequest) []service.WizardPrice {
-	out := make([]service.WizardPrice, len(in))
-	for i, p := range in {
-		out[i] = service.WizardPrice{
-			BillingInterval: p.BillingInterval,
-			IntervalCount:   int(p.IntervalCount),
-			UnitAmount:      money.FromCents(p.UnitAmount),
-			Currency:        p.Currency,
+// pricesUpdateFrom 把改价请求映射成 service.PricesUpdate；两组价格都没给回 422。
+func pricesUpdateFrom(req pricesUpdateRequest) (service.PricesUpdate, error) {
+	out := service.PricesUpdate{ExpectedRowVersion: req.ExpectedRowVersion}
+	if req.Prices != nil {
+		for _, t := range *req.Prices {
+			change := service.TierChange{
+				BillingInterval: t.BillingInterval,
+				IntervalCount:   t.IntervalCount,
+			}
+			if t.UnitAmount != nil {
+				amount := money.FromCents(*t.UnitAmount)
+				change.UnitAmount = &amount
+			}
+			out.Tiers = append(out.Tiers, change)
 		}
+		return out, nil
+	}
+	if req.UnitAmount != nil {
+		out.OneTime = &service.OneTimeInput{
+			UnitAmount:   money.FromCents(*req.UnitAmount),
+			ValidityDays: req.ValidityDays,
+		}
+		return out, nil
+	}
+	return service.PricesUpdate{}, errs.Invalid(map[string]string{"prices": "请给出价格"})
+}
+
+// poolsUpdateFrom 把改线路请求映射成 service.PoolsUpdate。
+func poolsUpdateFrom(req poolsUpdateRequest) (service.PoolsUpdate, error) {
+	ids, err := parseUUIDList("pool_ids", req.PoolIDs)
+	if err != nil {
+		return service.PoolsUpdate{}, err
+	}
+	return service.PoolsUpdate{ExpectedRowVersion: req.ExpectedRowVersion, PoolIDs: ids}, nil
+}
+
+// usageUpdateFrom 把改用量请求映射成 service.UsageUpdate。
+func usageUpdateFrom(req usageUpdateRequest) service.UsageUpdate {
+	return service.UsageUpdate{
+		ExpectedRowVersion: req.ExpectedRowVersion,
+		Usage: service.UsageInput{
+			TrafficBytes: req.TrafficBytes,
+			MaxDevices:   req.MaxDevices,
+			ThrottleKbps: req.ThrottleKbps,
+		},
+	}
+}
+
+// --- 响应 DTO ---
+
+// priceRow 是一档价格；unit_amount 是整数分。
+type priceRow struct {
+	ID              string    `json:"id"`
+	BillingInterval string    `json:"billing_interval"`
+	IntervalCount   int       `json:"interval_count"`
+	UnitAmount      int64     `json:"unit_amount"`
+	ValidityDays    *int      `json:"validity_days"`
+	Status          string    `json:"status"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+// resetRow 是流量重置；整个 reset 在套餐没开重置时为 null。
+type resetRow struct {
+	Price int64 `json:"price"`
+	Limit *int  `json:"limit"`
+}
+
+// versionRow 是一个版本（用量快照）。
+type versionRow struct {
+	ID             string     `json:"id"`
+	Version        int        `json:"version"`
+	Status         string     `json:"status"`
+	PublishedAt    *time.Time `json:"published_at"`
+	TrafficBytes   *int64     `json:"traffic_bytes"`
+	MaxDevices     *int       `json:"max_devices"`
+	ThrottleKbps   *int       `json:"throttle_kbps"`
+	CreatedByEmail *string    `json:"created_by_email"`
+	CreatedAt      time.Time  `json:"created_at"`
+}
+
+// planRow 是后台套餐列表与详情共用的主体；version、draft_version、draft_version_id 与用量三项可为 null。
+type planRow struct {
+	ID                  string     `json:"id"`
+	RowVersion          int64      `json:"row_version"`
+	Code                string     `json:"code"`
+	Name                string     `json:"name"`
+	Description         *string    `json:"description"`
+	Kind                string     `json:"kind"`
+	Status              string     `json:"status"`
+	Visibility          string     `json:"visibility"`
+	Recommended         bool       `json:"recommended"`
+	Prices              []priceRow `json:"prices"`
+	TrafficBytes        *int64     `json:"traffic_bytes"`
+	MaxDevices          *int       `json:"max_devices"`
+	ThrottleKbps        *int       `json:"throttle_kbps"`
+	Version             *int       `json:"version"`
+	DraftVersion        *int       `json:"draft_version"`
+	DraftVersionID      *string    `json:"draft_version_id"`
+	PoolIDs             []string   `json:"pool_ids"`
+	Reset               *resetRow  `json:"reset"`
+	ActiveSubscriptions int64      `json:"active_subscriptions"`
+	NodeCount           int64      `json:"node_count"`
+}
+
+// planDetailResponse 是后台套餐详情：planRow 的全部字段 + 销售细节与版本历史。
+type planDetailResponse struct {
+	planRow
+	VisibleGroupIDs  []string     `json:"visible_group_ids"`
+	AllowNewPurchase bool         `json:"allow_new_purchase"`
+	AllowRenewal     bool         `json:"allow_renewal"`
+	AllowUpgrade     bool         `json:"allow_upgrade"`
+	Versions         []versionRow `json:"versions"`
+}
+
+type listPlansResponse struct {
+	Plans []planRow `json:"plans"`
+}
+
+type getPlanResponse struct {
+	Plan planDetailResponse `json:"plan"`
+}
+
+type createPlanResponse struct {
+	Plan planDetailResponse `json:"plan"`
+}
+
+// --- service 类型到响应 DTO 的转换 ---
+
+func priceRowFrom(p service.Price) priceRow {
+	return priceRow{
+		ID:              p.ID.String(),
+		BillingInterval: p.BillingInterval,
+		IntervalCount:   p.IntervalCount,
+		UnitAmount:      money.MustCents(p.UnitAmount),
+		ValidityDays:    p.ValidityDays,
+		Status:          p.Status,
+		CreatedAt:       p.CreatedAt,
+	}
+}
+
+func priceRowsFrom(prices []service.Price) []priceRow {
+	out := make([]priceRow, len(prices))
+	for i, p := range prices {
+		out[i] = priceRowFrom(p)
 	}
 	return out
 }
 
-func wizardCreateFromRequest(req createPlanCompleteRequest) (service.WizardCreate, error) {
-	groups, err := parseVisibleGroupIDs(req.VisibleGroupIDs)
-	if err != nil {
-		return service.WizardCreate{}, err
-	}
-	plan := service.PlanInput{
-		Code:                 req.Code,
-		Name:                 req.Name,
-		Description:          req.Description,
-		Visibility:           req.Visibility,
-		VisibleGroupIDs:      groups,
-		AllowNewPurchase:     defaultTrueBool(req.AllowNewPurchase),
-		AllowRenewal:         defaultTrueBool(req.AllowRenewal),
-		AllowUpgrade:         defaultTrueBool(req.AllowUpgrade),
-		PurchaseLimitPerUser: req.PurchaseLimitPerUser,
-		StockTotal:           req.StockTotal,
-		SortOrder:            req.SortOrder,
-		Highlights:           nonNilStrings(req.Highlights),
-		Recommended:          req.Recommended,
-	}
-	var resetDay *int
-	if req.QuotaResetDay != nil {
-		d := int(*req.QuotaResetDay)
-		resetDay = &d
-	}
-	poolIDs, err := parseWizardPoolIDs(req.PoolIDs)
-	if err != nil {
-		return service.WizardCreate{}, err
-	}
-	return service.WizardCreate{
-		Plan:               plan,
-		TrafficGB:          req.TrafficGB,
-		MaxDevices:         req.MaxDevices,
-		ThrottleKbps:       req.ThrottleKbps,
-		QuotaResetStrategy: req.QuotaResetStrategy,
-		QuotaResetDay:      resetDay,
-		PoolIDs:            poolIDs,
-		Prices:             wizardPricesFromRequest(req.Prices),
-		Publish:            req.Publish,
-	}, nil
-}
-
-func wizardUpdateFromRequest(req updatePlanCompleteRequest) (service.WizardUpdate, error) {
-	groups, err := parseVisibleGroupIDs(req.VisibleGroupIDs)
-	if err != nil {
-		return service.WizardUpdate{}, err
-	}
-	out := service.WizardUpdate{
-		ExpectedRowVersion:   req.ExpectedRowVersion,
-		Code:                 req.Code,
-		Name:                 req.Name,
-		Description:          req.Description,
-		Visibility:           req.Visibility,
-		VisibleGroupIDs:      groups,
-		SortOrder:            req.SortOrder,
-		AllowNewPurchase:     req.AllowNewPurchase,
-		AllowRenewal:         req.AllowRenewal,
-		AllowUpgrade:         req.AllowUpgrade,
-		PurchaseLimitPerUser: req.PurchaseLimitPerUser,
-		StockTotal:           req.StockTotal,
-		Highlights:           req.Highlights,
-		Recommended:          req.Recommended,
-		TrafficGB:            req.TrafficGB,
-		MaxDevices:           optionalIntToService(req.MaxDevices),
-		ThrottleKbps:         optionalIntToService(req.ThrottleKbps),
-	}
-	if req.Prices != nil {
-		wp := wizardPricesFromRequest(*req.Prices)
-		out.Prices = &wp
-	}
-	if req.PoolIDs != nil {
-		ids, err := parseWizardPoolIDs(*req.PoolIDs)
-		if err != nil {
-			return service.WizardUpdate{}, err
-		}
-		out.PoolIDs = &ids
-	}
-	return out, nil
-}
-
-func nonNilStrings(s []string) []string {
-	if s == nil {
-		return []string{}
-	}
-	return s
-}
-
-func uuidToString(id uuid.UUID) string { return id.String() }
-
-func uuidPtrToString(id *uuid.UUID) *string {
-	if id == nil {
+func resetRowFrom(price *decimal.Decimal, limit *int) *resetRow {
+	if price == nil {
 		return nil
 	}
-	s := id.String()
-	return &s
+	return &resetRow{Price: money.MustCents(*price), Limit: limit}
 }
 
+func versionRowFrom(v service.Version) versionRow {
+	return versionRow{
+		ID:             v.ID.String(),
+		Version:        v.Version,
+		Status:         v.Status,
+		PublishedAt:    v.FrozenAt,
+		TrafficBytes:   v.TrafficLimit(),
+		MaxDevices:     v.MaxDevices,
+		ThrottleKbps:   v.ThrottleKbps,
+		CreatedByEmail: v.CreatedByEmail,
+		CreatedAt:      v.CreatedAt,
+	}
+}
+
+func versionRowsFrom(versions []service.Version) []versionRow {
+	out := make([]versionRow, len(versions))
+	for i, v := range versions {
+		out[i] = versionRowFrom(v)
+	}
+	return out
+}
+
+// uuidsToStrings 把 UUID 列表转成字符串列表；空列表返回空切片（JSON 里是 [] 不是 null）。
 func uuidsToStrings(ids []uuid.UUID) []string {
 	if len(ids) == 0 {
 		return []string{}
@@ -579,161 +429,68 @@ func uuidsToStrings(ids []uuid.UUID) []string {
 	return out
 }
 
-func priceRowFrom(p service.Price) priceRowResponse {
-	return priceRowResponse{
-		ID:          uuidToString(p.ID),
-		Currency:    string(p.Currency),
-		UnitAmount:  money.MustCents(p.UnitAmount),
-		Interval:    p.BillingInterval,
-		Count:       p.IntervalCount,
-		Status:      p.Status,
-		UserGroupID: uuidPtrToString(p.UserGroupID),
-		ValidFrom:   p.ValidFrom,
-		ValidUntil:  p.ValidUntil,
-		RowVersion:  p.RowVersion,
+func uuidPtrToString(id *uuid.UUID) *string {
+	if id == nil {
+		return nil
 	}
+	s := id.String()
+	return &s
 }
 
-func priceRowsFrom(prices []service.Price) []priceRowResponse {
-	out := make([]priceRowResponse, len(prices))
-	for i, p := range prices {
-		out[i] = priceRowFrom(p)
-	}
-	return out
-}
-
-func versionRowFrom(v service.Version) versionRowResponse {
-	ents := make([]entitlementRequest, len(v.Entitlements))
-	for i, e := range v.Entitlements {
-		ents[i] = entitlementRequest{Code: e.Code, Value: e.Value}
-	}
-	quotas := make([]quotaRequest, len(v.Quotas))
-	for i, q := range v.Quotas {
-		quotas[i] = quotaRequest{Metric: q.Metric, Limit: q.Limit, Unit: q.Unit, Period: q.Period}
-	}
-	return versionRowResponse{
-		ID:                   uuidToString(v.ID),
-		Version:              v.Version,
-		Status:               v.Status,
-		FrozenAt:             v.FrozenAt,
-		RowVersion:           v.RowVersion,
-		QuotaResetStrategy:   v.QuotaResetStrategy,
-		QuotaResetDay:        v.QuotaResetDay,
-		RenewalExtendsPeriod: v.RenewalExtendsPeriod,
-		RenewalResetsQuota:   v.RenewalResetsQuota,
-		RenewalKeepsAddons:   v.RenewalKeepsAddons,
-		MaxDevices:           v.MaxDevices,
-		MaxConcurrent:        v.MaxConcurrent,
-		DeviceReleaseHours:   v.DeviceReleaseHours,
-		OveragePolicy:        service.OveragePolicySuspend,
-		ThrottleKbps:         v.ThrottleKbps,
-		Notes:                v.Notes,
-		Entitlements:         ents,
-		Quotas:               quotas,
-		PoolIDs:              uuidsToStrings(v.PoolIDs),
-		CreatedByEmail:       v.CreatedByEmail,
-		CreatedAt:            v.CreatedAt,
-	}
-}
-
-func versionRowsFrom(versions []service.Version) []versionRowResponse {
-	out := make([]versionRowResponse, len(versions))
-	for i, v := range versions {
-		out[i] = versionRowFrom(v)
-	}
-	return out
-}
-
-func catalogPlanDetailFrom(d service.PlanDetail) catalogPlanDetailResponse {
-	p := d.Plan
-	return catalogPlanDetailResponse{
-		ID:                   uuidToString(p.ID),
-		CurrentVersionID:     uuidPtrToString(p.CurrentVersionID),
-		RowVersion:           p.RowVersion,
-		Code:                 p.Code,
-		Name:                 p.Name,
-		Description:          p.Description,
-		Status:               p.Status,
-		Visibility:           p.Visibility,
-		VisibleGroupIDs:      uuidsToStrings(p.VisibleGroupIDs),
-		VisibleFrom:          p.VisibleFrom,
-		VisibleUntil:         p.VisibleUntil,
-		AllowNewPurchase:     p.AllowNewPurchase,
-		AllowRenewal:         p.AllowRenewal,
-		AllowUpgrade:         p.AllowUpgrade,
-		PurchaseLimitPerUser: p.PurchaseLimitPerUser,
-		StockTotal:           p.StockTotal,
-		StockReserved:        p.StockReserved,
-		SortOrder:            p.SortOrder,
-		Highlights:           nonNilStrings(p.Highlights),
-		Recommended:          p.Recommended,
-		Versions:             versionRowsFrom(d.Versions),
-		Prices:               priceRowsFrom(d.Prices),
-	}
-}
-
-func planRowFromSummary(s service.PlanSummary, activeSubs int64, nodeCount int64) planRowResponse {
+// planRowFrom 组装列表与详情共用的主体字段；activeSubs、nodeCount 由调用方批量取。
+func planRowFrom(s service.PlanSummary, activeSubs, nodeCount int64) planRow {
 	p := s.Plan
-	return planRowResponse{
-		ID:               uuidToString(p.ID),
-		RowVersion:       p.RowVersion,
-		Code:             p.Code,
-		Name:             p.Name,
-		Description:      p.Description,
-		Status:           p.Status,
-		Visibility:       p.Visibility,
-		SortOrder:        p.SortOrder,
-		CurrentVersionID: uuidPtrToString(p.CurrentVersionID),
-		DraftVersionID:   uuidPtrToString(s.DraftVersionID),
-		Version:          s.Version,
-		MaxDevices:       s.MaxDevices,
-		TrafficLimit:     s.TrafficLimit,
-		Highlights:       nonNilStrings(p.Highlights),
-		Recommended:      p.Recommended,
-		Prices:           priceRowsFrom(s.Prices),
-		ActiveSubs:       int(activeSubs),
-		NodeCount:        int(nodeCount),
+	return planRow{
+		ID:                  p.ID.String(),
+		RowVersion:          p.RowVersion,
+		Code:                p.Code,
+		Name:                p.Name,
+		Description:         p.Description,
+		Kind:                p.Kind,
+		Status:              p.Status,
+		Visibility:          p.Visibility,
+		Recommended:         p.Recommended,
+		Prices:              priceRowsFrom(s.Prices),
+		TrafficBytes:        s.TrafficBytes,
+		MaxDevices:          s.MaxDevices,
+		ThrottleKbps:        s.ThrottleKbps,
+		Version:             s.Version,
+		DraftVersion:        s.DraftVersion,
+		DraftVersionID:      uuidPtrToString(s.DraftVersionID),
+		PoolIDs:             uuidsToStrings(s.PoolIDs),
+		Reset:               resetRowFrom(p.ResetPrice, p.ResetLimit),
+		ActiveSubscriptions: activeSubs,
+		NodeCount:           nodeCount,
 	}
 }
 
-func collectCurrentVersionIDs(rows []service.PlanSummary) []uuid.UUID {
-	out := make([]uuid.UUID, 0, len(rows))
-	for _, r := range rows {
-		if r.CurrentVersionID != nil {
-			out = append(out, *r.CurrentVersionID)
-		}
+// planDetailFrom 组装后台详情（versions、prices 全量、销售细节）。
+func planDetailFrom(d service.PlanDetail) planDetailResponse {
+	row := planRowFrom(service.PlanSummary{Plan: d.Plan, PlanUsage: d.PlanUsage, Prices: d.Prices}, 0, 0)
+	return planDetailResponse{
+		planRow:          row,
+		VisibleGroupIDs:  uuidsToStrings(d.VisibleGroupIDs),
+		AllowNewPurchase: d.AllowNewPurchase,
+		AllowRenewal:     d.AllowRenewal,
+		AllowUpgrade:     d.AllowUpgrade,
+		Versions:         versionRowsFrom(d.Versions),
 	}
-	return out
 }
 
+// planFilterFrom 把查询参数放进 PlanFilter，原样传给 service（校验在 service）。
+func planFilterFrom(c *gin.Context) service.PlanFilter {
+	return service.PlanFilter{
+		Kind:   c.Query("kind"),
+		Status: c.Query("status"),
+		Q:      c.Query("q"),
+	}
+}
+
+// collectPlanIDs 取一批套餐行的 id。
 func collectPlanIDs(rows []service.PlanSummary) []uuid.UUID {
 	out := make([]uuid.UUID, len(rows))
 	for i, r := range rows {
 		out[i] = r.ID
 	}
 	return out
-}
-
-func wizardCreatedResponse(w service.WizardCreated) createPlanCompleteResponse {
-	priceIDs := make([]string, len(w.PriceIDs))
-	for i, id := range w.PriceIDs {
-		priceIDs[i] = uuidToString(id)
-	}
-	return createPlanCompleteResponse{
-		Plan:      catalogPlanDetailFrom(w.Plan),
-		VersionID: uuidToString(w.VersionID),
-		PriceIDs:  priceIDs,
-		Published: w.Published,
-	}
-}
-
-func wizardUpdatedResponse(w service.WizardUpdated) updatePlanCompleteResponse {
-	changed := w.Changed
-	if changed == nil {
-		changed = []string{}
-	}
-	return updatePlanCompleteResponse{
-		Plan:    catalogPlanDetailFrom(w.Plan),
-		Changed: changed,
-	}
 }
