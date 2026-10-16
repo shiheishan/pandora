@@ -9,16 +9,17 @@ const ids = z
   .transform((v) => v ?? [])
 
 // ---------------------------------------------------------------------------
-// 套餐目录子集（GET v1/plans）：只收营销页要的名字与价格
+// 套餐目录子集（GET v1/plans）：只收营销页要的名字、类型与价格（10-16 起只有人民币，没有币种）
 // ---------------------------------------------------------------------------
 const planSchema = z.object({
   id: uuid,
   name: z.string(),
+  /** subscription 订阅套餐按时间（月 / 季 / 半年 / 年四档价）；one_time 一次性套餐只有一个价 */
+  kind: z.enum(['subscription', 'one_time']),
   status: z.enum(['draft', 'active', 'archived']),
   prices: z.array(
     z.object({
       id: uuid,
-      currency: z.string(),
       unit_amount: z.number(),
       billing_interval: z.string(),
       interval_count: z.number(),
@@ -38,17 +39,12 @@ export const couponSchema = z.object({
   name: z.string(),
   discount_type: z.enum(['percent', 'fixed']),
   discount_value: z.number(),
-  currency: z.string(),
   max_discount: z.number().nullable(),
   min_order_amount: z.number(),
   max_redemptions: z.number().nullable(),
   max_redemptions_per_user: z.number(),
   redeemed_count: z.number(),
   applicable_plan_ids: ids,
-  applicable_intervals: z
-    .array(z.string())
-    .nullable()
-    .transform((v) => v ?? []),
   valid_from: iso.nullable(),
   valid_until: iso.nullable(),
   status: z.string(),
@@ -60,7 +56,7 @@ export type Coupon = z.output<typeof couponSchema>
 
 export const redemptionsResponse = z.object({
   redemptions: z
-    .array(z.object({ email: z.string(), order_no: z.string(), discount: z.number(), currency: z.string(), at: iso, reverted: z.boolean() }))
+    .array(z.object({ email: z.string(), order_no: z.string(), discount: z.number(), at: iso, reverted: z.boolean() }))
     .nullable()
     .transform((v) => v ?? []),
 })
@@ -107,6 +103,8 @@ const templateSchema = z.object({
   theme_color: z.string(),
   code_total: z.number(),
   code_used: z.number(),
+  /** 套餐卡的价格档已下架：兑换会被拒，模板行标出来 */
+  price_archived: z.boolean(),
   created_at: iso,
 })
 export const templatesResponse = z.object({
@@ -230,8 +228,7 @@ const withdrawalSchema = z.object({
   email: z.string(),
   user_id: uuid,
   amount: z.number(),
-  currency: z.string(),
-  status: z.string(),
+  status: z.enum(['requested', 'approved', 'rejected', 'paid']),
   payout_detail: z.string(),
   reject_reason: z.string(),
   requested_at: iso,
@@ -258,7 +255,6 @@ const reviewEntrySchema = z.object({
   referrer_email: z.string(),
   referee_email: z.string(),
   amount: z.number().int(),
-  currency: z.string(),
   review_reason: z.string(),
   /** 由原因归类：underfunded（解冻时待结科目余额不足）的条目通过后仍会解冻失败；account_deleted（受益人已注销）只能作废 */
   review_source: z.enum(['same_source', 'source_check', 'underfunded', 'account_deleted', 'other']),

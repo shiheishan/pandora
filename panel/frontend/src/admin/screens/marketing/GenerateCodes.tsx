@@ -4,7 +4,8 @@ import { filenameFromDisposition, saveFile } from '../../../core/download'
 import { useApi } from '../../../shell/runtime'
 import { Button, Input, Modal, useToast } from '../../../ui'
 import local from './Gifts.module.css'
-import { batchFileName, batchLabel, buildGenerateRequest, codeFilterQuery, codesReportFileName, type FieldErrors, type GenerateForm } from './logic'
+import { batchFileName, batchLabel, buildGenerateRequest, codeFilterQuery, codesReportFileName, type GenerateForm } from './giftModel'
+import type { FieldErrors } from './logic'
 import css from './marketing.module.css'
 import { useFailure, useIntentKey, useInvalidateMarketing } from './queries'
 import { codesGenerated, type CodesGenerated, type GiftTemplate } from './schemas'
@@ -89,7 +90,8 @@ export function GenerateModal({ template, onClose, onGenerated }: { template: Gi
       open={template !== null}
       onClose={onClose}
       dismissible={!generate.isPending}
-      title={`为「${template?.name ?? ''}」生成一批码`}
+      title="生成卡码"
+      subtitle={template?.name ?? ''}
       actions={
         <>
           <Button size="dialog" onClick={onClose} disabled={generate.isPending}>
@@ -111,7 +113,7 @@ export function GenerateModal({ template, onClose, onGenerated }: { template: Gi
   )
 }
 
-/** 设计稿 oneTime：显示 sample 加「…」；「导出 CSV」直接一次性导出，「已保存，关闭」只关弹窗，批次保持未导出 */
+/** 设计稿 genDone：eyebrow「仅此一次可见」，title「已生成 N 张卡码」，subtitle「批次 <batchLabel>」 */
 export function OneTimeModal({ result, onClose }: { result: CodesGenerated | null; onClose: () => void }) {
   const exporter = useBatchExport(onClose)
   return (
@@ -119,12 +121,13 @@ export function OneTimeModal({ result, onClose }: { result: CodesGenerated | nul
       open={result !== null}
       onClose={onClose}
       dismissible={!exporter.isPending}
-      eyebrow={<span className={local.eyebrow}>仅此一次可见</span>}
-      title={result ? `批次 ${batchLabel(result.batch)} 已生成 ${result.count} 张` : ''}
+      eyebrow="仅此一次可见"
+      title={result ? `已生成 ${result.count} 张卡码` : ''}
+      subtitle={result ? `批次 ${batchLabel(result.batch)}` : ''}
       actions={
         <>
           <Button size="dialog" onClick={onClose} disabled={exporter.isPending}>
-            已保存，关闭
+            稍后再导出
           </Button>
           <Button size="dialog" variant="primary" busy={exporter.isPending} onClick={() => result && exporter.mutate(result.batch_id)} data-autofocus="">
             导出 CSV
@@ -134,13 +137,18 @@ export function OneTimeModal({ result, onClose }: { result: CodesGenerated | nul
     >
       {result && (
         <div className={css.stack}>
-          <div className={css.muted}>关闭后完整卡码不再显示，只能看到掩码；批次在导出前还能从「批次与卡码」里一次性导出。</div>
-          <div className={local.sample}>
-            {result.sample.map((code) => (
-              <span key={code}>{code}</span>
-            ))}
-            {result.count > result.sample.length && <span className={css.faint}>…</span>}
+          <div>
+            <div className={local.secTitle}>样例</div>
+            <div className={local.sampleGrid}>
+              {result.sample.map((code, i) => (
+                <div key={code} className={local.sampleRow}>
+                  <span className={css.muted}>#{i + 1}</span>
+                  <span className={css.mono}>{code}</span>
+                </div>
+              ))}
+            </div>
           </div>
+          <div className={css.muted}>关闭后完整卡码不再显示，只能看到掩码；批次在导出前还能从「批次与卡码」里一次性导出。</div>
         </div>
       )}
     </Modal>

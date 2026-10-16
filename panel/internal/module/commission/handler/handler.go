@@ -24,7 +24,7 @@ type Service interface {
 	RequestWithdrawal(ctx context.Context, userID uuid.UUID, amount decimal.Decimal, method, payoutDetail string) (uuid.UUID, error)
 	TransferToBalance(ctx context.Context, userID uuid.UUID, amount decimal.Decimal) (uuid.UUID, error)
 	AdminOverview(ctx context.Context) (service.Overview, error)
-	AdminWithdrawals(ctx context.Context, status string) ([]service.AdminWithdrawal, error)
+	AdminWithdrawals(ctx context.Context, statuses []string) ([]service.AdminWithdrawal, error)
 	ReviewWithdrawal(ctx context.Context, id uuid.UUID, approve bool, reason string) (string, error)
 	MarkWithdrawalPaid(ctx context.Context, id uuid.UUID, reference string, paidUSDT *decimal.Decimal) error
 	SetConfig(ctx context.Context, u service.ConfigUpdate) error

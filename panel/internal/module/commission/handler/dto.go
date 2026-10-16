@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"strings"
 	"time"
 
 	"github.com/aegispanel/aegis/internal/module/commission/service"
@@ -8,9 +9,20 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// listWithdrawalsQuery 是后台提现列表的查询参数。
+// listWithdrawalsQuery 是后台提现列表的查询参数；status 逗号分隔，如 requested,approved。
 type listWithdrawalsQuery struct {
 	Status string `form:"status"`
+}
+
+// statuses 把逗号分隔的状态拆开（去空白、丢空段）；为空表示不筛。
+func (q listWithdrawalsQuery) statuses() []string {
+	var out []string
+	for _, p := range strings.Split(q.Status, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // withdrawalRequest 是门户发起提现的请求体。

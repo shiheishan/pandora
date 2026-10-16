@@ -2,7 +2,7 @@ import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'
 import { userStore } from '../dev/mock/admin/users'
-import { overviewSchema } from '../src/admin/screens/marketing/schemas'
+import { overviewSchema, withdrawalsResponse } from '../src/admin/screens/marketing/schemas'
 import { bearer, close, loginAs, mockFetch, serve } from './mock-helpers'
 
 describe('mock api · admin commission', () => {
@@ -70,7 +70,7 @@ describe('mock api · admin commission', () => {
     const closedEmpty = await post('/v1/commission/config', { withdraw_enabled: false, withdraw_methods: [] })
     expect(closedEmpty.status).toBe(422)
     expect(await closedEmpty.json()).toMatchObject({
-      error: { code: 'validation_failed', fields: { withdraw_methods: '关着提现时其他币种的佣金仍按这里的方式提现，至少要选一种' } },
+      error: { code: 'validation_failed', fields: { withdraw_methods: '关着提现时也至少要选一种提现方式，重新打开提现时直接生效' } },
     })
 
     const unknown = await post('/v1/commission/config', { nope: 1 })
@@ -106,6 +106,26 @@ describe('mock api · admin commission', () => {
     expect(paid.status).toBe('paid')
     expect(paid.paid_usdt_amount).toBe('88.5')
     expect(paid.payout_reference).toBe(hash)
+  })
+
+  it('filters withdrawals by comma-separated statuses like the Go handler', async () => {
+    const list = async (q: string) => ((await (await get(`/v1/withdrawals${q}`)).json()) as { withdrawals: Array<{ status: string }> }).withdrawals
+    const all = await list('')
+    expect(withdrawalsResponse.safeParse({ withdrawals: all }).success).toBe(true)
+    expect(all.every((w) => !('currency' in w))).toBe(true)
+    const open = await list('?status=requested,%20approved,')
+    expect(open.length).toBeGreaterThan(0)
+    expect(open.every((w) => w.status === 'requested' || w.status === 'approved')).toBe(true)
+    const done = await list('?status=paid,rejected,paid')
+    expect(done.length).toBeGreaterThan(0)
+    expect(done.every((w) => w.status === 'paid' || w.status === 'rejected')).toBe(true)
+    expect(open.length + done.length).toBe(all.length)
+
+    const bad = await get('/v1/withdrawals?status=requested,reviewing')
+    expect(bad.status).toBe(422)
+    expect(await bad.json()).toMatchObject({
+      error: { code: 'validation_failed', fields: { status: '状态只能是 requested、approved、rejected 或 paid' } },
+    })
   })
 
   it('lists, creates, and deletes commission overrides', async () => {
