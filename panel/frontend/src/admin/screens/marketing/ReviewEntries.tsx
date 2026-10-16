@@ -4,7 +4,8 @@ import { formatMoney } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
 import { Button, Empty, Modal, QueryView, TextArea, useToast } from '../../../ui'
 import local from './Commission.module.css'
-import { approveReasonError, formatDateTime, freezeLabel, voidReasonError, type FieldErrors } from './logic'
+import { approveReasonError, freezeLabel, voidReasonError } from './commissionModel'
+import { formatDateTime, type FieldErrors } from './logic'
 import css from './marketing.module.css'
 import { useFailure, useInvalidateMarketing, useReviewEntries } from './queries'
 import { entryReviewResponse, type ReviewEntry } from './schemas'
@@ -18,14 +19,10 @@ export function ReviewEntries() {
   const query = { ...q, data: flat }
 
   return (
-    <section className={css.panel}>
-      <div className={css.panelHead}>
-        <h3 className={css.panelTitle}>待复核佣金</h3>
-        <span className={css.faint}>同源嫌疑或解冻异常的佣金不会自动解冻；通过后照常解冻，作废会冲回计提。两个操作都需要重新验证身份</span>
-      </div>
+    <section className={local.section}>
       <QueryView
         query={query}
-        empty={<Empty bare title="没有待复核的佣金" description="同源嫌疑、同源检查失败或解冻时余额不足的佣金会出现在这里。" />}
+        empty={<Empty bare title="没有待复核的佣金" />}
       >
         {(rows) => (
           <>
@@ -50,27 +47,24 @@ export function ReviewEntries() {
 
 function ReviewRow({ entry: e, onDialog }: { entry: ReviewEntry; onDialog: (d: Dialog) => void }) {
   return (
-    <div className={local.row}>
+    <div className={local.reviewRow}>
       <span className={local.who}>
-        <span className={local.ellipsis}>{e.referrer_email}</span>
-        <span className={`${css.faint} ${local.ellipsis}`}>
-          来自 {e.referee_email} · 订单 {e.order_no} · {formatDateTime(e.created_at)}
+        <span className={local.ellipsis}>{e.referrer_email} ← {e.referee_email}</span>
+        <span className={`${local.warn} ${local.ellipsis}`}>{e.review_reason}</span>
+        <span className={`${local.reviewMeta} ${local.ellipsis}`}>
+          订单 {e.order_no} · {formatDateTime(e.created_at)} · {freezeLabel(e, new Date())}
         </span>
-        <span className={`${css.faint} ${local.ellipsis}`}>复核原因：{e.review_reason}</span>
-        <span className={`${css.faint} ${local.ellipsis}`}>{freezeLabel(e, new Date())}</span>
       </span>
-      <span className={local.amount}>
-        <span className={local.money}>{formatMoney(e.amount, e.currency)}</span>
-      </span>
-      <span className={local.actions}>
-        <Button size="xs" className={local.reject} onClick={() => onDialog({ kind: 'void', entry: e })}>
-          作废
-        </Button>
+      <span className={local.reviewAmount}>{formatMoney(e.amount)}</span>
+      <span className={local.reviewActions}>
         {e.review_source !== 'account_deleted' && (
-          <Button size="xs" variant="primary" onClick={() => onDialog({ kind: 'approve', entry: e })}>
+          <button type="button" className={local.btnPass} onClick={() => onDialog({ kind: 'approve', entry: e })}>
             通过
-          </Button>
+          </button>
         )}
+        <button type="button" className={local.btnVoid} onClick={() => onDialog({ kind: 'void', entry: e })}>
+          作废
+        </button>
       </span>
     </div>
   )
@@ -128,7 +122,7 @@ function ApproveDialog({ entry, onClose }: { entry: ReviewEntry | null; onClose:
       {entry && (
         <form id="commission-approve" className={css.stack} onSubmit={submit} noValidate>
           <div className={css.muted}>
-            {entry.referrer_email} 的佣金 {formatMoney(entry.amount, entry.currency)}（订单 {entry.order_no}）。复核原因：{entry.review_reason}
+            {entry.referrer_email} 的佣金 {formatMoney(entry.amount)}（订单 {entry.order_no}）。复核原因：{entry.review_reason}
           </div>
           <div className={css.muted}>
             {freezeLabel(entry, new Date())}
@@ -200,7 +194,7 @@ function VoidDialog({ entry, onClose }: { entry: ReviewEntry | null; onClose: ()
       {entry && (
         <form id="commission-void" className={css.stack} onSubmit={submit} noValidate>
           <div className={css.muted}>
-            {entry.referrer_email} 的佣金 {formatMoney(entry.amount, entry.currency)}（订单 {entry.order_no}）。作废后这笔佣金从推荐人的待结佣金冲回平台收入，不能撤销。
+            {entry.referrer_email} 的佣金 {formatMoney(entry.amount)}（订单 {entry.order_no}）。作废后这笔佣金从推荐人的待结佣金冲回平台收入，不能撤销。
           </div>
           <TextArea
             label="作废原因"

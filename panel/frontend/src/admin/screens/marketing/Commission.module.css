@@ -1,35 +1,38 @@
-.columns {
+.section {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-16);
-  align-items: flex-start;
+  flex-direction: column;
 }
 
-.withdrawals {
-  flex: 2 1 520px;
+.filterRow {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 0 10px;
 }
 
-.settings {
-  flex: 1 1 280px;
-}
-
-.row {
+.reviewRow {
   display: flex;
   align-items: center;
   gap: var(--space-12);
-  min-height: 56px;
-  padding: 10px var(--space-16);
-  border-bottom: 1px solid var(--border);
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
 }
 
-.row:last-of-type {
-  border-bottom: 0;
+.reviewRow:first-of-type {
+  border-top: 1px solid var(--border);
+}
+
+.withdrawalRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px var(--space-16);
+  padding: 11px 0;
+  border-top: 1px solid var(--border);
 }
 
 .who {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
+  flex: 1 1 280px;
   min-width: 0;
 }
 
@@ -39,95 +42,106 @@
   white-space: nowrap;
 }
 
-.amount {
-  display: flex;
-  flex: none;
-  flex-direction: column;
-  align-items: flex-end;
+.reviewMeta {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
 }
 
-.money {
-  font-weight: var(--fw-medium);
+.warn {
+  color: var(--warn);
+  font-size: var(--fs-caption);
+}
+
+.reviewAmount {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
   font-variant-numeric: tabular-nums;
+}
+
+.amount {
+  flex: none;
+  width: 100px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
   white-space: nowrap;
 }
 
 .state {
   flex: none;
-  width: 64px;
+  width: 72px;
 }
 
 .actions {
   display: flex;
   flex: none;
-  justify-content: flex-end;
-  gap: 6px;
-  min-width: 104px;
-}
-
-.reject {
-  border-color: var(--danger-line);
-  color: var(--danger);
-}
-
-.pay {
-  background: var(--ok);
-  color: var(--on-ink);
-}
-
-.form {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-12);
-  padding: var(--space-16);
-}
-
-.rate {
-  display: flex;
-  flex-direction: column;
-}
-
-.rateLine {
-  display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: flex-end;
+  gap: var(--space-14, 14px);
+  width: 120px;
 }
 
-.rateLine > :last-child {
-  width: 40px;
-  text-align: right;
+.reviewActions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-12);
 }
 
-.range {
-  flex: 1;
-  accent-color: var(--text);
+.btnPass {
+  flex: none;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--text);
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
 }
 
-.scope {
-  width: 100%;
-}
-
-.scope > * {
-  flex: 1;
-}
-
-.pair {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+.btnVoid {
+  flex: none;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--danger);
+  font-size: var(--fs-caption);
+  cursor: pointer;
 }
 
 .more {
-  padding: var(--space-12) var(--space-16);
+  padding: var(--space-12) 0;
+  border-top: 1px solid var(--border);
 }
 
-@media (max-width: 640px) {
-  .row {
+@media (max-width: 639px) {
+  .reviewRow {
     flex-wrap: wrap;
+  }
+
+  .reviewActions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .withdrawalRow {
+    gap: 8px var(--space-12);
   }
 
   .actions {
     width: 100%;
-    min-width: 0;
+    justify-content: flex-end;
+  }
+
+  .amount {
+    width: auto;
+    text-align: left;
   }
 }
+
