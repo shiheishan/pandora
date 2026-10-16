@@ -106,8 +106,6 @@ type PoolRef struct {
 type GroupUsage struct {
 	// Plans 是把该组列入可见名单的套餐数（含已归档）
 	Plans int64
-	// Prices 是该组的专属价格数（不分状态）
-	Prices int64
 	// Coupons 是限定该组的优惠券数（不分状态）
 	Coupons int64
 	// ExclusivePools 是把该组列入「仅限用户组」名单的节点池，按名称、id 升序

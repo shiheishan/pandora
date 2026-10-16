@@ -7,7 +7,7 @@ import { useApi } from '../../../shell/runtime'
 import { Button, Card, ConfirmModal, Empty, Input, QueryView, Table, Tag, useToast, type TableColumn } from '../../../ui'
 import { useFailure } from '../../actions'
 import { groupSavedSchema, okSchema, useInvalidateUsers, useUserGroups, type UserGroup } from './api'
-import { EXCLUSIVE_NONE_HINT, GROUP_DISABLE_NOTICE, exclusivePoolsLabel, groupBlocker, groupDeleteNotice, groupRefs } from './model'
+import { EXCLUSIVE_NONE_HINT, GROUP_DISABLE_NOTICE, exclusivePoolsLabel, groupBlocker, GROUP_DELETE_NOTICE, groupRefs } from './model'
 import ops from './Ops.module.css'
 import css from './Users.module.css'
 
@@ -189,7 +189,7 @@ export function GroupsTab() {
       <ConfirmModal
         open={deleting !== null}
         title={`删除用户组「${deleting?.name ?? ''}」？`}
-        body={deleting ? groupDeleteNotice(deleting) : ''}
+        body={deleting ? GROUP_DELETE_NOTICE : ''}
         confirmLabel="删除"
         tone="danger"
         onConfirm={remove}

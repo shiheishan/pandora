@@ -5,7 +5,6 @@ import type { Group, Sub, User } from './users.ts'
 export interface UsersStore {
   users: User[]
   groups: Group[]
-  soldPriceGroups: ReadonlySet<string>
   /** 当前订阅：与后端 currentSubscriptionSQL 同一挑法 */
   current(u: User): Sub | undefined
   hasSubState(u: User, state: string): boolean
@@ -242,7 +241,7 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
       const code = (typeof body.code === 'string' ? body.code.trim() : '') || slug(name)
       if (groups.some((g) => g.code === code)) return ctx.fail(409, 'conflict', '这个分组标识已存在')
       const id = randomUUID()
-      groups.push({ id, code, name, description: typeof body.description === 'string' ? body.description : '', status: 'active', plans: 0, prices: 0, coupons: 0 })
+      groups.push({ id, code, name, description: typeof body.description === 'string' ? body.description : '', status: 'active', plans: 0, coupons: 0 })
       ctx.send(200, { id })
     },
 
@@ -285,7 +284,6 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
       if (users.some((u) => u.group_id === g.id)) return ctx.fail(409, 'conflict', '这个分组下还有用户，先把他们移出去')
       if (g.plans > 0) return ctx.fail(409, 'conflict', '还有套餐按这个分组控制可见性，先解除')
       if (g.coupons > 0) return ctx.fail(409, 'conflict', '还有优惠券限定了这个分组，先解除')
-      if (g.prices > 0 && store.soldPriceGroups.has(g.id)) return ctx.fail(409, 'conflict', '这个分组的专属价已经有人买过（订单、订阅或礼品卡用过），不能删除；不想再用可以停用这个分组')
       groups.splice(k, 1)
       ctx.send(200, { ok: true })
     },

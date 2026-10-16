@@ -13,7 +13,7 @@ import {
   generateProblems,
   GROUP_DISABLE_NOTICE,
   groupBlocker,
-  groupDeleteNotice,
+  GROUP_DELETE_NOTICE,
   groupOptionLabel,
   groupRefs,
   nearLimit,
@@ -31,28 +31,25 @@ import {
 } from './model'
 
 describe('用户组', () => {
-  const g = { status: 'active' as const, users: 0, plans: 0, prices: 0, coupons: 0, exclusive_pools: [] as Array<{ id: string; name: string }> }
+  const g = { status: 'active' as const, users: 0, plans: 0, coupons: 0, exclusive_pools: [] as Array<{ id: string; name: string }> }
   it('按后端 409 的先后顺序说明为什么不能删（R104 节点池名单排最前）', () => {
     expect(groupBlocker(g)).toBeNull()
     expect(groupBlocker({ ...g, users: 3, exclusive_pools: [{ id: 'p', name: '专属线路 A' }] })).toBe('节点池「专属线路 A」限定了这个组，先在节点池里把它移出名单')
     expect(groupBlocker({ ...g, users: 3, plans: 1 })).toBe('组内还有 3 位用户，先把他们移出去')
     expect(groupBlocker({ ...g, plans: 2, coupons: 1 })).toBe('还有 2 个套餐按这个组控制可见性，先解除')
-    // 专属价不再拦删除
-    const withPrice = { ...g, prices: 1 }
-    expect(groupBlocker(withPrice)).toBeNull()
     expect(groupBlocker({ ...g, coupons: 4 })).toContain('4 张优惠券')
   })
 
   it('R104「可用节点池」：列名单里的池，空是破折号', () => {
     expect(exclusivePoolsLabel(g)).toBe('—')
     expect(exclusivePoolsLabel({ exclusive_pools: [{ id: 'a', name: '专线 A' }, { id: 'b', name: '灰度' }] })).toBe('专线 A、灰度')
-    expect(userGroupsSchema.parse({ groups: [{ id: 'g', code: 'vip', name: 'VIP', description: '', status: 'active', users: 0, plans: 0, prices: 0, coupons: 0, exclusive_pools: null }] }).groups[0]!.exclusive_pools).toEqual([])
-    expect(userGroupsSchema.safeParse({ groups: [{ id: 'g', code: 'vip', name: 'VIP', description: '', users: 0, plans: 0, prices: 0, coupons: 0, exclusive_pools: null }] }).success).toBe(false)
+    expect(userGroupsSchema.parse({ groups: [{ id: 'g', code: 'vip', name: 'VIP', description: '', status: 'active', users: 0, plans: 0, coupons: 0, exclusive_pools: null }] }).groups[0]!.exclusive_pools).toEqual([])
+    expect(userGroupsSchema.safeParse({ groups: [{ id: 'g', code: 'vip', name: 'VIP', description: '', users: 0, plans: 0, coupons: 0, exclusive_pools: null }] }).success).toBe(false)
   })
 
   it('「被引用」只列不为 0 的，都为 0 时是破折号', () => {
     expect(groupRefs(g)).toBe('—')
-    expect(groupRefs({ plans: 2, prices: 0, coupons: 1 })).toBe('套餐 2 · 优惠券 1')
+    expect(groupRefs({ plans: 2, coupons: 1 })).toBe('套餐 2 · 优惠券 1')
   })
 
   it('停用组：分配下拉隐藏，但保留当前值并标「（已停用）」', () => {
@@ -63,11 +60,10 @@ describe('用户组', () => {
     expect(groupOptionLabel(list[0]!)).toBe('VIP')
   })
 
-  it('删组确认：有专属价时写明会一并删除、买过的会被拒', () => {
-    expect(groupDeleteNotice({ prices: 3 })).toContain('3 条专属价格')
-    expect(groupDeleteNotice({ prices: 3 })).toContain('改用停用')
-    expect(groupDeleteNotice({ prices: 0 })).not.toContain('专属价格')
+  it('删组、停用确认的正文', () => {
+    expect(GROUP_DELETE_NOTICE).not.toContain('专属价格')
     expect(GROUP_DISABLE_NOTICE).toContain('已有成员不受影响')
+    expect(GROUP_DISABLE_NOTICE).not.toContain('专属价格')
   })
 })
 

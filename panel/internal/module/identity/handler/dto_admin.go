@@ -100,7 +100,6 @@ type admUserGroupRow struct {
 	Users          int64                `json:"users"`
 	Status         string               `json:"status"`
 	Plans          int64                `json:"plans"`
-	Prices         int64                `json:"prices"`
 	Coupons        int64                `json:"coupons"`
 	ExclusivePools []admPoolRefResponse `json:"exclusive_pools"`
 }
@@ -220,7 +219,6 @@ func admGroupRowFrom(g service.Group) admUserGroupRow {
 		Users:          g.Users,
 		Status:         g.Status,
 		Plans:          g.Plans,
-		Prices:         g.Prices,
 		Coupons:        g.Coupons,
 		ExclusivePools: pools,
 	}

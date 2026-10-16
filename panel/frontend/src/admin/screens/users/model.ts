@@ -234,8 +234,8 @@ export function devicePolicyBody(form: { mode: 'loose' | 'strict'; grace: string
   return { mode: form.mode, ...(form.mode === 'strict' ? { grace: g } : {}), ...(form.window !== savedWindow ? { window_minutes: form.window } : {}) }
 }
 
-export function groupRefs(g: Pick<UserGroup, 'plans' | 'prices' | 'coupons'>): string {
-  const parts = [g.plans && `套餐 ${g.plans}`, g.prices && `价格 ${g.prices}`, g.coupons && `优惠券 ${g.coupons}`].filter(Boolean)
+export function groupRefs(g: Pick<UserGroup, 'plans' | 'coupons'>): string {
+  const parts = [g.plans && `套餐 ${g.plans}`, g.coupons && `优惠券 ${g.coupons}`].filter(Boolean)
   return parts.length ? parts.join(' · ') : '—'
 }
 
@@ -251,12 +251,9 @@ export function assignableGroups<T extends { id: string; status: string }>(group
   return groups.filter((g) => g.status !== 'disabled' || keep.includes(g.id))
 }
 /** 停用确认的正文 */
-export const GROUP_DISABLE_NOTICE = '已有成员不受影响，照样看到这个组的套餐、专属价格、节点池和订阅域名。停用后不能再把用户加进这个组，后台各处的分配下拉里也不再出现它；可以随时重新启用。'
-/** 删组确认的正文：有专属价时说明会一并删除、买过的会被拒绝 */
-export function groupDeleteNotice(g: Pick<UserGroup, 'prices'>): string {
-  if (g.prices > 0) return `删除后无法恢复。会一并删除这个组的 ${g.prices} 条专属价格；如果其中有人买过，删除会被拒绝，可以改用停用。`
-  return '删除后无法恢复。这个组已经没有成员，也没有套餐或优惠券引用它。'
-}
+export const GROUP_DISABLE_NOTICE = '已有成员不受影响，照样看到这个组的套餐、节点池和订阅域名。停用后不能再把用户加进这个组，后台各处的分配下拉里也不再出现它；可以随时重新启用。'
+/** 删组确认的正文 */
+export const GROUP_DELETE_NOTICE = '删除后无法恢复。这个组已经没有成员，也没有套餐或优惠券引用它。'
 
 // ===========================================================================
 // 批量运营：设计稿的四个下拉 → BulkFilter（契约映射）

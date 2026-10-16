@@ -188,9 +188,8 @@ type Group struct {
 	Users       int64
 	// Status：GroupActive / GroupDisabled
 	Status string
-	// 下面经 OpsGroupUsage 补：引用该组的套餐、价格、券数，与把它列入限定名单的节点池（永不为 nil）
+	// 下面经 OpsGroupUsage 补：引用该组的套餐、券数，与把它列入限定名单的节点池（永不为 nil）
 	Plans          int64
-	Prices         int64
 	Coupons        int64
 	ExclusivePools []PoolRef
 }

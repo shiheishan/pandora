@@ -18,7 +18,7 @@ paths:
   - `billing/schemas.ts` 的订单列表行也是用户详情「最近订单」的形状（`users/api.ts` 从这里取）
   - `users/model.ts` 的 `ORDER_STATUS_VIEW` / `orderWhat` / `parseYuan` 与 `plans/model.ts` 的周期文案被订单页复用
   - `plans/api.ts` 的 `planOptionsKey` 给用户、内容两个模块各自查套餐目录，挂在 `PK` 下，套餐页写后一并失效
-  - `users/api.ts` 的 `useUserGroups` 被套餐页（可见用户组、组专属价）借用
+  - `users/api.ts` 的 `useUserGroups` 被套餐页（可见用户组）借用
 - 10-16 起按设计稿显示效果还原：设计稿没显示的功能前后端一起删，安全项保留（见 redesign-2026-10-16.md）。
 - 外壳（10-16）：页头没有面包屑和标题，页签栏直接在顶；页签右端的「?」读 `admin/page-help.ts` 的 `PAGE_HELP`，键是 `模块:页签`（没有页签的模块用模块名）。新页面或改页签时在那里补一条（`{label, sections:[{title, ordered?, items}]}`，items 是字符串或 `{term, text}`），`admin.test.ts` 核对每个键都落在真实页面上。
 - `admin/modules.ts` 的 `PENDING_TABS` 是「还没按新设计做出来」的页签，外壳给它们显示空状态；页面接好后从集合里删掉那一项。套餐模块没有页签，详情路径是 `/plans/<id>`。

@@ -195,7 +195,6 @@ func TestPGAdminListGroups(t *testing.T) {
 	poolID := uuid.New()
 	fakes.groups.usage[g1] = GroupUsage{
 		Plans:          2,
-		Prices:         1,
 		Coupons:        3,
 		ExclusivePools: []PoolRef{{ID: poolID, Name: "池A"}},
 	}
@@ -217,13 +216,13 @@ func TestPGAdminListGroups(t *testing.T) {
 			row2 = &groups[i]
 		}
 	}
-	if row1 == nil || row1.Plans != 2 || row1.Prices != 1 || row1.Coupons != 3 {
+	if row1 == nil || row1.Plans != 2 || row1.Coupons != 3 {
 		t.Fatalf("g1 usage %+v", row1)
 	}
 	if len(row1.ExclusivePools) != 1 || row1.ExclusivePools[0].Name != "池A" {
 		t.Fatalf("g1 pools %+v", row1.ExclusivePools)
 	}
-	if row2 == nil || row2.Plans != 0 || row2.Prices != 0 || row2.Coupons != 0 {
+	if row2 == nil || row2.Plans != 0 || row2.Coupons != 0 {
 		t.Fatalf("g2 counts %+v", row2)
 	}
 	if row2.ExclusivePools == nil || len(row2.ExclusivePools) != 0 {

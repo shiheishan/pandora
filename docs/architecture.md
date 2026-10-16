@@ -255,7 +255,7 @@ identity, auth ─► settings, audit
 | R11 | 账本：分录金额 > 0，配平在库里检查（5.3）；余额缓存在 Go 里同事务更新；交易 kind 加 CHECK 枚举；礼品卡赠送改记新科目 `platform_promo_expense`，不再和渠道手续费混用一个科目 |
 | R12 | 金额小数位只在 `pkg/money` 一处定义；去掉写死的 `/100` |
 
-订单减免的先后（xb-order，照 Xboard）：小计是 catalog 按用户组取到的价格档单价（用户组专属价已在这里体现）；优惠券与会员折扣都按小计算、相加，合计不超过小计（超出时压会员部分）；再减换套餐剩余价值，得到总额；最后余额抵扣与零头免除。`discount_amount` 记券 + 会员，其中会员部分另记 `member_discount_amount`。流量重置单例外：永远按原价收，不收券、不打会员折扣（用户 10-14 定，库约束 `orders_traffic_reset_no_discount`）。
+订单减免的先后（xb-order，照 Xboard）：小计是 catalog 取到的价格档单价；减优惠券（不超过小计），再减换套餐剩余价值，得到总额；最后余额抵扣与零头免除。`discount_amount` 记券（10-16 起没有用户组专属价与会员折扣）。流量重置单例外：永远按原价收，不收券（用户 10-14 定，库约束 `orders_traffic_reset_no_discount`）。
 
 计费周期加月用 Go 的 `AddDate`（1 月 31 日加一个月得到 3 月 3 日）。周期计算只在 Go 里做，不挪进 SQL，以免两边口径不一致。
 

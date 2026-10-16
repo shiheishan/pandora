@@ -34,7 +34,7 @@ paths:
 ## 管理员与用户管理
 - 停用、封禁用户前在同一事务里过 `AdminGuard`：是最后一个有效管理员就 409。批量停用同源账号跳过管理员（`DisableIPClusterAccounts`）。
 - 管理员不能走门户自助找回密码，只能用 `pandora admin reset-password`。
-- 删用户组先锁组、数组内用户（有就 409），再按引用统计拦节点池名单、套餐可见名单、优惠券（409，`ensureGroupUnused`），再删（`DeleteGroup`）。组专属价格不拦（用户 10-14 定 C）：00050 把 `prices.user_group_id` 改成 ON DELETE CASCADE，没被买过的专属价（不分在售、归档）随组删除，审计记 `prices_deleted`；被订单项、订阅、礼品卡引用过的价格让级联撞上它们的 RESTRICT 外键，整笔回滚，回 409「专属价已经有人买过…可以停用这个分组」。组的 code 建后不可改。
+- 删用户组先锁组、数组内用户（有就 409），再按引用统计拦节点池名单、套餐可见名单、优惠券（409，`ensureGroupUnused`），再删（`DeleteGroup`）。用户组专属价已删（10-16，00056 删 `prices.user_group_id`），组的引用统计只剩套餐可见、优惠券、节点池。组的 code 建后不可改。
 - 用户组停用（用户 10-14 定 B，`user_groups.status` active / disabled，`SetGroupStatus`，`POST /v1/user-groups/:id/status`，幂等、写审计 `user_group.status_changed`，可再启用）：只挡新成员——`AssignGroup` 对不在该组的用户回 409（本来就在组里再提交同组不拦），批量生成入队回 422 `fields.group_id`「分组已停用」、执行时复查（`errGenerationGroupDisabled`，任务失败）；读组状态用 `repo.GroupStatus`（FOR SHARE，与停用、删组互斥）。已有成员完全不受影响：门户、订阅拉取、节点名单、订阅域名都不看 status。后台各处的分配下拉隐藏停用组（前端，见 screens-admin-users）。
 - 批量生成账号是 asynq 任务 `identity:generate_users`：请求只登记任务、写审计、提交后入队；任务 ID 带认领代数 `attempts`，`reconcile:user_generation` 每分钟补排卡住的任务并清过期结果。结果含明文初始口令，只存密文（`generationResultAAD`），只有提交人能下载、要近期重认证、每次下载记审计，24 小时后清密文。
 - 用户导出、按条件预览、群发收件人共用同一套 `BulkFilter`；导出审计写不进去就整单失败，不交出名单（`ExportUsers`）。CSV 单元格过 `CSVCell`。

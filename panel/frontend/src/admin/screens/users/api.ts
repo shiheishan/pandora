@@ -120,7 +120,6 @@ const userGroupSchema = z.object({
   status: z.enum(['active', 'disabled']),
   users: count,
   plans: count,
-  prices: count,
   coupons: count,
   // R104：把这个组列入「仅限用户组」名单的节点池（只读）；Go 的 nil 切片可能编成 null，归一成 []
   exclusive_pools: z

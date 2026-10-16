@@ -8,8 +8,8 @@ paths:
 - 保留规则 2 贯穿整个模块：后台看不到订阅地址。列表、详情、画像都不含令牌；订阅标签用一句说明代替设计稿的「订阅地址 + 复制」；换发订阅链接的响应 schema 用 `.strict()` 守住「不回令牌」（`model.test.ts` 断言带令牌即判不符），成功后提示让用户到门户重新复制。换发会连节点密码一起换（2026-10-07），对话框写明旧链接和已导入的节点立即失效、用户所有设备要重新更新订阅；后台换发不限频。
 - 明文注册 IP 只从风控画像接口取。
 - 产品取舍：重置密码是管理员直接设新密码，不要原因、不发邮件、不回显（D-B-2）；不给全局「默认同时在线设备」滑块；批量生成不带「开通套餐」（引导去人工开单）；设备标签只有在线台数与上限，不列逐台客户端与 IP（节点只上报 IP 哈希，D-B-8）；识别窗口只给 5 / 10 / 30 / 60 分钟（`DEVICE_WINDOWS`），下拉旁说明代价。
-- 用户组删除拦截先看节点池名单（`exclusive_pools`），再看成员、套餐可见、优惠券，与后端 409 同序（`model.ts` 的 `groupBlocker`）；专属价格不拦，删除确认写明会一并删除 N 条专属价、买过的会被拒绝可改用停用（`groupDeleteNotice`）。删组、启停后连套餐页（`['admin','plans']`）与订阅域名页的用户组查询一起失效。
-- 用户组停用 / 启用（`POST v1/user-groups/{id}/status`，`{disabled}`，无 reauth、无幂等）：停用要确认（`GROUP_DISABLE_NOTICE`：已有成员不受影响，只是不能再加人、下拉里不再出现），启用直接做。所有「分配 / 选择用户组」的下拉与勾选（用户抽屉分组、批量生成、套餐可见组、新建专属价、节点池仅限用户组、订阅域名分给用户组）用 `assignableGroups(groups, 当前值)` 隐藏停用组但保留当前已选的，名字用 `groupOptionLabel`（停用的加「（已停用）」）；筛选类下拉（用户列表分组筛选、批量运营按条件筛选）不隐藏，只标「（已停用）」。公告定向的组列表来自 content 后端，不带 status，暂未区分。
+- 用户组删除拦截先看节点池名单（`exclusive_pools`），再看成员、套餐可见、优惠券，与后端 409 同序（`model.ts` 的 `groupBlocker`）；删除确认用固定文案 `GROUP_DELETE_NOTICE`（10-16 起没有组专属价）。删组、启停后连套餐页（`['admin','plans']`）与订阅域名页的用户组查询一起失效。
+- 用户组停用 / 启用（`POST v1/user-groups/{id}/status`，`{disabled}`，无 reauth、无幂等）：停用要确认（`GROUP_DISABLE_NOTICE`：已有成员不受影响，只是不能再加人、下拉里不再出现），启用直接做。所有「分配 / 选择用户组」的下拉与勾选（用户抽屉分组、批量生成、套餐可见组、节点池仅限用户组、订阅域名分给用户组）用 `assignableGroups(groups, 当前值)` 隐藏停用组但保留当前已选的，名字用 `groupOptionLabel`（停用的加「（已停用）」）；筛选类下拉（用户列表分组筛选、批量运营按条件筛选）不隐藏，只标「（已停用）」。公告定向的组列表来自 content 后端，不带 status，暂未区分。
 - 前端口径与后端逐一对齐，改后端这些函数时同步改 `model.ts`：当前订阅挑法 = subscription service 的 `currentIndex`（`panel/internal/module/subscription/service/state.go`）；手动重置按份（只能重置 `status=active` 的订阅，`resettableSubs`；多份时预选用得最多的，`defaultResetSub` 对应 `purchase.Options` 的重置规则，加流量预选剩余最少的 `defaultTrafficSub`）；批量生成校验 = identity service 的 `normalizeGenerateInput`（`ops_generate.go`）；密码预检 = identity service 的 `validatePassword`（`password.go`）。
 - 设备策略请求体：strict 才带 grace，识别窗口改了才带 `window_minutes`。
 - 订阅只有 `active` / `expired` 两态（`00011_subscription.sql`）：「还在用」只有一处判断 `model.ts` 的 `isLive`（`status === 'active'`），不要另写状态集合；换发链接的候选是 `rotatableSubscriptions`（还在用的，一个都没有时退回全部）。

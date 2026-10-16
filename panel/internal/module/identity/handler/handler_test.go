@@ -429,7 +429,7 @@ func TestAdminUserJSONKeys(t *testing.T) {
 	gr := decodeMap(t, w.Body.Bytes())
 	groups, _ := gr["groups"].([]any)
 	g0, _ := groups[0].(map[string]any)
-	assertKeys(t, g0, "id", "code", "name", "description", "users", "status", "plans", "prices", "coupons", "exclusive_pools")
+	assertKeys(t, g0, "id", "code", "name", "description", "users", "status", "plans", "coupons", "exclusive_pools")
 	if g0["status"] != "active" {
 		t.Fatalf("group status %v", g0["status"])
 	}
