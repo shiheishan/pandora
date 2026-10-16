@@ -8,7 +8,9 @@
 # - pandora-ops：postgres 同主版本 + age/openssl，维护 migrate/backup/psql 等。
 #
 # 构建上下文为仓库根目录，例如：
-#   docker build -f panel/deploy/docker/Dockerfile --target pandora .
+#   HUGEICONS_NPM_TOKEN=… docker build -f panel/deploy/docker/Dockerfile \
+#     --secret id=hugeicons_npm_token,env=HUGEICONS_NPM_TOKEN --target pandora .
+# （从源码构建要装前端私有图标包，没有令牌 npm ci 回 401；用 --build-context release=… 替换 release 阶段时不需要。）
 # 发版构建可覆盖 release 阶段（同名构建上下文会替换同名阶段）：
 #   docker build -f panel/deploy/docker/Dockerfile --build-context release=<已验 tarball 解开的目录> --target pandora .
 
@@ -23,10 +25,17 @@ ENV PATH=/usr/local/go/bin:$PATH
 WORKDIR /src
 COPY . .
 ARG PANDORA_VERSION
-RUN --mount=type=cache,target=/root/go/pkg/mod \
+# 前端的 @hugeicons-pro 走私有 npm 源：令牌经 BuildKit secret 只在这一步作为环境变量出现
+# （docker build --secret id=hugeicons_npm_token,env=HUGEICONS_NPM_TOKEN），不进构建参数、不进镜像层；
+# 写进 npmrc 的只是 ${NODE_AUTH_TOKEN} 占位，由 npm 运行时展开，用完即删。
+RUN --mount=type=secret,id=hugeicons_npm_token,env=NODE_AUTH_TOKEN \
+    --mount=type=cache,target=/root/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/root/.npm \
-    PANDORA_VERSION="$PANDORA_VERSION" bash panel/deploy/build-release.sh /tmp/dist \
+    export NPM_CONFIG_USERCONFIG=/tmp/hugeicons.npmrc \
+ && printf '%s\n' '@hugeicons-pro:registry=https://npm.collectui.pro/' '//npm.collectui.pro/:_authToken=${NODE_AUTH_TOKEN}' > "$NPM_CONFIG_USERCONFIG" \
+ && PANDORA_VERSION="$PANDORA_VERSION" bash panel/deploy/build-release.sh /tmp/dist \
+ && rm -f "$NPM_CONFIG_USERCONFIG" \
  && mkdir /release \
  && mv "/tmp/dist/pandora-panel_${PANDORA_VERSION}_linux_amd64" "/tmp/dist/pandora-panel_${PANDORA_VERSION}_linux_arm64" /release/
 
