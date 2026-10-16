@@ -1,12 +1,12 @@
 import { Moon02Icon, Search01Icon, SidebarLeftIcon, Sun03Icon } from '@hugeicons-pro/core-stroke-rounded'
 import { HugeiconsIcon } from '@hugeicons/react'
+import { navigate } from '../core/router'
 import { toggleTheme, useTheme } from '../core/theme'
 import { Logo } from '../shell/Logo'
 import { signOut, useRuntime } from '../shell/runtime'
 import { Menu } from '../ui'
 import { EventsCapsule } from './EventsCapsule'
 import { identityLabels, useAdminMe } from './me'
-import type { ModuleKey } from './modules'
 import { useAdminSiteName } from './site'
 import css from './Topbar.module.css'
 
@@ -14,7 +14,6 @@ export interface TopbarProps {
   collapsed: boolean
   onToggleSidebar: () => void
   onOpenPalette: () => void
-  onNavigate: (module: ModuleKey, tab?: string | null) => void
   onChangePassword: () => void
   onBindTelegram: () => void
 }
@@ -23,7 +22,6 @@ export function Topbar({
   collapsed,
   onToggleSidebar,
   onOpenPalette,
-  onNavigate,
   onChangePassword,
   onBindTelegram,
 }: TopbarProps) {
@@ -96,7 +94,7 @@ export function Topbar({
         />
       </button>
 
-      <EventsCapsule onNavigate={(mod, tab) => onNavigate(mod, tab ?? null)} />
+      <EventsCapsule onOpen={(path) => navigate(path)} />
 
       <div className={css.accountMenuWrap}>
         <Menu

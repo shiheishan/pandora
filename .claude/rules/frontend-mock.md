@@ -49,6 +49,7 @@ paths:
   - 页面读接口要先过 `gate`，`error` / `slow` 场景才对它生效；外框读的余额、佣金也算在内
   - 按用户挂的模块状态放在 `WeakMap<PortalState, …>` 里，才能随切换场景一起重建
 - 外框顶栏读的余额、订阅、佣金、未读数按契约归各页面，所以住在对应页面的模块文件里（`wallet` / `subs` / `referral` / `messages`）；页面扩充这些接口时外框直接沿用
+- SSE（`dev/mock-api.ts` 的 `stream`）：后台每 15 秒推一条表变更，载荷照 Go 的 `{ table, op, id }`，由 `admin/events.ts` 的 `pickAdminEvent` 从订单、工单、节点、订阅、套餐的种子里挑真有的行（只发 INSERT / UPDATE），后台点事件能打开那一条；守卫 `tests/mock-admin-events.test.ts`
 - 状态都在内存里，vite 重启即复原
   - `POST /__mock/expire-reauth` 让所有会话的 rat 立即过期，用来走 reauth 流程
   - 演示账号见 `dev/mock-api.ts` 的 `MOCK_ACCOUNTS`

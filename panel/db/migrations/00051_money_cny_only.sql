@@ -78,6 +78,9 @@ END
 $$;
 -- +goose StatementEnd
 
+-- 0. 站点币种设置 site.currency 没有读者了（settings 已删这个键），删掉存过的那一行；Down 不种回（旧代码没有这一行时取缺省 CNY）
+DELETE FROM settings WHERE key = 'site.currency';
+
 -- 1. 先删引用方的复合外键
 ALTER TABLE ledger_entries
   DROP CONSTRAINT ledger_entries_transaction_fk,

@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../core/api'
 import { classifyFailure, createIntentKey, handleFailure } from './actions'
 import { passwordStrength } from './ChangePasswordDialog'
-import { describeEvent } from './EventsCapsule'
 import { identityLabels } from './me'
 import { MODULES, modulePath, paletteGroups, resolveRoute } from './modules'
 import { PAGE_HELP, pageHelp } from './page-help'
@@ -149,23 +148,6 @@ describe('identityLabels', () => {
 describe('passwordStrength', () => {
   it('fills one bar per 4 characters, capped at 4', () => {
     expect([0, 3, 4, 11, 12, 16, 40].map((n) => passwordStrength('x'.repeat(n)))).toEqual([0, 0, 1, 2, 3, 4, 4])
-  })
-})
-
-describe('describeEvent', () => {
-  it('turns a table-change event into a generic, navigable item', () => {
-    const item = describeEvent({ event: 'orders.changed', data: '{"table":"orders","op":"INSERT","id":"0192a1b2-c3d4"}' }, 1)
-    expect(item).toMatchObject({ title: '订单变更 · 新建', body: 'orders · 0192a1b2', module: 'billing', tab: 'orders', tone: 'ok' })
-  })
-
-  it('handles ticket replies, unknown topics and bad payloads', () => {
-    expect(describeEvent({ event: 'ticket.updated', data: '{"ticket_id":"t-123456789"}' }, 2)).toMatchObject({ title: '工单回复变更', body: 't-123456', module: 'tickets' })
-    expect(describeEvent({ event: 'data.changed', data: 'not json' }, 3)).toMatchObject({ title: '数据变更', body: '', module: null })
-  })
-
-  it('describes switch toggles by code and direction', () => {
-    expect(describeEvent({ event: 'switches.changed', data: '{"code":"billing.checkout","enabled":false}' }, 4)).toMatchObject({ title: '降级开关变更 · 已暂停', body: 'billing.checkout', module: 'security', tab: 'switches', tone: 'warn' })
-    expect(describeEvent({ event: 'switches.changed', data: '{"code":"admin.writes","enabled":true}' }, 5)).toMatchObject({ title: '降级开关变更 · 已恢复', body: 'admin.writes' })
   })
 })
 

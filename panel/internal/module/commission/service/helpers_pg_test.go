@@ -127,7 +127,7 @@ func (f *fakeSources) SharesSource(_ context.Context, a, b uuid.UUID) (bool, err
 // CASCADE 带走订单子表、预留、订阅子表等）。不留会被别的包或解冻扫描扫到的数据。
 var commitTables = []string{
 	"commission_forfeitures", "commission_transfers", "withdrawals", "commission_entries",
-	"orders", "plan_purchase_counters",
+	"orders",
 	"late_payment_cases", "payment_events", "payments", "payment_intents",
 	"balance_holds", "coupon_redemptions", "subscriptions",
 	"ledger_entries", "ledger_transactions", "ledger_accounts",

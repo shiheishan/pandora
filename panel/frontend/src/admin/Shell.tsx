@@ -95,7 +95,6 @@ export function Shell() {
         collapsed={collapsed}
         onToggleSidebar={toggleSidebar}
         onOpenPalette={() => setPalette(true)}
-        onNavigate={go}
         onChangePassword={() => setPassword(true)}
         onBindTelegram={() => setTelegram(true)}
       />

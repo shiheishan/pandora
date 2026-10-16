@@ -1,82 +1,39 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { z } from 'zod'
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { relativeTime } from '../core/format'
 import type { SseEvent } from '../core/sse'
 import { useRealtime } from '../shell/runtime'
 import css from './EventsCapsule.module.css'
-import type { ModuleKey } from './modules'
+import {
+  describeEvent,
+  eventsInTab,
+  EVENT_TABS,
+  markAllRead,
+  markRead,
+  pushEvent,
+  unreadCount,
+  type EventItem,
+  type EventTab,
+} from './events'
 
 // ---------------------------------------------------------------------------
-// 事件只说「哪张表哪一行变了」，没有标题正文。D-A-1 已决（5.A.2）：维持按契约
-// 用 topic + op 生成通用条目，点击跳到对应模块。降级开关的 switches.changed
-// 不是表变更，载荷是 { code, enabled }，正文写开关 code 与切换方向。
+// 顶栏「实时事件」：收 SSE 推送，按 events.ts 的模型画未读、页签与跳转。
+// 已读只在内存里，刷新即清（10-16 用户定）；面板开着时新事件也算未读。
 // ---------------------------------------------------------------------------
-const TOPICS: Record<string, { label: string; module: ModuleKey | null; tab?: string; tone: 'ok' | 'warn' | 'danger' | 'info' }> = {
-  'orders.changed': { label: '订单', module: 'billing', tab: 'orders', tone: 'ok' },
-  'subscriptions.changed': { label: '订阅', module: 'users', tab: 'list', tone: 'info' },
-  'tickets.changed': { label: '工单', module: 'tickets', tone: 'danger' },
-  'ticket.updated': { label: '工单回复', module: 'tickets', tone: 'danger' },
-  'plans.changed': { label: '套餐', module: 'plans', tone: 'info' },
-  'nodes.changed': { label: '节点', module: 'nodes', tab: 'nodes', tone: 'warn' },
-  'announcements.changed': { label: '公告', module: 'content', tab: 'announce', tone: 'info' },
-  'switches.changed': { label: '降级开关', module: 'security', tab: 'switches', tone: 'warn' },
-}
-const OPS: Record<string, string> = { INSERT: '新建', UPDATE: '更新', DELETE: '删除' }
-
-const payloadSchema = z.object({ table: z.string().optional(), op: z.string().optional(), id: z.string().optional(), ticket_id: z.string().optional(), code: z.string().optional(), enabled: z.boolean().optional() })
-
-interface EventItem {
-  key: number
-  title: string
-  body: string
-  at: Date
-  tone: 'ok' | 'warn' | 'danger' | 'info'
-  module: ModuleKey | null
-  tab?: string
-}
-
-export function describeEvent(event: SseEvent, key: number, at = new Date()): EventItem {
-  const topic = TOPICS[event.event] ?? { label: '数据', module: null, tone: 'info' as const }
-  let payload: z.infer<typeof payloadSchema> = {}
-  try {
-    const parsed = payloadSchema.safeParse(JSON.parse(event.data))
-    if (parsed.success) payload = parsed.data
-  } catch {
-    // data 不是 JSON：只显示 topic
-  }
-  // 开关极性：enabled = 功能可用，false = 进入降级（与降级开关页一致）
-  const op = payload.op ? (OPS[payload.op] ?? payload.op) : payload.enabled === undefined ? null : payload.enabled ? '已恢复' : '已暂停'
-  const id = payload.id ?? payload.ticket_id
-  return {
-    key,
-    title: op ? `${topic.label}变更 · ${op}` : `${topic.label}变更`,
-    body: [payload.table ?? payload.code, id?.slice(0, 8)].filter(Boolean).join(' · '),
-    at,
-    tone: topic.tone,
-    module: topic.module,
-    tab: topic.tab,
-  }
-}
-
-const MAX_ITEMS = 12
-
-export function EventsCapsule({ onNavigate }: { onNavigate: (module: ModuleKey, tab?: string) => void }) {
+export function EventsCapsule({ onOpen }: { onOpen: (path: string) => void }) {
   const [items, setItems] = useState<EventItem[]>([])
-  const [unread, setUnread] = useState(0)
   const [open, setOpen] = useState(false)
-  const openRef = useRef(open)
+  const [tab, setTab] = useState<EventTab>('all')
+  // 最新一条的 key，只用来给它加淡入动画
+  const [freshKey, setFreshKey] = useState<number | null>(null)
   const seq = useRef(0)
   const root = useRef<HTMLDivElement>(null)
+  const button = useRef<HTMLButtonElement>(null)
   const [, setTick] = useState(0)
-
-  useEffect(() => {
-    openRef.current = open
-  })
 
   const onEvent = useCallback((event: SseEvent) => {
     const item = describeEvent(event, ++seq.current)
-    setItems((list) => [item, ...list].slice(0, MAX_ITEMS))
-    if (!openRef.current) setUnread((n) => n + 1)
+    setFreshKey(item.key)
+    setItems((list) => pushEvent(list, item))
   }, [])
   const status = useRealtime(true, onEvent)
 
@@ -86,13 +43,17 @@ export function EventsCapsule({ onNavigate }: { onNavigate: (module: ModuleKey, 
     return () => window.clearInterval(timer)
   }, [])
 
+  // 点面板外 / Esc 关闭；Esc 关闭后焦点回到按钮
   useEffect(() => {
     if (!open) return
     const onPointer = (event: PointerEvent) => {
       if (!root.current?.contains(event.target as Node)) setOpen(false)
     }
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false)
+      if (event.key === 'Escape') {
+        setOpen(false)
+        button.current?.focus()
+      }
     }
     document.addEventListener('pointerdown', onPointer)
     document.addEventListener('keydown', onKey)
@@ -105,50 +66,118 @@ export function EventsCapsule({ onNavigate }: { onNavigate: (module: ModuleKey, 
   if (status === 'unavailable' || status === 'off') return null
 
   const live = status === 'open'
+  const unread = unreadCount(items)
+  const visible = eventsInTab(items, tab)
+
+  const openItem = (item: EventItem) => {
+    setItems((list) => markRead(list, item.key))
+    if (item.path) {
+      onOpen(item.path)
+      setOpen(false)
+    }
+  }
+
+  // 页签上左右方向键移动并切换
+  const onTabKey = (event: ReactKeyboardEvent) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+    event.preventDefault()
+    const index = EVENT_TABS.findIndex(([key]) => key === tab)
+    const next = EVENT_TABS[(index + (event.key === 'ArrowRight' ? 1 : EVENT_TABS.length - 1)) % EVENT_TABS.length]![0]
+    setTab(next)
+  }
+
   return (
     <div ref={root} className={css.root}>
       <button
+        ref={button}
         type="button"
         className={css.capsule}
         aria-expanded={open}
-        aria-haspopup="true"
-        onClick={() => {
-          setOpen(!open)
-          setUnread(0)
-        }}
+        aria-haspopup="dialog"
+        aria-label={unread > 0 ? `实时事件，${unread} 条未读` : '实时事件'}
+        onClick={() => setOpen(!open)}
       >
         <span className={live ? css.dotLive : css.dotWait} aria-hidden="true" />
         <span className={css.label}>实时事件</span>
         {unread > 0 && <span className={css.count}>{unread > 99 ? '99+' : unread}</span>}
       </button>
       {open && (
-        <div className={css.panel}>
+        <div className={css.panel} role="dialog" aria-label="实时事件">
           <div className={css.head}>
-            <span className={css.headTitle}>实时事件</span>
-            <span className={css.state}>{live ? 'SSE · 已连接' : 'SSE · 重连中…'}</span>
-          </div>
-          <div className={css.list}>
-            {items.length === 0 && <div className={css.empty}>暂无事件，数据有变化时会出现在这里</div>}
-            {items.map((item) => (
+            <div className={css.headText}>
+              <span className={css.headTitle}>实时事件</span>
+              <span className={css.state}>
+                <span className={live ? css.stateDotOk : css.stateDotWarn} aria-hidden="true" />
+                {live ? '推送已连接 · 新事件会自动出现在这里' : '推送重连中 · 恢复后继续接收'}
+              </span>
+            </div>
+            {unread > 0 && (
               <button
-                key={item.key}
                 type="button"
-                className={css.item}
-                disabled={!item.module}
-                onClick={() => {
-                  if (!item.module) return
-                  onNavigate(item.module, item.tab)
-                  setOpen(false)
-                }}
+                className={css.readAll}
+                onClick={() => setItems((list) => markAllRead(list))}
               >
-                <span className={css[item.tone]} aria-hidden="true" />
-                <span className={css.text}>
-                  <span className={css.title}>{item.title}</span>
-                  {item.body && <span className={css.body}>{item.body}</span>}
-                </span>
-                <span className={css.at}>{relativeTime(item.at)}</span>
+                全部标为已读
+              </button>
+            )}
+          </div>
+          <div className={css.tabs} role="tablist" onKeyDown={onTabKey}>
+            {EVENT_TABS.map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                aria-selected={tab === key}
+                className={tab === key ? css.tabOn : css.tab}
+                onClick={() => setTab(key)}
+              >
+                {label}
               </button>
             ))}
+          </div>
+          <div className={css.list}>
+            {items.length === 0 ? (
+              <div className={css.empty}>暂无事件，数据有变化时会出现在这里</div>
+            ) : visible.length === 0 ? (
+              <div className={css.empty}>这一类暂时没有事件</div>
+            ) : (
+              visible.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={`${item.unread ? css.itemUnread : css.item}${item.key === freshKey ? ` ${css.fresh}` : ''}`}
+                  onClick={() => openItem(item)}
+                >
+                  <span className={css[item.tone]} aria-hidden="true" />
+                  <span className={css.text}>
+                    <span className={css.title}>{item.title}</span>
+                    {item.meta && <span className={css.meta}>{item.meta}</span>}
+                  </span>
+                  <span className={css.rightCol}>
+                    <span className={css.at}>{relativeTime(item.at)}</span>
+                    {item.unread && (
+                      <>
+                        <span className={css.unreadDot} aria-hidden="true" />
+                        <span className={css.srOnly}>未读</span>
+                      </>
+                    )}
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+          <div className={css.footer}>
+            <span>点击事件跳到对应页面处理</span>
+            <button
+              type="button"
+              className={css.auditLink}
+              onClick={() => {
+                onOpen('/security/audit')
+                setOpen(false)
+              }}
+            >
+              审计日志 →
+            </button>
           </div>
         </div>
       )}
