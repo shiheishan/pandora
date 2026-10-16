@@ -62,7 +62,7 @@ function readOp(payload: Payload): Op {
 }
 
 /** op → 三段标题的取法：常规表按 插入/更新/删除 三种，特殊表三段一样 */
-const titles = (insert: string, update: string, del: string) => (op: Op) => (op === 'INSERT' ? insert : op === 'DELETE' ? del : update)
+const titles = (insert: string, update: string, del: string) => (_payload: Payload, op: Op) => (op === 'INSERT' ? insert : op === 'DELETE' ? del : update)
 const fixedTitle = (title: string) => () => title
 
 interface TopicSpec {
@@ -105,8 +105,8 @@ const TOPICS: Record<string, TopicSpec> = {
     area: '工单',
     title: (payload, op) =>
       payload.table === 'ticket_messages'
-        ? fixedTitle('工单有新消息')(op)
-        : titles('新工单', '工单有更新', '工单已删除')(op),
+        ? fixedTitle('工单有新消息')()
+        : titles('新工单', '工单有更新', '工单已删除')(payload, op),
     // ticket_messages 的 id 是消息 id，定位不到工单，恒回工单列表
     path: (id, payload) => (payload.table === 'ticket_messages' || !id ? '/tickets' : `/tickets/${encodeURIComponent(id)}`),
     metaId: (p) => shortId(p.id),
@@ -126,8 +126,8 @@ const TOPICS: Record<string, TopicSpec> = {
     area: '节点与服务器',
     title: (payload, op) =>
       payload.table === 'servers'
-        ? titles('新服务器', '服务器有变化', '服务器已删除')(op)
-        : titles('新节点', '节点有变化', '节点已删除')(op),
+        ? titles('新服务器', '服务器有变化', '服务器已删除')(payload, op)
+        : titles('新节点', '节点有变化', '节点已删除')(payload, op),
     path: (id, payload) => (payload.table === 'servers' ? detailPath('/nodes/servers', (x) => `/nodes/servers/${x}`)(id) : detailPath('/nodes/nodes', (x) => `/nodes/nodes/${x}`)(id)),
     metaId: (p) => shortId(p.id),
   },
@@ -137,8 +137,8 @@ const TOPICS: Record<string, TopicSpec> = {
     area: '套餐',
     title: (payload, op) =>
       payload.table && payload.table !== 'plans'
-        ? fixedTitle('套餐有变化')(op)
-        : titles('新套餐', '套餐有变化', '套餐已删除')(op),
+        ? fixedTitle('套餐有变化')()
+        : titles('新套餐', '套餐有变化', '套餐已删除')(payload, op),
     // plan_versions、prices 等子表的 id 不是套餐 id，恒回套餐列表
     path: (id, payload) => (payload.table === 'plans' || !payload.table ? detailPath('/plans', (x) => `/plans/${x}`)(id) : '/plans'),
     metaId: (p) => shortId(p.id),
@@ -185,7 +185,8 @@ export function describeEvent(event: SseEvent, key: number, at: Date = new Date(
     at,
     tone,
     tab: spec.tab,
-    path: spec.path(payload.id, payload),
+    // 删掉的行打不开详情，退回列表
+    path: spec.path(op === 'DELETE' ? undefined : payload.id, payload),
     unread: true,
   }
 }
