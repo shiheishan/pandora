@@ -100,7 +100,7 @@ func newEnv(t *testing.T) (*env, context.Context) {
 	return e, ctx
 }
 
-// newEnvCommitted 与 newEnv 相同，但不用回滚事务（库存并发测试用）。
+// newEnvCommitted 与 newEnv 相同，但不用回滚事务（真实提交（并发锁测试用））。
 func newEnvCommitted(t *testing.T) (*env, context.Context) {
 	t.Helper()
 	d := testkit.DB(t)
@@ -138,7 +138,7 @@ func newEnvCommitted(t *testing.T) (*env, context.Context) {
 	return e, ctx
 }
 
-// deleteCommittedPlans 删掉提交态用例自己建的套餐及其版本、权益、配额、价格、可见组，
+// deleteCommittedPlans 删掉提交态用例自己建的套餐及其版本、权益、配额、价格、线路绑定、可见组，
 // 免得读全表的用例（门户、换套餐列表）看到别人的套餐。已发布快照与价格有冻结触发器，
 // 这里在事务里临时 session_replication_role = replica 跳过（触发器与外键都不触发，删除顺序无所谓）。
 // 用户行与审计行留着：审计只追加，且引用用户。
@@ -153,6 +153,7 @@ func deleteCommittedPlans(t *testing.T, e *env) {
 		`DELETE FROM entitlements WHERE plan_version_id IN (SELECT id FROM plan_versions WHERE plan_id IN ?)`,
 		`DELETE FROM quota_definitions WHERE plan_version_id IN (SELECT id FROM plan_versions WHERE plan_id IN ?)`,
 		`DELETE FROM prices WHERE plan_id IN ?`,
+		`DELETE FROM plan_node_pools WHERE plan_id IN ?`,
 		`DELETE FROM plan_visible_groups WHERE plan_id IN ?`,
 		`DELETE FROM plan_versions WHERE plan_id IN ?`,
 		`DELETE FROM plans WHERE id IN ?`,
@@ -242,64 +243,98 @@ func uniqCode(t *testing.T, prefix string) string {
 	return fmt.Sprintf("%s%s", prefix, hex.EncodeToString(b))
 }
 
-// publishedPlanOpts 定制 publishedPlan 向导入参。
+// publishedPlanOpts 定制 publishedPlan 的入参；零值 = 订阅套餐、public、月付 9.90、10 GiB、不绑线路、不卖重置、发布。
 type publishedPlanOpts struct {
-	StockTotal       *int
-	Visibility       string
+	Kind             string // 缺省 KindSubscription
+	Name             string // 缺省 "测试套餐"
+	Visibility       string // 缺省 public
 	VisibleGroupIDs  []uuid.UUID
-	ExtraPrices      []WizardPrice
-	AllowNewPurchase *bool
-	TrafficGB        *int64
+	AllowNewPurchase *bool         // 缺省 true
+	AllowRenewal     *bool         // 缺省：订阅 true、一次性 false
+	AllowUpgrade     *bool         // 缺省 true
+	TrafficBytes     *int64        // 缺省 10 GiB
+	Tiers            []TierInput   // 订阅缺省 [{month,1,9.90}]
+	OneTime          *OneTimeInput // 一次性缺省 {19.90, nil}
+	PoolIDs          []uuid.UUID
+	Reset            *ResetInput
+	Draft            bool // 为真不发布（套餐停在 draft，版本 1 是草稿）
 }
 
-// publishedPlan 用 CreatePlanComplete 建一个已发布套餐（默认 public、CNY 月付 9.90、10 GB）。
+// publishedPlan 用 e.svc.CreatePlan 建套餐（Publish = !opts.Draft），返回 PlanDetail；提交态 env 记进 e.plans。
 func publishedPlan(t *testing.T, ctx context.Context, e *env, opts publishedPlanOpts) PlanDetail {
 	t.Helper()
-	traffic := int64(10)
-	if opts.TrafficGB != nil {
-		traffic = *opts.TrafficGB
+	name := opts.Name
+	if name == "" {
+		name = "测试套餐"
 	}
-	vis := VisibilityPublic
-	if opts.Visibility != "" {
-		vis = opts.Visibility
+	vis := opts.Visibility
+	if vis == "" {
+		vis = VisibilityPublic
 	}
 	allowNew := true
 	if opts.AllowNewPurchase != nil {
 		allowNew = *opts.AllowNewPurchase
 	}
-	prices := []WizardPrice{
-		{
-			BillingInterval: "month",
-			IntervalCount:   1,
-			UnitAmount:      decimal.RequireFromString("9.90"),
-			Currency:        "CNY",
-		},
+	allowUpgrade := true
+	if opts.AllowUpgrade != nil {
+		allowUpgrade = *opts.AllowUpgrade
 	}
-	prices = append(prices, opts.ExtraPrices...)
+	kind := opts.Kind
+	if kind == "" {
+		kind = KindSubscription
+	}
+	var allowRenewal bool
+	if opts.AllowRenewal != nil {
+		allowRenewal = *opts.AllowRenewal
+	} else {
+		allowRenewal = kind == KindSubscription
+	}
 
-	created, err := e.svc.CreatePlanComplete(ctx, WizardCreate{
-		Plan: PlanInput{
-			Code:             uniqCode(t, "plan"),
-			Name:             "测试套餐",
+	traffic := int64(10 << 30) // 10 GiB
+	if opts.TrafficBytes != nil {
+		traffic = *opts.TrafficBytes
+	}
+
+	in := PlanCreate{
+		Kind:    kind,
+		Name:    name,
+		Usage:   UsageInput{TrafficBytes: &traffic},
+		PoolIDs: opts.PoolIDs,
+		Reset:   opts.Reset,
+		Sales: SalesInput{
 			Visibility:       vis,
 			VisibleGroupIDs:  opts.VisibleGroupIDs,
 			AllowNewPurchase: allowNew,
-			AllowRenewal:     true,
-			AllowUpgrade:     true,
-			StockTotal:       opts.StockTotal,
-			Highlights:       []string{},
+			AllowRenewal:     allowRenewal,
+			AllowUpgrade:     allowUpgrade,
 		},
-		TrafficGB: &traffic,
-		Prices:    prices,
-		Publish:   true,
-	})
+		Publish: !opts.Draft,
+	}
+
+	if kind == KindSubscription {
+		in.Tiers = opts.Tiers
+		if len(in.Tiers) == 0 {
+			in.Tiers = []TierInput{{
+				BillingInterval: IntervalMonth,
+				IntervalCount:   1,
+				UnitAmount:      decimal.RequireFromString("9.90"),
+			}}
+		}
+	} else {
+		in.OneTime = opts.OneTime
+		if in.OneTime == nil {
+			in.OneTime = &OneTimeInput{UnitAmount: decimal.RequireFromString("19.90")}
+		}
+	}
+
+	detail, err := e.svc.CreatePlan(ctx, in)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if e.committed {
-		e.plans = append(e.plans, created.Plan.ID)
+		e.plans = append(e.plans, detail.Plan.ID)
 	}
-	return created.Plan
+	return detail
 }
 
 func errCode(err error) errs.Code {
