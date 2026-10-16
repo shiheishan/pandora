@@ -1,9 +1,33 @@
 import { useEffect, useState } from 'react'
 import { formatMoney, relativeTime } from '../../../core/format'
 import { href } from '../../../core/router'
-import { Empty, Pager, QueryView, Segmented, Select, Table, Tag, type TableColumn } from '../../../ui'
+import {
+  Button,
+  Empty,
+  FilterTabs,
+  QueryView,
+  SearchField,
+  Select,
+  Table,
+  Tag,
+  Toolbar,
+  type TableColumn,
+} from '../../../ui'
 import { useUserGroups, useUsers, USERS_PAGE, type UserRow } from './api'
-import { deviceView, expiryView, groupOptionLabel, initial, listParams, shortId, STATUS_FILTERS, trafficView, USER_STATUS_VIEW, userLabel, type StatusFilter } from './model'
+import {
+  deviceView,
+  groupOptionLabel,
+  initial,
+  listParams,
+  shortId,
+  STATUS_FILTERS,
+  subExpiryView,
+  trafficView,
+  USER_STATUS_VIEW,
+  userLabel,
+  type StatusFilter,
+} from './model'
+import listCss from './List.module.css'
 import css from './Users.module.css'
 
 export interface ListState {
@@ -12,6 +36,8 @@ export interface ListState {
   q: string
   offset: number
 }
+
+const statusFilterItems = STATUS_FILTERS.map(([value, label]) => ({ value, label }))
 
 export function UserList({
   state,
@@ -28,7 +54,10 @@ export function UserList({
   const users = useUsers(listParams(state.filter, state.group, state.q, state.offset))
   const groups = useUserGroups()
   const total = users.data?.total ?? 0
-  const shown = users.data?.users.length ?? 0
+  const pageFrom = total === 0 ? 0 : state.offset + 1
+  const pageTo = total === 0 ? 0 : Math.min(state.offset + USERS_PAGE, total)
+  const noPrev = total === 0 || state.offset <= 0
+  const noNext = total === 0 || state.offset + USERS_PAGE >= total
 
   const groupOptions = [
     { value: 'none', label: '未分组（默认）' },
@@ -36,10 +65,24 @@ export function UserList({
   ]
 
   return (
-    <div className={css.list}>
-      <div className={css.toolbar}>
+    <div className={listCss.list}>
+      <Toolbar
+        end={
+          <>
+            <span className={css.hint}>按注册时间</span>
+            <a className={css.linkButton} href={href('/users/bulk')}>
+              批量生成
+            </a>
+          </>
+        }
+      >
         <SearchBox value={state.q} onChange={(q) => onChange({ q, offset: 0 })} />
-        <Segmented size="sm" label="账号状态" options={STATUS_FILTERS.map(([value, label]) => ({ value, label }))} value={state.filter} onChange={(filter) => onChange({ filter, offset: 0 })} />
+        <FilterTabs
+          label="账号状态"
+          items={statusFilterItems}
+          value={state.filter}
+          onChange={(filter) => onChange({ filter, offset: 0 })}
+        />
         <Select
           size="sm"
           aria-label="用户组"
@@ -49,17 +92,8 @@ export function UserList({
           onChange={(e) => onChange({ group: e.target.value, offset: 0 })}
           fieldClassName={css.groupSelect}
         />
-        <div className={css.spacer} />
-        {users.data && (
-          <span className={css.hint}>
-            显示 {shown} / 共 {total.toLocaleString('en-US')}
-          </span>
-        )}
-        <a className={css.linkButton} href={href('/users/bulk')}>
-          批量生成
-        </a>
-      </div>
-      <div className={css.tableBox}>
+      </Toolbar>
+      <div className={listCss.tableBox}>
         <QueryView
           query={users}
           rows={8}
@@ -68,14 +102,36 @@ export function UserList({
             <Empty
               bare
               title={state.q || state.filter !== 'all' || state.group ? '没有符合条件的用户' : '还没有用户'}
-              description={state.q || state.filter !== 'all' || state.group ? '换个关键词或筛选条件再看看。' : '用户在门户注册后会出现在这里。'}
+              description={
+                state.q || state.filter !== 'all' || state.group
+                  ? '换个关键词或筛选条件再看看。'
+                  : '用户在用户端注册后会出现在这里。'
+              }
             />
           }
         >
-          {(d) => <Table label="用户列表" columns={columns(now)} rows={d.users} rowKey={(u) => u.id} onRowClick={(u) => window.location.assign(linkFor(u.id))} />}
+          {(d) => (
+            <Table
+              stickyHeader
+              label="用户列表"
+              columns={columns(now)}
+              rows={d.users}
+              rowKey={(u) => u.id}
+              onRowClick={(u) => window.location.assign(linkFor(u.id))}
+            />
+          )}
         </QueryView>
       </div>
-      <Pager total={total} limit={USERS_PAGE} offset={state.offset} onChange={(offset) => onChange({ offset })} />
+      <footer className={listCss.footer}>
+        <span className={listCss.footerTotal}>共 {total.toLocaleString('en-US')} 位用户</span>
+        <span className={listCss.footerRange}>第 {pageFrom}–{pageTo} 条</span>
+        <Button size="xs" disabled={noPrev} onClick={() => onChange({ offset: Math.max(0, state.offset - USERS_PAGE) })}>
+          上一页
+        </Button>
+        <Button size="xs" disabled={noNext} onClick={() => onChange({ offset: state.offset + USERS_PAGE })}>
+          下一页
+        </Button>
+      </footer>
     </div>
   )
 }
@@ -105,7 +161,7 @@ function columns(now: Date): TableColumn<UserRow>[] {
       render: (u) => {
         const s = u.current_subscription
         if (!s) return <span className={css.muted}>无订阅</span>
-        const exp = expiryView(s.current_period_end, now)
+        const exp = subExpiryView(s.current_period_end, now)
         return (
           <span className={css.stack}>
             <span>{s.plan_name}</span>
@@ -132,7 +188,7 @@ function columns(now: Date): TableColumn<UserRow>[] {
         )
       },
     },
-    { key: 'balance', header: '余额', width: '88px', align: 'right', mono: true, render: (u) => formatMoney(u.balance, u.currency) },
+    { key: 'balance', header: '余额', width: '88px', align: 'right', mono: true, render: (u) => formatMoney(u.balance) },
     {
       key: 'devices',
       header: '设备',
@@ -178,5 +234,13 @@ function SearchBox({ value, onChange }: { value: string; onChange: (q: string) =
     const timer = setTimeout(() => onChange(text), 300)
     return () => clearTimeout(timer)
   }, [text, value, onChange])
-  return <input className={css.search} type="search" value={text} onChange={(e) => setText(e.target.value)} placeholder="搜索邮箱、用户 ID、订阅令牌" aria-label="搜索用户" />
+  return (
+    <SearchField
+      aria-label="搜索用户"
+      placeholder="邮箱、用户 ID 或订阅令牌"
+      width={240}
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+    />
+  )
 }
