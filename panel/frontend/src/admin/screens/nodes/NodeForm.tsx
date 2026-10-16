@@ -33,11 +33,10 @@ import {
   type BasicForm,
   type FormValues,
   type ProtocolField,
-  type ProtocolSchema,
 } from './logic'
 import css from './form.module.css'
 import { endsIntent, useFailure, useIntentKey, useInvalidateNodes, usePools, useProtocolSchemas, useServers } from './queries'
-import { adminNodeSchema, realityKeypairResponse, type AdminNode, type NodeDetail } from './schemas'
+import { adminNodeSchema, realityKeypairResponse, type AdminNode, type NodeDetail, type ProtocolSchema } from './schemas'
 
 const REGION_CODES = new Set(REGIONS.map(([c]) => c))
 const REGION_OTHER = '__other'

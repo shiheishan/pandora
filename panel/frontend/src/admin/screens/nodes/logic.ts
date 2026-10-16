@@ -244,7 +244,7 @@ const defaultToString = (v: unknown): string => (v === undefined || v === null ?
 
 export function protocolFields(s: ProtocolSchema): ProtocolField[] {
   // kind / options / required / sensitive / hint 的算法对两条路一致，都按 path 取
-  const fieldOf = (path: string): ProtocolField => {
+  const fieldOf = (path: string): Omit<ProtocolField, 'label' | 'advanced' | 'showIf' | 'defaultValue' | 'optionLabels'> => {
     const type = s.property_types?.[path]
     // methods 是 Shadowsocks 加密方式（字段名 cipher）的可选值
     // 枚举按整条路径找，找不到再按叶子名：后端把 network_settings.mode 的可选值登记在 enums.mode 下
