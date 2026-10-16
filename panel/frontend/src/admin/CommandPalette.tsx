@@ -1,7 +1,9 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Search01Icon } from '@hugeicons-pro/core-stroke-rounded'
+import { navigate } from '../core/router'
 import css from './CommandPalette.module.css'
+import { useEntitySearch, isEntityItem } from './entity-search'
 import { paletteGroups, type PaletteGroup, type PaletteItem } from './modules'
 
 export function CommandPalette({
@@ -22,10 +24,12 @@ export function CommandPalette({
   const input = useRef<HTMLInputElement>(null)
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
+  const entity = useEntitySearch(query, open)
 
+  // 实体组（用户 / 订单 / 节点）接在「页面」之后、外部 sources 之前
   const groups = [
     ...paletteGroups(query),
-    ...(query.trim() ? (sources ?? []).flatMap((s) => s(query)) : []),
+    ...(query.trim() ? [...entity.groups, ...(sources ?? []).flatMap((s) => s(query))] : []),
   ].filter((g) => g.items.length > 0)
   const flat = groups.flatMap((g) => g.items)
   const index = Math.min(active, Math.max(0, flat.length - 1))
@@ -58,7 +62,9 @@ export function CommandPalette({
 
   const pick = (item: PaletteItem | undefined) => {
     if (!item) return
-    onPick(item)
+    // 实体候选自带完整地址，直接打开那一条；其余走调用方的 onPick
+    if (isEntityItem(item)) navigate(item.path)
+    else onPick(item)
     onClose()
   }
 
@@ -110,7 +116,7 @@ export function CommandPalette({
             />
             <kbd className={css.escKbd}>esc</kbd>
           </div>
-          <div id={listId} role="listbox" aria-label="搜索结果" className={css.list}>
+          <div id={listId} role="listbox" aria-label="搜索结果" aria-busy={entity.pending} className={css.list}>
             {groupsWithOffset.map(({ group, start }, gIdx) => {
               const gId = `${baseId}-g-${gIdx}`
               return (
@@ -148,8 +154,16 @@ export function CommandPalette({
                 </div>
               )
             })}
+            {/* 有结果但实体搜索还在跑时，列表末尾给一行小字 */}
+            {flat.length > 0 && entity.pending && (
+              <div className={css.searching} aria-live="polite">
+                正在搜索用户、订单、节点…
+              </div>
+            )}
             {flat.length === 0 && (
-              <div className={css.empty}>没有找到「{query}」相关的结果</div>
+              <div className={css.empty}>
+                {entity.pending ? '正在搜索…' : `没有找到「${query}」相关的结果`}
+              </div>
             )}
           </div>
           <div className={css.footer} aria-hidden="true">

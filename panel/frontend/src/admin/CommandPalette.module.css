@@ -163,6 +163,13 @@
   text-align: center;
 }
 
+/* 有结果但实体搜索还在跑时，列表末尾的一行小字 */
+.searching {
+  padding: 8px 16px;
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+}
+
 .footer {
   display: flex;
   align-items: center;
