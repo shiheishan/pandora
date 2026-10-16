@@ -288,7 +288,7 @@ func (s *Service) CreatePlan(ctx context.Context, in PlanCreate) (PlanDetail, er
 		if err := s.writeUsageTx(ctx, in.Kind, v.ID, in.Usage, nil); err != nil {
 			return err
 		}
-		if err := s.replacePoolsTx(ctx, m.ID, in.PoolIDs); err != nil {
+		if err := s.replacePoolsTx(ctx, m.ID, in.PoolIDs, in.PoolIDs); err != nil {
 			return err
 		}
 		if in.Kind == KindSubscription {

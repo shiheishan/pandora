@@ -489,3 +489,63 @@ func TestPoolUsageOnSaleAndVersionIDs(t *testing.T) {
 		}
 	}
 }
+
+type fakePublishGate struct{ err error }
+
+func (f fakePublishGate) CheckPublishable(context.Context, uuid.UUID) error { return f.err }
+
+// 审查 1016-A1 应改 1：原来绑着的池后来停用了，改别的线路时它照样保留，guard 只检查新加的池。
+func TestSetPlanPoolsKeepsDisabledExisting(t *testing.T) {
+	e, ctx := newEnv(t)
+	ctx, _ = seedAdmin(t, ctx, e)
+	g := &fakePoolGuard{}
+	e.svc.UsePoolGuard(g)
+
+	old := seedPool(t, ctx, e, "active")
+	plan := publishedPlan(t, ctx, e, publishedPlanOpts{PoolIDs: []uuid.UUID{old}})
+	added := seedPool(t, ctx, e, "active")
+	g.calls = nil
+
+	detail, _ := e.svc.GetPlan(ctx, plan.ID)
+	upd, err := e.svc.SetPlanPools(ctx, plan.ID, PoolsUpdate{
+		ExpectedRowVersion: detail.RowVersion,
+		PoolIDs:            []uuid.UUID{old, added},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	poolEqualIDs(t, upd.PoolIDs, []uuid.UUID{old, added})
+	if len(g.calls) != 1 || len(g.calls[0]) != 1 || g.calls[0][0] != added {
+		t.Fatalf("guard 只应检查新加的池 %s，调用 %v", added, g.calls)
+	}
+}
+
+// 审查 1016-A1 应改 2：已发布的套餐改线路后要过上架检查；不过就整笔回滚，线路不变。
+func TestSetPlanPoolsPublishedRunsGate(t *testing.T) {
+	e, ctx := newEnv(t)
+	ctx, _ = seedAdmin(t, ctx, e)
+	e.svc.UsePoolGuard(&fakePoolGuard{})
+
+	p1 := seedPool(t, ctx, e, "active")
+	plan := publishedPlan(t, ctx, e, publishedPlanOpts{PoolIDs: []uuid.UUID{p1}})
+	e.svc.UsePublishGate(fakePublishGate{err: errs.Invalid(map[string]string{"pool_ids": "线路里没有可服务的节点"})})
+	t.Cleanup(func() { e.svc.UsePublishGate(nil) })
+
+	detail, _ := e.svc.GetPlan(ctx, plan.ID)
+	_, err := e.svc.SetPlanPools(ctx, plan.ID, PoolsUpdate{
+		ExpectedRowVersion: detail.RowVersion,
+		PoolIDs:            []uuid.UUID{},
+	})
+	if errCode(err) != errs.ValidationFailed {
+		t.Fatalf("已发布套餐清空线路期望 422，得到 %v", err)
+	}
+	detail, _ = e.svc.GetPlan(ctx, plan.ID)
+	poolEqualIDs(t, detail.PoolIDs, []uuid.UUID{p1})
+
+	// 草稿（没发布过）不过闸
+	draft := publishedPlan(t, ctx, e, publishedPlanOpts{Name: "草稿不过闸", Draft: true})
+	detail, _ = e.svc.GetPlan(ctx, draft.ID)
+	if _, err := e.svc.SetPlanPools(ctx, draft.ID, PoolsUpdate{ExpectedRowVersion: detail.RowVersion, PoolIDs: []uuid.UUID{}}); err != nil {
+		t.Fatalf("草稿改线路不应过上架检查：%v", err)
+	}
+}

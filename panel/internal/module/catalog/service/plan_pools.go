@@ -137,13 +137,29 @@ func uuidSlicesEqualSet(a, b []uuid.UUID) bool {
 	return true
 }
 
-// replacePoolsTx 整体替换套餐绑池（CreatePlan 与 SetPlanPools 共用）。
-func (s *Service) replacePoolsTx(ctx context.Context, planID uuid.UUID, poolIDs []uuid.UUID) error {
-	if len(poolIDs) > 0 {
+// addedPools 返回 next 里 before 没有的池。
+func addedPools(before, next []uuid.UUID) []uuid.UUID {
+	had := make(map[uuid.UUID]bool, len(before))
+	for _, id := range before {
+		had[id] = true
+	}
+	out := []uuid.UUID{}
+	for _, id := range next {
+		if !had[id] {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// replacePoolsTx 整体替换套餐绑池（CreatePlan 与 SetPlanPools 共用）。added 是这次新加的池：只检查它们存在、未停用；
+// 原来就绑着的池即使后来停用了也照样保留（否则改别的线路时得连它一起解绑，那个池上的老用户立刻掉线）。
+func (s *Service) replacePoolsTx(ctx context.Context, planID uuid.UUID, poolIDs, added []uuid.UUID) error {
+	if len(added) > 0 {
 		if s.pools == nil {
 			return errs.Newf(errs.Unavailable, "节点池模块未装配，暂时不能绑定线路")
 		}
-		ids := append([]uuid.UUID(nil), poolIDs...)
+		ids := append([]uuid.UUID(nil), added...)
 		sort.Slice(ids, func(i, j int) bool { return ids[i].String() < ids[j].String() })
 		if err := s.pools.LockAssignablePools(ctx, ids); err != nil {
 			return err
@@ -172,7 +188,7 @@ func (s *Service) SetPlanPools(ctx context.Context, planID uuid.UUID, in PoolsUp
 
 	var detail PlanDetail
 	err := s.tx.Do(ctx, func(ctx context.Context) error {
-		_, err := s.lockEditablePlan(ctx, planID, in.ExpectedRowVersion)
+		cur, err := s.lockEditablePlan(ctx, planID, in.ExpectedRowVersion)
 		if err != nil {
 			return err
 		}
@@ -189,8 +205,14 @@ func (s *Service) SetPlanPools(ctx context.Context, planID uuid.UUID, in PoolsUp
 			return err
 		}
 
-		if err := s.replacePoolsTx(ctx, planID, in.PoolIDs); err != nil {
+		if err := s.replacePoolsTx(ctx, planID, in.PoolIDs, addedPools(before, in.PoolIDs)); err != nil {
 			return err
+		}
+		// 已发布的套餐改线路后仍要过上架检查（线路里有可服务的节点），与发布时同一道闸：不能一步改成没有线路
+		if cur.CurrentVersionID != nil && s.gate != nil {
+			if err := s.gate.CheckPublishable(ctx, planID); err != nil {
+				return err
+			}
 		}
 		next, err := s.bumpPlanRow(ctx, planID, in.ExpectedRowVersion)
 		if err != nil {
