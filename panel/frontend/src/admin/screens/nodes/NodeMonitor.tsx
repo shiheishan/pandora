@@ -1,117 +1,180 @@
-import { formatBytes, formatCount, formatDateTime } from '../../../core/format'
-import { QueryView, Tag } from '../../../ui'
-import { bandwidthBuckets, heartbeatLabel, ruleSummary } from './logic'
-import css from './nodes.module.css'
-import { useNodeMetrics, useNodeRouting } from './queries'
-import { applyPhaseLabel, runState, runtimeReasonText } from './runtime'
+import { useMemo, useState } from 'react'
+import { formatBytes, formatCount } from '../../../core/format'
+import { QueryView } from '../../../ui'
+import css from './detail.module.css'
+import { bandwidthBuckets, heartbeatLabel } from './logic'
+import { useNodeMetrics } from './queries'
 import type { NodeRow } from './schemas'
 
-const pct = (v: number | null | undefined) => (v == null ? '—' : `${Math.round(v)}%`)
+const W = 240
+const H = 100
+const BUCKET_N = 24
+
+/** Y 轴「好看的步长」：1 / 2 / 2.5 / 5 / 10 × 10^n */
+function niceTicks(maxMbps: number): { top: number; step: number } {
+  const max = Math.max(maxMbps * 1.1, 0.1)
+  const raw = max / 3
+  const mag = 10 ** Math.floor(Math.log10(raw))
+  const nm = raw / mag
+  const step = (nm <= 1 ? 1 : nm <= 2 ? 2 : nm <= 2.5 ? 2.5 : nm <= 5 ? 5 : 10) * mag
+  const top = Math.ceil(max / step) * step
+  return { top, step }
+}
+
+/** 单调三次样条折线（设计稿 ch 算法） */
+function smoothPath(points: ReadonlyArray<readonly [number, number]>): string {
+  const first = points[0]
+  if (!first) return ''
+  if (points.length === 1) return `M${first[0]},${first[1]}`
+  // 相邻两点的斜率：m[i] 是 points[i] → points[i+1]
+  const m: number[] = []
+  for (let i = 0; i + 1 < points.length; i++) {
+    const [x0, y0] = points[i]!
+    const [x1, y1] = points[i + 1]!
+    m.push((y1 - y0) / (x1 - x0 || 1))
+  }
+  const last = points.length - 1
+  const t = points.map((_, i) => {
+    if (i === 0) return m[0] ?? 0
+    const prev = m[i - 1] ?? 0
+    if (i === last) return prev
+    const next = m[i] ?? 0
+    return prev * next <= 0 ? 0 : 2 / (1 / prev + 1 / next)
+  })
+  let path = `M${first[0]},${first[1]}`
+  for (let i = 0; i < last; i++) {
+    const [x0, y0] = points[i]!
+    const [x1, y1] = points[i + 1]!
+    const dx = (x1 - x0) / 3
+    path += `C${x0 + dx},${y0 + (t[i] ?? 0) * dx} ${x1 - dx},${y1 - (t[i + 1] ?? 0) * dx} ${x1},${y1}`
+  }
+  return path
+}
+
+function bucketMbps(b: { mbps: number | null }): number {
+  return b.mbps ?? 0
+}
+
+function hoverLabel(index: number): string {
+  const hoursAgo = BUCKET_N - 1 - index
+  if (hoursAgo === 0) return '最近 1 小时'
+  return `${hoursAgo} 小时前`
+}
 
 export function NodeMonitor({ node }: { node: NodeRow }) {
   const metrics = useNodeMetrics(node.id)
-  const routing = useNodeRouting(node.id)
+  const [hover, setHover] = useState<number | null>(null)
   const latest = metrics.data?.latest
   const cpu = latest ? latest.cpu_percent : node.cpu_percent
-  const mem = latest && latest.mem_total_mb ? (latest.mem_used_mb / latest.mem_total_mb) * 100 : node.mem_percent
-  const buckets = bandwidthBuckets(metrics.data?.points ?? [])
-  const peak = Math.max(1, ...buckets.map((b) => b.mbps ?? 0))
-  const run = runState(node)
-  const reason = runtimeReasonText(node.runtime_reason, node.runtime_reason_node)
+
+  const buckets = useMemo(() => bandwidthBuckets(metrics.data?.points ?? []), [metrics.data?.points])
+  const vals = useMemo(() => buckets.map(bucketMbps), [buckets])
+  const maxVal = useMemo(() => Math.max(1, ...vals), [vals])
+  const { top, step } = useMemo(() => niceTicks(maxVal), [maxVal])
+
+  const pts = useMemo(() => {
+    const x = (i: number) => (i * W) / (BUCKET_N - 1)
+    const y = (v: number) => H - (v / top) * H
+    return vals.map((v, i) => [x(i), y(v)] as const)
+  }, [vals, top])
+
+  const linePath = useMemo(() => smoothPath(pts), [pts])
+  const areaPath = linePath ? `${linePath}L${W},${H}L0,${H}Z` : ''
+
+  const tickCount = Math.round(top / step) + 1
+  const ticks = useMemo(
+    () =>
+      Array.from({ length: tickCount }, (_, k) => ({
+        yPct: 100 - (k * step / top) * 100,
+        label: `${k * step} Mbps`,
+      })),
+    [tickCount, step, top],
+  )
+
+  const cur = hover ?? BUCKET_N - 1
+  const curMbps = buckets[cur]?.mbps
+  const curDisplay = curMbps == null ? '无数据' : `${curMbps} Mbps`
 
   return (
-    <div className={css.stackLg}>
+    <div>
       <div className={css.kpis}>
-        <div className={css.kpi} title={`在线 IP ${node.online_ips}（明显多于在线用户说明有人共享账号）`}>
+        <div className={css.kpi} title={`在线 IP ${formatCount(node.online_ips)}`}>
           <div className={css.kpiLabel}>在线用户</div>
-          <div className={css.kpiValue}>{formatCount(node.online_users)}</div>
-          <div className={css.faint}>在线 IP {formatCount(node.online_ips)}</div>
+          <div className={css.kpiValue}>{node.online_users ? formatCount(node.online_users) : '—'}</div>
         </div>
         <div className={css.kpi}>
           <div className={css.kpiLabel}>CPU</div>
-          <div className={css.kpiValue}>{pct(cpu)}</div>
-          {!latest && node.metrics_at && <div className={css.faint}>所在服务器</div>}
-        </div>
-        <div className={css.kpi}>
-          <div className={css.kpiLabel}>内存</div>
-          <div className={css.kpiValue}>{pct(mem)}</div>
-          {latest && (
-            <div className={css.faint}>
-              {latest.mem_used_mb} / {latest.mem_total_mb} MB
-            </div>
-          )}
+          <div className={css.kpiValue}>{cpu == null ? '—' : `${Math.round(cpu)}%`}</div>
         </div>
         <div className={css.kpi}>
           <div className={css.kpiLabel}>24h 流量</div>
           <div className={css.kpiValue}>{formatBytes(node.traffic_bytes_24h)}</div>
         </div>
+        <div className={css.kpi}>
+          <div className={css.kpiLabel}>最近心跳</div>
+          <div className={css.kpiValue}>{node.last_heartbeat_at ? heartbeatLabel(node.last_heartbeat_at) : '从未'}</div>
+        </div>
       </div>
 
-      <section>
-        <div className={css.groupLabel}>带宽 · 近 24 小时（Mbps）</div>
+      <div className={css.chartBlock}>
+        <div className={css.chartHead}>
+          <span className={css.chartTitle}>近 24 小时带宽</span>
+          <span className={css.chartCur}>
+            <span className={css.chartCurLine} aria-hidden="true" />
+            <span className={css.chartCurLabel}>{hoverLabel(cur)}</span>
+            <span className={css.chartCurVal}>{curDisplay}</span>
+          </span>
+        </div>
         <QueryView query={metrics} rows={1} isEmpty={(d) => d.points.length === 0} empty={<div className={css.faint}>还没有探针数据：节点从未心跳，或探针挂在服务器的控制节点上。</div>}>
           {() => (
-            <div className={css.bars} role="img" aria-label={`近 24 小时带宽，峰值 ${peak} Mbps`}>
-              {buckets.map((b, i) => (
-                <span key={i} className={css.bar} title={`${b.hour}:00 · ${b.mbps == null ? '无数据' : `${b.mbps} Mbps`}`}>
-                  <span className={b.mbps == null ? css.barEmpty : css.barFill} style={{ height: `${b.mbps == null ? 4 : Math.max(4, (b.mbps / peak) * 100)}%` }} />
-                </span>
-              ))}
+            <div className={css.chartGrid} role="img" aria-label="近 24 小时带宽曲线">
+              <div className={css.yAxis}>
+                {ticks.map((t) => (
+                  <span key={t.yPct} className={css.yTick} style={{ top: `${t.yPct}%` }}>
+                    {t.label}
+                  </span>
+                ))}
+              </div>
+              <div className={css.plot} onMouseLeave={() => setHover(null)}>
+                {ticks.map((t) => (
+                  <span key={`g-${t.yPct}`} className={css.hGrid} style={{ top: `${t.yPct}%` }} />
+                ))}
+                <svg className={css.plotSvg} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
+                  <defs>
+                    <linearGradient id={`ndTrafficFill-${node.id}`} x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="var(--text)" stopOpacity={0.12} />
+                      <stop offset="100%" stopColor="var(--text)" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  {areaPath && <path d={areaPath} fill={`url(#ndTrafficFill-${node.id})`} />}
+                  {linePath && (
+                    <path d={linePath} fill="none" stroke="var(--text)" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+                  )}
+                </svg>
+                {hover != null && (
+                  <>
+                    <span className={css.hoverV} style={{ left: `${(cur / (BUCKET_N - 1)) * 100}%` }} />
+                    <span className={css.hoverDot} style={{ left: `${(cur / (BUCKET_N - 1)) * 100}%`, top: `${pts[cur]?.[1] ?? 0}%` }} />
+                  </>
+                )}
+                <div className={css.hitRow}>
+                  {vals.map((_, i) => (
+                    <span key={i} className={css.hitCell} onMouseEnter={() => setHover(i)} title={buckets[i]?.mbps == null ? '无数据' : `${buckets[i]!.mbps} Mbps`} />
+                  ))}
+                </div>
+              </div>
+              <span />
+              <div className={css.xLabels} style={{ gridColumn: 2 }}>
+                <span>-24h</span>
+                <span>-18h</span>
+                <span>-12h</span>
+                <span>-6h</span>
+                <span>现在</span>
+              </div>
             </div>
           )}
         </QueryView>
-      </section>
-
-      <section>
-        <div className={css.groupLabel}>运行信息</div>
-        <dl className={css.facts}>
-          <dt>心跳</dt>
-          <dd>{node.last_heartbeat_at ? `${heartbeatLabel(node.last_heartbeat_at)} · ${formatDateTime(node.last_heartbeat_at)}` : '从未心跳'}</dd>
-          <dt>运行状态</dt>
-          <dd>
-            {run ? (
-              <Tag tone={run.tone} title={run.detail || undefined}>
-                {run.label}
-              </Tag>
-            ) : (
-              '—'
-            )}
-            {reason && run?.detail !== reason && <span className={css.faint}> {reason}</span>}
-            {node.runtime_state_at && <span className={css.faint}> · {formatDateTime(node.runtime_state_at)} 起</span>}
-          </dd>
-          {node.last_apply_failure && (
-            <>
-              <dt>最近失败</dt>
-              <dd>
-                {applyPhaseLabel(node.last_apply_failure.phase)}：{node.last_apply_failure.detail || '节点没给原因'}
-                <span className={css.faint}> · {formatDateTime(node.last_apply_failure.at)}</span>
-              </dd>
-            </>
-          )}
-          <dt>Agent</dt>
-          <dd>{node.agent_version ?? '—'}</dd>
-          <dt>资源池</dt>
-          <dd>{node.pool_name ?? '未加入'}</dd>
-          <dt>授权套餐</dt>
-          <dd>{node.granted_plans.length ? node.granted_plans.join('、') : '没有套餐能用到这个节点'}</dd>
-        </dl>
-      </section>
-
-      <section>
-        <div className={css.groupLabel}>单节点路由（覆盖全局）</div>
-        <QueryView query={routing} rows={1} isEmpty={(d) => d.routes.length === 0} empty={<div className={css.faint}>沿用全局规则</div>}>
-          {(d) => (
-            <ul className={css.ruleList}>
-              {d.routes.map((r, i) => (
-                <li key={i} className={r.enabled ? undefined : css.ruleOff}>
-                  <span>{ruleSummary(r)}</span>
-                  <span className={css.mono}>→ {r.outbound_tag}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </QueryView>
-      </section>
+      </div>
     </div>
   )
 }

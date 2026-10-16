@@ -25,6 +25,11 @@ paths:
 - ShadowTLS 的内层 `method` 只收经典三种（schema 枚举与 `validate_kernel.go` 都用 `shadowsocksAEADMethods`）。
 - schema 仍不收 `password`：2022 的服务端身份密钥由 node service 派生后只进配置文档与订阅线路（`node/service/ss2022.go`）。表单说明 `ss2022CipherHint`（`schema_hints.go`）。
 
+## 表单元数据（10-16）
+- `Schema.Note` 与 `Schema.Fields`（`schema_form.go` 的 `protocolForms`，`Schemas()` 经 `withForms` 挂上；不写进 `schema.go` 的字面量，免得碰对齐门）。`Fields` 按显示顺序、每个 `AllowedProperties` 恰好一项：`label` 中文名、`advanced` 高级参数（默认折叠）、`show_if`（键是另一字段路径，值按表单字符串比较，布尔 "true"/"false"、未填 ""，各键同时满足才显示）、`default`、`placeholder`、`option_labels`（"" 键是选填枚举「不选」项的文字）。
+- `default` 只给节点端实际缺省或唯一可选的值（vless / trojan 的 network=tcp 与表单一贯把缺省当 tcp 一致；tls 三态不给默认；tuic 拥塞控制缺省 cubic 只写进选项文字；shadowtls method 缺省按 pdnd 是 aes-256-gcm）。改 pdnd 的缺省要同步这里。
+- 表单表里的额外说明经 `withForms` 补进 `Hints`（只补没有的键）；`schema_form_test.go` 钉住：路径集合与 `AllowedProperties` 相同、必填不能高级、`show_if` / `option_labels` / `default` 的取值合乎枚举与类型。加字段要同时登记表单元数据。
+
 ## 其它
 - 前端假后端的 `panel/frontend/dev/mock/admin/node-schemas.ts` 是 schema 响应的原样导出：改了 schema 或 handler 的 DTO，`TestMockNodeSchemasMatchGo`（node/handler）会红，按它的提示加 `-update` 重导。
 - 表单说明在 schema `Hints`（`schema_hints.go`）；`policy_test.go` 的 `TestSchemaEnumsMatchPolicyLists` 要求 hint 指向真实字段。

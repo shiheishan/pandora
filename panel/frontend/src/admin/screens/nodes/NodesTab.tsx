@@ -3,12 +3,12 @@ import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { formatBytes, formatCount } from '../../../core/format'
 import { navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
-import { Button, Checkbox, Empty, IconClose, Input, Modal, Pager, QueryView, Segmented, Select, Tag, useToast } from '../../../ui'
+import { Button, Checkbox, Empty, IconClose, Input, Pager, QueryView, Segmented, Select, Tag, useToast } from '../../../ui'
 import { addressLabel, batchPlan, filterNodes, moveItem, nodeState, orderItems, protocolLabel, sameNodeLine, tagOptions, type NodeFilter, type NodeLineData } from './logic'
 import { runState, sameRunState, type RunState } from './runtime'
 import { NodeBatchEdit } from './NodeBatchEdit'
 import { DRAWER_TABS, NodeDrawer, type DrawerTab } from './NodeDrawer'
-import { NodeForm } from './NodeForm'
+import { NodeCreateWizard } from './NodeForm'
 import css from './nodes.module.css'
 import { NODE_PAGE, useFailure, useIntentKey, useInvalidateNodes, useNodeDetail, useNodePage, useNodes } from './queries'
 import { batchStatusResponse, okUpdated, type NodeRow } from './schemas'
@@ -47,6 +47,8 @@ export function NodesTab({ rest }: { rest: string[] }) {
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set())
   const [sorting, setSorting] = useState<NodeRow[] | null>(null)
   const [creating, setCreating] = useState(false)
+  // 每次打开新建向导换一个 key，向导重挂载、状态从头开始
+  const [createKey, setCreateKey] = useState(0)
   const [batchEditing, setBatchEditing] = useState(false)
   const list = useNodes()
 
@@ -196,7 +198,13 @@ export function NodesTab({ rest }: { rest: string[] }) {
           </Button>
         )}
         {!sorting && (
-          <Button variant="primary" onClick={() => setCreating(true)}>
+          <Button
+            variant="primary"
+            onClick={() => {
+              setCreateKey((k) => k + 1)
+              setCreating(true)
+            }}
+          >
             新建节点
           </Button>
         )}
@@ -268,19 +276,16 @@ export function NodesTab({ rest }: { rest: string[] }) {
         onClose={() => setBatchEditing(false)}
         onDone={() => setPicked(new Set())}
       />
-      <Modal open={creating} onClose={() => setCreating(false)} size="lg" title="新建节点" eyebrow="建成草稿，上线后才会下发">
-        {creating && (
-          <NodeForm
-            node={null}
-            onCancel={() => setCreating(false)}
-            onSaved={(saved) => {
-              setCreating(false)
-              toast('节点已创建为草稿。所在服务器还没接入的，到「服务器」页签发安装令牌；接入后在「操作」里上线')
-              navigate(`/nodes/nodes/${saved.id}/proto`)
-            }}
-          />
-        )}
-      </Modal>
+      <NodeCreateWizard
+        key={createKey}
+        open={creating}
+        onClose={() => setCreating(false)}
+        onCreated={(saved) => {
+          setCreating(false)
+          toast('节点已创建为草稿。所在服务器还没接入的，到「服务器」页签发安装令牌；接入后在节点详情右上角上线')
+          navigate(`/nodes/nodes/${saved.id}/proto`)
+        }}
+      />
     </div>
   )
 }

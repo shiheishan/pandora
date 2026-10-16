@@ -1,0 +1,110 @@
+/* ===========================================================================
+ * 注册设置（SignupSecurity / SignupGrowth / SignupForm）
+ * ========================================================================= */
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  min-width: 0;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(300px, 1fr) minmax(320px, 1.4fr);
+  align-items: start;
+  gap: var(--space-16);
+}
+
+@media (max-width: 959px) {
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.formStack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  min-width: 0;
+}
+
+.note {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-body-sm);
+}
+
+.dangerText {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--fs-caption);
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ===========================================================================
+ * 设备策略（DevicePolicy）
+ * ========================================================================= */
+.deviceStack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  min-width: 0;
+}
+
+.modeSet {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.modeSet > legend {
+  margin-bottom: var(--space-8);
+  padding: 0;
+}
+
+.modeGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-12);
+}
+
+@media (max-width: 959px) {
+  .modeGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.twoCols {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-12);
+  align-items: start;
+}
+
+@media (max-width: 959px) {
+  .twoCols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.policyFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+  margin-top: var(--space-4);
+}
+
+.statusText {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}

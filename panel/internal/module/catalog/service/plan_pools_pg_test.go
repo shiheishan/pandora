@@ -336,7 +336,11 @@ func TestCreatePlanWithoutGuardRollback(t *testing.T) {
 	e, ctx := newEnvCommitted(t)
 	ctx, _ = seedAdmin(t, ctx, e)
 	p1 := seedPool(t, ctx, e, "active")
+	// t.Cleanup 后进先出，这里先于删套餐执行：回滚真失败时先拆掉套餐对池的绑定（RESTRICT），免得多报一条清理错误
 	t.Cleanup(func() {
+		if err := e.exec(context.Background(), `DELETE FROM plan_node_pools WHERE pool_id = ?`, p1); err != nil {
+			t.Errorf("清理套餐线路: %v", err)
+		}
 		if err := e.exec(context.Background(), `DELETE FROM node_pools WHERE id = ?`, p1); err != nil {
 			t.Errorf("清理节点池: %v", err)
 		}
@@ -535,11 +539,21 @@ func TestSetPlanPoolsKeepsDisabledExisting(t *testing.T) {
 
 // 审查 1016-A1 应改 2：已发布的套餐改线路后要过上架检查；不过就整笔回滚，线路不变。
 func TestSetPlanPoolsPublishedRunsGate(t *testing.T) {
-	e, ctx := newEnv(t)
+	// 提交态：回滚态里 service 的 tx.Do 加入外层事务，出错时测不出整笔回滚（同 TestCreatePlanWithoutGuardRollback）
+	e, ctx := newEnvCommitted(t)
 	ctx, _ = seedAdmin(t, ctx, e)
 	e.svc.UsePoolGuard(&fakePoolGuard{})
 
 	p1 := seedPool(t, ctx, e, "active")
+	// 后进先出，先于删套餐执行：先拆套餐对池的绑定（RESTRICT）再删池
+	t.Cleanup(func() {
+		if err := e.exec(context.Background(), `DELETE FROM plan_node_pools WHERE pool_id = ?`, p1); err != nil {
+			t.Errorf("清理套餐线路: %v", err)
+		}
+		if err := e.exec(context.Background(), `DELETE FROM node_pools WHERE id = ?`, p1); err != nil {
+			t.Errorf("清理节点池: %v", err)
+		}
+	})
 	plan := publishedPlan(t, ctx, e, publishedPlanOpts{PoolIDs: []uuid.UUID{p1}})
 	e.svc.UsePublishGate(fakePublishGate{err: errs.Invalid(map[string]string{"pool_ids": "线路里没有可服务的节点"})})
 	t.Cleanup(func() { e.svc.UsePublishGate(nil) })

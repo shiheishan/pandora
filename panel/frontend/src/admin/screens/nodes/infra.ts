@@ -202,13 +202,14 @@ export const POOL_STATUS: Readonly<Record<PoolStatus, { label: string; tone: Ton
 /** 「绑定套餐」：套餐名用「、」连接，没有显示「—」 */
 export const planNamesLabel = (p: Pick<Pool, 'plan_names'>) => (p.plan_names.length ? p.plan_names.join('、') : '—')
 
-/** R104 设计稿的「仅用户组『内测』」：多个组用「、」连在一对『』里；没有限定为 null */
-export const poolGroupsLabel = (p: Pick<Pool, 'allowed_user_groups'>) => (p.allowed_user_groups.length ? `仅用户组『${p.allowed_user_groups.map((g) => g.name).join('、')}』` : null)
+/** 设计稿显示「仅限 A、B」；没有限定为 null */
+export const poolGroupsLabel = (p: Pick<Pool, 'allowed_user_groups'>) => (p.allowed_user_groups.length ? `仅限 ${p.allowed_user_groups.map((g) => g.name).join('、')}` : null)
+
 
 /** 契约：nodes > 0 或 plans > 0 时删除按钮直接禁用并说明；模板、发布记录、未用令牌这三种只有后端知道，靠 409 的消息 */
 export function poolDeleteBlock(p: Pick<Pool, 'nodes' | 'plans'>): string | null {
-  if (p.nodes > 0) return `还有 ${p.nodes} 个节点，先把节点移到别的节点池`
-  if (p.plans > 0) return `还有 ${p.plans} 个套餐版本绑定着它，先在套餐里解除绑定`
+  if (p.nodes > 0) return `池里还有 ${p.nodes} 个节点，先把它们改到别的池`
+  if (p.plans > 0) return `还有 ${p.plans} 个套餐绑定了它，先在套餐里解绑`
   return null
 }
 

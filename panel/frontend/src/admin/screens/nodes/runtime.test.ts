@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import * as runtime from './runtime'
-import { applyPhaseLabel, copyPortValue, runState, runtimeReasonText, sameRunState, type RuntimeFields } from './runtime'
+import { runState, runtimeReasonText, sameRunState, type RuntimeFields } from './runtime'
 
 const base: RuntimeFields = {
   serving_status: 'active',
@@ -62,19 +62,5 @@ describe('runState', () => {
 describe('legacy port conflict', () => {
   it('is not part of the runtime module', () => {
     expect(runtime).not.toHaveProperty('portConflictText')
-  })
-})
-
-describe('copy and conflicts', () => {
-  it('parses the copy port box', () => {
-    expect(copyPortValue('')).toBeUndefined()
-    expect(copyPortValue(' 8443 ')).toBe(8443)
-    expect(copyPortValue('0')).toBe('invalid')
-    expect(copyPortValue('65536')).toBe('invalid')
-    expect(copyPortValue('44a')).toBe('invalid')
-  })
-
-  it('names a failed apply phase', () => {
-    expect(applyPhaseLabel('health_failed')).toBe('健康检查失败')
   })
 })
