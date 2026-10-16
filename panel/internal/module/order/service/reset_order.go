@@ -14,7 +14,6 @@ import (
 	promosvc "github.com/aegispanel/aegis/internal/module/promo/service"
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
 var errOpenReset = errs.Newf(errs.Conflict, "这份订阅还有一张未完成的流量重置订单，请先支付或取消")
@@ -56,13 +55,13 @@ type resetOffer struct {
 	Sub      subsvc.Subscription
 	PlanName string
 	Version  catalogsvc.Version
-	Currency money.Currency
+	Kind     string
 	Amount   decimal.Decimal
 }
 
 // loadResetOffer 判断这份订阅此刻能不能买流量重置。能买回快照；不能买时 refusal 是给用户看的原因
-// （不生效 subsvc.ErrNotLive；没有限额流量配额或套餐没配这个币种的重置价 ErrResetNotSold；作依据的配额行这一期已结束、
-// 还没滚到下一期 ErrResetPeriodSwitching），系统错误走 err。
+// （不生效 subsvc.ErrNotLive；没有限额流量配额或套餐没配重置价 ErrResetNotSold；作依据的配额行这一期已结束、
+// 还没滚到下一期 ErrResetPeriodSwitching；重置次数已用完 ErrResetLimitReached / ErrResetLimitReachedOneTime），系统错误走 err。
 func (s *Service) loadResetOffer(ctx context.Context, sub subsvc.Subscription, now time.Time) (off resetOffer, refusal error, err error) {
 	if sub.StateAt(now) != subsvc.StateLive {
 		return resetOffer{}, subsvc.ErrNotLive, nil
@@ -75,17 +74,6 @@ func (s *Service) loadResetOffer(ctx context.Context, sub subsvc.Subscription, n
 	if !ok {
 		return resetOffer{}, ErrResetNotSold, nil
 	}
-	cur := sub.Price.Currency
-	amt, ok, err := s.catalog.ResetPrice(ctx, sub.PlanID, cur)
-	if err != nil {
-		return resetOffer{}, nil, err
-	}
-	if !ok {
-		return resetOffer{}, ErrResetNotSold, nil
-	}
-	if periodEnded(basis, now) {
-		return resetOffer{}, ErrResetPeriodSwitching, nil
-	}
 	plans, err := s.catalog.PlansByIDs(ctx, []uuid.UUID{sub.PlanID})
 	if err != nil {
 		return resetOffer{}, nil, err
@@ -93,6 +81,25 @@ func (s *Service) loadResetOffer(ctx context.Context, sub subsvc.Subscription, n
 	plan, ok := plans[sub.PlanID]
 	if !ok {
 		return resetOffer{}, nil, catalogsvc.ErrNotFound
+	}
+	if plan.ResetPrice == nil {
+		return resetOffer{}, ErrResetNotSold, nil
+	}
+	amt := *plan.ResetPrice
+	if periodEnded(basis, now) {
+		return resetOffer{}, ErrResetPeriodSwitching, nil
+	}
+	if plan.ResetLimit != nil {
+		used, err := s.subs.ResetsUsed(ctx, sub.ID)
+		if err != nil {
+			return resetOffer{}, nil, err
+		}
+		if used >= *plan.ResetLimit {
+			if plan.Kind == catalogsvc.KindOneTime {
+				return resetOffer{}, ErrResetLimitReachedOneTime, nil
+			}
+			return resetOffer{}, ErrResetLimitReached, nil
+		}
 	}
 	versions, err := s.catalog.VersionsByIDs(ctx, []uuid.UUID{sub.PlanVersionID})
 	if err != nil {
@@ -106,7 +113,7 @@ func (s *Service) loadResetOffer(ctx context.Context, sub subsvc.Subscription, n
 		Sub:      sub,
 		PlanName: plan.Name,
 		Version:  ver,
-		Currency: cur,
+		Kind:     plan.Kind,
 		Amount:   amt,
 	}, nil, nil
 }
@@ -151,7 +158,7 @@ func pendingResetConflict(ctx context.Context, s *Service, subscriptionID uuid.U
 	return e
 }
 
-// quoteResetLines 流量重置报价：一条；这份订阅不卖重置（不生效、没有限额流量配额、套餐没配这个币种的价）时回空切片。
+// quoteResetLines 流量重置报价：一条；这份订阅不卖重置（不生效、没有限额流量配额、套餐没配重置价）时回空切片。
 func quoteResetLines(ctx context.Context, s *Service, userID uuid.UUID, in QuoteInput, now time.Time) ([]Quote, error) {
 	if in.SubscriptionID == nil || *in.SubscriptionID == uuid.Nil {
 		return nil, errs.Invalid(map[string]string{"subscription_id": "必填"})
@@ -164,8 +171,8 @@ func quoteResetLines(ctx context.Context, s *Service, userID uuid.UUID, in Quote
 	if err != nil {
 		return nil, err
 	}
-	if errors.Is(refusal, ErrResetPeriodSwitching) {
-		// 这份卖重置，只是此刻在两期之间：回原因让门户提示稍后再来，而不是当作不卖
+	if errors.Is(refusal, ErrResetPeriodSwitching) || errors.Is(refusal, ErrResetLimitReached) || errors.Is(refusal, ErrResetLimitReachedOneTime) {
+		// 这份卖重置，只是此刻在两期之间或次数已满：回原因让门户据此提示，而不是当作不卖
 		return nil, refusal
 	}
 	if refusal != nil {
@@ -179,7 +186,6 @@ func quoteResetLines(ctx context.Context, s *Service, userID uuid.UUID, in Quote
 	q := Quote{
 		SubscriptionID: &subID,
 		PlanID:         &planID,
-		Currency:       off.Currency,
 		Subtotal:       off.Amount,
 		Credit:         decimal.Zero,
 		Refund:         decimal.Zero,
@@ -233,7 +239,6 @@ func (s *Service) CreateResetOrder(ctx context.Context, in ResetOrderInput) (Cre
 		created, _, err = s.place(ctx, draft{
 			Kind:           KindTrafficReset,
 			UserID:         userID,
-			Currency:       off.Currency,
 			Subtotal:       off.Amount,
 			SubscriptionID: &subID,
 			Item:           resetOrderItem(off),
