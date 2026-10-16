@@ -56,14 +56,6 @@ func archivePlan(t *testing.T, ctx context.Context, e *poolEnv, planID uuid.UUID
 	}
 }
 
-// activatePlan 把套餐改成在售（status = active）；这里只关心「未归档」，不建版本与价格。
-func activatePlan(t *testing.T, ctx context.Context, e *poolEnv, planID uuid.UUID) {
-	t.Helper()
-	if err := e.exec(ctx, `UPDATE plans SET status = 'active' WHERE id = ?`, planID); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func bindPlanToPool(t *testing.T, ctx context.Context, e *poolEnv, planID, poolID uuid.UUID) {
 	t.Helper()
 	if err := e.exec(ctx, `INSERT INTO plan_node_pools (plan_id, pool_id) VALUES (?, ?)`, planID, poolID); err != nil {
@@ -122,6 +114,7 @@ func TestDeletePoolReleasesArchivedBindings(t *testing.T) {
 	}
 }
 
+// 未归档（这里用草稿）套餐的绑定仍挡删池，归档套餐的绑定也不会被提前删掉。
 func TestDeletePoolStillRefusedByLivePlans(t *testing.T) {
 	e, ctx := newArchivedPoolEnv(t)
 
@@ -142,23 +135,5 @@ func TestDeletePoolStillRefusedByLivePlans(t *testing.T) {
 	if !poolExists(t, ctx, e, q) {
 		t.Fatalf("拒绝后池应仍在")
 	}
-
-	r := seedPoolRow(t, ctx, e, PoolActive)
-	live := seedPlanRow(t, ctx, e)
-	activatePlan(t, ctx, e, live)
-	archR := seedPlanRow(t, ctx, e)
-	archivePlan(t, ctx, e, archR)
-	bindPlanToPool(t, ctx, e, live, r)
-	bindPlanToPool(t, ctx, e, archR, r)
-
-	err = poolSavepoint(t, ctx, e, func() error { return e.svc.DeletePool(ctx, r) })
-	if poolErrCode(err) != errs.Conflict {
-		t.Fatalf("在售套餐绑定应 Conflict，得到 %v", err)
-	}
-	if poolBindingCount(t, ctx, e, r) != 2 {
-		t.Fatalf("拒绝后绑定应仍在")
-	}
-	if !poolExists(t, ctx, e, r) {
-		t.Fatalf("拒绝后池应仍在")
-	}
+	// 在售套餐与草稿同属「未归档」，挡删池走同一个 Plans 计数；在售的计数口径见 catalog 的 pool_release_pg_test.go
 }

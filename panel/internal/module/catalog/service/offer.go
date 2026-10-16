@@ -344,6 +344,13 @@ func (s *Service) PlansByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUI
 	return out, nil
 }
 
+// PlanStatuses 批量取套餐状态（一条 SQL，不带可见组等子表）：套餐 id → PlanDraft / PlanActive / PlanArchived；不存在的 id 不在 map 里。
+// 给只关心状态的热路径用（order 结算时判断订单行套餐是否已归档）。
+func (s *Service) PlanStatuses(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error) {
+	out, err := s.repo.PlanStatuses(ctx, ids)
+	return out, catalogErr(err)
+}
+
 // VersionsByIDs 批量取版本（含权益与配额）；与 id 个数无关，固定 3 条 SQL（版本、权益、配额）。
 func (s *Service) VersionsByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]Version, error) {
 	out := make(map[uuid.UUID]Version)

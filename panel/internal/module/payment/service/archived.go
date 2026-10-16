@@ -12,7 +12,9 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/aegispanel/aegis/internal/module/payment/model"
+	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/reqmeta"
 )
 
 // archivedApplyReason 是自动转入余额写进挂账案的处理原因（库里要求 5 字以上），也是这笔 late_payment_applied 分录的备注。
@@ -31,13 +33,19 @@ func (s *Service) afterSettleArchived(ctx context.Context, evID uuid.UUID, in re
 		return RecordResult{}, ErrArchivedPlanOffline
 	}
 	var result RecordResult
-	err := s.settler.CloseArchivedOrder(ctx, orderID, func(ctx context.Context) error {
-		res, late, err := s.quarantine(ctx, evID, in, npe, haveIntent, intent, orderID, userID, orderNo, paymentID, surcharge)
+	err := s.settler.CloseArchivedOrder(ctx, orderID, func(ctx context.Context, orderStatus string) error {
+		// 挂账案记订单此刻的状态（保存点回滚到重新锁单之间可能已被取消或超时），不用回滚前读到的旧值
+		cur := *npe
+		if orderStatus != "" {
+			cur.OrderStatus = orderStatus
+		}
+		res, late, err := s.quarantine(ctx, evID, in, &cur, haveIntent, intent, orderID, userID, orderNo, paymentID, surcharge)
 		if err != nil {
 			return err
 		}
+		// 自动转入是系统规则做的：账本与审计的操作者固定记系统，不随后台查单补记的管理员走。
 		// 案是本事务刚插的，别人看不见，不用再锁
-		if _, err := s.applyLateCase(ctx, late, archivedApplyReason); err != nil {
+		if _, err := s.applyLateCase(systemActorCtx(ctx), late, archivedApplyReason); err != nil {
 			return err
 		}
 		result = res
@@ -50,4 +58,10 @@ func (s *Service) afterSettleArchived(ctx context.Context, evID uuid.UUID, in re
 		return RecordResult{}, errors.New("payment: 归档套餐的付款没有入账")
 	}
 	return result, nil
+}
+
+// systemActorCtx 去掉 ctx 里的登录主体与请求来源 IP（事务、req_id 照旧），让账本记 system、审计记 system。
+func systemActorCtx(ctx context.Context) context.Context {
+	ctx = authn.With(ctx, authn.Principal{})
+	return reqmeta.With(ctx, reqmeta.Meta{})
 }

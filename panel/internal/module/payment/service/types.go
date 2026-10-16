@@ -26,10 +26,11 @@ import (
 //   - 锁序：Settler 先锁订单行；payment 在调它之前不锁意图（插收款时外键检查只对意图加 KEY SHARE）。
 //   - 订单行套餐已归档时 SettlePayment 返回 NotPayable(CaseArchivedPlan, …)；payment 回滚保存点后（订单行锁随之释放）调
 //     CloseArchivedOrder(orderID, settle)：Settler 重新锁订单行、释放预留与券，在释放余额冻结之前调 settle（payment 记挂账、
-//     意图标成功、转入余额），再释放余额冻结、作废其余在途意图、把订单关成取消。订单已不是待付时只调 settle。
+//     意图标成功、转入余额；orderStatus 是订单此刻的状态，记进挂账案），再释放余额冻结、作废其余在途意图、把订单关成取消。
+//     订单已不是待付时只调 settle。
 type Settler interface {
 	SettlePayment(ctx context.Context, in SettleInput) error
-	CloseArchivedOrder(ctx context.Context, orderID uuid.UUID, settle func(ctx context.Context) error) error
+	CloseArchivedOrder(ctx context.Context, orderID uuid.UUID, settle func(ctx context.Context, orderStatus string) error) error
 }
 
 // SettleInput 是一笔已确认、已落库的收款。

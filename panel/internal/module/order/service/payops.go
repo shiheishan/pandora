@@ -46,6 +46,20 @@ func (s *Service) Pay(ctx context.Context, in PayInput) (paymentsvc.IntentResult
 		if !s.clock().Before(o.ExpiresAt) {
 			return ErrPaymentLapsed
 		}
+		// 套餐归档后，归档前下的待付单不让再发起付款（用户 2026-10-16 定）；已建好的在途意图照旧，付了由结算转余额
+		if planOrder(o.Kind) {
+			it, err := s.onlyItem(ctx, o)
+			if err != nil {
+				return err
+			}
+			archived, err := s.planArchivedFor(ctx, it)
+			if err != nil {
+				return err
+			}
+			if archived {
+				return ErrPlanRetired
+			}
+		}
 		title, err := s.payTitle(ctx, o)
 		if err != nil {
 			return err

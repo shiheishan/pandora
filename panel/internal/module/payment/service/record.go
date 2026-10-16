@@ -435,6 +435,7 @@ func (s *Service) afterSettleQuarantine(ctx context.Context, evID uuid.UUID, in 
 }
 
 // quarantine 记挂账：late_payment_suspense 分录、挂账案（suspense）、意图标成功、事件处理完、审计 payment.quarantined。返回新建的挂账案。
+// 挂账金额是 实收 − surcharge：surcharge 照记手续费收入、不退，archived_plan 也一样（用户 2026-10-16 定「手续费不退」）。
 func (s *Service) quarantine(ctx context.Context, evID uuid.UUID, in recordInput, npe *NotPayableError,
 	haveIntent bool, intent model.Intent, orderID, userID uuid.UUID, orderNo string, paymentID uuid.UUID, surcharge decimal.Decimal) (RecordResult, model.LateCase, error) {
 

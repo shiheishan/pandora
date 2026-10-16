@@ -99,9 +99,9 @@ func (s *stubSettler) SettlePayment(ctx context.Context, in SettleInput) error {
 }
 
 // CloseArchivedOrder 桩：没有订单表要动，直接调 settle（记挂账、转余额），并记下调用次数。
-func (s *stubSettler) CloseArchivedOrder(ctx context.Context, orderID uuid.UUID, settle func(ctx context.Context) error) error {
+func (s *stubSettler) CloseArchivedOrder(ctx context.Context, orderID uuid.UUID, settle func(ctx context.Context, orderStatus string) error) error {
 	s.closeCalls.Add(1)
-	return settle(ctx)
+	return settle(ctx, "")
 }
 
 type env struct {
