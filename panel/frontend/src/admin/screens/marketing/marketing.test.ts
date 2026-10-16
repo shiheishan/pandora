@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { GB, basisPointsToPercent, buildCouponRequest, couponBatchLabel, couponState, discountLabel, emptyCouponForm, formatGB, intervalScopeLabel, minorToYuan, parseCount, percentToBasisPoints, planScopeLabel, usage, validUntilLabel, yuanToMinor } from './logic'
+import { GB, basisPointsToPercent, buildCouponRequest, couponBatchLabel, couponPeriodLabel, couponState, discountLabel, emptyCouponForm, formatGB, minorToYuan, parseCount, percentToBasisPoints, planScopeLabel, usage, yuanToMinor } from './logic'
 import { couponSchema, type Plan } from './schemas'
 
 const PLANS: Plan[] = [
-  { id: 'p1', name: '基础版', status: 'active', prices: [] },
-  { id: 'p2', name: '专业版', status: 'active', prices: [] },
+  { id: 'p1', name: '基础版', kind: 'subscription', status: 'active', prices: [] },
+  { id: 'p2', name: '专业版', kind: 'subscription', status: 'active', prices: [] },
 ]
 
 describe('input conversion', () => {
@@ -36,17 +36,40 @@ describe('input conversion', () => {
 })
 
 describe('coupons', () => {
-  it('labels discounts: basis points as percent, fixed in its currency (blank means CNY)', () => {
-    expect(discountLabel({ discount_type: 'percent', discount_value: 1500, currency: '' })).toBe('15% 折扣')
-    expect(discountLabel({ discount_type: 'fixed', discount_value: 1000, currency: '' })).toBe('立减 ¥10.00')
-    expect(discountLabel({ discount_type: 'fixed', discount_value: 500, currency: 'USD' })).toBe('立减 ¥5.00')
+  it('labels discounts: basis points as percent, fixed in CNY', () => {
+    expect(discountLabel({ discount_type: 'percent', discount_value: 1500 })).toBe('15% 折扣')
+    expect(discountLabel({ discount_type: 'fixed', discount_value: 1000 })).toBe('立减 ¥10.00')
+    expect(discountLabel({ discount_type: 'fixed', discount_value: 500 })).toBe('立减 ¥5.00')
   })
 
   it('shows usage against the cap, unlimited when null', () => {
     expect(usage({ redeemed_count: 412, max_redemptions: 1000 })).toEqual({ label: '412 / 1000', ratio: 0.412 })
     expect(usage({ redeemed_count: 5, max_redemptions: null })).toEqual({ label: '5 / 不限', ratio: 0 })
     expect(usage({ redeemed_count: 120, max_redemptions: 100 }).ratio).toBe(1)
-    expect(validUntilLabel(null)).toBe('长期')
+  })
+
+  it('formats coupon period label for future start, until, or perpetual', () => {
+    const now = new Date('2026-10-16T12:00:00Z')
+    // 未来开始 + 结束
+    expect(couponPeriodLabel({ valid_from: '2026-11-01T00:00:00Z', valid_until: '2026-12-01T00:00:00Z' }, now)).toEqual({
+      short: '11-01 起 · 至 12-01',
+      full: '2026-11-01 → 2026-12-01',
+    })
+    // 过去开始 + 长期（无结束）
+    expect(couponPeriodLabel({ valid_from: '2026-09-01T00:00:00Z', valid_until: null }, now)).toEqual({
+      short: '长期',
+      full: '2026-09-01 → 长期',
+    })
+    // 都空
+    expect(couponPeriodLabel({ valid_from: null, valid_until: null }, now)).toEqual({
+      short: '长期',
+      full: '创建即生效 → 长期',
+    })
+    // 过去开始 + 有结束
+    expect(couponPeriodLabel({ valid_from: '2026-10-01T00:00:00Z', valid_until: '2026-11-01T00:00:00Z' }, now)).toEqual({
+      short: '至 11-01',
+      full: '2026-10-01 → 2026-11-01',
+    })
   })
 
   it('maps plan scope to names, falling back to a count without the catalog', () => {
@@ -54,12 +77,6 @@ describe('coupons', () => {
     expect(planScopeLabel(['p2', 'p1'], PLANS)).toBe('专业版、基础版')
     expect(planScopeLabel(['p2', 'gone'], PLANS)).toBe('专业版、已删除的套餐')
     expect(planScopeLabel(['p1', 'p2'], undefined)).toBe('2 个套餐')
-  })
-
-  it('maps interval scope to labels, empty to unlimited', () => {
-    expect(intervalScopeLabel([])).toBe('不限时长')
-    expect(intervalScopeLabel(['month', 'year'])).toBe('月付、年付')
-    expect(intervalScopeLabel(['day', 'week', 'quarter', 'one_time'])).toBe('按天、按周、季付、一次性')
   })
 
   it('only active and paused coupons get a switch; expired and exhausted become tags', () => {
@@ -77,9 +94,11 @@ describe('coupons', () => {
       ok: true,
       body: { code: 'AUTUMN26', discount_type: 'percent', discount_value: 1500, max_redemptions: 1000, max_redemptions_per_user: 1, max_discount: 3000 },
     })
-    const fixed = buildCouponRequest({ ...emptyCouponForm(false), code: 'X', kind: 'fixed', value: '10', currency: 'USD', minOrder: '50', planIds: ['p1'], intervals: ['month', 'year'] }, false)
-    expect(fixed.ok && fixed.body).toMatchObject({ discount_type: 'fixed', discount_value: 1000, currency: 'USD', max_redemptions: null, min_order_amount: 5000, applicable_plan_ids: ['p1'], applicable_intervals: ['month', 'year'] })
-    // fixed 不带封顶优惠，percent 不带币种
+    const fixed = buildCouponRequest({ ...emptyCouponForm(false), code: 'X', kind: 'fixed', value: '10', minOrder: '50', planIds: ['p1'] }, false)
+    expect(fixed.ok && fixed.body).toMatchObject({ discount_type: 'fixed', discount_value: 1000, max_redemptions: null, min_order_amount: 5000, applicable_plan_ids: ['p1'] })
+    // 没有 currency、applicable_intervals、max_discount
+    expect(fixed.ok && 'currency' in fixed.body).toBe(false)
+    expect(fixed.ok && 'applicable_intervals' in fixed.body).toBe(false)
     expect(fixed.ok && 'max_discount' in fixed.body).toBe(false)
   })
 
@@ -97,14 +116,19 @@ describe('coupons', () => {
     expect(!bad.ok && Object.keys(bad.errors).sort()).toEqual(['count', 'name', 'prefix'])
   })
 
-  describe('valid_until', () => {
+  describe('valid_from and valid_until', () => {
     beforeEach(() => vi.useFakeTimers({ now: new Date('2026-09-24T10:00:00Z') }))
     afterEach(() => vi.useRealTimers())
-    it('sends RFC3339 and rejects the past', () => {
-      const future = buildCouponRequest({ ...emptyCouponForm(false), code: 'A', validUntil: '2026-10-07T23:59' }, false)
+    it('sends RFC3339, converts valid_from and rejects past or start after end', () => {
+      const future = buildCouponRequest({ ...emptyCouponForm(false), code: 'A', validFrom: '2026-10-01T00:00', validUntil: '2026-10-07T23:59' }, false)
+      expect(future.ok && future.body.valid_from).toMatch(/^2026-10-01T\d\d:00:00\.000Z$/)
       expect(future.ok && future.body.valid_until).toMatch(/^2026-10-0\dT\d\d:59:00\.000Z$/)
+
       const past = buildCouponRequest({ ...emptyCouponForm(false), code: 'A', validUntil: '2026-01-01T00:00' }, false)
       expect(!past.ok && past.errors.valid_until).toBe('结束时间要晚于现在')
+
+      const inverted = buildCouponRequest({ ...emptyCouponForm(false), code: 'A', validFrom: '2026-10-10T00:00', validUntil: '2026-10-05T00:00' }, false)
+      expect(!inverted.ok && inverted.errors.valid_until).toBe('结束时间要晚于开始时间')
     })
   })
 
@@ -115,14 +139,12 @@ describe('coupons', () => {
       name: 'A',
       discount_type: 'percent',
       discount_value: 1,
-      currency: '',
       max_discount: null,
       min_order_amount: 0,
       max_redemptions: null,
       max_redemptions_per_user: 1,
       redeemed_count: 0,
       applicable_plan_ids: null,
-      applicable_intervals: null,
       valid_from: null,
       valid_until: null,
       status: 'active',
@@ -130,6 +152,6 @@ describe('coupons', () => {
       discounted_total: 0,
     })
     expect(row.applicable_plan_ids).toEqual([])
-    expect(row.applicable_intervals).toEqual([])
   })
+})
 })

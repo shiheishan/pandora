@@ -70,9 +70,9 @@ export type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'neutral'
 // 优惠券
 // ---------------------------------------------------------------------------
 
-/** percent：discount_value/100 %；fixed：立减金额（币种空串按 CNY） */
-export function discountLabel(c: Pick<Coupon, 'discount_type' | 'discount_value' | 'currency'>): string {
-  return c.discount_type === 'percent' ? `${basisPointsToPercent(c.discount_value)}% 折扣` : `立减 ${formatMoney(c.discount_value, c.currency || 'CNY')}`
+/** percent：discount_value/100 %；fixed：立减金额 */
+export function discountLabel(c: Pick<Coupon, 'discount_type' | 'discount_value'>): string {
+  return c.discount_type === 'percent' ? `${basisPointsToPercent(c.discount_value)}% 折扣` : `立减 ${formatMoney(c.discount_value)}`
 }
 
 /** 用量：「412 / 1000」与进度比例；上限 null 为「不限」、比例 0 */
@@ -82,37 +82,25 @@ export function usage(c: Pick<Coupon, 'redeemed_count' | 'max_redemptions'>): { 
   return { label: `${c.redeemed_count} / ${c.max_redemptions}`, ratio }
 }
 
-export const validUntilLabel = (iso: string | null) => (iso ? formatDate(iso) : '长期')
+/** 有效期标签：short 用于列表列，full 用于 title 与详情 */
+export function couponPeriodLabel(
+  c: Pick<Coupon, 'valid_from' | 'valid_until'>,
+  now: Date,
+): { short: string; full: string } {
+  const fromFuture = c.valid_from ? new Date(c.valid_from).getTime() > now.getTime() : false
+  const prefix = fromFuture && c.valid_from ? `${formatDate(c.valid_from).slice(5)} 起 · ` : ''
+  const suffix = c.valid_until ? `至 ${formatDate(c.valid_until).slice(5)}` : '长期'
+  const short = `${prefix}${suffix}`
+  const fromFull = c.valid_from ? formatDate(c.valid_from) : '创建即生效'
+  const untilFull = c.valid_until ? formatDate(c.valid_until) : '长期'
+  return { short, full: `${fromFull} → ${untilFull}` }
+}
 
 /** 适用套餐：空 →「全部套餐」；套餐目录没取到（加载中或失败）时退回「N 个套餐」 */
 export function planScopeLabel(ids: readonly string[], plans: readonly Plan[] | undefined): string {
   if (ids.length === 0) return '全部套餐'
   if (!plans) return `${ids.length} 个套餐`
   return ids.map((id) => plans.find((p) => p.id === id)?.name ?? '已删除的套餐').join('、')
-}
-
-export const COUPON_INTERVAL_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
-  { value: 'day', label: '按天' },
-  { value: 'week', label: '按周' },
-  { value: 'month', label: '月付' },
-  { value: 'quarter', label: '季付' },
-  { value: 'year', label: '年付' },
-  { value: 'one_time', label: '一次性' },
-]
-
-export const COUPON_INTERVAL_LABELS: Record<string, string> = {
-  day: '按天',
-  week: '按周',
-  month: '月付',
-  quarter: '季付',
-  year: '年付',
-  one_time: '一次性',
-}
-
-/** 适用计费周期：空 →「不限时长」；有值时用顿号连接 */
-export function intervalScopeLabel(intervals: readonly string[]): string {
-  if (!intervals || intervals.length === 0) return '不限时长'
-  return intervals.map((i) => COUPON_INTERVAL_LABELS[i] ?? i).join('、')
 }
 
 /** 只有 active / paused 能切换；expired、exhausted 在「全部」里显示成标签（契约：设计缺，待补·前端） */
@@ -134,14 +122,13 @@ export interface CouponForm {
   name: string
   kind: 'percent' | 'fixed'
   value: string
-  currency: 'CNY' | 'USD'
   maxRedemptions: string
   perUser: string
   minOrder: string
   maxDiscount: string
+  validFrom: string
   validUntil: string
   planIds: string[]
-  intervals: string[]
 }
 
 export const emptyCouponForm = (batch: boolean): CouponForm => ({
@@ -151,14 +138,13 @@ export const emptyCouponForm = (batch: boolean): CouponForm => ({
   name: '',
   kind: 'percent',
   value: batch ? '15' : '10',
-  currency: 'CNY',
   maxRedemptions: batch ? '1' : '',
   perUser: '1',
   minOrder: '',
   maxDiscount: '',
+  validFrom: '',
   validUntil: '',
   planIds: [],
-  intervals: [],
 })
 
 export type FieldErrors = Record<string, string>
@@ -192,7 +178,6 @@ export function buildCouponRequest(f: CouponForm, batch: boolean): Built<Record<
     errors.discount_value = f.kind === 'percent' ? '折扣填 0.01 到 100 之间的数' : '立减金额需大于 0，最多两位小数'
   }
   Object.assign(body, { discount_type: f.kind, discount_value: value ?? 0 })
-  if (f.kind === 'fixed') body.currency = f.currency
 
   const max = parseCount(f.maxRedemptions)
   if (Number.isNaN(max) || max === 0) errors.max_redemptions = '填正整数，留空为不限'
@@ -210,13 +195,23 @@ export function buildCouponRequest(f: CouponForm, batch: boolean): Built<Record<
     if (cap === null || cap < 1) errors.max_discount = '填大于 0 的金额，留空为不封顶'
     else body.max_discount = cap
   }
+  if (f.validFrom) {
+    const iso = localInputToIso(f.validFrom)
+    if (!iso) errors.valid_from = '时间格式不正确'
+    else body.valid_from = iso
+  }
   if (f.validUntil) {
     const iso = localInputToIso(f.validUntil)
     if (!iso) errors.valid_until = '时间格式不正确'
     else if (new Date(iso).getTime() <= Date.now()) errors.valid_until = '结束时间要晚于现在'
     else body.valid_until = iso
   }
+  if (f.validFrom && f.validUntil && !errors.valid_from && !errors.valid_until) {
+    if (new Date(body.valid_until as string).getTime() <= new Date(body.valid_from as string).getTime()) {
+      errors.valid_until = '结束时间要晚于开始时间'
+      delete body.valid_until
+    }
+  }
   if (f.planIds.length) body.applicable_plan_ids = f.planIds
-  if (f.intervals.length) body.applicable_intervals = f.intervals
   return Object.keys(errors).length ? { ok: false, errors } : { ok: true, body }
 }

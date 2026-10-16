@@ -1,102 +1,176 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.tableWrap {
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-top: 1px solid var(--text);
+  border-bottom: 1px solid var(--border-strong);
+}
+
+.tableInner {
+  min-width: 640px;
+}
+
 .grid {
   display: grid;
-  grid-template-columns: minmax(150px, 1.2fr) 110px minmax(120px, 1fr) 110px 110px 60px;
-  gap: var(--space-12);
+  grid-template-columns: minmax(0, 1.3fr) 96px minmax(0, 1fr) 80px 120px 48px;
+  gap: 12px;
   align-items: center;
-  min-width: 720px;
-  padding: 0 var(--space-16);
 }
 
 .head {
-  height: 36px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-2);
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-strong);
   color: var(--text-3);
-  font-size: var(--fs-caption);
+  font-size: 12px;
 }
 
 .row {
-  border-bottom: 1px solid var(--border);
-}
-
-.row:last-child {
-  border-bottom: 0;
-}
-
-.line {
-  min-height: 46px;
-}
-
-.code {
-  display: flex;
-  align-items: center;
-  gap: var(--space-8);
-  min-width: 0;
-  padding: 0;
+  width: 100%;
+  padding: 10px 0;
   border: 0;
+  border-top: 1px solid var(--border);
   background: transparent;
   color: inherit;
   font: inherit;
   text-align: left;
-}
-
-button.code {
   cursor: pointer;
+  transition: background-color 0.15s;
 }
 
-button.code:hover .codeText {
-  text-decoration: underline;
+.row:first-of-type {
+  border-top: 0;
+}
+
+.row:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: -2px;
+}
+
+.row:hover {
+  background: var(--surface-2);
+}
+
+.codeCell {
+  min-width: 0;
 }
 
 .codeText {
+  display: block;
   font-family: var(--font-mono);
-  font-weight: var(--fw-medium);
+  font-size: 12.5px;
+  font-weight: 500;
 }
 
-.chevron {
-  width: 12px;
+.nameText {
+  display: block;
+  overflow: hidden;
   color: var(--text-3);
-  transition: transform 0.15s;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.open .chevron {
-  transform: rotate(180deg);
+.offText {
+  white-space: nowrap;
 }
 
-.usage {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+.planText {
+  overflow: hidden;
+  color: var(--text-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.end {
+.monoRight {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-align: right;
+}
+
+.periodText {
+  overflow: hidden;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.switchCell {
   display: flex;
   justify-content: flex-end;
 }
 
-.log {
-  min-width: 720px;
-  padding: 6px var(--space-16) var(--space-12) var(--space-32);
-  background: var(--surface-2);
+.empty {
+  padding: 40px 0;
+  color: var(--text-3);
+  text-align: center;
 }
 
-.logTitle {
-  padding: 6px 0;
-  color: var(--text-2);
-  font-size: var(--fs-caption);
+.section {
+  margin-top: 10px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
 }
 
-.logRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 150px 110px 110px;
-  gap: 10px;
-  padding: 6px 0;
-  border-top: 1px solid var(--border);
-  font-size: var(--fs-caption);
+.section:first-child {
+  margin-top: 0;
 }
 
-.right {
+.summaryRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: -6px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.summaryLabel {
+  flex: none;
+  color: var(--text-3);
+}
+
+.summaryValue {
+  flex: 1;
+  min-width: 0;
   text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.summaryValueMono {
+  font-family: var(--font-mono);
+}
+
+.summaryValueMuted {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+}
+
+.logNote {
+  padding: 12px 0;
+  color: var(--text-3);
+  font-size: 12px;
 }
 
 .reverted {
@@ -104,15 +178,45 @@ button.code:hover .codeText {
   text-decoration: line-through;
 }
 
+.fieldHint {
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.fieldError {
+  font-size: 12px;
+  color: var(--danger);
+}
+
+.faint {
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.plansGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px 12px;
+}
+
 .sample {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: 4px;
   max-height: 180px;
   overflow: auto;
-  padding: 10px var(--space-12);
-  border-radius: var(--radius-md);
+  padding: 10px 12px;
   background: var(--surface-3);
   font-family: var(--font-mono);
-  font-size: var(--fs-caption);
+  font-size: 12px;
+}
+
+.right {
+  text-align: right;
+}
+
+.fieldCol {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }

@@ -1,101 +1,140 @@
 import { useMutation } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useState, type KeyboardEvent } from 'react'
 import { saveFile, toCsv } from '../../../core/download'
 import { formatMoney } from '../../../core/format'
+import { navigate, useHashLocation } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
-import { Button, Empty, IconChevronDown, Modal, Pager, QueryView, Segmented, Switch, Tag, useToast } from '../../../ui'
-import { CouponForm, type BatchResult } from './CouponForm'
+import { Button, FilterTabs, Modal, Pager, QueryView, Switch, Tag, useToast } from '../../../ui'
+import { CouponFormModal, type BatchResult } from './CouponForm'
 import local from './Coupons.module.css'
-import { couponBatchLabel, couponState, discountLabel, formatDateTime, intervalScopeLabel, planScopeLabel, usage, validUntilLabel } from './logic'
 import css from './marketing.module.css'
+import {
+  couponBatchLabel,
+  couponPeriodLabel,
+  couponState,
+  discountLabel,
+  formatDateTime,
+  planScopeLabel,
+  usage,
+} from './logic'
 import { useCoupons, useFailure, useInvalidateMarketing, usePlanCatalog, useRedemptions } from './queries'
 import { okResponse, type Coupon, type Plan } from './schemas'
 
 const PAGE = 50
 type Mode = 'all' | 'active' | 'paused'
 
-export function Coupons() {
+export function Coupons({ rest }: { rest: string[] }) {
   const toast = useToast()
-  const [mode, setMode] = useState<Mode>('all')
+  const loc = useHashLocation()
+  const selectedId = rest[0] ?? null
+
+  const statusParam = loc.query.get('status')
+  const mode: Mode = statusParam === 'active' || statusParam === 'paused' ? statusParam : 'all'
+
   const [offset, setOffset] = useState(0)
-  const [form, setForm] = useState<null | 'one' | 'batch'>(null)
-  const [open, setOpen] = useState<string | null>(null)
+  const [formModal, setFormModal] = useState<null | 'one' | 'batch'>(null)
   const [batch, setBatch] = useState<BatchResult | null>(null)
+
   const list = useCoupons({ ...(mode === 'all' ? {} : { status: mode }), limit: PAGE, offset })
   const catalog = usePlanCatalog()
   const plans = catalog.isSuccess ? catalog.data : undefined
 
   const pickMode = (next: Mode) => {
-    setMode(next)
     setOffset(0)
-    setOpen(null)
+    navigate('/marketing/coupons', {
+      query: next === 'all' ? {} : { status: next },
+      replace: true,
+    })
   }
 
+  const openDetail = (id: string) => {
+    navigate(`/marketing/coupons/${id}`, {
+      query: mode === 'all' ? {} : { status: mode },
+    })
+  }
+
+  const closeDetail = () => {
+    navigate('/marketing/coupons', {
+      query: mode === 'all' ? {} : { status: mode },
+    })
+  }
+
+  const selectedCoupon = list.data?.coupons.find((c) => c.id === selectedId) ?? null
+
   return (
-    <div className={css.stack}>
-      <div className={css.toolbar}>
-        <Segmented<Mode>
+    <div className={local.container}>
+      <div className={local.toolbar}>
+        <FilterTabs<Mode>
           label="按状态筛选"
-          size="sm"
           value={mode}
           onChange={pickMode}
-          options={[
+          items={[
             { value: 'all', label: '全部' },
             { value: 'active', label: '启用中' },
             { value: 'paused', label: '已停用' },
           ]}
         />
-        <span className={css.spacer} />
-        <Button onClick={() => setForm(form === 'batch' ? null : 'batch')}>批量生成</Button>
-        <Button variant="primary" onClick={() => setForm(form === 'one' ? null : 'one')}>
-          新建优惠券
+        <span className={local.spacer} />
+        <Button onClick={() => setFormModal('batch')}>批量生成</Button>
+        <Button variant="primary" onClick={() => setFormModal('one')}>
+          新建
         </Button>
       </div>
 
-      {form && (
-        <CouponForm
-          key={form}
-          batch={form === 'batch'}
-          plans={plans}
-          onCancel={() => setForm(null)}
-          onCreated={(result) => {
-            setForm(null)
-            if ('codes' in result) setBatch(result)
-            else toast(`优惠券 ${result.code} 已创建`)
-          }}
-        />
-      )}
+      <div className={local.tableWrap}>
+        <div className={local.tableInner}>
+          <div className={`${local.grid} ${local.head}`} role="row">
+            <span>优惠码</span>
+            <span>优惠</span>
+            <span>适用套餐</span>
+            <span className={local.right}>使用</span>
+            <span>有效期</span>
+            <span className={local.right}>启用</span>
+          </div>
 
-      <div className={css.panel}>
-        <div className={`${local.grid} ${local.head}`} role="row">
-          <span>优惠码</span>
-          <span>优惠</span>
-          <span>适用套餐</span>
-          <span>使用</span>
-          <span>有效期至</span>
-          <span className={local.right}>启用</span>
+          <QueryView
+            query={list}
+            isEmpty={(d) => d.coupons.length === 0}
+            empty={
+              <div className={local.empty}>
+                {mode === 'all' ? '还没有优惠券' : mode === 'active' ? '没有启用中的优惠券' : '没有已停用的优惠券'}
+              </div>
+            }
+          >
+            {(data) => (
+              <>
+                {data.coupons.map((c) => (
+                  <CouponRow
+                    key={c.id}
+                    coupon={c}
+                    plans={plans}
+                    onClick={() => openDetail(c.id)}
+                  />
+                ))}
+                <Pager total={data.total} limit={PAGE} offset={offset} onChange={setOffset} />
+              </>
+            )}
+          </QueryView>
         </div>
-        <QueryView
-          query={list}
-          isEmpty={(d) => d.coupons.length === 0}
-          empty={
-            <Empty
-              bare
-              title={mode === 'all' ? '还没有优惠券' : mode === 'active' ? '没有启用中的优惠券' : '没有已停用的优惠券'}
-              description="用「新建优惠券」发一张，或「批量生成」给渠道发一批。"
-            />
-          }
-        >
-          {(data) => (
-            <>
-              {data.coupons.map((c) => (
-                <CouponRow key={c.id} coupon={c} plans={plans} open={open === c.id} onToggleOpen={() => setOpen(open === c.id ? null : c.id)} />
-              ))}
-              <Pager total={data.total} limit={PAGE} offset={offset} onChange={setOffset} />
-            </>
-          )}
-        </QueryView>
       </div>
+
+      <CouponFormModal
+        open={formModal}
+        plans={plans}
+        onClose={() => setFormModal(null)}
+        onCreated={(result) => {
+          setFormModal(null)
+          if ('codes' in result) setBatch(result)
+          else toast(`优惠券 ${result.code} 已创建`)
+        }}
+      />
+
+      <CouponDetailModal
+        id={selectedId}
+        coupon={selectedCoupon}
+        plans={plans}
+        onClose={closeDetail}
+      />
 
       <BatchResultModal result={batch} onClose={() => setBatch(null)} />
     </div>
@@ -105,13 +144,11 @@ export function Coupons() {
 function CouponRow({
   coupon: c,
   plans,
-  open,
-  onToggleOpen,
+  onClick,
 }: {
   coupon: Coupon
   plans: readonly Plan[] | undefined
-  open: boolean
-  onToggleOpen: () => void
+  onClick: () => void
 }) {
   const api = useApi()
   const toast = useToast()
@@ -119,43 +156,45 @@ function CouponRow({
   const invalidate = useInvalidateMarketing()
   const state = couponState(c.status)
   const use = usage(c)
-  const batch = couponBatchLabel(c)
+  const batchLabel = couponBatchLabel(c)
+  const period = couponPeriodLabel(c, new Date())
 
   const toggle = useMutation({
     mutationFn: (next: 'active' | 'paused') => api.post(`v1/coupons/${c.id}/status`, okResponse, { body: { status: next } }),
     onSuccess: (_, next) => {
-      toast(next === 'active' ? `已启用 ${c.code}` : `已停用 ${c.code}`)
+      toast(next === 'active' ? `${c.code} 已启用` : `${c.code} 已停用`)
       void invalidate()
     },
     onError: (error) => fail(error),
   })
 
-  const codeCell = (
-    <>
-      <span className={local.codeText}>{c.code}</span>
-      {batch && <span className={css.faint}>{batch}</span>}
-      <IconChevronDown className={local.chevron} />
-    </>
-  )
+  // 行里还有开关按钮，所以行本身不能是 <button>（按钮不能嵌套）：用 role="button" 并只响应行自己的按键
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.target !== e.currentTarget) return
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      onClick()
+    }
+  }
 
   return (
-    <div className={open ? `${local.row} ${local.open}` : local.row}>
-      <div className={`${local.grid} ${local.line}`}>
-        <button type="button" className={local.code} aria-expanded={open} onClick={onToggleOpen}>
-          {codeCell}
-        </button>
-        <span>{discountLabel(c)}</span>
-        <span className={css.muted}>
-          {planScopeLabel(c.applicable_plan_ids, plans)} · {intervalScopeLabel(c.applicable_intervals)}
+    <div role="button" tabIndex={0} aria-label={`查看 ${c.code}`} className={local.row} onClick={onClick} onKeyDown={onKeyDown}>
+      <div className={local.grid}>
+        <span className={local.codeCell}>
+          <span className={local.codeText}>{c.code}</span>
+          {batchLabel && <span className={local.nameText}>{batchLabel}</span>}
         </span>
-        <span className={local.usage}>
-          <span className={`${css.mono} ${css.faint}`}>{use.label}</span>
-          <span className={css.bar}>
-            <span className={css.barFill} style={{ width: `${Math.round(use.ratio * 100)}%` }} />
-          </span>
+        <span className={local.offText}>{discountLabel(c)}</span>
+        <span className={local.planText}>{planScopeLabel(c.applicable_plan_ids, plans)}</span>
+        <span className={local.monoRight}>{use.label}</span>
+        <span title={period.full} className={local.periodText}>
+          {period.short}
         </span>
-        <span className={`${css.mono} ${css.faint}`}>{validUntilLabel(c.valid_until)}</span>
-        <span className={local.end}>
+        <span
+          className={local.switchCell}
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
           {state.switchable ? (
             <Switch
               aria-label={`${state.on ? '停用' : '启用'} ${c.code}`}
@@ -168,32 +207,100 @@ function CouponRow({
           )}
         </span>
       </div>
-      {open && <Redemptions couponId={c.id} />}
     </div>
   )
 }
 
-function Redemptions({ couponId }: { couponId: string }) {
-  const log = useRedemptions(couponId)
-  return (
-    <div className={local.log}>
-      <div className={local.logTitle}>兑换记录（最近 200 条）</div>
-      <QueryView query={log} rows={2} empty={<div className={css.faint}>还没有人用过这张券。</div>}>
-        {(rows) =>
-          rows.map((r) => (
-            <div key={`${r.order_no}-${r.at}`} className={local.logRow}>
-              <span>{r.email}</span>
-              <span className={`${css.mono} ${css.muted}`}>{r.order_no}</span>
-              <span className={`${css.mono} ${local.right} ${r.reverted ? local.reverted : ''}`}>
-                −{formatMoney(r.discount, r.currency || 'CNY')}
-                {r.reverted && ' 已回滚'}
-              </span>
-              <span className={`${local.right} ${css.faint}`}>{formatDateTime(r.at)}</span>
-            </div>
-          ))
+function CouponDetailModal({
+  id,
+  coupon,
+  plans,
+  onClose,
+}: {
+  id: string | null
+  coupon: Coupon | null
+  plans: readonly Plan[] | undefined
+  onClose: () => void
+}) {
+  const redemptions = useRedemptions(id)
+
+  if (!id) return null
+
+  if (!coupon) {
+    return (
+      <Modal
+        open={true}
+        onClose={onClose}
+        size={520}
+        title="优惠券详情"
+        actions={
+          <Button size="dialog" onClick={onClose}>
+            关闭
+          </Button>
         }
-      </QueryView>
-    </div>
+      >
+        <div className={local.empty}>这张券不在当前列表里</div>
+      </Modal>
+    )
+  }
+
+  const use = usage(coupon)
+  const period = couponPeriodLabel(coupon, new Date())
+
+  return (
+    <Modal
+      open={true}
+      onClose={onClose}
+      size={520}
+      title={coupon.code}
+      subtitle={coupon.name !== coupon.code ? coupon.name : undefined}
+      actions={
+        <Button size="dialog" onClick={onClose}>
+          关闭
+        </Button>
+      }
+    >
+      <div className={css.stack}>
+        <div className={local.section}>规则</div>
+        <div className={local.summaryRow}>
+          <span className={local.summaryLabel}>优惠</span>
+          <span className={local.summaryValue}>{discountLabel(coupon)}</span>
+        </div>
+        <div className={local.summaryRow}>
+          <span className={local.summaryLabel}>适用套餐</span>
+          <span className={local.summaryValue}>{planScopeLabel(coupon.applicable_plan_ids, plans)}</span>
+        </div>
+        <div className={local.summaryRow}>
+          <span className={local.summaryLabel}>使用</span>
+          <span className={`${local.summaryValue} ${local.summaryValueMono}`}>{use.label}</span>
+        </div>
+        <div className={local.summaryRow}>
+          <span className={local.summaryLabel}>有效期</span>
+          <span className={`${local.summaryValue} ${local.summaryValueMono}`}>{period.full}</span>
+        </div>
+
+        <div className={local.section}>兑换记录（最近 200 条）</div>
+        <QueryView
+          query={redemptions}
+          rows={3}
+          empty={<div className={local.logNote}>还没有人用过这张券。</div>}
+        >
+          {(rows) =>
+            rows.map((r, i) => (
+              <div key={`${r.order_no}-${r.at}-${i}`} className={local.summaryRow}>
+                <span className={local.summaryLabel}>{r.email}</span>
+                <span className={local.summaryValueMuted}>
+                  <span className={r.reverted ? local.reverted : undefined}>−{formatMoney(r.discount)}</span>
+                  {r.reverted && ' 已回滚'}
+                  {' · '}
+                  {formatDateTime(r.at)}
+                </span>
+              </div>
+            ))
+          }
+        </QueryView>
+      </div>
+    </Modal>
   )
 }
 
@@ -226,7 +333,7 @@ function BatchResultModal({ result, onClose }: { result: BatchResult | null; onC
             {result.codes.slice(0, 12).map((code) => (
               <span key={code}>{code}</span>
             ))}
-            {result.codes.length > 12 && <span className={css.faint}>… 共 {result.codes.length} 张，完整清单请下载</span>}
+            {result.codes.length > 12 && <span className={local.faint}>… 共 {result.codes.length} 张，完整清单请下载</span>}
           </div>
         </div>
       )}
