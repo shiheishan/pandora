@@ -11,7 +11,6 @@ import (
 	"github.com/aegispanel/aegis/internal/module/order/repo"
 	paymentsvc "github.com/aegispanel/aegis/internal/module/payment/service"
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
 // 列表分页口径。
@@ -33,10 +32,8 @@ func toRow(o model.Order) OrderRow {
 		UserID:            o.UserID,
 		Kind:              o.Kind,
 		Status:            o.Status,
-		Currency:          money.Currency(o.Currency),
 		Subtotal:          o.SubtotalAmount,
 		Discount:          o.DiscountAmount,
-		MemberDiscount:    o.MemberDiscountAmount,
 		ProrationCredit:   o.ProrationCreditAmount,
 		Waived:            o.WaivedAmount,
 		Total:             o.TotalAmount,
@@ -67,18 +64,15 @@ func toItem(it model.Item) ItemRow {
 		PriceID:       it.PriceID,
 		PlanID:        it.PlanID,
 		PlanVersionID: it.PlanVersionID,
-		TrafficPackID: it.TrafficPackID,
 		Name:          it.SnapshotName,
 		PlanVersion:   it.SnapshotPlanVersion,
 		Interval:      it.SnapshotInterval,
 		IntervalCount: it.SnapshotIntervalCount,
-		TrafficBytes:  it.SnapshotTrafficBytes,
 		Entitlements:  it.SnapshotEntitlements,
 		Quotas:        it.SnapshotQuotas,
 		Quantity:      it.Quantity,
 		UnitAmount:    it.UnitAmount,
 		LineAmount:    it.LineAmount,
-		Currency:      money.Currency(it.Currency),
 		CreatedAt:     it.CreatedAt,
 	}
 }
@@ -304,7 +298,6 @@ func (s *Service) MyOrder(ctx context.Context, id uuid.UUID) (MyOrderDetail, err
 		out.Payments = append(out.Payments, PaymentLine{
 			Status:       p.Status,
 			Amount:       p.Amount,
-			Currency:     p.Currency,
 			CreatedAt:    p.PaidAt,
 			Method:       p.Method,
 			ProviderName: p.ProviderName,

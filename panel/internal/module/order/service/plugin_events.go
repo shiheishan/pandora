@@ -12,10 +12,10 @@ import (
 // UsePluginEvents 注入插件事件口（plugin 模块实现，见 internal/pkg/pluginevents）。
 func (s *Service) UsePluginEvents(p pluginevents.Emitter) { s.events = p }
 
-// emitOrderCreated 订单创建（新购、换套餐、流量包、流量重置；续费与充值单不发）。
+// emitOrderCreated 订单创建（新购、换套餐、叠加、流量重置；续费与充值单不发）。
 func (s *Service) emitOrderCreated(ctx context.Context, o model.Order) error {
 	switch o.Kind {
-	case KindNew, KindUpgrade, KindAddon, KindTrafficReset:
+	case KindNew, KindUpgrade, KindStack, KindTrafficReset:
 	default:
 		return nil
 	}
@@ -28,19 +28,17 @@ func (s *Service) emitOrderCreated(ctx context.Context, o model.Order) error {
 		"order_id": o.ID.String(),
 		"order_no": o.OrderNo,
 		"user_id":  o.UserID.String(),
-		"currency": o.Currency,
 		"total":    total,
 	})
 }
 
 // emitOrderPaid 订单支付完成（外部支付结算与 0 元单都发）。dedupe 用订单 id：支付回调会重放，同一笔只通知一次。
-// zeroPay 为 true 时（插件事件口径，产品决定）：只有新购、流量包与流量重置的 0 元单发（0 元续费、0 元换套餐不发），
-// currency 发 ""、amount 发 0。金额换算失败时返回错误，让业务事务失败。
+// zeroPay 为 true 时（插件事件口径，产品决定）：只有新购、叠加与流量重置的 0 元单发（0 元续费、0 元换套餐不发），
+// amount 发 0。金额换算失败时返回错误，让业务事务失败。
 func (s *Service) emitOrderPaid(ctx context.Context, o model.Order, zeroPay bool) error {
-	var currency string
 	var amount int64
 	if zeroPay {
-		if o.Kind != KindNew && o.Kind != KindAddon && o.Kind != KindTrafficReset {
+		if o.Kind != KindNew && o.Kind != KindStack && o.Kind != KindTrafficReset {
 			return nil
 		}
 	} else {
@@ -48,14 +46,13 @@ func (s *Service) emitOrderPaid(ctx context.Context, o model.Order, zeroPay bool
 		if err != nil {
 			return fmt.Errorf("order.paid 金额: %w", err)
 		}
-		currency, amount = o.Currency, cents
+		amount = cents
 	}
 	p := map[string]any{
 		"event":    "order.paid",
 		"order_id": o.ID.String(),
 		"user_id":  o.UserID.String(),
 		"kind":     o.Kind,
-		"currency": currency,
 		"amount":   amount,
 	}
 	if sub, ok := provisionedSub(o); ok {
