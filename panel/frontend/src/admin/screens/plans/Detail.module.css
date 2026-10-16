@@ -1,0 +1,254 @@
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  min-width: 0;
+}
+
+.bodyStack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-20);
+}
+
+.notes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-8);
+  padding: var(--space-8) var(--space-12);
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: var(--fs-body-sm);
+  line-height: 1.5;
+}
+
+.noteDot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+  min-height: 30px;
+  padding-bottom: var(--space-8);
+  border-bottom: 1px solid var(--text);
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: var(--fs-h3);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+
+.kvRow {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: var(--space-16);
+  align-items: baseline;
+  padding: var(--space-12) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.kvKey {
+  color: var(--text-2);
+  font-size: var(--fs-body-sm);
+}
+
+.kvVal {
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: var(--fs-body-sm);
+}
+
+.archiveRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-16);
+  padding: var(--space-16) 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.archiveInfo {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.archiveTitle {
+  font-weight: var(--fw-medium);
+  font-size: var(--fs-body-sm);
+  color: var(--text);
+}
+
+.dangerBtn {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.priceRow {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr) auto;
+  gap: var(--space-16);
+  align-items: center;
+  min-height: 46px;
+  padding: var(--space-8) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.priceAddRow {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr) auto;
+  gap: var(--space-16);
+  align-items: center;
+  padding: var(--space-12) 0;
+}
+
+.poolRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-16);
+  min-height: 52px;
+  padding: var(--space-8) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.poolInfo {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.poolName {
+  font-weight: var(--fw-medium);
+  font-size: var(--fs-body-sm);
+  color: var(--text);
+}
+
+.versionRow {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  gap: var(--space-16);
+  align-items: center;
+  min-height: 52px;
+  padding: var(--space-8) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.versionN {
+  font-family: var(--font-mono);
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-body-sm);
+  color: var(--text);
+}
+
+.versionMeta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.versionHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+
+.versionDate {
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+.versionSummary {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+
+.grid2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-16);
+}
+
+.toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-12) var(--space-20);
+}
+
+.fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.legend {
+  margin-bottom: var(--space-4);
+  padding: 0;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+.fieldError {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--fs-caption);
+}
+
+.mutedSmall {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.muted {
+  color: var(--text-3);
+}
+
+.dimmed {
+  opacity: 0.5;
+}
+
+@media (max-width: 639px) {
+  .kvRow {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-4);
+  }
+
+  .grid2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .priceRow,
+  .priceAddRow {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-8);
+  }
+}
