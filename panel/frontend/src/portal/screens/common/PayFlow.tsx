@@ -18,13 +18,13 @@ import { formatDate } from './traffic'
 
 export type PayState =
   /** 下单成功、待外部支付：弹窗一打开就发起 pay 并跳收银台 */
-  | { phase: 'redirect'; orderId: string; orderNo: string; amount: number; currency: string; method: PaymentMethod }
+  | { phase: 'redirect'; orderId: string; orderNo: string; amount: number; method: PaymentMethod }
   /** 0 元订单已当场履约，或回跳后确认已支付（含在付款面板里轮询到已付） */
   | { phase: 'done'; orderId: string }
   /** 收银台回跳：轮询订单直到 paid / fulfilled，最多 2 分钟 */
   | { phase: 'confirm'; orderId: string }
   /** 已有的待支付订单（订单页「去支付」）：先选支付方式，选完进入 redirect */
-  | { phase: 'choose'; orderId: string; orderNo: string; amount: number; currency: string }
+  | { phase: 'choose'; orderId: string; orderNo: string; amount: number }
 
 /** 回跳地址：相对入口页解析，令门户在后台前缀或子路径下也成立；后端要求以 PublicBaseURL + "/" 开头 */
 export function payReturnUrl(orderId: string, base = window.location.href): string {
@@ -32,12 +32,12 @@ export function payReturnUrl(orderId: string, base = window.location.href): stri
 }
 
 /** 支付成功文案，按订单种类（契约门户-03 支付条目） */
-export function paySuccessText(o: Pick<OrderDetail, 'kind' | 'paid_amount' | 'total_amount' | 'currency' | 'subscription_period_end'>): string {
+export function paySuccessText(o: Pick<OrderDetail, 'kind' | 'paid_amount' | 'total_amount' | 'subscription_period_end'>): string {
   switch (o.kind) {
     case 'topup':
-      return `余额 +${formatMoney(o.paid_amount || o.total_amount, o.currency)}`
-    case 'addon':
-      return '流量包已到账'
+      return `余额 +${formatMoney(o.paid_amount || o.total_amount)}`
+    case 'stack':
+      return '已叠加，总流量加上了'
     case 'traffic_reset':
       return '本期流量已清零'
     case 'upgrade':
@@ -54,11 +54,10 @@ const intentSchema = z.object({
   form_fields: z.record(z.string(), z.string()),
   amount: z.number().int(),
   surcharge: z.number().int().nonnegative().default(0),
-  currency: z.string(),
   reused: z.boolean(),
 })
 
-/** 回跳后要刷新的读数：余额、订阅、流量包、订单全在 portal 前缀下 */
+/** 回跳后要刷新的读数：余额、套餐、订单全在 portal 前缀下 */
 function useRefreshAccount() {
   const client = useQueryClient()
   return () => void client.invalidateQueries({ queryKey: ['portal'] })
@@ -76,7 +75,7 @@ export function PaymentModal({ state: given, onClose, onUnpayable }: { state: Pa
   const [picked, setPicked] = useState<{ orderId: string; method: PaymentMethod } | null>(null)
   const state: PayState | null =
     given?.phase === 'choose' && picked?.orderId === given.orderId
-      ? { phase: 'redirect', orderId: given.orderId, orderNo: given.orderNo, amount: given.amount, currency: given.currency, method: picked.method }
+      ? { phase: 'redirect', orderId: given.orderId, orderNo: given.orderNo, amount: given.amount, method: picked.method }
       : given
   const close = () => {
     setPicked(null)
@@ -96,7 +95,6 @@ export function PaymentModal({ state: given, onClose, onUnpayable }: { state: Pa
           <PayPanel
             orderId={state.orderId}
             amount={state.amount}
-            currency={state.currency}
             method={state.method}
             returnUrl={payReturnUrl(state.orderId)}
             onPaid={() => setPaidHere(state.orderId)}
@@ -117,13 +115,13 @@ export function PaymentModal({ state: given, onClose, onUnpayable }: { state: Pa
 const stateOrder = (s: PayState) => s.orderId
 
 // ---------------------------------------------------------------------------
-// 选支付方式：只列能收该币种的方式（GET v1/payment-methods，修订 R61）
+// 选支付方式：列当前可用的方式（GET v1/payment-methods，修订 R61）
 // ---------------------------------------------------------------------------
 function Choose({ state, onPick, onLater }: { state: Extract<PayState, { phase: 'choose' }>; onPick: (m: PaymentMethod) => void; onLater: () => void }) {
   const methods = usePaymentMethods(state.amount)
   return (
     <div className={css.body}>
-      <div className={css.amount}>{formatMoney(state.amount, state.currency)}</div>
+      <div className={css.amount}>{formatMoney(state.amount)}</div>
       <div className={css.note}>订单 {state.orderNo}</div>
       {methods.isPending ? (
         <Skeleton height={40} radius="var(--radius-md)" />
@@ -177,7 +175,6 @@ export const isPaymentLapsed = (e: unknown) => isApiError(e, 'order_lapsed')
 interface PayPanelProps {
   orderId: string
   amount: number
-  currency: string
   method: PaymentMethod
   /** 收银台付完回跳到哪：确认页是完成页，订单页与钱包是订单页的 ?paid=1 */
   returnUrl: string
@@ -191,7 +188,7 @@ interface PayPanelProps {
   afterCancel?: () => void
 }
 
-export function PayPanel({ orderId, amount, currency, method, returnUrl, onPaid, onUnpayable, onOtherMethod, onLater, afterCancel }: PayPanelProps) {
+export function PayPanel({ orderId, amount, method, returnUrl, onPaid, onUnpayable, onOtherMethod, onLater, afterCancel }: PayPanelProps) {
   const cancel = useCancelOrder()
   const api = useApi()
   const started = useRef(false)
@@ -295,7 +292,7 @@ export function PayPanel({ orderId, amount, currency, method, returnUrl, onPaid,
   return (
     <div className={css.body} data-screen="pay">
       <p className={css.note}>用{method.label}付</p>
-      <div className={css.amount}>{formatMoney(finalAmount, currency)}</div>
+      <div className={css.amount}>{formatMoney(finalAmount)}</div>
       {note && <div className={css.hint}>{note}</div>}
       {inProgressWaiting ? (
         <div className={css.hint}>正在发起支付，请稍候…</div>
@@ -392,7 +389,7 @@ function payErrorText(error: unknown): string {
 function Done({ orderId, onClose }: { orderId: string; onClose: () => void }) {
   const order = useOrder(orderId)
   const refresh = useRefreshAccount()
-  // 打开即刷新一次账户读数（余额、订阅、流量包）
+  // 打开即刷新一次账户读数（余额、套餐）
   useEffect(() => refresh(), []) // eslint-disable-line react-hooks/exhaustive-deps
   return <SuccessBody order={order.data} loading={order.isPending} onClose={onClose} />
 }
@@ -438,7 +435,7 @@ function useConfirmation(orderId: string | undefined) {
     const timer = setTimeout(() => setTimedOut(true), POLL_LIMIT_MS)
     return () => clearTimeout(timer)
   }, [orderId])
-  // 转为已支付时刷新余额、订阅、流量包
+  // 转为已支付时刷新余额、套餐
   useEffect(() => {
     if (paid) refresh()
   }, [paid]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -466,7 +463,7 @@ function Confirming({ confirm, onClose }: { confirm: ReturnType<typeof useConfir
       {message ? <div className={css.note}>{message}</div> : <div className={css.hint}>收银台已返回，正在确认支付结果…</div>}
       {order.data && (
         <div className={css.note}>
-          订单 {order.data.order_no} · {formatMoney(order.data.payable_amount, order.data.currency)}
+          订单 {order.data.order_no} · {formatMoney(order.data.payable_amount)}
         </div>
       )}
       <Button block onClick={onClose} data-autofocus>

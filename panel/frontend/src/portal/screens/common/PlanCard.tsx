@@ -1,25 +1,41 @@
 import type { ReactNode } from 'react'
 import { Card } from '../../../ui'
-import { cnyPrices, periodOf, periodUnit, priceFor, throttleNote, type Plan } from './catalog'
+import {
+  headlinePrice,
+  periodOf,
+  periodSpan,
+  periodUnit,
+  planTraffic,
+  resetPriceText,
+  sortPrices,
+  throttleNote,
+  validityText,
+  type Plan,
+} from './catalog'
 import css from './PlanCard.module.css'
-import { devicesText, moneyShort, planTraffic } from './purchase'
+import { devicesText, moneyShort } from './purchase'
 
-/** 套餐卡的事实：每月流量、设备数、限速、3 个月价，后面跟后台写的卖点（R100） */
-function planFacts(plan: Plan): string[] {
-  const month = priceFor(plan, '1m')
-  const three = priceFor(plan, '3m')
-  return [
-    planTraffic(plan),
-    plan.max_devices === null ? '不限设备数' : `${devicesText(plan.max_devices)}设备同时用`,
-    throttleNote(plan.throttle_kbps),
-    month && three ? `3 个月 ${moneyShort(three.unit_amount)}` : null,
-    ...plan.highlights,
-  ].filter((f): f is string => Boolean(f))
+export { headlinePrice } from './catalog'
+
+/** 除大价签外其余价格档，写成「3 个月 ¥84 · 半年 ¥160 · 1 年 ¥300」 */
+function otherPricesLine(plan: Plan): string | null {
+  const head = headlinePrice(plan)
+  if (!head || plan.kind !== 'subscription') return null
+  const headKey = periodOf(head)
+  const rest = sortPrices(plan.prices).filter((p) => periodOf(p) !== headKey)
+  if (!rest.length) return null
+  return rest.map((p) => `${periodSpan(periodOf(p))} ${moneyShort(p.unit_amount)}`).join(' · ')
 }
 
-/** 卡片上的大价签：有月付写月付，否则写最便宜的一档 */
-export function headlinePrice(plan: Plan) {
-  return priceFor(plan, '1m') ?? [...cnyPrices(plan)].sort((a, b) => a.unit_amount - b.unit_amount)[0] ?? null
+function planFacts(plan: Plan): string[] {
+  const price = headlinePrice(plan)
+  const device = plan.max_devices === null ? '不限设备数' : `${devicesText(plan.max_devices)}设备同时用`
+  if (plan.kind === 'one_time' && price) {
+    return [planTraffic(plan), validityText(price.validity_days), device, throttleNote(plan.throttle_kbps), resetPriceText(plan)].filter(
+      (f): f is string => Boolean(f),
+    )
+  }
+  return [planTraffic(plan), device, throttleNote(plan.throttle_kbps), otherPricesLine(plan), resetPriceText(plan)].filter((f): f is string => Boolean(f))
 }
 
 /**
@@ -37,7 +53,7 @@ export function PlanCard({ plan, tag, current = false, action, note }: { plan: P
       {price ? (
         <div className={css.price}>
           {moneyShort(price.unit_amount)}
-          <small> {periodUnit(periodOf(price))}</small>
+          <small>{plan.kind === 'one_time' ? ' 一次' : ` ${periodUnit(periodOf(price))}`}</small>
         </div>
       ) : (
         <div className={css.price}>—</div>

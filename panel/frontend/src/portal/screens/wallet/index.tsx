@@ -46,7 +46,7 @@ function BalanceCard() {
   const balance = useBalance()
   const topup = useTopup()
   const intentKey = useIntentKey()
-  const placed = usePlacedOrder<{ orderId: string; orderNo: string; amount: number; currency: string }>()
+  const placed = usePlacedOrder<{ orderId: string; orderNo: string; amount: number }>()
   const payable = useOrderPayable()
   const [reopening, setReopening] = useState(false)
   const [amount, setAmount] = useState('100')
@@ -77,7 +77,7 @@ function BalanceCard() {
       {
         onSuccess: (order) => {
           intentKey.reset()
-          const created = { orderId: order.order_id, orderNo: order.order_no, amount: order.amount, currency: order.currency }
+          const created = { orderId: order.order_id, orderNo: order.order_no, amount: order.amount }
           placed.remember(body, created)
           setPay({ phase: 'redirect', ...created, method })
         },
@@ -93,8 +93,8 @@ function BalanceCard() {
     <Card className={css.balance}>
       <div>
         <div className={css.caption}>账户余额</div>
-        <div className={css.bigAmount}>{balance.data ? formatMoney(balance.data.balance, balance.data.currency) : balance.isError ? '—' : <Skeleton width={140} height={40} />}</div>
-        <div className={css.hint}>买套餐、续费、买流量包都能用，结账时自动先用。不能提现。</div>
+        <div className={css.bigAmount}>{balance.data ? formatMoney(balance.data.balance) : balance.isError ? '—' : <Skeleton width={140} height={40} />}</div>
+        <div className={css.hint}>买套餐、续费都能用，结账时自动先用。不能提现。</div>
       </div>
       <div className={css.field}>
         <div className={css.caption}>充值金额</div>
@@ -125,7 +125,7 @@ function BalanceCard() {
             value={method ? methodKey(method) : ''}
             placeholder={list.length ? undefined : '暂无可用的支付方式'}
             options={list.map((m) => {
-              const label = m.fee && m.fee > 0 ? `${m.label}（手续费 ${formatMoney(m.fee, 'CNY')}）` : m.label
+              const label = m.fee && m.fee > 0 ? `${m.label}（手续费 ${formatMoney(m.fee)}）` : m.label
               return { value: methodKey(m), label }
             })}
             onChange={(e) => setMethodChoice(e.target.value)}
@@ -165,7 +165,7 @@ function HistoryCard() {
                   </span>
                   <span className={h.delta > 0 ? css.plus : css.minus}>
                     {h.delta > 0 ? '+' : ''}
-                    {formatMoney(h.delta, d.currency)}
+                    {formatMoney(h.delta)}
                   </span>
                 </li>
               ))}

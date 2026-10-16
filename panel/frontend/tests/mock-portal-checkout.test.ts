@@ -6,11 +6,13 @@ import { quoteSchema } from '../src/portal/screens/common/quote-schema'
 import { applyBalance, waiveSmallDue } from '../dev/mock/portal/purchase'
 import { bearer, close, loginAs, mockFetch, serve } from './mock-helpers'
 
-// 购买模型（设计稿 2.2 / 2.4 / 2.6）：报价、建单比对 expect、同套餐未付款新购单、最低额、流量包必须挂一份
+// 购买模型（设计稿 2.2 / 2.4 / 2.6，10-16）：报价、建单比对 expect、同套餐未付款新购单、最低额、落点、一次性叠加
 const STD = 'a1000000-0000-4000-8000-000000000002'
 const PRO = 'a1000000-0000-4000-8000-000000000003'
 const BASIC = 'a1000000-0000-4000-8000-000000000001'
-const PACK100 = 'a2000000-0000-4000-8000-000000000100'
+// 非原型目录（default / multi 场景）：流量版（一次性 100G ¥30 有效 90 天）、经典版（关了新购）
+const TRAFFIC = '6f1c2a10-0000-4000-8000-000000000004'
+const CLASSIC = '6f1c2a10-0000-4000-8000-000000000006'
 
 describe('mock api · portal checkout (purchase model)', () => {
   let server: Server
@@ -176,19 +178,45 @@ describe('mock api · portal checkout (purchase model)', () => {
     expect([quoted.status, qb.error.code, qb.error.fields.order_id]).toEqual([409, 'order_pending', pending.error.fields.order_id])
   })
 
-  it('流量包必须挂到一份在用的上；付款前的支付最低额兜底', async () => {
-    await scenario('proto-s1')
-    const [sub] = (await subs()).subscriptions
-    expect((await call('POST', '/v1/me/traffic-pack-orders', { pack_id: PACK100 }, true)).status).toBe(422)
-    const q = await quote({ action: 'pack', pack_id: PACK100, subscription_id: sub!.id })
-    const ok = await call('POST', '/v1/me/traffic-pack-orders', { pack_id: PACK100, subscription_id: sub!.id, as_of: q.as_of, expect: { total: 1800, balance_applied: 0, payable: 1800 } }, true)
-    expect(ok.status).toBe(201)
-    const order = (await ok.json()) as { order_id: string }
-    const paid = await mockFetch(base, auth, 'GET', `/v1/__mock/cashier/complete?intent=none`)
-    expect(paid.status).toBe(404)
-    expect((await call('POST', `/v1/orders/${order.order_id}/pay`, { provider: 'epay', method: 'alipay', return_url: `${base}/#/x` })).status).toBe(201)
-    await scenario('proto-s8')
-    const [expired] = (await subs()).subscriptions
-    expect((await call('POST', '/v1/me/traffic-pack-orders', { pack_id: PACK100, subscription_id: expired!.id }, true)).status).toBe(409)
+  it('落点：new 在最前，同款一次性给叠加，别的给换；挂着待付续费单的那份不列；关了新购的回 409', async () => {
+    await scenario('multi')
+    const list = (await subs()).subscriptions
+    const once = list.find((s) => s.plan_id === TRAFFIC)!
+    const std = list.find((s) => s.plan_name === '标准版')!
+    const res = await call('GET', `/v1/me/checkout/landings?plan_id=${TRAFFIC}`)
+    expect(res.status).toBe(200)
+    // 第一份专业版挂着待付的续费单（场景种子），不列
+    expect(((await res.json()) as { options: unknown[] }).options).toEqual([{ mode: 'new' }, { mode: 'stack', subscription_id: once.id }, { mode: 'change', subscription_id: std.id }])
+    const closed = await call('GET', `/v1/me/checkout/landings?plan_id=${CLASSIC}`)
+    expect(closed.status).toBe(409)
+    expect(((await closed.json()) as { error: { message: string } }).error.message).toBe('该套餐当前不接受新购')
+    expect((await call('GET', '/v1/me/checkout/landings?plan_id=x')).status).toBe(422)
+  })
+
+  it('叠加：一次性同款总流量加上、天数顺延；一次性不能续费；不带 new_copy 新购同款回 409', async () => {
+    await scenario('multi')
+    const once = (await subs()).subscriptions.find((s) => s.plan_id === TRAFFIC)!
+    expect([once.plan_kind, once.renewable, once.stackable, once.permanent]).toEqual(['one_time', false, true, false])
+    const q = await quote({ action: 'stack', subscription_id: once.id })
+    const r = q.quotes[0]!
+    expect([r.total, r.validity_days, r.previous_end]).toEqual([3000, 90, once.current_period_end])
+    expect(Date.parse(r.period_end!) - Date.parse(once.current_period_end!)).toBe(90 * 86_400_000)
+    const renew = await call('POST', '/v1/me/checkout/quote', { action: 'renew', subscription_id: once.id })
+    expect(renew.status).toBe(409)
+    const dup = await call('POST', '/v1/me/checkout/quote', { action: 'new', plan_id: TRAFFIC })
+    expect(((await dup.json()) as { error: { message: string } }).error.message).toBe('你已有这个一次性套餐，可以叠加到原来那一份，或选择另开一份')
+    const created = await call('POST', `/v1/me/subscriptions/${once.id}/stack`, { price_id: r.price_id, as_of: q.as_of, expect: { total: 3000, balance_applied: 0, payable: 3000 } }, true)
+    expect(created.status).toBe(201)
+    const order = (await created.json()) as { order_id: string }
+    // 同一份有在途的叠加单：再叠加回 409
+    expect((await call('POST', `/v1/me/subscriptions/${once.id}/stack`, { price_id: r.price_id }, true)).status).toBe(409)
+    const pay = await call('POST', `/v1/orders/${order.order_id}/pay`, { provider: 'epay', method: 'alipay', return_url: `${base}/#/x` })
+    const intent = new URL(((await pay.json()) as { redirect_url: string }).redirect_url).searchParams.get('intent')!
+    expect((await fetch(`${base}/v1/__mock/cashier/complete?intent=${intent}`, { redirect: 'manual' })).status).toBe(302)
+    const after = (await subs()).subscriptions.find((s) => s.id === once.id)!
+    expect(after.traffic_limit).toBe(200 * 1024 ** 3)
+    expect(after.current_period_end).toBe(r.period_end)
+    const detail = (await (await call('GET', `/v1/orders/${order.order_id}`)).json()) as { order: { kind: string; status: string } }
+    expect(detail.order).toMatchObject({ kind: 'stack', status: 'fulfilled' })
   })
 })

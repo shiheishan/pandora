@@ -47,7 +47,6 @@ export const meSchema = z.object({
 // 余额与流水（契约门户-05）：外框只读 balance，钱包页读 history，同键一份全字段
 export const balanceSchema = z.object({
   balance: z.number().int(),
-  currency: z.string(),
   history: z.array(z.object({ kind: z.string(), delta: z.number().int(), memo: z.string(), at: z.string() })),
 })
 export const notificationsSchema = z.object({ unread: z.number() })
@@ -145,17 +144,6 @@ export function useSubscriptions<T = Subscription[]>(select?: (subs: Subscriptio
   })
 }
 
-/** 顶层的未分配流量包余量：与订阅列表同键同一次请求 */
-export function useUnattachedPackBytes() {
-  const api = useApi()
-  return useQuery({
-    queryKey: SUBSCRIPTIONS_KEY,
-    queryFn: ({ signal }) => api.get('v1/me/subscriptions', subscriptionsSchema, { signal }),
-    select: (d) => d.unattached_pack_bytes,
-    meta: { topics: ['subscriptions.changed', 'orders.changed'] },
-  })
-}
-
 const primaryPlanName = (subs: Subscription[]) => pickPrimary(subs)?.plan_name ?? null
 
 /** 头像菜单的套餐徽标：生效中到期最晚的那份（pickPrimary 只留给外框徽标用）。 */
@@ -176,7 +164,6 @@ const WITHDRAWAL_STATUSES = ['requested', 'reviewing', 'approved', 'rejected', '
 
 export const commissionSchema = z.object({
   summary: z.object({
-    currency: z.string(),
     pending: z.number().int(),
     available: z.number().int(),
     withdrawing: z.number().int(),
@@ -190,8 +177,6 @@ export const commissionSchema = z.object({
     min_withdraw: z.number().int(),
     withdraw_enabled: z.boolean(),
     withdraw_methods: z.array(z.string()),
-    // 站点币种：关提现只关这个币种（解冻后自动转余额），汇总是别的币种时照常能提
-    site_currency: z.string(),
     // R81 / R114：计佣范围，与计提同一个兜底；first_order 时横幅写「首单」
     scope: z.enum(COMMISSION_SCOPES),
   }),
@@ -203,7 +188,6 @@ export const commissionSchema = z.object({
       rate_bp: z.number().int(),
       level: z.number().int(),
       share_percent: z.number().int(),
-      currency: z.string(),
       status: z.enum(COMMISSION_ENTRY_STATUSES),
       frozen_until: z.string().nullable(),
       created_at: z.string(),
@@ -215,7 +199,6 @@ export const commissionSchema = z.object({
     z.object({
       id: z.string(),
       amount: z.number().int(),
-      currency: z.string(),
       method: z.string(),
       status: z.enum(WITHDRAWAL_STATUSES),
       reject_reason: z.string(),
@@ -223,7 +206,7 @@ export const commissionSchema = z.object({
       completed_at: z.string().nullable(),
     }),
   ),
-  transfers: z.array(z.object({ ledger_txn_id: z.string(), amount: z.number().int(), currency: z.string(), created_at: z.string() })),
+  transfers: z.array(z.object({ ledger_txn_id: z.string(), amount: z.number().int(), created_at: z.string() })),
 })
 export type Commission = z.output<typeof commissionSchema>
 

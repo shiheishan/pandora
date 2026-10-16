@@ -4,7 +4,7 @@ import { formatDateTime, formatMoney } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
 import { endsIntent } from './intent'
 
-const ORDER_KINDS = ['new', 'renewal', 'topup', 'addon', 'upgrade', 'traffic_reset'] as const
+const ORDER_KINDS = ['new', 'renewal', 'topup', 'upgrade', 'stack', 'traffic_reset'] as const
 export const ORDER_STATUSES = ['pending_payment', 'paid', 'fulfilled', 'cancelled', 'expired'] as const
 
 export const orderRowSchema = z.object({
@@ -12,10 +12,8 @@ export const orderRowSchema = z.object({
   order_no: z.string(),
   kind: z.enum(ORDER_KINDS),
   status: z.enum(ORDER_STATUSES),
-  currency: z.string(),
   total_amount: z.number().int(),
   discount_amount: z.number().int(),
-  member_discount_amount: z.number().int(),
   balance_applied: z.number().int(),
   payable_amount: z.number().int(),
   paid_amount: z.number().int(),
@@ -63,21 +61,21 @@ export function intervalLabel(interval: string | undefined, count = 1): string {
   return unit ? `${count} ${unit}` : ''
 }
 
-/** 契约门户-04 的标题映射；plan_name 缺席时为空串（修订 R32：流量包订单的 plan_name 即流量包名），流量包标题取 item_name。 */
+/** 契约门户-04 的标题映射；plan_name 缺席时为空串，商品名 Go 无 omitempty 恒在。 */
 export function orderTitle(o: Pick<OrderRow, 'kind' | 'plan_name' | 'item_name' | 'interval' | 'interval_count'>): string {
   const plan = o.plan_name ?? ''
   const period = intervalLabel(o.interval, o.interval_count)
   switch (o.kind) {
     case 'topup':
       return '余额充值'
-    case 'addon':
-      return `流量包 · ${o.item_name}`
     case 'traffic_reset':
       return o.item_name
     case 'upgrade':
       return `${plan} · 变更套餐`
     case 'renewal':
       return `${plan} · ${period ? `${period}续费` : '续费'}`
+    case 'stack':
+      return `叠加 · ${plan || o.item_name}`
     default:
       return period ? `${plan} · ${period}` : plan
   }
@@ -111,7 +109,6 @@ export const orderDetailSchema = z.object({
       z.object({
         status: z.string(),
         amount: z.number().int(),
-        currency: z.string(),
         created_at: z.string(),
         method: z.string().optional(),
         provider_name: z.string(),
@@ -119,7 +116,7 @@ export const orderDetailSchema = z.object({
     ),
     coupon_code: z.string().optional(),
     subscription_period_end: z.string().optional(),
-    // 履约后落到的那一份（新购是新开的那份，续费、换套餐、流量包是原来那份）；没履约时 null
+    // 履约后落到的那一份（新购是新开的那份，续费、换套餐、叠加是原来那份）；没履约时 null
     subscription_id: z.string().nullable(),
   }),
 })
@@ -144,12 +141,11 @@ export function useOrder(id: string | undefined, poll: number | false = false) {
 }
 
 // ---------------------------------------------------------------------------
-// 下单四个接口（新购、续费、变更套餐、流量包）同形的 201 响应
+// 下单接口同形的 201 响应
 // ---------------------------------------------------------------------------
 export const orderCreatedSchema = z.object({
   order_id: z.string(),
   order_no: z.string(),
-  currency: z.string(),
   total_amount: z.number().int(),
   discount_amount: z.number().int(),
   balance_applied: z.number().int(),
@@ -314,7 +310,7 @@ export function orderResult(o: Pick<OrderDetail, 'status' | 'kind' | 'cancel_rea
     case 'fulfilled':
     case 'paid':
       if (o.kind === 'topup') return '余额已到账'
-      if (o.kind === 'addon') return '流量包已到账'
+      if (o.kind === 'stack') return '已叠加，总流量加上了'
       if (o.kind === 'traffic_reset') return '本期流量已清零'
       if (o.kind === 'upgrade') return '已换好套餐，链接不变'
       return [method, o.subscription_period_end ? `有效期至 ${formatDateTime(o.subscription_period_end).slice(0, 10)}` : '已开通'].filter(Boolean).join(' · ')
@@ -332,7 +328,7 @@ const PAYMENT_STATUS: Readonly<Record<string, string>> = { succeeded: '成功' }
 
 /** 展开区事实行（契约门户-04 待补·前端）：订单号、时间、结果、金额拆分、支付记录 */
 export function orderFacts(o: OrderDetail): Array<{ k: string; v: string }> {
-  const money = (m: number) => formatMoney(m, o.currency)
+  const money = (m: number) => formatMoney(m)
   const original = o.items.reduce((n, i) => n + i.line_amount, 0)
   const facts = [
     { k: '订单号', v: o.order_no },
@@ -345,7 +341,7 @@ export function orderFacts(o: OrderDetail): Array<{ k: string; v: string }> {
   if (PAID_STATUSES.has(o.status)) facts.push({ k: '实付', v: money(o.paid_amount) })
   if (OPEN_STATUSES.includes(o.status as (typeof OPEN_STATUSES)[number]) && o.expires_at) facts.push({ k: '过期时间', v: formatDateTime(o.expires_at) })
   for (const p of o.payments) {
-    facts.push({ k: '支付记录', v: [payMethodName([p]), formatMoney(p.amount, p.currency), PAYMENT_STATUS[p.status] ?? p.status, formatDateTime(p.created_at)].join(' · ') })
+    facts.push({ k: '支付记录', v: [payMethodName([p]), formatMoney(p.amount), PAYMENT_STATUS[p.status] ?? p.status, formatDateTime(p.created_at)].join(' · ') })
   }
   return facts
 }

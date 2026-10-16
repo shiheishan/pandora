@@ -97,6 +97,7 @@ interface QuotaLike {
   limit: number | null
   consumed: number
   remaining: number | null
+  bonus_bytes?: number
   period_start?: string | null
   period_end?: string | null
 }
@@ -114,41 +115,44 @@ export function pickTrafficQuota<Q extends QuotaLike>(quotas: readonly Q[], now:
 
 export interface TrafficSummary {
   used: number
-  /** 本期总量 = 已用 + 剩余；null = 不限 */
+  /** 上限 + 送的；null = 不限 */
   total: number | null
-  /** 套餐剩余（不含流量包）；null = 不限 */
+  /** 还能用；null = 不限 */
   remaining: number | null
-  /** 流量包余量，挂在用户身上，套餐扣完后才扣（5.A D-E-1） */
-  pack: number
+  /** 送的流量 */
+  bonus: number
   /** 已用 / 总量，不限时为 0 */
   ratio: number
 }
 
-/** 契约映射：已用 = consumed；总量 = consumed + remaining；剩余 = remaining（null 为不限）。 */
-export function trafficSummary(quota: QuotaLike | null, packBytes = 0): TrafficSummary | null {
+/** 契约映射：total = limit + bonus_bytes（limit 为 null 则不限）；remaining = max(0, total - consumed)。 */
+export function trafficSummary(quota: QuotaLike | null): TrafficSummary | null {
   if (!quota) return null
-  const remaining = quota.remaining === null ? null : Math.max(0, quota.remaining)
-  const total = remaining === null ? null : quota.consumed + remaining
-  const ratio = total ? Math.min(1, quota.consumed / total) : total === 0 ? 1 : 0
-  return { used: quota.consumed, total, remaining, pack: Math.max(0, packBytes), ratio }
+  const bonus = quota.bonus_bytes ?? 0
+  if (quota.limit === null) {
+    return { used: quota.consumed, total: null, remaining: null, bonus, ratio: 0 }
+  }
+  const total = quota.limit + bonus
+  const remaining = Math.max(0, total - quota.consumed)
+  const ratio = total > 0 ? Math.min(1, quota.consumed / total) : 1
+  return { used: quota.consumed, total, remaining, bonus, ratio }
 }
 
 /**
- * 下次重置时刻：strategy=never 不重置；next_reset_at 优先（服务端取最新流量额度行的周期末，可为 null），其次是额度行的周期末，
+ * 下次重置时刻：一次性套餐不重置；否则 next_reset_at 优先，其次是额度行的周期末，
  * 再其次是按日用量接口的 period_end（它的窗口就是当前流量周期，修订 R47）。
  */
 export function resetAtOf(
-  sub: { quota_reset_strategy?: string; next_reset_at?: string | null },
+  sub: { plan_kind?: string; next_reset_at?: string | null },
   quota: { period_end?: string | null } | null,
   usage: { period_end: string | null } | undefined,
 ): string | null {
-  if (sub.quota_reset_strategy === 'never') return null
+  if (sub.plan_kind === 'one_time') return null
   return sub.next_reset_at ?? quota?.period_end ?? usage?.period_end ?? null
 }
 
 // ---------------------------------------------------------------------------
-// 预测：「按目前的速度…」。套餐扣完再扣流量包，所以可用量 = 套餐剩余 + 流量包；
-// 预计到重置时用量 ≥ (总量 + 流量包) 的 95% 视为不够用，给「买流量包 →」。
+// 预测：「按目前的速度…」。可用量 = 套餐剩余；不够用时文案保持「…比重置早。」
 // ---------------------------------------------------------------------------
 interface Projection {
   text: string
@@ -158,11 +162,11 @@ interface Projection {
 export function projectUsage(summary: TrafficSummary, avgDailyBytes: number, resetAt: string | null, now: Date = new Date()): Projection {
   if (summary.total === null) return { text: '本期流量不限量。', short: false }
   if (avgDailyBytes <= 0) return { text: '本期还没有产生用量。', short: false }
-  const left = (summary.remaining ?? 0) + summary.pack
+  const left = summary.remaining ?? 0
   const runout = Math.floor(left / avgDailyBytes)
   if (!resetAt) return { text: `按目前的速度，约 ${runout} 天后用完。`, short: runout <= 7 }
   const projected = summary.used + avgDailyBytes * daysUntil(resetAt, now)
-  if (projected >= (summary.total + summary.pack) * 0.95) {
+  if (projected >= (summary.total ?? 0) * 0.95) {
     return { text: `按目前的速度，约 ${runout} 天后用完，比重置早。`, short: true }
   }
   return { text: `按目前的速度，本期预计用到 ${formatBytes(Math.round(projected))}，够用。`, short: false }
