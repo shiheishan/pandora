@@ -9,30 +9,32 @@ paths:
 
 - `protocol_config` 写入是整体替换（普通键缺席即删除）；读接口按名字在任意深度抹掉敏感键（`password`、`private_key`、`psk`、`mask_password`…，见 `logic.ts` 的 `REDACTED_KEYS`），PATCH 里缺席的敏感键后端按原路径补回。所以 PATCH 只在协议字段真的改了（或换了协议）才带 `protocol_config`。
 - 编辑同一协议时敏感字段留空 = 不改、不带这个键（必填的也不算缺）；选填的敏感字段可点「清空」，保存前确认后显式发 `null`；换协议后端不补旧密钥，必填照常要填。
-- 协议 schema 由后端 `GET v1/node-protocol-schemas` 给出（只有 stable，全部可选），表单按 `allowed_properties` 渲染、点号路径展开成嵌套对象；422 的 `protocol_config.<键>` 先按路径再按叶子名落回字段。不要在前端硬编码协议字段。
+- 协议 schema 由后端 `GET v1/node-protocol-schemas` 给出（只有 stable，全部可选），表单按 `fields`（10-16 起的表单元数据：中文名、`show_if` 条件显示、`advanced` 折叠、`default` 新建预填、`placeholder`、`option_labels`）的顺序渲染，没有 `fields` 时退回 `allowed_properties`；点号路径展开成嵌套对象；422 的 `protocol_config.<键>` 先按路径再按叶子名落回字段。不要在前端硬编码协议字段。
+- 隐藏的字段（`show_if` 不满足）不写进 `protocol_config`、不校验必填；「有没有改动」按两次 `toProtocolConfig` 的结果比，只改隐藏字段不算改动。布尔字段表单值是 'true' / 'false'。
 - 字段说明来自 schema 的 `hints`（回落、证书目录、REALITY 多值等），不在前端写死；`property_types` 的 `list`（REALITY 的 server_name / short_id）按逗号分隔录入，一个值存字符串、多个存数组。zod 里 `property_types` 是闭合枚举，后端加新类型要同步改 `schemas.ts`，否则整份 schema 解析失败。
-- 联动默认值只有一处：`logic.withProtocolDefaults`（VLESS + REALITY + tcp 默认 `xtls-rprx-vision`，离开该组合清掉 Vision）；表单顶部提示在 `protocolNotices`（不加密的 CDN 传输要套 CDN 或 TLS、裸 tcp 会被拒）。
+- 新建时的默认值来自后端 `default`（`logic.protocolDefaults`）；字段间联动只有一处：`logic.withProtocolDefaults`（VLESS + REALITY + tcp 默认 `xtls-rprx-vision`，离开该组合清掉 Vision）；表单顶部提示在 `protocolNotices`（不加密的 CDN 传输要套 CDN 或 TLS、裸 tcp 会被拒）。
 - 内核只给 auto / pandora-native；存量 sing-box / xray-core 载入显示为自动，只在这次保存会重新校验协议（改协议、地址、端口）时随 PATCH 带上新值，只改名字不带（`patchBody`）。
 
 生命周期与服务器：
 
-- 保留规则 5：能不能迁移只看列表行的 `movable`（后端 `service.nodeMovableState`：draft、无配置回执、无应用失败、无运行状态，只看节点自己，不看所在服务器的心跳与身份），前端不自己判断；不能迁的引导「复制到新服务器再退役」。迁移 409 只带文案（或 `row_version` / `server_port` / `capacity_nodes`），没有计数清单。
+- 10-16 设计稿删掉了节点的复制、迁移、删除与「发布配置」入口（后端接口仍在，前端不再调用），以及详情里的「运行信息」区；运行状态只在列表行上标非「运行中」的三种。
+- 新建节点是三步向导（`NodeForm.tsx` 的 `NodeCreateWizard`）：协议 → 连接信息（名称、地区、地址、端口、所在服务器、节点池，新建时地区与节点池必填）→ 协议参数；建成草稿后跳到详情「协议参数」。
+- 节点详情是 760 宽弹窗（文件名仍是 `NodeDrawer.tsx`），4 个页签 概览 / 协议参数 / 路由与流量 / 身份与操作，地址 `/nodes/nodes/<id>/<metrics|proto|settings|ops>`；上线 / 停用在弹窗头部（`NodeOps.tsx` 的 `NodeHeaderAction`），「身份与操作」只剩吊销身份与退役。概览是 4 格指标加近 24 小时带宽曲线（探针数据，Mbps）。「路由与流量」是三块只读摘要，「编辑」各开一个弹窗装现成的编辑器（`NodeRouting`、`NodeTraffic`、`NodeAccess`）。
 - 节点列表一次取 1000 条并总带 `include_retired=1`：「全部」里藏掉已退役是前端筛选的事，刚退役的节点抽屉还要能继续删除。
 - 节点只有 `serving_status` 一个状态（接口里没有 `status`）。草稿节点用抽屉「操作 › 上线」（activate）一步推到 active 并让服务器就绪（服务器没就绪也能用）；草稿时「启用」置灰并指向「上线」。停用后再恢复用「启用」（要求服务器已就绪）。
-- 删除只许 draft 或 retired；在役、停用的按钮置灰，提示先退役（后端 422 同口径）。
 - 节点是否下发给用户直接显示后端的 `delivered_to_users` / `delivery_note`（无池节点不服务任何用户），不要按 `pool_id` 另判。
 - 批量启停整批有一条非法后端就整批 409，所以只提交能转的，其余计数告诉管理员（`batchPlan`）。
-- 服务器只有 draft / ready / draining / maintenance / retired 五态；卡片「标记维护」发 `draining`（显示「维护中」），maintenance 是进一步停机；完整状态走详情里的合法边下拉，`infra.ts` 与 mock 的状态边表照后端 `serverStatusTransitions` 原样写，`infra.test.ts` 逐边钉住。
+- 服务器只有 draft / ready / draining / maintenance / retired 五态；卡片「标记维护」发 `draining`（显示「维护中」），maintenance 是进一步停机；详情弹窗（`ServerDrawer.tsx` 的 `ServerDetail`）只读键值 + 编辑名称、容量、备注 + 退役（服务中的要先标记维护）与删除；`infra.ts` 与 mock 的状态边表照后端 `serverStatusTransitions` 原样写，`infra.test.ts` 逐边钉住。
 - 服务器删除只许草稿或已退役；名下节点不拒绝而是级联静默（身份吊销、摘掉 `server_id`），文案按此改写了设计稿的「先迁移或删除」。
 - 安装令牌固定传 `ttl_minutes: 30`（后端缺省 20）。
-- 签安装令牌只有服务器页一个入口（`serverActions.ts` 的 `useIssueServerToken`，`v1/servers/:id/bootstrap-token`）；节点抽屉「身份与令牌」不再签发令牌（吊销身份仍在这里），只显示身份与服务器待用令牌数，有服务器时给「去服务器」，没有服务器时给「去操作」（编辑表单里服务器只读，换服务器靠迁移或复制）（10-14 删了 `v1/nodes/bootstrap-token` 与 UniProxy 服务端令牌）。
+- 签安装令牌只有服务器卡片一个入口（`serverActions.ts` 的 `useIssueServerToken`，`v1/servers/:id/bootstrap-token`），签好后弹安装弹窗（命令、令牌两步各自复制，关闭即不再显示）；节点详情「身份与操作」只显示节点 ID、身份、证书指纹（`identity.fingerprint_sha256`）与服务器待用令牌数，不签发令牌、没有单节点令牌（10-14 删了 `v1/nodes/bootstrap-token` 与 UniProxy 服务端令牌）。
 
 运行状态与端口（w4deliver）：
 
 - 节点行与详情的运行状态由 `runtime.ts` 的 `runState` 算：生效失败（回执失败或节点报端口被占、没起来、新配置装不上）→ 降级：用缓存服务 → 待生效 → 运行中；列表只标非「运行中」的三种。原因码中文化在 `runtimeReasonText`，端口冲突的占用者名字由后端 `runtime_reason_node` 给，前端不按 id 另查
 - 节点没有健康分与配置代数（后端已删这些恒 null 的键）：配置是否生效只看 `effective_state`，在「运行状态」里显示（`runtime.ts` 的 `runState`）。
 - 节点服务状态只有 draft / active / disabled / retired（没有 draining，draining 只属于服务器与节点池）；转换表 `logic.ts` 的 `EDGES` 与 mock 的 `EDGES` 都照后端 `node_status.go` 的 `nodeServingTransitions`
-- 同机端口门禁的 409 带 `fields.server_port`，表单与复制弹窗都标到端口框；复制弹窗可另给端口（留空沿用原节点），复制到同一台服务器必须换端口
+- 同机端口门禁的 409 带 `fields.server_port`，向导跳回第 2 步标到端口框，详情表单标到端口框
 - 新加的运行状态字段在 `schemas.ts` 里带缺省（`catch` / `nullish`）：开发期假后端（`panel/frontend/dev/`）还没有这些字段，补上后可以收紧
 
 节点补齐 Xboard（迁移 00045；后端口径见 `module-node.md` 的同名一节）：

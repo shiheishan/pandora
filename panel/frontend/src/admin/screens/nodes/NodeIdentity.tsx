@@ -1,15 +1,8 @@
 import { formatDateTime } from '../../../core/format'
-import { Button, Modal, QueryView, Tag, useToast } from '../../../ui'
+import { Button, QueryView, Tag, useToast } from '../../../ui'
 import css from './detail.module.css'
 import { useNodeIdentity } from './queries'
 import type { NodeRow } from './schemas'
-
-interface Secret {
-  title: string
-  token: string
-  command: string
-  hint: string
-}
 
 const IDENTITY_STATUS: Readonly<Record<string, [string, 'ok' | 'warn' | 'danger' | 'neutral']>> = {
   active: ['有效', 'ok'],
@@ -82,53 +75,5 @@ export function NodeIdentity({ node }: { node: NodeRow }) {
       </QueryView>
       <p className={css.sectionNote}>安装令牌按服务器签发：到「服务器」页给这台节点所在的服务器签发。</p>
     </section>
-  )
-}
-
-/** 一次性令牌：令牌与命令分两块、各自可复制；关掉就再也看不到 */
-export function SecretModal({ secret, onClose }: { secret: Secret | null; onClose: () => void }) {
-  const toast = useToast()
-  const copy = (value: string, what: string) =>
-    navigator.clipboard.writeText(value).then(
-      () => toast(`${what}已复制`),
-      () => toast('浏览器不允许写剪贴板，请手动选中复制', 'danger'),
-    )
-  return (
-    <Modal
-      open={secret !== null}
-      onClose={onClose}
-      size="md"
-      eyebrow={<span style={{ color: 'var(--warn)' }}>仅此一次可见</span>}
-      title={secret?.title ?? ''}
-      actions={
-        <Button size="dialog" variant="primary" onClick={onClose} data-autofocus="">
-          已保存，关闭
-        </Button>
-      }
-    >
-      {secret && (
-        <div className={css.stack}>
-          <div className={css.faint}>{secret.hint}</div>
-          <div>
-            <div className={css.valLine}>
-              <span>令牌</span>
-              <Button size="xs" onClick={() => void copy(secret.token, '令牌')}>
-                复制
-              </Button>
-            </div>
-            <code className={`${css.mono} ${css.breakAll}`}>{secret.token}</code>
-          </div>
-          <div>
-            <div className={css.valLine}>
-              <span>安装命令（执行后粘贴上面的令牌）</span>
-              <Button size="xs" onClick={() => void copy(secret.command, '命令')}>
-                复制
-              </Button>
-            </div>
-            <code className={`${css.mono} ${css.breakAll}`}>{secret.command}</code>
-          </div>
-        </div>
-      )}
-    </Modal>
   )
 }
