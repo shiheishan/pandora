@@ -8,7 +8,7 @@ import { PlanDetailView } from './PlanDetail'
 import css from './Plans.module.css'
 import { Wizard } from './Wizard'
 
-const pathOf = (id: string) => `/plans/catalog/${encodeURIComponent(id)}`
+const pathOf = (id: string) => `/plans/${encodeURIComponent(id)}`
 
 export function CatalogTab({ selected }: { selected: string | null }) {
   const plans = usePlans()

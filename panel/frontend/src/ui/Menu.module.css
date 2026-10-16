@@ -23,10 +23,10 @@
   width: var(--menu-w);
   max-width: calc(100vw - 32px);
   padding: 6px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--popover-border);
   border-radius: var(--radius-lg);
   background: var(--surface);
-  box-shadow: var(--shadow);
+  box-shadow: var(--popover-shadow);
   animation: drop 0.14s ease-out;
 }
 

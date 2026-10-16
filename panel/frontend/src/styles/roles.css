@@ -30,6 +30,12 @@
   --radius-control: var(--radius-md);
   --radius-card: var(--radius-xl);
   --pad-card: var(--space-20);
+  /* 输入框四边框、白底 */
+  --control-border-width: 1px;
+  --control-bg: var(--surface);
+  /* 浮层（菜单、弹窗、抽屉、下拉列表）：浅边框加阴影 */
+  --popover-border: var(--border);
+  --popover-shadow: var(--shadow);
 }
 
 /* ===========================================================================
@@ -40,7 +46,8 @@
   /* 设计稿里墨色主按钮没有悬停变化 */
   --accent-hover: var(--text);
   --on-accent: var(--on-ink);
-  --focus-halo: var(--border);
+  /* 10-16 设计稿：聚焦只把下边线描黑，没有外圈 */
+  --focus-halo: transparent;
   --focus-ring: var(--text);
   /* 文字链接：墨色加下划线，下划线用 --border-hover */
   --link: var(--text);
@@ -54,9 +61,9 @@
   --h-control: 32px;
   --h-control-sm: 28px;
   --h-control-xs: 24px;
-  /* 规范：主按钮 0 14，次按钮 0 12，输入框 0 10 */
+  /* 规范：主按钮 0 14，次按钮 0 12；输入框只有下边线，左右 2（10-16 设计稿） */
   --pad-button: 12px;
-  --pad-input: 10px;
+  --pad-input: 2px;
   /* 弹窗按钮：后台 32 / 7 */
   --h-dialog-action: 32px;
   /* 墨色底上的圆钮用页面底色，深色模式下随之变深 */
@@ -64,4 +71,37 @@
   --radius-control: var(--radius-sm);
   --radius-card: var(--radius-lg);
   --pad-card: var(--space-16);
+  /* 10-16 设计稿：输入框只有下边线、透明底 */
+  --control-border-width: 0 0 1px;
+  --control-bg: transparent;
+  /* 浮层用墨色细框，不要阴影 */
+  --popover-border: var(--text);
+  --popover-shadow: none;
+}
+
+/* ===========================================================================
+ * 后台调色与直角（10-16 设计稿 管理后台.dc.html 的令牌）
+ * 卡片与页面同底、层次靠线；所有圆角归零（圆点、头像用 50% 不受影响）。
+ * 选择器用 html[...] 而不是 :root[...]：要压过 tokens.css 的 :root，又要输给
+ * :root[data-theme='dark']，深色再由下一块覆盖。值与 design-tokens.ts 的
+ * ADMIN_OVERRIDES 同源（tests/tokens.test.ts 核对）。
+ * ========================================================================= */
+html[data-app='admin'] {
+  --surface: #f5f4f0;
+  --surface-2: #efede8;
+  --surface-3: #e8e6e0;
+  --border: #e3e1da;
+  --border-strong: #d5d2ca;
+  --radius-tag: 0;
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-xl: 0;
+  --radius-pill: 0;
+}
+
+html[data-app='admin'][data-theme='dark'] {
+  --surface: #111113;
+  --surface-2: #18181b;
+  --surface-3: #202023;
 }

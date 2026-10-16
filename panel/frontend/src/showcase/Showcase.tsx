@@ -1,6 +1,8 @@
 import { useState, type ReactNode } from 'react'
 import { setTheme, useTheme, type Theme } from '../core/theme'
 import {
+  ADMIN_OVERRIDES,
+  ADMIN_RADIUS,
   COLOR_TOKENS,
   RADIUS_SCALE,
   ROLE_TOKENS,
@@ -33,12 +35,20 @@ function verify(theme: Theme, app: App): { checked: number; mismatches: Mismatch
   const expectations = [
     ...COLOR_TOKENS.map((t) => ({ name: t.name, expected: normalizeCssValue(t[theme]) })),
     ...[...SPACE_SCALE, ...RADIUS_SCALE].map((t) => ({ name: t.name, expected: t.value })),
+  ].map((e) => {
+    // 后台在全局令牌上有覆盖（roles.css 的 html[data-app='admin']），照覆盖值核对
+    if (app === 'admin' && ADMIN_RADIUS.includes(e.name)) return { name: e.name, expected: '0' }
+    const o = app === 'admin' ? ADMIN_OVERRIDES.find((x) => x.name === e.name) : undefined
+    const v = o ? (theme === 'dark' ? o.dark : o.light) : null
+    return v == null ? e : { name: e.name, expected: normalizeCssValue(v) }
+  })
+  expectations.push(
     ...TYPE_SCALE.map((t) => ({ name: `--fs-${t.name}`, expected: t.size })),
     ...ROLE_TOKENS.map((t) => {
       const ref = /^var\((--[\w-]+)\)$/.exec(t[app])
       return { name: t.name, expected: ref ? value(ref[1]!) : normalizeCssValue(t[app]) }
     }),
-  ]
+  )
   const mismatches = expectations
     .map(({ name, expected }) => ({ name, expected, actual: value(name) }))
     .filter((m) => m.actual !== m.expected)

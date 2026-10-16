@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import css from './CommandPalette.module.css'
-import { paletteItems, type PaletteItem } from './modules'
+import { paletteGroups, type PaletteItem } from './modules'
 
 export function CommandPalette({
   open,
@@ -15,7 +15,7 @@ export function CommandPalette({
   const input = useRef<HTMLInputElement>(null)
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
-  const items = paletteItems(query)
+  const items = paletteGroups(query).flatMap((g) => g.items)
   const index = Math.min(active, Math.max(0, items.length - 1))
 
   useEffect(() => {
@@ -94,7 +94,7 @@ export function CommandPalette({
                 onClick={() => pick(item)}
               >
                 <span className={css.title}>{item.title}</span>
-                <span className={css.path}>{item.path}</span>
+                <span className={css.path}>{item.sub}</span>
               </button>
             ))}
             {items.length === 0 && <div className={css.empty}>没有匹配的页面</div>}
