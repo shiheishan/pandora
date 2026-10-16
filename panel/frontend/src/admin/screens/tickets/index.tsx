@@ -40,7 +40,20 @@ export default function Tickets({ rest }: AdminScreenProps) {
         <SearchBox value={q} onChange={(text) => setQuery({ q: text })} />
       </Toolbar>
       <TicketSettingsDialog open={settings} onClose={() => setSettings(false)} />
-      <div className={css.page}>
+      {selected && (
+        <button
+          type="button"
+          className={css.pickBack}
+          onClick={() =>
+            navigate('/tickets', {
+              query: { f: filter === 'active' ? undefined : filter, q: q || undefined },
+            })
+          }
+        >
+          ← 返回工单列表
+        </button>
+      )}
+      <div className={`${css.page} ${selected ? css.pickDetail : css.pickList}`}>
         <Queue
           filter={filter}
           query={q}

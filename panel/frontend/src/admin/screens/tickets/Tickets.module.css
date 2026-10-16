@@ -24,6 +24,58 @@
   flex: 1;
 }
 
+/* -------------------------------------------------------------------------
+ * 手机（≤639px）：双栏变单栏，按选中态用 pickList / pickDetail 二选一显示；
+ * 两个修饰类只在窄屏生效，宽屏两栏照旧
+ * ------------------------------------------------------------------------- */
+@media (max-width: 639px) {
+  .page {
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  /* 没选中：只显示左栏列表（第一个子元素），隐藏右栏详情 */
+  .page.pickList > :last-child {
+    display: none;
+  }
+
+  /* 已选中：只显示右栏详情（最后一个子元素），隐藏左栏列表 */
+  .page.pickDetail > :first-child {
+    display: none;
+  }
+
+  /* 详情栏在窄屏不再有固定高度，改由对话区自己撑开 */
+  .page.pickDetail .messages {
+    max-height: 60vh;
+  }
+}
+
+/* 窄屏选中时显示在双栏上方的「返回工单列表」文字按钮，宽屏隐藏 */
+.pickBack {
+  display: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-caption);
+  text-align: left;
+  cursor: pointer;
+}
+
+.pickBack:hover {
+  color: var(--text);
+}
+
+@media (max-width: 639px) {
+  .pickBack {
+    display: inline-block;
+  }
+}
+
 .mono {
   font-family: var(--font-mono);
   font-size: var(--fs-caption);

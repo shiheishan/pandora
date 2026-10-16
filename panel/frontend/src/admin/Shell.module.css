@@ -68,4 +68,21 @@
   .content {
     padding: 20px 16px 64px;
   }
+
+  .scrim {
+    position: fixed;
+    inset: 56px 0 0 0;
+    z-index: 39;
+    background: rgb(0 0 0 / 0.32);
+  }
+}
+
+.scrim {
+  display: none;
+}
+
+@media (max-width: 639px) {
+  .scrim {
+    display: block;
+  }
 }

@@ -16,7 +16,18 @@ function useNavBadges(): Partial<Record<ModuleKey, number>> {
   return { tickets: taskCount(data?.items, 'tickets_open'), marketing: taskCount(data?.items, 'withdrawals_pending') }
 }
 
-export function Sidebar({ current, collapsed }: { current: ModuleKey; collapsed: boolean }) {
+export function Sidebar({
+  current,
+  collapsed,
+  drawer,
+  offscreen,
+}: {
+  current: ModuleKey
+  collapsed: boolean
+  drawer: boolean
+  /** 窄屏抽屉收着：移出屏幕，inert 让 Tab 与读屏都跳过它 */
+  offscreen: boolean
+}) {
   const badges = useNavBadges()
   const navRef = useRef<HTMLElement>(null)
   const [fadeTop, setFadeTop] = useState(false)
@@ -41,7 +52,7 @@ export function Sidebar({ current, collapsed }: { current: ModuleKey; collapsed:
   }, [updateFade])
 
   return (
-    <aside id="admin-sidebar" className={cx(css.sidebar, collapsed && css.collapsed)}>
+    <aside id="admin-sidebar" className={cx(css.sidebar, collapsed && css.collapsed, drawer && css.open)} inert={offscreen || undefined}>
       <nav aria-label="主导航" ref={navRef} onScroll={updateFade} className={css.nav}>
         <div className={css.navGroups}>
           {NAV_GROUPS.map(([group, keys]) => (

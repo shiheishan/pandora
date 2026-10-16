@@ -119,7 +119,7 @@ function PlanTable({ rows, onOpen, hasAny }: { rows: readonly PlanRow[]; onOpen:
     {
       key: 'kind',
       header: '类型',
-      render: (r) => <span className={cellCls(r)}>{KIND_LABELS[r.kind]}</span>,
+      render: (r) => <span className={[cellCls(r), css.nowrap].filter(Boolean).join(' ')}>{KIND_LABELS[r.kind]}</span>,
     },
     {
       key: 'price',
@@ -129,7 +129,7 @@ function PlanTable({ rows, onOpen, hasAny }: { rows: readonly PlanRow[]; onOpen:
         return (
           <span className={cellCls(r)}>
             <span className={css.cellName}>
-              <span className={css.monoText}>{view.price}</span>
+              <span className={`${css.monoText} ${css.nowrap}`}>{view.price}</span>
               {view.priceSub && <span className={css.subText}>{view.priceSub}</span>}
             </span>
           </span>
@@ -144,8 +144,8 @@ function PlanTable({ rows, onOpen, hasAny }: { rows: readonly PlanRow[]; onOpen:
         return (
           <span className={cellCls(r)}>
             <span className={css.cellName}>
-              <span>{view.quota}</span>
-              <span className={css.subText}>{view.quotaSub}</span>
+              <span className={css.nowrap}>{view.quota}</span>
+              {view.quotaSub && <span className={css.subText}>{view.quotaSub}</span>}
             </span>
           </span>
         )

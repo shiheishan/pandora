@@ -302,6 +302,22 @@
   background: var(--surface);
 }
 
+@media (max-width: 639px) {
+  .pool {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .pool > * {
+    min-width: 0;
+  }
+
+  .poolPlans {
+    align-items: flex-start;
+    text-align: left;
+  }
+}
+
 .poolName {
   font-weight: var(--fw-semibold);
 }

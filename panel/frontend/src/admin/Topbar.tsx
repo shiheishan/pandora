@@ -12,6 +12,8 @@ import css from './Topbar.module.css'
 
 export interface TopbarProps {
   collapsed: boolean
+  /** 窄屏抽屉模式：按钮文案用「打开/关闭导航」 */
+  narrow?: boolean
   onToggleSidebar: () => void
   onOpenPalette: () => void
   onChangePassword: () => void
@@ -20,6 +22,7 @@ export interface TopbarProps {
 
 export function Topbar({
   collapsed,
+  narrow,
   onToggleSidebar,
   onOpenPalette,
   onChangePassword,
@@ -33,7 +36,9 @@ export function Topbar({
 
   const isDark = theme === 'dark'
   const themeLabel = isDark ? '切换到浅色模式' : '切换到深色模式'
-  const sidebarLabel = collapsed ? '展开侧栏' : '收起侧栏'
+  const sidebarLabel = narrow
+    ? collapsed ? '打开导航' : '关闭导航'
+    : collapsed ? '展开侧栏' : '收起侧栏'
 
   return (
     <header className={css.topbar}>

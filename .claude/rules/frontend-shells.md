@@ -20,6 +20,7 @@ paths:
 - 外框布局（10-16 设计稿）：顶栏（`Topbar.tsx`）横跨整页，下面左侧栏（`Sidebar.tsx`）、右侧主区；主区没有面包屑和大标题，页头直接是页签条
   - 顶栏：Logo + 站点名 + 版本号、收起侧栏、居中搜索（点开 ⌘K）、主题切换、实时事件（`EventsCapsule`）、头像菜单（菜单头「管理员 · 名字」+ 邮箱；修改我的密码、绑定 Telegram、退出登录）
   - 侧栏浅底，可收起成 56px 图标栏（状态由 `Shell.tsx` 持有，存 localStorage `pandora-admin-sidebar`，读写包 try/catch；没存过时窄于 960 默认收起）；收起时悬停或聚焦出模块名提示、徽标变小红点；底部「打开用户端 ↗」（入口页的上一级 `../`）
+  - 窄于 640（`Shell.tsx` 的 `useNarrow`）侧栏不占位，改成从左滑出的抽屉：顶栏按钮叫「打开导航 / 关闭导航」，盖遮罩；换页、点遮罩、Esc 关闭；收着时 `inert`；不改也不写 localStorage 的收起状态
   - 模块图标在 `nav-icons.ts`（Hugeicons），新模块要同时登记图标
 - 新增模块或页签：`modules.ts` 的 `MODULES` 与 `NAV_GROUPS`、`nav-icons.ts`；不再登记权限码
   - 页签已登记、页面还没接上的，放进 `modules.ts` 的 `PENDING_TABS`（外框画空状态，不交给模块页面分发）；接好页面后删掉那一项

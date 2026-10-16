@@ -18,6 +18,21 @@ import { Topbar } from './Topbar'
 
 const SIDEBAR_STORAGE_KEY = 'pandora-admin-sidebar'
 
+/** 窄屏：侧栏不占位，用抽屉滑出（与 Topbar.module.css 断点一致） */
+function useNarrow(): boolean {
+  const [narrow, setNarrow] = useState(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false
+    return window.matchMedia('(max-width: 639px)').matches
+  })
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 639px)')
+    const onChange = () => setNarrow(mq.matches)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+  return narrow
+}
+
 function getInitialSidebarCollapsed(): boolean {
   try {
     const saved = localStorage.getItem(SIDEBAR_STORAGE_KEY)
@@ -46,16 +61,32 @@ export function Shell() {
   const route = resolveRoute(location.path)
   const def = MODULES[route.module]
   const Screen = SCREENS[route.module]
+  const narrow = useNarrow()
   const [collapsed, setCollapsed] = useState(getInitialSidebarCollapsed)
+  const [drawer, setDrawer] = useState(false)
   const [palette, setPalette] = useState(false)
   const [password, setPassword] = useState(false)
   const [telegram, setTelegram] = useState(false)
   const runtime = useRuntime()
 
+  // 换页就关抽屉（渲染期比较上一次地址，不在 effect 里 setState）
+  const [prevPath, setPrevPath] = useState(location.path)
+  if (location.path !== prevPath) {
+    setPrevPath(location.path)
+    setDrawer(false)
+  }
+
   const toggleSidebar = () => {
+    if (narrow) {
+      setDrawer((v) => !v)
+      return
+    }
     persistSidebarCollapsed(!collapsed)
     setCollapsed(!collapsed)
   }
+
+  const sidebarCollapsed = narrow ? false : collapsed
+  const topbarCollapsed = narrow ? !drawer : collapsed
 
   // 2 小时无操作自动退出（后台轮询会让服务端的空闲计时一直续上，见 idle.ts）
   useEffect(() => startIdleWatch({ timeoutMs: ADMIN_IDLE_MS, onIdle: () => void signOut(runtime) }), [runtime])
@@ -75,6 +106,10 @@ export function Shell() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && narrow && drawer) {
+        setDrawer(false)
+        return
+      }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault()
         setPalette((v) => !v)
@@ -82,7 +117,7 @@ export function Shell() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [narrow, drawer])
 
   const go = (module: ModuleKey, tab?: string | null) => navigate(modulePath(module, tab))
   const tabs = def.tabs ?? []
@@ -92,14 +127,18 @@ export function Shell() {
   return (
     <div className={css.frame}>
       <Topbar
-        collapsed={collapsed}
+        narrow={narrow}
+        collapsed={topbarCollapsed}
         onToggleSidebar={toggleSidebar}
         onOpenPalette={() => setPalette(true)}
         onChangePassword={() => setPassword(true)}
         onBindTelegram={() => setTelegram(true)}
       />
       <div className={css.body}>
-        <Sidebar current={route.module} collapsed={collapsed} />
+        {narrow && drawer && (
+          <div className={css.scrim} onClick={() => setDrawer(false)} aria-hidden="true" />
+        )}
+        <Sidebar current={route.module} collapsed={sidebarCollapsed} drawer={narrow && drawer} offscreen={narrow && !drawer} />
         <main className={css.main}>
           {(tabs.length > 0 || help) && (
             <div className={css.pageHead}>

@@ -67,6 +67,11 @@
   opacity: 0.6;
 }
 
+/* 窄屏防竖排：主文字单行不换行 */
+.nowrap {
+  white-space: nowrap;
+}
+
 /* --- 新建弹窗 --- */
 .formStack {
   display: flex;
