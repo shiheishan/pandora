@@ -5,6 +5,13 @@ import { Empty } from './Empty'
 import { Skeleton } from './Skeleton'
 import css from './Table.module.css'
 
+export type SortDir = 'asc' | 'desc'
+
+export interface TableSort {
+  key: string
+  dir: SortDir
+}
+
 export interface TableColumn<T> {
   key: string
   header: ReactNode
@@ -14,6 +21,8 @@ export interface TableColumn<T> {
   align?: 'left' | 'right'
   /** 节点名、订单号、IP 这类要逐字核对的列 */
   mono?: boolean
+  /** 可点表头排序 */
+  sortable?: boolean
 }
 
 export interface TableProps<T> {
@@ -32,9 +41,30 @@ export interface TableProps<T> {
     selected: ReadonlySet<Key>
     onChange: (next: Set<Key>) => void
   }
+  /** 当前排序；配合列的 sortable */
+  sort?: TableSort
+  /** 点可排序的表头：同一列再点切换方向，换列时由调用方决定初始方向 */
+  onSortChange?: (key: string) => void
+  /** 表格下方的一行说明（计数、合计），12px 灰字 */
+  footer?: ReactNode
+  /** 表头吸顶（表格放在自己滚动的容器里时用） */
+  stickyHeader?: boolean
 }
 
-export function Table<T>({ columns, rows, rowKey, label, loading = false, empty, onRowClick, selection }: TableProps<T>) {
+export function Table<T>({
+  columns,
+  rows,
+  rowKey,
+  label,
+  loading = false,
+  empty,
+  onRowClick,
+  selection,
+  sort,
+  onSortChange,
+  footer,
+  stickyHeader,
+}: TableProps<T>) {
   const keys = rows.map(rowKey)
   const picked = selection ? keys.filter((k) => selection.selected.has(k)).length : 0
   const toggleAll = () => selection?.onChange(new Set(picked === keys.length ? [] : keys))
@@ -48,78 +78,122 @@ export function Table<T>({ columns, rows, rowKey, label, loading = false, empty,
   const span = columns.length + (selection ? 1 : 0)
 
   return (
-    <div className={css.scroll}>
-      <table className={css.table} aria-label={label} aria-busy={loading || undefined}>
-        <colgroup>
-          {selection && <col className={css.pickCol} />}
-          {columns.map((c) => (
-            <col key={c.key} style={c.width ? { width: c.width } : undefined} />
-          ))}
-        </colgroup>
-        <thead>
-          <tr>
-            {selection && (
-              <th scope="col">
-                <Checkbox
-                  small
-                  aria-label="全选"
-                  checked={keys.length > 0 && picked === keys.length}
-                  indeterminate={picked > 0 && picked < keys.length}
-                  disabled={keys.length === 0}
-                  onChange={toggleAll}
-                />
-              </th>
-            )}
+    <div className={cx(css.root, footer != null && css.hasFooter)}>
+      <div className={css.scroll}>
+        <table className={css.table} aria-label={label} aria-busy={loading || undefined}>
+          <colgroup>
+            {selection && <col className={css.pickCol} />}
             {columns.map((c) => (
-              <th key={c.key} scope="col" className={cx(c.align === 'right' && css.right)}>
-                {c.header}
-              </th>
+              <col key={c.key} style={c.width ? { width: c.width } : undefined} />
             ))}
-          </tr>
-        </thead>
-        <tbody>
-          {loading &&
-            [0, 1, 2].map((i) => (
-              <tr key={`loading-${i}`}>
-                <td colSpan={span}>
-                  <Skeleton height={14} width={`${70 - i * 15}%`} />
+          </colgroup>
+          <thead>
+            <tr>
+              {selection && (
+                <th scope="col" className={cx(stickyHeader && css.sticky)}>
+                  <Checkbox
+                    small
+                    aria-label="全选"
+                    checked={keys.length > 0 && picked === keys.length}
+                    indeterminate={picked > 0 && picked < keys.length}
+                    disabled={keys.length === 0}
+                    onChange={toggleAll}
+                  />
+                </th>
+              )}
+              {columns.map((c) => {
+                const canSort = Boolean(c.sortable && onSortChange)
+                const isSorted = canSort && sort?.key === c.key
+                const ariaSort = canSort ? (isSorted ? (sort?.dir === 'asc' ? 'ascending' : 'descending') : 'none') : undefined
+
+                return (
+                  <th
+                    key={c.key}
+                    scope="col"
+                    aria-sort={ariaSort}
+                    className={cx(
+                      c.align === 'right' && css.right,
+                      stickyHeader && css.sticky,
+                      isSorted && css.sorted,
+                    )}
+                  >
+                    {canSort ? (
+                      <button
+                        type="button"
+                        className={cx(css.sortButton, c.align === 'right' && css.sortButtonRight)}
+                        onClick={() => onSortChange!(c.key)}
+                      >
+                        <span>{c.header}</span>
+                        <svg
+                          viewBox="0 0 24 24"
+                          width={12}
+                          height={12}
+                          stroke="currentColor"
+                          strokeWidth={2}
+                          fill="none"
+                          aria-hidden="true"
+                          className={cx(
+                            css.sortIcon,
+                            isSorted && css.sortIconActive,
+                            isSorted && sort?.dir === 'desc' && css.sortIconDesc,
+                          )}
+                        >
+                          <path d="m18 15-6-6-6 6" />
+                        </svg>
+                      </button>
+                    ) : (
+                      c.header
+                    )}
+                  </th>
+                )
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {loading &&
+              [0, 1, 2].map((i) => (
+                <tr key={`loading-${i}`}>
+                  <td colSpan={span}>
+                    <Skeleton height={14} width={`${70 - i * 15}%`} />
+                  </td>
+                </tr>
+              ))}
+            {!loading && rows.length === 0 && (
+              <tr>
+                <td colSpan={span} className={css.emptyCell}>
+                  {empty ?? <Empty title="暂无数据" bare />}
                 </td>
               </tr>
-            ))}
-          {!loading && rows.length === 0 && (
-            <tr>
-              <td colSpan={span} className={css.emptyCell}>
-                {empty ?? <Empty title="暂无数据" bare />}
-              </td>
-            </tr>
-          )}
-          {!loading &&
-            rows.map((row, i) => {
-              const key = keys[i]!
-              const isPicked = selection?.selected.has(key) ?? false
-              return (
-                <tr
-                  key={key}
-                  className={cx(isPicked && css.picked, onRowClick && css.clickable)}
-                  onClick={onRowClick ? () => onRowClick(row) : undefined}
-                  tabIndex={onRowClick ? 0 : undefined}
-                  onKeyDown={onRowClick ? (e) => activateOnKey(e, () => onRowClick(row)) : undefined}
-                >
-                  {selection && (
-                    <td onClick={(e) => e.stopPropagation()}>
-                      <Checkbox small aria-label="选择此行" checked={isPicked} onChange={() => toggle(key)} />
-                    </td>
-                  )}
-                  {columns.map((c) => (
-                    <td key={c.key} className={cx(c.align === 'right' && css.right, c.mono && 'mono')}>
-                      {c.render(row)}
-                    </td>
-                  ))}
-                </tr>
-              )
-            })}
-        </tbody>
-      </table>
+            )}
+            {!loading &&
+              rows.map((row, i) => {
+                const key = keys[i]!
+                const isPicked = selection?.selected.has(key) ?? false
+                return (
+                  <tr
+                    key={key}
+                    className={cx(isPicked && css.picked, onRowClick && css.clickable)}
+                    onClick={onRowClick ? () => onRowClick(row) : undefined}
+                    tabIndex={onRowClick ? 0 : undefined}
+                    onKeyDown={onRowClick ? (e) => activateOnKey(e, () => onRowClick(row)) : undefined}
+                  >
+                    {selection && (
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <Checkbox small aria-label="选择此行" checked={isPicked} onChange={() => toggle(key)} />
+                      </td>
+                    )}
+                    {columns.map((c) => (
+                      <td key={c.key} className={cx(c.align === 'right' && css.right, c.mono && 'mono')}>
+                        {c.render(row)}
+                      </td>
+                    ))}
+                  </tr>
+                )
+              })}
+          </tbody>
+        </table>
+      </div>
+      {footer != null && <div className={css.footer}>{footer}</div>}
     </div>
   )
 }

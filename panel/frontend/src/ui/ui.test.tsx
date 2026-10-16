@@ -68,15 +68,18 @@ describe('form controls', () => {
         ]}
       />,
     )
-    expect(out).toMatch(/<option value="" disabled=""[^>]*>请选择<\/option>/)
-    expect(out).toContain('<option value="jp" disabled="">东京</option>')
+    expect(out).toContain('role="combobox"')
+    expect(out).toContain('请选择')
+    expect(out).toContain('aria-haspopup="listbox"')
+    expect(out).toContain('aria-expanded="false"')
+    expect(out).not.toContain('role="listbox"')
   })
 
   it('Select emptyOption is a selectable empty value and replaces the placeholder', () => {
     const out = html(<Select label="用户组" emptyOption="全部用户组" placeholder="请选择" value="" onChange={noop} options={[{ value: 'vip', label: 'VIP' }]} />)
-    expect(out).toMatch(/<option value="" selected="">全部用户组<\/option>/)
+    expect(out).toContain('role="combobox"')
+    expect(out).toContain('全部用户组')
     expect(out).not.toContain('请选择')
-    expect(out).not.toMatch(/<option value=""[^>]*disabled/)
   })
 
   it('an empty-string error counts as no error: no red state, no alert, hint stays', () => {
