@@ -330,8 +330,7 @@ func (s *Service) grantPlan(ctx context.Context, in grantInput) (granted, error)
 			return granted{}, err
 		}
 		id := res.SubscriptionID
-		// 兑换流水的 plan_mode 只有 new/renewed/changed 三种，叠加记作 renewed
-		g.planMode, g.subID = PlanGrantRenewed, &id
+		g.planMode, g.subID = PlanGrantStacked, &id
 		g.summary = append(g.summary, "「"+plan.Name+"」已叠加，"+endText(res.PeriodEnd))
 	case KindChange:
 		if err := s.grantPlanChange(ctx, in, price, &g); err != nil {

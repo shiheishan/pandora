@@ -36,6 +36,7 @@ const (
 	PlanGrantNew     = "new"
 	PlanGrantRenewed = "renewed"
 	PlanGrantChanged = "changed"
+	PlanGrantStacked = "stacked" // 叠加到同款一次性套餐（10-16）
 )
 
 // Prize 是盲盒奖池里的一项；Weight 是相对权重（70/20/10 与 7/2/1 等价）。零值表示不送。

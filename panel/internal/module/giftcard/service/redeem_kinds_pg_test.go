@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// 同套餐的一次性套餐卡：默认叠加，也能新开；叠加后总流量增加，到期日顺延，流水记 renewed。
+// 同套餐的一次性套餐卡：默认叠加，也能新开；叠加后总流量增加，到期日顺延，流水记 stacked。
 func TestRedeemPlanCardStacksOneTime(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
@@ -49,8 +49,8 @@ func TestRedeemPlanCardStacksOneTime(t *testing.T) {
 	}
 
 	var count int64
-	if err := e.row(ctx, `SELECT count(*) FROM gift_card_redemptions WHERE plan_mode = 'renewed' AND subscription_id = ?`, sub.ID).Scan(&count); err != nil || count != 1 {
-		t.Fatalf("流水 renewed 笔数 %d (%v)，期望 1", count, err)
+	if err := e.row(ctx, `SELECT count(*) FROM gift_card_redemptions WHERE plan_mode = 'stacked' AND subscription_id = ?`, sub.ID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("流水 stacked 笔数 %d (%v)，期望 1", count, err)
 	}
 
 	var limitVal int64

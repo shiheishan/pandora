@@ -189,7 +189,7 @@ const DEFAULTS: Record<string, { subject: string; body: string }> = {
   'subscription.expiring|inapp': { subject: '套餐即将到期', body: '你的「{{plan}}」将在 {{days}} 天后（{{expires_at}}）到期。到期后节点会停止服务，记得及时续费。' },
   'subscription.expiring|email': { subject: '【{{site}}】你的套餐 {{days}} 天后到期', body: '你好，\n\n你的「{{plan}}」将在 {{days}} 天后到期（{{expires_at}}）。\n到期后节点将停止服务，请及时续费以免影响使用。\n\n{{site}}' },
   'quota.warning|inapp': { subject: '流量即将用尽', body: '你的「{{plan}}」已使用 {{percent}}% 流量（剩余 {{remaining}}）。用尽后将无法连接节点。' },
-  'quota.warning|email': { subject: '【{{site}}】流量已使用 {{percent}}%', body: '你好，\n\n你的「{{plan}}」已使用 {{percent}}% 流量，剩余 {{remaining}}。\n流量用尽后将无法连接节点，可在面板购买流量包或升级套餐。\n\n{{site}}' },
+  'quota.warning|email': { subject: '【{{site}}】流量已使用 {{percent}}%', body: '你好，\n\n你的「{{plan}}」已使用 {{percent}}% 流量，剩余 {{remaining}}。\n流量用尽后将无法连接节点，可在面板重置流量或更换套餐。\n\n{{site}}' },
   'order.paid|inapp': { subject: '支付成功', body: '订单 {{order_no}} 已支付成功，「{{plan}}」已开通，有效期至 {{expires_at}}。' },
   'ticket.replied|inapp': { subject: '工单有新回复', body: '你的工单「{{subject}}」有新回复，点击查看。' },
   'auth.email_verify|email': { subject: '【{{site}}】注册验证码 {{code}}', body: '你好，\n\n你正在注册 {{site}}，验证码是：\n\n{{code}}\n\n验证码 {{minutes}} 分钟内有效。如果这不是你本人的操作，忽略这封邮件即可。\n\n{{site}}' },

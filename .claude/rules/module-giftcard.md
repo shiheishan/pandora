@@ -16,7 +16,7 @@ paths:
   - 卡提供内容（`offerOf`）涉及订阅时，落点必须由用户选择（`Preview` 下发选项，`Redeem` 传入 choice 并在事务内二次校验）。
   - 套餐卡模板必须有价格档（库里 CHECK `gift_card_templates_plan_needs_price`）：订阅套餐选一档周期价，一次性套餐选它唯一的价；保存时价格必须在售且属于该套餐。
     价格后来被归档（改价或迁移 00056 归档了不合规的价）：兑换拒绝（「这张卡对应的套餐价格已下架，请联系客服」，码不被用掉），后台模板标出「价格已下架」，编辑时必须重选。
-  - 套餐卡落点：同套餐的订阅套餐那份 → `subs.Renew`（套餐已归档回 `ErrRenewArchived`）；同套餐的一次性那份 → `subs.Stack`（选项 `stack`，兑换流水 plan_mode 记 `renewed`，库里 CHECK 只有 new/renewed/changed）；
+  - 套餐卡落点：同套餐的订阅套餐那份 → `subs.Renew`（套餐已归档回 `ErrRenewArchived`）；同套餐的一次性那份 → `subs.Stack`（选项 `stack`，兑换流水 plan_mode 记 `stacked`，00055 加进 CHECK）；
     别的套餐 → `subs.Provision`（新开）或 `subs.ChangePlan`（换掉，可跨类型，剩余价值经 order 的 `RemainingValue` 全额退余额）。一次性同款不套用「只有一份同款就直接续」，叠加与新开都给。
   - 送流量（通用卡、盲盒奖品）经 `subs.GrantBonus` 加到那一份的本期赠送（`bonus_value`；一次性加到总量）。用户没有可加流量的订阅回 `ErrNoTrafficTarget`，不再有「未分配」。
   - 通用卡的落点排除不适用的订阅：含加时长的排除永久的一次性订阅，含加流量的排除不限流量的订阅。盲盒抽中什么说不准，不排除；

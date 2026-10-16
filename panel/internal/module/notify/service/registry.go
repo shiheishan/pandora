@@ -211,7 +211,7 @@ var templateDefs = []templateDef{
 		Body: `你好，
 
 你的「{{plan}}」已使用 {{percent}}% 流量，剩余 {{remaining}}。
-流量用尽后将无法连接节点，可在面板购买流量包或升级套餐。
+流量用尽后将无法连接节点，可在面板重置流量或更换套餐。
 
 {{site}}`,
 	},
