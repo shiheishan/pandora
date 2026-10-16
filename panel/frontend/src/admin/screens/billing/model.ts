@@ -109,6 +109,7 @@ export function canCancel(o: Pick<OrderRow, 'status'>): boolean {
 // 系统写的取消原因是代码（后台取消写的是管理员填的原文，原样显示）
 const CANCEL_REASON_LABELS: Readonly<Record<string, string>> = {
   account_deleted: '账号已注销',
+  plan_archived: '套餐已归档，实付已转入用户余额',
 }
 
 export function cancelReasonLabel(reason: string): string {
@@ -356,6 +357,7 @@ export const LATE_KIND_LABELS: Record<LateKind, string> = {
   released_order: '订单取消后到账',
   excess_capture: '超额扣款',
   ineligible_subscription: '订阅已结束后到账',
+  archived_plan: '套餐归档后到账',
 }
 
 export function lateKindLabel(k: LateKind): string {

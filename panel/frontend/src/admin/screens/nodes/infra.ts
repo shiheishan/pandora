@@ -209,7 +209,7 @@ export const poolGroupsLabel = (p: Pick<Pool, 'allowed_user_groups'>) => (p.allo
 /** 契约：nodes > 0 或 plans > 0 时删除按钮直接禁用并说明；模板、发布记录、未用令牌这三种只有后端知道，靠 409 的消息 */
 export function poolDeleteBlock(p: Pick<Pool, 'nodes' | 'plans'>): string | null {
   if (p.nodes > 0) return `池里还有 ${p.nodes} 个节点，先把它们改到别的池`
-  if (p.plans > 0) return `还有 ${p.plans} 个套餐绑定了它，先在套餐里解绑`
+  if (p.plans > 0) return `还有 ${p.plans} 个在售或草稿套餐绑定了它，先在套餐里解绑（已归档的不挡，删池时一起解绑）`
   return null
 }
 

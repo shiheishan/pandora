@@ -317,6 +317,7 @@ export function orderResult(o: Pick<OrderDetail, 'status' | 'kind' | 'cancel_rea
     case 'expired':
       return '超时未支付，已自动取消'
     case 'cancelled':
+      if (o.cancel_reason === 'plan_archived') return '套餐已停售，没有开通；付的钱已转入钱包余额'
       return !o.cancel_reason || o.cancel_reason === 'user_cancelled' ? '已由您取消' : o.cancel_reason
     default:
       return o.expires_at ? `待支付，${formatDateTime(o.expires_at)} 前有效` : '待支付'

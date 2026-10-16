@@ -537,7 +537,7 @@ export function fulfil(o: Order, at: string): void {
 // ===========================================================================
 export interface LateCase {
   id: string
-  case_kind: 'released_order' | 'excess_capture' | 'ineligible_subscription'
+  case_kind: 'released_order' | 'excess_capture' | 'ineligible_subscription' | 'archived_plan'
   status: 'suspense' | 'applied'
   amount: number
   order: Order

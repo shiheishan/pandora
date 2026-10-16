@@ -206,7 +206,7 @@ describe('pools', () => {
   it('blocks deletion while nodes or plans hang on it', () => {
     expect(poolDeleteBlock(pool)).toBeNull()
     expect(poolDeleteBlock({ ...pool, nodes: 2 })).toBe('池里还有 2 个节点，先把它们改到别的池')
-    expect(poolDeleteBlock({ ...pool, plans: 1 })).toBe('还有 1 个套餐绑定了它，先在套餐里解绑')
+    expect(poolDeleteBlock({ ...pool, plans: 1 })).toBe('还有 1 个在售或草稿套餐绑定了它，先在套餐里解绑（已归档的不挡，删池时一起解绑）')
   })
 
   it('labels bound plans and the R104 user-group restriction', () => {
