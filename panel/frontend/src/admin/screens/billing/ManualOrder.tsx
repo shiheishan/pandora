@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { isApiError } from '../../../core/api'
 import { useApi } from '../../../shell/runtime'
 import { Button, Input, Modal, Select, useToast } from '../../../ui'
@@ -54,6 +54,7 @@ function ManualForm({ userId, entrySubscriptionId, onClose }: { userId: string |
   const [form, setForm] = useState<ManualForm>(() => emptyManual())
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
+  const radioId = useId()
 
   // 从用户抽屉进来：详情回来后选中这个人（只在还没选人时）
   const [prefilled, setPrefilled] = useState(false)
@@ -83,7 +84,9 @@ function ManualForm({ userId, entrySubscriptionId, onClose }: { userId: string |
   const option = preview.data?.options.find((o) => o.key === selected)
   const target = option ? choiceOf(option) : null
   // 低于最低付款额：preview 按落点给出应付与判定，页面不再读渠道列表自己算
-  const below = manualBelowMinimum(form.settlement, option, preview.data?.min_payment, chosen?.currency)
+  const below = manualBelowMinimum(form.settlement, option, preview.data?.min_payment)
+  // 只有一个落点且服务端说它开不了：按钮灰着，原因写在落点区
+  const onlyOption = preview.data?.options.length === 1 ? preview.data.options[0] : undefined
   const gate = submitGate({
     hasInputs: params !== null,
     loading: params !== null && preview.isPending,
@@ -91,6 +94,7 @@ function ManualForm({ userId, entrySubscriptionId, onClose }: { userId: string |
     failedLabel: failure.fields.price_id ? '先换一个价格' : undefined,
     selected,
     blocked: below ? '低于最低付款额' : null,
+    unavailable: onlyOption?.unavailable_reason ?? null,
   })
 
   const submit = async () => {
@@ -119,14 +123,14 @@ function ManualForm({ userId, entrySubscriptionId, onClose }: { userId: string |
     }
   }
 
-  const settlement = SETTLEMENTS.find((s) => s.value === form.settlement)!
   return (
     <Modal
       open
-      size="md"
+      size={520}
       onClose={() => onClose()}
       dismissible={!busy}
       title="人工开单"
+      subtitle="替用户下单：待支付、线下已收款或赠送"
       actions={
         <>
           <Button size="dialog" onClick={() => onClose()} disabled={busy}>
@@ -145,23 +149,52 @@ function ManualForm({ userId, entrySubscriptionId, onClose }: { userId: string |
           onChange={(user) => set('user', user)}
           error={errors.user_id}
         />
-        <div className={css.grid2}>
-          <Select
-            label="套餐与周期"
-            placeholder={plans.isPending ? '读取中…' : choices.length ? '选择在售价格' : '没有在售的价格'}
-            options={choices.map(({ value, label }) => ({ value, label }))}
-            value={form.choice}
-            onChange={(e) => set('choice', e.target.value)}
-            error={errors.price_id || errors.plan_id || failure.fields.price_id}
-          />
-          <Select
-            label="结算方式"
-            options={SETTLEMENTS.map(({ value, label }) => ({ value, label }))}
-            value={form.settlement}
-            onChange={(e) => set('settlement', e.target.value as Settlement)}
-            error={errors.settlement}
-          />
-        </div>
+        <Select
+          label="套餐与周期"
+          placeholder={plans.isPending ? '读取中…' : choices.length ? '选择在售价格' : '没有在售的价格'}
+          options={choices.map(({ value, label }) => ({ value, label }))}
+          value={form.choice}
+          onChange={(e) => set('choice', e.target.value)}
+          error={errors.price_id || errors.plan_id || failure.fields.price_id}
+        />
+        {chosen && form.settlement !== 'grant' && <span className={css.small}>{priceNote(chosen.amount, option)}</span>}
+
+        <fieldset className={`${css.stack} ${css.fieldset}`}>
+          <legend className={css.fieldLabel}>结算方式</legend>
+          <div className={css.placeList}>
+            {SETTLEMENTS.map((s) => {
+              const on = form.settlement === s.value
+              return (
+                <label key={s.value} className={on ? `${css.placeItem} ${css.placeItemOn}` : css.placeItem}>
+                  <input
+                    type="radio"
+                    name="manual-settlement"
+                    className={css.placeRadio}
+                    value={s.value}
+                    checked={on}
+                    aria-labelledby={`${radioId}-${s.value}-t`}
+                    aria-describedby={`${radioId}-${s.value}-h`}
+                    onChange={() => set('settlement', s.value as Settlement)}
+                  />
+                  <span className={css.placeText}>
+                    <span id={`${radioId}-${s.value}-t`} className={css.placeTitle}>
+                      {s.label}
+                    </span>
+                    <span id={`${radioId}-${s.value}-h`} className={css.placeResult}>
+                      {s.hint}
+                    </span>
+                  </span>
+                </label>
+              )
+            })}
+          </div>
+          {errors.settlement && (
+            <span role="alert" className={`${css.small} ${css.tone_danger}`}>
+              {errors.settlement}
+            </span>
+          )}
+        </fieldset>
+
         {params !== null && failure.general !== null && <PlacementError message={failure.general} onRetry={() => void preview.refetch()} />}
         {preview.data && chosen && (
           <PlacementPicker
@@ -197,14 +230,10 @@ function ManualForm({ userId, entrySubscriptionId, onClose }: { userId: string |
             </span>
           </div>
         )}
-        <p className={css.small}>
-          {settlement.hint}
-          {chosen && form.settlement !== 'grant' && `；${priceNote(chosen.amount, chosen.currency, option)}`}。「从余额扣除」暂不提供，需要时先到用户详情调账，再用赠送开单。
-        </p>
         {form.settlement === 'offline' && (
-          <Input label="凭证号" mono placeholder="银行流水号、收据编号等" value={form.reference} onChange={(e) => set('reference', e.target.value)} error={errors.reference} />
+          <Input label="线下凭证号" mono placeholder="银行流水号、收据编号等" value={form.reference} onChange={(e) => set('reference', e.target.value)} error={errors.reference} />
         )}
-        <Input label="开单原因（写入审计）" placeholder="至少 5 个字，日后对账的依据" value={form.reason} onChange={(e) => set('reason', e.target.value)} error={errors.reason} />
+        <Input label="开单原因（写入审计）" placeholder="如：工单 #2041 补偿" value={form.reason} onChange={(e) => set('reason', e.target.value)} error={errors.reason} />
       </div>
     </Modal>
   )

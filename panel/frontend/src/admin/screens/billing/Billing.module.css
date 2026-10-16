@@ -86,23 +86,6 @@
   gap: var(--space-8);
 }
 
-.search {
-  width: 240px;
-  height: var(--h-control);
-  padding: 0 var(--space-12);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-control);
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-  outline: none;
-}
-
-.search:focus {
-  border-color: var(--text);
-  box-shadow: 0 0 0 3px var(--focus-halo);
-}
-
 /* 按用户筛选的标签：「只看 某人 ×」 */
 .chip {
   display: inline-flex;
@@ -149,100 +132,52 @@
 }
 
 /* ===========================================================================
- * 订单抽屉
+ * 订单详情弹窗
  * ========================================================================= */
-.drawerBody {
+.detailSection {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: var(--space-8);
+  margin-top: 10px;
 }
 
-.drawerTitle {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.detailSection:first-child {
+  margin-top: 0;
 }
 
-.orderNo {
-  font-family: var(--font-mono);
-  font-size: 15px;
+.detailSectionTitle {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
   font-weight: 600;
 }
 
-.titleMeta {
+.detailRow {
   display: flex;
-  align-items: center;
-  gap: var(--space-8);
-  color: var(--text-2);
-  font-size: var(--fs-caption);
-  font-weight: 400;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 6px 0;
+  font-size: 13px;
 }
 
-.facts {
-  display: grid;
-  grid-template-columns: 90px minmax(0, 1fr);
-  row-gap: 9px;
-  margin: 0;
-}
-
-.facts dt {
+.detailLabel {
+  flex: none;
   color: var(--text-3);
 }
 
-.facts dd {
-  margin: 0;
+.detailValue {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 0;
+  text-align: right;
   overflow-wrap: anywhere;
 }
 
-.section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-8);
-}
-
-.sectionTitle {
-  margin: 0;
-  font-size: var(--body-size);
-  font-weight: 600;
-}
-
-.lines {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-8);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.line {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 96px 76px;
-  gap: var(--space-8);
-  align-items: center;
-  padding: 9px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
-
-.lineAmount {
-  font-family: var(--font-mono);
-  text-align: right;
-}
-
-.lineState {
+.listFooter {
+  color: var(--text-3);
   font-size: var(--fs-caption);
-  text-align: right;
-}
-
-.box {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-8);
-  padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface-2);
 }
 
 .boxText {
@@ -353,6 +288,15 @@
 .placeItemOn {
   border-color: var(--accent);
   background: var(--surface-2);
+}
+
+.placeItemOff {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.placeItemOff:hover {
+  border-color: var(--border-strong);
 }
 
 .placeRadio {
