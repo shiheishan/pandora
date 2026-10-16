@@ -86,7 +86,6 @@ func (f *fakeSvc) UserDetail(_ context.Context, id uuid.UUID) (service.UserDetai
 			Metric: "traffic.bytes", Limit: &lim, Consumed: 42, Remaining: &lim,
 		}},
 		DeviceLimitOverride: &devLim, PlanMaxDevices: &planMax, OnlineDevices: 1,
-		PackRemainingBytes: 99,
 	}
 	current := sub
 	return service.UserDetail{
@@ -106,9 +105,8 @@ func (f *fakeSvc) UserDetail(_ context.Context, id uuid.UUID) (service.UserDetai
 			ProviderCode: &prov, ProviderName: &provName,
 			PlanName: "基础套餐", Interval: "month", IntervalCount: 1, ItemCount: 1, Manual: false,
 		}},
-		PaidTotal:           decimal.RequireFromString("12.34"),
-		Telegram:            &service.TelegramRef{Username: "testuser", BoundAt: paidAt},
-		UnattachedPackBytes: 0,
+		PaidTotal: decimal.RequireFromString("12.34"),
+		Telegram:  &service.TelegramRef{Username: "testuser", BoundAt: paidAt},
 	}, nil
 }
 
@@ -392,7 +390,7 @@ func TestAdminUserJSONKeys(t *testing.T) {
 	det := decodeMap(t, w.Body.Bytes())
 	detailExtra := []string{
 		"email_verified", "is_admin", "referrer", "stats", "subscriptions", "recent_orders",
-		"telegram", "unattached_pack_bytes", "admin_note", "deleted_at",
+		"telegram", "admin_note", "deleted_at",
 	}
 	assertKeys(t, det, append(rowKeys, detailExtra...)...)
 	stats, _ := det["stats"].(map[string]any)
@@ -404,7 +402,7 @@ func TestAdminUserJSONKeys(t *testing.T) {
 	assertKeys(t, s0,
 		"id", "label", "plan_name", "plan_version", "status", "current_period_start", "current_period_end",
 		"amount", "quotas", "device_limit_override", "plan_max_devices",
-		"online_devices", "pack_remaining_bytes",
+		"online_devices",
 	)
 	if s0["amount"] != float64(1234) {
 		t.Fatalf("subscription amount %v", s0["amount"])

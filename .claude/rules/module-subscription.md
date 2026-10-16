@@ -59,7 +59,7 @@ paths:
 
 ## 到期与续费窗口
 - `RenewalWindow` = 30 天（`service/types.go`）；`ExpireDue`：到期改 `expired`（不动凭据）→ 满窗写 `renewal_closed_at` 并吊销凭据（`service/expire.go`）
-- 两类套餐（catalog `Plan.Kind`）：流量落在哪一行一律按套餐类型判断（`trafficPeriod`：订阅 → cycle，一次性 → total），开通、换套餐、叠加、续费重建配额前先 `withKind` 把版本里流量定义的 period 改对，不信版本里存的 period（`service/internal.go`）
+- 两类套餐（catalog `Plan.Kind`）：流量落在哪一行一律按套餐类型判断（`trafficPeriod`：订阅 → cycle，一次性 → total），开通、换套餐、叠加、续费重建配额前先 `withKind` 把版本里跟着套餐走的那条流量定义（cycle 或 total）的 period 改对，不信版本里存的 period；day / month 是独立滚动窗口，原样保留（都改成 cycle 会折成多条同周期定义、建配额撞唯一键）（`service/internal.go`）
 - 期末 `PeriodEndFor`：订阅按周期；一次性有天数 = 起点 + N 天，永久 = 远期哨兵（`IsPermanent` 判断，50 年以上）（`service/period.go`）
 - 续费 `Renew`：只许订阅套餐（一次性回 `ErrRenewOneTime`）；提前续接 `RenewalBase`，版本与配额不动，新周期开始时由配额滚动切到套餐当前版本；过期恢复当场切到当前版本并 `rebuildQuotas`（清已用与送的量）（`service/renew.go`、`service/plan_change.go`）
 - 叠加 `Stack`：只许一次性套餐、同一个套餐（版本须属于它）；total 行上限加上新版本的流量（饱和加，新版本不限就置不限），已用与送的量不动、不写重置日志；期末 `StackEnd`（原来永久就不变、新价永久则永久、否则 max(原到期, now) + N 天）；版本切到下单时的当前版本；已过期没停用的恢复成 active；事件 `renewed`（payload `mode: stack`）（`service/stack.go`）

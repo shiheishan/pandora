@@ -77,9 +77,9 @@ func (s *Service) emitSubscriptionProvisioned(ctx context.Context, o model.Order
 	})
 }
 
-// provisionedSub 返回履约后订单落到的订阅 id；只有新购、续费、换套餐单有。
+// provisionedSub 返回履约后订单落到的订阅 id；只有新购、续费、换套餐、叠加单有（叠加顺延了到期，按续期算）。
 func provisionedSub(o model.Order) (string, bool) {
-	if (o.Kind == KindNew || o.Kind == KindRenewal || o.Kind == KindUpgrade) && o.SubscriptionID != nil {
+	if (o.Kind == KindNew || o.Kind == KindRenewal || o.Kind == KindUpgrade || o.Kind == KindStack) && o.SubscriptionID != nil {
 		return o.SubscriptionID.String(), true
 	}
 	return "", false

@@ -205,15 +205,15 @@ describe('pools', () => {
 
   it('blocks deletion while nodes or plans hang on it', () => {
     expect(poolDeleteBlock(pool)).toBeNull()
-    expect(poolDeleteBlock({ ...pool, nodes: 2 })).toContain('2 个节点')
-    expect(poolDeleteBlock({ ...pool, plans: 1 })).toContain('1 个套餐版本')
+    expect(poolDeleteBlock({ ...pool, nodes: 2 })).toBe('池里还有 2 个节点，先把它们改到别的池')
+    expect(poolDeleteBlock({ ...pool, plans: 1 })).toBe('还有 1 个套餐绑定了它，先在套餐里解绑')
   })
 
   it('labels bound plans and the R104 user-group restriction', () => {
     expect(planNamesLabel(pool)).toBe('—')
     expect(planNamesLabel({ plan_names: ['专业版', '团队版'] })).toBe('专业版、团队版')
     expect(poolGroupsLabel(pool)).toBeNull()
-    expect(poolGroupsLabel({ allowed_user_groups: [{ id: 'g1', name: '内测' }, { id: 'g2', name: 'VIP' }] })).toBe('仅用户组『内测、VIP』')
+    expect(poolGroupsLabel({ allowed_user_groups: [{ id: 'g1', name: '内测' }, { id: 'g2', name: 'VIP' }] })).toBe('仅限 内测、VIP')
   })
 
   it('R104: sends allowed_user_group_ids only when the list changes (it triggers reauth)', () => {

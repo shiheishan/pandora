@@ -385,12 +385,12 @@ expect_http 200 POST "$ADM/v1/nodes/$NODE_ID/activate" -H "$AH" -H 'Content-Type
 wait_nodesim_node_config s1 "nodesim s1 has node with non-empty config_sha256"
 
 admin_auth
-expect_http 201 POST "$ADM/v1/plans/complete" -H "$AH" -H 'Content-Type: application/json' \
+expect_http 201 POST "$ADM/v1/plans" -H "$AH" -H 'Content-Type: application/json' \
   -H "Idempotency-Key: exp-plan-$STAMP" \
-  -d "{\"code\":\"exp-plan-$STAMP\",\"name\":\"Expiry Plan $STAMP\",\"visibility\":\"public\",\"traffic_gb\":1,\"pool_ids\":[\"$POOL_ID\"],\"prices\":[{\"billing_interval\":\"month\",\"interval_count\":1,\"unit_amount\":1000,\"currency\":\"CNY\"}],\"publish\":true}"
+  -d "{\"kind\":\"subscription\",\"name\":\"Expiry Plan $STAMP\",\"visibility\":\"public\",\"traffic_bytes\":1073741824,\"pool_ids\":[\"$POOL_ID\"],\"prices\":[{\"billing_interval\":\"month\",\"interval_count\":1,\"unit_amount\":1000}],\"publish\":true}"
 PLAN=$(json_get "$HTTP_BODY" plan.id)
-PRICE=$(json_get "$HTTP_BODY" price_ids.0)
-is_uuid "$PLAN" && is_uuid "$PRICE" || die "plan/complete returned invalid ids"
+PRICE=$(json_get "$HTTP_BODY" plan.prices.0.id)
+is_uuid "$PLAN" && is_uuid "$PRICE" || die "POST /plans returned invalid ids"
 ok "plan 1 published with pool binding"
 
 #-------------------------------------------------------------------------------
@@ -471,11 +471,11 @@ wait_roster present "$PROXY_UUID" "续费后用户回到节点名单，proxy_uui
 #-------------------------------------------------------------------------------
 sec "5. 后台开不同套餐：原订阅换套餐，链接不变"
 admin_auth
-expect_http 201 POST "$ADM/v1/plans/complete" -H "$AH" -H 'Content-Type: application/json' \
+expect_http 201 POST "$ADM/v1/plans" -H "$AH" -H 'Content-Type: application/json' \
   -H "Idempotency-Key: exp-plan2-$STAMP" \
-  -d "{\"code\":\"exp-plan2-$STAMP\",\"name\":\"Expiry Pro Plan $STAMP\",\"visibility\":\"public\",\"traffic_gb\":2,\"pool_ids\":[\"$POOL_ID\"],\"prices\":[{\"billing_interval\":\"month\",\"interval_count\":1,\"unit_amount\":3000,\"currency\":\"CNY\"}],\"publish\":true}"
+  -d "{\"kind\":\"subscription\",\"name\":\"Expiry Pro Plan $STAMP\",\"visibility\":\"public\",\"traffic_bytes\":2147483648,\"pool_ids\":[\"$POOL_ID\"],\"prices\":[{\"billing_interval\":\"month\",\"interval_count\":1,\"unit_amount\":3000}],\"publish\":true}"
 PLAN2=$(json_get "$HTTP_BODY" plan.id)
-PRICE2=$(json_get "$HTTP_BODY" price_ids.0)
+PRICE2=$(json_get "$HTTP_BODY" plan.prices.0.id)
 is_uuid "$PLAN2" && is_uuid "$PRICE2" || die "second plan invalid"
 
 admin_auth

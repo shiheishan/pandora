@@ -262,10 +262,8 @@ func TestChangePlanPG(t *testing.T) {
 	if *cycle.Limit != 200*gib || cycle.Consumed != 0 {
 		t.Fatalf("cycle 行: %+v", cycle)
 	}
-	day := quotaOf(t, e, ctx, sub.ID, MetricTraffic, PeriodDay)
-	if day.Limit != nil || day.Consumed != 0 {
-		t.Fatalf("新版本没有的 day 行应不限: %+v", day)
-	}
+	// 新版本没有的 day 行删掉（审查 1016-A2：不留上限为空的残行被当成不限）
+	assertNoQuota(t, e, ctx, sub.ID, MetricTraffic, PeriodDay)
 	month := quotaOf(t, e, ctx, sub.ID, MetricTraffic, PeriodMonth)
 	if *month.Limit != 150*gib {
 		t.Fatalf("补的 month 行: %+v", month)

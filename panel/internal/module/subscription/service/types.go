@@ -102,6 +102,8 @@ var (
 	ErrNotActive = errs.Newf(errs.Conflict, "这一份已过期，不能再加流量")
 	// ErrUnlimited 是送流量的那一份不限流量（没有限额的流量配额行），无需加。
 	ErrUnlimited = errs.Newf(errs.Conflict, "这一份不限流量，无需加流量")
+	// ErrBonusPeriodSwitching：本期已结束、还没滚到下一期，这时送的流量会在滚动时被清零。
+	ErrBonusPeriodSwitching = errs.Newf(errs.Conflict, "流量周期正在切换，请稍后再试")
 	// ErrRenewOneTime 是一次性套餐来续费：一次性套餐不能续费，只能叠加或另买一份。
 	ErrRenewOneTime = errs.Newf(errs.Conflict, "一次性套餐不能续费，可以叠加到这一份或另买一份")
 	// ErrStackNotOneTime 是叠加的目标不是一次性套餐，或与要叠加的不是同一个套餐。

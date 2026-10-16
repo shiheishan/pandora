@@ -115,7 +115,7 @@ func (s *Service) ManualPreview(ctx context.Context, in ManualPreviewInput) (Man
 		return ManualPreview{}, err
 	}
 	cands := candidatesFrom(us)
-	opts, def := planPlacements(in.PlanID, plan.Plan.Kind, cands, in.EntrySubscriptionID)
+	opts, def := planPlacements(in.PlanID, plan.Kind, cands, in.EntrySubscriptionID)
 
 	refused, err := s.catalogRefusals(ctx, in, opts)
 	if err != nil {

@@ -945,17 +945,18 @@ def main():
         ctx["node_rv"] = int((act or {}).get("row_version") or node_rv)
         wait_nodesim_node_config(status_path, "s1", node_id)
 
-        _, js = ADMIN.call("POST", "/v1/plans/complete",
-                           {"code": f"risk-{STAMP}", "name": f"风控评估 {STAMP}", "visibility": "public",
-                            "traffic_gb": 100, "max_devices": 3, "pool_ids": [pool_id],
+        _, js = ADMIN.call("POST", "/v1/plans",
+                           {"kind": "subscription", "name": f"风控评估 {STAMP}", "visibility": "public",
+                            "traffic_bytes": 100 * 1024 ** 3, "max_devices": 3, "pool_ids": [pool_id],
                             "prices": [{"billing_interval": "month", "interval_count": 1,
-                                        "unit_amount": 990, "currency": "CNY"}],
+                                        "unit_amount": 990}],
                             "publish": True},
                            idem=f"risk-plan-{STAMP}", expect=(201,))
         ctx["plan_id"] = need_uuid(js["plan"]["id"], "套餐 id")
-        ctx["price_id"] = need_uuid(js["price_ids"][0], "价格 id")
+        ctx["price_id"] = need_uuid(js["plan"]["prices"][0]["id"], "价格 id")
         restore.append("plan")
-        check(js.get("published") is True, "套餐（设备上限 3）已发布，绑定夹具节点池")
+        check(js["plan"].get("status") == "active" and js["plan"].get("max_devices") == 3,
+              "套餐（设备上限 3）已发布，绑定夹具节点池")
 
         sigs = [run_round(0, ctx), run_round(1, ctx)]
 

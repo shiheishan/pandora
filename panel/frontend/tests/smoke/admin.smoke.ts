@@ -32,7 +32,7 @@ import { planPoolsSchema, planResponseSchema, plansSchema, poolOptionsSchema } f
 import { accessResponse, auditResponse, clustersResponse, switchesResponse } from '../../src/admin/screens/security/schemas'
 import { deliveriesResponse, hooksResponse, mailSettingsSchema, telegramSettingsSchema, templatesResponse as mailTemplatesResponse } from '../../src/admin/screens/system/schemas'
 import { assigneesSchema, macrosSchema, queueSchema, ticketDetailSchema } from '../../src/admin/screens/tickets/api'
-import { devicesSchema, planOptionsSchema, profileSchema, resetLogsSchema, resetStatsSchema, userDetailSchema, userGroupsSchema, usersSchema } from '../../src/admin/screens/users/api'
+import { devicesSchema, planOptionsSchema, profileSchema, userDetailSchema, userGroupsSchema, usersSchema } from '../../src/admin/screens/users/api'
 import { rawGet, runTable, state, type Row } from './harness'
 
 const s = state.seed
@@ -71,9 +71,6 @@ const rows: Row[] = [
   { at: 'users/api.ts', path: 'v1/users', query: { q: s.portal.email, limit: 100, offset: 0 }, schema: usersSchema },
   { at: 'users/api.ts', path: 'v1/plans', schema: planOptionsSchema },
   { at: 'users/api.ts', seed: '易支付回调开出订阅；nodesim 上报在线 IP', path: 'v1/devices', schema: devicesSchema },
-  { at: 'users/api.ts', seed: '后台 POST subscriptions/{id}/traffic-reset', path: 'v1/traffic-resets', query: { limit: 25, offset: 0 }, schema: resetLogsSchema },
-  { at: 'users/api.ts', path: 'v1/traffic-resets/stats', schema: resetStatsSchema },
-  { at: 'users/api.ts', seed: '后台 POST subscriptions/{id}/traffic-reset', path: `v1/users/${s.portal.user_id}/traffic-resets`, schema: resetLogsSchema },
 
   // ---- 营销 ----
   { at: 'marketing/queries.ts', path: 'v1/plans', schema: marketingPlansResponse },

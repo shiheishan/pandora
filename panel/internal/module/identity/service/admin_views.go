@@ -47,8 +47,6 @@ type AdminSub struct {
 	PlanMaxDevices      *int
 	// OnlineDevices 是在线设备数（计数口读失败时按 0）
 	OnlineDevices int
-	// PackRemainingBytes 是挂在这一份上的流量包余量
-	PackRemainingBytes int64
 }
 
 // AdminUserSubs 是一个用户的全部订阅。
@@ -57,8 +55,6 @@ type AdminUserSubs struct {
 	Subscriptions []AdminSub
 	// Current 是「当前订阅」（生效的优先，再到期晚的，再创建晚的），是 Subscriptions 里那一项的副本；没有订阅为 nil
 	Current *AdminSub
-	// UnattachedPackBytes 是还没加到任何一份的流量包余量
-	UnattachedPackBytes int64
 }
 
 // ---- 订单 ----

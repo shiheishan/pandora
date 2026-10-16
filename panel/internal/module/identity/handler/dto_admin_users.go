@@ -59,7 +59,6 @@ type admSubscriptionResponse struct {
 	DeviceLimitOverride *int               `json:"device_limit_override"`
 	PlanMaxDevices      *int               `json:"plan_max_devices"`
 	OnlineDevices       int                `json:"online_devices"`
-	PackRemainingBytes  int64              `json:"pack_remaining_bytes"`
 }
 
 // admOrderRowResponse 键与 order 模块 adminOrderRowResponse 完全相同。
@@ -161,7 +160,6 @@ func admSubscriptionFrom(cc *admCents, s service.AdminSub) admSubscriptionRespon
 		DeviceLimitOverride: s.DeviceLimitOverride,
 		PlanMaxDevices:      s.PlanMaxDevices,
 		OnlineDevices:       s.OnlineDevices,
-		PackRemainingBytes:  s.PackRemainingBytes,
 	}
 }
 

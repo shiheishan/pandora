@@ -89,6 +89,8 @@ func TestSetPlanPoolsDraftAndPublished(t *testing.T) {
 		t.Fatal(err)
 	}
 	rv := detail.RowVersion
+	// 建套餐时写线路也会推进一次名单纪元；这里只数改线路这一次
+	markBefore := g.markChanged
 	upd, err := e.svc.SetPlanPools(ctx, plan.ID, PoolsUpdate{
 		ExpectedRowVersion: rv,
 		PoolIDs:            []uuid.UUID{p2, p1},
@@ -103,8 +105,8 @@ func TestSetPlanPoolsDraftAndPublished(t *testing.T) {
 	if len(g.calls) != 1 || len(g.calls[0]) != 2 {
 		t.Fatalf("guard 锁池调用: %v", g.calls)
 	}
-	if g.markChanged != 1 {
-		t.Fatalf("MarkUsersChanged 期望 1，得到 %d", g.markChanged)
+	if n := g.markChanged - markBefore; n != 1 {
+		t.Fatalf("MarkUsersChanged 期望 1，得到 %d", n)
 	}
 	if n := poolCountAuditPlanPools(t, ctx, e, plan.ID); n != 1 {
 		t.Fatalf("审计 plan.pools_update 期望 1，得到 %d", n)
@@ -328,10 +330,21 @@ func TestCreatePlanWithPools(t *testing.T) {
 
 }
 
+// 用提交态：回滚态的用例整体在一个外层事务里，service 的 tx.Do 加入它而不是自己开事务，
+// 出错时不会回滚已插的套餐行，测不出「整笔回滚」。
 func TestCreatePlanWithoutGuardRollback(t *testing.T) {
-	e, ctx := newEnv(t)
+	e, ctx := newEnvCommitted(t)
 	ctx, _ = seedAdmin(t, ctx, e)
 	p1 := seedPool(t, ctx, e, "active")
+	// t.Cleanup 后进先出，这里先于删套餐执行：回滚真失败时先拆掉套餐对池的绑定（RESTRICT），免得多报一条清理错误
+	t.Cleanup(func() {
+		if err := e.exec(context.Background(), `DELETE FROM plan_node_pools WHERE pool_id = ?`, p1); err != nil {
+			t.Errorf("清理套餐线路: %v", err)
+		}
+		if err := e.exec(context.Background(), `DELETE FROM node_pools WHERE id = ?`, p1); err != nil {
+			t.Errorf("清理节点池: %v", err)
+		}
+	})
 	name := "无guard回滚" + uniqCode(t, "ng")
 	_, err := e.svc.CreatePlan(ctx, PlanCreate{
 		Kind: KindSubscription,
@@ -351,6 +364,10 @@ func TestCreatePlanWithoutGuardRollback(t *testing.T) {
 		t.Fatalf("无 guard 带池创建期望 503，得到 %v", err)
 	}
 	if n := scanInt64(t, ctx, e, `SELECT count(*) FROM plans WHERE name = ?`, name); n != 0 {
+		var leaked uuid.UUID
+		if err := e.row(ctx, `SELECT id FROM plans WHERE name = ?`, name).Scan(&leaked); err == nil {
+			e.plans = append(e.plans, leaked)
+		}
 		t.Fatal("创建失败应整笔回滚，不留套餐行")
 	}
 }
@@ -487,5 +504,75 @@ func TestPoolUsageOnSaleAndVersionIDs(t *testing.T) {
 		if b.PlanID == arch.ID && b.OnSale {
 			t.Fatal("归档套餐 OnSale 应为 false")
 		}
+	}
+}
+
+type fakePublishGate struct{ err error }
+
+func (f fakePublishGate) CheckPublishable(context.Context, uuid.UUID) error { return f.err }
+
+// 审查 1016-A1 应改 1：原来绑着的池后来停用了，改别的线路时它照样保留，guard 只检查新加的池。
+func TestSetPlanPoolsKeepsDisabledExisting(t *testing.T) {
+	e, ctx := newEnv(t)
+	ctx, _ = seedAdmin(t, ctx, e)
+	g := &fakePoolGuard{}
+	e.svc.UsePoolGuard(g)
+
+	old := seedPool(t, ctx, e, "active")
+	plan := publishedPlan(t, ctx, e, publishedPlanOpts{PoolIDs: []uuid.UUID{old}})
+	added := seedPool(t, ctx, e, "active")
+	g.calls = nil
+
+	detail, _ := e.svc.GetPlan(ctx, plan.ID)
+	upd, err := e.svc.SetPlanPools(ctx, plan.ID, PoolsUpdate{
+		ExpectedRowVersion: detail.RowVersion,
+		PoolIDs:            []uuid.UUID{old, added},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	poolEqualIDs(t, upd.PoolIDs, []uuid.UUID{old, added})
+	if len(g.calls) != 1 || len(g.calls[0]) != 1 || g.calls[0][0] != added {
+		t.Fatalf("guard 只应检查新加的池 %s，调用 %v", added, g.calls)
+	}
+}
+
+// 审查 1016-A1 应改 2：已发布的套餐改线路后要过上架检查；不过就整笔回滚，线路不变。
+func TestSetPlanPoolsPublishedRunsGate(t *testing.T) {
+	// 提交态：回滚态里 service 的 tx.Do 加入外层事务，出错时测不出整笔回滚（同 TestCreatePlanWithoutGuardRollback）
+	e, ctx := newEnvCommitted(t)
+	ctx, _ = seedAdmin(t, ctx, e)
+	e.svc.UsePoolGuard(&fakePoolGuard{})
+
+	p1 := seedPool(t, ctx, e, "active")
+	// 后进先出，先于删套餐执行：先拆套餐对池的绑定（RESTRICT）再删池
+	t.Cleanup(func() {
+		if err := e.exec(context.Background(), `DELETE FROM plan_node_pools WHERE pool_id = ?`, p1); err != nil {
+			t.Errorf("清理套餐线路: %v", err)
+		}
+		if err := e.exec(context.Background(), `DELETE FROM node_pools WHERE id = ?`, p1); err != nil {
+			t.Errorf("清理节点池: %v", err)
+		}
+	})
+	plan := publishedPlan(t, ctx, e, publishedPlanOpts{PoolIDs: []uuid.UUID{p1}})
+	e.svc.UsePublishGate(fakePublishGate{err: errs.Invalid(map[string]string{"pool_ids": "线路里没有可服务的节点"})})
+	t.Cleanup(func() { e.svc.UsePublishGate(nil) })
+
+	detail, _ := e.svc.GetPlan(ctx, plan.ID)
+	_, err := e.svc.SetPlanPools(ctx, plan.ID, PoolsUpdate{
+		ExpectedRowVersion: detail.RowVersion,
+		PoolIDs:            []uuid.UUID{},
+	})
+	if errCode(err) != errs.ValidationFailed {
+		t.Fatalf("已发布套餐清空线路期望 422，得到 %v", err)
+	}
+	detail, _ = e.svc.GetPlan(ctx, plan.ID)
+	poolEqualIDs(t, detail.PoolIDs, []uuid.UUID{p1})
+
+	// 草稿（没发布过）不过闸
+	draft := publishedPlan(t, ctx, e, publishedPlanOpts{Name: "草稿不过闸", Draft: true})
+	detail, _ = e.svc.GetPlan(ctx, draft.ID)
+	if _, err := e.svc.SetPlanPools(ctx, draft.ID, PoolsUpdate{ExpectedRowVersion: detail.RowVersion, PoolIDs: []uuid.UUID{}}); err != nil {
+		t.Fatalf("草稿改线路不应过上架检查：%v", err)
 	}
 }

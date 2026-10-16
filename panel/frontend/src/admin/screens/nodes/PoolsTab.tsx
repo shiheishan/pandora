@@ -35,7 +35,7 @@ export function PoolsTab() {
   return (
     <div className={css.stack}>
       <div className={x.bar}>
-        <span>节点池决定「谁能看到哪些节点」：节点归入节点池，套餐绑定节点池。</span>
+        <span>{pools.data ? `${pools.data.length} 个节点池 · 节点归入池，套餐绑定池` : '节点池'}</span>
         <span className={css.spacer} />
         <Button variant="primary" onClick={() => setEditing('new')}>
           新建节点池
@@ -92,7 +92,7 @@ export function PoolsTab() {
       <ConfirmModal
         open={removing !== null}
         title={`删除节点池「${removing?.name ?? ''}」？`}
-        body="删除后不能恢复。节点池下已经没有节点和套餐绑定；如果还有节点模板、配置发布记录或未用的安装令牌引用它，后端会拒绝并说明原因。"
+        body="删除后不能恢复。"
         confirmLabel="删除节点池"
         tone="danger"
         onConfirm={() => {
@@ -132,7 +132,7 @@ function PoolModal({ pool, onClose }: { pool: Pool | null; onClose: () => void }
   })
 
   const submit = () => {
-    if (!form.name.trim()) return setErrors({ name: '分组名必填' })
+    if (!form.name.trim()) return setErrors({ name: '名称必填' })
     setErrors({})
     if (!pool) return save.mutate(createPoolBody(form))
     const body = patchPoolBody(pool, form)
@@ -144,15 +144,15 @@ function PoolModal({ pool, onClose }: { pool: Pool | null; onClose: () => void }
     <Modal
       open
       onClose={onClose}
-      size="md"
-      title={pool ? `编辑节点池「${pool.name}」` : '新建节点池'}
+      size={440}
+      title={pool ? '编辑节点池' : '新建节点池'}
       actions={
         <>
           <Button size="dialog" variant="ghost" onClick={onClose}>
             取消
           </Button>
           <Button size="dialog" variant="primary" busy={save.isPending} onClick={submit}>
-            {pool ? '保存' : '创建'}
+            保存
           </Button>
         </>
       }
@@ -165,17 +165,16 @@ function PoolModal({ pool, onClose }: { pool: Pool | null; onClose: () => void }
           ) : (
             <Input label="标识（可选）" mono value={form.code} error={errors.code} disabled={save.isPending} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="留空由名称生成" />
           )}
-          <Input label="地区（可选）" value={form.region} disabled={save.isPending} onChange={(e) => setForm({ ...form, region: e.target.value })} placeholder="如 APAC" />
+          <Input label="备注（可选）" value={form.region} disabled={save.isPending} onChange={(e) => setForm({ ...form, region: e.target.value })} placeholder="如 APAC" />
           {pool && <Select label="状态" value={form.status} disabled={save.isPending} onChange={(e) => setForm({ ...form, status: e.target.value as PoolStatus })} options={POOL_STATUSES.map((v) => ({ value: v, label: POOL_STATUS[v].label }))} />}
         </div>
-        <div className={css.faint}>{pool ? '标识创建后不能改；名称与地区只能改成别的值，不能清空。' : '标识给接口与脚本用，创建后不能改。新建的节点池一律是启用状态。'}</div>
         <PoolGroups
           picked={form.groupIds}
           disabled={save.isPending}
           error={errors.allowed_user_group_ids}
           onChange={(ids) => setForm({ ...form, groupIds: ids })}
         />
-        {groupsTouched && <div className={css.faint}>改动「仅限用户组」会改变谁能用这组节点，保存时需要重新验证身份。</div>}
+        {groupsTouched && <div className={css.faint}>改动仅限用户组需要重新验证身份。</div>}
       </div>
     </Modal>
   )
@@ -206,7 +205,6 @@ function PoolGroups({ picked, disabled, error, onChange }: { picked: readonly st
           ))}
         </div>
       )}
-      <span className={css.faint}>限定后只有名单里的用户组能用这个节点池；未分组（默认）的用户用不了任何限定了用户组的节点池。</span>
       {error && (
         <span className={x.fieldError} role="alert">
           {error}

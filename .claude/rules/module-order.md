@@ -10,7 +10,7 @@ paths:
 
 - 锁序（防死锁 40P01）：
   - 结算主链：订单行（`OrderByID` 锁行）→ 订阅（`subs.Lock`，续费/换套餐/叠加/流量重置）→ 预留确认（`captureReservation` 锁券）→ 记账（`postSettlement`，经 `lockAccounts` 稳定顺序锁科目）→ 订单状态（`markPaid`）→ `PaidHook` → 履约（`fulfil`）。
-  - 建单主链：新购锁套餐行（`catalog.Offer`）；续费/叠加/流量重置锁订阅；换套餐建单先锁订阅（`subs.Lock`）；再调 `promo.Reserve` / `ledger.HoldForOrder`，最后插订单。取消/超时释放先锁订单行。门户各建单事务与后台开单（`requireUser`）的第一步是 `rejectDeleted`（identity `IsDeleted`，给用户行加共享锁），已注销 409「账号已注销」。后台调账 `AdjustBalance` 对已注销账号只拒加钱，扣减照常（仍要原因、重认证、审计），用于线下退款后冲平留在账号上的余额（注销前的余额、注销时释放的冻结、注销后转入的迟到付款）。
+  - 建单主链：新购锁套餐行（`catalog.Offer`）；续费/叠加/流量重置锁订阅；换套餐建单先锁订阅（`subs.Lock`）；带券时先 `promo.Lock` 把券行锁成 FOR UPDATE，再插订单，再 `promo.Reserve`（同一行，重入）与 `ledger.HoldForOrder`。先锁券是防死锁：插订单时 coupon_id 外键检查给券行加 KEY SHARE，若之后才升级成 FOR UPDATE，同券并发建单会互等（40P01）；10-16 去掉库存后新购的套餐行只是共享锁，挡不住同套餐并发。取消/超时释放先锁订单行。门户各建单事务与后台开单（`requireUser`）的第一步是 `rejectDeleted`（identity `IsDeleted`，给用户行加共享锁），已注销 409「账号已注销」。后台调账 `AdjustBalance` 对已注销账号只拒加钱，扣减照常（仍要原因、重认证、审计），用于线下退款后冲平留在账号上的余额（注销前的余额、注销时释放的冻结、注销后转入的迟到付款）。
   - 注销账号：identity 在注销事务里锁用户行后先调 commission 的 `LockForDeletion`（拿 `LockUser` 咨询锁），再调 `CancelUserPending`（`service/cancel.go`），按 id 升序锁该用户全部待付单逐张 `releaseOrder`（原因 `ReasonAccountDeleted`，作废在途支付意图），之后到的回调按 `CaseReleasedOrder` 挂账；停完订阅后调 commission 的 `VoidForDeletedUser`（见下面「注销作废」）。咨询锁要在释放冻结之前拿：释放会锁他的余额科目，转余额是拿着咨询锁与可提现佣金再等余额，反过来就互等。
   - 发起支付（`Pay`）：事务里锁订单行、核对可付，调 `payments.BeginIntent` 占住意图后提交；`payments.CompleteIntent` 在事务外调（渠道可能联网，不占库连接和订单锁）。`/orders/:id/pay` 按账号每分钟 10 次（`PayPerMinute`，键 `order_pay`）。
   - 余额全额支付走 `CaptureFromBalance`：用户余额、冻结、收入三科目按 ID 升序一次锁完，冻结直出 captured，不要分步锁。
@@ -27,7 +27,7 @@ paths:
   - 库里恒等式 `total = greatest(subtotal − discount − proration_credit, 0) − waived`；`OrderTotal` 只算前半段，`waived` 由调用方另减。`proration_credit` 仅 upgrade 单非零。
   - 券只按套餐限定（`promosvc.Target{UserID, PlanID, Subtotal}`）；新购、续费、叠加、换套餐给套餐 id；充值与流量重置不用券。
   - 续费只许订阅套餐（catalog `UseRenewal` 拒一次性与已归档）；续费单的订单行记套餐当前版本，提前续费由配额滚动在新周期开始时切过去，过期恢复当场切。
-  - 换套餐剩余价值（`proration.go`，可以跨类型）：原订阅是订阅套餐 `= 本周期付费合计 × 剩余付费时间比`（付费天数先用、赠天最后用，不看流量）；是一次性套餐 `= 本周期付费合计（含叠加单）× min(剩余天数比, 剩余流量比)`，永久的天数比按 1、不限流量的流量比按 1、送的量不计入。向零截断到分，比值交叉相乘。
+  - 换套餐剩余价值（`proration.go`，可以跨类型）：原订阅是订阅套餐 `= 本周期付费合计 × 剩余付费时间比`（付费天数先用、赠天最后用，不看流量）；是一次性套餐 `= 本周期付费合计（含叠加单）× min(剩余付费天数比, 剩余付费流量比)`：天数与流量都只算付费单买下的（天数 = 各付费单价格有效天数之和，流量 = 各付费单订单行快照的 total 流量之和），礼品卡叠加送的天数最后用、送的流量不进上限、已用量全记在付费上；付费买下永久的天数比按 1，送成永久的仍按付费天数；不限流量的流量比按 1。向零截断到分，比值交叉相乘。
   - 余额抵扣 `PlanBalance`；换套餐零头免除 `WaiveSmallDue`（仅 upgrade 单，上限 99 分，单独记 `waived_amount`，不并入券折扣）。
 - 换套餐与购买落点：
   - 同一订阅同时只许一张未完结的续费、叠加或变更单（库约束 `orders_one_open_subscription_change` 覆盖 renewal、upgrade、stack，建单先拦截回 409 `ErrOpenChange`）。
@@ -39,7 +39,7 @@ paths:
     订单行是第三种形状：套餐与订阅当时的版本，没有价格档与周期，名字「流量重置 · <套餐名>」。同一订阅同时只许一张未完结的重置单（`orders_one_open_traffic_reset`；建单与报价先查回 `order_pending`，撞索引回 `errOpenReset`）。
     永远按原价收（用户 10-14 定）：不收券。`place` 对重置单带券码直接回 rejection `promosvc.ErrCouponNotForReset`（不调 Evaluate），报价带券码落 `coupon_error`、`discount` 为 0；库约束 `orders_traffic_reset_no_discount`（重置单 `discount_amount = 0` 且 `coupon_id` 为空）兜底。可用余额：余额全额抵扣时应付为 0，照样走 `settleZeroPay` 当场履约（这条路不是只为折扣存在，保留）。
     履约调 `subs.ResetTraffic`（原因 `subsvc.ResetOrder`，备注订单号，`At` 传结算时刻，与 `resetPayable` 判生效用同一个 now；写重置日志、通知节点名单）。佣金照现有口径（非充值、总额 > 0 的收款单计佣），基数即原价。
-    插件事件与叠加单同口径：发 `order.created`、应付为 0（余额全额）的单发 `order.paid`，不发 `subscription.provisioned`。付款后给管理员群组发收款提醒、不给用户发支付成功通知（见 module-notify）。
+    插件事件：发 `order.created`、应付为 0（余额全额）的单发 `order.paid`，不发 `subscription.provisioned`（重置不改到期；叠加单顺延到期，按续期发 `subscription.provisioned`）。付款后给管理员群组发收款提醒、不给用户发支付成功通知（见 module-notify）。
   - 后台开单落点由人选（`planPlacements` / `candidatesFrom` 最多 50 份，生效中优先、新的优先）：同款订阅套餐是续费、同款一次性是叠加（`PlacementStack`），换掉生效中的永不自动默认。
   - 人工开单（`CreateManualOrder`）：原因必填 5–500 字，审计 `order.manual_created`；结算方式收 `grant`（赠送履约）、`pending`、`offline`（同一事务调 `RecordOffline`），不接受 `balance`。
 - 账本与佣金：

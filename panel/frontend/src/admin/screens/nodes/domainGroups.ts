@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 // ---------------------------------------------------------------------------
-// 订阅域名分组：schema 与纯函数。校验文案与后端（sd-spec「校验文案」）逐字一致。
+// 订阅域名：schema 与平铺列表用的纯函数（添加 / 移除仍走整份 PUT）。
 // ---------------------------------------------------------------------------
 
 /** GET / PUT v1/subscription-domains 的响应（PUT 回保存后的最新配置） */
@@ -37,54 +37,6 @@ export const userGroupOptionsSchema = z.object({
 })
 export type UserGroupOptions = z.output<typeof userGroupOptionsSchema>
 
-// ---------------------------------------------------------------------------
-// 表单（编辑稿）
-// ---------------------------------------------------------------------------
-
-export interface DomainRowForm {
-  baseUrl: string
-  weight: string
-}
-
-export interface GroupForm {
-  /** 只给 React 列表用：已有组用 id，新组用 new-<递增数字> */
-  key: string
-  name: string
-  isDefault: boolean
-  domains: DomainRowForm[]
-  userGroupIds: string[]
-}
-
-export function formFrom(cfg: DomainConfig): GroupForm[] {
-  return cfg.groups.map((g) => ({
-    key: g.id,
-    name: g.name,
-    isDefault: g.is_default,
-    domains: g.domains.map((d) => ({ baseUrl: d.base_url, weight: String(d.weight) })),
-    userGroupIds: [...g.user_group_ids],
-  }))
-}
-
-/** 新建一组的初值：没有缺省组时它就是缺省；带一个空域名行（权重 1） */
-export function newGroup(existing: GroupForm[]): GroupForm {
-  let n = 0
-  for (const g of existing) {
-    const m = /^new-(\d+)$/.exec(g.key)
-    if (m) n = Math.max(n, Number(m[1]))
-  }
-  return {
-    key: `new-${n + 1}`,
-    name: '',
-    isDefault: !existing.some((g) => g.isDefault),
-    domains: [{ baseUrl: '', weight: '1' }],
-    userGroupIds: [],
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 保存：前端能做的校验 + 请求体（整份替换，规范化与重复地址等交给后端）
-// ---------------------------------------------------------------------------
-
 export interface DomainGroupBody {
   name: string
   is_default: boolean
@@ -92,71 +44,139 @@ export interface DomainGroupBody {
   user_group_ids: string[]
 }
 
-// 检查顺序与后端一致：组数 → 各组名称 → 缺省组 → 各组域名 → 用户组重复
-export function bodyFrom(
-  form: GroupForm[],
-  limits: DomainConfig['limits'],
-): { body: { groups: DomainGroupBody[] } } | { error: string } {
-  if (form.length > limits.groups) return { error: `订阅域名组最多 ${limits.groups} 个` }
-
-  const seenNames: string[] = []
-  for (let i = 0; i < form.length; i++) {
-    const name = form[i]!.name.trim()
-    if (!name) return { error: `第 ${i + 1} 组：名称不能为空` }
-    if ([...name].length > 40) return { error: `第 ${i + 1} 组：名称最多 40 个字` }
-    const dupAt = seenNames.indexOf(name)
-    if (dupAt >= 0) return { error: `第 ${i + 1} 组：名称和第 ${dupAt + 1} 组重复` }
-    seenNames.push(name)
-  }
-
-  if (form.filter((g) => g.isDefault).length > 1) return { error: '只能有一个缺省组' }
-
-  const assigned = new Set<string>()
-  const out: DomainGroupBody[] = []
-  for (let i = 0; i < form.length; i++) {
-    const g = form[i]!
-    // 全空（地址为空白）的域名行忽略不计
-    const domains: Array<{ base_url: string; weight: number }> = []
-    for (let k = 0; k < g.domains.length; k++) {
-      const row = g.domains[k]!
-      const baseUrl = row.baseUrl.trim()
-      if (!baseUrl) continue
-      if (!baseUrl.toLowerCase().startsWith('https://')) {
-        return { error: `第 ${i + 1} 组第 ${k + 1} 个域名：必须以 https:// 开头` }
-      }
-      const weight = row.weight.trim()
-      const n = Number(weight)
-      if (!/^[0-9]+$/.test(weight) || n < 1 || n > limits.weight_max) {
-        return { error: `第 ${i + 1} 组第 ${k + 1} 个域名：权重必须是 1–${limits.weight_max} 的整数` }
-      }
-      domains.push({ base_url: baseUrl, weight: n })
-    }
-    if (domains.length === 0) return { error: `第 ${i + 1} 组：至少要有一个域名` }
-    if (domains.length > limits.domains_per_group) {
-      return { error: `第 ${i + 1} 组：域名最多 ${limits.domains_per_group} 个` }
-    }
-
-    for (const id of g.userGroupIds) {
-      if (assigned.has(id)) return { error: '同一个用户组只能分到一个域名组' }
-      assigned.add(id)
-    }
-
-    out.push({ name: g.name.trim(), is_default: g.isDefault, domains, user_group_ids: [...g.userGroupIds] })
-  }
-
-  return { body: { groups: out } }
+export interface DomainRow {
+  groupId: string
+  host: string
+  baseUrl: string
+  scope: string
 }
 
-// ---------------------------------------------------------------------------
-// 展示
-// ---------------------------------------------------------------------------
+const HOST_RE = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/
+const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/
 
-/** 有效权重的说明文字；分数读不到时只说基础权重。数字按后端给的原样 */
-export function effectiveText(
-  d: { weight: number; score: number; effective_weight: number },
-  scoresAvailable: boolean,
+/** 由 base_url 取 host（去 https:// 与结尾 /） */
+export function hostOf(baseUrl: string): string {
+  return baseUrl.trim().toLowerCase().replace(/^https:\/\//, '').replace(/\/+$/, '')
+}
+
+/** 输入 → host；不合法返回 null */
+export function parseHost(input: string): string | null {
+  let s = input.trim().toLowerCase()
+  s = s.replace(/^https:\/\//, '').replace(/\/+$/, '')
+  if (s.includes(':') || s.includes('/') || s.includes('?') || s.includes('#')) return null
+  if (!HOST_RE.test(s) || IPV4_RE.test(s)) return null
+  return s
+}
+
+function userGroupNames(ids: string[], userGroups: ReadonlyArray<{ id: string; name: string }>): string {
+  return ids.map((id) => userGroups.find((g) => g.id === id)?.name ?? '已删除的用户组').join('、')
+}
+
+/** 组的作用范围文案（与平铺列表一致） */
+export function scopeForGroup(
+  g: DomainConfig['groups'][number],
+  allGroups: DomainConfig['groups'],
+  userGroups: ReadonlyArray<{ id: string; name: string }>,
 ): string {
-  return scoresAvailable
-    ? `当前有效权重 ${d.effective_weight}（基础 ${d.weight} × 分数 ${d.score}）`
-    : `当前按基础权重 ${d.weight}（暂时读不到分数）`
+  const names = userGroupNames(g.user_group_ids, userGroups)
+  const hasIds = g.user_group_ids.length > 0
+  if (g.is_default) {
+    if (!hasIds) return allGroups.length === 1 ? '所有用户' : '其余用户'
+    return `${names}与其余用户`
+  }
+  if (!hasIds) return '未分配用户组（不会用到）'
+  return `仅 ${names}`
+}
+
+/** 平铺：按组顺序展开，作用范围取所在组的用户组 */
+export function flattenDomains(cfg: DomainConfig, userGroups: ReadonlyArray<{ id: string; name: string }>): DomainRow[] {
+  const rows: DomainRow[] = []
+  for (const g of cfg.groups) {
+    const scope = scopeForGroup(g, cfg.groups, userGroups)
+    for (const d of g.domains) {
+      rows.push({ groupId: g.id, host: hostOf(d.base_url), baseUrl: d.base_url, scope })
+    }
+  }
+  return rows
+}
+
+/** 现有配置 → PUT 体（原样带回 name / is_default / weight / user_group_ids） */
+export function toBody(cfg: DomainConfig): { groups: DomainGroupBody[] } {
+  return {
+    groups: cfg.groups.map((g) => ({
+      name: g.name,
+      is_default: g.is_default,
+      domains: g.domains.map((d) => ({ base_url: d.base_url, weight: d.weight })),
+      user_group_ids: [...g.user_group_ids],
+    })),
+  }
+}
+
+function allHosts(cfg: DomainConfig): Set<string> {
+  const set = new Set<string>()
+  for (const g of cfg.groups) {
+    for (const d of g.domains) set.add(hostOf(d.base_url))
+  }
+  return set
+}
+
+function uniqueDefaultName(existingNames: string[]): string {
+  const used = new Set(existingNames)
+  if (!used.has('缺省')) return '缺省'
+  for (let n = 2; n < 1000; n++) {
+    const name = `缺省 ${n}`
+    if (!used.has(name)) return name
+  }
+  return '缺省'
+}
+
+/** 加一个域名；返回新 PUT 体或错误文案 */
+export function addDomainBody(
+  cfg: DomainConfig,
+  input: string,
+): { body: { groups: DomainGroupBody[] }; host: string } | { error: string } {
+  const host = parseHost(input)
+  if (!host) return { error: '填一个域名，如 sub.example.com' }
+  if (allHosts(cfg).has(host)) return { error: '这个域名已经在列表里' }
+
+  const baseUrl = `https://${host}`
+  const limits = cfg.limits
+  const body = toBody(cfg)
+  const defaultIdx = body.groups.findIndex((g) => g.is_default)
+
+  if (defaultIdx >= 0) {
+    const g = body.groups[defaultIdx]!
+    if (g.domains.length >= limits.domains_per_group) {
+      return { error: `缺省组最多 ${limits.domains_per_group} 个域名` }
+    }
+    g.domains.push({ base_url: baseUrl, weight: 1 })
+    return { body, host }
+  }
+
+  if (body.groups.length >= limits.groups) {
+    return { error: `订阅域名组最多 ${limits.groups} 个` }
+  }
+  const name = uniqueDefaultName(body.groups.map((g) => g.name))
+  body.groups.push({ name, is_default: true, domains: [{ base_url: baseUrl, weight: 1 }], user_group_ids: [] })
+  return { body, host }
+}
+
+/** 移除一个域名；dropsGroup 为真表示这是该组最后一个，组一起删 */
+export function removeDomainBody(
+  cfg: DomainConfig,
+  groupId: string,
+  baseUrl: string,
+): { body: { groups: DomainGroupBody[] }; dropsGroup: boolean; groupName: string } {
+  const src = cfg.groups.find((g) => g.id === groupId)
+  const groupName = src?.name ?? ''
+  const body = toBody(cfg)
+  const idx = body.groups.findIndex((_g, i) => cfg.groups[i]?.id === groupId)
+  if (idx < 0) return { body, dropsGroup: false, groupName }
+
+  const g = body.groups[idx]!
+  const nextDomains = g.domains.filter((d) => d.base_url !== baseUrl)
+  const dropsGroup = nextDomains.length === 0
+  if (dropsGroup) body.groups.splice(idx, 1)
+  else g.domains = nextDomains
+  return { body, dropsGroup, groupName }
 }

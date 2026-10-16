@@ -1,22 +1,18 @@
 import { useState, type ReactNode } from 'react'
-import { Button, Input, Modal, Select, Tag, TextArea, useToast } from '../../../ui'
-import { OUTBOUND_TYPES, outboundToRow, renameOutbound, routeToRow, rowsToOutbounds, rowsToRoutes, rulesUsing, type OutboundRow, type RuleRow } from './logic'
-import { RuleRows } from './NodeRouting'
-import x from './infra.module.css'
-import css from './nodes.module.css'
+import { Button, Input, Select, TextArea, useToast } from '../../../ui'
+import { OUTBOUND_TYPES, outboundToRow, routeToRow, rowsToOutbounds, rowsToRoutes, rulesUsing, type OutboundRow, type RuleRow } from './logic'
+import { AddRuleButton, RuleRows } from './NodeRouting'
+import css from './routing.module.css'
+import n from './nodes.module.css'
 import type { Outbound, Route } from './schemas'
+import { outboundAddress } from './routing'
 
 export interface RoutingPayload {
   outbounds: Array<{ tag: string; type: string; settings: unknown }>
   routes: ReturnType<typeof rowsToRoutes>['routes']
 }
 
-interface Editing {
-  /** null = 新增 */
-  index: number | null
-  row: OutboundRow
-  error: string | null
-}
+const emptyDraft = (): OutboundRow => ({ tag: '', type: 'trojan', settings: '' })
 
 export function ScopeRoutingEditor({
   outbounds: initialOutbounds,
@@ -27,6 +23,7 @@ export function ScopeRoutingEditor({
   busy,
   formError,
   publishLabel,
+  actions,
   onSubmit,
 }: {
   outbounds: readonly Outbound[]
@@ -38,6 +35,8 @@ export function ScopeRoutingEditor({
   busy: boolean
   formError: string | null
   publishLabel: string
+  /** 发布行最右侧的按钮（路由组的「改名」「删除路由组」） */
+  actions?: ReactNode
   onSubmit: (payload: RoutingPayload) => void
 }) {
   const toast = useToast()
@@ -46,7 +45,9 @@ export function ScopeRoutingEditor({
   const [outbounds, setOutbounds] = useState<OutboundRow[]>(initial.outbounds)
   const [ruleErrors, setRuleErrors] = useState<Record<number, string>>({})
   const [outErrors, setOutErrors] = useState<Record<number, string>>({})
-  const [editing, setEditing] = useState<Editing | null>(null)
+  const [adding, setAdding] = useState(false)
+  const [draft, setDraft] = useState<OutboundRow>(emptyDraft)
+  const [draftError, setDraftError] = useState<string | null>(null)
   const dirty = JSON.stringify({ rules, outbounds }) !== JSON.stringify(initial)
 
   const own = outbounds.filter((o) => o.tag.trim()).map((o): [string, string] => [o.tag.trim(), `${o.tag.trim()} · ${o.type}`])
@@ -70,112 +71,116 @@ export function ScopeRoutingEditor({
     setOutErrors({})
   }
 
-  const saveOutbound = (e: Editing) => {
-    const next = e.index === null ? [...outbounds, e.row] : outbounds.map((o, j) => (j === e.index ? e.row : o))
-    const at = e.index ?? next.length - 1
+  /** 就地表单提交：新行拼到最后，用 rowsToOutbounds 校验那一行，没错才收起 */
+  const addOutbound = () => {
+    const next = [...outbounds, draft]
+    const at = next.length - 1
     const error = rowsToOutbounds(next).errors[at]
-    if (error) return setEditing({ ...e, error })
-    if (e.index !== null) setRules(renameOutbound(rules, outbounds[e.index]!.tag, e.row.tag))
+    if (error) return setDraftError(error)
     setOutbounds(next.map((o, j) => (j === at ? { ...o, tag: o.tag.trim() } : o)))
     setOutErrors({})
-    setEditing(null)
+    setDraft(emptyDraft())
+    setDraftError(null)
+    setAdding(false)
+  }
+
+  /** 出站行的地址列：settings 是 JSON 文本，先解析；解析失败按没有地址显示 */
+  const addressOf = (o: OutboundRow) => {
+    try {
+      return outboundAddress(JSON.parse(o.settings))
+    } catch {
+      return '—'
+    }
   }
 
   return (
-    <div className={x.routing}>
-      <section className={x.routingPanel} aria-label="分流规则">
-        <div className={x.panelHead}>
-          <h3 className={x.panelTitle}>分流规则</h3>
-          <span className={css.faint}>{ruleHint}</span>
+    <div className={css.page}>
+      <section className={css.section} aria-label="出站">
+        <div className={css.sectionHead}>
+          <h3 className={css.sectionTitle}>出站</h3>
+          <Button size="sm" disabled={busy} onClick={() => (setDraft(emptyDraft()), setDraftError(null), setAdding(true))}>
+            添加出站
+          </Button>
         </div>
-        <div className={x.panelBody}>
-          <RuleRows rows={rules} errors={ruleErrors} outbounds={tags} disabled={busy} onChange={setRules} emptyHint={emptyHint} />
-        </div>
-      </section>
-
-      <section className={x.routingPanel} aria-label="出站">
-        <div className={x.panelHead}>
-          <h3 className={x.panelTitle}>出站</h3>
-        </div>
-        <div className={x.panelBody}>
-          <div>
-            <div className={x.builtin}>
-              <span className={x.builtinName}>直连</span>
-              <span className={`${css.mono} ${css.faint}`}>direct</span>
-              <Tag tone="neutral">内置</Tag>
-            </div>
-            <div className={x.builtin}>
-              <span className={x.builtinName}>拦截</span>
-              <span className={`${css.mono} ${css.faint}`}>block</span>
-              <Tag tone="neutral">内置</Tag>
-            </div>
-            {outbounds.map((o, i) => (
+        <div className={css.rows}>
+          <div className={css.row}>
+            <span className={css.tag} title="direct">direct</span>
+            <span className={css.type}>直连</span>
+            <span className={css.address}>—</span>
+            <span className={css.builtinText}>内置</span>
+          </div>
+          <div className={css.row}>
+            <span className={css.tag} title="block">block</span>
+            <span className={css.type}>拦截</span>
+            <span className={css.address}>—</span>
+            <span className={css.builtinText}>内置</span>
+          </div>
+          {outbounds.map((o, i) => {
+            const referred = rulesUsing(rules, o.tag.trim()) > 0
+            return (
               <div key={i}>
-                <div className={x.builtin}>
-                  <span className={`${x.builtinName} ${css.mono}`} title={o.tag}>
-                    {o.tag}
-                  </span>
-                  <span className={`${css.mono} ${css.faint}`}>{o.type}</span>
-                  <Button size="xs" variant="ghost" disabled={busy} aria-label={`编辑出站 ${o.tag}`} onClick={() => setEditing({ index: i, row: o, error: null })}>
-                    编辑
-                  </Button>
-                  <Button size="xs" variant="ghost" disabled={busy} aria-label={`移除出站 ${o.tag}`} onClick={() => removeOutbound(i)}>
-                    移除
+                <div className={css.row}>
+                  <span className={css.tag} title={o.tag}>{o.tag}</span>
+                  <span className={css.type}>{o.type}</span>
+                  <span className={css.address}>{addressOf(o)}</span>
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    disabled={busy}
+                    className={referred ? css.referred : undefined}
+                    aria-label={`删除出站 ${o.tag}`}
+                    onClick={() => removeOutbound(i)}
+                  >
+                    删除
                   </Button>
                 </div>
-                {outErrors[i] && <div className={x.outErr}>{outErrors[i]}</div>}
+                {outErrors[i] && <div className={n.errorBox}>{outErrors[i]}</div>}
               </div>
-            ))}
-          </div>
-          <div>
-            <Button size="sm" disabled={busy} onClick={() => setEditing({ index: null, row: { tag: '', type: 'trojan', settings: '{}' }, error: null })}>
-              ＋ 添加出站
-            </Button>
-          </div>
-        </div>
-        <div className={x.publish}>
-          {formError && <div className={`${css.errorBox} ${x.dirty}`}>{formError}</div>}
-          {dirty && <div className={x.dirty}>有未发布的修改，发布后才会下发。</div>}
-          <Button variant="primary" className={x.publishButton} busy={busy} onClick={submit}>
-            {publishLabel}
-          </Button>
+            )
+          })}
+          {adding && (
+            <div className={css.addForm}>
+              <Input label="标签" mono value={draft.tag} error={draftError?.startsWith('settings') ? undefined : (draftError ?? undefined)} placeholder="如 US-LAX-01" onChange={(e) => setDraft({ ...draft, tag: e.target.value })} />
+              <Select label="类型" value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value })} options={OUTBOUND_TYPES.map((t) => ({ value: t, label: t }))} />
+              <div className={css.addSettings}>
+                <TextArea
+                  label="settings（JSON）"
+                  mono
+                  rows={4}
+                  value={draft.settings}
+                  error={draftError?.startsWith('settings') ? draftError : undefined}
+                  fieldClassName={n.span2}
+                  placeholder='{"server": "proxy.example.com", "server_port": 443}'
+                  onChange={(e) => setDraft({ ...draft, settings: e.target.value })}
+                />
+              </div>
+              <div className={css.addActions}>
+                <Button size="sm" onClick={addOutbound}>添加</Button>
+                <Button size="sm" variant="ghost" onClick={() => (setAdding(false), setDraftError(null))}>取消</Button>
+              </div>
+            </div>
+          )}
         </div>
       </section>
-      {editing && <OutboundModal editing={editing} onChange={setEditing} onSave={saveOutbound} onClose={() => setEditing(null)} />}
-    </div>
-  )
-}
 
-function OutboundModal({ editing, onChange, onSave, onClose }: { editing: Editing; onChange: (e: Editing) => void; onSave: (e: Editing) => void; onClose: () => void }) {
-  const row = editing.row
-  const settingsError = editing.error?.startsWith('settings') ? editing.error : undefined
-  const set = (patch: Partial<OutboundRow>) => onChange({ ...editing, row: { ...row, ...patch }, error: null })
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      size="md"
-      title={editing.index === null ? '添加出站' : `编辑出站 ${row.tag}`}
-      eyebrow="在本地修改，发布后生效"
-      actions={
-        <>
-          <Button size="dialog" variant="ghost" onClick={onClose}>
-            取消
-          </Button>
-          <Button size="dialog" variant="primary" onClick={() => onSave(editing)}>
-            {editing.index === null ? '添加' : '完成'}
-          </Button>
-        </>
-      }
-    >
-      <div className={css.stack}>
-        <div className={css.grid2}>
-          <Input label="标签" mono value={row.tag} error={settingsError ? undefined : (editing.error ?? undefined)} onChange={(e) => set({ tag: e.target.value })} placeholder="如 US-LAX-01" />
-          <Select label="类型" value={row.type} onChange={(e) => set({ type: e.target.value })} options={OUTBOUND_TYPES.map((t) => ({ value: t, label: t }))} />
-          <TextArea label="settings（JSON）" mono rows={6} value={row.settings} error={settingsError} fieldClassName={css.span2} onChange={(e) => set({ settings: e.target.value })} />
+      <section className={css.section} aria-label="规则">
+        <div className={css.sectionHead}>
+          <h3 className={css.sectionTitle}>规则</h3>
+          <AddRuleButton rows={rules} disabled={busy} onChange={setRules} />
         </div>
-        <div className={css.faint}>改标签时，指向它的规则会一起改过去。</div>
+        <p className={css.sectionHint}>{ruleHint}</p>
+        <RuleRows rows={rules} errors={ruleErrors} outbounds={tags} disabled={busy} onChange={setRules} emptyHint={emptyHint} inlineAdd={false} />
+      </section>
+
+      {formError && <div className={n.errorBox}>{formError}</div>}
+      <div className={css.publishRow}>
+        <Button variant="primary" busy={busy} disabled={!dirty} onClick={submit}>
+          {publishLabel}
+        </Button>
+        {dirty && <span className={css.dirtyNote}>有未发布的修改</span>}
+        <span className={css.spacer} />
+        {actions}
       </div>
-    </Modal>
+    </div>
   )
 }

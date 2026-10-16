@@ -175,8 +175,6 @@ type UserDetail struct {
 	PaidTotal  decimal.Decimal
 	OrderCount int64
 	Telegram   *TelegramRef
-	// UnattachedPackBytes 是还没加到任何一份的流量包余量
-	UnattachedPackBytes int64
 }
 
 // Group 是后台用户组列表的一行。

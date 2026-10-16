@@ -22,17 +22,21 @@ export interface Sub {
   plan_name: string
   plan_version: number
   status: SubStatus
+  kind?: 'subscription' | 'one_time'
   current_period_start: string | null
   current_period_end: string | null
   amount: number
+  /** 订单与收款假后端还在读，那边改完后删 */
   currency: string
   traffic_limit: number | null
   traffic_used: number
   device_limit_override: number | null
   plan_max_devices: number | null
   online_devices: number
-  /** 挂在这一份上的流量包余量（字节）：流量包按订阅挂 */
+  /** 订单与收款假后端还在读，那边改完后删 */
   pack_bytes: number
+  /** 本期送的量，缺省 0 */
+  bonus_bytes?: number
   created_at: string
   /** 只用于 q 反查，永不出现在响应里（保留规则 2） */
   token: string
@@ -49,9 +53,10 @@ export interface User {
   last_login_at: string | null
   email_verified: boolean
   balance: number
+  /** 订单与收款假后端还在读，那边改完后删 */
   currency: string
   subs: Sub[]
-  /** 还没加到任何一份的流量包余量（字节）：无订阅时兑的送流量卡 */
+  /** 还没加到任何一份的流量包余量（字节）：订单与收款假后端还在读，那边改完后删 */
   unattached_bytes: number
   referrer: string | null
   telegram: { username: string; bound_at: string } | null
@@ -165,19 +170,69 @@ for (let i = 2; i < users.length; i += 4) users[i]!.referrer = users[0]!.id
 
 // ---------------------------------------------------------------------------
 // 落点演示数据（购买模型统一）：固定 id 的种子用户里布置「多份订阅」，后台开单的落点、
-// 订阅行上的按份操作才有东西可点。只改备注名、流量包与一条同款订阅，其余沿用上面的确定性生成
+// 订阅行上的按份操作才有东西可点。只改备注名与一条同款订阅，其余沿用上面的确定性生成
 // ---------------------------------------------------------------------------
 // 第 2 位（…02）：专业版 + 体验版，两份都在用、不同款。开别的套餐时没有默认落点
 const duo = users[1]!.subs
 if (duo.length === 2) {
   duo[0]!.label = '我的手机'
-  duo[0]!.pack_bytes = 30 * GiB
   duo[1]!.label = '妈妈的 iPad'
 }
-// 两份不同款都在用时兑的送流量卡不会自动挂：第 2 位还有 5 GiB 未分配，要用户在门户里选一份
-users[1]!.unattached_bytes = 5 * GiB
-// 第 7 位（没有订阅）：兑过一张送流量卡，20 GiB 未分配；人工开第一份订阅时自动挂上
-users[6]!.unattached_bytes = 20 * GiB
+// 第 3 位（…03）：加一份一次性套餐（流量畅用 500G，永久）
+const user3 = users[2]!
+const user3Start = Date.now() - 20 * DAY
+const user3End = new Date(user3Start)
+user3End.setFullYear(user3End.getFullYear() + 100)
+user3.subs.push({
+  id: randomUUID(),
+  label: null,
+  plan_id: PLAN_IDS[0]!,
+  plan_name: '流量畅用 500G',
+  plan_version: 1,
+  status: 'active',
+  kind: 'one_time',
+  current_period_start: new Date(user3Start).toISOString(),
+  current_period_end: user3End.toISOString(),
+  amount: 9900,
+  currency: 'CNY',
+  traffic_limit: 500 * GiB,
+  traffic_used: 120 * GiB,
+  device_limit_override: null,
+  plan_max_devices: 3,
+  online_devices: 1,
+  pack_bytes: 0,
+  bonus_bytes: 0,
+  created_at: new Date(user3Start - DAY).toISOString(),
+  token: 'tk002ot',
+})
+
+// 第 4 位（…04）：加一份一次性套餐（短期 100G，有效 30 天）
+const user4 = users[3]!
+const user4Start = Date.now() - 5 * DAY
+const user4End = user4Start + 30 * DAY
+user4.subs.push({
+  id: randomUUID(),
+  label: null,
+  plan_id: PLAN_IDS[0]!,
+  plan_name: '短期 100G',
+  plan_version: 1,
+  status: 'active',
+  kind: 'one_time',
+  current_period_start: new Date(user4Start).toISOString(),
+  current_period_end: new Date(user4End).toISOString(),
+  amount: 1900,
+  currency: 'CNY',
+  traffic_limit: 100 * GiB,
+  traffic_used: 30 * GiB,
+  device_limit_override: null,
+  plan_max_devices: 3,
+  online_devices: 0,
+  pack_bytes: 0,
+  bonus_bytes: 0,
+  created_at: new Date(user4Start - DAY).toISOString(),
+  token: 'tk003ot',
+})
+
 // 第 6 位（…06）：再加一份同款（专业版）订阅，两份同款都在用。开专业版时默认续到期更早的那份
 const twin = users[5]!
 const twinFirst = twin.subs[0]
@@ -197,7 +252,7 @@ if (twinFirst) {
   }
   twinFirst.label = '常用'
   twinFirst.status = 'active'
-  twinFirst.pack_bytes = 10 * GiB
+  twinFirst.pack_bytes = 0
   twin.subs.push(second)
 }
 
@@ -236,7 +291,6 @@ function row(u: User) {
     subscription_count: u.subs.length,
     active_plan: activePlan?.plan_name ?? null,
     balance: u.balance,
-    currency: u.currency,
     current_subscription: cs
       ? {
           id: cs.id,
@@ -299,12 +353,6 @@ export function setOrderSource(source: (userId: string) => OrderView[]): void {
   orderSource = source
 }
 
-function paidTotals(orders: readonly OrderView[]): Array<{ currency: string; amount: number }> {
-  const sums = new Map<string, number>()
-  for (const o of orders) if (o.status === 'paid' || o.status === 'fulfilled') sums.set(o.currency, (sums.get(o.currency) ?? 0) + o.paid_amount)
-  return [...sums].filter(([, amount]) => amount > 0).sort(([a], [b]) => a.localeCompare(b)).map(([currency, amount]) => ({ currency, amount }))
-}
-
 function detail(u: User) {
   const orders: OrderView[] = orderSource ? orderSource(u.id) : seedOrders(u).map(listView)
   const referrer = users.find((r) => r.id === u.referrer)
@@ -326,25 +374,28 @@ function detail(u: User) {
         current_period_start: s.current_period_start,
         current_period_end: s.current_period_end,
         amount: s.amount,
-        currency: s.currency,
-        quotas: [{ metric: 'traffic.bytes', period: 'cycle', limit: s.traffic_limit, consumed: s.traffic_used, remaining: s.traffic_limit === null ? null : Math.max(0, s.traffic_limit - s.traffic_used) }],
+        quotas: [
+          {
+            metric: 'traffic.bytes',
+            period: s.kind === 'one_time' ? 'total' : 'cycle',
+            limit: s.traffic_limit,
+            consumed: s.traffic_used,
+            remaining: s.traffic_limit === null ? null : Math.max(0, s.traffic_limit - s.traffic_used),
+          },
+        ],
         device_limit_override: s.device_limit_override,
         plan_max_devices: s.plan_max_devices,
         online_devices: s.online_devices,
-        pack_remaining_bytes: s.pack_bytes,
       })),
     recent_orders: orders.sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 20),
     is_admin: u.is_admin,
     stats: {
-      // R114：paid_total 已弃用但 Go 仍回（跨币种直接相加）；paid_totals 按币种分组、币种升序、只列大于 0 的
       paid_total: orders.filter((o) => o.status === 'paid' || o.status === 'fulfilled').reduce((sum, o) => sum + o.paid_amount, 0),
-      paid_totals: paidTotals(orders),
       order_count: orders.length,
       referral_count: users.filter((r) => r.referrer === u.id).length,
     },
     referrer: referrer ? { id: referrer.id, email: referrer.email } : null,
     telegram: u.telegram,
-    unattached_pack_bytes: u.unattached_bytes,
     admin_note: u.admin_note ?? null,
     deleted_at: u.deleted_at ?? null,
   }

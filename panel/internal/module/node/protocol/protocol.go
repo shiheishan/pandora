@@ -28,6 +28,10 @@ type Schema struct {
 	SensitiveProperties []string            `json:"sensitive_properties,omitempty"`
 	// Hints 是表单上挂在字段下的一句说明（按字段路径），前端不硬编码协议知识。
 	Hints map[string]string `json:"hints,omitempty"`
+	// Note 是表单顶部的一句协议说明。
+	Note string `json:"note,omitempty"`
+	// Fields 是表单元数据，按显示顺序；每个 AllowedProperties 恰好出现一次。
+	Fields []FormField `json:"fields,omitempty"`
 }
 
 // 节点入站实际 bind 的 L4。ListenTCPUDP 是同一端口 TCP、UDP 都听（shadowsocks），与同端口的 tcp、udp 都冲突。
@@ -49,7 +53,7 @@ func StableTypes() []string {
 
 // Schemas 返回全部稳定协议的 schema，按 node_type 排序。
 func Schemas() []Schema {
-	return stableSchemas()
+	return withForms(stableSchemas())
 }
 
 // Validate 校验一次协议写入。nodeType 为空（未配置协议的草稿）返回 version 0、无错误；

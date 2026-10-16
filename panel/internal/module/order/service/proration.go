@@ -24,6 +24,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
+	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
@@ -40,12 +41,14 @@ type trafficAllowance struct {
 type prorationBasis struct {
 	Value decimal.Decimal // 本周期付费合计（元）；本周期没有付费单时为 0
 	// OneTime 为 true 表示原订阅是一次性套餐；Permanent 为一次性且期末是永久哨兵
-	OneTime     bool
-	Permanent   bool
-	PaidSpan    time.Duration // 订阅套餐：付费单买下的总时长；一次性：周期全长
+	OneTime   bool
+	Permanent bool
+	// PaidSpan 是本周期付费单买下的总时长（一次性按各付费单价格的有效天数相加）；礼品卡、加时长卡送的不算，
+	// 折算时付费的先用、送的最后用，送的那段不折钱
+	PaidSpan    time.Duration
 	PeriodStart time.Time
 	PeriodEnd   time.Time
-	Traffic     []trafficAllowance // 仅一次性套餐有内容
+	Traffic     []trafficAllowance // 仅一次性套餐有内容；Cap 只算付费单买下的流量
 }
 
 // CreditDetail 是剩余价值「怎么算的」（报价的 credit_detail）：本期付费合计、剩余与总的付费整天数、
@@ -69,9 +72,8 @@ func prorationCredit(b prorationBasis, now time.Time) (decimal.Decimal, CreditDe
 			d.TrafficLeft += max(min(t.Cap-t.Consumed, t.Cap), 0)
 		}
 		if !b.Permanent {
-			span := b.PeriodEnd.Sub(b.PeriodStart)
-			d.DaysTotal = int(span / day)
-			if rem := b.PeriodEnd.Sub(now); rem > 0 {
+			d.DaysTotal = int(b.PaidSpan / day)
+			if rem := paidRemaining(b, now); rem > 0 {
 				d.DaysLeft = int(rem / day)
 			}
 		}
@@ -94,7 +96,7 @@ func prorationCredit(b prorationBasis, now time.Time) (decimal.Decimal, CreditDe
 		if b.PaidSpan <= 0 {
 			return decimal.Zero, d
 		}
-		remaining := min(b.PaidSpan-now.Sub(b.PeriodStart), b.PeriodEnd.Sub(now), b.PaidSpan)
+		remaining := paidRemaining(b, now)
 		if remaining <= 0 {
 			return decimal.Zero, d
 		}
@@ -115,15 +117,19 @@ func oneTimeTimeRatio(b prorationBasis, now time.Time, d *CreditDetail) (*big.In
 	if b.Permanent {
 		return big.NewInt(1), big.NewInt(1)
 	}
-	span := b.PeriodEnd.Sub(b.PeriodStart)
-	if span <= 0 {
+	if b.PaidSpan <= 0 {
 		return nil, nil
 	}
-	rem := b.PeriodEnd.Sub(now)
+	rem := paidRemaining(b, now)
 	if rem <= 0 {
 		return nil, nil
 	}
-	return big.NewInt(int64(rem)), big.NewInt(int64(span))
+	return big.NewInt(int64(rem)), big.NewInt(int64(b.PaidSpan))
+}
+
+// paidRemaining 是 now 时刻还没用掉的付费时长：付费的从周期起点先用，送的接在后面最后用。
+func paidRemaining(b prorationBasis, now time.Time) time.Duration {
+	return min(b.PaidSpan-now.Sub(b.PeriodStart), b.PeriodEnd.Sub(now), b.PaidSpan)
 }
 
 // applyTrafficRatio 在已有时间比例上再与流量比例取较小者。
@@ -145,9 +151,9 @@ func applyTrafficRatio(traffic []trafficAllowance, num, den *big.Int, d *CreditD
 }
 
 // giftedDaysLeft 是到期前来自赠送的剩余整天数：订阅套餐按「付费天数先用、赠送天数最后用」；
-// 一次性套餐恒为 0。换掉这一份时这段不折钱，后台开单预览写「赠送的 N 天不保留」。
+// 一次性套餐同样（礼品卡叠加送的天数）；永久的不算天数，恒为 0。换掉这一份时这段不折钱，后台开单预览写「赠送的 N 天不保留」。
 func giftedDaysLeft(b prorationBasis, now time.Time) int {
-	if b.OneTime {
+	if b.Permanent || subsvc.IsPermanent(b.PeriodEnd) {
 		return 0
 	}
 	from := b.PeriodStart.Add(max(b.PaidSpan, 0))

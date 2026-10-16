@@ -5,6 +5,8 @@
 // 建单没有订单锁：续费、叠加、换套餐、流量重置先锁订阅，新购先锁套餐行（catalog.Offer Lock）；结算、取消、超时先锁订单。
 // 结算先确认预留（券）再记账，见 SettlePayment。
 // 下单事务里一律先插订单行，再调 promo.Reserve、ledger.HoldForOrder 等（它们的 order_id 有外键）。
+// 带券时插订单之前先 promo.Lock 把券行锁成 FOR UPDATE：订单 coupon_id 的外键检查给券行加 KEY SHARE，
+// 若之后才由 Reserve 升级成 FOR UPDATE，同券并发建单会各拿着 KEY SHARE 互等。新购的套餐行只是 FOR SHARE，挡不住同套餐并发。
 package service
 
 import (
@@ -62,6 +64,7 @@ type Ledger interface {
 // Promo 是 promo service 用到的面。
 type Promo interface {
 	Evaluate(ctx context.Context, code string, t promosvc.Target) (*promosvc.Applied, error)
+	Lock(ctx context.Context, code string) error
 	Reserve(ctx context.Context, code string, t promosvc.Target, o promosvc.OrderRef) (*promosvc.Applied, error)
 	Release(ctx context.Context, orderID uuid.UUID, reason string) error
 	Capture(ctx context.Context, orderID uuid.UUID) error

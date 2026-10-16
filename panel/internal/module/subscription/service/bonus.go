@@ -69,6 +69,10 @@ func (s *Service) GrantBonus(ctx context.Context, in BonusGrant) (int64, error) 
 		if target == nil {
 			return ErrUnlimited
 		}
+		// 本期已结束、还没滚动：加上去马上会被滚动清零（审查 1016-A2 应改 2）
+		if period == PeriodCycle && target.PeriodEnd != nil && !target.PeriodEnd.After(s.clock()) {
+			return ErrBonusPeriodSwitching
+		}
 		bonus, err := s.repo.AddQuotaBonus(ctx, target.ID, in.Bytes)
 		if err != nil {
 			return subErr(err)

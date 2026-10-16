@@ -508,12 +508,12 @@ done
 ok "pdnd 监听 $KICK_NODE_PORT（配置已下发）"
 
 admin_auth
-expect_http 201 POST "$ADM/v1/plans/complete" -H "$AH" -H 'Content-Type: application/json' \
+expect_http 201 POST "$ADM/v1/plans" -H "$AH" -H 'Content-Type: application/json' \
   -H "Idempotency-Key: kick-plan-$RUN" \
-  -d "{\"code\":\"kick-$RUN\",\"name\":\"Kick $RUN\",\"visibility\":\"public\",\"traffic_gb\":10,\"pool_ids\":[\"$POOL_ID\"],\"prices\":[{\"billing_interval\":\"month\",\"interval_count\":1,\"unit_amount\":1000,\"currency\":\"CNY\"}],\"publish\":true}"
+  -d "{\"kind\":\"subscription\",\"name\":\"Kick $RUN\",\"visibility\":\"public\",\"traffic_bytes\":10737418240,\"pool_ids\":[\"$POOL_ID\"],\"prices\":[{\"billing_interval\":\"month\",\"interval_count\":1,\"unit_amount\":1000}],\"publish\":true}"
 PLAN=$(json_get "$HTTP_BODY" plan.id)
-PRICE=$(json_get "$HTTP_BODY" price_ids.0)
-is_uuid "$PLAN" && is_uuid "$PRICE" || die "plans/complete returned invalid ids"
+PRICE=$(json_get "$HTTP_BODY" plan.prices.0.id)
+is_uuid "$PLAN" && is_uuid "$PRICE" || die "POST /plans returned invalid ids"
 ok "套餐 kick-$RUN 已发布"
 
 #-------------------------------------------------------------------------------

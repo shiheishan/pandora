@@ -23,6 +23,14 @@ func (r *Repo) QuotasBySubscriptions(ctx context.Context, subIDs []uuid.UUID, lo
 	return out, mapErr(err)
 }
 
+// DeleteQuotas 删掉这些配额行（换套餐后新版本没有定义的行）。
+func (r *Repo) DeleteQuotas(ctx context.Context, ids []uuid.UUID) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return mapErr(r.d.Conn(ctx).Exec(`DELETE FROM quota_balances WHERE id IN ?`, ids).Error)
+}
+
 // InsertQuotas 批量插入配额行。
 func (r *Repo) InsertQuotas(ctx context.Context, rows []model.QuotaBalance) error {
 	if len(rows) == 0 {
