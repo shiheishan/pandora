@@ -14,7 +14,7 @@ var (
 
 // Surcharge 按渠道配置算这次向用户加收的手续费：amount × percent / 100 + fixed，向上取整到分
 // （不足一分按一分收；照 Xboard 的「固定 + 比例」，Xboard 是四舍五入，这里按产品定向上取整）。
-// amount 不为正或两项都是 0 时返回 0。两种币种（CNY、USD）都是两位小数。
+// amount 不为正或两项都是 0 时返回 0。金额两位小数。
 func Surcharge(amount, fixed, percent decimal.Decimal) decimal.Decimal {
 	if !amount.IsPositive() || (fixed.IsZero() && percent.IsZero()) {
 		return decimal.Zero

@@ -1,4 +1,4 @@
-// 本文件是 payment 包测试用的支付渠道替身：HMAC-SHA256 验签的 JSON 回调，支持手续费与任意币种，
+// 本文件是 payment 包测试用的支付渠道替身：HMAC-SHA256 验签的 JSON 回调，支持手续费，
 // 事件号由回调给出；经 Service.adapter 注入，产品代码里没有它。
 
 package service
@@ -60,7 +60,6 @@ func (p *fakeProvider) CreatePayment(ctx context.Context, req provider.CreateReq
 	q := url.Values{
 		"out_trade_no": {req.OutTradeNo},
 		"amount":       {strconv.FormatInt(cents, 10)},
-		"currency":     {string(req.Currency)},
 	}
 	redirect := base + "?" + q.Encode()
 	return provider.CreateResponse{
@@ -69,7 +68,6 @@ func (p *fakeProvider) CreatePayment(ctx context.Context, req provider.CreateReq
 		FormFields: map[string]string{
 			"out_trade_no": req.OutTradeNo,
 			"amount":       strconv.FormatInt(cents, 10),
-			"currency":     string(req.Currency),
 		},
 	}, nil
 }
@@ -80,7 +78,6 @@ type fakeNotifyBody struct {
 	PaymentID string          `json:"payment_id"`
 	OrderNo   string          `json:"order_no"`
 	Amount    int64           `json:"amount"`
-	Currency  string          `json:"currency"`
 	Fee       int64           `json:"fee"`
 	Method    string          `json:"method"`
 	Raw       json.RawMessage `json:"raw"`
@@ -103,18 +100,13 @@ func (p *fakeProvider) ParseNotification(ctx context.Context, in provider.Inboun
 		return provider.Notification{}, errors.New("fake: 缺少 order_no")
 	}
 
-	canonical := fakeCanonical(b.EventID, b.EventType, b.PaymentID, b.OrderNo, b.Amount, b.Fee, b.Currency)
+	canonical := fakeCanonical(b.EventID, b.EventType, b.PaymentID, b.OrderNo, b.Amount, b.Fee)
 	sigHex := strings.TrimSpace(in.Header.Get("X-Aegis-Signature"))
 	sig, _ := hex.DecodeString(sigHex)
 	mac := hmac.New(sha256.New, p.cfg.Secret)
 	mac.Write([]byte(canonical))
 	expected := mac.Sum(nil)
 	verified := len(sig) > 0 && hmac.Equal(expected, sig)
-
-	cur, err := money.ParseCurrency(b.Currency)
-	if err != nil {
-		return provider.Notification{}, fmt.Errorf("fake: %w", err)
-	}
 
 	status := provider.StatusPending
 	switch b.EventType {
@@ -142,7 +134,6 @@ func (p *fakeProvider) ParseNotification(ctx context.Context, in provider.Inboun
 		OutTradeNo:        b.OrderNo,
 		Amount:            money.FromCents(b.Amount),
 		Fee:               money.FromCents(b.Fee),
-		Currency:          cur,
 		Status:            status,
 		Method:            b.Method,
 		Raw:               raw,
@@ -182,16 +173,16 @@ func (p *fakeProvider) QueryPayment(ctx context.Context, outTradeNo string) (pro
 	return provider.QueryResult{}, fmt.Errorf("fake: %w", provider.ErrNotSupported)
 }
 
-func fakeCanonical(eventID, eventType, paymentID, orderNo string, amountCents, feeCents int64, currency string) string {
+func fakeCanonical(eventID, eventType, paymentID, orderNo string, amountCents, feeCents int64) string {
 	return strings.Join([]string{
 		eventID, eventType, paymentID, orderNo,
-		strconv.FormatInt(amountCents, 10), strconv.FormatInt(feeCents, 10), currency,
+		strconv.FormatInt(amountCents, 10), strconv.FormatInt(feeCents, 10),
 	}, "|")
 }
 
-func fakeSign(secret []byte, eventID, eventType, paymentID, orderNo string, amountCents, feeCents int64, currency string) string {
+func fakeSign(secret []byte, eventID, eventType, paymentID, orderNo string, amountCents, feeCents int64) string {
 	mac := hmac.New(sha256.New, secret)
-	mac.Write([]byte(fakeCanonical(eventID, eventType, paymentID, orderNo, amountCents, feeCents, currency)))
+	mac.Write([]byte(fakeCanonical(eventID, eventType, paymentID, orderNo, amountCents, feeCents)))
 	return hex.EncodeToString(mac.Sum(nil))
 }
 

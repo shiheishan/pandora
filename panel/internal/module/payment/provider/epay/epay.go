@@ -92,9 +92,6 @@ func New(cfg Config) (*Provider, error) {
 
 // CreatePayment 生成收银台跳转信息。
 func (p *Provider) CreatePayment(ctx context.Context, req provider.CreateRequest) (provider.CreateResponse, error) {
-	if req.Currency != money.CNY {
-		return provider.CreateResponse{}, fmt.Errorf("epay: 仅支持 %s，收到 %s", money.CNY, req.Currency)
-	}
 	if !req.Amount.IsPositive() {
 		return provider.CreateResponse{}, errors.New("epay: 金额必须为正")
 	}
@@ -192,7 +189,6 @@ func (p *Provider) ParseNotification(ctx context.Context, in provider.Inbound) (
 		OutTradeNo:        raw["out_trade_no"],
 		Amount:            amount,
 		Fee:               money.Zero,
-		Currency:          money.CNY,
 		Status:            status,
 		Method:            raw["type"],
 		Raw:               raw,
@@ -281,7 +277,6 @@ func (p *Provider) QueryPayment(ctx context.Context, outTradeNo string) (provide
 		Found:      true,
 		PaymentRef: qr.TradeNo,
 		Amount:     amount,
-		Currency:   money.CNY,
 		Status:     status,
 		Method:     qr.Type,
 	}, nil

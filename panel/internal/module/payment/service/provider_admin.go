@@ -9,9 +9,7 @@ import (
 
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/module/payment/model"
-	paymentrepo "github.com/aegispanel/aegis/internal/module/payment/repo"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -96,9 +94,9 @@ func (s *Service) ListProviders(ctx context.Context) ([]ProviderView, error) {
 	if err != nil {
 		return nil, err
 	}
-	todayByProvider := map[uuid.UUID][]paymentrepo.ProviderAmount{}
+	todayByProvider := map[uuid.UUID]decimal.Decimal{}
 	for _, a := range today {
-		todayByProvider[a.ProviderID] = append(todayByProvider[a.ProviderID], a)
+		todayByProvider[a.ProviderID] = todayByProvider[a.ProviderID].Add(a.Amount)
 	}
 	out := make([]ProviderView, 0, len(rows))
 	for _, m := range rows {
@@ -114,25 +112,13 @@ func (s *Service) ListProviders(ctx context.Context) ([]ProviderView, error) {
 func (s *Service) buildProviderView(
 	m model.Provider,
 	notifyBase string,
-	today []paymentrepo.ProviderAmount,
+	today decimal.Decimal,
 	rates map[uuid.UUID]float64,
 	lastEvents map[uuid.UUID]time.Time,
 ) (ProviderView, error) {
 	methods := m.Methods
 	if methods == nil {
 		methods = []string{}
-	}
-	currencies := m.Currencies
-	if currencies == nil {
-		currencies = []string{}
-	}
-	todayMap := make(map[money.Currency]decimal.Decimal)
-	for _, a := range today {
-		c, err := money.ParseCurrency(a.Currency)
-		if err != nil {
-			return ProviderView{}, err
-		}
-		todayMap[c] = a.Amount
 	}
 	var rate *float64
 	if r, ok := rates[m.ID]; ok {
@@ -162,7 +148,6 @@ func (s *Service) buildProviderView(
 		AcceptingNew:     m.AcceptingNew,
 		HasCredentials:   len(m.CredentialsSealed) > 0,
 		BaseURL:          m.BaseURL,
-		Currencies:       currencies,
 		SubmitPath:       m.SubmitPath,
 		APIPath:          m.APIPath,
 		Methods:          methods,
@@ -173,7 +158,7 @@ func (s *Service) buildProviderView(
 		FeePercent:       m.FeePercent,
 		HasWebhookSecret: hasWebhookSecret,
 		NotifyURL:        callbackURL,
-		Today:            todayMap,
+		Today:            today,
 		SuccessRate24h:   rate,
 		LastCallbackAt:   last,
 	}, nil
@@ -221,7 +206,6 @@ func (s *Service) CreateProvider(ctx context.Context, in CreateProviderInput) (P
 			Adapter:           adapter,
 			DisplayName:       norm.displayName,
 			CredentialsSealed: sealed,
-			Currencies:        []string{"CNY"},
 			BaseURL:           norm.baseURL,
 			SubmitPath:        norm.submitPath,
 			APIPath:           norm.apiPath,

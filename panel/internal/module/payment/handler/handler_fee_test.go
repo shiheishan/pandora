@@ -79,12 +79,12 @@ func TestPaymentMethodsFeeShape(t *testing.T) {
 	total := decimal.RequireFromString("10.55")
 	f := &fakeSvc{methods: []service.PaymentMethod{
 		{
-			Provider: "p1", DisplayName: "P1", Method: "alipay", Currencies: []string{"CNY"},
+			Provider: "p1", DisplayName: "P1", Method: "alipay",
 			FeeFixed: decimal.RequireFromString("0.30"), FeePercent: decimal.RequireFromString("2.5"),
 			Fee: &fee, Total: &total,
 		},
 		{
-			Provider: "p2", DisplayName: "P2", Method: "", Currencies: []string{"CNY"},
+			Provider: "p2", DisplayName: "P2", Method: "",
 			FeeFixed: decimal.Zero, FeePercent: decimal.Zero,
 		},
 	}}

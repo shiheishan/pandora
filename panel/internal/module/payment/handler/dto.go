@@ -24,14 +24,13 @@ type paymentMethodsResponse struct {
 
 // paymentMethodResponse 是门户可选的一种支付方式。
 type paymentMethodResponse struct {
-	Provider   string   `json:"provider"`
-	Method     string   `json:"method"`
-	Label      string   `json:"label"`
-	Currencies []string `json:"currencies"`
-	FeeFixed   int64    `json:"fee_fixed"`
-	FeePercent string   `json:"fee_percent"`
-	Fee        *int64   `json:"fee,omitempty"`
-	Total      *int64   `json:"total,omitempty"`
+	Provider   string `json:"provider"`
+	Method     string `json:"method"`
+	Label      string `json:"label"`
+	FeeFixed   int64  `json:"fee_fixed"`
+	FeePercent string `json:"fee_percent"`
+	Fee        *int64 `json:"fee,omitempty"`
+	Total      *int64 `json:"total,omitempty"`
 }
 
 func paymentMethodFrom(m service.PaymentMethod) (paymentMethodResponse, error) {
@@ -39,16 +38,12 @@ func paymentMethodFrom(m service.PaymentMethod) (paymentMethodResponse, error) {
 	if l, ok := paymentMethodLabels[m.Method]; ok {
 		label = l
 	}
-	cur := m.Currencies
-	if cur == nil {
-		cur = []string{}
-	}
 	feeFixed, err := money.ToCents(m.FeeFixed)
 	if err != nil {
 		return paymentMethodResponse{}, err
 	}
 	out := paymentMethodResponse{
-		Provider: m.Provider, Method: m.Method, Label: label, Currencies: cur,
+		Provider: m.Provider, Method: m.Method, Label: label,
 		FeeFixed: feeFixed, FeePercent: m.FeePercent.StringFixed(2),
 	}
 	if m.Fee != nil {
@@ -149,28 +144,27 @@ type listProvidersResponse struct {
 
 // providerResponse 是后台渠道卡一行。
 type providerResponse struct {
-	ID               string           `json:"id"`
-	Code             string           `json:"code"`
-	Adapter          string           `json:"adapter"`
-	DisplayName      string           `json:"display_name"`
-	Enabled          bool             `json:"enabled"`
-	AcceptingNew     bool             `json:"accepting_new"`
-	HasCredentials   bool             `json:"has_credentials"`
-	BaseURL          string           `json:"base_url"`
-	Currencies       []string         `json:"currencies"`
-	SubmitPath       string           `json:"submit_path"`
-	APIPath          string           `json:"api_path"`
-	Methods          []string         `json:"methods"`
-	DefaultMethod    string           `json:"default_method"`
-	AllowPrivateHost bool             `json:"allow_private_host"`
-	MinAmount        int64            `json:"min_amount"`
-	FeeFixed         int64            `json:"fee_fixed"`
-	FeePercent       string           `json:"fee_percent"`
-	HasWebhookSecret bool             `json:"has_webhook_secret"`
-	NotifyURL        string           `json:"notify_url"`
-	Today            map[string]int64 `json:"today"`
-	SuccessRate24h   *float64         `json:"success_rate_24h"`
-	LastCallbackAt   *time.Time       `json:"last_callback_at"`
+	ID               string     `json:"id"`
+	Code             string     `json:"code"`
+	Adapter          string     `json:"adapter"`
+	DisplayName      string     `json:"display_name"`
+	Enabled          bool       `json:"enabled"`
+	AcceptingNew     bool       `json:"accepting_new"`
+	HasCredentials   bool       `json:"has_credentials"`
+	BaseURL          string     `json:"base_url"`
+	SubmitPath       string     `json:"submit_path"`
+	APIPath          string     `json:"api_path"`
+	Methods          []string   `json:"methods"`
+	DefaultMethod    string     `json:"default_method"`
+	AllowPrivateHost bool       `json:"allow_private_host"`
+	MinAmount        int64      `json:"min_amount"`
+	FeeFixed         int64      `json:"fee_fixed"`
+	FeePercent       string     `json:"fee_percent"`
+	HasWebhookSecret bool       `json:"has_webhook_secret"`
+	NotifyURL        string     `json:"notify_url"`
+	Today            int64      `json:"today"`
+	SuccessRate24h   *float64   `json:"success_rate_24h"`
+	LastCallbackAt   *time.Time `json:"last_callback_at"`
 }
 
 func providerFrom(v service.ProviderView) (providerResponse, error) {
@@ -182,11 +176,7 @@ func providerFrom(v service.ProviderView) (providerResponse, error) {
 	if methods == nil {
 		methods = []string{}
 	}
-	currencies := v.Currencies
-	if currencies == nil {
-		currencies = []string{}
-	}
-	today, err := centsByCurrency(v.Today)
+	today, err := money.ToCents(v.Today)
 	if err != nil {
 		return providerResponse{}, err
 	}
@@ -197,7 +187,7 @@ func providerFrom(v service.ProviderView) (providerResponse, error) {
 	return providerResponse{
 		ID: v.ID.String(), Code: v.Code, Adapter: v.Adapter, DisplayName: v.DisplayName,
 		Enabled: v.Enabled, AcceptingNew: v.AcceptingNew, HasCredentials: v.HasCredentials,
-		BaseURL: v.BaseURL, Currencies: currencies,
+		BaseURL:    v.BaseURL,
 		SubmitPath: v.SubmitPath, APIPath: v.APIPath, Methods: methods,
 		DefaultMethod: v.DefaultMethod, AllowPrivateHost: v.AllowPrivateHost,
 		MinAmount: minAmt, FeeFixed: feeFixed, FeePercent: v.FeePercent.StringFixed(2),
@@ -220,9 +210,9 @@ type toggleProviderResponse struct {
 
 // listLatePaymentsResponse 对应 GET /v1/late-payments。
 type listLatePaymentsResponse struct {
-	Cases          []lateCaseResponse `json:"cases"`
-	Total          int64              `json:"total"`
-	PendingAmounts map[string]int64   `json:"pending_amounts"`
+	Cases         []lateCaseResponse `json:"cases"`
+	Total         int64              `json:"total"`
+	PendingAmount int64              `json:"pending_amount"`
 }
 
 // lateCaseResponse 是挂账列表一行。
@@ -231,7 +221,6 @@ type lateCaseResponse struct {
 	CaseKind         string     `json:"case_kind"`
 	Status           string     `json:"status"`
 	Amount           int64      `json:"amount"`
-	Currency         string     `json:"currency"`
 	OrderNo          string     `json:"order_no"`
 	OrderStatus      string     `json:"order_status"`
 	UserID           string     `json:"user_id"`
@@ -248,28 +237,12 @@ func lateCaseFrom(c service.LateCase) (lateCaseResponse, error) {
 	}
 	return lateCaseResponse{
 		ID: c.ID.String(), CaseKind: string(c.Kind), Status: string(c.Status),
-		Amount: amt, Currency: string(c.Currency),
+		Amount:  amt,
 		OrderNo: c.OrderNo, OrderStatus: c.OrderStatus,
 		UserID: c.UserID.String(), UserEmail: c.UserEmail,
 		ReceivedAt: c.ReceivedAt,
 		ResolvedAt: c.ResolvedAt, ResolutionReason: c.ResolutionReason,
 	}, nil
-}
-
-// centsByCurrency 把按币种的金额转成分；nil 给空 map。
-func centsByCurrency(m map[money.Currency]decimal.Decimal) (map[string]int64, error) {
-	if m == nil {
-		return map[string]int64{}, nil
-	}
-	out := make(map[string]int64, len(m))
-	for c, d := range m {
-		cents, err := money.ToCents(d)
-		if err != nil {
-			return nil, err
-		}
-		out[string(c)] = cents
-	}
-	return out, nil
 }
 
 // applyLatePaymentRequest 是挂账转入余额请求体。

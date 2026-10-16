@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"slices"
 	"strings"
 	"time"
 
@@ -33,7 +32,7 @@ const intentCreatingWindow = 30 * time.Second
 const completeIntentBudget = 15 * time.Second
 
 // completeIntentPersistTimeout 是 CompleteIntent 落库（回写或作废占位）的期限，从总期限里留出；渠道调用得到其余的 12 秒。
-// CoinPayments 冷缓存时要连发两次请求（查币种 + 建发票），safehttp 单次超时 6 秒，两次正好在 12 秒内。
+// CoinPayments 冷缓存时要连发两次请求（查法币 ID + 建发票），safehttp 单次超时 6 秒，两次正好在 12 秒内。
 const completeIntentPersistTimeout = 3 * time.Second
 
 // IntentDraft 是 BeginIntent 的结果：要么是可直接复用的在途意图，要么是刚占好、等 CompleteIntent 去渠道建单的占位意图。
@@ -44,7 +43,7 @@ type IntentDraft struct {
 	provider string // 渠道 code，只用于日志
 	ad       provider.Provider
 	req      provider.CreateRequest
-	result   IntentResult // 预填好 IntentID、OutTradeNo、Amount、Surcharge、Currency、ExpiresAt
+	result   IntentResult // 预填好 IntentID、OutTradeNo、Amount、Surcharge、ExpiresAt
 }
 
 // BeginIntent 校验并占住这次支付：在调用方事务里执行（order 已锁订单行），不调渠道。
@@ -59,7 +58,7 @@ func (s *Service) BeginIntent(ctx context.Context, in CreateIntentInput) (Intent
 	if orderNo == "" || len(orderNo) > 64 {
 		return IntentDraft{}, errs.Newf(errs.BadRequest, "发起支付的参数不完整")
 	}
-	if !in.Amount.IsPositive() || money.Check(in.Amount) != nil || !in.Currency.Valid() {
+	if !in.Amount.IsPositive() || money.Check(in.Amount) != nil {
 		return IntentDraft{}, errs.Newf(errs.BadRequest, "发起支付的参数不完整")
 	}
 
@@ -70,9 +69,6 @@ func (s *Service) BeginIntent(ctx context.Context, in CreateIntentInput) (Intent
 	p, ad, err := s.adapterFor(ctx, in.ProviderCode, true)
 	if err != nil {
 		return IntentDraft{}, err
-	}
-	if !slices.Contains(p.Currencies, string(in.Currency)) {
-		return IntentDraft{}, errs.Invalid(map[string]string{"provider": "该支付渠道不支持此币种"})
 	}
 	method, err := resolveMethod(p, in.Method)
 	if err != nil {
@@ -106,7 +102,6 @@ func (s *Service) BeginIntent(ctx context.Context, in CreateIntentInput) (Intent
 	createReq := provider.CreateRequest{
 		OutTradeNo: "", // 事务内再拼
 		Amount:     gross,
-		Currency:   in.Currency,
 		Subject:    in.Title,
 		Method:     method,
 		NotifyURL:  notifyURL(base, p.Code),
@@ -123,7 +118,6 @@ func (s *Service) BeginIntent(ctx context.Context, in CreateIntentInput) (Intent
 		if ok {
 			if active.ProviderID == p.ID && active.Method == method &&
 				active.Amount.Equal(gross) && active.SurchargeAmount.Equal(surcharge) &&
-				active.Currency == string(in.Currency) &&
 				active.RedirectURL != "" &&
 				(active.ExpiresAt == nil || active.ExpiresAt.After(now)) {
 				draft = IntentDraft{
@@ -135,7 +129,6 @@ func (s *Service) BeginIntent(ctx context.Context, in CreateIntentInput) (Intent
 						FormFields:  active.FormFields,
 						Amount:      active.Amount,
 						Surcharge:   active.SurchargeAmount,
-						Currency:    in.Currency,
 						ExpiresAt:   active.ExpiresAt,
 						Reused:      true,
 					},
@@ -186,7 +179,6 @@ func (s *Service) BeginIntent(ctx context.Context, in CreateIntentInput) (Intent
 			OutTradeNo:      outTradeNo,
 			ProviderRef:     nil,
 			Method:          method,
-			Currency:        string(in.Currency),
 			Amount:          gross,
 			SurchargeAmount: surcharge,
 			Status:          string(IntentRequiresAction),
@@ -213,7 +205,6 @@ func (s *Service) BeginIntent(ctx context.Context, in CreateIntentInput) (Intent
 				OutTradeNo: outTradeNo,
 				Amount:     gross,
 				Surcharge:  surcharge,
-				Currency:   in.Currency,
 				ExpiresAt:  expPtr,
 			},
 		}

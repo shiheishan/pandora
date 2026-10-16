@@ -43,7 +43,6 @@ type recordInput struct {
 	OutTradeNo        string // 按它找意图；线下收款为空
 	Offline           *offlineTarget
 	Amount, Fee       decimal.Decimal
-	Currency          money.Currency
 	Method            string
 	Raw               map[string]string
 	SignatureVerified bool
@@ -219,7 +218,7 @@ func (s *Service) recordPaymentTx(ctx context.Context, in recordInput, hook reco
 		orderID = intent.OrderID
 		userID = intent.UserID
 		orderNo = intent.OrderNo
-		if !in.Amount.Equal(intent.Amount) || string(in.Currency) != intent.Currency {
+		if !in.Amount.Equal(intent.Amount) {
 			return RecordResult{}, ErrAmountMismatch
 		}
 		if intent.ProviderRef != nil && *intent.ProviderRef != pr {
@@ -261,7 +260,7 @@ func (s *Service) recordPaymentTx(ctx context.Context, in recordInput, hook reco
 		if existing.OrderID != orderID {
 			return RecordResult{}, ErrPaymentReused
 		}
-		if !existing.Amount.Equal(in.Amount) || existing.Currency != string(in.Currency) ||
+		if !existing.Amount.Equal(in.Amount) ||
 			(!in.FeeUnknown && !existing.FeeAmount.Equal(in.Fee)) ||
 			!existing.SurchargeAmount.Equal(surcharge) {
 			return RecordResult{}, errs.Newf(errs.Conflict, "重放的渠道收款与已记录的金额不一致")
@@ -294,7 +293,6 @@ func (s *Service) recordPaymentTx(ctx context.Context, in recordInput, hook reco
 		PaymentIntentID:   intentID,
 		ProviderID:        in.Provider.ID,
 		ProviderPaymentID: pr,
-		Currency:          string(in.Currency),
 		Amount:            in.Amount,
 		FeeAmount:         in.Fee,
 		SurchargeAmount:   surcharge,
@@ -319,7 +317,6 @@ func (s *Service) recordPaymentTx(ctx context.Context, in recordInput, hook reco
 		Amount:       in.Amount.Sub(surcharge),
 		Fee:          in.Fee,
 		Surcharge:    surcharge,
-		Currency:     in.Currency,
 		ProviderCode: in.Provider.Code,
 		Method:       method,
 	})
@@ -377,9 +374,6 @@ func validateRecordAmounts(in recordInput) error {
 	if in.Fee.IsNegative() || money.Check(in.Fee) != nil || in.Fee.GreaterThan(in.Amount) {
 		return errs.Newf(errs.BadRequest, "支付金额或手续费不正确")
 	}
-	if !in.Currency.Valid() {
-		return errs.Newf(errs.BadRequest, "支付金额或手续费不正确")
-	}
 	return nil
 }
 
@@ -419,7 +413,6 @@ func (s *Service) afterSettleSuccess(ctx context.Context, evID uuid.UUID, in rec
 			"amount":       in.Amount.StringFixed(2),
 			"fee":          in.Fee.StringFixed(2),
 			"surcharge":    surcharge.StringFixed(2),
-			"currency":     string(in.Currency),
 			"method":       method,
 		},
 	}); err != nil {
@@ -442,7 +435,6 @@ func (s *Service) afterSettleQuarantine(ctx context.Context, evID uuid.UUID, in 
 	legs := buildSuspenseLegs(in, surcharge)
 	txnID, err := s.ledger.Post(ctx, ledgersvc.Posting{
 		Kind:       ledgersvc.KindLatePaymentSuspense,
-		Currency:   in.Currency,
 		SourceType: ledgersvc.SourcePayment,
 		SourceID:   paymentID,
 		Memo:       "迟到支付挂账：" + string(npe.Kind),
@@ -462,7 +454,6 @@ func (s *Service) afterSettleQuarantine(ctx context.Context, evID uuid.UUID, in 
 		PaymentID:      paymentID,
 		PaymentEventID: &evID,
 		CaseKind:       string(npe.Kind),
-		Currency:       string(in.Currency),
 		Amount:         in.Amount.Sub(surcharge),
 		Status:         string(LateSuspense),
 		SuspenseTxnID:  txnID,
@@ -496,7 +487,6 @@ func (s *Service) afterSettleQuarantine(ctx context.Context, evID uuid.UUID, in 
 			"amount":              in.Amount.StringFixed(2),
 			"fee":                 in.Fee.StringFixed(2),
 			"surcharge":           surcharge.StringFixed(2),
-			"currency":            string(in.Currency),
 			"suspense_txn":        txnID.String(),
 		},
 	}); err != nil {

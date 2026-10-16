@@ -2,7 +2,7 @@
 //
 // Webhook 在 BTCPay 商店设置里配置（不随发票下发）。签名为请求头
 // BTCPay-Sig: sha256=<hex(HMAC-SHA256(webhook 密钥, 原始请求体))>。
-// 回调只用来通知有变化；金额、币种、状态一律以按发票号回查的结果为准。
+// 回调只用来通知有变化；金额、状态一律以按发票号回查的结果为准。
 // 手动标记为已结算（additionalStatus = Marked）的发票不自动入账；部分付款后过期算失败。
 package btcpay
 
@@ -207,17 +207,17 @@ func mapStatus(status, additional string) (st provider.Status, marked bool) {
 	return provider.StatusPending, false
 }
 
-func normalize(inv invoice) (amount decimal.Decimal, cur money.Currency, st provider.Status, marked bool, err error) {
+func normalize(inv invoice) (amount decimal.Decimal, st provider.Status, marked bool, err error) {
 	amount, err = money.ParseProvider(string(inv.Amount))
 	if err != nil {
-		return decimal.Zero, "", provider.StatusPending, false, fmt.Errorf("btcpay: 发票金额非法: %w", err)
+		return decimal.Zero, provider.StatusPending, false, fmt.Errorf("btcpay: 发票金额非法: %w", err)
 	}
-	cur, err = money.ParseCurrency(strings.ToUpper(strings.TrimSpace(inv.Currency)))
-	if err != nil {
-		return decimal.Zero, "", provider.StatusPending, false, fmt.Errorf("btcpay: 发票币种 %q 不受支持", inv.Currency)
+	echoCur := strings.ToUpper(strings.TrimSpace(inv.Currency))
+	if echoCur != provider.FiatCurrency {
+		return decimal.Zero, provider.StatusPending, false, fmt.Errorf("btcpay: 发票币种 %q 不受支持", inv.Currency)
 	}
 	st, marked = mapStatus(inv.Status, inv.AdditionalStatus)
-	return amount, cur, st, marked, nil
+	return amount, st, marked, nil
 }
 
 func (p *Provider) validateCheckoutLink(link string) error {
@@ -233,9 +233,6 @@ func (p *Provider) validateCheckoutLink(link string) error {
 
 // CreatePayment 在 BTCPay 创建发票并返回收银台链接。
 func (p *Provider) CreatePayment(ctx context.Context, req provider.CreateRequest) (provider.CreateResponse, error) {
-	if !req.Currency.Valid() {
-		return provider.CreateResponse{}, fmt.Errorf("btcpay: 不支持的币种 %s", req.Currency)
-	}
 	if !req.Amount.IsPositive() {
 		return provider.CreateResponse{}, errors.New("btcpay: 金额必须为正")
 	}
@@ -245,7 +242,7 @@ func (p *Provider) CreatePayment(ctx context.Context, req provider.CreateRequest
 
 	payload := map[string]any{
 		"amount":   money.FormatProvider(req.Amount),
-		"currency": string(req.Currency),
+		"currency": provider.FiatCurrency,
 		"metadata": map[string]string{
 			"orderId":  req.OutTradeNo,
 			"itemDesc": sanitizeSubject(req.Subject),
@@ -276,8 +273,8 @@ func (p *Provider) CreatePayment(ctx context.Context, req provider.CreateRequest
 	if err != nil {
 		return provider.CreateResponse{}, fmt.Errorf("btcpay: 发票金额非法: %w", err)
 	}
-	echoCur, err := money.ParseCurrency(strings.ToUpper(strings.TrimSpace(inv.Currency)))
-	if err != nil || !echoAmount.Equal(req.Amount) || echoCur != req.Currency {
+	echoCur := strings.ToUpper(strings.TrimSpace(inv.Currency))
+	if !echoAmount.Equal(req.Amount) || echoCur != provider.FiatCurrency {
 		return provider.CreateResponse{}, errors.New("btcpay: 发票金额或币种与请求不符")
 	}
 
@@ -367,7 +364,7 @@ func (p *Provider) ParseNotification(ctx context.Context, in provider.Inbound) (
 		return provider.Notification{}, errors.New("btcpay: 发票缺少 orderId")
 	}
 
-	amount, cur, st, marked, err := normalize(inv)
+	amount, st, marked, err := normalize(inv)
 	if err != nil {
 		return provider.Notification{}, err
 	}
@@ -399,7 +396,6 @@ func (p *Provider) ParseNotification(ctx context.Context, in provider.Inbound) (
 		OutTradeNo:        inv.Metadata.OrderID,
 		Amount:            amount,
 		Fee:               money.Zero,
-		Currency:          cur,
 		Status:            st,
 		Method:            "",
 		SignatureVerified: true,
@@ -459,7 +455,7 @@ func (p *Provider) QueryPayment(ctx context.Context, outTradeNo string) (provide
 
 	chosen := matched[0]
 	for _, inv := range matched {
-		_, _, st, _, err := normalize(inv)
+		_, st, _, err := normalize(inv)
 		if err != nil {
 			return provider.QueryResult{}, err
 		}
@@ -469,7 +465,7 @@ func (p *Provider) QueryPayment(ctx context.Context, outTradeNo string) (provide
 		}
 	}
 
-	amount, cur, st, _, err := normalize(chosen)
+	amount, st, _, err := normalize(chosen)
 	if err != nil {
 		return provider.QueryResult{}, err
 	}
@@ -478,7 +474,6 @@ func (p *Provider) QueryPayment(ctx context.Context, outTradeNo string) (provide
 		Found:      true,
 		PaymentRef: chosen.ID,
 		Amount:     amount,
-		Currency:   cur,
 		Status:     st,
 		Method:     "",
 	}, nil

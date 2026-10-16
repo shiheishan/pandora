@@ -25,7 +25,6 @@ import (
 	settingsrepo "github.com/aegispanel/aegis/internal/module/settings/repo"
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/aegispanel/aegis/internal/pkg/reqid"
 	"github.com/aegispanel/aegis/internal/pkg/reqmeta"
 	"github.com/aegispanel/aegis/internal/pkg/testkit"
@@ -83,7 +82,6 @@ func (s *stubSettler) SettlePayment(ctx context.Context, in SettleInput) error {
 	_, err := s.ledger.PostOrderPaid(ctx, ledgersvc.OrderPaid{
 		OrderID:   in.OrderID,
 		UserID:    userID,
-		Currency:  in.Currency,
 		Total:     in.Amount,
 		Paid:      in.Amount,
 		Fee:       in.Fee,
@@ -202,8 +200,9 @@ func setupEnv(t *testing.T, commit bool) (*env, context.Context) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// settings 也要一份：payment 的回调地址读它；ledger service 不再依赖 settings。
 	settings := settingssvc.New(settingsrepo.New(d), tx.NewManager(d), sealer, rdb, auditSvc)
-	ledgerSvc := ledgersvc.New(ledgerrepo.New(d), tx.NewManager(d), settings, auditSvc)
+	ledgerSvc := ledgersvc.New(ledgerrepo.New(d), tx.NewManager(d), auditSvc)
 	svc := New(paymentrepo.New(d), tx.NewManager(d), ledgerSvc, nil, settings, auditSvc, sealer, Config{
 		PublicBaseURL:     "https://panel.example.test",
 		AllowPrivateHosts: true,
@@ -268,7 +267,6 @@ func (e *env) mkFakeProvider(t *testing.T, ctx context.Context, code string) pro
 		Adapter:           AdapterEpay,
 		DisplayName:       "Fake",
 		CredentialsSealed: sealed,
-		Currencies:        []string{"CNY"},
 		BaseURL:           "https://checkout.example.test",
 		Methods:           []string{"alipay"},
 		Enabled:           true,
@@ -285,7 +283,7 @@ func (e *env) mkFakeProvider(t *testing.T, ctx context.Context, code string) pro
 	return rec
 }
 
-// mkOrder 插一张待付的充值单（9.90 CNY）并登记给 stubSettler，返回 ID 与订单号：
+// mkOrder 插一张待付的充值单（9.90 元）并登记给 stubSettler，返回 ID 与订单号：
 // 意图、收款、挂账的 order_id 都有指向 orders 的外键。订单号满足 ^[A-Z0-9-]{1,64}$，随机取，全局唯一。
 func (e *env) mkOrder(t *testing.T, ctx context.Context, user uuid.UUID) (uuid.UUID, string) {
 	t.Helper()
@@ -295,8 +293,8 @@ func (e *env) mkOrder(t *testing.T, ctx context.Context, user uuid.UUID) (uuid.U
 	}
 	orderNo := fmt.Sprintf("T%012d", n.Int64())
 	var orderID uuid.UUID
-	if err := e.row(ctx, `INSERT INTO orders (order_no, user_id, kind, currency, subtotal_amount, total_amount, payable_amount, expires_at)
-		VALUES (?, ?, 'topup', 'CNY', 9.90, 9.90, 9.90, now() + interval '30 minutes') RETURNING id`, orderNo, user).Scan(&orderID); err != nil {
+	if err := e.row(ctx, `INSERT INTO orders (order_no, user_id, kind, subtotal_amount, total_amount, payable_amount, expires_at)
+		VALUES (?, ?, 'topup', 9.90, 9.90, 9.90, now() + interval '30 minutes') RETURNING id`, orderNo, user).Scan(&orderID); err != nil {
 		t.Fatalf("建订单: %v", err)
 	}
 	e.orders.add(orderID)
@@ -327,7 +325,6 @@ func (e *env) createIntent(t *testing.T, ctx context.Context, providerCode strin
 		OrderNo:      orderNo,
 		UserID:       user,
 		Amount:       amt,
-		Currency:     money.CNY,
 		ProviderCode: providerCode,
 		Title:        "测试订单",
 		ClientIP:     "203.0.113.1",
@@ -351,12 +348,11 @@ func fakeInboundFee(eventID, eventType, paymentRef, orderNo string, cents, feeCe
 		"payment_id": paymentRef,
 		"order_no":   orderNo,
 		"amount":     cents,
-		"currency":   "CNY",
 		"fee":        feeCents,
 		"method":     "alipay",
 	})
 	h := http.Header{}
-	h.Set("X-Aegis-Signature", fakeSign([]byte(fakeSecret), eventID, eventType, paymentRef, orderNo, cents, feeCents, "CNY"))
+	h.Set("X-Aegis-Signature", fakeSign([]byte(fakeSecret), eventID, eventType, paymentRef, orderNo, cents, feeCents))
 	return provider.Inbound{Method: http.MethodPost, Header: h, Body: body}
 }
 
@@ -407,7 +403,7 @@ SELECT string_agg(d.id, ',') FROM (
 	}
 }
 
-func (e *env) accountBalance(t *testing.T, ctx context.Context, ref ledgersvc.AccountRef, cur money.Currency) decimal.Decimal {
+func (e *env) accountBalance(t *testing.T, ctx context.Context, ref ledgersvc.AccountRef) decimal.Decimal {
 	t.Helper()
 	var owner *uuid.UUID
 	if ref.Type.UserOwned() {
@@ -417,9 +413,9 @@ func (e *env) accountBalance(t *testing.T, ctx context.Context, ref ledgersvc.Ac
 	var bal sql.NullString
 	err := e.row(ctx, `
 SELECT balance FROM ledger_accounts
-WHERE account_type = ? AND currency = ?
+WHERE account_type = ?
   AND owner_user_id IS NOT DISTINCT FROM ? AND owner_ref = ?`,
-		string(ref.Type), string(cur), owner, ref.Ref,
+		string(ref.Type), owner, ref.Ref,
 	).Scan(&bal)
 	if err == sql.ErrNoRows {
 		return decimal.Zero
