@@ -137,6 +137,26 @@ const protocolSchemaSchema = z.object({
   sensitive_properties: z.array(z.string()).optional(),
   /** 字段下的一句说明（按字段路径），跟着后端 schema 走 */
   hints: z.record(z.string(), z.string()).optional(),
+  /** 10-16 表单元数据：一句话备注（可缺席） */
+  note: z.string().optional(),
+  /**
+   * 字段显示顺序与显示名、条件显示、高级折叠、默认值、占位文字、枚举文案（全部可缺席；
+   * 有则按此顺序渲染，没有时退回 allowed_properties 的旧口径）。show_if 的键是另一字段的
+   * 路径，值是让本字段显示的表单取值（按表单字符串比较），所有键同时满足才显示
+   */
+  fields: z
+    .array(
+      z.object({
+        path: z.string(),
+        label: z.string(),
+        advanced: z.boolean().optional(),
+        show_if: z.record(z.string(), z.array(z.string())).optional(),
+        default: z.union([z.string(), z.number(), z.boolean()]).optional(),
+        placeholder: z.string().optional(),
+        option_labels: z.record(z.string(), z.string()).optional(),
+      }),
+    )
+    .optional(),
 })
 export const protocolSchemasResponse = z.object({ schemas: list(protocolSchemaSchema) })
 export type ProtocolSchema = z.output<typeof protocolSchemaSchema>
