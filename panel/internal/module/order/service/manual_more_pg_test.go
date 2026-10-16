@@ -98,7 +98,7 @@ WHERE p.order_id = ? AND pp.code = 'offline'`, c.OrderID); n != 1 {
 	mustErrMsg(t, "凭证号重复", err, paymentsvc.ErrPaymentReused)
 }
 
-// 预览与建单同口径：目标套餐不允许变更时 change 标不可选、默认值不落在它上面；价格币种与原订阅本期不同标不可选；
+// 预览与建单同口径：目标套餐不允许变更时 change 标不可选、默认值不落在它上面；
 // 隐藏套餐「另开一份」标不可选、建单 404（换套餐不看可见性）；这一份挂着未完结的续费或变更单时标不可选。
 func TestManualPreviewMatchesCreate(t *testing.T) {
 	e, ctx := newEnv(t)
@@ -141,20 +141,6 @@ func TestManualPreviewMatchesCreate(t *testing.T) {
 	_, err := e.svc.CreateManualOrder(actx, ManualOrderInput{UserID: user, PlanID: locked, PriceID: lockedPrice, Reason: manualReason,
 		Target: &Choice{Kind: PlacementChange, SubscriptionID: &sub.ID}})
 	mustErrMsg(t, "建单：不允许变更", err, catalogsvc.ErrChangeNotAllowed)
-
-	planUSD, _, _ := e.mkPlan(t, ctx, 1000, "month")
-	e.mustExec(t, ctx, `UPDATE prices SET status = 'archived', row_version = row_version + 1 WHERE plan_id = ?`, planUSD)
-	var usdPrice uuid.UUID
-	if err := e.row(ctx, `INSERT INTO prices (plan_id, currency, unit_amount, billing_interval, interval_count) VALUES (?, 'USD', 10, 'month', 1) RETURNING id`,
-		planUSD).Scan(&usdPrice); err != nil {
-		t.Fatal(err)
-	}
-	pv = preview(planUSD, usdPrice)
-	op := optionOf(pv, changeKey)
-	if op.Unavailable != ErrPlanChangeCurrency.Message {
-		t.Fatalf("币种不一致：change 选项 %q", op.Unavailable)
-	}
-	mustEq(t, "币种不一致时应付按全价", op.Due, dec("10"))
 
 	hidden, _, hiddenPrice := e.mkPlan(t, ctx, 10000, "month")
 	e.mustExec(t, ctx, `UPDATE plans SET visibility = 'hidden' WHERE id = ?`, hidden)

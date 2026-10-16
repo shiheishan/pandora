@@ -18,7 +18,6 @@ import (
 	"github.com/aegispanel/aegis/internal/module/payment/provider/epay"
 	paymentsvc "github.com/aegispanel/aegis/internal/module/payment/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
 // spyHook 记下 PaidHook 的调用；fail 非空时返回它（模拟佣金写入失败）。
@@ -56,7 +55,7 @@ func (e *env) lateCase(t *testing.T, ctx context.Context, orderID uuid.UUID) (ki
 // platformBalance 读平台科目（按 owner_ref）的余额。
 func (e *env) platformBalance(t *testing.T, ctx context.Context, typ ledgersvc.AccountType, ref string) decimal.Decimal {
 	t.Helper()
-	s := e.strCol(t, ctx, `SELECT balance::text FROM ledger_accounts WHERE account_type = ? AND owner_ref = ? AND currency = 'CNY' AND owner_user_id IS NULL`,
+	s := e.strCol(t, ctx, `SELECT balance::text FROM ledger_accounts WHERE account_type = ? AND owner_ref = ? AND owner_user_id IS NULL`,
 		string(typ), ref)
 	if s == "" {
 		return decimal.Zero
@@ -64,7 +63,7 @@ func (e *env) platformBalance(t *testing.T, ctx context.Context, typ ledgersvc.A
 	return dec(s)
 }
 
-// 新购待付单（券 + 部分余额）→ 发起支付 → 回调：履约、order_paid 1 笔、库存转已售、冻结与券 captured。
+// 新购待付单（券 + 部分余额）→ 发起支付 → 回调：履约、order_paid 1 笔、冻结与券 captured。
 func TestWebhookSettlesNewOrder(t *testing.T) {
 	e, ctx := newEnv(t)
 	code := payCode()
@@ -85,12 +84,6 @@ func TestWebhookSettlesNewOrder(t *testing.T) {
 	}
 	if n := e.txnCount(t, ctx, ledgersvc.KindOrderPaid, orderID); n != 1 {
 		t.Fatalf("order_paid %d 笔", n)
-	}
-	if r, s := e.stock(t, ctx, planID); r != 0 || s != 1 {
-		t.Fatalf("库存 reserved=%d sold=%d", r, s)
-	}
-	if p, r := e.counter(t, ctx, planID, user); p != 1 || r != 0 {
-		t.Fatalf("限购 purchased=%d reserved=%d", p, r)
 	}
 	if st := e.strCol(t, ctx, `SELECT status FROM balance_holds WHERE order_id = ?`, orderID); st != "captured" {
 		t.Fatalf("冻结 %s", st)
@@ -359,7 +352,6 @@ func TestSettleTopupWithFee(t *testing.T) {
 		PaymentID:    uuid.New(),
 		Amount:       dec("100.00"),
 		Fee:          dec("0.60"),
-		Currency:     money.CNY,
 		ProviderCode: code,
 		Method:       "alipay",
 	}); err != nil {
@@ -375,31 +367,6 @@ func TestSettleTopupWithFee(t *testing.T) {
 		t.Fatalf("balance_topup %d 笔", n)
 	}
 	e.assertNoDrift(t, ctx)
-}
-
-// 流量包单结算：traffic_pack_grants 挂在目标订阅上。
-func TestWebhookSettlesPack(t *testing.T) {
-	e, ctx := newEnv(t)
-	code := payCode()
-	e.mkPayProvider(t, ctx, code)
-	user := e.mkUser(t, ctx)
-	planID, versionID, priceID := e.mkPlan(t, ctx, 1000, "month")
-	sub := e.provision(t, ctx, user, planID, versionID, priceID, 1000)
-	packID := e.mkPack(t, ctx, 600, 20*gib)
-	c, err := e.svc.CreatePackOrder(asUser(ctx, user), PackOrderInput{PackID: packID, SubscriptionID: sub.ID})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ack := e.payAndNotify(t, ctx, user, c.OrderID, code, "pay-"+randHex(8)); !ackOK(ack) {
-		t.Fatalf("回执: %s", ack.Body)
-	}
-	if n := e.count(t, ctx, `SELECT count(*) FROM traffic_pack_grants WHERE source = 'order' AND source_id = ? AND subscription_id = ? AND granted_bytes = ?`,
-		c.OrderID, sub.ID, 20*gib); n != 1 {
-		t.Fatalf("流量包发放 %d 行", n)
-	}
-	if st := e.order(t, ctx, c.OrderID).Status; st != StatusFulfilled {
-		t.Fatalf("订单 %s", st)
-	}
 }
 
 // 后台标记已支付：待付单履约、offline 渠道一行收款；已取消的单 409 且不开挂账；门户主体 403。

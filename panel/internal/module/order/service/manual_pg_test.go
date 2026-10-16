@@ -59,12 +59,6 @@ WHERE p.order_id = ? AND pp.code = 'offline'`, c.OrderID); n != 1 {
 	if n := e.count(t, ctx, `SELECT count(*) FROM audit_events WHERE action = ? AND resource_id = ?`, ActionManualCreated, c.OrderID); n != 1 {
 		t.Fatalf("人工单审计 %d 条", n)
 	}
-	if r, s := e.stock(t, ctx, planID); r != 0 || s != 1 {
-		t.Fatalf("库存 reserved=%d sold=%d", r, s)
-	}
-	if p, r := e.counter(t, ctx, planID, user); p != 1 || r != 0 {
-		t.Fatalf("限购 purchased=%d reserved=%d", p, r)
-	}
 
 	// 有了同款的一份：只剩「续一期」，不问直接续
 	pv, err = e.svc.ManualPreview(actx, ManualPreviewInput{UserID: user, PlanID: planID, PriceID: &priceID})
