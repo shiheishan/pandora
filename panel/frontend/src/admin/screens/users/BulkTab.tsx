@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { filenameFromDisposition, saveFile } from '../../../core/download'
 import { formatCount, formatDateTime } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
-import { Button, Card, ConfirmModal, Empty, Input, QueryView, Select, Tag, TextArea, useToast } from '../../../ui'
+import { Button, ConfirmModal, Empty, Input, QueryView, Select, Tag, TextArea, useToast } from '../../../ui'
 import { useFailure, useIntentKey } from '../../actions'
 import {
   bulkMailSchema,
@@ -41,114 +41,151 @@ import css from './Users.module.css'
 
 export function BulkTab({ now }: { now: Date }) {
   return (
-    <div className={ops.splitBulk}>
-      <FilterPanel now={now} />
-      <GeneratePanel />
+    <div className={ops.bulkRoot}>
+      <FilterSection now={now} />
+      <GenerateSection />
     </div>
   )
 }
 
 // ===========================================================================
-// 按条件筛选：预览 → 导出 / 群发
+// 批量操作用户：筛选 → 确认名单 → 选择操作
 // ===========================================================================
-function FilterPanel({ now }: { now: Date }) {
+function FilterSection({ now }: { now: Date }) {
   const [form, setForm] = useState<BulkForm>({ plan: '', status: '', expiry: '', group: '' })
   const filter = bulkFilter(form)
   const preview = useBulkPreview(filter)
-  // 套餐下拉读 GET v1/plans
   const plans = usePlanOptions()
   const groups = useUserGroups()
   const [mailOpen, setMailOpen] = useState(false)
   const [banOpen, setBanOpen] = useState(false)
   const total = preview.data?.total ?? null
   const set = (next: Partial<BulkForm>) => setForm((f) => ({ ...f, ...next }))
+  const opsDisabled = total === null || total === 0
 
   return (
-    <Card
-      flush
-      title={
-        <span className={ops.cardTitle}>
-          按条件筛选用户 <span className={`${css.small} ${ops.titleNote}`}>预览后导出、群发邮件或批量封禁</span>
+    <section className={ops.bulkSection} aria-labelledby="bulk-users-heading">
+      <div className={ops.sectionHead}>
+        <h3 id="bulk-users-heading" className={ops.sectionTitle}>
+          批量操作用户 <span className={ops.sectionNote}>先筛选，确认名单，再执行</span>
+        </h3>
+      </div>
+
+      <div className={ops.stepHead}>
+        <span className={ops.stepBadge} aria-hidden="true">1</span>
+        <span className={ops.stepTitle}>设定筛选条件</span>
+        <span className={ops.stepNote}>不选即为不限</span>
+      </div>
+      <div className={ops.stepBody}>
+        <div className={ops.filterGrid}>
+          <Select
+            label="套餐"
+            size="sm"
+            emptyOption="不限"
+            options={(plans.data ?? []).map((p) => ({ value: p.id, label: p.status === 'archived' ? `${p.name}（已归档）` : p.name }))}
+            value={form.plan}
+            onChange={(e) => set({ plan: e.target.value })}
+          />
+          <Select label="状态" size="sm" emptyOption="不限" options={BULK_STATUS.map(([value, label]) => ({ value, label }))} value={form.status} onChange={(e) => set({ status: e.target.value as BulkStatus })} />
+          <Select label="到期时间" size="sm" emptyOption="不限" options={BULK_EXPIRY.map(([value, label]) => ({ value, label }))} value={form.expiry} onChange={(e) => set({ expiry: e.target.value as BulkExpiry })} />
+          <Select
+            label="用户组"
+            size="sm"
+            emptyOption="不限"
+            options={(groups.data ?? []).map((g) => ({ value: g.id, label: groupOptionLabel(g) }))}
+            value={form.group}
+            onChange={(e) => set({ group: e.target.value })}
+          />
+        </div>
+      </div>
+
+      <div className={ops.stepHead}>
+        <span className={ops.stepBadge} aria-hidden="true">2</span>
+        <span className={ops.stepTitle}>确认命中名单</span>
+        <span className={ops.stepSpacer} />
+        <span className={ops.hitCountRow}>
+          <span className={ops.hitNumber}>{total === null ? '—' : formatCount(total)}</span>
+          <span className={ops.hitUnit}>位用户命中</span>
         </span>
-      }
-    >
-      <div className={ops.filterGrid}>
-        <Select
-          label="套餐"
-          size="sm"
-          emptyOption="不限"
-          options={(plans.data ?? []).map((p) => ({ value: p.id, label: p.status === 'archived' ? `${p.name}（已归档）` : p.name }))}
-          value={form.plan}
-          onChange={(e) => set({ plan: e.target.value })}
-        />
-        <Select label="状态" size="sm" emptyOption="不限" options={BULK_STATUS.map(([value, label]) => ({ value, label }))} value={form.status} onChange={(e) => set({ status: e.target.value as BulkStatus })} />
-        <Select label="到期时间" size="sm" emptyOption="不限" options={BULK_EXPIRY.map(([value, label]) => ({ value, label }))} value={form.expiry} onChange={(e) => set({ expiry: e.target.value as BulkExpiry })} />
-        <Select
-          label="用户组"
-          size="sm"
-          emptyOption="不限"
-          options={(groups.data ?? []).map((g) => ({ value: g.id, label: groupOptionLabel(g) }))}
-          value={form.group}
-          onChange={(e) => set({ group: e.target.value })}
-        />
       </div>
-      <div className={ops.hitBar}>
-        <span className={ops.hitCount}>{total === null ? '—' : formatCount(total)}</span>
-        <span className={css.muted}>位用户命中</span>
-        <span className={css.spacer} />
-        <ExportButton filter={filter} total={total} />
-        <Button
-          size="sm"
-          variant="primary"
-          aria-expanded={mailOpen}
-          onClick={() => {
-            setMailOpen((v) => !v)
-            setBanOpen(false)
-          }}
-        >
-          群发邮件
-        </Button>
-        <Button
-          size="sm"
-          variant="danger"
-          aria-expanded={banOpen}
-          onClick={() => {
-            setBanOpen((v) => !v)
-            setMailOpen(false)
-          }}
-        >
-          批量封禁
-        </Button>
+      <div className={ops.stepBody}>
+        <div className={ops.previewBox}>
+          <QueryView
+            query={preview}
+            rows={5}
+            isEmpty={(d) => d.total === 0}
+            empty={<Empty bare title="没有命中任何用户" description="换个条件再看看。" />}
+          >
+            {(d) => (
+              <>
+                <div className={ops.previewHead} aria-hidden="true">
+                  <span>邮箱</span>
+                  <span>套餐</span>
+                  <span className={ops.textRight}>到期</span>
+                </div>
+                <ul className={ops.previewList} aria-label="命中用户预览">
+                  {d.sample_rows.map((u) => (
+                    <li key={u.email} className={ops.previewRow}>
+                      <span className={ops.ellipsis}>{u.email}</span>
+                      <span className={ops.previewSub}>{u.plan_name ?? '无订阅'}</span>
+                      <span className={ops.previewExp}>{u.current_period_end ? expiryView(u.current_period_end, now).text : '—'}</span>
+                    </li>
+                  ))}
+                </ul>
+                {d.total > d.sample_rows.length && (
+                  <p className={ops.previewFoot}>
+                    仅展示最近注册的 {formatCount(d.sample_rows.length)} 位，操作会作用于全部 {formatCount(d.total)} 位
+                  </p>
+                )}
+              </>
+            )}
+          </QueryView>
+        </div>
       </div>
-      {mailOpen && <MailForm filter={filter} total={total} onSent={() => setMailOpen(false)} />}
-      {banOpen && <BulkBanForm filter={filter} total={total} onDone={() => setBanOpen(false)} />}
-      <QueryView
-        query={preview}
-        rows={5}
-        isEmpty={(d) => d.total === 0}
-        empty={<Empty bare title="没有命中任何用户" description="换个条件再看看。" />}
-      >
-        {(d) => (
-          <>
-            <ul className={ops.previewList} aria-label="命中用户预览">
-              {d.sample_rows.map((u) => (
-                <li key={u.email} className={ops.previewRow}>
-                  <span className={ops.ellipsis}>{u.email}</span>
-                  <span className={css.muted}>{u.plan_name ?? '无订阅'}</span>
-                  <span className={css.small}>{u.current_period_end ? expiryView(u.current_period_end, now).text : '—'}</span>
-                </li>
-              ))}
-            </ul>
-            {d.total > d.sample_rows.length && <p className={ops.previewFoot}>只预览最近注册的 {d.sample_rows.length} 位</p>}
-          </>
-        )}
-      </QueryView>
-    </Card>
+
+      <div className={ops.stepHead}>
+        <span className={ops.stepBadge} aria-hidden="true">3</span>
+        <span className={ops.stepTitle}>选择操作</span>
+      </div>
+      <div className={ops.stepBody}>
+        <div className={ops.opGrid}>
+          <ExportOpCard filter={filter} total={total} disabled={opsDisabled} />
+          <button
+            type="button"
+            className={`${ops.opCard} ${mailOpen ? ops.opCardActive : ''}`}
+            disabled={opsDisabled}
+            aria-expanded={mailOpen}
+            onClick={() => {
+              setMailOpen((v) => !v)
+              setBanOpen(false)
+            }}
+          >
+            <span className={ops.opCardTitle}>群发邮件</span>
+            <span className={ops.opCardDesc}>给他们发一封通知</span>
+          </button>
+          <button
+            type="button"
+            className={`${ops.opCard} ${ops.opCardDanger} ${banOpen ? ops.opCardDangerActive : ''}`}
+            disabled={opsDisabled}
+            aria-expanded={banOpen}
+            onClick={() => {
+              setBanOpen((v) => !v)
+              setMailOpen(false)
+            }}
+          >
+            <span className={ops.opCardTitle}>批量封禁</span>
+            <span className={ops.opCardDesc}>停止登录与连接</span>
+          </button>
+        </div>
+        {mailOpen && <MailForm filter={filter} total={total} onSent={() => setMailOpen(false)} />}
+        {banOpen && <BulkBanForm filter={filter} total={total} onDone={() => setBanOpen(false)} />}
+      </div>
+    </section>
   )
 }
 
 /** 导出：GET v1/users/bulk/export（reauth，R9）。没有 cookie，只能 fetch 带 Bearer 取回再存文件 */
-function ExportButton({ filter, total }: { filter: BulkFilter; total: number | null }) {
+function ExportOpCard({ filter, total, disabled }: { filter: BulkFilter; total: number | null; disabled: boolean }) {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
@@ -166,9 +203,10 @@ function ExportButton({ filter, total }: { filter: BulkFilter; total: number | n
   }
   return (
     <>
-      <Button size="sm" disabled={!n} onClick={() => setOpen(true)}>
-        导出 CSV
-      </Button>
+      <button type="button" className={ops.opCard} disabled={disabled} onClick={() => setOpen(true)}>
+        <span className={ops.opCardTitle}>导出 CSV</span>
+        <span className={ops.opCardDesc}>下载这份名单</span>
+      </button>
       <ConfirmModal
         open={open}
         title="导出用户名单？"
@@ -268,15 +306,11 @@ function MailForm({ filter, total, onSent }: { filter: BulkFilter; total: number
 
 // ===========================================================================
 // 批量生成：POST v1/users/bulk/generate（reauth + 幂等 user_bulk_generate）
-// 是后台任务：提交即回，worker 逐个生成（一次只占 1 个 Argon2 名额，不挡登录）。
-// 这里轮询进度画进度条；完成后从服务端下载结果 CSV（含初始口令，24 小时内、只有提交人能下，
-// 要近期重认证，每次下载都进审计）
 // ===========================================================================
 const EMPTY_FORM: GenerateForm = { count: '10', prefix: '', domain: '', group: '', reason: '' }
-// 后端字段名 → 表单字段名
 const FIELD_KEYS: Record<string, keyof GenerateForm> = { count: 'count', email_prefix: 'prefix', email_domain: 'domain', group_id: 'group', reason: 'reason' }
 
-function GeneratePanel() {
+function GenerateSection() {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
@@ -292,7 +326,6 @@ function GeneratePanel() {
   const jobs = useGenerationJobs()
   const finished = job.data ? jobFinished(job.data) : false
 
-  // 任务一结束：用户列表与最近任务各刷新一次
   useEffect(() => {
     if (!finished) return
     void invalidate(true)
@@ -338,45 +371,81 @@ function GeneratePanel() {
   }
 
   return (
-    <Card title="批量生成用户">
-      <form
-        className={ops.formStack}
-        onSubmit={(e) => {
-          e.preventDefault()
-          void submit()
-        }}
-      >
-        <div className={ops.genRow}>
-          <Input label="数量" mono inputMode="numeric" value={form.count} error={errors.count} onChange={(e) => set('count', e.target.value)} />
-          <Input label="邮箱前缀" mono placeholder="dealer" value={form.prefix} error={errors.prefix} onChange={(e) => set('prefix', e.target.value)} />
+    <section className={ops.bulkSection} aria-labelledby="bulk-generate-heading">
+      <div className={ops.sectionHead}>
+        <h3 id="bulk-generate-heading" className={ops.sectionTitle}>
+          批量生成用户 <span className={ops.sectionNote}>账号不带套餐，需要时再人工开单</span>
+        </h3>
+      </div>
+
+      <div className={ops.stepHead}>
+        <span className={ops.stepBadge} aria-hidden="true">1</span>
+        <span className={ops.stepTitle}>账号格式</span>
+        <span className={ops.stepNote}>生成多少个、邮箱长什么样</span>
+      </div>
+      <div className={ops.stepBody}>
+        <div className={ops.formStack}>
+          <div className={ops.genRow}>
+            <Input label="数量" mono inputMode="numeric" value={form.count} error={errors.count} onChange={(e) => set('count', e.target.value)} />
+            <Input label="邮箱前缀" mono placeholder="dealer" value={form.prefix} error={errors.prefix} onChange={(e) => set('prefix', e.target.value)} />
+          </div>
+          <Input
+            label="邮箱后缀"
+            mono
+            placeholder="example.com"
+            value={form.domain}
+            error={errors.domain}
+            hint={`生成的邮箱形如 ${form.prefix.trim().toLowerCase() || '前缀'}-8 位随机@${form.domain.trim().toLowerCase() || '后缀'}`}
+            onChange={(e) => set('domain', e.target.value)}
+          />
         </div>
-        <Input
-          label="邮箱后缀"
-          mono
-          placeholder="example.com"
-          value={form.domain}
-          error={errors.domain}
-          hint={`生成的邮箱形如 ${form.prefix.trim().toLowerCase() || '前缀'}-8 位随机@${form.domain.trim().toLowerCase() || '后缀'}`}
-          onChange={(e) => set('domain', e.target.value)}
-        />
-        {/* 停用的组不收新成员：隐藏（已选中的照样显示，提交时后端回 422 分组已停用） */}
-        <Select
-          label="用户组"
-          emptyOption="不分组"
-          options={assignableGroups(groups.data ?? [], form.group ? [form.group] : []).map((g) => ({ value: g.id, label: groupOptionLabel(g) }))}
-          value={form.group}
-          error={errors.group}
-          onChange={(e) => set('group', e.target.value)}
-        />
-        <TextArea label="生成原因" rows={2} value={form.reason} error={errors.reason} hint="写进审计日志，5 到 500 个字" onChange={(e) => set('reason', e.target.value)} />
-        <p className={css.small}>生成的账号不带套餐；需要时到「订单与收款」为其人工开单。生成在后台进行，不影响用户登录。</p>
-        <Button type="submit" variant="primary" busy={busy}>
-          生成
-        </Button>
-      </form>
-      {job.data && <JobProgress job={job.data} onDownload={(j) => void download(j)} onClose={() => setJobId(null)} />}
-      <RecentJobs jobs={(jobs.data ?? []).filter((j) => j.id !== jobId)} onDownload={(j) => void download(j)} />
-    </Card>
+      </div>
+
+      <div className={ops.stepHead}>
+        <span className={ops.stepBadge} aria-hidden="true">2</span>
+        <span className={ops.stepTitle}>归属与原因</span>
+      </div>
+      <div className={ops.stepBody}>
+        <div className={ops.formStack}>
+          <Select
+            label="用户组"
+            emptyOption="未分组（默认）"
+            options={assignableGroups(groups.data ?? [], form.group ? [form.group] : []).map((g) => ({ value: g.id, label: groupOptionLabel(g) }))}
+            value={form.group}
+            error={errors.group}
+            onChange={(e) => set('group', e.target.value)}
+          />
+          <TextArea label="生成原因" rows={2} value={form.reason} error={errors.reason} hint="写进审计日志，5 到 500 个字" onChange={(e) => set('reason', e.target.value)} />
+        </div>
+      </div>
+
+      <div className={ops.stepHead}>
+        <span className={ops.stepBadge} aria-hidden="true">3</span>
+        <span className={ops.stepTitle}>提交生成</span>
+      </div>
+      <div className={ops.stepBody}>
+        <form
+          className={ops.formStack}
+          onSubmit={(e) => {
+            e.preventDefault()
+            void submit()
+          }}
+        >
+          <div className={ops.submitRow}>
+            <span className={ops.submitHint}>在后台生成，不影响用户登录</span>
+            <Button type="submit" variant="primary" busy={busy}>
+              开始生成
+            </Button>
+          </div>
+        </form>
+        {job.data && (
+          <div className={ops.jobBox}>
+            <JobProgress job={job.data} onDownload={(j) => void download(j)} onClose={() => setJobId(null)} />
+          </div>
+        )}
+        <RecentJobs jobs={(jobs.data ?? []).filter((j) => j.id !== jobId)} onDownload={(j) => void download(j)} />
+      </div>
+    </section>
   )
 }
 
@@ -419,28 +488,30 @@ function JobProgress({ job, onDownload, onClose }: { job: GenerationJob; onDownl
 function RecentJobs({ jobs, onDownload }: { jobs: GenerationJob[]; onDownload: (j: GenerationJob) => void }) {
   if (jobs.length === 0) return null
   return (
-    <div className={ops.genResult}>
-      <div className={ops.genHead}>最近的生成任务</div>
-      <ul className={ops.genList} aria-label="最近的生成任务">
-        {jobs.slice(0, 5).map((j) => (
-          <li key={j.id}>
-            <span>
-              {j.email_prefix}@{j.email_domain} · {formatCount(j.completed)}/{formatCount(j.total)} · {JOB_STATUS_VIEW[j.status].label}
-            </span>
-            <span className={css.muted}>
-              {formatDateTime(j.created_at)}
-              {j.result_available && (
-                <>
-                  {' '}
-                  <Button size="xs" variant="link" onClick={() => onDownload(j)}>
-                    下载
-                  </Button>
-                </>
-              )}
-            </span>
-          </li>
-        ))}
-      </ul>
+    <div className={ops.recentJobsSection}>
+      <div className={ops.recentJobsHead}>生成记录</div>
+      <div className={ops.genResult}>
+        <ul className={ops.genList} aria-label="生成记录">
+          {jobs.slice(0, 5).map((j) => (
+            <li key={j.id}>
+              <span>
+                {j.email_prefix}@{j.email_domain} · {formatCount(j.completed)}/{formatCount(j.total)} · {JOB_STATUS_VIEW[j.status].label}
+              </span>
+              <span className={css.muted}>
+                {formatDateTime(j.created_at)}
+                {j.result_available && (
+                  <>
+                    {' '}
+                    <Button size="xs" variant="link" onClick={() => onDownload(j)}>
+                      下载
+                    </Button>
+                  </>
+                )}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
     </div>
   )
 }
