@@ -46,8 +46,8 @@ export function Shell() {
   const name = displayName(me.data)
   const owner = navOwner(page)
   const inMenu = MENU_PAGES.includes(page)
-  const balanceLabel = balance.data ? formatMoney(balance.data.balance, balance.data.currency) : null
-  const [title, subtitle] = PAGES[page]
+  const balanceLabel = balance.data ? formatMoney(balance.data.balance) : null
+  const title = PAGES[page]
   const Screen = SCREENS[page]
   const heading = head?.title ?? (page === 'overview' ? `${greeting()}${name ? `，${name}` : ''}` : title)
   const back = () => {
@@ -57,7 +57,7 @@ export function Shell() {
 
   const hints: Partial<Record<PageKey, string | null>> = {
     wallet: balanceLabel,
-    referral: commission.data ? formatMoney(commission.data.available, commission.data.currency) : null,
+    referral: commission.data ? formatMoney(commission.data.available) : null,
   }
 
   return (
@@ -111,7 +111,7 @@ export function Shell() {
                 </>
               }
               entries={[
-                ...MENU_PAGES.map((key) => ({ key, label: PAGES[key][0], hint: hints[key] ?? undefined, current: key === page, onSelect: () => navigate(pagePath(key)) })),
+                ...MENU_PAGES.map((key) => ({ key, label: PAGES[key], hint: hints[key] ?? undefined, current: key === page, onSelect: () => navigate(pagePath(key)) })),
                 { kind: 'separator' as const, key: 'sep' },
                 { kind: 'toggle' as const, key: 'theme', label: '深色模式', checked: theme === 'dark', onChange: () => toggleTheme() },
                 { key: 'logout', label: '退出登录', danger: true, onSelect: () => void signOut(runtime) },
@@ -129,7 +129,6 @@ export function Shell() {
             </button>
           )}
           <h1 className={css.title}>{heading}</h1>
-          {!head && subtitle && <p className={css.subtitle}>{subtitle}</p>}
         </div>
         <ScreenFrame resetKey={canonical}>
           <PageHeadProvider set={setHead}>
@@ -141,7 +140,7 @@ export function Shell() {
       <footer className={css.footer}>
         {MENU_PAGES.map((key) => (
           <a key={key} href={href(pagePath(key))} className={key === page ? `${css.footLink} ${css.footOn}` : css.footLink}>
-            {PAGES[key][0]}
+            {PAGES[key]}
           </a>
         ))}
         <span className={css.spacer} />

@@ -1,4 +1,4 @@
-import type { Channel, Delivery, Encryption, Hook, MailSettings, RegistrationMode, TelegramSettings, Template } from './schemas'
+import type { Channel, Delivery, Encryption, Hook, HookEvent, MailSettings, RegistrationMode, TelegramExtras, TelegramSettings, Template } from './schemas'
 
 export type Tone = 'ok' | 'warn' | 'muted'
 
@@ -128,6 +128,47 @@ export function telegramBody(f: TelegramForm, saved: TelegramSettings): { enable
   return chat.value === saved.admin_chat_id ? body : { ...body, admin_chat_id: chat.value }
 }
 
+/** Telegram 弹窗「机器人与群组」一节的草稿；两个管理员提醒开关不在这里，放在页面「管理员提醒」里即时保存 */
+export interface ExtrasForm {
+  subCommand: boolean
+  startMessage: string
+  joinReview: boolean
+  userGroupChatId: string
+  discussLink: string
+}
+
+export function extrasFormFrom(e: TelegramExtras): ExtrasForm {
+  return {
+    subCommand: e.sub_command_enabled,
+    startMessage: e.start_message,
+    joinReview: e.join_review_enabled,
+    userGroupChatId: e.user_group_chat_id === null ? '' : String(e.user_group_chat_id),
+    discussLink: e.discuss_link,
+  }
+}
+
+/** 整份 7 个键：表单里的 5 个 + 已保存的两个管理员提醒开关；用户群 chat id 只收负数 */
+export function extrasBody(f: ExtrasForm, saved: TelegramExtras): TelegramExtras | { error: Record<string, string> } {
+  const chat = parseGroupChatId(f.userGroupChatId)
+  if (!chat.ok) return { error: { user_group_chat_id: '用户群 chat id 必须是负数（群组的 chat id 以 - 开头）' } }
+  return {
+    sub_command_enabled: f.subCommand,
+    start_message: f.startMessage,
+    admin_paid_notify: saved.admin_paid_notify,
+    admin_ticket_notify: saved.admin_ticket_notify,
+    join_review_enabled: f.joinReview,
+    user_group_chat_id: chat.value,
+    discuss_link: f.discussLink,
+  }
+}
+
+export type AdminAlert = 'admin_paid_notify' | 'admin_ticket_notify'
+
+/** 管理员提醒两个开关（10-16 保持两个，不拆三项）：即时保存，其余 5 个键照已保存的原样带上 */
+export function adminAlertBody(saved: TelegramExtras, key: AdminAlert, on: boolean): TelegramExtras {
+  return { ...saved, [key]: on }
+}
+
 // ---------------------------------------------------------------------------
 // 通知模板
 // ---------------------------------------------------------------------------
@@ -181,12 +222,10 @@ export function validateTemplate(d: Draft): Record<string, string> {
 // ---------------------------------------------------------------------------
 // Webhook 钩子
 // ---------------------------------------------------------------------------
-/** 近 7 天成功率 = sent / (sent + failed)；都为 0 显示「—」 */
-export function successRate(h: Pick<Hook, 'sent_count_7d' | 'failed_count'>): string {
-  const total = h.sent_count_7d + h.failed_count
-  if (total === 0) return '—'
-  const pct = (h.sent_count_7d / total) * 100
-  return `${pct === 100 ? '100' : pct.toFixed(1)}%`
+/** 钩子的健康字样（设计稿行内小字）：停用 > 近 7 天失败次数 > 正常 */
+export function hookHealth(h: Pick<Hook, 'enabled' | 'failed_count'>): string {
+  if (!h.enabled) return '已停用'
+  return h.failed_count > 0 ? `近 7 天有 ${h.failed_count} 次失败` : '正常'
 }
 
 export function hookTone(h: Pick<Hook, 'enabled' | 'failed_count'>): Tone {
@@ -272,10 +311,11 @@ export function hookBody(code: string, f: HookForm): HookBody {
   }
 }
 
-export function eventsLabel(events: readonly string[], catalogSize: number): string {
+/** 订阅事件的显示：空 = 未订阅，订满目录 = 全部事件，其余按目录里的中文说明（目录没有的原样）用顿号连起来 */
+export function eventsLabel(events: readonly string[], catalog: readonly HookEvent[]): string {
   if (events.length === 0) return '未订阅事件'
-  if (catalogSize > 0 && events.length >= catalogSize) return '全部事件'
-  return events.join(', ')
+  if (catalog.length > 0 && events.length >= catalog.length) return '全部事件'
+  return events.map((name) => catalog.find((e) => e.name === name)?.desc || name).join('、')
 }
 
 export function durationLabel(ms: number | null): string {
@@ -283,14 +323,15 @@ export function durationLabel(ms: number | null): string {
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${ms} ms`
 }
 
-/** 投递记录一行：状态码（0 → —）、事件（重试累加在 attempts 上，显示「第 n 次」）、耗时、时间（HH:MM:SS） */
-export function deliveryRow(d: Delivery): { code: string; tone: Tone; event: string; duration: string; at: string } {
+/** 投递记录一行（表头：时间 / 事件 / 响应 / 耗时 / 次数）：状态码 0 显示「—」，排队中显示「排队」；次数 0 显示「—」 */
+export function deliveryRow(d: Delivery): { at: string; event: string; code: string; tone: Tone; duration: string; attempts: string } {
   const tone: Tone = d.status === 'queued' ? 'muted' : d.response_code >= 200 && d.response_code < 300 ? 'ok' : 'warn'
   return {
+    at: (d.sent_at || d.created_at).slice(5, 16),
+    event: d.event,
     code: d.status === 'queued' && d.response_code === 0 ? '排队' : d.response_code === 0 ? '—' : String(d.response_code),
     tone,
-    event: d.attempts > 1 ? `${d.event} · 第 ${d.attempts} 次` : d.event,
     duration: durationLabel(d.duration_ms),
-    at: (d.sent_at || d.created_at).slice(5),
+    attempts: d.attempts > 0 ? String(d.attempts) : '—',
   }
 }

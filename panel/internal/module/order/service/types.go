@@ -488,6 +488,8 @@ type AdminOrderView struct {
 	Manual        bool
 	ProviderCode  *string
 	ProviderName  *string
+	// Method 是成功那笔收款的支付方式（payment 的支付摘要给）；没有收款为 nil
+	Method *string
 }
 
 // AdminOrderList 是后台订单列表的一页。

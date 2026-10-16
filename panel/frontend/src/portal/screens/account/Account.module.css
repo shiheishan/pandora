@@ -28,11 +28,6 @@
   font-family: var(--font-mono);
 }
 
-.grow {
-  flex: 1;
-  min-width: 0;
-}
-
 /* 个人信息 */
 .facts {
   display: grid;
@@ -145,10 +140,8 @@
   color: var(--text-3);
 }
 
-.tgRow {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.unbind {
+  color: var(--danger);
 }
 
 .codeBox {

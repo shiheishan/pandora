@@ -37,7 +37,7 @@ const page = (q: URLSearchParams, def: number, max: number) => {
 // 让券的「适用套餐」与套餐卡在营销页上对得上套餐页
 // ---------------------------------------------------------------------------
 const PRO = plans.find((p) => p.id === PLAN_IDS[1])!
-const PRO_MONTH = PRO.prices.find((p) => p.status === 'active' && p.currency === 'CNY' && p.billing_interval === 'month' && !p.user_group_id)!
+const PRO_MONTH = PRO.prices.find((p) => p.status === 'active' && p.billing_interval === 'month')!
 
 // ---------------------------------------------------------------------------
 // 优惠券（契约后台-06 · 优惠券）

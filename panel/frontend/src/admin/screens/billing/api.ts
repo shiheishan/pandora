@@ -114,16 +114,16 @@ export function usePaymentSettings() {
   })
 }
 
-/** 最多 200 条、无分页（契约）；currency 空 = 全部 */
-export function useAdjustments(currency: string) {
+/** 最多 200 条、无分页（契约）；只有人民币，不再按币种筛 */
+export function useAdjustments() {
   const api = useApi()
   return useQuery({
-    queryKey: [...BK, 'adjustments', currency],
-    queryFn: ({ signal }) => api.get('v1/revenue/adjustments', adjustmentsSchema, { signal, query: { currency: currency || undefined } }).then((r) => r.adjustments),
+    queryKey: [...BK, 'adjustments'],
+    queryFn: ({ signal }) => api.get('v1/revenue/adjustments', adjustmentsSchema, { signal }).then((r) => r.adjustments),
   })
 }
 
-/** 写成功（或失败后状态可能已变）时整个前缀重拉：订单状态、挂账合计、渠道统计互相牵连 */
+/** 写成功（或失败后状态可能已变）时整个前缀重拉：订单状态、待处理到账合计、渠道统计互相牵连 */
 export function useInvalidateBilling() {
   const client = useQueryClient()
   return useCallback(() => client.invalidateQueries({ queryKey: BK }), [client])

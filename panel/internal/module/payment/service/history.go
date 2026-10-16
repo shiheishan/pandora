@@ -72,6 +72,7 @@ func (s *Service) OrderSummaries(ctx context.Context, orderIDs []uuid.UUID) (map
 			HasIntent:    r.HasIntent,
 			ProviderCode: r.ProviderCode,
 			ProviderName: r.ProviderName,
+			Method:       r.Method,
 		}
 	}
 	return out, nil

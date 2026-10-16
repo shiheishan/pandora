@@ -325,7 +325,6 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
             balance: 0,
             currency: 'CNY',
             subs: [],
-            unattached_bytes: 0,
             referrer: null,
             telegram: null,
             is_admin: false,

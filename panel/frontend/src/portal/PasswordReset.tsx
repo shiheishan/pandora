@@ -46,6 +46,10 @@ export function PasswordResetForm({ onDone, onCancel }: { onDone: (email: string
   }>({})
   const [busy, setBusy] = useState(false)
 
+  const lead = started
+    ? `如果 ${email.trim()} 已注册，验证码已发送，10 分钟内有效。重设后这个账号在所有设备上的登录都会退出。`
+    : '输入注册时用的邮箱，我们会发一个验证码过去。'
+
   const start = async (event: FormEvent) => {
     event.preventDefault()
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) return setErrors({ email: '请输入有效邮箱' })
@@ -93,27 +97,25 @@ export function PasswordResetForm({ onDone, onCancel }: { onDone: (email: string
         auth: false,
         body: { email: email.trim(), code, new_password: password },
       })
-      toast('密码已重置，所有设备上的登录都已退出，请用新密码登录')
+      toast('密码已重设，所有设备上的登录都已退出，请用新密码登录')
       onDone(email.trim())
     } catch (err) {
       setBusy(false)
       if (isApiError(err) && err.fields.password) return setErrors({ password: err.fields.password })
       setErrors({
-        code: isApiError(err) && err.fields.code ? err.fields.code : message(err, '重置失败，请稍后重试'),
+        code: isApiError(err) && err.fields.code ? err.fields.code : message(err, '重设失败，请稍后重试'),
       })
     }
   }
 
   return (
     <>
-      <div className={css.steps}>
-        <span className={started ? css.stepDone : css.stepOn}>1 填写邮箱</span>
-        <span aria-hidden="true">—</span>
-        <span className={started ? css.stepOn : css.stepDone}>2 验证码与新密码</span>
+      <div className={css.head}>
+        <h2 className={css.headTitle}>找回密码</h2>
+        <p className={css.muted}>{lead}</p>
       </div>
       {!started ? (
         <form className={css.form} onSubmit={start} noValidate>
-          <p className={css.muted}>填写注册时用的邮箱，我们会往这个邮箱发一个 6 位验证码。</p>
           <Input label="邮箱" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} error={errors.email} />
           {cap.element}
           {errors.captcha && (
@@ -132,7 +134,6 @@ export function PasswordResetForm({ onDone, onCancel }: { onDone: (email: string
         </form>
       ) : (
         <form className={css.form} onSubmit={complete} noValidate>
-          <p className={css.muted}>若 {email.trim()} 已注册，验证码已发送，10 分钟内有效。重置后这个账号在所有设备上的登录都会退出。</p>
           <Input
             label="验证码"
             mono
@@ -155,11 +156,11 @@ export function PasswordResetForm({ onDone, onCancel }: { onDone: (email: string
             error={errors.password}
           />
           <div className={css.row}>
-            <Button onClick={() => setStarted(null)} disabled={busy}>
-              上一步
+            <Button onClick={onCancel} disabled={busy}>
+              返回登录
             </Button>
             <Button type="submit" variant="primary" busy={busy} className={css.grow}>
-              重置密码
+              重设密码
             </Button>
           </div>
         </form>

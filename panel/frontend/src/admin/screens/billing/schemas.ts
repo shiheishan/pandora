@@ -5,22 +5,19 @@ import { z } from 'zod'
 // ---------------------------------------------------------------------------
 // 库里 5 态（00013_order.sql）
 const ORDER_STATUSES = ['pending_payment', 'paid', 'fulfilled', 'cancelled', 'expired'] as const
-const ORDER_KINDS = ['new', 'renewal', 'upgrade', 'addon', 'topup', 'traffic_reset'] as const
+// 库里 6 种（00052）
+const ORDER_KINDS = ['new', 'renewal', 'upgrade', 'topup', 'traffic_reset', 'stack'] as const
 const INTENT_STATUSES = ['requires_action', 'succeeded', 'cancelled', 'expired'] as const
 const PAYMENT_STATUSES = ['succeeded'] as const
 const LATE_STATUSES = ['suspense', 'applied'] as const
 const LATE_KINDS = ['released_order', 'excess_capture', 'ineligible_subscription'] as const
-const CURRENCIES = ['CNY', 'USD'] as const
 export type OrderStatus = (typeof ORDER_STATUSES)[number]
 export type LateStatus = (typeof LATE_STATUSES)[number]
 export type LateKind = (typeof LATE_KINDS)[number]
-export type Currency = (typeof CURRENCIES)[number]
 
 const int = z.number().int()
 const count = int.nonnegative()
 const time = z.string()
-/** 金额按币种分开的合计（分和美分不能相加，R3 / R66）：币种 → 最小单位 */
-const byCurrency = z.record(z.string(), int)
 
 // ---------------------------------------------------------------------------
 // GET v1/orders：列表行（R63 加 balance_applied 与渠道；plan_name / interval 是首项快照）
@@ -31,7 +28,6 @@ export const orderRowSchema = z.object({
   user_email: z.string(),
   kind: z.enum(ORDER_KINDS),
   status: z.enum(ORDER_STATUSES),
-  currency: z.string(),
   total_amount: int,
   payable_amount: int,
   paid_amount: int,
@@ -40,6 +36,8 @@ export const orderRowSchema = z.object({
   paid_at: time.nullable(),
   provider_code: z.string().nullable(),
   provider_name: z.string().nullable(),
+  // 成功那笔收款的支付方式：alipay / wxpay / offline…，没有收款为 null
+  method: z.string().nullable(),
   plan_name: z.string(),
   interval: z.string(),
   interval_count: int,
@@ -68,7 +66,6 @@ const orderItemSchema = z.object({
   quantity: int,
   unit_amount: int,
   line_amount: int,
-  currency: z.string(),
   created_at: time,
 })
 export const orderDetailSchema = orderRowSchema.extend({
@@ -76,7 +73,6 @@ export const orderDetailSchema = orderRowSchema.extend({
   state_version: int,
   subtotal_amount: int,
   discount_amount: int,
-  member_discount_amount: int,
   coupon_id: z.string().nullable(),
   manual_reason: z.string().nullable(),
   created_by: z.string().nullable(),
@@ -100,7 +96,7 @@ const intentSchema = z.object({
   id: z.string(),
   provider_code: z.string(),
   provider_name: z.string(),
-  currency: z.string(),
+  method: z.string().nullable(),
   amount: int,
   surcharge_amount: int,
   status: z.enum(INTENT_STATUSES),
@@ -115,7 +111,6 @@ const paymentSchema = z.object({
   provider_code: z.string(),
   provider_name: z.string(),
   provider_payment_id: z.string(),
-  currency: z.string(),
   amount: int,
   surcharge_amount: int,
   fee_amount: int,
@@ -146,7 +141,6 @@ export const manualCreatedSchema = z.object({
   discount_amount: int,
   order_id: z.string(),
   order_no: z.string(),
-  currency: z.string(),
   total_amount: int,
   balance_applied: int,
   payable_amount: int,
@@ -161,9 +155,9 @@ export type ManualCreated = z.output<typeof manualCreatedSchema>
 // POST v1/orders/manual/preview：这单能落到哪几份、默认哪一份（购买模型统一，设计稿 2.3 / 4.2）。
 // 形状取 billing.ManualPlacement 的 json tag：purchase.Placement 内嵌展平（Option 再内嵌，其余全是 omitempty，
 // 所以都是 optional），外加 due / below_minimum 两项；顶层另有 min_payment。
-// 后台开单只会出现 renew / change / new 三种落点；default_key 为空 = 不预选，提交按钮置灰
+// 后台开单会出现 renew / stack / change / new 四种落点；default_key 为空 = 不预选，提交按钮置灰
 // ---------------------------------------------------------------------------
-const PLACEMENT_KINDS = ['renew', 'change', 'new'] as const
+const PLACEMENT_KINDS = ['renew', 'stack', 'change', 'new'] as const
 const PLACEMENT_BADGES = ['same_plan', 'soonest_expiry', 'most_used', 'least_remaining'] as const
 const placementSchema = z.object({
   key: z.string(),
@@ -182,12 +176,12 @@ const placementSchema = z.object({
   new_period_end: time.optional(),
   // 只用在 change 上：原套餐没用完的部分。赠送全额退到余额，别的结算方式先抵新价
   credit: int.optional(),
-  currency: z.string().optional(),
   // 只用在 change 上：到期前来自赠送的剩余整天数，换掉时不保留（用户 10-08）
   gift_days_lost: int.optional(),
   traffic_used: int.optional(),
   traffic_cap: int.optional(),
-  pack_remaining: int.optional(),
+  // 非空表示这一项开不了，内容是建单会回的那句话
+  unavailable_reason: z.string().optional(),
   // billing.ManualPlacement（无 omitempty）：按「待用户支付」开这单用户要付多少（分，换套餐已先抵 credit），
   // 以及它是否低于站点最低付款额（与建单 422 同一个判定）。价格档读不到时为 0 / false
   due: int,
@@ -224,14 +218,13 @@ export const orderQueriedSchema = z.object({
 export type OrderQueried = z.output<typeof orderQueriedSchema>
 
 // ---------------------------------------------------------------------------
-// GET v1/late-payments：挂账（保留规则 6，设计稿的「欠费单」）；R3 待处理合计按币种分开
+// GET v1/late-payments：待处理到账（保留规则 6，设计稿的「欠费单」）；待处理合计为分
 // ---------------------------------------------------------------------------
 const lateCaseSchema = z.object({
   id: z.string(),
   case_kind: z.enum(LATE_KINDS),
   status: z.enum(LATE_STATUSES),
   amount: int.positive(),
-  currency: z.string(),
   order_no: z.string(),
   order_status: z.enum(ORDER_STATUSES),
   user_id: z.string(),
@@ -243,7 +236,7 @@ const lateCaseSchema = z.object({
 export const latePaymentsSchema = z.object({
   cases: z.array(lateCaseSchema),
   total: count,
-  pending_amounts: byCurrency,
+  pending_amount: count,
 })
 export type LateCase = z.output<typeof lateCaseSchema>
 export const lateAppliedSchema = z.object({ ledger_txn_id: z.string() })
@@ -260,7 +253,6 @@ const providerSchema = z.object({
   accepting_new: z.boolean(),
   has_credentials: z.boolean(),
   base_url: z.string(),
-  currencies: z.array(z.string()),
   // 编辑表单回填用的非机密配置；商户号与密钥只写不读，只有 has_credentials
   submit_path: z.string(),
   api_path: z.string(),
@@ -273,7 +265,8 @@ const providerSchema = z.object({
   fee_percent: z.string(),
   has_webhook_secret: z.boolean(),
   notify_url: z.string(),
-  today: byCurrency,
+  // 今日成交金额（分）
+  today: count,
   success_rate_24h: z.number().min(0).max(1).nullable(),
   last_callback_at: time.nullable(),
 })
@@ -295,7 +288,6 @@ export type PaymentSettings = z.output<typeof paymentSettingsSchema>
 // ---------------------------------------------------------------------------
 export const adjustmentSchema = z.object({
   id: z.string(),
-  currency: z.enum(CURRENCIES),
   amount: int,
   reason: z.string(),
   effective_on: z.string(),

@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
+  adminAlertBody,
   deliveryRow,
   durationLabel,
   eventsLabel,
+  extrasBody,
+  extrasFormFrom,
   formatSender,
   hookBody,
   hookFormFrom,
+  hookHealth,
   hookTone,
   hostOf,
   insertVariable,
@@ -17,7 +21,6 @@ import {
   smtpBody,
   smtpFormFrom,
   smtpStatus,
-  successRate,
   telegramBody,
   telegramFormFrom,
   telegramStatus,
@@ -114,17 +117,39 @@ describe('templates', () => {
   })
 })
 
+describe('telegram extras', () => {
+  const extras = { sub_command_enabled: false, start_message: '', admin_paid_notify: true, admin_ticket_notify: false, join_review_enabled: false, user_group_chat_id: -1001, discuss_link: '' }
+
+  it('keeps the saved admin alerts when the dialog saves its five keys', () => {
+    const f = { ...extrasFormFrom(extras), subCommand: true, userGroupChatId: '' }
+    expect(extrasBody(f, extras)).toEqual({ ...extras, sub_command_enabled: true, user_group_chat_id: null })
+    expect(extrasBody({ ...f, userGroupChatId: '123' }, extras)).toEqual({ error: { user_group_chat_id: '用户群 chat id 必须是负数（群组的 chat id 以 - 开头）' } })
+    expect(extrasFormFrom(extras).userGroupChatId).toBe('-1001')
+  })
+
+  it('flips one admin alert and sends the other six keys unchanged', () => {
+    expect(adminAlertBody(extras, 'admin_ticket_notify', true)).toEqual({ ...extras, admin_ticket_notify: true })
+    expect(adminAlertBody(extras, 'admin_paid_notify', false)).toEqual({ ...extras, admin_paid_notify: false })
+  })
+})
+
 describe('hooks', () => {
-  it('computes rate, tone and labels', () => {
-    expect(successRate(hook)).toBe('75.0%')
-    expect(successRate({ sent_count_7d: 0, failed_count: 0 })).toBe('—')
-    expect(successRate({ sent_count_7d: 5, failed_count: 0 })).toBe('100%')
+  it('computes health, tone and labels', () => {
+    expect(hookHealth(hook)).toBe('近 7 天有 1 次失败')
+    expect(hookHealth({ ...hook, failed_count: 0 })).toBe('正常')
+    expect(hookHealth({ ...hook, enabled: false })).toBe('已停用')
     expect(hookTone(hook)).toBe('warn')
     expect(hookTone({ ...hook, failed_count: 0 })).toBe('ok')
     expect(hookTone({ ...hook, enabled: false })).toBe('muted')
-    expect(eventsLabel([], 10)).toBe('未订阅事件')
-    expect(eventsLabel(['a', 'b'], 2)).toBe('全部事件')
-    expect(eventsLabel(['a', 'b'], 10)).toBe('a, b')
+    const catalog = [
+      { name: 'order.paid', desc: '订单支付成功' },
+      { name: 'order.cancelled', desc: '订单取消' },
+      { name: 'user.registered', desc: '用户完成注册' },
+    ]
+    expect(eventsLabel([], catalog)).toBe('未订阅事件')
+    expect(eventsLabel(['order.paid', 'order.cancelled', 'user.registered'], catalog)).toBe('全部事件')
+    expect(eventsLabel(['order.paid', 'x.unknown'], catalog)).toBe('订单支付成功、x.unknown')
+    expect(eventsLabel(['order.paid'], [])).toBe('order.paid')
     expect(durationLabel(null)).toBe('—')
     expect(durationLabel(88)).toBe('88 ms')
     expect(durationLabel(10000)).toBe('10.0 s')
@@ -149,9 +174,9 @@ describe('hooks', () => {
 
   it('formats delivery rows and accepts null lists', () => {
     const base = { event: 'order.paid', status: 'sent' as const, attempts: 1, response_code: 200, error_message: '', created_at: '2026-09-24 21:40:18', sent_at: '2026-09-24 21:40:19', duration_ms: 84 }
-    expect(deliveryRow(base)).toEqual({ code: '200', tone: 'ok', event: 'order.paid', duration: '84 ms', at: '09-24 21:40:19' })
-    expect(deliveryRow({ ...base, status: 'failed', response_code: 0, attempts: 3, sent_at: '', duration_ms: null })).toMatchObject({ code: '—', tone: 'warn', event: 'order.paid · 第 3 次', duration: '—', at: '09-24 21:40:18' })
-    expect(deliveryRow({ ...base, status: 'queued', response_code: 0, attempts: 0 }).code).toBe('排队')
+    expect(deliveryRow(base)).toEqual({ at: '09-24 21:40', event: 'order.paid', code: '200', tone: 'ok', duration: '84 ms', attempts: '1' })
+    expect(deliveryRow({ ...base, status: 'failed', response_code: 0, attempts: 3, sent_at: '', duration_ms: null })).toEqual({ at: '09-24 21:40', event: 'order.paid', code: '—', tone: 'warn', duration: '—', attempts: '3' })
+    expect(deliveryRow({ ...base, status: 'queued', response_code: 0, attempts: 0 })).toMatchObject({ code: '排队', tone: 'muted', attempts: '—' })
     expect(deliveriesResponse.parse({ deliveries: null }).deliveries).toBeNull()
     expect(hooksResponse.parse({ hooks: [hook], events: [{ name: 'order.paid', desc: '订单支付成功' }] }).hooks).toHaveLength(1)
     expect(() => hooksResponse.parse({ hooks: [hook], events: [{ Name: 'x', Desc: 'y' }] })).toThrow()

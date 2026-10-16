@@ -1,201 +1,116 @@
 import { z } from 'zod'
 
 // ---------------------------------------------------------------------------
-// 封闭枚举（迁移里的 CHECK 与 Go 校验）：未知值判为不符约定
+// 后台套餐接口的响应形状，照 panel/internal/module/catalog/handler/dto_admin.go 写。
+// 封闭枚举（迁移里的 CHECK 与 Go 校验）：未知值判为不符约定。
+// catalog 的切片都由 make / 空切片构造，不会编成 null，所以这些数组字段不放宽成 nullable。
 // ---------------------------------------------------------------------------
+export const PLAN_KINDS = ['subscription', 'one_time'] as const
 const PLAN_STATUSES = ['draft', 'active', 'archived'] as const
-export const VISIBILITIES = ['public', 'authenticated', 'group', 'invite_only', 'hidden'] as const
-const VERSION_STATUSES = ['draft', 'published', 'retired'] as const
-const RESET_STRATEGIES = ['never', 'natural_month', 'billing_cycle', 'fixed_day'] as const
-const OVERAGE_POLICIES = ['suspend', 'throttle', 'metered_billing'] as const
-const QUOTA_PERIODS = ['total', 'cycle', 'day', 'month'] as const
-const BILLING_INTERVALS = ['day', 'week', 'month', 'quarter', 'year', 'one_time'] as const
-const CURRENCIES = ['CNY', 'USD'] as const
-const PACK_STATUSES = ['active', 'archived'] as const
+export const VISIBILITIES = ['public', 'authenticated', 'group', 'hidden'] as const
+const VERSION_STATUSES = ['draft', 'published'] as const
+const BILLING_INTERVALS = ['month', 'year', 'one_time'] as const
+export type PlanKind = (typeof PLAN_KINDS)[number]
 export type PlanStatus = (typeof PLAN_STATUSES)[number]
 export type Visibility = (typeof VISIBILITIES)[number]
-export type ResetStrategy = (typeof RESET_STRATEGIES)[number]
 export type BillingInterval = (typeof BILLING_INTERVALS)[number]
-export type Currency = (typeof CURRENCIES)[number]
-export type PackStatus = (typeof PACK_STATUSES)[number]
 
 const int = z.number().int()
 const count = int.nonnegative()
 const time = z.string()
-/** Go 的 nil 切片编成 null：收下后归一成 [] */
-const list = <T extends z.ZodType>(item: T) =>
-  z
-    .array(item)
-    .nullable()
-    .transform((v) => v ?? [])
 
 // ---------------------------------------------------------------------------
-// 价格行（列表与详情同形，含已归档）
+// 价格：订阅套餐只有 (month,1) (month,3) (month,6) (year,1) 四档，一次性套餐只有 (one_time,1)。
+// unit_amount 是整数分；validity_days 只有一次性价有，null = 永久。
 // ---------------------------------------------------------------------------
 const priceRowSchema = z.object({
   id: z.string(),
-  currency: z.enum(CURRENCIES),
-  unit_amount: count,
   billing_interval: z.enum(BILLING_INTERVALS),
   interval_count: int.positive(),
+  unit_amount: count,
+  validity_days: int.positive().nullable(),
   status: z.enum(['active', 'archived']),
-  user_group_id: z.string().nullable(),
-  valid_from: time.nullable(),
-  valid_until: time.nullable(),
-  row_version: int,
+  created_at: time,
 })
 export type PriceRow = z.output<typeof priceRowSchema>
 
+/** 流量重置：price 是每次的整数分，limit null = 不限次数；整个字段 null = 不卖重置 */
+const resetSchema = z.object({ price: count, limit: int.positive().nullable() })
+export type PlanReset = z.output<typeof resetSchema>
+
 // ---------------------------------------------------------------------------
-// GET v1/plans：左栏卡片（不分页，含已归档）
+// GET v1/plans：列表行。prices 只有在售的（按周期从短到长）；用量三项取当前版本，
+// 还没发布过取草稿版本，null = 不限；traffic_bytes 订阅是每周期、一次性是总量。
+// version / draft_version 是版本号，draft_version_id 是草稿版本的 id（发布接口要它）。
 // ---------------------------------------------------------------------------
 export const planRowSchema = z.object({
   id: z.string(),
-  row_version: int,
+  row_version: int.positive(),
   code: z.string(),
   name: z.string(),
   description: z.string().nullable(),
+  kind: z.enum(PLAN_KINDS),
   status: z.enum(PLAN_STATUSES),
   visibility: z.enum(VISIBILITIES),
-  sort_order: int,
-  current_version_id: z.string().nullable(),
+  recommended: z.boolean(),
+  prices: z.array(priceRowSchema),
+  traffic_bytes: int.positive().nullable(),
+  max_devices: int.positive().nullable(),
+  throttle_kbps: int.positive().nullable(),
+  version: int.positive().nullable(),
+  draft_version: int.positive().nullable(),
   draft_version_id: z.string().nullable(),
-  version: int.nullable(),
-  max_devices: int.nullable(),
-  traffic_limit: int.nullable(),
-  prices: list(priceRowSchema),
+  pool_ids: z.array(z.string()),
+  reset: resetSchema.nullable(),
   active_subscriptions: count,
   node_count: count,
-  // 修订 R100：卖点与「推荐」
-  highlights: list(z.string()),
-  recommended: z.boolean(),
 })
-export const plansSchema = z.object({ plans: list(planRowSchema) })
+export const plansSchema = z.object({ plans: z.array(planRowSchema) })
 export type PlanRow = z.output<typeof planRowSchema>
 
 // ---------------------------------------------------------------------------
-// GET v1/plans/{id}：详情（版本 version 降序，价格 created_at 降序）
+// GET v1/plans/{id} 与全部写接口的响应 {plan}：列表行 + 销售细节 + 版本（version 降序）；
+// 这里的 prices 是全部价格（含已归档，created_at 降序）
 // ---------------------------------------------------------------------------
-const quotaSchema = z.object({ metric: z.string(), limit: int.nullable(), unit: z.string(), period: z.enum(QUOTA_PERIODS) })
-export type Quota = z.output<typeof quotaSchema>
-const entitlementSchema = z.object({ code: z.string(), value: z.unknown() })
-
 export const versionRowSchema = z.object({
   id: z.string(),
-  version: int,
+  version: int.positive(),
   status: z.enum(VERSION_STATUSES),
-  frozen_at: time.nullable(),
-  row_version: int,
-  quota_reset_strategy: z.enum(RESET_STRATEGIES),
-  quota_reset_day: int.nullable(),
-  renewal_extends_period: z.boolean(),
-  renewal_resets_quota: z.boolean(),
-  renewal_keeps_addons: z.boolean(),
-  max_devices: int.nullable(),
-  max_concurrent: int.nullable(),
-  device_release_hours: count,
-  // R99：新写入只收 suspend，存量行可能还是另外两种，读取照收
-  overage_policy: z.enum(OVERAGE_POLICIES),
-  // R99：全程生效的按用户限速，null = 不限
+  published_at: time.nullable(),
+  traffic_bytes: int.positive().nullable(),
+  max_devices: int.positive().nullable(),
   throttle_kbps: int.positive().nullable(),
-  notes: z.string().nullable(),
-  entitlements: list(entitlementSchema),
-  quotas: list(quotaSchema),
-  pool_ids: list(z.string()),
-  // 修订 R66：创建人（JOIN users，账号已删时为 null）
   created_by_email: z.string().nullable(),
   created_at: time,
 })
 export type VersionRow = z.output<typeof versionRowSchema>
 
-export const planDetailSchema = z.object({
-  id: z.string(),
-  current_version_id: z.string().nullable(),
-  row_version: int,
-  code: z.string(),
-  name: z.string(),
-  description: z.string().nullable(),
-  status: z.enum(PLAN_STATUSES),
-  visibility: z.enum(VISIBILITIES),
-  visible_group_ids: list(z.string()),
-  visible_from: time.nullable(),
-  visible_until: time.nullable(),
+export const planDetailSchema = planRowSchema.extend({
+  visible_group_ids: z.array(z.string()),
   allow_new_purchase: z.boolean(),
   allow_renewal: z.boolean(),
   allow_upgrade: z.boolean(),
-  purchase_limit_per_user: int.nullable(),
-  stock_total: int.nullable(),
-  stock_reserved: count,
-  sort_order: int,
-  // 修订 R100
-  highlights: list(z.string()),
-  recommended: z.boolean(),
-  versions: list(versionRowSchema),
-  prices: list(priceRowSchema),
+  versions: z.array(versionRowSchema),
 })
 export const planResponseSchema = z.object({ plan: planDetailSchema })
 export type PlanDetail = z.output<typeof planDetailSchema>
 
 // ---------------------------------------------------------------------------
-// GET v1/plans/{id}/pools：有草稿时是草稿的绑定（可改），否则是当前发布版本的（只读）
+// GET v1/plans/{id}/pools（node 模块注册）：绑池选择器，列出未停用的池与是否已绑。
+// active_nodes 是生命周期 active 且定了协议的节点数（与节点池列表同口径）；deliverable_nodes 是其中
+// 真能写进订阅的（服务器就绪、在役、见过心跳、协议稳定、有地址，后端 subscription.DeliverableNodeSQL）
 // ---------------------------------------------------------------------------
 export const planPoolsSchema = z.object({
-  version_id: z.string(),
-  version_status: z.string(),
-  row_version: int,
-  editable: z.boolean(),
-  // active_nodes 是生命周期 active 且定了协议的节点数（与节点池列表同口径）；deliverable_nodes 是其中
-  // 真能写进订阅的（服务器就绪、在役、见过心跳、协议稳定、有地址，后端 subscription.DeliverableNodeSQL）
-  pools: list(z.object({ id: z.string(), name: z.string(), active_nodes: count, deliverable_nodes: count, bound: z.boolean() })),
+  pools: z.array(z.object({ id: z.string(), name: z.string(), active_nodes: count, deliverable_nodes: count, bound: z.boolean() })),
 })
 export type PlanPools = z.output<typeof planPoolsSchema>
 
-// GET v1/node-pools（节点分段）：新建向导没有套餐 id，只能从这里取候选；
-// 只收向导要的字段，其余字段归节点页的 schema 管，所以查询键与节点页分开
-export const poolOptionsSchema = z.object({ pools: list(z.object({ id: z.string(), name: z.string(), status: z.string(), active_nodes: count })) })
-
-// ---------------------------------------------------------------------------
-// 流量包（修订 R73）：乐观锁是 updated_at，原样回传
-// ---------------------------------------------------------------------------
-export const packSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  traffic_bytes: int.positive(),
-  currency: z.enum(CURRENCIES),
-  unit_amount: int.positive(),
-  recommended: z.boolean(),
-  status: z.enum(PACK_STATUSES),
-  sort_order: int,
-  sold_count: count,
-  created_at: time,
-  updated_at: time,
+// GET v1/node-pools（节点模块）：新建套餐时还没有套餐 id，只能从这里取候选；
+// 只收这里要的字段，其余字段归节点页的 schema 管，所以查询键与节点页分开
+export const poolOptionsSchema = z.object({
+  pools: z
+    .array(z.object({ id: z.string(), name: z.string(), status: z.string(), active_nodes: count }))
+    .nullable()
+    .transform((v) => v ?? []),
 })
-export const packsSchema = z.object({ packs: list(packSchema) })
-export const packResponseSchema = z.object({ pack: packSchema })
-export type TrafficPack = z.output<typeof packSchema>
-
-// ---------------------------------------------------------------------------
-// 写响应
-// ---------------------------------------------------------------------------
-/** POST v1/plans/complete（R65：plan 是建成后的完整详情） */
-export const planCreatedSchema = z.object({ plan: planDetailSchema, version_id: z.string(), price_ids: list(z.string()), published: z.boolean() })
-/** PUT v1/plans/{id}/complete：changed 是可直接展示的中文生效说明 */
-export const planUpdatedSchema = z.object({ plan: planDetailSchema, changed: list(z.string()) })
-/** PUT v1/plans/{id}、PUT versions、归档价格、归档套餐 */
-export const rowVersionSchema = z.object({ ok: z.literal(true), row_version: int })
-/** POST v1/plans/{id}/versions：只有 id / version / status / frozen_at / row_version / created_at 有意义，其余为默认值 */
-export const versionCreatedSchema = z.object({ version: versionRowSchema })
-export const publishedSchema = z.object({ ok: z.literal(true), plan_row_version: int, version_row_version: int })
-export const priceCreatedSchema = z.object({ price: priceRowSchema })
-export const poolsBoundSchema = z.object({ bound: count, row_version: int, version_id: z.string() })
-
-// 套餐的流量重置价格（GET/PUT v1/plans/:id/reset-prices）：放在这里，假后端测试（node 侧 tsconfig）能引
-export const resetPriceItemSchema = z.object({
-  currency: z.enum(['CNY', 'USD']),
-  unit_amount: z.number().int().positive(),
-})
-export const planResetPricesSchema = z.object({
-  reset_prices: z.array(resetPriceItemSchema),
-})
-export type ResetPriceItem = z.output<typeof resetPriceItemSchema>
-export type PlanResetPrices = z.output<typeof planResetPricesSchema>
+export type PoolOption = z.output<typeof poolOptionsSchema>['pools'][number]

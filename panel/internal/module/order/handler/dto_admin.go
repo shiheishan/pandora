@@ -84,7 +84,7 @@ func markPaidFrom(r service.MarkPaidResult) markPaidResponse {
 	}
 }
 
-// adminOrderRowResponse 是后台订单列表的一行。
+// adminOrderRowResponse 是后台订单列表的一行。method 是成功那笔收款的支付方式（alipay、wxpay、offline…，原样给，前端翻中文），没有收款为 null。
 type adminOrderRowResponse struct {
 	ID             string     `json:"id"`
 	OrderNo        string     `json:"order_no"`
@@ -99,6 +99,7 @@ type adminOrderRowResponse struct {
 	PaidAt         *time.Time `json:"paid_at"`
 	ProviderCode   *string    `json:"provider_code"`
 	ProviderName   *string    `json:"provider_name"`
+	Method         *string    `json:"method"`
 	PlanName       string     `json:"plan_name"`
 	Interval       string     `json:"interval"`
 	IntervalCount  int        `json:"interval_count"`
@@ -172,6 +173,7 @@ func adminOrderRowFrom(cc *cents, v service.AdminOrderView) adminOrderRowRespons
 		PaidAt:         v.PaidAt,
 		ProviderCode:   v.ProviderCode,
 		ProviderName:   v.ProviderName,
+		Method:         v.Method,
 		PlanName:       strOrEmpty(v.PlanName),
 		Interval:       strOrEmpty(v.Interval),
 		IntervalCount:  intOrZero(v.IntervalCount),
@@ -246,11 +248,12 @@ func adminOrderDetailFrom(d service.AdminOrderDetail) (adminOrderDetailResponse,
 	return adminOrderDetailResponse{Order: body}, cc.err
 }
 
-// intentResponse 是订单的一次支付尝试。
+// intentResponse 是订单的一次支付尝试。method 是这次尝试用户选的方式，渠道没有方式（空串）时为 null。
 type intentResponse struct {
 	ID              string     `json:"id"`
 	ProviderCode    string     `json:"provider_code"`
 	ProviderName    string     `json:"provider_name"`
+	Method          *string    `json:"method"`
 	Amount          int64      `json:"amount"`
 	SurchargeAmount int64      `json:"surcharge_amount"`
 	Status          string     `json:"status"`
@@ -292,6 +295,7 @@ func orderPaymentsFrom(h paymentsvc.OrderHistory) (orderPaymentsResponse, error)
 			ID:              in.ID.String(),
 			ProviderCode:    in.ProviderCode,
 			ProviderName:    in.ProviderName,
+			Method:          strPtrOrNil(in.Method),
 			Amount:          cc.of(in.Amount),
 			SurchargeAmount: cc.of(in.Surcharge),
 			Status:          string(in.Status),
@@ -317,4 +321,12 @@ func orderPaymentsFrom(h paymentsvc.OrderHistory) (orderPaymentsResponse, error)
 		})
 	}
 	return out, cc.err
+}
+
+// strPtrOrNil 空串给 nil（JSON 里是 null），否则给它的指针。
+func strPtrOrNil(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }

@@ -1,32 +1,25 @@
 import { href, navigate } from '../../../core/router'
 import { Card } from '../../../ui'
-import { APP_UPDATE, guideApps, PROFILE_NAME_HINT, UPDATE_FALLBACK, UPDATE_GUIDE_PARAM, type GuideText } from '../common/app-update'
+import { APP_UPDATE, guideApps, PROFILE_NAME_HINT, UPDATE_FALLBACK, UPDATE_GUIDE_PARAM, thisDevice, type GuideText } from '../common/app-update'
 import { DEVICE_SAY, DEVICES, type Device } from '../common/clients'
 import { Chips } from '../common/Flow'
 import css from './Help.module.css'
 
-/** 「iPhone / iPad 上怎么点更新」：西文结尾补一个空格 */
-const guideTitle = (d: Device) => `${DEVICE_SAY[d]}${/[A-Za-z]$/.test(DEVICE_SAY[d]) ? ' ' : ''}上怎么点更新`
-
-/** 目录最上面的内置一组「在 App 里更新」：每种设备一篇，和帮助文章并列 */
+/** 目录最上面：一张卡片链到当前设备的内置「在 App 里点一次更新」 */
 export function UpdateGuideToc({ current }: { current: Device | null }) {
+  const device = current ?? thisDevice()
   return (
-    <Card flush className={css.toc}>
-      <nav aria-label="在 App 里更新">
-        <section className={css.group}>
-          <h3 className={css.groupTitle}>在 App 里更新</h3>
-          <ul className={css.items}>
-            {DEVICES.map((d) => (
-              <li key={d}>
-                <a className={css.item} href={href('/help', { [UPDATE_GUIDE_PARAM]: d })} aria-current={d === current ? 'page' : undefined}>
-                  {guideTitle(d)}
-                </a>
-              </li>
-            ))}
-          </ul>
-        </section>
-      </nav>
-    </Card>
+    <a
+      className={css.guideCard}
+      href={href('/help', { [UPDATE_GUIDE_PARAM]: device })}
+      aria-current={current ? 'page' : undefined}
+    >
+      <span className={css.guideCardText}>
+        <b>在 App 里点一次更新</b>
+        <small>换了链接、节点不对时先做这个</small>
+      </span>
+      <span aria-hidden="true" className={css.guideCardArrow}>›</span>
+    </a>
   )
 }
 
@@ -43,6 +36,7 @@ export function UpdateGuide({ device }: { device: Device }) {
         ← 全部文章
       </a>
       <article className={css.body} data-guide={device}>
+        <div className={css.meta}>内置指南</div>
         <h2 className={css.title}>在 App 里点一次「更新」</h2>
         <Chips
           label="你的设备"

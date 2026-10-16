@@ -72,27 +72,25 @@ function Bound({ info }: { info: Telegram }) {
   const [asking, setAsking] = useState(false)
   return (
     <>
-      <div className={css.tgRow}>
-        <span className={css.grow}>{info.username ? `已绑定 @${info.username}` : '已绑定 Telegram'}，到期提醒和工单回复将推送到 Telegram</span>
-        <Button size="sm" onClick={() => setAsking(true)}>
-          解绑
-        </Button>
-      </div>
+      <p className={css.muted}>{info.username ? `已绑定 @${info.username}。` : '已绑定 Telegram。'}到期、流量、工单回复等提醒可以发到 Telegram。</p>
       {!info.enabled && <p className={css.muted}>站点目前暂停了 Telegram 通知，恢复前不会推送。</p>}
+      <Button block className={css.unbind} onClick={() => setAsking(true)}>
+        解除绑定
+      </Button>
       <ConfirmModal
         open={asking}
-        title="解绑 Telegram？"
+        title="解除绑定 Telegram？"
         body="将不再收到 Telegram 推送，之后可以重新绑定。"
-        confirmLabel="解绑"
+        confirmLabel="解除绑定"
         tone="danger"
         onCancel={() => setAsking(false)}
         onConfirm={async () => {
           try {
             await unbind.mutateAsync()
-            toast('已解绑')
+            toast('已解除绑定')
           } catch (e) {
             // 404：别处已经解绑，列表随 onSettled 重拉
-            if (!isApiError(e, 'not_found')) toast(e instanceof Error && e.message ? e.message : '解绑失败，请稍后重试', 'danger')
+            if (!isApiError(e, 'not_found')) toast(e instanceof Error && e.message ? e.message : '解除绑定失败，请稍后重试', 'danger')
           }
           setAsking(false)
         }}
@@ -139,7 +137,7 @@ function Unbound({ code, left, onCode, onBound }: { code: BindCode | null; left:
             在 Telegram 中打开
           </a>
           <Button variant="outline" busy={checking} onClick={() => void check()}>
-            我已发送，检查绑定状态
+            我已发送，完成绑定
           </Button>
         </div>
       </>
@@ -147,9 +145,9 @@ function Unbound({ code, left, onCode, onBound }: { code: BindCode | null; left:
   }
   return (
     <>
-      {code && <p className={css.muted}>绑定码已过期，请重新获取。</p>}
+      <p className={css.muted}>{code ? '绑定码已过期，请重新获取。' : '绑定后，到期、流量和工单回复的提醒也能发到 Telegram。'}</p>
       <Button block busy={issue.isPending} onClick={getCode}>
-        获取绑定码
+        绑定 Telegram
       </Button>
     </>
   )
@@ -171,7 +169,7 @@ export function NotificationPrefsCard() {
   return (
     <Card flush>
       <div className={css.prefHead} role="presentation">
-        <h3 className={css.prefTitle}>通知偏好</h3>
+        <h3 className={css.prefTitle}>通知方式</h3>
         {PREF_CHANNELS.map((c) => (
           <span key={c} className={css.prefCol}>
             {CHANNEL_LABEL[c]}

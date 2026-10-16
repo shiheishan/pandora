@@ -1,0 +1,160 @@
+/* 风控页签（10-16 设计稿）：三段筛选 + 横排聚类行 */
+
+/* 列表：顶部一条正文色细线，行间细分隔线 */
+.list {
+  min-width: 0;
+  border-top: 1px solid var(--text);
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 32px;
+  align-items: flex-start;
+  padding: var(--space-16) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+/* 已标记正常的行整体变淡 */
+.dim {
+  opacity: 0.6;
+}
+
+/* 左列：IP / 归属地 / 风险与账号数 / 复核结论 */
+.info {
+  display: flex;
+  flex: 0 1 240px;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 200px;
+}
+
+.ip {
+  font-family: var(--font-mono);
+  font-size: var(--fs-h3);
+  font-weight: var(--fw-semibold);
+}
+
+.place {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+  align-items: center;
+  margin-top: 2px;
+}
+
+.count {
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  white-space: nowrap;
+}
+
+.note {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+/* 中列：成员行 */
+.members {
+  display: flex;
+  flex: 1 1 360px;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.member {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 64px 90px;
+  gap: 12px;
+  align-items: center;
+  padding: 6px 0;
+  font-size: var(--fs-body-sm);
+}
+
+.member + .member {
+  border-top: 1px solid var(--border);
+}
+
+.member a {
+  color: inherit;
+}
+
+.status {
+  font-size: var(--fs-caption);
+}
+
+.stNormal {
+  color: var(--text-2);
+}
+
+.stWarn {
+  color: var(--warn);
+}
+
+.stDanger {
+  color: var(--danger);
+}
+
+.plan {
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+.more {
+  padding-top: 4px;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+/* 右列：文字按钮 */
+.actions {
+  display: flex;
+  flex: none;
+  gap: var(--space-16);
+  align-items: center;
+}
+
+.textBtn {
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  cursor: pointer;
+}
+
+.textBtn:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.textBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.textBtn:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+/* 危险文字按钮：红色 + 下边线（设计稿的「禁用账号…」） */
+.dangerBtn {
+  border-bottom: 1px solid var(--danger);
+  color: var(--danger);
+  font-weight: var(--fw-medium);
+}
+
+.dangerBtn:hover:not(:disabled) {
+  color: var(--danger);
+}
+
+/* 列表下方挂设备策略 */
+.deviceSlot {
+  margin-top: var(--space-32);
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { badgeLabel, choiceOf, placementResult, placementTitle, previewFailure, priceNote, selectedKey, stateLine, submitGate, subjectOf } from './placement'
+import { badgeLabel, choiceOf, placementResult, placementTitle, previewFailure, priceNote, selectedKey, stateLine, submitGate, subjectOf, unavailableLine } from './placement'
 import { manualPreviewSchema, type Placement } from './schemas'
 
 const sub = (over: Partial<Placement>): Placement => ({
@@ -11,7 +11,6 @@ const sub = (over: Partial<Placement>): Placement => ({
   state: 'live',
   period_end: '2026-10-30T12:00:00Z',
   new_period_end: '2026-11-30T12:00:00Z',
-  currency: 'CNY',
   due: 3000,
   below_minimum: false,
   ...over,
@@ -39,15 +38,24 @@ describe('落点选项的称呼与结果', () => {
     expect(placementResult(p, 'grant')).toContain('从现在起算，到期 2026-11-30')
   })
 
+  it('叠加：总流量加上、到期变化或永久', () => {
+    const p = sub({ key: 'stack:s1', kind: 'stack' })
+    expect(placementTitle(p, '标准版')).toBe('叠加到标准版')
+    expect(placementResult(p, 'pending')).toBe('生效中，2026-10-30 到期；总流量加上这次的量；到期 2026-10-30 → 2026-11-30；订阅链接不变')
+    const noEnd = sub({ key: 'stack:s1', kind: 'stack', period_end: undefined, new_period_end: undefined })
+    expect(placementResult(noEnd, 'grant')).toBe('生效中，长期有效；总流量加上这次的量；订阅链接不变')
+    const onlyNew = sub({ key: 'stack:s1', kind: 'stack', period_end: undefined, new_period_end: '2027-01-01T12:00:00Z' })
+    expect(placementResult(onlyNew, 'grant')).toContain('到期 2027-01-01')
+  })
+
   it('换套餐：写明剩余价值的去向，赠送全额退回、别的先抵新价', () => {
     const p = sub({ key: 'change:s1', kind: 'change', plan_name: '基础版', label: '妈妈的 iPad', credit: 1200 })
-    expect(placementTitle(p, '进阶版')).toBe('把「妈妈的 iPad」基础版换成进阶版')
+    expect(placementTitle(p, '进阶版')).toBe('换掉「妈妈的 iPad」基础版，改成进阶版')
     expect(placementResult(p, 'grant')).toContain('没用完的 ¥12.00 全额退到用户余额')
     expect(placementResult(p, 'offline')).toContain('没用完的 ¥12.00 先抵新价，抵不完的退到用户余额')
     expect(placementResult(p, 'grant')).toContain('换后从现在起算，到期 2026-11-30')
     expect(placementResult(p, 'grant')).toContain('订阅链接不变')
     expect(placementResult({ ...p, credit: undefined }, 'pending')).toContain('原套餐没有可抵的剩余价值')
-    // 赠送的时长不保留，与门户兑换卡同一句；没有赠送天数时不写
     expect(placementResult(p, 'grant')).not.toContain('赠送的')
     expect(placementResult({ ...p, gift_days_lost: 7 }, 'grant')).toContain('；赠送的 7 天不保留；')
   })
@@ -57,9 +65,14 @@ describe('落点选项的称呼与结果', () => {
     expect(placementTitle(p, '进阶版')).toBe('恢复基础版并改成进阶版')
   })
 
-  it('另开一份：会生成新链接，现有订阅都不动', () => {
-    expect(placementTitle(NEW, '进阶版')).toBe('另开一份进阶版')
+  it('新开一份：会生成新链接，现有订阅都不动', () => {
+    expect(placementTitle(NEW, '进阶版')).toBe('新开一份进阶版')
     expect(placementResult(NEW, 'grant')).toBe('会生成新的订阅链接，用户现有的订阅都不动；到期 2026-11-07')
+  })
+
+  it('不可用原因', () => {
+    expect(unavailableLine({})).toBeNull()
+    expect(unavailableLine({ unavailable_reason: '已有未完结的变更单' })).toBe('开不了：已有未完结的变更单')
   })
 
   it('徽标与 target', () => {
@@ -67,13 +80,14 @@ describe('落点选项的称呼与结果', () => {
     expect(badgeLabel(undefined)).toBeNull()
     expect(choiceOf(sub({}))).toEqual({ kind: 'renew', subscription_id: 's1' })
     expect(choiceOf(NEW)).toEqual({ kind: 'new' })
+    expect(choiceOf(sub({ key: 'stack:s1', kind: 'stack' }))).toEqual({ kind: 'stack', subscription_id: 's1' })
   })
 
   it('价目说明：换套餐有剩余价值时不替服务端算应付', () => {
-    expect(priceNote(4500, 'CNY', undefined)).toBe('应付 ¥45.00')
-    expect(priceNote(4500, 'CNY', { kind: 'renew' })).toBe('应付 ¥45.00')
-    expect(priceNote(4500, 'CNY', { kind: 'change', credit: 0 })).toBe('应付 ¥45.00')
-    expect(priceNote(4500, 'CNY', { kind: 'change', credit: 1200 })).toContain('先抵扣原套餐的剩余价值')
+    expect(priceNote(4500, undefined)).toBe('应付 ¥45.00')
+    expect(priceNote(4500, { kind: 'renew' })).toBe('应付 ¥45.00')
+    expect(priceNote(4500, { kind: 'change', credit: 0 })).toBe('应付 ¥45.00')
+    expect(priceNote(4500, { kind: 'change', credit: 1200 })).toContain('先抵扣原套餐的剩余价值')
   })
 })
 
@@ -84,7 +98,6 @@ describe('默认值与提交按钮', () => {
   it('按服务端默认预选；点过且仍在列表里的用点的', () => {
     expect(selectedKey(two, '')).toBe('renew:s1')
     expect(selectedKey(two, 'new')).toBe('new')
-    // 点过的选项已经不在列表里（订阅变了）：回到服务端默认
     expect(selectedKey(two, 'change:gone')).toBe('renew:s1')
   })
 
@@ -97,8 +110,19 @@ describe('默认值与提交按钮', () => {
     expect(selectedKey({ options: [NEW, sub({})], default_key: 'renew:other' }, '')).toBe('')
   })
 
-  it('只有一个选项时不让选，直接用它', () => {
+  it('只有一个选项时不让选，直接用它；不可用则空', () => {
     expect(selectedKey({ options: [NEW], default_key: '' }, '')).toBe('new')
+    const blocked = { key: 'stack:s1', kind: 'stack' as const, unavailable_reason: '不能叠', due: 0, below_minimum: false }
+    expect(selectedKey({ options: [blocked], default_key: '' }, '')).toBe('')
+  })
+
+  it('默认项不可用时不预选', () => {
+    const opts = manualPreviewSchema.parse({
+      options: [sub({ unavailable_reason: '开不了' }), NEW],
+      default_key: 'renew:s1',
+      min_payment: 100,
+    })
+    expect(selectedKey(opts, '')).toBe('')
   })
 
   it('还没取回来时没有选择', () => {
@@ -111,22 +135,19 @@ describe('默认值与提交按钮', () => {
     expect(submitGate({ ...base, selected: 'new' })).toEqual({ ok: true })
     expect(submitGate({ ...base, loading: true, selected: '' })).toEqual({ ok: false, label: '读取落点中…' })
     expect(submitGate({ ...base, failed: true, selected: '' })).toEqual({ ok: false, label: '落点读取失败' })
-    // 用户、套餐、价格没选全：落点无从谈起，按钮照常可点，点了由表单预检指出缺哪项
     expect(submitGate({ hasInputs: false, loading: false, failed: false, selected: '' })).toEqual({ ok: true })
-    // 价格档不对时按钮写下一步；选好了也提交不了（低于最低付款额）时灰着写原因
     expect(submitGate({ ...base, failed: true, failedLabel: '先换一个价格', selected: '' })).toEqual({ ok: false, label: '先换一个价格' })
     expect(submitGate({ ...base, selected: 'new', blocked: '低于最低付款额' })).toEqual({ ok: false, label: '低于最低付款额' })
     expect(submitGate({ ...base, selected: '', blocked: '低于最低付款额' })).toEqual({ ok: false, label: '先选落点' })
     expect(submitGate({ ...base, selected: 'new', blocked: null })).toEqual({ ok: true })
+    expect(submitGate({ ...base, selected: '', unavailable: '已有未完结单' })).toEqual({ ok: false, label: '这单开不了' })
   })
 
   it('preview 的 422 落到对应的表单项上（F9）', () => {
     expect(previewFailure(null)).toEqual({ fields: {}, entryRejected: null, general: null })
     expect(previewFailure({ status: 422, fields: { price_id: '价格档标识不正确' }, message: '请求参数校验未通过' })).toEqual({ fields: { price_id: '价格档标识不正确' }, entryRejected: null, general: null })
-    // 入口订阅不对：不按入口预选，去掉它重取
     expect(previewFailure({ status: 422, fields: { entry_subscription_id: '订阅标识不正确' }, message: '请求参数校验未通过' })).toEqual({ fields: {}, entryRejected: '订阅标识不正确', general: null })
     expect(previewFailure({ status: 422, fields: { price_id: 'a', entry_subscription_id: 'b' }, message: 'x' })).toEqual({ fields: { price_id: 'a' }, entryRejected: 'b', general: null })
-    // 别的失败（含网络）整块提示并给重试
     expect(previewFailure({ status: 0, fields: {}, message: '网络不通' })).toEqual({ fields: {}, entryRejected: null, general: '网络不通' })
     expect(previewFailure({ status: 404, fields: {}, message: '不存在' }).general).toBe('不存在')
   })
@@ -144,8 +165,9 @@ describe('preview 的 schema', () => {
     expect(manualPreviewSchema.safeParse({ options: [{ key: 'new', kind: 'new', due: 2500, below_minimum: true }] }).success).toBe(false)
   })
 
-  it('后台开单只会有 renew / change / new，别的判为不符', () => {
+  it('后台开单只会有 renew / stack / change / new，别的判为不符', () => {
     expect(manualPreviewSchema.safeParse({ options: [{ key: 'reset_traffic:s1', kind: 'reset_traffic', due: 0, below_minimum: false }], default_key: '', min_payment: 0 }).success).toBe(false)
+    expect(manualPreviewSchema.safeParse({ options: [{ key: 'stack:s1', kind: 'stack', due: 0, below_minimum: false }], default_key: '', min_payment: 0 }).success).toBe(true)
     expect(manualPreviewSchema.safeParse({ options: [{ key: 'new', kind: 'new', badge: 'cheapest', due: 0, below_minimum: false }], default_key: '', min_payment: 0 }).success).toBe(false)
   })
 })

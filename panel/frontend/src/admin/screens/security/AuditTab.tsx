@@ -24,8 +24,9 @@ const columns: TableColumn<AuditEvent>[] = [
     header: '操作人',
     width: '20%',
     render: (e) => (
-      <span className={`${css.ellipsis} ${css.cellWho}`} title={`${ACTOR_LABEL[e.actor_kind]}${e.actor_email ? ` · ${e.actor_email}` : ''}`}>
-        {actorLabel(e)}
+      <span className={css.cellWho} title={`${ACTOR_LABEL[e.actor_kind]}${e.actor_email ? ` · ${e.actor_email}` : ''}`}>
+        <span className={`${css.ellipsis} ${css.cellWhoMain}`}>{actorLabel(e)}</span>
+        <span className={css.cellWhoKind}>{ACTOR_LABEL[e.actor_kind]}</span>
       </span>
     ),
   },
@@ -33,11 +34,8 @@ const columns: TableColumn<AuditEvent>[] = [
     key: 'action',
     header: '动作',
     render: (e) => (
-      <span className={css.actionCell}>
-        <span className={`${css.mono} ${css.ellipsis}`} title={e.action}>
-          {e.action}
-        </span>
-        {e.outcome !== 'success' && <Tag tone={OUTCOME_TONE[e.outcome]}>{OUTCOME_LABEL[e.outcome]}</Tag>}
+      <span className={`${css.mono} ${css.ellipsis} ${css.cellAction}`} title={e.action}>
+        {e.action}
       </span>
     ),
   },
@@ -57,8 +55,14 @@ const columns: TableColumn<AuditEvent>[] = [
     width: '80px',
     render: (e) => {
       const a = authLabel(e.auth_context)
-      return <span className={`${css.nowrap} ${a.strong ? css.warnText : css.faint}`}>{a.label}</span>
+      return <span className={`${css.nowrap} ${a.strong ? css.strong : css.faint}`}>{a.label}</span>
     },
+  },
+  {
+    key: 'outcome',
+    header: '结果',
+    width: '90px',
+    render: (e) => <Tag tone={OUTCOME_TONE[e.outcome]}>{OUTCOME_LABEL[e.outcome]}</Tag>,
   },
 ]
 
@@ -96,11 +100,6 @@ export function AuditTab() {
         <Input size="sm" mono aria-label="动作前缀" fieldClassName={css.prefix} placeholder="动作前缀，如 order." value={filter.action} onChange={(e) => patch({ action: e.target.value })} />
         <Select size="sm" aria-label="操作者类型" emptyOption="全部操作者" value={filter.actor} options={ACTOR_KINDS.map((k) => ({ value: k, label: ACTOR_LABEL[k] }))} onChange={(e) => patch({ actor: e.target.value as ActorKind | '' })} />
         <Select size="sm" aria-label="结果" emptyOption="全部结果" value={filter.outcome} options={OUTCOMES.map((o) => ({ value: o, label: OUTCOME_LABEL[o] }))} onChange={(e) => patch({ outcome: e.target.value as Outcome | '' })} />
-        {filtered && (
-          <Button size="sm" variant="ghost" onClick={clear}>
-            清空筛选
-          </Button>
-        )}
         <Button size="sm" className={css.push} onClick={() => setExporting(true)}>
           导出
         </Button>
@@ -115,7 +114,7 @@ export function AuditTab() {
             filtered ? (
               <Empty bare title="没有符合条件的审计记录" description="换个关键词，或清空筛选再看。" action={<Button size="sm" onClick={clear}>清空筛选</Button>} />
             ) : (
-              <Empty bare title="还没有审计记录" description="后台与门户的写操作、登录和系统任务都会记在这里。" />
+              <Empty bare title="还没有审计记录" description="后台与用户端的写操作、登录和系统任务都会记在这里。" />
             )
           }
         >
