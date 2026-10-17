@@ -1,0 +1,392 @@
+/* Telegram 卡 */
+.card {
+  border-radius: 20px;
+  background: var(--surface);
+  box-shadow: var(--lift);
+  padding: 18px 20px 20px;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.ri {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--brand-ink);
+  flex: none;
+}
+
+.text {
+  flex: 1;
+  font-size: 15px;
+}
+
+.text small {
+  display: block;
+  font-size: 13px;
+  color: var(--text-2);
+  margin-top: 2px;
+}
+
+.text b {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.unlink {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--text-2);
+  padding: 8px 6px;
+  transition: color 0.15s;
+}
+
+.unlink:hover {
+  color: var(--danger);
+}
+
+.unlink:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  border-radius: 6px;
+}
+
+.group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+  padding-top: 14px;
+  box-shadow: 0 -1px 0 var(--border);
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+
+.group a {
+  font-size: 14px;
+  color: var(--brand);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.group a:hover {
+  text-decoration: underline;
+}
+
+/* Telegram 绑定弹层 */
+.flow {
+  display: grid;
+  grid-template-columns: 1fr 168px;
+  gap: 22px;
+  align-items: center;
+  margin-top: 14px;
+}
+
+.how {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  counter-reset: tg-how;
+}
+
+.how li {
+  display: flex;
+  gap: 10px;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-2);
+  counter-increment: tg-how;
+}
+
+.how li::before {
+  content: counter(tg-how);
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin-top: 0;
+  border-radius: 50%;
+  background: var(--brand-soft);
+  color: var(--brand-ink);
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.how li b {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.mobile {
+  display: none;
+}
+
+.qrBox {
+  width: 168px;
+  height: 168px;
+  padding: 12px;
+  border-radius: 18px;
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--border), 0 14px 30px -18px color-mix(in srgb, var(--shade) 45%, transparent);
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.qr {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.qrSkeleton {
+  width: 100%;
+  height: 100%;
+  border-radius: 12px;
+}
+
+.qrOver {
+  position: absolute;
+  inset: 0;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  backdrop-filter: blur(3px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.qrOver b {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.mainBtn {
+  margin-top: 18px;
+}
+
+.wait {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  margin-top: 14px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.wait.lapsed {
+  color: var(--danger);
+}
+
+.spin {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--brand-soft);
+  border-top-color: var(--brand);
+  animation: spin 0.9s linear infinite;
+  flex: none;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}
+
+.manual {
+  margin-top: 16px;
+  padding-top: 14px;
+  box-shadow: 0 -1px 0 var(--border);
+}
+
+.manual summary {
+  cursor: pointer;
+  font-size: 13.5px;
+  color: var(--text-2);
+  list-style: none;
+  text-align: center;
+  user-select: none;
+}
+
+.manual summary::-webkit-details-marker {
+  display: none;
+}
+
+.manual summary::after {
+  content: ' ›';
+}
+
+.manual[open] summary::after {
+  content: ' ‹';
+}
+
+.manual p {
+  margin: 12px 2px 8px;
+  font-size: 13.5px;
+  color: var(--text-2);
+}
+
+.manual p b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.manualChip.manualChip {
+  justify-content: space-between;
+  height: 46px;
+  background: var(--surface-2);
+}
+
+.done {
+  text-align: center;
+  padding: 6px 0 0;
+}
+
+.doneIcon {
+  width: 56px;
+  height: 56px;
+  margin: 10px auto 14px;
+  border-radius: 50%;
+  background: var(--ok-soft);
+  color: var(--ok);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.done > b {
+  display: block;
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.done p {
+  margin: 8px auto 0;
+  max-width: 360px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+
+.doneBtn {
+  margin-top: 18px;
+}
+
+/* 通知方式 */
+.pref {
+  border-radius: 20px;
+  background: var(--surface);
+  box-shadow: var(--lift);
+  overflow: hidden;
+}
+
+.pf {
+  display: grid;
+  grid-template-columns: 1fr 76px 76px;
+  align-items: center;
+  padding: 14px 20px;
+}
+
+.pf + .pf {
+  box-shadow: 0 -1px 0 var(--border);
+}
+
+.pf b {
+  display: block;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.pf small {
+  display: block;
+  font-size: 12.5px;
+  color: var(--text-2);
+  margin-top: 2px;
+}
+
+.hd {
+  padding: 12px 20px;
+  font-size: 12.5px;
+  color: var(--text-3);
+  background: var(--surface-2);
+}
+
+.hd span:not(:first-child) {
+  justify-self: center;
+}
+
+.pfCell {
+  justify-self: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.note {
+  padding: 12px 20px 14px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  box-shadow: 0 -1px 0 var(--border);
+  background: var(--surface-2);
+}
+
+@media (max-width: 959px) {
+  .card {
+    padding: 16px;
+  }
+
+  .flow {
+    grid-template-columns: 1fr;
+  }
+
+  .qrBox {
+    display: none;
+  }
+
+  .desk {
+    display: none;
+  }
+
+  .mobile {
+    display: inline;
+  }
+
+  .pf {
+    grid-template-columns: 1fr 52px 76px;
+    padding: 14px 16px;
+  }
+
+  .hd {
+    padding: 11px 16px;
+  }
+}

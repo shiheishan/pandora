@@ -12,6 +12,7 @@ import { useTheme, setTheme } from '../../../core/theme'
 import { formatMoney } from '../../../core/format'
 import { signOut, useRuntime } from '../../../shell/runtime'
 import { Segmented } from '../../../ui'
+import { useTickets } from '../tickets/api'
 import css from './Me.module.css'
 
 // 手机「我的」页（#/me）：资料卡、三格快捷入口、邀请横幅、帮助与账号安全、外观、退出登录。
@@ -26,6 +27,8 @@ export default function Me() {
   const unread = useUnreadCount()
   const available = useCommissionAvailable().data?.available
   const theme = useTheme()
+  // 「N 张客服已回复」：与工单列表的「客服已回复」标签同口径（status = pending_user，用户回复或关闭前一直算）；0 张只写标题
+  const replied = useTickets().data?.filter((t) => t.status === 'pending_user').length ?? 0
 
   return (
     <>
@@ -59,6 +62,7 @@ export default function Me() {
         <a className={css.tile} href={href('/tickets')}>
           <Icon name="chat" />
           <b>工单</b>
+          {replied > 0 && <small className={css.hot}>{replied} 张客服已回复</small>}
         </a>
       </nav>
 
