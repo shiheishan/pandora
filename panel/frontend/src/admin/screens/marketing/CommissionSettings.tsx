@@ -2,7 +2,7 @@ import { useMutation } from '@tanstack/react-query'
 import { useState, type FormEvent } from 'react'
 import { WITHDRAW_METHODS, isUSDTMethod, withdrawMethodLabel } from '../../../core/withdraw-methods'
 import { useApi } from '../../../shell/runtime'
-import { Button, Checkbox, FilterTabs, Input, Switch, useToast } from '../../../ui'
+import { Button, Card, Checkbox, FilterTabs, Input, Switch, useToast } from '../../../ui'
 import { CommissionOverrides } from './CommissionOverrides'
 import {
   buildSettingsConfig,
@@ -58,106 +58,115 @@ export function CommissionSettings({ overview }: { overview: CommissionOverview 
   const sum = levelsSum(form)
   const hasUSDT = form.methods.some(isUSDTMethod)
 
+  const cardFooter = (
+    <div className={local.sbar}>
+      <span className={css.faint}>只影响之后产生的佣金</span>
+      <span className={local.spacer} />
+      <Button
+        type="submit"
+        form="commission-settings-form"
+        variant="primary"
+        size="sm"
+        busy={save.isPending}
+      >
+        保存设置
+      </Button>
+    </div>
+  )
+
   return (
-    <div className={local.section}>
-      <form onSubmit={submit} noValidate className={local.secBlock}>
-        {/* 1. 返佣规则 */}
-        <div className={local.secBlock}>
-          <div className={local.secHead}>
-            <h3 className={local.secTitle}>返佣规则</h3>
-            <span className={css.faint}>被邀请人下单后，邀请人拿多少、多久到账</span>
-          </div>
-          <div className={local.grid3}>
-            <Input
-              label="返佣比例（%）"
-              mono
-              inputMode="numeric"
-              value={form.rate}
-              onChange={(e) => setForm({ ...form, rate: e.target.value })}
-              error={errors.rate_percent}
-            />
-            <Input
-              label="结算冻结期（天）"
-              mono
-              inputMode="numeric"
-              value={form.freezeDays}
-              onChange={(e) => setForm({ ...form, freezeDays: e.target.value })}
-              error={errors.freeze_days}
-            />
-            <div className={local.scopeField}>
-              <span className={local.scopeLabel}>计佣范围</span>
-              <div className={local.scopeTabs}>
-                <FilterTabs
-                  label="计佣范围"
-                  items={SCOPE_ITEMS}
-                  value={form.scope}
-                  onChange={(scope) => setForm({ ...form, scope })}
-                />
+    <div>
+      <form id="commission-settings-form" onSubmit={submit} noValidate>
+        <Card title="返佣规则" footer={cardFooter} flush>
+          {/* 段 1：返佣规则内容 */}
+          <div className={local.cbody}>
+            <div className={local.fg}>
+              <Input
+                label="返佣比例（%）"
+                mono
+                inputMode="numeric"
+                value={form.rate}
+                onChange={(e) => setForm({ ...form, rate: e.target.value })}
+                error={errors.rate_percent}
+              />
+              <Input
+                label="结算冻结期（天）"
+                mono
+                inputMode="numeric"
+                value={form.freezeDays}
+                onChange={(e) => setForm({ ...form, freezeDays: e.target.value })}
+                error={errors.freeze_days}
+              />
+              <div className={local.fl}>
+                <span>计佣范围</span>
+                <div className={local.scopeTabs}>
+                  <FilterTabs
+                    label="计佣范围"
+                    items={SCOPE_ITEMS}
+                    value={form.scope}
+                    onChange={(scope) => setForm({ ...form, scope })}
+                  />
+                </div>
               </div>
             </div>
           </div>
-        </div>
 
-        {/* 2. 三级分销 */}
-        <div className={local.secBlock}>
-          <div className={local.secHeadSwitch}>
-            <div className={local.secHeadTitle}>
-              <h3 className={local.secTitle}>三级分销</h3>
-              <span className={css.faint}>邀请人的上级、上上级也按比例拿佣金</span>
-            </div>
+          {/* 段 2：三级分销 */}
+          <div className={local.bhBt}>
+            <h3 className={local.bhTitle}>三级分销</h3>
+            <span className={local.spacer} />
             <Switch
               aria-label="三级分销"
               checked={form.distributionOn}
               onChange={(e) => setForm({ ...form, distributionOn: e.target.checked })}
             />
           </div>
-          <div className={`${local.grid3} ${!form.distributionOn ? local.disabledBlock : ''}`}>
-            <Input
-              label="第一级（%）"
-              mono
-              inputMode="numeric"
-              value={form.l1}
-              onChange={(e) => setForm({ ...form, l1: e.target.value })}
-              error={errors.distribution_l1}
-              disabled={!form.distributionOn}
-            />
-            <Input
-              label="第二级（%）"
-              mono
-              inputMode="numeric"
-              value={form.l2}
-              onChange={(e) => setForm({ ...form, l2: e.target.value })}
-              error={errors.distribution_l2}
-              disabled={!form.distributionOn}
-            />
-            <Input
-              label="第三级（%）"
-              mono
-              inputMode="numeric"
-              value={form.l3}
-              onChange={(e) => setForm({ ...form, l3: e.target.value })}
-              error={errors.distribution_l3}
-              disabled={!form.distributionOn}
-            />
-          </div>
-          <div className={css.faint}>合计 {sum}%（不超过 100）</div>
-        </div>
-
-        {/* 3. 开放提现 */}
-        <div className={local.secBlock}>
-          <div className={local.secHeadSwitch}>
-            <div className={local.secHeadTitle}>
-              <h3 className={local.secTitle}>开放提现</h3>
-              <span className={css.faint}>关闭后佣金解冻即自动转入余额</span>
+          <div className={form.distributionOn ? local.cbody : local.cbodyOff}>
+            <div className={local.fg}>
+              <Input
+                label="第一级（%）"
+                mono
+                inputMode="numeric"
+                value={form.l1}
+                onChange={(e) => setForm({ ...form, l1: e.target.value })}
+                error={errors.distribution_l1}
+                disabled={!form.distributionOn}
+              />
+              <Input
+                label="第二级（%）"
+                mono
+                inputMode="numeric"
+                value={form.l2}
+                onChange={(e) => setForm({ ...form, l2: e.target.value })}
+                error={errors.distribution_l2}
+                disabled={!form.distributionOn}
+              />
+              <Input
+                label="第三级（%）"
+                mono
+                inputMode="numeric"
+                value={form.l3}
+                onChange={(e) => setForm({ ...form, l3: e.target.value })}
+                error={errors.distribution_l3}
+                disabled={!form.distributionOn}
+              />
             </div>
+            <small className={local.hint}>合计 {sum}%（不超过 100）</small>
+          </div>
+
+          {/* 段 3：开放提现 */}
+          <div className={local.bhBt}>
+            <h3 className={local.bhTitle}>开放提现</h3>
+            <span className={local.bhSub}>关闭后佣金解冻即自动转入余额</span>
+            <span className={local.spacer} />
             <Switch
               aria-label="开放提现"
               checked={form.withdrawOn}
               onChange={(e) => setForm({ ...form, withdrawOn: e.target.checked })}
             />
           </div>
-          <div className={`${local.secBlock} ${!form.withdrawOn ? local.disabledBlock : ''}`}>
-            <div className={local.grid3}>
+          <div className={form.withdrawOn ? local.cbody : local.cbodyOff}>
+            <div className={local.fgSingle}>
               <Input
                 label="最低提现（¥）"
                 mono
@@ -168,9 +177,9 @@ export function CommissionSettings({ overview }: { overview: CommissionOverview 
                 disabled={!form.withdrawOn}
               />
             </div>
-            <div className={local.methodsBlock}>
+            <div className={local.methodsWrap}>
               <div className={css.groupLabel}>提现方式</div>
-              <div className={local.checks}>
+              <div className={local.chks}>
                 {WITHDRAW_METHODS.map((method) => (
                   <Checkbox
                     key={method}
@@ -183,21 +192,13 @@ export function CommissionSettings({ overview }: { overview: CommissionOverview 
               </div>
               {errors.withdraw_methods && <div className={css.error}>{errors.withdraw_methods}</div>}
               {hasUSDT && (
-                <div className={css.faint}>
+                <div className={local.hint}>
                   USDT 只记录打款，面板不发起链上转账
                 </div>
               )}
             </div>
           </div>
-        </div>
-
-        {/* 底部保存按钮 */}
-        <div className={local.actions}>
-          <Button type="submit" variant="primary" busy={save.isPending}>
-            保存设置
-          </Button>
-          <span className={css.faint}>只影响之后产生的佣金</span>
-        </div>
+        </Card>
       </form>
 
       {/* 单独佣金设置 */}
