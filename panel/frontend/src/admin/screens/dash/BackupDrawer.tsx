@@ -2,7 +2,7 @@ import { formatBytes, formatDateTime, relativeTime } from '../../../core/format'
 import { Drawer, Empty, Table, Tag, type TableColumn } from '../../../ui'
 import type { BackupFile, BackupStatus } from './api'
 import css from './Ops.module.css'
-import { backupSummary } from './model'
+import { backupSummary } from './system'
 
 const yesNo = (v: boolean | undefined, yes: string, no: string) => (v === undefined ? '—' : v ? yes : no)
 
