@@ -10,6 +10,8 @@
   max-width: 100%;
   overflow-x: auto;
   scrollbar-width: none;
+  /* 放在纵向 flex 容器里也只占内容宽，不被拉成整行 */
+  align-self: flex-start;
 }
 
 .tab {
