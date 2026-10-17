@@ -753,10 +753,6 @@
   .land .opt > svg.chev { width: 18px; height: 18px; color: var(--text-3); align-self: center; }
 
   /* 我的（手机） */
-  .profile { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
-  .profile .avatar { width: 52px; height: 52px; font-size: 20px; }
-  .profile b { font-size: 20px; font-weight: 600; display: block; }
-  .profile span { color: var(--text-2); font-size: 14px; }
 
   /* ---------------- 手机底部标签栏 ---------------- */
   .tabbar { display: none; }
@@ -956,6 +952,33 @@
     .au-brand { margin-bottom: 22px; }
     .au-card { padding: 18px 18px 22px; border-radius: 22px; }
   }
+
+  /* 手机「我的」 */
+  .me-card { display: flex; align-items: center; gap: 14px; padding: 18px; border-radius: 22px; background: radial-gradient(420px 200px at 0% 0%, var(--tint), transparent 75%), #fff; box-shadow: var(--lift), 0 0 0 1px var(--tint-line); }
+  .me-card .avatar { width: 52px; height: 52px; font-size: 20px; background: var(--deep); color: #fff; }
+  .me-who { flex: 1; min-width: 0; }
+  .me-who b { display: flex; align-items: center; font-size: 19px; font-weight: 600; }
+  .me-who b .chip { font-weight: 600; }
+  .me-who small { display: block; margin-top: 3px; font-size: 13.5px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; }
+  .me-card .chev { width: 18px; height: 18px; color: var(--text-3); }
+  .me-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
+  .me-tile { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 14px 14px 13px; border-radius: 18px; background: #fff; box-shadow: var(--lift); }
+  .me-tile svg { color: var(--deep); margin-bottom: 8px; }
+  .me-tile b { font-size: 15px; font-weight: 600; }
+  .me-tile small { font-size: 12px; color: var(--text-3); }
+  .me-tile small.warn { color: var(--warn); }
+  .me-tile small.hot { color: var(--act); font-weight: 600; }
+  .me-ref { display: flex; align-items: center; gap: 12px; margin-top: 14px; padding: 16px 16px 16px 18px; border-radius: 18px; background: var(--deep); color: #fff; box-shadow: 0 14px 28px -18px rgba(var(--sh), 0.8); }
+  .me-ref-t { flex: 1; min-width: 0; }
+  .me-ref-t b { display: block; font-size: 15.5px; font-weight: 600; }
+  .me-ref-t small { display: block; margin-top: 3px; font-size: 12.5px; color: rgba(255, 255, 255, 0.72); }
+  .me-ref-t .num { color: #fff; font-size: 13.5px; }
+  .me-ref-go { display: flex; align-items: center; gap: 2px; font-size: 13.5px; font-weight: 600; color: var(--mark); white-space: nowrap; }
+  .me-ref-go svg { width: 16px; height: 16px; }
+  .me-rows { margin-top: 14px; }
+  .me-theme { padding: 3px; border-radius: 11px; background: var(--bg); box-shadow: none; }
+  .me-theme span { padding: 6px 14px; border-radius: 8px; font-size: 13px; }
+  .me-out { display: flex; width: 100%; margin-top: 22px; height: 50px; }
 </style>
 </head>
 <body>
@@ -2179,32 +2202,32 @@
     </div>
   </section>
 
-  <!-- ================= 我的（手机标签；桌面上这些在侧栏） ================= -->
+  <!-- ================= 我的（手机标签；桌面上这些在侧栏） =================
+       参考 Deliveroo / Saily 的资料卡 + 分组行、foodpanda 的三格快捷入口、Zip 的邀请横幅、Finimize 的外观分段控件。
+       钱包已经是底部标签，这里不再放余额卡；外观只有浅色 / 深色两档（core/theme 没有跟随系统） -->
   <section class="page" id="p-me">
     <div class="col">
-      <div class="m-top only-m"><span class="logo">pandora</span><span class="icon-btn"><svg class="i"><use href="#i-moon"/></svg></span></div>
-      <div class="profile"><div class="avatar">张</div><div><b>张伟</b><span>user@example.test</span></div></div>
-      <div class="balance" style="padding:24px 22px">
-        <div class="lbl">余额</div>
-        <div class="amt num" style="font-size:46px"><span class="cur" style="font-size:24px">¥</span>26.50</div>
-        <div class="acts" style="margin-top:18px"><a class="btn hot grow" href="#wallet" style="height:44px">充值</a><a class="btn soft grow" href="#wallet" style="height:44px">兑换卡</a></div>
+      <div class="m-top only-m"><span class="logo">pandora</span></div>
+      <a class="me-card" href="#security">
+        <span class="avatar">张</span>
+        <span class="me-who"><b>张伟<span class="chip">专业版</span></b><small>user@example.test</small></span>
+        <svg class="i chev"><use href="#i-chev"/></svg>
+      </a>
+      <div class="me-tiles">
+        <a class="me-tile" href="#orders"><svg class="i"><use href="#i-orders"/></svg><b>订单</b><small class="warn">2 笔待支付</small></a>
+        <a class="me-tile" href="#msgs"><svg class="i"><use href="#i-bell"/></svg><b>消息</b><small class="hot">2 条未读</small></a>
+        <a class="me-tile" href="#tickets"><svg class="i"><use href="#i-chat"/></svg><b>工单</b><small class="hot">有新回复</small></a>
       </div>
-      <h3>账户</h3>
-      <div class="rows">
-        <a class="row" href="#orders"><span class="ri"><svg class="i"><use href="#i-orders"/></svg></span><span class="rt">订单</span><span class="rv">2 笔待支付</span><svg class="i chev"><use href="#i-chev"/></svg></a>
-        <a class="row" href="#ref"><span class="ri"><svg class="i"><use href="#i-gift"/></svg></span><span class="rt">邀请返利</span><span class="rv">可用佣金 <span class="num" style="color:var(--ink)">¥135.60</span></span><svg class="i chev"><use href="#i-chev"/></svg></a>
-        <a class="row" href="#msgs"><span class="ri"><svg class="i"><use href="#i-bell"/></svg></span><span class="rt">消息</span><span class="rv">2 条未读</span><svg class="i chev"><use href="#i-chev"/></svg></a>
-      </div>
-      <h3>帮助</h3>
-      <div class="rows">
-        <a class="row" href="#tickets"><span class="ri"><svg class="i"><use href="#i-chat"/></svg></span><span class="rt">工单支持</span><span class="rv">客服回复了 1 张</span><svg class="i chev"><use href="#i-chev"/></svg></a>
+      <a class="me-ref" href="#ref">
+        <span class="me-ref-t"><b>邀请好友，拿返利</b><small>可用佣金 <span class="num">¥135.60</span></small></span>
+        <span class="me-ref-go">去看看 <svg class="i"><use href="#i-chev"/></svg></span>
+      </a>
+      <div class="rows me-rows">
         <a class="row" href="#help"><span class="ri"><svg class="i"><use href="#i-help"/></svg></span><span class="rt">帮助中心</span><svg class="i chev"><use href="#i-chev"/></svg></a>
+        <a class="row" href="#security"><span class="ri"><svg class="i"><use href="#i-shield"/></svg></span><span class="rt">账号安全<small>密码、登录的设备、Telegram</small></span><svg class="i chev"><use href="#i-chev"/></svg></a>
+        <div class="row static"><span class="ri"><svg class="i"><use href="#i-moon"/></svg></span><span class="rt">外观</span><span class="seg me-theme" role="radiogroup" aria-label="外观"><span class="on" role="radio" aria-checked="true" data-th="light">浅色</span><span role="radio" aria-checked="false" data-th="dark">深色</span></span></div>
       </div>
-      <h3>设置</h3>
-      <div class="rows">
-        <a class="row" href="#security"><span class="ri"><svg class="i"><use href="#i-shield"/></svg></span><span class="rt">账号安全</span><svg class="i chev"><use href="#i-chev"/></svg></a>
-        <a class="row" href="#login"><span class="ri"><svg class="i"><use href="#i-logout"/></svg></span><span class="rt" style="color:var(--danger)">退出登录</span></a>
-      </div>
+      <a class="btn soft me-out" href="#login">退出登录</a>
     </div>
   </section>
   <!-- 登录页：没有导航，单独一屏。站点名、标语、公告都由后台设置；页脚照注册方式写 -->
@@ -2724,6 +2747,10 @@
   av(q.get('av') || 'login')
   if (q.get('le')) { leEmail.value = 'zhang@example.test'; lePw.value = 'password1'; leErr.hidden = false; lePw.classList.add('bad') }
   if (q.get('ok')) { leEmail.value = 'zhang@example.test'; au.querySelector('[data-ok]').hidden = false }
+  // 我的：外观分段（样稿里只切高亮）
+  document.querySelectorAll('.me-theme [data-th]').forEach((el) => el.addEventListener('click', () => {
+    document.querySelectorAll('.me-theme [data-th]').forEach((x) => { x.classList.toggle('on', x === el); x.setAttribute('aria-checked', x === el) })
+  }))
 </script>
 </body>
 </html>
