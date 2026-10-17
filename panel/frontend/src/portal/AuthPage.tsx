@@ -51,7 +51,10 @@ export function AuthPage({
   const signup = useSignupConfig()
   const appearance = useAppearance()
   const mode = site.data?.registration_mode ?? 'open'
-  const [view, setView] = useState<View>(initialTab)
+  const [picked, setView] = useState<View>(initialTab)
+  // 关闭注册时整个注册页签藏掉（样稿 ?reg=closed），带邀请码打开的也落到登录
+  const regOpen = mode !== 'closed'
+  const view: View = picked === 'reg' && !regOpen ? 'login' : picked
   const [resetDone, setResetDone] = useState<string | null>(null)
   const canReset = site.data?.password_reset === true
   const mailOn = signup.data?.mail_link_login === true || initialTab === 'mail'
@@ -85,7 +88,7 @@ export function AuthPage({
           </div>
         )}
         <div className={css.card}>
-          {(view === 'login' || view === 'reg') && (
+          {regOpen && (view === 'login' || view === 'reg') && (
             <Segmented
               label="登录或注册"
               options={[{ value: 'login' as const, label: '登录' }, { value: 'reg' as const, label: '注册' }]}
@@ -112,18 +115,15 @@ export function AuthPage({
               />
             </>
           )}
-          {view === 'reg' &&
-            (mode === 'closed' ? (
-              <RegisterClosed siteName={siteName} onLogin={() => goView('login')} />
-            ) : (
-              <RegisterForm
-                mode={mode === 'invite_only' ? 'invite_only' : 'open'}
-                invite={invite ?? readStoredInvite()}
-                emailVerification={site.data?.email_verification ?? true}
-                captcha={signup.data?.captcha ?? null}
-                emailSuffixes={signup.data?.email_suffixes ?? []}
-              />
-            ))}
+          {view === 'reg' && (
+            <RegisterForm
+              mode={mode === 'invite_only' ? 'invite_only' : 'open'}
+              invite={invite ?? readStoredInvite()}
+              emailVerification={site.data?.email_verification ?? true}
+              captcha={signup.data?.captcha ?? null}
+              emailSuffixes={signup.data?.email_suffixes ?? []}
+            />
+          )}
           {view === 'forgot' && canReset && (
             <PasswordResetForm
               onCancel={() => goView('login')}
@@ -226,17 +226,6 @@ function LoginForm({
         </Btn>
       </div>
     </>
-  )
-}
-
-function RegisterClosed({ siteName, onLogin }: { siteName: string; onLogin: () => void }) {
-  return (
-    <div className={css.form}>
-      <p className={css.p}>{siteName} 目前不开放注册。已有账号的话，直接登录就行。</p>
-      <Btn tone="soft" full className={css.submit} onClick={onLogin}>
-        去登录
-      </Btn>
-    </div>
   )
 }
 

@@ -50,9 +50,10 @@ paths:
 - 外来链接不能用两段式路径（public 网关根下有订阅通配）
   - 邀请链接用 `/?invite=CODE`，渲染前就取走
   - 快捷登录链接用 `#/quick-login/<token>`，加载时即消费并抹掉
-  - 邮件登录链接用 `#/mail-login/<token>`（`entry-links.ts` 的 `mailLoginTokenFromHash`），同样加载即消费并抹掉，失败落到登录页「邮件登录」标签并显示原因；带 `?invite=` 打开门户时上报一次邀请访问（`POST v1/invite/visit`，失败忽略）
-  - 登录页读公开的 `v1/signup-config`：`mail_link_login` 为 true 才有「邮件登录」标签；`captcha` 非空时注册与找回第 1 步渲染人机验证（`Captcha.tsx` 按需加载第三方脚本，不写内联脚本），`email_suffixes` 非空时邮箱框提示可用后缀
+  - 邮件登录链接用 `#/mail-login/<token>`（`entry-links.ts` 的 `mailLoginTokenFromHash`），同样加载即消费并抹掉，失败落到登录页「用邮件里的链接登录」子页并显示原因；带 `?invite=` 打开门户时上报一次邀请访问（`POST v1/invite/visit`，失败忽略）
+  - 登录页读公开的 `v1/signup-config`：`mail_link_login` 为 true 才在登录按钮下给「用邮件里的链接登录」入口；`captcha` 非空时注册第 1 步、找回第 1 步、邮件登录第 1 步渲染人机验证（`Captcha.tsx` 按需加载第三方脚本，不写内联脚本），`email_suffixes` 非空时邮箱框提示可用后缀
   - 生成与识别的格式只写在 `entry-links.ts` 一处
+- 登录页（10-16 样稿 v5）：站点名与标语、公告、白卡片、页脚写注册方式；卡片里登录 / 注册两个页签（`v1/site-config` 的 `registration_mode` 为 closed 时注册页签整个藏掉，带邀请码打开也落到登录）；邀请码只有 invite_only 必填，open 模式下填了无效码的 403 落在邀请码框；邮件链接登录、快捷登录是登录按钮下的次级入口，找回密码从「忘记密码？」进，三者都是带返回的子页；后台关邮箱验证时注册只有一步
 - 快捷登录只收已登录设备在账号安全页生成的链接或令牌（保留规则 1，与设计稿不同）
 - 外观：生效主题的颜色经 CSSOM 写到 `<html>`，不注入 `<style>`
 - 站点名取 `GET v1/appearance` 的顶层 `site_name`（系统设置 `site.name`），不读主题 branding；标语与 Logo 才取生效主题。服务端下发入口页时已把站点名写进 `<title>`，`useAppearanceTheme` 接口回来后照样同步 `document.title`
