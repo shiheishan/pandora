@@ -26,6 +26,8 @@ export interface TableColumn<T> {
   mono?: boolean
   /** 可点表头排序 */
   sortable?: boolean
+  /** ≤639 时整列隐藏（样稿 .h-m），把次要信息留给桌面 */
+  hideOnMobile?: boolean
 }
 
 export interface TableProps<T> {
@@ -93,7 +95,7 @@ export function Table<T>({
           <colgroup>
             {selection && <col className={css.pickCol} />}
             {columns.map((c) => (
-              <col key={c.key} style={c.width ? { width: c.width } : undefined} />
+              <col key={c.key} className={cn(c.hideOnMobile && css.hideMobile)} style={c.width ? { width: c.width } : undefined} />
             ))}
           </colgroup>
           <thead>
@@ -122,6 +124,7 @@ export function Table<T>({
                     aria-sort={ariaSort}
                     className={cn(
                       c.align === 'right' && css.right,
+                      c.hideOnMobile && css.hideMobile,
                       stickyHeader && css.sticky,
                       isSorted && css.sorted,
                     )}
@@ -192,7 +195,7 @@ export function Table<T>({
                       </td>
                     )}
                     {columns.map((c) => (
-                      <td key={c.key} className={cn(c.align === 'right' && css.right, c.mono && 'mono')}>
+                      <td key={c.key} className={cn(c.align === 'right' && css.right, c.mono && 'mono', c.hideOnMobile && css.hideMobile)}>
                         {c.render(row)}
                       </td>
                     ))}
