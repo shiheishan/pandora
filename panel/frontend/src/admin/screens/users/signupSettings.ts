@@ -31,7 +31,7 @@ export interface SignupForm {
   clear_secret: boolean
   recaptcha_v3_threshold: string
   email_suffix_whitelist_enabled: boolean
-  email_suffixes_text: string
+  email_suffixes: string[]
   gmail_alias_block: boolean
   ip_limit_enabled: boolean
   ip_limit_count: string
@@ -43,29 +43,19 @@ export interface SignupForm {
   mail_link_login: boolean
 }
 
-const DEFAULT_SUFFIXES = [
-  'gmail.com',
-  'qq.com',
-  '163.com',
-  'yahoo.com',
-  'sina.com',
-  '126.com',
-  'outlook.com',
-  'yeah.net',
-  'foxmail.com',
-]
+export const EMAIL_SUFFIX_MAX = 100
 
-/** 与后端 NormalizeEmailSuffixes 对齐：按空白/逗号切分、去 @、小写、去重保序 */
-export function parseEmailSuffixesText(text: string): string[] {
-  const seen = new Set<string>()
-  const out: string[] = []
-  for (const part of text.split(/[\s,，]+/)) {
-    const s = part.trim().replace(/^@/, '').toLowerCase()
-    if (!s || seen.has(s)) continue
-    seen.add(s)
-    out.push(s)
-  }
-  return out
+/** trim、去开头的 @、小写 */
+export function normalizeEmailSuffix(raw: string): string {
+  return raw.trim().replace(/^@/, '').toLowerCase()
+}
+
+/** 非空、不含空白与 @、含一个以上 .、不以 . 开头或结尾 */
+export function isEmailSuffix(v: string): boolean {
+  if (!v || /\s|@/.test(v)) return false
+  if (v.startsWith('.') || v.endsWith('.')) return false
+  const dots = v.split('.').length - 1
+  return dots >= 1
 }
 
 function suffixListsEqual(a: string[], b: string[]): boolean {
@@ -73,6 +63,25 @@ function suffixListsEqual(a: string[], b: string[]): boolean {
   const sa = [...a].sort()
   const sb = [...b].sort()
   return sa.every((v, i) => v === sb[i])
+}
+
+function normalizeSuffixList(raw: string[]): { suffixes: string[]; error?: string } {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const item of raw) {
+    const s = normalizeEmailSuffix(item)
+    if (!s || seen.has(s)) continue
+    seen.add(s)
+    out.push(s)
+  }
+  if (out.length > EMAIL_SUFFIX_MAX) {
+    return { suffixes: out, error: '最多 100 个后缀' }
+  }
+  return { suffixes: out }
+}
+
+export function captchaEnabled(form: SignupForm): boolean {
+  return form.captcha_provider !== ''
 }
 
 export function signupFormFrom(s: SignupSettings): SignupForm {
@@ -83,7 +92,7 @@ export function signupFormFrom(s: SignupSettings): SignupForm {
     clear_secret: false,
     recaptcha_v3_threshold: String(s.recaptcha_v3_threshold),
     email_suffix_whitelist_enabled: s.email_suffix_whitelist_enabled,
-    email_suffixes_text: s.email_suffixes.join('\n'),
+    email_suffixes: [...s.email_suffixes],
     gmail_alias_block: s.gmail_alias_block,
     ip_limit_enabled: s.ip_limit_enabled,
     ip_limit_count: String(s.ip_limit_count),
@@ -144,8 +153,9 @@ export function signupBody(form: SignupForm, saved: SignupSettings): { body: Rec
   if (form.email_suffix_whitelist_enabled !== saved.email_suffix_whitelist_enabled) {
     body.email_suffix_whitelist_enabled = form.email_suffix_whitelist_enabled
   }
-  const suffixes = parseEmailSuffixesText(form.email_suffixes_text)
-  if (!suffixListsEqual(suffixes, saved.email_suffixes)) body.email_suffixes = suffixes
+  const { suffixes, error: suffixError } = normalizeSuffixList(form.email_suffixes)
+  if (suffixError) errors.email_suffixes = suffixError
+  else if (!suffixListsEqual(suffixes, saved.email_suffixes)) body.email_suffixes = suffixes
 
   if (form.gmail_alias_block !== saved.gmail_alias_block) body.gmail_alias_block = form.gmail_alias_block
   if (form.ip_limit_enabled !== saved.ip_limit_enabled) body.ip_limit_enabled = form.ip_limit_enabled
@@ -180,5 +190,3 @@ export function signupBody(form: SignupForm, saved: SignupSettings): { body: Rec
   if (Object.keys(errors).length > 0) return { errors }
   return { body }
 }
-
-export { DEFAULT_SUFFIXES }

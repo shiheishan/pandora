@@ -1,49 +1,146 @@
 /* ===========================================================================
  * 注册设置（SignupSecurity / SignupGrowth / SignupForm）
  * ========================================================================= */
-.panel {
+
+.stack {
   display: flex;
   flex-direction: column;
   gap: var(--space-16);
   min-width: 0;
 }
 
-.grid {
-  display: grid;
-  grid-template-columns: minmax(300px, 1fr) minmax(320px, 1.4fr);
-  align-items: start;
+.growthCards {
+  display: flex;
+  flex-direction: column;
   gap: var(--space-16);
+  min-width: 0;
 }
 
-@media (max-width: 959px) {
-  .grid {
+.fieldGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-12);
+  align-items: start;
+}
+
+@media (max-width: 639px) {
+  .fieldGrid {
     grid-template-columns: minmax(0, 1fr);
   }
 }
 
-.formStack {
+.fieldLabel {
+  margin: 0 0 var(--space-8);
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.revealStack {
   display: flex;
   flex-direction: column;
   gap: var(--space-12);
   min-width: 0;
 }
 
-.note {
+.hint {
   margin: 0;
   color: var(--text-3);
   font-size: var(--fs-caption);
   line-height: var(--lh-body-sm);
 }
 
-.dangerText {
-  margin: 0;
+.sent {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+  color: var(--text);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.inputMinutes {
+  width: 64px;
+}
+
+.inputCount {
+  width: 72px;
+}
+
+.inputThreshold {
+  width: 96px;
+}
+
+.inputInviteMax {
+  max-width: 320px;
+}
+
+.alert {
+  margin: var(--space-4) 0 0;
   color: var(--danger);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-body-sm);
+}
+
+.swr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-16);
+  padding: var(--space-12) 0;
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+
+.swr:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.swrText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.swrTitle {
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.swrDesc {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-body-sm);
+}
+
+.growthBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  min-width: 0;
+}
+
+.growthFooter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  width: 100%;
+  min-width: 0;
+}
+
+.footerHint {
+  color: var(--text-3);
   font-size: var(--fs-caption);
 }
 
-.actions {
-  display: flex;
-  justify-content: flex-end;
+.footerSpacer {
+  flex: 1;
+  min-width: 0;
 }
 
 /* ===========================================================================
