@@ -2,7 +2,7 @@
   width: 100%;
   height: var(--h-control);
   padding: 0 var(--pad-input);
-  /* 门户四边框白底；后台只有下边线、透明底（角色令牌） */
+  /* 边框与底色来自角色令牌 */
   border-style: solid;
   border-width: var(--control-border-width);
   border-color: var(--control-border-color);
@@ -25,7 +25,7 @@
 
 .control:focus,
 .control:focus-visible {
-  border-color: var(--accent);
+  border-color: var(--control-focus-border);
   box-shadow: 0 0 0 3px var(--focus-halo);
   outline: none;
 }
