@@ -1,9 +1,11 @@
 import { useMutation } from '@tanstack/react-query'
-import { useState, type KeyboardEvent } from 'react'
+import { useState } from 'react'
+import { Add01Icon } from '@hugeicons-pro/core-stroke-rounded'
 import { formatMoney } from '../../../core/format'
 import { navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
-import { Button, ConfirmModal, Empty, FilterTabs, Pager, QueryView, Select, StatStrip, Tag, useToast } from '../../../ui'
+import { Button, Card, ConfirmModal, Empty, FilterTabs, Pager, QueryView, Select, StatStrip, Table, Tag, type TableColumn, useToast } from '../../../ui'
+import { PageActions, Row, RowList } from '../../kit'
 import { GenerateModal, OneTimeModal, useBatchExport, useCodesReport } from './GenerateCodes'
 import { TemplateModal } from './TemplateDrawer'
 import local from './Gifts.module.css'
@@ -21,7 +23,7 @@ import {
 import { formatDateTime } from './logic'
 import css from './marketing.module.css'
 import { useFailure, useGiftBatches, useGiftCodes, useGiftStats, useGiftTemplates, useGiftUsages, useInvalidateMarketing, usePlanCatalog } from './queries'
-import { templateSaved, toggleResponse, type Batch, type CodesGenerated, type GiftCode, type GiftStats, type GiftTemplate, type Plan } from './schemas'
+import { templateSaved, toggleResponse, type Batch, type CodesGenerated, type GiftCode, type GiftStats, type GiftTemplate, type Plan, type Usage } from './schemas'
 
 type View = 'templates' | 'batches' | 'usages'
 const VIEWS: readonly View[] = ['templates', 'batches', 'usages']
@@ -49,6 +51,12 @@ export function Gifts({ rest }: { rest: string[] }) {
 
   return (
     <div className={css.stack}>
+      <PageActions>
+        <Button variant="primary" icon={Add01Icon} onClick={() => setTemplateModalOpen(true)}>
+          新建
+        </Button>
+      </PageActions>
+
       <StatStrip label="礼品卡统计" items={stats.data ? giftStats(stats.data) : undefined} />
       <div className={local.toolbarRow}>
         <FilterTabs<View>
@@ -62,11 +70,6 @@ export function Gifts({ rest }: { rest: string[] }) {
           ]}
         />
         <div className={css.spacer} />
-        {view === 'templates' && (
-          <Button variant="primary" onClick={() => setTemplateModalOpen(true)}>
-            新建
-          </Button>
-        )}
         {view === 'usages' && (
           <div className={local.rightMeta}>
             <Select
@@ -115,11 +118,13 @@ function Templates({ onGenerated }: { onGenerated: (result: CodesGenerated) => v
         empty={<Empty title="还没有礼品卡模板" description="点右上角「新建」建第一张。" />}
       >
         {(templates) => (
-          <div className={local.templateList}>
-            {templates.map((t) => (
-              <TemplateRowItem key={t.id} template={t} plans={plans} onGen={() => setGenerating(t)} />
-            ))}
-          </div>
+          <Card flush>
+            <RowList label="礼品卡模板">
+              {templates.map((t) => (
+                <TemplateRowItem key={t.id} template={t} plans={plans} onGen={() => setGenerating(t)} />
+              ))}
+            </RowList>
+          </Card>
         )}
       </QueryView>
       <GenerateModal
@@ -163,36 +168,48 @@ function TemplateRowItem({
   })
 
   return (
-    <div className={isPaused ? `${local.templateRow} ${local.templateRowPaused}` : local.templateRow}>
-      <div className={local.tplFaceCol}>
-        <div className={local.tplFace}>{face.face}</div>
-        <div className={local.tplKind}>{face.kind}</div>
-      </div>
-      <div className={local.tplMainCol}>
-        <div className={local.tplTitleLine}>
-          <span className={local.tplName}>{t.name}</span>
-          <span className={local.typeTag}>{TEMPLATE_TYPE_LABEL[t.type]}</span>
-          {isPaused && <Tag tone="warn">暂停兑换</Tag>}
-          {t.price_archived && <Tag tone="danger">价格已下架</Tag>}
+    <Row
+      lead={
+        <div className={local.face}>
+          <b className={local.faceNum}>{face.face}</b>
+          <small className={local.faceKind}>{face.kind}</small>
         </div>
-        <div className={local.tplMetaLine}>
-          兑换后 {face.after} · 已发 {t.code_total.toLocaleString('zh-CN')} 张 · 已兑 {t.code_used.toLocaleString('zh-CN')}
-        </div>
-      </div>
-      <div className={local.tplActionsCol}>
-        <button type="button" className={local.tplGenBtn} onClick={onGen}>
-          生成卡码
-        </button>
-        <button
-          type="button"
-          className={local.tplPauseBtn}
-          disabled={toggleStatus.isPending}
-          onClick={() => toggleStatus.mutate()}
-        >
-          {isPaused ? '恢复兑换' : '暂停兑换'}
-        </button>
-      </div>
-    </div>
+      }
+      title={
+        <>
+          <span>{t.name}</span>
+          {' '}
+          <Tag tone="neutral">{TEMPLATE_TYPE_LABEL[t.type]}</Tag>
+          {isPaused && (
+            <>
+              {' '}
+              <Tag tone="warn">暂停兑换</Tag>
+            </>
+          )}
+          {t.price_archived && (
+            <>
+              {' '}
+              <Tag tone="danger">价格已下架</Tag>
+            </>
+          )}
+        </>
+      }
+      meta={`兑换后 ${face.after} · 已发 ${t.code_total.toLocaleString('zh-CN')} 张 · 已兑 ${t.code_used.toLocaleString('zh-CN')}`}
+      actions={
+        <>
+          <Button size="sm" onClick={onGen}>
+            生成卡码
+          </Button>
+          <Button
+            size="sm"
+            disabled={toggleStatus.isPending}
+            onClick={() => toggleStatus.mutate()}
+          >
+            {isPaused ? '恢复兑换' : '暂停兑换'}
+          </Button>
+        </>
+      }
+    />
   )
 }
 
@@ -210,77 +227,94 @@ function Batches({ selected }: { selected: string | null }) {
   const [exportBatchTarget, setExportBatchTarget] = useState<Batch | null>(null)
   const exporter = useBatchExport(() => setExportBatchTarget(null))
 
-  const handleKeyDown = (e: KeyboardEvent<HTMLTableRowElement>, id: string) => {
-    // 行里的「一次性导出」按钮自己处理按键
-    if (e.target !== e.currentTarget) return
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault()
-      navigate(giftPath('batches', id))
-    }
-  }
+  const total = list.data?.total ?? 0
+
+  const batchColumns: readonly TableColumn<Batch>[] = [
+    {
+      key: 'batch',
+      header: '批次',
+      render: (b) => (
+        <div>
+          <span className={css.mono}>{batchLabel(b)}</span>
+          <span className={local.subLine}>
+            {formatDateTime(b.created_at)}
+            {b.created_by_email ? ` · ${b.created_by_email}` : ''}
+          </span>
+        </div>
+      ),
+    },
+    {
+      key: 'template',
+      header: '模板',
+      hideOnMobile: true,
+      render: (b) => b.template_name,
+    },
+    {
+      key: 'count',
+      header: '数量',
+      align: 'right',
+      mono: true,
+      render: (b) => b.count.toLocaleString('zh-CN'),
+    },
+    {
+      key: 'export',
+      header: '导出',
+      hideOnMobile: true,
+      render: (b) =>
+        b.exported_at ? (
+          <span className={css.muted}>已导出 · {b.exported_by_email ?? ''}</span>
+        ) : (
+          <span>
+            <span className={local.warnText}>未导出</span>
+            <span className={css.faint}> · 完整卡码仍可一次性导出</span>
+          </span>
+        ),
+    },
+    {
+      key: 'actions',
+      header: '',
+      align: 'right',
+      render: (b) => {
+        const isExported = b.exported_at !== null
+        return (
+          <Button
+            size="sm"
+            disabled={isExported}
+            onClick={(e) => {
+              e.stopPropagation()
+              if (!isExported) setExportBatchTarget(b)
+            }}
+          >
+            {isExported ? '已导出过' : '一次性导出'}
+          </Button>
+        )
+      },
+    },
+  ]
+
+  const batchFooter =
+    total > BATCH_PAGE ? <Pager inline total={total} limit={BATCH_PAGE} offset={offset} onChange={setOffset} /> : <span>共 {total} 批</span>
 
   return (
-    <div className={local.batchesStack}>
-      <div className={local.tableWrap}>
-        <QueryView query={list} isEmpty={(d) => d.items.length === 0} empty={<Empty bare title="还没有批次" description="在「模板」里生成一批卡码后，这里就会出现。" />}>
-          {(data) => (
-            <>
-              <table className={local.dataTable}>
-                <thead>
-                  <tr>
-                    <th className={local.th}>批次</th>
-                    <th className={local.th}>模板</th>
-                    <th className={`${local.th} ${local.thRight} ${local.thQty}`}>数量</th>
-                    <th className={local.th}>导出</th>
-                    <th className={`${local.th} ${local.thAction}`}></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.items.map((b) => {
-                    const isSelected = b.id === current?.id
-                    return (
-                      <tr
-                        key={b.id}
-                        tabIndex={0}
-                        aria-current={isSelected}
-                        className={isSelected ? `${local.batchTr} ${local.batchTrSelected}` : local.batchTr}
-                        onClick={() => navigate(giftPath('batches', b.id))}
-                        onKeyDown={(e) => handleKeyDown(e, b.id)}
-                      >
-                        <td className={local.batchTd}>
-                          <span className={css.mono}>{batchLabel(b)}</span>
-                          <span className={local.subLine}>
-                            {formatDateTime(b.created_at)}
-                          </span>
-                        </td>
-                        <td className={local.batchTdStandard}>{b.template_name}</td>
-                        <td className={local.batchTdQty}>{b.count.toLocaleString('zh-CN')}</td>
-                        <td className={`${local.batchTdExport} ${b.exported_at ? local.exportDone : local.exportPending}`}>
-                          {b.exported_at ? `已导出 · ${b.exported_by_email ?? ''}` : '未导出 · 完整卡码仍可一次性导出'}
-                        </td>
-                        <td className={local.batchTdBtn}>
-                          <button
-                            type="button"
-                            className={local.textActionBtn}
-                            disabled={b.exported_at !== null}
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              if (!b.exported_at) setExportBatchTarget(b)
-                            }}
-                          >
-                            {b.exported_at !== null ? '已导出过' : '一次性导出'}
-                          </button>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-              <Pager total={data.total} limit={BATCH_PAGE} offset={offset} onChange={setOffset} />
-            </>
-          )}
-        </QueryView>
-      </div>
+    <div className={css.stack}>
+      <QueryView
+        query={list}
+        isEmpty={(d) => d.items.length === 0}
+        empty={<Empty bare title="还没有批次" description="在「模板」里生成一批卡码后，这里就会出现。" />}
+      >
+        {(data) => (
+          <Table<Batch>
+            label="批次"
+            boxed
+            columns={batchColumns}
+            rows={data.items}
+            rowKey={(b) => b.id}
+            onRowClick={(b) => navigate(giftPath('batches', b.id))}
+            rowClassName={(b) => (b.id === current?.id ? local.cur : undefined)}
+            footer={batchFooter}
+          />
+        )}
+      </QueryView>
 
       {current ? (
         <BatchCodes key={current.id} batch={current} />
@@ -312,14 +346,47 @@ function BatchCodes({ batch }: { batch: Batch }) {
   const filter = codeFilterQuery(batch.id, status)
   const codes = useGiftCodes({ ...filter, limit: CODE_PAGE, offset })
   const report = useCodesReport(() => setReporting(false))
-  const total = codes.data?.total
-  const scope = `批次 ${batchLabel(batch)}${status ? ` · ${CODE_STATUS[status]!.label}` : ''}${total !== undefined ? ` · 共 ${total.toLocaleString('zh-CN')} 张` : ''}`
+  const total = codes.data?.total ?? 0
+  const scope = `批次 ${batchLabel(batch)}${status ? ` · ${CODE_STATUS[status]!.label}` : ''}${codes.data?.total !== undefined ? ` · 共 ${codes.data.total.toLocaleString('zh-CN')} 张` : ''}`
+
+  const codeFooter =
+    total > CODE_PAGE ? <Pager inline total={total} limit={CODE_PAGE} offset={offset} onChange={setOffset} /> : <span>共 {total} 张</span>
+
+  const codeColumns: readonly TableColumn<GiftCode>[] = [
+    {
+      key: 'code',
+      header: '卡码',
+      mono: true,
+      render: (c) => c.code_masked,
+    },
+    {
+      key: 'status',
+      header: '状态',
+      render: (c) => {
+        const st = CODE_STATUS[c.status] ?? { label: c.status, tone: 'neutral' as const }
+        return <Tag tone={st.tone}>{st.label}</Tag>
+      },
+    },
+    {
+      key: 'user',
+      header: '兑换人',
+      hideOnMobile: true,
+      render: (c) => <span className={css.muted}>{c.used_email ? `兑换人 ${c.used_email}` : '—'}</span>,
+    },
+    {
+      key: 'action',
+      header: '',
+      align: 'right',
+      render: (c) => <CodeActionCell code={c} />,
+    },
+  ]
 
   return (
-    <section className={local.codesSection}>
-      <div className={local.codesHeader}>
-        <h3 className={local.codesTitle}>{batchLabel(batch)} 的卡码</h3>
-        <div className={local.codeStatusSelect}>
+    <Card
+      flush
+      title={<><span className={css.mono}>{batchLabel(batch)}</span> 的卡码</>}
+      extra={
+        <>
           <Select
             aria-label="按状态筛选卡码"
             size="sm"
@@ -330,29 +397,29 @@ function BatchCodes({ batch }: { batch: Batch }) {
             }}
             options={STATUS_OPTIONS}
           />
-        </div>
-        <button
-          type="button"
-          className={local.textActionBtn}
-          disabled={total === 0}
-          onClick={() => setReporting(true)}
-        >
-          导出当前筛选
-        </button>
-      </div>
-
+          <Button
+            size="sm"
+            disabled={total === 0}
+            onClick={() => setReporting(true)}
+          >
+            导出当前筛选
+          </Button>
+        </>
+      }
+    >
       <QueryView
         query={codes}
         isEmpty={(d) => d.codes.length === 0}
-        empty={<div className={local.emptyBlock}>没有这个状态的码</div>}
+        empty={<Empty bare title="没有这个状态的码" />}
       >
         {(data) => (
-          <>
-            {data.codes.map((c) => (
-              <CodeRow key={c.id} code={c} />
-            ))}
-            <Pager total={data.total} limit={CODE_PAGE} offset={offset} onChange={setOffset} />
-          </>
+          <Table<GiftCode>
+            label={`${batchLabel(batch)} 的卡码`}
+            columns={codeColumns}
+            rows={data.codes}
+            rowKey={(c) => c.id}
+            footer={codeFooter}
+          />
         )}
       </QueryView>
 
@@ -364,16 +431,15 @@ function BatchCodes({ batch }: { batch: Batch }) {
         onConfirm={() => report.mutateAsync(filter).catch(() => setReporting(false))}
         onCancel={() => setReporting(false)}
       />
-    </section>
+    </Card>
   )
 }
 
-function CodeRow({ code: c }: { code: GiftCode }) {
+function CodeActionCell({ code: c }: { code: GiftCode }) {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
   const invalidate = useInvalidateMarketing()
-  const status = CODE_STATUS[c.status] ?? { label: c.status, tone: 'neutral' as const }
   const toggle = useMutation({
     mutationFn: (disabled: boolean) => api.post(`v1/gift-cards/codes/${c.id}/toggle`, toggleResponse, { body: { disabled } }),
     onSuccess: ({ disabled }) => {
@@ -386,27 +452,17 @@ function CodeRow({ code: c }: { code: GiftCode }) {
     },
   })
   const action = c.status === 'unused' ? '停用' : c.status === 'disabled' ? '恢复' : null
+  if (!action) return null
 
   return (
-    <div className={local.codeGridRow}>
-      <span className={local.codeText}>{c.code_masked}</span>
-      <span>
-        <Tag tone={status.tone}>{status.label}</Tag>
-      </span>
-      <span className={local.whoText}>{c.used_email ? `兑换人 ${c.used_email}` : ''}</span>
-      <span className={local.rightAlign}>
-        {action && (
-          <button
-            type="button"
-            className={action === '停用' ? `${local.textActionBtn} ${local.dangerBtn}` : local.textActionBtn}
-            disabled={toggle.isPending}
-            onClick={() => toggle.mutate(c.status === 'unused')}
-          >
-            {action}
-          </button>
-        )}
-      </span>
-    </div>
+    <button
+      type="button"
+      className={action === '停用' ? local.linkD : local.linkB}
+      disabled={toggle.isPending}
+      onClick={() => toggle.mutate(c.status === 'unused')}
+    >
+      {action}
+    </button>
   )
 }
 
@@ -416,38 +472,50 @@ function CodeRow({ code: c }: { code: GiftCode }) {
 function Usages({ templateId }: { templateId: string }) {
   const list = useGiftUsages(templateId)
 
+  const usageColumns: readonly TableColumn<Usage>[] = [
+    {
+      key: 'time',
+      header: '时间',
+      mono: true,
+      hideOnMobile: true,
+      render: (u) => <span className={css.muted}>{formatDateTime(u.redeemed_at)}</span>,
+    },
+    {
+      key: 'code',
+      header: '卡码',
+      mono: true,
+      render: (u) => u.code_masked,
+    },
+    {
+      key: 'template',
+      header: '模板',
+      hideOnMobile: true,
+      render: (u) => <span className={css.muted}>{u.template_name}</span>,
+    },
+    {
+      key: 'user',
+      header: '用户',
+      render: (u) => u.user_email,
+    },
+    {
+      key: 'granted',
+      header: '获得',
+      align: 'right',
+      render: (u) => grantedLabel(u),
+    },
+  ]
+
   return (
-    <div className={local.tableWrap}>
-      <QueryView query={list} empty={<Empty bare title="还没有兑换记录" description="用户兑换礼品卡后会出现在这里。" />}>
-        {(rows) => (
-          <table className={local.usagesTable}>
-            <thead>
-              <tr>
-                <th className={`${local.th} ${local.thTime}`}>
-                  时间
-                </th>
-                <th className={local.th}>卡码</th>
-                <th className={local.th}>模板</th>
-                <th className={local.th}>用户</th>
-                <th className={`${local.th} ${local.thRight}`}>获得</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((u, i) => (
-                <tr key={`${u.code_masked}-${u.redeemed_at}-${i}`} className={local.usageTr}>
-                  <td className={local.usageTdMono}>{formatDateTime(u.redeemed_at)}</td>
-                  <td className={local.usageTdMono}>{u.code_masked}</td>
-                  <td className={local.usageTd}>{u.template_name}</td>
-                  <td className={`${local.usageTd} ${local.usageTdMuted}`}>
-                    {u.user_email}
-                  </td>
-                  <td className={local.usageTdRight}>{grantedLabel(u)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </QueryView>
-    </div>
+    <QueryView query={list} empty={<Empty bare title="还没有兑换记录" description="用户兑换礼品卡后会出现在这里。" />}>
+      {(rows) => (
+        <Table<Usage>
+          label="使用记录"
+          boxed
+          columns={usageColumns}
+          rows={rows}
+          rowKey={(u) => `${u.code_masked}-${u.redeemed_at}`}
+        />
+      )}
+    </QueryView>
   )
 }

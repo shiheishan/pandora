@@ -1,110 +1,224 @@
 /* ===========================================================================
  * 注册设置（SignupSecurity / SignupGrowth / SignupForm）
  * ========================================================================= */
-.panel {
+
+.stack {
   display: flex;
   flex-direction: column;
   gap: var(--space-16);
   min-width: 0;
 }
 
-.grid {
-  display: grid;
-  grid-template-columns: minmax(300px, 1fr) minmax(320px, 1.4fr);
-  align-items: start;
+.growthCards {
+  display: flex;
+  flex-direction: column;
   gap: var(--space-16);
+  min-width: 0;
 }
 
-@media (max-width: 959px) {
-  .grid {
+.fieldGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-12);
+  align-items: start;
+}
+
+@media (max-width: 639px) {
+  .fieldGrid {
     grid-template-columns: minmax(0, 1fr);
   }
 }
 
-.formStack {
+.fieldLabel {
+  margin: 0 0 var(--space-8);
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.revealStack {
   display: flex;
   flex-direction: column;
   gap: var(--space-12);
   min-width: 0;
 }
 
-.note {
+.hint {
   margin: 0;
   color: var(--text-3);
   font-size: var(--fs-caption);
   line-height: var(--lh-body-sm);
 }
 
-.dangerText {
-  margin: 0;
+.sent {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+  color: var(--text);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.inputMinutes {
+  width: 64px;
+}
+
+.inputCount {
+  width: 72px;
+}
+
+.inputThreshold {
+  width: 96px;
+}
+
+.inputInviteMax {
+  max-width: 320px;
+}
+
+.alert {
+  margin: var(--space-4) 0 0;
   color: var(--danger);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-body-sm);
+}
+
+.swr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-16);
+  padding: var(--space-12) 0;
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+
+.swr:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.swrText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.swrTitle {
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.swrDesc {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-body-sm);
+}
+
+.growthBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  min-width: 0;
+}
+
+.growthFooter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  width: 100%;
+  min-width: 0;
+}
+
+.footerHint {
+  color: var(--text-3);
   font-size: var(--fs-caption);
 }
 
-.actions {
-  display: flex;
-  justify-content: flex-end;
+.footerSpacer {
+  flex: 1;
+  min-width: 0;
 }
 
 /* ===========================================================================
- * 设备策略（DevicePolicy）
+ * 设备策略（DevicePolicy，风控页签挂载）
  * ========================================================================= */
-.deviceStack {
+
+.dpStack {
   display: flex;
   flex-direction: column;
   gap: var(--space-16);
   min-width: 0;
 }
 
-.modeSet {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-8);
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
+.dpFieldLabel {
+  margin: 12px 0 0;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.4;
 }
 
-.modeSet > legend {
-  margin-bottom: var(--space-8);
-  padding: 0;
-}
-
-.modeGrid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-12);
-}
-
-@media (max-width: 959px) {
-  .modeGrid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-.twoCols {
+.dpTwoCols {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-12);
   align-items: start;
+  margin-top: var(--space-4);
 }
 
-@media (max-width: 959px) {
-  .twoCols {
+@media (max-width: 639px) {
+  .dpTwoCols {
     grid-template-columns: minmax(0, 1fr);
   }
 }
 
-.policyFooter {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-12);
-  margin-top: var(--space-4);
-}
-
-.statusText {
+.dpFooterStatus {
   color: var(--text-3);
   font-size: var(--fs-caption);
+}
+
+.dpFooterSpacer {
+  flex: 1;
+  min-width: 0;
+}
+
+.dpSubLine {
+  display: block;
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+
+.dpDots {
+  display: inline-flex;
+  gap: 3px;
+  margin-right: 10px;
+  vertical-align: 1px;
+}
+
+.dpDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+
+.dpDotOn {
+  background: var(--ok);
+}
+
+.dpDotOver {
+  background: var(--warn);
+}
+
+.dpDotOverDanger {
+  background: var(--danger);
+}
+
+.dpMuted {
+  color: var(--text-2);
 }

@@ -1,6 +1,8 @@
-import { useState, type ReactNode } from 'react'
+import { useState } from 'react'
+import { Add01Icon } from '@hugeicons-pro/core-stroke-rounded'
 import { navigate, useHashLocation } from '../../../core/router'
 import { Button, Empty, FilterTabs, IconClose, Modal, QueryView, Table, Tag, Toolbar } from '../../../ui'
+import { PageActions } from '../../kit'
 import { AnnounceEditor } from './AnnounceEditor'
 import css from './announce.module.css'
 import { ANN_STATUS, annFilterItems, annTargetLabel, annWhen, isAnnFilter, SEVERITY, visibleAnns, type AnnFilter, type AnnForm } from './logic'
@@ -37,104 +39,101 @@ export function AnnounceTab({ rest }: { rest: string[] }) {
   }
 
   return (
-    <QueryView query={query} rows={5} empty={null}>
-      {(data) => {
-        const list = data.announcements
-        const current: Announcement | 'new' | null = selected === 'new' ? 'new' : (list.find((a) => a.id === selected) ?? null)
-        return (
-          <div className={css.page}>
-            <Toolbar
-              end={
-                <Button variant="primary" onClick={() => startNew(null)}>
-                  新建公告
-                </Button>
-              }
-            >
-              <FilterTabs label="按状态筛选" items={annFilterItems(list)} value={filter} onChange={setFilter} />
-            </Toolbar>
-            <Table
-              label="公告列表"
-              rows={visibleAnns(list, filter)}
-              rowKey={(a) => a.id}
-              onRowClick={(a) => open(a.id)}
-              columns={[
-                {
-                  key: 'title',
-                  header: '标题',
-                  render: (a) =>
-                    dim(
-                      a,
+    <>
+      <PageActions>
+        <Button variant="primary" icon={Add01Icon} onClick={() => startNew(null)}>
+          新建公告
+        </Button>
+      </PageActions>
+      <QueryView query={query} rows={5} empty={null}>
+        {(data) => {
+          const list = data.announcements
+          const current: Announcement | 'new' | null = selected === 'new' ? 'new' : (list.find((a) => a.id === selected) ?? null)
+          return (
+            <div className={css.page}>
+              <Toolbar>
+                <FilterTabs label="按状态筛选" items={annFilterItems(list)} value={filter} onChange={setFilter} />
+              </Toolbar>
+              <Table
+                boxed
+                label="公告列表"
+                rows={visibleAnns(list, filter)}
+                rowKey={(a) => a.id}
+                rowClassName={(a) => (a.status === 'withdrawn' ? css.dimRow : undefined)}
+                onRowClick={(a) => open(a.id)}
+                columns={[
+                  {
+                    key: 'title',
+                    header: '标题',
+                    render: (a) => (
                       <span className={css.annTitle}>
-                        {a.pinned && <span className={css.pin}>置顶</span>}
+                        {a.pinned && <Tag tone="neutral">置顶</Tag>}
                         <span className={css.annTitleText}>{a.title}</span>
-                      </span>,
+                      </span>
                     ),
-                },
-                {
-                  key: 'status',
-                  header: '状态',
-                  width: '72px',
-                  render: (a) =>
-                    dim(
-                      a,
-                      <Tag tone={ANN_STATUS[a.status].tone}>{ANN_STATUS[a.status].label}</Tag>,
+                  },
+                  {
+                    key: 'status',
+                    header: '状态',
+                    width: '72px',
+                    render: (a) => (
+                      <Tag tone={ANN_STATUS[a.status].tone}>{ANN_STATUS[a.status].label}</Tag>
                     ),
-                },
-                {
-                  key: 'severity',
-                  header: '级别',
-                  width: '64px',
-                  render: (a) => dim(a, <span className={SEV_CLASS[a.severity]}>{SEVERITY[a.severity].label}</span>),
-                },
-                {
-                  key: 'target',
-                  header: '可见范围',
-                  width: '104px',
-                  render: (a) => dim(a, <span className={css.target}>{annTargetLabel(a)}</span>),
-                },
-                {
-                  key: 'when',
-                  header: '时间',
-                  width: '112px',
-                  align: 'right',
-                  render: (a) => dim(a, <span className={css.when}>{annWhen(a)}</span>),
-                },
-              ]}
-              empty={
-                list.length === 0 ? (
-                  <Empty bare title="还没有公告" description="新建一条公告，发布后用户端「消息」页与首页公告栏都能看到。" />
-                ) : (
-                  <Empty bare title="这个状态下没有公告" />
-                )
-              }
-            />
-            {selected === null ? null : current === 'new' ? (
-              <AnnounceEditor key={`new:${draft.seed}`} data={data} original={null} prefill={draft.form} onCopy={startNew} onClose={close} />
-            ) : current ? (
-              <AnnounceEditor key={current.id} data={data} original={current} prefill={null} onCopy={startNew} onClose={close} />
-            ) : (
-              <Modal
-                open
-                size={640}
-                title="公告"
-                onClose={close}
-                headExtra={
-                  <Button variant="ghost" size="sm" aria-label="关闭" onClick={close}>
-                    <IconClose />
-                  </Button>
+                  },
+                  {
+                    key: 'severity',
+                    header: '级别',
+                    hideOnMobile: true,
+                    width: '64px',
+                    render: (a) => <span className={SEV_CLASS[a.severity]}>{SEVERITY[a.severity].label}</span>,
+                  },
+                  {
+                    key: 'target',
+                    header: '可见范围',
+                    hideOnMobile: true,
+                    width: '104px',
+                    render: (a) => <span className={css.target}>{annTargetLabel(a)}</span>,
+                  },
+                  {
+                    key: 'when',
+                    header: '时间',
+                    hideOnMobile: true,
+                    width: '112px',
+                    align: 'right',
+                    render: (a) => <span className={css.when}>{annWhen(a)}</span>,
+                  },
+                ]}
+                empty={
+                  list.length === 0 ? (
+                    <Empty bare title="还没有公告" description="新建一条公告，发布后用户端「消息」页与首页公告栏都能看到。" />
+                  ) : (
+                    <Empty bare title="这个状态下没有公告" />
+                  )
                 }
-              >
-                <Empty bare title="公告不存在或已删除" />
-              </Modal>
-            )}
-          </div>
-        )
-      }}
-    </QueryView>
+              />
+              {selected === null ? null : current === 'new' ? (
+                <AnnounceEditor key={`new:${draft.seed}`} data={data} original={null} prefill={draft.form} onCopy={startNew} onClose={close} />
+              ) : current ? (
+                <AnnounceEditor key={current.id} data={data} original={current} prefill={null} onCopy={startNew} onClose={close} />
+              ) : (
+                <Modal
+                  open
+                  size={640}
+                  title="公告"
+                  onClose={close}
+                  headExtra={
+                    <Button variant="ghost" size="sm" aria-label="关闭" onClick={close}>
+                      <IconClose />
+                    </Button>
+                  }
+                >
+                  <Empty bare title="公告不存在或已删除" />
+                </Modal>
+              )}
+            </div>
+          )
+        }}
+      </QueryView>
+    </>
   )
-}
-
-/** 已撤回的行整行淡显：Table 没有行类名，在每个单元格的 render 外包一层 */
-function dim(a: Announcement, node: ReactNode): ReactNode {
-  return a.status === 'withdrawn' ? <span className={css.dim}>{node}</span> : node
 }

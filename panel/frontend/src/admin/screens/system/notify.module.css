@@ -1,181 +1,60 @@
-/* 通知渠道页（tab=notify）：发送渠道三张卡、管理员提醒、注册与验证卡；弹窗内表单复用 system.module.css */
+/* 通知渠道页（tab=notify）：行列表标题、管理员提醒开关行、弹窗内表单 */
 
-/* ---- 页面：节与节标题 ---- */
-.page {
-  display: flex;
-  flex-direction: column;
-  gap: 36px;
-}
-
-.section {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.sectionTitle {
-  margin: 0;
-  font-size: 15px;
-  font-weight: var(--fw-semibold);
-}
-
-.chList {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-/* ---- 渠道卡（一行）：图标 + 标题/标签 + 描述，可点时右侧「配置」 ---- */
-.chCard {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  width: 100%;
-  padding: 16px 18px;
-  border: 1px solid var(--border-strong);
-  background: var(--surface);
-  color: var(--text);
-  text-align: left;
-}
-
-.clickable {
-  cursor: pointer;
-  transition: background-color 0.15s, border-color 0.15s;
-}
-
-.clickable:hover {
-  background: var(--surface-2);
-  border-color: var(--text);
-}
-
-.clickable:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-}
-
-.chIcon {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  background: var(--surface-3);
-  color: var(--text-2);
-}
-
-.chMain {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.chTitleRow {
-  display: flex;
+.titleRow {
+  display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
 
-.chTitle {
-  font-size: 14px;
-  font-weight: var(--fw-semibold);
-  white-space: nowrap;
+.mono {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
 }
 
-/* 状态标签（渠道卡与弹窗头部共用）：小圆点 + 文字，底色按色调 */
-.chTag {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 1px 7px;
-  font-size: 11.5px;
-  white-space: nowrap;
+/* 管理员提醒：样稿 .swr */
+.swrList {
+  display: flex;
+  flex-direction: column;
 }
 
-.chDot {
-  flex: none;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: currentcolor;
-}
-
-.tagOk {
-  background: var(--ok-soft);
-  color: var(--ok);
-}
-
-.tagWarn {
-  background: var(--warn-soft);
-  color: var(--warn);
-}
-
-.tagMuted {
-  background: var(--surface-3);
-  color: var(--text-2);
-}
-
-.chDesc {
-  overflow: hidden;
-  color: var(--text-2);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.configBtn {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  height: 30px;
-  padding: 0 12px;
-  border: 1px solid var(--border-strong);
-  color: var(--text);
-  font-size: var(--fs-caption);
-  white-space: nowrap;
-}
-
-/* ---- 管理员提醒：带边框的两行开关 ---- */
-.alerts {
-  border: 1px solid var(--border-strong);
-}
-
-.alertRow {
+.swr {
   display: flex;
   align-items: center;
-  gap: 14px;
-  min-height: 52px;
-  padding: 8px 18px;
+  gap: 16px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
 }
 
-.alertRow + .alertRow {
-  border-top: 1px solid var(--border);
+.swr:last-child {
+  border-bottom: 0;
 }
 
-/* Telegram 未启用：整行半透明、开关禁用 */
 .alertDim {
   opacity: 0.45;
 }
 
-.alertMain {
+.swrMain {
   flex: 1;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
 }
 
-.alertLabel {
+.swrLabel {
+  display: block;
+  font-size: 13.5px;
   font-weight: var(--fw-medium);
 }
 
-.alertDesc {
+.swrDesc {
+  display: block;
+  margin-top: 2px;
+  font-size: 12.5px;
   color: var(--text-3);
-  font-size: var(--fs-caption);
 }
 
 .warnText {
+  display: block;
+  margin-top: 8px;
   color: var(--warn);
   font-size: var(--fs-caption);
 }

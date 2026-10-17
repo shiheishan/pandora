@@ -1,7 +1,8 @@
 import { useMutation } from '@tanstack/react-query'
 import { useState, type FormEvent } from 'react'
 import { useApi } from '../../../shell/runtime'
-import { Button, ConfirmModal, Empty, Input, QueryView, Select, useToast } from '../../../ui'
+import { Button, Card, ConfirmModal, Empty, Input, QueryView, Select, useToast } from '../../../ui'
+import { Row, RowList } from '../../kit'
 import {
   buildOverrideBody,
   overrideSummary,
@@ -9,7 +10,6 @@ import {
 } from './levelsModel'
 import local from './CommissionSettings.module.css'
 import { formatDateTime, type FieldErrors } from './logic'
-import css from './marketing.module.css'
 import { useCommissionOverrides, useFailure, useInvalidateMarketing } from './queries'
 import {
   okResponse,
@@ -77,36 +77,40 @@ export function CommissionOverrides() {
     setErrors({})
   }
 
-  return (
-    <div className={local.secBlock}>
-      <div className={local.secHead}>
-        <h3 className={local.secTitle}>单独佣金设置</h3>
-        <span className={css.faint}>
-          只影响这个人作为直接邀请人的以后订单；已计提的佣金不变。设置与删除都需要重新验证身份
-        </span>
-      </div>
+  const hasErrors = Object.keys(errors).length > 0
+  const errorMessage = errors.email || errors.rate_percent || errors.scope
 
-      <form className={css.stack} onSubmit={submit} noValidate>
-        <div className={local.grid3}>
+  return (
+    <Card
+      title="单独佣金设置"
+      subtitle="给个别推荐人单独的比例或范围"
+      flush
+      className={local.overridesCard}
+    >
+      <form onSubmit={submit} noValidate>
+        <div className={local.adjf}>
           <Input
-            label="用户邮箱"
+            aria-label="用户邮箱"
+            placeholder="用户邮箱"
             type="email"
+            size="sm"
             value={form.email}
             onChange={(e) => setForm({ ...form, email: e.target.value })}
-            error={errors.email}
-            placeholder="name@example.com"
+            className={local.emailInput}
           />
           <Input
-            label="佣金比例（%，留空跟全局）"
+            aria-label="佣金比例（%，留空跟全局）"
+            placeholder="佣金比例（%，留空跟全局）"
             mono
             inputMode="numeric"
+            size="sm"
             value={form.rate}
             onChange={(e) => setForm({ ...form, rate: e.target.value })}
-            error={errors.rate_percent}
-            placeholder="0–50"
+            className={local.rateInput}
           />
           <Select
-            label="计佣范围"
+            aria-label="计佣范围"
+            size="sm"
             value={form.scope}
             onChange={(e) =>
               setForm({
@@ -114,21 +118,22 @@ export function CommissionOverrides() {
                 scope: e.target.value as OverrideForm['scope'],
               })
             }
-            emptyOption="跟全局"
+            emptyOption="计佣范围 · 跟全局"
             options={[
               { value: 'first_order', label: '仅首单' },
               { value: 'every_order', label: '每笔订单' },
             ]}
-            error={errors.scope}
+            className={local.scopeSelect}
           />
-        </div>
-        <div className={css.toolbar}>
-          <span className={css.faint}>同一邮箱再保存会覆盖原设置</span>
-          <span className={css.spacer} />
-          <Button type="submit" variant="primary" busy={saveMutation.isPending}>
+          <Button type="submit" size="sm" busy={saveMutation.isPending}>
             保存
           </Button>
         </div>
+        {hasErrors && (
+          <div className={local.errorRow}>
+            {errorMessage}
+          </div>
+        )}
       </form>
 
       <QueryView
@@ -141,31 +146,36 @@ export function CommissionOverrides() {
           />
         }
       >
-        {(rows) =>
-          rows.map((o) => (
-            <div key={o.user_id} className={local.overridesRow}>
-              <span className={local.who}>
-                <span className={local.ellipsis}>{o.email}</span>
-                <span className={`${css.faint} ${local.ellipsis}`}>
-                  {overrideSummary(o)} · {formatDateTime(o.updated_at)}
-                </span>
-              </span>
-              <span className={local.overrideActions}>
-                <Button size="xs" onClick={() => editOverride(o)}>
-                  修改
-                </Button>
-                <Button
-                  size="xs"
-                  className={local.btnReject}
-                  onClick={() => setDeleting(o)}
-                  disabled={deleteMutation.isPending}
-                >
-                  删除
-                </Button>
-              </span>
-            </div>
-          ))
-        }
+        {(rows) => (
+          <RowList label="单独佣金设置">
+            {rows.map((o) => (
+              <Row
+                key={o.user_id}
+                title={o.email}
+                meta={`${overrideSummary(o)} · ${formatDateTime(o.updated_at)}`}
+                actions={
+                  <>
+                    <button
+                      type="button"
+                      className={local.linkButton}
+                      onClick={() => editOverride(o)}
+                    >
+                      修改
+                    </button>
+                    <button
+                      type="button"
+                      className={local.deleteButton}
+                      onClick={() => setDeleting(o)}
+                      disabled={deleteMutation.isPending}
+                    >
+                      删除
+                    </button>
+                  </>
+                }
+              />
+            ))}
+          </RowList>
+        )}
       </QueryView>
 
       <ConfirmModal
@@ -176,12 +186,11 @@ export function CommissionOverrides() {
         tone="danger"
         onConfirm={async () => {
           if (deleting) {
-            // 失败已由 onError 提示，这里吞掉拒绝，免得成为未处理的 Promise
             await deleteMutation.mutateAsync(deleting.user_id).catch(() => undefined)
           }
         }}
         onCancel={() => setDeleting(null)}
       />
-    </div>
+    </Card>
   )
 }

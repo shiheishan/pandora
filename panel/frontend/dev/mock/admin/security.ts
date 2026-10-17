@@ -220,7 +220,7 @@ const CLIENTS = ['clash-verge/2.0.4', 'sing-box/1.10.1', 'Shadowrocket/2.2.53', 
   }
 })()
 
-/** 实时尾随要看得到新行：每次读按流逝时间补事件，约 6 秒一条，一次最多 3 条 */
+/** 实时监控要看得到新行：每次读按流逝时间补事件，约 6 秒一条，一次最多 3 条 */
 let lastTick = Date.now()
 function tick() {
   const due = Math.min(3, Math.floor((Date.now() - lastTick) / 6000))

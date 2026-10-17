@@ -7,8 +7,9 @@
   min-width: 0;
 }
 
-.dim {
-  opacity: 0.6;
+/* 已归档的行整行淡显（样稿 tr.dimrow td） */
+.dimRow td {
+  opacity: 0.5;
 }
 
 /* 表格标题列：主标题 + slug */
@@ -30,7 +31,7 @@
   overflow: hidden;
   color: var(--text-3);
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: 12.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -48,7 +49,7 @@
 }
 
 .ver {
-  color: var(--text-3);
+  color: var(--text-2);
   font-family: var(--font-mono);
   font-size: 12px;
 }
@@ -154,27 +155,6 @@
 .slugInput:focus {
   border-bottom-color: var(--text);
   outline: none;
-}
-
-.localeInput {
-  height: 30px;
-  padding: 0 2px;
-  border: 0;
-  border-bottom: 1px solid var(--border-strong);
-  border-radius: 0;
-  background: transparent;
-  color: var(--text);
-  font-family: var(--font-mono);
-}
-
-.localeInput:focus {
-  border-bottom-color: var(--text);
-  outline: none;
-}
-
-.error {
-  color: var(--danger);
-  font-size: var(--fs-caption);
 }
 
 .platformRow {

@@ -2,14 +2,19 @@ import { useMutation } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { href } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
-import { Button, Checkbox, Input, Modal, QueryView, Segmented, Select, Switch, useToast } from '../../../ui'
-import { ChannelCard, StatusChip } from './ChannelCard'
+import { Button, Card, Checkbox, Input, Modal, QueryView, Segmented, Select, Switch, Tag, useToast } from '../../../ui'
+import { Row, RowList, SectionTitle } from '../../kit'
+import { StatusChip } from './ChannelCard'
 import { adminAlertBody, formatSender, REGISTRATION_LABEL, registrationBody, smtpBody, smtpFormFrom, smtpStatus, validateSmtp, type AdminAlert, type SmtpForm, type Tone } from './logic'
 import { useFailure, useInvalidateSystem, useMailSettings, useTelegramExtras, useTelegramSettings } from './queries'
 import { ENCRYPTIONS, mailTested, okResponse, REGISTRATION_MODES, telegramExtrasSchema, type RegistrationMode, type TelegramExtras } from './schemas'
 import css from './notify.module.css'
 import sys from './system.module.css'
 import { TelegramDialog } from './TelegramCard'
+
+function registrationSummary(mode: RegistrationMode, verify: boolean): string {
+  return `${REGISTRATION_LABEL[mode]}注册 · ${verify ? '需验证邮箱' : '不验证邮箱'}`
+}
 
 export function ChannelsTab() {
   const mail = useMailSettings()
@@ -26,68 +31,113 @@ export function ChannelsTab() {
 
   const tg = telegram.data
   const tgOn = tg?.enabled ?? false
-  const tgTag = !tg || !tg.has_token ? { label: '未配置', tone: 'muted' as Tone } : tg.enabled ? { label: '已启用', tone: 'ok' as Tone } : { label: '已停用', tone: 'warn' as Tone }
-  const tgParts = tg?.enabled ? [tg.bot_username ? `Bot @${tg.bot_username}` : '', tg.admin_chat_id !== null ? `管理群 ${tg.admin_chat_id}` : ''].filter(Boolean) : []
-  const tgDesc = tgParts.length > 0 ? tgParts.join(' · ') : '启用后用户和管理员都能在 Telegram 收到通知'
+  const tgTag = !tg || !tg.has_token ? { label: '未配置', tone: 'neutral' as const } : tg.enabled ? { label: '已启用', tone: 'ok' as const } : { label: '已停用', tone: 'warn' as const }
 
   return (
-    <div className={css.page}>
-      <section className={css.section}>
-        <h3 className={css.sectionTitle}>发送渠道</h3>
-        <QueryView query={mail} rows={3} empty={null}>
-          {(saved) => {
-            const status = smtpStatus(saved)
-            const configured = status.tone === 'ok'
-            return (
-              <div className={css.chList}>
-                <ChannelCard
-                  icon={<ChannelIcon paths={ICONS.inapp} />}
-                  title="站内信"
-                  tag={{ label: '始终开启', tone: 'ok' }}
-                  desc="显示在用户端和后台右上角的铃铛里，无需配置"
+    <div>
+      <SectionTitle variant="group">发送渠道</SectionTitle>
+      <QueryView query={mail} rows={3} empty={null}>
+        {(saved) => {
+          const status = smtpStatus(saved)
+          const configured = status.tone === 'ok'
+          return (
+            <Card flush>
+              <RowList label="发送渠道">
+                <Row
+                  title={
+                    <span className={css.titleRow}>
+                      站内信 <Tag tone="ok">始终开启</Tag>
+                    </span>
+                  }
+                  meta="显示在用户端和后台的铃铛里，无需配置"
                 />
-                <ChannelCard
-                  icon={<ChannelIcon paths={ICONS.email} />}
-                  title="邮件"
-                  tag={{ label: configured ? '已配置' : '未配置', tone: configured ? 'ok' : 'muted' }}
-                  dirty={dirty.mail}
-                  desc={configured ? `经 ${saved.smtp_host} 发出 · 发件人 ${formatSender(saved.from_name, saved.from_address)}` : '配好 SMTP 服务器后才能发邮件'}
-                  onOpen={() => setOpen('mail')}
+                <Row
+                  title={
+                    <span className={css.titleRow}>
+                      邮件 <Tag tone={configured ? 'ok' : 'neutral'}>{configured ? '已配置' : '未配置'}</Tag>
+                      {dirty.mail && <Tag tone="warn">未保存</Tag>}
+                    </span>
+                  }
+                  meta={
+                    configured ? (
+                      <>
+                        经 <span className={css.mono}>{saved.smtp_host}</span> 发出 · 发件人 {formatSender(saved.from_name, saved.from_address)}
+                      </>
+                    ) : (
+                      '配好 SMTP 服务器后才能发邮件'
+                    )
+                  }
+                  actions={
+                    <Button size="sm" onClick={() => setOpen('mail')}>
+                      配置
+                    </Button>
+                  }
                 />
-                <ChannelCard
-                  icon={<ChannelIcon paths={ICONS.tg} />}
-                  title="Telegram"
-                  tag={tgTag}
-                  dirty={dirty.telegram}
-                  desc={tgDesc}
-                  onOpen={() => setOpen('telegram')}
+                <Row
+                  title={
+                    <span className={css.titleRow}>
+                      Telegram <Tag tone={tgTag.tone}>{tgTag.label}</Tag>
+                      {dirty.telegram && <Tag tone="warn">未保存</Tag>}
+                    </span>
+                  }
+                  meta={
+                    !tg?.enabled ? (
+                      '启用后用户和管理员都能在 Telegram 收到通知'
+                    ) : (
+                      <>
+                        {tg.bot_username ? `Bot @${tg.bot_username}` : null}
+                        {tg.bot_username && tg.admin_chat_id !== null ? ' · ' : null}
+                        {tg.admin_chat_id !== null ? (
+                          <>
+                            管理群 <span className={css.mono}>{tg.admin_chat_id}</span>
+                          </>
+                        ) : null}
+                        {!tg.bot_username && tg.admin_chat_id === null ? '启用后用户和管理员都能在 Telegram 收到通知' : null}
+                      </>
+                    )
+                  }
+                  actions={
+                    <Button size="sm" onClick={() => setOpen('telegram')}>
+                      配置
+                    </Button>
+                  }
                 />
-              </div>
-            )
-          }}
-        </QueryView>
-      </section>
+              </RowList>
+            </Card>
+          )
+        }}
+      </QueryView>
 
-      <section className={css.section}>
-        <h3 className={css.sectionTitle}>管理员提醒</h3>
-        <QueryView query={extras} rows={2} empty={null}>
-          {(saved) => <AdminAlerts saved={saved} enabled={tgOn} />}
-        </QueryView>
-      </section>
+      <SectionTitle variant="group" hint="推送到 Telegram 管理群">
+        管理员提醒
+      </SectionTitle>
+      <QueryView query={extras} rows={2} empty={null}>
+        {(saved) => <AdminAlerts saved={saved} enabled={tgOn} />}
+      </QueryView>
 
-      <section className={css.section}>
-        <h3 className={css.sectionTitle}>注册与验证</h3>
-        <QueryView query={mail} rows={1} empty={null}>
-          {(saved) => (
-            <ChannelCard
-              title="注册模式与邮箱验证"
-              dirty={dirty.registration}
-              desc={`${REGISTRATION_LABEL[saved.registration_mode]}注册${saved.email_verification ? ' · 需验证邮箱' : ''}`}
-              onOpen={() => setOpen('registration')}
-            />
-          )}
-        </QueryView>
-      </section>
+      <SectionTitle variant="group">注册与验证</SectionTitle>
+      <QueryView query={mail} rows={1} empty={null}>
+        {(saved) => (
+          <Card flush>
+            <RowList label="注册与验证">
+              <Row
+                title={
+                  <span className={css.titleRow}>
+                    注册模式与邮箱验证
+                    {dirty.registration && <Tag tone="warn">未保存</Tag>}
+                  </span>
+                }
+                meta={registrationSummary(saved.registration_mode, saved.email_verification)}
+                actions={
+                  <Button size="sm" onClick={() => setOpen('registration')}>
+                    配置
+                  </Button>
+                }
+              />
+            </RowList>
+          </Card>
+        )}
+      </QueryView>
 
       {/* 弹窗一直挂载：关掉不丢草稿，草稿状态由 onDirtyChange 回报给渠道卡 */}
       <MailDialog open={open === 'mail'} onClose={close} onDirtyChange={markDirty.mail} />
@@ -97,29 +147,12 @@ export function ChannelsTab() {
   )
 }
 
-/** 渠道卡图标（18px 线条 svg，路径照设计稿） */
-const ICONS: Record<'inapp' | 'email' | 'tg', readonly string[]> = {
-  inapp: ['M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9', 'M10.3 21a1.94 1.94 0 0 0 3.4 0'],
-  email: ['M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z', 'm22 6-10 7L2 6'],
-  tg: ['m22 2-7 20-4-9-9-4Z', 'M22 2 11 13'],
-}
-
-function ChannelIcon({ paths }: { paths: readonly string[] }) {
-  return (
-    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      {paths.map((d) => (
-        <path key={d} d={d} />
-      ))}
-    </svg>
-  )
-}
-
 // ---------------------------------------------------------------------------
 // 管理员提醒：两个开关即时保存（Telegram 未启用时禁用并显示为关）
 // ---------------------------------------------------------------------------
 const ALERT_ROWS: { key: AdminAlert; label: string; desc: string }[] = [
   { key: 'admin_paid_notify', label: '新订单已支付', desc: '用户付款成功后推送订单号与金额' },
-  { key: 'admin_ticket_notify', label: '工单提醒', desc: '新工单与用户回复都推送到管理员群组；已绑定 Telegram 的管理员直接回复提醒消息即可回复工单' },
+  { key: 'admin_ticket_notify', label: '工单提醒', desc: '新工单与用户回复都推送；已绑定 Telegram 的管理员直接回复提醒消息即可回复工单' },
 ]
 
 function AdminAlerts({ saved, enabled }: { saved: TelegramExtras; enabled: boolean }) {
@@ -139,17 +172,19 @@ function AdminAlerts({ saved, enabled }: { saved: TelegramExtras; enabled: boole
 
   return (
     <>
-      <div className={css.alerts}>
-        {ALERT_ROWS.map((row) => (
-          <div key={row.key} className={enabled ? css.alertRow : `${css.alertRow} ${css.alertDim}`}>
-            <span className={css.alertMain}>
-              <span className={css.alertLabel}>{row.label}</span>
-              <span className={css.alertDesc}>{row.desc}</span>
-            </span>
-            <Switch aria-label={row.label} checked={enabled && saved[row.key]} disabled={!enabled || save.isPending} onChange={(e) => save.mutate({ key: row.key, on: e.target.checked })} />
-          </div>
-        ))}
-      </div>
+      <Card flush>
+        <div className={css.swrList}>
+          {ALERT_ROWS.map((row) => (
+            <div key={row.key} className={enabled ? css.swr : `${css.swr} ${css.alertDim}`}>
+              <span className={css.swrMain}>
+                <b className={css.swrLabel}>{row.label}</b>
+                <small className={css.swrDesc}>{row.desc}</small>
+              </span>
+              <Switch aria-label={row.label} checked={enabled && saved[row.key]} disabled={!enabled || save.isPending} onChange={(e) => save.mutate({ key: row.key, on: e.target.checked })} />
+            </div>
+          ))}
+        </div>
+      </Card>
       {!enabled && <span className={css.warnText}>Telegram 未启用，先在上面配好并启用才能打开这些提醒。</span>}
     </>
   )
@@ -285,7 +320,7 @@ function RegistrationDialog({ open, onClose, onDirtyChange }: DialogProps) {
   }
 
   if (saved === undefined || value === null) return null
-  const status = { label: `${REGISTRATION_LABEL[saved.registration_mode]}注册${saved.email_verification ? ' · 需验证邮箱' : ''}`, tone: (saved.registration_mode === 'closed' ? 'muted' : 'ok') as Tone }
+  const status = { label: registrationSummary(saved.registration_mode, saved.email_verification), tone: (saved.registration_mode === 'closed' ? 'muted' : 'ok') as Tone }
   return (
     <Modal
       open={open}

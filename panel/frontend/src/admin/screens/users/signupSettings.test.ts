@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { parseEmailSuffixesText, signupBody, signupFormFrom, type SignupSettings } from './signupSettings'
+import {
+  EMAIL_SUFFIX_MAX,
+  isEmailSuffix,
+  normalizeEmailSuffix,
+  signupBody,
+  signupFormFrom,
+  type SignupSettings,
+} from './signupSettings'
 
 const saved: SignupSettings = {
   captcha_provider: '',
@@ -34,10 +41,22 @@ describe('signupBody', () => {
 
   it('后缀切分去重转小写', () => {
     const form = signupFormFrom(saved)
-    form.email_suffixes_text = 'Gmail.com, gmail.com\nQQ.COM'
+    form.email_suffixes = ['Gmail.com', 'gmail.com', '@QQ.COM']
     const r = signupBody(form, saved)
     expect(r).toEqual({ body: { email_suffixes: ['gmail.com', 'qq.com'] } })
-    expect(parseEmailSuffixesText('Gmail.com, gmail.com\nQQ.COM')).toEqual(['gmail.com', 'qq.com'])
+    expect(normalizeEmailSuffix('@Foo.COM ')).toBe('foo.com')
+  })
+
+  it('顺序不同但内容相同 → body 为 {}', () => {
+    const form = signupFormFrom(saved)
+    form.email_suffixes = [...saved.email_suffixes].reverse()
+    expect(signupBody(form, saved)).toEqual({ body: {} })
+  })
+
+  it('101 个不同后缀返回 errors', () => {
+    const form = signupFormFrom(saved)
+    form.email_suffixes = Array.from({ length: EMAIL_SUFFIX_MAX + 1 }, (_, i) => `s${i}.example.test`)
+    expect(signupBody(form, saved)).toEqual({ errors: { email_suffixes: '最多 100 个后缀' } })
   })
 
   it('数字越界返回 errors', () => {
@@ -64,5 +83,14 @@ describe('signupBody', () => {
     const form = signupFormFrom(withTrial)
     form.trial_plan_id = ''
     expect(signupBody(form, withTrial)).toEqual({ body: { trial_plan_id: '' } })
+  })
+})
+
+describe('isEmailSuffix', () => {
+  it('合法与非法后缀', () => {
+    expect(isEmailSuffix('qq.com')).toBe(true)
+    expect(isEmailSuffix('qq')).toBe(false)
+    expect(isEmailSuffix('a b.com')).toBe(false)
+    expect(isEmailSuffix('.com')).toBe(false)
   })
 })

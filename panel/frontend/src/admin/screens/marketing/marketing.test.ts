@@ -82,7 +82,7 @@ describe('coupons', () => {
   it('only active and paused coupons get a switch; expired and exhausted become tags', () => {
     expect(couponState('active')).toMatchObject({ switchable: true, on: true })
     expect(couponState('paused')).toMatchObject({ switchable: true, on: false })
-    expect(couponState('expired').tag).toEqual({ label: '已过期', tone: 'warn' })
+    expect(couponState('expired').tag).toEqual({ label: '已过期', tone: 'neutral' })
     expect(couponState('exhausted').tag).toEqual({ label: '已用完', tone: 'neutral' })
     expect(couponBatchLabel({ code: 'KOLA7Q2', name: 'KOL 渠道' })).toBe('KOL 渠道')
     expect(couponBatchLabel({ code: 'AUTUMN26', name: 'AUTUMN26' })).toBe('')

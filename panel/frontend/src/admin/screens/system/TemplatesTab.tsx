@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { useApi } from '../../../shell/runtime'
-import { Button, ConfirmModal, Empty, FilterTabs, Input, Modal, QueryView, Table, TextArea, useToast } from '../../../ui'
+import { Button, ConfirmModal, Empty, FilterTabs, Input, Modal, QueryView, Table, Tag, TextArea, useToast } from '../../../ui'
 import { CHANNEL_LABEL, insertVariable, templateKey, templateMeta, templateName, validateTemplate, type Draft } from './logic'
 import { SK, useFailure, useTemplates } from './queries'
 import { CHANNELS, templatePreview, templateReset, templateSaved, templateTested, type Channel, type Template, type TemplateRow } from './schemas'
@@ -41,6 +41,7 @@ export function TemplatesTab() {
               items={CHANNELS.map((c) => ({ value: c, label: CHANNEL_LABEL[c] }))}
             />
             <Table
+              boxed
               label="通知模板"
               rows={rows}
               rowKey={(r) => templateKey(r.template)}
@@ -48,15 +49,21 @@ export function TemplatesTab() {
               empty={<Empty bare title="这个渠道目前没有可编辑的模板。" />}
               columns={[
                 { key: 'name', header: '模板', render: (r) => <span className={css.name}>{r.name}</span> },
-                { key: 'code', header: '标识', render: (r) => <span className={`${sysCss.mono} ${css.code}`}>{r.code}</span> },
+                { key: 'code', header: '标识', render: (r) => <span className={css.code}>{r.code}</span> },
                 {
                   key: 'status',
                   header: '状态',
                   width: '112px',
                   align: 'right',
-                  render: (r) => (
-                    <span className={`${sysCss[r.status.tone]} ${css.status}`}>{r.status.label}</span>
-                  ),
+                  render: (r) => {
+                    if (r.status.label === '已自定义') {
+                      return <Tag tone="info">已自定义</Tag>
+                    }
+                    if (r.status.tone === 'warn') {
+                      return <span className={css.statusWarn}>{r.status.label}</span>
+                    }
+                    return <span className={css.statusDefault}>{r.status.label}</span>
+                  },
                 },
               ]}
             />

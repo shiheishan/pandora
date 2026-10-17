@@ -9,7 +9,8 @@ import {
   withdrawMethodLabel,
 } from '../../../core/withdraw-methods'
 import { useApi } from '../../../shell/runtime'
-import { Button, ConfirmModal, Empty, FilterTabs, Input, Modal, QueryView, StatStrip, Tabs, Tag, TextArea, useToast } from '../../../ui'
+import { Button, Card, ConfirmModal, Empty, FilterTabs, Input, Modal, QueryView, StatStrip, Tag, TextArea, useToast } from '../../../ui'
+import { Row, RowList } from '../../kit'
 import local from './Commission.module.css'
 import { CommissionSettings } from './CommissionSettings'
 import { commissionStats, withdrawalState } from './commissionModel'
@@ -31,19 +32,16 @@ export function Commission({ rest }: { rest: string[] }) {
     navigate(`/marketing/commission/${nextTab}`)
   }
 
-  const needReview = overview.data?.need_review ?? 0
-  const waitingWithdrawals = overview.data?.waiting_withdrawals ?? 0
-
   const tabItems = [
     {
       value: 'review' as const,
       label: '待复核佣金',
-      badge: needReview > 0 ? needReview : undefined,
+      count: overview.data?.need_review,
     },
     {
       value: 'withdraw' as const,
       label: '提现申请',
-      badge: waitingWithdrawals > 0 ? waitingWithdrawals : undefined,
+      count: overview.data?.waiting_withdrawals,
     },
     {
       value: 'settings' as const,
@@ -54,7 +52,7 @@ export function Commission({ rest }: { rest: string[] }) {
   return (
     <div className={css.stack}>
       <StatStrip label="佣金统计" items={overview.data ? commissionStats(overview.data) : undefined} />
-      <Tabs<CommissionTab>
+      <FilterTabs<CommissionTab>
         label="佣金与提现"
         value={currentTab}
         items={tabItems}
@@ -107,7 +105,7 @@ function Withdrawals() {
         : '还没有提现申请'
 
   return (
-    <section className={local.section}>
+    <div>
       <div className={local.filterRow}>
         <FilterTabs<WithdrawalFilter>
           label="提现状态筛选"
@@ -121,53 +119,58 @@ function Withdrawals() {
         />
       </div>
       <QueryView query={list} empty={<Empty bare title={emptyTitle} />}>
-        {(rows) => rows.map((w) => <WithdrawalRow key={w.id} withdrawal={w} onDialog={setDialog} />)}
+        {(rows) => (
+          <Card flush>
+            <RowList label="提现申请">
+              {rows.map((w) => (
+                <WithdrawalItemRow key={w.id} withdrawal={w} onDialog={setDialog} />
+              ))}
+            </RowList>
+          </Card>
+        )}
       </QueryView>
       <ApproveDialog withdrawal={dialog?.kind === 'approve' ? dialog.withdrawal : null} onClose={() => setDialog(null)} />
       <RejectDialog withdrawal={dialog?.kind === 'reject' ? dialog.withdrawal : null} onClose={() => setDialog(null)} />
       <PayDialog withdrawal={dialog?.kind === 'pay' ? dialog.withdrawal : null} onClose={() => setDialog(null)} />
-    </section>
+    </div>
   )
 }
 
-function WithdrawalRow({ withdrawal: w, onDialog }: { withdrawal: Withdrawal; onDialog: (d: Dialog) => void }) {
+function WithdrawalItemRow({ withdrawal: w, onDialog }: { withdrawal: Withdrawal; onDialog: (d: Dialog) => void }) {
   const state = withdrawalState(w.status)
 
+  const metaText = `${formatDateTime(w.requested_at)} · ${withdrawMethodLabel(w.method)} · ${w.payout_detail || '未填收款信息'}${
+    w.status === 'rejected' && w.reject_reason ? ` · 拒绝理由：${w.reject_reason === 'account_deleted' ? '账号已注销' : w.reject_reason}` : ''
+  }${w.status === 'paid' && w.payout_reference ? ` · 流水号 ${w.payout_reference}` : ''}${
+    w.status === 'paid' && w.paid_usdt_amount ? ` · 实付 ${w.paid_usdt_amount} USDT` : ''
+  }`
+
   return (
-    <div className={local.withdrawalRow}>
-      <span className={local.who}>
-        <span className={local.ellipsis}>{w.email}</span>
-        <span className={`${local.reviewMeta} ${local.ellipsis}`}>
-          {formatDateTime(w.requested_at)} · {withdrawMethodLabel(w.method)} · {w.payout_detail || '未填收款信息'}
-          {w.status === 'rejected' && w.reject_reason && ` · 拒绝理由：${w.reject_reason === 'account_deleted' ? '账号已注销' : w.reject_reason}`}
-          {w.status === 'paid' && w.payout_reference && ` · 流水号 ${w.payout_reference}`}
-          {w.status === 'paid' && w.paid_usdt_amount && ` · 实付 ${w.paid_usdt_amount} USDT`}
-        </span>
-      </span>
-      <span className={local.amount} title={`累计获得 ${formatMoney(w.earned_total)}`}>
-        {formatMoney(w.amount)}
-      </span>
-      <span className={local.state}>
-        <Tag tone={state.tone}>{state.label}</Tag>
-      </span>
-      <span className={local.actions}>
-        {state.canReview && (
-          <>
-            <button type="button" className={local.btnPass} onClick={() => onDialog({ kind: 'approve', withdrawal: w })}>
-              通过
-            </button>
-            <button type="button" className={local.btnVoid} onClick={() => onDialog({ kind: 'reject', withdrawal: w })}>
-              拒绝
-            </button>
-          </>
-        )}
-        {state.canPay && (
-          <button type="button" className={local.btnPass} onClick={() => onDialog({ kind: 'pay', withdrawal: w })}>
-            记录打款
-          </button>
-        )}
-      </span>
-    </div>
+    <Row
+      title={w.email}
+      meta={metaText}
+      value={<span title={`累计获得 ${formatMoney(w.earned_total)}`}>{formatMoney(w.amount)}</span>}
+      actions={
+        <>
+          <Tag tone={state.tone}>{state.label}</Tag>
+          {state.canReview && (
+            <>
+              <Button size="sm" onClick={() => onDialog({ kind: 'approve', withdrawal: w })}>
+                通过
+              </Button>
+              <Button size="sm" variant="danger" onClick={() => onDialog({ kind: 'reject', withdrawal: w })}>
+                拒绝
+              </Button>
+            </>
+          )}
+          {state.canPay && (
+            <Button size="sm" variant="primary" onClick={() => onDialog({ kind: 'pay', withdrawal: w })}>
+              记录打款
+            </Button>
+          )}
+        </>
+      }
+    />
   )
 }
 

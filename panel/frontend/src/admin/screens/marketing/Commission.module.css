@@ -1,150 +1,24 @@
-.section {
-  display: flex;
-  flex-direction: column;
-}
-
 .filterRow {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
   padding: 0 0 10px;
 }
 
-.reviewRow {
-  display: flex;
-  align-items: center;
-  gap: var(--space-12);
-  padding: 10px 0;
-  border-top: 1px solid var(--border);
-}
-
-.reviewRow:first-of-type {
-  border-top: 1px solid var(--border);
-}
-
-.withdrawalRow {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px var(--space-16);
-  padding: 11px 0;
-  border-top: 1px solid var(--border);
-}
-
-.who {
-  display: flex;
-  flex: 1 1 280px;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.ellipsis {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.reviewMeta {
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-}
-
-.warn {
-  color: var(--warn);
-  font-size: var(--fs-caption);
-}
-
-.reviewAmount {
-  flex: none;
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-  font-variant-numeric: tabular-nums;
-}
-
-.amount {
-  flex: none;
-  width: 100px;
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-  white-space: nowrap;
-}
-
-.state {
-  flex: none;
-  width: 72px;
-}
-
-.actions {
-  display: flex;
-  flex: none;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-14, 14px);
-  width: 120px;
-}
-
-.reviewActions {
-  display: flex;
-  flex: none;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-12);
-}
-
-.btnPass {
-  flex: none;
-  height: 24px;
-  padding: 0;
-  border: 0;
-  border-bottom: 1px solid var(--text);
-  background: transparent;
-  color: var(--text);
-  font-size: var(--fs-caption);
-  font-weight: var(--fw-medium);
-  cursor: pointer;
-}
-
-.btnVoid {
-  flex: none;
-  height: 24px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--danger);
-  font-size: var(--fs-caption);
-  cursor: pointer;
-}
-
 .more {
-  padding: var(--space-12) 0;
+  padding: 12px 16px;
   border-top: 1px solid var(--border);
 }
 
-@media (max-width: 639px) {
-  .reviewRow {
-    flex-wrap: wrap;
-  }
-
-  .reviewActions {
-    width: 100%;
-    justify-content: flex-end;
-  }
-
-  .withdrawalRow {
-    gap: 8px var(--space-12);
-  }
-
-  .actions {
-    width: 100%;
-    justify-content: flex-end;
-  }
-
-  .amount {
-    width: auto;
-    text-align: left;
-  }
+.warnText {
+  color: var(--warn);
 }
 
+.dangerText {
+  color: var(--danger);
+}
+
+/* 待复核行的第三行：订单号、时间、冻结说明 */
+.subLine {
+  font-size: 12.5px;
+  color: var(--text-3);
+}

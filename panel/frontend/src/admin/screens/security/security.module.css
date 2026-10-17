@@ -16,11 +16,6 @@
   flex: 1;
 }
 
-/* 工具条换行时也贴右（960 下审计的「导出」） */
-.push {
-  margin-left: auto;
-}
-
 .search {
   width: 260px;
 }
@@ -29,18 +24,21 @@
   width: 180px;
 }
 
-/* 工具条右侧的文字按钮「清空筛选」：无框，黑色下划线（设计稿） */
+/* 工具条右侧的灰字文字按钮「清空筛选」 */
 .inlineClear {
   flex: none;
   height: 24px;
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--text);
+  color: var(--text-2);
   font-size: var(--fs-caption);
   white-space: nowrap;
   cursor: pointer;
-  box-shadow: inset 0 -1px 0 var(--text);
+}
+
+.inlineClear:hover {
+  color: var(--text);
 }
 
 .inlineClear:focus-visible {
@@ -48,29 +46,8 @@
   outline-offset: 1px;
 }
 
-.panel {
-  min-width: 0;
-  overflow: auto;
-  border: 1px solid var(--border);
-  border-radius: 0;
-  background: var(--surface);
-}
-
-.pager {
-  border-top: 1px solid var(--border);
-}
-
-.mono {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-}
-
 .strong {
   font-weight: var(--fw-medium);
-}
-
-.muted {
-  color: var(--text-2);
 }
 
 .faint {
@@ -97,35 +74,54 @@
   white-space: nowrap;
 }
 
-/* ui/Table 是自动布局，nowrap 的文本会按内容撑宽列；审计表在这里改成固定布局，省略号按列宽截断。
- * 最小 880：1280 下铺满，960 下按 ui/Table 的约定在面板内横向滚动，不把列挤没 */
-.fixedTable table {
-  min-width: 880px;
-  table-layout: fixed;
+/* ---- 审计日志表格 -------------------------------------------------------- */
+.auditTableHost {
+  min-width: 0;
 }
 
-.cellWho {
+/* 桌面七列定宽，窄于 880 时表格内横向滚动 */
+@media (min-width: 640px) {
+  .auditTableHost table {
+    table-layout: fixed;
+    min-width: 880px;
+  }
+}
+
+/* 手机上只剩操作人与结果两列：按内容排，操作人占满剩余宽度
+   （列宽是 Table 写在 col 上的行内样式，只能用 !important 盖掉） */
+@media (max-width: 639px) {
+  .auditTableHost col {
+    width: auto !important;
+  }
+}
+
+.auditWho {
   display: block;
   max-width: 220px;
 }
 
-.cellWhoMain {
+.auditWhoMain {
   display: block;
 }
 
-.cellWhoKind {
+.auditWhoSub {
   display: block;
   color: var(--text-3);
-  font-size: var(--fs-caption);
+  font-size: 12.5px;
 }
 
 .cellObject {
   display: block;
+  color: var(--text-2);
 }
 
 .cellAction {
   font-size: var(--fs-caption);
   white-space: nowrap;
+}
+
+.authMuted {
+  color: var(--text-2);
 }
 
 /* ---- 弹窗表单 ------------------------------------------------------------ */
@@ -177,250 +173,216 @@
   border: 0;
 }
 
-/* ---- 访问日志：深色终端 -------------------------------------------------- */
-.terminal {
-  /* 终端在明暗两种主题下都是深底，令牌在容器内重映射（同 admin/Sidebar.module.css） */
-  --surface: #34343a;
-  --surface-2: #1b1b1f;
-  --surface-3: #222226;
-  --border: #26262b;
-  --text: #ecebe7;
-  --text-2: #8f8d87;
-  --text-3: #6d6b66;
-  --shadow-segment: none;
-  --focus-ring: var(--sidebar-text);
-
+/* ---- 访问日志：亮底白框事件流 -------------------------------------------- */
+.box {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   overflow: hidden;
-  border-radius: 0;
-  background: var(--sidebar);
-  color: #c9c7c1;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
 }
 
-.termHead {
+.boxHead {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
+  height: 48px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+
+.boxHeadSub {
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+
+@media (max-width: 639px) {
+  .boxHeadSub {
+    display: none;
+  }
+}
+
+.boxFilter {
+  height: auto;
   padding: 10px 16px;
   border-bottom: 1px solid var(--border);
-  color: var(--text-2);
-  font-size: var(--fs-caption);
 }
 
-.termHint {
-  color: var(--text-3);
+.logs {
+  min-width: 0;
+  font-size: 13px;
 }
 
-.liveDot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--text-3);
-}
-
-.live {
-  background: var(--toast-ok);
-  animation: pulse 1.6s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  50% {
-    opacity: 0.35;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .live {
-    animation: none;
-  }
-}
-
-.termButton {
-  height: 24px;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: 0;
-  background: transparent;
-  color: var(--text-2);
-  font-size: var(--fs-caption);
-  cursor: pointer;
-}
-
-.termButton:hover:not(:disabled) {
-  color: var(--text);
-}
-
-.termButton:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.termButton:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 1px;
-}
-
-/* 分段按钮组：设计稿的文字按钮，选中浅色加下划线，未选中灰色 */
-.segGroup {
-  display: flex;
-  flex-wrap: wrap;
+.logRow {
+  display: grid;
+  grid-template-columns: 72px 64px 72px 128px minmax(0, 1fr);
   align-items: center;
   gap: 12px;
-}
-
-.seg {
-  height: 24px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--text-3);
-  font-size: var(--fs-caption);
+  height: 38px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
   white-space: nowrap;
-  cursor: pointer;
 }
 
-.segOn {
-  color: var(--text);
-  font-weight: var(--fw-medium);
-  box-shadow: inset 0 -1.5px 0 var(--text);
-}
-
-.seg:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 1px;
-}
-
-.termRows {
-  padding: 4px 0;
-}
-
-.termRow {
-  display: grid;
-  /* 时间跨天会带 MM-DD 前缀，比纯时钟略宽 */
-  grid-template-columns: 92px 64px 70px 130px minmax(0, 1fr);
-  gap: 12px;
-  padding: 6px 16px;
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-}
-
-.termRow:hover {
+.logRow:hover {
   background: var(--surface-2);
 }
 
-.termTime,
-.termIp {
-  color: var(--text-3);
-}
-
-.termCat {
-  color: #8fb0d8;
-}
-
-.termOk {
-  color: var(--toast-ok);
-}
-
-.termBad {
-  color: var(--toast-danger);
-}
-
-.termEmpty {
-  padding: 32px 16px;
-}
-
-.termFoot {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  border-top: 1px solid var(--border);
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-}
-
-/* ---- 降级开关 ------------------------------------------------------------ */
-.switchList {
-  min-width: 0;
-  border-top: 1px solid var(--border-strong);
-}
-
-.switchRow {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px 24px;
-  padding: 14px 16px;
-  border-bottom: 1px solid var(--border);
-}
-
-.switchRow:last-child {
+.logRow:last-child {
   border-bottom: 0;
 }
 
-/* 降级中：左侧 2px 红竖线并缩进，开关底色跟着转危险色 */
-.switchOn {
-  --accent: var(--danger);
-
-  box-shadow: inset 2px 0 0 var(--danger);
-  padding-left: 12px;
+.logTime {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
-/* 核心项：开关画成打开但禁用（Switch 自带的禁用半透明），绿色轨道 */
-.switchLocked {
-  --accent: var(--ok);
+.logCat {
+  justify-self: start;
 }
 
-.switchMain {
-  flex: 1 1 360px;
+.toneOk {
+  color: var(--ok);
+}
+
+.toneWarn {
+  color: var(--warn);
+}
+
+.toneBad {
+  color: var(--danger);
+}
+
+.toneNone {
+  color: var(--text-3);
+}
+
+.logIp {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.logAccount {
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
 }
 
-.switchTitle {
+.logAction {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.empty {
+  padding: 32px 16px;
+}
+
+.boxFoot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 48px;
+  padding: 0 16px;
+  border-top: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+/* ---- 降级开关（样稿 .swt / .sst）----------------------------------------- */
+.swt {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.swt:last-child {
+  border-bottom: 0;
+}
+
+.swtPaused {
+  background: var(--danger-soft);
+}
+
+.swtMain {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  font-size: 13px;
+}
+
+.swtTitle {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
 
-.switchName {
+.swtName {
+  font-size: 13.5px;
+  font-weight: 500;
   color: var(--text);
-  font-weight: var(--fw-semibold);
   white-space: nowrap;
 }
 
-.switchDesc {
-  margin-top: 2px;
-  color: var(--text-2);
-  font-size: var(--fs-caption);
-}
-
-.switchNote {
-  margin: 4px 0 0;
-  color: var(--warn);
-  font-size: var(--fs-caption);
-}
-
-.switchReason {
-  margin-top: 4px;
-  color: var(--danger);
-  font-size: var(--fs-caption);
-}
-
-.switchStatus {
-  flex: none;
-  width: 72px;
+.swtCode {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 400;
   color: var(--text-3);
-  font-size: var(--fs-caption);
-  font-weight: var(--fw-medium);
-  text-align: right;
 }
 
-.danger {
+.swtDesc {
+  font-size: 12.5px;
+  color: var(--text-2);
+  line-height: 1.6;
+}
+
+.swtImp {
+  font-size: 12.5px;
+  color: var(--warn);
+  line-height: 1.6;
+}
+
+.swtWhy {
+  font-size: 12.5px;
+  color: var(--danger);
+  line-height: 1.6;
+}
+
+.sst {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.sstPaused {
   color: var(--danger);
 }
 
-.ok {
-  color: var(--ok);
+/* 手机专用的补充行（桌面隐藏，对应样稿 .m-only）；放在文件末尾，盖过同权重的 display */
+.mOnly {
+  display: none;
+}
+
+@media (max-width: 639px) {
+  .mOnly {
+    display: block;
+  }
 }

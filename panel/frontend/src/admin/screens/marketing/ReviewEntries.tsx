@@ -2,7 +2,8 @@ import { useMutation } from '@tanstack/react-query'
 import { useState, type FormEvent } from 'react'
 import { formatMoney } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
-import { Button, Empty, Modal, QueryView, TextArea, useToast } from '../../../ui'
+import { Button, Card, Empty, Modal, QueryView, TextArea, useToast } from '../../../ui'
+import { Row, RowList } from '../../kit'
 import local from './Commission.module.css'
 import { approveReasonError, freezeLabel, voidReasonError } from './commissionModel'
 import { formatDateTime, type FieldErrors } from './logic'
@@ -19,16 +20,18 @@ export function ReviewEntries() {
   const query = { ...q, data: flat }
 
   return (
-    <section className={local.section}>
+    <>
       <QueryView
         query={query}
         empty={<Empty bare title="没有待复核的佣金" />}
       >
         {(rows) => (
-          <>
-            {rows.map((e) => (
-              <ReviewRow key={e.id} entry={e} onDialog={setDialog} />
-            ))}
+          <Card flush>
+            <RowList label="待复核佣金">
+              {rows.map((e) => (
+                <ReviewEntryRow key={e.id} entry={e} onDialog={setDialog} />
+              ))}
+            </RowList>
             {q.hasNextPage && (
               <div className={local.more}>
                 <Button size="xs" busy={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>
@@ -36,37 +39,53 @@ export function ReviewEntries() {
                 </Button>
               </div>
             )}
-          </>
+          </Card>
         )}
       </QueryView>
       <ApproveDialog entry={dialog?.kind === 'approve' ? dialog.entry : null} onClose={() => setDialog(null)} />
       <VoidDialog entry={dialog?.kind === 'void' ? dialog.entry : null} onClose={() => setDialog(null)} />
-    </section>
+    </>
   )
 }
 
-function ReviewRow({ entry: e, onDialog }: { entry: ReviewEntry; onDialog: (d: Dialog) => void }) {
+function ReviewEntryRow({ entry: e, onDialog }: { entry: ReviewEntry; onDialog: (d: Dialog) => void }) {
+  const isUnderfunded = e.review_source === 'underfunded'
+  const freezeText = freezeLabel(e, new Date())
+
+  const metaContent = (
+    <span className={local.warnText}>{e.review_reason}</span>
+  )
+
+  const extraContent = (
+    <small className={local.subLine}>
+      订单 {e.order_no} · {formatDateTime(e.created_at)} ·{' '}
+      {isUnderfunded ? (
+        <span className={local.dangerText}>{freezeText}</span>
+      ) : (
+        <span>{freezeText}</span>
+      )}
+    </small>
+  )
+
   return (
-    <div className={local.reviewRow}>
-      <span className={local.who}>
-        <span className={local.ellipsis}>{e.referrer_email} ← {e.referee_email}</span>
-        <span className={`${local.warn} ${local.ellipsis}`}>{e.review_reason}</span>
-        <span className={`${local.reviewMeta} ${local.ellipsis}`}>
-          订单 {e.order_no} · {formatDateTime(e.created_at)} · {freezeLabel(e, new Date())}
-        </span>
-      </span>
-      <span className={local.reviewAmount}>{formatMoney(e.amount)}</span>
-      <span className={local.reviewActions}>
-        {e.review_source !== 'account_deleted' && (
-          <button type="button" className={local.btnPass} onClick={() => onDialog({ kind: 'approve', entry: e })}>
-            通过
-          </button>
-        )}
-        <button type="button" className={local.btnVoid} onClick={() => onDialog({ kind: 'void', entry: e })}>
-          作废
-        </button>
-      </span>
-    </div>
+    <Row
+      title={`${e.referrer_email} ← ${e.referee_email}`}
+      meta={metaContent}
+      extra={extraContent}
+      value={formatMoney(e.amount)}
+      actions={
+        <>
+          {e.review_source !== 'account_deleted' && (
+            <Button size="sm" onClick={() => onDialog({ kind: 'approve', entry: e })}>
+              通过
+            </Button>
+          )}
+          <Button size="sm" variant="danger" onClick={() => onDialog({ kind: 'void', entry: e })}>
+            作废
+          </Button>
+        </>
+      }
+    />
   )
 }
 

@@ -1,9 +1,28 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
-import { Empty, Input, QueryView } from '../../../ui'
-import { ACCESS_PAGE, ACCESS_VIEWS, accessDetail, accessKey, accessOutcomeLabel, accessTooltip, CATEGORY_LABEL, clockTime, EMPTY_ACCESS_FILTER, isAccessError, type AccessFilter, type AccessView } from './logic'
+import { useEffect, useState } from 'react'
+import { Button, Empty, FilterTabs, Input, QueryView, Tag } from '../../../ui'
+import { StatusDot } from '../../kit'
+import {
+  ACCESS_PAGE,
+  ACCESS_VIEWS,
+  accessKey,
+  accessOutcomeLabel,
+  accessTone,
+  accessTooltip,
+  accessUser,
+  CATEGORY_LABEL,
+  clockTime,
+  EMPTY_ACCESS_FILTER,
+  type AccessFilter,
+  type AccessTone,
+  type AccessView,
+} from './logic'
 import { useAccessLog } from './queries'
 import type { AccessItem } from './schemas'
 import css from './security.module.css'
+
+const TONE_CLASS: Record<AccessTone, string | undefined> = { ok: css.toneOk, warn: css.toneWarn, bad: css.toneBad, none: css.toneNone }
+
+const VIEW_ITEMS = ACCESS_VIEWS.map(([value, label]) => ({ value, label }))
 
 export function AccessTab() {
   const [ip, setIp] = useState('')
@@ -34,6 +53,7 @@ export function AccessTab() {
     setOffset(0)
   }
   const hasBoxes = Boolean(filter.ip.trim() || filter.user.trim())
+  const full = (log.data?.length ?? 0) >= ACCESS_PAGE
 
   return (
     <div className={css.stack}>
@@ -49,19 +69,20 @@ export function AccessTab() {
         )}
       </div>
 
-      <section className={css.terminal} aria-label="安全事件实时尾随">
-        <header className={css.termHead}>
-          <span className={`${css.liveDot} ${tailing ? css.live : ''}`} aria-hidden="true" />
-          <span>实时尾随 · 登录 / 注册 / 订阅拉取 / 管理动作</span>
-          <span className={css.termHint}>{tailing ? '每 5 秒刷新' : offset > 0 ? '查看更早的记录时不刷新' : '已暂停'}</span>
+      <section className={css.box} aria-label="安全事件实时监控">
+        <header className={css.boxHead}>
+          {tailing ? <StatusDot tone="ok">实时监控</StatusDot> : <StatusDot tone="off">{offset > 0 ? '查看更早的记录' : '已暂停'}</StatusDot>}
+          <span className={css.boxHeadSub}>登录 / 注册 / 订阅拉取 / 管理动作 · 每 5 秒刷新</span>
           <span className={css.spacer} />
-          <ViewSeg value={filter.view} onChange={pick} />
           {offset === 0 && (
-            <button type="button" className={css.termButton} onClick={() => setPaused((v) => !v)}>
+            <Button size="sm" onClick={() => setPaused((v) => !v)}>
               {paused ? '继续' : '暂停'}
-            </button>
+            </Button>
           )}
         </header>
+        <div className={css.boxFilter}>
+          <FilterTabs label="事件分段" items={VIEW_ITEMS} value={filter.view} onChange={pick} />
+        </div>
         <QueryView
           query={log}
           rows={10}
@@ -69,106 +90,54 @@ export function AccessTab() {
           empty={
             <Empty
               bare
-              className={css.termEmpty}
+              className={css.empty}
               title={offset > 0 ? '没有更早的记录了' : '没有符合条件的安全事件'}
-              description={offset > 0 ? '回到最新继续尾随。' : '换个分段或清空筛选再看。'}
+              description={offset > 0 ? '回到最新继续监控。' : '换个分段或清空筛选再看。'}
             />
           }
         >
           {(items) => (
-            <div role="table" aria-label="安全事件" className={css.termRows}>
+            <div role="table" aria-label="安全事件" className={css.logs}>
               {items.map((item, i) => (
                 <AccessRow key={accessKey(item, i)} item={item} />
               ))}
             </div>
           )}
         </QueryView>
-        {(offset > 0 || (log.data?.length ?? 0) >= ACCESS_PAGE) && (
-          <footer className={css.termFoot}>
-            <span>第 {offset / ACCESS_PAGE + 1} 页</span>
-            <span className={css.spacer} />
-            {offset > 0 && (
-              <button type="button" className={css.termButton} onClick={() => setOffset(0)}>
-                回到最新
-              </button>
-            )}
-            <button type="button" className={css.termButton} disabled={(log.data?.length ?? 0) < ACCESS_PAGE || log.isFetching} onClick={() => setOffset(offset + ACCESS_PAGE)}>
-              更早
-            </button>
-          </footer>
-        )}
+        <footer className={css.boxFoot}>
+          <span>第 {offset / ACCESS_PAGE + 1} 页</span>
+          <span className={css.spacer} />
+          <Button size="sm" disabled={offset === 0} onClick={() => setOffset(0)}>
+            回到最新
+          </Button>
+          <Button size="sm" disabled={!full || log.isFetching} onClick={() => setOffset(offset + ACCESS_PAGE)}>
+            更早
+          </Button>
+        </footer>
       </section>
     </div>
   )
 }
 
-/** 分段按钮组：设计稿的文字按钮样式，键盘与 FilterTabs 同一套（radiogroup + 可移动 tabindex） */
-function ViewSeg({ value, onChange }: { value: AccessView; onChange: (v: AccessView) => void }) {
-  const refs = useRef<(HTMLButtonElement | null)[]>([])
-
-  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    const current = ACCESS_VIEWS.findIndex(([v]) => v === value)
-    const last = ACCESS_VIEWS.length - 1
-    const next =
-      event.key === 'ArrowRight' || event.key === 'ArrowDown'
-        ? (current + 1) % ACCESS_VIEWS.length
-        : event.key === 'ArrowLeft' || event.key === 'ArrowUp'
-          ? (current - 1 + ACCESS_VIEWS.length) % ACCESS_VIEWS.length
-          : event.key === 'Home'
-            ? 0
-            : event.key === 'End'
-              ? last
-              : -1
-
-    if (next < 0) return
-    event.preventDefault()
-    onChange(ACCESS_VIEWS[next]![0])
-    refs.current[next]?.focus()
-  }
-
-  return (
-    <div role="radiogroup" aria-label="事件分段" className={css.segGroup} onKeyDown={onKeyDown}>
-      {ACCESS_VIEWS.map(([v, label], i) => {
-        const on = v === value
-        return (
-          <button
-            key={v}
-            ref={(el) => {
-              refs.current[i] = el
-            }}
-            type="button"
-            role="radio"
-            aria-checked={on}
-            tabIndex={on ? 0 : -1}
-            className={`${css.seg} ${on ? css.segOn : ''}`}
-            onClick={() => onChange(v)}
-          >
-            {label}
-          </button>
-        )
-      })}
-    </div>
-  )
-}
-
+/** 一行事件（样稿 .lg）：时间、分类、结果、IP、账号 · 动作 */
 function AccessRow({ item }: { item: AccessItem }) {
-  const bad = isAccessError(item)
   return (
-    <div role="row" className={css.termRow} title={accessTooltip(item)}>
-      <span role="cell" className={css.termTime}>
+    <div role="row" className={css.logRow} title={accessTooltip(item)}>
+      <span role="cell" className={css.logTime}>
         {clockTime(item.occurred_at)}
       </span>
-      <span role="cell" className={css.termCat}>
-        {CATEGORY_LABEL[item.category]}
+      <span role="cell" className={css.logCat}>
+        <Tag tone="neutral">{CATEGORY_LABEL[item.category]}</Tag>
       </span>
-      <span role="cell" className={bad ? css.termBad : css.termOk}>
+      <span role="cell" className={TONE_CLASS[accessTone(item)]}>
         {accessOutcomeLabel(item)}
       </span>
-      <span role="cell" className={css.termIp}>
+      <span role="cell" className={css.logIp}>
         {item.ip ?? '—'}
       </span>
-      <span role="cell" className={css.ellipsis}>
-        {accessDetail(item)}
+      <span role="cell" className={css.logAccount}>
+        {accessUser(item)}
+        {item.action && <span className={css.logAction}> · {item.action}</span>}
       </span>
     </div>
   )

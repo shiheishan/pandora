@@ -13,13 +13,21 @@
   display: block;
   overflow: hidden;
   color: var(--text-3);
+  font-family: var(--font-mono);
   font-size: var(--fs-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* 状态列：12px 右对齐小字（列宽已定 112px，不换行） */
-.status {
+/* 状态列：默认是 --text-3 灰字，警告状态（如未保存）用 --warn */
+.statusDefault {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  white-space: nowrap;
+}
+
+.statusWarn {
+  color: var(--warn);
   font-size: var(--fs-caption);
   white-space: nowrap;
 }

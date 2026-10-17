@@ -1,10 +1,12 @@
 import { useMutation } from '@tanstack/react-query'
-import { useState, type KeyboardEvent } from 'react'
+import { Add01Icon } from '@hugeicons-pro/core-stroke-rounded'
+import { useState } from 'react'
 import { saveFile, toCsv } from '../../../core/download'
 import { formatMoney } from '../../../core/format'
 import { navigate, useHashLocation } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
-import { Button, FilterTabs, Modal, Pager, QueryView, Switch, Tag, useToast } from '../../../ui'
+import { Button, FilterTabs, Modal, Pager, QueryView, Switch, Table, Tag, useToast } from '../../../ui'
+import { PageActions } from '../../kit'
 import { CouponFormModal, type BatchResult } from './CouponForm'
 import local from './Coupons.module.css'
 import css from './marketing.module.css'
@@ -63,60 +65,85 @@ export function Coupons({ rest }: { rest: string[] }) {
 
   return (
     <div className={local.container}>
-      <div className={local.toolbar}>
-        <FilterTabs<Mode>
-          label="按状态筛选"
-          value={mode}
-          onChange={pickMode}
-          items={[
-            { value: 'all', label: '全部' },
-            { value: 'active', label: '启用中' },
-            { value: 'paused', label: '已停用' },
-          ]}
-        />
-        <span className={local.spacer} />
+      <FilterTabs<Mode>
+        label="按状态筛选"
+        value={mode}
+        onChange={pickMode}
+        items={[
+          { value: 'all', label: '全部' },
+          { value: 'active', label: '启用中' },
+          { value: 'paused', label: '已停用' },
+        ]}
+      />
+
+      <QueryView query={list} empty={null}>
+        {(data) => {
+          return (
+            <Table<Coupon>
+              label="优惠券"
+              boxed
+              rows={data.coupons}
+              rowKey={(c) => c.id}
+              onRowClick={(c) => openDetail(c.id)}
+              rowClassName={(c) => (couponState(c.status).switchable ? undefined : local.dimRow)}
+              empty={
+                <div className={local.empty}>
+                  {mode === 'all' ? '还没有优惠券' : mode === 'active' ? '没有启用中的优惠券' : '没有已停用的优惠券'}
+                </div>
+              }
+              columns={[
+                {
+                  key: 'code',
+                  header: '优惠码',
+                  render: (c) => {
+                    const batchLabel = couponBatchLabel(c)
+                    return (
+                      <span className={local.codeCell}>
+                        <span className={local.codeMain}>{c.code}</span>
+                        {batchLabel && <span className={local.codeSub}>{batchLabel}</span>}
+                        {/* 手机上隐藏了使用与有效期两列，挪到这里一行 */}
+                        <span className={`${local.codeSub} ${local.mOnly}`}>
+                          {usage(c).label} · {couponPeriodLabel(c, new Date()).short}
+                        </span>
+                      </span>
+                    )
+                  },
+                },
+                { key: 'discount', header: '优惠', render: (c) => <span className={local.offCell}>{discountLabel(c)}</span> },
+                {
+                  key: 'plans',
+                  header: '适用套餐',
+                  hideOnMobile: true,
+                  render: (c) => <span className={local.cellDim}>{planScopeLabel(c.applicable_plan_ids, plans)}</span>,
+                },
+                { key: 'usage', header: '使用', align: 'right', hideOnMobile: true, render: (c) => <span className={local.numCell}>{usage(c).label}</span> },
+                {
+                  key: 'period',
+                  header: '有效期',
+                  hideOnMobile: true,
+                  render: (c) => {
+                    const period = couponPeriodLabel(c, new Date())
+                    return (
+                      <span title={period.full} className={local.cellDim}>
+                        {period.short}
+                      </span>
+                    )
+                  },
+                },
+                { key: 'enabled', header: '启用', align: 'right', render: (c) => <CouponToggle coupon={c} /> },
+              ]}
+              footer={data.total > PAGE ? <Pager inline total={data.total} limit={PAGE} offset={offset} onChange={setOffset} /> : <span>共 {data.total} 张</span>}
+            />
+          )
+        }}
+      </QueryView>
+
+      <PageActions>
         <Button onClick={() => setFormModal('batch')}>批量生成</Button>
-        <Button variant="primary" onClick={() => setFormModal('one')}>
+        <Button variant="primary" icon={Add01Icon} onClick={() => setFormModal('one')}>
           新建
         </Button>
-      </div>
-
-      <div className={local.tableWrap}>
-        <div className={local.tableInner}>
-          <div className={`${local.grid} ${local.head}`} role="row">
-            <span>优惠码</span>
-            <span>优惠</span>
-            <span>适用套餐</span>
-            <span className={local.right}>使用</span>
-            <span>有效期</span>
-            <span className={local.right}>启用</span>
-          </div>
-
-          <QueryView
-            query={list}
-            isEmpty={(d) => d.coupons.length === 0}
-            empty={
-              <div className={local.empty}>
-                {mode === 'all' ? '还没有优惠券' : mode === 'active' ? '没有启用中的优惠券' : '没有已停用的优惠券'}
-              </div>
-            }
-          >
-            {(data) => (
-              <>
-                {data.coupons.map((c) => (
-                  <CouponRow
-                    key={c.id}
-                    coupon={c}
-                    plans={plans}
-                    onClick={() => openDetail(c.id)}
-                  />
-                ))}
-                <Pager total={data.total} limit={PAGE} offset={offset} onChange={setOffset} />
-              </>
-            )}
-          </QueryView>
-        </div>
-      </div>
+      </PageActions>
 
       <CouponFormModal
         open={formModal}
@@ -129,35 +156,20 @@ export function Coupons({ rest }: { rest: string[] }) {
         }}
       />
 
-      <CouponDetailModal
-        id={selectedId}
-        coupon={selectedCoupon}
-        plans={plans}
-        onClose={closeDetail}
-      />
+      <CouponDetailModal id={selectedId} coupon={selectedCoupon} plans={plans} onClose={closeDetail} />
 
       <BatchResultModal result={batch} onClose={() => setBatch(null)} />
     </div>
   )
 }
 
-function CouponRow({
-  coupon: c,
-  plans,
-  onClick,
-}: {
-  coupon: Coupon
-  plans: readonly Plan[] | undefined
-  onClick: () => void
-}) {
+/** 「启用」列：可切换状态给开关（乐观显示，pending 时禁用），否则给灰标签 */
+function CouponToggle({ coupon: c }: { coupon: Coupon }) {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
   const invalidate = useInvalidateMarketing()
   const state = couponState(c.status)
-  const use = usage(c)
-  const batchLabel = couponBatchLabel(c)
-  const period = couponPeriodLabel(c, new Date())
 
   const toggle = useMutation({
     mutationFn: (next: 'active' | 'paused') => api.post(`v1/coupons/${c.id}/status`, okResponse, { body: { status: next } }),
@@ -168,46 +180,20 @@ function CouponRow({
     onError: (error) => fail(error),
   })
 
-  // 行里还有开关按钮，所以行本身不能是 <button>（按钮不能嵌套）：用 role="button" 并只响应行自己的按键
-  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (e.target !== e.currentTarget) return
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault()
-      onClick()
-    }
-  }
-
+  // 点开关不要触发整行打开详情
   return (
-    <div role="button" tabIndex={0} aria-label={`查看 ${c.code}`} className={local.row} onClick={onClick} onKeyDown={onKeyDown}>
-      <div className={local.grid}>
-        <span className={local.codeCell}>
-          <span className={local.codeText}>{c.code}</span>
-          {batchLabel && <span className={local.nameText}>{batchLabel}</span>}
-        </span>
-        <span className={local.offText}>{discountLabel(c)}</span>
-        <span className={local.planText}>{planScopeLabel(c.applicable_plan_ids, plans)}</span>
-        <span className={local.monoRight}>{use.label}</span>
-        <span title={period.full} className={local.periodText}>
-          {period.short}
-        </span>
-        <span
-          className={local.switchCell}
-          onClick={(e) => e.stopPropagation()}
-          onKeyDown={(e) => e.stopPropagation()}
-        >
-          {state.switchable ? (
-            <Switch
-              aria-label={`${state.on ? '停用' : '启用'} ${c.code}`}
-              checked={toggle.isPending ? toggle.variables === 'active' : state.on}
-              disabled={toggle.isPending}
-              onChange={() => toggle.mutate(state.on ? 'paused' : 'active')}
-            />
-          ) : (
-            state.tag && <Tag tone={state.tag.tone}>{state.tag.label}</Tag>
-          )}
-        </span>
-      </div>
-    </div>
+    <span className={local.toggleCell} onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+      {state.switchable ? (
+        <Switch
+          aria-label={`${state.on ? '停用' : '启用'} ${c.code}`}
+          checked={toggle.isPending ? toggle.variables === 'active' : state.on}
+          disabled={toggle.isPending}
+          onChange={() => toggle.mutate(state.on ? 'paused' : 'active')}
+        />
+      ) : (
+        state.tag && <Tag tone={state.tag.tone}>{state.tag.label}</Tag>
+      )}
+    </span>
   )
 }
 
