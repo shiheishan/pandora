@@ -26,6 +26,9 @@ function formatSharePct(part: bigint, whole: bigint): string {
   return `${(Number(scaled) / 10).toFixed(1)}%`
 }
 
+/** 排行卡显示的行数（与系统状态卡等高） */
+export const RANK_SHOWN = 8
+
 export function rankView(
   data: NodeTraffic | UserTraffic,
   nodesOnline?: { online: number; total: number }
@@ -59,7 +62,7 @@ export function rankView(
   const maxTotalBytes = itemsWithBytes.length > 0 ? itemsWithBytes[0]!.totalBytes : 0n
 
   let listSum = 0n
-  const rows: RankRow[] = itemsWithBytes.map(({ item, totalBytes }) => {
+  const rows: RankRow[] = itemsWithBytes.slice(0, RANK_SHOWN).map(({ item, totalBytes }) => {
     listSum += totalBytes
 
     let key: string

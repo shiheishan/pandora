@@ -220,8 +220,8 @@ export function useRevenue(days: RevenueDays) {
   })
 }
 
-/** 仪表盘固定取近 24 小时前 8 名（两张卡各 8 行，等高） */
-const TRAFFIC_QUERY = { range: '24h', limit: 8 } as const
+/** 仪表盘固定取近 24 小时前 10 名（后端只收 5 / 10 / 20），显示时由 rankView 截到前 8 名 */
+const TRAFFIC_QUERY = { range: '24h', limit: 10 } as const
 
 export function useNodeTraffic() {
   const api = useApi()

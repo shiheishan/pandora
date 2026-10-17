@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { nodeTrafficSchema, userTrafficSchema } from './api'
-import { rankView } from './rank'
+import { RANK_SHOWN, rankView } from './rank'
 
 const GiB = 1024n ** 3n
 
@@ -120,6 +120,17 @@ describe('rankView - 节点排行', () => {
 
     const withOnline = rankView(nodeData, { online: 41, total: 44 })
     expect(withOnline.footer).toBe('合计 2.44 TB · 41/44 节点在线')
+  })
+
+  it('接口给 10 名时只显示前 RANK_SHOWN 名（后端 limit 只收 5 / 10 / 20）', () => {
+    const many = Array.from({ length: 10 }, (_, i) => ({
+      ...nodeRaw.items[0]!,
+      node_id: `node-x${i}`,
+      total_bytes: String(BigInt(100 - i) * GiB),
+    }))
+    const view = rankView(nodeTrafficSchema.parse({ ...nodeRaw, items: many }))
+    expect(RANK_SHOWN).toBe(8)
+    expect(view.rows.map((r) => r.key)).toEqual(many.slice(0, 8).map((m) => m.node_id))
   })
 })
 
