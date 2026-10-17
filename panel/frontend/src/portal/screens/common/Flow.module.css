@@ -12,10 +12,15 @@
 
 /* 「会发生什么」：Card tint 的配色 */
 .callout {
-  padding: 12px 14px;
-  border: 1px solid var(--brand-soft);
-  border-radius: var(--radius-lg);
-  background: var(--brand-tint);
+  padding: 16px 18px;
+  border: 0;
+  border-radius: 16px;
+  background:
+    radial-gradient(420px 140px at 0% 0%, var(--brand-soft), transparent 80%),
+    var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--brand-line);
+  font-size: 15px;
+  line-height: 1.7;
   overflow-wrap: anywhere;
 }
 
@@ -23,17 +28,19 @@
   display: block;
   margin-bottom: 2px;
   color: var(--brand-ink);
-  font-size: var(--fs-caption);
-  font-weight: var(--fw-semibold);
+  font-size: 12.5px;
+  font-weight: 600;
 }
 
 .tip {
-  padding: 12px 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  padding: 14px 16px;
+  border: 0;
+  border-radius: 14px;
   background: var(--surface);
+  box-shadow: 0 0 0 1px var(--border);
   color: var(--text-2);
-  font-size: 13px;
+  font-size: 14px;
+  line-height: 1.65;
   overflow-wrap: anywhere;
 }
 
@@ -43,19 +50,21 @@
 }
 
 .warnBox {
-  padding: 10px 12px;
-  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  border-radius: 14px;
   background: var(--warn-soft);
   color: var(--warn);
-  font-size: 13px;
+  font-size: 14px;
+  line-height: 1.65;
 }
 
 .errorBox {
-  padding: 10px 12px;
-  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  border-radius: 14px;
   background: var(--danger-soft);
   color: var(--danger);
-  font-size: 13px;
+  font-size: 13.5px;
+  line-height: 1.6;
 }
 
 .lead {
@@ -69,8 +78,9 @@
 }
 
 .q {
-  margin: 0;
-  font-weight: var(--fw-semibold);
+  margin: 4px 4px 0;
+  font-size: 18px;
+  font-weight: 600;
 }
 
 .muted {
@@ -79,7 +89,7 @@
 
 .faint {
   color: var(--text-3);
-  font-size: 13px;
+  font-size: 12.5px;
 }
 
 .small {
@@ -89,43 +99,46 @@
 /* ---- 单选列表：结账页 .option + .dot ---- */
 .choices {
   display: grid;
-  gap: var(--space-8);
+  gap: 10px;
 }
 
 .choice {
   display: flex;
   align-items: flex-start;
-  gap: var(--space-12);
+  gap: 12px;
   width: 100%;
-  padding: 12px 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  padding: 18px;
+  border: 0;
+  border-radius: 18px;
   background: var(--surface);
+  box-shadow: var(--lift);
   color: var(--text);
   text-align: left;
+  cursor: pointer;
 }
 
 .choice:hover {
-  border-color: var(--border-hover);
+  background: var(--surface-2);
 }
 
 .choice[aria-checked='true'] {
-  border-color: var(--brand);
-  background: var(--brand-tint);
+  background: var(--surface-2);
+  box-shadow: var(--lift), 0 0 0 1.5px var(--brand-line);
 }
 
 .dot {
   flex: none;
-  width: 16px;
-  height: 16px;
-  margin-top: 3px;
-  border: 1.5px solid var(--border-strong);
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  border: 0;
   border-radius: 50%;
-  background: var(--surface);
+  background: none;
+  box-shadow: inset 0 0 0 1.5px var(--text-3);
 }
 
 .choice[aria-checked='true'] .dot {
-  border: 5px solid var(--brand);
+  box-shadow: inset 0 0 0 5px var(--brand-deep);
 }
 
 .choiceText {
@@ -134,25 +147,28 @@
 }
 
 .choiceLabel {
-  font-weight: var(--fw-medium);
+  font-size: 16px;
+  font-weight: 600;
 }
 
 .choiceDesc {
   display: block;
+  margin-top: 2px;
   color: var(--text-2);
-  font-size: 13px;
+  font-size: 12.5px;
 }
 
 .badge {
   display: inline-block;
   font-style: normal;
   margin-left: 6px;
-  padding: 0 6px;
-  border-radius: var(--radius-tag);
+  padding: 2px 8px;
+  border-radius: 99px;
   background: var(--brand-soft);
   color: var(--brand-ink);
-  font-size: var(--fs-caption);
-  line-height: 1.5;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
   vertical-align: 1px;
 }
 
@@ -161,32 +177,34 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-8);
+  gap: 8px;
 }
 
 .chip {
   display: inline-flex;
   align-items: center;
   max-width: 100%;
-  min-height: var(--h-control-xs);
-  padding: 4px 12px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
+  min-height: 34px;
+  padding: 7px 12px;
+  border: 0;
+  border-radius: 10px;
   background: var(--surface);
+  box-shadow: 0 0 0 1px var(--border);
   color: var(--text);
-  font-size: 13px;
+  font-size: 13.5px;
   text-align: left;
+  cursor: pointer;
 }
 
 .chip:hover {
-  border-color: var(--border-hover);
+  background: var(--surface-2);
 }
 
 .chip[aria-checked='true'] {
-  border-color: var(--brand);
-  background: var(--brand-tint);
+  background: var(--brand-soft);
+  box-shadow: 0 0 0 1.5px var(--brand);
   color: var(--brand-ink);
-  font-weight: var(--fw-medium);
+  font-weight: 600;
 }
 
 .chipNote {
@@ -305,32 +323,34 @@
 }
 
 .textButton {
-  padding: 6px 0;
+  padding: 0;
   border: 0;
   background: none;
-  color: var(--link);
-  font-size: var(--fs-body);
+  color: var(--brand);
+  font-size: 14px;
+  font-weight: 600;
   text-align: left;
+  cursor: pointer;
 }
 
 .textButton:hover {
-  color: var(--link-hover);
+  color: var(--brand);
+  text-decoration: underline;
 }
 
 .altButton {
   composes: textButton;
-  color: var(--text-2);
   text-align: center;
 }
 
 .altButton:hover {
-  color: var(--text);
+  text-decoration: underline;
 }
 
 .canChange {
   margin: 0;
   color: var(--ok);
-  font-size: var(--fs-caption);
+  font-size: 13.5px;
 }
 
 /* 两行按钮：主文案 + 一行小字（原型 .btn small） */
@@ -431,41 +451,46 @@
   flex: none;
   align-items: center;
   justify-content: center;
-  height: var(--h-control-xs);
-  padding: 0 12px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-control);
+  height: 38px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: 11px;
   background: var(--surface);
+  box-shadow: var(--button-secondary-shadow);
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--button-font-size-sm);
+  font-weight: 600;
   white-space: nowrap;
+  cursor: pointer;
 }
 
 .mini:hover {
-  background: var(--surface-3);
+  background: var(--surface-2);
 }
 
 .miniPrimary {
   composes: mini;
-  border-color: transparent;
-  background: var(--accent);
-  color: var(--on-accent);
-  font-weight: var(--fw-medium);
+  border-color: var(--button-primary-border);
+  background: var(--button-primary-bg);
+  box-shadow: var(--button-primary-shadow);
+  color: var(--on-brand);
 }
 
 .miniPrimary:hover {
-  background: var(--accent-hover);
+  color: var(--on-brand);
+  filter: brightness(1.05);
 }
 
 .miniDanger {
   composes: mini;
-  border-color: var(--danger-line);
+  background: var(--danger-soft);
+  box-shadow: none;
   color: var(--danger);
-  font-weight: var(--fw-medium);
 }
 
 .miniDanger:hover {
-  background: var(--danger-tint);
+  background: var(--danger-soft);
+  filter: brightness(0.97);
 }
 
 /* 链接框：尾号 + 复制 + 添加到 App + 「App 里显示为」 */
