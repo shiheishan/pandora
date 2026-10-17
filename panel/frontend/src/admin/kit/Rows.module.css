@@ -29,6 +29,8 @@
   flex: 1;
   min-width: 0;
   font-size: 13px;
+  /* 网址、地址这类没有断点的长串任意处折行，不撑出行宽 */
+  overflow-wrap: anywhere;
 }
 
 .title {
