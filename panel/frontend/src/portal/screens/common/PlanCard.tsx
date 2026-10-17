@@ -200,12 +200,10 @@ export function PlanFacts({ plan, skip = [], className }: PlanFactsProps) {
 
 export interface PlanCardProps {
   plan: Plan
-  /** 眉标：站点名（样稿 .eyebrow「Pandora」） */
-  site?: string
+  /** 眉标：站点名（样稿 .eyebrow） */
+  site: string
   /** 右上角徽标（样稿 .badge）：soft = 白底（你在用），solid = 深绿底白字（推荐）；null 不画 */
   badge?: { text: string; tone: 'soft' | 'solid' } | null
-  /** 兼容旧代码直接传 tag */
-  tag?: ReactNode
   /** 正在用的这一款：换底色（样稿 .plan.pop） */
   current?: boolean
   /** 按钮（调用方传 kit 的 Btn，href 链接） */
@@ -219,9 +217,8 @@ export interface PlanCardProps {
  */
 export function PlanCard({
   plan,
-  site = 'Pandora',
+  site,
   badge,
-  tag,
   current = false,
   action,
   note,
@@ -230,11 +227,7 @@ export function PlanCard({
 
   return (
     <section className={cx(css.card, current && css.current)} id={`plan-${plan.id}`}>
-      {badge ? (
-        <span className={cx(css.badge, badge.tone === 'solid' && css.badgeSolid)}>{badge.text}</span>
-      ) : tag ? (
-        <span className={css.badge}>{tag}</span>
-      ) : null}
+      {badge && <span className={cx(css.badge, badge.tone === 'solid' && css.badgeSolid)}>{badge.text}</span>}
       <Eyebrow>{site}</Eyebrow>
       <Sticker as="h3">{plan.name}</Sticker>
       {plan.description && <p className={css.desc}>{plan.description}</p>}
