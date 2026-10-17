@@ -79,14 +79,19 @@
   min-width: 0;
 }
 
-.auditTableHost table {
-  table-layout: fixed;
-}
-
-/* 桌面七列定宽，窄于 880 时表格内横向滚动；手机上只剩操作人与结果两列，不设最小宽 */
+/* 桌面七列定宽，窄于 880 时表格内横向滚动 */
 @media (min-width: 640px) {
   .auditTableHost table {
+    table-layout: fixed;
     min-width: 880px;
+  }
+}
+
+/* 手机上只剩操作人与结果两列：按内容排，操作人占满剩余宽度
+   （列宽是 Table 写在 col 上的行内样式，只能用 !important 盖掉） */
+@media (max-width: 639px) {
+  .auditTableHost col {
+    width: auto !important;
   }
 }
 
