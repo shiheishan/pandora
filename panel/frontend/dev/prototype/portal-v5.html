@@ -3,87 +3,13 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>门户样稿 v5 · 配色对比</title>
+<title>门户样稿 v5 · 森林绿</title>
 <!-- 样稿专用：正式实现时字体自托管（CSP font-src 'self'） -->
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&family=Noto+Serif+SC:wght@900&display=swap" rel="stylesheet" />
 <style>
   :root {
-    /* A 朱砂墨：墨色做主色，朱砂只点在 logo、进度条末端、链接（参考 Wealthsimple 的克制 + 我们 logo 的红点） */
-    --bg: #f3f3f1;
-    --sh: 28, 26, 24;
-    --ink: #161616;
-    --text-2: #6b6a66;
-    --text-3: #9c9b96;
-    --paper-2: #f7f7f5;
-    --paper-3: #f1f1ee;
-    --tint: #ecebe7;
-    --tint-line: #d9d7d1;
-    --deep: #1b1b1c;
-    --act: #b23a26;
-    --mark: #c9432d;
-    --btn: linear-gradient(180deg, #303033, #161618);
-    --btn-border: #0b0b0c;
-    --btn-glow: rgba(10, 10, 12, 0.85);
-    --hot: linear-gradient(180deg, #303033, #161618);
-    --hot-border: #0b0b0c;
-    --bar: linear-gradient(90deg, #1b1b1c 0%, #3a3a3c 55%, #c9432d 100%);
-    --dot: rgba(var(--sh), 0.07);
-    --line: rgba(var(--sh), 0.08);
-    --warn: #8a5a00;
-    --warn-bg: #fbf1dc;
-    --danger: #a3283a;
-    --danger-bg: #f9e4e6;
-    --tw: 'Courier Prime', 'Courier New', ui-monospace, monospace;
-    --serif-zh: 'Courier Prime', 'Noto Serif SC', 'Songti SC', serif;
-    --sans: -apple-system, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
-    --lift: 0 0 0 1px rgba(var(--sh), 0.035), 0 30px 60px -32px rgba(var(--sh), 0.22), 0 6px 16px -8px rgba(var(--sh), 0.09);
-    --nav-w: 232px;
-  }
-  /* B 深海珊瑚：深海军蓝做主色，珊瑚红做重点动作（参考 Monzo） */
-  :root[data-pal='b'] {
-    --bg: #f0f3f6;
-    --sh: 14, 32, 52;
-    --ink: #0f1c2b;
-    --text-2: #5d6a78;
-    --text-3: #93a0ad;
-    --paper-2: #f6f8fa;
-    --paper-3: #eef2f6;
-    --tint: #e0eaf3;
-    --tint-line: #c0d2e2;
-    --deep: #112231;
-    --act: #cf4630;
-    --mark: #ff6a4d;
-    --btn: linear-gradient(180deg, #213a52, #112231);
-    --btn-border: #08131d;
-    --btn-glow: rgba(8, 22, 36, 0.85);
-    --hot: linear-gradient(180deg, #f6694f, #dc4a31);
-    --hot-border: #b9381f;
-    --bar: linear-gradient(90deg, #112231 0%, #2a4863 50%, #ff6a4d 100%);
-  }
-  /* C 雾蓝：冷白底、长春花蓝做主色、淡紫做铺底（参考 Mercury） */
-  :root[data-pal='c'] {
-    --bg: #f4f5f8;
-    --sh: 34, 38, 80;
-    --ink: #161925;
-    --text-2: #656b7b;
-    --text-3: #9aa0ae;
-    --paper-2: #f8f9fc;
-    --paper-3: #f1f2f8;
-    --tint: #e7e8fb;
-    --tint-line: #c9cdf4;
-    --deep: #2c3170;
-    --act: #4b55d1;
-    --mark: #5e6af0;
-    --btn: linear-gradient(180deg, #6470f2, #4a55d6);
-    --btn-border: #3d47b9;
-    --btn-glow: rgba(60, 70, 190, 0.6);
-    --hot: linear-gradient(90deg, #3f49c4 0%, #5763e6 55%, #7e8bfa 100%);
-    --hot-border: #363fae;
-    --bar: linear-gradient(90deg, #4a55d6 0%, #7380f5 60%, #b3bbff 100%);
-  }
-  /* D 森林绿：v4 原样的绿（来自 Laper 参考图），留档对比 */
-  :root[data-pal='d'] {
+    /* 森林绿（10-16 定为默认主题色；其余三套候选只记在 PALETTES.md） */
     --bg: #f4f5f2;
     --sh: 20, 40, 30;
     --ink: #141715;
@@ -102,9 +28,111 @@
     --hot: linear-gradient(90deg, #1f3d2b 0%, #2c5a3f 45%, #4cbb72 100%);
     --hot-border: #10251a;
     --bar: linear-gradient(90deg, #1f3d2b, #4cbb72);
+    --dot: rgba(var(--sh), 0.07);
+    --line: rgba(var(--sh), 0.08);
+    --warn: #8a5a00;
+    --warn-bg: #fbf1dc;
+    --danger: #a3283a;
+    --danger-bg: #f9e4e6;
+    --tw: 'Courier Prime', 'Courier New', ui-monospace, monospace;
+    --serif-zh: 'Courier Prime', 'Noto Serif SC', 'Songti SC', serif;
+    --sans: -apple-system, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+    --lift: 0 0 0 1px rgba(var(--sh), 0.035), 0 30px 60px -32px rgba(var(--sh), 0.22), 0 6px 16px -8px rgba(var(--sh), 0.09);
+    --nav-w: 232px;
   }
+
+  /* 我的套餐：多份切换条（参考 Saily 顶部的 eSIM 切换、Airalo 的 My eSIMs） */
+  .copies { display: flex; gap: 10px; margin: 18px 0 0; overflow-x: auto; scrollbar-width: none; padding: 2px; }
+  .cp { all: unset; cursor: pointer; flex: none; display: flex; flex-direction: column; gap: 3px; min-width: 128px; padding: 11px 16px 12px; border-radius: 14px; background: rgba(255, 255, 255, 0.55); box-shadow: 0 0 0 1px var(--line); transition: background 0.15s, box-shadow 0.15s; }
+  .cp b { font-size: 14.5px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+  .cp small { font-size: 12.5px; color: var(--text-2); }
+  .cp small .num { font-size: 13px; color: var(--ink); }
+  .cp:hover { background: #fff; }
+  .cp.on { background: #fff; box-shadow: 0 0 0 1.5px var(--tint-line), 0 8px 18px -12px rgba(var(--sh), 0.5); }
+  .cp:focus-visible { outline: 2px solid var(--act); outline-offset: 2px; }
+  .warn-dot { width: 7px; height: 7px; border-radius: 50%; background: #d08a1a; }
+  .copy { display: none; }
+  .copy.on { display: block; }
+  /* 流量快用完：主卡里就地给出两条路（参考 X 用量到顶的就地升级卡、Cash App 的剩余流量条） */
+  .bar.low i { background: linear-gradient(90deg, #8a5a00, #e0a43a); }
+  .low-tip { display: flex; align-items: center; gap: 14px; margin-top: 18px; padding: 12px 14px 12px 16px; border-radius: 14px; background: var(--warn-bg); }
+  .low-tip .t { flex: 1; min-width: 0; font-size: 13.5px; color: var(--warn); }
+  .low-tip .t b { display: block; font-size: 14.5px; color: #5c3c00; margin-bottom: 1px; }
+  .low-tip .go { color: var(--warn); font-weight: 600; font-size: 14px; white-space: nowrap; }
+  .btn.sm { height: 38px; padding: 0 14px; border-radius: 11px; font-size: 14px; }
+  /* 已到期 / 没有套餐（参考 App Store 订阅页：红字状态 + 带价格的续费按钮；Strava 会员页） */
+  .hero.off { background: linear-gradient(180deg, #f3f3f1, #fff); box-shadow: var(--lift), 0 0 0 1px var(--line); }
+  .hero.off .tag { color: var(--text-2); }
+  .pill.bad { background: var(--danger-bg); color: var(--danger); box-shadow: none; font-weight: 600; }
+  .gone { margin-top: 30px; font-size: 30px; font-weight: 600; letter-spacing: -0.01em; }
+  .hero.empty { background: radial-gradient(640px 300px at 100% 0%, var(--tint), transparent 70%), linear-gradient(180deg, var(--paper-2), #fff); }
+  .steps { display: flex; gap: 10px; margin-top: 24px; flex-wrap: wrap; }
+  .steps span { display: flex; align-items: center; gap: 10px; padding: 10px 14px 10px 10px; border-radius: 12px; background: #fff; box-shadow: 0 0 0 1px var(--line); font-size: 14px; }
+  .steps b { width: 24px; height: 24px; border-radius: 50%; background: var(--tint); color: var(--deep); display: flex; align-items: center; justify-content: center; font-size: 13px; }
+  .aside { font-size: 13px; color: var(--text-2); margin: 12px 6px 0; }
+
+  /* 选购 */
+  .seg-cap { margin: -12px 4px 0; font-size: 14px; color: var(--text-2); }
+  .plan .badge.rec { background: var(--deep); color: #fff; box-shadow: none; }
+  .next { margin: 10px 0 0; font-size: 12.5px; color: var(--text-3); text-align: center; }
+  .chip { font-style: normal; font-size: 12px; font-weight: 500; padding: 2px 8px; border-radius: 99px; background: var(--tint); color: var(--deep); margin-left: 6px; vertical-align: 2px; }
+  .chip.rec { background: var(--deep); color: #fff; }
+  .pick { display: none; }
+  .once { margin-top: 22px; border-radius: 22px; background: #fff; box-shadow: var(--lift); overflow: hidden; }
+  .on-row { display: grid; grid-template-columns: 120px 1fr auto 236px; align-items: center; gap: 20px; padding: 22px 26px; }
+  .on-row + .on-row { box-shadow: 0 -1px 0 var(--line); }
+  .on-row.cur { background: radial-gradient(420px 160px at 0% 50%, var(--tint), transparent 75%); }
+  .on-gb .num { font-size: 40px; line-height: 1; }
+  .on-gb small { font-family: var(--tw); font-size: 16px; margin-left: 4px; }
+  .on-t b { display: block; font-size: 16px; font-weight: 600; }
+  .on-t small { display: block; margin-top: 4px; font-size: 13.5px; color: var(--text-2); }
+  .on-p .num { font-size: 26px; }
+  .on-a .btn { width: 100%; }
+  .on-a .next { margin-top: 6px; }
+
+  /* 钱包 */
+  .balance .meta { font-size: 13.5px; }
+  .more { all: unset; cursor: pointer; display: block; margin: 14px auto 0; padding: 8px 16px; border-radius: 10px; font-size: 14px; color: var(--act); font-weight: 600; }
+  .more:hover { background: rgba(255, 255, 255, 0.7); }
+  .sheet { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; background: rgba(var(--sh), 0.28); backdrop-filter: blur(3px); }
+  .sheet[hidden] { display: none; }
+  .sh-card { width: 440px; max-width: calc(100% - 32px); border-radius: 26px; background: #fff; padding: 22px 24px 24px; box-shadow: 0 40px 80px -30px rgba(var(--sh), 0.55); animation: rise 0.25s cubic-bezier(0.2, 0.7, 0.2, 1); }
+  .sh-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+  .sh-top b { font-size: 18px; }
+  .x { all: unset; cursor: pointer; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 22px; color: var(--text-2); background: var(--bg); }
+  .amt-show { text-align: center; margin: 18px 0 20px; }
+  .amt-show .num { font-size: 56px; line-height: 1; }
+  .amt-show .cur { font-size: 28px; margin-right: 4px; vertical-align: 14px; }
+  .amts { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+  .am { all: unset; cursor: pointer; text-align: center; height: 44px; line-height: 44px; border-radius: 12px; font-size: 15px; font-weight: 600; background: var(--bg); }
+  .am.on { background: var(--deep); color: #fff; }
+  .faint { font-size: 12.5px; color: var(--text-3); margin: 10px 2px 0; }
+  .sh-lbl { font-size: 13px; color: var(--text-2); margin: 20px 2px 8px; }
+  .pays, .opts { display: flex; flex-direction: column; gap: 8px; }
+  .pay, .opt { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px; box-shadow: 0 0 0 1px var(--line); cursor: pointer; }
+  .pay.on, .opt.on { box-shadow: 0 0 0 1.5px var(--tint-line); background: var(--paper-2); }
+  .pi { width: 30px; height: 30px; border-radius: 8px; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; }
+  .pi.ali { background: #1677ff; }
+  .pi.wx { background: #07c160; }
+  .pt { flex: 1; font-size: 15px; }
+  .pt small, .ot small { display: block; font-size: 12.5px; color: var(--text-2); margin-top: 2px; }
+  .dot-r { width: 18px; height: 18px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--text-3); flex: none; }
+  .on > .dot-r { box-shadow: inset 0 0 0 5px var(--deep); }
+  .opt { align-items: flex-start; }
+  .opt .dot-r { margin-top: 2px; }
+  .ot { flex: 1; }
+  .ot b { font-size: 15px; font-weight: 600; }
+  .btn.full { width: 100%; margin-top: 22px; }
+  .sh-p { font-size: 14px; color: var(--text-2); margin: 8px 0 16px; }
+  .code { width: 100%; height: 52px; border: 0; border-radius: 14px; padding: 0 16px; font: 17px var(--tw); letter-spacing: 0.04em; background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); color: var(--ink); }
+  .code:focus { outline: none; box-shadow: inset 0 0 0 1.5px var(--act); }
+  .sh-link { display: block; text-align: center; margin-top: 14px; font-size: 14px; color: var(--text-2); }
+  .gc { display: flex; flex-direction: column; gap: 6px; margin: 14px 0 16px; padding: 18px 20px; border-radius: 18px; background: radial-gradient(360px 160px at 0% 0%, var(--tint), transparent 75%), var(--paper-2); box-shadow: 0 0 0 1px var(--tint-line); }
+  .gc-n { font-family: var(--serif-zh); font-weight: 900; font-size: 24px; }
+  /* 样稿状态：data-only 列出在哪些状态下出现 */
+  [data-only] { display: none !important; }
   .logo::after { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--mark); margin-left: 3px; }
-  /* 样稿专用：配色切换 */
+  /* 样稿专用：状态切换 */
   .pal { position: fixed; top: 16px; right: 16px; z-index: 9; display: flex; gap: 4px; padding: 4px; border-radius: 12px; background: rgba(255, 255, 255, 0.9); box-shadow: 0 0 0 1px var(--line), 0 10px 24px -14px rgba(var(--sh), 0.5); font-size: 13px; }
   .pal a { padding: 6px 12px; border-radius: 9px; color: var(--text-2); }
   .pal a.on { background: var(--deep); color: #fff; }
@@ -288,11 +316,40 @@
     .pill { top: 24px; right: 20px; }
     .big { font-size: 60px; }
     .hero-foot { flex-direction: column; align-items: stretch; }
+    .hero-foot .btn { flex: none; }
     .linkchip { justify-content: space-between; }
-    .plans { grid-template-columns: 1fr; gap: 18px; }
+    .plans { display: none; }
+    .sheet { align-items: flex-end; }
+    .sh-card { width: 100%; max-width: none; border-radius: 26px 26px 0 0; padding-bottom: 34px; }
+    .pick { display: flex; flex-direction: column; gap: 12px; margin-top: 18px; }
+    .pk { border-radius: 20px; background: #fff; box-shadow: var(--lift); }
+    .pk[open] { box-shadow: var(--lift), 0 0 0 1.5px var(--tint-line); }
+    .pk.cur { background: radial-gradient(360px 200px at 0% 0%, var(--tint), transparent 75%), #fff; }
+    .pk summary { list-style: none; cursor: pointer; display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 18px 20px; }
+    .pk summary::-webkit-details-marker { display: none; }
+    .pk-n { font-size: 17px; font-weight: 600; }
+    .pk-s { grid-row: 2; font-size: 13.5px; color: var(--text-2); }
+    .pk-p { grid-row: 1 / 3; grid-column: 2; align-self: center; font-size: 13px; color: var(--text-2); }
+    .pk-p b { font-size: 22px; color: var(--ink); margin-right: 3px; }
+    .pk-b { padding: 0 20px 20px; }
+    .pk-b .alt { margin-top: 0; }
+    .pk-b ul { margin: 10px 0 18px; }
+    .pk-b li { padding: 6px 0; font-size: 14.5px; }
+    .pk-b .btn { width: 100%; }
+    .seg-cap { margin-top: -8px; font-size: 13px; }
+    .once { border-radius: 20px; }
+    .on-row { grid-template-columns: 84px 1fr auto; gap: 6px 14px; padding: 18px 18px; }
+    .on-gb .num { font-size: 30px; }
+    .on-gb small { font-size: 13px; }
+    .on-a { grid-column: 1 / -1; }
+    .on-p .num { font-size: 20px; }
     .plan { padding: 26px 22px 22px; border-radius: 24px; }
     .note .t small { display: none; }
     .row { padding: 0 16px; }
+    .low-tip { flex-wrap: wrap; }
+    .low-tip .t { flex-basis: 100%; }
+    .gone { font-size: 26px; }
+    .steps { flex-direction: column; }
   }
 </style>
 </head>
@@ -318,6 +375,7 @@
   <symbol id="i-card" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M7 15h4"/></symbol>
   <symbol id="i-in" viewBox="0 0 24 24"><path d="M12 4v13M6 11l6 6 6-6"/></symbol>
   <symbol id="i-out" viewBox="0 0 24 24"><path d="M12 20V7M6 13l6-6 6 6"/></symbol>
+  <symbol id="i-reset" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.3-5.7"/><path d="M4 4v5h5"/><path d="M12 8v4l3 2"/></symbol>
   <symbol id="i-renew" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 5v6h-6"/></symbol>
   <symbol id="i-logout" viewBox="0 0 24 24"><path d="M14 4h5v16h-5"/><path d="M10 8l-4 4 4 4M6 12h10"/></symbol>
 </svg>
@@ -349,36 +407,147 @@
       <div class="m-top only-m"><span class="logo">pandora</span></div>
       <div class="h-row"><h1>我的套餐</h1></div>
 
-      <a class="note" href="#orders"><span class="k warn">待支付</span><span class="t">专业版 · 续费 <b class="num">¥59.00</b><small>18 分钟内未支付将自动取消</small></span><span class="go">去支付 ›</span></a>
-      <a class="note" href="#subs"><span class="k danger">重要</span><span class="t">9 月 28 日凌晨 2:00–3:00 香港节点维护</span><span class="go">查看 ›</span></a>
+      <div data-only="one multi expired">
+        <a class="note" href="#orders"><span class="k warn">待支付</span><span class="t">专业版 · 续费 <b class="num">¥59.00</b><small>18 分钟内未支付将自动取消</small></span><span class="go">去支付 ›</span></a>
+        <a class="note" href="#subs"><span class="k danger">重要</span><span class="t">9 月 28 日凌晨 2:00–3:00 香港节点维护</span><span class="go">查看 ›</span></a>
+      </div>
 
-      <div class="hero">
-        <span class="pill">还剩 <b>42</b> 天</span>
-        <div class="eyebrow">Pandora</div>
-        <div><span class="tag">专业版</span></div>
-        <div style="margin-top:36px"><span class="num big">208</span><span class="unit">GB</span></div>
-        <div class="meta" style="margin-top:10px">本期剩余 · 共 <b>520 GB</b>，含送的 <b>20 GB</b></div>
-        <div class="bar"><i style="--w:40%"></i></div>
-        <div class="meta" style="font-size:14px">11 月 27 日 16:03 到期 · 3 / 5 台设备在线</div>
-        <div class="hero-foot">
-          <button class="btn hot grow">添加到 App</button>
-          <button class="btn soft">续费 · 到 12 月 27 日</button>
+      <!-- 多份：切换条，只有一份时不出现 -->
+      <div data-only="multi">
+        <div class="copies" role="tablist">
+          <button class="cp on" data-c="1" role="tab"><b>专业版</b><small><span class="num">208 GB</span> · 42 天</small></button>
+          <button class="cp" data-c="2" role="tab"><b>家里用<i class="warn-dot"></i></b><small><span class="num">41 GB</span> · 18 天</small></button>
+          <button class="cp" data-c="3" role="tab"><b>随用 100G</b><small><span class="num">63 GB</span> · 永久</small></button>
         </div>
       </div>
 
-      <h3>这一份</h3>
-      <div class="rows">
-        <div class="row"><span class="ri"><svg class="i"><use href="#i-link"/></svg></span><span class="rt">链接<small>App 里显示为 Pandora · 专业版</small></span><span class="rv"><code class="num" style="font-weight:400">····PQsM</code></span><span class="rv plus" style="font-weight:600">复制</span></div>
-        <div class="row"><span class="ri"><svg class="i"><use href="#i-chart"/></svg></span><span class="rt">节点和每天用量</span><svg class="i chev"><use href="#i-chev"/></svg></div>
-        <div class="row"><span class="ri"><svg class="i"><use href="#i-swap"/></svg></span><span class="rt">换个套餐<small>差价按剩余时间算，换之前先看报价</small></span><svg class="i chev"><use href="#i-chev"/></svg></div>
-        <div class="row"><span class="ri"><svg class="i"><use href="#i-edit"/></svg></span><span class="rt">起个名字</span><svg class="i chev"><use href="#i-chev"/></svg></div>
-        <div class="row"><span class="ri"><svg class="i"><use href="#i-renew"/></svg></span><span class="rt">换新链接<small>旧链接立刻失效，App 里要重新添加</small></span><svg class="i chev"><use href="#i-chev"/></svg></div>
+      <!-- 第 1 份：按时间的套餐，正常 -->
+      <div class="copy on" data-c="1" data-only="one multi">
+        <div class="hero">
+          <span class="pill">还剩 <b>42</b> 天</span>
+          <div class="eyebrow">Pandora</div>
+          <div><span class="tag">专业版</span></div>
+          <div style="margin-top:36px"><span class="num big">208</span><span class="unit">GB</span></div>
+          <div class="meta" style="margin-top:10px">本期剩余 · 共 <b>520 GB</b>，含送的 <b>20 GB</b></div>
+          <div class="bar"><i style="--w:40%"></i></div>
+          <div class="meta" style="font-size:14px">11 月 27 日 16:03 到期 · 3 / 5 台设备在线</div>
+          <div class="hero-foot">
+            <button class="btn hot grow">添加到 App</button>
+            <button class="btn soft">续费 · 到 12 月 27 日</button>
+          </div>
+        </div>
+        <h3>这一份</h3>
+        <div class="rows">
+          <div class="row"><span class="ri"><svg class="i"><use href="#i-link"/></svg></span><span class="rt">链接<small>App 里显示为 Pandora · 专业版</small></span><span class="rv"><code class="num" style="font-weight:400">····PQsM</code></span><span class="rv plus" style="font-weight:600">复制</span></div>
+          <div class="row"><span class="ri"><svg class="i"><use href="#i-chart"/></svg></span><span class="rt">节点和每天用量</span><svg class="i chev"><use href="#i-chev"/></svg></div>
+          <div class="row"><span class="ri"><svg class="i"><use href="#i-reset"/></svg></span><span class="rt">重置本期流量<small>已用的清零，马上能用满 520 GB · 本期还能买 2 次</small></span><span class="rv num">¥15</span><svg class="i chev"><use href="#i-chev"/></svg></div>
+          <div class="row"><span class="ri"><svg class="i"><use href="#i-swap"/></svg></span><span class="rt">换个套餐<small>差价按剩余时间算，换之前先看报价</small></span><svg class="i chev"><use href="#i-chev"/></svg></div>
+          <div class="row"><span class="ri"><svg class="i"><use href="#i-edit"/></svg></span><span class="rt">起个名字</span><svg class="i chev"><use href="#i-chev"/></svg></div>
+          <div class="row"><span class="ri"><svg class="i"><use href="#i-renew"/></svg></span><span class="rt">换新链接<small>旧链接立刻失效，App 里要重新添加</small></span><svg class="i chev"><use href="#i-chev"/></svg></div>
+        </div>
       </div>
 
-      <h3>更多</h3>
-      <div class="rows">
-        <div class="row"><span class="ri"><svg class="i"><use href="#i-plus"/></svg></span><span class="rt">再买一份，分开用<small>单独的链接、单独的流量，和现在的互不影响</small></span><svg class="i chev"><use href="#i-chev"/></svg></div>
-        <div class="row"><span class="ri"><svg class="i"><use href="#i-card"/></svg></span><span class="rt">有卡？去兑换</span><svg class="i chev"><use href="#i-chev"/></svg></div>
+      <!-- 第 2 份：按时间的套餐，流量快用完（过 80%） -->
+      <div class="copy" data-c="2" data-only="multi">
+        <div class="hero">
+          <span class="pill">还剩 <b>18</b> 天</span>
+          <div class="eyebrow">Pandora · 基础版</div>
+          <div><span class="tag">家里用</span></div>
+          <div style="margin-top:36px"><span class="num big">41</span><span class="unit">GB</span></div>
+          <div class="meta" style="margin-top:10px">本期剩余 · 共 <b>200 GB</b></div>
+          <div class="bar low"><i style="--w:20%"></i></div>
+          <div class="meta" style="font-size:14px">11 月 3 日 09:20 到期 · 2 / 3 台设备在线</div>
+          <div class="low-tip">
+            <span class="t"><b>流量快用完了</b>本期已用 80%，用完会停，到下一期恢复</span>
+            <button class="btn soft sm">重置 · <span class="num">¥10</span></button>
+            <a class="go" href="#plans">换更大的 ›</a>
+          </div>
+          <div class="hero-foot">
+            <button class="btn hot grow">添加到 App</button>
+            <button class="btn soft">续费 · 到 12 月 3 日</button>
+          </div>
+        </div>
+        <h3>这一份</h3>
+        <div class="rows">
+          <div class="row"><span class="ri"><svg class="i"><use href="#i-link"/></svg></span><span class="rt">链接<small>App 里显示为 Pandora · 家里用</small></span><span class="rv"><code class="num" style="font-weight:400">····x7Ke</code></span><span class="rv plus" style="font-weight:600">复制</span></div>
+          <div class="row"><span class="ri"><svg class="i"><use href="#i-chart"/></svg></span><span class="rt">节点和每天用量</span><svg class="i chev"><use href="#i-chev"/></svg></div>
+          <div class="row"><span class="ri"><svg class="i"><use href="#i-reset"/></svg></span><span class="rt">重置本期流量<small>已用的清零，马上能用满 200 GB · 本期还能买 1 次</small></span><span class="rv num">¥10</span><svg class="i chev"><use href="#i-chev"/></svg></div>
+          <div class="row"><span class="ri"><svg class="i"><use href="#i-swap"/></svg></span><span class="rt">换个套餐<small>差价按剩余时间算，换之前先看报价</small></span><svg class="i chev"><use href="#i-chev"/></svg></div>
+          <div class="row"><span class="ri"><svg class="i"><use href="#i-edit"/></svg></span><span class="rt">起个名字</span><svg class="i chev"><use href="#i-chev"/></svg></div>
+          <div class="row"><span class="ri"><svg class="i"><use href="#i-renew"/></svg></span><span class="rt">换新链接<small>旧链接立刻失效，App 里要重新添加</small></span><svg class="i chev"><use href="#i-chev"/></svg></div>
+        </div>
+      </div>
+
+      <!-- 第 3 份：一次性套餐，按流量算，不清零、不能续费 -->
+      <div class="copy" data-c="3" data-only="multi">
+        <div class="hero">
+          <span class="pill">永久有效</span>
+          <div class="eyebrow">Pandora · 一次性</div>
+          <div><span class="tag">随用 100G</span></div>
+          <div style="margin-top:36px"><span class="num big">63</span><span class="unit">GB</span></div>
+          <div class="meta" style="margin-top:10px">剩余 · 共 <b>100 GB</b>，不清零，用完为止</div>
+          <div class="bar"><i style="--w:63%"></i></div>
+          <div class="meta" style="font-size:14px">没有到期日 · 1 / 3 台设备在线</div>
+          <div class="hero-foot">
+            <button class="btn hot grow">添加到 App</button>
+            <button class="btn soft">再买同款，叠加上去</button>
+          </div>
+        </div>
+        <h3>这一份</h3>
+        <div class="rows">
+          <div class="row"><span class="ri"><svg class="i"><use href="#i-link"/></svg></span><span class="rt">链接<small>App 里显示为 Pandora · 随用 100G</small></span><span class="rv"><code class="num" style="font-weight:400">····m2Qa</code></span><span class="rv plus" style="font-weight:600">复制</span></div>
+          <div class="row"><span class="ri"><svg class="i"><use href="#i-chart"/></svg></span><span class="rt">节点和每天用量</span><svg class="i chev"><use href="#i-chev"/></svg></div>
+          <div class="row"><span class="ri"><svg class="i"><use href="#i-swap"/></svg></span><span class="rt">换个套餐<small>差价按剩余流量算，换之前先看报价</small></span><svg class="i chev"><use href="#i-chev"/></svg></div>
+          <div class="row"><span class="ri"><svg class="i"><use href="#i-edit"/></svg></span><span class="rt">起个名字</span><svg class="i chev"><use href="#i-chev"/></svg></div>
+          <div class="row"><span class="ri"><svg class="i"><use href="#i-renew"/></svg></span><span class="rt">换新链接<small>旧链接立刻失效，App 里要重新添加</small></span><svg class="i chev"><use href="#i-chev"/></svg></div>
+        </div>
+      </div>
+
+      <!-- 已到期：链接保留，续费后马上恢复 -->
+      <div data-only="expired">
+        <div class="hero off">
+          <span class="pill bad">已到期</span>
+          <div class="eyebrow">Pandora</div>
+          <div><span class="tag">专业版</span></div>
+          <div class="gone">10 月 2 日到期了</div>
+          <div class="meta" style="margin-top:10px">节点已经停了。续费后链接不变，App 里更新一次就能接着用。</div>
+          <div class="hero-foot">
+            <button class="btn hot grow">续费 · <span class="num">¥59</span> / 月</button>
+            <button class="btn soft">另买一份</button>
+          </div>
+        </div>
+        <h3>这一份</h3>
+        <div class="rows">
+          <div class="row"><span class="ri"><svg class="i"><use href="#i-link"/></svg></span><span class="rt">链接<small>续费后照旧能用，不用重新添加</small></span><span class="rv"><code class="num" style="font-weight:400">····PQsM</code></span><span class="rv plus" style="font-weight:600">复制</span></div>
+          <div class="row"><span class="ri"><svg class="i"><use href="#i-chart"/></svg></span><span class="rt">节点和每天用量<small>能看到期前的记录</small></span><svg class="i chev"><use href="#i-chev"/></svg></div>
+          <div class="row"><span class="ri"><svg class="i"><use href="#i-edit"/></svg></span><span class="rt">起个名字</span><svg class="i chev"><use href="#i-chev"/></svg></div>
+        </div>
+        <p class="aside">重置流量、换套餐要在用着的套餐上办，先续费就能接着用。</p>
+      </div>
+
+      <!-- 没有套餐 -->
+      <div data-only="empty">
+        <div class="hero empty">
+          <div class="eyebrow">Pandora</div>
+          <div class="gone" style="margin-top:22px">你还没有套餐</div>
+          <div class="meta" style="margin-top:10px">选一个套餐，拿到链接后添加到 App 就能用。</div>
+          <div class="steps">
+            <span><b class="num">1</b>选套餐、付款</span>
+            <span><b class="num">2</b>复制链接</span>
+            <span><b class="num">3</b>添加到 App</span>
+          </div>
+          <div class="hero-foot">
+            <a class="btn hot grow" href="#plans">去选购</a>
+          </div>
+        </div>
+      </div>
+
+      <div data-only="one multi expired empty">
+        <h3>更多</h3>
+        <div class="rows">
+          <div class="row" data-only="one multi expired"><span class="ri"><svg class="i"><use href="#i-plus"/></svg></span><span class="rt">再买一份，分开用<small>单独的链接、单独的流量，和现在的互不影响</small></span><svg class="i chev"><use href="#i-chev"/></svg></div>
+          <div class="row"><span class="ri"><svg class="i"><use href="#i-card"/></svg></span><span class="rt">有卡？去兑换</span><svg class="i chev"><use href="#i-chev"/></svg></div>
+        </div>
       </div>
     </div>
   </section>
@@ -387,36 +556,103 @@
   <section class="page" id="p-plans">
     <div class="col wide">
       <div class="m-top only-m"><span class="logo">pandora</span></div>
-      <div class="h-row"><h1>选购</h1><div class="seg"><span class="on">按时间</span><span>一次性</span></div></div>
-      <div class="plans">
-        <article class="plan">
-          <div class="eyebrow">Pandora</div><div><span class="tag">标准版</span></div>
-          <p class="desc">日常浏览与社交</p>
-          <div class="price"><span class="cur">¥</span><span class="num">29</span><small>/ 月</small></div>
-          <div class="alt">季付 <b>¥79</b> · 半年 <b>¥149</b> · 年付 <b>¥299</b></div>
-          <div class="rule"></div>
-          <ul><li><span>每期 <b>200 GB</b> 流量</span></li><li><span><b>3 台</b>设备同时用</span></li><li><span><b>常规</b>线路</span></li><li><span>不限速</span></li><li><span>流量重置 <b>¥10</b> / 次，每期 <b>2 次</b></span></li></ul>
-          <button class="btn">买标准版</button>
-        </article>
-        <article class="plan pop">
-          <span class="badge">你在用</span>
-          <div class="eyebrow">Pandora</div><div><span class="tag">专业版</span></div>
-          <p class="desc">亚太精选与欧美线路</p>
-          <div class="price"><span class="cur">¥</span><span class="num">59</span><small>/ 月</small></div>
-          <div class="alt">季付 <b>¥159</b> · 年付 <b>¥599</b></div>
-          <div class="rule"></div>
-          <ul><li><span>每期 <b>500 GB</b> 流量</span></li><li><span><b>5 台</b>设备同时用</span></li><li><span><b>亚太精选 + 欧美</b>线路</span></li><li><span><b>流媒体</b>解锁</span></li><li><span>流量重置 <b>¥10</b> / 次，<b>不限</b>次数</span></li></ul>
-          <button class="btn hot">续费专业版</button>
-        </article>
-        <article class="plan">
-          <div class="eyebrow">Pandora</div><div><span class="tag">家庭版</span></div>
-          <p class="desc">一家人一起用</p>
-          <div class="price"><span class="cur">¥</span><span class="num">49</span><small>/ 月</small></div>
-          <div class="alt">季付 <b>¥139</b> · 年付 <b>¥499</b></div>
-          <div class="rule"></div>
-          <ul><li><span>每期 <b>300 GB</b> 流量</span></li><li><span><b>6 台</b>设备同时用</span></li><li><span><b>常规</b>线路</span></li><li><span>限速 <b>100 Mbps</b></span></li><li><span>流量重置 <b>¥15</b> / 次，<b>不限</b>次数</span></li></ul>
-          <button class="btn">买家庭版</button>
-        </article>
+      <div class="h-row"><h1>选购</h1>
+        <div class="seg" role="tablist"><span class="on" data-k="time" role="tab">按时间</span><span data-k="once" role="tab">一次性</span></div>
+      </div>
+      <p class="seg-cap" data-k="time">月 / 季 / 半年 / 年付，每期给流量，到下一期重新给满</p>
+      <p class="seg-cap" data-k="once" hidden>付一次，流量用完为止，不会清零</p>
+
+      <!-- 按时间 · 桌面：三张并排的卡（参考 Airalo、Adobe 的套餐卡） -->
+      <div class="kind" data-k="time">
+        <div class="plans">
+          <article class="plan">
+            <div class="eyebrow">Pandora</div><div><span class="tag">标准版</span></div>
+            <p class="desc">日常浏览与社交</p>
+            <div class="price"><span class="cur">¥</span><span class="num">29</span><small>/ 月</small></div>
+            <div class="alt">季付 <b>¥79</b> · 半年 <b>¥149</b> · 年付 <b>¥299</b></div>
+            <div class="rule"></div>
+            <ul><li><span>每期 <b>200 GB</b> 流量</span></li><li><span><b>3 台</b>设备同时用</span></li><li><span><b>常规</b>线路</span></li><li><span>不限速</span></li><li><span>流量重置 <b>¥10</b> / 次，每期 <b>2 次</b></span></li></ul>
+            <button class="btn soft">买标准版</button>
+            <p class="next">下一步选：另开一份，或换掉现在的一份</p>
+          </article>
+          <article class="plan pop">
+            <span class="badge">你在用</span>
+            <div class="eyebrow">Pandora</div><div><span class="tag">专业版</span></div>
+            <p class="desc">亚太精选与欧美线路</p>
+            <div class="price"><span class="cur">¥</span><span class="num">59</span><small>/ 月</small></div>
+            <div class="alt">季付 <b>¥159</b> · 年付 <b>¥599</b></div>
+            <div class="rule"></div>
+            <ul><li><span>每期 <b>500 GB</b> 流量</span></li><li><span><b>5 台</b>设备同时用</span></li><li><span><b>亚太精选 + 欧美</b>线路</span></li><li><span><b>流媒体</b>解锁</span></li><li><span>流量重置 <b>¥10</b> / 次，<b>不限</b>次数</span></li></ul>
+            <button class="btn hot">续费专业版</button>
+            <p class="next">下一步选：续在原来那份上，或另开一份</p>
+          </article>
+          <article class="plan">
+            <span class="badge rec">推荐</span>
+            <div class="eyebrow">Pandora</div><div><span class="tag">家庭版</span></div>
+            <p class="desc">一家人一起用</p>
+            <div class="price"><span class="cur">¥</span><span class="num">49</span><small>/ 月</small></div>
+            <div class="alt">季付 <b>¥139</b> · 年付 <b>¥499</b></div>
+            <div class="rule"></div>
+            <ul><li><span>每期 <b>300 GB</b> 流量</span></li><li><span><b>6 台</b>设备同时用</span></li><li><span><b>常规</b>线路</span></li><li><span>限速 <b>100 Mbps</b></span></li><li><span>流量重置 <b>¥15</b> / 次，<b>不限</b>次数</span></li></ul>
+            <button class="btn">买家庭版</button>
+            <p class="next">下一步选：另开一份，或换掉现在的一份</p>
+          </article>
+        </div>
+
+        <!-- 按时间 · 手机：单选列表，选中的那行展开（参考 N26、Klarna 的套餐选择） -->
+        <div class="pick">
+          <details class="pk" name="pk-time">
+            <summary><span class="pk-n">标准版</span><span class="pk-s">每期 200 GB · 3 台</span><span class="pk-p"><b class="num">¥29</b>/ 月</span></summary>
+            <div class="pk-b">
+              <div class="alt">季付 <b>¥79</b> · 半年 <b>¥149</b> · 年付 <b>¥299</b></div>
+              <ul><li><span><b>常规</b>线路</span></li><li><span>不限速</span></li><li><span>流量重置 <b>¥10</b> / 次，每期 <b>2 次</b></span></li></ul>
+              <button class="btn soft">买标准版</button>
+              <p class="next">下一步选：另开一份，或换掉现在的一份</p>
+            </div>
+          </details>
+          <details class="pk cur" name="pk-time" open>
+            <summary><span class="pk-n">专业版 <i class="chip">你在用</i></span><span class="pk-s">每期 500 GB · 5 台</span><span class="pk-p"><b class="num">¥59</b>/ 月</span></summary>
+            <div class="pk-b">
+              <div class="alt">季付 <b>¥159</b> · 年付 <b>¥599</b></div>
+              <ul><li><span><b>亚太精选 + 欧美</b>线路</span></li><li><span><b>流媒体</b>解锁</span></li><li><span>流量重置 <b>¥10</b> / 次，<b>不限</b>次数</span></li></ul>
+              <button class="btn hot">续费专业版</button>
+              <p class="next">下一步选：续在原来那份上，或另开一份</p>
+            </div>
+          </details>
+          <details class="pk" name="pk-time">
+            <summary><span class="pk-n">家庭版 <i class="chip rec">推荐</i></span><span class="pk-s">每期 300 GB · 6 台</span><span class="pk-p"><b class="num">¥49</b>/ 月</span></summary>
+            <div class="pk-b">
+              <div class="alt">季付 <b>¥139</b> · 年付 <b>¥499</b></div>
+              <ul><li><span><b>常规</b>线路</span></li><li><span>限速 <b>100 Mbps</b></span></li><li><span>流量重置 <b>¥15</b> / 次，<b>不限</b>次数</span></li></ul>
+              <button class="btn">买家庭版</button>
+              <p class="next">下一步选：另开一份，或换掉现在的一份</p>
+            </div>
+          </details>
+        </div>
+      </div>
+
+      <!-- 一次性：只差在流量多少，用一行一款的列表（参考 Klarna、Revolut 的 eSIM 流量选择） -->
+      <div class="kind" data-k="once" hidden>
+        <div class="once">
+          <div class="on-row">
+            <div class="on-gb"><span class="num">50</span><small>GB</small></div>
+            <div class="on-t"><b>随用 50G</b><small>90 天内用完 · 3 台设备 · 常规线路</small></div>
+            <div class="on-p"><span class="num">¥25</span></div>
+            <div class="on-a"><button class="btn sm soft">买这个</button><p class="next">下一步选：另开一份，或换掉现在的一份</p></div>
+          </div>
+          <div class="on-row cur">
+            <div class="on-gb"><span class="num">100</span><small>GB</small></div>
+            <div class="on-t"><b>随用 100G <i class="chip">你在用</i></b><small>永久有效 · 3 台设备 · 常规线路</small></div>
+            <div class="on-p"><span class="num">¥39</span></div>
+            <div class="on-a"><button class="btn sm hot">再买一份</button><p class="next">下一步选：叠加到原来那份，或另开一份</p></div>
+          </div>
+          <div class="on-row">
+            <div class="on-gb"><span class="num">300</span><small>GB</small></div>
+            <div class="on-t"><b>随用 300G <i class="chip rec">推荐</i></b><small>永久有效 · 5 台设备 · 亚太精选线路</small></div>
+            <div class="on-p"><span class="num">¥99</span></div>
+            <div class="on-a"><button class="btn sm">买这个</button><p class="next">下一步选：另开一份，或换掉现在的一份</p></div>
+          </div>
+        </div>
       </div>
     </div>
   </section>
@@ -427,26 +663,72 @@
       <div class="m-top only-m"><span class="logo">pandora</span></div>
       <h1>钱包</h1>
       <div class="balance">
-        <div class="lbl">账户余额 · 买套餐、续费时自动先用</div>
+        <div class="lbl">账户余额</div>
         <div class="amt num"><span class="cur">¥</span>26.50</div>
-        <div class="acts"><button class="btn hot grow">充值</button><button class="btn soft grow">兑换卡</button></div>
+        <div class="meta">买套餐、续费都能用，结账时自动先用。不能提现。</div>
+        <div class="acts"><button class="btn hot grow" data-open="topup">充值</button><button class="btn soft grow" data-open="redeem">兑换卡</button></div>
       </div>
 
-      <div class="group-h"><span>2026 年 10 月</span><span>收入 ¥126.50 · 支出 ¥20.00</span></div>
+      <!-- 余额记录：按月分组，不算月度合计（只拿得到最近 100 条，合计会不准） -->
+      <div class="h-row" style="margin-top:34px"><h3 style="margin:0 4px">余额记录</h3></div>
+      <div class="group-h"><span>2026 年 10 月</span></div>
       <div class="rows">
         <div class="row"><span class="ico"><svg class="i"><use href="#i-card"/></svg></span><span class="rt">礼品卡<small>10-12 17:03 · GC-0915-…</small></span><span class="rv num plus">+¥10.00</span></div>
         <div class="row"><span class="ico out"><svg class="i"><use href="#i-out"/></svg></span><span class="rt">下单用余额<small>10-10 17:03 · 订单 PD-2003</small></span><span class="rv num">−¥20.00</span></div>
         <div class="row"><span class="ico"><svg class="i"><use href="#i-in"/></svg></span><span class="rt">充值<small>10-07 17:03 · 支付宝</small></span><span class="rv num plus">+¥100.00</span></div>
         <div class="row"><span class="ico"><svg class="i"><use href="#i-gift"/></svg></span><span class="rt">佣金转入<small>10-01 17:03</small></span><span class="rv num plus">+¥16.50</span></div>
       </div>
-      <div class="group-h"><span>2026 年 9 月</span><span>收入 ¥38.80 · 支出 ¥88.80</span></div>
+      <div class="group-h"><span>2026 年 9 月</span></div>
       <div class="rows">
         <div class="row"><span class="ico"><svg class="i"><use href="#i-in"/></svg></span><span class="rt">挂账转入<small>09-24 17:03</small></span><span class="rv num plus">+¥5.00</span></div>
         <div class="row"><span class="ico"><svg class="i"><use href="#i-swap"/></svg></span><span class="rt">换套餐退回<small>09-16 17:03 · 差额退回</small></span><span class="rv num plus">+¥3.80</span></div>
         <div class="row"><span class="ico out"><svg class="i"><use href="#i-out"/></svg></span><span class="rt">人工调整<small>09-13 17:03 · 重复充值退回</small></span><span class="rv num">−¥88.80</span></div>
       </div>
+      <button class="more">显示全部 23 条</button>
     </div>
   </section>
+
+  <!-- 充值：大号金额 + 金额格子 + 支付方式 + 按钮写明金额（参考 Cleo、Greenlight、7-Eleven 的充值页） -->
+  <div class="sheet" id="sh-topup" hidden>
+    <div class="sh-card" role="dialog" aria-label="充值">
+      <div class="sh-top"><b>充值</b><button class="x" data-close aria-label="关闭">×</button></div>
+      <div class="amt-show"><span class="num cur">¥</span><span class="num">100</span></div>
+      <div class="amts" role="radiogroup" aria-label="充值金额">
+        <button class="am">¥50</button><button class="am on">¥100</button><button class="am">¥200</button><button class="am">¥500</button><button class="am">其他</button>
+      </div>
+      <p class="faint">最少 ¥1，单次最多 ¥50,000</p>
+      <div class="sh-lbl">支付方式</div>
+      <div class="pays">
+        <label class="pay on"><span class="pi ali">支</span><span class="pt">支付宝</span><span class="dot-r"></span></label>
+        <label class="pay"><span class="pi wx">微</span><span class="pt">微信支付<small>手续费 ¥0.60</small></span><span class="dot-r"></span></label>
+      </div>
+      <button class="btn hot full">充值 <span class="num">¥100.00</span></button>
+    </div>
+  </div>
+
+  <!-- 兑换卡 · 第一步：一个输入框（参考 Wolt、DoorDash、Deliveroo 的兑换码） -->
+  <div class="sheet" id="sh-redeem" hidden>
+    <div class="sh-card" role="dialog" aria-label="兑换卡">
+      <div class="sh-top"><b>兑换卡</b><button class="x" data-close aria-label="关闭">×</button></div>
+      <p class="sh-p">套餐卡、加时长卡、流量重置卡都在这里兑换。余额卡兑换后直接进钱包。</p>
+      <input class="code" placeholder="卡上的一串字母和数字" value="PDGC-7KQ2-M9XA-31" aria-label="卡号" />
+      <button class="btn hot full" data-open="redeem2">兑换</button>
+      <a class="sh-link" href="#wallet">兑换过的卡 ›</a>
+    </div>
+  </div>
+
+  <!-- 兑换卡 · 第二步：认出是套餐卡，让用户选落点（真实门户的「这张卡怎么用？」） -->
+  <div class="sheet" id="sh-redeem2" hidden>
+    <div class="sh-card" role="dialog" aria-label="这张卡怎么用">
+      <div class="sh-top"><b>这张卡怎么用？</b><button class="x" data-close aria-label="关闭">×</button></div>
+      <div class="gc"><span class="eyebrow" style="font-size:15px">Pandora · 套餐卡</span><span class="gc-n">专业版 · 1 个月</span><span class="faint" style="margin:0">PDGC-7KQ2-M9XA-31</span></div>
+      <div class="opts">
+        <label class="opt on"><span class="dot-r"></span><span class="ot"><b>加到你现在的专业版上 <i class="chip">同款，最常见</i></b><small>到期日顺延到 12 月 27 日，链接没变</small></span></label>
+        <label class="opt"><span class="dot-r"></span><span class="ot"><b>另开一份新的</b><small>单独的链接、单独的流量，今天起到 11 月 16 日</small></span></label>
+      </div>
+      <button class="btn hot full">兑换</button>
+    </div>
+  </div>
 
   <!-- ================= 订单 ================= -->
   <section class="page" id="p-orders">
@@ -525,19 +807,41 @@
   addEventListener('hashchange', show)
   show()
 
-  // 配色切换：?pal=a|b|c|d，&shot=1 截图时隐藏切换条
+  // 样稿状态：?s=one|multi|expired|empty（默认 one），&c=1|2|3 预选多份里的某一份，&shot=1 截图时隐藏切换条
   const q = new URLSearchParams(location.search)
-  const pal = ['a', 'b', 'c', 'd'].includes(q.get('pal')) ? q.get('pal') : 'a'
-  document.documentElement.dataset.pal = pal
+  const st = ['one', 'multi', 'expired', 'empty'].includes(q.get('s')) ? q.get('s') : 'one'
   if (q.get('shot')) document.documentElement.classList.add('shot')
+  document.querySelectorAll('[data-only]').forEach((el) => {
+    if (el.dataset.only.split(' ').includes(st)) el.removeAttribute('data-only')
+  })
+  function pick(c) {
+    document.querySelectorAll('.cp').forEach((el) => el.classList.toggle('on', el.dataset.c === c))
+    document.querySelectorAll('.copy').forEach((el) => el.classList.toggle('on', el.dataset.c === c))
+  }
+  document.querySelectorAll('.cp').forEach((el) => el.addEventListener('click', () => pick(el.dataset.c)))
+  if (st === 'multi' && q.get('c')) pick(q.get('c'))
+  // 选购：按时间 / 一次性切换，?k=once 预选
+  function kind(k) {
+    document.querySelectorAll('.seg [data-k]').forEach((el) => el.classList.toggle('on', el.dataset.k === k))
+    document.querySelectorAll('.seg-cap, .kind').forEach((el) => { el.hidden = el.dataset.k !== k })
+  }
+  document.querySelectorAll('.seg [data-k]').forEach((el) => el.addEventListener('click', () => kind(el.dataset.k)))
+  if (q.get('k') === 'once') kind('once')
+  // 钱包：充值 / 兑换卡弹层，?w=topup|redeem|redeem2 预开
+  function sheet(id) {
+    document.querySelectorAll('.sheet').forEach((el) => { el.hidden = el.id !== 'sh-' + id })
+  }
+  document.querySelectorAll('[data-open]').forEach((el) => el.addEventListener('click', () => sheet(el.dataset.open)))
+  document.querySelectorAll('.sheet').forEach((el) => el.addEventListener('click', (e) => { if (e.target === el || e.target.closest('[data-close]')) el.hidden = true }))
+  addEventListener('keydown', (e) => { if (e.key === 'Escape') sheet('') })
+  if (q.get('w')) sheet(q.get('w'))
   const bar = document.createElement('nav')
   bar.className = 'pal'
-  ;[['a', 'A 朱砂墨'], ['b', 'B 深海珊瑚'], ['c', 'C 雾蓝'], ['d', 'D 森林绿']].forEach(([k, t]) => {
+  ;[['one', '一份'], ['multi', '三份'], ['expired', '已到期'], ['empty', '没有套餐']].forEach(([k, t]) => {
     const a = document.createElement('a')
     a.textContent = t
-    a.href = '?pal=' + k + location.hash
-    a.className = k === pal ? 'on' : ''
-    a.addEventListener('click', (e) => { e.preventDefault(); location.href = '?pal=' + k + location.hash })
+    a.href = '?s=' + k + '#subs'
+    a.className = k === st ? 'on' : ''
     bar.append(a)
   })
   document.body.append(bar)
