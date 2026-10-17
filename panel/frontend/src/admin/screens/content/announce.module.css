@@ -8,17 +8,6 @@
   min-width: 0;
 }
 
-/* 置顶标记：品牌色细框小字 */
-.pin {
-  flex: none;
-  padding: 0 6px;
-  border: 1px solid var(--brand);
-  color: var(--brand);
-  font-size: 11px;
-  font-weight: var(--fw-semibold);
-  white-space: nowrap;
-}
-
 /* 表格标题列：加粗、单行省略 */
 .annTitle {
   display: flex;
@@ -36,9 +25,9 @@
   white-space: nowrap;
 }
 
-/* 单元格内容的淡显外壳：Table 没有行类名，已撤回的行在每个单元格里包一层 */
-.dim {
-  opacity: 0.6;
+/* 已撤回的行整行淡显（样稿 tr.dimrow td） */
+.dimRow td {
+  opacity: 0.5;
 }
 
 /* 级别文字颜色（设计稿 220–229：普通灰、提示 info、警告 warn、紧急 danger） */
@@ -58,9 +47,9 @@
   color: var(--danger);
 }
 
-/* 时间列：12px 灰、右对齐（对齐由 Table 列的 align 管，这里只管字） */
+/* 时间列：次要色、右对齐（对齐由 Table 列的 align 管，这里只管字） */
 .when {
-  color: var(--text-3);
+  color: var(--text-2);
   font-size: var(--fs-caption);
   white-space: nowrap;
 }

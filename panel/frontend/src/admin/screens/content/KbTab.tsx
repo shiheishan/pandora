@@ -1,6 +1,9 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { Add01Icon } from '@hugeicons-pro/core-stroke-rounded'
 import { navigate, useHashLocation } from '../../../core/router'
 import { Button, Empty, FilterTabs, Modal, QueryView, Table, Tag, Toolbar, SearchField, IconClose } from '../../../ui'
+import { PageActions } from '../../kit'
 import { KbEditor } from './KbEditor'
 import css from './kb.module.css'
 import { articleRows, groupArticles, KIND_LABEL, knownCategories, PAGE_STATUS_LABEL, platformsLabel, type Article } from './logic'
@@ -49,105 +52,107 @@ export function KbTab({ rest }: { rest: string[] }) {
   const startNew = () => open('new')
 
   return (
-    <QueryView query={pages} rows={6} empty={null} isEmpty={() => false}>
-      {(list) => {
-        const articles = groupArticles(list)
-        const rows = articleRows(articles, q)
-        const current: Article | 'new' | null = selected === 'new' ? 'new' : selected ? (articles.find((a) => a.slug === selected) ?? null) : null
-        return (
-          <div className={css.page}>
-            <Toolbar
-              end={
-                <Button variant="primary" onClick={startNew}>
-                  新建文章
-                </Button>
-              }
-            >
-              <SearchBox value={q} onChange={(text) => setList({ q: text })} />
-              <FilterTabs
-                label="按类型筛选"
-                value={kind}
-                items={KINDS.map((k) => ({ value: k, label: KIND_LABEL[k] }))}
-                onChange={(k) => setList({ kind: k })}
-              />
-            </Toolbar>
-            <Table
-              label="文章列表"
-              rows={rows}
-              rowKey={(a) => a.slug}
-              onRowClick={(a) => open(a.slug)}
-              columns={[
-                {
-                  key: 'title',
-                  header: '标题',
-                  render: (a) =>
-                    dim(
-                      a,
+    <>
+      <PageActions>
+        <Button variant="primary" onClick={startNew}>
+          <HugeiconsIcon icon={Add01Icon} size={16} aria-hidden="true" />
+          新建文章
+        </Button>
+      </PageActions>
+      <QueryView query={pages} rows={6} empty={null} isEmpty={() => false}>
+        {(list) => {
+          const articles = groupArticles(list)
+          const rows = articleRows(articles, q)
+          const current: Article | 'new' | null = selected === 'new' ? 'new' : selected ? (articles.find((a) => a.slug === selected) ?? null) : null
+          return (
+            <div className={css.page}>
+              <Toolbar>
+                <SearchBox value={q} onChange={(text) => setList({ q: text })} />
+                <FilterTabs
+                  label="按类型筛选"
+                  value={kind}
+                  items={KINDS.map((k) => ({ value: k, label: KIND_LABEL[k] }))}
+                  onChange={(k) => setList({ kind: k })}
+                />
+              </Toolbar>
+              <Table
+                boxed
+                label="文章列表"
+                rows={rows}
+                rowKey={(a) => a.slug}
+                rowClassName={(a) => (a.archived ? css.dimRow : undefined)}
+                onRowClick={(a) => open(a.slug)}
+                columns={[
+                  {
+                    key: 'title',
+                    header: '标题',
+                    render: (a) => (
                       <span className={css.titleCell}>
                         <span className={css.titleMain}>{a.latest.title}</span>
                         <span className={css.titleSlug}>{a.slug}</span>
-                      </span>,
+                      </span>
                     ),
-                },
-                {
-                  key: 'category',
-                  header: '分类',
-                  width: '112px',
-                  render: (a) => dim(a, <span className={css.cat}>{a.latest.category?.trim() || '未分类'}</span>),
-                },
-                {
-                  key: 'platforms',
-                  header: '平台',
-                  width: '140px',
-                  render: (a) => dim(a, <span className={css.plats}>{platformsLabel(a.latest.target_platforms)}</span>),
-                },
-                {
-                  key: 'status',
-                  header: '状态',
-                  width: '72px',
-                  render: (a) => dim(a, <Tag tone={STATUS_TONE[a.latest.status]}>{PAGE_STATUS_LABEL[a.latest.status]}</Tag>),
-                },
-                {
-                  key: 'version',
-                  header: '版本',
-                  width: '56px',
-                  align: 'right',
-                  render: (a) => dim(a, <span className={css.ver}>v{a.latest.version}</span>),
-                },
-              ]}
-              empty={
-                articles.length === 0 ? (
-                  <Empty bare title={`还没有${KIND_LABEL[kind]}`} description="点「新建文章」写第一篇。" />
-                ) : q.trim() ? (
-                  <Empty bare title="没有匹配的文章" description="换个关键词，或清空搜索。" />
-                ) : (
-                  <Empty bare title={`还没有${KIND_LABEL[kind]}`} />
-                )
-              }
-            />
-            {selected === null ? null : current === 'new' ? (
-              <KbEditor key={`new:${kind}`} article={null} page={null} kind={kind} categories={knownCategories(articles)} takenSlugs={articles.map((a) => a.slug)} onClose={close} />
-            ) : current ? (
-              <KbArticleModal key={current.slug} article={current} categories={knownCategories(articles)} onClose={close} />
-            ) : (
-              <Modal
-                open
-                size={720}
-                title="文章"
-                onClose={close}
-                headExtra={
-                  <Button variant="ghost" size="sm" aria-label="关闭" onClick={close}>
-                    <IconClose />
-                  </Button>
+                  },
+                  {
+                    key: 'category',
+                    header: '分类',
+                    width: '112px',
+                    render: (a) => <span className={css.cat}>{a.latest.category?.trim() || '未分类'}</span>,
+                  },
+                  {
+                    key: 'platforms',
+                    header: '平台',
+                    width: '140px',
+                    render: (a) => <span className={css.plats}>{platformsLabel(a.latest.target_platforms)}</span>,
+                  },
+                  {
+                    key: 'status',
+                    header: '状态',
+                    width: '72px',
+                    render: (a) => <Tag tone={STATUS_TONE[a.latest.status]}>{PAGE_STATUS_LABEL[a.latest.status]}</Tag>,
+                  },
+                  {
+                    key: 'version',
+                    header: '版本',
+                    width: '56px',
+                    align: 'right',
+                    render: (a) => <span className={css.ver}>v{a.latest.version}</span>,
+                  },
+                ]}
+                empty={
+                  articles.length === 0 ? (
+                    <Empty bare title={`还没有${KIND_LABEL[kind]}`} description="点「新建文章」写第一篇。" />
+                  ) : q.trim() ? (
+                    <Empty bare title="没有匹配的文章" description="换个关键词，或清空搜索。" />
+                  ) : (
+                    <Empty bare title={`还没有${KIND_LABEL[kind]}`} />
+                  )
                 }
-              >
-                <Empty bare title="文章不存在或已删除" />
-              </Modal>
-            )}
-          </div>
-        )
-      }}
-    </QueryView>
+              />
+              {selected === null ? null : current === 'new' ? (
+                <KbEditor key={`new:${kind}`} article={null} page={null} kind={kind} categories={knownCategories(articles)} takenSlugs={articles.map((a) => a.slug)} onClose={close} />
+              ) : current ? (
+                <KbArticleModal key={current.slug} article={current} categories={knownCategories(articles)} onClose={close} />
+              ) : (
+                <Modal
+                  open
+                  size={720}
+                  title="文章"
+                  onClose={close}
+                  headExtra={
+                    <Button variant="ghost" size="sm" aria-label="关闭" onClick={close}>
+                      <IconClose />
+                    </Button>
+                  }
+                >
+                  <Empty bare title="文章不存在或已删除" />
+                </Modal>
+              )}
+            </div>
+          )
+        }}
+      </QueryView>
+    </>
   )
 }
 
@@ -191,8 +196,4 @@ function SearchBox({ value, onChange }: { value: string; onChange: (q: string) =
     return () => clearTimeout(timer)
   }, [text, value, onChange])
   return <SearchField value={text} onChange={(e) => setText(e.target.value)} placeholder="标题或标识" aria-label="搜索文章" width={240} />
-}
-
-function dim(a: Article, node: ReactNode): ReactNode {
-  return a.archived ? <span className={css.dim}>{node}</span> : node
 }
