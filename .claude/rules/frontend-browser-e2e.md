@@ -20,7 +20,7 @@ paths:
   - 种子写在状态目录的 `browser-world.json`（0600），文件在就整份复用，同一套栈重跑不撞套餐编码
   - 类型检查走 `npm run typecheck`（`tsconfig.node.json` 收 `tests/` 下除 smoke 外的文件），lint 走 `npm run lint`
 - 选择器只用角色与可见文字（`getByRole` / `getByText` / `getByLabel`），不为测试给组件加 `data-testid`
-  - 选购页有「按时间 / 一次性」两个标签（`tablist`「套餐类型」）：一次性套餐要先点「一次性」；有份时买别的套餐先过落点选择（`radiogroup`「<套餐名>放到哪里」，不预选）
+  - 选购页有「按时间 / 一次性」分段控件（`radiogroup`「套餐类型」，10-16 样稿）：一次性套餐要先点「一次性」；有份时买别的套餐先过落点选择（`radiogroup`「<套餐名>放到哪里」，不预选）
   - 我的套餐的卡片是 `<article>`、套餐卡是 `<section>`，按标题 heading 过滤（`card` / `planCard`）；完成页按「发生了什么」下的列表读（`happened`）
   - 开关（ui/Switch）的透明 checkbox 被轨道盖住，点外面那层 label（`setSwitch`），和人点的是同一处
   - 后台写操作要重新认证时，`openAdmin` 挂的 `addLocatorHandler` 自动在弹框里填口令；登录自带 15 分钟窗口，通常不出现
