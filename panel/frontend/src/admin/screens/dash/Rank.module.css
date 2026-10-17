@@ -1,12 +1,12 @@
 /* ===========================================================================
  * 仪表盘「流量排行」卡样式（Rank.module.css，样稿 admin-v4 #p-dash .two .box）
- * 结构：标题 48 / 表头 34 / 8 行每行 40 / 页脚 44，列表区最小 320px
+ * 结构：标题 48 / 表头 34 / 8 行每行 40 / 页脚；两卡等高靠 ui Card 内容区 flex: 1，不再写最小高度
  * ========================================================================= */
 
 .body {
   display: flex;
   flex-direction: column;
-  min-height: 354px; /* 表头 34px + 列表 320px */
+  flex: 1;
 }
 
 /* 表头行（样稿 .lh.rk-g，34 高、12px --text-3、下边线） */
@@ -26,10 +26,9 @@
   text-align: right;
 }
 
-/* 列表容器 min-height: 320px（8 × 40），无默认列表样式 */
+/* 列表容器，无默认列表样式 */
 .rankList {
   flex: 1;
-  min-height: 320px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -109,20 +108,18 @@
   white-space: nowrap;
 }
 
-/* 空状态占位容器：占满至少 320px 高 */
+/* 空状态占位容器：撑满卡片内容区 */
 .emptyWrap {
   flex: 1;
   display: flex;
-  min-height: 320px;
 }
 
-/* 骨架屏占位容器：占满至少 320px 高 */
+/* 骨架屏占位容器：撑满卡片内容区 */
 .skeletonWrap {
   flex: 1;
   display: flex;
   flex-direction: column;
   justify-content: center;
-  min-height: 320px;
 }
 
 /* 卡片页脚左侧文字（13px --text-3、等宽数字） */

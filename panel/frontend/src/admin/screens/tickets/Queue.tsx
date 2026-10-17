@@ -81,7 +81,7 @@ export function Queue({
         />
         {help && (
           <span className={css.help}>
-            <PageHelpTip help={help} />
+            <PageHelpTip help={help} align="start" />
           </span>
         )}
       </div>

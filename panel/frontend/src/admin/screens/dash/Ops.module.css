@@ -1,12 +1,12 @@
 /* ===========================================================================
  * 仪表盘「系统状态」卡与备份抽屉（Ops.module.css，样稿 admin-v4 #p-dash .two .box）
- * 结构：标题 48 / 表头 34 / 8 行每行 40 / 页脚 44，列表区最小 320px
+ * 结构：标题 48 / 表头 34 / 8 行每行 40 / 页脚；两卡等高靠 ui Card 内容区 flex: 1，不再写最小高度
  * ========================================================================= */
 
 .body {
   display: flex;
   flex-direction: column;
-  min-height: 354px; /* 表头 34px + 列表 320px */
+  flex: 1;
 }
 
 /* 表头行（样稿 .lh.sv-g） */
@@ -29,7 +29,6 @@
 /* 列表容器 */
 .list {
   flex: 1;
-  min-height: 320px;
 }
 
 /* 行（样稿 .ln.sv-g） */
@@ -90,7 +89,6 @@
 .skeletonWrap {
   flex: 1;
   display: flex;
-  min-height: 354px;
   flex-direction: column;
   justify-content: center;
 }

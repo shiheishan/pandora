@@ -1,5 +1,4 @@
 import { ArrowUp01Icon } from '@hugeicons-pro/core-stroke-rounded'
-import { HugeiconsIcon } from '@hugeicons/react'
 import { href } from '../../../core/router'
 import { Button } from '../../../ui'
 import type { TicketDetail } from './api'
@@ -94,8 +93,8 @@ export function Props({ t, controls }: { t: TicketDetail; controls: TicketContro
         className={css.escalate}
         disabled={controls.escalate.escalated}
         onClick={controls.escalate.open}
+        icon={ArrowUp01Icon}
       >
-        <HugeiconsIcon icon={ArrowUp01Icon} size={14} strokeWidth={1.8} aria-hidden />
         {controls.escalate.escalated ? '已升级到 L2' : '升级到 L2'}
       </Button>
       <p className={css.hint}>升级会把优先级提到至少「高」，并在对话里留一条系统记录。</p>

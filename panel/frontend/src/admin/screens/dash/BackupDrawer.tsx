@@ -6,12 +6,13 @@ import { backupSummary } from './system'
 
 const yesNo = (v: boolean | undefined, yes: string, no: string) => (v === undefined ? '—' : v ? yes : no)
 
+// 手机上只留文件与时间两列；缺校验、缺封条的份数在上方摘要里已经写明
 const COLUMNS: TableColumn<BackupFile>[] = [
   { key: 'name', header: '文件', mono: true, render: (f) => f.name },
-  { key: 'size', header: '大小', align: 'right', render: (f) => formatBytes(f.size) },
+  { key: 'size', header: '大小', align: 'right', hideOnMobile: true, render: (f) => formatBytes(f.size) },
   { key: 'at', header: '时间', render: (f) => <span title={formatDateTime(f.created_at)}>{relativeTime(f.created_at)}</span> },
-  { key: 'sum', header: '校验', render: (f) => (f.has_checksum ? <Tag tone="ok">有</Tag> : <Tag tone="danger">缺失</Tag>) },
-  { key: 'seal', header: '封条', render: (f) => (f.has_seal ? <Tag tone="ok">有</Tag> : <Tag tone="danger">缺失</Tag>) },
+  { key: 'sum', header: '校验', hideOnMobile: true, render: (f) => (f.has_checksum ? <Tag tone="ok">有</Tag> : <Tag tone="danger">缺失</Tag>) },
+  { key: 'seal', header: '封条', hideOnMobile: true, render: (f) => (f.has_seal ? <Tag tone="ok">有</Tag> : <Tag tone="danger">缺失</Tag>) },
 ]
 
 export function BackupDrawer({ open, onClose, backup }: { open: boolean; onClose: () => void; backup: BackupStatus }) {

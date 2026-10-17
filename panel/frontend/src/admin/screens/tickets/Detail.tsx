@@ -114,8 +114,8 @@ function Loaded({ t, backHref }: { t: TicketDetail; backHref: string }) {
                 variant="secondary"
                 disabled={controls.escalate.escalated}
                 onClick={controls.escalate.open}
+                icon={ArrowUp01Icon}
               >
-                <HugeiconsIcon icon={ArrowUp01Icon} size={14} strokeWidth={1.8} aria-hidden />
                 {controls.escalate.escalated ? '已升级' : '升级到 L2'}
               </Button>
             </div>
