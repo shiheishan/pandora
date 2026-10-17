@@ -2,10 +2,11 @@ import { useState, type FormEvent } from 'react'
 import { z } from 'zod'
 import { isApiError } from '../core/api'
 import { useRuntime } from '../shell/runtime'
-import { Button, Input, useToast } from '../ui'
+import { Input } from '../ui'
 import { useCaptcha } from './Captcha'
 import captchaCss from './Captcha.module.css'
 import css from './AuthPage.module.css'
+import { Btn, Icon } from './kit'
 import { useSignupConfig } from './queries'
 
 // ---------------------------------------------------------------------------
@@ -31,7 +32,6 @@ function resetPasswordProblem(value: string): string | null {
 
 export function PasswordResetForm({ onDone, onCancel }: { onDone: (email: string) => void; onCancel: () => void }) {
   const { api } = useRuntime()
-  const toast = useToast()
   const signup = useSignupConfig()
   const cap = useCaptcha(signup.data?.captcha ?? null)
   const [email, setEmail] = useState('')
@@ -45,10 +45,6 @@ export function PasswordResetForm({ onDone, onCancel }: { onDone: (email: string
     captcha?: string
   }>({})
   const [busy, setBusy] = useState(false)
-
-  const lead = started
-    ? `如果 ${email.trim()} 已注册，验证码已发送，10 分钟内有效。重设后这个账号在所有设备上的登录都会退出。`
-    : '输入注册时用的邮箱，我们会发一个验证码过去。'
 
   const start = async (event: FormEvent) => {
     event.preventDefault()
@@ -70,7 +66,6 @@ export function PasswordResetForm({ onDone, onCancel }: { onDone: (email: string
         body,
       })
       setStarted(out)
-      toast(out.message)
     } catch (err) {
       cap.reset()
       const nextErr: typeof errors = {}
@@ -97,7 +92,6 @@ export function PasswordResetForm({ onDone, onCancel }: { onDone: (email: string
         auth: false,
         body: { email: email.trim(), code, new_password: password },
       })
-      toast('密码已重设，所有设备上的登录都已退出，请用新密码登录')
       onDone(email.trim())
     } catch (err) {
       setBusy(false)
@@ -110,60 +104,66 @@ export function PasswordResetForm({ onDone, onCancel }: { onDone: (email: string
 
   return (
     <>
-      <div className={css.head}>
-        <h2 className={css.headTitle}>找回密码</h2>
-        <p className={css.muted}>{lead}</p>
-      </div>
+      <button type="button" className={css.back} onClick={onCancel}>
+        <Icon name="chev" size={16} />
+        返回登录
+      </button>
+      <h2 className={css.h}>找回密码</h2>
       {!started ? (
-        <form className={css.form} onSubmit={start} noValidate>
-          <Input label="邮箱" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} error={errors.email} />
-          {cap.element}
-          {errors.captcha && (
-            <p className={captchaCss.error} role="alert">
-              {errors.captcha}
-            </p>
-          )}
-          <div className={css.row}>
-            <Button onClick={onCancel} disabled={busy}>
-              返回登录
-            </Button>
-            <Button type="submit" variant="primary" busy={busy} className={css.grow}>
+        <>
+          <p className={css.p}>输入注册时用的邮箱，我们会发一个验证码过去。</p>
+          <form className={css.form} onSubmit={start} noValidate>
+            <Input
+              label="邮箱"
+              type="email"
+              autoComplete="username"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              error={errors.email}
+            />
+            {cap.element}
+            {errors.captcha && (
+              <p className={captchaCss.error} role="alert">
+                {errors.captcha}
+              </p>
+            )}
+            <Btn type="submit" full busy={busy} className={css.submit}>
               发送验证码
-            </Button>
-          </div>
-        </form>
+            </Btn>
+          </form>
+        </>
       ) : (
-        <form className={css.form} onSubmit={complete} noValidate>
-          <Input
-            label="验证码"
-            mono
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            placeholder="6 位数字"
-            className={css.code}
-            value={code}
-            onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-            error={errors.code}
-            hint={started.dev_code ? `开发模式验证码：${started.dev_code}` : undefined}
-          />
-          <Input
-            label="新密码"
-            type="password"
-            autoComplete="new-password"
-            hint="至少 8 位，同时包含字母和数字"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            error={errors.password}
-          />
-          <div className={css.row}>
-            <Button onClick={onCancel} disabled={busy}>
-              返回登录
-            </Button>
-            <Button type="submit" variant="primary" busy={busy} className={css.grow}>
+        <>
+          <p className={css.p}>
+            如果 <b>{email.trim()}</b> 已注册，验证码已发送，10 分钟内有效。重设后这个账号在所有设备上的登录都会退出。
+          </p>
+          <form className={css.form} onSubmit={complete} noValidate>
+            <Input
+              label="验证码"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              placeholder="6 位数字"
+              className={css.otp}
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              error={errors.code}
+              hint={started.dev_code ? `开发模式验证码：${started.dev_code}` : undefined}
+            />
+            <Input
+              label="新密码"
+              type="password"
+              autoComplete="new-password"
+              hint="至少 8 位，同时包含字母和数字"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              error={errors.password}
+            />
+            <Btn type="submit" full busy={busy} className={css.submit}>
               重设密码
-            </Button>
-          </div>
-        </form>
+            </Btn>
+          </form>
+        </>
       )}
     </>
   )

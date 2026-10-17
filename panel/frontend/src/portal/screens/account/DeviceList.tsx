@@ -25,7 +25,7 @@ export function DeviceList({ onChangePassword }: { onChangePassword: () => void 
 
           return (
             <>
-              <Rows className={css.devs}>
+              <Rows>
                 {sorted.map((s) => {
                   const name = deviceName(s.user_agent)
                   const icon = deviceKind(s.user_agent) === 'phone' ? 'phone' : 'desk'
