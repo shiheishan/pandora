@@ -283,10 +283,74 @@
   .ico.out { color: var(--text-2); }
 
   /* 订单 */
-  .ord .rt b { font-weight: 600; }
-  .st { font-size: 12px; padding: 2px 8px; border-radius: 6px; background: var(--bg); color: var(--text-2); margin-left: 8px; font-weight: 400; }
+  .st { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 6px; background: var(--bg); color: var(--text-2); font-weight: 400; white-space: nowrap; }
   .st.ok { background: #e4f1e8; color: #23603c; } /* 已支付保持语义绿 */
   .st.warn { background: var(--warn-bg); color: var(--warn); }
+  /* 待支付：单独成卡放最上面，倒计时 + 三个动作（参考 OKX Orders 的 Pending 置顶、talabat 订单卡的状态条与按钮） */
+  .pend { border-radius: 22px; padding: 20px 22px 18px; background: #fff; box-shadow: var(--lift), 0 0 0 1px rgba(208, 138, 26, 0.28); }
+  .pend + .pend { margin-top: 12px; }
+  .pend-top { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--warn); }
+  .pend-top .cd { margin-left: auto; }
+  .pend-main { display: flex; align-items: flex-end; gap: 16px; margin-top: 14px; }
+  .pend-main > div:first-child { flex: 1; min-width: 0; }
+  .pend-t { display: block; font-size: 18px; font-weight: 600; }
+  .pend-main small { display: block; margin-top: 4px; font-size: 13px; color: var(--text-2); }
+  .mono { font-family: var(--tw); font-size: 13.5px; color: var(--text-2); }
+  .pend-amt { font-size: 30px; line-height: 1; }
+  .pend-acts { display: flex; align-items: center; gap: 10px; margin-top: 18px; }
+  .lnk { all: unset; cursor: pointer; font-size: 14px; color: var(--text-2); padding: 8px 6px; margin-left: auto; }
+  .lnk:hover { color: var(--danger); }
+  .pend-note { margin: 14px 0 0; padding: 10px 12px; border-radius: 12px; background: var(--paper-2); font-size: 13.5px; color: var(--text-2); }
+  .pend-note[hidden] { display: none; }
+  /* 已结束：筛选 + 月份分组 + 行内展开收据（参考 Shopify Orders 的筛选与右侧金额、Uber Eats / Shop 的收据分段） */
+  .tools { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 34px 0 0; }
+  .tools .seg span { padding: 7px 14px; }
+  .tools .seg em { font-style: normal; font-family: var(--tw); font-weight: 700; margin-left: 4px; color: var(--text-3); }
+  .tools .seg .on em { color: var(--text-2); }
+  .tools .hint { font-size: 13px; color: var(--text-3); }
+  .od + .od { box-shadow: 0 -1px 0 var(--line); }
+  .od > summary { list-style: none; }
+  .od > summary::-webkit-details-marker { display: none; }
+  .od > summary:focus-visible { outline: 2px solid var(--act); outline-offset: -2px; }
+  .od[open] > summary { background: var(--paper-2); }
+  .od .rt b { font-weight: 600; }
+  .od.off .rt b, .od.off .oa .num { color: var(--text-2); font-weight: 500; }
+  .oa { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+  .oa .num { font-size: 15.5px; }
+  .od > summary svg.chev { width: 18px; height: 18px; color: var(--text-3); transition: transform 0.2s; }
+  .od[open] > summary svg.chev { transform: rotate(90deg); }
+  .rc { padding: 4px 20px 20px 70px; background: var(--paper-2); }
+  .rc-res { display: flex; align-items: center; gap: 8px; font-size: 14.5px; font-weight: 600; padding: 12px 0 14px; }
+  .rc-res i { width: 20px; height: 20px; border-radius: 50%; flex: none; display: flex; align-items: center; justify-content: center; font-style: normal; font-size: 12px; background: #e4f1e8; color: #23603c; }
+  .rc-res.off { color: var(--text-2); font-weight: 500; }
+  .rc-res.off i { background: var(--bg); color: var(--text-2); }
+  .rc-box { border-radius: 16px; background: #fff; box-shadow: 0 0 0 1px var(--line); padding: 6px 16px; }
+  .rc-ln { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; font-size: 14px; color: var(--text-2); }
+  .rc-ln .num { font-size: 14.5px; color: var(--ink); font-weight: 400; }
+  .rc-ln code { font-family: var(--tw); font-size: 13px; padding: 1px 6px; border-radius: 5px; background: var(--bg); margin-left: 6px; }
+  .rc-ln.tot { box-shadow: 0 -1px 0 var(--line); margin-top: 4px; padding-top: 12px; color: var(--ink); font-weight: 600; }
+  .rc-ln.tot .num { font-weight: 700; font-size: 17px; }
+  .rc-h { font-size: 12.5px; color: var(--text-3); margin: 16px 2px 8px; }
+  .rc-pay { display: flex; align-items: center; gap: 12px; font-size: 14.5px; }
+  .rc-pay .pt small { margin-top: 1px; }
+  .rc-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 16px; padding-top: 14px; box-shadow: 0 -1px 0 var(--line); font-size: 13.5px; color: var(--text-2); }
+  .rc-foot button { all: unset; cursor: pointer; color: var(--act); font-weight: 600; margin-left: 6px; }
+  .rc-foot a { color: var(--act); }
+  .group-h .sum { font-family: var(--tw); }
+  .o-empty { text-align: center; padding: 56px 24px 44px; }
+  .o-empty .ri { margin: 0 auto 16px; width: 52px; height: 52px; border-radius: 16px; background: #fff; box-shadow: var(--lift); display: flex; align-items: center; justify-content: center; color: var(--deep); }
+  .o-empty b { display: block; font-size: 19px; font-weight: 600; }
+  .o-empty p { margin: 8px 0 22px; font-size: 14.5px; color: var(--text-2); }
+  /* 支付与取消弹层 */
+  .ps { display: flex; align-items: center; gap: 12px; margin: 14px 0 4px; padding: 16px 18px; border-radius: 16px; background: var(--paper-2); box-shadow: 0 0 0 1px var(--line); }
+  .ps > span:first-child { flex: 1; min-width: 0; font-size: 15px; font-weight: 600; }
+  .ps small { display: block; font-weight: 400; margin-top: 3px; }
+  .ps .num { font-size: 26px; }
+  .swb { margin-top: 18px; padding: 14px 16px; border-radius: 14px; background: var(--bg); font-size: 13.5px; color: var(--text-2); line-height: 1.55; }
+  .swb p { margin: 0 0 10px; }
+  .sh-acts { display: flex; gap: 10px; margin-top: 22px; }
+  .sh-acts .btn { flex: 1; }
+  .btn.danger { background: var(--danger); border-color: #7d1c2b; box-shadow: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 10px 22px -12px rgba(125, 28, 43, 0.8); }
 
   /* 我的（手机） */
   .profile { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
@@ -350,6 +414,18 @@
     .low-tip .t { flex-basis: 100%; }
     .gone { font-size: 26px; }
     .steps { flex-direction: column; }
+    .pend { padding: 18px 18px 16px; border-radius: 20px; }
+    .pend-t { font-size: 16.5px; }
+    .pend-amt { font-size: 24px; }
+    .pend-acts { flex-wrap: wrap; }
+    .pend-acts .btn:first-child { flex: 1; height: 46px; }
+    .pend-acts:has(.soft) .btn:first-child { flex-basis: 100%; }
+    .pend-acts .btn.soft { flex: 1; height: 44px; font-size: 14.5px; }
+    .tools .hint { display: none; }
+    .tools .seg { display: flex; width: 100%; }
+    .tools .seg span { flex: 1; text-align: center; padding: 7px 4px; }
+    .rc { padding: 4px 16px 18px; }
+    .od .ico { display: none; }
   }
 </style>
 </head>
@@ -735,25 +811,182 @@
     <div class="col">
       <div class="m-top only-m"><span class="logo">pandora</span></div>
       <h1>订单</h1>
-      <div class="group-h"><span>待支付</span><span>超时自动取消</span></div>
-      <div class="rows ord">
-        <div class="row"><span class="ico"><svg class="i"><use href="#i-renew"/></svg></span><span class="rt"><b>专业版 · 续费</b><span class="st warn">待支付</span><small>PD-2609-3397 · 18 分钟内未支付将自动取消</small></span><span class="rv num">¥59.00</span><button class="btn" style="height:38px;padding:0 16px;font-size:14px">去支付</button></div>
-        <div class="row"><span class="ico"><svg class="i"><use href="#i-in"/></svg></span><span class="rt"><b>余额充值</b><span class="st warn">待支付</span><small>PD-2301 · 25 分钟内未支付将自动取消</small></span><span class="rv num">¥50.00</span><button class="btn" style="height:38px;padding:0 16px;font-size:14px">去支付</button></div>
+
+      <!-- 从没下过单：只留一句话和去选购（不画筛选条） -->
+      <div class="o-empty" data-only="empty">
+        <span class="ri"><svg class="i"><use href="#i-orders"/></svg></span>
+        <b>还没有订单</b>
+        <p>买套餐或充值余额后，记录都会出现在这里。</p>
+        <a class="btn" href="#plans">去选购套餐</a>
       </div>
-      <div class="group-h"><span>2026 年 10 月</span><span>已支付 ¥177.20</span></div>
-      <div class="rows ord">
-        <div class="row"><span class="ico"><svg class="i"><use href="#i-renew"/></svg></span><span class="rt"><b>专业版 · 月付续费</b><small>PD-23002 · 10-13 17:03</small></span><span class="rv num">¥47.20</span><span class="st ok">已支付</span></div>
-        <div class="row"><span class="ico"><svg class="i"><use href="#i-plans"/></svg></span><span class="rt"><b>流量版 · 一次性</b><small>PD-23003 · 10-10 17:03</small></span><span class="rv num">¥30.00</span><span class="st ok">已支付</span></div>
-        <div class="row"><span class="ico"><svg class="i"><use href="#i-in"/></svg></span><span class="rt"><b>余额充值</b><small>PD-23004 · 10-07 17:03</small></span><span class="rv num">¥100.00</span><span class="st ok">已支付</span></div>
-        <div class="row"><span class="ico out"><svg class="i"><use href="#i-chart"/></svg></span><span class="rt"><b>重置本期流量</b><small>PD-23005 · 10-04 17:03</small></span><span class="rv num">¥10.00</span><span class="st">已取消</span></div>
-      </div>
-      <div class="group-h"><span>2026 年 9 月</span><span>已支付 ¥59.00</span></div>
-      <div class="rows ord">
-        <div class="row"><span class="ico out"><svg class="i"><use href="#i-plans"/></svg></span><span class="rt"><b>标准版 · 年付</b><small>PD-23006 · 09-26 17:03</small></span><span class="rv num">¥299.00</span><span class="st">已取消</span></div>
-        <div class="row"><span class="ico"><svg class="i"><use href="#i-renew"/></svg></span><span class="rt"><b>专业版 · 月付续费</b><small>PD-23007 · 09-12 17:03</small></span><span class="rv num">¥59.00</span><span class="st ok">已支付</span></div>
+
+      <div data-only="one multi expired">
+        <!-- 待支付：每张单一张卡，后端 30 分钟不付自动取消 -->
+        <div class="group-h" style="margin-top:0"><span>待支付 2 笔</span><span>30 分钟内不付会自动取消</span></div>
+        <div class="pend">
+          <div class="pend-top"><span class="st warn">待支付</span><span class="cd">18 分钟后自动取消</span></div>
+          <div class="pend-main">
+            <div><b class="pend-t">专业版 · 月付续费</b><small><span class="mono">PD-2609-3397</span> · 10-16 16:48</small></div>
+            <div class="num pend-amt">¥59.00</div>
+          </div>
+          <div class="pend-acts">
+            <button class="btn" data-open="pay">去支付</button>
+            <!-- 发起过支付（has_payment_intent）才有 -->
+            <button class="btn soft" data-refresh>我已支付，刷新状态</button>
+            <button class="lnk" data-open="cancel">取消订单</button>
+          </div>
+          <p class="pend-note" hidden>支付渠道尚未确认收到付款。刚付完的话，请过一两分钟再刷新。</p>
+        </div>
+        <div class="pend">
+          <div class="pend-top"><span class="st warn">待支付</span><span class="cd">25 分钟后自动取消</span></div>
+          <div class="pend-main">
+            <div><b class="pend-t">余额充值</b><small><span class="mono">PD-2609-3402</span> · 10-16 16:55</small></div>
+            <div class="num pend-amt">¥50.00</div>
+          </div>
+          <div class="pend-acts">
+            <button class="btn" data-open="pay2">去支付</button>
+            <button class="lnk" data-open="cancel">取消订单</button>
+          </div>
+        </div>
+
+        <!-- 已结束：筛选计数是全部订单的，不受当前筛选影响 -->
+        <div class="tools">
+          <div class="seg" role="tablist" aria-label="订单状态">
+            <span class="on" data-f="all">全部<em>9</em></span><span data-f="paid">已支付<em>6</em></span><span data-f="cancelled">已取消<em>3</em></span>
+          </div>
+          <span class="hint">点一笔看明细</span>
+        </div>
+
+        <div class="og">
+          <div class="group-h"><span>2026 年 10 月</span><span class="sum" data-paid="已支付 ¥193.00">已支付 ¥193.00</span></div>
+          <div class="rows">
+            <details class="od" name="od" data-st="paid">
+              <summary class="row"><span class="ico"><svg class="i"><use href="#i-renew"/></svg></span><span class="rt"><b>专业版 · 月付续费</b><small><span class="mono">PD-2610-2300</span> · 10-13 17:03</small></span><span class="oa"><span class="num">¥54.00</span><span class="st ok">已支付</span></span><svg class="i chev"><use href="#i-chev"/></svg></summary>
+              <div class="rc">
+                <div class="rc-res"><i>✓</i>已续上，有效期至 2026-11-13</div>
+                <div class="rc-box">
+                  <div class="rc-ln"><span>原价</span><span class="num">¥59.00</span></div>
+                  <div class="rc-ln"><span>优惠<code>HELLO5</code></span><span class="num">−¥5.00</span></div>
+                  <div class="rc-ln"><span>用了余额</span><span class="num">−¥6.80</span></div>
+                  <div class="rc-ln tot"><span>实付</span><span class="num">¥47.20</span></div>
+                </div>
+                <div class="rc-h">支付记录</div>
+                <div class="rc-pay"><span class="pi ali">支</span><span class="pt">支付宝<small>10-13 17:04 · 成功</small></span><span class="num">¥47.20</span></div>
+                <div class="rc-foot"><span>订单号 <span class="mono">PD-2610-2300</span><button>复制</button></span><a href="#orders">对这笔订单有疑问？提交工单 →</a></div>
+              </div>
+            </details>
+            <details class="od" name="od" data-st="paid">
+              <summary class="row"><span class="ico"><svg class="i"><use href="#i-plus"/></svg></span><span class="rt"><b>叠加 · 随用 100G</b><small><span class="mono">PD-2610-2271</span> · 10-10 17:03</small></span><span class="oa"><span class="num">¥39.00</span><span class="st ok">已支付</span></span><svg class="i chev"><use href="#i-chev"/></svg></summary>
+              <div class="rc">
+                <div class="rc-res"><i>✓</i>已叠加，总流量加上了</div>
+                <div class="rc-box">
+                  <div class="rc-ln"><span>原价</span><span class="num">¥39.00</span></div>
+                  <div class="rc-ln tot"><span>实付</span><span class="num">¥39.00</span></div>
+                </div>
+                <div class="rc-h">支付记录</div>
+                <div class="rc-pay"><span class="pi wx">微</span><span class="pt">微信支付<small>10-10 17:05 · 成功</small></span><span class="num">¥39.00</span></div>
+                <div class="rc-foot"><span>订单号 <span class="mono">PD-2610-2271</span><button>复制</button></span><a href="#orders">对这笔订单有疑问？提交工单 →</a></div>
+              </div>
+            </details>
+            <details class="od" name="od" data-st="paid">
+              <summary class="row"><span class="ico"><svg class="i"><use href="#i-in"/></svg></span><span class="rt"><b>余额充值</b><small><span class="mono">PD-2610-2208</span> · 10-07 17:03</small></span><span class="oa"><span class="num">¥100.00</span><span class="st ok">已支付</span></span><svg class="i chev"><use href="#i-chev"/></svg></summary>
+              <div class="rc">
+                <div class="rc-res"><i>✓</i>余额已到账</div>
+                <div class="rc-box">
+                  <div class="rc-ln"><span>原价</span><span class="num">¥100.00</span></div>
+                  <div class="rc-ln tot"><span>实付</span><span class="num">¥100.00</span></div>
+                </div>
+                <div class="rc-h">支付记录</div>
+                <div class="rc-pay"><span class="pi ali">支</span><span class="pt">支付宝<small>10-07 17:03 · 成功</small></span><span class="num">¥100.00</span></div>
+                <div class="rc-foot"><span>订单号 <span class="mono">PD-2610-2208</span><button>复制</button></span><a href="#orders">对这笔订单有疑问？提交工单 →</a></div>
+              </div>
+            </details>
+            <details class="od off" name="od" data-st="cancelled">
+              <summary class="row"><span class="ico out"><svg class="i"><use href="#i-reset"/></svg></span><span class="rt"><b>重置本期流量</b><small><span class="mono">PD-2610-2150</span> · 10-04 17:03</small></span><span class="oa"><span class="num">¥10.00</span><span class="st">已取消</span></span><svg class="i chev"><use href="#i-chev"/></svg></summary>
+              <div class="rc">
+                <div class="rc-res off"><i>–</i>超时未支付，已自动取消</div>
+                <div class="rc-box">
+                  <div class="rc-ln"><span>原价</span><span class="num">¥10.00</span></div>
+                </div>
+                <div class="rc-foot"><span>订单号 <span class="mono">PD-2610-2150</span><button>复制</button></span><a href="#orders">对这笔订单有疑问？提交工单 →</a></div>
+              </div>
+            </details>
+          </div>
+        </div>
+
+        <div class="og">
+          <div class="group-h"><span>2026 年 9 月</span><span class="sum" data-paid="已支付 ¥59.00">已支付 ¥59.00</span></div>
+          <div class="rows">
+            <details class="od off" name="od" data-st="cancelled">
+              <summary class="row"><span class="ico out"><svg class="i"><use href="#i-plans"/></svg></span><span class="rt"><b>标准版 · 年付</b><small><span class="mono">PD-2609-1987</span> · 09-26 17:03</small></span><span class="oa"><span class="num">¥299.00</span><span class="st">已取消</span></span><svg class="i chev"><use href="#i-chev"/></svg></summary>
+              <div class="rc">
+                <div class="rc-res off"><i>–</i>已由您取消</div>
+                <div class="rc-box">
+                  <div class="rc-ln"><span>原价</span><span class="num">¥299.00</span></div>
+                  <div class="rc-ln"><span>用了余额</span><span class="num">−¥20.00</span></div>
+                </div>
+                <div class="rc-foot"><span>订单号 <span class="mono">PD-2609-1987</span><button>复制</button></span><a href="#orders">对这笔订单有疑问？提交工单 →</a></div>
+              </div>
+            </details>
+            <details class="od" name="od" data-st="paid">
+              <summary class="row"><span class="ico"><svg class="i"><use href="#i-plans"/></svg></span><span class="rt"><b>专业版 · 月付</b><small><span class="mono">PD-2609-1820</span> · 09-12 17:03</small></span><span class="oa"><span class="num">¥59.00</span><span class="st ok">已支付</span></span><svg class="i chev"><use href="#i-chev"/></svg></summary>
+              <div class="rc">
+                <div class="rc-res"><i>✓</i>已开通，有效期至 2026-10-12</div>
+                <div class="rc-box">
+                  <div class="rc-ln"><span>原价</span><span class="num">¥59.00</span></div>
+                  <div class="rc-ln tot"><span>实付</span><span class="num">¥59.00</span></div>
+                </div>
+                <div class="rc-h">支付记录</div>
+                <div class="rc-pay"><span class="pi ali">支</span><span class="pt">支付宝<small>09-12 17:04 · 成功</small></span><span class="num">¥59.00</span></div>
+                <div class="rc-foot"><span>订单号 <span class="mono">PD-2609-1820</span><button>复制</button></span><a href="#orders">对这笔订单有疑问？提交工单 →</a></div>
+              </div>
+            </details>
+          </div>
+        </div>
+        <!-- 每次多取 6 笔；「还有 N 笔」按当前筛选 -->
+        <button class="more" data-more>显示更早的订单（还有 <span>3</span> 笔）</button>
       </div>
     </div>
   </section>
+
+  <!-- 去支付：先选方式（带手续费），按钮写明金额；有余额时给「改用余额付」（取消重下） -->
+  <div class="sheet" id="sh-pay" hidden>
+    <div class="sh-card" role="dialog" aria-label="去支付">
+      <div class="sh-top"><b>去支付</b><button class="x" data-close aria-label="关闭">×</button></div>
+      <div class="ps"><span>专业版 · 月付续费<small class="mono">PD-2609-3397</small></span><span class="num">¥59.00</span></div>
+      <div class="sh-lbl">支付方式</div>
+      <div class="pays">
+        <label class="pay on"><span class="pi ali">支</span><span class="pt">支付宝</span><span class="dot-r"></span></label>
+        <label class="pay"><span class="pi wx">微</span><span class="pt">微信支付<small>手续费 ¥0.35</small></span><span class="dot-r"></span></label>
+      </div>
+      <button class="btn hot full">去支付 <span class="num">¥59.00</span></button>
+      <div class="swb">
+        <p>余额还有 <b class="num" style="color:var(--ink)">¥26.50</b>。想用余额付：先取消这张单（不扣钱，用过的优惠码退回），再按现在的价格回到确认页，余额自动用上。</p>
+        <button class="btn soft sm">取消这张单，改用余额付</button>
+      </div>
+    </div>
+  </div>
+  <div class="sheet" id="sh-pay2" hidden>
+    <div class="sh-card" role="dialog" aria-label="去支付">
+      <div class="sh-top"><b>去支付</b><button class="x" data-close aria-label="关闭">×</button></div>
+      <div class="ps"><span>余额充值<small class="mono">PD-2609-3402</small></span><span class="num">¥50.00</span></div>
+      <div class="sh-lbl">支付方式</div>
+      <div class="pays">
+        <label class="pay on"><span class="pi ali">支</span><span class="pt">支付宝</span><span class="dot-r"></span></label>
+        <label class="pay"><span class="pi wx">微</span><span class="pt">微信支付<small>手续费 ¥0.30</small></span><span class="dot-r"></span></label>
+      </div>
+      <button class="btn hot full">去支付 <span class="num">¥50.00</span></button>
+    </div>
+  </div>
+
+  <!-- 取消订单：确认一次，写明退回什么 -->
+  <div class="sheet" id="sh-cancel" hidden>
+    <div class="sh-card" role="alertdialog" aria-label="取消这笔订单">
+      <div class="sh-top"><b>取消这笔订单？</b><button class="x" data-close aria-label="关闭">×</button></div>
+      <p class="sh-p">专业版 · 月付续费 · ¥59.00。取消后优惠码和已冻结的余额会立即退回。</p>
+      <div class="sh-acts"><button class="btn soft" data-close>再想想</button><button class="btn danger" data-close>取消订单</button></div>
+    </div>
+  </div>
 
   <!-- ================= 我的（手机标签；桌面上这些在侧栏） ================= -->
   <section class="page" id="p-me">
@@ -835,15 +1068,38 @@
   document.querySelectorAll('.sheet').forEach((el) => el.addEventListener('click', (e) => { if (e.target === el || e.target.closest('[data-close]')) el.hidden = true }))
   addEventListener('keydown', (e) => { if (e.key === 'Escape') sheet('') })
   if (q.get('w')) sheet(q.get('w'))
+  // 订单：筛选（月份合计在「已取消」下变成「无支付」，没有行的月份整组藏起）、刷新状态、显示更早
+  const MORE = { all: 3, paid: 2, cancelled: 1 }
+  function filter(f) {
+    document.querySelectorAll('.tools [data-f]').forEach((el) => el.classList.toggle('on', el.dataset.f === f))
+    document.querySelectorAll('.od').forEach((el) => { el.hidden = f !== 'all' && el.dataset.st !== f; if (el.hidden) el.open = false })
+    document.querySelectorAll('.og').forEach((g) => {
+      g.hidden = !g.querySelector('.od:not([hidden])')
+      const sum = g.querySelector('.sum')
+      sum.textContent = f === 'cancelled' ? '无支付' : sum.dataset.paid
+    })
+    document.querySelector('[data-more] span').textContent = MORE[f]
+  }
+  document.querySelectorAll('.tools [data-f]').forEach((el) => el.addEventListener('click', () => filter(el.dataset.f)))
+  if (q.get('f')) filter(q.get('f'))
+  if (q.get('od')) document.querySelectorAll('.od')[+q.get('od') - 1].open = true
+  document.querySelectorAll('[data-refresh]').forEach((el) => el.addEventListener('click', () => {
+    el.textContent = '正在向支付渠道查询…'
+    setTimeout(() => { el.textContent = '我已支付，刷新状态'; el.closest('.pend').querySelector('.pend-note').hidden = false }, 700)
+  }))
   const bar = document.createElement('nav')
   bar.className = 'pal'
   ;[['one', '一份'], ['multi', '三份'], ['expired', '已到期'], ['empty', '没有套餐']].forEach(([k, t]) => {
     const a = document.createElement('a')
     a.textContent = t
-    a.href = '?s=' + k + '#subs'
+    a.dataset.s = k
     a.className = k === st ? 'on' : ''
     bar.append(a)
   })
+  // 切状态时留在当前页
+  const palHref = () => bar.querySelectorAll('a').forEach((a) => { a.href = '?s=' + a.dataset.s + (location.hash || '#subs') })
+  palHref()
+  addEventListener('hashchange', palHref)
   document.body.append(bar)
 </script>
 </body>
