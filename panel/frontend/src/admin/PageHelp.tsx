@@ -4,7 +4,8 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import type { PageHelp } from './page-help'
 import css from './PageHelp.module.css'
 
-export function PageHelpTip({ help }: { help: PageHelp }) {
+/** align：浮层对齐触发按钮的哪一边；页头右端用 end（默认），工单左栏这类靠左的栏头用 start */
+export function PageHelpTip({ help, align = 'end' }: { help: PageHelp; align?: 'start' | 'end' }) {
   const [open, setOpen] = useState(false)
   const tooltipId = useId()
 
@@ -34,7 +35,7 @@ export function PageHelpTip({ help }: { help: PageHelp }) {
         <HugeiconsIcon icon={HelpCircleIcon} size={16} strokeWidth={1.6} aria-hidden="true" />
       </button>
 
-      <div role="tooltip" id={tooltipId} className={`${css.tooltip}${open ? ` ${css.open}` : ''}`}>
+      <div role="tooltip" id={tooltipId} className={`${css.tooltip}${align === 'start' ? ` ${css.alignStart}` : ''}${open ? ` ${css.open}` : ''}`}>
         {help.sections.map((section, idx) => (
           <div key={idx} className={css.section}>
             <div className={css.sectionTitle}>{section.title}</div>
