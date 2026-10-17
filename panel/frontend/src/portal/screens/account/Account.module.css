@@ -1,258 +1,297 @@
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
-  gap: var(--space-16);
-  align-items: start;
-}
+/* 账号安全页（样稿 #p-security） */
 
-.column {
+.acct {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-16);
-  min-width: 0;
+  align-items: center;
+  gap: 14px;
+  padding: 20px 22px;
+  border-radius: 22px;
+  background: radial-gradient(420px 160px at 0% 0%, var(--brand-soft), transparent 75%), var(--surface);
+  box-shadow: var(--lift), 0 0 0 1px var(--brand-line);
 }
 
-.muted {
-  margin: 0;
+.acct b {
+  display: block;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.acct small {
+  display: block;
+  margin-top: 3px;
   font-size: 13px;
   color: var(--text-2);
 }
 
-.hint {
-  font-size: var(--fs-caption);
-  font-weight: var(--fw-regular);
-  color: var(--text-3);
-}
-
 .mono {
-  font-family: var(--font-mono);
+  font-family: var(--font-display);
+  font-size: 13.5px;
+  color: var(--text);
 }
 
-/* 个人信息 */
-.facts {
-  display: grid;
-  row-gap: 9px;
-  margin: 0;
-  font-size: 13px;
+/* 弹层通用 */
+.sheetLead {
+  margin: 8px 0 16px;
+  font-size: 14px;
+  color: var(--text-2);
 }
 
-.fact {
-  display: grid;
-  grid-template-columns: 100px minmax(0, 1fr);
-}
-
-.fact dt {
-  color: var(--text-3);
-}
-
-.fact dd {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-/* 修改密码 */
 .form {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
 }
 
 .formError {
+  margin: 0;
   font-size: 13px;
   color: var(--danger);
 }
 
-/* 快捷登录 */
-.quick {
+/* 快捷登录弹层 */
+.qrBox {
+  position: relative;
+  width: 208px;
+  height: 208px;
+  margin: 0 auto;
+  padding: 14px;
+  border-radius: 20px;
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--border), 0 14px 30px -18px color-mix(in srgb, var(--shade) 45%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.qr {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.qrCenter {
   display: flex;
   flex-direction: column;
-  gap: var(--space-8);
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  text-align: center;
+  padding: 10px;
+  font-size: 13px;
+  color: var(--text-2);
 }
 
-.code {
-  padding: 10px 12px;
-  border-radius: var(--radius-md);
+.qrSkeleton {
+  width: 100%;
+  height: 100%;
+  border-radius: 12px;
+}
+
+.qrOver {
+  position: absolute;
+  inset: 0;
+  border-radius: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  backdrop-filter: blur(3px);
+  font-size: 15px;
+}
+
+.qrOver b {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.qlTime {
+  width: 208px;
+  margin: 14px auto 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.qlTrack {
+  display: block;
+  height: 4px;
+  margin-top: 8px;
+  border-radius: 99px;
   background: var(--bg);
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-  word-break: break-all;
-  user-select: all;
+  overflow: hidden;
 }
 
-.quickBar {
-  display: flex;
-  align-items: center;
+.qlBar {
+  display: block;
+  height: 100%;
+  border-radius: 99px;
+  background: var(--brand);
+  transition: width 1s linear;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qlBar {
+    transition: none;
+  }
+}
+
+.low {
+  color: var(--warn);
+}
+
+.low .qlBar {
+  background: var(--warn);
+}
+
+.lapsed {
+  color: var(--danger);
+}
+
+.qlLink.qlLink {
+  margin-top: 18px;
+  height: 48px;
+  background: var(--surface-2);
   justify-content: space-between;
-  gap: var(--space-8);
 }
 
-.countdown {
-  font-size: var(--fs-caption);
+.qlLink code {
+  font-size: 13.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.off {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.qlWarn {
+  margin: 10px 2px 0;
+  font-size: 12.5px;
   color: var(--text-3);
-  font-variant-numeric: tabular-nums;
 }
 
-/* 登录会话 */
-.sessions {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  border-top: 1px solid var(--surface-3);
+/* 登录的设备 */
+.kick {
+  color: var(--text-2);
+  transition: color 0.15s;
 }
 
-.session {
+.devRow:hover .kick {
+  color: var(--danger);
+}
+
+.here {
+  margin-left: 8px;
+}
+
+.cap {
+  margin: 10px 6px 0;
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+
+.capLink {
+  all: unset;
+  cursor: pointer;
+  color: var(--brand-ink);
+  font-weight: 600;
+}
+
+.capLink:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* 设备下线确认弹层 */
+.devId {
   display: flex;
   align-items: center;
-  gap: var(--space-12);
-  padding: 12px 20px;
-  border-bottom: 1px solid var(--surface-2);
+  gap: 14px;
+  margin: 14px 0 0;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border);
 }
 
-.session:last-child {
-  border-bottom: 0;
+.devIcon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--brand-ink);
+  flex: none;
+  box-shadow: 0 0 0 1px var(--border);
 }
 
-.sessionMain {
+.devMeta {
   flex: 1;
   min-width: 0;
 }
 
-.sessionName {
-  display: flex;
-  align-items: center;
-  gap: var(--space-8);
-  font-weight: var(--fw-medium);
+.devMeta b {
+  display: block;
+  font-size: 15.5px;
+  font-weight: 600;
 }
 
-.sessionMeta {
-  font-size: var(--fs-caption);
-  color: var(--text-3);
+.devMeta small {
+  display: block;
+  font-size: 13px;
+  color: var(--text-2);
+  margin-top: 2px;
 }
 
-.kick {
-  border-color: var(--danger-line);
-  color: var(--danger);
-}
-
-/* Telegram */
-.status {
-  font-size: var(--fs-caption);
-  color: var(--text-3);
-}
-
-.unbind {
-  color: var(--danger);
-}
-
-.codeBox {
+.devFx {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 12px;
-  border-radius: var(--radius-md);
-  background: var(--bg);
+  gap: 8px;
 }
 
-.bindCode {
-  font-family: var(--font-mono);
-  font-size: 16px;
-  font-weight: var(--fw-medium);
-  user-select: all;
-}
-
-.actions {
+.devFx li {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-8);
-}
-
-.actions > * {
-  flex: 1 1 180px;
-}
-
-.linkButton {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: var(--h-control);
-  padding: 0 var(--pad-button);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-control);
-  background: var(--surface);
-  color: var(--text);
-  text-decoration: none;
-  white-space: nowrap;
-}
-
-.linkButton:hover {
-  background: var(--surface-3);
-  color: var(--text);
-  text-decoration: none;
-}
-
-.linkButton:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px var(--focus-halo);
-  border-color: var(--focus-ring);
-}
-
-/* 通知偏好 */
-.prefHead,
-.prefRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 70px 80px;
   gap: 10px;
-  align-items: center;
-  padding: 10px 20px;
-  border-bottom: 1px solid var(--surface-2);
+  padding: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-2);
 }
 
-.prefHead {
-  padding-block: 14px;
-  border-bottom-color: var(--surface-3);
-}
-
-.prefTitle {
+.devFx li::before {
+  content: '–';
+  flex: none;
+  width: 18px;
+  height: auto;
   margin: 0;
-  font-size: var(--fs-body);
-  font-weight: var(--fw-semibold);
+  background: none;
+  color: var(--danger);
+  font-weight: 600;
+  text-align: center;
 }
 
-.prefCol {
-  display: flex;
-  justify-content: center;
-  font-size: var(--fs-caption);
-  color: var(--text-3);
+.devFx li.keep::before {
+  content: '✓';
+  color: var(--ok);
 }
 
-.prefLabel {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.prefNote {
-  margin: 0;
-  padding: 10px 20px 14px;
-  font-size: var(--fs-caption);
-  color: var(--text-3);
-}
-
-/* 退出登录 */
-.logout {
+/* 退出登录按钮 */
+.logout.logout {
+  margin-top: 30px;
   color: var(--danger);
 }
 
-@media (max-width: 639px) {
-  .session,
-  .prefHead,
-  .prefRow,
-  .prefNote {
-    padding-inline: var(--pad-card);
-  }
-
-  .prefHead,
-  .prefRow {
-    grid-template-columns: minmax(0, 1fr) 56px 72px;
+@media (max-width: 959px) {
+  .acct {
+    padding: 18px;
   }
 }
+
