@@ -144,6 +144,9 @@
     background: radial-gradient(var(--dot) 1px, transparent 1.3px) 0 0 / 16px 16px, var(--bg);
     min-height: 100vh;
   }
+  /* 焦点框统一用主题色（只在键盘聚焦时出现）；输入框另有自己的聚焦描边 */
+  :focus-visible { outline: 2px solid var(--act); outline-offset: 2px; }
+  .nav-a:focus-visible, .row:focus-visible, .tabbar a:focus-visible { outline-offset: -2px; }
   svg.i { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex: none; }
   a { color: inherit; text-decoration: none; }
   .num { font-family: var(--tw); font-weight: 700; letter-spacing: -0.02em; }
@@ -2374,6 +2377,14 @@
   const q = new URLSearchParams(location.search)
   const st = ['one', 'multi', 'expired', 'empty'].includes(q.get('s')) ? q.get('s') : 'one'
   if (q.get('shot')) document.documentElement.classList.add('shot')
+  // 本机预览 Hugeicons：.tmp-icons/hugeicons.svg 由 .tmp-icons/gen.mjs 从 node_modules 生成，不入库（Pro 图标要授权）。
+  // 文件在就按 id 换掉上面的内联图标，不在就用内联的；?ic=0 强制看原来的
+  if (q.get('ic') !== '0') fetch('.tmp-icons/hugeicons.svg').then((r) => (r.ok ? r.text() : null)).then((txt) => {
+    if (!txt) return
+    const doc = new DOMParser().parseFromString(txt, 'image/svg+xml')
+    doc.querySelectorAll('symbol').forEach((s) => { const old = document.getElementById(s.id); if (old) old.replaceWith(document.importNode(s, true)) })
+    document.documentElement.dataset.icons = 'hugeicons'
+  }).catch(() => {})
   document.querySelectorAll('[data-only]').forEach((el) => {
     if (el.dataset.only.split(' ').includes(st)) el.removeAttribute('data-only')
   })
