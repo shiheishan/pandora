@@ -142,3 +142,10 @@
   color: var(--text-2);
   font-size: 13px;
 }
+
+/* 列的 hideOnMobile：手机上整列（col、表头、单元格）都不出现 */
+@media (max-width: 639px) {
+  .hideMobile {
+    display: none;
+  }
+}
